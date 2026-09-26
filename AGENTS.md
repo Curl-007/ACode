@@ -34,6 +34,7 @@
 - `apps/acode-cli`：Agent CLI 与运行时。
 - `CONTEXT.md`：插件商店领域词汇；修改相关 UI 前阅读。
 - `DESIGN.md`：UI 设计规范；修改 UI 前阅读。
+- `docs/git-collaboration.md`：Git 协作规则（main 为发布分支、分支模型、提交与发布流程）；开分支、提交、合并、发布前阅读。
 
 ## 实现与验证
 

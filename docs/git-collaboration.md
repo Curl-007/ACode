@@ -4,15 +4,15 @@
 
 ## 分支模型
 
-| 分支 | 用途 | 切自 | 合入 | 合并方式 |
-| ---- | ---- | ---- | ---- | -------- |
-| `main` | 发布版本,任何提交都必须可发布 | —(只接受 `release/*`、`hotfix/*`) | — | `merge --no-ff` |
-| `dev` | 日常集成分支,功能汇合与联调验证 | `main`(初始化) | `release/*` | 入侧 squash |
-| `feature/<scope>-<摘要>` | 单个功能开发 | `dev` | `dev` | squash |
-| `fix/<scope>-<摘要>` | 缺陷修复 | `dev` | `dev` | squash |
-| `chore/`、`docs/`、`refactor/` + 摘要 | 工程、文档、重构类改动 | `dev` | `dev` | squash |
-| `release/<版本>` | 发布准备:冻结、验证、出包 | `dev` | `main`,发布后回并 `dev` | `--no-ff` |
-| `hotfix/<摘要>` | 已发布版本的紧急修复 | `main` | `main`,随后回并 `dev` | `--no-ff` |
+| 分支                                  | 用途                            | 切自                              | 合入                    | 合并方式        |
+| ------------------------------------- | ------------------------------- | --------------------------------- | ----------------------- | --------------- |
+| `main`                                | 发布版本,任何提交都必须可发布   | —(只接受 `release/*`、`hotfix/*`) | —                       | `merge --no-ff` |
+| `dev`                                 | 日常集成分支,功能汇合与联调验证 | `main`(初始化)                    | `release/*`             | 入侧 squash     |
+| `feature/<scope>-<摘要>`              | 单个功能开发                    | `dev`                             | `dev`                   | squash          |
+| `fix/<scope>-<摘要>`                  | 缺陷修复                        | `dev`                             | `dev`                   | squash          |
+| `chore/`、`docs/`、`refactor/` + 摘要 | 工程、文档、重构类改动          | `dev`                             | `dev`                   | squash          |
+| `release/<版本>`                      | 发布准备:冻结、验证、出包       | `dev`                             | `main`,发布后回并 `dev` | `--no-ff`       |
+| `hotfix/<摘要>`                       | 已发布版本的紧急修复            | `main`                            | `main`,随后回并 `dev`   | `--no-ff`       |
 
 规则要点:
 
@@ -43,7 +43,7 @@
 禁止事项:
 
 - 禁止直接 `push` 到 `main`、`dev`、`release/*`;一律走 PR。单人维护期可临时直推 `main`,但必须自行完成发布级验证,并在恢复多人协作后立即收回。
-- 禁止对 `main`、`dev`、`release/*`  force-push;个人功能分支 rebase 后仅允许 force-push 自己的、且无他人协作的分支。
+- 禁止对 `main`、`dev`、`release/*` force-push;个人功能分支 rebase 后仅允许 force-push 自己的、且无他人协作的分支。
 - 禁止用 `--no-verify` 绕过仓库检查提交或推送。
 
 ## 发布与版本

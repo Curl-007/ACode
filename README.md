@@ -1,7 +1,7 @@
 # ACode
 
 <div align="center">
-  <img src="public/logo/open-audit.svg" alt="ACode" width="96" height="96" />
+  <img src="public/logo/acode.svg" alt="ACode" width="96" height="96" />
   <p><strong>AI coding workspace: desktop · browser · terminal</strong></p>
 </div>
 <p align="center">

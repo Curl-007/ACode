@@ -46,7 +46,7 @@ import {
   type SettingsSectionId,
 } from "@/lib/settingsNavigation.js";
 import { runWorkspaceVisibleCommand } from "@/lib/workspaceVisibleCommand.js";
-import appLogoUrl from "@/assets/provider-icons/logo-open-audit.svg";
+import appLogoUrl from "@/assets/provider-icons/logo-acode.svg";
 import { resolveTheme } from "@/useTheme.js";
 import { WorkspaceShellLayout } from "@/app-shell/WorkspaceShellLayout.js";
 import { useAppChromeState } from "@/app-shell/useAppChromeState.js";

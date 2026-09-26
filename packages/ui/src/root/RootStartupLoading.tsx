@@ -43,10 +43,10 @@ function ACodeStartupLogo({
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
-      width="118"
+      width="158"
       height="100"
       fill="none"
-      viewBox="176 224 712 608"
+      viewBox="120 264 784 496"
       className={cn("shrink-0 text-current", className)}
       aria-hidden="true"
       focusable="false"
@@ -60,14 +60,14 @@ function ACodeStartupLogo({
           values="1;0.4;1"
         />
       ) : null}
-      {/* 品牌 Z 使用图标同款对角渐变，避免在深色启动底上呈现为纯白。 */}
+      {/* 品牌括号与 AI 星光使用图标同款对角渐变，避免在深色启动底上呈现为纯白。 */}
       <defs>
         <linearGradient
-          id="acode-brand-z-gradient"
-          x1="712"
-          y1="224"
+          id="acode-brand-gradient"
+          x1="760"
+          y1="300"
           x2="300"
-          y2="800"
+          y2="720"
           gradientUnits="userSpaceOnUse"
         >
           <stop offset="0" stopColor="#38bdf8" />
@@ -75,13 +75,24 @@ function ACodeStartupLogo({
         </linearGradient>
       </defs>
       <path
-        fill="url(#acode-brand-z-gradient)"
-        d="M184 224H512L453 308Q439 328 415 328H184Z"
+        d="M368 312L168 512L368 712"
+        fill="none"
+        stroke="#38bdf8"
+        strokeWidth="96"
+        strokeLinecap="round"
+        strokeLinejoin="round"
       />
-      <path fill="url(#acode-brand-z-gradient)" d="M584 224H832L424 800H176Z" />
       <path
-        fill="url(#acode-brand-z-gradient)"
-        d="M536 720L600 656L648 704L824 528L888 592L648 832Z"
+        fill="url(#acode-brand-gradient)"
+        d="M512 380C525 462 562 499 644 512C562 525 525 562 512 644C499 562 462 525 380 512C462 499 499 462 512 380Z"
+      />
+      <path
+        d="M656 312L856 512L656 712"
+        fill="none"
+        stroke="#818cf8"
+        strokeWidth="96"
+        strokeLinecap="round"
+        strokeLinejoin="round"
       />
     </svg>
   );

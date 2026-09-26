@@ -1,5 +1,5 @@
 import { PanelLeftOpen } from "lucide-react";
-import appLogoUrl from "@/assets/provider-icons/logo-open-audit.svg";
+import appLogoUrl from "@/assets/provider-icons/logo-acode.svg";
 import { Button } from "@/components/ui/button.js";
 import { ControlHintTooltip } from "@/ControlHintTooltip.js";
 import { useACodeIntl } from "@/i18n/IntlProvider.js";

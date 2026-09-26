@@ -183,20 +183,20 @@ export function createCustomAboutDialogHtml(input: CustomAboutDialogHtmlInput): 
           <div class="app-icon" aria-hidden="true">
             <svg
               xmlns="http://www.w3.org/2000/svg"
-              width="118"
+              width="158"
               height="100"
               fill="none"
-              viewBox="176 224 712 608"
+              viewBox="120 264 784 496"
               class="app-logo"
               focusable="false"
             >
               <defs>
                 <linearGradient
-                  id="acode-brand-z-gradient"
-                  x1="712"
-                  y1="224"
+                  id="acode-brand-gradient"
+                  x1="760"
+                  y1="300"
                   x2="300"
-                  y2="800"
+                  y2="720"
                   gradientUnits="userSpaceOnUse"
                 >
                   <stop offset="0" stop-color="#38bdf8" />
@@ -204,13 +204,24 @@ export function createCustomAboutDialogHtml(input: CustomAboutDialogHtmlInput): 
                 </linearGradient>
               </defs>
               <path
-                fill="url(#acode-brand-z-gradient)"
-                d="M184 224H512L453 308Q439 328 415 328H184Z"
+                d="M368 312L168 512L368 712"
+                fill="none"
+                stroke="#38bdf8"
+                stroke-width="96"
+                stroke-linecap="round"
+                stroke-linejoin="round"
               />
-              <path fill="url(#acode-brand-z-gradient)" d="M584 224H832L424 800H176Z" />
               <path
-                fill="url(#acode-brand-z-gradient)"
-                d="M536 720L600 656L648 704L824 528L888 592L648 832Z"
+                fill="url(#acode-brand-gradient)"
+                d="M512 380C525 462 562 499 644 512C562 525 525 562 512 644C499 562 462 525 380 512C462 499 499 462 512 380Z"
+              />
+              <path
+                d="M656 312L856 512L656 712"
+                fill="none"
+                stroke="#818cf8"
+                stroke-width="96"
+                stroke-linecap="round"
+                stroke-linejoin="round"
               />
             </svg>
           </div>

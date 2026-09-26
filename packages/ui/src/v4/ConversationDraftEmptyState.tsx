@@ -224,26 +224,43 @@ function ACodeEmptyStateLogo({ className }: { className?: string }) {
         )}
         width="400"
         height="320"
-        viewBox="176 224 712 608"
+        viewBox="120 264 784 496"
         fill="none"
         xmlns="http://www.w3.org/2000/svg"
       >
         <defs>
           <linearGradient
-            id="acode-brand-z-gradient"
-            x1="712"
-            y1="224"
+            id="acode-brand-gradient"
+            x1="760"
+            y1="300"
             x2="300"
-            y2="800"
+            y2="720"
             gradientUnits="userSpaceOnUse"
           >
             <stop offset="0" stopColor="#38bdf8" />
             <stop offset="1" stopColor="#818cf8" />
           </linearGradient>
         </defs>
-        <path d="M184 224H512L453 308Q439 328 415 328H184Z" fill="url(#acode-brand-z-gradient)" />
-        <path d="M584 224H832L424 800H176Z" fill="url(#acode-brand-z-gradient)" />
-        <path d="M536 720L600 656L648 704L824 528L888 592L648 832Z" fill="url(#acode-brand-z-gradient)" />
+        <path
+          d="M368 312L168 512L368 712"
+          fill="none"
+          stroke="#38bdf8"
+          strokeWidth="96"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+        <path
+          fill="url(#acode-brand-gradient)"
+          d="M512 380C525 462 562 499 644 512C562 525 525 562 512 644C499 562 462 525 380 512C462 499 499 462 512 380Z"
+        />
+        <path
+          d="M656 312L856 512L656 712"
+          fill="none"
+          stroke="#818cf8"
+          strokeWidth="96"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
       </svg>
     </>
   );

@@ -1,7 +1,7 @@
 # ACode
 
 <div align="center">
-  <img src="public/logo/open-audit.svg" alt="ACode" width="96" height="96" />
+  <img src="public/logo/acode.svg" alt="ACode" width="96" height="96" />
   <p><strong>AI 编程工作台：桌面 · 浏览器 · 终端</strong></p>
 </div>
 <p align="center">

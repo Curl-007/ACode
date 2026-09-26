@@ -1,5 +1,5 @@
 import { cn } from "@/components/lib/utils.js";
-import zaiLogoUrl from "@/assets/provider-icons/logo-open-audit.svg";
+import zaiLogoUrl from "@/assets/provider-icons/logo-acode.svg";
 
 export function WindowsTopLeftLogo({
   className,

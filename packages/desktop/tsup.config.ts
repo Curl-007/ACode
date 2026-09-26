@@ -194,7 +194,9 @@ export default defineConfig([
     platform: "node",
     target: "node22",
     external: ["electron"],
-    noExternal: ["@acode/shared"],
+    // 沙箱化 preload（desktopWindowChrome 等窗口 sandbox:true）只允许 require electron
+    // 白名单，zod 留成外部 require 会让 preload 整体加载失败，渲染端桥接未定义进而白屏。
+    noExternal: ["@acode/shared", "zod"],
     outExtension: () => ({ js: ".cjs" }),
     define: createSharedDefines(),
     esbuildOptions(options) {

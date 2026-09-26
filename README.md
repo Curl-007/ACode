@@ -2,61 +2,24 @@
 
 <div align="center">
   <img src="public/logo/open-audit.svg" alt="ACode" width="96" height="96" />
-  <p><strong>An independent security audit fork of ACode</strong></p>
+  <p><strong>AI coding workspace: desktop · browser · terminal</strong></p>
 </div>
 <p align="center">
-  <a href="README.zh-CN.md">简体中文</a> | English ·
-  <a href="https://acode-project.github.io/">Project site</a>
+  <a href="README.zh-CN.md">简体中文</a> | English
 </p>
 
-> This repository is forked from [Curl-007/ACode](https://github.com/Curl-007/ACode), open-sourced by Zhipu on September 21, 2026. The name follows the same pattern as Chrome → Chromium and VS Code → VSCodium: **ACode → ACode**. Everything here is backed by code and reproducible checks.
+ACode is an AI coding workspace with desktop, browser, and terminal interfaces. This repository contains the full source code — clients, backend services, shared UI, and the Agent CLI and runtime — maintained independently by the repository owner.
 
-## How it compares with upstream
+## Highlights
 
-| Item                     | ACode (this repo)                                                                  | Official client (closed source)                                           | Official open source             |
-| ------------------------ | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------- | -------------------------------- |
-| Monitoring and telemetry | **All removed** (~26k lines), with regression checks                                 | Everything on by default; the switches never stopped packaging or uploads | Same as the closed-source client |
-| Repository upload logic  | Removed                                                                              | Present (until the 2026-09-18 report)                                     | Removed (since 2026-09-21)       |
-| Historical versions      | **Full history and releases kept** for audit trail                                   | Old download links pulled                                                 | Old download links pulled        |
-| Build transparency       | **GitHub Actions builds transparently from this repo**; artifacts ship with releases | Vendor binaries, not reproducible                                         | No public build                  |
-| Issues and collaboration | **Open** — issues and discussions welcome                                            | Not open                                                                  | Closed                           |
+- **No monitoring or telemetry**: roughly 26k lines of monitoring/telemetry implementation removed (ARMS RUM, OTLP reporting, crash collection, resource and network sampling, UI instrumentation), with regression checks keeping those exits from coming back.
+- **Vendor services off by default**: account sign-in, feedback, coding plans, official MCP, and the plugin marketplace are all off by default, each with its own switch in Settings.
+- **No unconsented data egress**: snapshot packaging, encryption, and direct-upload paths were reviewed across the repository; this version has no unconsented data egress implementation.
+- **Transparent source builds**: desktop clients and the CLI distribution are built with GitHub Actions from this repository's source, with artifacts published to Releases.
 
-## What ACode changes vs. official ACode
+### What was removed
 
-Compared with the upstream open-source release:
-
-- **Vendor services off by default**: account sign-in, feedback, coding plans, official MCP and the plugin marketplace are all off by default, each with its own switch in Settings. Turning one on connects to ACode's official servers — keep them off unless you need them.
-- **Deleted all monitoring and telemetry**, about 26k lines: ARMS RUM, OTLP reporting, crash collection, resource and network sampling, UI instrumentation. Regression checks keep those exits from coming back (see "What we removed" below).
-- **Searched the sensitive paths**: snapshot packaging, encryption, and direct-upload code was reviewed across the repository; this version has no unconsented data egress.
-- **Wired up builds and releases**: GitHub Actions builds the installers and deploys this site; in-app updates point at this repo's GitHub Releases.
-
-The audit is a static code search, not full dynamic forensics. Findings and limits will be updated.
-
-## We keep auditing
-
-- Every commit in [Curl-007/ACode](https://github.com/Curl-007/ACode) gets a diff audit, not just releases.
-- Only risk-free changes are synced. Code that does data egress, monitoring/telemetry, or permission expansion is stripped or rejected, with the reason recorded.
-- Every sync is followed by a rebuild and a new audited release (see [Releases](https://github.com/ACode-project/ACode/releases)).
-- Audit methods and conclusions stay in this repository and on the [project site](https://acode-project.github.io/). Review and challenge are welcome.
-
-## Background
-
-For the background and details, read the external coverage below; this repository makes no finding of fact about it:
-
-| Source                                     | Link                                                                   |
-| ------------------------------------------ | ---------------------------------------------------------------------- |
-| ferstar's original technical analysis      | https://blog.ferstar.org/posts/zcode-silent-workspace-snapshot-upload/ |
-| Independent reproduction                   | https://blog.margrop.net/post/zcode-silent-git-upload-investigation/   |
-| Official open-source repository (upstream) | https://github.com/Curl-007/ACode                                       |
-| The Paper coverage                         | https://www.thepaper.cn/newsDetail_forward_34111815                    |
-| Jiemian News coverage                      | https://www.jiemian.com/article/15120609.html                          |
-| ITHome coverage                            | https://www.ithome.com/1/005/046.htm                                   |
-| Huxiu coverage                             | https://www.huxiu.com/article/4892416.html                             |
-| ifeng coverage                             | https://tech.ifeng.com/c/8waIS4X7FAe                                   |
-
-## What we removed
-
-Compared with the upstream open-source release, this repository contains **no monitoring or telemetry implementation**:
+Compared with the open-source baseline, this repository contains **no monitoring or telemetry implementation**:
 
 | Area                        | Removed                                                                                                                                                 |
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -74,14 +37,14 @@ Compared with the upstream open-source release, this repository contains **no mo
 
 ## Download and install
 
-The [Releases](https://github.com/ACode-project/ACode/releases) page ships desktop clients (macOS / Windows / Linux) and the CLI distribution.
+The [Releases](https://github.com/Curl-007/ACode/releases) page ships desktop clients (macOS / Windows / Linux) and the CLI distribution.
 
-**About signing**: the builds are **not signed by ACode**, so the operating system blocks the first launch. That is expected — allow it once per platform as below. You can verify the download against the `sha256.txt` on the release page before allowing it.
+**About signing**: the builds are **not code-signed**, so the operating system blocks the first launch. That is expected — allow it once per platform as below. You can verify the download against the `sha256.txt` on the release page before allowing it.
 
 ### macOS (.dmg)
 
 1. Download `ACode-*-mac-arm64.dmg` (Apple Silicon) or `ACode-*-mac-x64.dmg` (Intel), open it and drag ACode into Applications.
-2. The app is not signed by ACode, so Gatekeeper will say the developer cannot be verified (or that the app is damaged). **After dragging the app into Applications**, run the command below (enter your login password when asked; nothing is shown while typing):
+2. The app is unsigned, so Gatekeeper will say the developer cannot be verified (or that the app is damaged). **After dragging the app into Applications**, run the command below (enter your login password when asked; nothing is shown while typing):
 
    ```bash
    # One-time command (unblocks and launches; it exits immediately):
@@ -93,7 +56,7 @@ The [Releases](https://github.com/ACode-project/ACode/releases) page ships deskt
 ### Windows (.exe)
 
 1. Download `ACode-*-win-x64.exe` and double-click it.
-2. The installer is not signed by ACode, so SmartScreen shows the "Windows protected your PC" warning. Click **More info** → **Run anyway** and finish the installer.
+2. The installer is unsigned, so SmartScreen shows the "Windows protected your PC" warning. Click **More info** → **Run anyway** and finish the installer.
 
    This is the expected prompt, not a sign of corruption; you can also verify the installer against the `sha256.txt` from the release page first.
 
@@ -124,30 +87,8 @@ acode --help        # or run directly: node bin/acode.mjs --help
 
 ## Build and Release
 
-- **GitHub builds**: audited code is built in this repository with GitHub Actions. CLI distributions are published to [Releases](https://github.com/ACode-project/ACode/releases), and the project site is built in [its own repository](https://github.com/ACode-project/acode-project.github.io) and served at https://acode-project.github.io/. Every artifact comes from the audited source in this repository and contains no unsynced upstream changes.
-- **Release flow**: run the [Release](https://github.com/ACode-project/ACode/actions/workflows/release.yml) workflow manually in Actions. Enter `3.14.0` with pre-release checked to get `3.14.0-audit.<date>` (repeat builds on the same day get `.2`, `.3`, …; the full form `3.14.0-audit.20260922[.2]` is also accepted). With pre-release unchecked it publishes the stable `v3.14.0` (clean tag, GitHub Latest, so `/releases/latest` works). Release notes always lead with "what changed vs ACode", then the install steps — the English block first, an exact Chinese mirror below — and the downloads list last. Every artifact is uploaded into a **draft** release first; the release is published only after the CLI and all desktop platform artifacts are uploaded, and a failed build leaves it as a draft, so download pages never resolve to a still-building version.
-- **Upstream sync**: review the change first, diff-audit it per version, and merge only the risk-free parts; conclusions go into the audit record.
-
-## Community
-
-Join the community for discussions and feedback:
-
-| Discord | QQ group |
-| --- | --- |
-| <img src="docs/community/discord-qr.png" alt="Discord invite QR code" width="220" /> | <img src="docs/community/qq-group-qr.jpg" alt="QQ group QR code" width="220" /> |
-| https://discord.gg/HeDkhY9nV | Group ID: 344502652 |
-
-## Disclaimer
-
-This repository is community-driven open source and is not affiliated with any existing commercial company. All facts come from public reporting and independent code audits, with sources cited. If any party believes something is inaccurate, please open an issue.
-
-[Other similar community distributions: ACode](https://github.com/axiom-desu/ACode)
-
----
-
-# Official ACode README (upstream content below)
-
-> **Note**: the sections below come from the official upstream repository [Curl-007/ACode](https://github.com/Curl-007/ACode) README and describe the upstream project itself. Its community links, services, and commitments are maintained by upstream and are not part of this audit fork.
+- **GitHub builds**: this repository builds from source with GitHub Actions, and CLI distributions are published to [Releases](https://github.com/Curl-007/ACode/releases). Every artifact comes from the source in this repository.
+- **Release flow**: run the [Release](.github/workflows/release.yml) workflow manually in Actions. Enter `3.14.0` with pre-release checked to get `3.14.0-audit.<date>` (repeat builds on the same day get `.2`, `.3`, …; the full form `3.14.0-audit.20260922[.2]` is also accepted). With pre-release unchecked it publishes the stable `v3.14.0` (clean tag, GitHub Latest, so `/releases/latest` works). Release notes always lead with "what changed vs the baseline", then the install steps — the English block first, an exact Chinese mirror below — and the downloads list last. Every artifact is uploaded into a **draft** release first; the release is published only after the CLI and all desktop platform artifacts are uploaded, and a failed build leaves it as a draft, so download pages never resolve to a still-building version.
 
 ---
 
@@ -201,6 +142,10 @@ Set `ACODE_DATA_BASE_DIR` to use a separate development data directory. For exam
 ```bash
 ACODE_DATA_BASE_DIR="$HOME/.acode-dev-home" pnpm dev:desktop:test
 ```
+
+### Remote features (SSH/WSL)
+
+Run `pnpm bootstrap:with-remote` first to prepare remote assets (mock-cdn), then `pnpm dev:desktop`; when connecting to a remote project, choose "download locally and upload" for assets. In development, assets come from the local `packages/desktop/mock-cdn` and local build outputs, uploaded to the remote host over SFTP without touching a CDN.
 
 ### Web Development
 
@@ -287,6 +232,12 @@ pnpm bundle:desktop -- --help
 
 The default target is macOS arm64, and the default output directory is `packages/desktop/dist/`. `--os` accepts `mac`, `win`, or `linux`; `--arch` accepts `x64` or `arm64`. Packaging and signing require the tools and configuration for the target platform.
 
+To install: open the produced DMG and drag ACode into Applications. Local builds are unsigned; if macOS blocks the first launch, run:
+
+```bash
+sudo /usr/bin/xattr -rd com.apple.quarantine /Applications/ACode.app && open -a "ACode"
+```
+
 ### ACode CLI distribution
 
 Run `pnpm build:acode` to build the CLI/TUI, backend, and Web client, collect the TUI native libraries, workers, and runtime dependencies, then assemble the distribution. Running the distribution still requires Node.js; use the version specified in `mise.toml`.
@@ -313,8 +264,6 @@ The version defaults to the root `package.json` version. Output is written to `d
 - `latest.json` and `install.sh`: version index and installer.
 
 Upload the entire directory to the configured download base URL. The installer downloads the runtime package from that URL, installs it to `~/.acode/runtime` by default, and creates the `acode` command in `~/.local/bin`. Override these directories with `ACODE_DIST_HOME` and `ACODE_DIST_BIN_DIR`, respectively.
-
-Existing Lite users should switch to the new build command, environment variables, and installer. Installation does not remove old Lite directories or migrate/delete session data.
 
 To test a packaged build locally, extract and run it directly without uploading or installing it:
 
@@ -348,11 +297,9 @@ Open `http://127.0.0.1:3030` to validate the complete flow, with one backend ser
 | `apps/acode-cli`                                     | Agent CLI, TUI, runtime, and tools                                                      |
 | `scripts`, `config`, `third-party`                   | Build and maintenance scripts, built-in configuration, and third-party notice materials |
 
-The project site source lives in the [acode-project.github.io](https://github.com/ACode-project/acode-project.github.io) repository, built with Vite + Svelte + Tailwind CSS v4 and deployed with GitHub Actions to <https://acode-project.github.io/>.
-
 ## License
 
-First-party code (including all audit and modification work) is licensed under **MIT** (see [LICENSE](LICENSE)). The repository contains upstream code from [Curl-007/ACode](https://github.com/Curl-007/ACode), which stays under **Apache-2.0** (full text in [LICENSE-APACHE](LICENSE-APACHE)), with the original copyright and attribution notices retained. Third-party component licensing is listed in [NOTICE.md](NOTICE.md).
+First-party code is licensed under **MIT** (see [LICENSE](LICENSE)). The repository contains code derived from the ACode open-source baseline, which stays under **Apache-2.0** (full text in [LICENSE-APACHE](LICENSE-APACHE)), with the original copyright and attribution notices retained. Third-party component licensing is listed in [NOTICE.md](NOTICE.md).
 
 ## Project Notice
 

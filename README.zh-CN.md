@@ -2,61 +2,24 @@
 
 <div align="center">
   <img src="public/logo/open-audit.svg" alt="ACode" width="96" height="96" />
-  <p><strong>ACode 开源代码的独立审计版本</strong></p>
+  <p><strong>AI 编程工作台：桌面 · 浏览器 · 终端</strong></p>
 </div>
 <p align="center">
-  简体中文 | <a href="README.md">English</a> ·
-  <a href="https://acode-project.github.io/">项目网站</a>
+  简体中文 | <a href="README.md">English</a>
 </p>
 
-> 本仓库 fork 自智谱 2026 年 9 月 21 日开源的 [Curl-007/ACode](https://github.com/Curl-007/ACode)。名字沿用 Chrome → Chromium、VS Code → VSCodium 的变形逻辑：**ACode → ACode**。所有结论以代码和可复现的验证为准。
+ACode 是 AI 编程工作台，提供桌面应用、浏览器界面和终端 Agent。本仓库包含完整源码：客户端、后端服务、共享 UI，以及 Agent CLI 与运行时，由仓库所有者独立维护。
 
-## 和官方版本的对比
+## 特性
 
-| 对比项       | ACode（本仓库）                                          | 官方客户端（闭源）               | 官方开源版                 |
-| ------------ | ---------------------------------------------------------- | -------------------------------- | -------------------------- |
-| 监控与遥测   | **全部移除**（约 2.6 万行），并加防回归检查                | 全套默认开启，开关管不到打包上传 | 与闭源版相同               |
-| 仓库上传逻辑 | 已移除                                                     | 有（直到 2026-09-18 被曝光）     | 已移除（自 2026-09-21 起） |
-| 历史版本回溯 | **保留全部历史版本与提交记录**，供审计回溯                 | 旧版本下载链接已下架             | 旧版本下载链接已下架       |
-| 构建透明度   | **GitHub Actions 从仓库源码透明构建**，产物随 Release 发布 | 官方二进制，构建不可复现         | 不提供公开构建             |
-| Issue 与共建 | **开放**（Issue 与 Discussions），欢迎共建讨论             | 不开放                           | 关闭                       |
+- **无监控与遥测**：移除了约 2.6 万行监控遥测实现（ARMS RUM、OTLP 上报、崩溃采集、资源与网络采样、UI 埋点），并加入防回归检查，防止这些出口被重新引入。
+- **官方服务默认关闭**：账号登录、反馈、编码套餐、官方 MCP、插件市场等官方接口默认关闭，设置里可逐个开关。
+- **无未经确认的数据外发**：快照打包、加密、直传相关代码经过全仓库检索，当前版本没有未经确认的数据外发实现。
+- **源码透明构建**：桌面客户端与 CLI 发行包均通过 GitHub Actions 从本仓库源码构建，产物随 Release 发布。
 
-## ACode 比 ACode 官方改了什么
+### 移除明细
 
-相比上游开源版本：
-
-- **官方服务默认全部关闭**：账号登录、反馈、编码套餐、官方 MCP、插件市场等官方接口默认关闭，设置里可逐个开关。打开任意一个都会连接 ACode 官方服务器，如无必要请保持关闭。
-- **删掉了所有监控与遥测**，约 2.6 万行：ARMS RUM、OTLP 上报、崩溃采集、资源与网络采样、UI 埋点。另外加了防回归检查，防止这些出口被重新引入（见下文"我们移除了什么"）。
-- **检索了敏感路径**：快照打包、加密、直传相关的代码全仓库过了一遍，当前版本没有未经确认的数据外发实现。
-- **接通了构建和发布**：GitHub Actions 构建安装包、部署项目站点；应用内更新指向本仓库的 GitHub Releases，走自己的发布链路。
-
-审计是静态代码检索，不等于完整动态取证。发现和局限会持续更新。
-
-## 我们会持续审计
-
-- 上游 [Curl-007/ACode](https://github.com/Curl-007/ACode) 的每次提交都会做 diff 审计，不等发版才看。
-- 只同步无风险的改动。数据外发、监控遥测、权限扩张这类代码会剥离或拒绝合入，并在审计记录里写明原因。
-- 每次同步后重新构建、发布新的审计版本（见 [Releases](https://github.com/ACode-project/ACode/releases)）。
-- 审计方法和结论留在仓库和[项目网站](https://acode-project.github.io/)，欢迎复核和质疑。
-
-## 背景
-
-事情的起因和细节以外部报道为准，这里不做事实认定：
-
-| 来源                     | 链接                                                                   |
-| ------------------------ | ---------------------------------------------------------------------- |
-| ferstar 原始技术分析     | https://blog.ferstar.org/posts/zcode-silent-workspace-snapshot-upload/ |
-| 魔都水滴独立复现         | https://blog.margrop.net/post/zcode-silent-git-upload-investigation/   |
-| 智谱官方开源仓库（上游） | https://github.com/Curl-007/ACode                                       |
-| 澎湃新闻相关报道         | https://www.thepaper.cn/newsDetail_forward_34111815                    |
-| 界面新闻相关报道         | https://www.jiemian.com/article/15120609.html                          |
-| IT之家相关报道           | https://www.ithome.com/1/005/046.htm                                   |
-| 虎嗅相关报道             | https://www.huxiu.com/article/4892416.html                             |
-| 凤凰网相关报道           | https://tech.ifeng.com/c/8waIS4X7FAe                                   |
-
-## 我们移除了什么
-
-与上游开源版本相比，本仓库不再包含任何监控与遥测（telemetry）实现：
+与开源基线版本相比，本仓库不再包含任何监控与遥测（telemetry）实现：
 
 | 类别           | 移除内容                                                                              |
 | -------------- | ------------------------------------------------------------------------------------- |
@@ -74,14 +37,14 @@
 
 ## 下载与安装
 
-[Releases](https://github.com/ACode-project/ACode/releases) 提供桌面客户端（macOS / Windows / Linux）和 CLI 发行包。
+[Releases](https://github.com/Curl-007/ACode/releases) 提供桌面客户端（macOS / Windows / Linux）和 CLI 发行包。
 
-**关于签名**：所有安装包都**没有 ACode 官方签名**，首次打开会被系统安全机制拦截。这是预期行为，按下面各平台的方式放行一次即可。放行前可以先用 Release 页提供的 `sha256.txt` 校验下载文件。
+**关于签名**：所有安装包都**未经代码签名**，首次打开会被系统安全机制拦截。这是预期行为，按下面各平台的方式放行一次即可。放行前可以先用 Release 页提供的 `sha256.txt` 校验下载文件。
 
 ### macOS（.dmg）
 
 1. 按机型下载 `ACode-*-mac-arm64.dmg`（Apple Silicon）或 `ACode-*-mac-x64.dmg`（Intel），打开后把 ACode 拖进“应用程序”。
-2. 因为没有 ACode 官方签名，Gatekeeper 会提示“无法验证开发者”或“已损坏”。**先把应用拖进「应用程序」，再执行**下面命令（提示输入密码时输入开机密码，输入过程屏幕上不显示任何字符）：
+2. 因为没有开发者签名，Gatekeeper 会提示“无法验证开发者”或“已损坏”。**先把应用拖进「应用程序」，再执行**下面命令（提示输入密码时输入开机密码，输入过程屏幕上不显示任何字符）：
 
    ```bash
    # 命令行放行并启动（命令会立即退出，不会占用终端）：
@@ -93,7 +56,7 @@
 ### Windows（.exe）
 
 1. 下载 `ACode-*-win-x64.exe`，双击运行。
-2. 安装包没有 ACode 官方签名，Windows SmartScreen 会弹出“Windows 已保护你的电脑”的警告。点击“**更多信息**” → “**仍要运行**”，按提示完成安装即可。
+2. 安装包未经代码签名，Windows SmartScreen 会弹出“Windows 已保护你的电脑”的警告。点击“**更多信息**” → “**仍要运行**”，按提示完成安装即可。
 
    这是预期提示，不是文件损坏；介意的话可以先按 Release 页的 `sha256.txt` 校验安装包。
 
@@ -124,30 +87,8 @@ acode --help        # 或直接运行：node bin/acode.mjs --help
 
 ## 构建与发布
 
-- **GitHub 构建**：审计后的代码在本仓库通过 GitHub Actions 构建，CLI 发行包随版本发布到 [Releases](https://github.com/ACode-project/ACode/releases)，站点由独立仓库构建，部署在 https://acode-project.github.io/。所有产物都来自本仓库经过审计的源码，不包含上游未同步的改动。
-- **发版流程**：在 Actions 中手动运行 [Release](https://github.com/ACode-project/ACode/actions/workflows/release.yml) workflow，版本号填 `3.14.0`：勾选“预发布”生成 `3.14.0-audit.<当天日期>`（同一天重复构建自动追加 `.2`、`.3`，也可直接填完整形式 `3.14.0-audit.20260922[.2]`）；不勾选则发布正式版 `v3.14.0`（干净版本号，成为 GitHub Latest）。Release 说明固定为“相对 ACode 的改动”在前、安装说明在后，英文在上、中文在下（内容严格对应），末尾列出产物。所有产物先上传到 **draft** release，只有 CLI 与各桌面平台全部上传成功后才发布；构建失败会保持 draft，下载页不会解析到仍在构建中的版本。
-- **上游同步**：先审阅改动，再逐版本 diff 审计，只合入无风险部分；结论写在审计记录里。
-
-## 社区
-
-欢迎加入社区交流、反馈问题：
-
-| Discord | QQ 群 |
-| --- | --- |
-| <img src="docs/community/discord-qr.png" alt="Discord 邀请二维码" width="220" /> | <img src="docs/community/qq-group-qr.jpg" alt="QQ 群二维码" width="220" /> |
-| https://discord.gg/HeDkhY9nV | 群号：344502652 |
-
-## 免责声明
-
-本仓库为开源社区驱动，与任何现有商业公司无关。文中事实均来自公开报道与独立代码审计，并已注明出处。如相关方认为内容有误，欢迎通过 Issue 提交更正。
-
-[社区的其他类似发行版：ACode](https://github.com/axiom-desu/ACode)
-
----
-
-# 官方 ACode README（以下为上游原文）
-
-> **提示**：以下章节来自上游官方仓库 [Curl-007/ACode](https://github.com/Curl-007/ACode) 的 README，仅用于说明上游项目自身的安装与开发方式；其中的社群、链接、服务与承诺均由上游维护，与本审计仓库无关。
+- **GitHub 构建**：本仓库通过 GitHub Actions 从源码构建，CLI 发行包随版本发布到 [Releases](https://github.com/Curl-007/ACode/releases)。所有产物都来自本仓库源码。
+- **发版流程**：在 Actions 中手动运行 [Release](.github/workflows/release.yml) workflow，版本号填 `3.14.0`：勾选“预发布”生成 `3.14.0-audit.<当天日期>`（同一天重复构建自动追加 `.2`、`.3`，也可直接填完整形式 `3.14.0-audit.20260922[.2]`）；不勾选则发布正式版 `v3.14.0`（干净版本号，成为 GitHub Latest）。Release 说明固定为“相对基线版本的改动”在前、安装说明在后，英文在上、中文在下（内容严格对应），末尾列出产物。所有产物先上传到 **draft** release，只有 CLI 与各桌面平台全部上传成功后才发布；构建失败会保持 draft，下载页不会解析到仍在构建中的版本。
 
 ---
 
@@ -324,8 +265,6 @@ pnpm build:acode --help
 
 完整目录可上传到配置的下载根地址。安装脚本从该地址下载运行包，默认安装到 `~/.acode/runtime`，并在 `~/.local/bin` 创建 `acode` 命令。安装目录可通过 `ACODE_DIST_HOME` 修改，命令目录可通过 `ACODE_DIST_BIN_DIR` 修改。
 
-旧 Lite 用户需要改用上述构建命令、环境变量和新的安装脚本。新安装不会删除旧 Lite 目录，也不会迁移或删除已有会话数据。
-
 本地调试打包产物时，可直接解压运行，无需上传或安装：
 
 ```bash
@@ -358,11 +297,9 @@ node dist/acode/debug/acode/bin/acode.mjs --web \
 | `apps/acode-cli`                                     | Agent CLI、TUI、运行时与工具               |
 | `scripts`、`config`、`third-party`                   | 构建维护脚本、内置配置与第三方声明材料     |
 
-项目网站源码独立在 [acode-project.github.io](https://github.com/ACode-project/acode-project.github.io) 仓库，使用 Vite + Svelte + Tailwind CSS v4 构建，通过 GitHub Actions 部署到 <https://acode-project.github.io/>。
-
 ## 开源协议
 
-第一方代码（含全部审计与改动）采用 **MIT** 协议（见 [LICENSE](LICENSE)）；仓库包含来自 [Curl-007/ACode](https://github.com/Curl-007/ACode) 的上游代码，该部分保持 **Apache-2.0**（全文见 [LICENSE-APACHE](LICENSE-APACHE)），原有版权与署名声明保留。第三方组件许可见 [NOTICE.zh-CN.md](NOTICE.zh-CN.md)。
+第一方代码采用 **MIT** 协议（见 [LICENSE](LICENSE)）；本仓库包含来自 ACode 开源基线版本的代码，该部分保持 **Apache-2.0**（全文见 [LICENSE-APACHE](LICENSE-APACHE)），原有版权与署名声明保留。第三方组件许可见 [NOTICE.zh-CN.md](NOTICE.zh-CN.md)。
 
 ## 项目声明
 

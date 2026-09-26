@@ -1,0 +1,385 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "版本号：3.14.0（勾选预发布=自动生成 3.14.0-audit.<当天日期>，同日重复构建自动加 .2/.3；不勾选=正式版 v3.14.0）；也可直接填完整日期形式 3.14.0-audit.20260922[.2]"
+        required: true
+        type: string
+      prerelease:
+        description: "预发布（audit 日期式版本）；不勾选则发布正式版（干净版本号，成为 GitHub Latest）"
+        required: false
+        type: boolean
+        default: false
+      build_artifacts:
+        description: "构建 CLI 发行包和桌面客户端并上传到 Release；全部上传成功后才发布（失败则保持 draft）"
+        required: false
+        type: boolean
+        default: true
+      keep_draft:
+        description: "保持 draft 不公开（用于上游审计自动构建的测试版本；勾选后即使全部成功也不发布）"
+        required: false
+        type: boolean
+        default: false
+      notice:
+        description: "插入 Release 说明顶部的警示文本（可选，支持多行；用于测试版提示）"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.validate.outputs.tag }}
+      version: ${{ steps.validate.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate version
+        id: validate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+          PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          set -euo pipefail
+          # 版本命名：
+          #   3.14.0 + 勾选预发布 -> 3.14.0-audit.<YYYYMMDD>（同一天重复构建自动追加 .2/.3/...）
+          #   3.14.0 + 不勾选     -> v3.14.0（正式版，成为 GitHub Latest，/releases/latest 可用）
+          #   完整日期形式         -> 严格按给定版本使用，不自动递增
+          DATE="$(date -u +%Y%m%d)"
+          if printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' && [ "$PRERELEASE" != "true" ]; then
+            TAG="v$VERSION"
+            if git ls-remote --tags origin "refs/tags/$TAG" | grep -q .; then
+              echo "::error::Tag $TAG already exists"
+              exit 1
+            fi
+          elif printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            BASE="$VERSION-audit.$DATE"
+            TAG="v$BASE"
+            if git ls-remote --tags origin "refs/tags/$TAG" | grep -q .; then
+              SEQ=2
+              while git ls-remote --tags origin "refs/tags/v$BASE.$SEQ" | grep -q .; do
+                SEQ=$((SEQ + 1))
+              done
+              TAG="v$BASE.$SEQ"
+            fi
+          elif printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+-audit\.[0-9]{8}(\.[0-9]+)?$'; then
+            TAG="v$VERSION"
+            if git ls-remote --tags origin "refs/tags/$TAG" | grep -q .; then
+              echo "::error::Tag $TAG already exists; pass the base version (e.g. 3.14.0) to auto-sequence, or pick another date/suffix"
+              exit 1
+            fi
+          else
+            echo "::error::Invalid version \"$VERSION\". Use 3.14.0 (pre-release: date and same-day sequence are appended; stable: v3.14.0) or the full form 3.14.0-audit.20260922[.2]"
+            exit 1
+          fi
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "::error::Release $TAG already exists"
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          # 桌面构建用完整版本（不带 v 前缀）注入 ACODE_APP_VERSION，让安装包文件名带审计序号。
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      # tag 在构建前就推送，但 release 先建为 draft：
+      # 官网/下载页只解析已发布且带产物列表的 release，draft 不会露出，
+      # 避免用户在构建过程中下到某个尚未上传完成的平台产物（404）。
+      - name: Create tag and draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.validate.outputs.tag }}
+          PRERELEASE: ${{ inputs.prerelease }}
+          NOTICE: ${{ inputs.notice }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag "$TAG"
+          git push origin "$TAG"
+          cat > /tmp/release-notes.md <<'NOTES'
+          # ACode <VERSION>
+
+          ## English
+
+          ### What changed vs ACode
+
+          - **All monitoring and telemetry removed** (~26k lines): ARMS RUM, OTLP reporting, crash collection, resource and network sampling, UI analytics - with regression checks so they cannot be reintroduced.
+          - **Official platform services disconnected**: account login, feedback upload, coding plans, official MCP credentials, plugin marketplace and remote client config are short-circuited before any request; feedback points to GitHub Issues.
+          - **No account system**: no login, no account concepts. Configure your own API key or a custom model provider and start working.
+          - **No purchase or upgrade prompts**: the purchase UI and related copy are removed; nothing pushes you to buy a plan.
+          - **No repository upload behavior**: snapshot packaging and upload logic removed, with guards against reintroduction.
+          - **Open source and reviewable**: first-party code MIT, upstream Apache-2.0; removal reports for desktop, CLI and UI ship in the repository.
+          - **Transparent builds**: installers are built by GitHub Actions from this repository, and in-app updates point to this repository's GitHub Releases.
+          - **Honest limitations**: Computer Use is an unavailable placeholder; installers are not signed by ACode.
+
+          ### Install
+
+          - **macOS (.dmg)**: download `ACode-<VERSION>-mac-arm64.dmg` (Apple Silicon) or `ACode-<VERSION>-mac-x64.dmg` (Intel), open it, drag ACode into Applications. The app is not signed by ACode, so Gatekeeper blocks the first launch - this system block is macOS only. Allow it once with the command below (enter your login password when asked; nothing is shown while typing; the command launches the app and exits immediately):
+
+            ```bash
+            sudo /usr/bin/xattr -rd com.apple.quarantine "/Applications/ACode.app" && open -a "ACode"
+            ```
+
+            The absolute `/usr/bin/xattr` path avoids shadowing by other tools with the same name. You can also right-click (Control-click) the app in Finder -> Open -> Open.
+          - **Windows (.exe)**: run `ACode-<VERSION>-win-x64.exe`. The installer is not signed by ACode, so SmartScreen shows a warning - a warning, not a system block; click **More info** -> **Run anyway**. This is expected, not a corrupted file.
+          - **Linux x64 (.AppImage)**: `chmod +x ACode-<VERSION>-linux-x86_64.AppImage && ./ACode-<VERSION>-linux-x86_64.AppImage`.
+          - **Linux arm64 (.AppImage)**: `chmod +x ACode-<VERSION>-linux-arm64.AppImage && ./ACode-<VERSION>-linux-arm64.AppImage`.
+          - **CLI (.tar.gz)**: requires Node.js 24. Extract and run:
+
+            ```bash
+            tar -xzf acode-<VERSION>.tar.gz
+            cd acode
+            ./install.sh        # installs the acode command into ~/.acode/runtime
+            acode --help        # or run: node bin/acode.mjs --help
+            ```
+
+          ## 中文
+
+          ### 相对 ACode 的改动
+
+          - **移除全部监控与遥测**（约 2.6 万行）：ARMS RUM、OTLP 上报、崩溃采集、资源与网络采样、UI 埋点，并加了防回归检查，防止重新引入。
+          - **断开官方平台服务**：账号登录、反馈上传、编码套餐、官方 MCP 凭证、插件市场与客户端远端配置在请求前短路；反馈入口指向 GitHub Issues。
+          - **没有账号体系**：不需要登录，也没有任何账号概念。配置自己的 API Key 或自定义模型即可开始使用。
+          - **没有购买与升级引导**：购买界面与相关文案已移除，不会引导你购买套餐。
+          - **移除仓库上传行为**：快照打包与上传逻辑已删除，并加了防回归保护。
+          - **开源可复核**：第一方代码 MIT，上游代码 Apache-2.0；桌面端、CLI、UI 的移除报告随仓库发布。
+          - **构建透明**：安装包由 GitHub Actions 从本仓库构建；应用内更新指向本仓库的 GitHub Releases。
+          - **如实说明限制**：Computer Use 为不可用占位；安装包没有 ACode 官方签名。
+
+          ### 安装说明
+
+          - **macOS（.dmg）**：按机型下载 `ACode-<VERSION>-mac-arm64.dmg`（Apple Silicon）或 `ACode-<VERSION>-mac-x64.dmg`（Intel），打开后把 ACode 拖进“应用程序”。没有 ACode 官方签名，Gatekeeper 会拦截首次打开——这是 macOS 独有的系统拦截。用下面命令放行一次（输入密码时不显示字符；命令会自动启动应用并立即退出）：
+
+            ```bash
+            sudo /usr/bin/xattr -rd com.apple.quarantine "/Applications/ACode.app" && open -a "ACode"
+            ```
+
+            使用 `/usr/bin/xattr` 绝对路径，避免 PATH 中同名工具干扰。也可以在“访达”里右键（Control-点击）应用 -> 打开 -> 弹窗里再点“打开”。
+          - **Windows（.exe）**：运行 `ACode-<VERSION>-win-x64.exe`。没有 ACode 官方签名，SmartScreen 会显示警告——只是警告，不是系统拦截；点“**更多信息**” -> “**仍要运行**”。这是预期提示，不是文件损坏。
+          - **Linux x64（.AppImage）**：`chmod +x ACode-<VERSION>-linux-x86_64.AppImage && ./ACode-<VERSION>-linux-x86_64.AppImage`。
+          - **Linux arm64（.AppImage）**：`chmod +x ACode-<VERSION>-linux-arm64.AppImage && ./ACode-<VERSION>-linux-arm64.AppImage`。
+          - **CLI（.tar.gz）**：需要 Node.js 24。解压后运行：
+
+            ```bash
+            tar -xzf acode-<VERSION>.tar.gz
+            cd acode
+            ./install.sh        # 安装 acode 命令到 ~/.acode/runtime
+            acode --help        # 或直接运行：node bin/acode.mjs --help
+            ```
+
+          ## Downloads / 产物
+
+          - macOS Apple Silicon: `ACode-<VERSION>-mac-arm64.dmg` / `.zip`
+          - macOS Intel: `ACode-<VERSION>-mac-x64.dmg` / `.zip`
+          - Windows x64: `ACode-<VERSION>-win-x64.exe`
+          - Linux x64: `ACode-<VERSION>-linux-x86_64.AppImage`
+          - Linux arm64: `ACode-<VERSION>-linux-arm64.AppImage`
+          - CLI: `acode-<VERSION>.tar.gz`
+          - Checksums: `sha256.txt`（下载后可用它校验 / verify downloads with it）
+          - Update metadata: `latest*.yml`, `latest.json`
+          NOTES
+          sed -i "s/<VERSION>/${TAG#v}/g" /tmp/release-notes.md
+          # 自动生成版本差异 Changelog：对比最近的 tag（排除 ci 类提交），插入到标题之后
+          BASE_TAG=$(git describe --tags --abbrev=0 "${TAG}^" 2>/dev/null || true)
+          if [ -n "$BASE_TAG" ]; then
+            {
+              echo "## Changelog (vs $BASE_TAG) / 更新日志（相对 $BASE_TAG）"
+              echo ""
+              CHANGES=$(git log --no-merges --pretty='- %s (%h)' "$BASE_TAG..${TAG}" | grep -v '^- ci' || true)
+              if [ -n "$CHANGES" ]; then
+                printf '%s\n' "$CHANGES"
+              else
+                echo "- 无代码变更 / No code changes"
+              fi
+              echo ""
+              echo "对比完整变更 / Full diff: https://github.com/${GITHUB_REPOSITORY}/compare/${BASE_TAG}...${TAG}"
+              echo ""
+              echo "---"
+              echo ""
+            } > /tmp/changelog-section.md
+            head -n 1 /tmp/release-notes.md > /tmp/release-notes-title.md
+            tail -n +2 /tmp/release-notes.md > /tmp/release-notes-rest.md
+            { cat /tmp/release-notes-title.md; echo; cat /tmp/changelog-section.md; cat /tmp/release-notes-rest.md; } > /tmp/release-notes-merged.md
+            mv /tmp/release-notes-merged.md /tmp/release-notes.md
+          fi
+          # 测试版警示（如上游审计自动构建的 draft）插入到说明顶部
+          if [ -n "${NOTICE:-}" ]; then
+            { printf '%s\n\n' "$NOTICE"; cat /tmp/release-notes.md; } > /tmp/release-notes-with-notice.md
+            mv /tmp/release-notes-with-notice.md /tmp/release-notes.md
+          fi
+          args=(--draft --title "$TAG" --notes-file /tmp/release-notes.md)
+          if [ "$PRERELEASE" = "true" ]; then
+            args+=(--prerelease)
+          fi
+          gh release create "$TAG" "${args[@]}"
+
+  build:
+    needs: release
+    if: ${{ inputs.build_artifacts }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build project references
+        run: pnpm typecheck
+
+      - name: Build ACode CLI distribution
+        env:
+          ACODE_DIST_BASE_URL: https://github.com/${{ github.repository }}/releases/download/${{ needs.release.outputs.tag }}/
+          RELEASE_TAG: ${{ needs.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          pnpm build:acode -- --version "${RELEASE_TAG#v}"
+
+      - name: Upload assets to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          # GitHub API 偶发连接失败（runner 网络抖动），上传重试 3 次；--clobber 让重试可安全覆盖。
+          for attempt in 1 2 3; do
+            if gh release upload "$TAG" \
+              dist/acode/releases/*/acode-*.tar.gz \
+              dist/acode/releases/*/sha256.txt \
+              dist/acode/install.sh \
+              dist/acode/latest.json \
+              --clobber; then
+              exit 0
+            fi
+            echo "::warning::gh release upload failed (attempt $attempt/3), retrying in 10s"
+            sleep 10
+          done
+          echo "::error::gh release upload failed after 3 attempts"
+          exit 1
+
+  desktop:
+    needs: release
+    if: ${{ inputs.build_artifacts }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14
+            target: mac
+            arch: arm64
+            glob: "*.dmg"
+          - runner: macos-15-intel
+            target: mac
+            arch: x64
+            glob: "*.dmg"
+          - runner: windows-latest
+            target: win
+            arch: x64
+            glob: "*.exe"
+          - runner: ubuntu-latest
+            target: linux
+            arch: x64
+            glob: "*.AppImage"
+          # GitHub 公开仓库免费的 ARM64 runner（ubuntu-24.04-arm）；electron-builder 在原生 arm64 上
+          # 打包 linux arm64 的 AppImage/deb，无需 QEMU 交叉仿真。
+          # 更新元数据生成 latest-linux-arm64.yml，与 x64 的 latest-linux.yml 不冲突，可并行上传。
+          - runner: ubuntu-24.04-arm
+            target: linux
+            arch: arm64
+            glob: "*.AppImage"
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build project references
+        run: pnpm typecheck
+
+      - name: Bundle desktop app
+        env:
+          ACODE_ENV: production
+          # 文件名与应用版本带上完整审计版本（如 3.14.0-audit.20260922.6），不再只写 3.14.0。
+          ACODE_APP_VERSION: ${{ needs.release.outputs.version }}
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: pnpm bundle:desktop -- --os ${{ matrix.target }} --arch ${{ matrix.arch }}
+
+      - name: Upload desktop asset to release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          ls -la packages/desktop/dist/
+          # latest*.yml 是 electron-updater 的更新元数据，应用靠它做自动更新；
+          # macOS 自动更新需要 zip 包（electron-updater 用 zip 而不是 dmg），blockmap 供差分下载。
+          shopt -s nullglob
+          files=(
+            packages/desktop/dist/${{ matrix.glob }}
+            packages/desktop/dist/latest*.yml
+            packages/desktop/dist/*.zip
+            packages/desktop/dist/*.blockmap
+          )
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "::error::no desktop assets matched in packages/desktop/dist"
+            exit 1
+          fi
+          # GitHub API 偶发连接失败（runner 网络抖动），上传重试 3 次；--clobber 让重试可安全覆盖。
+          for attempt in 1 2 3; do
+            if gh release upload "$TAG" "${files[@]}" --clobber; then
+              exit 0
+            fi
+            echo "::warning::gh release upload failed (attempt $attempt/3), retrying in 10s"
+            sleep 10
+          done
+          echo "::error::gh release upload failed after 3 attempts"
+          exit 1
+
+  # 只有 CLI 与全部桌面平台产物都上传成功才公开 release；任一构建失败则保持 draft，
+  # 由人工排查后重跑或删除，避免不完整的版本出现在 Releases 与官网下载页。
+  # keep_draft=true（上游审计自动构建的测试版）：即使全部成功也保持 draft，不公开、不进入自动更新。
+  publish:
+    needs: [release, build, desktop]
+    if: ${{ always() && inputs.keep_draft != true && needs.release.result == 'success' && (needs.build.result == 'success' || needs.build.result == 'skipped') && (needs.desktop.result == 'success' || needs.desktop.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.release.outputs.tag }}
+          PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          set -euo pipefail
+          args=(--draft=false --repo "$GITHUB_REPOSITORY")
+          if [ "$PRERELEASE" = "true" ]; then
+            args+=(--prerelease)
+          else
+            args+=(--latest)
+          fi
+          gh release edit "$TAG" "${args[@]}"

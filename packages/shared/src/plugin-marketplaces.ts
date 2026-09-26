@@ -1,0 +1,66 @@
+import { isOfficialServiceEnabled } from "./officialPlatformPolicy.js";
+
+export interface DefaultPluginMarketplace {
+  id: string;
+  source: string;
+  name: string;
+  description: string;
+  pluginCount: number;
+  lastUpdated?: string;
+}
+
+export const ACODE_OFFICIAL_PLUGIN_MARKETPLACE_ID = "acode-plugins-official";
+
+/** Settings 三类资源发现共用；Bootstrap 单测与官方 definition 的 defaultEnabled 机械对照。 */
+export const DEFAULT_ENABLED_OFFICIAL_PLUGIN_IDS: ReadonlySet<string> = new Set([
+  "browser-use@acode-plugins-official",
+  "image-search@acode-plugins-official",
+  "documents@acode-plugins-official",
+  "pdf@acode-plugins-official",
+  "presentations@acode-plugins-official",
+  "spreadsheets@acode-plugins-official",
+  // node_repl 宿主：不进市场、不对用户露出，也不贡献任何 skill/command/subagent，但必须
+  // 始终可用 —— node_repl 的注册门禁是「Browser Use 或 Computer Use 任一启用」，宿主自己
+  // 不参与那个判断。Browser Use 默认开着，宿主若默认关就等于它上来就没有宿主。
+  "node-repl-host@acode-plugins-official",
+  "skill-creator@acode-plugins-official",
+  "plugin-creator@acode-plugins-official",
+  "acode-guide@acode-plugins-official",
+  // 电脑控制回退为默认关闭，故 computer-use 不在此名单内。
+  // 该集合必须与 official-plugin-definitions.ts 里标了 defaultEnabled 的插件逐一对应，
+  // bootstrap 的「Settings 默认启用集合与 CLI 的官方插件声明一致」单测机械对照两者。
+]);
+
+// 官方市场来源定义保留在这里；是否进入默认市场集合由 marketplace 开关决定
+// （见 resolveDefaultPluginMarketplaces）。关闭时不 seed，保持审计版默认断连。
+export const DEFAULT_PLUGIN_MARKETPLACES: DefaultPluginMarketplace[] = [
+  {
+    // ACode 官方唯一市场：本地 seed 分片与 CDN 分片在 Agent storage 内合并。
+    // CDN manifest 的 name 必须与该 canonical id 一致。
+    id: ACODE_OFFICIAL_PLUGIN_MARKETPLACE_ID,
+    source: "https://cdn-zcode.z.ai/zcode/official-plugin/marketplace.json",
+    name: ACODE_OFFICIAL_PLUGIN_MARKETPLACE_ID,
+    description: "Official ACode plugins marketplace: built-in and community plugins for ACode.",
+    pluginCount: 0,
+  },
+];
+
+/**
+ * 默认插件市场集合按官方服务开关过滤：
+ * 官方来源只在 marketplace 开启时进入集合；本地内置插件与个人来源不受影响。
+ * agent 进程的开关来自 Desktop 的 env 投影或 CLI 手动的 ACODE_ENABLE_OFFICIAL_*。
+ */
+export function resolveDefaultPluginMarketplaces(): DefaultPluginMarketplace[] {
+  return DEFAULT_PLUGIN_MARKETPLACES.filter(
+    (marketplace) =>
+      marketplace.id !== ACODE_OFFICIAL_PLUGIN_MARKETPLACE_ID ||
+      isOfficialServiceEnabled("marketplace"),
+  );
+}
+
+// 商店「公开」分段只有一个 ACode 官方市场 id，内置与 CDN 不再拆分身份。
+export const PUBLIC_STORE_MARKETPLACE_IDS = [ACODE_OFFICIAL_PLUGIN_MARKETPLACE_ID] as const;
+
+export function isPublicStoreMarketplaceId(id: string): boolean {
+  return (PUBLIC_STORE_MARKETPLACE_IDS as readonly string[]).includes(id);
+}

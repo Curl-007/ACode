@@ -1,0 +1,44 @@
+{
+  "name": "@acode/bootstrap",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./v4-replay": {
+      "types": "./dist/acode-protocol-v4/replay.d.ts",
+      "import": "./dist/acode-protocol-v4/replay.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "clean": "node ../../scripts/clean-dist.mjs",
+    "typecheck": "tsc --noEmit",
+    "lint": "oxlint src",
+    "lint:fix": "oxlint --write src"
+  },
+  "dependencies": {
+    "@acode/adapters": "workspace:*",
+    "@acode/contracts": "workspace:*",
+    "@acode/core": "workspace:*",
+    "@acode/dynamic-workflow": "workspace:*",
+    "@acode/dynamic-workflow-runtime": "workspace:*",
+    "@acode/i18n": "workspace:*",
+    "@acode/provider": "workspace:*",
+    "@acode/provider-node": "workspace:*",
+    "@acode/shared": "workspace:*",
+    "diff": "^9.0.0",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/yazl": "^3.3.1",
+    "@acode/formal-proof": "workspace:*",
+    "yazl": "^3.3.1"
+  }
+}

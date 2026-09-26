@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-labelledby="open-audit-title open-audit-desc">
+  <title id="open-audit-title">ZCodium</title>
+  <desc id="open-audit-desc">深色圆角底板上的天蓝色三笔几何 Z，右下笔画折成审计对勾。</desc>
+  <defs>
+    <linearGradient id="open-audit-diagonal" x1="712" y1="224" x2="300" y2="800" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#38bdf8" />
+      <stop offset="1" stop-color="#818cf8" />
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" rx="208" fill="#0a0c10" />
+  <path d="M184 224H512L453 308Q439 328 415 328H184Z" fill="#38bdf8" />
+  <path d="M584 224H832L424 800H176Z" fill="url(#open-audit-diagonal)" />
+  <path d="M536 720L600 656L648 704L824 528L888 592L648 832Z" fill="#38bdf8" />
+</svg>

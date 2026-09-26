@@ -1,0 +1,24 @@
+<svg
+  width="18"
+  height="18"
+  viewBox="176 224 712 608"
+  fill="none"
+  xmlns="http://www.w3.org/2000/svg"
+>
+  <defs>
+    <linearGradient
+      id="openAuditDiagonal"
+      x1="712"
+      y1="224"
+      x2="300"
+      y2="800"
+      gradientUnits="userSpaceOnUse"
+    >
+      <stop offset="0" stop-color="#38bdf8" />
+      <stop offset="1" stop-color="#818cf8" />
+    </linearGradient>
+  </defs>
+  <path d="M184 224H512L453 308Q439 328 415 328H184Z" fill="#38bdf8" />
+  <path d="M584 224H832L424 800H176Z" fill="url(#openAuditDiagonal)" />
+  <path d="M536 720L600 656L648 704L824 528L888 592L648 832Z" fill="#38bdf8" />
+</svg>

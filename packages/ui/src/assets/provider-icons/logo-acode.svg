@@ -1,14 +1,14 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-labelledby="c-title c-desc">
-  <title id="c-title">ACode</title>
-  <desc id="c-desc">深色圆角底板上的代码括号与 AI 四角星光。</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-labelledby="a-title a-desc">
+  <title id="a-title">ACode</title>
+  <desc id="a-desc">深色圆角底板上的代码括号与 AI 四角星光，图形撑满底板保证小尺寸可读。</desc>
   <defs>
-    <linearGradient id="c-g" x1="760" y1="220" x2="300" y2="820" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#38bdf8" />
-      <stop offset="1" stop-color="#818cf8" />
+    <linearGradient id="a-g" x1="760" y1="300" x2="300" y2="720" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#7dd3fc" />
+      <stop offset="1" stop-color="#a5b4fc" />
     </linearGradient>
   </defs>
   <rect width="1024" height="1024" rx="208" fill="#0a0c10" />
-  <path d="M368 312L168 512L368 712" fill="none" stroke="#38bdf8" stroke-width="96" stroke-linecap="round" stroke-linejoin="round" />
-  <path d="M656 312L856 512L656 712" fill="none" stroke="#818cf8" stroke-width="96" stroke-linecap="round" stroke-linejoin="round" />
-  <path d="M512 380C525 462 562 499 644 512C562 525 525 562 512 644C499 562 462 525 380 512C462 499 499 462 512 380Z" fill="url(#c-g)" />
+  <path d="M345 280L113 512L345 744" fill="none" stroke="#7dd3fc" stroke-width="132" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M512 295C527 447 557 492 683 512C557 532 527 577 512 729C497 577 467 532 341 512C467 492 497 447 512 295Z" fill="url(#a-g)" />
+  <path d="M679 280L911 512L679 744" fill="none" stroke="#a5b4fc" stroke-width="132" stroke-linecap="round" stroke-linejoin="round" />
 </svg>

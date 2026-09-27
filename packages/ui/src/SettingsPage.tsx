@@ -72,6 +72,7 @@ import { PluginsSection } from "@/settings/PluginsSection.js";
 import { HooksSection } from "@/settings/HooksSection.js";
 import { WorkspaceFileSearchSection } from "@/settings/WorkspaceFileSearchSection.js";
 import { MemorySettingsSection } from "@/settings/MemorySettingsSection.js";
+import { EngineSection } from "@/settings/EngineSection.js";
 import { OfficialServicesSettingsSection } from "@/settings/OfficialServicesSection.js";
 import { BrowserSettingsSection } from "@/settings/BrowserSettingsSection.js";
 import { ComputerUseSection } from "@/settings/ComputerUseSection.js";
@@ -1478,6 +1479,8 @@ export function SettingsPage({
                               workspaceDisplayNames={memoryWorkspaceDisplayNames}
                             />
                           </ServiceProvider>
+                        ) : activeSection === "engine" ? (
+                          <EngineSection />
                         ) : activeSection === "officialServices" ? (
                           <OfficialServicesSettingsSection
                             switches={sharedSettings?.officialServices}

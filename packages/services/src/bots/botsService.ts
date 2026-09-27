@@ -10,12 +10,15 @@ import {
   generateTraceId,
   normalizeAgentProviderToACodeAgent,
   ACODE_AGENT_PROVIDER,
+  BOT_DEFAULT_DRAFT_MODE,
+  BOT_ACODE_PROVIDER_OPTIONS,
   BOT_TASK_BROADCAST_CHANNEL,
   BOT_TASK_STREAM_BROADCAST_CHANNEL,
   appendAssistantMessagePart,
   buildACodeAssistantPresentation,
   decodeCustomModelValue,
   encodeCustomModelValue,
+  getACodeAgentAvailableModes,
   getPermissionRequestPreview,
   getSupportedBotReplyGranularities,
   normalizeBotReplyGranularity,
@@ -37,6 +40,7 @@ import {
   type BotTaskStreamBroadcastPayload,
   type BotConfig,
   type BotContextState,
+  type BotCurrentOptions,
   type BotDraftOptions,
   type BotCommand,
   type BotInboundAttachment,
@@ -108,6 +112,8 @@ import {
   pollWeixinRegistration as pollWeixinQrRegistration,
 } from "./providers/weixinRegistration.js";
 import { createFeishuBotProvider } from "./providers/feishuProvider.js";
+import { createDiscordBotProvider } from "./providers/discordProvider.js";
+import { createWeComBotProvider } from "./providers/wecomProvider.js";
 import { formatBotMessage, type BotMessageId } from "./messages.js";
 import {
   extractBotAssistantResponseMessages,
@@ -156,6 +162,7 @@ import {
 import { createTelegramChannelRuntime } from "./telegramChannelRuntime.js";
 import { createWeixinChannelRuntime } from "./weixinChannelRuntime.js";
 import { createFeishuChannelRuntime } from "./feishuChannelRuntime.js";
+import { createDiscordChannelRuntime } from "./discordChannelRuntime.js";
 import { registerMemoryDiagnosticsProvider } from "#src/memoryDiagnostics.js";
 
 const botsLogger = createServiceLogger("bots");
@@ -209,7 +216,13 @@ const BOT_REPLY_GRANULARITY_OPTIONS = [
   aliases: readonly string[];
 }>;
 
-const BOT_EXCLUSIVE_CREDENTIAL_PROVIDERS = new Set<BotProvider>(["telegram", "feishu", "lark"]);
+// Discord 同一 token 只允许一个 Gateway 会话，与 telegram/feishu 一样禁止两个启用 bot 共享凭据。
+const BOT_EXCLUSIVE_CREDENTIAL_PROVIDERS = new Set<BotProvider>([
+  "telegram",
+  "feishu",
+  "lark",
+  "discord",
+]);
 const FEISHU_STREAMING_CARD_MIN_UPDATE_INTERVAL_MS = 1_000;
 const FEISHU_STREAMING_CARD_REQUEST_TIMEOUT_MS = 15_000;
 const FEISHU_STREAMING_CARD_FAILURE_BACKOFF_BASE_MS = 1_000;
@@ -234,6 +247,7 @@ const helpMessageByCommand = {
   new: "helpNew",
   workspace: "helpWorkspace",
   model: "helpModel",
+  engine: "helpEngine",
   mode: "helpMode",
   thoughtLevel: "helpThoughtLevel",
   reply: "helpReply",
@@ -317,6 +331,7 @@ type BotAuthorizedCommand =
   | "reconnect"
   | "workspace"
   | "model"
+  | "engine"
   | "mode"
   | "thoughtLevel"
   | "task"
@@ -435,6 +450,30 @@ function resolveReplyGranularityByValue(
   return option ? (options.find((item) => item.id === option.id) ?? null) : null;
 }
 
+/**
+ * /engine 候选：来自共享注册表 BOT_ACODE_PROVIDER_OPTIONS（已过滤到 implemented 引擎）。
+ * label 直接用注册表的稳定展示名（非 i18n key），与既有引擎选择面一致。
+ */
+function getBotEngineOptions(): Array<{ id: ACodeProvider; label: string }> {
+  return BOT_ACODE_PROVIDER_OPTIONS.map((option) => ({ ...option }));
+}
+
+/**
+ * /mode（草稿态）候选：按引擎从注册表取支持的权限模式。
+ * 绕开 stub 的 listUserConfigOptions（恒返回 []），保证草稿态也能列出 native 的 build/edit/plan/yolo。
+ */
+function getBotDraftModeOptions(
+  _locale: Locale | undefined,
+  provider: ACodeProvider,
+): Array<{ id: string; label: string }> {
+  // native 引擎返回带 name/description 的会话模式（build/edit/plan/yolo）；
+  // 外部引擎 name 即 id。统一用 name 作为展示 label。
+  return getACodeAgentAvailableModes(provider).map((mode) => ({
+    id: mode.id,
+    label: mode.name || mode.id,
+  }));
+}
+
 function resolveOptionByValue<T extends { id: string; label: string }>(
   items: T[],
   value: string,
@@ -487,6 +526,14 @@ function resolveAutomationBotDeliveryTarget(
     providerUserId,
     chatType: actor.chatType,
   };
+}
+
+/**
+ * 纯文本通道：没有原生选项按钮，选项靠“回复数字”承接。
+ * 微信、Discord、企业微信都走编号文本 fallback；Telegram/飞书/Lark/Webhook 有结构化选项。
+ */
+function isTextOnlySelectionProvider(provider: BotProvider): boolean {
+  return provider === "weixin" || provider === "discord" || provider === "wecom";
 }
 
 function formatSelectionFallback(selection: SelectionPrompt, locale?: Locale): string {
@@ -659,8 +706,6 @@ function delay(ms: number): Promise<void> {
 }
 
 const DEFAULT_BOT_ACODE_PROVIDER: ACodeProvider = ACODE_AGENT_PROVIDER;
-// Bot 模式硬锁 yolo：所有 bot task 一律免交互权限，且禁止通过 /mode 切换运行模式。
-const BOT_FORCED_MODE = "yolo";
 const BOT_TYPING_INTERVAL_MS = 4_000;
 const BOT_TASK_META_RETRY_DELAYS_MS = [80, 160, 320] as const;
 const BOT_WORKSPACE_REFS_CACHE_TTL_MS = 5_000;
@@ -743,8 +788,12 @@ export function createBotsService(
     weixin: createWeixinBotProvider({
       loadCredential: (key) => deps.credentialService.load(key),
     }),
-    discord: null,
-    wecom: null,
+    discord: createDiscordBotProvider({
+      loadCredential: (key) => deps.credentialService.load(key),
+    }),
+    wecom: createWeComBotProvider({
+      loadCredential: (key) => deps.credentialService.load(key),
+    }),
   };
   let service: IBotsService & {
     disposeAll(): void;
@@ -808,6 +857,15 @@ export function createBotsService(
     ensureBotStorageMigrated,
     readConfig: () => repo.readConfig(),
     summarizeCallbackPayload,
+    processProviderCallback,
+  });
+  const discordRuntime = createDiscordChannelRuntime({
+    runBackgroundTasks: runStartupBackgroundTasks,
+    credentialService: deps.credentialService,
+    logger: botsLogger,
+    statusSink,
+    ensureBotStorageMigrated,
+    readConfig: () => repo.readConfig(),
     processProviderCallback,
   });
 
@@ -923,7 +981,10 @@ export function createBotsService(
       workspaceId: workspace.id,
       mode: "draft",
       activeTaskId: null,
-      draftOptions: await buildInitializedDraftOptions(workspace),
+      draftOptions: await buildInitializedDraftOptions(
+        { ...workspace, botId: bot.id },
+        bot.currentOptions,
+      ),
       updatedAt: Date.now(),
     };
   }
@@ -1217,6 +1278,8 @@ export function createBotsService(
       requestedCommand !== "status" &&
       requestedCommand !== "workspace" &&
       requestedCommand !== "reconnect" &&
+      // /engine 只列已注册引擎（静态注册表），不申请目标 Host runtime；远端断连也应可用。
+      requestedCommand !== "engine" &&
       requestedCommand !== "reply"
     );
   }
@@ -1682,43 +1745,71 @@ export function createBotsService(
 
   function normalizeBotDraftOptions(draftOptions: BotDraftOptions): BotDraftOptions {
     // Bugfix: bot-state 里可能还残留旧三方 CLI 草稿 provider。
-    // 如果直接复用，/new 后首条消息会重新创建第三方 runtime，绕过 ACode Agent 单一事实源。
+    // provider 经引擎感知归一：合法引擎原样保留，未知/旧值回退 native(glm)。
     return {
       ...draftOptions,
       provider: normalizeAgentProviderToACodeAgent(draftOptions.provider),
     };
   }
 
+  /**
+   * 每 bot 草稿默认值：引擎来自 currentOptions.cli（缺省 native），权限模式来自 currentOptions.mode
+   * （缺省 BOT_DEFAULT_DRAFT_MODE）。currentOptions 是每 bot 默认的唯一所有者，草稿初始化只读不写它。
+   */
+  function resolveBotDraftDefaults(
+    currentOptions?: BotCurrentOptions,
+  ): { provider: ACodeProvider; mode: string } {
+    return {
+      provider: normalizeAgentProviderToACodeAgent(
+        currentOptions?.cli ?? DEFAULT_BOT_ACODE_PROVIDER,
+      ),
+      mode: currentOptions?.mode?.trim() || BOT_DEFAULT_DRAFT_MODE,
+    };
+  }
+
+  /**
+   * currentOptions 未显式透传时的回退：按 botId 从配置读取。
+   * 让 /status 等只有 context 的路径也能拿到每 bot 默认，不必逐层加参数。
+   */
+  async function readBotDraftDefaults(
+    context: Pick<BotContextState, "botId">,
+  ): Promise<{ provider: ACodeProvider; mode: string }> {
+    const bot = findBot(await repo.readConfig(), context.botId);
+    return resolveBotDraftDefaults(bot?.currentOptions);
+  }
+
   async function buildInitializedDraftOptions(
-    context: Pick<BotContextState, "workspacePath" | "workspaceIdentity">,
-    provider?: ACodeProvider,
+    context: Pick<BotContextState, "botId" | "workspacePath" | "workspaceIdentity">,
+    currentOptions?: BotCurrentOptions,
   ): Promise<BotDraftOptions> {
-    const requestedProvider = normalizeAgentProviderToACodeAgent(
-      provider ?? DEFAULT_BOT_ACODE_PROVIDER,
-    );
+    const { provider: requestedProvider } = currentOptions
+      ? resolveBotDraftDefaults(currentOptions)
+      : await readBotDraftDefaults(context);
     if (context.workspaceIdentity && !(await isRemoteWorkspaceConnected(context))) {
       // Bugfix: 远端断连时初始化草稿也不能偷偷申请远端 ACode Agent runtime。
       // 只有 /reconnect 能恢复连接；草稿先保留最小默认值，重连成功后再刷新。
       return { provider: requestedProvider };
     }
-    const resolvedProvider = requestedProvider;
-    return {
-      provider: resolvedProvider,
-      mode: BOT_FORCED_MODE,
-    };
+    // mode 不在初始化时烘焙：留空表示「跟随每 bot 默认」，派发与 /mode 展示再按
+    // currentOptions.mode 解析。这样 UI 改默认权限模式后，未显式 /mode 覆盖的草稿立即生效，
+    // 不会被 /status 等命令早先创建的草稿快照固化成旧默认。/mode 才写入显式 override。
+    return { provider: requestedProvider };
   }
 
-  async function buildActiveTaskDraftOptions(context: BotContextState): Promise<BotDraftOptions> {
+  async function buildActiveTaskDraftOptions(
+    context: BotContextState,
+    currentOptions?: BotCurrentOptions,
+  ): Promise<BotDraftOptions> {
     const activeTask = await readContextActiveTaskMeta(context);
     if (!context.activeTaskId || !activeTask?.provider) {
-      return buildInitializedDraftOptions(context);
+      return buildInitializedDraftOptions(context, currentOptions);
     }
     const configOptions = await listActiveTaskConfigOptions(context, context.activeTaskId).catch(
       () => [],
     );
+    // /new 继承活跃 task 的引擎与模型选择（不丢用户已选模型）；权限模式同样留空，
+    // 由派发/展示按每 bot 默认解析，保持「draftOptions.mode 只由 /mode 显式覆盖」的单一不变量。
     const resolvedProvider = normalizeAgentProviderToACodeAgent(activeTask.provider);
-    // Bot 硬锁 yolo：继承当前 task 时也强制 yolo，不沿用原 task 的 mode。
-    const forcedMode = resolveSupportedDraftMode(configOptions, BOT_FORCED_MODE, resolvedProvider);
     const currentModel = readCurrentActiveTaskModel(activeTask, configOptions);
     const parsedSelection = currentModel ? parseBotModelOptionValue(currentModel) : undefined;
     const reasoningLevel = readConfigSelectCurrentValue(configOptions, "thoughtLevel");
@@ -1731,11 +1822,13 @@ export function createBotsService(
     return {
       provider: resolvedProvider,
       ...(modelSelection ? { modelSelection } : {}),
-      ...(forcedMode ? { mode: forcedMode } : {}),
     };
   }
 
-  async function ensureDraftOptions(context: BotContextState): Promise<BotDraftOptions> {
+  async function ensureDraftOptions(
+    context: BotContextState,
+    currentOptions?: BotCurrentOptions,
+  ): Promise<BotDraftOptions> {
     if (context.draftOptions) {
       const normalizedDraftOptions = normalizeBotDraftOptions(context.draftOptions);
       if (normalizedDraftOptions.provider !== context.draftOptions.provider) {
@@ -1743,7 +1836,7 @@ export function createBotsService(
       }
       return normalizedDraftOptions;
     }
-    const draftOptions = await buildInitializedDraftOptions(context);
+    const draftOptions = await buildInitializedDraftOptions(context, currentOptions);
     await writeContext({ ...context, draftOptions });
     return draftOptions;
   }
@@ -1809,6 +1902,7 @@ export function createBotsService(
     context: BotContextState,
     taskId: string,
     traceId: string,
+    currentOptions?: BotCurrentOptions,
   ): Promise<void> {
     const draftOptions = context.draftOptions;
     if (!draftOptions) {
@@ -1820,26 +1914,39 @@ export function createBotsService(
     const modeOption = configOptions.find(
       (option) => option.category === "mode" && option.type === "select",
     );
-    // Bot 硬锁 yolo：无论草稿/继承的 mode 是什么，建 task 时一律下发 yolo。
-    // 这是 mode 真正进入 agent session 的唯一咽喉，保证任何 bot task 都免交互权限。
-    const forcedDraftMode = resolveSupportedDraftMode(
-      configOptions,
-      BOT_FORCED_MODE,
-      draftOptions.provider,
-    );
-    if (modeOption?.id && forcedDraftMode) {
+    // 这是 mode 真正进入 agent session 的唯一咽喉。有效模式 = 草稿显式 /mode override，
+    // 否则每 bot 默认（currentOptions.mode），再否则 BOT_DEFAULT_DRAFT_MODE。
+    // 所选模式不被当前 provider 支持时回退缺省，缺省也不支持则跳过，保持 provider 自身默认模式。
+    const selectedMode = resolveEffectiveDraftMode(draftOptions, currentOptions);
+    const resolvedDraftMode =
+      resolveSupportedDraftMode(configOptions, selectedMode, draftOptions.provider) ??
+      resolveSupportedDraftMode(configOptions, BOT_DEFAULT_DRAFT_MODE, draftOptions.provider);
+    if (modeOption?.id && resolvedDraftMode) {
       const acodeTaskService = await resolveACodeTaskServiceForContext(context);
       await acodeTaskService.setMode({
         taskId,
-        mode: forcedDraftMode as ACodeTaskMode,
+        mode: resolvedDraftMode as ACodeTaskMode,
       });
     } else if (modeOption?.id) {
-      // provider 不支持 yolo（非 ACode Agent）：保持其自身默认模式，避免首条消息回调失败。
+      // provider 既不支持所选模式也不支持缺省模式：保持其自身默认模式，避免首条消息回调失败。
       botsLogger.debug(
         traceId,
-        `skip forced yolo mode unsupported provider=${draftOptions.provider}`,
+        `skip draft mode unsupported provider=${draftOptions.provider} mode=${selectedMode}`,
       );
     }
+  }
+
+  /**
+   * 有效草稿权限模式：草稿显式 /mode override 优先，否则跟随每 bot 默认，再否则缺省常量。
+   * 让 UI 改默认权限模式后，未显式覆盖的草稿立即生效，而不被早先创建的草稿快照固化。
+   */
+  function resolveEffectiveDraftMode(
+    draftOptions: Pick<BotDraftOptions, "mode">,
+    currentOptions?: BotCurrentOptions,
+  ): string {
+    return (
+      draftOptions.mode?.trim() || resolveBotDraftDefaults(currentOptions).mode
+    );
   }
 
   function getActorContextKey(actor: BotActor): string {
@@ -1896,8 +2003,8 @@ export function createBotsService(
     if (!selection) {
       return null;
     }
-    if (actor.provider !== "weixin") {
-      // Bugfix: 只有微信没有结构化选项，只能靠“回复数字”承接 pending selection。
+    if (!isTextOnlySelectionProvider(actor.provider)) {
+      // Bugfix: 只有纯文本通道（微信/Discord/企业微信）没有结构化选项，只能靠“回复数字”承接 pending selection。
       // Telegram/飞书等 provider 有按钮回调，普通文本不应被隐式解析成菜单选择。
       clearPendingSelection(actor);
       return null;
@@ -1922,6 +2029,8 @@ export function createBotsService(
         return { type: "model.provider.set", value: option.id };
       case "model.set":
         return { type: "model.set", value: option.id };
+      case "engine.set":
+        return { type: "engine.set", value: option.id };
       case "mode.set":
         return { type: "mode.set", value: option.id };
       case "thoughtLevel.set":
@@ -3433,11 +3542,11 @@ export function createBotsService(
       return [createOutbound(actor, msg(auth.locale, "elicitationExpired"))];
     }
     const parsedValue = parseElicitationResponseValue(value);
-    if (actor.provider !== "weixin") {
+    if (!isTextOnlySelectionProvider(actor.provider)) {
       const expectedToken = getPendingElicitationSelectionToken(pending);
       if (!parsedValue.token || parsedValue.token !== expectedToken) {
         // Bugfix: Telegram/飞书/Webhook 的旧按钮可能在新一轮 AskUserQuestion 后才送达。
-        // 非微信通道必须带本轮短 token，避免把上一轮按钮编号误当成当前问题的答案。
+        // 非纯文本通道必须带本轮短 token，避免把上一轮按钮编号误当成当前问题的答案。
         return [createOutbound(actor, msg(auth.locale, "elicitationExpired"))];
       }
     }
@@ -4234,10 +4343,10 @@ export function createBotsService(
     extras: Pick<BotOutboundMessage, "elicitation" | "locale"> = {},
   ): Promise<BotOutboundMessage[]> {
     const markedSelection = markCurrentSelection(selection, locale);
-    // Bugfix: 微信没有原生选项卡能力，只能走纯文本编号选项。
+    // Bugfix: 纯文本通道（微信/Discord/企业微信）没有原生选项卡能力，只能走纯文本编号选项。
     // 之前纯文本 fallback 会同时展示标题里的“当前”和选项上的“当前”标记，
     // 微信回复看起来像重复状态文案；这里让标题负责说明当前状态，列表只保留可回复的编号。
-    const supportsStructuredSelection = actor.provider !== "weixin";
+    const supportsStructuredSelection = !isTextOnlySelectionProvider(actor.provider);
     // Bugfix: 微信 /model 第一层选择的是供应商，之前复用 description 把模型列表也拼进同一行，
     // 导致用户还没选供应商就看到两层信息。纯文本通道先只展示供应商，模型放到下一层再展示。
     const textSelection = stripModelProviderDescriptionsForTextSelection(selection);
@@ -4348,7 +4457,10 @@ export function createBotsService(
       ];
     }
     if (auth.context.mode === "draft" || !auth.context.activeTaskId) {
-      const draftOptions = await buildInitializedDraftOptions(auth.context);
+      const draftOptions = await buildInitializedDraftOptions(
+        auth.context,
+        auth.bot.currentOptions,
+      );
       await writeContext({ ...auth.context, draftOptions });
     }
     // 成功重连后统一回完整状态，避免命令完成文案和 /status 内容分裂。
@@ -4841,7 +4953,8 @@ export function createBotsService(
     }
     if (auth.context.mode === "draft" || !auth.context.activeTaskId) {
       const draftOptions =
-        auth.context.draftOptions ?? (await buildInitializedDraftOptions(auth.context));
+        auth.context.draftOptions ??
+        (await buildInitializedDraftOptions(auth.context, auth.bot.currentOptions));
       // 原因：直接提交旧账号身份会绕过统一解析。只在首次创建前解析原意图；
       // 后续创建、配置和首发固定这份结果；绑定后以 Session 原选择解析下一次新输入。
       const selectionView = await readModelSelectionView(auth.context, draftOptions.modelSelection);
@@ -4883,6 +4996,7 @@ export function createBotsService(
           { ...auth.context, draftOptions: submissionDraftOptions },
           task.taskId,
           traceId,
+          auth.bot.currentOptions,
         );
       } catch (error) {
         // Bugfix: 初始配置失败时旧流程已把 context 切到 task，留下无法继续的空任务。
@@ -5215,6 +5329,7 @@ export function createBotsService(
       telegramRuntime.scheduleRefresh(savedConfig);
       weixinRuntime.scheduleRefresh(savedConfig);
       feishuRuntime.scheduleRefresh(savedConfig);
+      discordRuntime.scheduleRefresh(savedConfig);
       return savedConfig;
     },
     async listBots() {
@@ -5278,6 +5393,7 @@ export function createBotsService(
       telegramRuntime.scheduleRefresh(savedConfig);
       weixinRuntime.scheduleRefresh(savedConfig);
       feishuRuntime.scheduleRefresh(savedConfig);
+      discordRuntime.scheduleRefresh(savedConfig);
       return bot;
     },
     async removeBotSecret(botId: string) {
@@ -5295,6 +5411,9 @@ export function createBotsService(
       if (bot.provider === "weixin") {
         weixinRuntime.stopPolling(bot.id);
       }
+      if (bot.provider === "discord") {
+        discordRuntime.stopGateway(bot.id);
+      }
       // Bugfix: 只移除密钥时如果保留旧绑定身份，UI 会显示“已连通”，但运行时已经没有 token 可用。
       // 这里同步清理绑定状态，让 Bot token 行回到可重新添加的状态。
       const nextBot = normalizeBotConfig({
@@ -5304,6 +5423,8 @@ export function createBotsService(
         providerUserId: undefined,
         displayName: undefined,
         feishuAppId: isFeishuBotProvider(bot.provider) ? undefined : bot.feishuAppId,
+        // wecom 回调 Token 复用 webhookSecretRef；移除密钥后回调验签必须失效，不能残留 EncodingAESKey 让旧密文继续解出。
+        wecomEncodingAESKey: bot.provider === "wecom" ? undefined : bot.wecomEncodingAESKey,
       });
       const savedConfig = await repo.writeConfig({
         ...config,
@@ -5316,6 +5437,7 @@ export function createBotsService(
       telegramRuntime.scheduleRefresh(savedConfig);
       weixinRuntime.scheduleRefresh(savedConfig);
       feishuRuntime.scheduleRefresh(savedConfig);
+      discordRuntime.scheduleRefresh(savedConfig);
       if (bot.credentialRef) {
         await deps.credentialService.delete(bot.credentialRef);
       }
@@ -5336,6 +5458,9 @@ export function createBotsService(
       if (bot?.provider === "weixin") {
         weixinRuntime.stopPolling(bot.id);
       }
+      if (bot?.provider === "discord") {
+        discordRuntime.stopGateway(bot.id);
+      }
       await repo.writeConfig({
         ...config,
         bots: config.bots.filter((item) => item.id !== botId),
@@ -5343,6 +5468,7 @@ export function createBotsService(
       clearCandidateCaches();
       telegramRuntime.scheduleRefresh();
       weixinRuntime.scheduleRefresh();
+      discordRuntime.scheduleRefresh();
       const state = await repo.readState();
       delete state.bots[botId];
       await repo.writeState(state);
@@ -5411,7 +5537,7 @@ export function createBotsService(
           parsedCommand.type === "message"
             ? (resolvePendingSelectionCommand(message.actor, parsedCommand.text) ?? parsedCommand)
             : parsedCommand.type === "selection.cancel" &&
-                message.actor.provider !== "weixin" &&
+                !isTextOnlySelectionProvider(message.actor.provider) &&
                 message.text.trim() === "0"
               ? (clearPendingSelection(message.actor),
                 { type: "message", text: message.text } as const)
@@ -5439,7 +5565,7 @@ export function createBotsService(
             }
             const context = await writeDraftContext(
               auth.context,
-              await buildActiveTaskDraftOptions(auth.context),
+              await buildActiveTaskDraftOptions(auth.context, auth.bot.currentOptions),
             );
             return createStatusReply(message.actor, context, auth.locale);
           }
@@ -5520,7 +5646,7 @@ export function createBotsService(
             };
             const draftContext = await writeDraftContext(
               context,
-              await buildInitializedDraftOptions(context),
+              await buildInitializedDraftOptions(context, auth.bot.currentOptions),
             );
             pendingWorkspaceSelectionsByContext.delete(getActorContextKey(message.actor));
             return createStatusReply(message.actor, draftContext, auth.locale);
@@ -5712,7 +5838,7 @@ export function createBotsService(
               return [createOutbound(message.actor, msg(auth.locale, "taskRunning"))];
             }
             if (auth.context.mode === "draft" || !auth.context.activeTaskId) {
-              const draftOptions = await ensureDraftOptions(auth.context);
+              const draftOptions = await ensureDraftOptions(auth.context, auth.bot.currentOptions);
               const model =
                 resolvePendingSelectionOption(message.actor, "model.set", command.value) ??
                 resolveOptionByValue(
@@ -5794,26 +5920,199 @@ export function createBotsService(
             });
             return createStatusReply(message.actor, auth.context, auth.locale);
           }
-          case "mode.list":
-          case "thoughtLevel.list": {
-            const commandName = command.type === "mode.list" ? "mode" : "thoughtLevel";
-            const auth = await withAuthorizedContext(message, commandName);
+          case "engine.list": {
+            const auth = await withAuthorizedContext(message, "engine");
             if (!auth.ok) return auth.reply;
-            if (command.type === "mode.list") {
-              // Bot 硬锁 yolo：不提供模式选择。
-              return [createOutbound(message.actor, msg(auth.locale, "modeLocked"))];
+            const options = getBotEngineOptions();
+            if (options.length === 0) {
+              return [createOutbound(message.actor, msg(auth.locale, "engineMissing"))];
             }
+            const currentProvider = resolveBotDraftDefaults(auth.bot.currentOptions).provider;
+            const currentLabel =
+              options.find((option) => option.id === currentProvider)?.label ?? currentProvider;
+            return createSelectionReply(
+              message.actor,
+              {
+                id: `engine-${Date.now()}`,
+                title: msg(auth.locale, "engineSelectTitle", { engine: currentLabel }),
+                currentId: currentProvider,
+                action: "engine.set",
+                options,
+              },
+              auth.locale,
+            );
+          }
+          case "engine.set": {
+            const auth = await withAuthorizedContext(message, "engine");
+            if (!auth.ok) return auth.reply;
+            const options = getBotEngineOptions();
+            const option =
+              resolvePendingSelectionOption(message.actor, "engine.set", command.value) ??
+              resolveOptionByValue(options, command.value);
+            if (!option || !options.some((candidate) => candidate.id === option.id)) {
+              return [createOutbound(message.actor, msg(auth.locale, "engineMissing"))];
+            }
+            // option 已经过 options（ACodeProvider id）校验，pending selection 分支把它放宽成 string，这里收窄回引擎 id。
+            const engine = option.id as ACodeProvider;
+            // 引擎是每 bot 默认值：写 currentOptions.cli（经 saveBot 归一），再按新默认重建草稿，
+            // 使后续聊天创建的任务用新引擎。沿用 reply.set 的 saveBot 写路径，保持配置单一所有者。
+            await service.saveBot({
+              bot: {
+                ...auth.bot,
+                currentOptions: normalizeBotCurrentOptions({
+                  ...auth.bot.currentOptions,
+                  cli: engine,
+                }),
+              },
+            });
+            if (auth.context.mode === "draft" || !auth.context.activeTaskId) {
+              await writeDraftContext(
+                auth.context,
+                await buildInitializedDraftOptions(auth.context, {
+                  ...auth.bot.currentOptions,
+                  cli: engine,
+                }),
+              );
+            }
+            return [
+              createOutbound(
+                message.actor,
+                msg(auth.locale, "engineChanged", { engine: option.label }),
+              ),
+            ];
+          }
+          case "mode.list": {
+            const auth = await withAuthorizedContext(message, "mode");
+            if (!auth.ok) return auth.reply;
             if (await isContextActiveTaskRunning(auth.context)) {
-              // Bugfix: task 运行中不展示模式/思考级别选择，避免和正在执行的上下文配置混淆。
+              // Bugfix: task 运行中不展示模式选择，避免和正在执行的上下文配置混淆。
               return [createOutbound(message.actor, msg(auth.locale, "taskRunning"))];
             }
             if (auth.context.mode === "draft" || !auth.context.activeTaskId) {
-              const draftOptions = await ensureDraftOptions(auth.context);
+              const draftOptions = await ensureDraftOptions(auth.context, auth.bot.currentOptions);
+              // 草稿态从注册表取该引擎支持的权限模式；绕开 stub 的 listUserConfigOptions（恒返回 []）。
+              const options = getBotDraftModeOptions(auth.locale, draftOptions.provider);
+              // 草稿未显式 /mode 覆盖时展示每 bot 默认权限模式，而不是空值。
+              const currentValue = resolveEffectiveDraftMode(
+                draftOptions,
+                auth.bot.currentOptions,
+              );
+              const currentLabel =
+                options.find((option) => option.id === currentValue)?.label ?? currentValue;
+              if (options.length === 0) {
+                return [createOutbound(message.actor, msg(auth.locale, "modeMissing"))];
+              }
+              return createSelectionReply(
+                message.actor,
+                {
+                  id: `mode-${Date.now()}`,
+                  title: msg(auth.locale, "modeSelectTitle", { mode: currentLabel ?? "-" }),
+                  currentId: currentValue,
+                  action: "mode.set",
+                  options,
+                },
+                auth.locale,
+              );
+            }
+            const active = await requireActiveTask(message, auth);
+            if (!active.ok) return active.reply;
+            const activeProvider = normalizeAgentProviderToACodeAgent(active.task.provider);
+            const optionSource = active.task.provider
+              ? await listProviderConfigOptionsForActiveTask(active.task, activeProvider)
+              : active.configOptions;
+            const currentValue = readCurrentActiveTaskMode(active.task, active.configOptions);
+            const currentLabel = readConfigSelectLabelForValue(optionSource, "mode", currentValue, {
+              locale: auth.locale,
+              provider: activeProvider,
+            });
+            const selectOption = findSelectConfigOption(optionSource, "mode");
+            const options = listConfigSelectOptions(optionSource, "mode", {
+              locale: auth.locale,
+              provider: activeProvider,
+            });
+            if (options.length === 0) {
+              return [createOutbound(message.actor, msg(auth.locale, "modeMissing"))];
+            }
+            return createSelectionReply(
+              message.actor,
+              {
+                id: `${selectOption?.id ?? "mode"}-${Date.now()}`,
+                title: msg(auth.locale, "modeSelectTitle", { mode: currentLabel ?? "-" }),
+                currentId: currentValue,
+                action: "mode.set",
+                options,
+              },
+              auth.locale,
+            );
+          }
+          case "mode.set": {
+            const auth = await withAuthorizedContext(message, "mode");
+            if (!auth.ok) return auth.reply;
+            if (await isContextActiveTaskRunning(auth.context)) {
+              return [createOutbound(message.actor, msg(auth.locale, "taskRunning"))];
+            }
+            if (auth.context.mode === "draft" || !auth.context.activeTaskId) {
+              const draftOptions = await ensureDraftOptions(auth.context, auth.bot.currentOptions);
+              const displayOptions = getBotDraftModeOptions(auth.locale, draftOptions.provider);
+              const option =
+                resolvePendingSelectionOption(message.actor, "mode.set", command.value) ??
+                resolveOptionByValue(displayOptions, command.value);
+              if (!option || !displayOptions.some((candidate) => candidate.id === option.id)) {
+                return [createOutbound(message.actor, msg(auth.locale, "modeMissing"))];
+              }
+              // 草稿态写 live draft（per-context），不改每 bot 默认；首条消息派发经 applyDraftConfigOptions 下发。
+              const nextContext = await writeDraftOptions(auth.context, {
+                ...draftOptions,
+                mode: option.id,
+              });
+              return createStatusReply(message.actor, nextContext, auth.locale);
+            }
+            const active = await requireActiveTask(message, auth);
+            if (!active.ok) return active.reply;
+            const activeProvider = normalizeAgentProviderToACodeAgent(active.task.provider);
+            const optionSource = active.task.provider
+              ? await listProviderConfigOptionsForActiveTask(active.task, activeProvider)
+              : active.configOptions;
+            const selectOption = findSelectConfigOption(optionSource, "mode");
+            const displayOptions = listConfigSelectOptions(optionSource, "mode", {
+              locale: auth.locale,
+              provider: activeProvider,
+            });
+            const option =
+              resolvePendingSelectionOption(message.actor, "mode.set", command.value) ??
+              resolveOptionByValue(displayOptions, command.value);
+            if (!option || !selectOption?.id) {
+              return [createOutbound(message.actor, msg(auth.locale, "modeMissing"))];
+            }
+            const traceId = generateTraceId(active.taskId);
+            const acodeTaskService = await resolveACodeTaskServiceForContext(auth.context);
+            const configOptions = await acodeTaskService.setConfigOption({
+              taskId: active.taskId,
+              traceId,
+              configId: selectOption.id,
+              value: option.id,
+            });
+            await broadcastTaskConfigSync({
+              context: auth.context,
+              taskId: active.taskId,
+              task: await readContextActiveTaskMeta(auth.context),
+              provider: active.task.provider,
+              configOptions,
+            });
+            return createStatusReply(message.actor, auth.context, auth.locale);
+          }
+          case "thoughtLevel.list": {
+            const commandName = "thoughtLevel" as const;
+            const auth = await withAuthorizedContext(message, commandName);
+            if (!auth.ok) return auth.reply;
+            if (await isContextActiveTaskRunning(auth.context)) {
+              // Bugfix: task 运行中不展示思考级别选择，避免和正在执行的上下文配置混淆。
+              return [createOutbound(message.actor, msg(auth.locale, "taskRunning"))];
+            }
+            if (auth.context.mode === "draft" || !auth.context.activeTaskId) {
+              const draftOptions = await ensureDraftOptions(auth.context, auth.bot.currentOptions);
               const optionSource = await listDraftConfigOptions(auth.context, draftOptions);
-              const rawCurrentValue =
-                commandName === "mode"
-                  ? draftOptions.mode
-                  : findSelectConfigOption(optionSource, commandName)?.currentValue;
+              const rawCurrentValue = findSelectConfigOption(optionSource, commandName)?.currentValue;
               const currentValue =
                 typeof rawCurrentValue === "string" ? rawCurrentValue : undefined;
               const currentLabel = readConfigSelectLabelForValue(
@@ -5839,14 +6138,7 @@ export function createBotsService(
                 message.actor,
                 {
                   id: `${selectOption?.id ?? commandName}-${Date.now()}`,
-                  title:
-                    commandName === "mode"
-                      ? msg(auth.locale, "modeSelectTitle", {
-                          mode: currentLabel ?? "-",
-                        })
-                      : msg(auth.locale, "thoughtLevelSelectTitle", {
-                          level: currentLabel ?? "-",
-                        }),
+                  title: msg(auth.locale, "thoughtLevelSelectTitle", { level: currentLabel ?? "-" }),
                   currentId: currentValue,
                   action: `${commandName}.set` as SelectionPrompt["action"],
                   options,
@@ -5856,27 +6148,12 @@ export function createBotsService(
             }
             const active = await requireActiveTask(message, auth);
             if (!active.ok) return active.reply;
-            const optionSource =
-              commandName === "mode" && active.task.provider
-                ? await listProviderConfigOptionsForActiveTask(
-                    active.task,
-                    normalizeAgentProviderToACodeAgent(active.task.provider),
-                  )
-                : active.configOptions;
-            const currentValue =
-              commandName === "mode"
-                ? readCurrentActiveTaskMode(active.task, active.configOptions)
-                : readConfigSelectCurrentValue(active.configOptions, commandName);
-            const currentLabel =
-              commandName === "mode"
-                ? readConfigSelectLabelForValue(optionSource, commandName, currentValue, {
-                    locale: auth.locale,
-                    provider: normalizeAgentProviderToACodeAgent(active.task.provider),
-                  })
-                : readConfigSelectCurrentLabel(active.configOptions, commandName, {
-                    locale: auth.locale,
-                    provider: normalizeAgentProviderToACodeAgent(active.task.provider),
-                  });
+            const optionSource = active.configOptions;
+            const currentValue = readConfigSelectCurrentValue(active.configOptions, commandName);
+            const currentLabel = readConfigSelectCurrentLabel(active.configOptions, commandName, {
+              locale: auth.locale,
+              provider: normalizeAgentProviderToACodeAgent(active.task.provider),
+            });
             const selectOption = findSelectConfigOption(optionSource, commandName);
             const options = listConfigSelectOptions(optionSource, commandName, {
               locale: auth.locale,
@@ -5894,14 +6171,7 @@ export function createBotsService(
               message.actor,
               {
                 id: `${selectOption?.id ?? commandName}-${Date.now()}`,
-                title:
-                  commandName === "mode"
-                    ? msg(auth.locale, "modeSelectTitle", {
-                        mode: currentLabel ?? "-",
-                      })
-                    : msg(auth.locale, "thoughtLevelSelectTitle", {
-                        level: currentLabel ?? "-",
-                      }),
+                title: msg(auth.locale, "thoughtLevelSelectTitle", { level: currentLabel ?? "-" }),
                 currentId: currentValue,
                 action: `${commandName}.set` as SelectionPrompt["action"],
                 options,
@@ -5909,20 +6179,15 @@ export function createBotsService(
               auth.locale,
             );
           }
-          case "mode.set":
           case "thoughtLevel.set": {
-            const commandName = command.type === "mode.set" ? "mode" : "thoughtLevel";
+            const commandName = "thoughtLevel" as const;
             const auth = await withAuthorizedContext(message, commandName);
             if (!auth.ok) return auth.reply;
-            if (command.type === "mode.set") {
-              // Bot 硬锁 yolo：拒绝任何模式切换请求。
-              return [createOutbound(message.actor, msg(auth.locale, "modeLocked"))];
-            }
             if (await isContextActiveTaskRunning(auth.context)) {
               return [createOutbound(message.actor, msg(auth.locale, "taskRunning"))];
             }
             if (auth.context.mode === "draft" || !auth.context.activeTaskId) {
-              const originalOptions = await ensureDraftOptions(auth.context);
+              const originalOptions = await ensureDraftOptions(auth.context, auth.bot.currentOptions);
               const view = await readModelSelectionView(
                 auth.context,
                 originalOptions.modelSelection,
@@ -5968,28 +6233,23 @@ export function createBotsService(
               }
               const nextContext = await writeDraftOptions(auth.context, {
                 ...draftOptions,
-                ...(commandName === "mode"
-                  ? { mode: option.id }
-                  : draftOptions.modelSelection
-                    ? {
-                        modelSelection: {
-                          ...draftOptions.modelSelection,
-                          options: {
-                            ...draftOptions.modelSelection.options,
-                            reasoningLevel: option.id,
-                          },
+                ...(draftOptions.modelSelection
+                  ? {
+                      modelSelection: {
+                        ...draftOptions.modelSelection,
+                        options: {
+                          ...draftOptions.modelSelection.options,
+                          reasoningLevel: option.id,
                         },
-                      }
-                    : {}),
+                      },
+                    }
+                  : {}),
               });
               return createStatusReply(message.actor, nextContext, auth.locale);
             }
             const active = await requireActiveTask(message, auth);
             if (!active.ok) return active.reply;
-            const optionSource =
-              commandName === "mode" && active.task.provider
-                ? await listProviderConfigOptionsForActiveTask(active.task, active.task.provider)
-                : active.configOptions;
+            const optionSource = active.configOptions;
             const selectOption = findSelectConfigOption(optionSource, commandName);
             const displayOptions = listConfigSelectOptions(optionSource, commandName, {
               locale: auth.locale,
@@ -6204,8 +6464,8 @@ export function createBotsService(
             if (!pending) {
               return [createOutbound(message.actor, msg(auth.locale, "elicitationExpired"))];
             }
-            if (message.actor.provider !== "weixin") {
-              // Bugfix: 非微信通道的“完成”应从带 token 的按钮进入 elicitation.respond。
+            if (!isTextOnlySelectionProvider(message.actor.provider)) {
+              // Bugfix: 非纯文本通道的“完成”应从带 token 的按钮进入 elicitation.respond。
               // 直接 /elicitation submit 没有轮次标识，可能误提交上一轮 AskUserQuestion。
               return [createOutbound(message.actor, msg(auth.locale, "elicitationExpired"))];
             }
@@ -6338,11 +6598,12 @@ export function createBotsService(
       automationDeliveryWarningAtByKey.clear();
       inboundProcessingQueuesByContext.clear();
       // Bugfix：host 的异步资源回收会优先调用 disposeAllAndWait。保留统一 Promise，确保并发关闭
-      // 只执行一次，并在返回前等三类 Provider runtime 的请求、WebSocket 和跨进程锁全部收口。
+      // 只执行一次，并在返回前等各 Provider runtime 的请求、WebSocket/Gateway 和跨进程锁全部收口。
       shutdownPromise = Promise.allSettled([
         telegramRuntime.dispose(),
         weixinRuntime.dispose(),
         feishuRuntime.dispose(),
+        discordRuntime.dispose(),
       ]).then(() => undefined);
       return shutdownPromise;
     },
@@ -6351,6 +6612,7 @@ export function createBotsService(
     void telegramRuntime.refresh();
     void weixinRuntime.refresh();
     void feishuRuntime.refresh();
+    void discordRuntime.refresh();
     void ensureBotStorageMigrated().catch((error: unknown) => {
       // 首次读取失败必须可见，不能产生未处理 rejection；交互入口仍直接收到该错误。
       botsLogger.error(

@@ -86,10 +86,20 @@ export const dockerConnectOptionsSchema = z.object({
   container: nonEmptyStringSchema,
 });
 
+export const serverConnectOptionsSchema = z.object({
+  kind: z.literal("server"),
+  url: z.string().url(),
+  name: nonEmptyStringSchema.optional(),
+  token: z.string().optional(),
+  workspacePath: z.string().optional(),
+  serverId: nonEmptyStringSchema.optional(),
+});
+
 export const remoteTargetSchema = z.discriminatedUnion("kind", [
   sshConnectOptionsSchema,
   wslConnectOptionsSchema,
   dockerConnectOptionsSchema,
+  serverConnectOptionsSchema,
 ]);
 
 export const helloMessageSchema = z.object({

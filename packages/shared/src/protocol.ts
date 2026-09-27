@@ -157,10 +157,24 @@ export interface DockerRemoteTargetSnapshot {
   container: string;
 }
 
+export interface ServerRemoteTargetSnapshot {
+  kind: "server";
+  url: string;
+  name?: string;
+  workspacePath?: string;
+  serverId?: string;
+  /**
+   * server token 不写入 settings.json。
+   * 这里只保存 credentialService 的键名，恢复时再去安全存储读取真实 token。
+   */
+  tokenCredentialKey?: string;
+}
+
 export type RemoteTargetSnapshot =
   | SSHRemoteTargetSnapshot
   | WSLRemoteTargetSnapshot
-  | DockerRemoteTargetSnapshot;
+  | DockerRemoteTargetSnapshot
+  | ServerRemoteTargetSnapshot;
 
 export interface RemoteWorkspaceSessionSnapshot {
   /** 远程 workspace 的真实绝对路径 */

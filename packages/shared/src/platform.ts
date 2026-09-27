@@ -269,7 +269,9 @@ export interface PrintPageToPdfResult {
   error?: string;
 }
 
-export function createOpenInEditorRemoteTarget(target: RemoteTarget): OpenInEditorRemoteTarget {
+export function createOpenInEditorRemoteTarget(
+  target: RemoteTarget,
+): OpenInEditorRemoteTarget | undefined {
   switch (target.kind) {
     case "ssh":
       // openInEditor 只需要构造 VS Code Remote-SSH URI 的连接标识，
@@ -294,6 +296,9 @@ export function createOpenInEditorRemoteTarget(target: RemoteTarget): OpenInEdit
         kind: "docker",
         container: target.container,
       };
+    case "server":
+      // WebSocket server 没有 VS Code Remote-SSH/WSL URI，外部编辑器打开不适用。
+      return undefined;
   }
 }
 

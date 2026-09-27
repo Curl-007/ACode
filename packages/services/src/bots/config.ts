@@ -2,6 +2,7 @@ import {
   DEFAULT_BOT_COMMANDS,
   DEFAULT_BOT_REPLY_GRANULARITY,
   modelSelectionSchema,
+  normalizeAgentProviderToACodeAgent,
   normalizeBotReplyGranularity,
   type BotCurrentOptions,
   type BotDraftOptions,
@@ -42,6 +43,7 @@ export function normalizeBotCommandPolicy(
     new: commands.new ?? DEFAULT_BOT_COMMANDS.new,
     workspace: commands.workspace ?? DEFAULT_BOT_COMMANDS.workspace,
     model: commands.model ?? DEFAULT_BOT_COMMANDS.model,
+    engine: commands.engine ?? DEFAULT_BOT_COMMANDS.engine,
     mode: commands.mode ?? DEFAULT_BOT_COMMANDS.mode,
     thoughtLevel: commands.thoughtLevel ?? DEFAULT_BOT_COMMANDS.thoughtLevel,
     sandboxMode: commands.sandboxMode ?? DEFAULT_BOT_COMMANDS.sandboxMode,
@@ -52,7 +54,6 @@ export function normalizeBotCommandPolicy(
 
 export function normalizeBotCurrentOptions(
   options: Partial<BotCurrentOptions> & {
-    cli?: unknown;
     model?: unknown;
     thoughtLevel?: unknown;
   } = {},
@@ -60,12 +61,15 @@ export function normalizeBotCurrentOptions(
   const parsedSelection = modelSelectionSchema.safeParse(options.modelSelection);
   const modelSelection = parsedSelection.success ? parsedSelection.data : undefined;
   // 旧 model/thoughtLevel 只在 Repository 的一次性导入读取，普通保存只认新字段。
-  // Bugfix: /cli 命令移除后，历史 currentOptions.cli 只作为旧配置兼容读取，不再保存。
+  // cli 现在是每 bot 默认引擎（不是已移除的 /cli 命令策略），归一后保留，供草稿初始化读取。
   return {
     ...(modelSelection ? { modelSelection } : {}),
     ...(options.mode ? { mode: options.mode } : {}),
     ...(options.sandboxMode ? { sandboxMode: options.sandboxMode } : {}),
     ...(options.approvalPolicy ? { approvalPolicy: options.approvalPolicy } : {}),
+    ...(options.cli
+      ? { cli: normalizeAgentProviderToACodeAgent(options.cli) }
+      : {}),
   };
 }
 

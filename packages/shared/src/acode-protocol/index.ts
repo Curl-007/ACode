@@ -29,6 +29,7 @@ import { accountProviderUnavailableReasonSchema } from "../account-provider-stat
 import { modelExecutionSchema } from "../model-execution.js";
 import { APP_USAGE_RANGES, appUsageSnapshotSchema } from "../usage-stats.js";
 import { acodeAutomationBotDeliveryTargetSchema } from "../bots.js";
+import { acodeAgentEngineIdSchema } from "../acode-agent-registry.js";
 // browser-use 命令/结果契约单一来源：agent 构造、协议校验和 main executor 共用同一 schema。
 import { browserClientModeSchema, browserCommandSchema } from "../browser-use/commands.js";
 import {
@@ -1562,6 +1563,9 @@ export const acodeSessionCreateParamsSchema = z
     workspace: acodeWorkspaceRefSchema,
     parentSessionId: nonEmptyString.optional(),
     mode: acodeSessionModeSchema.optional(),
+    // 选择本次 session 由哪个 agent 引擎驱动。缺省 = native(glm)，旧 host/agent 不带此字段时
+    // 行为不变。外部引擎不说 ACode Protocol，此字段只决定走哪条 spawn 路径，native 路径不受影响。
+    engine: acodeAgentEngineIdSchema.optional(),
     model: modelSelectionSchema.optional(),
     persistence: acodeSessionPersistenceSchema.optional(),
     thoughtLevel: nonEmptyString.optional(),

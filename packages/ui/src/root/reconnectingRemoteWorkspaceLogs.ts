@@ -24,6 +24,22 @@ function getRemoteWorkspaceReconnectLogTargetSuffix(
     }
     case "docker":
       return target.container;
+    case "server": {
+      // 日志 label 仅用于归属，下游 sanitize 会再过滤；优先 serverId/name，回落 URL host。
+      const serverId = target.serverId?.trim();
+      if (serverId) {
+        return serverId;
+      }
+      const name = target.name?.trim();
+      if (name) {
+        return name;
+      }
+      try {
+        return new URL(target.url.trim()).host;
+      } catch {
+        return target.url.trim();
+      }
+    }
   }
 }
 

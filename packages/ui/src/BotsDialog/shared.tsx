@@ -141,6 +141,7 @@ export function createDefaultCommands(): BotConfig["allowedCommands"] {
     new: true,
     workspace: true,
     model: true,
+    engine: true,
     mode: true,
     thoughtLevel: true,
     reply: true,

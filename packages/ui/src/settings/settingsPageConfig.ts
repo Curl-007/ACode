@@ -13,6 +13,7 @@ import {
   Anchor,
   Brain,
   Blocks,
+  Cpu,
   Globe2,
   Cable,
   WandSparkles,
@@ -78,6 +79,12 @@ const BASE_SETTINGS_SECTIONS: SettingsSectionDefinition[] = [
     id: "memory",
     icon: Brain,
     titleId: "settings.memory",
+    groupId: "agentCapabilities",
+  },
+  {
+    id: "engine",
+    icon: Cpu,
+    titleId: "settings.engine.title",
     groupId: "agentCapabilities",
   },
   {

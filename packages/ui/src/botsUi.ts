@@ -1,9 +1,14 @@
 import type {
+  ACodeProvider,
   BotConfig,
   BotProvider,
   BotReplyGranularity,
 } from "@acode/shared";
-import { getSupportedBotReplyGranularities } from "@acode/shared";
+import {
+  BOT_ACODE_PROVIDER_OPTIONS,
+  getAgentEnginePermissionModes,
+  getSupportedBotReplyGranularities,
+} from "@acode/shared";
 
 export type BotProviderEntryId = BotProvider | "dingding";
 
@@ -17,8 +22,8 @@ export const BOT_PROVIDERS: BotProviderEntry[] = [
   { id: "lark", label: "Lark", implemented: true },
   { id: "telegram", label: "Telegram", implemented: true },
   { id: "dingding", label: "DingTalk", implemented: false },
-  { id: "discord", label: "Discord", implemented: false },
-  { id: "wecom", label: "WeCom", implemented: false },
+  { id: "discord", label: "Discord", implemented: true },
+  { id: "wecom", label: "WeCom", implemented: true },
   { id: "webhook", label: "Webhook", implemented: true },
 ];
 
@@ -50,6 +55,37 @@ export const BOT_REPLY_GRANULARITIES: Array<{
 ];
 
 export const DEFAULT_BOT_REPLY_GRANULARITY_ENTRY = BOT_REPLY_GRANULARITIES[0]!;
+
+/**
+ * Bot 可选引擎，由共享 BOT_ACODE_PROVIDER_OPTIONS（已过滤到 implemented 引擎）派生。
+ * label/description 复用既有 engine.<id>.name / engine.<id>.description 文案键。
+ */
+export const BOT_ENGINES: Array<{
+  id: ACodeProvider;
+  labelId: string;
+  descriptionId: string;
+}> = BOT_ACODE_PROVIDER_OPTIONS.map((engine) => ({
+  id: engine.id,
+  labelId: `engine.${engine.id}.name`,
+  descriptionId: `engine.${engine.id}.description`,
+}));
+
+export function getBotEngineEntry(engine: ACodeProvider | undefined) {
+  return BOT_ENGINES.find((entry) => entry.id === engine) ?? BOT_ENGINES[0];
+}
+
+/**
+ * 某引擎支持的权限模式选项（按引擎作用域，来自注册表）。
+ * label 复用 engine.permissionMode.<id> 文案键；native 引擎为 build/edit/plan/yolo。
+ */
+export function getBotPermissionModesForEngine(
+  engine: ACodeProvider | undefined,
+): Array<{ id: string; labelId: string }> {
+  return getAgentEnginePermissionModes(engine).map((mode) => ({
+    id: mode,
+    labelId: `engine.permissionMode.${mode}`,
+  }));
+}
 
 export function getBotReplyGranularitiesForProvider(
   provider: BotProvider,

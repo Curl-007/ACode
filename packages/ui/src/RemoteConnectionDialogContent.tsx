@@ -8,7 +8,7 @@ import type {
   SSHConfigAliasOption,
   WSLDistro,
 } from "@acode/shared";
-import { TID_REMOTE_KIND_DOCKER, TID_REMOTE_KIND_SSH, TID_REMOTE_KIND_WSL } from "@acode/shared";
+import { TID_REMOTE_KIND_DOCKER, TID_REMOTE_KIND_SERVER, TID_REMOTE_KIND_SSH, TID_REMOTE_KIND_WSL } from "@acode/shared";
 import type {
   IMcpSyncService,
   IPluginSyncService,
@@ -19,6 +19,7 @@ import type {
 import {
   AlertTriangleIcon,
   ChevronRightIcon,
+  CloudIcon,
   LoaderIcon,
   MonitorCogIcon,
   ServerIcon,
@@ -45,6 +46,8 @@ function getKindIcon(kind: RemoteTarget["kind"]) {
       return MonitorCogIcon;
     case "wsl":
       return TerminalIcon;
+    case "server":
+      return CloudIcon;
   }
 }
 
@@ -80,7 +83,9 @@ export function RemoteConnectionKindStep({
                   ? TID_REMOTE_KIND_SSH
                   : value === "wsl"
                     ? TID_REMOTE_KIND_WSL
-                    : TID_REMOTE_KIND_DOCKER
+                    : value === "server"
+                      ? TID_REMOTE_KIND_SERVER
+                      : TID_REMOTE_KIND_DOCKER
               }
               className={cn(
                 "flex min-h-32 flex-col items-start gap-4 rounded-2xl border p-4 text-left transition-colors",
@@ -150,6 +155,10 @@ export function RemoteConnectionSettingsStep({
   manualDockerContainer,
   dockerContainers,
   dockerAvailable,
+  serverUrl = "",
+  serverName = "",
+  serverToken = "",
+  serverWorkspacePath = "",
   sshConfigAliases,
   sshConfigAliasesLoading,
   sshConfigAliasesError,
@@ -172,6 +181,10 @@ export function RemoteConnectionSettingsStep({
   onWslUserChange,
   onDockerContainerChange,
   onManualDockerContainerChange,
+  onServerUrlChange,
+  onServerNameChange,
+  onServerTokenChange,
+  onServerWorkspacePathChange,
   onDockerContainersRefresh,
   onApplySshConfigAlias,
   onClearSelectedSshConfigAlias,
@@ -193,6 +206,10 @@ export function RemoteConnectionSettingsStep({
   manualDockerContainer: string;
   dockerContainers: DockerContainerInfo[];
   dockerAvailable: boolean | null;
+  serverUrl?: string;
+  serverName?: string;
+  serverToken?: string;
+  serverWorkspacePath?: string;
   sshConfigAliases: SSHConfigAliasOption[];
   sshConfigAliasesLoading: boolean;
   sshConfigAliasesError: string;
@@ -215,6 +232,10 @@ export function RemoteConnectionSettingsStep({
   onWslUserChange?: (value: string) => void;
   onDockerContainerChange: (value: string) => void;
   onManualDockerContainerChange: (value: string) => void;
+  onServerUrlChange?: (value: string) => void;
+  onServerNameChange?: (value: string) => void;
+  onServerTokenChange?: (value: string) => void;
+  onServerWorkspacePathChange?: (value: string) => void;
   onDockerContainersRefresh?: () => void;
   onApplySshConfigAlias: (value: SSHConfigAliasOption) => void;
   onClearSelectedSshConfigAlias: () => void;
@@ -254,6 +275,10 @@ export function RemoteConnectionSettingsStep({
           manualDockerContainer={manualDockerContainer}
           dockerContainers={dockerContainers}
           dockerAvailable={dockerAvailable}
+          serverUrl={serverUrl}
+          serverName={serverName}
+          serverToken={serverToken}
+          serverWorkspacePath={serverWorkspacePath}
           sshConfigAliases={sshConfigAliases}
           sshConfigAliasesLoading={sshConfigAliasesLoading}
           sshConfigAliasesError={sshConfigAliasesError}
@@ -274,6 +299,10 @@ export function RemoteConnectionSettingsStep({
           setWslUser={onWslUserChange}
           setDockerContainer={onDockerContainerChange}
           setManualDockerContainer={onManualDockerContainerChange}
+          setServerUrl={onServerUrlChange}
+          setServerName={onServerNameChange}
+          setServerToken={onServerTokenChange}
+          setServerWorkspacePath={onServerWorkspacePathChange}
           refreshDockerContainers={onDockerContainersRefresh}
         />
       </div>

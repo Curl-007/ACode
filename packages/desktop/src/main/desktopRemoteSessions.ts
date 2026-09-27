@@ -9,6 +9,7 @@ import {
   HostResponseTypes,
   hostResponseMessageSchema,
   InternalChannels,
+  normalizeServerEndpoint,
   PlatformChannels,
   resolveWorkspaceKey,
   type RemoteTarget,
@@ -56,23 +57,6 @@ interface PendingProviderProvisioningExecution {
   readonly reject: (error: Error) => void;
 }
 
-function normalizeServerRemoteUrlForComparison(url: string): string {
-  try {
-    const parsed = new URL(url.trim());
-    if (parsed.protocol === "ws:") parsed.protocol = "http:";
-    if (parsed.protocol === "wss:") parsed.protocol = "https:";
-    parsed.hash = "";
-    parsed.search = "";
-    const normalizedPath = parsed.pathname.replace(/\/+$/g, "");
-    parsed.pathname = normalizedPath.endsWith("/ws")
-      ? normalizedPath.slice(0, -"/ws".length) || "/"
-      : normalizedPath || "/";
-    return parsed.toString().replace(/\/$/g, "");
-  } catch {
-    return url.trim().replace(/\/+$/g, "");
-  }
-}
-
 function isSameRemoteTarget(left: RemoteTarget, right: RemoteTarget): boolean {
   if (left.kind !== right.kind) return false;
   switch (left.kind) {
@@ -95,8 +79,7 @@ function isSameRemoteTarget(left: RemoteTarget, right: RemoteTarget): boolean {
     case "server":
       return (
         right.kind === "server" &&
-        normalizeServerRemoteUrlForComparison(left.url) ===
-          normalizeServerRemoteUrlForComparison(right.url)
+        normalizeServerEndpoint(left.url) === normalizeServerEndpoint(right.url)
       );
   }
 }

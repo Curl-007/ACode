@@ -257,6 +257,14 @@ export function acquireFeishuWebSocketLock(
   return acquireBotRuntimeLock(`${bot.provider}-websocket`, bot.feishuAppId?.trim() ?? "", bot.id);
 }
 
+/** Discord 同一 token 只允许一个 Gateway 会话；两个 ACode 窗口不能同时连接。 */
+export async function acquireDiscordGatewayLock(
+  token: string,
+  botId: string,
+): Promise<BotRuntimeLock | null> {
+  return acquireBotRuntimeLock("discord-gateway", token, botId);
+}
+
 export function waitFor(ms: number, signal: AbortSignal): Promise<void> {
   if (signal.aborted) {
     return Promise.resolve();

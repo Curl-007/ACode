@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve as resolvePath } from "node:path";
-import { ACODE_AGENT_RUNTIME } from "@acode/shared";
+import { getEngineRuntime, type ACodeProvider } from "@acode/shared";
 
 const packagedResourcesPath =
   typeof (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath === "string"
@@ -41,8 +41,15 @@ function resolveLegacyBundledResourceRoots(moduleDir?: string): Array<string | n
   ];
 }
 
-export function findACodeAgentRuntimeBinary(): string | null {
-  const runtime = ACODE_AGENT_RUNTIME;
+/**
+ * 按引擎描述符发现 binary。
+ *
+ * 缺省/native(glm) 走既有候选链（GLM_BINARY_PATH env、packagedResources、~/.acode/server/agents/glm、
+ * bundled-agents）。外部引擎(codex/opencode/gemini)用各自的 env var / bundledResourceDir，但默认
+ * 不随包 bundle，多由用户自装——未命中返回 null，由调用方 surface missingBinaryMessage。
+ */
+export function findACodeAgentRuntimeBinary(engineId?: ACodeProvider | string | null): string | null {
+  const runtime = getEngineRuntime(engineId);
   const entrySegments = runtime.resolveEntrySegments(process.platform);
   const resourceSegments = [runtime.bundledResourceDir, ...entrySegments];
   const envPath = process.env[runtime.binaryEnvVar];
@@ -69,13 +76,15 @@ export function findACodeAgentRuntimeBinary(): string | null {
 }
 
 /**
- * 查找 agent 的 JS bundle（resources/glm/acode.cjs）。
+ * 查找 agent 的 JS bundle（native: resources/glm/acode.cjs）。
  * 桌面打包态用 app 内置的 Electron Node runtime 直接执行这个 bundle，不再随包内置独立 Node 二进制。
  * 候选目录与 findACodeAgentRuntimeBinary 完全平行，只是入口换成平台无关的 nodeBundleEntryFile。
- * 不查 GLM_BINARY_PATH——那个 env 指向原生二进制，语义不同。
+ * 不查 binaryEnvVar——那个 env 指向原生二进制，语义不同。
  */
-export function findACodeAgentRuntimeNodeBundle(): string | null {
-  const runtime = ACODE_AGENT_RUNTIME;
+export function findACodeAgentRuntimeNodeBundle(
+  engineId?: ACodeProvider | string | null,
+): string | null {
+  const runtime = getEngineRuntime(engineId);
   const entrySegments = runtime.resolveNodeBundleSegments();
   const resourceSegments = [runtime.bundledResourceDir, ...entrySegments];
 

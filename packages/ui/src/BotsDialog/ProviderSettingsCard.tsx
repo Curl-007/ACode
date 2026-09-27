@@ -21,6 +21,7 @@ import { cn } from "@/components/lib/utils.js";
 import { logger } from "@/logger.js";
 import type { BindCodeState, FeishuRegistrationState, WeixinRegistrationState } from "./shared.js";
 import { TELEGRAM_BOTFATHER_URL, formatBindCountdown } from "./shared.js";
+import { WeComSettingsPanel, type WeComConfigValues } from "./WeComSettingsPanel.js";
 
 function DetailPanel({ children }: { children: ReactNode }) {
   return <div className="rounded-lg bg-background p-3">{children}</div>;
@@ -125,6 +126,7 @@ export function ProviderSettingsCard({
   secretSaving,
   onCredentialValueChange,
   onSaveSecret,
+  onSaveWeCom,
   onRemoveSecret,
   onOpenTelegramBotFather,
   onStartWeixinRegistration,
@@ -148,6 +150,7 @@ export function ProviderSettingsCard({
   secretSaving: boolean;
   onCredentialValueChange: (value: string) => void;
   onSaveSecret: () => void;
+  onSaveWeCom: (values: WeComConfigValues) => void;
   onRemoveSecret: () => void;
   onOpenTelegramBotFather: () => void;
   onStartWeixinRegistration: () => void;
@@ -157,6 +160,7 @@ export function ProviderSettingsCard({
   onCopyBindCommand: () => void;
 }) {
   const { intl } = useACodeIntl();
+  // webhook 无凭据配置；wecom 用专门的多字段表单分支。
   if (bot.provider === "webhook") {
     return null;
   }
@@ -222,6 +226,71 @@ export function ProviderSettingsCard({
         onCredentialValueChange={onCredentialValueChange}
         onSaveSecret={onSaveSecret}
       />
+    );
+  } else if (bot.provider === "discord" && !hasSecret) {
+    // Discord 只需要 Bot Token；token 保存后落入通用 bind 流程展示 /bind。
+    control = null;
+    detail = (
+      <DetailPanel>
+        <div className="min-w-52 space-y-3 text-ui-base text-foreground-subtle">
+          <div>{intl.formatMessage({ id: "bots.discord.applicationHint" })}</div>
+          <div className="flex w-full min-w-0 items-center gap-2">
+            <Input
+              size="lg"
+              type="password"
+              value={credentialValue}
+              onChange={(event) => onCredentialValueChange(event.target.value)}
+              placeholder={intl.formatMessage({ id: "bots.discord.tokenField" })}
+              className="min-w-0 flex-1"
+              disabled={secretSaving}
+            />
+            <Button
+              variant="outline"
+              size="lg"
+              onClick={onSaveSecret}
+              disabled={secretSaving || !credentialValue.trim()}
+            >
+              {secretSaving ? (
+                <LoaderCircle className="size-4 animate-spin" />
+              ) : (
+                <KeyRound className="size-4" />
+              )}
+              {intl.formatMessage({ id: "bots.saveSecret" })}
+            </Button>
+          </div>
+        </div>
+      </DetailPanel>
+    );
+  } else if (bot.provider === "wecom") {
+    // 企业微信：corpid/agentid/EncodingAESKey + CorpSecret/回调Token 一次性配置，
+    // 保存后回调验签才生效；随后进入通用 bind 流程绑定成员私聊。
+    const wecomConfigured =
+      hasSecret && Boolean(bot.webhookSecretRef) && Boolean(bot.wecomEncodingAESKey);
+    control = wecomConfigured ? (
+      <div className="flex w-full flex-wrap justify-end gap-2">
+        {!showBindCode && !hasRuntimeError ? (
+          <Button variant="outline" size="lg" onClick={onCreateBindCode}>
+            {intl.formatMessage({ id: "bots.bind" })}
+          </Button>
+        ) : null}
+        <Button variant="outline" size="lg" onClick={onRemoveSecret}>
+          {intl.formatMessage({ id: "bots.removeSecret" })}
+        </Button>
+      </div>
+    ) : (
+      <Button
+        variant="outline"
+        size="lg"
+        onClick={onRemoveSecret}
+        disabled={!hasSecret}
+      >
+        {intl.formatMessage({ id: "bots.removeSecret" })}
+      </Button>
+    );
+    detail = (
+      <DetailPanel>
+        <WeComSettingsPanel bot={bot} saving={secretSaving} onSave={onSaveWeCom} />
+      </DetailPanel>
     );
   } else if ((isFeishuLike && !hasSecret) || (isWeixin && !hasSecret)) {
     const loading = isWeixin ? weixinRegistrationLoading : feishuRegistrationLoading;

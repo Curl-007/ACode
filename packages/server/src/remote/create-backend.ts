@@ -31,5 +31,11 @@ export async function createRemoteBackend(target: RemoteTarget): Promise<IRemote
       const { DockerBackend } = await import("./docker-backend.js");
       return new DockerBackend(target);
     }
+    case "server":
+      // server kind 附着到已运行的 server（WebSocket RPC），没有 stdio backend，
+      // 也不部署/拉起远端进程。误入 deploy 路径时显式拒绝，避免半连接。
+      throw new Error(
+        "server 远端类型通过 WebSocket 附着已运行的 server，不能经 createRemoteBackend 创建 stdio backend",
+      );
   }
 }

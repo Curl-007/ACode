@@ -4,6 +4,7 @@ const BOT_POLICY_COMMAND_ORDER = [
   "new",
   "workspace",
   "model",
+  "engine",
   "mode",
   "thoughtLevel",
   "reply",

@@ -39,10 +39,16 @@ export type {
 export type {
   DockerConnectOptions,
   RemoteTarget,
+  ServerConnectOptions,
   SSHConnectOptions,
   WSLConnectOptions,
 } from "./remoteTarget.js";
 export { stripRemoteTargetSecrets } from "./remoteTarget.js";
+export {
+  normalizeServerEndpoint,
+  normalizeServerIdForIdentity,
+  resolveServerIdentityId,
+} from "./serverEndpoint.js";
 export { buildSshRemoteHostKey } from "./remoteSshHostKey.js";
 export { buildRemoteEnvironmentKey } from "./remoteEnvironmentKey.js";
 export type {
@@ -95,6 +101,7 @@ export * from "./acode-slash-command-help.js";
 export * from "./acodeEndpoint.js";
 export * from "./acode-source-headers.js";
 export * from "./acode-agent-policy.js";
+export * from "./acode-agent-registry.js";
 export * from "./acode-media-policy.js";
 export * from "./media-preview.js";
 export * from "./plugin-display-name.js";

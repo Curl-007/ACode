@@ -91,6 +91,7 @@ export function isUserCommandAllowed(
     | "reconnect"
     | "workspace"
     | "model"
+    | "engine"
     | "mode"
     | "thoughtLevel"
     | "task"

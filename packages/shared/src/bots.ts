@@ -1,7 +1,10 @@
 /* oxlint-disable eslint(max-lines) -- Bot 共享合约集中维护 provider、状态和 schema，保持类型与校验就近。 */
 import { z } from "zod";
 import { modelSelectionSchema, type ModelSelection } from "./model-selection.js";
-import { ACODE_AGENT_PROVIDER, ACODE_AGENT_PROVIDER_LABEL } from "./acode-agent-policy.js";
+import {
+  acodeAgentEngineIdSchema,
+  getAgentEngineDescriptors,
+} from "./acode-agent-registry.js";
 import type {
   ACodeConfigOption,
   ACodeElicitationRequest,
@@ -71,6 +74,14 @@ export const BOT_REPLY_GRANULARITIES = [
 export const ALL_BOT_WORKSPACES = "*";
 export const BOT_BIND_CODE_TTL_MS = 30_000;
 
+/**
+ * Bot 草稿缺省权限模式（services 与 UI 共用的单一事实源）。
+ *
+ * 既有 bot（currentOptions.mode 缺省）沿用 yolo，行为零变化；用户显式选择后下发所选模式。
+ * 不再像旧实现那样硬锁——yolo 只是缺省，不是强制。
+ */
+export const BOT_DEFAULT_DRAFT_MODE = "yolo";
+
 export interface BotWorkspaceRef {
   id: string;
   label: string;
@@ -83,6 +94,8 @@ export interface BotAllowedCommands {
   new: boolean;
   workspace: boolean;
   model: boolean;
+  /** 引擎选择命令 /engine；缺省随 DEFAULT_BOT_COMMANDS 开启。 */
+  engine?: boolean;
   mode?: boolean;
   thoughtLevel: boolean;
   sandboxMode?: boolean;
@@ -97,6 +110,11 @@ export interface BotCurrentOptions {
   mode?: string;
   sandboxMode?: string;
   approvalPolicy?: string;
+  /**
+   * 每 bot 默认引擎（持久化键 cli，与 botCurrentOptionsSchema 对齐）。
+   * 草稿初始化读取它决定 provider；缺省 = native(glm)。
+   */
+  cli?: ACodeProvider;
 }
 
 export type BotReplyMode = BotReplyGranularity;
@@ -111,6 +129,10 @@ export interface BotConfig {
   webhookUrl?: string;
   webhookAuthHeaderName?: string;
   feishuAppId?: string;
+  // 企业微信自建应用：corpid/agentid 为普通配置；CorpSecret 复用 credentialRef，回调 Token 复用 webhookSecretRef。
+  wecomCorpId?: string;
+  wecomAgentId?: string;
+  wecomEncodingAESKey?: string;
   providerUserId?: string;
   displayName?: string;
   allowedWorkspaces: string[];
@@ -246,6 +268,8 @@ export type BotCommand =
   | { type: "model.list" }
   | { type: "model.provider.set"; value: string }
   | { type: "model.set"; value: string }
+  | { type: "engine.list" }
+  | { type: "engine.set"; value: string }
   | { type: "mode.list" }
   | { type: "mode.set"; value: string }
   | { type: "thoughtLevel.list" }
@@ -275,6 +299,7 @@ export interface SelectionPrompt {
     | "workspace.set"
     | "model.provider.set"
     | "model.set"
+    | "engine.set"
     | "mode.set"
     | "thoughtLevel.set"
     | "task.set"
@@ -383,6 +408,7 @@ export const botAllowedCommandsSchema = z
     new: z.boolean(),
     workspace: z.boolean(),
     model: z.boolean(),
+    engine: z.boolean().optional(),
     mode: z.boolean().optional(),
     thoughtLevel: z.boolean(),
     sandboxMode: z.boolean().optional(),
@@ -401,14 +427,14 @@ export const botCurrentOptionsSchema = z
     mode: z.string().min(1).optional(),
     sandboxMode: z.string().min(1).optional(),
     approvalPolicy: z.string().min(1).optional(),
-    // 兼容旧 bot-config.json；CLI provider 现在统一由 ACode Protocol 侧配置决定。
-    cli: z.literal(ACODE_AGENT_PROVIDER).optional(),
+    // 兼容旧 bot-config.json；cli 现覆盖整个引擎联合（native + 外部引擎）。
+    cli: acodeAgentEngineIdSchema.optional(),
   })
   .strict();
 
 export const botDraftOptionsSchema = z
   .object({
-    provider: z.literal(ACODE_AGENT_PROVIDER),
+    provider: acodeAgentEngineIdSchema,
     modelSelection: modelSelectionSchema.optional(),
     mode: z.string().min(1).optional(),
   })
@@ -464,6 +490,9 @@ export const botConfigSchema = z
     webhookUrl: z.string().url().optional(),
     webhookAuthHeaderName: z.string().min(1).optional(),
     feishuAppId: z.string().min(1).optional(),
+    wecomCorpId: z.string().min(1).optional(),
+    wecomAgentId: z.string().min(1).optional(),
+    wecomEncodingAESKey: z.string().min(1).optional(),
     providerUserId: z.string().min(1).optional(),
     displayName: z.string().optional(),
     allowedWorkspaces: z.array(z.string().min(1)),
@@ -525,6 +554,7 @@ export const DEFAULT_BOT_COMMANDS: BotAllowedCommands = {
   new: true,
   workspace: true,
   model: true,
+  engine: true,
   mode: true,
   thoughtLevel: true,
   reply: true,
@@ -552,7 +582,15 @@ export function normalizeBotReplyGranularity(
   return supported.includes(candidate) ? candidate : supported[0]!;
 }
 
+/**
+ * Bot 可选 ACode 引擎列表，由注册表生成。
+ *
+ * 只暴露 implemented 引擎：外部引擎的会话协议适配器尚未接入（registry implemented:false），
+ * 让用户在 bot 配置里选到不能驱动会话的引擎是误导。当前等价于 [glm]，外部引擎实现后自动出现。
+ */
 export const BOT_ACODE_PROVIDER_OPTIONS: Array<{
   id: ACodeProvider;
   label: string;
-}> = [{ id: ACODE_AGENT_PROVIDER, label: ACODE_AGENT_PROVIDER_LABEL }];
+}> = getAgentEngineDescriptors()
+  .filter((engine) => engine.implemented)
+  .map((engine) => ({ id: engine.id, label: engine.label }));

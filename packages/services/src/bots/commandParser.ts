@@ -61,6 +61,9 @@ export function parseBotCommand(text: string): BotCommand {
     case "mode":
     case "模式":
       return rest ? { type: "mode.set", value: rest } : { type: "mode.list" };
+    case "engine":
+    case "引擎":
+      return rest ? { type: "engine.set", value: rest } : { type: "engine.list" };
     case "thoughtlevel":
     case "thought_level":
     case "thought-level":

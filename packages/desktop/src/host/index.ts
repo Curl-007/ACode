@@ -72,6 +72,7 @@ import {
   formatZodError,
   buildRemoteWorkspaceIdentity,
   buildRemoteEnvironmentKey,
+  normalizeServerEndpoint,
   isOffPeakTicketExpiredError,
   isRemoteWorkspaceIdentity,
   resolveWorkspaceKey,
@@ -140,13 +141,16 @@ import {
   type WindowRemoteConnectionCloseEvent,
   type WindowRemoteConnectionHandle,
 } from "./windowRemoteConnectionRegistry.js";
+import { connectToRemoteServerTarget } from "./serverRemoteConnection.js";
 import { createWindowHostControllerRuntime } from "./windowHostControllerService.js";
 import { resolveAutomationSubmissionModelSelection } from "./automationModelSelection.js";
 import { createRemoteConnectionProgressContext } from "@acode/server/remote/remoteConnectionProgressContext.js";
 type RemoteBackendHostConnection = RemoteConnection & {
   backend: IRemoteBackend;
 };
-type HostRemoteConnection = RemoteBackendHostConnection;
+// server kind 附着到已运行 server，没有 stdio backend；backend 因此对这一路可选。
+type ServerHostConnection = RemoteConnection & { backend?: undefined };
+type HostRemoteConnection = RemoteBackendHostConnection | ServerHostConnection;
 interface HostRemoteConnectionCapabilities {
   browserRecordingUploader?: Pick<IRemoteBackend, "upload">;
   remoteMediaPreviewFactory?: (
@@ -1525,6 +1529,11 @@ function formatRemoteTargetForLog(target: RemoteTarget): string {
     }
     case "docker":
       return `docker:${target.container}`;
+    case "server": {
+      // token 是 secret：日志只打归一化 URL，token 以 [redacted] 占位，绝不输出原值。
+      const hasToken = Boolean(target.token?.trim());
+      return `server:${normalizeServerEndpoint(target.url)}${hasToken ? "?token=[redacted]" : ""}`;
+    }
   }
 }
 
@@ -1616,53 +1625,66 @@ async function createWindowRemoteConnectionHandle(params: {
       listener(event);
     }
   };
-  const connection = await setupRemoteConnection(
-    params.target,
-    params.remoteAssets,
-    { fetch: requireActiveHostApiNetworkTransport().fetch },
-    await resolveDesktopRemoteRuntimeNetwork(params.target),
-    (exitCode) => notifyClose({ exitCode, signal: null }),
-    params.target.kind === "ssh" ? "caller-serialized" : "remote",
-    params.target.kind === "ssh" ? params.signal : undefined,
-  );
+
+  // server kind 附着到已运行 server（WebSocket RPC），没有 stdio backend；
+  // 其余 kind 走 setupRemoteConnection 的部署 + exec + handshake。两条路返回同形 RemoteConnection。
+  const connection: HostRemoteConnection =
+    params.target.kind === "server"
+      ? await connectToRemoteServerTarget(params.target, {
+          signal: params.signal,
+          fetch: requireActiveHostApiNetworkTransport().fetch,
+          onDidRemoteClose: ({ code, reason }) =>
+            notifyClose({ exitCode: code, signal: null, ...(reason ? { error: reason } : {}) }),
+        })
+      : await setupRemoteConnection(
+          params.target,
+          params.remoteAssets,
+          { fetch: requireActiveHostApiNetworkTransport().fetch },
+          await resolveDesktopRemoteRuntimeNetwork(params.target),
+          (exitCode) => notifyClose({ exitCode, signal: null }),
+          params.target.kind === "ssh" ? "caller-serialized" : "remote",
+          params.target.kind === "ssh" ? params.signal : undefined,
+        );
 
   if (params.signal.aborted) {
     await disposeHostRemoteConnection(connection);
     throw new Error("远程连接已取消");
   }
 
-  const backendConnection = connection;
-  const materializePromptAttachments = async (request: {
-    taskId: string;
-    traceId: TraceId | string;
-    content: string;
-    attachments?: ACodePromptAttachment[];
-  }) => {
-    const result = await materializeRemotePromptAttachments(request, {
-      backend: backendConnection.backend,
-    });
-    return { content: result.content, attachments: result.attachments };
-  };
-  const promptAttachmentTransferService = createRemotePromptAttachmentTransferService(
-    backendConnection.backend,
-    {
-      onJanitorError: (error: unknown) =>
-        logger.warn("remote prompt attachment janitor failed", error),
-    },
-  );
+  // backend 仅 stdio 路径存在；server 附着没有它，prompt 附件不在 host 侧 eager 物化，
+  // 直接复用 server 经 RPC 暴露的 transfer service（与纯 Web 附着同模型）。
+  const backend = "backend" in connection ? connection.backend : undefined;
+  const materializePromptAttachments = backend
+    ? async (request: {
+        taskId: string;
+        traceId: TraceId | string;
+        content: string;
+        attachments?: ACodePromptAttachment[];
+      }) => {
+        const result = await materializeRemotePromptAttachments(request, { backend });
+        return { content: result.content, attachments: result.attachments };
+      }
+    : undefined;
+  const promptAttachmentTransferService =
+    backend != null
+      ? createRemotePromptAttachmentTransferService(backend, {
+          onJanitorError: (error: unknown) =>
+            logger.warn("remote prompt attachment janitor failed", error),
+        })
+      : connection.services.promptAttachmentTransferService;
   const services = createRemoteWorkspaceServiceCollection({
     clientConfigService,
-    connectionServices: backendConnection.services,
+    connectionServices: connection.services,
     sourceServices: activeServices ?? undefined,
     parentPort,
     createRemotePromptAttachmentSessionService: (service) =>
-      createRemotePromptAttachmentSessionService(service, {
-        materializePromptAttachments,
-      }),
+      materializePromptAttachments
+        ? createRemotePromptAttachmentSessionService(service, { materializePromptAttachments })
+        : service,
     createRemotePromptAttachmentTaskService: (service) =>
-      createRemotePromptAttachmentTaskService(service, {
-        materializePromptAttachments,
-      }),
+      materializePromptAttachments
+        ? createRemotePromptAttachmentTaskService(service, { materializePromptAttachments })
+        : service,
     createReportingRemoteACodeTaskService: (service) =>
       createReportingRemoteACodeTaskService(service, {
         taskRealtimePort: activeSessionRealtimePort ?? undefined,
@@ -1690,13 +1712,12 @@ async function createWindowRemoteConnectionHandle(params: {
         });
   return {
     services,
-    capabilities:
-      "backend" in connection
-        ? {
-            browserRecordingUploader: connection.backend,
-            ...(remoteMediaPreviewFactory ? { remoteMediaPreviewFactory } : {}),
-          }
-        : {},
+    capabilities: {
+      // browserRecordingUploader 需要 backend.upload，server 附着没有 backend，故省略；
+      // 媒体预览代理只依赖 IFileService（RPC 同样可达），server kind 也保留。
+      ...(backend ? { browserRecordingUploader: backend } : {}),
+      ...(remoteMediaPreviewFactory ? { remoteMediaPreviewFactory } : {}),
+    },
     onDidClose(listener) {
       closeListeners.add(listener);
       return { dispose: () => closeListeners.delete(listener) };

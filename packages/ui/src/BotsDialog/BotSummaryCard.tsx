@@ -1,10 +1,12 @@
 import { useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 import { Clock3, Trash2 } from "lucide-react";
 import type {
+  ACodeProvider,
   BotConfig,
   BotReplyGranularity,
   BotServiceStatus,
 } from "@acode/shared";
+import { ACODE_NATIVE_AGENT_ENGINE } from "@acode/shared";
 import { Button } from "@/components/ui/button.js";
 import {
   Select,
@@ -20,6 +22,9 @@ import {
   SettingsRow,
 } from "@/settings/SettingsPageParts.js";
 import {
+  BOT_ENGINES,
+  getBotEngineEntry,
+  getBotPermissionModesForEngine,
   getBotReplyGranularitiesForProvider,
   getBotReplyGranularityEntryForProvider,
 } from "@/botsUi.js";
@@ -227,8 +232,108 @@ export function BotReplyGranularityCard({
   );
 }
 
-export function BotDangerCard({ onDelete }: { onDelete: () => void }) {
+/**
+ * 每 bot 默认引擎卡片。写 bot.currentOptions.cli（持久化键 cli），经 saveBot 归一保存。
+ * 草稿初始化读取它决定 createTask 的 provider；选项只列已实现引擎（当前等价于 native glm）。
+ */
+export function BotEngineCard({
+  bot,
+  onPatchBot,
+}: {
+  bot: BotConfig;
+  onPatchBot: (patch: Partial<BotConfig>) => void;
+}) {
   const { intl } = useACodeIntl();
+  const selectedEngine = getBotEngineEntry(bot.currentOptions.cli);
+
+  return (
+    <SettingsRow
+      label={intl.formatMessage({ id: "bots.engine" })}
+      description={
+        selectedEngine
+          ? intl.formatMessage({ id: selectedEngine.descriptionId })
+          : intl.formatMessage({ id: "bots.engine.description" })
+      }
+      control={
+        <Select
+          value={selectedEngine?.id ?? ACODE_NATIVE_AGENT_ENGINE}
+          onValueChange={(cli) => {
+            // 引擎切换时清掉权限模式 override：旧模式可能不在新引擎的支持集里。
+            // 留空表示跟随新引擎默认，避免持久化一个对新引擎非法的模式。
+            onPatchBot({
+              currentOptions: {
+                modelSelection: bot.currentOptions.modelSelection,
+                sandboxMode: bot.currentOptions.sandboxMode,
+                approvalPolicy: bot.currentOptions.approvalPolicy,
+                cli: cli as ACodeProvider,
+              },
+            });
+          }}
+        >
+          <SelectTrigger size="lg" className="w-48 justify-between">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {BOT_ENGINES.map((engine) => (
+              <SelectItem key={engine.id} value={engine.id}>
+                {intl.formatMessage({ id: engine.labelId })}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      }
+    />
+  );
+}
+
+/**
+ * 每 bot 默认权限模式卡片。写 bot.currentOptions.mode；草稿未显式 /mode 覆盖时跟随它。
+ * 选项按所选引擎的支持集派生（native = build/edit/plan/yolo），来自引擎注册表，不内联枚举。
+ */
+export function BotPermissionModeCard({
+  bot,
+  onPatchBot,
+}: {
+  bot: BotConfig;
+  onPatchBot: (patch: Partial<BotConfig>) => void;
+}) {
+  const { intl } = useACodeIntl();
+  const engine = bot.currentOptions.cli ?? ACODE_NATIVE_AGENT_ENGINE;
+  const permissionModes = getBotPermissionModesForEngine(engine);
+  const selectedMode =
+    permissionModes.find((mode) => mode.id === bot.currentOptions.mode) ??
+    permissionModes[0];
+
+  return (
+    <SettingsRow
+      label={intl.formatMessage({ id: "bots.permissionMode" })}
+      description={intl.formatMessage({ id: "bots.permissionMode.description" })}
+      control={
+        <Select
+          value={selectedMode?.id ?? ""}
+          onValueChange={(mode) =>
+            onPatchBot({
+              currentOptions: { ...bot.currentOptions, mode },
+            })
+          }
+        >
+          <SelectTrigger size="lg" className="w-48 justify-between">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {permissionModes.map((mode) => (
+              <SelectItem key={mode.id} value={mode.id}>
+                {intl.formatMessage({ id: mode.labelId })}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      }
+    />
+  );
+}
+
+export function BotDangerCard({ onDelete }: { onDelete: () => void }) {  const { intl } = useACodeIntl();
 
   return (
     <SettingsGroupCard>

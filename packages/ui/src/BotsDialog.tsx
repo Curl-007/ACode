@@ -49,6 +49,8 @@ import {
 import { cn } from "@/components/lib/utils.js";
 import {
   BotDangerCard,
+  BotEngineCard,
+  BotPermissionModeCard,
   BotReplyGranularityCard,
   BotSummaryCard,
 } from "@/BotsDialog/BotSummaryCard.js";
@@ -344,10 +346,14 @@ export function BotsDialog({
   }, [entryProvider, open]);
 
   const saveBot = useCallback(
-    async (bot: BotConfig, secrets?: { credentialValue?: string }) => {
+    async (
+      bot: BotConfig,
+      secrets?: { credentialValue?: string; webhookSecretValue?: string },
+    ) => {
       const saved = await botsService.saveBot({
         bot,
         credentialValue: secrets?.credentialValue,
+        webhookSecretValue: secrets?.webhookSecretValue,
       });
       setConfig((previous) => ({
         ...previous,
@@ -823,6 +829,37 @@ export function BotsDialog({
     }
   };
 
+  const handleSaveWeCom = async (values: {
+    wecomCorpId: string;
+    wecomAgentId: string;
+    wecomEncodingAESKey: string;
+    corpSecret?: string;
+    callbackToken?: string;
+  }) => {
+    if (!selectedBot || secretSaving) return;
+    setSecretSaving(true);
+    try {
+      await saveBot(
+        {
+          ...selectedBot,
+          wecomCorpId: values.wecomCorpId,
+          wecomAgentId: values.wecomAgentId,
+          wecomEncodingAESKey: values.wecomEncodingAESKey,
+        },
+        {
+          credentialValue: values.corpSecret,
+          webhookSecretValue: values.callbackToken,
+        },
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error("[BotsDialog] 保存企业微信配置失败", message);
+      toast(intl.formatMessage({ id: "bots.saveFailed" }, { error: message }));
+    } finally {
+      setSecretSaving(false);
+    }
+  };
+
   const handleStartFeishuRegistration = useCallback(async () => {
     if (!selectedBot || !isFeishuBotProvider(selectedBot.provider)) return;
     setFeishuRegistrationLoading(true);
@@ -954,7 +991,10 @@ export function BotsDialog({
       return;
     }
 
-    if (selectedBot.provider === "telegram") {
+    if (
+      selectedBot.provider === "telegram" ||
+      selectedBot.provider === "discord"
+    ) {
       if (!selectedBot.credentialRef || selectedBot.providerUserId) {
         return;
       }
@@ -965,8 +1005,30 @@ export function BotsDialog({
         return;
       }
 
-      // Bugfix: Telegram 和飞书/Lark 一样分成凭据接入与私聊绑定两步；
+      // Bugfix: Telegram / Discord 和飞书/Lark 一样分成凭据接入与私聊绑定两步；
       // token 保存后自动展示 /bind；绑定码过期也自动续码，避免 30 秒有效期让用户卡在旧码上。
+      autoBindCreatingBotIdsRef.current.add(selectedBot.id);
+      void createBindCodeForBot(selectedBot).finally(() => {
+        autoBindCreatingBotIdsRef.current.delete(selectedBot.id);
+      });
+      return;
+    }
+
+    if (selectedBot.provider === "wecom") {
+      // 企业微信回调配置齐全但未绑定成员时，自动展示 /bind，让首屏直接可操作。
+      const wecomConfigured =
+        Boolean(selectedBot.credentialRef) &&
+        Boolean(selectedBot.webhookSecretRef) &&
+        Boolean(selectedBot.wecomEncodingAESKey);
+      if (!wecomConfigured || selectedBot.providerUserId) {
+        return;
+      }
+      if (bindCode?.botId === selectedBot.id && !bindExpired) {
+        return;
+      }
+      if (autoBindCreatingBotIdsRef.current.has(selectedBot.id)) {
+        return;
+      }
       autoBindCreatingBotIdsRef.current.add(selectedBot.id);
       void createBindCodeForBot(selectedBot).finally(() => {
         autoBindCreatingBotIdsRef.current.delete(selectedBot.id);
@@ -1319,6 +1381,7 @@ export function BotsDialog({
                   secretSaving={secretSaving}
                   onCredentialValueChange={setCredentialValue}
                   onSaveSecret={() => void handleSaveSecret()}
+                  onSaveWeCom={(values) => void handleSaveWeCom(values)}
                   onRemoveSecret={() => void handleRemoveSecret()}
                   onOpenTelegramBotFather={handleOpenTelegramBotFather}
                   onStartWeixinRegistration={() =>
@@ -1333,6 +1396,13 @@ export function BotsDialog({
                 />
 
                 <SettingsGroupCard>
+                  <BotEngineCard bot={selectedBot} onPatchBot={patchSelectedBot} />
+
+                  <BotPermissionModeCard
+                    bot={selectedBot}
+                    onPatchBot={patchSelectedBot}
+                  />
+
                   <BotReplyGranularityCard
                     bot={selectedBot}
                     onPatchBot={patchSelectedBot}

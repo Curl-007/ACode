@@ -19,12 +19,21 @@
  */
 export const BOT_REMOTE_FORBIDDEN_PERMISSION_MODES = ["yolo", "bypassPermissions"] as const;
 
-/** 某权限模式是否属于远程入口禁止的全权限档。 */
-export function isBotRemoteForbiddenPermissionMode(mode: string | null | undefined): boolean {
+/**
+ * 某权限模式是否跳过逐动作确认（yolo 直通 / bypass 直通）。
+ * 这是「全权限档」的通用判定单一事实源：远程 bot 天花板（P0-3）与托管策略地板的
+ * disableBypassPermissionsMode（P2 R4）都据此识别同一组模式，不各自维护清单。
+ */
+export function isBypassPermissionMode(mode: string | null | undefined): boolean {
   if (!mode) {
     return false;
   }
   return (BOT_REMOTE_FORBIDDEN_PERMISSION_MODES as readonly string[]).includes(mode);
+}
+
+/** 某权限模式是否属于远程入口禁止的全权限档。 */
+export function isBotRemoteForbiddenPermissionMode(mode: string | null | undefined): boolean {
+  return isBypassPermissionMode(mode);
 }
 
 /**

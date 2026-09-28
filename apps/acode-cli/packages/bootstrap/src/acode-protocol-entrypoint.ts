@@ -9,6 +9,7 @@ import {
 } from "@acode/adapters/mcp";
 import {
   acodeProtocolNotifications,
+  ACODE_APP_IS_PACKAGED_ENV,
   type ACodeMcpResourceSample,
   type ACodeMcpTelemetryEvent,
 } from "@acode/shared";
@@ -84,7 +85,12 @@ export async function runACodeProtocolAgent(
   options: RunACodeProtocolAgentOptions = {},
 ): Promise<void> {
   if (options.prepareStorageOnly) {
-    const config = createConfig({ env: options.env });
+    // 安全加固 P2：打包运行时（桌面 main 下发 ACODE_APP_IS_PACKAGED=1）加载托管策略
+    // 地板时忽略用户态 env 注入；与 createACodeApp 内的判定同源。
+    const config = createConfig({
+      env: options.env,
+      isPackaged: (options.env ?? process.env)[ACODE_APP_IS_PACKAGED_ENV] === "1",
+    });
     await prepareProtocolStartupStorage({
       dbPath: getSessionDbPath(config, options.cwd),
       input: options.input ?? process.stdin,
@@ -139,7 +145,10 @@ export async function runACodeProtocolAgent(
     | undefined;
   try {
     // 数据库准备先于账号、Registry 和遥测，不把远端材料等待混进迁移门禁。
-    const configResult = createConfig({ env: options.env });
+    const configResult = createConfig({
+      env: options.env,
+      isPackaged: (options.env ?? process.env)[ACODE_APP_IS_PACKAGED_ENV] === "1",
+    });
     sessionStore = await acquireProtocolStartupResource({
       signal: options.lifecycle?.signal,
       logger,

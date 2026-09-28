@@ -7,6 +7,7 @@ import { listSSHConfigAliasesFromLocalConfig } from "@acode/services/node";
 import { DEV_HELPER_APP_NAME, HELPER_APP_NAME } from "@acode/acode-cua/broker/helperConstants";
 import {
   ACODE_APP_VERSION_ENV,
+  ACODE_APP_IS_PACKAGED_ENV,
   ACODE_AGENT_RUNTIME,
   ACODE_DYNAMIC_WORKFLOW_MODE_ENV,
   ACODE_ENV,
@@ -539,6 +540,9 @@ export function buildHostProcessEnv(hostProcessLocalEnv: Record<string, string>)
     // 模型请求默认 header 由 agent 进程构造，过去只继承 shell env 导致桌面启动时拿不到 app 版本。
     // 这里从 main 进程显式下发，agent 子进程继承 host env 后即可稳定写入请求 header。
     [ACODE_APP_VERSION_ENV]: ACODE_VERSION,
+    // 安全加固 P2：打包态标记下发给 host/worker 的配置加载链——打包运行时的托管策略
+    // 地板必须忽略 ACODE_MANAGED_POLICY_FILE 等用户态 env 注入（见 managed-policy.ts）。
+    ...(packagedDesktop ? { [ACODE_APP_IS_PACKAGED_ENV]: "1" } : {}),
     ...(dataBaseDir !== homedir() ? { ACODE_DATA_BASE_DIR: dataBaseDir } : {}),
     ...(windowsAppInstallDir ? { [ACODE_WINDOWS_APP_INSTALL_DIR_ENV]: windowsAppInstallDir } : {}),
     ...(bundledCuaHelperAppPath

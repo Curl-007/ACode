@@ -314,7 +314,9 @@ export type ConfigDiagnosticCode =
   | "config_file_invalid"
   | "config_mcp_server_invalid"
   | "config_project_hooks_pending_trust"
-  | "config_project_permission_restricted";
+  | "config_project_permission_restricted"
+  // 安全加固 P2：托管策略文件存在但不可读/解析失败（fail-closed 最小封锁时上报）。
+  | "config_managed_policy_invalid";
 
 export interface ConfigDiagnostic {
   code: ConfigDiagnosticCode;

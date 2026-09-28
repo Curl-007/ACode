@@ -36,6 +36,10 @@ export const ACODE_PRODUCT_FLAVOR = normalizeACodeProductFlavor(
 );
 export const ACODE_APP_VERSION_ENV = "ACODE_APP_VERSION" as const;
 export const ACODE_BUILD_COMMIT_ID_ENV = "ACODE_BUILD_COMMIT_ID" as const;
+// 安全加固 P2：桌面 main 在打包态向 host/worker 下发「本进程属打包运行时」标记。
+// 打包态的配置加载必须忽略用户态 env 注入（如托管策略文件路径覆盖），与 P1-7
+// 更新源门禁同一哲学；dev/源码运行不设此键。
+export const ACODE_APP_IS_PACKAGED_ENV = "ACODE_APP_IS_PACKAGED" as const;
 
 // ── 运行时环境变量（不经过编译打包，启动时从 process.env 读取） ──
 // 启用调试模式，值为 inspect-brk 的端口号，如 ACODE_DEBUG=9230

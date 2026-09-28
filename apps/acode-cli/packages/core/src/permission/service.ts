@@ -6,6 +6,7 @@ import {
   AMEND_WORKFLOW_TOOL_NAME,
   isAmendWorkflowOwnedPredecessor,
   PermissionCapabilityGroup,
+  type ManagedPolicyFloorData,
   type PermissionCapabilityGroup as PermissionCapabilityGroupType,
   type PermissionRuleValue,
   type PermissionRuleset,
@@ -19,6 +20,10 @@ import { OFFICIAL_CUA_PERMISSION_RULE_TOOL_NAME } from "@acode/shared";
 import { resolvePlanModeTransitionPermission } from "./plan-mode-policy.js";
 import { webFetchRuleSubjects, wildcardToRegExp } from "./rule-matching.js";
 import { isPreapprovedWorkflowDraftWrite } from "./workflow-draft-path.js";
+import {
+  breakerContextFromPermissionContext,
+  evaluateBypassImmuneBreakers,
+} from "./bypass-immune-breakers.js";
 import { applyPermissionUpdates } from "../tool/executor/permission-rules.js";
 import { isWebFetchPreapprovedUrl } from "../tool/webfetch-preapproved.js";
 import type { ToolPermissionRulePolicy } from "../tool/types.js";
@@ -42,6 +47,12 @@ export interface PermissionContext {
    * 可选：拿不到工作目录的调用方照常按其余规则判定，不会因此少一层确认。
    */
   workingDirectory?: string;
+  /**
+   * 工作区根目录（安全加固 P2）。旁路免疫熔断器的「路径逃逸写」判定用；
+   * 可选：拿不到时该类熔断器不触发（与 workingDirectory 同一容错哲学），
+   * 其余判定不受影响。
+   */
+  workspaceRoot?: string;
 }
 
 export interface PermissionToolCapability {
@@ -94,6 +105,15 @@ export class PermissionService {
     this.sessionRules = applyPermissionUpdates(this.sessionRules, updates);
   }
 
+  /**
+   * 安全加固 P2（R4）：托管策略地板是否禁用了 yolo/bypass 直通。
+   * 供模式切换边界（runtime 的 applyRuntimeExecutionState）拒绝显式的全权限档请求；
+   * 决策层的跳过（checkPermissionByMode 的 yolo 分支）是安全底线，本方法是 UX 一致性。
+   */
+  isBypassPermissionsModeDisabled(): boolean {
+    return this.config.policyFloor?.disableBypassPermissionsMode === true;
+  }
+
   checkPermission(
     context: PermissionContext,
     toolCapability?: PermissionToolCapability,
@@ -101,6 +121,69 @@ export class PermissionService {
     rulePolicy?: ToolPermissionRulePolicy,
   ): PermissionDecisionResult {
     const capability = this.resolveCapability(context, toolCapability);
+
+    // 安全加固 P2（R3 步骤 0/1）：托管策略地板压过一切分支——deny 绝对最高，
+    // ask 压过 yolo/plan-readonly/项目 allow/allowedTools。规则匹配复用项目规则同一套
+    // 语义（toolName + ruleContent + 能力域），策略层不另造匹配器。
+    const policyFloor = this.config.policyFloor;
+    if (policyFloor) {
+      const policyRuleset: PermissionRuleset = {
+        version: 1,
+        deny: [...policyFloor.deny],
+        ask: [...policyFloor.ask],
+      };
+      if (this.matchesProjectRules(policyRuleset, "deny", context, capability, rulePolicy)) {
+        return this.deny(
+          context,
+          capability,
+          "rule.policy.deny",
+          `Tool ${context.toolName} is denied by managed policy`,
+        );
+      }
+      if (this.matchesProjectRules(policyRuleset, "ask", context, capability, rulePolicy)) {
+        return this.ask(
+          context,
+          capability,
+          "rule.policy.ask",
+          `Tool ${context.toolName} requires approval by managed policy`,
+        );
+      }
+    }
+
+    // 安全加固 P2（R3 步骤 2）：disallowedTools 硬禁用前移到所有模式分支之前。
+    // 此前 yolo 直通先于该检查——用户/策略显式禁用的工具在 yolo 下会被放行
+    // （原 checkAlwaysAsk 注释自认的 wart）。硬禁用是明确意图，任何模式都不能复活它；
+    // 策略层的 disallowedTools 已在配置合并时并入本集合（strictest-wins 并集）。
+    if (this.config.disallowedTools.has(context.toolName)) {
+      return this.deny(
+        context,
+        capability,
+        "rule.disallowedTools",
+        `Tool ${context.toolName} is explicitly disallowed`,
+      );
+    }
+
+    const decision = this.checkPermissionByMode(context, capability, projectRules, rulePolicy);
+
+    // 安全加固 P2（R2/R3 步骤 6）：旁路免疫熔断器**只降级 allow**——deny/ask 原样通过。
+    // 放在决策收口处而非 yolo 分支内：无论放行来自 yolo 直通、项目 allow、allowedTools
+    // 还是 build/edit 低风险分支，命中熔断器都改 ask（bypass-immune 的完整语义）。
+    if (decision.decision === "allow") {
+      const breakerHit = evaluateBypassImmuneBreakers(breakerContextFromPermissionContext(context));
+      if (breakerHit) {
+        return this.ask(context, capability, breakerHit.ruleId, breakerHit.reason);
+      }
+    }
+    return decision;
+  }
+
+  /** 模式与规则驱动的既有判定流程；策略地板与熔断器在 checkPermission 收口，不在这里重复。 */
+  private checkPermissionByMode(
+    context: PermissionContext,
+    capability: ResolvedPermissionCapability,
+    projectRules?: PermissionRuleset | null,
+    rulePolicy?: ToolPermissionRulePolicy,
+  ): PermissionDecisionResult {
     const planModeTransition = resolvePlanModeTransitionPermission(context);
 
     if (planModeTransition) {
@@ -110,15 +193,6 @@ export class PermissionService {
     }
 
     if (capability.requiresUserInteraction) {
-      if (this.config.disallowedTools.has(context.toolName)) {
-        return this.deny(
-          context,
-          capability,
-          "rule.disallowedTools",
-          `Tool ${context.toolName} is explicitly disallowed`,
-        );
-      }
-
       return this.ask(
         context,
         capability,
@@ -134,7 +208,11 @@ export class PermissionService {
 
     const planEnabled = context.planEnabled ?? context.mode === "plan";
     if (context.mode === "yolo" && !planEnabled) {
-      return this.allow(context, capability, "mode.yolo", "Yolo mode bypasses permission prompts");
+      // 安全加固 P2（R1/R3 步骤 7）：策略地板 disableBypassPermissionsMode=true 时
+      // yolo 直通失效——不返回 allow，落入下方与 build 模式相同的判定（副作用动作 ask）。
+      if (!this.config.policyFloor?.disableBypassPermissionsMode) {
+        return this.allow(context, capability, "mode.yolo", "Yolo mode bypasses permission prompts");
+      }
     }
 
     if (context.mode === "auto") {
@@ -143,15 +221,6 @@ export class PermissionService {
         capability,
         "mode.auto.unimplemented",
         "Auto mode is reserved but not implemented yet",
-      );
-    }
-
-    if (this.config.disallowedTools.has(context.toolName)) {
-      return this.deny(
-        context,
-        capability,
-        "rule.disallowedTools",
-        `Tool ${context.toolName} is explicitly disallowed`,
       );
     }
 
@@ -323,12 +392,12 @@ export class PermissionService {
    * 工具自报 alwaysAsk 时的判定：ask 压过所有"放行"分支（yolo 直通、plan 的 readOnly 直通），
    * 但**压不过"阻断"**——所以这里先自己走一遍硬阻断判定。
    *
-   * 为什么不直接返回 ask：disallowedTools 是用户配置的硬禁用，项目 deny 规则符合工具自报的
-   * denyPriority: "beforeAsk"，auto 模式是"该模式未实现"的保护。少了这一步，一个被硬禁用的
-   * 工具会退化成"弹个窗、用户一点就能跑"。
+   * 为什么不直接返回 ask：项目 deny 规则符合工具自报的 denyPriority: "beforeAsk"，
+   * auto 模式是"该模式未实现"的保护。少了这一步，一个被项目规则禁用的工具会退化成
+   * "弹个窗、用户一点就能跑"。
    *
-   * 这些判定在 checkPermission 里按原有顺序还会各自出现一次；此处刻意只覆盖 alwaysAsk 工具，
-   * 不改动其他工具的既有优先级（尤其 yolo 目前先于 disallowedTools 放行这一点）。
+   * disallowedTools 与策略地板 deny/ask 已在 checkPermission 收口处前置（安全加固 P2），
+   * 到达这里时必然未命中，不再重复判定。
    */
   private checkAlwaysAsk(
     context: PermissionContext,
@@ -342,14 +411,6 @@ export class PermissionService {
         capability,
         "mode.auto.unimplemented",
         "Auto mode is reserved but not implemented yet",
-      );
-    }
-    if (this.config.disallowedTools.has(context.toolName)) {
-      return this.deny(
-        context,
-        capability,
-        "rule.disallowedTools",
-        `Tool ${context.toolName} is explicitly disallowed`,
       );
     }
     if (this.matchesProjectRules(projectRules, "deny", context, capability, rulePolicy)) {
@@ -677,6 +738,13 @@ export interface PermissionConfig {
   disallowedTools: Set<string>;
   autoApproveHighRisk: boolean;
   allowMediumRiskInAutoMode: boolean;
+  /**
+   * 安全加固 P2：托管策略地板（strictest-wins）。由 createConfig 从 OS 托管路径读入、
+   * 经 ConfigScope.Policy 合并后注入；缺省表示本机未部署策略文件（零行为变化）。
+   * 注意：策略的 disallowedTools 已在配置合并层并入上面的 disallowedTools 集合，
+   * 这里只消费 deny/ask 规则与 disableBypassPermissionsMode。
+   */
+  policyFloor?: ManagedPolicyFloorData;
 }
 
 export const defaultPermissionConfig: PermissionConfig = {

@@ -93,6 +93,39 @@ export function isBashCommandPermissionSafe(analysis: BashCommandAnalysis): bool
   return !analysis.hasParseErrors && !analysis.hasUnsupportedSyntax && !analysis.hasDynamicWords;
 }
 
+/**
+ * 安全加固 P2：「递归/强制删除类调用」的结构特征（纯数据，不含任何执行语义）。
+ * 供权限层的旁路免疫熔断器（permission/bypass-immune-breakers.ts）判定
+ * 「空变量根删除」形态：hasDynamicWords=true 表示路径参数含未解析展开，
+ * pathArguments 是去掉旗标后的字面路径参数。
+ */
+export interface ForcedDeleteCandidate {
+  readonly hasDynamicWords: boolean;
+  readonly pathArguments: readonly string[];
+}
+
+/**
+ * 从 AST 分析结果里提取删除类调用的危险特征。程序名集合与旗标判定由调用方注入
+ * （策略属于权限层，本模块只做结构查询）；本函数不执行、不改写任何命令文本。
+ */
+export function extractForcedDeleteCandidates(
+  analysis: BashCommandAnalysis,
+  programNames: ReadonlySet<string>,
+  isRecursiveOrForceFlag: (arg: string) => boolean,
+): readonly ForcedDeleteCandidate[] {
+  const candidates: ForcedDeleteCandidate[] = [];
+  for (const invocation of analysis.commands) {
+    if (!programNames.has(invocation.name.toLowerCase())) continue;
+    const args = invocation.argv.slice(1);
+    if (!args.some(isRecursiveOrForceFlag)) continue;
+    candidates.push({
+      hasDynamicWords: invocation.hasDynamicWords,
+      pathArguments: args.filter((arg) => !arg.startsWith("-")),
+    });
+  }
+  return candidates;
+}
+
 interface MutableBashCommandAnalysis {
   commands: BashCommandInvocation[];
   hasDynamicWords: boolean;

@@ -34,6 +34,7 @@ import {
   type MessageId,
 } from "@acode/contracts";
 import {
+  ACODE_APP_IS_PACKAGED_ENV,
   isRemoteWorkspaceIdentity,
   readOfficialServiceSwitchesFromEnv,
   resolveACodeRuntimeEnv,
@@ -145,6 +146,15 @@ function decodePromptAttachmentDataUrl(
   return { bytes, mediaType };
 }
 
+/**
+ * 安全加固 P2：本进程是否属于打包运行时。桌面 main 在 app.isPackaged 时向 host/worker
+ * 下发 ACODE_APP_IS_PACKAGED=1（desktopRuntimeEnv）；独立 CLI 分发不设此键——
+ * 终端用户就是本机管理员，env 覆盖属合法用法（与桌面打包态的注入面不同）。
+ */
+function resolveIsPackagedRuntime(env: Readonly<Record<string, string | undefined>>): boolean {
+  return env[ACODE_APP_IS_PACKAGED_ENV] === "1";
+}
+
 export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp> {
   // CLI/headless：官方平台功能默认关闭；可用 ACODE_ENABLE_OFFICIAL_* 环境变量按需开启。
   setOfficialServiceSwitches(readOfficialServiceSwitchesFromEnv(process.env));
@@ -166,6 +176,10 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
       skipUserConfig: options.skipUserConfig,
       userConfigPath: options.userConfigPath,
       cliOverrides: createConfigCliOverrides(options),
+      // 安全加固 P2：桌面 main 在打包态下发 ACODE_APP_IS_PACKAGED=1（见 desktopRuntimeEnv）。
+      // 打包运行时加载托管策略地板必须忽略用户态 env 注入（ACODE_MANAGED_POLICY_FILE），
+      // 与 P1-7 更新源门禁同一哲学。
+      isPackaged: resolveIsPackagedRuntime(options.env ?? process.env),
     }),
     options,
   );
@@ -347,6 +361,11 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
       autoApproveHighRisk: configResult.config.permission.autoApproveHighRisk,
       disallowedTools: new Set(configResult.config.permission.disallowedTools),
       allowMediumRiskInAutoMode: configResult.config.permission.allowMediumRiskInAuto,
+      // 安全加固 P2：托管策略地板（deny/ask 规则 + disableBypassPermissionsMode）。
+      // disallowedTools 的策略并集已在配置合并层完成，这里不重复携带。
+      ...(configResult.config.permission.policy
+        ? { policyFloor: configResult.config.permission.policy }
+        : {}),
     });
     const inputHistoryStore = options.inputHistoryStore ?? asInputHistoryStore(sessionStore);
     const artifactStore =

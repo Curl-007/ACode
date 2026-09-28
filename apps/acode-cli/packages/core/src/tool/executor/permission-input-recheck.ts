@@ -42,6 +42,8 @@ export async function recheckPermissionHookModifiedInput(input: {
     toolName: input.toolCall.name,
     // 与首次判定同源：hook 改过 input 之后，草稿免确认仍要按同一个工作目录复核。
     workingDirectory: input.deps.getWorkingDirectory(),
+    // 安全加固 P2：hook 可能把路径改写到工作区外——熔断器复核必须拿到同一个根。
+    workspaceRoot: input.deps.getWorkspaceRoot(),
   };
   const rulePolicy = input.entry.resolvePermissionRulePolicy?.(
     input.modifiedInput,
@@ -71,6 +73,9 @@ export async function recheckPermissionHookModifiedInput(input: {
   if (
     decision.decision !== "ask" ||
     (decision.ruleId !== "rule.project.ask" &&
+      // 安全加固 P2：hook 改写 input 后命中旁路免疫熔断器（如路径被改到工作区外）
+      // 必须重新走确认——改写后的危险性正是熔断器要拦的，不能沿用改写前的放行。
+      !decision.ruleId.startsWith("breaker.") &&
       !targetsMemoryFile({
         executionInput: input.modifiedInput,
         memoryRoot: input.deps.getMemoryRoot?.(),

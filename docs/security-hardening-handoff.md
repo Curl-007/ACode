@@ -17,10 +17,11 @@
 | **P0-4** 凭据主密钥 | ✅ 完成（范围是「无后悔步」，非 OS 钥匙串，见 §4） | ✅ 可合并 |
 | **P1-6** 项目 permission 收紧 | ✅ 完成，补了 disallowedTools 并集修复 | ✅ 可合并 |
 | **P1-7** 更新源 isPackaged 门禁 | ✅ 完成 | ✅ 可合并 |
-| **P1-5** BYO Key 迁 credentialRef | ✅ 三条回归已修复（见 §5），含 5.4 UX 占位 | ✅ 可合并（建议合并前再跑一轮 §2 门禁） |
-| P2 / P3 | 未开始 | — |
+| **P1-5** BYO Key 迁 credentialRef | ✅ 三条回归已修复（见 §5），含 5.4 UX 占位 | ✅ 已合入 dev/0.0.1（e5f0fe1） |
+| **P2 骨架** 策略地板 + 旁路免疫熔断器 | ✅ 完成（分支 `feature/security-policy-floor`，见 §6） | 待合入 |
+| P2 其余项 / P3 | 未开始 | — |
 
-**当前状态**：P1-5 的三条回归（§5）已于 2026-09-28 下午全部修复并验证（含一次「故意注入回归确认测试变红」的对照验证）。分支上的全部 P0/P1 项均已完成且门禁全绿。剩余工作是 P2/P3（见 §6）。
+**当前状态**：P0+P1 已全部合入 `dev/0.0.1`（squash 提交 `e5f0fe1`，原 PR #1 已关）。P2 骨架（托管策略地板 + 旁路免疫熔断器）已在 `feature/security-policy-floor` 分支完成实现与测试（26 个新测试用例），门禁全绿，待合入。P2 其余项与 P3 未开始（见 §6）。
 
 ---
 
@@ -211,12 +212,25 @@ done
 
 ---
 
-## 6. 剩余工作（P2 / P3，未开始）
+## 6. 剩余工作（P2 / P3）
 
 见 `docs/security-hardening-plan.md` 的 P2/P3 段。摘要：
-- **P2 策略地板 + 旁路免疫熔断器**（Claude Code policySettings / Codex requirements.toml 的 strictest-wins + bypass-immune breakers）。ACode 当前 `permission/service.ts` 是 `yolo → 直接 allow` 无熔断。P1-6 的 restrictive floor 是它的雏形，可在此基础上长。
-- **P2 其余继承加固项**（子进程 env 白名单化、Electron 四件套、fuse、agent 命令 env 门禁、工作区路径收敛、OAuth PKCE、http 端点告警、插件 git 源 commit 固定、子代理模式继承、Chrome 提权门）。
-- **P3 能力差异化**（auto 模式 LLM 分类器目前是桩、heartbeat 自动化、跨厂商插件清单兼容、prompt-cache 诊断、任务依赖图）。
+- **P2 骨架：策略地板 + 旁路免疫熔断器 —— ✅ 已完成**（分支 `feature/security-policy-floor`）。
+  spec 见 `apps/acode-cli/specs/managed-policy-floor-and-bypass-immune-breakers.md`：
+  托管策略地板（OS 托管路径 JSON、strict schema 只收 deny/ask/disallowedTools/
+  disableBypassPermissionsMode、ConfigScope.Policy=60 strictest-wins 并集、解析失败
+  fail-closed 最小封锁、打包态忽略 env 覆盖）+ 三类旁路免疫熔断器（空变量根删除 /
+  路径逃逸写 / 敏感位置读，yolo 下命中即 ask，只降级 allow）。附带两处刻意收紧：
+  disallowedTools 前移到 yolo 直通之前（修复「yolo 复活硬禁用工具」的既有 wart）；
+  hook 改写 input 后命中熔断器会重新走确认。测试 26 例（managed-policy-floor 13 +
+  bypass-immune-breakers 13）。**已知边界**：跨机隔离熔断器留作扩展点（需与 owner/lease
+  路由联合设计）；策略分发通道（MDM/远程策略）未做；Settings UI 策略只读视图未做。
+- **P2 其余继承加固项**（未开始）：子进程 env 白名单化、Electron 四件套、fuse、agent 命令
+  env 门禁、工作区路径收敛、OAuth PKCE、http 端点告警、插件 git 源 commit 固定、
+  子代理模式继承、Chrome 提权门。Mimosa 深度扫描（scan-2026-09-28）报出的
+  `server/src/remote/*` 命令注入族与 env 白名单化是同一批改法，建议排在一起。
+- **P3 能力差异化**（未开始）：auto 模式 LLM 分类器目前是桩、heartbeat 自动化、
+  跨厂商插件清单兼容、prompt-cache 诊断、任务依赖图。
 - 计划里还列了 P1 之外的 P2 项（如 bot 权限请求改由桌面本地可信确认者响应），是 P0-3 诚实边界的真正修法。
 
 ---

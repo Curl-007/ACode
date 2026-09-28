@@ -24,6 +24,8 @@ import { createConfigPort } from "./index.js";
 import { loadFileConfig, getDefaultConfigPath, type LoadedConfig } from "./file-config.adapter.js";
 import { parseEnvConfig } from "./env-config.adapter.js";
 import { mergeConfigs, createPrioritizedConfig } from "./config-merger.js";
+import { loadManagedPolicyFloor } from "./managed-policy.js";
+import type { ConfigDiagnostic } from "./schema.js";
 import { createNodeLoggerFactory } from "../logging/index.js";
 import {
   loadProjectConfigFile,
@@ -50,6 +52,12 @@ export interface ConfigFactoryOptions {
   skipUserConfig?: boolean;
   /** Optional logger factory for tests or embedding runtimes. Defaults to the node JSONL logger. */
   loggerFactory?: LoggerFactory;
+  /**
+   * 安全加固 P2：打包运行时标记（桌面 worker 经 ACODE_APP_IS_PACKAGED env 传入）。
+   * 为 true 时托管策略地板忽略 ACODE_MANAGED_POLICY_FILE 等用户态 env 注入，
+   * 只读 OS 托管路径——与 P1-7 更新源门禁同一哲学。
+   */
+  isPackaged?: boolean;
 }
 
 export interface ConfigResult {
@@ -205,6 +213,34 @@ export function createConfig(options: ConfigFactoryOptions = {}): ConfigResult {
       createPrioritizedConfig(
         withHookConfigSource(options.cliOverrides, { kind: "internal" }),
         ConfigScope.Cli,
+      ),
+    );
+  }
+
+  // 6. Managed policy floor（安全加固 P2）：优先级最高（Policy=60 > Cli=50），
+  //    但合并语义是 strictest-wins——只携带 disallowedTools 并集与 policy 地板本身，
+  //    永远不携带 mode/allowedTools 等放宽字段（加载器 schema 已拒绝 allow 类键）。
+  const managedPolicy = loadManagedPolicyFloor({
+    env: options.env ?? process.env,
+    ...(options.isPackaged !== undefined ? { isPackaged: options.isPackaged } : {}),
+  });
+  if (managedPolicy.diagnostics.length > 0) {
+    logManagedPolicyDiagnostics({
+      diagnostics: managedPolicy.diagnostics,
+      env: options.env,
+      loggerFactory: options.loggerFactory,
+    });
+  }
+  if (managedPolicy.floor) {
+    configs.push(
+      createPrioritizedConfig(
+        {
+          permission: {
+            disallowedTools: [...managedPolicy.floor.disallowedTools],
+            policy: managedPolicy.floor,
+          },
+        },
+        ConfigScope.Policy,
       ),
     );
   }
@@ -437,6 +473,9 @@ function resolveConfigDiagnosticLogMessage(
   if (code === "config_project_permission_restricted") {
     return "Project permission overrides ignored (only tightening allowed)";
   }
+  if (code === "config_managed_policy_invalid") {
+    return "Managed policy file invalid; bypass mode disabled";
+  }
   return "Config file failed to load";
 }
 
@@ -450,7 +489,34 @@ function resolveConfigDiagnosticLogEvent(
   if (code === "config_project_permission_restricted") {
     return "config.project_permission.restricted";
   }
+  if (code === "config_managed_policy_invalid") {
+    return "config.managed_policy.invalid";
+  }
   return "config.file.invalid";
+}
+
+/** 托管策略诊断单独走一条日志路径：策略层不属于 user/project 文件来源，scope 标记为 policy。 */
+function logManagedPolicyDiagnostics(input: {
+  diagnostics: readonly ConfigDiagnostic[];
+  env?: Record<string, string | undefined>;
+  loggerFactory?: LoggerFactory;
+}): void {
+  if (input.diagnostics.length === 0) return;
+  const loggerFactory = input.loggerFactory ?? createNodeLoggerFactory({ env: input.env });
+  const logger = loggerFactory.createLogger("acode").child({
+    module: "adapters.config",
+  });
+  for (const diagnostic of input.diagnostics) {
+    logger.warn(resolveConfigDiagnosticLogMessage(diagnostic.code), {
+      configPath: diagnostic.filePath,
+      configScope: "policy",
+      diagnosticCode: diagnostic.code,
+      diagnosticMessage: diagnostic.message,
+      diagnosticPath: diagnostic.path,
+      event: resolveConfigDiagnosticLogEvent(diagnostic.code),
+      severity: diagnostic.severity,
+    });
+  }
 }
 
 function summarizeOptionalProjectConfig(files: ProjectConfigFile[]): OptionalPathLoadedConfig {

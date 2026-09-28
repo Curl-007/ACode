@@ -59,6 +59,9 @@ export async function resolveToolPermission(
     // workflow 草稿免确认要按工作目录解析相对路径，见 PermissionService 的
     // isPreapprovedWorkflowDraftWrite。
     workingDirectory: deps.getWorkingDirectory(),
+    // 安全加固 P2：旁路免疫熔断器的「路径逃逸写」判定需要工作区根；拿不到时该类
+    // 熔断器不触发（容错哲学与 workingDirectory 一致），其余判定不受影响。
+    workspaceRoot: deps.getWorkspaceRoot(),
   };
   const runtimePermissionContext = resolveRuntimePermissionContext(deps);
   const rulePolicy = entry.resolvePermissionRulePolicy?.(executionInput, runtimePermissionContext);

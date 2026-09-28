@@ -17,7 +17,7 @@ import {
   parseOAuthStateRegistration,
   registerOAuthState,
 } from "./desktopOAuthDeepLink.js";
-import { openPathInDefaultApp } from "./desktopMainIpcHelpers.js";
+import { openPathInDefaultApp, resolveLocalFileUrlTarget } from "./desktopMainIpcHelpers.js";
 
 function isAllowedExternalOpenUrl(value: string): boolean {
   try {
@@ -195,6 +195,23 @@ export function registerRemoteIpcHandlers(options: {
     const senderFrameUrl =
       typeof event.senderFrame?.url === "string" ? event.senderFrame.url : undefined;
     const sourceUrl = senderFrameUrl ?? request.sourceUrl ?? senderUrl;
+    // 安全加固 P2 #2d（specs/electron-hardening.md §4）：file: 一律不进 shell.openExternal
+    // （其参数由 OS shell 直接解释，可打开任意文件/UNC 执行载体）。转成路径后走
+    // openPathInDefaultApp（normalize + realpath + shell.openPath），与 OpenExternalFile 同一条硬化链路。
+    if (new URL(url).protocol === "file:") {
+      const localTarget = resolveLocalFileUrlTarget(url);
+      if (!localTarget) {
+        options.logger.warn("[open-external] blocked unsupported file url", url);
+        return;
+      }
+      void openPathInDefaultApp(localTarget, options.logger).catch((error: unknown) => {
+        options.logger.warn("[open-external] 本地文件打开失败", {
+          url,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+      return;
+    }
     if (
       typeof sender?.loadURL === "function" &&
       shouldKeepCodingPlanOpenExternalInWebview(sourceUrl, url)

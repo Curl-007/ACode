@@ -31,6 +31,7 @@ import {
   resolveDesktopZoomLevelFromFactor,
 } from "./desktopZoom.js";
 import { resolveDesktopWindowChromeState } from "./desktopWindowChromeState.js";
+import { attachMainWindowNavigationGuards } from "./desktopWebContentsGuard.js";
 import {
   MIN_DESKTOP_WINDOW_HEIGHT,
   MIN_DESKTOP_WINDOW_WIDTH,
@@ -606,6 +607,12 @@ export function createBrowserWindow(options: {
   win.webContents.setZoomFactor(initialDesktopZoomFactor);
   if (process.platform === "win32") registerCustomWindowsControls(win);
   syncWindowControlsOverlayForZoomLevel(win, initialDesktopZoomLevel);
+
+  // 安全加固 P2 #2a（specs/electron-hardening.md §1）：主特权窗此前只在 webview guest 上有
+  // 导航/弹窗守卫，主窗 webContents 自身没有。renderer 被诱导换页等于把 window.acode IPC 面
+  // 整体交给外部站点，这里把主帧导航收敛到应用自身 origin，外部 URL 转交系统浏览器，
+  // 并拒绝一切 window.open 子窗口。判定规则见 desktopWebContentsGuard.ts。
+  attachMainWindowNavigationGuards({ webContents: win.webContents, logger: options.logger });
 
   if (initialWindowSize.maximized) {
     win.maximize();

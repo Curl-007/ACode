@@ -104,6 +104,7 @@ import {
   updateACodeStdioTapDevMenuState,
 } from "./desktopApplicationMenu.js";
 import { applyAppIcon } from "./desktopWindowChrome.js";
+import { installDesktopSessionPermissionPolicies } from "./desktopSessionPermissionPolicy.js";
 import { resolveWindowsAppUserModelIdForFlavor } from "../../scripts/desktop-product-identity.mjs";
 import type { DesktopWindowSize } from "./desktopWindowSize.js";
 import { maybeWarnArchitectureMismatch } from "./desktopArchitectureGuard.js";
@@ -1784,6 +1785,11 @@ app.whenReady().then(async () => {
   installLocalMediaPreviewProtocol(session.defaultSession.protocol, {
     isPathAuthorized: localMediaPreviewPathRegistry.isAuthorized,
   });
+  // 安全加固 P2 #2b（specs/electron-hardening.md §2）：此前全仓没有 setPermissionRequestHandler，
+  // Electron 默认放行全部权限请求，内嵌浏览器加载的任意页面可无确认拿摄像头/麦克风/屏幕捕获。
+  // 这里在 defaultSession 与两个 webview partition 上统一挂「默认拒绝 + 最小放行」策略，
+  // 必须先于任何窗口创建执行；recorder 临时 partition 刻意不覆盖（见 spec）。
+  installDesktopSessionPermissionPolicies(session, logger);
   // Electron 的 net.request 只能在 app ready 后使用；灰度请求仍是旁路预热，不阻塞首个 Host。
   void desktopContextPromptRollout?.refresh();
   installBrowserRestoreBootstrapProtocol(

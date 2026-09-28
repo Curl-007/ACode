@@ -2,6 +2,20 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <!--
+      安全加固 P2 #2c（specs/electron-hardening.md §3）：主特权窗 CSP，对齐辅助窗（aboutWindow 等）
+      的 meta CSP 形态，但覆盖主窗真实资源面：
+      - 'unsafe-inline'：本文件的启动动画 module script + dev 态 Vite/React-refresh 内联注入（辅助窗同款处理）；
+      - file: 源：打包态 loadFile 页面 origin 为 opaque，'self' 不匹配 file: 子资源；
+      - ws: 覆盖 dev HMR websocket；http/https 保留 renderer 既有远程取数面（图片预览、发布说明等）；
+      - frame-src http:/https:：内嵌浏览器与 Coding Plan 是 <webview> guest（frame-src 对 webview 生效），
+        guest 自身导航白名单仍由 main 侧 will-attach-webview / guest 守卫负责；
+      - media-src acode-media:：本地音视频预览走 LOCAL_MEDIA_PREVIEW_SCHEME（packages/shared）。
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self' file: 'unsafe-inline'; style-src 'self' file: 'unsafe-inline'; img-src 'self' file: data: blob: acode-media: https: http:; media-src 'self' file: data: blob: acode-media: https: http:; font-src 'self' file: data:; connect-src 'self' file: data: blob: ws: wss: http: https: acode-media:; worker-src 'self' file: blob:; frame-src http: https: 'self' file:; object-src 'none'; base-uri 'none'; form-action 'none'"
+    />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>ACode</title>
     <style>

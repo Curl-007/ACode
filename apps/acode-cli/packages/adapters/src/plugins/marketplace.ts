@@ -36,9 +36,11 @@ import {
   resolveGitHubArchiveSource,
   shouldFallbackGitHubArchiveToGit,
 } from "./github-archive-source.js";
+import { describePluginRepositorySourcePolicyViolation } from "./git-source-pinning.js";
 import {
   createArchiveFetchError,
   createGitUnavailableError,
+  createPluginSourcePolicyError,
   getPluginSourceDiagnosticCode,
   isCommandUnavailableError,
 } from "./source-errors.js";
@@ -1242,6 +1244,7 @@ async function resolvePluginSourceRoot(input: {
         ref: typeof source.ref === "string" ? source.ref : undefined,
         signal: input.signal,
         sha: readPluginSourceIdentityPin(source),
+        source,
         url,
       });
     }
@@ -1251,6 +1254,7 @@ async function resolvePluginSourceRoot(input: {
         ref: typeof source.ref === "string" ? source.ref : undefined,
         signal: input.signal,
         sha: readPluginSourceIdentityPin(source),
+        source,
         url: readRequiredPluginSourceString(source, "url", "Git URL"),
       });
     }
@@ -1275,6 +1279,7 @@ async function resolvePluginSourceRoot(input: {
         ref: typeof source.ref === "string" ? source.ref : undefined,
         signal: input.signal,
         sha: readPluginSourceIdentityPin(source),
+        source,
         url,
       });
     }
@@ -1284,6 +1289,7 @@ async function resolvePluginSourceRoot(input: {
         ref: typeof source.ref === "string" ? source.ref : undefined,
         signal: input.signal,
         sha: readPluginSourceIdentityPin(source),
+        source,
         url: normalizeGitUrl(readRequiredPluginSourceString(source, "url", "git-subdir URL")),
       });
     }
@@ -1385,13 +1391,40 @@ async function resolveGitPluginSource(input: {
   return { cleanup, path: subdir };
 }
 
+/**
+ * 安全加固 P2 #8 的统一策略门：所有仓库型插件源（github/git/git-subdir/url:git）在
+ * 物化（Archive 快路径或 git clone）之前先过 commit 固定与 host 白名单判定。
+ * 放在这里而非 clone 内部，是因为浮动 ref 在 Archive 快路径同样不安全（zipball/branch
+ * 每次下载内容可变），且这是 resolveGitPluginSource 的唯一上游。
+ */
+function throwIfRepositoryPluginSourcePolicyViolated(input: {
+  ref?: string;
+  sha?: string;
+  source: unknown;
+  url: string;
+}): void {
+  const violation = describePluginRepositorySourcePolicyViolation({
+    ...(input.ref !== undefined ? { ref: input.ref } : {}),
+    ...(input.sha !== undefined ? { sha: input.sha } : {}),
+    ...(isRecord(input.source) && input.source.allowFloatingRef !== undefined
+      ? { allowFloatingRef: input.source.allowFloatingRef }
+      : {}),
+    url: input.url,
+  });
+  if (violation) {
+    throw createPluginSourcePolicyError(input.url, violation);
+  }
+}
+
 async function resolveRepositoryPluginSource(input: {
   path?: string;
   ref?: string;
   signal?: AbortSignal;
   sha?: string;
+  source: unknown;
   url: string;
 }): Promise<ResolvedPluginSourceRoot> {
+  throwIfRepositoryPluginSourcePolicyViolated(input);
   try {
     return await resolveGitHubArchiveSource({
       path: input.path,
@@ -2398,11 +2431,60 @@ function validateMarketplaceEntryShape(
         });
       }
     }
+    describeRepositorySourcePolicyDiagnostic({
+      diagnostics,
+      entrySource: entry.source,
+      pluginId,
+      sourceKind,
+    });
   }
   if (options.includeEntryCompatibility !== false) {
     pushEntryCompatibilityDiagnostics({ diagnostics, entry, marketplace });
   }
   return diagnostics;
+}
+
+/**
+ * 浏览/校验阶段预先暴露安装策略违规（安全加固 P2 #8：commit 固定 + host 白名单），
+ * 与安装期的 `throwIfRepositoryPluginSourcePolicyViolated` 用同一纯判定，避免规则漂移。
+ * 只覆盖仓库型源（github 的 repo 简写天然落在白名单内，无需检查）；
+ * zip 源的 sha256 强校验已在上方单独完成，浮动 ref 拒绝见 specs/plugin-git-source-pinning.md。
+ */
+function describeRepositorySourcePolicyDiagnostic(input: {
+  diagnostics: PluginValidationDiagnostic[];
+  entrySource: Record<string, unknown>;
+  pluginId: string;
+  sourceKind: string;
+}): void {
+  const isRepositorySource =
+    input.sourceKind === "git" ||
+    input.sourceKind === "git-subdir" ||
+    (input.sourceKind === "url" &&
+      (typeof input.entrySource.type !== "string" || input.entrySource.type === "git"));
+  if (!isRepositorySource) return;
+  const rawUrl = typeof input.entrySource.url === "string" ? input.entrySource.url : "";
+  // 空 url 属「缺字段」错误：url 源已在上方报 required，git 源留给安装期 readRequired 报。
+  if (!rawUrl) return;
+  const repositoryUrl = input.sourceKind === "git-subdir" ? normalizeGitUrl(rawUrl) : rawUrl;
+  const sha = readPluginSourceIdentityPin(input.entrySource);
+  const violation = describePluginRepositorySourcePolicyViolation({
+    ...(typeof input.entrySource.ref === "string" && input.entrySource.ref.trim()
+      ? { ref: input.entrySource.ref }
+      : {}),
+    ...(sha ? { sha } : {}),
+    ...(input.entrySource.allowFloatingRef !== undefined
+      ? { allowFloatingRef: input.entrySource.allowFloatingRef }
+      : {}),
+    url: repositoryUrl,
+  });
+  if (violation) {
+    input.diagnostics.push({
+      code: "plugin_marketplace_invalid",
+      message: violation,
+      pluginId: input.pluginId,
+      severity: "error",
+    });
+  }
 }
 
 function pushEntryCompatibilityDiagnostics(input: {

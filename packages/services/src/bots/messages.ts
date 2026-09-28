@@ -78,6 +78,10 @@ const messages = {
     permissionHandled: "权限请求已处理。",
     permissionDenied: "已拒绝权限请求。",
     permissionSubmitted: "已提交权限响应。",
+    permissionAwaitingDesktopApproval:
+      "该权限请求已发送到 ACode 桌面端，请在桌面窗口中确认（已开启「Bot 任务权限需本机确认」）。",
+    permissionLocalApprovalRequired:
+      "已开启「Bot 任务权限需本机确认」，bot 端不能批准权限，请在 ACode 桌面窗口中处理该请求。",
     elicitationExpired: "问答请求已过期，请在 acode UI 中处理。",
     elicitationHandled: "问答请求已处理。",
     elicitationSubmitted: "已提交问答响应。",
@@ -204,6 +208,10 @@ const messages = {
     permissionHandled: "Permission request has already been handled.",
     permissionDenied: "Permission request denied.",
     permissionSubmitted: "Permission response submitted.",
+    permissionAwaitingDesktopApproval:
+      "This permission request was sent to the ACode desktop app. Please approve it in the desktop window (\"Require local approval for bot task permissions\" is on).",
+    permissionLocalApprovalRequired:
+      "Local approval is required for bot task permissions, so the bot cannot approve. Please handle this request in the ACode desktop window.",
     elicitationExpired: "This question request has expired. Please handle it in the acode UI.",
     elicitationHandled: "Question request has already been handled.",
     elicitationSubmitted: "Question response submitted.",

@@ -7,6 +7,7 @@ import type {
 } from "@acode/shared";
 import {
   TID_SETTINGS_ASK_USER_QUESTION_AUTO_RESOLUTION_SWITCH,
+  TID_SETTINGS_BOT_PERMISSION_LOCAL_APPROVAL_SWITCH,
   TID_SETTINGS_NATIVE_SEARCH_SWITCH,
 } from "@acode/shared";
 import { useState, useCallback, useEffect } from "react";
@@ -81,6 +82,7 @@ export function GeneralSectionContent({
   toolGroupingChangesEnabled,
   acodeInteractionBehavior,
   askUserQuestionAutoResolutionEnabled = true,
+  botPermissionLocalApprovalEnabled = false,
   modelIoFullRetentionEnabled = false,
   onDataBaseDirChange,
   onSelectDataBaseDir,
@@ -105,6 +107,7 @@ export function GeneralSectionContent({
   onToolGroupingChangesEnabledChange,
   onACodeInteractionBehaviorChange,
   onAskUserQuestionAutoResolutionEnabledChange = async () => {},
+  onBotPermissionLocalApprovalEnabledChange = async () => {},
   onModelIoFullRetentionEnabledChange = async () => {},
   onOpenOnboardingDialog,
 }: {
@@ -144,6 +147,7 @@ export function GeneralSectionContent({
   toolGroupingChangesEnabled: boolean;
   acodeInteractionBehavior: ACodeInteractionBehavior;
   askUserQuestionAutoResolutionEnabled?: boolean;
+  botPermissionLocalApprovalEnabled?: boolean;
   modelIoFullRetentionEnabled?: boolean;
   onDataBaseDirChange: (dir: string) => Promise<void>;
   onSelectDataBaseDir: () => Promise<string | null>;
@@ -168,6 +172,7 @@ export function GeneralSectionContent({
   onToolGroupingChangesEnabledChange: (enabled: boolean) => Promise<void>;
   onACodeInteractionBehaviorChange: (behavior: ACodeInteractionBehavior) => Promise<void>;
   onAskUserQuestionAutoResolutionEnabledChange?: (enabled: boolean) => Promise<void>;
+  onBotPermissionLocalApprovalEnabledChange?: (enabled: boolean) => Promise<void>;
   onModelIoFullRetentionEnabledChange?: (enabled: boolean) => Promise<void>;
   onOpenOnboardingDialog: () => void;
 }) {
@@ -713,6 +718,26 @@ export function GeneralSectionContent({
               data-testid={TID_SETTINGS_ASK_USER_QUESTION_AUTO_RESOLUTION_SWITCH}
               onCheckedChange={(checked) => {
                 void onAskUserQuestionAutoResolutionEnabledChange(checked);
+              }}
+            />
+          }
+        />
+        <SettingsRow
+          label={intl.formatMessage({
+            id: "settings.botPermissionLocalApproval",
+          })}
+          description={intl.formatMessage({
+            id: "settings.botPermissionLocalApprovalDescription",
+          })}
+          control={
+            <Switch
+              aria-label={intl.formatMessage({
+                id: "settings.botPermissionLocalApproval",
+              })}
+              checked={botPermissionLocalApprovalEnabled}
+              data-testid={TID_SETTINGS_BOT_PERMISSION_LOCAL_APPROVAL_SWITCH}
+              onCheckedChange={(checked) => {
+                void onBotPermissionLocalApprovalEnabledChange(checked);
               }}
             />
           }

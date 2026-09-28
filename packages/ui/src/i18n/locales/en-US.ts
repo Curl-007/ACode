@@ -2326,6 +2326,9 @@ const enUS: Record<string, string> = {
   "settings.askUserQuestionAutoResolution": "Automatically continue questions",
   "settings.askUserQuestionAutoResolutionDescription":
     "When enabled, Agent questions automatically continue after 5 minutes without an answer. When disabled, current and future questions wait for your response.",
+  "settings.botPermissionLocalApproval": "Require local approval for bot task permissions",
+  "settings.botPermissionLocalApprovalDescription":
+    "When enabled, tool permission requests from chat-bot-driven tasks (Telegram/Feishu, etc.) can only be approved in the ACode desktop window. The chat side shows a read-only notice instead of approval buttons. An administrator policy can force this on and it cannot be relaxed here.",
   "settings.modelIoFullRetention": "Keep complete model I/O",
   "settings.modelIoFullRetentionDescription":
     "Keep complete model requests and responses without compression, size limits, or automatic deletion.",

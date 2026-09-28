@@ -100,6 +100,7 @@ import {
 } from "./config.js";
 import { BOT_MENU_COMMAND_ORDER } from "./commandOrder.js";
 import { parseBotCommand } from "./commandParser.js";
+import { readBotPermissionLocalApprovalGate } from "./botPermissionLocalApproval.js";
 import { BotsRepo } from "./repo.js";
 import type {
   BotProviderAdapter,
@@ -1097,6 +1098,15 @@ export function createBotsService(
     const settings = await deps.settingService?.get().catch(() => null);
     cachedLocale = settings?.locale ?? cachedLocale;
     return cachedLocale;
+  }
+
+  // 安全加固 P2：bot 任务权限是否只能在桌面本机确认（用户设置 ∨ 管理员策略地板 ∨ 策略损坏 fail-closed）。
+  // 权限事件低频，每次即时判定（settings.get + 策略小文件同步读），不缓存——设置/策略变更需立即生效。
+  // 规格见 packages/services/specs/bot-permission-local-approval.md R2.3/R2.4。
+  async function isBotPermissionLocalApprovalRequired(): Promise<boolean> {
+    return readBotPermissionLocalApprovalGate({
+      getSettings: deps.settingService ? () => deps.settingService!.get() : undefined,
+    });
   }
 
   function msg(
@@ -4148,6 +4158,18 @@ export function createBotsService(
         await broadcastTaskListChange(context, event.taskId, "permission_request", {
           permissionRequest: event,
         });
+        // 安全加固 P2（spec bot-permission-local-approval.md R2.4）：门槛开启时 bot 侧不发可交互
+        // 批准卡片，只发只读提示（保留权限摘要，让聊天侧知道桌面端在等什么），把批准收口到桌面
+        // 本机。broadcastTaskListChange 已照常发出，桌面角标/弹窗/通知与 store 回放都不受影响。
+        if (await isBotPermissionLocalApprovalRequired()) {
+          const summary = formatBotPermissionRequestSummary(event, {
+            locale,
+            workspacePath: context.workspacePath,
+          });
+          const notice = msg(locale, "permissionAwaitingDesktopApproval");
+          await sendOutbound(bot, createOutbound(actor, `${summary}\n\n${notice}`));
+          return;
+        }
         // Bugfix: UI 会把 ACode Agent 原始权限选项规整成“允许/始终允许/拒绝”的固定顺序和文案；
         // 机器人之前直接展示 provider 原始英文 name，还额外加取消按钮，导致同一个权限请求在飞书和 UI 看起来不一致。
         const permissionOptions = sortBotPermissionOptions(event.options);
@@ -6514,6 +6536,12 @@ export function createBotsService(
             if (!auth.ok) return auth.reply;
             if (!auth.context.activeTaskId)
               return [createOutbound(message.actor, msg(auth.locale, "noActiveTask"))];
+            // 安全加固 P2（R2.4 纵深防御）：门槛开启时拒绝 bot 端批准，覆盖门槛开启前已发出的
+            // 旧卡片按钮与手打 /permission 命令。批准只能在桌面本机进行。
+            if (await isBotPermissionLocalApprovalRequired())
+              return [
+                createOutbound(message.actor, msg(auth.locale, "permissionLocalApprovalRequired")),
+              ];
             const optionIndex = Number.parseInt(command.value, 10) - 1;
             const option = Number.isFinite(optionIndex)
               ? auth.context.pendingPermissionOptions?.[optionIndex]
@@ -6599,6 +6627,11 @@ export function createBotsService(
             if (!auth.ok) return auth.reply;
             if (!auth.context.activeTaskId)
               return [createOutbound(message.actor, msg(auth.locale, "noActiveTask"))];
+            // 安全加固 P2（R2.4 纵深防御）：门槛开启时拒绝 bot 端 /approve。
+            if (await isBotPermissionLocalApprovalRequired())
+              return [
+                createOutbound(message.actor, msg(auth.locale, "permissionLocalApprovalRequired")),
+              ];
             const pendingOption = auth.context.pendingPermissionOptions?.find(
               (option) =>
                 option.requestId === command.requestId && option.optionId === command.optionId,
@@ -6631,6 +6664,11 @@ export function createBotsService(
             if (!auth.ok) return auth.reply;
             if (!auth.context.activeTaskId)
               return [createOutbound(message.actor, msg(auth.locale, "noActiveTask"))];
+            // 安全加固 P2（R2.4 纵深防御）：门槛开启时拒绝 bot 端 /deny。
+            if (await isBotPermissionLocalApprovalRequired())
+              return [
+                createOutbound(message.actor, msg(auth.locale, "permissionLocalApprovalRequired")),
+              ];
             const pendingOption = auth.context.pendingPermissionOptions?.find(
               (option) => option.requestId === command.requestId && option.command === "deny",
             );

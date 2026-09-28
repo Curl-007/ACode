@@ -2,7 +2,7 @@
 
 > **给接手的模型/工程师**：本文记录 ACode 安全加固（P0 + P1）的完整状态、已验证的改动、跑测试的确切命令、以及踩过的坑和协作陷阱。读完本文即可无缝接手，无需回溯对话历史。
 >
-> **最后更新**：2026-09-28 ~17:30。**分支**：`fix/security-hardening-p0-p1`（未推送、未合并）。**工作树**：干净。
+> **最后更新**：2026-09-28（bot 权限桌面本机确认，两阶段 B+A）。**最近工作分支**：`feat/bot-permission-local-approval`（自 `dev/0.0.1` 切出，squash 合回）。**工作树**：干净。
 >
 > 计划全文见 [`docs/security-hardening-plan.md`](security-hardening-plan.md)；本文件是「实施进度 + 接手须知」，与计划互补。
 
@@ -19,7 +19,12 @@
 | **P1-7** 更新源 isPackaged 门禁 | ✅ 完成 | ✅ 可合并 |
 | **P1-5** BYO Key 迁 credentialRef | ✅ 三条回归已修复（见 §5），含 5.4 UX 占位 | ✅ 已合入 dev/0.0.1（e5f0fe1） |
 | **P2 骨架** 策略地板 + 旁路免疫熔断器 | ✅ 完成（分支 `feature/security-policy-floor`，见 §6） | 待合入 |
-| P2 其余项 / P3 | 未开始 | — |
+| **P2** bot 权限桌面本机确认（P0-3 诚实边界真正修法） | ✅ 完成（两阶段 B+A，见 §6 末条） | ✅ 已合入 dev/0.0.1 |
+| P2 残余（#5 路径收敛）/ P3 | 待产品决策 / 未开始 | — |
+
+> 注：上表 P0/P1 行与「P2 骨架」行是早期分支快照；其后各 P2 批次项（Electron 加固、
+> http 告警、git 源固定、PKCE、遥测清理、bot 权限本机确认等）按既定流程逐项 squash
+> 合入 `dev/0.0.1`，权威明细见 §6。
 
 **当前状态**：P0+P1 已全部合入 `dev/0.0.1`（squash 提交 `e5f0fe1`，原 PR #1 已关）。P2 骨架（托管策略地板 + 旁路免疫熔断器）已在 `feature/security-policy-floor` 分支完成实现与测试（26 个新测试用例），门禁全绿，待合入。P2 其余项与 P3 未开始（见 §6）。
 
@@ -87,7 +92,12 @@ for f in \
   packages/desktop/tests/github-updates.test.mjs \
   packages/services/test/providerConfigMigration.test.ts \
   packages/services/test/botDraftOptions.test.ts \
-  packages/services/test/providerProvisioningByoApikey.test.ts ; do
+  packages/services/test/providerProvisioningByoApikey.test.ts \
+  packages/ui/test/botPermissionFallback.test.ts \
+  packages/shared/tests/managed-policy.test.mjs \
+  packages/shared/tests/app-settings-bot-approval.test.mjs \
+  packages/services/tests/botPermissionLocalApproval.test.mjs \
+  apps/acode-cli/tests/managed-policy-floor.test.mjs ; do
   node --import tsx --test "$f" >/dev/null 2>&1; echo "EXIT=$? $f"
 done
 ```
@@ -298,8 +308,29 @@ done
   **有意的产品决定**（子代理需要查看用户指定的兄弟仓库/外部文件）。翻转它会给
   合法流程带来持续弹窗疲劳，属产品取舍而非纯安全修复，按 AGENTS.md 需先与用户
   对齐，不单方面加兜底分支。
-- **P2 未开始项**：bot 权限请求改由桌面本地可信确认者响应（P0-3 诚实边界的真正
-  修法；涉及 desktop↔bot 中继架构与信任边界重设计，是大件，建议独立排期）。
+- **bot 权限请求改由桌面本机确认（P0-3 诚实边界的真正修法）—— ✅ 已完成**
+  （spec `packages/services/specs/bot-permission-local-approval.md`）。分两阶段：
+  - **阶段1/B（纯能力，无行为变更）**：`respondPermission` 早已在 RPC 面（ProxyChannel
+    自动代理整个 IACodeTaskService），缺的是 UI 出口。V4InteractionDialogs 在 snapshot
+    无可渲染交互时，回落到 bot 广播回放进 acodeSessionStore 的权限队列（此前只写不读的
+    死状态），经 `acodeTaskService.respondPermission`（task 级 RPC，不依赖 session 订阅
+    健康）落地；与 snapshot 按 requestId≡interactionId 去重。任务列表角标/通知复用既有
+    sessions-index 投影（bot 任务就是普通任务，天然覆盖，未改）。纯函数 + 9 测试。
+  - **阶段2/A（门槛，默认关）**：AppSettings 新增 `botPermissionLocalApprovalEnabled`
+    （默认 false，零行为变更）。开启后 permission_request 只发只读提示（保留权限摘要），
+    不发可交互批准卡片；permission.respond/approve/deny 三个 action 加守卫（纵深防御，
+    覆盖门槛开启前的旧卡片按钮与手打命令）。门槛 = 用户设置 ∨ 管理员策略地板 ∨ 策略
+    损坏 fail-closed，用户设置无法放宽管理员地板（strictest-wins）。配对手机远控不算
+    独立可信确认者（其信任边界由远控配对鉴权负责，未单独设限）。
+  - **R3 managed-policy 单一来源**：canonical schema/OS 路径/读取迁到 `@acode/shared/node`
+    （`managedPolicy.ts`），CLI adapters 改为薄包装（floor/diagnostics/诊断文案字节级不变，
+    13 条既有回归全绿），host services 直接消费。新增可选收紧键 `requireLocalPermissionApproval`
+    （CLI 接受但忽略、不进 floor；host 消费）——**必须让 CLI strict schema 认识它**，否则
+    管理员一部署该键，CLI 会因未知键把整份策略降级 MINIMAL_LOCKDOWN、丢掉 deny 规则。
+  - 测试：shared managed-policy(11) + app-settings(4)、services 门槛真值表(9)、CLI (6b)
+    新键不降级 + 既有 13 回归、ui 纯函数(9)。**残留人工冒烟**：门槛开启后端到端走一次
+    （Telegram/飞书只读提示 + 桌面弹窗批准 + 旧卡片按钮被守卫拒绝）。
+- **P2 其余未开始项**：工作区路径收敛残余（#5，见上，需产品决策）。
 - **P3 能力差异化**（未开始）：auto 模式 LLM 分类器目前是桩、heartbeat 自动化、
   跨厂商插件清单兼容、prompt-cache 诊断、任务依赖图。
 

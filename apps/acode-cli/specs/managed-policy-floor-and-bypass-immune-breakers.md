@@ -31,6 +31,13 @@ P1-6 的项目 restrictive floor 是本骨架的特例（见 `project-permission
   `permissions.disallowedTools`（字符串数组）、`permissions.disableBypassPermissionsMode`
   （布尔）。**出现 `allow` 类字段或未知键 → 解析拒绝**（strict schema），防止策略文件
   被误用成放宽通道。
+- **`permissions.requireLocalPermissionApproval`（布尔，可选）**：schema 接受该键但 CLI
+  权限判定**忽略**它（不进 floor 数据、不影响 deny/ask/yolo 语义）。它的语义由 host
+  botsService 消费——强制 bot 任务权限只能在桌面本机确认（见
+  `packages/services/specs/bot-permission-local-approval.md` R2）。**必须让 CLI 严格 schema
+  接受该键**，否则管理员一部署它，CLI 就会因未知键把整份策略降级成 MINIMAL_LOCKDOWN、
+  丢掉 deny 规则。canonical schema 已单一来源化到 `packages/shared/src/node/managedPolicy.ts`
+  （见该 spec R3），CLI 加载器是其薄包装。
 - **strictest-wins**：策略层参与合并时只并集、不替换——`disallowedTools` 与用户/项目层
   取并集；deny/ask 规则作为独立规则集参与判定，压过所有放行分支。任何低层配置
   （System<User<Project<Session<Env<Cli）都不能移除或弱化策略条目。

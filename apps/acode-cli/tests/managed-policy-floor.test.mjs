@@ -131,6 +131,28 @@ test("(6) packaged runtime ignores the env override (P1-7 philosophy)", async ()
   });
 });
 
+test("(6b) requireLocalPermissionApproval is accepted by CLI without degrading the floor", async () => {
+  // 该键由 host botsService 消费（bot 权限需本机确认）；CLI 必须让 strict schema 认识它，
+  // 否则管理员一部署就把整份策略降级成 MINIMAL_LOCKDOWN、丢掉 deny 规则（见 spec R2.2/R3.2）。
+  await withTempDir(async (dir) => {
+    const filePath = writePolicy(dir, {
+      permissions: {
+        disallowedTools: ["Bash"],
+        deny: [{ toolName: "Write" }],
+        requireLocalPermissionApproval: true,
+      },
+    });
+    const { floor, diagnostics } = loadFrom(filePath);
+    assert.deepEqual(diagnostics, [], "known key must not produce diagnostics");
+    // 其它收紧规则正常加载（未降级）：disallowedTools/deny 都在，bypass 未被误禁。
+    assert.deepEqual(floor.disallowedTools, ["Bash"]);
+    assert.equal(floor.deny.length, 1);
+    assert.equal(floor.disableBypassPermissionsMode, false);
+    // CLI floor 不携带该键（CLI 权限判定忽略它）。
+    assert.equal("requireLocalPermissionApproval" in floor, false);
+  });
+});
+
 test("(7) merge: policy unions disallowedTools and never wipes inherited permission fields", () => {
   // A. User → Policy（无 Project 层）：稀疏的 Policy 补丁不得抹掉继承的 mode/allowedTools。
   const userThenPolicy = mergeConfigs(

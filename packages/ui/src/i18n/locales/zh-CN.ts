@@ -2186,6 +2186,9 @@ const zhCN: Record<string, string> = {
   "settings.askUserQuestionAutoResolution": "提问自动继续",
   "settings.askUserQuestionAutoResolutionDescription":
     "开启后，Agent 提问 5 分钟未回答会自动继续；关闭后，当前和后续提问会一直等待你的回答。",
+  "settings.botPermissionLocalApproval": "Bot 任务权限需本机确认",
+  "settings.botPermissionLocalApprovalDescription":
+    "开启后，聊天机器人（Telegram/飞书等）发起的任务遇到工具权限请求时，只能在 ACode 桌面窗口本机批准；聊天侧只显示只读提示，不再提供批准按钮。管理员策略可强制开启且无法在此放宽。",
   "settings.modelIoFullRetention": "完整保留模型 I/O",
   "settings.modelIoFullRetentionDescription":
     "保留完整的模型请求和响应，不自动压缩、限制大小或删除旧记录。",

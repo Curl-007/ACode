@@ -59,3 +59,14 @@ export {
   type ResolveCredentialMasterKeyOptions,
   type ResolvedCredentialMasterKey,
 } from "./node/credentialMasterKey.js";
+export {
+  ACODE_MANAGED_POLICY_FILE_ENV,
+  loadManagedPolicyFile,
+  resolveManagedPolicyFilePath,
+  type ManagedPolicyFileData,
+  type ManagedPolicyFileLoadResult,
+  type ManagedPolicyFileOptions,
+  type ManagedPolicyFileStatus,
+  type ManagedPolicyInvalidKind,
+  type ManagedPolicyRule,
+} from "./node/managedPolicy.js";

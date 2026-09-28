@@ -12,7 +12,7 @@ import type {
   ProviderSettingsFormModel,
 } from "@/lib/providerSettingsFormTypes.js";
 import type { ModelConnectivityResult } from "@acode/shared";
-import type { ProviderApiType } from "@acode/provider";
+import { isPlaintextHttpBaseUrl, type ProviderApiType } from "@acode/provider";
 import {
   TID_MODEL_PROVIDER_ADD_MODEL_BUTTON,
   TID_MODEL_PROVIDER_BASE_URL_INPUT,
@@ -22,7 +22,15 @@ import {
   TID_MODEL_PROVIDER_NAME_INPUT,
   testId,
 } from "@acode/shared";
-import { InfoIcon, LockKeyholeIcon, Plus, Pencil, Trash2, MoreHorizontal } from "lucide-react";
+import {
+  AlertTriangleIcon,
+  InfoIcon,
+  LockKeyholeIcon,
+  Plus,
+  Pencil,
+  Trash2,
+  MoreHorizontal,
+} from "lucide-react";
 import { Button } from "@/components/ui/button.js";
 import { Input } from "@/components/ui/input.js";
 import {
@@ -205,6 +213,23 @@ export function ProviderConnectionSection({
   const readOnlyBaseUrl = provider.config.api?.baseUrl ?? "";
   const resolvedApiFormat = provider.config.api?.type ?? "anthropic-messages";
 
+  // 安全加固 P2 #7：baseUrl 走明文 http 时 API Key 与对话内容会明文过网，必须就地可见。
+  // 编辑态盯草稿值（用户边输入边看到），只读继承态盯继承值（只读不等于安全）。
+  // 警告非阻断：内网 http 端点是少数合法场景，这里只负责「知情」。
+  const plaintextHttpWarning = isPlaintextHttpBaseUrl(
+    readOnly ? readOnlyBaseUrl : baseUrlValue,
+  ) ? (
+    <p
+      className="flex items-start gap-1.5 text-ui-sm text-warning"
+      data-testid="model-provider-base-url-http-warning"
+    >
+      <AlertTriangleIcon className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+      <span>
+        {intl.formatMessage({ id: "settings.modelProvider.baseUrlPlaintextHttpWarning" })}
+      </span>
+    </p>
+  ) : null;
+
   const renderReadOnlyField = (label: string, value: string) => (
     <div>
       <label className="mb-1 block text-ui-base text-foreground-subtle">{label}</label>
@@ -231,6 +256,7 @@ export function ProviderConnectionSection({
           intl.formatMessage({ id: "settings.modelProvider.baseUrl" }),
           readOnlyBaseUrl,
         )}
+        {plaintextHttpWarning}
         {showApiFormat
           ? renderReadOnlyField(
               intl.formatMessage({ id: "settings.modelProvider.apiFormat" }),
@@ -262,6 +288,7 @@ export function ProviderConnectionSection({
           onCompositionStart={onBaseUrlCompositionStart}
           onCompositionEnd={onBaseUrlCompositionEnd}
         />
+        {plaintextHttpWarning}
       </div>
       {showApiFormat ? (
         <div>

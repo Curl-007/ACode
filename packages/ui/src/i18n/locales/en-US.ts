@@ -2856,6 +2856,8 @@ const enUS: Record<string, string> = {
     "Add at least one model before adding the provider.",
   "settings.modelProvider.baseUrl": "Base URL",
   "settings.modelProvider.baseUrlPlaceholder": "https://api.example.com/v1",
+  "settings.modelProvider.baseUrlPlaintextHttpWarning":
+    "Plaintext HTTP endpoint: the API key will be sent in cleartext; consider switching to https",
   "settings.modelProvider.readOnlyField": "{field} (read only)",
   "settings.modelProvider.endpointPath": "Endpoint path: {format}",
   "settings.modelProvider.apiFormat": "API format",

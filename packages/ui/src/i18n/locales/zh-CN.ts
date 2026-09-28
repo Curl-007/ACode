@@ -2669,6 +2669,8 @@ const zhCN: Record<string, string> = {
   "settings.modelProvider.addProviderModelReminder": "添加供应商前，请至少添加一个模型。",
   "settings.modelProvider.baseUrl": "Base URL",
   "settings.modelProvider.baseUrlPlaceholder": "https://api.example.com/v1",
+  "settings.modelProvider.baseUrlPlaintextHttpWarning":
+    "明文 http 端点：API Key 将以明文传输，建议改用 https",
   "settings.modelProvider.readOnlyField": "{field}（只读）",
   "settings.modelProvider.endpointPath": "接口路径：{format}",
   "settings.modelProvider.apiFormat": "API 格式",

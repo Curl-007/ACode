@@ -13,6 +13,14 @@ export interface OAuthProviderContext {
   state: string;
   redirectUri: string;
   now: () => number;
+  /**
+   * 本次授权流的 PKCE verifier（仅客户端构造授权 URL 的 deep-link 流程存在；
+   * 轮询流程授权 URL 与兑换均由后端持有，无 verifier，字段保持缺省）。
+   * 由 OAuthService 生成并暂存于 pendingState，adapter 只消费不存储。
+   */
+  codeVerifier?: string;
+  /** 与 codeVerifier 配对的 S256 challenge，供 buildAuthorizeUrl 拼接授权参数。 */
+  codeChallenge?: string;
 }
 
 /** OAuth provider 适配器：隔离协议差异 */

@@ -14,6 +14,7 @@ import { readApiJson } from "../../providers/api/apiJson.js";
 import { ZaiBusinessTokenResolver } from "../../providers/zaiBusinessTokenResolver.js";
 import { parseOAuthLoginAttribution } from "../callbackAttribution.js";
 import type { OAuthProviderRuntimeConfig } from "../runtimeConfig.js";
+import { buildPkceAuthorizeParams, buildPkceTokenExchangeFields } from "./pkce.js";
 import type { OAuthProviderAdapter, OAuthProviderContext } from "./providerAdapter.js";
 
 interface ZaiBackendTokenPayload {
@@ -291,6 +292,8 @@ export class ZaiProviderAdapter implements OAuthProviderAdapter {
       response_type: "code",
       client_id: this.config.appId,
       state: context.state,
+      // PKCE S256：与 BigModel 共用同一 helper，deep-link 流程注入、轮询流程保持原形。
+      ...buildPkceAuthorizeParams(context),
     });
 
     return `${this.config.authorizeUrl}?${query.toString()}`;
@@ -345,6 +348,9 @@ export class ZaiProviderAdapter implements OAuthProviderAdapter {
             code: params.code,
             redirect_uri: context.redirectUri,
             state: context.state,
+            // PKCE：仅 deep-link 流程带 code_verifier，与 BigModel 共用 helper；
+            // verifier 等同 bearer 机密，禁止进入日志（上方结构日志保持不含 verifier）。
+            ...buildPkceTokenExchangeFields(context),
           }),
         },
       );

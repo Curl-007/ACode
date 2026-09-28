@@ -29,6 +29,7 @@ import {
   withProviderProfileSchema,
 } from "./oauthProfileSchema.js";
 import { createOAuthProviderAdapters, type OAuthProviderAdapter } from "./providers/index.js";
+import { createOAuthPkcePair } from "./providers/pkce.js";
 import { OAuthCredentialRepo } from "./repo/oauthCredentialRepo.js";
 import { createOAuthRuntimeConfig } from "./runtimeConfig.js";
 import {
@@ -49,6 +50,12 @@ interface PendingState {
   provider: OAuthProviderId;
   timeout: NodeJS.Timeout;
   phase: "awaiting-attribution-or-code" | "awaiting-code-after-attribution";
+  /**
+   * PKCE verifier：仅客户端构造授权 URL 的 deep-link 流程生成（specs/oauth-pkce.md）。
+   * 与 state 同对象、同生命周期地存于进程内 pendingState，不落盘、不进日志；
+   * 进程重启随 pendingState 一起丢失，回调按 state 不匹配拒绝（与现状一致）。
+   */
+  codeVerifier?: string;
   completionPromise?: Promise<OAuthCallbackResult | null>;
   polling?: {
     expiresAt: number;
@@ -859,6 +866,9 @@ export class OAuthService implements IOAuthService {
     });
 
     const state = randomBytes(32).toString("hex");
+    // PKCE pair 与 state 同一时刻、同一所有者生成（specs/oauth-pkce.md）。
+    // 生成失败必须让登录启动失败（fail-closed），禁止静默降级为无 PKCE 继续。
+    const { codeVerifier, codeChallenge } = await createOAuthPkcePair();
     const timeout = setTimeout(() => {
       if (this.pendingState?.state === state) {
         this.pendingState = null;
@@ -870,6 +880,7 @@ export class OAuthService implements IOAuthService {
       provider: adapter.providerId,
       timeout,
       phase: "awaiting-attribution-or-code",
+      codeVerifier,
     };
 
     const authorizeUrl = adapter.buildAuthorizeUrl({
@@ -877,6 +888,8 @@ export class OAuthService implements IOAuthService {
       state,
       redirectUri: adapter.redirectUri,
       now: this.now,
+      codeVerifier,
+      codeChallenge,
     });
 
     return {
@@ -967,6 +980,9 @@ export class OAuthService implements IOAuthService {
           state: callback.state,
           redirectUri: adapter.redirectUri,
           now: this.now,
+          // 回调兑换使用启动时暂存在同一 pending 里的 verifier：
+          // state 匹配已保证 verifier 与本次授权流配对，跨 flow 取不到彼此的 verifier。
+          ...(pending.codeVerifier ? { codeVerifier: pending.codeVerifier } : {}),
         };
         const tokenSet = await this.runWithAdapterError(adapter, () =>
           adapter.exchangeToken(callback, context),

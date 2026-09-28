@@ -12,6 +12,7 @@ import { readApiJson } from "../../providers/api/apiJson.js";
 import { createServiceLogger } from "../../logger/serviceLogger.js";
 import { parseOAuthLoginAttribution } from "../callbackAttribution.js";
 import type { OAuthProviderRuntimeConfig } from "../runtimeConfig.js";
+import { buildPkceAuthorizeParams, buildPkceTokenExchangeFields } from "./pkce.js";
 import type { OAuthProviderAdapter, OAuthProviderContext } from "./providerAdapter.js";
 
 interface BigModelAcodeTokenEnvelope {
@@ -111,6 +112,9 @@ export class BigModelProviderAdapter implements OAuthProviderAdapter {
       redirect: context.redirectUri,
       appId: this.config.appId,
       state: context.state,
+      // PKCE S256：deep-link 流程由 OAuthService 生成 pair 后经 context 注入；
+      // 轮询流程无 PKCE 上下文，展开空对象保持 URL 形态不变。
+      ...buildPkceAuthorizeParams(context),
     });
 
     return `${this.config.authorizeUrl}?${query.toString()}`;
@@ -163,6 +167,10 @@ export class BigModelProviderAdapter implements OAuthProviderAdapter {
             code: params.code,
             redirect_uri: context.redirectUri,
             state: context.state,
+            // PKCE：仅 deep-link 流程带 code_verifier（见 specs/oauth-pkce.md）。
+            // 服务端是否转发给 provider 未经验证；不识别该字段的后端应忽略。
+            // verifier 等同 bearer 机密，禁止进入日志。
+            ...buildPkceTokenExchangeFields(context),
           }),
         },
       );

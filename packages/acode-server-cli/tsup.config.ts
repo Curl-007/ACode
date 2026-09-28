@@ -27,7 +27,7 @@ export default defineConfig({
   banner: {
     js: 'import { fileURLToPath as __acodeFileURLToPath } from "node:url"; import { dirname as __acodeDirname } from "node:path"; const __filename = __acodeFileURLToPath(import.meta.url); const __dirname = __acodeDirname(__filename);',
   },
-  noExternal: ["@acode/shared", "@acode/rpc", "@acode/services"],
+  noExternal: ["@acode/shared", "@acode/shared/node", "@acode/rpc", "@acode/services"],
   define: SERVER_CLI_DEFINES,
   external: [
     "node-pty",

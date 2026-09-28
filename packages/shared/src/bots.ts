@@ -77,10 +77,12 @@ export const BOT_BIND_CODE_TTL_MS = 30_000;
 /**
  * Bot 草稿缺省权限模式（services 与 UI 共用的单一事实源）。
  *
- * 既有 bot（currentOptions.mode 缺省）沿用 yolo，行为零变化；用户显式选择后下发所选模式。
- * 不再像旧实现那样硬锁——yolo 只是缺省，不是强制。
+ * 安全加固 P0-3：远程聊天入口不可达全权限档（yolo/bypass）。bot createTask 的首条消息默认
+ * 进入 **build** 审批模式——副作用工具照常经桌面 host 的审批闸弹窗，不静默执行。此前该缺省是
+ * `yolo`（「一条聊天消息 → 远程任意命令执行」面），现回退到受审批的缺省，与引擎注册表
+ * `defaultPermissionMode: "build"`（native）一致。需要 yolo 必须在桌面本地显式操作。
  */
-export const BOT_DEFAULT_DRAFT_MODE = "yolo";
+export const BOT_DEFAULT_DRAFT_MODE = "build";
 
 export interface BotWorkspaceRef {
   id: string;

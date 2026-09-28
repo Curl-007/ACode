@@ -16,6 +16,7 @@ const messages = {
     noWorkspaceAllowed: "没有可用 workspace，请先在 Bots 设置里允许 workspace。",
     workspaceOutOfScope: "当前聊天上下文的 workspace 已不在授权范围内，请重新选择 **/项目**。",
     bindCodeInvalid: "绑定码无效或已过期，请在 acode UI 重新生成。",
+    bindLocked: "绑定尝试过于频繁，请在 {seconds} 秒后重试。",
     bindBotMissing: "绑定失败：bot 不存在。",
     bindSuccess: "绑定成功。发送 **/帮助** 查看可用命令。",
     weixinActivatedWelcome: "微信 Bot 已激活。发送 **/帮助** 查看命令，或直接描述你要做的事。",
@@ -60,6 +61,10 @@ const messages = {
     engineChanged: "Bot 默认引擎已切换为 {engine}。",
     modeSelectTitle: "当前模式 {mode}\n选择模式",
     modeMissing: "未找到模式。",
+    modeRemoteForbidden:
+      "远程入口不支持完全访问模式。请改选 build/edit/plan，或在桌面本地显式切换。",
+    taskModeRemoteForbidden:
+      "当前任务处于完全访问模式，远程入口不能在其中继续执行。请在桌面本地把该任务切回 build/edit/plan，或改用其他任务。",
     modeChanged: "当前任务模式已切换为 {mode}。",
     thoughtLevelSelectTitle: "当前思考级别 {level}\n选择思考级别",
     thoughtLevelMissing: "当前模型不支持思考级别。",
@@ -136,6 +141,7 @@ const messages = {
     workspaceOutOfScope:
       "The workspace in this chat is no longer authorized. Please select **/workspace** again.",
     bindCodeInvalid: "The bind code is invalid or expired. Generate a new one in the acode UI.",
+    bindLocked: "Too many bind attempts. Please retry in {seconds} seconds.",
     bindBotMissing: "Bind failed: bot does not exist.",
     bindSuccess: "Bound successfully. Send **/help** to see available commands.",
     weixinActivatedWelcome:
@@ -181,6 +187,10 @@ const messages = {
     engineChanged: "Bot default engine changed to {engine}.",
     modeSelectTitle: "Current mode {mode}\nSelect mode",
     modeMissing: "Mode option not found.",
+    modeRemoteForbidden:
+      "The remote entry does not support full access. Choose build/edit/plan, or switch it locally on the desktop.",
+    taskModeRemoteForbidden:
+      "This task is in full-access mode, so the remote entry cannot keep driving it. Switch the task back to build/edit/plan locally on the desktop, or pick a different task.",
     modeChanged: "Current task mode changed to {mode}.",
     thoughtLevelSelectTitle: "Current thought level {level}\nSelect thought level",
     thoughtLevelMissing: "The current model does not support thought level.",

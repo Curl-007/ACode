@@ -1881,6 +1881,8 @@ app.whenReady().then(async () => {
     updateFeedSource: resolveUpdateFeedSourceFromStartupConfig({
       argv: process.argv,
       env: process.env,
+      // 打包发行版忽略 env/argv 的更新源覆盖（P1-7），仅供开发构建使用。
+      isPackaged: app.isPackaged,
     }),
   });
 

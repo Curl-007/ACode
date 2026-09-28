@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { atomicWritePrivateTextFile, backupCorruptFile, withFileLock } from "@acode/shared/node";
 import { createACodeCredentialCipher, type ACodeCredentialCipher } from "./credential-cipher.js";
 
@@ -70,7 +70,14 @@ export function createSharedACodeCredentialStore(
 ): SharedACodeCredentialStore {
   const env = options.env ?? process.env;
   const filePath = resolveSharedACodeCredentialsPath(options);
-  const cipher = options.cipher ?? createACodeCredentialCipher({ env });
+  // 密钥文件钉在 credentials.json 同目录：baseDir/filePath 被调用方覆盖时，
+  // 密钥解析必须跟着走，否则「凭据在新目录、密钥在旧目录」会直接解密失败。
+  const cipher =
+    options.cipher ??
+    createACodeCredentialCipher({
+      env,
+      keyFilePath: join(dirname(filePath), "credential-key.json"),
+    });
 
   return {
     filePath,
@@ -269,7 +276,12 @@ export function loadSharedACodeCredentialSync(
     if (rawValue === undefined) {
       return undefined;
     }
-    const cipher = options.cipher ?? createACodeCredentialCipher({ env: options.env });
+    const cipher =
+      options.cipher ??
+      createACodeCredentialCipher({
+        env: options.env,
+        keyFilePath: join(dirname(filePath), "credential-key.json"),
+      });
     const decrypted = cipher.decrypt(rawValue);
     return decrypted.trim().length > 0 ? decrypted : undefined;
   } catch {

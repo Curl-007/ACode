@@ -9,6 +9,7 @@ export function ApiKeyInput({
   value,
   visible,
   readOnly,
+  storedInVault,
   onChange,
   onBlur,
   onKeyDown,
@@ -19,6 +20,8 @@ export function ApiKeyInput({
   value: string;
   visible: boolean;
   readOnly?: boolean;
+  /** Key 已 vault 化（P1-5）：字段为空是「不回显」而非「未配置」，占位符需如实提示。 */
+  storedInVault?: boolean;
   onChange: (value: string) => void;
   onBlur: () => void;
   onKeyDown?: (event: React.KeyboardEvent<HTMLInputElement>) => void;
@@ -37,7 +40,9 @@ export function ApiKeyInput({
         data-testid={TID_MODEL_PROVIDER_API_KEY_INPUT}
         className="pr-10 h-9"
         placeholder={intl.formatMessage({
-          id: "settings.modelProvider.apiKeyPlaceholder",
+          id: storedInVault
+            ? "settings.modelProvider.apiKeyConfiguredPlaceholder"
+            : "settings.modelProvider.apiKeyPlaceholder",
         })}
         value={value}
         readOnly={readOnly}

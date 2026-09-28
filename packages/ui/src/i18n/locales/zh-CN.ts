@@ -2684,6 +2684,7 @@ const zhCN: Record<string, string> = {
   "settings.modelProvider.apiFormat.title.anthropicMessages": "Anthropic Messages",
   "settings.modelProvider.apiKey": "API Key",
   "settings.modelProvider.apiKeyPlaceholder": "输入 API Key",
+  "settings.modelProvider.apiKeyConfiguredPlaceholder": "已配置（••••••••），输入新值可更换",
   "settings.modelProvider.apiKeyDisabledHint": "设置 API Key 后即可启用。",
   "settings.modelProvider.getApiKey": "获取 API Key",
   "settings.modelProvider.viewUsage": "查看用量",

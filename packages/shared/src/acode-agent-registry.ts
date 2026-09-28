@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { ACodeProvider } from "./acode-task-types-core.js";
 import { acodeEnginePermissionModeSchema } from "./acode-protocol-legacy-types.js";
+import { filterBotSelectablePermissionModes } from "./bot-remote-guard.js";
 
 /**
  * Agent 引擎注册表（唯一所有者）。
@@ -136,4 +137,17 @@ export function getAgentEnginePermissionModes(
   engineId?: ACodeProvider | string | null,
 ): readonly ACodeAgentPermissionMode[] {
   return resolveAgentEngine(engineId).supportedPermissionModes;
+}
+
+/**
+ * 远程 bot 入口可选的权限模式（安全加固 P0-3 天花板）。
+ *
+ * = 引擎支持集剔除全权限档（yolo/bypassPermissions）。bot 驱动的会话永不可达全权限：
+ * 远程聊天一条消息即能放大成 host 上的任意副作用执行，需要这些模式必须在桌面本地显式操作。
+ * services 的 `/mode` 列表与派发咽喉、UI 的 bot 默认权限模式卡片都从本函数派生，单一事实源、不内联枚举。
+ */
+export function getBotSelectablePermissionModes(
+  engineId?: ACodeProvider | string | null,
+): readonly ACodeAgentPermissionMode[] {
+  return filterBotSelectablePermissionModes(getAgentEnginePermissionModes(engineId));
 }

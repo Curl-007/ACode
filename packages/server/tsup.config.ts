@@ -60,6 +60,7 @@ export default defineConfig({
   // workspace 包的 exports 指向 .ts 源码，node 运行时无法直接加载，需要 bundle 进来
   noExternal: [
     "@acode/shared",
+    "@acode/shared/node",
     "@acode/rpc",
     "@acode/services",
     "@acode/services/node",

@@ -35,6 +35,20 @@ Compared with the open-source baseline, this repository contains **no monitoring
 
 **Verification**: the change passes `pnpm typecheck`, `pnpm lint` (0 errors), and per-module regression tests. Full lists and verification limits are in the removal reports: [desktop](packages/desktop/specs/telemetry-removal-report.md), [CLI](apps/acode-cli/specs/telemetry-removal-report.md), [UI](packages/ui/specs/telemetry-removal-report.md).
 
+### Local credential protection
+
+Sign-in tokens and paid API keys are stored in `~/.acode/v2/credentials.json`, encrypted with AES-256-GCM (the `enc:v2:` format). The encryption master key is **no longer** derived offline from machine attributes (platform / home directory / username) — previously any process that could read that file could reconstruct every credential purely offline. The key source is now, by priority:
+
+1. the `ACODE_CREDENTIAL_SECRET` environment variable (only honored when no key file exists yet);
+2. a per-install random key file `~/.acode/v2/credential-key.json` (32 bytes, `0600`, generated on first use).
+
+**Two data-loss risks you must know about:**
+
+- **`credential-key.json` lives or dies with your credentials.** Deleting it, or backing up / migrating by copying `credentials.json` but forgetting the key file, makes every `enc:v2:` credential **permanently unrecoverable**. Treat the two files as one unit and back them up together. The app's built-in data-directory migration (switching `ACODE_DATA_BASE_DIR`) carries the key file automatically — no manual step needed.
+- **Rolling back to an older version silently corrupts your sign-in.** An older build only recognizes the `enc:v1:` prefix; on an `enc:v2:` value it returns the **ciphertext verbatim as plaintext** — which surfaces as a mysteriously broken login (401) or an invalid API key, not a clear error. After upgrading to this version, do not roll back to a pre-upgrade build; if you must, sign out on the desktop first, then sign in again on the old version.
+
+Because the key file sits on the same disk as the ciphertext, this scheme does **not** protect against "the whole `.acode` directory being exfiltrated" (cloud sync, backup leaks, disk images). True "separation of ciphertext and key" requires an OS keychain (Electron `safeStorage` / keytar), which first needs the synchronous cipher interface made asynchronous and the cross-process key-agreement problem solved (the desktop host and the CLI are two processes sharing one credential file). That is future work — see [`packages/services/specs/credential-storage.md`](packages/services/specs/credential-storage.md).
+
 ## Download and install
 
 The [Releases](https://github.com/Curl-007/ACode/releases) page ships desktop clients (macOS / Windows / Linux) and the CLI distribution.
@@ -183,7 +197,9 @@ acode --web --help
 
 In Web mode, it uses the current directory as the workspace, listens on `127.0.0.1` without token authentication by default, selects an available port, and opens a browser. Use the URL printed in the terminal and press `Ctrl+C` to stop the service. For LAN access, use `--host 0.0.0.0`; listening on a non-local address generates an access token by default. Use the token-bearing URL printed in the terminal. Set a token with `--token`, or disable token authentication with `--no-token`.
 
-When starting the general Web service's HTTP entry directly, configure API/WebSocket authentication with `ACODE_SERVER_AUTH_TOKEN`. When creating the service programmatically, use the `authToken` option.
+Authentication is fail-closed: the server refuses to start when it would bind a non-loopback address (for example `--host 0.0.0.0`) without a token, so `--no-token` is only valid for loopback binds. When it does start on loopback without a token, it prints a loud "no auth, loopback only" warning at startup, because any local process or browser page can then reach it.
+
+When starting the general Web service's HTTP entry directly, configure API/WebSocket authentication with `ACODE_SERVER_AUTH_TOKEN`. When creating the service programmatically, use the `authToken` option. Send the token in an `Authorization: Bearer <token>` header; the `?token=` URL query still works for backward compatibility but is deprecated (it leaks into logs, browser history and `Referer`) and logs a deprecation warning. The `acode_lite_token` cookie remains supported as a browser-compatibility path. To allow a trusted reverse proxy or LAN origin to redeem the trusted-host `/ws/host` upgrade, list full origins in `ACODE_SERVER_ALLOWED_ORIGINS` (comma-separated); browser upgrades carrying any other `Origin` are rejected.
 
 See Packaging below for build instructions. `pnpm build:acode` only creates the distribution; it does not replace an existing `acode` on `PATH`. If the command still points to an older installation or another checkout, check it with `command -v acode` on macOS / Linux or `where.exe acode` on Windows.
 

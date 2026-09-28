@@ -6,7 +6,7 @@ import type {
 } from "@acode/shared";
 import {
   BOT_ACODE_PROVIDER_OPTIONS,
-  getAgentEnginePermissionModes,
+  getBotSelectablePermissionModes,
   getSupportedBotReplyGranularities,
 } from "@acode/shared";
 
@@ -75,13 +75,17 @@ export function getBotEngineEntry(engine: ACodeProvider | undefined) {
 }
 
 /**
- * 某引擎支持的权限模式选项（按引擎作用域，来自注册表）。
- * label 复用 engine.permissionMode.<id> 文案键；native 引擎为 build/edit/plan/yolo。
+ * 某引擎下 bot（远程入口）可选的默认权限模式选项（按引擎作用域，来自注册表）。
+ * label 复用 engine.permissionMode.<id> 文案键。
+ *
+ * 安全加固 P0-3：这是「bot 默认权限模式」卡片的选项源，设置的是 bot 驱动的远程会话默认模式，
+ * 因此剔除全权限档（yolo/bypassPermissions），与远程入口天花板（services 派发侧 clampBotPermissionMode）
+ * 同源。native 引擎只列 build/edit/plan。需要 yolo 请在桌面本地的任务工具栏显式切换，不经 bot 配置。
  */
 export function getBotPermissionModesForEngine(
   engine: ACodeProvider | undefined,
 ): Array<{ id: string; labelId: string }> {
-  return getAgentEnginePermissionModes(engine).map((mode) => ({
+  return getBotSelectablePermissionModes(engine).map((mode) => ({
     id: mode,
     labelId: `engine.permissionMode.${mode}`,
   }));

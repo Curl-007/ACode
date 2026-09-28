@@ -101,6 +101,7 @@ export * from "./acode-slash-command-help.js";
 export * from "./acodeEndpoint.js";
 export * from "./acode-source-headers.js";
 export * from "./acode-agent-policy.js";
+export * from "./bot-remote-guard.js";
 export * from "./acode-agent-registry.js";
 export * from "./acode-media-policy.js";
 export * from "./media-preview.js";

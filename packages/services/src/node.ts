@@ -13,6 +13,7 @@ import { getAppConfigDir as resolveAppConfigDir } from "./paths.js";
 import {
   buildLocalMediaPreviewUrl,
   isProviderProvisioningAccountCredentialKey,
+  isProviderProvisioningProviderApiKeyCredentialKey,
   type ProviderProvisioningTrigger,
 } from "@acode/shared";
 
@@ -369,6 +370,7 @@ import { bindAccountProviderInvalidation } from "./model-provider/accountProvide
 import { AccountProviderApiClient } from "./model-provider/accountProviderApiClient.js";
 import { AccountProviderApiKeyResolver } from "./model-provider/accountProviderApiKeyResolver.js";
 import { createProviderConfigRuntime } from "./model-provider/providerConfigRuntime.js";
+import { createCredentialServiceApiKeyVault } from "./model-provider/credentialServiceApiKeyVault.js";
 import { fetchACodeBuiltinRemoteRelease } from "./model-provider/acodeBuiltinRemoteConfig.js";
 import {
   createProviderRuntimeFromConfigRuntime,
@@ -1401,7 +1403,13 @@ export function createLocalServices(options: {
   const provisioningOAuthKeys = new Set<string>(PROVIDER_PROVISIONING_OAUTH_CREDENTIAL_KEYS);
   const credentialService = createCredentialService({
     onDidMutate: ({ key }) => {
-      if (provisioningOAuthKeys.has(key) || isProviderProvisioningAccountCredentialKey(key)) {
+      // P1-5（R2）：BYO Key（provider:apikey:*）也是 provisioning 信封的凭据事实，
+      // 变化后必须触发源变更推送，否则远端拿到新 ref 却等不来新真值。
+      if (
+        provisioningOAuthKeys.has(key) ||
+        isProviderProvisioningAccountCredentialKey(key) ||
+        isProviderProvisioningProviderApiKeyCredentialKey(key)
+      ) {
         options.onProviderProvisioningSourceChanged?.("credential");
       }
     },
@@ -1409,6 +1417,10 @@ export function createLocalServices(options: {
   const accountProviderCredentialStore = createAccountProviderCredentialStore({
     credentialService,
   });
+  // 安全加固 P1-5：BYO Provider 的 API Key 走加密凭据库，provider_config.json 只存 credentialRef。
+  // 写入侧（ProviderConfigRuntime → repository）与读取侧（ProviderRuntime → registry hydration）
+  // 必须注入**同一个** vault 实例，否则会出现「写了 ref 但读不回来」。
+  const providerApiKeyVault = createCredentialServiceApiKeyVault(credentialService);
   const broadcastService = createBroadcastService(options?.parentPort ?? null);
   const gitCheckpointService = createGitCheckpointService();
   const hostApiNetworkTransport =
@@ -1555,6 +1567,7 @@ export function createLocalServices(options: {
     // 已发布 config.json 保存的是 ACode 用户配置；清理第三方 ACP 不能移除这条升级路径。
     // Repository 仅在新 Personal 配置不存在时导入，并保留旧文件以便回滚。
     readLegacyProviders: () => readLegacyACodeConfigProviders(),
+    providerApiKeyVault,
   });
   const accountProviderConfigSource = createAccountProviderConfigSource({
     configSource: providerConfigRuntime.configService,
@@ -1620,6 +1633,10 @@ export function createLocalServices(options: {
     configRuntime: providerConfigRuntime,
     accountSource: accountProviderConfigSource,
     modelSelectionConfiguredDefaultSource,
+    // P1-5 读取侧：registry 的异步刷新循环把 credentialRef hydrate 回明文 apiKey，
+    // 之后同步 resolver 与下游约 39 处 `access.apiKey` 消费者拿到的都是真值，无需改动。
+    // 必须与写入侧（providerConfigRuntime）同一个 vault 实例。
+    providerApiKeyVault,
     disposeModelSelectionConfiguredDefaultSource: () =>
       modelSelectionConfiguredDefaultSource.dispose(),
     testConnectivity: createProviderSettingsConnectivityTester({

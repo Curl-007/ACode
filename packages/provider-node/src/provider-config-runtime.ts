@@ -1,5 +1,6 @@
 import {
   ProviderConfigService,
+  type ProviderApiKeyVault,
   type ProviderConfigLayerSnapshot,
   type ProviderConfigLayerUpdate,
 } from "@acode/provider";
@@ -34,6 +35,11 @@ export interface NodeProviderConfigRuntimeOptions {
   readonly importLegacy?: (
     acodeBuiltin: ProviderConfigLayerSnapshot,
   ) => Promise<ProviderConfigLayerUpdate | null>;
+  /**
+   * BYO Provider API Key 的加密凭据库（安全加固 P1-5）。可选；注入后写入漏斗把明文 Key
+   * 搬进凭据库、文件只留 credentialRef。透传给 NodePersonalProviderConfigRepository。
+   */
+  readonly providerApiKeyVault?: ProviderApiKeyVault;
   readonly watch?: boolean;
 }
 
@@ -77,6 +83,9 @@ export class NodeProviderConfigRuntime {
       onRecovery: options.onPersonalConfigRecovery,
       onPollingError: options.onPersonalConfigPollingError,
       pollingIntervalMs: options.personalPollingIntervalMs,
+      ...(options.providerApiKeyVault
+        ? { providerApiKeyVault: options.providerApiKeyVault }
+        : {}),
       ...(options.importLegacy
         ? {
             importLegacy: async () => options.importLegacy!(await this.#acodeBuiltinSource.read()),

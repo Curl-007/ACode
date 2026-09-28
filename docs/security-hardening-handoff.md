@@ -286,8 +286,20 @@ done
   「远程执行命令」的 API 契约（SSH exec / docker exec sh -lc / wsl bash -lc），
   全部调用方的路径插值都经 `quotePosixShellArg`/`quotePosixPathArg` 转义（已全量
   sweep 验证无未转义插值）。无需修复；后续扫描可按此结论 triage。
-- **P2 未开始项**：工作区路径收敛（#5，与熔断器交互需整体设计）、遥测残留清理（#10 低危）、
-  bot 权限请求改由桌面本地可信确认者响应（P0-3 诚实边界的真正修法）。
+- **遥测残留清理（#10）—— ✅ 已完成**（b5ead30）：globals.d.ts 的
+  syncTelemetryContext/reportTelemetryEvent 死声明与坏类型导入删除（类型在 shared
+  已不存在，仅 skipLibCheck 掩盖）。**X-Device-Mid 评估结论：保留**——随机持久 ID
+  （非硬件指纹）、nodeApiClient 按 origin 门禁只发往自有端点（不达第三方模型端点）、
+  支撑在用功能（灰度分桶/反馈关联/Start Plan 权益）。
+- **工作区路径收敛（#5）—— 评估结论：实质已被熔断器覆盖，残余需产品决策**：
+  yolo 越界写已由 breaker.pathEscapeWrite 拦截（ask）；build 模式副作用写本来就
+  全部 ask；凭据位置读全模式由 breaker.sensitiveRead 拦截。剩余唯一面 =「非敏感
+  越界读」在 build/yolo 静默放行——而 path-policy.ts:36-38 注释明确记录这是
+  **有意的产品决定**（子代理需要查看用户指定的兄弟仓库/外部文件）。翻转它会给
+  合法流程带来持续弹窗疲劳，属产品取舍而非纯安全修复，按 AGENTS.md 需先与用户
+  对齐，不单方面加兜底分支。
+- **P2 未开始项**：bot 权限请求改由桌面本地可信确认者响应（P0-3 诚实边界的真正
+  修法；涉及 desktop↔bot 中继架构与信任边界重设计，是大件，建议独立排期）。
 - **P3 能力差异化**（未开始）：auto 模式 LLM 分类器目前是桩、heartbeat 自动化、
   跨厂商插件清单兼容、prompt-cache 诊断、任务依赖图。
 

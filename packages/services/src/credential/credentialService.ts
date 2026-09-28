@@ -87,7 +87,12 @@ interface CredentialServiceDependencies {
 export function createCredentialService(
   dependencies: CredentialServiceDependencies = {},
 ): ICredentialService {
-  const cipherProvider = dependencies.cipherProvider ?? createCredentialCipherProvider();
+  // 密钥文件必须与 credentials.json 同目录（同受 setDataBaseDir/ACODE_DATA_BASE_DIR 控制）。
+  // 若各自独立解析 baseDir，宿主用 setDataBaseDir 切换数据根后会出现「凭据在新目录、
+  // 密钥在旧目录」的分裂，直接导致解密失败。显式把凭据目录钉给 cipher。
+  const cipherProvider =
+    dependencies.cipherProvider ??
+    createCredentialCipherProvider({ keyFilePath: join(getCredentialsDir(), "credential-key.json") });
 
   return {
     async load(key: string): Promise<string | null> {

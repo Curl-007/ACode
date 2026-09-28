@@ -19,8 +19,12 @@ import {
   decodeCustomModelValue,
   encodeCustomModelValue,
   getACodeAgentAvailableModes,
+  getAgentEnginePermissionModes,
   getPermissionRequestPreview,
   getSupportedBotReplyGranularities,
+  isBotRemoteForbiddenPermissionMode,
+  clampBotPermissionMode,
+  createBotBindAttemptGuard,
   normalizeBotReplyGranularity,
   type ACodeConfigOption,
   type ACodeElicitationRequest,
@@ -410,8 +414,15 @@ function summarizeCallbackPayload(payload: unknown): string {
   ].join(" ");
 }
 
+/**
+ * 生成绑定码。
+ *
+ * 安全加固 P0-3：从 randomBytes(3)（6 个 hex，约 1670 万空间）扩到 randomBytes(8)（16 个 hex，
+ * 2^64 空间），配合 handleBind 的每 bot 指数退避锁定，把「TTL 内高速枚举」面降到不可行。
+ * 仍保持单次使用 + 短 TTL（见 createBindCode / BOT_BIND_CODE_TTL_MS）。
+ */
 function createCode(): string {
-  return randomBytes(3).toString("hex").toUpperCase();
+  return randomBytes(8).toString("hex").toUpperCase();
 }
 
 function normalizeText(value: string): string {
@@ -460,18 +471,42 @@ function getBotEngineOptions(): Array<{ id: ACodeProvider; label: string }> {
 
 /**
  * /mode（草稿态）候选：按引擎从注册表取支持的权限模式。
- * 绕开 stub 的 listUserConfigOptions（恒返回 []），保证草稿态也能列出 native 的 build/edit/plan/yolo。
+ * 绕开 stub 的 listUserConfigOptions（恒返回 []），保证草稿态也能列出 native 的 build/edit/plan。
+ *
+ * 安全加固 P0-3：远程聊天入口设权限模式天花板——剔除全权限档（yolo/bypassPermissions），
+ * 否则一条聊天消息即可驱动 host agent 在无逐动作确认下执行任意副作用。需要这些模式必须在
+ * 桌面本地显式操作。过滤经共享 isBotRemoteForbiddenPermissionMode，与派发咽喉/UI 同源。
  */
 function getBotDraftModeOptions(
   _locale: Locale | undefined,
   provider: ACodeProvider,
 ): Array<{ id: string; label: string }> {
-  // native 引擎返回带 name/description 的会话模式（build/edit/plan/yolo）；
-  // 外部引擎 name 即 id。统一用 name 作为展示 label。
-  return getACodeAgentAvailableModes(provider).map((mode) => ({
-    id: mode.id,
-    label: mode.name || mode.id,
-  }));
+  // native 引擎返回带 name/description 的会话模式；外部引擎 name 即 id。统一用 name 作为展示 label。
+  return getACodeAgentAvailableModes(provider)
+    .filter((mode) => !isBotRemoteForbiddenPermissionMode(mode.id))
+    .map((mode) => ({
+      id: mode.id,
+      label: mode.name || mode.id,
+    }));
+}
+
+/**
+ * 判断 /mode 的输入是否在「显式请求远程入口禁止的全权限档」。
+ *
+ * 安全加固 P0-3：远程聊天入口的可选集已剔除 yolo/bypass（见 getBotDraftModeOptions），
+ * 因此这些值永远不会被 resolveOptionByValue 命中。但命中「模式未找到」（modeMissing）会掩盖
+ * 用户真实意图——他是在请求被天花板拦截，不是输错。这里单独识别显式全权限请求，回专属提示，
+ * 既不让其生效，也给出可操作引导（改选 build/edit/plan 或在桌面本地切换）。
+ */
+function isForbiddenModeRequest(provider: ACodeProvider, value: string): boolean {
+  // 数字索引选择交由 resolveOptionByValue 在已过滤的可选集内解析，不算显式全权限请求。
+  if (isSelectionIndexValue(value)) {
+    return false;
+  }
+  const normalized = normalizeText(value);
+  return getACodeAgentAvailableModes(provider).some(
+    (mode) => isBotRemoteForbiddenPermissionMode(mode.id) && normalizeText(mode.id) === normalized,
+  );
 }
 
 function resolveOptionByValue<T extends { id: string; label: string }>(
@@ -727,6 +762,8 @@ export function createBotsService(
   const runStartupBackgroundTasks = deps.runStartupBackgroundTasks !== false;
   const repo = new BotsRepo();
   const bindCodes = new Map<string, BindCodeRecord>();
+  // 安全加固 P0-3：每 bot 绑定码尝试守护（连续错误计数 + 指数退避锁定），仅存活于本进程内存。
+  const bindAttemptGuard = createBotBindAttemptGuard();
   const automationDeliveryWarningAtByKey = new Map<string, number>();
   const streamSubscriptions = new Map<string, IDisposable>();
   const streamingCardRequestControllers = new Set<AbortController>();
@@ -1939,13 +1976,27 @@ export function createBotsService(
   /**
    * 有效草稿权限模式：草稿显式 /mode override 优先，否则跟随每 bot 默认，再否则缺省常量。
    * 让 UI 改默认权限模式后，未显式覆盖的草稿立即生效，而不被早先创建的草稿快照固化。
+   *
+   * 安全加固 P0-3：返回值再经远程入口天花板夹取（clampBotPermissionMode），剔除全权限档
+   * （yolo/bypassPermissions）。这是「bot 驱动的会话永不进入 yolo」不变量的派发侧兜底——
+   * 即使 bot-config 里残留旧的 currentOptions.mode:"yolo"（本加固之前持久化），首条消息派发也
+   * 只会落到 build/edit/plan；需要 yolo 必须在桌面本地显式操作。夹取按引擎作用域的支持集，
+   * 单一事实源在 @acode/shared/bot-remote-guard。
    */
   function resolveEffectiveDraftMode(
-    draftOptions: Pick<BotDraftOptions, "mode">,
+    draftOptions: Pick<BotDraftOptions, "mode" | "provider">,
     currentOptions?: BotCurrentOptions,
   ): string {
+    const requestedMode = draftOptions.mode?.trim() || resolveBotDraftDefaults(currentOptions).mode;
+    // 夹取失败（引擎可选集为空的极端情形）也不回退到 requestedMode——那可能正是被禁的全权限档。
+    // 退回 BOT_DEFAULT_DRAFT_MODE（受审批、永不在禁止集）；若该引擎连缺省也不支持，
+    // 下游 resolveSupportedDraftMode 会判为 undefined 并跳过 setMode，保持 provider 自身默认。
     return (
-      draftOptions.mode?.trim() || resolveBotDraftDefaults(currentOptions).mode
+      clampBotPermissionMode(
+        requestedMode,
+        getAgentEnginePermissionModes(draftOptions.provider),
+        BOT_DEFAULT_DRAFT_MODE,
+      ) ?? BOT_DEFAULT_DRAFT_MODE
     );
   }
 
@@ -4645,8 +4696,37 @@ export function createBotsService(
     if (message.actor.chatType !== "private") {
       return [createOutbound(message.actor, msg(locale, "bindPrivateOnly"))];
     }
+    // 安全加固 P0-3：先查锁定状态，锁定期内连码都不校验，直接回显剩余等待时间，
+    // 杜绝攻击者在绑定码 TTL 内高速枚举。计数按 botId 隔离（一个 bot 被锁不殃及其他）。
+    const existingLock = bindAttemptGuard.isLocked(message.botId);
+    if (existingLock.locked) {
+      return [
+        createOutbound(
+          message.actor,
+          msg(locale, "bindLocked", {
+            seconds: Math.max(1, Math.ceil(existingLock.retryAfterMs / 1000)),
+          }),
+        ),
+      ];
+    }
     const record = bindCodes.get(code.trim().toUpperCase());
     if (!record || record.expiresAt <= Date.now() || record.botId !== message.botId) {
+      // 错误尝试计入指数退避；达到阈值即锁定并回 bindLocked，否则维持原「码无效」提示。
+      const lockStatus = bindAttemptGuard.recordFailure(message.botId);
+      if (lockStatus.locked) {
+        botsLogger.warn(
+          undefined,
+          `bind attempts locked bot=${message.botId} retryAfterMs=${lockStatus.retryAfterMs}`,
+        );
+        return [
+          createOutbound(
+            message.actor,
+            msg(locale, "bindLocked", {
+              seconds: Math.max(1, Math.ceil(lockStatus.retryAfterMs / 1000)),
+            }),
+          ),
+        ];
+      }
       return [createOutbound(message.actor, msg(locale, "bindCodeInvalid"))];
     }
     const config = await repo.readConfig();
@@ -4670,6 +4750,8 @@ export function createBotsService(
       bots: config.bots.map((item) => (item.id === nextBot.id ? nextBot : item)),
     });
     bindCodes.delete(record.code);
+    // 绑定成功清除该 bot 的尝试计数与锁定，避免历史误触把后续合法重绑也拖进退避。
+    bindAttemptGuard.recordSuccess(message.botId);
     return [
       createOutbound(
         message.actor,
@@ -5066,6 +5148,29 @@ export function createBotsService(
       return [];
     }
     const acodeTaskService = await resolveACodeTaskServiceForContext(auth.context);
+    // 安全加固 P0-3 修复（对抗评审核实的旁路）：权限模式天花板此前只在 createTask 派发咽喉
+    // （resolveEffectiveDraftMode）生效，活跃任务路径直接 resumeTask + sendPromptInBackground，
+    // 从不夹取模式。被绑定的聊天用户因此可以 /task-attach 到一个**已存在**的 yolo 任务
+    // （off-peak/automation 任务默认就是 yolo，见 acodeAgentService permissionMode ?? "yolo"），
+    // 然后在其中发消息——该消息在原任务的 yolo 模式下执行，等于远程聊天一条消息拿到
+    // host 上无逐动作确认的任意命令执行。
+    //
+    // 这里是**拒绝**而非静默降级：下方既有注释明确 bot 只是同一 Session 的输入端、不得改写
+    // Session；静默把用户在桌面显式选择的模式改掉会在其不知情下变更共享状态。与 /mode 显式
+    // 请求 yolo 时的处理一致（回专属提示，不静默夹取）。
+    const activeTask = await readContextActiveTaskMeta(auth.context);
+    if (!activeTask) {
+      // 拿不到任务元数据就无法核实模式天花板——fail closed，不放行。
+      return [createOutbound(message.actor, msg(auth.locale, "noActiveTask"))];
+    }
+    const activeTaskConfigOptions = await listActiveTaskConfigOptions(
+      auth.context,
+      auth.context.activeTaskId!,
+    ).catch(() => [] as ACodeConfigOption[]);
+    const activeTaskMode = readCurrentActiveTaskMode(activeTask, activeTaskConfigOptions);
+    if (isBotRemoteForbiddenPermissionMode(activeTaskMode)) {
+      return [createOutbound(message.actor, msg(auth.locale, "taskModeRemoteForbidden"))];
+    }
     await acodeTaskService.resumeTask({
       taskId: auth.context.activeTaskId,
       workspacePath: auth.context.workspacePath,
@@ -6026,10 +6131,12 @@ export function createBotsService(
               provider: activeProvider,
             });
             const selectOption = findSelectConfigOption(optionSource, "mode");
+            // 安全加固 P0-3：活跃任务态的 /mode 菜单同样剔除全权限档，远程入口不提供 yolo/bypass 选项；
+            // 当前值（currentLabel）仍如实展示桌面本地可能已设的档位，只是不可在远程入口选中。
             const options = listConfigSelectOptions(optionSource, "mode", {
               locale: auth.locale,
               provider: activeProvider,
-            });
+            }).filter((candidate) => !isBotRemoteForbiddenPermissionMode(candidate.id));
             if (options.length === 0) {
               return [createOutbound(message.actor, msg(auth.locale, "modeMissing"))];
             }
@@ -6053,6 +6160,11 @@ export function createBotsService(
             }
             if (auth.context.mode === "draft" || !auth.context.activeTaskId) {
               const draftOptions = await ensureDraftOptions(auth.context, auth.bot.currentOptions);
+              // 安全加固 P0-3：显式请求 yolo/bypass 被远程入口天花板拦截，回专属提示而非「模式未找到」，
+              // 避免把「被天花板拒绝」误显示成「输错」。可选集本身已在 getBotDraftModeOptions 剔除全权限档。
+              if (isForbiddenModeRequest(draftOptions.provider, command.value)) {
+                return [createOutbound(message.actor, msg(auth.locale, "modeRemoteForbidden"))];
+              }
               const displayOptions = getBotDraftModeOptions(auth.locale, draftOptions.provider);
               const option =
                 resolvePendingSelectionOption(message.actor, "mode.set", command.value) ??
@@ -6070,6 +6182,11 @@ export function createBotsService(
             const active = await requireActiveTask(message, auth);
             if (!active.ok) return active.reply;
             const activeProvider = normalizeAgentProviderToACodeAgent(active.task.provider);
+            // 安全加固 P0-3：活跃任务态同样受远程入口天花板约束——显式请求 yolo/bypass 直接拒绝，
+            // 不放开「绑定后切到活跃任务即可提权」的旁路。
+            if (isForbiddenModeRequest(activeProvider, command.value)) {
+              return [createOutbound(message.actor, msg(auth.locale, "modeRemoteForbidden"))];
+            }
             const optionSource = active.task.provider
               ? await listProviderConfigOptionsForActiveTask(active.task, activeProvider)
               : active.configOptions;
@@ -6077,7 +6194,7 @@ export function createBotsService(
             const displayOptions = listConfigSelectOptions(optionSource, "mode", {
               locale: auth.locale,
               provider: activeProvider,
-            });
+            }).filter((candidate) => !isBotRemoteForbiddenPermissionMode(candidate.id));
             const option =
               resolvePendingSelectionOption(message.actor, "mode.set", command.value) ??
               resolveOptionByValue(displayOptions, command.value);

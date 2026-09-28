@@ -59,6 +59,21 @@ export function getProviderFormApiKey(
   return isApiKeyAccess(provider.config.access) ? (provider.config.access.apiKey ?? "") : "";
 }
 
+/**
+ * Key 是否已 vault 化（安全加固 P1-5）：真值在加密凭据库、文件里只有 credentialRef，
+ * 表单永远拿不到明文回显。字段为空不代表「未配置」，占位符需提示已配置状态，
+ * 避免用户误以为 Key 丢失而重复录入。
+ */
+export function hasProviderFormStoredApiKey(
+  provider: Pick<ProviderSettingsFormProvider, "config">,
+): boolean {
+  return (
+    isApiKeyAccess(provider.config.access) &&
+    typeof provider.config.access.credentialRef === "string" &&
+    provider.config.access.credentialRef.trim().length > 0
+  );
+}
+
 export function getProviderFormApiKeyManagementUrl(
   provider: Pick<ProviderSettingsFormProvider, "config">,
 ): string | undefined {

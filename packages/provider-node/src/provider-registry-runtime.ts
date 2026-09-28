@@ -35,6 +35,12 @@ export class NodeProviderRegistryRuntime {
     this.registryService = new ProviderRegistryService({
       configSource: this.configService,
       accountSource: this.#accountSource,
+      // 安全加固 P1-5：读写两侧必须注入**同一个** vault。options 已 extends
+      // NodeProviderConfigRuntimeOptions，故写入侧（repository）自动拿到 providerApiKeyVault；
+      // 若这里不透传，则 CLI 会「写了 ref 但永不 hydrate」，BYO provider 在 TUI/Agent 里静默失效。
+      ...(options.providerApiKeyVault
+        ? { providerApiKeyVault: options.providerApiKeyVault }
+        : {}),
     });
   }
 

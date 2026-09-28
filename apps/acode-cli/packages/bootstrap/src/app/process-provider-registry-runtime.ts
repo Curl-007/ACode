@@ -22,6 +22,7 @@ import {
 } from "@acode/provider-node";
 import {
   createSharedACodeCredentialStore,
+  createSharedCredentialStoreApiKeyVault,
   type SharedACodeCredentialStore,
 } from "@acode/adapters/auth";
 import { readLegacyCliPersonalProviderConfig } from "./legacy-cli-personal-provider-config-importer.js";
@@ -52,9 +53,20 @@ export async function startProcessProviderRegistryRuntime(
   }
 
   const accountSource = new MutableAccountProviderConfigSource();
-  const credentialStore = options.standalone
+  // Standalone（Prompt CLI / TUI）自持账号凭据与旧配置；协议 worker（桌面 host 拉起的
+  // app-server --stdio）不自持账号，账号事实由 Host 经 syncAccountProviderConfig 下发。
+  const standaloneCredentialStore = options.standalone
     ? (options.standalone.credentialStore ?? createSharedACodeCredentialStore({ env: { ...env } }))
     : undefined;
+  // 安全加固 P1-5 回归修复（R1）：「谁读 vault 化的 provider_config.json，谁就得有 vault」。
+  // 协议 worker 与桌面 host 共用同一份 provider_config.json 与 credentials.json（路径由
+  // ACODE_DATA_BASE_DIR / 默认 homedir 一致解析；cipher 惰性，构造无磁盘副作用）。
+  // 此前 vault 只在 standalone 注入：桌面把文件迁成 credentialRef 形态后，worker 无法
+  // hydrate，把 ref 字符串当 apiKey 用 → 桌面 BYO provider 全线静默 401。
+  // 因此这里无条件注入；standalone 专属的账号管理仍以 standaloneCredentialStore 为门槛。
+  const credentialStore =
+    standaloneCredentialStore ?? createSharedACodeCredentialStore({ env: { ...env } });
+  const providerApiKeyVault = createSharedCredentialStoreApiKeyVault(credentialStore);
   let standaloneAccount: AccountProviderService | undefined;
   const bundledFile = options.standalone
     ? env[ACODE_BUILTIN_PROVIDER_BUNDLED_CONFIG_FILE_ENV]?.trim()
@@ -85,7 +97,8 @@ export async function startProcessProviderRegistryRuntime(
       : {}),
     onACodeBuiltinRefreshError: options.standalone?.onBuiltinRefreshError,
     accountSource,
-    ...(credentialStore
+    providerApiKeyVault,
+    ...(standaloneCredentialStore
       ? {
           createAccountSource(configService) {
             standaloneAccount = new AccountProviderService({
@@ -93,7 +106,7 @@ export async function startProcessProviderRegistryRuntime(
               async resolve({ configRevision, configuredProviders }) {
                 // 使用本轮捕获的 Built-in，而不是异步读另一份文件后仅贴上新 revision。
                 const snapshot = await readStandaloneAccountProviderConfigSnapshot(
-                  credentialStore,
+                  standaloneCredentialStore,
                   env,
                   { revision: configRevision, providers: configuredProviders },
                 );
@@ -133,8 +146,10 @@ export async function startProcessProviderRegistryRuntime(
       })
     : undefined;
   // 复用 AccountService 的串行、过期结果丢弃机制，凭据变化与 Built-in 变化不能各自发布。
-  const disposeCredentialSubscription = credentialStore?.onDidChange?.(async () => {
-    await standaloneAccount!.refresh("standalone-credentials-changed");
+  // 协议 worker 没有 standaloneAccount：本进程 vault 写入（若 agent 侧保存 provider 配置）
+  // 只需刷新 registry 重新 hydrate，不能假定 standalone 分支存在。
+  const disposeCredentialSubscription = credentialStore.onDidChange?.(async () => {
+    if (standaloneAccount) await standaloneAccount.refresh("standalone-credentials-changed");
     await runtime.registryService.refresh("standalone-credentials-barrier");
   });
   try {
@@ -163,10 +178,10 @@ export async function startProcessProviderRegistryRuntime(
           modelSelectionConfigRepository.dispose();
           runtime.dispose();
         },
-        ...(credentialStore
+        ...(standaloneCredentialStore
           ? {
               providerRuntimeHeadersPort: createStandaloneProviderRuntimeHeadersPort(
-                credentialStore,
+                standaloneCredentialStore,
                 env,
               ),
             }

@@ -15,3 +15,47 @@ export {
   withFileLock,
   type SharedFileLockOptions,
 } from "./node/privateFilePersistence.js";
+export {
+  assertServerAuthInvariant,
+  describeNoAuthLoopbackWarning,
+  fingerprintPrincipal,
+  isLoopbackBindHost,
+  isLoopbackHostname,
+  parseBearerToken,
+  resolveHostCapabilityBinding,
+  resolveRequestOriginTrust,
+  timingSafeTokenEquals,
+  type HostCapabilityBindingInput,
+  type HostCapabilityBindingResult,
+  type RequestOriginTrustInput,
+  type RequestOriginTrustResult,
+  type ServerAuthInvariantInput,
+} from "./node/serverAuth.js";
+export {
+  ANONYMOUS_HOST_CAPABILITY_PRINCIPAL,
+  createHostCapabilityStore,
+  DEFAULT_HOST_CAPABILITY_TTL_MS,
+  MAX_LIVE_HOST_CAPABILITIES,
+  type HostCapabilityPrincipal,
+  type HostCapabilityStore,
+  type HostCapabilityStoreOptions,
+} from "./node/hostCapability.js";
+export {
+  createACodeCredentialCipher,
+  createCredentialCipherProvider,
+  isEncryptedACodeCredentialValue,
+  isEncryptedACodeCredentialValueV1,
+  type ACodeCredentialCipher,
+  type CreateACodeCredentialCipherOptions,
+  type CredentialCipherProvider,
+} from "./node/credentialCipher.js";
+export {
+  CREDENTIAL_KEY_FILE_NAME,
+  CREDENTIAL_KEY_FILE_VERSION,
+  CREDENTIAL_SECRET_ENV_KEY,
+  resolveCredentialKeyFilePath,
+  resolveCredentialMasterKey,
+  type CredentialMasterKeySource,
+  type ResolveCredentialMasterKeyOptions,
+  type ResolvedCredentialMasterKey,
+} from "./node/credentialMasterKey.js";

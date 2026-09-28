@@ -691,8 +691,22 @@ export function resolveUpdateFeedSourceFromStartupConfig(
   options: {
     argv?: readonly string[];
     env?: Record<string, string | undefined>;
+    /**
+     * 是否为打包发行版（`app.isPackaged`）。**打包版忽略这两个覆盖入口**，仅供开发构建使用——
+     * 与 NOTICE.md / NOTICE.zh-CN.md 的既有承诺一致。
+     *
+     * 安全加固 P1-7：此前该函数无条件读取 env/argv，`applyUpdateProvider` 也无条件应用，
+     * 于是能向进程注入环境变量或启动参数者（恶意父进程、被篡改的快捷方式、污染的 dotenv）
+     * 可把更新清单指向自有服务器。下载侧虽有 sha512 与 Windows Authenticode 兜底，
+     * 但清单请求本身仍会泄露设备标识，且文档声称打包版会忽略——代码与文档矛盾时以文档为准收紧代码。
+     */
+    isPackaged?: boolean;
   } = {},
 ): RuntimeUpdateFeedSource | undefined {
+  if (options.isPackaged) {
+    // 打包版不读 env/argv 覆盖，直接返回 undefined 走内置 GitHub provider。
+    return undefined;
+  }
   const argv = options.argv ?? process.argv;
   const env = options.env ?? process.env;
   const feedUrl = readSwitchValue(argv, UPDATE_FEED_URL_SWITCH) ?? env[UPDATE_FEED_URL_ENV]?.trim();

@@ -11,7 +11,8 @@ import {
 import { normalizeBotCurrentOptions, normalizeBotDraftOptions } from "../src/bots/config.js";
 import { parseBotCommand } from "../src/bots/commandParser.js";
 
-// 验收 1/5：既有配置（无 cli/mode）严格 schema round-trip 保持有效，草稿缺省仍是 native + yolo 语义。
+// 验收 1/5：既有配置（无 cli/mode）严格 schema round-trip 保持有效；草稿缺省引擎仍是 native(glm)，
+// 缺省权限模式为受审批的 build（安全加固 P0-3：远程入口天花板，不再缺省 yolo）。
 test("bot config round-trips through strict schemas without engine/mode", () => {
   const legacyBot = {
     id: "bot-1",

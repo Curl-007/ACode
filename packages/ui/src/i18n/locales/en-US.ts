@@ -2871,6 +2871,7 @@ const enUS: Record<string, string> = {
   "settings.modelProvider.apiFormat.title.anthropicMessages": "Anthropic messages",
   "settings.modelProvider.apiKey": "API key",
   "settings.modelProvider.apiKeyPlaceholder": "Enter API key",
+  "settings.modelProvider.apiKeyConfiguredPlaceholder": "Configured (••••••••). Type a new value to replace it.",
   "settings.modelProvider.apiKeyDisabledHint": "Set an API key to enable this provider.",
   "settings.modelProvider.getApiKey": "Get API key",
   "settings.modelProvider.viewUsage": "View usage",

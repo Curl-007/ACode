@@ -39,7 +39,17 @@ import {
   type ServerRemoteWorkspaceInfo,
 } from "@acode/shared";
 import { connectRemote, createRemoteBackend, type RemoteConnection } from "./remote/index.js";
-import { createHostCapabilityStore } from "./hostCapability.js";
+import {
+  ANONYMOUS_HOST_CAPABILITY_PRINCIPAL,
+  assertServerAuthInvariant,
+  createHostCapabilityStore,
+  describeNoAuthLoopbackWarning,
+  fingerprintPrincipal,
+  parseBearerToken,
+  resolveHostCapabilityBinding,
+  resolveRequestOriginTrust,
+  timingSafeTokenEquals,
+} from "@acode/shared/node";
 
 function wrapWebSocket(ws: WebSocket): ISocket {
   const onData = new Emitter<VSBuffer>();
@@ -140,6 +150,8 @@ interface HttpServerOptions {
   spaFallback?: boolean;
   staticRoot?: string;
   workspaces?: ServerRemoteWorkspaceInfo[];
+  /** `/ws/host` 升级允许的非 loopback Origin 白名单（DNS-rebinding / 恶意网页防护）。 */
+  allowedOrigins?: string[];
 }
 
 function readTrimmedEnv(name: string): string | undefined {
@@ -185,6 +197,23 @@ function createServerInfo(options: HttpServerOptions): ServerRemoteInfo {
 
 const acodeLiteTokenCookieName = "acode_lite_token";
 
+interface LiteTokenAuthResult {
+  valid: boolean;
+  /** 命中已弃用的 `?token=` query；调用点据此打印一次性弃用告警。 */
+  viaDeprecatedQuery: boolean;
+}
+
+// `?token=` 弃用告警每进程只打印一次，避免刷屏，同时确保旧客户端能被明确告知迁移路径。
+let warnedDeprecatedQueryToken = false;
+function warnDeprecatedQueryTokenOnce(): void {
+  if (warnedDeprecatedQueryToken) return;
+  warnedDeprecatedQueryToken = true;
+  console.warn(
+    formatLogPrefix("acode-server:http", process.pid),
+    "DEPRECATION: authenticating via the ?token= URL query is deprecated and will be removed in a future release; it leaks into logs, browser history and Referer. Send `Authorization: Bearer <token>` instead.",
+  );
+}
+
 const staticMimeTypes: Record<string, string> = {
   ".css": "text/css; charset=utf-8",
   ".gif": "image/gif",
@@ -223,16 +252,69 @@ function parseCookieHeader(header: string | undefined): Map<string, string> {
   return cookies;
 }
 
-function hasValidLiteToken(c: Context, token: string): boolean {
+/**
+ * 读取 `acode_lite_token` cookie 的值，与写入端（`encodeURIComponent`）对称地安全解码。
+ *
+ * **为什么必须有这一个 helper**：鉴权（`hasValidLiteToken`）与主体绑定
+ * （`readPresentedLiteToken`）必须对「本次请求出示的是哪个 token」给出**完全相同**的答案。
+ * 此前两处各自读 cookie——一处比较原值、一处 `decodeURIComponent`——导致含 `%XX` 的 token
+ * 会出现「中间件认可、绑定校验算出不同主体」的分叉：合法 cookie 升级被 403（principal-mismatch），
+ * 含裸 `%` 的 token 还会让 `decodeURIComponent` 抛 URIError → 500。
+ *
+ * 解码失败时回退原值而不是抛错：cookie 可能来自旧客户端或非本服务写入，
+ * 鉴权/绑定都不应因为一个畸形值而 500，比较不上自然就是「不匹配」。
+ */
+function readLiteTokenCookie(c: Context): string | undefined {
+  const raw = parseCookieHeader(c.req.header("cookie")).get(acodeLiteTokenCookieName);
+  if (raw === undefined) {
+    return undefined;
+  }
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
+}
+
+function hasValidLiteToken(c: Context, token: string): LiteTokenAuthResult {
+  // P0-2：token 校验优先走 `Authorization: Bearer`，其次 cookie（浏览器兼容），
+  // 最后才是已弃用的 `?token=` query（会泄漏进日志/历史/Referer）。
+  const bearer = parseBearerToken(c.req.header("authorization"));
+  if (timingSafeTokenEquals(bearer, token)) {
+    return { valid: true, viaDeprecatedQuery: false };
+  }
+  if (timingSafeTokenEquals(readLiteTokenCookie(c), token)) {
+    return { valid: true, viaDeprecatedQuery: false };
+  }
   const url = new URL(c.req.url);
-  if (url.searchParams.get("token") === token) {
+  if (timingSafeTokenEquals(url.searchParams.get("token") ?? undefined, token)) {
+    // 兼容旧客户端：命中 query 后回写 cookie，使其后续走 cookie 路径。
     c.header(
       "Set-Cookie",
       `${acodeLiteTokenCookieName}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax`,
     );
-    return true;
+    return { valid: true, viaDeprecatedQuery: true };
   }
-  return parseCookieHeader(c.req.header("cookie")).get(acodeLiteTokenCookieName) === token;
+  return { valid: false, viaDeprecatedQuery: false };
+}
+
+/**
+ * 取出本次请求实际出示的 token（`Authorization: Bearer` > cookie > 已弃用 query）。
+ *
+ * P0-1 需要它来**真正执行**能力与主体的绑定：`hasValidLiteToken` 只回答「合不合法」，
+ * 而绑定校验要的是「出示的是哪一个主体」。两者必须同源——cookie 一律经
+ * `readLiteTokenCookie` 读取，避免出现「中间件认可 A、绑定校验取到 B」的分叉。
+ */
+function readPresentedLiteToken(c: Context): string | undefined {
+  const bearer = parseBearerToken(c.req.header("authorization"));
+  if (bearer) {
+    return bearer;
+  }
+  const fromCookie = readLiteTokenCookie(c);
+  if (fromCookie) {
+    return fromCookie;
+  }
+  return new URL(c.req.url).searchParams.get("token") ?? undefined;
 }
 
 function isTokenProtectedPath(pathname: string): boolean {
@@ -333,8 +415,11 @@ export function createHttpServer(
   if (authToken) {
     app.use("*", async (c, next) => {
       const pathname = new URL(c.req.url).pathname;
-      const validToken = hasValidLiteToken(c, authToken);
-      if (!isTokenProtectedPath(pathname) || validToken) {
+      const auth = hasValidLiteToken(c, authToken);
+      if (auth.viaDeprecatedQuery) {
+        warnDeprecatedQueryTokenOnce();
+      }
+      if (!isTokenProtectedPath(pathname) || auth.valid) {
         await next();
         return;
       }
@@ -343,7 +428,39 @@ export function createHttpServer(
   }
 
   app.get("/api/server-info", (c) => c.json(createServerInfo(options)));
-  app.post("/api/rpc-host-capability", (c) => c.json(hostCapabilities.issue()));
+  // P0-1：铸造 trusted-host 能力受鉴权门控。配置 token 时，未鉴权请求已被上面的中间件
+  // 拦为 401；走到这里说明请求已通过该 token 鉴权，故主体即该 token 的指纹（单 token=单主体）。
+  // 未配置 token 的 loopback 场景主体为 anonymous，仍受非 loopback fail-closed 不变量约束。
+  app.post("/api/rpc-host-capability", (c) => {
+    // 先做 Origin 裁决，**再** issue()：恶意网页发来的跨源 POST 属于不需要 CORS 预检的
+    // simple request，即使它读不到响应，请求本身也会触发 issue() 占掉一个槽位。
+    // 若把校验放在铸造之后，攻击者仍可灌满 MAX_LIVE_HOST_CAPABILITIES 个槽位，
+    // 让合法桌面 host 铸造就吃 503——那只是把「内存耗尽 DoS」换成「可用性 DoS」。
+    // 放在之前则恶意网页连槽位都占不到。
+    //
+    // 与 /ws/host 升级路径用同一个 resolveRequestOriginTrust，策略一致：
+    // 浏览器带 Origin 且不在白名单 → 403；原生客户端不带 Origin → 放行。
+    // 本端点在仓库内没有浏览器调用方（唯一消费链 packages/desktop/src/host/
+    // serverRemoteConnection.ts 用 Node 原生 `ws`，默认不发 Origin），故对合法流程零影响。
+    const mintTrust = resolveRequestOriginTrust({
+      origin: c.req.header("origin"),
+      host: c.req.header("host"),
+      allowedOrigins: options.allowedOrigins,
+    });
+    if (!mintTrust.allowed) {
+      return c.json({ error: `Mint rejected: untrusted ${mintTrust.reason}` }, 403);
+    }
+    const issued = hostCapabilities.issue(
+      authToken
+        ? { fingerprint: fingerprintPrincipal(authToken) }
+        : ANONYMOUS_HOST_CAPABILITY_PRINCIPAL,
+    );
+    // P0-1：存活能力达上限即拒绝铸造，堵住无鉴权端点被刷爆内存的 DoS（见 MAX_LIVE_HOST_CAPABILITIES）。
+    if (!issued) {
+      return c.json({ error: "Host capability budget exhausted; retry later" }, 503);
+    }
+    return c.json(issued);
+  });
 
   // 普通 `/ws` 永远是 terminal-client；浏览器/任意客户端设置旧 mode header
   // 都不能再把自己提升为 trusted host。
@@ -362,9 +479,30 @@ export function createHttpServer(
     },
   }));
   app.use("/ws/host", async (c, next) => {
+    // P0-1：在消费能力之前先做 Origin/Host 校验，拒绝携带浏览器 Origin 但非白名单的升级请求
+    // （DNS-rebinding / 恶意网页驱动 loopback WS）。原生客户端不带 Origin，放行交由能力 ticket 把关。
+    const trust = resolveRequestOriginTrust({
+      origin: c.req.header("origin"),
+      host: c.req.header("host"),
+      allowedOrigins: options.allowedOrigins,
+    });
+    if (!trust.allowed) {
+      return c.json({ error: `Upgrade rejected: untrusted ${trust.reason}` }, 403);
+    }
     const capability = c.req.header(ACODE_RPC_HOST_CAPABILITY_HEADER);
-    if (!hostCapabilities.consume(capability)) {
+    const principal = hostCapabilities.consume(capability);
+    if (!principal) {
       return c.json({ error: "Invalid or expired host capability" }, 401);
+    }
+    // P0-1：真正执行能力与主体的绑定（共享 helper，与 server-core 同源，避免两套实现分叉）。
+    // 此前 consume() 的返回值被丢弃，绑定形同虚设（对抗评审核实）；这里把比较补上。
+    const binding = resolveHostCapabilityBinding({
+      boundPrincipal: principal,
+      configuredToken: authToken,
+      presentedToken: readPresentedLiteToken(c),
+    });
+    if (!binding.allowed) {
+      return c.json({ error: `Host capability rejected: ${binding.reason}` }, 403);
     }
     await next();
   });
@@ -503,11 +641,21 @@ export function createHttpServer(
     });
   }
 
-  const server = serve({ fetch: app.fetch, hostname: options.host, port }, () => {
+  // P0-2：把 server-core 既有的 fail-closed 不变量提到共享层。未指定 host 时默认绑定
+  // loopback（此前未指定即监听所有网卡，属 fail-open）；非 loopback 绑定且未配 token 一律
+  // 拒绝启动。bindHost 同时用于不变量校验与实际 serve，保证「检查的」与「监听的」是同一地址。
+  const bindHost = options.host?.trim() || "127.0.0.1";
+  const authRequired = Boolean(authToken);
+  assertServerAuthInvariant({ host: bindHost, authRequired });
+
+  const server = serve({ fetch: app.fetch, hostname: bindHost, port }, () => {
     const address = server.address();
     const listenPort = typeof address === "object" && address ? address.port : port;
-    const listenHost = options.host?.trim() || "localhost";
-    log(`http://${listenHost}:${listenPort}`);
+    if (!authRequired) {
+      // loopback 无 token 是受支持的默认姿态，但必须醒目告警，提醒本机任意进程/网页均可访问。
+      log(describeNoAuthLoopbackWarning(bindHost));
+    }
+    log(`http://${bindHost}:${listenPort}`);
   });
 
   injectWebSocket(server);

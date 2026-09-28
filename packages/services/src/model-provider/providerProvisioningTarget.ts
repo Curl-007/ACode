@@ -10,6 +10,7 @@ import {
   providerProvisioningEnvelopeSchema,
   providerProvisioningResultSchema,
   isProviderProvisioningAccountCredentialKey,
+  isProviderProvisioningProviderApiKeyCredentialKey,
   type ProviderProvisioningEnvelope,
   type ProviderProvisioningResult,
 } from "@acode/shared";
@@ -191,7 +192,13 @@ async function captureBeforeState(
     ...envelope.credentials.map((entry) => entry.key),
   ]);
   for (const key of credentialKeys) {
-    if (!OAUTH_CREDENTIAL_KEYS.has(key) && !isProviderProvisioningAccountCredentialKey(key)) {
+    if (
+      !OAUTH_CREDENTIAL_KEYS.has(key) &&
+      !isProviderProvisioningAccountCredentialKey(key) &&
+      // P1-5（R2）：provider:apikey:* 也是 replace-allowlist 管辖的物理键，
+      // 不进 before 集合会让「信封没带的 BYO Key」在目标端残留、回滚也无法恢复。
+      !isProviderProvisioningProviderApiKeyCredentialKey(key)
+    ) {
       continue;
     }
     credentials.set(key, await options.credentialService.load(key));
@@ -299,14 +306,19 @@ function sameAccountSettings(
   return JSON.stringify(toProvisioningAccountSettings(current)) === JSON.stringify(expected);
 }
 
-function validateCredentialEntries(envelope: ProviderProvisioningEnvelope): void {
+/** 信封里 scope 与 key 必须成对匹配；导出供目标端校验与回归测试共用同一契约。 */
+export function validateCredentialEntries(envelope: ProviderProvisioningEnvelope): void {
   const seen = new Set<string>();
   for (const entry of envelope.credentials) {
     if (seen.has(entry.key)) throw new Error(`重复 Provisioning Credential key: ${entry.key}`);
     seen.add(entry.key);
     const allowed =
       (entry.scope === "oauth-session" && OAUTH_CREDENTIAL_KEYS.has(entry.key)) ||
-      (entry.scope === "account-provider" && isProviderProvisioningAccountCredentialKey(entry.key));
+      (entry.scope === "account-provider" && isProviderProvisioningAccountCredentialKey(entry.key)) ||
+      // P1-5 回归修复（R2）：BYO Key 的真值必须能随信封落进目标端凭据库，
+      // 否则 ref 形态配置同步过去后 hydrate 得 null、provider 静默失效。
+      (entry.scope === "provider-apikey" &&
+        isProviderProvisioningProviderApiKeyCredentialKey(entry.key));
     if (!allowed) throw new Error(`不允许同步的 Credential key: ${entry.key}`);
   }
 }

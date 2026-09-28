@@ -313,7 +313,8 @@ export type ConfigDiagnosticSeverity = "warning" | "error";
 export type ConfigDiagnosticCode =
   | "config_file_invalid"
   | "config_mcp_server_invalid"
-  | "config_project_hooks_pending_trust";
+  | "config_project_hooks_pending_trust"
+  | "config_project_permission_restricted";
 
 export interface ConfigDiagnostic {
   code: ConfigDiagnosticCode;

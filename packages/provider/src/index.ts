@@ -8,6 +8,7 @@ export * from "./facades.js";
 export * from "./effective-model-selection.js";
 export * from "./model-selection-config.js";
 export * from "./owned-order.js";
+export * from "./provider-api-key-vault.js";
 export * from "./resolver.js";
 export * from "./registry.js";
 export * from "./registry-service.js";

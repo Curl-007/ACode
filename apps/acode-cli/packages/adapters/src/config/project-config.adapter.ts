@@ -10,6 +10,60 @@ import { loadFileConfig, type LoadedConfig } from "./file-config.adapter.js";
 
 const CURRENT_DIRECTORY = ".";
 
+/**
+ * 项目配置里「放宽权限」的字段（安全加固 P1-6）。
+ *
+ * 背景：仓库携带的项目配置（`.acode/config.json` 等）此前会被无条件合并，其中
+ * `permission.allowedTools` 命中 `permission/service.ts` 的 `config.allowedTools.has(toolName)`
+ * 即**按裸工具名整体放行**，绕过 build 模式的审批弹窗；`autoApproveHighRisk` /
+ * `allowMediumRiskInAuto` / `mode:"yolo"` 同理放宽。克隆恶意仓库即可静默预放行 Bash/Write/Edit。
+ * 同一份配置文件里的 `hooks` 却走了完整信任门（`config_project_hooks_pending_trust`）——
+ * 即「明知仓库配置要门控，却独漏了更危险的 permission」。
+ *
+ * 修法采用**「项目配置只能收紧、不能放宽」**（restrictive floor，与 Claude Code policySettings、
+ * Codex requirements.toml 同一哲学）：项目来源的放宽字段一律剥离，`disallowedTools`
+ * （收紧，只会减少放行）保留。这比把 permission 接进 hooks 的 digest 信任管线简单得多，
+ * 且不需要异步信任状态——本函数是同步的。
+ *
+ * **不影响用户自己的授权**：用户在会话里点「Always allow in this project」写入的是 session store
+ * 的 projectRules（经 `permission/service.ts` 的 `matchesProjectRules` 路径），与仓库携带的
+ * `config.allowedTools`（`this.config.allowedTools` 路径）是两条不同的来源，前者照常生效。
+ */
+const PROJECT_PERMISSION_LOOSENING_KEYS = [
+  "allowedTools",
+  "autoApproveHighRisk",
+  "allowMediumRiskInAuto",
+  "mode",
+] as const;
+
+/**
+ * 剥离项目配置中会放宽权限的字段，返回剩余 permission（可能为空对象）与被剥离的键名。
+ * `disallowedTools` 属于收紧，保留。
+ */
+function restrictProjectPermission(
+  permission: NonNullable<RuntimeConfigPatch["permission"]>,
+): {
+  retained: NonNullable<RuntimeConfigPatch["permission"]>;
+  stripped: string[];
+} {
+  const retained: Record<string, unknown> = {};
+  const stripped: string[] = [];
+  for (const [key, value] of Object.entries(permission)) {
+    if (value === undefined) {
+      continue;
+    }
+    if ((PROJECT_PERMISSION_LOOSENING_KEYS as readonly string[]).includes(key)) {
+      stripped.push(key);
+      continue;
+    }
+    retained[key] = value;
+  }
+  return {
+    retained: retained as NonNullable<RuntimeConfigPatch["permission"]>,
+    stripped,
+  };
+}
+
 export interface ProjectConfigFile {
   baseDir: string;
   config: RuntimeConfigPatch;
@@ -70,6 +124,22 @@ export function loadProjectConfigFile(
     });
   }
 
+  // 安全加固 P1-6：项目配置里放宽权限的字段（allowedTools/autoApproveHighRisk/
+  // allowMediumRiskInAuto/mode）在 normalizeProjectConfig 里被剥离；这里同步报一条 warning，
+  // 让用户知道仓库携带的权限放宽未生效（与 hooks 的 pending_trust 诊断同一风格）。
+  if (result.loaded && result.config.permission) {
+    const { stripped } = restrictProjectPermission(result.config.permission);
+    if (stripped.length > 0) {
+      diagnostics.push({
+        code: "config_project_permission_restricted",
+        filePath: result.path,
+        message: `Project permission overrides ignored (only tightening is allowed): ${stripped.join(", ")}`,
+        path: "permission",
+        severity: "warning",
+      });
+    }
+  }
+
   return {
     baseDir,
     config: result.loaded ? normalizeProjectConfig(result.config, baseDir) : {},
@@ -120,7 +190,7 @@ function getProjectConfigBaseDir(path: string): string {
 }
 
 function normalizeProjectConfig(config: RuntimeConfigPatch, baseDir: string): RuntimeConfigPatch {
-  const normalized: RuntimeConfigPatch = config.hooks
+  const withoutHooks: RuntimeConfigPatch = config.hooks
     ? (() => {
         const { hooks: _hooks, ...safeConfig } = config;
         // Project Hook declarations are retained only in the immutable candidate side-channel.
@@ -128,6 +198,21 @@ function normalizeProjectConfig(config: RuntimeConfigPatch, baseDir: string): Ru
         return safeConfig;
       })()
     : { ...config };
+
+  // 安全加固 P1-6：剥离项目配置中「放宽权限」的字段（见 PROJECT_PERMISSION_LOOSENING_KEYS）。
+  // 仓库携带的 allowedTools 会命中 permission/service.ts 的 config.allowedTools.has(toolName)
+  // 而按裸工具名整体放行，绕过 build 模式审批；mode/autoApproveHighRisk 同理放宽。
+  // 收紧字段 disallowedTools 保留——剥离它会**削弱**安全。
+  const normalized: RuntimeConfigPatch = withoutHooks.permission
+    ? (() => {
+        const { retained } = restrictProjectPermission(withoutHooks.permission);
+        if (Object.keys(retained).length === 0) {
+          const { permission: _permission, ...rest } = withoutHooks;
+          return rest;
+        }
+        return { ...withoutHooks, permission: retained };
+      })()
+    : withoutHooks;
 
   if (!normalized.mcp?.servers) return normalized;
 

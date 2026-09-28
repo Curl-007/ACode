@@ -35,6 +35,20 @@ ACode 是 AI 编程工作台，提供桌面应用、浏览器界面和终端 Age
 
 **验证**：以上改动通过 `pnpm typecheck`、`pnpm lint`（0 error）与各模块防回归测试。完整清单与验证边界见移除报告：[桌面端](packages/desktop/specs/telemetry-removal-report.md)、[CLI](apps/acode-cli/specs/telemetry-removal-report.md)、[UI](packages/ui/specs/telemetry-removal-report.md)。
 
+### 本地凭据保护
+
+登录令牌与付费 API Key 落盘在 `~/.acode/v2/credentials.json`，使用 AES-256-GCM 加密（`enc:v2:` 格式）。加密主密钥**不再**由机器属性（平台 / 家目录 / 用户名）离线推导——此前任何能读到该文件的进程都可以纯离线还原全部凭据。现在的密钥来源按优先级为：
+
+1. `ACODE_CREDENTIAL_SECRET` 环境变量（仅当尚无密钥文件时生效）；
+2. 每安装随机密钥文件 `~/.acode/v2/credential-key.json`（32 字节、`0600`、首次使用时生成）。
+
+**务必知道的两条数据丢失风险：**
+
+- **`credential-key.json` 与凭据同生共死**。删除该文件、或备份/迁移时只复制 `credentials.json` 而漏掉它，都会让所有 `enc:v2:` 凭据**永久不可恢复**。请把这两个文件当作一个整体一起备份。应用内置的数据目录迁移（`ACODE_DATA_BASE_DIR` 切换）会自动带上密钥文件，无需手动处理。
+- **回滚到旧版本会静默损坏登录态**。旧版本只认识 `enc:v1:` 前缀，遇到 `enc:v2:` 会把**密文原样当作明文返回**——表现为登录莫名失效（401）或 API Key 无效，而不是一个明确的错误。升级到本版本后请勿回滚到升级前的构建；若必须回滚，需先在桌面端退出登录、回到旧版重新登录。
+
+密钥文件与密文位于同一磁盘，因此本方案**不能**防御「整个 `.acode` 目录被外带」（云同步、备份泄露、磁盘镜像）。真正的「密文与密钥分离」需要接入操作系统钥匙串（Electron `safeStorage` / keytar），那需要先把同步的 cipher 接口改为异步、并解决桌面 host 与 CLI 两个进程共用同一凭据文件时的跨进程密钥一致性问题——属于后续工作，详见 [`packages/services/specs/credential-storage.md`](packages/services/specs/credential-storage.md)。
+
 ## 下载与安装
 
 [Releases](https://github.com/Curl-007/ACode/releases) 提供桌面客户端（macOS / Windows / Linux）和 CLI 发行包。
@@ -183,7 +197,9 @@ acode --web --help
 
 Web 模式默认工作目录为当前目录，监听 `127.0.0.1`，默认不启用访问令牌，自动选择空闲端口并打开浏览器。访问终端输出的地址，按 `Ctrl+C` 停止服务。局域网访问可使用 `--host 0.0.0.0`；监听非本机地址时默认生成访问令牌，使用终端输出的带令牌链接。可通过 `--token` 指定令牌或 `--no-token` 关闭令牌认证。
 
-直接启动通用 Web 服务的 HTTP 入口时，通过 `ACODE_SERVER_AUTH_TOKEN` 配置 API／WebSocket 认证；通过程序接口创建服务时，使用 `authToken` 选项。
+鉴权采用 fail-closed：当服务将绑定非 loopback 地址（如 `--host 0.0.0.0`）却没有令牌时拒绝启动，因此 `--no-token` 只对 loopback 绑定有效。在 loopback 上无令牌启动时，会在启动日志打印醒目的「无鉴权·仅本机」告警，因为此时本机任意进程或网页都能访问该端口。
+
+直接启动通用 Web 服务的 HTTP 入口时，通过 `ACODE_SERVER_AUTH_TOKEN` 配置 API／WebSocket 认证；通过程序接口创建服务时，使用 `authToken` 选项。令牌优先经 `Authorization: Bearer <token>` 头传递；`?token=` URL query 仍兼容旧客户端但已弃用（会泄漏进日志、浏览器历史与 `Referer`），命中时打印弃用告警；`acode_lite_token` cookie 作为浏览器兼容路径保留。若需让受信反代或局域网来源兑换 trusted-host 的 `/ws/host` 升级，把完整 origin 列进 `ACODE_SERVER_ALLOWED_ORIGINS`（逗号分隔）；携带其它 `Origin` 的浏览器升级请求会被拒绝。
 
 构建方式见下方打包章节。`pnpm build:acode` 只生成发行包，不会替换 `PATH` 中已有的 `acode`。如果命令仍指向旧安装或其他源码目录，macOS / Linux 可用 `command -v acode` 检查，Windows 可用 `where.exe acode` 检查。
 

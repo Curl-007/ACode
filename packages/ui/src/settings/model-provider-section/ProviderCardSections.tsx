@@ -279,6 +279,7 @@ export function ProviderApiKeySection({
   apiKeyValue,
   apiKeyVisible,
   readOnly,
+  apiKeyStoredInVault,
   presetApiKeyUrl,
   onOpenPresetApiKey,
   onApiKeyChange,
@@ -291,6 +292,7 @@ export function ProviderApiKeySection({
   apiKeyValue: string;
   apiKeyVisible: boolean;
   readOnly?: boolean;
+  apiKeyStoredInVault?: boolean;
   presetApiKeyUrl?: string;
   onOpenPresetApiKey?: () => void;
   onApiKeyChange: (value: string) => void;
@@ -316,6 +318,7 @@ export function ProviderApiKeySection({
         value={apiKeyValue}
         visible={apiKeyVisible}
         readOnly={readOnly}
+        storedInVault={apiKeyStoredInVault}
         onChange={onApiKeyChange}
         onBlur={onApiKeyBlur}
         onKeyDown={onApiKeyKeyDown}

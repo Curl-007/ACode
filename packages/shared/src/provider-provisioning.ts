@@ -17,6 +17,7 @@ export type ProviderProvisioningTrigger = z.infer<typeof providerProvisioningTri
 export const providerProvisioningCredentialScopeSchema = z.enum([
   "oauth-session",
   "account-provider",
+  "provider-apikey",
 ]);
 
 export type ProviderProvisioningCredentialScope = z.infer<
@@ -27,6 +28,17 @@ export type ProviderProvisioningCredentialScope = z.infer<
 export function isProviderProvisioningAccountCredentialKey(key: string): boolean {
   const normalized = key.trim();
   return normalized === key && /^account-provider:.+:api-key$/.test(normalized);
+}
+
+/**
+ * 只允许同步 BYO Provider 的 vault 化 API key（`provider:apikey:<providerId>`，P1-5 的确定性引用键）。
+ * 键格式与 `@acode/provider` 的 `providerApiKeyCredentialKey` 一致；本包不能反向依赖 provider，
+ * 故以同一正则在此声明。provider_config.json 里只存 ref，真值必须随信封传输，
+ * 否则目标端 hydrate 得 null、BYO provider 在远程/迁移环境静默失效。
+ */
+export function isProviderProvisioningProviderApiKeyCredentialKey(key: string): boolean {
+  const normalized = key.trim();
+  return normalized === key && /^provider:apikey:.+$/.test(normalized);
 }
 
 /** Personal Config 的 Envelope；具体字段由 @acode/provider 在目标 Environment 再校验。 */

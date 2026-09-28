@@ -7,6 +7,7 @@ import {
   ProviderSettingsFacade,
   createFailClosedAccountProviderConfigSnapshot,
   type AccountProviderConfigSnapshot,
+  type ProviderApiKeyVault,
   type ProviderConfigSnapshot,
   type ProviderSettingsMutationTarget,
   type ProviderSource,
@@ -37,6 +38,15 @@ export interface ProviderRuntimeDependencies {
   readonly testConnectivity?: ProviderSettingsConnectivityTester;
   readonly modelSelectionConfiguredDefaultSource?: ModelSelectionConfiguredDefaultSource;
   readonly disposeModelSelectionConfiguredDefaultSource?: () => void;
+  /**
+   * BYO Provider API Key 的加密凭据库（安全加固 P1-5）。注入后 registry 的异步刷新循环会把
+   * `credentialRef` hydrate 回明文 apiKey 再交给同步 resolver，下游约 39 处消费者无需改动。
+   * 不注入则 credentialRef 不 hydrate、文件里的明文照读（安全空操作）。
+   *
+   * 注意：写入侧（把明文搬进凭据库）由 `ProviderConfigRuntime` 的 vault 负责，
+   * 两者应注入同一实现，否则会出现「写了 ref 但读不回来」。
+   */
+  readonly providerApiKeyVault?: ProviderApiKeyVault;
 }
 
 interface RefreshableProviderSource<TSnapshot> extends ProviderSource<TSnapshot> {
@@ -93,6 +103,9 @@ export class ProviderRuntime {
     this.registryService = new ProviderRegistryService({
       configSource: this.configService,
       accountSource,
+      ...(dependencies.providerApiKeyVault
+        ? { providerApiKeyVault: dependencies.providerApiKeyVault }
+        : {}),
     });
     const mutations = createSettingsMutationTarget(
       this.#configRuntime,

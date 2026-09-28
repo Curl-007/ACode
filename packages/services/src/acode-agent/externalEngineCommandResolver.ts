@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import {
   getEngineRuntime,
+  isPackagedACodeDesktopRuntime,
   resolveAgentEngine,
   type ACodeProvider,
 } from "@acode/shared";
@@ -35,7 +36,13 @@ export function resolveExternalEngineCommand(
   }
 
   const runtime = getEngineRuntime(engine.id);
-  const envPath = process.env[runtime.binaryEnvVar]?.trim();
+  // 安全加固 P2（agent-command-env-gate R1）：打包态忽略外部引擎 binaryEnvVar——
+  // 与 native 的 GLM_BINARY_PATH 同一门禁（引擎注册表把该覆盖面按引擎复制了一遍，
+  // 判定点统一用 isPackagedACodeDesktopRuntime，不散点手写 env 读取）。
+  // 委托的 findACodeAgentRuntimeBinary 内部已门禁，此处只需挡住 envPath 快捷通道。
+  const envPath = isPackagedACodeDesktopRuntime()
+    ? undefined
+    : process.env[runtime.binaryEnvVar]?.trim();
   const binaryPath =
     envPath && existsSync(envPath) ? envPath : findACodeAgentRuntimeBinary(engine.id);
 

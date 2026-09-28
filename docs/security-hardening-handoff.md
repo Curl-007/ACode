@@ -235,10 +235,21 @@ done
   （sensitive-env-guard 9 + subprocess-env-allowlist 8）。**已知边界**：host/agent 进程
   自身 env 仍含凭据（第一方可信进程；node-repl 等进程内工具的可见性随「agent 命令 env
   门禁」项处理）；桌面 Settings 的 allowlist 管理 UI 未做。
-  未开始项：Electron 四件套、fuse、agent 命令 env 门禁、工作区路径收敛、OAuth PKCE、
+  未开始项：Electron 四件套、fuse、工作区路径收敛、OAuth PKCE、
   http 端点告警、插件 git 源 commit 固定、子代理模式继承、Chrome 提权门。
-  Mimosa 深度扫描（scan-2026-09-28）报出的 `server/src/remote/*` 命令注入族建议与
-  「agent 命令 env 门禁」排在一起。
+- **agent 命令 env 门禁 —— ✅ 已完成**（分支 `feature/agent-env-gate`）。spec 见
+  `packages/services/specs/agent-command-env-gate.md`：打包桌面运行时（main 依
+  app.isPackaged 下发 ACODE_APP_IS_PACKAGED=1）统一忽略 ACODE_AGENT_SERVER_COMMAND 族
+  与引擎 binaryEnvVar（GLM_BINARY_PATH/CODEX_BINARY_PATH/OPENCODE_BINARY_PATH）——
+  封堵 launchctl setenv/shell profile 级注入整体替换 agent 二进制（P1-7 同一哲学，
+  谓词 isPackagedACodeDesktopRuntime 单一事实源）。dev/独立 CLI/远程 server 零变化。
+  测试 7 例（agent-command-env-gate）。已知诚实边界：login shell 采集的 SHELL 保留
+  （功能本体即运行用户 shell，已有 X_OK 校验；残余=同用户文件植入面，不在 env 注入
+  威胁模型内）；二进制签名校验独立立项。
+- **Mimosa `server/src/remote/*` 命令注入族 —— 已复核为误报**：`exec(command)` 是
+  「远程执行命令」的 API 契约（SSH exec / docker exec sh -lc / wsl bash -lc），
+  全部调用方的路径插值都经 `quotePosixShellArg`/`quotePosixPathArg` 转义（已全量
+  sweep 验证无未转义插值）。无需修复；后续扫描可按此结论 triage。
 - **P3 能力差异化**（未开始）：auto 模式 LLM 分类器目前是桩、heartbeat 自动化、
   跨厂商插件清单兼容、prompt-cache 诊断、任务依赖图。
 - 计划里还列了 P1 之外的 P2 项（如 bot 权限请求改由桌面本地可信确认者响应），是 P0-3 诚实边界的真正修法。

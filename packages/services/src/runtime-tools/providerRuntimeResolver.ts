@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve as resolvePath } from "node:path";
-import { getEngineRuntime, type ACodeProvider } from "@acode/shared";
+import { getEngineRuntime, isPackagedACodeDesktopRuntime, type ACodeProvider } from "@acode/shared";
 
 const packagedResourcesPath =
   typeof (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath === "string"
@@ -52,7 +52,10 @@ export function findACodeAgentRuntimeBinary(engineId?: ACodeProvider | string | 
   const runtime = getEngineRuntime(engineId);
   const entrySegments = runtime.resolveEntrySegments(process.platform);
   const resourceSegments = [runtime.bundledResourceDir, ...entrySegments];
-  const envPath = process.env[runtime.binaryEnvVar];
+  // 安全加固 P2（agent-command-env-gate R1）：打包态忽略引擎 binaryEnvVar（GLM_BINARY_PATH 等）。
+  // 它是本候选链的第一顺位，env 注入可整体替换 agent/引擎二进制；打包态只走
+  // packagedResources / ~/.acode/server/agents / bundled-agents 标准候选。
+  const envPath = isPackagedACodeDesktopRuntime() ? undefined : process.env[runtime.binaryEnvVar];
   if (envPath && existsSync(envPath)) {
     return envPath;
   }

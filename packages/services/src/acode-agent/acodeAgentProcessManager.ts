@@ -18,6 +18,7 @@ import {
 import {
   ACODE_AGENT_RUNTIME,
   ACODE_RUNTIME_ENV_KEY,
+  isPackagedACodeDesktopRuntime,
   resolveAgentEngine,
   resolveWorkspaceKey,
   resolveACodeRuntimeEnv,
@@ -465,7 +466,13 @@ export function resolveDefaultACodeAgentCommand(
     return null;
   }
 
-  const command = process.env.ACODE_AGENT_SERVER_COMMAND?.trim();
+  // 安全加固 P2（agent-command-env-gate R1）：打包态忽略 ACODE_AGENT_SERVER_COMMAND 族。
+  // launchctl setenv / shell profile / Windows 用户环境变量可在用户级权限下注入 GUI 应用
+  // 的启动环境；这三个变量能整体替换 agent spawn 命令，等于每个任务静默运行攻击者二进制。
+  // 非打包态（dev/独立 CLI/远程 server）照常生效——那些场景用户就是管理员。
+  const command = isPackagedACodeDesktopRuntime()
+    ? undefined
+    : process.env.ACODE_AGENT_SERVER_COMMAND?.trim();
   if (command) {
     return applyPresentationSurfaceToCommand(
       {

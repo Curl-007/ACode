@@ -72,6 +72,7 @@ export {
   ACODE_APP_IS_PACKAGED_ENV,
   ACODE_BUILD_COMMIT_ID_ENV,
   RUNTIME_ACODE_DEBUG,
+  isPackagedACodeDesktopRuntime,
   normalizeACodeEnv,
   normalizeACodeProductFlavor,
 } from "./env.js";

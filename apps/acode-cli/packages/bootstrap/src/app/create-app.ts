@@ -20,6 +20,7 @@ import { createMcpAdapter } from "@acode/adapters/mcp";
 import {
   AgentRuntime,
   PermissionService,
+  setProcessManagedPolicyFloor,
   buildPluginReferenceCatalog,
   type AmendWorkflowRunSettingsInput,
   type ResumeSessionResult,
@@ -356,6 +357,11 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
           }
         : {}),
     });
+    // 安全加固 P2 补丁项（subagent-policy-floor-inheritance R1）：策略地板注册为进程级
+    // 事实——Explore 子代理与 memory agent 用 defaultPermissionConfig 自建 PermissionService，
+    // 构造参数纪律覆盖不到；进程注册后任何实例缺省自动携带地板（含 disableBypassPermissionsMode
+    // 对 Explore 缺省 yolo 的约束）。undefined = 本机未部署策略文件（清除旧值，测试/复用安全）。
+    setProcessManagedPolicyFloor(configResult.config.permission.policy);
     const permissionService = new PermissionService({
       allowedTools: new Set(configResult.config.permission.allowedTools),
       autoApproveHighRisk: configResult.config.permission.autoApproveHighRisk,

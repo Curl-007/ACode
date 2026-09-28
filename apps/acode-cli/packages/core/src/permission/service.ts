@@ -24,6 +24,7 @@ import {
   breakerContextFromPermissionContext,
   evaluateBypassImmuneBreakers,
 } from "./bypass-immune-breakers.js";
+import { getProcessManagedPolicyFloor } from "./process-policy-floor.js";
 import { applyPermissionUpdates } from "../tool/executor/permission-rules.js";
 import { isWebFetchPreapprovedUrl } from "../tool/webfetch-preapproved.js";
 import type { ToolPermissionRulePolicy } from "../tool/types.js";
@@ -111,7 +112,19 @@ export class PermissionService {
    * 决策层的跳过（checkPermissionByMode 的 yolo 分支）是安全底线，本方法是 UX 一致性。
    */
   isBypassPermissionsModeDisabled(): boolean {
-    return this.config.policyFloor?.disableBypassPermissionsMode === true;
+    return this.resolvePolicyFloor()?.disableBypassPermissionsMode === true;
+  }
+
+  /**
+   * 策略地板解析链（安全加固 P2 补丁项，subagent-policy-floor-inheritance R1）：
+   * 显式构造参数优先，缺省回落进程级注册地板。Explore 子代理与 memory agent 用
+   * defaultPermissionConfig 自建实例，构造参数纪律覆盖不到——进程级回落让
+   * 「地板对所有权限决策生效」成为结构性不变量。三处消费点（policy deny/ask、
+   * yolo 直通跳过、isBypassPermissionsModeDisabled）必须统一走本方法，不得直读
+   * this.config.policyFloor。
+   */
+  private resolvePolicyFloor(): ManagedPolicyFloorData | undefined {
+    return this.config.policyFloor ?? getProcessManagedPolicyFloor();
   }
 
   checkPermission(
@@ -125,7 +138,8 @@ export class PermissionService {
     // 安全加固 P2（R3 步骤 0/1）：托管策略地板压过一切分支——deny 绝对最高，
     // ask 压过 yolo/plan-readonly/项目 allow/allowedTools。规则匹配复用项目规则同一套
     // 语义（toolName + ruleContent + 能力域），策略层不另造匹配器。
-    const policyFloor = this.config.policyFloor;
+    // 解析链见 resolvePolicyFloor：显式构造参数 ?? 进程级注册地板（覆盖 Explore/memory agent）。
+    const policyFloor = this.resolvePolicyFloor();
     if (policyFloor) {
       const policyRuleset: PermissionRuleset = {
         version: 1,
@@ -210,7 +224,8 @@ export class PermissionService {
     if (context.mode === "yolo" && !planEnabled) {
       // 安全加固 P2（R1/R3 步骤 7）：策略地板 disableBypassPermissionsMode=true 时
       // yolo 直通失效——不返回 allow，落入下方与 build 模式相同的判定（副作用动作 ask）。
-      if (!this.config.policyFloor?.disableBypassPermissionsMode) {
+      // 经 resolvePolicyFloor：进程级地板对 Explore 子代理的缺省 yolo 同样生效。
+      if (!this.resolvePolicyFloor()?.disableBypassPermissionsMode) {
         return this.allow(context, capability, "mode.yolo", "Yolo mode bypasses permission prompts");
       }
     }

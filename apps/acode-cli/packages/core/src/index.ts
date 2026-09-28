@@ -118,6 +118,9 @@ export {
   createDenyPermissionBroker,
   createManualPermissionBroker,
   defaultPermissionConfig,
+  // 安全加固 P2 补丁项：托管策略地板的进程级注册点（create-app 唯一调用方；
+  // get/reset 仅供测试，从 src 路径直接导入，不进公开入口避免无消费者导出）。
+  setProcessManagedPolicyFloor,
 } from "./permission/index.js";
 export type {
   ManualPermissionBrokerOptions,

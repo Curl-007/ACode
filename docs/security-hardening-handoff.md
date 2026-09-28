@@ -235,6 +235,15 @@ done
   （sensitive-env-guard 9 + subprocess-env-allowlist 8）。**已知边界**：host/agent 进程
   自身 env 仍含凭据（第一方可信进程；node-repl 等进程内工具的可见性随「agent 命令 env
   门禁」项处理）；桌面 Settings 的 allowlist 管理 UI 未做。
+- **P2 骨架补丁：策略地板进程级结构化继承 —— ✅ 已完成**（分支
+  `feature/subagent-policy-floor`）。spec 见
+  `apps/acode-cli/specs/subagent-policy-floor-inheritance.md`：修复骨架落地后的三个
+  结构性旁路——①Explore 子代理/memory agent 用 defaultPermissionConfig 自建
+  PermissionService 且缺省 yolo，策略地板对其失效 → 进程级注册点
+  （setProcessManagedPolicyFloor，create-app 唯一调用）+ 解析链
+  config.policyFloor ?? 进程地板；②memory 便利放行可撤销 rule.policy.ask 与
+  breaker.* 的 ask → 保护集纳入；③子代理模式天花板现状钉住（request 显式
+  yolo/bypass 回落 parentMode，导出纯函数 + 测试）。测试 6 例。
   未开始项：Electron 四件套、fuse、工作区路径收敛、OAuth PKCE、
   http 端点告警、插件 git 源 commit 固定、子代理模式继承、Chrome 提权门。
 - **agent 命令 env 门禁 —— ✅ 已完成**（分支 `feature/agent-env-gate`）。spec 见

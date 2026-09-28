@@ -470,7 +470,13 @@ function createSubagentOverrideModelFactory(
   };
 }
 
-function resolveSubagentPermissionMode(
+/**
+ * 子代理权限模式天花板（安全加固 P2，subagent-policy-floor-inheritance R3）。
+ * 导出供回归测试钉住：request 显式 yolo/bypassPermissions 走 default 分支回落
+ * parentMode——子代理 profile 无法把模式抬到父会话之上；auto/plan 覆盖只会更严。
+ * Explore 的缺省 yolo 是设计保留（只读工具面），其安全兜底是熔断器 + 进程级策略地板。
+ */
+export function resolveSubagentPermissionMode(
   parentMode: AgentRuntimeInternal["config"]["mode"],
   permissionMode: ExploreSubagentRuntimeRequest["permissionMode"],
   builtInExplore: boolean,

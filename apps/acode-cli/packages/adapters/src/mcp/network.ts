@@ -11,11 +11,17 @@ export function buildMcpStdioEnv(options: {
   network?: NetworkEgressEnvPolicy;
 }): Record<string, string> {
   const sourceEnv = options.env ?? process.env;
+  // 安全加固 P2：MCP stdio server 是第三方供应链执行面，在既有黑名单之上追加剥离
+  // 敏感凭据键；per-server env 配置在本函数之后 spread（见 adapters/mcp 的
+  // StdioClientTransport 组装），用户显式给单个 server 注入的值不受影响。
   return prependRunningNodeDirectory(
-    applyNetworkEgressEnv(sanitizeACodeRuntimeEnv(filterStringEnv(sourceEnv)), {
-      network: options.network,
-      sourceEnv,
-    }),
+    applyNetworkEgressEnv(
+      sanitizeACodeRuntimeEnv(filterStringEnv(sourceEnv), { stripSensitiveCredentials: true }),
+      {
+        network: options.network,
+        sourceEnv,
+      },
+    ),
   );
 }
 

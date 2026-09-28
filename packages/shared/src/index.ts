@@ -109,6 +109,7 @@ export * from "./media-preview.js";
 export * from "./plugin-display-name.js";
 export * from "./acode-agent-runtime.js";
 export * from "./runtimeEnv.js";
+export * from "./sensitive-env-guard.js";
 export * from "./dynamic-workflow-feature.js";
 export * from "./markdown-artifact-images.js";
 export * from "./serviceAuthority.js";

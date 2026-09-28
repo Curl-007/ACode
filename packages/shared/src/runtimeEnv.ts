@@ -1,3 +1,10 @@
+import {
+  ACODE_TOOL_ENV_INHERIT_ALLOWLIST_ENV_KEY,
+  isSensitiveCredentialEnvKey,
+  isToolEnvInheritAllowed,
+  parseToolEnvInheritAllowlist,
+} from "./sensitive-env-guard.js";
+
 export const ACODE_RUNTIME_ENV_KEY = "ACODE_RUNTIME_ENV";
 export const ACODE_HTTP_PROXY_ENV_KEY = "ACODE_HTTP_PROXY";
 export const ACODE_NO_PROXY_ENV_KEY = "ACODE_NO_PROXY";
@@ -177,13 +184,47 @@ export function resetCapturedACodeCuaBrokerCredentialsForTest(): void {
   capturedCuaBrokerCredentials = undefined;
 }
 
+export interface SanitizeACodeRuntimeEnvOptions {
+  /**
+   * 安全加固 P2：在既有黑名单之上，额外剥离敏感凭据键（AWS_ 前缀、GITHUB_TOKEN、
+   * SSH_AUTH_SOCK、_API_KEY 后缀等，判定见 sensitive-env-guard.ts）。
+   * 仅在「不可信子进程」边界（Bash 工具、MCP stdio）开启；main→host→agent 的
+   * 第一方传递保持缺省 false——那里保留源值是 allowlist 在工具边界恢复的前提。
+   */
+  stripSensitiveCredentials?: boolean;
+  /**
+   * 允许恢复继承的敏感键（精确名或 PREFIX* 通配，大写形态）。缺省从被 sanitize 的
+   * env 自身的 ACODE_TOOL_ENV_INHERIT_ALLOWLIST 解析——即用户 shell/桌面启动环境的
+   * 显式 opt-in；Bash 子进程内 export 改不了 agent 的 process.env，无法自我放行。
+   */
+  sensitiveInheritAllowlist?: readonly string[];
+}
+
+function shouldStripSensitiveCredentialKey(
+  key: string,
+  env: Record<string, string | undefined>,
+  options: SanitizeACodeRuntimeEnvOptions | undefined,
+): boolean {
+  if (!options?.stripSensitiveCredentials) return false;
+  if (!isSensitiveCredentialEnvKey(key)) return false;
+  const allowlist =
+    options.sensitiveInheritAllowlist ??
+    parseToolEnvInheritAllowlist(env[ACODE_TOOL_ENV_INHERIT_ALLOWLIST_ENV_KEY]);
+  return !isToolEnvInheritAllowed(key, allowlist);
+}
+
 export function sanitizeACodeRuntimeEnv<T extends Record<string, string | undefined>>(
   env: T,
+  options?: SanitizeACodeRuntimeEnvOptions,
 ): Record<string, string> {
   captureACodeCuaBrokerCredentials(env);
   const sanitized: Record<string, string> = {};
   for (const [key, value] of Object.entries(env)) {
-    if (value === undefined || shouldSanitizeACodeRuntimeEnvKey(key)) {
+    if (
+      value === undefined ||
+      shouldSanitizeACodeRuntimeEnvKey(key) ||
+      shouldStripSensitiveCredentialKey(key, env, options)
+    ) {
       continue;
     }
     sanitized[key] = value;
@@ -232,10 +273,16 @@ export function readACodeToolEnvPassthroughEnv(env: EnvRecord): Record<string, s
   }
 }
 
-export function sanitizeACodeRuntimeEnvInPlace(env: Record<string, string | undefined>): void {
+export function sanitizeACodeRuntimeEnvInPlace(
+  env: Record<string, string | undefined>,
+  options?: SanitizeACodeRuntimeEnvOptions,
+): void {
   captureACodeCuaBrokerCredentials(env);
   for (const key of Object.keys(env)) {
-    if (shouldSanitizeACodeRuntimeEnvKey(key)) {
+    if (
+      shouldSanitizeACodeRuntimeEnvKey(key) ||
+      shouldStripSensitiveCredentialKey(key, env, options)
+    ) {
       delete env[key];
     }
   }

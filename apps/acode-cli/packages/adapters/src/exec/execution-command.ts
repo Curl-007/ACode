@@ -45,7 +45,11 @@ export function buildExecutionEnv(
     }
     // Bash/tool 子进程不能直接继承运行时的 NODE_ENV、http_proxy 或证书变量。
     // 网络变量会在 applyNetworkEgressEnv 中从 ACode 内部封存恢复，避免 app/provider 运行时先被污染。
-    sanitizeACodeRuntimeEnvInPlace(env);
+    // 安全加固 P2：Bash 子进程是不可信执行面（模型生成的任意命令），在既有黑名单之上
+    // 追加剥离敏感凭据键（AWS_ 前缀、GITHUB_TOKEN、SSH_AUTH_SOCK、_API_KEY 后缀等）；
+    // 用户可经 ACODE_TOOL_ENV_INHERIT_ALLOWLIST 显式放行，overlay.set 的显式注入在下方
+    // 后置、不受剥离影响。
+    sanitizeACodeRuntimeEnvInPlace(env, { stripSensitiveCredentials: true });
   }
 
   applyExecutionTextEnv(env, platform);

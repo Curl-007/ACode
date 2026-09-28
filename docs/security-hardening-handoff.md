@@ -225,10 +225,20 @@ done
   hook 改写 input 后命中熔断器会重新走确认。测试 26 例（managed-policy-floor 13 +
   bypass-immune-breakers 13）。**已知边界**：跨机隔离熔断器留作扩展点（需与 owner/lease
   路由联合设计）；策略分发通道（MDM/远程策略）未做；Settings UI 策略只读视图未做。
-- **P2 其余继承加固项**（未开始）：子进程 env 白名单化、Electron 四件套、fuse、agent 命令
-  env 门禁、工作区路径收敛、OAuth PKCE、http 端点告警、插件 git 源 commit 固定、
-  子代理模式继承、Chrome 提权门。Mimosa 深度扫描（scan-2026-09-28）报出的
-  `server/src/remote/*` 命令注入族与 env 白名单化是同一批改法，建议排在一起。
+- **P2 其余继承加固项**：子进程 env 凭据白名单化 —— ✅ 已完成（分支
+  `feature/subprocess-env-allowlist`）。spec 见
+  `apps/acode-cli/specs/subprocess-env-credential-allowlist.md`：Bash 工具与 MCP stdio
+  两个子进程边界默认剥离敏感凭据键（封闭规则集：精确名单 + AWS_/AZURE_/GITHUB_ 等前缀 +
+  _API_KEY/_TOKEN 等后缀 + npm_config 形态），用户经 `ACODE_TOOL_ENV_INHERIT_ALLOWLIST`
+  显式放行（项目配置无入口，P1-6 同一哲学）；main→host→agent 第一方边界零变化；
+  overlay.set / MCP per-server env 的显式注入后置、不受剥离影响。测试 17 例
+  （sensitive-env-guard 9 + subprocess-env-allowlist 8）。**已知边界**：host/agent 进程
+  自身 env 仍含凭据（第一方可信进程；node-repl 等进程内工具的可见性随「agent 命令 env
+  门禁」项处理）；桌面 Settings 的 allowlist 管理 UI 未做。
+  未开始项：Electron 四件套、fuse、agent 命令 env 门禁、工作区路径收敛、OAuth PKCE、
+  http 端点告警、插件 git 源 commit 固定、子代理模式继承、Chrome 提权门。
+  Mimosa 深度扫描（scan-2026-09-28）报出的 `server/src/remote/*` 命令注入族建议与
+  「agent 命令 env 门禁」排在一起。
 - **P3 能力差异化**（未开始）：auto 模式 LLM 分类器目前是桩、heartbeat 自动化、
   跨厂商插件清单兼容、prompt-cache 诊断、任务依赖图。
 - 计划里还列了 P1 之外的 P2 项（如 bot 权限请求改由桌面本地可信确认者响应），是 P0-3 诚实边界的真正修法。

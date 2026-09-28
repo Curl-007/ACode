@@ -244,8 +244,6 @@ done
   config.policyFloor ?? 进程地板；②memory 便利放行可撤销 rule.policy.ask 与
   breaker.* 的 ask → 保护集纳入；③子代理模式天花板现状钉住（request 显式
   yolo/bypass 回落 parentMode，导出纯函数 + 测试）。测试 6 例。
-  未开始项：Electron 四件套、fuse、工作区路径收敛、OAuth PKCE、
-  http 端点告警、插件 git 源 commit 固定、子代理模式继承、Chrome 提权门。
 - **agent 命令 env 门禁 —— ✅ 已完成**（分支 `feature/agent-env-gate`）。spec 见
   `packages/services/specs/agent-command-env-gate.md`：打包桌面运行时（main 依
   app.isPackaged 下发 ACODE_APP_IS_PACKAGED=1）统一忽略 ACODE_AGENT_SERVER_COMMAND 族
@@ -255,13 +253,43 @@ done
   测试 7 例（agent-command-env-gate）。已知诚实边界：login shell 采集的 SHELL 保留
   （功能本体即运行用户 shell，已有 X_OK 校验；残余=同用户文件植入面，不在 env 注入
   威胁模型内）；二进制签名校验独立立项。
+- **P2 批次二（三子智能体并行实现，整合方统一门禁后合入 06ec1ed）—— ✅ 已完成 4 项**：
+  - **Electron 加固（#2 四件套 + #3 fuse + #9 Chrome 提权门）**：spec 见
+    `packages/desktop/specs/electron-hardening.md`。主窗 will-navigate/setWindowOpenHandler、
+    三 session 的 setPermissionRequestHandler（media/display-capture 等敏感权限全拒、
+    未识别 fail-closed）、主 renderer CSP、openExternal 收敛 file:；fuse 经
+    electron-builder 26 原生 electronFuses 接线（OnlyLoadAppFromAsar 全平台、
+    AsarIntegrity win 全开/mac 仅签名构建）+ afterPack 后 asar 完整性刷新（防本包
+    重写 asar 导致 bricking，刷新失败即打包失败）；Chrome 提权门改 main 持有
+    （win32 + v20 行嗅探 + dialog 显式确认，载荷不再被信任）。测试 10 例。
+    **两处与计划的偏离（spec §5 记录）**：RunAsNode 与 EnableNodeOptionsEnvironmentVariable
+    保持开启——打包 agent 经 electron.exe+ELECTRON_RUN_AS_NODE 启动，且后者同时控制
+    NODE_EXTRA_CA_CERTS（agent 自定义 CA 信任）；待独立 node 二进制工程落地后一并关。
+    **待发布冒烟**：fuse/asar 完整性/CSP 的打包态行为需真实出包验证。
+  - **http 明文端点告警（#7）**：spec 见 `packages/provider/specs/provider-http-endpoint-warning.md`。
+    纯判定 isPlaintextHttpBaseUrl + 设置页 Base URL 内联警告（双语，知情不禁止）；
+    诊断层未接（ConfigValidationIssue 无 warning severity，需独立契约变更）。测试 2 例。
+  - **插件 git 源 commit 固定（#8）**：spec 见 `apps/acode-cli/specs/plugin-git-source-pinning.md`。
+    浮动 ref 默认拒绝（fail-closed）+ 显式 allowFloatingRef 逃生门；host 白名单与
+    archive 快路径同源（PLUGIN_REPOSITORY_ALLOWED_HOSTS 单一事实源）；浏览期与安装期
+    同一纯判定。市场清单自身的 git 源留待后续。测试 6 例。
+  - **OAuth PKCE（#6）**：spec 见 `packages/services/specs/oauth-pkce.md`。S256、
+    verifier 与 state 同刻生成同生命周期（进程内、fail-closed）、双 adapter 共用构造器；
+    生产轮询流程（URL 由后端下发）明确不注入。**最大诚实边界：服务端对附加参数的
+    容忍度未验证，合并后需 BigModel/ZAI 各一次真实登录冒烟**；若后端严格 schema
+    拒绝 code_verifier 需回退或后端支持。services 直接声明 pkce-challenge 依赖，
+    lockfile 以 pinned pnpm 更新。测试 10 例。
+  - 整合方标记的后续小项（非阻断）：OpenSplitButton 本地文件外链已是死链路可迁移
+    openExternalFile；shared 的 allowElevatedChromeDecryption 字段已无授权语义可评估删除；
+    辅助窗（resource-manager/cua-permission-panel）CSP 未补；http 警告的 UI 渲染建议手工过一眼。
 - **Mimosa `server/src/remote/*` 命令注入族 —— 已复核为误报**：`exec(command)` 是
   「远程执行命令」的 API 契约（SSH exec / docker exec sh -lc / wsl bash -lc），
   全部调用方的路径插值都经 `quotePosixShellArg`/`quotePosixPathArg` 转义（已全量
   sweep 验证无未转义插值）。无需修复；后续扫描可按此结论 triage。
+- **P2 未开始项**：工作区路径收敛（#5，与熔断器交互需整体设计）、遥测残留清理（#10 低危）、
+  bot 权限请求改由桌面本地可信确认者响应（P0-3 诚实边界的真正修法）。
 - **P3 能力差异化**（未开始）：auto 模式 LLM 分类器目前是桩、heartbeat 自动化、
   跨厂商插件清单兼容、prompt-cache 诊断、任务依赖图。
-- 计划里还列了 P1 之外的 P2 项（如 bot 权限请求改由桌面本地可信确认者响应），是 P0-3 诚实边界的真正修法。
 
 ---
 

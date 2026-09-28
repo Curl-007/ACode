@@ -245,6 +245,46 @@ test("main renderer index.html carries a CSP that blocks remote script while ser
   );
 });
 
+test("aux windows (resource-manager / cua-permission-panel) carry a tightened CSP", async () => {
+  // specs/electron-hardening.md §3b：两个 vite 构建的独立辅助窗补 CSP，是 index.html 的已验证子集。
+  for (const page of ["resource-manager.html", "cua-permission-panel.html"]) {
+    const html = await readSource(`src/renderer/${page}`);
+    const metaMatch = html.match(/Content-Security-Policy"[^>]*content="([^"]+)"/);
+    assert.ok(metaMatch, `${page} must declare a Content-Security-Policy meta tag`);
+    const directives = new Map(
+      metaMatch[1]
+        .split(";")
+        .map((directive) => directive.trim())
+        .filter(Boolean)
+        .map((directive) => {
+          const parts = directive.split(/\s+/);
+          return [parts[0], parts.slice(1)];
+        }),
+    );
+    assert.deepEqual(directives.get("default-src"), ["'none'"], `${page} default-src`);
+    assert.deepEqual(
+      directives.get("script-src"),
+      ["'self'", "file:", "'unsafe-inline'"],
+      `${page} script-src must allow self + file: (packaged) + inline (vite dev)`,
+    );
+    assert.equal(directives.get("object-src")?.[0], "'none'", `${page} object-src`);
+    assert.equal(directives.get("base-uri")?.[0], "'none'", `${page} base-uri`);
+    assert.equal(directives.get("form-action")?.[0], "'none'", `${page} form-action`);
+    // 收紧回归守护：辅助窗无远端取数面，connect-src 不得含 http/https；无 <webview> 故无 frame-src。
+    const connectSrc = directives.get("connect-src") ?? [];
+    assert.ok(!connectSrc.includes("http:"), `${page} connect-src must not widen to http:`);
+    assert.ok(!connectSrc.includes("https:"), `${page} connect-src must not widen to https:`);
+    assert.ok(connectSrc.includes("ws:"), `${page} connect-src must keep ws: for dev HMR`);
+    assert.equal(directives.get("frame-src"), undefined, `${page} must not declare frame-src`);
+    assert.equal(directives.get("media-src"), undefined, `${page} must not declare media-src`);
+    // cua 浮窗图标经 data: URL 推送；resource-manager 渲染 @acode/ui 可能用 data:/blob:。
+    assert.ok(
+      (directives.get("img-src") ?? []).includes("data:"),
+      `${page} img-src must allow data: (icon / ui assets)`,
+    );
+  }
+});
+
 test("openExternal file urls resolve to hardened local paths, never to shell.openExternal", async () => {
   const helpers = await loadMain("desktopMainIpcHelpers", {
     electron: { shell: {} },

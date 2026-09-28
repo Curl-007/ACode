@@ -111,12 +111,69 @@ form-action 'none';
 - `worker-src`：UI 层有 `new Worker(new URL(...))`（diffs / workspace 文件搜索 worker），Vite 构建产物为 self chunk，dev 可能经 blob。
 - `object-src 'none'`、`base-uri 'none'`、`form-action 'none'`：封死插件、基址劫持与表单外送。
 
-resource-manager.html / cua-permission-panel.html 属辅助窗，本轮不改（见「未决」）。
+resource-manager.html / cua-permission-panel.html 属辅助窗，本轮不改（见 §3b 与「未决」）。
 
 ### 验收
 
 1. dev（`pnpm dev:desktop`）主窗正常渲染、HMR 生效。
 2. 打包态主窗正常渲染（file: 子资源可加载）——打包冒烟属发布流程验证项（见 §6）。
+
+---
+
+## 3b. 辅助窗 CSP（resource-manager / cua-permission-panel，P2 后续补齐）
+
+### 现状
+
+`resource-manager.html`（存储/资源占用独立窗）与 `cua-permission-panel.html`（macOS 电脑使用
+权限拖拽浮窗）是仅有的两个**经 vite 构建、独立 .html 入口**却缺 CSP meta 的特权窗。其余辅助窗
+（aboutWindow / forceUpdatePrompt / windowsCuaOperationIndicator / recorder）是 main 进程内联
+HTML 字符串，已各自带 meta CSP；主窗 index.html 见 §3。
+
+两窗加载方式与主窗同款双态：dev `loadURL(${rendererDevUrl}/<page>.html)`（vite 源，注入 HMR），
+打包 `loadFile(${rendererDir}/<page>.html)`（file: opaque origin）。
+
+### 指令（两窗同一份，是 index.html CSP 的已验证子集）
+
+```
+default-src 'none';
+script-src 'self' file: 'unsafe-inline';
+style-src 'self' file: 'unsafe-inline';
+img-src 'self' file: data: blob:;
+font-src 'self' file: data:;
+connect-src 'self' ws: wss:;
+worker-src 'self' file: blob:;
+object-src 'none';
+base-uri 'none';
+form-action 'none';
+```
+
+理由（相对 index.html 的每处收紧都对应已核实的事实）：
+
+- `script-src` / `style-src` 与主窗一致：module script 走 vite chunk（`'self'`，打包态 `file:`），
+  `'unsafe-inline'` 覆盖 dev 态 Vite/React-refresh 注入的内联脚本与两窗 HTML 内联 `<style>` 块
+  （cua 浮窗整段样式内联）。主威胁（脚本执行面）防御与主窗等同。
+- **去掉 `frame-src`**：两窗都无 `<webview>` guest（frame-src http/https 是内嵌浏览器/Coding Plan
+  专用），无需保留。
+- **去掉 `media-src` 与 `acode-media:`**：两窗不做音视频预览。
+- **`connect-src` 收紧为 `'self' ws: wss:`**：两窗都只经 contextBridge IPC（`window.resourceManager`
+  / `window.cuaPermissionPanel`，非网络、不受 CSP 约束）取数，TS 入口无任何 `fetch`/`XHR`/`WebSocket`；
+  `ws:/wss:` 仅供 dev HMR，`'self'` 供 dev 同源模块取数。**不保留 http:/https:**——与主窗不同，
+  这两窗没有已知的远端取数面（主窗的 http/https 是 §3 记录的刻意从宽 tradeoff）。若将来面板引入
+  远端取数，需在此显式加回并记录证据。
+- `img-src data: blob:`：cua 浮窗的真实图标由 main 经 `state.iconDataUrl`（data: URL）推送、
+  在 `cuaPermissionPanel.ts` 里 `icon.style.backgroundImage = url(...)` 设置（图片资源受 img-src
+  约束）；resource-manager 渲染 @acode/ui 组件可能用到 data:/blob: 图。
+- `font-src` / `worker-src` 保留：resource-manager 引入 `@acode/ui/styles.css`（可能含 @font-face）
+  与 @acode/ui 组件树（可能用到打包 worker）；cua 浮窗虽用不到，但两窗共用同一份策略以便维护，
+  多余指令无副作用。
+- `object-src` / `base-uri` / `form-action` 一律 `'none'`：与主窗一致，封死插件、基址劫持、表单外送。
+
+### 验收
+
+1. 配置层测试（desktop-hardening.test.mjs）：两窗 HTML 各带 CSP meta，`default-src 'none'`、
+   `script-src` 含 `'self' file: 'unsafe-inline'`、`object-src/base-uri/form-action` 为 `'none'`、
+   `connect-src` 不含 `http:`/`https:`（收紧回归守护）、无 `frame-src`。
+2. dev / 打包态两窗正常渲染属发布流程冒烟项（见 §6 未决 1）。
 
 ---
 
@@ -214,5 +271,5 @@ shared 类型 `ChromeBrowserDataImportOptions.allowElevatedChromeDecryption` 属
 1. **打包冒烟**：fuse（含完整性校验、agent spawn 回归）与 CSP 打包态表现需发布流程真实出包验证；本批仅配置层测试。
 2. `packages/ui` OpenSplitButton 迁移到 `openExternalFile`（完成后删除 OpenExternal 的 file: 分支）——跨包所有权，移交整合方。
 3. `enableNodeOptionsEnvironmentVariable`/`runAsNode` 两个 fuse 的关闭依赖「agent 独立 node 二进制」工程落地。
-4. resource-manager.html / cua-permission-panel.html 的 CSP 未在本批补齐（辅助窗，任务范围外）。
+4. ~~resource-manager.html / cua-permission-panel.html 的 CSP 未在本批补齐~~ —— ✅ 已补齐（见 §3b，index.html CSP 的已验证子集，connect-src 收紧去掉 http/https）。打包态渲染仍属未决 1 的发布冒烟项。
 5. CSP `connect-src http:/https:` 从宽，待收集 renderer 实际远端取数清单后收紧。

@@ -291,7 +291,17 @@ done
     lockfile 以 pinned pnpm 更新。测试 10 例。
   - 整合方标记的后续小项（非阻断）：OpenSplitButton 本地文件外链已是死链路可迁移
     openExternalFile；shared 的 allowElevatedChromeDecryption 字段已无授权语义可评估删除；
-    辅助窗（resource-manager/cua-permission-panel）CSP 未补；http 警告的 UI 渲染建议手工过一眼。
+    http 警告的 UI 渲染建议手工过一眼。（辅助窗 CSP 已补齐，见下条。）
+- **辅助窗 CSP（resource-manager / cua-permission-panel）—— ✅ 已完成**
+  （spec `packages/desktop/specs/electron-hardening.md` §3b）。两个 vite 构建的独立特权辅助窗
+  此前缺 CSP meta（其余辅助窗是 main 内联 HTML 字符串、已各自带 CSP，主窗见 §3）。补上的是
+  index.html CSP 的**已验证子集**：script-src/style-src 同主窗（module chunk + dev 内联），
+  但**去掉 frame-src**（无 webview）、**去掉 media-src/acode-media:**（无音视频预览）、
+  **connect-src 收紧为 `'self' ws: wss:`**（两窗只经 contextBridge IPC 取数、TS 入口无
+  fetch/XHR/WebSocket，不保留 http/https；ws: 仅供 dev HMR）。img-src 保留 data:（cua 浮窗图标
+  经 data: URL 推送）。主威胁（脚本执行面）防御与主窗等同。desktop-hardening.test.mjs 加配置层
+  回归守护（含「connect-src 不得含 http/https」「无 frame-src」断言），11 测试绿。**残留**：
+  打包态两窗渲染仍属发布流程冒烟项（§6 未决 1）。
 - **Mimosa `server/src/remote/*` 命令注入族 —— 已复核为误报**：`exec(command)` 是
   「远程执行命令」的 API 契约（SSH exec / docker exec sh -lc / wsl bash -lc），
   全部调用方的路径插值都经 `quotePosixShellArg`/`quotePosixPathArg` 转义（已全量

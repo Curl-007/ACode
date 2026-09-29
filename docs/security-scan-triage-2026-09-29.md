@@ -74,6 +74,20 @@ Mimosa 离线库报 19 包/86 条；在线 registry 实测覆盖更广：
 
 **建议动作**：另立**依赖升级专项**（不进本文实施）：批次 1 = prod critical/high 且有修复版本（shell-quote、axios、undici、protobufjs、fast-uri、nanoid、form-data、ws）；批次 2 = 其余 prod moderate 与 dev 面；每批走全量门禁 + 桌面/CLI 打包冒烟。CLI workspace 为 0 的事实说明新近重建的 lockfile 自然消解公告——root lockfile 的批量 `pnpm update` 是主要手段。
 
+> **批次 1 处置记录（2026-09-30，已实施）**：经 root `package.json` 的 `pnpm.overrides`
+> （22 条 major 作用域选择器，防跨 major 意外升级）落地，实际覆盖超出原批次 1 清单
+> （含 hono CORS、postcss 任意文件读、brace-expansion×3 major、browserslist、
+> builder-util-runtime、ip-address、basic-ftp、smol-toml）。复测：**prod 公告
+> 158 → 34（critical 1→0，high 54→2）**。残留：linkify-it ×2 high——补丁仅存于 5.x 线，
+> 强升会破坏 markdown-it@13 的 API 契约，登记为接受残留（二次复杂度 DoS，触发需向
+> markdown 渲染面喂超大文本，非远程无交互面）；批次 2（prod moderate + dev 面
+> electron/tar/extract-zip）待另行排期。验证：root typecheck / lint（0 error，76 warnings
+> 同基线）/ architecture:check 全绿 + 14 个定向安全测试套件全绿（含 github-updates，
+> 覆盖 electron-updater 链）；**桌面/CLI 打包冒烟未跑**，下次出包时覆盖。
+> 注意：本机 PATH pnpm 为 9.10.0，与 `packageManager: pnpm@10.33.2` 错配会触发
+> node_modules 全量重建交互确认——本批用 `npx pnpm@10.33.2` 执行（mise 任务
+> `mise run install` 为仓库正规路径，本机未装 mise）。
+
 ## 5. 结论与后续动作
 
 **结论**：118 条静态 findings 已全部归簇处置——96 误报、14 设计固有、5 已缓解（P0/P1/P2 既有加固守卫在位）、12 影子条目随主链关闭；**无 P0/P1 级真实问题**。3 条残留观察项（§3）均给出了最小修复点，待产品决策。依赖面存在实质升级需求（§4，1 条 prod critical + 54 prod high），与代码 findings 相互独立。

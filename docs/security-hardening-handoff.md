@@ -286,10 +286,13 @@ done
     同一纯判定。市场清单自身的 git 源留待后续。测试 6 例。
   - **OAuth PKCE（#6）**：spec 见 `packages/services/specs/oauth-pkce.md`。S256、
     verifier 与 state 同刻生成同生命周期（进程内、fail-closed）、双 adapter 共用构造器；
-    生产轮询流程（URL 由后端下发）明确不注入。**最大诚实边界：服务端对附加参数的
-    容忍度未验证，合并后需 BigModel/ZAI 各一次真实登录冒烟**；若后端严格 schema
-    拒绝 code_verifier 需回退或后端支持。services 直接声明 pkce-challenge 依赖，
-    lockfile 以 pinned pnpm 更新。测试 10 例。
+    生产轮询流程（URL 由后端下发）明确不注入。**诚实边界（已更正框定）**：当前 UI 唯一
+    登录路径是轮询流程，BigModel/ZAI 真实登录**不发送任何 PKCE 参数**——deep-link（带 PKCE）
+    流程在产品 UI 中无调用方（`startOAuth` 无人调、且仅对非 bigmodel/zai provider 生效，而
+    OAuth provider 只有这两个）。所以 PKCE 是 **dormant 契约**：客户端侧正确性由 oauthPkce.test.ts
+    （10 例）保证，「服务端对 code_verifier 的容忍度」在 deep-link 接入 UI 之前**无法也无需**
+    冒烟。对 BigModel/ZAI 做真实登录冒烟只能验证轮询登录链路本身（登录可用 + URL 零回归），
+    验不到 PKCE。services 直接声明 pkce-challenge 依赖，lockfile 以 pinned pnpm 更新。
   - 整合方标记的后续小项：~~OpenSplitButton 本地文件外链死链路迁移 openExternalFile~~、
     ~~shared allowElevatedChromeDecryption 死字段删除~~ —— 均 ✅ 已完成（见下「electron-hardening
     后续清理批次」）；http 警告的 UI 渲染仍建议手工过一眼（编辑态草稿 + 只读诊断两条路径）。

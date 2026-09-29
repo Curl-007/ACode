@@ -44,7 +44,8 @@
   - 客户端与仓库内均无授权服务器 metadata（`.well-known/oauth-authorization-server`）抓取，无本地可验证的 PKCE 能力声明；
   - BigModel 授权入口是自定义登录页 `https://bigmodel.cn/login`（参数 `redirect`/`appId`/`state`），非标准 `/authorize` 端点；ZAI 入口 `https://chat.z.ai/api/oauth/authorize` 是标准形态（`response_type=code` + `client_id`），但同样无支持证据；
   - token 兑换并非直连 provider，而是 POST ACode 自有后端 `/api/v1/oauth/token`（`{provider, code, redirect_uri, state}`），后端实现不在本仓库。PKCE 端到端生效要求后端把 `code_verifier` 转发给 provider，这一转发是否存在无法本地确认。
-  - **因此本实现采用「附加参数」策略**：不支持 PKCE 的服务端按 RFC 7636 应忽略未知参数（授权 URL 的 `code_challenge`、交换载荷的 `code_verifier`），行为不变；支持的服务端则立即获得防护。**合并后必须做一次真实登录冒烟**（BigModel 与 ZAI 各一次）确认服务端不拒绝多出的参数；若后端 token 路由对未知字段严格校验（拒绝请求），需回退或由后端显式支持。
+  - **因此本实现采用「附加参数」策略**：不支持 PKCE 的服务端按 RFC 7636 应忽略未知参数（授权 URL 的 `code_challenge`、交换载荷的 `code_verifier`），行为不变；支持的服务端则立即获得防护。
+  - **冒烟范围的更正（重要）**：当前产品 UI 唯一登录路径是轮询流程（`startOAuthWithPolling` → 后端 `/api/v1/oauth/cli/init` 下发 URL），**不注入也不发送任何 PKCE 参数**（见上「轮询流程不注入」与下「deep-link 无 UI 调用方」）。因此对 BigModel/ZAI 做真实登录冒烟**只能验证轮询登录链路本身**（登录可用 + 后端下发 URL 被原样使用、客户端仅重写 redirect/state、交换载荷不含 code_verifier 的零回归），**无法验证服务端对 code_challenge/code_verifier 的容忍度**——那条路径根本不发这些参数。「服务端 PKCE 容忍度」只在 deep-link 流程真正接入 UI 后才可冒烟；在此之前它是 dormant 契约，由 `oauthPkce.test.ts` 的单元层保证客户端侧正确性。若将来启用 deep-link 入口，届时再对真实授权服务器做一次 code_verifier 兑换冒烟。
 - **deep-link 流程当前无 UI 调用方**：`startOAuth`（非轮询）在产品 UI 中暂无调用，本实现保证 adapter 契约与 service 实现端到端 PKCE-ready；一旦入口启用即获得防护。
 - **轮询流程的劫持面未消除**：轮询流程授权 URL 与兑换均在后端，若 provider 侧存在授权码劫持风险，需后端协议跟进（后端在 init 时生成 pair、authorize URL 带 challenge、兑换带 verifier）。
 - `pkce-challenge` 当前是 MCP SDK 的传递依赖（`node-linker=hoisted` 布局下可解析），但 `packages/services/package.json` 尚未声明直接依赖；应补 `"pkce-challenge": "^5.0.1"` 显式声明（属包清单变更，另行处理）。

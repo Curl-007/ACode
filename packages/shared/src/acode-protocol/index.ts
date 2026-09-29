@@ -858,6 +858,11 @@ export const acodeSessionTodoItemSchema = z
     content: nonEmptyString,
     status: z.enum(["pending", "in_progress", "completed"]),
     priority: z.enum(["high", "medium", "low"]),
+    // D4 todo 依赖字段最小加宽（apps/acode-cli/specs/todo-dependency-fields.md R5/R7）：
+    // 与 CLI 侧 TodoItemSchema 同批新增的三个可选成员；保持 .strict()，未知键仍拒绝。
+    id: nonEmptyString.optional(),
+    blockedBy: z.array(nonEmptyString).optional(),
+    metadata: z.record(z.string(), z.unknown()).optional(),
   })
   .strict();
 export const acodeSessionGoalStatsSchema = z

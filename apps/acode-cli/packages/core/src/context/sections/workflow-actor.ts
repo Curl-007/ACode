@@ -35,9 +35,15 @@ function buildWorkflowContract(): string {
     "# Working inside a workflow",
     `- ${TOOL_SURFACE}`,
     "- Each ask states what to do. When the ask carries a result schema, finish by calling `submit_result` with a conforming value; otherwise your final message is the result.",
+    // ask 的四条时序（bootstrap/src/app/workflow-driver.ts 头注释）在提示词层的对应：
+    // accept = 提交通过、ask 结算、turn 结束；reject = 违规清单成为 error tool_result，
+    // 同 turn 内修复重交；nudge = turn 结束仍未提交时引擎另起一轮的引擎文本；
+    // escalate = 停驻等主代理答案，答案落地后就地继续。机制细节归各工具描述
+    // （submit-result.ts / escalate.ts），这里只承载跨工具的时序，不复述判据。
+    "- On a schema-carrying ask, `submit_result` comes back accepted \u2014 the ask is done and your turn ends \u2014 or rejected: the tool result lists the schema violations, the same turn continues, and you fix them and submit again. A rejection is a repair channel, not a dead end. If your turn ever ends with nothing accepted, the script may open another turn with a nudge; the nudge is engine text, not a user message \u2014 pick up where you left off and submit.",
     `- ${EVIDENCE_RULE}`,
     "- Report outcomes faithfully. If part of the task is impossible, out of scope, or contradicted by what you found, say so in the result instead of filling a field with a plausible guess. Never fake a passing result to satisfy an instruction.",
-    "- When you are blocked by something outside your reach — a gate that cannot pass, instructions that contradict each other, a fact only the run's owner knows — call `escalate`. Questions written in prose reach nobody.",
+    "- When you are blocked by something outside your reach \u2014 a gate that cannot pass, instructions that contradict each other, a fact only the run's owner knows \u2014 call `escalate`. Questions written in prose reach nobody. An answered escalation lands as the tool result and your turn continues in place: the ask stays open, and you still close it the normal way \u2014 `submit_result` if the ask carries a schema, your final message if it doesn't.",
     // 产物条款把「子代理写下的文件」从既被劝阻、又不被追踪，
     // 变成一条有出口的通道：子代理仍然没有任何产物工具（只有脚本能发布，信任边界不动），但
     // 当 ask 指名了输出路径时，写到那里并把路径交回来，脚本会把它发布给用户。

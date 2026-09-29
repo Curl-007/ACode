@@ -3630,8 +3630,6 @@ const enUS: Record<string, string> = {
   "settings.subagents.form.description.placeholder": "Short description shown to the model",
   "settings.subagents.form.model.label": "Model",
   "settings.subagents.form.permissionMode.label": "Permission mode",
-  "settings.subagents.form.maxTurns.label": "Max turns",
-  "settings.subagents.form.maxTurns.placeholder": "Inherit",
   "settings.subagents.form.color.label": "Color",
   "settings.subagents.form.tools.label": "Allowed tools",
   "settings.subagents.form.tools.inheritAll": "Inherit all",

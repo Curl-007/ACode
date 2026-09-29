@@ -8,6 +8,7 @@ import {
 } from "../deps.js";
 import {
   buildRuntimeModeReminderBody,
+  buildMemoryRecallReminderBody,
   buildPlanModeExitReminderBody,
   buildRuntimeOutputStyleReminderBody,
   buildTodoReminderBody,
@@ -141,18 +142,37 @@ export async function runRegularTurnLoop(
       shouldBuildTodoReminder(state.turnRequestState.entries)
     ) {
       const currentTodos = await this.readSessionTodosForContext(state.turnTraceContext);
+      // 列表无未完成项时 body 为 null：此时既不提交 attachment，也不落 persisted notice，
+      // 避免「没有可跟踪工作却每 10 turn 落一条 synthetic notice」
+      // （specs/reminder-extensions.md R1 条件 5 / R2）。
       const reminderBody = buildTodoReminderBody(currentTodos);
+      if (reminderBody) {
+        commitTurnRequestEntries(this, state.turnRequestState, [
+          systemReminderAttachmentEntry("todo_reminder", reminderBody),
+        ]);
+        await this.persistSyntheticUserNoticeForSession({
+          messageID: createMessageId(),
+          metadata: { runtimeMessage: todoReminderRuntimeMetadata() },
+          sessionId: this.sessionId,
+          source: "todo_reminder",
+          text: reminderBody,
+          traceContext: state.turnTraceContext,
+        });
+      }
+    }
+    // 召回记忆提醒：per-request 档，只进本轮请求 entries，不落 session
+    // （specs/reminder-extensions.md R3；档位判据见 R4）。
+    const memoryRecallReminderBody = outputTokenRecoveryActive
+      ? null
+      : buildMemoryRecallReminderBody({
+          entries: state.turnRequestState.entries,
+          memoryRoot: this.memoryRoot,
+          memoryIndexContent: this.memoryIndexContent,
+        });
+    if (memoryRecallReminderBody) {
       commitTurnRequestEntries(this, state.turnRequestState, [
-        systemReminderAttachmentEntry("todo_reminder", reminderBody),
+        systemReminderAttachmentEntry("memory_recall", memoryRecallReminderBody),
       ]);
-      await this.persistSyntheticUserNoticeForSession({
-        messageID: createMessageId(),
-        metadata: { runtimeMessage: todoReminderRuntimeMetadata() },
-        sessionId: this.sessionId,
-        source: "todo_reminder",
-        text: reminderBody,
-        traceContext: state.turnTraceContext,
-      });
     }
     const outputStyleReminderBody =
       state.modelStepCount === 0

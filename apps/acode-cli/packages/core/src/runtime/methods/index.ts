@@ -11,6 +11,7 @@ import { getProjectId } from "./config.js";
 import { setWorkingDirectory } from "./config.js";
 import { ensureSessionPersistedForExternalActivity } from "./config.js";
 import { getActiveTurnInfo } from "./config.js";
+import { getConcurrencyDiagnostics } from "./concurrency-diagnostics.js";
 import { getTools } from "./config.js";
 import { invalidateToolCache } from "./config.js";
 import { getToolRegistry } from "./config.js";
@@ -217,6 +218,7 @@ export function installAgentRuntimeMethods(ctor: AgentRuntimeConstructor): void 
   proto.testModelConnectivity = testModelConnectivity;
   proto.recordExternalUserPrompt = recordExternalUserPrompt;
   proto.getActiveTurnInfo = getActiveTurnInfo;
+  proto.getConcurrencyDiagnostics = getConcurrencyDiagnostics;
   proto.getTools = getTools;
   proto.invalidateToolCache = invalidateToolCache;
   proto.getToolRegistry = getToolRegistry;

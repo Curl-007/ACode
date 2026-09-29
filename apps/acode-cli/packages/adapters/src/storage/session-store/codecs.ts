@@ -3,6 +3,7 @@ import {
   SESSION_ENTRY_MODEL_SELECTION,
   SESSION_TITLE_SOURCES,
   parseModelSelectionValue,
+  TodoDepsJsonSchema,
   type CollaborationMode,
   type FileDiff,
   type MessageId,
@@ -17,6 +18,7 @@ import {
   type SessionRevert,
   type SessionTitleSource,
   type SessionEntryType,
+  type TodoDepsJson,
   type TodoItem,
   type TraceId,
   type WorkspaceId,
@@ -184,7 +186,40 @@ export function decodeTodoRow(row: TodoRow): TodoItem {
     content: row.content,
     status: row.status as TodoItem["status"],
     priority: row.priority as TodoItem["priority"],
+    // D4（specs/todo-dependency-fields.md R5）：读回必须带上三个新字段——
+    // 漏掉的症状是「写进去了、读回来只剩三字段」且不报错。
+    ...decodeTodoDeps(row.deps_json),
   };
+}
+
+/**
+ * deps_json 编码：只存规范化后的在场成员；三成员全缺席时写 null（与旧行同形）。
+ * 序列化形状由 contracts 的 TodoDepsJsonSchema 唯一定义（跨存储边界走 schema，
+ * apps/acode-cli/AGENTS.md「模块边界与接口契约」）。
+ */
+export function encodeTodoDeps(todo: TodoItem): string | null {
+  const deps: TodoDepsJson = {};
+  if (todo.id !== undefined) deps.id = todo.id;
+  if (todo.blockedBy !== undefined) deps.blockedBy = todo.blockedBy;
+  if (todo.metadata !== undefined) deps.metadata = todo.metadata;
+  return Object.keys(deps).length === 0 ? null : JSON.stringify(deps);
+}
+
+/**
+ * deps_json 解码：null / 坏 JSON / 形状校验失败（含未来版本写入新成员的前向数据）
+ * 一律按「三字段缺席」处理——与 R5 回滚策略「忽略该列」同义，单行脏数据不能让整个
+ * 会话的 todos 读不出来。
+ */
+function decodeTodoDeps(raw: string | null): TodoDepsJson {
+  if (!raw) return {};
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return {};
+  }
+  const result = TodoDepsJsonSchema.safeParse(parsed);
+  return result.success ? result.data : {};
 }
 
 export function partCreatedAt(part: MessagePart, fallback: number): number {

@@ -44,6 +44,7 @@ import {
   type WorkflowReportSink,
 } from "@acode/dynamic-workflow";
 import { type ChildMessage, type ChildPayload, type ResponseMessage } from "./protocol.js";
+import { scriptThrowError } from "./script-error.js";
 import { renderChildEntry } from "./child-source.js";
 import { writeChildEntryFile, type HarnessWarning } from "./child-entry-file.js";
 
@@ -177,6 +178,13 @@ export interface RunWorkflowOptions {
    * EngineConfig**，harness 不读、不加工。读前驱的行发生在 run service。
    */
   inheritedTokens?: number;
+  /**
+   * 本次 run 的 token 预算显式阈值（BUDGET_CAPS.maxTokensPerRun 的更严覆盖，R4）；与
+   * `inheritedTokens` 同规：**verbatim 转交 EngineConfig**，harness 不读、不加工、不推断
+   * ——生效值的归一（与常量取更严）与 resume 的「从 journal 读回、拒绝新阈值」语义都在
+   * 引擎（engine-caps.ts 的 creationCaps / resumedCaps）。
+   */
+  tokenBudget?: number;
 }
 
 const DEFAULT_MAX_OLD_SPACE_MB = 256;
@@ -230,6 +238,7 @@ export async function runWorkflowScript(options: RunWorkflowOptions): Promise<Ru
     ...(options.launch === undefined ? {} : { launch: options.launch }),
     ...(options.importedCache === undefined ? {} : { importedCache: options.importedCache }),
     ...(options.inheritedTokens === undefined ? {} : { inheritedTokens: options.inheritedTokens }),
+    ...(options.tokenBudget === undefined ? {} : { tokenBudget: options.tokenBudget }),
     cwd: options.cwd ?? process.cwd(),
   });
   // 控制面一构造好就绑：run 从第一条事件起就可被改设置，而**不必**等子进程起来——下面那条
@@ -498,13 +507,8 @@ function handleChildMessage(message: ChildMessage, deps: MessageDeps): void {
       if (message.ok) {
         engine.complete(message.value);
       } else {
-        // 脚本抛错：run 失败（错误明细来自沙箱）。
-        const err = message.error;
-        failRun(
-          new WorkflowError("DriverError", err?.message ?? "The workflow script threw an error", {
-            cause: err?.stack ?? err?.name,
-          }),
-        );
+        // 脚本抛错：run 失败（错误明细来自沙箱；带合法码的按原码重建，见 scriptThrowError）。
+        failRun(scriptThrowError(message.error));
       }
       return;
     case "request":

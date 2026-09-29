@@ -925,6 +925,14 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
     id: "0022_backfilled_session_reasoning",
     sql: BACKFILLED_SESSION_REASONING_MIGRATION_SQL,
   },
+  {
+    // D4 todo 依赖字段（specs/todo-dependency-fields.md R5）：nullable deps_json 列，
+    // 回滚 = 旧代码忽略该列（decodeTodoRow 显式挑字段），不需要 down migration。
+    appVersion: "0.16.9",
+    id: "0023_todo_deps_json",
+    sql: TODO_DEPS_JSON_MIGRATION_SQL,
+  },
 ];
 import { OFFICIAL_GLM_SELECTION_MIGRATION_SQL } from "./migrations/0021-official-glm-selection.js";
 import { BACKFILLED_SESSION_REASONING_MIGRATION_SQL } from "./migrations/0022-backfilled-session-reasoning.js";
+import { TODO_DEPS_JSON_MIGRATION_SQL } from "./migrations/0023-todo-deps-json.js";

@@ -154,6 +154,12 @@ export class CommandInbox {
 
         const decision = this.decide(envelope);
         if (decision.kind === "ack") {
+          // `remember` 的非对称是**必要条件**，不是遗漏（详见 decide() 的返回类型注释）：
+          // CAS/guard 丢弃一律 remember:false，唯一 remember:true 的是 guard 的 noop。
+          // 把 stale 记进 settled LRU 会让客户端的**修正重试**永久失效——handle() 在
+          // decide() 之前先查 lookupExact（本函数上方两处），同一 commandId 重发会被短路成
+          // duplicate(stale)，永远拿不到 execute。noop 反之必须记住：它表示「该命令的效果
+          // 已成立/无需再做」，重试方需要认出它。
           if (decision.remember) this.rememberSettled(bucketKey, envelope.commandId, decision.ack);
           releaseSession();
           return this.ackOnly(decision.ack);
@@ -305,6 +311,18 @@ export class CommandInbox {
     return null;
   }
 
+  /**
+   * 裁决一条已解析的信封。纯函数：只读 host 的 revision/logEpoch 投影与两个裁决端口，
+   * 不分配 admissionSeq、不产出副作用，所以任何丢弃路径的重试都是幂等的。
+   *
+   * `remember` = 这条 ack 是否进 settled LRU（512/session）。约定：
+   * - **CAS / guard 的丢弃一律 `remember: false`**。这些终态描述的是「以客户端当时的
+   *   baseRevision/baseLogEpoch 为前提不成立」，客户端读到 `revisionAtDecision` 后会用
+   *   **同一 commandId** 修正重发；若记住了，重发会在 handle() 的 lookupExact 处被折叠成
+   *   `duplicate`，修正永远无法被 admit。
+   * - **guard 的 `noop` 必须 `remember: true`**（本方法唯一的 true）。noop 表示该命令的
+   *   效果已成立或无需再做，是一个需要被重试方认出的终态事实。
+   */
   private decide(
     envelope: CommandEnvelope,
   ): { kind: "execute"; ack: CommandAck } | { kind: "ack"; ack: CommandAck; remember: boolean } {
@@ -323,6 +341,14 @@ export class CommandInbox {
     }
 
     if (COMMANDS_REQUIRING_BASE_REVISION.has(envelope.type)) {
+      // 纵深防御，正常路径**不可达**：parseCommandEnvelope 对同一条件先拒成
+      // proto.invalidPayload（packages/shared/src/acode-protocol-v4/command.ts 的
+      // 「CAS commands require baseRevision and baseLogEpoch」），handle() 在 parsed.ok
+      // 为假时就已返回，走不到 decide()。decide 是 private、当前无旁路调用方，所以本分支
+      // 只在「未来出现绕过 parse 的调用方」时才有意义。
+      // 即使删掉它也不失守：baseRevision 缺失会落到下面的 `envelope.baseRevision !== revision`
+      // 比较（undefined !== number 恒真）被拒成 staleRevision，只是 reasonCode 不够精确。
+      // 保留 + 注明理由，取舍见 specs/command-terminal-state-audit.md §B。
       if (envelope.baseRevision === undefined) {
         return {
           kind: "ack",
@@ -421,6 +447,9 @@ export class CommandInbox {
       };
     }
     if (decision.verdict === "noop") {
+      // 本方法唯一的 remember:true。noop ≠ 丢弃：它表示该命令的效果已成立/无需再做，
+      // 是一个需要被晚到重试认出的终态事实，所以必须进 settled LRU（对比上面各条
+      // CAS/guard 丢弃的 remember:false，理由见 decide() 的返回类型注释）。
       return {
         kind: "ack",
         remember: true,
@@ -445,6 +474,13 @@ export class CommandInbox {
 
   private retryAck(ack: CommandAck): CommandAck {
     // failed 是终态事实，不得被 duplicate 状态覆盖后让 UI/服务误判为可接受。
+    //
+    // **cancel 方向靠归一化覆盖，而不是靠这里点名**：CommandAck.status 的枚举里没有
+    // `cancelled`（packages/shared/src/acode-protocol-v4/command.ts 的 commandAckSchema），
+    // 取消在持久事实层就被投影成 `status:"failed"` + `reasonCode:"fault.command.inputCancelled"`
+    // （bootstrap/src/acode-protocol-v4/persistent-command-facts.ts），所以取消的终态走的
+    // 正是上面这条 failed 分支，同样不会被折叠成 duplicate。改动 status 枚举或那条归一
+    // 投影时必须重新核对本处：两者是「取消终态不可被覆盖」这一条约定的上下两半。
     return ack.status === "failed" ? ack : { ...ack, status: "duplicate" };
   }
 

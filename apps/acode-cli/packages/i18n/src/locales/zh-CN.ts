@@ -80,6 +80,14 @@ Slash Commands:
       disabled: "关闭",
       enabled: "开启",
     },
+    errors: {
+      // detail 是模型面英文原文（tool 契约的 cancellation.userVisibleMessage），按
+      // specs/prompt-language-policy.md R3 保留不翻译；本地化只补类型标签，让 zh-CN 用户
+      // 认得出这是「取消」而不是别的失败。刻意不用「已取消」这种断言：同一个 type 下也有
+      // 「同步执行、无法取消」的原文，断言会与 detail 自相矛盾。
+      toolCancelled: (detail) => `工具取消：${detail}`,
+      unknown: "未知错误",
+    },
     input: {
       activeStatusHint: "esc to interrupt",
       busyPlaceholder: "输入内容会排队",

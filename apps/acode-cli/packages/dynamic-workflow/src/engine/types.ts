@@ -118,6 +118,24 @@ export type ImportCloseCause = "mutating-tool" | "world-run";
  */
 export interface Caps {
   maxConcurrency: number;
+  /**
+   * R2 总量保险丝的**更严**覆盖（specs/workflow-budget-fuses.md R6）：缺席 = 用
+   * `BUDGET_CAPS.maxAsksPerRun`；显式值只允许比常量更严——生效值取两者较小
+   * （scheduler-types.ts 的 `effectiveAskBudget`），与「只能收紧」的既有哲学一致。
+   * 引擎构造与 `setMaxConcurrency` 的整份替换都必须保留本成员（构造丢字段 = 显式 caps
+   * 在一次 retune 之后静默失效）。
+   */
+  maxAsksPerRun?: number;
+  /** R3 扇出积压保险丝的更严覆盖；规则与 {@link Caps.maxAsksPerRun} 逐条相同。 */
+  maxPendingAsks?: number;
+  /**
+   * R4 token 硬顶的生效阈值。与上面两个成员不同，它同时是阈值的 **journal 落库载体**：
+   * 创建时引擎把生效值（`EngineConfig.tokenBudget` 与 `BUDGET_CAPS.maxTokensPerRun`
+   * 取更严）折进本成员，随 `run-started` 事件落 journal（零 SQL，事件即锚点）；resume
+   * 从**第一世**的 run-started 读回，绝不接受调用方给的新阈值（与 args 同一条纪律，
+   * 装配在 engine-caps.ts 的 creationCaps / resumedCaps）。
+   */
+  maxTokensPerRun?: number;
 }
 
 // 终态相关的结构化明细（ProviderStop 明细、run 级停滞观察）住在 run-terminal.ts，从这里

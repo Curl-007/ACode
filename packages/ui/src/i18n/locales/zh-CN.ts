@@ -3402,8 +3402,6 @@ const zhCN: Record<string, string> = {
   "settings.subagents.form.description.placeholder": "展示给模型的简短说明",
   "settings.subagents.form.model.label": "模型",
   "settings.subagents.form.permissionMode.label": "权限模式",
-  "settings.subagents.form.maxTurns.label": "最大轮数",
-  "settings.subagents.form.maxTurns.placeholder": "继承默认",
   "settings.subagents.form.color.label": "颜色标记",
   "settings.subagents.form.tools.label": "可用工具",
   "settings.subagents.form.tools.inheritAll": "继承全部",

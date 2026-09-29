@@ -15,6 +15,9 @@ export {
   type ConcurrencyThrottleReason,
 } from "./concurrency.js";
 export { canonicalJson, fnv1a, inputHash } from "./hash.js";
+// 结构化错误的运行时 guard 与预算明细类型直接从 errors.ts 导出（types.ts 已抵 400 行门，
+// 而这两者是 errors.ts 自己的表面；WorkflowError 本体按惯例仍经 types.js 再导出）。
+export { isWorkflowErrorCode, type AgentBudgetDetails } from "./errors.js";
 export {
   WorkflowError,
   INSTRUCTIONS_HEAD_MAX_CHARS,

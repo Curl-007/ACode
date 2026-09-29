@@ -29,6 +29,7 @@ import { applyRuntimeExecutionState } from "../execution-state.js";
 
 import { orderProviderVisibleToolContracts } from "../../tool/provider-visible-order.js";
 import { projectToolModelContract } from "../../tool/model-contract.js";
+import { logToolsSchemaTokenMetric } from "./tools-schema-token-metric.js";
 import { rebuildContextPrefix } from "./context-refresh.js";
 import { filterEmbeddedSearchRuntimeVisibleTools } from "./embedded-search-branch.js";
 import {
@@ -136,6 +137,10 @@ export function getActiveTurnInfo(this: AgentRuntimeInternal): ActiveTurnInfo | 
 export function getTools(this: AgentRuntimeInternal, model?: Model): ModelToolContract[] {
   if (this.cachedTools === null) {
     this.cachedTools = filterRuntimeVisibleTools.call(this, this.registry.toContracts());
+    // P5 度量点一（specs/tools-schema-token-metrics.md R1）：缓存重建时点 = 工具面变化时点，
+    // 记一条 debug 级本地度量（工具数量 / MCP 占比 / schema 估算 token）。只写本地日志，
+    // 不外发、不进遥测通道；度量纯读契约数组，不影响这里的返回值与后续过滤。
+    logToolsSchemaTokenMetric(this, this.cachedTools);
   }
   return this.cachedTools
     .filter((tool) => tool.name !== "WebSearch" || shouldExposeWebSearch.call(this, model))

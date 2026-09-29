@@ -25,6 +25,23 @@ export interface TuiCopy {
     disabled: string;
     enabled: string;
   };
+  /**
+   * 错误行的本地化渲染（`specs/prompt-language-policy.md` R3）。
+   *
+   * 纪律：按**结构化字段**（`error.type` / `error.code`）查本表，**不翻译 message 本身**——
+   * 工具错误的 message 是双面文本（同时进 tool result 给模型），恒英文；各条目的 `detail`
+   * 入参就是那段英文原文，原样保留。表外的一律回落展示原始英文（错误种类是开放集合，
+   * catalog 是封闭集合，回落是必须的）。
+   */
+  errors: {
+    /**
+     * `CoreErrorType.ToolCancelled`（`tool_cancelled`）：tool 契约的
+     * `cancellation.userVisibleMessage` 走这条。
+     */
+    toolCancelled(detail: string): string;
+    /** 事件里既取不到 message 也取不到 reason 时的兜底行。 */
+    unknown: string;
+  };
   input: {
     activeStatusHint: string;
     busyPlaceholder: string;

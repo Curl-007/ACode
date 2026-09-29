@@ -10,9 +10,10 @@
  *   校验 inputHash——不一致则整个 run 大声失败（结构化错误，绝不静默偏移）。
  * - 每 actor FIFO + actorSeq 准入顺序 + replay 的 hold 规则：见 scheduler.ts（本文件把 ask 生命周期委托给它）。
  *
- * 本文件聚焦 run 生命周期：host API 入口、用量记账、run 结算与事件记录。用户面产物、report、
- * world 节点与导入缓存、run 终态三条路径的方法体各在兄弟模块（engine-artifacts.ts / engine-report.ts /
- * engine-world.ts / engine-settlement.ts），经 engine-state.ts 的 {@link EngineState} 接缝读写这里的
+ * 本文件聚焦 run 生命周期：host API 入口、run 结算与事件记录。用户面产物、report、
+ * world 节点与导入缓存、caps 装配与并发命令、用量记账与 token 预算判定、run 终态三条
+ * 路径的方法体各在兄弟模块（engine-artifacts.ts / engine-report.ts / engine-world.ts /
+ * engine-caps.ts / engine-settlement.ts），经 engine-state.ts 的 {@link EngineState} 接缝读写这里的
  * 私有状态；本类上只留薄委托（拆分原因：oxlint max-lines 上限 400 行）。出生阶段坐标的两个
  * 打戳函数（事件与 ProviderStop）是纯函数，住在 engine-phase-stamp.ts，只读本类拥有的
  * `instancePhases` 表。
@@ -31,6 +32,7 @@ import { publishReport } from "./engine-report.js";
 import { closeImportCache, readWorld, recoverImportClosure } from "./engine-world.js";
 import { recoverSettleOrder, ReplaySettleOrder } from "./replay-order.js";
 import { settleCompleted, settleFailed, settleStopped } from "./engine-settlement.js";
+import { creationCaps, recordAskUsage, resumedCaps, setRunMaxConcurrency } from "./engine-caps.js";
 import type {
   ActorId,
   ArtifactRef,
@@ -121,6 +123,14 @@ export interface EngineConfig {
    */
   inheritedTokens?: number;
   /**
+   * 本次 run 的 token 预算显式阈值（R4，specs/workflow-budget-fuses.md）。生效值 = 它与
+   * `BUDGET_CAPS.maxTokensPerRun` 取更严，装配进 `caps.maxTokensPerRun` 后随 run-started
+   * 事件落 journal（零 SQL）；resume 从 journal 读回，**绝不接受调用方给的新阈值**——与
+   * `args` 同一条纪律（见下面 args 的注释）。缺席 = 用常量；归一（非有限值与非正数按缺席、
+   * 小数下取整）在 engine-caps.ts 的 creationCaps 一处做。
+   */
+  tokenBudget?: number;
+  /**
    * amend-resume 的导入缓存（{@link ImportedRunCache}）。**纯数据注入**——核心因此仍是
    * 零 I/O 的确定性状态机：读前驱 journal、走 `resumed_from` 链、解析转录源，全部发生在
    * run service，引擎只拿到一张构建好的表并按运行期身份（actor 名 + persona、
@@ -206,6 +216,18 @@ export class WorkflowEngine implements WorkflowHostApi, WorkflowReportSink {
    */
   private reportCount = 0;
   /**
+   * 本 run 已准入的 ask 行数（BUDGET_CAPS.maxAsksPerRun 的计数器，总量保险丝 R2）。
+   * 与 `reportCount` 同一条恢复法：resume 时按 journal 里 `kind:"ask"` 的行数恢复（共用
+   * 同一次 listNodes 读取）——上限是 run 级的事实，跨 resume 必须连续计数，否则一个反复
+   * resume 的 run 可以无限派发。记账由调度器在**行创建的同一同步步骤里**回调
+   * （countAskAdmitted），所以本计数与 journal ask 行数恒等，恢复法与在生命周期内的
+   * 维护法给出同一个数。被闸拒绝的 ask 不写行、不记账（拒绝可由计数在 resume 时确定性
+   * 复现，无需 journal 化）。amend 的后继 run 按自己物化的行起账（含导入命中的行——
+   * 每行恰好计一次，不从「前驱计数 + 本 run 行」双重累加），论证见
+   * specs/workflow-budget-fuses.md R5。
+   */
+  private askTotalCount = 0;
+  /**
    * 本 run 每个**用户面产物** id 的状态。与 `reportCount`
    * 同一条恢复法：resume 时从 journal 的 `kind: "artifact"` 行重建，此后在内存里维护——
    * 上限（32 个 id / 每 id 16 版）与版本号都是 run 级的事实，跨 resume 必须连续，否则一个
@@ -228,7 +250,10 @@ export class WorkflowEngine implements WorkflowHostApi, WorkflowReportSink {
     this.driver = config.driver;
     this.journal = config.driver.journal;
     // 自己留一份：调用方（harness / run service）手里的那个对象不该因为一次 retune 而被改写。
-    this.caps = { maxConcurrency: config.caps.maxConcurrency };
+    // 装配规则在 engine-caps.ts 的 creationCaps：预算可选成员随份保留（R6，setMaxConcurrency
+    // 整份换 caps 时构造丢字段会让显式上界在一次 retune 后静默失效），显式 tokenBudget 折进
+    // caps.maxTokensPerRun（生效值 = 与常量取更严），随 run-started 事件落 journal（R4）。
+    this.caps = creationCaps(config.caps, config.tokenBudget);
     this.askSpecs = config.askSpecs;
     this.validate = config.validate;
     this.importedCache = config.importedCache;
@@ -272,6 +297,15 @@ export class WorkflowEngine implements WorkflowHostApi, WorkflowReportSink {
       },
       abortInFlight: (error, emitCancelled) => this.scheduler.abortInFlight(error, emitCancelled),
       resolveSettled: (settlement) => this.settledDeferred.resolve(settlement),
+      // caps 与用量的读写面（engine-caps.ts 的自由函数经它们进私有字段）：caps 现读、
+      // 整份替换；用量只增。写法与 abortInFlight 同一先例——箭头闭包延迟求值，
+      // this.scheduler 在 state 装配之后才赋值也安全。
+      caps: () => this.caps,
+      applyCaps: (caps) => void (this.caps = caps),
+      pumpAll: () => this.scheduler.pumpAll(),
+      noteStats: (instance, stats) => this.scheduler.noteStats(instance, stats),
+      spentTokens: () => this.spentTokens,
+      addSpentTokens: (delta) => void (this.spentTokens += delta),
     };
 
     // caps 对调度器是**现读**：setMaxConcurrency 整份换掉 this.caps，而派发判据必须看见新值
@@ -296,6 +330,10 @@ export class WorkflowEngine implements WorkflowHostApi, WorkflowReportSink {
       wasLiveBeforeResume: (instance) => this.liveAskInstances.has(refToString(instance)),
       wasQueuedBeforeImportClose: (instance) =>
         this.queuedBeforeImportClose.has(refToString(instance)),
+      // R2 总量保险丝的计数面：计数器归引擎所有（journal 行数的派生投影），判定在调度器
+      // （runBudgetGatedAdmission）；记账点与行创建同一同步步骤，见 SchedulerHost 注释。
+      askTotalCount: () => this.askTotalCount,
+      countAskAdmitted: () => void this.askTotalCount++,
     };
     this.scheduler = new AskScheduler(host);
 
@@ -353,6 +391,8 @@ export class WorkflowEngine implements WorkflowHostApi, WorkflowReportSink {
       this.replaySettleOrder = recoverSettleOrder(this.journal, this.runId, nodes);
       // 报告计数按 journal 里 kind:"report" 的行数恢复；用量从记录恢复（跨生命周期连续）。
       this.reportCount = nodes.filter((n) => n.kind === "report").length;
+      // ask 总量计数同法、同一趟节点行恢复（R2 保险丝跨 resume 连续，见字段注释）。
+      this.askTotalCount = nodes.filter((n) => n.kind === "ask").length;
       // 产物状态与 reportCount 同席恢复：id 归属（种类、预置 spec）与已成功版本数全部由
       // journal 行派生，所以崩溃恢复后第 3 版仍然是第 3 版，而不是从 1 重新数起。
       for (const node of nodes) {
@@ -360,6 +400,9 @@ export class WorkflowEngine implements WorkflowHostApi, WorkflowReportSink {
         rememberArtifactRow(this.state, node.artifactId, node.result);
       }
       this.spentTokens = existing.spentTokens;
+      // token 阈值从第一世的 run-started 事件读回（R4/R5：阈值事实的所有者是 journal，
+      // 绝不接受调用方给的新阈值——与 args 同一条纪律）；本世 run-started 以同值再上事件轨。
+      this.caps = resumedCaps(this.caps, this.journal, this.runId);
       // 修订 run 的崩溃恢复：导入表被整表重建，而「门是否已关」不落库——从事件精确恢复。
       if (this.importedCache !== undefined) {
         const recovered = recoverImportClosure(this.journal, this.runId);
@@ -559,35 +602,12 @@ export class WorkflowEngine implements WorkflowHostApi, WorkflowReportSink {
   }
 
   /**
-   * 就地改本 run **自己**的并发上界。
-   * 一次只带 `max_concurrency` 的修订作用在活着的 run 上：同一个 runId、不铸后继、不 supersede、
-   * 在飞 ask 一个不丢——这正是它与 AmendWorkflow 的全部差别，也是它存在的唯一理由。
-   *
-   * 返回**这次是否真的改了**。两条 no-op 都返回 false 且不写库、不发事件：run 已结算（宿主的
-   * 存活判定与本调用之间的竞态——调用方据此回落到一次真正的 amend），以及新值与当前值相同。
-   *
-   * 改成时三件事在同一个同步步骤里发生，于是三者永远一致：整份换掉 caps（调度器现读）、写
-   * `dwf_run.caps_max_concurrency`（resume 沿用行里的 caps，不落库就恢复成旧上界）、记一条
-   * `run-caps-changed`。**抬高**还多一次 `pumpAll()`——上界是派发前现读的，但没有别的事件会
-   * 触发重扫，排队的 ask 否则要等到下一次结算。调低不召回在飞 ask：它们照常跑完，上界只管
-   * 「还能不能再放一个」。
-   *
-   * 钳到 `[1, 天花板]` 归调用方——天花板是宿主事实（机器核数），引擎既看不见也不该看见。
-   * 这里只做落库归一，与构造函数里的 `inheritedTokens` 同一条纪律：这个数要落
-   * `caps_max_concurrency`（integer not null），一个 NaN 会同时毒化列值与派发判据。
+   * 就地改本 run **自己**的并发上界：方法体在 engine-caps.ts 的 setRunMaxConcurrency
+   * （完整语义随方法体迁移：与 AmendWorkflow 的差别、两条 no-op、「换 caps + 写库 + 记
+   * run-caps-changed」三件事同一同步步骤、抬高多一次 pumpAll、落库归一，全在那里）。
    */
   setMaxConcurrency(maxConcurrency: number): boolean {
-    if (this.runSettled) return false;
-    if (!Number.isFinite(maxConcurrency)) return false;
-    const previous = this.caps;
-    const next = Math.max(1, Math.floor(maxConcurrency));
-    if (next === previous.maxConcurrency) return false;
-    const caps: Caps = { maxConcurrency: next };
-    this.caps = caps;
-    this.journal.updateRunCaps(this.runId, caps);
-    this.record({ type: "run-caps-changed", runId: this.runId, caps, previous });
-    if (next > previous.maxConcurrency) this.scheduler.pumpAll();
-    return true;
+    return setRunMaxConcurrency(this.state, maxConcurrency);
   }
 
   // ——————————————————————————— Boundary B（向上回报）———————————————————————————
@@ -610,19 +630,12 @@ export class WorkflowEngine implements WorkflowHostApi, WorkflowReportSink {
     this.record({ type: "node-progress", instance, ...progress });
   }
 
+  /**
+   * ask 用量回报：方法体在 engine-caps.ts 的 recordAskUsage——节点侧回填、累计与持久化、
+   * usage-updated 事件、R4 token 越顶判定（事后）全在那里，顺序是载荷性的（见该方法注释）。
+   */
   askStats(instance: InstanceRef, stats: AskStats): void {
-    this.scheduler.noteStats(instance, stats);
-    this.spentTokens += stats.tokens;
-    // 用量不能只在 createRun(0) 落库一次：累计不回写会让 resume 恢复出零用量。
-    // 累加后立刻持久化，且早于事件——事件载荷与列值在同一同步步骤产生，二者永远相等。
-    this.journal.updateRunUsage(this.runId, this.spentTokens);
-    // 结算后到达的 straggler stats（真实 actor 的用量在 turn 解析后才知道，最后一个
-    // ask 的 stats 常晚于 complete/cancel 到达）不能照发事件——事件被追加在 run-settled 之后，
-    // 下游投影不预期（run-settled 必须是事件流最后一条）。结算后只记账（用量行 + noteStats
-    // 的节点回填都是 journal 行更新，不是事件），不再发事件。账仍要入：可 resume 的 run 用量
-    // 跨生命周期连续。
-    if (this.runSettled) return;
-    this.record({ type: "usage-updated", spentTokens: this.spentTokens });
+    recordAskUsage(this.state, instance, stats);
   }
 
   askFailed(instance: InstanceRef, error: WorkflowError): void {

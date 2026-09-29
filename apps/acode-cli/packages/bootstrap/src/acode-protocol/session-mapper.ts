@@ -1060,11 +1060,20 @@ function mapSessionGoal(goal: SessionGoal | null | undefined): ACodeSessionGoal 
   };
 }
 
-function mapTodoItem(todo: TodoItem): TodoItem {
+/**
+ * 协议投影（D4，specs/todo-dependency-fields.md R5）：必须携带 id/blockedBy/metadata——
+ * 显式重建三字段曾是「写进去了、投影读回来只剩三字段」的 narrowing 点。根协议 schema
+ * acodeSessionTodoItemSchema（packages/shared/src/acode-protocol/index.ts）已同批最小加宽
+ * 为三个可选成员、保持 strict，桌面接收方校验不破。导出供 D4 往返测试直接断言。
+ */
+export function mapTodoItem(todo: TodoItem): TodoItem {
   return {
     content: todo.content,
     priority: todo.priority,
     status: todo.status,
+    ...(todo.id !== undefined ? { id: todo.id } : {}),
+    ...(todo.blockedBy !== undefined ? { blockedBy: todo.blockedBy } : {}),
+    ...(todo.metadata !== undefined ? { metadata: todo.metadata } : {}),
   };
 }
 
@@ -1420,7 +1429,35 @@ function readTodoItem(value: unknown): TodoItem | null {
   if (!content || !isTodoStatus(status) || !isTodoPriority(priority)) {
     return null;
   }
-  return { content, priority, status };
+  // D4（R5「CLI 侧任何重建 TodoItem 的位置」）：从历史工具输入重建时同样携带新字段。
+  // 宽容读取：成员形状不符只丢弃该成员，不让整项投影失败（readTodosFromToolInput 的
+  // 全有或全无判定在上层，这里返回 null 会抹掉整组投影，不能因可选成员触发）。
+  const id = stringValue(record.id)?.trim();
+  const blockedBy = readTodoBlockedBy(record.blockedBy);
+  const metadata = isPlainRecord(record.metadata) ? record.metadata : undefined;
+  return {
+    content,
+    priority,
+    status,
+    ...(id ? { id } : {}),
+    ...(blockedBy ? { blockedBy } : {}),
+    ...(metadata ? { metadata } : {}),
+  };
+}
+
+function readTodoBlockedBy(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const refs: string[] = [];
+  for (const entry of value) {
+    const ref = stringValue(entry)?.trim();
+    if (!ref) return undefined;
+    refs.push(ref);
+  }
+  return refs;
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isTodoWriteToolName(toolName: string): boolean {

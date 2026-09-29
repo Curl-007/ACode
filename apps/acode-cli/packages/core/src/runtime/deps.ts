@@ -144,6 +144,7 @@ export type {
   ModelProperties,
   ModelRequest,
   ModelRequestAdmission,
+  ModelRequestAdmissionBucketSnapshot,
   ModelSelection,
   ModelStatusSink,
   ModelStreamRecoveryStatus,
@@ -262,7 +263,7 @@ export {
   createSessionMailboxHookRegistrations,
 } from "../hooks/index.js";
 export type { HookRunner, HookRunResult } from "../hooks/index.js";
-export type { ToolDependency, ToolSchedule } from "../tool/scheduler.js";
+export type { ToolDependency, ToolSchedule, ToolSchedulerSnapshot } from "../tool/scheduler.js";
 export { defaultToolScheduler as defaultScheduler, ToolScheduler } from "../tool/scheduler.js";
 export { PermissionService, defaultPermissionConfig } from "../permission/service.js";
 export { createDenyPermissionBroker } from "../permission/broker.js";

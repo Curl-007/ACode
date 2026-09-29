@@ -74,7 +74,6 @@ export interface ExploreSubagentRuntimeRequest {
   disallowedTools?: readonly string[];
   sessionId: SessionId;
   description: string;
-  maxTurns?: number;
   /** child session 已持久化且可被 projection/query 读取后、首次模型执行前调用。 */
   onSessionReady?: () => Promise<void>;
   permissionMode?: AgentProfile["permissionMode"];
@@ -1143,7 +1142,6 @@ async function runAgentToCompletion(
       disallowedTools: lifecycle.profile.disallowedTools,
       sessionId: lifecycle.childSessionId,
       description: request.description,
-      maxTurns: lifecycle.profile.maxTurns,
       onSessionReady: notifySessionReady,
       permissionMode: lifecycle.profile.permissionMode,
       prompt: request.prompt,
@@ -1498,6 +1496,11 @@ async function finalizeBackgroundCompletion(
   registry: RuntimeTaskRegistry,
   completed: { output: AgentCompletedOutput },
 ): Promise<void> {
+  // 终态 first-wins 的**快速路径**：条目已终态就不必再写产物、发通知。
+  // 这里与下面的 registry.update 之间隔着真实文件 I/O（writeCompletedAgentArtifacts），
+  // 所以本判断挡不住并发方向（停止路径可能在这个 await 里先写下 killed）；
+  // 原子性由原语层兜底——InMemoryRuntimeTaskRegistry.update 拒绝「终态 → 另一个终态」的覆盖
+  // （约定见 core/src/runtime-task/registry.ts 与 specs/subagent-terminal-first-wins.md）。
   const current = registry.get(lifecycle.agentId);
   if (current && isTerminalRuntimeTask(current)) return;
 
@@ -1577,6 +1580,8 @@ async function finalizeBackgroundFailure(
   registry: RuntimeTaskRegistry,
   error: unknown,
 ): Promise<void> {
+  // 终态 first-wins 的快速路径；并发方向由 registry.update 的原语层守卫兜底
+  // （见 finalizeBackgroundCompletion 同款注释与 specs/subagent-terminal-first-wins.md）。
   const current = registry.get(lifecycle.agentId);
   if (current && isTerminalRuntimeTask(current)) return;
 
@@ -1664,6 +1669,12 @@ function createBackgroundStoppedTask(
   registry: RuntimeTaskRegistry,
   task: RuntimeTaskSnapshot,
 ): StoppedBackgroundAgentTask | undefined {
+  // 终态 first-wins 的快速路径：已终态（或条目缺失）就不再铸造停止快照。
+  // 从这里的判读到 finalizeBackgroundStopped 的 registry.update 之间隔着
+  // writeStoppedAgentArtifacts 的真实文件 I/O，并发方向由原语层守卫兜底：
+  // update 拒绝「终态 → 另一个终态」并返回赢家快照，child 抢先完成时 killed 写不进去；
+  // 输家分支由 finalizeBackgroundStopped 的 stopCommitted 判定收口（带赢家快照返回，
+  // 不发停止通知、不回滚），killed-over-killed 的双重 stop 交错在 patcher 内自查。
   const current = registry.get(task.taskId);
   if (!current || isTerminalRuntimeTask(current)) return undefined;
 
@@ -1699,10 +1710,26 @@ async function finalizeBackgroundStopped(
     totalDurationMs: stopped.totalDurationMs,
   });
   await writeStoppedAgentArtifacts(stopped.task);
-  registry.update(stopped.task.taskId, (current) => ({
-    ...stopped.task,
-    notified: current.notified,
-  }));
+  // first-wins 并发方向的输家分支（specs/subagent-terminal-first-wins.md R5）：铸造停止快照时的
+  // 终态判读到这次写入之间隔着 writeStoppedAgentArtifacts 的真实文件 I/O，另一条 finalize
+  // （completion/failure，或并发的第二个 stopTask）可能在窗口内先提交终态。此时 patcher 原样
+  // 返回赢家快照，stopCommitted 保持 false。注意 killed-over-killed（双重 stop 交错）时两侧
+  // status 相等、update 的终态覆盖守卫不拒，所以必须在 patcher 内自查而不能只看返回值。
+  // 输了就必须到此为止：
+  // - 继续 enqueue 会给实际已完成的任务发「已停止」通知，或抢占 notified 认领吞掉赢家自己的通知；
+  // - 走下方 register(stopped.previousTask) 回滚会绕过 update 守卫，用陈旧 running 快照覆盖
+  //   赢家已对外承诺的终态，使 waitForTerminal（已按赢家终态结算）与 get()（读回 running）分叉。
+  // 直接把赢家快照交还 stopTask 调用方；undefined 表示条目已被移除，同样不入队、不复活条目。
+  let stopCommitted = false;
+  const updatedTask = registry.update(stopped.task.taskId, (current) => {
+    if (isTerminalRuntimeTask(current)) return current;
+    stopCommitted = true;
+    return {
+      ...stopped.task,
+      notified: current.notified,
+    };
+  });
+  if (!stopCommitted) return updatedTask;
   const enqueued = enqueueBackgroundNotification(
     options,
     registry,

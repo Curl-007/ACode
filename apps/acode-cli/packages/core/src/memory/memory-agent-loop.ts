@@ -22,6 +22,16 @@ import { resolveContainedMemoryFilePath, resolveSafeMemoryFilePath } from "./mem
 import { auxiliaryModelOptions } from "../model/auxiliary-model-options.js";
 
 interface MemoryAgentLoopResult {
+  /**
+   * 到顶截断标记：true = 循环因 maxTurns 用尽而退出（模型最后一轮仍在索取工具），
+   * false = 模型自然收尾（某轮不再索取工具）。
+   *
+   * 为什么必须显式带出：`turns` 单独**无法**区分两者——自然收尾在 break 前 `turns += 1`，
+   * 到顶由循环头 `turns += 1`，两者都可以等于 maxTurns（maxTurns=5 时，第 5 轮自然收尾与
+   * 第 5 轮到顶都返回 turns=5）。调用方据此分流，见
+   * specs/command-terminal-state-audit.md §A。
+   */
+  capped: boolean;
   messages: ModelInputMessage[];
   turns: number;
 }
@@ -54,6 +64,9 @@ export async function runMemoryAgentLoop(input: {
 }): Promise<MemoryAgentLoopResult> {
   const messages = input.messages.map(cloneModelMessage);
   let turns = 0;
+  // finishedNaturally 只在「模型某轮不再索取工具」时置真。循环因 maxTurns 用尽而退出时
+  // 它保持 false，于是返回值的 capped（= !finishedNaturally）就是「被切断」而非「自然收尾」。
+  let finishedNaturally = false;
 
   for (; turns < input.maxTurns; turns += 1) {
     input.abortSignal?.throwIfAborted();
@@ -77,6 +90,7 @@ export async function runMemoryAgentLoop(input: {
     messages.push(createAssistantMessage(response.text, response.reasoning, toolCalls));
     if (toolCalls.length === 0) {
       turns += 1;
+      finishedNaturally = true;
       break;
     }
 
@@ -115,7 +129,7 @@ export async function runMemoryAgentLoop(input: {
     messages.push(...toolMessages);
   }
 
-  return { messages, turns };
+  return { capped: !finishedNaturally, messages, turns };
 }
 
 function evaluateMemoryAgentToolPolicy(

@@ -266,7 +266,6 @@ export function createDefaultSubagentPort(
             ...(agentsMdInstructions ? { userInstructions: agentsMdInstructions } : {}),
           },
           agentName: `acode-${request.agentType}`,
-          maxTurns: request.maxTurns ?? this.config.subagents?.maxTurns ?? 4,
           parentSessionId: this.sessionId,
           taskType: "subagent_child",
           // 动态工作流灰度门必须结构性继承：

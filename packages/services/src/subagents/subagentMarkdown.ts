@@ -66,7 +66,6 @@ export function parseSubagentMarkdown(
   const modelSelection = parseSubagentMarkdownSelection(frontmatter);
   const color = normalizeEnum(frontmatter.color, VALID_COLORS);
   const permissionMode = normalizeEnum(frontmatter.permissionMode, VALID_PERMISSION_MODES);
-  const maxTurns = normalizePositiveInteger(frontmatter.maxTurns);
   const tools = parseToolSpecList(frontmatter.tools);
   const disallowedTools = parseToolSpecList(frontmatter.disallowedTools);
   const skills = parseStringList(frontmatter.skills);
@@ -86,7 +85,6 @@ export function parseSubagentMarkdown(
       ...(disallowedTools ? { disallowedTools } : {}),
       ...(skills ? { skills } : {}),
       ...(permissionMode ? { permissionMode } : {}),
-      ...(maxTurns ? { maxTurns } : {}),
       ...(background !== undefined ? { background } : {}),
       ...(injectAgentsMd !== undefined ? { injectAgentsMd } : {}),
       ...(mcpServers ? { mcpServers } : {}),
@@ -116,9 +114,6 @@ export function serializeSubagentMarkdown(config: SubAgentConfig): string {
   appendList(frontmatterLines, "disallowedTools", config.disallowedTools);
   appendList(frontmatterLines, "skills", config.skills);
   appendScalar(frontmatterLines, "permissionMode", config.permissionMode);
-  if (config.maxTurns !== undefined) {
-    frontmatterLines.push(`maxTurns: ${config.maxTurns}`);
-  }
   if (config.background !== undefined) {
     frontmatterLines.push(`background: ${config.background ? "true" : "false"}`);
   }
@@ -301,15 +296,6 @@ function parseOptionalBoolean(value: unknown): boolean | undefined {
   if (typeof value === "string") {
     if (value.toLowerCase() === "true") return true;
     if (value.toLowerCase() === "false") return false;
-  }
-  return undefined;
-}
-
-function normalizePositiveInteger(value: unknown): number | undefined {
-  if (typeof value === "number" && Number.isInteger(value) && value > 0) return value;
-  if (typeof value === "string" && /^\d+$/u.test(value)) {
-    const parsed = Number(value);
-    return parsed > 0 ? parsed : undefined;
   }
   return undefined;
 }

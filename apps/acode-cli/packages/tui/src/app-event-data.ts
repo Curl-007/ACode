@@ -1,4 +1,5 @@
-import { createModelUsageSummary, type ModelUsageSummary } from "@acode/contracts";
+import { CoreErrorType, createModelUsageSummary, type ModelUsageSummary } from "@acode/contracts";
+import type { TuiCopy } from "@acode/i18n";
 import type { CacheStats, ContextUsage } from "./app-model.js";
 import { asRecord, booleanField, numberField, stringField } from "./state.js";
 
@@ -73,14 +74,25 @@ export function cacheStatsFromPayload(payload: Record<string, unknown>): CacheSt
   return Object.values(next).some((value) => value !== undefined) ? next : undefined;
 }
 
-export function formatEventError(payload: Record<string, unknown>): string {
+export function formatEventError(
+  payload: Record<string, unknown>,
+  errors: TuiCopy["errors"],
+): string {
   const error = asRecord(payload.error);
-  return (
+  const detail =
     stringField(error, "message") ??
     stringField(payload, "message") ??
-    stringField(payload, "reason") ??
-    "Unknown error"
-  );
+    stringField(payload, "reason");
+  // 兜底行也走 catalog：它是纯 UI 文本（没有对应的模型面原文），以前是硬编码英文。
+  if (detail === undefined) return errors.unknown;
+  // 语言策略（specs/prompt-language-policy.md R3）：工具错误的 message 是**双面文本**
+  // （同一段英文既进 tool result 给模型，又被这里展示），所以 UI 侧只能按结构化字段
+  // 查 catalog，不翻译 message 本身；detail 原样带英文原文。
+  // 表外一律回落展示原始英文——错误种类是开放集合，catalog 是封闭集合，回落是必须的。
+  if (stringField(error, "type") === CoreErrorType.ToolCancelled) {
+    return errors.toolCancelled(detail);
+  }
+  return detail;
 }
 
 export function modelNetworkRequestTargetFromPayload(

@@ -28,6 +28,12 @@
 
 **当前状态**：P0+P1 已全部合入 `dev/0.0.1`（squash 提交 `e5f0fe1`，原 PR #1 已关）。P2 骨架（托管策略地板 + 旁路免疫熔断器）已在 `feature/security-policy-floor` 分支完成实现与测试（26 个新测试用例），门禁全绿，待合入。P2 其余项与 P3 未开始（见 §6）。
 
+> **跨 track 动态（2026-09-29）**：非安全 track 的「CLI 调度与系统提示词升级」已于同日
+> squash 合入 `dev/0.0.1`（11 篇新 spec + Phase 0-3 实施，新增/更新 `apps/acode-cli/tests/`
+> 下约 20 个 `*.test.mjs`，跑法同 §2 的 `node --import tsx --test`）。其权威状态与验证记录
+> 见 [`docs/cli-dispatch-and-system-prompt-upgrade-plan.md`](cli-dispatch-and-system-prompt-upgrade-plan.md)，
+> 不在本文范围；本文三个既有红的清单不变。
+
 ---
 
 ## 1. 分支与提交

@@ -15,6 +15,13 @@ import type { ProviderStopDetails } from "./run-terminal.js";
  *   promise，所以"缩窄 pattern 或加个 glob"是一条脚本真能走的路。也刻意**不**折进
  *   DriverError——上限是脚本可以据以重写自己的契约，而靠匹配 message 文本区分两者，
  *   正是这个联合类型存在的目的所要防的。
+ *   AgentBudgetExceeded——run 级预算保险丝（`facade/budget-caps.ts`，specs/workflow-budget-fuses.md）：
+ *   一个 run 准入的 ask 总数到达 `maxAsksPerRun`（`details.limit:"total"`），或未结算 ask 积压
+ *   到达 `maxPendingAsks`（`details.limit:"pending"`）。节点级而非 run 级，同一条拒绝通道论证、
+ *   与 ReportCapExceeded 结论相反：`ask` 返回 PromiseLike，脚本可以 `catch` 后 `report()` 已
+ *   完成的部分收尾（report 存在的意义正是让前 N-1 个任务的成果活下来）。两个限额共用一个码，
+ *   因为作者的恢复动作相同（收窄扇出、少派发）；是哪道闸由结构化的 `details.limit` 区分，
+ *   不从 message 文本里抠。同样刻意不折进 DriverError：预算是脚本可据以重写自己的契约。
  * - run 级：InputHashMismatch / UnknownActor / MissingAskSpec /
  *   DuplicateActorName——同一个 run 内两次 createActor 得到相同的**非空**有效名
  *   （有效名 = normalizePersona 后的 `spec.name`，persona.name 压过 name 实参）。规则对
@@ -27,6 +34,12 @@ import type { ProviderStopDetails } from "./run-terminal.js";
  *   分界同理、结论相反：`report` 返回 `void`，脚本**没有**可以 catch 的通道，除了 run 无处可放。
  *   也正因如此这两个数字必须宽到讲道理的脚本永远碰不到——脚本作者写不出恢复路径。
  *   同样刻意不折进 DriverError：上限是脚本可据以重写自己的契约。
+ *   TokenBudgetExceeded——run 的累计 token 越过预算阈值（`facade/budget-caps.ts` 的
+ *   maxTokensPerRun，或创建时显式给出的更严阈值；见 specs/workflow-budget-fuses.md R4）。
+ *   与 ReportCapExceeded 同一条拒绝通道论证、同一个结论：token 累计发生在 ask 结算
+ *   **之后**、由引擎记账（askStats），不在任何单次调用的返回通道上，脚本**没有**可以
+ *   catch 的地方。判定是事后的（不做请求前预估——预估会把 provider 的计数变成引擎的
+ *   猜测）：可能超顶一个在飞 ask 的量，刻意取舍。
  * - 构造期（run 尚未开始，引擎构造函数同步抛出）：ScriptHashMismatch
  * - 宿主级（**引擎从不产出**）：Interrupted——拥有该 run 的进程在结算之前就没了，由宿主在
  *   下一次构造时收敛那行永远停在 running 的记录（`bootstrap/src/app/dynamic-workflow-run-service.ts`
@@ -43,9 +56,11 @@ export type WorkflowErrorCode =
   | "ResultNotSubmitted"
   | "DriverError"
   | "WorldReadCapExceeded"
+  | "AgentBudgetExceeded"
   | "Cancelled"
   | "ContextLimit"
   | "ReportCapExceeded"
+  | "TokenBudgetExceeded"
   | "InputHashMismatch"
   | "UnknownActor"
   | "MissingAskSpec"
@@ -85,6 +100,17 @@ export interface WorkflowErrorMismatch {
   got: string;
 }
 
+/**
+ * `AgentBudgetExceeded` 的结构化明细：是哪道闸（`total` = run 的 ask 总量，`pending` =
+ * 未结算积压）、上界是多少、判定时刻的计数是多少。流程判断看 `limit`（结构化字段，
+ * 不匹配 message 文本），展示与日志三个数一起用。
+ */
+export interface AgentBudgetDetails {
+  limit: "total" | "pending";
+  cap: number;
+  actual: number;
+}
+
 /** 错误的可序列化形态，落 journal（dwf_node.error_json / dwf_run.failure_json）。 */
 export interface WorkflowErrorJson {
   code: WorkflowErrorCode;
@@ -94,6 +120,8 @@ export interface WorkflowErrorJson {
   mismatch?: WorkflowErrorMismatch;
   /** 只在 `code === "ProviderStop"` 时在场。 */
   providerStop?: ProviderStopDetails;
+  /** 只在 `code === "AgentBudgetExceeded"` 时在场。 */
+  details?: AgentBudgetDetails;
 }
 
 /**
@@ -106,6 +134,7 @@ export class WorkflowError extends Error {
   readonly finalText?: string;
   readonly mismatch?: WorkflowErrorMismatch;
   readonly providerStop?: ProviderStopDetails;
+  readonly details?: AgentBudgetDetails;
 
   constructor(
     code: WorkflowErrorCode,
@@ -115,6 +144,7 @@ export class WorkflowError extends Error {
       finalText?: string;
       mismatch?: WorkflowErrorMismatch;
       providerStop?: ProviderStopDetails;
+      details?: AgentBudgetDetails;
       cause?: unknown;
     },
   ) {
@@ -125,6 +155,7 @@ export class WorkflowError extends Error {
     if (extra?.finalText !== undefined) this.finalText = extra.finalText;
     if (extra?.mismatch !== undefined) this.mismatch = extra.mismatch;
     if (extra?.providerStop !== undefined) this.providerStop = extra.providerStop;
+    if (extra?.details !== undefined) this.details = extra.details;
     if (extra?.cause !== undefined) (this as { cause?: unknown }).cause = extra.cause;
   }
 
@@ -135,6 +166,7 @@ export class WorkflowError extends Error {
     if (this.finalText !== undefined) json.finalText = this.finalText;
     if (this.mismatch !== undefined) json.mismatch = this.mismatch;
     if (this.providerStop !== undefined) json.providerStop = this.providerStop;
+    if (this.details !== undefined) json.details = this.details;
     return json;
   }
 
@@ -145,6 +177,51 @@ export class WorkflowError extends Error {
       finalText: json.finalText,
       mismatch: json.mismatch,
       providerStop: json.providerStop,
+      details: json.details,
     });
   }
+}
+
+/**
+ * {@link WorkflowErrorCode} 的运行时码表。`Record<…, true>` 让穷尽性由编译器强制——联合里
+ * 新增一个码而忘了在这里登记，typecheck 直接失败，guard 因此永不落后于词汇表。
+ */
+const WORKFLOW_ERROR_CODE_TABLE: Record<WorkflowErrorCode, true> = {
+  ValidationFailed: true,
+  ResultNotSubmitted: true,
+  DriverError: true,
+  WorldReadCapExceeded: true,
+  AgentBudgetExceeded: true,
+  Cancelled: true,
+  ContextLimit: true,
+  ReportCapExceeded: true,
+  TokenBudgetExceeded: true,
+  InputHashMismatch: true,
+  UnknownActor: true,
+  MissingAskSpec: true,
+  DuplicateActorName: true,
+  ScriptHashMismatch: true,
+  Interrupted: true,
+  ProviderStop: true,
+  ArtifactSourceMissing: true,
+  ArtifactPathOutsideWorkspace: true,
+  ArtifactTooLarge: true,
+  ArtifactStoreUnavailable: true,
+  ArtifactVersionCapExceeded: true,
+  ArtifactKindMismatch: true,
+  ArtifactCapExceeded: true,
+  ArtifactSpecInvalid: true,
+  ArtifactRedeclared: true,
+  ArtifactUndeclared: true,
+  ArtifactPrimaryConflict: true,
+};
+
+/**
+ * 运行时 guard：一个未知值是否属于 {@link WorkflowErrorCode} 词汇表。harness 据它决定
+ * 沙箱回传的未捕获错误能否按原 code 重建——线形态（WireError）带 code，而沙箱不是安全
+ * 边界（脚本可以自造任意 `e.code`），没有这道 guard，一个编造的码会污染 failure_json 的
+ * 稳定词汇表。查表用 hasOwn：`in` 会把 `toString` 这类原型链键也放进来。
+ */
+export function isWorkflowErrorCode(code: unknown): code is WorkflowErrorCode {
+  return typeof code === "string" && Object.hasOwn(WORKFLOW_ERROR_CODE_TABLE, code);
 }

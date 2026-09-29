@@ -129,6 +129,29 @@ export class InMemoryRuntimeTaskRegistry implements RuntimeTaskRegistry {
     this.activeBranchGeneration = generation;
   }
 
+  /**
+   * 终态 **first-wins**：条目一旦进入 TERMINAL_STATUSES，它的 status 就不得被**另一个终态**
+   * 覆盖——第一个写下终态的路径就是赢家。
+   *
+   * 为什么是 first-wins：终态是已经对外承诺过的事实。`waitForTerminal` 的等待方
+   * （resolveWaiters 首次结算即删除整组 waiter，本身就是 first-wins）、
+   * `BackgroundTaskCompleted` 事件、模型通知都可能已经基于第一个终态发出；后写者覆盖会让
+   * 「已收到 completed 的等待方」与「随后 get() 到 killed 的轮询方」互相矛盾，且通知收不回来。
+   * 守卫落在原语层是因为 subagent 的三条 finalize 路径（runner.ts 的
+   * finalizeBackgroundCompletion / finalizeBackgroundFailure / finalizeBackgroundStopped）
+   * 都是「读快照判终态 → await 真实文件 I/O → 写快照」，守卫与写入之间的窗口客观存在，
+   * 靠调用方各自判终态兜不住并发方向。表达强度对齐
+   * dynamic-workflow/src/engine/engine-settlement.ts:7 的 first-wins 约定。
+   *
+   * 只拦「终态 → 另一个终态」，以下必须放行（都是既有语义）：
+   * - 不改 status 的字段写入：notified 认领/释放、messageSink、pendingMessages、usage 补齐；
+   * - 终态 → 非终态：background-task-registry.ts 的晚挂载合并（Bash/Agent 的 task id 一轮即弃，
+   *   但 tracker 晚挂载会撞上已认领的终态条目）；
+   * - 重臂（resume 新生命）与 finalizeBackgroundStopped 的回滚走 register()，不经这里。
+   *
+   * 返回 `current`（而不是 undefined）表示「写入被拒，这是赢家快照」：undefined 在本接口里的
+   * 既有含义是条目不存在，调用方据此走 task_missing 分支，不能把两件事混成一个信号。
+   */
   update(
     id: string,
     patcher: (task: RuntimeTaskSnapshot) => RuntimeTaskSnapshot,
@@ -136,6 +159,13 @@ export class InMemoryRuntimeTaskRegistry implements RuntimeTaskRegistry {
     const current = this.tasks.get(id);
     if (!current) return undefined;
     const next = patcher(current);
+    if (
+      next.status !== current.status &&
+      isTerminalRuntimeTask(current) &&
+      isTerminalRuntimeTask(next)
+    ) {
+      return current;
+    }
     this.tasks.set(id, next);
     this.resolveIfTerminal(id, next);
     this.resolveIfBackgrounded(id, next);

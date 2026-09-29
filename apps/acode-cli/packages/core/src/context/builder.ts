@@ -1,6 +1,24 @@
 // ============================================================
-// Context Builder - System prompt assembly
+// Context Builder - System prompt assembly（P2 注册表驱动）
 // ============================================================
+//
+// specs/system-prompt-section-registry.md：build() 曾是硬编码调用序列，现在段的
+// 启用条件与产出全部登记在 MAIN_SECTION_REGISTRY（context/registry-main.ts，声明序）。
+// 本文件只剩**主组装器**职责：通道过滤 → enabled → build → 排序 → 最多 3 个
+// system block（cli_prefix / stable body / dynamic）+ meta_user attachment。
+//
+// 不回退的硬约束（R4/R5）：
+// - 三选一身份互斥硬失败：workflowActor 与 customSystemPrompt 同在 → 抛错
+//   （resolveIdentityChannel，section-descriptors.ts，消息逐字保留）；
+// - assembleSystemMessages 产出 ≤3 个 system block，全部带 ephemeral cacheControl，
+//   dynamic block 自带 "\n\n" 左边界；
+// - stable 前缀稳定性：system-stable 组文本不依赖会话内可变量。
+//
+// build() 保持同步签名：既有调用方（runtime/methods/context.ts:278、
+// context-refresh.ts:37）同步消费 ContextBuildResult，迁移它们归 runtime 所有者；
+// buildAsync() 是 spec R3「统一 await 解析」的完整通道。当前注册表全部 descriptor
+// 同步产出，两条通道产物一致；同步通道遇到 async 段按 R3 的失败语义处理
+// （critical 抛、其余 warn+skip，见 registry.ts resolveSectionEntriesSync）。
 
 import type { ModelInputMessage } from "@acode/contracts";
 import type {
@@ -12,29 +30,21 @@ import type {
 } from "./types.js";
 import type { ToolRegistry } from "../tool/registry.js";
 import { estimateTokens } from "./utils.js";
-import { buildCliPrefixSection } from "./sections/cli-prefix.js";
-import { buildIdentitySection } from "./sections/identity.js";
-import { buildWorkflowActorIdentitySection } from "./sections/workflow-actor.js";
-import { buildEnvInfoSection, buildGitSystemContextSection } from "./sections/env-info.js";
-import { buildSkillsSection } from "./sections/skills.js";
-import { buildRequestUserContextSection } from "./sections/request-user-context.js";
-import { buildCurrentDateSection } from "./sections/current-date.js";
-import { buildMemorySection } from "./sections/memory.js";
-import { buildDesktopContextSection } from "./sections/desktop.js";
 import {
-  buildContextManagementSection,
-  buildDynamicBehaviorSection,
-  buildOutputStyleSection,
-  buildSessionGuidanceSection,
-} from "./dynamic-sections.js";
+  createMainSectionContext,
+  emitSectionManifestTrace,
+  MAIN_SECTION_REGISTRY,
+  resolveSectionEntries,
+  resolveSectionEntriesSync,
+  type ResolvedSection,
+  type SectionContext,
+} from "./registry.js";
 
 // -----------------------------------------------
 // Context Builder
 // -----------------------------------------------
 
 const EPHEMERAL_CACHE_CONTROL = { type: "ephemeral" as const };
-/** Skill 工具的注册名（与 tool/handlers/skill.ts 的 metadata.name 同字面；contracts 没有常量）。 */
-const SKILL_TOOL_NAME = "Skill";
 
 export class ContextBuilder {
   private config: ContextBuilderConfig;
@@ -60,7 +70,8 @@ export class ContextBuilder {
   }
 
   /**
-   * 添加自定义 section（用于后续扩展）
+   * 添加自定义 section（用于后续扩展）。不经注册表：在注册段之后追加，
+   * 再随 orderSectionsForInjection 归组（既有扩展位语义不变）。
    */
   addSection(
     section: Omit<ContextSection, "chars" | "tokens" | "injectionTarget" | "cacheHint"> &
@@ -77,133 +88,35 @@ export class ContextBuilder {
   }
 
   /**
-   * 构建 context，返回结构化结果
+   * 构建 context，返回结构化结果（同步通道，既有调用方兼容入口）。
    */
   build(): ContextBuildResult {
-    const sections: ContextSection[] = [];
-    const activeOutputStyle = this.config.outputStyle?.prompt.trim()
-      ? this.config.outputStyle
-      : undefined;
-    const customSystemPrompt = this.config.customSystemPrompt?.trim();
-    const hasCustomSystemPrompt = Boolean(customSystemPrompt);
-    // 工作流子代理身份：第三条路径。与
-    // customSystemPrompt 互斥——两者同在只可能是接线错误（persona 该经 workflowActor 进来，
-    // 不该再塞 systemPrompt），大声失败而不是默默二选一。
-    const workflowActor = this.config.workflowActor;
-    if (workflowActor !== undefined && hasCustomSystemPrompt) {
-      throw new Error(
-        "ContextBuilder: workflowActor and customSystemPrompt are mutually exclusive",
-      );
-    }
-    const isWorkflowActor = workflowActor !== undefined;
+    const ctx = createMainSectionContext(this.config);
+    const entries = resolveSectionEntriesSync(MAIN_SECTION_REGISTRY, ctx);
+    return this.assembleBuildResult(entries, ctx);
+  }
 
-    // 1. CLI / product prefix. Keep this as the short leading identity block.
-    // 「You are ACode, an interactive coding agent」对一个
-    // 只对脚本说话、可能连读文件工具都没有的子代理是错的身份，且走在正确身份段前面。
-    if (!isWorkflowActor) {
-      sections.push(buildCliPrefixSection());
-    }
+  /**
+   * 构建 context（async 通道）：descriptor.build 允许 async，管线统一 await 解析
+   * （spec R3）。段解析失败：非身份段 warn+skip，身份体三段（critical）向上抛。
+   */
+  async buildAsync(): Promise<ContextBuildResult> {
+    const ctx = createMainSectionContext(this.config);
+    const entries = await resolveSectionEntries(MAIN_SECTION_REGISTRY, ctx);
+    return this.assembleBuildResult(entries, ctx);
+  }
 
-    // 2. Stable agent behavior or custom prompt body
-    if (hasCustomSystemPrompt) {
-      sections.push(
-        createSection({
-          name: "Custom System Prompt",
-          source: "custom_system_prompt",
-          injectionTarget: "system",
-          cacheHint: "stable",
-          content: customSystemPrompt ? `\n${customSystemPrompt}` : "",
-        }),
-      );
-    } else if (workflowActor !== undefined) {
-      sections.push(buildWorkflowActorIdentitySection(workflowActor));
-    } else {
-      sections.push(buildIdentitySection(activeOutputStyle));
-    }
+  private assembleBuildResult(
+    entries: readonly ResolvedSection[],
+    ctx: SectionContext,
+  ): ContextBuildResult {
+    // ACODE_PROMPT_MANIFEST_TRACE：段 id 清单 + manifest hash 进 debug 级本地日志（不外发）。
+    emitSectionManifestTrace(entries, ctx);
 
-    // 3. Dynamic system context
-    // custom prompt 不是只替换
-    // stable body，而是跳过默认 system prompt 体系和 systemContext；否则用户提供
-    // custom prompt 后仍会混入 Session Guidance / output style 等动态 system 段。
-    // 工作流子代理跳过其中面向「与用户对话」的三段（desktop、Dynamic Behavior、session
-    // guidance——契约里已把 Report outcomes faithfully 搬过去），保留 memory 与其后各段。
-    if (!hasCustomSystemPrompt) {
-      if (!isWorkflowActor && this.config.presentationSurface === "acode_desktop") {
-        sections.push(buildDesktopContextSection());
-      }
-
-      // behaviour part right after stable sp...
-      if (!isWorkflowActor) {
-        sections.push(buildDynamicBehaviorSection());
-      }
-
-      // Session-specific guidance
-      const sessionGuidanceSection = isWorkflowActor
-        ? null
-        : buildSessionGuidanceSection(
-            this.config.guidanceToolNames ?? [],
-            (this.config.skills?.skills.length ?? 0) > 0,
-          );
-      if (sessionGuidanceSection) {
-        sections.push(sessionGuidanceSection);
-      }
-
-      // Memory
-      if (this.config.memoryRoot) {
-        const memorySection = buildMemorySection(this.config.memoryRoot);
-        if (memorySection) {
-          sections.push(memorySection);
-        }
-      }
-      sections.push(buildEnvInfoSection(this.config.envInfo, this.config.model));
-
-      // Output Style
-      const outputStyleSection = buildOutputStyleSection(activeOutputStyle);
-      if (outputStyleSection) {
-        sections.push(outputStyleSection);
-      }
-
-      // Context Management
-      sections.push(buildContextManagementSection());
-
-      const gitSystemContextSection = buildGitSystemContextSection(this.config.envInfo);
-      if (gitSystemContextSection) {
-        sections.push(gitSystemContextSection);
-      }
-    }
-
-    // 4. Skills appear as a meta user system-reminder, matching provider block layout.
-    // guidanceToolNames 是 runtime 当下的
-    // 工具表；一个 Skill 工具未注册的工作流子代理被告知「以下技能可经 Skill 工具使用」，
-    // 只会让它相信自己有一个没有的工具。表缺席（测试 / 旧调用方）时保持既有行为。
-    if (this.config.skills && this.skillToolAvailable()) {
-      const skillsSection = buildSkillsSection({
-        outcome: this.config.skills,
-        metadataBudget: this.config.skillMetadataBudget,
-      });
-      if (skillsSection) {
-        sections.push(skillsSection);
-      }
-    }
-
-    // 5. Meta user context: workspace instructions/project memory first, date second.
-    const requestUserContextSection = buildRequestUserContextSection({
-      userInstructions: this.config.userInstructions,
-      memoryIndexContent: this.config.memoryIndexContent,
-      memoryRoot: this.config.memoryRoot,
-    });
-    if (requestUserContextSection) {
-      sections.push(requestUserContextSection);
-    }
-
-    const currentDateSection = buildCurrentDateSection(this.config.currentDate);
-    if (currentDateSection) {
-      sections.push(currentDateSection);
-    }
-
-    // 6. Custom sections
-    sections.push(...this.customSections);
-
+    const sections: ContextSection[] = [
+      ...entries.map((entry) => entry.section),
+      ...this.customSections,
+    ];
     const orderedSections = orderSectionsForInjection(sections);
 
     // 计算总计
@@ -220,11 +133,6 @@ export class ContextBuilder {
       systemMessages,
       metaUserAttachments,
     };
-  }
-
-  private skillToolAvailable(): boolean {
-    const names = this.config.guidanceToolNames;
-    return names === undefined || names.includes(SKILL_TOOL_NAME);
   }
 
   private assembleSystemMessages(sections: ContextSection[]): ModelInputMessage[] {
@@ -346,21 +254,6 @@ export function buildSkillsMetaUserBody(sections: ContextSection[]): string | nu
 
 function buildSectionContent(sections: ContextSection[]): string {
   return sections.map((section) => section.content).join("\n\n");
-}
-
-function createSection(input: {
-  name: string;
-  source: ContextSection["source"];
-  injectionTarget: ContextSection["injectionTarget"];
-  cacheHint: ContextSection["cacheHint"];
-  content: string;
-}): ContextSection {
-  return {
-    ...input,
-    chars: input.content.length,
-    tokens: estimateTokens(input.content),
-    preview: input.content.slice(0, 100),
-  };
 }
 
 // -----------------------------------------------

@@ -3,7 +3,6 @@ import type { SessionId } from "../interfaces/shared.js";
 
 const MAX_WORKFLOW_AGENT_TOOLS = 128;
 const MAX_WORKFLOW_AGENT_SKILLS = 64;
-const MAX_WORKFLOW_AGENT_TURNS = 200;
 const MAX_WORKFLOW_AGENT_TIMEOUT_MS = 86_400_000;
 
 export const WorkflowScriptPhaseMetaSchema = z
@@ -48,7 +47,6 @@ export const WorkflowAgentOptionsSchema = z
     instructions: z.string().min(1).optional(),
     isolation: WorkflowAgentIsolationSchema.optional(),
     label: z.string().min(1).optional(),
-    maxTurns: z.number().int().positive().max(MAX_WORKFLOW_AGENT_TURNS).optional(),
     model: z.string().min(1).optional(),
     phase: z.string().min(1).optional(),
     schema: z.record(z.unknown()).optional(),

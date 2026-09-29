@@ -1,4 +1,8 @@
-import { selectActiveConversationBranch, type TraceContext } from "../deps.js";
+import {
+  selectActiveConversationBranch,
+  traceContextToLogContext,
+  type TraceContext,
+} from "../deps.js";
 import {
   buildMemoryExtractionPrompt,
   createMemoryExtractionScheduler,
@@ -145,7 +149,7 @@ async function executeProjectMemoryExtraction(
       );
       const executor = createProjectMemoryAgentToolExecutor(runtime, input.snapshot);
 
-      await runMemoryAgentLoop({
+      const loop = await runMemoryAgentLoop({
         abortSignal: input.abortSignal,
         executeTool: (toolCall, options) =>
           executor.execute(toolCall, {
@@ -160,7 +164,25 @@ async function executeProjectMemoryExtraction(
         workingDirectory: input.snapshot.workingDirectory,
         workspaceRoot: input.snapshot.workspaceRoot,
       });
+      // 到顶截断必须与自然收尾分开记录：模型在第 EXTRACTION_MAX_TURNS 轮仍在索取工具时，
+      // 抽取是**被切断**的（memory 文件可能只写了一半），而 `turns` 单独区分不了两者
+      // （自然收尾在 break 前 +1、到顶由循环头 +1，都可以等于 maxTurns）。
+      // 见 specs/command-terminal-state-audit.md §A。
+      if (loop.capped) {
+        runtime.logger?.warn("Project memory extraction hit the turn cap", {
+          ...traceContextToLogContext(input.snapshot.traceContext),
+          event: "memory.extraction.turn_capped",
+          maxTurns: EXTRACTION_MAX_TURNS,
+          module: "core.runtime",
+          turns: loop.turns,
+        });
+      }
       telemetry.finishCompleted();
+      // 到顶仍返回 success（cursor 照常推进）。取舍：MemoryExtractionExecutionStatus 是
+      // extraction.ts 内的闭合四值联合（success/no-op/error/aborted），没有「截断」这一档，
+      // 而 error/aborted 都不推进 cursor —— 那会让同一窗口在每次触发时反复重抽
+      // （每轮最多 EXTRACTION_MAX_TURNS 次模型调用）且不保证收敛。本项只补可观测性，
+      // 不改重抽策略；若产品要求到顶重试，需另立项并给出重试上界。
       return "success" as const;
     } catch (error) {
       if (input.abortSignal.aborted || isAbortError(error)) {

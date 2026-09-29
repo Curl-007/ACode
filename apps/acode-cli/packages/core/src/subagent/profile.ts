@@ -24,7 +24,6 @@ export interface AgentProfile {
   description: string;
   disallowedTools?: readonly string[];
   injectAgentsMd?: boolean;
-  maxTurns?: number;
   mcpServers?: readonly string[];
   memory?: AgentMemoryScope;
   modelSelection?: ModelSelection;
@@ -183,7 +182,6 @@ export function parseAgentProfileFromMarkdown(input: {
   // 项目级 subagent markdown 属于仓库输入，不能通过 frontmatter 把
   // child runtime 提升到 bypass/yolo；权限模式只接受用户级或受信插件配置。
   const permissionMode = input.source === "project" ? undefined : parsedPermissionMode;
-  const maxTurns = normalizePositiveInteger(frontmatter.maxTurns);
   const memory = parseAgentMemoryScope(frontmatter.memory);
   const memoryDiagnostic =
     frontmatter.memory !== undefined && memory === undefined
@@ -214,7 +212,6 @@ export function parseAgentProfileFromMarkdown(input: {
       ...(modelSelection ? { modelSelection } : {}),
       ...(color ? { color } : {}),
       ...(permissionMode ? { permissionMode } : {}),
-      ...(maxTurns ? { maxTurns } : {}),
       ...(memory ? { memory } : {}),
       ...optionalList("tools", frontmatter.tools),
       ...optionalList("disallowedTools", frontmatter.disallowedTools),
@@ -322,15 +319,6 @@ function normalizePermissionMode(value: string | undefined): AgentPermissionMode
   return VALID_PERMISSION_MODES.has(value as AgentPermissionMode)
     ? (value as AgentPermissionMode)
     : undefined;
-}
-
-function normalizePositiveInteger(value: unknown): number | undefined {
-  if (typeof value === "number" && Number.isInteger(value) && value > 0) return value;
-  if (typeof value === "string" && /^\d+$/u.test(value)) {
-    const parsed = Number(value);
-    return parsed > 0 ? parsed : undefined;
-  }
-  return undefined;
 }
 
 export function agentProfileDisplayName(profile: AgentProfile): string {

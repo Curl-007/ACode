@@ -80,6 +80,13 @@ Slash Commands:
       disabled: "disabled",
       enabled: "enabled",
     },
+    errors: {
+      // detail 是模型面英文原文；en-US 下它已经就是用户的语言，所以是纯透传（不加冗余的
+      // 类型标签，既有显示逐字不变）。键必须与 zh-CN 同批存在——缺一个 locale 就是回归
+      // （specs/prompt-language-policy.md R5：缺键在运行时炸，不是编译期）。
+      toolCancelled: (detail) => detail,
+      unknown: "Unknown error",
+    },
     input: {
       activeStatusHint: "esc to interrupt",
       busyPlaceholder: "Type to queue input",

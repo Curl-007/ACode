@@ -16,7 +16,12 @@ export { resolveProjectMemoryRoot } from "./memory/project-root.js";
 
 // Tool components
 export { ToolScheduler, defaultToolScheduler, READ_ONLY_TOOLS } from "./tool/scheduler.js";
-export type { ToolSchedule, ToolScheduleItem, ToolDependency } from "./tool/scheduler.js";
+export type {
+  ToolSchedule,
+  ToolScheduleItem,
+  ToolDependency,
+  ToolSchedulerSnapshot,
+} from "./tool/scheduler.js";
 export { createToolRegistry, ToolRegistry, ToolRegistryImpl } from "./tool/registry.js";
 export { createToolExecutor, ToolExecutor, ToolExecutorImpl } from "./tool/executor.js";
 export { builtInTools, registerBuiltInTools } from "./tool/handlers/index.js";
@@ -144,6 +149,15 @@ export type {
   ChildClientPortsContext,
   ClientFacingPorts,
 } from "./runtime/helpers/child-client-ports.js";
+// D5 并发只读诊断投影（specs/concurrency-diagnostics-projection.md）：快照形状经包公开
+// 入口再导出，文档与消费方（debug 面、测试）引用同一份类型定义，不各自手抄。
+export type {
+  ConcurrencyDiagnosticsSnapshot,
+  ConcurrencyDomainId,
+  ConcurrencyDomainSnapshot,
+} from "./runtime/methods/concurrency-diagnostics.js";
+// P5 tools schema token 度量（specs/tools-schema-token-metrics.md）：度量形状同上理由导出。
+export type { ToolsSchemaTokenMetric } from "./runtime/methods/tools-schema-token-metric.js";
 export type {
   ActiveTurnInfo,
   AgentRuntimeConfig,

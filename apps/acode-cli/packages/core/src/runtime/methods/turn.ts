@@ -54,6 +54,7 @@ import {
 import type { RegularTurnLoopState } from "./turn-loop-state.js";
 import { finishOutputTokenRecovery } from "./turn-output-token-continuation.js";
 import { recordTurnUsageFact } from "./usage-observability.js";
+import { logConcurrencyDiagnostics } from "./concurrency-diagnostics.js";
 import { persistStableForkCompletionBoundary } from "./stable-fork-boundary.js";
 import {
   closeGoalStateChangeReminderDeferral,
@@ -124,6 +125,9 @@ export async function executeTurnCommand(
   let turnMachine = TurnMachineImpl.create(this.sessionId, this.turnNumber, input, traceId, turnId);
   this.currentTurnFileChanges = new Map();
   if (!startReservation) this.reserveTurnStart(turnId, turnTraceContext, "regular");
+  // D5 并发只读诊断投影（specs/concurrency-diagnostics-projection.md R5）：每 turn 至多一条。
+  // 并发治理事实的变化粒度是 turn 级，每模型请求/每工具批只会重复噪声；debug 级只走本地日志。
+  logConcurrencyDiagnostics(this, turnTraceContext);
 
   const turnAbortScope = createTurnAbortScope(options?.abortSignal);
   const turnAbortSignal = turnAbortScope.signal;

@@ -4,6 +4,7 @@
 
 import type {
   EnvInfo,
+  Logger,
   Model,
   ModelInputMessage,
   ProjectContext,
@@ -13,6 +14,7 @@ import type {
 } from "@acode/contracts";
 import type { AutoCompactPolicyConfig } from "../compact/index.js";
 import type { AgentProfile } from "../subagent/profile.js";
+import type { PromptSectionFlags } from "./section-flags.js";
 
 export type {
   EnvInfo,
@@ -121,10 +123,34 @@ export interface ContextBuilderConfig {
    * 而不是像 `customSystemPrompt` 那样整段替换。与 `customSystemPrompt` 互斥。
    */
   workflowActor?: WorkflowActorContext;
+  /**
+   * **悬空配置：当前没有任何提示词消费方**——没有 section builder、工具描述构建函数或
+   * reminder 读它，`ContextBuilder.build()` / `buildAsync()` 全程不引用本字段
+   * （只活在 `runtime/methods/config.ts` 的 patch 写入 → `runtime/methods/context.ts`
+   * 的透传 → 本声明这条链上）。
+   *
+   * 按 `specs/prompt-language-policy.md` R1/R4，它**永远不该有**模型面消费方：送给模型的
+   * 文本恒英文，不随 locale 分叉（cache 前缀命中、指令遵循一致性、快照/parity 成本三条理由）。
+   * 不要把它接进任何段构建；确有需要先改 spec 再改码。
+   *
+   * 它也**不是** locale：类型是裸 `string`，与 `UiLocale`（`SupportedLocale | "auto"`，
+   * `contracts/src/config/index.ts:306-307`）不是同一个类型。UI 语言的唯一真实所有者是
+   * `RuntimeConfig.ui.locale`（`contracts/src/config/index.ts:281-283`），本字段不是它的别名，
+   * 也不得成为第二个语言所有者。
+   */
   language?: string;
   outputStyle?: OutputStylePromptConfig;
   compact?: AutoCompactPolicyConfig;
   guidanceToolNames?: readonly string[];
+  /**
+   * P2 注册表本地诊断旗标的显式覆盖位（ACODE_PROMPT_SECTIONS_DISABLED /
+   * ACODE_PROMPT_MANIFEST_TRACE，specs/system-prompt-section-registry.md R3）。
+   * 缺席时由管线入口（context/registry.ts）按 spec 的名称/默认值/错误行为解析 env；
+   * 在场时优先——这是 RuntimeConfig.prompt 接线落地前的 config 通道。
+   */
+  prompt?: PromptSectionFlags;
+  /** 可选诊断出口：组装管线的 warn（段失败/未知旗标 id）与 manifest trace debug 走它；缺席时静默。 */
+  logger?: Logger;
 }
 
 /**

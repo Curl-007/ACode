@@ -306,6 +306,9 @@ done
     （10 例）保证，「服务端对 code_verifier 的容忍度」在 deep-link 接入 UI 之前**无法也无需**
     冒烟。对 BigModel/ZAI 做真实登录冒烟只能验证轮询登录链路本身（登录可用 + URL 零回归），
     验不到 PKCE。services 直接声明 pkce-challenge 依赖，lockfile 以 pinned pnpm 更新。
+    **✅ 真实登录回归冒烟已通过（2026-09-29，用户人工验证）**：开 account 官方服务开关后
+    BigModel/ZAI 真实登录可用，轮询链路在全部安全提交后无回归。注意它验证的是轮询登录，
+    与 PKCE 服务端容忍度无关（后者 dormant，见上）。
   - 整合方标记的后续小项：~~OpenSplitButton 本地文件外链死链路迁移 openExternalFile~~、
     ~~shared allowElevatedChromeDecryption 死字段删除~~ —— 均 ✅ 已完成（见下「electron-hardening
     后续清理批次」）；http 警告的 UI 渲染仍建议手工过一眼（编辑态草稿 + 只读诊断两条路径）。

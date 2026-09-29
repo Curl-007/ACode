@@ -163,7 +163,6 @@ export type {
   BrowserViewScreenshotSurfaceReleasePayload,
   BrowserViewViewportChangedPayload,
   ChromeBrowserDataImportError,
-  ChromeBrowserDataImportOptions,
   ChromeBrowserDataImportResult,
   ConnectRemoteRequest,
   CreateTempTextAttachmentRequest,

@@ -250,10 +250,8 @@ declare global {
         tabId: string;
         viewport: BrowserViewportSize | null;
       }): Promise<void>;
-      /** 从自动发现的 Chrome Profile 一次性导入内置浏览器数据。 */
-      importChromeBrowserData?(
-        options?: import("@acode/shared").ChromeBrowserDataImportOptions,
-      ): Promise<ChromeBrowserDataImportResult>;
+      /** 从自动发现的 Chrome Profile 一次性导入内置浏览器数据（无入参，授权由 main 判定）。 */
+      importChromeBrowserData?(): Promise<ChromeBrowserDataImportResult>;
       /** 清理内置浏览器缓存或全部站点数据。 */
       clearEmbeddedBrowserData?(mode: "cache" | "all"): Promise<EmbeddedBrowserDataClearResult>;
       /** 注册新版本已下载完毕的回调，返回 disposer */

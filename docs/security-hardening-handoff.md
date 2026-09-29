@@ -290,9 +290,9 @@ done
     容忍度未验证，合并后需 BigModel/ZAI 各一次真实登录冒烟**；若后端严格 schema
     拒绝 code_verifier 需回退或后端支持。services 直接声明 pkce-challenge 依赖，
     lockfile 以 pinned pnpm 更新。测试 10 例。
-  - 整合方标记的后续小项（非阻断）：OpenSplitButton 本地文件外链已是死链路可迁移
-    openExternalFile；shared 的 allowElevatedChromeDecryption 字段已无授权语义可评估删除；
-    http 警告的 UI 渲染建议手工过一眼。（辅助窗 CSP 已补齐，见下条。）
+  - 整合方标记的后续小项：~~OpenSplitButton 本地文件外链死链路迁移 openExternalFile~~、
+    ~~shared allowElevatedChromeDecryption 死字段删除~~ —— 均 ✅ 已完成（见下「electron-hardening
+    后续清理批次」）；http 警告的 UI 渲染仍建议手工过一眼（编辑态草稿 + 只读诊断两条路径）。
 - **辅助窗 CSP（resource-manager / cua-permission-panel）—— ✅ 已完成**
   （spec `packages/desktop/specs/electron-hardening.md` §3b）。两个 vite 构建的独立特权辅助窗
   此前缺 CSP meta（其余辅助窗是 main 内联 HTML 字符串、已各自带 CSP，主窗见 §3）。补上的是
@@ -320,6 +320,27 @@ done
   回退）。services 连通性测试门同步 blocking-aware。测试：provider 10 + ui 9 新增，
   endpoint-security/byo-credential-ref/worker-vault-injection 回归全绿（43 测试合计）；
   typecheck 0、lint 0 error/76 基线、arch 0 违规。
+- **electron-hardening 后续清理批次（两项）—— ✅ 已完成**（spec §4 / #9 / 未决 2·6 已更新）：
+  - **OpenSplitButton 死链路修复**：本地文件「外部打开」此前走 `openExternal(裸路径)`——
+    裸 Windows 路径经 `new URL()` 解析成 `c:` 协议被 main 白名单拒，是静默死链路。路由判定
+    抽成纯函数 `resolveOpenExternalAction`（`packages/ui/src/lib/openExternalTarget.ts`）：
+    file 目标与带 localPath 的 website 目标统一走 `openExternalFile`，能力缺失/空路径显式失败，
+    绝不退回死链路。回归测试守护「本地文件永不走 openExternalUrl」不变量（7 测试）。
+    **修正 spec 原「file: 分支可整体删除」判断**：OpenExternal 的 file: 分支保留——它是
+    message.tsx markdown `file://` 链接的活路径且已硬化（resolveLocalFileUrlTarget →
+    openPathInDefaultApp，永不进 shell.openExternal），删除会 regress 合法链接、无安全收益。
+  - **allowElevatedChromeDecryption 死字段移除**：该字段是纯死契约面（main `void value`
+    从不读、UI 从不传，授权早在 P2 #9 改由 main 判定）。整体删掉 `ChromeBrowserDataImportOptions`
+    接口与 `IPlatformService.importChromeBrowserData` 的 options 参，同步收敛 preload / renderer
+    bridge / client globals.d.ts / web fallback / shared index（renderer→main 契约面收窄为无入参）。
+    main 内部实现 `browserDataManager.importChromeBrowserData({allowElevatedChromeDecryption, logger})`
+    保留 options（main 自算授权后传入，活代码，与被删的 renderer 契约面是两回事）。
+  - 门禁：root typecheck 0、lint 0 error/76 基线、arch 0 违规；desktop-hardening(11) +
+    openExternalTarget(7) + providerIssueWarnings(9) + botPermissionFallback(9) 共 36 测试绿。
+    **desktop main/preload/renderer 子工程不在任何 typecheck 门禁内**（root typecheck 只含
+    desktop host），standalone `tsc -b` 有既有环境缺失类错误（preload 3 / renderer 113，
+    window.acode / styles.css / shared 导出 ambient 问题）——已用 stash 基线对比证明本批
+    改动**零新增**（错误集与干净树逐字相同）。残留人工项：设置页 http 警告 UI 手工过一眼。
 - **Mimosa `server/src/remote/*` 命令注入族 —— 已复核为误报**：`exec(command)` 是
   「远程执行命令」的 API 契约（SSH exec / docker exec sh -lc / wsl bash -lc），
   全部调用方的路径插值都经 `quotePosixShellArg`/`quotePosixPathArg` 转义（已全量

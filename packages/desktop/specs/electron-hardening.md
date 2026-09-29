@@ -197,7 +197,17 @@ form-action 'none';
 
 IPC 层：`OpenExternal` 载荷若为 file: → 走 `resolveLocalFileUrlTarget` + `openPathInDefaultApp`（normalize + realpath + `shell.openPath`），与 `OpenExternalFile` 同一条硬化链路；转换失败一律拒绝并告警。http/https 行为不变；裸路径/自定义协议仍被 allowlist 拒绝（现状不变）。
 
-`packages/ui` 的 OpenSplitButton 本地文件「外部打开」现状即不可达（WHATWG 解析为 `c:` 协议被拒），后续应改走 `openExternalFile` 修复该入口（越出本次文件所有权，见「未决」）；迁移完成后 file: 分支可整体删除。
+`packages/ui` 的 OpenSplitButton 本地文件「外部打开」现状即不可达（WHATWG 解析为 `c:` 协议被拒），后续应改走 `openExternalFile` 修复该入口（越出本次文件所有权，见「未决」）。
+
+**→ 后续已完成（安全加固 P2 清理批次）**：OpenSplitButton 的路由判定抽成纯函数
+`resolveOpenExternalAction`（`packages/ui/src/lib/openExternalTarget.ts`，回归测试守护
+「本地文件永不走 openExternal 死链路」不变量），`file` 目标与带 `localPath` 的 website
+目标统一走 `openExternalFile`；宿主无该能力（或畸形空路径）时显式失败，绝不退回死链路。
+**修正原「file: 分支可整体删除」的判断**：OpenExternal 处理器的 file: 分支**保留**——
+它不是 OpenSplitButton 专用（OpenSplitButton 传的是裸路径 `c:` 协议，从不命中 file: 分支），
+而是 `message.tsx` markdown 链接 `openExternal(href)` 的活路径（AI 回复可含 `file://` 链接），
+且该分支已是硬化处理（resolveLocalFileUrlTarget → openPathInDefaultApp，永不进
+shell.openExternal）。删除它会 regress 合法的 file:// 链接且无安全收益，故保留。
 
 ### 验收
 
@@ -251,13 +261,15 @@ fuse 效果（含完整性校验、RUN_AS_NODE 行为）无法在不打包的本
 
 `desktopBrowserDataIpc.ts`：
 
-1. **一律忽略**载荷中的 `allowElevatedChromeDecryption`（字段留在 shared 类型里仅供类型兼容，main 不读）。
+1. **一律忽略**载荷中的 `allowElevatedChromeDecryption`（main 不读；该死字段已从 shared IPC 契约整体移除，见下）。
 2. 提权授权由 main 进程判定，纯函数 `resolveElevatedChromeDecryptionAuthorization({ platform, appBoundCookieRowsPresent, userConfirmed })`：仅当 `platform === "win32"` 且嗅探确认 Cookie 库确有 v20（App-Bound）行 且 用户在 main 弹出的确认框点确认，才允许提权路径。
 3. 嗅探：`chromeCookieManager.hasAppBoundEncryptedCookies({ profilePath, platform, logger })`——复用既有快照/只读查询链，仅判断 v20 前缀。库缺失或读取失败返回 `null` → **fail-closed**：不弹窗、不提权，导入按无提权继续（结果仍是既有的 `chrome_cookie_elevation_required` 错误码）。
 4. 用户确认：复用仓库既有 `dialog.showMessageBox(parentWindow, …)` 模式（对齐 desktopCommandHandlers 的确认框），中文文案说明将启动 Chrome 提权组件解密 App-Bound Cookie；取消则不带提权执行。
 5. 提权授权是**一次性**的（本次 IPC 调用内有效），不持久化、不缓存。
 
-shared 类型 `ChromeBrowserDataImportOptions.allowElevatedChromeDecryption` 属 `packages/shared`（本轮所有权之外）不动；spec 记录该字段在 desktop 链路上已不具授权语义。
+shared 类型 `ChromeBrowserDataImportOptions.allowElevatedChromeDecryption` 当时属 `packages/shared`（首轮所有权之外）不动，仅记录该字段在 desktop 链路上已不具授权语义。
+
+**→ 后续已完成（安全加固 P2 清理批次）**：该字段是纯死契约面（main `void value` 从不读、UI 从不传），已**整体移除**——删掉 `ChromeBrowserDataImportOptions` 接口与 `IPlatformService.importChromeBrowserData` 的 options 参，同步收敛 preload、renderer bridge、client globals.d.ts、web fallback 与 shared index 导出（renderer→main 契约面收窄为无入参）。main 内部实现 `browserDataManager.importChromeBrowserData({allowElevatedChromeDecryption, logger})` 保留 options（main 自算授权后传入，是活代码，与被删的 renderer 契约面是两回事）。desktop-hardening 的「伪造 renderer 载荷被忽略」测试不变（handler 仍防御性 `void value`）。
 
 ### 验收
 
@@ -269,7 +281,8 @@ shared 类型 `ChromeBrowserDataImportOptions.allowElevatedChromeDecryption` 属
 ## 未决与移交
 
 1. **打包冒烟**：fuse（含完整性校验、agent spawn 回归）与 CSP 打包态表现需发布流程真实出包验证；本批仅配置层测试。
-2. `packages/ui` OpenSplitButton 迁移到 `openExternalFile`（完成后删除 OpenExternal 的 file: 分支）——跨包所有权，移交整合方。
+2. ~~`packages/ui` OpenSplitButton 迁移到 `openExternalFile`（完成后删除 OpenExternal 的 file: 分支）~~ —— ✅ OpenSplitButton 已迁移（路由判定抽成纯函数 `resolveOpenExternalAction` + 回归测试，见 §4）。**file: 分支保留**：它是 message.tsx markdown `file://` 链接的活路径且已硬化，删除会 regress 合法链接、无安全收益（§4 已修正原判断）。
 3. `enableNodeOptionsEnvironmentVariable`/`runAsNode` 两个 fuse 的关闭依赖「agent 独立 node 二进制」工程落地。
 4. ~~resource-manager.html / cua-permission-panel.html 的 CSP 未在本批补齐~~ —— ✅ 已补齐（见 §3b，index.html CSP 的已验证子集，connect-src 收紧去掉 http/https）。打包态渲染仍属未决 1 的发布冒烟项。
 5. CSP `connect-src http:/https:` 从宽，待收集 renderer 实际远端取数清单后收紧。
+6. ~~shared `ChromeBrowserDataImportOptions.allowElevatedChromeDecryption` 死字段评估删除~~ —— ✅ 已整体移除（见 #9 后续），renderer→main 契约面收窄为无入参。

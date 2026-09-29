@@ -54,10 +54,10 @@ async function confirmElevatedChromeDecryptionWithUser(
 
 export function registerBrowserDataIpcHandlers(logger: BrowserDataIpcLogger) {
   ipcMain.handle(PlatformChannels.ImportChromeBrowserData, async (event, value: unknown) => {
-    // 安全加固 P2 #9：renderer 载荷一律不信任——请求载荷里的 allowElevatedChromeDecryption
-    // 字段在此被显式丢弃（不读取、不透传），提权授权改由 main 进程判定：
+    // 安全加固 P2 #9（及后续清理）：renderer 载荷一律不信任。提权解密授权完全由 main 判定：
     // 平台 + v20 前置嗅探 + 用户显式确认，且授权只在本次调用内有效（不持久化、不缓存）。
-    // 当前 UI（BrowserSettingsSection.handleImport）从不传该字段，收权不构成 UX 回归。
+    // IPC 契约已不再携带任何 options（allowElevatedChromeDecryption 死字段已从 shared 类型移除）；
+    // 这里仍防御性忽略任何残余载荷（void value），旧 renderer 进程或伪造请求都无法影响授权。
     void value;
     let allowElevatedChromeDecryption = false;
     if (process.platform === "win32") {

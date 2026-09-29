@@ -638,9 +638,8 @@ contextBridge.exposeInMainWorld("acode", {
   /** 将 UI 自由尺寸同步为当前受控 tab 的真实 viewport。 */
   browserViewUpdateViewport: (payload: { tabId: string; viewport: BrowserViewportSize | null }) =>
     ipcRenderer.invoke(PlatformChannels.BrowserViewUpdateViewport, payload),
-  /** 从自动发现的 Chrome Profile 一次性导入内置浏览器数据。 */
-  importChromeBrowserData: (options?: import("@acode/shared").ChromeBrowserDataImportOptions) =>
-    ipcRenderer.invoke(PlatformChannels.ImportChromeBrowserData, options),
+  /** 从自动发现的 Chrome Profile 一次性导入内置浏览器数据（无入参，授权由 main 判定）。 */
+  importChromeBrowserData: () => ipcRenderer.invoke(PlatformChannels.ImportChromeBrowserData),
   /** 清理内置浏览器缓存或全部站点数据。 */
   clearEmbeddedBrowserData: (mode: "cache" | "all") =>
     ipcRenderer.invoke(PlatformChannels.ClearEmbeddedBrowserData, mode),

@@ -210,7 +210,7 @@ function createWebPlatform(): IPlatformService {
     onTaskNotificationClick: () => () => {},
     exportLogs: () => Promise.resolve({ success: false, error: "Not supported in web mode" }),
     captureWindowScreenshot: () => Promise.resolve(null),
-    importChromeBrowserData: (_options) =>
+    importChromeBrowserData: () =>
       Promise.resolve({
         success: false,
         cookies: { imported: 0, skipped: 0, failed: 0 },

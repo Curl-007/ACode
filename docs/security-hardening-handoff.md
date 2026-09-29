@@ -104,7 +104,14 @@ done
 
 ### 三个既有红（不是回归，别去修）
 以下三个测试在**干净的基线 `8a1018e`** 上就是红的（我已在临时 worktree 复核确认）。它们断言的是与本工作无关的代码：
-- `packages/desktop/tests/no-official-platform.test.mjs` — 断言未改动的 conversationShareService.ts。
+- `packages/desktop/tests/no-official-platform.test.mjs` — 三处断言红，均为**测试桩件/既有**问题、非产品 bug：
+  (1) conversationShareService.ts 不再含 zcode.z.ai URL（分享已下线，断言过时）；(2) 某守卫「Missing expected exception」；
+  (3) `oauthService.ts startOAuth` 抛 `ReferenceError: assertOfficialServiceAvailable is not defined`——这是测试用
+  `{ "@acode/shared": officialPlatformPolicy }` stub 加载 oauthService 时桩件没接上该函数，**产品代码正确**
+  （oauthService.ts:2 已导入、root typecheck 过、真实 @acode/shared 导出它）。已复核：本会话提交（c2244d4..HEAD）
+  未触及 oauthService/conversationShare/officialPlatformPolicy，且该测试在 c2244d4 上同样红——既有，非回归。
+  **副作用**：因桩件 gap，该测试实际没能验证 startOAuth 的官方服务守卫；若要让它真正生效，需修测试的 @acode/shared stub
+  （补 assertOfficialServiceAvailable），属测试基建修复，非产品改动。
 - `packages/ui/tests/no-telemetry.test.mjs` — ENOENT 引用 `codingPlanEmbeddedWebview.ts`，该文件 git 全历史从未存在。
 - `packages/ui/test/nonCliAcpRetirement.test.ts` — `@/lib` 路径别名在裸 tsx 下解析不了。
 

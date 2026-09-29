@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { hasBlockingConfigIssues } from "@acode/provider";
 import type { ModelConfigResolution } from "@acode/provider";
 import { useIdleTrigger } from "@/settings/model-provider-section/useIdleTrigger.js";
 
@@ -54,8 +55,10 @@ export function useModelConfigResolution({
         const resolution = await resolve(normalizedModelId);
         if (!isCurrent()) return undefined;
         const inheritedSignature = JSON.stringify(resolution.inheritedConfig);
+        // 字段反馈只在解析出阻断级问题时让位：warning（如明文 http 端点）不算失败，
+        // 继承默认值照常展示（spec R3：门控 blocking-aware）。
         if (
-          resolution.issues.length === 0 &&
+          !hasBlockingConfigIssues(resolution.issues) &&
           inheritedSignatureRef.current !== inheritedSignature
         ) {
           inheritedSignatureRef.current = inheritedSignature;

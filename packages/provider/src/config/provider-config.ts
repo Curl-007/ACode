@@ -1,5 +1,5 @@
 /* oxlint-disable eslint(max-lines) -- Provider 与 Access Config 的 Overlay/序列化必须集中维护同一联合类型；待契约稳定后再按配置族拆文件。 */
-import { ConfigOverlay, type ConfigValidationIssue } from "../config-overlay.js";
+import { ConfigOverlay, isBlockingConfigIssue, type ConfigValidationIssue } from "../config-overlay.js";
 import type { z } from "zod";
 import {
   completeApiKeyAccessDataSchema,
@@ -20,6 +20,7 @@ import {
   type providerTemplateDataSchema,
 } from "./provider-data-schema.js";
 import { validateConfigSchema } from "./schema-validation.js";
+import { isPlaintextHttpBaseUrl } from "./provider-endpoint-security.js";
 import type { ModelId, ProviderId, ProviderTemplateId } from "./ids.js";
 import type { ProviderConfigRuleData } from "./rule-data-schema.js";
 
@@ -194,7 +195,18 @@ export class ProviderApiConfig extends ConfigOverlay<ProviderApiConfig> {
 
   validateComplete(path: readonly string[] = []): readonly ConfigValidationIssue[] {
     // 旧检查只判断 type 非空，不可信 JS 值可绕过枚举；准入与保存共用 schema。
-    return validateConfigSchema(completeProviderApiDataSchema, this.toJSON(), path);
+    const issues = [...validateConfigSchema(completeProviderApiDataSchema, this.toJSON(), path)];
+    // 明文 http 是「知情不禁止」的告警而非阻断，severity 恒为 warning，与 zod error 可共存。
+    // 非法 URL 时上面的 url 校验已报 error，isPlaintextHttpBaseUrl 对非法值返回 false，不会双报。
+    if (isPlaintextHttpBaseUrl(this.baseUrl)) {
+      issues.push({
+        code: "plaintext-http-endpoint",
+        path: [...path, "baseUrl"],
+        severity: "warning",
+        message: `配置 ${[...path, "baseUrl"].join(".")} 使用明文 http，API Key 与对话内容将暴露给链路中间节点，建议改用 https`,
+      });
+    }
+    return issues;
   }
 
   toJSON(): ProviderApiConfigInput {
@@ -289,7 +301,19 @@ export class ProviderConfig extends ConfigOverlay<ProviderConfig> {
 
   validateComplete(path: readonly string[] = []): readonly ConfigValidationIssue[] {
     // 不再用字段存在性代替值域验证，也不把展示/成员等可选字段变成执行必填项。
-    return validateConfigSchema(completeProviderConfigDataSchema, this.toJSON(), path);
+    const issues = [...validateConfigSchema(completeProviderConfigDataSchema, this.toJSON(), path)];
+    // 明文 http 告警的唯一产生点是 api 子对象的 validateComplete（resolver 校验合并后的
+    // effective config 走到这里，模板继承来的 http 值因此同样产出 warning）。外层 zod
+    // 嵌套校验会产出同样的 api zod error，若整份并入子对象结果会把同一 error 报两遍，
+    // 所以只把非阻断的诊断（warning）并入，error 仍以外层结果为准。
+    if (this.api) {
+      issues.push(
+        ...this.api
+          .validateComplete([...path, "api"])
+          .filter((issue) => !isBlockingConfigIssue(issue)),
+      );
+    }
+    return issues;
   }
 
   toJSON(): ProviderConfigObject {

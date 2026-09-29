@@ -6,7 +6,7 @@ import type {
   completeZhipuAccountAccessDataSchema,
   completeProviderConfigDataSchema,
 } from "./config/provider-data-schema.js";
-import type { ConfigValidationIssue } from "./config-overlay.js";
+import { hasBlockingConfigIssues, type ConfigValidationIssue } from "./config-overlay.js";
 import {
   type ApiKeyAccessConfig,
   ModelConfig,
@@ -102,7 +102,12 @@ export function serializeRegistryModelConfig(
 }
 
 export type RegistryConfigResult<T> =
-  | { readonly ok: true; readonly config: T }
+  | {
+      readonly ok: true;
+      readonly config: T;
+      /** warning 级诊断随 ok:true 携带，否则 warning-only 的 Provider/Model 在 ok 分支丢诊断。 */
+      readonly issues: readonly ConfigValidationIssue[];
+    }
   | { readonly ok: false; readonly issues: readonly ConfigValidationIssue[] };
 
 export function createRegistryProviderConfig(
@@ -110,9 +115,10 @@ export function createRegistryProviderConfig(
   path: readonly string[] = ["provider"],
 ): RegistryConfigResult<RegistryProviderConfig> {
   const issues = config.validateComplete(path);
-  return issues.length > 0
+  // 只有阻断级问题（severity 缺省视为 error）才拒绝准入；warning 不影响 ok，但要随结果流转。
+  return hasBlockingConfigIssues(issues)
     ? { ok: false, issues: Object.freeze([...issues]) }
-    : { ok: true, config: config as RegistryProviderConfig };
+    : { ok: true, config: config as RegistryProviderConfig, issues: Object.freeze([...issues]) };
 }
 
 export function createRegistryModelConfig(
@@ -120,9 +126,9 @@ export function createRegistryModelConfig(
   path: readonly string[] = ["model"],
 ): RegistryConfigResult<RegistryModelConfig> {
   const issues = config.validateComplete(path);
-  return issues.length > 0
+  return hasBlockingConfigIssues(issues)
     ? { ok: false, issues: Object.freeze([...issues]) }
-    : { ok: true, config: config as RegistryModelConfig };
+    : { ok: true, config: config as RegistryModelConfig, issues: Object.freeze([...issues]) };
 }
 
 export interface ProviderConfigResolverInput {
@@ -221,9 +227,8 @@ export class ProviderConfigResolver {
       const enabled = config.access?.type === "zhipu-account" || (rule.enabled ?? true);
       const providerPath = ["providers", providerId];
       const registryProviderResult = createRegistryProviderConfig(config, providerPath);
-      const providerIssues: ConfigValidationIssue[] = registryProviderResult.ok
-        ? []
-        : [...registryProviderResult.issues];
+      // 诊断面必须完整：无论 ok 与否都取 result.issues，warning 才能流入 resolution.issues/View。
+      const providerIssues: ConfigValidationIssue[] = [...registryProviderResult.issues];
       const templateId = rule.templateId ?? undefined;
       const templateConfig = templateId ? providerTemplates?.get(templateId)?.config : undefined;
       if (templateId && !templateConfig) {
@@ -252,7 +257,7 @@ export class ProviderConfigResolver {
       // Off-Peak 不定义 current，沿用其独立调度、隐藏和鉴权规则。
       const accountCurrent = input.accountStates?.[providerId]?.current !== false;
       const providerExecutable =
-        enabled && accessEntitled && accountCurrent && providerIssues.length === 0;
+        enabled && accessEntitled && accountCurrent && !hasBlockingConfigIssues(providerIssues);
       const models = orderedModelIds.map((modelId): ResolvedProviderModel => {
         const modelConfig = effectiveModelRules.resolve({
           providerId,
@@ -273,10 +278,11 @@ export class ProviderConfigResolver {
           "models",
           modelId,
         ]);
-        const modelIssues = registryModelResult.ok ? [] : registryModelResult.issues;
+        const modelIssues: ConfigValidationIssue[] = [...registryModelResult.issues];
         issues.push(...modelIssues);
         const modelEnabled = modelConfig.enabled === true;
-        const executable = providerExecutable && modelEnabled && modelIssues.length === 0;
+        const executable =
+          providerExecutable && modelEnabled && !hasBlockingConfigIssues(modelIssues);
         const selectable = executable && config.visibility !== "hidden";
         return Object.freeze({
           kind: "candidate",
@@ -306,7 +312,9 @@ export class ProviderConfigResolver {
       });
       resolvedProviders.push(resolvedProvider);
 
-      if (!registryProviderResult.ok || providerIssues.length > 0) {
+      // 准入看阻断级问题：ok:false 只由 blocking 产生；手工追加的 missing-template 等
+      // blocking issue 由 hasBlockingConfigIssues 兜住（warning-only 不再逐出 registry）。
+      if (!registryProviderResult.ok || hasBlockingConfigIssues(providerIssues)) {
         continue;
       }
       const validModels = models

@@ -277,8 +277,9 @@ done
     NODE_EXTRA_CA_CERTS（agent 自定义 CA 信任）；待独立 node 二进制工程落地后一并关。
     **待发布冒烟**：fuse/asar 完整性/CSP 的打包态行为需真实出包验证。
   - **http 明文端点告警（#7）**：spec 见 `packages/provider/specs/provider-http-endpoint-warning.md`。
-    纯判定 isPlaintextHttpBaseUrl + 设置页 Base URL 内联警告（双语，知情不禁止）；
-    诊断层未接（ConfigValidationIssue 无 warning severity，需独立契约变更）。测试 2 例。
+    纯判定 isPlaintextHttpBaseUrl + 设置页 Base URL 内联警告（双语，知情不禁止）。
+    诊断层当时未接（ConfigValidationIssue 无 warning severity）——**后续已补齐，见下条
+    「ConfigValidationIssue severity 契约」**。测试 2 例。
   - **插件 git 源 commit 固定（#8）**：spec 见 `apps/acode-cli/specs/plugin-git-source-pinning.md`。
     浮动 ref 默认拒绝（fail-closed）+ 显式 allowFloatingRef 逃生门；host 白名单与
     archive 快路径同源（PLUGIN_REPOSITORY_ALLOWED_HOSTS 单一事实源）；浏览期与安装期
@@ -302,6 +303,23 @@ done
   经 data: URL 推送）。主威胁（脚本执行面）防御与主窗等同。desktop-hardening.test.mjs 加配置层
   回归守护（含「connect-src 不得含 http/https」「无 frame-src」断言），11 测试绿。**残留**：
   打包态两窗渲染仍属发布流程冒烟项（§6 未决 1）。
+- **ConfigValidationIssue severity 契约 + 明文 http 端点持久诊断（#7 后续）—— ✅ 已完成**
+  （spec `packages/provider/specs/config-validation-severity.md`；两子智能体并行实现，
+  整合方统一门禁）。给 provider 配置域诊断契约加**可选** `severity`（缺省 error =
+  全部既有产生点零改动保持阻断语义）+ 唯一门控谓词 `isBlockingConfigIssue`/
+  `hasBlockingConfigIssues`（禁止调用点手写过滤）。新 code `plaintext-http-endpoint`
+  在 `ProviderApiConfig.validateComplete` 产出（复用既有判定函数；`ProviderConfig.validateComplete`
+  只并入 api 子对象的非阻断诊断——外层 zod 已嵌套校验 api，error 不双报）。resolver 六处
+  门控 blocking-aware 化：warning-only 的 provider/model 可执行、可选、准入 registry，
+  `RegistryConfigResult` ok:true 变体 additive 携带 issues 使 warning 流入
+  `resolution.issues` → `ProviderSettingsView.issues`（既有 provider-settings RPC 通道，
+  **零协议改动**；CLI worker 与桌面 host 同一 resolver，语义两端一致）。error 的所有既有
+  后果逐字保持（含手工 push 的 missing-template：准入门保留 `hasBlockingConfigIssues(providerIssues)`
+  兜住）。UI：编辑态草稿内联警告不变；只读继承态警告改为诊断驱动（testid/样式不变）；
+  模型 issue 渲染 severity 分色 + 已知 code 走 i18n（message 是硬编码中文，只作未知 code
+  回退）。services 连通性测试门同步 blocking-aware。测试：provider 10 + ui 9 新增，
+  endpoint-security/byo-credential-ref/worker-vault-injection 回归全绿（43 测试合计）；
+  typecheck 0、lint 0 error/76 基线、arch 0 违规。
 - **Mimosa `server/src/remote/*` 命令注入族 —— 已复核为误报**：`exec(command)` 是
   「远程执行命令」的 API 契约（SSH exec / docker exec sh -lc / wsl bash -lc），
   全部调用方的路径插值都经 `quotePosixShellArg`/`quotePosixPathArg` 转义（已全量

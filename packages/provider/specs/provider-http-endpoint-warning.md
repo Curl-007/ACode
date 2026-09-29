@@ -38,6 +38,11 @@
    因此本次**只做 UI 警告 + 本判定函数**，不发明新的诊断管线。后续若要把告警下沉为
    持久化诊断，应先给 `ConfigValidationIssue` 增加 severity 维度（breaking 契约变更，
    需独立 spec），而不是在 config 层塞入一次性 side-channel。
+   **→ 后续已完成**：severity 维度与持久诊断见独立 spec
+   `packages/provider/specs/config-validation-severity.md`（additive 可选 severity 字段、
+   缺省 error 保持既有阻断语义、`plaintext-http-endpoint` warning 沿既有
+   ProviderSettingsView.issues 通道流转，UI 只读态警告改为诊断驱动）。本 spec 的
+   编辑态草稿内联警告保持不变（诊断只覆盖已保存配置，两者互补）。
 
 ## 兼容性
 

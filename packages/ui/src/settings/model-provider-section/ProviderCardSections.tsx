@@ -42,6 +42,10 @@ import {
 } from "@/components/ui/dropdown-menu.js";
 import { useACodeIntl } from "@/i18n/IntlProvider.js";
 import { useServices } from "@/hooks/useServices.js";
+import {
+  resolveConfigIssueDisplay,
+  selectProviderWarningIssues,
+} from "@/lib/providerIssueWarnings.js";
 import { TECHNICAL_INPUT_ATTRIBUTES } from "@/lib/technicalInputAttributes.js";
 import { ApiKeyInput } from "./ApiKeyInput.js";
 import { ModelRowInput } from "./ProviderFormControls.js";
@@ -214,11 +218,16 @@ export function ProviderConnectionSection({
   const resolvedApiFormat = provider.config.api?.type ?? "anthropic-messages";
 
   // 安全加固 P2 #7：baseUrl 走明文 http 时 API Key 与对话内容会明文过网，必须就地可见。
-  // 编辑态盯草稿值（用户边输入边看到），只读继承态盯继承值（只读不等于安全）。
+  // 编辑态盯草稿值（用户边输入边看到）；只读继承态改为诊断驱动（spec R4）：
+  // resolver 对已保存的 effective 配置统一校验并产出 plaintext-http-endpoint warning，
+  // 同时覆盖直接配置与内置模板继承两种来源，UI 不再对继承值重复判定，诊断即单一事实源。
   // 警告非阻断：内网 http 端点是少数合法场景，这里只负责「知情」。
-  const plaintextHttpWarning = isPlaintextHttpBaseUrl(
-    readOnly ? readOnlyBaseUrl : baseUrlValue,
-  ) ? (
+  const showPlaintextHttpWarning = readOnly
+    ? selectProviderWarningIssues(provider.issues).some(
+        (issue) => issue.code === "plaintext-http-endpoint",
+      )
+    : isPlaintextHttpBaseUrl(baseUrlValue);
+  const plaintextHttpWarning = showPlaintextHttpWarning ? (
     <p
       className="flex items-start gap-1.5 text-ui-sm text-warning"
       data-testid="model-provider-base-url-http-warning"
@@ -530,6 +539,13 @@ export function ProviderModelsSection({
                 inputFormat.supportsAudio != null &&
                 inputFormat.supportsPdf != null &&
                 outputFormat?.supportsText != null;
+              // spec R4：blocking 诊断保持 destructive，warning 诊断（如明文 http 端点）
+              // 用 warning 色提示但不吓退；已知 code 走 i18n，未知 code 回退诊断 message（spec R5）。
+              const issueDisplay = resolveConfigIssueDisplay(
+                model.issues?.[0],
+                (messageId) => intl.formatMessage({ id: messageId }),
+                intl.formatMessage({ id: "settings.modelProvider.modelConfigIncomplete" }),
+              );
               return (
                 <>
                   <ModelRowInput
@@ -562,9 +578,12 @@ export function ProviderModelsSection({
                     onTest={onTestModel}
                   />
                   {!completeProperties && (
-                    <div className="px-3 pb-2 text-ui-sm text-destructive">
-                      {model.issues?.[0]?.message ??
-                        intl.formatMessage({ id: "settings.modelProvider.modelConfigIncomplete" })}
+                    <div
+                      className={`px-3 pb-2 text-ui-sm ${
+                        issueDisplay.tone === "warning" ? "text-warning" : "text-destructive"
+                      }`}
+                    >
+                      {issueDisplay.text}
                     </div>
                   )}
                 </>

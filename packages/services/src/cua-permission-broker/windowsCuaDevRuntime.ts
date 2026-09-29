@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import type { Stats } from "node:fs";
 import * as fs from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep, win32 as windowsPath } from "node:path";
+import { isPackagedACodeDesktopRuntime } from "@acode/shared";
 
 const DEV_ROOT_ENV = "ACODE_CUA_DEV_ROOT";
 const EXPECTED_PACKAGE_NAME = "@acode/acode-cua";
@@ -85,8 +86,12 @@ export async function resolveWindowsCuaRuntime(
     );
   }
 
-  const configuredRoot = (options.env ?? process.env)[DEV_ROOT_ENV]?.trim();
-  if (configuredRoot) {
+  const requestEnv = options.env ?? process.env;
+  const configuredRoot = requestEnv[DEV_ROOT_ENV]?.trim();
+  // 打包态忽略 dev-root env 注入（门禁④）：规则与威胁模型见
+  // packages/services/specs/agent-command-env-gate.md R4；dev-root 本身的
+  // 绝对路径/realpath/包契约校验在 resolveDevelopmentRuntime 内，不变。
+  if (configuredRoot && !isPackagedACodeDesktopRuntime(requestEnv)) {
     return resolveDevelopmentRuntime(configuredRoot, options.fileSystem ?? defaultFileSystem);
   }
 

@@ -62,6 +62,25 @@
 - 独立 `acode-server-cli` 分发不设打包标记：其管理员对本机有完全控制权，env 配置
   属合法用法（与桌面签名包的信任位置不同）。
 
+### R4 门禁覆盖 ACODE_CUA_DEV_ROOT（2026-09-30 深度扫描分诊补充）
+
+来源：[`docs/security-scan-triage-2026-09-29.md`](../../../docs/security-scan-triage-2026-09-29.md)
+§3 残留观察项 #2。`windowsCuaDevRuntime.ts` 的 `resolveWindowsCuaRuntime` 以
+`ACODE_CUA_DEV_ROOT` env 为最高优先级选择 dev 运行时根目录，且 helper host 会 fork
+该目录下的 JS（`windowsCuaDevHelperHost.ts`）——与 R1 的 `ACODE_AGENT_SERVER_COMMAND`
+同一威胁模型（用户级 env 注入替换实际执行的代码面），但此前未接门禁，与 R2
+「门禁是统一谓词」的哲学不一致。
+
+- 规则：`resolveWindowsCuaRuntime` 采纳 dev-root env 前经同一
+  `isPackagedACodeDesktopRuntime(env)` 谓词判定；打包态忽略该 env，落回
+  `resolvePackagedRuntime`（resourcesPath 解析链）。判定使用与 dev-root 读取一致的
+  env 源（`options.env ?? process.env`），保证可注入测试。
+- dev/源码运行、独立 CLI、远程 server 无标记 → dev-root 照常生效（R1 的「非打包态
+  零变化」边界同样适用：那些场景用户就是管理员，dev-root 是 CUA helper 开发工作流
+  的合法通道）。
+- 定性：打包态此前 dev-root 也几乎不可能被命中（打包用户无该 env），本条是
+  **一致性加固**而非缺陷修复；无权限增量的论证见分诊文档 §3 #2。
+
 ## 状态所有者与调用链
 
 ```
@@ -70,7 +89,8 @@
        └─ host 进程（services）
             ├─ resolveDefaultACodeAgentCommand ── 门禁①（ACODE_AGENT_SERVER_COMMAND 族）
             ├─ findACodeAgentRuntimeBinary ────── 门禁②（binaryEnvVar，native+外部引擎）
-            └─ resolveExternalEngineCommand ───── 门禁③（envPath → 委托门禁②）
+            ├─ resolveExternalEngineCommand ───── 门禁③（envPath → 委托门禁②）
+            └─ resolveWindowsCuaRuntime ───────── 门禁④（ACODE_CUA_DEV_ROOT，R4）
 ```
 
 ## 接口
@@ -92,6 +112,10 @@
    走标准候选链（未安装 → missingBinaryMessage）。
 5. 标记不可被继承值伪造：main 侧 spread 顺序已有测试守护（desktopRuntimeEnv），
    本层只断言谓词语义。
+6. （R4）打包态：设 `ACODE_CUA_DEV_ROOT=<绝对路径>` → `resolveWindowsCuaRuntime`
+   （platform 注入 "win32"）走 packaged 解析链——无 resourcesPath 时报
+   `missing-resources-path`，而非任何 `development-*` 错误；非打包态同 env →
+   走 dev 解析链（报 `development-root-*` / `invalid-package` 类错误，证明 dev-root 生效）。
 
 ## 不在本项范围
 

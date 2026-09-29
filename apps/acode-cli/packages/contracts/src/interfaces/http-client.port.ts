@@ -59,6 +59,14 @@ export interface HttpClientRequest {
   maxResponseBytes?: number;
   redirect?: HttpClientRedirectPolicy;
   egressPolicy?: HttpClientEgressPolicy;
+  /**
+   * 仅对 `egressPolicy: "public"` 有意义：解析出代理时是否允许**显式降级**继续请求
+   * （代理侧 DNS 不可本地验证，降级后防线只剩调用方的 URL 字面守卫，
+   * 响应 `egress.publicEgressDnsVerified` 为 false 如实记录）。
+   * 缺省 false=严格档：public + 代理 → egress_blocked 拒绝。
+   * 授权面窄：当前仅 WebFetch 允许设置（specs/webfetch-public-egress.md R4）。
+   */
+  allowProxiedPublicEgress?: boolean;
   trace?: TraceContext;
 }
 
@@ -68,6 +76,12 @@ export interface HttpClientEgressInfo {
   proxyHost?: string;
   noProxyMatched?: boolean;
   customCa?: boolean;
+  /**
+   * 仅 `egressPolicy: "public"` 的请求携带：true = 建连前公网 DNS 预检已执行且
+   * 连接使用过检解析（TOCTOU-safe）；false = 走了代理降级路径（R2 opt-in），
+   * DNS 未经本地验证。可观察性要求见 specs/webfetch-public-egress.md。
+   */
+  publicEgressDnsVerified?: boolean;
 }
 
 export interface HttpClientResponse {

@@ -25,7 +25,10 @@ import { test } from "node:test";
  */
 
 const root = new URL("../../../", import.meta.url);
-const read = (path) => readFile(new URL(path, root), "utf8");
+// core.autocrlf=true 的机器上 git checkout 会把工作区重写为 CRLF，令含 \n 的
+// 多行 indexOf/match 断言失真（约定文字核查是位置敏感的）；读取后统一归一为 LF。
+const read = (path) =>
+  readFile(new URL(path, root), "utf8").then((text) => text.replace(/\r\n/gu, "\n"));
 const CLI = "apps/acode-cli/packages";
 
 const { InMemoryRuntimeTaskRegistry, isTerminalRuntimeTask } = await import(

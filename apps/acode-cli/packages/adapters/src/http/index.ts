@@ -76,6 +76,9 @@ export class NodeHttpClientAdapter implements HttpClientPort {
         : undefined;
     const tlsCaCertificates = this.resolveTlsCaCertificates();
     const egress = buildEgressInfo(proxy, tlsCaCertificates);
+    // specs/webfetch-public-egress.md：public egress 直连 → 强制 DNS 预检 + 过检 lookup 建连；
+    // 代理 → 缺省拒绝（代理侧解析不可本地验证），仅显式 allowProxiedPublicEgress 降级放行。
+    let publicEgressDnsVerified = false;
     const abortController = new AbortController();
     const abortState = linkAbortSignals(options.signal, abortController);
     let timeout: ReturnType<typeof setTimeout> | undefined;
@@ -89,10 +92,19 @@ export class NodeHttpClientAdapter implements HttpClientPort {
 
     try {
       if (publicDnsLookup) {
-        assertPublicEgressProxyBoundary(url, proxy.proxyUrl);
-        await assertPublicEgressDestination(url, publicDnsLookup, {
-          signal: abortController.signal,
-        });
+        if (proxy.proxyUrl) {
+          // 普通代理在代理侧解析目标域名，本地 DNS 预检无法证明最终 IP 仍是公网地址：
+          // 缺省严格拒绝；调用方显式携带 allowProxiedPublicEgress（当前仅 WebFetch，
+          // 授权面见 spec R4）时降级继续，防线退化为调用方字面守卫，egress 如实标记未预检。
+          if (!request.allowProxiedPublicEgress) {
+            assertPublicEgressProxyBoundary(url, proxy.proxyUrl);
+          }
+        } else {
+          await assertPublicEgressDestination(url, publicDnsLookup, {
+            signal: abortController.signal,
+          });
+          publicEgressDnsVerified = true;
+        }
       }
       const response = await fetchHttpResponse(
         url,
@@ -118,7 +130,7 @@ export class NodeHttpClientAdapter implements HttpClientPort {
         body,
         bytes: body.byteLength,
         durationMs: Math.max(0, Date.now() - startedAt),
-        egress,
+        egress: publicDnsLookup ? { ...egress, publicEgressDnsVerified } : egress,
       };
     } catch (error) {
       throw toHttpClientError(error, {

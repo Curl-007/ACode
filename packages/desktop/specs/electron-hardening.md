@@ -89,7 +89,7 @@ deny 决策统一落 info 日志（permission + requestingUrl），便于事后�
 
 ```
 default-src 'none';
-script-src 'self' file: 'unsafe-inline';
+script-src 'self' file: 'unsafe-inline' 'wasm-unsafe-eval';
 style-src 'self' file: 'unsafe-inline';
 img-src 'self' file: data: blob: acode-media: https: http:;
 media-src 'self' file: data: blob: acode-media: https: http:;
@@ -105,6 +105,7 @@ form-action 'none';
 理由（与辅助窗 CSP 的差异均有对应事实）：
 
 - `script-src 'unsafe-inline'`：index.html 内联启动动画 module script + dev 态 Vite/React-refresh 注入的内联脚本（辅助窗同款处理）。`'self'` 覆盖 dev vite 模块与打包产物 chunk；追加 `file:` 是因为打包态 `loadFile` 页面 origin 为 opaque，`'self'` 不匹配 file: 子资源。
+- `script-src 'wasm-unsafe-eval'`（运行时冒烟补加）：主 renderer 的 Shiki 代码高亮（`shikiHighlighter.ts` `createHighlighter` → Oniguruma WASM）经 `WebAssembly.instantiate` 编译，CSP 下需要 `'wasm-unsafe-eval'`，否则代码高亮 / diff / office 预览全部被拦（dev desktop 启动冒烟实测到该违规）。`'wasm-unsafe-eval'` 只放行 WASM 编译、**不放行任意 `eval()`**，对脚本注入面（主威胁）几乎无削弱，是比 `'unsafe-eval'` 收窄的标准做法。WASM 二进制来自打包产物（`'self'`/`file:`），非远端。
 - `connect-src ws:` 覆盖 dev HMR websocket；`http:/https:` 保留 renderer 已存在的远程取数面（UI 层 `fetch` 图片预览、发布说明等）；`blob:` 覆盖本地附件预览的 fetch。该指令从宽是刻意 tradeoff：脚本执行面（主威胁）已被 `script-src` 收紧，connect 面后续可用运行证据再收敛，先不因过严打断功能。
 - `frame-src http: https:`：内嵌浏览器与 Coding Plan 都是 `<webview>` guest（frame-src 对 webview 生效）；guest 自身导航白名单仍由 main 侧 `will-attach-webview` / guest 守卫负责，本指令只约束宿主页。
 - `media-src acode-media:`：本地音视频预览走 `LOCAL_MEDIA_PREVIEW_SCHEME = "acode-media"`（`packages/shared/src/platform.ts`）。
@@ -155,6 +156,10 @@ form-action 'none';
 - **去掉 `frame-src`**：两窗都无 `<webview>` guest（frame-src http/https 是内嵌浏览器/Coding Plan
   专用），无需保留。
 - **去掉 `media-src` 与 `acode-media:`**：两窗不做音视频预览。
+- **不含 `'wasm-unsafe-eval'`（与主窗的差异，最小权限）**：两窗都无 WASM 消费方——resource-manager
+  渲染 `ResourceManagerApp`（存储/资源占用，不引 Shiki/代码高亮），cua 浮窗是自包含 vanilla 面板。
+  主窗因 Shiki 代码高亮需要 `'wasm-unsafe-eval'`，辅助窗刻意保持最严；若将来辅助窗引入 WASM，
+  需按运行证据单独加回。
 - **`connect-src` 收紧为 `'self' ws: wss:`**：两窗都只经 contextBridge IPC（`window.resourceManager`
   / `window.cuaPermissionPanel`，非网络、不受 CSP 约束）取数，TS 入口无任何 `fetch`/`XHR`/`WebSocket`；
   `ws:/wss:` 仅供 dev HMR，`'self'` 供 dev 同源模块取数。**不保留 http:/https:**——与主窗不同，

@@ -6,6 +6,8 @@
       安全加固 P2 #2c（specs/electron-hardening.md §3）：主特权窗 CSP，对齐辅助窗（aboutWindow 等）
       的 meta CSP 形态，但覆盖主窗真实资源面：
       - 'unsafe-inline'：本文件的启动动画 module script + dev 态 Vite/React-refresh 内联注入（辅助窗同款处理）；
+      - 'wasm-unsafe-eval'：Shiki 代码高亮（Oniguruma WASM）经 WebAssembly.instantiate 编译，CSP 下必须放行；
+        只允许 WASM 编译、不允许任意 eval()，WASM 二进制来自打包产物（self/file:），非远端；
       - file: 源：打包态 loadFile 页面 origin 为 opaque，'self' 不匹配 file: 子资源；
       - ws: 覆盖 dev HMR websocket；http/https 保留 renderer 既有远程取数面（图片预览、发布说明等）；
       - frame-src http:/https:：内嵌浏览器与 Coding Plan 是 <webview> guest（frame-src 对 webview 生效），
@@ -14,7 +16,7 @@
     -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'none'; script-src 'self' file: 'unsafe-inline'; style-src 'self' file: 'unsafe-inline'; img-src 'self' file: data: blob: acode-media: https: http:; media-src 'self' file: data: blob: acode-media: https: http:; font-src 'self' file: data:; connect-src 'self' file: data: blob: ws: wss: http: https: acode-media:; worker-src 'self' file: blob:; frame-src http: https: 'self' file:; object-src 'none'; base-uri 'none'; form-action 'none'"
+      content="default-src 'none'; script-src 'self' file: 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' file: 'unsafe-inline'; img-src 'self' file: data: blob: acode-media: https: http:; media-src 'self' file: data: blob: acode-media: https: http:; font-src 'self' file: data:; connect-src 'self' file: data: blob: ws: wss: http: https: acode-media:; worker-src 'self' file: blob:; frame-src http: https: 'self' file:; object-src 'none'; base-uri 'none'; form-action 'none'"
     />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>ACode</title>

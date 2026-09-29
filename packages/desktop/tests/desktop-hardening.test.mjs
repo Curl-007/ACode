@@ -226,8 +226,19 @@ test("main renderer index.html carries a CSP that blocks remote script while ser
   assert.deepEqual(directives.get("default-src"), ["'none'"]);
   assert.deepEqual(
     directives.get("script-src"),
-    ["'self'", "file:", "'unsafe-inline'"],
-    "script-src must allow self + file: (packaged loadFile) + inline (startup script / vite dev)",
+    ["'self'", "file:", "'unsafe-inline'", "'wasm-unsafe-eval'"],
+    "script-src must allow self + file: (packaged loadFile) + inline (startup script / vite dev) + wasm (Shiki)",
+  );
+  // 回归守护：主窗 Shiki 代码高亮经 WebAssembly.instantiate 编译，缺 'wasm-unsafe-eval' 会被 CSP
+  // 拦下（代码高亮/diff/office 预览全坏）。dev desktop 启动冒烟实测到过该违规，故钉死。
+  assert.ok(
+    directives.get("script-src").includes("'wasm-unsafe-eval'"),
+    "script-src must keep 'wasm-unsafe-eval' for Shiki/Oniguruma WASM (code highlighting)",
+  );
+  // 'wasm-unsafe-eval' 只放行 WASM 编译，不放行任意 eval()——绝不能退化成 'unsafe-eval'。
+  assert.ok(
+    !directives.get("script-src").includes("'unsafe-eval'"),
+    "script-src must not widen to 'unsafe-eval' (wasm-unsafe-eval is the narrow form)",
   );
   assert.ok(directives.get("object-src")[0] === "'none'", "object-src must be none");
   assert.ok(directives.get("base-uri")[0] === "'none'", "base-uri must be none");

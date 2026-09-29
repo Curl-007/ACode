@@ -279,6 +279,12 @@ done
     AsarIntegrity win 全开/mac 仅签名构建）+ afterPack 后 asar 完整性刷新（防本包
     重写 asar 导致 bricking，刷新失败即打包失败）；Chrome 提权门改 main 持有
     （win32 + v20 行嗅探 + dialog 显式确认，载荷不再被信任）。测试 10 例。
+    **运行时冒烟补漏（302bc8a）**：主 renderer CSP 原缺 `'wasm-unsafe-eval'`，dev desktop
+    启动冒烟实测到 `WebAssembly.instantiate()` 被拦——Shiki 代码高亮（Oniguruma WASM）/diff
+    viewer/office 预览全失效，是上批主窗 CSP 的既有运行时回归（配置层测试照不到）。已给主窗
+    script-src 补 `'wasm-unsafe-eval'`（只放行 WASM 编译、不放行任意 eval；辅助窗无 WASM 消费方
+    刻意不加）。经 CDP 实测运行中 renderer 确认 WASM_OK、0 违规、截图 UI 完整渲染。
+    **教训**：CSP 类改动必须配运行时冒烟，配置层断言不足以发现「策略过严阻断合法 WASM」。
     **两处与计划的偏离（spec §5 记录）**：RunAsNode 与 EnableNodeOptionsEnvironmentVariable
     保持开启——打包 agent 经 electron.exe+ELECTRON_RUN_AS_NODE 启动，且后者同时控制
     NODE_EXTRA_CA_CERTS（agent 自定义 CA 信任）；待独立 node 二进制工程落地后一并关。

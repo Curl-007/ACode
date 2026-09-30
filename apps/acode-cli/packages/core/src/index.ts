@@ -126,6 +126,9 @@ export {
   // 安全加固 P2 补丁项：托管策略地板的进程级注册点（create-app 唯一调用方；
   // get/reset 仅供测试，从 src 路径直接导入，不进公开入口避免无消费者导出）。
   setProcessManagedPolicyFloor,
+  // J1-2：反射门审计 sink 的进程级注册点（create-app 唯一调用方，接 info 级 Logger
+  // 落 JSONL；缺省 sink 写 stderr，见 specs/bash-confirm-reflexive-gate.md R6）。
+  setBashReflexAuditSink,
 } from "./permission/index.js";
 export type {
   ManualPermissionBrokerOptions,
@@ -135,6 +138,7 @@ export type {
   PermissionToolCapability,
 } from "./permission/index.js";
 export type { PermissionConfig } from "./permission/index.js";
+export type { BashReflexAuditEntry, BashReflexAuditSink } from "./permission/index.js";
 
 // Runtime
 export { AgentRuntime } from "./runtime.js";

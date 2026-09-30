@@ -11,7 +11,13 @@ import {
 } from "@acode/contracts";
 import type { SchedulerCollection, WorkflowGraphRecordEdge } from "./types.js";
 
-const COMPLETED_NODE_STATUSES = new Set<WorkflowNodeStatus>(["cancelled", "completed", "skipped"]);
+// done 状态集合的唯一所有者：调度完成判定与 critic gate 审计范围（artifact-gate.ts）
+// 共用同一份定义，避免「哪些状态算 done」出现第二个事实来源。
+export const COMPLETED_NODE_STATUSES = new Set<WorkflowNodeStatus>([
+  "cancelled",
+  "completed",
+  "skipped",
+]);
 
 export function readyExecutableNodes(
   graph: WorkflowGraph,
@@ -88,7 +94,7 @@ export function areExecutableNodesComplete(
 export function updateGraphNode(
   snapshot: WorkflowRunSnapshot,
   nodeId: string,
-  patch: Partial<Pick<WorkflowGraphNode, "attempts" | "error" | "status">>,
+  patch: Partial<Pick<WorkflowGraphNode, "artifactRequeues" | "attempts" | "error" | "status">>,
 ): WorkflowRunSnapshot {
   return {
     ...snapshot,

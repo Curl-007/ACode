@@ -4,7 +4,11 @@
 
 import {
   CoreErrorType,
+  appendConfidenceObservation,
+  completionGateErrorMessage,
   computeAvailable,
+  findCompletionGateViolations,
+  isSameTodoContent,
   normalizeTodos,
   TodoReadInputJsonSchema,
   TodoReadInputSchema,
@@ -15,6 +19,7 @@ import {
   TodoWriteOutputJsonSchema,
   TodoWriteOutputSchema,
   createCoreError,
+  type NormalizedTodo,
   type TodoItem,
   type TodoItemView,
   type TodoReadOutput,
@@ -68,17 +73,69 @@ const todoWriteHandler: ToolHandler = async (input, context) => {
   // 写入合法性（唯一性/悬空引用/环/metadata 上界）已由 TodoWriteInputSchema.superRefine
   // 在 parse 时判定——报错时下面的 read/update 都不会执行（验收场景 1「不静默断边」）。
   const normalized = normalizeTodos(todos);
-  const views = toTodoViews(normalized);
+  // J2-1（specs/todo-confidence-semantics.md R2/R3）：门槛与 history 追加都需要旧列表，
+  // readTodos 提前到判定之前；本 handler 是 confidenceHistory 的唯一写入路径。
+  const prior = normalizeTodos(
+    await context.sessionStore.readTodos({ sessionID: context.sessionId }),
+  );
 
-  const oldTodos = await context.sessionStore.readTodos({ sessionID: context.sessionId });
-  await context.sessionStore.updateTodos({ sessionID: context.sessionId, todos: normalized });
+  // R3 完成门槛：新完成转移缺足够证据状态 → 立即抛 InvalidInput（updateTodos 不执行，
+  // 持久化零写入）；grandfather 豁免（旧列表已 completed 的项重发不受检）。
+  // 文案点名 id 但不披露枚举排序/门槛边界（保密规则见 completionGateErrorMessage）。
+  const violations = findCompletionGateViolations(normalized, prior);
+  if (violations.length > 0) {
+    throw createCoreError(CoreErrorType.InvalidInput, completionGateErrorMessage(violations), {
+      context: {
+        toolCallId: context.toolCallId,
+        toolName: "TodoWrite",
+        todoIds: violations.map((violation) => violation.id),
+      },
+      recoverable: true,
+    });
+  }
+
+  // R2 工具自有 history：模型自报的 confidenceHistory 已在 schema 层被 strip
+  // （不是可写面成员）；这里按 id+content 双匹配旧项轨迹（对抗复核 F1，单一实现
+  // isSameTodoContent），每项最多追加一条观测
+  // （机制参照 jcode (MIT) crates/jcode-app-core/src/tool/todo.rs:26-68，自撰实现）。
+  const stored = mergeConfidenceHistory(normalized, prior);
+  const views = toTodoViews(stored);
+
+  await context.sessionStore.updateTodos({ sessionID: context.sessionId, todos: stored });
 
   return {
-    oldTodos: toTodoViews(oldTodos),
+    oldTodos: toTodoViews(prior),
     todos: views,
     summary: summarizeTodos(views),
   } satisfies TodoWriteOutput;
 };
+
+/**
+ * J2-1 R2：把本次提交的 completionConfidence 观测折叠进工具维护的轨迹。
+ * 无观测且旧项无轨迹 → 原样返回（undefined 不物化空数组，旧格式项逐字节不变）；
+ * 轨迹通过 appendConfidenceObservation 纯函数追加（连续去重 + 滑动窗口）。
+ * 对抗复核 F1：继承判据与 R3 门槛豁免同款 id+content 双匹配（isSameTodoContent 单一实现）
+ * ——同 id 但内容变更的项不继承旧轨迹，从本次观测重新开始；否则「剪枝补位/重排/显式 id
+ * 换内容」的项会继承前项 ["verified"] 类轨迹，制造伪爬升，污染 J2-2 spike 检测数据源。
+ */
+function mergeConfidenceHistory(
+  submitted: readonly NormalizedTodo[],
+  prior: readonly NormalizedTodo[],
+): TodoItem[] {
+  const priorById = new Map<string, NormalizedTodo>();
+  for (const todo of prior) {
+    priorById.set(todo.id, todo);
+  }
+  return submitted.map((todo) => {
+    const priorTodo = priorById.get(todo.id);
+    const inherited =
+      priorTodo !== undefined && isSameTodoContent(todo, priorTodo)
+        ? priorTodo.confidenceHistory
+        : undefined;
+    const history = appendConfidenceObservation(inherited, todo.completionConfidence);
+    return history === undefined ? todo : { ...todo, confidenceHistory: [...history] };
+  });
+}
 
 /**
  * R4：available 是当次列表的派生只读投影——不落库、不进 journal、不跨调用缓存
@@ -159,7 +216,9 @@ export const todoWriteToolEntry: ToolEntry = {
 - Keep one item \`in_progress\` at a time and mark it \`completed\` when done.
 - Optionally give an item a stable \`id\` (unique within the list); items without one are assigned a position-derived id like \`todo-0\` in the stored and returned list.
 - \`blockedBy\` lists ids from the same submitted list that must complete first: each referenced item must carry an explicit \`id\`, and dangling references or dependency cycles are rejected. Every returned item is marked \`available\` when it is pending and unblocked (no \`blockedBy\` left, or all referenced items completed), and \`summary.available\` counts them.
-- \`metadata\` is a bounded annotation object (max 16 keys, 64-char keys, 4 KB serialized, JSON values only); it is pure annotation and never affects ordering or counts.`,
+- \`metadata\` is a bounded annotation object (max 16 keys, 64-char keys, 4 KB serialized, JSON values only); it is pure annotation and never affects ordering or counts.
+- \`completionConfidence\` records the evidence behind an item's completion — report it from what you actually observed, not from what you hope is true. Marking an item \`completed\` without sufficient completion evidence is rejected with the item named; run the checks first, then report from the evidence you have.
+- Each returned item carries a tool-maintained \`confidenceHistory\` (the trail of \`completionConfidence\` values reported for it, oldest first); any \`confidenceHistory\` you submit is ignored.`,
     readOnly: true,
     destructive: false,
     concurrentSafe: false,

@@ -20,6 +20,7 @@ import { createMcpAdapter } from "@acode/adapters/mcp";
 import {
   AgentRuntime,
   PermissionService,
+  setBashReflexAuditSink,
   setProcessManagedPolicyFloor,
   buildPluginReferenceCatalog,
   type AmendWorkflowRunSettingsInput,
@@ -188,6 +189,28 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
   const logger = loggerFactory.createLogger("acode").child({
     ...traceContextToLogContext(traceContext),
     module: "bootstrap",
+  });
+  // J1-2（specs/bash-confirm-reflexive-gate.md R6）：反射门 auditedAllow 的审计必须落盘。
+  // gate 模块的缺省 sink 只写一行 stderr——宿主不重定向就没有任何持久记录，而 allow lane
+  // 的入口包含项目 allow 规则/allowedTools/会话规则（不只是 yolo），confirm 级破坏命令
+  // 不能在只留一行易失 stderr 的情况下执行（评审 J1-2 修复，plan 验收项「yolo 下审计
+  // 日志落盘」）。这里把 sink 接到 info 级 Logger：NodeFileLogger 以 appendFileSync 写
+  // JSONL 日志文件（@acode/adapters/logging），与 setProcessManagedPolicyFloor 同一
+  // 「bootstrap 装配期注册进程级 hook」形态。
+  const permissionAuditLogger = loggerFactory.createLogger("acode").child({
+    ...traceContextToLogContext(traceContext),
+    module: "core.permission",
+  });
+  setBashReflexAuditSink((entry) => {
+    permissionAuditLogger.info("Bash reflex gate allowed a confirm-level command", {
+      assessmentReasons: entry.assessmentReasons,
+      command: entry.command,
+      event: entry.event,
+      justification: entry.justification,
+      ruleId: entry.ruleId,
+      status: "completed",
+      timestamp: entry.timestamp,
+    });
   });
   const startupTimer = new StartupTimer(
     logger,

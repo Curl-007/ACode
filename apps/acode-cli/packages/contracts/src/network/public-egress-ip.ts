@@ -41,6 +41,18 @@ const BLOCKED_IP_RANGES: BlockedIpRange[] = [
   { address: "fc00::", family: "ipv6", prefix: 7, reason: "unique-local IPv6 address" },
   { address: "fe80::", family: "ipv6", prefix: 10, reason: "link-local IPv6 address" },
   { address: "ff00::", family: "ipv6", prefix: 8, reason: "multicast IPv6 address" },
+  // IPv6 过渡/保留段（对抗复核 F1）：这些段会把内网/保留 IPv4 地址编码进 IPv6 字面量
+  // （如 NAT64 WKP `64:ff9b::a9fe:a9fe` 内嵌 169.254.169.254 云元数据地址），仅凭
+  // IPv4 段与既有 IPv6 段判不到。本表是 doctor endpoint-policy（R4）与 core WebFetch
+  // egress guard 的共享事实源——补段两侧同时收紧（安全方向，无放宽）。
+  {
+    address: "64:ff9b::",
+    family: "ipv6",
+    prefix: 96,
+    reason: "NAT64 well-known prefix (RFC 6052)",
+  },
+  { address: "2002::", family: "ipv6", prefix: 16, reason: "6to4 transition range (RFC 7526)" },
+  { address: "2001::", family: "ipv6", prefix: 32, reason: "Teredo tunneling range (RFC 7359)" },
 ];
 
 const BLOCKED_PUBLIC_EGRESS_RANGES = BLOCKED_IP_RANGES.map((range) => {

@@ -2,26 +2,35 @@
 //
 // 一组内置的危险动作检查：**即使 yolo/bypass 也强制降级为 ask**。把「yolo = 无条件放行」
 // 改成「yolo = 放行除熔断器外的一切」。规格见
-// apps/acode-cli/specs/managed-policy-floor-and-bypass-immune-breakers.md R2。
+// apps/acode-cli/specs/managed-policy-floor-and-bypass-immune-breakers.md R2
+// 与 apps/acode-cli/specs/bash-target-blast-radius.md R5（J1-1 新增 deny 级命中类）。
 //
 // 设计约束：
 // - 纯函数、无 IO、不依赖配置——熔断器是代码内不变量，策略地板只能额外收紧、不能放松它。
-// - 只降级 allow：调用方（PermissionService）仅在决策为 allow 时应用本模块的命中结果，
-//   deny/ask 分支永远不经过这里，因此熔断器不可能把更严的决策放宽。
-// - 命中返回 ask 而非 deny：保留用户「我知道我在做什么」的最终决定权，与既有 ask 语义一致。
+// - 只降级、永不放宽：调用方（PermissionService）保证本模块的命中只会把决策改严。
+// - 命中分两级（J1-1 起）：
+//   · ask 级（缺省，既有三类）：保留用户「我知道我在做什么」的最终决定权，与既有
+//     ask 语义一致；decision 已是 ask 时不覆写原 ruleId。
+//   · deny 级（behavior: "deny"，仅 catastrophic 目标档）：「永不执行、任何论证不
+//     解锁」，把 allow 与 ask 一并降级为 deny——deny 比两者都严，不违反上一条不变量。
+//     用户最终决定权的体现是工具拒绝充当执行载体，用户仍可在工具外自行执行。
 // - 本模块**从不执行**任何外部程序：只对工具入参字符串做静态判定。Bash 文本的结构分析
-//   委托给既有的 bash-command-parser（unbash AST），本模块只消费其纯数据结果。
+//   委托给既有的 bash-command-parser（unbash AST），本模块只消费其纯数据结果；
+//   目标 blast-radius 分级委托给 bash-target-risk（同为纯函数）。
 import { homedir } from "node:os";
 import { isAbsolute, normalize, relative, resolve, sep } from "node:path";
 import {
   analyzeBashCommand,
   extractForcedDeleteCandidates,
 } from "../tool/handlers/bash-command-parser.js";
+import { assessBashCommandTargetRisk } from "../tool/handlers/bash-target-risk/index.js";
 import type { PermissionContext } from "./service.js";
 
 export interface BypassImmuneBreakerHit {
   readonly ruleId: string;
   readonly reason: string;
+  /** 缺省 "ask"（只降级 allow）；"deny" 为 J1-1 catastrophic 目标档的绝对拒绝。 */
+  readonly behavior?: "ask" | "deny";
 }
 
 export interface BypassImmuneBreakerContext {
@@ -31,12 +40,49 @@ export interface BypassImmuneBreakerContext {
   readonly workspaceRoot?: string;
 }
 
-/** 按 R3 顺序评估三类熔断器，返回第一个命中；无命中返回 undefined。 */
+/**
+ * 按 R3 顺序评估熔断器，返回第一个命中；无命中返回 undefined。
+ * J1-1 的 catastrophic 目标档排在最前（deny 严于 ask，首命中即最严命中）；
+ * 既有三类的相对顺序与 ruleId 保持不变。
+ */
 export function evaluateBypassImmuneBreakers(
   context: BypassImmuneBreakerContext,
 ): BypassImmuneBreakerHit | undefined {
   return (
-    checkForcedRootDelete(context) ?? checkPathEscapeWrite(context) ?? checkSensitiveRead(context)
+    checkCatastrophicBashTarget(context) ??
+    checkForcedRootDelete(context) ??
+    checkPathEscapeWrite(context) ??
+    checkSensitiveRead(context)
+  );
+}
+
+// ── 类 4（J1-1）：catastrophic 目标 blast-radius ─────────────────────
+
+function checkCatastrophicBashTarget(
+  context: BypassImmuneBreakerContext,
+): BypassImmuneBreakerHit | undefined {
+  if (context.toolName !== "Bash") return undefined;
+  const bashText = stringField(context.input, "command");
+  if (!bashText) return undefined;
+
+  const assessment = assessBashCommandTargetRisk(bashText, {
+    workingDirectory: context.workingDirectory,
+    workspaceRoot: context.workspaceRoot,
+    homeDirectory: homedir(),
+    platform: process.platform,
+  });
+  if (assessment.level !== "catastrophic") return undefined;
+
+  const first = assessment.findings.find((item) => item.level === "catastrophic");
+  const detail = first
+    ? `${first.reason}${first.target ? ` (target: ${first.target})` : ""}`
+    : "command targets a path that must never be destroyed";
+  return hit(
+    "breaker.bashTargetCatastrophic",
+    `Bash command blocked: ${detail}. This target class is never permitted through the Bash tool. ` +
+      "No justification, permission rule, or mode unlocks it — narrow the target to a specific " +
+      "workspace path, or ask the user to run the command themselves.",
+    "deny",
   );
 }
 
@@ -230,8 +276,12 @@ function matchesSensitiveLocation(value: string): boolean {
 
 // ── 共用 ──────────────────────────────────────────────────────────────
 
-function hit(ruleId: string, reason: string): BypassImmuneBreakerHit {
-  return Object.freeze({ ruleId, reason });
+function hit(
+  ruleId: string,
+  reason: string,
+  behavior: "ask" | "deny" = "ask",
+): BypassImmuneBreakerHit {
+  return Object.freeze(behavior === "deny" ? { ruleId, reason, behavior } : { ruleId, reason });
 }
 
 function stringField(input: unknown, key: string): string | undefined {

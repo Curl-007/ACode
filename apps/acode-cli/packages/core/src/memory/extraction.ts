@@ -1,7 +1,5 @@
 import type { MessageId, MessageWithParts, ToolPart } from "@acode/contracts";
 import { resolveContainedMemoryFilePath } from "./memory-file-path.js";
-import { formatMemoryManifest } from "./recall/manifest.js";
-import type { MemoryManifestEntry } from "./recall/types.js";
 
 const MINIMUM_USER_WORDS = 3;
 
@@ -40,13 +38,19 @@ export interface MemoryExtractionScheduler<
 }
 
 export function buildMemoryExtractionPrompt(input: {
-  manifest: readonly MemoryManifestEntry[];
   messageCount: number;
+  /**
+   * 已通过重验证的召回块（specs/memory-injection-fail-closed.md R4/R8）。
+   * `undefined` = 这次没有可注入的既有记忆清单：要么目录本来就空，要么清单在注入前
+   * 被 fail-closed 整体丢弃（记忆被改写/删除、身份或 scope 变更、存储不可读、同名歧义）。
+   * 此时整块（标题 + 清单 + 查重提示）都不出现——绝不注入部分清单，也绝不注入一份
+   * 与盘上状态可能不一致的旧清单让子代理据此决定「更新哪个文件而不是新建」。
+   */
+  recallBlock?: string;
 }): string {
-  const existingMemories =
-    input.manifest.length > 0
-      ? `\n\n## Existing memory files\n\n${formatMemoryManifest(input.manifest)}\n\nCheck this list before writing \u2014 update an existing file rather than creating a duplicate.`
-      : "";
+  const existingMemories = input.recallBlock
+    ? `\n\n${input.recallBlock}\n\nCheck this list before writing \u2014 update an existing file rather than creating a duplicate.`
+    : "";
 
   return [
     `You are now acting as the memory extraction subagent. Analyze the most recent ~${input.messageCount} messages above and use them to update your persistent memory systems.`,

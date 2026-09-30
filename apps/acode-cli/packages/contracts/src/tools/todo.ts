@@ -7,14 +7,19 @@ import { z } from "zod";
 import type { ToolCallId, TraceId } from "../interfaces/shared.js";
 import { toToolJsonSchema } from "./json-schema.js";
 import {
+  TODO_CONFIDENCE_HISTORY_MAX,
+  TodoCompletionConfidenceSchema,
+} from "./todo-confidence.js";
+import {
   TodoBlockedBySchema,
   TodoIdSchema,
   TodoMetadataSchema,
   validateTodoList,
 } from "./todo-deps.js";
 
-// D4 依赖字段的常量与纯函数物理家在 ./todo-deps.js（避免运行时循环导入）；
-// 对本模块原样再导出，消费方导出面与 spec todo-dependency-fields.md「接口」节一致。
+// D4 依赖字段的常量与纯函数物理家在 ./todo-deps.js、J2-1 置信度的在 ./todo-confidence.js
+// （避免运行时循环导入；后者独立成文件是 AGENTS.md 单文件 400 行上限）；
+// 对本模块原样再导出，消费方导出面与 spec「接口」节一致。
 export {
   TODO_BLOCKED_BY_MAX_ITEMS,
   TODO_ID_MAX_CHARS,
@@ -34,6 +39,19 @@ export {
   type TodoDepsJson,
   type TodoListIssue,
 } from "./todo-deps.js";
+export {
+  TODO_CONFIDENCE_HISTORY_MAX,
+  TodoCompletionConfidenceSchema,
+  TodoConfidenceJsonSchema,
+  appendConfidenceObservation,
+  completionConfidencePassesGate,
+  completionGateErrorMessage,
+  findCompletionGateViolations,
+  isSameTodoContent,
+  type TodoCompletionConfidence,
+  type TodoCompletionGateViolation,
+  type TodoConfidenceJson,
+} from "./todo-confidence.js";
 
 export const TodoStatus = {
   Pending: "pending",
@@ -66,16 +84,43 @@ export const TodoItemSchema = z.object({
   metadata: TodoMetadataSchema.optional().describe(
     "Bounded annotation object (max 16 keys, 64-char keys, 4 KB serialized, JSON values only); pure annotation, never affects scheduling or counts",
   ),
+  // J2-1（specs/todo-confidence-semantics.md R1）：可选完成证据状态。四级语义进 describe
+  // （枚举成员在 JSON schema 天然可见，语义描述不等于门槛披露）；哪个值过完成门槛是
+  // 实现细节，不出现在任何模型可见文案里（R3/R6 保密规则）。
+  completionConfidence: TodoCompletionConfidenceSchema.optional().describe(
+    "Evidence state behind this item's completion, reported from what you actually observed: speculative (unexamined guess), plausible (reasoned but not yet checked), validated (checked against direct evidence), verified (reproduced end to end)",
+  ),
 });
 
-export type TodoItem = z.infer<typeof TodoItemSchema>;
+/**
+ * J2-1 存储/域形状（specs/todo-confidence-semantics.md R4）：可写面 + 工具自有
+ * confidenceHistory。history **不是** TodoItemSchema 的成员——模型自报的 history 被 zod
+ * 默认 strip 静默丢弃（任何形状都不报错，R2「只出不进」的类型级表达）；工具在 handler
+ * 唯一写入路径上追加（每项每次写入最多一条观测）。
+ */
+export const StoredTodoItemSchema = TodoItemSchema.extend({
+  confidenceHistory: z
+    .array(TodoCompletionConfidenceSchema)
+    .max(TODO_CONFIDENCE_HISTORY_MAX)
+    .optional()
+    .describe(
+      "Tool-owned append-only trail of completionConfidence observations, oldest first; any submitted value is ignored",
+    ),
+});
 
 /**
- * R4 输出视图：TodoItem + 派生布尔 available（pending 且未被阻塞）。
- * 只出现在输出 schema——不进 TodoItemSchema 写入面、不落库、不是第二份状态，
+ * 域类型 = 存储形状（D4「TodoItem 变宽、端口签名形状不变」同款手法）：
+ * session-store 端口、codecs、session-mapper 等消费方零改动自动兼容（可选成员加宽
+ * 对读写两个方向都结构兼容）。模型可写面是 z.infer<TodoItemSchema>（不含 history）。
+ */
+export type TodoItem = z.infer<typeof StoredTodoItemSchema>;
+
+/**
+ * R4 输出视图：存储形状 + 派生布尔 available（pending 且未被阻塞）。
+ * 只出现在输出 schema——不进 TodoItemSchema 写入面、不是第二份状态，
  * 每次读取/写入时从当次列表重算。
  */
-export const TodoItemViewSchema = TodoItemSchema.extend({
+export const TodoItemViewSchema = StoredTodoItemSchema.extend({
   available: z
     .boolean()
     .describe("Derived: pending and unblocked (no blockedBy left, or every referenced item completed)"),
@@ -197,11 +242,20 @@ export function isTodoToolName(value: string | undefined): value is "TodoRead" |
 
 /**
  * 从工具结果 JSON 里提取 todo 列表。宽容解析：只要求顶层 `todos` 数组，元素按
- * TodoItemSchema 解析（strip 掉 available 等输出视图字段）——同一函数因此同时接受
- * D4 之前（三字段、无 available）与之后（含 id/blockedBy/metadata/available）的
- * 历史结果形状。当前仓库内无调用方（knip 基线内保留的公开契约助手）。
+ * 存储形状解析（strip 掉 available 等输出视图字段）——同一函数因此同时接受
+ * D4 之前（三字段）、D4 之后（含 id/blockedBy/metadata/available）与 J2-1 之后
+ * （含 completionConfidence/confidenceHistory）的历史结果形状。元素 history **不带
+ * max(TODO_CONFIDENCE_HISTORY_MAX)**：窗口上限是存储不变量而不是解析不变量，
+ * 未来版本放宽窗口后回滚，历史结果仍可解析。当前仓库内无调用方（knip 基线内保留的
+ * 公开契约助手）。
  */
-const TodoResultContentSchema = z.object({ todos: z.array(TodoItemSchema) });
+const TodoResultContentSchema = z.object({
+  todos: z.array(
+    TodoItemSchema.extend({
+      confidenceHistory: z.array(TodoCompletionConfidenceSchema).optional(),
+    }),
+  ),
+});
 
 export function todoItemsFromToolResultContent(content: string): TodoItem[] | undefined {
   let parsed: unknown;

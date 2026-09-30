@@ -301,6 +301,154 @@ function isModelMediaTooLargeMarker(value: string | undefined): boolean {
   return value !== undefined && MODEL_MEDIA_TOO_LARGE_MARKERS.has(value.trim().toLowerCase());
 }
 
+/**
+ * HTTP 413「请求体字节超限」判定——与 token 上下文超限是两条独立失败路径。
+ *
+ * 机制参照 jcode (MIT) crates/jcode-compaction-core/src/lib.rs:602-631
+ * （is_request_payload_too_large_error + contains_independent_status_code），自撰实现。
+ *
+ * 413 由序列化后的请求体字节数触发（几乎总是内联 base64 媒体），token 会计有意不按 base64
+ * 长度计费，所以 `isModelContextExceededError` 与 `isModelMediaTooLargeError` 都不会命中它：
+ * adapter 把 413 归一成 `MODEL_REQUEST_FAILED` + `reason: unknown`（不可重试），
+ * 只把真实状态码留在 `context.statusCode`（`adapters/src/model/runner-retry.ts:136`）。
+ * 恢复动作见 `compact/payload-recovery.ts`（逐级收缩媒体字节预算后重试）。
+ */
+export function isModelRequestPayloadTooLargeError(error: unknown): boolean {
+  let current = error;
+  const seen = new WeakSet<object>();
+
+  for (let depth = 0; depth <= 6; depth += 1) {
+    if (current === undefined || current === null) return false;
+    if (typeof current !== "object") return false;
+    if (seen.has(current)) return false;
+    seen.add(current);
+
+    const record = current as Record<string, unknown>;
+    if (isPayloadTooLargeStatusRecord(record)) return true;
+    if (
+      isModelRequestPayloadTooLargeMarker(stringProperty(record, "type")) ||
+      isModelRequestPayloadTooLargeMarker(stringProperty(record, "code")) ||
+      isModelRequestPayloadTooLargeMarker(stringProperty(record, "reason")) ||
+      isModelRequestPayloadTooLargeMarker(stringProperty(record, "stopReason")) ||
+      isModelRequestPayloadTooLargeMessage(stringProperty(record, "message"))
+    ) {
+      return true;
+    }
+
+    const context = isPlainRecord(record.context) ? record.context : undefined;
+    if (
+      context &&
+      (isPayloadTooLargeStatusRecord(context) ||
+        isModelRequestPayloadTooLargeMarker(stringProperty(context, "type")) ||
+        isModelRequestPayloadTooLargeMarker(stringProperty(context, "code")) ||
+        isModelRequestPayloadTooLargeMarker(stringProperty(context, "reason")) ||
+        isModelRequestPayloadTooLargeMessage(stringProperty(context, "message")))
+    ) {
+      return true;
+    }
+
+    current = record.cause ?? record.lastError ?? record.error;
+  }
+
+  return false;
+}
+
+const HTTP_PAYLOAD_TOO_LARGE_STATUS = 413;
+
+/** 归一化边界上可能承载 HTTP 状态码的字段名（adapter 与 provider 业务错误各用不同键）。 */
+const PAYLOAD_TOO_LARGE_STATUS_KEYS = [
+  "statusCode",
+  "responseStatus",
+  "httpStatus",
+  "httpStatusCode",
+  "httpResponseStatus",
+  "status",
+] as const;
+
+const MODEL_REQUEST_PAYLOAD_TOO_LARGE_MARKERS = new Set<string>([
+  "request_too_large",
+  "payload_too_large",
+  "request_entity_too_large",
+  "request_payload_too_large",
+  "http_413",
+]);
+
+const MODEL_REQUEST_PAYLOAD_TOO_LARGE_MESSAGE_PATTERNS = [
+  "payload too large",
+  "request too large",
+  "request entity too large",
+  "request body too large",
+  "request exceeds the maximum size",
+  "exceeds the maximum size",
+];
+
+/**
+ * 裸「413」只在 HTTP/体积语境下才算字节超限。
+ * jcode 直接匹配独立 413；ACode 的 token 超窗文案里也可能出现三位数
+ * （如 `prompt is too long: 413 tokens > 200 maximum`），误判会把 token 轨道的
+ * 丢轮次恢复换成媒体剥离，因此这里额外要求一个体积/状态语境词。
+ */
+const PAYLOAD_TOO_LARGE_MESSAGE_CONTEXT_WORDS = [
+  "http",
+  "status",
+  "payload",
+  "entity",
+  "body",
+  "size",
+  "bytes",
+];
+
+function isPayloadTooLargeStatusRecord(record: Record<string, unknown>): boolean {
+  return PAYLOAD_TOO_LARGE_STATUS_KEYS.some(
+    (key) => numberProperty(record, key) === HTTP_PAYLOAD_TOO_LARGE_STATUS,
+  );
+}
+
+function isModelRequestPayloadTooLargeMarker(value: string | undefined): boolean {
+  return (
+    value !== undefined && MODEL_REQUEST_PAYLOAD_TOO_LARGE_MARKERS.has(value.trim().toLowerCase())
+  );
+}
+
+function isModelRequestPayloadTooLargeMessage(value: string | undefined): boolean {
+  const message = value?.trim().toLowerCase();
+  if (!message) return false;
+  if (
+    MODEL_REQUEST_PAYLOAD_TOO_LARGE_MESSAGE_PATTERNS.some((pattern) => message.includes(pattern))
+  ) {
+    return true;
+  }
+  return (
+    containsIndependentStatusCode(message, String(HTTP_PAYLOAD_TOO_LARGE_STATUS)) &&
+    PAYLOAD_TOO_LARGE_MESSAGE_CONTEXT_WORDS.some((word) => message.includes(word))
+  );
+}
+
+/**
+ * `code` 是否作为独立状态码出现，而不是更长数字的片段（"413" 命中，"4130"/"41300" 不命中）。
+ * 与 jcode `contains_independent_status_code` 同口径：前后都不得紧邻 ASCII 数字。
+ */
+function containsIndependentStatusCode(haystack: string, code: string): boolean {
+  let fromIndex = 0;
+  while (fromIndex <= haystack.length - code.length) {
+    const start = haystack.indexOf(code, fromIndex);
+    if (start < 0) return false;
+    const before = start === 0 ? undefined : haystack[start - 1];
+    const after = haystack[start + code.length];
+    const isDigit = (value: string | undefined): boolean =>
+      value !== undefined && value >= "0" && value <= "9";
+    if (!isDigit(before) && !isDigit(after)) return true;
+    fromIndex = start + 1;
+  }
+  return false;
+}
+
+function numberProperty(record: Record<string, unknown>, key: string): number | undefined {
+  const value = record[key];
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+  return Math.trunc(value);
+}
+
 function isModelContextExceededMessage(value: string | undefined): boolean {
   const message = value?.trim().toLowerCase();
   if (!message) return false;

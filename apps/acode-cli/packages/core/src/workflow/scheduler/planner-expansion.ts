@@ -3,6 +3,7 @@ import {
   type WorkflowGraph,
   type WorkflowGraphNode,
   type WorkflowGraphPlannerNode,
+  type WorkflowGraphPlannerResult,
   type WorkflowRunSnapshot,
 } from "@acode/contracts";
 import {
@@ -26,7 +27,16 @@ export function applyPlannerExpansion(
   unseenCompletions: readonly string[],
   timestamp: string,
 ): AppliedPlannerExpansion {
-  const result = WorkflowGraphPlannerResultSchema.parse(rawResult);
+  // 对抗复核 F-1（specs/workflow-typed-artifacts.md R11）：schema 现在对节点 id 做
+  // trim+min(1) 校验；把 ZodError 包装为人可读错误——planner_failed 事件的 message 直接
+  // 面向用户时间线，裸 ZodError 的 JSON 串难以定位是哪个节点被拒。
+  let result: WorkflowGraphPlannerResult;
+  try {
+    result = WorkflowGraphPlannerResultSchema.parse(rawResult);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(`Planner returned an invalid graph expansion: ${reason}`);
+  }
   const existingNodeIds = new Set(snapshot.graph.nodes.map((node) => node.id));
   const addedNodes = (result.nodes ?? []).map((node) =>
     workflowNodeFromPlannerNode(node, collection.collectionId),

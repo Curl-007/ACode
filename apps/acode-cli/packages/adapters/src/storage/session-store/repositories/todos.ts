@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { SessionId, TodoItem } from "@acode/contracts";
-import { decodeTodoRow, encodeTodoDeps } from "../codecs.js";
+import { decodeTodoRow, encodeTodoConfidence, encodeTodoDeps } from "../codecs.js";
 import type { TodoRow } from "../rows.js";
 import { touchSession } from "./sessions.js";
 
@@ -32,12 +32,14 @@ export async function updateTodos(
     db.prepare("delete from todo where session_id = ?").run(input.sessionID);
     if (input.todos.length > 0) {
       // D4：deps_json 是 id/blockedBy/metadata 的唯一持久化家（migration 0023，nullable）。
+      // J2-1：confidence_json 是 completionConfidence/confidenceHistory 的唯一持久化家
+      // （migration 0024，nullable，specs/todo-confidence-semantics.md R5）。
       // 写入的是调用方给的规范化结果，本层不再做第二份规范化（唯一写入路径纪律）。
       const insert = db.prepare(
         `
         insert into todo (
-          session_id, content, status, priority, position, time_created, time_updated, deps_json
-        ) values (?, ?, ?, ?, ?, ?, ?, ?)
+          session_id, content, status, priority, position, time_created, time_updated, deps_json, confidence_json
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
       );
 
@@ -51,6 +53,7 @@ export async function updateTodos(
           now,
           now,
           encodeTodoDeps(todo),
+          encodeTodoConfidence(todo),
         );
       }
     }

@@ -3,6 +3,7 @@
 // ============================================================
 // specs/todo-dependency-fields.md R1–R4：规范化（铸派生 id）、环检测、available 派生，
 // 以及写入合法性规则（id 唯一性 / 悬空引用 / 派生 id 引用 / metadata 上界）。
+// J2-1 完成置信度的纯函数在同目录 ./todo-confidence.ts（400 行文件上限，AGENTS.md）。
 // 单一实现，两处共享：TodoWriteInputSchema.superRefine（写入合法性唯一判定点）与
 // core handler 的输出投影（依赖方向 core→contracts 允许共享，反向不允许——这正是
 // 本文件落在 contracts 而不是 core 的原因，见 spec 实施记录）。

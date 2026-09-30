@@ -10,6 +10,7 @@ import type {
   WorkflowGraphRecord,
   WorkflowRunSnapshot,
 } from "@acode/contracts";
+import type { WorkflowGateSettings } from "../artifact-gate.js";
 
 export interface WorkflowGraphSchedulerActivityInput {
   abortSignal?: AbortSignal;
@@ -101,6 +102,9 @@ export interface WorkflowGraphSchedulerDeps {
 
 export interface WorkflowGraphSchedulerRunOptions {
   abortSignal?: AbortSignal;
+  // J2-3（specs/workflow-typed-artifacts.md R4/R9）：分档 gate 设置，由 definition 解析而来。
+  // 缺省 = 未声明（light，无 artifact-or-nothing 强制），既有调用方零改动。
+  artifactGate?: WorkflowGateSettings;
   artifactDirectory?: string;
   buildPrompt?: (input: {
     node: WorkflowGraphNode;

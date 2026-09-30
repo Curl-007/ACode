@@ -74,7 +74,10 @@ P1-6 的项目 restrictive floor 是本骨架的特例（见 `project-permission
 checkPermission(context, capability, projectRules, rulePolicy)
   │
   ├─ 0. policyFloor.deny 命中            → deny   （绝对最高，压过一切分支）
-  ├─ 1. policyFloor.ask 命中             → ask    （压过 yolo / plan-readonly / allow）
+  ├─ 1. policyFloor.ask 命中             → 托底 ask（压过 yolo / plan-readonly / allow；
+  │        │                                      对抗复审 N1：不提前返回——托底后仍要过
+  │        │                                      第 6 步熔断与反射门，最严者胜，见下）
+  │        └─ 模式层给出 deny 时保留 deny（policy ask 不得把任何 deny 放宽成 ask）
   ├─ 2. disallowedTools（含策略并集）     → deny
   ├─ 3. plan-mode transition（既有）
   ├─ 4. requiresUserInteraction（既有）
@@ -84,6 +87,14 @@ checkPermission(context, capability, projectRules, rulePolicy)
   │        落入 build 判定）
   └─ 8. auto / project rules / plan / allowedTools / edit / build（既有顺序不变）
 ```
+
+**与反射门的交互（对抗复审 N1，详见 `bash-confirm-reflexive-gate.md` R7）**：
+第 1 步的 policy ask 不再是提前出口——门前 decision 托底为 ask 后，第 6 步的
+**deny 级熔断（`breaker.bashTargetCatastrophic`）先于策略 ask 收敛**（policy ask +
+`rm -rf ~` + yolo → deny，而非可批准的 ask）；confirm 级命令仍要过反射门（首调 deny
+`gate.bashConfirmReflex.reflect`，二调带有效 justification → ask，ruleId 保留
+`rule.policy.ask`，reason 同时携带策略地板与门语义）。策略地板只能收紧、不能放松
+任何既有判定（含模式层 deny）的本节总原则，在「policy ask × 熔断/门」交界处同样成立。
 
 状态所有者：策略地板的**唯一读取点**是 `adapters/src/config/managed-policy.ts`（新模块），
 由 `createConfig` 在 System 之前读入、以 `ConfigScope.Policy`（priority 60，高于 Cli 50）

@@ -18,6 +18,11 @@ import { test } from "node:test";
  *   services 位置派生 id 与 CLI 规范化同形的源码级防漂移）；
  * - 场景 10：并发写最后写入者胜；
  * - R6：工具描述三条 bullet + "# Delegating work" 纪律节的 todo 一句话（随工具面门控）。
+ *
+ * J2-1 适配（specs/todo-confidence-semantics.md「D4 测试适配记录」）：完成门槛让
+ * 「新生 completed 项无置信度」从成功变为拒绝——场景 3/5 的 completed 项补
+ * completionConfidence，场景 4 改为 grandfather 重发形态（三字段逐字节断言原样保留），
+ * 场景 6 的 legacyRow 补 confidence_json 列。其余场景不受影响。
  */
 
 const {
@@ -218,7 +223,8 @@ test("(场景3) handler 输出：逐项 available 与 summary.available 计数�
     {
       todos: [
         item("a", "pending", "high", { id: "a", blockedBy: ["b"] }),
-        item("b", "completed", "high", { id: "b" }),
+        // J2-1：新生 completed 项需携带过线的 completionConfidence（完成门槛）。
+        item("b", "completed", "high", { id: "b", completionConfidence: "verified" }),
         item("c", "in_progress", "high", { id: "c" }),
         item("d", "pending", "high"),
       ],
@@ -262,7 +268,10 @@ test("(场景4) 旧格式三字段：写入成功、三字段逐字节不变、�
     item("implement", "in_progress", "high"),
     item("test", "pending", "medium"),
   ];
-  const store = fakeStore();
+  // J2-1 适配：legacy 含新生 completed 项会被完成门槛拒绝；本场景改为 grandfather
+  // 重发形态——prior 种子 = 同一份 legacy 列表（升级前已存在的 completed 存量项），
+  // 三字段逐字节断言与计数断言原样保留，恰好钉住 R3 豁免条款与 R2「无观测不物化」。
+  const store = fakeStore(structuredClone(legacy));
   const output = await todoWriteToolEntry.handler({ todos: structuredClone(legacy) }, contextFor(store));
 
   // 旧实现的四个计数（total/pending/inProgress/completed）逐项不变：
@@ -307,7 +316,8 @@ test("(场景5) 往返一致：write → read → 逐字段相等（含 id/block
   await withStore(async (store) => {
     const submitted = [
       item("a", "pending", "high", { id: "a", blockedBy: ["b"], metadata: { est: "2h", tags: ["x"] } }),
-      item("b", "completed", "high", { id: "b" }),
+      // J2-1：新生 completed 项需携带过线的 completionConfidence（完成门槛）。
+      item("b", "completed", "high", { id: "b", completionConfidence: "verified" }),
       item("legacy shape"),
     ];
     const output = await todoWriteToolEntry.handler(
@@ -317,7 +327,8 @@ test("(场景5) 往返一致：write → read → 逐字段相等（含 id/block
     const readBack = await store.readTodos({ sessionID: "ses_d4_test" });
     assert.deepEqual(readBack, output.todos.map(({ available, ...todo }) => todo));
     assert.deepEqual(readBack[0], submitted[0]);
-    assert.deepEqual(readBack[1], submitted[1]);
+    // J2-1：读回比提交多一个工具追加的 confidenceHistory（工具自有轨迹，R2）。
+    assert.deepEqual(readBack[1], { ...submitted[1], confidenceHistory: ["verified"] });
     assert.deepEqual(readBack[2], { ...submitted[2], id: "todo-2" });
 
     // R5 协议投影（bootstrap session-mapper）：三字段仍在。
@@ -347,6 +358,7 @@ test("(场景6) migration 0023 已登记执行；旧行 deps_json=null 读回等
       time_created: 0,
       time_updated: 0,
       deps_json: null,
+      confidence_json: null, // J2-1（migration 0024）：新列旧行同为 null。
     };
     assert.deepEqual(decodeTodoRow(legacyRow), {
       content: "old",

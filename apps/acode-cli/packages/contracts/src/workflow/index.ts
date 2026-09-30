@@ -97,11 +97,25 @@ export const WorkflowPhaseDefinitionSchema = z.object({
 });
 export type WorkflowPhaseDefinition = z.infer<typeof WorkflowPhaseDefinitionSchema>;
 
+// J2-3（specs/workflow-typed-artifacts.md R9）：gate 分档 preset。light = 既有行为
+// （任意 artifact 都接受、critic 不强制点名）；deep = 全量点名校验 + artifact-or-nothing。
+// 只有 workflow definition 显式声明 deep 才启用；内建 expert definition 不声明 → light。
+export const WorkflowGatePresetSchema = z.enum(["light", "deep"]);
+export type WorkflowGatePreset = z.infer<typeof WorkflowGatePresetSchema>;
+
+export const WorkflowGatePolicySchema = z.object({
+  // deep 档 artifact-or-nothing 的 requeue 封顶（缺省 1：requeue 一次、第二次 fail）。
+  maxArtifactRequeues: z.number().int().nonnegative().optional(),
+  preset: WorkflowGatePresetSchema.default("light"),
+});
+export type WorkflowGatePolicy = z.infer<typeof WorkflowGatePolicySchema>;
+
 export const WorkflowDefinitionSchema = z
   .object({
     definitionId: z.string().min(1),
     definitionVersion: z.string().min(1),
     description: z.string().optional(),
+    gatePolicy: WorkflowGatePolicySchema.optional(),
     kind: WorkflowKindSchema,
     phaseOrder: z.array(WorkflowPhaseIdSchema).min(1),
     phases: z.array(WorkflowPhaseDefinitionSchema).min(1),
@@ -152,12 +166,51 @@ export const WorkflowDefinitionSchema = z
   });
 export type WorkflowDefinition = z.infer<typeof WorkflowDefinitionSchema>;
 
+// J2-3（specs/workflow-typed-artifacts.md R1）：节点级类型化交接 artifact 的置信度档位。
+// low 不是惩罚：它把节点路由成后续工作（critic gate 的置信度债务规则）。
+export const WorkflowArtifactConfidenceSchema = z.enum(["low", "medium", "high"]);
+export type WorkflowArtifactConfidence = z.infer<typeof WorkflowArtifactConfidenceSchema>;
+
+// 对抗复核 F-4（specs/workflow-typed-artifacts.md R1）：typed 段长度上限。typed 段随 run
+// snapshot 持久化，上限防病态模型输出把 snapshot 写爆。依据：单字符串 ≤100_000 字符（约 2.5
+// 万 token，覆盖一切合理结论文本）；数组 ≤200 项；数组条目 ≤10_000 字符（file:line / 路径 /
+// commit 引用实际远短于此）。超限 → 整块 invalid（deep 走 artifact-or-nothing，light 忽略）。
+// 上限只可放宽不可收紧：snapshot 读取路径复用本 schema，收紧会让历史 snapshot 解析失败。
+export const WORKFLOW_TYPED_ARTIFACT_TEXT_MAX_LENGTH = 100_000;
+export const WORKFLOW_TYPED_ARTIFACT_LIST_MAX_LENGTH = 200;
+export const WORKFLOW_TYPED_ARTIFACT_ITEM_MAX_LENGTH = 10_000;
+
+// 机制参照 jcode (MIT) crates/jcode-plan/src/dag/mod.rs 的 HandoffArtifact，自撰实现。
+// schema 层宽容（全字段可缺省、未知键剥离）；「deep 必填 findings/whatINotChecked/confidence」
+// 是引擎校验规则（core/src/workflow/typed-artifact.ts），不进 schema——light 档允许部分 typed 段。
+export const WorkflowArtifactTypedSchema = z.object({
+  confidence: WorkflowArtifactConfidenceSchema.optional(),
+  // 引用而非断言：约定 file:line / commit ref / path，格式不强校验（jcode 同为自由文本数组）。
+  evidence: z
+    .array(z.string().max(WORKFLOW_TYPED_ARTIFACT_ITEM_MAX_LENGTH))
+    .max(WORKFLOW_TYPED_ARTIFACT_LIST_MAX_LENGTH)
+    .default([]),
+  findings: z.string().max(WORKFLOW_TYPED_ARTIFACT_TEXT_MAX_LENGTH).default(""),
+  openQuestions: z
+    .array(z.string().max(WORKFLOW_TYPED_ARTIFACT_ITEM_MAX_LENGTH))
+    .max(WORKFLOW_TYPED_ARTIFACT_LIST_MAX_LENGTH)
+    .default([]),
+  validation: z.string().max(WORKFLOW_TYPED_ARTIFACT_TEXT_MAX_LENGTH).optional(),
+  whatINotChecked: z
+    .array(z.string().max(WORKFLOW_TYPED_ARTIFACT_ITEM_MAX_LENGTH))
+    .max(WORKFLOW_TYPED_ARTIFACT_LIST_MAX_LENGTH)
+    .default([]),
+});
+export type WorkflowArtifactTyped = z.infer<typeof WorkflowArtifactTypedSchema>;
+
 export const WorkflowArtifactSchema = z.object({
   contentType: z.string(),
   createdAt: z.string(),
   label: z.string(),
   path: z.string(),
   phase: WorkflowPhaseIdSchema.optional(),
+  // J2-3：可选 typed 段。既有路径式产物字段全部保留，历史 artifacts（无 typed）解析不变。
+  typed: WorkflowArtifactTypedSchema.optional(),
 });
 export type WorkflowArtifact = z.infer<typeof WorkflowArtifactSchema>;
 
@@ -277,6 +330,9 @@ export const WorkflowGraphNodeSchema = z.object({
   collectionId: z.string().optional(),
   id: z.string(),
   attempts: z.number().int().nonnegative().optional(),
+  // J2-3（specs/workflow-typed-artifacts.md R4）：deep 档 artifact-or-nothing 的 requeue 累计
+  // 计数。与 attempts（执行错误重试）分账；reopen 不重置（节点级总预算）。
+  artifactRequeues: z.number().int().nonnegative().optional(),
   dependsOn: z.array(z.string()).default([]),
   description: z.string().optional(),
   error: z.string().optional(),
@@ -325,7 +381,13 @@ export const WorkflowGraphPlannerNodeSchema = z.object({
   collectionId: z.string().optional(),
   dependsOn: z.array(z.string()).default([]),
   description: z.string().optional(),
-  id: z.string(),
+  // 对抗复核 F-1（specs/workflow-typed-artifacts.md R11）：planner 输出节点 id 必须 trim 后
+  // 非空。此前 `z.string()` 让 `""`/`"  "` 直接进图，deep 档 critic gate 的 mentionsNodeId
+  // 对空 id 恒 false → 任意 coverageTexts 都判 uncovered_siblings → critic 确定性死路。
+  // `.trim()` 归一使 " abc " 与 "abc" 同一身份（与 seed 路径 stringValue 同口径）；本 schema
+  // 只用于 planner LLM 输出解析（消费面核查见 spec R11），持久化节点走
+  // WorkflowGraphNodeSchema（id 仍为 z.string()），历史数据不受影响。
+  id: z.string().trim().min(1),
   kind: z.enum(["phase", "task"]).default("task"),
   phase: WorkflowPhaseIdSchema.optional(),
   prompt: z.string().optional(),

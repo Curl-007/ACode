@@ -42,6 +42,13 @@ test("(1) 解析到环回/私网/链路本地地址的域名一律拒绝（DNS �
   await expectBlocked("https://rebind.example/x", fakeLookup([{ address: "192.168.1.1", family: 4 }]), "私网 192.168");
   await expectBlocked("https://rebind.example/x", fakeLookup([{ address: "169.254.169.254", family: 4 }]), "云元数据");
   await expectBlocked("https://rebind.example/x", fakeLookup([{ address: "::1", family: 6 }]), "IPv6 环回");
+  // 对抗复核 F1：IPv6 过渡/保留段——NAT64 WKP 内嵌 IPv4（169.254.169.254 / 127.0.0.1）、
+  // 6to4、Teredo。与 doctor endpoint-policy 共享同一张 BLOCKED_IP_RANGES 表（contracts），
+  // 补段两侧同时收紧。
+  await expectBlocked("https://rebind.example/x", fakeLookup([{ address: "64:ff9b::a9fe:a9fe", family: 6 }]), "NAT64 内嵌云元数据");
+  await expectBlocked("https://rebind.example/x", fakeLookup([{ address: "64:ff9b::7f00:1", family: 6 }]), "NAT64 内嵌环回");
+  await expectBlocked("https://rebind.example/x", fakeLookup([{ address: "2002:7f00:1::1", family: 6 }]), "6to4 内嵌环回");
+  await expectBlocked("https://rebind.example/x", fakeLookup([{ address: "2001::1", family: 6 }]), "Teredo");
   // 多地址解析中只要有一个非公网即整体拒绝（重绑定的多记录形态）。
   await expectBlocked(
     "https://rebind.example/x",
@@ -62,6 +69,16 @@ test("(3) localhost/.local/单标签主机名/私网 IP 字面量在策略层拒
   await expectBlocked("https://nas.local/x", fakeLookup(PUBLIC_V4), ".local");
   await expectBlocked("https://intranet/x", fakeLookup(PUBLIC_V4), "单标签主机名");
   await expectBlocked("https://192.168.0.1/x", fakeLookup([]), "私网 IP 字面量");
+  // 对抗复核 F1：IPv6 过渡段 IP 字面量同样在策略层拒绝（带括号的 URL 形态）。
+  await expectBlocked("https://[64:ff9b::a9fe:a9fe]/x", fakeLookup([]), "NAT64 字面量");
+  await expectBlocked("https://[2002:7f00:1::1]/x", fakeLookup([]), "6to4 字面量");
+  await expectBlocked("https://[2001::1]/x", fakeLookup([]), "Teredo 字面量");
+  // 不回归：正常公网 IPv6 字面量与解析结果仍放行。
+  await assertPublicEgressDestination(new URL("https://[2606:4700::1]/x"), fakeLookup([]));
+  await assertPublicEgressDestination(
+    new URL("https://v6.example/x"),
+    fakeLookup([{ address: "2606:4700::1", family: 6 }]),
+  );
 });
 
 test("(4) 已中止的 signal 透传到 DNS 预检（继承请求超时/取消边界）", async () => {

@@ -2,7 +2,7 @@
 
 本文件是 ACode 的分优先级安全加固路线图，基于对业界通行安全设计的对照与公开资料，以及对 ACode 当前源码的逐项核实。适用于所有协作者与 AI 辅助会话；与 [AGENTS.md](../AGENTS.md) 冲突时以 AGENTS.md 为准。
 
-> **文档状态**：方案（plan）。**P0 与 P1（P1-5/6/7）已实施并验证，进度与验证记录见 [`security-hardening-handoff.md`](security-hardening-handoff.md)；P2/P3 未开始。**每项落地前先按 AGENTS.md 的 spec-first 约定更新对应 `specs/*.md`，再改代码。
+> **文档状态**：方案（plan）。**P0 与 P1（P1-5/6/7）已实施并验证，进度与验证记录见 [`security-hardening-handoff.md`](security-hardening-handoff.md)；P2 已实施（2026-09-30 核实代码+spec 俱在）、P3 未开始。**每项落地前先按 AGENTS.md 的 spec-first 约定更新对应 `specs/*.md`，再改代码。
 >
 > **生成日期**：2026-09-27。**行号时效性**：以下 `file:line` 以 2026-09-27 的检出为准，实施前需复核（行号会随版本漂移）。
 >
@@ -37,8 +37,8 @@
 | **P1-5** | BYO Provider API Key 从明文 config 迁入加密凭据库 | 继承·high | M |
 | **P1-6** | 项目级 `permission.allowedTools` 纳入信任门（对齐 hooks） | 继承·high | M |
 | **P1-7** | 更新源 env/参数覆盖加 `isPackaged` 门禁 + 修 NOTICE 文档矛盾 | 继承·medium | S |
-| **P2** | 托管策略地板（strictest-wins）+ 旁路免疫熔断器 | 机制移植 | L |
-| **P2** | 其余继承项（Electron 加固/fuse/env 白名单/工作区收敛/PKCE/http 端点告警/插件 commit 固定/子代理模式/Chrome 提权门） | 加固 | 各项 S–M |
+| **P2** | 托管策略地板（strictest-wins）+ 旁路免疫熔断器（**已实施**：`apps/acode-cli/packages/core/src/permission/process-policy-floor.ts`、`bypass-immune-breakers.ts`，spec `apps/acode-cli/specs/managed-policy-floor-and-bypass-immune-breakers.md`；2026-09-30 核实俱在） | 机制移植 | L |
+| **P2** | 其余继承项（Electron 加固/fuse/env 白名单/工作区收敛/PKCE/http 端点告警/插件 commit 固定/子代理模式/Chrome 提权门）（**已按批次实施**，各项 spec 与验证记录见 handoff §6，2026-09-30 核实；残余 #5 工作区路径收敛待产品决策） | 加固 | 各项 S–M |
 | **P3** | 能力差异化 backlog（auto 模式 LLM 分类器/heartbeat 自动化/跨厂商插件清单/prompt-cache 诊断/任务依赖图） | 非安全·已选后置 | — |
 
 > S=小（≤1 天）M=中（1–3 天）L=大（>3 天）。

@@ -120,6 +120,11 @@ function requiresProviderRuntime(argv: readonly string[]): boolean {
 
   const command = argv[0];
   if (command === undefined || command.startsWith("-")) return true;
+  // `doctor --provider` 要读同一份 Built-in / Personal Provider 配置，路径解析必须与
+  // login / tui 同源；裸 `doctor`（只看 cli/runtime/packaging 信息）不拉起 provider 资源。
+  if (command === "doctor") {
+    return argv.some((arg) => arg === "--provider" || arg.startsWith("--provider="));
+  }
   return (
     command === "tui" ||
     command === "app-server" ||

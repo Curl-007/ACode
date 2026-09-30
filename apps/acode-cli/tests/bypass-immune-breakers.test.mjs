@@ -37,10 +37,19 @@ function evaluateBashRootDelete(command) {
 }
 
 test("(8b) literal root/home targets fire; ordinary relative deletes do not", () => {
-  assert.equal(evaluateBashRootDelete("rm -rf /"), "breaker.bashRootDelete");
-  assert.equal(evaluateBashRootDelete("rm -rf ~"), "breaker.bashRootDelete");
-  assert.equal(evaluateBashRootDelete("rm -rf $HOME"), "breaker.bashRootDelete");
-  assert.equal(evaluateBashRootDelete(`rm -rf "${homedir()}"`), "breaker.bashRootDelete");
+  // J1-1（bash-target-blast-radius R5）：字面根/home 目标升级为 catastrophic 目标档
+  // 的 deny 级命中（严于类 1 的 ask），排在既有三类之前；未解析展开形态（8a）仍走类 1。
+  assert.equal(evaluateBashRootDelete("rm -rf /"), "breaker.bashTargetCatastrophic");
+  assert.equal(evaluateBashRootDelete("rm -rf ~"), "breaker.bashTargetCatastrophic");
+  assert.equal(evaluateBashRootDelete("rm -rf $HOME"), "breaker.bashTargetCatastrophic");
+  assert.equal(
+    evaluateBashRootDelete(`rm -rf "${homedir()}"`),
+    "breaker.bashTargetCatastrophic",
+  );
+  assert.equal(
+    evaluateBypassImmuneBreakers(bash("rm -rf ~"))?.behavior,
+    "deny",
+  );
   // 普通工作区删除不受影响（yolo 照常直通）。
   assert.equal(evaluateBashRootDelete("rm -rf ./build"), undefined);
   assert.equal(evaluateBashRootDelete("rm file.txt"), undefined);

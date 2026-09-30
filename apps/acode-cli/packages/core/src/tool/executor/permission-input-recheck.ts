@@ -44,6 +44,9 @@ export async function recheckPermissionHookModifiedInput(input: {
     workingDirectory: input.deps.getWorkingDirectory(),
     // 安全加固 P2：hook 可能把路径改写到工作区外——熔断器复核必须拿到同一个根。
     workspaceRoot: input.deps.getWorkspaceRoot(),
+    // 对抗复审 N3：复核与首次判定必须是同一调用方身份，否则 hook 改写后命中的反射门
+    // 挑战键会换一个身份，门把已通过反射的命令重新拒一遍（反之也防跨身份借用挑战）。
+    sessionId: input.deps.sessionId,
   };
   const rulePolicy = input.entry.resolvePermissionRulePolicy?.(
     input.modifiedInput,

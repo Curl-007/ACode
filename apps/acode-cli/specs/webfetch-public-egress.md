@@ -34,8 +34,12 @@ WebFetch 的每次 `httpClientPort.request`（含重定向逐跳）携带 `egres
 无代理时适配器必须：建连前 `assertPublicEgressDestination`（所有解析地址均为公网，
 否则 `egress_blocked`），且建连 lookup 走 `createPublicEgressLookup`（连接复用已过检
 解析）。localhost/单标签主机名/私网与保留 IP 字面量在策略层同样拒绝
-（`public-egress-policy.ts:125-139`，与字面守卫双保险）。**直连路径无逃生舱**：
-不提供关闭校验的配置或 env。
+（`public-egress-policy.ts:125-139`，与字面守卫双保险）。保留地址段由
+`contracts/src/network/public-egress-ip.ts` 的 `BLOCKED_IP_RANGES` 统一枚举（与
+doctor endpoint-policy 共享同一张表），并包含 IPv6 过渡/保留段：`64:ff9b::/96`（NAT64
+WKP）、`2002::/16`（6to4）、`2001::/32`（Teredo）——对抗复核 F1：这类段会把内网/保留
+IPv4 地址编码进 IPv6 字面量（如 `64:ff9b::a9fe:a9fe` 内嵌云元数据地址），缺段即被
+误判公网。**直连路径无逃生舱**：不提供关闭校验的配置或 env。
 
 ### R2 代理路径：显式 opt-in 降级，可观察
 

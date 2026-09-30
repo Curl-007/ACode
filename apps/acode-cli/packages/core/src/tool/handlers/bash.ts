@@ -2,6 +2,7 @@
 // Bash Tool Handler
 // ============================================================
 
+import { homedir } from "node:os";
 import {
   BashInputJsonSchema,
   BashInputSchema,
@@ -55,6 +56,10 @@ import { createBashProviderDescription } from "./bash-prompt.js";
 import { applyBashReadFileStateEffects } from "./bash-read-file-state.js";
 import { isRuntimeReadOnlyBashCommand } from "./bash-semantics.js";
 import {
+  assessBashCommandTargetRisk,
+  type TargetRiskContext,
+} from "./bash-target-risk/index.js";
+import {
   attachToolExecutionTelemetry,
   classifyCommand,
   classifySafeCommandIdentity,
@@ -74,12 +79,40 @@ const BASH_PROVIDER_DESCRIPTION = createBashProviderDescription({
   maxTimeoutMs: DEFAULT_BASH_TIMEOUT_POLICY.maxTimeoutMs,
 });
 
+/**
+ * J1-1（bash-target-blast-radius R5 接线点 1）：目标维度分级与既有 riskLevel 取更严者。
+ * - safe：readonly 快径照旧；非只读命令返回 undefined（entry 默认 high+needsApproval）。
+ * - low：取消 readonly 快径（目标维度发现了破坏面时只读结论不可信），回落 entry 默认。
+ * - confirm/catastrophic：riskLevel 升到 critical（autoApproveHighRisk 不能自动批准），
+ *   destructive/needsApproval 置真。catastrophic 的「直接 deny、不进 ask」由
+ *   bypass-immune-breakers 的 deny 级命中类在 PermissionService 收口处兜底
+ *   （capability 没有 deny 通道），这里是纵深防御的另一半。
+ */
 function resolveBashPermissionCapability(
   input: unknown,
   context?: ToolRuntimePermissionCapabilityContext,
 ): ToolRuntimePermissionCapability | undefined {
   const command = readStringProperty(input, "command");
-  if (!command || !isRuntimeReadOnlyBashCommand(command, context)) return undefined;
+  if (!command) return undefined;
+
+  const assessment = assessBashCommandTargetRisk(command, bashTargetRiskContext(context));
+  if (assessment.level === "confirm" || assessment.level === "catastrophic") {
+    return {
+      destructive: true,
+      needsApproval: true,
+      readOnly: false,
+      riskLevel: "critical" as const,
+      sideEffectScope: "system" as const,
+      permission: {
+        needsApproval: true,
+        riskLevel: "critical" as const,
+        sideEffectScope: "system" as const,
+      },
+    };
+  }
+  if (assessment.level === "low") return undefined;
+
+  if (!isRuntimeReadOnlyBashCommand(command, context)) return undefined;
   return {
     destructive: false,
     needsApproval: false,
@@ -91,6 +124,18 @@ function resolveBashPermissionCapability(
       riskLevel: "low" as const,
       sideEffectScope: "none" as const,
     },
+  };
+}
+
+/** 目标分级上下文：homedir/platform 在接线层注入，评估模块保持纯函数。 */
+function bashTargetRiskContext(
+  context?: ToolRuntimePermissionCapabilityContext,
+): TargetRiskContext {
+  return {
+    workingDirectory: context?.workingDirectory,
+    workspaceRoot: context?.workspaceRoot,
+    homeDirectory: homedir(),
+    platform: process.platform,
   };
 }
 

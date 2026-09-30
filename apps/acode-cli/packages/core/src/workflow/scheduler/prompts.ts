@@ -3,12 +3,15 @@ import type {
   WorkflowGraphNode,
   WorkflowRunSnapshot,
 } from "@acode/contracts";
+import type { WorkflowGateSettings } from "../artifact-gate.js";
+import { typedArtifactContractLines } from "../typed-artifact.js";
 import { collectionNodeIdsForGraph, nodeById } from "./graph.js";
 
 export function buildDefaultNodePrompt(
   snapshot: WorkflowRunSnapshot,
   node: WorkflowGraphNode,
   phase: string,
+  gate?: WorkflowGateSettings,
 ): string {
   const previousArtifacts = snapshot.artifacts
     .map((artifact) => `- ${artifact.label}: ${artifact.path}`)
@@ -30,9 +33,32 @@ export function buildDefaultNodePrompt(
       : "No previous artifacts yet.",
     "",
     "Execute only this node's scope. Return a concise Markdown artifact with changes, validation, and residual risk.",
+    // J2-3（specs/workflow-typed-artifacts.md R8）：deep 档追加 typed artifact 契约与上次
+    // 尝试的引擎反馈；light 档（gate 缺省或 preset light）不追加任何段落，提示词字节不变。
+    ...deepNodePromptLines(node, gate),
   ]
     .filter((line): line is string => line !== undefined)
     .join("\n");
+}
+
+/**
+ * deep 档节点提示词追加段：typed artifact 契约 + 重派发时的上一次引擎反馈
+ * （artifact requeue 或 error retry 的 error 文案，修复通道要求拒绝理由对模型可见）。
+ */
+export function deepNodePromptLines(
+  node: WorkflowGraphNode,
+  gate?: WorkflowGateSettings,
+): string[] {
+  if (gate?.preset !== "deep") return [];
+  const feedback =
+    node.error && node.error.length > 0
+      ? [
+          "",
+          `Previous attempt feedback from the workflow engine: ${node.error}`,
+          "Fix exactly these violations before resubmitting.",
+        ]
+      : [];
+  return [...feedback, ...typedArtifactContractLines()];
 }
 
 export function buildDefaultPlannerPrompt(

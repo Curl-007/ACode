@@ -148,6 +148,7 @@ const zhCN: Record<string, string> = {
   "chat.composer.attachment": "附件",
   "chat.permission.feedback.ariaLabel": "拒绝时给模型的可选反馈",
   "chat.permission.feedback.placeholder": "告诉模型接下来应该怎么做...",
+  "chat.permission.justification.label": "模型对本命令的论证",
   "offPeak.chatCreated.defaultTitle": "闲时任务",
   "offPeak.chatCreated.queued": "已加入闲时队列",
   "offPeak.chatCreated.queuedAt": "排队第 {position} 位",

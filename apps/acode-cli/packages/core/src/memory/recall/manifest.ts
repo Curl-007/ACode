@@ -2,48 +2,21 @@ import { basename, relative, sep } from "node:path";
 import type { FileSystemPort } from "@acode/contracts";
 import { parse as parseYaml } from "yaml";
 
-import { MEMORY_RECALL_TYPES, type MemoryManifestEntry, type MemoryRecallType } from "./types.js";
+import { MEMORY_RECALL_TYPES, type MemoryRecallType } from "./types.js";
 
-const MANIFEST_FILE_LIMIT = 200;
-const MANIFEST_PREVIEW_LINE_LIMIT = 30;
+/** 单次召回最多收录的记忆文件数（specs/memory-injection-fail-closed.md R10 常量表）。 */
+export const MANIFEST_FILE_LIMIT = 200;
 
-export async function scanMemoryManifest(input: {
-  fileSystem: FileSystemPort;
-  rootDir: string;
-  signal?: AbortSignal;
-}): Promise<MemoryManifestEntry[]> {
-  try {
-    const paths = await collectMemoryPaths(input.fileSystem, input.rootDir, input.signal);
-    const settled = await Promise.allSettled(
-      paths.map((filePath) =>
-        readManifestEntry(input.fileSystem, input.rootDir, filePath, input.signal),
-      ),
-    );
-    return settled
-      .filter(
-        (result): result is PromiseFulfilledResult<MemoryManifestEntry> =>
-          result.status === "fulfilled",
-      )
-      .map((result) => result.value)
-      .sort((left, right) => right.mtimeMs - left.mtimeMs)
-      .slice(0, MANIFEST_FILE_LIMIT);
-  } catch {
-    return [];
-  }
-}
-
-export function formatMemoryManifest(manifest: readonly MemoryManifestEntry[]): string {
-  return manifest
-    .map((entry) => {
-      const type = entry.type ? `[${entry.type}] ` : "";
-      const timestamp = new Date(entry.mtimeMs).toISOString();
-      const base = `- ${type}${entry.filename} (${timestamp})`;
-      return entry.description ? `${base}: ${entry.description}` : base;
-    })
-    .join("\n");
-}
-
-async function collectMemoryPaths(
+/**
+ * 递归收集 rootDir 下的记忆候选文件路径。
+ *
+ * 与旧的清单扫描实现（已删除，见 specs/memory-injection-fail-closed.md R10）不同：
+ * **列目录失败会抛出**而不是被吞成空清单。
+ * 召回是 fail-closed 协议（specs/memory-injection-fail-closed.md R4），
+ * 「存储不可读」必须与「目录里确实没有记忆」可区分，否则一次 IO 故障会被渲染成
+ * 「你没有任何既有记忆」，直接诱导模型新建重复记忆。
+ */
+export async function collectMemoryFilePaths(
   fileSystem: FileSystemPort,
   directory: string,
   signal?: AbortSignal,
@@ -53,7 +26,7 @@ async function collectMemoryPaths(
 
   for (const entry of listed.entries) {
     if (entry.kind === "directory") {
-      paths.push(...(await collectMemoryPaths(fileSystem, entry.path, signal)));
+      paths.push(...(await collectMemoryFilePaths(fileSystem, entry.path, signal)));
       continue;
     }
     if (entry.kind === "file") {
@@ -73,35 +46,18 @@ async function collectMemoryPaths(
   return paths;
 }
 
+/** 记忆文件在注入文本与去重账本里使用的稳定相对名（正斜杠，跨平台一致）。 */
+export function memoryFileRelativeName(rootDir: string, filePath: string): string {
+  return relative(rootDir, filePath).split(sep).join("/");
+}
+
 function isMemoryCandidate(filePath: string): boolean {
   return filePath.endsWith(".md") && basename(filePath) !== "MEMORY.md";
 }
 
-async function readManifestEntry(
-  fileSystem: FileSystemPort,
-  rootDir: string,
-  filePath: string,
-  signal?: AbortSignal,
-): Promise<MemoryManifestEntry> {
-  const [stat, preview] = await Promise.all([
-    fileSystem.stat({ path: filePath }, { signal }),
-    fileSystem.readTextFileRange(
-      { path: filePath, offsetLine: 0, limitLines: MANIFEST_PREVIEW_LINE_LIMIT },
-      { signal },
-    ),
-  ]);
-  const frontmatter = parseMemoryFrontmatter(preview.content);
-  return {
-    ...(frontmatter.description ? { description: frontmatter.description } : {}),
-    filePath,
-    filename: relative(rootDir, filePath).split(sep).join("/"),
-    mtimeMs: stat.mtimeMs ?? 0,
-    ...(frontmatter.type ? { type: frontmatter.type } : {}),
-  };
-}
-
-function parseMemoryFrontmatter(content: string): {
+export function parseMemoryFrontmatter(content: string): {
   description?: string;
+  name?: string;
   type?: MemoryRecallType;
 } {
   const normalized = content.replace(/^\uFEFF/u, "").replace(/\r\n/gu, "\n");
@@ -119,11 +75,13 @@ function parseMemoryFrontmatter(content: string): {
   if (!isRecord(parsed)) return {};
 
   const description = typeof parsed.description === "string" ? parsed.description : undefined;
+  const name = typeof parsed.name === "string" ? parsed.name : undefined;
   const metadata = isRecord(parsed.metadata) ? parsed.metadata : undefined;
   const typeCandidate = metadata?.type ?? parsed.type;
   const type = isMemoryRecallType(typeCandidate) ? typeCandidate : undefined;
   return {
     ...(description ? { description } : {}),
+    ...(name ? { name } : {}),
     ...(type ? { type } : {}),
   };
 }

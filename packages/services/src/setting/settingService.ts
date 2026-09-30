@@ -15,6 +15,7 @@ import {
 } from "@acode/shared";
 import type { ISettingService } from "./setting.js";
 import { normalizeSettingsPatch } from "#src/setting/normalizeSettingsPatch.js";
+import { buildExplicitKeyPersistedSettings } from "#src/setting/explicitSettingsPersist.js";
 import { copyDataDirectory, getDataBaseDir, validateDataBaseDirTarget } from "../paths.js";
 import { isEffectiveDevelopmentNodeEnv } from "../runtime-tools/nodeEnv.js";
 import { maybeThrowInjectedFsFault } from "../fs/fsFaultInjection.js";
@@ -194,6 +195,7 @@ async function writeSettings(
   runExclusiveCommit: (commit: () => Promise<void>) => Promise<void> = (commit) => commit(),
   enterCommitPhase: () => void = () => undefined,
   commitAccountSelection = false,
+  explicitKeys?: ReadonlySet<string>,
 ): Promise<void> {
   const settingsDir = getSettingsDir();
   const settingsFile = getSettingsFile();
@@ -206,7 +208,14 @@ async function writeSettings(
   maybeThrowInjectedFsFault({ operation: "writeFile", path: settingsFile });
   const raw = await readLegacyAccountConnectionSettingsFile(settingsFile);
   const rollbackFields = retainLegacyAccountConnectionFields(raw);
-  const persisted = { ...rollbackFields, ...settings };
+  // jcode 事故教训（全量写回把旧默认值冻结进用户配置，之后翻转默认值救不回来）：
+  // explicitKeys 传入时只写「磁盘已有键 ∪ 显式设置键 ∪ 迁移标记键」，从未显式设置的键保持缺席；
+  // 未传入表示一次性迁移提交路径，保持全量写盘的既有语义（迁移结果有意固化）。
+  // 详见 ./explicitSettingsPersist.ts 与 apps/acode-cli/specs/config-persistence-audit.md。
+  const persisted: Record<string, unknown> = {
+    ...rollbackFields,
+    ...(explicitKeys ? buildExplicitKeyPersistedSettings(settings, raw, explicitKeys) : settings),
+  };
   // 旧 Team 尚待 OAuth 补组织时，schema 的默认 {} 不是用户的新选择。
   // 普通偏好保存必须保留新字段缺席；只有迁移提交或用户显式选连接才结束旧导入。
   if (!commitAccountSelection && readIncompleteLegacyTeamConnections(raw).length > 0) {
@@ -305,7 +314,11 @@ export function createSettingServiceWithMigrations(): {
 
     async update(patch: Partial<AppSettings>, expectedAccountSettings): Promise<void> {
       const runUpdate = async (shouldCommit: () => boolean, enterCommitPhase: () => void) => {
-        const validatedPatch = appSettingsPatchSchema.parse(normalizeSettingsPatch(patch));
+        const normalizedPatch = normalizeSettingsPatch(patch);
+        const validatedPatch = appSettingsPatchSchema.parse(normalizedPatch);
+        // 显式键集合取自归一化结果（zod parse 之前）：normalizeSettingsPatch 会把「清空」
+        // 归一成 undefined 值键，这些键必须留在显式集合里才能把磁盘旧值删除。
+        const explicitKeys = new Set(Object.keys(normalizedPatch));
         // 官方服务开关变更后立即生效：刷新进程级策略，供各服务短路点与网络拦截读取。
         if (Object.hasOwn(validatedPatch, "officialServices")) {
           setOfficialServiceSwitches(validatedPatch.officialServices);
@@ -341,6 +354,7 @@ export function createSettingServiceWithMigrations(): {
           runSettingsCommit,
           enterCommitPhase,
           Object.hasOwn(patch, "providerFamilyConnectionSelections"),
+          explicitKeys,
         );
       };
 

@@ -64,6 +64,8 @@ export interface TodoRow {
   time_updated: number;
   /** D4（migration 0023）：规范化后 { id?, blockedBy?, metadata? } 的 JSON；旧行/旧格式为 null。 */
   deps_json: string | null;
+  /** J2-1（migration 0024）：{ completionConfidence?, confidenceHistory? } 的 JSON；旧行/未声明为 null。 */
+  confidence_json: string | null;
 }
 
 export interface PermissionRow {

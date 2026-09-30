@@ -27,6 +27,10 @@ import {
   sortPermissionOptions,
   type PermissionRequestScope,
 } from "@/lib/permissionRequest.js";
+import {
+  getPermissionJustification,
+  PERMISSION_JUSTIFICATION_LABEL_MESSAGE_ID,
+} from "@/lib/permissionJustification.js";
 import type { TaskChatToolCall } from "@/lib/taskChatMessageTypes.js";
 import {
   readRawToolCallFileSummaries,
@@ -244,6 +248,13 @@ function getPermissionDisplayReason(request: ACodePermissionRequest): string | n
 
   return inputReason ?? readUserFacingPermissionReason(request.description) ?? rawReason;
 }
+
+/**
+ * J1-2 反射门（apps/acode-cli/specs/bash-confirm-reflexive-gate.md R8）：模型重提被拒
+ * 命令时携带的 justification 随工具入参透传（协议 input 为 z.unknown()），在审批弹窗
+ * 单独成段展示原文，帮助用户对照「模型说用户要什么」与「用户实际要什么」做裁决。
+ * 投影逻辑住在 lib/permissionJustification.ts（无 React/别名依赖，可被 node --test 覆盖）。
+ */
 
 function getMcpPermissionToolName(toolCall: TaskChatToolCall): string | null {
   const rawToolName = isPlainRecord(toolCall.raw)
@@ -491,6 +502,7 @@ export function PermissionDialog({
     [blockKind, codePreviewSettings, intl, rawFileSummaries, theme, toolCall, workspacePath],
   );
   const displayReason = useMemo(() => getPermissionDisplayReason(request), [request]);
+  const justification = useMemo(() => getPermissionJustification(request), [request]);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [feedback, setFeedback] = useState("");
   const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
@@ -705,6 +717,21 @@ export function PermissionDialog({
             !shouldUseSaveWorkflowBlock &&
             displayReason ? (
               <p className="text-ui-base leading-5 text-foreground">{displayReason}</p>
+            ) : null}
+            {justification ? (
+              // 反射门 justification 段：长文本在段内滚动，不挤掉权限选项（同反馈行
+              // max-h philosophy）；data 属性供 E2E 稳定定位，不泄露原文到选择器。
+              <div
+                data-permission-justification="true"
+                className="space-y-1 rounded-xl border border-border bg-hover/50 px-3 py-2"
+              >
+                <p className="text-ui-base font-medium leading-5 text-foreground-subtle">
+                  {intl.formatMessage({ id: PERMISSION_JUSTIFICATION_LABEL_MESSAGE_ID })}
+                </p>
+                <p className="max-h-40 overflow-y-auto whitespace-pre-wrap break-words text-ui-base leading-5 text-foreground">
+                  {justification}
+                </p>
+              </div>
             ) : null}
             {shouldUseSwitchModePlaceholder ? (
               <div className="flex items-center gap-2 text-ui-base text-foreground">

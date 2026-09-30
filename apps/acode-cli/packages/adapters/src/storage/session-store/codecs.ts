@@ -3,6 +3,7 @@ import {
   SESSION_ENTRY_MODEL_SELECTION,
   SESSION_TITLE_SOURCES,
   parseModelSelectionValue,
+  TodoConfidenceJsonSchema,
   TodoDepsJsonSchema,
   type CollaborationMode,
   type FileDiff,
@@ -18,6 +19,7 @@ import {
   type SessionRevert,
   type SessionTitleSource,
   type SessionEntryType,
+  type TodoConfidenceJson,
   type TodoDepsJson,
   type TodoItem,
   type TraceId,
@@ -189,6 +191,9 @@ export function decodeTodoRow(row: TodoRow): TodoItem {
     // D4（specs/todo-dependency-fields.md R5）：读回必须带上三个新字段——
     // 漏掉的症状是「写进去了、读回来只剩三字段」且不报错。
     ...decodeTodoDeps(row.deps_json),
+    // J2-1（specs/todo-confidence-semantics.md R5）：同款纪律——completionConfidence 与
+    // 工具自有 confidenceHistory 必须随读回带上，漏掉的症状同样是静默丢字段。
+    ...decodeTodoConfidence(row.confidence_json),
   };
 }
 
@@ -219,6 +224,40 @@ function decodeTodoDeps(raw: string | null): TodoDepsJson {
     return {};
   }
   const result = TodoDepsJsonSchema.safeParse(parsed);
+  return result.success ? result.data : {};
+}
+
+/**
+ * J2-1 confidence_json 编码（specs/todo-confidence-semantics.md R5，与 encodeTodoDeps
+ * 同款做法）：只存在场成员，两成员全缺席写 null（与旧行同形）；空数组 history 不写
+ * （不物化——工具侧追加规则保证 undefined 不变成 []，存储层不加第二份判断）。
+ * 序列化形状由 contracts 的 TodoConfidenceJsonSchema 唯一定义（跨存储边界走 schema）。
+ */
+export function encodeTodoConfidence(todo: TodoItem): string | null {
+  const confidence: TodoConfidenceJson = {};
+  if (todo.completionConfidence !== undefined) {
+    confidence.completionConfidence = todo.completionConfidence;
+  }
+  if (todo.confidenceHistory !== undefined && todo.confidenceHistory.length > 0) {
+    confidence.confidenceHistory = [...todo.confidenceHistory];
+  }
+  return Object.keys(confidence).length === 0 ? null : JSON.stringify(confidence);
+}
+
+/**
+ * J2-1 confidence_json 解码：null / 坏 JSON / 形状校验失败（含未来版本写入新成员或
+ * 放宽窗口后的前向数据）一律按「两成员缺席」处理——与 decodeTodoDeps 同一纪律：
+ * 回滚策略 =「忽略该列」，单行脏数据不能让整个会话的 todos 读不出来。
+ */
+function decodeTodoConfidence(raw: string | null): TodoConfidenceJson {
+  if (!raw) return {};
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return {};
+  }
+  const result = TodoConfidenceJsonSchema.safeParse(parsed);
   return result.success ? result.data : {};
 }
 

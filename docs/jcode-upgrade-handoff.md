@@ -334,3 +334,34 @@ root `pnpm typecheck` exit 0；tsc core/contracts/adapters 均 exit 0；`pnpm li
 - 主动深度扫描（异步模式，规避大 diff enobufs）：scanId `scan-2026-09-30T18-56-41.721Z-16e671c60036`，封印 `sha256:8d7952119328623996c972894b8ae0e0efe8ec4d0034c60778f163d3b6e8481c`；118 findings（88 high / 30 medium，全部 candidate、verdictEffect=none），run status inconclusive（覆盖缺口：调用图动态派发，静态边界内不可判运行时可利用性）。
 - 与 2026-09-29 已分诊基线（[`security-scan-triage-2026-09-29.md`](security-scan-triage-2026-09-29.md)，同为 118 条）按稳定键（severity|title|path）对比：**净新增 1 条**——`apps/acode-cli/packages/adapters/src/doctor/defaults.ts:71`「request 是 ssrf 入口」。定性：启发式入口点标记；实际调用点是 doctor 的 HTTP 端口，显式走 `egressPolicy:"public"`（DNS 预检 + 过检解析建连 + 代理缺省拒绝，spec R4），且本轮对抗复核已实证 offline 档零网络（全端口计数）与 host 校验 21 例全拦。与基线中数十条「ssrf 入口」标记同簇同口径（candidate、不改变 verdict），随基线簇处置。**净消失 1 条**——`windowsCuaDevRuntime.ts` 的 resolveDevelopmentRuntime path-traversal（1483018 已修）。本批其余全部新增文件（bash-target-risk/、bash-confirm-reflex-gate.ts、memory/recall/pending.ts、todo-confidence.ts、typed-artifact.ts、artifact-gate.ts、payload-recovery.ts、explicitSettingsPersist.ts、permissionJustification.ts 等）**零命中**。
 - commit hook 扫描因大 diff（114 文件 / 24k 行）返回 `scanner_enobufs` 未得完整结论，按 hook 兼容策略放行提交；合入前审计以上述主动扫描封印为准。**不据此宣称项目整体安全**：既有 118 条候选簇的归簇结论与 3 条残留观察项仍以 09-29 分诊记录为准，本批未做逐簇重对账。
+
+---
+
+## 10. R6 边界⑥收口：npm run script 体扫描（2026-10-01 增补，独立批次合入）
+
+§8.3/§9 登记的最高优先边界「`npm run <script>` 体删除对风险分级层不可见（JS monorepo 主删除通道，yolo 直通）」已立项收口，走完整「实现→对抗验证→修复→终验→扫描」管线。
+
+### 10.1 实现
+
+- spec：`apps/acode-cli/specs/npm-script-body-scan.md`（R1-R7）+ `bash-target-blast-radius.md` R6 边界⑥改为已收口。
+- 架构：**纯函数宪法不破**——新纯模块 `bash-target-risk/npm-scripts.ts`（run/别名/裸名/pre-post/选择器/body 递归）；唯一 IO 面 `bash-package-script-context.ts`（cwd 向上找最近 package.json、≤1MiB、坏 JSON 止走、cd/pushd 目标与 body 选择器二遍提取、`scannedDirectories` 覆盖证据）；新异步钩子 `ToolEntry.resolvePermissionCapabilityContextAsync`（executor 在 permission-flow 与 hook 改写复核两处 await 注入，两处同源）。
+- **决策链关键发现**：yolo 分支不看 capability critical（直接 allow mode.yolo）——deny 级熔断是 yolo 唯一 deny 通道，故 body 扫描接入 `PermissionContext.packageScripts` → breaker/gate（body-catastrophic → yolo deny `breaker.bashTargetCatastrophic`；body-confirm → 反射门），而非只抬 capability。
+
+### 10.2 对抗验证与修复（一轮闭环）
+
+全新上下文验证员判「现状不可合入」，证出 2 high + 1 medium + 4 low，修复轮全部闭合：
+- **F1 [high]** 预取覆盖面 ≠ npm 就近语义：`cd sub && npm run clean`（sub 自有危险 body）与嵌套 body 选择器（`release:cli` → `pnpm --dir sub run release`）在 yolo 下静默放行，与 spec R2 矛盾。修：预取端扩候选（cd/pushd 提取 + body 二遍扫，MAX_SOURCES=12）+ 模块端 `scannedDirectories` 覆盖证明 fail-closed（未证明无更近 package.json → confirm；选择器目标不匹配禁止回落 enclosing）。
+- **F2 [high]** npx/npm exec 取值旗标缺口（母层既有）：`npx --package x npm run clean`、`npx -c "…"` 一个合法旗标吞掉真实命令。修：wrapperFlagTakesValue 补 JS 运行器条目、`-c/--call` payload 按 sh 语义递归且继续解包、保底网（npx 停点后残留包管理器词 → confirm）。
+- **F3 [medium]** `echo clean | xargs npm run` 无名追加语义绕过「无名 → safe（天然失败）」依据。修：管道/xargs payload 位无名或 `{}` 名 → confirm。
+- F4-F7 [low]：坏 JSON 止走（消过严误报）、`-C<path>` 粘连同口径、main 缺失跳过 pre/post（`--if-present` 保留）、`--prefix` enclosing 口径 spec 登记。
+
+### 10.3 终验与扫描
+
+CLI 全量 **661/661**（+18 用例，七套件 213/213）；root typecheck / tsc core / lint（0 error/76 warning 基线）/ arch（0 violations）全绿；主代理独立探针 8/8 符合预期 + E2E yolo body-catastrophic → `deny breaker.bashTargetCatastrophic`（`Temp\npm-script-verify-probe.mjs` 可复跑）；本仓真实 package.json 注入下日常命令（pnpm lint/typecheck/architecture:check/dev:desktop/dev:web/verify:pre-push 等）全部 safe 零摩擦。合入前 Mimosa 主动深扫封印：scanId `scan-2026-10-01T04-46-47.240Z-a496d888a0f8`、seal `sha256:ef278d9a…401161`、118 findings——与 §9.4 封印**逐条 diff 零净变化**，npm-scripts.ts / bash-package-script-context.ts **零命中**。
+
+### 10.4 登记与产品注记
+
+1. **F1② confirm 摩擦**：`cd <未预取目录> && npm run <script>` 且祖先包被 enclosing 命中时 → confirm（一次反射回合）——「无法证明没有更近 package.json 时不放行」的必然代价；cd 目标可静态解析时预取①已覆盖（零摩擦）。
+2. **`@scope/name` filter 摩擦**：本仓 `pnpm dev:server`/`build:sea`（body 链含 scoped 包名 filter）→ confirm（既有「路径形 filter 精确匹配失败」保守口径）。消除该摩擦需「包名形 filter → 双基准包目录解析」，属独立行为变更，**建议后续立项**。
+3. R7 范围外边界维持登记：deno task（deno.json JSONC 需第二套解析器）、make/just、npm install 生命周期钩子（供应链面）、`node x.js` JS 源内删除。
+4. **测试健壮性教训**：provider-doctor.test.mjs 的 stripComments 在 CRLF 文件上整行注释剥离失效（autocrlf 检出后 `.` 不匹配 `\r`），注释里的 `no-telemetry.md` 字样被误判为代码——已修（`\r?\n` 切分）。**仓库内所有源码扫描式断言对行尾敏感，新增此类测试一律用 `\r?\n` 切分**；该抖动由 squash 合并时 git 重写工作区文件触发，今后大合并后首跑全套如遇「注释内容触发源断言」类失败优先怀疑行尾。

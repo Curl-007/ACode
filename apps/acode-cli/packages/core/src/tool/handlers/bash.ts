@@ -55,6 +55,7 @@ import {
 import { createBashProviderDescription } from "./bash-prompt.js";
 import { applyBashReadFileStateEffects } from "./bash-read-file-state.js";
 import { isRuntimeReadOnlyBashCommand } from "./bash-semantics.js";
+import { collectBashPackageScriptSources } from "./bash-package-script-context.js";
 import {
   assessBashCommandTargetRisk,
   type TargetRiskContext,
@@ -136,7 +137,35 @@ function bashTargetRiskContext(
     workspaceRoot: context?.workspaceRoot,
     homeDirectory: homedir(),
     platform: process.platform,
+    // R6 边界⑥收口：npm/pnpm/yarn/bun run 的 script 体由 executor 链路异步预取后
+    // 注入（resolvePermissionCapabilityContextAsync → permission-flow/input-recheck）；
+    // 缺省 undefined = legacy 上下文，run 族维持 safe 直通（spec
+    // npm-script-body-scan.md R6）。
+    ...(context?.packageScripts ? { packageScripts: context.packageScripts } : {}),
+    // 对抗验证 F1②：扫描覆盖证据与 map 同源注入（目标目录的 enclosing 命中只有被
+    // 它覆盖才可信任）。空数组是有意义状态（无覆盖证据 → fail-closed），不能省。
+    ...(context?.scannedDirectories ? { scannedDirectories: context.scannedDirectories } : {}),
   };
+}
+
+/**
+ * R6 边界⑥收口（spec npm-script-body-scan.md R1/R5）：权限链路的异步前置——预取
+ * package.json scripts 供 run 族 body 评估与熔断器/反射门共用。容错不抛：预取失败
+ * 返回 undefined（= 上下文缺席 = legacy 语义），绝不阻断权限链路。
+ */
+async function resolveBashPermissionCapabilityContextAsync(
+  input: unknown,
+  context: ToolRuntimePermissionCapabilityContext,
+): Promise<
+  Partial<Pick<ToolRuntimePermissionCapabilityContext, "packageScripts" | "scannedDirectories">>
+| undefined> {
+  const command = readStringProperty(input, "command");
+  if (!command) return undefined;
+  const prefetch = await collectBashPackageScriptSources(command, {
+    workingDirectory: context.workingDirectory,
+    workspaceRoot: context.workspaceRoot,
+  });
+  return { packageScripts: prefetch.sources, scannedDirectories: prefetch.scannedDirectories };
 }
 
 const bashHandler: ToolHandler = (input, context) =>
@@ -507,6 +536,7 @@ export const bashToolEntry: ToolEntry = {
   handler: bashHandler,
   resolveTimeoutBudgetMs: createBashTimeoutBudgetResolver(DEFAULT_BASH_TIMEOUT_POLICY),
   resolvePermissionCapability: resolveBashPermissionCapability,
+  resolvePermissionCapabilityContextAsync: resolveBashPermissionCapabilityContextAsync,
   resolvePermissionRulePolicy: resolveBashPermissionRulePolicy,
   inputSchema: BashInputJsonSchema,
   outputSchema: BashOutputJsonSchema,

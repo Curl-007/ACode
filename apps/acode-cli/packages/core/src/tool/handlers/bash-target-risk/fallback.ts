@@ -33,6 +33,10 @@ import {
   SHELL_CONTROL_WORDS,
   UNKNOWN_BLAST_RADIUS_REASON_SUFFIX,
 } from "./grammar.js";
+import {
+  assessPackageManagerScriptInFallback,
+  isPackageManagerAtRunnablePosition,
+} from "./npm-scripts.js";
 import { assessCopyMove, assessSed, assessTee } from "./overwrite-verbs.js";
 import {
   classifyTarget,
@@ -40,6 +44,7 @@ import {
   isSafeWriteSink,
   resolveCdTargetWithCdpath,
 } from "./paths.js";
+import type { ScriptAssessor } from "./grammar.js";
 import type { TargetRiskContext, TargetRiskFinding, TrackedCwd } from "./types.js";
 
 /** cwd 跟踪可变游标（与 assess.ts 同构；独立声明避免跨模块导出内部形态）。 */
@@ -97,6 +102,14 @@ export function assessRawText(
   context: TargetRiskContext,
   findings: TargetRiskFinding[],
   cursor?: CwdCursor,
+  // 本段文本的递归深度（R6 边界⑥的 body 递归守卫沿用它；入口为 0，assessText
+  // 透传自身深度）。
+  depth = 0,
+  // recurse：assessText 回调（assess.ts 注入，避免循环依赖）。`npm run x` 的 body
+  // 递归（R6 边界⑥）经它走 AST 主路径；缺省时跳过 manager 挂点（不递归＝维持
+  // 旧 fallback 行为，不会 fail-open 到「看不见 body 就放行 run」——run 族判定
+  // 本身需要 map，legacy 上下文本就直通）。
+  recurse?: ScriptAssessor,
 ): void {
   const tokens = fallbackTokenize(text);
   // HOME= 只在赋值位才算重赋值（与 AST 路径同一口径）：`(grep HOME= f)` 里的 `HOME=`
@@ -115,6 +128,9 @@ export function assessRawText(
   // 段内是否已出现命令词：其后的 `CDPATH=` 词元是数据参数（`echo CDPATH=/x; cd y`
   // 的 cd 不受影响），不得当作赋值捕获。
   let sawCommandWord = false;
+  // 最近一个非旗标词（R6 边界⑥ fallback 挂点用：`sudo npm run x` 的 npm 不在
+  // 命令位，但其前是 wrapper 词，同样要进入 run 族解析）。
+  let previousCommandToken: string | undefined;
   // F-1（对抗复核）：shell 控制词（then/do/{/else/elif/…）是普通词 token，不在
   // 操作符字符集内——其后的词必然处于命令位，却拿不到操作符带来的段首标记，
   // `if true; then cd ~; rm -rf .ssh; fi` 的 cd 因此脱离跟踪（曾判 low、yolo 静默
@@ -183,7 +199,10 @@ export function assessRawText(
       previousTokenWasControlWord = false;
       continue;
     }
-    if (!isFlagToken(token.text)) sawCommandWord = true;
+    if (!isFlagToken(token.text)) {
+      sawCommandWord = true;
+      previousCommandToken = token.text;
+    }
     previousTokenWasControlWord = SHELL_CONTROL_WORDS.has(token.text);
     if (token.pipeFed && isDestructiveProgramName(name)) {
       pushFinding(findings, {
@@ -211,6 +230,21 @@ export function assessRawText(
     if (name === "cp" || name === "mv") {
       assessCopyMove(name, fallbackVerbArgs(tokens, i), derived, findings);
       continue;
+    }
+    // R6 边界⑥收口（fallback 口径）：subshell/if/while 包裹的 `npm run x` 与裸命令
+    // 同判（母层 F-1：一层括号不得降级）。run 族解析在 npm-scripts.ts，body 经
+    // recurse 回调走 AST 主路径递归；recurse 缺省（不应发生）时跳过。
+    if (
+      recurse !== undefined &&
+      isPackageManagerAtRunnablePosition(token.text, previousCommandToken, atCommandPosition)
+    ) {
+      assessPackageManagerScriptInFallback(tokens, i, derived, findings, depth, recurse, {
+        // 对抗验证 F3：xargs payload 位/管道喂入位的无名 run 由 stdin 提供名字
+        //（`(echo clean | xargs npm run)` 一层括号不得降级）。
+        throughXargs:
+          previousCommandToken !== undefined && programBasename(previousCommandToken) === "xargs",
+        receivesPipe: token.pipeFed,
+      });
     }
     if (!isDestructiveProgramName(name)) continue;
     assessRawDestructiveVerb(tokens, i, name, derived, findings);

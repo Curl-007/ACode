@@ -195,6 +195,9 @@ function hasUnverifiableTargetRisk(
     workspaceRoot: context?.workspaceRoot,
     homeDirectory: homedir(),
     platform: process.platform,
+    // R6 边界⑥收口：与 capability 同一视角——confirm/catastrophic 级 script body
+    //（`npm run $X`、危险 body）不得产出可复用的 allow 前缀规则。
+    ...(context?.packageScripts ? { packageScripts: context.packageScripts } : {}),
   }).level;
   return level === "confirm" || level === "catastrophic";
 }

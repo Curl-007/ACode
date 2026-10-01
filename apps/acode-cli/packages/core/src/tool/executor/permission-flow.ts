@@ -13,7 +13,12 @@ import {
 import type { HookRunResult } from "../../hooks/index.js";
 import { isBashReflexGateRuleId } from "../../permission/bash-confirm-reflex-gate.js";
 import type { PermissionContext } from "../../permission/service.js";
-import type { ExecutableToolCall, ToolEntry, ToolExecutionResult } from "../types.js";
+import type {
+  ExecutableToolCall,
+  ToolEntry,
+  ToolExecutionResult,
+  ToolRuntimePermissionCapabilityContext,
+} from "../types.js";
 import { normalizeToolExecutionInput } from "../input-normalization.js";
 import { resolveToolApproval } from "./approval-gate.js";
 import { createErrorResult, createPermissionErrorResult } from "./errors.js";
@@ -50,6 +55,19 @@ export async function resolveToolPermission(
   signal?: AbortSignal,
   telemetry?: ToolExecutionSpanWriter,
 ): Promise<ToolPermissionFlowResult> {
+  const baseRuntimePermissionContext = resolveRuntimePermissionContext(deps);
+  // R6 边界⑥收口（spec npm-script-body-scan.md R1/R5）：权限链路的异步前置。仅声明
+  // 了钩子的工具（当前只有 Bash）有开销；预取结果并入 capability context——capability
+  // 合并、规则建议收窄与下面的 PermissionContext 三方同源，不另建旁路。容错不抛由
+  // 钩子实现方保证（预取失败 = 上下文缺席 = legacy 语义）。
+  const capabilityContextExtra = await entry.resolvePermissionCapabilityContextAsync?.(
+    executionInput,
+    baseRuntimePermissionContext,
+  );
+  const runtimePermissionContext: ToolRuntimePermissionCapabilityContext = {
+    ...baseRuntimePermissionContext,
+    ...(capabilityContextExtra ?? {}),
+  };
   const permissionContext: PermissionContext = {
     toolName: toolCall.name,
     input: executionInput,
@@ -67,8 +85,19 @@ export async function resolveToolPermission(
     // PermissionService 实例，挑战键不含身份时会话 A 的反射挑战会被会话 B 的首调
     // 「继承」，B 携带预填 justification 即可绕过反射轮。
     sessionId: deps.sessionId,
+    // R6 边界⑥收口（spec npm-script-body-scan.md R1/R4）：npm/pnpm/yarn/bun run 的
+    // script 体预解析 map。bypass-immune-breakers 的 deny 级命中与反射门从这里拿到
+    // 注入——yolo 下 body catastrophic 的 deny 通道就在这里接通（breaker 是纯函数，
+    // map 只能由调用方喂进来）。
+    ...(runtimePermissionContext.packageScripts
+      ? { packageScripts: runtimePermissionContext.packageScripts }
+      : {}),
+    // 对抗验证 F1②：扫描覆盖证据同源透传（三消费点共享同一份，缺任何一段都会让
+    // confirm 在该消费点退回 enclosing 误判 → yolo 直通）。空数组是有意义状态。
+    ...(runtimePermissionContext.scannedDirectories
+      ? { scannedDirectories: runtimePermissionContext.scannedDirectories }
+      : {}),
   };
-  const runtimePermissionContext = resolveRuntimePermissionContext(deps);
   const rulePolicy = entry.resolvePermissionRulePolicy?.(executionInput, runtimePermissionContext);
   const suggestedPermissionUpdates =
     rulePolicy?.suggestedPermissionUpdates ??

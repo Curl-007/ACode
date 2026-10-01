@@ -49,6 +49,21 @@ export interface TargetRiskAssessment {
 }
 
 /**
+ * 一个包的 package.json scripts 预解析结果（R6 边界⑥收口，
+ * 规格见 apps/acode-cli/specs/npm-script-body-scan.md R1）。
+ *
+ * `npm run <script>` 的删除发生在 package.json 的 script 体里，模块自己读不到——
+ * 由调用方（tool/handlers/bash-package-script-context.ts 接线层）异步预取后注入。
+ * 模块保持零 IO 宪法不变：本类型只是把预取事实搬进纯评估器。
+ */
+export interface PackageScriptSource {
+  /** package.json 所在目录（npm scripts 的执行 cwd；body 评估的 trackedCwd 基准）。 */
+  readonly directory: string;
+  /** scripts map（仅字符串值；JSON 解析失败/超限的文件不产生条目）。 */
+  readonly scripts: Readonly<Record<string, string>>;
+}
+
+/**
  * 判定上下文。模块是纯函数、无 IO：homedir/platform 由调用方注入
  * （接线层用 node:os 与 process.platform），模块自身不读环境。
  */
@@ -67,6 +82,30 @@ export interface TargetRiskContext {
    * 重新定基；unresolved 时相对目标 fail-closed。
    */
   readonly trackedCwd?: TrackedCwd;
+  /**
+   * npm/pnpm/yarn/bun run 的 script 体预解析注入（R6 边界⑥收口）。
+   * - 缺省（undefined）= legacy 调用方：run 族维持收口前行为（safe 直通），
+   *   spec npm-script-body-scan.md R6 登记该边界；
+   * - 数组（含空数组）= 调用方已完成预取，空数组表示「cwd 向上不存在可解析的
+   *   package.json」——`npm run <name>` 天然失败，safe。
+   * 生产链路：bash-package-script-context.ts 预取 → bash.ts 钩子 → executor 注入，
+   * permission 层经 PermissionContext 透传给熔断器与反射门。
+   */
+  readonly packageScripts?: readonly PackageScriptSource[];
+  /**
+   * 预取阶段实际读过/走过的目录（扫描覆盖证据，对抗验证 F1②，
+   * spec npm-script-body-scan.md R1/R2）。
+   *
+   * 模块用它证明「目标目录的最近 package.json 已被扫描覆盖」：目标目录不在覆盖内
+   * 且命中的 enclosing source 也不是目标目录本身时（目标严格深于 enclosing、enclosing
+   * 可能充数），confirm 而不放行——`cd sub && npm run clean` 落进未扫描子包时，拿
+   * 根包 map 充数会静默放行 body 灾难命令。
+   * - 缺省（undefined）= legacy 上下文（单测直注入 map 等）：维持 enclosing 信任
+   *   （现行为），生产链路（executor 预取）总是提供；
+   * - 空数组 = 预取完成但无任何覆盖证据（如 source 超限丢弃）→ 除「source 恰在
+   *   目标目录」外一律 fail-closed confirm。
+   */
+  readonly scannedDirectories?: readonly string[];
 }
 
 function targetRiskLevelRank(level: TargetRiskLevel): number {

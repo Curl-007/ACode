@@ -364,6 +364,27 @@ export function wrapperFlagTakesValue(wrapper: string, flag: string): boolean {
         "-I", "--replace", "-J", "-d", "--delimiter", "-E", "--eof",
         "-L", "--max-lines",
       ].includes(flag);
+    // 对抗验证 F2：JS 包运行器的取值旗标缺口——`-p/--package/-c/--call` 的值不被
+    // 消费时，值后的真实 payload 会被误停在错误位置（`npx --package x npm run clean`
+    // 曾把 `x` 当 payload、`npm exec --package x -- rimraf ~` 整体漏评 → safe →
+    // yolo 静默放行）。刻意**不收** `-y/-q` 等布尔旗标：把它们标成取值会让真实
+    // payload 被「吃掉」（`npx -q rimraf ~` 的 rimraf 落进旗标值 → 反而 fail-open）。
+    case "npx":
+    case "bunx":
+      return ["-p", "--package", "-c", "--call", "--registry", "--userconfig"].includes(flag);
+    case "npm":
+      // `npm exec --package x -- <payload>`：npm 作为解包链第一跳时同样要消费取值
+      // 旗标（run 族解析从 npm 词重新起算，不受此处影响）。
+      return ["--package", "-c", "--call", "--prefix", "--registry", "--userconfig", "--cache"].includes(
+        flag,
+      );
+    case "exec":
+    case "dlx":
+      // 解包链第二跳（`npm exec --package x …`、`pnpm dlx --package x rimraf ~`）。
+      // 刻意不含 -c/--call：bash 内建 exec 的 `-c` 是「清空环境」布尔（`exec -c
+      // rimraf ~` 仍执行 rimraf ~），按取值消费会把真实程序吃掉（fail-open）——
+      // 包管理器链内的 `npm exec -c` 由 assessTokens 的上下文敏感分支处理。
+      return ["--package", "--registry"].includes(flag);
     default:
       return false;
   }

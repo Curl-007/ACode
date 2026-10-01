@@ -1211,10 +1211,13 @@ test("(7b) 全部 provider 一起诊断（裸 --provider 语义）", async () =>
 
 // ── (8) 接线钉住（源断言） ──────────────────────────────────────────
 
+// Windows 检出（core.autocrlf）会把源文件转成 CRLF：`.` 不匹配 `\r` 且 `$` 不落行尾，
+// 整行注释剥离会静默失败（注释里的 specs/no-telemetry.md 字样被误判为代码引入遥测）。
+// 按 \r?\n 切分使剥离对两种行尾都成立。
 const stripComments = (source) =>
   source
     .replace(/\/\*[\s\S]*?\*\//g, "")
-    .split("\n")
+    .split(/\r?\n/)
     .map((line) => line.replace(/^\s*\/\/.*$/, ""))
     .join("\n");
 

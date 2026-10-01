@@ -18,6 +18,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { assessBashCommandTargetRisk } from "../tool/handlers/bash-target-risk/index.js";
+import type { PackageScriptSource } from "../tool/handlers/bash-target-risk/types.js";
 
 type BashReflexGateAction = "pass-through" | "deny" | "ask" | "allow";
 
@@ -40,6 +41,17 @@ export interface BashReflexGateRequest {
    * 缺省（legacy 调用方）退回仅按命令文本哈希的现行为。
    */
   readonly sessionId?: string;
+  /**
+   * npm/pnpm/yarn/bun run 的 package.json scripts 预解析 map（R6 边界⑥收口，
+   * spec npm-script-body-scan.md R4）：confirm 级 script body（`npm run $X`、不可解析
+   * 选择器等）在 yolo 下经门收口。缺省 = legacy 调用方，门看不到 body，维持现行为。
+   */
+  readonly packageScripts?: readonly PackageScriptSource[];
+  /**
+   * 预取实际读过/走过的目录（扫描覆盖证据，对抗验证 F1②）。与 packageScripts
+   * 同源：目标目录的 enclosing 充数拦截依赖它。缺省 = legacy 调用方。
+   */
+  readonly scannedDirectories?: readonly string[];
 }
 
 /** allow lane 有效论证放行 / 无效论证收敛 ask 的审计条目（R6 / 对抗复审 N6）。 */
@@ -182,6 +194,12 @@ export class BashConfirmReflexGate {
       workspaceRoot: request.workspaceRoot,
       homeDirectory: homedir(),
       platform: process.platform,
+      // R6 边界⑥收口：confirm 级 script body（`npm run $X`、未知旗标、不可解析选择器）
+      // 与目标侧 confirm 同一反射语义（spec npm-script-body-scan.md R4）。
+      ...(request.packageScripts ? { packageScripts: request.packageScripts } : {}),
+      // 对抗验证 F1②：覆盖证据同源进门（cd/选择器目标的 enclosing 充数拦截依赖它，
+      // 缺了门内会退回误判放行）。空数组是有意义状态，不能省。
+      ...(request.scannedDirectories ? { scannedDirectories: request.scannedDirectories } : {}),
     });
     if (assessment.level !== "confirm") return PASS_THROUGH;
 

@@ -29,6 +29,7 @@ import {
   type BashReflexGateOutcome,
   type BashReflexGateRequest,
 } from "./bash-confirm-reflex-gate.js";
+import type { PackageScriptSource } from "../tool/handlers/bash-target-risk/types.js";
 import { getProcessManagedPolicyFloor } from "./process-policy-floor.js";
 import { applyPermissionUpdates } from "../tool/executor/permission-rules.js";
 import { isWebFetchPreapprovedUrl } from "../tool/webfetch-preapproved.js";
@@ -60,13 +61,27 @@ export interface PermissionContext {
    */
   workspaceRoot?: string;
   /**
-   * 调用方身份（对抗复审 N3）：持有本次决策的会话 id。反射门的挑战键把它并入哈希，
+   * 调用方身份（对抗复审 N3）：持有本次决策的会话 id。反射门的挑战键把它并入哈希,
    * 防止共享 PermissionService 实例的两个会话（general-purpose/自定义子代理继承父
    * 实例）互用对方的反射挑战——会话 A 触发的挑战对会话 B 不生效，B 首调带
    * justification 仍是预填 → deny。可选：legacy 调用方（既有单测、不经 executor 的
    * 直连调用）缺省时按仅命令文本哈希的现行为判定（spec R4 登记该边界）。
    */
   sessionId?: string;
+  /**
+   * npm/pnpm/yarn/bun run 的 package.json scripts 预解析 map（R6 边界⑥收口，
+   * spec npm-script-body-scan.md R1/R4）。executor 的 permission 链路异步预取后注入；
+   * deny 级熔断（body catastrophic → yolo 也 deny）与反射门从这里拿注入。
+   * 缺省 = legacy 调用方：breaker/门看不到 body，run 族维持收口前行为（spec R6 登记）。
+   */
+  packageScripts?: readonly PackageScriptSource[];
+  /**
+   * 预取实际读过/走过的目录（扫描覆盖证据，对抗验证 F1②，spec
+   * npm-script-body-scan.md R1/R2）。与 packageScripts 同源透传给熔断器与反射门：
+   * 目标目录的 enclosing 命中只有被它覆盖才可信任。缺省 = legacy 调用方（维持
+   * enclosing 信任）。
+   */
+  scannedDirectories?: readonly string[];
 }
 
 export interface PermissionToolCapability {
@@ -291,6 +306,12 @@ export class PermissionService {
       ...(context.workspaceRoot ? { workspaceRoot: context.workspaceRoot } : {}),
       // 对抗复审 N3：调用方身份进挑战键，挑战不跨身份生效（spec R4）。
       ...(context.sessionId ? { sessionId: context.sessionId } : {}),
+      // R6 边界⑥收口：confirm 级 script body（npm run $X 等）在 yolo 下经反射门
+      // 收口（deny 首轮 + 四问），与目标侧 confirm 同一语义。
+      ...(context.packageScripts ? { packageScripts: context.packageScripts } : {}),
+      // 对抗验证 F1②：覆盖证据同源进反射门（cd/选择器目标的 enclosing 充数拦截
+      // 依赖它，缺了会在门内退回误判放行）。
+      ...(context.scannedDirectories ? { scannedDirectories: context.scannedDirectories } : {}),
     };
     return this.bashReflexGate.evaluate(request);
   }

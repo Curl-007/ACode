@@ -55,6 +55,10 @@ import {
   wrapperFlagTakesValue,
   wrapperPayloadUnknown,
 } from "./grammar.js";
+import {
+  PACKAGE_MANAGER_PROGRAMS,
+  assessPackageManagerScriptRun,
+} from "./npm-scripts.js";
 import { assessForeignShellPayload, extractCommandSubstitutions } from "./payloads.js";
 import {
   classifyTarget,
@@ -70,6 +74,19 @@ import type {
   TargetRiskFinding,
   TrackedCwd,
 } from "./types.js";
+
+/**
+ * 对抗验证 F2：`-c/--call` 的值按 sh 语义命令文本递归评估的 wrapper 集合
+ * （npx/bunx 的 call、npm 的 exec call）。exec/dlx 的 `-c/--call` 不在通用表里
+ * （bash 内建 exec 的 -c 是「清空环境」布尔），由下方包管理器链上下文敏感分支处理。
+ */
+const NPM_CALL_SHELL_WRAPPERS: ReadonlySet<string> = new Set(["npx", "bunx", "npm"]);
+
+/** 对抗验证 F2 保底网：token 是否提及包管理器词（精确词或空白分隔词）。 */
+function mentionsPackageManagerWord(token: string): boolean {
+  if (PACKAGE_MANAGER_PROGRAMS.has(programBasename(token))) return true;
+  return token.split(/\s+/).some((word) => PACKAGE_MANAGER_PROGRAMS.has(word.toLowerCase()));
+}
 
 /**
  * 评估一条 bash 命令文本的目标 blast-radius。入口是全函数式的：任何输入（包括
@@ -97,7 +114,9 @@ export function assessBashCommandTargetRisk(
   if (analysis.hasParseErrors || analysis.hasUnsupportedSyntax || parserSwallowedCommandText(command, analysis)) {
     // AST 看不到的形态（subshell/if/while/case、解析失败、超长文本）：词法
     // fallback 兜底——拦不住解析器覆盖不到的危险形态就等于没有这一层。
-    assessRawText(command, context, findings, cursor);
+    // recurse 回调让 fallback 内的 `npm run x`（R6 边界⑥）也能递归 body，
+    // 避免 fallback ↔ assess 循环依赖（payloads.ts 同款注入形态）。
+    assessRawText(command, context, findings, cursor, 0, assessText);
   }
 
   return buildAssessment(findings);
@@ -304,16 +323,31 @@ function assessTokens(
 
   let index = 0;
   let wrappedBy: string | undefined;
+  // 最外层 wrapper 词的位置（R6 边界⑥）：包管理器的取值旗标（--filter/-C 等）不在
+  // wrapperFlagTakesValue 表内，通用解包会把旗标值误当 payload 程序——run 族解析
+  // 必须从包管理器词本身的下一个 token 重新解析，不能信任解包循环的停点。
+  let wrappedByIndex = -1;
+  // 解包链是否含 xargs（对抗验证 F3）：`echo clean | xargs npm run` 的无名 run 由
+  // stdin 提供名字，npm 真会执行——run 族解析需要这条语境。
+  let throughXargs = false;
+  // 解包链此前是否出现过包管理器词（对抗验证 F2）：`npm exec -c` 的 -c 是 call，
+  // 裸 bash 内建 `exec -c` 是清环境布尔——用链上下文区分同形旗标。
+  let sawPackageManagerWrapper = false;
+  // 已按 sh 文本递归评估过 `-c/--call` 的值（对抗验证 F2）：payload 已可见，解包
+  // 走到尽头时不再追加「wrapper payload 不可见」confirm（`npx -c "npm run lint"`
+  // 的日常形态零摩擦）。
+  let callPayloadAssessed = false;
   // env 透传的 CDPATH 赋值（对抗复核 F-3）：`env CDPATH=/home/u cd .ssh` 对 cd 生效。
   let cdpathFromArgs: string | undefined;
   for (;;) {
     if (index >= tokens.length) {
-      // 解包到尽头还看不到 payload：不可见 ≠ 安全。
-      if (wrappedBy) pushFinding(findings, wrapperPayloadUnknown(wrappedBy));
+      // 解包到尽头还看不到 payload：不可见 ≠ 安全（-c 文本已评估时豁免）。
+      if (wrappedBy && !callPayloadAssessed) pushFinding(findings, wrapperPayloadUnknown(wrappedBy));
       return;
     }
     const token = tokens[index]!;
     const name = programBasename(token);
+    if (name === "xargs") throughXargs = true;
 
     if (name === "eval") {
       const payload = tokens.slice(index + 1);
@@ -358,7 +392,11 @@ function assessTokens(
     }
 
     if (!WRAPPER_PROGRAMS.has(name)) break;
+    if (PACKAGE_MANAGER_PROGRAMS.has(name) || name === "npx" || name === "bunx") {
+      sawPackageManagerWrapper = true;
+    }
     wrappedBy = name;
+    wrappedByIndex = index;
     index += 1;
 
     // `command -v/-V` 只描述名字（包括 wrapper 的名字）：仅检查其自身 option 前缀，
@@ -415,9 +453,41 @@ function assessTokens(
         index += 1;
         continue;
       }
-      if (isFlagToken(wrapperToken)) {
+      // 对抗验证 F2：`npm exec -c/--call <sh 文本>` 的第二跳——仅当解包链此前出现
+      // 过包管理器词时按 call 处理（值递归评估 + 豁免尽头 unknown-confirm）；裸
+      // bash 内建 `exec -c`（清空环境布尔）不经此路，后续 payload 照常解包分级。
+      if (
+        (name === "exec" || name === "dlx") &&
+        sawPackageManagerWrapper &&
+        (wrapperToken === "-c" || wrapperToken === "--call")
+      ) {
         index += 1;
-        if (wrapperFlagTakesValue(name, wrapperToken) && index < tokens.length) index += 1;
+        if (index < tokens.length) {
+          assessText(tokens[index]!, context, findings, depth + 1, { state: effectiveState() });
+          callPayloadAssessed = true;
+          index += 1;
+        }
+        continue;
+      }
+      if (isFlagToken(wrapperToken)) {
+        const takesValue = wrapperFlagTakesValue(name, wrapperToken);
+        index += 1;
+        if (takesValue && index < tokens.length) {
+          const value = tokens[index]!;
+          index += 1;
+          // 对抗验证 F2：`npx -c "npm run clean"` / `npm exec --call …` 的值是 sh
+          // 语义命令文本（npx 用 $SHELL 执行），不是程序名——按内联脚本递归评估。
+          // 刻意**不**在此结束解包：bash 内建 `exec -c` 是「清空环境」（`exec -c
+          // rimraf ~` 仍执行 rimraf ~），与 npm exec 的 `--call` 同形不同义；继续
+          // 解包让后续 payload 照常分级，两边取并集不漏、不降级。
+          if (
+            (wrapperToken === "-c" || wrapperToken === "--call") &&
+            NPM_CALL_SHELL_WRAPPERS.has(name)
+          ) {
+            assessText(value, context, findings, depth + 1, { state: effectiveState() });
+            callPayloadAssessed = true;
+          }
+        }
         continue;
       }
       if (BARE_DURATION_PATTERN.test(wrapperToken)) {
@@ -459,6 +529,38 @@ function assessTokens(
       reason:
         "command name is computed at runtime, so the invoked program cannot be identified statically",
     });
+  }
+
+  // R6 边界⑥收口（spec npm-script-body-scan.md）：解包链含 npm/pnpm/yarn/bun 时
+  // 进入 run 族语义——`run <script>`/别名/裸名按注入的 package.json scripts 解析
+  // body 并递归评估；参数从包管理器词的后一个 token 重新解析（上面的通用解包会
+  // 把 --filter 等取值旗标的值误当 payload，见 wrappedByIndex 注释）。map 未注入时
+  // 模块内部维持 legacy 直通（返回空），外层对 program=`run` 的既有分类照旧。
+  if (wrappedBy !== undefined && PACKAGE_MANAGER_PROGRAMS.has(wrappedBy) && wrappedByIndex >= 0) {
+    assessPackageManagerScriptRun(
+      wrappedBy,
+      tokens.slice(wrappedByIndex + 1),
+      ctx,
+      findings,
+      depth,
+      assessText,
+      // 对抗验证 F3：xargs payload 位/管道喂入位的无名 run 由 stdin 提供名字。
+      { throughXargs, receivesPipe: meta.receivesPipe },
+    );
+  }
+
+  // 对抗验证 F2 保底网：npx/bunx 的取值旗标表再漏一项时，值后的真实程序会停在
+  // 错误位置而整体漏评（`npx --unknown x npm run clean` 曾 safe 直通）——解包停点
+  // 后仍出现包管理器词 → 至少 confirm（fail-closed，防表漂移回退）。完整再解包
+  // 形态不受影响：`npx pnpm lint` 的最终 wrappedBy 是 pnpm，不落本网。
+  if (wrappedBy === "npx" || wrappedBy === "bunx") {
+    if (rest.some((token) => mentionsPackageManagerWord(token))) {
+      pushFinding(findings, {
+        level: "confirm",
+        reason:
+          "`npx`/`bunx` payload could not be fully unwrapped statically (a package manager word remains after the unwrap stop point), so the command that would execute is unknown",
+      });
+    }
   }
 
   if (programName === "find") {
@@ -712,6 +814,6 @@ function assessText(
     analysis.hasUnsupportedSyntax ||
     parserSwallowedCommandText(text, analysis)
   ) {
-    assessRawText(text, context, findings, activeCursor);
+    assessRawText(text, context, findings, activeCursor, depth, assessText);
   }
 }

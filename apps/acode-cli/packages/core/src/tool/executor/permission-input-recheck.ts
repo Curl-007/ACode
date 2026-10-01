@@ -32,7 +32,17 @@ export async function recheckPermissionHookModifiedInput(input: {
   toolCall: ExecutableToolCall;
   traceContext: TraceContext;
 }): Promise<PermissionHookInputRecheckResult> {
-  const runtimePermissionContext = resolveRuntimePermissionContext(input.deps);
+  const baseRuntimePermissionContext = resolveRuntimePermissionContext(input.deps);
+  // R6 边界⑥收口（spec npm-script-body-scan.md R1/R5）：hook 改写后的命令可能指向
+  // 不同的 script/选择器，复核必须**重新预取**，与首次判定同源同语义。
+  const capabilityContextExtra = await input.entry.resolvePermissionCapabilityContextAsync?.(
+    input.modifiedInput,
+    baseRuntimePermissionContext,
+  );
+  const runtimePermissionContext = {
+    ...baseRuntimePermissionContext,
+    ...(capabilityContextExtra ?? {}),
+  };
   const permissionContext: PermissionContext = {
     input: input.modifiedInput,
     mode: input.mode,
@@ -47,6 +57,14 @@ export async function recheckPermissionHookModifiedInput(input: {
     // 对抗复审 N3：复核与首次判定必须是同一调用方身份，否则 hook 改写后命中的反射门
     // 挑战键会换一个身份，门把已通过反射的命令重新拒一遍（反之也防跨身份借用挑战）。
     sessionId: input.deps.sessionId,
+    // R6 边界⑥收口：script 体 map（deny 级熔断与反射门从这里拿注入）。
+    ...(runtimePermissionContext.packageScripts
+      ? { packageScripts: runtimePermissionContext.packageScripts }
+      : {}),
+    // 对抗验证 F1②：扫描覆盖证据同源透传（与首次判定同一语义）。
+    ...(runtimePermissionContext.scannedDirectories
+      ? { scannedDirectories: runtimePermissionContext.scannedDirectories }
+      : {}),
   };
   const rulePolicy = input.entry.resolvePermissionRulePolicy?.(
     input.modifiedInput,

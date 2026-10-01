@@ -24,6 +24,7 @@ import {
   extractForcedDeleteCandidates,
 } from "../tool/handlers/bash-command-parser.js";
 import { assessBashCommandTargetRisk } from "../tool/handlers/bash-target-risk/index.js";
+import type { PackageScriptSource } from "../tool/handlers/bash-target-risk/types.js";
 import type { PermissionContext } from "./service.js";
 
 export interface BypassImmuneBreakerHit {
@@ -38,6 +39,20 @@ export interface BypassImmuneBreakerContext {
   readonly input: unknown;
   readonly workingDirectory?: string;
   readonly workspaceRoot?: string;
+  /**
+   * npm/pnpm/yarn/bun run 的 package.json scripts 预解析 map（R6 边界⑥收口）。
+   * breaker 是纯函数：script body 只能由调用方（PermissionService，map 来自 executor
+   * 的异步预取）喂进来——没有它，「npm run clean（body=rimraf ~）」在 yolo 下没有任何
+   * deny 通道（capability critical 不影响 yolo 直通，实测确认）。缺省 = legacy 调用方，
+   * body 不可见，维持收口前行为（spec npm-script-body-scan.md R4/R6）。
+   */
+  readonly packageScripts?: readonly PackageScriptSource[];
+  /**
+   * 预取实际读过/走过的目录（扫描覆盖证据，对抗验证 F1②）。与 packageScripts
+   * 同源：目标目录的 enclosing 命中只有被它覆盖才可信任（`cd sub` 落进未扫描子包
+   * 时根包 map 充数会漏掉 deny）。缺省 = legacy 调用方，维持 enclosing 信任。
+   */
+  readonly scannedDirectories?: readonly string[];
 }
 
 /**
@@ -70,6 +85,12 @@ function checkCatastrophicBashTarget(
     workspaceRoot: context.workspaceRoot,
     homeDirectory: homedir(),
     platform: process.platform,
+    // R6 边界⑥收口（spec npm-script-body-scan.md R4）：script body 的 catastrophic
+    //（`npm run clean` 且 body=`rimraf ~`）走同一个 deny 级命中类，ruleId 仍是
+    // `breaker.bashTargetCatastrophic`——命中路径经 script body 发现不改变类别。
+    ...(context.packageScripts ? { packageScripts: context.packageScripts } : {}),
+    // 对抗验证 F1②：覆盖证据同源进 breaker（空数组是有意义状态，不能省）。
+    ...(context.scannedDirectories ? { scannedDirectories: context.scannedDirectories } : {}),
   });
   if (assessment.level !== "catastrophic") return undefined;
 
@@ -299,5 +320,10 @@ export function breakerContextFromPermissionContext(
     input: context.input,
     ...(context.workingDirectory ? { workingDirectory: context.workingDirectory } : {}),
     ...(context.workspaceRoot ? { workspaceRoot: context.workspaceRoot } : {}),
+    // R6 边界⑥收口：script body map 透传给 deny 级命中类（yolo 下 body catastrophic
+    // 的唯一 deny 通道，spec npm-script-body-scan.md R4）。
+    ...(context.packageScripts ? { packageScripts: context.packageScripts } : {}),
+    // 对抗验证 F1②：扫描覆盖证据同源透传（cd/选择器目标的 enclosing 充数拦截依赖它）。
+    ...(context.scannedDirectories ? { scannedDirectories: context.scannedDirectories } : {}),
   };
 }

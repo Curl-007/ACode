@@ -168,6 +168,17 @@ export function isSafeWriteSink(raw: string): boolean {
 }
 
 /**
+ * 把调用方注入的运行时路径（PackageScriptSource.directory、trackedCwd 基准等，
+ * 来源是文件系统而非模型输入）归一化到与目标分级同一词法空间
+ * （正斜杠、盘符小写、`.`/`..` 消除）。npm-scripts.ts 的选择器/source 匹配用——
+ * 两边必须同一比较口径，否则 Windows 反斜杠形态的注入目录匹配不上选择器
+ * （R6 边界⑥收口，spec npm-script-body-scan.md R2）。
+ */
+export function normalizeRuntimePath(raw: string, platform: string | undefined): string {
+  return normalizeConcrete(raw, { platform }).text;
+}
+
+/**
  * 把上下文里的真实路径（cwd/workspaceRoot/homedir）归一化到同一词法空间。
  * 这些路径来自运行时而非模型输入，不含未解析段。
  */

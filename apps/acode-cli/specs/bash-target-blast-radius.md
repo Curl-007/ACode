@@ -212,7 +212,26 @@ Windows 目录递归保护区内，按 catastrophic 处理）。
     `pnpm dlx rimraf ~` 是最常见的递归删除形态；jcode 上游的 18 个 wrapper 面向
     Rust/shell 宿主，照抄表范围会留下一条 safe 直通路径。解包后的程序名不在破坏性
     表内时判定不变（`npm run clean`、`node script.js`、`deno run x.ts`、`pnpm install`
-  仍是 safe），所以这一条只收紧、不新增噪声。
+  仍是 safe），所以这一条只收紧、不新增噪声。`npm run` 族在 map 注入后的分级见
+  `npm-script-body-scan.md`（R6 边界⑥已收口）。
+  - **JS 包运行器的取值旗标（对抗验证 F2）**：`npx`/`bunx` 的 `-p/--package/
+    -c/--call/--registry/--userconfig`、`npm` 的 `--package/-c/--call/--prefix/
+    --registry/--userconfig/--cache`、`exec`/`dlx`（`npm exec`/`pnpm exec`/`pnpm dlx`
+    解包链的第二跳）的 `--package/--registry` **取值**——值不进解包，其后
+    才是真实 payload。取值表缺口就是 fail-open：`npx --package x npm run clean`、
+    `npm exec --package x -- rimraf ~` 曾把 `x` 误停在 payload 位、真实命令整体漏评。
+    配套三条：①`-c/--call` 的值是 **sh 语义命令文本**，按内联脚本递归评估
+    （`npx -c "npm run clean"` 评的是 clean body，不是把 payload 当程序名）；评估
+    值之后解包**继续**而非终止——bash 内建 `exec -c` 是「清空环境」（`exec -c
+    rimraf ~` 仍执行 rimraf ~），与 npm exec 的 `--call` 同形不同义；通用取值表
+    因此不含 exec/dlx 的 `-c/--call`，包管理器链内的 `npm exec -c` 由链上下文
+    （此前出现过包管理器词）区分：链内按 call 文本递归评估并豁免「payload 不可见」
+    confirm，裸 `exec -c` 按布尔跳过、后续 payload 照常分级；已评估 `-c` 文本时
+    解包走到尽头不再追加「payload 不可见」confirm（`npx -c "npm run lint"` 日常
+    形态零摩擦）；
+    ②**保底网**——解包停点后 `wrappedBy ∈ {npx, bunx}` 且停点之后仍出现包管理器词
+    （npm/pnpm/yarn/bun）→ 至少 confirm（fail-closed，防取值表再漏一项时静默放行；
+    `npx pnpm lint` 这类完整再解包形态停点后已无残留，不受影响）。
   - **busybox/toybox 同样解包**（对抗复核 F-4）：`busybox rm -rf ~`、`busybox sh -c
     "rm -rf ~"`、`busybox tee /etc/passwd`、`toybox rm -rf ~` 的真实动词是**第一个
     非旗标参数**（applet 名），其后按既有 payload 递归评估（applet 是 wrapper/shell
@@ -496,10 +515,15 @@ the command themselves.
   级别的命令名动态形态在 AST 路径与 find `-exec` 合成段升级；fallback 只在
   `hasParseErrors`/`hasUnsupportedSyntax` 时对原始文本词法扫描，命令名位判定
   依赖 AST 词边界，不做猜测。
-- JS 包运行器只解包到**命令行可见的动词**：`npx rimraf ~` 覆盖，但
-  `npm run clean`/`node -e "<删文件的 JS>"`/`pnpm exec node clean.js` 的破坏发生在
-  package.json script 或 JS 源里，本层看不见（不解析 JS）——由既有 high+needsApproval
-  与 J1-2 反射门（若目标不可静态确定则升级）兜底。
+- JS 包运行器只解包到**命令行可见的动词**：`npx rimraf ~` 覆盖；`npm run clean`/
+  `pnpm run <script>`/`yarn <script>`/`bun run <script>` 的 script 体盲区
+  （本节原边界⑥，最高优先）**已收口**——调用方异步预解析 package.json scripts 后
+  经 `TargetRiskContext.packageScripts` 注入，`run` 族按 body 文本递归评估，
+  规则、fallback 矩阵与决策链见 `apps/acode-cli/specs/npm-script-body-scan.md`
+  （R2 wrapper 解包条目的「`npm run clean` … 仍是 safe」在此限定为 **map 未注入的
+  legacy 上下文**；注入后的分级以新 spec 为准）。`node -e "<删文件的 JS>"/
+  `pnpm exec node clean.js` 的破坏发生在 JS 源里，本层看不见（不解析 JS）——
+  由既有 high+needsApproval 与 J1-2 反射门兜底。
 - 不改变既有三红基线测试、不放宽任何既有防线。
 
 ## 验收场景（测试矩阵）
@@ -548,7 +572,9 @@ the command themselves.
 | `HOME=` 数据参数：`grep HOME= f` / `rg "HOME=" src` / `git log -S "HOME="` / `echo HOME=` / `(grep HOME= f)` | safe（readonly 快径保留） |
 | `HOME=` 赋值位：`HOME=/tmp rm -rf ~` / `env HOME=/tmp rm -rf ~/.ssh` / `sudo env HOME=/tmp rm -rf ~` / `(HOME=/tmp rm -rf ~)` / `bash -c 'HOME=/tmp rm -rf ~'` | catastrophic；`export HOME=/tmp` | confirm |
 | JS 生态：`npx rimraf ~` / `bunx rimraf ~/.ssh` / `pnpm dlx rimraf ~` / `yarn rimraf /etc` / `npx rm -rf ~` / `pnpm exec rimraf /usr` / `rimraf ~` | catastrophic；`rimraf dist` / `pnpm exec rimraf dist` | low |
-| JS 生态不回归：`npm run clean` / `node script.js` / `deno run x.ts` / `bun test` / `pnpm install` / `npm rm -g typescript` / `npx tsc --noEmit` | safe/low（不打断） |
+| JS 生态不回归：`npm run clean` / `node script.js` / `deno run x.ts` / `bun test` / `pnpm install` / `npm rm -g typescript` / `npx tsc --noEmit` | safe/low（不打断；`npm run` 族 map 未注入的 legacy 口径，注入后见 npm-script-body-scan.md） |
+| F2 取值旗标：`npx --package x npm run clean`（clean body=`rimraf ~`） / `npx -c "npm run clean"` / `npx --call "npm run clean"` / `npm exec --package x -- rimraf ~` / `npm exec -c "npm run clean"` | catastrophic（yolo 不得静默 allow） |
+| F2 不回归：`npx tsc --noEmit` / `npx rimraf dist` / `npx npm run clean`（既有 catastrophic） / `npx pnpm lint`（完整再解包不受保底网误伤） | 档位零变化 |
 | cwd 跟踪：`cd ~ && rm -rf .ssh` / `cd / && rm -rf etc` / `cd /etc && rm -rf passwd` / `(cd ~; rm -rf .ssh)` / `sh -c 'cd ~ && rm -rf .ssh'` / `env -C ~ rm -rf .ssh` / `sudo --chdir /home/u rm -rf .ssh` / `cd ~/.ssh && rm -rf *` / `pushd ~; rm -rf .gnupg` | catastrophic |
 | cwd 跟踪 fail-closed：`cd $X && rm -rf .ssh` / `popd; rm -rf .ssh` / `cd -; rm -rf .ssh` | ≥confirm（相对目标落点未知） |
 | cwd 不回归：`cd dist && rm -rf *`（cwd 内） | low；`cd /tmp && rm -rf cache` | safe/low；`cd ~/projects/x && rm -rf build` | low |

@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
 import { basename, extname, relative, resolve, sep } from "node:path";
 import { hostname } from "node:os";
-import { Hono, type Context } from "hono";
+import { Hono, type Context, type MiddlewareHandler } from "hono";
 import { serve } from "@hono/node-server";
 import { createNodeWebSocket } from "@hono/node-ws";
 import type { WebSocket } from "ws";
@@ -92,6 +92,9 @@ function wrapWebSocket(ws: WebSocket): ISocket {
 
 const log = (...args: unknown[]) =>
   console.log(formatLogPrefix("acode-server:http", process.pid), ...args);
+
+const warn = (...args: unknown[]) =>
+  console.warn(formatLogPrefix("acode-server:http", process.pid), ...args);
 
 function setupChannelServer(
   ws: WebSocket,
@@ -462,8 +465,31 @@ export function createHttpServer(
     return c.json(issued);
   });
 
+  // P0-3：普通 `/ws` 与 `/ws/remote/:id` 升级在鉴权（上方 token 中间件）之后、升级之前，
+  // 做与 `/ws/host` 完全同源的 Origin/Host 裁决。WebSocket 握手不受 CORS 限制：默认
+  // loopback 无 token 配置下，恶意网页（DNS-rebinding / 本机恶意页面）可直连
+  // ws://127.0.0.1:<port>/ws 以 terminal-client 身份调用全部暴露服务（含文件/终端），
+  // Origin 裁决是该姿态下唯一的浏览器侧屏障；原生客户端（Node `ws`）不带 Origin，放行。
+  // 判定必须复用 `/ws/host` 的同一个 resolveRequestOriginTrust，不允许另起兜底分支。
+  const rejectUntrustedUpgradeOrigin: MiddlewareHandler = async (c, next) => {
+    const trust = resolveRequestOriginTrust({
+      origin: c.req.header("origin"),
+      host: c.req.header("host"),
+      allowedOrigins: options.allowedOrigins,
+    });
+    if (!trust.allowed) {
+      // 安全拒绝是生产可用事件（AGENTS.md 日志分级），记 warn 且不打敏感数据。
+      warn(
+        `SECURITY: WebSocket upgrade to ${new URL(c.req.url).pathname} rejected: untrusted ${trust.reason}`,
+      );
+      return c.json({ error: `Upgrade rejected: untrusted ${trust.reason}` }, 403);
+    }
+    await next();
+  };
+
   // 普通 `/ws` 永远是 terminal-client；浏览器/任意客户端设置旧 mode header
   // 都不能再把自己提升为 trusted host。
+  app.use("/ws", rejectUntrustedUpgradeOrigin);
   app.get(
     "/ws",
     upgradeWebSocket(() => ({
@@ -592,7 +618,11 @@ export function createHttpServer(
   app.post("/api/bots/:provider/:botId", handleBotCallback);
   app.get("/api/bots/:provider/:botId", handleBotVerify);
 
-  // 远程连接的 WebSocket 端点，将远程 services 桥接给浏览器
+  // 远程连接的 WebSocket 端点，将远程 services 桥接给浏览器。
+  // P0-3 核查结论：`/ws/remote/:id` 是**独立的**升级路由（`app.get("/ws")` 处理器不覆盖它），
+  // 必须单独挂同一裁决——默认 loopback 无 token 姿态下恶意网页可先 POST /api/connect-remote
+  // 拿到 id 再连这里，拿到的服务面（文件/终端）与 `/ws` 相同。
+  app.use("/ws/remote/:id", rejectUntrustedUpgradeOrigin);
   app.get(
     "/ws/remote/:id",
     upgradeWebSocket((c) => {

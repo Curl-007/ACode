@@ -51,7 +51,9 @@ const sharedStub = {
   formatLogPrefix: (scope, pid) => `[${scope}:${pid}]`,
   formatZodError: (error) => String(error),
   botProviders: ["webhook", "wecom"],
-  remoteTargetSchema: { safeParse: () => ({ success: false, error: { issues: [{ message: "stub" }] } }) },
+  remoteTargetSchema: {
+    safeParse: () => ({ success: false, error: { issues: [{ message: "stub" }] } }),
+  },
 };
 
 const rpcStub = {
@@ -112,6 +114,11 @@ const nodeCrypto = await import("node:crypto");
 const nodeFsPromises = await import("node:fs/promises");
 const nodePath = await import("node:path");
 const nodeOs = await import("node:os");
+// 原生 WebSocket 客户端（不带 Origin 头）：模拟 Node `ws` / SSH 隧道内的合法客户端。
+const RawWebSocket = (await import("ws")).default ?? (await import("ws"));
+
+// server-core 的 createServiceLogger stub 捕获 warn，供 P0-3 拒绝日志断言。
+const coreWarnLines = [];
 
 async function loadServerHttp() {
   return load("packages/server/src/http.ts", {
@@ -139,7 +146,12 @@ async function loadServerCoreHttp() {
     "@hono/node-ws": nodeWs,
     "@acode/rpc": rpcStub,
     "@acode/services": servicesStub,
-    "@acode/services/node": { createServiceLogger: () => ({ debug: () => undefined }) },
+    "@acode/services/node": {
+      createServiceLogger: () => ({
+        debug: () => undefined,
+        warn: (...args) => coreWarnLines.push(args.join(" ")),
+      }),
+    },
     "@acode/shared": sharedStub,
     "@acode/shared/node": { ...serverAuth, ...hostCapability },
   });
@@ -158,6 +170,36 @@ async function startCore(createCoreHttpServer, options) {
   const services = new ServiceCollection();
   const core = await createCoreHttpServer(services, { host: "127.0.0.1", ...options });
   return { core, port: core.port, close: () => core.close() };
+}
+
+/**
+ * 发起真实 WebSocket 升级并回传握手结果：`{ opened: true, status: 101 }` 或服务器拒绝状态。
+ * 仅连 loopback 临时端口；意外错误 reject，避免把「连接被拒」误当成功。
+ * 返回 socket 引用供调用方 terminate，防止已升级连接卡住 server.close()。
+ */
+function wsHandshake(url, headers = {}) {
+  return new Promise((resolve, reject) => {
+    const socket = new RawWebSocket(url, { headers, handshakeTimeout: 5000 });
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve({ socket, ...value });
+    };
+    socket.on("unexpected-response", (_request, response) => {
+      response.resume();
+      finish({ opened: false, status: response.statusCode });
+    });
+    socket.on("open", () => finish({ opened: true, status: 101 }));
+    socket.on("error", (error) => {
+      if (!settled) reject(error);
+    });
+  });
+}
+
+/** close 带超时兜底：已升级连接若因 stub 未完全收敛而挂着，不让测试进程永久卡死。 */
+async function closeWithTimeout(close, ms = 2000) {
+  await Promise.race([close(), new Promise((resolve) => setTimeout(resolve, ms))]);
 }
 
 // ── 纯共享原语单测 ───────────────────────────────────────────────────────────
@@ -214,11 +256,17 @@ test("resolveRequestOriginTrust rejects non-allowlisted browser Origin and Host"
   });
   // (7) loopback Origin => 放行。
   assert.deepEqual(
-    serverAuth.resolveRequestOriginTrust({ origin: "http://127.0.0.1:5173", host: "127.0.0.1:3030" }),
+    serverAuth.resolveRequestOriginTrust({
+      origin: "http://127.0.0.1:5173",
+      host: "127.0.0.1:3030",
+    }),
     { allowed: true },
   );
   assert.deepEqual(
-    serverAuth.resolveRequestOriginTrust({ origin: "http://localhost:5173", host: "localhost:3030" }),
+    serverAuth.resolveRequestOriginTrust({
+      origin: "http://localhost:5173",
+      host: "localhost:3030",
+    }),
     { allowed: true },
   );
   // 显式白名单 Origin => 放行。
@@ -286,7 +334,10 @@ test("host capability store binds principal, is single-use and short-TTL", () =>
   // 缺省主体为 anonymous。
   clock = 2_000_000;
   const anon = store.issue();
-  assert.deepEqual(store.consume(anon.capability), hostCapability.ANONYMOUS_HOST_CAPABILITY_PRINCIPAL);
+  assert.deepEqual(
+    store.consume(anon.capability),
+    hostCapability.ANONYMOUS_HOST_CAPABILITY_PRINCIPAL,
+  );
 });
 
 test("host capability store caps live entries (no unbounded memory growth)", () => {
@@ -484,7 +535,11 @@ test("server: cookie-encoded token authenticates consistently across middleware 
         403,
         `cookie-authenticated upgrade must not be rejected as principal-mismatch for ${JSON.stringify(token)}`,
       );
-      assert.notEqual(upgrade.status, 500, `upgrade must not throw (URIError) for ${JSON.stringify(token)}`);
+      assert.notEqual(
+        upgrade.status,
+        500,
+        `upgrade must not throw (URIError) for ${JSON.stringify(token)}`,
+      );
     } finally {
       await ctx.close();
     }
@@ -577,7 +632,11 @@ test("server: same capability cannot be redeemed twice (c)", async () => {
     const first = await fetch(`http://127.0.0.1:${ctx.port}/ws/host`, {
       headers: { authorization: "Bearer secret-token", "x-acode-rpc-host-capability": capability },
     });
-    assert.notEqual(first.status, 401, `first redemption should pass the capability gate, got ${first.status}`);
+    assert.notEqual(
+      first.status,
+      401,
+      `first redemption should pass the capability gate, got ${first.status}`,
+    );
     // 第二次：同一 capability 已作废 => 能力门 401。
     const second = await fetch(`http://127.0.0.1:${ctx.port}/ws/host`, {
       headers: { authorization: "Bearer secret-token", "x-acode-rpc-host-capability": capability },
@@ -599,7 +658,11 @@ test("server: non-loopback bind without token refuses to start (d)", async () =>
     /requires an auth token/i,
   );
   // 0.0.0.0 + 有 token：允许构造（fail-closed 不变量满足）。
-  const authed = createHttpServer(services, 0, { host: "0.0.0.0", authToken: "t", authRequired: true });
+  const authed = createHttpServer(services, 0, {
+    host: "0.0.0.0",
+    authToken: "t",
+    authRequired: true,
+  });
   await new Promise((resolve) => setTimeout(resolve, 120));
   authed.close();
 });
@@ -654,7 +717,11 @@ test("server-core: /ws/host upgrade with evil Origin is rejected and capability 
     const first = await fetch(`http://127.0.0.1:${ctx.port}/ws/host`, {
       headers: { "x-acode-rpc-host-capability": capability },
     });
-    assert.notEqual(first.status, 401, `first redemption should pass capability gate, got ${first.status}`);
+    assert.notEqual(
+      first.status,
+      401,
+      `first redemption should pass capability gate, got ${first.status}`,
+    );
     // 同一 capability 二次兑换 => 401。
     const replay = await fetch(`http://127.0.0.1:${ctx.port}/ws/host`, {
       headers: { "x-acode-rpc-host-capability": capability },
@@ -676,4 +743,166 @@ test("server-core: loopback host starts and reports authRequired false", async (
   } finally {
     await ctx.close();
   }
+});
+
+// ── P0-3：普通 `/ws` 升级前 Origin/Host 裁决（验收场景 13）─────────────────────
+
+test("server: /ws upgrade with evil Origin is rejected 403 and connection not established (13)", async () => {
+  const { createHttpServer } = await loadServerHttp();
+  const warnings = [];
+  const originalWarn = console.warn;
+  console.warn = (...args) => warnings.push(args.join(" "));
+  let ctx;
+  try {
+    ctx = await startHttp(createHttpServer, {});
+    const attempt = await wsHandshake(`ws://127.0.0.1:${ctx.port}/ws`, {
+      origin: "http://evil.test",
+    });
+    attempt.socket.terminate();
+    assert.equal(attempt.opened, false, "handshake must not complete for untrusted Origin");
+    assert.equal(attempt.status, 403);
+    // 拒绝必须记 warn（生产可用安全事件），与既有拒绝/弃用日志风格一致。
+    assert.ok(
+      warnings.some((line) => /SECURITY/i.test(line) && /untrusted origin/i.test(line)),
+      `expected a rejection warn log, got: ${JSON.stringify(warnings)}`,
+    );
+  } finally {
+    console.warn = originalWarn;
+    if (ctx) await closeWithTimeout(ctx.close);
+  }
+});
+
+test("server: native client without Origin upgrades /ws normally (13)", async () => {
+  const { createHttpServer } = await loadServerHttp();
+  let ctx;
+  try {
+    ctx = await startHttp(createHttpServer, {});
+    // Node `ws` 默认不发 Origin 头：原生客户端（terminal-client / web-remote 客户端）不受 Origin 门拦截。
+    const native = await wsHandshake(`ws://127.0.0.1:${ctx.port}/ws`);
+    native.socket.terminate();
+    assert.equal(native.opened, true, "no-Origin native upgrade must succeed");
+    assert.equal(native.status, 101);
+  } finally {
+    if (ctx) await closeWithTimeout(ctx.close);
+  }
+});
+
+test("server: /ws upgrade with loopback Origin is allowed (13)", async () => {
+  const { createHttpServer } = await loadServerHttp();
+  let ctx;
+  try {
+    ctx = await startHttp(createHttpServer, {});
+    // 同源（loopback）浏览器页面是合法调用方：`Origin: http://127.0.0.1:<port>` 放行。
+    const loopback = await wsHandshake(`ws://127.0.0.1:${ctx.port}/ws`, {
+      origin: `http://127.0.0.1:${ctx.port}`,
+    });
+    loopback.socket.terminate();
+    assert.equal(loopback.opened, true, "loopback Origin upgrade must be allowed");
+    const localhost = await wsHandshake(`ws://127.0.0.1:${ctx.port}/ws`, {
+      origin: `http://localhost:${ctx.port}`,
+    });
+    localhost.socket.terminate();
+    assert.equal(localhost.opened, true, "localhost Origin upgrade must be allowed");
+  } finally {
+    if (ctx) await closeWithTimeout(ctx.close);
+  }
+});
+
+test("server: token auth runs before the /ws Origin gate (401 before 403)", async () => {
+  const { createHttpServer } = await loadServerHttp();
+  let ctx;
+  try {
+    ctx = await startHttp(createHttpServer, { authToken: "secret-token", authRequired: true });
+    // 无凭据 + 恶意 Origin：鉴权中间件先拦（spec 要求裁决在「鉴权之后、升级之前」）。
+    const unauthenticated = await wsHandshake(`ws://127.0.0.1:${ctx.port}/ws`, {
+      origin: "http://evil.test",
+    });
+    unauthenticated.socket.terminate();
+    assert.equal(unauthenticated.status, 401);
+    // 合法凭据 + 恶意 Origin：过鉴权后被 Origin 门拦为 403。
+    const authenticated = await wsHandshake(`ws://127.0.0.1:${ctx.port}/ws`, {
+      origin: "http://evil.test",
+      authorization: "Bearer secret-token",
+    });
+    authenticated.socket.terminate();
+    assert.equal(authenticated.opened, false);
+    assert.equal(authenticated.status, 403);
+  } finally {
+    if (ctx) await closeWithTimeout(ctx.close);
+  }
+});
+
+test("server: /ws/remote/:id one-shot endpoint is covered by the same Origin gate (13)", async () => {
+  // P0-3 核查：/ws/remote/:id 是独立升级路由，不经 `/ws` 处理器；未挂门时未知 id 也会先完成
+  // 101 握手再在 onOpen 里 close(4004)。断言 403 证明升级前的 Origin 裁决覆盖了该端点。
+  const { createHttpServer } = await loadServerHttp();
+  let ctx;
+  try {
+    ctx = await startHttp(createHttpServer, {});
+    const evil = await wsHandshake(`ws://127.0.0.1:${ctx.port}/ws/remote/whatever`, {
+      origin: "http://evil.test",
+    });
+    evil.socket.terminate();
+    assert.equal(evil.opened, false);
+    assert.equal(evil.status, 403);
+    const native = await wsHandshake(`ws://127.0.0.1:${ctx.port}/ws/remote/whatever`);
+    native.socket.terminate();
+    // 无 Origin 原生客户端过 Origin 门（随后由 onOpen 的 id 校验 close，非本断言关注点）。
+    assert.notEqual(native.status, 403);
+  } finally {
+    if (ctx) await closeWithTimeout(ctx.close);
+  }
+});
+
+test("server-core: /ws upgrade with evil Origin is rejected 403 with warn (13)", async () => {
+  const { createCoreHttpServer } = await loadServerCoreHttp();
+  let ctx;
+  try {
+    ctx = await startCore(createCoreHttpServer);
+    const evil = await wsHandshake(`ws://127.0.0.1:${ctx.port}/ws`, {
+      origin: "http://evil.test",
+    });
+    evil.socket.terminate();
+    assert.equal(evil.opened, false, "handshake must not complete for untrusted Origin");
+    assert.equal(evil.status, 403);
+    assert.ok(
+      coreWarnLines.some((line) => /SECURITY/i.test(line) && /untrusted origin/i.test(line)),
+      `expected a server-core rejection warn log, got: ${JSON.stringify(coreWarnLines)}`,
+    );
+  } finally {
+    if (ctx) await closeWithTimeout(ctx.close);
+  }
+});
+
+test("server-core: native and loopback-Origin clients upgrade /ws normally (13)", async () => {
+  const { createCoreHttpServer } = await loadServerCoreHttp();
+  let ctx;
+  try {
+    ctx = await startCore(createCoreHttpServer);
+    // 无 Origin 原生客户端（SSH 隧道内的 terminal-client）：放行并完成握手。
+    const native = await wsHandshake(`ws://127.0.0.1:${ctx.port}/ws`);
+    native.socket.terminate();
+    assert.equal(native.opened, true, "no-Origin native upgrade must succeed on server-core");
+    // loopback Origin：放行并完成握手。
+    const loopback = await wsHandshake(`ws://127.0.0.1:${ctx.port}/ws`, {
+      origin: `http://127.0.0.1:${ctx.port}`,
+    });
+    loopback.socket.terminate();
+    assert.equal(loopback.opened, true, "loopback Origin upgrade must be allowed on server-core");
+  } finally {
+    if (ctx) await closeWithTimeout(ctx.close);
+  }
+});
+
+test("static: both /ws upgrade gates adjudicate with the same shared helper (13)", async () => {
+  // 不变量守护：两套 server 的 `/ws` 升级门必须调用同一个共享 resolveRequestOriginTrust
+  // （@acode/shared/node），不允许任一侧另起兜底分支。
+  const serverHttp = await read("packages/server/src/http.ts");
+  const coreHttp = await read("packages/acode-server-cli/src/server-core/http.ts");
+  // packages/server：/ws 与 /ws/remote/:id 挂同一裁决中间件，中间件内调用共享 helper。
+  assert.match(serverHttp, /const rejectUntrustedUpgradeOrigin[\s\S]*?resolveRequestOriginTrust\(/);
+  assert.match(serverHttp, /app\.use\(\s*"\/ws",\s*rejectUntrustedUpgradeOrigin\s*\)/);
+  assert.match(serverHttp, /app\.use\(\s*"\/ws\/remote\/:id",\s*rejectUntrustedUpgradeOrigin\s*\)/);
+  // Server Core：/ws 升级裁决内联调用同一个共享 helper。
+  assert.match(coreHttp, /app\.use\(\s*"\/ws",[\s\S]*?resolveRequestOriginTrust\(/);
 });

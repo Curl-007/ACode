@@ -147,6 +147,25 @@ export async function createCoreHttpServer(
   // 使用与 packages/server 同源的 TTL 一次性 + 主体绑定 store，使有效期和消费语义一致。
   const capabilities = options.hostCapabilityStore ?? createHostCapabilityStore();
   app.get("/api/server-info", (context) => context.json(info));
+  // P0-3：普通 `/ws` 升级与 `/ws/host`、以及 packages/server 同源同规则的 Origin/Host 裁决。
+  // WebSocket 握手不受 CORS 限制：Core 恒 loopback 且无 token（authRequired 恒 false），
+  // 恶意网页（DNS-rebinding / 本机恶意页面）可直连 ws://127.0.0.1:<port>/ws 以 terminal-client
+  // 身份调用全部暴露服务，Origin 裁决是该姿态下唯一的浏览器侧屏障；原生客户端（Node `ws` /
+  // SSH 隧道）不带 Origin，放行。判定必须复用同一个 resolveRequestOriginTrust（@acode/shared/node），
+  // 不允许另起兜底分支。Core 没有 `/ws/remote/:id` 端点，无需另挂。
+  app.use("/ws", async (context, next) => {
+    const trust = resolveRequestOriginTrust({
+      origin: context.req.header("origin"),
+      host: context.req.header("host"),
+      allowedOrigins: options.allowedOrigins,
+    });
+    if (!trust.allowed) {
+      // 安全拒绝是生产可用事件（AGENTS.md 日志分级），记 warn 且不打敏感数据。
+      log.warn(undefined, `SECURITY: WebSocket upgrade to /ws rejected: untrusted ${trust.reason}`);
+      return context.json({ error: `Upgrade rejected: untrusted ${trust.reason}` }, 403);
+    }
+    await next();
+  });
   app.get(
     "/ws",
     upgradeWebSocket(() => ({

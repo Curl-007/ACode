@@ -34,6 +34,12 @@ P0-2（鉴权 fail-closed + token 走 Header 不走 query）。
   弃用告警（进程内只告警一次），后续版本移除。
 - **受保护路径**：`/ws`、`/ws/**`、`/api/**` 在配置了 token 时必须携带合法凭据；其余路径（静态资源、
   SPA fallback、`/api/server-info`）不强制。`/api/server-info` 自报 `authRequired` 供客户端预判。
+- **`/ws` 升级前 Origin/Host 裁决（P0-3，与 `/ws/host` 同源同规则）**：普通 `/ws` 升级（terminal-client /
+  web-remote 客户端）在鉴权之后、升级之前调用同一个 `resolveRequestOriginTrust`——无 `Origin`（原生客户端）
+  放行；loopback origin 与显式白名单放行；携带浏览器 `Origin` 但不在白名单返回 403。理由与
+  `/ws/host` 相同：WebSocket 握手不受 CORS 限制，默认 loopback 无 token 配置下恶意网页可直连
+  `ws://127.0.0.1:<port>/ws` 以客户端身份调用全部暴露服务（含文件/终端），Origin 裁决是该姿态下的
+  唯一浏览器侧屏障；仓库内无浏览器调用方直连 `/ws`，对合法流程零影响。
 - **fail-closed 启动不变量**：解析后的绑定 host 非 loopback 且未配置 token（`authRequired` 为假）时，
   `createHttpServer` / `createCoreHttpServer` **在 listen 之前抛错拒绝启动**，错误信息指明「非 loopback
   绑定需要鉴权」。loopback 绑定无 token 允许启动，但打印「无鉴权·仅本机」告警。
@@ -124,6 +130,8 @@ P0-2（鉴权 fail-closed + token 走 Header 不走 query）。
     store 返回 `null`（达存活上限）时回 **503**。
   - `/ws/host`：先 `resolveRequestOriginTrust` 裁决（拒绝返回 403），再 `consume` 能力（失败 401），
     **最后 `resolveHostCapabilityBinding` 校验主体**（配置了 token 且不匹配返回 403）。
+  - `/ws`（普通升级）：鉴权之后、升级之前 `resolveRequestOriginTrust` 裁决（拒绝返回 403），
+    规则与 helper 与 `/ws/host` 完全同源；两套 server 行为一致。
   - `createHttpServer` 在 `serve()` 前调用 `assertServerAuthInvariant`；loopback 无 token 打印告警；
     host 未指定时默认 `127.0.0.1`。
   - 新增 `allowedOrigins?` 选项 + `ACODE_SERVER_ALLOWED_ORIGINS`（逗号分隔）解析。
@@ -158,6 +166,9 @@ P0-2（鉴权 fail-closed + token 走 Header 不走 query）。
 12. **cookie 编码 token 跨中间件与绑定一致**：含 `%XX` / 裸 `%` / UTF-8 百分号编码的 token，经 query 铸造
     回写 cookie 后，仅带 cookie 再次铸造仍 200，且用它做原生 `/ws/host` 升级不被 403（principal-mismatch）
     或 500（URIError）——证明 `readLiteTokenCookie` 让鉴权与主体绑定对同一 cookie 给出一致答案。
+13. **`/ws` 恶意 Origin 被拒（P0-3）**：`/ws` 升级携带 `Origin: http://evil.test` → 403；无 `Origin` 的原生
+    客户端（Node `ws`）升级正常；loopback origin（`http://127.0.0.1:<port>`）放行。两套 server 同源验证
+    （`packages/server` 与 Server Core 行为一致，共用同一 helper，不允许任一侧另起兜底分支）。
 
 测试遵循仓库既有「不变量守护」风格（`packages/desktop/tests/no-telemetry.test.mjs`、
 `apps/acode-cli/tests/no-telemetry.test.mjs`）：仅用临时端口 / loopback / 内存 fixture，

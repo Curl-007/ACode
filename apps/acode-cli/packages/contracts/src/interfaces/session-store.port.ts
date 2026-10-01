@@ -155,7 +155,6 @@ export interface SessionInfo {
   titleSource?: SessionTitleSource;
   titleMessageID?: MessageId;
   version: string;
-  shareURL?: string;
   summaryAdditions?: number;
   summaryDeletions?: number;
   summaryFiles?: number;
@@ -185,7 +184,6 @@ export interface CreateSessionInput {
   titleSource?: SessionTitleSource;
   titleMessageID?: MessageId;
   version: string;
-  shareURL?: string;
   permission?: PermissionRuleset;
   time?: {
     created?: number;
@@ -253,7 +251,6 @@ export interface UpdateSessionInput {
   titleSource?: SessionTitleSource;
   titleMessageID?: MessageId | null;
   expectedTitleSources?: readonly SessionTitleSource[];
-  shareURL?: string | null;
   summary?: {
     additions?: number;
     deletions?: number;
@@ -781,23 +778,9 @@ export interface MessageWithParts {
   parts: MessagePart[];
 }
 
-/** 分享导入的单事务载荷：新 session、唯一 model-only 上下文和 provenance 全有或全无。 */
-export interface SharedContextImportCommitBundle {
-  session: CreateSessionInput;
-  contextMessage: MessageWithParts;
-  provenance: SessionEntryInfo;
-}
-
-export type SharedContextImportStatus = "pending" | "reserved" | "attached" | "discarded";
-
-export interface SharedContextImportTransition {
-  sessionID: SessionId;
-  contextId: string;
-  expectedStatus: SharedContextImportStatus | readonly SharedContextImportStatus[];
-  status: SharedContextImportStatus;
-  /** queue/input identity or accepted user message identity for audit/recovery. */
-  sourceId?: string;
-}
+// 对话分享已下线：SharedContextImportCommitBundle / SharedContextImportStatus /
+// SharedContextImportTransition 类型与端口方法已删除；存量库中的
+// v4/shared_context_import entry 不再有运行时消费者（specs/conversation-share-removal.md 2.2）。
 
 export const SESSION_ENTRY_TARGET_COMPLETION_VERIFICATION =
   "target_completion_verification" as const;
@@ -1095,8 +1078,6 @@ export interface SessionStorePort {
   ): Promise<SessionInfo>;
   /** V4 stable/compact-edit fork 的唯一事务入口。legacy workspace fork 不调用。 */
   commitForkBundle?(bundle: ForkCommitBundle): Promise<SessionInfo>;
-  commitSharedContextImportBundle?(bundle: SharedContextImportCommitBundle): Promise<SessionInfo>;
-  transitionSharedContextImport?(input: SharedContextImportTransition): Promise<boolean>;
   updateSession(input: UpdateSessionInput): Promise<SessionInfo>;
   getSession(sessionID: SessionId): Promise<SessionInfo | null>;
   listSessions(input?: ListSessionsInput): Promise<SessionInfo[]>;

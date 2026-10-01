@@ -26,7 +26,6 @@ import type {
   TurnId,
   FileSystemErrorCode,
 } from "@acode/contracts";
-import type { ConversationSnapshot } from "@acode/shared/acode-protocol-v4";
 import { SessionEventType, isFileSystemPortError } from "@acode/contracts";
 import type { ACodeWorkspaceRef } from "@acode/shared";
 import { extractMarkdownArtifactImageRefs } from "@acode/shared";
@@ -169,10 +168,8 @@ function rowTargetActionForCommand(
 interface PersistedEventsLoadResult {
   events: SessionEvent[];
   synthesized: boolean;
-  /** durable transcript 重放后、live buffer 补回前注入的 store-verified child manifest。 */
+  /** durable transcript 重放后、live buffer 补回前注入的 store-verified child manifest. */
   subagentsSeed?: SessionSubagentsSeed;
-  /** shared_context 不生成可见 row；只把脱敏 handover metadata 下发。 */
-  sharedContextImport?: ConversationSnapshot["sharedContextImport"];
   /** memory eventStore 取快照时已包含的 raw sequence 水位。 */
   sourceEventSeq?: number;
   /** 与本次历史事件使用同一容量的种子；null 表示已查询但没有历史水位。 */
@@ -608,19 +605,6 @@ export class ConversationV4Gateway {
   private readonly cuaPermissionNormalizer = new CuaPermissionObservationNormalizer();
   private readonly telemetryEventIds = new Set<string>();
   private disposed = false;
-
-  /** session entry 状态变更后的轻量 metadata 更新，不重放 conversation event。 */
-  updateSharedContextImport(
-    sessionId: string,
-    source: ConversationSnapshot["sharedContextImport"],
-  ): void {
-    const publisher = this.publishers.get(sessionId);
-    if (!publisher) return;
-    publisher.seedSharedContextImport(source);
-    for (const [routeKey, state] of this.flushStates) {
-      if (state.sessionId === sessionId) this.scheduleFlush(routeKey, state, publisher);
-    }
-  }
 
   constructor(
     private readonly host: V4GatewayHost,
@@ -2969,9 +2953,6 @@ export class ConversationV4Gateway {
       // 创建时种子可能落空（record 尚未入册），首次订阅补一次（幂等、事件优先）。
       this.hydrationBuffers.delete(sessionId);
       this.seedPublisherConfig(sessionId, latestPublisher);
-      if (loaded.sharedContextImport) {
-        latestPublisher.seedSharedContextImport(loaded.sharedContextImport);
-      }
       await this.seedPublisherUsage(
         sessionId,
         latestPublisher,
@@ -3004,9 +2985,6 @@ export class ConversationV4Gateway {
           sessionId,
         }),
     });
-    if (loaded.sharedContextImport) {
-      publisher.seedSharedContextImport(loaded.sharedContextImport);
-    }
     if (loaded.subagentsSeed) publisher.seedSubagents(loaded.subagentsSeed);
     // 同次恢复的种子先应用，再补 live buffer；较新的使用量和选模事件始终获胜。
     if (loaded.usageSeed) publisher.seedUsage(loaded.usageSeed);

@@ -446,7 +446,6 @@ export interface ExecuteTurnOptionsBase {
   epilogueStart?: number;
   inputId?: string;
   intent?: TurnInputIntentMetadata;
-  sharedContextRefs?: TurnInputIntentMetadata["sharedContextRefs"];
   queryId?: QueryId;
   inputSource?: SyntheticUserMessageSource;
   inputPresentation?: RuntimeInputPresentation;

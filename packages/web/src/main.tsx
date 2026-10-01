@@ -171,7 +171,6 @@ function createWebPlatform(): IPlatformService {
     registerOAuthState: (_payload) => {},
     onOAuthCallback: () => () => {},
     onPaymentCallback: () => () => {},
-    onShareImport: () => () => {},
     notifyRendererReady: () => {},
     showTaskNotification: (payload) => {
       if (document.hasFocus()) {

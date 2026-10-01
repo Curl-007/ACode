@@ -55,7 +55,6 @@ export function createDesktopPlatform(options: {
     registerOAuthState: (payload) => window.acode.registerOAuthState(payload),
     onOAuthCallback: (callback) => window.acode.onOAuthCallback(callback),
     onPaymentCallback: (callback) => window.acode.onPaymentCallback(callback),
-    onShareImport: (callback) => window.acode.onShareImport?.(callback) ?? (() => {}),
     notifyRendererReady: () => window.acode.notifyRendererReady(),
     showTaskNotification: (payload) => window.acode.showTaskNotification(payload),
     syncWindowTabs: (paths) => window.acode.syncWindowTabs(paths),

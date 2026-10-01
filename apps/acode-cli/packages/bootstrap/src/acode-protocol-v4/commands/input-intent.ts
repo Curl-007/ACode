@@ -17,7 +17,6 @@ interface CanonicalCommandIntent {
   admittedDelivery?: TurnInputIntentMetadata["admittedDelivery"];
   fallbackReasonCode?: string;
   attachmentRefs?: readonly AttachmentRef[];
-  sharedContextRefs?: TurnInputIntentMetadata["sharedContextRefs"];
   provenance?: TurnInputIntentMetadata["provenance"];
 }
 
@@ -32,7 +31,6 @@ export function inputIntentMetadata(
     modelSelection?: ModelSelection;
     mode?: SubmissionMode;
     planEnabled?: boolean;
-    sharedContextRefs?: TurnInputIntentMetadata["sharedContextRefs"];
   },
 ): TurnInputIntentMetadata {
   const admission = commandAdmissionOf(envelope);
@@ -64,7 +62,6 @@ export function inputIntentMetadata(
           : "startNow"),
     ...(options.fallbackReasonCode ? { fallbackReasonCode: options.fallbackReasonCode } : {}),
     ...(options.attachmentRefs ? { attachmentRefs: [...options.attachmentRefs] } : {}),
-    ...(options.sharedContextRefs ? { sharedContextRefs: [...options.sharedContextRefs] } : {}),
   };
 }
 
@@ -92,7 +89,6 @@ export function inputIntentMetadataFromCanonical(
     admittedDelivery: canonical.admittedDelivery ?? "startNow",
     ...(canonical.fallbackReasonCode ? { fallbackReasonCode: canonical.fallbackReasonCode } : {}),
     ...(canonical.attachmentRefs ? { attachmentRefs: [...canonical.attachmentRefs] } : {}),
-    ...(canonical.sharedContextRefs ? { sharedContextRefs: [...canonical.sharedContextRefs] } : {}),
     ...(originalSourceCommandId
       ? {
           provenance: canonical.provenance ?? {
@@ -128,7 +124,6 @@ export function inputIntentMetadataFromQueueItem(
       ? { fallbackReasonCode: item.delivery.fallbackReasonCode }
       : {}),
     attachmentRefs: item.attachments,
-    ...(item.sharedContextRefs ? { sharedContextRefs: [...item.sharedContextRefs] } : {}),
     // 提升只改变调度状态；重试／编辑原始输入的来源关联不能在此丢失。
     ...(item.provenance ? { provenance: { ...item.provenance } } : {}),
   };

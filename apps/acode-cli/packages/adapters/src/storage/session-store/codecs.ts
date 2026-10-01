@@ -66,7 +66,8 @@ export function decodeSessionRow(row: SessionRow): SessionInfo {
     titleSource: decodeSessionTitleSource(row.title_source),
     titleMessageID: row.title_message_id ? (row.title_message_id as MessageId) : undefined,
     version: row.version,
-    shareURL: row.share_url ?? undefined,
+    // 对话分享已下线：share_url 列随已发布 migration 保留（存量库兼容），
+    // 读侧不再映射，写侧不再落值（specs/conversation-share-removal.md 2.3）。
     summaryAdditions: row.summary_additions ?? undefined,
     summaryDeletions: row.summary_deletions ?? undefined,
     summaryFiles: row.summary_files ?? undefined,

@@ -38,7 +38,6 @@ test("runtime official URL literals are restricted to identity and user-opened l
   const allowed = new Set([
     "packages/shared/src/acodeEndpoint.ts",
     "packages/ui/src/lib/productDocs.ts",
-    "packages/web/src/share/ConversationShareLandingPage.tsx",
     // 官方插件市场来源：只在 officialServices.marketplace 开关开启（Desktop env 投影或 CLI env）时
     // 才进入默认市场集合，网络出口仍受 assertOfficialPlatformAccessible 与开关裁决。
     "packages/shared/src/plugin-marketplaces.ts",
@@ -194,11 +193,6 @@ test("all platform service boundaries guard before touching credentials, state o
       "packages/services/src/oauth/oauthService.ts",
       ["restoreCachedSessionState"],
       { status: "signed-out" },
-    ],
-    [
-      "packages/services/src/conversation-share/conversationShareService.ts",
-      ["preflight", "publish", "importShare"],
-      "reject",
     ],
     ["packages/services/src/feedback/feedbackHttpClient.ts", ["request"], "reject"],
     [

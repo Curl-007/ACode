@@ -398,14 +398,13 @@ export function useAppPanels(options: {
 
       // 交互说明：消息区只负责抛出"打开这个 URL"的意图，
       // 真正的 webview 导航、地址校验和面板显隐仍统一收口在浏览器面板一侧处理。
-      const isShareUrl = /^https?:\/\/[^/]+\/(?:cn\/)?share\/[^/]+$/u.test(payload.url);
       const targetTabId = `browser:${createUuid()}`;
       // Agent 控制的 guest 触发 popup 时，新的页面仍属于模型操作链路；不能把它
       // 当作人类新开的 Browser tab，继承 setting.json 中保存的自由尺寸/缩放偏好。
       const agentOpened = isAgentOpenedBrowserPopup(payload);
       // webview popup 事件原来只携带 URL，迟到的对话 1 事件会被当前对话 2
       // 的 owner 接管。保留来源 scope，并且只有来源仍是当前 owner 时才抢焦点。
-      if (!isShareUrl && isCurrentOwner) {
+      if (isCurrentOwner) {
         setBrowserNavigationRequest({
           id: createUuid(),
           targetTabId,
@@ -417,24 +416,17 @@ export function useAppPanels(options: {
         `[App] ${isCurrentOwner ? "切换" : "后台挂载"}右侧面板 mode=browser workspace=${sourceWorkspaceKey} sessionId=${sourceSessionId} url=${payload.url}`,
       );
       commitOpenedSidePaneState((current) =>
-        isShareUrl
-          ? openOrActivateBrowserSidePaneByUrl(current, {
-              initialUrl: payload.url,
-              ownerTaskId: sourceSessionId,
-              workspaceKey: sourceWorkspaceKey,
-              ...(sourceRemoteSessionId ? { remoteSessionId: sourceRemoteSessionId } : {}),
-            })
-          : openBrowserSidePane(current, {
-              tabId: targetTabId,
-              initialUrl: payload.url,
-              ownerTaskId: sourceSessionId,
-              workspaceKey: sourceWorkspaceKey,
-              // 这两条路径都带 ownerTaskId，stampSidePaneTabsOwnership 不会再补 scope，
-              // remoteSessionId 必须在创建时就冻结，否则远程下这个 tab 关不掉。
-              ...(sourceRemoteSessionId ? { remoteSessionId: sourceRemoteSessionId } : {}),
-              activate: isCurrentOwner,
-              agentOpened,
-            }),
+        openBrowserSidePane(current, {
+          tabId: targetTabId,
+          initialUrl: payload.url,
+          ownerTaskId: sourceSessionId,
+          workspaceKey: sourceWorkspaceKey,
+          // 这两条路径都带 ownerTaskId，stampSidePaneTabsOwnership 不会再补 scope，
+          // remoteSessionId 必须在创建时就冻结，否则远程下这个 tab 关不掉。
+          ...(sourceRemoteSessionId ? { remoteSessionId: sourceRemoteSessionId } : {}),
+          activate: isCurrentOwner,
+          agentOpened,
+        }),
       );
     },
     [

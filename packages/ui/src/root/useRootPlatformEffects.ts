@@ -1,11 +1,10 @@
-/* oxlint-disable eslint(max-lines) -- 平台事件和分享导入共用同一生命周期。 */
-import { useEffect, useRef, useState } from "react";
+/* oxlint-disable eslint(max-lines) -- 平台事件集中在同一生命周期处理。 */
+import { useEffect, useRef } from "react";
 import { useACodeSessionStore } from "@/store/acodeSessionStore.js";
 import type { IPlatformService } from "@acode/shared";
 import { isWorkspaceTab, type TabStoreState, type WindowTabState } from "@/store/tabStore.js";
 import { useTabStore } from "@/store/TabStoreProvider.js";
 import { logger } from "@/logger.js";
-import { seedImportedSessionDraft } from "@/v4/composer/newTaskDraft.js";
 import { dismissToast, toast, updateToast } from "@/components/ui/toast.js";
 import { matchesPrimaryShortcut } from "@/lib/keyboardShortcuts.js";
 import { isShortcutRecordingActive } from "@/shortcuts/bindings.js";

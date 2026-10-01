@@ -31,10 +31,10 @@ export function createSession(
       insert into session (
         id, project_id, workspace_id, parent_id, trace_id, task_type, slug, directory, path,
         title, title_source, title_message_id, version,
-        share_url, summary_additions, summary_deletions, summary_files, summary_diffs,
+        summary_additions, summary_deletions, summary_files, summary_diffs,
         revert, permission, time_created, time_updated, time_title_updated,
         time_compacting, time_archived
-      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, null, null, null, null, null, ?, ?, ?, ?, null, null)
+      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, null, null, null, null, null, ?, ?, ?, ?, null, null)
       on conflict(id) do update set
         project_id = excluded.project_id,
         workspace_id = excluded.workspace_id,
@@ -48,7 +48,6 @@ export function createSession(
         title_source = excluded.title_source,
         title_message_id = excluded.title_message_id,
         version = excluded.version,
-        share_url = excluded.share_url,
         permission = coalesce(excluded.permission, session.permission),
         time_title_updated = excluded.time_title_updated,
         time_updated = excluded.time_updated
@@ -68,7 +67,6 @@ export function createSession(
       input.titleSource ?? "first_input",
       input.titleMessageID ?? null,
       input.version,
-      input.shareURL ?? null,
       encodeJson(input.permission),
       timeCreated,
       timeUpdated,
@@ -117,7 +115,6 @@ export async function updateSession(
         title = ?,
         title_source = ?,
         title_message_id = ?,
-        share_url = ?,
         summary_additions = ?,
         summary_deletions = ?,
         summary_files = ?,
@@ -140,7 +137,6 @@ export async function updateSession(
       input.titleMessageID === undefined
         ? (current.titleMessageID ?? null)
         : input.titleMessageID,
-      input.shareURL === undefined ? (current.shareURL ?? null) : input.shareURL,
       summary === null ? null : (summary.additions ?? null),
       summary === null ? null : (summary.deletions ?? null),
       summary === null ? null : (summary.files ?? null),

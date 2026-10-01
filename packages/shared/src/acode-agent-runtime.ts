@@ -3,6 +3,15 @@ import { resolveAgentEngine } from "./acode-agent-registry.js";
 
 export type ACodeAgentBinaryKind = "native-binary";
 
+/**
+ * J5-L1：桌面生产 agent 的 V8 字节码加载器入口文件名。
+ * 字节码严格绑定编译时的 Electron/V8/平台/架构（指纹校验由 loader 在 agent 进程内权威执行）；
+ * 生产 resolver 选用 loader 时设 ACODE_BYTECODE_FALLBACK=1，loader 失配则优雅回退 acode.cjs
+ * （spec: packages/desktop/specs/agent-bytecode-production.md）。
+ * 仅 native(glm) 随包带字节码；外部引擎（codex/opencode/gemini）不 bundle，无此入口。
+ */
+export const ACODE_AGENT_BYTECODE_ENTRY_FILE = "acode.bytecode.cjs";
+
 export interface ACodeAgentRuntimeDescriptor {
   binaryKind: ACodeAgentBinaryKind;
   binaryEnvVar: string;

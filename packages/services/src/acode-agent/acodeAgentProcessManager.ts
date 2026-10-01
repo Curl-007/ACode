@@ -17,6 +17,7 @@ import {
 } from "@acode/shared/process-diagnostic";
 import {
   ACODE_AGENT_RUNTIME,
+  ACODE_AGENT_BYTECODE_ENTRY_FILE,
   ACODE_RUNTIME_ENV_KEY,
   isPackagedACodeDesktopRuntime,
   resolveAgentEngine,
@@ -368,7 +369,7 @@ function resolveBundledWorkspaceACodeAgentCommand(
     const useBytecode =
       process.versions.electron && process.env.ACODE_DESKTOP_AGENT_BYTECODE === "1";
     const entrypoint = useBytecode
-      ? join(dirname(distEntrypoint), "acode.bytecode.cjs")
+      ? join(dirname(distEntrypoint), ACODE_AGENT_BYTECODE_ENTRY_FILE)
       : distEntrypoint;
     // 此同步 command resolver 沿用既有 existsSync 契约；显式试验不能静默回退成 JS。
     if (useBytecode && !existsSync(entrypoint)) {
@@ -419,6 +420,17 @@ function resolveDeployedACodeAgentBinaryCommand(
   };
 }
 
+/**
+ * J5-L1：生产 agent 入口解析——优先 V8 字节码 loader（若随包 staged），否则 acode.cjs。
+ *
+ * 安全设计（关键）：字节码 .jsc 严格绑定编译时的 Electron/V8/平台/架构 + cachedDataVersionTag，
+ * 而 cachedDataVersionTag 依赖 V8 标志（编译/加载侧经 configureBytecodeRuntime 设
+ * --no-lazy --no-flush-bytecode）。host 进程无法在不污染自身 V8 行为的前提下复现该 tag，
+ * 故 **host 侧不做指纹预检**（预检通过但 loader 硬失败仍是 P0）。权威校验放在 agent 进程内的
+ * loader：本 resolver 选用 loader 时同时设 ACODE_BYTECODE_FALLBACK=1，loader 在字节码失配/损坏时
+ * require 同目录 acode.cjs 优雅回退（最坏情况 = 回退现状 JS，agent 照常启动）。
+ * dev 显式试验路径（resolveBundledWorkspaceACodeAgentCommand）不设此 env → loader 硬失败暴露问题。
+ */
 function resolveElectronRuntimeACodeAgentCommand(
   context: ACodeAgentCommandResolverContext,
 ): ACodeAgentCommand | null {
@@ -435,13 +447,27 @@ function resolveElectronRuntimeACodeAgentCommand(
   if (!bundlePath) {
     return null;
   }
+  // J5-L1：生产优先 V8 字节码入口（就绪 -44%，见 docs/j5-performance-baseline.md §3）。
+  // 安全（对抗复核 F3）：字节码 loader 只认 **已解析 JS bundle 的同目录兄弟**，不跑独立候选链——
+  // 独立链会下沉到 ~/.acode/server/agents/glm 等用户可写目录，打包态下任何同用户进程写入
+  // acode.bytecode.cjs 即可劫持 agent 入口（回退 agent-command-env-gate 加固）。同目录兄弟保证
+  // loader 与 acode.cjs 同源于同一可信目录（生产=只读签名区 process.resourcesPath/glm）。
+  // loader 内置优雅回退（ACODE_BYTECODE_FALLBACK=1）：字节码失配/损坏 → agent 进程内 require acode.cjs。
+  // storagePreparationEntry 恒为 JS bundle：Worker 与 Electron Node 子进程 V8 snapshot 可不同（沿用既有语义）。
+  const bytecodeSibling = join(dirname(bundlePath), ACODE_AGENT_BYTECODE_ENTRY_FILE);
+  const bytecodeLoaderPath = existsSync(bytecodeSibling) ? bytecodeSibling : null;
+  const entrypoint = bytecodeLoaderPath ?? bundlePath;
   return {
     command: process.execPath,
-    args: [bundlePath, ...ACODE_AGENT_RUNTIME.spawnArgs],
+    args: [entrypoint, ...ACODE_AGENT_RUNTIME.spawnArgs],
     storagePreparationEntry: bundlePath,
     cwd: context.workspacePath,
     // 关键：必须以纯 Node 模式启动，否则子进程会被当成 Electron/Chromium 子进程卡在 GPU 初始化。
-    env: { ELECTRON_RUN_AS_NODE: "1" },
+    env: {
+      ELECTRON_RUN_AS_NODE: "1",
+      // 仅在实际选用字节码 loader 时设回退标志；走 JS bundle 时无需设（loader 不会被执行）。
+      ...(bytecodeLoaderPath ? { ACODE_BYTECODE_FALLBACK: "1" } : {}),
+    },
   };
 }
 

@@ -107,3 +107,8 @@ export function findACodeAgentRuntimeNodeBundle(
   ];
   return resolveExistingPath(candidates);
 }
+
+// J5-L1 注：字节码 loader（acode.bytecode.cjs）不走独立候选链发现。对抗复核 F3 证明独立链会
+// 下沉到 ~/.acode/server/agents/glm 等用户可写目录，打包态下可被同用户进程写入劫持 agent 入口。
+// 生产 resolver 改为取「已解析 JS bundle 的同目录兄弟」（见 acodeAgentProcessManager
+// resolveElectronRuntimeACodeAgentCommand），保证 loader 与 acode.cjs 同源于同一可信目录。

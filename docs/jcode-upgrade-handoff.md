@@ -365,3 +365,32 @@ CLI 全量 **661/661**（+18 用例，七套件 213/213）；root typecheck / ts
 2. **`@scope/name` filter 摩擦**：本仓 `pnpm dev:server`/`build:sea`（body 链含 scoped 包名 filter）→ confirm（既有「路径形 filter 精确匹配失败」保守口径）。消除该摩擦需「包名形 filter → 双基准包目录解析」，属独立行为变更，**建议后续立项**。
 3. R7 范围外边界维持登记：deno task（deno.json JSONC 需第二套解析器）、make/just、npm install 生命周期钩子（供应链面）、`node x.js` JS 源内删除。
 4. **测试健壮性教训**：provider-doctor.test.mjs 的 stripComments 在 CRLF 文件上整行注释剥离失效（autocrlf 检出后 `.` 不匹配 `\r`），注释里的 `no-telemetry.md` 字样被误判为代码——已修（`\r?\n` 切分）。**仓库内所有源码扫描式断言对行尾敏感，新增此类测试一律用 `\r?\n` 切分**；该抖动由 squash 合并时 git 重写工作区文件触发，今后大合并后首跑全套如遇「注释内容触发源断言」类失败优先怀疑行尾。
+
+## 11. J5 性能与资源效率：基线剖析 + L1/L4 落地（2026-10-01 增补，独立批次合入）
+
+jcode 适配全线合入后，用户提出新方向：借鉴 jcode 对性能/资源的极致利用优化 CLI 引擎（不要 TUI 形态）。引擎=apps/acode-cli 的 app-server 子进程（Desktop 经 stdio 调度、Electron-as-node），与 UI 壳解耦，故性能工程可落在 CLI 而无需改产品形态。
+
+### 11.1 基线剖析（合入 5765967，纯 docs）
+
+`docs/j5-performance-baseline.md`：四形态（tsx-dev/dist-node25/dist-electron=桌面现状/bytecode-electron）冷启动+RSS+热路径+GC 实测。关键数据：启动 cpu-prof 定位 ~60% 在 V8 编译(31%)+顶层求值(30%) 的 15.6MB 单文件 bundle；字节码就绪 1073→604ms(-44%)；token 估算 O(transcript)×2-4/step、长会话每-step 本地核算线性退化 8×；v4 帧双 stringify；**零 GC 暂停、堆稳定无泄漏、SQLite 行级 upsert、bash AST 4.5~45µs（实测确认非瓶颈勿动）**。杠杆 L1-L5 排序。探针在 Temp（j5-startup/hotpath/gc-probe.mjs）。
+
+### 11.2 实施（合入 8e2d56a）：L1 + L4，L3/L2/L5 deferred
+
+深读实现面后修订排序（基线初判 L1「改动最小」/L3「纯局部低风险」均有误）：
+- **L1 桌面 Agent V8 字节码生产启用**（spec `packages/desktop/specs/agent-bytecode-production.md`）：生产打包链原本完全无字节码路径。安全核心=权威 V8 校验放 agent 进程内 loader（host 无法在不自我污染下复现 cachedDataVersionTag），resolver 只做「acode.cjs 同目录兄弟派生 loader + 设 ACODE_BYTECODE_FALLBACK=1」，loader 失配/损坏/runtime 缺失优雅回退 acode.cjs，最坏=干净 JS 现状绝不 P0。
+- **L4 token 估算 length-based 投影**（spec `apps/acode-cli/specs/token-estimate-perf.md`）：join("\n\n") 只为取 .length 却分配全文 → 累加 textLength，契约内逐位不变，400 消息 ~5.2×。
+- **L3（帧合并 stringify）deferred**：跨层 plumbing（gateway 计量↔transport 写出）触碰分帧/checksum 正确性，稳态收益边际。**L2（惰性 import）deferred**：架构性、收益不确定、难验证。**L5（削 transcript 拷贝）deferred**：触碰 turn-loop 正确性高风险。
+
+### 11.3 两轮对抗复核（新鲜上下文只读攻击者 + 真实 Electron 探针）
+
+- 第 1 轮证出：F1(P0 loader 同步 require 在 .catch 外，runtime 缺失硬崩)、F2(High .jsc↔acode.cjs 无新鲜度绑定，陈旧字节码静默取代新码+coverage 归零)、F3(High 独立候选链下沉 ~/.acode 用户可写目录可被劫持)、F4a/b(二次执行+回退零可观测)、F5/F6/F7(Low)、L4 M1(契约外畸形 text 产 NaN)。修复轮全闭合。
+- 第 2 轮验证 F1-F7/M1 全闭合（实机：Electron 三路径、F4a 零二次执行、sha 绑定链对账、L4 畸形输入等价），又证出 **N1(P2 loadBytecode 先设 V8 flags 再校验→失配回退的 acode.cjs 带 eager-compile 污染 +20~25%，证伪「最坏=回退无损」)**、N2(spec 滞后)、N3-N7(P3)。N 修复轮：N1 重排（无需 flags 的稳定字段+digest 校验前置，最常见回退场景零污染，实测回退 1024ms≈基线 987ms）、N2 spec 同步、N3/N4/N5/N7② 清理。
+- 关键修复要点登记：①**字节码安全权威必须在 agent 进程内 loader**（host 侧 cachedDataVersionTag 因 V8 标志依赖无法复现，预检不可靠）；②**回退安全网自身不能带性能污染**（N1：flags 前置会让回退比现状还慢）；③**loader 同步 require 必须纳入回退保护**（F1：.catch 只保护 promise 链）；④**字节码入口必须同信任域兄弟派生**（F3：独立候选链=劫持面）；⑤**.jsc 与源 bundle 需 staging 端 sourceSha256 新鲜度绑定**（F2：运行时无新鲜度校验，V8 只看 sourceLength 且取自 loader 自身 metadata 恒自洽）。
+
+### 11.4 终验与扫描
+
+CLI 全量 **666/666**（+5 L4 等价）；svc+desk **28/28**（loader 回退 7 + staging 7 + env-gate 9 + L4 5）；root typecheck / core tsc / lint(0e/76w) / arch(0) 全绿；真实 Electron 端到端（字节码加载 ~521ms / 损坏+runtime 缺失干净回退 / dev 硬失败 / F4a 不二次执行 / N1 无污染税）。Mimosa 主动深扫封印 scanId `scan-2026-10-01T09-45-31.851Z-18ea8d8c273d`、seal `sha256:862673ad…0d29`、118 findings——与 §10.3 封印**稳定键(severity|title|path)逐条零净差异**，触及改动文件的 2 条 high（acodeAgentProcessManager.ts:1086 spawn 点「不可信程序选择/命令参数向量」）为既有 agent-command-env-gate 已分诊簇，F3 兄弟派生实际强化该面。commit/push hook 扫描持续 enobufs（不宣称安全，审计以主动封印为准）。
+
+### 11.5 发布清单跟进（本环境无法验证）
+
+L1 在开发环境实现并单测 + 真实 Electron 验证三路径，但**无法跑真实跨平台 electron-builder 发布构建**。发布前必须确认（详见 spec 发布清单）：CI 各原生 runner 编出 .jsc 并 staged 进 resources/glm；安装包走字节码入口且就绪下降、失配静默回退 JS；audit-bundle-size 限额（500MiB）在 +36MB 后有余量；**Electron 版本 bump（devDep + electron-builder.config.js:479 两处独立 pin）时发布链强制重编 .jsc**（否则指纹失配→干净回退 JS，安全但无收益，建议加机械校验）。

@@ -21,6 +21,8 @@ import {
 import { logger } from "@/logger.js";
 import type { ConversationTurnNavigatorHydrationResult } from "@/v4/conversationTurnNavigatorHelpers.js";
 import type { ConversationTransport } from "@/v4/transport.js";
+import type { TurnIndexEntry } from "@/v4/conversationTurnIndex.js";
+import { ConversationTurnIndex } from "@/v4/conversationTurnIndex.js";
 import { uiMemoryDiagnosticsRegistry } from "@/lib/memoryDiagnostics.js";
 
 /**
@@ -207,6 +209,97 @@ function logSubagentProjectionTransition(
   });
 }
 
+// ── 投影窗口双上限（specs/renderer-memory-budget.md 规则 3）──
+//
+// 全量历史常驻 renderer 是主窗口堆棘轮式增长直至 OOM 的活数据无界增长源：wire 尾窗
+// 只有 snapshotTailWindowRows(60) 行，但 loadOlder/loadAllOlder 合并历史后从不裁剪，
+// 宽窗口下 loadAllOlder 会把整条分支历史（含 CUA base64 截图的行）常驻内存。窗口因此
+// 始终保持「有界连续尾窗」：行数与字节双上限，超限从头部丢弃最旧行，
+// window[0].rowId 始终是 rowsRange 分页游标（hasOlderRows/beforeRowId 语义不变）。
+export const PROJECTION_WINDOW_MAX_ROWS = 4000;
+export const PROJECTION_WINDOW_MAX_BYTES = 128 * 1024 * 1024;
+
+// 协议行不可变（结构变化换整行），字节估计按对象身份只算一次。
+const projectionRowBytesCache = new WeakMap<ConversationRow, number>();
+
+/**
+ * 估算单行在 renderer 的驻留字节：对 row 内所有字符串字段按 UTF-16 code unit 求和
+ * （row 是纯 JSON 数据，无环；纯函数，结果按行对象身份缓存）。
+ * CUA 截图以 base64 dataUrl 字符串内嵌在 toolCall input 等字段，按原长度计入——
+ * 这是行字节的支配项；CJK 正文按 char 计相对 UTF-8 字节低估，但相对截图量级可忽略。
+ */
+export function estimateRowBytes(row: ConversationRow): number {
+  const cached = projectionRowBytesCache.get(row);
+  if (cached !== undefined) return cached;
+  let total = 0;
+  const visit = (value: unknown): void => {
+    if (typeof value === "string") {
+      total += value.length;
+      return;
+    }
+    if (Array.isArray(value)) {
+      for (const item of value) visit(item);
+      return;
+    }
+    if (value !== null && typeof value === "object") {
+      for (const item of Object.values(value as Record<string, unknown>)) visit(item);
+    }
+  };
+  visit(row);
+  projectionRowBytesCache.set(row, total);
+  return total;
+}
+
+export interface TrimmedProjectionWindow {
+  /** 满足双上限的连续尾窗；未超限时与输入同引用（避免无谓换引用触发渲染）。 */
+  window: ConversationRow[];
+  /** 从头部裁掉的最旧行；这些行仍保留在 turn 索引中（索引登记先于裁剪）。 */
+  evicted: readonly ConversationRow[];
+}
+
+/**
+ * 窗口双上限裁剪：从头部丢弃最旧行，直到行数与字节同时满足上限。
+ * 不变量：裁剪后 window 仍是连续尾窗，window[0].rowId 是合法分页游标
+ * （hasOlderRows / loadOlder 的 beforeRowId 语义保持正确）。
+ * 极端情形：单行即超字节预算时保留尾行、不裁出空窗口——游标与最新内容优先；
+ * wire 帧上限（maxFrameBytes / logicalFrameAssemblyMaxBytes）使该情形实际不可达。
+ */
+export function trimProjectionWindowToLimits(
+  window: readonly ConversationRow[],
+): TrimmedProjectionWindow {
+  let totalBytes = 0;
+  for (const row of window) totalBytes += estimateRowBytes(row);
+  if (window.length <= PROJECTION_WINDOW_MAX_ROWS && totalBytes <= PROJECTION_WINDOW_MAX_BYTES) {
+    return { window: window as ConversationRow[], evicted: [] };
+  }
+  let cut = 0;
+  while (
+    cut < window.length - 1 &&
+    (window.length - cut > PROJECTION_WINDOW_MAX_ROWS || totalBytes > PROJECTION_WINDOW_MAX_BYTES)
+  ) {
+    const oldest = window[cut];
+    if (oldest === undefined) break;
+    totalBytes -= estimateRowBytes(oldest);
+    cut += 1;
+  }
+  return { window: window.slice(cut), evicted: window.slice(0, cut) };
+}
+
+/** 对快照的 rows.window 应用双上限裁剪；未裁剪时原引用返回（避免无谓渲染）。 */
+function withProjectionWindowLimits(snapshot: ConversationSnapshot): ConversationSnapshot {
+  const { window, evicted } = trimProjectionWindowToLimits(snapshot.rows.window);
+  if (evicted.length === 0) return snapshot;
+  return { ...snapshot, rows: { ...snapshot.rows, window } };
+}
+
+/** 窗口是否已抵到任一上限（行数或估算字节）；封顶后 loadOlder 无法再让游标后退。 */
+function isProjectionWindowAtCap(window: readonly ConversationRow[]): boolean {
+  if (window.length >= PROJECTION_WINDOW_MAX_ROWS) return true;
+  let totalBytes = 0;
+  for (const row of window) totalBytes += estimateRowBytes(row);
+  return totalBytes >= PROJECTION_WINDOW_MAX_BYTES;
+}
+
 /**
  * 还有更早历史可拉 ⇔ 窗口首行不是全序首行（firstRowId 判定）。
  * 纯函数供 store/组件共用；快照缺失/空窗口/未知 firstRowId 一律 false。
@@ -227,6 +320,9 @@ export function shouldAutoLoadIncompleteLeadingTurn(
   loadingOlder: boolean,
 ): boolean {
   if (loadingOlder || !hasOlderRows(snapshot) || !snapshot) return false;
+  // 双上限已封顶时，补拉行会被窗口裁剪原样吃掉（头部游标无法后退），继续补拉只会
+  // 空转；首 turn 缺 header 的展示降级让位于内存预算，不再为它自动补拉。
+  if (isProjectionWindowAtCap(snapshot.rows.window)) return false;
   const leadingTurnId = snapshot.rows.window[0]?.turnId;
   if (!leadingTurnId) return false;
   return !snapshot.rows.window.some(
@@ -237,16 +333,17 @@ export function shouldAutoLoadIncompleteLeadingTurn(
 /**
  * rows/range 结果并入本地窗口（合并规范）：按 rowId 键控、只收
  * 窗口首行之前的行、去重后前插；顺序键 = rowId 升序（全序保证）。
- * 返回 null 表示无可并入行（窗口无变化，调用方不换引用）。
+ * 返回 null 表示无可并入行（窗口无变化，调用方不换引用）；
+ * older 是实际并入的行，供 turn 索引在进入窗口前登记。
  */
 function mergeOlderRows(
   window: readonly ConversationRow[],
   fetched: readonly ConversationRow[],
-): ConversationRow[] | null {
+): { window: ConversationRow[]; older: readonly ConversationRow[] } | null {
   const firstRowId = window[0]?.rowId ?? Number.POSITIVE_INFINITY;
   const older = fetched.filter((row) => row.rowId < firstRowId);
   if (older.length === 0) return null;
-  return [...older, ...window];
+  return { window: [...older, ...window], older };
 }
 
 /**
@@ -258,10 +355,22 @@ function mergeOlderRows(
 const liveProjectionStores = new Set<ConversationProjectionStore>();
 uiMemoryDiagnosticsRegistry.register("projection", () => {
   let rows = 0;
+  let turnIndexEntries = 0;
+  let turnIndexEvictions = 0;
+  let turnIndexBytes = 0;
   for (const store of liveProjectionStores) {
     rows += store.countProjectionRows();
+    turnIndexEntries += store.turnIndexSize();
+    turnIndexEvictions += store.turnIndexEvictionCount();
+    turnIndexBytes += store.turnIndexByteEstimate();
   }
-  return { stores: liveProjectionStores.size, rows };
+  return {
+    stores: liveProjectionStores.size,
+    rows,
+    turnIndexEntries,
+    turnIndexEvictions,
+    turnIndexBytes,
+  };
 });
 
 export class ConversationProjectionStore {
@@ -314,6 +423,12 @@ export class ConversationProjectionStore {
         { status: "hydrated" | "not-enough-queries" }
       > & { directoryRevision: number })
     | null = null;
+  /**
+   * turn 轻量索引（specs/renderer-memory-budget.md 所有者表）：行进入窗口时登记
+   * （含随后被窗口双上限裁剪掉的行），供窗口外 turn 的目录感知与按需回拉；
+   * 上限 20000 条、超限丢最旧，close() 时与窗口一并释放。
+   */
+  private readonly turnIndex = new ConversationTurnIndex();
   private closed = false;
 
   constructor(
@@ -632,20 +747,23 @@ export class ConversationProjectionStore {
         frame.payload.snapshot,
         "snapshot",
       );
-      // 规则 1：整体替换，扔掉手里的一切换新的。
+      // 行进入窗口前先登记 turn 索引（含随后被双上限裁剪的行）。
+      // 规则 1：整体替换，扔掉手里的一切换新的；替换后的窗口同样执行双上限裁剪。
+      this.registerSnapshotRowsInTurnIndex(frame.payload.snapshot);
+      const committedSnapshot = withProjectionWindowLimits(frame.payload.snapshot);
       this.setState({
-        snapshot: frame.payload.snapshot,
+        snapshot: committedSnapshot,
         planDirectoryRevision: this.state.planDirectoryRevision + 1,
         // snapshot 整体替换后 real-user query 集合可能已变，终态缓存必须失效。
         turnNavigatorDirectoryRevision: this.state.turnNavigatorDirectoryRevision + 1,
       });
       this.subscriptionHasAppliedBase = true;
-      this.reconcileOptimistic(frame.payload.snapshot);
-      this.reconcileAcceptedInputProjection(frame.payload.snapshot);
+      this.reconcileOptimistic(committedSnapshot);
+      this.reconcileAcceptedInputProjection(committedSnapshot);
       // initial 丢失时，publisher 允许完整 online snapshot 建立首个
       // applied base；其中的持久 transition 可能早于本次订阅，不能冒充实时新事件。
       // 首帧只播种观察基线，后续 online 跃迁才通知 pane。
-      this.observeModelTransition(frame.payload.snapshot, context.online && hadAppliedBase);
+      this.observeModelTransition(committedSnapshot, context.online && hadAppliedBase);
       if (context.recovery) this.markRecoveryFrameSeen();
       return;
     }
@@ -676,6 +794,13 @@ export class ConversationProjectionStore {
     // seq 是快照对齐水位，delta 帧应用完推进到帧右端点。
     const next = { ...applied, seq: frame.toSeq };
     logSubagentProjectionTransition(this.topic, current, next, "deltas");
+    // 行进入窗口即登记 turn 索引（row.upserted 按 rowId 去重）；登记先于下方窗口裁剪，
+    // 被双上限裁掉的行仍保留「窗口外 turn」的目录与回拉依据。
+    for (const delta of frame.payload.deltas) {
+      if (delta.op === "row.appended" || delta.op === "row.upserted") {
+        this.turnIndex.addRow(delta.row);
+      }
+    }
     const removedFromRowId = frame.payload.deltas.reduce<number | null>(
       (earliest, delta) =>
         delta.op === "row.removed"
@@ -684,7 +809,7 @@ export class ConversationProjectionStore {
       null,
     );
     this.setState({
-      snapshot: next,
+      snapshot: withProjectionWindowLimits(next),
       // row.removed 已给出权威裁剪边界，可以同步删掉缓存目录中的旧分支计划；
       // 完整 query 继续负责补回 wire tail 之外、但仍属于当前分支的早期计划。
       ...(removedFromRowId === null
@@ -935,7 +1060,9 @@ export class ConversationProjectionStore {
    * - 单飞：在途期间重复调用 no-op（loadingOlder 防重入）；
    * - 陈旧读防护：atLogEpoch ≠ 当前快照 epoch 的结果整体丢弃（跨 CLI 重启）；
    * - 合并以 rowId 为键：与订阅流的 row.upserted/removed 天然一致，
-   *   在途期间到达的 delta 帧不受影响（它们只动 ≥ 窗口首行的行）。
+   *   在途期间到达的 delta 帧不受影响（它们只动 ≥ 窗口首行的行）；
+   * - 合并后按窗口双上限从头部裁剪：窗口保持有界连续尾窗，window[0].rowId
+   *   始终是下一次分页游标；封顶时拉回行全部被裁掉，跳过提交避免空转渲染。
    */
   async loadOlder(limit: number = PROTOCOL_V4_LIMITS.snapshotTailWindowRows): Promise<void> {
     if (this.closed || this.state.loadingOlder) return;
@@ -963,8 +1090,27 @@ export class ConversationProjectionStore {
       // 在途期间游标失效（row.removed 截断 / snapshot resync 整体替换）→ 结果作废，
       // 防止把权威侧已移除的历史行复活；下次触发按新窗口重新拉。
       if (current.rows.window[0]?.rowId !== beforeRowId) return;
-      const window = mergeOlderRows(current.rows.window, result.rows);
-      if (window === null) return;
+      const mergeOutcome = mergeOlderRows(current.rows.window, result.rows);
+      if (mergeOutcome === null) return;
+      // 拉回的历史行进入窗口前先登记 turn 索引：随后被双上限裁掉的行仍保留目录依据。
+      this.turnIndex.addRows(mergeOutcome.older);
+      // 合并后的窗口按双上限从头部裁剪，保持「连续尾窗 + window[0] 为分页游标」不变量。
+      const { window, evicted } = trimProjectionWindowToLimits(mergeOutcome.window);
+      if (
+        window[0]?.rowId === current.rows.window[0]?.rowId &&
+        window.length === current.rows.window.length
+      ) {
+        // 双上限封顶：拉回行全部被裁掉，窗口内容无变化。保持旧引用，避免无谓渲染
+        // 与游标漂移；后续触发仍以当前 window[0] 为游标，分页语义不中断。
+        return;
+      }
+      if (evicted.length > 0) {
+        logger.debug("[v4-store] loadOlder 合并后按窗口双上限裁剪头部", {
+          evictedRows: evicted.length,
+          retainedRows: window.length,
+          topic: this.topic,
+        });
+      }
       this.setState({
         snapshot: { ...current, rows: { ...current.rows, window } },
       });
@@ -984,6 +1130,8 @@ export class ConversationProjectionStore {
    * 问题导航过去直接扫描 renderer 的 tail window，因此 1000 轮会话只显示
    * 已加载的几十轮。这里按协议上限分页读取，但等全部页成功后只换一次 snapshot，
    * 避免每 200 行重建一次 timeline render units 与两个 virtualizer。
+   * 分页缓冲与最终提交都受窗口双上限约束：renderer 只常驻靠近当前窗口的尾段，
+   * 更早的分页行在拉取时登记 turn 索引后即可丢弃（specs 规则 3）。
    */
   async loadAllOlder(): Promise<ConversationTurnNavigatorHydrationResult> {
     const stale = (logEpoch = this.state.snapshot?.logEpoch ?? "unknown") => ({
@@ -1009,7 +1157,13 @@ export class ConversationProjectionStore {
 
     const initialLogEpoch = snapshot.logEpoch;
     const preserveIncompleteLeadingTurn = shouldAutoLoadIncompleteLeadingTurn(snapshot, false);
-    const pages: ConversationRow[][] = [];
+    // 分页缓冲只保留「靠近当前窗口」且在双上限内的尾段：整条分支历史常驻 renderer 是
+    // 活数据无界增长的根源（specs/renderer-memory-budget.md 规则 3），补拉扫描途中也不
+    // 能例外。更早的分页行丢弃前已登记 turn 索引（含未提交的探测页），窗口外 turn 的
+    // 目录与回拉依据不丢。
+    let retainedOlderAsc: ConversationRow[] = [];
+    let fetchedRealUserQueryCount = 0;
+    let pageCount = 0;
     let beforeRowId = initialBeforeRowId;
     let committed = false;
     this.setState({ loadingOlder: true });
@@ -1054,7 +1208,16 @@ export class ConversationProjectionStore {
           });
           return { status: "retryable-failure", logEpoch: initialLogEpoch };
         }
-        pages.push(older);
+        pageCount += 1;
+        for (const row of older) {
+          if (row.kind === "userInput" && row.origin === "realUser") {
+            fetchedRealUserQueryCount += 1;
+          }
+        }
+        this.turnIndex.addRows(older);
+        // 页行全在缓冲首行之前，前插保持 rowId 升序（与 mergeOlderRows 输入约定一致），
+        // 再用与窗口提交相同的纯函数裁掉最旧行，缓冲始终有界。
+        retainedOlderAsc = trimProjectionWindowToLimits([...older, ...retainedOlderAsc]).window;
         beforeRowId = nextBeforeRowId;
         if (!result.hasMore) break;
       }
@@ -1067,15 +1230,21 @@ export class ConversationProjectionStore {
       ) {
         return stale(initialLogEpoch);
       }
-      const olderRows = [...pages].reverse().flat();
-      const realUserQueryCount = [...olderRows, ...current.rows.window].reduce(
-        (count, row) => (row.kind === "userInput" && row.origin === "realUser" ? count + 1 : count),
-        0,
-      );
+      // 运行累计的 query 数覆盖全部拉取页（含被缓冲裁掉的行），与旧的全量计数等价。
+      const olderRows = retainedOlderAsc;
+      const realUserQueryCount =
+        fetchedRealUserQueryCount +
+        current.rows.window.reduce(
+          (count, row) =>
+            row.kind === "userInput" && row.origin === "realUser" ? count + 1 : count,
+          0,
+        );
       if (realUserQueryCount < 2) {
         if (preserveIncompleteLeadingTurn) {
-          const window = mergeOlderRows(current.rows.window, olderRows);
-          if (window === null) return stale(initialLogEpoch);
+          const mergeOutcome = mergeOlderRows(current.rows.window, olderRows);
+          if (mergeOutcome === null) return stale(initialLogEpoch);
+          // 提交前按双上限裁剪：补齐首轮所需的行保留，更早的分页行不常驻 renderer。
+          const { window } = trimProjectionWindowToLimits(mergeOutcome.window);
           committed = true;
           this.setState({
             loadingOlder: false,
@@ -1084,7 +1253,7 @@ export class ConversationProjectionStore {
           // navigator 已经拿到补齐首轮所需的权威 rows，必须在隐藏 rail 前先提交它们。
           logger.debug("[v4-store] 完整问题目录不足两条 query，保留首轮补齐 rows", {
             loadedRows: window.length,
-            pages: pages.length,
+            pages: pageCount,
             sessionId,
           });
         }
@@ -1092,7 +1261,7 @@ export class ConversationProjectionStore {
         // 完整分支也是单 query。宽屏必须探测到分支起点；确认不足两条后不合并探测页，
         // 避免为一个不会显示的 rail 把完整历史常驻 renderer projection。
         logger.debug("[v4-store] 完整问题目录探测后不足两条 query", {
-          pages: pages.length,
+          pages: pageCount,
           preservedIncompleteLeadingTurn: preserveIncompleteLeadingTurn,
           realUserQueryCount,
           sessionId,
@@ -1105,8 +1274,10 @@ export class ConversationProjectionStore {
         this.turnNavigatorHydrationTerminal = result;
         return result;
       }
-      const window = mergeOlderRows(current.rows.window, olderRows);
-      if (window === null) return stale(initialLogEpoch);
+      const mergeOutcome = mergeOlderRows(current.rows.window, olderRows);
+      if (mergeOutcome === null) return stale(initialLogEpoch);
+      // 提交前按双上限裁剪：整窗提交不再把整条分支历史常驻 renderer。
+      const { window } = trimProjectionWindowToLimits(mergeOutcome.window);
       committed = true;
       this.setState({
         loadingOlder: false,
@@ -1114,7 +1285,7 @@ export class ConversationProjectionStore {
       });
       logger.debug("[v4-store] 完整问题目录历史 rows 补拉完成", {
         loadedRows: window.length,
-        pages: pages.length,
+        pages: pageCount,
         sessionId,
       });
       const result = {
@@ -1282,6 +1453,39 @@ export class ConversationProjectionStore {
     return this.state.snapshot?.rows.window.length ?? 0;
   }
 
+  /** turn 轻量索引只读快照（窗口外 turn 可回拉的依据；close() 后为空）。 */
+  getTurnIndexEntries(): readonly TurnIndexEntry[] {
+    return this.turnIndex.snapshotEntries();
+  }
+
+  /** 内存诊断：turn 索引条目数。 */
+  turnIndexSize(): number {
+    return this.turnIndex.size;
+  }
+
+  /** 内存诊断：turn 索引累计淘汰条目数。 */
+  turnIndexEvictionCount(): number {
+    return this.turnIndex.evictionCount;
+  }
+
+  /** 内存诊断：turn 索引字节估算（specs 规则 1：缓存必须暴露条数/字节/淘汰数）。 */
+  turnIndexByteEstimate(): number {
+    return this.turnIndex.byteEstimate;
+  }
+
+  /**
+   * snapshot 整体替换时登记行进 turn 索引。logEpoch 变更（CLI 换代/重开日志）先清空：
+   * rowId 只在 epoch 内单调，跨 epoch 复用会让去重集合误判，旧分支的窗口外 turn 也
+   * 已不可回拉；同 epoch 重放（recovery snapshot）按 rowId 去重，不重复占额度。
+   */
+  private registerSnapshotRowsInTurnIndex(snapshot: ConversationSnapshot): void {
+    const previous = this.state.snapshot;
+    if (previous && previous.logEpoch !== snapshot.logEpoch) {
+      this.turnIndex.clear();
+    }
+    this.turnIndex.addRows(snapshot.rows.window);
+  }
+
   /** 退订并终结本 store（仅 SessionDataLayer 调用）。 */
   async close(): Promise<void> {
     if (this.closed) return;
@@ -1303,6 +1507,8 @@ export class ConversationProjectionStore {
     for (const timer of this.acceptedInputProjectionTimers.values()) clearTimeout(timer);
     this.acceptedInputProjectionTimers.clear();
     this.modelTransitionListeners.clear();
+    // specs 所有者表：投影窗口与 turn 索引在 store close() 时一并释放。
+    this.turnIndex.clear();
     this.discardRecovery();
     this.awaitingInitial = null;
     this.subscriptionHasAppliedBase = false;

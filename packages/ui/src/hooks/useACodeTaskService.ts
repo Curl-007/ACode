@@ -13,14 +13,21 @@ const snapshotInflightRequestsByService = new WeakMap<
   IACodeTaskService,
   Map<string, GetTaskSnapshotResult>
 >();
+// 内存快照条目带剪枝元数据（updatedAt/sizeBytes），与持久层条目共用同一预算纯函数。
+type MemorySnapshotCacheEntry = {
+  etag: string;
+  snapshot: ACodeTaskSnapshot;
+  updatedAt: number;
+  sizeBytes: number;
+};
 const snapshotCacheByService = new WeakMap<
   IACodeTaskService,
-  Map<string, { etag: string; snapshot: ACodeTaskSnapshot }>
+  Map<string, MemorySnapshotCacheEntry>
 >();
 const SNAPSHOT_CACHE_STORAGE_KEY = "acode-task-snapshot-cache:v1";
-const SNAPSHOT_CACHE_MAX_ENTRY_BYTES = 256 * 1024;
-const SNAPSHOT_CACHE_MAX_TOTAL_BYTES = 2 * 1024 * 1024;
-const SNAPSHOT_CACHE_MAX_ENTRIES = 20;
+export const SNAPSHOT_CACHE_MAX_ENTRY_BYTES = 256 * 1024;
+export const SNAPSHOT_CACHE_MAX_TOTAL_BYTES = 2 * 1024 * 1024;
+export const SNAPSHOT_CACHE_MAX_ENTRIES = 20;
 type PersistedSnapshotCacheEntry = {
   key: string;
   etag: string;
@@ -32,11 +39,63 @@ let persistedSnapshotCacheLoaded = false;
 const persistedSnapshotCache = new Map<string, PersistedSnapshotCacheEntry>();
 // 内存诊断计数器：WeakMap 无法枚举，记住最近一个
 // service 的内存缓存（renderer 内实际只有一个 task service 实例）。
-let latestSnapshotCache: Map<string, { etag: string; snapshot: ACodeTaskSnapshot }> | undefined;
+let latestSnapshotCache: Map<string, MemorySnapshotCacheEntry> | undefined;
+let memorySnapshotEvictionCount = 0;
 uiMemoryDiagnosticsRegistry.register("taskSnapshotCache", () => ({
   entries: latestSnapshotCache?.size ?? 0,
+  bytes:
+    latestSnapshotCache === undefined
+      ? 0
+      : [...latestSnapshotCache.values()].reduce((sum, entry) => sum + entry.sizeBytes, 0),
   persisted: persistedSnapshotCache.size,
+  evictions: memorySnapshotEvictionCount,
 }));
+
+/** 内存条目与持久层条目共有的剪枝字段；保证两层执行同一预算。 */
+export interface PrunableSnapshotCacheEntry {
+  updatedAt: number;
+  sizeBytes: number;
+}
+
+// 内存快照 Map 原本无界（持久层已有 20 条/2MB 剪枝而内存层没有，防护不对称），
+// 是 renderer 棘轮式内存增长源之一。这里把持久层剪枝预算抽成共享纯函数，
+// 内存层每次写入后执行同参数剪枝（specs/renderer-memory-budget.md 规则 4）。
+// 语义：按 updatedAt 新→旧保留；条数或字节超预算的条目跳过，但继续尝试更旧的更小条目。
+export function selectRetainedSnapshotEntries<E extends PrunableSnapshotCacheEntry>(
+  entries: E[],
+): E[] {
+  const sorted = [...entries].sort((left, right) => right.updatedAt - left.updatedAt);
+  const retained: E[] = [];
+  let totalBytes = 0;
+  for (const entry of sorted) {
+    if (retained.length >= SNAPSHOT_CACHE_MAX_ENTRIES) {
+      continue;
+    }
+    if (totalBytes + entry.sizeBytes > SNAPSHOT_CACHE_MAX_TOTAL_BYTES) {
+      continue;
+    }
+    retained.push(entry);
+    totalBytes += entry.sizeBytes;
+  }
+  return retained;
+}
+
+function measureSnapshotBytes(snapshot: ACodeTaskSnapshot): number {
+  return new TextEncoder().encode(JSON.stringify(snapshot)).byteLength;
+}
+
+function pruneMemorySnapshotCache(snapshotCache: Map<string, MemorySnapshotCacheEntry>): void {
+  const retained = new Set(selectRetainedSnapshotEntries([...snapshotCache.values()]));
+  if (retained.size === snapshotCache.size) {
+    return;
+  }
+  memorySnapshotEvictionCount += snapshotCache.size - retained.size;
+  for (const [key, entry] of snapshotCache) {
+    if (!retained.has(entry)) {
+      snapshotCache.delete(key);
+    }
+  }
+}
 
 function buildSnapshotDedupeKey(params: GetTaskSnapshotParams): string {
   return [
@@ -78,7 +137,7 @@ function getOrCreateSnapshotInflightMap(
 
 function getOrCreateSnapshotCacheMap(
   service: IACodeTaskService,
-): Map<string, { etag: string; snapshot: ACodeTaskSnapshot }> {
+): Map<string, MemorySnapshotCacheEntry> {
   if (!service || typeof service !== "object") {
     return new Map();
   }
@@ -87,7 +146,7 @@ function getOrCreateSnapshotCacheMap(
     latestSnapshotCache = existing;
     return existing;
   }
-  const created = new Map<string, { etag: string; snapshot: ACodeTaskSnapshot }>();
+  const created = new Map<string, MemorySnapshotCacheEntry>();
   snapshotCacheByService.set(service, created);
   latestSnapshotCache = created;
   return created;
@@ -153,40 +212,26 @@ function flushPersistedSnapshotCache() {
 }
 
 function prunePersistedSnapshotCache() {
-  const entries = [...persistedSnapshotCache.values()].sort(
-    (left, right) => right.updatedAt - left.updatedAt,
-  );
-  const nextEntries: PersistedSnapshotCacheEntry[] = [];
-  let totalBytes = 0;
-  for (const entry of entries) {
-    if (nextEntries.length >= SNAPSHOT_CACHE_MAX_ENTRIES) {
-      continue;
-    }
-    if (totalBytes + entry.sizeBytes > SNAPSHOT_CACHE_MAX_TOTAL_BYTES) {
-      continue;
-    }
-    nextEntries.push(entry);
-    totalBytes += entry.sizeBytes;
-  }
+  // 与内存层共用同一预算纯函数，保证两层剪枝参数永远一致。
+  const retained = selectRetainedSnapshotEntries([...persistedSnapshotCache.values()]);
   persistedSnapshotCache.clear();
-  for (const entry of nextEntries) {
+  for (const entry of retained) {
     persistedSnapshotCache.set(entry.key, entry);
   }
 }
 
-function readPersistedSnapshotEntry(key: string) {
+function readPersistedSnapshotEntry(key: string): PersistedSnapshotCacheEntry | null {
   ensurePersistedSnapshotCacheLoaded();
-  const entry = persistedSnapshotCache.get(key);
-  if (!entry) {
-    return null;
-  }
-  return { etag: entry.etag, snapshot: entry.snapshot };
+  return persistedSnapshotCache.get(key) ?? null;
 }
 
-function writePersistedSnapshotEntry(key: string, etag: string, snapshot: ACodeTaskSnapshot): void {
+function writePersistedSnapshotEntry(
+  key: string,
+  etag: string,
+  snapshot: ACodeTaskSnapshot,
+  sizeBytes: number,
+): void {
   ensurePersistedSnapshotCacheLoaded();
-  const serializedSnapshot = JSON.stringify(snapshot);
-  const sizeBytes = new TextEncoder().encode(serializedSnapshot).byteLength;
   if (sizeBytes > SNAPSHOT_CACHE_MAX_ENTRY_BYTES) {
     // 大消息 task 的快照若直接写 localStorage，会很快触发配额上限并拖慢主线程。
     // 这里只持久化小体积快照，超限时删除旧缓存，避免“为了加速加载反而造成存储压力”。
@@ -212,7 +257,8 @@ function deletePersistedSnapshotEntry(key: string): void {
   flushPersistedSnapshotCache();
 }
 
-function createACodeTaskServiceProxy(service: IACodeTaskService): IACodeTaskService {
+// 导出供测试驱动真实代理链路（fake service + getTaskSnapshot）。
+export function createACodeTaskServiceProxy(service: IACodeTaskService): IACodeTaskService {
   const inflight = getOrCreateSnapshotInflightMap(service);
   const snapshotCache = getOrCreateSnapshotCacheMap(service);
 
@@ -231,7 +277,9 @@ function createACodeTaskServiceProxy(service: IACodeTaskService): IACodeTaskServ
         const cachedSnapshotEntry =
           snapshotCache.get(requestKey) ?? readPersistedSnapshotEntry(requestKey);
         if (cachedSnapshotEntry && !snapshotCache.has(requestKey)) {
+          // 命中持久层时提升到内存层；提升也是一次写入，同样执行预算剪枝。
           snapshotCache.set(requestKey, cachedSnapshotEntry);
+          pruneMemorySnapshotCache(snapshotCache);
         }
 
         // 远控首屏恢复时，多个 hook 会并发请求同一 task snapshot，
@@ -254,22 +302,42 @@ function createACodeTaskServiceProxy(service: IACodeTaskService): IACodeTaskServ
               params as GetTaskSnapshotWithEtagParams,
             );
             if (fallbackResult.snapshot && fallbackResult.etag) {
+              const snapshotSizeBytes = measureSnapshotBytes(fallbackResult.snapshot);
               const nextEntry = {
                 etag: fallbackResult.etag,
                 snapshot: fallbackResult.snapshot,
+                updatedAt: Date.now(),
+                sizeBytes: snapshotSizeBytes,
               };
+              // 内存层与持久层同预算：每次写入后剪枝（specs/renderer-memory-budget.md 规则 4）。
               snapshotCache.set(requestKey, nextEntry);
-              writePersistedSnapshotEntry(requestKey, fallbackResult.etag, fallbackResult.snapshot);
+              pruneMemorySnapshotCache(snapshotCache);
+              writePersistedSnapshotEntry(
+                requestKey,
+                fallbackResult.etag,
+                fallbackResult.snapshot,
+                snapshotSizeBytes,
+              );
             }
             return fallbackResult.snapshot;
           }
           if (firstResult.snapshot && firstResult.etag) {
+            const snapshotSizeBytes = measureSnapshotBytes(firstResult.snapshot);
             const nextEntry = {
               etag: firstResult.etag,
               snapshot: firstResult.snapshot,
+              updatedAt: Date.now(),
+              sizeBytes: snapshotSizeBytes,
             };
+            // 内存层与持久层同预算：每次写入后剪枝（specs/renderer-memory-budget.md 规则 4）。
             snapshotCache.set(requestKey, nextEntry);
-            writePersistedSnapshotEntry(requestKey, firstResult.etag, firstResult.snapshot);
+            pruneMemorySnapshotCache(snapshotCache);
+            writePersistedSnapshotEntry(
+              requestKey,
+              firstResult.etag,
+              firstResult.snapshot,
+              snapshotSizeBytes,
+            );
           } else if (!firstResult.snapshot) {
             snapshotCache.delete(requestKey);
             deletePersistedSnapshotEntry(requestKey);

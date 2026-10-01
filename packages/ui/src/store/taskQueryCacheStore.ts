@@ -27,6 +27,8 @@ interface TaskQueryCacheState {
   taskMetaByEntityKey: Record<TaskEntityKey, CachedTaskListItem>;
   /** 覆盖正在提交或等待 membership 确认的 unreadAt 字段；null 表示清除。 */
   taskUnreadOverlayByEntityKey: Record<TaskEntityKey, number | null>;
+  /** resultsByQueryKey 的写入序 LRU 记录（最旧在前）；仅供 store 内部总量上限淘汰使用。 */
+  queryLruOrder: TaskListCacheKey[];
   setQueryResult: (params: {
     queryKey: TaskListCacheKey;
     descriptor: TaskListCacheDescriptor;
@@ -346,10 +348,101 @@ function preserveFreshLocalTaskKeys(params: {
   };
 }
 
+// —— 版本化 queryKey 的形状归一化与总量上限 ——
+// 版本化 queryKey 只增不删（taskListVersion 每次 bump 都派生新键、旧键从不清除），
+// 是 renderer 棘轮式内存增长源之一（specs/renderer-memory-budget.md 规则 4）。
+// 约束：同一查询形状只保留最新版本键；另设总量 LRU 上限兜底淘汰最久未用。
+export const TASK_QUERY_CACHE_MAX_RESULTS = 64;
+const TASK_QUERY_KEY_VERSION_SUFFIX = /::version=[^:]*$/;
+
+/** 去掉写入方（useWorkspaceTaskLists）追加的 `::version=N` 尾段，得到「同查询形状」的归一化键。 */
+export function buildTaskQueryShapeKey(queryKey: TaskListCacheKey): string {
+  return queryKey.replace(TASK_QUERY_KEY_VERSION_SUFFIX, "");
+}
+
+// 内存诊断：淘汰计数用于验证 specs/renderer-memory-budget.md 规则 5（60s 采样曲线呈平台期）。
+let taskQueryCacheEvictionCount = 0;
+
+/** 刷新 queryKey 的最近使用位置；已在末尾时返回原引用，等价短路路径不产生新状态。 */
+function touchTaskQueryLru(
+  lruOrder: TaskListCacheKey[],
+  queryKey: TaskListCacheKey,
+): TaskListCacheKey[] {
+  const index = lruOrder.lastIndexOf(queryKey);
+  // 空数组/未记录过时 lastIndexOf 返回 -1，必须先于「已在末尾」判断，
+  // 否则 -1 === length-1 会把首次插入误判为已最新而丢记录。
+  if (index === -1) {
+    return [...lruOrder, queryKey];
+  }
+  if (index === lruOrder.length - 1) {
+    return lruOrder;
+  }
+  const next = [...lruOrder];
+  next.splice(index, 1);
+  next.push(queryKey);
+  return next;
+}
+
+function dropTaskQueryResultKey(
+  resultsByQueryKey: Record<TaskListCacheKey, CachedTaskListResult>,
+  key: TaskListCacheKey,
+): Record<TaskListCacheKey, CachedTaskListResult> {
+  if (!(key in resultsByQueryKey)) {
+    return resultsByQueryKey;
+  }
+  const { [key]: _removed, ...rest } = resultsByQueryKey;
+  return rest;
+}
+
+// 单条写入路径共享的版本淘汰与 LRU 上限；纯函数，不改传入引用。
+function applyTaskQueryCacheBounds(params: {
+  resultsByQueryKey: Record<TaskListCacheKey, CachedTaskListResult>;
+  lruOrder: TaskListCacheKey[];
+  queryKey: TaskListCacheKey;
+  result: CachedTaskListResult;
+}): {
+  resultsByQueryKey: Record<TaskListCacheKey, CachedTaskListResult>;
+  lruOrder: TaskListCacheKey[];
+} {
+  let results = params.resultsByQueryKey;
+  let lruOrder = params.lruOrder;
+  // 1) 同一查询形状只保留最新版本键：写入新版本时立即删除同形状旧版本条目。
+  const shapeKey = buildTaskQueryShapeKey(params.queryKey);
+  for (const existingKey of Object.keys(results)) {
+    if (existingKey === params.queryKey || buildTaskQueryShapeKey(existingKey) !== shapeKey) {
+      continue;
+    }
+    const nextResults = dropTaskQueryResultKey(results, existingKey);
+    if (nextResults !== results) {
+      results = nextResults;
+      lruOrder = lruOrder.filter((entry) => entry !== existingKey);
+      taskQueryCacheEvictionCount += 1;
+    }
+  }
+  // 2) 写入新结果并刷新 LRU 记录。
+  results = { ...results, [params.queryKey]: params.result };
+  lruOrder = touchTaskQueryLru(lruOrder, params.queryKey);
+  // 3) 总量 LRU 上限：超限淘汰最久未写条目。
+  while (lruOrder.length > TASK_QUERY_CACHE_MAX_RESULTS) {
+    const oldestKey = lruOrder[0];
+    lruOrder = lruOrder.slice(1);
+    if (oldestKey === undefined) {
+      break;
+    }
+    const nextResults = dropTaskQueryResultKey(results, oldestKey);
+    if (nextResults !== results) {
+      results = nextResults;
+      taskQueryCacheEvictionCount += 1;
+    }
+  }
+  return { resultsByQueryKey: results, lruOrder };
+}
+
 export const useTaskQueryCacheStore = create<TaskQueryCacheState>()((set) => ({
   resultsByQueryKey: {},
   taskMetaByEntityKey: {},
   taskUnreadOverlayByEntityKey: {},
+  queryLruOrder: [],
   setQueryResult: ({
     queryKey,
     descriptor,
@@ -440,6 +533,7 @@ export const useTaskQueryCacheStore = create<TaskQueryCacheState>()((set) => ({
         invalidationVersion: state.resultsByQueryKey[queryKey]?.invalidationVersion ?? 0,
       };
       // 内容与现缓存完全等价时跳过 setState，republish 不再引发全列表无效重渲染。
+      // LRU 记录仍要刷新（该查询刚被使用），但顺序不变时保持原引用避免无谓更新。
       if (
         !taskMetaChanged &&
         !taskUnreadOverlayChanged &&
@@ -456,18 +550,26 @@ export const useTaskQueryCacheStore = create<TaskQueryCacheState>()((set) => ({
           failedShardKeys: failedShardKeys ?? [],
         })
       ) {
-        return state;
+        const touchedLruOrder = touchTaskQueryLru(state.queryLruOrder, queryKey);
+        return touchedLruOrder === state.queryLruOrder ? state : { queryLruOrder: touchedLruOrder };
       }
 
+      // 写入时执行版本淘汰（同形状只留最新版本键）与总量 LRU 上限，
+      // 阻断「版本化 queryKey 只增不删」的棘轮增长。
+      const bounded = applyTaskQueryCacheBounds({
+        resultsByQueryKey: state.resultsByQueryKey,
+        lruOrder: state.queryLruOrder,
+        queryKey,
+        result: buildCachedTaskListResult(resultParams),
+      });
+
       return {
-        resultsByQueryKey: {
-          ...state.resultsByQueryKey,
-          [queryKey]: buildCachedTaskListResult(resultParams),
-        },
+        resultsByQueryKey: bounded.resultsByQueryKey,
         taskMetaByEntityKey: taskMetaChanged ? nextTaskMetaByEntityKey : state.taskMetaByEntityKey,
         taskUnreadOverlayByEntityKey: taskUnreadOverlayChanged
           ? nextTaskUnreadOverlayByEntityKey
           : state.taskUnreadOverlayByEntityKey,
+        queryLruOrder: bounded.lruOrder,
       };
     }),
   setQueryResults: (entries) =>
@@ -482,7 +584,8 @@ export const useTaskQueryCacheStore = create<TaskQueryCacheState>()((set) => ({
       const nextTaskUnreadOverlayByEntityKey = {
         ...state.taskUnreadOverlayByEntityKey,
       };
-      const nextResultsByQueryKey = { ...state.resultsByQueryKey };
+      let nextResultsByQueryKey = state.resultsByQueryKey;
+      let nextLruOrder = state.queryLruOrder;
       let resultsChanged = false;
 
       for (const entry of entries) {
@@ -580,14 +683,25 @@ export const useTaskQueryCacheStore = create<TaskQueryCacheState>()((set) => ({
             failedShardKeys: entry.failedShardKeys ?? [],
           })
         ) {
+          // 等价短路同样刷新 LRU 记录：该查询刚被使用，不能被上限淘汰误杀。
+          nextLruOrder = touchTaskQueryLru(nextLruOrder, entry.queryKey);
           continue;
         }
         resultsChanged = true;
-        nextResultsByQueryKey[entry.queryKey] = buildCachedTaskListResult(resultParams);
+        // 生产写入路径（useWorkspaceTaskLists 批量提交）与单条路径执行同一套
+        // 版本淘汰 + LRU 上限，阻断版本化 queryKey 的棘轮增长。
+        const bounded = applyTaskQueryCacheBounds({
+          resultsByQueryKey: nextResultsByQueryKey,
+          lruOrder: nextLruOrder,
+          queryKey: entry.queryKey,
+          result: buildCachedTaskListResult(resultParams),
+        });
+        nextResultsByQueryKey = bounded.resultsByQueryKey;
+        nextLruOrder = bounded.lruOrder;
       }
 
       if (!taskMetaChanged && !resultsChanged && !taskUnreadOverlayChanged) {
-        return state;
+        return nextLruOrder === state.queryLruOrder ? state : { queryLruOrder: nextLruOrder };
       }
 
       return {
@@ -596,6 +710,7 @@ export const useTaskQueryCacheStore = create<TaskQueryCacheState>()((set) => ({
         taskUnreadOverlayByEntityKey: taskUnreadOverlayChanged
           ? nextTaskUnreadOverlayByEntityKey
           : state.taskUnreadOverlayByEntityKey,
+        queryLruOrder: nextLruOrder,
       };
     }),
   upsertTaskMeta: (task) =>
@@ -916,10 +1031,21 @@ export const useTaskQueryCacheStore = create<TaskQueryCacheState>()((set) => ({
           return !invalidatedWorkspaceKeySet.has(workspaceKey);
         }),
       );
+      // workspace 移除后其 unread overlay 条目不再有任何观察者，
+      // 与实体 meta 用同一前缀规则一并清理，避免实体键映射只增不减。
+      const nextTaskUnreadOverlayByEntityKey = Object.fromEntries(
+        Object.entries(state.taskUnreadOverlayByEntityKey).filter(([entityKey]) => {
+          const workspaceKey = entityKey.split("::")[0] ?? "";
+          return !invalidatedWorkspaceKeySet.has(workspaceKey);
+        }),
+      );
 
       return {
         resultsByQueryKey: nextResultsByQueryKey,
         taskMetaByEntityKey: nextTaskMetaByEntityKey,
+        taskUnreadOverlayByEntityKey: nextTaskUnreadOverlayByEntityKey,
+        // LRU 记录同步剔除已删除的 query 键，保持「记录键集合 = 结果键集合」不变量。
+        queryLruOrder: state.queryLruOrder.filter((queryKey) => queryKey in nextResultsByQueryKey),
       };
     }),
   clearAll: () =>
@@ -929,6 +1055,7 @@ export const useTaskQueryCacheStore = create<TaskQueryCacheState>()((set) => ({
       resultsByQueryKey: {},
       taskMetaByEntityKey: {},
       taskUnreadOverlayByEntityKey: {},
+      queryLruOrder: [],
     })),
 }));
 
@@ -1010,11 +1137,13 @@ export function removeTaskFromTaskQueryCaches(
   return removed;
 }
 
-// 内存诊断计数器：版本化 queryKey 只增不删，先落日志。
+// 内存诊断计数器：版本化 queryKey 只增不删是 renderer 棘轮增长源之一，
+// 现已由版本淘汰 + LRU 上限约束；evictions 供 60s 采样曲线验证棘轮消除。
 uiMemoryDiagnosticsRegistry.register("taskQueryCache", () => {
   const state = useTaskQueryCacheStore.getState();
   return {
     queryKeys: Object.keys(state.resultsByQueryKey).length,
     taskMetas: Object.keys(state.taskMetaByEntityKey).length,
+    evictions: taskQueryCacheEvictionCount,
   };
 });

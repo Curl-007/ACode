@@ -92,4 +92,3 @@ node scripts/architecture/architecture-check.mjs check --changed
 - [packages/ui/src/lib/trustedImageUrl.ts](../../../packages/ui/src/lib/trustedImageUrl.ts)
 - [packages/ui/src/v4/featureSuggestedPrompts.ts](../../../packages/ui/src/v4/featureSuggestedPrompts.ts)
 - [packages/web/src/auth/zaiWebOAuthProvider.ts](../../../packages/web/src/auth/zaiWebOAuthProvider.ts)
-- [packages/web/src/share/conversationSharePreviewClient.ts](../../../packages/web/src/share/conversationSharePreviewClient.ts)

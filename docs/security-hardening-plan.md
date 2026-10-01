@@ -118,7 +118,7 @@
 
 ### P1-6 · 项目级 permission 纳入信任门（对齐 hooks）
 
-**问题**：仓库携带的项目配置里的 `permission.allowedTools`/`autoApproveHighRisk` 被**无条件合并生效**（`apps/acode-cli/packages/adapters/src/config/config-merger.ts:51-53`；`config/index.ts:80-96` 按 scope 写入 `PermissionAllowedTools`），最终命中 `apps/acode-cli/packages/core/src/permission/service.ts:217` 的 `this.config.allowedTools.has(toolName)` **裸工具名整体放行**。而**同一份配置文件里的 hooks 字段却走了完整信任门**（`packages/contracts/src/hooks/workspace-hook-trust.ts` 的 `pending_trust`/`bundleDigest`）。即「明知仓库配置要门控，却独漏了更危险的 permission」。克隆恶意仓库即可静默预放行 Bash/Write/Edit。
+**问题**：仓库携带的项目配置里的 `permission.allowedTools`/`autoApproveHighRisk` 被**无条件合并生效**（`apps/acode-cli/packages/adapters/src/config/config-merger.ts:51-53`；`apps/acode-cli/packages/adapters/src/config/index.ts:80-96` 按 scope 写入 `PermissionAllowedTools`），最终命中 `apps/acode-cli/packages/core/src/permission/service.ts:217` 的 `this.config.allowedTools.has(toolName)` **裸工具名整体放行**。而**同一份配置文件里的 hooks 字段却走了完整信任门**（`apps/acode-cli/packages/contracts/src/hooks/workspace-hook-trust.ts` 的 `pending_trust`/`bundleDigest`）。即「明知仓库配置要门控，却独漏了更危险的 permission」。克隆恶意仓库即可静默预放行 Bash/Write/Edit。
 
 **改动**：把项目来源的 `permission.allowedTools`/`autoApproveHighRisk` 接入**已有的** workspace-hook 信任管线（同一 `trustState`/`bundleDigest` 机制，复用 `apps/acode-cli/packages/core/src/hooks/workspace-hook-trust-*.ts`）：未受信任的项目配置，其 permission 放行项标 `pending_trust`、不生效，直到用户审阅通过。用户级/系统级配置不受影响。
 
@@ -175,7 +175,7 @@
 - **prompt-cache 命中诊断**：业界同类产品暴露 `prompt_cache` 健康对象（warm/ttl/hit_ratio + miss-cause 闭集：`system_prompt_changed`/`tools_changed`/`model_changed`/`messages_rewritten`/`ttl_expired`）。ACode 已有 `core/src/context/sections` 的 `cacheHint:"stable"` 标注，补一个命中率/miss 归因面板可显著降本。
 - **任务依赖图**：业界同类产品的任务创建带 blocked-by/owner/blocked 状态，ACode 为扁平 `core/src/tool/handlers/todo.ts`。编排能力升级。
 
-> **不属于缺口**：**Workflow JS-DSL 多代理编排**——ACode 的 `packages/dynamic-workflow` 已实现 `agent()`/fan-out/worktree 隔离/schema 强制返回（`packages/contracts/src/workflow/script.ts`、`dynamic-workflow/src/analysis/*`，含 actor-names/causality-graph 静态分析），仅 `pipeline/parallel/phase/budget` 的完整度可对照补强。
+> **不属于缺口**：**Workflow JS-DSL 多代理编排**——ACode 的 `apps/acode-cli/packages/dynamic-workflow` 已实现 `agent()`/fan-out/worktree 隔离/schema 强制返回（`apps/acode-cli/packages/contracts/src/workflow/script.ts`、`apps/acode-cli/packages/dynamic-workflow/src/analysis/*`，含 actor-names/causality-graph 静态分析），仅 `pipeline/parallel/phase/budget` 的完整度可对照补强。
 >
 > **低优先**（桌面端特有，对 CLI 中心的 ACode 价值有限）：独立 consent 窗口进程把特权动作 UX 与聊天 UI 分离；第一方 MCP 以「预鉴权 bundled stdio server」形态分发 + 双 host 运行时（in-proc 快、subprocess 隔离）；渲染不可信 HTML 的 iframe 沙箱运行时，仅在 ACode 将来渲染模型生成 HTML 时才需要。
 

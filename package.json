@@ -48,7 +48,6 @@
   },
   "dependencies": {
     "border-beam": "^1.0.1",
-    "d3-path": "^3.1.0",
     "tailwind-scrollbar-hide": "^4.0.0"
   },
   "devDependencies": {

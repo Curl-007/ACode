@@ -31,6 +31,11 @@
 - `packages/ui`：共享 React 组件、hooks 与 Zustand store。
 - `packages/services`：业务服务；`packages/rpc`：RPC 框架。
 - `packages/shared`：共享协议与类型；`packages/client`：Agent 客户端 SDK。
+- `packages/provider`、`packages/provider-node`：模型 provider 账号/配置服务与 Node 端 builtin 配置物化。
+- `packages/model-option-map`：模型选项映射的解析、编译与求值。
+- `packages/acode-server-cli`：远程服务器侧 CLI 与 supervisor。
+- `packages/acode-cua`：CUA（Computer Use）占位包，本构建全部表面 fail-closed。
+- `packages/formal-proof`：形式化证明模型与界面。
 - `apps/acode-cli`：Agent CLI 与运行时。
 - `CONTEXT.md`：插件商店领域词汇；修改相关 UI 前阅读。
 - `DESIGN.md`：UI 设计规范；修改 UI 前阅读。

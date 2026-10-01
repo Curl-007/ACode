@@ -216,8 +216,13 @@ function logSubagentProjectionTransition(
 // 宽窗口下 loadAllOlder 会把整条分支历史（含 CUA base64 截图的行）常驻内存。窗口因此
 // 始终保持「有界连续尾窗」：行数与字节双上限，超限从头部丢弃最旧行，
 // window[0].rowId 始终是 rowsRange 分页游标（hasOlderRows/beforeRowId 语义不变）。
-export const PROJECTION_WINDOW_MAX_ROWS = 4000;
-export const PROJECTION_WINDOW_MAX_BYTES = 128 * 1024 * 1024;
+// 上限取值依据：wire 尾窗只有 snapshotTailWindowRows(60) 行，深滚动历史始终经
+// rowsRange 回拉（每页最多 rowsRangeMaxLimit(200) 行），窗口外 turn 由 turn 索引提供
+// 目录兜底，因此常驻 1200 行（≈ 6 个回拉页）已覆盖可视余量——深滚动只是多一两次
+// 分页，却把最坏常驻（含 CUA base64 截图行）压到原先的 1/3。字节上限随行数上限
+// 同比下调到 32MB（行均预算与 128MB/4000 行同量级），裁头不改变分页游标语义。
+export const PROJECTION_WINDOW_MAX_ROWS = 1200;
+export const PROJECTION_WINDOW_MAX_BYTES = 32 * 1024 * 1024;
 
 // 协议行不可变（结构变化换整行），字节估计按对象身份只算一次。
 const projectionRowBytesCache = new WeakMap<ConversationRow, number>();
@@ -426,7 +431,7 @@ export class ConversationProjectionStore {
   /**
    * turn 轻量索引（specs/renderer-memory-budget.md 所有者表）：行进入窗口时登记
    * （含随后被窗口双上限裁剪掉的行），供窗口外 turn 的目录感知与按需回拉；
-   * 上限 20000 条、超限丢最旧，close() 时与窗口一并释放。
+   * 上限 TURN_INDEX_MAX_ENTRIES 条、超限丢最旧，close() 时与窗口一并释放。
    */
   private readonly turnIndex = new ConversationTurnIndex();
   private closed = false;

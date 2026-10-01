@@ -1,9 +1,8 @@
 /* eslint-disable max-lines -- 终端 resize 调度需要和 xterm/PTY 生命周期放在同一组件内，避免拖拽状态、fit、后端 resize 队列拆散后出现竞态。*/
-import { ClipboardAddon } from "@xterm/addon-clipboard";
-import { FitAddon } from "@xterm/addon-fit";
-import { Terminal as XTerm } from "@xterm/xterm";
 import { ClipboardPaste, Copy } from "lucide-react";
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { FitAddon } from "@xterm/addon-fit";
+import type { Terminal as XTerm } from "@xterm/xterm";
 import type { ILink, ILinkHandler, ITheme, IWindowsPty } from "@xterm/xterm";
 import type { IServiceAccessor } from "@acode/services";
 import type { IDisposable } from "@acode/rpc";
@@ -41,6 +40,40 @@ const TERMINAL_RESIZE_DRAG_THROTTLE_MS = 300;
 const TERMINAL_INPUT_FALLBACK_RECENT_DATA_MS = 150;
 const TERMINAL_INPUT_FALLBACK_KEYDOWN_INPUT_MS = 40;
 const TERMINAL_INPUT_FALLBACK_FLUSH_DELAY_MS = 150;
+
+/**
+ * xterm 运行时按需加载（spec：renderer-memory-budget 规则 7 —— 终端面板首次打开才加载 xterm）。
+ *
+ * @xterm/xterm 连同 fit / clipboard addon 体积较大，但只有真正创建终端实例时才需要；
+ * AnimatedTerminalPanel 已经保证「面板首次展开才渲染终端」，这里再把模块本身从静态
+ * import 改成运行时动态 import：从未打开过终端的会话不再把 xterm 常驻进启动内存。
+ * 终端注册表 / PTY 生命周期语义不变——懒加载只推迟模块求值时机，不改变任何创建顺序。
+ * xterm 的 CSS 仍在全局 styles.css 引入：CSSOM 由渲染器共享、体积小，不属于 JS 堆预算。
+ */
+interface XtermRuntime {
+  Terminal: typeof import("@xterm/xterm").Terminal;
+  FitAddon: typeof import("@xterm/addon-fit").FitAddon;
+  ClipboardAddon: typeof import("@xterm/addon-clipboard").ClipboardAddon;
+}
+
+let loadedXtermRuntime: XtermRuntime | null = null;
+let xtermRuntimePromise: Promise<XtermRuntime> | null = null;
+
+function loadXtermRuntime(): Promise<XtermRuntime> {
+  xtermRuntimePromise ??= Promise.all([
+    import("@xterm/xterm"),
+    import("@xterm/addon-fit"),
+    import("@xterm/addon-clipboard"),
+  ]).then(([xtermModule, fitAddonModule, clipboardAddonModule]) => {
+    loadedXtermRuntime = {
+      Terminal: xtermModule.Terminal,
+      FitAddon: fitAddonModule.FitAddon,
+      ClipboardAddon: clipboardAddonModule.ClipboardAddon,
+    };
+    return loadedXtermRuntime;
+  });
+  return xtermRuntimePromise;
+}
 
 type TerminalResizeReason = "drag" | "final" | "visible" | "init" | "observer";
 
@@ -122,6 +155,9 @@ export function TerminalSession({
   workspaceKey?: string;
 }) {
   const { intl } = useACodeIntl();
+  // xterm 模块就绪态：本组件挂载时才触发动态 import（其它 session 已触发过则同步进入 ready），
+  // 主初始化 effect 以 isXtermRuntimeReady 为门禁，就绪前后各执行一次完整初始化路径。
+  const [isXtermRuntimeReady, setIsXtermRuntimeReady] = useState(() => loadedXtermRuntime !== null);
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
@@ -148,6 +184,30 @@ export function TerminalSession({
   exitedMessageRef.current = intl.formatMessage({ id: "terminal.exited" });
   exitHandlerRef.current = onExit;
   openBrowserUrlRef.current = onOpenBrowserUrl;
+
+  useEffect(() => {
+    if (loadedXtermRuntime) {
+      setIsXtermRuntimeReady(true);
+      return;
+    }
+
+    let disposed = false;
+    loadXtermRuntime()
+      .then(() => {
+        if (!disposed) {
+          setIsXtermRuntimeReady(true);
+        }
+      })
+      .catch((error) => {
+        // 模块加载失败只影响本面板的终端能力，不能变成 Uncaught Promise 拖垮渲染进程。
+        if (!disposed) {
+          logger.error("[Terminal] xterm runtime load failed:", error);
+        }
+      });
+    return () => {
+      disposed = true;
+    };
+  }, []);
 
   const flushTerminalServiceResize = useCallback(() => {
     if (resizeInFlightRef.current) {
@@ -329,6 +389,16 @@ export function TerminalSession({
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
+    // xterm 运行时尚未就绪（首次打开终端触发动态 import 中）：先跳过初始化，
+    // isXtermRuntimeReady 翻转后本 effect 会重新执行下面完整的创建/复用路径，语义不变。
+    if (!loadedXtermRuntime) {
+      return;
+    }
+    const {
+      Terminal: XTermCtor,
+      FitAddon: FitAddonCtor,
+      ClipboardAddon: ClipboardAddonCtor,
+    } = loadedXtermRuntime;
 
     // ===== persistentKey 路径：side pane terminal 跨 workspace 会话保活 =====
     // xterm 实例 + PTY 所有权上移到 sidePaneTerminalSessionRegistry 模块级单例，
@@ -393,7 +463,7 @@ export function TerminalSession({
       const registryDisposers: IDisposable[] = [];
       const localDisposers: IDisposable[] = [];
 
-      const term = new XTerm({
+      const term = new XTermCtor({
         fontSize: 13,
         fontFamily: DEFAULT_TERMINAL_FONT_FAMILY,
         theme: mergeTerminalTheme(terminalProfileThemeRef.current),
@@ -409,10 +479,10 @@ export function TerminalSession({
       });
       termRef.current = term;
 
-      const fitAddon = new FitAddon();
+      const fitAddon = new FitAddonCtor();
       fitAddonRef.current = fitAddon;
       term.loadAddon(fitAddon);
-      term.loadAddon(new ClipboardAddon());
+      term.loadAddon(new ClipboardAddonCtor());
       term.open(hostEl);
 
       let initialTerminalSize: TerminalSize | null = null;
@@ -757,7 +827,7 @@ export function TerminalSession({
     let disposed = false;
     terminalProfileThemeRef.current = undefined;
 
-    const term = new XTerm({
+    const term = new XTermCtor({
       fontSize: 13,
       fontFamily: DEFAULT_TERMINAL_FONT_FAMILY,
       theme: mergeTerminalTheme(terminalProfileThemeRef.current),
@@ -775,11 +845,11 @@ export function TerminalSession({
     });
     termRef.current = term;
 
-    const fitAddon = new FitAddon();
+    const fitAddon = new FitAddonCtor();
     fitAddonRef.current = fitAddon;
     term.loadAddon(fitAddon);
     // 接入 ClipboardAddon 以支持 OSC 52，并让 xterm 的 copy 事件把选区写入系统剪贴板。
-    term.loadAddon(new ClipboardAddon());
+    term.loadAddon(new ClipboardAddonCtor());
     term.open(el);
     let initialTerminalSize: TerminalSize | null = null;
     if (isVisibleRef.current && el.clientWidth > 0 && el.clientHeight > 0) {
@@ -1075,6 +1145,7 @@ export function TerminalSession({
     clearResizeThrottleTimer,
     cwd,
     isWindowsDesktop,
+    isXtermRuntimeReady,
     onShellLabelChange,
     requestFocus,
     scheduleFitAndResize,
@@ -1107,7 +1178,15 @@ export function TerminalSession({
         <div
           ref={containerRef}
           className="terminal-xterm-shell h-full min-h-0 w-full overflow-hidden"
-        />
+        >
+          {!isXtermRuntimeReady ? (
+            /* xterm 模块首次加载期间（仅首次打开终端会出现）：以同底色轻量占位替代闪烁，
+               就绪后本节点与初始化 effect 在同一次提交内被移除/执行，不改变容器 DOM 结构。 */
+            <div className="flex h-full items-center justify-center text-ui-sm text-foreground-subtle">
+              {intl.formatMessage({ id: "common.loading" })}
+            </div>
+          ) : null}
+        </div>
       </ContextMenuTrigger>
       <ContextMenuContent>
         <ContextMenuItem onSelect={handleCopy}>

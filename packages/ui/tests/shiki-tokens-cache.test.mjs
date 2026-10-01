@@ -4,6 +4,7 @@ import {
   TOKENS_CACHE_MAX_BYTES,
   TOKENS_CACHE_MAX_ENTRIES,
   clearTokensCacheForTest,
+  getHighlighterInstanceCount,
   getShikiTokenCacheStats,
   hasTokensCacheEntryForTest,
   highlightCode,
@@ -20,9 +21,9 @@ const singleTokenResult = (content) => ({
 });
 
 // highlightCode 的 tokenize 是异步的；回调送达即代表该次 tokenize 完成。
-function highlightAsync(code, language = "json") {
+function highlightAsync(code, language = "json", theme = undefined) {
   return new Promise((resolve) => {
-    const sync = highlightCode(code, language, undefined, resolve);
+    const sync = highlightCode(code, language, theme, resolve);
     if (sync) {
       resolve(sync);
     }
@@ -127,7 +128,8 @@ test("LRU evicts oldest entry when byte budget is exceeded", () => {
   clearTokensCacheForTest();
   const before = getShikiTokenCacheStats();
 
-  const entryBytes = 25 * 1024 * 1024;
+  // 每条 5MB：单条在 8MB 预算内，但两条合计 10MB 超限，必须淘汰最旧条目。
+  const entryBytes = 5 * 1024 * 1024;
   const codeA = `a`.repeat(entryBytes);
   const codeB = `b`.repeat(entryBytes);
 
@@ -137,7 +139,7 @@ test("LRU evicts oldest entry when byte budget is exceeded", () => {
   assert.equal(afterA.bytes, entryBytes + TOKEN_ENTRY_OVERHEAD_BYTES);
   assert.equal(afterA.evictions, before.evictions);
 
-  // 第二条 25MB 使总字节超过 40MB 预算：最旧的 A 被淘汰，bytes 回落到预算内。
+  // 第二条 5MB 使总字节超过 8MB 预算：最旧的 A 被淘汰，bytes 回落到预算内。
   insertTokensCacheEntryForTest(codeB, "json", singleTokenResult(codeB));
   const afterB = getShikiTokenCacheStats();
   assert.equal(afterB.evictions - before.evictions, 1, "exceeding budget must evict");
@@ -150,6 +152,24 @@ test("LRU evicts oldest entry when byte budget is exceeded", () => {
   assert.equal(afterB.entries, 1, "byte budget must keep entry count bounded");
   assert.equal(afterB.bytes, entryBytes + TOKEN_ENTRY_OVERHEAD_BYTES, "bytes must fall back");
   assert.ok(afterB.bytes <= TOKENS_CACHE_MAX_BYTES);
+});
+
+test("two languages and two themes share a single highlighter instance", async () => {
+  // 单例共享（spec 所有者表「高亮引擎实例」）：不再为每个 (theme,lang) 组合各建
+  // 独立 wasm 引擎实例；缺失的语言/主题在共享实例上按需 load，实例数恒为 1。
+  const light = await highlightAsync("const singleton = 1;", "ts", "github-light");
+  assert.ok(Array.isArray(light.tokens));
+  assert.equal(getHighlighterInstanceCount(), 1);
+
+  // 换语言 + 换主题：仍复用同一实例（对共享实例 loadLanguage/loadTheme）。
+  const dark = await highlightAsync("print('second')", "python", "github-dark");
+  assert.ok(Array.isArray(dark.tokens));
+  assert.equal(getHighlighterInstanceCount(), 1);
+
+  // 交叉组合（旧语言 + 新主题 / 新语言 + 旧主题）也不产生第二个实例。
+  await highlightAsync("const third = 3;", "ts", "github-dark");
+  await highlightAsync("let fourth = 4;", "python", "github-light");
+  assert.equal(getHighlighterInstanceCount(), 1);
 });
 
 test("messageCodePlugin mirrors @streamdown/code sync/callback semantics", async () => {

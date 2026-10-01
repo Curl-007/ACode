@@ -211,15 +211,16 @@ test("超行数上限裁头：window[0] 为原窗口内部行，尾部保留", (
   const rows = Array.from({ length: 5000 }, (_, i) => makeRow(i + 1));
   const result = trimProjectionWindowToLimits(rows);
   assert.equal(result.window.length, PROJECTION_WINDOW_MAX_ROWS);
-  assert.equal(result.window[0].rowId, 1001);
+  assert.equal(result.window[0].rowId, 3801);
   assert.equal(result.window.at(-1).rowId, 5000);
-  assert.equal(result.evicted.length, 1000);
+  assert.equal(result.evicted.length, 5000 - PROJECTION_WINDOW_MAX_ROWS);
   assert.equal(result.evicted[0].rowId, 1);
   assertContiguousAscending(result.window);
 });
 
 test("超字节上限裁头：裁剪后字节与行数同时满足上限", () => {
-  const bigText = "A".repeat(200_000);
+  // 700 行 × ~50KB ≈ 35MB，刚好越过 32MB 字节上限，验证从头部裁回预算内。
+  const bigText = "A".repeat(50_000);
   const rows = Array.from({ length: 700 }, (_, i) => makeRow(i + 1, { text: bigText }));
   const result = trimProjectionWindowToLimits(rows);
   let bytes = 0;
@@ -245,8 +246,16 @@ test("窗口封顶后首 turn 缺 header 不再自动补拉", () => {
     Array.from({ length: count }, (_, i) =>
       makeRow(i + 1001, { turnId: "turn-A", kind: "assistantText" }),
     );
-  const belowCap = makeSnapshot({ window: buildRows(3999), totalCount: 5000, firstRowId: 1 });
-  const atCap = makeSnapshot({ window: buildRows(4000), totalCount: 5000, firstRowId: 1 });
+  const belowCap = makeSnapshot({
+    window: buildRows(PROJECTION_WINDOW_MAX_ROWS - 1),
+    totalCount: 5000,
+    firstRowId: 1,
+  });
+  const atCap = makeSnapshot({
+    window: buildRows(PROJECTION_WINDOW_MAX_ROWS),
+    totalCount: 5000,
+    firstRowId: 1,
+  });
   assert.equal(shouldAutoLoadIncompleteLeadingTurn(belowCap, false), true);
   assert.equal(shouldAutoLoadIncompleteLeadingTurn(atCap, false), false);
 });
@@ -261,7 +270,7 @@ test("snapshot 超行数上限裁头：hasOlderRows/loadOlder 游标语义保持
 
   const snapshot = store.getState().snapshot;
   assert.equal(snapshot.rows.window.length, PROJECTION_WINDOW_MAX_ROWS);
-  assert.equal(snapshot.rows.window[0].rowId, 1001, "window[0] 必须是原窗口内部行");
+  assert.equal(snapshot.rows.window[0].rowId, 3801, "window[0] 必须是原窗口内部行");
   assert.equal(snapshot.rows.window.at(-1).rowId, 5000);
   assert.equal(hasOlderRows(snapshot), true, "裁剪后仍有更早历史可拉");
   await store.close();
@@ -287,18 +296,18 @@ test("封顶窗口 loadOlder 游标连续：beforeRowId 始终取自 window[0]�
 
   await store.loadOlder();
   const firstCall = calls.rowsRange[0];
-  assert.equal(firstCall.beforeRowId, 1001, "游标必须是裁剪后的 window[0]");
+  assert.equal(firstCall.beforeRowId, 3801, "游标必须是裁剪后的 window[0]");
   assert.equal(firstCall.limit, 60);
 
   const snapshot = store.getState().snapshot;
   assert.equal(snapshot.rows.window.length, PROJECTION_WINDOW_MAX_ROWS, "封顶后窗口行数不变");
-  assert.equal(snapshot.rows.window[0].rowId, 1001, "拉回行全部被裁掉，游标不漂移");
+  assert.equal(snapshot.rows.window[0].rowId, 3801, "拉回行全部被裁掉，游标不漂移");
   assert.equal(store.getState().loadingOlder, false);
   assert.equal(hasOlderRows(snapshot), true, "分页仍可继续");
 
   // 游标连续：再次 loadOlder 仍以当前 window[0] 为 beforeRowId。
   await store.loadOlder();
-  assert.equal(calls.rowsRange[1].beforeRowId, 1001);
+  assert.equal(calls.rowsRange[1].beforeRowId, 3801);
   await store.close();
 });
 
@@ -334,7 +343,7 @@ test("未封顶窗口 loadOlder：游标推进且合并后仍是连续尾窗", a
 });
 
 test("snapshot 超字节上限裁头", async () => {
-  const bigText = "A".repeat(200_000);
+  const bigText = "A".repeat(50_000);
   const rows = Array.from({ length: 700 }, (_, i) => makeRow(i + 1, { text: bigText }));
   const { transport } = makeFakeTransport({});
   const store = await makeConnectedStore(transport);
@@ -354,19 +363,29 @@ test("delta 路径行数触顶时同样裁头", async () => {
   const rows = Array.from({ length: PROJECTION_WINDOW_MAX_ROWS }, (_, i) => makeRow(i + 1));
   const { transport } = makeFakeTransport({});
   const store = await makeConnectedStore(transport);
-  applySnapshot(store, makeSnapshot({ window: rows, totalCount: 4000, firstRowId: 1 }));
+  applySnapshot(
+    store,
+    makeSnapshot({
+      window: rows,
+      totalCount: PROJECTION_WINDOW_MAX_ROWS,
+      firstRowId: 1,
+    }),
+  );
   assert.equal(store.getState().snapshot.rows.window.length, PROJECTION_WINDOW_MAX_ROWS);
 
   store.handleFrame(
     makeFrame(
-      { kind: "deltas", deltas: [{ op: "row.appended", row: makeRow(4001) }] },
+      {
+        kind: "deltas",
+        deltas: [{ op: "row.appended", row: makeRow(PROJECTION_WINDOW_MAX_ROWS + 1) }],
+      },
       { fromSeq: 1, toSeq: 2 },
     ),
     { deliveryKind: "online" },
   );
   const snapshot = store.getState().snapshot;
   assert.equal(snapshot.rows.window.length, PROJECTION_WINDOW_MAX_ROWS, "追加一行后仍封顶");
-  assert.equal(snapshot.rows.window.at(-1).rowId, 4001, "新行必须保留");
+  assert.equal(snapshot.rows.window.at(-1).rowId, PROJECTION_WINDOW_MAX_ROWS + 1, "新行必须保留");
   assert.equal(snapshot.rows.window[0].rowId, 2, "从头部裁掉最旧行");
   assertContiguousAscending(snapshot.rows.window);
   await store.close();
@@ -455,7 +474,7 @@ test("loadAllOlder 整窗提交裁剪为双上限尾窗，被丢页行保留在�
   assert.equal(result.status, "hydrated");
   const snapshot = store.getState().snapshot;
   assert.equal(snapshot.rows.window.length, PROJECTION_WINDOW_MAX_ROWS, "提交窗口受行数上限约束");
-  assert.equal(snapshot.rows.window[0].rowId, 1001);
+  assert.equal(snapshot.rows.window[0].rowId, 3801);
   assert.equal(snapshot.rows.window.at(-1).rowId, 5000);
   assertContiguousAscending(snapshot.rows.window);
   assert.ok(calls.rowsRange.length > 20, "分页必须覆盖全部历史");
@@ -473,7 +492,7 @@ test("loadAllOlder 整窗提交裁剪为双上限尾窗，被丢页行保留在�
 
 // ── ConversationTurnIndex 类 ──
 
-test("turn 索引上限 20000 条：超限丢最旧", () => {
+test("turn 索引上限 TURN_INDEX_MAX_ENTRIES 条：超限丢最旧", () => {
   const index = new ConversationTurnIndex();
   for (let rowId = 1; rowId <= TURN_INDEX_MAX_ENTRIES + 5; rowId++) {
     index.addRow(makeRow(rowId));
@@ -490,7 +509,7 @@ test("turn 索引同 rowId 去重，淘汰后允许重新登记", () => {
   index.addRow(row);
   index.addRow(row);
   assert.equal(index.size, 1, "row.upserted / snapshot 重放不重复占额度");
-  // 填满上限：rowId 3..20001，随后加入 rowId=1 挤掉最旧的 rowId=2。
+  // 填满上限：rowId 3..上限+1，随后加入 rowId=1 挤掉最旧的 rowId=2。
   for (let rowId = 3; rowId <= TURN_INDEX_MAX_ENTRIES + 1; rowId++) {
     index.addRow(makeRow(rowId));
   }

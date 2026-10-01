@@ -1,5 +1,5 @@
 /* eslint-disable max-lines -- 远程连接向导的多个步骤暂集中在同一文件，避免拆分时扩大 SSH/Docker/WSL 回归面。 */
-import { useState } from "react";
+import { lazy, Suspense, useState } from "react";
 import type {
   DockerContainerInfo,
   RemoteAssetInstallMode,
@@ -8,7 +8,12 @@ import type {
   SSHConfigAliasOption,
   WSLDistro,
 } from "@acode/shared";
-import { TID_REMOTE_KIND_DOCKER, TID_REMOTE_KIND_SERVER, TID_REMOTE_KIND_SSH, TID_REMOTE_KIND_WSL } from "@acode/shared";
+import {
+  TID_REMOTE_KIND_DOCKER,
+  TID_REMOTE_KIND_SERVER,
+  TID_REMOTE_KIND_SSH,
+  TID_REMOTE_KIND_WSL,
+} from "@acode/shared";
 import type {
   IMcpSyncService,
   IPluginSyncService,
@@ -25,7 +30,6 @@ import {
   ServerIcon,
   TerminalIcon,
 } from "lucide-react";
-import { DirectoryBrowser } from "@/DirectoryBrowser.js";
 import { RemoteConnectionFields } from "@/RemoteConnectionFields.js";
 import type { SSHAuthMethod } from "@/hooks/useRemoteConnectionForm.js";
 import { Button } from "@/components/ui/button.js";
@@ -37,6 +41,14 @@ import {
   shouldShowRemoteSyncActions,
 } from "@/settings/RemoteSyncActions.js";
 export { RemoteConnectionConnectingStep } from "@/remote-connection/RemoteConnectionConnectingStep.js";
+
+// 解链让 lazy 分包生效（spec：renderer-memory-budget 规则 7）：DirectoryBrowser 不再静态 import
+// （本文件位于 SSHDialog 子树，静态链会把目录浏览器并回远程连接 chunk，使 Root.tsx 对
+// DirectoryBrowser 的 React.lazy 边界失效）。懒加载声明与 Root.tsx 保持同一来源与写法；
+// 目录浏览器仅在远程连接成功后的目录选择步骤挂载，null fallback 无跳动。
+const DirectoryBrowser = lazy(() =>
+  import("@/DirectoryBrowser.js").then((module) => ({ default: module.DirectoryBrowser })),
+);
 
 function getKindIcon(kind: RemoteTarget["kind"]) {
   switch (kind) {
@@ -454,13 +466,16 @@ export function RemoteConnectionDirectoryStep({
             selecting ? "pointer-events-none opacity-70" : "",
           )}
         >
-          <DirectoryBrowser
-            services={services}
-            embedded
-            onSelect={onSelect}
-            onCancel={onCancel}
-            onPathChange={setSelectedPath}
-          />
+          {/* 懒加载边界（规则 7）：目录浏览器按需挂载；模块已解析时 React 不提交 fallback，零视觉差异。 */}
+          <Suspense fallback={null}>
+            <DirectoryBrowser
+              services={services}
+              embedded
+              onSelect={onSelect}
+              onCancel={onCancel}
+              onPathChange={setSelectedPath}
+            />
+          </Suspense>
         </div>
       </div>
       <div className="flex items-center justify-end gap-3">

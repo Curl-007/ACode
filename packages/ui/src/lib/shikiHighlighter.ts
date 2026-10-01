@@ -58,22 +58,38 @@ function normalizeCodeLanguage(language: string): BundledLanguage {
   return FALLBACK_CODE_LANGUAGE;
 }
 
-const highlighterCache = new Map<
-  string,
-  Promise<HighlighterGeneric<BundledLanguage, BundledTheme>>
->();
 const tokensCache = new Map<string, TokenizedCode>();
 const subscribers = new Map<string, Set<(result: TokenizedCode) => void>>();
+
+// ---------------------------------------------------------------------------
+// 高亮引擎单例（spec: renderer-memory-budget 所有者表「高亮引擎实例」）：
+// 过去每个 `theme:lang` 组合 `createHighlighter` 一个独立实例，各自持有 wasm 引擎与
+// grammar 注册表且无上限，是 renderer 常驻内存的无界增长点。现在整个模块只创建一个
+// 共享 highlighter 实例（共享 wasm 引擎），首次请求携带当时的 lang/theme 创建，后续
+// 缺失的语言/主题在该实例上按需 loadLanguage/loadTheme。
+// ---------------------------------------------------------------------------
+let sharedHighlighterPromise:
+  | Promise<HighlighterGeneric<BundledLanguage, BundledTheme>>
+  | undefined;
+/** 进行中的按需加载（含创建时的首载）：同一 load 只发一次，结束后移除以便失败重试。 */
+const pendingLanguageLoads = new Map<BundledLanguage, Promise<void>>();
+const pendingThemeLoads = new Map<BundledTheme, Promise<void>>();
 
 // ---------------------------------------------------------------------------
 // tokensCache 预算（spec: packages/ui/specs/renderer-memory-budget.md 规则 1/2）。
 // 缓存键含 code.length，流式渲染时每个 delta 都会生成一个新键；过去这里只增不减，
 // 是主窗口 renderer 堆一天 87MB→2GB OOM 的根因之一。上限常量导出供单测断言。
+//
+// 预算从 2000 条/40MB 下调到 400 条/8MB：二次命中策略下缓存只保留「同一内容键第二次
+// 被请求」的稳定代码块，流式中间态一律不进入；实际会命中的稳定块数量远小于历史消息
+// 总量，过剩预算只会放大驻留 token 数组、没有命中收益（spec 所有者表同口径）。
 // ---------------------------------------------------------------------------
-export const TOKENS_CACHE_MAX_ENTRIES = 2000;
-export const TOKENS_CACHE_MAX_BYTES = 40 * 1024 * 1024;
+export const TOKENS_CACHE_MAX_ENTRIES = 400;
+export const TOKENS_CACHE_MAX_BYTES = 8 * 1024 * 1024;
+// seenKeys 条数同样按稳定块规模收敛：只需覆盖稳定内容键 + 少量流式尾键，
+// 2048 足够且更早淘汰旧键。
 /** seenKeys 只存键字符串（键长有界），条数上限独立于字节预算。 */
-export const SEEN_KEYS_MAX_ENTRIES = 4096;
+export const SEEN_KEYS_MAX_ENTRIES = 2048;
 
 /** 当前 tokensCache 占用的估算字节数 = Σ(token.content.length) + 64×token 数。 */
 let tokensCacheBytes = 0;
@@ -174,6 +190,7 @@ export const getShikiTokenCacheStats = (): ShikiTokenCacheStats => ({
 
 // 内存诊断计数器：tokensCache 曾无淘汰、键含 code.length，是审计里
 // renderer 最可疑的增长点；这里暴露条数、字节、淘汰与命中曲线供 60s 采样。
+// highlighters 现在报告共享引擎实例数（应为 0/1；>1 即回归到按组合建实例）。
 uiMemoryDiagnosticsRegistry.register("shiki", () => ({
   tokensCache: tokensCache.size,
   tokensCacheBytes,
@@ -181,7 +198,7 @@ uiMemoryDiagnosticsRegistry.register("shiki", () => ({
   evictions: tokensCacheEvictions,
   hits: tokensCacheHits,
   misses: tokensCacheMisses,
-  highlighters: highlighterCache.size,
+  highlighters: getHighlighterInstanceCount(),
 }));
 
 // 供 streamdownCodePlugin 等消费方解析当前生效主题；无显式主题时跟随文档 dark class。
@@ -202,24 +219,78 @@ const getCodeTokensCacheKey = (code: string, language: BundledLanguage, theme: B
   const end = code.length > 100 ? code.slice(-100) : "";
   return `${theme}:${language}:${code.length}:${start}:${end}`;
 };
+const ensureThemeLoaded = (
+  highlighter: HighlighterGeneric<BundledLanguage, BundledTheme>,
+  theme: BundledTheme,
+): Promise<void> => {
+  if (highlighter.getLoadedThemes().includes(theme)) {
+    return Promise.resolve();
+  }
+
+  const pending = pendingThemeLoads.get(theme);
+  if (pending) {
+    return pending;
+  }
+
+  const load = highlighter.loadTheme(theme).finally(() => {
+    pendingThemeLoads.delete(theme);
+  });
+  pendingThemeLoads.set(theme, load);
+  return load;
+};
+
+const ensureLanguageLoaded = (
+  highlighter: HighlighterGeneric<BundledLanguage, BundledTheme>,
+  language: BundledLanguage,
+): Promise<void> => {
+  if (highlighter.getLoadedLanguages().includes(language)) {
+    return Promise.resolve();
+  }
+
+  const pending = pendingLanguageLoads.get(language);
+  if (pending) {
+    return pending;
+  }
+
+  const load = highlighter.loadLanguage(language).finally(() => {
+    pendingLanguageLoads.delete(language);
+  });
+  pendingLanguageLoads.set(language, load);
+  return load;
+};
+
 const getHighlighter = (
   language: BundledLanguage,
   theme: BundledTheme,
 ): Promise<HighlighterGeneric<BundledLanguage, BundledTheme>> => {
-  const cacheKey = `${theme}:${language}`;
-  const cached = highlighterCache.get(cacheKey);
-  if (cached) {
-    return cached;
+  if (!sharedHighlighterPromise) {
+    // 首次请求：携带当前 lang/theme 创建唯一实例；失败则清空引用，下次调用重新创建，
+    // 避免一个被拒绝的 promise 永久毒化单例（错误本身由调用方 catch 记日志）。
+    const creation = createHighlighter({
+      langs: [language],
+      themes: [theme],
+    });
+    sharedHighlighterPromise = creation;
+    creation.catch(() => {
+      if (sharedHighlighterPromise === creation) {
+        sharedHighlighterPromise = undefined;
+      }
+    });
   }
 
-  const highlighterPromise = createHighlighter({
-    langs: [language],
-    themes: [theme],
-  });
-
-  highlighterCache.set(cacheKey, highlighterPromise);
-  return highlighterPromise;
+  return sharedHighlighterPromise.then((highlighter) =>
+    // 后续语言/主题在共享实例上按需补载（并发去重：同一 load 只发一次）；
+    // 首载组合已在 createHighlighter 完成，这里立即通过。
+    Promise.all([
+      ensureLanguageLoaded(highlighter, language),
+      ensureThemeLoaded(highlighter, theme),
+    ]).then(() => highlighter),
+  );
 };
+
+/** 当前共享 highlighter 实例数（0=未创建，1=已创建/创建中）；供测试与诊断确认单例。 */
+export const getHighlighterInstanceCount = (): number =>
+  sharedHighlighterPromise !== undefined ? 1 : 0;
 
 const createRawCodeTokens = (code: string): TokenizedCode => ({
   bg: "transparent",

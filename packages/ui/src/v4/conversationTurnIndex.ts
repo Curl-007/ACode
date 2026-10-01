@@ -19,7 +19,10 @@ export interface TurnIndexEntry {
   summary?: string;
 }
 
-export const TURN_INDEX_MAX_ENTRIES = 20000;
+// 上限取值依据：索引只需覆盖「当前窗口（≤1200 行）+ 被裁历史 + loadAllOlder 探测页」
+// 的目录感知，窗口外正文始终经 rowsRange 回拉兜底；8000 条约为窗口行数上限的
+// 6-7 倍，深滚动的目录余量足够。超限丢最旧只造成目录起点回退，不丢正文数据。
+export const TURN_INDEX_MAX_ENTRIES = 8000;
 const TURN_INDEX_SUMMARY_MAX_CHARS = 120;
 
 /** 从 row 抽取轻量索引条目（纯函数）；summary 只取 userInput 行文本前 120 字符。 */

@@ -14,14 +14,14 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { createRequire } from "node:module";
-import { fileURLToPath } from "node:url";
 
-const desktopPackageRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
 // 深解析 app-builder-lib 内部实现，与其自身共用同一份 resedit/plist 依赖与哈希语义。
 // electron-builder 26.8.1 已锁定（packages/desktop/package.json），升级时须同步核对本文件。
-const appBuilderLibPackageJsonPath = resolve(
-  desktopPackageRoot,
-  "node_modules/app-builder-lib/package.json",
+// 修复：node-linker=hoisted 布局下 app-builder-lib 提升到仓库根 node_modules，desktop
+// 本地没有该包副本；原先写死 <desktop>/node_modules 路径令打包在 asar 完整性步骤必然
+// 失败（exe 未嵌图标）。改为标准模块解析向上查找，本地存在与提升两种布局都兼容。
+const appBuilderLibPackageJsonPath = createRequire(import.meta.url).resolve(
+  "app-builder-lib/package.json",
 );
 const appBuilderLibRequire = createRequire(appBuilderLibPackageJsonPath);
 

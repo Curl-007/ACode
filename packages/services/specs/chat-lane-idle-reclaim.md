@@ -14,7 +14,7 @@ expected 并按需懒重启。目标:闲置 workspace 的 CLI 进程不再全量
 ### 已核实的现状(起草时逐条核实,行号以当前检出为准)
 
 1. **chat lane 的空闲回收被类型层面刻意禁止**:`CreateACodeAgentServiceOptions extends
-   Omit<ACodeAgentProcessManagerOptions, "idleTimeoutMs">`
+Omit<ACodeAgentProcessManagerOptions, "idleTimeoutMs">`
    (`packages/services/src/acode-agent/acodeAgentService.ts:858-859`),注释原话「仅供 MCP
    状态探测进程使用,不能把空闲回收传给 chat」。三个进程管理器中只有 mcp-status lane 配了
    `idleTimeoutMs`(5 分钟,`:319、:1087-1095`);chat(`:1056`)与 plugin(`:1078`)lane
@@ -42,7 +42,7 @@ expected 并按需懒重启。目标:闲置 workspace 的 CLI 进程不再全量
    静默判定也无需查询它们的队列(那是 Host 事实);进行中的闲时/定时轮就是普通 turn,
    被 R1 的 turn 判据挡住。
 6. **退出归因存在明确缺口**:Host 归类 `terminationKind = managed.terminationIntent?.kind
-   ?? "unexpected"`(`acodeAgentProcessManager.ts:1268`),且注释明说「signal crash 和
+?? "unexpected"`(`acodeAgentProcessManager.ts:1268`),且注释明说「signal crash 和
    长期运行的 Agent 自行 exit 0 同样是非预期退出」(`:1298-1300`)。`recordTerminationIntent`
    (`:711-729`)只允许 Host 主动回收建立 expected 意图,protocol close 不得把异常改写成
    expected。**CLI 主动退出必须在 protocol close 之前送达显式信号**,否则会被记为崩溃
@@ -153,12 +153,12 @@ local_workflow | local_dynamic_workflow | monitor_mcp`),不另立条件。
 
 ### R5 需要新增的最小接口(白名单,禁止扩散)
 
-| 缺口 | 位置 | 新增 |
-| --- | --- | --- |
-| 在飞请求数 | `bootstrap/src/acode-protocol/transport.ts:43`(processing 队列)、`server.ts:220`(pendingClientRequests,private) | 只读计数访问器 |
-| 操作租约数 | `session-resident-pool.ts:64-66、:222-224`(activeOperationCount / inFlightDeactivations,private) | 只读计数访问器 |
-| 附件暂存 | `bootstrap/src/acode-protocol-v4/attachment-upload-registry.ts:20-30` | 未提交条目计数 |
-| 静默聚合 | bootstrap 协议层 | `collectQuiescenceFacts()` 单一聚合函数(组合上表 + 既有 readResidencyFacts/getQueueLength/pool.stats),供自检与 memoryDiagnostics 共用 |
+| 缺口       | 位置                                                                                                            | 新增                                                                                                                                  |
+| ---------- | --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| 在飞请求数 | `bootstrap/src/acode-protocol/transport.ts:43`(processing 队列)、`server.ts:220`(pendingClientRequests,private) | 只读计数访问器                                                                                                                        |
+| 操作租约数 | `session-resident-pool.ts:64-66、:222-224`(activeOperationCount / inFlightDeactivations,private)                | 只读计数访问器                                                                                                                        |
+| 附件暂存   | `bootstrap/src/acode-protocol-v4/attachment-upload-registry.ts:20-30`                                           | 未提交条目计数                                                                                                                        |
+| 静默聚合   | bootstrap 协议层                                                                                                | `collectQuiescenceFacts()` 单一聚合函数(组合上表 + 既有 readResidencyFacts/getQueueLength/pool.stats),供自检与 memoryDiagnostics 共用 |
 
 其余判定一律复用既有接口,不新造平行状态(治理红线:避免重复状态和多条写入路径)。
 

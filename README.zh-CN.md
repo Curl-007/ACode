@@ -47,7 +47,7 @@ ACode 是 AI 编程工作台，提供桌面应用、浏览器界面和终端 Age
 - **`credential-key.json` 与凭据同生共死**。删除该文件、或备份/迁移时只复制 `credentials.json` 而漏掉它，都会让所有 `enc:v2:` 凭据**永久不可恢复**。请把这两个文件当作一个整体一起备份。应用内置的数据目录迁移（`ACODE_DATA_BASE_DIR` 切换）会自动带上密钥文件，无需手动处理。
 - **回滚到旧版本会静默损坏登录态**。旧版本只认识 `enc:v1:` 前缀，遇到 `enc:v2:` 会把**密文原样当作明文返回**——表现为登录莫名失效（401）或 API Key 无效，而不是一个明确的错误。升级到本版本后请勿回滚到升级前的构建；若必须回滚，需先在桌面端退出登录、回到旧版重新登录。
 
-密钥文件与密文位于同一磁盘，因此本方案**不能**防御「整个 `.acode` 目录被外带」（云同步、备份泄露、磁盘镜像）。真正的「密文与密钥分离」需要接入操作系统钥匙串（Electron `safeStorage` / keytar），那需要先把同步的 cipher 接口改为异步、并解决桌面 host 与 CLI 两个进程共用同一凭据文件时的跨进程密钥一致性问题——属于后续工作，详见 [`packages/services/specs/credential-storage.md`](packages/services/specs/credential-storage.md)。
+密钥文件与密文位于同一磁盘，因此本方案**不能**防御「整个 `.acode` 目录被外带」（云同步、备份泄露、磁盘镜像）。真正的「密文与钥匙分离」需要接入操作系统钥匙串（Electron `safeStorage` / keytar），那需要先把同步的 cipher 接口改为异步、并解决桌面 host 与 CLI 两个进程共用同一凭据文件时的跨进程密钥一致性问题——属于后续工作，详见 [`packages/services/specs/credential-storage.md`](packages/services/specs/credential-storage.md)。
 
 ## 下载与安装
 
@@ -102,11 +102,15 @@ acode --help        # 或直接运行：node bin/acode.mjs --help
 ## 构建与发布
 
 - **GitHub 构建**：本仓库通过 GitHub Actions 从源码构建，CLI 发行包随版本发布到 [Releases](https://github.com/Curl-007/ACode/releases)。所有产物都来自本仓库源码。
-- **发版流程**：在 Actions 中手动运行 [Release](.github/workflows/release.yml) workflow，版本号填 `3.14.0`：勾选“预发布”生成 `3.14.0-audit.<当天日期>`（同一天重复构建自动追加 `.2`、`.3`，也可直接填完整形式 `3.14.0-audit.20260922[.2]`）；不勾选则发布正式版 `v3.14.0`（干净版本号，成为 GitHub Latest）。Release 说明固定为“相对基线版本的改动”在前、安装说明在后，英文在上、中文在下（内容严格对应），末尾列出产物。所有产物先上传到 **draft** release，只有 CLI 与各桌面平台全部上传成功后才发布；构建失败会保持 draft，下载页不会解析到仍在构建中的版本。
+- **发版流程**：在 Actions 中手动运行 [Release](.github/workflows/release.yml) workflow，版本号填 `0.0.1`：勾选“预发布”生成 `0.0.1-audit.<当天日期>`（同一天重复构建自动追加 `.2`、`.3`，也可直接填完整形式 `0.0.1-audit.20260922[.2]`）；不勾选则发布正式版 `v0.0.1`（干净版本号，成为 GitHub Latest）。Release 说明固定为“相对基线版本的改动”在前、安装说明在后，英文在上、中文在下（内容严格对应），末尾列出产物。所有产物先上传到 **draft** release，只有 CLI 与各桌面平台全部上传成功后才发布；构建失败会保持 draft，下载页不会解析到仍在构建中的版本。
+
+分支模型、提交规范与完整的合并发布流程见 [docs/git-collaboration.md](docs/git-collaboration.md)：`main` 为发布分支，功能经 squash 合入 `dev`，发布经 `release/*` 分支出包。
 
 ---
 
-ACode 是 AI 编程工作台，提供桌面应用、浏览器界面和终端 Agent。本仓库包含客户端、后端服务、共享 UI，以及 Agent CLI 与运行时源码。
+## 开发
+
+一套代码服务三种入口：
 
 | 入口                 | 用途                                                           | 开发命令                       |
 | -------------------- | -------------------------------------------------------------- | ------------------------------ |
@@ -147,6 +151,9 @@ pnpm dev:desktop
 
 # 使用测试环境
 pnpm dev:desktop:test
+
+# 以编译后的 V8 字节码运行桌面 Agent（生产形态）
+pnpm dev:desktop:bytecode
 ```
 
 `pnpm dev:desktop` 默认等同于 `pnpm dev:desktop:prod`，使用生产服务配置。启动脚本会准备本地运行资源、构建桌面 Agent，再启动 Electron 和源码监听。
@@ -218,6 +225,23 @@ node apps/acode-cli/packages/cli/dist/acode.cjs --help
 
 这个入口直接运行 Agent CLI，不经过发行包的 `--web` 分流。开发 Web 用 `pnpm dev:web`；验证统一的 `acode` 命令，用下方解压后的 `bin/acode.mjs`。
 
+`acode` CLI 的插件、MCP 服务与 hooks 配置见 [apps/acode-cli/README.md](apps/acode-cli/README.md)。
+
+## 质量门禁
+
+以下命令在仓库根目录执行；`pnpm verify:pre-push` 是推送前的最低门禁。仓库没有统一的全仓测试命令，测试入口以各包 `package.json` 与源码旁的实际测试文件为准。
+
+| 命令                                    | 用途                        |
+| --------------------------------------- | --------------------------- |
+| `pnpm typecheck`                        | TypeScript 项目引用类型检查 |
+| `pnpm lint` / `pnpm lint:fix`           | Lint 与自动修复（oxlint）   |
+| `pnpm fmt:check` / `pnpm fmt`           | 格式检查与格式化（oxfmt）   |
+| `pnpm verify:pre-push`                  | Lint + 架构检查（推送门禁） |
+| `pnpm architecture:check -- --changed`  | 针对变更文件的架构边界检查  |
+| `pnpm architecture:context <module-id>` | 生成模块的受控阅读上下文    |
+| `pnpm knip`                             | 未使用依赖与导出报告        |
+| `pnpm dep:refs --list-exports <file>`   | 列出文件导出及其引用        |
+
 ## 配置
 
 根目录 [.env.example](.env.example) 提供服务地址与构建配置示例，可按需复制到 `.env`，本地覆盖放入 `.env.local`。Desktop 的开发环境通过 `dev:desktop:test` / `dev:desktop:prod` 选择。
@@ -247,6 +271,8 @@ pnpm bundle:desktop -- --help
 ```
 
 默认目标为 macOS arm64，默认输出目录为 `packages/desktop/dist/`。`--os` 支持 `mac`、`win`、`linux`，`--arch` 支持 `x64`、`arm64`；实际打包与签名需要目标平台对应的工具和配置。
+
+桌面打包会在构建机上把 Agent 编译为 V8 字节码以加快启动；交叉构建（构建机平台 ≠ 目标平台）与 E2E 覆盖率构建会自动回退到普通 JS 包。见 [`packages/desktop/specs/agent-bytecode-production.md`](packages/desktop/specs/agent-bytecode-production.md)。
 
 安装：双击打开产物 DMG，将 ACode 拖入"应用程序"。本地构建未签名，首次打开若被 macOS 拦截，执行：
 
@@ -300,18 +326,49 @@ node dist/acode/debug/acode/bin/acode.mjs --web \
 
 ## 仓库结构
 
-| 目录                                                 | 职责                                       |
-| ---------------------------------------------------- | ------------------------------------------ |
-| `packages/desktop`                                   | Electron Main、Host、Renderer 与桌面打包   |
-| `packages/web`                                       | Web 客户端                                 |
-| `packages/server`                                    | HTTP / WebSocket 服务与远程连接            |
-| `packages/acode-server-cli`                          | 独立 Server 启动与进程管理                 |
-| `packages/ui`                                        | 共享 React 组件、hooks 与 Zustand 状态     |
-| `packages/services`                                  | 业务服务与持久化                           |
-| `packages/shared`、`packages/rpc`、`packages/client` | 共享协议和类型、RPC 框架、Agent 客户端 SDK |
-| `packages/provider`、`packages/provider-node`        | Provider 公共能力与 Node 实现              |
-| `apps/acode-cli`                                     | Agent CLI、TUI、运行时与工具               |
-| `scripts`、`config`、`third-party`                   | 构建维护脚本、内置配置与第三方声明材料     |
+| 目录                               | 职责                                                                                                                                                        |
+| ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/desktop`                 | Electron Main、Host、Renderer 与桌面打包                                                                                                                    |
+| `packages/web`                     | Web 客户端                                                                                                                                                  |
+| `packages/server`                  | HTTP / WebSocket 服务与远程连接                                                                                                                             |
+| `packages/acode-server-cli`        | 远程服务器侧 CLI 与 supervisor                                                                                                                              |
+| `packages/ui`                      | 共享 React 组件、hooks 与 Zustand 状态                                                                                                                      |
+| `packages/services`                | 业务服务与持久化                                                                                                                                            |
+| `packages/shared`                  | 共享协议与类型（含 Desktop–Agent 通信协议）                                                                                                                 |
+| `packages/rpc`                     | RPC 框架                                                                                                                                                    |
+| `packages/client`                  | Agent 客户端 SDK                                                                                                                                            |
+| `packages/provider`                | Provider 账号与配置服务                                                                                                                                     |
+| `packages/provider-node`           | Node 端 builtin Provider 配置物化                                                                                                                           |
+| `packages/model-option-map`        | 模型选项映射的解析、编译与求值                                                                                                                              |
+| `packages/acode-cua`               | CUA（Computer Use）占位包，本构建全部表面 fail-closed                                                                                                       |
+| `packages/formal-proof`            | 形式化证明模型与界面                                                                                                                                        |
+| `apps/acode-cli`                   | Agent CLI、TUI、运行时与工具——嵌套 workspace，其子包（`core`、`adapters`、`contracts`、`cli`、`tui`、`dynamic-workflow` 等）位于 `apps/acode-cli/packages/` |
+| `scripts`、`config`、`third-party` | 构建维护脚本、内置配置与第三方声明材料                                                                                                                      |
+| `docs`                             | 工程方案、交接与验证记录（见下文文档索引）                                                                                                                  |
+
+## 文档
+
+顶层指南：
+
+- [AGENTS.md](AGENTS.md) — 面向协作者与 AI 会话的工作约定：spec-first 流程、验证要求、模块边界与日志规范。
+- [CONTEXT.md](CONTEXT.md) — 插件商店领域词汇，修改相关 UI 前阅读。
+- [DESIGN.md](DESIGN.md) — UI 设计规范，修改 UI 前阅读。
+- [docs/git-collaboration.md](docs/git-collaboration.md) — 分支模型、提交规范与合并发布流程。
+
+[docs/](docs/) 下的工程文档记录各条加固与升级主线 的方案、实施状态、交接与验证记录：
+
+| 文档                                                                                                  | 内容                                                                                                         |
+| ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| [security-hardening-plan.md](docs/security-hardening-plan.md)                                         | 分优先级（P0–P3）的安全加固路线图，基于逐行源码核实                                                          |
+| [security-hardening-handoff.md](docs/security-hardening-handoff.md)                                   | 安全加固各批次 的实施状态、验证命令与交接须知                                                                |
+| [security-scan-triage-2026-09-29.md](docs/security-scan-triage-2026-09-29.md)                         | 密封深度安全扫描全部 118 条 findings 的分诊：误报 / 设计固有 / 已缓解 / 残留                                 |
+| [j5-performance-baseline.md](docs/j5-performance-baseline.md)                                         | Agent CLI 四种运行形态的性能与资源基线，及已落地杠杆（生产 V8 字节码、token 估算优化）                       |
+| [jcode-inspired-upgrade-plan.md](docs/jcode-inspired-upgrade-plan.md)                                 | 防御性机制升级路线图：bash 目标 blast-radius 分级、Confirm 反射门、类型化 workflow artifact、Provider Doctor |
+| [jcode-upgrade-handoff.md](docs/jcode-upgrade-handoff.md)                                             | 该轮升级逐项 的实施状态、评审结论与后续登记                                                                  |
+| [cli-dispatch-and-system-prompt-upgrade-plan.md](docs/cli-dispatch-and-system-prompt-upgrade-plan.md) | Agent 调度与系统提示词升级路线图（含逐项实施状态）                                                           |
+| [renderer-memory-soak-2026-10-01.md](docs/renderer-memory-soak-2026-10-01.md)                         | 渲染进程内存泄漏根因、修复与实机验证                                                                         |
+
+行为改动遵循 spec-first 约定：先在 `packages/*/specs/` 与 `apps/acode-cli/specs/` 的模块 spec 中写明产品规则、状态所有者、接口与验收场景，再实现代码——例如[遥测移除报告](packages/desktop/specs/telemetry-removal-report.md)与[凭据存储 spec](packages/services/specs/credential-storage.md)。
 
 ## 开源协议
 

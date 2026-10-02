@@ -109,6 +109,7 @@ export * from "./media-preview.js";
 export * from "./plugin-display-name.js";
 export * from "./acode-agent-runtime.js";
 export * from "./acode-agent-idle-exit.js";
+export * from "./process-v8-heap-guard.js";
 export * from "./runtimeEnv.js";
 export * from "./sensitive-env-guard.js";
 export * from "./dynamic-workflow-feature.js";

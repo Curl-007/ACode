@@ -27,6 +27,9 @@ import {
   serializeLaunchMarks,
   type WorkspacePurpose,
   ACODE_DESKTOP_CONTEXT_PROMPT_ENABLED_ENV,
+  ACODE_HOST_MAX_OLD_SPACE_MB_ENV_KEY,
+  DEFAULT_HOST_MAX_OLD_SPACE_MB,
+  resolveMaxOldSpaceMb,
 } from "@acode/shared";
 import { getMainLaunchPartialMarks } from "./desktopLaunchMarks.js";
 import { BroadcastHub } from "./broadcastHub.js";
@@ -240,9 +243,16 @@ export function spawnHostProcess(
 ): ElectronUtilityProcess {
   const hostId = randomUUID();
   const glmBinaryPath = resolveBundledGlmBinaryPath();
+  // v8 堆上限护栏(spec: packages/services/specs/agent-v8-heap-guard.md R1):
+  // execArgv 而非 NODE_OPTIONS——确定性生效,且与继承 env 剔除面互不干扰。
+  const hostMaxOldSpaceMb = resolveMaxOldSpaceMb(
+    process.env[ACODE_HOST_MAX_OLD_SPACE_MB_ENV_KEY],
+    DEFAULT_HOST_MAX_OLD_SPACE_MB,
+  );
   const execArgv = [
     ...(RUNTIME_ACODE_DEBUG ? [`--inspect-brk=${RUNTIME_ACODE_DEBUG}`] : []),
     "--no-warnings",
+    ...(hostMaxOldSpaceMb > 0 ? [`--max-old-space-size=${hostMaxOldSpaceMb}`] : []),
   ];
   const child = electronUtilityProcess.fork(hostModulePath, [], {
     serviceName: formatACodeHostProcessName(label),

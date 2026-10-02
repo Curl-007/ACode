@@ -21,10 +21,14 @@ import {
   ACODE_AGENT_IDLE_EXIT_CODE,
   ACODE_AGENT_IDLE_EXIT_ENV_KEY,
   ACODE_AGENT_IDLE_EXIT_GRACE_MS,
+  ACODE_AGENT_MAX_OLD_SPACE_MB_ENV_KEY,
   ACODE_RUNTIME_ENV_KEY,
+  DEFAULT_AGENT_MAX_OLD_SPACE_MB,
   acodeProtocolNotifications,
   acodeRuntimeIdleExitParamsSchema,
+  appendMaxOldSpaceToNodeOptions,
   isPackagedACodeDesktopRuntime,
+  resolveMaxOldSpaceMb,
   resolveWorkspaceKey,
   resolveACodeRuntimeEnv,
   sanitizeACodeRuntimeEnv,
@@ -1082,24 +1086,38 @@ export class ACodeAgentProcessManager {
       spawnPreflight,
     });
     const spawnRequestedAt = Date.now();
+    const agentSpawnEnv: Record<string, string> = {
+      ...sanitizeACodeRuntimeEnv(process.env),
+      [ACODE_RUNTIME_ENV_KEY]: runtimeEnv,
+      ...spawnEnv,
+      ...effectiveCommand.env,
+      // 身份/隔离语义使用 workspaceIdentity；cwd 继续使用 workspacePath。
+      ...buildAgentWorkspaceIdentityEnv(params.workspaceIdentity),
+      // lane 级策略优先级最高:plugin/mcp-status 显式关闭 CLI 空闲自退(spec
+      // chat-lane-idle-reclaim.md R8),不允许被继承 env 覆盖;chat lane 不注入,
+      // 走 CLI 缺省(启用)与 ACODE_AGENT_IDLE_EXIT_MS 调优。
+      ...(this.disableCliIdleExit ? { [ACODE_AGENT_IDLE_EXIT_ENV_KEY]: "0" } : {}),
+      ...buildE2EAgentCoverageEnv(),
+    };
+    // v8 堆上限护栏(spec: packages/services/specs/agent-v8-heap-guard.md R2):
+    // 在 coverage env 之后合并,保留既有 NODE_OPTIONS 片段(如 E2E preload);
+    // 继承的用户值已被 sanitize 剔除,这里只注入 Host 装配的护栏值。
+    const guardedNodeOptions = appendMaxOldSpaceToNodeOptions(
+      agentSpawnEnv.NODE_OPTIONS,
+      resolveMaxOldSpaceMb(
+        process.env[ACODE_AGENT_MAX_OLD_SPACE_MB_ENV_KEY],
+        DEFAULT_AGENT_MAX_OLD_SPACE_MB,
+      ),
+    );
+    if (guardedNodeOptions !== undefined) {
+      agentSpawnEnv.NODE_OPTIONS = guardedNodeOptions;
+    }
     const child = spawn(effectiveCommand.command, spawnPreflight.args, {
       cwd: spawnPreflight.cwd,
       // agent 可能再派生实际 runtime/MCP 子进程。POSIX 下让 wrapper 进入独立进程组，
       // 关闭时才能按进程树整体回收；Windows 保持非 detached，交给 taskkill /T 处理。
       detached: shouldSpawnInDetachedProcessGroup(),
-      env: {
-        ...sanitizeACodeRuntimeEnv(process.env),
-        [ACODE_RUNTIME_ENV_KEY]: runtimeEnv,
-        ...spawnEnv,
-        ...effectiveCommand.env,
-        // 身份/隔离语义使用 workspaceIdentity；cwd 继续使用 workspacePath。
-        ...buildAgentWorkspaceIdentityEnv(params.workspaceIdentity),
-        // lane 级策略优先级最高:plugin/mcp-status 显式关闭 CLI 空闲自退(spec
-        // chat-lane-idle-reclaim.md R8),不允许被继承 env 覆盖;chat lane 不注入,
-        // 走 CLI 缺省(启用)与 ACODE_AGENT_IDLE_EXIT_MS 调优。
-        ...(this.disableCliIdleExit ? { [ACODE_AGENT_IDLE_EXIT_ENV_KEY]: "0" } : {}),
-        ...buildE2EAgentCoverageEnv(),
-      },
+      env: agentSpawnEnv,
       stdio: ["pipe", "pipe", "pipe"],
     });
     const startedAt = Date.now();

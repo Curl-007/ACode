@@ -51,6 +51,10 @@ const SANITIZED_RUNTIME_ENV_KEYS = [
   "NODE_ENV",
   "ELECTRON_RUN_AS_NODE",
   "NODE_NO_WARNINGS",
+  // NODE_OPTIONS 可携带 --require= 任意代码,与 ACODE_AGENT_SERVER_COMMAND 同级的
+  // 用户级 env 注入面(spec: packages/services/specs/agent-v8-heap-guard.md R3)。
+  // Host/agent 的 v8 堆护栏在剔除之后由各自 spawn 点定向注入,不吃继承值。
+  "NODE_OPTIONS",
   "HTTP_PROXY",
   "HTTPS_PROXY",
   "ALL_PROXY",
@@ -103,6 +107,8 @@ const NON_TOOL_PASSTHROUGH_RUNTIME_ENV_KEYS = [
   "NODE_ENV",
   "ELECTRON_RUN_AS_NODE",
   "NODE_NO_WARNINGS",
+  // 护栏/注入面同理:剔除后不得经 tool-env-passthrough 恢复到 Bash/tool 子进程。
+  "NODE_OPTIONS",
   // CUA broker 凭据不得经 tool-env-passthrough 恢复到 Bash/tool 子进程（否则等于绕过上面的剔除）。
   ACODE_CUA_BROKER_SOCKET_ENV_KEY,
   "ACODE_CUA_PERMISSION_BROKER_REFRESH_MARKER",

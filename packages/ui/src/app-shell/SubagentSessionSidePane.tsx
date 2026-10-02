@@ -45,6 +45,8 @@ export const SubagentSessionSidePane = memo(function SubagentSessionSidePane({
         readOnly
         allowWorkspaceFileRewind
         focused={focused}
+        // 侧栏 focused = isVisible && active tab(真可见性),可安全驱动订阅门控。
+        subscriptionActive={focused}
         workspacePath={tab.workspacePath}
         workspaceIdentity={tab.workspaceIdentity}
         remoteSessionId={tab.remoteSessionId}

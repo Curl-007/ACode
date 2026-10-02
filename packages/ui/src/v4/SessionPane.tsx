@@ -244,6 +244,15 @@ export interface SessionPaneProps {
    * focused pane。单 pane 消费者（V4ChatPane）缺省 true。
    */
   focused?: boolean;
+  /**
+   * 订阅门控(spec: packages/ui/specs/hidden-pane-subscription-release.md R1):
+   * false 时不持有会话 lease——既有 cleanup 释放 → 30s keep-warm → 退订并释放
+   * 投影窗口;重新变 true 走既有 acquire(warm 复用或 cold snapshot)。
+   * 只允许由**真可见性**信号驱动:侧栏宿主传其 focused(isVisible && active tab);
+   * workbench/主聊天恒缺省 true(渲染即可见)。禁止把 workbench 的 focused
+   * (键盘焦点语义)接进来,否则分屏下可见非焦点 pane 会被误释放。
+   */
+  subscriptionActive?: boolean;
   /** 向右拆分新 draft 窗格（叶子数达上限时宿主不下发）。 */
   onSplitRight?: () => void;
   /** 向下拆分新 draft 窗格。 */
@@ -428,6 +437,7 @@ export function SessionPane({
   onSessionCreated,
   onSelectionSideChatUnavailable,
   focused = true,
+  subscriptionActive = true,
   onSplitRight,
   onSplitDown,
   onClosePane,
@@ -1745,7 +1755,12 @@ export function SessionPane({
   });
 
   useEffect(() => {
-    if (!effectiveSessionId) {
+    // 不可见门控(spec: hidden-pane-subscription-release.md R1):释放走上一轮
+    // cleanup(release → refCount 归零 → 30s keep-warm → close),30s 内重新
+    // 可见则 warm 复用同一 store(订阅未断、滚动/行高缓存保留);超时后走
+    // cold snapshot/resume,与「重开面板」同路径。lease 为 null 期间所有
+    // store 消费点均有 lease?.store 守卫(发送/恢复/loadOlder 路径,已逐一核实)。
+    if (!effectiveSessionId || !subscriptionActive) {
       setLease(null);
       return;
     }
@@ -1760,7 +1775,7 @@ export function SessionPane({
       offOnlineModelTransition();
       nextLease.release();
     };
-  }, [layer, effectiveSessionId]);
+  }, [layer, effectiveSessionId, subscriptionActive]);
 
   useEffect(() => {
     if (!sessionId || !lease || snapshot?.sessionId !== sessionId) return;

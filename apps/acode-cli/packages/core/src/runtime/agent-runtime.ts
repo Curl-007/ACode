@@ -68,6 +68,7 @@ import type {
 } from "./deps.js";
 import { installAgentRuntimeMethods } from "./methods/index.js";
 import type { StartSavedWorkflowRunResult } from "./methods/dynamic-workflow-run-start.js";
+import type { ConcurrencyDiagnosticsSnapshot } from "./methods/concurrency-diagnostics.js";
 import type {
   AmendWorkflowRunSettingsInput,
   AmendWorkflowRunSettingsResult,
@@ -385,6 +386,12 @@ export interface AgentRuntime {
     toModelLabel: string;
   }): void;
   getActiveTurnInfo(): ActiveTurnInfo | undefined;
+  /**
+   * D5 并发只读诊断投影（specs/concurrency-diagnostics-projection.md）：tool scheduler /
+   * dynamic-workflow / Plan Explore / subagent 后台四域的 caps/current/degraded 统一快照。
+   * 纯投影——供 debug 日志与文档引用，不改变任何调度决策，参数调整权留在各域。
+   */
+  getConcurrencyDiagnostics(): ConcurrencyDiagnosticsSnapshot;
   admitPrompt(
     input: string,
     attachments?: TurnState["attachments"],

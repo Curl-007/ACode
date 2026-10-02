@@ -183,46 +183,35 @@ export function createCustomAboutDialogHtml(input: CustomAboutDialogHtmlInput): 
           <div class="app-icon" aria-hidden="true">
             <svg
               xmlns="http://www.w3.org/2000/svg"
-              width="158"
-              height="100"
+              width="140"
+              height="137"
               fill="none"
-              viewBox="120 264 784 496"
+              viewBox="156 162 712 700"
               class="app-logo"
               focusable="false"
             >
               <defs>
                 <linearGradient
                   id="acode-brand-gradient"
-                  x1="760"
-                  y1="300"
-                  x2="300"
-                  y2="720"
+                  x1="238"
+                  y1="244"
+                  x2="542"
+                  y2="780"
                   gradientUnits="userSpaceOnUse"
                 >
-                  <stop offset="0" stop-color="#38bdf8" />
-                  <stop offset="1" stop-color="#818cf8" />
+                  <stop offset="0" stop-color="#f1f5f9" />
+                  <stop offset="1" stop-color="#64748b" />
                 </linearGradient>
               </defs>
               <path
-                d="M368 312L168 512L368 712"
+                d="M238 244L542 512L238 780"
                 fill="none"
-                stroke="#38bdf8"
-                stroke-width="96"
+                stroke="url(#acode-brand-gradient)"
+                stroke-width="164"
                 stroke-linecap="round"
                 stroke-linejoin="round"
               />
-              <path
-                fill="url(#acode-brand-gradient)"
-                d="M512 380C525 462 562 499 644 512C562 525 525 562 512 644C499 562 462 525 380 512C462 499 499 462 512 380Z"
-              />
-              <path
-                d="M656 312L856 512L656 712"
-                fill="none"
-                stroke="#818cf8"
-                stroke-width="96"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              />
+              <rect x="668" y="412" width="200" height="200" rx="44" fill="#f8fafc" />
             </svg>
           </div>
           <h1 id="about-title" class="title">

@@ -32,11 +32,29 @@ export const apiKeyAccessDataSchema = z
     type: z.enum(["api-key", "zhipu-coding-plan-api-key"]),
     apiKey: z.string().nullable().optional(),
     apiKeyManagementUrl: z.string().url().nullable().optional(),
+    /**
+     * 加密凭据库里的引用（安全加固 P1-5）。BYO Provider 的 API Key 不再明文落盘：
+     * 真值存进 `credentials.json`，本字段只存引用，由 ProviderRegistryService 的异步刷新
+     * 循环 hydrate 回 `apiKey` 后才交给下游同步消费者。
+     *
+     * 与 `apiKey` 互斥但不强制二选一（迁移中间态、明文回退兼容都要求宽容），
+     * 完整性由 `completeApiKeyAccessDataSchema` 的「至少有一个」约束表达。
+     */
+    credentialRef: z.string().min(1).nullable().optional(),
   })
   .strict();
-export const completeApiKeyAccessDataSchema = apiKeyAccessDataSchema.extend({
-  apiKey: nonBlankRequiredString,
-});
+
+export const completeApiKeyAccessDataSchema = apiKeyAccessDataSchema.refine(
+  (value) => {
+    const hasKey = typeof value.apiKey === "string" && value.apiKey.trim().length > 0;
+    const hasRef = typeof value.credentialRef === "string" && value.credentialRef.trim().length > 0;
+    return hasKey || hasRef;
+  },
+  {
+    message: "必须提供 API Key 或其凭据引用",
+    params: { configIssueCode: "required-field-missing" },
+  },
+);
 
 export const completeZhipuAccountAccessDataSchema = z
   .object({

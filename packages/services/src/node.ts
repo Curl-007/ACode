@@ -13,6 +13,7 @@ import { getAppConfigDir as resolveAppConfigDir } from "./paths.js";
 import {
   buildLocalMediaPreviewUrl,
   isProviderProvisioningAccountCredentialKey,
+  isProviderProvisioningProviderApiKeyCredentialKey,
   type ProviderProvisioningTrigger,
 } from "@acode/shared";
 
@@ -222,10 +223,6 @@ export { createFeedbackDiagnosticArchive } from "./feedback/feedbackLogArchive.j
 export { createFeedbackService } from "./feedback/feedbackService.js";
 export type { CreateFeedbackServiceOptions } from "./feedback/feedbackService.js";
 export { createLocalPromptAttachmentTransferService } from "./prompt-attachment-transfer/promptAttachmentTransferService.js";
-export {
-  createLocalConversationShareArtifactSource,
-  createRemoteConversationShareArtifactSource,
-} from "./conversation-share/conversationShareArtifactSource.js";
 export { createNodeApiClient, NodeApiClient } from "./providers/api/nodeApiClient.js";
 export {
   createHostApiNetworkTransport,
@@ -296,17 +293,6 @@ import { IACodeTaskService } from "./session/acodeTaskService.js";
 import { IACodeAgentService } from "./acode-agent/acodeAgent.js";
 import type { CuaOperationStateReporter } from "./acode-agent/cuaOperationTurnTracker.js";
 import { IACodeSessionService } from "./acode-session/acodeSession.js";
-import {
-  createUnsupportedConversationShareService,
-  IConversationShareService,
-  type IConversationShareService as IConversationShareServiceType,
-} from "./conversation-share/conversationShare.js";
-import {
-  ConversationShareService,
-  conversationShareConnectionScopeFactory,
-} from "./conversation-share/conversationShareService.js";
-import { createLocalConversationShareArtifactSource } from "./conversation-share/conversationShareArtifactSource.js";
-import { ConversationShareHttpClient } from "./conversation-share/conversationShareHttpClient.js";
 import { IBotsService } from "./bots/bots.js";
 import { IFileWatcherService } from "./fileWatcher/fileWatcher.js";
 import { IOAuthService } from "./oauth/oauth.js";
@@ -369,6 +355,7 @@ import { bindAccountProviderInvalidation } from "./model-provider/accountProvide
 import { AccountProviderApiClient } from "./model-provider/accountProviderApiClient.js";
 import { AccountProviderApiKeyResolver } from "./model-provider/accountProviderApiKeyResolver.js";
 import { createProviderConfigRuntime } from "./model-provider/providerConfigRuntime.js";
+import { createCredentialServiceApiKeyVault } from "./model-provider/credentialServiceApiKeyVault.js";
 import { fetchACodeBuiltinRemoteRelease } from "./model-provider/acodeBuiltinRemoteConfig.js";
 import {
   createProviderRuntimeFromConfigRuntime,
@@ -521,16 +508,7 @@ import {
   acodeProviderAccountAccessSchema,
   ACODE_VERSION,
   ACODE_ENV,
-  buildRuntimeACodeApiUrl,
 } from "@acode/shared";
-
-// 这些 conversation-share 实现依赖 Node 文件系统；仅通过 @acode/services/node 暴露，
-// 防止 browser-safe 根入口把 node:* 依赖带进 renderer。
-export {
-  ConversationShareService,
-  ConversationShareHttpClient,
-  conversationShareConnectionScopeFactory,
-};
 
 interface ServiceWithDisposeAll {
   disposeAll: () => void;
@@ -1401,7 +1379,13 @@ export function createLocalServices(options: {
   const provisioningOAuthKeys = new Set<string>(PROVIDER_PROVISIONING_OAUTH_CREDENTIAL_KEYS);
   const credentialService = createCredentialService({
     onDidMutate: ({ key }) => {
-      if (provisioningOAuthKeys.has(key) || isProviderProvisioningAccountCredentialKey(key)) {
+      // P1-5（R2）：BYO Key（provider:apikey:*）也是 provisioning 信封的凭据事实，
+      // 变化后必须触发源变更推送，否则远端拿到新 ref 却等不来新真值。
+      if (
+        provisioningOAuthKeys.has(key) ||
+        isProviderProvisioningAccountCredentialKey(key) ||
+        isProviderProvisioningProviderApiKeyCredentialKey(key)
+      ) {
         options.onProviderProvisioningSourceChanged?.("credential");
       }
     },
@@ -1409,6 +1393,10 @@ export function createLocalServices(options: {
   const accountProviderCredentialStore = createAccountProviderCredentialStore({
     credentialService,
   });
+  // 安全加固 P1-5：BYO Provider 的 API Key 走加密凭据库，provider_config.json 只存 credentialRef。
+  // 写入侧（ProviderConfigRuntime → repository）与读取侧（ProviderRuntime → registry hydration）
+  // 必须注入**同一个** vault 实例，否则会出现「写了 ref 但读不回来」。
+  const providerApiKeyVault = createCredentialServiceApiKeyVault(credentialService);
   const broadcastService = createBroadcastService(options?.parentPort ?? null);
   const gitCheckpointService = createGitCheckpointService();
   const hostApiNetworkTransport =
@@ -1555,6 +1543,7 @@ export function createLocalServices(options: {
     // 已发布 config.json 保存的是 ACode 用户配置；清理第三方 ACP 不能移除这条升级路径。
     // Repository 仅在新 Personal 配置不存在时导入，并保留旧文件以便回滚。
     readLegacyProviders: () => readLegacyACodeConfigProviders(),
+    providerApiKeyVault,
   });
   const accountProviderConfigSource = createAccountProviderConfigSource({
     configSource: providerConfigRuntime.configService,
@@ -1620,6 +1609,10 @@ export function createLocalServices(options: {
     configRuntime: providerConfigRuntime,
     accountSource: accountProviderConfigSource,
     modelSelectionConfiguredDefaultSource,
+    // P1-5 读取侧：registry 的异步刷新循环把 credentialRef hydrate 回明文 apiKey，
+    // 之后同步 resolver 与下游约 39 处 `access.apiKey` 消费者拿到的都是真值，无需改动。
+    // 必须与写入侧（providerConfigRuntime）同一个 vault 实例。
+    providerApiKeyVault,
     disposeModelSelectionConfiguredDefaultSource: () =>
       modelSelectionConfiguredDefaultSource.dispose(),
     testConnectivity: createProviderSettingsConnectivityTester({
@@ -2388,30 +2381,6 @@ export function createLocalServices(options: {
     authorizeLocalMediaPreviewPath: options?.authorizeLocalMediaPreviewPath,
     createLocalMediaPreviewUrl: buildLocalMediaPreviewUrl,
   });
-  const conversationShareClient = new ConversationShareHttpClient({
-    // 分享运行时始终走真实 API；测试/Mock 场景应在 service 单测或 Web fixture 中显式注入，
-    // 不能让开发环境默认生成仅存在于进程内存的 mock-share 链接。
-    apiClient,
-    baseUrl: buildRuntimeACodeApiUrl(process.env, "/api/v1"),
-    tokenProvider: async (): Promise<string | null> => {
-      const activeProvider = await oauthCredentialRepo.getActiveProvider();
-      if (!activeProvider) {
-        return null;
-      }
-      const tokenSet = await oauthCredentialRepo.loadTokenSet(activeProvider);
-      return tokenSet?.acodeJwtToken ?? tokenSet?.accessToken ?? null;
-    },
-  });
-  const conversationShareService: IConversationShareServiceType = isDesktopAttachedRemote
-    ? createUnsupportedConversationShareService({
-        message: "Conversation publishing is not available for remote workspaces",
-      })
-    : new ConversationShareService({
-        acodeAgentService,
-        acodeSessionService,
-        client: conversationShareClient,
-        artifactSource: createLocalConversationShareArtifactSource(),
-      });
   // 注册链上的懒工厂（如 OffPeak）会各自创建 tasks-index sqlite repo；先收集到本数组，
   // services 集合建好后在 return 前统一登记进 sharedSqliteRepos 侧表
   const sqliteReposToClose: Array<{ close(): void }> = [];
@@ -2431,7 +2400,6 @@ export function createLocalServices(options: {
     .register(IACodeSessionService, acodeSessionService)
     .register(ICuaPermissionService, cuaPermissionService)
     .register(ICuaPipSessionService, cuaPipSessionService)
-    .register(IConversationShareService, conversationShareService)
     .register(
       IBotsService,
       createBotsService({

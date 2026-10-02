@@ -16,6 +16,10 @@ import type {
   ProviderConfigSnapshot,
   ProviderSource,
 } from "./sources.js";
+import {
+  hydrateProviderConfigCredentialRefs,
+  type ProviderApiKeyVault,
+} from "./provider-api-key-vault.js";
 
 export interface ProviderRegistryServiceSnapshot {
   readonly sourceRevisions: {
@@ -42,6 +46,12 @@ export interface ProviderRegistryServiceDependencies {
   readonly configSource: ProviderSource<ProviderConfigSnapshot>;
   readonly accountSource: ProviderSource<AccountProviderConfigSnapshot>;
   readonly resolver?: ProviderConfigResolver;
+  /**
+   * BYO Provider API Key 的加密凭据库（安全加固 P1-5）。可选：未注入时 credentialRef 不 hydrate，
+   * 文件里的明文 apiKey 照读（安全空操作，兼容纯 builtin / 测试 / 凭据库不可用）。
+   * 由 services（桌面 host）或 CLI 注入，provider 不反向依赖它们。
+   */
+  readonly providerApiKeyVault?: ProviderApiKeyVault;
 }
 
 interface RefreshWaiter {
@@ -54,6 +64,7 @@ export class ProviderRegistryService {
   readonly #configSource: ProviderSource<ProviderConfigSnapshot>;
   readonly #accountSource: ProviderSource<AccountProviderConfigSnapshot>;
   readonly #resolver: ProviderConfigResolver;
+  readonly #providerApiKeyVault: ProviderApiKeyVault | undefined;
   readonly #registry = new ProviderRegistry();
   readonly #changeListeners = new Set<(event: ProviderRegistryServiceChangedEvent) => void>();
   readonly #errorListeners = new Set<(event: ProviderRegistryServiceRefreshErrorEvent) => void>();
@@ -71,6 +82,7 @@ export class ProviderRegistryService {
     this.#configSource = dependencies.configSource;
     this.#accountSource = dependencies.accountSource;
     this.#resolver = dependencies.resolver ?? new ProviderConfigResolver();
+    this.#providerApiKeyVault = dependencies.providerApiKeyVault;
   }
 
   async start(): Promise<void> {
@@ -219,10 +231,32 @@ export class ProviderRegistryService {
       }
 
       try {
+        // 安全加固 P1-5：把 BYO provider 的 credentialRef 经凭据库 hydrate 回明文 apiKey。
+        // 只喂给下面的 resolve()；**snapshot 仍存 ref 形态**——revision = sha256(encode(磁盘内容))，
+        // 且 providerProvisioningSource.readProvisionablePersonalConfig 会重算磁盘 hash 并断言
+        // 等于 revision。若把 hydrate 后的明文回灌进 snapshot，磁盘与 snapshot 就不一致，
+        // 远程 provisioning 会抛「配置在读取期间发生变化」，且每次轮询都会误判变化并重写文件。
+        //
+        // hydrate 内部已对单个 provider 的凭据失败做了隔离（保留原 access、不抛错）；这里再包一层
+        // 兜底：凭据库整体异常时退回未 hydrate 的 providers，宁可暂时用不到明文 Key，
+        // 也不能让整个 registry 停止刷新（那会让所有 provider 当场失效）。
+        let hydratedPersonalProviders = config.personalProviders;
+        try {
+          hydratedPersonalProviders = await hydrateProviderConfigCredentialRefs(
+            config.personalProviders,
+            this.#providerApiKeyVault,
+          );
+        } catch {
+          hydratedPersonalProviders = config.personalProviders;
+        }
+        // hydrate 是新增的 await 点：期间 generation 可能已前进，此时不再发布这份过期组合，
+        // 交由 while 循环按更新的 generation 重来（与上面读取 config/account 后的判定同源）。
+        if (generation < this.#requestedGeneration) continue;
+
         const resolution = this.#resolver.resolve({
           acodeBuiltinProviders: config.acodeBuiltinProviders,
           acodeBuiltinProviderTemplates: config.acodeBuiltinProviderTemplates,
-          personalProviders: config.personalProviders,
+          personalProviders: hydratedPersonalProviders,
           acodeBuiltinModelRules: config.acodeBuiltinModelRules,
           personalModels: config.personalModels,
           accountProviders: account.providers,

@@ -1,14 +1,14 @@
 /**
- * scheduler.ts 顶到 oxlint max-lines 上限（400 行），把 Boundary B 的两条向上回报
- * （submit_result 到达、turn 结束）及其 repair / nudge 预算与 submit 归一化拆到本文件；
- * 公开面仍从 scheduler.ts 导出。
+ * scheduler.ts 顶到 oxlint max-lines 上限（400 行），把 Boundary B 的向上回报处理
+ * （submit_result 到达、turn 结束、ask 用量 stats）及其 repair / nudge 预算与 submit
+ * 归一化拆到本文件；公开面仍从 scheduler.ts 导出。
  *
  * 自由函数经 {@link SubmitSeam} 拿到调度器的 live 节点表与两条结算入口；AskScheduler 上的
- * submitAttempted / turnEnded 只是薄委托。
+ * submitAttempted / turnEnded / noteStats 只是薄委托。
  */
 
-import type { AskNode, SchedulerHost } from "./scheduler-types.js";
-import type { InstanceRef, Violation } from "./types.js";
+import { journaledStats, type AskNode, type SchedulerHost } from "./scheduler-types.js";
+import type { AskStats, InstanceRef, Violation } from "./types.js";
 import { REPAIR_ATTEMPTS, WorkflowError } from "./types.js";
 
 /** 调度器暴露给回报处理的最小接缝：查 live 节点、按结果结算。 */
@@ -113,4 +113,31 @@ export function handleTurnEnded(seam: SubmitSeam, instance: InstanceRef, finalTe
       { finalText },
     ),
   );
+}
+
+/**
+ * ask 用量回报（原 AskScheduler.noteStats 的方法体；预算闸合入后调度器顶到 max-lines 门，
+ * 按本文件既定的「向上回报处理」职责迁出，行为不变）。
+ *
+ * live 节点直接把 stats 挂在节点上（结算时随 nodeRecordFor 落库）。节点已离开 liveNodes
+ * ——typed-accept 主导路径：submit 停 turn 并在 settle 时落库，而真实 actor 的用量在 turn
+ * 解析后（submit 之后）才知道，故 stats 在结算之后才到达。回填已结算的 journal 记录：
+ * 只新增/覆写 stats，保留 status/result/actorSeq/inputHash/error/kind/actor 身份。
+ * 尽力而为且幂等；预算扣减仍在 engine.askStats（此处只补 journal 完整性）。
+ */
+export function handleNoteStats(
+  seam: SubmitSeam,
+  priorTranscriptAsks: ReadonlySet<string>,
+  instance: InstanceRef,
+  stats: AskStats,
+): void {
+  const node = seam.liveNode(instance);
+  if (node !== undefined) {
+    node.lastStats = stats;
+    return;
+  }
+  const journal = seam.host.driver.journal;
+  const recorded = journal.getNode(seam.host.runId, instance.siteId, instance.ordinal);
+  if (recorded === undefined) return;
+  journal.putNode({ ...recorded, stats: journaledStats(priorTranscriptAsks, instance, stats) });
 }

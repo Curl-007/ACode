@@ -14,6 +14,12 @@ import {
 } from "./zip-source.js";
 
 const GITHUB_HOSTS = new Set(["github.com", "www.github.com"]);
+/**
+ * 插件仓库源 host 白名单（单一事实源）。安全加固 P2 #8：
+ * GitHub Archive 快路径与 git fallback（`git-source-pinning.ts`）共用同一份常量；
+ * 扩展新 host 必须改这里，并同步 specs/plugin-git-source-pinning.md 的取舍记录。
+ */
+export const PLUGIN_REPOSITORY_ALLOWED_HOSTS: ReadonlySet<string> = GITHUB_HOSTS;
 const GITHUB_REPOSITORY_SEGMENT = /^[A-Za-z0-9_.-]+$/u;
 
 interface PublicGitHubRepository {

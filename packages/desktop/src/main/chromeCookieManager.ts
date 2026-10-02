@@ -256,6 +256,39 @@ function hasEncryptedCookiePrefix(rows: ChromeCookieRow[], prefix: "v11" | "v20"
   );
 }
 
+/**
+ * App-Bound 提权解密的前置嗅探（安全加固 P2 #9，specs/electron-hardening.md §6）：
+ * 提权确认框只在确认 Cookie 库确有 v20（App-Bound）行时弹出，避免每次导入都打扰用户。
+ * 返回 null 表示库缺失或快照读取失败——调用方必须按 fail-closed 处理（不弹窗、不提权）。
+ */
+export async function hasAppBoundEncryptedCookies(options: {
+  profilePath: string;
+  databaseBackup?: ChromeCookieDatabaseBackup;
+  logger: BrowserDataLogger;
+}): Promise<boolean | null> {
+  const cookieDatabasePath = await resolveChromeCookieDatabasePath(options.profilePath);
+  if (!cookieDatabasePath) {
+    return null;
+  }
+  try {
+    return await withDatabaseSnapshot(
+      cookieDatabasePath,
+      options.logger,
+      options.databaseBackup ?? backup,
+      async (snapshotPath) => {
+        const { rows } = await readChromeCookies(snapshotPath);
+        return hasEncryptedCookiePrefix(rows, "v20");
+      },
+    );
+  } catch (error) {
+    options.logger.warn(
+      "[browser-data] App-Bound Cookie 前置嗅探失败，按不可提权处理",
+      toSafeBrowserDataError(error),
+    );
+    return null;
+  }
+}
+
 async function collectCookieDetails(options: {
   allowElevatedChromeDecryption?: boolean;
   chromeCookieHelper: ChromeCookieHelper;

@@ -47,10 +47,28 @@ interface ToolSchedulerOptions {
 
 const DEFAULT_MAX_CONCURRENCY = 10;
 
+/**
+ * D5 只读诊断投影（specs/concurrency-diagnostics-projection.md R1/R3）：scheduler 域能如实
+ * 报告的两个事实。scheduler 是纯函数式分组器、不跟踪在飞执行，所以 `current` 口径只能是
+ * 「最近一次 schedule() 产出的最大并行组宽度」——这是分组结果里唯一的并发水位事实。
+ */
+export interface ToolSchedulerSnapshot {
+  /** 生效的并发上限（默认 DEFAULT_MAX_CONCURRENCY，可经配置下调/上调）。 */
+  maxConcurrency: number;
+  /** 最近一次 schedule() 的最大并行组宽度；0 = 本实例尚无调度。 */
+  lastScheduleMaxParallelGroupWidth: number;
+}
+
 export class ToolScheduler {
   private itemsMap = new Map<ToolCallId, ToolScheduleItem>();
   private maxConcurrency: number;
   private readOnlyTools: Set<string>;
+  /**
+   * 纯诊断记录（D5 R2）：只被 snapshot() 读取，任何调度分支都不读它——分组结果在它被
+   * 写下之前已完全确定，schedule() 的返回值逐字节不受影响。这是刻意的单向事实流：
+   * 投影可以观察调度，调度绝不观察投影。
+   */
+  private lastScheduleMaxParallelGroupWidth = 0;
 
   constructor(options: ToolSchedulerOptions = {}) {
     this.maxConcurrency = options.maxConcurrency ?? DEFAULT_MAX_CONCURRENCY;
@@ -63,7 +81,8 @@ export class ToolScheduler {
       toolName: tool.toolName,
       dependencies: tool.dependsOn,
       canRunParallel: this.canRunInParallel(tool),
-      readOnly: tool.readOnly ?? (tool.toolName ? this.readOnlyTools.has(tool.toolName) : undefined),
+      readOnly:
+        tool.readOnly ?? (tool.toolName ? this.readOnlyTools.has(tool.toolName) : undefined),
       destructive: tool.destructive,
       concurrentSafe: tool.concurrentSafe,
       sideEffectScope: tool.sideEffectScope,
@@ -74,11 +93,24 @@ export class ToolScheduler {
     const sorted = this.topologicalSort(items);
     const groups = this.groupByParallel(sorted);
     this.validateNoCycles(groups);
+    // D5 纯诊断记录：在全部调度决策（分组、环校验）完成之后写，见字段注释。
+    this.lastScheduleMaxParallelGroupWidth = groups.reduce(
+      (widest, group) => Math.max(widest, group.length),
+      0,
+    );
 
     return {
       items,
       parallelGroups: groups,
       executionOrder: groups.flat(),
+    };
+  }
+
+  /** D5 只读快照：不改变任何调度状态（连诊断字段也只读不写）。 */
+  snapshot(): ToolSchedulerSnapshot {
+    return {
+      maxConcurrency: this.maxConcurrency,
+      lastScheduleMaxParallelGroupWidth: this.lastScheduleMaxParallelGroupWidth,
     };
   }
 
@@ -94,7 +126,8 @@ export class ToolScheduler {
       return true;
     }
 
-    const readOnly = tool.readOnly ?? (hasToolName ? this.readOnlyTools.has(tool.toolName!) : false);
+    const readOnly =
+      tool.readOnly ?? (hasToolName ? this.readOnlyTools.has(tool.toolName!) : false);
     if (tool.destructive) return false;
     if (tool.concurrentSafe === true) return true;
     if (tool.concurrentSafe === false) return false;

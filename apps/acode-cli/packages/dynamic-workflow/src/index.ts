@@ -1,6 +1,8 @@
 export { FACADE_DTS, FACADE_FILE_NAME, SNIPPET_FACADE_DTS } from "./facade/dts.js";
 export { WORLD_READ_CAPS } from "./facade/world-read-caps.js";
 export { REPORT_CAPS } from "./facade/report-caps.js";
+// 预算保险丝（agent 总量 / 扇出积压；token 硬顶 P2）：常量住纯包，数字即契约。
+export { BUDGET_CAPS } from "./facade/budget-caps.js";
 // 用户面产物：上限常量、注册表词汇、编译期清单与诊断。
 export { ARTIFACT_CAPS, ARTIFACT_ID_PATTERN } from "./facade/artifact-caps.js";
 export {
@@ -171,6 +173,7 @@ export {
   WorkflowEngine,
   InMemoryJournalStore,
   WorkflowError,
+  isWorkflowErrorCode,
   INSTRUCTIONS_HEAD_MAX_CHARS,
   LAST_TOOL_NAME_MAX_CHARS,
   LAST_TOOL_TARGET_MAX_CHARS,
@@ -193,6 +196,7 @@ export {
   type AskSpec,
   type AskStats,
   type Caps,
+  type AgentBudgetDetails,
   type EngineConfig,
   type ImportedActorCandidate,
   type ImportedAskEntry,

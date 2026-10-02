@@ -17,6 +17,7 @@ import {
   type ContextUsageCategoryBreakdown,
 } from "../helpers/context-usage-breakdown.js";
 import { compactContextUsageSnapshot } from "./context-usage-log-compact.js";
+import { stringifyToolContractForEstimation } from "./tools-schema-token-metric.js";
 import type {
   ActiveTurnSteeringState,
   DrainedPendingInputDiagnostics,
@@ -311,18 +312,9 @@ export function buildToolUsageDetail(
   this: AgentRuntimeInternal,
   tool: ModelToolContract,
 ): ContextUsageToolDetail {
-  const content = stringifyForEstimation({
-    name: tool.name,
-    description: tool.description,
-    capability: tool.capability,
-    inputSchema: tool.inputSchema,
-    outputSchema: tool.outputSchema,
-    readOnly: tool.readOnly,
-    destructive: tool.destructive,
-    sideEffectScope: tool.sideEffectScope,
-    permission: tool.permission,
-    resultBudget: tool.resultBudget,
-  });
+  // P5 口径合一（specs/tools-schema-token-metrics.md R4）：schema 序列化与
+  // tools_schema_token_metric 度量点共用同一个纯函数，两处字段清单不会各抄一份漂移。
+  const content = stringifyToolContractForEstimation(tool);
   const mcp = parseMcpToolName(tool.name);
   return {
     name: tool.name,

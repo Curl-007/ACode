@@ -6,6 +6,7 @@ import type {
   RemoteTargetSnapshot,
   RemoteWorkspaceSessionEntry,
 } from "@acode/shared";
+import { normalizeServerIdForIdentity, resolveServerIdentityId } from "@acode/shared";
 import type { WindowTabState } from "@/store/tabStore.js";
 import { isWorkspaceTab } from "@/store/tabStore.js";
 
@@ -34,11 +35,19 @@ function buildRemoteWorkspacePrivateKeyPassphraseCredentialKey(workspaceKey: str
   return `remote-workspace:${workspaceKey}:private-key-passphrase`;
 }
 
+function buildRemoteWorkspaceTokenCredentialKey(workspaceKey: string): string {
+  return `remote-workspace:${workspaceKey}:token`;
+}
+
 function collectRemoteWorkspaceCredentialKeys(snapshot: RemoteTargetSnapshot): string[] {
   if (snapshot.kind === "ssh") {
     return [snapshot.passwordCredentialKey, snapshot.privateKeyPassphraseCredentialKey].filter(
       (key): key is string => typeof key === "string" && key.length > 0,
     );
+  }
+
+  if (snapshot.kind === "server" && snapshot.tokenCredentialKey) {
+    return [snapshot.tokenCredentialKey];
   }
 
   return [];
@@ -56,6 +65,25 @@ type WslRemoteTargetLike = Extract<RemoteTarget | RemoteTargetSnapshot, { kind: 
 
 function getWslRemoteTargetUser(target: WslRemoteTargetLike): string | undefined {
   return target.user?.trim() || undefined;
+}
+
+type ServerRemoteTargetLike = Extract<RemoteTarget | RemoteTargetSnapshot, { kind: "server" }>;
+
+/** server 展示用 host：优先 name，其次 URL host，最后原始 url。仅用于标题/副标题展示。 */
+function formatServerRemoteTargetHostLabel(target: ServerRemoteTargetLike): string {
+  const name = target.name?.trim();
+  if (name) {
+    return name;
+  }
+  try {
+    const host = new URL(target.url.trim()).host;
+    if (host) {
+      return host;
+    }
+  } catch {
+    // 非法 URL 时回落到原始字符串。
+  }
+  return target.url.trim();
 }
 
 function formatWslRemoteTargetAuthority(target: WslRemoteTargetLike): string {
@@ -79,6 +107,8 @@ export function formatRemoteWorkspaceTargetSubtitle(
     }
     case "docker":
       return `Docker · ${target.container}`;
+    case "server":
+      return `Server · ${formatServerRemoteTargetHostLabel(target)}`;
   }
 }
 
@@ -92,6 +122,8 @@ export function formatRemoteWorkspaceHeaderHostLabel(
       return formatWslRemoteTargetAuthority(target);
     case "docker":
       return `docker:${target.container}`;
+    case "server":
+      return `server:${formatServerRemoteTargetHostLabel(target)}`;
   }
 }
 
@@ -131,6 +163,10 @@ function getRemoteWorkspaceAuthorityKey(target: RemoteTarget | RemoteTargetSnaps
     }
     case "docker":
       return ["docker", target.container].join(":");
+    case "server":
+      // 必须与 shared buildRemoteWorkspaceIdentity 的 server authority 段逐字节一致，
+      // 否则 UI 计算的 identity 与 host/main 计算的会漂移，导致 session/缓存/队列串用。
+      return ["server", normalizeServerIdForIdentity(resolveServerIdentityId(target))].join(":");
   }
 }
 
@@ -214,6 +250,25 @@ function createRemoteTargetSnapshot(
         kind: "docker",
         container: target.container,
       };
+    case "server": {
+      const name = target.name?.trim();
+      const workspacePath = target.workspacePath?.trim();
+      const serverId = target.serverId?.trim();
+      return {
+        kind: "server",
+        url: target.url,
+        ...(name ? { name } : {}),
+        ...(workspacePath ? { workspacePath } : {}),
+        ...(serverId ? { serverId } : {}),
+        // token 是 secret，不落盘；只保存 credentialService 键名，复用既有键避免每次重连都换键。
+        tokenCredentialKey:
+          target.token && target.token.length > 0
+            ? previousSnapshot?.kind === "server" && previousSnapshot.tokenCredentialKey
+              ? previousSnapshot.tokenCredentialKey
+              : buildRemoteWorkspaceTokenCredentialKey(workspaceKey)
+            : undefined,
+      };
+    }
   }
 }
 
@@ -222,6 +277,7 @@ export function createRemoteTargetFromSnapshot(
   credentials: {
     password: string | null;
     privateKeyPassphrase: string | null;
+    token?: string | null;
   },
 ): RemoteTarget {
   switch (snapshot.kind) {
@@ -249,6 +305,15 @@ export function createRemoteTargetFromSnapshot(
       return {
         kind: "docker",
         container: snapshot.container,
+      };
+    case "server":
+      return {
+        kind: "server",
+        url: snapshot.url,
+        ...(snapshot.name ? { name: snapshot.name } : {}),
+        ...(snapshot.workspacePath ? { workspacePath: snapshot.workspacePath } : {}),
+        ...(snapshot.serverId ? { serverId: snapshot.serverId } : {}),
+        ...(credentials.token ? { token: credentials.token } : {}),
       };
   }
 }
@@ -386,6 +451,18 @@ export function buildRemoteWorkspaceSessionMutation(params: {
     credentialsToSave.push({
       key: nextSnapshot.privateKeyPassphraseCredentialKey,
       value: params.target.privateKeyPassphrase,
+    });
+  }
+
+  if (
+    params.target.kind === "server" &&
+    nextSnapshot.kind === "server" &&
+    params.target.token &&
+    nextSnapshot.tokenCredentialKey
+  ) {
+    credentialsToSave.push({
+      key: nextSnapshot.tokenCredentialKey,
+      value: params.target.token,
     });
   }
 

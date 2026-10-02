@@ -65,8 +65,8 @@ node scripts/architecture/architecture-check.mjs check --changed
 - [packages/services/src/client-config/clientConfigService.ts](../../../packages/services/src/client-config/clientConfigService.ts)
 - [packages/services/src/client-scenes/clientScenesService.ts](../../../packages/services/src/client-scenes/clientScenesService.ts)
 - [packages/services/src/coding-plan-subscription/bigmodelCodingPlanSubscriptionProvider.ts](../../../packages/services/src/coding-plan-subscription/bigmodelCodingPlanSubscriptionProvider.ts)
-- [packages/services/src/conversation-share/conversationShareHttpClient.ts](../../../packages/services/src/conversation-share/conversationShareHttpClient.ts)
-- [packages/services/src/conversation-share/conversationShareService.ts](../../../packages/services/src/conversation-share/conversationShareService.ts)
+- `packages/services/src/conversation-share/conversationShareHttpClient.ts`——本轮曾改为请求前拒绝；对话分享后续整体下线，该文件已随 `packages/services/specs/conversation-share-removal.md` 删净，链接不再保留
+- `packages/services/src/conversation-share/conversationShareService.ts`——同上，已随对话分享下线删除
 - [packages/services/src/feedback/feedbackHttpClient.ts](../../../packages/services/src/feedback/feedbackHttpClient.ts)
 - [packages/services/src/feedback/feedbackService.ts](../../../packages/services/src/feedback/feedbackService.ts)
 - [packages/services/src/model-provider/accountProviderApiClient.ts](../../../packages/services/src/model-provider/accountProviderApiClient.ts)
@@ -92,4 +92,3 @@ node scripts/architecture/architecture-check.mjs check --changed
 - [packages/ui/src/lib/trustedImageUrl.ts](../../../packages/ui/src/lib/trustedImageUrl.ts)
 - [packages/ui/src/v4/featureSuggestedPrompts.ts](../../../packages/ui/src/v4/featureSuggestedPrompts.ts)
 - [packages/web/src/auth/zaiWebOAuthProvider.ts](../../../packages/web/src/auth/zaiWebOAuthProvider.ts)
-- [packages/web/src/share/conversationSharePreviewClient.ts](../../../packages/web/src/share/conversationSharePreviewClient.ts)

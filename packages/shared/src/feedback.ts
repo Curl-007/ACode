@@ -21,6 +21,7 @@ export type FeedbackTicketModule =
   | "权限 / 配置保存"
   | "SSH连接失败"
   | "WSL连接失败"
+  | "Server连接失败"
   | "UI布局 / 交互"
   | "模型响应慢 / 额度"
   | "崩溃 / Internal Error"
@@ -191,6 +192,7 @@ export const FEEDBACK_TICKET_MODULES: FeedbackTicketModule[] = [
   "权限 / 配置保存",
   "SSH连接失败",
   "WSL连接失败",
+  "Server连接失败",
   "UI布局 / 交互",
   "模型响应慢 / 额度",
   "崩溃 / Internal Error",

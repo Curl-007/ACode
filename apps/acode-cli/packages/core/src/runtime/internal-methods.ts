@@ -35,6 +35,7 @@ import type {
   ExecutionShellSelection,
 } from "./deps.js";
 import type { BackgroundResultOriginMeta, ContextUsageBreakdownItem } from "@acode/contracts";
+import type { ConcurrencyDiagnosticsSnapshot } from "./methods/concurrency-diagnostics.js";
 import type { RuntimeCommand, RuntimeCommandId } from "./command-queue.js";
 import type { RuntimeMessageEntry } from "../agent/message-history.js";
 import type {
@@ -112,6 +113,11 @@ export interface AgentRuntimeCoreMethods {
     },
   ): Promise<MessageId>;
   getActiveTurnInfo(): ActiveTurnInfo | undefined;
+  /**
+   * D5 并发只读诊断投影（specs/concurrency-diagnostics-projection.md）：四个并发域的
+   * caps/current/degraded 统一快照。纯投影——不改变任何调度决策、无新增写入路径。
+   */
+  getConcurrencyDiagnostics(): ConcurrencyDiagnosticsSnapshot;
   enqueueDeferredInput(input: string | TurnSteerInput): Promise<TurnSteerResult>;
   steerTurn(input: string | TurnSteerInput): Promise<TurnSteerResult>;
   beginActiveTurn(

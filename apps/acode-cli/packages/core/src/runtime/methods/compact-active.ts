@@ -35,8 +35,10 @@ import {
   isTurnCancellationError,
   isModelContextExceededError,
   isModelMediaTooLargeError,
+  isModelRequestPayloadTooLargeError,
   logMediaBudgetProjection,
   logMediaCapabilityProjection,
+  projectMessagesForMediaBudget,
   truncateCompactSummaryRequestEntriesAfterPromptTooLong,
   projectCompactMediaForRetry,
   projectMessagesForModelMediaPolicy,
@@ -44,13 +46,15 @@ import {
   readApprovedPlanFileReferenceEntry,
 } from "../helpers/index.js";
 import type { CompactTimelineContext, RuntimeModelTextResult } from "../types.js";
-import type { Model } from "../deps.js";
+import type { Logger, Model, ModelInputMessage } from "../deps.js";
+import type { MediaBudgetProjection } from "../helpers/index.js";
 import type { AgentRuntimeInternal } from "../internal.js";
 import type { CompactAttemptOutcome } from "./turn-loop-state.js";
 import {
   legacySyntheticRuntimeMetadata,
   type RuntimeMessageEntry,
 } from "../../agent/message-history.js";
+import { nextCompactPayloadRecoveryMediaBudget } from "../../compact/payload-recovery.js";
 import { selectPersistedCompactTail } from "../helpers/compact-preservation.js";
 import {
   buildCompactSummaryRequestMessages,
@@ -269,6 +273,9 @@ async function compactActiveConversationImpl(
       let result: RuntimeModelTextResult;
       let compactPromptTooLongAttempts = 0;
       let stripMediaForSummary = false;
+      // HTTP 413（请求体字节超限）恢复轨道：undefined 表示未启用；启用后按
+      // compact/payload-recovery.ts 的阶梯逐级收缩内联媒体字节预算。
+      let payloadRecoveryMediaBudgetBytes: number | undefined;
       const reselectEntriesAfterPromptTooLong = (cause: unknown): boolean => {
         const reselected = selectCompactEntriesAfterPromptTooLong({
           currentGroupsPreserved: currentSelection.groupsPreserved,
@@ -362,6 +369,30 @@ async function compactActiveConversationImpl(
           logCompactMediaRetryProjection(this.logger, modelTraceContext, mediaProjection);
         }
 
+        if (payloadRecoveryMediaBudgetBytes !== undefined) {
+          // 413 属于字节轨道：按预算剥掉最旧的内联媒体、尽量保留最近的。
+          // 复用聚合媒体预算投影而不是新写一份剥离逻辑，这样 CUA 图块配对与
+          // media_type 占位文案只有一处实现（AGENTS.md：避免多条写入路径）。
+          const payloadProjection = projectCompactMessagesForPayloadRecovery(
+            projectedRequestMessages,
+            payloadRecoveryMediaBudgetBytes,
+          );
+          projectedRequestMessages = payloadProjection.messages;
+          projectedRecordableMessages =
+            recordableRequestMessages === requestMessages
+              ? projectedRequestMessages
+              : projectCompactMessagesForPayloadRecovery(
+                  projectedRecordableMessages,
+                  payloadRecoveryMediaBudgetBytes,
+                ).messages;
+          logCompactPayloadRecoveryProjection(
+            this.logger,
+            modelTraceContext,
+            payloadProjection,
+            payloadRecoveryMediaBudgetBytes,
+          );
+        }
+
         const modelRequestEvent = this.createEvent(
           SessionEventType.ModelRequest,
           {
@@ -427,6 +458,30 @@ async function compactActiveConversationImpl(
             traceContext: modelTraceContext,
           });
           if (isTurnCancellationError(error, options.abortSignal)) {
+            throw error;
+          }
+          if (isModelRequestPayloadTooLargeError(error)) {
+            // 413 是「请求体字节超限」，与 token 超窗是两条独立轨道：token 会计有意不按
+            // base64 长度计费，所以丢轮次/截断 summary 输入既诊断不出原因也不一定降得下字节数。
+            const nextPayloadBudget = nextCompactPayloadRecoveryMediaBudget(
+              payloadRecoveryMediaBudgetBytes,
+            );
+            if (nextPayloadBudget !== undefined) {
+              payloadRecoveryMediaBudgetBytes = nextPayloadBudget;
+              this.logger?.warn(
+                "Compact summary hit request payload size limit; retrying with reduced media budget",
+                {
+                  ...traceContextToLogContext(modelTraceContext),
+                  errorMessage: error instanceof Error ? error.message : String(error),
+                  event: "compact.request.payload_too_large.retry",
+                  maxMediaBytes: nextPayloadBudget,
+                  module: "core.runtime",
+                },
+              );
+              continue;
+            }
+            // 阶梯耗尽（媒体已全剥仍 413）：不再转投 token 轨道，否则会把「请求体太大」
+            // 误诊成「上下文太长」并放大成 3×3 重试。与 jcode 一致——无可剥媒体即放弃。
             throw error;
           }
           if (isModelMediaTooLargeError(error) && !stripMediaForSummary) {
@@ -722,4 +777,39 @@ function capCompactSummaryMaxOutputTokens(model: Model): number {
     MAX_OUTPUT_TOKENS_FOR_SUMMARY,
   );
   return Math.min(desired, model.optionSpecs.maxOutputTokens.max);
+}
+
+function projectCompactMessagesForPayloadRecovery(
+  messages: ModelInputMessage[],
+  maxMediaBytes: number,
+): MediaBudgetProjection {
+  // preserveLatestUserMedia: false —— summary 请求的最后一条 user 是 compact prompt，
+  // 没有需要保护的“当前附件”；沿用保护规则会让 0 字节预算直接抛
+  // MEDIA_BUDGET_CURRENT_ATTACHMENT_TOO_LARGE，而不是把媒体剥掉。
+  return projectMessagesForMediaBudget(messages, {
+    maxMediaBytes,
+    preserveLatestUserMedia: false,
+  });
+}
+
+function logCompactPayloadRecoveryProjection(
+  logger: Logger | undefined,
+  traceContext: TraceContext,
+  projection: MediaBudgetProjection,
+  maxMediaBytes: number,
+): void {
+  if (projection.omittedMediaCount === 0) return;
+  // 剥掉的媒体字节数只能在这里观测：占位文案由聚合媒体预算投影统一生成（含 media_type），
+  // 不带原始长度，因此把原始/投影后字节数落进日志，供 413 复盘对齐预算阶梯。
+  logger?.warn("Compact request media reduced for payload-size recovery", {
+    ...traceContextToLogContext(traceContext),
+    event: "compact.request.payload_too_large.media_projection",
+    maxMediaBytes,
+    module: "core.runtime",
+    omittedMediaCount: projection.omittedMediaCount,
+    projectedMediaBytes: projection.projectedMediaBytes,
+    retainedMediaCount: projection.retainedMediaCount,
+    status: "completed",
+    totalMediaBytes: projection.totalMediaBytes,
+  });
 }

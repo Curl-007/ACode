@@ -269,7 +269,9 @@ export interface PrintPageToPdfResult {
   error?: string;
 }
 
-export function createOpenInEditorRemoteTarget(target: RemoteTarget): OpenInEditorRemoteTarget {
+export function createOpenInEditorRemoteTarget(
+  target: RemoteTarget,
+): OpenInEditorRemoteTarget | undefined {
   switch (target.kind) {
     case "ssh":
       // openInEditor 只需要构造 VS Code Remote-SSH URI 的连接标识，
@@ -294,6 +296,9 @@ export function createOpenInEditorRemoteTarget(target: RemoteTarget): OpenInEdit
         kind: "docker",
         container: target.container,
       };
+    case "server":
+      // WebSocket server 没有 VS Code Remote-SSH/WSL URI，外部编辑器打开不适用。
+      return undefined;
   }
 }
 
@@ -353,11 +358,6 @@ export type ChromeBrowserDataImportError =
   | "chrome_browser_data_import_unavailable"
   | "chrome_data_import_failed"
   | "chrome_default_profile_not_found";
-
-export interface ChromeBrowserDataImportOptions {
-  /** Windows App-Bound Cookie 只能在本次显式确认后触发 UAC；不得持久化为全局授权。 */
-  allowElevatedChromeDecryption?: boolean;
-}
 
 /** Chrome 浏览器数据导入只返回数量和状态；Cookie/LocalStorage 值和解密材料不得跨进程。 */
 export interface ChromeBrowserDataImportResult {
@@ -681,9 +681,6 @@ export interface IPlatformService {
    */
   onPaymentCallback(callback: (url: string) => void): () => void;
 
-  /** 注册 `zcode://share/import?code=...` 导入意图。 */
-  onShareImport?(callback: (payload: { shareCode: string }) => void): () => void;
-
   /** 通知 main process renderer 已就绪，触发缓存的冷启动 deep link 转发 */
   notifyRendererReady(): void;
 
@@ -854,10 +851,12 @@ export interface IPlatformService {
     viewport: BrowserViewportSize | null;
   }): Promise<void>;
 
-  /** 从自动发现的本机 Chrome Profile 一次性导入 Cookie 与 LocalStorage。 */
-  importChromeBrowserData?(
-    options?: ChromeBrowserDataImportOptions,
-  ): Promise<ChromeBrowserDataImportResult>;
+  /**
+   * 从自动发现的本机 Chrome Profile 一次性导入 Cookie 与 LocalStorage。
+   * 无入参：App-Bound 提权解密的授权完全由 main 进程判定（平台 + v20 嗅探 + 用户显式确认），
+   * renderer 载荷一律不信任，故 IPC 契约不再携带任何 options（安全加固 P2 #9 后续清理）。
+   */
+  importChromeBrowserData?(): Promise<ChromeBrowserDataImportResult>;
 
   /** 清理内置浏览器持久化分区；cache 模式保留认证数据，all 模式清理全部站点数据。 */
   clearEmbeddedBrowserData?(mode: "cache" | "all"): Promise<EmbeddedBrowserDataClearResult>;

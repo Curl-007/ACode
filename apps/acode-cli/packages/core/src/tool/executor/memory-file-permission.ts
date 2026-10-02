@@ -79,6 +79,12 @@ function preservesExistingPermissionDecision(decision: PermissionDecisionResult)
   // （只有 Write/Edit 会命中 memory 目标，二者都没声明 alwaysAsk），但一旦有人给它们加上，
   // 少了这个判断就会出现"memory 文件让模式无关的确认静默消失"——正是本旗标要防的事。
   if (decision.alwaysAsk) return true;
+  // 安全加固 P2（subagent-policy-floor-inheritance R2）：安全地板类 ask 不可被 memory
+  // 便利放行撤销——策略地板的 rule.policy.ask 与旁路免疫熔断器的 breaker.*（例如
+  // memoryRoot 在 workspace 外时命中的 breaker.pathEscapeWrite）。少了这两条，
+  // checkPermission 收口处的熔断/地板判定会被本覆盖升级回 allow，等于静默拆除。
+  if (decision.ruleId === "rule.policy.ask") return true;
+  if (decision.ruleId.startsWith("breaker.")) return true;
   return (
     decision.decision === "ask" &&
     (decision.ruleId === "rule.project.ask" || decision.ruleId === "hook.PreToolUse.ask")

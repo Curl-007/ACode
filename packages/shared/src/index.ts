@@ -39,10 +39,16 @@ export type {
 export type {
   DockerConnectOptions,
   RemoteTarget,
+  ServerConnectOptions,
   SSHConnectOptions,
   WSLConnectOptions,
 } from "./remoteTarget.js";
 export { stripRemoteTargetSecrets } from "./remoteTarget.js";
+export {
+  normalizeServerEndpoint,
+  normalizeServerIdForIdentity,
+  resolveServerIdentityId,
+} from "./serverEndpoint.js";
 export { buildSshRemoteHostKey } from "./remoteSshHostKey.js";
 export { buildRemoteEnvironmentKey } from "./remoteEnvironmentKey.js";
 export type {
@@ -63,8 +69,10 @@ export {
   ACODE_ENV,
   ACODE_PRODUCT_FLAVOR,
   ACODE_APP_VERSION_ENV,
+  ACODE_APP_IS_PACKAGED_ENV,
   ACODE_BUILD_COMMIT_ID_ENV,
   RUNTIME_ACODE_DEBUG,
+  isPackagedACodeDesktopRuntime,
   normalizeACodeEnv,
   normalizeACodeProductFlavor,
 } from "./env.js";
@@ -86,7 +94,6 @@ export * from "./acode-session-visible-content.js";
 export * from "./official-mcp-auth.js";
 export * from "./official-mcp-tool-error.js";
 export * from "./conversation-message-projection-policy.js";
-export * from "./conversation-share.js";
 export * from "./officialPlatformPolicy.js";
 export * from "./conversation-preview-artifacts.js";
 export * from "./acode-session-task-status.js";
@@ -95,11 +102,14 @@ export * from "./acode-slash-command-help.js";
 export * from "./acodeEndpoint.js";
 export * from "./acode-source-headers.js";
 export * from "./acode-agent-policy.js";
+export * from "./bot-remote-guard.js";
+export * from "./acode-agent-registry.js";
 export * from "./acode-media-policy.js";
 export * from "./media-preview.js";
 export * from "./plugin-display-name.js";
 export * from "./acode-agent-runtime.js";
 export * from "./runtimeEnv.js";
+export * from "./sensitive-env-guard.js";
 export * from "./dynamic-workflow-feature.js";
 export * from "./markdown-artifact-images.js";
 export * from "./serviceAuthority.js";
@@ -152,7 +162,6 @@ export type {
   BrowserViewScreenshotSurfaceReleasePayload,
   BrowserViewViewportChangedPayload,
   ChromeBrowserDataImportError,
-  ChromeBrowserDataImportOptions,
   ChromeBrowserDataImportResult,
   ConnectRemoteRequest,
   CreateTempTextAttachmentRequest,

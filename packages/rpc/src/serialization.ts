@@ -38,6 +38,11 @@ export class BufferReader implements IReader {
     this.pos += result.byteLength;
     return result;
   }
+
+  /** 剩余未读字节数，供 decode 路径推导变长结构的长度上界 */
+  get remaining(): number {
+    return this.buffer.byteLength - this.pos;
+  }
 }
 
 /**
@@ -137,6 +142,56 @@ const RPC_NESTED_UINT8_ARRAY_MARKER = "__acode_rpc_nested_uint8array_v1";
 const RPC_NESTED_UINT8_ARRAY_BASE64_KEY = "base64";
 
 // ============================================================================
+// 帧解码错误
+// ============================================================================
+
+/**
+ * 帧解码错误：线上数据畸形时由 deserialize 抛出。
+ *
+ * 修复依据（specs/rpc-frame-hardening.md 规则 2）：此前变长结构的长度直接取自线上
+ * 数据且无上界——几十字节的帧声明 2^30 元素数组即可让 server 进入超长循环并堆积
+ * 大数组（CPU/内存 DoS）；未知类型标签还会让 decode 返回 undefined 半结构结果，
+ * 下游 `header[0]` 直接抛 TypeError。现在声明长度必须满足「剩余已读字节 ≥ 每元素
+ * 最小编码」推导的上界，超界或类型未知时立即抛 FrameDecodeError，由 ChannelServer
+ * 的唯一 catch 点丢弃该帧。
+ */
+export class FrameDecodeError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "FrameDecodeError";
+  }
+}
+
+/**
+ * 读取 reader 自报的剩余字节数。
+ * 只有 BufferReader（及其子类）等能自报边界的实现参与上界校验；未知实现保持
+ * 原有语义，避免对合法帧造成行为差异（规则 4）。
+ */
+function remainingBytesOf(reader: IReader): number | undefined {
+  const remaining = (reader as { remaining?: unknown }).remaining;
+  return typeof remaining === "number" ? remaining : undefined;
+}
+
+/**
+ * 校验线上声明的长度不超过「剩余已读字节按每元素最小编码推导的上界」。
+ * 每个元素至少占用 1 byte（数组元素至少有 1 byte 类型标签，Undefined 元素恰好
+ * 1 byte），字节型数据（string/buffer/object）则按声明字节数精确比较。
+ */
+function assertLengthWithinRemaining(reader: IReader, declared: number, what: string): void {
+  const remaining = remainingBytesOf(reader);
+  if (remaining !== undefined && declared > remaining) {
+    throw new FrameDecodeError(`Declared ${what} ${declared} exceeds ${remaining} remaining bytes`);
+  }
+}
+
+/** 读取 VQL 长度并校验其不超过剩余字节（字节型变长数据使用） */
+function readBoundedByteLength(reader: IReader, what: string): number {
+  const length = readIntVQL(reader);
+  assertLengthWithinRemaining(reader, length, what);
+  return length;
+}
+
+// ============================================================================
 // serialize / deserialize
 // ============================================================================
 
@@ -188,7 +243,10 @@ export function serialize(writer: IWriter, data: any): void {
 }
 
 /**
- * 从 reader 反序列化数据
+ * 从 reader 反序列化数据。
+ *
+ * 畸形输入（未知类型标签、声明长度超界、输入提前耗尽）一律抛 FrameDecodeError
+ * 而不是返回 undefined / 半结构结果，供上层统一丢弃；合法帧解码结果不变。
  */
 export function deserialize(reader: IReader): any {
   const type = reader.read(1).readUInt8(0);
@@ -197,13 +255,20 @@ export function deserialize(reader: IReader): any {
     case DataType.Undefined:
       return undefined;
     case DataType.String:
-      return reader.read(readIntVQL(reader)).toString();
+      return reader.read(readBoundedByteLength(reader, "string length")).toString();
     case DataType.Buffer:
-      return reader.read(readIntVQL(reader)).buffer;
+      return reader.read(readBoundedByteLength(reader, "buffer length")).buffer;
     case DataType.VSBuffer:
-      return reader.read(readIntVQL(reader));
+      return reader.read(readBoundedByteLength(reader, "vsbuffer length"));
     case DataType.Array: {
       const length = readIntVQL(reader);
+      if (length < 0) {
+        // VQL 移位可能带出负数（bit 31 置位），负长度是明确的畸形声明
+        throw new FrameDecodeError(`Declared array length ${length} is negative`);
+      }
+      // 每个元素至少 1 byte 类型标签，声明长度超过「剩余字节 × 每元素最小编码」
+      // 推导的上界即畸形：先于循环抛出，避免按线上长度进入超长迭代与大分配。
+      assertLengthWithinRemaining(reader, length, "array length");
       const result: any[] = [];
       for (let i = 0; i < length; i++) {
         result.push(deserialize(reader));
@@ -211,9 +276,16 @@ export function deserialize(reader: IReader): any {
       return result;
     }
     case DataType.Object:
-      return JSON.parse(reader.read(readIntVQL(reader)).toString(), decodeRpcJsonValue);
+      return JSON.parse(
+        reader.read(readBoundedByteLength(reader, "object length")).toString(),
+        decodeRpcJsonValue,
+      );
     case DataType.Int:
       return readIntVQL(reader);
+    default:
+      // 未知类型标签（含输入耗尽时 readUInt8 返回 undefined）：畸形帧，
+      // 修复依据：此前会静默返回 undefined，下游 header[0] 抛 TypeError 崩掉 server。
+      throw new FrameDecodeError(`Unknown data type tag: ${String(type)}`);
   }
 }
 

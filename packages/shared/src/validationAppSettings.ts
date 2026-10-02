@@ -100,6 +100,14 @@ const remoteWorkspaceTargetSchema = z.discriminatedUnion("kind", [
     kind: z.literal("docker"),
     container: nonEmptyStringSchema,
   }),
+  z.object({
+    kind: z.literal("server"),
+    url: z.string().url(),
+    name: nonEmptyStringSchema.optional(),
+    workspacePath: z.string().optional(),
+    serverId: nonEmptyStringSchema.optional(),
+    tokenCredentialKey: nonEmptyStringSchema.optional(),
+  }),
 ]);
 
 const appWorkspaceSessionEntrySchema = z.discriminatedUnion("kind", [
@@ -463,6 +471,8 @@ const appSettingsObjectSchema = z.object({
   toolGroupingChangesEnabled: z.boolean().default(false),
   acodeInteractionBehavior: acodeInteractionBehaviorSchema.default("queue"),
   askUserQuestionAutoResolutionEnabled: z.boolean().default(true),
+  // 安全加固 P2：bot 任务权限是否只能在桌面本机确认（默认关，管理员策略地板可强制开启）。
+  botPermissionLocalApprovalEnabled: z.boolean().default(false),
   modelIoFullRetentionEnabled: z.boolean().default(false),
   startPlanRecommendationDismissed: z.boolean().default(false),
   providerFamilyConnectionSelections: providerFamilyConnectionSelectionSettingsSchema.default({}),
@@ -535,6 +545,7 @@ export const appSettingsPatchSchema = z.object({
   toolGroupingChangesEnabled: z.boolean().optional(),
   acodeInteractionBehavior: acodeInteractionBehaviorSchema.optional(),
   askUserQuestionAutoResolutionEnabled: z.boolean().optional(),
+  botPermissionLocalApprovalEnabled: z.boolean().optional(),
   modelIoFullRetentionEnabled: z.boolean().optional(),
   startPlanRecommendationDismissed: z.boolean().optional(),
   providerFamilyConnectionSelections: providerFamilyConnectionSelectionSettingsSchema.optional(),

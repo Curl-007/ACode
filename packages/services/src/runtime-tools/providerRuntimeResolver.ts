@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve as resolvePath } from "node:path";
-import { ACODE_AGENT_RUNTIME } from "@acode/shared";
+import { getEngineRuntime, isPackagedACodeDesktopRuntime, type ACodeProvider } from "@acode/shared";
 
 const packagedResourcesPath =
   typeof (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath === "string"
@@ -41,11 +41,21 @@ function resolveLegacyBundledResourceRoots(moduleDir?: string): Array<string | n
   ];
 }
 
-export function findACodeAgentRuntimeBinary(): string | null {
-  const runtime = ACODE_AGENT_RUNTIME;
+/**
+ * 按引擎描述符发现 binary。
+ *
+ * 引擎联合只剩 native(glm)：走既有候选链（GLM_BINARY_PATH env、packagedResources、
+ * ~/.acode/server/agents/glm、bundled-agents）。engineId 入参仅作形状保留，
+ * 外部引擎槽位已下线（spec: agent-engine-external-slots-removal.md）。
+ */
+export function findACodeAgentRuntimeBinary(engineId?: ACodeProvider | string | null): string | null {
+  const runtime = getEngineRuntime(engineId);
   const entrySegments = runtime.resolveEntrySegments(process.platform);
   const resourceSegments = [runtime.bundledResourceDir, ...entrySegments];
-  const envPath = process.env[runtime.binaryEnvVar];
+  // 安全加固 P2（agent-command-env-gate R1）：打包态忽略引擎 binaryEnvVar（GLM_BINARY_PATH 等）。
+  // 它是本候选链的第一顺位，env 注入可整体替换 agent/引擎二进制；打包态只走
+  // packagedResources / ~/.acode/server/agents / bundled-agents 标准候选。
+  const envPath = isPackagedACodeDesktopRuntime() ? undefined : process.env[runtime.binaryEnvVar];
   if (envPath && existsSync(envPath)) {
     return envPath;
   }
@@ -69,13 +79,15 @@ export function findACodeAgentRuntimeBinary(): string | null {
 }
 
 /**
- * 查找 agent 的 JS bundle（resources/glm/acode.cjs）。
+ * 查找 agent 的 JS bundle（native: resources/glm/acode.cjs）。
  * 桌面打包态用 app 内置的 Electron Node runtime 直接执行这个 bundle，不再随包内置独立 Node 二进制。
  * 候选目录与 findACodeAgentRuntimeBinary 完全平行，只是入口换成平台无关的 nodeBundleEntryFile。
- * 不查 GLM_BINARY_PATH——那个 env 指向原生二进制，语义不同。
+ * 不查 binaryEnvVar——那个 env 指向原生二进制，语义不同。
  */
-export function findACodeAgentRuntimeNodeBundle(): string | null {
-  const runtime = ACODE_AGENT_RUNTIME;
+export function findACodeAgentRuntimeNodeBundle(
+  engineId?: ACodeProvider | string | null,
+): string | null {
+  const runtime = getEngineRuntime(engineId);
   const entrySegments = runtime.resolveNodeBundleSegments();
   const resourceSegments = [runtime.bundledResourceDir, ...entrySegments];
 
@@ -95,3 +107,8 @@ export function findACodeAgentRuntimeNodeBundle(): string | null {
   ];
   return resolveExistingPath(candidates);
 }
+
+// J5-L1 注：字节码 loader（acode.bytecode.cjs）不走独立候选链发现。对抗复核 F3 证明独立链会
+// 下沉到 ~/.acode/server/agents/glm 等用户可写目录，打包态下可被同用户进程写入劫持 agent 入口。
+// 生产 resolver 改为取「已解析 JS bundle 的同目录兄弟」（见 acodeAgentProcessManager
+// resolveElectronRuntimeACodeAgentCommand），保证 loader 与 acode.cjs 同源于同一可信目录。

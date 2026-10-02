@@ -67,6 +67,11 @@ import {
   patchNsisInstallSectionFile,
   restoreNsisInstallSectionFileSync,
 } from "./scripts/patch-nsis-install-section.mjs";
+import {
+  resolveDesktopElectronFuses,
+  shouldRefreshAsarIntegrity,
+} from "./scripts/desktop-electron-fuses.mjs";
+import { refreshPackagedAsarIntegrity } from "./scripts/desktop-asar-integrity-refresh.mjs";
 
 const buildMetadata = getBuildMetadata();
 const targetPlatform = getTargetPlatform();
@@ -84,6 +89,14 @@ const macSigningIdentity =
   rawMacSigningIdentity?.replace(/^Developer ID Application:\s*/, "") ?? null;
 const shouldEnableMacSigning =
   process.env.ACODE_ENABLE_MAC_SIGN === "1" && Boolean(macSigningIdentity);
+// 安全加固 P2 #3（specs/electron-hardening.md §5）：electron-builder 26 原生 electronFuses
+// 接线，flip 固定发生在全部 afterPack hook 之后、签名之前（app-builder-lib platformPackager），
+// 不会影响 dev 运行。RunAsNode 与 EnableNodeOptionsEnvironmentVariable 与计划的偏离及理由
+// （打包版 agent 依赖宿主二进制的 Node 语义）记录在 scripts/desktop-electron-fuses.mjs 与 spec。
+const desktopElectronFuses = resolveDesktopElectronFuses({
+  platformOs: targetPlatform.os,
+  macSigningEnabled: shouldEnableMacSigning,
+});
 const workspaceRoot = resolve(import.meta.dirname, "../..");
 const desktopPackageRoot = import.meta.dirname;
 const runtimeModuleLookupRoots = [
@@ -464,6 +477,9 @@ export default {
   // 有时无法从依赖树里稳定推导出 Electron 版本，导致 bundle 直接中断。
   // 显式写死当前桌面端使用的 Electron 版本，避免打包阶段再做不可靠的猜测。
   electronVersion: "41.0.3",
+  // 安全加固 P2 #3：fuse 取值见 scripts/desktop-electron-fuses.mjs 与
+  // specs/electron-hardening.md §5；electron-builder 会在 afterPack 之后、签名之前 flip。
+  electronFuses: desktopElectronFuses,
   electronDownload: {
     // ELECTRON_MIRROR 是 @electron/get 的全局环境变量，会覆盖 dmg-builder 等
     // generic artifact 自己传入的 mirrorOptions，导致 builder 辅助包被错误拼到 Electron runtime 镜像目录。
@@ -547,6 +563,33 @@ export default {
     await runTimedAsync("afterPack:stripPackagedSourcemapReferences", () =>
       stripPackagedSourcemapReferences(context),
     );
+    if (shouldRefreshAsarIntegrity(desktopElectronFuses)) {
+      // 安全加固 P2 #3（specs/electron-hardening.md §5）：本 hook 前面的步骤重写了 app.asar，
+      // 而 electron-builder 内嵌的 asar 完整性哈希取自 beforeCopyExtraFiles 阶段（早于 afterPack）。
+      // 开启完整性校验 fuse 的平台必须在这里把最终 app.asar 的 header 哈希回写进产物，
+      // 否则安装包启动即校验失败；刷新失败直接抛错，不允许带着过期哈希出包。
+      await runTimedAsync("afterPack:refreshPackagedAsarIntegrity", () =>
+        refreshPackagedAsarIntegrity({
+          electronPlatformName: context.electronPlatformName,
+          resourcesDir: resolvePackagedResourcesDir(context),
+          ...(context.electronPlatformName === "win32"
+            ? {
+                executablePath: resolve(
+                  context.appOutDir,
+                  `${context.packager?.appInfo?.productFilename ?? "ACode"}.exe`,
+                ),
+              }
+            : {}),
+          ...(context.electronPlatformName === "darwin"
+            ? {
+                // resolveAppAsarPath 是「……/Contents/Resources/app.asar」文件路径；
+                // resolve 以它为前缀拼接，需要三级 .. 才回到 .app 根，否则会落到 Contents/Contents。
+                infoPlistPath: resolve(resolveAppAsarPath(context), "../../../Contents/Info.plist"),
+              }
+            : {}),
+        }),
+      );
+    }
     runTimedSync("afterPack:assertPackagedNativeResourcePolicy", () =>
       assertPackagedNativeResourcePolicy(context),
     );

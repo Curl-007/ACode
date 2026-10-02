@@ -20,6 +20,8 @@ import { createMcpAdapter } from "@acode/adapters/mcp";
 import {
   AgentRuntime,
   PermissionService,
+  setBashReflexAuditSink,
+  setProcessManagedPolicyFloor,
   buildPluginReferenceCatalog,
   type AmendWorkflowRunSettingsInput,
   type ResumeSessionResult,
@@ -34,6 +36,7 @@ import {
   type MessageId,
 } from "@acode/contracts";
 import {
+  ACODE_APP_IS_PACKAGED_ENV,
   isRemoteWorkspaceIdentity,
   readOfficialServiceSwitchesFromEnv,
   resolveACodeRuntimeEnv,
@@ -145,6 +148,15 @@ function decodePromptAttachmentDataUrl(
   return { bytes, mediaType };
 }
 
+/**
+ * 安全加固 P2：本进程是否属于打包运行时。桌面 main 在 app.isPackaged 时向 host/worker
+ * 下发 ACODE_APP_IS_PACKAGED=1（desktopRuntimeEnv）；独立 CLI 分发不设此键——
+ * 终端用户就是本机管理员，env 覆盖属合法用法（与桌面打包态的注入面不同）。
+ */
+function resolveIsPackagedRuntime(env: Readonly<Record<string, string | undefined>>): boolean {
+  return env[ACODE_APP_IS_PACKAGED_ENV] === "1";
+}
+
 export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp> {
   // CLI/headless：官方平台功能默认关闭；可用 ACODE_ENABLE_OFFICIAL_* 环境变量按需开启。
   setOfficialServiceSwitches(readOfficialServiceSwitchesFromEnv(process.env));
@@ -166,6 +178,10 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
       skipUserConfig: options.skipUserConfig,
       userConfigPath: options.userConfigPath,
       cliOverrides: createConfigCliOverrides(options),
+      // 安全加固 P2：桌面 main 在打包态下发 ACODE_APP_IS_PACKAGED=1（见 desktopRuntimeEnv）。
+      // 打包运行时加载托管策略地板必须忽略用户态 env 注入（ACODE_MANAGED_POLICY_FILE），
+      // 与 P1-7 更新源门禁同一哲学。
+      isPackaged: resolveIsPackagedRuntime(options.env ?? process.env),
     }),
     options,
   );
@@ -173,6 +189,28 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
   const logger = loggerFactory.createLogger("acode").child({
     ...traceContextToLogContext(traceContext),
     module: "bootstrap",
+  });
+  // J1-2（specs/bash-confirm-reflexive-gate.md R6）：反射门 auditedAllow 的审计必须落盘。
+  // gate 模块的缺省 sink 只写一行 stderr——宿主不重定向就没有任何持久记录，而 allow lane
+  // 的入口包含项目 allow 规则/allowedTools/会话规则（不只是 yolo），confirm 级破坏命令
+  // 不能在只留一行易失 stderr 的情况下执行（评审 J1-2 修复，plan 验收项「yolo 下审计
+  // 日志落盘」）。这里把 sink 接到 info 级 Logger：NodeFileLogger 以 appendFileSync 写
+  // JSONL 日志文件（@acode/adapters/logging），与 setProcessManagedPolicyFloor 同一
+  // 「bootstrap 装配期注册进程级 hook」形态。
+  const permissionAuditLogger = loggerFactory.createLogger("acode").child({
+    ...traceContextToLogContext(traceContext),
+    module: "core.permission",
+  });
+  setBashReflexAuditSink((entry) => {
+    permissionAuditLogger.info("Bash reflex gate allowed a confirm-level command", {
+      assessmentReasons: entry.assessmentReasons,
+      command: entry.command,
+      event: entry.event,
+      justification: entry.justification,
+      ruleId: entry.ruleId,
+      status: "completed",
+      timestamp: entry.timestamp,
+    });
   });
   const startupTimer = new StartupTimer(
     logger,
@@ -342,11 +380,21 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
           }
         : {}),
     });
+    // 安全加固 P2 补丁项（subagent-policy-floor-inheritance R1）：策略地板注册为进程级
+    // 事实——Explore 子代理与 memory agent 用 defaultPermissionConfig 自建 PermissionService，
+    // 构造参数纪律覆盖不到；进程注册后任何实例缺省自动携带地板（含 disableBypassPermissionsMode
+    // 对 Explore 缺省 yolo 的约束）。undefined = 本机未部署策略文件（清除旧值，测试/复用安全）。
+    setProcessManagedPolicyFloor(configResult.config.permission.policy);
     const permissionService = new PermissionService({
       allowedTools: new Set(configResult.config.permission.allowedTools),
       autoApproveHighRisk: configResult.config.permission.autoApproveHighRisk,
       disallowedTools: new Set(configResult.config.permission.disallowedTools),
       allowMediumRiskInAutoMode: configResult.config.permission.allowMediumRiskInAuto,
+      // 安全加固 P2：托管策略地板（deny/ask 规则 + disableBypassPermissionsMode）。
+      // disallowedTools 的策略并集已在配置合并层完成，这里不重复携带。
+      ...(configResult.config.permission.policy
+        ? { policyFloor: configResult.config.permission.policy }
+        : {}),
     });
     const inputHistoryStore = options.inputHistoryStore ?? asInputHistoryStore(sessionStore);
     const artifactStore =

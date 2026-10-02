@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "id": "prefix.cli",
+      "mechanism": "产品身份前缀块（短前导身份，独立 stable cache block）"
+    },
+    {
+      "id": "identity.default",
+      "mechanism": "交互式 Agent 身份体（开场句 + 安全 IMPORTANT 行 + Harness 块）"
+    },
+    {
+      "id": "surface.desktop",
+      "mechanism": "ACode Desktop 呈现面渲染与交互协议段"
+    },
+    {
+      "id": "behavior.dynamic",
+      "mechanism": "动态行为边界（沟通可读性 / 不可逆与外发操作确认 / 如实汇报）"
+    },
+    {
+      "id": "context.management",
+      "mechanism": "长上下文管理提示（摘要续跑 + 自主推进纪律）"
+    },
+    {
+      "id": "subagent.notes",
+      "mechanism": "子代理通用操作提醒（绝对路径 / 最终答复自足 / 不写报告文件）"
+    }
+  ]
+}

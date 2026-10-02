@@ -49,8 +49,12 @@ export async function fetchAndExtractContent(options: {
   let response: HttpClientResponse | undefined;
 
   for (let redirectCount = 0; redirectCount <= MAX_REDIRECTS; redirectCount += 1) {
-    // ACode WebFetch 从 agent runtime 所在机器出网；移除 DNS preflight 后，
-    // 每个真实 GET 前仍要阻断 URL 字面量本地/私网目标，避免 NO_PROXY 绕过安全边界。
+    // ACode WebFetch 从 agent runtime 所在机器出网，URL 是模型可控输入（prompt injection
+    // 可诱导抓取任意域名）。防线三层（specs/webfetch-public-egress.md）：
+    // ① 每个真实 GET 前阻断 URL 字面量本地/私网目标（下方，含重定向逐跳）；
+    // ② 直连时适配器做公网 DNS 预检 + 过检解析建连——堵「域名解析到内网 IP」的重绑定
+    //    绕过（egressPolicy:"public"）；③ 代理路径 DNS 不可本地验证，显式降级只留 ①，
+    //    egress.publicEgressDnsVerified=false 如实记录（allowProxiedPublicEgress 授权见 spec R4）。
     await assertWebFetchLiteralEgress(currentUrl);
 
     const requestId = `net_${crypto.randomUUID()}`;
@@ -75,6 +79,8 @@ export async function fetchAndExtractContent(options: {
           timeoutMs: DEFAULT_WEBFETCH_TIMEOUT_MS,
           maxResponseBytes: MAX_WEBFETCH_RESPONSE_BYTES,
           redirect: "manual",
+          egressPolicy: "public",
+          allowProxiedPublicEgress: true,
           trace: traceFromContext(options.context),
         },
         { signal: options.context.abortSignal },

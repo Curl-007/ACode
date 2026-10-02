@@ -128,7 +128,6 @@ export interface AgentRuntimeConfig {
   streamingToolExecution?: "off" | "readOnly";
   /** Session 创建时固定；缺省使用共享的模型上下文预算默认策略。 */
   modelContextBudgetStrategy?: "legacy" | "preflight-v1";
-  maxTurns?: number;
   permissionTimeoutMs?: number;
   compact?: AutoCompactPolicyConfig;
   targetCompletionVerification?: { enabled?: boolean };
@@ -141,7 +140,6 @@ export interface AgentRuntimeConfig {
     inactivityTimeoutMs?: number;
     autoBackgroundMs?: number;
     backgroundBashMaxMs?: number;
-    maxTurns?: number;
     outputRootDir?: string;
     profiles?: readonly AgentProfile[];
     builtInModelSelectionOverrides?: Partial<Record<"general-purpose" | "Explore", ModelSelection>>;
@@ -448,7 +446,6 @@ export interface ExecuteTurnOptionsBase {
   epilogueStart?: number;
   inputId?: string;
   intent?: TurnInputIntentMetadata;
-  sharedContextRefs?: TurnInputIntentMetadata["sharedContextRefs"];
   queryId?: QueryId;
   inputSource?: SyntheticUserMessageSource;
   inputPresentation?: RuntimeInputPresentation;

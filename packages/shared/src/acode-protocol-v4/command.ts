@@ -24,8 +24,6 @@ import {
   acodeBrowserAmbientContextSchema,
   acodeProtocolMcpServerSchema,
 } from "../acode-protocol/index.js";
-import { sharedContextRefSchema } from "./shared-context-ref.js";
-export type { SharedContextRef } from "./shared-context-ref.js";
 
 const createSessionRequestedConfigSchema = z.object({
   modelSelection: modelSelectionSchema.optional(),
@@ -86,9 +84,6 @@ export const commandPayloadSchemas = {
       // startNow 由 CLI 原子抢占当前 turn，不经过 queue admission。
       requestedDelivery: z.enum(["startNow", "queue", "guide"]).optional(),
       browserAmbientContext: acodeBrowserAmbientContextSchema.optional(),
-      // Share handover 只允许当前 session 的一个已导入上下文；完整正文由 runtime 从
-      // 持久化 provenance 解析，不能随 command 从 renderer 传入。
-      context_refs: z.array(sharedContextRefSchema).max(1).optional(),
       heldQueueDisposition: z.enum(["clearQueueAndSend", "keepQueueAndSend"]).optional(),
       // 暂停队列确认框打开时看到的 queueItemId 集合。CLI 在执行 clear/keep 前校验，
       // 防止桌面/手机并发增删后把用户没确认过的新队列一并处置。
@@ -243,7 +238,6 @@ export const commandPayloadSchemas = {
   amendWorkflowRunSettings: amendWorkflowRunSettingsPayloadSchema,
   renameSession: z.object({ title: z.string() }),
   deleteSession: z.object({}),
-  discardSharedContext: z.object({ contextId: z.string().trim().min(1) }).strict(),
 } as const;
 
 export type CommandType = keyof typeof commandPayloadSchemas;

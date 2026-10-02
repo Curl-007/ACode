@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import {
   getProviderFormApiKey,
   getProviderFormLabel,
+  hasProviderFormStoredApiKey,
   type ProviderSettingsFormProvider,
   type ProviderSettingsFormModel,
 } from "@/lib/providerSettingsFormTypes.js";
@@ -828,6 +829,7 @@ export function InlineEditableProviderCard({
           <ProviderApiKeySection
             apiKeyValue={apiKeyValue}
             apiKeyVisible={apiKeyVisible}
+            apiKeyStoredInVault={hasProviderFormStoredApiKey(provider)}
             presetApiKeyUrl={presetApiKeyUrl}
             onOpenPresetApiKey={onOpenPresetApiKey}
             onApiKeyChange={handleApiKeyValueChange}

@@ -9,6 +9,7 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import { Emitter } from "@acode/rpc";
 import {
   parseACodeProcessDiagnostic,
+  classifyAgentEngineError,
   ACODE_AGENT_LIFECYCLE_LOG_MARKER,
   ACODE_PROCESS_DIAGNOSTIC_NAME_MAX_CHARS,
   ACODE_PROCESS_DIAGNOSTIC_MESSAGE_MAX_CHARS,
@@ -16,11 +17,13 @@ import {
 } from "@acode/shared/process-diagnostic";
 import {
   ACODE_AGENT_RUNTIME,
-  ACODE_AGENT_PROVIDER,
+  ACODE_AGENT_BYTECODE_ENTRY_FILE,
   ACODE_RUNTIME_ENV_KEY,
+  isPackagedACodeDesktopRuntime,
   resolveWorkspaceKey,
   resolveACodeRuntimeEnv,
   sanitizeACodeRuntimeEnv,
+  type ACodeProvider,
 } from "@acode/shared";
 import {
   findACodeAgentRuntimeBinary,
@@ -52,6 +55,11 @@ export interface ACodeAgentCommandResolverContext {
   workspacePath: string;
   workspaceIdentity?: string;
   workspaceKey: string;
+  /**
+   * 本次 spawn 的目标 agent 引擎。缺省/`glm` = native，走既有 app-server 候选链；
+   * codex/opencode/gemini 走外部引擎 binary 解析。
+   */
+  engineId?: ACodeProvider;
 }
 
 export type ACodeAgentCommandResolver = (
@@ -109,6 +117,7 @@ interface ManagedACodeAgentProcess {
   client: ACodeProtocolClient;
   child: ChildProcessWithoutNullStreams;
   cleanupPromise?: Promise<void>;
+  engineId: ACodeProvider;
   exited: boolean;
   firstCleanupReason?: AgentProcessCleanupReason;
   idleTimer?: ReturnType<typeof setTimeout>;
@@ -358,7 +367,7 @@ function resolveBundledWorkspaceACodeAgentCommand(
     const useBytecode =
       process.versions.electron && process.env.ACODE_DESKTOP_AGENT_BYTECODE === "1";
     const entrypoint = useBytecode
-      ? join(dirname(distEntrypoint), "acode.bytecode.cjs")
+      ? join(dirname(distEntrypoint), ACODE_AGENT_BYTECODE_ENTRY_FILE)
       : distEntrypoint;
     // 此同步 command resolver 沿用既有 existsSync 契约；显式试验不能静默回退成 JS。
     if (useBytecode && !existsSync(entrypoint)) {
@@ -409,6 +418,17 @@ function resolveDeployedACodeAgentBinaryCommand(
   };
 }
 
+/**
+ * J5-L1：生产 agent 入口解析——优先 V8 字节码 loader（若随包 staged），否则 acode.cjs。
+ *
+ * 安全设计（关键）：字节码 .jsc 严格绑定编译时的 Electron/V8/平台/架构 + cachedDataVersionTag，
+ * 而 cachedDataVersionTag 依赖 V8 标志（编译/加载侧经 configureBytecodeRuntime 设
+ * --no-lazy --no-flush-bytecode）。host 进程无法在不污染自身 V8 行为的前提下复现该 tag，
+ * 故 **host 侧不做指纹预检**（预检通过但 loader 硬失败仍是 P0）。权威校验放在 agent 进程内的
+ * loader：本 resolver 选用 loader 时同时设 ACODE_BYTECODE_FALLBACK=1，loader 在字节码失配/损坏时
+ * require 同目录 acode.cjs 优雅回退（最坏情况 = 回退现状 JS，agent 照常启动）。
+ * dev 显式试验路径（resolveBundledWorkspaceACodeAgentCommand）不设此 env → loader 硬失败暴露问题。
+ */
 function resolveElectronRuntimeACodeAgentCommand(
   context: ACodeAgentCommandResolverContext,
 ): ACodeAgentCommand | null {
@@ -425,20 +445,43 @@ function resolveElectronRuntimeACodeAgentCommand(
   if (!bundlePath) {
     return null;
   }
+  // J5-L1：生产优先 V8 字节码入口（就绪 -44%，见 docs/j5-performance-baseline.md §3）。
+  // 安全（对抗复核 F3）：字节码 loader 只认 **已解析 JS bundle 的同目录兄弟**，不跑独立候选链——
+  // 独立链会下沉到 ~/.acode/server/agents/glm 等用户可写目录，打包态下任何同用户进程写入
+  // acode.bytecode.cjs 即可劫持 agent 入口（回退 agent-command-env-gate 加固）。同目录兄弟保证
+  // loader 与 acode.cjs 同源于同一可信目录（生产=只读签名区 process.resourcesPath/glm）。
+  // loader 内置优雅回退（ACODE_BYTECODE_FALLBACK=1）：字节码失配/损坏 → agent 进程内 require acode.cjs。
+  // storagePreparationEntry 恒为 JS bundle：Worker 与 Electron Node 子进程 V8 snapshot 可不同（沿用既有语义）。
+  const bytecodeSibling = join(dirname(bundlePath), ACODE_AGENT_BYTECODE_ENTRY_FILE);
+  const bytecodeLoaderPath = existsSync(bytecodeSibling) ? bytecodeSibling : null;
+  const entrypoint = bytecodeLoaderPath ?? bundlePath;
   return {
     command: process.execPath,
-    args: [bundlePath, ...ACODE_AGENT_RUNTIME.spawnArgs],
+    args: [entrypoint, ...ACODE_AGENT_RUNTIME.spawnArgs],
     storagePreparationEntry: bundlePath,
     cwd: context.workspacePath,
     // 关键：必须以纯 Node 模式启动，否则子进程会被当成 Electron/Chromium 子进程卡在 GPU 初始化。
-    env: { ELECTRON_RUN_AS_NODE: "1" },
+    env: {
+      ELECTRON_RUN_AS_NODE: "1",
+      // 仅在实际选用字节码 loader 时设回退标志；走 JS bundle 时无需设（loader 不会被执行）。
+      ...(bytecodeLoaderPath ? { ACODE_BYTECODE_FALLBACK: "1" } : {}),
+    },
   };
 }
 
 export function resolveDefaultACodeAgentCommand(
   context: ACodeAgentCommandResolverContext,
 ): ACodeAgentCommand | null {
-  const command = process.env.ACODE_AGENT_SERVER_COMMAND?.trim();
+  // 引擎联合只剩 native(glm)（外部引擎槽位已下线，spec: agent-engine-external-slots-removal.md）；
+  // context.engineId 仅作形状保留，所有输入都走下方 native 候选链。
+
+  // 安全加固 P2（agent-command-env-gate R1）：打包态忽略 ACODE_AGENT_SERVER_COMMAND 族。
+  // launchctl setenv / shell profile / Windows 用户环境变量可在用户级权限下注入 GUI 应用
+  // 的启动环境；这三个变量能整体替换 agent spawn 命令，等于每个任务静默运行攻击者二进制。
+  // 非打包态（dev/独立 CLI/远程 server）照常生效——那些场景用户就是管理员。
+  const command = isPackagedACodeDesktopRuntime()
+    ? undefined
+    : process.env.ACODE_AGENT_SERVER_COMMAND?.trim();
   if (command) {
     return applyPresentationSurfaceToCommand(
       {
@@ -720,7 +763,7 @@ export class ACodeAgentProcessManager {
     this.reportProcessLifecycle((reporter) =>
       reporter.onReady?.({
         pid: managed.child.pid!,
-        provider: ACODE_AGENT_PROVIDER,
+        provider: managed.engineId,
         ...(this.lane ? { lane: this.lane } : {}),
         workspacePath: managed.workspace.workspacePath,
         readyAt: managed.readyAt!,
@@ -832,6 +875,7 @@ export class ACodeAgentProcessManager {
   async getClient(params: {
     workspacePath: string;
     workspaceIdentity?: string;
+    engineId?: ACodeProvider;
   }): Promise<ACodeProtocolClient> {
     if (this.disposed) {
       throw new Error("ACode agent process manager is disposed.");
@@ -946,6 +990,7 @@ export class ACodeAgentProcessManager {
     params: {
       workspacePath: string;
       workspaceIdentity?: string;
+      engineId?: ACodeProvider;
     },
     workspaceKey: string,
     startGeneration: number,
@@ -953,10 +998,13 @@ export class ACodeAgentProcessManager {
   ): Promise<ACodeProtocolClient> {
     const startStartedAt = Date.now();
     const resolveCommandStartedAt = Date.now();
+    // 引擎联合只剩 native(glm)：engineId 恒为 ACODE_AGENT_PROVIDER，旧 provider 值已在上游归一。
+    const engineId: ACodeProvider = "glm";
     const command = await this.commandResolver({
       ...params,
       ...(this.presentationSurface ? { presentationSurface: this.presentationSurface } : {}),
       workspaceKey,
+      engineId,
     });
     const resolveCommandDurationMs = Date.now() - resolveCommandStartedAt;
     if (!command) {
@@ -1043,7 +1091,7 @@ export class ACodeAgentProcessManager {
           this.reportProcessLifecycle((reporter) =>
             reporter.onException?.({
               pid: child.pid!,
-              provider: ACODE_AGENT_PROVIDER,
+              provider: engineId,
               ...(this.lane ? { lane: this.lane } : {}),
               workspacePath: params.workspacePath,
               runtimeGeneration,
@@ -1102,6 +1150,7 @@ export class ACodeAgentProcessManager {
     const managed: ManagedACodeAgentProcess = {
       child,
       client,
+      engineId,
       exited: false,
       readyReported: false,
       runtimeIdentity,
@@ -1157,7 +1206,7 @@ export class ACodeAgentProcessManager {
         this.reportProcessLifecycle((reporter) =>
           reporter.onSpawn({
             pid: child.pid!,
-            provider: ACODE_AGENT_PROVIDER,
+            provider: engineId,
             ...(this.lane ? { lane: this.lane } : {}),
             workspacePath: params.workspacePath,
             command: effectiveCommand.command,
@@ -1194,7 +1243,7 @@ export class ACodeAgentProcessManager {
       this.reportProcessLifecycle((reporter) =>
         reporter.onError?.({
           pid: typeof child.pid === "number" ? child.pid : null,
-          provider: ACODE_AGENT_PROVIDER,
+          provider: engineId,
           ...(this.lane ? { lane: this.lane } : {}),
           workspacePath: params.workspacePath,
           command: effectiveCommand.command,
@@ -1224,14 +1273,23 @@ export class ACodeAgentProcessManager {
       // 协议已立即失效，但 exit 先于 stderr EOF；保留旧 runtime 闭包身份收齐最后诊断。
       await transport.waitForStderrDrain();
       const stderr = stderrTail.snapshot();
+      // 外部引擎（codex/opencode/gemini）多以「未安装/运行时缺失/运行时崩溃」退出。
+      // 用镜像 ZCode 的签名表把 stderr tail 归类，便于上层区分「该自动重试」与
+      // 「该提示用户安装/配置引擎」。native 通常不命中，保持 unclassified。
+      const engineErrorKind =
+        terminationKind === "unexpected" && stderr.tail.length > 0
+          ? classifyAgentEngineError(stderr.tail.join("\n"))
+          : "unclassified";
       const exitContext = {
         workspaceKey,
         pid: child.pid,
         runtimeIdentity: runtimeIdentity.identity,
+        engineId,
         code,
         signal,
         terminationKind,
         terminationReason,
+        ...(engineErrorKind !== "unclassified" ? { engineErrorKind } : {}),
       };
       // 之前日志只有新的 "process started"，缺少旧 pid 的退出轨迹。
       // agent native crash 后 UI 只会看到 protocol close/Session is not active，无法判断是崩溃还是主动重启。
@@ -1253,7 +1311,7 @@ export class ACodeAgentProcessManager {
         this.reportProcessLifecycle((reporter) =>
           reporter.onExit({
             pid: child.pid!,
-            provider: ACODE_AGENT_PROVIDER,
+            provider: engineId,
             ...(this.lane ? { lane: this.lane } : {}),
             workspacePath: params.workspacePath,
             exitCode: code,
@@ -1352,6 +1410,7 @@ export class ACodeAgentProcessManager {
   async canStart(params: {
     workspacePath: string;
     workspaceIdentity?: string;
+    engineId?: ACodeProvider;
   }): Promise<{ available: boolean; workspaceKey: string; reason?: string }> {
     const workspaceKey = resolveWorkspaceKey(params);
     try {
@@ -1368,6 +1427,8 @@ export class ACodeAgentProcessManager {
             reason: "ACODE_AGENT_SERVER_COMMAND is not configured",
           };
     } catch (error) {
+      // 外部引擎未安装时 resolveDefaultACodeAgentCommand 抛 missingBinaryMessage，
+      // 这里透传为 canStart.reason，供 UI/诊断 surface「引擎未安装/运行时缺失」。
       return {
         available: false,
         workspaceKey,

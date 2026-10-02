@@ -10,7 +10,6 @@ import { Button } from "../ui/button.js";
 import { ButtonGroup, ButtonGroupText } from "../ui/button-group.js";
 import { cn } from "../lib/utils.js";
 import { cjk } from "@streamdown/cjk";
-import { code } from "@streamdown/code";
 import { createMathPlugin } from "@streamdown/math";
 import { mermaid } from "@streamdown/mermaid";
 import type { EditorInfo, FileStat, OpenInEditorOptions } from "@acode/shared";
@@ -71,6 +70,7 @@ import {
 import { STREAMDOWN_CONTROLS } from "@/components/ai-elements/streamdown-controls.js";
 import { resolveMessageLinkOpenTarget } from "@/embeddedBrowserHelpers.js";
 import type { CodeViewerSource } from "@/lib/codeViewer.js";
+import { messageCodePlugin } from "@/lib/streamdownCodePlugin.js";
 import { persistLastSelectedEditorId, readLastSelectedEditorId } from "@/lib/editorPreference.js";
 import {
   FileDisplayIcon,
@@ -89,7 +89,7 @@ import { resolveWorkspaceEditorSelection } from "@/lib/workspaceEditorSelection.
 import { sortInstalledEditorsForFileTree } from "@/workspace-file-tree/helpers.js";
 import type { CodePreviewSettings } from "@/lib/codePreviewSettings.js";
 import { DEFAULT_CODE_PREVIEW_SETTINGS } from "@/lib/codePreviewSettings.js";
-import { useACodeStore } from "@/store/StoreProvider.js";
+import { useACodeStore, useACodeStoreWithDefault } from "@/store/StoreProvider.js";
 import { ControlHintTooltip } from "@/ControlHintTooltip.js";
 import { useOptionalPlatform, usePlatform } from "@/hooks/usePlatform.js";
 import { useFileContextActions } from "@/hooks/useFileContextActions.js";
@@ -425,7 +425,12 @@ const messageCjkPlugin: typeof cjk = {
   remarkPlugins: [...cjk.remarkPluginsBefore, ...messageCjkRemarkPluginsAfter],
   remarkPluginsAfter: messageCjkRemarkPluginsAfter,
 };
-const streamdownPlugins = { cjk: messageCjkPlugin, code, math: messageMathPlugin, mermaid };
+const streamdownPlugins = {
+  cjk: messageCjkPlugin,
+  code: messageCodePlugin,
+  math: messageMathPlugin,
+  mermaid,
+};
 const messageLinkSafety = { enabled: false } as const;
 // `decoration-dashed` 会把原有的细圆点下划线绘制成短线段；这里只改变下划线的
 // 出现时机，继续使用 `dotted` 保留原视觉形态。
@@ -1330,6 +1335,15 @@ export const MessageResponse = memo(
     codePreviewSettings = DEFAULT_CODE_PREVIEW_SETTINGS,
     children,
   }: MessageResponseProps) => {
+    // Store 主题订阅：多数宿主把 store theme 经 props 传入，memo 比较已覆盖主题切换；
+    // 但仍有调用点不传 theme（默认 "system"，只跟随系统偏好）。Streamdown 代码高亮改为
+    // 单主题 token 后（不再有 light/dark CSS 变量兜底），应用内切换主题必须让已挂载的
+    // markdown 重渲染并用新主题重新高亮。这里用既有主题 store 建立依赖（不新建 context）。
+    const storeTheme = useACodeStoreWithDefault((state) => state.theme, "system");
+    // 显式传入且非 system 的 prop 优先，保持既有注入契约；prop 为 system/缺省时以 store
+    // 为准——matchMedia 只反映系统偏好，不反映应用内主题选择，否则切主题不会改变
+    // codeBlockTheme，streamdownRenderKey 不变，代码块不会用新主题重新高亮。
+    const effectiveTheme = theme === "system" && storeTheme !== "system" ? storeTheme : theme;
     const wrapLongLines = forceCodeWrap || codePreviewSettings.wrapLongLines;
     const rawMarkdown = useMemo(() => extractCodeText(children), [children]);
     const renderStreaming = streaming;
@@ -1385,8 +1399,8 @@ export const MessageResponse = memo(
       [renderStreaming, streamdownMode, targetMarkdown.length],
     );
     const codeBlockTheme = useMemo(
-      () => resolveMessageCodeTheme(theme, codePreviewSettings),
-      [codePreviewSettings, theme],
+      () => resolveMessageCodeTheme(effectiveTheme, codePreviewSettings),
+      [codePreviewSettings, effectiveTheme],
     );
     const shikiTheme = useMemo(
       () =>
@@ -1569,7 +1583,7 @@ export const MessageResponse = memo(
               language={language}
               renderMermaid={!renderStreaming}
               theme={codeBlockTheme}
-              appTheme={theme}
+              appTheme={effectiveTheme}
               wrapLongLines={wrapLongLines}
             >
               <CodeBlockHeader
@@ -1602,7 +1616,7 @@ export const MessageResponse = memo(
         readAttachment,
         renderStreaming,
         sessionId,
-        theme,
+        effectiveTheme,
         workspaceHomePath,
         workspacePath,
         workspaceIdentity,

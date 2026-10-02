@@ -17,12 +17,19 @@ import {
   hashMismatch,
   describeCause,
   headOfInstructions,
+  journaledStats,
+  runBudgetGatedAdmission,
   type Actor,
   type AskNode,
   type Deferred,
   type SchedulerHost,
 } from "./scheduler-types.js";
-import { handleSubmitAttempted, handleTurnEnded, type SubmitSeam } from "./scheduler-submit.js";
+import {
+  handleNoteStats,
+  handleSubmitAttempted,
+  handleTurnEnded,
+  type SubmitSeam,
+} from "./scheduler-submit.js";
 import type {
   ActorId,
   ActorRef,
@@ -160,13 +167,21 @@ export class AskScheduler {
     }
 
     // 未命中（fresh）：注册到 pendingLive，按到达顺序在记录节点排空后准入并分配新的 actorSeq。
-    // 分配到 seq 之后先问导入缓存（amend-resume）：命中即 cached settle，不 live。
+    // 分配到 seq 之后先过预算闸、再问导入缓存（amend-resume）：命中即 cached settle，不 live。
+    // 闸门次序与记账规则集中在 runBudgetGatedAdmission（scheduler-types.ts）。
     actor.pendingLive.push(() => {
       const seq = actor.nextAdmitSeq++;
-      if (this.tryImportedSettle(instance, actor, seq, hash, deferred)) return;
-      // 未命中之后才知道它是不是「续跑前驱的在飞 ask」——判定在 take 里随分歧一起做出。
-      const carried = actor.imported?.carriedAt(seq) === true;
-      this.admitLive(instance, actor, seq, instructions, hash, spec, deferred, carried);
+      runBudgetGatedAdmission(
+        this.host,
+        this.liveNodes.size,
+        deferred,
+        () => this.tryImportedSettle(instance, actor, seq, hash, deferred),
+        () => {
+          // 未命中之后才知道它是不是「续跑前驱的在飞 ask」——判定在 take 里随分歧一起做出。
+          const carried = actor.imported?.carriedAt(seq) === true;
+          this.admitLive(instance, actor, seq, instructions, hash, spec, deferred, carried);
+        },
+      );
     });
     this.drainAdmission(actor);
     this.pumpAll();
@@ -278,34 +293,9 @@ export class AskScheduler {
     handleTurnEnded(this.submitSeam, instance, finalText);
   }
 
+  /** ask 用量 stats 到达：方法体在 scheduler-submit.ts 的 handleNoteStats（迁移理由见该处）。 */
   noteStats(instance: InstanceRef, stats: AskStats): void {
-    const node = this.liveNodes.get(refToString(instance));
-    if (node !== undefined) {
-      node.lastStats = stats;
-      return;
-    }
-    // 节点已离开 liveNodes——typed-accept 主导路径：submit 停 turn 并在 settle 时落库，而真实
-    // actor 的用量在 turn 解析后（submit 之后）才知道，故 stats 在结算之后才到达。回填已结算的
-    // journal 记录：只新增/覆写 stats，保留 status/result/actorSeq/inputHash/error/kind/actor 身份。
-    // 尽力而为且幂等；预算扣减仍在 engine.askStats（此处只补 journal 完整性）。
-    const recorded = this.journal.getNode(this.host.runId, instance.siteId, instance.ordinal);
-    if (recorded === undefined) return;
-    this.journal.putNode({ ...recorded, stats: this.journaledStats(instance, stats) });
-  }
-
-  /**
-   * 落 journal 的 stats：**转录早于本次派发**的 ask 抹掉 `worldToolCalls`。
-   *
-   * 根因：driver 的工具计数器是内存态、每次 ask 起跑时清零，所以接着一段既有转录跑的 ask 只数
-   * 得到自己这几轮，转录里原有的工具调用一个也数不到。少报的后果不是账目不准（那是 tokens 的
-   * 事），而是**纯度判据被污染**：一个报 0 的 ask 会被后来的修订当成纯条目，在关门之后仍从缓存
-   * 结算——而它其实碰过工作区。缺席这个键本就表示「碰过」（保守读法），所以抹掉才是诚实记录。
-   * tokens / toolCalls / turns 照记：它们是用量，不是纯度声明。
-   */
-  private journaledStats(instance: InstanceRef, stats: AskStats): AskStats {
-    if (!this.priorTranscriptAsks.has(refToString(instance))) return stats;
-    const { worldToolCalls: _unreliable, ...rest } = stats;
-    return rest;
+    handleNoteStats(this.submitSeam, this.priorTranscriptAsks, instance, stats);
   }
 
   failed(instance: InstanceRef, error: WorkflowError): void {
@@ -533,7 +523,7 @@ export class AskScheduler {
     if (outcome.status === "completed") record.result = outcome.result;
     else record.error = outcome.error;
     if (node.lastStats !== undefined)
-      record.stats = this.journaledStats(node.instance, node.lastStats);
+      record.stats = journaledStats(this.priorTranscriptAsks, node.instance, node.lastStats);
     return record;
   }
 }

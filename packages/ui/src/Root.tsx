@@ -1,5 +1,5 @@
 /* eslint-disable max-lines -- Root 当前集中编排启动和 workspace shell wiring，先保持入口收口避免跨层状态拆散。 */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { LucideProvider, RefreshCw } from "lucide-react";
 import {
   APP_RUNTIME_PREFERENCES_CHANGED_BROADCAST_CHANNEL,
@@ -12,14 +12,14 @@ import { Button } from "@/components/ui/button.js";
 import { PlatformProvider } from "@/hooks/usePlatform.js";
 import { ServiceProvider } from "@/hooks/useServices.js";
 import { useDynamicWorkflowAvailabilityLoader } from "@/hooks/useDynamicWorkflowAvailability.js";
-import { DirectoryBrowser } from "@/DirectoryBrowser.js";
 import { useTabPersistence } from "@/hooks/useTabPersistence.js";
 import { useTokenRefresh } from "@/hooks/useTokenRefresh.js";
 import { useWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
 import { useACodeIntl } from "@/i18n/IntlProvider.js";
-import { SSHDialog } from "@/SSHDialog.js";
-import { SettingsPage } from "@/SettingsPage.js";
 import { CodingPlanUpgradeDialogProvider } from "@/settings/CodingPlanUpgradeDialogProvider.js";
+// WelcomeScreen 刻意保持静态：无工作区首启路径下它是启动门禁后的第一屏
+// （rootStartupGate 特意让门禁在 WelcomeScreen 打开时立即让位，避免未登录用户卡在启动 logo），
+// 懒加载会在首启引入加载间隙；且其依赖树很小（LoginApiKeyForm + 主题插画），懒加载收益有限。
 import { WelcomeScreen, type LoginCompleteReason } from "@/WelcomeScreen.js";
 import { setDefaultFileDisplayBasePath } from "@/lib/fileDisplay.js";
 import { countAllUnreadTasks } from "@/lib/unreadTaskCount.js";
@@ -75,6 +75,25 @@ import { CLOSE_ACTIVE_CONTEXT_REQUEST_EVENT } from "@/lib/closeActiveContext.js"
 import { AssistantCodeCommentFeatureProvider } from "@/AssistantCodeCommentFeatureProvider.js";
 
 const DEFAULT_LUCIDE_STROKE_WIDTH = 1.5;
+
+// ===== 次级界面懒加载（spec：renderer-memory-budget 规则 7 —— 次级路由默认 React.lazy）=====
+// 设置页 / SSH 远程连接 / 目录浏览属于次级路由，不应随主会话启动链一起加载。
+// 注意：这些模块当前仍被其它静态链引用（打包器会先把模块并回主包），React.lazy 边界
+// 先行落位——模块已解析时 React 不提交 fallback、零视觉差异；待下列引用迁移后即生效为真正的按需分包：
+// - SettingsPage ← root/WorkspaceSettingsLayer.tsx 静态 import；
+// - SSHDialog ← ChatEmptyState.tsx / WorkspaceSidebar.tsx 静态 import；
+// - DirectoryBrowser ← RemoteConnectionDialogContent.tsx（SSHDialog 子树）静态 import。
+// fallback 取 null：三者均在稳定的应用框架/条件弹窗内挂载，null 占位不产生布局跳动或白屏闪烁。
+const SettingsPage = lazy(() =>
+  import("@/SettingsPage.js").then((module) => ({ default: module.SettingsPage })),
+);
+const SSHDialog = lazy(() =>
+  import("@/SSHDialog.js").then((module) => ({ default: module.SSHDialog })),
+);
+const DirectoryBrowser = lazy(() =>
+  import("@/DirectoryBrowser.js").then((module) => ({ default: module.DirectoryBrowser })),
+);
+
 interface RemoteConnectionOpenPreference {
   preferredKind?: RemoteTarget["kind"];
   preferredWslDistro?: string;
@@ -846,21 +865,25 @@ function RootInner({
   }, []);
 
   const remoteConnectionDialog = allowRemoteWorkspace ? (
-    <SSHDialog
-      onConnect={handleConnectRemote}
-      onSelectProject={handleSelectRemoteProject}
-      onCancelSession={handleCancelRemoteProject}
-      localWorkspacePath={localWorkspacePathForRemoteConnection}
-      isWindowsDesktop={isWindowsDesktop}
-      remoteWorkspaceSessions={remoteWorkspaceSessions}
-      open={remoteConnectionDialogOpen}
-      onOpenChange={handleRemoteConnectionDialogOpenChange}
-      onFlowActiveChange={setRemoteConnectionInProgress}
-      onFlowRequestIdChange={setRemoteConnectionRequestId}
-      preferredKind={remoteConnectionOpenPreference?.preferredKind}
-      preferredWslDistro={remoteConnectionOpenPreference?.preferredWslDistro}
-      hideTriggerWhenClosed
-    />
+    // 懒加载边界（规则 7）：挂载条件与之前完全一致（allowRemoteWorkspace 即挂载），
+    // 避免改变 SSHDialog 关闭态下的 hooks/副作用时序；模块未分包前 fallback 不会被提交。
+    <Suspense fallback={null}>
+      <SSHDialog
+        onConnect={handleConnectRemote}
+        onSelectProject={handleSelectRemoteProject}
+        onCancelSession={handleCancelRemoteProject}
+        localWorkspacePath={localWorkspacePathForRemoteConnection}
+        isWindowsDesktop={isWindowsDesktop}
+        remoteWorkspaceSessions={remoteWorkspaceSessions}
+        open={remoteConnectionDialogOpen}
+        onOpenChange={handleRemoteConnectionDialogOpenChange}
+        onFlowActiveChange={setRemoteConnectionInProgress}
+        onFlowRequestIdChange={setRemoteConnectionRequestId}
+        preferredKind={remoteConnectionOpenPreference?.preferredKind}
+        preferredWslDistro={remoteConnectionOpenPreference?.preferredWslDistro}
+        hideTriggerWhenClosed
+      />
+    </Suspense>
   ) : null;
   const directoryBrowserDialog = directoryBrowserOpen ? (
     <ScopedErrorBoundary
@@ -868,14 +891,17 @@ function RootInner({
       resetKeys={["directory-browser"]}
       variant="silent"
     >
-      <DirectoryBrowser
-        services={services}
-        onCancel={() => setDirectoryBrowserOpen(false)}
-        onSelect={(path) => {
-          setDirectoryBrowserOpen(false);
-          void handleSelectProject(path);
-        }}
-      />
+      {/* 懒加载边界（规则 7）：目录浏览器仅在用户主动打开时挂载，错误边界置于 Suspense 之外以兜住 chunk 加载失败。 */}
+      <Suspense fallback={null}>
+        <DirectoryBrowser
+          services={services}
+          onCancel={() => setDirectoryBrowserOpen(false)}
+          onSelect={(path) => {
+            setDirectoryBrowserOpen(false);
+            void handleSelectProject(path);
+          }}
+        />
+      </Suspense>
     </ScopedErrorBoundary>
   ) : null;
 
@@ -964,7 +990,11 @@ function RootInner({
               variant="panel"
               className="h-full"
             >
-              <SettingsPage {...settingsLayerProps} />
+              {/* 懒加载边界（规则 7）：设置页由稳定的应用框架包裹，null 占位无布局跳动；
+                  错误边界置于 Suspense 之外以兜住 chunk 加载失败。 */}
+              <Suspense fallback={null}>
+                <SettingsPage {...settingsLayerProps} />
+              </Suspense>
             </ScopedErrorBoundary>
           ) : null
         ) : (

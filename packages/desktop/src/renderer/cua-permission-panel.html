@@ -2,6 +2,21 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
+    <!--
+      安全加固 P2（specs/electron-hardening.md §3b）：辅助窗 CSP，是主窗 index.html CSP 的已验证子集。
+      - script-src/style-src 同主窗：module script 走 vite chunk（'self'，打包态 file:），'unsafe-inline'
+        覆盖 dev 态 Vite 内联脚本与本文件整段内联 <style>；
+      - img-src data:：真实 ACode 图标由 main 经 state.iconDataUrl（data: URL）推送，在 cuaPermissionPanel.ts
+        里以 icon.style.backgroundImage=url(...) 设置（图片资源受 img-src 约束）；
+      - connect-src 收紧为 'self' ws: wss:：本窗只经 window.cuaPermissionPanel IPC bridge 通信（非网络），
+        无 fetch/XHR/WebSocket；ws: 仅供 dev HMR。不保留 http/https（无远端取数面）；
+      - 无 frame-src（无 <webview>）、无 media-src/acode-media:（不做音视频预览）；
+      - object-src/base-uri/form-action 'none' 封死插件、基址劫持、表单外送。
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self' file: 'unsafe-inline'; style-src 'self' file: 'unsafe-inline'; img-src 'self' file: data: blob:; font-src 'self' file: data:; connect-src 'self' ws: wss:; worker-src 'self' file: blob:; object-src 'none'; base-uri 'none'; form-action 'none'"
+    />
     <title>ACode Computer Use</title>
     <style>
       html,

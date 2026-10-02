@@ -1,5 +1,5 @@
 /* oxlint-disable eslint(max-lines) -- Provider 与 Access Config 的 Overlay/序列化必须集中维护同一联合类型；待契约稳定后再按配置族拆文件。 */
-import { ConfigOverlay, type ConfigValidationIssue } from "../config-overlay.js";
+import { ConfigOverlay, isBlockingConfigIssue, type ConfigValidationIssue } from "../config-overlay.js";
 import type { z } from "zod";
 import {
   completeApiKeyAccessDataSchema,
@@ -20,6 +20,7 @@ import {
   type providerTemplateDataSchema,
 } from "./provider-data-schema.js";
 import { validateConfigSchema } from "./schema-validation.js";
+import { isPlaintextHttpBaseUrl } from "./provider-endpoint-security.js";
 import type { ModelId, ProviderId, ProviderTemplateId } from "./ids.js";
 import type { ProviderConfigRuleData } from "./rule-data-schema.js";
 
@@ -37,20 +38,48 @@ export class ApiKeyAccessConfig extends ConfigOverlay<ApiKeyAccessConfig> {
   readonly type: ApiKeyAccessConfigObject["type"];
   readonly apiKey?: ApiKeyAccessConfigInput["apiKey"];
   readonly apiKeyManagementUrl?: ApiKeyAccessConfigInput["apiKeyManagementUrl"];
+  /**
+   * 加密凭据库引用（安全加固 P1-5）。存在时表示真值已托管在 `credentials.json`，
+   * 本对象的 `apiKey` 是 hydration 后的运行期内存值，**不得**回写磁盘。
+   */
+  readonly credentialRef?: ApiKeyAccessConfigInput["credentialRef"];
 
   constructor(input: ApiKeyAccessConfigInput = {}) {
     super();
     this.type = input.type ?? "api-key";
     this.apiKey = input.apiKey;
     this.apiKeyManagementUrl = input.apiKeyManagementUrl;
+    this.credentialRef = input.credentialRef;
     Object.freeze(this);
   }
 
   overlay(next: ApiKeyAccessConfig): ApiKeyAccessConfig {
+    // `apiKey` 与 `credentialRef` 在存储形态上互斥（P1-5）：真值要么在文件里（迁移前/回退态的
+    // 明文），要么在凭据库里（ref）。overlayValue 的语义是「next 未定义就保留 base」，
+    // 若直接对两个字段各自 overlay，会把「base 的旧 ref」与「next 的新明文 apiKey」同时留下，
+    // 于是 toJSON() 只写 ref → **用户刚输入的新 Key 被静默丢弃**，界面看着像保存成功、
+    // 实际仍在用旧 Key。这是真实的数据丢失，必须在 overlay 里排他处理。
+    //
+    // 规则：next 提供了哪一个，就以它为准并清掉另一个。
+    // - next 带新明文 apiKey（用户在设置里改了 Key）→ 丢弃 base 的旧 ref，
+    //   由写入路径把新 Key 存进凭据库并分配新 ref；
+    // - next 带 ref（已 vault 化）→ 丢弃 base 的明文，避免明文回流磁盘；
+    // - next 两者都没带 → 保留 base 现状（base 自身已是互斥的）。
+    const nextProvidesApiKey = next.apiKey !== undefined;
+    const nextProvidesRef = next.credentialRef !== undefined;
     return new ApiKeyAccessConfig({
       type: next.type,
-      apiKey: this.overlayValue(this.apiKey, next.apiKey),
+      apiKey: nextProvidesApiKey
+        ? next.apiKey
+        : nextProvidesRef
+          ? undefined
+          : this.apiKey,
       apiKeyManagementUrl: this.overlayValue(this.apiKeyManagementUrl, next.apiKeyManagementUrl),
+      credentialRef: nextProvidesRef
+        ? next.credentialRef
+        : nextProvidesApiKey
+          ? undefined
+          : this.credentialRef,
     });
   }
 
@@ -58,12 +87,27 @@ export class ApiKeyAccessConfig extends ConfigOverlay<ApiKeyAccessConfig> {
     return validateConfigSchema(completeApiKeyAccessDataSchema, this.toJSON(), path);
   }
 
+  /**
+   * 磁盘形态：**有 credentialRef 就只写 ref，绝不写 apiKey 明文**。
+   *
+   * 这是 P1-5 的核心安全属性。运行期内存里 `apiKey` 可能已被 registry 的 hydration
+   * 填上真值（下游约 39 处同步消费者依赖它），但落盘序列化必须丢掉它，否则等于
+   * 白做迁移。仅在「未迁移 / 凭据库不可用的明文回退态」（有 apiKey、无 ref）时才写明文，
+   * 以保证迁移完成前用户的 provider 不会当场失效。
+   *
+   * 注意 `validateComplete` 走的是本方法，因此 complete 校验看到的也是磁盘形态：
+   * 有 ref 即满足「至少有一个」，不会因为运行期 apiKey 缺席而误报缺字段。
+   */
   toJSON(): ApiKeyAccessConfigObject {
+    const hasCredentialRef =
+      typeof this.credentialRef === "string" && this.credentialRef.trim().length > 0;
     return {
       type: this.type,
       ...objectWithoutUndefined({
-        apiKey: this.apiKey,
+        // 有 ref 时不落明文；否则（迁移前/回退态）保留明文以免 provider 失效。
+        apiKey: hasCredentialRef ? undefined : this.apiKey,
         apiKeyManagementUrl: this.apiKeyManagementUrl,
+        credentialRef: this.credentialRef,
       }),
     };
   }
@@ -151,7 +195,18 @@ export class ProviderApiConfig extends ConfigOverlay<ProviderApiConfig> {
 
   validateComplete(path: readonly string[] = []): readonly ConfigValidationIssue[] {
     // 旧检查只判断 type 非空，不可信 JS 值可绕过枚举；准入与保存共用 schema。
-    return validateConfigSchema(completeProviderApiDataSchema, this.toJSON(), path);
+    const issues = [...validateConfigSchema(completeProviderApiDataSchema, this.toJSON(), path)];
+    // 明文 http 是「知情不禁止」的告警而非阻断，severity 恒为 warning，与 zod error 可共存。
+    // 非法 URL 时上面的 url 校验已报 error，isPlaintextHttpBaseUrl 对非法值返回 false，不会双报。
+    if (isPlaintextHttpBaseUrl(this.baseUrl)) {
+      issues.push({
+        code: "plaintext-http-endpoint",
+        path: [...path, "baseUrl"],
+        severity: "warning",
+        message: `配置 ${[...path, "baseUrl"].join(".")} 使用明文 http，API Key 与对话内容将暴露给链路中间节点，建议改用 https`,
+      });
+    }
+    return issues;
   }
 
   toJSON(): ProviderApiConfigInput {
@@ -246,7 +301,19 @@ export class ProviderConfig extends ConfigOverlay<ProviderConfig> {
 
   validateComplete(path: readonly string[] = []): readonly ConfigValidationIssue[] {
     // 不再用字段存在性代替值域验证，也不把展示/成员等可选字段变成执行必填项。
-    return validateConfigSchema(completeProviderConfigDataSchema, this.toJSON(), path);
+    const issues = [...validateConfigSchema(completeProviderConfigDataSchema, this.toJSON(), path)];
+    // 明文 http 告警的唯一产生点是 api 子对象的 validateComplete（resolver 校验合并后的
+    // effective config 走到这里，模板继承来的 http 值因此同样产出 warning）。外层 zod
+    // 嵌套校验会产出同样的 api zod error，若整份并入子对象结果会把同一 error 报两遍，
+    // 所以只把非阻断的诊断（warning）并入，error 仍以外层结果为准。
+    if (this.api) {
+      issues.push(
+        ...this.api
+          .validateComplete([...path, "api"])
+          .filter((issue) => !isBlockingConfigIssue(issue)),
+      );
+    }
+    return issues;
   }
 
   toJSON(): ProviderConfigObject {

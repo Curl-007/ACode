@@ -22,7 +22,9 @@ export type {
   GitGraphRef,
   GitGraphRefKind,
 } from "./git-graph/layout.js";
-export { SSHDialog, RemoteConnectionDialog } from "./SSHDialog.js";
+// SSHDialog/RemoteConnectionDialog 已不再从公共入口 re-export：全仓无消费者经 @acode/ui
+// 引用它们，而该静态 re-export 会把 SSHDialog 子树拉回主入口 chunk，使 Root.tsx 的
+// React.lazy 分包失效（spec: renderer-memory-budget 规则 7）。
 export { useTheme } from "./useTheme.js";
 export type { Theme } from "./useTheme.js";
 export { useTestActions } from "./test-actions.js";

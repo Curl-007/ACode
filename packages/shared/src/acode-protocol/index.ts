@@ -29,6 +29,7 @@ import { accountProviderUnavailableReasonSchema } from "../account-provider-stat
 import { modelExecutionSchema } from "../model-execution.js";
 import { APP_USAGE_RANGES, appUsageSnapshotSchema } from "../usage-stats.js";
 import { acodeAutomationBotDeliveryTargetSchema } from "../bots.js";
+import { acodeAgentEngineIdSchema } from "../acode-agent-registry.js";
 // browser-use 命令/结果契约单一来源：agent 构造、协议校验和 main executor 共用同一 schema。
 import { browserClientModeSchema, browserCommandSchema } from "../browser-use/commands.js";
 import {
@@ -742,34 +743,6 @@ export const acodeSessionImportHistorySchema = z.discriminatedUnion("source", [
       messages: z.array(acodeSessionImportMessageSchema).min(1),
     })
     .strict(),
-  z
-    .object({
-      source: z.literal("sharedContext"),
-      title: z.string().trim().min(1),
-      createdAt: timestampMsSchema.optional(),
-      markdown: z.string().min(1),
-      provenance: z
-        .object({
-          shareId: z.string().trim().min(1),
-          contextId: z.string().trim().min(1).optional(),
-          shareUrl: z.string().url().optional(),
-          status: z.enum(["pending", "reserved", "attached", "discarded"]).optional(),
-          projectionSha256: z.string().regex(/^[0-9a-f]{64}$/u),
-          artifactSetSha256: z.string().regex(/^[0-9a-f]{64}$/u),
-          formatterVersion: z.literal(1),
-          markdownSha256: z.string().regex(/^[0-9a-f]{64}$/u),
-          installedArtifacts: z.array(
-            z
-              .object({
-                artifactId: z.string().trim().min(1),
-                workspaceRelativePath: z.string().trim().min(1),
-              })
-              .strict(),
-          ),
-        })
-        .strict(),
-    })
-    .strict(),
 ]);
 export type ACodeSessionImportHistory = z.infer<typeof acodeSessionImportHistorySchema>;
 
@@ -857,6 +830,11 @@ export const acodeSessionTodoItemSchema = z
     content: nonEmptyString,
     status: z.enum(["pending", "in_progress", "completed"]),
     priority: z.enum(["high", "medium", "low"]),
+    // D4 todo 依赖字段最小加宽（apps/acode-cli/specs/todo-dependency-fields.md R5/R7）：
+    // 与 CLI 侧 TodoItemSchema 同批新增的三个可选成员；保持 .strict()，未知键仍拒绝。
+    id: nonEmptyString.optional(),
+    blockedBy: z.array(nonEmptyString).optional(),
+    metadata: z.record(z.string(), z.unknown()).optional(),
   })
   .strict();
 export const acodeSessionGoalStatsSchema = z
@@ -1562,6 +1540,9 @@ export const acodeSessionCreateParamsSchema = z
     workspace: acodeWorkspaceRefSchema,
     parentSessionId: nonEmptyString.optional(),
     mode: acodeSessionModeSchema.optional(),
+    // 选择本次 session 由哪个 agent 引擎驱动。缺省 = native(glm)，旧 host/agent 不带此字段时
+    // 行为不变。外部引擎不说 ACode Protocol，此字段只决定走哪条 spawn 路径，native 路径不受影响。
+    engine: acodeAgentEngineIdSchema.optional(),
     model: modelSelectionSchema.optional(),
     persistence: acodeSessionPersistenceSchema.optional(),
     thoughtLevel: nonEmptyString.optional(),

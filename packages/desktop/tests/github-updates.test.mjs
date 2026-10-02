@@ -117,6 +117,34 @@ test("github feed, overrides, manual check and native download/install remain wi
       { url: "https://example.invalid/cli/" },
     );
   }
+  // P1-7：打包发行版（isPackaged:true）必须忽略 env 与 argv 两个更新源覆盖入口，
+  // 与 NOTICE.md / NOTICE.zh-CN.md「打包版会忽略 ACODE_UPDATE_FEED_URL 及 --acode-update-feed-url」
+  // 的承诺一致。此前代码无条件读取 env/argv，文档与代码矛盾。
+  for (const isPackaged of [true, undefined, false]) {
+    const expectOverride = isPackaged !== true;
+    for (const argv of [
+      [],
+      ["--acode-update-feed-url=https://example.invalid/cli/"],
+    ]) {
+      const resolved = module.resolveUpdateFeedSourceFromStartupConfig({
+        argv,
+        env: { ACODE_UPDATE_FEED_URL: "https://example.invalid/feed/" },
+        isPackaged,
+      });
+      if (expectOverride) {
+        assert.ok(
+          resolved && typeof resolved.url === "string" && resolved.url.startsWith("https://example.invalid/"),
+          `dev build (isPackaged=${isPackaged}) must still honor the override, got ${JSON.stringify(resolved)}`,
+        );
+      } else {
+        assert.equal(
+          resolved,
+          undefined,
+          "packaged build must ignore env/argv update-feed override (P1-7)",
+        );
+      }
+    }
+  }
   await module.initAutoUpdater({
     onBeforeQuitAndInstall: async () => {
       preparation++;

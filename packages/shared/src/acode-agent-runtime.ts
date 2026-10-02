@@ -1,4 +1,14 @@
+import type { ACodeProvider } from "./acode-task-types-core.js";
+
 export type ACodeAgentBinaryKind = "native-binary";
+
+/**
+ * J5-L1：桌面生产 agent 的 V8 字节码加载器入口文件名。
+ * 字节码严格绑定编译时的 Electron/V8/平台/架构（指纹校验由 loader 在 agent 进程内权威执行）；
+ * 生产 resolver 选用 loader 时设 ACODE_BYTECODE_FALLBACK=1，loader 失配则优雅回退 acode.cjs
+ * （spec: packages/desktop/specs/agent-bytecode-production.md）。
+ */
+export const ACODE_AGENT_BYTECODE_ENTRY_FILE = "acode.bytecode.cjs";
 
 export interface ACodeAgentRuntimeDescriptor {
   binaryKind: ACodeAgentBinaryKind;
@@ -39,6 +49,16 @@ export const ACODE_AGENT_RUNTIME: ACodeAgentRuntimeDescriptor = {
     return [this.nodeBundleEntryFile];
   },
 };
+
+/**
+ * 引擎作用域的运行时描述符。外部引擎槽位已下线（spec: agent-engine-external-slots-removal.md），
+ * 当前恒等于 native(glm)；保留引擎入参以维持调用方形状，未知值一律回退 native。
+ */
+export function getEngineRuntime(
+  _engineId?: ACodeProvider | string | null,
+): ACodeAgentRuntimeDescriptor {
+  return ACODE_AGENT_RUNTIME;
+}
 
 export function getACodeAgentRuntime(): ACodeAgentRuntimeDescriptor {
   return ACODE_AGENT_RUNTIME;

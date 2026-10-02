@@ -1,9 +1,14 @@
 import type {
+  ACodeProvider,
   BotConfig,
   BotProvider,
   BotReplyGranularity,
 } from "@acode/shared";
-import { getSupportedBotReplyGranularities } from "@acode/shared";
+import {
+  BOT_ACODE_PROVIDER_OPTIONS,
+  getBotSelectablePermissionModes,
+  getSupportedBotReplyGranularities,
+} from "@acode/shared";
 
 export type BotProviderEntryId = BotProvider | "dingding";
 
@@ -17,8 +22,8 @@ export const BOT_PROVIDERS: BotProviderEntry[] = [
   { id: "lark", label: "Lark", implemented: true },
   { id: "telegram", label: "Telegram", implemented: true },
   { id: "dingding", label: "DingTalk", implemented: false },
-  { id: "discord", label: "Discord", implemented: false },
-  { id: "wecom", label: "WeCom", implemented: false },
+  { id: "discord", label: "Discord", implemented: true },
+  { id: "wecom", label: "WeCom", implemented: true },
   { id: "webhook", label: "Webhook", implemented: true },
 ];
 
@@ -50,6 +55,41 @@ export const BOT_REPLY_GRANULARITIES: Array<{
 ];
 
 export const DEFAULT_BOT_REPLY_GRANULARITY_ENTRY = BOT_REPLY_GRANULARITIES[0]!;
+
+/**
+ * Bot 可选引擎，由共享 BOT_ACODE_PROVIDER_OPTIONS（已过滤到 implemented 引擎）派生。
+ * label/description 复用既有 engine.<id>.name / engine.<id>.description 文案键。
+ */
+export const BOT_ENGINES: Array<{
+  id: ACodeProvider;
+  labelId: string;
+  descriptionId: string;
+}> = BOT_ACODE_PROVIDER_OPTIONS.map((engine) => ({
+  id: engine.id,
+  labelId: `engine.${engine.id}.name`,
+  descriptionId: `engine.${engine.id}.description`,
+}));
+
+export function getBotEngineEntry(engine: ACodeProvider | undefined) {
+  return BOT_ENGINES.find((entry) => entry.id === engine) ?? BOT_ENGINES[0];
+}
+
+/**
+ * 某引擎下 bot（远程入口）可选的默认权限模式选项（按引擎作用域，来自注册表）。
+ * label 复用 engine.permissionMode.<id> 文案键。
+ *
+ * 安全加固 P0-3：这是「bot 默认权限模式」卡片的选项源，设置的是 bot 驱动的远程会话默认模式，
+ * 因此剔除全权限档（yolo/bypassPermissions），与远程入口天花板（services 派发侧 clampBotPermissionMode）
+ * 同源。native 引擎只列 build/edit/plan。需要 yolo 请在桌面本地的任务工具栏显式切换，不经 bot 配置。
+ */
+export function getBotPermissionModesForEngine(
+  engine: ACodeProvider | undefined,
+): Array<{ id: string; labelId: string }> {
+  return getBotSelectablePermissionModes(engine).map((mode) => ({
+    id: mode,
+    labelId: `engine.permissionMode.${mode}`,
+  }));
+}
 
 export function getBotReplyGranularitiesForProvider(
   provider: BotProvider,

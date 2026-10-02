@@ -36,12 +36,12 @@ import {
   resolveDesktopZoomFactorForLevel,
   resolveDesktopZoomLevelFromFactor,
 } from "./desktopZoom.js";
+import { CODING_PLAN_WEBVIEW_PARTITION } from "./desktopSessionPermissionPolicy.js";
 
 export const HELP_TOGGLE_DEV_TOOLS_MENU_ID = "help.toggle-dev-tools";
 export const HELP_TOGGLE_ACODE_STDIO_TAP_MENU_ID = "help.toggle-acode-stdio-tap";
 const ACODE_ENDPOINT_PROMPT_WIDTH = 460;
 const ACODE_ENDPOINT_PROMPT_HEIGHT = 210;
-const CODING_PLAN_WEBVIEW_PARTITION = "persist:acode-coding-plan";
 
 function resolveTargetWindow(senderWindow?: BrowserWindow | null) {
   if (senderWindow && !senderWindow.isDestroyed()) {

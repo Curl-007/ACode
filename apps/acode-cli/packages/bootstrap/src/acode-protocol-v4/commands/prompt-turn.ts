@@ -21,7 +21,6 @@ interface StartPromptTurnParamsBase {
   intent?: TurnInputIntentMetadata;
   /** 标准 Selection 的单次执行约束；不会改写 Session Selection。 */
   modelExecution?: SendInputOptions["modelExecution"];
-  sharedContextRefs?: SendInputOptions["sharedContextRefs"];
   toolDisallowlist?: readonly string[];
   /** sendQueuedNow 已持有 Core promotion lease，要求这次 admission 只能占用空闲位。 */
   requireIdle?: boolean;
@@ -130,7 +129,6 @@ export async function startPromptTurn(
         }),
         intent: params.intent,
         ...(params.modelExecution ? { modelExecution: params.modelExecution } : {}),
-        ...(params.sharedContextRefs ? { sharedContextRefs: params.sharedContextRefs } : {}),
         ...(turnToolDisallowlist ? { toolDisallowlist: turnToolDisallowlist } : {}),
         ...(params.requireIdle ? { requireIdle: true } : {}),
         queryId: params.inputId as SendInputOptions["queryId"],

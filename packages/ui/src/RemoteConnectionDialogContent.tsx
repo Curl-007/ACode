@@ -1,5 +1,5 @@
 /* eslint-disable max-lines -- 远程连接向导的多个步骤暂集中在同一文件，避免拆分时扩大 SSH/Docker/WSL 回归面。 */
-import { useState } from "react";
+import { lazy, Suspense, useState } from "react";
 import type {
   DockerContainerInfo,
   RemoteAssetInstallMode,
@@ -8,7 +8,12 @@ import type {
   SSHConfigAliasOption,
   WSLDistro,
 } from "@acode/shared";
-import { TID_REMOTE_KIND_DOCKER, TID_REMOTE_KIND_SSH, TID_REMOTE_KIND_WSL } from "@acode/shared";
+import {
+  TID_REMOTE_KIND_DOCKER,
+  TID_REMOTE_KIND_SERVER,
+  TID_REMOTE_KIND_SSH,
+  TID_REMOTE_KIND_WSL,
+} from "@acode/shared";
 import type {
   IMcpSyncService,
   IPluginSyncService,
@@ -19,12 +24,12 @@ import type {
 import {
   AlertTriangleIcon,
   ChevronRightIcon,
+  CloudIcon,
   LoaderIcon,
   MonitorCogIcon,
   ServerIcon,
   TerminalIcon,
 } from "lucide-react";
-import { DirectoryBrowser } from "@/DirectoryBrowser.js";
 import { RemoteConnectionFields } from "@/RemoteConnectionFields.js";
 import type { SSHAuthMethod } from "@/hooks/useRemoteConnectionForm.js";
 import { Button } from "@/components/ui/button.js";
@@ -37,6 +42,14 @@ import {
 } from "@/settings/RemoteSyncActions.js";
 export { RemoteConnectionConnectingStep } from "@/remote-connection/RemoteConnectionConnectingStep.js";
 
+// 解链让 lazy 分包生效（spec：renderer-memory-budget 规则 7）：DirectoryBrowser 不再静态 import
+// （本文件位于 SSHDialog 子树，静态链会把目录浏览器并回远程连接 chunk，使 Root.tsx 对
+// DirectoryBrowser 的 React.lazy 边界失效）。懒加载声明与 Root.tsx 保持同一来源与写法；
+// 目录浏览器仅在远程连接成功后的目录选择步骤挂载，null fallback 无跳动。
+const DirectoryBrowser = lazy(() =>
+  import("@/DirectoryBrowser.js").then((module) => ({ default: module.DirectoryBrowser })),
+);
+
 function getKindIcon(kind: RemoteTarget["kind"]) {
   switch (kind) {
     case "ssh":
@@ -45,6 +58,8 @@ function getKindIcon(kind: RemoteTarget["kind"]) {
       return MonitorCogIcon;
     case "wsl":
       return TerminalIcon;
+    case "server":
+      return CloudIcon;
   }
 }
 
@@ -80,7 +95,9 @@ export function RemoteConnectionKindStep({
                   ? TID_REMOTE_KIND_SSH
                   : value === "wsl"
                     ? TID_REMOTE_KIND_WSL
-                    : TID_REMOTE_KIND_DOCKER
+                    : value === "server"
+                      ? TID_REMOTE_KIND_SERVER
+                      : TID_REMOTE_KIND_DOCKER
               }
               className={cn(
                 "flex min-h-32 flex-col items-start gap-4 rounded-2xl border p-4 text-left transition-colors",
@@ -150,6 +167,10 @@ export function RemoteConnectionSettingsStep({
   manualDockerContainer,
   dockerContainers,
   dockerAvailable,
+  serverUrl = "",
+  serverName = "",
+  serverToken = "",
+  serverWorkspacePath = "",
   sshConfigAliases,
   sshConfigAliasesLoading,
   sshConfigAliasesError,
@@ -172,6 +193,10 @@ export function RemoteConnectionSettingsStep({
   onWslUserChange,
   onDockerContainerChange,
   onManualDockerContainerChange,
+  onServerUrlChange,
+  onServerNameChange,
+  onServerTokenChange,
+  onServerWorkspacePathChange,
   onDockerContainersRefresh,
   onApplySshConfigAlias,
   onClearSelectedSshConfigAlias,
@@ -193,6 +218,10 @@ export function RemoteConnectionSettingsStep({
   manualDockerContainer: string;
   dockerContainers: DockerContainerInfo[];
   dockerAvailable: boolean | null;
+  serverUrl?: string;
+  serverName?: string;
+  serverToken?: string;
+  serverWorkspacePath?: string;
   sshConfigAliases: SSHConfigAliasOption[];
   sshConfigAliasesLoading: boolean;
   sshConfigAliasesError: string;
@@ -215,6 +244,10 @@ export function RemoteConnectionSettingsStep({
   onWslUserChange?: (value: string) => void;
   onDockerContainerChange: (value: string) => void;
   onManualDockerContainerChange: (value: string) => void;
+  onServerUrlChange?: (value: string) => void;
+  onServerNameChange?: (value: string) => void;
+  onServerTokenChange?: (value: string) => void;
+  onServerWorkspacePathChange?: (value: string) => void;
   onDockerContainersRefresh?: () => void;
   onApplySshConfigAlias: (value: SSHConfigAliasOption) => void;
   onClearSelectedSshConfigAlias: () => void;
@@ -254,6 +287,10 @@ export function RemoteConnectionSettingsStep({
           manualDockerContainer={manualDockerContainer}
           dockerContainers={dockerContainers}
           dockerAvailable={dockerAvailable}
+          serverUrl={serverUrl}
+          serverName={serverName}
+          serverToken={serverToken}
+          serverWorkspacePath={serverWorkspacePath}
           sshConfigAliases={sshConfigAliases}
           sshConfigAliasesLoading={sshConfigAliasesLoading}
           sshConfigAliasesError={sshConfigAliasesError}
@@ -274,6 +311,10 @@ export function RemoteConnectionSettingsStep({
           setWslUser={onWslUserChange}
           setDockerContainer={onDockerContainerChange}
           setManualDockerContainer={onManualDockerContainerChange}
+          setServerUrl={onServerUrlChange}
+          setServerName={onServerNameChange}
+          setServerToken={onServerTokenChange}
+          setServerWorkspacePath={onServerWorkspacePathChange}
           refreshDockerContainers={onDockerContainersRefresh}
         />
       </div>
@@ -425,13 +466,16 @@ export function RemoteConnectionDirectoryStep({
             selecting ? "pointer-events-none opacity-70" : "",
           )}
         >
-          <DirectoryBrowser
-            services={services}
-            embedded
-            onSelect={onSelect}
-            onCancel={onCancel}
-            onPathChange={setSelectedPath}
-          />
+          {/* 懒加载边界（规则 7）：目录浏览器按需挂载；模块已解析时 React 不提交 fallback，零视觉差异。 */}
+          <Suspense fallback={null}>
+            <DirectoryBrowser
+              services={services}
+              embedded
+              onSelect={onSelect}
+              onCancel={onCancel}
+              onPathChange={setSelectedPath}
+            />
+          </Suspense>
         </div>
       </div>
       <div className="flex items-center justify-end gap-3">

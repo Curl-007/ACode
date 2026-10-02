@@ -83,7 +83,7 @@ export function applySessionEventToState(
         handlers.setQueuedInputs?.([]);
         break;
       }
-      applyTurnErrorEvent(payload, handlers.setLastError, handlers.setMessages);
+      applyTurnErrorEvent(payload, handlers.setLastError, handlers.setMessages, copy.errors);
       handlers.setStatus(copy.status.turnFailed);
       handlers.setQueuedInputs?.([]);
       break;
@@ -154,7 +154,7 @@ export function applySessionEventToState(
     case SessionEventType.ToolCallError:
       applyToolTranscriptEvent(event, handlers);
       handlers.setStatus(copy.status.toolFailed(toolLabel(payload, handlers.toolNamesById)));
-      handlers.setLastError(formatEventError(payload));
+      handlers.setLastError(formatEventError(payload, copy.errors));
       break;
     case SessionEventType.NetworkRequestStatus:
       applyNetworkRequestEvent(payload, handlers.setNetworkRequests);
@@ -265,8 +265,9 @@ function applyTurnErrorEvent(
   payload: Record<string, unknown>,
   setLastError: (message: string | undefined) => void,
   setMessages: React.Dispatch<React.SetStateAction<Message[]>>,
+  errors: TuiCopy["errors"],
 ): void {
-  const message = formatEventError(payload);
+  const message = formatEventError(payload, errors);
   setLastError(message);
   setMessages((current) => appendSystemErrorMessage(current, message));
 }

@@ -1,10 +1,6 @@
 import { Component } from "react";
 import type { ErrorInfo, ReactNode } from "react";
-import type { Locale } from "@acode/shared";
-import { DEFAULT_LOCALE } from "@acode/shared";
 import { DesktopWindowFrame } from "@/DesktopWindowFrame.js";
-import zhCN from "@/i18n/locales/zh-CN.js";
-import enUS from "@/i18n/locales/en-US.js";
 import { logger } from "@/logger.js";
 import { cn } from "@/components/lib/utils.js";
 import { Button } from "@/components/ui/button.js";
@@ -39,8 +35,6 @@ interface ScopedErrorBoundaryProps {
   onCaughtReactError?: (error: Error, errorInfo: ErrorInfo, scope: string) => void;
 }
 
-const LOCALE_PREFERENCE_KEY = "acode-locale-preference";
-
 function normalizeError(error: unknown): Error {
   if (error instanceof Error) {
     return error;
@@ -61,31 +55,28 @@ function serializeErrorForLog(error: Error): {
   };
 }
 
-function resolveBoundaryLocale(): Locale {
-  if (typeof localStorage !== "undefined" && typeof localStorage.getItem === "function") {
-    try {
-      const storedPreference = localStorage.getItem(LOCALE_PREFERENCE_KEY);
-      if (storedPreference === "zh-CN" || storedPreference === "en-US") {
-        return storedPreference;
-      }
-    } catch {
-      // 在 Node 测试环境里，可能出现“localStorage 对象存在但能力不完整/不可读”的场景
-      // （例如只有占位对象或读取阶段直接抛错）。错误边界若不兜底会在 fallback 渲染期再次崩溃，
-      // 用户就会看到白屏。这里吞掉存储层异常，继续回退到 navigator / 默认语言。
-    }
-  }
-
-  if (typeof navigator !== "undefined") {
-    return navigator.language.toLowerCase().startsWith("zh") ? "zh-CN" : "en-US";
-  }
-
-  return DEFAULT_LOCALE;
-}
+// 解链让 lazy 分包生效（spec：renderer-memory-budget 规则 7）：此前静态 import
+// zh-CN / en-US 两份完整词典（各约 400KB）只为异常态兜底文案取词，会把词典模块并回主包，
+// 使 IntlProvider 的按语言动态加载失效。错误边界只在异常态显示，不依赖完整词典，
+// 这里只内嵌本文件实际用到的 appError.* 中文兜底文案（与 zh-CN 词典逐字一致）。
+const BOUNDARY_FALLBACK_MESSAGES: Record<string, string> = {
+  "appError.title": "应用界面出了点问题",
+  "appError.description":
+    "刚才的页面错误已经被拦住了，所以不会直接白屏。你可以先重试；如果问题持续，再刷新应用恢复界面。",
+  "appError.retry": "重试",
+  "appError.reload": "刷新应用",
+  "appError.hint": "错误详情已记录到诊断日志里，方便继续排查。",
+  "appError.details": "查看组件堆栈",
+  "appError.unknown": "未知错误",
+  "appError.sectionTitle": "这块界面出了点问题",
+  "appError.sectionDescription":
+    "错误已经限制在当前区域，其它功能可以继续使用。你可以先重试这个区域；如果问题持续，再刷新应用。",
+  "appError.sectionRetry": "重试此区域",
+  "appError.sectionHint": "错误详情已记录到诊断日志里，方便继续排查。",
+};
 
 function formatBoundaryMessage(id: string): string {
-  const locale = resolveBoundaryLocale();
-  const messages = locale === "en-US" ? enUS : zhCN;
-  return messages[id] ?? id;
+  return BOUNDARY_FALLBACK_MESSAGES[id] ?? id;
 }
 
 function haveResetKeysChanged(

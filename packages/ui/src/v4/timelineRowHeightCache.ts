@@ -10,8 +10,13 @@
 /** 未测量行的兜底估计高度（与旧 ConversationTimeline 的 ROW_ESTIMATE_PX 一致）。 */
 export const DEFAULT_ROW_HEIGHT_ESTIMATE_PX = 72;
 
-/** 缓存上限：超长会话防内存膨胀；淘汰最久未写入的行（写入序 ≈ 行序，旧行先淘汰）。 */
-const MAX_ROW_HEIGHT_CACHE_ENTRIES = 4000;
+/**
+ * 缓存上限：超长会话防内存膨胀；淘汰最久未写入的行（写入序 ≈ 行序，旧行先淘汰）。
+ * 取值与投影窗口行数上限（PROJECTION_WINDOW_MAX_ROWS=1200）对齐：测高只对仍在
+ * 窗口内渲染的 render unit 有意义，行被窗口双上限裁头后不再渲染，其测量值留着
+ * 只会白占内存；深滚动回拉的行重新测量一次即可恢复，无功能损失。
+ */
+const MAX_ROW_HEIGHT_CACHE_ENTRIES = 1200;
 
 type TimelineRowHeightCacheKey = string | number;
 

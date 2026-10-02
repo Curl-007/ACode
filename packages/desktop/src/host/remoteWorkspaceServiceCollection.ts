@@ -13,7 +13,6 @@ import {
   IACodeTaskService,
   IACodeAgentService,
   IACodeSessionService,
-  IConversationShareService,
   IBotsService,
   IFileWatcherService,
   IOAuthService,
@@ -38,8 +37,6 @@ import {
   type IServiceAccessor,
 } from "@acode/services";
 import {
-  ConversationShareHttpClient,
-  ConversationShareService,
   createSettingService,
   createCredentialService,
   createBroadcastService,
@@ -63,12 +60,10 @@ import {
   createServiceLogger,
   createSubagentsService,
   createMemoryService,
-  createRemoteConversationShareArtifactSource,
   OAuthCredentialRepo,
 } from "@acode/services/node";
 import {
   BIGMODEL_PROVIDER_ID,
-  buildRuntimeACodeApiUrl,
   DEFAULT_ACODE_MODEL_CONTEXT_BUDGET_STRATEGY,
   type ProviderFamilyDomain,
   type ACodeSessionRuntimePreferencesResult,
@@ -81,7 +76,6 @@ import {
 } from "./remoteProviderProvisioningService.js";
 
 const runtimePreferencesLogger = createServiceLogger("remote-runtime-preferences");
-const ACODE_JWT_TOKEN_KEY = "acodejwttoken";
 
 export function createRemoteWorkspaceServiceCollection(params: {
   clientConfigService: IClientConfigService;
@@ -178,20 +172,6 @@ export function createRemoteWorkspaceServiceCollection(params: {
   });
   handleOAuthProviderLogout = createOAuthProviderLogoutHandler({
     accountProviderCredentialStore: localAccountProviderCredentialStore,
-  });
-  const conversationShareClient = new ConversationShareHttpClient({
-    // 远端 workspace 的分享也必须使用真实 API；本地 Mock 仅用于单测，不生成无法跨进程访问的链接。
-    apiClient: localApiClient,
-    baseUrl: buildRuntimeACodeApiUrl(process.env, "/api/v1"),
-    tokenProvider: async () =>
-      (await localCredentialService.load(ACODE_JWT_TOKEN_KEY))?.trim() || null,
-  });
-  const conversationShareService = new ConversationShareService({
-    acodeAgentService: params.connectionServices.acodeAgentService,
-    client: conversationShareClient,
-    artifactSource: createRemoteConversationShareArtifactSource(
-      params.connectionServices.fileService,
-    ),
   });
   const reportingRemoteACodeTaskService = params.createReportingRemoteACodeTaskService(
     params.connectionServices.acodeTaskService,
@@ -323,7 +303,6 @@ export function createRemoteWorkspaceServiceCollection(params: {
     .register(IACodeTaskService, remoteACodeTaskService)
     .register(IACodeAgentService, params.connectionServices.acodeAgentService)
     .register(IACodeSessionService, remoteACodeSessionService)
-    .register(IConversationShareService, conversationShareService)
     .register(
       IBotsService,
       createBotsService({

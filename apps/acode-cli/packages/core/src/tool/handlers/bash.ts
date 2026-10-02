@@ -2,6 +2,7 @@
 // Bash Tool Handler
 // ============================================================
 
+import { homedir } from "node:os";
 import {
   BashInputJsonSchema,
   BashInputSchema,
@@ -54,6 +55,11 @@ import {
 import { createBashProviderDescription } from "./bash-prompt.js";
 import { applyBashReadFileStateEffects } from "./bash-read-file-state.js";
 import { isRuntimeReadOnlyBashCommand } from "./bash-semantics.js";
+import { collectBashPackageScriptSources } from "./bash-package-script-context.js";
+import {
+  assessBashCommandTargetRisk,
+  type TargetRiskContext,
+} from "./bash-target-risk/index.js";
 import {
   attachToolExecutionTelemetry,
   classifyCommand,
@@ -74,12 +80,40 @@ const BASH_PROVIDER_DESCRIPTION = createBashProviderDescription({
   maxTimeoutMs: DEFAULT_BASH_TIMEOUT_POLICY.maxTimeoutMs,
 });
 
+/**
+ * J1-1（bash-target-blast-radius R5 接线点 1）：目标维度分级与既有 riskLevel 取更严者。
+ * - safe：readonly 快径照旧；非只读命令返回 undefined（entry 默认 high+needsApproval）。
+ * - low：取消 readonly 快径（目标维度发现了破坏面时只读结论不可信），回落 entry 默认。
+ * - confirm/catastrophic：riskLevel 升到 critical（autoApproveHighRisk 不能自动批准），
+ *   destructive/needsApproval 置真。catastrophic 的「直接 deny、不进 ask」由
+ *   bypass-immune-breakers 的 deny 级命中类在 PermissionService 收口处兜底
+ *   （capability 没有 deny 通道），这里是纵深防御的另一半。
+ */
 function resolveBashPermissionCapability(
   input: unknown,
   context?: ToolRuntimePermissionCapabilityContext,
 ): ToolRuntimePermissionCapability | undefined {
   const command = readStringProperty(input, "command");
-  if (!command || !isRuntimeReadOnlyBashCommand(command, context)) return undefined;
+  if (!command) return undefined;
+
+  const assessment = assessBashCommandTargetRisk(command, bashTargetRiskContext(context));
+  if (assessment.level === "confirm" || assessment.level === "catastrophic") {
+    return {
+      destructive: true,
+      needsApproval: true,
+      readOnly: false,
+      riskLevel: "critical" as const,
+      sideEffectScope: "system" as const,
+      permission: {
+        needsApproval: true,
+        riskLevel: "critical" as const,
+        sideEffectScope: "system" as const,
+      },
+    };
+  }
+  if (assessment.level === "low") return undefined;
+
+  if (!isRuntimeReadOnlyBashCommand(command, context)) return undefined;
   return {
     destructive: false,
     needsApproval: false,
@@ -92,6 +126,46 @@ function resolveBashPermissionCapability(
       sideEffectScope: "none" as const,
     },
   };
+}
+
+/** 目标分级上下文：homedir/platform 在接线层注入，评估模块保持纯函数。 */
+function bashTargetRiskContext(
+  context?: ToolRuntimePermissionCapabilityContext,
+): TargetRiskContext {
+  return {
+    workingDirectory: context?.workingDirectory,
+    workspaceRoot: context?.workspaceRoot,
+    homeDirectory: homedir(),
+    platform: process.platform,
+    // R6 边界⑥收口：npm/pnpm/yarn/bun run 的 script 体由 executor 链路异步预取后
+    // 注入（resolvePermissionCapabilityContextAsync → permission-flow/input-recheck）；
+    // 缺省 undefined = legacy 上下文，run 族维持 safe 直通（spec
+    // npm-script-body-scan.md R6）。
+    ...(context?.packageScripts ? { packageScripts: context.packageScripts } : {}),
+    // 对抗验证 F1②：扫描覆盖证据与 map 同源注入（目标目录的 enclosing 命中只有被
+    // 它覆盖才可信任）。空数组是有意义状态（无覆盖证据 → fail-closed），不能省。
+    ...(context?.scannedDirectories ? { scannedDirectories: context.scannedDirectories } : {}),
+  };
+}
+
+/**
+ * R6 边界⑥收口（spec npm-script-body-scan.md R1/R5）：权限链路的异步前置——预取
+ * package.json scripts 供 run 族 body 评估与熔断器/反射门共用。容错不抛：预取失败
+ * 返回 undefined（= 上下文缺席 = legacy 语义），绝不阻断权限链路。
+ */
+async function resolveBashPermissionCapabilityContextAsync(
+  input: unknown,
+  context: ToolRuntimePermissionCapabilityContext,
+): Promise<
+  Partial<Pick<ToolRuntimePermissionCapabilityContext, "packageScripts" | "scannedDirectories">>
+| undefined> {
+  const command = readStringProperty(input, "command");
+  if (!command) return undefined;
+  const prefetch = await collectBashPackageScriptSources(command, {
+    workingDirectory: context.workingDirectory,
+    workspaceRoot: context.workspaceRoot,
+  });
+  return { packageScripts: prefetch.sources, scannedDirectories: prefetch.scannedDirectories };
 }
 
 const bashHandler: ToolHandler = (input, context) =>
@@ -462,6 +536,7 @@ export const bashToolEntry: ToolEntry = {
   handler: bashHandler,
   resolveTimeoutBudgetMs: createBashTimeoutBudgetResolver(DEFAULT_BASH_TIMEOUT_POLICY),
   resolvePermissionCapability: resolveBashPermissionCapability,
+  resolvePermissionCapabilityContextAsync: resolveBashPermissionCapabilityContextAsync,
   resolvePermissionRulePolicy: resolveBashPermissionRulePolicy,
   inputSchema: BashInputJsonSchema,
   outputSchema: BashOutputJsonSchema,

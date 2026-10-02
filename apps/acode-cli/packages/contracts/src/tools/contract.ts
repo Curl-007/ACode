@@ -155,6 +155,21 @@ export type ToolTimeoutPolicy = NoToolTimeoutPolicy | TimedToolTimeoutPolicy;
 export interface ToolCancellationPolicy {
   supported: boolean;
   cleanup: "none" | "bestEffort" | "required";
+  /**
+   * **模型面文本，恒英文**——名字里的「user visible」是历史误导，实际读者是模型。
+   * 消费路径：`core/src/tool/executor/timeout.ts` 把它塞进
+   * `createCoreError(CoreErrorType.ToolCancelled, <本文本>)` 的 message，而工具错误的
+   * message 会同时进 tool result 的 `error.message`（`core/src/tool/executor/errors.ts`，
+   * 该文件注明 tool result 是「父模型和 UI hover 的共同来源」）与 `modelContent` 兜底
+   * （`call-runner.ts`）。按 `specs/prompt-language-policy.md` R3，这类**双面文本按模型面
+   * 处理**：不接 i18n、不随 locale 变化（否则 tool result 文本分叉，直接违反 R1 第 1 条的
+   * cache 前缀稳定性）。
+   *
+   * UI 要本地化取消提示，走**结构化字段 → i18n key** 的映射，不翻译本文本：按
+   * `error.type`（`tool_cancelled`）/`error.code` 查各自的 catalog（CLI/TUI 侧
+   * `@acode/i18n`，Desktop/Web 侧 `packages/ui/src/i18n/locales/*`），查不到时回落展示
+   * 原始英文 message（错误种类是开放集合，catalog 是封闭集合，回落是必须的）。
+   */
   userVisibleMessage: string;
 }
 

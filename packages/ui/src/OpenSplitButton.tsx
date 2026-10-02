@@ -16,6 +16,7 @@ import { useFileContextActions } from "@/hooks/useFileContextActions.js";
 import { useWorkspaceOpenInEditorTarget } from "@/hooks/useWorkspaceOpenInEditorTarget.js";
 import { useACodeIntl } from "@/i18n/IntlProvider.js";
 import { persistLastSelectedEditorId, readLastSelectedEditorId } from "@/lib/editorPreference.js";
+import { resolveOpenExternalAction } from "@/lib/openExternalTarget.js";
 import type { CodeViewerSource } from "@/lib/codeViewer.js";
 import { getWorkspaceFileRelativePath } from "@/workspace-file-tree/model.js";
 import { resolveWorkspaceEditorSelection } from "@/lib/workspaceEditorSelection.js";
@@ -171,25 +172,35 @@ export function OpenSplitButton({
   };
 
   const handleOpenExternal = () => {
-    if (target.type !== "website" || !target.localPath || !platform.openExternalFile) {
-      platform.openExternal(target.type === "website" ? target.url : target.path);
-      return;
-    }
-
-    const localPath = target.localPath;
-    const reportFailure = (error: unknown) => {
+    // 本地文件必须走 openExternalFile（main 侧 openPathInDefaultApp 硬化链路）；openExternal(裸本地路径)
+    // 是死链路——main 白名单只放行 http/https/file:，而裸 Windows 路径经 new URL() 解析成 c: 协议被拒
+    // （specs/electron-hardening.md §4）。路由判定收敛在 resolveOpenExternalAction，便于回归守护。
+    const action = resolveOpenExternalAction(target, Boolean(platform.openExternalFile));
+    const reportFailure = (path: string, error: unknown) => {
       logger.warn("[OpenSplitButton] 浏览器打开本地文件失败", {
-        path: localPath,
+        path,
         error: error instanceof Error ? error.message : String(error),
       });
       toast(intl.formatMessage({ id: "chat.previewCards.openExternalFailed" }));
     };
+    if (action.kind === "openExternalUrl") {
+      platform.openExternal(action.url);
+      return;
+    }
+    if (action.kind === "unsupportedLocalFile") {
+      // 宿主无 openExternalFile 能力（或畸形空路径）：显式报错，不静默走死链路。
+      logger.warn("[OpenSplitButton] 无法外部打开本地文件：openExternalFile 能力缺失或路径为空", {
+        path: action.path,
+      });
+      toast(intl.formatMessage({ id: "chat.previewCards.openExternalFailed" }));
+      return;
+    }
     void platform
-      .openExternalFile(localPath)
+      .openExternalFile?.(action.path)
       .then((result) => {
-        if (!result.success) reportFailure(result.error ?? "unknown-error");
+        if (result && !result.success) reportFailure(action.path, result.error ?? "unknown-error");
       })
-      .catch(reportFailure);
+      .catch((error) => reportFailure(action.path, error));
   };
 
   if (hideOpenWithMenu) {

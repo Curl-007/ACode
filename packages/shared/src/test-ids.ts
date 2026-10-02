@@ -157,6 +157,8 @@ export const TID_REMOTE_KIND_SSH = "remote-kind-ssh";
 export const TID_REMOTE_KIND_WSL = "remote-kind-wsl";
 /** 远程连接方式切换到 Docker */
 export const TID_REMOTE_KIND_DOCKER = "remote-kind-docker";
+/** 远程连接方式切换到 Server（附着到已运行的 ACode/ZCode server） */
+export const TID_REMOTE_KIND_SERVER = "remote-kind-server";
 /** SSH 主机地址输入框 */
 export const TID_SSH_HOST_INPUT = "ssh-host-input";
 /** SSH 端口号输入框 */
@@ -181,6 +183,14 @@ export const TID_WSL_USER_INPUT = "wsl-user-input";
 export const TID_DOCKER_CONTAINER_SELECT = "docker-container-select";
 /** Docker 容器名称/ID 输入框 */
 export const TID_DOCKER_CONTAINER_INPUT = "docker-container-input";
+/** Server 地址输入框 */
+export const TID_SERVER_URL_INPUT = "server-url-input";
+/** Server 展示名输入框 */
+export const TID_SERVER_NAME_INPUT = "server-name-input";
+/** Server token 输入框 */
+export const TID_SERVER_TOKEN_INPUT = "server-token-input";
+/** Server 默认工作目录输入框 */
+export const TID_SERVER_WORKSPACE_PATH_INPUT = "server-workspace-path-input";
 /** SSH 连接确认按钮 */
 export const TID_SSH_CONNECT_BUTTON = "ssh-connect-button";
 /** SSH 弹窗取消按钮 */
@@ -387,6 +397,8 @@ export const TID_SETTINGS_MEMORY_BACK_PROJECTS = "settings-memory-back-projects"
 export const TID_SETTINGS_MEMORY_BACK_MEMORIES = "settings-memory-back-memories";
 /** Memory workspace 行（动态后缀为 workspace id） */
 export const TID_SETTINGS_MEMORY_WORKSPACE = "settings-memory-workspace";
+/** 设置页 Agent 引擎分区中的单个引擎行（动态后缀为 engine id） */
+export const TID_SETTINGS_ENGINE_ROW = "settings-engine-row";
 
 /** Memory 文件行（动态后缀为文件名） */
 export const TID_SETTINGS_MEMORY_FILE = "settings-memory-file";
@@ -403,6 +415,9 @@ export const TID_SETTINGS_MEMORY_PREVIEW = "settings-memory-preview";
 /** 常规设置中的 AskUserQuestion 自动继续开关 */
 export const TID_SETTINGS_ASK_USER_QUESTION_AUTO_RESOLUTION_SWITCH =
   "settings-ask-user-question-auto-resolution-switch";
+/** 常规设置中的「Bot 任务权限需本机确认」开关 */
+export const TID_SETTINGS_BOT_PERMISSION_LOCAL_APPROVAL_SWITCH =
+  "settings-bot-permission-local-approval-switch";
 /** 设置页通用分区的界面语言下拉触发器 */
 export const TID_SETTINGS_LOCALE_SELECT_TRIGGER = "settings-locale-select-trigger";
 /** 设置页通用分区的界面语言下拉项（动态后缀为 locale preference） */

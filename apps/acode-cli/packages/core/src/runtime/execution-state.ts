@@ -1,4 +1,4 @@
-import { resolveExecutionState, type ExecutionState } from "@acode/shared";
+import { isBypassPermissionMode, resolveExecutionState, type ExecutionState } from "@acode/shared";
 import {
   SESSION_ENTRY_EXECUTION_STATE,
   SessionEventType,
@@ -51,6 +51,16 @@ export async function applyRuntimeExecutionState(
   const previous = readRuntimeExecutionState(runtime);
   const next = resolveExecutionState(input, previous);
   if (next.mode === previous.mode && next.planEnabled === previous.planEnabled) return next;
+  // 安全加固 P2（R4）：托管策略地板禁用 bypass 时，显式切换到全权限档（yolo/bypassPermissions）
+  // 被拒。决策层的跳过（PermissionService 的 yolo 分支）是安全底线；这里让模式切换本身
+  // 也失败，避免 UI 显示「已进 yolo」而实际按 build 判定的分裂状态。
+  if (
+    next.mode !== previous.mode &&
+    isBypassPermissionMode(next.mode) &&
+    runtime.permissionService.isBypassPermissionsModeDisabled()
+  ) {
+    throw new Error("modePolicyForbidden: managed policy disables bypass permission modes");
+  }
   if (next.planEnabled && !previous.planEnabled) {
     const goal = await runtime.readSessionTargetForContext?.(
       cause.traceContext ?? runtime.rootTraceContext,

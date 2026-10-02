@@ -86,8 +86,12 @@ export async function hydrateMessageHistoryFromSession(input: {
         sharedContextStatus !== undefined &&
         sharedContextStatus !== "attached"
       ) {
-        // Share handover 的 pending/reserved context 只是本地候选，不能在用户首次
-        // 发送前偷偷进入 provider history；attach 后由 runtime 显式注入一次。
+        // 对话分享已下线（写入路径已删，specs/conversation-share-removal.md 2.2），但存量
+        // 已导入会话仍可能持久化 source="shared_context" 的上下文消息；此过滤只对这类
+        // 消息生效，普通消息不受影响。保留原因：本函数重建的是 provider history，
+        // pending/reserved（导入后从未发送首条消息）的上下文原本就不进入模型历史，
+        // 删除该判定会让这些存量会话在续聊时突然把导入上下文注入模型历史，
+        // 违反 spec 第 3 节「存量会话打开与续聊不受影响」，故作为读端容错保留。
         continue;
       }
       // session 持久化的是 raw synthetic notice，hydrate 阶段若提前包成

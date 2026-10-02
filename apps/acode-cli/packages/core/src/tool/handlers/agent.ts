@@ -85,8 +85,15 @@ const AGENT_TOOL_OUTPUT_SCHEMA = {
  * 动态工作流灰度门也管**工具描述**：
  * 关闭时十个工具不注册，但这条 bullet 仍在 Agent 的 provider 描述里写着「CreateWorkflow
  * 是强制的」，于是模型被指向一个根本不存在的工具，只会白白撞一次 tool_not_found。
- * 缺省 true：TUI、headless 与既有调用方（包括模块加载期烘焙的 AGENT_PROVIDER_DESCRIPTION）
- * 行为不变，只有显式 false 才抹掉这一行。
+ * 缺省 true：未显式传该选项的调用方（TUI、headless）行为不变，只有显式 false 才抹掉这一行。
+ *
+ * 去烘焙（spec dispatch-discipline-prompt.md R4）：本函数曾在模块加载期求值成常量
+ * AGENT_PROVIDER_DESCRIPTION，被静态 agentToolEntry/taskToolEntry 的 metadata.description
+ * 直接引用——任何依赖运行期配置的描述分支（profiles / embeddedSearchEnabled /
+ * dynamicWorkflowEnabled）在静态路径上永远拿到缺省值，上面那次灰度事故正是这个坑的发作。
+ * 现在描述只在**装配期**产出：createAgentToolEntry / createTaskToolEntry 是唯一产出点
+ * （装配点 tool/handlers/index.ts 的 resolveBuiltInToolEntryForBranch，出口是
+ * tool/registry.ts 的 toContracts），静态条目不再携带 description。
  */
 function buildAgentProviderDescription(
   options: {
@@ -124,8 +131,6 @@ function buildAgentProviderDescription(
         ]),
   ].join("\n");
 }
-
-const AGENT_PROVIDER_DESCRIPTION = buildAgentProviderDescription();
 
 function formatAgentOutputForModel(output: unknown): string {
   const parsed = AgentOutputSchema.safeParse(output);
@@ -225,7 +230,9 @@ export const agentToolEntry: ToolEntry = {
   capability: "Launch a profile-backed subagent; background execution is runtime-configured",
   metadata: {
     name: "Agent",
-    description: AGENT_PROVIDER_DESCRIPTION,
+    // description 刻意缺席：静态条目只是 builtInTools 成员与装配基底，描述唯一在装配期由
+    // createAgentToolEntry 产出。静态携带描述 = 模块加载期烘焙，会让灰度门在静态路径上
+    // 读到缺省值、指向不存在的工具（见 buildAgentProviderDescription 的注释与 R4）。
     readOnly: true,
     destructive: false,
     concurrentSafe: true,
@@ -291,11 +298,8 @@ export const taskToolEntry: ToolEntry = {
     ...agentToolEntry.metadata,
     name: TASK_TOOL_NAME,
     providerVisible: false,
-    description: [
-      "Claude Code-compatible alias for the Agent tool. Use this when plugin instructions ask for the Task tool.",
-      "",
-      agentToolEntry.metadata.description ?? "",
-    ].join("\n"),
+    // 描述与 Agent 同款只在装配期产出（createTaskToolEntry），且必须与 Agent 出自同一次
+    // buildAgentProviderDescription 调用——否则灰度门在两个工具上分叉（R4）。
   },
 };
 

@@ -334,6 +334,23 @@ function createWorkflowConcurrencyGovernor(
     tryAcquire: ({ model }) => grant(bucketFor(workflowConcurrencyKey(model)), OBSERVER_RUN_ID),
     acquire: ({ model }) =>
       Promise.resolve(grant(bucketFor(workflowConcurrencyKey(model)), OBSERVER_RUN_ID)),
+    // D5 只读诊断投影（specs/concurrency-diagnostics-projection.md R4）：把全部桶的既有
+    // 控制器快照收窄成契约字段。纯读——不 observe、不 drain、不碰时钟，准入决策零变化；
+    // runtime 的诊断面经这个可选成员看到 AIMD 事实，core 因此不需要 import bootstrap。
+    concurrencyBuckets: () =>
+      [...buckets.values()].map((bucket) => {
+        const snapshot = bucket.controller.snapshot();
+        return {
+          key: snapshot.key,
+          ceiling: snapshot.ceiling,
+          cap: snapshot.cap,
+          inFlight: snapshot.inFlight,
+          waiters: snapshot.waiters,
+          ...(snapshot.cooldownUntil === undefined
+            ? {}
+            : { cooldownUntil: snapshot.cooldownUntil }),
+        };
+      }),
   };
 
   return {

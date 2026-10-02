@@ -156,7 +156,19 @@ export class Emitter<T> implements IDisposable {
       return;
     }
     for (const listener of [...this.listeners]) {
-      listener(event);
+      // 修复依据（specs/rpc-frame-hardening.md 规则 3）：单个 listener 抛错若直接
+      // 上抛，会打断其余 listener 的通知，且异常沿事件链（如 ws message 事件）变为
+      // uncaughtException 崩掉宿主进程。这里 catch 后记 warn，继续通知其余 listener，
+      // 不改变 listener 的调用顺序。
+      try {
+        listener(event);
+      } catch (error) {
+        console.warn(
+          `[rpc] Emitter listener threw: ${
+            error instanceof Error ? `${error.name}: ${error.message}` : String(error)
+          }`,
+        );
+      }
     }
   }
 

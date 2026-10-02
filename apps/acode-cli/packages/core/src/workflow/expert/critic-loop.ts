@@ -3,6 +3,15 @@ import type {
   WorkflowCriticReopenProposal,
   WorkflowPhaseDefinition,
 } from "@acode/contracts";
+import {
+  buildCriticSupplementRequest,
+  collectCriticAuditScope,
+  collectCriticCoverageTexts,
+  describeCriticGateIssues,
+  evaluateCriticGate,
+  resolveWorkflowGateSettings,
+  type CriticGateIssue,
+} from "../artifact-gate.js";
 import { reopenWorkflowGraphNode } from "../lifecycle.js";
 import { phaseNodeId } from "./ids.js";
 import { dedupeReopenProposals, parseCriticResult } from "./parsers/critic.js";
@@ -18,6 +27,12 @@ export async function runFinalCriticLoop(
   options: ExpertWorkflowRunOptions,
 ): Promise<ExpertWorkflowRunSnapshot> {
   let current = snapshot;
+  // J2-3（specs/workflow-typed-artifacts.md R6-R7）：分档 gate。light（含未声明 gatePolicy
+  // 的既有 definition）只强制置信度债务；deep 追加 stale scope 与全量点名校验。
+  const gate = resolveWorkflowGateSettings(ctx.definition);
+  // pass 被覆盖/stale 债务拒绝后注入下一轮 critic 提示词的补充要求。每轮用后即清、不落盘：
+  // resume 后 critic 阶段整体重跑、重新点名，不需要恢复该状态。
+  let supplementRequest: string | undefined;
   const execDefinition = ctx.definition.phases.find(
     (phaseDefinition) => phaseDefinition.behavior === "scheduled_graph",
   );
@@ -33,36 +48,86 @@ export async function runFinalCriticLoop(
       signal: options.abortSignal,
     });
 
-    const phaseRun = await runPhase(ctx, current, definition, options);
+    const phaseRun = await runPhase(ctx, current, definition, options, {
+      gate,
+      ...(supplementRequest ? { supplementRequest } : {}),
+    });
+    const deliveredSupplement = supplementRequest;
+    supplementRequest = undefined;
     current = phaseRun.snapshot;
     const critic = parseCriticResult(phaseRun.response);
 
+    let gateIssues: CriticGateIssue[] = [];
+    let gateProposals: WorkflowCriticReopenProposal[] = [];
     if (critic.verdict === "pass") {
-      await ctx.appendEvent(current.runId, "critic_passed", {
-        message: critic.reasoning || `Final critic iteration ${iteration} passed.`,
-        payload: {
-          acceptanceGaps: critic.acceptanceGaps,
-          iteration,
-        },
-        phase: definition.phase,
-        signal: options.abortSignal,
+      gateIssues = evaluateCriticGate({
+        coverageTexts: collectCriticCoverageTexts(critic),
+        preset: gate.preset,
+        scope: collectCriticAuditScope(current),
       });
-      return current;
+      if (gateIssues.length === 0) {
+        await ctx.appendEvent(current.runId, "critic_passed", {
+          message: critic.reasoning || `Final critic iteration ${iteration} passed.`,
+          payload: {
+            acceptanceGaps: critic.acceptanceGaps,
+            iteration,
+          },
+          phase: definition.phase,
+          signal: options.abortSignal,
+        });
+        return current;
+      }
+
+      const lowConfidence = gateIssues.find(
+        (issue) => issue.kind === "unaddressed_low_confidence",
+      );
+      if (lowConfidence) {
+        // 置信度债务（两档通用的轻量规则）：自报 low 且 pass 未点名的节点转成后续工作，
+        // 复用既有 reopen → exec 重跑通道；封顶由 maxReopens 与 maxIterations 保证。
+        gateProposals = lowConfidence.nodeIds.map((nodeId) => ({
+          nodeId,
+          reason:
+            "Node self-reported confidence=low and the critic pass verdict did not address it by id; routed as follow-up work by the workflow gate.",
+          severity: "major" as const,
+        }));
+      } else {
+        // 覆盖/stale 债务（deep）：不重开节点（工作本身可能没问题，薄的是审计），
+        // 拒绝 pass 并要求 critic 在下一轮按 id 补充点名。
+        supplementRequest = buildCriticSupplementRequest(gateIssues);
+      }
     }
 
-    const reopenProposals = dedupeReopenProposals(critic.reopenProposals);
+    const reopenProposals = dedupeReopenProposals([...critic.reopenProposals, ...gateProposals]);
     await ctx.appendEvent(current.runId, "critic_failed", {
-      message: critic.reasoning || `Final critic iteration ${iteration} failed.`,
+      message:
+        gateIssues.length > 0
+          ? `Final critic pass rejected by the ${gate.preset} gate: ${describeCriticGateIssues(gateIssues)}`
+          : critic.reasoning || `Final critic iteration ${iteration} failed.`,
       payload: {
         acceptanceGaps: critic.acceptanceGaps,
         iteration,
         reopenProposals,
+        ...(gateIssues.length > 0
+          ? {
+              gateIssues: gateIssues.map((issue) => ({ ...issue })),
+              preset: gate.preset,
+            }
+          : {}),
+        ...(deliveredSupplement ? { supplementRequest: deliveredSupplement } : {}),
       },
       phase: definition.phase,
       signal: options.abortSignal,
     });
 
     if (reopenProposals.length === 0) {
+      if (supplementRequest) {
+        // 只重置 critic phase（exec 的 done 节点不动），下一轮 runPhase 携带补充要求重跑。
+        const retryReason = `Final critic pass rejected by the ${gate.preset} gate: ${describeCriticGateIssues(gateIssues)}`;
+        current = resetPhaseForRetry(ctx, current, definition.phase, retryReason);
+        await ctx.store.writeSnapshot(current, { signal: options.abortSignal });
+        await ctx.appendGraphStatus(current, definition.phase, "pending", options.abortSignal);
+        continue;
+      }
       return current;
     }
 

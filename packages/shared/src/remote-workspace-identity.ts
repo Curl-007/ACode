@@ -5,14 +5,16 @@
 //   remote:ssh:<host>:<port>:<username>:<posixPath>
 //   remote:wsl:<distro>[:<user>]:<posixPath>
 //   remote:docker:<container>:<posixPath>
+//   remote:server:<normalizedServerId>:<posixPath>
 // path 段经 normalizeWorkspacePathForIdentity 归一（分隔符 → "/"，去收尾斜杠，
 // 空 → "/"），因此恒以 "/" 开头；authority 各段不含 "/"（host 小写、port 数字、
 // docker 容器名/wsl 发行版名的合法字符集均不含 ":" 与 "/"）。
 // 消费方：CLI v4 createSession 的 workspaceId（远程 pane 里 workspaceKey =
 // identity）需要还原出真实 workspacePath 作为会话 workingDirectory。
 import type { RemoteTarget } from "./remoteTarget.js";
+import { normalizeServerIdForIdentity, resolveServerIdentityId } from "./serverEndpoint.js";
 
-export type RemoteWorkspaceIdentityKind = "ssh" | "wsl" | "docker";
+export type RemoteWorkspaceIdentityKind = "ssh" | "wsl" | "docker" | "server";
 
 export interface ParsedRemoteWorkspaceIdentity {
   kind: RemoteWorkspaceIdentityKind;
@@ -27,10 +29,11 @@ const AUTHORITY_SEGMENTS: Record<RemoteWorkspaceIdentityKind, number> = {
   ssh: 3,
   wsl: 1,
   docker: 1,
+  server: 1,
 };
 
 function isRemoteWorkspaceIdentityKind(value: string): value is RemoteWorkspaceIdentityKind {
-  return value === "ssh" || value === "wsl" || value === "docker";
+  return value === "ssh" || value === "wsl" || value === "docker" || value === "server";
 }
 
 function normalizeWorkspacePathForIdentity(workspacePath: string): string {
@@ -57,6 +60,12 @@ export function buildRemoteWorkspaceIdentity(workspacePath: string, target: Remo
     }
     case "docker":
       return `remote:docker:${target.container}:${normalizedPath}`;
+    case "server": {
+      // serverId/name/host 可能含 ":"（如 host:port），normalizeServerIdForIdentity
+      // 会把非 [a-z0-9._-] 段替换为 "-"，保证 authority 单段不含 ":"，通用解析循环可还原 path。
+      const serverId = normalizeServerIdForIdentity(resolveServerIdentityId(target));
+      return `remote:server:${serverId}:${normalizedPath}`;
+    }
   }
 }
 

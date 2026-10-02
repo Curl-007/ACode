@@ -54,7 +54,6 @@ export interface AgentSummary {
   injectAgentsMd?: boolean;
   skills?: string[];
   permissionMode?: AgentPermissionMode;
-  maxTurns?: number;
   background?: boolean;
   mcpServers?: unknown[];
   path: string;
@@ -99,7 +98,6 @@ export interface SubAgentConfig {
   injectAgentsMd?: boolean;
   skills?: string[];
   permissionMode?: AgentPermissionMode;
-  maxTurns?: number;
   background?: boolean;
   mcpServers?: unknown[];
 }

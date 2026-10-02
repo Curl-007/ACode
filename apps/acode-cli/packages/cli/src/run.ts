@@ -20,6 +20,10 @@ import { resolveCliCwd } from "./cwd.js";
 import { runLoginCommand, runLogoutCommand } from "./login-command.js";
 import { CLI_COMMAND_NAME, CLI_PROCESS_NAME } from "./process-name.js";
 import { isPluginHostInvocation, runPluginHostCommand } from "./plugin-host-command.js";
+import {
+  isProviderDoctorInvocation,
+  runProviderDoctorCommand,
+} from "./provider-doctor-command.js";
 import { isDwfChildInvocation, runDwfChildCommand } from "./dwf-child-command.js";
 import { runPrompt } from "./prompt-command.js";
 import { runPluginsCommand, type PluginsCommandFlags } from "./plugins-command.js";
@@ -308,6 +312,12 @@ export const run = async (ctx: RunContext, deps: RunDependencies = {}): Promise<
 
   if (ctx.argv[0] === "hooks") {
     return await runHooksCommand(ctx, deps, version);
+  }
+
+  // `doctor --provider` 自带严格 argv 解析（`--provider` 允许裸标志=全部 provider），
+  // 全局 parseArgs 是 strict 的、会把未知选项直接报错，因此与 hooks 同构地提前分流。
+  if (isProviderDoctorInvocation(ctx.argv)) {
+    return await runProviderDoctorCommand(ctx, deps, version, ctx.argv);
   }
 
   let parsed: ReturnType<typeof parseGlobalArgs>;

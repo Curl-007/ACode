@@ -72,6 +72,27 @@ export const acodePermissionResponseSchema = z
   .strict();
 export type ACodePermissionResponse = z.infer<typeof acodePermissionResponseSchema>;
 export const acodeSessionModeSchema = z.enum(["plan", "build", "edit", "yolo", "auto"]);
+/**
+ * 引擎权限模式联合（镜像 ZCode kernel:34720 dzi）。
+ *
+ * native(glm) 实际只用 build/edit/plan/yolo 子集。外部引擎槽位已下线
+ * （spec: agent-engine-external-slots-removal.md），但联合保持取值上界不收窄：
+ * bots 权限投影（含历史 bot 配置里的 default/acceptEdits 等档位文案）仍消费完整联合，
+ * 引擎作用域的实际允许集见 getAgentEnginePermissionModes()。
+ */
+export const acodeEnginePermissionModeSchema = z.enum([
+  "default",
+  "yolo",
+  "plan",
+  "edit",
+  "acceptEdits",
+  "auto",
+  "dontAsk",
+  "bypassPermissions",
+  "autoEdit",
+  "build",
+]);
+export type ACodeEnginePermissionMode = z.infer<typeof acodeEnginePermissionModeSchema>;
 export const acodeSessionStatusSchema = z.enum([
   "idle",
   "running",

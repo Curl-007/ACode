@@ -2,6 +2,22 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <!--
+      安全加固 P2 #2c（specs/electron-hardening.md §3）：主特权窗 CSP，对齐辅助窗（aboutWindow 等）
+      的 meta CSP 形态，但覆盖主窗真实资源面：
+      - 'unsafe-inline'：本文件的启动动画 module script + dev 态 Vite/React-refresh 内联注入（辅助窗同款处理）；
+      - 'wasm-unsafe-eval'：Shiki 代码高亮（Oniguruma WASM）经 WebAssembly.instantiate 编译，CSP 下必须放行；
+        只允许 WASM 编译、不允许任意 eval()，WASM 二进制来自打包产物（self/file:），非远端；
+      - file: 源：打包态 loadFile 页面 origin 为 opaque，'self' 不匹配 file: 子资源；
+      - ws: 覆盖 dev HMR websocket；http/https 保留 renderer 既有远程取数面（图片预览、发布说明等）；
+      - frame-src http:/https:：内嵌浏览器与 Coding Plan 是 <webview> guest（frame-src 对 webview 生效），
+        guest 自身导航白名单仍由 main 侧 will-attach-webview / guest 守卫负责；
+      - media-src acode-media:：本地音视频预览走 LOCAL_MEDIA_PREVIEW_SCHEME（packages/shared）。
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self' file: 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' file: 'unsafe-inline'; img-src 'self' file: data: blob: acode-media: https: http:; media-src 'self' file: data: blob: acode-media: https: http:; font-src 'self' file: data:; connect-src 'self' file: data: blob: ws: wss: http: https: acode-media:; worker-src 'self' file: blob:; frame-src http: https: 'self' file:; object-src 'none'; base-uri 'none'; form-action 'none'"
+    />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>ACode</title>
     <style>
@@ -117,47 +133,36 @@
       <div class="startup-logo-shell">
         <svg
           xmlns="http://www.w3.org/2000/svg"
-          width="158"
-          height="100"
+          width="140"
+          height="137"
           fill="none"
-          viewBox="120 264 784 496"
+          viewBox="156 162 712 700"
           class="startup-logo"
           aria-hidden="true"
         >
-          <!-- 品牌括号与 AI 星光用图标同款对角渐变（天蓝→靛紫），不再使用白色 currentColor。 -->
+          <!-- 品牌终端提示符与方块光标，银白渐变，与图标同款。 -->
           <defs>
             <linearGradient
               id="startup-brand-gradient"
-              x1="760"
-              y1="300"
-              x2="300"
-              y2="720"
+              x1="238"
+              y1="244"
+              x2="542"
+              y2="780"
               gradientUnits="userSpaceOnUse"
             >
-              <stop offset="0" stop-color="#38bdf8" />
-              <stop offset="1" stop-color="#818cf8" />
+              <stop offset="0" stop-color="#f1f5f9" />
+              <stop offset="1" stop-color="#64748b" />
             </linearGradient>
           </defs>
           <path
-            d="M368 312L168 512L368 712"
+            d="M238 244L542 512L238 780"
             fill="none"
-            stroke="#38bdf8"
-            stroke-width="96"
+            stroke="url(#startup-brand-gradient)"
+            stroke-width="164"
             stroke-linecap="round"
             stroke-linejoin="round"
           />
-          <path
-            fill="url(#startup-brand-gradient)"
-            d="M512 380C525 462 562 499 644 512C562 525 525 562 512 644C499 562 462 525 380 512C462 499 499 462 512 380Z"
-          />
-          <path
-            d="M656 312L856 512L656 712"
-            fill="none"
-            stroke="#818cf8"
-            stroke-width="96"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-          />
+          <rect x="668" y="412" width="200" height="200" rx="44" fill="#f8fafc" />
         </svg>
       </div>
     </div>

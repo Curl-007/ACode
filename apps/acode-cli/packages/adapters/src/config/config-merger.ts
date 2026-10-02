@@ -42,6 +42,19 @@ export function mergeConfigs(...configs: PrioritizedConfig[]): RuntimeConfigPatc
         : inputConfig;
     const previousHooks = result.hooks;
     const previousPlugins = result.plugins;
+    // 安全加固 P1-6 补漏：必须在 Object.assign 之前快照继承来的 disallowedTools。
+    // Object.assign(result, config) 会把 result.permission 整体替换成项目层的对象，
+    // 之后再读 result.permission.disallowedTools 拿到的已经是项目值，与项目值并集等于没并集。
+    // 这个 bug 被回归测试抓到过两次（先是在展开后读、再是在 assign 后读）。
+    // 安全加固 P2：Policy 层与 Project 层同为「只能收紧」语义，共用同一并集路径。
+    const tightenOnlyScope = scope === ConfigScope.Project || scope === ConfigScope.Policy;
+    const inheritedDisallowedTools = tightenOnlyScope
+      ? result.permission?.disallowedTools
+      : undefined;
+    // 安全加固 P2：Policy 补丁是稀疏的（只有 disallowedTools + policy），Object.assign 会
+    // 整体替换 result.permission——必须在替换前快照继承的 permission，合并末尾恢复，
+    // 否则策略地板会把用户/项目层的 mode、allowedTools 等字段抹掉。
+    const inheritedPermission = scope === ConfigScope.Policy ? result.permission : undefined;
     Object.assign(result, config);
 
     // Deep merge nested objects
@@ -49,7 +62,35 @@ export function mergeConfigs(...configs: PrioritizedConfig[]): RuntimeConfigPatc
       result.modelStream = { ...result.modelStream, ...config.modelStream };
     }
     if (config.permission) {
+      // 安全加固 P1-6 补漏（对抗评审核实）：`disallowedTools` 若走下面的展开是**整体替换**，
+      // 而 ConfigScope.Project 优先级(20)高于 User(10)。于是仓库携带的 permission.disallowedTools
+      // 会覆盖用户在 ~/.acode/cli/config.json 里的硬禁用集——例如用户禁了 Bash、仓库写
+      // disallowedTools:["WebFetch"] 或 []，Bash 的硬禁用就被静默清空（从 permission/service.ts
+      // 的 disallowedTools 硬拒降级为普通 build 模式审批）。这直接违反「项目配置只能收紧、
+      // 不能放宽」：disallowedTools 是唯一被有意保留的项目 permission 字段，却恰好能用来放宽。
+      //
+      // 修法：Project/Policy 作用域下对 disallowedTools 做**并集**而非替换。合并按优先级升序
+      // 进行，走到 Project 时 result 已含 System(0) 与 User(10)，走到 Policy(60) 时已含全部
+      // 低层，故并集等价于「高层只能追加禁用项」。
+      //
+      // 注意 inheritedDisallowedTools 已在循环开头（Object.assign 之前）快照，见上。
       result.permission = { ...result.permission, ...config.permission };
+      if (tightenOnlyScope) {
+        const incoming = config.permission.disallowedTools;
+        if (inheritedDisallowedTools !== undefined || incoming !== undefined) {
+          result.permission = {
+            ...result.permission,
+            disallowedTools: [
+              ...new Set([...(inheritedDisallowedTools ?? []), ...(incoming ?? [])]),
+            ],
+          };
+        }
+      }
+      if (inheritedPermission) {
+        // 恢复被稀疏 Policy 补丁整体替换掉的继承字段；策略自身的贡献
+        // （disallowedTools 并集、policy 地板）在展开顺序上位于继承值之后，保持胜出。
+        result.permission = { ...inheritedPermission, ...result.permission };
+      }
     }
     if (config.storage) {
       result.storage = { ...result.storage, ...config.storage };

@@ -22,6 +22,16 @@ import { resolveContainedMemoryFilePath, resolveSafeMemoryFilePath } from "./mem
 import { auxiliaryModelOptions } from "../model/auxiliary-model-options.js";
 
 interface MemoryAgentLoopResult {
+  /**
+   * 到顶截断标记：true = 循环因 maxTurns 用尽而退出（模型最后一轮仍在索取工具），
+   * false = 模型自然收尾（某轮不再索取工具）。
+   *
+   * 为什么必须显式带出：`turns` 单独**无法**区分两者——自然收尾在 break 前 `turns += 1`，
+   * 到顶由循环头 `turns += 1`，两者都可以等于 maxTurns（maxTurns=5 时，第 5 轮自然收尾与
+   * 第 5 轮到顶都返回 turns=5）。调用方据此分流，见
+   * specs/command-terminal-state-audit.md §A。
+   */
+  capped: boolean;
   messages: ModelInputMessage[];
   turns: number;
 }
@@ -44,6 +54,18 @@ export async function runMemoryAgentLoop(input: {
     toolCall: ExecutableToolCall,
     options: { abortSignal?: AbortSignal },
   ) => Promise<ToolExecutionResult>;
+  /**
+   * fail-closed scope guard（specs/memory-injection-fail-closed.md R9）：每轮模型请求**前**
+   * 复查「这次循环绑定的记忆 scope 还是不是当前 scope」。返回 false 立即停轮，不再发模型请求、
+   * 不再执行任何工具——否则最长 5 轮模型往返期间身份/工作区一旦变化（resume 会重写
+   * config.memory.workspaceIdentity，runtime/methods/resume.ts:125-129），循环会继续把记忆
+   * 写进一个已经不属于本会话的目录。
+   *
+   * 返回值形状刻意不变（仍是 capped/messages/turns，tests/subagent-maxturns-dangling.test.mjs
+   * 逐字钉住这三个键）：scope 中止既不是「到顶」也不是「自然收尾」，不能污染 capped 语义
+   * （specs/command-terminal-state-audit.md §A）。中止事实由调用方自己的闭包记录并优先消费。
+   */
+  isScopeStillCurrent?: () => boolean;
   maxTurns: number;
   messages: readonly ModelInputMessage[];
   model: Model;
@@ -54,9 +76,16 @@ export async function runMemoryAgentLoop(input: {
 }): Promise<MemoryAgentLoopResult> {
   const messages = input.messages.map(cloneModelMessage);
   let turns = 0;
+  // finishedNaturally 只在「模型某轮不再索取工具」时置真。循环因 maxTurns 用尽而退出时
+  // 它保持 false，于是返回值的 capped（= !finishedNaturally）就是「被切断」而非「自然收尾」。
+  let finishedNaturally = false;
 
   for (; turns < input.maxTurns; turns += 1) {
     input.abortSignal?.throwIfAborted();
+    // scope 复查在模型请求之前：已经过期的 scope 不值得再花一次 provider 往返。
+    // 中止时 messages 可能带悬空 tool_use（无对应 tool_result）——调用方整份丢弃
+    // （Extraction 从不把它回灌主对话），因此不构成 provider 侧的配对违约。
+    if (input.isScopeStillCurrent && !input.isScopeStillCurrent()) break;
     // 只在 Memory 初始快照投影会漏掉 Read 等工具后续产生的媒体；每一次
     // provider 请求都必须在 request-local 副本上执行同一套 capability + budget 策略。
     const mediaProjection = projectMessagesForModelMediaPolicy(
@@ -77,6 +106,7 @@ export async function runMemoryAgentLoop(input: {
     messages.push(createAssistantMessage(response.text, response.reasoning, toolCalls));
     if (toolCalls.length === 0) {
       turns += 1;
+      finishedNaturally = true;
       break;
     }
 
@@ -115,7 +145,7 @@ export async function runMemoryAgentLoop(input: {
     messages.push(...toolMessages);
   }
 
-  return { messages, turns };
+  return { capped: !finishedNaturally, messages, turns };
 }
 
 function evaluateMemoryAgentToolPolicy(

@@ -170,27 +170,11 @@ async function deleteSession(
   return undefined;
 }
 
-async function discardSharedContext(
-  host: V4CommandCoreHost,
-  envelope: CommandEnvelope,
-): Promise<CommandResult | undefined> {
-  const payload = envelope.payload as CommandPayloadMap["discardSharedContext"];
-  const sessionId = envelope.sessionId;
-  if (!sessionId || !host.discardSharedContext) {
-    throw new Error("v4 discardSharedContext requires a session-scoped storage capability");
-  }
-  const updated = await host.discardSharedContext(sessionId, payload.contextId);
-  if (!updated)
-    throw new V4InputAdmissionRejectedError(
-      "fault.command.inputRejected",
-      "shared context is not pending",
-    );
-  return undefined;
-}
+// 对话分享已下线：discardSharedContext 命令已删除
+// （specs/conversation-share-removal.md 2.2）。
 
 export const sessionMgmtHandlers = {
   createSession,
   renameSession,
   deleteSession,
-  discardSharedContext,
 };

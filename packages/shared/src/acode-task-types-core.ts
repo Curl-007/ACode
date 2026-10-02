@@ -31,7 +31,12 @@ export type InputId = string;
 export type QueryId = string;
 // ---- ACode Provider ----
 
-/** 支持的 ACode agent 提供方；当前仅保留 glm。 */
+/**
+ * ACode 的 agent 引擎（provider）。
+ *
+ * `glm` = ACode 自带 bundled native agent。外部引擎槽位（codex/opencode/gemini）已下线，
+ * 旧持久化 provider 值在解析层归一（见 acode-agent-policy.ts 的 acodeAgentProviderSchema）。
+ */
 export type ACodeProvider = "glm";
 export type ACodeGlmAgentModelStateUpdateReason =
   | "session_initialized"

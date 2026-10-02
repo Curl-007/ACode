@@ -16,7 +16,12 @@ export { resolveProjectMemoryRoot } from "./memory/project-root.js";
 
 // Tool components
 export { ToolScheduler, defaultToolScheduler, READ_ONLY_TOOLS } from "./tool/scheduler.js";
-export type { ToolSchedule, ToolScheduleItem, ToolDependency } from "./tool/scheduler.js";
+export type {
+  ToolSchedule,
+  ToolScheduleItem,
+  ToolDependency,
+  ToolSchedulerSnapshot,
+} from "./tool/scheduler.js";
 export { createToolRegistry, ToolRegistry, ToolRegistryImpl } from "./tool/registry.js";
 export { createToolExecutor, ToolExecutor, ToolExecutorImpl } from "./tool/executor.js";
 export { builtInTools, registerBuiltInTools } from "./tool/handlers/index.js";
@@ -118,6 +123,12 @@ export {
   createDenyPermissionBroker,
   createManualPermissionBroker,
   defaultPermissionConfig,
+  // 安全加固 P2 补丁项：托管策略地板的进程级注册点（create-app 唯一调用方；
+  // get/reset 仅供测试，从 src 路径直接导入，不进公开入口避免无消费者导出）。
+  setProcessManagedPolicyFloor,
+  // J1-2：反射门审计 sink 的进程级注册点（create-app 唯一调用方，接 info 级 Logger
+  // 落 JSONL；缺省 sink 写 stderr，见 specs/bash-confirm-reflexive-gate.md R6）。
+  setBashReflexAuditSink,
 } from "./permission/index.js";
 export type {
   ManualPermissionBrokerOptions,
@@ -127,6 +138,7 @@ export type {
   PermissionToolCapability,
 } from "./permission/index.js";
 export type { PermissionConfig } from "./permission/index.js";
+export type { BashReflexAuditEntry, BashReflexAuditSink } from "./permission/index.js";
 
 // Runtime
 export { AgentRuntime } from "./runtime.js";
@@ -141,6 +153,15 @@ export type {
   ChildClientPortsContext,
   ClientFacingPorts,
 } from "./runtime/helpers/child-client-ports.js";
+// D5 并发只读诊断投影（specs/concurrency-diagnostics-projection.md）：快照形状经包公开
+// 入口再导出，文档与消费方（debug 面、测试）引用同一份类型定义，不各自手抄。
+export type {
+  ConcurrencyDiagnosticsSnapshot,
+  ConcurrencyDomainId,
+  ConcurrencyDomainSnapshot,
+} from "./runtime/methods/concurrency-diagnostics.js";
+// P5 tools schema token 度量（specs/tools-schema-token-metrics.md）：度量形状同上理由导出。
+export type { ToolsSchemaTokenMetric } from "./runtime/methods/tools-schema-token-metric.js";
 export type {
   ActiveTurnInfo,
   AgentRuntimeConfig,

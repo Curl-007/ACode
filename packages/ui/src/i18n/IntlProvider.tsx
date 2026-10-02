@@ -16,14 +16,7 @@ import {
   readSafeLocalStorage,
   writeSafeLocalStorage,
 } from "@/lib/browserEnvironment.js";
-import zhCN from "./locales/zh-CN.js";
-import enUS from "./locales/en-US.js";
-
-/** 语言 → 翻译消息映射 */
-const MESSAGES: Record<Locale, Record<string, string>> = {
-  "zh-CN": zhCN,
-  "en-US": enUS,
-};
+import { getLocaleMessagesResource, type LocaleMessages } from "./localeMessages.js";
 
 /** 简易 intl 工具：根据 id 查找翻译，支持 {key} 占位符替换 */
 export interface IntlInstance {
@@ -110,9 +103,8 @@ function shouldApplyLocaleBroadcastMessage(
   return true;
 }
 
-function createIntl(locale: Locale): IntlInstance {
-  // noUncheckedIndexedAccess：用 ?? 回退到默认语言的翻译
-  const messages = MESSAGES[locale] ?? MESSAGES[DEFAULT_LOCALE]!;
+function createIntl(messages: LocaleMessages): IntlInstance {
+  // noUncheckedIndexedAccess：缺失 key 回退为 id 本身（与原静态词典实现一致）
   return {
     formatMessage({ id }, values) {
       let msg = messages[id] ?? id;
@@ -190,6 +182,12 @@ export function ACodeIntlProvider({
     () => initialLocale ?? readStoredPreference() ?? "system",
   );
   const [systemLocale, setSystemLocale] = useState<Locale>(() => resolveNavigatorSystemLocale());
+  // 规则 7（词典单语言驻留）：记录最近一次已就绪的词典。切换目标语言的词典未就绪期间
+  // 沿用旧语言整组（locale + messages 原子一致）渲染，就绪后一次性换载，切换期间 UI 保持可用。
+  const [loadedLocaleMessages, setLoadedLocaleMessages] = useState<{
+    locale: Locale;
+    messages: LocaleMessages;
+  } | null>(null);
   const enqueueLocalePreferenceUpdate = useCallback(
     (operationSeq: number, resolvedLocale: Locale, preference: LocalePreference) => {
       if (localePreferenceOperationSeqRef.current !== operationSeq) {
@@ -354,12 +352,61 @@ export function ACodeIntlProvider({
     [setLocalePreference],
   );
 
-  const intl = useMemo(() => createIntl(locale), [locale]);
+  // ===== 规则 7：词典按需加载，只驻留当前语言 =====
+  // 渲染期获取当前语言的词典资源（幂等，首次获取即触发动态 import）。
+  const localeMessagesResource = getLocaleMessagesResource(locale);
+  // 资源已就绪 → 直接使用当前语言词典；未就绪（语言切换中）→ 沿用上一次已提交词典。
+  const activeLocaleMessages =
+    localeMessagesResource.state === "fulfilled"
+      ? { locale, messages: localeMessagesResource.messages }
+      : loadedLocaleMessages;
 
-  const value = useMemo<IntlContextValue>(
-    () => ({ intl, locale, localePreference, setLocale, setLocalePreference }),
-    [intl, locale, localePreference, setLocale, setLocalePreference],
+  useEffect(() => {
+    if (localeMessagesResource.state === "fulfilled") {
+      // 就绪路径：把已就绪词典登记为提交状态（同语言重复登记为 no-op，不会触发额外渲染）。
+      const next = { locale, messages: localeMessagesResource.messages };
+      setLoadedLocaleMessages((current) => (current?.locale === next.locale ? current : next));
+      return;
+    }
+
+    let disposed = false;
+    const pendingLocale = locale;
+    void localeMessagesResource.promise.then((messages) => {
+      // 目标语言又被切走（如快速 zh→en→zh）：迟到的词典不再提交，避免旧语言覆盖新选择。
+      if (disposed) {
+        return;
+      }
+      setLoadedLocaleMessages({ locale: pendingLocale, messages });
+    });
+    return () => {
+      disposed = true;
+    };
+  }, [locale, localeMessagesResource]);
+
+  const activeMessages = activeLocaleMessages?.messages;
+  const intl = useMemo(
+    () => (activeMessages ? createIntl(activeMessages) : null),
+    [activeMessages],
   );
+  const activeLocale = activeLocaleMessages?.locale;
+  const value = useMemo<IntlContextValue | null>(
+    () =>
+      intl && activeLocale
+        ? { intl, locale: activeLocale, localePreference, setLocale, setLocalePreference }
+        : null,
+    [intl, activeLocale, localePreference, setLocale, setLocalePreference],
+  );
+
+  if (!value && localeMessagesResource.state === "pending") {
+    // 冷启动首帧词典未就绪：挂起本 Provider（抛出待决 promise）。入口没有包裹 Suspense 边界，
+    // React 会推迟整个根提交——桌面 HTML 启动壳 / web 入口加载页原样保持，避免闪现未翻译的
+    // message id；词典模块已在主包时该 promise 在微任务内 resolve，首帧提交不受感知。
+    throw localeMessagesResource.promise;
+  }
+  if (!value) {
+    // 理论不可达（fulfilled 资源必然能构造 intl）；仅作类型收口防御，不改变运行行为。
+    throw new Error("[i18n] locale messages unavailable");
+  }
 
   return <IntlContext value={value}>{children}</IntlContext>;
 }

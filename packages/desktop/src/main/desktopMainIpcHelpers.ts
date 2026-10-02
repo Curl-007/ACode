@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { realpath } from "node:fs/promises";
 import { normalize } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { BrowserWindow } from "electron";
 import { shell } from "electron";
 
@@ -8,6 +9,36 @@ type DesktopIpcLogger = {
   info?: (...args: unknown[]) => void;
   warn: (...args: unknown[]) => void;
 };
+
+/**
+ * 把 OpenExternal 载荷里的 file: URL（含 OpenSplitButton 传入的裸本地路径——WHATWG 解析会把
+ * `C:\...` 规范成 file:///C:/...）转换为可直接 `shell.openPath` 的本地绝对路径。
+ *
+ * 安全加固 P2 #2d（specs/electron-hardening.md §4）：file: 一律不再进入 `shell.openExternal`
+ * ——该 API 把字符串直接交给 OS shell 解释，历史上是任意文件/UNC 路径打开面。转换规则：
+ * - 非 file: 协议或解析失败 → null（调用方拒绝）；
+ * - host 非 "" 且非 "localhost"（UNC 形态 `file://server/share`）→ null；
+ * - 其余经 fileURLToPath 返回本地路径，由 openPathInDefaultApp 走 normalize + realpath + openPath。
+ */
+export function resolveLocalFileUrlTarget(value: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "file:") {
+    return null;
+  }
+  if (url.host !== "" && url.host !== "localhost") {
+    return null;
+  }
+  try {
+    return fileURLToPath(url);
+  } catch {
+    return null;
+  }
+}
 
 export async function openPathInDefaultApp(
   rawPath: string,

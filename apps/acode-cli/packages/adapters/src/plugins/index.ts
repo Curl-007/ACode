@@ -92,6 +92,15 @@ export {
 export { getPluginSourceDiagnosticCode } from "./source-errors.js";
 
 export {
+  describePluginRepositorySourcePolicyViolation,
+  isPluginGitSourceHostAllowed,
+  parsePluginRepositorySourceHost,
+  resolvePluginRepositorySourcePinDecision,
+  PLUGIN_REPOSITORY_SOURCE_ALLOWED_HOSTS,
+  type PluginRepositorySourcePinDecision,
+} from "./git-source-pinning.js";
+
+export {
   comparePluginUpdate,
   comparePluginVersions,
   type PluginUpdateStatus,

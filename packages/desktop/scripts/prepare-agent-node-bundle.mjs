@@ -11,12 +11,13 @@
 //
 // 远端（SSH/WSL/Docker）没有 Electron，仍走 prepare:remote-assets 的原生二进制，互不影响。
 
-import { cpSync, existsSync, mkdirSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { access, cp, mkdir } from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { runCommand } from "../../../scripts/spawn-command.mjs";
+import { buildDesktopAgentBytecode } from "../../../scripts/build-desktop-agent-bytecode.mjs";
 import { stageAgentBundle } from "./stage-agent-bundle.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
@@ -169,6 +170,65 @@ function buildCliBundle() {
   }
 }
 
+// J5-L1：删除 cli/dist 里的全部字节码产物（loader/.jsc/runtime/meta）。编译失败或平台失配时调用，
+// 确保 staging 不会捡到部分/错平台产物（staging 另有新鲜度+依赖闭环校验兜底，这里是源头清理）。
+function removeBytecodeArtifacts() {
+  const distDir = resolve(repoRoot, "apps/acode-cli/packages/cli/dist");
+  if (!existsSync(distDir)) return;
+  for (const name of readdirSync(distDir)) {
+    if (
+      name === "acode.bytecode.cjs" ||
+      name === "acode.bytecode-meta.json" ||
+      /^acode\.bytecode-.+\.jsc$/.test(name) ||
+      /^acode\.bytecode-runtime-.+\.cjs$/.test(name)
+    ) {
+      rmSync(resolve(distDir, name), { force: true });
+    }
+  }
+}
+
+// J5-L1：打包时编译 agent 的 V8 字节码入口（生产就绪 -44%，见 docs/j5-performance-baseline.md §3）。
+// 仅当 host 平台/架构 == target 平台/架构才编译：字节码严格绑定 platform+arch+V8 版本，编译器用
+// createRequire('electron') 取宿主 Electron；CI 原生分平台构建（release.yml matrix）保证 host==target。
+// 交叉打包时跳过 → 包内无 .jsc → 生产 resolver 优雅回退 acode.cjs（安全，且避免错平台 .jsc 进包失配）。
+// 编译失败非致命：log warn 继续（不阻断发布构建；生产回退 JS）。
+async function buildAgentBytecode() {
+  if (process.env.ACODE_E2E_COVERAGE === "1") {
+    console.log("[prepare:agent-bundle] skip bytecode under E2E coverage (JS path required)");
+    return;
+  }
+  if (process.platform !== platform || process.arch !== arch) {
+    console.log(
+      `[prepare:agent-bundle] skip bytecode: host ${process.platform}-${process.arch} != target ${platform}-${arch} (cross-build → JS fallback)`,
+    );
+    return;
+  }
+  try {
+    console.log("[prepare:agent-bundle] compiling agent V8 bytecode ...");
+    const artifact = await buildDesktopAgentBytecode();
+    // J5-L1（对抗复核 F5）：跨平台守卫校验的是宿主 node 的 platform/arch，但实际编译用的 Electron 在
+    // Rosetta / npm_config_arch / pnpm supportedArchitectures 下可能是另一架构。断言编译产物 runtime 指纹
+    // 的 platform/arch == target，失配则删产物（staging 回退 JS），避免错平台 .jsc 进包（运行时虽会指纹
+    // 失配→回退 JS 安全，但 36MB 死重且零收益）。
+    const runtime = artifact.metadata?.runtime;
+    if (!runtime || runtime.platform !== platform || runtime.arch !== arch) {
+      console.warn(
+        `[prepare:agent-bundle] bytecode runtime ${runtime?.platform}-${runtime?.arch} != target ${platform}-${arch}, discarding bytecode (JS fallback)`,
+      );
+      removeBytecodeArtifacts();
+      return;
+    }
+    console.log(`[prepare:agent-bundle] bytecode compiled: ${artifact.bytecodePath}`);
+  } catch (error) {
+    console.warn(
+      `[prepare:agent-bundle] bytecode compile failed (non-fatal, production falls back to JS): ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    removeBytecodeArtifacts();
+  }
+}
+
 function buildOfficialPluginRuntimes() {
   for (const plugin of officialPluginPackages) {
     if (!plugin.requiresRuntime) continue;
@@ -289,6 +349,7 @@ async function stageBundledSkillPack() {
 // browser-use runtime 的声明生成依赖 @acode/core/dist。CI 干净检出没有该产物，
 // 必须先构建 CLI 依赖，再构建官方插件；开发机残留的 dist 曾掩盖这个顺序问题。
 buildCliBundle();
+await buildAgentBytecode();
 buildOfficialPluginRuntimes();
 stageBundle();
 stageOfficialPlugins();

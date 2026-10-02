@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "generatedAt": "2026-09-29T09:18:10.446Z",
+  "sections": [
+    {
+      "id": "prefix.cli",
+      "group": "system-stable",
+      "source": "cli_prefix",
+      "owner": "apps/acode-cli/packages/core/src/context/registry-shared.ts",
+      "hash": "3a4a34dae09db1e0c7ed0f4f09fe0c6e931294ea04ba0197d9de6872cdcf407a"
+    },
+    {
+      "id": "identity.default",
+      "group": "system-stable",
+      "source": "identity",
+      "owner": "apps/acode-cli/packages/core/src/context/sections/identity.ts",
+      "hash": "53b0061ec95a090f7aa5298e04e5aa17fedc67b766b5c25cf24eecff9038ff05"
+    },
+    {
+      "id": "surface.desktop",
+      "group": "system-stable",
+      "source": "desktop_context",
+      "owner": "apps/acode-cli/packages/core/src/context/sections/desktop.ts",
+      "hash": "9dad7ac1d209146aa5588f0cf22dbe0f08d78eac446b73a061da362823a4b2b6"
+    },
+    {
+      "id": "behavior.dynamic",
+      "group": "system-dynamic",
+      "source": "dynamic_behavior",
+      "owner": "apps/acode-cli/packages/core/src/context/dynamic-sections.ts",
+      "hash": "bbdc66b399d297fff35df404921dcbd9056ed8892cd0fa6f35762345115225af"
+    },
+    {
+      "id": "context.management",
+      "group": "system-dynamic",
+      "source": "context_management",
+      "owner": "apps/acode-cli/packages/core/src/context/dynamic-sections.ts",
+      "hash": "1732b7f098a925d7cee667d6aa722d3ff6aaf83cda240dc43ad4f98503c142bb"
+    },
+    {
+      "id": "subagent.notes",
+      "group": "system-stable",
+      "source": "subagent_notes",
+      "owner": "apps/acode-cli/packages/core/src/subagent/system-prompt.ts",
+      "hash": "5de0735ce4ced596466720f2002e1942e1ec745cfb4a6669bbb137db6ff6f10b"
+    }
+  ],
+  "sectionsHash": "eddd09689981f844a1fc69aa3d176c98901c425c98c68cdb4686128f6f24019f"
+}

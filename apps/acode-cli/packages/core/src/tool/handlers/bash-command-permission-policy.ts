@@ -1,3 +1,4 @@
+import { homedir } from "node:os";
 import type { PermissionRuleValue, PermissionUpdate } from "@acode/contracts";
 import type { ToolPermissionRulePolicy, ToolRuntimePermissionCapabilityContext } from "../types.js";
 import {
@@ -12,6 +13,7 @@ import {
   type BashCommandRegistryNode,
 } from "./generated/bash-command-registry.js";
 import { isRuntimeReadOnlyBashCommand } from "./bash-semantics.js";
+import { assessBashCommandTargetRisk } from "./bash-target-risk/index.js";
 
 const MAX_SUGGESTED_RULES = 5;
 const ARG_IS_COMMAND = 1;
@@ -98,7 +100,10 @@ function createBashPermissionRulePolicy(
   const rawCommand = command.trim();
   const exactCommands = command === rawCommand ? [rawCommand] : [command, rawCommand];
   const analysis = analyzeBashCommand(command);
-  const safe = isAnalysisSafeForPrefix(analysis);
+  // J1-1（bash-target-blast-radius R5.3）：目标 blast-radius 为 confirm/catastrophic
+  // 的命令不生成稳定前缀通配规则——破坏目标无法静态确定的命令不应产出可复用的
+  // allow 前缀（只允许精确命令规则）。既有 HIGH_RISK_ROOT_COMMANDS 与前缀逻辑不动。
+  const safe = isAnalysisSafeForPrefix(analysis) && !hasUnverifiableTargetRisk(command, context);
   const allSubjectGroups = safe ? analysis.commands.map(buildInvocationRuleSubjects) : [];
   const requiredCommands = safe
     ? analysis.commands.filter(
@@ -178,6 +183,23 @@ function isAnalysisSafeForPrefix(analysis: BashCommandAnalysis): boolean {
         staticAssignmentTokens(invocation) !== undefined,
     )
   );
+}
+
+/** 目标 blast-radius 分级为 confirm/catastrophic 时禁止生成通配前缀规则（见 R5.3）。 */
+function hasUnverifiableTargetRisk(
+  command: string,
+  context?: ToolRuntimePermissionCapabilityContext,
+): boolean {
+  const level = assessBashCommandTargetRisk(command, {
+    workingDirectory: context?.workingDirectory,
+    workspaceRoot: context?.workspaceRoot,
+    homeDirectory: homedir(),
+    platform: process.platform,
+    // R6 边界⑥收口：与 capability 同一视角——confirm/catastrophic 级 script body
+    //（`npm run $X`、危险 body）不得产出可复用的 allow 前缀规则。
+    ...(context?.packageScripts ? { packageScripts: context.packageScripts } : {}),
+  }).level;
+  return level === "confirm" || level === "catastrophic";
 }
 
 function normalizeInvocation(invocation: BashCommandInvocation): string {

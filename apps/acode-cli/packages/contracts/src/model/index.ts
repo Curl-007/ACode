@@ -78,6 +78,34 @@ export interface ModelRequestAdmission {
     model: ModelRequestTarget;
     signal?: AbortSignal;
   }): Promise<ModelRequestAdmissionTicket>;
+  /**
+   * D5 并发只读诊断投影（`specs/concurrency-diagnostics-projection.md` R4）：返回全部治理桶
+   * （每个 provider key 一桶）的只读快照。**纯投影**——实现不得因它改变任何准入决策，也不得
+   * 因此新增状态。可选成员（先例：`tryAcquire?`、`DynamicWorkflowRunPort.concurrencyCeiling?`）：
+   * 缺席 = 宿主未装配投影面，消费方（runtime 诊断面）投影「未知」，不得猜测。
+   */
+  concurrencyBuckets?(): ModelRequestAdmissionBucketSnapshot[];
+}
+
+/**
+ * 一个 provider key 治理桶的只读事实（D5 投影的最小形状，字段口径见
+ * `specs/concurrency-diagnostics-projection.md` R1/R3）。刻意是 `ConcurrencyControllerSnapshot`
+ * 的收窄投影：诊断面只要 caps/current/degraded 能算出来的那几个数，epoch/streak 等控制器
+ * 内部状态不外泄到跨包契约上。
+ */
+export interface ModelRequestAdmissionBucketSnapshot {
+  /** provider key：`${providerId}/${modelId}`。 */
+  key: string;
+  /** CPU 推导天花板（桶的初值与上界）。 */
+  ceiling: number;
+  /** AIMD 当前并发 cap。 */
+  cap: number;
+  /** 已准入未结算的模型请求数。 */
+  inFlight: number;
+  /** 排队等待准入的请求数。 */
+  waiters: number;
+  /** Retry-After 冷却截止（ms epoch）；缺席 = 不在冷却。 */
+  cooldownUntil?: number;
 }
 
 /**

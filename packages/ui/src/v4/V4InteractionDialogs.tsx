@@ -4,6 +4,7 @@ import type { ConversationSnapshot } from "@acode/shared/acode-protocol-v4";
 import { ElicitationDialog } from "@/ElicitationDialog.js";
 import { PermissionDialog } from "@/PermissionDialog.js";
 import { useOptionalPlatform } from "@/hooks/usePlatform.js";
+import { BotPermissionFallback } from "@/v4/BotPermissionFallbackDialog.js";
 import { useACodeIntl } from "@/i18n/IntlProvider.js";
 import { usePendingInteractionTaskNotifications } from "@/hooks/useTaskNotifications.js";
 import { logger } from "@/logger.js";
@@ -308,7 +309,16 @@ export function V4InteractionDialogs({
   }, [pending?.autoResolution, pending?.interactionId, sendSnoozeOnce]);
 
   if (!pending) {
-    return null;
+    // snapshot 无可渲染交互时，回落到 bot 广播回放进 store 的权限请求（去重后渲染）。
+    return (
+      <BotPermissionFallback
+        currentSnapshot={currentSnapshot}
+        sessionId={sessionId}
+        workspacePath={workspacePath}
+        workspaceIdentity={workspaceIdentity}
+        provider={provider}
+      />
+    );
   }
 
   // workspaceHookReview 只能由 Settings/Hooks 行内 Trust 处理；绝不降级成通用 Dialog。

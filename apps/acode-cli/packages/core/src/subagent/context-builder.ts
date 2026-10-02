@@ -1,19 +1,22 @@
-import type { Model, ModelInputMessage } from "@acode/contracts";
+import type { Logger, Model, ModelInputMessage } from "@acode/contracts";
 import { ContextBuilder } from "../context/builder.js";
 import {
   buildContextMetaUserBody,
   buildSkillsMetaUserBody,
   type ContextBuilderConfig,
   type ContextBuildResult,
-  type ContextSection,
   type EnvInfo,
 } from "../context/index.js";
-import { buildCliPrefixSection } from "../context/sections/cli-prefix.js";
-import { buildCurrentDateSection } from "../context/sections/current-date.js";
-import { buildRequestUserContextSection } from "../context/sections/request-user-context.js";
-import { buildSkillsSection } from "../context/sections/skills.js";
-import { estimateTokens } from "../context/utils.js";
-import { buildSubagentCommonNotes, buildSubagentEnvironmentContext } from "./system-prompt.js";
+import {
+  createSubagentSectionContext,
+  emitSectionManifestTrace,
+  resolveSectionEntries,
+  resolveSectionEntriesSync,
+  SUBAGENT_SECTION_REGISTRY,
+  type ResolvedSection,
+  type SectionContext,
+} from "../context/registry.js";
+import type { PromptSectionFlags } from "../context/section-flags.js";
 
 export interface SubagentContextBuilderConfig {
   agentPrompt: string;
@@ -23,10 +26,22 @@ export interface SubagentContextBuilderConfig {
   skillMetadataBudget?: number;
   skills?: ContextBuilderConfig["skills"];
   userInstructions?: ContextBuilderConfig["userInstructions"];
+  /** 本地诊断旗标显式覆盖位（缺席时管线入口解析 env，见 context/registry.ts）。 */
+  prompt?: PromptSectionFlags;
+  /** 可选诊断出口：管线 warn / manifest trace debug 走它；缺席时静默。 */
+  logger?: Logger;
 }
 
 const EPHEMERAL_CACHE_CONTROL = { type: "ephemeral" as const };
 
+/**
+ * 子代理组装器（specs/system-prompt-section-registry.md R7）：与主路径共享
+ * descriptor 基础设施与共享段实例（SUBAGENT_SECTION_REGISTRY 引用 registry-shared.ts
+ * 的同一对象），但**保留独立组装**——每个 system 段各自一条 system message、
+ * 各自带 ephemeral breakpoint（R4：刻意的 cache 设计，不得统一成主路径 3-block 形态）。
+ * 段的左边界由本组装器按 descriptor.boundary 施加（agent_prompt "\n"、其余 "\n\n"），
+ * 不进 descriptor 文本——同一份共享文本在两条路径上 hash 一致（R6/R7）。
+ */
 export class SubagentContextBuilder extends ContextBuilder {
   private subagentConfig: SubagentContextBuilderConfig;
 
@@ -44,16 +59,43 @@ export class SubagentContextBuilder extends ContextBuilder {
   }
 
   override build(): ContextBuildResult {
-    const sections = buildSubagentContextSections(this.subagentConfig);
-    const orderedSections = orderSubagentSections(sections);
+    const ctx = this.createSectionContext();
+    const entries = resolveSectionEntriesSync(SUBAGENT_SECTION_REGISTRY, ctx);
+    return this.assembleSubagentResult(entries, ctx);
+  }
+
+  override async buildAsync(): Promise<ContextBuildResult> {
+    const ctx = this.createSectionContext();
+    const entries = await resolveSectionEntries(SUBAGENT_SECTION_REGISTRY, ctx);
+    return this.assembleSubagentResult(entries, ctx);
+  }
+
+  private createSectionContext(): SectionContext {
+    return createSubagentSectionContext({
+      config: toSectionContextConfig(this.subagentConfig),
+      subagent: { agentPrompt: this.subagentConfig.agentPrompt },
+      prompt: this.subagentConfig.prompt,
+      logger: this.subagentConfig.logger,
+    });
+  }
+
+  private assembleSubagentResult(
+    entries: readonly ResolvedSection[],
+    ctx: SectionContext,
+  ): ContextBuildResult {
+    emitSectionManifestTrace(entries, ctx);
+
+    const orderedEntries = orderSubagentEntries(entries);
+    const orderedSections = orderedEntries.map((entry) => entry.section);
     const totalChars = orderedSections.reduce((sum, section) => sum + section.chars, 0);
     const totalTokens = orderedSections.reduce((sum, section) => sum + section.tokens, 0);
-    const systemMessages = orderedSections
-      .filter((section) => section.injectionTarget === "system")
+    const systemMessages = orderedEntries
+      .filter((entry) => entry.section.injectionTarget === "system")
       .map(
-        (section): ModelInputMessage => ({
+        (entry): ModelInputMessage => ({
           role: "system",
-          content: section.content,
+          // 左边界由组装器施加（R7）：descriptor 文本保持纯净，boundary 声明在 descriptor 上。
+          content: `${entry.descriptor.boundary ?? ""}${entry.section.content}`,
           // subagent context builder 不走 main ContextBuilder 的 system 组装，
           // 仍需在每段稳定 child system prompt 上保留 provider cache breakpoint。
           cacheControl: EPHEMERAL_CACHE_CONTROL,
@@ -103,85 +145,11 @@ export function createSubagentContextBuilder(
   return new SubagentContextBuilder(config);
 }
 
-function buildSubagentContextSections(config: SubagentContextBuilderConfig): ContextSection[] {
-  const sections: ContextSection[] = [buildCliPrefixSection()];
-  const agentPrompt = config.agentPrompt.trimEnd();
-  if (agentPrompt) {
-    sections.push(
-      createSubagentSection({
-        name: "Subagent Agent Prompt",
-        source: "subagent_agent_prompt",
-        cacheHint: "stable",
-        // 空 prompt 不是语义段，不能让左边界单独成为 system block。
-        // ACode by design：Subagent agent prompt 自带相对 CLI prefix 的单换行左边界。
-        content: `\n${agentPrompt}`,
-      }),
-    );
-  }
-
-  sections.push(
-    createSubagentSection({
-      name: "Subagent Notes",
-      source: "subagent_notes",
-      cacheHint: "stable",
-      // ACode by design：后续 Subagent system block 统一自带双换行左边界。
-      content: `\n\n${buildSubagentCommonNotes()}`,
-    }),
-    createSubagentSection({
-      name: "Subagent Environment",
-      source: "subagent_environment",
-      cacheHint: "dynamic",
-      content: `\n\n${buildSubagentEnvironmentContext({
-        agentPrompt: config.agentPrompt,
-        envInfo: config.envInfo,
-        model: config.model,
-      })}`,
-    }),
-  );
-
-  const requestUserContextSection = buildRequestUserContextSection({
-    userInstructions: config.userInstructions,
-  });
-  if (requestUserContextSection) {
-    sections.push(requestUserContextSection);
-  }
-  const currentDateSection = buildCurrentDateSection(config.currentDate);
-  if (currentDateSection) {
-    sections.push(currentDateSection);
-  }
-  if (config.skills) {
-    const skillsSection = buildSkillsSection({
-      outcome: config.skills,
-      metadataBudget: config.skillMetadataBudget,
-    });
-    if (skillsSection) {
-      sections.push(skillsSection);
-    }
-  }
-
-  return sections;
-}
-
-function orderSubagentSections(sections: ContextSection[]): ContextSection[] {
+function orderSubagentEntries(entries: readonly ResolvedSection[]): ResolvedSection[] {
   return [
-    ...sections.filter((section) => section.injectionTarget === "system"),
-    ...sections.filter((section) => section.injectionTarget === "meta_user"),
+    ...entries.filter((entry) => entry.section.injectionTarget === "system"),
+    ...entries.filter((entry) => entry.section.injectionTarget === "meta_user"),
   ];
-}
-
-function createSubagentSection(input: {
-  name: string;
-  source: ContextSection["source"];
-  cacheHint: ContextSection["cacheHint"];
-  content: string;
-}): ContextSection {
-  return {
-    ...input,
-    injectionTarget: "system",
-    chars: input.content.length,
-    tokens: estimateTokens(input.content),
-    preview: input.content.slice(0, 100),
-  };
 }
 
 function toBaseContextBuilderConfig(config: SubagentContextBuilderConfig): ContextBuilderConfig {
@@ -192,5 +160,13 @@ function toBaseContextBuilderConfig(config: SubagentContextBuilderConfig): Conte
     currentDate: config.currentDate,
     skillMetadataBudget: config.skillMetadataBudget,
     skills: config.skills,
+  };
+}
+
+/** SectionContext 用的完整折算：比基类 config 多带 userInstructions（共享段 ruc 的输入）。 */
+function toSectionContextConfig(config: SubagentContextBuilderConfig): ContextBuilderConfig {
+  return {
+    ...toBaseContextBuilderConfig(config),
+    userInstructions: config.userInstructions,
   };
 }

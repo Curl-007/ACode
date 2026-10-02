@@ -654,6 +654,8 @@ export function SettingsPage({
   const nativeSearchEnhancementsEnabled = sharedSettings?.nativeSearchEnhancementsEnabled !== false;
   const askUserQuestionAutoResolutionEnabled =
     sharedSettings?.askUserQuestionAutoResolutionEnabled !== false;
+  const botPermissionLocalApprovalEnabled =
+    sharedSettings?.botPermissionLocalApprovalEnabled === true;
   const modelIoFullRetentionEnabled = sharedSettings?.modelIoFullRetentionEnabled === true;
   const [dataBaseDir, setDataBaseDir] = useState("");
   const [terminalInheritSystemProfile, setTerminalInheritSystemProfile] = useState(true);
@@ -834,6 +836,12 @@ export function SettingsPage({
   const handleAskUserQuestionAutoResolutionEnabledChange = useCallback(
     async (enabled: boolean) => {
       await updateSharedSettings({ askUserQuestionAutoResolutionEnabled: enabled });
+    },
+    [updateSharedSettings],
+  );
+  const handleBotPermissionLocalApprovalEnabledChange = useCallback(
+    async (enabled: boolean) => {
+      await updateSharedSettings({ botPermissionLocalApprovalEnabled: enabled });
     },
     [updateSharedSettings],
   );
@@ -1392,6 +1400,7 @@ export function SettingsPage({
                             askUserQuestionAutoResolutionEnabled={
                               askUserQuestionAutoResolutionEnabled
                             }
+                            botPermissionLocalApprovalEnabled={botPermissionLocalApprovalEnabled}
                             modelIoFullRetentionEnabled={modelIoFullRetentionEnabled}
                             onDataBaseDirChange={handleDataBaseDirChange}
                             onSelectDataBaseDir={selectDirectory}
@@ -1438,6 +1447,9 @@ export function SettingsPage({
                             onACodeInteractionBehaviorChange={handleACodeInteractionBehaviorChange}
                             onAskUserQuestionAutoResolutionEnabledChange={
                               handleAskUserQuestionAutoResolutionEnabledChange
+                            }
+                            onBotPermissionLocalApprovalEnabledChange={
+                              handleBotPermissionLocalApprovalEnabledChange
                             }
                             onOpenOnboardingDialog={() => requestOnboardingDialog()}
                           />

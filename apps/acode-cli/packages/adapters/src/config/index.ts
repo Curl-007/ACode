@@ -97,6 +97,11 @@ class ConfigStore {
           scope,
         );
       }
+      // 安全加固 P2：托管策略地板随 ConfigScope.Policy 层进入 store；只读事实，
+      // 运行时 set 路径不接受放宽（加载器 schema 已在源头拒绝 allow 类键）。
+      if (config.permission.policy) {
+        this.set(ConfigKey.PermissionPolicy, config.permission.policy, scope);
+      }
     }
     if (config.storage) {
       if (config.storage.dir) this.set(ConfigKey.StorageDir, config.storage.dir, scope);
@@ -268,6 +273,11 @@ export class ConfigPortImpl implements ConfigPort {
         disallowedTools: this.get(ConfigKey.PermissionDisallowedTools),
         autoApproveHighRisk: this.get(ConfigKey.PermissionAutoApproveHighRisk),
         allowMediumRiskInAuto: this.get(ConfigKey.PermissionAllowMediumRiskInAuto),
+        // 安全加固 P2：策略地板缺省 = 本机未部署策略文件；用 store.get 而非 this.get，
+        // 因为 permission.policy 没有默认值，this.get 会对缺失键抛错。
+        ...(this.store.get(ConfigKey.PermissionPolicy)
+          ? { policy: this.store.get(ConfigKey.PermissionPolicy) }
+          : {}),
       },
       storage: {
         dir: this.store.get(ConfigKey.StorageDir) ?? DefaultConfig.storage.dir,

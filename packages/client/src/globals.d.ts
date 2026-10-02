@@ -34,11 +34,9 @@ import type {
   BotRemoteWorkspaceReconnectedEvent,
   RemoteTarget,
   SSHConfigAliasOption,
-  RendererTelemetryEventPayload,
   RendererActionTraceBatchV1,
   RendererActionTraceConfigV1,
   RendererHeapSample,
-  TelemetryRendererContext,
   TaskNotificationPayload,
   WindowScreenshotResult,
   EmbeddedBrowserDataClearResult,
@@ -209,10 +207,6 @@ declare global {
       onPaymentCallback(cb: (url: string) => void): () => void;
       /** 通知 main process renderer 已就绪 */
       notifyRendererReady(): void;
-      /** 同步当前 renderer 的 telemetry 上下文到 main process */
-      syncTelemetryContext(context: TelemetryRendererContext): void;
-      /** 通过 main process 统一上报业务 telemetry 事件 */
-      reportTelemetryEvent(payload: RendererTelemetryEventPayload): Promise<void>;
       /** 读取 Desktop Renderer 用户操作 Trace 灰度配置。 */
       getRendererActionTraceConfig?(): Promise<RendererActionTraceConfigV1>;
       /** 订阅 Renderer 用户操作 Trace 灰度配置变化。 */
@@ -256,10 +250,8 @@ declare global {
         tabId: string;
         viewport: BrowserViewportSize | null;
       }): Promise<void>;
-      /** 从自动发现的 Chrome Profile 一次性导入内置浏览器数据。 */
-      importChromeBrowserData?(
-        options?: import("@acode/shared").ChromeBrowserDataImportOptions,
-      ): Promise<ChromeBrowserDataImportResult>;
+      /** 从自动发现的 Chrome Profile 一次性导入内置浏览器数据（无入参，授权由 main 判定）。 */
+      importChromeBrowserData?(): Promise<ChromeBrowserDataImportResult>;
       /** 清理内置浏览器缓存或全部站点数据。 */
       clearEmbeddedBrowserData?(mode: "cache" | "all"): Promise<EmbeddedBrowserDataClearResult>;
       /** 注册新版本已下载完毕的回调，返回 disposer */

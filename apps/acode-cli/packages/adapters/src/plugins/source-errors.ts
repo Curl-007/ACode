@@ -31,6 +31,20 @@ export function createArchiveFetchError(source: string, cause: unknown): Error {
 }
 
 /**
+ * 安装策略拒绝（安全加固 P2 #8：git 源 commit 固定 + host 白名单）。
+ * 拒绝是配置级问题而非运行故障，沿用 plugin_marketplace_invalid 诊断码，
+ * 消息由 `git-source-pinning.ts` 的纯判定生成、面向清单作者可操作；
+ * source 只经 redact 后进入持久化诊断，避免 URL userinfo 泄漏。
+ */
+export function createPluginSourcePolicyError(source: string, reason: string): Error {
+  const safeSource = redactPluginSource(source);
+  return new PluginSourceMaterializationError(
+    "plugin_marketplace_invalid",
+    `Plugin source rejected by install policy: ${reason} Source: ${safeSource}`,
+  );
+}
+
+/**
  * source materialization 错误现在会被持久化并投影到桌面/Web UI，不能把 URL
  * userinfo 带入状态文件、日志或截图。凭据只在诊断生成边界清理，所有消费者共享同一规则。
  */

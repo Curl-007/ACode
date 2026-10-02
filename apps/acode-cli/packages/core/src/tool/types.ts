@@ -59,6 +59,7 @@ import type {
   PersistedReadFileStateMetadata,
   PersistedReadFileStateTool,
 } from "./read-file-state-metadata.js";
+import type { PackageScriptSource } from "./handlers/bash-target-risk/types.js";
 import type { RuntimeTaskRegistry } from "../runtime-task/registry.js";
 
 // -----------------------------------------------
@@ -340,6 +341,25 @@ export interface ToolEntry extends ToolContractDeclaration {
     input: unknown,
     context?: ToolRuntimePermissionCapabilityContext,
   ) => ToolRuntimePermissionCapability | undefined;
+  /**
+   * 权限能力上下文的异步前置（R6 边界⑥收口，spec
+   * apps/acode-cli/specs/npm-script-body-scan.md R1/R5）。executor 的
+   * `resolveToolPermission` 与 hook 改写复核在构造 capability/规则策略/权限上下文
+   * 之前 await 本钩子，把结果并入 `ToolRuntimePermissionCapabilityContext`——
+   * capability 合并、规则建议收窄与熔断器/反射门拿到同一份注入。
+   *
+   * 为什么是独立钩子而不是 `resolvePermissionCapability` 自己做 IO：capability
+   * 钩子是同步的（permission 链路在多处同步消费它），而 `npm run <script>` 的
+   * package.json scripts 必须异步预读。Bash 用它预取 `packageScripts`；其它工具
+   * 不声明即零开销。实现必须容错不抛（预取失败 = 上下文缺席 = 各消费点按 legacy
+   * 语义判定，绝不让预取故障阻断权限链路）。
+   */
+  resolvePermissionCapabilityContextAsync?: (
+    input: unknown,
+    context: ToolRuntimePermissionCapabilityContext,
+  ) => Promise<
+    Partial<Pick<ToolRuntimePermissionCapabilityContext, "packageScripts" | "scannedDirectories">>
+  | undefined>;
   resolvePermissionRulePolicy?: (
     input: unknown,
     context?: ToolRuntimePermissionCapabilityContext,
@@ -396,6 +416,18 @@ export interface ToolRuntimePermissionCapabilityContext {
   runtimeScope?: ToolRuntimeScope;
   workingDirectory?: string;
   workspaceRoot?: string;
+  /**
+   * npm/pnpm/yarn/bun run 的 package.json scripts 预解析结果（R6 边界⑥收口，
+   * spec npm-script-body-scan.md R1）。由 {@link ToolEntry.resolvePermissionCapabilityContextAsync}
+   * 异步预取后并入；缺省（undefined）= 未接线/legacy，run 族维持 safe 直通。
+   */
+  packageScripts?: readonly PackageScriptSource[];
+  /**
+   * 预取实际读过/走过的目录（扫描覆盖证据，对抗验证 F1②，spec
+   * npm-script-body-scan.md R1/R2）。与 packageScripts 同源注入：run 族目标目录的
+   * enclosing 命中只有被它覆盖时才可信任，否则 fail-closed confirm。
+   */
+  scannedDirectories?: readonly string[];
 }
 
 export interface ToolExecutionModelContext {

@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { type ProviderApiKeyVault } from "@acode/provider";
 import {
   NodeProviderConfigRuntime,
   PERSONAL_PROVIDER_CONFIG_FILE_NAME,
@@ -20,6 +21,12 @@ export interface ProviderConfigRuntimeOptions {
   readonly personalFilePath?: string;
   readonly personalPollingIntervalMs?: number | false;
   readonly readLegacyProviders?: () => Promise<readonly ModelProviderConfig[]>;
+  /**
+   * BYO Provider API Key 的加密凭据库（安全加固 P1-5）。注入后 repository 的写入漏斗会把
+   * 明文 Key 搬进凭据库、文件只留 credentialRef；不注入则明文照写照读（安全空操作）。
+   * 必须与 `ProviderRuntime` 的 vault 为**同一实现**，否则会「写了 ref 但读不回来」。
+   */
+  readonly providerApiKeyVault?: ProviderApiKeyVault;
   readonly watch?: boolean;
 }
 
@@ -43,6 +50,9 @@ export class ProviderConfigRuntime {
       personalFilePath:
         options.personalFilePath ?? join(getAppConfigDir(), PERSONAL_PROVIDER_CONFIG_FILE_NAME),
       personalPollingIntervalMs: options.personalPollingIntervalMs,
+      ...(options.providerApiKeyVault
+        ? { providerApiKeyVault: options.providerApiKeyVault }
+        : {}),
       watch: options.watch,
       ...(options.readLegacyProviders
         ? {

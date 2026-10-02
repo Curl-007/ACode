@@ -2,8 +2,25 @@
 
 import type { CollaborationMode } from "../interfaces/session.port.js";
 import type { McpServerConfig } from "../interfaces/mcp.port.js";
+import type { PermissionRuleValue } from "../interfaces/permission.port.js";
 import type { HooksRuntimeConfig, HooksRuntimeConfigPatch } from "../hooks/index.js";
 import type { PluginConfig, PluginOptionValues } from "../plugins/index.js";
+
+// ============================================================
+// Managed Policy Floor（安全加固 P2）
+// ============================================================
+
+/**
+ * 管理员经 OS 托管路径下发的策略地板（wire 形态）。**只能表达收紧**：
+ * deny/ask 规则、disallowedTools 追加、禁用 yolo/bypass 直通。schema 拒绝 allow 类字段
+ * （见 adapters/src/config/managed-policy.ts），防止策略文件被误用成放宽通道。
+ */
+export interface ManagedPolicyFloorData {
+  readonly deny: readonly PermissionRuleValue[];
+  readonly ask: readonly PermissionRuleValue[];
+  readonly disallowedTools: readonly string[];
+  readonly disableBypassPermissionsMode: boolean;
+}
 
 // ============================================================
 // Config Key Types
@@ -18,6 +35,8 @@ export const ConfigKey = {
   PermissionDisallowedTools: "permission.disallowedTools",
   PermissionAutoApproveHighRisk: "permission.autoApproveHighRisk",
   PermissionAllowMediumRiskInAuto: "permission.allowMediumRiskInAuto",
+  // 安全加固 P2：托管策略地板（strictest-wins，只读事实，不接受运行时写入放宽）。
+  PermissionPolicy: "permission.policy",
 
   // Storage
   StorageDir: "storage.dir",
@@ -93,7 +112,9 @@ export type ConfigValue<K extends ConfigKey> = K extends "modelStream.idleTimeou
       ? string[]
       : K extends "permission.autoApproveHighRisk" | "permission.allowMediumRiskInAuto"
         ? boolean
-        : K extends
+        : K extends "permission.policy"
+          ? ManagedPolicyFloorData
+          : K extends
               | "storage.dir"
               | "storage.sessionDbPath"
               | "network.httpProxy"
@@ -161,6 +182,9 @@ export const ConfigScope = {
   Session: "session",
   Env: "env",
   Cli: "cli",
+  // 安全加固 P2：托管策略地板。优先级最高（压过 Cli），但合并语义是 strictest-wins——
+  // 只能收紧（deny/ask/disallowedTools/disableBypassPermissionsMode），永远不能放宽。
+  Policy: "policy",
 } as const;
 
 export type ConfigScope = (typeof ConfigScope)[keyof typeof ConfigScope];
@@ -172,6 +196,7 @@ export const ConfigScopePriority: Record<ConfigScope, number> = {
   [ConfigScope.Session]: 30,
   [ConfigScope.Env]: 40,
   [ConfigScope.Cli]: 50,
+  [ConfigScope.Policy]: 60,
 };
 
 // ============================================================
@@ -207,6 +232,8 @@ export interface RuntimeConfig {
     disallowedTools: string[];
     autoApproveHighRisk: boolean;
     allowMediumRiskInAuto: boolean;
+    /** 安全加固 P2：托管策略地板；缺省表示本机未部署策略文件（零行为变化）。 */
+    policy?: ManagedPolicyFloorData;
   };
   storage: {
     dir: string;

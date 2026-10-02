@@ -1,6 +1,7 @@
 import type { Event } from "@acode/rpc";
 import { ServiceChannels } from "@acode/shared";
 import {
+  hasBlockingConfigIssues,
   type ModelConfigObject,
   type ModelId,
   type ModelSelection,
@@ -177,10 +178,12 @@ export function createProviderSettingsService(
         .getView()
         .providers.find((item) => item.providerId === input.providerId);
       const model = provider?.models.find((item) => item.modelId === input.modelId);
+      // 只有阻断级（severity 缺省为 error）诊断才取消连通性测试资格；
+      // warning（如明文 http Base URL）是「知情不禁止」，不阻断测试（spec R3）。
       const unavailable =
         !provider || !provider.enabled
           ? "provider-unavailable"
-          : !model || !model.enabled || model.issues.length > 0
+          : !model || !model.enabled || hasBlockingConfigIssues(model.issues)
             ? "model-unavailable"
             : !provider.executable
               ? "provider-unavailable"

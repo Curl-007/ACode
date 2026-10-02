@@ -68,6 +68,18 @@ export const BashInputSchema = z
       .describe(
         "Set this to true to dangerously override sandbox mode and run commands without sandboxing.",
       ),
+    /**
+     * J1-2 反射门（specs/bash-confirm-reflexive-gate.md R3）：仅当同一条命令的上一轮
+     * 调用被拒并要求论证时，重提才携带本字段。校验（长度/非确认词/防预填）在权限层
+     * 的 gate 执行而不在 zod 层——被拒时要回喂结构化指引，而不是一条 schema 报错。
+     */
+    justification: z
+      .string()
+      .max(4000)
+      .optional()
+      .describe(
+        "Only for re-issuing a command whose previous attempt was refused and asked for a justification: explain which specific user request this command serves and why this target follows from it. Do not prefill this field on a first attempt — it is ignored there and the command is still refused.",
+      ),
   })
   .strict();
 

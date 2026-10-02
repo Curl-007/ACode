@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   isProviderProvisioningAccountCredentialKey,
+  isProviderProvisioningProviderApiKeyCredentialKey,
   providerProvisioningEnvelopeSchema,
   type ProviderProvisioningCredentialEntry,
   type ProviderProvisioningEnvelope,
@@ -123,18 +124,29 @@ async function readProvisioningCredentials(
   if (!isRecord(parsed)) {
     throw new Error("Credential Store 必须是 JSON 对象");
   }
-  const cipher = cipherProvider ?? createCredentialCipherProvider();
+  // 密钥文件钉在被读取的凭据文件同目录：credentialFilePath 可被调用方覆盖，
+  // 若密钥仍按默认 baseDir 解析，会出现「凭据在一个目录、密钥在另一个目录」的分裂而解密失败。
+  const cipher =
+    cipherProvider ??
+    createCredentialCipherProvider({
+      keyFilePath: join(dirname(credentialFilePath), "credential-key.json"),
+    });
   const allowedKeys = new Set<string>(PROVIDER_PROVISIONING_OAUTH_CREDENTIAL_KEYS);
   const entries: ProviderProvisioningCredentialEntry[] = [];
   // Credential Store 还可能包含不属于 Provisioning allowlist 的历史记录；
   // 这些记录不是本次同步事实，不能因为其值损坏而阻断合法账号凭据的同步。
   // allowlist 内的条目仍保持字符串和解密校验，避免把未知内容当成 Secret 传输。
   for (const [key, encrypted] of Object.entries(parsed)) {
+    // P1-5 回归修复（R2）：provider_config.json 里 BYO Key 只剩 credentialRef，真值在
+    // `provider:apikey:<providerId>` 条目里；不把该 scope 纳入 allowlist，信封就会
+    // 「带 ref 形态配置、不带 Key 真值」→ 目标端 hydrate 得 null → 远程/迁移环境静默失效。
     const scope = allowedKeys.has(key)
       ? ("oauth-session" as const)
       : isProviderProvisioningAccountCredentialKey(key)
         ? ("account-provider" as const)
-        : undefined;
+        : isProviderProvisioningProviderApiKeyCredentialKey(key)
+          ? ("provider-apikey" as const)
+          : undefined;
     if (!scope) continue;
     if (typeof encrypted !== "string") {
       throw new Error(`Credential allowlist value must be a string: ${key}`);
@@ -178,6 +190,9 @@ export async function listProviderProvisioningCredentialKeys(
   if (!isRecord(parsed)) throw new Error("Credential Store 必须是 JSON 对象");
   const oauthKeys = new Set<string>(PROVIDER_PROVISIONING_OAUTH_CREDENTIAL_KEYS);
   return Object.keys(parsed).filter(
-    (key) => oauthKeys.has(key) || isProviderProvisioningAccountCredentialKey(key),
+    (key) =>
+      oauthKeys.has(key) ||
+      isProviderProvisioningAccountCredentialKey(key) ||
+      isProviderProvisioningProviderApiKeyCredentialKey(key),
   );
 }

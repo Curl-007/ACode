@@ -1,4 +1,5 @@
 import { type ExpertWorkflowRunSnapshot, type WorkflowPhaseDefinition } from "@acode/contracts";
+import { resolveWorkflowGateSettings } from "../artifact-gate.js";
 import { WorkflowGraphScheduler } from "../scheduler.js";
 import { executableNodeIdsForPhase, safeArtifactName } from "./ids.js";
 import { parseWorkflowPlannerResult } from "./parsers/planner-result.js";
@@ -80,11 +81,15 @@ export async function runScheduledPhase(
     writeSnapshot: (nextSnapshot, writeOptions) =>
       ctx.store.writeSnapshot(nextSnapshot, writeOptions),
   });
+  // J2-3（specs/workflow-typed-artifacts.md R9）：gate 设置单点解析后随 run options 下传；
+  // 未声明 gatePolicy 的 definition → light，调度与提示词行为与现状一致。
+  const gateSettings = resolveWorkflowGateSettings(ctx.definition);
   const result = await scheduler.run({
     abortSignal: options.abortSignal,
     artifactDirectory: `artifacts/${safeArtifactName(definition.phase)}`,
+    artifactGate: gateSettings,
     buildPrompt: ({ node, snapshot: promptSnapshot }) =>
-      buildScheduledNodePrompt(promptSnapshot, definition, node),
+      buildScheduledNodePrompt(promptSnapshot, definition, node, gateSettings),
     cwd: options.cwd,
     executableNodeIds: executableNodeIdsForPhase(active.graph, definition.phase),
     onEvent: options.onEvent,

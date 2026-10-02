@@ -157,6 +157,7 @@ const enUS: Record<string, string> = {
   "chat.composer.attachment": "Attachments",
   "chat.permission.feedback.ariaLabel": "Optional feedback for the model when denying",
   "chat.permission.feedback.placeholder": "Tell the model what to do instead...",
+  "chat.permission.justification.label": "Model's justification for this command",
   "offPeak.chatCreated.defaultTitle": "Idle-time task",
   "offPeak.chatCreated.queued": "Queued for idle-time compute",
   "offPeak.chatCreated.queuedAt": "#{position} in queue",
@@ -190,252 +191,6 @@ const enUS: Record<string, string> = {
   "common.save": "Save",
   "common.saving": "Saving...",
   "common.delete": "Delete",
-  "conversationShare.trigger": "Share",
-  "conversationShare.shareTitle": "Share title",
-  "conversationShare.permissionLabel": "Access",
-  "conversationShare.permission.private": "Only me",
-  "conversationShare.permission.privateHint": "For personal notes",
-  "conversationShare.permission.linkViewer": "Anyone with the link can view",
-  "conversationShare.permission.linkViewerHint": "Cannot import and continue",
-  "conversationShare.permission.linkViewerSummary": "Link holders can view",
-  "conversationShare.permission.linkEditor": "Anyone with the link can import and continue",
-  "conversationShare.permission.linkEditorHint": "Import into ACode",
-  "conversationShare.permission.linkEditorSummary": "Link holders can import and continue",
-  "conversationShare.permission.privateSummary": "Only me",
-  "conversationShare.openLink": "Open share page",
-  "conversationShare.result.title": "Share created",
-  "conversationShare.result.description": "Your link is ready to copy or view in a browser.",
-  "conversationShare.result.openInBrowser": "View in browser",
-  "conversationShare.result.dismiss": "Close share result",
-  "conversationShare.generatingLink": "Generating share link",
-  "conversationShare.copyLink": "Copy link",
-  "conversationShare.copySucceeded": "Share link copied",
-  "conversationShare.publishSucceeded": "Share link created",
-  "conversationShare.publishSucceededWithSkips": "Share link created; {count} file(s) were skipped",
-  "conversationShare.copyFailed": "Could not copy share link",
-  "conversationShare.publishFailed": "Could not generate the share link. Try again.",
-  "conversationShare.error.authenticationRequired":
-    "Sharing is available only when you are signed in. Your sign-in has expired; sign in again, then retry.",
-  "conversationShare.error.featureDisabled":
-    "Sharing is not available for this workspace or connection type.",
-  "conversationShare.error.artifactNotAllowed":
-    "A previewed file type is not supported for sharing. Deselect that conversation and retry.",
-  "conversationShare.error.limitExceeded":
-    "The selected conversation or its files exceed the sharing limit. Select fewer conversations.",
-  "conversationShare.error.rateLimited": "Too many share attempts. Wait a moment, then try again.",
-  "conversationShare.error.network":
-    "Could not reach the sharing service. Check your connection and try again.",
-  "conversationShare.error.safetyCheckTimeout":
-    "The share safety check took too long. Try again later.",
-  "conversationShare.error.invalidSelection":
-    "The selected conversation changed. Reopen the share panel and select it again.",
-  "conversationShare.error.invalidConversation":
-    "The selection contains a structure that is not shareable yet. Deselect active turns or inline images, confirm preview files are complete, and retry.",
-  "conversationShare.error.runningTurn":
-    "A selected turn is still running. Deselect it and wait for it to finish before sharing.",
-  "conversationShare.error.streamingRow":
-    "A selected response is still streaming. Wait for the turn to finish before sharing.",
-  "conversationShare.error.activeToolCall":
-    "A selected tool call is still active. Wait for it to finish before sharing.",
-  "conversationShare.error.activeSubagent":
-    "A selected subtask is still running. Wait for it to finish before sharing.",
-  "conversationShare.error.inputAttachment":
-    "A user-input attachment could not be shared. Check that it still exists and try again.",
-  "conversationShare.error.inlineToolImage":
-    "A selected turn contains an unsupported inline tool image. Deselect that turn and retry.",
-  "conversationShare.error.unsupportedTimeline":
-    "A selected turn contains an unsupported branch or restore record. Deselect that turn and retry.",
-  "conversationShare.error.unsafeUrl":
-    "The selected content contains a local or inline file URL. Remove it before sharing.",
-  "conversationShare.error.missingProductTurn":
-    "The selected conversation is incomplete. Reopen the share panel and select the turn again.",
-  "conversationShare.error.artifactTypeNotAllowed":
-    "A previewed file type is not allowed for sharing. Deselect its turn and retry.",
-  "conversationShare.error.artifactExtensionMissing":
-    "A previewed file has no valid extension. Check the file and retry.",
-  "conversationShare.error.artifactOutsideWorkspace":
-    "A previewed file is outside the current workspace. Regenerate or move it, then retry.",
-  "conversationShare.error.artifactChanged":
-    "A previewed file changed before sharing. Regenerate the preview file and retry.",
-  "conversationShare.error.artifactReadFailed":
-    "A previewed file could not be read. Check that it still exists and is accessible, then retry.",
-  "conversationShare.error.artifactSizeLimit":
-    "A file exceeds the per-file size limit. Deselect that turn or use a smaller file, then retry.",
-  "conversationShare.error.artifactManifest":
-    "The preview file manifest is incomplete. Regenerate the file and refresh the share panel.",
-  "conversationShare.error.payloadLimit":
-    "The selected conversation or files exceed the sharing limit. Select less and retry.",
-  "conversationShare.error.disclosureRequired":
-    "Review and confirm the shared content before creating the link.",
-  "conversationShare.error.uploadFailed":
-    "A file could not be uploaded completely. Check that it still exists, then retry.",
-  "conversationShare.error.connectionUnavailable":
-    "Desktop connection is not ready. Reopen the share panel and try again.",
-  "conversationShare.error.noShareableContent":
-    "The current selection has no shareable content. Select different turns.",
-  "conversationShare.error.summary":
-    "Share failed: {count} issue(s) found. See the share panel for details.",
-  "conversationShare.issue.artifactTypeNotAllowed":
-    "Turn {turnOrdinal}: {artifactDisplayName} ({artifactType}) cannot be shared and will be skipped. Supported types: {allowedFormats}.",
-  "conversationShare.issue.artifactExtensionMissing":
-    "Turn {turnOrdinal}: the preview file has no valid extension. Check the file name and try again.",
-  "conversationShare.issue.artifactOutsideWorkspace":
-    "Turn {turnOrdinal}: the preview file is outside the current workspace. Move or regenerate it and try again.",
-  "conversationShare.issue.artifactChanged":
-    "Turn {turnOrdinal}: {artifactDisplayName} changed while it was being read. Regenerate the file and try again.",
-  "conversationShare.issue.artifactReadFailed":
-    "Turn {turnOrdinal}: {artifactDisplayName} could not be read. Check that it still exists and is accessible.",
-  "conversationShare.issue.inputAttachment":
-    "Turn {turnOrdinal} contains a user-input attachment, which is not supported in this version. Deselect this turn.",
-  "conversationShare.issue.inputAttachmentUnavailable":
-    "Turn {turnOrdinal} contains a user-input attachment that no longer exists or cannot be read.",
-  "conversationShare.issue.inlineToolImage":
-    "Turn {turnOrdinal} contains an inline tool image that cannot be included in a public share.",
-  "conversationShare.issue.runningTurn":
-    "Turn {turnOrdinal} is still running. Wait for it to finish or deselect it.",
-  "conversationShare.issue.streamingRow":
-    "Turn {turnOrdinal} is still generating. Wait for it to finish or deselect it.",
-  "conversationShare.issue.activeToolCall":
-    "Turn {turnOrdinal} has an unfinished tool call. Deselect this turn.",
-  "conversationShare.issue.activeSubagent":
-    "Turn {turnOrdinal} has a running subtask. Wait for it to finish or deselect it.",
-  "conversationShare.issue.unsupportedTimeline":
-    "Turn {turnOrdinal} contains a timeline record that cannot be included in a public share.",
-  "conversationShare.issue.noShareableContent":
-    "The current selection has no shareable content. Select different turns.",
-  "conversationShare.issue.unsafeUrl":
-    "Turn {turnOrdinal} contains a local or inline file address, which is not supported. Remove it and try again.",
-  "conversationShare.issue.missingProductTurn":
-    "The selection is missing a complete turn identity. Re-select the conversation.",
-  "conversationShare.issue.invalidSelection":
-    "The selected turns changed. Return to selection and choose them again.",
-  "conversationShare.issue.invalidConversation":
-    "The selected conversation is incomplete. Deselect the affected turn(s) and try again.",
-  "conversationShare.issue.staleConversation":
-    "The conversation changed while the share was prepared. Return to selection and try again.",
-  "conversationShare.issue.rowsLimit":
-    "The conversation has {actual} rows, above the limit of {limit}. Reduce the selected turns.",
-  "conversationShare.issue.artifactCountLimit":
-    "The conversation has {actual} artifacts, above the limit of {limit}. Reduce the selected turns.",
-  "conversationShare.issue.artifactSizeLimit":
-    "{artifactDisplayName} is {actual}, above the per-file limit of {limit}. Deselect the turn or regenerate a smaller file.",
-  "conversationShare.issue.artifactTotalSizeLimit":
-    "Artifacts total {actual}, above the limit of {limit}. Reduce artifacts or deselect the affected turn(s).",
-  "conversationShare.issue.payloadSizeLimit":
-    "The share request is {actual}, above the limit of {limit}. Reduce the selected turns or artifacts.",
-  "conversationShare.issue.artifactManifest":
-    "The preview artifact manifest is duplicated or incomplete. Regenerate files and refresh the share panel.",
-  "conversationShare.issue.uploadIncomplete":
-    "The upload acknowledgement for {artifactDisplayName} does not match the file. Ensure it did not change and try again.",
-  "conversationShare.issue.unknown":
-    "Share failed during {phase}; the server returned no actionable details. Try again later.",
-  "conversationShare.issue.details": "Error details",
-  "conversationShare.issue.requestIdLabel": "Server request ID",
-  "conversationShare.issue.requestId": "Server request ID: {requestId}",
-  "conversationShare.issue.requestIdMissing": "No server request ID was received.",
-  "conversationShare.issue.copyRequestId": "Copy request ID",
-  "conversationShare.issue.deselectTurn": "Deselect this turn",
-  "conversationShare.issue.retryPreflight": "Check again",
-  "conversationShare.issue.more": "{count} more issue(s) not shown.",
-  "conversationShare.warning.summary":
-    "Shared successfully. {count} file(s) were skipped and are not included in the link.",
-  "conversationShare.warning.artifactSkipped":
-    "Turn {turnOrdinal}: {artifactDisplayName} could not be read, so it was skipped. If it should have been shared, regenerate the file and share again.",
-  "conversationShare.warning.inputAttachmentSkipped":
-    "Turn {turnOrdinal}: the input attachment is not included in the share; the turn's text is still shared.",
-  "conversationShare.warning.inputAttachmentUnavailable":
-    "Turn {turnOrdinal}: {artifactDisplayName} no longer exists or cannot be read and was skipped.",
-  "conversationShare.warning.artifactTypeSkipped":
-    "Turn {turnOrdinal}: {artifactDisplayName} ({artifactType}) is not supported and was skipped. Supported types: {allowedFormats}.",
-  "conversationShare.warning.artifactChangedSkipped":
-    "Turn {turnOrdinal}: {artifactDisplayName} changed before sharing and was skipped.",
-  "conversationShare.partial.panelLabel": "Select conversations to share",
-  "conversationShare.selection.reopen": "Reopen selection panel",
-  "conversationShare.partial.empty": "There are no completed conversations to share",
-  "conversationShare.partial.selectionStageHint":
-    "Select completed conversations to share, then continue to the next step.",
-  "conversationShare.partial.preflightChecking": "Checking share content…",
-  "conversationShare.partial.preflightBlocked":
-    "Some content cannot be shared. Fix the issues below first.",
-  "conversationShare.partial.preflightSkipped":
-    "{count} file(s) will not be included in the share. They will be skipped if you continue.",
-  "conversationShare.partial.preflightDeferred":
-    "Some files cannot be checked yet. They will be verified again when publishing.",
-  "conversationShare.partial.continueWithSkips": "Continue (skip {count} file(s))",
-  "conversationShare.partial.selectionHint":
-    "Review the title, access, and sensitive-content acknowledgement, then create the link.",
-  "conversationShare.partial.confirmationTitle": "Confirm shared content",
-  "conversationShare.publish.failedTitle": "Share publication failed",
-  "conversationShare.publish.failedDescription": "Fix the issue below, then retry.",
-  "conversationShare.publish.retry": "Retry generation",
-  "conversationShare.publish.footerMeta": "Share {selected} conversation turn(s), {access}",
-  "conversationShare.publish.failedFooter": "Adjust the content before publishing again",
-  "conversationShare.partial.selectAll": "Select all",
-  "conversationShare.partial.deselectAll": "Deselect all",
-  "conversationShare.partial.selectionCount": "{selected}/{total}",
-  "conversationShare.partial.selectedSummary": "Selected {selected} / {total}",
-  "conversationShare.partial.cancel": "Cancel",
-  "conversationShare.partial.next": "Next",
-  "conversationShare.partial.back": "Back",
-  "conversationShare.partial.confirm": "Create share link",
-  "conversationShare.partial.publishing": "Generating…",
-  "conversationShare.progress.collecting": "Collecting conversation and artifacts…",
-  "conversationShare.progress.uploading": "Uploading artifacts…",
-  "conversationShare.progress.checking": "Waiting for safety checks to finish…",
-  "conversationShare.progress.collectingFailed": "Collecting conversation and artifacts failed",
-  "conversationShare.progress.uploadingFailed": "Uploading artifacts failed",
-  "conversationShare.progress.checkingFailed": "Safety checks failed",
-  "conversationShare.phase.collecting": "Prepare content",
-  "conversationShare.phase.uploading": "Upload artifacts",
-  "conversationShare.phase.checking": "Safety checks",
-  "conversationShare.phase.collectingComplete": "Conversation and artifacts ready",
-  "conversationShare.phase.uploadingComplete": "Artifacts uploaded",
-  "conversationShare.phase.uploadingActive": "Uploading {completed} / {total}",
-  "conversationShare.phase.collectingPending": "Waiting to start",
-  "conversationShare.phase.uploadingPending": "Waiting for preparation",
-  "conversationShare.phase.checkingPending": "Waiting for upload",
-  "conversationShare.phase.failed": "Failed",
-  "conversationShare.publicWarning":
-    "Check conversations, tool inputs and outputs, and artifacts for sensitive information.",
-  "conversationShare.disclosure.description":
-    "The system does not automatically detect sensitive information.",
-  "conversationShare.disclosure.checkbox":
-    "I reviewed the shared content and confirm it contains no sensitive information.",
-  "conversationShare.disclosure.scope.trigger": "View review scope",
-  "conversationShare.disclosure.scope.title": "Review scope",
-  "conversationShare.disclosure.scope.reviewLabel": "Review these areas",
-  "conversationShare.disclosure.scope.conversation":
-    "Conversation content: user messages, assistant replies, and task titles",
-  "conversationShare.disclosure.scope.tools":
-    "Tool inputs and outputs: commands, parameters, and results",
-  "conversationShare.disclosure.scope.generated":
-    "Generated content: code, files, and preview content",
-  "conversationShare.disclosure.scope.sensitiveLabel": "Check carefully",
-  "conversationShare.disclosure.scope.sensitive":
-    "Credentials, tokens, passwords, private keys, internal addresses, and personal information",
-  "conversationShare.disclosure.scope.note":
-    "The system does not scan or redact this content automatically. Review each item before sharing.",
-  "conversationShare.import.source": "Imported from share: {title}",
-  "conversationShare.import.dividerLabel": "Imported from share",
-  "conversationShare.import.fallbackRemoteWorkspace":
-    "Imported from share: {title}. The current workspace is remote, which import does not support yet, so the session was created in the local workspace {workspacePath}.",
-  "conversationShare.import.fallbackDefaultWorkspace":
-    "Imported from share: {title}. No target workspace was available, so the session was created in the default workspace {workspacePath}.",
-  "conversationShare.import.downloading": "Downloading shared files: {completed}/{total}",
-  "conversationShare.import.installing": "Installing shared files",
-  "conversationShare.import.committing": "Creating the shared conversation",
-  "conversationShare.import.complete": "Share import complete",
-  "conversationShare.import.loginRequired":
-    "This share cannot be imported anonymously. Sign in to ACode and try again",
-  "conversationShare.import.notFound": "The share is unavailable",
-  "conversationShare.import.expired": "The share expired. Ask the author to create a new one",
-  "conversationShare.import.integrityFailed": "Share file verification failed; import stopped",
-  "conversationShare.import.failed": "Share import failed. Check your network and retry",
-  "conversationShare.import.integrityFailedWithArtifact":
-    "Verification failed for shared file {artifactDisplayName}; import stopped. Ask the author to create a new link.",
-  "conversationShare.import.failedWithArtifact":
-    "Downloading shared file {artifactDisplayName} failed. Check your network and retry.",
-  "conversationShare.import.retry": "Retry",
   "settings.resourceGroup.item.one": "{count} item",
   "settings.resourceGroup.item.other": "{count} items",
   "pluginCreator.add": "Add",
@@ -669,6 +424,11 @@ const enUS: Record<string, string> = {
   "bots.feishuRegistration.expired": "The QR code expired. Start again.",
   "bots.feishuRegistration.error": "Registration failed.",
   "bots.enabledToggle": "Enable {name}",
+  "bots.engine": "Agent engine",
+  "bots.engine.description": "Which agent runtime this bot's new tasks use.",
+  "bots.permissionMode": "Default permission mode",
+  "bots.permissionMode.description":
+    "Permission mode for new task drafts. Bot chats can override per draft with /mode.",
   "bots.replyGranularity": "Bot reply granularity",
   "bots.replyGranularity.description": "Message detail level.",
   "bots.replyGranularity.assistantChanges": "Standard reply",
@@ -706,8 +466,8 @@ const enUS: Record<string, string> = {
   "bots.newBot.providerDescription.dingding": "DingTalk bot integration is planned.",
   "bots.newBot.providerDescription.webhook":
     "Receive callbacks from your own system and optionally push replies back.",
-  "bots.newBot.providerDescription.discord": "Discord bot integration is planned.",
-  "bots.newBot.providerDescription.wecom": "WeCom bot integration is planned.",
+  "bots.newBot.providerDescription.discord": "Paste the Bot Token, then bind over gateway.",
+  "bots.newBot.providerDescription.wecom": "Configure the self-built app callback, then bind.",
   "bots.empty": "No bots configured.",
   "bots.name": "Bot name",
   "bots.provider": "Channel",
@@ -724,8 +484,8 @@ const enUS: Record<string, string> = {
   "bots.providerSettings.lark": "Scan to get app credentials.",
   "bots.providerSettings.webhook":
     "Webhook uses a callback secret for inbound requests and an optional outbound URL for replies.",
-  "bots.providerSettings.discord": "Discord support is not available yet.",
-  "bots.providerSettings.wecom": "WeCom support is not available yet.",
+  "bots.providerSettings.discord": "Paste the Bot Token to open the gateway.",
+  "bots.providerSettings.wecom": "Configure self-built app credentials and callback URL.",
   "bots.telegramBotToken": "Link bot",
   "bots.weixinRegistrationTitle": "Weixin QR login",
   "bots.weixinRegistrationDescription":
@@ -759,6 +519,20 @@ const enUS: Record<string, string> = {
   "bots.botTokenDescription.lark": "Scan to get app credentials.",
   "bots.botTokenDescription.weixin": "Credentials are saved after scan.",
   "bots.botTokenDescription.webhook": "Used to connect this webhook bot.",
+  "bots.botTokenDescription.discord": "Save the Bot Token from your Discord application.",
+  "bots.botTokenDescription.wecom": "Configure WeCom self-built app credentials and callback.",
+  "bots.discord.tokenField": "Paste the Bot Token",
+  "bots.discord.applicationHint":
+    "Create an application in the Discord developer portal, enable the Bot, and copy its Token. Turn on the privileged MESSAGE CONTENT intent in the Bot settings, otherwise incoming messages arrive empty.",
+  "bots.wecom.corpId": "Corp ID (CorpID)",
+  "bots.wecom.agentId": "Agent ID",
+  "bots.wecom.encodingAESKey": "Callback EncodingAESKey",
+  "bots.wecom.corpSecret": "App Secret (CorpSecret)",
+  "bots.wecom.callbackToken": "Callback Token",
+  "bots.wecom.callbackUrl": "Callback URL",
+  "bots.wecom.callbackUrlCopied": "Callback URL copied.",
+  "bots.wecom.verifyHint":
+    "Fill the callback URL above into WeCom's “Receive messages” config, and enter the same Token and EncodingAESKey here. WeCom will start URL verification once you save.",
   "bots.telegramBotFatherQrAlt": "Telegram BotFather QR code",
   "bots.telegramBotFatherScanHint": "Scan to open BotFather, create a bot, and paste the token.",
   "bots.openBotFather": "Open BotFather",
@@ -775,6 +549,14 @@ const enUS: Record<string, string> = {
   "bots.runtime.feishuWebSocketConnecting": "Feishu WebSocket is connecting.",
   "bots.runtime.feishuWebSocketRunning": "Feishu WebSocket is running.",
   "bots.runtime.feishuWebSocketStopped": "Feishu WebSocket is stopped.",
+  "bots.runtime.discordGatewayStarting": "Discord gateway is starting.",
+  "bots.runtime.discordGatewayConnecting": "Discord gateway is connecting.",
+  "bots.runtime.discordGatewayRunning": "Discord gateway is running.",
+  "bots.runtime.discordGatewayStopped": "Discord gateway is stopped.",
+  "bots.runtime.discordGatewayHandledElsewhere":
+    "Discord gateway is handled by another ACode window.",
+  "bots.runtime.discordTokenMissing": "Discord bot token is missing.",
+  "bots.runtime.discordGatewayFailedRetrying": "Discord gateway failed; retrying.",
   "bots.runtime.connectionFailed": "Bot connection failed",
   "bots.runtime.feishuConnectionFailed": "Feishu connection failed",
   "bots.runtime.larkConnectionFailed": "Lark connection failed",
@@ -1763,9 +1545,11 @@ const enUS: Record<string, string> = {
   "remote.kind.ssh": "SSH",
   "remote.kind.wsl": "WSL",
   "remote.kind.docker": "Docker",
+  "remote.kind.server": "Server",
   "remote.kind.ssh.wizardDescription": "Remote host",
   "remote.kind.wsl.wizardDescription": "Windows Subsystem for Linux",
   "remote.kind.docker.wizardDescription": "Local container",
+  "remote.kind.server.wizardDescription": "Attach to a running ACode server",
   "remote.connect": "Connect",
   "remote.connecting": "Connecting...",
   "remote.minimize": "Minimize remote connection window",
@@ -1788,6 +1572,7 @@ const enUS: Record<string, string> = {
   "remote.log.prepare": "Wizard parameters validated. Preparing the connection request.",
   "remote.log.sshTarget": "SSH target: {username}@{host}:{port}",
   "remote.log.dockerTarget": "Docker container target: {container}",
+  "remote.log.serverTarget": "Server target: {url}",
   "remote.log.requestingSession": "Requesting the host process to create a remote session...",
   "remote.log.sessionReady":
     "Remote session created successfully. You can choose a directory next.",
@@ -1817,6 +1602,22 @@ const enUS: Record<string, string> = {
   "docker.unavailable": "No running containers detected.",
   "docker.noContainers": "No running containers detected.",
   "docker.validation.required": "Container name or ID is required",
+
+  // Server (attach to a running ACode/ZCode server)
+  "server.description":
+    "Attach to an already-running ACode server over WebSocket instead of deploying a new one.",
+  "server.url": "Server URL",
+  "server.urlPlaceholder": "e.g. https://studio.example.com:3030",
+  "server.name": "Display name",
+  "server.namePlaceholder": "Optional name for this server",
+  "server.token": "Token",
+  "server.tokenPlaceholder": "Optional server token",
+  "server.workspacePath": "Default workspace path",
+  "server.workspacePathPlaceholder": "/path/on/server",
+  "server.workspacePathDescription":
+    "Leave empty to choose a directory on the server after connecting.",
+  "server.validation.urlRequired": "Server URL is required",
+  "server.validation.invalidUrl": "Enter a valid URL, e.g. https://studio.example.com:3030",
 
   // Locale switch
   "locale.switchLanguage": "Switch language",
@@ -2141,6 +1942,16 @@ const enUS: Record<string, string> = {
   "settings.nativeSearchEnhancements": "Enhanced Find and Grep",
   "settings.nativeSearchEnhancementsDescription":
     "Use enhanced Find and Grep in new sessions and sessions restored after an app restart. Active sessions keep their current setting; Find remains unchanged on Windows.",
+  "engine.permissionMode.default": "Default",
+  "engine.permissionMode.yolo": "Full access",
+  "engine.permissionMode.plan": "Plan",
+  "engine.permissionMode.edit": "Edit",
+  "engine.permissionMode.acceptEdits": "Accept edits",
+  "engine.permissionMode.auto": "Auto",
+  "engine.permissionMode.dontAsk": "Don't ask",
+  "engine.permissionMode.bypassPermissions": "Bypass permissions",
+  "engine.permissionMode.autoEdit": "Auto edit",
+  "engine.permissionMode.build": "Build",
   "settings.memory": "Memory",
   "settings.memory.workspaceMemory": "Workspace Memory",
   "settings.memoryDescription":
@@ -2255,6 +2066,9 @@ const enUS: Record<string, string> = {
   "settings.askUserQuestionAutoResolution": "Automatically continue questions",
   "settings.askUserQuestionAutoResolutionDescription":
     "When enabled, Agent questions automatically continue after 5 minutes without an answer. When disabled, current and future questions wait for your response.",
+  "settings.botPermissionLocalApproval": "Require local approval for bot task permissions",
+  "settings.botPermissionLocalApprovalDescription":
+    "When enabled, tool permission requests from chat-bot-driven tasks (Telegram/Feishu, etc.) can only be approved in the ACode desktop window. The chat side shows a read-only notice instead of approval buttons. An administrator policy can force this on and it cannot be relaxed here.",
   "settings.modelIoFullRetention": "Keep complete model I/O",
   "settings.modelIoFullRetentionDescription":
     "Keep complete model requests and responses without compression, size limits, or automatic deletion.",
@@ -2785,6 +2599,8 @@ const enUS: Record<string, string> = {
     "Add at least one model before adding the provider.",
   "settings.modelProvider.baseUrl": "Base URL",
   "settings.modelProvider.baseUrlPlaceholder": "https://api.example.com/v1",
+  "settings.modelProvider.baseUrlPlaintextHttpWarning":
+    "Plaintext HTTP endpoint: the API key will be sent in cleartext; consider switching to https",
   "settings.modelProvider.readOnlyField": "{field} (read only)",
   "settings.modelProvider.endpointPath": "Endpoint path: {format}",
   "settings.modelProvider.apiFormat": "API format",
@@ -2800,6 +2616,7 @@ const enUS: Record<string, string> = {
   "settings.modelProvider.apiFormat.title.anthropicMessages": "Anthropic messages",
   "settings.modelProvider.apiKey": "API key",
   "settings.modelProvider.apiKeyPlaceholder": "Enter API key",
+  "settings.modelProvider.apiKeyConfiguredPlaceholder": "Configured (••••••••). Type a new value to replace it.",
   "settings.modelProvider.apiKeyDisabledHint": "Set an API key to enable this provider.",
   "settings.modelProvider.getApiKey": "Get API key",
   "settings.modelProvider.viewUsage": "View usage",
@@ -3553,8 +3370,6 @@ const enUS: Record<string, string> = {
   "settings.subagents.form.description.placeholder": "Short description shown to the model",
   "settings.subagents.form.model.label": "Model",
   "settings.subagents.form.permissionMode.label": "Permission mode",
-  "settings.subagents.form.maxTurns.label": "Max turns",
-  "settings.subagents.form.maxTurns.placeholder": "Inherit",
   "settings.subagents.form.color.label": "Color",
   "settings.subagents.form.tools.label": "Allowed tools",
   "settings.subagents.form.tools.inheritAll": "Inherit all",

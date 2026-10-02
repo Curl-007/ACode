@@ -58,8 +58,8 @@ export const desktopBrowserPlatformBridge = {
     window.acode.browserViewRestoreTabs?.(payload) ?? Promise.resolve([]),
   browserViewUpdateViewport: (payload) =>
     window.acode.browserViewUpdateViewport?.(payload) ?? Promise.resolve(),
-  importChromeBrowserData: (options) =>
-    window.acode.importChromeBrowserData?.(options) ??
+  importChromeBrowserData: () =>
+    window.acode.importChromeBrowserData?.() ??
     Promise.resolve({
       success: false,
       cookies: { imported: 0, skipped: 0, failed: 0 },

@@ -4,6 +4,7 @@ import {
   ModelConfigRules,
   ProviderConfigMap,
   type PersonalProviderConfigRepository,
+  type ProviderApiKeyVault,
   type ProviderConfigLayerSnapshot,
   type ProviderConfigLayerUpdate,
 } from "@acode/provider";
@@ -12,6 +13,11 @@ import {
   decodeProviderConfigFile,
   encodeProviderConfigFile,
 } from "./provider-config-file-codec.js";
+import {
+  deleteOrphanedProviderApiKeys,
+  hasPlaintextApiKeys,
+  vaultPersonalProviderApiKeys,
+} from "./personal-provider-apikey-vaulting.js";
 
 export interface NodePersonalProviderConfigRepositoryOptions {
   readonly filePath: string;
@@ -19,6 +25,12 @@ export interface NodePersonalProviderConfigRepositoryOptions {
   readonly onRecovery?: (event: PersonalProviderConfigRecoveryEvent) => void;
   readonly onPollingError?: (error: unknown) => void;
   readonly pollingIntervalMs?: number | false;
+  /**
+   * BYO Provider API Key 的加密凭据库（安全加固 P1-5）。可选：未注入时明文照写照读
+   * （安全空操作，兼容纯 builtin / 测试 / 凭据库不可用）。注入后写入漏斗会把明文 Key
+   * 搬进凭据库、文件里只留 credentialRef。由 services（桌面 host）或 CLI 注入。
+   */
+  readonly providerApiKeyVault?: ProviderApiKeyVault;
 }
 
 export interface PersonalProviderConfigRecoveryEvent {
@@ -31,6 +43,7 @@ export class NodePersonalProviderConfigRepository implements PersonalProviderCon
   readonly #onRecovery?: (event: PersonalProviderConfigRecoveryEvent) => void;
   readonly #onPollingError?: (error: unknown) => void;
   readonly #pollingIntervalMs: number | false;
+  readonly #providerApiKeyVault: ProviderApiKeyVault | undefined;
   readonly #listeners = new Set<(reason: string) => void>();
   #pollingTimer: ReturnType<typeof setTimeout> | null = null;
   #pollingInFlight = false;
@@ -45,6 +58,7 @@ export class NodePersonalProviderConfigRepository implements PersonalProviderCon
     this.#importLegacy = options.importLegacy;
     this.#onRecovery = options.onRecovery;
     this.#onPollingError = options.onPollingError;
+    this.#providerApiKeyVault = options.providerApiKeyVault;
     this.#pollingIntervalMs = options.pollingIntervalMs ?? 1_000;
     if (this.#pollingIntervalMs !== false && this.#pollingIntervalMs <= 0) {
       throw new Error("Personal Provider Config pollingIntervalMs 必须大于 0");
@@ -81,6 +95,17 @@ export class NodePersonalProviderConfigRepository implements PersonalProviderCon
           defaultModelSelection: next.defaultModelSelection,
         });
         const committed = await this.#writeLocked(update);
+        // 安全加固 P1-5 回归修复（孤儿清理）：必须在 #writeLocked 成功**之后**删除凭据——
+        // 反序会在写文件失败时留下「引用悬空且真值已删」的真丢 Key 状态；正序最坏只留下
+        // 孤儿条目（与修复前一致，非破坏）。清理在文件锁内：锁外延迟删除可能与
+        // 「并发 writer 重建同名 provider 并写入同一确定性 ref」竞争，误删新真值。
+        // 清理失败不改写已提交的事实：update 已成功，此时抛错会让调用方误以为删除失败，
+        // 重试则命中「Provider 不存在」；故仅经 onRecovery 上报。
+        try {
+          await deleteOrphanedProviderApiKeys(current, committed, this.#providerApiKeyVault);
+        } catch (error) {
+          this.#reportRecovery({ error });
+        }
         const snapshot = snapshotFromUpdate(committed);
         // 原子写可能产生多次文件系统事件。写入完成后先记录内容版本，
         // polling 随后读取到同一版本时不会再次发布失效通知。
@@ -115,11 +140,18 @@ export class NodePersonalProviderConfigRepository implements PersonalProviderCon
     if (file === null && !this.#importLegacy) return snapshotFromUpdate(emptyUpdate());
     if (file !== null) {
       const update = decodeProviderConfigFile(file.value);
-      if (JSON.stringify(file.value) === JSON.stringify(encodeProviderConfigFile(update))) {
-        return snapshotFromUpdate(update);
+      // P1-5：只有「注入了 vault 且文件里还留着明文 apiKey」才需要迁移，此时落到加锁路径
+      // 由那里唯一地调用 vault（快通道不碰凭据库，避免同一把 Key 被 save 两遍）。
+      // 未注入 vault 时该判定恒为 false，快通道行为与改动前完全一致——不会平白开始加锁。
+      const needsVaultMigration =
+        this.#providerApiKeyVault !== undefined && hasPlaintextApiKeys(update);
+      if (!needsVaultMigration) {
+        if (JSON.stringify(file.value) === JSON.stringify(encodeProviderConfigFile(update))) {
+          return snapshotFromUpdate(update);
+        }
       }
     }
-    // 导入和规范化仍会写盘。拿锁后必须重读，不能用加锁前的旧内容覆盖其他 writer。
+    // 导入、规范化和 P1-5 迁移仍会写盘。拿锁后必须重读，不能用加锁前的旧内容覆盖其他 writer。
     return withFileLock(this.#filePath, () => this.#readLocked());
   }
 
@@ -133,17 +165,39 @@ export class NodePersonalProviderConfigRepository implements PersonalProviderCon
     }
 
     const update = decodeProviderConfigFile(file.value);
-    const encoded = encodeProviderConfigFile(update);
+    const vaulted = await this.#vaultUpdate(update);
+    const encoded = encodeProviderConfigFile(vaulted);
     if (JSON.stringify(file.value) !== JSON.stringify(encoded)) {
-      await this.#writeLocked(update);
+      await this.#writeLocked(vaulted);
     }
-    return snapshotFromUpdate(update);
+    // 返回 vaulted（ref 形态）：snapshot 必须与磁盘一致，revision 才等于 sha256(encode(磁盘))，
+    // 远程 provisioning 的重算断言才不会失败；明文 hydrate 由 registry 的异步刷新循环负责。
+    return snapshotFromUpdate(vaulted);
+  }
+
+  /**
+   * 把明文 BYO apiKey 搬进加密凭据库、换成 credentialRef（P1-5）。
+   *
+   * vault.save 抛错时**原样返回未改动的 update**：本次不动文件（明文继续可用），
+   * 下次读写再重试迁移。这样凭据库暂时不可用不会让写入失败，更不会弄丢 Key。
+   */
+  async #vaultUpdate(update: ProviderConfigLayerUpdate): Promise<ProviderConfigLayerUpdate> {
+    if (!this.#providerApiKeyVault) return update;
+    try {
+      return (await vaultPersonalProviderApiKeys(update, this.#providerApiKeyVault)).update;
+    } catch (error) {
+      this.#reportRecovery({ error });
+      return update;
+    }
   }
 
   async #writeLocked(update: ProviderConfigLayerUpdate): Promise<ProviderConfigLayerUpdate> {
     // 同一入口写入规则与默认选择；先严格验证整份结果，不能落盘后才发现来源越权/坏值。
     // 使用与读取相同的规范形态再计算版本，避免外层规则键顺序使“写成功”的版本读回就变化。
-    const canonical = decodeProviderConfigFile(encodeProviderConfigFile(update));
+    // vault 化必须在 canonical 之前：落盘的、算 revision 的、返回给 snapshot 的都得是 ref 形态，
+    // 三者一致才不会出现「revision 基于明文、磁盘是 ref」的错配。
+    const vaulted = await this.#vaultUpdate(update);
+    const canonical = decodeProviderConfigFile(encodeProviderConfigFile(vaulted));
     const encoded = encodeProviderConfigFile(canonical);
     await atomicWritePrivateTextFile(this.#filePath, JSON.stringify(encoded, null, 2));
     this.#writeGeneration += 1;

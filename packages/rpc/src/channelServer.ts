@@ -10,6 +10,19 @@ import {
   ResponseType,
 } from "./channels.shared.js";
 
+/**
+ * 截断 payload 的十六进制摘要：只取前 16 byte，足够定位畸形帧的形态，
+ * 又不会把大段业务内容写进日志（spec 规则 1：不含敏感内容）。
+ */
+function payloadHexDigest(message: VSBuffer): string {
+  const limit = Math.min(message.byteLength, 16);
+  const parts: string[] = [];
+  for (let i = 0; i < limit; i++) {
+    parts.push(message.buffer[i].toString(16).padStart(2, "0"));
+  }
+  return parts.join(" ");
+}
+
 export class ChannelServer<TContext = string> implements IChannelServer<TContext>, IDisposable {
   private channels = new Map<string, IServerChannel<TContext>>();
   private activeRequests = new Map<number, IDisposable>();
@@ -67,8 +80,35 @@ export class ChannelServer<TContext = string> implements IChannelServer<TContext
 
   private onRawMessage(message: VSBuffer): void {
     const reader = new BufferReader(message);
-    const header = deserialize(reader);
-    const body = deserialize(reader);
+
+    // 修复依据（specs/rpc-frame-hardening.md 规则 1）：此前 message handler 对
+    // deserialize 结果零防护——一字节 0x00 帧即让 header 为 undefined、header[0]
+    // 抛 TypeError，异常沿 ws message listener 上抛为 uncaughtException，单帧
+    // 即可远程崩溃 server 进程。这里是畸形帧的唯一 catch 点：丢弃该帧并记 warn
+    // （截断十六进制摘要，不含敏感内容），连接保持存活，不重抛。
+    let header: any;
+    let body: any;
+    try {
+      header = deserialize(reader);
+      body = deserialize(reader);
+    } catch (error) {
+      console.warn(
+        `[rpc] ChannelServer dropped malformed frame (${
+          error instanceof Error ? `${error.name}: ${error.message}` : String(error)
+        }) payload[0:16]=<${payloadHexDigest(message)}>`,
+      );
+      return;
+    }
+
+    if (!Array.isArray(header)) {
+      // 合法 header 必须是 [RequestType, id, channelName, methodName] 形状的数组；
+      // 非 array（如单字节 0x00 帧解出的 undefined）同样按规则 1 丢弃并保持连接。
+      console.warn(
+        `[rpc] ChannelServer dropped frame with non-array header (${typeof header}) payload[0:16]=<${payloadHexDigest(message)}>`,
+      );
+      return;
+    }
+
     const type = header[0] as RequestType;
 
     switch (type) {

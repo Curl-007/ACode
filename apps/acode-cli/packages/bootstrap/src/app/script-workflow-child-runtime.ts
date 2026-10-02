@@ -112,7 +112,6 @@ export function createScriptWorkflowAgentRuntime(input: {
       ...inheritedConfig,
       ...(systemPrompt === undefined ? {} : { systemPrompt }),
       agentName: input.request.opts?.agentType ?? "acode-workflow",
-      maxTurns: input.request.opts?.maxTurns ?? input.deps.runtimeConfig.maxTurns,
       mode: "yolo",
       modelSelection,
       parentSessionId: input.deps.sessionId,

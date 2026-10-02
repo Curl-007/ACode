@@ -157,10 +157,24 @@ export interface DockerRemoteTargetSnapshot {
   container: string;
 }
 
+export interface ServerRemoteTargetSnapshot {
+  kind: "server";
+  url: string;
+  name?: string;
+  workspacePath?: string;
+  serverId?: string;
+  /**
+   * server token 不写入 settings.json。
+   * 这里只保存 credentialService 的键名，恢复时再去安全存储读取真实 token。
+   */
+  tokenCredentialKey?: string;
+}
+
 export type RemoteTargetSnapshot =
   | SSHRemoteTargetSnapshot
   | WSLRemoteTargetSnapshot
-  | DockerRemoteTargetSnapshot;
+  | DockerRemoteTargetSnapshot
+  | ServerRemoteTargetSnapshot;
 
 export interface RemoteWorkspaceSessionSnapshot {
   /** 远程 workspace 的真实绝对路径 */
@@ -316,6 +330,8 @@ export interface AppSettings {
   acodeInteractionBehavior?: ACodeInteractionBehavior;
   /** Agent 提问五分钟无人回答时是否允许自动继续；缺失按开启兼容旧配置。 */
   askUserQuestionAutoResolutionEnabled?: boolean;
+  /** bot 任务权限是否只能在桌面本机确认；默认关，管理员策略地板可强制开启（用户设置无法放宽）。 */
+  botPermissionLocalApprovalEnabled?: boolean;
   /** 是否完整保留 Model I/O；开启后不轮转、不限额重置、不压缩或裁剪，鉴权信息仍会脱敏。 */
   modelIoFullRetentionEnabled?: boolean;
   /** 设置页中每个 Provider Family 当前唯一的结构化连接选择。 */

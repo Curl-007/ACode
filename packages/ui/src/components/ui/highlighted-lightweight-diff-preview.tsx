@@ -10,6 +10,7 @@ import {
   type TokenizedCode,
 } from "@/lib/shikiHighlighter.js";
 import { logger } from "@/logger.js";
+import { ensureDiffsWorkers } from "@/root/DiffsWorkerPoolProvider.js";
 import type { CodePreviewSettings } from "@/store/index.js";
 
 const HIGHLIGHTED_LIGHTWEIGHT_DIFF_MAX_CHARS = 120_000;
@@ -59,26 +60,38 @@ function useHighlightedLightweightDiffTokens({
       });
     }
 
-    const tokenized = highlightCode(code, language, theme, (result) => {
+    // 首个轻量 diff 渲染是用户即将查看 diff 的信号,在此刻才物化 Diffs worker 池:
+    // 池冷启动会一次性 spawn 4 个 worker(828KB bundle + shiki 引擎,多占 16-32MB
+    // 进程内存),绝大多数启动会话在首个 diff 前完全不需要(spec 规则 6)。
+    // ensure 幂等且永不 reject;物化失败时后续 @pierre/diffs 组件自动走主线程兜底,
+    // 本组件的本地 shiki 高亮也不受影响。
+    void (async () => {
+      await ensureDiffsWorkers();
       if (cancelled) {
         return;
       }
 
-      if (shouldHighlight) {
-        logger.debug("[HighlightedLightweightDiffPreview] 异步 diff 高亮完成", {
-          durationMs: Date.now() - startedAt,
-          language,
-          path,
-          theme,
-        });
+      const tokenized = highlightCode(code, language, theme, (result) => {
+        if (cancelled) {
+          return;
+        }
+
+        if (shouldHighlight) {
+          logger.debug("[HighlightedLightweightDiffPreview] 异步 diff 高亮完成", {
+            durationMs: Date.now() - startedAt,
+            language,
+            path,
+            theme,
+          });
+        }
+
+        setTokenizedCode(result);
+      });
+
+      if (tokenized) {
+        setTokenizedCode(tokenized);
       }
-
-      setTokenizedCode(result);
-    });
-
-    if (tokenized) {
-      setTokenizedCode(tokenized);
-    }
+    })();
 
     return () => {
       cancelled = true;

@@ -7,12 +7,22 @@ import {
   type WorkflowNodeStatus,
   type WorkflowPhaseDefinition,
 } from "@acode/contracts";
+import { deepCriticPromptLines, type WorkflowGateSettings } from "../artifact-gate.js";
+import { deepNodePromptLines } from "../scheduler/prompts.js";
 import { workflowDefinitionPhaseMap } from "../definition.js";
 import { phaseNodeId } from "./ids.js";
+
+export interface WorkflowPhasePromptOptions {
+  // J2-3（specs/workflow-typed-artifacts.md R8）：deep 档 gate 设置；缺省 = light，提示词字节不变。
+  gate?: WorkflowGateSettings;
+  // critic pass 被 gate 拒绝后注入下一轮的补充要求（点名缺失清单）。
+  supplementRequest?: string;
+}
 
 export function buildPhasePrompt(
   snapshot: ExpertWorkflowRunSnapshot,
   definition: WorkflowPhaseDefinition,
+  options?: WorkflowPhasePromptOptions,
 ): string {
   const previousArtifacts = snapshot.artifacts
     .map((artifact) => `- ${artifact.label}: ${artifact.path}`)
@@ -27,6 +37,14 @@ export function buildPhasePrompt(
           "Node ids must be unique, references must point to real node ids, and edges must not create cycles.",
         ]
       : [];
+  const gate = options?.gate;
+  const deepCriticContract =
+    gate?.preset === "deep" && definition.behavior === "critic"
+      ? deepCriticPromptLines(snapshot)
+      : [];
+  const supplementRequest = options?.supplementRequest
+    ? ["", options.supplementRequest]
+    : [];
   return [
     `You are running the ACode workflow phase: ${definition.phase}.`,
     `Workflow run: ${snapshot.runId}`,
@@ -48,6 +66,8 @@ export function buildPhasePrompt(
     ...architectureGraphContract,
     "",
     "Output a concise Markdown artifact for this phase. Preserve concrete file paths, commands, risks, and next actions. If this phase executes code, make the edits and run focused validation when practical.",
+    ...deepCriticContract,
+    ...supplementRequest,
   ].join("\n");
 }
 
@@ -55,9 +75,10 @@ export function buildScheduledNodePrompt(
   snapshot: ExpertWorkflowRunSnapshot,
   definition: WorkflowPhaseDefinition,
   node: WorkflowGraphNode,
+  gate?: WorkflowGateSettings,
 ): string {
   if (node.phase === definition.phase && node.kind === "phase") {
-    return buildPhasePrompt(snapshot, definition);
+    return buildPhasePrompt(snapshot, definition, gate ? { gate } : undefined);
   }
   const previousArtifacts = snapshot.artifacts
     .map((artifact) => `- ${artifact.label}: ${artifact.path}`)
@@ -83,6 +104,9 @@ export function buildScheduledNodePrompt(
       : "No previous artifacts yet.",
     "",
     "Execute only this node's scope. Return a concise Markdown artifact with changes, validation, and residual risk.",
+    // J2-3（specs/workflow-typed-artifacts.md R8）：deep 档追加 typed artifact 契约与上次
+    // 引擎反馈；light 档不追加任何段落，提示词与现状逐字节一致。
+    ...deepNodePromptLines(node, gate),
   ]
     .filter((line): line is string => line !== undefined)
     .join("\n");

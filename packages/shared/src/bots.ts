@@ -1,7 +1,11 @@
 /* oxlint-disable eslint(max-lines) -- Bot 共享合约集中维护 provider、状态和 schema，保持类型与校验就近。 */
 import { z } from "zod";
 import { modelSelectionSchema, type ModelSelection } from "./model-selection.js";
-import { ACODE_AGENT_PROVIDER, ACODE_AGENT_PROVIDER_LABEL } from "./acode-agent-policy.js";
+import {
+  ACODE_NATIVE_AGENT_ENGINE,
+  getAgentEngineDescriptors,
+  isAgentEngineId,
+} from "./acode-agent-registry.js";
 import type {
   ACodeConfigOption,
   ACodeElicitationRequest,
@@ -71,6 +75,16 @@ export const BOT_REPLY_GRANULARITIES = [
 export const ALL_BOT_WORKSPACES = "*";
 export const BOT_BIND_CODE_TTL_MS = 30_000;
 
+/**
+ * Bot 草稿缺省权限模式（services 与 UI 共用的单一事实源）。
+ *
+ * 安全加固 P0-3：远程聊天入口不可达全权限档（yolo/bypass）。bot createTask 的首条消息默认
+ * 进入 **build** 审批模式——副作用工具照常经桌面 host 的审批闸弹窗，不静默执行。此前该缺省是
+ * `yolo`（「一条聊天消息 → 远程任意命令执行」面），现回退到受审批的缺省，与引擎注册表
+ * `defaultPermissionMode: "build"`（native）一致。需要 yolo 必须在桌面本地显式操作。
+ */
+export const BOT_DEFAULT_DRAFT_MODE = "build";
+
 export interface BotWorkspaceRef {
   id: string;
   label: string;
@@ -83,6 +97,8 @@ export interface BotAllowedCommands {
   new: boolean;
   workspace: boolean;
   model: boolean;
+  /** 已废弃：/engine 命令已随外部引擎槽位下线移除；字段仅为旧 bot-config.json 宽容解析保留。 */
+  engine?: boolean;
   mode?: boolean;
   thoughtLevel: boolean;
   sandboxMode?: boolean;
@@ -97,6 +113,11 @@ export interface BotCurrentOptions {
   mode?: string;
   sandboxMode?: string;
   approvalPolicy?: string;
+  /**
+   * 每 bot 默认引擎（持久化键 cli，与 botCurrentOptionsSchema 对齐）。
+   * 草稿初始化读取它决定 provider；缺省 = native(glm)。
+   */
+  cli?: ACodeProvider;
 }
 
 export type BotReplyMode = BotReplyGranularity;
@@ -111,6 +132,10 @@ export interface BotConfig {
   webhookUrl?: string;
   webhookAuthHeaderName?: string;
   feishuAppId?: string;
+  // 企业微信自建应用：corpid/agentid 为普通配置；CorpSecret 复用 credentialRef，回调 Token 复用 webhookSecretRef。
+  wecomCorpId?: string;
+  wecomAgentId?: string;
+  wecomEncodingAESKey?: string;
   providerUserId?: string;
   displayName?: string;
   allowedWorkspaces: string[];
@@ -383,6 +408,8 @@ export const botAllowedCommandsSchema = z
     new: z.boolean(),
     workspace: z.boolean(),
     model: z.boolean(),
+    // 已废弃：/engine 命令已移除（外部引擎槽位下线），新配置不会再写入这个字段。
+    engine: z.boolean().optional(),
     mode: z.boolean().optional(),
     thoughtLevel: z.boolean(),
     sandboxMode: z.boolean().optional(),
@@ -401,14 +428,20 @@ export const botCurrentOptionsSchema = z
     mode: z.string().min(1).optional(),
     sandboxMode: z.string().min(1).optional(),
     approvalPolicy: z.string().min(1).optional(),
-    // 兼容旧 bot-config.json；CLI provider 现在统一由 ACode Protocol 侧配置决定。
-    cli: z.literal(ACODE_AGENT_PROVIDER).optional(),
+    // 兼容旧 bot-config.json；外部引擎槽位已下线，旧值（codex/opencode/gemini）解析时归一为 glm。
+    cli: z
+      .string()
+      .optional()
+      .transform((value) => (isAgentEngineId(value) ? value : ACODE_NATIVE_AGENT_ENGINE)),
   })
   .strict();
 
 export const botDraftOptionsSchema = z
   .object({
-    provider: z.literal(ACODE_AGENT_PROVIDER),
+    // 外部引擎槽位已下线：旧持久化的 codex/opencode/gemini 值解析时归一为 glm（唯一引擎）。
+    provider: z
+      .string()
+      .transform((value) => (isAgentEngineId(value) ? value : ACODE_NATIVE_AGENT_ENGINE)),
     modelSelection: modelSelectionSchema.optional(),
     mode: z.string().min(1).optional(),
   })
@@ -464,6 +497,9 @@ export const botConfigSchema = z
     webhookUrl: z.string().url().optional(),
     webhookAuthHeaderName: z.string().min(1).optional(),
     feishuAppId: z.string().min(1).optional(),
+    wecomCorpId: z.string().min(1).optional(),
+    wecomAgentId: z.string().min(1).optional(),
+    wecomEncodingAESKey: z.string().min(1).optional(),
     providerUserId: z.string().min(1).optional(),
     displayName: z.string().optional(),
     allowedWorkspaces: z.array(z.string().min(1)),
@@ -552,7 +588,13 @@ export function normalizeBotReplyGranularity(
   return supported.includes(candidate) ? candidate : supported[0]!;
 }
 
+/**
+ * Bot 可选 ACode 引擎列表，由注册表生成。
+ *
+ * 引擎联合只剩 native(glm)（外部引擎槽位已下线），列表恒为单项；保留导出以维持
+ * bot 配置 UI 的选项形状，未来若新增引擎自动出现。
+ */
 export const BOT_ACODE_PROVIDER_OPTIONS: Array<{
   id: ACodeProvider;
   label: string;
-}> = [{ id: ACODE_AGENT_PROVIDER, label: ACODE_AGENT_PROVIDER_LABEL }];
+}> = getAgentEngineDescriptors().map((engine) => ({ id: engine.id, label: engine.label }));

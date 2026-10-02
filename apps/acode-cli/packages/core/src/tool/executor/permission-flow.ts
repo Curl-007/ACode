@@ -11,8 +11,14 @@ import {
   type ToolExecutionSpanWriter,
 } from "@acode/contracts";
 import type { HookRunResult } from "../../hooks/index.js";
+import { isBashReflexGateRuleId } from "../../permission/bash-confirm-reflex-gate.js";
 import type { PermissionContext } from "../../permission/service.js";
-import type { ExecutableToolCall, ToolEntry, ToolExecutionResult } from "../types.js";
+import type {
+  ExecutableToolCall,
+  ToolEntry,
+  ToolExecutionResult,
+  ToolRuntimePermissionCapabilityContext,
+} from "../types.js";
 import { normalizeToolExecutionInput } from "../input-normalization.js";
 import { resolveToolApproval } from "./approval-gate.js";
 import { createErrorResult, createPermissionErrorResult } from "./errors.js";
@@ -49,6 +55,19 @@ export async function resolveToolPermission(
   signal?: AbortSignal,
   telemetry?: ToolExecutionSpanWriter,
 ): Promise<ToolPermissionFlowResult> {
+  const baseRuntimePermissionContext = resolveRuntimePermissionContext(deps);
+  // R6 边界⑥收口（spec npm-script-body-scan.md R1/R5）：权限链路的异步前置。仅声明
+  // 了钩子的工具（当前只有 Bash）有开销；预取结果并入 capability context——capability
+  // 合并、规则建议收窄与下面的 PermissionContext 三方同源，不另建旁路。容错不抛由
+  // 钩子实现方保证（预取失败 = 上下文缺席 = legacy 语义）。
+  const capabilityContextExtra = await entry.resolvePermissionCapabilityContextAsync?.(
+    executionInput,
+    baseRuntimePermissionContext,
+  );
+  const runtimePermissionContext: ToolRuntimePermissionCapabilityContext = {
+    ...baseRuntimePermissionContext,
+    ...(capabilityContextExtra ?? {}),
+  };
   const permissionContext: PermissionContext = {
     toolName: toolCall.name,
     input: executionInput,
@@ -59,8 +78,26 @@ export async function resolveToolPermission(
     // workflow 草稿免确认要按工作目录解析相对路径，见 PermissionService 的
     // isPreapprovedWorkflowDraftWrite。
     workingDirectory: deps.getWorkingDirectory(),
+    // 安全加固 P2：旁路免疫熔断器的「路径逃逸写」判定需要工作区根；拿不到时该类
+    // 熔断器不触发（容错哲学与 workingDirectory 一致），其余判定不受影响。
+    workspaceRoot: deps.getWorkspaceRoot(),
+    // 对抗复审 N3：调用方身份进反射门挑战键——general-purpose/自定义子代理继承父
+    // PermissionService 实例，挑战键不含身份时会话 A 的反射挑战会被会话 B 的首调
+    // 「继承」，B 携带预填 justification 即可绕过反射轮。
+    sessionId: deps.sessionId,
+    // R6 边界⑥收口（spec npm-script-body-scan.md R1/R4）：npm/pnpm/yarn/bun run 的
+    // script 体预解析 map。bypass-immune-breakers 的 deny 级命中与反射门从这里拿到
+    // 注入——yolo 下 body catastrophic 的 deny 通道就在这里接通（breaker 是纯函数，
+    // map 只能由调用方喂进来）。
+    ...(runtimePermissionContext.packageScripts
+      ? { packageScripts: runtimePermissionContext.packageScripts }
+      : {}),
+    // 对抗验证 F1②：扫描覆盖证据同源透传（三消费点共享同一份，缺任何一段都会让
+    // confirm 在该消费点退回 enclosing 误判 → yolo 直通）。空数组是有意义状态。
+    ...(runtimePermissionContext.scannedDirectories
+      ? { scannedDirectories: runtimePermissionContext.scannedDirectories }
+      : {}),
   };
-  const runtimePermissionContext = resolveRuntimePermissionContext(deps);
   const rulePolicy = entry.resolvePermissionRulePolicy?.(executionInput, runtimePermissionContext);
   const suggestedPermissionUpdates =
     rulePolicy?.suggestedPermissionUpdates ??
@@ -143,11 +180,22 @@ export async function resolveToolPermission(
     });
     return {
       allowed: false,
-      result: createPermissionErrorResult(toolCall, permissionDecision.reason, {
-        decision: permissionDecision.decision,
-        mode,
-        ruleId: permissionDecision.ruleId,
-      }),
+      // 反射门的 deny 文案是结构化指引（四问 + 重提协议），必须原样投递给模型：
+      // 缺省通道会压平空白并截到 500 字符，首轮 1000 字符文案的后三问与
+      // 「re-issue with a justification」指令会全部丢失（评审 J1-2 修复，
+      // specs/bash-confirm-reflexive-gate.md R5/R7）。其余 deny 文案维持既有投影。
+      result: createPermissionErrorResult(
+        toolCall,
+        permissionDecision.reason,
+        {
+          decision: permissionDecision.decision,
+          mode,
+          ruleId: permissionDecision.ruleId,
+        },
+        isBashReflexGateRuleId(permissionDecision.ruleId)
+          ? { preserveReasonFormatting: true }
+          : undefined,
+      ),
     };
   }
 
@@ -302,6 +350,9 @@ export async function resolveToolPermission(
     mode,
     module: "core.tool.executor",
     reason: resolvedPermission.reason,
+    // 对抗复审 N6：ruleId 此前只在 debug 级日志（生产不落盘），ask 的归因在
+    // 生产日志断线。这里补上触发本次 ask 的决策 ruleId。
+    ruleId: permissionDecision.ruleId,
     requestId,
     status:
       resolvedPermission.decision === "allow" || resolvedPermission.decision === "modify"
@@ -325,7 +376,10 @@ export async function resolveToolPermission(
           requestId,
           ruleId: permissionDecision.ruleId,
         },
-        resolvedPermission.preserveReasonFormatting
+        // hook 改写 input 后的复核也可能落到反射门 deny（新命令无挑战 → 门 deny），
+        // 与首次判定同一投递语义：结构化指引不被截断。
+        resolvedPermission.preserveReasonFormatting ||
+        isBashReflexGateRuleId(permissionDecision.ruleId)
           ? { preserveReasonFormatting: true }
           : undefined,
       ),

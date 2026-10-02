@@ -17,7 +17,6 @@ import {
 import type {
   HookRunResult,
   MessageId,
-  MessagePart,
   QueryId,
   SessionEvent,
   SessionGoal,
@@ -54,6 +53,7 @@ import {
 import type { RegularTurnLoopState } from "./turn-loop-state.js";
 import { finishOutputTokenRecovery } from "./turn-output-token-continuation.js";
 import { recordTurnUsageFact } from "./usage-observability.js";
+import { logConcurrencyDiagnostics } from "./concurrency-diagnostics.js";
 import { persistStableForkCompletionBoundary } from "./stable-fork-boundary.js";
 import {
   closeGoalStateChangeReminderDeferral,
@@ -124,6 +124,9 @@ export async function executeTurnCommand(
   let turnMachine = TurnMachineImpl.create(this.sessionId, this.turnNumber, input, traceId, turnId);
   this.currentTurnFileChanges = new Map();
   if (!startReservation) this.reserveTurnStart(turnId, turnTraceContext, "regular");
+  // D5 并发只读诊断投影（specs/concurrency-diagnostics-projection.md R5）：每 turn 至多一条。
+  // 并发治理事实的变化粒度是 turn 级，每模型请求/每工具批只会重复噪声；debug 级只走本地日志。
+  logConcurrencyDiagnostics(this, turnTraceContext);
 
   const turnAbortScope = createTurnAbortScope(options?.abortSignal);
   const turnAbortSignal = turnAbortScope.signal;
@@ -434,45 +437,6 @@ export async function executeTurnCommand(
           workingDirectory: this.workingDirectory,
         });
         logResolvedTurnAttachments(this.logger, turnTraceContext, resolvedAttachments);
-        const sharedContextRefs = options?.sharedContextRefs ?? options?.intent?.sharedContextRefs;
-        if (sharedContextRefs && sharedContextRefs.length > 0) {
-          const [reference] = sharedContextRefs;
-          if (!reference || reference.kind !== "shared_context_import") {
-            throw new Error("invalid shared context reference");
-          }
-          if (!this.sessionStore) throw new Error("shared context import storage is unavailable");
-          const alreadyHydrated = this.messageHistory
-            .borrowReadOnlyRuntimeEntries()
-            .some(
-              (entry) => entry.kind !== "attachment" && entry.metadata?.source === "shared_context",
-            );
-          if (!alreadyHydrated) {
-            const importedMessages = await this.sessionStore.messages({
-              sessionID: this.sessionId,
-            });
-            const contextMessage = importedMessages.find(
-              (message) =>
-                message.info.role === "user" &&
-                message.info.source === "shared_context" &&
-                message.info.metadata &&
-                typeof message.info.metadata === "object" &&
-                (message.info.metadata as Record<string, unknown>).contextId ===
-                  reference.context_id,
-            );
-            const contextText = contextMessage?.parts
-              .filter(
-                (part): part is Extract<MessagePart, { type: "text" }> => part.type === "text",
-              )
-              .map((part) => part.text)
-              .join("\n")
-              .trim();
-            if (!contextText) throw new Error("shared context content is unavailable");
-            this.messageHistory.addUser(
-              contextText,
-              runtimeMetadataForSyntheticUserMessageSource("shared_context"),
-            );
-          }
-        }
         await this.persistPendingModelChangeTimeline(turnTraceContext);
         if (options?.skipInputRecord !== true && options?.inputVisibility === "model-only") {
           const inputSource = options.inputSource ?? "goal-continuation";

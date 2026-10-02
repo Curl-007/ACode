@@ -1,6 +1,6 @@
 import { createChildTraceContext, type WorkflowPhaseDefinition } from "@acode/contracts";
 import { phaseNodeId } from "./ids.js";
-import { buildPhasePrompt } from "./prompts.js";
+import { buildPhasePrompt, type WorkflowPhasePromptOptions } from "./prompts.js";
 import type { ExpertWorkflowRuntimeContext } from "./runtime-context.js";
 import type { ExpertPhaseRunResult, ExpertWorkflowRunOptions } from "./types.js";
 import type { ExpertWorkflowRunSnapshot } from "@acode/contracts";
@@ -10,6 +10,8 @@ export async function runPhase(
   snapshot: ExpertWorkflowRunSnapshot,
   definition: WorkflowPhaseDefinition,
   options: ExpertWorkflowRunOptions,
+  // J2-3：critic-loop 传入 gate 设置与（pass 被拒后的）补充要求；缺省时提示词与现状逐字节一致。
+  promptOptions?: WorkflowPhasePromptOptions,
 ): Promise<ExpertPhaseRunResult> {
   const activityId = ctx.createActivityId();
   const inputArtifactPaths = snapshot.artifacts.map((artifact) => artifact.path);
@@ -94,7 +96,7 @@ export async function runPhase(
       onEvent: options.onEvent,
       parentSessionId: active.sessionId,
       phase: definition.phase,
-      prompt: buildPhasePrompt(runningSnapshot, definition),
+      prompt: buildPhasePrompt(runningSnapshot, definition, promptOptions),
       runId: active.runId,
       task: active.task,
       traceContext: phaseTraceContext,

@@ -1,6 +1,7 @@
 /* eslint-disable max-lines -- 所有 transport 生命周期共享同一个 registry 状态机，必须原子演进。 */
 import {
   buildSshRemoteHostKey,
+  normalizeServerEndpoint,
   stripRemoteTargetSecrets,
   type RemoteTarget,
   type WindowHostAttachmentScope,
@@ -122,6 +123,9 @@ function buildConnectionKey(target: RemoteTarget, remoteSessionId: string): stri
     case "docker":
       // Docker 保持现有 dedicated logical session 生命周期，不按 target 复用。
       return `${target.kind}:dedicated:${remoteSessionId}`;
+    case "server":
+      // server 按归一化 URL 复用（像 ssh/wsl）：两个窗口附着同一 server 共享一个逻辑会话。
+      return `server:${normalizeServerEndpoint(target.url)}`;
   }
 }
 

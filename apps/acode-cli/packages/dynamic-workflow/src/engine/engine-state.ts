@@ -14,6 +14,8 @@
 import type { ImportedWorldQueue } from "./imported-cache.js";
 import type { ArtifactOp } from "../facade/registry.js";
 import type {
+  AskStats,
+  Caps,
   ImportedRunCache,
   InstanceRef,
   JournalStorePort,
@@ -78,6 +80,20 @@ export interface EngineState {
    * 非 resume、或次序表里没有这个实例时立即执行 `release`。
    */
   holdForReplay(instance: InstanceRef, release: () => void): void;
+
+  /** 本 run 的 caps（现读；引擎自留一份，setMaxConcurrency 会整份替换，见 engine-caps.ts）。 */
+  caps(): Caps;
+  /** 整份替换 caps（唯一写入口；调用方是 setRunMaxConcurrency，替换对象由它构造）。 */
+  applyCaps(caps: Caps): void;
+  /** 抬高并发上界后重扫每个 actor 的待派发队列（委托调度器）。 */
+  pumpAll(): void;
+
+  /** ask 用量回报的节点侧回填（委托调度器的 noteStats；live 节点挂账、已结算行补 stats）。 */
+  noteStats(instance: InstanceRef, stats: AskStats): void;
+  /** 本 run 累计 token 用量（观察面 + R4 判定共用同一个数）。 */
+  spentTokens(): number;
+  /** 累加用量（唯一写入口，只增；持久化与事件在 engine-caps.ts 的 recordAskUsage 里）。 */
+  addSpentTokens(delta: number): void;
 
   /** 本 run 已发布的报告条数（REPORT_CAPS.maxItemsPerRun 的计数器，跨 resume 连续）。 */
   reportCount(): number;

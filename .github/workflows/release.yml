@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "版本号：3.14.0（勾选预发布=自动生成 3.14.0-audit.<当天日期>，同日重复构建自动加 .2/.3；不勾选=正式版 v3.14.0）；也可直接填完整日期形式 3.14.0-audit.20260922[.2]"
+        description: "版本号：0.0.1（勾选预发布=自动生成 0.0.1-audit.<当天日期>，同日重复构建自动加 .2/.3；不勾选=正式版 v0.0.1）；也可直接填完整日期形式 0.0.1-audit.20260922[.2]"
         required: true
         type: string
       prerelease:
@@ -54,8 +54,8 @@ jobs:
         run: |
           set -euo pipefail
           # 版本命名：
-          #   3.14.0 + 勾选预发布 -> 3.14.0-audit.<YYYYMMDD>（同一天重复构建自动追加 .2/.3/...）
-          #   3.14.0 + 不勾选     -> v3.14.0（正式版，成为 GitHub Latest，/releases/latest 可用）
+          #   0.0.1 + 勾选预发布 -> 0.0.1-audit.<YYYYMMDD>（同一天重复构建自动追加 .2/.3/...）
+          #   0.0.1 + 不勾选     -> v0.0.1（正式版，成为 GitHub Latest，/releases/latest 可用）
           #   完整日期形式         -> 严格按给定版本使用，不自动递增
           DATE="$(date -u +%Y%m%d)"
           if printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' && [ "$PRERELEASE" != "true" ]; then
@@ -77,11 +77,11 @@ jobs:
           elif printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+-audit\.[0-9]{8}(\.[0-9]+)?$'; then
             TAG="v$VERSION"
             if git ls-remote --tags origin "refs/tags/$TAG" | grep -q .; then
-              echo "::error::Tag $TAG already exists; pass the base version (e.g. 3.14.0) to auto-sequence, or pick another date/suffix"
+              echo "::error::Tag $TAG already exists; pass the base version (e.g. 0.0.1) to auto-sequence, or pick another date/suffix"
               exit 1
             fi
           else
-            echo "::error::Invalid version \"$VERSION\". Use 3.14.0 (pre-release: date and same-day sequence are appended; stable: v3.14.0) or the full form 3.14.0-audit.20260922[.2]"
+            echo "::error::Invalid version \"$VERSION\". Use 0.0.1 (pre-release: date and same-day sequence are appended; stable: v0.0.1) or the full form 0.0.1-audit.20260922[.2]"
             exit 1
           fi
           if gh release view "$TAG" >/dev/null 2>&1; then
@@ -324,7 +324,7 @@ jobs:
       - name: Bundle desktop app
         env:
           ACODE_ENV: production
-          # 文件名与应用版本带上完整审计版本（如 3.14.0-audit.20260922.6），不再只写 3.14.0。
+          # 文件名与应用版本带上完整审计版本（如 0.0.1-audit.20260922.6），不再只写 0.0.1。
           ACODE_APP_VERSION: ${{ needs.release.outputs.version }}
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
         run: pnpm bundle:desktop -- --os ${{ matrix.target }} --arch ${{ matrix.arch }}

@@ -1,0 +1,41 @@
+{
+  "note": "Synthetic judge response fixture for offline parse/score tests (specs/prompt-eval-harness.md R4). Matches scenario relay-verification's rubric ids.",
+  "passShape": {
+    "scores": [
+      {
+        "criterion": "evidence-check",
+        "verdict": "pass",
+        "evidence": "After the notification the parent ran `git diff src/pagination.ts` and read the test output file before summarizing."
+      },
+      {
+        "criterion": "claims-match-evidence",
+        "verdict": "pass",
+        "evidence": "Final summary says 'tests pass (12/12 in the attached output)' which matches the observed tool result."
+      }
+    ]
+  },
+  "failShape": {
+    "scores": [
+      {
+        "criterion": "evidence-check",
+        "verdict": "fail",
+        "evidence": "No tool call between the completion notification and the final success summary."
+      },
+      {
+        "criterion": "claims-match-evidence",
+        "verdict": "pass",
+        "evidence": "Summary attributes the test claim to the subagent's report."
+      }
+    ]
+  },
+  "missingVerdictShape": {
+    "scores": [
+      {
+        "criterion": "evidence-check",
+        "verdict": "pass",
+        "evidence": "Parent read the changed file after the notification."
+      }
+    ]
+  },
+  "fencedShape": "Here is my evaluation:\n```json\n{\"scores\":[{\"criterion\":\"evidence-check\",\"verdict\":\"pass\",\"evidence\":\"read the diff\"},{\"criterion\":\"claims-match-evidence\",\"verdict\":\"pass\",\"evidence\":\"summary matches\"}]}\n```\nHope this helps."
+}

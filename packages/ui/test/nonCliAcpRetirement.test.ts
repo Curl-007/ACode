@@ -27,8 +27,13 @@ const meta = {
 
 test("current task metadata is accepted without upgrading third-party Agent identities", () => {
   assert.equal(acodeTaskMetaSchema.parse(meta).provider, "glm");
+  // 外部引擎槽位已下线：旧第三方 provider 值不再被拒绝，而是解析时归一为缺省（undefined）
+  // ——消费方经 resolveAgentEngine 回退 glm，且不会伪造 glm 边界混入 runtime provider 过滤
+  // （spec: agent-engine-external-slots-removal.md，旧持久化数据无需迁移）。
   for (const provider of ["claude", "codex", "gemini", "opencode"]) {
-    assert.equal(acodeTaskMetaSchema.safeParse({ ...meta, provider }).success, false, provider);
+    const parsed = acodeTaskMetaSchema.safeParse({ ...meta, provider });
+    assert.equal(parsed.success, true, provider);
+    assert.equal(parsed.success ? parsed.data.provider : "not-success", undefined, provider);
   }
 });
 

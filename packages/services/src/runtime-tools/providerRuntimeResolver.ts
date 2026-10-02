@@ -44,9 +44,9 @@ function resolveLegacyBundledResourceRoots(moduleDir?: string): Array<string | n
 /**
  * 按引擎描述符发现 binary。
  *
- * 缺省/native(glm) 走既有候选链（GLM_BINARY_PATH env、packagedResources、~/.acode/server/agents/glm、
- * bundled-agents）。外部引擎(codex/opencode/gemini)用各自的 env var / bundledResourceDir，但默认
- * 不随包 bundle，多由用户自装——未命中返回 null，由调用方 surface missingBinaryMessage。
+ * 引擎联合只剩 native(glm)：走既有候选链（GLM_BINARY_PATH env、packagedResources、
+ * ~/.acode/server/agents/glm、bundled-agents）。engineId 入参仅作形状保留，
+ * 外部引擎槽位已下线（spec: agent-engine-external-slots-removal.md）。
  */
 export function findACodeAgentRuntimeBinary(engineId?: ACodeProvider | string | null): string | null {
   const runtime = getEngineRuntime(engineId);

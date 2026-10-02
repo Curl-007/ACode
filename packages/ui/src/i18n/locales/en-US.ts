@@ -1942,21 +1942,6 @@ const enUS: Record<string, string> = {
   "settings.nativeSearchEnhancements": "Enhanced Find and Grep",
   "settings.nativeSearchEnhancementsDescription":
     "Use enhanced Find and Grep in new sessions and sessions restored after an app restart. Active sessions keep their current setting; Find remains unchanged on Windows.",
-  "settings.engine.title": "Agent engines",
-  "settings.engine.description":
-    "ACode ships a built-in native agent. External engines (Codex, OpenCode, Gemini) are listed for reference; their session adapters are not wired up yet, so they cannot drive a conversation.",
-  "settings.engine.installed": "Enabled",
-  "settings.engine.missing": "Not enabled",
-  "settings.engine.missingHint":
-    "The session adapter for this engine is not implemented yet. Install its CLI to prepare the runtime.",
-  "engine.glm.name": "ACode Agent",
-  "engine.glm.description": "Built-in native agent. Runs out of the box with full session support.",
-  "engine.codex.name": "Codex",
-  "engine.codex.description": "OpenAI Codex CLI. Uses approval policy and sandbox mode for permissions.",
-  "engine.opencode.name": "OpenCode",
-  "engine.opencode.description": "OpenCode CLI runtime.",
-  "engine.gemini.name": "Gemini",
-  "engine.gemini.description": "Gemini CLI. Requires a configured Gemini API key.",
   "engine.permissionMode.default": "Default",
   "engine.permissionMode.yolo": "Full access",
   "engine.permissionMode.plan": "Plan",

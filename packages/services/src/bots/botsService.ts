@@ -11,7 +11,6 @@ import {
   normalizeAgentProviderToACodeAgent,
   ACODE_AGENT_PROVIDER,
   BOT_DEFAULT_DRAFT_MODE,
-  BOT_ACODE_PROVIDER_OPTIONS,
   BOT_TASK_BROADCAST_CHANNEL,
   BOT_TASK_STREAM_BROADCAST_CHANNEL,
   appendAssistantMessagePart,
@@ -252,7 +251,6 @@ const helpMessageByCommand = {
   new: "helpNew",
   workspace: "helpWorkspace",
   model: "helpModel",
-  engine: "helpEngine",
   mode: "helpMode",
   thoughtLevel: "helpThoughtLevel",
   reply: "helpReply",
@@ -336,7 +334,6 @@ type BotAuthorizedCommand =
   | "reconnect"
   | "workspace"
   | "model"
-  | "engine"
   | "mode"
   | "thoughtLevel"
   | "task"
@@ -460,14 +457,6 @@ function resolveReplyGranularityByValue(
       normalizeText(item.label["en-US"]) === normalized,
   );
   return option ? (options.find((item) => item.id === option.id) ?? null) : null;
-}
-
-/**
- * /engine 候选：来自共享注册表 BOT_ACODE_PROVIDER_OPTIONS（已过滤到 implemented 引擎）。
- * label 直接用注册表的稳定展示名（非 i18n key），与既有引擎选择面一致。
- */
-function getBotEngineOptions(): Array<{ id: ACodeProvider; label: string }> {
-  return BOT_ACODE_PROVIDER_OPTIONS.map((option) => ({ ...option }));
 }
 
 /**
@@ -1325,8 +1314,6 @@ export function createBotsService(
       requestedCommand !== "status" &&
       requestedCommand !== "workspace" &&
       requestedCommand !== "reconnect" &&
-      // /engine 只列已注册引擎（静态注册表），不申请目标 Host runtime；远端断连也应可用。
-      requestedCommand !== "engine" &&
       requestedCommand !== "reply"
     );
   }
@@ -2090,8 +2077,6 @@ export function createBotsService(
         return { type: "model.provider.set", value: option.id };
       case "model.set":
         return { type: "model.set", value: option.id };
-      case "engine.set":
-        return { type: "engine.set", value: option.id };
       case "mode.set":
         return { type: "mode.set", value: option.id };
       case "thoughtLevel.set":
@@ -6046,67 +6031,6 @@ export function createBotsService(
               configOptions,
             });
             return createStatusReply(message.actor, auth.context, auth.locale);
-          }
-          case "engine.list": {
-            const auth = await withAuthorizedContext(message, "engine");
-            if (!auth.ok) return auth.reply;
-            const options = getBotEngineOptions();
-            if (options.length === 0) {
-              return [createOutbound(message.actor, msg(auth.locale, "engineMissing"))];
-            }
-            const currentProvider = resolveBotDraftDefaults(auth.bot.currentOptions).provider;
-            const currentLabel =
-              options.find((option) => option.id === currentProvider)?.label ?? currentProvider;
-            return createSelectionReply(
-              message.actor,
-              {
-                id: `engine-${Date.now()}`,
-                title: msg(auth.locale, "engineSelectTitle", { engine: currentLabel }),
-                currentId: currentProvider,
-                action: "engine.set",
-                options,
-              },
-              auth.locale,
-            );
-          }
-          case "engine.set": {
-            const auth = await withAuthorizedContext(message, "engine");
-            if (!auth.ok) return auth.reply;
-            const options = getBotEngineOptions();
-            const option =
-              resolvePendingSelectionOption(message.actor, "engine.set", command.value) ??
-              resolveOptionByValue(options, command.value);
-            if (!option || !options.some((candidate) => candidate.id === option.id)) {
-              return [createOutbound(message.actor, msg(auth.locale, "engineMissing"))];
-            }
-            // option 已经过 options（ACodeProvider id）校验，pending selection 分支把它放宽成 string，这里收窄回引擎 id。
-            const engine = option.id as ACodeProvider;
-            // 引擎是每 bot 默认值：写 currentOptions.cli（经 saveBot 归一），再按新默认重建草稿，
-            // 使后续聊天创建的任务用新引擎。沿用 reply.set 的 saveBot 写路径，保持配置单一所有者。
-            await service.saveBot({
-              bot: {
-                ...auth.bot,
-                currentOptions: normalizeBotCurrentOptions({
-                  ...auth.bot.currentOptions,
-                  cli: engine,
-                }),
-              },
-            });
-            if (auth.context.mode === "draft" || !auth.context.activeTaskId) {
-              await writeDraftContext(
-                auth.context,
-                await buildInitializedDraftOptions(auth.context, {
-                  ...auth.bot.currentOptions,
-                  cli: engine,
-                }),
-              );
-            }
-            return [
-              createOutbound(
-                message.actor,
-                msg(auth.locale, "engineChanged", { engine: option.label }),
-              ),
-            ];
           }
           case "mode.list": {
             const auth = await withAuthorizedContext(message, "mode");

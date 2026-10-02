@@ -20,7 +20,6 @@ import {
   ACODE_AGENT_BYTECODE_ENTRY_FILE,
   ACODE_RUNTIME_ENV_KEY,
   isPackagedACodeDesktopRuntime,
-  resolveAgentEngine,
   resolveWorkspaceKey,
   resolveACodeRuntimeEnv,
   sanitizeACodeRuntimeEnv,
@@ -30,7 +29,6 @@ import {
   findACodeAgentRuntimeBinary,
   findACodeAgentRuntimeNodeBundle,
 } from "../runtime-tools/providerRuntimeResolver.js";
-import { resolveExternalEngineCommand } from "./externalEngineCommandResolver.js";
 import { isEffectiveDevelopmentNodeEnv } from "#src/runtime-tools/nodeEnv.js";
 import { createServiceLogger } from "#src/logger/serviceLogger.js";
 import { ACodeProtocolClient } from "./acodeProtocolClient.js";
@@ -474,23 +472,8 @@ function resolveElectronRuntimeACodeAgentCommand(
 export function resolveDefaultACodeAgentCommand(
   context: ACodeAgentCommandResolverContext,
 ): ACodeAgentCommand | null {
-  // 引擎 dispatch：外部引擎(codex/opencode/gemini)不走 native 的 ACODE_AGENT_SERVER_COMMAND
-  // env / monorepo 源码 / Electron bundle 候选链，只按各自描述符发现 binary。
-  // native(glm) 与缺省继续走下面的既有路径，行为字节级不变。
-  const engine = resolveAgentEngine(context.engineId);
-  if (!engine.native) {
-    const external = resolveExternalEngineCommand(engine.id, context.workspacePath);
-    if (external.command) {
-      // --surface 是 ACode app-server 专属约定，外部引擎 CLI 不识别，不能套用 presentation surface。
-      return external.command;
-    }
-    // 外部引擎未安装：抛出引擎专属诊断，让 startClient 的调用方 surface「引擎未安装/运行时缺失」，
-    // 而不是退化成通用的 "command is not configured"。
-    if (external.missingBinaryMessage) {
-      throw new Error(external.missingBinaryMessage);
-    }
-    return null;
-  }
+  // 引擎联合只剩 native(glm)（外部引擎槽位已下线，spec: agent-engine-external-slots-removal.md）；
+  // context.engineId 仅作形状保留，所有输入都走下方 native 候选链。
 
   // 安全加固 P2（agent-command-env-gate R1）：打包态忽略 ACODE_AGENT_SERVER_COMMAND 族。
   // launchctl setenv / shell profile / Windows 用户环境变量可在用户级权限下注入 GUI 应用
@@ -1015,10 +998,8 @@ export class ACodeAgentProcessManager {
   ): Promise<ACodeProtocolClient> {
     const startStartedAt = Date.now();
     const resolveCommandStartedAt = Date.now();
-    // native(glm)/缺省仍标记为 ACODE_AGENT_PROVIDER；外部引擎用其 engineId，
-    // 让 spawn/error/exit 生命周期事件可按引擎区分。
-    const engine = resolveAgentEngine(params.engineId);
-    const engineId = engine.id;
+    // 引擎联合只剩 native(glm)：engineId 恒为 ACODE_AGENT_PROVIDER，旧 provider 值已在上游归一。
+    const engineId: ACodeProvider = "glm";
     const command = await this.commandResolver({
       ...params,
       ...(this.presentationSurface ? { presentationSurface: this.presentationSurface } : {}),

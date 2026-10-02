@@ -75,9 +75,10 @@ export const acodeSessionModeSchema = z.enum(["plan", "build", "edit", "yolo", "
 /**
  * 引擎权限模式联合（镜像 ZCode kernel:34720 dzi）。
  *
- * native(glm) 实际只用 build/edit/plan/yolo 子集；外部引擎按需取档位，codex 走
- * approvalPolicy/sandboxMode（既有 bots schema 承载）。本 schema 是各引擎权限模式的
- * 取值上界，引擎作用域的实际允许集见 getAgentEnginePermissionModes()。
+ * native(glm) 实际只用 build/edit/plan/yolo 子集。外部引擎槽位已下线
+ * （spec: agent-engine-external-slots-removal.md），但联合保持取值上界不收窄：
+ * bots 权限投影（含历史 bot 配置里的 default/acceptEdits 等档位文案）仍消费完整联合，
+ * 引擎作用域的实际允许集见 getAgentEnginePermissionModes()。
  */
 export const acodeEnginePermissionModeSchema = z.enum([
   "default",

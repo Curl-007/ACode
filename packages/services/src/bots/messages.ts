@@ -27,7 +27,6 @@ const messages = {
     helpNew: "/新建 或 /clear — 开始新的任务草稿",
     helpWorkspace: "**/项目** — 切换工作区",
     helpModel: "**/模型** — 切换模型",
-    helpEngine: "**/引擎** — 切换 Agent 引擎",
     helpMode: "**/模式** — 切换运行模式",
     helpThoughtLevel: "**/思考** — 切换思考级别",
     helpReply: "**/回复** — 切换回复详细程度",
@@ -56,9 +55,6 @@ const messages = {
     modelModelSelectTitle: "当前模型 {model}\n选择模型",
     modelMissing: "未找到 model。",
     sessionModelUnavailable: "当前会话的模型选择不可用，请使用 /model 重新选择。原选择已保留。",
-    engineSelectTitle: "当前引擎 {engine}\n选择引擎",
-    engineMissing: "未找到引擎。",
-    engineChanged: "Bot 默认引擎已切换为 {engine}。",
     modeSelectTitle: "当前模式 {mode}\n选择模式",
     modeMissing: "未找到模式。",
     modeRemoteForbidden:
@@ -157,7 +153,6 @@ const messages = {
     helpNew: "/new or /clear — Start a new task draft",
     helpWorkspace: "**/project** — Switch workspace",
     helpModel: "**/model** — Switch model",
-    helpEngine: "**/engine** — Switch agent engine",
     helpMode: "**/mode** — Switch run mode",
     helpThoughtLevel: "**/think** — Switch thought level",
     helpReply: "**/reply** — Switch reply detail",
@@ -186,9 +181,6 @@ const messages = {
     modelMissing: "Model not found.",
     sessionModelUnavailable:
       "The session's model selection is unavailable. Use /model to choose again. Your saved selection has been preserved.",
-    engineSelectTitle: "Current engine {engine}\nSelect engine",
-    engineMissing: "Engine not found.",
-    engineChanged: "Bot default engine changed to {engine}.",
     modeSelectTitle: "Current mode {mode}\nSelect mode",
     modeMissing: "Mode option not found.",
     modeRemoteForbidden:

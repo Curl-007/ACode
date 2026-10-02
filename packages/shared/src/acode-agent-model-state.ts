@@ -6,7 +6,6 @@
 import { formatModelPickerValue } from "./model-selection.js";
 import type { ACodeSessionMode, ACodeSessionSettingsState } from "./acode-protocol/index.js";
 import type { ACodeConfigOption, ACodeTaskModeInfo, ACodeProvider } from "./acode-task-types-core.js";
-import { resolveAgentEngine } from "./acode-agent-registry.js";
 const MODEL_CONFIG_ID = "model";
 const MODEL_CONFIG_CATEGORY = "model";
 const MODE_CONFIG_ID = "mode";
@@ -54,19 +53,12 @@ export function getACodeAgentModeSelectOptions(): NonNullable<ACodeConfigOption[
 /**
  * native(glm) 引擎的可用模式（build/edit/plan/yolo）。
  *
- * 外部引擎的权限模式集合不同（codex 走 approvalPolicy/sandboxMode），不能复用这张表。
- * 传 engineId 时返回该引擎的权限模式投影；缺省/native 仍走既有 ACODE_AGENT_MODE_OPTIONS。
+ * 外部引擎槽位已下线，引擎联合只剩 native；保留 engineId 入参以维持调用方形状，
+ * 非法/旧值经 resolveAgentEngine 归一后仍走 native 分支。
  */
 export function getACodeAgentAvailableModes(engineId?: ACodeProvider | string | null): ACodeTaskModeInfo[] {
-  const engine = resolveAgentEngine(engineId);
-  if (engine.native) {
-    return ACODE_AGENT_MODE_OPTIONS.map((mode) => ({ ...mode }));
-  }
-  return engine.supportedPermissionModes.map((mode) => ({
-    id: mode,
-    name: mode,
-    description: mode,
-  }));
+  void engineId;
+  return ACODE_AGENT_MODE_OPTIONS.map((mode) => ({ ...mode }));
 }
 
 export function acodeSessionSettingsToACodeConfigOptions(

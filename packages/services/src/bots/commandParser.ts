@@ -61,9 +61,10 @@ export function parseBotCommand(text: string): BotCommand {
     case "mode":
     case "模式":
       return rest ? { type: "mode.set", value: rest } : { type: "mode.list" };
+    // /engine 已随外部引擎槽位（codex/opencode/gemini）下线移除；旧命令按未知命令回复。
     case "engine":
     case "引擎":
-      return rest ? { type: "engine.set", value: rest } : { type: "engine.list" };
+      return { type: "unknown", name, raw: text };
     case "thoughtlevel":
     case "thought_level":
     case "thought-level":

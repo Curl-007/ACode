@@ -19,9 +19,6 @@ const { isPackagedACodeDesktopRuntime } = await import(
 const { findACodeAgentRuntimeBinary } = await import(
   "../src/runtime-tools/providerRuntimeResolver.ts"
 );
-const { resolveExternalEngineCommand } = await import(
-  "../src/acode-agent/externalEngineCommandResolver.ts"
-);
 const { resolveDefaultACodeAgentCommand } = await import(
   "../src/acode-agent/acodeAgentProcessManager.ts"
 );
@@ -106,26 +103,9 @@ test("(3b) unpackaged: GLM_BINARY_PATH still first candidate (zero regression)",
   });
 });
 
-test("(4) packaged: external engine binaryEnvVar ignored → standard chain / missing diagnostic", () => {
-  withTempFile("evil-codex", (fakeBinary) => {
-    return withEnv({ ...PACKAGED, CODEX_BINARY_PATH: fakeBinary }, () => {
-      const result = resolveExternalEngineCommand("codex", agentContext.workspacePath);
-      assert.notEqual(result.command?.command, fakeBinary);
-      // 测试机标准候选链没有 codex → 未安装诊断（而不是 env 注入的假 binary）。
-      assert.equal(result.command, null);
-      assert.ok(result.missingBinaryMessage, "missing engine must surface its diagnostic");
-    });
-  });
-});
-
-test("(4b) unpackaged: external engine binaryEnvVar still honored", () => {
-  withTempFile("custom-codex", (fakeBinary) => {
-    return withEnv({ ACODE_APP_IS_PACKAGED: null, CODEX_BINARY_PATH: fakeBinary }, () => {
-      const result = resolveExternalEngineCommand("codex", agentContext.workspacePath);
-      assert.equal(result.command?.command, fakeBinary);
-    });
-  });
-});
+// (4)/(4b) 外部引擎 binaryEnvVar 用例已随引擎槽位下线移除
+// （spec: packages/shared/specs/agent-engine-external-slots-removal.md；
+//  CODEX/OPENCODE/GEMINI_BINARY_PATH 概念不复存在，env 门禁仅覆盖 native 链路）。
 
 // ── 场景 6（R4，2026-09-30 深度扫描分诊补充）：ACODE_CUA_DEV_ROOT 打包态门禁 ──
 //

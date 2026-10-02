@@ -2,8 +2,9 @@
 import { z } from "zod";
 import { modelSelectionSchema, type ModelSelection } from "./model-selection.js";
 import {
-  acodeAgentEngineIdSchema,
+  ACODE_NATIVE_AGENT_ENGINE,
   getAgentEngineDescriptors,
+  isAgentEngineId,
 } from "./acode-agent-registry.js";
 import type {
   ACodeConfigOption,
@@ -96,7 +97,7 @@ export interface BotAllowedCommands {
   new: boolean;
   workspace: boolean;
   model: boolean;
-  /** 引擎选择命令 /engine；缺省随 DEFAULT_BOT_COMMANDS 开启。 */
+  /** 已废弃：/engine 命令已随外部引擎槽位下线移除；字段仅为旧 bot-config.json 宽容解析保留。 */
   engine?: boolean;
   mode?: boolean;
   thoughtLevel: boolean;
@@ -270,8 +271,6 @@ export type BotCommand =
   | { type: "model.list" }
   | { type: "model.provider.set"; value: string }
   | { type: "model.set"; value: string }
-  | { type: "engine.list" }
-  | { type: "engine.set"; value: string }
   | { type: "mode.list" }
   | { type: "mode.set"; value: string }
   | { type: "thoughtLevel.list" }
@@ -301,7 +300,6 @@ export interface SelectionPrompt {
     | "workspace.set"
     | "model.provider.set"
     | "model.set"
-    | "engine.set"
     | "mode.set"
     | "thoughtLevel.set"
     | "task.set"
@@ -410,6 +408,7 @@ export const botAllowedCommandsSchema = z
     new: z.boolean(),
     workspace: z.boolean(),
     model: z.boolean(),
+    // 已废弃：/engine 命令已移除（外部引擎槽位下线），新配置不会再写入这个字段。
     engine: z.boolean().optional(),
     mode: z.boolean().optional(),
     thoughtLevel: z.boolean(),
@@ -429,14 +428,20 @@ export const botCurrentOptionsSchema = z
     mode: z.string().min(1).optional(),
     sandboxMode: z.string().min(1).optional(),
     approvalPolicy: z.string().min(1).optional(),
-    // 兼容旧 bot-config.json；cli 现覆盖整个引擎联合（native + 外部引擎）。
-    cli: acodeAgentEngineIdSchema.optional(),
+    // 兼容旧 bot-config.json；外部引擎槽位已下线，旧值（codex/opencode/gemini）解析时归一为 glm。
+    cli: z
+      .string()
+      .optional()
+      .transform((value) => (isAgentEngineId(value) ? value : ACODE_NATIVE_AGENT_ENGINE)),
   })
   .strict();
 
 export const botDraftOptionsSchema = z
   .object({
-    provider: acodeAgentEngineIdSchema,
+    // 外部引擎槽位已下线：旧持久化的 codex/opencode/gemini 值解析时归一为 glm（唯一引擎）。
+    provider: z
+      .string()
+      .transform((value) => (isAgentEngineId(value) ? value : ACODE_NATIVE_AGENT_ENGINE)),
     modelSelection: modelSelectionSchema.optional(),
     mode: z.string().min(1).optional(),
   })
@@ -556,7 +561,6 @@ export const DEFAULT_BOT_COMMANDS: BotAllowedCommands = {
   new: true,
   workspace: true,
   model: true,
-  engine: true,
   mode: true,
   thoughtLevel: true,
   reply: true,
@@ -587,12 +591,10 @@ export function normalizeBotReplyGranularity(
 /**
  * Bot 可选 ACode 引擎列表，由注册表生成。
  *
- * 只暴露 implemented 引擎：外部引擎的会话协议适配器尚未接入（registry implemented:false），
- * 让用户在 bot 配置里选到不能驱动会话的引擎是误导。当前等价于 [glm]，外部引擎实现后自动出现。
+ * 引擎联合只剩 native(glm)（外部引擎槽位已下线），列表恒为单项；保留导出以维持
+ * bot 配置 UI 的选项形状，未来若新增引擎自动出现。
  */
 export const BOT_ACODE_PROVIDER_OPTIONS: Array<{
   id: ACodeProvider;
   label: string;
-}> = getAgentEngineDescriptors()
-  .filter((engine) => engine.implemented)
-  .map((engine) => ({ id: engine.id, label: engine.label }));
+}> = getAgentEngineDescriptors().map((engine) => ({ id: engine.id, label: engine.label }));

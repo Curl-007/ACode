@@ -6,8 +6,10 @@ import { filterBotSelectablePermissionModes } from "./bot-remote-guard.js";
 /**
  * Agent 引擎注册表（唯一所有者）。
  *
- * 引擎联合 = ACode native(`glm`) + 外部引擎(codex/opencode/gemini)。native 永远是缺省，
- * 所有已持久化的 provider:"glm" 与 bot 配置保持有效，无需迁移。
+ * 引擎联合只剩 native(`glm`)——外部引擎槽位（codex/opencode/gemini）已下线
+ * （spec: agent-engine-external-slots-removal.md）：其会话协议适配器从未实现、
+ * 无 UI 选择入口、bot 命令过滤后不可选。旧持久化 provider 值经
+ * resolveAgentEngine / acodeAgentProviderSchema 归一为 native，无需迁移。
  *
  * 命名裁决：ACode 的 "glm" 是自带 bundled native agent（acode.cjs / app-server --stdio），
  * 不是 ZCode 的外部 GLM 引擎；ZCode 的外部 glm 槽位在 ACode 不复刻。
@@ -18,12 +20,7 @@ export const ACODE_NATIVE_AGENT_ENGINE = "glm" satisfies ACodeProvider;
  * 引擎 id 列表与 ACodeProvider 联合双向绑定：任一侧漂移即编译失败。
  * native 固定排首位，作为 UI/缺省的稳定锚点。
  */
-export const ACODE_AGENT_ENGINE_IDS = [
-  "glm",
-  "codex",
-  "opencode",
-  "gemini",
-] as const satisfies readonly ACodeProvider[];
+export const ACODE_AGENT_ENGINE_IDS = ["glm"] as const satisfies readonly ACodeProvider[];
 
 export type ACodeAgentEngineId = (typeof ACODE_AGENT_ENGINE_IDS)[number];
 
@@ -33,8 +30,7 @@ export const acodeAgentEngineIdSchema = z.enum(ACODE_AGENT_ENGINE_IDS);
  * 每引擎权限模式集合的取值域，派生自协议 schema（acodeEnginePermissionModeSchema），
  * 避免注册表与协议两侧漂移。
  *
- * native(`glm`) 用 ACode 会话模式（build/edit/plan/yolo）；外部引擎取自 ZCode 权限模式联合。
- * codex 语义上走 approvalPolicy/sandboxMode（既有 bots schema 已承载），不复用 build/edit/plan/yolo。
+ * native(`glm`) 用 ACode 会话模式（build/edit/plan/yolo）。
  */
 export type ACodeAgentPermissionMode = z.infer<typeof acodeEnginePermissionModeSchema>;
 
@@ -44,17 +40,10 @@ export interface ACodeAgentEngineDescriptor {
   label: string;
   /** native = ACode 自带 bundled agent，走既有 app-server 协议链路。 */
   native: boolean;
-  /**
-   * 是否已实现「真正驱动会话」。外部引擎的会话协议适配器属净新增、ZCode 无参考，
-   * 当前范围内为 false：binary 发现 / 诊断 / spawn 命令解析可用，但不接入会话协议桥。
-   */
-  implemented: boolean;
   /** 该引擎支持的权限模式（按展示顺序）。 */
   supportedPermissionModes: readonly ACodeAgentPermissionMode[];
   /** 默认权限模式。 */
   defaultPermissionMode: ACodeAgentPermissionMode;
-  /** 外部引擎是否用 approvalPolicy/sandboxMode 而非 permissionMode 表达授权（codex=true）。 */
-  usesApprovalPolicy?: boolean;
 }
 
 const NATIVE_PERMISSION_MODES: readonly ACodeAgentPermissionMode[] = [
@@ -74,35 +63,8 @@ export const ACODE_AGENT_ENGINE_REGISTRY: Readonly<Record<ACodeProvider, ACodeAg
       id: "glm",
       label: "ACode Agent",
       native: true,
-      implemented: true,
       supportedPermissionModes: NATIVE_PERMISSION_MODES,
       defaultPermissionMode: "build",
-    },
-    codex: {
-      id: "codex",
-      label: "Codex",
-      native: false,
-      implemented: false,
-      // codex 走 approvalPolicy/sandboxMode；这里给出 ZCode 联合中与之对应的授权档位。
-      supportedPermissionModes: ["default", "acceptEdits", "bypassPermissions"] as const,
-      defaultPermissionMode: "default",
-      usesApprovalPolicy: true,
-    },
-    opencode: {
-      id: "opencode",
-      label: "OpenCode",
-      native: false,
-      implemented: false,
-      supportedPermissionModes: ["default", "plan", "acceptEdits", "bypassPermissions"] as const,
-      defaultPermissionMode: "default",
-    },
-    gemini: {
-      id: "gemini",
-      label: "Gemini",
-      native: false,
-      implemented: false,
-      supportedPermissionModes: ["default", "yolo"] as const,
-      defaultPermissionMode: "default",
     },
   };
 

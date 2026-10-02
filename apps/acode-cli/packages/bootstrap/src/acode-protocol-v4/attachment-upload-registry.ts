@@ -233,6 +233,16 @@ export class AttachmentUploadRegistry {
     }
   }
 
+  /**
+   * 是否存在未走到 commit/abort 终态的暂存上传(含 commit 在飞)——空闲回收静默判据之一
+   * (spec: packages/services/specs/chat-lane-idle-reclaim.md R1/R5)。
+   * committed 条目已把字节写进会话附件存储，进程退出不丢数据，不阻断。
+   */
+  hasPendingUploads(): boolean {
+    this.pruneExpired();
+    return this.staged.size > 0;
+  }
+
   private async commitStaged(upload: StagedUpload): Promise<V4AttachmentCommitResult> {
     if (
       upload.chunks.length !== upload.metadata.totalChunks ||

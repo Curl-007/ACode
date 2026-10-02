@@ -2536,6 +2536,11 @@ export class ConversationV4Gateway {
     return this.getQueueLength(sessionId) > 0 || this.inbox.hasPinnedSessionState(sessionId);
   }
 
+  /** 空闲回收静默判据：未终态的附件暂存上传(spec: chat-lane-idle-reclaim.md R1/R5)。 */
+  hasPendingAttachmentUploads(): boolean {
+    return this.attachmentUploads.hasPendingUploads();
+  }
+
   getQueueHead(sessionId: string): {
     autoDrain: boolean;
     dispatchState: QueueItem["dispatch"]["state"];

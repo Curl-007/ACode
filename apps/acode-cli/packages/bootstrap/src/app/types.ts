@@ -725,11 +725,15 @@ export interface ResolveLatestSessionOptions {
 }
 
 export interface RunACodeProtocolAgentOptions {
-  /** 入口拥有退出时限；bootstrap 只编排取消和资源清理，不直接退出进程。 */
+  /**
+   * 入口拥有退出时限；bootstrap 只编排取消和资源清理，不直接退出进程。
+   * exitCode 供空闲退出等受控自退路径锁定保留退出码
+   * (spec: packages/services/specs/chat-lane-idle-reclaim.md R3)；缺省语义不变。
+   */
   lifecycle?: {
     readonly signal: AbortSignal;
     readonly deadlineAt: number | undefined;
-    requestShutdown(error?: Error): void;
+    requestShutdown(error?: Error, exitCode?: number): void;
   };
   /** Desktop 内部命令：只运行原存储准备并退出。 */
   prepareStorageOnly?: boolean;

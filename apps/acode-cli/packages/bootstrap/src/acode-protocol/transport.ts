@@ -49,6 +49,11 @@ export class ACodeProtocolNdjsonConnection {
   private transportCloseNotified = false;
   private draining = false;
   private drainTimer?: ReturnType<typeof setTimeout>;
+  /**
+   * 在飞 dispatch 数:消息进入 dispatchLine 即 +1(排队中同样计入),handler 终态才 -1。
+   * chat lane 空闲回收的静默判据之一(spec: packages/services/specs/chat-lane-idle-reclaim.md R1/R5)。
+   */
+  private inFlightDispatchCount = 0;
 
   constructor(private readonly options: ACodeProtocolNdjsonConnectionOptions) {
     this.closedPromise = new Promise((resolve, reject) => {
@@ -69,6 +74,18 @@ export class ACodeProtocolNdjsonConnection {
 
   waitForClose(): Promise<void> {
     return this.closedPromise;
+  }
+
+  /** 是否仍有已入队或处理中的入站帧;空闲退出 evaluator 在 entrypoint 合并该事实。 */
+  get hasInFlightDispatches(): boolean {
+    return this.inFlightDispatchCount > 0;
+  }
+
+  private trackDispatch(handling: Promise<unknown>): Promise<unknown> {
+    this.inFlightDispatchCount += 1;
+    return handling.finally(() => {
+      this.inFlightDispatchCount -= 1;
+    });
   }
 
   send(message: ACodeProtocolOutgoingMessage): void {
@@ -163,7 +180,7 @@ export class ACodeProtocolNdjsonConnection {
       // Agent 发出反向 request 前已同步登记 pending response。
       // 若 response 等待“最后一个排队请求开始”，后续普通请求会把等待点推到当前长请求之后，
       // 形成「当前请求等 response、response 等后续请求」的死锁。
-      void this.handleMessage(message).catch((error: unknown) => {
+      void this.trackDispatch(this.handleMessage(message)).catch((error: unknown) => {
         this.fail(error instanceof Error ? error : new Error(String(error)));
       });
       return;
@@ -171,11 +188,11 @@ export class ACodeProtocolNdjsonConnection {
     if (this.shouldBypassProcessingQueue(message)) {
       // 停止/取消控制必须等它前面的普通请求真正进入 handler、建立 abort
       // controller，再越过该请求的异步执行；只延后一轮微任务会让控制请求提前成为空操作。
-      void this.lastQueuedMessageStarted
-        .then(() => this.handleMessage(message))
-        .catch((error: unknown) => {
-          this.fail(error instanceof Error ? error : new Error(String(error)));
-        });
+      void this.trackDispatch(
+        this.lastQueuedMessageStarted.then(() => this.handleMessage(message)),
+      ).catch((error: unknown) => {
+        this.fail(error instanceof Error ? error : new Error(String(error)));
+      });
       return;
     }
     let markStarted!: () => void;
@@ -183,6 +200,8 @@ export class ACodeProtocolNdjsonConnection {
       markStarted = resolve;
     });
     this.lastQueuedMessageStarted = started;
+    // 入队即计数(而非 handler 开始时):排队未执行的请求同样必须阻断空闲退出。
+    this.inFlightDispatchCount += 1;
     this.processing = this.processing
       .then(async () => {
         const handling = this.handleMessage(message);
@@ -192,6 +211,9 @@ export class ACodeProtocolNdjsonConnection {
       .catch((error: unknown) => {
         markStarted();
         this.fail(error instanceof Error ? error : new Error(String(error)));
+      })
+      .finally(() => {
+        this.inFlightDispatchCount -= 1;
       });
   }
 

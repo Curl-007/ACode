@@ -223,6 +223,14 @@ export class SessionResidentPool {
     return this.inFlightDeactivations.get(sessionId) ?? Promise.resolve();
   }
 
+  /**
+   * 进程级操作租约或去激活事务是否在飞——空闲回收静默判据之一
+   * (spec: packages/services/specs/chat-lane-idle-reclaim.md R1/R5)。
+   */
+  hasActiveOperations(): boolean {
+    return this.activeOperationCount > 0 || this.inFlightDeactivations.size > 0;
+  }
+
   private isEligible(sessionId: string, facts: SessionResidencyFacts): boolean {
     return (
       facts.persisted &&

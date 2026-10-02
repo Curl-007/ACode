@@ -10,6 +10,8 @@ import {
 import {
   acodeProtocolNotifications,
   ACODE_APP_IS_PACKAGED_ENV,
+  createACodeAgentIdleExitEvaluator,
+  resolveACodeAgentIdleExitConfig,
   type ACodeMcpResourceSample,
   type ACodeMcpTelemetryEvent,
 } from "@acode/shared";
@@ -332,10 +334,48 @@ export async function runACodeProtocolAgent(
     };
     connection.start();
     mcpTelemetryTracker?.start();
+    // chat lane 空闲回收(spec: packages/services/specs/chat-lane-idle-reclaim.md):
+    // 静默自检搭 60s 资源采样节拍;宣告帧 + 保留退出码让 Host 归因 expected。
+    // lifecycle 缺失(测试/嵌入式调用)时不启用——没有退出 owner 就不得自杀。
+    const idleExitConfig = resolveACodeAgentIdleExitConfig(runtimeEnv);
+    if (idleExitConfig.parseError !== undefined) {
+      logger.warn("ACODE_AGENT_IDLE_EXIT_MS 非法,空闲退出已禁用", {
+        event: "acode_protocol.idle_exit.config_invalid",
+        module: "bootstrap.acode_protocol",
+        raw: idleExitConfig.parseError,
+      });
+    }
+    const idleExit =
+      idleExitConfig.enabled && options.lifecycle
+        ? createACodeAgentIdleExitEvaluator({
+            idleExitMs: idleExitConfig.idleExitMs,
+            collectFacts: () => {
+              const facts = server.collectQuiescenceFacts();
+              // transport 在飞帧(含排队)在 entrypoint 合并:connection 对 server 不可见。
+              if (connection.hasInFlightDispatches) {
+                return { quiescent: false, reasons: [...facts.reasons, "transport-busy"] };
+              }
+              return facts;
+            },
+            announce: (params) =>
+              connection.send({ method: acodeProtocolNotifications.runtimeIdleExit, params }),
+            requestShutdown: (exitCode) => options.lifecycle?.requestShutdown(undefined, exitCode),
+            onEvent: (event) => {
+              if (event.kind === "announced") {
+                logger.info("空闲退出已宣告,进入优雅退出链", {
+                  event: "acode_protocol.idle_exit.announced",
+                  module: "bootstrap.acode_protocol",
+                  quiescentMs: event.quiescentMs,
+                });
+              }
+            },
+          })
+        : undefined;
     processResourceSampler = startProtocolResourceSampler(
       server,
       (message) => connection.send(message),
       logger,
+      idleExit,
     );
     startupTimer.complete("ACode Protocol agent startup completed", {
       event: "acode_protocol.startup.completed",

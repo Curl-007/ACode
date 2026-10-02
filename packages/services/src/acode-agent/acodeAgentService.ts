@@ -856,7 +856,10 @@ function createRuntimeUnavailableError(params: ACodeAgentWorkspaceTarget): Error
 
 interface CreateACodeAgentServiceOptions extends Omit<
   ACodeAgentProcessManagerOptions,
-  "idleTimeoutMs"
+  // 两个空闲回收面都不许外部调用方直接配置:Host 侧 idleTimeoutMs 只属于 mcp-status
+  // 探测 lane;CLI 侧空闲自退(spec: chat-lane-idle-reclaim.md)只对 chat lane 生效,
+  // plugin/mcp-status 由本文件内部显式关闭(R8)。
+  "idleTimeoutMs" | "disableCliIdleExit"
 > {
   /** 仅供 MCP 状态探测进程使用，不能把空闲回收传给 chat。 */
   mcpStatusIdleTimeoutMs?: number;
@@ -1081,6 +1084,8 @@ export function createACodeAgentService(
     requestTimeoutMs: options?.requestTimeoutMs,
     resolveSpawnEnv: options?.resolveSpawnEnv,
     waitForSpawnAdmission: options?.waitForSpawnAdmission,
+    // plugin lane 维持现状不回收(spec: chat-lane-idle-reclaim.md R8)。
+    disableCliIdleExit: true,
   });
   // 合并时误删了独立进程：mcp/list 的慢握手会堵住串行 stdio 队列，连带卡住插件卸载。
   // 恢复专用控制面进程及空闲回收；共享 workspace 路径，不共享请求队列或 watchdog。
@@ -1093,6 +1098,8 @@ export function createACodeAgentService(
     waitForSpawnAdmission: options?.waitForSpawnAdmission,
     lane: "mcp-status",
     idleTimeoutMs: options?.mcpStatusIdleTimeoutMs ?? MCP_STATUS_LANE_IDLE_TIMEOUT_MS,
+    // 空闲回收单一所有者:该 lane 已由 Host 侧 idleTimeoutMs 管理,不叠加 CLI 自退。
+    disableCliIdleExit: true,
   });
   const sessionEmitters = new Map<string, Emitter<ACodeAgentServiceEvent>>();
   /**

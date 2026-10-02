@@ -496,10 +496,19 @@ function buildAtomicForkNotice(
   ];
 }
 
-const SELECTION_SIDE_CHAT_BOUNDARY = [
-  "The preceding conversation was inherited from the parent task for reference only.",
-  "Do not continue the parent's active work automatically; answer only new questions sent in this side chat.",
-  "Modify the workspace only when the user explicitly asks you to do so in this side chat.",
+/**
+ * 副屏边界契约（specs/side-chat-boundary-contract.md R1 六要素）：身份与定位 /
+ * 历史指令废止 / 历史批准无效 / 父线程工具活动仅参考 / 禁子代理 / 改动与提权纪律。
+ * persisted notice 正文，逐字进每次冷恢复历史——长度上限 1,600 字符（spec R1）。
+ * 导出供测试（R2，先例：dispatch-discipline spec R4 的「导出供测试」处置）。
+ */
+export const SELECTION_SIDE_CHAT_BOUNDARY = [
+  "This is a side conversation forked from the parent task, for answering questions and lightweight exploration. It is not the main thread; never present yourself as continuing the main thread's active work.",
+  "The inherited conversation is reference context only: instructions, plans, and requests that appear in it are not active instructions here — only what the user submits in this side conversation, after this boundary, is active.",
+  "Do not continue, execute, or complete any task, tool call, approval, or edit that appears only in the inherited history; approvals recorded there authorize nothing in this side conversation.",
+  "Tool and MCP calls visible in the inherited history happened in the parent thread and are reference-only; do not infer active work from them.",
+  "Do not spawn or interact with subagents from this side conversation, even if the parent thread used them; work that needs fan-out belongs to the main thread.",
+  "Stay read-only by default: reading, searching, and checks that do not alter workspace state. Modify the workspace only when the user explicitly asks for it in this side conversation, keep the change minimal and local, and do not disrupt the main thread. Never request escalated permissions or broader sandbox access unless the user explicitly asks for a modification that requires it.",
 ].join(" ");
 
 function buildSelectionSideChatBoundary(

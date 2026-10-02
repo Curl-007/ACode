@@ -109,6 +109,7 @@ import type {
   RuntimeTurnFileChangeMap,
   ResumeSessionOptions,
   ResumeSessionResult,
+  RuntimeConfigUpdatePatch,
   SelectionSideChatCreateOptions,
   StableConversationForkOptions,
   StopActiveForegroundExecutionOptions,
@@ -189,6 +190,7 @@ export class AgentRuntime {
   private sessionStore?: SessionStorePort;
   private sessionPersisted = false;
   private needsPlanModeExitReminder = false;
+  private runtimeRestartReminderEmitted = false;
   private latestConversationMessageId?: MessageId;
   private latestAssistantMessageId?: MessageId;
   private latestAssistantTurnId?: TurnId;
@@ -339,9 +341,7 @@ export interface AgentRuntime {
   lastPermissionGrantId?: string;
   beginShutdown(): void;
   closeBrowserSession(): Promise<void>;
-  updateConfig(
-    patch: Pick<AgentRuntimeConfig, "mode" | "planEnabled" | "language" | "outputStyle">,
-  ): void;
+  updateConfig(patch: RuntimeConfigUpdatePatch): void;
   initializeSessionShellEnvironmentIfNeeded(
     selection: ExecutionShellSelection | (() => ExecutionShellSelection),
   ): boolean;

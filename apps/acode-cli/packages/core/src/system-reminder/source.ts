@@ -45,6 +45,7 @@ export const SYSTEM_REMINDER_PER_REQUEST_SOURCES = [
   "output_style",
   "memory_recall",
   "date_change",
+  "runtime_restart_tasks",
   "referenced_session_context",
   "model_anomaly",
   "prompt_attachment",
@@ -99,6 +100,15 @@ const SYSTEM_REMINDER_DESCRIPTORS: Record<SystemReminderSource, DescriptorShape>
   // contracts 枚举、v4 origin 映射与 shared 投影白名单里（R7 有断言钉住）。
   memory_recall: descriptor("current_turn", "per_current_turn", true, "sr.memory_recall"),
   date_change: descriptor("current_turn", "runtime_local", true, "sr.date_change"),
+  // 重启孤儿任务提醒（specs/runtime-restart-task-reminder.md R2）：正文是持久化历史的
+  // 确定性派生（launch/终态记录都在 session store），冷恢复重算即可、无需逐字存活，
+  // 故走 per-request 档 + runtime_local 一次性触发；不进 persisted 名单，跨包分类零改动。
+  runtime_restart_tasks: descriptor(
+    "current_turn",
+    "runtime_local",
+    true,
+    "sr.runtime_restart_tasks",
+  ),
   referenced_session_context: descriptor(
     "current_turn",
     "per_current_turn",

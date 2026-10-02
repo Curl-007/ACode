@@ -11,9 +11,11 @@ import {
   buildMemoryRecallReminderBody,
   buildPlanModeExitReminderBody,
   buildRuntimeOutputStyleReminderBody,
+  buildRuntimeRestartReminderBody,
   buildTodoReminderBody,
   buildRuntimeProviderRequestMessages,
   createCompactRapidRefillError,
+  findOrphanedBackgroundTaskIds,
   throwIfTurnAborted,
   shouldBuildTodoReminder,
 } from "../helpers/index.js";
@@ -135,6 +137,22 @@ export async function runRegularTurnLoop(
       commitTurnRequestEntries(this, state.turnRequestState, [
         systemReminderAttachmentEntry("runtime_mode", runtimeModeReminderBody),
       ]);
+    }
+    // 重启孤儿任务提醒：per-request 档 + runtime_local 一次性触发，评估即消费
+    // （specs/runtime-restart-task-reminder.md R2/R3）。首 turn 时本进程尚无后台任务
+    // （launch 只发生在 turn 内），registry 谓词在该时点恒真；flag 防同进程重复注入。
+    if (!outputTokenRecoveryActive && !this.runtimeRestartReminderEmitted) {
+      this.runtimeRestartReminderEmitted = true;
+      const orphanedTaskIds = findOrphanedBackgroundTaskIds({
+        entries: state.turnRequestState.entries,
+        isTaskKnownToRuntime: (taskId) => this.runtimeTaskRegistry.get(taskId) !== undefined,
+      });
+      const runtimeRestartReminderBody = buildRuntimeRestartReminderBody(orphanedTaskIds);
+      if (runtimeRestartReminderBody) {
+        commitTurnRequestEntries(this, state.turnRequestState, [
+          systemReminderAttachmentEntry("runtime_restart_tasks", runtimeRestartReminderBody),
+        ]);
+      }
     }
     if (
       !outputTokenRecoveryActive &&

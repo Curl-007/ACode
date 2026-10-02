@@ -58,6 +58,7 @@ import type {
   ResumeSessionOptions,
   ResumeSessionResult,
   RunModelTextRequestOptions,
+  RuntimeConfigUpdatePatch,
   RuntimeModelTextResult,
   SealBackgroundTaskNotificationsInput,
   StopActiveForegroundExecutionOptions,
@@ -66,9 +67,7 @@ import type {
 } from "./types.js";
 
 export interface AgentRuntimeCoreMethods {
-  updateConfig(
-    patch: Pick<AgentRuntimeConfig, "mode" | "planEnabled" | "language" | "outputStyle">,
-  ): void;
+  updateConfig(patch: RuntimeConfigUpdatePatch): void;
   initializeSessionShellEnvironmentIfNeeded(
     selection: ExecutionShellSelection | (() => ExecutionShellSelection),
   ): boolean;

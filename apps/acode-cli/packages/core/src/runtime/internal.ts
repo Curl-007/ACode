@@ -117,6 +117,11 @@ export interface AgentRuntimeInternal
   sessionMailboxPort?: SessionMailboxPort;
   sessionPersisted: boolean;
   needsPlanModeExitReminder: boolean;
+  /**
+   * 重启孤儿任务提醒的一次性 flag（specs/runtime-restart-task-reminder.md R3）：
+   * 每个 runtime 实例首 turn 评估一次、评估即消费；进程内不落盘。
+   */
+  runtimeRestartReminderEmitted: boolean;
   latestConversationMessageId?: MessageId;
   latestAssistantMessageId?: MessageId;
   latestAssistantTurnId?: TurnId;

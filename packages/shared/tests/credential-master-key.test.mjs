@@ -48,6 +48,7 @@ const { resolveCredentialMasterKey, resolveCredentialKeyFilePath, CREDENTIAL_KEY
 const noKeychain = {
   read: () => ({ status: "unavailable", reason: "disabled for file-mode test" }),
   write: () => ({ status: "unavailable", reason: "disabled for file-mode test" }),
+  delete: () => {},
 };
 
 /** 复刻旧 v1 加密逻辑（sha256 单轮、无 AAD），用于构造历史密文 fixture。 */

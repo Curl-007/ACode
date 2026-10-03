@@ -37,17 +37,21 @@ Compared with the open-source baseline, this repository contains **no monitoring
 
 ### Local credential protection
 
-Sign-in tokens and paid API keys are stored in `~/.acode/v2/credentials.json`, encrypted with AES-256-GCM (the `enc:v2:` format). The encryption master key is **no longer** derived offline from machine attributes (platform / home directory / username) — previously any process that could read that file could reconstruct every credential purely offline. The key source is now, by priority:
+Sign-in tokens and paid API keys are stored in `~/.acode/v2/credentials.json`, encrypted with AES-256-GCM (the `enc:v2:` format). The encryption master key is **no longer** derived offline from machine attributes (platform / home directory / username) — previously any process that could read that file could reconstruct every credential purely offline. The key material now lives, by priority:
 
-1. the `ACODE_CREDENTIAL_SECRET` environment variable (only honored when no key file exists yet);
-2. a per-install random key file `~/.acode/v2/credential-key.json` (32 bytes, `0600`, generated on first use).
+1. an explicit `ACODE_CREDENTIAL_SECRET` environment variable (only honored when no keychain entry and no key file exist yet);
+2. **the OS keychain** — macOS Keychain, Windows DPAPI (a per-user protected blob next to the credentials), or Linux libsecret (GNOME Keyring / KDE Wallet). The key is separated from the ciphertext: a stolen `.acode` directory cannot be decrypted on another machine or user account;
+3. a fallback per-install key file `~/.acode/v2/credential-key.json` (32 bytes, `0600`) — used when the OS keychain is unavailable (e.g. headless Linux without a secret service, containers, CI), with a one-time warning at generation time.
 
-**Two data-loss risks you must know about:**
+Existing installs are migrated automatically on first launch after this update: the key file's material is moved into the OS keychain (byte-identical — existing credentials are **not** re-encrypted), verified by reading it back, and only then is the key file removed. If any migration step fails, the entry is rolled back and the key file stays authoritative; migration is retried on a later launch.
 
-- **`credential-key.json` lives or dies with your credentials.** Deleting it, or backing up / migrating by copying `credentials.json` but forgetting the key file, makes every `enc:v2:` credential **permanently unrecoverable**. Treat the two files as one unit and back them up together. The app's built-in data-directory migration (switching `ACODE_DATA_BASE_DIR`) carries the key file automatically — no manual step needed.
-- **Rolling back to an older version silently corrupts your sign-in.** An older build only recognizes the `enc:v1:` prefix; on an `enc:v2:` value it returns the **ciphertext verbatim as plaintext** — which surfaces as a mysteriously broken login (401) or an invalid API key, not a clear error. After upgrading to this version, do not roll back to a pre-upgrade build; if you must, sign out on the desktop first, then sign in again on the old version.
+**Data-loss and backup semantics you must know about:**
 
-Because the key file sits on the same disk as the ciphertext, this scheme does **not** protect against "the whole `.acode` directory being exfiltrated" (cloud sync, backup leaks, disk images). True "separation of ciphertext and key" requires an OS keychain (Electron `safeStorage` / keytar), which first needs the synchronous cipher interface made asynchronous and the cross-process key-agreement problem solved (the desktop host and the CLI are two processes sharing one credential file). That is future work — see [`packages/services/specs/credential-storage.md`](packages/services/specs/credential-storage.md).
+- **The keychain entry is now the single point of failure.** Losing it (OS reinstall without keychain migration, manually deleting the entry, clearing the Linux secret service) makes every `enc:v2:` credential **permanently unrecoverable** — you would sign in again / re-enter API keys. Copying `~/.acode` to a new machine **does not carry the keychain entry**; on the new machine ACode generates a fresh key, so copy-only migration leaves old credentials unreadable. To move machines, re-authenticate on the new machine instead of copying ciphertext.
+- **Rolling back to an older version silently corrupts your sign-in.** An older build only recognizes the `enc:v1:` prefix; on an `enc:v2:` value it returns the **ciphertext verbatim as plaintext** — which surfaces as a mysteriously broken login (401) or an invalid API key, not a clear error. Additionally, builds from before the keychain migration expect a key file that no longer exists, and would generate a **new** key, orphaning your credentials. After upgrading, do not roll back; if you must, sign out on the desktop first, then sign in again on the old version.
+- In fallback key-file mode (no OS keychain), the key file sits on the same disk as the ciphertext: treat `credential-key.json` and `credentials.json` as one unit and back them up together. The app's built-in data-directory migration (switching `ACODE_DATA_BASE_DIR`) carries the key file automatically.
+
+Full rules, priority chain, race/migration semantics and honest boundaries: [`packages/services/specs/credential-storage.md`](packages/services/specs/credential-storage.md); design rationale: [`docs/credential-os-keychain-design.md`](docs/credential-os-keychain-design.md).
 
 ## Download and install
 

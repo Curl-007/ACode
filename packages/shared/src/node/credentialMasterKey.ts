@@ -1,5 +1,5 @@
 import { randomBytes, scryptSync } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import {
@@ -344,6 +344,16 @@ export function resolveCredentialMasterKey(
           `(which discards existing credentials).`,
       );
     }
+    // R1-b 一次性迁移：钥匙串可用（read 返回 absent 而非 unavailable/error）且条目缺失 →
+    // 把文件材料搬入条目（零重加密：材料字节不变）。写入→回读逐字节验证→通过才删文件；
+    // 任一步失败 → 尽力清掉刚写入的条目 + 保持文件模式 + 下次解析重试（绝不留半迁移态：
+    // 解析链里钥匙串优先于文件，坏条目会压过权威材料）。
+    if (keychainRead.status === "absent") {
+      const migrated = migrateKeyFileToKeychain(keychain, keyFilePath, existing, warn);
+      if (migrated) {
+        return { key: migrated, source: "keychain" };
+      }
+    }
     return { key: existing, source: "keyFile", keyFilePath };
   }
 
@@ -422,4 +432,79 @@ function decodeKeychainSecret(secret: string, keyFilePath: string): Buffer {
     );
   }
   return keyStrict;
+}
+
+/** 解码但不抛错（迁移验证用：读回材料非法 = 验证失败，走「清条目保文件」路径而非中断解析）。 */
+function tryDecodeKeychainSecret(secret: string): Buffer | undefined {
+  const key = Buffer.from(secret, "base64url");
+  if (key.length === MASTER_KEY_BYTES) return key;
+  const strict = Buffer.from(secret, "base64");
+  return strict.length === MASTER_KEY_BYTES ? strict : undefined;
+}
+
+/**
+ * R1-b 一次性迁移：密钥文件材料 → OS 钥匙串条目（零重加密，材料字节不变）。
+ *
+ * 返回迁移成功的材料（调用方以 `source: "keychain"` 返回）；任何一步失败返回
+ * `undefined`（调用方保持文件模式，下次解析重试）。失败路径必须**尽力删除刚写入的
+ * 条目**：解析链里钥匙串优先于密钥文件，留下与文件材料不一致的坏条目会压过权威材料、
+ * 让既有 enc:v2 凭据解不开——比不迁移严重得多。
+ *
+ * 并发：桌面 host 与 CLI 同时首跑迁移时，双方搬的是**同一份文件材料**——macOS/Windows
+ * 的排他写入让落败方回读赢家（材料相同，验证必过）；Linux last-writer-wins 写入的也是
+ * 同一材料。删除文件的失败方拿到 ENOENT → 同样按失败路径返回文件模式？不：删除竞争
+ * （另一进程已删）视同成功——材料已验证入条目，文件消失正是目标状态。
+ */
+function migrateKeyFileToKeychain(
+  keychain: CredentialKeychainAccess,
+  keyFilePath: string,
+  fileKey: Buffer,
+  warn: (message: string) => void,
+): Buffer | undefined {
+  const secret = fileKey.toString("base64url");
+  const written = keychain.write(keyFilePath, secret);
+  if (written.status !== "written") {
+    warn(
+      `Credential master key migration to the OS keychain was skipped (${written.reason}); ` +
+        `staying on the 0600 key file mode. Will retry on a later launch.`,
+    );
+    return undefined;
+  }
+
+  // 回读逐字节验证：确认条目里的材料就是文件里的那把（写入成功 ≠ 可读回，
+  // 例如 secret service 在 store 与 lookup 之间掉线）。
+  const verify = keychain.read(keyFilePath);
+  const verified = verify.status === "found" ? tryDecodeKeychainSecret(verify.secret) : undefined;
+  if (!verified || !verified.equals(fileKey)) {
+    keychain.delete(keyFilePath);
+    warn(
+      `Credential master key migration verification failed (read-back ${verify.status}); ` +
+        `the partially written keychain entry was removed and the key file remains authoritative. ` +
+        `Will retry on a later launch.`,
+    );
+    return undefined;
+  }
+
+  try {
+    unlinkSync(keyFilePath);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== "ENOENT") {
+      // ENOENT = 并发迁移的另一进程已删除，目标状态已达成，按成功处理。
+      keychain.delete(keyFilePath);
+      warn(
+        `Credential master key was written to the OS keychain but the key file could not be ` +
+        `removed (${code}); the entry was rolled back and the key file remains authoritative. ` +
+        `Will retry on a later launch.`,
+      );
+      return undefined;
+    }
+  }
+
+  warn(
+    `INFO: the credential master key was migrated from ${keyFilePath} into the OS keychain ` +
+      `and the key file was removed. Directory backups no longer carry the key material — ` +
+      `see README "Local credential protection" for the new backup/rollback semantics.`,
+  );
+  return fileKey;
 }

@@ -277,6 +277,7 @@ function stubKeychain() {
     store: new Map(),
     reads: 0,
     writes: 0,
+    deletes: 0,
     readResult: undefined, // 覆盖 read 返回（absent 缺省）
     writeResult: undefined, // 覆盖 write 返回（written 缺省）
   };
@@ -292,6 +293,10 @@ function stubKeychain() {
       if (state.writeResult && state.writeResult.status !== "written") return state.writeResult;
       state.store.set(keyFilePath, secret);
       return { status: "written", secret };
+    },
+    delete(keyFilePath) {
+      state.deletes += 1;
+      state.store.delete(keyFilePath);
     },
   };
 }
@@ -456,5 +461,121 @@ test("resolver: standard-base64 keychain material is accepted (hand-written entr
     const resolved = resolveCredentialMasterKey({ baseDir, env: {}, onWarn: () => {}, keychain });
     assert.equal(resolved.source, "keychain");
     assert.deepEqual(resolved.key, raw);
+  });
+});
+
+// ── R1-b 一次性迁移（密钥文件 → 钥匙串，零重加密）─────────────────────
+
+function writeKeyFileFixture(keyFilePath, material) {
+  mkdirSync(dirname(keyFilePath), { recursive: true });
+  writeFileSync(
+    keyFilePath,
+    `${JSON.stringify({ version: 1, key: material.toString("base64url") }, null, 2)}\n`,
+    "utf-8",
+  );
+}
+
+test("R1-b migration: key file material moves into the keychain, file removed, key unchanged", () => {
+  withTempDir((baseDir) => {
+    const keychain = stubKeychain();
+    const keyFilePath = resolveCredentialKeyFilePath({ baseDir, env: {} });
+    const material = randomBytes(32);
+    writeKeyFileFixture(keyFilePath, material);
+
+    const warnings = [];
+    const resolved = resolveCredentialMasterKey({
+      baseDir,
+      env: {},
+      onWarn: (m) => warnings.push(m),
+      keychain,
+    });
+    assert.equal(resolved.source, "keychain");
+    assert.deepEqual(resolved.key, material, "migration must be zero-re-encryption (same bytes)");
+    assert.equal(existsSync(keyFilePath), false, "key file must be removed after verified migration");
+    assert.equal(keychain.state.writes, 1);
+    assert.equal(keychain.state.deletes, 0, "happy path must not roll back");
+    assert.ok(warnings.some((line) => /migrated from .* into the OS keychain/.test(line)));
+
+    // 幂等：第二次解析走 found（条目里就是原材料），不再迁移。
+    const again = resolveCredentialMasterKey({ baseDir, env: {}, onWarn: () => {}, keychain });
+    assert.equal(again.source, "keychain");
+    assert.deepEqual(again.key, material);
+    assert.equal(keychain.state.writes, 1, "second resolve must not re-migrate");
+  });
+});
+
+test("R1-b migration: read-back mismatch rolls the entry back and keeps the file authoritative", () => {
+  withTempDir((baseDir) => {
+    const keyFilePath = resolveCredentialKeyFilePath({ baseDir, env: {} });
+    const material = randomBytes(32);
+    writeKeyFileFixture(keyFilePath, material);
+
+    // 病态钥匙串：写入「成功」但回读返回另一份材料（store 与 lookup 不一致的坏环境）。
+    let stored = false;
+    let deleted = false;
+    const poison = {
+      read() {
+        if (!stored) return { status: "absent" };
+        return { status: "found", secret: randomBytes(32).toString("base64url") };
+      },
+      write() {
+        stored = true;
+        return { status: "written", secret: material.toString("base64url") };
+      },
+      delete() {
+        deleted = true;
+        stored = false;
+      },
+    };
+
+    const warnings = [];
+    const resolved = resolveCredentialMasterKey({
+      baseDir,
+      env: {},
+      onWarn: (m) => warnings.push(m),
+      keychain: poison,
+    });
+    assert.equal(resolved.source, "keyFile", "failed verification must keep file mode");
+    assert.deepEqual(resolved.key, material);
+    assert.ok(existsSync(keyFilePath), "key file must survive a failed migration");
+    assert.equal(deleted, true, "the poisoned entry must be removed (keychain outranks the file)");
+    assert.ok(warnings.some((line) => /verification failed/.test(line)));
+  });
+});
+
+test("R1-b migration: keychain write failure skips migration and keeps file mode", () => {
+  withTempDir((baseDir) => {
+    const keychain = stubKeychain();
+    const keyFilePath = resolveCredentialKeyFilePath({ baseDir, env: {} });
+    const material = randomBytes(32);
+    writeKeyFileFixture(keyFilePath, material);
+    keychain.state.writeResult = { status: "error", reason: "keychain is locked" };
+
+    const warnings = [];
+    const resolved = resolveCredentialMasterKey({
+      baseDir,
+      env: {},
+      onWarn: (m) => warnings.push(m),
+      keychain,
+    });
+    assert.equal(resolved.source, "keyFile");
+    assert.deepEqual(resolved.key, material);
+    assert.ok(existsSync(keyFilePath));
+    assert.equal(keychain.state.deletes, 0, "nothing was written, nothing to roll back");
+    assert.ok(warnings.some((line) => /migration to the OS keychain was skipped/.test(line)));
+  });
+});
+
+test("R1-b migration: unavailable keychain never attempts migration (headless stays on file)", () => {
+  withTempDir((baseDir) => {
+    const keychain = stubKeychain();
+    const keyFilePath = resolveCredentialKeyFilePath({ baseDir, env: {} });
+    writeKeyFileFixture(keyFilePath, randomBytes(32));
+    keychain.state.readResult = { status: "unavailable", reason: "no secret service" };
+
+    const resolved = resolveCredentialMasterKey({ baseDir, env: {}, onWarn: () => {}, keychain });
+    assert.equal(resolved.source, "keyFile");
+    assert.equal(keychain.state.writes, 0);
+    assert.ok(existsSync(keyFilePath));
   });
 });

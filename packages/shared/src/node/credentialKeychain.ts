@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, normalize } from "node:path";
 import { createHash } from "node:crypto";
 
@@ -54,6 +54,13 @@ export interface CredentialKeychainAccess {
   read(keyFilePath: string): CredentialKeychainReadResult;
   /** 竞争安全写入；返回最终生效的材料（重复条目时回读赢家）。 */
   write(keyFilePath: string, secret: string): CredentialKeychainWriteResult;
+  /**
+   * 尽力删除条目，从不抛错（R1-b 迁移的回滚原语：验证失败时必须清掉刚写入的条目，
+   * 否则「钥匙串优先于密钥文件」的解析链会让坏材料压过权威文件）。删除失败无返回值
+   * 语义——调用方随后仍保持文件模式，坏条目会在下次迁移尝试时被重复写入-验证流程
+   * 覆盖或再次清理。
+   */
+  delete(keyFilePath: string): void;
 }
 
 export interface CredentialKeychainDeps {
@@ -160,6 +167,19 @@ function createDarwinKeychain(spawn: SpawnLike): CredentialKeychainAccess {
       // 钥匙串锁定等环境性失败 → error（调用方降级文件模式并告警）。
       return { status: "error", reason: `security add-generic-password failed: ${stderr.trim() || `exit ${result.status}`}` };
     },
+    delete(keyFilePath) {
+      try {
+        spawn("security", [
+          "delete-generic-password",
+          "-s",
+          CREDENTIAL_KEYCHAIN_SERVICE,
+          "-a",
+          credentialKeychainAccount(keyFilePath),
+        ]);
+      } catch {
+        // 尽力而为（见接口注释）：删除失败由下次迁移尝试兜底。
+      }
+    },
   };
 }
 
@@ -261,6 +281,13 @@ function createWin32Keychain(spawn: SpawnLike): CredentialKeychainAccess {
       }
       return { status: "written", secret };
     },
+    delete(keyFilePath) {
+      try {
+        unlinkSync(windowsDpapiBlobPath(keyFilePath));
+      } catch {
+        // 尽力而为：ENOENT 即已删；其余失败由下次迁移尝试兜底。
+      }
+    },
   };
 }
 
@@ -335,6 +362,17 @@ function createLinuxKeychain(spawn: SpawnLike): CredentialKeychainAccess {
       }
       return { status: "error", reason: `secret-tool store succeeded but read-back returned ${verify.status}` };
     },
+    delete(keyFilePath) {
+      try {
+        spawn("secret-tool", [
+          "clear",
+          SECRET_TOOL_ATTRIBUTE,
+          credentialKeychainAccount(keyFilePath),
+        ]);
+      } catch {
+        // 尽力而为（见接口注释）。
+      }
+    },
   };
 }
 
@@ -344,6 +382,7 @@ function createUnavailableKeychain(reason: string): CredentialKeychainAccess {
   return {
     read: () => ({ status: "unavailable", reason }),
     write: () => ({ status: "unavailable", reason }),
+    delete: () => {},
   };
 }
 

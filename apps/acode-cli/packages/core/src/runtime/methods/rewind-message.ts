@@ -724,6 +724,10 @@ async function rebuildConversationDerivedState(
       ? latestAssistant.info.time.completed
       : undefined;
   this.messageHistory.setCacheMiss();
+  // miss-cause 归因（prompt-cache-diagnostics.md R1/R3）：rewind 是显式 miss 事件；
+  // 计数不可从持久化 tokens 重建，随聚合一并从空开始。
+  this.pendingCacheMissCause = "conversation_rewind";
+  this.cacheMissCauseCounts = {};
   this.mainTurnCacheHitAggregate = mainTurnCacheHitAggregateFromMessages({
     activeMessages,
     persistedMessages: options.persistedMessages,

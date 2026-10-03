@@ -221,6 +221,10 @@ export async function resumeFromStore(
     activeMessages,
     persistedMessages: messages,
   });
+  // miss-cause 计数不可从持久化 tokens 重建，冷启动从空开始
+  //（prompt-cache-diagnostics.md R3 诚实边界，与聚合重建同点）。
+  this.cacheMissCauseCounts = {};
+  this.pendingCacheMissCause = undefined;
   this.turnNumber = activeMessages.filter(
     (message) => message.info.role === "user" && !message.info.summary,
   ).length;

@@ -770,6 +770,12 @@ export interface ACodeContextCacheUsage {
   totalCacheWriteTokens?: number;
   /** Agent 归一化后返回给 app 的主轮累计平均缓存命中率；未知时为 null。 */
   hitRate: number | null;
+  /**
+   * prompt-cache miss 归因计数快照（进程内累计，resume 后从空开始）。
+   * 键为 CLI 侧闭集因名（apps/acode-cli/specs/prompt-cache-diagnostics.md R1），
+   * 镜像层保持开放 record 以免加因时的版本偏斜。
+   */
+  missCauses?: Record<string, number>;
 }
 /** Agent 每次模型请求完成后推送的 task 累计 token 增量。 */
 export interface ACodeTaskTokenUsageDelta {

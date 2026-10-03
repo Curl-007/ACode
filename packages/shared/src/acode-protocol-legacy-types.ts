@@ -491,6 +491,10 @@ export const acodeSessionContextCacheUsageSchema = z
     totalCacheReadTokens: z.number().int().nonnegative().optional(),
     totalCacheWriteTokens: z.number().int().nonnegative().optional(),
     hitRate: z.number().nonnegative().nullable(),
+    // prompt-cache miss 归因计数快照（apps/acode-cli/specs/prompt-cache-diagnostics.md R4）。
+    // 开放 record 不复刻 CLI 因集枚举——CLI 未来加因不需要再动本镜像（版本偏斜安全）；
+    // 必须与 CLI 生产侧同一提交加宽，否则 v4 客户端 strict 校验整帧拒收。
+    missCauses: z.record(z.string(), z.number().int().nonnegative()).optional(),
   })
   .strict();
 export const acodeContextUsageBreakdownSourceSchema = z.enum([

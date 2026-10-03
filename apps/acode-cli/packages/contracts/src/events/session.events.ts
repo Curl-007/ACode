@@ -762,6 +762,24 @@ export interface NetworkRequestStatusPayload {
   egress?: HttpClientEgressInfo;
 }
 
+/**
+ * prompt-cache miss 归因闭集（specs/prompt-cache-diagnostics.md R1）——因集唯一家。
+ * shared 镜像 schema 用开放 record 不复刻枚举（版本偏斜安全：CLI 未来加因无需再动
+ * shared）；闭集纪律由生产侧类型与单测钉住。phase 2 登记不实现：
+ * system_prompt_changed / tools_changed（需 runtime hash 对比回路）。
+ */
+export const PROMPT_CACHE_MISS_CAUSES = [
+  "conversation_rewind",
+  "control_only_turn",
+  "compaction",
+  "context_refresh",
+  "model_changed",
+  "idle_ttl_suspected",
+  "unknown",
+] as const;
+
+export type PromptCacheMissCause = (typeof PROMPT_CACHE_MISS_CAUSES)[number];
+
 export interface ModelCompletePayload {
   cacheHit?: {
     inputTokens: number;
@@ -773,6 +791,11 @@ export interface ModelCompletePayload {
     totalInputTokens: number;
     totalCacheReadTokens: number;
     totalCacheWriteTokens: number;
+    /**
+     * 进程内累计的 miss 归因计数快照（R2/R3）：随每个 main_turn ModelComplete 下发；
+     * resume/rewind 重建后从空开始（tokens 可重建命中率、不可重建归因）。
+     */
+    missCauses?: Partial<Record<PromptCacheMissCause, number>>;
   };
   content: string;
   contextUsageBreakdown?: ContextUsageBreakdownItem[];

@@ -77,6 +77,8 @@ export async function microcompactIfNeeded(
       recordableEntries,
     ),
   );
+  // microcompact 清理工具结果同样重写前缀（prompt-cache-diagnostics.md R1，与全量压缩同因）。
+  this.pendingCacheMissCause = "compaction";
   context.turnRequestState.entries = result.entries;
 
   const payload = {

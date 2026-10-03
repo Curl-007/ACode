@@ -584,7 +584,9 @@ async function runModelBackedTurnStepImpl(
   }
 
   const cacheHit =
-    querySource === "main_turn" ? recordMainTurnCacheHitUsage(this, result.usage) : undefined;
+    querySource === "main_turn"
+      ? recordMainTurnCacheHitUsage(this, result.usage, executionModelSelection.modelId)
+      : undefined;
   // subagent 的文件 checkpoint 已经持久化，但旧 gate 只允许 main_turn 把
   // 汇总写入 ModelComplete，导致 child 详情无法从权威事件恢复摘要和撤销入口。
   const supportsTurnFileChanges = querySource === "main_turn" || querySource === "subagent";

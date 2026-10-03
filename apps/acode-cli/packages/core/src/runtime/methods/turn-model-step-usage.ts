@@ -1,4 +1,5 @@
 import type { MessageId, MessageWithParts, Model, ModelUsage, TraceContext } from "../deps.js";
+import type { PromptCacheMissCause } from "@acode/contracts";
 import type { MainTurnCacheHitAggregate, RuntimeModelTextResult } from "../types.js";
 import type { AgentRuntimeInternal } from "../internal.js";
 import type { RegularTurnLoopState } from "./turn-loop-state.js";
@@ -107,6 +108,7 @@ export function mainTurnCacheHitAggregateFromMessages(input: {
 export function recordMainTurnCacheHitUsage(
   runtime: AgentRuntimeInternal,
   usage: ModelUsage | undefined,
+  modelId?: string,
 ):
   | {
       cacheReadTokens: number;
@@ -118,6 +120,7 @@ export function recordMainTurnCacheHitUsage(
       totalCacheReadTokens: number;
       totalCacheWriteTokens: number;
       totalInputTokens: number;
+      missCauses?: Partial<Record<PromptCacheMissCause, number>>;
     }
   | undefined {
   if (!usage) {
@@ -140,7 +143,21 @@ export function recordMainTurnCacheHitUsage(
       runtime.mainTurnCacheHitAggregate.totalCacheWriteTokens + cacheWriteTokens,
   };
 
+  // miss-cause 归因唯一判定点（specs/prompt-cache-diagnostics.md R2，Path A）。
+  const isMiss = cacheReadTokens === 0 && inputTokens > 0;
+  if (isMiss) {
+    const cause = resolveCacheMissCause(runtime, modelId);
+    runtime.cacheMissCauseCounts = {
+      ...runtime.cacheMissCauseCounts,
+      [cause]: (runtime.cacheMissCauseCounts[cause] ?? 0) + 1,
+    };
+  }
+  // 命中与 miss 都消费 pending 并更新模型记录：陈旧 pending 不得归因给后续无关 miss。
+  runtime.pendingCacheMissCause = undefined;
+  if (modelId !== undefined) runtime.lastRequestModelId = modelId;
+
   const aggregate = runtime.mainTurnCacheHitAggregate;
+  const hasMissCauses = Object.keys(runtime.cacheMissCauseCounts).length > 0;
   return {
     inputTokens,
     cacheReadTokens,
@@ -154,7 +171,36 @@ export function recordMainTurnCacheHitUsage(
     totalInputTokens: aggregate.totalInputTokens,
     totalCacheReadTokens: aggregate.totalCacheReadTokens,
     totalCacheWriteTokens: aggregate.totalCacheWriteTokens,
+    ...(hasMissCauses ? { missCauses: { ...runtime.cacheMissCauseCounts } } : {}),
   };
+}
+
+/**
+ * 闲置超过该窗口的 miss 记「疑似 TTL 过期」（主流 provider prompt-cache TTL 为分钟量级，
+ * 无法精确探测，UI 文案必须标注疑似——spec R1）。
+ */
+export const CACHE_TTL_SUSPECT_MS = 5 * 60_000;
+
+/** 归因优先级：显式本地事件 > 换模型 > 闲置疑似 TTL > unknown（spec R2）。 */
+function resolveCacheMissCause(
+  runtime: AgentRuntimeInternal,
+  modelId: string | undefined,
+): PromptCacheMissCause {
+  if (runtime.pendingCacheMissCause) return runtime.pendingCacheMissCause;
+  if (
+    modelId !== undefined &&
+    runtime.lastRequestModelId !== undefined &&
+    runtime.lastRequestModelId !== modelId
+  ) {
+    return "model_changed";
+  }
+  if (
+    runtime.lastAssistantCompletedAtMs !== undefined &&
+    Date.now() - runtime.lastAssistantCompletedAtMs > CACHE_TTL_SUSPECT_MS
+  ) {
+    return "idle_ttl_suspected";
+  }
+  return "unknown";
 }
 
 function modelUsageInputWindowTokens(usage?: ModelUsage): number | undefined {

@@ -1,5 +1,6 @@
 import { DEFAULT_ACODE_MODEL_CONTEXT_BUDGET_STRATEGY, resolveExecutionState } from "@acode/shared";
 import type { BackgroundBashOutputResult } from "@acode/shared";
+import type { PromptCacheMissCause } from "@acode/contracts";
 import {
   createDenyPermissionBroker,
   createRootTraceContext,
@@ -200,6 +201,11 @@ export class AgentRuntime {
     totalCacheReadTokens: 0,
     totalCacheWriteTokens: 0,
   };
+  // prompt-cache miss 归因（specs/prompt-cache-diagnostics.md R2/R3）：进程内状态，
+  // resume/rewind 重建后计数从空开始（tokens 可重建命中率、不可重建归因）。
+  private pendingCacheMissCause?: PromptCacheMissCause;
+  private cacheMissCauseCounts: Partial<Record<PromptCacheMissCause, number>> = {};
+  private lastRequestModelId?: string;
   private currentTurnFileChanges: RuntimeTurnFileChangeMap = new Map();
   private lastAssistantCompletedAtMs?: number;
   private lastEmittedLocalDate?: string;

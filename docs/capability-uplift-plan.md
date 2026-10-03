@@ -289,3 +289,32 @@ R4 migration 0004 形态 / R7 范围收缩：OffPeakCreate 不动、同批修正
   本批未覆盖，后续项。
 - **未执行**：`pnpm dev:desktop` 端到端手测（建高频 automation 观察未读/Bot 行为、
   桌面与手机远控两种语义）——需要交互环境，待人工或 browser-use 补验。
+
+## 实施记录（2026-10-03 · 批次 2 · prompt-cache miss-cause 归因）
+
+spec `apps/acode-cli/specs/prompt-cache-diagnostics.md` 先行；实施前侦察修正了本
+路线图 C4 的两处假设：`turn.ts:520` 的 setCacheMiss 是**每 turn 无条件重置**而非
+interrupt 标记；`setCacheMiss`/`lastCacheHit` 旗标路径（Path B）**从不进 GUI/协议**，
+GUI 命中率唯一来源是 provider-usage 驱动的 `recordMainTurnCacheHitUsage`（Path A）
+——归因点因此落在 Path A，而非原计划的 setCacheMiss 调用点。
+
+- **因集闭集（7 因，按 ACode 真实可检测事件推导，不照抄 Claude Code 因名）**：
+  conversation_rewind / control_only_turn / compaction（含 microcompact）/
+  context_refresh / model_changed / idle_ttl_suspected（推断值，UI 标注「疑似」）/
+  unknown。system_prompt_changed / tools_changed 登记 phase 2（需 runtime hash
+  对比回路，可复用 `context/manifest.ts` 纯函数）。
+- **落地**：contracts 因集唯一家 + `cacheHit.missCauses`；core 五个显式事件点写
+  `pendingCacheMissCause`、归因/计数/快照收敛在 `recordMainTurnCacheHitUsage`
+  单点（优先级：显式 > 换模 > 闲置疑似 > unknown；命中也消费 pending 防陈旧污染）；
+  resume/rewind 重建复位计数（tokens 可重建命中率、不可重建归因——诚实边界）；
+  bootstrap session-debug 旁路接受 ModelComplete 累计因集；shared 三处 strict 镜像
+  - services 显式挑取中继**同批加宽**（v4 客户端整帧校验，漏一处 =
+    SUBSCRIPTION_CONTENT_REJECTED，P0 教训）；镜像层用开放 record 不复刻枚举
+    （CLI 未来加因免动 shared）；UI 落点 DeveloperToolsPane（未识别因名原样展示，
+    偏斜宽容）+ 双语 i18n；contextUsage 弹层 breakdown 登记 phase 2。
+- **no-telemetry**：诊断零网络出口，测试含负向断言。
+- **测试**：`apps/acode-cli/tests/prompt-cache-diagnostics.test.mjs` 9/9（归因
+  优先级/命中不计数/快照拷贝/闭集纪律/四处镜像守护/事件点与复位守护/no-telemetry/
+  UI 与 i18n 落点）。全量验证：根 typecheck exit0、CLI contracts/core/bootstrap
+  tsc exit0（contracts dist 重建后）、lint 0 error、architecture 0 违规、
+  CLI 回归 52/52、shared+services+desktop 套件 101/101。

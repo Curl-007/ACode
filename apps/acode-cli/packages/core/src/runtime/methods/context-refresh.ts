@@ -43,6 +43,8 @@ export function rebuildContextPrefix(
 
   runtime.latestContextBuildResult = effectiveContextResult;
   runtime.messageHistory.replaceMessages([...contextEntries, ...canonicalConversationEntries]);
+  // context 前缀重建后缓存前缀可能已变（prompt-cache-diagnostics.md R1）。
+  runtime.pendingCacheMissCause = "context_refresh";
 
   const turnEntries = options.turnRequestEntries;
   if (!turnEntries) return runtime.messageHistory.borrowReadOnlyRuntimeEntries();

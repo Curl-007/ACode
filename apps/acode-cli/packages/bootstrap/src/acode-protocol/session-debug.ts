@@ -1,5 +1,6 @@
 import {
   SessionEventType,
+  type ModelCompletePayload,
   type ModelNetworkStatusPayload,
   type SessionEvent,
 } from "@acode/contracts";
@@ -49,12 +50,41 @@ function token(value: number | undefined): number | undefined {
   return value !== undefined && Number.isFinite(value) && value >= 0 ? value : undefined;
 }
 
+function observeModelCompleteMissCauses(record: SessionRecord, event: SessionEvent): void {
+  const payload = event.payload as ModelCompletePayload;
+  const missCauses = payload.cacheHit?.missCauses;
+  if (!missCauses) return;
+  let observation = observations.get(record);
+  if (!observation) {
+    observation = {
+      snapshot: emptySnapshot(record.app.sessionId),
+      seenEvents: new Set(),
+      completedRequests: new Set(),
+      hasUnknownCacheUsage: false,
+    };
+    observations.set(record, observation);
+  }
+  if (!remember(observation.seenEvents, String(event.id))) return;
+  const previous = observation.snapshot.cache;
+  observation.snapshot.cache = {
+    hitRateRequestCount: previous?.hitRateRequestCount ?? 0,
+    totalInputTokens: previous?.totalInputTokens ?? 0,
+    totalCacheReadTokens: previous?.totalCacheReadTokens ?? 0,
+    hitRate: previous?.hitRate ?? null,
+    missCauses: { ...missCauses },
+  };
+}
+
 export function observeSessionDebug(record: SessionRecord, event: SessionEvent): void {
-  if (
-    event.type !== SessionEventType.ModelNetworkStatus ||
-    String(event.sessionId) !== record.app.sessionId
-  )
+  if (String(event.sessionId) !== record.app.sessionId) return;
+  // prompt-cache-diagnostics.md R5：ModelComplete 只累计 miss 归因快照（CLI 侧已是
+  // 进程内累计值，后写覆盖而非累加）；不进网络条目/round 路径。旁路记录仍是
+  // WeakMap 本地态，零网络出口（R6 no-telemetry）。
+  if (event.type === SessionEventType.ModelComplete) {
+    observeModelCompleteMissCauses(record, event);
     return;
+  }
+  if (event.type !== SessionEventType.ModelNetworkStatus) return;
   const payload = event.payload as ModelNetworkStatusPayload;
   const mapped = acodeTaskNetworkDebugStatusFromPayload({
     taskId: record.app.sessionId,

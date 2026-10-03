@@ -5614,6 +5614,22 @@ function shouldUseModelUsageForContext(payload: Record<string, unknown>): boolea
   return querySource === undefined || querySource === "main_turn";
 }
 
+/**
+ * miss 归因计数快照清洗（prompt-cache-diagnostics.md R4）：只接受 string→非负整数
+ * record，逐项清洗、整体无效则缺席。镜像层保持宽容（开放 record），闭集纪律在
+ * CLI 生产侧类型与单测。
+ */
+function missCauseCountsFromUnknown(value: unknown): Record<string, number> | undefined {
+  const record = asRecord(value);
+  if (Object.keys(record).length === 0) return undefined;
+  const result: Record<string, number> = {};
+  for (const [cause, count] of Object.entries(record)) {
+    const normalized = nonNegativeIntegerValue(count);
+    if (normalized !== undefined) result[cause] = normalized;
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
 function contextCacheUsageFromPayload(
   payload: Record<string, unknown>,
   usage: Record<string, unknown>,
@@ -5629,6 +5645,8 @@ function contextCacheUsageFromPayload(
     const totalInputTokens = nonNegativeIntegerValue(aggregate.totalInputTokens);
     const totalCacheReadTokens = nonNegativeIntegerValue(aggregate.totalCacheReadTokens);
     const totalCacheWriteTokens = nonNegativeIntegerValue(aggregate.totalCacheWriteTokens);
+    // prompt-cache-diagnostics.md R4：显式挑取处必须补 missCauses，否则 v3 链路静默丢弃。
+    const missCauses = missCauseCountsFromUnknown(aggregate.missCauses);
     return {
       inputTokens,
       cacheReadTokens,
@@ -5638,6 +5656,7 @@ function contextCacheUsageFromPayload(
       ...(totalInputTokens !== undefined ? { totalInputTokens } : {}),
       ...(totalCacheReadTokens !== undefined ? { totalCacheReadTokens } : {}),
       ...(totalCacheWriteTokens !== undefined ? { totalCacheWriteTokens } : {}),
+      ...(missCauses ? { missCauses } : {}),
       hitRate: hitRate !== undefined ? Math.max(0, hitRate) : null,
     };
   }

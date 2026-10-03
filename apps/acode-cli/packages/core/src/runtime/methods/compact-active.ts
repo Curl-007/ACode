@@ -677,6 +677,8 @@ async function compactActiveConversationImpl(
             )
           : recordablePostCompactEntries,
       );
+      // 压缩重写消息前缀，下个请求缓存必 miss（prompt-cache-diagnostics.md R1）。
+      this.pendingCacheMissCause = "compaction";
       this.readFileState.clear();
       return {
         displayText: "Compacted",

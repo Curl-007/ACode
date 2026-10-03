@@ -1,4 +1,5 @@
 /* oxlint-disable eslint(max-lines) -- 开发者工具面板集中展示 token 表和网络 headers，后续继续扩展时再按区块拆分。 */
+import { Fragment } from "react";
 import { ActivityIcon, BugIcon, NetworkIcon } from "lucide-react";
 import type { SessionDebugNetworkEntry } from "@acode/shared";
 import { useACodeIntl } from "@/i18n/IntlProvider.js";
@@ -33,6 +34,44 @@ function formatMilliseconds(locale: string, value: number | undefined): string {
     return "-";
   }
   return `${new Intl.NumberFormat(locale, { maximumFractionDigits: 0 }).format(value)} ms`;
+}
+
+/**
+ * prompt-cache miss 归因展示（apps/acode-cli/specs/prompt-cache-diagnostics.md R5）。
+ * 顺序对齐 CLI 因集闭集；镜像层是开放 record——CLI 未来新增因名时原样展示裸键，
+ * UI 不拒绝、不崩溃（版本偏斜宽容）。
+ */
+const MISS_CAUSE_DISPLAY_ORDER = [
+  "conversation_rewind",
+  "control_only_turn",
+  "compaction",
+  "context_refresh",
+  "model_changed",
+  "idle_ttl_suspected",
+  "unknown",
+] as const;
+
+const MISS_CAUSE_LABEL_KEYS: Record<string, string> = {
+  conversation_rewind: "tokenDebug.missCause.conversationRewind",
+  control_only_turn: "tokenDebug.missCause.controlOnlyTurn",
+  compaction: "tokenDebug.missCause.compaction",
+  context_refresh: "tokenDebug.missCause.contextRefresh",
+  model_changed: "tokenDebug.missCause.modelChanged",
+  idle_ttl_suspected: "tokenDebug.missCause.idleTtlSuspected",
+  unknown: "tokenDebug.missCause.unknown",
+};
+
+function missCauseDisplayRank(cause: string): number {
+  const index = (MISS_CAUSE_DISPLAY_ORDER as readonly string[]).indexOf(cause);
+  return index === -1 ? MISS_CAUSE_DISPLAY_ORDER.length : index;
+}
+
+function formatMissCauseLabel(
+  intl: { formatMessage(descriptor: { id: string }): string },
+  cause: string,
+): string {
+  const labelKey = MISS_CAUSE_LABEL_KEYS[cause];
+  return labelKey ? intl.formatMessage({ id: labelKey }) : cause;
 }
 
 function formatTimestamp(locale: string, value: string | undefined, fallback: number): string {
@@ -100,6 +139,12 @@ export function DeveloperToolsPane({
   const { intl, locale } = useACodeIntl();
   const debugState = useSessionDebug({ workspacePath, workspaceIdentity, taskId, enabled });
   const networkEntries = [...debugState.networkEntries].reverse();
+  const missCauseRows = Object.entries(debugState.cache?.missCauses ?? {})
+    .filter(([, count]) => Number.isFinite(count) && count > 0)
+    .sort(
+      ([left], [right]) =>
+        missCauseDisplayRank(left) - missCauseDisplayRank(right) || left.localeCompare(right),
+    );
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-background" data-testid="developer-tools-pane">
@@ -139,6 +184,17 @@ export function DeveloperToolsPane({
             <span className="font-mono text-foreground">
               {formatNumber(locale, debugState.cache?.totalCacheReadTokens)}
             </span>
+            {missCauseRows.length > 0 ? (
+              <span className="col-span-2 border-t border-border pt-2 text-ui-xs">
+                {intl.formatMessage({ id: "tokenDebug.summary.missCauses" })}
+              </span>
+            ) : null}
+            {missCauseRows.map(([cause, count]) => (
+              <Fragment key={cause}>
+                <span>{formatMissCauseLabel(intl, cause)}</span>
+                <span className="font-mono text-foreground">{formatNumber(locale, count)}</span>
+              </Fragment>
+            ))}
           </div>
           <div className="overflow-auto rounded-md border border-border">
             <table className="w-full min-w-[38rem] border-collapse text-ui-xs">

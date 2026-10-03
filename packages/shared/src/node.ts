@@ -60,6 +60,17 @@ export {
   type ResolvedCredentialMasterKey,
 } from "./node/credentialMasterKey.js";
 export {
+  CREDENTIAL_KEYCHAIN_SERVICE,
+  WINDOWS_DPAPI_BLOB_FILE_NAME,
+  createCredentialKeychain,
+  credentialKeychainAccount,
+  windowsDpapiBlobPath,
+  type CredentialKeychainAccess,
+  type CredentialKeychainDeps,
+  type CredentialKeychainReadResult,
+  type CredentialKeychainWriteResult,
+} from "./node/credentialKeychain.js";
+export {
   ACODE_MANAGED_POLICY_FILE_ENV,
   loadManagedPolicyFile,
   resolveManagedPolicyFilePath,

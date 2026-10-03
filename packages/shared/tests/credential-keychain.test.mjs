@@ -185,6 +185,62 @@ test("win32: write protects via powershell, wx-exclusive blob; EEXIST adopts win
   });
 });
 
+test("win32: write canonicalizes base64url transport; command uses Assembly::Load (真机回归 2026-10-03)", () => {
+  withTempDir((dir) => {
+    const keyFilePath = join(dir, "credential-key.json");
+    // 构造 base64url 形态必然含 - 与 _ 且无填充的材料（0xFB 0xEF 0xFE → "--_-" 前缀）。
+    // 真机回归：.NET FromBase64String 对 -/_ 与缺填充都抛 FormatException——修复前
+    // Windows 上 write 恒失败，钥匙串档整体失效（永远降级文件模式），mock 测不出。
+    const material = Buffer.concat([Buffer.from([0xfb, 0xef, 0xfe]), Buffer.alloc(29, 0x41)]);
+    const secret = material.toString("base64url");
+    assert.ok(/[-_]/.test(secret) && secret.length % 4 !== 0, "fixture must exercise the base64url-only shape");
+
+    const { spawn, calls } = mockSpawn((command, args) => {
+      const cmd = args[args.length - 1];
+      return cmd.includes("::Protect(") ? ok("PROTECTED-B64") : ok("x");
+    });
+    const keychain = createCredentialKeychain({ platform: "win32", spawn });
+    const result = keychain.write(keyFilePath, secret);
+    assert.equal(result.status, "written");
+
+    const cmd = calls[0].args[calls[0].args.length - 1];
+    const canonical = Buffer.from(secret, "base64url").toString("base64");
+    assert.equal(Buffer.from(canonical, "base64").equals(material), true, "canonical form preserves material bytes");
+    assert.ok(cmd.includes(`FromBase64String('${canonical}')`), "command must embed canonical base64");
+    assert.ok(!cmd.includes(`'${secret}'`), "raw base64url (with -/_) must never reach .NET");
+    assert.equal(result.secret, canonical, "write returns the canonical transport form (same bytes)");
+    // 程序集加载走全名 Assembly::Load（Add-Type 冷启动实测 ~1.8s，Load ~0.9s，热态两者同 ~225ms）。
+    assert.ok(cmd.startsWith("[void][System.Reflection.Assembly]::Load('System.Security,"), cmd.slice(0, 60));
+    assert.ok(!cmd.includes("Add-Type"), "Add-Type variant regresses cold-start latency");
+    // blob 存 protect 输出（DPAPI 密文），不是明文材料。
+    const blob = JSON.parse(readFileSync(windowsDpapiBlobPath(keyFilePath), "utf-8"));
+    assert.equal(blob.blob, "PROTECTED-B64");
+  });
+});
+
+test("win32: stderr decoded via console codepage (GBK) so degradation warnings stay readable", () => {
+  withTempDir((dir) => {
+    const keyFilePath = join(dir, "credential-key.json");
+    // 「拒绝访问」的 GBK 字节——中文 locale 下 PowerShell 的 stderr 按控制台代码页写出，
+    // UTF-8 直解是乱码并会原样拼进用户可见告警。
+    const gbkStderr = Buffer.from([0xbe, 0xdc, 0xbe, 0xf8, 0xb7, 0xc3, 0xce, 0xca]);
+    const keychain = createCredentialKeychain({
+      platform: "win32",
+      spawn: mockSpawn(() => ({ status: 1, stdout: Buffer.from(""), stderr: gbkStderr })).spawn,
+    });
+
+    const write = keychain.write(keyFilePath, randomBytes(32).toString("base64url"));
+    assert.equal(write.status, "unavailable");
+    assert.ok(write.reason.includes("拒绝访问"), `reason must be readable, got: ${write.reason}`);
+
+    // read 侧（blob 存在、unprotect 失败）的 error reason 同样走 GBK 解码。
+    writeFileSync(windowsDpapiBlobPath(keyFilePath), JSON.stringify({ version: 1, blob: "PROTECTED" }), "utf-8");
+    const read = keychain.read(keyFilePath);
+    assert.equal(read.status, "error");
+    assert.ok(read.reason.includes("拒绝访问"), `reason must be readable, got: ${read.reason}`);
+  });
+});
+
 // ── Linux（secret-tool）──────────────────────────────────────────────
 
 test("linux: read found/absent(empty stdout)/D-Bus→unavailable/other→error", () => {

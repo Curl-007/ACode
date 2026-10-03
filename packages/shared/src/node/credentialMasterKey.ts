@@ -34,10 +34,14 @@ import {
  * `credentialService` 与 CLI `shared-credentials` 在**文件锁内联**调用。P0-4 时点
  * 「safeStorage/keytar 皆异步」是事实；R1-a 的解法不是异步化整条链，而是平台工具
  * `spawnSync` 一次性解析 + 本模块对 found/unavailable 结果做**进程级缓存**（D2 裁决）——
- * 钥匙串访问频率 = 每进程每数据目录至多一次成功 spawn，与既有「每 cipher 实例惰性
- * 解析一次密钥文件」的成本形态一致。跨进程一致性由「同一 keyFilePath → 同一条目
- * 命名」（D3）与平台访问器的排他写语义（macOS 重复即回读赢家 / Windows blob `wx` /
- * Linux 写前读+写后回读采用）保证。
+ * 钥匙串访问频率 = 每进程每数据目录至多一次成功 spawn。真机实测（2026-10-03，Windows
+ * PowerShell DPAPI，scripts/smoke-credential-keychain.mjs）：连发热态 ~225ms/次，间隔
+ * 真实使用 ~860-930ms/次，冷启动（开机后首调/程序集缓存被逐出）0.9~2s——比毫秒级密钥
+ * 文件读取高几个数量级，但按「每进程一次性启动开销」评估可接受（缓存后零 spawn；长驻
+ * 进程付一次，CLI 短进程在触碰凭据的路径上付 ~0.9s）。若成为体感痛点，登记的后续优化
+ * 是 bootstrap 异步预热（进程启动即并行 spawn 填充本缓存），而非回退材料落盘。跨进程
+ * 一致性由「同一 keyFilePath → 同一条目命名」（D3）与平台访问器的排他写语义（macOS
+ * 重复即回读赢家 / Windows blob `wx` / Linux 写前读+写后回读采用）保证。
  *
  * **诚实边界（R1-a 后更新）**：钥匙串模式下密钥材料与密文分离，「整个 `.acode` 目录
  * 被外带」在异机/异用户上不可解密（Windows DPAPI 为逻辑分离：blob 物理同目录但仅同机

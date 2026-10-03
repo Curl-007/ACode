@@ -20,6 +20,7 @@ D1–D6 已按推荐批复）。定义凭据静态加密的主密钥来源、密
 - **OS 钥匙串访问**（R1-a，`credentialKeychain.ts`，D1/D3/D5 裁决）：平台原生工具统一路径，桌面 host 与 CLI 共用**同一实现**——macOS Keychain generic-password（`security`，经其创建的条目 ACL 归属 `security`，跨进程读取不触发弹窗）；Windows DPAPI(CurrentUser) blob 文件（`<凭据目录>/credential-key.dpapi.json`，`wx` 排他创建，异机/异用户不可解 = 逻辑分离）；Linux libsecret（`secret-tool`，密码走 stdin 无 ps 暴露；需 D-Bus 会话，headless 走降级）。条目账户名含 keyFilePath 的 sha256 指纹（多数据目录/测试隔离；跨进程收敛靠「同一 keyFilePath 钉给 cipher」既有规则）。safeStorage（跨进程信封不通）与 keytar（原生依赖）维持否决。
   - **降级（D5）**：钥匙串不可用（工具缺席/无 secret service/平台不支持）→ 文件模式 + 一次性告警 + `source` 词汇可诊断（`keyFile` vs `keychain`）；**绝不拒绝启动**（headless/CI 的 CLI 是正当使用）。注意「不可用」与「损坏」的区分：无任何材料痕迹才叫不可用；材料可见而读不出必须 error（fail-loud）。
   - **竞争收敛**：macOS 无 `-U` 写入、重复即回读赢家；Windows blob `wx` 排他 + EEXIST 回读；Linux `secret-tool store` 无排他语义 → 写前读 + 写后回读采用最终值（残余毫秒级竞争窗已登记，Linux 并发首装为罕见路径）。
+  - **Windows 传输编码**（2026-10-03 真机回归）：`write` 收到的 `secret` 是材料的 base64url（43 字符无填充、可含 `-`/`_`），而 .NET `FromBase64String` 只接受规范标准 base64——写入端必须先规范化为规范 base64 再嵌入 PowerShell 命令，否则 Protect 必抛 FormatException、写入恒失败、Windows 钥匙串档**整体静默失效**（永远降级文件模式；mock 单测测不出——mock 不做真实 base64 解码，真机冒烟 `scripts/smoke-credential-keychain.mjs` 首轮即抓到）。传输契约：blob 存 DPAPI(材料原始字节)；回读返回规范标准 base64——字符串形态可能与写入不同、解码字节一致，调用方一律按解码后字节消费。程序集加载用全名 `Assembly::Load` 而非 `Add-Type`（冷启动实测 ~1.8s→~0.9s，热态等价，非过时 API）；stderr 按控制台代码页（GBK）解码后再拼入用户可见告警（中文 locale 下 UTF-8 直解是乱码；GBK 为 ASCII 超集，英文 locale 结果不变）。
 - **一次性迁移（R1-b，D4）**：解析链发现「密钥文件存在 ∧ 钥匙串条目缺失（read 为 absent，unavailable 不触发）」时自动迁移：写入条目 → **回读逐字节验证** → 通过才删除密钥文件 + 一次性 INFO 提示。任一步失败 → **尽力删除刚写入的条目**（解析链里钥匙串优先于文件，与文件材料不一致的坏条目会压过权威材料，比不迁移严重得多）→ 保持文件模式 → 下次解析重试。并发迁移：两进程搬同一份文件材料，macOS/Windows 排他写入的落败方回读赢家（材料相同、验证必过），Linux last-writer-wins 写的也是同一材料；删除文件的 ENOENT（对端已删）视同成功。迁移不改变材料字节 → 既有 `enc:v2` 密文**零重加密**。
 - **每安装密钥文件**：`<凭据目录>/credential-key.json`，首次使用时随机生成 32 字节，`0600` 权限，`wx` 排他创建。排他创建保证并发首次启动时只有一个进程写入成功、落败方回读赢家的密钥，两个进程因此收敛到同一把密钥——这是桌面 host 与 CLI 共用同一 `credentials.json` 的前提。（R1-a 后仅在钥匙串不可用的降级模式或未迁移遗留中产生/使用。）
   - **回读必须带重试**：赢家的 `writeFileSync` 不是原子操作，落败方可能在半截 JSON 上读到内容。旧实现直接 `JSON.parse` 会抛未捕获的 `SyntaxError` 崩进程（对抗评审核实，且直接反驳了「必然收敛」）。现在落败方按 `[10,25,50,100,200]ms` 退避重试；重试耗尽仍读不出则**保留现场报错**，绝不回退到生成新密钥——生成等于换一把密钥，会把已写入的全部 `enc:v2` 凭据变成永久垃圾。
@@ -40,7 +41,7 @@ D1–D6 已按推荐批复）。定义凭据静态加密的主密钥来源、密
 
 ## 接口
 
-cipher 接口保持**同步**（`encrypt/decrypt`），因为它被 `credentialService` 与 CLI `shared-credentials` 在文件锁内联调用。P0-4 时点「safeStorage/keytar 皆异步」是不接入的直接原因；R1-a 的解法（设计文档 D2）不是异步化整条链，而是**平台工具 `spawnSync` 一次性解析 + 解析层进程级缓存**（found/unavailable 缓存；absent/error 不缓存——前者生成写入后须可见，后者必须每次现场 fail-loud）。钥匙串访问频率 = 每进程每数据目录至多一次成功 spawn；Windows PowerShell 冷启动延迟（约 100–300ms）登记为实施实测项，缓解为惰性解析（首次加解密才触发）。
+cipher 接口保持**同步**（`encrypt/decrypt`），因为它被 `credentialService` 与 CLI `shared-credentials` 在文件锁内联调用。P0-4 时点「safeStorage/keytar 皆异步」是不接入的直接原因；R1-a 的解法（设计文档 D2）不是异步化整条链，而是**平台工具 `spawnSync` 一次性解析 + 解析层进程级缓存**（found/unavailable 缓存；absent/error 不缓存——前者生成写入后须可见，后者必须每次现场 fail-loud）。钥匙串访问频率 = 每进程每数据目录至多一次成功 spawn。Windows PowerShell DPAPI 延迟**已实测**（2026-10-03，Win10 26200，`scripts/smoke-credential-keychain.mjs`）：连发热态 ~225ms/次，间隔真实使用 ~860–930ms/次，冷启动（开机后首调/程序集缓存被逐出）0.9–2s——原「约 100–300ms」的预估登记项据此关闭。缓解为惰性解析（首次加解密才触发）+ 进程级缓存；CLI 短进程在触碰凭据的路径上付 ~0.9s，若成体感痛点，登记的后续优化是 bootstrap 异步预热（进程启动即并行 spawn 填充缓存），而非回退材料落盘。
 
 ## 已知边界（诚实声明）
 
@@ -53,7 +54,7 @@ cipher 接口保持**同步**（`encrypt/decrypt`），因为它被 `credentialS
 
 ## 验收场景
 
-见 `packages/shared/tests/credential-master-key.test.mjs`（文件模式，注入 unavailable 钥匙串 stub 钉住 P0-4 语义）与 `packages/shared/tests/credential-keychain.test.mjs`（R1-a：平台访问器 mock spawn 全分支 + 解析链优先级）：
+见 `packages/shared/tests/credential-master-key.test.mjs`（文件模式，注入 unavailable 钥匙串 stub 钉住 P0-4 语义）与 `packages/shared/tests/credential-keychain.test.mjs`（R1-a：平台访问器 mock spawn 全分支 + 解析链优先级）；真机层验证走 `scripts/smoke-credential-keychain.mjs`（真实平台机制、临时目录隔离、不进 CI——mock 与真机互补，2026-10-03 Windows 首轮 17 项全过并抓到 base64url 传输 bug）：
 
 - 新密文为 `enc:v2:` 且可往返；降级文件模式的密钥文件生成在 `<baseDir>/.acode/v2/credential-key.json`，内容为 32 字节。
 - 同 baseDir 的两个 cipher 实例互相解得开对方的密文（host + CLI 共用文件）。
@@ -61,6 +62,7 @@ cipher 接口保持**同步**（`encrypt/decrypt`），因为它被 `credentialS
 - **已存在密钥文件时密钥文件优先于 env**：再设 `ACODE_CREDENTIAL_SECRET` 不改变解析出的密钥，并发出一条告警（对抗评审 #5：防止升级后设 env 静默孤立全部 v2 凭据）。
 - **R1-a 优先级链**：钥匙串 found → `source: "keychain"`；与密钥文件并存 → 钥匙串优先 + 并存告警；条目损坏（读 error / 长度不符）→ 抛错保留现场，绝不生成；钥匙串 absent + 文件存在 → `keyFile`；全新安装且钥匙串可用 → 生成直接入条目、**不落密钥文件**；钥匙串不可用/写入失败 → 文件模式 + 一次性降级告警。
 - **R1-a 平台访问器**（mock spawn）：macOS found/absent(44)/重复写入回读赢家/ENOENT→unavailable；Windows blob wx 排他 + EEXIST 回读/PowerShell 失败→写入 unavailable（新装安全降级）/**blob 存在而 PowerShell 缺席→error（fail-loud）**；Linux stdin 写入/空 stdout→absent/D-Bus 缺失→unavailable/写后回读采用；不支持平台→unavailable。条目账户名含 keyFilePath 指纹（稳定且互异）。
+- **Windows 传输回归**（2026-10-03 真机 bug 的 mock 钉桩）：base64url secret（含 `-`/`_`、无填充）写入时命令必须嵌**规范 base64**、原始形态绝不到达 .NET；write 返回规范化传输形态（字节同一）；命令用 `Assembly::Load` 前缀（防冷启动更慢的 `Add-Type` 回潮）；stderr 按 GBK 解码后告警可读（中文 locale 乱码回归）。
 - **R1-b 迁移**：happy path（材料逐字节不变、文件删除、INFO 提示、二次解析幂等不再迁移）；回读不一致 → 条目回滚删除 + 文件保持权威 + 告警；写入失败 → 跳过迁移保持文件模式；unavailable → 绝不尝试迁移（headless 留在文件模式）。
 - 历史 `enc:v1:` 仍可解密（升级不丢凭据）。
 - v1 密文改贴 `enc:v2:` 前缀被 GCM 拒绝（版本混淆攻击不成立）。

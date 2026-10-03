@@ -102,6 +102,21 @@ function toText(value: Buffer | string | undefined): string {
   return typeof value === "string" ? value : value.toString("utf-8");
 }
 
+/**
+ * Windows PowerShell 的 stderr 按控制台代码页写出（中文 locale 为 GBK），直接按 UTF-8
+ * 解码是乱码——而这段文本会被拼进用户可见的降级/报错告警。GBK 是 ASCII 超集，英文
+ * locale 下解码结果不变；decoder 不可用（非 full-ICU 构建）时退回 UTF-8。
+ */
+function toWin32ConsoleText(value: Buffer | string | undefined): string {
+  if (value === undefined) return "";
+  if (typeof value === "string") return value;
+  try {
+    return new TextDecoder("gbk").decode(value);
+  } catch {
+    return value.toString("utf-8");
+  }
+}
+
 function isSpawnENOENT(result: { error?: Error & { code?: string } }): boolean {
   return result.error?.code === "ENOENT";
 }
@@ -184,12 +199,24 @@ function createDarwinKeychain(spawn: SpawnLike): CredentialKeychainAccess {
 }
 
 // ── Windows：DPAPI(CurrentUser) blob 文件 ───────────────────────────────
+//
+// 传输契约：write 的 secret 必须是材料的 base64/base64url 编码；blob 存 DPAPI(材料原始
+// 字节)；read 返回规范标准 base64——字符串形态可能与写入时不同（base64url → base64），
+// 但解码字节一致。调用方（decodeKeychainSecret/tryDecodeKeychainSecret）都按解码后字节
+// 消费，天然兼容。
+
+// 程序集加载用全名 Assembly::Load 而非 Add-Type -AssemblyName（真机探针 2026-10-03，
+// Windows 10.0.26200）：热态两者等价（~225ms ≈ 裸 powershell.exe 启动），但 Add-Type
+// 冷启动实测可达 ~1.8s，Assembly::Load 冷启动 ~0.9s；且后者非过时 API。全名钉住
+// .NET Framework 4.x 的 GAC 身份（本命令只发给 powershell.exe 5.1，见 spawnPowershell）。
+const POWERSHELL_LOAD_SECURITY =
+  "[void][System.Reflection.Assembly]::Load('System.Security, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a')";
 
 const POWERSHELL_UNPROTECT = (b64: string): string =>
-  `Add-Type -AssemblyName System.Security; [Convert]::ToBase64String([System.Security.Cryptography.ProtectedData]::Unprotect([Convert]::FromBase64String('${b64}'), $null, [System.Security.Cryptography.DataProtectionScope]::CurrentUser))`;
+  `${POWERSHELL_LOAD_SECURITY}; [Convert]::ToBase64String([System.Security.Cryptography.ProtectedData]::Unprotect([Convert]::FromBase64String('${b64}'), $null, [System.Security.Cryptography.DataProtectionScope]::CurrentUser))`;
 
 const POWERSHELL_PROTECT = (b64: string): string =>
-  `Add-Type -AssemblyName System.Security; [Convert]::ToBase64String([System.Security.Cryptography.ProtectedData]::Protect([Convert]::FromBase64String('${b64}'), $null, [System.Security.Cryptography.DataProtectionScope]::CurrentUser))`;
+  `${POWERSHELL_LOAD_SECURITY}; [Convert]::ToBase64String([System.Security.Cryptography.ProtectedData]::Protect([Convert]::FromBase64String('${b64}'), $null, [System.Security.Cryptography.DataProtectionScope]::CurrentUser))`;
 
 function spawnPowershell(spawn: SpawnLike, command: string) {
   // Windows PowerShell 5.1（powershell.exe）在 Win10+ 恒在位；.NET Framework 的
@@ -230,7 +257,7 @@ function createWin32Keychain(spawn: SpawnLike): CredentialKeychainAccess {
         // 解不开属现场损坏，fail-loud。
         return {
           status: "error",
-          reason: `DPAPI unprotect failed: ${toText(result.stderr).trim() || `exit ${result.status}`}`,
+          reason: `DPAPI unprotect failed: ${toWin32ConsoleText(result.stderr).trim() || `exit ${result.status}`}`,
         };
       }
       const secret = toText(result.stdout).trim();
@@ -241,12 +268,19 @@ function createWin32Keychain(spawn: SpawnLike): CredentialKeychainAccess {
     },
     write(keyFilePath, secret) {
       const blobPath = windowsDpapiBlobPath(keyFilePath);
-      const result = spawnPowershell(spawn, POWERSHELL_PROTECT(secret));
+      // 传输编码规范化：.NET 的 FromBase64String 只接受规范标准 base64（+/ 字母表、
+      // 带填充），而调用方（credentialMasterKey 的生成与迁移）统一传 base64url
+      // （43 字符、无填充、可含 -/_）。真机探针（2026-10-03）证实：不规范化则
+      // Protect 必抛 FormatException → write 恒 unavailable → Windows 钥匙串档整体
+      // 失效（永远降级文件模式）；mock 单测测不出（mock 不做真实 base64 解码）。
+      // Node 的 base64url 解码器同时接受两种字母表与缺填充，规范化幂等。
+      const canonicalSecret = Buffer.from(secret, "base64url").toString("base64");
+      const result = spawnPowershell(spawn, POWERSHELL_PROTECT(canonicalSecret));
       if (isSpawnENOENT(result)) {
         return { status: "unavailable", reason: "powershell.exe not found" };
       }
       if (result.status !== 0) {
-        const stderr = toText(result.stderr).trim();
+        const stderr = toWin32ConsoleText(result.stderr).trim();
         // 受限语言模式/策略拦截 → unavailable（新装场景无任何既有材料，降级文件模式安全）。
         return { status: "unavailable", reason: `DPAPI protect failed: ${stderr || `exit ${result.status}`}` };
       }
@@ -279,7 +313,8 @@ function createWin32Keychain(spawn: SpawnLike): CredentialKeychainAccess {
       } catch {
         // Windows 上 mode 不一定生效，收紧失败不阻断（NTFS ACL 是真实边界）。
       }
-      return { status: "written", secret };
+      // 返回规范化后的传输形态（与 EEXIST 回读赢家路径的返回形态一致，字节同一）。
+      return { status: "written", secret: canonicalSecret };
     },
     delete(keyFilePath) {
       try {

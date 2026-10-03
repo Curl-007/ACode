@@ -502,17 +502,11 @@ test("server: cookie-encoded token authenticates consistently across middleware 
   for (const token of ["plain-token", "abc%41", "100%", "a%2Fb%3Fc", "%E4%B8%AD%E6%96%87"]) {
     const ctx = await startHttp(createHttpServer, { authToken: token, authRequired: true });
     try {
-      // 走 query 命中一次，让 server 回写 encodeURIComponent(token) 的 cookie（既有兼容路径）。
-      const seeded = await fetch(
-        `http://127.0.0.1:${ctx.port}/api/rpc-host-capability?token=${encodeURIComponent(token)}`,
-        { method: "POST" },
-      );
-      assert.equal(seeded.status, 200, `token ${JSON.stringify(token)} should mint via query`);
-      const setCookie = seeded.headers.get("set-cookie") ?? "";
-      const cookieValue = setCookie.split(";")[0]?.trim() ?? "";
-      assert.ok(cookieValue.length > 0, "server should set the lite-token cookie on query auth");
+      // R2 后 HTTP 路由不再接受 query token（cookie 回写也随之移除），直接按回写曾经的
+      // 产物构造 cookie 头：`acode_lite_token=${encodeURIComponent(token)}`。
+      const cookieValue = `acode_lite_token=${encodeURIComponent(token)}`;
 
-      // 仅带 cookie（不带 Authorization / query）再次铸造：必须同样 200，
+      // 仅带 cookie（不带 Authorization / query）铸造：必须 200，
       // 且不得因为编码差异而 403（principal-mismatch）或 500（URIError）。
       const viaCookie = await fetch(`http://127.0.0.1:${ctx.port}/api/rpc-host-capability`, {
         method: "POST",
@@ -569,24 +563,36 @@ test("server: token via Authorization header authenticates (e)", async () => {
   }
 });
 
-test("server: ?token= still works but emits a deprecation warning (f)", async () => {
+test("server: ?token= rejected on HTTP routes with one-time warning, still accepted for /ws upgrades (R2/f)", async () => {
   const { createHttpServer } = await loadServerHttp();
   const ctx = await startHttp(createHttpServer, { authToken: "secret-token", authRequired: true });
   const warnings = [];
   const originalWarn = console.warn;
   console.warn = (...args) => warnings.push(args.join(" "));
   try {
+    // HTTP 路由：合法 query token 不再接受（兼容窗已按 spec 承诺关闭）→ 401，且不回写 cookie。
     const res = await fetch(
       `http://127.0.0.1:${ctx.port}/api/rpc-host-capability?token=secret-token`,
       { method: "POST" },
     );
-    assert.equal(res.status, 200);
-    // 命中弃用 query 后回写 cookie，便于后续走 cookie 路径。
-    assert.match(res.headers.get("set-cookie") ?? "", /acode_lite_token=/);
+    assert.equal(res.status, 401);
+    assert.equal(res.headers.get("set-cookie"), null);
     assert.ok(
-      warnings.some((line) => /DEPRECATION/i.test(line) && /\?token=/i.test(line)),
-      `expected a ?token= deprecation warning, got: ${JSON.stringify(warnings)}`,
+      warnings.some((line) => /DEPRECATION REMOVED/i.test(line) && /\?token=/i.test(line)),
+      `expected a ?token= removal warning, got: ${JSON.stringify(warnings)}`,
     );
+
+    // WS 升级路径：query 是唯一保留面（标准 WebSocket API 无法携带自定义 header）。
+    // 无 Upgrade 头不会真的 101，但只要不是 401 即证明鉴权中间件放行了 query 凭据；
+    // 错误 token 仍必须 401。超时护栏防止升级处理器对非升级请求的行为差异拖死测试。
+    const wsOk = await fetch(`http://127.0.0.1:${ctx.port}/ws?token=secret-token`, {
+      signal: AbortSignal.timeout(5000),
+    });
+    assert.notEqual(wsOk.status, 401);
+    const wsBad = await fetch(`http://127.0.0.1:${ctx.port}/ws?token=wrong-token`, {
+      signal: AbortSignal.timeout(5000),
+    });
+    assert.equal(wsBad.status, 401);
   } finally {
     console.warn = originalWarn;
     await ctx.close();

@@ -219,17 +219,28 @@ insufficient_evidence`
 
 ## 9. 裁决汇总表（所有者填写或回复「按推荐」）
 
+> **裁决记录（2026-10-03）**：所有者批复「按推荐」——D1–D9 全部按推荐列执行。
+> 实施前侦察补充 5 个设计修正（已并入 spec）：① sidecar 机械不可从接缝直接触达，
+> 分类器端口在 `createRuntimeToolExecutor`（runtime 在作用域处）构造注入；
+> ② `isBypassPermissionMode` 与 bot 禁列共用常量，直接加 auto 会误伤桌面
+> （managed policy 下 execution-state 拒切 auto）——必须拆分两个常量；
+> ③ 配置面存在死标志 `allowMediumRiskInAutoMode`（全链路已铺、决策核心从不读），
+> v1 按字面语义激活为「用户/系统级显式信任：medium 免分类器放行」（项目级已被
+> 剥离，克隆攻击面不变）；④ `alwaysAsk` 工具在 auto 下恒 ask 不进灰区
+> （critical 等价物）；⑤ 接缝 2 的灰区标记消费必须先于其 ruleId 过滤器，
+> 否则标记被静默丢弃回陈旧 broker 竞速。
+
 | #   | 议题        | 推荐                                                 | 裁决 |
 | --- | ----------- | ---------------------------------------------------- | ---- |
-| D1  | 灰区定义    | B：low 放行 / critical 恒 ask / medium+high 过分类器 |      |
-| D2  | sync/async  | B：同步内核灰区标记 + 两异步接缝消费                 |      |
-| D3  | 模型来源    | A：会话模型 + auxiliaryModelOptions（v1 零配置）     |      |
-| D4  | 上下文范围  | B：入参+元数据+≤2K 有界取证窗                        |      |
-| D5  | 校准与缓存  | 全收：rubric 校准 + LRU 缓存 + 不沉淀规则            |      |
-| D6  | 预算超时    | 12 次/turn、15s、超限/超时/失败→ASK，常量起步        |      |
-| D7  | 输出审计    | 结构化三值 + reasonCode 闭集 + decidedBy 留痕        |      |
-| D8  | 子代理/远程 | 子代理同路径；bot v1 禁 auto；automation 不自动获得  |      |
-| D9  | 灰度评估    | v1/v2/v3 三批 + evals fixtures 先行 + hillclimb 纪律 |      |
+| D1  | 灰区定义    | B：low 放行 / critical 恒 ask / medium+high 过分类器 | ✓    |
+| D2  | sync/async  | B：同步内核灰区标记 + 两异步接缝消费                 | ✓    |
+| D3  | 模型来源    | A：会话模型 + auxiliaryModelOptions（v1 零配置）     | ✓    |
+| D4  | 上下文范围  | B：入参+元数据+≤2K 有界取证窗                        | ✓    |
+| D5  | 校准与缓存  | 全收：rubric 校准 + LRU 缓存 + 不沉淀规则            | ✓    |
+| D6  | 预算超时    | 12 次/turn、15s、超限/超时/失败→ASK，常量起步        | ✓    |
+| D7  | 输出审计    | 结构化三值 + reasonCode 闭集 + decidedBy 留痕        | ✓    |
+| D8  | 子代理/远程 | 子代理同路径；bot v1 禁 auto；automation 不自动获得  | ✓    |
+| D9  | 灰度评估    | v1/v2/v3 三批 + evals fixtures 先行 + hillclimb 纪律 | ✓    |
 
 裁决后产出：`apps/acode-cli/specs/auto-mode-risk-classifier.md`（产品规则/接口/
 验收场景/守护测试清单），再按批次实施。

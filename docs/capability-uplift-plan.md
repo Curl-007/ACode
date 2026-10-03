@@ -327,5 +327,42 @@ GUI 命中率唯一来源是 provider-usage 驱动的 `recordMainTurnCacheHitUsa
   zoode 机制情报转译（Claude Code 服务端分类器 → provider 侧 sidecar，零新信任
   边界；Codex Guardian 确定性后置 + 校准）、5 条设计不变量、决策顺序架构图、
   D1–D9 裁决点（各带推荐）、提示注入硬化四件套、成本估算、v1/v2/v3 批次序。
-- **状态：待所有者裁决 D1–D9**；裁决后落
-  `apps/acode-cli/specs/auto-mode-risk-classifier.md` 再实施。本文档不含代码改动。
+- **状态：D1–D9 已裁决（2026-10-03 所有者批复「按推荐」，裁决记录进设计文档 §9），
+  spec 与 v1 实施已完成**，见下。
+
+## 实施记录（2026-10-03 · 批次 3 · auto 分类器 v1）
+
+spec `apps/acode-cli/specs/auto-mode-risk-classifier.md` 先行（R1–R7 + 12 验收场景），
+实施前侦察修正设计 5 处（sidecar 装配点唯一在 createRuntimeToolExecutor、bot 常量
+必须拆分、死标志 allowMediumRiskInAutoMode 顺势激活、alwaysAsk 不进灰区、接缝 2
+消费先于 ruleId 过滤器）——均已并入 spec 与裁决记录。
+
+- **确定性分层（R1）**：service.ts 两处 auto deny 桩移除；auto 分支按
+  critical 恒 ask / high+medium 灰区（ask 形态 + `autoGrayZone` 标记，wire 面
+  三值不变、忽略标记者天然 fail-safe）/ medium 受 `allowMediumRiskInAutoMode`
+  显式信任放行 / low 放行（workspace 副作用例外进灰区）；alwaysAsk 工具走既有
+  ask 语义不进灰区。
+- **分类器（R2–R4）**：纯层 `permission/auto-risk-classifier.ts`（端口/常量/
+  rubric 提示词/解析硬化/LRU/接缝消费辅助/审计 sink）+ sidecar 实现
+  `runtime/methods/auto-risk-classifier-sidecar.ts`（1:1 沿 title sidecar 纪律：
+  auxiliaryModelOptions、15s 超时、querySource=auto_risk_classify、usage 入账、
+  tools:[]、取证窗=最近 1 条真实用户消息 ≤2K）；装配点唯一
+  `createRuntimeToolExecutor`，子代理 child runtime 自动覆盖。
+- **接缝（R3）**：permission-flow 与 permission-input-recheck 共用
+  `resolveAutoGrayZoneDecision`（recheck 消费先于 ruleId 过滤器）；裁决映射
+  allow/deny/ask + `auto.classifier.*` ruleId + reason 展示；fail-safe 全谱
+  （超时/坏输出/低置信/预算尽/端口缺席/端口抛异常）一律 ask；只缓存 allow/deny。
+- **bot 面（R5）**：`BOT_REMOTE_MODE_CEILING_FORBIDDEN`（+auto）与 bypass 身份集
+  拆分——桌面 execution-state 的 modePolicyForbidden 判定不受波及；
+  bot-draft-options spec 同批增补。
+- **可观测（R6）**：`tool.permission.auto_classified` debug 事件 + 进程级审计
+  sink（create-app 装配期接 JSONL，仿反射门先例）；零协议新增面、零网络出口。
+- **词汇**：contracts `ModelApiOperation`/`AgentTelemetryOperation` 增
+  `auto_risk_classification`（本地用量归类，非遥测上报）。
+- **测试**：`auto-risk-classifier.test.mjs` 18/18（R1 分层/标记纪律/裁决映射/
+  fail-safe 六因/解析硬化含注入样本/LRU/源码不变量五组/rubric 要素）；
+  bot-guardrails 增 auto 拆分断言 12/12；权限回归电池 247/247（policy floor/
+  breakers/反射门/对抗组全量）；CLI 相关套件 67/67。验证：根 typecheck exit0、
+  contracts/core 构建 exit0、core/bootstrap tsc exit0、lint 0 error、arch 0 违规。
+- **未执行**：真实模型的端到端 auto 会话（需 dev:desktop/CLI live 环境与模型
+  额度）；rubric 的 evals fixtures 跑批（v2，守 hillclimb 纪律）。

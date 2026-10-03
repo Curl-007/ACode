@@ -20,6 +20,7 @@ import {
   resolveRuntimeDynamicWorkflowToolsIncluded,
 } from "./tool-allowlist.js";
 import { isStaleBranchRuntimeTaskEvent } from "../methods/runtime-command-generation.js";
+import { createAutoRiskClassifier } from "../methods/auto-risk-classifier-sidecar.js";
 import { resolveEnabledProjectMemoryRoot } from "./project-memory.js";
 import { sessionHasLoadedSkill } from "../../agent/loaded-skills.js";
 
@@ -158,6 +159,10 @@ function createRuntimeToolExecutor(
     registry: runtime.registry,
     permissionService: runtime.permissionService,
     permissionBroker: runtime.permissionBroker,
+    // auto 模式灰区分类器（specs/auto-mode-risk-classifier.md R2）：装配点唯一在此
+    //（runtime 在作用域处构造 sidecar 闭包）；子代理 child runtime 走同一 helper
+    // 自动获得；不把 runtime 本体传进 deps（分层纪律）。
+    autoRiskClassifier: createAutoRiskClassifier(runtime),
     emitEvent: async (event) => {
       await runtime.appendEvent(event, getCurrentTraceContext() ?? runtime.rootTraceContext);
     },

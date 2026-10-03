@@ -12,6 +12,7 @@ import {
 } from "@acode/contracts";
 import type { HookRunResult } from "../../hooks/index.js";
 import { isBashReflexGateRuleId } from "../../permission/bash-confirm-reflex-gate.js";
+import { resolveAutoGrayZoneDecision } from "../../permission/auto-risk-classifier.js";
 import type { PermissionContext } from "../../permission/service.js";
 import type {
   ExecutableToolCall,
@@ -134,6 +135,21 @@ export async function resolveToolPermission(
     toolName: toolCall.name,
     workingDirectory: deps.getWorkingDirectory(),
     workspaceRoot: deps.getWorkspaceRoot(),
+  });
+  // auto 灰区标记消费（specs/auto-mode-risk-classifier.md R3，接缝 1/2 共用同一辅助
+  // 函数防语义分叉）：必须先于下方 allowed/deny 短路——标记进来时 wire 形态是 ask，
+  // 端口缺席或裁决失败都维持 ask（fail-safe），分类器裁决不产生任何持久规则。
+  permissionDecision = await resolveAutoGrayZoneDecision({
+    classifier: deps.autoRiskClassifier,
+    decision: permissionDecision,
+    mode,
+    toolName: toolCall.name,
+    executionInput,
+    sessionId: deps.sessionId,
+    turnId: traceContext.turnId ?? deps.turnId,
+    traceContext,
+    ...(signal ? { signal } : {}),
+    ...(deps.logger ? { logger: deps.logger } : {}),
   });
 
   deps.logger?.debug("Tool permission evaluated", {

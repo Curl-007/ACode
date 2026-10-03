@@ -7,6 +7,7 @@ import {
 } from "@acode/contracts";
 
 import type { PermissionDecisionResult, PermissionContext } from "../../permission/service.js";
+import { resolveAutoGrayZoneDecision } from "../../permission/auto-risk-classifier.js";
 import type { ExecutableToolCall, ToolEntry } from "../types.js";
 import { applyMemoryFilePermission, targetsMemoryFile } from "./memory-file-permission.js";
 import {
@@ -83,6 +84,21 @@ export async function recheckPermissionHookModifiedInput(input: {
     toolName: input.toolCall.name,
     workingDirectory: input.deps.getWorkingDirectory(),
     workspaceRoot: input.deps.getWorkspaceRoot(),
+  });
+  // auto 灰区标记消费（specs/auto-mode-risk-classifier.md R3，接缝 2）：必须先于下方
+  // ruleId 过滤器——否则改写后仍是灰区的 ask 会被过滤器当成「非 project/breaker」
+  // 丢弃，回落到改写前的陈旧 broker 竞速；改写后降出灰区（如 low）则分类器不介入。
+  decision = await resolveAutoGrayZoneDecision({
+    classifier: input.deps.autoRiskClassifier,
+    decision,
+    mode: input.mode,
+    toolName: input.toolCall.name,
+    executionInput: input.modifiedInput,
+    sessionId: input.deps.sessionId,
+    turnId: input.traceContext.turnId ?? input.deps.turnId,
+    traceContext: input.traceContext,
+    ...(input.signal ? { signal: input.signal } : {}),
+    ...(input.deps.logger ? { logger: input.deps.logger } : {}),
   });
 
   if (decision.decision === "deny") {

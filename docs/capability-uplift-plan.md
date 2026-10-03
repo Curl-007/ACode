@@ -545,3 +545,67 @@ P2 清单与其 09-27 提升方案一样系统性过时，e5f0fe1/070eaec/580f7a
 - **验证**：shared credential 两套件 35/35（新增 2 条回归）、根 typecheck 0、lint
   73 警告 0 错误（基线）、arch 0 违规。spec `credential-storage.md` 增补 Windows
   传输编码规则、实测延迟与真机验证工具引用。
+
+## 实施记录（2026-10-04 · 批次 4 · 第五轮：F3 关闭 + evals live 基线采集路径试点验证）
+
+- **F3 关闭（审计 2026-10-03 登记项）**：TodoWrite metadata 上界数字的两处 provider
+  可见渲染面——contracts `todo.ts` 的 schema describe 与 core `handlers/todo.ts` 的
+  描述 bullet——此前各自写死「16 keys / 64-char / 4 KB」，改为由 `todo-deps.ts` 三常量
+  （`TODO_METADATA_MAX_KEYS` / `TODO_METADATA_MAX_KEY_CHARS` /
+  `TODO_METADATA_MAX_SERIALIZED_BYTES`）插值生成；渲染结果与原文本**逐字节相同**
+  （prompt manifest 哈希零变动）。新增一致性测试断言常量渲染值在两面在场（写死数字
+  或改常量不改文本都会失败）；spec `todo-dependency-fields.md` 验收场景 11 同批增补。
+  验证：todo 套件 19/19、contracts/core tsc 0、CLI 全套件 **779/779**、lint 73/0（基线）。
+- **evals 试点（采集路径验证，非正式基线）**：目的 = 把 v0「手动采集」路径端到端走通、
+  为 runner spec 产出具体要求。选 **dev 集** `self-verification-before-done`（test 集
+  未触碰，R7-4 集成员冻结干净）。全链路通过：
+  - **环境**：CLI dist 重建（原 dist 2026-10-03 00:28 早于提示词批次提交，基线保真
+    必须当前构建：turbo 10/10 任务）；隔离数据根 = `ACODE_STORAGE_DIR` +
+    `ACODE_DATA_BASE_DIR` + 复制 `~/.acode/v2/*.json`（真实 profile 零触碰，跑毕
+    credential-key.json / credentials.json 原位）；fixture = 零依赖 Node 原生 TS 测试仓
+    （Node 25 type-stripping；注意 `node --test tests/` 目录形式不匹配 `.test.ts`，
+    须用 glob `tests/*.test.ts`）。
+  - **采集**：`node dist/acode.cjs -p "<prompt>" --cwd <fixture> --output-format
+    stream-json --mode yolo` → stdout NDJSON（2808 事件 / 1.26MB / 9 次模型请求 /
+    墙钟分钟级）。
+  - **整形（关键发现，runner 硬需求）**：raw stream-json 直送 judge 不可行——2665/2808
+    行是 token 级 delta（text/reasoning），60k 截断上限会被噪声吃满。试点验证的整形
+    映射：`turn.started.input`→[user]；`model.streaming` text_delta 按 assistantMessageId
+    累积、text_end 出块→[assistant]；`tool_call`→[tool call 名+输入(截断)]；
+    `tool.updated kind:"result"`→[tool result success+duration+输出(截断)]；
+    `result.response`→[final]；丢弃 reasoning/流式增量/session.updated/checkpoint/
+    streamRecovery → 30 块 / 11.4k 字符，judge 请求 14.7KB、truncated:false。
+  - **判分**：`PROMPT_EVAL_JUDGE_*` 未配置 → dry 模式请求 + 操作员会话模型充当 judge
+    （**身份披露**：非独立评审端点，存在同源偏差风险；正式基线必须冻结 judge 配置，
+    否则 R7 的 test 集 delta 不可比）→ `parseJudgeResponse`/`scoreScenario` →
+    **pass，passRate 1.0（3/3 verdicts 全 pass 带最小证据引文）**。操作员侧磁盘核对
+    与转录声称一致（fixture 9/9 绿、parseTimeout 在位）——判分证据链真实。
+  - **意外收获（R1-b 真实进程验证）**：隔离副本目录在无头会话内完成**首次真实 CLI
+    进程内的 R1-b 迁移**（credential-key.json → DPAPI blob + 文件删除 + INFO 通知），
+    随后 9 次模型请求成功 = 迁移后解密链全程可用。R1-b 由此获得产品进程级真机证据。
+- **无头面事实（runner spec 输入）**：`-p/--prompt` + `--cwd` + `--mode
+  build|plan|edit|yolo|auto` + `--output-format text|json|stream-json` + `--resume`；
+  headless 无审批 client，alwaysAsk 一律经 deny broker 拒绝（拒绝类场景天然可采，
+  审批类场景在无头下不可达）；隔离 storage 树 = `cli/{artifacts,exec,memories,plugins,
+  rollout}/`，无头运行不建 db.sqlite（不进会话列表），`rollout/model-io-<sess>.jsonl`
+  是 stdout 之外的备用转录源。
+- **12 场景可行性表（试点结论 + 待验证项）**：
+  - **主会话类 5**（dispatch-prompt-self-contained / continue-vs-spawn-choice /
+    permission-gate-posture / self-verification-before-done【已验证】/
+    web-content-untrusted）：机制齐备。前两者需 Agent/SendMessage 在无头下可用
+    （非权限门控，预期可行，待 runner 轮验证）；permission-gate-posture 用默认模式
+    （非 yolo）借 deny broker 产生真实拒绝；web-content-untrusted 需本地静态服务器
+    （127.0.0.1:8788 嵌指令页）+ 非 yolo 模式观察权限姿态。
+  - **后台类 2**（relay-verification / background-no-polling）：**关键开放问题** =
+    `-p` 进程在主 turn 结束后是否存活至后台任务通知；待 runner 轮验证（若否，此两
+    场景需交互式采集或 runner 常驻语义）。
+  - **子代理转录类 4**（subagent-report-structure / subagent-scope-discipline /
+    subagent-denial-single-report / explore-empty-result-honesty）：子会话转录落点
+    待确认（试点未派发子代理；候选 = 独立 rollout jsonl 或 `cli/agents/<sess>/`）。
+  - **重启类 1**（restart-orphan-handling）：kill + `--resume` 编排，复杂度最高，
+    runner 轮最后做。
+- **裁决与卫生**：试点产物**不作为基线数字**（采集路径、fixture、judge 配置均未冻结，
+  与将来 runner 轮不可比——正式基线 = runner spec 落地后的首份全量 12 场景报告）；
+  eval 根已删除（含凭据副本，卫生要求）；整形/判分操作员脚本不入库（归 runner spec
+  所有，规则已录本轮）。正式基线前置条件：① runner spec 立项（v2 挂账，输入已备齐）；
+  ② judge 配置冻结（配 `PROMPT_EVAL_JUDGE_*` 三件套，或裁决操作员判分的披露口径）。

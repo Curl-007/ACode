@@ -1,6 +1,7 @@
 import {
   createCodingPlanApiKeyResolver,
   createSharedACodeCredentialStore,
+  createSharedCredentialStoreApiKeyVault,
   createCliOAuthClient,
   createCliOAuthPollToken,
   openUrlInBrowser,
@@ -345,10 +346,15 @@ async function persistStandaloneCodingPlanConnection(input: {
     input.env[ACODE_PERSONAL_PROVIDER_CONFIG_FILE_ENV]?.trim() ??
     join(dirname(input.credentialStore.filePath), PERSONAL_PROVIDER_CONFIG_FILE_NAME);
   // 登录与运行时共享文件和事务；首次写入仍先保留旧用户 Provider，不能仅写默认值。
+  // R1-c（批次 4）：补上 vault 注入——此前本装配点是全仓唯一不注入的构造处，
+  // saveConfiguredDefault 重写整份文件时会把 importLegacy 带入的旧明文 BYO Key
+  // 原样落盘且不迁移。credentialStore 就在本函数上下文，用与 process-provider-registry-runtime
+  // 相同的适配器（同一 credentials.json、同一确定性引用键，桌面写入的 ref CLI 可读回）。
   const personalRepository = new NodePersonalProviderConfigRepository({
     filePath: path,
     importLegacy: () => readLegacyCliPersonalProviderConfig({}),
     pollingIntervalMs: false,
+    providerApiKeyVault: createSharedCredentialStoreApiKeyVault(input.credentialStore),
   });
   const repository = new NodeModelSelectionConfigRepository({ personalRepository });
   try {

@@ -136,9 +136,33 @@ P1-5 首版实现漏了「**谁读 vault 化的 provider_config.json，谁就得
 - 删除失败**不回滚**已提交的文件写入（用户视角删除已成功），经 `onRecovery` 上报。
 - delete 幂等：provisioning 的 credential 回滚与写入漏斗可能对同一 ref 各删一次，第二次必须是无操作。
 
+## R1-c：明文回退的显式告警与装配点收口（2026-10-03 批次 4）
+
+D6 裁决（docs/credential-os-keychain-design.md）：明文回退**保留**（可用性优先是既有产品
+决定：vault 不可用时 Key 继续可用、下次写入重试迁移；硬闸会把安全成本转嫁为 headless BYO
+不可用），但必须显式可发现，且「可修复的接线缺席」要收口根因。
+
+- **成因调查结论**：全仓 `NodePersonalProviderConfigRepository` 构造点共三处——
+  provider-node 内部工厂（options 透传）、`provider-config-runtime.ts`（转发
+  `providerApiKeyVault`，桌面 services node.ts 与 CLI process-provider-registry-runtime
+  两个装配点均已注入）、CLI `bootstrap/auth-login.ts`（**唯一缺口**：不注入 vault，
+  `saveConfiguredDefault` 重写整份文件时把 `importLegacy` 带入的旧明文 BYO Key 原样落盘
+  且不迁移）。
+- **根因收口**：auth-login 构造点补注入 `createSharedCredentialStoreApiKeyVault(input.credentialStore)`
+  ——与 process-provider-registry-runtime 同一适配器（同一 `credentials.json`、同一确定性
+  引用键，桌面写入的 ref CLI 可读回的既有前提不变）。守护：
+  `apps/acode-cli/tests/auth-login-vault-wiring.test.mjs` 源码不变量（构造参数缺
+  `providerApiKeyVault` 即红）。
+- **回退告警**：写入漏斗 `#writeLocked` 在 vault 化之后仍有明文 BYO Key 落盘时，发一次性
+  `SECURITY NOTICE` console.warn（once-guarded，键 = 成因+文件路径：轮询/重复写入不刷屏，
+  不同数据目录互不吞告警）。成因二分文案：vault 未注入（装配点缺失/纯 builtin/测试）vs
+  save 失败（已经 `onRecovery` 上报，这里补用户可见面）。告警不改变任何行为——迁移
+  重试与明文可用性照旧。
+
 ## 不在本特性范围
 
 - `apiKeyManagementUrl` 等非敏感字段仍明文存文件（不是 secret）。
 - 账号/OAuth Key 已在凭据库，不在本次范围。
-- OS 钥匙串接入仍是 P0-4 的后续工作；本次只是把 BYO key 并入**已加固的**凭据库，
-  凭据库自身的密钥强度由 P0-4 决定。
+- ~~OS 钥匙串接入仍是 P0-4 的后续工作~~ **已落地**（批次 4 R1-a/R1-b：主密钥入 OS 钥匙串 +
+  一次性迁移，见 packages/services/specs/credential-storage.md）。本特性把 BYO key 并入
+  凭据库，凭据库主密钥强度现由钥匙串保障。

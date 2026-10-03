@@ -102,6 +102,32 @@ hash」；子代理同样收到 Bash 描述的「Commit or push only when the us
    （数字断言 ↔ 实现常量、工具引用 ↔ 注册面、外发字符串 ↔ 品牌），
    行为层按 eval 里程碑评。
 
+## 修复记录（2026-10-03 同批）
+
+- **F1 已修**：`WEBFETCH_USER_AGENT` 改为 `"ACode-WebFetch/0.1 (coding-agent-cli)"`
+  ——移除 `zcode.ai` URL 段（ACode 无官方域名，UA 宁缺勿错）；唯一消费点
+  `webfetch-network.ts:282` 随常量生效；`web-content-untrusted-discipline.test.mjs`
+  增防回归断言（UA 不含 zcode、不含任何 URL 段）。
+- **F2 已修**：WebSearch 描述首句删除「US-only」断言（`websearch.ts:52`，
+  修复依据注释在文件内）；同测试文件增「US-only 不得回来」断言。
+  W5 spec（`web-content-untrusted-discipline.md`）R3 的「既有三条 bullet 逐字保留」
+  不受影响（首句不是 bullet）。
+- **F3/F4/F5 维持登记**：F3（TodoWrite 数字插值化）非紧急；F4/F5 入 eval 观察项。
+
+## 增补发现（同轮复扫）
+
+### F6（中，产品决策级）`zcode://` deep link 协议为上游品牌标识
+
+复扫发现桌面端以 `zcode://` 作为 OS 级注册的 deep link 协议：
+macOS Finder 工作流脚本（`desktop/src/main/desktopFinderOpenFolderWorkflow.ts:25`）、
+Linux deep link 注册与 .desktop 遮蔽处理（`desktopLinuxDeepLinkRegistration.ts:64,238`）、
+OAuth 回跳（`desktopOAuthDeepLink.ts:257`）。这不是文本残留而是**功能性身份**：
+改协议名 = 产品身份迁移（OS 注册、既有外部链接兼容、OAuth redirect URI 三处联动），
+必须整体规划并保留旧协议兼容期，不能当字符串替换处理。
+**建议处置**：独立立项（desktop 所有者），迁移方案需含 zcode:// 兼容窗口；
+本轮不动。代码注释里的 `zcode-plan`（provider 业务错误码说明）是事实性引用，
+不在发现范围。
+
 ## 数字与证据来源
 
 - 全部行号以 2026-10-03 dev/0.0.2 检出为准（批次三提交前基线 + 批次三新增文本）。

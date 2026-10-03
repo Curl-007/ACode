@@ -48,11 +48,7 @@ const ENV_DATA_BASE = "ACODE_DATA_BASE_DIR";
 
 /** §R6 not-supported-v1 登记：显式报错指向 open questions，绝不静默跳过。 */
 export const NOT_SUPPORTED_V1 = {
-  "subagent-report-structure": "§R7-1 子代理转录落点未确认",
-  "subagent-scope-discipline": "§R7-1 子代理转录落点未确认",
-  "subagent-denial-single-report": "§R7-1 子代理转录落点未确认",
-  "explore-empty-result-honesty": "§R7-1 子代理转录落点未确认",
-  "restart-orphan-handling": "§R7-2 kill+resume 编排未验证",
+  "restart-orphan-handling": "§R7-6 kill+resume 编排未验证",
 };
 
 const TOOL_INPUT_CHARS = 1200;
@@ -102,6 +98,67 @@ export function shapeTranscript(ndjson) {
   }
   const text = `${blocks.join("\n\n")}\n`;
   return { text, eventsTotal, blocksShaped: blocks.length, shapedChars: text.length };
+}
+
+/**
+ * 子转录整形（spec §R3 子转录规则，EXP1 实证源）：子会话 rollout model-io jsonl 的
+ * **末行** `request.body.messages` 是完整消息链（含全部 tool_use/tool_result）；映射为
+ * 与父转录同族的块，末尾追加 output.txt 全文为 [final report]（报告契约面判分对象）。
+ * system 不在 messages 里，天然丢弃。
+ */
+export function shapeChildTranscript(modelIoNdjson, finalReport) {
+  let last;
+  for (const line of modelIoNdjson.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    try {
+      last = JSON.parse(line);
+    } catch {
+      continue;
+    }
+  }
+  const messages = last?.request?.body?.messages ?? [];
+  const blocks = [];
+  for (const msg of messages) {
+    const parts = typeof msg.content === "string" ? [{ type: "text", text: msg.content }] : (msg.content ?? []);
+    for (const part of parts) {
+      if (part.type === "text" && msg.role === "user") {
+        blocks.push(`[user] ${part.text}`);
+      } else if (part.type === "text" && msg.role === "assistant") {
+        blocks.push(`[assistant] ${part.text}`);
+      } else if (part.type === "tool_use") {
+        blocks.push(`[tool call ${part.id}] ${part.name}\n${truncate(JSON.stringify(part.input ?? {}, null, 1), TOOL_INPUT_CHARS)}`);
+      } else if (part.type === "tool_result") {
+        const content = typeof part.content === "string" ? part.content : JSON.stringify(part.content ?? "");
+        blocks.push(`[tool result ${part.tool_use_id}]\n${truncate(content, TOOL_RESULT_CHARS)}`);
+      }
+    }
+  }
+  if (finalReport?.trim()) blocks.push(`[final report] ${finalReport.trim()}`);
+  const text = `${blocks.join("\n\n")}\n`;
+  return { text, blocksShaped: blocks.length, shapedChars: text.length };
+}
+
+/**
+ * 子代理工件定位（EXP1 实证）：`cli/agents/<parentSess>/agent_<id>/metadata.json` 给
+ * childSessionId 映射；rollout model-io 与 output.txt 按命名约定取。多子代理时调用方
+ * fail-loud（v1 语料均为单子代理场景，多选语义不猜）。
+ */
+export function locateChildArtifacts(storageRoot, parentSessionId) {
+  const agentsRoot = join(storageRoot, "cli", "agents", parentSessionId);
+  if (!existsSync(agentsRoot)) return [];
+  const found = [];
+  for (const agentDir of readdirSync(agentsRoot)) {
+    const metaPath = join(agentsRoot, agentDir, "metadata.json");
+    if (!existsSync(metaPath)) continue;
+    const meta = JSON.parse(readFileSync(metaPath, "utf-8"));
+    if (!meta.childSessionId) continue;
+    found.push({
+      description: meta.description ?? "",
+      modelIoPath: join(storageRoot, "cli", "rollout", `model-io-${meta.childSessionId}.jsonl`),
+      reportPath: join(agentsRoot, agentDir, "output.txt"),
+    });
+  }
+  return found;
 }
 
 /** dist 新鲜度守护（spec §R2，试点教训：陈旧 dist = 测旧提示词 = 基线保真不成立）。 */
@@ -289,15 +346,20 @@ async function dryFlow(scenario, recipe, evalRootArg) {
   try {
     await recipe.setup(fixtureDir);
     server = recipe.server ? await recipe.server() : undefined;
-    if (scenario.prompt.startsWith("(")) {
-      // 语料 prompt 以括号开头 = 舞台指示（如 "(subagent-side capture)"），不是可投递
-      // 的输入——支持面登记错误，fail-loud 而不是把指示当 prompt 发出去。
-      throw new Error(`scenario "${scenario.id}" prompt is a stage direction, not deliverable input（见 ${SPEC_REF} §R6）`);
+    let deliverablePrompt = scenario.prompt;
+    if (deliverablePrompt.startsWith("(")) {
+      // 语料 prompt 以括号开头 = 舞台指示（如 "(subagent-side capture)"）：判分对象是
+      // 子/后台会话，父侧投递语由 recipe.parentPrompt 声明；缺声明 = 支持面登记错误，
+      // fail-loud 而不是把指示当 prompt 发出去。
+      if (!recipe.parentPrompt) {
+        throw new Error(`scenario "${scenario.id}" prompt is a stage direction and the recipe declares no parentPrompt（见 ${SPEC_REF} §R6）`);
+      }
+      deliverablePrompt = recipe.parentPrompt;
     }
     const args = [
       CLI_DIST,
       "-p",
-      scenario.prompt,
+      deliverablePrompt,
       "--cwd",
       fixtureDir,
       "--output-format",
@@ -316,6 +378,31 @@ async function dryFlow(scenario, recipe, evalRootArg) {
     const shaped = shapeTranscript(ndjson);
     writeFileSync(join(runDir, "transcript-shaped.txt"), shaped.text, "utf-8");
 
+    // 子代理场景（§R6 judgeTarget:"child"）：判分对象是子转录（语料 setup 要求），
+    // 父转录留盘仅作派发上下文。子工件定位与整形规则见 §R3/locateChildArtifacts。
+    let judgedText = shaped.text;
+    let judgedFile = join(runDir, "transcript-shaped.txt");
+    let childMeta;
+    if (recipe.judgeTarget === "child") {
+      const parentSessionId = JSON.parse(ndjson.split(/\r?\n/).find((line) => line.trim()) ?? "{}").sessionId;
+      const children = locateChildArtifacts(storage, parentSessionId);
+      if (children.length !== 1) {
+        throw new Error(
+          `scenario "${scenario.id}" expects exactly one child session artifact, found ${children.length}` +
+            (children.length ? `（${children.map((c) => c.description).join("; ")}）` : "（子代理未派发？检查父转录）"),
+        );
+      }
+      const child = children[0];
+      const childShaped = shapeChildTranscript(
+        readFileSync(child.modelIoPath, "utf-8"),
+        existsSync(child.reportPath) ? readFileSync(child.reportPath, "utf-8") : "",
+      );
+      writeFileSync(join(runDir, "transcript-child-shaped.txt"), childShaped.text, "utf-8");
+      judgedText = childShaped.text;
+      judgedFile = join(runDir, "transcript-child-shaped.txt");
+      childMeta = { childBlocks: childShaped.blocksShaped, childChars: childShaped.shapedChars };
+    }
+
     const notes = [];
     if (code !== 0) notes.push(`cli-exit-${code}`);
     if (recipe.experimental && !/notification|task-notification/i.test(ndjson)) {
@@ -331,6 +418,7 @@ async function dryFlow(scenario, recipe, evalRootArg) {
       shapedChars: shaped.shapedChars,
       modelRequests: (ndjson.match(/"type":"model_request_started"/g) ?? []).length,
       wallMs,
+      ...(childMeta ? { child: childMeta } : {}),
       ...(notes.length ? { notes } : {}),
     };
 
@@ -340,11 +428,11 @@ async function dryFlow(scenario, recipe, evalRootArg) {
     let status = "awaiting-judgement";
     let fingerprint = judgeFingerprintFor("pending");
     let score;
-    const request = buildJudgeRequest(scenario, shaped.text);
+    const request = buildJudgeRequest(scenario, judgedText);
     writeFileSync(join(runDir, "request.json"), `${JSON.stringify({ scenarioId: scenario.id, ...request }, null, 2)}\n`, "utf-8");
     if (liveEnvReady) {
       const liveOut = join(runDir, "live-report.json");
-      await runChild(process.execPath, [join(HERE, "judge.mjs"), "--scenario", scenario.id, "--transcript", join(runDir, "transcript-shaped.txt"), "--json-out", liveOut, "--live"], {
+      await runChild(process.execPath, [join(HERE, "judge.mjs"), "--scenario", scenario.id, "--transcript", judgedFile, "--json-out", liveOut, "--live"], {
         cwd: CLI_ROOT,
         env: process.env,
         stdoutFile: join(runDir, "judge-stdout.log"),

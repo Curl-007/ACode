@@ -15,6 +15,8 @@ import { test } from "node:test";
 
 const {
   shapeTranscript,
+  shapeChildTranscript,
+  locateChildArtifacts,
   buildReport,
   judgeFingerprintFor,
   checkDistFreshness,
@@ -101,7 +103,65 @@ test("(场景2/R2) dist 新鲜度守护：陈旧 fail-loud 并给出重建命令
   assert.equal(checkDistFreshness(2000, 2000).ok, true);
 });
 
-test("(场景3/R6) not-supported-v1 五场景 fail-loud 指向 §R7；registry 无静默缺口", async () => {
+test("(场景1/R3) shapeChildTranscript：末行 messages 全链映射 + final report 追加 + 截断标记", () => {
+  const older = JSON.stringify({ request: { body: { messages: [{ role: "user", content: "stale prefix" }] } } });
+  const lastLine = JSON.stringify({
+    request: {
+      body: {
+        messages: [
+          { role: "user", content: "do the child task" },
+          {
+            role: "assistant",
+            content: [
+              { type: "text", text: "I will search." },
+              { type: "tool_use", id: "tu1", name: "Bash", input: { command: "grep -r QuantumFlux ." } },
+            ],
+          },
+          { role: "user", content: [{ type: "tool_result", tool_use_id: "tu1", content: "y".repeat(4000) }] },
+          { role: "assistant", content: [{ type: "text", text: "Nothing found." }] },
+        ],
+      },
+    },
+  });
+  const shaped = shapeChildTranscript(`${older}\n${lastLine}\n`, "## Negative result\nnothing here");
+  assert.ok(shaped.text.includes("[user] do the child task"), "末行消息链为准（stale prefix 不出现）");
+  assert.ok(!shaped.text.includes("stale prefix"));
+  assert.ok(shaped.text.includes("[assistant] I will search."));
+  assert.ok(shaped.text.includes("[tool call tu1] Bash"));
+  assert.ok(shaped.text.includes("[tool result tu1]"));
+  assert.ok(shaped.text.includes("runner-truncated 1000 chars"), "子转录同截断规则");
+  assert.ok(shaped.text.includes("[assistant] Nothing found."));
+  assert.ok(shaped.text.endsWith("[final report] ## Negative result\nnothing here\n"), "output.txt 全文收尾");
+});
+
+test("(场景1/R6) locateChildArtifacts：metadata 映射 childSessionId；空/缺目录返回 []", () => {
+  const root = mkdtempSync(join(tmpdir(), "acode-runner-child-"));
+  try {
+    const parent = "sess_parent1";
+    const agentDir = join(root, "cli", "agents", parent, "agent_a1");
+    mkdirSync(agentDir, { recursive: true });
+    mkdirSync(join(root, "cli", "rollout"), { recursive: true });
+    writeFileSync(
+      join(agentDir, "metadata.json"),
+      JSON.stringify({ agentId: "agent_a1", childSessionId: "sess_subagent_agent_a1", description: "find X" }),
+      "utf-8",
+    );
+    writeFileSync(join(root, "cli", "rollout", "model-io-sess_subagent_agent_a1.jsonl"), "{}\n", "utf-8");
+    writeFileSync(join(agentDir, "output.txt"), "report body", "utf-8");
+    const found = locateChildArtifacts(root, parent);
+    assert.equal(found.length, 1);
+    assert.equal(found[0].description, "find X");
+    assert.ok(found[0].modelIoPath.endsWith("model-io-sess_subagent_agent_a1.jsonl"));
+    assert.ok(found[0].reportPath.endsWith("output.txt"));
+    assert.deepEqual(locateChildArtifacts(root, "sess_missing"), []);
+    assert.deepEqual(locateChildArtifacts(join(root, "nope"), parent), []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("(场景3/R6) not-supported-v1 登记 fail-loud 指向 §R7（仅剩 restart-orphan）；registry 无静默缺口", async () => {
+  assert.deepEqual(Object.keys(NOT_SUPPORTED_V1), ["restart-orphan-handling"], "EXP1/EXP2 关闭后仅剩重启编排");
   for (const id of Object.keys(NOT_SUPPORTED_V1)) {
     assert.throws(
       () => assertScenarioSupported(id),
@@ -110,6 +170,7 @@ test("(场景3/R6) not-supported-v1 五场景 fail-loud 指向 §R7；registry �
     );
   }
   assertScenarioSupported("self-verification-before-done"); // 支持面不误伤
+  assertScenarioSupported("explore-empty-result-honesty"); // EXP1 后已转 ready
 
   const scenarios = await loadScenarios();
   const ids = scenarios.map((s) => s.id);
@@ -123,6 +184,7 @@ test("(场景3/R6) not-supported-v1 五场景 fail-loud 指向 §R7；registry �
     assert.ok(ids.includes(id), `not-supported 登记了不存在的场景 ${id}`);
   }
   // recipe 导出面合法：
+  const scenarioById = new Map(scenarios.map((s) => [s.id, s]));
   for (const id of recipeIds) {
     const recipe = await import(new URL(`./${id}.mjs`, RECIPES_DIR).href);
     assert.equal(typeof recipe.setup, "function", `${id} 必须导出 setup(dir)`);
@@ -131,6 +193,12 @@ test("(场景3/R6) not-supported-v1 五场景 fail-loud 指向 §R7；registry �
       `${id} mode 非法: ${recipe.mode}`,
     );
     assert.ok(recipe.experimental === undefined || recipe.experimental === true, `${id} experimental 必须是 true/缺省`);
+    assert.ok(recipe.judgeTarget === undefined || recipe.judgeTarget === "child", `${id} judgeTarget 必须是 "child"/缺省`);
+    // 舞台指示 prompt 的场景必须声明父侧投递语（runner 据此投递，缺声明 fail-loud）：
+    if (scenarioById.get(id).prompt.startsWith("(")) {
+      assert.equal(typeof recipe.parentPrompt, "string", `${id} 语料 prompt 是舞台指示，recipe 必须声明 parentPrompt`);
+      assert.ok(!recipe.parentPrompt.startsWith("("), `${id} parentPrompt 自身不得是舞台指示`);
+    }
   }
 });
 

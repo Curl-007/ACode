@@ -6,6 +6,7 @@ import {
   getACodeUserVisibleMessages,
   isACodeGoalContinuationReminderText,
   isACodeModelOnlySyntheticUserMessage,
+  isCronTask,
   resolveWorkspaceKey,
   resolveACodeVisibleSessionTitle,
   ACODE_AGENT_PROVIDER_NOT_READY_CODE,
@@ -591,6 +592,13 @@ export function createACodeTaskIndexSyncer(
           : { status: "completed", lastError: undefined, updatedAt },
       })
       .then((meta) => {
+        // heartbeat 协议 R1（automation-heartbeat-protocol.md）：automation 任务的未读
+        // 归 host settle 决策点唯一所有（NOTIFY 决策/失败才标未读）。syncer 不再为其
+        // 发 background_terminal 信号，否则 UI 侧 taskStatusUnreadSync 会独立标未读，
+        // 默认安静失效。bound task（meta 无 automation 标记）保持既有聊天任务行为，
+        // 是 spec 已登记的边界。
+        const automationOwned = meta !== null && isCronTask(meta);
+        const effectiveUnreadSignal = automationOwned ? undefined : unreadSignal;
         if (meta) {
           // 之前只更新 sqlite 不广播，UI 监听 workspace_task_list_changed 收不到通知，
           // 导致 spinner 不消失、updatedAt 排序不刷新。补一次广播让列表收敛。
@@ -601,7 +609,7 @@ export function createACodeTaskIndexSyncer(
             broadcastTargetFrom(target),
             meta,
             "task_status_changed",
-            unreadSignal ? { unreadSignal } : undefined,
+            effectiveUnreadSignal ? { unreadSignal: effectiveUnreadSignal } : undefined,
           );
         }
         // 终态读取完整 snapshot：v4 命令路径（createSession/sendText 走 v4/command）
@@ -611,7 +619,7 @@ export function createACodeTaskIndexSyncer(
           moveGroupedTaskToTop: options?.moveGroupedTaskToTop,
           // patch 已广播时不能让随后的 snapshot 回源再次制造完成提醒；
           // 行缺失时则把同一 signal 交给回源结果，保证提醒既不丢也不重复。
-          ...(meta || !unreadSignal ? {} : { unreadSignal }),
+          ...(meta || !effectiveUnreadSignal ? {} : { unreadSignal: effectiveUnreadSignal }),
         });
       })
       .catch((error) => {

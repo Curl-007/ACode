@@ -66,6 +66,9 @@ import {
   HostMessageTypes,
   HostResponseTypes,
   ACODE_VERSION,
+  AUTOMATION_NOTICE_INSTRUCTION,
+  appendAutomationNoticeTail,
+  parseAutomationNotice,
   formatLogPrefix,
   formatACodeHostProcessName,
   formatZodError,
@@ -796,23 +799,49 @@ function trackCronRunOutcome(params: {
   const key = cronRunSubscriptionKey(params.taskId, params.traceId);
   disposeCronRunSubscription(key);
   markCronRunOutcome({ ...params, outcome: "running" });
+  // heartbeat 协议 R2：订阅窗内累积本 run 主 agent 正文尾部（派发 prompt 的 traceId=runId，
+  // adapter 已把事件 inputId 对齐到本轮 inputId），终态解析通知决策；滚动尾部有界。
+  let automationNoticeTail = "";
+  const streamSubscription = params.acodeTaskService.onDynamicStreamEvent(params.taskId)(
+    (event) => {
+      if (
+        event.type !== "agent_message_chunk" ||
+        event.parentToolUseId ||
+        event.inputId !== params.traceId
+      ) {
+        return;
+      }
+      automationNoticeTail = appendAutomationNoticeTail(automationNoticeTail, event.content);
+    },
+  );
   const disposable = params.acodeTaskService.onDynamicTaskTerminalOutcome(params.taskId)(
     (result) => {
       if (result.inputId !== params.traceId) return;
+      const notifyDecision = parseAutomationNotice(automationNoticeTail);
       void settleCronRunTerminalOutcome({
         ...params,
         outcome: result.outcome,
         error: result.error,
+        notifyDecision,
         repo: cronAutomationRepo,
         logWarn: (message, error) => logger.warn(message, error),
       });
-      // 定时任务在后台完成后统一置为未读，真正打开 task 时再由导航链路清除。
-      void params.acodeTaskService.setTaskUnread({
-        taskId: params.taskId,
-        workspacePath: params.workspacePath,
-        ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
-        unread: true,
-      });
+      // heartbeat 协议 R1：默认安静——触发完成本身不再是未读理由。仅 NOTIFY 决策或
+      // 失败终态标未读（打开 task 时仍由导航链路 compare-and-clear 清除）。
+      // absent 记 warn：模型没有按注入协议输出决策，按安静处理防刷屏回潮。
+      if (notifyDecision === "notify" || result.outcome === "failed") {
+        void params.acodeTaskService.setTaskUnread({
+          taskId: params.taskId,
+          workspacePath: params.workspacePath,
+          ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
+          unread: true,
+        });
+      } else if (notifyDecision === "absent") {
+        logger.warn(
+          `automation 通知决策缺失，按默认安静处理 automation=${params.automationId} runId=${params.runId}`,
+        );
+      }
+      streamSubscription.dispose();
       disposeCronRunSubscription(key);
     },
   );
@@ -827,6 +856,7 @@ function trackCronRunOutcome(params: {
   cronRunSubscriptions.set(key, {
     dispose() {
       claimHeartbeat?.dispose();
+      streamSubscription.dispose();
       disposable.dispose();
     },
   });
@@ -915,6 +945,7 @@ async function dispatchCronRun(request: CronRunDispatchRequest): Promise<{
           workspacePath: request.workspacePath,
           ...(request.workspaceIdentity ? { workspaceIdentity: request.workspaceIdentity } : {}),
           taskId: task.taskId,
+          runId: request.runId,
           repo: cronAutomationRepo,
           botsService,
         });
@@ -942,7 +973,9 @@ async function dispatchCronRun(request: CronRunDispatchRequest): Promise<{
     await acodeTaskService.sendPrompt({
       taskId: task.taskId,
       traceId: promptTraceId,
-      content: request.prompt,
+      // heartbeat 协议 R2 注入点（Q3 裁决：后缀拼接）——作者 prompt 原文在前、语义不改写；
+      // 指令段是 host 常量（@acode/shared automation-notice），不是可被作者覆写的第二指令源。
+      content: request.prompt + AUTOMATION_NOTICE_INSTRUCTION,
       clientMode: "desktop-continuous",
       automationId: request.automationId,
     });

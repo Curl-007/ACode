@@ -11,6 +11,7 @@ interface CronBotDeliveryService {
   watchAutomationRun(params: {
     target: ACodeAutomationBotDeliveryTarget;
     taskId: string;
+    runId: string;
     workspacePath: string;
     workspaceIdentity?: string;
   }): Promise<void>;
@@ -25,21 +26,19 @@ export async function watchCronRunBotDelivery(params: {
   workspacePath: string;
   workspaceIdentity?: string;
   taskId: string;
+  /** heartbeat 协议 R3：run 台账 id，透传给 bots 侧做诊断关联。 */
+  runId: string;
   repo: CronBotDeliveryRepo;
   botsService: CronBotDeliveryService;
 }): Promise<boolean> {
-  const target = await params.repo.getBotDeliveryTarget(
-    params.automationId,
-    params.workspaceKey,
-  );
+  const target = await params.repo.getBotDeliveryTarget(params.automationId, params.workspaceKey);
   if (!target) return false;
   await params.botsService.watchAutomationRun({
     target,
     taskId: params.taskId,
+    runId: params.runId,
     workspacePath: params.workspacePath,
-    ...(params.workspaceIdentity
-      ? { workspaceIdentity: params.workspaceIdentity }
-      : {}),
+    ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
   });
   return true;
 }

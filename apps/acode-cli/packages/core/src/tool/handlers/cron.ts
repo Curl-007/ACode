@@ -206,12 +206,15 @@ export const cronCreateToolEntry: ToolEntry = {
       "For every N minutes/hours/days/weeks/months/years, always set intervalUnit (minute|hourly|daily|weekly|monthly|yearly) and interval together. interval must be an integer from 1 to 200, including values cron could express directly. Supply a legal 5-field compatible cron only for time-of-day/day/weekday/month slots; never put an out-of-range step in cron. Examples: every 20 minutes -> intervalUnit='minute', interval=20, cron='* * * * *'; every 31 hours at minute 49 -> intervalUnit='hourly', interval=31, cron='49 * * * *'; every 40 days at 09:00 -> intervalUnit='daily', interval=40, cron='0 9 * * *'. Omit intervalUnit/interval only for ordinary calendar cron schedules, such as weekdays at 09:00.",
       "Pin minute, hour, day-of-month, and month in cron only for an absolute wall-clock date the user names outright, such as 'tomorrow at 9am' or 'on July 30 at 20:00'; set recurring=false and omit maxRuns (the default limit is 1). A relative one-shot such as '8分钟后' or 'in 2 hours' must use delayMinutes instead, because a self-computed one-shot time that has just passed silently rolls a full year forward.",
       "For exactly N scheduled runs, set recurring=false and maxRuns=N. recurring=true is indefinite and must not be combined with maxRuns.",
-      "Automations persist in the current workspace until the user deletes them. Finite automations become completed and retain their history; they are not session-only or auto-deleted.",
+      // heartbeat 协议 R5b 同批修正：旧句「not session-only or auto-deleted」与耗尽
+      // automation 的 7 天保留窗自动清理（automation-heartbeat-protocol.md）直接矛盾。
+      "Automations persist in the current workspace until the user deletes them. Finite automations become completed; exhausted definitions are automatically removed after a 7-day retention window. They are not session-only.",
       "Honor exact user-provided times without adding jitter or shifting the schedule.",
       "Do not include workspace paths or identities in the input; the current session workspace is used.",
       "Always set title and preserve the user's natural-language schedule phrase verbatim in it. The title may be concise, but must not omit timing such as '每20分钟', '每天早上9点', or 'every Friday'.",
       "Write prompt as a complete instruction that can run later without relying on unstated conversation context.",
       "Write the final work directly in prompt. Never ask the scheduled run to create, schedule, or configure another automation, and never ask it to call CronCreate.",
+      "The runtime automatically appends a notification-decision protocol to each dispatched run (the run ends its final reply with a NOTIFY or DONT_NOTIFY tag). Do not write notification or decision-tag instructions into prompt yourself.",
     ],
     readOnly: false,
     destructive: false,

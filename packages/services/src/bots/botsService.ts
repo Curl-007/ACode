@@ -14,6 +14,7 @@ import {
   BOT_TASK_BROADCAST_CHANNEL,
   BOT_TASK_STREAM_BROADCAST_CHANNEL,
   appendAssistantMessagePart,
+  appendAutomationNoticeTail,
   buildACodeAssistantPresentation,
   decodeCustomModelValue,
   encodeCustomModelValue,
@@ -25,6 +26,7 @@ import {
   clampBotPermissionMode,
   createBotBindAttemptGuard,
   normalizeBotReplyGranularity,
+  parseAutomationNotice,
   type ACodeConfigOption,
   type ACodeElicitationRequest,
   type ACodeElicitationQuestion,
@@ -1790,9 +1792,10 @@ export function createBotsService(
    * 每 bot 草稿默认值：引擎来自 currentOptions.cli（缺省 native），权限模式来自 currentOptions.mode
    * （缺省 BOT_DEFAULT_DRAFT_MODE）。currentOptions 是每 bot 默认的唯一所有者，草稿初始化只读不写它。
    */
-  function resolveBotDraftDefaults(
-    currentOptions?: BotCurrentOptions,
-  ): { provider: ACodeProvider; mode: string } {
+  function resolveBotDraftDefaults(currentOptions?: BotCurrentOptions): {
+    provider: ACodeProvider;
+    mode: string;
+  } {
     return {
       provider: normalizeAgentProviderToACodeAgent(
         currentOptions?.cli ?? DEFAULT_BOT_ACODE_PROVIDER,
@@ -3788,6 +3791,7 @@ export function createBotsService(
     actor: BotActor,
     context: BotContextState,
     user: BotConfig,
+    automationNotice?: { runId: string },
   ): Promise<void> {
     if (!context.activeTaskId) {
       return;
@@ -3801,6 +3805,8 @@ export function createBotsService(
     }
     let assistantParts: ACodeAssistantMessagePart[] = [];
     let assistantReplyBuffer = "";
+    // heartbeat 协议 R3：automation 通知决策的主 agent 正文尾部（滚动有界）。
+    let automationNoticeTail = "";
     let sentAnyAssistantReply = false;
     const assistantPartToolIds = new Set<string>();
     const toolCalls = new Map<string, BotReplyToolCallState>();
@@ -4068,6 +4074,12 @@ export function createBotsService(
       // 但 /status Progress 仍然要独立缓存，避免受发送颗粒度影响。
       updateLiveStatusProgress(event);
       if (event.type === "agent_message_chunk") {
+        // heartbeat 协议 R3：automation watch 累积决策尾部。不按 inputId 过滤——
+        // bound-task 的订阅按 taskId 去重复用、可能跨 run 存活，last-match 解析
+        // 天然取最新 run 的决策；只取主 agent 正文（parentToolUseId 空）。
+        if (automationNotice && !event.parentToolUseId) {
+          automationNoticeTail = appendAutomationNoticeTail(automationNoticeTail, event.content);
+        }
         assistantParts = appendAssistantMessagePart(assistantParts, {
           type: "content",
           content: event.content,
@@ -4286,6 +4298,13 @@ export function createBotsService(
               }),
             ),
           );
+          return;
+        }
+
+        // heartbeat 协议 R3：automation 回推与桌面未读同源（同一共享解析器）。
+        // notify 才回推；dont_notify/absent 静默完成（默认安静，fail-safe 防刷屏回潮）。
+        // 失败恒回推：task_error 已在上方分支处理，不经过此门。订阅已 dispose，直接返回安全。
+        if (automationNotice && parseAutomationNotice(automationNoticeTail) !== "notify") {
           return;
         }
 
@@ -5389,10 +5408,17 @@ export function createBotsService(
     };
     // Automation 回推固定为终态摘要；不能复用用户当前 replyMode，否则 streaming/card
     // 会在后台任务执行过程中向原会话持续发送中间过程。
-    await watchTaskStream(bot, actor, context, {
-      ...bot,
-      replyMode: "summary_changes",
-    });
+    // 第 5 参开启 heartbeat 通知决策门（R3）：runId 供诊断关联，决策由共享解析器判定。
+    await watchTaskStream(
+      bot,
+      actor,
+      context,
+      {
+        ...bot,
+        replyMode: "summary_changes",
+      },
+      { runId: params.runId },
+    );
   }
 
   service = {
@@ -6044,10 +6070,7 @@ export function createBotsService(
               // 草稿态从注册表取该引擎支持的权限模式；绕开 stub 的 listUserConfigOptions（恒返回 []）。
               const options = getBotDraftModeOptions(auth.locale, draftOptions.provider);
               // 草稿未显式 /mode 覆盖时展示每 bot 默认权限模式，而不是空值。
-              const currentValue = resolveEffectiveDraftMode(
-                draftOptions,
-                auth.bot.currentOptions,
-              );
+              const currentValue = resolveEffectiveDraftMode(draftOptions, auth.bot.currentOptions);
               const currentLabel =
                 options.find((option) => option.id === currentValue)?.label ?? currentValue;
               if (options.length === 0) {
@@ -6175,7 +6198,10 @@ export function createBotsService(
             if (auth.context.mode === "draft" || !auth.context.activeTaskId) {
               const draftOptions = await ensureDraftOptions(auth.context, auth.bot.currentOptions);
               const optionSource = await listDraftConfigOptions(auth.context, draftOptions);
-              const rawCurrentValue = findSelectConfigOption(optionSource, commandName)?.currentValue;
+              const rawCurrentValue = findSelectConfigOption(
+                optionSource,
+                commandName,
+              )?.currentValue;
               const currentValue =
                 typeof rawCurrentValue === "string" ? rawCurrentValue : undefined;
               const currentLabel = readConfigSelectLabelForValue(
@@ -6201,7 +6227,9 @@ export function createBotsService(
                 message.actor,
                 {
                   id: `${selectOption?.id ?? commandName}-${Date.now()}`,
-                  title: msg(auth.locale, "thoughtLevelSelectTitle", { level: currentLabel ?? "-" }),
+                  title: msg(auth.locale, "thoughtLevelSelectTitle", {
+                    level: currentLabel ?? "-",
+                  }),
                   currentId: currentValue,
                   action: `${commandName}.set` as SelectionPrompt["action"],
                   options,
@@ -6250,7 +6278,10 @@ export function createBotsService(
               return [createOutbound(message.actor, msg(auth.locale, "taskRunning"))];
             }
             if (auth.context.mode === "draft" || !auth.context.activeTaskId) {
-              const originalOptions = await ensureDraftOptions(auth.context, auth.bot.currentOptions);
+              const originalOptions = await ensureDraftOptions(
+                auth.context,
+                auth.bot.currentOptions,
+              );
               const view = await readModelSelectionView(
                 auth.context,
                 originalOptions.modelSelection,

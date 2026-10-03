@@ -53,6 +53,8 @@ export interface BotUserConfigOptionsParams {
 export interface BotAutomationRunWatchParams {
   target: ACodeAutomationBotDeliveryTarget;
   taskId: string;
+  /** automation run 台账 id（heartbeat 协议 R3）：诊断关联用；决策由共享解析器判定。 */
+  runId: string;
   workspacePath: string;
   workspaceIdentity?: string;
 }

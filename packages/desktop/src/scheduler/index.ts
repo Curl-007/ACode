@@ -15,6 +15,8 @@ import {
   OffPeakTaskRepo,
 } from "@acode/services/node";
 import {
+  AUTOMATION_EXHAUSTED_RETENTION_MS,
+  AUTOMATION_RUN_HISTORY_RETENTION_MS,
   resolveWorkspaceKey,
   type ACodeAutomation,
   type ACodeAutomationTrigger,
@@ -416,6 +418,29 @@ async function main(): Promise<void> {
     log(
       "error",
       `off-peak recoverInterrupted failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  // heartbeat 协议 R5：一次性启动保留清理。scheduler 是 app 单例、纯 DB 进程，
+  // 清理归这里（host 是 per-window，放 host 会多窗口重复执行）。
+  // (a) run 历史台账按窗口清扫（pruneRuns 此前是死代码，零调用方）；
+  // (b) 耗尽（completed）automation 定义过保留窗即删，释放 AUTOMATION_CREATE_LIMIT
+  //     额度（该上限计数含所有生命周期状态，僵尸 completed 会永久占坑）；
+  //     (b) 产生的孤儿 run 行由 (a) 的窗口兜住，两步无顺序依赖。
+  try {
+    const prunedRuns = await repo.pruneRuns(AUTOMATION_RUN_HISTORY_RETENTION_MS);
+    const prunedAutomations = await repo.pruneExhaustedAutomations(
+      AUTOMATION_EXHAUSTED_RETENTION_MS,
+    );
+    if (prunedRuns > 0 || prunedAutomations > 0) {
+      log(
+        "info",
+        `automation retention cleanup: runs=${prunedRuns} exhaustedAutomations=${prunedAutomations}`,
+      );
+    }
+  } catch (error) {
+    log(
+      "error",
+      `automation retention cleanup failed: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
   schedulerReady = true;

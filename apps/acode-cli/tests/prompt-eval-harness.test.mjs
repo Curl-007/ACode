@@ -36,6 +36,23 @@ test("(场景1/R2,R6) 语料 schema：12 场景、覆盖表齐全、specRefs 指
   assert.equal(scenarios.length, 12);
   const ids = scenarios.map((s) => s.id);
   assert.equal(new Set(ids).size, 12);
+  // R7 dev/test 集分离：7 dev / 5 test，覆盖各学说族：
+  for (const scenario of scenarios) {
+    assert.ok(
+      scenario.set === "dev" || scenario.set === "test",
+      `${scenario.id} 缺少合法 set 字段`,
+    );
+  }
+  assert.equal(scenarios.filter((s) => s.set === "dev").length, 7);
+  assert.equal(scenarios.filter((s) => s.set === "test").length, 5);
+  const testIds = scenarios.filter((s) => s.set === "test").map((s) => s.id).sort();
+  assert.deepEqual(testIds, [
+    "background-no-polling",
+    "relay-verification",
+    "restart-orphan-handling",
+    "subagent-scope-discipline",
+    "web-content-untrusted",
+  ]);
   // R6 覆盖表逐 id 在场：
   for (const expected of [
     "dispatch-prompt-self-contained",
@@ -71,6 +88,9 @@ test("(场景1/R2,R6) 语料 schema：12 场景、覆盖表齐全、specRefs 指
 test("(场景1) validateScenario 拒绝坏形状", () => {
   assert.ok(validateScenario(null).length > 0);
   assert.ok(validateScenario({ ...relayScenario, id: "NotKebab" }).length > 0);
+  assert.ok(validateScenario({ ...relayScenario, set: "holdout" }).length > 0);
+  assert.ok(validateScenario({ ...relayScenario, set: undefined }).length > 0);
+  assert.deepEqual(validateScenario({ ...relayScenario, set: "dev" }), []);
   assert.ok(validateScenario({ ...relayScenario, rubric: relayScenario.rubric.slice(0, 1) }).length > 0);
   assert.ok(validateScenario({ ...relayScenario, passThreshold: 0 }).length > 0);
   assert.ok(validateScenario({ ...relayScenario, passThreshold: 1.5 }).length > 0);

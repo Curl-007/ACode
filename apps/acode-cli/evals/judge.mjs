@@ -63,6 +63,11 @@ export function validateScenario(scenario) {
   if (typeof scenario.id !== "string" || !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(scenario.id)) {
     errors.push("id must be kebab-case");
   }
+  // dev/test 集归属（spec R7 hillclimb 纪律）：调优只看 dev，评分只认 test；
+  // 缺字段即语料不合法（loadScenarios fail-loud）。
+  if (scenario.set !== "dev" && scenario.set !== "test") {
+    errors.push('set must be "dev" or "test"');
+  }
   requireString("doctrine");
   requireString("setup");
   requireString("prompt");

@@ -1,4 +1,9 @@
-const DEEP_LINK_SCHEME = "acode";
+/**
+ * Deep link 协议名的唯一权威定义（F6，2026-10-04）：受理端谓词、运行时注册
+ * （desktopOAuthDeepLink）与打包期声明（electron-builder protocols）必须同源；
+ * 此前注册处另写一份 `"acode"` 字面量，是迁移/改名时的双点漂移风险。
+ */
+export const DEEP_LINK_SCHEME = "acode";
 const DEEP_LINK_RE = /\bacode:(?:\/\/|\/)?[^\s"'<>]+/i;
 const OAUTH_CALLBACK_HOSTS = new Set(["oauth"]);
 const PAYMENT_CALLBACK_HOST = "payment";

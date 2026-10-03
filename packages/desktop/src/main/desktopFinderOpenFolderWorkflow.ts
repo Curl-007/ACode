@@ -6,12 +6,18 @@ import type { Locale } from "@acode/shared";
 
 const WORKFLOW_NAME = "Open in ACode.workflow";
 const WORKFLOW_BUNDLE_ID = "dev.acode.app.finder-open-workflow";
-const WORKFLOW_VERSION = "5";
+// F6 修复（2026-10-04）："5"→"6"——脚本内发射协议由旧 zcode scheme 对齐到 acode://
+// （见下），版本号推进让已装机器经安装器的内容比对自动刷新到新脚本。
+const WORKFLOW_VERSION = "6";
 const SERVICES_MENU_LABELS: Record<Locale, string> = {
   "zh-CN": "在ACode中打开",
   "en-US": "Open in ACode",
 };
 
+// F6 修复（2026-10-04）：发射端由旧 zcode scheme 改为 acode://。受理端
+// （desktopDeepLinkUrl.ts）自 fork 初始提交起只匹配 acode:，此前 Finder「Open in
+// ACode」发出的旧 scheme URL 本产品收不到（同机装有上游 ZCode 时反而被它接管）
+// ——不是迁移，是修复现存断链。
 const workflowScript = `first=""
 for item in "$@"; do
   if [ -d "$item" ]; then
@@ -22,7 +28,7 @@ done
 
 if [ -n "$first" ]; then
   encoded=$(/usr/bin/osascript -l JavaScript -e 'function run(argv) { return encodeURIComponent(argv[0]); }' "$first")
-  /usr/bin/open "zcode://workspace/open?path=\${encoded}"
+  /usr/bin/open "acode://workspace/open?path=\${encoded}"
 fi
 `;
 

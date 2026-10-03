@@ -128,6 +128,22 @@ OAuth 回跳（`desktopOAuthDeepLink.ts:257`）。这不是文本残留而是**�
 本轮不动。代码注释里的 `zcode-plan`（provider 业务错误码说明）是事实性引用，
 不在发现范围。
 
+> **更正与处置结果（2026-10-04，F6 关闭）**：立项前普查推翻了本段前提——OS 注册面
+> （electron-builder protocols / setAsDefaultProtocolClient / Linux x-scheme-handler）
+> 自 fork 初始提交起就全部是 `acode://`，从未注册过 `zcode://`；上文三处证据中
+> desktopLinuxDeepLinkRegistration.ts:64,238 与 desktopOAuthDeepLink.ts:257 只是过时
+> 注释。真实缺陷是**两个 zcode:// 发射端与受理端不匹配的现存断链**：① macOS Finder
+> 工作流脚本发射 zcode scheme（本产品收不到，同机上游 ZCode 反而接管）；② OAuth
+> 官网中转页 redirect 参数 `DESKTOP_OAUTH_CALLBACK_URI = zcode://oauth/callback`
+> （回跳到不了本产品；token 主链路走 polling 故登录不断，断的是归因/收窗，且同机
+> 上游应用可抢收回调）。处置：两个发射端对齐 `acode://`（Finder 脚本版本 5→6 触发
+> 已装机自动刷新），scheme 常量收敛单一事实源（DEEP_LINK_SCHEME 导出、注册端复用）；
+> **裁决不做 zcode:// 兼容注册**——本 fork 无存量 zcode:// 外链可保，注册它与上游抢
+> 默认 handler 且有对称劫持面。钉桩：packages/desktop/tests/deep-link-scheme.test.mjs
+> （发射端/注册面/零残留三组不变量）+ oauthPkce.test.ts 中转页 redirect 参数断言。
+> 外部依赖登记：官网 /app/oauth/login 若对 redirect 有 scheme 白名单（仓库外），发布
+> 验证轮跑一次真实 OAuth 流程确认。
+
 ### F7（低）模型可见文本引用不存在的工具——NotebookEdit / ScheduleWakeup 悬空引用
 
 能力提升批次核实（`docs/capability-uplift-plan.md` 批次 0 C6）发现两处模型可见文本

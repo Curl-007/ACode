@@ -10,6 +10,7 @@ import {
   PlatformChannels,
 } from "@acode/shared";
 import {
+  DEEP_LINK_SCHEME,
   extractWorkspaceOpenPath,
   isOAuthCallbackUrl,
   isPaymentCallbackUrl,
@@ -254,7 +255,7 @@ export function handleDeepLink(
     const targetWindow = options.resolveApplicationWindow
       ? options.resolveApplicationWindow()
       : (BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0] ?? null);
-    // zcode://workspace/open 来自浏览器/IM 等外部应用，不能等同于用户在
+    // acode://workspace/open 来自浏览器/IM 等外部应用，不能等同于用户在
     // ACode 内部选择目录；确认必须发生在 statSync 之前，避免项目配置被静默信任。
     if (
       !confirmExternalWorkspaceOpen(workspacePath, logger, targetWindow, options.confirmationCopy)
@@ -341,7 +342,8 @@ export function registerDeepLinkProtocol(
   },
   options: { iconPath?: string } = {},
 ) {
-  const scheme = "acode";
+  // scheme 单一事实源（F6）：受理端与注册端同用 desktopDeepLinkUrl 的常量。
+  const scheme = DEEP_LINK_SCHEME;
 
   if (process.defaultApp && process.argv.length >= 2) {
     const entry = resolve(process.argv[1]!);

@@ -24,7 +24,10 @@ const ZAI_OAUTH_PROVIDER_CONFIG: Omit<OAuthProviderRuntimeConfig, "appSecret"> =
   businessLoginUrl: "https://api.z.ai/api/auth/z/login",
   // 生产 client_id 不是 secret，但保留 fallback 可以避免未配置 env 的旧构建直接无法登录。
   appId: "client_P8X5CMWmlaRO9gyO-KSqtg",
-  redirectUri: "zcode://oauth/callback",
+  // F6（2026-10-04）：静态兜底与 configUtils 的 DESKTOP_OAUTH_CALLBACK_URI 同批改
+  // acode://——桌面受理端只认 acode:，旧 zcode scheme 值本就收不到（运行时该字段
+  // 恒被 buildDesktopOAuthRedirectUriFromEnv 覆盖，此处是配置一致性修复）。
+  redirectUri: "acode://oauth/callback",
 };
 
 export function createZaiProviderRuntimeConfig(env: NodeJS.ProcessEnv): OAuthProviderRuntimeConfig {

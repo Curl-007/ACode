@@ -4,7 +4,7 @@
 
 ## 背景
 
-账号登录是授权码 + 自定义协议回调（`zcode://oauth/callback`），此前仅 `state` 防 CSRF，**无 PKCE**。自定义协议回调可被同机其他应用抢注或劫持授权码：没有 PKCE 时，劫持者拿到授权码即可直接兑换 token。
+账号登录是授权码 + 自定义协议回调（`acode://oauth/callback`；F6 修复 2026-10-04 前该常量误为旧 zcode scheme——桌面受理端只认 `acode:`，发射端与受理端不匹配即断链，修复与「不做旧协议兼容注册」的裁决见 `configUtils.ts` 注释与 `packages/desktop/tests/deep-link-scheme.test.mjs`），此前仅 `state` 防 CSRF，**无 PKCE**。自定义协议回调可被同机其他应用抢注或劫持授权码：没有 PKCE 时，劫持者拿到授权码即可直接兑换 token。
 
 客户端有两个授权码入口，PKCE 适用性不同：
 

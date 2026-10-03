@@ -19,7 +19,8 @@ const BIGMODEL_OAUTH_PROVIDER_CONFIG: Omit<OAuthProviderRuntimeConfig, "appSecre
   tokenUrl: "",
   userinfoUrl: buildBigModelApiUrl({ ACODE_ENV: "production" }, BIGMODEL_USERINFO_PATH),
   appId: "acode",
-  redirectUri: "zcode://oauth/callback",
+  // F6（2026-10-04）：同 zaiProviderConfig——静态兜底对齐 acode://（受理端唯一 scheme）。
+  redirectUri: "acode://oauth/callback",
 };
 
 export function createBigModelProviderRuntimeConfig(

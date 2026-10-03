@@ -681,3 +681,43 @@ P2 清单与其 09-27 提升方案一样系统性过时，e5f0fe1/070eaec/580f7a
   86/86（38 ts + 48 mjs）、shared credential 35/35、根 typecheck 0、bootstrap tsc 0、
   lint 73 警告 0 错误（基线）、arch 0 违规。提交：72d0037（runner）、b5f36b7（F6）、
   3f90704（继承性测试修复）、f3e8142（S1）、本轮记录。
+
+## 实施记录增补（2026-10-04 · 第七轮：runner §R7-1/§R7-2 实证关闭 + 子转录支持 + debug 构建）
+
+- **EXP1/EXP2 实证**（隔离 eval 根，两会话）：§R7-1 子代理转录落点 =
+  `cli/agents/<parentSess>/agent_<id>/`（metadata.json 给 childSessionId 映射、output.txt/
+  task.output 为子最终报告）+ `cli/rollout/model-io-sess_subagent_agent_<id>.jsonl`（末行
+  `request.body.messages` 为含全部 tool_use/tool_result 的完整消息链）；§R7-2 无头后台
+  寿命 = `-p` 进程**存活至后台任务通知**（45s 套件 / 73s 墙钟 / 父转录含套件输出并总结
+  失败）——原 orphan 担忧不成立。
+- **runner 子转录支持落地（361fc6f）**：`locateChildArtifacts` + `shapeChildTranscript`
+  （末行 messages 全链映射 + output.txt 收尾 `[final report]`）；recipe 契约增
+  `judgeTarget:"child"` + `parentPrompt`（舞台指示 prompt 的父侧投递语）；四个子代理
+  场景与两个后台场景全部转 ready（11/12 场景可采集，仅剩 restart-orphan-handling 登记
+  §R7-6）；spec R3/R6/R7 同批更新（0aea5f9 含 judge 端点配置指南）。测试 8/8。
+- **debug 构建**：CLI turbo 全链重建（dist 含 S1，runner 新鲜度守护恢复放行）+ 桌面
+  bundle（tsup+vite → `packages/desktop/out/` 六目录）。冒烟验证：隔离 profile 启动
+  编译产物 15s 内 CDP 就绪、渲染层确认来自 `out/renderer/index.html`（file://，非 dev
+  server）、新 profile 正确落 API Key 引导页；验证后实例关停、端口关闭、临时 profile
+  删除。本地启动方式：`cd packages/desktop && ACODE_ENV=test pnpm exec electron .`
+  （dev 态自动开 9229 CDP；正式打包面仅 CI release 流水线）。
+
+## 实施记录增补（2026-10-04 · 第七轮：runner §R7-1/§R7-2 实证关闭 + 子转录支持 + debug 构建）
+
+- **EXP1/EXP2 实证**（隔离 eval 根，两会话）：§R7-1 子代理转录落点 =
+  `cli/agents/<parentSess>/agent_<id>/`（metadata.json 给 childSessionId 映射、output.txt/
+  task.output 为子最终报告）+ `cli/rollout/model-io-sess_subagent_agent_<id>.jsonl`（末行
+  `request.body.messages` 为含全部 tool_use/tool_result 的完整消息链）；§R7-2 无头后台
+  寿命 = `-p` 进程**存活至后台任务通知**（45s 套件 / 73s 墙钟 / 父转录含套件输出并总结
+  失败）——原 orphan 担忧不成立。
+- **runner 子转录支持落地（361fc6f）**：`locateChildArtifacts` + `shapeChildTranscript`
+  （末行 messages 全链映射 + output.txt 收尾 `[final report]`）；recipe 契约增
+  `judgeTarget:"child"` + `parentPrompt`（舞台指示 prompt 的父侧投递语）；四个子代理
+  场景与两个后台场景全部转 ready（11/12 场景可采集，仅剩 restart-orphan-handling 登记
+  §R7-6）；spec R3/R6/R7 同批更新（0aea5f9 含 judge 端点配置指南）。测试 8/8。
+- **debug 构建**：CLI turbo 全链重建（dist 含 S1，runner 新鲜度守护恢复放行）+ 桌面
+  bundle（tsup+vite → `packages/desktop/out/` 六目录）。冒烟验证：隔离 profile 启动
+  编译产物 15s 内 CDP 就绪、渲染层确认来自 `out/renderer/index.html`（file://，非 dev
+  server）、新 profile 正确落 API Key 引导页；验证后实例关停、端口关闭、临时 profile
+  删除。本地启动方式：`cd packages/desktop && ACODE_ENV=test pnpm exec electron .`
+  （dev 态自动开 9229 CDP；正式打包面仅 CI release 流水线）。

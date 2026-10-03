@@ -318,3 +318,14 @@ GUI 命中率唯一来源是 provider-usage 驱动的 `recordMainTurnCacheHitUsa
   UI 与 i18n 落点）。全量验证：根 typecheck exit0、CLI contracts/core/bootstrap
   tsc exit0（contracts dist 重建后）、lint 0 error、architecture 0 违规、
   CLI 回归 52/52、shared+services+desktop 套件 101/101。
+
+## 实施记录（2026-10-03 · 批次 3 · auto 分类器——设计对齐阶段）
+
+- 按批次 3 纪律（高风险项先对齐再动码），设计文档已交付：
+  `docs/auto-mode-classifier-design.md`——现状核实（auto 桩可达、元数据地基、
+  sync/async 接缝、辅助模型 sidecar 骨架、bot 面 auto 未禁的新通道风险）、
+  zoode 机制情报转译（Claude Code 服务端分类器 → provider 侧 sidecar，零新信任
+  边界；Codex Guardian 确定性后置 + 校准）、5 条设计不变量、决策顺序架构图、
+  D1–D9 裁决点（各带推荐）、提示注入硬化四件套、成本估算、v1/v2/v3 批次序。
+- **状态：待所有者裁决 D1–D9**；裁决后落
+  `apps/acode-cli/specs/auto-mode-risk-classifier.md` 再实施。本文档不含代码改动。

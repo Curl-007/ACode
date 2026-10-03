@@ -160,9 +160,16 @@ test("(场景4/R4) 技能文件正文无 CJK", async () => {
   }
 });
 
-test("(场景5/R3) 发现链路冒烟：bundled skills 目录扫出三个技能", async () => {
+test("(场景5/R3) 发现链路冒烟：bundled skills 目录扫出全部内置技能", async () => {
   const rootPath = SKILLS_ROOT.pathname.replace(/^\//, "");
   const files = await scanSkillFilesUnderRoot(join(rootPath));
   const names = files.map((file) => file.split(/[\\/]/).at(-2)).sort();
-  assert.deepEqual(names, ["code-review", "dynamic-workflows", "research-report"]);
+  // 批次二两个技能 + 批次三 verify/run（specs/bundled-verify-run-skills.md 验收场景 6）：
+  assert.deepEqual(names, [
+    "code-review",
+    "dynamic-workflows",
+    "research-report",
+    "run",
+    "verify",
+  ]);
 });

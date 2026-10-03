@@ -1,5 +1,10 @@
+// 成员纪律（能力提升方案 S3）：只收录**真实注册**的工具名。上游遗留的占位死名
+// （EnterWorktree/ExitWorktree/LSP/NotebookEdit/ScheduleWakeup/TaskCreate/TaskGet/
+// TaskList/TaskUpdate）已移除——它们不注入任何工具、只误导维护者，且曾是模型可见文本
+// 悬空引用的源头（prompt-corpus-audit F7）。新增工具落地时再按字母序补名。
 const SORTED_PROVIDER_TOOL_NAMES = new Set([
   "Agent",
+  "ApplyPatch",
   "AskUserQuestion",
   "Bash",
   "CronCreate",
@@ -8,22 +13,13 @@ const SORTED_PROVIDER_TOOL_NAMES = new Set([
   "CronUpdate",
   "Edit",
   "EnterPlanMode",
-  "EnterWorktree",
   "ExitPlanMode",
-  "ExitWorktree",
   "Glob",
   "Grep",
-  "LSP",
-  "NotebookEdit",
   "Read",
-  "ScheduleWakeup",
   "Skill",
-  "TaskCreate",
-  "TaskGet",
-  "TaskList",
   "TaskOutput",
   "TaskStop",
-  "TaskUpdate",
   "TodoRead",
   "TodoWrite",
   "WebFetch",

@@ -23,6 +23,7 @@ import {
   analyzeBashCommand,
   extractForcedDeleteCandidates,
 } from "../tool/handlers/bash-command-parser.js";
+import { extractApplyPatchTargetPaths } from "../tool/apply-patch-format.js";
 import { assessBashCommandTargetRisk } from "../tool/handlers/bash-target-risk/index.js";
 import type { PackageScriptSource } from "../tool/handlers/bash-target-risk/types.js";
 import type { PermissionContext } from "./service.js";
@@ -214,14 +215,25 @@ function checkPathEscapeWrite(
   // 拿不到 workspaceRoot 时不触发：与既有「拿不到工作目录照常按其余规则判定」同一容错哲学，
   // 宁可少一层熔断，不能把无根上下文的所有写入都拦下。
   if (!workspaceRoot) return undefined;
-  const rawPath = stringField(context.input, "file_path") ?? stringField(context.input, "path");
-  if (!rawPath) return undefined;
+  // S2 修复依据（specs/apply-patch-tool.md R4）：ApplyPatch 的目标路径内嵌在 patch_text 的
+  // section 头里，原字段提取（file_path/path）拿不到 → 熔断会对它静默跳过。改用宽松提取器
+  // （畸形补丁不抛错、尽力提取），任一目标路径逃逸即命中；其余写工具维持单路径提取。
+  const rawPaths =
+    context.toolName === "ApplyPatch"
+      ? extractApplyPatchTargetPaths(stringField(context.input, "patch_text") ?? "")
+      : [stringField(context.input, "file_path") ?? stringField(context.input, "path")].filter(
+          (path): path is string => Boolean(path),
+        );
 
-  const resolved = isAbsolute(rawPath)
-    ? normalize(rawPath)
-    : resolve(context.workingDirectory?.trim() || workspaceRoot, rawPath);
-  if (isPathInside(resolved, workspaceRoot)) return undefined;
-  return hit("breaker.pathEscapeWrite", "Write target escapes the workspace root");
+  for (const rawPath of rawPaths) {
+    const resolved = isAbsolute(rawPath)
+      ? normalize(rawPath)
+      : resolve(context.workingDirectory?.trim() || workspaceRoot, rawPath);
+    if (!isPathInside(resolved, workspaceRoot)) {
+      return hit("breaker.pathEscapeWrite", "Write target escapes the workspace root");
+    }
+  }
+  return undefined;
 }
 
 function isPathInside(child: string, parent: string): boolean {

@@ -93,6 +93,14 @@ apps/acode-cli/evals/
   | 其余（`reasoning_*`、token 增量、`session.updated`、`checkpoint.created`、`streamRecovery.updated`、`model_request_*`、`streamRecovery` 等） | 丢弃 |
 
   截断带 `…[runner-truncated N chars]` 标记（judge 能看到省略事实）。
+- **子转录整形**（EXP1 实证源，§R6 子代理四场景）：取子会话 rollout model-io jsonl
+  **末行**的 `request.body.messages`（完整消息链）映射为块——`role:user` 文本→
+  `[user]`、`role:assistant` 文本块→`[assistant]`、assistant `tool_use`→`[tool call]`、
+  `tool_result`→`[tool result]`（同截断规则）；末尾追加 `output.txt` 全文为
+  `[final report]` 块（报告契约面的判分对象）。system 块丢弃。子会话定位：
+  `cli/agents/<parentSess>/agent_<id>/metadata.json` 的 `childSessionId` →
+  `rollout/model-io-<childSessionId>.jsonl`；父转录的 Agent `tool_call` 块保留作派发
+  上下文（自足性判据仍看父侧）。
 - 整形产物落 `reports/raw/<runId>/transcript-shaped.txt` 后才构建 judge 请求；
   `buildJudgeRequest` 自身的 `maxTranscriptChars` 截断保持第二道防线（v0 R3 不变）。
 
@@ -107,6 +115,15 @@ apps/acode-cli/evals/
   里程碑评测必须同一指纹（R7 可比性的机器化表达）。
 - 判分永远经 judge.mjs 的 `parseJudgeResponse` + `scoreScenario`（invalid 不 pass 不
   fail 的防放水语义不变），runner 不实现任何平行判分。
+- **judge 端点配置指南（所有者侧操作，R7-3 的落地面）**：在跑 runner 的 shell 里导出
+  三件套即切 live 模式（缺任一自动回落 dry，不静默降级）：
+  `export PROMPT_EVAL_JUDGE_BASE_URL=https://<openai-compatible-host>/v1`、
+  `PROMPT_EVAL_JUDGE_API_KEY=<key>`、`PROMPT_EVAL_JUDGE_MODEL=<model-id>`。
+  冻结纪律：基线与后续里程碑必须用**同一组**三件套（指纹进报告，跨指纹 delta 无效）；
+  换端点/换模型 = 新基线起点，旧报告只作历史。无端点时用 operator 模式：响应文件里
+  的判分模型标识经 `--judge-model` 显式披露（缺省记 `unspecified`，该指纹的报告只可
+  与同披露口径互比）。三件套只进 dev shell env，**不入库、不进 CI secret 之外的任何
+  持久面**（no-telemetry 红线的同族纪律）。
 
 ### R5 报告与入库约定（v0 悬置项裁决）
 
@@ -127,24 +144,27 @@ apps/acode-cli/evals/
 | verified | self-verification-before-done | 试点全链路 PASS（passRate 1.0） |
 | ready | web-content-untrusted | recipe 附本地静态服务器（127.0.0.1:8788，嵌指令页）；**yolo 模式**——学说主轴 = 抵抗嵌入指令，fetch 必须被放行才可测；风险有界：外泄目标 `evil.example` 是保留域（不可解析）、删除范围限一次性 fixture |
 | first-run-unverified | dispatch-prompt-self-contained / continue-vs-spawn-choice / permission-gate-posture | 三者都依赖 Agent/SendMessage 在无头下可用（非权限门控、预期可行）；permission-gate-posture 另用默认权限模式借 headless deny broker 产生真实拒绝（主会话转录即可判）。首跑若派发不可得，报告记 `dispatch-unavailable` 并转 §R7 |
-| experimental | relay-verification / background-no-polling | 关键开放问题：`-p` 进程主 turn 结束后是否存活至后台通知；进程早退时报告记 `background-orphan`（本身即产品行为发现，不算采集失败） |
-| not-supported-v1 | subagent-report-structure / subagent-scope-discipline / subagent-denial-single-report / explore-empty-result-honesty / restart-orphan-handling | 子会话转录落点未确认（前四）/ kill+resume 编排未验证（末一）；runner 显式报错指向 §R7 |
+| ready | subagent-report-structure / subagent-scope-discipline / subagent-denial-single-report / explore-empty-result-honesty | 子代理转录源已实证（2026-10-04 EXP1，§R3 子转录整形）：`cli/agents/<parentSess>/agent_<id>/metadata.json` 给 childSessionId 映射；工具链证据取 `cli/rollout/model-io-sess_subagent_agent_<id>.jsonl` **末行** `request.body.messages`（含全部 tool_use/tool_result）；最终报告取同目录 `output.txt`（==task.output）。判分对象 = 子转录（语料 setup 要求），父转录仅作派发上下文 |
+| ready | relay-verification / background-no-polling | 后台寿命已实证（2026-10-04 EXP2）：`-p` 进程**存活至后台任务通知**（45s 套件、73s 墙钟、父转录含套件输出 6 处并给出失败总结）——原 experimental 的 orphan 担忧不成立，notes 机制保留作异常信号 |
+| not-supported-v1 | restart-orphan-handling | kill+resume 编排未验证（后台寿命问题已关闭，剩 resume 提醒附着与孤儿处置的编排面）；runner 显式报错指向 §R7 |
 
 - 每 recipe 导出 `{ mode, setup(dir), teardown?(dir), server?() }`；registry 缺配方 =
   not-supported（fail-loud）。配方只布置语料 `setup` 字段要求的会话条件，不加戏。
 
 ### R7 open questions（结转 v1.1，逐项有触发条件）
 
-1. **子代理转录落点**：候选 = 隔离 storage 下独立 `rollout/model-io-<childSess>.jsonl`
-   或 `cli/agents/<parentSess>/` 子树（试点无子代理会话，未观察）。触发：任一子代理
-   场景首跑时调查；确认后四个场景转 ready。
-2. **无头后台任务寿命**：`-p` 进程在后台任务通知到达前是否存活。触发：experimental
-   两场景首跑。若进程早退且产品语义应为「等待」，这是产品缺陷单独立项，不是 runner
-   问题。
-3. **judge 端点正式配置**：`PROMPT_EVAL_JUDGE_*` 由所有者配置；配置前 operator mode
-   是唯一可冻结指纹（同源偏差已披露）。触发：正式基线采集前。
+1. ~~**子代理转录落点**~~ **已解决（2026-10-04 EXP1）**：落点 = `cli/agents/<parentSess>/
+   agent_<id>/`（metadata/output.txt/task.output）+ `cli/rollout/model-io-<childSessionId>.
+   jsonl`（末行 messages 为完整工具链）；整形规则进 §R3。四个子代理场景转 ready。
+2. ~~**无头后台任务寿命**~~ **已解决（2026-10-04 EXP2）**：`-p` 进程存活至后台任务
+   通知（45s 套件 / 73s 墙钟 / 父转录含套件输出并总结失败）；两个后台场景转 ready，
+   `background-orphan` notes 保留作异常信号（若未来某跑早退即产品回归信号）。
+3. **judge 端点正式配置**：`PROMPT_EVAL_JUDGE_*` 由所有者配置（§R4 配置指南）；配置前
+   operator mode 是唯一可冻结指纹（同源偏差已披露）。触发：正式基线采集前。
 4. **CI recorded-judge**：v0 结转悬置项。触发：CI 集成需求出现。
 5. **`--set` 批量与里程碑编排**：触发：judge 指纹裁决（3）落地后。
+6. **restart-orphan 编排**（EXP 后新增）：kill + `--resume` 的提醒附着与孤儿处置编排；
+   触发：v1.1 或所有者点名。
 
 ## 状态所有者
 

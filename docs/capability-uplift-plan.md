@@ -437,3 +437,42 @@ isWriteTool、breaker WRITE_TOOLS、managed-policy-floor spec 熔断表、GUI Ch
   architecture 0 违规、contracts 构建 exit0、core/bootstrap tsc exit0、CLI 全套件
   **776/776**、server-auth 30/30、tools-schema-token-metrics / prompt-manifest-parity /
   system-prompt-section-registry 守护全绿（新工具描述进语料无阈值/清单破坏）。
+
+## 实施记录（2026-10-03 · 批次 4 · 第二轮：R3-B 实施 + P2-11 清单逐项核实）
+
+**R3 裁决与实施**：所有者批复「按照你的建议完整实现」→ 评估选项 **B（风险分层默认
+ON）**落地为 spec R2.7（提交 `6afea96`，细节在 `bot-permission-local-approval.md`）：
+high/critical 权限请求无论用户设置如何都收口桌面本机批准；low/medium 维持现状；缺失
+riskLevel fail-closed。关键接线：三个协议源 schema 本就必带 riskLevel、只是投影层丢弃
+——`ACodePermissionRequest` 加宽 + adapter 三投影透传 + bot 持久化 schema 同批加宽
+（批次 2 教训）+ 守卫移到解析选项后按选项风险档判定。验证：门槛真值表 12 + bot 护栏
+12 + services 48 + shared 46 全绿，根 typecheck/lint/arch 0。
+
+**P2-11 加固清单逐项核实（结论：11/11 已落地或按设计收敛，零真剩余）**——zoode 的
+P2 清单与其 09-27 提升方案一样系统性过时，e5f0fe1/070eaec/580f7a5 的 P0–P2 加固批次
+已覆盖全部条目：
+
+| # | 条目 | 状态 | 证据（当前源码） |
+| --- | --- | --- | --- |
+| 1 | 子进程 env 白名单 | ✅ 已落地 | `shared/src/runtimeEnv.ts` allowlist 机制 + spec `subprocess-env-credential-allowlist.md` + `subprocess-env-allowlist.test.mjs` |
+| 2a | 主窗 will-navigate/windowOpen | ✅ 已落地 | `desktopWebContentsGuard.ts`（专职守卫模块） |
+| 2b | setPermissionRequestHandler | ✅ 已落地 | `desktopSessionPermissionPolicy.ts`（三 session 安装）+ `main/index.ts` P2 #2b 注释 |
+| 2c | 主 renderer CSP | ✅ 已落地 | `renderer/index.html:18` + spec §3（wasm-unsafe-eval 有据） |
+| 2d | openExternal 收敛 file: | ✅ 已落地 | `desktopMainIpcRemote.ts:198` P2 #2d（file: 一律不进 openExternal） |
+| 3 | Electron fuse | ✅ 已落地 | `scripts/desktop-electron-fuses.mjs` + builder 接线（RunAsNode 偏离有文档化理由：打包 agent 依赖宿主 Node 语义） |
+| 4 | agent 命令 env 门禁 | ✅ 已落地 | `acodeAgentProcessManager.ts:498` + `providerRuntimeResolver.ts:55`（打包态忽略 env 族）+ `agent-command-env-gate.test.mjs` |
+| 5 | 工作区路径收敛 | ✅ 按设计收敛 | 硬拦缺席是**明文产品决定**（`path-policy.ts` 注释 + managed-policy-floor spec「ask 而非 deny」一致）；熔断兜底 `breaker.pathEscapeWrite` 已落地且本批扩展到 ApplyPatch |
+| 6 | OAuth PKCE | ✅ 已落地 | `oauth/providers/pkce.js` 复用 + spec `oauth-pkce.md`（deep-link 流程带 code_verifier） |
+| 7 | http 明文端点告警 | ✅ 已落地 | `provider/config/provider-endpoint-security.ts` P2 #7 + spec `provider-http-endpoint-warning.md` + UI 内联警告 |
+| 8 | 插件 git 源 commit 固定 | ✅ 已落地 | `plugins/git-source-pinning.ts`（判定唯一事实源：commit 固定 + host 白名单）+ `plugin-git-source-pinning.test.mjs` |
+| 9 | Chrome 提权解密门 | ✅ 已落地 | IPC 契约死字段已移除（`desktopBrowserDataIpc.ts:59`）；开关 main 进程持有 + 用户确认框 `confirmElevatedChromeDecryptionWithUser` |
+| 10 | 遥测残留 | ✅ 已收敛 | `globals.d.ts` 死类型已删（grep 零命中）；`X-Device-Mid` 评估=**保留**——活跃业务消费方（主动反馈设备关联、Start Plan 权益、help/rollout 配置 source headers），非被动遥测通道 |
+| 11 | 子代理模式继承 | ✅ 已落地 | `resolveSubagentPermissionMode` 天花板（子代理不可高于父）+ spec `subagent-policy-floor-inheritance.md` R3 + `subagent-policy-floor.test.mjs` |
+
+附带修正一处 spec 文本漂移：`electron-hardening.md` §3b 仍写「辅助窗缺 CSP、后续补齐」，
+实际两窗 HTML 早已带与 spec 指令一致的 CSP meta 与实施注释——§3b 已加实施状态标注。
+
+**批次 4 剩余（更新）**：仅 S1 worktree 隔离（L 级专项，缓做——服务的 dynamic-workflow
+仍在灰度门后，not-implemented 抛错是诚实 fail-loud，待功能族出灰度或出现真实并行 agent
+需求信号再立项）与 R1 OS 钥匙串 + BYO vault 明文回退（M 级，设计文档
+`docs/credential-os-keychain-design.md` 已出，待用户裁决后实施）。

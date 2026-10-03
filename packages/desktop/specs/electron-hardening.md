@@ -121,9 +121,14 @@ resource-manager.html / cua-permission-panel.html 属辅助窗，本轮不改（
 
 ---
 
-## 3b. 辅助窗 CSP（resource-manager / cua-permission-panel，P2 后续补齐）
+## 3b. 辅助窗 CSP（resource-manager / cua-permission-panel）
 
-### 现状
+> **实施状态（2026-10-03 批次 4 P2-11 核实修正）**：本节原标记「P2 后续补齐」，实际两窗
+> HTML 均已带下述指令的 CSP meta 与实施注释（`src/renderer/resource-manager.html`、
+> `src/renderer/cua-permission-panel.html`），本节「现状」段的「缺 CSP meta」描述已过时，
+> 保留原文仅作规则依据。
+
+### 现状（历史描述，已实施）
 
 `resource-manager.html`（存储/资源占用独立窗）与 `cua-permission-panel.html`（macOS 电脑使用
 权限拖拽浮窗）是仅有的两个**经 vite 构建、独立 .html 入口**却缺 CSP meta 的特权窗。其余辅助窗

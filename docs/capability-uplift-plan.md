@@ -476,3 +476,40 @@ P2 清单与其 09-27 提升方案一样系统性过时，e5f0fe1/070eaec/580f7a
 仍在灰度门后，not-implemented 抛错是诚实 fail-loud，待功能族出灰度或出现真实并行 agent
 需求信号再立项）与 R1 OS 钥匙串 + BYO vault 明文回退（M 级，设计文档
 `docs/credential-os-keychain-design.md` 已出，待用户裁决后实施）。
+
+## 实施记录（2026-10-03 · 批次 4 · 第三轮：R1 钥匙串三批全部完成，批次 4 收官）
+
+所有者批复「按推荐」（D1–D6 全采纳）后实施，R1 按设计文档的 a/b/c 三批落地：
+
+- **R1-a（钥匙串访问器 + 解析链）**：`shared/src/node/credentialKeychain.ts` 平台原生
+  统一路径（D1）——macOS `security` generic-password（ACL 归属 security、跨进程免弹窗、
+  无 `-U` 排他写+重复回读赢家）；Windows DPAPI(CurrentUser) blob 文件（PowerShell
+  ProtectedData、`wx` 排他、异机/异用户不可解=逻辑分离）；Linux `secret-tool`（stdin
+  传递无 ps 暴露、写前读+写后回读、毫秒级竞争窗登记）。四态语义纪律：「材料可见但
+  读不出」必须 error（fail-loud）而非 unavailable——静默降级=生成新密钥=既有凭据永久
+  垃圾。解析链五级（D4）：explicit > keychain > keyFile > env > 生成（钥匙串优先入
+  条目不落文件；不可用→文件+一次性告警，D5）。**同步保持（D2 的关键修正）**：spawnSync
+  一次性 + 解析层进程级缓存（found/unavailable 缓存、absent/error 不缓存各有理由），
+  cipher 同步接口与两套委托层零改动。条目名含 keyFilePath sha256 指纹（D3）。
+- **R1-b（一次性迁移）**：密钥文件存在 ∧ 钥匙串 absent → 写入条目 → 回读**逐字节**
+  验证 → 通过才删文件 + INFO 提示；任何失败 → delete 刚写入的条目（钥匙串在解析链
+  优先于文件，坏条目会压过权威材料）→ 保持文件模式 → 下次重试。零重加密（材料字节
+  不变、HKDF 输入不变、既有 enc:v2 密文不动）。并发迁移双方搬同一份材料，收敛由排他
+  写/回读保证；删除 ENOENT 视同成功。README「本地凭据保护」改写为钥匙串语义（新单点
+  披露：条目丢失=重新登录重输 Key；复制 ~/.acode 不携带条目，跨机应重新认证；回滚
+  风险追加一层：旧构建找不到密钥文件会生成新密钥孤立凭据）。
+- **R1-c（BYO vault 明文回退收口）**：成因调查兑现 D6——全仓 repository 构造点三处，
+  **唯一缺口是 CLI `auth-login.ts`**（不注入 vault，`saveConfiguredDefault` 重写文件时
+  把 importLegacy 带入的旧明文 Key 静默落盘）→ 补 `createSharedCredentialStoreApiKeyVault`
+  注入 + 源码不变量守护测试；写入漏斗补一次性 `SECURITY NOTICE`（vault 化后仍含明文
+  才告警，键=成因+文件路径防刷屏），覆盖未来的未注入装配点与 save 失败态。明文回退
+  本身保留（可用性优先的既有产品决定，硬闸否决理由在 D6）。
+- **测试与验证**：credential-keychain 17（三平台 mock spawn 全分支+解析链+迁移四场景，
+  真机钥匙串零触碰）+ credential-master-key 16（注入 stub 钉住文件模式）+ byo 13 +
+  auth-login 接线 2；shared 66/66、services 48/48、provider-node 13/13、CLI 全套件
+  **778/778**；根 typecheck / bootstrap tsc / lint / arch 全 0。spec
+  `credential-storage.md` 与 `byo-apikey-credential-ref.md` 同批改写。
+- **批次 4 状态：收官**。S1 worktree 维持缓做裁决（灰度门后功能族的 L 级投入，待需求
+  信号）；其余 S2/S3/R1/R2/R3/P2-11 全部关闭。挂账事项不变：heartbeat 与 miss-cause
+  桌面 E2E（需交互环境）、auto 模式 TUI/桌面 picker（v2）、evals fixtures（v2）、
+  R1 设计文档登记的 Windows PowerShell 冷启动实测（发布验证轮）。

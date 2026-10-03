@@ -1,7 +1,10 @@
 # R1 设计文档：凭据主密钥接入 OS 钥匙串（含 BYO vault 明文回退收口）
 
-状态：设计对齐阶段（批次 4 第二轮，零代码改动）。裁决点 D1–D6 各带推荐；批复后按
-R1-a/b/c 三批实施。前置事实核实全部基于当前检出源码（`credentialMasterKey.ts` /
+状态：**已实施**（2026-10-03 所有者批复「按推荐」，D1–D6 全采纳；R1-a/b/c 三批落地，
+实施记录见 `docs/capability-uplift-plan.md` 批次 4 第三轮，规则沉淀在
+`packages/services/specs/credential-storage.md` 与
+`packages/provider-node/specs/byo-apikey-credential-ref.md` R1-c 节）。以下为批复时的
+设计原文；前置事实核实全部基于当时检出源码（`credentialMasterKey.ts` /
 `credential-storage.md` spec / `provider-config.ts`）。
 
 ## 1. 现状（P0-4 已落地的地基与已知边界）

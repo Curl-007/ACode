@@ -168,3 +168,30 @@ host botsService.watchTaskStream
 - 不改任务列表角标数据源（sessions-index 投影已是权威）。
 - elicitation（AskUserQuestion）的 bot 代答门槛不在本 spec 范围——问答不是权限边界，
   且已有 autoResolution 设置约束。
+
+## 批次 4 评估（2026-10，能力提升方案 R3）：高风险动作是否默认本机审批
+
+**问题重述**：门槛默认 OFF 时，bot 通道是「一条消息 + N 次聊天内批准」——发起执行的人
+就是批准执行的人（self-approval）。聊天账号一旦失陷，攻击者可以自己发起高风险动作再
+自己批准，在宿主机上完成远端代码执行；现有缓解（bot 护栏、批次 3 的 bot 模式天花板
+`BOT_REMOTE_MODE_CEILING_FORBIDDEN` 禁 auto/yolo/bypass）都不覆盖这条 self-approval 路径。
+
+**评估选项**：
+
+- **A. 维持默认 OFF（现状）**。「默认关」是本 spec 已与用户对齐的产品决策（见「设计决策」
+  节），远程聊天审批是 bot 功能的核心使用形态，收紧默认值对合法单人远程用户是即刻的
+  UX 回退（尽管配对手机远控复用桌面 renderer 能力面、经配对鉴权仍可批——见设计决策
+  第三条，独立信任锚存在）。
+- **B. 风险分层默认 ON**：`riskLevel ≥ high` 的权限请求无论用户设置如何都要求本机批准
+  （判定输入已在手：工具 capability 的 riskLevel 词汇 + 批次 3 分类器基建；实现约 S——
+  `resolveBotPermissionLocalApprovalRequired` 增加 riskLevel 入参与一条 ∨ 分支）。安全上
+  站得住：把 self-approval 残余风险的高影响段收掉，与本 spec 的 fail-closed 哲学、批次 3
+  的 bot 天花板同向；代价是未动设置的远程用户对高风险动作必须走桌面/配对手机批准。
+- **C. 仅加管理员策略键**（`requireLocalPermissionApprovalForHighRisk`）：不改个人默认，
+  企业可强制。additive、零 UX 风险，但当前无管理员需求信号——按 C5 撤销先例（投机设计
+  不做），不单独落地。
+
+**结论与建议**：技术上推荐 **B**（信任不对称是真实的，且实施面小、判定纯函数可测）；
+但「默认 OFF」是 spec 明文的用户已对齐决策，翻转默认值属**产品决策**，不在批次 4 内
+擅自实施。登记为待用户裁决项：选 B 则按上述 S 级改动落地并更新验收场景 1/2；选 A 则
+本评估存档、残余风险由用户知情承担。C 仅在出现真实管理员需求时与 B 合并考虑。

@@ -377,3 +377,63 @@ spec `apps/acode-cli/specs/auto-mode-risk-classifier.md` 先行（R1–R7 + 12 �
   build:bootstrap 管线自然覆盖），已登记 spec 为发布检查项。
 - **仍未执行**：heartbeat 与 miss-cause UI 的桌面 E2E（需 dev:desktop 交互环境）；
   rubric 的 evals fixtures 跑批（v2，守 hillclimb 纪律）。
+
+## 实施记录（2026-10-03 · 批次 4 · 第一轮：S3 + S2 + R2 落地，R3 评估存档）
+
+启动前逐项核实（纪律：源码事实先于路线图假设），三处修正：S3 死名从 5 个扩到 9 个
+（TaskCreate/TaskGet/TaskList/TaskUpdate 同为上游遗留、全仓零注册；`Workflow` 经二次
+核实**不是**活工具而是遗留容忍词汇——background.ts 任务类型映射/off-peak 禁用列表/
+includeWorkflow 灰度门仍处理旧会话 rollout 里的该名字，保留并测试显式豁免）；S2 的
+「实现或移除」裁决为**实现**（下游接线是有意预铺：shared identity `file-write` family、
+compat hook 别名 `ApplyPatch→[Write,Edit]`、ruleSubjects 提取键含 `patch_text`、
+isWriteTool、breaker WRITE_TOOLS、managed-policy-floor spec 熔断表、GUI Changes 聚合
+注释——移除反而要动 6+ 处下游且丢弃多文件原子编辑能力）；R2 不是纯删除——desktop
+的 server-info fetch 与 /ws 握手都在用 query token（`serverRemoteConnection.ts`），
+标准 WebSocket API 无法带自定义 header，query 面必须为升级握手保留。
+
+- **S3 完成**：`provider-visible-order.ts` 移除 9 个死名（EnterWorktree/ExitWorktree/
+  LSP/NotebookEdit/ScheduleWakeup/TaskCreate/TaskGet/TaskList/TaskUpdate），成员纪律
+  注释在案（只收真实注册名；C6/F7 的悬空引用源头就此闭合）。守护测试
+  `provider-visible-order-hygiene.test.mjs` 4/4：死名永不回 set、**set ⊆ builtInTools
+  注册名 ∪ 显式遗留豁免**（自维护不变量，未来加死名即红）、排序行为钉住。
+- **S2 完成（实现裁决）**：spec `apps/acode-cli/specs/apply-patch-tool.md` 先行
+  （R1 格式语法 V4A 风格自有解析器 / R2 两段式执行——校验段零写入、应用段诚实原子性
+  不回滚 / R3 错误码契约修订——悬空 contract 的字符串码零消费者，改数字码与 Edit 同语义
+  同值对齐，executor envelope 全仓数字强校验 / R4 权限接线——**修复 breaker 缺口**：
+  checkPathEscapeWrite 原只认 file_path/path 字段，对 patch_text 会静默跳过，新增宽松
+  提取器 extractApplyPatchTargetPaths 任一目标逃逸即命中 / R5 注册面与模型描述纪律）。
+  实施：contracts 错误码修订、`tool/apply-patch-format.ts`（严格解析器 + 宽松路径提取
+  分权：解析负责拒绝、提取负责兜底安全）、`handlers/apply-patch.ts`（read-before-patch
+  与 staleness 同 Edit 纪律、hunk 精确唯一匹配、ipynb 守卫 F7 同源文案、1GB 上限、
+  expectedRevision 乐观并发、readFileState 逐文件更新、telemetry 用契约本有的 "patch"
+  判别变体）、builtInTools 激活上游注释占位、sort set 加名、`PersistedReadFileStateTool`
+  扩展 + hydrator ApplyPatch 分支（**resume 诚实边界**：多文件补丁单 metadata 槽位只
+  恢复最后写入文件，其余退回未读态，保守 fail-safe）。v1 范围 Add/Update/Delete；
+  Move 明确拒绝指向 Bash git mv（FileSystemPort 无 rename，v2 端口扩展登记）。
+  测试 `apply-patch-tool.test.mjs` 21/21（解析器/提取器/handler 集成走真实
+  NodeFileSystemAdapter+临时目录/熔断三态/注册不变量含描述无悬空工具名断言）。
+- **R2 完成**：`server/src/http.ts` query token 收缩——HTTP 路由出示合法 query →
+  401 + 一次性「已移除」告警（指明 Bearer 迁移路径），唯一保留面 = `/ws*` 升级握手
+  （WebSocket API 无法带自定义 header）；cookie 回写随之移除（101 上 Set-Cookie 无
+  消费方）；readPresentedLiteToken 优先级注释同步（主体绑定唯一调用点即 /ws/host）。
+  desktop `serverRemoteConnection.ts` info fetch 迁 `Authorization: Bearer` 头，WS 握手
+  保留 query（注释指向 spec）。spec `server-auth.md` 鉴权节改写（兼容窗自 e5f0fe1 起算
+  「仍接受一个版本」承诺兑现）。server-core 无 token 面（恒 loopback fail-closed）不适用；
+  全仓扫描确认无其他第一方 query 消费者。测试 `server-auth.test.mjs` 30/30（(f) 翻转为
+  HTTP 401+告警 / WS query 放行+错 token 401；cookie 一致性测试改直构 cookie 头）。
+- **R3 评估存档（不改默认值）**：结论入 spec `bot-permission-local-approval.md` 批次 4
+  评估节——self-approval 残余风险真实（聊天账号失陷 = 自己发起自己批准高风险动作，
+  bot 护栏与模式天花板不覆盖此路径）；技术上推荐 **B 风险分层默认 ON**（riskLevel ≥
+  high 无论用户设置都要求本机批准，实现约 S、判定纯函数可测），但「默认 OFF」是 spec
+  明文的用户已对齐产品决策，翻转默认值**留待用户裁决**（选 A 维持现状则评估存档、
+  残余风险知情承担）；C（仅管理员策略键）无需求信号，按 C5 先例不投机落地。
+- **未启动（留下一轮/专项）**：S1 worktree 隔离（L 级，git 状态/清理/并发风险，需
+  独立 spec 轮）；R1 OS 钥匙串（M 级 + cipher 链异步化 + 桌面 host 与 CLI 跨进程密钥
+  一致性设计问题，需设计对齐）；第 4 项安全残留「BYO vault 缺失回退明文」并入 R1 同轮
+  （同属凭据存储面）；P2 11 项加固清单逐项核实（清单在 zoode/ACode-提升方案.md:143，
+  部分已随 P2 骨架收敛——子代理继承有 subagent-policy-floor、工作区收敛有 breaker
+  pathEscapeWrite 且本批扩展到 ApplyPatch）。
+- **验证**：根 typecheck exit0、lint 0 error（73 条既有 baseline warning）、
+  architecture 0 违规、contracts 构建 exit0、core/bootstrap tsc exit0、CLI 全套件
+  **776/776**、server-auth 30/30、tools-schema-token-metrics / prompt-manifest-parity /
+  system-prompt-section-registry 守护全绿（新工具描述进语料无阈值/清单破坏）。

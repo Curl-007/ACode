@@ -10,6 +10,9 @@ import {
   findCompletionGateViolations,
   isSameTodoContent,
   normalizeTodos,
+  TODO_METADATA_MAX_KEY_CHARS,
+  TODO_METADATA_MAX_KEYS,
+  TODO_METADATA_MAX_SERIALIZED_BYTES,
   TodoReadInputJsonSchema,
   TodoReadInputSchema,
   TodoReadOutputJsonSchema,
@@ -216,7 +219,7 @@ export const todoWriteToolEntry: ToolEntry = {
 - Keep one item \`in_progress\` at a time and mark it \`completed\` when done.
 - Optionally give an item a stable \`id\` (unique within the list); items without one are assigned a position-derived id like \`todo-0\` in the stored and returned list.
 - \`blockedBy\` lists ids from the same submitted list that must complete first: each referenced item must carry an explicit \`id\`, and dangling references or dependency cycles are rejected. Every returned item is marked \`available\` when it is pending and unblocked (no \`blockedBy\` left, or all referenced items completed), and \`summary.available\` counts them.
-- \`metadata\` is a bounded annotation object (max 16 keys, 64-char keys, 4 KB serialized, JSON values only); it is pure annotation and never affects ordering or counts.
+- \`metadata\` is a bounded annotation object (max ${TODO_METADATA_MAX_KEYS} keys, ${TODO_METADATA_MAX_KEY_CHARS}-char keys, ${TODO_METADATA_MAX_SERIALIZED_BYTES / 1024} KB serialized, JSON values only); it is pure annotation and never affects ordering or counts.
 - \`completionConfidence\` records the evidence behind an item's completion — report it from what you actually observed, not from what you hope is true. Marking an item \`completed\` without sufficient completion evidence is rejected with the item named; run the checks first, then report from the evidence you have.
 - Each returned item carries a tool-maintained \`confidenceHistory\` (the trail of \`completionConfidence\` values reported for it, oldest first); any \`confidenceHistory\` you submit is ignored.`,
     readOnly: true,

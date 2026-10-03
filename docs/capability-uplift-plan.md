@@ -364,5 +364,16 @@ spec `apps/acode-cli/specs/auto-mode-risk-classifier.md` 先行（R1–R7 + 12 �
   bot-guardrails 增 auto 拆分断言 12/12；权限回归电池 247/247（policy floor/
   breakers/反射门/对抗组全量）；CLI 相关套件 67/67。验证：根 typecheck exit0、
   contracts/core 构建 exit0、core/bootstrap tsc exit0、lint 0 error、arch 0 违规。
-- **未执行**：真实模型的端到端 auto 会话（需 dev:desktop/CLI live 环境与模型
-  额度）；rubric 的 evals fixtures 跑批（v2，守 hillclimb 纪律）。
+- **真实测试已执行（2026-10-03 同日补验，证据细节在 spec「实施批次记录」）**：
+  ① headless `--mode auto` 表面同批放宽（CliRuntimeMode 链路，TUI 菜单/桌面
+  picker 留 v2 灰度）；② 两轮真模型实跑（GLM-5.3）：灰区 Write → sidecar 真调
+  （rollout querySource=auto_risk_classify、辅助档 max_tokens 5000、rubric 硬化
+  prompt 原文在案）→ 模型结构化裁决 allow/0.9 与 allow/0.95
+  （serves_stated_intent）→ 文件真实落盘 → 审计 sink JSONL 全字段留痕
+  （ruleId=auto.classifier.allow, latencyMs=2160, cache=miss）；③ migration 0004
+  在用户真实 tasks-index.sqlite 的**副本**上全过（迁移账本 0001-0004、
+  notify_decision 往返、重试复位、prune 安全边界；live DB 零触碰，副本用后即删）。
+  轮 1 暴露的「bootstrap dist 陈旧则审计 sink 缺席」是构建新鲜度事实（发布走
+  build:bootstrap 管线自然覆盖），已登记 spec 为发布检查项。
+- **仍未执行**：heartbeat 与 miss-cause UI 的桌面 E2E（需 dev:desktop 交互环境）；
+  rubric 的 evals fixtures 跑批（v2，守 hillclimb 纪律）。

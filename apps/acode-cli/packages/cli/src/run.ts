@@ -20,10 +20,7 @@ import { resolveCliCwd } from "./cwd.js";
 import { runLoginCommand, runLogoutCommand } from "./login-command.js";
 import { CLI_COMMAND_NAME, CLI_PROCESS_NAME } from "./process-name.js";
 import { isPluginHostInvocation, runPluginHostCommand } from "./plugin-host-command.js";
-import {
-  isProviderDoctorInvocation,
-  runProviderDoctorCommand,
-} from "./provider-doctor-command.js";
+import { isProviderDoctorInvocation, runProviderDoctorCommand } from "./provider-doctor-command.js";
 import { isDwfChildInvocation, runDwfChildCommand } from "./dwf-child-command.js";
 import { runPrompt } from "./prompt-command.js";
 import { runPluginsCommand, type PluginsCommandFlags } from "./plugins-command.js";
@@ -32,6 +29,7 @@ import { runTuiCommand } from "./tui-command.js";
 import type {
   CliPermissionMode,
   CliResumeRequest,
+  CliRuntimeMode,
   CliTargetRequest,
   RunDependencies,
 } from "./cli-types.js";
@@ -137,11 +135,17 @@ const normalizeLocaleOption = (value: string | undefined): UiLocale | undefined 
   throw new Error(getACodeCopy().cli.errors.localeUnsupported(value));
 };
 
-const normalizePromptMode = (value: string | undefined): CliPermissionMode | undefined => {
+const normalizePromptMode = (value: string | undefined): CliRuntimeMode | undefined => {
   if (value === undefined) return undefined;
   const mode = value.toLowerCase();
-  if (mode === "build" || mode === "plan" || mode === "edit" || mode === "yolo") return mode;
-  throw new Error(`Unsupported --mode value: ${value}. Supported modes: build, edit, plan, yolo.`);
+  // auto 自 risk-classifier v1 起可选（specs/auto-mode-risk-classifier.md）：灰区动作
+  // 由 LLM 分类器裁决，fail-safe 一律 ask。headless 无审批 UI 时 ask 经 deny broker
+  // 拒绝——这是预期语义（无人值守别选 auto 干灰区密集的活），不是缺陷。
+  if (mode === "build" || mode === "plan" || mode === "edit" || mode === "yolo" || mode === "auto")
+    return mode;
+  throw new Error(
+    `Unsupported --mode value: ${value}. Supported modes: build, edit, plan, yolo, auto.`,
+  );
 };
 
 const normalizeBrowserUse = (value: string | undefined): GlobalOptions["browserUse"] => {
@@ -343,7 +347,7 @@ export const run = async (ctx: RunContext, deps: RunDependencies = {}): Promise<
     return 1;
   }
 
-  let mode: CliPermissionMode | undefined;
+  let mode: CliRuntimeMode | undefined;
   let browserUse: GlobalOptions["browserUse"];
   let presentationSurface: PresentationSurface;
   try {

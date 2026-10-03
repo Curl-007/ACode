@@ -36,9 +36,11 @@ export const TUI_TITLE_GENERATION_CONFIG: NonNullable<
   NonNullable<ACodeAppOptions["runtimeConfig"]>["titleGeneration"]
 > = {};
 
-export const createCliModeState = (mode?: CliPermissionMode): CliModeState => ({
+export const createCliModeState = (mode?: CliRuntimeMode): CliModeState => ({
   current: mode,
-  override: mode,
+  // override 词汇保持 CliPermissionMode（用户显式覆盖档）；auto 只进 current——
+  // 它是运行时可裁决模式，不是可覆盖的权限档。
+  ...(mode !== undefined && mode !== "auto" ? { override: mode } : {}),
 });
 
 export const currentCliMode = (state: CliModeState): CliRuntimeMode =>

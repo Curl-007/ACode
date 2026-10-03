@@ -29,6 +29,7 @@ import type { CommandCenterApp, SlashCommand } from "./command-center.js";
 import type {
   CliPermissionMode,
   CliResumeRequest,
+  CliRuntimeMode,
   ModeCapableApp,
   RunDependencies,
 } from "./cli-types.js";
@@ -65,7 +66,7 @@ export const runPrompt = async (
   options: GlobalOptions,
   deps: RunDependencies,
   version: string,
-  mode?: CliPermissionMode,
+  mode?: CliRuntimeMode,
   resumeRequest: CliResumeRequest = { continueSession: false },
   toolDisallowlist?: readonly string[],
   forceMcs = false,
@@ -478,7 +479,7 @@ async function runPromptCommandCenterCommand(
   options: GlobalOptions,
   app: ModeCapableApp,
   prompt: string,
-  mode: CliPermissionMode | undefined,
+  mode: CliRuntimeMode | undefined,
   traceId: string | undefined,
   abortSignal: AbortSignal,
   deps: RunDependencies,

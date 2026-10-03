@@ -609,3 +609,75 @@ P2 清单与其 09-27 提升方案一样系统性过时，e5f0fe1/070eaec/580f7a
   eval 根已删除（含凭据副本，卫生要求）；整形/判分操作员脚本不入库（归 runner spec
   所有，规则已录本轮）。正式基线前置条件：① runner spec 立项（v2 挂账，输入已备齐）；
   ② judge 配置冻结（配 `PROMPT_EVAL_JUDGE_*` 三件套，或裁决操作员判分的披露口径）。
+
+## 实施记录（2026-10-04 · 批次 4 · 第六轮：所有者拍板「全都做了」——runner 立项 + F6 关闭 + S1 落地 + 桌面 E2E）
+
+所有者对第五轮收尾给出的四个可选项全部拍板执行（含推翻 S1 缓做裁决——「全都做了」
+即需求信号本身）。四项结果：
+
+- **① evals runner v1 立项落地（提交 72d0037）**：v0 结转的「自动化 runner」以
+  `specs/prompt-eval-runner.md` 立项——只固化 2026-10-04 试点验证过的机制，未验证面
+  （子代理转录落点/后台任务无头寿命/重启编排）显式登记 §R7 并对 5 个场景 fail-loud。
+  实现：`evals/runner.mjs`（编排 + shapeTranscript/buildReport/checkDistFreshness/
+  cleanupEvalRoot 纯函数）+ 7 个配方登记制 + judge 三态（live 复用 judge.mjs /
+  operator dry→response / recorded 结转）+ judgeFingerprint 冻结规则机器化。验收测试
+  6/6（合成 NDJSON 零模型调用）；**live 端到端闭环**：dev 集 self-verification-
+  before-done 经 runner 采集（2596 事件→20 块整形）→ dry 请求 → operator 判分 →
+  **首份入库报告 passRate 1.0**（reports/report-*.json，raw gitignored 裁决落地）。
+  CLI 全套件 785/785（当轮）。正式基线前置只剩：judge 端点配置冻结（§R7-3，所有者侧）。
+- **② F6 关闭（提交 b5f36b7 + 3f90704）**：立项前普查**推翻审计前提**——OS 注册面
+  （electron-builder protocols / setAsDefaultProtocolClient / x-scheme-handler）自 fork
+  初始提交即全 acode://，「zcode:// 注册身份需兼容窗口迁移」不成立。真实缺陷 = 两个
+  zcode:// **发射端**与受理端不匹配的现存断链：macOS Finder 工作流脚本（本产品收不到，
+  同机上游 ZCode 反而接管）+ OAuth 官网中转页 redirect 参数（回跳到不了本产品；token
+  主链路 polling 故登录不断，断的是归因/收窗，且上游应用可抢收回调——PKCE 是缓解非
+  豁免）。修复：双发射端对齐 acode://（Finder WORKFLOW_VERSION 5→6 借内容比对自动
+  刷新已装机）、DEEP_LINK_SCHEME 导出为单一事实源；**裁决不做旧协议兼容注册**（无
+  存量外链可保，注册反与上游抢 handler）。钉桩：desktop deep-link-scheme 4 组不变量
+  + oauthPkce redirect 断言。附带战果：补跑桌面套件浮出 **2 个继承性带病测试**
+  （git 考古证实初始提交即红：ACODE.Z.AI. 宿主项从未在策略名单、边界守卫注入面停留
+  在平台级旧名而产品面早已 per-service 化）——修复后桌面 51/51，**桌面 .mjs 套件自此
+  纳入每轮验证矩阵**（此前漏跑面）。外部依赖登记：官网中转页若有 redirect scheme
+  白名单（仓库外），发布验证轮跑真实 OAuth 流程确认。
+- **③ S1 worktree 隔离落地（提交 f3e8142）**：「全都做了」推翻缓做裁决。spec
+  `workflow-worktree-isolation.md` 立项：范围裁决 R1 = legacy 脚本路径（契约
+  isolation:"worktree" 声明处、桩所在地）兑现既有契约；dwf 引擎面显式非目标（给灰度
+  门后引擎加 facade 参数是投机新表面，触发条件登记）。`workflow-worktree-manager.ts`
+  为生命周期唯一所有者：命名空间 `os.tmpdir()/acode-workflow-worktrees/<repo 指纹>/`
+  （0700）、分支 `acode/workflow/<slug>/<slug>`、**材料优先回收**（clean 才删，
+  dirty/领先提交/检视失败一律保留并登记 path/branch/baseRef 进 activity result 信封
+  ——零契约改动）、进程内互斥队列 + 进程间锁冲突一次退避重试、机会式孤儿 prune
+  （龄期>1h 门槛避开并发进程）、fail-loud 绝不静默降级共享 cwd。注入走子 runtime
+  既有 configOverrides 通道（零新接口）；workspaceRoot=workingDirectory 同源令
+  pathEscapeWrite breaker 收敛随迁。真机探针实证 `git worktree add` 不支持
+  --porcelain 且 -b 须在 path 前。验证：S1 套件 10/10（真实 git 临时仓+注入 runner
+  双轨）、CLI 全套件 **795/795**、bootstrap tsc 0、lint 73/0、arch 0；
+  security-hardening-plan.md:178「已实现 worktree 隔离」错误陈述同批纠偏。
+- **④ 桌面 E2E（Windows 侧可达面完成，提交见本轮）**：所有者的生产 ACode 实例在跑
+  （单实例锁），改用 test 环境隔离启动——`ACODE_ENV=test` 下 appName「ACode Dev」天然
+  分离 userData（`desktopRuntimeEnv.ts:59-80` 注释证实这是既有 e2e 身份隔离机制，
+  watch 忽略名单里的 `.e2e-home-*` 是上游 harness 遗迹），叠加 `ACODE_DESKTOP_HOME_DIR`
+  /`ACODE_DESKTOP_USER_DATA_DIR` 临时目录覆盖，与生产实例并存互不干扰。**CDP 发现**：
+  dev 态主进程自动 `appendSwitch("remote-debugging-port","9229")`（`index.ts:188-189`，
+  `ACODE_DISABLE_FIXED_REMOTE_DEBUGGING_PORT=1` 可让位 Chromedriver）——期间在 dev.mjs
+  自加的端口钩子被证实是重复机制，已还原（产品内置面优先；实测另证 Chromium 开关在
+  应用路径后置时不生效）。agent-browser 经 CDP 9229 驱动真实窗口：
+  - **自动化页（heartbeat 宿主面）**：渲染完整（创建定时任务/定时任务模板/保持电脑
+    唤醒开关）；**创建流程全闭环**——标题+每小时计划+指令 → 创建 → 列表项出现
+    「每小时的第 00 分 · 下次运行 27 分钟后 · 已运行 0 次」（截图 automation-created.png）。
+    heartbeat 深环（调度触发→agent 会话→NOTIFY/DONT_NOTIFY 决策）未走到：需 provider
+    凭据 + 等待触发窗口；协议层已有 automation-heartbeat-protocol.test.mjs 覆盖
+    （桌面 51/51 电池内）——行为级维持交互轮登记。
+  - **miss-cause UI（DeveloperToolsPane）**：localStorage 写 `acode:developer-tools:enabled=1`
+    （产品既有开关，`developerToolsPreference.ts`）→ 侧边面板出现「开发者工具」tab →
+    **Token 调试表完整渲染**：轮次/Input/Output/TPS/Total/Reasoning/**Cache Read/
+    Cache Write/命中率** + 空态「暂无 main session token 记录」正确（截图
+    developer-tools-pane.png）。miss-cause 值呈现需真实模型轮次（新 profile 无凭据），
+    结构面已验证、行为面登记交互轮。
+  - 卫生：agent-browser 断开、dev 实例停止（9229 关闭、无进程残留）、临时 home/userdata
+    删除（截图留 `/tmp/acode-e2e-desktop/shots/` 备查）。macOS 侧冒烟（钥匙串 GUI 条目
+    可见性 + Finder 工作流新发射端）Windows 机不可做，维持登记。
+- **本轮验证矩阵**：CLI 全套件 795/795、桌面 .mjs 套件 51/51（本轮起纳入）、services
+  86/86（38 ts + 48 mjs）、shared credential 35/35、根 typecheck 0、bootstrap tsc 0、
+  lint 73 警告 0 错误（基线）、arch 0 违规。提交：72d0037（runner）、b5f36b7（F6）、
+  3f90704（继承性测试修复）、f3e8142（S1）、本轮记录。

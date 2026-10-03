@@ -128,6 +128,25 @@ OAuth 回跳（`desktopOAuthDeepLink.ts:257`）。这不是文本残留而是**�
 本轮不动。代码注释里的 `zcode-plan`（provider 业务错误码说明）是事实性引用，
 不在发现范围。
 
+### F7（低）模型可见文本引用不存在的工具——NotebookEdit / ScheduleWakeup 悬空引用
+
+能力提升批次核实（`docs/capability-uplift-plan.md` 批次 0 C6）发现两处模型可见文本
+引用了仅在 `core/src/tool/provider-visible-order.ts` 保留、无 handler 的工具名：
+
+- `core/src/tool/handlers/edit.ts` 的 .ipynb 守卫错误文案叫模型
+  「Use the NotebookEdit to edit this file」——NotebookEdit 未实现，模型照做会收到
+  tool-not-found，需自行绕路；
+- `core/src/tool/handlers/bash-gh-rate-limit.ts` 的 gh 限速提示末句
+  「use ScheduleWakeup instead of retrying」——ScheduleWakeup 同为保留名、无 handler。
+
+两字符串无任何 golden/行为测试钉住（全仓 grep 核实；`compact-invariants.test.mjs:573`
+的「rate limit exceeded」是模型侧 429 固件，不相干）。`provider-visible-order.ts` 的
+保留名本身是内部排序、非模型可见文本，其「落地或移除」另登记于
+`docs/capability-uplift-plan.md` S3，不属本发现。
+**处置：本轮已修**——edit.ts 文案改指真实可用路径（Write 整写 notebook JSON /
+Bash 结构化编辑如 jq）；gh 提示改为不点工具名的行为指导（单次 sleep 等 reset）。
+修复依据注释在两文件内。
+
 ## 数字与证据来源
 
 - 全部行号以 2026-10-03 dev/0.0.2 检出为准（批次三提交前基线 + 批次三新增文本）。

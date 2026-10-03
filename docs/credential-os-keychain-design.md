@@ -82,6 +82,11 @@ Linux libsecret），目录整体外带到异机/异用户后不可解密；桌�
   `Atomics.wait` 小睡，先例一致）；钥匙串读取挂在同一位置，接口签名不变。
 - 成本预估：macOS/Linux 单次 spawn ~10–50ms；Windows PowerShell 冷启动 ~100–300ms
   （登记为实施实测项；缓解：懒解析——首次 encrypt/decrypt 才触发，且缓存后为零）。
+  **实测修正（2026-10-03，Win10 26200，`scripts/smoke-credential-keychain.mjs`）**：
+  预估偏低——裸 powershell.exe 启动 ~220ms，完整 DPAPI 调用连发热态 ~225ms、间隔
+  真实使用 ~850–930ms、冷启动 0.9–2s。按「每进程一次性开销（缓存后零 spawn）」评估
+  仍可接受，D2 裁决维持；CLI 短进程若成体感痛点，升级路径是 bootstrap 异步预热
+  （并行 spawn 填缓存）而非异步化整条 cipher 链。
 - 异步化整条 cipher 链（备选）：接口手术波及 credentialService、CLI
   shared-credentials、文件锁内联点与两套委托层——工作量和回归面数倍于收益，仅当
   实测 spawnSync 延迟不可接受时才升级考虑。

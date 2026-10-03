@@ -513,3 +513,35 @@ P2 清单与其 09-27 提升方案一样系统性过时，e5f0fe1/070eaec/580f7a
   信号）；其余 S2/S3/R1/R2/R3/P2-11 全部关闭。挂账事项不变：heartbeat 与 miss-cause
   桌面 E2E（需交互环境）、auto 模式 TUI/桌面 picker（v2）、evals fixtures（v2）、
   R1 设计文档登记的 Windows PowerShell 冷启动实测（发布验证轮）。
+
+## 实施记录（2026-10-03 · 批次 4 · 第四轮：R1 Windows 真机验证——抓到并修复钥匙串档整体失效的传输 bug）
+
+- **背景**：R1 三批此前只有 mock spawn 测试（真机钥匙串零触碰）。本轮做 Windows DPAPI
+  真机验证，并沉淀可复用工具 `scripts/smoke-credential-keychain.mjs`（真实平台机制、
+  mkdtemp 临时目录 + 指纹化条目命名隔离，绝不触碰真实数据目录；不进 CI，与 mock 电池
+  互补；macOS/Linux 打包冒烟轮可直接复跑）。
+- **真 bug（P0 级，真机首轮即红）**：win32 `write` 把调用方的 base64url secret
+  （43 字符、无填充、可含 `-`/`_`）直接嵌进 .NET `FromBase64String`——真机探针证实
+  `-`/`_` 与缺填充**都**抛 FormatException，即修复前 Windows 上 write 恒失败 →
+  **钥匙串档整体静默失效**（新装恒降级文件模式、R1-b 迁移恒跳过），而 mock 单测
+  测不出（mock 不做真实 base64 解码）。修复：写入前规范化为规范标准 base64（Node
+  base64url 解码器双字母表 + 缺填充宽容，规范化幂等；blob 存 DPAPI(材料原始字节)，
+  回读返回规范 base64，调用方本就按解码后字节消费）；补 2 条 mock 回归钉桩。
+- **实测驱动的两处顺手修**：程序集加载 `Add-Type -AssemblyName System.Security` →
+  全名 `Assembly::Load`（非过时 API；冷启动 ~1.8s→~0.9s，热态等价）；PowerShell
+  stderr 按控制台代码页（GBK）解码——中文 locale 的报错文本 UTF-8 直解是乱码，会
+  原样拼进用户可见的降级/fail-loud 告警。
+- **延迟实测（第三轮挂账的登记项关闭）**：裸 powershell.exe ~220ms；完整 DPAPI
+  Protect/Unprotect 连发热态 ~225ms、间隔真实使用 ~850–930ms、冷启动 0.9–2s。原
+  「约 100–300ms」预估修正（设计文档 D2 段与 spec 接口节同批更新）。评估：按每进程
+  一次性开销（进程级缓存后零 spawn）可接受，D2 裁决维持；CLI 短进程触碰凭据的路径
+  付 ~0.9s，若成体感痛点，登记的升级路径是 bootstrap 异步预热，不回退材料落盘。
+- **冒烟 17/17 全过**（Win10 26200 真机）：访问器往返字节一致（含 base64url 传输
+  规范化）、重复写收敛（wx EEXIST 回读赢家）、损坏 blob → error fail-loud、非法长度
+  条目 → resolver 抛错、新装生成材料不落盘（仅 DPAPI blob）、R1-b 迁移零重加密 +
+  文件删除 + INFO 通知 + 幂等。**真机未覆盖（诚实登记）**：Windows 异用户不可解密
+  （需第二用户账户）、macOS Keychain GUI 条目可见性、headless Linux 降级——各自环境
+  复跑同一冒烟脚本即可。
+- **验证**：shared credential 两套件 35/35（新增 2 条回归）、根 typecheck 0、lint
+  73 警告 0 错误（基线）、arch 0 违规。spec `credential-storage.md` 增补 Windows
+  传输编码规则、实测延迟与真机验证工具引用。

@@ -57,6 +57,7 @@ const ACODE_INLINE_PLUGIN_MARKETPLACE = "inline";
 const ACODE_PLUGIN_MANIFEST_PATH = join(".acode-plugin", "plugin.json");
 const CLAUDE_PLUGIN_MANIFEST_PATH = join(".claude-plugin", "plugin.json");
 const CODEX_PLUGIN_MANIFEST_PATH = join(".codex-plugin", "plugin.json");
+const CURSOR_PLUGIN_MANIFEST_PATH = join(".cursor-plugin", "plugin.json");
 
 /** 对齐 apps/acode-cli/packages/adapters/src/skills/index.ts:19 */
 const MAX_DESCRIPTION_LENGTH = 1024;
@@ -741,10 +742,12 @@ async function readPluginManifest(rootPath: string): Promise<PluginManifestSumma
 }
 
 async function findPluginManifestPath(rootPath: string): Promise<string | null> {
+  // 候选集与优先级对齐 apps/acode-cli/specs/plugin-foreign-manifest-compat.md。
   for (const manifestPath of [
     join(rootPath, ACODE_PLUGIN_MANIFEST_PATH),
     join(rootPath, CLAUDE_PLUGIN_MANIFEST_PATH),
     join(rootPath, CODEX_PLUGIN_MANIFEST_PATH),
+    join(rootPath, CURSOR_PLUGIN_MANIFEST_PATH),
   ]) {
     if (await exists(manifestPath)) {
       return manifestPath;

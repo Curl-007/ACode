@@ -60,6 +60,7 @@ _Avoid_: 插件元数据（含糊，可能指 manifest）
 
 **Plugin Manifest（插件清单）**:
 插件包内 `plugin.json` 的功能性定义（commands/agents/skills/hooks/mcpServers/userConfig…）。描述"插件是什么、做什么"。
+清单目录约定兼容多厂商：`.acode-plugin` 优先，其后 `.claude-plugin` / `.codex-plugin` / `.cursor-plugin`（候选集与优先级见 `apps/acode-cli/specs/plugin-foreign-manifest-compat.md`）。
 _Avoid_: marketplace.json（那是目录，不是清单）
 
 **Example Prompt（示例提示词）**:

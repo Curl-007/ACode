@@ -414,6 +414,7 @@ const SUPPORTED_MCP_AGENT_SOURCES: ExternalAgentMcpPathSource[] = [
 const ACODE_PLUGIN_MANIFEST_PATH = [".acode-plugin", "plugin.json"] as const;
 const CLAUDE_PLUGIN_MANIFEST_PATH = [".claude-plugin", "plugin.json"] as const;
 const CODEX_PLUGIN_MANIFEST_PATH = [".codex-plugin", "plugin.json"] as const;
+const CURSOR_PLUGIN_MANIFEST_PATH = [".cursor-plugin", "plugin.json"] as const;
 const INLINE_PLUGIN_MARKETPLACE = "inline";
 
 function resolveUserHomeDir(): string {
@@ -778,6 +779,7 @@ async function collectCommandMarkdownPaths(rootPath: string): Promise<string[]> 
 }
 
 async function findPluginManifestPath(pluginPath: string): Promise<string | null> {
+  // 候选集与优先级对齐 apps/acode-cli/specs/plugin-foreign-manifest-compat.md。
   const acodeManifestPath = join(pluginPath, ...ACODE_PLUGIN_MANIFEST_PATH);
   if (await pathExists(acodeManifestPath)) {
     return acodeManifestPath;
@@ -789,6 +791,10 @@ async function findPluginManifestPath(pluginPath: string): Promise<string | null
   const codexManifestPath = join(pluginPath, ...CODEX_PLUGIN_MANIFEST_PATH);
   if (await pathExists(codexManifestPath)) {
     return codexManifestPath;
+  }
+  const cursorManifestPath = join(pluginPath, ...CURSOR_PLUGIN_MANIFEST_PATH);
+  if (await pathExists(cursorManifestPath)) {
+    return cursorManifestPath;
   }
   return null;
 }

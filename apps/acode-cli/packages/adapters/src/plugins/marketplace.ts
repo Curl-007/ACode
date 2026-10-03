@@ -56,6 +56,7 @@ const CLAUDE_MARKETPLACE_FILE = join(".claude-plugin", "marketplace.json");
 const ACODE_MANIFEST_PATH = join(".acode-plugin", "plugin.json");
 const CLAUDE_MANIFEST_PATH = join(".claude-plugin", "plugin.json");
 const CODEX_MANIFEST_PATH = join(".codex-plugin", "plugin.json");
+const CURSOR_MANIFEST_PATH = join(".cursor-plugin", "plugin.json");
 const DEFAULT_VERSION = "0.0.0";
 const GIT_CLONE_MAX_ATTEMPTS = 3;
 const GIT_COMMAND_TIMEOUT_MS = 90_000;
@@ -2181,7 +2182,13 @@ function findMarketplaceManifestPath(rootPath: string, explicitPath?: string): s
 }
 
 function findPluginManifestPath(rootPath: string): string | null {
-  for (const candidate of [ACODE_MANIFEST_PATH, CLAUDE_MANIFEST_PATH, CODEX_MANIFEST_PATH]) {
+  // 候选集与优先级见 specs/plugin-foreign-manifest-compat.md（所有发现点必须一致）。
+  for (const candidate of [
+    ACODE_MANIFEST_PATH,
+    CLAUDE_MANIFEST_PATH,
+    CODEX_MANIFEST_PATH,
+    CURSOR_MANIFEST_PATH,
+  ]) {
     const path = join(rootPath, candidate);
     if (fileExists(path)) return path;
   }

@@ -64,7 +64,12 @@ test("audit policy is unconditional and distinguishes platform from model provid
   const policy = await load("packages/shared/src/officialPlatformPolicy.ts");
   assert.equal(policy.isOfficialPlatformEnabled(), false);
   assert.throws(() => policy.assertOfficialPlatformAvailable(), /ACode/);
-  for (const host of ["zcode.z.ai", "cdn-zcode.z.ai", "test.zcode.z.ai", "ACODE.Z.AI."]) {
+  // 修复（2026-10-04，F6 批次补跑桌面套件时发现的继承性带病测试）：原第四项
+  // "ACODE.Z.AI." 自 fork 初始提交起就必红——策略宿主名单（officialPlatformPolicy.ts
+  // isOfficialPlatformUrl）从初始提交就只有 zcode.z.ai/cdn-zcode.z.ai，acode.z.ai 在
+  // 产品源码零引用，也违背策略「仅阻断平台域名，保留用户自配地址」的原则。大小写 +
+  // 尾点规范化的原始测试意图改由真实平台域名 ZCODE.Z.AI. 承载。
+  for (const host of ["zcode.z.ai", "cdn-zcode.z.ai", "test.zcode.z.ai", "ZCODE.Z.AI."]) {
     assert.throws(() => policy.assertNoOfficialPlatformUrl(`https://${host}/api/v1`));
   }
   for (const url of [
@@ -244,15 +249,20 @@ test("all platform service boundaries guard before touching credentials, state o
     for (const name of names) {
       assert.ok(bodies.has(name), `${file}: ${name}`);
       // 执行真实方法体，不提供 this/凭证/网络依赖；若短路被移至副作用之后即失败。
+      // 修复（2026-10-04）：注入面与产品现实对齐——所有 case 文件的守卫自 fork 初始
+      // 提交起就是 per-service 的 assertOfficialServiceAvailable/isOfficialServiceEnabled
+      // （official-service-switches.md「Z.AI 服务」逐功能开关），原注入的平台级两名
+      // （assertOfficialPlatformAvailable/isOfficialPlatformEnabled）已无任何 case 方法
+      // 引用，导致方法体 ReferenceError、rejects 消息不匹配 /ACode/ 而必红。
       const body = ts.transpileModule(`async function boundary() ${bodies.get(name)}`, {
         compilerOptions: { target: ts.ScriptTarget.ES2022 },
       }).outputText;
       const run = new Function(
-        "assertOfficialPlatformAvailable",
-        "isOfficialPlatformEnabled",
+        "assertOfficialServiceAvailable",
+        "isOfficialServiceEnabled",
         "fail",
         `${body}; return boundary;`,
-      )(policy.assertOfficialPlatformAvailable, policy.isOfficialPlatformEnabled, () => ({
+      )(policy.assertOfficialServiceAvailable, policy.isOfficialServiceEnabled, () => ({
         ok: false,
       }));
       if (expected === "reject") await assert.rejects(run(), /ACode/, `${file}: ${name}`);

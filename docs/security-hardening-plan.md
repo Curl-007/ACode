@@ -175,7 +175,7 @@
 - **prompt-cache 命中诊断**：业界同类产品暴露 `prompt_cache` 健康对象（warm/ttl/hit_ratio + miss-cause 闭集：`system_prompt_changed`/`tools_changed`/`model_changed`/`messages_rewritten`/`ttl_expired`）。ACode 已有 `core/src/context/sections` 的 `cacheHint:"stable"` 标注，补一个命中率/miss 归因面板可显著降本。
 - **任务依赖图**：业界同类产品的任务创建带 blocked-by/owner/blocked 状态，ACode 为扁平 `core/src/tool/handlers/todo.ts`。编排能力升级。
 
-> **不属于缺口**：**Workflow JS-DSL 多代理编排**——ACode 的 `apps/acode-cli/packages/dynamic-workflow` 已实现 `agent()`/fan-out/worktree 隔离/schema 强制返回（`apps/acode-cli/packages/contracts/src/workflow/script.ts`、`apps/acode-cli/packages/dynamic-workflow/src/analysis/*`，含 actor-names/causality-graph 静态分析），仅 `pipeline/parallel/phase/budget` 的完整度可对照补强。
+> **不属于缺口**：**Workflow JS-DSL 多代理编排**——ACode 的 `apps/acode-cli/packages/dynamic-workflow` 已实现 `agent()`/fan-out/schema 强制返回（`apps/acode-cli/packages/contracts/src/workflow/script.ts`、`apps/acode-cli/packages/dynamic-workflow/src/analysis/*`，含 actor-names/causality-graph 静态分析），仅 `pipeline/parallel/phase/budget` 的完整度可对照补强。（**2026-10-04 纠偏**：本行原声称「已实现 worktree 隔离」与源码不符——当时 `isolation:"worktree"` 是 not-implemented 桩，且现役 dwf 引擎无任何 isolation 参数面。S1 已把桩落地为真实 git worktree 隔离，但范围是 **legacy 脚本工作流路径**（契约声明处）；dwf 面的 isolation 仍是显式非目标，见 `apps/acode-cli/specs/workflow-worktree-isolation.md` R1。）
 >
 > **低优先**（桌面端特有，对 CLI 中心的 ACode 价值有限）：独立 consent 窗口进程把特权动作 UX 与聊天 UI 分离；第一方 MCP 以「预鉴权 bundled stdio server」形态分发 + 双 host 运行时（in-proc 快、subprocess 隔离）；渲染不可信 HTML 的 iframe 沙箱运行时，仅在 ACode 将来渲染模型生成 HTML 时才需要。
 

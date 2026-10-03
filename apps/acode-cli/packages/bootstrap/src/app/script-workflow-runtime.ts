@@ -31,6 +31,11 @@ import {
   mergeScriptWorkflowStats,
 } from "./script-workflow-format.js";
 import {
+  WorkflowWorktreeManager,
+  type WorkflowWorktreeHandle,
+  type WorkflowWorktreeReleaseResult,
+} from "./workflow-worktree-manager.js";
+import {
   WorkflowLimiter,
   buildAgentPrompt,
   collectScriptWorkflowSessionStats,
@@ -46,6 +51,22 @@ const MAX_WORKFLOW_AGENT_CALLS = 1000;
 export interface ScriptWorkflowRuntimeDeps extends ScriptWorkflowAgentRuntimeDeps {
   prepareUserExecutionBoundary: PrepareUserExecutionBoundary;
   traceContext: TraceContext;
+  /** 测试注入点；缺省惰性构造真实 manager（S1，workflow-worktree-isolation.md R2）。 */
+  worktreeManager?: WorkflowWorktreeManager;
+}
+
+/** activity result 信封里的 worktree 登记（R5：kept/path/branch 供调用方处置隔离产物）。 */
+function buildWorktreeRecord(
+  handle: WorkflowWorktreeHandle,
+  release: WorkflowWorktreeReleaseResult | undefined,
+) {
+  return {
+    baseRef: handle.baseRef,
+    branch: handle.branch,
+    kept: release?.kept ?? true,
+    path: handle.path,
+    releaseReason: release?.reason ?? "release-skipped",
+  };
 }
 
 type ScriptWorkflowRunOptions = {
@@ -58,8 +79,16 @@ export class ScriptWorkflowRuntime {
   private readonly concurrency = resolveWorkflowConcurrencyCeiling();
   private readonly limiter = new WorkflowLimiter(this.concurrency);
   private callIndex = 0;
+  private worktreeManagerInstance?: WorkflowWorktreeManager;
 
   constructor(private readonly deps: ScriptWorkflowRuntimeDeps) {}
+
+  /** worktree 生命周期唯一所有者（惰性构造；测试可经 deps.worktreeManager 注入替身）。 */
+  private worktrees(): WorkflowWorktreeManager {
+    this.worktreeManagerInstance ??=
+      this.deps.worktreeManager ?? new WorkflowWorktreeManager();
+    return this.worktreeManagerInstance;
+  }
 
   async validate(input: { scriptPath: string }): Promise<{ response: string; traceId: string }> {
     const document = await readWorkflowScriptDocument({
@@ -279,9 +308,11 @@ export class ScriptWorkflowRuntime {
     input: WorkflowAgentCallInput,
     options?: ScriptWorkflowRunOptions,
   ): Promise<unknown> {
-    if (input.opts?.isolation === "worktree") {
-      throw new Error("workflow agent isolation 'worktree' is not implemented yet.");
-    }
+    // S1（specs/workflow-worktree-isolation.md）：isolation:"worktree" 由 not-implemented
+    // 桩兑现为真实 git worktree 隔离——ensure 失败 fail-loud 进 catch（activity failed），
+    // 绝不静默降级回共享 cwd；终态回收裁决见下方 try/catch/finally。
+    let worktree: WorkflowWorktreeHandle | undefined;
+    let worktreeRelease: WorkflowWorktreeReleaseResult | undefined;
     const startedAt = Date.now();
     const childSessionId = createSessionId(`workflow_${activity.id}`);
     const childTraceContext = createChildTraceContext(this.deps.traceContext, {
@@ -292,16 +323,27 @@ export class ScriptWorkflowRuntime {
       },
       sessionId: childSessionId,
     });
-    const childRuntime = createScriptWorkflowAgentRuntime({
-      childSessionId,
-      deps: this.deps,
-      request: input,
-      traceContext: childTraceContext,
-    });
     const agentPrompt = buildAgentPrompt(input);
 
     let unsubscribe: (() => void) | undefined;
     try {
+      if (input.opts?.isolation === "worktree") {
+        worktree = await this.worktrees().ensureWorktree({
+          activityId: activity.id,
+          label: input.opts.label,
+          repoDir: this.deps.workingDirectory,
+          runId: run.id,
+        });
+      }
+      const childRuntime = createScriptWorkflowAgentRuntime({
+        childSessionId,
+        deps: this.deps,
+        request: input,
+        traceContext: childTraceContext,
+        // R4 注入面：configOverrides 的 spread 顺序覆盖 deps 直传的父目录；
+        // workspaceRoot 与 workingDirectory 同源（agent-runtime），breaker 收敛随迁。
+        ...(worktree ? { configOverrides: { workingDirectory: worktree.path } } : {}),
+      });
       // workflow_activity.child_session_id has an FK to session(id), so link only after persistence.
       await childRuntime.ensureSessionPersistedForExternalActivity(agentPrompt, {
         traceContext: childTraceContext,
@@ -324,12 +366,17 @@ export class ScriptWorkflowRuntime {
       });
       const stats = await this.collectSessionStats(childSessionId);
       const value = input.opts?.schema ? parseStructuredResponse(result.response) : result.response;
+      // R5：成功路径在写 completed 记录**之前**完成回收裁决——result 信封要带 kept 信息。
+      if (worktree) {
+        worktreeRelease = await this.worktrees().releaseWorktree(worktree);
+      }
       const activityResult = {
         response: result.response,
         stats,
         traceId: result.traceId,
         turnId: result.turnId,
         value,
+        ...(worktree ? { worktree: buildWorktreeRecord(worktree, worktreeRelease) } : {}),
       };
       await this.store().updateScriptWorkflowActivity({
         completedAt: Date.now(),
@@ -359,10 +406,15 @@ export class ScriptWorkflowRuntime {
       // Keep the activity envelope on the child-process IPC boundary; script code receives value.
       return activityResult;
     } catch (error) {
+      // R5：失败/abort 同样先裁决——abort 常留半截编辑（dirty），材料优先保留并登记。
+      if (worktree && !worktreeRelease) {
+        worktreeRelease = await this.worktrees().releaseWorktree(worktree);
+      }
       await this.store().updateScriptWorkflowActivity({
         completedAt: Date.now(),
         error: serializeError(error),
         id: activity.id,
+        ...(worktree ? { result: { worktree: buildWorktreeRecord(worktree, worktreeRelease) } } : {}),
         status: "failed",
       });
       await this.addRunStats(run.id, {
@@ -377,6 +429,10 @@ export class ScriptWorkflowRuntime {
       throw error;
     } finally {
       unsubscribe?.();
+      // 兜底：正常路径已在 try/catch 内裁决；仅当 release 自身意外抛出才走到这里。
+      if (worktree && !worktreeRelease) {
+        await this.worktrees().releaseWorktree(worktree).catch(() => undefined);
+      }
     }
   }
 

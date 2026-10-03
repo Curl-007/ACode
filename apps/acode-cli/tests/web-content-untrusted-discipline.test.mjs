@@ -16,9 +16,21 @@ const { buildProcessingPrompt } = await import(
   "../packages/core/src/tool/handlers/webfetch-processing.ts"
 );
 const { webFetchToolEntry } = await import("../packages/core/src/tool/handlers/webfetch.ts");
+const { WEBFETCH_USER_AGENT } = await import(
+  "../packages/core/src/tool/handlers/webfetch-constants.ts"
+);
 const { webSearchToolEntry } = await import("../packages/core/src/tool/handlers/websearch.ts");
 
 const CJK_PATTERN = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/;
+
+test("(审计F1) WebFetch UA 携带 ACode 自身标识，上游品牌 URL 不得回来", () => {
+  assert.ok(WEBFETCH_USER_AGENT.startsWith("ACode-WebFetch/"));
+  assert.ok(!WEBFETCH_USER_AGENT.includes("zcode"), `UA 含上游品牌残留：${WEBFETCH_USER_AGENT}`);
+  assert.ok(
+    !/https?:\/\//.test(WEBFETCH_USER_AGENT),
+    "ACode 无官方域名，UA 不带 URL 段（宁缺勿错）",
+  );
+});
 
 test("(场景1/R1) 处理提示词两个变体都含不可信界定，既有约束逐字保留", () => {
   for (const preapprovedUrl of [true, false]) {
@@ -74,7 +86,9 @@ test("(场景2/R2) WebFetch 描述新增两条 bullet，既有三条逐字保留
 test("(场景3/R3) WebSearch 描述新增一条 bullet，既有内容逐字保留、月份插值不变", () => {
   const desc = webSearchToolEntry.metadata.description;
   assert.ok(desc);
-  assert.ok(desc.startsWith("Search the web. Returns result blocks with titles and URLs. US-only."));
+  assert.ok(desc.startsWith("Search the web. Returns result blocks with titles and URLs."));
+  // 审计 F2 修复钉住：承袭的「US-only」provider 特定断言不得回来。
+  assert.ok(!desc.includes("US-only"));
   // 既有三条（月份行按当前月插值）：
   const now = new Date();
   const months = [

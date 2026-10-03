@@ -106,22 +106,47 @@ host botsService.watchTaskStream
   必须同步接受该键**，否则管理员部署该键会让 CLI 地板降级为 MINIMAL_LOCKDOWN（丢 deny 规则）。
 - R2.3 门槛判定（纯函数，`packages/services/src/bots/botPermissionLocalApproval.ts`）：
   `required = settings.botPermissionLocalApprovalEnabled === true
-  ∨ managed.status === "invalid" ∨ managed.requireLocalPermissionApproval === true`。
+  ∨ managed.status === "invalid" ∨ managed.requireLocalPermissionApproval === true
+  ∨ riskTier(requestRiskLevel)`（R2.7 风险分层，2026-10-03 批次 4 增补）。
   - 策略文件损坏/不可读 → **fail-closed 视为开启**（与 CLI MINIMAL_LOCKDOWN 同一克制哲学：
     不阻断工作——桌面本机仍可批——只收回较弱通道）。
   - 管理员地板开启时用户设置不能放宽（strictest-wins，∨ 语义天然满足）。
 - R2.4 botsService 接线：
-  - `permission_request` 事件分支：`broadcastTaskListChange` 照常先发；门槛开 → 发只读提示
-    （复用 `formatBotPermissionRequestSummary` 摘要 + 新文案 `permissionAwaitingDesktopApproval`），
-    **不写** `pendingPermissionOptions`（bot 侧从源头没有可交互路径）；门槛关 → 现状不变。
-  - `permission.respond` / `approve` / `deny` 三个 action 分支：鉴权后、解析选项前加守卫，
-    门槛开 → 回复新文案 `permissionLocalApprovalRequired` 并 return（纵深防御：覆盖门槛开启前
-    已发出的旧卡片按钮与手打命令）。
+  - `permission_request` 事件分支：`broadcastTaskListChange` 照常先发；门槛开（含 R2.7
+    风险分层命中）→ 发只读提示（复用 `formatBotPermissionRequestSummary` 摘要 + 文案
+    `permissionAwaitingDesktopApproval`），**不写** `pendingPermissionOptions`（bot 侧从源头
+    没有可交互路径）；门槛关 → 现状不变。
+  - `permission.respond` / `approve` / `deny` 三个 action 分支：鉴权后加守卫，门槛开 →
+    回复文案 `permissionLocalApprovalRequired` 并 return（纵深防御：覆盖门槛开启前已发出
+    的旧卡片按钮与手打命令）。**R2.7 后守卫位置调整**：从「解析选项前」移到「解析选项后」，
+    以所解析 pending 选项携带的 `riskLevel` 做单一调用点判定——高风险请求本就不会有 pending
+    选项（卡片从未发出），旧持久化选项缺 `riskLevel` 时 fail-closed 拒绝；`deny` 在无
+    pending 选项时同样 fail-closed 拒绝（请求保持等待，桌面可拒——拒绝权不丢失，只是收口）。
   - 门槛每次事件即时判定（settings `get()` + 策略文件小 JSON 同步读），不做进程级缓存——
     权限事件天然低频，且设置/策略变更需立即生效。
 - R2.5 新文案 keys（`messages.ts` zh + en 双份，TS 类型强制对齐）：
   `permissionAwaitingDesktopApproval`、`permissionLocalApprovalRequired`。
 - R2.6 只读提示必须保留权限摘要（工具名/命令预览），让聊天侧用户知道桌面端在等什么。
+- R2.7 **风险分层默认**（2026-10-03 批次 4，评估节选项 B 经所有者批复实施）：
+  `riskTier(requestRiskLevel) = requestRiskLevel === undefined ∨ requestRiskLevel === "high"
+  ∨ requestRiskLevel === "critical"`。即 **high/critical 权限请求无论用户设置如何都要求
+  桌面本机批准**——把「聊天账号失陷 → 自己发起自己批准高风险动作」的 self-approval 残余
+  风险收掉；low/medium 维持现状（全局门槛关时聊天可批），远程聊天审批的核心使用形态不变。
+  用户设置与管理员地板只能**再收紧**（∨ 语义），不能放宽风险分层。
+  - **riskLevel 来源（投影加宽）**：三个协议源的 schema 均**必带** riskLevel
+    （`acodePermissionRequestParamsSchema` / `acodePendingPermissionSchema` /
+    `acodePermissionRequestedEventPayloadSchema`，`packages/shared/src/acode-protocol`）；
+    此前 `acodeTaskServiceAdapter` 投影为 `ACodePermissionRequest` 流事件时丢弃了该字段。
+    本规则要求：`ACodePermissionRequest` 增加可选 `riskLevel`（三处投影全部透传；legacy
+    payload 投影做四值字面量校验后才透传）。可选而非必带 = 对旧持久化/回放事件的偏斜
+    宽容，缺失时消费端 fail-closed（视为 high）。
+  - **持久化同批加宽**（批次 2 SUBSCRIPTION_CONTENT_REJECTED 教训）：
+    `BotPendingPermissionOption` 增加可选 `riskLevel`，`bots.ts` 的 bot-state strict zod
+    schema **同批**接受该键——否则卡片创建时写入的 riskLevel 会在持久化往返中被静默剥离，
+    守卫端全部 fail-closed 成「只能桌面批」。旧持久化状态无该键 → optional 加载正常 →
+    守卫 fail-closed，方向保守。
+  - **事件与守卫消费**：`permission_request` 事件用 `event.riskLevel` 判定；三个守卫
+    action 用所解析 pending 选项的 `riskLevel` 判定（见 R2.4 调整）。
 
 ### R3 managed-policy 单一来源
 
@@ -149,6 +174,12 @@ host botsService.watchTaskStream
    CLI 地板正常加载（deny/ask 规则不丢、不降级 MINIMAL_LOCKDOWN）。
 5. 策略文件损坏：CLI 侧 MINIMAL_LOCKDOWN（现状不变）；services 侧门槛 fail-closed 开启。
 6. 两端 racing（门槛关时 bot 与桌面同时批）：先到者生效，后到者收到 duplicate/noop，不重复执行。
+7. R2.7 风险分层 + 全局门槛关：high/critical 请求 bot 只发只读提示（含权限摘要）、不写
+   pendingPermissionOptions；low/medium 请求卡片照发、聊天可批（现状回归不变）。
+8. R2.7 偏斜容错：事件缺 riskLevel（旧回放/legacy 投影）→ fail-closed 走只读提示；
+   旧持久化 pending 选项缺 riskLevel → 守卫拒绝并指引桌面批准。
+9. R2.7 守卫：全局门槛关时，对高风险请求的手打 `/approve`、`/deny`、旧卡片按钮一律被
+   守卫拒绝（判定在解析选项后以选项 riskLevel 进行）；low/medium 的既有批准路径不变。
 
 ## 测试计划
 
@@ -192,6 +223,11 @@ host botsService.watchTaskStream
   不做），不单独落地。
 
 **结论与建议**：技术上推荐 **B**（信任不对称是真实的，且实施面小、判定纯函数可测）；
-但「默认 OFF」是 spec 明文的用户已对齐决策，翻转默认值属**产品决策**，不在批次 4 内
+但「默认 OFF」是本 spec 明文的用户已对齐决策，翻转默认值属**产品决策**，不在批次 4 内
 擅自实施。登记为待用户裁决项：选 B 则按上述 S 级改动落地并更新验收场景 1/2；选 A 则
 本评估存档、残余风险由用户知情承担。C 仅在出现真实管理员需求时与 B 合并考虑。
+
+**裁决记录（2026-10-03）**：所有者批复「按照你的建议完整实现」→ **采纳 B**，以 R2.7
+规则实施（风险分层默认 ON，用户设置不可放宽；A 的全局默认 OFF 对 low/medium 保持不变，
+C 不落地）。情势变更依据：批次 3 已落地风险词汇与 bot 模式天花板，B 的实施前提
+（riskLevel 元数据、判定基建）在评估时点已比原对齐时点完备。

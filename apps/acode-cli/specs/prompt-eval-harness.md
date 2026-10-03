@@ -39,6 +39,11 @@ apps/acode-cli/evals/
     └── judge-response-sample.json   合成 judge 响应（解析器/聚合器测试用）
 ```
 
+v1 增补（归属 `prompt-eval-runner.md`，本 spec 的树不随其扩展）：`runner.mjs`（采集/
+整形/判分编排）、`recipes/`（每场景采集配方）、`reports/`（入库报告；`reports/raw/`
+gitignored 存转录与判分往返文件）。语料与 judge 纯函数的所有权仍在 v0 边界内——
+runner 只读 scenarios.json、只 import judge.mjs，不平行实现判分。
+
 `judge.mjs` 导出纯函数（可单测）：`loadScenarios` / `validateScenario` /
 `buildJudgeRequest` / `parseJudgeResponse` / `scoreScenario`；CLI 入口
 （`node evals/judge.mjs --scenario <id> --transcript <file> [--json-out <file>] [--live]`）

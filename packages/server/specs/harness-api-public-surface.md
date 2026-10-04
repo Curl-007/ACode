@@ -171,8 +171,11 @@ CLI 入口形态；`packages/harness-sdk`（新包：client/session/launch/struc
 4. **seq 丢帧检测**：桥注入丢帧 → SDK `onGap` 回调（测试钩子）；
 5. **权限 fail-closed**：PermissionRequested 无应答超时 → turn 拒绝而非挂死；
    应答 allow → 继续；
-6. **configure_tools**：disable 生效（工具面不含被禁项）；自定义工具经回调执行且
-   结果回传引擎（ToolCall 事件往返）；
+6. **configure_tools**：v1 按附录 A 映射表返回 `not_supported`（services 层无 create 后
+   的会话级动态工具配置面，也无自定义工具注册回调）；工具控制经
+   `create_session.toolDenylist`（创建时禁用清单）表达；自定义工具回调属 v2 additive
+   落地后解除。**修订说明（K7 对抗复核 M5）**：原场景 6 描述的「disable 生效 + 自定义
+   工具回调往返」与附录 A 映射表矛盾——v1 契约以附录 A 为准，spec 修订而非改实现；
 7. **launch 隔离**：runtime 目录独立（不污染 Desktop 会话库——两库文件集断言分离）；
    inheritCredentials 走授权路径（keychain 在场时零明文文件拷贝断言）；
 8. **structured**：schema 违例 → 重试带错误反馈 → 第 2 次合法 → 返回；连续违例 →
@@ -198,3 +201,129 @@ CLI 入口形态；`packages/harness-sdk`（新包：client/session/launch/struc
 协议形态（版本化 NDJSON/Unknown 兜底/翻译桥独立于内部协议/双模式 SDK/parity 测试
 方法论）参照 jcode (MIT) harness-api 与 sdk crate，自撰 TypeScript 实现；
 wire schema 与方法面按 ACode services 层 API 重新设计。
+
+---
+
+## 实施附录（K7 落地登记，2026-10-04）
+
+### A. services 层方法面映射表（翻译桥逐方法）
+
+| Harness 方法                          | services 层入口                                                                                                                                  | 结论                                                                                                                                                                                   |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| list_sessions                         | `IACodeAgentService.listSessions`                                                                                                                | 直译                                                                                                                                                                                   |
+| create_session                        | `IACodeAgentService.createSession`（mode/model/toolDenylist 透传）                                                                               | 直译；`systemPrompt` 入参 services 层 createSession 无对应 → 提供时返回 not_supported                                                                                                  |
+| attach_session                        | `IACodeAgentService.resumeSession`                                                                                                               | 直译                                                                                                                                                                                   |
+| detach_session                        | `IACodeTaskService.releaseWorkspacePreparation`                                                                                                  | 直译（detach=放手：绝不 closeSession——那会终止会话本体）                                                                                                                               |
+| fork_session                          | `IACodeAgentService.createSession({ parentSessionId })`                                                                                          | 直译                                                                                                                                                                                   |
+| rewind_session                        | —                                                                                                                                                | **not_supported**：services 层无会话级 rewind API（仅 CLI 内建 `/rewind` 命令与 v4 文件 rewind 预览）；schema 预留 target，待 services additive                                        |
+| send_message                          | `IACodeAgentService.sendPrompt`（服务层既有入口；v4 sendText 收敛路径仍由 services 内部承担）                                                    | 直译                                                                                                                                                                                   |
+| cancel_turn                           | `IACodeTaskService.stopGeneration`（taskId ≡ sessionId）                                                                                         | 直译                                                                                                                                                                                   |
+| run                                   | `sendPrompt`（预分配 `harness-run-<uuid>` inputId 随 send 下发，引擎 TurnStarted/TurnComplete payload 回显——K7 复核 H1 归属依据）+ `onDynamicSessionEvent` 订阅窗口等**本 run turn** 的终态；引擎不回显 inputId 时退化只认「订阅后 TurnStarted→TurnDone 完整对」；不轮询 readSessionEvents——afterSeq=0 起扫会命中历史 turn 终态 | 组合翻译                                                                                                                                                                               |
+| subscribe_events / unsubscribe_events | `IACodeAgentService.onDynamicSessionEvent`（deliveryKind=desktop-continuous；桥持连接作用域订阅登记 + 单调 seq）                                 | 直译                                                                                                                                                                                   |
+| permission_respond                    | `IACodeTaskService.respondPermission`（taskId ≡ sessionId；服务层 response 字段在 v4 resolveInteraction 路径不被消费，决策由 optionId 完整承载） | 直译                                                                                                                                                                                   |
+| set_model                             | `IACodeAgentService.setModel`                                                                                                                    | 直译                                                                                                                                                                                   |
+| get_models                            | `IModelSelectionService.getView`（只读；不含凭据管理写操作）                                                                                     | 直译                                                                                                                                                                                   |
+| compact                               | `IACodeAgentService.compactSession`                                                                                                              | 直译                                                                                                                                                                                   |
+| read_file                             | `IFileService.readTextFile`                                                                                                                      | 直译                                                                                                                                                                                   |
+| search_text                           | —                                                                                                                                                | **not_supported**：IFileService 只有文件名搜索（searchWorkspaceFiles），内容 grep 在 agent 工具面不在 services 层                                                                      |
+| find_files                            | `IFileService.searchWorkspaceFiles`                                                                                                              | 直译                                                                                                                                                                                   |
+| configure_tools                       | —                                                                                                                                                | **not_supported**：services 层工具控制是 create/resume/send 时点的 toolAllowlist/toolDenylist 参数，无 create 后动态配置面与自定义工具注册回调；可用替代 `create_session.toolDenylist` |
+
+事件面映射：`turn.started→turn_started`、`turn.completed/failed→turn_done`（终态
+resultType 归一 success/cancelled/error）+ `token_usage`、`part.delta(field=text)→text_delta`、
+`tool.updated(started|result|error)→tool_call_started/finished`、
+`permission.requested→permission_requested`（session 帧与 typed 帧双发按 requestId 去重）；
+其余内部事件（message.upserted/session.\* 等）不在 v1 公开面，桥侧丢弃。
+
+### B. CLI 入口选择：独立 bin `acode-harness`（spec R3 二选一裁决）
+
+`packages/server/src/entry-harness.ts` + package.json bin + tsup entry。
+理由：`acode-server-cli` 是 supervisor 守护进程命令面（serve/status/stop/restart/
+update/uninstall + data-root 锁/OS service 注册/更新事务），在其上挂 `--harness`
+stdio 直连形态会绕过锁与 Supervisor 生命周期治理；独立 bin 与 stdio/http entry
+同层级，services 懒构造（握手/版本拒绝路径零服务面初始化）。
+
+### C. 凭据继承实现结论（R4 launch）
+
+凭据存储形态（实施核实，`packages/shared/src/node/credentialMasterKey.ts`）：
+密文 `{dataBaseDir}/.acode/v2/credentials.json`（enc:v2 全加密，磁盘无明文）；
+主密钥解析优先级 = OS 钥匙串（macOS Keychain / Windows DPAPI blob 文件
+`credential-key.dpapi.json` / Linux libsecret）→ `credential-key.json` → env。
+
+- **引用式继承不可实现**：凭据目录没有独立 env（随 ACODE_DATA_BASE_DIR 整体
+  .acode 隔离），无「指向原库」的机制。
+- **采用的继承 = 加密文件成对字节拷贝**：credentials.json + 随行密钥材料
+  （credential-key.json 与/或 credential-key.dpapi.json）一起拷入 runtime 目录
+  （0600 语义、零解密零明文、写 sdk-credential-inheritance.json 溯源标记）——
+  与既有 `copyDataDirectory` 迁移同安全语义，不绕过主密钥（子进程走同一解析链）。
+- **钥匙串模式 fail**：credentials.json 存在而密钥材料文件不在场（macOS Keychain /
+  Linux libsecret 持有材料）时，返回 `{ status: "failed" }` 并说明原因——绝不拷明文、
+  绕钥匙串。消费方可选 `inheritCredentials:false` 或在隔离 runtime 内重新登录。
+  **K7 复核 M7 例外**：`ACODE_CREDENTIAL_SECRET` env 模式（主密钥解析第 4 级来源）
+  不是「钥匙串持有」——env 随 launch 传子进程，凭据可继承（只拷密文 credentials.json，
+  无需随行密钥材料，仍然零解密零明文）；launch() 对 `failed` 状态直接抛
+  `HarnessLaunchError`（fail 并报告，不再静默继续到首次调用才炸）。
+- 第三方 IDE 凭据：红线不碰（jcode inherit 清单仅作情报）。
+
+### D. 实施期修复的真实缺陷
+
+- SDK `prepareLaunchRuntime` 凭据源目录曾用 `node:os homedir()`——Windows 上它只认
+  USERPROFILE、忽略 HOME 覆盖，launch 隔离测试（及任何设 HOME 的宿主）会**静默读到
+  真实用户凭据库**并拷进 runtime。已修复为镜像 services 层 `getDataBaseDir` 解析链
+  `ACODE_DATA_BASE_DIR → HOME → homedir()`（launch 隔离测试的「主库文件集不变」断言
+  抓住该缺陷）。
+- K7 对抗复核缺陷（2026-10-04 第二轮，修复清单）：
+  - H1 `runAndWaitTurn` 终态归属：只认本 run 的 turn（inputId 回显主路径 + 订阅后
+    TurnStarted→TurnDone 完整对的退化路径），在途旧 turn 终态不再被冒领；
+  - H2 翻译桥入参接入 `harnessMethodParamsSchemas`（shared 映射表）safeParse，
+    失败回 `invalid_params`（含字段路径）；`String(undefined)` 变形透传全部移除
+    （send 缺 content / fork 缺 sessionId / limit 越界三实证形态全部拦截）；
+  - M1 NDJSON 跨 chunk 多字节 UTF-8：transport/connection 三处 `chunk.toString("utf8")`
+    改 `StringDecoder`（中文核心场景）；
+  - M2 `session.send()` 补订阅（send-only 权限事件必达、fail-closed 计时器起表）；
+  - M3 SDK 双重泄漏：session 连接级监听器可回收（`session.close()`/`client.close()`
+    统一清理），events() 队列条目真移除；
+  - M4 单行上限 4 MiB（`HARNESS_MAX_LINE_LENGTH`，shared 单一出处；超限 error 帧
+    line_too_long + 断连 / SDK `frame-too-large` 断连归因）与 writeLine 写背压
+    （write() false → 暂停输入泵，drain 恢复）；
+  - M7 launch 凭据继承 failed 抛 `HarnessLaunchError`；env 主密钥模式归因修正；
+  - M8 `describeZodSchema` 标量/枚举/optional 识别（ask requirement 不再全 any）；
+  - L1 `ACODE_HARNESS_COMMAND_JSON`（JSON 数组形态，支持含空格路径；旧格式兼容）；
+  - L2 `pickDenyOption` 显式 deny/reject 匹配（optionId/kind/name，词边界），
+    兜底末项的契约假设已注释登记。
+
+### D2. 已知限制（K7 对抗复核 Low 级，登记不实现）
+
+- **L3 run 超时不回收引擎 turn**：`run_timeout` 抛出时 turn 可能仍在引擎执行，
+  桥不自动 cancel_turn（消费方自行决定；自动取消会误伤并发 turn）。
+- **L4 permission_respond 中性 decision**：services 层 respondPermission 的 response
+  字段在 v4 resolveInteraction 收敛路径不被消费，桥传中性 `{decision:"allow"}`
+  仅满足入参 schema，决策完全由 optionId 承载。
+- **L5 permission 去重集上限**：桥侧 seenPermissionRequestIds 超过 256 清空重建，
+  极端场景可能多发一条重复 permission_requested（消费方应答幂等，最坏影响可控）。
+- **L6 send_message 不回传 turnId**：sendPrompt 的返回面（ACodeSessionSendResult）
+  不含 turnId/inputId，send-only 消费方只能从事件流拿归属（run 路径已有 inputId）。
+- **L7 行上限按解码字符计**：`HARNESS_MAX_LINE_LENGTH` 以解码后 UTF-16 字符数近似
+  字节（非精确字节数），边界值有 ≤4 字节误差——防 OOM 语义不受影响。
+- **L8 同会话并发 run 的退化归属不区分**：引擎不回显 inputId 的退化路径下，
+  同会话并发第三方 turn 的终态可能被先到者误收（v1 串行假设，inputId 主路径不受影响）。
+
+### E. 测试与验证真实结果（2026-10-04 复核修复后，Windows / Node 25.8.2 / pnpm 10.33.2）
+
+- `node --import tsx --test packages/server/tests/harness-api.test.mjs`：16/16 pass
+  （真实子进程端到端；services 层公开接口脚本化桩件——真实 agent 需真实模型凭据；
+  含 H1 归属×2 / H2 参数校验 / M1 UTF-8 跨 chunk / M4 行上限+写背压回归；
+  waitFor 上限 8s→20s——tsx 冷启动 9s 实测会顶穿 8s）。
+- `node --import tsx --test packages/harness-sdk/tests/parity.test.mjs`：15/15 pass
+  （SDK vs 直接 NDJSON 逐方法 parity、seq gap、权限 fail-closed、结构化输出重试、
+  断连归因、launch 隔离/凭据继承（含 env 密钥模式）/launch fail 抛错、
+  M1 SDK 侧 UTF-8、M2 send-only、M3 泄漏回落、M4 frame-too-large、
+  M8 schema 描述、L1/L2 单元）。
+- `packages/shared`：`tsc --noEmit -p .` 通过；`tsc -p .` 通过（产出含 harness-api 声明）。
+- `packages/server`：`tsc --noEmit -p .` 通过。
+- `packages/harness-sdk`：`tsc --noEmit -p .` 通过。
+- 根 `pnpm typecheck`：通过（项目列表未动；harness-sdk 由各包 tsconfig/references
+  自检，未加入根 `tsc -b` 列表）。
+- 红线钉住：acode-protocol / acode-protocol-v4 git 零 diff（测试断言）；翻译桥源码
+  acode-protocol import 零命中（测试断言）；Desktop stdio 链路（entry-stdio/stdio.ts）
+  零改动。

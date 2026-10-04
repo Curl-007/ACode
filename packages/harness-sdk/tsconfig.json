@@ -1,0 +1,13 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src",
+    "lib": ["ES2022"],
+    "types": ["node"]
+  },
+  "include": ["src"],
+  // SDK 只依赖 shared 的 harness-api 投影（browser-safe zod 面），显式引用 shared project，
+  // typecheck 优先读取 shared 已生成的声明文件而不是重编其源码。
+  "references": [{ "path": "../shared" }]
+}

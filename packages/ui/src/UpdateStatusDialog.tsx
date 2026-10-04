@@ -13,7 +13,10 @@ import { Progress } from "@/components/ui/progress.js";
 import type { IntlInstance } from "@/i18n/IntlProvider.js";
 import type { UpdateStatusDialogPhase } from "@/updateStatusModel.js";
 
-const macosDockIconUrl = new URL("../../../public/icon_512@2x.png", import.meta.url).href;
+// 更新弹窗图标 = 当前品牌资产（public/logo/icons，与 desktop build/icon.png 同源）。
+// 修复（2026-10-04）：此前指向根 public/icon_512@2x.png——10-02 换标时漏改的旧 `<✦>`
+// 标记残留，弹窗因此展示旧图标；旧文件同批删除防再引用。
+const appIconUrl = new URL("../../../public/logo/icons/1024x1024.png", import.meta.url).href;
 
 type LocalizedUpdateReleaseNotes = {
   markdown: string;
@@ -105,7 +108,7 @@ export function UpdateStatusDialog({
       <DialogHeader className="gap-0">
         <div className="flex min-w-0 items-center gap-3 [app-region:no-drag]">
           <img
-            src={macosDockIconUrl}
+            src={appIconUrl}
             alt=""
             aria-hidden="true"
             className="pointer-events-none -ml-[5px] size-12 shrink-0 select-none shadow-none drop-shadow-none"

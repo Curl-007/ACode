@@ -75,6 +75,12 @@ import {
 } from "../session-target.js";
 import { SqliteSessionMigrationError } from "./errors.js";
 import {
+  scheduleSessionMessageFtsPreheat,
+  searchSessionMessages as runSessionMessageSearch,
+  type SessionMessageSearchInput,
+  type SessionMessageSearchOutput,
+} from "./fts.js";
+import {
   DEFAULT_SQLITE_STARTUP_LOCK_TIMEOUT_MS,
   runSqliteSessionMigrations,
   runSqliteSessionMigrationsAsync,
@@ -275,6 +281,9 @@ export class SqliteSessionStore
     const store = new SqliteSessionStore(options, deferredStartup);
     try {
       await runSqliteSessionMigrationsAsync(store.db, store.dbPath, migrationOptions);
+      // K4 R5 索引预热：storageReady 后低优先级核对 FTS 缺口（存量回填兜底 + 孤儿
+      // 清理），不阻塞任何读路径；runtime 启动路径统一走本工厂，这里就是接线点。
+      scheduleSessionMessageFtsPreheat(store.db);
       return store;
     } catch (error) {
       // close 也可能因 IO 失败；迁移的原始 cause 才是用户应处理的原因。
@@ -536,6 +545,15 @@ export class SqliteSessionStore
     messageID: MessageId;
   }): Promise<MessageWithParts | null> {
     return messageRepository.messageWithParts(this.db, input);
+  }
+
+  /**
+   * K4 跨会话搜索（specs/session-search.md）：session_message_fts 投影上的关键词
+   * 检索。方法不在 SessionStorePort 上（contracts 不随 K4 改动），core 侧以结构化
+   * duck-typing 消费（同 bootstrap 的 asInputHistoryStore 模式）。
+   */
+  searchSessionMessages(input: SessionMessageSearchInput): SessionMessageSearchOutput {
+    return runSessionMessageSearch(this.db, input);
   }
 
   async messages(input: { sessionID: SessionId }): Promise<MessageWithParts[]> {

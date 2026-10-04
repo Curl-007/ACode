@@ -55,6 +55,7 @@ import type { AgentRuntimeCoreMethods } from "./internal-methods.js";
 import type { AgentRuntimeTurnMethods } from "./internal-turn-methods.js";
 import type { AgentRuntimeHookMethods } from "./internal-hook-methods.js";
 import type { ProjectMemoryExtractionScheduler } from "./helpers/project-memory-extraction.js";
+import type { MemorySemanticRecallChannel } from "./helpers/memory-semantic-recall.js";
 import type { RuntimeTelemetryFacade } from "../telemetry/runtime-telemetry.js";
 import type { WorkspaceHookRuntimeAdmissionPort } from "../hooks/workspace-hook-runtime-admission.js";
 
@@ -94,6 +95,12 @@ export interface AgentRuntimeInternal
   memoryRoot?: string;
   memoryIndexContent?: string;
   memoryExtractionScheduler?: ProjectMemoryExtractionScheduler;
+  /**
+   * K1 会话级语义召回通道（specs/memory-semantic-recall.md R6/R9）：injector（含四层
+   * 去重账本）+ 检索管线 + 度量账本。会话唯一所有者（非模块级全局），首轮检索时惰性
+   * 构造；resume/rewind 不跨会话复用。
+   */
+  memorySemanticRecallChannel?: MemorySemanticRecallChannel;
   contextSourcePort?: ContextSourcePort;
   skillPort?: SkillPort;
   mcpPort?: McpPort;

@@ -104,6 +104,7 @@ import { resolveACodeBuiltinPromptCommand } from "../builtin-prompt-command.js";
 import { collectDisabledPaths } from "../skill-command-overrides.js";
 import { loadPluginAgentProfiles, loadACodeAgentProfiles } from "../subagents.js";
 import { createRuntimeAiSdkModelExecutionConfig } from "../model-config.js";
+import { createCliPlatformOpenPort } from "./platform-open-port.js";
 import { ApiProviderModelRuntime } from "./provider-registry-model-runtime.js";
 import {
   completeAppStartup,
@@ -838,6 +839,9 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
       modelCatalogPort,
       automationPort: options.automationPort,
       offPeakPort: options.offPeakPort,
+      // CLI 宿主 native opener（K9）：Open 工具的平台 port。desktop host 下发链
+      // 接入后由宿主侧替换注入，此处保持 CLI 形态的兜底实现。
+      platformOpenPort: createCliPlatformOpenPort(),
       appVersion,
       traceContext,
     });

@@ -25,6 +25,9 @@ export type {
 export { createToolRegistry, ToolRegistry, ToolRegistryImpl } from "./tool/registry.js";
 export { createToolExecutor, ToolExecutor, ToolExecutorImpl } from "./tool/executor.js";
 export { builtInTools, registerBuiltInTools } from "./tool/handlers/index.js";
+// Open 工具的平台端口类型：宿主（bootstrap 的 CLI native opener / desktop host 下发链）
+// 实现此接口注入，缺席则工具不注册（K9 R2 port 门控）。
+export type { OpenPlatformPort } from "./tool/handlers/open.js";
 // dwf driver 的 submit profile 运行时守卫要把 typed 声明换回通用声明。
 export {
   createSubmitResultToolEntry,

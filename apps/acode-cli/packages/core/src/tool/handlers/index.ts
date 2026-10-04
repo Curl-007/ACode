@@ -68,6 +68,8 @@ import { evalWorkflowSnippetToolEntry } from "./eval-workflow-snippet.js";
 import { listWorkflowRunsToolEntry } from "./list-workflow-runs.js";
 import { getWorkflowRunToolEntry } from "./get-workflow-run.js";
 import { resumeWorkflowRunToolEntry } from "./resume-workflow-run.js";
+import { sessionSearchToolEntry } from "./session-search.js";
+import { createOpenToolEntry, type OpenPlatformPort } from "./open.js";
 import { createToolRuleNameSet } from "../tool-visibility.js";
 
 // direct 分支保留 Glob/Grep 工具实现；embedded search 分支由 registerBuiltInTools
@@ -107,6 +109,9 @@ export const builtInTools: ToolEntry[] = [
   taskOutputToolEntry,
   taskStopToolEntry,
   readSessionContextToolEntry,
+  // 跨会话全文搜索（K4）：本地只读、无 gate，与 ReadSessionContext 同级——
+  // 都消费 sessionStore 面且不产生副作用，handler 运行时经 context 取存储能力。
+  sessionSearchToolEntry,
   agentToolEntry,
   taskToolEntry,
   skillToolEntry,
@@ -175,6 +180,8 @@ interface RegisterBuiltInToolsOptions {
   includeAutomation?: boolean;
   /** Off-Peak 会话内创建工具面；由 host 的 offPeakToolEnabled flag（灰度/远程门）驱动。 */
   includeOffPeak?: boolean;
+  /** 开箱（Open 工具）平台端口；在场即注册，缺席不注册（K9 R2 的 port 门控）。 */
+  platformOpenPort?: OpenPlatformPort;
   /**
    * 动态工作流灰度门。**只有显式 false
    * 才下架** DYNAMIC_WORKFLOW_TOOL_NAMES：缺席代表调用方不参与灰度（TUI、headless、
@@ -266,6 +273,12 @@ export function registerBuiltInTools(
     registry.register(resolveBuiltInToolEntryForBranch(entry, options), {
       silentDuplicateWarning: options.silentDuplicateWarnings,
     });
+  }
+  // Open 工具（K9）：依赖 platform port 构造 handler 闭包，不能进静态数组——
+  // 端口缺席即 undefined，不注册（CLI 无平台宿主时 Open 自然缺席，模型看到的世界自洽）。
+  const openEntry = createOpenToolEntry({ platform: options.platformOpenPort });
+  if (openEntry) {
+    registry.register(openEntry, { silentDuplicateWarning: options.silentDuplicateWarnings });
   }
 }
 

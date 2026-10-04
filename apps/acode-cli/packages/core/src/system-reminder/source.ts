@@ -44,6 +44,7 @@ export const SYSTEM_REMINDER_PER_REQUEST_SOURCES = [
   "plan_mode_exit",
   "output_style",
   "memory_recall",
+  "memory_semantic_recall",
   "date_change",
   "runtime_restart_tasks",
   "referenced_session_context",
@@ -99,6 +100,18 @@ const SYSTEM_REMINDER_DESCRIPTORS: Record<SystemReminderSource, DescriptorShape>
   // 条件重建即可，因此走 per-request 档、不落 session；不进 persisted 名单也就不会出现在
   // contracts 枚举、v4 origin 映射与 shared 投影白名单里（R7 有断言钉住）。
   memory_recall: descriptor("current_turn", "per_current_turn", true, "sr.memory_recall"),
+  // 语义召回动态注入（specs/memory-semantic-recall.md R6）：每 turn 以最新用户消息检索
+  // 出的 top-K 记忆条目正文，内容逐 turn 变化。与 memory_recall 的静态定性提醒刻意
+  // 分开成两种 kind：定性提醒有 5-turn 节奏配额，动态注入必须每轮独立评估、不能共享
+  // 配额（否则注入会被定性提醒的节奏拖延）。同样走 per-request 档、不落 session——
+  // 注入文本只对当轮模型请求有效，冷恢复后下一 turn 重新检索即可，持久化反而会把
+  // 「某轮的检索结果」伪装成「会话事实」。
+  memory_semantic_recall: descriptor(
+    "current_turn",
+    "per_current_turn",
+    true,
+    "sr.memory_semantic_recall",
+  ),
   date_change: descriptor("current_turn", "runtime_local", true, "sr.date_change"),
   // 重启孤儿任务提醒（specs/runtime-restart-task-reminder.md R2）：正文是持久化历史的
   // 确定性派生（launch/终态记录都在 session store），冷恢复重算即可、无需逐字存活，

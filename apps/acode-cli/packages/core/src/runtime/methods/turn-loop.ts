@@ -14,6 +14,7 @@ import {
   buildRuntimeRestartReminderBody,
   buildTodoReminderBody,
   buildRuntimeProviderRequestMessages,
+  buildSemanticMemoryRecallReminderBody,
   createCompactRapidRefillError,
   findOrphanedBackgroundTaskIds,
   throwIfTurnAborted,
@@ -191,6 +192,21 @@ export async function runRegularTurnLoop(
       commitTurnRequestEntries(this, state.turnRequestState, [
         systemReminderAttachmentEntry("memory_recall", memoryRecallReminderBody),
       ]);
+    }
+    // K1 语义召回动态注入（specs/memory-semantic-recall.md R6）：每个 Main turn 的首个
+    // 模型请求前执行一次（modelStepCount===0：turn 内后续 step 是工具循环，query 不变，
+    // 重复检索只浪费 IO；outputTokenContinuation 是恢复请求，同样不重复注入）。走
+    // per-request 动态段（memory_semantic_recall），不进 context section / 前缀缓存段。
+    if (!outputTokenRecoveryActive && state.modelStepCount === 0) {
+      const semanticRecallBody = await buildSemanticMemoryRecallReminderBody(this, {
+        entries: state.turnRequestState.entries,
+        traceContext: state.turnTraceContext,
+      });
+      if (semanticRecallBody) {
+        commitTurnRequestEntries(this, state.turnRequestState, [
+          systemReminderAttachmentEntry("memory_semantic_recall", semanticRecallBody),
+        ]);
+      }
     }
     const outputStyleReminderBody =
       state.modelStepCount === 0

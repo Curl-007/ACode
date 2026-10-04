@@ -51,6 +51,10 @@ export * from "./resume-workflow-run.js";
 // 名单读走，漏掉这两行会让那两处静默失效（照 resume-workflow-run 的同款注释）。
 export * from "./escalate.js";
 export * from "./resolve-workflow-question.js";
+// 跨会话全文搜索（K4）与开箱（K9）工具：名字常量与 schema 被 core 工具注册面读走，
+// 漏掉这两行会让 handler 拿不到契约（照 escalate/resolve 的同款注释）。
+export * from "./session-search.js";
+export * from "./open.js";
 export * from "./workflow-observation-display.js";
 export * from "./tool-result-metadata.js";
 export * from "./performance.js";

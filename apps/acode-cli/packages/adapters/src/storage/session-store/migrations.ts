@@ -940,8 +940,18 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
     id: "0024_todo_confidence_json",
     sql: TODO_CONFIDENCE_JSON_MIGRATION_SQL,
   },
+  {
+    // K4 跨会话搜索（specs/session-search.md R1/R2）：FTS5 trigram 旁挂投影。
+    // 只建结构 + 回填账本；存量回填在 storageReady 后由 fts.ts 分批执行（投影是
+    // JS 单实现，不可能在迁移 SQL 里复制一份）。分词器不可换，细节见
+    // migrations/0025-session-message-fts.ts 文件头。
+    appVersion: "0.16.9",
+    id: "0025_session_message_fts",
+    sql: SESSION_MESSAGE_FTS_MIGRATION_SQL,
+  },
 ];
 import { OFFICIAL_GLM_SELECTION_MIGRATION_SQL } from "./migrations/0021-official-glm-selection.js";
 import { BACKFILLED_SESSION_REASONING_MIGRATION_SQL } from "./migrations/0022-backfilled-session-reasoning.js";
 import { TODO_DEPS_JSON_MIGRATION_SQL } from "./migrations/0023-todo-deps-json.js";
 import { TODO_CONFIDENCE_JSON_MIGRATION_SQL } from "./migrations/0024-todo-confidence-json.js";
+import { SESSION_MESSAGE_FTS_MIGRATION_SQL } from "./migrations/0025-session-message-fts.js";

@@ -108,6 +108,7 @@ import type {
 import type { AgentProfile } from "../subagent/profile.js";
 import type { RuntimeTaskRegistry } from "../runtime-task/registry.js";
 import type { BashTimeoutPolicy } from "../tool/bash-timeout-policy.js";
+import type { OpenPlatformPort } from "../tool/handlers/open.js";
 import type { PresentationSurface } from "../context/types.js";
 import type { WorkspaceHookRuntimeAdmissionPort } from "../hooks/workspace-hook-runtime-admission.js";
 
@@ -380,6 +381,9 @@ export interface AgentRuntimeDeps {
   artifactStore?: ToolArtifactStorePort;
   automationPort?: AutomationPort;
   offPeakPort?: OffPeakPort;
+  /** 开箱（Open 工具）平台端口；宿主提供（CLI native opener / desktop host 下发），
+   * 缺席则 Open 工具不注册（spec K9 R2 的 port 门控）。 */
+  platformOpenPort?: OpenPlatformPort;
   contextSourcePort?: ContextSourcePort;
   eventSink?: SessionEventSink;
   logger?: Logger;

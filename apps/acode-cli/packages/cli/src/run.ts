@@ -22,6 +22,7 @@ import { CLI_COMMAND_NAME, CLI_PROCESS_NAME } from "./process-name.js";
 import { isPluginHostInvocation, runPluginHostCommand } from "./plugin-host-command.js";
 import { isProviderDoctorInvocation, runProviderDoctorCommand } from "./provider-doctor-command.js";
 import { isDwfChildInvocation, runDwfChildCommand } from "./dwf-child-command.js";
+import { runAcpCommand } from "./acp-command.js";
 import { runPrompt } from "./prompt-command.js";
 import { runPluginsCommand, type PluginsCommandFlags } from "./plugins-command.js";
 import { runSkillsCommand } from "./skills-command.js";
@@ -559,6 +560,9 @@ export const run = async (ctx: RunContext, deps: RunDependencies = {}): Promise<
       );
     case "doctor":
       return runDoctor(ctx, options, workingDirectory);
+    case "acp":
+      // K8 ACP 宿主适配：headless 进程，stdio 上讲 Agent Client Protocol。
+      return await runAcpCommand(ctx, commandDeps, version);
     case "login":
       return await runLoginCommand(
         ctx,

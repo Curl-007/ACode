@@ -6,6 +6,7 @@
     ".": "./src/index.ts",
     "./stdio": "./src/stdio.ts",
     "./harness": "./src/harness/index.ts",
+    "./harness-inprocess": "./src/harness-inprocess.ts",
     "./remote": "./src/remote/index.ts",
     "./remote/*.js": "./src/remote/*.ts"
   },

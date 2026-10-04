@@ -332,12 +332,18 @@ importers:
       '@acode/dynamic-workflow-runtime':
         specifier: workspace:*
         version: link:../dynamic-workflow-runtime
+      '@acode/harness-sdk':
+        specifier: workspace:*
+        version: link:../../../../packages/harness-sdk
       '@acode/i18n':
         specifier: workspace:*
         version: link:../i18n
       '@acode/provider-node':
         specifier: workspace:*
         version: link:../../../../packages/provider-node
+      '@acode/server':
+        specifier: workspace:*
+        version: link:../../../../packages/server
       '@acode/shared':
         specifier: workspace:*
         version: link:../../../../packages/shared

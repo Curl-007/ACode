@@ -9,7 +9,7 @@ import { scheduleCliExitWatchdog } from "./shutdown.js";
 import { installCliProcessErrorBoundary } from "./process-errors.js";
 import { installProtocolStderrBoundary } from "./protocol-stderr.js";
 import { createProtocolProcessLifecycle } from "./protocol-lifecycle.js";
-import { isProtocolServerInvocation } from "./arguments.js";
+import { isProtocolServerInvocation, parseGlobalArgs } from "./arguments.js";
 
 void main();
 
@@ -22,6 +22,11 @@ async function main(): Promise<void> {
   applyCliRuntimeEnvSanitization(process.env);
   const isProtocol = isProtocolServerInvocation(argv);
   const isTui = isTuiInvocation(argv);
+  // F5（K8 对抗复核）：`acp` 子命令的 stdout 是严格的 ACP NDJSON 协议通道——
+  // console 边界必须与 protocol/tui 同时机安装（在 await import("./run.js") 之前），
+  // 否则 run/bootstrap 求值阶段三方依赖的一行 console 输出就会污染协议流；
+  // acp-command.ts 内的安装保留为幂等兜底。
+  const isAcp = isAcpInvocation(argv);
   if (isProtocol) installProtocolStderrBoundary(process.stderr);
   const lifecycle =
     isProtocol && !argv.includes("--prepare-storage")
@@ -32,7 +37,7 @@ async function main(): Promise<void> {
   // 进程级 console 统一引导到 stderr，否则任意依赖的一行普通日志都会触发传输层 JSON 解析崩溃。
   // TUI 同样独占 stdout；AI SDK 的首条提示使用 console.info，不能绕过 stderr 捕获。
   const restoreConsole =
-    isProtocol || isTui ? installStderrConsoleBoundary(process.stderr) : undefined;
+    isProtocol || isTui || isAcp ? installStderrConsoleBoundary(process.stderr) : undefined;
   const runtimeWarnings = interceptKnownRuntimeWarnings(process.stderr);
   const tuiStderr = isTui ? interceptTuiStderr(process.stderr) : undefined;
   const stderr = tuiStderr?.passthrough ?? process.stderr;
@@ -115,6 +120,16 @@ function normalizeProcessExitCode(exitCode: string | number | null | undefined):
     if (Number.isInteger(parsed)) return parsed;
   }
   return 0;
+}
+
+/** F5：acp 子命令形态识别（与 isProtocolServerInvocation 同款容错：无效全局
+ * 参数时回退裸命令判断，正式报错由 run 层统一格式化）。 */
+function isAcpInvocation(argv: string[]): boolean {
+  try {
+    return parseGlobalArgs(argv).positionals[0] === "acp";
+  } catch {
+    return argv[0] === "acp";
+  }
 }
 
 function waitForPendingWarnings(): Promise<void> {

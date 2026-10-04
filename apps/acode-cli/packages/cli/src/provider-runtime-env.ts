@@ -129,6 +129,11 @@ function requiresProviderRuntime(argv: readonly string[]): boolean {
     command === "tui" ||
     command === "app-server" ||
     command === "agent-server" ||
+    // F1（K8 对抗复核）：`acp` 子命令经 in-process services 直连引擎，provider
+    // 配置必须与 tui/login 同源物化——白名单缺位会让 prepareCliProviderRuntimeEnv
+    // 返回 {}，ACODE_BUILTIN_PROVIDER_CONFIG_FILE 永不物化，`acode acp` 的
+    // 第一道检查（acp-command.ts 的 env gate）即 throw，入口整体断裂。
+    command === "acp" ||
     command === "login" ||
     command === "logout"
   );

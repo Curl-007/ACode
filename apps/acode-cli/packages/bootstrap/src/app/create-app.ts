@@ -86,6 +86,10 @@ import {
   createOvernightController,
   type OvernightController,
 } from "./overnight-controller.js";
+import {
+  createAmbientRuntimeWiring,
+  type AmbientRuntimeWiring,
+} from "./ambient-runtime.js";
 import { createSwarmPlanWiring, type SwarmPlanWiring } from "./swarm-plan-runtime.js";
 import {
   createDynamicWorkflowRunService,
@@ -826,9 +830,35 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
       workingDirectory,
       ...(pdfDocumentPort ? { pdfDocumentPort } : {}),
     });
+    // K6 ambient 接线（specs/ambient-budget-scheduler.md 接线批）：wiring 在主 runtime
+    // 构造前成型（deps 的注册门 ambientSchedulePort 要 queue + 创建回调闭包——两者都不
+    // 依赖 runtime 实例），fork/reminder/busy 驱动面在 runtime 就绪后 bind
+    //（swarmPlanWiring 的同款先后序）。flag 关（缺省）时只注入共享账本与 queue 面
+    //（turn 计量旁路写继续记 user kind——数据面与调度面正交），不启动 runner。
+    const ambientWiring: AmbientRuntimeWiring = createAmbientRuntimeWiring({
+      appOptions: options,
+      appVersion,
+      artifactStore,
+      configResult,
+      fileSystemPort,
+      imageProcessorPort,
+      logger,
+      mcpPort,
+      modelFactory,
+      permissionService,
+      runtimeConfig,
+      runtimeTaskRegistry,
+      sessionId,
+      sessionStore,
+      storageRoot,
+      traceContext,
+      workingDirectory,
+      ...(pdfDocumentPort ? { pdfDocumentPort } : {}),
+    });
     runtime = new AgentRuntime(sessionId, runtimeConfig, {
       runtimeTaskRegistry,
       swarmPlanPort: swarmPlanWiring.port,
+      ambientSchedulePort: ambientWiring.port,
       // 主代理的模型请求过治理器的 observer：立即放行，但让治理器看见它的 429 / 成功。
       modelRequestAdmission: workflowConcurrencyGovernor.observer(),
       eventStore: options.eventStore ?? createInMemorySessionEventStore(),
@@ -893,6 +923,10 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
     //（hydrate 在首个 turn 前完成——恢复的图要能被第一个调度点推进；坏行 warn + 空图起步）。
     swarmPlanWiring.bindRuntime(runtime);
     await swarmPlanWiring.hydrate(traceContext);
+    // K6 ambient：runtime 实例就绪后绑定 fork/reminder/busy 驱动面，并（flag 开时）
+    // 启动 runner——异步驱动不 await（宿主关停走 app.close 的 dispose，overnight 同款）。
+    ambientWiring.bindRuntime(runtime);
+    await ambientWiring.start();
     // K3 overnight 接线：controller 在 runtime 构造后装配（fork/turn 驱动都要 runtime
     // 实例）。入口链路：sendInput 拦截（resolveACodeBuiltinHostCommand）→ 结构化动作 →
     // controller.handleHostCommand；宿主/协议层也可经 app.startOvernightRun 直调同一面。
@@ -1272,6 +1306,9 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
         try {
           // K3 R1：app 关闭 = overnight run 终止（收口 runtime-task 投影，不等待在飞 turn）。
           overnightController.dispose();
+          // K6：app 关闭 = ambient runner 停循环释放 claim + 账本缓冲落盘（生命周期
+          // 绑定 app，spec R5；dispose 幂等，flag 关时是纯 flush）。
+          await ambientWiring.dispose();
           // K2 swarm：app 关闭 = 在飞 worker 子会话全部 abort（协作式取消；迟到结果由
           // runner 的 stale run 防护丢弃，持久化行已随每次提交写穿）。
           swarmPlanWiring.dispose();

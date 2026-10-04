@@ -124,6 +124,21 @@ export * from "./overnight/preflight.js";
 export * from "./overnight/coordinator.js";
 export * from "./overnight/runner.js";
 
+// Ambient 预算感知调度（K6，specs/ambient-budget-scheduler.md）：引擎层从包入口导出
+// （overnight/swarm 同款纪律——bootstrap 装配经公开入口消费，不开深路径；package.json
+// exports 只有 "."）。这是接线批对引擎导出面缺口的最小补齐：引擎批只落了
+// core/src/ambient/ 八文件，未从 index 出口。turn-usage-hook 与 proposal 是 core
+// 内部消费面（usage-observability / runner），不进公开出口。
+export * from "./ambient/constants.js";
+export * from "./ambient/queue.js";
+export * from "./ambient/scheduler.js";
+export * from "./ambient/runner.js";
+export * from "./ambient/usage-ledger.js";
+export * from "./ambient/session-kind.js";
+// overnight fork 链同款消费的 active 分支选择器：ambient cycle/spawn 的 fork 目标
+// （「fork 全部父 messages 于当下」）必须复用 session-fork 的分支语义，不能手写第二份。
+export { forkSourceMessagesForSession } from "./runtime/methods/session-fork.js";
+
 // 对话内 Swarm 任务图（K2，specs/swarm-task-graph.md）：端口/存储/runner/投影/提醒与
 // 2b 接线辅助从包入口导出（bootstrap 装配与宿主经 @acode/core 公开入口消费，overnight
 // 同款纪律）；graph/* 纯函数引擎留给测试深路径，不进公开面。

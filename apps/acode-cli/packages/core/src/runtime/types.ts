@@ -108,6 +108,7 @@ import type {
 } from "./deps.js";
 import type { AgentProfile } from "../subagent/profile.js";
 import type { RuntimeTaskRegistry } from "../runtime-task/registry.js";
+import type { AmbientScheduleQueue, ScheduledItem } from "../ambient/queue.js";
 import type { BashTimeoutPolicy } from "../tool/bash-timeout-policy.js";
 import type { OpenPlatformPort } from "../tool/handlers/open.js";
 import type { PresentationSurface } from "../context/types.js";
@@ -195,6 +196,13 @@ export interface AgentRuntimeConfig {
   /** 根 Session runtime 创建时固定；false 只关闭 Bash 的 bfs/ugrep prelude。 */
   nativeSearchEnhancementsEnabled?: boolean;
   memory?: MemoryRuntimeConfig;
+  /**
+   * K6 Ambient 预算感知调度（specs/ambient-budget-scheduler.md R5）：默认**关闭**——
+   * 开启是显式用户决策。控制两处门：Schedule 工具注册（runtime-tools）与
+   * AmbientRunner 启动（bootstrap ambient 装配）。形态对齐 runtimeFeatures 的
+   * 「装配期推导注入」：CLI/协议 call-level runtimeConfig 是唯一入口，runtime 只读消费。
+   */
+  ambient?: { enabled?: boolean };
   /** 历史恢复允许未绑定；只有完整选择才能创建本轮执行 Model。 */
   modelSelection?: ModelSelection;
   titleGeneration?: {
@@ -389,6 +397,18 @@ export interface AgentRuntimeDeps {
   artifactStore?: ToolArtifactStorePort;
   automationPort?: AutomationPort;
   offPeakPort?: OffPeakPort;
+  /**
+   * K6 Ambient 预算感知调度（specs/ambient-budget-scheduler.md 接线批）：Schedule 工具的
+   * 依赖闭包面——queue 是 ambient 域自持有的磁盘队列实例（bootstrap 装配经显式数据根
+   * 构造，与 runner 共享同一份），onScheduleCreated 是 handler 创建成功后的 runner
+   * nudge/重启缝（R3「新 schedule 创建可重启 idle 循环」）。端口缺席（CLI 未装配 ambient
+   * 或 flag 关）则 Schedule 工具不注册；注册门另需 config.ambient.enabled 显式 true
+   * （runtime-tools.ts 推导，automationPort 同款流向）。
+   */
+  ambientSchedulePort?: {
+    queue: AmbientScheduleQueue;
+    onScheduleCreated?(item: ScheduledItem): void;
+  };
   /** 开箱（Open 工具）平台端口；宿主提供（CLI native opener / desktop host 下发），
    * 缺席则 Open 工具不注册（spec K9 R2 的 port 门控）。 */
   platformOpenPort?: OpenPlatformPort;

@@ -150,6 +150,11 @@ import {
 } from "./acodeV4HostCommand.js";
 import { claudeNativeSessionImportRepo } from "#src/session/claude-native/claudeNativeSessionImportRepo.js";
 import { importClaudeNativeSessions } from "#src/session/claude-native/claudeNativeSessionImportService.js";
+import { importExternalSessions } from "#src/session/external-import/importService.js";
+import type {
+  ExternalImportResult,
+  ExternalSessionSource,
+} from "#src/session/external-import/types.js";
 import { buildImportedClaudeTaskId } from "#src/session/claude-native/buildImportedClaudeTaskFile.js";
 import {
   readLegacyImportedClaudeHistory,
@@ -1753,6 +1758,100 @@ export function createACodeTaskServiceAdapter(
     agentService.disposeAll();
   }
 
+  // K5 外部来源扩展（R4）：importClaudeSessions 增可选 source 参数。
+  // 重载必须用函数声明（对象字面量方法不支持重载签名）：
+  // - 缺省 / "claude-code" → 既有 Claude 导入链路，返回 ACodeImportSessionsResult（兼容性钉住）；
+  // - 其它来源 → external-import 框架，返回结构化 ExternalImportResult。
+  function importClaudeSessionsWithSource(params: {
+    workspacePath?: string;
+    workspaceIdentity?: string;
+    sessionIds: string[];
+    source?: "claude-code";
+  }): Promise<ACodeImportSessionsResult>;
+  function importClaudeSessionsWithSource(params: {
+    workspacePath?: string;
+    workspaceIdentity?: string;
+    sessionIds: string[];
+    source: Exclude<ExternalSessionSource, "claude-code">;
+  }): Promise<ExternalImportResult>;
+  async function importClaudeSessionsWithSource(params: {
+    workspacePath?: string;
+    workspaceIdentity?: string;
+    sessionIds: string[];
+    source?: ExternalSessionSource;
+  }): Promise<ACodeImportSessionsResult | ExternalImportResult> {
+    if (params.source && params.source !== "claude-code") {
+      // 新来源走 legacy snapshot + 任务索引落库（importedHistory 协议当前只接受
+      // claudeCode 来源，createSession 续聊路径等协议扩展后再接，见 spec 附录）。
+      return importExternalSessions({
+        source: params.source,
+        taskIndexRepo,
+        workspacePath: params.workspacePath,
+        workspaceIdentity: params.workspaceIdentity,
+        sessionIds: params.sessionIds,
+        onTaskImported: (meta) => {
+          rememberIndexedTaskMeta(meta);
+          emitWorkspaceTaskListChanged(
+            {
+              workspacePath: meta.workspacePath,
+              workspaceIdentity: meta.workspaceIdentity,
+              taskId: meta.taskId,
+            },
+            meta,
+            // 导入沿用 task_meta_changed 旧语义。
+            "task_meta_changed",
+          );
+        },
+      });
+    }
+    return importClaudeNativeSessions({
+      taskIndexRepo,
+      workspacePath: params.workspacePath,
+      workspaceIdentity: params.workspaceIdentity,
+      sessionIds: params.sessionIds,
+      createImportedSession: async (source) => {
+        const targetWorkspaceIdentity = params.workspacePath
+          ? params.workspaceIdentity
+          : undefined;
+        const snapshot = await options.acodeAgentService.createSession({
+          workspacePath: source.workspacePath,
+          workspaceIdentity: targetWorkspaceIdentity,
+          sessionId: buildImportedClaudeTaskId(source.workspacePath, source.sessionId),
+          sessionTraceId: createSessionTraceId(),
+          persistence: "immediate",
+          importedHistory: {
+            source: "claudeCode",
+            title: source.title,
+            createdAt: source.createdAt,
+            updatedAt: source.updatedAt,
+            messages: source.messages.map((message) => ({
+              role: message.role,
+              content: message.content,
+              timestamp: message.timestamp,
+            })),
+          },
+        });
+        const meta = await syncTaskIndexSnapshot(snapshot);
+        // 导入后的任务必须是真实 ACode session，setModel/sendPrompt 才能继续命中 runtime。
+        // 同时保留 migrationSource，避免任务列表把 Claude Code 迁移历史当成本地新会话。
+        return syncTaskIndexMeta({ ...meta, migrationSource: "claudeCode" });
+      },
+      onTaskImported: (meta) => {
+        rememberIndexedTaskMeta(meta);
+        emitWorkspaceTaskListChanged(
+          {
+            workspacePath: meta.workspacePath,
+            workspaceIdentity: meta.workspaceIdentity,
+            taskId: meta.taskId,
+          },
+          meta,
+          // 导入沿用 task_meta_changed 旧语义。
+          "task_meta_changed",
+        );
+      },
+    });
+  }
+
   const service: IACodeTaskService & {
     disposeAll(): void;
     disposeAllAndWait(): Promise<void>;
@@ -2652,58 +2751,9 @@ export function createACodeTaskServiceAdapter(
       });
     },
 
-    async importClaudeSessions(params: {
-      workspacePath?: string;
-      workspaceIdentity?: string;
-      sessionIds: string[];
-    }): Promise<ACodeImportSessionsResult> {
-      return importClaudeNativeSessions({
-        taskIndexRepo,
-        workspacePath: params.workspacePath,
-        workspaceIdentity: params.workspaceIdentity,
-        sessionIds: params.sessionIds,
-        createImportedSession: async (source) => {
-          const targetWorkspaceIdentity = params.workspacePath
-            ? params.workspaceIdentity
-            : undefined;
-          const snapshot = await options.acodeAgentService.createSession({
-            workspacePath: source.workspacePath,
-            workspaceIdentity: targetWorkspaceIdentity,
-            sessionId: buildImportedClaudeTaskId(source.workspacePath, source.sessionId),
-            sessionTraceId: createSessionTraceId(),
-            persistence: "immediate",
-            importedHistory: {
-              source: "claudeCode",
-              title: source.title,
-              createdAt: source.createdAt,
-              updatedAt: source.updatedAt,
-              messages: source.messages.map((message) => ({
-                role: message.role,
-                content: message.content,
-                timestamp: message.timestamp,
-              })),
-            },
-          });
-          const meta = await syncTaskIndexSnapshot(snapshot);
-          // 导入后的任务必须是真实 ACode session，setModel/sendPrompt 才能继续命中 runtime。
-          // 同时保留 migrationSource，避免任务列表把 Claude Code 迁移历史当成本地新会话。
-          return syncTaskIndexMeta({ ...meta, migrationSource: "claudeCode" });
-        },
-        onTaskImported: (meta) => {
-          rememberIndexedTaskMeta(meta);
-          emitWorkspaceTaskListChanged(
-            {
-              workspacePath: meta.workspacePath,
-              workspaceIdentity: meta.workspaceIdentity,
-              taskId: meta.taskId,
-            },
-            meta,
-            // 导入沿用 task_meta_changed 旧语义。
-            "task_meta_changed",
-          );
-        },
-      });
-    },
+    // K5 外部来源扩展：重载签名见 importClaudeSessionsWithSource（对象字面量方法
+    // 不支持重载声明，函数声明才支持）；缺省与显式 "claude-code" 保持既有 Claude 链路。
+    importClaudeSessions: importClaudeSessionsWithSource,
 
     async setMode(params): Promise<void> {
       // session/setMode → v4 switchCollaborationMode（CAS，revision 收敛见

@@ -76,6 +76,8 @@ import { createPlanExpandToolEntry } from "./plan-expand.js";
 import { createPlanSeedToolEntry } from "./plan-seed.js";
 import { createPlanStatusToolEntry } from "./plan-status.js";
 import type { SwarmPlanPort } from "../../swarm/port.js";
+import type { AmbientScheduleQueue, ScheduledItem } from "../../ambient/queue.js";
+import { createScheduleToolEntry } from "./schedule.js";
 import { createToolRuleNameSet } from "../tool-visibility.js";
 
 // direct 分支保留 Glob/Grep 工具实现；embedded search 分支由 registerBuiltInTools
@@ -198,6 +200,25 @@ interface RegisterBuiltInToolsOptions {
   /** 在场为 true 时只注册 PlanStatus（workflow 子会话的只读面，R5「防 worker 自改图」）。 */
   swarmPlanReadOnly?: boolean;
   /**
+   * K6 ambient Schedule 工具的注册门（specs/ambient-budget-scheduler.md R2/场景 10）：
+   * flag 推导在调用方（runtime-tools.ts 按 config.ambient.enabled && 非封闭子会话
+   * ——subagent_child/workflow_child/nested_workflow_child，F10 批次C 收紧），
+   * includeAutomation 同款先例，本层不做 runtime 配置推断——与 swarmPlanPort 的
+   * 门分工一致。
+   */
+  includeAmbientSchedule?: boolean;
+  /**
+   * K6：Schedule 工具的依赖闭包。queue 是 ambient 域装配面注入的磁盘队列实例（不能进
+   * 静态数组的原因与 Open/swarm 相同：handler 闭包依赖装配态）；sessionId 标记创建
+   * 来源会话（target=session 提醒的投递目标）；onScheduleCreated 是创建成功后的
+   * runner nudge/重启缝。
+   */
+  ambientSchedule?: {
+    queue: AmbientScheduleQueue;
+    sessionId?: string;
+    onScheduleCreated?(item: ScheduledItem): void;
+  };
+  /**
    * 动态工作流灰度门。**只有显式 false
    * 才下架** DYNAMIC_WORKFLOW_TOOL_NAMES：缺席代表调用方不参与灰度（TUI、headless、
    * workflow_child），它们必须保留全部工具面；fail-closed 的缺省值落在协议服务端的
@@ -313,6 +334,25 @@ export function registerBuiltInTools(
     for (const entry of planEntries) {
       registry.register(entry, { silentDuplicateWarning: options.silentDuplicateWarnings });
     }
+  }
+  // K6 ambient Schedule 工具（specs/ambient-budget-scheduler.md R2）：与 Open/swarm 同款
+  // 「依赖闭包装配态的工具不进静态数组」。双门：includeAmbientSchedule 是 flag 门
+  // （runtime-tools 按 config.ambient.enabled 推导——场景 10：缺省 false 不注册，
+  // 没有 runner 在跑时 Schedule 提议永远不兑现，注册只会把模型指向不兑现的承诺）；
+  // ambientSchedule 闭包缺席（CLI 未装配 ambient 队列）同样不注册。
+  if (options.includeAmbientSchedule === true && options.ambientSchedule !== undefined) {
+    registry.register(
+      createScheduleToolEntry({
+        queue: options.ambientSchedule.queue,
+        ...(options.ambientSchedule.sessionId !== undefined
+          ? { sessionId: options.ambientSchedule.sessionId }
+          : {}),
+        ...(options.ambientSchedule.onScheduleCreated !== undefined
+          ? { onScheduleCreated: options.ambientSchedule.onScheduleCreated }
+          : {}),
+      }),
+      { silentDuplicateWarning: options.silentDuplicateWarnings },
+    );
   }
 }
 

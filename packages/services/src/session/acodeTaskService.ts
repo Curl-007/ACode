@@ -40,6 +40,10 @@ import type {
   SessionMessageSendRequested,
 } from "#src/session/sessionMailbox.js";
 import type {
+  ExternalImportResult,
+  ExternalSessionSource,
+} from "#src/session/external-import/types.js";
+import type {
   ACodeTaskListQuery,
   ACodeTaskListResult,
   ACodeTaskListSortBy,
@@ -548,12 +552,23 @@ export interface IACodeTaskService {
     limit?: number;
   }): Promise<ACodeImportableSessionCandidate[]>;
 
-  /** 导入选中的 Claude 原生 session，并反向生成最小 task snapshot；不传 workspacePath 时按原始 workspace 导入。 */
+  /**
+   * 导入选中的 Claude 原生 session，并反向生成最小 task snapshot；不传 workspacePath 时按原始 workspace 导入。
+   * K5 起支持可选 source：缺省（或显式 "claude-code"）走既有 Claude 链路（兼容性钉住）；
+   * 其它来源（codex/gemini-cli/opencode/cursor）返回 external-import 框架的结构化结果。
+   */
   importClaudeSessions(params: {
     workspacePath?: string;
     workspaceIdentity?: string;
     sessionIds: string[];
+    source?: "claude-code";
   }): Promise<ACodeImportSessionsResult>;
+  importClaudeSessions(params: {
+    workspacePath?: string;
+    workspaceIdentity?: string;
+    sessionIds: string[];
+    source: Exclude<ExternalSessionSource, "claude-code">;
+  }): Promise<ExternalImportResult>;
 
   /** 切换 task 模式 */
   setMode(params: { taskId: string; mode: ACodeTaskMode }): Promise<void>;

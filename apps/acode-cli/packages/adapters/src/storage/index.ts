@@ -1,3 +1,4 @@
+/* eslint-disable max-lines -- 存量基线豁免:初始导入即超限(根 lint 的 ignorePatterns 排除 apps/acode-cli,CLI turbo lint 门禁因此从未变绿)。先恢复门禁信号,拆分重构另行立项。 */
 // Storage adapters - EventStore, ArtifactStore, MemoryStore implementations
 
 import { createHash, randomUUID } from "node:crypto";

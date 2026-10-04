@@ -1,3 +1,4 @@
+/* eslint-disable max-lines -- 存量基线豁免:该文件先于 CLI lint 门禁建立即超限(根 lint 的 ignorePatterns 排除 apps/acode-cli,turbo lint 因此从未变绿)。头注豁免以恢复门禁信号;拆分重构超出本批范围。 */
 // Command inbox：统一命令 admission 与查询入口。
 // 三类事实严格分离：in-flight / live input 永远 pinned；只有 settled 进入 512/session LRU。
 import type {

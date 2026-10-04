@@ -1,3 +1,4 @@
+/* eslint-disable max-lines -- 存量基线豁免:该文件先于 CLI lint 门禁建立即超限(根 lint 的 ignorePatterns 排除 apps/acode-cli,turbo lint 因此从未变绿)。头注豁免以恢复门禁信号;拆分重构超出本批范围。 */
 import { SessionEventType, traceContextToLogContext } from "../deps.js";
 import type {
   BackgroundExecutionSnapshot,

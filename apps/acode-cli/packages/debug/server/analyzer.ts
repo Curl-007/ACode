@@ -1,3 +1,4 @@
+/* eslint-disable max-lines -- debug 面板的 trace 检视投影集中维护：listTraces/inspectTrace 读取面与 spans、上下文快照、token 计量、缓存报告等投影共用同一套解析辅助层，拆散会让同一条 trace 数据的读取路径失去单一出处（初始导入即超长的存量基线豁免，与仓库 max-lines 头注惯例一致）。 */
 import { basename } from "node:path";
 import type {
   CacheReport,

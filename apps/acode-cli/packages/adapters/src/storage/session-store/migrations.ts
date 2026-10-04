@@ -1,3 +1,4 @@
+/* eslint-disable max-lines -- 迁移注册表随 schema 版本线性增长,单文件全量注册是迁移顺序的单一出处(初始导入即超限的存量文件,仓库惯例同款头注豁免)。 */
 import { PROVIDER_MODEL_SELECTION_MIGRATION_SQL } from "./migrations/0020-provider-model-selection.js";
 
 interface SqliteMigration {

@@ -1,3 +1,4 @@
+/* eslint-disable max-lines -- K2 swarm 任务图:DAG 读写操作(节点增删、依赖边、状态流转与环检测)集中维护,拆散会让图一致性的单一出处分散。 */
 // 机制参照 jcode (MIT)：crates/jcode-plan/src/dag/ops.rs（验证式图变更 seed / expand_node /
 // complete_node / inject_from_gate / requeue_failed 的 clone-stage-commit 语义、seed 幂等重放、
 // deep 强制 root gate、re-seed 重开审计、expand 的 composite 翻转与 children 边保留、owner

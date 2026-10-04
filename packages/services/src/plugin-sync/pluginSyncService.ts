@@ -78,6 +78,7 @@ const PLUGIN_MANIFEST_RELATIVE_PATHS = [
   [".acode-plugin", "plugin.json"],
   [".claude-plugin", "plugin.json"],
   [".codex-plugin", "plugin.json"],
+  [".cursor-plugin", "plugin.json"],
 ] as const;
 
 export function createPluginSyncService(options?: {

@@ -24,6 +24,7 @@ import {
   type ACodeAutomationRun,
   type ACodeAutomationRunDispatchStatus,
   type ACodeAutomationRunOutcome,
+  type ACodeAutomationNotifyDecision,
   type ACodeAutomationTrigger,
   type ACodeAutomationUpdateParams,
 } from "@acode/shared";
@@ -99,6 +100,7 @@ interface AutomationRunRow {
   model_selection: string | null;
   dispatch_status: string;
   outcome: string | null;
+  notify_decision: string | null;
   session_id: string | null;
   error: string | null;
   attempts: number;
@@ -190,6 +192,7 @@ function rowToRun(row: AutomationRunRow): ACodeAutomationRun {
     ...(modelSelection ? { modelSelection } : {}),
     dispatchStatus: row.dispatch_status as ACodeAutomationRunDispatchStatus,
     outcome: (row.outcome as ACodeAutomationRunOutcome | null) ?? undefined,
+    notifyDecision: (row.notify_decision as ACodeAutomationNotifyDecision | null) ?? undefined,
     sessionId: row.session_id ?? undefined,
     error: row.error ?? undefined,
     attempts: row.attempts,
@@ -692,6 +695,7 @@ export class AutomationRepo {
           model_selection: null,
           dispatch_status: "claimed",
           outcome: null,
+          notify_decision: null,
           session_id: null,
           error: null,
           attempts: 1,
@@ -911,6 +915,8 @@ export class AutomationRepo {
             model_selection: (row["r_model_selection"] as string | null) ?? null,
             dispatch_status: row["r_dispatch_status"] as string,
             outcome: (row["r_outcome"] as string | null) ?? null,
+            // 认领复位语义与 upsertRunClaimed 一致：claimed 且未 settle 的 run 无决策。
+            notify_decision: null,
             session_id: (row["r_session_id"] as string | null) ?? null,
             error: (row["r_error"] as string | null) ?? null,
             attempts: (row["r_attempts"] as number) + 1,
@@ -1199,6 +1205,7 @@ export class AutomationRepo {
           dispatch_status = 'claimed',
           model_selection = COALESCE(automation_runs.model_selection, excluded.model_selection),
           outcome = NULL,
+          notify_decision = NULL,
           error = NULL,
           attempts = attempts + 1,
           updated_at = excluded.updated_at`,
@@ -1328,11 +1335,16 @@ export class AutomationRepo {
     }
   }
 
-  /** session runtime 回写运行结果（running / succeeded / failed / stopped）。 */
+  /**
+   * session runtime 回写运行结果（running / succeeded / failed / stopped）。
+   * notifyDecision 仅 settle 提供（heartbeat 协议 R4）；running 起始写与未提供时
+   * 经 COALESCE 保留现值，不会被抹掉。
+   */
   async markRunOutcome(
     runId: string,
     outcome: ACodeAutomationRunOutcome,
     error?: string,
+    notifyDecision?: ACodeAutomationNotifyDecision,
   ): Promise<void> {
     await this.ensureReady();
     this.getDatabase()
@@ -1346,10 +1358,17 @@ export class AutomationRepo {
               WHEN @outcome = 'running' AND outcome IS NOT NULL AND outcome <> 'running' THEN error
               ELSE COALESCE(@error, error)
             END,
+            notify_decision = COALESCE(@notify_decision, notify_decision),
             updated_at = @now
         WHERE run_id = @run_id`,
       )
-      .run({ run_id: runId, outcome, error: error ?? null, now: Date.now() });
+      .run({
+        run_id: runId,
+        outcome,
+        error: error ?? null,
+        notify_decision: notifyDecision ?? null,
+        now: Date.now(),
+      });
   }
 
   /** 错过触发窗口：落一条 skipped run（session_id=null），不计 run_count。 */
@@ -1423,6 +1442,20 @@ export class AutomationRepo {
     await this.ensureReady();
     const res = this.getDatabase()
       .prepare(`DELETE FROM automation_runs WHERE created_at < ?`)
+      .run(Date.now() - maxAgeMs);
+    return Number(res.changes ?? 0);
+  }
+
+  /**
+   * 保留策略（heartbeat 协议 R5b）：删除耗尽（lifecycle completed）且过保留窗口的
+   * automation 定义，释放 AUTOMATION_CREATE_LIMIT 额度（该上限计数含所有生命周期状态，
+   * 僵尸 completed 会永久占坑）。failed/active/paused 不删——坏掉的任务用户要能看到。
+   * 孤儿 run 行由 pruneRuns 的窗口清扫（automations 无级联外键，R5 已注明）。
+   */
+  async pruneExhaustedAutomations(maxAgeMs: number): Promise<number> {
+    await this.ensureReady();
+    const res = this.getDatabase()
+      .prepare(`DELETE FROM automations WHERE lifecycle_status = 'completed' AND updated_at < ?`)
       .run(Date.now() - maxAgeMs);
     return Number(res.changes ?? 0);
   }

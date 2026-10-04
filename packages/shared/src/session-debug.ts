@@ -74,6 +74,10 @@ export const sessionDebugSnapshotSchema = z
         totalInputTokens: count,
         totalCacheReadTokens: count,
         hitRate: count.nullable(),
+        // prompt-cache miss 归因计数快照（apps/acode-cli/specs/prompt-cache-diagnostics.md
+        // R4/R5）。开放 record 不复刻 CLI 因集枚举：未来加因无需再动 shared 镜像
+        //（版本偏斜安全）；闭集纪律由生产侧类型与 CLI 单测钉住。
+        missCauses: z.record(z.string(), count).optional(),
       })
       .strict()
       .nullable(),

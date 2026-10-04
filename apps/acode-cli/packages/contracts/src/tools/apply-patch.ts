@@ -68,13 +68,24 @@ export interface ApplyPatchToolResult {
   durationMs: number;
 }
 
+// 修订依据（批次 4/S2，specs/apply-patch-tool.md R3）：原字符串码值随悬空 contract 遗留、
+// 全仓零消费者；而 ToolHandlerFailure.errorCode 全仓为 number（executor/errors.ts 强校验
+// typeof === "number"）。落地 handler 时改为数字码，语义与 EditErrorCode 同值对齐
+// （FILE_NOT_EXIST=4、NOTEBOOK_FILE=5、FILE_NOT_READ=6、STALE_FILE=7、FILE_TOO_LARGE=10、
+// INVALID_PATH=13），跨工具同语义同码。
 export const ApplyPatchErrorCode = {
-  INVALID_PATCH: "apply_patch_invalid_patch",
-  EMPTY_PATCH: "apply_patch_empty_patch",
-  FILE_NOT_EXIST: "apply_patch_file_not_exist",
-  FILE_EXISTS: "apply_patch_file_exists",
-  HUNK_NOT_FOUND: "apply_patch_hunk_not_found",
-  IO_ERROR: "apply_patch_io_error",
+  INVALID_PATCH: 1,
+  EMPTY_PATCH: 2,
+  FILE_EXISTS: 3,
+  FILE_NOT_EXIST: 4,
+  NOTEBOOK_FILE: 5,
+  FILE_NOT_READ: 6,
+  STALE_FILE: 7,
+  HUNK_NOT_FOUND: 8,
+  AMBIGUOUS_HUNK: 9,
+  FILE_TOO_LARGE: 10,
+  IO_ERROR: 11,
+  INVALID_PATH: 13,
 } as const;
 
 export type ApplyPatchErrorCode = (typeof ApplyPatchErrorCode)[keyof typeof ApplyPatchErrorCode];

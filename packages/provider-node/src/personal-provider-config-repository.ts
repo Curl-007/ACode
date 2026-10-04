@@ -37,6 +37,26 @@ export interface PersonalProviderConfigRecoveryEvent {
   readonly error: unknown;
 }
 
+/**
+ * R1-c：明文 BYO API Key 落盘的一次性告警（每进程每种成因只打一次，避免轮询刷屏）。
+ * 成因二分：vault 未注入（装配点缺失/纯 builtin/测试）vs vault save 失败（凭据库暂时
+ * 不可用，已经 onRecovery 上报，这里补用户可见面）。与 credentialMasterKey 的
+ * defaultWarnOnce、server 的弃用告警同一 once-guarded console.warn 风格。
+ */
+const warnedPlaintextPersist = new Set<string>();
+function warnPlaintextApiKeyPersistedOnce(filePath: string, vaultAbsent: boolean): void {
+  const cause = vaultAbsent ? "no encrypted credential vault is wired into this assembly" : "the credential vault rejected the save (it stays usable and migration will be retried on the next write)";
+  // 按「成因 + 文件」隔离：同进程同一文件的同一成因只告警一次（轮询/重复写入不刷屏），
+  // 不同数据目录（含测试临时目录）互不吞告警。
+  const guardKey = `${vaultAbsent ? "vault-absent" : "vault-failed"}:${filePath}`;
+  if (warnedPlaintextPersist.has(guardKey)) return;
+  warnedPlaintextPersist.add(guardKey);
+  console.warn(
+    `SECURITY NOTICE: BYO provider API key(s) are being persisted in PLAINTEXT in ${filePath} because ${cause}. ` +
+      `See packages/provider-node/specs/byo-apikey-credential-ref.md (R1-c).`,
+  );
+}
+
 export class NodePersonalProviderConfigRepository implements PersonalProviderConfigRepository {
   readonly #filePath: string;
   readonly #importLegacy?: () => Promise<ProviderConfigLayerUpdate | null>;
@@ -198,6 +218,13 @@ export class NodePersonalProviderConfigRepository implements PersonalProviderCon
     // 三者一致才不会出现「revision 基于明文、磁盘是 ref」的错配。
     const vaulted = await this.#vaultUpdate(update);
     const canonical = decodeProviderConfigFile(encodeProviderConfigFile(vaulted));
+    // R1-c（批次 4，byo-apikey-credential-ref.md）：vault 化之后仍有明文 BYO Key 要落盘 =
+    // 回退态（vault 未注入的装配点，或 save 失败保 Key 可用）。可用性优先是既有产品决定
+    // （明文继续可用、下次写入重试迁移），但「API Key 明文落盘」必须显式可发现——
+    // 一次性告警，不随轮询/重复写入刷屏。
+    if (hasPlaintextApiKeys(canonical)) {
+      warnPlaintextApiKeyPersistedOnce(this.#filePath, this.#providerApiKeyVault === undefined);
+    }
     const encoded = encodeProviderConfigFile(canonical);
     await atomicWritePrivateTextFile(this.#filePath, JSON.stringify(encoded, null, 2));
     this.#writeGeneration += 1;

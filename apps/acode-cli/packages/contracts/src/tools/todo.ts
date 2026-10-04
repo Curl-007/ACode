@@ -11,6 +11,9 @@ import {
   TodoCompletionConfidenceSchema,
 } from "./todo-confidence.js";
 import {
+  TODO_METADATA_MAX_KEY_CHARS,
+  TODO_METADATA_MAX_KEYS,
+  TODO_METADATA_MAX_SERIALIZED_BYTES,
   TodoBlockedBySchema,
   TodoIdSchema,
   TodoMetadataSchema,
@@ -82,7 +85,9 @@ export const TodoItemSchema = z.object({
     "Ids in this same submitted list that must complete before this item can start; each referenced item must carry an explicit id",
   ),
   metadata: TodoMetadataSchema.optional().describe(
-    "Bounded annotation object (max 16 keys, 64-char keys, 4 KB serialized, JSON values only); pure annotation, never affects scheduling or counts",
+    // F3（审计 2026-10-03 登记项）：上界数字由 todo-deps 常量插值渲染，结构上杜绝
+    // 「常量改了、文本还写死旧数」的漂移；渲染结果与原硬编码文本逐字节相同。
+    `Bounded annotation object (max ${TODO_METADATA_MAX_KEYS} keys, ${TODO_METADATA_MAX_KEY_CHARS}-char keys, ${TODO_METADATA_MAX_SERIALIZED_BYTES / 1024} KB serialized, JSON values only); pure annotation, never affects scheduling or counts`,
   ),
   // J2-1（specs/todo-confidence-semantics.md R1）：可选完成证据状态。四级语义进 describe
   // （枚举成员在 JSON schema 天然可见，语义描述不等于门槛披露）；哪个值过完成门槛是

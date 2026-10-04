@@ -129,6 +129,9 @@ export {
   // J1-2：反射门审计 sink 的进程级注册点（create-app 唯一调用方，接 info 级 Logger
   // 落 JSONL；缺省 sink 写 stderr，见 specs/bash-confirm-reflexive-gate.md R6）。
   setBashReflexAuditSink,
+  // auto 分类器审计 sink 的进程级注册点（create-app 唯一调用方，同一 JSONL 形态，
+  // 见 specs/auto-mode-risk-classifier.md R6；缺省无 sink，测试环境零输出）。
+  setAutoClassifierAuditSink,
 } from "./permission/index.js";
 export type {
   ManualPermissionBrokerOptions,
@@ -139,6 +142,12 @@ export type {
 } from "./permission/index.js";
 export type { PermissionConfig } from "./permission/index.js";
 export type { BashReflexAuditEntry, BashReflexAuditSink } from "./permission/index.js";
+export type {
+  AutoClassifierAuditEntry,
+  AutoClassifierAuditSink,
+  AutoRiskClassifierPort,
+  AutoRiskVerdict,
+} from "./permission/index.js";
 
 // Runtime
 export { AgentRuntime } from "./runtime.js";

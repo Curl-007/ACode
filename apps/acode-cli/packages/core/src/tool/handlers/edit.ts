@@ -193,7 +193,10 @@ const editHandler: ToolHandler = async (input, context) => {
   if (filePath.endsWith(".ipynb")) {
     return editFailure(
       EditErrorCode.NOTEBOOK_FILE,
-      "File is a Jupyter Notebook. Use the NotebookEdit to edit this file.",
+      // 修复依据（prompt-corpus-audit F7）：原文案指向 NotebookEdit——provider-visible-order.ts
+      // 的保留名、无 handler，模型照做会调用不存在的工具。改为指向真实可用路径：
+      // Write 无 .ipynb 门禁可整写 notebook JSON，Bash 可做结构化编辑（如 jq）。
+      "File is a Jupyter Notebook (.ipynb). Edit does not support notebooks; rewrite the full notebook JSON with Write, or edit it structurally via Bash (e.g. jq).",
     );
   }
 

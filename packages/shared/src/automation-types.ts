@@ -61,6 +61,21 @@ export type ACodeAutomationRunDispatchStatus =
 /** 单次 run 产出 session 后的运行结果（由 session runtime 回写，仅用于展示）。 */
 export type ACodeAutomationRunOutcome = "running" | "succeeded" | "failed" | "stopped";
 
+/**
+ * heartbeat 通知决策（automation-heartbeat-protocol.md R2/R4）：settle 时从本 run
+ * 主 agent 正文尾部解析。absent = 缺失/非法，消费方必须按 dont_notify 处理（默认安静）。
+ */
+export type ACodeAutomationNotifyDecision = "notify" | "dont_notify" | "absent";
+
+/** run 历史台账保留窗口（R5a）：scheduler 启动时一次性清扫。 */
+export const AUTOMATION_RUN_HISTORY_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+
+/**
+ * 耗尽（lifecycle completed）automation 定义的保留窗口（R5b，Q1 裁决 7 天）。
+ * failed 终态不自动删——用户要能看到坏掉的任务。
+ */
+export const AUTOMATION_EXHAUSTED_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+
 /** 一条定时任务定义 + 调度状态。 */
 export interface ACodeAutomation {
   automationId: string;
@@ -137,6 +152,8 @@ export interface ACodeAutomationRun {
   modelSelection?: ModelSelection;
   dispatchStatus: ACodeAutomationRunDispatchStatus;
   outcome?: ACodeAutomationRunOutcome;
+  /** heartbeat 通知决策（R4）；旧行/重试复位后为 undefined，读侧等价 absent。 */
+  notifyDecision?: ACodeAutomationNotifyDecision;
   /** dispatched 成功后回填，用于历史跳转。 */
   sessionId?: string;
   error?: string;

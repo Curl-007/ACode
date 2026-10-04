@@ -15,10 +15,18 @@
   该面随之放大。本特性此前把硬锁**降级为默认值**（缺省 yolo），现**改回硬天花板**：远程 bot 入口
   **不可达 yolo/bypassPermissions**，可选集最高到 build/edit/plan。需要全权限必须在桌面本地显式操作
   （任务工具栏切换），不经 bot 配置或聊天命令。
+  **2026-10-03 增补（auto-mode-risk-classifier.md R5）**：auto 模式落地后同批加入 bot
+  天花板集（`BOT_REMOTE_MODE_CEILING_FORBIDDEN`，与 bypass 身份集
+  `BOT_REMOTE_FORBIDDEN_PERMISSION_MODES` **拆分**）——auto 的灰区动作由 LLM 分类器
+  裁决，bot 场景请求者与审批者同一、裁决器可被提示注入影响，「远程消息 → LLM 放行 →
+  主机执行」不可接受；桌面本地 auto 不受影响（`isBypassPermissionMode("auto")` 恒
+  false，managed policy 的 modePolicyForbidden 判定不波及）。放开条件登记于分类器
+  spec v3 批次。
 - **天花板单一事实源**：`@acode/shared/bot-remote-guard`（`BOT_REMOTE_FORBIDDEN_PERMISSION_MODES` /
-  `isBotRemoteForbiddenPermissionMode` / `filterBotSelectablePermissionModes` / `clampBotPermissionMode`）
-  + 注册表派生的 `getBotSelectablePermissionModes`。services 的 `/mode` 列表、派发咽喉，UI 的默认权限模式卡片
-  都从这一处派生，禁止各处内联枚举。
+  `BOT_REMOTE_MODE_CEILING_FORBIDDEN` / `isBotRemoteForbiddenPermissionMode` /
+  `filterBotSelectablePermissionModes` / `clampBotPermissionMode`）
+  - 注册表派生的 `getBotSelectablePermissionModes`。services 的 `/mode` 列表、派发咽喉，UI 的默认权限模式卡片
+    都从这一处派生，禁止各处内联枚举。
 - **绑定码防爆破（安全加固 P0-3）**：绑定码从 `randomBytes(3)`（约 1670 万空间）扩到 `randomBytes(8)`
   （2^64 空间），保留单次使用 + 短 TTL（`BOT_BIND_CODE_TTL_MS`）。`handleBind` 叠加**每 bot 连续错误计数 +
   指数退避锁定**（`createBotBindAttemptGuard`），锁定期内连码都不校验，杜绝 TTL 窗口内高速枚举。
@@ -52,6 +60,7 @@
   （活跃任务派发路径上的既有约定：「菜单可能过滤无效值，不能拿它反推原选择，更不能重新套用
   Bot 创建默认值」）；静默把用户在桌面显式选择的模式改掉会在其不知情下变更共享状态。
   需要 yolo 必须在桌面本地显式操作。
+
 - **`/mode` 命令（草稿态 + 活跃任务态）只列天花板内档位**：可选集 = 引擎支持集剔除 yolo/bypass。
   显式请求 yolo/bypass（如 `/mode yolo`）回 `modeRemoteForbidden`（「远程入口不支持完全访问」），
   而非「模式未找到」，避免把「被天花板拒绝」误显示成「输错」。

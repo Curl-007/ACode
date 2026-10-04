@@ -10,6 +10,7 @@ import {
   setOfficialServiceSwitches,
 } from "@acode/shared";
 import { OAuthService } from "../src/oauth/oauthService.js";
+import { buildDesktopOAuthRedirectUriFromEnv } from "../src/oauth/providers/configUtils.js";
 import { BigModelProviderAdapter } from "../src/oauth/providers/bigmodelProviderAdapter.js";
 import {
   buildPkceAuthorizeParams,
@@ -22,7 +23,9 @@ import type {
   OAuthProviderRuntimeConfig,
 } from "../src/oauth/runtimeConfig.js";
 
-const REDIRECT_URI = "zcode://oauth/callback";
+// F6（2026-10-04）：回调协议对齐受理端唯一 scheme（desktopDeepLinkUrl.ts 的 acode）；
+// 文件底部另有 buildDesktopOAuthRedirectUriFromEnv 的发射端钉桩。
+const REDIRECT_URI = "acode://oauth/callback";
 const BIGMODEL_TOKEN_URL = "https://backend.example/api/v1/oauth/token";
 const ZAI_BUSINESS_LOGIN_URL = "https://api.z.example/api/auth/z/login";
 
@@ -284,7 +287,7 @@ test("OAuthService：回调兑换使用启动暂存的 verifier，旧 state 回�
     assert.equal(new URL(first.authorizeUrl).searchParams.get("code_challenge_method"), "S256");
 
     const result = await service.handleCallback(
-      `zcode://oauth/callback?authCode=code-1&state=${first.state}`,
+      `acode://oauth/callback?authCode=code-1&state=${first.state}`,
     );
     assert.equal(result?.kind, "session");
 
@@ -300,7 +303,7 @@ test("OAuthService：回调兑换使用启动暂存的 verifier，旧 state 回�
     // （state 错配在先，verifier 永远不会跨 flow 消费）。
     await service.startOAuth(BIGMODEL_PROVIDER_ID);
     await assert.rejects(
-      () => service.handleCallback(`zcode://oauth/callback?authCode=code-2&state=${first.state}`),
+      () => service.handleCallback(`acode://oauth/callback?authCode=code-2&state=${first.state}`),
       /state 不匹配或已过期/,
     );
     assert.equal(
@@ -331,7 +334,7 @@ test("OAuthService：refresh 路径不携带任何 PKCE 参数（未实现 refre
   try {
     const started = await service.startOAuth(BIGMODEL_PROVIDER_ID);
     await service.handleCallback(
-      `zcode://oauth/callback?authCode=code-1&state=${started.state}`,
+      `acode://oauth/callback?authCode=code-1&state=${started.state}`,
     );
 
     const before = captured.length;
@@ -381,4 +384,13 @@ test("startOAuthWithPolling 不注入 PKCE 参数（授权 URL 由后端所有�
     await service.cancelPending(ZAI_PROVIDER_ID);
     resetOfficialAccount();
   }
+});
+
+test("F6 发射端钉桩：官网中转页 redirect 参数必须是 acode://oauth/callback（受理端唯一 scheme）", () => {
+  // 修复前为 zcode://——桌面受理端（desktopDeepLinkUrl.ts）只认 acode:，中转页回跳
+  // 因此永远到不了本产品，同机装有上游 ZCode 时还会被其抢收授权码回调。用缺省 env
+  // （production origin）钉住发射端，防再漂移回 zcode://。
+  const relay = new URL(buildDesktopOAuthRedirectUriFromEnv({}));
+  assert.equal(relay.searchParams.get("redirect"), "acode://oauth/callback");
+  assert.equal(relay.pathname, "/app/oauth/login");
 });

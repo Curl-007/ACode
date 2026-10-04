@@ -16,13 +16,28 @@
  * 远程 bot 入口禁止的权限模式：这些档位跳过逐动作确认（yolo 直通、bypass 直通），
  * 一旦命中即等于把「远程聊天一条消息」直接放大成 host 上的任意副作用执行。
  * 需要这些模式必须在桌面本地显式操作，远程入口永不可达。
+ *
+ * ⚠ 本常量同时是「全权限档（bypass 身份）」的单一事实源（isBypassPermissionMode），
+ * 桌面 execution-state 的 modePolicyForbidden 判定消费它——**不要**把 auto 加进来
+ * （会误伤桌面：managed policy 下拒切 auto）。bot 天花板用下方独立集合。
  */
 export const BOT_REMOTE_FORBIDDEN_PERMISSION_MODES = ["yolo", "bypassPermissions"] as const;
 
 /**
+ * 远程 bot 入口天花板集（apps/acode-cli/specs/auto-mode-risk-classifier.md R5）：
+ * 全权限档之外再加 auto——auto 的灰区动作由 LLM 分类器裁决，而 bot 场景里请求者
+ * 与审批者同一（bot 护栏 spec 已登记的 self-approve 边界）、裁决器可被提示注入
+ * 影响，「远程消息 → LLM 放行 → 主机执行」在 v1 不可接受。桌面本地 auto 不受影响；
+ * 放开条件登记于分类器 spec 的 v3 批次。
+ */
+export const BOT_REMOTE_MODE_CEILING_FORBIDDEN = ["yolo", "bypassPermissions", "auto"] as const;
+
+/**
  * 某权限模式是否跳过逐动作确认（yolo 直通 / bypass 直通）。
- * 这是「全权限档」的通用判定单一事实源：远程 bot 天花板（P0-3）与托管策略地板的
- * disableBypassPermissionsMode（P2 R4）都据此识别同一组模式，不各自维护清单。
+ * 这是「全权限档」的通用判定单一事实源：托管策略地板的
+ * disableBypassPermissionsMode（P2 R4）据此识别同一组模式，不各自维护清单。
+ * 注意与 bot 天花板集的区别：auto 不跳过确认（它是「分类器代确认」），
+ * 不属于 bypass 身份，但对远程 bot 入口仍不可达（见上）。
  */
 export function isBypassPermissionMode(mode: string | null | undefined): boolean {
   if (!mode) {
@@ -31,9 +46,12 @@ export function isBypassPermissionMode(mode: string | null | undefined): boolean
   return (BOT_REMOTE_FORBIDDEN_PERMISSION_MODES as readonly string[]).includes(mode);
 }
 
-/** 某权限模式是否属于远程入口禁止的全权限档。 */
+/** 某权限模式是否属于远程入口禁止档位（bypass 身份档 + auto，见天花板集注释）。 */
 export function isBotRemoteForbiddenPermissionMode(mode: string | null | undefined): boolean {
-  return isBypassPermissionMode(mode);
+  if (!mode) {
+    return false;
+  }
+  return (BOT_REMOTE_MODE_CEILING_FORBIDDEN as readonly string[]).includes(mode);
 }
 
 /**

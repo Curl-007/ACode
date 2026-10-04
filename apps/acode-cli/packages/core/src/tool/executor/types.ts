@@ -36,6 +36,7 @@ import type {
 } from "@acode/contracts";
 import type { HookRunner } from "../../hooks/index.js";
 import type { PermissionService } from "../../permission/service.js";
+import type { AutoRiskClassifierPort } from "../../permission/auto-risk-classifier.js";
 import type { RuntimeTaskRegistry } from "../../runtime-task/registry.js";
 import type { ToolRegistry } from "../registry.js";
 import type { ToolSchedule } from "../scheduler.js";
@@ -78,6 +79,11 @@ export interface ToolExecutorOptions {
   registry: ToolRegistry;
   permissionService: PermissionService;
   permissionBroker?: PermissionBrokerPort;
+  /**
+   * auto 模式灰区分类器端口（specs/auto-mode-risk-classifier.md R2）；缺席时灰区
+   * 标记维持 ask 形态（fail-safe）。装配点唯一：createRuntimeToolExecutor。
+   */
+  autoRiskClassifier?: AutoRiskClassifierPort;
   emitEvent: (event: SessionEvent) => Promise<void>;
   enqueueBackgroundTaskNotification?: EnqueueBackgroundTaskNotification;
   shouldEnqueueBackgroundTaskNotification?: ShouldEnqueueBackgroundTaskNotification;
@@ -184,6 +190,8 @@ export interface ToolExecutorDeps {
   registry: ToolRegistry;
   permissionService: PermissionService;
   permissionBroker: PermissionBrokerPort;
+  /** auto 模式灰区分类器端口（同 ToolExecutorOptions.autoRiskClassifier）。 */
+  autoRiskClassifier?: AutoRiskClassifierPort;
   emitEvent: (event: SessionEvent) => Promise<void>;
   enqueueBackgroundTaskNotification?: EnqueueBackgroundTaskNotification;
   shouldEnqueueBackgroundTaskNotification?: ShouldEnqueueBackgroundTaskNotification;

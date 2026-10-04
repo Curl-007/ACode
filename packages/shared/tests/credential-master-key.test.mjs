@@ -14,13 +14,17 @@ import { readdirSync } from "node:fs";
  * （Node 25 type-stripping），仅用临时目录 fixture——**绝不读写真实 ~/.acode 或
  * 任何真实凭据**。
  *
+ * R1-a（批次 4）后本文件钉住的是**文件模式**语义：所有解析/构造调用注入
+ * `noKeychain` stub（unavailable），与 P0-4 时代的行为逐条对齐。钥匙串模式与
+ * 优先级链在 credential-keychain.test.mjs 覆盖；真机钥匙串绝不被本文件触碰。
+ *
  * 守护的不变量：
  * (a) 新密文一律 enc:v2:，密钥来自每安装随机密钥文件/env/显式注入，
  *     源码中不再出现 `acode-credential-fallback` 用于**新写入**的路径；
  * (b) 历史 enc:v1:（旧可推导密钥）仍可解密——升级不丢凭据；
  * (c) 两个「进程」（同 baseDir 的两个 cipher 实例）收敛到同一把密钥——
  *     桌面 host 与 CLI 共用同一 credentials.json 的前提；
- * (d) ACODE_CREDENTIAL_SECRET env 优先于密钥文件；
+ * (d) ACODE_CREDENTIAL_SECRET env 不得压过既有持久材料（密钥文件）；
  * (e) v1 密文重新贴上 enc:v2: 前缀必须被 GCM 拒绝（版本混淆攻击不成立）。
  */
 
@@ -35,6 +39,17 @@ const {
 } = credentialCipher;
 const { resolveCredentialMasterKey, resolveCredentialKeyFilePath, CREDENTIAL_KEY_FILE_NAME } =
   credentialMasterKey;
+
+/**
+ * 文件模式 stub：钥匙串恒不可用。R1-a 把「生成」分支改成了钥匙串优先，真机
+ * （macOS/Windows/Linux 桌面）上默认访问器可用会让本文件的密钥文件断言全部失真，
+ * 故显式注入。生成分支会因此发一条降级告警（走 onWarn 或 once-guarded console）。
+ */
+const noKeychain = {
+  read: () => ({ status: "unavailable", reason: "disabled for file-mode test" }),
+  write: () => ({ status: "unavailable", reason: "disabled for file-mode test" }),
+  delete: () => {},
+};
 
 /** 复刻旧 v1 加密逻辑（sha256 单轮、无 AAD），用于构造历史密文 fixture。 */
 function encryptLegacyV1(plaintext, secret) {
@@ -69,7 +84,7 @@ function withTempBaseDir(fn) {
 test("new ciphertext is enc:v2 and round-trips via per-install key file", () => {
   withTempBaseDir((baseDir) => {
     const env = {};
-    const cipher = createACodeCredentialCipher({ baseDir, env });
+    const cipher = createACodeCredentialCipher({ baseDir, env, keychain: noKeychain });
     const encrypted = cipher.encrypt("sk-live-secret-token");
     assert.ok(encrypted.startsWith("enc:v2:"), `expected enc:v2 prefix, got ${encrypted.slice(0, 12)}`);
     assert.ok(isEncryptedACodeCredentialValue(encrypted));
@@ -88,8 +103,8 @@ test("new ciphertext is enc:v2 and round-trips via per-install key file", () => 
 test("two cipher instances on the same baseDir converge on the same key (host+CLI shared file)", () => {
   withTempBaseDir((baseDir) => {
     const env = {};
-    const desktopSide = createACodeCredentialCipher({ baseDir, env });
-    const cliSide = createACodeCredentialCipher({ baseDir, env });
+    const desktopSide = createACodeCredentialCipher({ baseDir, env, keychain: noKeychain });
+    const cliSide = createACodeCredentialCipher({ baseDir, env, keychain: noKeychain });
     const encrypted = desktopSide.encrypt("oauth-access-token-123");
     // CLI 侧必须能解开桌面侧写的密文——两进程共用 credentials.json 的前提。
     assert.equal(cliSide.decrypt(encrypted), "oauth-access-token-123");
@@ -101,7 +116,7 @@ test("two cipher instances on the same baseDir converge on the same key (host+CL
 test("ACODE_CREDENTIAL_SECRET env takes precedence and no key file is written", () => {
   withTempBaseDir((baseDir) => {
     const env = { ACODE_CREDENTIAL_SECRET: "explicit-user-provided-secret-value" };
-    const cipher = createACodeCredentialCipher({ baseDir, env });
+    const cipher = createACodeCredentialCipher({ baseDir, env, keychain: noKeychain });
     const encrypted = cipher.encrypt("value-under-env-secret");
     assert.equal(cipher.decrypt(encrypted), "value-under-env-secret");
 
@@ -112,6 +127,7 @@ test("ACODE_CREDENTIAL_SECRET env takes precedence and no key file is written", 
     const otherCipher = createACodeCredentialCipher({
       baseDir,
       env: { ACODE_CREDENTIAL_SECRET: "a-different-secret" },
+      keychain: noKeychain,
     });
     assert.throws(() => otherCipher.decrypt(encrypted), /凭据解密失败/);
   });
@@ -124,7 +140,7 @@ test("legacy enc:v1 (derivable key) still decrypts — upgrade never orphans cre
 
   withTempBaseDir((baseDir) => {
     // env 留空 → 新写入走 v2 随机密钥；但 decrypt 必须仍能读 v1 历史密文。
-    const cipher = createACodeCredentialCipher({ baseDir, env: {} });
+    const cipher = createACodeCredentialCipher({ baseDir, env: {}, keychain: noKeychain });
     assert.equal(cipher.decrypt(legacyCipherText), "legacy-oauth-refresh-token");
   });
 });
@@ -133,28 +149,28 @@ test("v1 ciphertext relabeled as v2 is rejected by GCM (version-confusion attack
   const legacyCipherText = encryptLegacyV1("legacy-secret", legacyFallbackSecret());
   const relabeled = "enc:v2:" + legacyCipherText.slice("enc:v1:".length);
   withTempBaseDir((baseDir) => {
-    const cipher = createACodeCredentialCipher({ baseDir, env: {} });
+    const cipher = createACodeCredentialCipher({ baseDir, env: {}, keychain: noKeychain });
     assert.throws(() => cipher.decrypt(relabeled), /凭据解密失败/);
   });
 });
 
 test("plaintext (unencrypted) values pass through unchanged, matching legacy behavior", () => {
   withTempBaseDir((baseDir) => {
-    const cipher = createACodeCredentialCipher({ baseDir, env: {} });
+    const cipher = createACodeCredentialCipher({ baseDir, env: {}, keychain: noKeychain });
     assert.equal(cipher.decrypt("not-encrypted-at-all"), "not-encrypted-at-all");
   });
 });
 
 test("resolveCredentialMasterKey never returns the derivable fallback for new material", () => {
   withTempBaseDir((baseDir) => {
-    const resolved = resolveCredentialMasterKey({ baseDir, env: {} });
+    const resolved = resolveCredentialMasterKey({ baseDir, env: {}, keychain: noKeychain });
     assert.equal(resolved.source, "keyFile");
     assert.equal(resolved.key.length, 32);
     // 与旧派生结果必须不同（密钥确实不再是 sha256(fallback)）。
     const legacyKey = createHash("sha256").update(legacyFallbackSecret()).digest();
     assert.notDeepEqual(resolved.key, legacyKey);
     // 再次解析返回同一把（幂等，读文件而非重新生成）。
-    const again = resolveCredentialMasterKey({ baseDir, env: {} });
+    const again = resolveCredentialMasterKey({ baseDir, env: {}, keychain: noKeychain });
     assert.deepEqual(again.key, resolved.key);
   });
 });
@@ -203,7 +219,7 @@ test("decrypt failure carries the stable code + prefix that isCredentialDecryptE
   // 「清理损坏会话 → 强制干净登出 → 重新登录」。合并两份 cipher 时曾把错误改成不带
   // code/前缀的裸 Error，令该谓词恒 false、恢复路径失效。此测试钉住该契约。
   withTempBaseDir((baseDir) => {
-    const cipher = createACodeCredentialCipher({ baseDir, env: {} });
+    const cipher = createACodeCredentialCipher({ baseDir, env: {}, keychain: noKeychain });
     const good = cipher.encrypt("some-secret");
     // 用另一把密钥加密的密文，交给当前 cipher 解密必然失败。
     // 注意：这里必须用 explicit `secret`（最高优先级）而不是 ACODE_CREDENTIAL_SECRET env——
@@ -237,35 +253,37 @@ test("decrypt failure carries the stable code + prefix that isCredentialDecryptE
 //
 // 旧实现把 env 检查放在密钥文件之前，导致「正常升级（已写 v2）后再设
 // ACODE_CREDENTIAL_SECRET」会静默换密钥、令全部 v2 凭据不可解密且无诊断。
-// 新实现让已存在的密钥文件优先，env 被忽略并告警。
+// 新实现让已存在的持久材料（R1-a 后含钥匙串）优先，env 被忽略并告警。
 
 test("existing key file wins over ACODE_CREDENTIAL_SECRET and warns (no silent orphaning)", () => {
   withTempBaseDir((baseDir) => {
     const warnings = [];
     const onWarn = (message) => warnings.push(message);
 
-    // 第一次解析：无 env → 生成密钥文件。
-    const first = resolveCredentialMasterKey({ baseDir, env: {}, onWarn });
+    // 第一次解析：无 env → 生成密钥文件（noKeychain stub → 文件模式 + 一条降级告警）。
+    const first = resolveCredentialMasterKey({ baseDir, env: {}, onWarn, keychain: noKeychain });
     assert.equal(first.source, "keyFile");
 
     // 第二次解析：env 已设但密钥文件已存在 → 必须仍用密钥文件（否则既有 v2 凭据解不开），
-    // 且发出可诊断的告警。
+    // 且发出可诊断的告警。R1-a 后 warnings 还含首次生成的钥匙串降级告警，按内容过滤断言。
     const second = resolveCredentialMasterKey({
       baseDir,
       env: { ACODE_CREDENTIAL_SECRET: "a-different-secret-set-after-upgrade" },
       onWarn,
+      keychain: noKeychain,
     });
     assert.equal(second.source, "keyFile", "existing key file must take precedence over env");
     assert.deepEqual(second.key, first.key, "resolved key must be unchanged by the env var");
-    assert.equal(warnings.length, 1, "conflict must emit exactly one warning");
-    assert.match(warnings[0], /ACODE_CREDENTIAL_SECRET/);
-    assert.match(warnings[0], /orphaning existing enc:v2 credentials/);
+    const envWarnings = warnings.filter((line) => /ACODE_CREDENTIAL_SECRET/.test(line));
+    assert.equal(envWarnings.length, 1, "env conflict must emit exactly one warning");
+    assert.match(envWarnings[0], /orphaning existing enc:v2 credentials/);
 
     // 加密/解密仍然自洽（证明凭据没有被孤立）。
     const cipher = createACodeCredentialCipher({
       baseDir,
       env: { ACODE_CREDENTIAL_SECRET: "a-different-secret-set-after-upgrade" },
       onWarn,
+      keychain: noKeychain,
     });
     const encrypted = cipher.encrypt("still-readable-after-env-appeared");
     assert.equal(cipher.decrypt(encrypted), "still-readable-after-env-appeared");
@@ -275,7 +293,12 @@ test("existing key file wins over ACODE_CREDENTIAL_SECRET and warns (no silent o
 test("ACODE_CREDENTIAL_SECRET is honored on a fresh install (no key file yet)", () => {
   withTempBaseDir((baseDir) => {
     const env = { ACODE_CREDENTIAL_SECRET: "fresh-install-explicit-secret" };
-    const resolved = resolveCredentialMasterKey({ baseDir, env, onWarn: () => {} });
+    const resolved = resolveCredentialMasterKey({
+      baseDir,
+      env,
+      onWarn: () => {},
+      keychain: noKeychain,
+    });
     assert.equal(resolved.source, "env", "fresh install with env must use the env secret");
     assert.ok(
       !existsSync(resolveCredentialKeyFilePath({ baseDir, env })),
@@ -292,11 +315,12 @@ test("encrypt never emits enc:v1 (no new ciphertext under the derivable key)", (
   withTempBaseDir((baseDir) => {
     // 三种密钥来源都验：随机密钥文件、env、显式 secret。
     const ciphers = {
-      keyFile: createACodeCredentialCipher({ baseDir, env: {} }),
+      keyFile: createACodeCredentialCipher({ baseDir, env: {}, keychain: noKeychain }),
       env: createACodeCredentialCipher({
         baseDir,
         env: { ACODE_CREDENTIAL_SECRET: "fresh-secret-no-keyfile" },
         onWarn: () => {},
+        keychain: noKeychain,
       }),
       explicit: createACodeCredentialCipher({ baseDir, secret: "explicit-secret" }),
     };

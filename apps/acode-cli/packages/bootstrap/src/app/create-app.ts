@@ -20,6 +20,7 @@ import { createMcpAdapter } from "@acode/adapters/mcp";
 import {
   AgentRuntime,
   PermissionService,
+  setAutoClassifierAuditSink,
   setBashReflexAuditSink,
   setProcessManagedPolicyFloor,
   buildPluginReferenceCatalog,
@@ -210,6 +211,25 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
       ruleId: entry.ruleId,
       status: "completed",
       timestamp: entry.timestamp,
+    });
+  });
+  // auto 分类器审计（specs/auto-mode-risk-classifier.md R6）：同一 JSONL 本地落盘形态，
+  // 每次灰区裁决一条（verdict/reasonCode/confidence/latency/cache/fallback）。
+  setAutoClassifierAuditSink((entry) => {
+    permissionAuditLogger.info("Auto risk classifier verdict", {
+      cache: entry.cache,
+      confidence: entry.confidence,
+      event: entry.event,
+      ...(entry.fallback ? { fallback: entry.fallback } : {}),
+      latencyMs: entry.latencyMs,
+      reasonCode: entry.reasonCode,
+      ruleId: entry.ruleId,
+      sessionId: entry.sessionId,
+      status: "completed",
+      timestamp: entry.timestamp,
+      tool: entry.tool,
+      ...(entry.turnId ? { turnId: entry.turnId } : {}),
+      verdict: entry.verdict,
     });
   });
   const startupTimer = new StartupTimer(

@@ -416,3 +416,62 @@ test("(12c) vault.delete failure does not fail the committed update", async () =
     }
   });
 });
+
+// ── R1-c（批次 4）：明文回退的显式告警 ────────────────────────────────
+
+test("(R1-c) plaintext persistence warns once per file+cause; vaulted write stays silent", async () => {
+  await withTempDir(async (dir) => {
+    const warnings = [];
+    const originalWarn = console.warn;
+    console.warn = (...args) => warnings.push(args.join(" "));
+    const notices = () => warnings.filter((line) => /SECURITY NOTICE/.test(line));
+    try {
+      // ① vault 未注入（装配点缺失/纯 builtin）→ 明文落盘 + 一次性告警（未注入成因）。
+      const absentPath = join(dir, "provider_config_absent.json");
+      const absentRepo = createRepository(absentPath);
+      try {
+        await absentRepo.update(() => updateWithPlaintextKey("custom-notice", "sk-plaintext-notice"));
+        assert.equal(notices().length, 1, "first plaintext write must warn exactly once");
+        assert.match(notices()[0], /no encrypted credential vault is wired/);
+        assert.match(notices()[0], /PLAINTEXT/);
+        // 同文件同成因的后续写入不再刷屏（once-guarded，键含文件路径）。
+        await absentRepo.update(() => updateWithPlaintextKey("custom-notice-2", "sk-second"));
+        assert.equal(notices().length, 1, "same file+cause must not warn again");
+      } finally {
+        absentRepo.dispose();
+      }
+
+      // ② vault 注入 → 迁移落 ref，零告警。
+      const vaultedPath = join(dir, "provider_config_vaulted.json");
+      const vault = createMemoryVault();
+      const vaultedRepo = createRepository(vaultedPath, { providerApiKeyVault: vault });
+      try {
+        await vaultedRepo.update(() => updateWithPlaintextKey("custom-vaulted", "sk-vaulted"));
+        assert.equal(notices().length, 1, "vaulted migration must not warn");
+      } finally {
+        vaultedRepo.dispose();
+      }
+
+      // ③ vault save 失败 → 明文保留可用（既有非破坏语义）+ 失败成因告警（不同成因键不互吞）。
+      const failingPath = join(dir, "provider_config_failing.json");
+      const failingVault = createMemoryVault({ failOnSave: true });
+      const failingRepo = createRepository(failingPath, {
+        providerApiKeyVault: failingVault,
+        onRecovery: () => {},
+      });
+      try {
+        await failingRepo.update(() => updateWithPlaintextKey("custom-failing", "sk-failing"));
+        assert.ok(
+          warnings.some((line) => /credential vault rejected the save/.test(line)),
+          `expected vault-failed notice, got: ${JSON.stringify(warnings)}`,
+        );
+        const raw = readFileSync(failingPath, "utf-8");
+        assert.ok(raw.includes("sk-failing"), "save failure must keep the key usable (plaintext)");
+      } finally {
+        failingRepo.dispose();
+      }
+    } finally {
+      console.warn = originalWarn;
+    }
+  });
+});

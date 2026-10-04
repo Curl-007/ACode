@@ -133,13 +133,15 @@ export async function connectToRemoteServerTarget(
 
   // 1) 校验 server-info：协议版本/能力由 serverRemoteInfoSchema 的 literal 固定，
   //    safeParse 失败即视为不兼容，给出明确连接错误而不是半开 ws。
+  //    R2（server-auth.md）：HTTP 路由的 ?token= query 兼容窗已关闭，token 走 Bearer 头
+  //    ——query 会泄漏进日志/历史/Referer，fetch 可以带头就不该用 query。
   const infoUrl = new URL(endpoints.infoUrl.toString());
-  if (token) {
-    infoUrl.searchParams.set("token", token);
-  }
   let infoResponse: Response;
   try {
-    infoResponse = await fetchImpl(infoUrl.toString(), { cache: "no-store" });
+    infoResponse = await fetchImpl(infoUrl.toString(), {
+      cache: "no-store",
+      ...(token ? { headers: { authorization: `Bearer ${token}` } } : {}),
+    });
   } catch (error) {
     throw new Error(
       `无法访问 server-info（${endpoints.infoUrl.origin}）：${error instanceof Error ? error.message : String(error)}`,
@@ -165,7 +167,8 @@ export async function connectToRemoteServerTarget(
   }
   throwIfAborted();
 
-  // 2) 打开 /ws；token 仅经 query 注入（与 server hasValidLiteToken 的 ?token= 校验一致）。
+  // 2) 打开 /ws；token 仅经 query 注入——标准 WebSocket API 无法携带自定义 header，
+  //    server 侧 R2 收缩后 /ws* 升级握手是 query token 的唯一保留面（server-auth.md）。
   const wsUrl = new URL(endpoints.wsUrl.toString());
   if (token) {
     wsUrl.searchParams.set("token", token);

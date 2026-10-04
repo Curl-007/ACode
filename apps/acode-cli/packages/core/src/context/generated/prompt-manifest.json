@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generatedAt": "2026-09-29T09:18:10.446Z",
+  "generatedAt": "2026-10-02T19:50:18.007Z",
   "sections": [
     {
       "id": "prefix.cli",
@@ -28,7 +28,7 @@
       "group": "system-dynamic",
       "source": "dynamic_behavior",
       "owner": "apps/acode-cli/packages/core/src/context/dynamic-sections.ts",
-      "hash": "bbdc66b399d297fff35df404921dcbd9056ed8892cd0fa6f35762345115225af"
+      "hash": "dfc9c2e674c1aaee63efec602c76ff7b7d58ac4ea0b3349499363df7f651947b"
     },
     {
       "id": "context.management",
@@ -42,8 +42,8 @@
       "group": "system-stable",
       "source": "subagent_notes",
       "owner": "apps/acode-cli/packages/core/src/subagent/system-prompt.ts",
-      "hash": "5de0735ce4ced596466720f2002e1942e1ec745cfb4a6669bbb137db6ff6f10b"
+      "hash": "a34c8da890bceca1f2dba113942eac873ba78a490f8b52b1239a5fd52978af84"
     }
   ],
-  "sectionsHash": "eddd09689981f844a1fc69aa3d176c98901c425c98c68cdb4686128f6f24019f"
+  "sectionsHash": "6211b118ccb9ecaefe99be011cc96ec127bce1b83f13c9352913a7d9826df5dc"
 }

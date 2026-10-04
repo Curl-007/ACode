@@ -5,6 +5,7 @@ export const TELEMETRY_SCHEMA_VERSION = 6 as const;
 
 export const AgentTelemetryOperation = {
   AgentStep: "agent_step",
+  AutoRiskClassification: "auto_risk_classification",
   ContextCompaction: "context_compaction",
   GoalCompletionVerification: "goal_completion_verification",
   GoalTitleGeneration: "goal_title_generation",

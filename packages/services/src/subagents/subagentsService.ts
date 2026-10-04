@@ -85,6 +85,7 @@ const PLUGIN_MANIFEST_PATHS = [
   join(".acode-plugin", "plugin.json"),
   join(".claude-plugin", "plugin.json"),
   join(".codex-plugin", "plugin.json"),
+  join(".cursor-plugin", "plugin.json"),
 ] as const;
 
 function createBuiltInAgents(

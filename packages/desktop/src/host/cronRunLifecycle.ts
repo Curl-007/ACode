@@ -1,4 +1,8 @@
-import type { ACodeAutomationRunOutcome, ACodeAutomationTrigger } from "@acode/shared";
+import type {
+  ACodeAutomationNotifyDecision,
+  ACodeAutomationRunOutcome,
+  ACodeAutomationTrigger,
+} from "@acode/shared";
 
 interface CronRunLifecycleRepo {
   ensureRunClaimed(params: {
@@ -8,7 +12,12 @@ interface CronRunLifecycleRepo {
     scheduledAt: number | null;
     trigger: ACodeAutomationTrigger;
   }): Promise<void>;
-  markRunOutcome(runId: string, outcome: ACodeAutomationRunOutcome, error?: string): Promise<void>;
+  markRunOutcome(
+    runId: string,
+    outcome: ACodeAutomationRunOutcome,
+    error?: string,
+    notifyDecision?: ACodeAutomationNotifyDecision,
+  ): Promise<void>;
   markRunDispatch(params: {
     runId: string;
     dispatchStatus: "failed_to_dispatch";
@@ -55,12 +64,19 @@ export async function recordCronRunOutcomeBestEffort(
     repo: CronRunLifecycleRepo;
     outcome: ACodeAutomationRunOutcome;
     error?: string;
+    /** heartbeat 协议 R4：settle 时解析出的通知决策，落 run 台账。 */
+    notifyDecision?: ACodeAutomationNotifyDecision;
     logWarn: LogWarn;
   },
 ): Promise<void> {
   try {
     await params.repo.ensureRunClaimed(params);
-    await params.repo.markRunOutcome(params.runId, params.outcome, params.error);
+    await params.repo.markRunOutcome(
+      params.runId,
+      params.outcome,
+      params.error,
+      params.notifyDecision,
+    );
   } catch (error) {
     params.logWarn(
       `回写定时任务运行结果失败 automation=${params.automationId} runId=${params.runId}`,
@@ -118,6 +134,7 @@ export async function settleCronRunTerminalOutcome(
     repo: CronRunLifecycleRepo;
     outcome: Exclude<ACodeAutomationRunOutcome, "running">;
     error?: string;
+    notifyDecision?: ACodeAutomationNotifyDecision;
     logWarn: LogWarn;
   },
 ): Promise<void> {

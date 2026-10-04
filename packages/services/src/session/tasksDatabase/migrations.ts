@@ -8,6 +8,7 @@ import {
 } from "#src/session/tasksDatabase/schema-v1.js";
 import { importLegacyAutomationSelections } from "#src/session/tasksDatabase/provider-selection-v2.js";
 import { OFFICIAL_GLM_SELECTION_MIGRATION_SQL } from "#src/session/tasksDatabase/official-glm-selection-v3.js";
+import { AUTOMATION_NOTIFY_DECISION_MIGRATION_SQL } from "#src/session/tasksDatabase/automation-notify-decision-v4.js";
 
 // 冻结历史列声明，不能以实时 Repo/schema 代替，否则新版构建会改变已应用 checksum。
 const columns = [
@@ -64,6 +65,10 @@ const definitions = [
     id: "0003_official_glm_selection",
     checksumInput: [OFFICIAL_GLM_SELECTION_MIGRATION_SQL],
   },
+  {
+    id: "0004_automation_notify_decision",
+    checksumInput: [AUTOMATION_NOTIFY_DECISION_MIGRATION_SQL],
+  },
 ] as const;
 
 export function runTasksDatabaseMigrations(
@@ -113,7 +118,13 @@ export function runTasksDatabaseMigrations(
       options.onProgress?.("migrating", { ...migrationFacts });
       if (migration.id === "0001_adopt_task_schema") adoptSchema(db);
       else if (migration.id === "0002_provider_selection") importLegacyAutomationSelections(db);
-      else db.exec(OFFICIAL_GLM_SELECTION_MIGRATION_SQL);
+      else if (migration.id === "0003_official_glm_selection")
+        db.exec(OFFICIAL_GLM_SELECTION_MIGRATION_SQL);
+      else if (migration.id === "0004_automation_notify_decision")
+        db.exec(AUTOMATION_NOTIFY_DECISION_MIGRATION_SQL);
+      // 显式 fail-loud：definitions 加了新 id 却忘了接 body 时，宁可迁移失败也不能静默跳过。
+      // （此处 migration 已被上方四个分支穷尽收窄为 never，取循环头部记录的 id 报错。）
+      else throw new Error(`Unknown task database migration id: ${currentMigrationId}`);
       migrationFacts.executedCount++;
       db.prepare("INSERT INTO tasks_schema_migration VALUES(?,?,?)").run(
         migration.id,

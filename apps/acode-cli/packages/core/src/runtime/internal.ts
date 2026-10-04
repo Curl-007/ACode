@@ -1,4 +1,5 @@
 import { PermissionService, ToolScheduler } from "./deps.js";
+import type { PromptCacheMissCause } from "@acode/contracts";
 import type {
   Logger,
   ModelSelection,
@@ -117,10 +118,22 @@ export interface AgentRuntimeInternal
   sessionMailboxPort?: SessionMailboxPort;
   sessionPersisted: boolean;
   needsPlanModeExitReminder: boolean;
+  /**
+   * 重启孤儿任务提醒的一次性 flag（specs/runtime-restart-task-reminder.md R3）：
+   * 每个 runtime 实例首 turn 评估一次、评估即消费；进程内不落盘。
+   */
+  runtimeRestartReminderEmitted: boolean;
   latestConversationMessageId?: MessageId;
   latestAssistantMessageId?: MessageId;
   latestAssistantTurnId?: TurnId;
   mainTurnCacheHitAggregate: MainTurnCacheHitAggregate;
+  /**
+   * prompt-cache miss 归因（specs/prompt-cache-diagnostics.md R2/R3）：单格 pending
+   * 由显式事件点写入、归因消费即清；计数为进程内累计，resume/rewind 重建后从空开始。
+   */
+  pendingCacheMissCause?: PromptCacheMissCause;
+  cacheMissCauseCounts: Partial<Record<PromptCacheMissCause, number>>;
+  lastRequestModelId?: string;
   currentTurnFileChanges: RuntimeTurnFileChangeMap;
   lastAssistantCompletedAtMs?: number;
   lastEmittedLocalDate?: string;

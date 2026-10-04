@@ -18,8 +18,17 @@ import {
 import {
   ACODE_AGENT_RUNTIME,
   ACODE_AGENT_BYTECODE_ENTRY_FILE,
+  ACODE_AGENT_IDLE_EXIT_CODE,
+  ACODE_AGENT_IDLE_EXIT_ENV_KEY,
+  ACODE_AGENT_IDLE_EXIT_GRACE_MS,
+  ACODE_AGENT_MAX_OLD_SPACE_MB_ENV_KEY,
   ACODE_RUNTIME_ENV_KEY,
+  DEFAULT_AGENT_MAX_OLD_SPACE_MB,
+  acodeProtocolNotifications,
+  acodeRuntimeIdleExitParamsSchema,
+  appendMaxOldSpaceToNodeOptions,
   isPackagedACodeDesktopRuntime,
+  resolveMaxOldSpaceMb,
   resolveWorkspaceKey,
   resolveACodeRuntimeEnv,
   sanitizeACodeRuntimeEnv,
@@ -84,6 +93,13 @@ export interface ACodeAgentProcessManagerOptions {
    */
   idleTimeoutMs?: number;
   /**
+   * 关闭 CLI 侧空闲自退(spec: packages/services/specs/chat-lane-idle-reclaim.md R8):
+   * spawn env 注入 ACODE_AGENT_IDLE_EXIT_MS=0。plugin lane 维持现状不回收;
+   * mcp-status lane 已有 Host 侧 idleTimeoutMs,单一所有者,不叠加第二套机制。
+   * chat lane 缺省启用 CLI 侧空闲退出,不允许调用方经 service options 关闭(Omit)。
+   */
+  disableCliIdleExit?: boolean;
+  /**
    * 仅当默认进程 cwd 等于目标 workspace 且该目录不可用时使用。
    * 业务 workspacePath/workspaceKey 不随 cwd 兜底改变。
    */
@@ -121,6 +137,8 @@ interface ManagedACodeAgentProcess {
   exited: boolean;
   firstCleanupReason?: AgentProcessCleanupReason;
   idleTimer?: ReturnType<typeof setTimeout>;
+  /** CLI 宣告帧携带的静默时长;兜底归因(仅退出码)路径无值。 */
+  idleExitAnnounced?: { quiescentMs: number; announcedAt: number };
   readyAt?: number;
   readyReported: boolean;
   runtimeIdentity: ACodeAgentRuntimeIdentity;
@@ -135,6 +153,8 @@ interface ManagedACodeAgentProcess {
 }
 
 type AgentProcessCleanupReason =
+  | "cli-idle-exit"
+  | "cli-idle-exit-code"
   | "idle-timeout"
   | "idle-timeout-retry"
   | "manager-dispose"
@@ -617,6 +637,7 @@ export class ACodeAgentProcessManager {
   private readonly spawnFallbackCwd: string | undefined;
   private readonly lane: string | undefined;
   private readonly idleTimeoutMs: number | undefined;
+  private readonly disableCliIdleExit: boolean;
   private readonly runtimeRestartedEmitter = new Emitter<ACodeAgentRuntimeRestartedEvent>();
   private readonly runtimeLifecycleEmitter = new Emitter<ACodeAgentRuntimeLifecycleEvent>();
   private disposeAllInFlight: Promise<void> | undefined;
@@ -638,6 +659,7 @@ export class ACodeAgentProcessManager {
     this.lane = options?.lane?.trim() || undefined;
     this.idleTimeoutMs =
       options?.idleTimeoutMs && options.idleTimeoutMs > 0 ? options.idleTimeoutMs : undefined;
+    this.disableCliIdleExit = options?.disableCliIdleExit === true;
   }
 
   private reportProcessLifecycle(
@@ -1064,20 +1086,38 @@ export class ACodeAgentProcessManager {
       spawnPreflight,
     });
     const spawnRequestedAt = Date.now();
+    const agentSpawnEnv: Record<string, string> = {
+      ...sanitizeACodeRuntimeEnv(process.env),
+      [ACODE_RUNTIME_ENV_KEY]: runtimeEnv,
+      ...spawnEnv,
+      ...effectiveCommand.env,
+      // 身份/隔离语义使用 workspaceIdentity；cwd 继续使用 workspacePath。
+      ...buildAgentWorkspaceIdentityEnv(params.workspaceIdentity),
+      // lane 级策略优先级最高:plugin/mcp-status 显式关闭 CLI 空闲自退(spec
+      // chat-lane-idle-reclaim.md R8),不允许被继承 env 覆盖;chat lane 不注入,
+      // 走 CLI 缺省(启用)与 ACODE_AGENT_IDLE_EXIT_MS 调优。
+      ...(this.disableCliIdleExit ? { [ACODE_AGENT_IDLE_EXIT_ENV_KEY]: "0" } : {}),
+      ...buildE2EAgentCoverageEnv(),
+    };
+    // v8 堆上限护栏(spec: packages/services/specs/agent-v8-heap-guard.md R2):
+    // 在 coverage env 之后合并,保留既有 NODE_OPTIONS 片段(如 E2E preload);
+    // 继承的用户值已被 sanitize 剔除,这里只注入 Host 装配的护栏值。
+    const guardedNodeOptions = appendMaxOldSpaceToNodeOptions(
+      agentSpawnEnv.NODE_OPTIONS,
+      resolveMaxOldSpaceMb(
+        process.env[ACODE_AGENT_MAX_OLD_SPACE_MB_ENV_KEY],
+        DEFAULT_AGENT_MAX_OLD_SPACE_MB,
+      ),
+    );
+    if (guardedNodeOptions !== undefined) {
+      agentSpawnEnv.NODE_OPTIONS = guardedNodeOptions;
+    }
     const child = spawn(effectiveCommand.command, spawnPreflight.args, {
       cwd: spawnPreflight.cwd,
       // agent 可能再派生实际 runtime/MCP 子进程。POSIX 下让 wrapper 进入独立进程组，
       // 关闭时才能按进程树整体回收；Windows 保持非 detached，交给 taskkill /T 处理。
       detached: shouldSpawnInDetachedProcessGroup(),
-      env: {
-        ...sanitizeACodeRuntimeEnv(process.env),
-        [ACODE_RUNTIME_ENV_KEY]: runtimeEnv,
-        ...spawnEnv,
-        ...effectiveCommand.env,
-        // 身份/隔离语义使用 workspaceIdentity；cwd 继续使用 workspacePath。
-        ...buildAgentWorkspaceIdentityEnv(params.workspaceIdentity),
-        ...buildE2EAgentCoverageEnv(),
-      },
+      env: agentSpawnEnv,
       stdio: ["pipe", "pipe", "pipe"],
     });
     const startedAt = Date.now();
@@ -1183,6 +1223,58 @@ export class ACodeAgentProcessManager {
     if (this.idleTimeoutMs) {
       client.onPendingRequestsDrained(() => this.scheduleIdleReclaim(workspaceKey, managed));
     }
+    // chat lane 空闲回收(spec: packages/services/specs/chat-lane-idle-reclaim.md R3):
+    // CLI 完成静默自检后在退出前宣告;Host 据此建立 expected 终止意图,随后的
+    // protocol close/exit 不再被当作崩溃。宣告帧先于 EOF 到达(stdout 帧序保证),
+    // 竞态丢帧由退出码兜底(见 exit handler)。
+    client.onNotification((message) => {
+      if (message.method !== acodeProtocolNotifications.runtimeIdleExit) return;
+      if (this.disposed || managed.exited) return;
+      if (this.processesByWorkspaceKey.get(workspaceKey) !== managed) return;
+      const parsed = acodeRuntimeIdleExitParamsSchema.safeParse(message.params);
+      if (!parsed.success) {
+        warnLog("忽略非法 runtime/idleExit 宣告帧", {
+          workspaceKey,
+          pid: child.pid,
+          issues: parsed.error.issues.map((issue) => issue.code),
+        });
+        return;
+      }
+      // 已有终止意图(app quit / watchdog 等)优先;宣告帧不改写既有根因事实。
+      if (managed.terminationIntent) return;
+      managed.idleExitAnnounced = {
+        quiescentMs: parsed.data.quiescentMs,
+        announcedAt: Date.now(),
+      };
+      this.recordTerminationIntent(managed, "cli-idle-exit");
+      log("ACode agent announced idle exit", {
+        workspaceKey,
+        pid: child.pid,
+        runtimeIdentity: runtimeIdentity.identity,
+        quiescentMs: parsed.data.quiescentMs,
+      });
+      // 宽限:宣告后 CLI 走 1.5s 退出链;超时未退说明退出路径卡死,主动回收防悬挂。
+      const graceTimer = setTimeout(() => {
+        if (this.disposed || managed.exited) return;
+        if (this.processesByWorkspaceKey.get(workspaceKey) !== managed) return;
+        warnLog("ACode agent idle-exit grace elapsed; reclaiming", {
+          workspaceKey,
+          pid: child.pid,
+          graceMs: ACODE_AGENT_IDLE_EXIT_GRACE_MS,
+        });
+        this.processesByWorkspaceKey.delete(workspaceKey);
+        this.reportRuntimeUnavailable(managed);
+        void this.cleanupManagedProcessWithRetry(
+          managed,
+          "idle-timeout",
+          "idle-timeout-retry",
+          "idle exit grace",
+        ).catch(() => undefined);
+      }, ACODE_AGENT_IDLE_EXIT_GRACE_MS);
+      // 宽限计时器不能把 host 进程钉在事件循环里(与空闲回收计时器同规则)。
+      graceTimer.unref?.();
+      child.once("exit", () => clearTimeout(graceTimer));
+    });
     child.once("spawn", () => {
       managed.spawned = true;
       // Node spawn() 会先返回 ChildProcess，再异步报告 cwd/command ENOENT。
@@ -1265,11 +1357,18 @@ export class ACodeAgentProcessManager {
       managed.exited = true;
       this.clearIdleTimer(managed);
       const endedAt = Date.now();
-      const terminationKind = managed.terminationIntent?.kind ?? "unexpected";
+      // 空闲退出兜底归因(spec: chat-lane-idle-reclaim.md R3):宣告帧丢失/与 EOF 竞态时,
+      // 保留退出码是受控退出的唯一剩余证据;signal 崩溃 code 为 null,不会误命中。
+      const idleExitCodeFallback =
+        !managed.terminationIntent && code === ACODE_AGENT_IDLE_EXIT_CODE;
+      const terminationKind =
+        managed.terminationIntent?.kind ?? (idleExitCodeFallback ? "expected" : "unexpected");
       // 协议解析/stream 故障会先触发 protocol-close，再由 Host 用 SIGTERM
       // 回收仍存活的进程。若只透传主动 termination intent，desktop 只能看到最终信号，
       // 无法区分协议故障与受控退出；保留首次 cleanup 原因作为结构化根因。
-      const terminationReason = managed.terminationIntent?.reason ?? managed.firstCleanupReason;
+      const terminationReason =
+        managed.terminationIntent?.reason ??
+        (idleExitCodeFallback ? "cli-idle-exit-code" : managed.firstCleanupReason);
       // 协议已立即失效，但 exit 先于 stderr EOF；保留旧 runtime 闭包身份收齐最后诊断。
       await transport.waitForStderrDrain();
       const stderr = stderrTail.snapshot();
@@ -1294,6 +1393,15 @@ export class ACodeAgentProcessManager {
       // 之前日志只有新的 "process started"，缺少旧 pid 的退出轨迹。
       // agent native crash 后 UI 只会看到 protocol close/Session is not active，无法判断是崩溃还是主动重启。
       log("ACode agent process exited", exitContext);
+      if (terminationReason === "cli-idle-exit" || terminationReason === "cli-idle-exit-code") {
+        // 与 mcp-status lane 的 "idle timeout; reclaiming" 日志对称的生产可用事件;
+        // quiescentMs 来自 CLI 宣告帧,退出码兜底路径无值。
+        log("ACode agent process idle-exited", {
+          ...exitContext,
+          quiescentMs: managed.idleExitAnnounced?.quiescentMs,
+          uptimeMs: Math.max(0, endedAt - startedAt),
+        });
+      }
       if (terminationKind === "unexpected") {
         // Agent 顶层异常只写 stderr 并以非零 code 退出；stderr 过去仅走开发态
         // debug，生产日志只剩 code=1，无法还原异常。不能只按非零 code 判断：signal crash

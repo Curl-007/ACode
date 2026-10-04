@@ -30,8 +30,12 @@ P0-2（鉴权 fail-closed + token 走 Header 不走 query）。
 ### 鉴权（P0-2）
 
 - **token 来源优先级**：`Authorization: Bearer <token>` 头为首选；`acode_lite_token` cookie 为浏览器
-  兼容路径；`?token=<token>` query **已弃用**，仍接受一个版本以兼容旧客户端，但每次命中打印一次
-  弃用告警（进程内只告警一次），后续版本移除。
+  兼容路径；`?token=<token>` query 的 HTTP 路由兼容窗**已关闭**（R2，批次 4：原承诺「仍接受一个
+  版本」自 e5f0fe1 起算，本版本移除）——HTTP 路由出示合法 query token 一律 401，并打印一次性
+  「已移除」告警指明迁移路径；query 的**唯一保留面**是 `/ws*` 升级握手，因为标准 WebSocket API
+  无法携带自定义 header（desktop 附着链路 `serverRemoteConnection.ts` 的 info fetch 已同步迁移到
+  Bearer 头，仅 WS 握手保留 query）。cookie 回写（旧 query 命中后 Set-Cookie 迁移）随 HTTP query
+  面一并移除：101 升级响应上的 Set-Cookie 无消费方。
 - **受保护路径**：`/ws`、`/ws/**`、`/api/**` 在配置了 token 时必须携带合法凭据；其余路径（静态资源、
   SPA fallback、`/api/server-info`）不强制。`/api/server-info` 自报 `authRequired` 供客户端预判。
 - **`/ws` 升级前 Origin/Host 裁决（P0-3，与 `/ws/host` 同源同规则）**：普通 `/ws` 升级（terminal-client /

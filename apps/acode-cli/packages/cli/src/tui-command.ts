@@ -11,14 +11,19 @@ import { resolveTuiStartupLocale } from "./tui-startup-locale.js";
 import { createWorkspacePathSuggestionProvider } from "./tui-workspace-paths.js";
 import { resolveWorkspaceGitBranch } from "./tui-workspace-git.js";
 import { createCliModeState, currentCliMode } from "./tui-command-state.js";
-import type { CliPermissionMode, CliResumeRequest, RunDependencies } from "./cli-types.js";
+import type {
+  CliPermissionMode,
+  CliResumeRequest,
+  CliRuntimeMode,
+  RunDependencies,
+} from "./cli-types.js";
 
 export const runTuiCommand = async (
   ctx: RunContext,
   options: GlobalOptions,
   deps: RunDependencies,
   version: string,
-  mode?: CliPermissionMode,
+  mode?: CliRuntimeMode,
   resumeRequest?: CliResumeRequest,
   toolDisallowlist?: readonly string[],
   forceMcs = false,

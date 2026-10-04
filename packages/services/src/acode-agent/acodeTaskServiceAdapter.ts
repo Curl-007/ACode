@@ -96,6 +96,7 @@ import {
   type ACodePermissionOption,
   type ACodePermissionRequestParams,
   type ACodePermissionRequest,
+  type ACodeRiskLevel,
   type ACodeSessionEvent,
   type ACodeSessionMode,
   type ACodeSessionSettingsState,
@@ -4900,6 +4901,9 @@ function permissionRequestToStreamEvent(
     title: request.toolName,
     options: request.options,
     ...(request.origin ? { origin: request.origin } : {}),
+    // R2.7（bot-permission-local-approval.md）：协议源 schema 必带 riskLevel，投影透传——
+    // bot 门槛的风险分层消费它，此前该字段在投影层被丢弃。
+    riskLevel: request.riskLevel,
     raw: request,
   };
 }
@@ -4918,6 +4922,7 @@ function pendingPermissionToStreamEvent(
     title: permission.toolName,
     options: permission.options,
     ...(permission.origin ? { origin: permission.origin } : {}),
+    riskLevel: permission.riskLevel,
     raw: permission,
   };
 }
@@ -5140,6 +5145,9 @@ function permissionPayloadToStreamEvent(
   inputId: InputId | undefined,
   payload: Record<string, unknown>,
 ): ACodeStreamEvent {
+  // R2.7：legacy payload 无类型约束，riskLevel 经四值字面量校验后才透传；
+  // 非法/缺失值不透传 → bot 门槛消费端 fail-closed 视为 high。
+  const riskLevel = riskLevelFromPayload(payload);
   return {
     type: "permission_request",
     taskId,
@@ -5151,8 +5159,16 @@ function permissionPayloadToStreamEvent(
     kind: stringValue(payload.toolName) ?? "tool",
     title: stringValue(payload.toolName),
     options: permissionOptionsFromPayload(payload),
+    ...(riskLevel ? { riskLevel } : {}),
     raw: payload,
   };
+}
+
+function riskLevelFromPayload(payload: Record<string, unknown>): ACodeRiskLevel | undefined {
+  const value = stringValue(payload.riskLevel);
+  return value === "low" || value === "medium" || value === "high" || value === "critical"
+    ? value
+    : undefined;
 }
 
 function permissionOptionsFromPayload(payload: Record<string, unknown>): ACodePermissionOption[] {
@@ -5614,6 +5630,22 @@ function shouldUseModelUsageForContext(payload: Record<string, unknown>): boolea
   return querySource === undefined || querySource === "main_turn";
 }
 
+/**
+ * miss 归因计数快照清洗（prompt-cache-diagnostics.md R4）：只接受 string→非负整数
+ * record，逐项清洗、整体无效则缺席。镜像层保持宽容（开放 record），闭集纪律在
+ * CLI 生产侧类型与单测。
+ */
+function missCauseCountsFromUnknown(value: unknown): Record<string, number> | undefined {
+  const record = asRecord(value);
+  if (Object.keys(record).length === 0) return undefined;
+  const result: Record<string, number> = {};
+  for (const [cause, count] of Object.entries(record)) {
+    const normalized = nonNegativeIntegerValue(count);
+    if (normalized !== undefined) result[cause] = normalized;
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
 function contextCacheUsageFromPayload(
   payload: Record<string, unknown>,
   usage: Record<string, unknown>,
@@ -5629,6 +5661,8 @@ function contextCacheUsageFromPayload(
     const totalInputTokens = nonNegativeIntegerValue(aggregate.totalInputTokens);
     const totalCacheReadTokens = nonNegativeIntegerValue(aggregate.totalCacheReadTokens);
     const totalCacheWriteTokens = nonNegativeIntegerValue(aggregate.totalCacheWriteTokens);
+    // prompt-cache-diagnostics.md R4：显式挑取处必须补 missCauses，否则 v3 链路静默丢弃。
+    const missCauses = missCauseCountsFromUnknown(aggregate.missCauses);
     return {
       inputTokens,
       cacheReadTokens,
@@ -5638,6 +5672,7 @@ function contextCacheUsageFromPayload(
       ...(totalInputTokens !== undefined ? { totalInputTokens } : {}),
       ...(totalCacheReadTokens !== undefined ? { totalCacheReadTokens } : {}),
       ...(totalCacheWriteTokens !== undefined ? { totalCacheWriteTokens } : {}),
+      ...(missCauses ? { missCauses } : {}),
       hitRate: hitRate !== undefined ? Math.max(0, hitRate) : null,
     };
   }

@@ -111,6 +111,8 @@ export async function emitControlOnlyUserTurn(
   options.afterTurnBoundary?.();
   this.turnNumber += 1;
   this.messageHistory.setCacheMiss();
+  // 无模型输出的边界 turn 后首个请求前缀必变（prompt-cache-diagnostics.md R1）。
+  this.pendingCacheMissCause = "control_only_turn";
 }
 
 /**

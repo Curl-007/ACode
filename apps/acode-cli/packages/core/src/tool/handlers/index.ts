@@ -21,6 +21,7 @@ import type { AgentProfile } from "../../subagent/profile.js";
 import { readToolEntry } from "./read.js";
 import { writeToolEntry } from "./write.js";
 import { editToolEntry } from "./edit.js";
+import { applyPatchToolEntry } from "./apply-patch.js";
 import { bashToolEntry, createBashToolEntry } from "./bash.js";
 import type { BashTimeoutPolicy } from "../bash-timeout-policy.js";
 import { createJsToolEntry, jsToolEntry } from "./node-repl.js";
@@ -76,7 +77,9 @@ export const builtInTools: ToolEntry[] = [
   readToolEntry,
   writeToolEntry,
   editToolEntry,
-  // applyPatchToolEntry,
+  // S2（批次 4）：悬空 contract 落地为真实 handler——上游注释占位在此激活，
+  // 规格与两段式执行语义见 specs/apply-patch-tool.md。
+  applyPatchToolEntry,
   bashToolEntry,
   globToolEntry,
   grepToolEntry,

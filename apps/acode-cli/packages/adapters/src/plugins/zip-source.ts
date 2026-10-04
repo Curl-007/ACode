@@ -326,10 +326,12 @@ function resolveZipRoot(input: {
 }
 
 function hasPluginManifest(rootPath: string): boolean {
+  // 候选集与优先级见 specs/plugin-foreign-manifest-compat.md（所有发现点必须一致）。
   return (
     fileExists(join(rootPath, ".acode-plugin", "plugin.json")) ||
     fileExists(join(rootPath, ".claude-plugin", "plugin.json")) ||
-    fileExists(join(rootPath, ".codex-plugin", "plugin.json"))
+    fileExists(join(rootPath, ".codex-plugin", "plugin.json")) ||
+    fileExists(join(rootPath, ".cursor-plugin", "plugin.json"))
   );
 }
 

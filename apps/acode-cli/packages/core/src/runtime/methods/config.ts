@@ -22,10 +22,11 @@ import {
   type ChildClientPortsContext,
   type ClientFacingPorts,
 } from "../helpers/child-client-ports.js";
-import type { AgentRuntimeConfig, ActiveTurnInfo } from "../types.js";
+import type { ActiveTurnInfo, RuntimeConfigUpdatePatch } from "../types.js";
 import type { AgentRuntimeInternal } from "../internal.js";
 import { cloneModelSelection } from "../model-selection.js";
 import { applyRuntimeExecutionState } from "../execution-state.js";
+import { resolveOutputStyleSelection } from "../../context/output-styles.js";
 
 import { orderProviderVisibleToolContracts } from "../../tool/provider-visible-order.js";
 import { projectToolModelContract } from "../../tool/model-contract.js";
@@ -46,10 +47,7 @@ export async function setExecutionState(
   await applyRuntimeExecutionState(this, input, { source: "command", traceContext });
 }
 
-export function updateConfig(
-  this: AgentRuntimeInternal,
-  patch: Pick<AgentRuntimeConfig, "mode" | "planEnabled" | "language" | "outputStyle">,
-): void {
+export function updateConfig(this: AgentRuntimeInternal, patch: RuntimeConfigUpdatePatch): void {
   if (patch.mode !== undefined || patch.planEnabled !== undefined) {
     const previous = resolveExecutionState(this.config);
     const next = resolveExecutionState(patch, previous);
@@ -64,9 +62,19 @@ export function updateConfig(
     }
   }
   if ("outputStyle" in patch) {
-    this.config.outputStyle = patch.outputStyle;
-    if (!this.activeTurn) {
-      rebuildContextPrefix(this);
+    // 内建风格按名解析（specs/built-in-output-styles.md R2/R3）：未命中的字符串名
+    // → warn + 不改写现有风格（拼错名字不该静默清掉用户的风格），也不触发 prefix 重建；
+    // 对象与显式 undefined（清除）语义与改动前逐字一致。
+    const resolvedOutputStyle = resolveOutputStyleSelection(patch.outputStyle);
+    if (patch.outputStyle !== undefined && resolvedOutputStyle === undefined) {
+      this.logger?.warn("Unknown built-in output style name; keeping the current style", {
+        requested: String(patch.outputStyle),
+      });
+    } else {
+      this.config.outputStyle = resolvedOutputStyle;
+      if (!this.activeTurn) {
+        rebuildContextPrefix(this);
+      }
     }
   }
 }

@@ -108,6 +108,8 @@ export * from "./acode-media-policy.js";
 export * from "./media-preview.js";
 export * from "./plugin-display-name.js";
 export * from "./acode-agent-runtime.js";
+export * from "./acode-agent-idle-exit.js";
+export * from "./process-v8-heap-guard.js";
 export * from "./runtimeEnv.js";
 export * from "./sensitive-env-guard.js";
 export * from "./dynamic-workflow-feature.js";
@@ -205,6 +207,7 @@ export type {
 export type { ACodeTaskCreateResult } from "./acode-task-types.js";
 export * from "./acode-task-types.js";
 export * from "./automation-types.js";
+export * from "./automation-notice.js";
 export * from "./off-peak-types.js";
 export * from "./background-task-control-merge.js";
 export * from "./background-task-controls.js";

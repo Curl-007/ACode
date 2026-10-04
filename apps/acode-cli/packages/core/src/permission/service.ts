@@ -114,6 +114,12 @@ export interface PermissionDecisionResult {
    * allow 覆盖）靠这个结构化标记识别"不可抹掉的确认"，而不是去匹配 ruleId 字符串。
    */
   alwaysAsk?: boolean;
+  /**
+   * auto 模式灰区标记（specs/auto-mode-risk-classifier.md R1）：wire 面仍是三值 ask，
+   * 忽略本标记的消费者天然 fail-safe 到审批。仅 mode==="auto" 可产生（守护测试钉住），
+   * 由两个异步接缝（permission-flow / permission-input-recheck）消费后调分类器重写。
+   */
+  autoGrayZone?: true;
 }
 
 // -----------------------------------------------
@@ -356,11 +362,67 @@ export class PermissionService {
     }
 
     if (context.mode === "auto") {
-      return this.deny(
+      // auto 模式确定性分层（specs/auto-mode-risk-classifier.md R1，替换原 deny 桩）：
+      // critical 恒 ask（分类器无权放行）；medium/high 进灰区（标记 + ask 形态，
+      // 由异步接缝的分类器裁决）；low 确定性放行（workspace 副作用例外进灰区）。
+      // policy floor / disallowedTools / breakers 在本分支之前/之后照常收口——
+      // 灰区只存在于确定性层放不下的缝隙，地板只收紧在时序上成立。
+      if (capability.riskLevel === "critical") {
+        return this.ask(
+          context,
+          capability,
+          "mode.auto.criticalRisk",
+          `Tool ${context.toolName} is critical-risk and always requires approval in auto mode`,
+        );
+      }
+      if (capability.riskLevel === "high") {
+        return {
+          ...this.ask(
+            context,
+            capability,
+            "mode.auto.grayZone",
+            `Tool ${context.toolName} is high-risk; auto mode defers to the risk classifier`,
+          ),
+          autoGrayZone: true,
+        };
+      }
+      if (capability.riskLevel === "medium") {
+        // 激活既有死标志（用户/系统级显式信任；项目级来源已被 project-config
+        // adapter 剥离，克隆攻击面不变）：medium 免分类器放行。
+        if (this.config.allowMediumRiskInAutoMode) {
+          return this.allow(
+            context,
+            capability,
+            "mode.auto.mediumTrusted",
+            `Tool ${context.toolName} is medium-risk and explicitly trusted in auto mode`,
+          );
+        }
+        return {
+          ...this.ask(
+            context,
+            capability,
+            "mode.auto.grayZone",
+            `Tool ${context.toolName} is medium-risk; auto mode defers to the risk classifier`,
+          ),
+          autoGrayZone: true,
+        };
+      }
+      if (capability.sideEffectScope === "workspace") {
+        return {
+          ...this.ask(
+            context,
+            capability,
+            "mode.auto.grayZone",
+            `Tool ${context.toolName} writes to the workspace; auto mode defers to the risk classifier`,
+          ),
+          autoGrayZone: true,
+        };
+      }
+      return this.allow(
         context,
         capability,
-        "mode.auto.unimplemented",
-        "Auto mode is reserved but not implemented yet",
+        "mode.auto.lowRisk",
+        `Tool ${context.toolName} is low-risk and allowed in auto mode`,
       );
     }
 
@@ -545,14 +607,9 @@ export class PermissionService {
     projectRules?: PermissionRuleset | null,
     rulePolicy?: ToolPermissionRulePolicy,
   ): PermissionDecisionResult {
-    if (context.mode === "auto") {
-      return this.deny(
-        context,
-        capability,
-        "mode.auto.unimplemented",
-        "Auto mode is reserved but not implemented yet",
-      );
-    }
+    // auto 的 deny 桩已移除（specs/auto-mode-risk-classifier.md R1）：alwaysAsk 工具是
+    // critical 等价物，auto 下与其它模式同走「阻断分支 → 会话规则 → ask」既有语义，
+    // 不进灰区——分类器对显式 alwaysAsk 声明无权放行。
     if (this.matchesProjectRules(projectRules, "deny", context, capability, rulePolicy)) {
       return this.deny(
         context,

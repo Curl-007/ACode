@@ -91,7 +91,7 @@ test("bind attempt guard isolates bots and clears on success (a)", () => {
   assert.equal(g.recordFailure("bot-3").retryAfterMs, 4_000);
 });
 
-// ── (b) 远程入口权限模式天花板：yolo/bypass 不可达 ─────────────────────────────
+// ── (b) 远程入口权限模式天花板：yolo/bypass/auto 不可达 ─────────────────────────
 
 test("remote-entry ceiling forbids yolo and bypassPermissions (b)", () => {
   assert.equal(guard.isBotRemoteForbiddenPermissionMode("yolo"), true);
@@ -104,6 +104,24 @@ test("remote-entry ceiling forbids yolo and bypassPermissions (b)", () => {
   const selectable = guard.filterBotSelectablePermissionModes(["build", "edit", "plan", "yolo"]);
   assert.deepEqual(selectable, ["build", "edit", "plan"]);
   assert.ok(!selectable.includes("yolo"));
+});
+
+test("auto is bot-forbidden but NOT bypass-identity (classifier spec R5 constant split)", () => {
+  // auto 分类器落地后，bot 天花板含 auto（远程消息→LLM 放行→主机执行不可接受）；
+  // 但 auto 不是 bypass 身份档——桌面 execution-state 的 modePolicyForbidden 判定
+  // 只认 bypass 身份集，managed policy 下切 auto 不得被误伤。
+  assert.equal(guard.isBotRemoteForbiddenPermissionMode("auto"), true);
+  assert.equal(guard.isBypassPermissionMode("auto"), false);
+  assert.equal(guard.isBypassPermissionMode("yolo"), true);
+  assert.deepEqual(
+    guard.filterBotSelectablePermissionModes(["build", "edit", "plan", "yolo", "auto"]),
+    ["build", "edit", "plan"],
+  );
+  // 派发咽喉夹取：请求 auto → 回落缺省 build。
+  assert.equal(
+    guard.clampBotPermissionMode("auto", ["build", "edit", "plan", "yolo", "auto"], "build"),
+    "build",
+  );
 });
 
 test("mode.set draft/active branches reject yolo with the forbidden message (b)", async () => {

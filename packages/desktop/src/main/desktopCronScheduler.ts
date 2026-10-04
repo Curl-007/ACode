@@ -3,7 +3,12 @@
 // 把 host 回报的 CronRunResult 转回 scheduler 结算。scheduler 只碰 tasks-index，createTask 在 host 域执行。
 import { utilityProcess as electronUtilityProcess } from "electron";
 import type { UtilityProcess as ElectronUtilityProcess } from "electron";
-import { HostMessageTypes } from "@acode/shared";
+import {
+  ACODE_HOST_MAX_OLD_SPACE_MB_ENV_KEY,
+  DEFAULT_HOST_MAX_OLD_SPACE_MB,
+  HostMessageTypes,
+  resolveMaxOldSpaceMb,
+} from "@acode/shared";
 import { buildHostProcessEnv, schedulerModulePath } from "./desktopRuntimeEnv.js";
 import { registerSchedulerProcess, unregisterSchedulerProcess } from "./resourceManagerWindow.js";
 import type {
@@ -57,9 +62,17 @@ export interface CronSchedulerHandle {
 const DISPOSE_FORCE_KILL_MS = 1_500;
 
 export function spawnCronScheduler(deps: CronSchedulerDeps): CronSchedulerHandle {
+  // v8 堆上限护栏(spec: packages/services/specs/agent-v8-heap-guard.md R1),与 Host fork 同参数面。
+  const schedulerMaxOldSpaceMb = resolveMaxOldSpaceMb(
+    process.env[ACODE_HOST_MAX_OLD_SPACE_MB_ENV_KEY],
+    DEFAULT_HOST_MAX_OLD_SPACE_MB,
+  );
   const child = electronUtilityProcess.fork(schedulerModulePath, [], {
     serviceName: "acode-cron-scheduler",
-    execArgv: ["--no-warnings"],
+    execArgv: [
+      "--no-warnings",
+      ...(schedulerMaxOldSpaceMb > 0 ? [`--max-old-space-size=${schedulerMaxOldSpaceMb}`] : []),
+    ],
     env: {
       ...buildHostProcessEnv(deps.hostProcessLocalEnv),
       ACODE_PROCESS_LABEL: "scheduler",

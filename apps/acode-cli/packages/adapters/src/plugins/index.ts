@@ -109,6 +109,7 @@ export {
 const ACODE_MANIFEST_PATH = join(".acode-plugin", "plugin.json");
 const CLAUDE_MANIFEST_PATH = join(".claude-plugin", "plugin.json");
 const CODEX_MANIFEST_PATH = join(".codex-plugin", "plugin.json");
+const CURSOR_MANIFEST_PATH = join(".cursor-plugin", "plugin.json");
 const DEFAULT_VERSION = "0.0.0";
 const FIRST_PLUGIN_PRIORITY = 1_000;
 const PRIORITY_STEP = 10;
@@ -943,12 +944,17 @@ function findManifest(rootPath: string): string | null {
   }
 
   // 兼容不同 manifest 目录约定，发现阶段按稳定优先级回退。
+  // 候选集与优先级见 specs/plugin-foreign-manifest-compat.md（所有发现点必须一致）。
   const claudePath = join(rootPath, CLAUDE_MANIFEST_PATH);
   if (fileExists(claudePath)) {
     return claudePath;
   }
   const codexPath = join(rootPath, CODEX_MANIFEST_PATH);
-  return fileExists(codexPath) ? codexPath : null;
+  if (fileExists(codexPath)) {
+    return codexPath;
+  }
+  const cursorPath = join(rootPath, CURSOR_MANIFEST_PATH);
+  return fileExists(cursorPath) ? cursorPath : null;
 }
 
 function readManifest(path: string, diagnostics: PluginDiagnostic[]): PluginManifest | null {

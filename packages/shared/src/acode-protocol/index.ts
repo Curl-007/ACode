@@ -341,6 +341,7 @@ export const acodeProtocolNotifications = {
   toolExecResource: "process/toolExecResource",
   pluginOperationProgress: "plugins/operationProgress",
   processResourceSample: "process/resourceSample",
+  runtimeIdleExit: "runtime/idleExit",
 } as const;
 
 /** 启动控制面独立于 task stream；数据库身份不可携带路径/凭据。 */
@@ -560,6 +561,18 @@ export const acodeProcessResourceSampleSchema = z
   })
   .strict();
 export type ACodeProcessResourceSample = z.infer<typeof acodeProcessResourceSampleSchema>;
+
+/**
+ * CLI 空闲退出宣告（spec: packages/services/specs/chat-lane-idle-reclaim.md R3）。
+ * CLI 完成静默自检后、优雅退出前发送；Host 据此把随后的进程退出记录为
+ * expected/cli-idle-exit，不当作崩溃。quiescentMs 仅供诊断，Host 不据此重新判定静默。
+ */
+export const acodeRuntimeIdleExitParamsSchema = z
+  .object({
+    quiescentMs: z.number().finite().nonnegative(),
+  })
+  .strict();
+export type ACodeRuntimeIdleExitParams = z.infer<typeof acodeRuntimeIdleExitParamsSchema>;
 
 export const acodeProcessChildProcessesParamsSchema = z.object({}).strict();
 export const acodeProcessChildProcessSchema = z

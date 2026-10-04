@@ -15,6 +15,7 @@ import {
   parseWorkspaceConfigTopic,
 } from "@acode/shared/acode-protocol-v4";
 import type {
+  ACodeAgentQuiescenceFacts,
   ACodeProtocolError,
   ACodeProtocolMessage,
   ACodeProtocolMethod,
@@ -97,6 +98,7 @@ import { createSessionResidentPoolHost } from "./session-residency.js";
 import {
   DEFAULT_SESSION_RESIDENT_HIGH_WATER_COUNT,
   SessionResidentPool,
+  type SessionResidentPoolHost,
 } from "./session-resident-pool.js";
 import { createProtocolBrowserControlBroker } from "./browser-control-broker.js";
 import {
@@ -229,6 +231,11 @@ export class ACodeProtocolAgentServer {
     ACodeProtocolPostResponseBatch
   >();
   private nextClientRequestId = 1;
+  /**
+   * 与 resident pool 共用的同一份事实适配器:静默自检必须走 pool 的同一判据源,
+   * 不允许再抄一份 readResidencyFacts(避免重复状态/双路径,spec chat-lane-idle-reclaim.md R5)。
+   */
+  private readonly residentPoolHost: SessionResidentPoolHost;
 
   constructor(deps: ACodeProtocolAgentDependencies) {
     this.runtimeResources = new ProtocolRuntimeResources(deps.createACodeApp);
@@ -274,21 +281,48 @@ export class ACodeProtocolAgentServer {
         ? undefined
         : Math.max(DEFAULT_SESSION_RESIDENT_HIGH_WATER_COUNT, sessionResidentTargetCount));
     // 单 CLI resident session 池：协议 request release 主动收敛，资源 sampler 只作兜底。
-    this.context.sessionResidentPool = new SessionResidentPool(
-      createSessionResidentPoolHost(this.context),
-      {
-        ...deps.sessionResidentPoolOptions,
-        // legacy target 曾同时覆盖 high/low，导致迟滞窗口塌为 0；只覆盖 low。
-        // 仅配置 target 且超过默认 high 时抬升隐式 high，显式非法组合仍由 pool 拒绝。
-        highWaterCount: sessionResidentHighWaterCount,
-        targetCount: sessionResidentTargetCount,
-      },
-    );
+    this.residentPoolHost = createSessionResidentPoolHost(this.context);
+    this.context.sessionResidentPool = new SessionResidentPool(this.residentPoolHost, {
+      ...deps.sessionResidentPoolOptions,
+      // legacy target 曾同时覆盖 high/low，导致迟滞窗口塌为 0；只覆盖 low。
+      // 仅配置 target 且超过默认 high 时抬升隐式 high，显式非法组合仍由 pool 拒绝。
+      highWaterCount: sessionResidentHighWaterCount,
+      targetCount: sessionResidentTargetCount,
+    });
   }
 
   /** 低频 sampler 兜底入口；正常收敛由每个协议 request 的 operation lease 释放触发。 */
   rebalanceResidentSessions(): void {
     this.context.sessionResidentPool?.rebalance();
+  }
+
+  /**
+   * chat lane 空闲回收的静默事实聚合(spec: packages/services/specs/chat-lane-idle-reclaim.md R1/R5)。
+   * 只读:不触发 rebalance、不修改任何状态;由 60s 资源采样节拍调用。
+   * transport 在飞帧与进程生命周期状态由 entrypoint 的 evaluator 合并,这里不重复持有。
+   * 存储静默无需专门判据:迁移门禁在 server 开始服务前已收敛,后续写入都发生在
+   * turn/detached work 内,被 residency 事实覆盖。
+   */
+  collectQuiescenceFacts(): ACodeAgentQuiescenceFacts {
+    const reasons = new Set<string>();
+    if (this.shutdownPromise || this.clientDisconnectError) reasons.add("shutting-down");
+    if (this.pendingClientRequests.size > 0) reasons.add("pending-client-requests");
+    // 插件安装/卸载与 generateText 是 detached 长操作,transport 在飞计数盖不住。
+    if (this.pluginOperationControllers.size > 0) reasons.add("plugin-operations");
+    if (this.workspaceGenerateTextControllers.size > 0) reasons.add("generate-text");
+    if (this.context.sessionResidentPool?.hasActiveOperations()) reasons.add("operation-leases");
+    if (this.context.v4Gateway?.hasPendingAttachmentUploads()) reasons.add("attachment-uploads");
+    for (const sessionId of this.context.sessions.keys()) {
+      const facts = this.residentPoolHost.readResidencyFacts(sessionId);
+      if (!facts) continue;
+      // 非即时持久化会话不得随进程释放(与 pool isEligible 的 persisted 判据同源)。
+      if (!facts.persisted) reasons.add("unpersisted-session");
+      if (facts.hasResidencyBlockingWork) reasons.add("residency-blocking-work");
+      if (facts.hasPendingInteractions) reasons.add("pending-interactions");
+      if (facts.hasQueuedCommands) reasons.add("queued-commands");
+      if (facts.hasSubscribers || facts.hasLegacySubscriber) reasons.add("subscribers");
+    }
+    return { quiescent: reasons.size === 0, reasons: [...reasons] };
   }
 
   /**

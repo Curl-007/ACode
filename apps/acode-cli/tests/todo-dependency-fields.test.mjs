@@ -27,6 +27,7 @@ import { test } from "node:test";
 
 const {
   TodoWriteInputSchema,
+  TodoWriteInputJsonSchema,
   TodoReadOutputSchema,
   TodoWriteOutputSchema,
   normalizeTodos,
@@ -551,6 +552,26 @@ test("(R6) TodoWrite 描述新增 id/blockedBy/metadata 三条调用细节 bulle
   // 既有 bullet 保留（「恰一个 in_progress」维持提示级，不升级为硬约束）：
   assert.match(description, /Keep one item `in_progress` at a time/);
   assert.match(description, /Send the full list each call/);
+});
+
+test("(F3) metadata 上界数字与 todo-deps 常量一致：工具描述与 JSON schema 两面在场", () => {
+  // 审计 F3（2026-10-03 登记，验收场景 11）：两处 provider 可见渲染面此前各自写死
+  // 「16 / 64 / 4 KB」，常量改动会静默漂移；现由常量插值生成，本测试断言渲染值在场
+  // ——写死数字（改常量后不同步）或直接改文本都会失败。
+  const expected =
+    `max ${TODO_METADATA_MAX_KEYS} keys, ${TODO_METADATA_MAX_KEY_CHARS}-char keys, ` +
+    `${TODO_METADATA_MAX_SERIALIZED_BYTES / 1024} KB serialized`;
+  // 面 1：TodoWrite 工具主描述的 metadata bullet。
+  assert.ok(
+    todoWriteToolEntry.metadata.description.includes(expected),
+    "tool description must render the metadata caps from the todo-deps constants",
+  );
+  // 面 2：输入 JSON schema 的 metadata 属性 describe。
+  const metadataNode = TodoWriteInputJsonSchema.properties.todos.items.properties.metadata;
+  assert.ok(
+    metadataNode.description.includes(expected),
+    "JSON schema describe must render the metadata caps from the todo-deps constants",
+  );
 });
 
 test("(R6) '# Delegating work' 纪律节追加 todo 依赖一句话，且随 todo 工具面门控", () => {

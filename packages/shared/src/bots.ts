@@ -13,6 +13,7 @@ import type {
   ACodePermissionRequest,
   ACodePromptAttachment,
   ACodeProvider,
+  ACodeRiskLevel,
   ACodeStreamEvent,
   ACodeTaskMeta,
   ACodeTaskRuntimeStatus,
@@ -151,6 +152,12 @@ export interface BotPendingPermissionOption {
   label: string;
   response: ACodePermissionResponse;
   handledAt?: number;
+  /**
+   * 创建卡片时权限请求的风险档（R2.7 风险分层守卫用）。可选 = 旧持久化状态宽容；
+   * 守卫端缺失时 fail-closed 视为 high。持久化 schema 已同批加宽（批次 2 教训：
+   * strict schema 不同步会静默剥离新键）。
+   */
+  riskLevel?: ACodeRiskLevel;
 }
 
 export interface BotPendingElicitation {
@@ -543,6 +550,9 @@ export const botsStateFileSchema = z
               label: z.string().min(1),
               response: acodePermissionResponseSchema,
               handledAt: z.number().optional(),
+              // R2.7 风险分层：与 BotPendingPermissionOption.riskLevel 同批加宽——strict
+              // schema 不接受新键会在持久化往返中静默剥离它，守卫端将全部 fail-closed。
+              riskLevel: z.enum(["low", "medium", "high", "critical"]).optional(),
             }),
           )
           .optional(),

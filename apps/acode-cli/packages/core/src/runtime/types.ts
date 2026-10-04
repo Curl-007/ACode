@@ -246,6 +246,21 @@ export interface AgentRuntimeConfig {
   skillMetadataBudget?: number;
 }
 
+/**
+ * updateConfig 的 patch 类型（specs/built-in-output-styles.md R3）：三处声明
+ * （runtime/methods/config.ts、runtime/internal-methods.ts、runtime/agent-runtime.ts）
+ * 共用本命名类型，消除三份内联 Pick 的漂移面。与既有 Pick 的唯一差异是 outputStyle
+ * 额外接受**内建风格名**（字符串），由 config.ts 入口经 resolveOutputStyleSelection
+ * 单点解析；AgentRuntimeConfig.outputStyle 的存储类型不变（解析后的对象）。
+ */
+export type RuntimeConfigUpdatePatch = Omit<
+  Pick<AgentRuntimeConfig, "mode" | "planEnabled" | "language" | "outputStyle">,
+  "outputStyle"
+> & {
+  /** 内建风格可按名选择（大小写不敏感）；对象透传为自定义风格；显式 undefined = 清除。 */
+  outputStyle?: OutputStylePromptConfig | string;
+};
+
 export interface ResumeSessionOptions {
   /** 中止 cold-resume admission wait；不会伪造 Workspace Hook review decision。 */
   abortSignal?: AbortSignal;

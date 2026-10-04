@@ -615,6 +615,11 @@ export interface ACodePlanStep {
   title: string;
   status: "pending" | "in_progress" | "completed";
 }
+/**
+ * 权限请求的风险档（与 acode-protocol 三处 schema 的字面量枚举同词汇；协议源必带）。
+ * bot 本地审批门槛的风险分层（bot-permission-local-approval.md R2.7）消费该字段。
+ */
+export type ACodeRiskLevel = "low" | "medium" | "high" | "critical";
 export interface ACodePermissionRequest {
   type: "permission_request";
   taskId: string;
@@ -633,6 +638,12 @@ export interface ACodePermissionRequest {
    * 缺省 = 纯文本 ask（legacy v3 链路会显式剥离该字段）。
    */
   display?: ToolCallDisplay;
+  /**
+   * 权限请求风险档，投影自协议源（params/snapshot/legacy payload 三处 schema 均必带）。
+   * 可选 = 对旧持久化/回放事件的偏斜宽容；bot 门槛消费端缺失时 fail-closed 视为 high
+   * （bot-permission-local-approval.md R2.7）。
+   */
+  riskLevel?: ACodeRiskLevel;
   /** agent RequestPermissionRequest.toolCall 原始 payload */
   raw: unknown;
 }
@@ -770,6 +781,12 @@ export interface ACodeContextCacheUsage {
   totalCacheWriteTokens?: number;
   /** Agent 归一化后返回给 app 的主轮累计平均缓存命中率；未知时为 null。 */
   hitRate: number | null;
+  /**
+   * prompt-cache miss 归因计数快照（进程内累计，resume 后从空开始）。
+   * 键为 CLI 侧闭集因名（apps/acode-cli/specs/prompt-cache-diagnostics.md R1），
+   * 镜像层保持开放 record 以免加因时的版本偏斜。
+   */
+  missCauses?: Record<string, number>;
 }
 /** Agent 每次模型请求完成后推送的 task 累计 token 增量。 */
 export interface ACodeTaskTokenUsageDelta {

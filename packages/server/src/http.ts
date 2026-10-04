@@ -202,18 +202,21 @@ const acodeLiteTokenCookieName = "acode_lite_token";
 
 interface LiteTokenAuthResult {
   valid: boolean;
-  /** 命中已弃用的 `?token=` query；调用点据此打印一次性弃用告警。 */
+  /**
+   * HTTP 路由上出示了**合法**的 `?token=` query 并被拒绝（R2 收缩后 query 只在 WebSocket
+   * 升级握手有效）；调用点据此打印一次性「已移除」告警，给旧客户端明确迁移路径。
+   */
   viaDeprecatedQuery: boolean;
 }
 
-// `?token=` 弃用告警每进程只打印一次，避免刷屏，同时确保旧客户端能被明确告知迁移路径。
+// `?token=` 移除告警每进程只打印一次，避免刷屏，同时确保旧客户端能被明确告知迁移路径。
 let warnedDeprecatedQueryToken = false;
 function warnDeprecatedQueryTokenOnce(): void {
   if (warnedDeprecatedQueryToken) return;
   warnedDeprecatedQueryToken = true;
   console.warn(
     formatLogPrefix("acode-server:http", process.pid),
-    "DEPRECATION: authenticating via the ?token= URL query is deprecated and will be removed in a future release; it leaks into logs, browser history and Referer. Send `Authorization: Bearer <token>` instead.",
+    "DEPRECATION REMOVED: the ?token= URL query is no longer accepted on HTTP routes and the request was rejected (it leaks into logs, browser history and Referer). Send `Authorization: Bearer <token>` instead. The query form remains supported only for WebSocket upgrade handshakes (/ws*), which cannot carry custom headers.",
   );
 }
 
@@ -280,8 +283,7 @@ function readLiteTokenCookie(c: Context): string | undefined {
 }
 
 function hasValidLiteToken(c: Context, token: string): LiteTokenAuthResult {
-  // P0-2：token 校验优先走 `Authorization: Bearer`，其次 cookie（浏览器兼容），
-  // 最后才是已弃用的 `?token=` query（会泄漏进日志/历史/Referer）。
+  // P0-2：token 校验优先走 `Authorization: Bearer`，其次 cookie（浏览器兼容）。
   const bearer = parseBearerToken(c.req.header("authorization"));
   if (timingSafeTokenEquals(bearer, token)) {
     return { valid: true, viaDeprecatedQuery: false };
@@ -289,24 +291,31 @@ function hasValidLiteToken(c: Context, token: string): LiteTokenAuthResult {
   if (timingSafeTokenEquals(readLiteTokenCookie(c), token)) {
     return { valid: true, viaDeprecatedQuery: false };
   }
+  // R2（批次 4，server-auth.md）：HTTP 路由的 `?token=` 兼容窗已按原承诺（「仍接受一个
+  // 版本」）关闭——query 会泄漏进日志/历史/Referer。唯一保留的 query 面 = WebSocket 升级
+  // 握手：标准 WebSocket API 无法携带自定义 header，desktop /ws 附着依赖 query 注入
+  // （desktop/host/serverRemoteConnection.ts）。cookie 回写随之移除：HTTP 路由不再接受
+  // query，升级握手（101）上的 Set-Cookie 无消费方。HTTP 路由出示合法 query token →
+  // 401 + 一次性告警，给旧客户端明确迁移路径。
   const url = new URL(c.req.url);
-  if (timingSafeTokenEquals(url.searchParams.get("token") ?? undefined, token)) {
-    // 兼容旧客户端：命中 query 后回写 cookie，使其后续走 cookie 路径。
-    c.header(
-      "Set-Cookie",
-      `${acodeLiteTokenCookieName}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax`,
-    );
-    return { valid: true, viaDeprecatedQuery: true };
+  const queryToken = url.searchParams.get("token") ?? undefined;
+  if (!timingSafeTokenEquals(queryToken, token)) {
+    return { valid: false, viaDeprecatedQuery: false };
   }
-  return { valid: false, viaDeprecatedQuery: false };
+  if (isWebSocketUpgradePathname(url.pathname)) {
+    return { valid: true, viaDeprecatedQuery: false };
+  }
+  return { valid: false, viaDeprecatedQuery: true };
 }
 
 /**
- * 取出本次请求实际出示的 token（`Authorization: Bearer` > cookie > 已弃用 query）。
+ * 取出本次请求实际出示的 token（`Authorization: Bearer` > cookie > query）。
  *
  * P0-1 需要它来**真正执行**能力与主体的绑定：`hasValidLiteToken` 只回答「合不合法」，
  * 而绑定校验要的是「出示的是哪一个主体」。两者必须同源——cookie 一律经
  * `readLiteTokenCookie` 读取，避免出现「中间件认可 A、绑定校验取到 B」的分叉。
+ * R2 收缩后 query 只在 WS 升级路径构成有效凭据（唯一调用点即 `/ws/host` 绑定），HTTP
+ * 路由上合法 query 已被中间件 401，走不到主体解析，优先级顺序保持两者答案一致。
  */
 function readPresentedLiteToken(c: Context): string | undefined {
   const bearer = parseBearerToken(c.req.header("authorization"));
@@ -320,8 +329,13 @@ function readPresentedLiteToken(c: Context): string | undefined {
   return new URL(c.req.url).searchParams.get("token") ?? undefined;
 }
 
+/** WebSocket 升级路径（`/ws`、`/ws/host`、`/ws/remote/:id`）；R2 后 query token 的唯一有效面。 */
+function isWebSocketUpgradePathname(pathname: string): boolean {
+  return pathname === "/ws" || pathname.startsWith("/ws/");
+}
+
 function isTokenProtectedPath(pathname: string): boolean {
-  return pathname === "/ws" || pathname.startsWith("/ws/") || pathname.startsWith("/api/");
+  return isWebSocketUpgradePathname(pathname) || pathname.startsWith("/api/");
 }
 
 function isStaticFallbackAllowed(pathname: string): boolean {

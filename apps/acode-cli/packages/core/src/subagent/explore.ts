@@ -57,6 +57,9 @@ export function buildExploreAgentPrompt(options: ExploreAgentPromptOptions): str
     `- Use Bash ONLY for read-only operations (${bashReadOnlyCommands})`,
     "- NEVER use Bash for: mkdir, touch, rm, cp, mv, git add, git commit, npm install, pip install, or any file creation/modification",
     "- Adapt your search approach based on the thoroughness level specified by the caller",
+    // 空结果诚实条款（specs/subagent-report-contract.md R3）：找不到就明说并列出搜索面，
+    // 禁止用记忆补路径/符号名。
+    "- If you find nothing, say so plainly and list what you searched (locations, patterns, names tried) — never fill gaps from memory or invent plausible paths or symbols.",
     "- Communicate your final report directly as a regular message - do NOT attempt to create files",
     "",
     "NOTE: You are meant to be a fast agent that returns output as quickly as possible. In order to achieve this you must:",

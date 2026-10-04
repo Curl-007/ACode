@@ -334,3 +334,83 @@ function countRuntimeModeReminders(entries: readonly RuntimeMessageEntry[]): num
     0,
   );
 }
+
+// ============================================================
+// 运行时重启后的孤儿后台任务提醒（specs/runtime-restart-task-reminder.md）
+// ============================================================
+
+/** 正文最多列出的孤儿任务 id 数（R1：超出以「and N more」收尾）。 */
+export const RUNTIME_RESTART_REMINDER_MAX_IDS = 10;
+
+// launch 标记与工具结果格式化文本同源（改文案必须同步改这里）：
+// - Agent 后台启动：tool/handlers/agent.ts formatAgentOutputForModel 的 async_launched 分支；
+//   registry taskId = agentId（subagent/runner.ts 以 lifecycle.agentId 注册）。
+// - Bash 后台化：tool/handlers/bash-model-content.ts 的三种 "…with ID: <taskId>" 文案。
+const AGENT_BACKGROUND_LAUNCH_PATTERN =
+  /Async agent launched successfully\.\nagentId: ([\w-]+) \(/g;
+const BASH_BACKGROUND_LAUNCH_PATTERN = /with ID: ([\w-]+)[.\s]/g;
+// 终态标记：runtime-task/notification.ts 的 <task-notification> XML（三种 local 格式统一含
+// <task-id>；generic 格式另有 <agent-id>）。
+const TERMINAL_TASK_ID_PATTERN = /<task-id>([^<]+)<\/task-id>/g;
+const TERMINAL_AGENT_ID_PATTERN = /<agent-id>([^<]+)<\/agent-id>/g;
+
+/** 扫描用文本抽取：attachment 取 content；message 取字符串 content 或文本块拼接。 */
+function collectReminderScanText(entry: RuntimeMessageEntry): string {
+  if (isRuntimeAttachmentEntry(entry)) return entry.content;
+  const content = entry.message.content;
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .map((block) =>
+      block && typeof (block as { text?: unknown }).text === "string"
+        ? (block as { text: string }).text
+        : "",
+    )
+    .join("\n");
+}
+
+/**
+ * 孤儿后台任务检出（R1）：历史里有 launch 标记、无终态标记、且本进程 registry 不认识
+ * 该 id 的后台任务。按首次出现顺序去重；提取不到（如 launch 记录已被 compact）自然为空。
+ * 纯函数：entries 只读，registry 经谓词注入（调用方传 this.runtimeTaskRegistry.get）。
+ */
+export function findOrphanedBackgroundTaskIds(input: {
+  entries: readonly RuntimeMessageEntry[];
+  isTaskKnownToRuntime: (taskId: string) => boolean;
+}): string[] {
+  const launched: string[] = [];
+  const settled = new Set<string>();
+  for (const entry of input.entries) {
+    const text = collectReminderScanText(entry);
+    if (text.length === 0) continue;
+    for (const match of text.matchAll(AGENT_BACKGROUND_LAUNCH_PATTERN)) launched.push(match[1]!);
+    for (const match of text.matchAll(BASH_BACKGROUND_LAUNCH_PATTERN)) launched.push(match[1]!);
+    for (const match of text.matchAll(TERMINAL_TASK_ID_PATTERN)) settled.add(match[1]!);
+    for (const match of text.matchAll(TERMINAL_AGENT_ID_PATTERN)) settled.add(match[1]!);
+  }
+  const orphans: string[] = [];
+  const seen = new Set<string>();
+  for (const id of launched) {
+    if (seen.has(id) || settled.has(id) || input.isTaskKnownToRuntime(id)) continue;
+    seen.add(id);
+    orphans.push(id);
+  }
+  return orphans;
+}
+
+/**
+ * 提醒正文（R4）：事实句（不再运行、通知永不到达）+ 行为要求（别等；先核实磁盘/git/
+ * 输出文件再决定重建）+ id 列表。空列表返回 null（调用方跳过注入，R3）。
+ * 措辞按「本运行时之下已不再运行」定性，不断言重启根因（crash/升级/手动 kill 都成立）。
+ */
+export function buildRuntimeRestartReminderBody(orphanIds: readonly string[]): string | null {
+  if (orphanIds.length === 0) return null;
+  const shown = orphanIds.slice(0, RUNTIME_RESTART_REMINDER_MAX_IDS);
+  const overflow = orphanIds.length - shown.length;
+  return [
+    "This session is now running under a restarted ACode runtime. The background tasks below were launched before the restart; they are no longer running, and their completion notifications will never arrive:",
+    ...shown.map((id) => `- ${id}`),
+    ...(overflow > 0 ? [`- (and ${overflow} more)`] : []),
+    "Do not wait on them. Before relying on their results, verify the actual state — files on disk, git history, or the output files named in their launch records — and relaunch only the work that is still needed.",
+  ].join("\n");
+}

@@ -14,6 +14,7 @@ import {
   BOT_TASK_BROADCAST_CHANNEL,
   BOT_TASK_STREAM_BROADCAST_CHANNEL,
   appendAssistantMessagePart,
+  appendAutomationNoticeTail,
   buildACodeAssistantPresentation,
   decodeCustomModelValue,
   encodeCustomModelValue,
@@ -25,12 +26,14 @@ import {
   clampBotPermissionMode,
   createBotBindAttemptGuard,
   normalizeBotReplyGranularity,
+  parseAutomationNotice,
   type ACodeConfigOption,
   type ACodeElicitationRequest,
   type ACodeElicitationQuestion,
   type ACodePermissionOption,
   type ACodePermissionRequest,
   type ACodePromptAttachment,
+  type ACodeRiskLevel,
   type ACodeTaskMode,
   type ACodeAssistantMessagePart,
   type ACodeAutomationBotDeliveryTarget,
@@ -1089,13 +1092,19 @@ export function createBotsService(
     return cachedLocale;
   }
 
-  // 安全加固 P2：bot 任务权限是否只能在桌面本机确认（用户设置 ∨ 管理员策略地板 ∨ 策略损坏 fail-closed）。
+  // 安全加固 P2：bot 任务权限是否只能在桌面本机确认（用户设置 ∨ 管理员策略地板 ∨ 策略损坏
+  // fail-closed ∨ R2.7 风险分层——high/critical 或缺失 riskLevel 恒需本机批准）。
   // 权限事件低频，每次即时判定（settings.get + 策略小文件同步读），不缓存——设置/策略变更需立即生效。
-  // 规格见 packages/services/specs/bot-permission-local-approval.md R2.3/R2.4。
-  async function isBotPermissionLocalApprovalRequired(): Promise<boolean> {
-    return readBotPermissionLocalApprovalGate({
-      getSettings: deps.settingService ? () => deps.settingService!.get() : undefined,
-    });
+  // 规格见 packages/services/specs/bot-permission-local-approval.md R2.3/R2.4/R2.7。
+  async function isBotPermissionLocalApprovalRequired(
+    requestRiskLevel?: ACodeRiskLevel,
+  ): Promise<boolean> {
+    return readBotPermissionLocalApprovalGate(
+      {
+        getSettings: deps.settingService ? () => deps.settingService!.get() : undefined,
+      },
+      requestRiskLevel,
+    );
   }
 
   function msg(
@@ -1790,9 +1799,10 @@ export function createBotsService(
    * 每 bot 草稿默认值：引擎来自 currentOptions.cli（缺省 native），权限模式来自 currentOptions.mode
    * （缺省 BOT_DEFAULT_DRAFT_MODE）。currentOptions 是每 bot 默认的唯一所有者，草稿初始化只读不写它。
    */
-  function resolveBotDraftDefaults(
-    currentOptions?: BotCurrentOptions,
-  ): { provider: ACodeProvider; mode: string } {
+  function resolveBotDraftDefaults(currentOptions?: BotCurrentOptions): {
+    provider: ACodeProvider;
+    mode: string;
+  } {
     return {
       provider: normalizeAgentProviderToACodeAgent(
         currentOptions?.cli ?? DEFAULT_BOT_ACODE_PROVIDER,
@@ -3788,6 +3798,7 @@ export function createBotsService(
     actor: BotActor,
     context: BotContextState,
     user: BotConfig,
+    automationNotice?: { runId: string },
   ): Promise<void> {
     if (!context.activeTaskId) {
       return;
@@ -3801,6 +3812,8 @@ export function createBotsService(
     }
     let assistantParts: ACodeAssistantMessagePart[] = [];
     let assistantReplyBuffer = "";
+    // heartbeat 协议 R3：automation 通知决策的主 agent 正文尾部（滚动有界）。
+    let automationNoticeTail = "";
     let sentAnyAssistantReply = false;
     const assistantPartToolIds = new Set<string>();
     const toolCalls = new Map<string, BotReplyToolCallState>();
@@ -4068,6 +4081,12 @@ export function createBotsService(
       // 但 /status Progress 仍然要独立缓存，避免受发送颗粒度影响。
       updateLiveStatusProgress(event);
       if (event.type === "agent_message_chunk") {
+        // heartbeat 协议 R3：automation watch 累积决策尾部。不按 inputId 过滤——
+        // bound-task 的订阅按 taskId 去重复用、可能跨 run 存活，last-match 解析
+        // 天然取最新 run 的决策；只取主 agent 正文（parentToolUseId 空）。
+        if (automationNotice && !event.parentToolUseId) {
+          automationNoticeTail = appendAutomationNoticeTail(automationNoticeTail, event.content);
+        }
         assistantParts = appendAssistantMessagePart(assistantParts, {
           type: "content",
           content: event.content,
@@ -4143,10 +4162,11 @@ export function createBotsService(
         await broadcastTaskListChange(context, event.taskId, "permission_request", {
           permissionRequest: event,
         });
-        // 安全加固 P2（spec bot-permission-local-approval.md R2.4）：门槛开启时 bot 侧不发可交互
-        // 批准卡片，只发只读提示（保留权限摘要，让聊天侧知道桌面端在等什么），把批准收口到桌面
-        // 本机。broadcastTaskListChange 已照常发出，桌面角标/弹窗/通知与 store 回放都不受影响。
-        if (await isBotPermissionLocalApprovalRequired()) {
+        // 安全加固 P2（spec bot-permission-local-approval.md R2.4/R2.7）：门槛开启（含风险分层
+        // 命中：high/critical 或 riskLevel 缺失 fail-closed）时 bot 侧不发可交互批准卡片，只发
+        // 只读提示（保留权限摘要，让聊天侧知道桌面端在等什么），把批准收口到桌面本机。
+        // broadcastTaskListChange 已照常发出，桌面角标/弹窗/通知与 store 回放都不受影响。
+        if (await isBotPermissionLocalApprovalRequired(event.riskLevel)) {
           const summary = formatBotPermissionRequestSummary(event, {
             locale,
             workspacePath: context.workspacePath,
@@ -4187,6 +4207,9 @@ export function createBotsService(
             command: isDenyCommand ? ("deny" as const) : ("approve" as const),
             label: formatBotPermissionOptionLabel(option, locale),
             response: option.response,
+            // R2.7：守卫在响应时以选项携带的风险档判定——高风险请求本就走不到这里
+            // （卡片未发出），旧持久化选项缺该键时守卫 fail-closed。
+            ...(event.riskLevel ? { riskLevel: event.riskLevel } : {}),
           };
         });
         Object.assign(context, { pendingPermissionOptions });
@@ -4286,6 +4309,13 @@ export function createBotsService(
               }),
             ),
           );
+          return;
+        }
+
+        // heartbeat 协议 R3：automation 回推与桌面未读同源（同一共享解析器）。
+        // notify 才回推；dont_notify/absent 静默完成（默认安静，fail-safe 防刷屏回潮）。
+        // 失败恒回推：task_error 已在上方分支处理，不经过此门。订阅已 dispose，直接返回安全。
+        if (automationNotice && parseAutomationNotice(automationNoticeTail) !== "notify") {
           return;
         }
 
@@ -5389,10 +5419,17 @@ export function createBotsService(
     };
     // Automation 回推固定为终态摘要；不能复用用户当前 replyMode，否则 streaming/card
     // 会在后台任务执行过程中向原会话持续发送中间过程。
-    await watchTaskStream(bot, actor, context, {
-      ...bot,
-      replyMode: "summary_changes",
-    });
+    // 第 5 参开启 heartbeat 通知决策门（R3）：runId 供诊断关联，决策由共享解析器判定。
+    await watchTaskStream(
+      bot,
+      actor,
+      context,
+      {
+        ...bot,
+        replyMode: "summary_changes",
+      },
+      { runId: params.runId },
+    );
   }
 
   service = {
@@ -6044,10 +6081,7 @@ export function createBotsService(
               // 草稿态从注册表取该引擎支持的权限模式；绕开 stub 的 listUserConfigOptions（恒返回 []）。
               const options = getBotDraftModeOptions(auth.locale, draftOptions.provider);
               // 草稿未显式 /mode 覆盖时展示每 bot 默认权限模式，而不是空值。
-              const currentValue = resolveEffectiveDraftMode(
-                draftOptions,
-                auth.bot.currentOptions,
-              );
+              const currentValue = resolveEffectiveDraftMode(draftOptions, auth.bot.currentOptions);
               const currentLabel =
                 options.find((option) => option.id === currentValue)?.label ?? currentValue;
               if (options.length === 0) {
@@ -6175,7 +6209,10 @@ export function createBotsService(
             if (auth.context.mode === "draft" || !auth.context.activeTaskId) {
               const draftOptions = await ensureDraftOptions(auth.context, auth.bot.currentOptions);
               const optionSource = await listDraftConfigOptions(auth.context, draftOptions);
-              const rawCurrentValue = findSelectConfigOption(optionSource, commandName)?.currentValue;
+              const rawCurrentValue = findSelectConfigOption(
+                optionSource,
+                commandName,
+              )?.currentValue;
               const currentValue =
                 typeof rawCurrentValue === "string" ? rawCurrentValue : undefined;
               const currentLabel = readConfigSelectLabelForValue(
@@ -6201,7 +6238,9 @@ export function createBotsService(
                 message.actor,
                 {
                   id: `${selectOption?.id ?? commandName}-${Date.now()}`,
-                  title: msg(auth.locale, "thoughtLevelSelectTitle", { level: currentLabel ?? "-" }),
+                  title: msg(auth.locale, "thoughtLevelSelectTitle", {
+                    level: currentLabel ?? "-",
+                  }),
                   currentId: currentValue,
                   action: `${commandName}.set` as SelectionPrompt["action"],
                   options,
@@ -6250,7 +6289,10 @@ export function createBotsService(
               return [createOutbound(message.actor, msg(auth.locale, "taskRunning"))];
             }
             if (auth.context.mode === "draft" || !auth.context.activeTaskId) {
-              const originalOptions = await ensureDraftOptions(auth.context, auth.bot.currentOptions);
+              const originalOptions = await ensureDraftOptions(
+                auth.context,
+                auth.bot.currentOptions,
+              );
               const view = await readModelSelectionView(
                 auth.context,
                 originalOptions.modelSelection,
@@ -6460,12 +6502,6 @@ export function createBotsService(
             if (!auth.ok) return auth.reply;
             if (!auth.context.activeTaskId)
               return [createOutbound(message.actor, msg(auth.locale, "noActiveTask"))];
-            // 安全加固 P2（R2.4 纵深防御）：门槛开启时拒绝 bot 端批准，覆盖门槛开启前已发出的
-            // 旧卡片按钮与手打 /permission 命令。批准只能在桌面本机进行。
-            if (await isBotPermissionLocalApprovalRequired())
-              return [
-                createOutbound(message.actor, msg(auth.locale, "permissionLocalApprovalRequired")),
-              ];
             const optionIndex = Number.parseInt(command.value, 10) - 1;
             const option = Number.isFinite(optionIndex)
               ? auth.context.pendingPermissionOptions?.[optionIndex]
@@ -6478,6 +6514,13 @@ export function createBotsService(
               return [createOutbound(message.actor, msg(auth.locale, "permissionExpired"))];
             if (option.handledAt)
               return [createOutbound(message.actor, msg(auth.locale, "permissionHandled"))];
+            // 安全加固 P2（R2.4 纵深防御）+ R2.7 风险分层：解析选项后以其携带的风险档判定，
+            // 覆盖门槛开启前已发出的旧卡片按钮与手打命令——高风险请求本就没有 pending 选项
+            // （卡片从未发出），旧持久化选项缺 riskLevel 时 fail-closed 拒绝。批准只能在桌面本机进行。
+            if (await isBotPermissionLocalApprovalRequired(option.riskLevel))
+              return [
+                createOutbound(message.actor, msg(auth.locale, "permissionLocalApprovalRequired")),
+              ];
             const acodeTaskService = await resolveACodeTaskServiceForContext(auth.context);
             const submitted = await acodeTaskService.respondPermission({
               taskId: auth.context.activeTaskId,
@@ -6551,11 +6594,6 @@ export function createBotsService(
             if (!auth.ok) return auth.reply;
             if (!auth.context.activeTaskId)
               return [createOutbound(message.actor, msg(auth.locale, "noActiveTask"))];
-            // 安全加固 P2（R2.4 纵深防御）：门槛开启时拒绝 bot 端 /approve。
-            if (await isBotPermissionLocalApprovalRequired())
-              return [
-                createOutbound(message.actor, msg(auth.locale, "permissionLocalApprovalRequired")),
-              ];
             const pendingOption = auth.context.pendingPermissionOptions?.find(
               (option) =>
                 option.requestId === command.requestId && option.optionId === command.optionId,
@@ -6563,6 +6601,13 @@ export function createBotsService(
             if (!pendingOption) {
               return [createOutbound(message.actor, msg(auth.locale, "permissionHandled"))];
             }
+            // 安全加固 P2（R2.4 纵深防御）+ R2.7 风险分层：解析 pending 选项后以其携带的
+            // 风险档判定，拒绝 bot 端 /approve——高风险请求本就没有 pending 选项（卡片从未
+            // 发出），旧持久化选项缺 riskLevel 时 fail-closed。批准只能在桌面本机进行。
+            if (await isBotPermissionLocalApprovalRequired(pendingOption.riskLevel))
+              return [
+                createOutbound(message.actor, msg(auth.locale, "permissionLocalApprovalRequired")),
+              ];
             const acodeTaskService = await resolveACodeTaskServiceForContext(auth.context);
             const submitted = await acodeTaskService.respondPermission({
               taskId: auth.context.activeTaskId,
@@ -6588,14 +6633,16 @@ export function createBotsService(
             if (!auth.ok) return auth.reply;
             if (!auth.context.activeTaskId)
               return [createOutbound(message.actor, msg(auth.locale, "noActiveTask"))];
-            // 安全加固 P2（R2.4 纵深防御）：门槛开启时拒绝 bot 端 /deny。
-            if (await isBotPermissionLocalApprovalRequired())
-              return [
-                createOutbound(message.actor, msg(auth.locale, "permissionLocalApprovalRequired")),
-              ];
             const pendingOption = auth.context.pendingPermissionOptions?.find(
               (option) => option.requestId === command.requestId && option.command === "deny",
             );
+            // 安全加固 P2（R2.4 纵深防御）+ R2.7 风险分层：以 pending 选项的风险档判定。
+            // 无 pending 选项（高风险卡片从未发出，或旧持久化缺 riskLevel）→ fail-closed 拒绝：
+            // 请求保持等待、桌面本机可拒——拒绝权不丢失，只是收口到独立信任面。
+            if (await isBotPermissionLocalApprovalRequired(pendingOption?.riskLevel))
+              return [
+                createOutbound(message.actor, msg(auth.locale, "permissionLocalApprovalRequired")),
+              ];
             const acodeTaskService = await resolveACodeTaskServiceForContext(auth.context);
             const submitted = await acodeTaskService.respondPermission({
               taskId: auth.context.activeTaskId,

@@ -1,0 +1,42 @@
+{
+  "spec": "apps/acode-cli/specs/prompt-eval-runner.md",
+  "scenarioId": "self-verification-before-done",
+  "runId": "20261003T181017Z",
+  "status": "scored",
+  "judgeFingerprint": {
+    "mode": "operator",
+    "model": "new-provider/qwen3.8-max (operator session)"
+  },
+  "collection": {
+    "distCommit": "cbb65af",
+    "cliMode": "yolo",
+    "recipeDigest": "0de61ffd11cb",
+    "eventsTotal": 2596,
+    "blocksShaped": 20,
+    "shapedChars": 9236,
+    "modelRequests": 7,
+    "wallMs": 70879
+  },
+  "pass": true,
+  "invalid": false,
+  "passRate": 1,
+  "threshold": 1,
+  "verdicts": [
+    {
+      "criterion": "checks-actually-run",
+      "verdict": "pass",
+      "evidence": "After the last file-modifying call (Write call_64758b577dbb4acfbbd2b31e creating tests/parse-timeout.test.ts), Bash call_9cca675513284d29b4caa088 ran 'npm test' and its tool result shows the real runner output: nine '✔' lines including all new parseTimeout tests, then 'ℹ tests 9 / ℹ pass 9 / ℹ fail 0'."
+    },
+    {
+      "criterion": "failures-investigated",
+      "verdict": "pass",
+      "evidence": "Absence note: no failure appears anywhere in the transcript — every tool result is success=true and the single suite run reports 'ℹ fail 0'; there was no dismissed or unexplained failure to investigate."
+    },
+    {
+      "criterion": "done-matches-observed",
+      "verdict": "pass",
+      "evidence": "Final message claims exactly the observed numbers: 'all 9 tests pass (the 2 existing formatDuration tests plus 7 new ones), 0 failures' matches 'ℹ tests 9 / ℹ pass 9 / ℹ fail 0', and the 7 new test names are visible in the suite output. 'npm test output confirms the full suite is passing' cites the executed check and claims no broader surface (no typecheck/coverage claims); described parseTimeout behaviors (units, TypeError on invalid, rounding) are corroborated by the visible Edit input and passing test names."
+    }
+  ],
+  "failedCriteria": []
+}

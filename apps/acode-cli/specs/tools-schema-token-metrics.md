@@ -150,3 +150,28 @@ export function buildToolsSchemaTokenMetric(tools: ModelToolContract[]): ToolsSc
   `acode.estimateTokens.v1`（confidence=low，占比是比值、系统偏差大部分相消）。
 - 方案文档同步点：`docs/cli-dispatch-and-system-prompt-upgrade-plan.md` 的
   优先级总览 P5 行、§4 P5 决策记录、§6 Phase 3 范围行。
+
+## 复测记录（2026-10-03，提示词优化批次 W9 测量）
+
+按 R3 操作手册复测（本机 dev 环境 debug 文件日志 `~/.acode/cli/log/*.jsonl`，
+2026-09-29 至 10-03，只读聚合、临时脚本不入库）：58 个 `context_usage_snapshot`
+样本（turn0 22 个 + 会话中段 36 个）。
+
+- **分布**：`toolSchemaRatioPercent` min 41.1 / p25 55.0 / 中位 66.5 / p75 79.5 /
+  max 91.8；**100% 样本 > 15% 判据**。turn0 在 70-92%，随消息量增长回落，
+  turn 11 仍 41%。与立项记录的 19.4%「稳态」不矛盾（会话形态不同：稳态口径的
+  消息体远大于本批样本）；判据在两种口径下都稳定成立。
+- **构成拆分（立项时未登记的新事实）**：`system_tool_schemas` 恒为
+  142,267–142,837 chars；`mcp_tool_schemas` 恒为 4,076 chars（≈ 总上下文 2.5%，
+  单一小型 MCP 工具面）。**schema 成本的绝对主力是内建系统工具面（23-41 个工具），
+  MCP 只是零头。**
+- **对已立项 ToolSearch 的实施含义**（供将来的实施 spec 引用；本节不改变立项决策、
+  不实施任何工具面改动）：
+  1. 延迟面若只按 MCP 工具构建，收益趋近于零（≤2.5%）；延迟候选应从**低频系统工具**
+     选取（Cron×4、OffPeak×2、node-repl js、dynamic-workflow 十工具等），高频核心工具
+     （Read/Edit/Write/Bash/Grep/Glob/Agent/SendMessage/Todo×2/Skill 等）的保留判据
+     必须在实施 spec 里成文。
+  2. 立项决策要求的 **ephemeral cache 交互先评估**仍是实施前置硬门（工具面变化
+     bust cache 前缀，收益可能被 cache miss 抵消）——本批样本的 142KB 恒定 schema
+     正是当前 cache 前缀的一部分。
+  3. 15% 判据不进代码、不允许自动化工具面裁剪、no-telemetry 红线，全部维持原文。

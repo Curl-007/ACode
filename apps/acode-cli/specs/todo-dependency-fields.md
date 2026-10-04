@@ -355,7 +355,13 @@ title + 合法 status，`:39-41`），但任何让某一项多带一个**非法 
 10. **并发写不引入新竞态**：两次并发 `TodoWrite`（`concurrentSafe: false`，
     `handlers/todo.ts:142`）→ 最后写入者胜，与改动前一致；available 与环检测
     都只在各自那次提交的快照上判定，不跨调用读取（R4）。
-11. **验证命令**（从仓库根执行，如实记录结果）：
+11. **上界数字文本一致性（F3，审计 2026-10-03 登记项关闭）**：metadata 上界数字的
+    两处 provider 可见渲染面——`todoWriteToolEntry.metadata.description` 的 bullet 与
+    `TodoWriteInputJsonSchema` 的 metadata 属性 describe——由 `todo-deps.ts` 三常量
+    （`TODO_METADATA_MAX_KEYS` / `TODO_METADATA_MAX_KEY_CHARS` /
+    `TODO_METADATA_MAX_SERIALIZED_BYTES`）插值生成，结构上杜绝「常量改了、文本还写死
+    旧数」的漂移；测试断言常量渲染值在两面在场（写死数字或改常量不改文本都会失败）。
+12. **验证命令**（从仓库根执行，如实记录结果）：
     - 测试：`node --import tsx --test apps/acode-cli/tests/todo-dependency-fields.test.mjs`
       （新文件，遵循 `apps/acode-cli/tests/*.test.mjs` 的 `node:test` + `assert` 约定；
       写前先读 `tests/managed-policy-floor.test.mjs`、`tests/no-telemetry.test.mjs` 学约定）

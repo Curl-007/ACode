@@ -114,8 +114,10 @@ let electronCommand = existsSync(electronBinary) ? electronBinary : "electron";
 
 if (process.platform === "darwin" && existsSync(electronBinary)) {
   // macOS 命令行启动的 raw Electron 没有 CFBundleURLTypes，LaunchServices 会把
-  // zcode:// 交给一个没有项目入口的 Electron 默认壳。给本地启动副本补齐产品
-  // Info.plist 后，线上 Share 页面无需感知 Dev，仍可把链接投递给已运行的 Dev 实例。
+  // acode:// 交给一个没有项目入口的 Electron 默认壳。给本地启动副本补齐产品
+  // Info.plist（含 acode scheme，见 devElectronAppBundle.mjs）后，deep link 在
+  // dev 形态也能投递给已运行的 Dev 实例。（F6：原注释写 zcode:// 且引用已删除
+  // 的 Share 页面，双重过时，2026-10-04 重写。）
   const electronPackageJsonPath = require.resolve("electron/package.json");
   const electronPackage = JSON.parse(await readFile(electronPackageJsonPath, "utf8"));
   const electronAppPath = resolve(electronBinary, "../../..");

@@ -721,3 +721,15 @@ P2 清单与其 09-27 提升方案一样系统性过时，e5f0fe1/070eaec/580f7a
   server）、新 profile 正确落 API Key 引导页；验证后实例关停、端口关闭、临时 profile
   删除。本地启动方式：`cd packages/desktop && ACODE_ENV=test pnpm exec electron .`
   （dev 态自动开 9229 CDP；正式打包面仅 CI release 流水线）。
+- **更正（2026-10-04 午后，所有者问询触发核实）**：桌面 E2E 轮「真实 profile 零触碰」
+  声明对**凭据目录不成立**——启动命令漏设 `ACODE_DATA_BASE_DIR`：桌面凭据目录 =
+  services `getAppConfigDir()`（即 `~/.acode/v2`，见 desktopDeviceMid.ts 注释），不跟随
+  `ACODE_DESKTOP_HOME_DIR`。首个 E2E 实例（新代码含 R1）于 02:57 对真实目录执行了
+  R1-b 迁移（credential-key.json → credential-key.dpapi.json + 文件删除）。迁移本身按
+  设计无损（blob 持原材料），但与后续旧代码进程形成**混合代际存储**：旧构建找不到
+  密钥文件→04:00 生成游离新密钥文件；13:05 credentials.json 被某表面重写后，旧构建
+  （10-02 Preview exe 等）用游离密钥解不出正确 API Key → provider 401 auth_failed。
+  **恢复步骤（已给所有者）**：全进程关闭 → 删游离 `credential-key.json`（保 blob）→
+  新代码表面重存一次 provider Key → 旧构建停用（R1 回滚语义本就声明旧构建不兼容
+  迁移后存储）。**跟进登记**：E2E/冒烟启动清单必须含 ACODE_DATA_BASE_DIR；产品侧
+  是否让 desktop home 覆盖联动凭据目录另立裁决（不静默改产品代码）。

@@ -22,6 +22,8 @@ const {
 const { resolveCredentialMasterKey, resolveCredentialKeyFilePath } = await import(
   "../src/node/credentialMasterKey.ts"
 );
+const { createACodeCredentialCipher } = await import("../src/node/credentialCipher.ts");
+const { isCredentialDecryptError } = await import("../src/oauth.ts");
 
 function withTempDir(fn) {
   const dir = mkdtempSync(join(tmpdir(), "acode-keychain-test-"));
@@ -633,5 +635,127 @@ test("R1-b migration: unavailable keychain never attempts migration (headless st
     assert.equal(resolved.source, "keyFile");
     assert.equal(keychain.state.writes, 0);
     assert.ok(existsSync(keyFilePath));
+  });
+});
+
+// ── R2（0.0.3）：分歧材料解密回退（credential-storage.md R2）──────────
+//
+// 场景：R1-b 迁移把材料搬进钥匙串并删除密钥文件后，同机仍在运行的 pre-R1 构建
+// 重新生成了一把全新随机密钥文件并用它写入新凭据——「钥匙串 vs 密钥文件」材料
+// 分歧，双方密文互解不开，旧路径把解密失败放大成破坏性清空（2026-10-04 真机实证）。
+
+const unavailableKeychainStub = () => ({
+  read: () => ({ status: "unavailable", reason: "disabled for R2 old-build simulation" }),
+  write: () => ({ status: "unavailable", reason: "disabled for R2 old-build simulation" }),
+  delete: () => {},
+});
+
+test("R2 resolver: coexistence carries divergentFileKey only when materials differ", () => {
+  withTempDir((baseDir) => {
+    const keychain = stubKeychain();
+    const keyFilePath = resolveCredentialKeyFilePath({ baseDir, env: {} });
+    const material = randomBytes(32);
+    keychain.state.store.set(keyFilePath, material.toString("base64url"));
+    mkdirSync(dirname(keyFilePath), { recursive: true });
+
+    // 材料相同 → 不携带回退（同一把密钥，回退无意义）。
+    writeKeyFileFixture(keyFilePath, material);
+    const same = resolveCredentialMasterKey({ baseDir, env: {}, onWarn: () => {}, keychain });
+    assert.equal(same.source, "keychain");
+    assert.equal(same.divergentFileKey, undefined);
+    assert.deepEqual(same.key, material);
+
+    // 材料分歧（pre-R1 构建在迁移后重新生成了密钥文件）→ 携带文件材料作解密回退。
+    const divergent = randomBytes(32);
+    writeKeyFileFixture(keyFilePath, divergent);
+    const forked = resolveCredentialMasterKey({ baseDir, env: {}, onWarn: () => {}, keychain });
+    assert.equal(forked.source, "keychain");
+    assert.deepEqual(forked.key, material, "钥匙串仍是权威材料");
+    assert.deepEqual(forked.divergentFileKey, divergent);
+
+    // 文件损坏 → 不提供回退但绝不抛错（钥匙串权威不受影响）。
+    writeFileSync(keyFilePath, "{ not json", "utf-8");
+    const corrupt = resolveCredentialMasterKey({ baseDir, env: {}, onWarn: () => {}, keychain });
+    assert.equal(corrupt.divergentFileKey, undefined);
+    assert.deepEqual(corrupt.key, material);
+  });
+});
+
+test("R2 cipher: divergent-material ciphertext reads back via fallback; encrypt stays on the primary material", () => {
+  withTempDir((oldDir) => {
+    withTempDir((newDir) => {
+      // 旧构建（pre-R1：钥匙串不可用、只认密钥文件）在独立目录写出文件材料密文。
+      // 独立目录是为了绕开解析层按 keyFilePath 的进程级钥匙串缓存（旧/新视图同路径会互相污染）。
+      const divergent = randomBytes(32);
+      const oldKeyFilePath = resolveCredentialKeyFilePath({ baseDir: oldDir, env: {} });
+      writeKeyFileFixture(oldKeyFilePath, divergent);
+      const oldBuild = createACodeCredentialCipher({
+        keyFilePath: oldKeyFilePath,
+        env: {},
+        keychain: unavailableKeychainStub(),
+        onWarn: () => {},
+      });
+      const oldCipherText = oldBuild.encrypt("token-secret");
+
+      // 新构建视图：钥匙串（主材料）∧ 密钥文件（分歧材料）并存。
+      const keychain = stubKeychain();
+      const keyFilePath = resolveCredentialKeyFilePath({ baseDir: newDir, env: {} });
+      const primary = randomBytes(32);
+      keychain.state.store.set(keyFilePath, primary.toString("base64url"));
+      writeKeyFileFixture(keyFilePath, divergent);
+      const newBuild = createACodeCredentialCipher({
+        keyFilePath,
+        env: {},
+        keychain,
+        onWarn: () => {},
+      });
+
+      const info = newBuild.decryptWithFallbackInfo(oldCipherText);
+      assert.equal(info.plaintext, "token-secret");
+      assert.equal(info.usedFallbackKey, true);
+      assert.equal(
+        newBuild.decrypt(oldCipherText),
+        "token-secret",
+        "decrypt 语义 = decryptWithFallbackInfo().plaintext",
+      );
+
+      // 主材料自己写入的值：不触发回退。
+      const own = newBuild.encrypt("own-value");
+      const ownInfo = newBuild.decryptWithFallbackInfo(own);
+      assert.equal(ownInfo.plaintext, "own-value");
+      assert.equal(ownInfo.usedFallbackKey, false);
+
+      // 加密绝不用分歧材料产出密文：删除密钥文件（只剩钥匙串材料）后，
+      // 新写入的值仍可读，旧构建密文不可读。
+      rmSync(keyFilePath);
+      const primaryOnly = createACodeCredentialCipher({
+        keyFilePath,
+        env: {},
+        keychain,
+        onWarn: () => {},
+      });
+      assert.equal(primaryOnly.decrypt(own), "own-value");
+      assert.throws(
+        () => primaryOnly.decrypt(oldCipherText),
+        (error) => isCredentialDecryptError(error),
+      );
+
+      // 两把材料都解不开 → 抛主密钥错误（稳定 code + CJK 前缀契约不变）。
+      const foreign = createACodeCredentialCipher({
+        env: {},
+        secret: randomBytes(32).toString("base64url"),
+      }).encrypt("foreign-value");
+      writeKeyFileFixture(keyFilePath, divergent);
+      const withFallback = createACodeCredentialCipher({
+        keyFilePath,
+        env: {},
+        keychain,
+        onWarn: () => {},
+      });
+      assert.throws(
+        () => withFallback.decryptWithFallbackInfo(foreign),
+        (error) => isCredentialDecryptError(error),
+      );
+    });
   });
 });

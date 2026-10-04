@@ -430,9 +430,16 @@ export class OAuthCredentialRepo {
   }
 
   private async clearCorruptOAuthSession(): Promise<void> {
-    // AES-GCM 解密失败说明当前运行时已经无法信任本地 OAuth 登录态。
-    // 等价于强制登出已注册 OAuth provider：先清 provider 命名空间与共享 acode JWT，
-    // 再通知 service 层清理 Start/Coding Plan 这类派生模型凭据，同时避免误删 SSH 等其他独立凭据。
+    // AES-GCM 解密失败（R2 后含分歧密钥文件材料回退也失败）说明当前运行时已经无法
+    // 信任本地 OAuth 登录态。等价于强制登出已注册 OAuth provider：先清 provider
+    // 命名空间与共享 acode JWT，再通知 service 层清理 Start/Coding Plan 这类派生
+    // 模型凭据，同时避免误删 SSH 等其他独立凭据。
+    // R2 显式留痕：该路径曾完全静默——用户只见「登录态消失」，排障无从下手。
+    // 原始密文已由 credentialService.load 在错误上抛前整店留证（.corrupt-<hash>.bak），
+    // 这里的清空是可恢复动作而非不可逆丢失。
+    log.warn(undefined, "clearing corrupt OAuth session after credential decrypt failure", {
+      providers: this.knownProviderIds,
+    });
     for (const provider of this.knownProviderIds) {
       await this.clearProvider(provider);
     }

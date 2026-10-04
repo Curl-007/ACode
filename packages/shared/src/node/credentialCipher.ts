@@ -58,6 +58,13 @@ const AAD_V2 = Buffer.from("acode-credential-enc/v2", "utf-8");
 export interface ACodeCredentialCipher {
   decrypt(value: string): string;
   encrypt(value: string): string;
+  /**
+   * R2：解密并报告是否动用了分歧密钥文件材料（`divergentFileKey`）回退。
+   * 共享工厂恒实现；接口上声明为可选以免破坏既有测试 stub 与委托层类型。
+   * `usedFallbackKey === true` 说明该值是密钥分歧期间由旧材料写入的，
+   * 存储层应把它用主密钥材料重加密收敛（见 credential-storage.md R2）。
+   */
+  decryptWithFallbackInfo?(value: string): { plaintext: string; usedFallbackKey: boolean };
 }
 
 export interface CreateACodeCredentialCipherOptions extends ResolveCredentialMasterKeyOptions {
@@ -189,6 +196,12 @@ function encryptWithKey(key: Buffer, value: string): string {
   ].join("");
 }
 
+/** cipher 解析出的密钥集合：primary = 加解密权威材料；fallback = 分歧密钥文件材料（R2，仅解密）。 */
+interface ResolvedCipherKeys {
+  readonly primary: Buffer;
+  readonly fallback?: Buffer;
+}
+
 export function createACodeCredentialCipher(
   options: CreateACodeCredentialCipherOptions = {},
 ): ACodeCredentialCipher {
@@ -196,13 +209,22 @@ export function createACodeCredentialCipher(
   // 主密钥**惰性**解析：只在真正加解密时才触碰密钥文件。构造 cipher 是同步且高频的
   // （每次 store 工厂调用都会建一个），提前解析会让「密钥文件不可用」变成一个
   // 与凭据无关的启动期崩溃点。
-  let cachedDataKey: Buffer | undefined = options.dataKey;
-  const dataKey = (): Buffer => {
-    if (!cachedDataKey) {
-      cachedDataKey = deriveDataKey(resolveCredentialMasterKey(options).key);
+  let cachedKeys: ResolvedCipherKeys | undefined = options.dataKey
+    ? { primary: options.dataKey }
+    : undefined;
+  const cipherKeys = (): ResolvedCipherKeys => {
+    if (!cachedKeys) {
+      const resolved = resolveCredentialMasterKey(options);
+      cachedKeys = {
+        primary: deriveDataKey(resolved.key),
+        ...(resolved.divergentFileKey
+          ? { fallback: deriveDataKey(resolved.divergentFileKey) }
+          : {}),
+      };
     }
-    return cachedDataKey;
+    return cachedKeys;
   };
+  const dataKey = (): Buffer => cipherKeys().primary;
 
   let cachedLegacyKey: Buffer | undefined;
   const legacyKey = (): Buffer => {
@@ -212,32 +234,65 @@ export function createACodeCredentialCipher(
     return cachedLegacyKey;
   };
 
-  return {
-    decrypt(value: string): string {
-      // 非密文（历史明文值）原样返回，与旧实现行为一致。用谓词而非内联 startsWith，
-      // 让 isEncryptedACodeCredentialValue / ...ValueV1 成为真实解密路径的一部分，
-      // 而不是仅供测试引用的死导出（对抗评审 #6）。
-      if (!isEncryptedACodeCredentialValue(value)) {
-        return value;
-      }
-      if (isEncryptedACodeCredentialValueV1(value)) {
-        // 历史密文：沿用旧的派生密钥，保证升级后既有凭据仍可读。AAD 传 undefined，
-        // 因为 v1 加密时没有绑 AAD（见 decryptWithKey 注释）。
-        return decryptWithKey(
+  const decryptWithFallbackInfo = (
+    value: string,
+  ): { plaintext: string; usedFallbackKey: boolean } => {
+    // 非密文（历史明文值）原样返回，与旧实现行为一致。用谓词而非内联 startsWith，
+    // 让 isEncryptedACodeCredentialValue / ...ValueV1 成为真实解密路径的一部分，
+    // 而不是仅供测试引用的死导出（对抗评审 #6）。
+    if (!isEncryptedACodeCredentialValue(value)) {
+      return { plaintext: value, usedFallbackKey: false };
+    }
+    if (isEncryptedACodeCredentialValueV1(value)) {
+      // 历史密文：沿用旧的派生密钥，保证升级后既有凭据仍可读。AAD 传 undefined，
+      // 因为 v1 加密时没有绑 AAD（见 decryptWithKey 注释）。
+      return {
+        plaintext: decryptWithKey(
           legacyKey(),
           value,
           ENCRYPTED_VALUE_PREFIX_V1,
           undefined,
           "历史凭据",
-        );
+        ),
+        usedFallbackKey: false,
+      };
+    }
+    const { primary, fallback } = cipherKeys();
+    try {
+      return {
+        plaintext: decryptWithKey(primary, value, ENCRYPTED_VALUE_PREFIX_V2, AAD_V2, "凭据"),
+        usedFallbackKey: false,
+      };
+    } catch (error) {
+      if (!fallback) {
+        throw error;
       }
-      return decryptWithKey(dataKey(), value, ENCRYPTED_VALUE_PREFIX_V2, AAD_V2, "凭据");
+      // R2 密钥分歧：R1-b 迁移后 pre-R1 构建会重新生成密钥文件并用新材料写入
+      // 新凭据。用分歧材料重试一次；仍失败则抛主密钥的错误，保持稳定 code +
+      // CJK 前缀契约（isCredentialDecryptError 谓词不变）。
+      try {
+        return {
+          plaintext: decryptWithKey(fallback, value, ENCRYPTED_VALUE_PREFIX_V2, AAD_V2, "凭据"),
+          usedFallbackKey: true,
+        };
+      } catch {
+        throw error;
+      }
+    }
+  };
+
+  return {
+    decrypt(value: string): string {
+      return decryptWithFallbackInfo(value).plaintext;
     },
 
     encrypt(value: string): string {
-      // 新写入一律 v2；绝不产出可离线推导密钥下的密文。
+      // 新写入一律 v2 且只用主密钥材料；绝不产出可离线推导密钥下的密文，
+      // 也绝不用分歧回退材料产出密文（R2：收敛方向永远是主密钥）。
       return encryptWithKey(dataKey(), value);
     },
+
+    decryptWithFallbackInfo,
   };
 }
 

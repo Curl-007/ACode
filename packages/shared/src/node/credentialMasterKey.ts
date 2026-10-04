@@ -76,6 +76,16 @@ export interface ResolvedCredentialMasterKey {
   readonly source: CredentialMasterKeySource;
   /** 仅材料落在密钥文件（`source === "keyFile"`）时有值：实际读写的密钥文件路径。 */
   readonly keyFilePath?: string;
+  /**
+   * 仅 `source === "keychain"` 且密钥文件并存、材料分歧时有值（R2）：密钥文件里的
+   * 旧材料，**只作 enc:v2 解密回退，绝不用于加密**。
+   *
+   * 产生场景：R1-b 迁移删除密钥文件后，同机仍在运行的 pre-R1 构建（旧安装/回滚/
+   * 旧 CLI）重新生成了一把全新随机密钥并用它写入新凭据——没有回退时这些密文会
+   * 触发解密失败并被下游放大成登录态清空。加密始终用主材料（`key`），存储层在
+   * 回退命中后应把值重加密收敛回主材料（见 credential-storage.md R2）。
+   */
+  readonly divergentFileKey?: Buffer;
 }
 
 export interface ResolveCredentialMasterKeyOptions {
@@ -278,7 +288,10 @@ function defaultWarnOnce(message: string): void {
  * 优先级（P0-4 顺序经对抗评审修正；R1-a 插入钥匙串档，设计文档 D4）：
  * 1. 显式 `secret`（测试/宿主注入）——调用方的明确意图，最高。
  * 2. **OS 钥匙串条目**——迁移后材料的新家；与密钥文件**并存**时钥匙串优先并告警
- *    （两者材料本应相同，不同说明备份错位，告警给出双路径提示）。条目存在但读不出
+ *    （两者材料本应相同，不同说明备份错位，告警给出双路径提示）。并存且材料分歧时，
+ *    解析结果携带 `divergentFileKey`（R2：只作 enc:v2 解密回退，绝不用于加密——
+ *    pre-R1 构建在迁移后会重新生成密钥文件并写入新凭据，回退让这些密文可读而非
+ *    触发破坏性清空，见 credential-storage.md）。条目存在但读不出
  *    合法材料 → **抛错保留现场**，绝不降级生成（生成 = 换密钥 = 既有 v2 凭据永久垃圾，
  *    与密钥文件损坏同一纪律）。
  * 3. **已存在的密钥文件**——未迁移遗留/降级模式，它拥有已写入的全部 `enc:v2` 凭据，
@@ -317,15 +330,30 @@ export function resolveCredentialMasterKey(
   const keychainRead = readKeychainCached(keychain, keyFilePath);
   if (keychainRead.status === "found") {
     const key = decodeKeychainSecret(keychainRead.secret, keyFilePath);
-    if (existsSync(keyFilePath)) {
-      warn(
-        `SECURITY WARNING: both an OS keychain entry and a credential key file exist for ` +
-          `${keyFilePath}. Using the keychain entry (post-migration home of the key material). ` +
-          `If credentials fail to decrypt, the two materials have diverged (stale backup ` +
-          `restored?) — remove whichever copy is not the original.`,
-      );
+    if (!existsSync(keyFilePath)) {
+      return { key, source: "keychain" };
     }
-    return { key, source: "keychain" };
+    warn(
+      `SECURITY WARNING: both an OS keychain entry and a credential key file exist for ` +
+        `${keyFilePath}. Using the keychain entry (post-migration home of the key material). ` +
+        `If credentials fail to decrypt, the two materials have diverged (stale backup ` +
+        `restored?) — remove whichever copy is not the original.`,
+    );
+    // R2：并存态尝试读取文件材料作为解密回退——pre-R1 构建在迁移删文件后会重新
+    // 生成一把新随机密钥并写入新凭据，没有回退时这些密文会触发破坏性清空。
+    // 文件损坏读不出只意味着没有回退可用，不影响钥匙串权威，故不抛错。
+    let divergentFileKey: Buffer | undefined;
+    try {
+      const fileKey = readKeyFileWithRetry(keyFilePath);
+      if (fileKey && !fileKey.equals(key)) {
+        divergentFileKey = fileKey;
+      }
+    } catch {
+      // 分歧密钥文件本身损坏：放弃回退，钥匙串材料仍然权威。
+    }
+    return divergentFileKey
+      ? { key, source: "keychain", divergentFileKey }
+      : { key, source: "keychain" };
   }
   if (keychainRead.status === "error") {
     // fail-loud：条目/blob 存在但读不出合法材料。降级或生成都会孤立既有凭据。

@@ -45,6 +45,7 @@ export const SYSTEM_REMINDER_PER_REQUEST_SOURCES = [
   "output_style",
   "memory_recall",
   "memory_semantic_recall",
+  "swarm_plan_status",
   "date_change",
   "runtime_restart_tasks",
   "referenced_session_context",
@@ -112,6 +113,11 @@ const SYSTEM_REMINDER_DESCRIPTORS: Record<SystemReminderSource, DescriptorShape>
     true,
     "sr.memory_semantic_recall",
   ),
+  // K2 swarm plan 进展提醒（specs/swarm-task-graph.md R7）：plan 在 runtime store（不受
+  // transcript compact 影响——gate 归主对话的必要条件），冷恢复后按当前图快照重建即可，
+  // 逐字存活反而会把「某轮的图状态」伪装成会话事实。与 memory_semantic_recall 同款走
+  // per-request 档、不落 session（不进 persisted 名单，跨包分类零改动）。
+  swarm_plan_status: descriptor("current_turn", "per_current_turn", true, "sr.swarm_plan_status"),
   date_change: descriptor("current_turn", "runtime_local", true, "sr.date_change"),
   // 重启孤儿任务提醒（specs/runtime-restart-task-reminder.md R2）：正文是持久化历史的
   // 确定性派生（launch/终态记录都在 session store），冷恢复重算即可、无需逐字存活，

@@ -103,6 +103,7 @@ import * as scriptWorkflowRunRepository from "./repositories/script-workflow-run
 import * as sessionEntryRepository from "./repositories/session-entries.js";
 import * as sessionInputRepository from "./repositories/session-inputs.js";
 import * as sessionRepository from "./repositories/sessions.js";
+import * as swarmPlanRepository from "./repositories/swarm-plans.js";
 import * as todoRepository from "./repositories/todos.js";
 import * as usageRepository from "./repositories/usage.js";
 
@@ -646,6 +647,24 @@ export class SqliteSessionStore
   async updateTodos(input: { sessionID: SessionId; todos: TodoItem[] }): Promise<void> {
     this.throwBeforeWrite();
     return todoRepository.updateTodos(this.db, input);
+  }
+
+  // K2 swarm plan 的行存取（specs/swarm-task-graph.md R6 附录）：与 todos 同款的
+  // sessionStore 专用存储方法，但**不进 contracts SessionStorePort**（契约面冻结，
+  // K4 session-search 先例）——core 侧经 swarm/runtime-binding.ts 的结构化 duck-typing
+  // 消费，测试替身/未来远程 store 缺席时按「无持久化」降级。
+  async readSwarmPlan(input: { sessionID: SessionId }): Promise<unknown> {
+    return swarmPlanRepository.readSwarmPlan(this.db, input);
+  }
+
+  async writeSwarmPlan(input: { plan: unknown; sessionID: SessionId }): Promise<void> {
+    this.throwBeforeWrite();
+    return swarmPlanRepository.writeSwarmPlan(this.db, input);
+  }
+
+  async clearSwarmPlan(input: { sessionID: SessionId }): Promise<void> {
+    this.throwBeforeWrite();
+    return swarmPlanRepository.clearSwarmPlan(this.db, input);
   }
 
   async readTarget(input: { sessionID: SessionId }): Promise<SessionGoal | null> {

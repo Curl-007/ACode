@@ -454,6 +454,17 @@ function toolNameFromRuntimeTaskType(type: RuntimeTaskType): string {
       return "CreateWorkflow";
     case "monitor_mcp":
       return "Monitor";
+    // K3：overnight run 不是工具派生的任务（supervisor 驱动，R1），没有对应工具名；
+    // BackgroundTaskInfo 的 toolName 在此只是展示标签，投影一个可读名。
+    case "overnight":
+      return "Overnight";
+    // K2：swarm plan 由主对话经 PlanSeed 建立（引擎在 turn 间隙驱动），展示标签取其
+    // 建立工具；TaskStop 分派对 swarm_plan 走 not supported（停止面是 PlanControl）。
+    case "swarm_plan":
+      return "PlanSeed";
+    // K6：ambient cycle 由 AmbientRunner fork（runner 驱动，非工具派生），投影可读标签。
+    case "ambient":
+      return "Ambient";
   }
 }
 

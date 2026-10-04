@@ -23,6 +23,7 @@ import type {
 import type { ACodeProviderAccountAccess } from "@acode/shared";
 import type { EffectiveModelSelectionResult } from "@acode/shared/model-selection";
 import type { RuntimeMessageEntry } from "../agent/message-history.js";
+import type { SwarmPlanPort } from "../swarm/port.js";
 import type {
   CompactPhase,
   CompactReason,
@@ -372,6 +373,13 @@ export interface AgentRuntimeDeps {
    */
   modelRequestAdmission?: ModelRequestAdmission;
   workflowPort?: WorkflowPort;
+  /**
+   * K2 对话内 Swarm 任务图（specs/swarm-task-graph.md R5）：plan 工具族的注册门与
+   * turn 间隙调度面（store + runner 的 runtime 级绑定面）。与 workflowPort 同款装配：
+   * 端口在场即注册 plan 工具（workflow 子会话只见只读 PlanStatus，推导在 runtime-tools.ts）；
+   * 缺席 = 本会话不参与 swarm（纯内存无工具面），bootstrap 装配 swarm-plan-runtime.ts。
+   */
+  swarmPlanPort?: SwarmPlanPort;
   /** workflow run 的提交/观察/取消端口；存在即 CreateWorkflow 真启动，缺席则回占位诊断。 */
   dynamicWorkflowRunPort?: DynamicWorkflowRunPort;
   dynamicWorkflowSnippetPort?: DynamicWorkflowSnippetPort;

@@ -51,6 +51,7 @@ import type {
 } from "./types.js";
 import type { RuntimeCommandQueue } from "./command-queue.js";
 import type { RuntimeTaskRegistry } from "../runtime-task/registry.js";
+import type { SwarmPlanPort } from "../swarm/port.js";
 import type { AgentRuntimeCoreMethods } from "./internal-methods.js";
 import type { AgentRuntimeTurnMethods } from "./internal-turn-methods.js";
 import type { AgentRuntimeHookMethods } from "./internal-hook-methods.js";
@@ -110,6 +111,12 @@ export interface AgentRuntimeInternal
   mcpToolsRegistered: boolean;
   subagentPort?: SubagentPort;
   dynamicWorkflowRunPort?: DynamicWorkflowRunPort;
+  /**
+   * K2 swarm plan 端口（specs/swarm-task-graph.md R5）：turn 后调度点（methods/turn.ts）
+   * 与 plan 进展 reminder 的运行期消费面。deps 注入、构造期固定——与 dynamicWorkflowRunPort
+   * 同款（端口本体由 bootstrap 在 runtime 构造前装配完成，无 late binding）。
+   */
+  swarmPlanPort?: SwarmPlanPort;
   modelCatalogPort?: ModelCatalogPort;
   runtimeTaskRegistry: RuntimeTaskRegistry;
   branchGeneration: number;

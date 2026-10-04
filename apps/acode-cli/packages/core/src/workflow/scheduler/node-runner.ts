@@ -5,13 +5,9 @@ import {
 } from "@acode/contracts";
 import { WorkflowSchedulerEventLog } from "./events.js";
 import { addArtifact, compactWorkflowPayload, updateGraphNode, upsertActivity } from "./graph.js";
+import { executeNodeSubsession } from "./node-execution-core.js";
 import { buildDefaultNodePrompt, safeArtifactName } from "./prompts.js";
 import { isArtifactGateWorkerNode } from "../artifact-gate.js";
-import {
-  extractTypedArtifact,
-  TYPED_ARTIFACT_FENCE,
-  validateDeepNodeArtifact,
-} from "../typed-artifact.js";
 import type {
   NodeRunStarted,
   WorkflowGraphSchedulerDeps,
@@ -93,130 +89,128 @@ export function runWorkflowNode(
     resolveStarted({ snapshot: activeSnapshot });
 
     try {
-      const result = await runtime.runner.run({
-        abortSignal: options.abortSignal,
-        activityId,
-        cwd: options.cwd,
-        node,
-        onChildSessionStarted: async (event) => {
-          const latestSnapshot = snapshotAccess.getSnapshot();
-          const currentActivity = latestSnapshot.activities.find(
-            (activity) => activity.activityId === activityId,
-          );
-          if (!currentActivity || currentActivity.status !== "active") return;
-          const childStartedSnapshot = upsertActivity(
-            latestSnapshot,
-            {
-              ...currentActivity,
-              ...(event.model ? { model: event.model } : {}),
-              sessionId: event.sessionId,
-              traceId: event.traceId ?? currentActivity.traceId,
-              turnId: event.turnId ?? currentActivity.turnId,
-            },
-            runtime.eventLog.timestamp(),
-          );
-          await runtime.writeSnapshot(childStartedSnapshot, { signal: options.abortSignal });
-          snapshotAccess.setSnapshot(childStartedSnapshot);
-          await runtime.eventLog.emitEvent(childStartedSnapshot, "workflow_session_linked", {
-            message: `Workflow session linked: ${event.sessionId}`,
-            nodeId: node.id,
-            payload: compactWorkflowPayload({
-              activityId,
-              model: event.model,
-              sessionId: event.sessionId,
-              traceId: event.traceId,
-              turnId: event.turnId,
-            }),
-            phase: options.phase,
-            signal: options.abortSignal,
-          });
+      // K2（specs/swarm-task-graph.md R4/接口章）：子会话执行 + response→typed 提取 +
+      // artifact-or-nothing 裁策改经共享原语（node-execution-core.ts，expert 与 swarm runner
+      // 同一份语义）。原语只是既有决策的结构移动：reason 映射、封顶表达式、错误文案与
+      // 事件写序逐字节保留——expert 行为零回归是 K2 红线（workflow-typed-artifacts 全场景
+      // 重跑钉住）。enforce 的判定（deep 档且仅 worker/task 节点，评审 J2 修复：phase 容器
+      // 节点的提示词走 buildPhasePrompt 早退分支，对它强制等于「不告知规则却判违规」的
+      // 确定性 requeue→fail 死路，spec「边界与非目标」）留在调用方——它拥有图语义。
+      const gate = options.artifactGate;
+      const { rejection, result, typed } = await executeNodeSubsession({
+        enforcement: {
+          enforce: gate?.preset === "deep" && isArtifactGateWorkerNode(node),
+          maxArtifactRequeues: gate ? gate.maxArtifactRequeues : 0,
+          priorArtifactRequeues: node.artifactRequeues ?? 0,
         },
-        onEvent: options.onEvent,
-        parentSessionId: options.parentSessionId,
-        phase: options.phase,
-        prompt: options.buildPrompt
-          ? options.buildPrompt({ node, phase: options.phase, snapshot: activeSnapshot })
-          : buildDefaultNodePrompt(activeSnapshot, node, options.phase, options.artifactGate),
-        runId: activeSnapshot.runId,
-        task: activeSnapshot.task,
-        traceContext,
+        request: {
+          abortSignal: options.abortSignal,
+          activityId,
+          cwd: options.cwd,
+          node,
+          onChildSessionStarted: async (event) => {
+            const latestSnapshot = snapshotAccess.getSnapshot();
+            const currentActivity = latestSnapshot.activities.find(
+              (activity) => activity.activityId === activityId,
+            );
+            if (!currentActivity || currentActivity.status !== "active") return;
+            const childStartedSnapshot = upsertActivity(
+              latestSnapshot,
+              {
+                ...currentActivity,
+                ...(event.model ? { model: event.model } : {}),
+                sessionId: event.sessionId,
+                traceId: event.traceId ?? currentActivity.traceId,
+                turnId: event.turnId ?? currentActivity.turnId,
+              },
+              runtime.eventLog.timestamp(),
+            );
+            await runtime.writeSnapshot(childStartedSnapshot, { signal: options.abortSignal });
+            snapshotAccess.setSnapshot(childStartedSnapshot);
+            await runtime.eventLog.emitEvent(childStartedSnapshot, "workflow_session_linked", {
+              message: `Workflow session linked: ${event.sessionId}`,
+              nodeId: node.id,
+              payload: compactWorkflowPayload({
+                activityId,
+                model: event.model,
+                sessionId: event.sessionId,
+                traceId: event.traceId,
+                turnId: event.turnId,
+              }),
+              phase: options.phase,
+              signal: options.abortSignal,
+            });
+          },
+          onEvent: options.onEvent,
+          parentSessionId: options.parentSessionId,
+          phase: options.phase,
+          prompt: options.buildPrompt
+            ? options.buildPrompt({ node, phase: options.phase, snapshot: activeSnapshot })
+            : buildDefaultNodePrompt(activeSnapshot, node, options.phase, options.artifactGate),
+          runId: activeSnapshot.runId,
+          task: activeSnapshot.task,
+          traceContext,
+        },
+        runner: runtime.runner,
       });
       // J2-3（specs/workflow-typed-artifacts.md R2-R4）：typed artifact 提取与分档强制。
       // light：有效块挂载到 artifact.typed，无效/缺失忽略（零回归）；deep：缺失或薄
       // artifact 走 artifact-or-nothing——requeue 一次（封顶 maxArtifactRequeues），再犯 fail。
-      //
-      // 强制只落在 worker（task）节点上（评审 J2 修复，spec「边界与非目标」：phase 级 agent
-      // 产物不强制 typed 段）：scheduled 阶段没有 task 节点时 executableNodeIdsForPhase 会
-      // 回退派发 phase 容器节点（expert/ids.ts:15），而 buildScheduledNodePrompt 对该节点
-      // 早退到 buildPhasePrompt，deep 契约段与 requeue 反馈段都不会出现
-      // （expert/prompts.ts:41-44,80-82）——「强制但不告知」是确定性的 requeue→fail 死路，
-      // 会让整个 run 停在 scheduler paused。提取与挂载仍然对 phase 节点生效（typed 段是
-      // 可选数据，交了就用）。
-      const extraction = extractTypedArtifact(result.response);
-      const typed = extraction.kind === "valid" ? extraction.typed : undefined;
-      const gate = options.artifactGate;
-      if (gate?.preset === "deep" && isArtifactGateWorkerNode(node)) {
-        const rejectionReasons =
-          extraction.kind === "valid"
-            ? validateDeepNodeArtifact(extraction.typed)
-            : extraction.kind === "invalid"
-              ? extraction.reasons
-              : [`turn ended without a valid \`\`\`${TYPED_ARTIFACT_FENCE} typed artifact block`];
-        if (rejectionReasons.length > 0) {
-          const artifactRequeues = (node.artifactRequeues ?? 0) + 1;
-          const willRequeue = artifactRequeues <= gate.maxArtifactRequeues;
-          const nextStatus: WorkflowNodeStatus = willRequeue ? "pending" : "failed";
-          const errorMessage = `Typed artifact rejected: ${rejectionReasons.join("; ")}`;
-          const latestSnapshot = snapshotAccess.getSnapshot();
-          const currentActivity = latestSnapshot.activities.find(
-            (activity) => activity.activityId === activityId,
-          );
-          const requeuedSnapshot = upsertActivity(
-            updateGraphNode(latestSnapshot, node.id, {
-              artifactRequeues,
-              error: errorMessage,
-              status: nextStatus,
-            }),
-            {
-              activityId,
-              completedAt: runtime.eventLog.timestamp(),
-              error: errorMessage,
-              inputArtifactPaths,
-              kind: "agent_session",
-              ...(currentActivity?.model ? { model: currentActivity.model } : {}),
-              nodeId: node.id,
-              outputArtifactPaths: [],
-              parentSessionId: options.parentSessionId,
-              phase: options.phase,
-              sessionId: result.sessionId,
-              startedAt,
-              status: nextStatus,
-              traceId: result.traceId ?? traceContext?.traceId,
-              turnId: result.turnId,
-            },
-            runtime.eventLog.timestamp(),
-          );
-          await runtime.writeSnapshot(requeuedSnapshot, { signal: options.abortSignal });
-          snapshotAccess.setSnapshot(requeuedSnapshot);
-          await runtime.eventLog.appendGraphStatus(
-            requeuedSnapshot,
-            node.id,
-            options.phase,
-            nextStatus,
-            options.abortSignal,
-          );
-          // 复用既有 node_failed 事件（不新增枚举）：payload.artifactRequeue 区分修复通道。
-          // requeue 返回 ok:true——它是修复通道不是执行错误，不计入 consecutiveErrors；
-          // 封顶后的 fail 与既有 error-retry 同形（ok:false，error_threshold 保险丝继续生效）。
-          await runtime.eventLog.emitEvent(requeuedSnapshot, "node_failed", {
-            message: errorMessage,
+      // 裁决已由共享原语给出（rejection），这里只保留 workflow 状态机的落图与事件簿记。
+      if (rejection !== null) {
+        const artifactRequeues = rejection.artifactRequeues;
+        const willRequeue = rejection.willRequeue;
+        const nextStatus: WorkflowNodeStatus = willRequeue ? "pending" : "failed";
+        const errorMessage = rejection.errorMessage;
+        const latestSnapshot = snapshotAccess.getSnapshot();
+        const currentActivity = latestSnapshot.activities.find(
+          (activity) => activity.activityId === activityId,
+        );
+        const requeuedSnapshot = upsertActivity(
+          updateGraphNode(latestSnapshot, node.id, {
+            artifactRequeues,
+            error: errorMessage,
+            status: nextStatus,
+          }),
+          {
+            activityId,
+            completedAt: runtime.eventLog.timestamp(),
+            error: errorMessage,
+            inputArtifactPaths,
+            kind: "agent_session",
+            ...(currentActivity?.model ? { model: currentActivity.model } : {}),
             nodeId: node.id,
-            payload: { artifactRequeue: true, artifactRequeues, retry: willRequeue },
+            outputArtifactPaths: [],
+            parentSessionId: options.parentSessionId,
             phase: options.phase,
-            signal: options.abortSignal,
-          });
-          return { nodeId: node.id, ok: willRequeue, snapshot: requeuedSnapshot };
-        }
+            sessionId: result.sessionId,
+            startedAt,
+            status: nextStatus,
+            traceId: result.traceId ?? traceContext?.traceId,
+            turnId: result.turnId,
+          },
+          runtime.eventLog.timestamp(),
+        );
+        await runtime.writeSnapshot(requeuedSnapshot, { signal: options.abortSignal });
+        snapshotAccess.setSnapshot(requeuedSnapshot);
+        await runtime.eventLog.appendGraphStatus(
+          requeuedSnapshot,
+          node.id,
+          options.phase,
+          nextStatus,
+          options.abortSignal,
+        );
+        // 复用既有 node_failed 事件（不新增枚举）：payload.artifactRequeue 区分修复通道。
+        // requeue 返回 ok:true——它是修复通道不是执行错误，不计入 consecutiveErrors；
+        // 封顶后的 fail 与既有 error-retry 同形（ok:false，error_threshold 保险丝继续生效）。
+        await runtime.eventLog.emitEvent(requeuedSnapshot, "node_failed", {
+          message: errorMessage,
+          nodeId: node.id,
+          payload: { artifactRequeue: true, artifactRequeues, retry: willRequeue },
+          phase: options.phase,
+          signal: options.abortSignal,
+        });
+        return { nodeId: node.id, ok: willRequeue, snapshot: requeuedSnapshot };
       }
       const artifact = await runtime.writeArtifact(
         activeSnapshot.runId,

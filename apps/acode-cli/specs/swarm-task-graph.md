@@ -316,6 +316,35 @@ J2-3 测试形态；**模拟器先行**：全部调度/失败/gate 序列先在 
    字段完备。
 5. **plan 持久化细节**（落盘格式/迁移）：实施首日对齐 todo 的持久化链路后在此 spec 补
    记附录；若 todo 链路不可复用，走 task metadata 存储（单一事实源原则不变）。
+   - **附录（2b 实施补记，2026-10-04）**：todo 链路可复用，按「每 session 一行」落
+     SQLite——新表 `swarm_plan(session_id primary key, plan_json, time_created,
+     time_updated)`（migration `0026_swarm_plan_row`，repositories/swarm-plans.ts），
+     行内容是 `SwarmTaskPlan` 的 JSON 序列化（schema 校验在 core plan-store 的 hydrate
+     边界，坏行 warn + 空图起步、数据留排查）。端口方法**不进** contracts
+     SessionStorePort（契约面冻结；K4 session-search 的 duck-typing 先例——core 侧
+     `swarm/runtime-binding.ts` 结构化探测 `readSwarmPlan/writeSwarmPlan/clearSwarmPlan`，
+     三方法齐备才绑定，缺席按纯内存降级）。
+   - **runtime-task type 归属（附录）**：新增联合成员 `"swarm_plan"`（不复用
+     `local_workflow`/`local_dynamic_workflow`）——`RuntimeTaskType` 的既有分组维度是
+     取消语义（legacy Workflow 不可取消；dwf run 端口取消），plan 的停止面是
+     PlanControl（模型工具 retry/cancel-node/cancel-plan），GUI TaskStop 对它应答
+     not supported 而不是误路由到任何 workflow 停止分支；overnight 新增成员同款先例。
+     快照的计数与图摘要进 `description`（UI 统一渲染面）；专用快照字段留给 UI 批次
+     （见 #4，避免预设计 UI 形态）。
+   - **未接线（附录）**：`SWARM_MAX_CONCURRENT_WORKERS` 的 config 旋钮
+     （`swarm.maxConcurrentWorkers` 1-16）暂用常量缺省 4——config schema 不在本项
+     写面，runner 的 clamp(1,16) 已就位，旋钮接线登记后续批次。
+   - **hydrate 复位（附录，批次B对抗复核 H2）**：崩溃残留的 `running` 节点是死执行
+     实例的中间态——原样采纳会让 readyNodes 永不重派、planTerminalState 恒 active。
+     hydrate 边界（core plan-store）把 running 节点复位 `queued` + 清 `owner` + 清
+     `expanded`（合成中途态回到可再规划面），`artifactRequeues` 是累计预算保留不重置；
+     复位计数 >0 记一次 warn（`swarm.plan.hydrate_reset`，只报数量不列 id——plan 可达
+     1024 节点，id 列表会写爆日志）。
+   - **verdict 入参上限（附录，批次B对抗复核 M2）**：`SwarmGateVerdictSchema` 的
+     reasoning/acceptanceGaps 对齐 J2-3 typed artifact 上限（落图经
+     gateVerdictArtifact 进 findings/openQuestions，同源常量
+     `WORKFLOW_TYPED_ARTIFACT_*` 复用导出）；超限 verdict 在工具入参层拿可读错误，
+     不再落到 plan-store 的 safeParse 边界报伪装的不变量破裂。
 
 ## 第三方归属
 

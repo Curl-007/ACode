@@ -30,6 +30,14 @@ export type SlashCommand =
       type: "known";
     }
   | {
+      // 宿主动作命令：TUI 只放行原文本（bootstrap 的 sendInput 拦截层是唯一执行面，
+      // 一处同时覆盖 TUI 与桌面 v4 sendText——spec K3 R1 的单一命令面约束）。
+      args: string;
+      name: "overnight";
+      rawName: string;
+      type: "known";
+    }
+  | {
       args: string;
       name: "init";
       rawName: string;

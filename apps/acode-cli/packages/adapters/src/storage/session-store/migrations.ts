@@ -949,9 +949,17 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
     id: "0025_session_message_fts",
     sql: SESSION_MESSAGE_FTS_MIGRATION_SQL,
   },
+  {
+    // K2 对话内 Swarm 任务图（specs/swarm-task-graph.md R6）：plan 的每 session 一行
+    // 存储（回滚 = 旧代码不读不写，见 migrations/0026-swarm-plan-row.ts 文件头）。
+    appVersion: "0.16.9",
+    id: "0026_swarm_plan_row",
+    sql: SWARM_PLAN_ROW_MIGRATION_SQL,
+  },
 ];
 import { OFFICIAL_GLM_SELECTION_MIGRATION_SQL } from "./migrations/0021-official-glm-selection.js";
 import { BACKFILLED_SESSION_REASONING_MIGRATION_SQL } from "./migrations/0022-backfilled-session-reasoning.js";
 import { TODO_DEPS_JSON_MIGRATION_SQL } from "./migrations/0023-todo-deps-json.js";
 import { TODO_CONFIDENCE_JSON_MIGRATION_SQL } from "./migrations/0024-todo-confidence-json.js";
 import { SESSION_MESSAGE_FTS_MIGRATION_SQL } from "./migrations/0025-session-message-fts.js";
+import { SWARM_PLAN_ROW_MIGRATION_SQL } from "./migrations/0026-swarm-plan-row.js";

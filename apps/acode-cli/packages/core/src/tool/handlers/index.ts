@@ -70,6 +70,12 @@ import { getWorkflowRunToolEntry } from "./get-workflow-run.js";
 import { resumeWorkflowRunToolEntry } from "./resume-workflow-run.js";
 import { sessionSearchToolEntry } from "./session-search.js";
 import { createOpenToolEntry, type OpenPlatformPort } from "./open.js";
+import { createPlanCompleteGateToolEntry } from "./plan-complete-gate.js";
+import { createPlanControlToolEntry } from "./plan-control.js";
+import { createPlanExpandToolEntry } from "./plan-expand.js";
+import { createPlanSeedToolEntry } from "./plan-seed.js";
+import { createPlanStatusToolEntry } from "./plan-status.js";
+import type { SwarmPlanPort } from "../../swarm/port.js";
 import { createToolRuleNameSet } from "../tool-visibility.js";
 
 // direct 分支保留 Glob/Grep 工具实现；embedded search 分支由 registerBuiltInTools
@@ -183,6 +189,15 @@ interface RegisterBuiltInToolsOptions {
   /** 开箱（Open 工具）平台端口；在场即注册，缺席不注册（K9 R2 的 port 门控）。 */
   platformOpenPort?: OpenPlatformPort;
   /**
+   * K2 swarm plan 工具族的注册门（specs/swarm-task-graph.md R5）：端口在场即注册
+   * PlanSeed/PlanExpand/PlanCompleteGate/PlanStatus/PlanControl（工具工厂闭包 store，
+   * plan-shared.ts 头注释的 2b 接线位）。只读推导在调用方（runtime-tools.ts 按
+   * taskType，includeAutomation 同款先例），本层不做 runtime 配置推断。
+   */
+  swarmPlanPort?: SwarmPlanPort;
+  /** 在场为 true 时只注册 PlanStatus（workflow 子会话的只读面，R5「防 worker 自改图」）。 */
+  swarmPlanReadOnly?: boolean;
+  /**
    * 动态工作流灰度门。**只有显式 false
    * 才下架** DYNAMIC_WORKFLOW_TOOL_NAMES：缺席代表调用方不参与灰度（TUI、headless、
    * workflow_child），它们必须保留全部工具面；fail-closed 的缺省值落在协议服务端的
@@ -279,6 +294,25 @@ export function registerBuiltInTools(
   const openEntry = createOpenToolEntry({ platform: options.platformOpenPort });
   if (openEntry) {
     registry.register(openEntry, { silentDuplicateWarning: options.silentDuplicateWarnings });
+  }
+  // K2 swarm plan 工具族（specs/swarm-task-graph.md R5）：与 Open 同款「依赖闭包端口的
+  // 工具不进静态数组」——五个工厂闭包 store（plan-shared.ts），端口缺席不注册。只读门
+  // （swarmPlanReadOnly）只放行 PlanStatus：worker 子会话可见的图读取面，图变更工具仅
+  // 主对话。工具描述（plan-vs-todo 分工 / deep gate 契约话术）由 2a 工厂织入，此处原样注册。
+  if (options.swarmPlanPort !== undefined) {
+    const { store } = options.swarmPlanPort;
+    const planEntries = options.swarmPlanReadOnly
+      ? [createPlanStatusToolEntry({ store })]
+      : [
+          createPlanSeedToolEntry({ store }),
+          createPlanExpandToolEntry({ store }),
+          createPlanCompleteGateToolEntry({ store }),
+          createPlanStatusToolEntry({ store }),
+          createPlanControlToolEntry({ store }),
+        ];
+    for (const entry of planEntries) {
+      registry.register(entry, { silentDuplicateWarning: options.silentDuplicateWarnings });
+    }
   }
 }
 

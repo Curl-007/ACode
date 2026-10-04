@@ -1,4 +1,5 @@
 import type { TuiSubmitPrompt } from "@acode/tui";
+import { parseOvernightDuration } from "@acode/core";
 import {
   formatAvailableCommandNames,
   listCustomCommandsForHelp,
@@ -58,6 +59,44 @@ export function createCommandCenter(deps: CommandCenterDeps): TuiSubmitPrompt {
         mode: deps.getMode?.(),
         response: "Image attachments are only supported for normal prompts.",
       };
+    }
+
+    if (command.type === "known" && command.name === "overnight") {
+      // 宿主动作命令（K3）：空闲态直调 bootstrap 的结构化动作面（对抗复核 H1 修复——
+      // 空闲提交走 submitPrompt 而 sendInput 拦截层不在这条路上，放行文本会让命令
+      // 原文漏进模型且 run 不启动）。busy 态仍由 sendInput 拦截层接手；桌面 v4
+      // sendText 汇入 sendInput，同样被拦截。时长解析与拦截层共用 core 的
+      // parseOvernightDuration，单一解析口径。
+      if (await isLoginRequired(deps)) {
+        return {
+          loginRequired: true,
+          mode: deps.getMode?.(),
+          response: loginRequiredResponse(deps.getLocale?.()),
+        };
+      }
+      const app = await deps.getApp();
+      if (command.args.trim() === "cancel") {
+        const result = app.cancelOvernightRun?.();
+        await recordSlashCommandInHistory(deps, promptInput.text, command);
+        return {
+          mode: deps.getMode?.(),
+          response: result?.response ?? "No overnight run is active.",
+        };
+      }
+      const parsed = parseOvernightDuration(command.args);
+      if (!parsed.ok) {
+        await recordSlashCommandInHistory(deps, promptInput.text, command);
+        return { mode: deps.getMode?.(), response: parsed.error };
+      }
+      if (typeof app.startOvernightRun !== "function") {
+        return {
+          mode: deps.getMode?.(),
+          response: "Overnight runs are not available in this client.",
+        };
+      }
+      const result = await app.startOvernightRun({ durationMs: parsed.durationMs });
+      await recordSlashCommandInHistory(deps, promptInput.text, command);
+      return { mode: deps.getMode?.(), response: result.response };
     }
 
     if (command.type === "unknown") {

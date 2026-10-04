@@ -66,6 +66,16 @@ function registerRuntimeBuiltInTools(runtime: AgentRuntimeInternal, deps: AgentR
     includeEscalate: Boolean(deps.workflowEscalatePort),
     includeWorkflow: Boolean(deps.workflowPort),
     includeAutomation: Boolean(deps.automationPort) && runtime.config.taskType !== "subagent_child",
+    // K2 swarm plan 工具族（specs/swarm-task-graph.md R5 注册门）：端口在场即注册；
+    // 只读面推导与 includeAutomation 的 taskType 排除同款先例——workflow 子会话
+    // （swarm worker 是无名 workflow 子会话）只见 PlanStatus，图变更工具仅主对话，
+    // 防 worker 自改图；subagent 子会话整体不暴露（封闭域，无 plan 可协调）。
+    ...(deps.swarmPlanPort === undefined || runtime.config.taskType === "subagent_child"
+      ? {}
+      : {
+          swarmPlanPort: deps.swarmPlanPort,
+          swarmPlanReadOnly: runtime.config.taskType === "workflow_child",
+        }),
     // offPeakPort 只在 host 下发 offPeakToolEnabled 时注入（灰度/远程门在 host 端），
     // 端口存在即代表曝光允许；subagent 子会话与 automation 同规则不暴露。
     includeOffPeak: Boolean(deps.offPeakPort) && runtime.config.taskType !== "subagent_child",

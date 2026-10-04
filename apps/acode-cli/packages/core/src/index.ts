@@ -112,6 +112,36 @@ export * from "./subagent/index.js";
 // Runtime task components
 export * from "./runtime-task/index.js";
 
+// Overnight 挂机执行（K3，specs/overnight-execution.md）：接缝层（fork 端口/runner）与
+// 纯模块层一起从包入口导出——bootstrap 装配处与宿主经 @acode/core 公开入口消费，
+// 不开深路径（package.json exports 只有 "."）。
+export * from "./overnight/constants.js";
+export * from "./overnight/duration.js";
+export * from "./overnight/manifest.js";
+export * from "./overnight/prompts.js";
+export * from "./overnight/supervisor.js";
+export * from "./overnight/preflight.js";
+export * from "./overnight/coordinator.js";
+export * from "./overnight/runner.js";
+
+// 对话内 Swarm 任务图（K2，specs/swarm-task-graph.md）：端口/存储/runner/投影/提醒与
+// 2b 接线辅助从包入口导出（bootstrap 装配与宿主经 @acode/core 公开入口消费，overnight
+// 同款纪律）；graph/* 纯函数引擎留给测试深路径，不进公开面。
+export * from "./swarm/port.js";
+export * from "./swarm/plan-store.js";
+export * from "./swarm/runner.js";
+export * from "./swarm/projection.js";
+export * from "./swarm/prompts.js";
+export * from "./swarm/control.js";
+export * from "./swarm/runtime-binding.js";
+// K2 共享执行原语（specs/swarm-task-graph.md 接口章）：expert node-runner 与 swarm
+// runner 的共同消费面，2b 的 bootstrap executeNode 闭包经公开入口消费（不开深路径）。
+export {
+  decideArtifactGateEnforcement,
+  executeNodeSubsession,
+  type ArtifactGateRejection,
+} from "./workflow/scheduler/node-execution-core.js";
+
 // Workflow components
 export * from "./workflow/definition.js";
 export * from "./workflow/expert.js";

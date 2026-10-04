@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { parseOvernightDuration } from "@acode/core";
 import {
   BUILTIN_WORKFLOW_COMMAND_NAME,
   expandBuiltinWorkflowCommandPrompt,
@@ -6,6 +7,46 @@ import {
 
 const BUILTIN_PROMPT_COMMAND_PATTERN = /^\/([^\s]+)(?:\s+([\s\S]*))?$/;
 const INIT_COMMAND_NAME = "init";
+export const OVERNIGHT_COMMAND_NAME = "overnight";
+
+/**
+ * 内置「宿主动作命令」：解析结果不是 prompt 文本，而是触发宿主侧结构化动作的指令
+ * （K3 `/overnight`，specs/overnight-execution.md R1）。
+ *
+ * 为什么不放进 resolveACodeBuiltinPromptCommand：那个通道的返回值会作为模型输入
+ * （input-facade 的 customCommandPromptResolver → runtimePromptText），而 /overnight
+ * 不应把指令文本发给模型——它要 fork 隐藏 coordinator 并启动 supervisor。既有消费方
+ * （create-app 的 resolver 接线）只认 prompt 文本，因此宿主动作走本函数的判别联合，
+ * 由 bootstrap 装配处（create-app → overnight-controller）消费，/overnight 在
+ * resolveACodeBuiltinPromptCommand 里刻意不设分支（保持返回 undefined，不展开）。
+ */
+export type ACodeBuiltinHostCommand =
+  | { kind: "overnight-start"; durationMs: number }
+  | { kind: "overnight-cancel" }
+  | { kind: "overnight-invalid"; error: string };
+
+/**
+ * 解析宿主动作命令。只识别 `/overnight` 族；其余输入返回 undefined（调用方按普通
+ * 输入继续）。时长解析复用第一段 parseOvernightDuration（含 1 分钟–12 小时硬限与
+ * 可读错误）；`cancel` 走取消面。
+ */
+export function resolveACodeBuiltinHostCommand(input: string): ACodeBuiltinHostCommand | undefined {
+  const invocation = parseBuiltinPromptCommandInvocation(input);
+  if (!invocation || invocation.name !== OVERNIGHT_COMMAND_NAME) {
+    return undefined;
+  }
+  if (invocation.args.toLowerCase() === "cancel") {
+    return { kind: "overnight-cancel" };
+  }
+  if (invocation.args === "") {
+    return { kind: "overnight-invalid", error: "缺少时长参数。用法 /overnight <duration>，例如 8h、45m；取消用 /overnight cancel" };
+  }
+  const duration = parseOvernightDuration(invocation.args);
+  if (!duration.ok) {
+    return { kind: "overnight-invalid", error: duration.error };
+  }
+  return { kind: "overnight-start", durationMs: duration.durationMs };
+}
 
 interface ResolveACodeBuiltinPromptCommandOptions {
   /**

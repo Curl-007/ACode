@@ -22,7 +22,10 @@ export const APP_PROTOCOL_APP_ONLY_BUILTIN_SLASH_COMMANDS = [
   },
 ] as const satisfies readonly ACodeSlashCommand[];
 
-const EXTRA_RESERVED_SLASH_COMMAND_NAMES = ["compress", "plan"] as const;
+// compress 是 core executeTurn 的文本控制命令、plan 是 App-only 命令；overnight 是
+// builtin 宿主动作命令（builtin-prompt-command.ts 的 resolveACodeBuiltinHostCommand）——
+// 三者都不能被用户自定义命令遮蔽，否则宿主拦截面与自定义展开面会给同一前缀两个结论。
+const EXTRA_RESERVED_SLASH_COMMAND_NAMES = ["compress", "plan", "overnight"] as const;
 
 const RESERVED_SLASH_COMMAND_NAMES = new Set(
   BUILTIN_ACODE_SLASH_COMMAND_HELP_ENTRIES.flatMap((entry) => [

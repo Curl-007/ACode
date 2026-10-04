@@ -55,6 +55,10 @@ export * from "./resolve-workflow-question.js";
 // 漏掉这两行会让 handler 拿不到契约（照 escalate/resolve 的同款注释）。
 export * from "./session-search.js";
 export * from "./open.js";
+// K6 Ambient 预算感知调度（specs/ambient-budget-scheduler.md R2）：Schedule 工具的
+// schema 与名字常量。core 的 handler 工厂与 bootstrap 注册面读走；漏掉这行消费方
+// 拿不到 SCHEDULE_TOOL_NAME 契约（照 session-search 的同款注释）。
+export * from "./schedule.js";
 export * from "./workflow-observation-display.js";
 export * from "./tool-result-metadata.js";
 export * from "./performance.js";

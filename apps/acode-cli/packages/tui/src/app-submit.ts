@@ -170,6 +170,13 @@ export async function submitDuringActiveTurn(input: {
       );
       return;
     }
+    if (result.kind === "host_command") {
+      // 宿主动作命令（/overnight 等，K3）：拦截层已执行完毕，本地只展示回执文本——
+      // 与 command_result 同款不还原草稿；不插入本地用户消息（recordExternalUserPrompt
+      // 的 controlOnly 轮已让指令在 transcript 可见）。
+      input.applyResult({ response: result.response }, true);
+      return;
+    }
     if (result.kind !== "queued") {
       input.setDraftValue(input.text);
     } else {

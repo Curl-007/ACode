@@ -18,6 +18,16 @@
 > 机制级提炼转述，不含其源码原文；实施时翻译 substantial 逻辑的文件，在文件头注释保留 jcode
 > 出处与 MIT 归属，并评估是否需在 `THIRD-PARTY-NOTICES.md` 登记。禁止将 jcode 仓库任何文件
 > 直接拷入 ACode。
+>
+> **评估结论**（2026-10-05，dev/0.0.3 发布前复核，关闭「待评估」项）：判定**无需**在
+> `THIRD-PARTY-NOTICES.md` 登记。核查事实：① J+K 两轮共 89 个实现文件带
+> 「机制参照 jcode (MIT, github.com/1jehuang/jcode) …自撰实现」头注，K 系列 9 份 spec 全部
+> 显式引注 crate/文件级出处；② jcode 为 Rust 实现，本仓库为 TypeScript 机制级重写——仓库内
+> `.rs` 文件数为 0，不存在源码原文拷贝的物质条件；③ `third-party/inventory.json` 无 jcode
+> 条目，与其 "copied source/assets" 的收录范围定义一致。判定依据：MIT 的义务随「副本或其
+> substantial 部分」的复制产生；跨语言机制/思想级参照不构成版权意义的衍生作品，既有头注与
+> spec 引注已高于许可的最低要求。**失效条件**：未来若引入 jcode 的逐字翻译代码段（表达层
+> 复制），本判定作废，须按 `docs/jcode-inspired-upgrade-plan.md` 登记口径重新评估。
 
 ---
 

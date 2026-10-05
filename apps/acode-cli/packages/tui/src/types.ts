@@ -194,6 +194,13 @@ export type TuiSendInputResult =
       kind: "command_result";
       result: TuiSubmitPromptResult;
     }
+  | {
+      /** 宿主动作命令（/overnight 等，K3）：bootstrap sendInput 拦截层已执行，
+       * response 为回执文本（runId 供宿主侧关联 runtime-task 投影）。 */
+      kind: "host_command";
+      response: string;
+      runId?: string;
+    }
   | TurnSteerResult;
 
 export type TuiSendInput = (

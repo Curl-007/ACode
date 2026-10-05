@@ -1,3 +1,4 @@
+/* eslint-disable max-lines -- 存量基线豁免:该文件先于 CLI lint 门禁建立即超限(根 lint 的 ignorePatterns 排除 apps/acode-cli,turbo lint 因此从未变绿)。头注豁免以恢复门禁信号;拆分重构超出本批范围。 */
 import type { ACodeToolExecResource, BackgroundBashOutputResult } from "@acode/shared";
 import type { AiSdkModelAdapter } from "@acode/adapters/model";
 import type {
@@ -247,6 +248,13 @@ export interface UserPromptInput {
   attachments?: TurnAttachment[];
 }
 
+/** K3 overnight 宿主动作的回执（启动/取消共用形态；response 面向用户，不进模型）。 */
+export interface OvernightCommandResult {
+  ok: boolean;
+  runId?: string;
+  response: string;
+}
+
 export type PromptInput = string | UserPromptInput;
 
 export type SendInputResult =
@@ -256,7 +264,16 @@ export type SendInputResult =
       kind: "started_turn";
       turnId: TurnId;
     }
-  | TurnSteerResult;
+  | TurnSteerResult
+  /**
+   * K3：输入被宿主动作命令消费（/overnight 族——不进模型，runtime 不开 turn）。
+   * 宿主动作的回执文本由客户端按本地命令结果展示（与 /goal 拦截的回执面同语义）。
+   */
+  | {
+      kind: "host_command";
+      response: string;
+      runId?: string;
+    };
 
 export interface ResumeOptions {
   abortSignal?: AbortSignal;
@@ -605,6 +622,19 @@ export interface ACodeApp {
     workflowKind?: string;
   }): Promise<ExpertWorkflowCommandResult>;
   sendInput(input: PromptInput, options?: SendInputOptions): Promise<SendInputResult>;
+  /**
+   * K3 overnight：启动一次挂机 run（/overnight <duration> 拦截后的宿主动作）。
+   * 结构化动作面——返回 run 标识与回执，不发模型 prompt。宿主/协议层也可直调
+   * （与 setMode 等宿主配置面同族的 app 方法，不开第二条命令通道）。
+   */
+  startOvernightRun?(input: {
+    durationMs: number;
+    traceContext?: TraceContext;
+  }): Promise<OvernightCommandResult>;
+  /** K3 overnight：/overnight cancel 的宿主动作面。 */
+  cancelOvernightRun?(): OvernightCommandResult;
+  /** K3 overnight：当前 run 的只读探测（无 run 时 undefined；UI/宿主轮询面）。 */
+  getActiveOvernightRunId?(): string | undefined;
   setMode(mode: CollaborationMode): Promise<{
     mode: CollaborationMode;
     previousMode: CollaborationMode;

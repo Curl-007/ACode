@@ -41,11 +41,11 @@ import {
 import type { UtilityProcess as ElectronUtilityProcess } from "electron";
 import { spawn } from "node:child_process";
 import { join } from "node:path";
-import { homedir } from "node:os";
 import {
   createSettingService,
   buildRuntimeProcessEnvPatch,
   captureLoginShellEnvSnapshot,
+  getDataBaseDir,
   getConversationWorkspaceDir,
   normalizeRuntimeProcessEnv,
   setDataBaseDir,
@@ -460,7 +460,12 @@ async function runBrowserCommandOnView(params: {
 let currentDesktopZoomLevel = 0;
 let currentDesktopWindowSize: DesktopWindowSize | undefined;
 const preloadPath = join(import.meta.dirname, "../preload/index.cjs");
-const settingsFile = join(homedir(), ".acode", "v2", "setting.json");
+// 启动工作区解析必须读**有效数据根**下的设置：硬编码 homedir() 会穿透
+// ACODE_DATA_BASE_DIR / dataBaseDir 的隔离——隔离冒烟/E2E profile 会读到真实的
+// 最近工作区列表，其中已删除的目录会让 host 存储准备的 --cwd 校验硬失败、
+// 整个 host 启动卡死。desktopEarlyDataBaseDirBootstrap 在模块顶部已完成
+// setDataBaseDir，此处取值与 services 侧 getDataBaseDir() 语义一致。
+const settingsFile = join(getDataBaseDir(), ".acode", "v2", "setting.json");
 let activeAppShutdownPolicy = resolveAppShutdownPolicy("normal", process.platform);
 let activeAppShutdownKind: AppShutdownKind | null = null;
 const WINDOWS_AGENT_FORCE_KILL_TIMEOUT_MS = 2_000;

@@ -285,6 +285,20 @@ async function sendText(
   } finally {
     releaseForegroundPromotionLease();
   }
+  if (started.admission.kind === "host_command") {
+    // M3（批次B对抗复核）：host_command 被宿主动作消费（/overnight 族），Core 没开 turn、
+    // 没有 completion 可等——原实现落 startNow 桶会让客户端等一个永不会来的 turn 生命周期。
+    // 协议 delivery 枚举只有 ["startNow","queue","guide"] 且 shared 契约面本批次冻结
+    // （cli/tui/shared 是整合方域，不可加枚举值），故改写为 queued 同族的「已收讫、无 turn」
+    // receipt 形态，并附加 hostCommand 标记字段供客户端区分（commandResultSchema 的
+    // z.object 非严格，额外字段过校验不报错）。
+    return {
+      type: "inputAccepted",
+      delivery: "queue",
+      hostCommand: true,
+      inputId: envelope.commandId,
+    } as CommandResult;
+  }
   if (started.admission.kind === "queued") {
     return {
       type: "inputAccepted",

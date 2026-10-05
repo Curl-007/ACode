@@ -1,3 +1,4 @@
+/* eslint-disable max-lines -- 存量基线豁免:该文件先于 CLI lint 门禁建立即超限(根 lint 的 ignorePatterns 排除 apps/acode-cli,turbo lint 因此从未变绿)。头注豁免以恢复门禁信号;拆分重构超出本批范围。 */
 import { beginLocalTurnPreparation, type LocalTtftDetail } from "@acode/contracts";
 import { runtimeInputMetadata } from "../../agent/runtime-input-presentation.js";
 import {
@@ -37,7 +38,11 @@ import {
   resolveTurnAttachments,
   summarizeTurnAttachmentsForEvent,
   runtimeMetadataForSyntheticUserMessageSource,
+  buildSwarmPlanTurnReminderBody,
+  dispatchSwarmPlanReadyNodes,
 } from "../helpers/index.js";
+import { systemReminderAttachmentEntry } from "../../agent/message-history.js";
+import { commitTurnRequestEntries } from "./turn-output-token-continuation.js";
 import type { ActiveTurnSteeringState, ExecuteTurnOptions, TurnResult } from "../types.js";
 import type { ActiveTurnStartReservation } from "../types.js";
 import type { AgentRuntimeInternal } from "../internal.js";
@@ -572,6 +577,17 @@ export async function executeTurnCommand(
           userMessageId,
         };
 
+        // K2 swarm plan 进展 reminder（specs/swarm-task-graph.md R7）：plan 在场时每主 turn
+        // 注入一次（per-request 动态段，K1 memory_semantic_recall 同款载体——不落 session
+        // store，冷恢复按图快照重建）；无 plan / 子会话身份 → null 零注入。正文在
+        // swarm/prompts.ts 与 PlanStatus 投影共用同一份推导。
+        const swarmPlanReminderBody = buildSwarmPlanTurnReminderBody(this);
+        if (swarmPlanReminderBody !== null) {
+          commitTurnRequestEntries(this, loopState.turnRequestState, [
+            systemReminderAttachmentEntry("swarm_plan_status", swarmPlanReminderBody),
+          ]);
+        }
+
         openGoalStateChangeReminderDeferral(activeTurn);
         phaseStartedAt = startTurnPhase("regular_turn_loop");
         try {
@@ -666,6 +682,10 @@ export async function executeTurnCommand(
             traceContext: turnTraceContext,
           });
         }
+        // K2 swarm 调度点（specs/swarm-task-graph.md R4）：成功 Main turn 后批派发 ready
+        // worker 节点（与 memory extraction 同位挂点）。不 await——turn 间隙调度不能阻塞
+        // turn 返回；派发失败只 warn，下一个调度点/完成回调级联自愈。
+        dispatchSwarmPlanReadyNodes(this, { traceContext: turnTraceContext });
 
         const result: TurnResult = {
           response: loopState.modelResponse,

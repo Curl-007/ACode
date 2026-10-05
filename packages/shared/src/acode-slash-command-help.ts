@@ -60,6 +60,16 @@ export const BUILTIN_ACODE_SLASH_COMMAND_HELP_ENTRIES: readonly BuiltinACodeSlas
       usage: "/expert [status|resume|stop|<task>]",
     },
     {
+      details: [
+        "Forks a hidden coordinator task that keeps working autonomously until the given duration elapses (1m-12h).",
+        "A morning report is produced at the target time; use /overnight cancel to stop early.",
+        "The run lives only while the app is running (no cross-restart continuation).",
+      ],
+      name: "overnight",
+      summary: "Start or cancel an unattended overnight-style run.",
+      usage: "/overnight <duration>|cancel",
+    },
+    {
       aliases: ["variant"],
       details: [
         "In the TUI, type /effort or /variant to open composer suggestions.",

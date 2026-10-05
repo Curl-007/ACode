@@ -1,3 +1,4 @@
+/* eslint-disable max-lines -- 存量基线豁免:该文件先于 CLI lint 门禁建立即超限(根 lint 的 ignorePatterns 排除 apps/acode-cli,turbo lint 因此从未变绿)。头注豁免以恢复门禁信号;拆分重构超出本批范围。 */
 // 机制参照 jcode (MIT, github.com/1jehuang/jcode) crates/jcode-base/src/memory/pending.rs
 // （发布时绑定 scope+语义签名、消费前重读盘验证、任一异常整体丢弃、三层注入去重与 TTL
 // 设计教训、overlap 用 max(|A|,|B|) 归一、prompt 签名规范化），自撰 TypeScript 实现。
@@ -22,12 +23,18 @@ import {
 import type { MemoryRecallType } from "./types.js";
 
 /**
- * 协议常量（specs/memory-injection-fail-closed.md 常量表）。改这里即改协议，
+ * 协议常量（specs/memory-injection-fail-closed.md 常量表；层 4 追加自
+ * specs/memory-semantic-recall.md R7 常量表）。改这里即改协议，
  * 不要在调用点内联数值；测试按源码文本钉住这些值与 spec 一致。
  */
 const MEMORY_RECALL_TIMING = Object.freeze({
   /** 已注入条目的 TTL：45 分钟内同一条记忆不再重复注入（R5 层 3）。 */
   ENTRY_TTL_MS: 45 * 60_000,
+  /**
+   * R7 层 4（F3）：同 filename（不含 hash）距上次成功注入的最小间隔——微改写循环
+   * （+1 空格换 contentHash 绕 TTL）在此层被压到每 10 分钟最多注入一次。
+   */
+  FILENAME_MIN_INTERVAL_MS: 10 * 60_000,
   /** 集合重叠抑制窗口（R5 层 2）。 */
   OVERLAP_COOLDOWN_MS: 180_000,
   /** 集合重叠抑制阈值，overlap = |A∩B| / max(|A|,|B|)（R5 层 2）。 */
@@ -52,8 +59,16 @@ export type MemoryRecallRejectionReason =
   | "stale-snapshot"
   | "storage-error";
 
-/** 去重抑制原因（R5）；不是错误，不记 warn。 */
-export type MemoryRecallSuppression = "entry-ttl" | "same-block" | "set-overlap";
+/**
+ * 去重抑制原因（R5 三层 + R7 层 4）；不是错误，不记 warn。
+ * `filename-throttle` 只在「层 4 把候选全部剔空」时作为整包抑制 reason 出现——
+ * 层 4 的常规形态是条目级剔除（剩余条目照常注入），不产生这个返回值。
+ */
+export type MemoryRecallSuppression =
+  | "entry-ttl"
+  | "filename-throttle"
+  | "same-block"
+  | "set-overlap";
 
 /**
  * 注入文本的呈现形态（R6）：
@@ -112,6 +127,14 @@ export interface MemoryRecallScope {
 }
 
 export interface MemoryRecallCallOptions {
+  /**
+   * K1 检索管线预选的候选文件路径（specs/memory-semantic-recall.md R1）：
+   * 给定时 capture 只对这批文件绑定身份与签名（检索层已排序选出的 top-K），
+   * 其余文件不进快照。缺省 = 全目录（既有语义，Extraction 通道不传）。
+   * 列目录仍是全量扫描后过滤——与盘上状态的一致性判定（存在性/同名歧义）不因
+   * 预选而放松。
+   */
+  candidatePaths?: readonly string[];
   signal?: AbortSignal;
   traceContext?: TraceContext;
 }
@@ -178,7 +201,12 @@ export function createMemoryRecallInjector(input: {
   logger?: Logger;
   now?: () => number;
 }): MemoryRecallInjector {
-  const now = input.now ?? ((): number => Date.now());
+  // R7/F4 清偿：缺省时钟源换单调钟（performance.now 派发）。安全性依据（J3-2 R7）：
+  // 快照是进程内局部值（单次消费，PENDING_FRESHNESS_MS 窗口天然进程内），单调钟
+  // 不跨进程比较；系统墙钟回拨不再使 120s 新鲜度闸失效（原 Date.now 缺省的
+  // fail-open 债）。mtimeMs 仍墙钟（签名比对同源自洽，不受影响）；去重账本 TTL
+  // 同步用本时钟（同一 now 序列，负流逝时间不再出现）。
+  const now = input.now ?? ((): number => performance.now());
   const ledger = createInjectionLedger();
 
   const capture = async (
@@ -194,6 +222,15 @@ export function createMemoryRecallInjector(input: {
       // 中止要交给调用方的 abort 分支，不能被归类成「存储损坏」。
       options?.signal?.throwIfAborted();
       return { status: "rejected", reason: "storage-error" };
+    }
+
+    // K1 检索管线预选（R1）：只对 top-K 候选绑定与签名。仍先全量列目录再过滤，
+    // 「文件已不存在」的判定与全量采集同源；同名歧义判定只覆盖**选中集合**——
+    // 选中集外的同名对不再被检出（对抗复核 L4 如实登记：reference 形态不渲染
+    // name，此弱化无实际危害）。
+    if (options?.candidatePaths) {
+      const selected = new Set(options.candidatePaths);
+      paths = paths.filter((path) => selected.has(path));
     }
 
     const read = await readEntryDrafts(input.fileSystem, scope.memoryRoot, paths, options?.signal);
@@ -255,7 +292,13 @@ export function createMemoryRecallInjector(input: {
     if (scope.memoryRoot === undefined) return rejected("disabled");
     if (scope.memoryRoot !== snapshot.memoryRoot) return rejected("scope-changed");
 
-    if (now() - snapshot.capturedAtMs > MEMORY_RECALL_TIMING.PENDING_FRESHNESS_MS) {
+    // R7/F4 清偿：单调钟下同一时钟序列不可能倒退，capturedAtMs > now 只可能来自
+    // 时钟源被换/注入的 now 被回拨/快照被外部构造——任何一种都说明新鲜度窗口本身
+    // 不可信，检出即按 stale-snapshot 拒绝（fail-closed 方向，ε=0：performance.now
+    // 派发的两个读数即使相邻也满足 later >= earlier）。
+    const currentNow = now();
+    if (snapshot.capturedAtMs > currentNow) return rejected("stale-snapshot");
+    if (currentNow - snapshot.capturedAtMs > MEMORY_RECALL_TIMING.PENDING_FRESHNESS_MS) {
       return rejected("stale-snapshot");
     }
     if (snapshot.entries.length === 0) return { status: "verified" };
@@ -304,22 +347,37 @@ export function createMemoryRecallInjector(input: {
       }
       if (captured.snapshot.entries.length === 0) return { status: "empty" };
 
-      const text = renderMemoryRecallBlock(captured.snapshot, request.presentation);
       if (request.dedupe === false) {
-        return { status: "injected", snapshot: captured.snapshot, text };
+        // Extraction 显式关闭**全部**去重（含 R7 层 4）：每次 run 都是全新子代理上下文，
+        // 任何抑制都只会造成重复记忆；filename 限速若在这里生效，Extraction 第二次运行
+        // 将看不到刚被自己更新的文件（hash 变了正是它要再看一眼的理由）。
+        const wholeText = renderMemoryRecallBlock(captured.snapshot, request.presentation);
+        return { status: "injected", snapshot: captured.snapshot, text: wholeText };
       }
 
-      // 判定顺序与 jcode 不同（jcode 把 all-known 放最前）：jcode 的 payload 允许零 id，
-      // 第一层可被跳过；这里的集合恒非空，TTL 放最前会永久遮蔽另外两层——不可达的判据
-      // 等于没有判据。抑制结论相同，只是 reason 归因更准。
-      const suppression = ledger.suppressIfKnown(captured.snapshot, text, now());
+      // 层 1/2/3 对「原样候选」判定（判据与顺序不变，J3-2 R5）。判定顺序刻意与 jcode
+      // 相反（jcode 把 all-known 放最前）：jcode 的 payload 允许零 id，第一层可被跳过；
+      // 这里的集合恒非空，TTL 放最前会永久遮蔽另外两层——不可达的判据等于没有判据。
+      const originalText = renderMemoryRecallBlock(captured.snapshot, request.presentation);
+      const suppression = ledger.suppressIfKnown(captured.snapshot, originalText, now());
       if (suppression) {
         return { status: "suppressed", reason: suppression, snapshot: captured.snapshot };
       }
 
-      // 登记发生在验证通过之后：被丢弃的召回不占去重额度（R5）。
-      ledger.record(captured.snapshot, text, now());
-      return { status: "injected", snapshot: captured.snapshot, text };
+      // 层 4（R7/F3，判定顺序在层 3 之后）：filename 限速的**条目级**剔除——同一文件
+      // （不含 hash）距上次成功注入 <10min 的条目剔出本轮候选，剩余条目照常注入；
+      // 微改写循环（+1 空格换 contentHash 绕层 1/2/3）在此被压到每 10 分钟最多一次。
+      // 全部候选都被剔空的极端情形按整包抑制上报（reason=filename-throttle）。
+      const eligible = ledger.filterFilenameThrottled(captured.snapshot, now());
+      if (eligible.entries.length === 0) {
+        return { status: "suppressed", reason: "filename-throttle", snapshot: captured.snapshot };
+      }
+      const text = renderMemoryRecallBlock(eligible, request.presentation);
+
+      // 登记发生在验证通过之后：被丢弃的召回不占去重额度（R5 末条）；层 4 只登记
+      // 实际注入的条目（剔除的不刷新限速窗口，否则一次注入会互相续期）。
+      ledger.record(eligible, text, now());
+      return { status: "injected", snapshot: eligible, text };
     },
   };
 }
@@ -349,17 +407,32 @@ function warnDiscarded(
   });
 }
 
-// ── 三层去重账本（R5） ────────────────────────────────────────────────
+// ── 四层去重账本（R5 三层 + R7 层 4） ─────────────────────────────────
 
 interface InjectionLedgerState {
   /** entryKey → 上次注入时刻。 */
   entries: Map<string, number>;
+  /**
+   * filename → 上次成功注入 { 时刻, 当时 contentHash }（R7 层 4：key 不含 hash，
+   * 微改写不换 key）。记录 hash 是为了把层 4 精确限定在 F3 登记的穿透形态——
+   * **内容变了**的同名文件——上：内容未变的条目属于层 3 的管辖（J3-2 既有语义，
+   * 「部分条目仍在 TTL」的部分集合注入），层 4 不得扩大打击面把它剔掉。
+   */
+  filenames: Map<string, { atMs: number; contentHash: string }>;
   lastBlock?: { atMs: number; signature: string };
   lastSet?: { atMs: number; keys: ReadonlySet<string> };
 }
 
 interface InjectionLedger {
+  /** 只登记实际注入的条目（层 4 剔除后的集合），同时刷新两层账本。 */
   record(snapshot: MemoryRecallSnapshot, text: string, atMs: number): void;
+  /**
+   * 层 4 条目级剔除（R7/F3）：同一 filename 距上次成功注入 <10min **且内容已变**
+   * （contentHash 不同）的条目剔出本轮候选——正是「+1 空格换 hash 绕三层去重」的
+   * 微改写循环形态。返回剔除后的快照（位置引用按剩余集合重新分配——与 J3-2 R6 的
+   * 「每次渲染按当次集合顺序重新分配」一致）；无剔除时原样返回同一快照引用。
+   */
+  filterFilenameThrottled(snapshot: MemoryRecallSnapshot, atMs: number): MemoryRecallSnapshot;
   suppressIfKnown(
     snapshot: MemoryRecallSnapshot,
     text: string,
@@ -368,14 +441,37 @@ interface InjectionLedger {
 }
 
 function createInjectionLedger(): InjectionLedger {
-  const state: InjectionLedgerState = { entries: new Map() };
+  const state: InjectionLedgerState = { entries: new Map(), filenames: new Map() };
 
   return {
     record(snapshot, text, atMs) {
       pruneExpired(state, atMs);
-      for (const entry of snapshot.entries) state.entries.set(entryKey(entry), atMs);
+      for (const entry of snapshot.entries) {
+        state.entries.set(entryKey(entry), atMs);
+        state.filenames.set(entry.filename, {
+          atMs,
+          contentHash: entry.signature.contentHash,
+        });
+      }
       state.lastBlock = { atMs, signature: blockSignature(text) };
       state.lastSet = { atMs, keys: new Set(snapshot.entries.map(entryKey)) };
+    },
+    filterFilenameThrottled(snapshot, atMs) {
+      pruneExpired(state, atMs);
+      const kept = snapshot.entries.filter((entry) => {
+        const last = state.filenames.get(entry.filename);
+        if (!last) return true;
+        if (atMs - last.atMs >= MEMORY_RECALL_TIMING.FILENAME_MIN_INTERVAL_MS) return true;
+        // 10 分钟内同文件且内容未变：不是微改写，层 1/2/3 的既有语义已覆盖
+        // （全部在 TTL → 整组抑制；部分在 TTL → 部分集合注入是 J3-2 既定行为）。
+        if (last.contentHash === entry.signature.contentHash) return true;
+        return false;
+      });
+      if (kept.length === snapshot.entries.length) return snapshot;
+      return {
+        ...snapshot,
+        entries: kept.map((entry, index) => ({ ...entry, reference: `memory_${index + 1}` })),
+      };
     },
     suppressIfKnown(snapshot, text, atMs) {
       pruneExpired(state, atMs);
@@ -423,6 +519,13 @@ function isWithinTtl(injectedAtMs: number | undefined, atMs: number): boolean {
 function pruneExpired(state: InjectionLedgerState, atMs: number): void {
   for (const [key, injectedAtMs] of state.entries) {
     if (!isWithinTtl(injectedAtMs, atMs)) state.entries.delete(key);
+  }
+  // 层 4 账本按自己的（更短的）窗口清理：限速窗口外的记录不参与任何判定，
+  // 不清会让 Map 无界增长（R5 的有界增长要求对两层账本同等地成立）。
+  for (const [filename, last] of state.filenames) {
+    if (atMs - last.atMs >= MEMORY_RECALL_TIMING.FILENAME_MIN_INTERVAL_MS) {
+      state.filenames.delete(filename);
+    }
   }
 }
 

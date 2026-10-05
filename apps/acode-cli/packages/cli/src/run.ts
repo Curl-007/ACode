@@ -1,3 +1,4 @@
+/* eslint-disable max-lines -- 存量基线豁免:该文件先于 CLI lint 门禁建立即超限(根 lint 的 ignorePatterns 排除 apps/acode-cli,turbo lint 因此从未变绿)。头注豁免以恢复门禁信号;拆分重构超出本批范围。 */
 import { extractDisallowedToolsArgs, parseGlobalArgs } from "./arguments.js";
 import { createNodeLoggerFactory } from "@acode/adapters";
 import { getRuntimeInfo, type PresentationSurface } from "@acode/core";
@@ -22,6 +23,11 @@ import { CLI_COMMAND_NAME, CLI_PROCESS_NAME } from "./process-name.js";
 import { isPluginHostInvocation, runPluginHostCommand } from "./plugin-host-command.js";
 import { isProviderDoctorInvocation, runProviderDoctorCommand } from "./provider-doctor-command.js";
 import { isDwfChildInvocation, runDwfChildCommand } from "./dwf-child-command.js";
+// acp-command 必须在 case "acp" 内动态导入：它静态拉起 server harness-inprocess →
+// services/node.ts 整套 host 装配（含 terminalService 等顶层 createRequire(import.meta.url)
+// 的 ESM-only 模块）。静态导入会让 CJS bundle 的**所有**命令在模块求值期即崩
+// （import.meta.url 在 CJS 下为 undefined），也让每个 agent 进程白白求值整套业务依赖
+// （main.ts F5 注释的同一惰性纪律）。
 import { runPrompt } from "./prompt-command.js";
 import { runPluginsCommand, type PluginsCommandFlags } from "./plugins-command.js";
 import { runSkillsCommand } from "./skills-command.js";
@@ -559,6 +565,12 @@ export const run = async (ctx: RunContext, deps: RunDependencies = {}): Promise<
       );
     case "doctor":
       return runDoctor(ctx, options, workingDirectory);
+    case "acp": {
+      // K8 ACP 宿主适配：headless 进程，stdio 上讲 Agent Client Protocol。
+      // 懒加载理由见文件头 acp-command 导入处注释（CJS bundle 模块求值期崩溃 + 惰性纪律）。
+      const { runAcpCommand } = await import("./acp-command.js");
+      return await runAcpCommand(ctx, commandDeps, version);
+    }
     case "login":
       return await runLoginCommand(
         ctx,

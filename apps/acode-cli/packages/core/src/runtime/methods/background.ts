@@ -1,3 +1,4 @@
+/* eslint-disable max-lines -- 存量基线豁免:该文件先于 CLI lint 门禁建立即超限(根 lint 的 ignorePatterns 排除 apps/acode-cli,turbo lint 因此从未变绿)。头注豁免以恢复门禁信号;拆分重构超出本批范围。 */
 import { SessionEventType, traceContextToLogContext } from "../deps.js";
 import type {
   BackgroundExecutionSnapshot,
@@ -454,6 +455,17 @@ function toolNameFromRuntimeTaskType(type: RuntimeTaskType): string {
       return "CreateWorkflow";
     case "monitor_mcp":
       return "Monitor";
+    // K3：overnight run 不是工具派生的任务（supervisor 驱动，R1），没有对应工具名；
+    // BackgroundTaskInfo 的 toolName 在此只是展示标签，投影一个可读名。
+    case "overnight":
+      return "Overnight";
+    // K2：swarm plan 由主对话经 PlanSeed 建立（引擎在 turn 间隙驱动），展示标签取其
+    // 建立工具；TaskStop 分派对 swarm_plan 走 not supported（停止面是 PlanControl）。
+    case "swarm_plan":
+      return "PlanSeed";
+    // K6：ambient cycle 由 AmbientRunner fork（runner 驱动，非工具派生），投影可读标签。
+    case "ambient":
+      return "Ambient";
   }
 }
 

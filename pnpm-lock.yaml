@@ -332,12 +332,18 @@ importers:
       '@acode/dynamic-workflow-runtime':
         specifier: workspace:*
         version: link:../dynamic-workflow-runtime
+      '@acode/harness-sdk':
+        specifier: workspace:*
+        version: link:../../../../packages/harness-sdk
       '@acode/i18n':
         specifier: workspace:*
         version: link:../i18n
       '@acode/provider-node':
         specifier: workspace:*
         version: link:../../../../packages/provider-node
+      '@acode/server':
+        specifier: workspace:*
+        version: link:../../../../packages/server
       '@acode/shared':
         specifier: workspace:*
         version: link:../../../../packages/shared
@@ -812,6 +818,22 @@ importers:
       vite:
         specifier: ^8.0.2
         version: 8.0.8(@types/node@25.6.0)(esbuild@0.27.7)(jiti@2.6.1)(tsx@4.21.0)(yaml@2.9.0)
+
+  packages/harness-sdk:
+    dependencies:
+      '@acode/shared':
+        specifier: workspace:*
+        version: link:../shared
+      zod:
+        specifier: 4.6.5
+        version: 4.6.5
+    devDependencies:
+      '@types/node':
+        specifier: ^25.5.0
+        version: 25.6.0
+      typescript:
+        specifier: ^6.0.2
+        version: 6.0.2
 
   packages/model-option-map:
     devDependencies:

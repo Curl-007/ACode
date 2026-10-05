@@ -6,6 +6,7 @@ import {
   credentialRecordSchema,
   credentialValueSchema,
   formatZodError,
+  isCredentialDecryptError,
 } from "@acode/shared";
 import type { ICredentialService } from "./credential.js";
 import {
@@ -94,16 +95,82 @@ export function createCredentialService(
     dependencies.cipherProvider ??
     createCredentialCipherProvider({ keyFilePath: join(getCredentialsDir(), "credential-key.json") });
 
+  /**
+   * R2 自愈收敛：把「分歧密钥文件材料回退命中」的值用主密钥材料重加密写回。
+   * CAS 语义：锁内发现该值已被其他进程改写（已收敛或重新保存）则放弃本次重写。
+   * 收敛失败不影响本次读取——值仍可经回退材料读取，下次读取重试。
+   */
+  async function reconvergeDivergentValue(
+    key: string,
+    expectedRawValue: string,
+    plaintext: string,
+    credentialsFile: string,
+  ): Promise<void> {
+    try {
+      const rewrote = await withFileLock(credentialsFile, async () => {
+        const creds = await readAll(credentialsFile);
+        if (creds[key] !== expectedRawValue) {
+          return false;
+        }
+        creds[key] = cipherProvider.encrypt(plaintext);
+        await writeAll(credentialsFile, creds);
+        return true;
+      });
+      if (rewrote) {
+        logger.info(
+          undefined,
+          "credential value re-encrypted with the primary master key after divergent-material fallback",
+          { key },
+        );
+      }
+    } catch (error) {
+      logger.warn(
+        undefined,
+        "credential value reconvergence after divergent-material fallback failed; the value stays readable via the fallback material",
+        { key, error },
+      );
+    }
+  }
+
   return {
     async load(key: string): Promise<string | null> {
       const validatedKey = credentialKeySchema.parse(key);
-      const creds = await readAll();
+      const credentialsFile = getCredentialsFile();
+      const creds = await readAll(credentialsFile);
       const rawValue = creds[validatedKey];
       if (rawValue === undefined) {
         return null;
       }
 
-      return cipherProvider.decrypt(rawValue);
+      let plaintext: string;
+      let usedFallbackKey = false;
+      try {
+        if (cipherProvider.decryptWithFallbackInfo) {
+          ({ plaintext, usedFallbackKey } = cipherProvider.decryptWithFallbackInfo(rawValue));
+        } else {
+          plaintext = cipherProvider.decrypt(rawValue);
+        }
+      } catch (error) {
+        // R2 留证：解密失败会被下游放大成 OAuth 强制登出（clearCorruptOAuthSession
+        // 逐条删除条目）。删除前把原始密文完整留证，用户找回原密钥材料后还能从
+        // .bak 恢复——「解不开」不再是不可逆丢失。backupCorruptFile 按内容哈希
+        // 幂等收敛到一份证据（0600），日志只含路径不含凭据内容。
+        if (isCredentialDecryptError(error)) {
+          const backupPath = await backupCorruptFile(credentialsFile).catch(() => undefined);
+          logger.warn(undefined, "credential decrypt failed; raw store backed up before recovery", {
+            backupPath,
+            credentialsFile,
+          });
+        }
+        throw error;
+      }
+
+      if (usedFallbackKey) {
+        // R2：该值是密钥分歧期间由旧密钥文件材料写入的，立即用主密钥材料重加密
+        // 收敛，让存储回到单一材料态（全部分歧值收敛后删除多余密钥文件才安全）。
+        await reconvergeDivergentValue(validatedKey, rawValue, plaintext, credentialsFile);
+      }
+      return plaintext;
     },
 
     async save(key: string, value: string): Promise<void> {

@@ -58,6 +58,12 @@ function isMemoryCandidate(filePath: string): boolean {
 export function parseMemoryFrontmatter(content: string): {
   description?: string;
   name?: string;
+  /**
+   * frontmatter `tags`（若存在）：只进 K1 检索层的文档表示
+   * （specs/memory-semantic-recall.md R2），**不进** J3-2 的注入签名与渲染——
+   * 协议面（signature/去重/渲染）保持零变化。
+   */
+  tags?: string[];
   type?: MemoryRecallType;
 } {
   const normalized = content.replace(/^\uFEFF/u, "").replace(/\r\n/gu, "\n");
@@ -76,14 +82,22 @@ export function parseMemoryFrontmatter(content: string): {
 
   const description = typeof parsed.description === "string" ? parsed.description : undefined;
   const name = typeof parsed.name === "string" ? parsed.name : undefined;
+  const tags = parseMemoryTags(parsed.tags);
   const metadata = isRecord(parsed.metadata) ? parsed.metadata : undefined;
   const typeCandidate = metadata?.type ?? parsed.type;
   const type = isMemoryRecallType(typeCandidate) ? typeCandidate : undefined;
   return {
     ...(description ? { description } : {}),
     ...(name ? { name } : {}),
+    ...(tags.length > 0 ? { tags } : {}),
     ...(type ? { type } : {}),
   };
+}
+
+/** tags 只认字符串数组（YAML `tags: [a, b]`）；其余形态忽略，不做标量拆分。 */
+function parseMemoryTags(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((tag): tag is string => typeof tag === "string" && tag.length > 0);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

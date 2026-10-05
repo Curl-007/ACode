@@ -173,6 +173,15 @@ export function resolveAppRuntimeConfig(input: {
       },
       profiles: [...(options.runtimeConfig?.subagents?.profiles ?? []), ...subagentProfiles],
     },
+    // K6 ambient flag（specs/ambient-budget-scheduler.md R5 红线）：默认关闭——开启是
+    // 显式用户决策。对齐 runtimeFeatures 的「装配期推导注入」形态：CLI/协议
+    // call-level runtimeConfig（ACodeAppOptions.runtimeConfig）是唯一入口；config 文件
+    // schema（adapters features 面）不承载域级开关，本工厂只做 === true 收口，
+    // 不引入第二份真值。下游两处门：runtime-tools 的 Schedule 注册 + ambient 装配的
+    // runner 启动，都只读 runtimeConfig.ambient?.enabled。
+    ambient: {
+      enabled: options.runtimeConfig?.ambient?.enabled === true,
+    },
     memory: {
       cliStorageRoot,
       enabled: options.runtimeConfig?.memory?.enabled ?? configResult.config.features.memory,

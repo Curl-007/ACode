@@ -68,6 +68,16 @@ import { evalWorkflowSnippetToolEntry } from "./eval-workflow-snippet.js";
 import { listWorkflowRunsToolEntry } from "./list-workflow-runs.js";
 import { getWorkflowRunToolEntry } from "./get-workflow-run.js";
 import { resumeWorkflowRunToolEntry } from "./resume-workflow-run.js";
+import { sessionSearchToolEntry } from "./session-search.js";
+import { createOpenToolEntry, type OpenPlatformPort } from "./open.js";
+import { createPlanCompleteGateToolEntry } from "./plan-complete-gate.js";
+import { createPlanControlToolEntry } from "./plan-control.js";
+import { createPlanExpandToolEntry } from "./plan-expand.js";
+import { createPlanSeedToolEntry } from "./plan-seed.js";
+import { createPlanStatusToolEntry } from "./plan-status.js";
+import type { SwarmPlanPort } from "../../swarm/port.js";
+import type { AmbientScheduleQueue, ScheduledItem } from "../../ambient/queue.js";
+import { createScheduleToolEntry } from "./schedule.js";
 import { createToolRuleNameSet } from "../tool-visibility.js";
 
 // direct 分支保留 Glob/Grep 工具实现；embedded search 分支由 registerBuiltInTools
@@ -107,6 +117,9 @@ export const builtInTools: ToolEntry[] = [
   taskOutputToolEntry,
   taskStopToolEntry,
   readSessionContextToolEntry,
+  // 跨会话全文搜索（K4）：本地只读、无 gate，与 ReadSessionContext 同级——
+  // 都消费 sessionStore 面且不产生副作用，handler 运行时经 context 取存储能力。
+  sessionSearchToolEntry,
   agentToolEntry,
   taskToolEntry,
   skillToolEntry,
@@ -175,6 +188,36 @@ interface RegisterBuiltInToolsOptions {
   includeAutomation?: boolean;
   /** Off-Peak 会话内创建工具面；由 host 的 offPeakToolEnabled flag（灰度/远程门）驱动。 */
   includeOffPeak?: boolean;
+  /** 开箱（Open 工具）平台端口；在场即注册，缺席不注册（K9 R2 的 port 门控）。 */
+  platformOpenPort?: OpenPlatformPort;
+  /**
+   * K2 swarm plan 工具族的注册门（specs/swarm-task-graph.md R5）：端口在场即注册
+   * PlanSeed/PlanExpand/PlanCompleteGate/PlanStatus/PlanControl（工具工厂闭包 store，
+   * plan-shared.ts 头注释的 2b 接线位）。只读推导在调用方（runtime-tools.ts 按
+   * taskType，includeAutomation 同款先例），本层不做 runtime 配置推断。
+   */
+  swarmPlanPort?: SwarmPlanPort;
+  /** 在场为 true 时只注册 PlanStatus（workflow 子会话的只读面，R5「防 worker 自改图」）。 */
+  swarmPlanReadOnly?: boolean;
+  /**
+   * K6 ambient Schedule 工具的注册门（specs/ambient-budget-scheduler.md R2/场景 10）：
+   * flag 推导在调用方（runtime-tools.ts 按 config.ambient.enabled && 非封闭子会话
+   * ——subagent_child/workflow_child/nested_workflow_child，F10 批次C 收紧），
+   * includeAutomation 同款先例，本层不做 runtime 配置推断——与 swarmPlanPort 的
+   * 门分工一致。
+   */
+  includeAmbientSchedule?: boolean;
+  /**
+   * K6：Schedule 工具的依赖闭包。queue 是 ambient 域装配面注入的磁盘队列实例（不能进
+   * 静态数组的原因与 Open/swarm 相同：handler 闭包依赖装配态）；sessionId 标记创建
+   * 来源会话（target=session 提醒的投递目标）；onScheduleCreated 是创建成功后的
+   * runner nudge/重启缝。
+   */
+  ambientSchedule?: {
+    queue: AmbientScheduleQueue;
+    sessionId?: string;
+    onScheduleCreated?(item: ScheduledItem): void;
+  };
   /**
    * 动态工作流灰度门。**只有显式 false
    * 才下架** DYNAMIC_WORKFLOW_TOOL_NAMES：缺席代表调用方不参与灰度（TUI、headless、
@@ -266,6 +309,50 @@ export function registerBuiltInTools(
     registry.register(resolveBuiltInToolEntryForBranch(entry, options), {
       silentDuplicateWarning: options.silentDuplicateWarnings,
     });
+  }
+  // Open 工具（K9）：依赖 platform port 构造 handler 闭包，不能进静态数组——
+  // 端口缺席即 undefined，不注册（CLI 无平台宿主时 Open 自然缺席，模型看到的世界自洽）。
+  const openEntry = createOpenToolEntry({ platform: options.platformOpenPort });
+  if (openEntry) {
+    registry.register(openEntry, { silentDuplicateWarning: options.silentDuplicateWarnings });
+  }
+  // K2 swarm plan 工具族（specs/swarm-task-graph.md R5）：与 Open 同款「依赖闭包端口的
+  // 工具不进静态数组」——五个工厂闭包 store（plan-shared.ts），端口缺席不注册。只读门
+  // （swarmPlanReadOnly）只放行 PlanStatus：worker 子会话可见的图读取面，图变更工具仅
+  // 主对话。工具描述（plan-vs-todo 分工 / deep gate 契约话术）由 2a 工厂织入，此处原样注册。
+  if (options.swarmPlanPort !== undefined) {
+    const { store } = options.swarmPlanPort;
+    const planEntries = options.swarmPlanReadOnly
+      ? [createPlanStatusToolEntry({ store })]
+      : [
+          createPlanSeedToolEntry({ store }),
+          createPlanExpandToolEntry({ store }),
+          createPlanCompleteGateToolEntry({ store }),
+          createPlanStatusToolEntry({ store }),
+          createPlanControlToolEntry({ store }),
+        ];
+    for (const entry of planEntries) {
+      registry.register(entry, { silentDuplicateWarning: options.silentDuplicateWarnings });
+    }
+  }
+  // K6 ambient Schedule 工具（specs/ambient-budget-scheduler.md R2）：与 Open/swarm 同款
+  // 「依赖闭包装配态的工具不进静态数组」。双门：includeAmbientSchedule 是 flag 门
+  // （runtime-tools 按 config.ambient.enabled 推导——场景 10：缺省 false 不注册，
+  // 没有 runner 在跑时 Schedule 提议永远不兑现，注册只会把模型指向不兑现的承诺）；
+  // ambientSchedule 闭包缺席（CLI 未装配 ambient 队列）同样不注册。
+  if (options.includeAmbientSchedule === true && options.ambientSchedule !== undefined) {
+    registry.register(
+      createScheduleToolEntry({
+        queue: options.ambientSchedule.queue,
+        ...(options.ambientSchedule.sessionId !== undefined
+          ? { sessionId: options.ambientSchedule.sessionId }
+          : {}),
+        ...(options.ambientSchedule.onScheduleCreated !== undefined
+          ? { onScheduleCreated: options.ambientSchedule.onScheduleCreated }
+          : {}),
+      }),
+      { silentDuplicateWarning: options.silentDuplicateWarnings },
+    );
   }
 }
 

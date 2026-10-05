@@ -227,6 +227,18 @@ function defaultRuntimeTaskDescription(taskType: RuntimeTaskType): string {
       return "Agent background task";
     case "monitor_mcp":
       return "Monitor background task";
+    // K3：overnight run 从 runner 注册（带 run 详情描述），此默认值仅为联合完备性的
+    // 兜底标签——工具执行器不会以 overnight 类型登记任务。
+    case "overnight":
+      return "Overnight run";
+    // K2：swarm plan 从 wiring 的投影同步注册（description 携带图摘要），工具执行器
+    // 同样不会以此类型登记——兜底标签仅为联合完备性。
+    case "swarm_plan":
+      return "Swarm plan";
+    // K6：ambient cycle 从 AmbientRunner 注册（fork 端口绑定层），工具执行器不会以
+    // 此类型登记——兜底标签仅为联合完备性（overnight/swarm_plan 同款先例）。
+    case "ambient":
+      return "Ambient cycle";
   }
 }
 

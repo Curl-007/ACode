@@ -2784,6 +2784,7 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
           `local database startup failed attempt=${databaseStartup?.coordinator.snapshot.attemptId}`,
           error,
         ),
+      warn: (message, details) => logger.warn(message, details),
       initializeServices: async () => {
         logger.info("initializing local services");
         activeSessionRealtimePort = createTaskRealtimeBridgeForHostInit(msg, parentPort);

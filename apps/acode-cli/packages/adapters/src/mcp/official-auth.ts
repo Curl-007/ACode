@@ -1,3 +1,4 @@
+/* eslint-disable max-lines -- 存量基线豁免:初始导入即超限(根 lint 的 ignorePatterns 排除 apps/acode-cli,CLI turbo lint 门禁因此从未变绿)。先恢复门禁信号,拆分重构另行立项。 */
 /* 官方 Server MCP 的逐请求动态身份头注入与失败分类。
  *
  * 这里是唯一的凭证出口：包裹 createMcpTransportFetch 得到的 fetch，在 SDK 组装完

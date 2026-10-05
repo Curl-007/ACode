@@ -1,3 +1,4 @@
+/* eslint-disable max-lines -- 存量基线豁免:初始导入即超限(根 lint 的 ignorePatterns 排除 apps/acode-cli,CLI turbo lint 门禁因此从未变绿)。先恢复门禁信号,拆分重构另行立项。 */
 import * as permissionFullAccessRepository from "./repositories/permission-full-access.js";
 import { DatabaseSync } from "node:sqlite";
 import type {
@@ -75,6 +76,12 @@ import {
 } from "../session-target.js";
 import { SqliteSessionMigrationError } from "./errors.js";
 import {
+  scheduleSessionMessageFtsPreheat,
+  searchSessionMessages as runSessionMessageSearch,
+  type SessionMessageSearchInput,
+  type SessionMessageSearchOutput,
+} from "./fts.js";
+import {
   DEFAULT_SQLITE_STARTUP_LOCK_TIMEOUT_MS,
   runSqliteSessionMigrations,
   runSqliteSessionMigrationsAsync,
@@ -97,6 +104,7 @@ import * as scriptWorkflowRunRepository from "./repositories/script-workflow-run
 import * as sessionEntryRepository from "./repositories/session-entries.js";
 import * as sessionInputRepository from "./repositories/session-inputs.js";
 import * as sessionRepository from "./repositories/sessions.js";
+import * as swarmPlanRepository from "./repositories/swarm-plans.js";
 import * as todoRepository from "./repositories/todos.js";
 import * as usageRepository from "./repositories/usage.js";
 
@@ -275,6 +283,9 @@ export class SqliteSessionStore
     const store = new SqliteSessionStore(options, deferredStartup);
     try {
       await runSqliteSessionMigrationsAsync(store.db, store.dbPath, migrationOptions);
+      // K4 R5 索引预热：storageReady 后低优先级核对 FTS 缺口（存量回填兜底 + 孤儿
+      // 清理），不阻塞任何读路径；runtime 启动路径统一走本工厂，这里就是接线点。
+      scheduleSessionMessageFtsPreheat(store.db);
       return store;
     } catch (error) {
       // close 也可能因 IO 失败；迁移的原始 cause 才是用户应处理的原因。
@@ -538,6 +549,15 @@ export class SqliteSessionStore
     return messageRepository.messageWithParts(this.db, input);
   }
 
+  /**
+   * K4 跨会话搜索（specs/session-search.md）：session_message_fts 投影上的关键词
+   * 检索。方法不在 SessionStorePort 上（contracts 不随 K4 改动），core 侧以结构化
+   * duck-typing 消费（同 bootstrap 的 asInputHistoryStore 模式）。
+   */
+  searchSessionMessages(input: SessionMessageSearchInput): SessionMessageSearchOutput {
+    return runSessionMessageSearch(this.db, input);
+  }
+
   async messages(input: { sessionID: SessionId }): Promise<MessageWithParts[]> {
     return messageRepository.messages(this.db, input);
   }
@@ -628,6 +648,24 @@ export class SqliteSessionStore
   async updateTodos(input: { sessionID: SessionId; todos: TodoItem[] }): Promise<void> {
     this.throwBeforeWrite();
     return todoRepository.updateTodos(this.db, input);
+  }
+
+  // K2 swarm plan 的行存取（specs/swarm-task-graph.md R6 附录）：与 todos 同款的
+  // sessionStore 专用存储方法，但**不进 contracts SessionStorePort**（契约面冻结，
+  // K4 session-search 先例）——core 侧经 swarm/runtime-binding.ts 的结构化 duck-typing
+  // 消费，测试替身/未来远程 store 缺席时按「无持久化」降级。
+  async readSwarmPlan(input: { sessionID: SessionId }): Promise<unknown> {
+    return swarmPlanRepository.readSwarmPlan(this.db, input);
+  }
+
+  async writeSwarmPlan(input: { plan: unknown; sessionID: SessionId }): Promise<void> {
+    this.throwBeforeWrite();
+    return swarmPlanRepository.writeSwarmPlan(this.db, input);
+  }
+
+  async clearSwarmPlan(input: { sessionID: SessionId }): Promise<void> {
+    this.throwBeforeWrite();
+    return swarmPlanRepository.clearSwarmPlan(this.db, input);
   }
 
   async readTarget(input: { sessionID: SessionId }): Promise<SessionGoal | null> {

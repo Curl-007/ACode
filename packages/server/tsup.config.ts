@@ -52,7 +52,9 @@ export default defineConfig({
   onSuccess: async () => {
     await stageThirdPartyNotices(resolve(import.meta.dirname, "dist"));
   },
-  entry: { "entry-http": "src/entry-http.ts" },
+  // entry-harness：Harness API v1 公开稳定面的独立 bin（acode-harness）；
+  // 与 entry-http 同一打包/外置策略（services 链内联，native/CJS 依赖外置）。
+  entry: { "entry-http": "src/entry-http.ts", "entry-harness": "src/entry-harness.ts" },
   outDir: "dist",
   format: "esm",
   platform: "node",

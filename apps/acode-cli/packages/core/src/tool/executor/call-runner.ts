@@ -1,3 +1,4 @@
+/* eslint-disable max-lines -- 存量基线豁免:该文件先于 CLI lint 门禁建立即超限(根 lint 的 ignorePatterns 排除 apps/acode-cli,turbo lint 因此从未变绿)。头注豁免以恢复门禁信号;拆分重构超出本批范围。 */
 import {
   type AgentTelemetryErrorCategory,
   CoreErrorType,
@@ -56,6 +57,12 @@ import {
   withWorkflowRefineDeniedFollowUp,
 } from "./turn-control.js";
 import { mergeToolExecutionTelemetry, readToolExecutionTelemetry } from "../handlers/tool-perf.js";
+// K9（specs/tooling-micro-additions.md R1）：unknown-name / schema 违例的回执载体切换为
+// invalid 工具的规范化回执。只改呈现载体，判定逻辑（分类、事件、遥测）零变化。
+import {
+  formatInvalidSchemaViolationReceipt,
+  formatInvalidUnknownToolReceipt,
+} from "../handlers/invalid.js";
 import type { ToolExecuteOptions, ToolExecutorDeps } from "./types.js";
 import { validateInitialModelToolInput, validateInput, validateOutput } from "./validation.js";
 import type { ExecutableToolCall } from "../types.js";
@@ -136,6 +143,11 @@ async function executeToolCallImpl(
       // 空名在 admission 阶段停止会让模型永远收不到配对结果。复用
       // registry-miss 生命周期，但 provider 内容严格保留模型返回的原始空白名称。
       result.modelContent = `<tool_use_error>Error: No such tool available: ${toolCall.name}</tool_use_error>`;
+    } else {
+      // K9（specs/tooling-micro-additions.md R1）：unknown-name 的 provider 回执载体切换为
+      // invalid 工具的规范化回执（原名 + 就近建议，无近似则列注册表快照全集）。
+      // 失败分类（ToolNotFound）、事件与遥测仍走原路径——判定逻辑零变化，畸形调用零工具执行。
+      result.modelContent = formatInvalidUnknownToolReceipt(toolCall.name, deps.registry);
     }
     // registry miss 发生在 handler/ToolCallStarted 之前；旧代码只把失败
     // 返回给 provider，没有发布 ToolCallError，V4 tool row 因而永久停在 inputStreaming。
@@ -176,6 +188,14 @@ async function executeToolCallImpl(
   );
   if (initialInputValidation) {
     const result = createErrorResult(canonicalToolCall, initialInputValidation);
+    // K9（specs/tooling-micro-additions.md R1）：schema 违例的 provider 回执载体切换为
+    // invalid 工具的逐字段回执（路径 + 期望 + 截断实际值）。回执与失败判定共用同一份
+    // inputSchema 纯函数求值（json-schema.ts），错误分类与遥测原样——判定逻辑零变化。
+    result.modelContent = formatInvalidSchemaViolationReceipt(
+      canonicalToolCall.name,
+      executionInput,
+      entry.inputSchema,
+    );
     // schema 失败与 registry miss 同属 handler/ToolCallStarted 之前的早退；旧代码
     // 只把失败回灌模型，没有发布 ToolCallError，V4 tool row 因而在整个 turn 里停在
     // inputStreaming（CreateWorkflow 卡持续显示「正在编写工作流」），模型重试后又叠一张。

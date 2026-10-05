@@ -66,9 +66,42 @@ function registerRuntimeBuiltInTools(runtime: AgentRuntimeInternal, deps: AgentR
     includeEscalate: Boolean(deps.workflowEscalatePort),
     includeWorkflow: Boolean(deps.workflowPort),
     includeAutomation: Boolean(deps.automationPort) && runtime.config.taskType !== "subagent_child",
+    // K2 swarm plan 工具族（specs/swarm-task-graph.md R5 注册门）：端口在场即注册；
+    // 只读面推导与 includeAutomation 的 taskType 排除同款先例——workflow 子会话
+    // （swarm worker 是无名 workflow 子会话）只见 PlanStatus，图变更工具仅主对话，
+    // 防 worker 自改图；subagent 子会话整体不暴露（封闭域，无 plan 可协调）。
+    ...(deps.swarmPlanPort === undefined || runtime.config.taskType === "subagent_child"
+      ? {}
+      : {
+          swarmPlanPort: deps.swarmPlanPort,
+          swarmPlanReadOnly: runtime.config.taskType === "workflow_child",
+        }),
     // offPeakPort 只在 host 下发 offPeakToolEnabled 时注入（灰度/远程门在 host 端），
     // 端口存在即代表曝光允许；subagent 子会话与 automation 同规则不暴露。
     includeOffPeak: Boolean(deps.offPeakPort) && runtime.config.taskType !== "subagent_child",
+    // K6 ambient Schedule 工具（specs/ambient-budget-scheduler.md R2/场景 10）：门 =
+    // config.ambient.enabled 显式 true（缺省 false——开启是显式用户决策，spec 红线）
+    // && 非封闭子会话（F10，批次C：subagent_child 之外，workflow_child 与
+    // nested_workflow_child 也不得注册——swarmPlanReadOnly 的收紧先例同款；workflow
+    // 子会话是编排域的执行单元，不该再自建唤醒提议，也无主对话可投递 target=session
+    // 提醒）&& 端口在场（bootstrap 装配的 queue 与 nudge 闭包；automationPort 同款
+    // 流向）。sessionId 取 runtime 自己的——创建来源会话即提醒投递目标。
+    ...(deps.ambientSchedulePort === undefined ||
+        runtime.config.ambient?.enabled !== true ||
+        runtime.config.taskType === "subagent_child" ||
+        runtime.config.taskType === "workflow_child" ||
+        runtime.config.taskType === "nested_workflow_child"
+      ? {}
+      : {
+          includeAmbientSchedule: true,
+          ambientSchedule: {
+            queue: deps.ambientSchedulePort.queue,
+            sessionId: String(runtime.sessionId),
+            ...(deps.ambientSchedulePort.onScheduleCreated === undefined
+              ? {}
+              : { onScheduleCreated: deps.ambientSchedulePort.onScheduleCreated }),
+          },
+        }),
     // 动态工作流灰度门：与 off-peak 相反，
     // 这里不能用端口在场做判据——十个工具的端口在任何 CLI 里都装配齐全，灰度是 Host 的决定。
     // 取值收在 tool-allowlist.ts，与分支刷新那个入口共用同一个推导。
@@ -77,6 +110,8 @@ function registerRuntimeBuiltInTools(runtime: AgentRuntimeInternal, deps: AgentR
     // node_repl/browser-use 由 ACode 官方 browser-use 插件启停推导出的 runtimeFeatures 控制。
     includeNodeRepl: nodeReplEnabled,
     includeBrowserUse: browserUseEnabled,
+    // Open 工具的平台门：宿主注入 platformOpenPort 才注册（K9 R2）。
+    platformOpenPort: deps.platformOpenPort,
     embeddedSearchEnabled: resolveRuntimeEmbeddedSearchEnabled(runtime),
     agentProfiles: runtime.config.subagents?.profiles,
     allowedTools: resolveBuiltInToolAllowlist(runtime.config),

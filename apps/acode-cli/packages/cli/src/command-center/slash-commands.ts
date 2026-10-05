@@ -42,6 +42,17 @@ export function parseSlashCommand(input: string): SlashCommand | null {
     };
   }
 
+  if (rawName === "overnight") {
+    // 宿主动作命令（K3）：known 仅为了让 help/补全收编并跳过 unknown 拦截——
+    // 实际执行在 bootstrap 的 sendInput 拦截层（create.ts 的放行分支）。
+    return {
+      args,
+      name: "overnight",
+      rawName,
+      type: "known",
+    };
+  }
+
   if (rawName === "effort" || rawName === "variant") {
     return {
       args,

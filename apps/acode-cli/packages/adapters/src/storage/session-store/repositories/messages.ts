@@ -9,6 +9,11 @@ import type {
   SessionStorePort,
 } from "@acode/contracts";
 import { decodeMessageRow, decodePartRow, partCreatedAt } from "../codecs.js";
+import {
+  removeSessionMessageFtsRow,
+  runInSessionMessageFtsTransaction,
+  syncSessionMessageFtsRow,
+} from "../fts.js";
 import { encodeJson } from "../json.js";
 import type { MessageRow, PartRow } from "../rows.js";
 import { touchSession } from "./sessions.js";
@@ -64,50 +69,63 @@ export async function saveMessage(
   const timeUpdated =
     input.role === "assistant" ? (input.time.completed ?? Date.now()) : timeCreated;
 
-  db.prepare(
-    `
-      insert into message (id, session_id, time_created, time_updated, data, sequence)
-      values (
-        ?,
-        ?,
-        ?,
-        ?,
-        ?,
-        (
-          select coalesce(max(sequence), -1) + 1
-          from message
-          where session_id = ?
+  // K4（specs/session-search.md R1）：主表写与 FTS 投影维护必须同事务——FTS 失败整个
+  // 写回滚，不允许索引落后于主表。外层已有事务（fork bundle / promote）时内联进外层。
+  runInSessionMessageFtsTransaction(db, () => {
+    db.prepare(
+      `
+        insert into message (id, session_id, time_created, time_updated, data, sequence)
+        values (
+          ?,
+          ?,
+          ?,
+          ?,
+          ?,
+          (
+            select coalesce(max(sequence), -1) + 1
+            from message
+            where session_id = ?
+          )
         )
-      )
-      on conflict(id) do update set
-        session_id = excluded.session_id,
-        time_updated = excluded.time_updated,
-        -- 旧字段是回滚快照，不能因新版 Reader 隐藏了它们而在普通更新时丢掉。
-        data = case when message.session_id = excluded.session_id then ${MESSAGE_DATA_UPDATE} else excluded.data end,
-        sequence = case
-          when message.session_id = excluded.session_id then message.sequence
-          else excluded.sequence
-        end
-      `,
-  ).run(
-    id,
-    sessionID,
-    timeCreated,
-    timeUpdated,
-    encodeJson(copyLegacyMembers(db, "message", storedData, copyFrom)),
-    sessionID,
-  );
-  touchSession(db, sessionID, timeUpdated);
+        on conflict(id) do update set
+          session_id = excluded.session_id,
+          time_updated = excluded.time_updated,
+          -- 旧字段是回滚快照，不能因新版 Reader 隐藏了它们而在普通更新时丢掉。
+          data = case when message.session_id = excluded.session_id then ${MESSAGE_DATA_UPDATE} else excluded.data end,
+          sequence = case
+            when message.session_id = excluded.session_id then message.sequence
+            else excluded.sequence
+          end
+        `,
+    ).run(
+      id,
+      sessionID,
+      timeCreated,
+      timeUpdated,
+      encodeJson(copyLegacyMembers(db, "message", storedData, copyFrom)),
+      sessionID,
+    );
+    syncSessionMessageFtsRow(db, String(id));
+    touchSession(db, sessionID, timeUpdated);
+  });
 }
 
 export async function removeMessage(
   db: DatabaseSync,
   input: { sessionID: SessionId; messageID: MessageId },
 ): Promise<void> {
-  db.prepare("delete from message where id = ? and session_id = ?").run(
-    input.messageID,
-    input.sessionID,
-  );
+  // K4：主表删除与投影删除同事务（投影以主表为唯一事实源，主行消失投影必须消失）。
+  runInSessionMessageFtsTransaction(db, () => {
+    const result = db.prepare("delete from message where id = ? and session_id = ?").run(
+      input.messageID,
+      input.sessionID,
+    );
+    // K4 对抗复核 L3：sessionID 不匹配时主表删除命中 0 行，这条消息是活消息——
+    // FTS 投影删除必须以主表删除生效（changes > 0）为前置，否则活消息的索引会
+    // 消失到下次 reconcile 才被补回，期间检索不到。
+    if (Number(result.changes) === 0) return;
+    removeSessionMessageFtsRow(db, String(input.messageID));
+  });
 }
 
 export async function savePart(
@@ -141,44 +159,49 @@ export async function savePart(
   }
   const now = Date.now();
 
-  db.prepare(
-    `
-      insert into part (id, message_id, session_id, time_created, time_updated, data, sequence)
-      values (
-        ?,
-        ?,
-        ?,
-        ?,
-        ?,
-        ?,
-        (
-          select coalesce(max(sequence), -1) + 1
-          from part
-          where message_id = ?
+  // K4：part 变更会改变所属消息的 body 投影（文本/thinking/工具入参都在 part 行里），
+  // 主表写与投影重算同事务。
+  runInSessionMessageFtsTransaction(db, () => {
+    db.prepare(
+      `
+        insert into part (id, message_id, session_id, time_created, time_updated, data, sequence)
+        values (
+          ?,
+          ?,
+          ?,
+          ?,
+          ?,
+          ?,
+          (
+            select coalesce(max(sequence), -1) + 1
+            from part
+            where message_id = ?
+          )
         )
-      )
-      on conflict(id) do update set
-        message_id = excluded.message_id,
-        session_id = excluded.session_id,
-        time_updated = excluded.time_updated,
-        data = case when part.message_id = excluded.message_id and part.session_id = excluded.session_id
-          then ${PART_DATA_UPDATE} else excluded.data end,
-        sequence = case
-          when part.message_id = excluded.message_id and part.session_id = excluded.session_id
-            then part.sequence
-          else excluded.sequence
-        end
-      `,
-  ).run(
-    id,
-    messageID,
-    sessionID,
-    partCreatedAt(input, now),
-    now,
-    encodeJson(copyLegacyMembers(db, "part", storedData, copyFrom)),
-    messageID,
-  );
-  touchSession(db, sessionID, now);
+        on conflict(id) do update set
+          message_id = excluded.message_id,
+          session_id = excluded.session_id,
+          time_updated = excluded.time_updated,
+          data = case when part.message_id = excluded.message_id and part.session_id = excluded.session_id
+            then ${PART_DATA_UPDATE} else excluded.data end,
+          sequence = case
+            when part.message_id = excluded.message_id and part.session_id = excluded.session_id
+              then part.sequence
+            else excluded.sequence
+          end
+        `,
+    ).run(
+      id,
+      messageID,
+      sessionID,
+      partCreatedAt(input, now),
+      now,
+      encodeJson(copyLegacyMembers(db, "part", storedData, copyFrom)),
+      messageID,
+    );
+    syncSessionMessageFtsRow(db, String(messageID));
+    touchSession(db, sessionID, now);
+  });
 }
 
 function copyLegacyMembers(
@@ -211,11 +234,15 @@ export async function removePart(
     partID: PartId;
   },
 ): Promise<void> {
-  db.prepare("delete from part where id = ? and message_id = ? and session_id = ?").run(
-    input.partID,
-    input.messageID,
-    input.sessionID,
-  );
+  // K4：part 删除后重算所属消息投影，与主表删除同事务。
+  runInSessionMessageFtsTransaction(db, () => {
+    db.prepare("delete from part where id = ? and message_id = ? and session_id = ?").run(
+      input.partID,
+      input.messageID,
+      input.sessionID,
+    );
+    syncSessionMessageFtsRow(db, String(input.messageID));
+  });
 }
 
 export async function messages(

@@ -14,7 +14,20 @@ export type RuntimeTaskType =
   | "local_bash"
   | "local_workflow"
   | "local_dynamic_workflow"
-  | "monitor_mcp";
+  | "monitor_mcp"
+  // K3 overnight run（specs/overnight-execution.md 接口节）：run 的唯一 UI 投影面，
+  // 与 local_* 工具任务区分——它不是工具派生的，生命周期绑定 supervisor（R1）。
+  | "overnight"
+  // K2 对话内 swarm plan（specs/swarm-task-graph.md R4）：plan 的 runtime-task 投影。
+  // 不并入 local_workflow（legacy Workflow 工具，不可取消）也不并入 local_dynamic_workflow
+  // （dwf run，端口取消）：本联合按「取消语义」分组（见顶部注释），plan 的停止面是
+  // PlanControl 工具（模型侧 retry/cancel），GUI TaskStop 分派对它应答 not supported
+  // 而不是误路由到任何 workflow 停止分支——overnight 新增成员的同款先例。
+  | "swarm_plan"
+  // K6 ambient cycle（specs/ambient-budget-scheduler.md R3）：AmbientRunner fork 的隐藏
+  // 后台周期任务。非工具派生（runner 驱动），生命周期绑定 runner cycle——overnight 的
+  // 同款先例（本批写面内允许的唯一联合扩展：一行成员 + 两处 exhaustive switch 标签）。
+  | "ambient";
 
 export interface RuntimeTaskUsageSnapshot {
   durationMs?: number;
@@ -65,6 +78,22 @@ export interface RuntimeTaskSnapshot extends SubagentTaskSnapshot {
   traceContext?: TraceContext;
   turnId?: TurnId;
   usage?: RuntimeTaskUsageSnapshot;
+  /**
+   * K3 overnight run 的运行面摘要（specs/overnight-execution.md R2/R4/R5）：
+   * phase / 任务卡片计数 / 内存趋势。registry 只存储不解释——它是通用投影面，
+   * overnight 语义归 supervisor 所有；类型收窄为 string 以免 runtime-task 反向依赖
+   * overnight 模块的相位枚举（依赖方向：overnight → runtime-task，单向）。
+   */
+  overnight?: {
+    runId: string;
+    phase: string;
+    cardCount?: number;
+    memoryTrend?: {
+      samples: number;
+      firstRssBytes?: number;
+      lastRssBytes?: number;
+    };
+  };
 }
 
 export interface RuntimeTaskRegistry {

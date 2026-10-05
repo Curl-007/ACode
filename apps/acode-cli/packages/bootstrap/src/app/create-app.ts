@@ -1,3 +1,4 @@
+/* eslint-disable max-lines -- 存量基线豁免:该文件先于 CLI lint 门禁建立即超限(根 lint 的 ignorePatterns 排除 apps/acode-cli,turbo lint 因此从未变绿)。头注豁免以恢复门禁信号;拆分重构超出本批范围。 */
 import { isAbsolute, join, resolve } from "node:path";
 import {
   createInMemorySessionEventStore,
@@ -19,6 +20,7 @@ import { createNodeSkillAdapter } from "@acode/adapters/skills";
 import { createMcpAdapter } from "@acode/adapters/mcp";
 import {
   AgentRuntime,
+  InMemoryRuntimeTaskRegistry,
   PermissionService,
   setAutoClassifierAuditSink,
   setBashReflexAuditSink,
@@ -82,6 +84,15 @@ import { collectDynamicWorkflowDisabledSkillPaths } from "./dynamic-workflow-gat
 import { createWorkspaceHookRuntimeSecurity } from "./workspace-hook-trust.js";
 import { createScriptWorkflowBridge } from "./script-workflow-methods.js";
 import {
+  createOvernightController,
+  type OvernightController,
+} from "./overnight-controller.js";
+import {
+  createAmbientRuntimeWiring,
+  type AmbientRuntimeWiring,
+} from "./ambient-runtime.js";
+import { createSwarmPlanWiring, type SwarmPlanWiring } from "./swarm-plan-runtime.js";
+import {
   createDynamicWorkflowRunService,
   isDynamicWorkflowTaskLinkStore,
   resolveDynamicWorkflowJournalStore,
@@ -100,10 +111,14 @@ import {
 } from "./node-repl-browser-broker.js";
 import { resolveBuiltInNodeReplMcpServers } from "./built-in-node-repl.js";
 import { resolveACodeCustomCommandPrompt } from "../custom-command-prompt.js";
-import { resolveACodeBuiltinPromptCommand } from "../builtin-prompt-command.js";
+import {
+  resolveACodeBuiltinHostCommand,
+  resolveACodeBuiltinPromptCommand,
+} from "../builtin-prompt-command.js";
 import { collectDisabledPaths } from "../skill-command-overrides.js";
 import { loadPluginAgentProfiles, loadACodeAgentProfiles } from "../subagents.js";
 import { createRuntimeAiSdkModelExecutionConfig } from "../model-config.js";
+import { createCliPlatformOpenPort } from "./platform-open-port.js";
 import { ApiProviderModelRuntime } from "./provider-registry-model-runtime.js";
 import {
   completeAppStartup,
@@ -788,7 +803,63 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
       registry: options.providerRegistry,
       currentSelection: () => getRuntime().getSessionModelSelection(),
     });
+    // K3 overnight：runtime-task registry 在装配期显式建一份并注入 runtime——
+    // overnight controller 需要同一份引用来注册 run 投影（type: "overnight"），
+    // 不注入则 runtime 自建私有实例，run 的可见面挂不上去。
+    const runtimeTaskRegistry = new InMemoryRuntimeTaskRegistry();
+    // K2 swarm plan 装配（specs/swarm-task-graph.md 2b）：port 在主 runtime 构造前成型
+    //（deps 注册门要它在场），executeNode 的 runtime 引用在构造后 bind（overnight
+    // controller 的同款先后序）。持久化 seam 绑 sessionStore 的 swarm plan 行。
+    const swarmPlanWiring: SwarmPlanWiring = createSwarmPlanWiring({
+      appOptions: options,
+      appVersion,
+      ...(artifactStore ? { artifactStore } : {}),
+      configResult,
+      fileSystemPort,
+      ...(httpClientPort ? { httpClientPort } : {}),
+      imageProcessorPort,
+      logger,
+      ...(mcpPort ? { mcpPort } : {}),
+      modelFactory,
+      permissionService,
+      runtimeConfig,
+      runtimeTaskRegistry,
+      sessionId,
+      sessionStore,
+      storageRoot,
+      traceContext,
+      workingDirectory,
+      ...(pdfDocumentPort ? { pdfDocumentPort } : {}),
+    });
+    // K6 ambient 接线（specs/ambient-budget-scheduler.md 接线批）：wiring 在主 runtime
+    // 构造前成型（deps 的注册门 ambientSchedulePort 要 queue + 创建回调闭包——两者都不
+    // 依赖 runtime 实例），fork/reminder/busy 驱动面在 runtime 就绪后 bind
+    //（swarmPlanWiring 的同款先后序）。flag 关（缺省）时只注入共享账本与 queue 面
+    //（turn 计量旁路写继续记 user kind——数据面与调度面正交），不启动 runner。
+    const ambientWiring: AmbientRuntimeWiring = createAmbientRuntimeWiring({
+      appOptions: options,
+      appVersion,
+      artifactStore,
+      configResult,
+      fileSystemPort,
+      imageProcessorPort,
+      logger,
+      mcpPort,
+      modelFactory,
+      permissionService,
+      runtimeConfig,
+      runtimeTaskRegistry,
+      sessionId,
+      sessionStore,
+      storageRoot,
+      traceContext,
+      workingDirectory,
+      ...(pdfDocumentPort ? { pdfDocumentPort } : {}),
+    });
     runtime = new AgentRuntime(sessionId, runtimeConfig, {
+      runtimeTaskRegistry,
+      swarmPlanPort: swarmPlanWiring.port,
+      ambientSchedulePort: ambientWiring.port,
       // 主代理的模型请求过治理器的 observer：立即放行，但让治理器看见它的 429 / 成功。
       modelRequestAdmission: workflowConcurrencyGovernor.observer(),
       eventStore: options.eventStore ?? createInMemorySessionEventStore(),
@@ -838,6 +909,9 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
       modelCatalogPort,
       automationPort: options.automationPort,
       offPeakPort: options.offPeakPort,
+      // CLI 宿主 native opener（K9）：Open 工具的平台 port。desktop host 下发链
+      // 接入后由宿主侧替换注入，此处保持 CLI 形态的兜底实现。
+      platformOpenPort: createCliPlatformOpenPort(),
       appVersion,
       traceContext,
     });
@@ -845,6 +919,38 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
       hasInjectedModelAdapter: options.modelAdapter !== undefined,
       sessionId,
       startupTimer,
+    });
+    // K2 swarm：runtime 实例就绪后绑定 executeNode 迟到引用，并从持久化行恢复 plan
+    //（hydrate 在首个 turn 前完成——恢复的图要能被第一个调度点推进；坏行 warn + 空图起步）。
+    swarmPlanWiring.bindRuntime(runtime);
+    await swarmPlanWiring.hydrate(traceContext);
+    // K6 ambient：runtime 实例就绪后绑定 fork/reminder/busy 驱动面，并（flag 开时）
+    // 启动 runner——异步驱动不 await（宿主关停走 app.close 的 dispose，overnight 同款）。
+    ambientWiring.bindRuntime(runtime);
+    await ambientWiring.start();
+    // K3 overnight 接线：controller 在 runtime 构造后装配（fork/turn 驱动都要 runtime
+    // 实例）。入口链路：sendInput 拦截（resolveACodeBuiltinHostCommand）→ 结构化动作 →
+    // controller.handleHostCommand；宿主/协议层也可经 app.startOvernightRun 直调同一面。
+    const overnightController: OvernightController = createOvernightController({
+      appOptions: options,
+      appVersion,
+      artifactStore,
+      configResult,
+      executionPort,
+      fileSystemPort,
+      imageProcessorPort,
+      logger,
+      mcpPort,
+      modelFactory,
+      permissionService,
+      runtime: runtime!,
+      runtimeConfig,
+      runtimeTaskRegistry,
+      sessionId,
+      sessionStore,
+      storageRoot,
+      traceContext,
+      workingDirectory,
     });
     completeAppStartup({
       sessionId,
@@ -854,6 +960,29 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
     scheduleStartupLogRetentionCleanup(loggerFactory, logger);
     const inputFacade = createInputFacade({
       artifactStore,
+      // K3 /overnight 族的宿主动作拦截：sendInput 顶解析（薄层，结构化动作判定），
+      // 命中即不进模型。指令文本随后以 controlOnly 用户轮落 transcript（/goal 的
+      // recordExternalUserPrompt 先例——可见、无模型输出），再返回宿主回执。
+      builtinHostCommandInterceptor: async (text, interceptorOptions) => {
+        const command = resolveACodeBuiltinHostCommand(text);
+        if (!command) return undefined;
+        const hostTraceContext = interceptorOptions?.traceContext ?? traceContext;
+        const result = await overnightController.handleHostCommand(command, hostTraceContext);
+        try {
+          await getRuntime().recordExternalUserPrompt(text, { traceContext: hostTraceContext });
+        } catch (error) {
+          // transcript 可观测面失败不吞宿主动作的回执（启动/取消已生效）。
+          logger.warn("Overnight host command transcript record failed", {
+            error: error instanceof Error ? error.message : String(error),
+            event: "overnight.command.transcript_failed",
+            module: "bootstrap.overnight",
+          });
+        }
+        return {
+          response: result.response,
+          ...(result.runId ? { runId: result.runId } : {}),
+        };
+      },
       customCommandPromptResolver: async (text, resolverOptions) => {
         const builtinPrompt = resolveACodeBuiltinPromptCommand(text, {
           // 动态工作流关闭时内置 `/workflow` 不得展开。目录侧已经把它从 `/` 面板
@@ -986,6 +1115,11 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
       sessionId,
       traceId: traceContext.traceId,
       runtime,
+      // K3 overnight 宿主结构化动作面（协议层/宿主直调；/overnight 文本拦截走 sendInput）。
+      startOvernightRun: async (input) =>
+        await overnightController.start(input.durationMs, input.traceContext),
+      cancelOvernightRun: () => overnightController.cancel(),
+      getActiveOvernightRunId: () => overnightController.getActiveRunId(),
       respondWorkspaceHookReview: (input) =>
         workspaceHookRuntimeSecurity?.respond(
           {
@@ -1171,6 +1305,14 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
       ...sessionFacade,
       close: async () => {
         try {
+          // K3 R1：app 关闭 = overnight run 终止（收口 runtime-task 投影，不等待在飞 turn）。
+          overnightController.dispose();
+          // K6：app 关闭 = ambient runner 停循环释放 claim + 账本缓冲落盘（生命周期
+          // 绑定 app，spec R5；dispose 幂等，flag 关时是纯 flush）。
+          await ambientWiring.dispose();
+          // K2 swarm：app 关闭 = 在飞 worker 子会话全部 abort（协作式取消；迟到结果由
+          // runner 的 stale run 防护丢弃，持久化行已随每次提交写穿）。
+          swarmPlanWiring.dispose();
           await closeSession?.();
         } finally {
           providerModelRuntime?.dispose();

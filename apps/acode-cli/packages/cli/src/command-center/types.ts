@@ -221,6 +221,14 @@ export type CommandCenterApp = {
     abortSignal?: AbortSignal;
     runId?: string;
   }): Promise<CommandCenterExpertWorkflowResult>;
+  /** K3 overnight 宿主动作面（/overnight 空闲态直调路径）：bootstrap 的 ACodeApp
+   * 超集赋值时结构兼容；缺席回「不可用」。回执 response 面向用户，不进模型。 */
+  startOvernightRun?(input: { durationMs: number }): Promise<{
+    ok: boolean;
+    runId?: string;
+    response: string;
+  }>;
+  cancelOvernightRun?(): { ok: boolean; runId?: string; response: string };
   /**
    * workflow run 的枚举面，服务 `/dwf list`。可选能力：dwf journal 不可用时整个 run service
    * 不构造，此成员随之缺席——命令据此回「不可用」而不是空表。

@@ -73,6 +73,10 @@ export * from "./plugins/index.js";
 // Workflow
 export * from "./workflow/index.js";
 
+// Swarm（K2 对话内 Swarm 任务图，specs/swarm-task-graph.md R1）：消费方是
+// core/src/swarm/graph/* 图引擎（第一段）与后续 swarm runner / plan-* 工具 handlers（R4/R5）。
+export * from "./swarm/index.js";
+
 // Logging
 export * from "./logging/logger.js";
 

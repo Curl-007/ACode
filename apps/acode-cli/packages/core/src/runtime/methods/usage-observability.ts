@@ -1,3 +1,4 @@
+/* eslint-disable max-lines -- 存量基线豁免:该文件先于 CLI lint 门禁建立即超限(根 lint 的 ignorePatterns 排除 apps/acode-cli,turbo lint 因此从未变绿)。头注豁免以恢复门禁信号;拆分重构超出本批范围。 */
 import {
   CoreErrorType,
   SessionEventType,
@@ -17,6 +18,7 @@ import type {
 import type { RuntimeModelTextResult } from "../types.js";
 import type { AgentRuntimeInternal } from "../internal.js";
 import { isModelContextExceededError } from "../helpers/index.js";
+import { appendAmbientUsageForTurn } from "../../ambient/turn-usage-hook.js";
 
 type ModelUsageQuerySource =
   | "main_turn"
@@ -132,10 +134,29 @@ export async function recordTurnUsageFact(
   runtime: AgentRuntimeInternal,
   input: RecordTurnUsageInput,
 ): Promise<void> {
+  const usage = createModelUsageSummaryFromEvents(input.events);
+
+  // K6（specs/ambient-budget-scheduler.md R1）：usage 滚动账本旁路写——预算公式的数据
+  // 源，单一写入点。放在 usageStore 早退**之前**：账本是 ambient 域自持有（与 SQLite
+  // 观测面独立），观测面缺席时预算数据照常记；旁路内部自吞错，不阻断 turn 主路径。
+  await appendAmbientUsageForTurn(
+    runtime.sessionId,
+    {
+      status: input.status,
+      inputTokens: usage?.inputTokens,
+      outputTokens: usage?.outputTokens,
+    },
+    {
+      warn: (message, details) =>
+        runtime.logger?.warn(message, {
+          ...details,
+          module: "core.runtime",
+        }),
+    },
+  );
+
   const usageStore = usageStoreFor(runtime);
   if (!usageStore) return;
-
-  const usage = createModelUsageSummaryFromEvents(input.events);
   const modelRequests = input.events.filter(
     (event) => event.type === SessionEventType.ModelRequest,
   );

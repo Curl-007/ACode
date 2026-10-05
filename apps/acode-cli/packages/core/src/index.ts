@@ -25,6 +25,9 @@ export type {
 export { createToolRegistry, ToolRegistry, ToolRegistryImpl } from "./tool/registry.js";
 export { createToolExecutor, ToolExecutor, ToolExecutorImpl } from "./tool/executor.js";
 export { builtInTools, registerBuiltInTools } from "./tool/handlers/index.js";
+// Open 工具的平台端口类型：宿主（bootstrap 的 CLI native opener / desktop host 下发链）
+// 实现此接口注入，缺席则工具不注册（K9 R2 port 门控）。
+export type { OpenPlatformPort } from "./tool/handlers/open.js";
 // dwf driver 的 submit profile 运行时守卫要把 typed 声明换回通用声明。
 export {
   createSubmitResultToolEntry,
@@ -108,6 +111,51 @@ export * from "./subagent/index.js";
 
 // Runtime task components
 export * from "./runtime-task/index.js";
+
+// Overnight 挂机执行（K3，specs/overnight-execution.md）：接缝层（fork 端口/runner）与
+// 纯模块层一起从包入口导出——bootstrap 装配处与宿主经 @acode/core 公开入口消费，
+// 不开深路径（package.json exports 只有 "."）。
+export * from "./overnight/constants.js";
+export * from "./overnight/duration.js";
+export * from "./overnight/manifest.js";
+export * from "./overnight/prompts.js";
+export * from "./overnight/supervisor.js";
+export * from "./overnight/preflight.js";
+export * from "./overnight/coordinator.js";
+export * from "./overnight/runner.js";
+
+// Ambient 预算感知调度（K6，specs/ambient-budget-scheduler.md）：引擎层从包入口导出
+// （overnight/swarm 同款纪律——bootstrap 装配经公开入口消费，不开深路径；package.json
+// exports 只有 "."）。这是接线批对引擎导出面缺口的最小补齐：引擎批只落了
+// core/src/ambient/ 八文件，未从 index 出口。turn-usage-hook 与 proposal 是 core
+// 内部消费面（usage-observability / runner），不进公开出口。
+export * from "./ambient/constants.js";
+export * from "./ambient/queue.js";
+export * from "./ambient/scheduler.js";
+export * from "./ambient/runner.js";
+export * from "./ambient/usage-ledger.js";
+export * from "./ambient/session-kind.js";
+// overnight fork 链同款消费的 active 分支选择器：ambient cycle/spawn 的 fork 目标
+// （「fork 全部父 messages 于当下」）必须复用 session-fork 的分支语义，不能手写第二份。
+export { forkSourceMessagesForSession } from "./runtime/methods/session-fork.js";
+
+// 对话内 Swarm 任务图（K2，specs/swarm-task-graph.md）：端口/存储/runner/投影/提醒与
+// 2b 接线辅助从包入口导出（bootstrap 装配与宿主经 @acode/core 公开入口消费，overnight
+// 同款纪律）；graph/* 纯函数引擎留给测试深路径，不进公开面。
+export * from "./swarm/port.js";
+export * from "./swarm/plan-store.js";
+export * from "./swarm/runner.js";
+export * from "./swarm/projection.js";
+export * from "./swarm/prompts.js";
+export * from "./swarm/control.js";
+export * from "./swarm/runtime-binding.js";
+// K2 共享执行原语（specs/swarm-task-graph.md 接口章）：expert node-runner 与 swarm
+// runner 的共同消费面，2b 的 bootstrap executeNode 闭包经公开入口消费（不开深路径）。
+export {
+  decideArtifactGateEnforcement,
+  executeNodeSubsession,
+  type ArtifactGateRejection,
+} from "./workflow/scheduler/node-execution-core.js";
 
 // Workflow components
 export * from "./workflow/definition.js";

@@ -5,8 +5,13 @@
   "exports": {
     ".": "./src/index.ts",
     "./stdio": "./src/stdio.ts",
+    "./harness": "./src/harness/index.ts",
+    "./harness-inprocess": "./src/harness-inprocess.ts",
     "./remote": "./src/remote/index.ts",
     "./remote/*.js": "./src/remote/*.ts"
+  },
+  "bin": {
+    "acode-harness": "./dist/entry-harness.js"
   },
   "scripts": {
     "dev": "tsup --watch --onSuccess 'node dist/entry-http.js'",

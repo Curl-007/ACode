@@ -1,0 +1,21 @@
+{
+  "name": "@acode/harness-sdk",
+  "private": true,
+  "description": "ACode Harness API v1 TypeScript SDK（connect/launch 双模式）；对外发布名预留 @acode/sdk",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "lint": "oxlint",
+    "lint:fix": "oxlint --fix"
+  },
+  "dependencies": {
+    "@acode/shared": "workspace:*",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "typescript": "^6.0.2"
+  }
+}

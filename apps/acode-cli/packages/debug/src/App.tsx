@@ -1,3 +1,4 @@
+/* eslint-disable max-lines -- debug 面板 UI 单文件：Network/Gantt/Timeline/Context/Cache 各视图面板共享 App 层的 trace 选择与拉取状态，拆成独立组件文件的状态穿透成本大于收益（初始导入即超长的存量基线豁免，与仓库 max-lines 头注惯例一致）。 */
 import {
   AlertTriangle,
   BarChart3,

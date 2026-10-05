@@ -11,6 +11,7 @@ import {
   type AgentRuntimeDeps,
   type ChildClientPortsContext,
   type PermissionService,
+  type SwarmPlanPort,
 } from "@acode/core";
 import {
   type ContextSourcePort,
@@ -89,6 +90,12 @@ export function createScriptWorkflowAgentRuntime(input: {
    * 不喂信号。与两个工具端口同路进 runtime deps。
    */
   modelRequestAdmission?: ModelRequestAdmission;
+  /**
+   * K2 swarm plan 端口（specs/swarm-task-graph.md R5）：swarm worker 子会话注入——
+   * taskType=workflow_child 下 runtime-tools 只注册只读 PlanStatus（worker 见图不自改图）。
+   * 纯可选透传（与 workflowSubmitPort 同款装配形态），dwf/overnight 调用方不传零影响。
+   */
+  swarmPlanPort?: SwarmPlanPort;
 }): AgentRuntime {
   // dwf actor 经 configOverrides.workflowActor 走 builder 的叠加路径，此时 systemPrompt 必须
   // 缺席（builder 对二者同在抛错）——父会话自带的 custom system prompt 不得漏给子代理，所以
@@ -145,6 +152,7 @@ export function createScriptWorkflowAgentRuntime(input: {
       ...(input.modelRequestAdmission
         ? { modelRequestAdmission: input.modelRequestAdmission }
         : {}),
+      ...(input.swarmPlanPort ? { swarmPlanPort: input.swarmPlanPort } : {}),
     },
   );
 }

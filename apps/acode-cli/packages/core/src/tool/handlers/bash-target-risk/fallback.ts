@@ -1,3 +1,4 @@
+/* eslint-disable max-lines -- 存量基线豁免:该文件先于 CLI lint 门禁建立即超限(根 lint 的 ignorePatterns 排除 apps/acode-cli,turbo lint 因此从未变绿)。头注豁免以恢复门禁信号;拆分重构超出本批范围。 */
 // 词法 fallback（AST 不可用时）（J1-1）。
 // 规格见 apps/acode-cli/specs/bash-target-blast-radius.md R4「词法 fallback」。
 //

@@ -1,3 +1,4 @@
+/* eslint-disable max-lines -- 存量基线豁免:该文件先于 CLI lint 门禁建立即超限(根 lint 的 ignorePatterns 排除 apps/acode-cli,turbo lint 因此从未变绿)。头注豁免以恢复门禁信号;拆分重构超出本批范围。 */
 import { DEFAULT_ACODE_MODEL_CONTEXT_BUDGET_STRATEGY, resolveExecutionState } from "@acode/shared";
 import type { BackgroundBashOutputResult } from "@acode/shared";
 import type { PromptCacheMissCause } from "@acode/contracts";
@@ -123,6 +124,7 @@ import type {
 } from "./types.js";
 import type { AgentRuntimeInternal } from "./internal.js";
 import { InMemoryRuntimeTaskRegistry, type RuntimeTaskRegistry } from "../runtime-task/registry.js";
+import type { SwarmPlanPort } from "../swarm/port.js";
 import type { ChildClientPortsContext, ClientFacingPorts } from "./helpers/child-client-ports.js";
 import type { ProjectMemoryExtractionScheduler } from "./helpers/project-memory-extraction.js";
 import { projectPersistentAgentMemoryTools } from "../subagent/persistent-memory.js";
@@ -177,6 +179,7 @@ export class AgentRuntime {
   private mcpToolsRegistered = false;
   private subagentPort?: SubagentPort;
   private dynamicWorkflowRunPort?: DynamicWorkflowRunPort;
+  private swarmPlanPort?: SwarmPlanPort;
   private modelCatalogPort?: ModelCatalogPort;
   private runtimeTaskRegistry: RuntimeTaskRegistry;
   private branchGeneration = 0;
@@ -299,6 +302,8 @@ export class AgentRuntime {
     this.pdfDocumentPort = deps.pdfDocumentPort;
     this.subagentPort = deps.subagentPort ?? runtime.createDefaultSubagentPort(deps);
     this.dynamicWorkflowRunPort = deps.dynamicWorkflowRunPort;
+    // K2 swarm plan 端口：turn 后调度点与 reminder 的运行期消费面（internal.ts 字段注释）。
+    this.swarmPlanPort = deps.swarmPlanPort;
     // GUI「配置」解析子代理模型用的目录（与工具上下文拿的是同一个端口）。
     this.modelCatalogPort = deps.modelCatalogPort;
     this.registry = deps.toolRegistry ?? createToolRegistry();

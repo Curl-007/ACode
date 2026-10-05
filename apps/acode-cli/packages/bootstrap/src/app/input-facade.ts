@@ -45,6 +45,16 @@ interface CreateInputFacadeDeps {
     text: string,
     options?: Pick<SubmitPromptOptions, "abortSignal" | "traceContext">,
   ) => Promise<string | undefined>;
+  /**
+   * 内置宿主动作命令拦截（K3 /overnight 族，specs/overnight-execution.md R1）：命中时
+   * 输入不进 runtime admission、不展开为模型 prompt——与 customCommandPromptResolver
+   * （prompt 展开面，产物进模型）刻意分开，避免宿主动作被误接进模型输入面。
+   * 返回 undefined = 非宿主命令，走正常输入面。
+   */
+  builtinHostCommandInterceptor?: (
+    text: string,
+    options?: Pick<SubmitPromptOptions, "abortSignal" | "traceContext">,
+  ) => Promise<{ response: string; runId?: string } | undefined>;
   inputHistoryStore?: InputHistoryStorePort;
   logger: Logger;
   prepareUserExecutionBoundary: PrepareUserExecutionBoundary;
@@ -191,6 +201,21 @@ export function createInputFacade(deps: CreateInputFacadeDeps): InputFacade {
     recallPreviousInputHistory,
     sendInput: async (input, options) => {
       const promptInput = normalizePromptInput(input);
+      // K3 宿主动作命令拦截先于一切 admission 边界：/overnight 族不开 turn、不进模型。
+      // 拦截面只挂在 sendInput（CLI/TUI 的输入汇合点）；submitPrompt 的调用方
+      // （command-center 等）在到达前已按 slash 命令分派，宿主结构化动作走
+      // app.startOvernightRun 面。
+      const intercepted = await deps.builtinHostCommandInterceptor?.(promptInput.text, {
+        abortSignal: options?.abortSignal,
+        traceContext: options?.traceContext ?? deps.traceContext,
+      });
+      if (intercepted) {
+        return {
+          kind: "host_command" as const,
+          ...(intercepted.runId ? { runId: intercepted.runId } : {}),
+          response: intercepted.response,
+        };
+      }
       const delivery = options?.delivery ?? "auto";
       const unsubscribe =
         options?.onEvent || options?.onTurnStartedObserved

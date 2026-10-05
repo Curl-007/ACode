@@ -158,6 +158,19 @@ export async function startPromptTurn(
     );
   }
 
+  if (admission.kind === "host_command") {
+    // K3 /overnight 族：输入被宿主动作消费（fork/启动 supervisor），Core 没开 turn、
+    // 没有 completion 可等。指令原文已由拦截面以 controlOnly 用户轮落 transcript，
+    // run 状态经 runtime-task 投影面读取（spec：不新增协议命令，receipt 沿用既有形态）。
+    clearPromptRecordState(
+      record,
+      previousAutomationId,
+      previousOffPeakTaskId,
+      previousBotDeliveryTarget,
+    );
+    return { admission, turnStarted: Promise.resolve() };
+  }
+
   if (admission.kind === "queued") {
     clearPromptRecordState(
       record,

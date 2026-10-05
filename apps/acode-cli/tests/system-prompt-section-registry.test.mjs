@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 
 /**
  * P2 验收测试：动态段注册表 + 组装管线升级。
@@ -532,6 +533,10 @@ test("(场景6) env 接线：builder 在 config.prompt 缺席时解析 env，两
 });
 
 test("(场景6) 注册表与旗标源码无任何网络/遥测引用", async () => {
+  // 源文件路径必须锚定测试文件自身位置而非 process.cwd()：cwd 相对路径在从
+  // apps/acode-cli 目录运行套件时会把 apps/acode-cli 拼接两次导致 ENOENT
+  // （同目录 auth-login-vault-wiring 等源码审读测试的既有纪律）。
+  const here = dirname(fileURLToPath(import.meta.url));
   const files = [
     "context/registry.ts",
     "context/registry-main.ts",
@@ -546,7 +551,7 @@ test("(场景6) 注册表与旗标源码无任何网络/遥测引用", async () 
   const forbidden = /fetch\(|XMLHttpRequest|otlp|new\s+\w*Exporter|from\s+["'][^"']*telemetry|https?:\/\//i;
   for (const file of files) {
     const content = await readFile(
-      join("apps", "acode-cli", "packages", "core", "src", ...file.split("/")),
+      join(here, "..", "packages", "core", "src", ...file.split("/")),
       "utf8",
     );
     assert.equal(forbidden.test(content), false, `${file} 不得含网络/遥测引用`);

@@ -280,3 +280,31 @@ NDJSON 帧协议）。R4/验收 8 的 import 断言相应落地为：适配层�
    - **F14（零凭据断言证据链弱）**：源码断言为词法 grep；`env: process.env`
      整包传入 services 是设计内路径，断言不能证明数据流层面无凭据接触——
      如需强证据需引入数据流级审查。
+
+### A.5 编译验证修复（2026-10-05，dev/0.0.3 debug 构建冒烟发现）
+
+K8/K7 合入后 CLI **CJS bundle**（`dist/acode.cjs`）全链不可用——tsx/ESM 下运行的
+980 项测试与 tsc 全绿掩盖了该断裂，仅编译产物路径可复现：
+
+1. **run.ts 静态导入 acp-command 引爆模块求值链**：`run.ts → acp-command.ts →
+   server harness-inprocess → services/node.ts（host 全量装配）→ terminalService
+   等顶层 `createRequire(import.meta.url)``；esbuild CJS 产物中 `import.meta.url`
+   为 undefined，**任何**走到 `import("./run.js")` 的命令（app-server、agent、
+   prepare-storage worker）在模块求值期即 exit 1，桌面 debug 构建的 host 存储
+   准备因此 transport_closed、启动卡死。修复双管：
+   - `case "acp"` 改**动态 import**（对齐 main.ts F5 的惰性纪律：acp 专属重依赖
+     不得由所有命令的求值路径承担）；
+   - `build.mjs` banner 注入 `const importMetaUrl = pathToFileURL(__filename).href`
+     + `define: {"import.meta.url": "importMetaUrl"}`——services host 装配链在 CJS
+     下恢复可用（`acode acp` 自身仍需该链）。`import.meta.dirname` **不** shim：
+     既有消费方（providerRuntimeResolver 等）按 CJS 下 undefined 做了显式空值
+     保护，shim 成 dist 目录反而构造错误候选路径。
+2. **esbuild alias 漏注册三个 shared 子路径**：`@acode/shared/harness-api`（K7 新
+   导出面，cli 的 acp 入口与 harness-sdk 引用）、`workspaceFileSearch` /
+   `workspaceFileEntriesCodec`（K5 起 services 导入链进入 CLI bundle 依赖图后暴露
+   的既有漏声明）。前缀改写会拼出 `src/index.ts/<subpath>` 非法路径（本文件
+   build.mjs 内既有规则注释同款）；已按惯例在通用 `@acode/shared` 条目前精确注册。
+
+验证：`pnpm --dir apps/acode-cli build` 15/15；prepare-storage worker 协议帧完整
+（storagePath→…→storagePrepared）；`acode acp` bundle 态握手正常；桌面 debug 构建
+隔离冒烟 host 5s 内 `local services ready`。

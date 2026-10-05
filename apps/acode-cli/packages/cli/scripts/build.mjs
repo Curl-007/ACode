@@ -192,6 +192,24 @@ export const resolveBuildAliases = ({
     rootDirectory,
     "../../packages/shared/src/workspace-hook-trust-store-file.ts",
   ),
+  // K7 Harness API 公开稳定面子路径（cli 的 acp 入口与 @acode/harness-sdk 引用）；
+  // 漏声明会被通用 "@acode/shared" 前缀改写成 `src/index.ts/harness-api`，
+  // CLI bundle/Desktop agent/SEA 打包失败（前缀改写规则同上）。
+  "@acode/shared/harness-api": resolve(
+    rootDirectory,
+    "../../packages/shared/src/harness-api/index.ts",
+  ),
+  // services fileService/workspaceFileSearch 直连子路径：K5 起的导入链把
+  // packages/services/src/file/* 拉进 CLI bundle 依赖图后暴露的既有漏声明，
+  // 同样必须在通用入口前精确声明（前缀改写规则同上）。
+  "@acode/shared/workspaceFileSearch": resolve(
+    rootDirectory,
+    "../../packages/shared/src/workspaceFileSearch.ts",
+  ),
+  "@acode/shared/workspaceFileEntriesCodec": resolve(
+    rootDirectory,
+    "../../packages/shared/src/workspaceFileEntriesCodec.ts",
+  ),
   "@acode/shared/acodeEndpoint": resolve(
     rootDirectory,
     "../../packages/shared/src/acodeEndpoint.ts",
@@ -225,12 +243,20 @@ export const buildCli = async ({
   await build({
     banner: {
       // SEA 与普通 CLI 共用入口；声明必须在 Agent 初始化和原生资源解压前可独立读取。
-      js: `#!/usr/bin/env node\n"use strict";\nif (process.argv.length === 3 && process.argv[2] === "--licenses") { const sea = require("node:sea"); const nodeNotice = sea.isSea() ? "\\n\\n## Bundled Node.js runtime\\n\\n" + sea.getAsset("acode-node-license", "utf8") : ""; process.stdout.write(${JSON.stringify(notices.toString("utf8"))} + nodeNotice, () => process.exit(0)); } else {`,
+      // importMetaUrl：CJS 产物中 import.meta.url 会被 esbuild 置空（empty-import-meta），
+      // services host 装配链（terminalService/automationRepo/taskIndexRepo 等）顶层的
+      // createRequire(import.meta.url) 会在模块求值期抛 ERR_INVALID_ARG_TYPE。单文件
+      // bundle 的 __filename 即产物路径，createRequire 以此解析 builtin 与向上
+      // node_modules 均成立；SEA 态 __filename 为可执行文件路径，builtin 解析同样不受影响。
+      // import.meta.dirname 不 shim：其消费方（providerRuntimeResolver 等）按 CJS 下
+      // undefined 做了显式空值保护，shim 成 dist 目录反而会构造出错误的候选路径。
+      js: `#!/usr/bin/env node\n"use strict";\nif (process.argv.length === 3 && process.argv[2] === "--licenses") { const sea = require("node:sea"); const nodeNotice = sea.isSea() ? "\\n\\n## Bundled Node.js runtime\\n\\n" + sea.getAsset("acode-node-license", "utf8") : ""; process.stdout.write(${JSON.stringify(notices.toString("utf8"))} + nodeNotice, () => process.exit(0)); } else {\nconst importMetaUrl = require("node:url").pathToFileURL(__filename).href;`,
     },
     footer: { js: "}" },
     bundle: true,
     define: {
       __CLI_VERSION__: JSON.stringify(cliVersion),
+      "import.meta.url": "importMetaUrl",
     },
     entryPoints: [resolve(cliDirectory, "src/main.ts")],
     // Ink 7 and yoga-layout use top-level await, so the CJS CLI bundle loads the TUI

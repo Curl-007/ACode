@@ -1,0 +1,126 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "tags": ["-lintignore"],
+  "workspaces": {
+    ".": {
+      "entry": [
+        ".release-it.mjs",
+        ".vscode/*.mjs",
+        // 运维/手工脚本：由根 package.json scripts、CI 或人工按需调用，彼此无 import 关系
+        "scripts/**/*.{mjs,cjs}"
+      ],
+      "ignoreDependencies": [
+        // release-it 插件，由 .release-it.mjs 的 plugins 配置以字符串加载，不是 ESM import
+        "@release-it/conventional-changelog",
+        // 根 package.json 的 peerDependencies（本任务不可改字段）声明了该包，devDependencies 用于满足该 peer；实际消费者 packages/ui 已自行声明
+        "@tanstack/react-virtual",
+        // apps/acode-cli/evals/runner.mjs 显式调用 ../../node_modules/.bin/turbo；cli 的 build:sea 脚本用 pnpm --dir <仓库根> exec turbo，消费的都是根 workspace 的 turbo 二进制
+        "turbo"
+      ]
+    },
+    "packages/desktop": {
+      "entry": [
+        "electron-builder.config.js",
+        // 构建/运维脚本：由 package.json scripts、CI 与人工按需调用
+        "scripts/**/*.{mjs,cjs}",
+        "src/renderer/*.html",
+        "src/renderer/cuaPermissionPanel.ts",
+        "src/renderer/src/resource-manager.tsx"
+      ],
+      // powershell-command.d.mts / target-platform.d.mts：同目录 .mjs 运维脚本的类型伴生文件（ambient 声明，不会被 import）
+      "ignore": ["scripts/*.d.mts"],
+      "ignoreDependencies": [
+        // scripts/bundle.mjs 的 requiredRuntimeModules 机械校验项：electron-builder hoisted 布局下 @larksuiteoapi 等运行时依赖 @babel/runtime，缺了会在用户启动时才崩
+        "@babel/runtime",
+        // tsup.config.ts desktopNodeRuntimeExternals 外置；导入方是被内联打包的 ../services/src（feishu bot provider）
+        "@larksuiteoapi/node-sdk",
+        // node-pty 平台预编译二进制：scripts/node-pty-package-assets.mjs、desktop-native-package-policy.mjs、scripts/prepare-prebuilds.mjs 按目标平台选择复制，无 JS import
+        "@lydell/node-pty-linux-arm64",
+        "@lydell/node-pty-linux-x64",
+        // tsup.config.ts noExternal 显式要求内联其 TS 源码（Electron 生产运行时没有 TS loader，不能留裸包引用）
+        "@acode/provider",
+        "@acode/provider-node",
+        // scripts/bundle.mjs 的 requiredRuntimeModules 机械校验项：历史上 electron-builder 漏装它导致安装包启动即 Cannot find module
+        "module-details-from-path",
+        // tsup.config.ts desktopNodeRuntimeExternals 外置（内部动态 require("crypto") 不能内联）；导入方是被内联的 ../services/src/runtime-tools/appCaCert.ts
+        "node-forge",
+        // src/main/browserView/playwrightInjectedScriptSource.ts 通过 runtimeRequire.resolve("playwright-core/package.json") 运行时定位，createRequire 形式 knip 静态分析不可见
+        "playwright-core",
+        // tsup.config.ts desktopNodeRuntimeExternals 外置；src/host/index.ts 延迟加载的 remote backend（内联的 ../server/src/remote/*）导入 ssh2，CJS 依赖链在 asar 内需保持外置
+        "ssh2",
+        // tsup.config.ts desktopNodeRuntimeExternals 外置（ZIP 解包器内部 CJS require("fs") 不能内联）+ scripts/bundle.mjs requiredRuntimeModules 机械校验项
+        "yauzl",
+        // electron-builder.config.js 与 scripts/bundle.mjs、app-asar-repack.mjs 用 createRequire.resolve("@electron/asar/package.json") 定位 asar CLI 直接以 Node 执行（注释明确：不依赖 .bin shim），knip 不可见
+        "@electron/asar",
+        // scripts/node-pty-rebuild.mjs（postinstall）经平台条件变量 spawn "electron-rebuild"/"electron-rebuild.cmd" 二进制，knip binaries 检测识别不了变量形式
+        "@electron/rebuild",
+        // vite.config.ts 用 createRequire 加载 istanbul-lib-instrument 做 ACODE_E2E_COVERAGE=1 构建的插桩，knip 静态分析不可见
+        "istanbul-lib-instrument"
+      ]
+    },
+    "packages/server": {
+      // src/index.ts 是 knip 默认 entry、build-remote.ts 由 package.json build:remote 脚本覆盖，均无需重复声明
+      "entry": ["src/entry-stdio.ts"],
+      "ignoreDependencies": [
+        // 以下 4 项是 node-pty 的平台预编译二进制：acode-server-cli 的 tsup externals/packaging/stage.ts 与远程部署链路按目标平台复制分发，无 JS import
+        "@lydell/node-pty-darwin-arm64",
+        "@lydell/node-pty-darwin-x64",
+        "@lydell/node-pty-linux-arm64",
+        "@lydell/node-pty-linux-x64",
+        // 以下各项均列入 tsup.config.ts 的 SERVER_HTTP_EXTERNAL_DEPENDENCIES：构建时内联 ../services/src 等兄弟包源码，这些包保持外置、运行时从本包 node_modules 解析，因此必须在这里声明（导入方在内联源码或其 CJS 传递依赖里，knip 按 workspace 归因看不到）
+        "axios",
+        "combined-stream",
+        "follow-redirects",
+        "form-data",
+        // 同上外置策略；导入方是被内联的 ../services/src/runtime-tools/appCaCert.ts（动态 require("crypto") 不能内联）
+        "node-forge",
+        // 同上外置策略；导入方是被内联的 ../services/src/terminal/*（PTY）
+        "node-pty",
+        "proxy-from-env",
+        // 同上外置策略；导入方是被内联的 ../services/src/providers/api/nodeApiNetwork.ts 等
+        "undici",
+        // 同上外置策略；导入方是被内联的 ../services/src/settings-sync|skill-sync|skills|subagents|terminal 源码
+        "yaml",
+        // 同上外置策略（云内容 ZIP 解包链路，CJS require("fs") 不能内联）
+        "yauzl",
+        // 同上外置策略；导入方是被内联的 ../services/src/feedback/feedbackLogArchive.ts
+        "yazl"
+      ]
+    },
+    "packages/services": {
+      // src/index.ts 是 knip 默认 entry，无需重复声明
+      "entry": ["src/storage/module.ts"]
+    },
+    "packages/ui": {
+      "ignoreDependencies": [
+        // 以下 4 项由 packages/ui/src/components/**（ai-elements，被下方全局 ignore 排除在 knip 分析外）消费：persona.tsx、canvas/connection/controls/edge/node/panel/toolbar.tsx、terminal.tsx、conversation.tsx
+        "@rive-app/react-webgl2",
+        "@xyflow/react",
+        "ansi-to-react",
+        "use-stick-to-bottom"
+      ]
+    },
+    "packages/acode-server-cli": {
+      // verify-remote-ssh*.mjs 是手工运维脚本，无 import 关系
+      "entry": ["scripts/**/*.mjs"]
+    },
+    "apps/acode-cli": {
+      // shadow-replay.mjs 与 evals recipes 由人工/evals runner 按需调用
+      "entry": ["scripts/**/*.mjs", "evals/**/*.mjs"],
+      "ignoreDependencies": [
+        // 嵌套包 lint 脚本（core/adapters/tui/node-repl-host/browser-use-plugin 等均未自行声明）裸调 oxlint，二进制由 workspace 根 node_modules/.bin 提供，跨 workspace knip 无法归因
+        "oxlint",
+        // packages/cli/scripts/build-sea.mjs 直接 import postject 做 SEA 注入，cli 未自行声明，沿目录链解析到 workspace 根的声明
+        "postject"
+      ]
+    },
+    "apps/acode-cli/packages/node-repl-host": {
+      // tsc emitDeclarationOnly 的包 types 入口产物（tsconfig outDir=dist-types），已入 git、随 build 再生，不作源码分析
+      "ignore": ["dist-types/**"]
+    },
+    "apps/acode-cli/packages/browser-use-plugin": {
+      "entry": ["src/browser-client.ts"]
+    }
+  },
+  "ignore": [".agents/**", "packages/ui/src/components/**"]
+}

@@ -14,7 +14,8 @@
   },
   "scripts": {
     "lint": "oxlint",
-    "lint:fix": "oxlint --fix"
+    "lint:fix": "oxlint --fix",
+    "test": "node --import tsx --test \"test/**/*.test.ts\" \"tests/**/*.test.mjs\""
   },
   "dependencies": {
     "@larksuiteoapi/node-sdk": "1.64.0",
@@ -35,9 +36,7 @@
     "zod": "4.6.5"
   },
   "devDependencies": {
-    "@pierre/diffs": "^1.1.22",
     "@types/node": "^25.5.0",
-    "esbuild": "^0.25.0",
     "typescript": "^6.0.2"
   }
 }

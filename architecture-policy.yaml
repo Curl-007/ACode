@@ -21,7 +21,9 @@ modules:
     roots: [packages/services/src/session]
     managed: false
     requires: [shared]
-    publicEntrypoints: [packages/services/src/session/contract.ts]
+    # contract.ts 是 session 的迁移目标入口；文件落地前不在这里声明——
+    # checker 会校验 publicEntrypoints 的存在性（missing-public-entrypoint），
+    # 幻影声明会让治理报告失真（2026-10-05 审查发现并移除）。
     owner: conversation
   - id: storage
     roots: [packages/services/src/storage]
@@ -57,6 +59,11 @@ modules:
     managed: false
 
 global:
+  # max-file-lines 对未纳管（managed: false）模块以「只减不增」ratchet 生效：
+  # 存量超限文件全部记录进 .architecture-baseline.json（指纹不含行数，存量继续
+  # 增长不产生新违规），任何新增超限文件即失败；文件缩回上限内后必须保持干净。
+  # 纳管模块维持严格语义：行数入指纹，超限文件任何增长都是新违规。
+  # 测试/评测文件（*.test.*、tests/、test/、__tests__/、evals/）不参与 ratchet。
   maxFileLines: 400
   maxContractLines: 300
   maxPublicMethods: 12

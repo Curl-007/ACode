@@ -8,7 +8,8 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "lint": "oxlint"
+    "lint": "oxlint",
+    "test": "node --import tsx --test \"tests/**/*.test.mjs\""
   },
   "dependencies": {
     "@acode/provider": "workspace:*",
@@ -17,7 +18,6 @@
   },
   "devDependencies": {
     "@types/node": "^25.5.0",
-    "@acode/model-option-map": "workspace:*",
     "typescript": "^6.0.2"
   }
 }

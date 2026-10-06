@@ -17,7 +17,8 @@
     "demo:messageport": "node --loader ts-node/esm examples/03-ipc-server-client.ts",
     "demo:remote": "node --loader ts-node/esm examples/04-remote-connection.ts",
     "lint": "oxlint",
-    "lint:fix": "oxlint --fix"
+    "lint:fix": "oxlint --fix",
+    "test": "node --import tsx --test \"test/**/*.test.ts\""
   },
   "devDependencies": {
     "ts-node": "^10.9.0",

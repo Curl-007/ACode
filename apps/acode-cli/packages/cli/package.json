@@ -28,7 +28,6 @@
     "@acode/bootstrap": "workspace:*",
     "@acode/contracts": "workspace:*",
     "@acode/core": "workspace:*",
-    "@acode/dynamic-workflow-runtime": "workspace:*",
     "@acode/harness-sdk": "workspace:*",
     "@acode/i18n": "workspace:*",
     "@acode/provider-node": "workspace:*",

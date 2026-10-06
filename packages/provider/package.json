@@ -8,10 +8,10 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "lint": "oxlint"
+    "lint": "oxlint",
+    "test": "node --import tsx --test \"test/**/*.test.ts\""
   },
   "dependencies": {
-    "@acode/model-option-map": "workspace:*",
     "@acode/shared": "workspace:*",
     "zod": "4.6.5"
   },

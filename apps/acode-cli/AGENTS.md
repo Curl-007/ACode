@@ -103,5 +103,5 @@
 ## 验证
 
 - 在完成代码变更之前，从仓库根目录运行 `pnpm typecheck` 和 `pnpm lint`；涉及 CLI 代码时，还应运行 `pnpm --dir apps/acode-cli typecheck` 和 `pnpm --dir apps/acode-cli lint`。
-- 测试入口以目标包当前的 `package.json` 和实际测试文件为准，不假定存在统一的测试命令；行为变更应执行对应测试，交互变更应覆盖 E2E 场景。
+- 测试入口：本目录 `package.json` 的 `test` 脚本（`pnpm --dir apps/acode-cli test`，即 `node --import tsx --test "tests/**/*.test.mjs"`，直接跑 TS/MJS 无需预构建）；仓库根目录 `pnpm test` 会连同各 packages 一起串行执行。行为变更应执行对应测试，交互变更应覆盖 E2E 场景；仍不假定存在统一的 E2E 命令。
 - 如实记录执行过的命令、结果和未验证范围；缺少测试入口、已有失败或环境限制不得写成通过。

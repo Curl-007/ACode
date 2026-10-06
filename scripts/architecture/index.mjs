@@ -21,6 +21,10 @@ function fingerprint(rule, file, detail = "") {
   return createHash("sha256").update(`${rule}\0${file}\0${detail}`).digest("hex").slice(0, 16);
 }
 
+// legacy ratchet 的豁免面：测试/评测文件不参与「超限文件只减不增」基线，
+// 避免门禁阻碍补测试（长测试文件是常态，且测试不是生产代码债）。
+const RATCHET_EXEMPT_PATTERN = /(?:\.test\.[cm]?[jt]sx?$)|(?:^|\/)(?:tests?|__tests__|evals)(?:\/|$)/;
+
 function violation({ rule, file, detail, message, module, global = false }) {
   return {
     rule,
@@ -127,22 +131,69 @@ export async function checkArchitecture({ cwd = process.cwd(), changedFiles = nu
     }
   }
 
+  // 声明的公开入口必须真实存在：防止「策略声明了 contract 但文件不存在」的幻影
+  // 入口误导治理（2026-10-05 深度审查发现 session 模块声明的 contract.ts 从未落地，
+  // 该声明已随本次校验的引入从策略中移除；校验本身防止未来再出现同类幻影）。
+  for (const module of policy.modules) {
+    for (const entry of module.publicEntrypoints) {
+      const candidates = [
+        path.resolve(cwd, entry),
+        ...module.roots.map((root) => path.resolve(root, entry)),
+      ];
+      let found = false;
+      for (const candidate of candidates) {
+        try {
+          await fs.stat(candidate);
+          found = true;
+          break;
+        } catch {}
+      }
+      if (!found) {
+        violations.push(
+          violation({
+            rule: "missing-public-entrypoint",
+            file: path.join(cwd, "architecture-policy.yaml"),
+            detail: `${module.id}:${entry}`,
+            module,
+            message: `模块 ${module.id} 声明的公开入口不存在: ${entry}`,
+            global: true,
+          }),
+        );
+      }
+    }
+  }
+
   for (const file of files) {
     const module = modulesByFile.get(file);
-    if (!module || (policy.global.managedOnly && !module.managed)) continue;
+    if (!module) continue;
+    // 未纳管模块只参与 max-file-lines 的「只减不增」ratchet，其余规则维持
+    // managedOnly 语义（2026-10-05 深度审查：此前 15/16 模块未纳管导致
+    // 400 行上限对 99% 代码完全不生效，489 个超限文件无一被度量）。
+    const legacyRatchet = policy.global.managedOnly && !module.managed;
     const source = await fs.readFile(file, "utf8");
     const lines = source.split(/\r?\n/).length;
-    if (lines > policy.global.maxFileLines && !isException(policy, "max-file-lines", file, cwd)) {
+    if (
+      lines > policy.global.maxFileLines &&
+      !isException(policy, "max-file-lines", file, cwd) &&
+      !(legacyRatchet && RATCHET_EXEMPT_PATTERN.test(posix(file)))
+    ) {
       violations.push(
         violation({
           rule: "max-file-lines",
           file,
-          detail: String(lines),
+          // ratchet 语义：未纳管模块的指纹不含行数——存量超限文件继续增长不产生
+          // 新违规（它们已在基线里），但任何新的超限文件都是新指纹即失败；
+          // 文件缩回上限内后再次超限同样是新违规（一旦干净必须保持干净）。
+          // 纳管模块保持严格语义：行数入指纹，任何增长都是新违规。
+          detail: legacyRatchet ? "legacy-over-limit" : String(lines),
           module,
-          message: `文件 ${lines} 行，超过上限 ${policy.global.maxFileLines} 行`,
+          message: legacyRatchet
+            ? `文件 ${lines} 行，超过上限 ${policy.global.maxFileLines} 行（legacy ratchet：超限文件只减不增）`
+            : `文件 ${lines} 行，超过上限 ${policy.global.maxFileLines} 行`,
         }),
       );
     }
+    if (legacyRatchet) continue;
     if (path.basename(file).startsWith("contract.") && lines > policy.global.maxContractLines) {
       violations.push(
         violation({
@@ -304,7 +355,19 @@ export async function checkArchitecture({ cwd = process.cwd(), changedFiles = nu
     : violations;
   const baselineViolations = scoped.filter((item) => baselineFingerprints.has(item.fingerprint));
   const newViolations = scoped.filter((item) => !baselineFingerprints.has(item.fingerprint));
-  return { policy, violations: scoped, baselineViolations, newViolations, baseline };
+  // ratchet 总量从未过滤的全量违规统计（--changed 模式下 scoped 只是子集，
+  // 报告里需要看到全仓存量趋势，判断「只减不增」是否在兑现）。
+  const legacyOverLimit = violations.filter(
+    (item) => item.rule === "max-file-lines" && item.detail === "legacy-over-limit",
+  ).length;
+  return {
+    policy,
+    violations: scoped,
+    baselineViolations,
+    newViolations,
+    baseline,
+    summary: { legacyOverLimit },
+  };
 }
 
 export async function updateBaseline({ cwd = process.cwd(), violations }) {
@@ -322,69 +385,9 @@ export async function changedFilesFromGit(cwd = process.cwd()) {
   return [...new Set([...diff, ...untracked])];
 }
 
-export async function generateContext({ cwd = process.cwd(), moduleId }) {
-  const policy = await loadPolicy(cwd);
-  const module = policy.modules.find((item) => item.id === moduleId);
-  if (!module) throw new Error(`未知模块: ${moduleId}`);
-  const files = await discoverFiles(policy);
-  const moduleFiles = files.filter((file) => moduleForFile(file, policy)?.id === moduleId);
-  const manifest = moduleFiles.find((file) => path.basename(file) === "module.ts");
-  const contracts = moduleFiles.filter((file) => path.basename(file).startsWith("contract."));
-  const dependencyContracts = module.requires.flatMap((dependencyId) => {
-    const dependencyFiles = files.filter(
-      (file) => moduleForFile(file, policy)?.id === dependencyId,
-    );
-    return dependencyFiles
-      .filter((file) => path.basename(file) === "contract.ts")
-      .map((file) => `- ${posix(path.relative(cwd, file))}`);
-  });
-  return [
-    `# Architecture context: ${module.id}`,
-    `owner: ${module.owner ?? "unassigned"}`,
-    `managed: ${module.managed}`,
-    `requires: ${module.requires.join(", ") || "none"}`,
-    "",
-    "## Files",
-    ...(manifest ? [`- ${posix(path.relative(cwd, manifest))}`] : ["- module.ts: missing"]),
-    ...contracts.map((file) => `- ${posix(path.relative(cwd, file))}`),
-    ...module.publicEntrypoints.map((entry) => `- public: ${entry}`),
-    "",
-    "## Direct dependency contracts",
-    ...(dependencyContracts.length > 0 ? dependencyContracts : ["- none discovered"]),
-    "",
-    "## Boundaries",
-    "- Cross-module imports must use declared requirements and public entrypoints.",
-    "- Add a contract example before exposing a new capability.",
-  ].join("\n");
-}
-
-export function formatReport(result) {
-  const lines = [
-    `architecture: ${result.newViolations.length === 0 ? "OK" : "FAILED"}`,
-    `violations: ${result.violations.length}`,
-    `baseline: ${result.baselineViolations.length}`,
-    `new: ${result.newViolations.length}`,
-  ];
-  for (const item of result.newViolations)
-    lines.push(`- ${item.rule} ${item.file}: ${item.message}`);
-  return lines.join("\n");
-}
-
-export function formatMarkdownReport(result) {
-  const lines = [
-    `# Architecture report`,
-    "",
-    `- Status: **${result.newViolations.length === 0 ? "OK" : "FAILED"}**`,
-    `- Violations: ${result.violations.length}`,
-    `- Baseline: ${result.baselineViolations.length}`,
-    `- New: ${result.newViolations.length}`,
-  ];
-  if (result.newViolations.length > 0) {
-    lines.push("", "## New violations", "", "| Rule | File | Message |", "| --- | --- | --- |");
-    for (const item of result.newViolations)
-      lines.push(`| ${item.rule} | ${item.file} | ${item.message.replaceAll("|", "\\|")} |`);
-  }
-  return lines.join("\n");
-}
+// generateContext / formatReport / formatMarkdownReport 已抽至 reporting.mjs
+// （ratchet 落地后本文件超出 oxlint max-lines）；此处 re-export 保持既有导入面
+// （architecture-check.mjs 与技能脚本从本模块导入）。
+export { generateContext, formatReport, formatMarkdownReport } from "./reporting.mjs";
 
 export { loadPolicy };

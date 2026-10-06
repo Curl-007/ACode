@@ -16,8 +16,5 @@
     "build": "tsc",
     "clean": "node ../../scripts/clean-dist.mjs",
     "typecheck": "tsc --noEmit"
-  },
-  "dependencies": {
-    "@acode/shared-types": "workspace:*"
   }
 }

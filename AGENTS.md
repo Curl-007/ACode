@@ -15,6 +15,8 @@
 | ---------------- | ----------------------------------------- |
 | 类型检查         | `pnpm typecheck`                          |
 | Lint             | `pnpm lint` / `pnpm lint:fix`             |
+| 测试（全部包）   | `pnpm test`                               |
+| 测试（单个包）   | `pnpm --filter <包名> test`               |
 | 格式检查         | `pnpm fmt:check`                          |
 | 桌面开发         | `pnpm dev:desktop`                        |
 | Web 开发         | `pnpm dev:web`                            |
@@ -24,7 +26,7 @@
 | 未使用依赖与导出 | `pnpm knip`                               |
 | 导出引用查询     | `pnpm dep:refs --list-exports <file>`     |
 
-测试入口以目标包当前的 `package.json` 和实际测试文件为准，不假定存在统一的单测或 E2E 命令。
+各包测试入口是其 `package.json` 的 `test` 脚本（`node --import tsx --test`，直接跑 TS/MJS 测试文件，无需预构建）；根目录 `pnpm test` 串行执行全部包。CI（`.github/workflows/ci.yml`）与发布 verify 门禁以此为准。仍不假定存在统一的 E2E 命令。
 
 - `packages/desktop`：Electron main、host、renderer。
 - `packages/web`、`packages/server`：Web 客户端与服务端。
@@ -62,7 +64,7 @@
 
 ## 进程、协议与远程控制
 
-- Desktop app 通过 stdio 与 Agent 通信。协议改动同步更新 `packages/shared/src/acode-protocol/index.ts`，提供严格类型与运行时校验。
+- Desktop app 通过 stdio 与 Agent 通信。协议改动优先进 `packages/shared/src/acode-protocol-v4/`（新命令/事件只进 v4，提供严格类型与运行时校验）；`packages/shared/src/acode-protocol/index.ts` 是 legacy 存量面，只删不增，按 `docs/legacy-protocol-convergence-plan.md` 的里程碑整体退役。
 - Main 负责窗口、原生操作、进程调度和消息转发，不承载 task/session 业务状态。
 - 每个窗口使用一个 window-scoped Local Host；本地 workspace 共享该 Host。远程 workspace 由窗口内的连接注册表管理，不另建 Desktop Remote Host。
 - 手机远控连接桌面已有 Host attachment，复用会话运行时；不为手机另起 Agent、Local Host 或远程会话。

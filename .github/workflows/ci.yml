@@ -1,0 +1,57 @@
+# 持续集成门禁：每次 push / PR 运行静态检查与全量测试。
+#
+# 背景（2026-10-05 深度审查）：此前仓库没有任何自动化测试入口——package.json 无
+# test 脚本、CI 只跑 typecheck 与打包、husky 钩子未入库，提交信息宣称的「全绿」
+# 依赖手工执行且不可复现（Windows 工作区实测 979/980）。本 workflow 与各包固化的
+# `test` 脚本（node --import tsx --test）一起构成「绿」的唯一权威判定：
+# - typecheck / lint / architecture:check：静态与架构基线；
+# - pnpm test：pnpm -r --workspace-concurrency=1 run test，串行跑全部 10 个包的套件
+#   （services/shared/ui/desktop/server/provider/provider-node/rpc/harness-sdk/CLI）。
+# 任一步骤失败即门禁失败；本文件不做 baseline 自动刷新（与 architecture 技能约定一致）。
+name: CI
+
+on:
+  push:
+    branches: ["main", "dev/**", "release/**", "hotfix/**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Architecture check
+        run: pnpm architecture:check
+
+      # 死文件/死依赖门禁（2026-10-05 起清理至零并冻结）；exports/types 两类
+      # 是登记在 docs/tech-debt-backlog.md 的 backlog，不在门禁内。
+      - name: Knip (files & dependencies gate)
+        run: pnpm knip:gate
+
+      - name: Tests (all packages)
+        run: pnpm test

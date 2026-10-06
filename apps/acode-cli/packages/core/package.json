@@ -36,7 +36,6 @@
     "@acode/shared": "workspace:*",
     "@acode/shared-types": "workspace:*",
     "@acode/acode-cua": "workspace:*",
-    "cheerio": "^1.0.0",
     "diff": "^9.0.0",
     "ipaddr.js": "1.9.1",
     "marked": "16.4.2",

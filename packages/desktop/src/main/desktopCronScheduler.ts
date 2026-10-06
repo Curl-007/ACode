@@ -11,10 +11,13 @@ import {
 } from "@acode/shared";
 import { buildHostProcessEnv, schedulerModulePath } from "./desktopRuntimeEnv.js";
 import { registerSchedulerProcess, unregisterSchedulerProcess } from "./resourceManagerWindow.js";
+// 协议规范定义在 src/scheduler/schedulerProtocol.ts；main 编译单元（rootDir=src/main）
+// 不能直接 import ../scheduler 源文件（TS6059/TS6307），改用 src/main 内的类型镜像。
+// 修改消息协议时必须两处同步。
 import type {
   MainToSchedulerMessage,
   SchedulerToMainMessage,
-} from "../scheduler/schedulerProtocol.js";
+} from "./schedulerProtocolTypes.js";
 
 export interface CronRunResultPayload {
   runId: string;

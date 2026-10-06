@@ -4,7 +4,9 @@
  * 遍历、分类、聚合逻辑全部来自 @acode/services（单一扫描路径）。
  */
 import { isMainThread, parentPort, workerData } from "node:worker_threads";
-import type { StorageRootSpec } from "@acode/services";
+// StorageRootSpec 由 @acode/shared 定义；@acode/services 入口没有再导出它。
+// 纯类型导入，编译后被擦除，worker 运行时仍只加载 @acode/services/node。
+import type { StorageRootSpec } from "@acode/shared";
 import { runStorageScan } from "@acode/services/node";
 import {
   isStorageScanWorkerCommand,

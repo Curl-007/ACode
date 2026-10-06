@@ -169,8 +169,11 @@ scheduler(utilityProcess) 触发 / 手动 Run now
 ## 接口
 
 - `packages/shared/src/automation-types.ts`：`ACodeAutomationRun.notifyDecision?`（R4）。
-- `packages/desktop/src/host/index.ts`：终态回调改造（R1/R2/R3 执行点）；
-  `dispatchCronRun` prompt 拼接（R2 注入点，指令文本为 host 常量）。
+- 终态回调改造（R1/R2/R3 执行点）与 `dispatchCronRun` prompt 拼接（R2 注入点，指令文本为
+  host 常量）：原落点 `packages/desktop/src/host/index.ts`，2026-10-05 host 领域拆分后
+  位于 `packages/desktop/src/host/cronRunDispatch.ts`（派发/注入）与
+  `packages/desktop/src/host/cronRunTracking.ts`（终态回调/订阅追踪）；守护测试
+  `tests/automation-heartbeat-protocol.test.mjs` 的扫描目标已同步迁移。
 - `packages/desktop/src/host/cronRunLifecycle.ts`（或同目录新模块）：决策解析纯函数
   `parseAutomationNotice(messageText): "notify" | "dont_notify" | "absent"`——纯函数、
   无 IO，可单测。

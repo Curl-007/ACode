@@ -1,5 +1,6 @@
 /* eslint-disable max-lines -- host process 统一处理 main↔host 生命周期、日志、ACode Agent，拆分前先保持跨进程消息收口。 */
 import { bindDatabaseStartupRelay } from "./databaseStartupRelay.js";
+import { asWebContentsId, asWindowId, type WebContentsId } from "./desktopWindowIds.js";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import {
@@ -25,6 +26,7 @@ import {
   LAUNCH_MARKS_QUERY_KEY,
   RUNTIME_ACODE_DEBUG,
   serializeLaunchMarks,
+  type RemoteTarget,
   type WorkspacePurpose,
   ACODE_DESKTOP_CONTEXT_PROMPT_ENABLED_ENV,
   ACODE_HOST_MAX_OLD_SPACE_MB_ENV_KEY,
@@ -157,7 +159,7 @@ export function spawnHostProcess(
     };
     broadcastHub: BroadcastHub;
     taskRealtimeBus?: TaskRealtimeBus;
-    windowHostProcessMap: Map<number, ElectronUtilityProcess>;
+    windowHostProcessMap: Map<WebContentsId, ElectronUtilityProcess>;
     hostRunningTaskCountMap: Map<ElectronUtilityProcess, number>;
     onWorkspaceRunningTaskCountChanged?: (
       child: ElectronUtilityProcess,
@@ -685,16 +687,18 @@ export function spawnHostProcess(
     }
   }
 
-  const windowId = win.webContents.id;
+  // ID 空间显式化（desktopWindowIds.ts）：broadcastHub 走 WebContentsId，
+  // taskRealtimeBus 走 WindowId——历史上同一函数混用两套裸 number。
+  const webContentsId = asWebContentsId(win.webContents.id);
   const shouldRegisterBroadcast = options?.registerBroadcast ?? true;
   if (shouldRegisterBroadcast) {
-    dependencies.broadcastHub.register(windowId, child);
+    dependencies.broadcastHub.register(webContentsId, child);
   }
 
   if (shouldAttachRealtimeHost && dependencies.taskRealtimeBus && options?.taskRealtime) {
     dependencies.taskRealtimeBus.registerHost({
       hostId,
-      windowId: win.id,
+      windowId: asWindowId(win.id),
       child,
       workspaceKeys: options.taskRealtime.workspaceKeys,
       deliveryKind: options.taskRealtime.deliveryKind,
@@ -712,7 +716,7 @@ export function spawnHostProcess(
     dependencies.logger.info(`[spawnHostProcess] host process (${label}) exited with code ${code}`);
     dependencies.hostRunningTaskCountMap.delete(child);
     if (shouldRegisterBroadcast) {
-      dependencies.broadcastHub.unregister(windowId);
+      dependencies.broadcastHub.unregister(webContentsId);
     }
     unregisterHostProcess(label);
     for (const [wcId, process] of dependencies.windowHostProcessMap) {

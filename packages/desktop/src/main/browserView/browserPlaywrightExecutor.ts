@@ -15,10 +15,41 @@ function serializeRuntimeCall(fn: (...args: any[]) => unknown, ...args: unknown[
   return `(${fn.toString()})(${args.map((arg) => JSON.stringify(arg)).join(",")})`;
 }
 
+/**
+ * elementInfoRuntime / overlayRuntime 会被 toString() 序列化后注入浏览器页面的
+ * isolated world 执行；main 进程的编译环境（tsconfig.main：lib es2025，无 dom）
+ * 没有 Element/document 等 DOM 类型。这里用模块级 declare 为页面全局补一份最小
+ * 结构化类型：declare 只存在于类型层（不产生任何代码），注入函数的编译产物与
+ * 直接裸访问 document/CSS 完全一致，函数保持自包含、可安全序列化。
+ */
+interface InjectedPageElement {
+  id: string;
+  tagName: string;
+  outerHTML: string;
+  style: { cssText: string };
+  /** 非 HTMLElement（如 SVG）没有 innerText/value，按可选读取，语义与原 as 断言一致。 */
+  innerText?: string;
+  value?: string;
+  getAttribute(name: string): string | null;
+  matches(selectors: string): boolean;
+  getBoundingClientRect(): { x: number; y: number; width: number; height: number };
+  append(...children: InjectedPageElement[]): void;
+  remove(): void;
+}
+
+interface InjectedPageDocument {
+  documentElement: InjectedPageElement;
+  elementsFromPoint(x: number, y: number): InjectedPageElement[];
+  getElementById(elementId: string): InjectedPageElement | null;
+  createElement(tagName: string): InjectedPageElement;
+}
+
+declare const document: InjectedPageDocument;
+declare const CSS: { escape?: (value: string) => string } | undefined;
+
 function elementInfoRuntime(options: { x: number; y: number; includeNonInteractable?: boolean }) {
-  const cssEscape = (value: string) =>
-    globalThis.CSS?.escape?.(value) ?? value.replace(/[^\w-]/g, "\\$&");
-  const candidatesFor = (element: Element) => {
+  const cssEscape = (value: string) => CSS?.escape?.(value) ?? value.replace(/[^\w-]/g, "\\$&");
+  const candidatesFor = (element: InjectedPageElement) => {
     const values: string[] = [];
     if (element.id) values.push(`#${cssEscape(element.id)}`);
     const testId = element.getAttribute("data-testid");
@@ -28,7 +59,7 @@ function elementInfoRuntime(options: { x: number; y: number; includeNonInteracta
     values.push(element.tagName.toLowerCase());
     return [...new Set(values)];
   };
-  const role = (element: Element) =>
+  const role = (element: InjectedPageElement) =>
     element.getAttribute("role") ??
     (element.matches("button,input[type=button],input[type=submit]")
       ? "button"
@@ -37,7 +68,7 @@ function elementInfoRuntime(options: { x: number; y: number; includeNonInteracta
         : element.matches("input:not([type]),input[type=text],textarea")
           ? "textbox"
           : null);
-  const interactable = (element: Element) =>
+  const interactable = (element: InjectedPageElement) =>
     Boolean(role(element) || element.matches("input,select,textarea,[tabindex],[contenteditable]"));
   return document
     .elementsFromPoint(options.x, options.y)
@@ -45,8 +76,7 @@ function elementInfoRuntime(options: { x: number; y: number; includeNonInteracta
     .map((element) => {
       const rect = element.getBoundingClientRect();
       const candidates = candidatesFor(element);
-      const visibleText =
-        (element as HTMLElement).innerText?.trim() || (element as HTMLInputElement).value || null;
+      const visibleText = element.innerText?.trim() || element.value || null;
       const ariaName = element.getAttribute("aria-label") || visibleText;
       return {
         tagName: element.tagName.toLowerCase(),

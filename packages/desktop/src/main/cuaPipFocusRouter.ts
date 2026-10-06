@@ -1,27 +1,32 @@
 import type { PipSessionEvent } from "@acode/acode-cua/pip-session";
+import { asWebContentsId, type WebContentsId } from "./desktopWindowIds.js";
 
 type FocusEvent = Extract<PipSessionEvent, { kind: "focus-changed" }>;
 
+// ID 空间：本路由器的 windowId 全部是 WebContentsId（resolveCuaPipWindowKey
+// 是唯一取值口；消费端 windowHostProcessMap 同为 WebContentsId 空间）。
 interface CuaPipFocusRouter {
-  updateActiveSession(windowId: number, sessionId: string | null): void;
-  focusWindow(windowId: number): void;
-  blurWindow(windowId: number): void;
-  refreshWindow(windowId: number): void;
-  removeWindow(windowId: number): void;
+  updateActiveSession(windowId: WebContentsId, sessionId: string | null): void;
+  focusWindow(windowId: WebContentsId): void;
+  blurWindow(windowId: WebContentsId): void;
+  refreshWindow(windowId: WebContentsId): void;
+  removeWindow(windowId: WebContentsId): void;
 }
 
-export function resolveCuaPipWindowKey(window: { webContents: { id: number } }): number {
-  return window.webContents.id;
+export function resolveCuaPipWindowKey(window: {
+  webContents: { id: number };
+}): WebContentsId {
+  return asWebContentsId(window.webContents.id);
 }
 
 export function createCuaPipFocusRouter(options: {
-  send(windowId: number, event: FocusEvent): void;
+  send(windowId: WebContentsId, event: FocusEvent): void;
 }): CuaPipFocusRouter {
-  const activeSessionByWindow = new Map<number, string | null>();
-  let focusedWindowId: number | null = null;
+  const activeSessionByWindow = new Map<WebContentsId, string | null>();
+  let focusedWindowId: WebContentsId | null = null;
   let focusRevision = 0;
 
-  const publish = (windowId: number, sessionId: string | null) => {
+  const publish = (windowId: WebContentsId, sessionId: string | null) => {
     focusRevision += 1;
     options.send(windowId, {
       kind: "focus-changed",

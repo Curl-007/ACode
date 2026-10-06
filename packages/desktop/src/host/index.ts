@@ -25,12 +25,9 @@ import { createBrowserControlMainBridge } from "./browserControlMainBridge.js";
 import { materializeBrowserRecordingArtifact } from "./browserRecordingArtifactMaterializer.js";
 import {
   ServiceCollection,
-  IBotsService,
   IFileService,
   IClientConfigService,
   IMediaPreviewService,
-  IOffPeakTaskService,
-  IModelSelectionService,
   ISettingService,
   IWindowControllerService,
   IACodeAgentService,
@@ -42,43 +39,27 @@ import {
 } from "@acode/services";
 import {
   createLocalServices,
-  getOffPeakRequestAuthBuilder,
   disposeServiceResources,
   disposeServiceResourcesAndWait,
-  AutomationRepo,
-  OffPeakTaskRepo,
-  OffPeakTaskService,
   createServiceLogger,
-  buildTaskChangeSummary,
   createHostApiNetworkTransport,
   createSettingServiceWithMigrations,
-  OffPeakModelUnavailableError,
   OffPeakPermanentDispatchError,
   type HostApiNetworkTransport,
-  type OffPeakRequestAuthBuilder,
 } from "@acode/services/node";
 import { createHostResourceUsageResponder } from "./hostResourceUsage.js";
-import {
-  assertBoundSessionDispatchable,
-  resolveOffPeakDispatchKind,
-} from "./offPeakDispatchPlan.js";
 import {
   HostMessageTypes,
   HostResponseTypes,
   ACODE_VERSION,
-  AUTOMATION_NOTICE_INSTRUCTION,
-  appendAutomationNoticeTail,
-  parseAutomationNotice,
   formatLogPrefix,
   formatACodeHostProcessName,
   formatZodError,
   buildRemoteWorkspaceIdentity,
   buildRemoteEnvironmentKey,
   normalizeServerEndpoint,
-  isOffPeakTicketExpiredError,
   isRemoteWorkspaceIdentity,
   resolveWorkspaceKey,
-  formatModelPickerValue,
   type ACodePromptAttachment,
   type ACodeStreamEvent,
   type ACodeTaskMeta,
@@ -86,10 +67,6 @@ import {
   type TraceId,
   type ACodeTaskMode,
   type WindowHostAttachmentScope,
-  type ACodeAutomation,
-  type ACodeAutomationRun,
-  type ACodeAutomationRunOutcome,
-  type ModelSelection,
 } from "@acode/shared";
 import {
   parseHostIncomingMessageEvent,
@@ -115,7 +92,6 @@ import {
   createRemoteMediaPreviewProxy,
   type RemoteMediaPreviewProxy,
 } from "./remoteMediaPreviewProxy.js";
-import { watchCronRunBotDelivery } from "./cronBotDelivery.js";
 import { createHostRemoteWorkspaceProxyState } from "./hostRemoteWorkspaceProxyState.js";
 import { createRemoteWorkspaceServiceCollection } from "./remoteWorkspaceServiceCollection.js";
 import { getRemoteProviderProvisioningExecutor } from "./remoteProviderProvisioningService.js";
@@ -125,12 +101,6 @@ import { flushHostE2ECoverage } from "./e2eCoverage.js";
 import { runHostShutdownPhases, type HostShutdownResult } from "./hostShutdownPhases.js";
 import { initializeHostApiNetworkTransportOwner } from "./hostInitialization.js";
 import { createHostUncaughtExceptionHandler } from "./hostUncaughtExceptionGuard.js";
-import {
-  recordCronRunOutcomeBestEffort,
-  startManualClaimHeartbeat,
-  settleCronRunTerminalOutcome,
-  settleManualDispatchFailureBestEffort,
-} from "./cronRunLifecycle.js";
 import {
   createRemotePromptAttachmentSessionService,
   createRemotePromptAttachmentTaskService,
@@ -144,7 +114,8 @@ import {
 } from "./windowRemoteConnectionRegistry.js";
 import { connectToRemoteServerTarget } from "./serverRemoteConnection.js";
 import { createWindowHostControllerRuntime } from "./windowHostControllerService.js";
-import { resolveAutomationSubmissionModelSelection } from "./automationModelSelection.js";
+import { createHostCronRunDispatch } from "./cronRunDispatch.js";
+import { createHostOffPeakRunDispatch } from "./offPeakRunDispatch.js";
 import { createRemoteConnectionProgressContext } from "@acode/server/remote/remoteConnectionProgressContext.js";
 type RemoteBackendHostConnection = RemoteConnection & {
   backend: IRemoteBackend;
@@ -343,717 +314,21 @@ const logger = {
   error: (...args: unknown[]) => writeHostLog("error", ...args),
 };
 
-const cronAutomationRepo = new AutomationRepo();
-const cronRunSubscriptions = new Map<string, { dispose(): void }>();
-
-// ---- 闲时任务（off-peak）派发：与 cron 并行的独立链路（表/消息/常量互不复用）----
-const offPeakTaskRepo = new OffPeakTaskRepo();
-const offPeakRunSubscriptions = new Map<string, { dispose(): void }>();
-/**
- * 续跑提示词（"实现时定"的落地）：3h 时间盒到期 / app 重启恢复后 resume 同一
- * session 续发。不重发原始 prompt（会让模型从头再做一遍），而是指示接续未完成的工作。
- */
-const OFF_PEAK_RESUME_PROMPT =
-  "Continue the previous task from where it left off. The run was interrupted " +
-  "(app restart or execution window expired). Do not start over; review what has " +
-  "already been done and complete the remaining work.";
-
-// ---- off-peak 运行时装配（server client + 进程内 mock 网关 + 编排服务，host 域属主）----
-// ⚠ 多窗口=多 host 会各自跑一份 sync 轮询（批量接口幂等、写入同库同数据，重复仅多耗请求）；
-// mock 网关用固定端口单实例共享票据状态。若多窗口轮询放大成本，再加跨 host 选主。
-interface OffPeakRuntime {
-  service: OffPeakTaskService;
-  /** 派发时按本段票据构造逐请求鉴权；静态模型事实由 CLI Built-in Config 提供。 */
-  buildRequestAuth: OffPeakRequestAuthBuilder;
-  validateSelection: (selection: {
-    providerId: string;
-    modelId: string;
-    options?: { reasoningLevel?: string };
-  }) => Promise<boolean>;
-}
-let offPeakRuntime: OffPeakRuntime | null = null;
-
-async function ensureOffPeakRuntime(): Promise<OffPeakRuntime | null> {
-  if (offPeakRuntime) return offPeakRuntime;
-  const services = activeServices;
-  if (!services) return null;
-  const service = services.getOptional(IOffPeakTaskService);
-  const buildRequestAuth = getOffPeakRequestAuthBuilder(services);
-  if (!service || !buildRequestAuth) {
-    logger.warn("off-peak runtime unavailable: missing host services");
-    return null;
-  }
-  offPeakRuntime = {
-    service: service as OffPeakTaskService,
-    buildRequestAuth,
-    validateSelection: (selection) =>
-      (service as OffPeakTaskService).validateDispatchModelSelection(selection),
-  };
-  logger.info("off-peak runtime ready (service from local collection)");
-  return offPeakRuntime;
-}
-
-function disposeOffPeakRuntime(): void {
-  if (!offPeakRuntime) return;
-  offPeakRuntime = null;
-}
-
-interface OffPeakRunDispatchRequest {
-  offPeakTaskId: string;
-  prompt: string;
-  permissionMode: string;
-  modelSelection: ModelSelection;
-  conversationId?: string;
-  sessionId?: string;
-  serverTicketId?: string;
-  workspacePath: string;
-  workspaceIdentity?: string;
-}
-
-function offPeakRunSubscriptionKey(taskId: string, traceId: TraceId): string {
-  return `${taskId}\u0000${traceId}`;
-}
-
-function disposeOffPeakRunSubscription(key: string): void {
-  const disposable = offPeakRunSubscriptions.get(key);
-  if (!disposable) return;
-  offPeakRunSubscriptions.delete(key);
-  disposable.dispose();
-}
-
-/** 终态回填 files_changed：复用现有 task diff 汇总（工具写盘型统计，Bash 改动不计入，接受）。 */
-async function resolveOffPeakFilesChanged(params: {
-  acodeTaskService: IACodeTaskService;
-  taskId: string;
-  workspacePath: string;
-  workspaceIdentity?: string;
-}): Promise<number | undefined> {
-  try {
-    const snapshot = await params.acodeTaskService.getTaskSnapshot({
-      taskId: params.taskId,
-      workspacePath: params.workspacePath,
-      ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
-    });
-    const fileChanges = snapshot?.fileChanges;
-    if (!fileChanges) return undefined;
-    // 汇总为空（无文件改动）按 0 计——"改了 0 个文件"对完成通知是真实信息。
-    return buildTaskChangeSummary(fileChanges)?.fileCount ?? 0;
-  } catch (error) {
-    logger.warn("off-peak files_changed 汇总失败（不阻塞终态落库）:", error);
-    return undefined;
-  }
-}
-
-/** loop 终态 → off_peak_tasks 终态：succeeded→completed、stopped→cancelled（用户手动停止）、其余→failed。 */
-async function finalizeOffPeakRun(params: {
-  acodeTaskService: IACodeTaskService;
-  offPeakTaskId: string;
-  taskId: string;
-  workspacePath: string;
-  workspaceIdentity?: string;
-  outcome: ACodeAutomationRunOutcome;
-  error?: string;
-}): Promise<void> {
-  // 自动续跑：票据过期（active 3h 到期 / ready 废票）不是失败——
-  // 同 task_id 重取号回 queued，等下一个 ready 再 resume 同 session 续跑。
-  if (params.outcome === "failed" && isOffPeakTicketExpiredError(params.error)) {
-    const runtime = await ensureOffPeakRuntime();
-    if (runtime) {
-      await runtime.service.handleTicketExpiredDuringRun(params.offPeakTaskId);
-      logger.info(
-        `off-peak segment expired, requeued for continuation task=${params.offPeakTaskId}`,
-      );
-      return;
-    }
-    // 运行时不可用（服务缺失）时按普通失败落库，避免任务卡在 running。
-  }
-  const status =
-    params.outcome === "succeeded"
-      ? ("completed" as const)
-      : params.outcome === "stopped"
-        ? ("cancelled" as const)
-        : ("failed" as const);
-  const filesChanged = await resolveOffPeakFilesChanged(params);
-  const updated = await offPeakTaskRepo.markTerminal(params.offPeakTaskId, {
-    status,
-    endedAt: Date.now(),
-    ...(params.error ? { failureReason: params.error } : {}),
-    ...(filesChanged !== undefined ? { filesChanged } : {}),
-  });
-  if (!updated) {
-    // 终态不可逆出：任务已被用户先一步取消/删除等，丢弃迟到回写（幂等兜底）。
-    logger.info(
-      `off-peak terminal writeback dropped (already terminal) task=${params.offPeakTaskId}`,
-    );
-    return;
-  }
-  logger.info(
-    `off-peak run finished task=${params.offPeakTaskId} status=${status} filesChanged=${filesChanged ?? "n/a"}`,
-  );
-  // 后台完成统一置未读，打开 task 时由导航链路清除（与 cron 同款）。
-  void params.acodeTaskService.setTaskUnread({
-    taskId: params.taskId,
-    workspacePath: params.workspacePath,
-    ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
-    unread: true,
-  });
-}
-
-function trackOffPeakRunOutcome(params: {
-  acodeTaskService: IACodeTaskService;
-  offPeakTaskId: string;
-  taskId: string;
-  traceId: TraceId;
-  workspacePath: string;
-  workspaceIdentity?: string;
-}): void {
-  const key = offPeakRunSubscriptionKey(params.taskId, params.traceId);
-  disposeOffPeakRunSubscription(key);
-  const disposable = params.acodeTaskService.onDynamicTaskTerminalOutcome(params.taskId)(
-    (result) => {
-      if (result.inputId !== params.traceId) return;
-      disposeOffPeakRunSubscription(key);
-      void finalizeOffPeakRun({
-        acodeTaskService: params.acodeTaskService,
-        offPeakTaskId: params.offPeakTaskId,
-        taskId: params.taskId,
-        workspacePath: params.workspacePath,
-        ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
-        outcome: result.outcome,
-        ...(result.error ? { error: result.error } : {}),
-      }).catch((error) => logger.warn("off-peak 终态回写失败:", error));
-    },
-  );
-  offPeakRunSubscriptions.set(key, disposable);
-}
-
-/**
- * 把一次闲时任务派发提交给当前 host 的 V4 task service。
- * 首跑（无 conversationId）createTask 新建专属 session；续跑/中断恢复 resume
- * 同一会话并以续跑提示词继续。闲时完整 Selection/鉴权仅注入本次执行。
- */
-async function dispatchOffPeakRun(request: OffPeakRunDispatchRequest): Promise<{
-  conversationId: string;
-  sessionId: string;
-}> {
-  const acodeTaskService = activeServices?.getOptional(IACodeTaskService);
-  if (!acodeTaskService) {
-    throw new Error("ACode task service is not initialized.");
-  }
-  const runtime = await ensureOffPeakRuntime();
-  if (!runtime) {
-    throw new Error("off-peak runtime is not available");
-  }
-  if (!request.serverTicketId) {
-    // schedulable 必然已取号；无票派发说明快照失序，按 transient 回执等下轮（轮询会补票）。
-    throw new Error("off-peak dispatch without server ticket");
-  }
-  // idle plan 使用普通 Selection；单次执行约束保证它不写入 Session Selection。
-  const idleSelection = request.modelSelection;
-  if (!(await runtime.validateSelection(idleSelection))) {
-    throw new OffPeakModelUnavailableError("idlePlan");
-  }
-  const requestAuth = await runtime.buildRequestAuth(request.serverTicketId);
-  // 首次派发与复用会话的恢复派发需要在轮次事实中可区分；该字段只描述
-  // 当前自动 turn 的调度阶段，不改变稳定 task ID、独立 message ID 或手动消息语义。
-  const dispatchKind = resolveOffPeakDispatchKind(request);
-  const offPeakRunType = dispatchKind === "resume" ? "resume" : "init";
-  let trackedKey: string | null = null;
-  try {
-    let taskId: string;
-    let traceId: TraceId;
-    let promptContent = request.prompt;
-    if (dispatchKind === "bound-first-run") {
-      // 绑定首跑：会话内创建的任务在创建它的会话里执行（对齐 dispatchCronRun 的 targetTaskId 路径）。
-      // 先探测再写配置：绑定的是用户的工作会话，忙碌时直接 transient 交给调度器退避，
-      // 不能先 setMode 再被 session/send 以 -32010 拒绝（那会悄悄改掉用户会话的权限模式）。
-      taskId = request.sessionId!;
-      traceId = `${request.offPeakTaskId}:bound:${randomUUID()}` as TraceId;
-      const workspaceScope = {
-        workspacePath: request.workspacePath,
-        workspaceIdentity: request.workspaceIdentity,
-      };
-      const [deletedIds, tasks] = await Promise.all([
-        acodeTaskService.listDeletedTaskIds(workspaceScope),
-        acodeTaskService.listTasks(workspaceScope),
-      ]);
-      assertBoundSessionDispatchable({
-        sessionId: taskId,
-        deleted: deletedIds.includes(taskId),
-        running: tasks.find((task) => task.taskId === taskId)?.status === "running",
-      });
-      await acodeTaskService.resumeTask({
-        ...workspaceScope,
-        taskId,
-        // 绑定会话首次盖章归属标记，侧栏归入闲时分组（机制同 cron targetTaskId）。
-        offPeakTaskId: request.offPeakTaskId,
-      });
-      await acodeTaskService.setConfigOption({
-        taskId,
-        traceId,
-        configId: "mode",
-        value: request.permissionMode,
-      });
-    } else if (dispatchKind === "resume") {
-      // 续跑段：resume 同一 session（冷恢复水合历史；send 前必须先 resume）。
-      taskId = request.conversationId!;
-      // 原因：offPeakTaskId 只用于跨 talk 关联；每次自动轮必须生成独立消息身份，
-      // 不能复用 task ID，也不能依赖同毫秒时间戳避免碰撞。
-      traceId = `${request.offPeakTaskId}:resume:${randomUUID()}` as TraceId;
-      promptContent = OFF_PEAK_RESUME_PROMPT;
-      await acodeTaskService.resumeTask({
-        taskId,
-        workspacePath: request.workspacePath,
-        workspaceIdentity: request.workspaceIdentity,
-        // pre-打点会话续跑时补写归属标记（bootstrap 回填之外的双保险）。
-        offPeakTaskId: request.offPeakTaskId,
-      });
-      // 权限模式随派发下发（resume 后显式设置，幂等）。
-      await acodeTaskService.setConfigOption({
-        taskId,
-        traceId,
-        configId: "mode",
-        value: request.permissionMode,
-      });
-      // 档位是 idle Selection 的一部分，只在 sendPrompt 注入；单独写档位会污染用户会话。
-    } else {
-      const task = await acodeTaskService.createTask({
-        workspacePath: request.workspacePath,
-        workspaceIdentity: request.workspaceIdentity,
-        // 空 Session 沿用普通初始化；idle Selection 只在下方执行中注入。
-        // 在此写入会让闲时轮结束后的普通消息继续使用无票的隐藏 Provider。
-        mode: request.permissionMode as ACodeTaskMode,
-        // 闲时任务是无界面的 createTask + sendPrompt 连续派发；空 session 必须在首条
-        // V4 admission 内先持久化，否则 session_input 外键会先于 session 主记录写入。
-        deferPersistenceUntilFirstPrompt: true,
-        // 创建时即盖章持久归属标记（月亮图标/后续系统分组只看该标记，不再反查 store）。
-        offPeakTaskId: request.offPeakTaskId,
-      });
-      taskId = task.taskId;
-      traceId = task.traceId;
-    }
-    trackedKey = offPeakRunSubscriptionKey(taskId, traceId);
-    trackOffPeakRunOutcome({
-      acodeTaskService,
-      offPeakTaskId: request.offPeakTaskId,
-      taskId,
-      traceId,
-      workspacePath: request.workspacePath,
-      ...(request.workspaceIdentity ? { workspaceIdentity: request.workspaceIdentity } : {}),
-    });
-    await acodeTaskService.sendPrompt({
-      taskId,
-      traceId,
-      content: promptContent,
-      clientMode: "desktop-continuous",
-      // Bug 原因：闲时自动 turn 以前只注入 idle plan，没有限制工具面，模型可在后台创建
-      // 持久化定时任务。首跑与续跑在此收敛，显式隐藏 CronCreate 且不伪造 cron automation 归属。
-      // 闲时轮同时隐藏 OffPeakCreate，OffPeakList 只读保留。
-      toolDenylist: ["CronCreate", "OffPeakCreate"],
-      modelSelection: idleSelection,
-      modelExecution: {
-        // 闲时执行凭据只服务主 Turn；完成后不再派生自动 Memory 请求。
-        memoryExtraction: "skip",
-        selectionScope: "execution",
-        requestAuth,
-        subagents: {
-          foregroundModel: "submission",
-          background: "deny",
-        },
-      },
-      offPeakTaskId: request.offPeakTaskId,
-      offPeakRunType,
-    });
-    // 只有 init 实际新建；绑定首跑和跨票续跑只是原 Session 的后续输入。
-    if (dispatchKind === "init") {
-    }
-    return { conversationId: taskId, sessionId: taskId };
-  } catch (error) {
-    if (trackedKey) disposeOffPeakRunSubscription(trackedKey);
-    throw error;
-  }
-}
-
-interface CronRunDispatchRequest {
-  automationId: string;
-  runId: string;
-  prompt: string;
-  targetTaskId?: string;
-  modelSelection?: ModelSelection;
-  mode?: ACodeTaskMode;
-  workspacePath: string;
-  workspaceIdentity?: string;
-}
-
-function resolveAutomationTargetServices(request: {
-  workspacePath: string;
-  workspaceIdentity?: string;
-}): ServiceCollection {
-  const remoteSession = windowRemoteConnectionRegistry.findSessionForWorkspace(request);
-  if (remoteSession) {
-    if (!remoteSession.workspaceIdentity) {
-      throw new Error("Automation 目标 Remote Host 缺少 workspaceIdentity");
-    }
-    return windowRemoteConnectionRegistry.resolveScopedServices({
-      kind: "remote",
-      remoteSessionId: remoteSession.remoteSessionId,
-      workspacePath: request.workspacePath,
-      workspaceIdentity: remoteSession.workspaceIdentity,
-    });
-  }
-  // 远程 Automation 找不到目标 logical session 时，旧派发会静默落到 Local Host，
-  // 从而使用本地模型首选与 Registry。远程身份只能失败，不能跨 Environment fallback。
-  if (request.workspaceIdentity && isRemoteWorkspaceIdentity(request.workspaceIdentity)) {
-    throw new Error("Automation 目标 Remote Host 当前不可用");
-  }
-  if (!activeServices) {
-    throw new Error("Local Host services are not initialized.");
-  }
-  return activeServices;
-}
-
-function cronRunSubscriptionKey(taskId: string, traceId: TraceId): string {
-  return `${taskId}\u0000${traceId}`;
-}
-
-function parseCronRunScheduledAt(runId: string, automationId: string): number | null {
-  const prefix = `${automationId}:`;
-  if (!runId.startsWith(prefix)) return null;
-  const value = Number(runId.slice(prefix.length).split(":")[0]);
-  return Number.isSafeInteger(value) && value > 0 ? value : null;
-}
-
-function markCronRunOutcome(params: {
-  runId: string;
-  automationId: string;
-  workspaceKey: string;
-  scheduledAt: number | null;
-  trigger: "schedule" | "manual";
-  outcome: ACodeAutomationRunOutcome;
-  error?: string;
-}): void {
-  void recordCronRunOutcomeBestEffort({
-    ...params,
-    repo: cronAutomationRepo,
-    logWarn: (message, error) => logger.warn(message, error),
-  });
-}
-
-function disposeCronRunSubscription(key: string): void {
-  const disposable = cronRunSubscriptions.get(key);
-  if (!disposable) return;
-  cronRunSubscriptions.delete(key);
-  disposable.dispose();
-}
-
-async function applyCronRunConfigToExistingTask(params: {
-  acodeTaskService: IACodeTaskService;
-  taskId: string;
-  traceId: TraceId;
-  modelSelection?: ModelSelection;
-  mode?: string;
-}): Promise<void> {
-  let thoughtAppliedWithModel = false;
-  let modeAppliedWithModel = false;
-  if (params.modelSelection) {
-    await params.acodeTaskService.setAutomationSessionConfig({
-      taskId: params.taskId,
-      traceId: params.traceId,
-      modelSelection: params.modelSelection,
-      thoughtLevel: params.modelSelection.options?.reasoningLevel,
-      mode: params.mode?.trim() as ACodeTaskMode | undefined,
-    });
-    thoughtAppliedWithModel = true;
-    modeAppliedWithModel = true;
-  }
-  if (!modeAppliedWithModel && params.mode?.trim()) {
-    await params.acodeTaskService.setConfigOption({
-      taskId: params.taskId,
-      traceId: params.traceId,
-      configId: "mode",
-      value: params.mode.trim(),
-    });
-  }
-  if (!thoughtAppliedWithModel && params.modelSelection?.options?.reasoningLevel) {
-    await params.acodeTaskService.setConfigOption({
-      taskId: params.taskId,
-      traceId: params.traceId,
-      configId: "thought_level",
-      value: params.modelSelection.options.reasoningLevel,
-    });
-  }
-}
-
-function trackCronRunOutcome(params: {
-  acodeTaskService: IACodeTaskService;
-  taskId: string;
-  traceId: TraceId;
-  workspacePath: string;
-  workspaceIdentity?: string;
-  runId: string;
-  automationId: string;
-  workspaceKey: string;
-  scheduledAt: number | null;
-  trigger: "schedule" | "manual";
-}): void {
-  const key = cronRunSubscriptionKey(params.taskId, params.traceId);
-  disposeCronRunSubscription(key);
-  markCronRunOutcome({ ...params, outcome: "running" });
-  // heartbeat 协议 R2：订阅窗内累积本 run 主 agent 正文尾部（派发 prompt 的 traceId=runId，
-  // adapter 已把事件 inputId 对齐到本轮 inputId），终态解析通知决策；滚动尾部有界。
-  let automationNoticeTail = "";
-  const streamSubscription = params.acodeTaskService.onDynamicStreamEvent(params.taskId)(
-    (event) => {
-      if (
-        event.type !== "agent_message_chunk" ||
-        event.parentToolUseId ||
-        event.inputId !== params.traceId
-      ) {
-        return;
-      }
-      automationNoticeTail = appendAutomationNoticeTail(automationNoticeTail, event.content);
-    },
-  );
-  const disposable = params.acodeTaskService.onDynamicTaskTerminalOutcome(params.taskId)(
-    (result) => {
-      if (result.inputId !== params.traceId) return;
-      const notifyDecision = parseAutomationNotice(automationNoticeTail);
-      void settleCronRunTerminalOutcome({
-        ...params,
-        outcome: result.outcome,
-        error: result.error,
-        notifyDecision,
-        repo: cronAutomationRepo,
-        logWarn: (message, error) => logger.warn(message, error),
-      });
-      // heartbeat 协议 R1：默认安静——触发完成本身不再是未读理由。仅 NOTIFY 决策或
-      // 失败终态标未读（打开 task 时仍由导航链路 compare-and-clear 清除）。
-      // absent 记 warn：模型没有按注入协议输出决策，按安静处理防刷屏回潮。
-      if (notifyDecision === "notify" || result.outcome === "failed") {
-        void params.acodeTaskService.setTaskUnread({
-          taskId: params.taskId,
-          workspacePath: params.workspacePath,
-          ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
-          unread: true,
-        });
-      } else if (notifyDecision === "absent") {
-        logger.warn(
-          `automation 通知决策缺失，按默认安静处理 automation=${params.automationId} runId=${params.runId}`,
-        );
-      }
-      streamSubscription.dispose();
-      disposeCronRunSubscription(key);
-    },
-  );
-  const claimHeartbeat =
-    params.trigger === "manual"
-      ? startManualClaimHeartbeat({
-          ...params,
-          repo: cronAutomationRepo,
-          logWarn: (message, error) => logger.warn(message, error),
-        })
-      : null;
-  cronRunSubscriptions.set(key, {
-    dispose() {
-      claimHeartbeat?.dispose();
-      streamSubscription.dispose();
-      disposable.dispose();
-    },
-  });
-}
-
-/**
- * 把一次 cron/manual run 直接提交给当前 host 的 V4 task service。
- * 会话内 automation 可能绑定到未激活 session，必须先恢复再应用保存的运行参数。
- */
-async function dispatchCronRun(request: CronRunDispatchRequest): Promise<{
-  taskId: string;
-  sessionId: string;
-}> {
-  const targetServices = resolveAutomationTargetServices(request);
-  const acodeTaskService = targetServices.getOptional(IACodeTaskService);
-  if (!acodeTaskService) {
-    throw new Error("ACode task service is not initialized.");
-  }
-  const modelSelectionService = targetServices.getOptional(IModelSelectionService);
-  if (!modelSelectionService) {
-    throw new Error("目标 Host Model Selection service is not initialized.");
-  }
-  // 长期配置是原意图；首次派发在目标 Host 解析后固定。已有 run 必须直接复用，
-  // 不能因账号变化或本次 Registry 读取失败重新解释历史执行选择。
-  const existingRun = await cronAutomationRepo.getRun(request.runId);
-  const resolvedSubmissionModelSelection = await resolveAutomationSubmissionModelSelection({
-    selection: request.modelSelection,
-    fixedSelection: existingRun?.modelSelection,
-    modelSelectionService,
-    // Repo 已在读取前完成离线导入；不再为迁移绕行 Agent/账号服务。
-    // 未迁入或损坏的新值仍由此入口明确拒绝，不能当成跟随 Workspace。
-    readSelection: () =>
-      cronAutomationRepo.getModelSelectionForDispatch(
-        request.automationId,
-        resolveWorkspaceKey(request),
-      ),
-  });
-  const submissionModelSelection = await cronAutomationRepo.fixRunModelSelection(
-    request.runId,
-    resolvedSubmissionModelSelection,
-  );
-  let trackedKey: string | null = null;
-  const workspaceKey = resolveWorkspaceKey(request);
-  const trigger = request.runId.includes(":manual:") ? "manual" : "schedule";
-  const scheduledAt = parseCronRunScheduledAt(request.runId, request.automationId);
-  try {
-    const task = request.targetTaskId
-      ? { taskId: request.targetTaskId }
-      : await acodeTaskService.createTask({
-          workspacePath: request.workspacePath,
-          workspaceIdentity: request.workspaceIdentity,
-          model: formatModelPickerValue(submissionModelSelection),
-          mode: request.mode,
-          thoughtLevel: submissionModelSelection.options?.reasoningLevel,
-          automationId: request.automationId,
-        });
-    // 未绑定会话时不能沿用 createTask 的 session trace 作为首条 prompt trace：
-    // CLI 无法从 inputId 还原 manual/schedule admission。
-    // 建会话 trace 与执行 runId 是两种身份；两条派发路径的 prompt 都必须统一使用 runId。
-    const promptTraceId = request.runId as TraceId;
-    if (request.targetTaskId) {
-      // 绑定会话在 app 重启或切换 workspace 后通常不处于 active；旧实现直接
-      // setConfig/sendPrompt 会立即报 Session is not active，看起来像「立即运行」没有触发。
-      await acodeTaskService.resumeTask({
-        taskId: task.taskId,
-        workspacePath: request.workspacePath,
-        workspaceIdentity: request.workspaceIdentity,
-        model: formatModelPickerValue(submissionModelSelection),
-        thoughtLevel: submissionModelSelection.options?.reasoningLevel,
-        automationId: request.automationId,
-      });
-      await applyCronRunConfigToExistingTask({
-        acodeTaskService,
-        taskId: task.taskId,
-        traceId: promptTraceId,
-        modelSelection: submissionModelSelection,
-        mode: request.mode,
-      });
-    }
-    const botsService = targetServices.getOptional(IBotsService);
-    if (botsService) {
-      try {
-        await watchCronRunBotDelivery({
-          automationId: request.automationId,
-          workspaceKey,
-          workspacePath: request.workspacePath,
-          ...(request.workspaceIdentity ? { workspaceIdentity: request.workspaceIdentity } : {}),
-          taskId: task.taskId,
-          runId: request.runId,
-          repo: cronAutomationRepo,
-          botsService,
-        });
-      } catch (error) {
-        // Bot 回推是 best-effort 辅助通道；配置/凭据/订阅失败不能阻断 automation 派发与结算。
-        logger.warn(
-          `automation Bot delivery subscription failed automation=${request.automationId} provider=unknown`,
-          error,
-        );
-      }
-    }
-    trackedKey = cronRunSubscriptionKey(task.taskId, promptTraceId);
-    trackCronRunOutcome({
-      acodeTaskService,
-      taskId: task.taskId,
-      traceId: promptTraceId,
-      workspacePath: request.workspacePath,
-      workspaceIdentity: request.workspaceIdentity,
-      runId: request.runId,
-      automationId: request.automationId,
-      workspaceKey,
-      scheduledAt,
-      trigger,
-    });
-    await acodeTaskService.sendPrompt({
-      taskId: task.taskId,
-      traceId: promptTraceId,
-      // heartbeat 协议 R2 注入点（Q3 裁决：后缀拼接）——作者 prompt 原文在前、语义不改写；
-      // 指令段是 host 常量（@acode/shared automation-notice），不是可被作者覆写的第二指令源。
-      content: request.prompt + AUTOMATION_NOTICE_INSTRUCTION,
-      clientMode: "desktop-continuous",
-      automationId: request.automationId,
-    });
-    // prompt 创建的定时任务带 targetTaskId，追加原会话不能计成 session_create。
-    if (!request.targetTaskId) {
-    }
-    return { taskId: task.taskId, sessionId: task.taskId };
-  } catch (error) {
-    if (trackedKey) disposeCronRunSubscription(trackedKey);
-    markCronRunOutcome({
-      runId: request.runId,
-      automationId: request.automationId,
-      workspaceKey,
-      scheduledAt,
-      trigger,
-      outcome: "failed",
-      error: error instanceof Error ? error.message : String(error),
-    });
-    throw error;
-  }
-}
-
-async function dispatchManualAutomationRun(params: {
-  automation: ACodeAutomation;
-  run: ACodeAutomationRun;
-}): Promise<void> {
-  logger.info(
-    `direct manual automation dispatch started automation=${params.automation.automationId} runId=${params.run.runId}`,
-  );
-  let result: Awaited<ReturnType<typeof dispatchCronRun>>;
-  try {
-    result = await dispatchCronRun({
-      automationId: params.automation.automationId,
-      runId: params.run.runId,
-      prompt: params.automation.prompt,
-      targetTaskId: params.automation.targetTaskId,
-      modelSelection: params.run.modelSelection ?? params.automation.modelSelection,
-      mode: params.automation.mode,
-      workspacePath: params.automation.workspacePath,
-      workspaceIdentity: params.automation.workspaceIdentity,
-    });
-  } catch (error) {
-    logger.warn(
-      `direct manual automation dispatch failed automation=${params.automation.automationId} runId=${params.run.runId}:`,
-      error,
-    );
-    await settleManualDispatchFailureBestEffort({
-      repo: cronAutomationRepo,
-      automationId: params.automation.automationId,
-      runId: params.run.runId,
-      workspaceKey: params.automation.workspaceKey,
-      scheduledAt: params.run.scheduledAt ?? null,
-      trigger: "manual",
-      dispatchError: error,
-      logWarn: (message, releaseError) => logger.warn(message, releaseError),
-    });
-    throw error;
-  }
-
-  try {
-    await cronAutomationRepo.markManualRunDispatched({
-      runId: params.run.runId,
-      sessionId: result.sessionId,
-      dispatchedAt: Date.now(),
-    });
-  } catch (error) {
-    // prompt 已经 accepted/queued，台账和累计次数回写失败不能伪装成派发失败并提前释放锁；
-    // 真实终态仍由 trackCronRunOutcome 收口，避免同一 automation 重复排队。
-    logger.warn(
-      `回写 manual automation dispatched 状态与运行次数失败 automation=${params.automation.automationId} runId=${params.run.runId}`,
-      error,
-    );
-  }
-  // sendPrompt ACK 可能只表示进入 busy queue；manual claim 必须保留到对应 turn 终态。
-  logger.info(
-    `direct manual automation dispatch accepted automation=${params.automation.automationId} runId=${params.run.runId} taskId=${result.taskId}`,
-  );
-}
+// ── automation 派发域（cron / off-peak / manual）──
+// 2026-10-05 领域拆分：约 700 行派发逻辑抽至 cronRunDispatch.ts / cronRunTracking.ts /
+// offPeakRunDispatch.ts，上下文契约见 automationDispatchContext.ts。
+// activeServices 与 windowRemoteConnectionRegistry 在本文件中的创建位置晚于此工厂调用
+// （历史上派发函数靠调用时机避开 TDZ），因此上下文以惰性 getter 传递，构造期不求值，
+// 提取前后语义一致；AutomationRepo/OffPeakTaskRepo 的构造时机保持原模块加载位置。
+const hostAutomationDispatchContext = {
+  logger,
+  getActiveServices: () => activeServices,
+  getRemoteConnectionRegistry: () => windowRemoteConnectionRegistry,
+};
+const cronRunDispatch = createHostCronRunDispatch(hostAutomationDispatchContext);
+const offPeakRunDispatch = createHostOffPeakRunDispatch(hostAutomationDispatchContext);
+const { dispatchCronRun, dispatchManualAutomationRun } = cronRunDispatch;
+const { dispatchOffPeakRun } = offPeakRunDispatch;
 
 // Node warning 不是远端连接失败，改成结构化 warn，避免默认 stderr 被误染成 error。
 process.on("warning", (warning) => logger.warn(`${warning.name}: ${warning.message}`));
@@ -1129,21 +404,22 @@ const cuaOperationStateReporter = {
   },
 } satisfies NonNullable<Parameters<typeof createLocalServices>[0]>["cuaOperationStateReporter"];
 
-let untrackedPromptRpcCount = 0;
-function reportHostRunningTaskCount(): void {
-  runtimeTaskReporter.onRunningTaskCountChanged({
-    runningTaskCount: workspaceTaskTracker.getTotalRunningTaskCount() + untrackedPromptRpcCount,
-  });
-}
-
-const workspaceTaskTracker = createHostWorkspaceTaskTracker((event) => {
-  parentPort?.postMessage({
-    type: HostResponseTypes.WorkspaceRunningTaskCountChanged,
-    ...event,
-  });
-  windowRemoteConnectionRegistry.setWorkspaceRunningTaskCount(event);
-  reportHostRunningTaskCount();
-});
+// 「Host 上有多少任务在跑」的唯一所有者是 tracker（specs/host-running-task-count.md）：
+// workspace 分量 + 无归属 RPC 分量都收敛在 tracker 内，host 级总量经 reportTotal
+// 回调上报 Main。此前这里另有模块级影子计数器 untrackedPromptRpcCount 与 tracker
+// 双写同一事实，加减散落在 sendPrompt Proxy 包装器三处，漏报即失真。
+const workspaceTaskTracker = createHostWorkspaceTaskTracker(
+  (event) => {
+    parentPort?.postMessage({
+      type: HostResponseTypes.WorkspaceRunningTaskCountChanged,
+      ...event,
+    });
+    windowRemoteConnectionRegistry.setWorkspaceRunningTaskCount(event);
+  },
+  (runningTaskCount) => {
+    runtimeTaskReporter.onRunningTaskCountChanged({ runningTaskCount });
+  },
+);
 
 function isACodeTaskMeta(value: unknown): value is ACodeTaskMeta {
   return (
@@ -1461,8 +737,7 @@ function createReportingRemoteACodeTaskService<T extends object>(
               // task meta 缺失时无法安全伪造 workspace identity；仅保留 ACK 期间的 Host 退出诊断，
               // 不让该 fallback 参与 workspace runtime 的释放裁决。
               tracksOnlyRpcLifetime = true;
-              untrackedPromptRpcCount += 1;
-              reportHostRunningTaskCount();
+              workspaceTaskTracker.beginUnattributedRpc();
             }
             const preparedParams = await prepareRemotePromptParams(promptParams);
             return await mirrorRemotePrompt(
@@ -1473,8 +748,7 @@ function createReportingRemoteACodeTaskService<T extends object>(
           }
           if (options?.reportRunningPromptCount !== false) {
             tracksOnlyRpcLifetime = true;
-            untrackedPromptRpcCount += 1;
-            reportHostRunningTaskCount();
+            workspaceTaskTracker.beginUnattributedRpc();
           }
           return await value.apply(target, args);
         } catch (error) {
@@ -1484,8 +758,7 @@ function createReportingRemoteACodeTaskService<T extends object>(
           throw error;
         } finally {
           if (tracksOnlyRpcLifetime) {
-            untrackedPromptRpcCount = Math.max(0, untrackedPromptRpcCount - 1);
-            reportHostRunningTaskCount();
+            workspaceTaskTracker.finishUnattributedRpc();
           }
         }
       };
@@ -2116,15 +1389,12 @@ async function disposeHostResources(reason: string): Promise<HostShutdownResult>
     logger.info(`disposing host resources, reason=${reason}`);
     disposeAttachedServicePorts();
     windowHostControllerRuntime.dispose();
-    for (const key of Array.from(cronRunSubscriptions.keys())) {
-      disposeCronRunSubscription(key);
-    }
-    cronAutomationRepo.close();
-    for (const key of Array.from(offPeakRunSubscriptions.keys())) {
-      disposeOffPeakRunSubscription(key);
-    }
-    disposeOffPeakRuntime();
-    offPeakTaskRepo.close();
+    // automation 派发域收口（顺序与原实现一致：先 cron 订阅/台账，再 off-peak 订阅/运行时/台账）。
+    cronRunDispatch.disposeRunSubscriptions();
+    cronRunDispatch.closeRepository();
+    offPeakRunDispatch.disposeRunSubscriptions();
+    offPeakRunDispatch.disposeRuntime();
+    offPeakRunDispatch.closeRepository();
 
     if (activeSessionRealtimePort) {
       activeSessionRealtimePort.dispose();
@@ -2183,15 +1453,12 @@ function disposeHostResourcesBestEffort(reason: string): void {
   logger.info(`disposing host resources, reason=${reason}`);
   disposeAttachedServicePorts();
   windowHostControllerRuntime.dispose();
-  for (const key of Array.from(cronRunSubscriptions.keys())) {
-    disposeCronRunSubscription(key);
-  }
-  cronAutomationRepo.close();
-  for (const key of Array.from(offPeakRunSubscriptions.keys())) {
-    disposeOffPeakRunSubscription(key);
-  }
-  disposeOffPeakRuntime();
-  offPeakTaskRepo.close();
+  // automation 派发域收口（与 disposeHostResources 同序；best-effort 路径不 await）。
+  cronRunDispatch.disposeRunSubscriptions();
+  cronRunDispatch.closeRepository();
+  offPeakRunDispatch.disposeRunSubscriptions();
+  offPeakRunDispatch.disposeRuntime();
+  offPeakRunDispatch.closeRepository();
   void windowRemoteConnectionRegistry.dispose();
 
   if (activeServices) {

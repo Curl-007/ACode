@@ -76,6 +76,13 @@ interface HelperProcessResult {
 interface ReadAppBoundKeyOptions {
   appExecutablePath?: string;
   chromeExecutablePath: string;
+  /**
+   * helper 版本握手的预期值，属于公开入口 WindowsChromeAppBoundKeyReader 的既有契约
+   * （测试可注入）；verifyHelper 一直按此读取并回退到 ACODE_VERSION/ACODE_COMMIT，
+   * 此前接口声明漏掉了这两个字段。
+   */
+  expectedAppVersion?: string;
+  expectedBuildCommit?: string;
   helperPath?: string;
   isPackaged?: boolean;
   logger: BrowserDataLogger;

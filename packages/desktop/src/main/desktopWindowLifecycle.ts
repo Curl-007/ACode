@@ -1,4 +1,10 @@
 import { getDatabaseStartupPortPayload } from "./databaseStartupRelay.js";
+import {
+  asWebContentsId,
+  asWindowId,
+  type WebContentsId,
+  type WindowId,
+} from "./desktopWindowIds.js";
 import { randomUUID } from "node:crypto";
 import { app, BrowserWindow, Menu, MessageChannelMain } from "electron";
 import type { UtilityProcess as ElectronUtilityProcess } from "electron";
@@ -26,11 +32,14 @@ export function createWindow(options: {
   logger: { info: (...args: unknown[]) => void; warn: (...args: unknown[]) => void };
   forceQuitRef: { current: boolean };
   handleBeforeClose?: (win: BrowserWindow, label: string) => boolean;
-  windowHostProcessMap: Map<number, ElectronUtilityProcess>;
+  windowHostProcessMap: Map<WebContentsId, ElectronUtilityProcess>;
   spawnHostProcess: (
     win: BrowserWindow,
     label: string,
-    initMessage: HostInitMessage,
+    // 窗口生命周期只产出 init 消息的业务字段；acodeBuiltinProviderConfigFilePath
+    // 由 index.ts 的 spawn 边界统一注入（只有装配点掌握 Electron 安装布局与
+    // hostProcessLocalEnv 快照），因此这里声明为不含该字段的 Omit 类型。
+    initMessage: Omit<HostInitMessage, "acodeBuiltinProviderConfigFilePath">,
   ) => ElectronUtilityProcess;
   disposeHostProcess: (
     child: ElectronUtilityProcess,
@@ -40,7 +49,10 @@ export function createWindow(options: {
   syncAutoUpdaterStateToWindow: (win: BrowserWindow) => void;
   syncReadyUpdateToWindow: (win: BrowserWindow) => void;
   syncPostUpdateReleaseNotesToWindow: (win: BrowserWindow) => void;
-  disposeRemoteWorkspaceSessionsForWindow: (windowId: number, reason: string) => void;
+  disposeRemoteWorkspaceSessionsForWindow: (
+    webContentsId: WebContentsId,
+    reason: string,
+  ) => void;
   reattachRemoteWorkspaceSessionsForWindow: (win: BrowserWindow, reason: string) => void;
   bootstrap?: WindowBootstrapOptions;
   agentWarmupTargets?: readonly StartupWorkspaceWarmupTarget[];
@@ -65,7 +77,7 @@ export function createWindow(options: {
    */
   awaitFirstHostSpawnDecision?: () => Promise<void>;
   /** Local Host map insertion completed; presentation facts can now be replayed safely. */
-  onHostProcessReady?: (windowKey: number) => void;
+  onHostProcessReady?: (windowKey: WebContentsId) => void;
   resolveBrowserViewOwner?: Parameters<typeof createBrowserWindow>[0]["resolveBrowserViewOwner"];
 }) {
   const win = createBrowserWindow({
@@ -114,7 +126,7 @@ export function createWindow(options: {
     });
   }
 
-  const wcId = win.webContents.id;
+  const wcId = asWebContentsId(win.webContents.id);
   // 本地资源管理器据此区分主窗口与辅助窗口。
   registerMainApplicationWindow(wcId);
   let domReadyGeneration = 0;
@@ -284,9 +296,9 @@ export function showCurrentWindowFromDock(primaryWindowCoordinator: {
 
 export function focusWorkspaceInExistingWindow(
   path: string,
-  windowWorkspaceMap: Map<number, Set<string>>,
-  options?: { skipWindowId?: number },
-): { activated: boolean; winId?: number } {
+  windowWorkspaceMap: Map<WindowId, Set<string>>,
+  options?: { skipWindowId?: WindowId },
+): { activated: boolean; winId?: WindowId } {
   for (const [winId, pathSet] of windowWorkspaceMap) {
     if (options?.skipWindowId === winId) {
       continue;
@@ -311,7 +323,7 @@ export function focusWorkspaceInExistingWindow(
   return { activated: false };
 }
 
-export function syncApplicationUnreadBadge(windowUnreadCountMap: Map<number, number>) {
+export function syncApplicationUnreadBadge(windowUnreadCountMap: Map<WindowId, number>) {
   syncAppUnreadBadge({
     platform: process.platform,
     totalUnreadCount: sumWindowUnreadCounts(windowUnreadCountMap),
@@ -324,7 +336,7 @@ export function syncApplicationUnreadBadge(windowUnreadCountMap: Map<number, num
 export function handleWindowUnreadCountSync(
   win: BrowserWindow | null,
   payload: unknown,
-  windowUnreadCountMap: Map<number, number>,
+  windowUnreadCountMap: Map<WindowId, number>,
   logger: { warn: (...args: unknown[]) => void },
 ) {
   const unreadCount = parseWindowUnreadCount(payload);
@@ -338,9 +350,9 @@ export function handleWindowUnreadCountSync(
   }
 
   if (unreadCount === 0) {
-    windowUnreadCountMap.delete(win.id);
+    windowUnreadCountMap.delete(asWindowId(win.id));
   } else {
-    windowUnreadCountMap.set(win.id, unreadCount);
+    windowUnreadCountMap.set(asWindowId(win.id), unreadCount);
   }
   syncApplicationUnreadBadge(windowUnreadCountMap);
   return true;

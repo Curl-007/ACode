@@ -20,6 +20,7 @@ import {
   hostResponseMessageSchema,
 } from "@acode/shared";
 import { logger as defaultLogger } from "./logger.js";
+import type { WindowId } from "./desktopWindowIds.js";
 
 const STREAM_MIRROR_FLUSH_INTERVAL_MS = 1000;
 const STREAM_MIRROR_MAX_REPLAY_BATCHES = 60;
@@ -34,7 +35,8 @@ type HostExitListener = () => void;
 
 interface RegisteredRealtimeHost {
   hostId: string;
-  windowId: number;
+  // BrowserWindow.id 空间（注册点 desktopHostProcess 传 win.id），见 desktopWindowIds.ts。
+  windowId: WindowId;
   child: ElectronUtilityProcess;
   workspaceKeys: Set<string>;
   deliveryKind: TaskRealtimeHostDeliveryKind;
@@ -141,7 +143,7 @@ export class TaskRealtimeBus {
 
   registerHost(params: {
     hostId: string;
-    windowId: number;
+    windowId: WindowId;
     child: ElectronUtilityProcess;
     workspaceKeys: Iterable<string>;
     deliveryKind?: TaskRealtimeHostDeliveryKind;
@@ -248,7 +250,10 @@ export class TaskRealtimeBus {
 
     switch (parsed.data.type) {
       case HostResponseTypes.TaskRealtimePublish:
-        this.handleRealtimePublish(origin, parsed.data.event);
+        // hostResponseMessageSchema 对流式事件是有意的宽松 wire 校验（passthrough，只钉
+        // type/taskId/traceId），推断类型是 TaskRealtimeEvent 的超集；生产端是 host 内
+        // 类型化发出的 TaskRealtimeEvent，本地可信 IPC 边界上按域类型精确断言。
+        this.handleRealtimePublish(origin, parsed.data.event as TaskRealtimeEvent);
         break;
       case HostResponseTypes.TaskRunLeaseAcquire:
         this.handleLeaseAcquire(origin, parsed.data.request);
@@ -257,7 +262,13 @@ export class TaskRealtimeBus {
         this.releaseLease(origin.hostId, parsed.data.target);
         break;
       case HostResponseTypes.TaskStreamOpPublish:
-        this.handleStreamOpPublish(origin, parsed.data.target, parsed.data.op);
+        // 同上：wire schema 的 stream_event.event 是 passthrough 宽类型，
+        // host 生产端按 TaskStreamMirrorPublishOp 域类型发出，这里做边界断言。
+        this.handleStreamOpPublish(
+          origin,
+          parsed.data.target,
+          parsed.data.op as TaskStreamMirrorPublishOp,
+        );
         break;
       case HostResponseTypes.TaskOwnerCommandRequest:
         this.handleOwnerCommandRequest(origin, parsed.data.command);
@@ -591,7 +602,14 @@ export class TaskRealtimeBus {
     const coalesced: TaskStreamMirrorPublishOp[] = [];
     for (const op of ops) {
       const previous = coalesced[coalesced.length - 1];
-      if (this.canMergeTextChunk(previous, op)) {
+      // canMergeTextChunk 的类型谓词只能收窄一个引用（previous）；先按 discriminated
+      // union 对 op 做 kind/type 收窄，合并分支内才能类型安全地访问 op.event.content。
+      // 前置判断与 canMergeTextChunk 内部对 op 的检查重复，均为纯属性比较，结果不变。
+      if (
+        op.kind === "stream_event" &&
+        (op.event.type === "agent_message_chunk" || op.event.type === "agent_thought_chunk") &&
+        this.canMergeTextChunk(previous, op)
+      ) {
         coalesced[coalesced.length - 1] = {
           kind: "stream_event",
           event: {

@@ -1,5 +1,6 @@
 /* eslint-disable max-lines -- 远程连接、OAuth 回调和通知 IPC 共用窗口级上下文，集中注册避免跨文件状态漂移。 */
 import { app, BrowserWindow, ipcMain, shell } from "electron";
+import { asWebContentsId, type WebContentsId } from "./desktopWindowIds.js";
 import {
   formatZodError,
   normalizeUnknownError,
@@ -142,17 +143,17 @@ export function registerRemoteIpcHandlers(options: {
     signalGracePeriodMs?: number,
   ) => void;
   cancelPendingRemoteWorkspaceSessionsForWindow: (
-    wcId: number,
+    wcId: WebContentsId,
     reason: string,
     requestId?: string,
   ) => void;
   bindRemoteWorkspaceSessionContext: (
     sessionId: string,
     context: { workspacePath: string; workspaceIdentity?: string },
-    expectedWebContentsId?: number,
+    expectedWebContentsId?: WebContentsId,
   ) => Promise<void>;
   confirmRendererAttachmentReady: (
-    webContentsId: number,
+    webContentsId: WebContentsId,
     payload: { sessionId: string; attachmentId: string },
   ) => void;
   isDockerDaemonAvailable: () => Promise<boolean>;
@@ -167,7 +168,10 @@ export function registerRemoteIpcHandlers(options: {
     const attachmentId =
       typeof payload.attachmentId === "string" ? payload.attachmentId.trim() : "";
     if (!sessionId || !attachmentId) return;
-    options.confirmRendererAttachmentReady(event.sender.id, { sessionId, attachmentId });
+    options.confirmRendererAttachmentReady(asWebContentsId(event.sender.id), {
+      sessionId,
+      attachmentId,
+    });
   });
   ipcMain.on(PlatformChannels.OAuthRegisterState, (event, payload: unknown) => {
     const registration = parseOAuthStateRegistration(payload);
@@ -176,7 +180,7 @@ export function registerRemoteIpcHandlers(options: {
       return;
     }
 
-    registerOAuthState(event.sender.id, registration);
+    registerOAuthState(asWebContentsId(event.sender.id), registration);
   });
 
   ipcMain.on(PlatformChannels.OpenExternal, (event, payload: unknown) => {
@@ -249,7 +253,7 @@ export function registerRemoteIpcHandlers(options: {
   );
 
   app.on("browser-window-created", (_, win) => {
-    const windowWebContentsId = win.webContents.id;
+    const windowWebContentsId = asWebContentsId(win.webContents.id);
     win.on("closed", () => {
       // BrowserWindow 的 closed 阶段里 webContents 可能已被 Electron 释放。
       // 之前这里直接读取 win.webContents.id，会把正常关窗流程变成主进程未捕获异常。
@@ -334,7 +338,7 @@ export function registerRemoteIpcHandlers(options: {
       // 现在优先按 requestId 精确取消当前弹窗发起的连接，避免误伤同窗口其他并发连接。
       // 若 requestId 缺失则回退到按窗口取消，兼容旧调用端。
       options.cancelPendingRemoteWorkspaceSessionsForWindow(
-        event.sender.id,
+        asWebContentsId(event.sender.id),
         `cancel-pending-remote-connection:${event.sender.id}`,
         requestId,
       );
@@ -366,7 +370,7 @@ export function registerRemoteIpcHandlers(options: {
           workspacePath,
           ...(workspaceIdentity ? { workspaceIdentity } : {}),
         },
-        event.sender.id,
+        asWebContentsId(event.sender.id),
       );
     },
   );

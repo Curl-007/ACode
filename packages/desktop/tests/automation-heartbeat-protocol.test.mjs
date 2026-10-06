@@ -17,20 +17,22 @@ const repoRoot = fileURLToPath(new URL("../../..", import.meta.url));
 const read = (rel) => readFileSync(`${repoRoot}/${rel}`, "utf8").replace(/\r\n/g, "\n");
 
 test("R2 host 注入：dispatchCronRun 的 sendPrompt 后缀拼接指令常量", () => {
-  const source = read("packages/desktop/src/host/index.ts");
+  // 2026-10-05 host 领域拆分：dispatchCronRun 自 host/index.ts 迁至 cronRunDispatch.ts，
+  // 扫描目标随实现迁移（断言语义不变）。
+  const source = read("packages/desktop/src/host/cronRunDispatch.ts");
   assert.ok(
     source.includes("content: request.prompt + AUTOMATION_NOTICE_INSTRUCTION"),
     "dispatchCronRun 必须在作者 prompt 后拼接 AUTOMATION_NOTICE_INSTRUCTION（Q3 裁决：后缀注入）",
   );
   assert.ok(
-    source.includes("import {\n  HostMessageTypes") &&
-      source.includes("AUTOMATION_NOTICE_INSTRUCTION,"),
+    source.includes("AUTOMATION_NOTICE_INSTRUCTION,") && source.includes('} from "@acode/shared";'),
     "指令常量必须来自 @acode/shared（协议词汇唯一家），不得在 host 内联第二份",
   );
 });
 
 test("R1/R2 host settle：流式累积 + 决策解析 + 条件未读（无条件 unread:true 不得回潮）", () => {
-  const source = read("packages/desktop/src/host/index.ts");
+  // 2026-10-05 host 领域拆分：trackCronRunOutcome 自 host/index.ts 迁至 cronRunTracking.ts。
+  const source = read("packages/desktop/src/host/cronRunTracking.ts");
   assert.ok(
     source.includes("appendAutomationNoticeTail(automationNoticeTail, event.content)"),
     "trackCronRunOutcome 必须在订阅窗内累积本 run 主 agent 正文尾部",

@@ -1,5 +1,6 @@
 /* eslint-disable max-lines -- 桌面平台 IPC 集中装配，拆散会让权限边界更难审计；行数随平台能力增长。 */
 import { BrowserWindow, dialog, ipcMain, nativeTheme } from "electron";
+import { asWindowId, type WebContentsId, type WindowId } from "./desktopWindowIds.js";
 import { readACodeStdioTapDevState } from "@acode/services/node";
 import {
   DesktopCommandIds,
@@ -10,17 +11,26 @@ import {
   PlatformChannels,
   rendererLogPayloadSchema,
   stringArraySchema,
+  type AppSettings,
   type DesktopCommandId,
   type ApplicationIconRequest,
   type Locale,
   type LoadCliMcpFromUserDirectoryRequest,
   type MigrateLegacyCommonMcpRequest,
   type OpenInEditorOptions,
+  type PlatformChannelMap,
   type SaveCliMcpToUserDirectoryRequest,
   type CreateTempTextAttachmentRequest,
   type UpdateStatePayload,
-  type WindowControlsOverlayReadyPayload,
 } from "@acode/shared";
+
+/**
+ * WindowControlsOverlayReadyPayload 定义在 shared/platform.ts，但未从 @acode/shared 入口
+ * 再导出；这里经由已导出的 PlatformChannelMap 对同名通道做索引访问派生，
+ * 与上游定义保持单一来源，避免本地复制字段导致漂移。
+ */
+type WindowControlsOverlayReadyPayload =
+  PlatformChannelMap[(typeof PlatformChannels)["WindowControlsOverlayReady"]]["request"];
 import { getInstalledEditors } from "./editors.js";
 import { getApplicationIcon } from "./applicationIcons.js";
 import { exportLogs } from "./exportLogs.js";
@@ -66,18 +76,22 @@ export function registerPlatformIpcHandlers(options: {
   resolveSystemLocale: () => Locale;
   focusWorkspaceInExistingWindow: (
     path: string,
-    extra?: { skipWindowId?: number },
-  ) => { activated: boolean; winId?: number };
-  windowWorkspaceMap: Map<number, Set<string>>;
-  windowUnreadCountMap: Map<number, number>;
+    extra?: { skipWindowId?: WindowId },
+  ) => { activated: boolean; winId?: WindowId };
+  windowWorkspaceMap: Map<WindowId, Set<string>>;
+  windowUnreadCountMap: Map<WindowId, number>;
   currentApplicationLocale: () => Locale;
   executeDesktopCommand: (
     command: DesktopCommandId,
     senderWindow?: BrowserWindow | null,
   ) => Promise<unknown>;
   acknowledgePostUpdateReleaseNotes: (version: string) => Promise<void>;
-  syncActiveTaskSession: (windowId: number, sessionId: string | null) => void;
-  syncTaskRealtimeWorkspaceKeys: (windowId: number, workspaceKeys: Iterable<string>) => void;
+  // ID 空间（desktopWindowIds.ts）：syncActiveTaskSession 的 windowKey 是 WebContentsId
+  // （唯一调用方 desktopCuaPipIpc 传 resolveCuaPipWindowKey），终点是 cuaPipFocusRouter；
+  // syncTaskRealtimeWorkspaceKeys 的 windowId 是 WindowId（调用方传 win.id），
+  // 终点是 windowTaskRealtimeHostIdMap。两者历史上都叫 windowId: number。
+  syncActiveTaskSession: (windowKey: WebContentsId, sessionId: string | null) => void;
+  syncTaskRealtimeWorkspaceKeys: (windowId: WindowId, workspaceKeys: Iterable<string>) => void;
   getUpdateState: () => UpdateStatePayload;
   openUpdateStatusWindow: () => void;
   getDesktopSessionActivity: () => {
@@ -87,7 +101,9 @@ export function registerPlatformIpcHandlers(options: {
     autoDownloadAndInstallUpdates: boolean;
   }>;
   setAutoDownloadAndInstallUpdates: (enabled: boolean) => Promise<void>;
-  syncAppSettings: (patch: unknown) => void;
+  // SyncAppSettings 通道的 payload 会先经 appSettingsPatchSchema 校验再透传（见下方 ipcMain.on），
+  // 因此这里收窄为 AppSettings 的 patch 子集，而不是放宽成 unknown 让注入方失去类型约束。
+  syncAppSettings: (patch: Partial<AppSettings>) => void;
   /** 快捷键设置页录制态开关：true 时 main 重建菜单摘除可配置 accelerator */
   setShortcutRecordingActive?: (active: boolean, ownerWebContentsId?: number | null) => void;
   /** 桌面端设备标识符（基于 userData 路径的 SHA-256） */
@@ -153,21 +169,22 @@ export function registerPlatformIpcHandlers(options: {
     const validatedPath = nonEmptyStringSchema.parse(path);
     const senderWin = BrowserWindow.fromWebContents(event.sender);
     const activated = options.focusWorkspaceInExistingWindow(validatedPath, {
-      skipWindowId: senderWin?.id,
+      skipWindowId: senderWin ? asWindowId(senderWin.id) : undefined,
     });
     if (activated.activated) {
       return { activated: true };
     }
 
     if (senderWin) {
-      let pathSet = options.windowWorkspaceMap.get(senderWin.id);
+      const senderWindowId = asWindowId(senderWin.id);
+      let pathSet = options.windowWorkspaceMap.get(senderWindowId);
       if (!pathSet) {
         pathSet = new Set();
-        options.windowWorkspaceMap.set(senderWin.id, pathSet);
-        senderWin.on("closed", () => options.windowWorkspaceMap.delete(senderWin.id));
+        options.windowWorkspaceMap.set(senderWindowId, pathSet);
+        senderWin.on("closed", () => options.windowWorkspaceMap.delete(senderWindowId));
       }
       pathSet.add(validatedPath);
-      options.syncTaskRealtimeWorkspaceKeys(senderWin.id, pathSet);
+      options.syncTaskRealtimeWorkspaceKeys(senderWindowId, pathSet);
     }
     return { activated: false };
   });
@@ -247,8 +264,8 @@ export function registerPlatformIpcHandlers(options: {
     }
     const win = BrowserWindow.fromWebContents(event.sender);
     if (win) {
-      options.windowWorkspaceMap.set(win.id, new Set(result.data));
-      options.syncTaskRealtimeWorkspaceKeys(win.id, result.data);
+      options.windowWorkspaceMap.set(asWindowId(win.id), new Set(result.data));
+      options.syncTaskRealtimeWorkspaceKeys(asWindowId(win.id), result.data);
     }
   });
 
@@ -288,7 +305,12 @@ export function registerPlatformIpcHandlers(options: {
       return;
     }
 
-    options.syncAppSettings(result.data);
+    // wire/domain 类型分歧的边界断言：appSettingsPatchSchema 的产物比 Partial<AppSettings>
+    // 略宽——providerFamilyDomain 允许 ""（清空语义），而 AppSettings 域类型不含 ""。
+    // 生产注入方是 index.ts 的 syncImmediateAppSettings，只读取
+    // closeToTrayOnWindows/keepAwakeWhileRunning/officialServices/receivePreviewUpdates/
+    // shortcutBindings 这几个两侧类型一致的字段，不消费 providerFamilyDomain，断言安全。
+    options.syncAppSettings(result.data as Partial<AppSettings>);
   });
 
   // 快捷键录制态：renderer 设置页进入/退出录制时通知。macOS 系统菜单会先于 renderer

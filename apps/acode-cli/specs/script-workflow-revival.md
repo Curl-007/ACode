@@ -485,6 +485,66 @@
 （状态 / 步数 / 名册 / 日志尾巴 / 用量 / 结果 / 错误，全部不要图）、以及
 `workflowRuns` 投影本身。
 
+### R13 真实运行暴露的四处缺陷（批次 C7）
+
+前面 R1–R12 的全部验证都是单测与 typecheck。真实把 CLI 跑起来（`tsx src/main.ts -p`，
+真模型、真子进程）之后，一次跑出四个缺陷，**没有一个被单测拦住**。共性是：每个部件自己都对，
+错在部件之间那一跳没人走过。这一节记的是那四跳。
+
+- **R13.1 取消分派缺一支。** `runtime.stopBackgroundTask`（`core/src/runtime/methods/background.ts`）
+  按 taskType **显式列举**分派：`local_agent` / `local_bash` / `local_dynamic_workflow`，
+  列举之外一律 `unsupportedBackgroundStopResult`。`local_workflow`（脚本工作流的任务类型）
+  不在其中，于是端口有 `cancel`、`cancellable` 报 true，TaskStop 仍回答
+  `cannot be stopped`。修法：新增 `background-stop-script-workflow.ts`（与 dwf 那一支**并列**，
+  不共用——端口、存储、终态词都各自独立），并把 `workflowPort` 挂到 runtime 实例上
+  （此前它只经 deps 流到工具执行器，runtime 方法面拿不到：`internal.ts` 字段 + `agent-runtime.ts`
+  私有字段与赋值）。与 dwf 那一支的两点刻意差别：不写 `stopInitiator`（脚本工作流没有 amend 面，
+  终态词已由 cancelled 承载），`cancel` 也不接受 initiator 入参（契约就是 `(taskId) => boolean`）。
+- **R13.2 取消会把宿主进程打死。** 打通 R13.1 之后立刻撞到：TaskStop → 端口 abort →
+  `child.kill()`，而在飞的 agent 请求此时正要回写响应 → 往对端已关闭的管道写 → **EPIPE**。
+  `child.stdin` 上没有 `'error'` 监听器，Node 于是把它抛成**未捕获异常**（`node:events` throw er），
+  整个 CLI 退出码 1：run 没有结算、没有 `run-settled`、用户连一句错误都看不到。
+  也就是说「取消一个脚本工作流」曾等于「崩掉宿主」。
+  修法双保险：spawn 处给 `child.stdin` 挂一次 `'error'` 监听器（吞掉——对端已 gone，这次写
+  本来就无处可去，run 的终局由 kill 之后的 close/exit 路径裁定），并让 `writeResponse`
+  跳过已 `destroyed`/`writableEnded` 的流、写入走回调形式。两者缺一都不够：只挂监听器，
+  同步写失败仍可能抛；只用回调，流上异步 emit 的 `'error'` 仍无接收者。
+- **R13.3 headless 下 RunWorkflow 必然被拒。** headless 从不构造 permissionBroker，core 退到
+  `createDenyPermissionBroker()`，而 `alwaysAsk` 这道 gate 在任何模式下都要过 broker（yolo 也不跳）。
+  `createHeadlessPermissionBroker` 早已为 dwf 开了按名例外（CreateWorkflow / AmendWorkflow），
+  但 RunWorkflow 同样带 `alwaysAsk` 却不在名单里，于是 `-p` 下必然
+  `No permission client configured for RunWorkflow`——第二套系统在 headless 里根本用不了，
+  与「两套都要能用」直接冲突。修法：把它加进同一份名单（放行的是 **gate** 不是权限：
+  PermissionRequest hook 照旧先应答、权限事件照常发）。名单必须恰好这三个，多一个都是漏口。
+- **R13.4 脚本的 `return` 值从不回传。** run 记录（`ScriptWorkflowRunRecord`）没有 result 列，
+  值只落在 `workflow_completed` 事件的载荷里，而 `formatScriptWorkflowRun` 不印它。
+  技能 §2 却明写「`return` 是 run 交回结果的方式」。真实跑一遍时模型确实一个值都收不到，
+  只能退回去读脚本源码推断——它自己主动声明了这一点。
+  修法：`run()` 手上正握着 `childResult.value`，交给 formatter 印一节 `result:`。
+  **有界**（8000 字符，超界保留头部并明说被截断）：这段文本进的是有模型字节预算的工具响应，
+  一个 return 了整张表的脚本会把自己的结果连同同一响应里的状态与活动树一起挤成噪音。
+  循环引用退到 `String()`，绝不因为格式化失败丢掉整条响应。
+
+R13.4 的**残留边界**：事后 `status()` 查一条历史 run 时拿不到 result（值只在事件载荷里，
+而事件表当前没有读路径），那一节就不印——不编造、也不去猜。要让它在重启后仍可见，
+得给 run 记录加一列或给事件表加读路径，本项不做。
+
+#### R13 顺带核实的三件事（不是缺陷，但容易被误判成缺陷）
+
+- **headless 的工作流门是 `--enable-workflow`，缺省关。** `prompt-command.ts` 把
+  `dynamicWorkflowEnabled` 设成 `options.enableWorkflow === true`，而 TUI 走默认开启策略。
+  实测对照：不带该 flag 时系统提醒里只有 14 个技能（两个工作流技能都被剥掉），带上就是 16 个；
+  ultracode 关键词提醒同样受这道门（灰度关着时提醒模型去用一个不存在的工具毫无意义）。
+  这是既有的、写在注释里的设计，不是批次 A 的回归。
+- **`ACODE_DYNAMIC_WORKFLOW_MODE` 对独立 CLI 无效。** 读它的只有 desktop Host
+  （`desktopRuntimeEnv.ts`）、remote server（`server/src/remote/connect.ts`）与
+  `acodeAgentService`；`apps/acode-cli` 从不读它，`runtime-config.ts` 里也没有这个字段。
+  所以批次 A 改的缺省档位影响的是 **desktop / web / remote** 面，对独立 CLI 的影响是零
+  ——CLI 的工具面此前就不受灰度限制。
+- **`acode skills list` 不过灰度门。** 它是个目录浏览器，直接列 bundled 根目录，因此门关着时
+  仍会列出两个工作流技能（实测 16 个不变）。真正过门的是**模型上下文里**那份技能清单
+  （`create-app.ts` 的 `disabledPaths`），两者不是同一个读面。别拿 `skills list` 当灰度的判据。
+
 ## 状态所有者
 
 ```
@@ -616,6 +676,12 @@ export async function runScriptWorkflowChild(input: {...}): Promise<ScriptWorkfl
     `true` 并触发其 AbortController；对未知/已结算的 taskId 返回 `false`。
     `background-tasks.ts` 的 `cancellable` 按端口实况报（`typeof port?.cancel === "function"`），
     端口没有 cancel 时必须是 `false`——否则 TaskStop 会答应一件做不到的事。
+    ⚠ **这一条在批次 B1 交付时其实是假的**，直到真实跑一遍才暴露：端口有 cancel、
+    `cancellable` 也照实报 true，但 `stopBackgroundTask` 的分派是**显式列举 taskType** 的，
+    `local_workflow` 不在列举里，于是落进兜底的 `unsupportedBackgroundStopResult`，
+    TaskStop 回答 `Task wf_… cannot be stopped`（reason=`background_task_cancel_not_supported`）。
+    「报得出能力、走不到能力」比诚实地报 false 更坏。修法见 R13。
+    单测当时只测了端口的 cancel（它确实是好的），所以全绿。
 18. **resume 并发守卫**：对一个尚未结算的 `resumeFromRunId` 再次 `start` → 抛错，文案点名
     「has not exited yet」与「先 TaskStop 或等它结束」，**不启动第二份 run**。
     判据复用 `completionSnapshots`（run promise 未结算即在飞），不另立第二份运行态。
@@ -667,6 +733,55 @@ export async function runScriptWorkflowChild(input: {...}): Promise<ScriptWorkfl
     **且 sessionId 走完 started→completed 仍在场**；agent 失败 → `errored` 而不是停在 running。
     只有 agent 的执行是桩（真跑要模型凭据），事件形状与身份全是真的。
     这条测试查出过 24 的修复并不充分（见上一条「结算事件」裁决）。
+
+### 批次 C7（R13：真实运行暴露的缺陷）
+
+31. **TaskStop 真的停得掉在飞的脚本 run**（R13.1）：`stopBackgroundTask` 显式列举
+    `local_workflow` 这一支；停止分支走 `WorkflowPort.cancel`，端口缺席或未实现 cancel 时
+    诚实报 unsupported；`workflowPort` 确实挂到了 runtime 实例上（internal 字段 + 私有字段 + 赋值）。
+    成功与 not_found 两条都报 `local_workflow`，且不得混用 dwf 的 `local_dynamic_workflow`。
+32. **取消不打死宿主**（R13.2）：子进程 `stdin` 挂了 `'error'` 监听器，`writeResponse`
+    跳过已 destroyed/writableEnded 的流并走回调形式写入。两条都在场——只有一条不够。
+33. **headless 旁路放行 RunWorkflow**（R13.3）：`createHeadlessPermissionBroker` 的放行名单
+    **恰好**是 CreateWorkflow / AmendWorkflow / RunWorkflow 三个；多一个都是 headless 审批面的漏口。
+34. **脚本的 return 值回传**（R13.4）：`formatScriptWorkflowRun` 在有值时印一节 `result:`，
+    缺席与显式 undefined **逐字节相同**（都不印，不编造）；超 8000 字符保留头部并明说被截断；
+    循环引用退到 `String()` 且状态行仍在。
+
+#### 真实运行验证记录（批次 C7，Windows / node 25.8.2 / dev 形态 `tsx src/main.ts`）
+
+以下都是**实际跑出来的观测**，不是推演。命令形如
+`npx tsx src/main.ts --enable-workflow --mode yolo -p "…"`。
+
+- 无 agent 的脚本（`phase()` + `log()` + `return {ok:true,n:1+1}`）：进度流
+  `started → log: hello from a real sandboxed child process → completed`；
+  TaskOutput 回 `<task_type>local_workflow</task_type><status>completed</status>`；
+  通知里 `result: {"ok":true,"n":2}`（R13.4 修复前这一节整个不存在）。
+- 经 `/ultracode` 起一个带**真实 agent()** 的 run：进度流
+  `started → log: … → dispatched root/agent0@0 → settled root/agent0@0 (ok) → completed`；
+  子代理真的读了文件并返回正确内容，`result: {"file":"…","firstLine":"packages:"}`，
+  `agents: 1 · cached: 0 · failed: 0`。`root/agent0@0` 证实子进程送来的真 callPath
+  被折成 dwf 的 `siteId@ordinal`（ordinal 恒 0）且 node 生命周期两条信封都到位。
+- 取消：`TaskStop` 回 `Successfully stopped task: wf_… (local_workflow)`，进度流末行
+  **`stopped/user`**（R13.2/R13.1 修复前分别是「进程 EPIPE 崩溃退出码 1」与
+  `cannot be stopped`），通知 status `stopped`、正文 `workflow cancelled · verify-cancel`
+  （即存储写的是 `cancelled`），CLI 退出码 0。
+- 技能面：`--enable-workflow` 缺席时模型上下文里 14 个技能（两个工作流技能被剥掉），
+  带上时 16 个；ultracode 关键词提醒同样随这道门出现/消失，正文与
+  `buildUltracodeKeywordReminderBody()` 逐字一致。
+- 技能门：未加载 `script-workflows` 就带 `scriptPath` 调 RunWorkflow 被拒，文案点名
+  该技能；模型据此加载后重试成功——即拒因可执行。
+- 批次一（子代理目录）：Agent 工具的子代理清单里 `Plan` / `Review` / `Verify` 与
+  `general-purpose` / `Explore` 并列在场。
+
+仍未在真实面上观测到的（不是已知缺陷，是本轮没能到达的面）：TUI 工作流卡与方言徽标的
+**实际渲染**（需要交互式 pty）、桌面侧栏/确认窗/聊天卡的**实际渲染**（需要起 Electron 并用
+GUI 自动化驱动）、`usage-updated` 与子代理 sessionId 在**投影里**的落地
+（headless 的 stderr 进度刻意不打印这两类，桌面 GUI 才有读面）。
+另记一处**词表不一致**（非缺陷，但值得知道）：同一次取消在四个读面上是四个词——
+TaskOutput `<status>killed</status>`、通知 `status stopped`、通知正文 `workflow cancelled`、
+进度行 `stopped/user`。各自都有出处（BackgroundTaskInfoStatus / dwf RunStatus /
+ScriptWorkflowRunStatus / 进度格式化器），但读者需要知道它们指的是同一件事。
 
 ## 不在本项范围
 

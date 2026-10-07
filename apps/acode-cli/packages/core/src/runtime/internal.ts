@@ -25,6 +25,7 @@ import type {
   SkillPort,
   McpPort,
   DynamicWorkflowRunPort,
+  WorkflowPort,
   ModelCatalogPort,
   SubagentPort,
   ToolArtifactStorePort,
@@ -107,6 +108,15 @@ interface RuntimeInjectedDeps {
   mcpPort?: McpPort;
   subagentPort?: SubagentPort;
   dynamicWorkflowRunPort?: DynamicWorkflowRunPort;
+  /**
+   * 脚本工作流端口（RunWorkflow 那套，与 dwf 的 dynamicWorkflowRunPort 并列而非同一物）。
+   *
+   * 暴露在 internal 上的唯一理由是 `stopBackgroundTask` 的 `local_workflow` 分派要拿它的
+   * `cancel`——在此之前它只经 deps 流到工具执行器，runtime 方法面拿不到，于是脚本工作流的
+   * 后台任务虽然把 `cancellable` 报成 true，取消分派却落进兜底的「不支持」，TaskStop 回答
+   * "cannot be stopped"。装配方式与 dynamicWorkflowRunPort 同款：deps 注入、构造期固定。
+   */
+  workflowPort?: WorkflowPort;
   /**
    * K2 swarm plan 端口（specs/swarm-task-graph.md R5）：turn 后调度点（methods/turn.ts）
    * 与 plan 进展 reminder 的运行期消费面。deps 注入、构造期固定——与 dynamicWorkflowRunPort

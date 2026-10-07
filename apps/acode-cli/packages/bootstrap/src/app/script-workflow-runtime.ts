@@ -213,6 +213,10 @@ export class ScriptWorkflowRuntime {
     });
     await this.appendEvent(run.id, "workflow_started", { scriptPath: document.path });
 
+    // 脚本 return 的值，只在成功那条路上被赋值；失败/取消时保持 undefined，
+    // formatter 据此不印 result 节（failure 节已经说了发生了什么）。
+    let resultValue: unknown;
+
     try {
       await this.store().updateScriptWorkflowRun({
         id: run.id,
@@ -246,6 +250,10 @@ export class ScriptWorkflowRuntime {
         status: "completed",
       });
       await this.appendEvent(run.id, "workflow_completed", { result: childResult.value });
+      // 脚本 `return` 的值只在这一刻手上有着：run 记录没有这一列，事件表当前也没有读路径。
+      // 不回传的后果是调用方永远拿不到工作流产出——技能 §2 明写「return 是 run 交回结果的
+      // 方式」，而实测（真实 headless 跑一遍）模型确实什么值都收不到，只能靠读脚本源码去猜。
+      resultValue = childResult.value;
     } catch (error) {
       // 用户停下与脚本崩了是两笔不同的事实，必须分开落库：
       //   - 词表本来就有 `cancelled`（SCRIPT_WORKFLOW_RUN_STATUSES），而 tool port 的
@@ -281,7 +289,7 @@ export class ScriptWorkflowRuntime {
     const finalRun = (await this.store().getScriptWorkflowRun(run.id)) ?? run;
     const activities = await this.store().listScriptWorkflowActivities({ runId: run.id });
     return {
-      response: formatScriptWorkflowRun({ activities, run: finalRun }),
+      response: formatScriptWorkflowRun({ activities, run: finalRun, result: resultValue }),
       runId: run.id,
       status: finalRun.status,
       traceId: this.deps.traceContext.traceId,

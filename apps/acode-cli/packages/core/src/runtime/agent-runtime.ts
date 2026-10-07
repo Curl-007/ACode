@@ -46,6 +46,7 @@ import type {
   SkillPort,
   McpPort,
   DynamicWorkflowRunPort,
+  WorkflowPort,
   ModelCatalogPort,
   SubagentPort,
   ToolArtifactStorePort,
@@ -179,6 +180,7 @@ export class AgentRuntime {
   private mcpToolsRegistered = false;
   private subagentPort?: SubagentPort;
   private dynamicWorkflowRunPort?: DynamicWorkflowRunPort;
+  private workflowPort?: WorkflowPort;
   private swarmPlanPort?: SwarmPlanPort;
   private modelCatalogPort?: ModelCatalogPort;
   private runtimeTaskRegistry: RuntimeTaskRegistry;
@@ -302,6 +304,9 @@ export class AgentRuntime {
     this.pdfDocumentPort = deps.pdfDocumentPort;
     this.subagentPort = deps.subagentPort ?? runtime.createDefaultSubagentPort(deps);
     this.dynamicWorkflowRunPort = deps.dynamicWorkflowRunPort;
+    // 脚本工作流端口：runtime 方法面唯一 consumers 是 stopBackgroundTask 的 local_workflow
+    // 分派（internal.ts 字段注释记了漏接它的后果）。
+    this.workflowPort = deps.workflowPort;
     // K2 swarm plan 端口：turn 后调度点与 reminder 的运行期消费面（internal.ts 字段注释）。
     this.swarmPlanPort = deps.swarmPlanPort;
     // GUI「配置」解析子代理模型用的目录（与工具上下文拿的是同一个端口）。

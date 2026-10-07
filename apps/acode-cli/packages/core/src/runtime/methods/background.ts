@@ -9,6 +9,7 @@ import type {
 } from "../deps.js";
 import type { AgentRuntimeInternal } from "../internal.js";
 import { stopDynamicWorkflowBackgroundTask } from "./background-stop-dynamic-workflow.js";
+import { stopScriptWorkflowBackgroundTask } from "./background-stop-script-workflow.js";
 import type {
   RuntimeBackgroundStopOptions,
   RuntimeBackgroundStopResult,
@@ -125,6 +126,13 @@ export async function stopBackgroundTask(
       unsupportedBackgroundStopResult,
       options.initiator,
     );
+  }
+
+  // 脚本工作流（RunWorkflow）与 dwf 是并列的一支，不共用：端口、存储与终态词都各自独立。
+  // 缺这一支时它会落进下面的兜底「不支持」，而 background-tasks.ts 已按端口实况把
+  // cancellable 报成 true——报得出能力却走不到能力，TaskStop 只能回答 "cannot be stopped"。
+  if (target.taskType === "local_workflow") {
+    return stopScriptWorkflowBackgroundTask.call(this, target, unsupportedBackgroundStopResult);
   }
 
   return unsupportedBackgroundStopResult(target);

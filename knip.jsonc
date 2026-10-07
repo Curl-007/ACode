@@ -122,5 +122,8 @@
       "entry": ["src/browser-client.ts"]
     }
   },
-  "ignore": [".agents/**", "packages/ui/src/components/**"]
+  // `**/.acode/**` 是运行时产物（工作流 run 脚本等会落进仓库树内的嵌套 .acode 目录，
+  // 运行时自带 .gitignore 挡住 git 但挡不住 knip）：谁在树里跑过一次工作流，
+  // knip:gate 就红一片 Unused files。2026-10-07 release/0.0.4 验证时实测复现。
+  "ignore": [".agents/**", "**/.acode/**", "packages/ui/src/components/**"]
 }

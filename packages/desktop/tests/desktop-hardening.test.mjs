@@ -10,6 +10,12 @@ import { transpileModule, ModuleKind } from "typescript";
 const nodeRequire = createRequire(import.meta.url);
 const root = new URL("../", import.meta.url);
 const logger = { info() {}, warn() {}, error() {}, debug() {} };
+// Windows 专属行为的用例在 POSIX 上 skip 而不是改期望：app-bound cookies 嗅探链在生产
+// 代码里按 process.platform === "win32" 门控（desktopBrowserDataIpc.ts:63），
+// resolveLocalFileUrlTarget 直接返回 fileURLToPath 的平台形态（desktopMainIpcHelpers.ts:37）。
+// CI 跑 ubuntu，这两条在 Windows 开发机与 desktop 打包冒烟里仍然执行。
+const WIN32_ONLY =
+  process.platform === "win32" ? false : "Windows-only 行为，POSIX 上生产代码不走这条链";
 
 async function readSource(relative) {
   return readFile(new URL(relative, root), "utf8");
@@ -296,7 +302,10 @@ test("aux windows (resource-manager / cua-permission-panel) carry a tightened CS
   }
 });
 
-test("openExternal file urls resolve to hardened local paths, never to shell.openExternal", async () => {
+test(
+  "openExternal file urls resolve to hardened local paths, never to shell.openExternal",
+  { skip: WIN32_ONLY },
+  async () => {
   const helpers = await loadMain("desktopMainIpcHelpers", {
     electron: { shell: {} },
   });
@@ -459,7 +468,7 @@ test("chrome elevated decryption is decided by main, ignoring renderer payload",
   assert.equal(typeof registerBrowserDataIpcHandlers, "function");
 });
 
-test("chrome import flow asks the user only after an app-bound sniff hit", async () => {
+test("chrome import flow asks the user only after an app-bound sniff hit", { skip: WIN32_ONLY }, async () => {
   const handlers = new Map();
   let dialogOptions = null;
   let sniffCalls = 0;

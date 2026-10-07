@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 /**
  * F6（2026-10-04，docs/prompt-corpus-audit-2026-10.md 增补发现 + 同日更正）钉桩：
@@ -15,7 +16,8 @@ import test from "node:test";
  * 反而与上游抢默认 handler）。本测试钉住该裁决的每个面，防漂移回上游品牌协议。
  */
 
-const DESKTOP_ROOT = new URL("..", import.meta.url).pathname.replace(/^\//, "");
+// pathname 手切首斜杠是 Windows 假设（POSIX 上丢开头的 "/"，CI ubuntu 实测整片 ENOENT）。
+const DESKTOP_ROOT = fileURLToPath(new URL("..", import.meta.url));
 const REPO_ROOT = join(DESKTOP_ROOT, "..", "..");
 
 function read(relPath) {

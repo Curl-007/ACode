@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 /**
  * specs/host-startup-storage-cwd.md 验收（2026-10-05，dev/0.0.3 debug 冒烟实证）：
@@ -10,7 +11,8 @@ import test from "node:test";
  * 沿用 desktop 测试既有的源码审读纪律）。
  */
 
-const DESKTOP_ROOT = new URL("..", import.meta.url).pathname.replace(/^\//, "");
+// pathname 手切首斜杠是 Windows 假设（POSIX 上丢开头的 "/"，CI ubuntu 实测 ENOENT）。
+const DESKTOP_ROOT = fileURLToPath(new URL("..", import.meta.url));
 
 const { resolveSessionStorageStartupDirectories } = await import(
   "../src/host/sessionStorageStartupDirectories.ts"

@@ -238,6 +238,18 @@ async function handleOffPeakClaimed(task: ACodeOffPeakTask, now: number): Promis
     await offPeakRepo.releaseClaim(task.offPeakTaskId, { now });
     return;
   }
+  // 类型修复（2026-10-05）：modelSelection 是派发消息的必填字段，但任务行上可选。
+  // 旧代码会把 undefined 原样发给 main——dispatchOffPeakRun 的 validateSelection 收到
+  // undefined 后必然失败，任务落入「派发→transient 失败→重试」的无效循环。缺模型选择的
+  // 任务本质不可派发：在占用 in-flight 名额之前释放认领票据并告警，等待配置修复后重新认领。
+  if (!task.modelSelection) {
+    log(
+      "warn",
+      `off-peak task missing modelSelection, claim released task=${task.offPeakTaskId}`,
+    );
+    await offPeakRepo.releaseClaim(task.offPeakTaskId, { now });
+    return;
+  }
   offPeakInFlight.add(task.offPeakTaskId);
   const request: SchedulerToMainMessage = {
     type: "offpeak-dispatch-request",

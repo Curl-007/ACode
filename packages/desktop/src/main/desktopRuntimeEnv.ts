@@ -447,7 +447,12 @@ function resolveWindowsAppInstallDirForDataBaseDirGuard(
  *   - 未打包 dev：透传 shell 里的合法取值，方便手工切档；非法值直接丢弃而不是转发给 Host，
  *     Host 因此不必再判一次来源；
  *   - 打包 preview：固定写入 `alwaysOn`，忽略 shell，preview 用户始终拥有该功能；
- *   - 打包 production：不写入，且继承值必须被删除，否则本机环境变量就能自行打开灰度。
+ *   - 打包 production：不写入，且继承值必须被删除。理由在缺省档位反转（`alwaysOn`）后变了，
+ *     但这一层仍然必须删：环境变量在 resolveDynamicWorkflowClientConfig 里是 **override，压过
+ *     远端**。留着继承值等于让本机 shell 能把 production 钉死在任意档位——包括钉死在 `alwaysOn`
+ *     从而盖掉服务端下发的 `disabled`，灰度就再也回收不了。删掉之后 production 的路径是
+ *     「环境缺席 → 远端说了算 → 远端没说才落缺省」，服务端保留否决权。
+ *     （旧理由是「否则本机环境变量就能自行打开灰度」；缺省已经是开，那条不再成立。）
  * Main 是唯一决策者：对这个键只有「写」和「删」两种动作，绝不原样透传，
  * Host 端的 resolveDynamicWorkflowClientConfig 才能无条件相信读到的值。
  */

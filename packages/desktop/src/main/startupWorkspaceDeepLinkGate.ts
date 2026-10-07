@@ -19,7 +19,11 @@ export interface ExplicitStartupWorkspaceRequest {
 
 interface StartupDeepLinkConsumptionGate {
   markStartupRequestConsumed: (request: ExplicitStartupWorkspaceRequest) => void;
-  shouldHandleReadyProtocolUrl: (protocolUrl: string | null) => boolean;
+  /**
+   * 返回 true 即代表 protocolUrl 非空且未被冷启动消费过；声明为类型谓词让调用方
+   * （index.ts 的 whenReady deep link 重放）在 if 分支内直接拿到 string，无需重复判空。
+   */
+  shouldHandleReadyProtocolUrl: (protocolUrl: string | null) => protocolUrl is string;
 }
 
 interface ResolveExplicitStartupWorkspaceBootstrapDeps {
@@ -46,7 +50,7 @@ export function createStartupDeepLinkConsumptionGate(
       // 都必须形成一次性消费，避免 app.whenReady 再从 process.argv 重放同一个外部 URL。
       startupDeepLinkConsumed = true;
     },
-    shouldHandleReadyProtocolUrl: (protocolUrl) => {
+    shouldHandleReadyProtocolUrl: (protocolUrl): protocolUrl is string => {
       if (!protocolUrl) {
         return false;
       }

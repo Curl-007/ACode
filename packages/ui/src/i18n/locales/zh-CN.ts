@@ -4557,6 +4557,22 @@ const zhCN: Record<string, string> = {
   "chat.toolCall.workflow.resumeRun.inBackground": "后台运行中",
   "chat.toolCall.workflow.resumeRun.hint":
     "实例以同一 ID 继续：已完结步骤从 journal 重放、未完结步骤重新派发，完成时会收到携带最终结果的通知。",
+  // 脚本工作流（RunWorkflow）——与上面的 chat.toolCall.workflow.* 是**两套系统**，
+  // 刻意用独立命名空间：workflow.* 那些键描述的是 dwf 的因果图 / run 投影 / 产物，
+  // 这套系统一个都没有，混进去会让键名承诺它渲染不出来的东西。
+  "chat.toolCall.scriptWorkflow.label": "脚本工作流",
+  "chat.toolCall.scriptWorkflow.status.launching": "正在启动",
+  "chat.toolCall.scriptWorkflow.status.backgrounded": "后台运行中",
+  "chat.toolCall.scriptWorkflow.status.completed": "已完成",
+  "chat.toolCall.scriptWorkflow.status.failed": "已失败",
+  "chat.toolCall.scriptWorkflow.source.script": "内联脚本",
+  "chat.toolCall.scriptWorkflow.source.scriptPath": "脚本文件",
+  "chat.toolCall.scriptWorkflow.source.name": "预定义工作流",
+  "chat.toolCall.scriptWorkflow.source.resume": "续跑既有实例",
+  "chat.toolCall.scriptWorkflow.field.runId": "实例 ID",
+  "chat.toolCall.scriptWorkflow.field.scriptPath": "脚本路径",
+  "chat.toolCall.scriptWorkflow.field.resumeFromRunId": "续跑自",
+  "chat.toolCall.scriptWorkflow.field.script": "查看脚本",
   "chat.toolCall.workflow.listRuns.listing": "正在列出工作流实例",
   "chat.toolCall.workflow.listRuns.listed": "工作流实例",
   "chat.toolCall.workflow.listRuns.count": "{count} 个实例",
@@ -4665,6 +4681,24 @@ const zhCN: Record<string, string> = {
   // 「配置」弹层：改子代理模型与同时运行上限，
   // 应用即一次 GUI 修订（新 run 接着跑，旧 run 停下，已完成的步骤作缓存带过去）。
   "chat.toolCall.workflow.run.configure": "配置",
+  // 方言徽标：只在脚本工作流（ultracode / RunWorkflow）的 run 上出现，用来解释
+  // 「配置」与「恢复」为什么缺席——那两条命令是 dwf 专属的。
+  "chat.toolCall.workflow.run.dialect.script": "ultracode",
+  "chat.toolCall.workflow.run.dialect.scriptHint":
+    "由 RunWorkflow 启动的脚本工作流。「配置」与「恢复」只对 dwf 工作流可用；停止对两套都可用。",
+  // 实时活动主体：没有静态因果图的 run（脚本工作流）走这份只吃投影的清单。
+  // 明说不画依赖图，免得读者把时间顺序读成因果关系。
+  "chat.toolCall.workflow.run.activity.hint.script":
+    "本次运行观测到的实时活动。不显示依赖图：这套工作流系统没有静态计划，所以这里只有阶段、子代理与它们的结算是事实。",
+  "chat.toolCall.workflow.run.activity.hint.noGraph":
+    "本次运行观测到的实时活动。依赖图不在当前会话的可见历史里，所以时间线视图不可用，这里只列出观测到的活动。",
+  "chat.toolCall.workflow.run.activity.fraction": "已结算 {settled}/{total}",
+  "chat.toolCall.workflow.run.activity.asks": "{n} 次 ask",
+  "chat.toolCall.workflow.run.activity.cached": "命中缓存",
+  "chat.toolCall.workflow.run.activity.lastTool": "最后：{name}",
+  "chat.toolCall.workflow.run.activity.openActor": "打开这个子代理的转写",
+  "chat.toolCall.workflow.run.activity.actorInert": "这个子代理还没有会话记录",
+  "chat.toolCall.workflow.run.activity.untrackedNode": "未归属的步骤",
   "chat.toolCall.workflow.run.settings.title": "配置工作流",
   "chat.toolCall.workflow.run.settings.model": "子代理模型",
   "chat.toolCall.workflow.run.settings.model.session": "会话模型",
@@ -5079,6 +5113,22 @@ const zhCN: Record<string, string> = {
   // 会话免确认：只活在本次会话，重启后再问。
   "chat.permission.workflow.allowForSession": "本会话内始终允许",
   "chat.permission.workflow.allowForSession.description": "本会话内运行工作流不再询问",
+  // ── 脚本工作流（RunWorkflow）确认窗 ──
+  // 独立命名空间，理由同 chat.toolCall.scriptWorkflow.*：这套系统没有因果图与 dwf run 投影，
+  // 共用 workflow.* 前缀会让键名承诺渲染不出来的东西。
+  "chat.permission.scriptWorkflow.title": "运行这个脚本工作流？",
+  "chat.permission.scriptWorkflow.field.source": "来源",
+  "chat.permission.scriptWorkflow.field.name": "工作流",
+  "chat.permission.scriptWorkflow.field.scriptPath": "脚本文件",
+  "chat.permission.scriptWorkflow.field.resumeFromRunId": "续跑自",
+  "chat.permission.scriptWorkflow.source.script": "本次内联提交的脚本",
+  "chat.permission.scriptWorkflow.source.scriptPath": "磁盘上的脚本文件",
+  "chat.permission.scriptWorkflow.source.name": "预定义工作流",
+  "chat.permission.scriptWorkflow.source.resume": "续跑既有实例",
+  "chat.permission.scriptWorkflow.source.unknown": "未指明",
+  "chat.permission.scriptWorkflow.scriptHeading": "将要运行的脚本",
+  "chat.permission.scriptWorkflow.scriptPathNotice":
+    "批准的是这个文件当前的内容。它在批准之后仍可能被改动（手改、git pull、别人提交），而每次运行都会重新读取它。",
   // ── 修订──
   // 修订的确认窗只对别的会话的 run 出现：问句换词，多一行 lineage（前驱还在跑时再多一句）。
   // 不导入预览、不放脚本 diff。

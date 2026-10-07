@@ -66,8 +66,9 @@ export async function createScriptWorkflowRun(
       insert into workflow_run (
         id, definition_id, name, kind, parent_session_id, cwd, script_path, script_hash,
         args_json, args_hash, status, current_phase, budget_total, budget_spent,
-        stats_json, failure_json, time_created, time_started, time_updated, time_completed
-      ) values (?, ?, ?, 'script', ?, ?, ?, ?, ?, ?, ?, null, ?, 0, ?, null, ?, null, ?, null)
+        stats_json, failure_json, time_created, time_started, time_updated, time_completed,
+        tool_call_id
+      ) values (?, ?, ?, 'script', ?, ?, ?, ?, ?, ?, ?, null, ?, 0, ?, null, ?, null, ?, null, ?)
       `,
     )
     .run(
@@ -85,6 +86,7 @@ export async function createScriptWorkflowRun(
       encodeJson(input.stats),
       now,
       now,
+      input.toolCallId ?? null,
     );
   return mustGetRun(db, input.id);
 }
@@ -140,6 +142,12 @@ export async function listScriptWorkflowRuns(
   input: {
     cwd?: string;
     limit?: number;
+    /**
+     * 按发起会话过滤。冷回放必须是会话作用域的——`workflowRuns` 投影按会话物化，
+     * 把别的会话的 run 回放进来等于让一个会话看见另一个会话的工作流。
+     * 此前只有 `cwd`，而一个项目目录会被许多会话共用，顶不掉这个作用域。
+     */
+    parentSessionId?: string;
     statuses?: readonly ScriptWorkflowRunStatus[];
   } = {},
 ): Promise<ScriptWorkflowRunRecord[]> {
@@ -148,6 +156,10 @@ export async function listScriptWorkflowRuns(
   if (input.cwd) {
     clauses.push("cwd = ?");
     values.push(input.cwd);
+  }
+  if (input.parentSessionId) {
+    clauses.push("parent_session_id = ?");
+    values.push(input.parentSessionId);
   }
   if (input.statuses && input.statuses.length > 0) {
     clauses.push(`status in (${input.statuses.map(() => "?").join(", ")})`);

@@ -8,6 +8,7 @@ import { buildWorkflowTimeline } from "@/components/workflow-timeline/timeline-m
 import { workflowSubagentModelCardLabel } from "@/components/workflow-timeline/subagent-model-label.js";
 import { workflowSummaryParts } from "@/components/workflow-timeline/timeline-summary.js";
 import { WorkflowRunArtifactsSection } from "@/app-shell/WorkflowRunArtifactsSection.js";
+import { WorkflowRunActivityList } from "@/app-shell/WorkflowRunActivityList.js";
 import { WorkflowRunPhaseList } from "@/app-shell/WorkflowRunPhaseList.js";
 import { WorkflowRunProvenance } from "@/app-shell/WorkflowRunProvenance.js";
 import {
@@ -227,8 +228,15 @@ const WorkflowRunContent = memo(function WorkflowRunContent({
   // ——状态头、时间线、产物一件不少——唯独 Resume 收起来，因为按下去会真的起一台引擎。
   // 快照未就绪时 enabled 为 false，按未命中处理：宁可按钮晚半拍出现，也不给一个随时会消失的按钮。
   const { enabled: dynamicWorkflowEnabled } = useDynamicWorkflowAvailability();
+  // 方言门住在两个谓词里（`isWorkflowRunResumable` / `isWorkflowRunConfigurable`），不在这里
+  // 重新推导：`resumeWorkflowRun` 与 `amendWorkflowRunSettings` 都是 **dwf 专属**命令，打到脚本
+  // 工作流的 run 上必然失败（两套各有自己的存储、端口与 run 语义）。两套 run 现在共用这一个投影
+  // 与这一个侧栏，所以门必须在谓词那一个所有者上——这里曾自己叠过一道，而会话里的轮尾摘要卡
+  // 漏叠了，于是同一条 run 在两处给出不同的按钮。
+  // 漏叠了，于是同一条 run 在两处给出不同的按钮。方言徽标也不在这里：状态头自己按 run.dialect 判。
+  // Cancel 不受方言影响：它走 cancelBackgroundWork（workId ≡ runId），对两套都成立。
   const resumable = isWorkflowRunResumable(run) && dynamicWorkflowEnabled;
-  // 「配置」：与 Resume 同一道灰度门；
+  // 「配置」：与 Resume 同一道灰度门 + 同一道方言门（后者在谓词里）；
   // 被接受后面板跟着工作流走到新 run（useWorkflowRunPaneSettings）。
   const settings = useWorkflowRunPaneSettings({
     enabled: dynamicWorkflowEnabled,
@@ -385,8 +393,14 @@ const WorkflowRunContent = memo(function WorkflowRunContent({
       <WorkflowRunResultSections result={result} />
 
       {/*
-       * 阶段清单：时间线读作一份纵向清单，
-       *           升级问题挂在提问者那一行下面。图不可得（老对话翻不到发起行）时念一句「图不可用」。
+       * 主体三分支，顺序是有意的：
+       *   1. 有静态因果图 → 时间线清单（升级问题挂在提问者那一行下面）。
+       *   2. 没有图但**有 run 投影** → 只吃投影的实时活动清单。脚本工作流永远走这一支
+       *      （不编译、不做静态分析，RunWorkflow 的工具行上没有图）；dwf 在发起行滚出
+       *      可见历史窗口时也走这一支——两种情况下的提示语由组件按 dialect 分开措辞。
+       *      此前这一支不存在，脚本 run 打开侧栏只能看到一句「图不可用」，主体全空。
+       *   3. 连 run 都没有（被 8-run 上限淘汰、或冷启动尚未投影）→ 才念「图不可用」。
+       *      这句话的本义是「无从观测」，不该被有投影的 run 占用。
        */}
       {graph !== undefined && model !== undefined ? (
         <WorkflowRunPhaseList
@@ -399,6 +413,11 @@ const WorkflowRunContent = memo(function WorkflowRunContent({
             ? {}
             : { onOpenWorkspace: handleOpenWorkspace })}
           {...(landing === undefined ? {} : { landing })}
+        />
+      ) : run !== undefined ? (
+        <WorkflowRunActivityList
+          run={run}
+          {...(onOpenWorkflowActorSession === undefined ? {} : { onOpenActor: handleOpenActor })}
         />
       ) : (
         <p

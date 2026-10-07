@@ -2,6 +2,14 @@
 *.mjs text eol=lf
 *.sh  text eol=lf
 
+# TypeScript 源码统一 LF：core.autocrlf 的机器间差异曾让「字节级比较源码」的
+# 测试在 Windows 工作区误红（F8 教训，见 apps/acode-cli/specs/acp-host-adapter.md）。
+# 索引内文件本就全为 LF，此规则只约束检出形态，使跨平台字节一致。
+*.ts  text eol=lf
+*.tsx text eol=lf
+*.cts text eol=lf
+*.mts text eol=lf
+
 # 上游许可原文与生成的声明按字节保存，不能自动转换换行或裁剪空白。
 # 原文中的 License / ======= 是 Markdown 标题，不是合并冲突。
 THIRD-PARTY-NOTICES.md -text -whitespace conflict-marker-size=32 linguist-generated=true

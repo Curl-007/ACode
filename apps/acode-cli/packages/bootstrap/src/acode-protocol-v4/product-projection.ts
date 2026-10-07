@@ -3,7 +3,8 @@ import { PERMISSION_FULL_ACCESS_OPTION_ID } from "@acode/shared/acode-protocol-v
 // ProductProjection —— CLI 权威投影第二 reducer。
 // 输入：CLI 事件日志（SessionEvent，权威事实源）；输出：ConversationDelta[]。
 // 快照推进复用协议规范 apply（applyConversationDeltas）——投影演进与 delta 流
-// 逐字节一致是构造保证，黄金测试再用独立重放交叉验证。
+// 逐字节一致是构造保证（复用同一 apply 函数）。注意：旧注释宣称的「独立重放
+// 交叉验证」黄金测试尚未建成（2026-10-05 核实），构造保证是当前唯一机械保障。
 //
 // 覆盖：session/turn 生命周期、流式文本/思考、tool call 状态机、
 // 权限交互、turn-steer 队列、usage、错误态、迟到终态拒收、

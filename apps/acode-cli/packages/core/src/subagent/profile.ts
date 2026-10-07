@@ -4,13 +4,16 @@ import { EXPLORE_AGENT_TYPE } from "./explore.js";
 import { formatExploreAllowedToolsForAgentDescription } from "./explore-tools.js";
 import { parseAgentFrontmatter, splitMarkdownFrontmatter } from "./profile-frontmatter.js";
 import { filterSubagentChildToolNames } from "./tool-policy.js";
-import type { ModelSelection } from "@acode/shared";
+import type { BuiltInSubagentName, ModelSelection } from "@acode/shared";
 import { resolveProfileModelSelection } from "./profile-model-selection.js";
 
 export const DEFAULT_SUBAGENT_TYPE = GENERAL_PURPOSE_AGENT_TYPE;
 
+// builtin-subagent-catalog.md R5：键集从字面二名扩为 shared 的 BuiltInSubagentName 联合
+// （核心二内置 + bundled 预置 Plan/Verify/Review）。名单单一事实源在 @acode/shared 的
+// BUILT_IN_SUBAGENT_NAMES，core 不再维护第二份硬编码键集。
 export type BuiltInSubagentModelSelectionOverrides = Partial<
-  Record<typeof DEFAULT_SUBAGENT_TYPE | typeof EXPLORE_AGENT_TYPE, ModelSelection>
+  Record<BuiltInSubagentName, ModelSelection>
 >;
 
 export type AgentPermissionMode = "auto" | "plan";
@@ -67,8 +70,12 @@ export function createBuiltInExploreAgentProfile(
 ): AgentProfile {
   return {
     name: EXPLORE_AGENT_TYPE,
+    // R9（builtin-subagent-catalog.md）：description 自撰英文重写——旧文本与第三方产品
+    // 还原件逐字一致（prompt-language-policy.md R7 血缘冲突），产品拍板自撰重写。
+    // 兼容面 = 名字与派发行为（medium / very thorough 两档广度语义不变），不是 prose；
+    // 负边界句按 R9.2 补回精简时丢失的反用途语义（只读节选，不做评审/逐行审计）。
     description:
-      'Read-only search agent for broad fan-out searches - when answering means sweeping many files, directories, or naming conventions and you only need the conclusion, not the file dumps. It reads excerpts rather than whole files, so it locates code; it doesn\'t review or audit it. Specify search breadth: "medium" for moderate exploration, "very thorough" for multiple locations and naming conventions.',
+      'Fast read-only search specialist. Use when locating code across many files or naming conventions where only the conclusion matters. It samples excerpts rather than whole files, so it is wrong for code review, line-by-line audits, or consistency checks — use Review or Plan for those. Caller specifies search breadth: "medium" or "very thorough".',
     color: "cyan",
     injectAgentsMd: false,
     ...(options.modelSelection ? { modelSelection: options.modelSelection } : {}),
@@ -116,8 +123,10 @@ export function createBuiltInGeneralPurposeAgentProfile(
 ): AgentProfile {
   return {
     name: DEFAULT_SUBAGENT_TYPE,
+    // R9（builtin-subagent-catalog.md）：description 自撰英文重写，理由同 Explore——
+    // 旧文本系第三方还原件原文；名字、工具面与 subagent_type 派发命中行为不变，只换 prose。
     description:
-      "General-purpose agent for researching complex questions, searching for code, and executing multi-step tasks. When you are searching for a keyword or file and are not confident that you will find the right match in the first few tries use this agent to perform the search for you.",
+      "Multi-step worker with full tool rights. Use for complex research or multi-file changes when you cannot predict the right match in the first few tries. Not for pure lookup or design — Explore finds code faster and Plan returns implementation designs; this agent can modify files, so prefer read-only agents when no edits are needed.",
     // 内置子智能体使用显式身份色，避免 UI 按名称 hash 后把 general-purpose 显示为红色。
     color: "blue",
     injectAgentsMd: true,
@@ -127,6 +136,9 @@ export function createBuiltInGeneralPurposeAgentProfile(
     tools: ["*"],
   };
 }
+
+/** R4 父侧可见性标注：plan 权限地板 profile 描述行的只读后缀（位于工具清单后缀之前）。 */
+const READ_ONLY_ANNOTATION = " (read-only)";
 
 export function formatAgentProfilesForPrompt(
   profiles: readonly AgentProfile[],
@@ -145,7 +157,13 @@ export function formatAgentProfilesForPrompt(
           : undefined;
       const toolText = typeof tools === "string" ? tools : tools?.join(", ");
       const suffix = toolText ? ` (Tools: ${toolText})` : "";
-      return `- ${profile.name}: ${profile.description}${suffix}`;
+      // R4 父侧可见性（builtin-subagent-catalog.md）：permissionMode plan 地板的条目
+      // （bundled 预置 Plan/Review 与用户 markdown 同款判据）在描述行追加只读标注，
+      // 让父模型派发前就能看到只读硬保证。判据必须是权限地板而不是工具面推断：
+      // Bash 在 Explore/Verify 白名单内但可写文件，按工具面计算会漏标 Explore
+      // 或误标 Verify。签名不变，行为扩展。
+      const readOnlyNote = profile.permissionMode === "plan" ? READ_ONLY_ANNOTATION : "";
+      return `- ${profile.name}: ${profile.description}${readOnlyNote}${suffix}`;
     }),
   ].join("\n");
 }

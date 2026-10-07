@@ -14,7 +14,8 @@
   },
   "scripts": {
     "lint": "oxlint",
-    "lint:fix": "oxlint --fix"
+    "lint:fix": "oxlint --fix",
+    "test": "node --import tsx --test \"test/**/*.test.ts\" \"tests/**/*.test.mjs\""
   },
   "dependencies": {
     "@aiden0z/pptx-renderer": "1.2.4",

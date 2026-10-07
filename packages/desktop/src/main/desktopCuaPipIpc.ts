@@ -2,9 +2,10 @@ import { BrowserWindow, ipcMain } from "electron";
 import { PlatformChannels } from "@acode/shared";
 
 import { resolveCuaPipWindowKey } from "./cuaPipFocusRouter.js";
+import type { WebContentsId } from "./desktopWindowIds.js";
 
 export function registerCuaPipActiveSessionIpc(options: {
-  syncActiveTaskSession: (windowKey: number, sessionId: string | null) => void;
+  syncActiveTaskSession: (windowKey: WebContentsId, sessionId: string | null) => void;
   warn: (message: string) => void;
 }): void {
   ipcMain.on(PlatformChannels.SyncActiveTaskSession, (event, payload: unknown) => {

@@ -1,4 +1,6 @@
-import type { StorageRootSpec } from "@acode/services";
+// StorageRootSpec 的定义在 @acode/shared（services 内部同样从 shared 导入该类型）；
+// @acode/services 入口并未再导出它，这里修正导入来源（纯类型导入，无运行时影响）。
+import type { StorageRootSpec } from "@acode/shared";
 import type { StorageScanProgress } from "@acode/services/node";
 
 export interface StorageScanWorkerData {

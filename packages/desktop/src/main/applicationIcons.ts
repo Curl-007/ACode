@@ -74,6 +74,9 @@ async function buildApplicationPathIndex(
   const worker = async () => {
     while (cursor < appPaths.length) {
       const appPath = appPaths[cursor++];
+      // noUncheckedIndexedAccess：循环条件已保证下标在界内，appPath 实际不会是 undefined；
+      // 显式跳过仅用于类型收窄（cursor 已递增，不会造成死循环），不改变既有行为。
+      if (appPath === undefined) continue;
       const remainingMs = deadline - dependencies.now();
       if (remainingMs <= 0) return;
       try {

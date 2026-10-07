@@ -40,6 +40,9 @@ import {
   type SubagentWaitOptions,
   type TraceContext,
 } from "@acode/contracts";
+// 内置覆盖键集单一事实源 = shared（builtin-subagent-catalog.md R5）；原内联二名 Record
+// 与 runtime/types.ts 同款契约漂移，一并收敛，不再出现硬编码键集。
+import type { BuiltInSubagentModelSelectionOverrides } from "@acode/shared";
 import { mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -116,9 +119,7 @@ export interface ExploreSubagentPortOptions {
   enqueueParentTaskNotification?: EnqueueParentTaskNotification;
   outputRootDir?: string;
   profiles?: readonly AgentProfile[];
-  builtInModelSelectionOverrides?: Partial<
-    Record<"general-purpose" | "Explore", import("@acode/shared").ModelSelection>
-  >;
+  builtInModelSelectionOverrides?: BuiltInSubagentModelSelectionOverrides;
   runtimeTaskRegistry?: RuntimeTaskRegistry;
   createAgentId?: () => string;
   getAllowedTools?: (profile: AgentProfile) => readonly string[];
@@ -143,14 +144,15 @@ export function createExploreSubagentPort(options: ExploreSubagentPortOptions): 
     ): Promise<AgentOutput> {
       const { profile, request } = resolveAgentProfileForRequest(profiles, rawRequest);
       const executionRequest = toSubagentExecutionRequest(request);
-      const backgroundRequested =
-        rawRequest.runInBackground === true || profile.background === true;
+      // 三态判定（subagent-background-tristate.md R1）：显式 false 强制前台并压过
+      // profile.background 默认；仅 undefined 才跟随 profile。
+      const backgroundRequested = rawRequest.runInBackground ?? profile.background === true;
       if (backgroundRequested) {
         if (launchOptions?.modelOverride?.background === "deny") {
           // 单次执行的模型与动态鉴权不能脱离父 loop 生命周期进入后台。
           throw createCoreError(
             CoreErrorType.ToolExecutionFailed,
-            "Idle-time tasks do not support background agents. Run this agent in the foreground.",
+            "Idle-time tasks do not support background agents. Re-dispatch with run_in_background: false to run this agent in the foreground.",
             {
               context: {
                 code: AgentErrorCode.BACKGROUND_UNAVAILABLE,

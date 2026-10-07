@@ -2,12 +2,15 @@ import { BUILTIN_ACODE_SLASH_COMMAND_HELP_ENTRIES, type ACodeSlashCommand } from
 
 /**
  * App `/` 面板与加号菜单按本顺序展示（UI 不维护排序白名单）。`workflow` 紧随 `goal`：两者都是
- * 「开启一段工作」的入口；它受动态工作流开关约束，
+ * 「开启一段工作」的入口；`ultracode` 紧随 `workflow`：它是**另一套**工作流系统的入口
+ * （RunWorkflow + 纯 JS 脚本），与 workflow 相邻展示，用户才看得见这是两个不同的东西而不是
+ * 一个命令的两种拼写。两个都受动态工作流开关约束，
  * 由 acode-protocol/slash-commands.ts 在装配时剔除。
  */
 export const APP_PROTOCOL_VISIBLE_BUILTIN_SLASH_COMMAND_NAMES = [
   "goal",
   "workflow",
+  "ultracode",
   "compact",
   "init",
 ] as const;

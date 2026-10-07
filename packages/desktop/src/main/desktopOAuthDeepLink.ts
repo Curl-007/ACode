@@ -3,6 +3,7 @@ import { statSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 import { app, BrowserWindow, dialog } from "electron";
 import type { WebContents } from "electron";
+import { asWebContentsId, type WebContentsId } from "./desktopWindowIds.js";
 import {
   type Locale,
   type OAuthProviderId,
@@ -34,17 +35,18 @@ export interface ExternalWorkspaceOpenDialogCopy {
 }
 
 interface OAuthRouteTarget {
-  windowId: number;
+  // WebContentsId 空间（本模块所有 windowId 都来自 win.webContents.id），见 desktopWindowIds.ts。
+  windowId: WebContentsId;
   provider?: OAuthProviderId;
 }
 
 const oauthStateToWindow = new Map<string, OAuthRouteTarget>();
-const rendererReadyWebContentsIds = new Set<number>();
+const rendererReadyWebContentsIds = new Set<WebContentsId>();
 let pendingDeepLinkUrl: string | null = null;
 let pendingPaymentDeepLinkUrl: string | null = null;
 let pendingOpenWorkspaceRequest: {
   path: string;
-  targetWebContentsId?: number;
+  targetWebContentsId?: WebContentsId;
 } | null = null;
 
 export function parseOAuthStateRegistration(payload: unknown): OAuthStateRegistration | null {
@@ -179,7 +181,7 @@ export function handleOpenWorkspacePath(
     ? options.resolveApplicationWindow()
     : (BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0] ?? null);
   if (targetWindow) {
-    const targetWebContentsId = targetWindow.webContents.id;
+    const targetWebContentsId = asWebContentsId(targetWindow.webContents.id);
     if (!rendererReadyWebContentsIds.has(targetWebContentsId)) {
       pendingOpenWorkspaceRequest = {
         path,
@@ -384,7 +386,10 @@ export function registerDeepLinkProtocol(
   }
 }
 
-export function registerOAuthState(windowId: number, registration: OAuthStateRegistration): void {
+export function registerOAuthState(
+  windowId: WebContentsId,
+  registration: OAuthStateRegistration,
+): void {
   oauthStateToWindow.set(registration.state, {
     windowId,
     provider: registration.provider,
@@ -394,7 +399,7 @@ export function registerOAuthState(windowId: number, registration: OAuthStateReg
 }
 
 export function deliverPendingDeepLink(webContents: WebContents): boolean {
-  rendererReadyWebContentsIds.add(webContents.id);
+  rendererReadyWebContentsIds.add(asWebContentsId(webContents.id));
 
   const hasPendingOAuthCallback = pendingDeepLinkUrl != null;
   if (hasPendingOAuthCallback) {
@@ -416,7 +421,7 @@ export function deliverPendingDeepLink(webContents: WebContents): boolean {
   return hasPendingOAuthCallback;
 }
 
-export function clearOAuthRoutesForWindow(windowId: number): void {
+export function clearOAuthRoutesForWindow(windowId: WebContentsId): void {
   rendererReadyWebContentsIds.delete(windowId);
   if (pendingOpenWorkspaceRequest?.targetWebContentsId === windowId) {
     pendingOpenWorkspaceRequest = null;

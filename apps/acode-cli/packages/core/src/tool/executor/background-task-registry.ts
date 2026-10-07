@@ -204,6 +204,11 @@ function runtimeTaskTypeForToolCall(toolCall: ExecutableToolCall): RuntimeTaskTy
   switch (toolCall.name) {
     case "Bash":
       return "local_bash";
+    case "RunWorkflow":
+    // 保留死名 "Workflow"：这一支落空会让 registerRuntimeBackgroundTask 直接 return，
+    // 会话回收护栏与 TaskOutput 可见性全失（下面 default 分支的注释说的就是这件事）。
+    // 新调用不可能再叫 "Workflow"（条目已移出 builtInTools），但任何从历史重建
+    // ExecutableToolCall 的路径都会走到这里，代价一行、换掉一整类静默失效。
     case "Workflow":
       return "local_workflow";
     default:

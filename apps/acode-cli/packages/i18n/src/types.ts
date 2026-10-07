@@ -272,11 +272,15 @@ export interface TuiCopy {
       actorRow(input: { name: string; status: string }): string;
       usage(input: { spentTokens: number }): string;
       collapsed(input: {
+        /** 方言徽标的屏幕词；缺席即不挂徽标（dwf 是缺省方言，挂上去只是噪音）。 */
+        dialect?: string;
         label: string;
         status: string;
         nodesSettled: number;
         nodesTotal: number;
       }): string;
+      /** 脚本工作流（RunWorkflow）这条 run 的徽标词。 */
+      dialectScript: string;
       error(message: string): string;
       expandHint: string;
       collapseHint: string;

@@ -2,8 +2,15 @@ import type {
   BrowserViewportSize,
   BrowserViewScreenshotSurfacePreparePayload,
   BrowserViewScreenshotSurfaceReleasePayload,
-  BrowserViewSurfaceScaleMode,
 } from "@acode/shared";
+
+/**
+ * BrowserViewSurfaceScaleMode 定义在 shared/platform.ts，但未从 @acode/shared 入口再导出；
+ * 这里经由已导出的 prepare payload 的同名字段派生，与上游定义保持单一来源。
+ */
+type BrowserViewSurfaceScaleMode = NonNullable<
+  BrowserViewScreenshotSurfacePreparePayload["surfaceScaleMode"]
+>;
 
 const VIEWPORT_TOLERANCE_PX = 1;
 

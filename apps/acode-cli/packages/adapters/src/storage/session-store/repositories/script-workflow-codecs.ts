@@ -47,6 +47,8 @@ export interface WorkflowRunRow {
   time_created: number;
   time_started: number | null;
   time_updated: number;
+  /** 发起这次 run 的工具调用 id（migration 0027 加列，存量行为 null）。 */
+  tool_call_id: string | null;
 }
 
 export interface WorkflowActivityRow {
@@ -140,6 +142,8 @@ export function decodeRun(row: WorkflowRunRow): ScriptWorkflowRunRecord {
     stats: decodeJson(row.stats_json),
     status: row.status,
     updatedAt: row.time_updated,
+    // 存量行与迁移前的 run 都没有这个事实（当时没记），缺席即缺席，不用空串顶替。
+    ...(row.tool_call_id ? { toolCallId: row.tool_call_id } : {}),
   };
 }
 

@@ -2,6 +2,7 @@
 import { randomUUID } from "node:crypto";
 import { BrowserWindow, MessageChannelMain } from "electron";
 import type { MessagePortMain, UtilityProcess as ElectronUtilityProcess } from "electron";
+import { asWebContentsId, type WebContentsId } from "./desktopWindowIds.js";
 import {
   buildRemoteWorkspaceIdentity,
   buildRemoteEnvironmentKey,
@@ -26,14 +27,14 @@ interface RemoteWorkspaceSessionContext {
 
 interface PendingConnect {
   requestId: string;
-  webContentsId: number;
+  webContentsId: WebContentsId;
   win: BrowserWindow;
   resolve: (sessionId: string) => void;
   reject: (error: Error) => void;
 }
 
 interface RemoteAttachmentRoute {
-  webContentsId: number;
+  webContentsId: WebContentsId;
   // Main 只保留端口转发所需的 request/session 关联和脱敏 descriptor；连接/任务事实归 Host。
   descriptor: WindowHostRemoteWorkspaceDescriptor;
   rendererAttachmentId?: string;
@@ -99,7 +100,7 @@ export function createRemoteWorkspaceSessionManager(options: {
     warn: (...args: unknown[]) => void;
     error: (...args: unknown[]) => void;
   };
-  windowHostProcessMap: Map<number, ElectronUtilityProcess>;
+  windowHostProcessMap: Map<WebContentsId, ElectronUtilityProcess>;
   resolveRemoteAssetDirs: () => RemoteAssetDirs;
   resolveWslTarget?: (
     target: Extract<RemoteTarget, { kind: "wsl" }>,
@@ -122,16 +123,16 @@ export function createRemoteWorkspaceSessionManager(options: {
   let appShutdownStarted = false;
   const monotonicNowMs = options.monotonicNowMs ?? (() => performance.now());
 
-  function requestKey(webContentsId: number, requestId: string): string {
+  function requestKey(webContentsId: WebContentsId, requestId: string): string {
     return `${webContentsId}\0${requestId}`;
   }
 
   function getWindowHost(win: BrowserWindow): ElectronUtilityProcess {
-    const child = options.windowHostProcessMap.get(win.webContents.id);
+    const child = options.windowHostProcessMap.get(asWebContentsId(win.webContents.id));
     if (!child || child.pid == null) {
       throw new Error(`未找到窗口 Local Host，windowId=${win.webContents.id}`);
     }
-    ensureHostListener(child, win.webContents.id);
+    ensureHostListener(child, asWebContentsId(win.webContents.id));
     return child;
   }
 
@@ -278,7 +279,7 @@ export function createRemoteWorkspaceSessionManager(options: {
   }
 
   function confirmRendererAttachmentReady(
-    webContentsId: number,
+    webContentsId: WebContentsId,
     payload: { sessionId: string; attachmentId: string },
   ): void {
     const route = routesBySessionId.get(payload.sessionId);
@@ -318,7 +319,7 @@ export function createRemoteWorkspaceSessionManager(options: {
 
   function handleConnected(
     child: ElectronUtilityProcess,
-    webContentsId: number,
+    webContentsId: WebContentsId,
     requestId: string,
     descriptor: WindowHostRemoteWorkspaceDescriptor,
   ): void {
@@ -420,7 +421,7 @@ export function createRemoteWorkspaceSessionManager(options: {
   }
 
   function handleClosed(
-    webContentsId: number,
+    webContentsId: WebContentsId,
     event: {
       remoteSessionId: string;
       reason: "connection-closed" | "disposed" | "connect-cancelled";
@@ -468,7 +469,7 @@ export function createRemoteWorkspaceSessionManager(options: {
     }
   }
 
-  function ensureHostListener(child: ElectronUtilityProcess, webContentsId: number): void {
+  function ensureHostListener(child: ElectronUtilityProcess, webContentsId: WebContentsId): void {
     if (listenedHosts.has(child)) return;
     listenedHosts.add(child);
     child.on("message", (message: unknown) => {
@@ -583,7 +584,7 @@ export function createRemoteWorkspaceSessionManager(options: {
       throw new Error("窗口已关闭，无法创建远程工作区连接");
     }
     const resolvedRequestId = requestId ?? randomUUID();
-    const key = requestKey(win.webContents.id, resolvedRequestId);
+    const key = requestKey(asWebContentsId(win.webContents.id), resolvedRequestId);
     if (pendingByRequestKey.has(key)) {
       throw new Error(`远程连接 requestId 重复，requestId=${resolvedRequestId}`);
     }
@@ -595,7 +596,7 @@ export function createRemoteWorkspaceSessionManager(options: {
     return new Promise<string>((resolve, reject) => {
       pendingByRequestKey.set(key, {
         requestId: resolvedRequestId,
-        webContentsId: win.webContents.id,
+        webContentsId: asWebContentsId(win.webContents.id),
         win,
         resolve,
         reject,
@@ -614,7 +615,7 @@ export function createRemoteWorkspaceSessionManager(options: {
   async function bindRemoteWorkspaceSessionContext(
     sessionId: string,
     context: RemoteWorkspaceSessionContext,
-    expectedWebContentsId?: number,
+    expectedWebContentsId?: WebContentsId,
   ): Promise<void> {
     const route = routesBySessionId.get(sessionId);
     if (!route) {
@@ -712,7 +713,7 @@ export function createRemoteWorkspaceSessionManager(options: {
   }
 
   function cancelPendingRemoteWorkspaceSessionsForWindow(
-    webContentsId: number,
+    webContentsId: WebContentsId,
     _reason: string,
     requestId?: string,
   ): void {

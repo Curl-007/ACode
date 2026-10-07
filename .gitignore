@@ -32,8 +32,6 @@ z-work/
 openclaw/
 .run-logs/
 .worktrees/
-packages/stream-animate/dist-server/
-packages/stream-animate/.stream-animate-data/
 .codegraph
 .mimosa/
 # 集成分支曾混入 node-gyp 构建产物与 .playwright-mcp 临时快照；
@@ -69,3 +67,9 @@ packages/desktop/.e2e-artifacts/
 packages/desktop/.e2e-cache/
 packages/desktop/.e2e-network-capture/
 .acode-runtime/
+
+# 本地 agent 工作流产物（.zcode/）与临时对照文件（.tmp-*），均不入库。
+.zcode/
+.tmp-*
+# scripts/dependency-graph.mjs 的生成产物，可再生，不入库。
+dependency-graph.mmd

@@ -59,6 +59,8 @@ Slash Commands:
   /compact [instructions]  压缩当前对话
   /expert [status|resume|stop|<task>]  运行或管理 expert workflow
   /dwf [list|cancel|resume]  列出、取消或恢复 dynamic workflow run
+  /workflow [要完成的任务]  为某个任务设计并启动 dynamic workflow
+  /ultracode [要完成的任务]  为某个任务设计并启动脚本工作流（多代理扇出）
   /fork [latest|checkpointId]  从 workspace checkpoint 派生新 session
   /mcp [list|status|connect|disconnect]  查看或管理 MCP servers
   /mode [mode]          查看或切换权限模式：build、edit、plan 或 yolo
@@ -321,8 +323,9 @@ Slash Commands:
         actors: "actors：",
         actorRow: ({ name, status }) => `${name} - ${status}`,
         usage: ({ spentTokens }) => `用量：${spentTokens} tokens`,
-        collapsed: ({ label, status, nodesSettled, nodesTotal }) =>
-          `工作流 ${label} - ${status}（${nodesSettled}/${nodesTotal} 步）`,
+        collapsed: ({ dialect, label, status, nodesSettled, nodesTotal }) =>
+          `工作流 ${label}${dialect === undefined ? "" : `［${dialect}］`} - ${status}（${nodesSettled}/${nodesTotal} 步）`,
+        dialectScript: "ultracode",
         error: (message) => `错误：${message}`,
         expandHint: "+ 展开",
         collapseHint: "- 收起",

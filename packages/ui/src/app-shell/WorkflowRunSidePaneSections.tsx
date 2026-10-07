@@ -134,6 +134,21 @@ export const WorkflowRunStatusHeader = memo(function WorkflowRunStatusHeader({
         <span className="min-w-0 flex-1 truncate font-mono text-ui-base font-medium text-foreground">
           {title}
         </span>
+        {/*
+         * 方言徽标：只在脚本工作流的 run 上出现。dwf 是缺省方言，给每条既有 run 都挂一枚只会是
+         * 噪音。这枚徽标要答的是一个具体问题——「为什么这个面板没有『配置』也没有 Resume」：
+         * 那两条命令是 dwf 专属的，门在 isWorkflowRunConfigurable / isWorkflowRunResumable 里。
+         * 没有它，用户看到的是两个莫名缺席的按钮。
+         */}
+        {run?.dialect === "script" ? (
+          <span
+            className="shrink-0 rounded-full border border-border px-2 py-0.5 font-mono text-ui-xs text-foreground-muted"
+            data-testid="workflow-run-dialect-badge"
+            title={intl.formatMessage({ id: "chat.toolCall.workflow.run.dialect.scriptHint" })}
+          >
+            {intl.formatMessage({ id: "chat.toolCall.workflow.run.dialect.script" })}
+          </span>
+        ) : null}
         {/* Configure 排在 Resume / Stop 之前：打开「配置」弹层，锚在这枚钮下。 */}
         {onConfigureFrom === undefined ? null : (
           <Button

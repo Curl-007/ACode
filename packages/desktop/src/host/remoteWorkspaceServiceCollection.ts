@@ -60,6 +60,7 @@ import {
   createServiceLogger,
   createSubagentsService,
   createMemoryService,
+  resolveBundledAgentsRoot,
   OAuthCredentialRepo,
 } from "@acode/services/node";
 import {
@@ -350,7 +351,15 @@ export function createRemoteWorkspaceServiceCollection(params: {
     // 远端设置页插件管理也必须打到远端 agent（插件目录在远端文件系统）。
     .register(IPluginManagementService, params.connectionServices.pluginManagementService)
     .register(ICommandsService, params.connectionServices.commandsService)
-    .register(ISubagentsService, createSubagentsService({ isDesktopRuntime: true }))
+    // 官方预置子智能体目录（spec: builtin-subagent-catalog.md R7）：desktop host 侧统一
+    // 用本地 CLI 资源定位链注入；解析不到时 undefined，GUI 按缺省姿态降级不显示。
+    .register(
+      ISubagentsService,
+      createSubagentsService({
+        isDesktopRuntime: true,
+        bundledAgentsRoot: resolveBundledAgentsRoot(),
+      }),
+    )
     .register(IHooksService, params.connectionServices.hooksService)
     .register(IMemoryService, createMemoryService())
     .register(

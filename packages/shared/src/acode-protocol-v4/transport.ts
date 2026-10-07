@@ -690,6 +690,13 @@ export const v4ConversationWorkflowRunSummarySchema = z
     failureMessage: z.string().max(2048).optional(),
     /** 是否可恢复。CLI 按 resume 门的同一个谓词算好——UI 绝不自行推导（两处谓词会漂移）。 */
     resumable: z.boolean(),
+    /**
+     * 跑这条 run 的是哪套工作流系统。**缺席即 `"dwf"`**（所有既有 run 都没有这个键，
+     * 而它们全是 dwf 的）。追加可选字段是本 schema 既定的偏斜安全做法，与 `workflowRunSchema`
+     * 上那个同名键同一套理由；往闭集枚举里加值才是破坏性偏斜，所以这里只加键。
+     * 目录页据此挂徽标，与详情侧栏状态头同一套措辞。
+     */
+    dialect: z.enum(["dwf", "script"]).optional(),
   })
   .strict();
 export type V4ConversationWorkflowRunSummary = z.infer<

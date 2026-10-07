@@ -112,8 +112,9 @@ interface AvailabilityContext {
   autoDrain: boolean;
 }
 
-// 裁决表与 packages/formal-proof/src/model.ts 的 evaluate 逐条对齐
-// （黄金测试 formal-proof-consistency 背书）；reasonCode = product-protocol guard id。
+// 裁决表与 packages/formal-proof/src/model.ts 的 evaluate 逐条对齐。
+// 注意：旧注释宣称的黄金测试 formal-proof-consistency 不存在（2026-10-05 核实），
+// 对齐仅由人工维护——改本表必须同步核对 formal-proof 侧；reasonCode = product-protocol guard id。
 export function computeAvailability(context: AvailabilityContext): SessionActionAvailability {
   const { phase, goalStatus, compacting } = context;
   const running = phase === "running" || phase === "prewarming";

@@ -8,6 +8,7 @@ import {
   TID_SUBAGENT_BUILT_IN_MODEL_TRIGGER,
   TID_SUBAGENT_ROW,
   ACODE_AGENT_PROVIDER,
+  isBuiltInSubagentName,
   testId,
   type AgentColor,
   type AgentsCapability,
@@ -137,11 +138,26 @@ function isEditableUserAgent(agent: AgentSummary): boolean {
   );
 }
 
-// runtime 只对 user scope 应用 disabledAgentIds（CLI 侧 isDisabledUserProfile 对
-// source !== "user" 直接返回 false，workspace profile 的 source 是 "project"），服务端
-// attachEnabledState 也据此对非 user scope 恒返回 enabled: true。因此 workspace agent 不能
-// 展示启用开关——点了会静默回弹，还会往 user 级 agents-state.json 写入永不生效的记录。
+/**
+ * R7 展示别名前缀：bundled 预置成员的 path 形态是 `bundled:<name>`（唯一产出点是
+ * services 的 loadBundledAgentSummaries；核心二内置的别名是 `built-in:<name>`）。
+ */
+const BUNDLED_AGENT_PATH_PREFIX = "bundled:";
+
+function isBundledPresetAgent(agent: AgentSummary): boolean {
+  return agent.path?.startsWith(BUNDLED_AGENT_PATH_PREFIX) === true;
+}
+
+// disabledAgentIds 只作用于 user markdown 与 bundled 文件成员（CLI bootstrap 的
+// isDisabledUserProfile：source "user"，或 source "built-in" 且带 path，R5），workspace
+// profile 的 source 是 "project"、不参与禁用。因此 workspace agent 不能展示启用开关——
+// 点了会静默回弹，还会往 user 级 agents-state.json 写入永不生效的记录；bundled 预置
+// 成员则两端（bootstrap 装配过滤 + 服务端 attachEnabledState）都尊重其 state id，
+// 开关是真实生效的控件（R7：bundled 卡片仅比核心内置多一个启停开关）。
 function supportsEnabledToggle(agent: AgentSummary): boolean {
+  if (isBundledPresetAgent(agent)) {
+    return true;
+  }
   return isEditableUserAgent(agent) && agent.scope === "user";
 }
 
@@ -150,8 +166,9 @@ function isBuiltInAgent(agent: AgentSummary): boolean {
 }
 
 /**
- * 内置 general-purpose / Explore 与插件 agent 都是只读 profile，配置入口统一为行内
- * model / effort 覆盖控件；插件 md 属于插件安装目录，升级会覆写，所以不能像 user agent 那样改文件。
+ * 内置目录成员（核心 general-purpose / Explore + bundled 预置 Plan / Verify / Review）
+ * 与插件 agent 都是只读 profile，配置入口统一为行内 model / effort 覆盖控件；
+ * 插件 md 属于插件安装目录，升级会覆写，所以不能像 user agent 那样改文件。
  */
 function supportsModelOverride(agent: AgentSummary): boolean {
   return getBuiltInSubagentName(agent) !== null || agent.source === "plugin";
@@ -161,7 +178,10 @@ function getBuiltInSubagentName(agent: AgentSummary): BuiltInSubagentName | null
   if (!isBuiltInAgent(agent)) {
     return null;
   }
-  return agent.name === "general-purpose" || agent.name === "Explore" ? agent.name : null;
+  // R5/R7（builtin-subagent-catalog.md）：内置名单成员判定的单一事实源是 shared 的
+  // BUILT_IN_SUBAGENT_NAMES（经 isBuiltInSubagentName）。旧实现硬编码二名判定，会让
+  // bundled 预置 Plan/Verify/Review 拿不到模型覆盖控件（验收场景 6 的 GUI 侧通道）。
+  return isBuiltInSubagentName(agent.name) ? agent.name : null;
 }
 
 function getKnownTools(values: readonly string[] | undefined): string[] {

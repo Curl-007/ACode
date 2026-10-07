@@ -25,4 +25,5 @@ export * from "./runtime-provider-request-messages.js";
 export * from "./plan-file-continuity.js";
 export * from "./turn-file-changes.js";
 export * from "./memory-semantic-recall.js";
+export * from "./ultracode-keyword.js";
 export * from "./swarm-plan-turn.js";

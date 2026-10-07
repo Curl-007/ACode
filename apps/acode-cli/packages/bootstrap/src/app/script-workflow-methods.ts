@@ -4,6 +4,8 @@ import {
   type ScriptWorkflowRuntimeDeps,
 } from "./script-workflow-runtime.js";
 import { createScriptWorkflowToolPort } from "./script-workflow-tool-port.js";
+import { reconcileOrphanScriptWorkflowRuns } from "./script-workflow-reconcile.js";
+import { isScriptWorkflowStore } from "./script-workflow-utils.js";
 
 type ScriptWorkflowFacade = Pick<
   ACodeApp,
@@ -30,6 +32,24 @@ type ScriptWorkflowRuntimeOptions = Pick<
 };
 
 export function createScriptWorkflowBridge(deps: ScriptWorkflowBridgeDeps): ScriptWorkflowBridge {
+  // 构造期收敛本会话的孤儿 run（与 dwf 的 reconcileOrphanRuns 同一个时机、同一套边界，
+  // 理由与三条纪律见 script-workflow-reconcile.ts 文件头）。
+  //
+  // 这里是**发射后不管**：桥的构造是同步的，而 store 是异步的，等它会把一次 app 构造
+  // 变成一次数据库往返。安全的前提有两条，缺一条都不成立：
+  //   1. 那个函数自己把查询失败与单行写失败全部 catch 成 warn，永不 reject，
+  //      所以不会有未处理的 promise 拒绝；
+  //   2. 冷回放**不依赖收敛已经跑完**——它按行铸造结算，而行的状态词非终态时一律归到
+  //      interrupted（script-workflow-replay.ts 的 settleEventTypeForRow）。
+  //      于是「收敛前回放」与「收敛后回放」得到同一个投影状态，竞态是良性的。
+  if (isScriptWorkflowStore(deps.sessionStore)) {
+    void reconcileOrphanScriptWorkflowRuns({
+      logger: deps.logger,
+      parentSessionId: deps.sessionId,
+      store: deps.sessionStore,
+    });
+  }
+
   let runtime: ScriptWorkflowRuntime | undefined;
   const getRuntime = () => {
     runtime ??= new ScriptWorkflowRuntime({ ...deps, runtime: deps.getRuntime() });

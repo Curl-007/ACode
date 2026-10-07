@@ -32,9 +32,14 @@ export function isWorkflowRunCancellable(run: WorkflowRunState | undefined): boo
  * status + failureCode 推导（两处谓词会漂移：按钮亮着但命令被拒）。
  *
  * 投影缺席（被 8-run 上限淘汰）一律不可恢复：宁可少一个按钮，不给出一个点下去必被拒的控件。
+ *
+ * 叠在这上面的方言门是**另一根轴**，不是对可恢复性的二次推导：`resumable` 答的是「这条 run
+ * 能不能续」，方言答的是「这个按钮发出去的那条命令能不能续它」。按钮发的是 `resumeWorkflowRun`
+ * ——dwf 专属，打到脚本工作流的 `wf_` run 上必然被拒。脚本工作流自己确实能按 `resumeFromRunId`
+ * 续跑，但那是模型经 RunWorkflow 走的路，用户面前没有对应的命令，所以按钮不该亮。
  */
 export function isWorkflowRunResumable(run: WorkflowRunState | undefined): boolean {
-  return run?.resumable === true;
+  return run?.resumable === true && run.dialect !== "script";
 }
 
 type WorkflowRunResultView =

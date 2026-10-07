@@ -28,7 +28,7 @@ export const AgentInputSchema = z.object({
     .boolean()
     .optional()
     .describe(
-      "Set to true to run this agent in the background. You will be notified when it completes.",
+      "Set to true to run this agent in the background. You will be notified when it completes. Omit to follow the agent's own default; set to false to force foreground execution even if the agent defaults to background.",
     ),
 });
 

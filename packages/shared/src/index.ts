@@ -192,9 +192,12 @@ export type {
   RemoteSessionClosedEvent,
   RemoteServiceSession,
   SSHConfigAliasOption,
+  DesktopZoomState,
   TaskNotificationPayload,
   UpdateCheckResultPayload,
   UpdateStatePayload,
+  WindowControlsOverlayMetrics,
+  WindowControlsOverlayReadyPayload,
   WSLDistro,
   ACodeStdioTapDevState,
 } from "./platform.js";

@@ -18,7 +18,8 @@
     "build": "tsup && pnpm run build:remote",
     "build:remote": "tsx build-remote.ts",
     "lint": "oxlint",
-    "lint:fix": "oxlint --fix"
+    "lint:fix": "oxlint --fix",
+    "test": "node --import tsx --test \"tests/**/*.test.mjs\""
   },
   "dependencies": {
     "@hono/node-server": "^1.19.11",

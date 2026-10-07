@@ -249,7 +249,7 @@ NDJSON 帧协议）。R4/验收 8 的 import 断言相应落地为：适配层�
 | F5 | console 边界安装时机晚于 run/bootstrap 求值 | `main.ts` 的边界条件加 `isAcpInvocation(argv)`（import run 前安装）；`acp-command.ts` 内安装保留为幂等兜底 |
 | F6 | 会话零回收 + create 前 check-then-set 竞态 | 硬检查移到 `create_session` 成功后原子登记（并发恰一过，未登记者 detach 后拒绝）；注册表加 `closeSession`（unsubscribe + detach best-effort + map 删除） |
 | F7 | loopback 单侧死亡静默 | `request()` 在 `readEnded` 时立即 reject（可读错误）；`sendFrame` 记 warn 不静默；transport dispose 经 `link.onClose` 回调面触发适配层 `failPendingPrompts` |
-| F8 | 两份 `node-forge.d.ts` 可能漂移 | 测试加 declare 块逐字一致断言（漂移即红） |
+| F8 | 两份 `node-forge.d.ts` 可能漂移 | **2026-10-05 起收敛为单一事实源**：权威声明仅存 `packages/services/src/runtime-tools/node-forge.d.ts`（node-forge 依赖与唯一消费方 `appCaCert.ts` 都在 services）；cli 包 tsconfig 以 `files` 显式引用该文件，不再保存第二份副本。测试改为断言单一事实源（cli 下出现第二份副本、或 tsconfig 丢失引用即红）。原「declare 块逐字一致」断言依赖两份文件字节相同，在 `core.autocrlf=true` 的 Windows 工作区会因检出/直写行尾不一致而误红（实测 979/980 的唯一失败即此） |
 | F9 | `-32001` 占用上游保留段低段有撞位风险 | 自用段改码：`ACP_SESSION_BUSY=-32052`、`ACP_LINE_TOO_LONG=-32053` |
 | F11 | prompt 预递增与 `turn_started` 递增并存，重复帧二次递增 | `turn_started` 按 turnId 幂等计数（同 turn 已计数则跳过） |
 

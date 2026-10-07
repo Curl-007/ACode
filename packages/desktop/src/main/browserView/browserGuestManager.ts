@@ -1950,7 +1950,9 @@ export class BrowserGuestManager {
    */
   private isInFlightScreenshotAlive(tracked: InFlightScreenshot): boolean {
     const running = this.runningRequests.get(tracked.requestId);
-    return Boolean(running) && !running.controller.signal.aborted;
+    // Boolean() 不产生类型收窄；runningRequests 的 value 恒为对象，
+    // !== undefined 与 Boolean(running) 判定等价。
+    return running !== undefined && !running.controller.signal.aborted;
   }
 
   private createRecordingEntry(
@@ -2184,17 +2186,21 @@ export class BrowserGuestManager {
       return;
     }
     if (action.type === "click" || action.type === "type" || action.type === "waitFor") {
-      const locatorAction =
-        action.type === "click"
-          ? action.selector
-            ? {
-                name: "locator" as const,
-                selector: action.selector,
-                operation: action.doubleClick ? ("dblclick" as const) : ("click" as const),
-                ...(action.button ? { button: action.button } : {}),
-              }
-            : undefined
-          : action.type === "type"
+      // 录制动作是按 type 判别的 discriminated union：x/y/button/doubleClick 只存在于
+      // click 变体，text 只存在于 type 变体。先按 type 收窄再取字段，
+      // 不能在未收窄的联合上直接访问（原实现在 type/waitFor 分支上访问 click 字段）。
+      const runLocatorAction = async (
+        locatorAction: Parameters<typeof executeIabPlaywrightLocator>[1],
+        timeoutMs: number,
+      ): Promise<void> => {
+        const result = await executeIabPlaywrightLocator(view, locatorAction, timeoutMs, signal);
+        if (result.kind === "cancelled") throw abortError();
+        if (result.kind === "timeout")
+          throw new Error(`recording action timed out: ${result.reason}`);
+      };
+      if (action.type === "type" || action.type === "waitFor") {
+        await runLocatorAction(
+          action.type === "type"
             ? {
                 name: "locator" as const,
                 selector: action.selector,
@@ -2206,17 +2212,21 @@ export class BrowserGuestManager {
                 selector: action.selector,
                 operation: "waitFor" as const,
                 state: action.state ?? "visible",
-              };
-      if (locatorAction) {
-        const result = await executeIabPlaywrightLocator(
-          view,
-          locatorAction,
+              },
           action.type === "waitFor" ? (action.timeoutMs ?? 3_000) : 3_000,
-          signal,
         );
-        if (result.kind === "cancelled") throw abortError();
-        if (result.kind === "timeout")
-          throw new Error(`recording action timed out: ${result.reason}`);
+        return;
+      }
+      if (action.selector) {
+        await runLocatorAction(
+          {
+            name: "locator" as const,
+            selector: action.selector,
+            operation: action.doubleClick ? ("dblclick" as const) : ("click" as const),
+            ...(action.button ? { button: action.button } : {}),
+          },
+          3_000,
+        );
         return;
       }
       if (typeof action.x !== "number" || typeof action.y !== "number") {
@@ -2625,7 +2635,10 @@ export class BrowserGuestManager {
       // 如果 destroyed/mismatch 已经发起过重绑，沿用该请求，避免同一 tab 重复创建 webview。
       if (!tab.rebindRequested) this.onOpenTabRequested?.(tab.tabId, tab.owner);
       // 某些测试/旧 renderer 会在 Ready 回调内同步 attach；不能在 attach 已成功后再注册 waiter。
-      if (tab.guest && !safeBool(() => tab.guest.isDestroyed(), true)) return tab.guest;
+      // 闭包内访问 tab.guest 不携带外层属性收窄，先取局部引用再判断；
+      // safeBool 同步执行回调，单次读取与原实现语义一致。
+      const attachedGuest = tab.guest;
+      if (attachedGuest && !safeBool(() => attachedGuest.isDestroyed(), true)) return attachedGuest;
       const guest = await this.waitForGuest(tab.tabId);
       if (guest && !safeBool(() => guest.isDestroyed(), true)) return guest;
       if (attempt === 0 && !tab.hasAttachedGuest && !tab.attachFailure) return null;
@@ -2782,7 +2795,13 @@ export class BrowserGuestManager {
       title: tab.cachedTitle,
       viewport: await this.readTabViewport(tab),
       ...(this.effectiveActiveTabId(tab.owner) === tab.tabId ? { active: true } : {}),
-      ...(tab.lifecycle !== "active" ? { lifecycle: tab.lifecycle } : {}),
+      // 调用方（ownedTabs 过滤、activateTab/claimTab 等命令入口的 closed guard）保证
+      // closed tab 不进入 summary，BrowserTabSummary.lifecycle 枚举也不含 closed。
+      // 显式排除 closed 完成类型收窄：若未来新增调用方漏过滤，宁可 fail-safe 省略
+      // lifecycle 字段，也不构造违反 schema 枚举的值。
+      ...(tab.lifecycle !== "active" && tab.lifecycle !== "closed"
+        ? { lifecycle: tab.lifecycle }
+        : {}),
     };
   }
 
@@ -3852,8 +3871,13 @@ export class BrowserGuestManager {
   ): Promise<GuestWebContents | null> {
     if (tab.lifecycle === "closed" || tab.guest !== guest) return null;
     const restored = await this.restoreGuestState(tab, guest);
-    if (!restored || tab.lifecycle === "closed" || tab.guest !== guest) {
-      if (tab.lifecycle !== "closed" && tab.guest === guest) {
+    // 属性收窄不会跨 await 失效重算：restoreGuestState 期间并发 close 流程完全可能把
+    // lifecycle 改成 closed 或替换 guest，入口处的旧收窄在这里已过期。原代码的复查是
+    // 有意的 restore 后 TOCTOU 校验；const 初始化会继承过期收窄，故按声明的完整类型
+    // TabLifecycle 精确断言重读当前值，保留该复查（断言只是恢复声明类型，不改变值）。
+    const lifecycleAfterRestore = tab.lifecycle as TabLifecycle;
+    if (!restored || lifecycleAfterRestore === "closed" || tab.guest !== guest) {
+      if (lifecycleAfterRestore !== "closed" && tab.guest === guest) {
         this.warn(`browser tab guest rebind restore failed tabId=${tab.tabId}`);
       }
       return null;

@@ -9,6 +9,7 @@ import type {
 } from "../deps.js";
 import type { AgentRuntimeInternal } from "../internal.js";
 import { stopDynamicWorkflowBackgroundTask } from "./background-stop-dynamic-workflow.js";
+import { stopScriptWorkflowBackgroundTask } from "./background-stop-script-workflow.js";
 import type {
   RuntimeBackgroundStopOptions,
   RuntimeBackgroundStopResult,
@@ -125,6 +126,13 @@ export async function stopBackgroundTask(
       unsupportedBackgroundStopResult,
       options.initiator,
     );
+  }
+
+  // 脚本工作流（RunWorkflow）与 dwf 是并列的一支，不共用：端口、存储与终态词都各自独立。
+  // 缺这一支时它会落进下面的兜底「不支持」，而 background-tasks.ts 已按端口实况把
+  // cancellable 报成 true——报得出能力却走不到能力，TaskStop 只能回答 "cannot be stopped"。
+  if (target.taskType === "local_workflow") {
+    return stopScriptWorkflowBackgroundTask.call(this, target, unsupportedBackgroundStopResult);
   }
 
   return unsupportedBackgroundStopResult(target);
@@ -434,6 +442,9 @@ function runtimeTaskTypeFromBackgroundInfo(
     case "Agent":
       return "local_agent";
     case "Workflow":
+    // "Workflow" 是 RunWorkflow 落地前的名字，条目已移出 builtInTools，但旧会话的 rollout
+    // 里仍有这个名字的后台任务记录——保留这一支是为了让历史记录还能投影出正确的任务类型。
+    case "RunWorkflow":
       return "local_workflow";
     case "CreateWorkflow":
     case "AmendWorkflow":
@@ -450,7 +461,9 @@ function toolNameFromRuntimeTaskType(type: RuntimeTaskType): string {
     case "local_bash":
       return "Bash";
     case "local_workflow":
-      return "Workflow";
+      // 反向投影用**活名**：这是展示标签，指向一个已经不存在的工具名只会误导读者。
+      // 正向那一支保留 "Workflow" 是为了读旧 rollout，两个方向的取舍刻意不同。
+      return "RunWorkflow";
     case "local_dynamic_workflow":
       return "CreateWorkflow";
     case "monitor_mcp":

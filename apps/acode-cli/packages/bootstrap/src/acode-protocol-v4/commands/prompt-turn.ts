@@ -4,7 +4,11 @@
 // activeAbortController，也不等待 projection commit。这样 TurnStarted 之后的任意 Core
 // starting/active 状态都会继续挡住同一 session 的第二次 start。
 import { type TurnBackgroundAttribution, type TurnInputIntentMetadata } from "@acode/contracts";
-import type { TurnAttachment } from "@acode/core";
+import {
+  AUTOMATION_MUTATION_TOOL_NAMES,
+  OFF_PEAK_MUTATION_TOOL_NAMES,
+  type TurnAttachment,
+} from "@acode/core";
 import type { ACodeAutomationBotDeliveryTarget } from "@acode/shared";
 import type { SendInputOptions, SendInputResult } from "../../app/types.js";
 import { runWithSessionResidencyFinalization } from "../../acode-protocol/session-residency.js";
@@ -284,9 +288,7 @@ export function turnBackgroundAttributionOf(params: {
 }
 
 const AUTOMATION_INPUT_ID_PREFIX = "automation-";
-const AUTOMATION_MUTATION_TOOL_NAMES = ["CronCreate", "CronUpdate", "CronDelete"] as const;
-// 独立常量，绝不并入 AUTOMATION_MUTATION_TOOL_NAMES（cron 轮放行 OffPeakCreate）。
-// 与 core turn-loop-state 同值——闲时轮同时隐藏 SendMessage / Workflow（两者会在本轮
-// modelExecution 之外重启子 Agent）。
 const OFF_PEAK_INPUT_ID_PREFIX = "offpeak-";
-const OFF_PEAK_MUTATION_TOOL_NAMES = ["OffPeakCreate", "SendMessage", "Workflow"] as const;
+// 两份名单都从 core 导入，不在这里手抄：core/src/runtime/methods/turn-loop-state.ts 是唯一
+// 所有者。抄一份的代价是加一个工具要同时改三处，漏一处就等于在派发轮里放行一个能在本轮
+// modelExecution 之外重启子 Agent 的入口。语义（为什么是这两个名单、为什么不合并）见那边。

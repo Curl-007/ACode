@@ -347,7 +347,8 @@ export class PermissionService {
       );
     }
 
-    // 声明 alwaysAsk 的工具必须经过用户确认，不能被权限模式的放行分支绕过。
+    // 声明 alwaysAsk 的工具默认必须经过用户确认，不被普通放行分支绕过；唯一的模式级
+    // 例外是完全访问（yolo），其放行条件与下方 yolo 直通逐字同档（见 checkAlwaysAsk）。
     if (capability.alwaysAsk) {
       return this.checkAlwaysAsk(context, capability, projectRules, rulePolicy);
     }
@@ -592,8 +593,10 @@ export class PermissionService {
   }
 
   /**
-   * 工具自报 alwaysAsk 时的判定：ask 压过所有"放行"分支（yolo 直通、plan 的 readOnly 直通），
+   * 工具自报 alwaysAsk 时的判定：ask 压过 plan 的 readOnly 直通等放行分支，
    * 但**压不过"阻断"**——所以这里先自己走一遍硬阻断判定。
+   * 完全访问（yolo）是唯一例外（批次 C11 裁决）：用户已把整会话的信任交给模式，
+   * 工作流族不再单独弹窗；放行条件与 checkPermissionByMode 的 yolo 直通逐字同档。
    *
    * 为什么不直接返回 ask：项目 deny 规则符合工具自报的 denyPriority: "beforeAsk"，
    * auto 模式是"该模式未实现"的保护。少了这一步，一个被项目规则禁用的工具会退化成
@@ -617,6 +620,22 @@ export class PermissionService {
         capability,
         "rule.project.deny",
         `Tool ${context.toolName} is denied by project permission rules`,
+      );
+    }
+    // 完全访问放行（批次 C11 裁决）：条件与 checkPermissionByMode 的 yolo 直通逐字同档——
+    // plan 生效时不放行、策略地板 disableBypassPermissionsMode 时不放行。项目 deny 已在
+    // 本分支之前收口，仍压过它；会话 allow 与 owner-Amend 在其后，结论同为放行，顺序无碍。
+    const planEnabled = context.planEnabled ?? context.mode === "plan";
+    if (
+      context.mode === "yolo" &&
+      !planEnabled &&
+      !this.resolvePolicyFloor()?.disableBypassPermissionsMode
+    ) {
+      return this.allow(
+        context,
+        capability,
+        "mode.yolo.alwaysAsk",
+        `Yolo mode bypasses the alwaysAsk prompt for tool ${context.toolName}`,
       );
     }
     // 会话免确认：阻断分支之后、ask 之前。命中即放行，不发 permission 事件、不弹窗；

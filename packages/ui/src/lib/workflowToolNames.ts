@@ -97,3 +97,13 @@ export function isCreateWorkflowToolCall(source: WorkflowToolNameSource): boolea
 export function isAmendWorkflowToolCall(source: WorkflowToolNameSource): boolean {
   return matchesToolName(source, "amendworkflow");
 }
+
+/**
+ * 脚本工作流入口（RunWorkflow）。与上面那些不同，它**刻意不登记**进 workflow family：
+ * family 的兜底是 CreateWorkflow 卡，会画出这套系统根本没有的因果图与 dwf run 投影。
+ * 所以它只能靠按名判定认领自己的卡，登记反而是错的。
+ * 依据见 apps/acode-cli/specs/script-workflow-revival.md R3 补注。
+ */
+export function isRunWorkflowToolCall(source: WorkflowToolNameSource): boolean {
+  return matchesToolName(source, "runworkflow");
+}

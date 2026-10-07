@@ -10,12 +10,26 @@ export const seaBundledSkillAssetPrefix = "acode-bundled-skills/";
 export const seaBundledSkillManifestAssetKey = `${seaBundledSkillAssetPrefix}manifest.json`;
 export const bundledSkillPackRootPath = join("packages", "bundled-skills");
 export const bundledSkillPackSkillsDirectory = "skills";
+// 内容包顶层内容目录：skills（技能）之外还有 agents（官方预置子代理，
+// specs/builtin-subagent-catalog.md R1，与 skills/ 平级、共用同一分发通道）。
+// 两个目录都必须进 SEA 资产：bootstrap 的完整性门按 BUNDLED_SKILL_PACK_REQUIRED_PATHS
+// 拒绝缺文件的物化包，agents/ 缺席会让技能与预置 agent 一起降级。
+export const bundledSkillPackContentDirectories = ["skills", "agents"];
 // 与 bootstrap 的 BUNDLED_SKILL_PACK_REQUIRED_PATHS 对齐：缺任一项即中止 SEA 构建，
 // 不把一个引用文件残缺的技能包发进正式二进制。
+// 为什么是本地镜像而不是直接 import @acode/bootstrap：本脚本以纯 node ESM 运行
+// （build-sea.mjs 同款，全部兄弟 sea-*.mjs 只依赖 node 内置与相对 .mjs），而
+// @acode/bootstrap 公开入口指向 dist/index.js —— 需要完整 workspace 构建在场，
+// 且会连带加载 core/adapters/provider 整个依赖图；`pnpm sea` 直跑链路会因 dist
+// 缺席在 import 阶段崩溃。漂移防护由 apps/acode-cli/tests/sea-bundled-skill-assets.test.mjs
+// 的一致性断言承担（tsx 下直接 import bootstrap TS 源比对同集合）。
 export const bundledSkillPackRequiredPaths = [
   "skills/dynamic-workflows/SKILL.md",
   "skills/dynamic-workflows/patterns.md",
   "skills/dynamic-workflows/examples.md",
+  "agents/Plan.md",
+  "agents/Verify.md",
+  "agents/Review.md",
 ];
 
 export const collectSeaBundledSkillAssets = async ({ root, stagingDirectory }) => {
@@ -26,18 +40,20 @@ export const collectSeaBundledSkillAssets = async ({ root, stagingDirectory }) =
 
   const files = [];
   const assets = {};
-  for await (const sourcePath of walkFiles(join(packRoot, bundledSkillPackSkillsDirectory))) {
-    const relativePath = relative(packRoot, sourcePath);
-    if (!shouldIncludeFile(relativePath)) continue;
-    const bytes = await readFile(sourcePath);
-    const sourceStats = await stat(sourcePath);
-    const posixPath = toPosixPath(relativePath);
-    assets[`${seaBundledSkillAssetPrefix}${posixPath}`] = sourcePath;
-    files.push({
-      mode: modeForFile(sourceStats.mode),
-      path: posixPath,
-      sha256: createHash("sha256").update(bytes).digest("hex"),
-    });
+  for (const contentDirectory of bundledSkillPackContentDirectories) {
+    for await (const sourcePath of walkFiles(join(packRoot, contentDirectory))) {
+      const relativePath = relative(packRoot, sourcePath);
+      if (!shouldIncludeFile(relativePath)) continue;
+      const bytes = await readFile(sourcePath);
+      const sourceStats = await stat(sourcePath);
+      const posixPath = toPosixPath(relativePath);
+      assets[`${seaBundledSkillAssetPrefix}${posixPath}`] = sourcePath;
+      files.push({
+        mode: modeForFile(sourceStats.mode),
+        path: posixPath,
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+      });
+    }
   }
   files.sort((left, right) => left.path.localeCompare(right.path));
 

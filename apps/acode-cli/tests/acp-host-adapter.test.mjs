@@ -18,7 +18,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -1359,20 +1359,42 @@ test("F7: server 侧 stop 后 request 立即拒绝；在途 prompt 经适配层 
   }
 });
 
-// ── F8：两份 node-forge.d.ts 的 declare 块一致性（漂移即红）──
+// ── F8：node-forge 环境声明单一事实源（cli 出现第二份副本 / tsconfig 丢失引用即红）──
 
-test("F8: cli 与 services 两份 node-forge.d.ts 的 declare 块逐字一致", async () => {
-  const cliDeclare = readFileSync(join(CLI_SRC, "types", "node-forge.d.ts"), "utf8");
-  const servicesDeclare = readFileSync(
-    join(REPO_ROOT, "packages", "services", "src", "runtime-tools", "node-forge.d.ts"),
-    "utf8",
+test("F8: node-forge.d.ts 以 services 为单一事实源，cli 经 tsconfig files 引用", async () => {
+  // 修复依据（2026-10-05）：旧断言为「两份副本 declare 块逐字一致」，依赖字节级
+  // 比较；core.autocrlf=true 的 Windows 工作区里检出副本（CRLF）与工具直写副本
+  // （LF）行尾不同，内容未漂移也会误红。收敛为单一事实源后没有副本可比，本测试
+  // 改为守护：
+  // 1. 权威声明只存在于 services 且含 declare 块；
+  // 2. cli 下不再出现副本；
+  // 3. cli tsconfig 仍以 files 指向 services 文件（丢失引用会让 cli 的 tsc
+  //    拉入 appCaCert.ts 时缺少环境声明，即 F8 原事故回归）。
+  const servicesDeclarePath = join(
+    REPO_ROOT,
+    "packages",
+    "services",
+    "src",
+    "runtime-tools",
+    "node-forge.d.ts",
   );
-  const blockOf = (source) => source.slice(source.indexOf('declare module "node-forge"'));
-  assert.ok(blockOf(cliDeclare).length > 0, "cli 副本应含 declare 块");
-  assert.equal(
-    blockOf(cliDeclare),
-    blockOf(servicesDeclare),
-    "两份声明块漂移（升级 node-forge 或安装 @types 时须两处同步修改/删除）",
+  const servicesDeclare = readFileSync(servicesDeclarePath, "utf8");
+  assert.ok(
+    servicesDeclare.includes('declare module "node-forge"'),
+    "services 权威声明应含 declare module 块",
+  );
+
+  assert.ok(
+    !existsSync(join(CLI_SRC, "types", "node-forge.d.ts")),
+    "cli 下不得再出现第二份 node-forge.d.ts 副本（单一事实源在 services/src/runtime-tools）",
+  );
+
+  const cliTsconfigPath = join(CLI_SRC, "..", "tsconfig.json");
+  const cliTsconfig = JSON.parse(readFileSync(cliTsconfigPath, "utf8"));
+  const references = (cliTsconfig.files ?? []).map((entry) => resolve(dirname(cliTsconfigPath), entry));
+  assert.ok(
+    references.includes(resolve(servicesDeclarePath)),
+    `cli tsconfig.files 应引用 services 的 node-forge.d.ts（当前 files: ${JSON.stringify(cliTsconfig.files ?? [])}）`,
   );
 });
 

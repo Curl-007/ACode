@@ -13,8 +13,10 @@ import {
   createStorageRootsResolver,
   createStorageService,
   getDataBaseDir,
-  type IStorageService,
 } from "@acode/services/node";
+// IStorageService 契约由 @acode/services 主入口再导出（/node 入口没有导出该类型）。
+// 纯类型导入，编译后被擦除，不改变运行时加载面。
+import type { IStorageService } from "@acode/services";
 import { logger } from "./logger.js";
 import { createStorageScanWorkerRunner } from "./storageScanWorkerClient.js";
 

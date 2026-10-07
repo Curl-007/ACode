@@ -8,12 +8,16 @@ import {
 } from "@acode/shared";
 import type { BroadcastMessage } from "@acode/services";
 import { logger } from "./logger.js";
+import type { WebContentsId } from "./desktopWindowIds.js";
 
 /**
  * BroadcastHub —— main 进程中的广播中转站
  *
  * 管理所有活跃的 host process，当某个 host 发来广播消息时，
  * 转发给所有其他 host process。
+ *
+ * ID 空间：本 hub 的 windowId 全部是 WebContentsId（注册点
+ * desktopHostProcess 以 win.webContents.id 注册），见 desktopWindowIds.ts。
  *
  * 广播路径：
  *   Renderer A → (RPC) → Host A → (parentPort) → Main(BroadcastHub)
@@ -27,18 +31,18 @@ let claimTokenSequence = 0;
 
 type BroadcastClaimRecord = {
   token: string;
-  ownerWindowId: number;
+  ownerWindowId: WebContentsId;
   status: "reserved" | "committed";
   expiresAt: number | null;
 };
 
-function createClaimToken(windowId: number, requestId: string): string {
+function createClaimToken(windowId: WebContentsId, requestId: string): string {
   claimTokenSequence += 1;
   return `${windowId}:${requestId}:${claimTokenSequence}`;
 }
 
 export class BroadcastHub {
-  private processes = new Map<number, ElectronUtilityProcess>();
+  private processes = new Map<WebContentsId, ElectronUtilityProcess>();
   /** 通用 opaque reservation/claim；不保存 Coding Plan 等业务状态。 */
   private readonly claims = new Map<string, BroadcastClaimRecord>();
 
@@ -48,7 +52,7 @@ export class BroadcastHub {
   }
 
   /** 注册 host process 并监听其广播消息 */
-  register(windowId: number, child: ElectronUtilityProcess): void {
+  register(windowId: WebContentsId, child: ElectronUtilityProcess): void {
     this.processes.set(windowId, child);
 
     child.on("message", (msg: unknown) => {
@@ -76,7 +80,7 @@ export class BroadcastHub {
   }
 
   /** 注销 host process（窗口关闭时调用） */
-  unregister(windowId: number): void {
+  unregister(windowId: WebContentsId): void {
     this.processes.delete(windowId);
     // 窗口在 reservation 返回前关闭时无法主动 release；只回收该窗口未 commit
     // 的占用，已 commit claim 继续保留，避免后来打开的窗口重播同一次完成提示。
@@ -107,7 +111,7 @@ export class BroadcastHub {
    * 必须由 winner 在展示边界 commit，否则可按 token release，并受 TTL/host 注销兜底回收。
    */
   private handleClaim(
-    windowId: number,
+    windowId: WebContentsId,
     source: ElectronUtilityProcess,
     requestId: string,
     key: string,
@@ -152,7 +156,7 @@ export class BroadcastHub {
     });
   }
 
-  private handleClaimCommit(windowId: number, key: string, claimToken: string): void {
+  private handleClaimCommit(windowId: WebContentsId, key: string, claimToken: string): void {
     this.pruneExpiredReservations();
     const current = this.claims.get(key);
     if (
@@ -164,7 +168,7 @@ export class BroadcastHub {
     }
   }
 
-  private handleClaimRelease(windowId: number, key: string, claimToken: string): void {
+  private handleClaimRelease(windowId: WebContentsId, key: string, claimToken: string): void {
     this.pruneExpiredReservations();
     const current = this.claims.get(key);
     if (
@@ -177,7 +181,7 @@ export class BroadcastHub {
   }
 
   /** 将广播消息转发给除发送源以外的所有 host process */
-  private relay(sourceWindowId: number, message: BroadcastMessage): void {
+  private relay(sourceWindowId: WebContentsId, message: BroadcastMessage): void {
     const result = broadcastMessageSchema.safeParse(message);
     if (!result.success) {
       logger.warn("[BroadcastHub] invalid broadcast message:", formatZodError(result.error));

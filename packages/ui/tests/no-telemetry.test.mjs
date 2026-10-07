@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -38,66 +39,23 @@ test("platform and server do not expose or initialize reporting", async () => {
   }
 });
 
-async function loadWebviewHelpers() {
-  const { transpileModule, ModuleKind } = await import("typescript");
-  const source = await readFile(
-    root + "packages/ui/src/settings/model-provider-section/codingPlanEmbeddedWebview.ts",
-    "utf8",
+// 2026-10-05 修复：原「purchase WebView 保留鉴权/主题/语言且不注入跟踪上下文」测试
+// 依赖 src/settings/model-provider-section/codingPlanEmbeddedWebview.ts——该文件已随
+// 购买 UI 整体移除（README「What was removed」：purchase UI and related copy are
+// removed），测试未同步清理；ui 套件此前没有自动化入口，ENOENT 失败长期无人发现。
+// 功能已不存在，守护语义随之反转：内嵌购买 WebView 与它的 report-context 注入面
+// 不得回归——与本文件其余「防遥测回归」测试同一立场。
+test("embedded purchase WebView and its report-context injection stay removed", async () => {
+  assert.equal(
+    existsSync(root + "packages/ui/src/settings/model-provider-section/codingPlanEmbeddedWebview.ts"),
+    false,
+    "内嵌购买 WebView 已随购买 UI 移除，不得以该文件形态回归",
   );
-  const output = transpileModule(source, {
-    compilerOptions: { module: ModuleKind.CommonJS },
-  }).outputText;
-  const exports = {};
-  new Function("require", "exports", output)((name) => {
-    assert.equal(name, "@acode/shared");
-    return {};
-  }, exports);
-  return exports;
-}
-
-test("purchase WebView retains authentication, theme and locale without injecting tracking context", async () => {
-  const { runInNewContext } = await import("node:vm");
-  const helpers = await loadWebviewHelpers();
-  for (const provider of ["zai", "bigmodel"]) {
-    const values = new Map([["acode:coding-plan:report-context", "legacy context"]]);
-    const events = [];
-    const classes = new Map();
-    const host = {
-      localStorage: { setItem: (k, v) => values.set(k, v), removeItem: (k) => values.delete(k) },
-      window: { __acodeReportContext__: {}, dispatchEvent: (e) => events.push(e) },
-      document: { documentElement: { classList: { toggle: (k, v) => classes.set(k, v) } } },
-      CustomEvent: class {
-        constructor(type, options) {
-          this.type = type;
-          this.detail = options.detail;
-        }
-      },
-    };
-    runInNewContext(helpers.createCodingPlanCredentialClearScript(), host);
-    runInNewContext(
-      helpers.createCodingPlanAuthInjectionScript({
-        provider,
-        credentials: {
-          zaiAccessToken: "test-zai",
-          bigmodelAccessToken: "test-bigmodel",
-          acodeJwtToken: "test-jwt",
-        },
-        theme: "zai-dark",
-        locale: "zh-CN",
-      }),
-      host,
+  for (const file of await sources(root + "packages/ui/src")) {
+    assert.doesNotMatch(
+      await readFile(file, "utf8"),
+      /__acodeReportContext__|createCodingPlanAuthInjectionScript|createCodingPlanCredentialClearScript|acode:coding-plan:report-context/,
+      file,
     );
-    assert.equal(values.get(`oauth:${provider}:access_token`), `test-${provider}`);
-    assert.equal(values.get("acodejwttoken"), "test-jwt");
-    assert.equal(
-      values.has(`oauth:${provider === "zai" ? "bigmodel" : "zai"}:access_token`),
-      false,
-    );
-    assert.equal(host.window.__acodeLang__, "zh-CN");
-    assert.equal(classes.get("dark"), true);
-    assert.equal(events[0].type, "acode-coding-plan-auth-ready");
-    assert.deepEqual(JSON.parse(JSON.stringify(events[0].detail)), { provider, locale: "zh-CN" });
-    assert.equal(values.has("acode:coding-plan:report-context"), false);
-    assert.equal("__acodeReportContext__" in host.window, false);
   }
 });

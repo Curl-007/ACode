@@ -117,15 +117,25 @@ const officialPluginPackages = [
 // 随 CLI 内置的技能包（不是插件）：bootstrap 的 resolveBundledSkillRoots 沿官方插件同款候选目录
 // 在 acode.cjs 旁找 packages/bundled-skills 并原地读取。漏 stage 它，桌面包的 /workflow 会展开成
 // 「先加载 dynamic-workflows 技能」而技能文件不存在，因此必须随 Agent 一起打包。
+// 包内除 skills/ 外还有 agents/（官方预置子代理，specs/builtin-subagent-catalog.md R1）：
+// 顶层白名单漏掉 agents 会让桌面 seed 永久缺少预置 agent，bootstrap 的完整性门
+// （BUNDLED_SKILL_PACK_REQUIRED_PATHS）随即拒绝整包，技能与 agent 一起降级。
 const bundledSkillPack = {
   relativePath: "apps/acode-cli/packages/bundled-skills",
+  // bootstrap BUNDLED_SKILL_PACK_REQUIRED_PATHS 的本地镜像（漂移防护见
+  // apps/acode-cli/tests/sea-bundled-skill-assets.test.mjs 的一致性断言）。
+  // 不直接 import @acode/bootstrap：本脚本以纯 node 运行且导入即执行打包流程，
+  // bootstrap 公开入口指向 dist（需完整 workspace 构建在场），此阶段不可依赖。
   requiredPaths: [
     "skills/dynamic-workflows/SKILL.md",
     "skills/dynamic-workflows/patterns.md",
     "skills/dynamic-workflows/examples.md",
+    "agents/Plan.md",
+    "agents/Verify.md",
+    "agents/Review.md",
   ],
   stagedPath: "packages/bundled-skills",
-  topLevelPaths: ["skills"],
+  topLevelPaths: ["skills", "agents"],
 };
 const includedOfficialPluginTopLevelPaths = new Set([
   ".mcp.json",

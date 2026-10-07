@@ -214,11 +214,15 @@ function toInstallerLogger(
   logger: OpenCuaAccessibilitySettingsOptions["logger"],
 ): CuaHelperInstallerLogger | undefined {
   if (!logger) return undefined;
+  // 上游 @acode/acode-cua 是 fail-closed 占位包，CuaHelperInstallerOptions["logger"]
+  // 被降级为 unknown，无法给回调提供上下文类型；这里显式声明最宽兼容签名
+  // （首参 traceId 接受任意值，其余参数原样透传给 main logger），
+  // 上游恢复具体 logger 接口后该实现仍可直接赋值。
   return {
-    debug: (_traceId, ...args) => logger.debug?.(...args),
-    info: (_traceId, ...args) => (logger.info ?? logger.warn)(...args),
-    warn: (_traceId, ...args) => logger.warn(...args),
-    error: (_traceId, ...args) => (logger.error ?? logger.warn)(...args),
+    debug: (_traceId: unknown, ...args: unknown[]) => logger.debug?.(...args),
+    info: (_traceId: unknown, ...args: unknown[]) => (logger.info ?? logger.warn)(...args),
+    warn: (_traceId: unknown, ...args: unknown[]) => logger.warn(...args),
+    error: (_traceId: unknown, ...args: unknown[]) => (logger.error ?? logger.warn)(...args),
   };
 }
 

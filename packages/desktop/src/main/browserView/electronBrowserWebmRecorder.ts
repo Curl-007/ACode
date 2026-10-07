@@ -373,13 +373,12 @@ export async function createElectronBrowserWebmRecorder(
     if (!closed) fail(recorderError(`recorder renderer exited: ${details.reason ?? "unknown"}`));
   };
   recorderWindow.webContents.on("render-process-gone", onRendererGone);
-  const onConsoleMessage = (
-    _event: unknown,
-    details: { level?: string; message?: string },
-  ): void => {
-    debug?.(
-      `[browser-recording] recorder console level=${details.level ?? "unknown"} message=${details.message ?? ""}`,
-    );
+  // 当前 Electron 的 webContents console-message 事件签名是
+  // (event, level: number, message: string, line, sourceId)。旧实现把第 2 参当
+  // details 对象读取 level/message，升级后实际收到的是数字 level，诊断日志会恒输出
+  // unknown/空串；按现签名改正，日志内容恢复真实值。
+  const onConsoleMessage = (_event: unknown, level: number, message: string): void => {
+    debug?.(`[browser-recording] recorder console level=${level} message=${message}`);
   };
   recorderWindow.webContents.on("console-message", onConsoleMessage);
 

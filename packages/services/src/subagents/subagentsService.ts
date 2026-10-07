@@ -8,6 +8,7 @@ import {
   DEFAULT_ENABLED_OFFICIAL_PLUGIN_IDS,
   ACODE_OFFICIAL_PLUGIN_MARKETPLACE_ID,
   modelSelectionSchema,
+  BUILT_IN_SUBAGENT_NAMES,
   type AgentCreateParams,
   type AgentDeleteParams,
   type AgentDiagnostic,
@@ -18,6 +19,7 @@ import {
   type AgentsListResult,
   type BuiltInSubagentModelOverrideParams,
   type BuiltInSubagentModelSelectionOverrides,
+  type BuiltInSubagentName,
   type PluginSubagentModelOverrideParams,
   type PluginSubagentModelSelectionOverrides,
   type SubAgentConfig,
@@ -73,6 +75,12 @@ interface InstalledPluginRecord {
 
 interface SubagentsServiceOptions extends SubagentStorageOptions {
   isDesktopRuntime?: boolean;
+  /**
+   * 随 CLI 内容包分发的官方预置 agent markdown 目录（spec: builtin-subagent-catalog.md R7）。
+   * desktop host 用与 CLI 同款的包解析传入；缺省（Web/未接线环境）时 GUI 不显示
+   * bundled 成员，也不伪造条目。
+   */
+  bundledAgentsRoot?: string;
 }
 
 interface PluginAgentDiscovery {
@@ -80,7 +88,11 @@ interface PluginAgentDiscovery {
   runtimeAgents: AgentSummary[];
 }
 
-const BUILT_IN_AGENT_NAMES = new Set(["general-purpose", "Explore"]);
+// 保留名单从 shared 的 BUILT_IN_SUBAGENT_NAMES 联合派生（spec: builtin-subagent-catalog.md R5/R7）：
+// 名字是稳定契约，不依赖 bundledAgentsRoot 是否接线成功；不再另维护硬编码字面量名单。
+const BUILT_IN_AGENT_NAMES = new Set<string>(BUILT_IN_SUBAGENT_NAMES);
+/** bundled 预置成员在 GUI 侧的展示别名前缀；真实文件路径留在 CLI 侧诊断（R7）。 */
+const BUNDLED_AGENT_PATH_PREFIX = "bundled:";
 const PLUGIN_MANIFEST_PATHS = [
   join(".acode-plugin", "plugin.json"),
   join(".claude-plugin", "plugin.json"),
@@ -101,8 +113,10 @@ function createBuiltInAgents(
         source: "built-in",
       }),
       name: "general-purpose",
+      // R9（builtin-subagent-catalog.md）：description 为 core 侧自撰重写文本的简版投影，
+      // 与 core createBuiltInGeneralPurposeAgentProfile 保持同一措辞，不引入第二套文本。
       description:
-        "General-purpose agent for researching complex questions, searching for code, and executing multi-step tasks.",
+        "Multi-step worker with full tool rights for complex research and multi-file changes.",
       // 内置子智能体使用显式身份色，避免 UI 按名称 hash 后把 general-purpose 显示为红色。
       color: "blue",
       injectAgentsMd: true,
@@ -123,7 +137,9 @@ function createBuiltInAgents(
         source: "built-in",
       }),
       name: "Explore",
-      description: "Read-only search agent for broad fan-out searches.",
+      // R9（builtin-subagent-catalog.md）：同 general-purpose，为 core 侧重写文本的简版投影。
+      description:
+        "Fast read-only search specialist for locating code across many files; not for review or audits.",
       color: "cyan",
       injectAgentsMd: false,
       modelSelection: exploreOverride,
@@ -273,6 +289,92 @@ async function collectAgentMarkdownPaths(rootPath: string): Promise<string[]> {
   return result.sort((left, right) => left.localeCompare(right));
 }
 
+/**
+ * 列出随 CLI 内容包分发的官方预置 agent（spec: builtin-subagent-catalog.md R7）。
+ *
+ * 复用 subagentMarkdown 的宽松解析（与 runtime loose frontmatter 同语义），产出只读
+ * AgentSummary：source/scope 固定 "built-in"，path 用展示别名 `bundled:<name>`（真实
+ * 文件路径只进诊断），enabled 随 disabledAgentIds，模型选择走 builtInModelSelectionOverrides。
+ * root 缺省或不存在时返回空数组——GUI 缺省姿态是不显示、不报错、不伪造条目。
+ */
+export async function loadBundledAgentSummaries(
+  root: string | undefined,
+  options: {
+    disabledAgentIds?: Iterable<string>;
+    modelSelectionOverrides?: BuiltInSubagentModelSelectionOverrides;
+    diagnostics?: AgentDiagnostic[];
+  } = {},
+): Promise<AgentSummary[]> {
+  const trimmedRoot = root?.trim();
+  if (!trimmedRoot) return [];
+  const disabledSet = new Set(options.disabledAgentIds ?? []);
+  const overrides = options.modelSelectionOverrides ?? {};
+  const agents: AgentSummary[] = [];
+
+  let agentPaths: string[];
+  try {
+    agentPaths = await collectAgentMarkdownPaths(trimmedRoot);
+  } catch (error) {
+    // 目录不可读等同缺席：warn 后按缺省姿态降级，不让整个 list 失败（R7/R8）。
+    subagentLogger.warn(undefined, "bundled agents 目录不可读，跳过官方预置目录", {
+      root: trimmedRoot,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return [];
+  }
+
+  for (const agentPath of agentPaths) {
+    try {
+      const markdown = await readFile(agentPath, "utf-8");
+      const parsed = parseSubagentMarkdown({
+        content: markdown,
+        path: agentPath,
+        scope: "built-in",
+      });
+      if (parsed.diagnostic) {
+        options.diagnostics?.push(parsed.diagnostic);
+        continue;
+      }
+      if (!parsed.agent) continue;
+      const name = parsed.agent.name;
+      const id = createAgentStateId({ name, scope: "built-in", source: "built-in" });
+      const override = overrides[name as BuiltInSubagentName];
+      agents.push({
+        ...parsed.agent,
+        id,
+        path: `${BUNDLED_AGENT_PATH_PREFIX}${name}`,
+        scope: "built-in",
+        source: "built-in",
+        readOnly: true,
+        enabled: !disabledSet.has(id),
+        // 文件内 model 只是默认值；GUI 覆盖替换整份选择（与插件 agent 覆盖语义一致）。
+        ...(parsed.agent.modelSelection
+          ? { defaultModelSelection: parsed.agent.modelSelection }
+          : {}),
+        ...(override ? { modelSelection: override, modelSelectionOverride: override } : {}),
+      });
+    } catch {
+      options.diagnostics?.push({
+        code: "agent_read_failed",
+        message: `Failed to read bundled agent Markdown: ${agentPath}`,
+        path: agentPath,
+      });
+    }
+  }
+  return agents;
+}
+
+/** bundled/核心内置成员的 path 是展示别名而非可落盘文件，更新/删除必须显式拒绝（R7）。 */
+function isBuiltInAgentAliasPath(filePath: string | undefined): boolean {
+  if (!filePath) return false;
+  return filePath.startsWith(BUNDLED_AGENT_PATH_PREFIX) || filePath.startsWith("built-in:");
+}
+
+/** 仅 bundled 预置成员随 disabledAgentIds 启停；核心二内置（built-in:）恒 enabled。 */
+function isBundledAgentPath(filePath: string): boolean {
+  return filePath.startsWith(BUNDLED_AGENT_PATH_PREFIX);
+}
+
 function resolveCapabilities(options?: SubagentsServiceOptions): AgentsCapability {
   const isDesktopRuntime = options?.isDesktopRuntime ?? Boolean(process.env.ACODE_PROCESS_LABEL);
   if (isDesktopRuntime) {
@@ -285,7 +387,10 @@ function attachEnabledState(agents: AgentSummary[], state: AgentsStateFile): Age
   const disabledSet = new Set(state.disabledAgentIds);
   return agents.map((agent) => ({
     ...agent,
-    enabled: agent.scope === "user" ? !disabledSet.has(agent.id) : true,
+    // 核心二内置恒 enabled（无开关）；bundled 预置成员（path 别名 bundled:）与 user
+    // markdown 一样随 disabledAgentIds 启停（spec: builtin-subagent-catalog.md R5/R7）。
+    enabled:
+      agent.scope === "user" || isBundledAgentPath(agent.path) ? !disabledSet.has(agent.id) : true,
   }));
 }
 
@@ -534,10 +639,12 @@ function normalizeBuiltInSelectionOverrides(
 ): BuiltInSubagentModelSelectionOverrides {
   const result: BuiltInSubagentModelSelectionOverrides = {};
   const structuredRecord = isRecord(structured) ? structured : {};
-  const generalPurpose = modelSelectionSchema.safeParse(structuredRecord["general-purpose"]).data;
-  const explore = modelSelectionSchema.safeParse(structuredRecord.Explore).data;
-  if (generalPurpose) result["general-purpose"] = generalPurpose;
-  if (explore) result.Explore = explore;
+  // R5（builtin-subagent-catalog.md）：键集随 BUILT_IN_SUBAGENT_NAMES 联合遍历，不再按
+  // 字面二键硬编码；旧 state 文件里的未知键忽略不报错（既有 safeParse 方向）。
+  for (const name of BUILT_IN_SUBAGENT_NAMES) {
+    const selection = modelSelectionSchema.safeParse(structuredRecord[name]).data;
+    if (selection) result[name] = selection;
+  }
   return result;
 }
 
@@ -549,6 +656,7 @@ export function createSubagentsService(options?: SubagentsServiceOptions): ISuba
   const storageOptions: SubagentsServiceOptions = {
     homeDir: options?.homeDir,
   };
+  const bundledAgentsRoot = options?.bundledAgentsRoot;
 
   return {
     async prepareRuntimeState() {
@@ -586,6 +694,12 @@ export function createSubagentsService(options?: SubagentsServiceOptions): ISuba
       }
       const state = await readAgentStateFile(storageOptions);
       const builtInAgents = createBuiltInAgents(state.builtInModelSelectionOverrides);
+      // 官方预置目录（R7）：root 缺省/不存在时为空数组，list 退化为现状目录，不报错。
+      const bundledAgents = await loadBundledAgentSummaries(bundledAgentsRoot, {
+        disabledAgentIds: state.disabledAgentIds,
+        modelSelectionOverrides: state.builtInModelSelectionOverrides,
+        diagnostics,
+      });
       const fileAgents = await discoverFileAgents({
         diagnostics,
         includeUserAgents: capability.userScopeAvailable,
@@ -605,16 +719,21 @@ export function createSubagentsService(options?: SubagentsServiceOptions): ISuba
         state,
         reservedNames: [
           ...builtInAgents.map((agent) => agent.name),
+          ...bundledAgents.map((agent) => agent.name),
           ...sortedUserAgents.map((agent) => agent.name),
           ...sortedWorkspaceAgents.map((agent) => agent.name),
         ],
         storageOptions,
       });
+      // 合并顺序 = 核心内置 → bundled → user → workspace → plugin runtime（R7）；
+      // applyRuntimePrecedence 后进者覆盖同名，与 CLI normalizeAgentProfiles 的
+      // 「bundled < user < project」覆盖序一致（R5）。settingsUserOnly 同样含 bundled。
       const discoveredAgents =
         mode === "settingsUserOnly"
-          ? [...builtInAgents, ...sortedUserAgents]
+          ? [...builtInAgents, ...bundledAgents, ...sortedUserAgents]
           : applyRuntimePrecedence([
               ...builtInAgents,
+              ...bundledAgents,
               ...sortedUserAgents,
               ...sortedWorkspaceAgents,
               ...pluginAgentDiscovery.runtimeAgents,
@@ -726,6 +845,10 @@ export function createSubagentsService(options?: SubagentsServiceOptions): ISuba
     async updateAgent(params: AgentUpdateParams): Promise<{ agent: AgentSummary }> {
       validateUserAgentConfig(params.config);
       assertNotBuiltInName(params.config.name);
+      // bundled 预置成员只读：path 是展示别名而非可写文件，更新必须显式拒绝（R7）。
+      if (isBuiltInAgentAliasPath(params.oldFilePath)) {
+        throw new Error("Built-in agents are read-only and cannot be updated");
+      }
 
       const scope = params.scope ?? "user";
       const agentDir =
@@ -753,6 +876,11 @@ export function createSubagentsService(options?: SubagentsServiceOptions): ISuba
     },
 
     async deleteAgent(params: AgentDeleteParams): Promise<void> {
+      // bundled 预置成员与核心内置一样只读：别名 path 不可删除（R7）；
+      // 若只靠 rm 兜底，别名不是真实文件路径，会静默“成功”并留下不一致状态。
+      if (isBuiltInAgentAliasPath(params.filePath)) {
+        throw new Error("Built-in agents are read-only and cannot be deleted");
+      }
       await rm(params.filePath, { force: true });
 
       const state = await readAgentStateFile(storageOptions);

@@ -127,6 +127,8 @@ test("OAuth delivery and remote connection retain business behavior without tele
     "./desktopNotifications.js": {},
     "./desktopOAuthDeepLink.js": { deliverPendingDeepLink: () => delivered++ },
     "./desktopMainIpcHelpers.js": {},
+    // 窗口 ID 品牌类型模块（纯函数、零 IO）：加载真实实现，不做替身。
+    "./desktopWindowIds.js": await loadModule("src/main/desktopWindowIds.ts", {}),
   });
   let args;
   registerRemoteIpcHandlers({

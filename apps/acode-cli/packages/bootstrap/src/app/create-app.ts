@@ -80,6 +80,7 @@ import { resolvePluginRuntimeFeatures } from "./plugin-runtime-features.js";
 import { createSessionFacade } from "./session-facade.js";
 import { resolveAppRuntimeConfig, runtimeConfigLogContext } from "./runtime-config.js";
 import { resolveBundledSkillRoots } from "./bundled-skills.js";
+import { createReservedAgentNames, resolveBundledAgentProfiles } from "./bundled-agents.js";
 import { collectDynamicWorkflowDisabledSkillPaths } from "./dynamic-workflow-gate.js";
 import { createWorkspaceHookRuntimeSecurity } from "./workspace-hook-trust.js";
 import { createScriptWorkflowBridge } from "./script-workflow-methods.js";
@@ -101,6 +102,10 @@ import { getWorkflowConcurrencyGovernor } from "./workflow-concurrency-governor.
 import { createDynamicWorkflowSnippetService } from "./dynamic-workflow-snippet-service.js";
 import { createModelCatalogPort } from "./model-catalog-port.js";
 import { createDynamicWorkflowRunProgressSink } from "./dynamic-workflow-run-progress-sink.js";
+import { createScriptWorkflowProgressAdapter } from "./script-workflow-progress-adapter.js";
+import { replayScriptWorkflowRuns } from "./script-workflow-replay.js";
+import { toScriptWorkflowRunSummary } from "./script-workflow-run-summary.js";
+import { isScriptWorkflowStore } from "./script-workflow-utils.js";
 import { createScriptWorkflowAgentRuntime } from "./script-workflow-child-runtime.js";
 import { workflowActorModelPolicy } from "./workflow-actor-model.js";
 import { workflowActorToolPolicy } from "./workflow-actor-tools.js";
@@ -116,7 +121,10 @@ import {
   resolveACodeBuiltinPromptCommand,
 } from "../builtin-prompt-command.js";
 import { collectDisabledPaths } from "../skill-command-overrides.js";
-import { loadPluginAgentProfiles, loadACodeAgentProfiles } from "../subagents.js";
+import {
+  loadPluginAgentProfiles,
+  loadACodeAgentProfiles,
+} from "../subagents.js";
 import { createRuntimeAiSdkModelExecutionConfig } from "../model-config.js";
 import { createCliPlatformOpenPort } from "./platform-open-port.js";
 import { ApiProviderModelRuntime } from "./provider-registry-model-runtime.js";
@@ -279,7 +287,12 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
       cliStorageRoot,
       resolveACodeRuntimeEnv(options.env ?? process.env) === "development",
     );
+    // 官方预置 agent（bundled 包 agents/ 目录）：与 bundled 技能同源 pack root，
+    // 先解析再传入 loadACodeAgentProfiles 置于数组合并序最前（R5），
+    // 避免 bootstrap 内部两处各自解析 pack root。包缺席时降级为空，CLI 正常启动（R8）。
+    const bundledAgentOutcome = await resolveBundledAgentProfiles({ cliStorageRoot, logger });
     const acodeSubagentProfileOutcome = await loadACodeAgentProfiles({
+      bundledProfiles: bundledAgentOutcome.profiles,
       logger,
       storageRoot,
       workingDirectory,
@@ -299,7 +312,12 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
     const pluginSubagentProfiles = loadPluginAgentProfiles({
       logger,
       plugins: pluginOutcome.plugins,
-      reservedProfileNames: acodeSubagentProfiles.map((profile) => profile.name),
+      // 保留名单（R5 动态化）：核心二名 ∪ bundled profile 名（含被禁用成员，名单派生自
+      // 包内容而非装配结果），再并入 user/project profile 名（既有语义不变）。
+      reservedProfileNames: [
+        ...createReservedAgentNames(bundledAgentOutcome.profiles),
+        ...acodeSubagentProfiles.map((profile) => profile.name),
+      ],
       modelSelectionOverrides: acodeSubagentProfileOutcome.pluginAgentModelSelectionOverrides,
     }).profiles;
     const pluginRuntimeFeatures = resolvePluginRuntimeFeatures(pluginOutcome);
@@ -636,6 +654,15 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
     // runtime 与 expert workflow facade 都**共享**父会话这一份 factory——Registry 视图更新后
     // 新建的 Model 才看得到，child 不各自冻结一份。
     const modelFactory = providerModelRuntime.modelFactory;
+    // dwf 进度汇**只造一份**，dwf run service 与脚本工作流的投影适配器共用它。
+    // 两份的话就有两条 append 路径，而身份闸门 / runtime 未就绪 / append 失败这三条降级
+    // 语义（连同它们的单测）都住在这个汇里——复制一份等于让其中一份的降级悄悄漂移。
+    const workflowRunProgressSink = createDynamicWorkflowRunProgressSink({
+      // 惰性：run service 与脚本工作流桥都在 runtime 构造之前建好（它们是 AgentRuntime 的依赖）。
+      getRuntime,
+      logger,
+      sessionId,
+    });
     const scriptWorkflowFacade = createScriptWorkflowBridge({
       appOptions: options,
       appVersion,
@@ -650,6 +677,9 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
       modelFactory,
       permissionService,
       prepareUserExecutionBoundary,
+      // 脚本工作流的 run 也进 dwf 的 workflowRuns 投影（事件经适配器翻译），于是时间线卡、
+      // 状态面板、run 目录与详情侧栏整套复用。边界与映射表见适配器文件头。
+      progressAdapter: createScriptWorkflowProgressAdapter({ emit: workflowRunProgressSink }),
       getRuntime,
       runtimeConfig,
       sessionId,
@@ -762,12 +792,7 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
             //
             // 身份闸门、runtime 未就绪与 append 失败三条降级路径都在这个汇里（连同它们的单测），
             // 见 dynamic-workflow-run-progress-sink.ts 的文件头。
-            onRunEvent: createDynamicWorkflowRunProgressSink({
-              // 惰性：run service 在 runtime 构造之前就建好了（它是 AgentRuntime 的依赖之一）。
-              getRuntime,
-              logger,
-              sessionId,
-            }),
+            onRunEvent: workflowRunProgressSink,
             // 孤儿收敛的作用域：本 app 的会话。构造时把**这个会话**留在 journal 里的非终态
             // run（死进程的遗物）收敛成 failed；兄弟会话的在飞 run 因此绝不会被误伤。
             parentSessionId: sessionId,
@@ -1394,23 +1419,71 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
       // workflow run 的会话级生命周期读面（在飞计数 + 结算订阅）。消费者是宿主的 provider registry
       // 安全边界：子代理共用本会话的 live adapter，在飞 run 期间不能 replace registry。缺席条件同上。
       ...(dynamicWorkflowRunPort === undefined ? {} : {}),
-      // workflow run 的枚举面（重启后的发现查询）。能力缺席条件同上；端口的 listRunsForSession
-      // 是可选成员，方法缺席时本能力同样不注册。
-      ...(dynamicWorkflowRunPort === undefined ||
-      typeof dynamicWorkflowRunPort.listRunsForSession !== "function"
-        ? {}
-        : {
-            listDynamicWorkflowRuns: async (input: { limit?: number }) =>
-              dynamicWorkflowRunPort.listRunsForSession!(input.limit),
-          }),
-      // workflow run 的冷回放。能力缺席条件同上。
-      ...(dynamicWorkflowRunPort === undefined ||
-      typeof dynamicWorkflowRunPort.replayProgressForSession !== "function"
-        ? {}
-        : {
-            replayDynamicWorkflowRuns: async (input: { excludeRunIds: ReadonlySet<string> }) =>
-              dynamicWorkflowRunPort.replayProgressForSession!(input),
-          }),
+      // workflow run 的枚举面（重启后的发现查询）。**两个来源**合成一个能力，与下面的冷回放
+      // 同一条理由：目录页是「这个会话跑过哪些工作流」的发现面，只列 dwf 就少一半。
+      // 注册条件同样是「任一来源在场」，不再以 dwf 端口为准。
+      ...(() => {
+        const dwfList =
+          dynamicWorkflowRunPort !== undefined &&
+          typeof dynamicWorkflowRunPort.listRunsForSession === "function"
+            ? dynamicWorkflowRunPort.listRunsForSession.bind(dynamicWorkflowRunPort)
+            : undefined;
+        const scriptStore = isScriptWorkflowStore(sessionStore) ? sessionStore : undefined;
+        if (dwfList === undefined && scriptStore === undefined) return {};
+        return {
+          listDynamicWorkflowRuns: async (input: { limit?: number }) => {
+            const [dwf, script] = await Promise.all([
+              dwfList === undefined ? [] : dwfList(input.limit),
+              scriptStore === undefined
+                ? []
+                : (
+                    await scriptStore.listScriptWorkflowRuns({
+                      ...(input.limit === undefined ? {} : { limit: input.limit }),
+                      parentSessionId: sessionId,
+                    })
+                  ).map(toScriptWorkflowRunSummary),
+            ]);
+            // 两个来源各自都是「最近更新在前」，但拼接之后就不是了。目录的时间列与
+            // 「运行中 / 已结束」两段都依赖这个序，所以在这里按 updatedAt 归并一次再截断。
+            // 缺席 updatedAt 的排最后（无从比较，不该抢占有时间的条目的位置）。
+            const merged = [...dwf, ...script].sort(
+              (left, right) => (right.updatedAt ?? 0) - (left.updatedAt ?? 0),
+            );
+            return input.limit === undefined ? merged : merged.slice(0, input.limit);
+          },
+        };
+      })(),
+      // workflow run 的冷回放。**两个来源**合成一个能力：
+      //   - dwf：journal（端口的 replayProgressForSession，可选成员，缺席即无这一半）；
+      //   - 脚本工作流：自己的 workflow_run / workflow_event 表（script-workflow-replay.ts）。
+      // 注册条件从「dwf 端口在场」放宽成「任一来源在场」：两套 run 共用同一个投影与同一个
+      // 消费者（v4-bridge.ts），只因为 dwf 端口缺席就把整个能力摘掉，会让脚本 run 也一起
+      // 从冷启动的投影里消失——而它的真相明明在自己的表里。
+      // 顺序是 dwf 在前、脚本在后：两边都按「最旧优先」各自排好，拼接不保证跨系统的全局时序，
+      // 而 reducer 的序号是**每 run 各自**水位的，跨 run 的到达序只影响 8-run 上限的淘汰先后。
+      ...(() => {
+        const dwfReplay =
+          dynamicWorkflowRunPort !== undefined &&
+          typeof dynamicWorkflowRunPort.replayProgressForSession === "function"
+            ? dynamicWorkflowRunPort.replayProgressForSession.bind(dynamicWorkflowRunPort)
+            : undefined;
+        const scriptStore = isScriptWorkflowStore(sessionStore) ? sessionStore : undefined;
+        if (dwfReplay === undefined && scriptStore === undefined) return {};
+        return {
+          replayDynamicWorkflowRuns: async (input: { excludeRunIds: ReadonlySet<string> }) => {
+            const [dwf, script] = await Promise.all([
+              dwfReplay === undefined ? [] : dwfReplay(input),
+              scriptStore === undefined
+                ? []
+                : replayScriptWorkflowRuns(
+                    { logger, parentSessionId: sessionId, store: scriptStore },
+                    input,
+                  ),
+            ]);
+            return [...dwf, ...script];
+          },
+        };
+      })(),
       // dwf run 的恢复。能力缺席条件同上；此外
       // 端口的 resume 是可选成员（stub 端口不陪跑），方法缺席时本能力同样不注册——
       // 对 renderer「端口缺席」与「方法缺席」是同一个业务事实。

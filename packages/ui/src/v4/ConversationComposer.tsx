@@ -75,11 +75,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog.js";
 import { Spinner } from "@/components/ui/spinner.js";
-import { ImagePreviewDialog } from "@/components/ai-elements/image-preview-dialog.js";
-import {
-  ChatMediaAttachmentPreviewDialog,
-  type ChatMediaAttachmentPreviewTarget,
-} from "@/ChatMediaAttachmentPreviewDialog.js";
+import { useComposerAttachmentPreview } from "@/v4/composerAttachmentPreview.js";
 import type { LexicalChatInputHandle } from "@/LexicalChatInput.js";
 import { ChatPromptEditor } from "@/prompt-editor/ChatPromptEditor.js";
 import { usePromptEditorDragState } from "@/prompt-editor/usePromptEditorDragState.js";
@@ -660,11 +656,6 @@ function ConversationComposerImpl({
     onDropTargetControllerChange?.(dropTargetController);
     return () => onDropTargetControllerChange?.(null);
   }, [dropTargetController, onDropTargetControllerChange]);
-  const [attachmentPreviewIndex, setAttachmentPreviewIndex] = useState(0);
-  const [attachmentPreviewOpen, setAttachmentPreviewOpen] = useState(false);
-  const [pdfAttachmentPreview, setPdfAttachmentPreview] =
-    useState<ChatMediaAttachmentPreviewTarget | null>(null);
-  const [pdfAttachmentPreviewOpen, setPdfAttachmentPreviewOpen] = useState(false);
   const attachmentPreviewTitle = intl.formatMessage({
     id: "chat.attachments.preview.open",
   });
@@ -1483,6 +1474,10 @@ function ConversationComposerImpl({
       ),
     [composerAttachments],
   );
+  // 附件预览接缝（2026-10-05 拆分）：四个预览 state 与两个弹窗收口进 hook，
+  // composer 只持有 controller 函数并渲染返回的 dialogs。
+  const { openImagePreviewForSrc, openPdfPreview, attachmentPreviewDialogs } =
+    useComposerAttachmentPreview(composerMediaPreviewItems);
   const topContentNode = useMemo(() => {
     if (
       composerAttachments.length === 0 &&
@@ -1585,23 +1580,14 @@ function ConversationComposerImpl({
                   // 保证同一组媒体可以连续导航。
                   onOpen={
                     canPreviewImageAttachment || canPreviewVideoAttachment
-                      ? () => {
-                          const previewIndex = composerMediaPreviewItems.findIndex(
-                            (item) => item.src === attachment.objectUrl,
-                          );
-                          if (previewIndex < 0) return;
-                          setAttachmentPreviewIndex(previewIndex);
-                          setAttachmentPreviewOpen(true);
-                        }
+                      ? () => openImagePreviewForSrc(attachment.objectUrl)
                       : canPreviewPdfAttachment
-                        ? () => {
-                            setPdfAttachmentPreview({
+                        ? () =>
+                            openPdfPreview({
                               filename: attachment.filename,
                               mediaType: "application/pdf",
                               url: attachment.objectUrl,
-                            });
-                            setPdfAttachmentPreviewOpen(true);
-                          }
+                            })
                         : undefined
                   }
                   openLabel={
@@ -1800,6 +1786,8 @@ function ConversationComposerImpl({
     orderedComposerAttachments,
     intl,
     locale,
+    openImagePreviewForSrc,
+    openPdfPreview,
     removeCodeCommentContext,
     removeConversationSelectionReference,
     removeWebElementContext,
@@ -2083,20 +2071,7 @@ function ConversationComposerImpl({
           </p>
         ) : null}
       </div>
-      <ImagePreviewDialog
-        initialIndex={attachmentPreviewIndex}
-        items={composerMediaPreviewItems}
-        onOpenChange={setAttachmentPreviewOpen}
-        open={attachmentPreviewOpen}
-      />
-      <ChatMediaAttachmentPreviewDialog
-        attachment={pdfAttachmentPreview}
-        open={pdfAttachmentPreviewOpen}
-        onOpenChange={(open) => {
-          setPdfAttachmentPreviewOpen(open);
-          if (!open) setPdfAttachmentPreview(null);
-        }}
-      />
+      {attachmentPreviewDialogs}
       <Dialog
         open={heldQueueConfirmation !== null}
         onOpenChange={(open) => {

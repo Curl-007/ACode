@@ -222,6 +222,10 @@ export const runPrompt = async (
         memory: { extractionEnabled: options.memoryBench === true },
         modelStreaming: "on",
         presentationSurface,
+        // 一次性会话没有「稍后通知你」：-p 在最终消息后退出进程，后台子代理会随
+        // 进程消亡丢结果（bundled Verify/Review 默认 background:true 首当其冲）。
+        // 声明前台策略，port 层把全部子代理派发重写为前台（subagent-background-tristate.md R3）。
+        subagents: { backgroundPolicy: "foreground" as const },
         workingDirectory,
       },
       sessionId,

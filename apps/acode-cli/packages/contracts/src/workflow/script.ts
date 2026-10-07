@@ -68,6 +68,19 @@ export const WorkflowAgentCallInputSchema = z
   .strict();
 export type WorkflowAgentCallInput = z.infer<typeof WorkflowAgentCallInputSchema>;
 
+/**
+ * `workflow_run.status` 的**物理**词汇——受建表 CHECK 约束，不迁移。
+ *
+ * ⚠ 这不是逻辑词汇。「宿主进程在 run 结算前退出」这件事**没有**自己的物理词，它落成
+ * `cancelled` + `failure_json` 里的结构化 code（见 bootstrap 的 script-workflow-run-status.ts）。
+ * 这与 dwf 逐字同构：`dwf_run.status` 的 CHECK 集同样不含 `stopped`，dwf 把逻辑态
+ * `stopped{reason}` 编码成物理 `cancelled` + `{"stopReason": …}` 信封，映射只活在
+ * `dwf-journal-codecs.ts` 一个文件里。
+ *
+ * 曾经试图往这里加一个 `interrupted`：CHECK 约束当场拒写（`CHECK constraint failed: status in`），
+ * 而假 store 的单测撞不到它——只有对着真实库跑一遍才暴露。放宽约束要重建整张表
+ * （三张表外键引用它），代价与风险都远大于按既有模式编码。
+ */
 export const SCRIPT_WORKFLOW_RUN_STATUSES = [
   "pending",
   "running",
@@ -167,6 +180,8 @@ export interface ScriptWorkflowRunRecord {
   startedAt?: number;
   stats?: ScriptWorkflowRunStats;
   status: ScriptWorkflowRunStatus;
+  /** 发起这次 run 的工具调用 id；存量行（migration 0027 之前）缺席。见 CreateScriptWorkflowRunInput。 */
+  toolCallId?: string;
   updatedAt: number;
 }
 
@@ -248,6 +263,14 @@ export interface CreateScriptWorkflowRunInput {
   scriptPath?: string;
   stats?: ScriptWorkflowRunStats;
   status?: ScriptWorkflowRunStatus;
+  /**
+   * 发起这次 run 的工具调用 id。
+   *
+   * 它是两条联接的键：run 目录页把缺它的摘要**整条剔除**（`workflow-run` tab 与聊天里的
+   * 工具卡都按 toolCallId 找发起行），冷恢复的 run 也靠它联回发起它的那一行工具调用。
+   * 缺席只对存量行成立（migration 0027 之前没有记这个事实）。
+   */
+  toolCallId?: string;
 }
 
 export interface UpdateScriptWorkflowRunInput {
@@ -331,6 +354,11 @@ export interface ScriptWorkflowStorePort {
   listScriptWorkflowRuns(input?: {
     cwd?: string;
     limit?: number;
+    /**
+     * 按发起会话过滤。冷回放必须是会话作用域的（`workflowRuns` 投影按会话物化），
+     * 而一个项目目录会被许多会话共用，所以 `cwd` 顶不掉这个作用域。
+     */
+    parentSessionId?: string;
     statuses?: readonly ScriptWorkflowRunStatus[];
   }): Promise<ScriptWorkflowRunRecord[]>;
   upsertScriptWorkflowDefinition(

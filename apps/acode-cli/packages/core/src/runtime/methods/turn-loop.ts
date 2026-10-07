@@ -15,6 +15,8 @@ import {
   buildTodoReminderBody,
   buildRuntimeProviderRequestMessages,
   buildSemanticMemoryRecallReminderBody,
+  buildUltracodeKeywordReminderBody,
+  shouldEmitUltracodeKeywordReminder,
   createCompactRapidRefillError,
   findOrphanedBackgroundTaskIds,
   throwIfTurnAborted,
@@ -205,6 +207,22 @@ export async function runRegularTurnLoop(
       if (semanticRecallBody) {
         commitTurnRequestEntries(this, state.turnRequestState, [
           systemReminderAttachmentEntry("memory_semantic_recall", semanticRecallBody),
+        ]);
+      }
+    }
+    // ultracode 关键词触发（specs/script-workflow-revival.md 批次 C2）：与语义召回同款，
+    // 每个 Main turn 的首个模型请求前判定一次（turn 内后续 step 是工具循环，用户文本不变，
+    // 重复判定只会重复注入同一条）。正文纯由当轮用户文本派生，走 per-request 动态段。
+    if (!outputTokenRecoveryActive && state.modelStepCount === 0) {
+      const ultracodeReminderBody = shouldEmitUltracodeKeywordReminder({
+        dynamicWorkflowEnabled: this.config.dynamicWorkflowEnabled,
+        entries: state.turnRequestState.entries,
+      })
+        ? buildUltracodeKeywordReminderBody()
+        : null;
+      if (ultracodeReminderBody) {
+        commitTurnRequestEntries(this, state.turnRequestState, [
+          systemReminderAttachmentEntry("ultracode_keyword", ultracodeReminderBody),
         ]);
       }
     }

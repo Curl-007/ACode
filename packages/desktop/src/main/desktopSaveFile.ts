@@ -1,5 +1,6 @@
 import { copyFile, mkdtemp, open, rm, writeFile } from "node:fs/promises";
 import { lookup } from "node:dns/promises";
+import type { LookupAddress } from "node:dns";
 import { BlockList } from "node:net";
 import type { LookupFunction } from "node:net";
 import { tmpdir } from "node:os";
@@ -59,12 +60,15 @@ function parseRemoteImageUrl(value: unknown): URL | null {
   }
 }
 
-async function resolvePublicRemoteUrl(url: URL): Promise<Awaited<ReturnType<typeof lookup>>> {
+// 返回类型显式写 LookupAddress[]：@types/node 的 dns/promises lookup 有多个重载，
+// ReturnType<typeof lookup> 只会取最后一个重载（无 options → Promise<LookupAddress>），
+// 与这里 { all: true } 实际命中的 Promise<LookupAddress[]> 重载不符。
+async function resolvePublicRemoteUrl(url: URL): Promise<LookupAddress[]> {
   const hostname = url.hostname.replace(/^\[|\]$/g, "").toLowerCase();
   if (hostname === "localhost" || hostname.endsWith(".localhost")) {
     throw new SaveFileError("remote_address_not_allowed");
   }
-  let addresses: Awaited<ReturnType<typeof lookup>>;
+  let addresses: LookupAddress[];
   try {
     addresses = await lookup(hostname, { all: true, verbatim: true });
   } catch {
@@ -189,14 +193,18 @@ export function registerDesktopSaveFileIpcHandler(logger: { warn: (...args: unkn
       }
       const suggestedName = basename(payload.suggestedName.trim()).slice(0, 120);
       const sourceUrl = parseRemoteImageUrl(payload.sourceUrl);
-      const hasData = payload.data instanceof ArrayBuffer;
+      // SaveFileRequest 是 data/sourceUrl 二选一的判别联合，payload.data 声明上含 undefined；
+      // 布尔变量无法把 instanceof 收窄传递到后续分支，这里把判别结果保存为收窄后的局部引用，
+      // hasData 语义与原实现完全一致（同一 instanceof 判定）。
+      const dataArrayBuffer = payload.data instanceof ArrayBuffer ? payload.data : undefined;
+      const hasData = dataArrayBuffer !== undefined;
       if (!suggestedName || (sourceUrl === null && !hasData)) {
         return { success: false, error: "invalid_file_payload" };
       }
-      if (hasData && payload.data.byteLength === 0) {
+      if (dataArrayBuffer && dataArrayBuffer.byteLength === 0) {
         return { success: false, error: "invalid_file_payload" };
       }
-      if (hasData && payload.data.byteLength > MAX_SAVE_FILE_BYTES) {
+      if (dataArrayBuffer && dataArrayBuffer.byteLength > MAX_SAVE_FILE_BYTES) {
         return { success: false, error: "file_too_large" };
       }
 
@@ -212,8 +220,8 @@ export function registerDesktopSaveFileIpcHandler(logger: { warn: (...args: unkn
       try {
         if (sourceUrl) {
           await downloadRemoteFile(sourceUrl, result.filePath);
-        } else if (hasData) {
-          await writeFile(result.filePath, new Uint8Array(payload.data));
+        } else if (dataArrayBuffer) {
+          await writeFile(result.filePath, new Uint8Array(dataArrayBuffer));
         }
         return { success: true, path: result.filePath };
       } catch (error) {

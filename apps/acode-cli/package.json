@@ -28,16 +28,12 @@
     "release": "node ../../node_modules/release-it/bin/release-it.js --config .release-it.json",
     "release:dry": "pnpm run release --release-version",
     "sea": "pnpm --filter @acode/cli sea",
+    "test": "node --import tsx --test \"tests/**/*.test.mjs\"",
     "typecheck": "turbo run typecheck"
-  },
-  "dependencies": {
-    "dotenv": "^17.4.2",
-    "proxy-agent": "^8.0.1"
   },
   "devDependencies": {
     "@withfig/autocomplete": "2.692.3",
     "@types/node": "^24.0.0",
-    "c8": "^11.0.0",
     "esbuild": "^0.25.0",
     "oxfmt": "^0.47.0",
     "oxlint": "^1.62.0",

@@ -5,6 +5,7 @@ import {
 } from "./legacy-model-provider-identity.js";
 import { parseSubagentMarkdownSelection } from "./subagent-markdown-selection.js";
 import {
+  BUILT_IN_SUBAGENT_NAMES,
   parsePluginSubagentModelSelectionOverrides,
   type BuiltInSubagentModelSelectionOverrides,
   type PluginSubagentModelSelectionOverrides,
@@ -26,7 +27,12 @@ export function importSubagentStateSelections(input: Record<string, unknown>): R
 } {
   const current = Object.hasOwn(input, "builtInModelSelectionOverrides");
   const selections: BuiltInSubagentModelSelectionOverrides = {};
-  for (const name of ["Explore", "general-purpose"] as const) {
+  // 键集必须遍历联合名单而不是硬编码二名：本函数会用 `selections` 整体替换
+  // builtInModelSelectionOverrides（builtin-subagent-catalog.md R5 把联合扩为
+  // 核心二名 + bundled 三名）。若仍只遍历 Explore/general-purpose，每次启动迁移都会
+  // 把 GUI 已持久化的 Plan/Verify/Review 覆盖静默丢弃（验收场景 6 的数据丢失路径）。
+  // 旧双 map 分支对新名字天然返回 undefined（旧文件不可能有新键），行为不变。
+  for (const name of BUILT_IN_SUBAGENT_NAMES) {
     const selection = current
       ? modelSelectionSchema.safeParse(record(input.builtInModelSelectionOverrides)[name]).data
       : parseSubagentMarkdownSelection({

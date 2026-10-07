@@ -69,6 +69,12 @@ import { logger } from "./logger.js";
 import { markMainLaunchAppReady } from "./desktopLaunchMarks.js";
 import { createCuaPipFocusRouter, resolveCuaPipWindowKey } from "./cuaPipFocusRouter.js";
 import {
+  asWebContentsId,
+  asWindowId,
+  type WebContentsId,
+  type WindowId,
+} from "./desktopWindowIds.js";
+import {
   acknowledgePostUpdateReleaseNotes,
   getAutoUpdaterState,
   hydratePendingPostUpdateReleaseNotes,
@@ -105,7 +111,9 @@ import {
 } from "./desktopApplicationMenu.js";
 import { applyAppIcon } from "./desktopWindowChrome.js";
 import { installDesktopSessionPermissionPolicies } from "./desktopSessionPermissionPolicy.js";
-import { resolveWindowsAppUserModelIdForFlavor } from "../../scripts/desktop-product-identity.mjs";
+// main 编译单元无法为构建期 .mjs 脚本提供类型（TS7016），改用 src/main 内的类型化镜像；
+// 修改 scripts/desktop-product-identity.mjs 的 appId/AUMID 时必须同步该镜像。
+import { resolveWindowsAppUserModelIdForFlavor } from "./desktopWindowsAppUserModelId.js";
 import type { DesktopWindowSize } from "./desktopWindowSize.js";
 import { maybeWarnArchitectureMismatch } from "./desktopArchitectureGuard.js";
 import { maybeBlockStartupForForceUpdate } from "./forceUpdateGuard.js";
@@ -562,10 +570,10 @@ const forceQuitRef = { current: false };
 const explicitQuitRef = { current: false };
 let appQuitPreparationInFlight: Promise<void> | null = null;
 let hasPreparedAppQuit = false;
-const windowWorkspaceMap = new Map<number, Set<string>>();
-const windowTaskRealtimeHostIdMap = new Map<number, string>();
-const windowUnreadCountMap = new Map<number, number>();
-const windowHostProcessMap = new Map<number, ElectronUtilityProcess>();
+const windowWorkspaceMap = new Map<WindowId, Set<string>>();
+const windowTaskRealtimeHostIdMap = new Map<WindowId, string>();
+const windowUnreadCountMap = new Map<WindowId, number>();
+const windowHostProcessMap = new Map<WebContentsId, ElectronUtilityProcess>();
 const cuaPipFocusRouter = createCuaPipFocusRouter({
   send: (windowId, event) => {
     windowHostProcessMap.get(windowId)?.postMessage({
@@ -1670,9 +1678,9 @@ function createWindowInstance(startupBootstrap: StartupWindowBootstrap = {}) {
         },
         {
           taskRealtime: {
-            workspaceKeys: windowWorkspaceMap.get(win.id) ?? [],
+            workspaceKeys: windowWorkspaceMap.get(asWindowId(win.id)) ?? [],
             onHostId: (hostId) => {
-              windowTaskRealtimeHostIdMap.set(win.id, hostId);
+              windowTaskRealtimeHostIdMap.set(asWindowId(win.id), hostId);
             },
           },
         },
@@ -1710,8 +1718,10 @@ function createWindowInstance(startupBootstrap: StartupWindowBootstrap = {}) {
     initialDesktopZoomLevel: currentDesktopZoomLevel,
     initialWindowSize: currentDesktopWindowSize,
     currentApplicationLocale: () => currentApplicationLocale,
+    // 消费方只做 truthy 判断（desktopWindowChrome），null 与 undefined 等价；
+    // 接口契约是 owner | undefined，这里把 null 显式归一为 undefined。
     resolveBrowserViewOwner: (webContentsId) =>
-      browserGuestManager.getTabOwnerByWebContentsId(webContentsId),
+      browserGuestManager.getTabOwnerByWebContentsId(webContentsId) ?? undefined,
     persistWindowSize: async (state) => {
       currentDesktopWindowSize = state;
       await mainSettingService.update({ desktopWindowSize: state });
@@ -2092,13 +2102,13 @@ app.whenReady().then(async () => {
 });
 
 app.on("browser-window-created", (_, win) => {
-  const windowWebContentsId = win.webContents.id;
+  const windowWebContentsId = asWebContentsId(win.webContents.id);
   win.on("closed", () => {
     browserScreenshotSurfaceCoordinator.handleWindowDestroyed(win.id);
     browserGuestManager.closeWindow(win.id);
-    windowWorkspaceMap.delete(win.id);
-    windowTaskRealtimeHostIdMap.delete(win.id);
-    if (windowUnreadCountMap.delete(win.id)) {
+    windowWorkspaceMap.delete(asWindowId(win.id));
+    windowTaskRealtimeHostIdMap.delete(asWindowId(win.id));
+    if (windowUnreadCountMap.delete(asWindowId(win.id))) {
       syncApplicationUnreadBadge(windowUnreadCountMap);
     }
     // Electron 进入 closed 回调时，win.webContents 可能已经被销毁。

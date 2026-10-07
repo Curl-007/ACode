@@ -4774,6 +4774,23 @@ const enUS: Record<string, string> = {
   "chat.toolCall.workflow.resumeRun.inBackground": "Running in background",
   "chat.toolCall.workflow.resumeRun.hint":
     "The run continues under the same run ID: finished steps are replayed from the journal, unfinished ones are dispatched again. A completion notification with the final output will arrive.",
+  // Script workflows (RunWorkflow) — a DIFFERENT system from the chat.toolCall.workflow.* keys
+  // above, so it gets its own namespace on purpose: those keys describe dwf's causality graph,
+  // run projection and artifacts, none of which this system has. Sharing the prefix would make
+  // the key names promise things the card cannot render.
+  "chat.toolCall.scriptWorkflow.label": "Script workflow",
+  "chat.toolCall.scriptWorkflow.status.launching": "Launching",
+  "chat.toolCall.scriptWorkflow.status.backgrounded": "Running in background",
+  "chat.toolCall.scriptWorkflow.status.completed": "Completed",
+  "chat.toolCall.scriptWorkflow.status.failed": "Failed",
+  "chat.toolCall.scriptWorkflow.source.script": "Inline script",
+  "chat.toolCall.scriptWorkflow.source.scriptPath": "Script file",
+  "chat.toolCall.scriptWorkflow.source.name": "Predefined workflow",
+  "chat.toolCall.scriptWorkflow.source.resume": "Resuming a prior run",
+  "chat.toolCall.scriptWorkflow.field.runId": "Run ID",
+  "chat.toolCall.scriptWorkflow.field.scriptPath": "Script path",
+  "chat.toolCall.scriptWorkflow.field.resumeFromRunId": "Resumed from",
+  "chat.toolCall.scriptWorkflow.field.script": "View script",
   "chat.toolCall.workflow.listRuns.listing": "Listing workflow runs",
   "chat.toolCall.workflow.listRuns.listed": "Workflow runs",
   "chat.toolCall.workflow.listRuns.count": "{count} runs",
@@ -4872,6 +4889,27 @@ const enUS: Record<string, string> = {
   "chat.toolCall.workflow.run.resumeHint":
     "Continue from where it stopped: finished steps are reused, interrupted steps run again.",
   "chat.toolCall.workflow.run.configure": "Configure",
+  // Dialect badge: only on script-workflow (ultracode / RunWorkflow) runs, explaining why
+  // Configure and Resume are absent — both commands are dwf-only.
+  "chat.toolCall.workflow.run.dialect.script": "ultracode",
+  "chat.toolCall.workflow.run.dialect.scriptHint":
+    "A script workflow started by RunWorkflow. Configure and Resume apply to dwf workflows only; Stop works for both.",
+  // Live-activity body: the projection-only fallback for runs with no static causality graph
+  // (script workflows). It states plainly that no dependency graph is claimed.
+  "chat.toolCall.workflow.run.activity.hint.script":
+    "Live activity observed for this run. No dependency graph is shown: this workflow system has no static plan, so only phases, subagents and their settlements are facts here.",
+  "chat.toolCall.workflow.run.activity.hint.noGraph":
+    "Live activity observed for this run. The dependency graph is not in this conversation's visible history, so the timeline view is unavailable and only observed activity is listed.",
+  "chat.toolCall.workflow.run.activity.fraction": "{settled}/{total} settled",
+  // 简单 {n} 占位，不用 ICU plural：本仓的 formatMessage 只做 replaceAll("{key}", value)
+  // （IntlProvider.tsx），plural 语法会原样渲染出来。单复数的取舍不值得为此造一层。
+  "chat.toolCall.workflow.run.activity.asks": "{n} asks",
+  "chat.toolCall.workflow.run.activity.cached": "cached",
+  "chat.toolCall.workflow.run.activity.lastTool": "last: {name}",
+  "chat.toolCall.workflow.run.activity.openActor": "Open this subagent's transcript",
+  "chat.toolCall.workflow.run.activity.actorInert":
+    "No session recorded for this subagent yet",
+  "chat.toolCall.workflow.run.activity.untrackedNode": "unattributed step",
   "chat.toolCall.workflow.run.settings.title": "Configure workflow",
   "chat.toolCall.workflow.run.settings.model": "Subagent model",
   "chat.toolCall.workflow.run.settings.model.session": "session model",
@@ -5279,6 +5317,22 @@ const enUS: Record<string, string> = {
   "chat.permission.workflow.allowForSession": "Always allow in this session",
   "chat.permission.workflow.allowForSession.description":
     "Do not ask again for workflows in this session",
+  // Script workflow (RunWorkflow) confirmation — its own namespace for the same reason as
+  // chat.toolCall.scriptWorkflow.*: this system has no causality graph and no dwf run
+  // projection, so sharing the workflow.* prefix would promise things the block cannot render.
+  "chat.permission.scriptWorkflow.title": "Run this script workflow?",
+  "chat.permission.scriptWorkflow.field.source": "Source",
+  "chat.permission.scriptWorkflow.field.name": "Workflow",
+  "chat.permission.scriptWorkflow.field.scriptPath": "Script file",
+  "chat.permission.scriptWorkflow.field.resumeFromRunId": "Resumed from",
+  "chat.permission.scriptWorkflow.source.script": "Script submitted inline",
+  "chat.permission.scriptWorkflow.source.scriptPath": "Script file on disk",
+  "chat.permission.scriptWorkflow.source.name": "Predefined workflow",
+  "chat.permission.scriptWorkflow.source.resume": "Resuming a prior run",
+  "chat.permission.scriptWorkflow.source.unknown": "Not specified",
+  "chat.permission.scriptWorkflow.scriptHeading": "Script that will run",
+  "chat.permission.scriptWorkflow.scriptPathNotice":
+    "You are approving the file's current contents. It can still change after you approve (hand edit, git pull, someone else's commit), and every run re-reads it.",
   "chat.permission.workflow.amend.title": "Amend this workflow?",
   "chat.permission.workflow.amends": "Amends run",
   "chat.permission.workflow.amends.running": "still running, will be stopped",

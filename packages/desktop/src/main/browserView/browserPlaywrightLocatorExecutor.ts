@@ -303,6 +303,16 @@ class IabPlaywrightLocatorSession {
         "setChecked",
       ].includes(action.operation);
       let probeExecution: ActionProbeExecution;
+      // noUncheckedIndexedAccess 让数组下标访问的类型变为 ScrollAlignment | undefined。
+      // pointerAttempt 已按数组长度取模、下标恒有效，?? 兜底分支实际不可达；
+      // 兜底值取与 force 路径一致的首个对齐策略（center/center），保持既有成功路径不变。
+      const scrollAlignment: ScrollAlignment =
+        (action.force === true
+          ? POINTER_SCROLL_ALIGNMENTS[0]
+          : POINTER_SCROLL_ALIGNMENTS[pointerAttempt % POINTER_SCROLL_ALIGNMENTS.length]) ?? {
+          block: "center",
+          inline: "center",
+        };
       try {
         probeExecution = await this.actionProbe(
           target,
@@ -316,10 +326,7 @@ class IabPlaywrightLocatorSession {
             // force pointer action 仍等待稳定并滚动，但跳过 hit-target 校验。
             needsHitTarget: needsPointer && action.force !== true,
             needsStable: needsPointer,
-            scrollAlignment:
-              action.force === true
-                ? POINTER_SCROLL_ALIGNMENTS[0]
-                : POINTER_SCROLL_ALIGNMENTS[pointerAttempt % POINTER_SCROLL_ALIGNMENTS.length],
+            scrollAlignment,
           },
           remaining,
         );

@@ -22,6 +22,7 @@ import { ListWorkflowRunsToolCallBlock } from "@/ToolCallBlocks/renderers/list-w
 import { ResumeWorkflowRunToolCallBlock } from "@/ToolCallBlocks/renderers/resume-workflow-run.js";
 import { ResolveWorkflowQuestionToolCallBlock } from "@/ToolCallBlocks/renderers/resolve-workflow-question.js";
 import { SaveWorkflowToolCallBlock } from "@/ToolCallBlocks/renderers/save-workflow.js";
+import { RunWorkflowToolCallBlock } from "@/ToolCallBlocks/renderers/run-workflow.js";
 import {
   isEscalateToolCall,
   isEvalWorkflowSnippetToolCall,
@@ -31,6 +32,7 @@ import {
   isListWorkflowRunsToolCall,
   isResolveWorkflowQuestionToolCall,
   isResumeWorkflowRunToolCall,
+  isRunWorkflowToolCall,
   isSaveWorkflowToolCall,
 } from "@/lib/workflowToolNames.js";
 import { CuaToolCallBlock, isCuaToolCall } from "@/ToolCallBlocks/renderers/cua.js";
@@ -102,6 +104,14 @@ export function resolveToolCallRenderer(context: ToolCallBlockRenderContext) {
   // 兜底卡会把模型面那段以 providerId 开头的 `<models>` 文本原样摊进聊天区。
   if (isListModelsToolCall(context.toolCallNode.toolCall)) {
     return ListModelsToolCallBlock;
+  }
+
+  // 脚本工作流（RunWorkflow）必须抢在 family 分流之前认领自己。它是**另一套**工作流系统：
+  // 没有静态分析、没有因果图、run 不在 workflowRuns 投影里，而 workflow family 的兜底是
+  // CreateWorkflow 卡——落进去就会画出一张长着别人器官的卡。它也因此刻意不登记进
+  // tool-identity 的已知工具表（登记 = 落 family = 说谎），只能按名认领。
+  if (isRunWorkflowToolCall(context.toolCallNode.toolCall)) {
+    return RunWorkflowToolCallBlock;
   }
 
   // 升级问答两工具同款按名分流、同样排在 family 之前：它们不在已知工具表里（identity 回

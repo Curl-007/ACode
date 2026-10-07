@@ -207,4 +207,17 @@ export const BUILTIN_ACODE_SLASH_COMMAND_HELP_ENTRIES: readonly BuiltinACodeSlas
       summary: "Design and launch a dynamic workflow for a task.",
       usage: "/workflow [what the workflow should accomplish]",
     },
+    {
+      // 与 /workflow 相邻：两者都是「开启一段编排工作」的入口，但驱动的是**两套不同的系统**，
+      // details 的第一条必须把这点说穿，否则用户会以为它们是同一件事的两种拼写。
+      details: [
+        "Loads the script-workflows skill, then writes a plain-JavaScript workflow script (headed by `export const meta`) and submits it with RunWorkflow.",
+        "This is the other workflow system: /workflow drives CreateWorkflow with a TypeScript script checked against a facade. The two script forms are not interchangeable.",
+        "Runs as a normal agent turn; the workflow starts only after you confirm the script.",
+        "In the desktop app the command is offered only while dynamic workflows are enabled for this client.",
+      ],
+      name: "ultracode",
+      summary: "Design and launch a script workflow (multi-agent fan-out) for a task.",
+      usage: "/ultracode [what the workflow should accomplish]",
+    },
   ] as const;

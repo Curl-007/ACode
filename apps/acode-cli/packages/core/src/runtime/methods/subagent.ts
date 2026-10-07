@@ -54,6 +54,7 @@ import {
   SUBAGENT_COMPUTER_USE_UNAVAILABLE_MESSAGE,
   type OfficialCuaPolicy,
 } from "../../subagent/computer-use-policy.js";
+import { wrapSubagentPortWithForegroundPolicy } from "../../subagent/foreground-policy.js";
 import { computeOfficialCuaServerNames } from "./mcp.js";
 
 export function createDefaultSubagentPort(
@@ -64,10 +65,13 @@ export function createDefaultSubagentPort(
     return undefined;
   }
 
-  return createExploreSubagentPort({
+  // 一次性会话前台策略（subagent-background-tristate.md R3）：port 构造点单点强制——
+  // 超时转后台直接失能，派发请求经 wrapper 重写为前台。runner 不感知会话形态。
+  const foregroundPolicy = this.config.subagents?.backgroundPolicy === "foreground";
+  const port = createExploreSubagentPort({
     logger: this.logger,
     inactivityTimeoutMs: this.config.subagents?.inactivityTimeoutMs,
-    autoBackgroundMs: this.config.subagents?.autoBackgroundMs,
+    autoBackgroundMs: foregroundPolicy ? undefined : this.config.subagents?.autoBackgroundMs,
     outputRootDir: this.config.subagents?.outputRootDir,
     profiles: this.config.subagents?.profiles,
     builtInModelSelectionOverrides: this.config.subagents?.builtInModelSelectionOverrides,
@@ -418,6 +422,8 @@ export function createDefaultSubagentPort(
       }
     },
   });
+
+  return foregroundPolicy ? wrapSubagentPortWithForegroundPolicy(port) : port;
 }
 
 function resolveSubagentEmbeddedSearchEnabled(): boolean {

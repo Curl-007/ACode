@@ -45,6 +45,7 @@ export const SYSTEM_REMINDER_PER_REQUEST_SOURCES = [
   "output_style",
   "memory_recall",
   "memory_semantic_recall",
+  "ultracode_keyword",
   "swarm_plan_status",
   "date_change",
   "runtime_restart_tasks",
@@ -113,6 +114,11 @@ const SYSTEM_REMINDER_DESCRIPTORS: Record<SystemReminderSource, DescriptorShape>
     true,
     "sr.memory_semantic_recall",
   ),
+  // ultracode 关键词触发（specs/script-workflow-revival.md 批次 C2）：正文完全由当轮用户
+  // 文本派生（打了这个词就有、没打就没有），逐 turn 独立判定。与 memory_semantic_recall
+  // 同款走 per-request 档、不落 session——持久化会把「某轮的措辞」伪装成「会话事实」，
+  // 而会话级常开是另一件事，需要一份有明确所有者与恢复语义的状态，本档不提供。
+  ultracode_keyword: descriptor("current_turn", "per_current_turn", true, "sr.ultracode_keyword"),
   // K2 swarm plan 进展提醒（specs/swarm-task-graph.md R7）：plan 在 runtime store（不受
   // transcript compact 影响——gate 归主对话的必要条件），冷恢复后按当前图快照重建即可，
   // 逐字存活反而会把「某轮的图状态」伪装成会话事实。与 memory_semantic_recall 同款走

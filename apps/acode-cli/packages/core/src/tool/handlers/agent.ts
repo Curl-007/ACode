@@ -119,7 +119,7 @@ function buildAgentProviderDescription(
     "",
     "- The agent's final message is returned to you as the tool result; it is not shown to the user — relay what matters.",
     "- A new Agent call starts fresh, so the prompt must be self-contained.",
-    "- `run_in_background: true` runs the agent asynchronously; you'll be notified when it completes.",
+    "- `run_in_background: true` runs the agent asynchronously; you'll be notified when it completes. Omit it to follow the agent's own default; pass `false` to force foreground execution even for an agent that defaults to background.",
     "- When you launch multiple agents for independent work, send them in a single message with multiple tool uses so they run concurrently.",
     // 只保留「用户点名工作流」这一种情形：工作流一律由用户显式请求触发，与系统提示词其余
     // 部分一致。不能把「结果层层喂给下一步的多代理编排」也划给 CreateWorkflow，
@@ -216,7 +216,10 @@ const agentHandler: ToolHandler = async (input, context) => {
   return context.subagentPort.launch(
     {
       ...request,
-      runInBackground: parsed.run_in_background === true,
+      // 三态透传（subagent-background-tristate.md R1）：undefined=跟随 profile 默认、
+      // true=强制后台、false=强制前台。此前 `=== true` 把显式 false 折叠成缺省，
+      // 导致 profile.background=true 的成员无法被调用方拉回前台（deny 语境成死循环）。
+      runInBackground: parsed.run_in_background,
     },
     {
       signal: context.abortSignal,

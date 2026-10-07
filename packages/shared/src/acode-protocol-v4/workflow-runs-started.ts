@@ -73,11 +73,18 @@ export function reduceRunStarted(
   // 这条事件到达。读不出就退回已知值——老 CLI 不发这个键，而把已经显示出来的模型抹掉是退化里
   // 最坏的一种：run 看上去换了模型，其实只是少了一个字段。缺席即整个键不在（不是 undefined）。
   const subagentModel = readSubagentModel(payload.subagentModel) ?? rebased.subagentModel;
+  // 方言随 `run-started` 到达（脚本工作流的适配器发的第一个信封就带它）。读不出就退回已知值：
+  // 老 journal 与老 CLI 都不发这个键，而那些 run 全部是 dwf——「缺席即 dwf」是 schema 记明的
+  // 约定，不是这里的猜测。只认闭集里的两个词：别的值一律当没说，免得一个拼错的字符串让侧栏
+  // 按未知方言门掉全部动作（那比按 dwf 处理更坏，因为 dwf 至少是这套投影的原生方言）。
+  const dialect =
+    payload.dialect === "script" || payload.dialect === "dwf" ? payload.dialect : rebased.dialect;
   return reduceRunStartedConcurrency(
     {
       ...rebased,
       ...(resumedFrom === undefined ? {} : { resumedFrom }),
       ...(subagentModel === undefined ? {} : { subagentModel }),
+      ...(dialect === undefined ? {} : { dialect }),
       status: "running",
       usage: { spentTokens: 0, nodesUsed: 0 },
       ...workflowRunTablesForNewLife(run),

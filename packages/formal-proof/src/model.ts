@@ -481,8 +481,10 @@ function effectTitle(decision: Decision): string {
 }
 
 // 导出为可执行裁决表（02-projection「规则模块下沉」）：
-// CLI 投影的 guard 派生必须与本函数逐条一致，由 bootstrap 的
-// formal-proof-consistency 黄金测试机械背书。
+// CLI 投影的 guard 派生必须与本函数逐条一致。注意：旧注释宣称的
+// formal-proof-consistency 黄金测试从未建成（2026-10-05 全仓 grep 核实），
+// 该一致性目前仅由人工维护——修改任一侧裁决表必须人工核对另一侧，
+// 或先补建机械对照测试再改。
 export function evaluate(context: ProductContext, candidate: Candidate): Decision {
   if (candidate.kind === "system") {
     return evaluateSystem(context, candidate);

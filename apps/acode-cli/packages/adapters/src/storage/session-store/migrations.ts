@@ -957,6 +957,14 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
     id: "0026_swarm_plan_row",
     sql: SWARM_PLAN_ROW_MIGRATION_SQL,
   },
+  {
+    // 脚本工作流 run 的发起工具调用 id（specs/script-workflow-revival.md R15）：目录页与
+    // 聊天工具卡都按 toolCallId 与 run 联接，缺这一列则脚本 run 在目录里被整条剔除。
+    // 可空（存量行无事实可回填），回滚 = 旧代码不读不写，见 migrations/0027-*.ts 文件头。
+    appVersion: "0.16.9",
+    id: "0027_workflow_run_tool_call_id",
+    sql: WORKFLOW_RUN_TOOL_CALL_ID_MIGRATION_SQL,
+  },
 ];
 import { OFFICIAL_GLM_SELECTION_MIGRATION_SQL } from "./migrations/0021-official-glm-selection.js";
 import { BACKFILLED_SESSION_REASONING_MIGRATION_SQL } from "./migrations/0022-backfilled-session-reasoning.js";
@@ -964,3 +972,4 @@ import { TODO_DEPS_JSON_MIGRATION_SQL } from "./migrations/0023-todo-deps-json.j
 import { TODO_CONFIDENCE_JSON_MIGRATION_SQL } from "./migrations/0024-todo-confidence-json.js";
 import { SESSION_MESSAGE_FTS_MIGRATION_SQL } from "./migrations/0025-session-message-fts.js";
 import { SWARM_PLAN_ROW_MIGRATION_SQL } from "./migrations/0026-swarm-plan-row.js";
+import { WORKFLOW_RUN_TOOL_CALL_ID_MIGRATION_SQL } from "./migrations/0027-workflow-run-tool-call-id.js";

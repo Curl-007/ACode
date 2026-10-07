@@ -167,6 +167,8 @@ export interface ScriptWorkflowRunRecord {
   startedAt?: number;
   stats?: ScriptWorkflowRunStats;
   status: ScriptWorkflowRunStatus;
+  /** 发起这次 run 的工具调用 id；存量行（migration 0027 之前）缺席。见 CreateScriptWorkflowRunInput。 */
+  toolCallId?: string;
   updatedAt: number;
 }
 
@@ -248,6 +250,14 @@ export interface CreateScriptWorkflowRunInput {
   scriptPath?: string;
   stats?: ScriptWorkflowRunStats;
   status?: ScriptWorkflowRunStatus;
+  /**
+   * 发起这次 run 的工具调用 id。
+   *
+   * 它是两条联接的键：run 目录页把缺它的摘要**整条剔除**（`workflow-run` tab 与聊天里的
+   * 工具卡都按 toolCallId 找发起行），冷恢复的 run 也靠它联回发起它的那一行工具调用。
+   * 缺席只对存量行成立（migration 0027 之前没有记这个事实）。
+   */
+  toolCallId?: string;
 }
 
 export interface UpdateScriptWorkflowRunInput {
@@ -331,6 +341,11 @@ export interface ScriptWorkflowStorePort {
   listScriptWorkflowRuns(input?: {
     cwd?: string;
     limit?: number;
+    /**
+     * 按发起会话过滤。冷回放必须是会话作用域的（`workflowRuns` 投影按会话物化），
+     * 而一个项目目录会被许多会话共用，所以 `cwd` 顶不掉这个作用域。
+     */
+    parentSessionId?: string;
     statuses?: readonly ScriptWorkflowRunStatus[];
   }): Promise<ScriptWorkflowRunRecord[]>;
   upsertScriptWorkflowDefinition(

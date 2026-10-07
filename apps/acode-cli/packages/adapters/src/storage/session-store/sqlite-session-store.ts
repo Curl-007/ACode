@@ -869,6 +869,7 @@ export class SqliteSessionStore
   async listScriptWorkflowRuns(input?: {
     cwd?: string;
     limit?: number;
+    parentSessionId?: string;
     statuses?: readonly ScriptWorkflowRunStatus[];
   }): Promise<ScriptWorkflowRunRecord[]> {
     return scriptWorkflowRunRepository.listScriptWorkflowRuns(this.db, input);

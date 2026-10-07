@@ -85,7 +85,25 @@ const DirectoryRow = memo(function DirectoryRow({
         className={cn("mt-2 size-1.5 shrink-0 rounded-full", RUN_STATUS_DOT[row.status])}
       />
       <span className="min-w-0 flex-1">
-        <span className="block truncate font-medium text-foreground">{name}</span>
+        <span className="flex min-w-0 items-center gap-1.5">
+          <span className="min-w-0 flex-1 truncate font-medium text-foreground">{name}</span>
+          {/*
+           * 方言徽标与详情侧栏状态头同一套措辞、同一条规则：只挂 script。dwf 是缺省方言，
+           * 给每条既有 run 都挂一枚只是噪音。目录里两套 run 现在混排在同一张表上，
+           * 不标出来用户无从分辨——也无从理解为什么点进去某些动作缺席。
+           */}
+          {row.dialect === "script" ? (
+            <span
+              className="shrink-0 rounded-full border border-border px-1.5 py-px font-mono text-ui-xs text-foreground-muted"
+              data-testid="workflow-run-directory-dialect-badge"
+              title={intl.formatMessage({
+                id: "chat.toolCall.workflow.run.dialect.scriptHint",
+              })}
+            >
+              {intl.formatMessage({ id: "chat.toolCall.workflow.run.dialect.script" })}
+            </span>
+          ) : null}
+        </span>
         <span className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 text-ui-sm">
           <span className={cn("shrink-0", RUN_STATUS_TEXT[row.status])}>{statusLabel}</span>
           {/*

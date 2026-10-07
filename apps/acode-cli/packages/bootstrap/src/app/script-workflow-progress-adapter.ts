@@ -17,6 +17,7 @@
  *   workflow_usage      → usage-updated
  *   workflow_completed  → run-settled { status: "completed" }
  *   workflow_cancelled  → run-settled { status: "stopped", stopReason: "user" }
+ *   workflow_interrupted→ run-settled { status: "stopped", stopReason: "interrupted" }（合成，只由冷回放发）
  *   workflow_failed     → run-settled { status: "errored" }
  *   entry_file_fallback → （无对应，丢弃）
  *
@@ -327,6 +328,15 @@ export function createScriptWorkflowProgressAdapter(deps: {
           // （`/dwf resume` 打到 dwf 的 run service，对 wf_ 前缀的 run 必然失败）。
           // 亮起一个按不动的 Resume 比不亮更糟——dwf 侧的注释里就记着这条裂缝。
           send(runId, "run-settled", { status: "stopped", stopReason: "user" });
+          return;
+
+        case "workflow_interrupted":
+          // **合成事件**：只有冷回放会发它（script-workflow-replay.ts），事件表里不存在这一型。
+          // 进程死亡时在飞的 run 没有任何终态事件、行还停在 running，原样回放会让投影永远
+          // 亮着 running——卡片亮灯、Cancel 可点而后端无事可取消。归一成 stopped/interrupted
+          // （渲染成「stopped (process exited)」），与 dwf harness 对沙箱故障的归一同一笔语义。
+          // 不用 errored：脚本没有出错，是宿主没了；也不用 stopped/user：不是用户停的。
+          send(runId, "run-settled", { status: "stopped", stopReason: "interrupted" });
           return;
 
         case "workflow_failed": {

@@ -4894,6 +4894,22 @@ const enUS: Record<string, string> = {
   "chat.toolCall.workflow.run.dialect.script": "ultracode",
   "chat.toolCall.workflow.run.dialect.scriptHint":
     "A script workflow started by RunWorkflow. Configure and Resume apply to dwf workflows only; Stop works for both.",
+  // Live-activity body: the projection-only fallback for runs with no static causality graph
+  // (script workflows). It states plainly that no dependency graph is claimed.
+  "chat.toolCall.workflow.run.activity.hint.script":
+    "Live activity observed for this run. No dependency graph is shown: this workflow system has no static plan, so only phases, subagents and their settlements are facts here.",
+  "chat.toolCall.workflow.run.activity.hint.noGraph":
+    "Live activity observed for this run. The dependency graph is not in this conversation's visible history, so the timeline view is unavailable and only observed activity is listed.",
+  "chat.toolCall.workflow.run.activity.fraction": "{settled}/{total} settled",
+  // 简单 {n} 占位，不用 ICU plural：本仓的 formatMessage 只做 replaceAll("{key}", value)
+  // （IntlProvider.tsx），plural 语法会原样渲染出来。单复数的取舍不值得为此造一层。
+  "chat.toolCall.workflow.run.activity.asks": "{n} asks",
+  "chat.toolCall.workflow.run.activity.cached": "cached",
+  "chat.toolCall.workflow.run.activity.lastTool": "last: {name}",
+  "chat.toolCall.workflow.run.activity.openActor": "Open this subagent's transcript",
+  "chat.toolCall.workflow.run.activity.actorInert":
+    "No session recorded for this subagent yet",
+  "chat.toolCall.workflow.run.activity.untrackedNode": "unattributed step",
   "chat.toolCall.workflow.run.settings.title": "Configure workflow",
   "chat.toolCall.workflow.run.settings.model": "Subagent model",
   "chat.toolCall.workflow.run.settings.model.session": "session model",

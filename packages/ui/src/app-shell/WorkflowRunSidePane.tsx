@@ -8,6 +8,7 @@ import { buildWorkflowTimeline } from "@/components/workflow-timeline/timeline-m
 import { workflowSubagentModelCardLabel } from "@/components/workflow-timeline/subagent-model-label.js";
 import { workflowSummaryParts } from "@/components/workflow-timeline/timeline-summary.js";
 import { WorkflowRunArtifactsSection } from "@/app-shell/WorkflowRunArtifactsSection.js";
+import { WorkflowRunActivityList } from "@/app-shell/WorkflowRunActivityList.js";
 import { WorkflowRunPhaseList } from "@/app-shell/WorkflowRunPhaseList.js";
 import { WorkflowRunProvenance } from "@/app-shell/WorkflowRunProvenance.js";
 import {
@@ -392,8 +393,14 @@ const WorkflowRunContent = memo(function WorkflowRunContent({
       <WorkflowRunResultSections result={result} />
 
       {/*
-       * 阶段清单：时间线读作一份纵向清单，
-       *           升级问题挂在提问者那一行下面。图不可得（老对话翻不到发起行）时念一句「图不可用」。
+       * 主体三分支，顺序是有意的：
+       *   1. 有静态因果图 → 时间线清单（升级问题挂在提问者那一行下面）。
+       *   2. 没有图但**有 run 投影** → 只吃投影的实时活动清单。脚本工作流永远走这一支
+       *      （不编译、不做静态分析，RunWorkflow 的工具行上没有图）；dwf 在发起行滚出
+       *      可见历史窗口时也走这一支——两种情况下的提示语由组件按 dialect 分开措辞。
+       *      此前这一支不存在，脚本 run 打开侧栏只能看到一句「图不可用」，主体全空。
+       *   3. 连 run 都没有（被 8-run 上限淘汰、或冷启动尚未投影）→ 才念「图不可用」。
+       *      这句话的本义是「无从观测」，不该被有投影的 run 占用。
        */}
       {graph !== undefined && model !== undefined ? (
         <WorkflowRunPhaseList
@@ -406,6 +413,11 @@ const WorkflowRunContent = memo(function WorkflowRunContent({
             ? {}
             : { onOpenWorkspace: handleOpenWorkspace })}
           {...(landing === undefined ? {} : { landing })}
+        />
+      ) : run !== undefined ? (
+        <WorkflowRunActivityList
+          run={run}
+          {...(onOpenWorkflowActorSession === undefined ? {} : { onOpenActor: handleOpenActor })}
         />
       ) : (
         <p

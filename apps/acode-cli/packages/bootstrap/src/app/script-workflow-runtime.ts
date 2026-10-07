@@ -202,6 +202,10 @@ export class ScriptWorkflowRuntime {
       resumeFromRunId: input.resumeFromRunId,
       runId: input.runId,
       store: this.store(),
+      // 落库的这一份供**冷恢复**用（目录页与工具卡的联接键）；下面 registerRun 那一份供
+      // 本次实时投影用。resume 时两者刻意不同：落库不改写（那一行的 toolCallId 是它自己
+      // 出生时的事实），而实时投影要联到**本次** resume 调用的那一行工具卡上。
+      ...(input.toolCallId === undefined ? {} : { toolCallId: input.toolCallId }),
       workingDirectory: this.deps.workingDirectory,
     });
     // 投影上下文必须在第一个事件之前登记：`workflow_started` 会被翻译成 run-started，

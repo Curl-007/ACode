@@ -15,6 +15,12 @@ export async function prepareScriptWorkflowRun(input: {
   resumeFromRunId?: string;
   runId?: string;
   store: ScriptWorkflowStorePort;
+  /**
+   * 发起这次 run 的工具调用 id。存下来是因为它是两条联接的键：run 目录页把缺它的摘要整条
+   * 剔除，冷恢复的 run 也靠它联回发起它的那一行工具调用（详见 contracts 侧字段注释）。
+   * resume 路径不传：复用既有行，那一行的 toolCallId 是它自己出生时的事实，不该被改写。
+   */
+  toolCallId?: string;
   workingDirectory: string;
 }): Promise<ScriptWorkflowRunRecord> {
   const definition = await input.store.upsertScriptWorkflowDefinition({
@@ -42,5 +48,6 @@ export async function prepareScriptWorkflowRun(input: {
     scriptHash: input.document.hash,
     scriptPath: input.document.path,
     stats: emptyScriptWorkflowStats(),
+    ...(input.toolCallId === undefined ? {} : { toolCallId: input.toolCallId }),
   });
 }

@@ -103,6 +103,9 @@ import { createDynamicWorkflowSnippetService } from "./dynamic-workflow-snippet-
 import { createModelCatalogPort } from "./model-catalog-port.js";
 import { createDynamicWorkflowRunProgressSink } from "./dynamic-workflow-run-progress-sink.js";
 import { createScriptWorkflowProgressAdapter } from "./script-workflow-progress-adapter.js";
+import { replayScriptWorkflowRuns } from "./script-workflow-replay.js";
+import { toScriptWorkflowRunSummary } from "./script-workflow-run-summary.js";
+import { isScriptWorkflowStore } from "./script-workflow-utils.js";
 import { createScriptWorkflowAgentRuntime } from "./script-workflow-child-runtime.js";
 import { workflowActorModelPolicy } from "./workflow-actor-model.js";
 import { workflowActorToolPolicy } from "./workflow-actor-tools.js";
@@ -1416,23 +1419,71 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
       // workflow run 的会话级生命周期读面（在飞计数 + 结算订阅）。消费者是宿主的 provider registry
       // 安全边界：子代理共用本会话的 live adapter，在飞 run 期间不能 replace registry。缺席条件同上。
       ...(dynamicWorkflowRunPort === undefined ? {} : {}),
-      // workflow run 的枚举面（重启后的发现查询）。能力缺席条件同上；端口的 listRunsForSession
-      // 是可选成员，方法缺席时本能力同样不注册。
-      ...(dynamicWorkflowRunPort === undefined ||
-      typeof dynamicWorkflowRunPort.listRunsForSession !== "function"
-        ? {}
-        : {
-            listDynamicWorkflowRuns: async (input: { limit?: number }) =>
-              dynamicWorkflowRunPort.listRunsForSession!(input.limit),
-          }),
-      // workflow run 的冷回放。能力缺席条件同上。
-      ...(dynamicWorkflowRunPort === undefined ||
-      typeof dynamicWorkflowRunPort.replayProgressForSession !== "function"
-        ? {}
-        : {
-            replayDynamicWorkflowRuns: async (input: { excludeRunIds: ReadonlySet<string> }) =>
-              dynamicWorkflowRunPort.replayProgressForSession!(input),
-          }),
+      // workflow run 的枚举面（重启后的发现查询）。**两个来源**合成一个能力，与下面的冷回放
+      // 同一条理由：目录页是「这个会话跑过哪些工作流」的发现面，只列 dwf 就少一半。
+      // 注册条件同样是「任一来源在场」，不再以 dwf 端口为准。
+      ...(() => {
+        const dwfList =
+          dynamicWorkflowRunPort !== undefined &&
+          typeof dynamicWorkflowRunPort.listRunsForSession === "function"
+            ? dynamicWorkflowRunPort.listRunsForSession.bind(dynamicWorkflowRunPort)
+            : undefined;
+        const scriptStore = isScriptWorkflowStore(sessionStore) ? sessionStore : undefined;
+        if (dwfList === undefined && scriptStore === undefined) return {};
+        return {
+          listDynamicWorkflowRuns: async (input: { limit?: number }) => {
+            const [dwf, script] = await Promise.all([
+              dwfList === undefined ? [] : dwfList(input.limit),
+              scriptStore === undefined
+                ? []
+                : (
+                    await scriptStore.listScriptWorkflowRuns({
+                      ...(input.limit === undefined ? {} : { limit: input.limit }),
+                      parentSessionId: sessionId,
+                    })
+                  ).map(toScriptWorkflowRunSummary),
+            ]);
+            // 两个来源各自都是「最近更新在前」，但拼接之后就不是了。目录的时间列与
+            // 「运行中 / 已结束」两段都依赖这个序，所以在这里按 updatedAt 归并一次再截断。
+            // 缺席 updatedAt 的排最后（无从比较，不该抢占有时间的条目的位置）。
+            const merged = [...dwf, ...script].sort(
+              (left, right) => (right.updatedAt ?? 0) - (left.updatedAt ?? 0),
+            );
+            return input.limit === undefined ? merged : merged.slice(0, input.limit);
+          },
+        };
+      })(),
+      // workflow run 的冷回放。**两个来源**合成一个能力：
+      //   - dwf：journal（端口的 replayProgressForSession，可选成员，缺席即无这一半）；
+      //   - 脚本工作流：自己的 workflow_run / workflow_event 表（script-workflow-replay.ts）。
+      // 注册条件从「dwf 端口在场」放宽成「任一来源在场」：两套 run 共用同一个投影与同一个
+      // 消费者（v4-bridge.ts），只因为 dwf 端口缺席就把整个能力摘掉，会让脚本 run 也一起
+      // 从冷启动的投影里消失——而它的真相明明在自己的表里。
+      // 顺序是 dwf 在前、脚本在后：两边都按「最旧优先」各自排好，拼接不保证跨系统的全局时序，
+      // 而 reducer 的序号是**每 run 各自**水位的，跨 run 的到达序只影响 8-run 上限的淘汰先后。
+      ...(() => {
+        const dwfReplay =
+          dynamicWorkflowRunPort !== undefined &&
+          typeof dynamicWorkflowRunPort.replayProgressForSession === "function"
+            ? dynamicWorkflowRunPort.replayProgressForSession.bind(dynamicWorkflowRunPort)
+            : undefined;
+        const scriptStore = isScriptWorkflowStore(sessionStore) ? sessionStore : undefined;
+        if (dwfReplay === undefined && scriptStore === undefined) return {};
+        return {
+          replayDynamicWorkflowRuns: async (input: { excludeRunIds: ReadonlySet<string> }) => {
+            const [dwf, script] = await Promise.all([
+              dwfReplay === undefined ? [] : dwfReplay(input),
+              scriptStore === undefined
+                ? []
+                : replayScriptWorkflowRuns(
+                    { logger, parentSessionId: sessionId, store: scriptStore },
+                    input,
+                  ),
+            ]);
+            return [...dwf, ...script];
+          },
+        };
+      })(),
       // dwf run 的恢复。能力缺席条件同上；此外
       // 端口的 resume 是可选成员（stub 端口不陪跑），方法缺席时本能力同样不注册——
       // 对 renderer「端口缺席」与「方法缺席」是同一个业务事实。

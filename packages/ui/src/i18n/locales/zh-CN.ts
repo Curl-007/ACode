@@ -4686,6 +4686,19 @@ const zhCN: Record<string, string> = {
   "chat.toolCall.workflow.run.dialect.script": "ultracode",
   "chat.toolCall.workflow.run.dialect.scriptHint":
     "由 RunWorkflow 启动的脚本工作流。「配置」与「恢复」只对 dwf 工作流可用；停止对两套都可用。",
+  // 实时活动主体：没有静态因果图的 run（脚本工作流）走这份只吃投影的清单。
+  // 明说不画依赖图，免得读者把时间顺序读成因果关系。
+  "chat.toolCall.workflow.run.activity.hint.script":
+    "本次运行观测到的实时活动。不显示依赖图：这套工作流系统没有静态计划，所以这里只有阶段、子代理与它们的结算是事实。",
+  "chat.toolCall.workflow.run.activity.hint.noGraph":
+    "本次运行观测到的实时活动。依赖图不在当前会话的可见历史里，所以时间线视图不可用，这里只列出观测到的活动。",
+  "chat.toolCall.workflow.run.activity.fraction": "已结算 {settled}/{total}",
+  "chat.toolCall.workflow.run.activity.asks": "{n} 次 ask",
+  "chat.toolCall.workflow.run.activity.cached": "命中缓存",
+  "chat.toolCall.workflow.run.activity.lastTool": "最后：{name}",
+  "chat.toolCall.workflow.run.activity.openActor": "打开这个子代理的转写",
+  "chat.toolCall.workflow.run.activity.actorInert": "这个子代理还没有会话记录",
+  "chat.toolCall.workflow.run.activity.untrackedNode": "未归属的步骤",
   "chat.toolCall.workflow.run.settings.title": "配置工作流",
   "chat.toolCall.workflow.run.settings.model": "子代理模型",
   "chat.toolCall.workflow.run.settings.model.session": "会话模型",

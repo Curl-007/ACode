@@ -463,30 +463,32 @@
 
 #### R12 的已知边界（诚实声明）
 
-**1. 只有运行期实时可见，冷恢复后从投影里消失。** dwf 的投影有两条来源：实时事件，以及冷启动
-时从 dwf journal 回放（`dynamic-workflow-run-introspection.ts` 的 replay + TUI 的
-`app-workflow-seed.ts`）。脚本工作流的 run 不在那份 journal 里——它有自己的 `workflow_activity`
-与事件表。所以进程重启后，历史脚本工作流 run 不会出现在这套投影中；它们的真相仍在自己的表里，
-`scriptWorkflowStatus` / `listScriptWorkflows` 照旧能查。要补冷恢复需要给回放路径加第二个来源。
+> ⚠ 下面 1–3 条在批次 C4/C5 交付时是真实边界，**批次 C9（R15）已把三条都补掉**。
+> 保留原文与「已补」标注，是为了让读者看见这块显示面是怎么一步步变完整的，
+> 而不是把历史抹平成「一直都有」。当前仍然成立的边界见各条末尾与 R15 的「残留边界」。
 
-**2. run 目录里没有脚本 run。** `WorkflowRunDirectorySidePane` 的清单来自
-`useWorkflowRunJournalSummaries`——一条查 dwf journal 的 RPC，不是 `workflowRuns` 投影。
-脚本 run 不在那份 journal 里，所以目录页看不见它们。（批次 C4 的报告曾把 run 目录列为
-已白拿的渲染面，那是过度声称，此处更正。）
+**1. 只有运行期实时可见，冷恢复后从投影里消失。** ~~现状~~ → **已补（R15.2）**。
+dwf 的投影有两条来源：实时事件，以及冷启动时从 dwf journal 回放。脚本工作流的 run 不在那份
+journal 里——它有自己的 `workflow_run` / `workflow_event` 表。补法是给回放路径加**第二个来源**
+（`script-workflow-replay.ts`），复用同一个适配器把历史事件重新翻译成信封。
 
-**3. 详情侧栏的主体渲染不出来。** 侧栏的阶段清单与摘要行走的是
-`buildWorkflowTimeline(graph, run)`，而 `graph` 是**静态因果图**，按发起 toolCallId 从
-`CreateWorkflow` 工具行的元数据里取（`resolveWorkflowRunGraph`）。脚本工作流不编译、
-不做静态分析，`RunWorkflow` 的工具行上没有图，于是 `graph === undefined` → 主体退化成
-「当前会话的可见历史里没有这张工作流图」。状态头（含方言徽标）、结果区与产物区照常渲染。
-会话里的轮尾摘要卡同源同症（`WorkflowRunDigest` 也吃 `digest.graph`）。
-要补需要一个**动态**时间线渲染路径（从投影的 `nodes[]` / `actors[]` 直接出），
-或给脚本工作流做静态分析——两者都超出「只做实时进度」这一档。
+**2. run 目录里没有脚本 run。** ~~现状~~ → **已补（R15.3）**。
+`WorkflowRunDirectorySidePane` 的清单来自 `useWorkflowRunJournalSummaries`——一条查 dwf
+journal 的 RPC，不是 `workflowRuns` 投影。补法是把宿主能力 `listDynamicWorkflowRuns`
+改成两来源合成，并给 run 记录补一列 `tool_call_id`（目录页把缺它的摘要整条剔除）。
+（批次 C4 的报告曾把 run 目录列为已白拿的渲染面，那是过度声称，已在当时更正。）
 
-**4. 实际拿到的渲染面**（与上面三条对照，说清楚到底有什么）：会话状态面板
-（`ConversationStatusPanel` 的在飞工作流行，读投影、不要图）、TUI 的实时工作流卡
-（状态 / 步数 / 名册 / 日志尾巴 / 用量 / 结果 / 错误，全部不要图）、以及
-`workflowRuns` 投影本身。
+**3. 详情侧栏的主体渲染不出来。** ~~现状~~ → **已补（R15.1）**。
+侧栏的阶段清单与摘要行走的是 `buildWorkflowTimeline(graph, run)`，而 `graph` 是**静态因果图**，
+按发起 toolCallId 从 `CreateWorkflow` 工具行的元数据里取。脚本工作流不编译、不做静态分析，
+`RunWorkflow` 的工具行上没有图，于是主体退化成「图不可用」。补法是给侧栏一个**第二主体**
+（`WorkflowRunActivityList`），只吃投影的 `phases` / `actors` / `nodes`。
+⚠ 会话里的轮尾摘要卡（`WorkflowRunDigest` 也吃 `digest.graph`）**尚未**接这个第二主体，
+仍是 R15 的残留边界之一。
+
+**4. 实际拿到的渲染面**：会话状态面板（`ConversationStatusPanel` 的在飞工作流行，读投影、
+不要图）、TUI 的实时工作流卡（状态 / 步数 / 名册 / 日志尾巴 / 用量 / 结果 / 错误，全部不要图）、
+`workflowRuns` 投影本身，以及 C9 之后的详情侧栏主体与 run 目录。
 
 ### R13 真实运行暴露的四处缺陷（批次 C7）
 
@@ -583,6 +585,93 @@ R13 之后又在真实面上跑了两条，各暴露一处。两处都不是崩�
   ⚠ 改了 i18n 的 locale **必须重建 dist** 才能在真实面上看到：CLI 经包名导入 `@acode/i18n`
   → `dist/`，`tsx src/main.ts` 只让 `packages/cli` 自己走源码。这条与 R13 那批的
   bootstrap/core 重建是同一个坑。
+
+### R15 显示面补完（批次 C9）
+
+R12 登记的三条边界（冷恢复、run 目录、侧栏主体）在这一批全部补掉。三条不是各自独立的活：
+它们共用同一个根因——**脚本 run 的真相在自己的表里，而所有 GUI 读面此前只有一个来源**。
+
+- **R15.1 侧栏第二主体：只吃投影的实时活动清单。**
+  既有主体 `WorkflowRunPhaseList` 从头到尾绑在静态因果图上（`WorkflowCausalityGraphData` →
+  `buildWorkflowTimeline` → `model.stations`），而图里有 lanes / arcs / bands 与并行带。
+  **刻意不从投影合成一张图**：那些是静态分析的产物（谁 fan-out 出谁、哪几条并行），
+  投影只知道「这些阶段被进入过、这些子代理跑过、这些节点结算了」，拿它造 lanes 与 arcs
+  等于**编造因果**——读者会把一条时间顺序读成依赖关系。
+  所以另建一个第二主体 `WorkflowRunActivityList`，只画投影确实有的三样东西，一条边都不画。
+  规则住在纯模块 `workflowRunActivity.ts`（可穷举单测；组件文件带 `@/` 别名与 React/lucide
+  依赖，测试导入它会把整棵渲染树拖进来）。
+  侧栏主体因此变成三分支，顺序有意：有图 → 时间线清单；没图但**有 run 投影** → 实时活动清单；
+  连投影都没有 → 才念「图不可用」。那句话的本义是「无从观测」，不该被有投影的 run 占用。
+  提示语按方言分开措辞：脚本工作流是**根本没有**静态计划，而 dwf 是有图但发起行滚出了
+  可见历史窗口——对后者说「这套系统没有静态计划」是谎话。
+  复用而不是新造：灯的颜色走 dwf 那份 `STATUS_DOT`，状态折叠走 `aggregateRunStatuses` /
+  `statusOfRunNode`，行用 `WorkflowAgentPill`，点开子代理复用侧栏既有的 `handleOpenActor`
+  （`WorkflowActorInstance` 结构上就是一个 `WorkflowRunActor`）。自己再写一份折叠，
+  两套主体对同一批节点就会给出不同的灯。
+  **测出来的一个真实漏洞**：初版只经 actor 收集节点，于是「节点带 actorSiteId、但那个 actor
+  不在 `run.actors` 里」的活会凭空消失。这是可达状态——actor 表与 node 表各有自己的界
+  （`maxActors` / `maxNodes`），满了各自淘汰、两者不同步，旧 CLI 也可能压根不发
+  `actor-created`。正是适配器那边修过的「有活没人干」在渲染层重现。改成给节点**独立定相**，
+  actor 与 node 各按自己的相位归属、互不依赖。
+- **R15.2 冷回放：给投影加第二个来源。**
+  `script-workflow-replay.ts` 按会话枚举历史 run、读它们的事件、喂给**同一个**适配器，
+  产出信封。复用适配器而不是为冷态另写一份映射是硬要求：两份映射就会漂移，同一条 run
+  重启前后于是长得不一样——有一条测试专门钉「同一段事件走 live 与冷回放两条路，
+  产出的信封序列逐字节相同」。
+  与 dwf 回放的三条同款约定：上界用 `WORKFLOW_RUNS_LIMITS.maxRuns`（冷态应当等于「一个长寿
+  进程此刻会持有的状态」）、最旧优先（枚举面是最近更新在前，要反过来，reducer 的淘汰才与
+  live 到达序同形）、`excludeRunIds` 跳过本进程已有事件的 run（重放会把相位打回起点）。
+  **进程死亡留下的非终态行按 `stopped/interrupted` 合成结算。** 那种行的事件表里没有任何
+  终态事件、行还停在 `running`，原样回放会让投影永远亮着 running——卡片亮灯、Cancel 可点
+  而后端无事可取消。判据用「事件流里有没有终态」而不是「行是不是非终态」：进程可能在写完
+  终态事件与改写行之间死掉，那时以事件为准，否则会补出第二条结算、把一条已经 errored 的
+  run 改写成 stopped。合成**只在内存里**，绝不写回行（回放是读路径，不该有写副作用；
+  dwf 同款约定）。
+  接线：`create-app.ts` 的 `replayDynamicWorkflowRuns` 从「dwf 端口在场才注册」改成
+  「两个来源任一在场即注册」——只因为 dwf 端口缺席就把整个能力摘掉，会让脚本 run 也一起
+  从冷启动的投影里消失。
+  会话作用域需要 `listScriptWorkflowRuns` 支持按 `parentSessionId` 过滤（本批新加）：
+  投影按会话物化，而一个项目目录被许多会话共用，`cwd` 顶不掉这个作用域。
+- **R15.3 run 目录：两来源合成 + 补一列 `tool_call_id`。**
+  宿主能力 `listDynamicWorkflowRuns` 同样改成两来源合成，并按 `updatedAt` 归并重排后截断
+  （两个来源各自都是「最近更新在前」，拼接之后就不是了，而目录的时间列与「运行中/已结束」
+  两段都依赖这个序）。
+  **只合成还不够**：目录页把缺 `toolCallId` 的摘要**整条剔除**
+  （`workflowRunDirectoryModel.ts` 的 `hasDetailAnchor`），而脚本 run 的记录里没有这一列，
+  于是合成出来的行会被过滤器全吃掉。那一列的理由（「详情页要 toolCallId 去找静态图那一行」）
+  在 R15.1 之后只对 dwf 成立，但**仍然选择存这一列而不是放宽过滤器**，因为它同时是另外两条
+  联接的键：聊天里的工具卡按 toolCallId 与 run 联接（TUI 的 `buildTuiWorkflowCardIndex`
+  与 GUI 的 `buildWorkflowRunByToolCallId` 同规），冷回放的 `registerRun` 也用它。
+  放宽过滤器只能让行出现，联不回去的问题一个都没解决。
+  落法是 migration `0027_workflow_run_tool_call_id`（可空、无 down migration、与 0023/0024
+  的加列族同款：回滚 = 旧代码不读不写）。**不改建表基线**——基线里不含迁移列是本仓的既有
+  约定（`create table todo` 就没有 0023 加的 `deps_json`），迁移对新库同样会跑；
+  两边都写会让新库「重复列」失败。
+  状态词按 dwf 的五值词汇翻译：`completed→completed`、`failed→errored`、
+  `cancelled→stopped + stopReason:"user"`（与实时投影同一笔语义：用户停下不是脚本崩了）、
+  `pending/running/paused→running`（目录只有五值可说，把 paused 说成 stopped 会让读者
+  以为可以不管了）。`resumable` 恒 false——这是同一条裁决的**第三处**
+  （适配器、`isWorkflowRunResumable` 的方言门、这里），三处必须同结论。
+  目录行挂方言徽标，与侧栏状态头同一套措辞、同一条「只挂 script」规则。
+
+#### R15 的残留边界（诚实声明）
+
+1. **轮尾摘要卡仍吃静态图。** `WorkflowRunDigest` 拿 `digest.graph`，脚本 run 没有图，
+   所以对话里那张卡仍是降级形态。侧栏有了第二主体，摘要卡还没有——要接需要把
+   `workflowRunActivity` 的分组结果再喂给摘要卡的渲染路径，是另一件事。
+2. **冷回放的合成结算不写回行。** 投影说 `stopped`，而 `workflow_run` 行仍是 `running`，
+   于是 `scriptWorkflowStatus` 与后台任务快照这两个**模型面**读到的仍是旧词。
+   给脚本工作流补一套孤儿收敛（像 dwf 那样在构造期改写行）才能消掉这个分叉。
+   实测这个状态真实存在：库里就有一条 `wf_a33b872a…` 停在 `running`（宿主进程被外部 timeout
+   打死的遗物）。
+3. **存量行没有 `tool_call_id`。** migration 之前跑过的 run 无事实可回填，它们在目录里
+   照旧被剔除、也联不回工具卡——与 dwf 那些 `tool_call_id` 落库之前的老 run 同一个处境。
+4. **GUI 渲染未在真实面上观测到。** 三条实现都有行为级单测（分组规则、回放产出、摘要映射），
+   存储层也对着真实库验证过（`tool_call_id` 列在场、迁移账本有 `0027`、新 run 带真实
+   toolCallId、存量行为 null），但 TUI 卡与桌面侧栏/目录的**实际像素**没有取到证：
+   TUI 需要交互式 pty（本仓自己的发布记录就写着 Windows 上 node-pty conpty 代理
+   AttachConsole 会挂起），桌面需要起 Electron 并用 GUI 自动化驱动，app-server 的 stdio
+   分帧与握手未能在本轮摸清。这三条是「够不到」，不是「已验证通过」。
 
 ## 状态所有者
 
@@ -798,6 +887,32 @@ export async function runScriptWorkflowChild(input: {...}): Promise<ScriptWorkfl
     权威表里没有的命令（子集关系，防硬编码文案漂移）；工作流这一族 `dwf` / `workflow` /
     `ultracode` 三条都在场；两个 locale 的命令集合逐条相同。
     刻意不断言全等——`--help` 是精选子集，`plugins` 与 `locale` 由别的段承载。
+
+### 批次 C9（R15：显示面补完）
+
+37. **侧栏实时活动清单的分组规则**（R15.1）：阶段顺序按 `run.phases` 的**实际进入序**
+    （不是字母序）；actor 自己没有阶段坐标时退到它名下节点的坐标；每个节点恰好归属一组
+    （不重不漏）；`running` 优先于 `failed`；cached 命中（只有 `node-settled`、从不
+    `node-dispatched`）也要坐上表；进入过但零活动的阶段仍在场且状态为 `undefined`
+    （缺席不是状态，不凭空造一个）；空 run 不产出任何组。
+38. **节点有归属但那个 actor 不在名册上时，节点仍然在场**（R15.1 测出来的漏洞）：
+    `run.actors` 为空而 `run.nodes` 非空是可达状态（两张表各有自己的界、旧 CLI 不发
+    `actor-created`），此时组仍必须含那个节点——漏掉就等于把跑过的活藏起来。
+39. **子代理展示状态听节点的**：actor 三态里没有 `failed`（dwf 的派生语义），
+    所以一次失败必须从节点折叠出来，否则被画成绿勾。
+40. **冷回放**（R15.2）：跑完的 run 回放后进投影，`dialect` / 阶段 / 名册 / 子代理
+    sessionId / 终态一项不少；枚举按 `parentSessionId` 作用域且上界与
+    `WORKFLOW_RUNS_LIMITS.maxRuns` 同源；`excludeRunIds` 生效；枚举面最近更新在前而回放
+    最旧优先；非终态行合成 `stopped/interrupted` 且**不写库**；行非终态但事件流已结算时
+    不补第二条结算；枚举失败降级成空而不抛；单条 run 失败不牵连其余；
+    **同一段事件走 live 与冷回放两条路产出的信封序列逐字节相同**。
+41. **run 目录摘要映射**（R15.3）：`completed→completed`、`failed→errored`、
+    `cancelled→stopped+user`、`pending/running/paused→running`；`resumable` 恒 false；
+    `dialect: "script"`；`toolCallId` 在场时带上（它决定目录页会不会把整行剔除）；
+    两来源合成后按 `updatedAt` 归并重排再截断。
+42. **真实库验证**（migration 0027）：`pragma table_info(workflow_run)` 含 `tool_call_id`；
+    迁移账本含 `0027_workflow_run_tool_call_id`；新 run 的行带真实 `call_*` id；
+    存量行为 null。已实测通过。
 
 #### 真实运行验证记录（批次 C7，Windows / node 25.8.2 / dev 形态 `tsx src/main.ts`）
 

@@ -20,7 +20,10 @@ import type {
   WorkspaceHookBundleSnapshot,
   WorkspaceId,
 } from "@acode/contracts";
-import type { ACodeProviderAccountAccess } from "@acode/shared";
+import type {
+  ACodeProviderAccountAccess,
+  BuiltInSubagentModelSelectionOverrides,
+} from "@acode/shared";
 import type { EffectiveModelSelectionResult } from "@acode/shared/model-selection";
 import type { RuntimeMessageEntry } from "../agent/message-history.js";
 import type { SwarmPlanPort } from "../swarm/port.js";
@@ -145,7 +148,15 @@ export interface AgentRuntimeConfig {
     backgroundBashMaxMs?: number;
     outputRootDir?: string;
     profiles?: readonly AgentProfile[];
-    builtInModelSelectionOverrides?: Partial<Record<"general-purpose" | "Explore", ModelSelection>>;
+    // 键集单一事实源 = shared 的 BuiltInSubagentName 联合（builtin-subagent-catalog.md R5）。
+    // 原内联二名 Record 与契约漂移：bootstrap 实际穿透的是五键对象（含 bundled 预置三名），
+    // 类型面却只声明二键，收敛到 shared 类型避免第二份硬编码键集。
+    builtInModelSelectionOverrides?: BuiltInSubagentModelSelectionOverrides;
+    // 一次性会话（-p）装配期声明 "foreground"：port 层单点把全部派发重写为前台
+    // （runInBackground→false）并压制 autoBackgroundMs——一次性进程在最终消息后退出，
+    // 任何后台化都等于丢结果（subagent-background-tristate.md R3）。
+    // 缺省 "honor"：尊重调用三态与 profile.background 默认，交互式会话零变化。
+    backgroundPolicy?: "honor" | "foreground";
   };
   toolAllowlist?: readonly string[];
   toolDisallowlist?: readonly string[];

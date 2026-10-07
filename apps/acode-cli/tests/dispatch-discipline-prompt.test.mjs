@@ -11,6 +11,11 @@ import { test } from "node:test";
  * - 场景 6：纪律节与工具描述无重复句子（去重审查的机器化半边）；
  * - 场景 8：纪律节落 dynamic cache 分组、system block 数量不回退。
  *
+ * 追加覆盖 apps/acode-cli/specs/builtin-subagent-catalog.md（同批快照更新，R9.4）：
+ * - R4 父侧可见性：permissionMode plan 地板条目的描述行带 (read-only) 标注，非 plan 不带；
+ * - R9 存量重写：两个核心内置 description 冻结为自撰 golden（R3 三要素、≤350 上限、
+ *   无 CJK、Explore 两档广度字面量、名字与工具面兼容不变），并进场景 5 的三变量矩阵。
+ *
  * 快照式断言 = 测试内冻结的 golden 全文（与 node:test + assert 的既有约定一致，
  * 不引入 snapshot 文件机制）；改动段文本必须同步改 golden，即快照测试的防漂移本意。
  */
@@ -25,6 +30,11 @@ const {
   createAgentToolEntry,
   createTaskToolEntry,
 } = await import("../packages/core/src/tool/handlers/agent.ts");
+const {
+  createBuiltInExploreAgentProfile,
+  createBuiltInGeneralPurposeAgentProfile,
+  formatAgentProfilesForPrompt,
+} = await import("../packages/core/src/subagent/profile.ts");
 
 /** 全量工具面：派发工具 + SendMessage + Skill + AskUserQuestion + 直搜（direct 分支）。 */
 const DISPATCH_FACE = [
@@ -43,6 +53,25 @@ const CUSTOM_PROFILE = {
   description: "Reviews diffs for regressions.",
   source: "project",
 };
+
+/**
+ * R9 golden（builtin-subagent-catalog.md）：两个核心内置 description 的自撰重写定稿文本
+ * （经人工审读后冻结；R9.4 合规断言 = golden + 人工审查，不与第三方原件做自动比对）。
+ * 改动必须对照 spec R9 定稿文本同批更新并重新审读。
+ */
+const GENERAL_PURPOSE_DESCRIPTION_GOLDEN =
+  "Multi-step worker with full tool rights. Use for complex research or multi-file changes when you cannot predict the right match in the first few tries. Not for pure lookup or design \u2014 Explore finds code faster and Plan returns implementation designs; this agent can modify files, so prefer read-only agents when no edits are needed.";
+const EXPLORE_DESCRIPTION_GOLDEN =
+  'Fast read-only search specialist. Use when locating code across many files or naming conventions where only the conclusion matters. It samples excerpts rather than whole files, so it is wrong for code review, line-by-line audits, or consistency checks \u2014 use Review or Plan for those. Caller specifies search breadth: "medium" or "very thorough".';
+
+/** R4 只读标注字面量（core profile.ts 的 READ_ONLY_ANNOTATION 常量同形）。 */
+const READ_ONLY_ANNOTATION = " (read-only)";
+
+/** prompt-language-policy R1 无 CJK 断言（subagent-report-contract.test.mjs 同款 pattern）。 */
+const CJK_PATTERN = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/;
+
+/** R3 description 上限（builtin-subagent-catalog.md：每条 ≤ 350 字符）。 */
+const DESCRIPTION_MAX_LENGTH = 350;
 
 const ENV_INFO = {
   cwd: "C:/tmp/acode-d1-test",
@@ -211,9 +240,21 @@ test("(场景5/R5) 三变量组合矩阵：12 组合的描述不变量与确定�
 
         // 每个组合都保留 agent 清单与两个内置 profile：
         assert.ok(desc.includes("Available agent types"), key);
-        assert.ok(desc.includes("- general-purpose:"), key);
+        const generalPurposeLine = desc
+          .split("\n")
+          .find((line) => line.startsWith("- general-purpose:"));
+        assert.ok(generalPurposeLine, key);
         const exploreLine = desc.split("\n").find((line) => line.startsWith("- Explore:"));
         assert.ok(exploreLine, key);
+
+        // R9 描述快照（builtin-subagent-catalog.md R9.4：与本矩阵同批一次更新）：
+        // 两个核心内置的 description 在全部 12 个组合下都是冻结的自撰 golden 文本。
+        assert.ok(generalPurposeLine.includes(GENERAL_PURPOSE_DESCRIPTION_GOLDEN), key);
+        assert.ok(exploreLine.includes(EXPLORE_DESCRIPTION_GOLDEN), key);
+        // R4：核心内置均无 permissionMode（Explore 的只读性由 prompt 红线承担、描述自述），
+        // 判据 = 权限地板，故两个内置条目在任何组合下都不带 (read-only) 标注。
+        assert.ok(!generalPurposeLine.includes(READ_ONLY_ANNOTATION), key);
+        assert.ok(!exploreLine.includes(READ_ONLY_ANNOTATION), key);
 
         // embeddedSearchEnabled 只影响 Explore 的直搜工具行（注册面隐藏 Glob/Grep 时描述同步）：
         if (embeddedSearchEnabled) {
@@ -256,6 +297,100 @@ test("(场景5/R5) 三变量组合矩阵：12 组合的描述不变量与确定�
   assert.notStrictEqual(seen.get("empty|true|true"), seen.get("custom|true|true"));
   // undefined 与 true 同值（缺席即开启）：
   assert.strictEqual(seen.get("empty|true|undefined"), seen.get("empty|true|true"));
+});
+
+test("(R4/场景2) plan 权限地板条目描述行带 (read-only) 标注，非 plan 条目不带", () => {
+  // 判据 = permissionMode 权限地板，而不是工具面推断（builtin-subagent-catalog.md R4）：
+  // Bash 同时在 plan profile 与可执行 profile 的白名单内且可写文件，按工具面计算
+  // 会漏标 Explore 或误标 Verify。这里用 formatAgentProfilesForPrompt 直接构造三类条目。
+  const planProfile = {
+    name: "Plan",
+    description: "Read-only research that returns an implementation design.",
+    source: "user",
+    permissionMode: "plan",
+    tools: ["Read", "Grep", "Glob", "Bash", "TodoWrite"],
+  };
+  const executableProfile = {
+    name: "Verify",
+    description: "Runs checks and reports results honestly.",
+    source: "user",
+    tools: ["Bash", "Read", "Grep", "Glob", "TodoWrite"],
+  };
+  const autoProfile = {
+    name: "Worker",
+    description: "Explicit auto permission mode profile.",
+    source: "user",
+    permissionMode: "auto",
+    tools: ["Read"],
+  };
+
+  const prompt = formatAgentProfilesForPrompt([planProfile, executableProfile, autoProfile]);
+  assert.ok(prompt);
+  const lines = prompt.split("\n");
+  const lineFor = (name) => {
+    const line = lines.find((candidate) => candidate.startsWith(`- ${name}:`));
+    assert.ok(line, name);
+    return line;
+  };
+
+  // plan 条目：标注位于 description 之后、(Tools: …) 后缀之前（R4 位置契约，整行等值钉住）。
+  assert.equal(
+    lineFor("Plan"),
+    `- Plan: ${planProfile.description}${READ_ONLY_ANNOTATION} (Tools: Read, Grep, Glob, Bash, TodoWrite)`,
+  );
+  // 非 plan 条目：permissionMode 缺席（Verify / 核心内置播种）或显式 auto（Worker）都不带标注。
+  assert.ok(!lineFor("Verify").includes(READ_ONLY_ANNOTATION));
+  assert.ok(!lineFor("Worker").includes(READ_ONLY_ANNOTATION));
+  assert.ok(!lineFor("general-purpose").includes(READ_ONLY_ANNOTATION));
+  // Explore 描述里的 "read-only" 是 prose 自述，不是 R4 标注形态（带括号才算）。
+  assert.ok(!lineFor("Explore").includes(READ_ONLY_ANNOTATION));
+});
+
+test("(R9/场景10) 核心内置 description 为冻结自撰 golden，满足 R3 三要素、上限与无 CJK", () => {
+  const generalPurpose = createBuiltInGeneralPurposeAgentProfile();
+  const explore = createBuiltInExploreAgentProfile();
+
+  // 快照式断言：文本冻结为 golden，改动必须对照 spec R9 定稿同批更新并人工审读。
+  assert.equal(generalPurpose.description, GENERAL_PURPOSE_DESCRIPTION_GOLDEN);
+  assert.equal(explore.description, EXPLORE_DESCRIPTION_GOLDEN);
+
+  for (const profile of [generalPurpose, explore]) {
+    // R3 上限：每条 ≤ 350 字符。
+    assert.ok(profile.description.length <= DESCRIPTION_MAX_LENGTH, profile.name);
+    // prompt-language-policy R1：模型面文本无 CJK（subagent-report-contract 场景 4 同款断言）。
+    assert.doesNotMatch(profile.description, CJK_PATTERN, profile.name);
+  }
+
+  // R3 三要素：定位句 / "Use when …" 触发句 / 负边界句（不适用 + 失败机理）。
+  assert.ok(GENERAL_PURPOSE_DESCRIPTION_GOLDEN.startsWith("Multi-step worker with full tool rights."));
+  assert.ok(GENERAL_PURPOSE_DESCRIPTION_GOLDEN.includes("Use for complex research or multi-file changes"));
+  assert.ok(GENERAL_PURPOSE_DESCRIPTION_GOLDEN.includes("Not for pure lookup or design"));
+  assert.ok(EXPLORE_DESCRIPTION_GOLDEN.startsWith("Fast read-only search specialist."));
+  assert.ok(EXPLORE_DESCRIPTION_GOLDEN.includes("Use when locating code"));
+  assert.ok(
+    EXPLORE_DESCRIPTION_GOLDEN.includes("wrong for code review, line-by-line audits, or consistency checks"),
+  );
+
+  // 场景 10：Explore 保留 medium / very thorough 两档广度字面量、无第三档
+  // （R9.2：单点快查档与「单事实查询直接搜」判据冲突，加档反而鼓励用 Explore 替代直搜）。
+  assert.deepEqual(EXPLORE_DESCRIPTION_GOLDEN.match(/"[^"]*"/gu), [
+    '"medium"',
+    '"very thorough"',
+  ]);
+
+  // R9.1 兼容面 = 名字与行为，不是 prose：名字字面量与工具面不变（subagent_type 派发命中靠名字）。
+  assert.equal(generalPurpose.name, "general-purpose");
+  assert.equal(explore.name, "Explore");
+  assert.deepEqual(generalPurpose.tools, ["*"]);
+  assert.deepEqual(explore.tools, [
+    "Bash",
+    "Glob",
+    "Grep",
+    "Read",
+    "WebFetch",
+    "WebSearch",
+    "TodoWrite",
+  ]);
 });
 
 test("(场景6) 去重成立：纪律节与工具描述不含同一「委派后别重复搜」句子", () => {

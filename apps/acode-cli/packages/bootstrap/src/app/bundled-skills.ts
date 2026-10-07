@@ -16,6 +16,9 @@ import { candidateBaseDirs } from "./bundled-plugins.js";
  * - SEA 二进制：资产内嵌在 `acode-bundled-skills/` 前缀下，首启按内容 hash 解压到
  *   `<cli storage>/bundled-skills/<hash>/`；目录名即内容身份，重复启动幂等，并发只会有一个赢家。
  * - 远端主机：prepare-prebuilds 把目录 stage 到远端 acode.cjs 旁，与桌面同路。
+ *
+ * 本包同时承载官方预置 agent（agents/ 子目录，specs/builtin-subagent-catalog.md R1，
+ * 由同目录 bundled-agents.ts 从同一 pack root 解析），不新增分发通道。
  */
 
 export const BUNDLED_SKILL_PACK_DIRECTORY_NAME = "bundled-skills";
@@ -23,11 +26,15 @@ export const BUNDLED_SKILL_PACK_SKILLS_DIRECTORY = "skills";
 /** 门与技能包共用一个名字：常量住在 contracts（core 的技能门也读它），这里只转出。 */
 export { DYNAMIC_WORKFLOW_SKILL_NAME };
 
-/** 技能包里每个文件都是必需资产：丢任何一个都拒绝整包，而不是装出一个引用文件缺失的技能。 */
+/** 内容包里每个文件都是必需资产：丢任何一个都拒绝整包，而不是装出一个引用文件缺失的技能/预置 agent。 */
 export const BUNDLED_SKILL_PACK_REQUIRED_PATHS = [
   `skills/${DYNAMIC_WORKFLOW_SKILL_NAME}/SKILL.md`,
   `skills/${DYNAMIC_WORKFLOW_SKILL_NAME}/patterns.md`,
   `skills/${DYNAMIC_WORKFLOW_SKILL_NAME}/examples.md`,
+  // 官方预置 agent（specs/builtin-subagent-catalog.md R1）：与技能同款 all-or-nothing 完整性门。
+  "agents/Plan.md",
+  "agents/Verify.md",
+  "agents/Review.md",
 ] as const;
 
 /** 与 official-plugin-definitions 的 rootCandidates 同形，覆盖 monorepo src/dist、cli/dist 与桌面 resources/glm 布局。 */
@@ -62,12 +69,24 @@ export interface ResolveBundledSkillRootsOptions {
   logger?: Logger;
 }
 
+/**
+ * 三形态共用的 bundled 内容包根解析（SEA 物化 ?? 文件系统候选目录）。
+ * 上提自 resolveBundledSkillRoots 的内联组合，供技能与官方预置 agent（bundled-agents.ts）
+ * 共用同一 pack root；行为与原组合一致，缺席时返回 undefined，由调用方决定降级姿态。
+ */
+export async function resolveBundledContentPackRoot(
+  options: ResolveBundledSkillRootsOptions,
+): Promise<string | undefined> {
+  return (
+    (await materializeSeaBundledSkillPack(options)) ??
+    (await resolveFilesystemBundledSkillPackRoot())
+  );
+}
+
 export async function resolveBundledSkillRoots(
   options: ResolveBundledSkillRootsOptions,
 ): Promise<SkillRoot[]> {
-  const packRoot =
-    (await materializeSeaBundledSkillPack(options)) ??
-    (await resolveFilesystemBundledSkillPackRoot());
+  const packRoot = await resolveBundledContentPackRoot(options);
   if (!packRoot) {
     // 内置技能包缺席会让脚本编写被技能门拒绝；记录诊断，便于定位不完整的分发资产。
     options.logger?.warn("Bundled skill pack unavailable", {

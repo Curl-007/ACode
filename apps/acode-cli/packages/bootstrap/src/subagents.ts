@@ -8,16 +8,28 @@ import {
 } from "@acode/core";
 import type { Logger, PluginMetadata } from "@acode/contracts";
 import {
+  BUILT_IN_SUBAGENT_NAMES,
   createAgentStateId,
   createPluginAgentStateId,
   parsePluginSubagentModelSelectionOverrides,
   modelSelectionSchema,
   type BuiltInSubagentModelSelectionOverrides,
-  type BuiltInSubagentName,
   type PluginSubagentModelSelectionOverrides,
 } from "@acode/shared";
+// 保留名单与 bundled 覆盖烘焙的判据同住 bundled 目录模块（架构 ratchet：
+// 本文件受 400 行上限约束，目录相关辅助归 app/bundled-agents.ts 单一事实源）。
+import {
+  CORE_RESERVED_AGENT_NAMES,
+  resolveBundledProfileModelSelection,
+} from "./app/bundled-agents.js";
 
 interface LoadACodeAgentProfilesInput {
+  /**
+   * 官方预置 agent（bundled 包 agents/ 目录解析结果，specs/builtin-subagent-catalog.md R5）。
+   * 由 create-app 装配时先经 resolveBundledAgentProfiles 解析再传入，
+   * 避免 bootstrap 内部两处各自解析 pack root；插入 profiles 数组最前。
+   */
+  bundledProfiles?: readonly AgentProfile[];
   logger?: Logger;
   storageRoot: string;
   workingDirectory: string;
@@ -44,8 +56,6 @@ interface ParsedPluginAgentProfile {
   profile: AgentProfile;
 }
 
-const RESERVED_AGENT_NAMES = new Set(["general-purpose", "Explore"]);
-
 export async function loadACodeAgentProfiles(
   input: LoadACodeAgentProfilesInput,
 ): Promise<LoadACodeAgentProfilesResult> {
@@ -70,6 +80,24 @@ export async function loadACodeAgentProfiles(
   }
   const agentState = readAgentState(input.storageRoot);
   const profiles: AgentProfile[] = [];
+
+  // 合并序（R5）：核心内置（normalizeAgentProfiles 播种）< bundled < user < project。
+  // bundled 插数组最前，user/project 同名整体覆盖；禁用的 bundled profile 不装配。
+  for (const bundledProfile of input.bundledProfiles ?? []) {
+    if (isDisabledUserProfile(bundledProfile, agentState.disabledAgentIds)) {
+      continue;
+    }
+    // 场景 6（builtin-subagent-catalog.md）：GUI 内置模型覆盖在装配期烘焙到 bundled 成员。
+    // normalizeAgentProfiles 只对播种的核心二内置应用 overrides，不在这里烘焙则
+    // Plan/Verify/Review 的覆盖只会持久化、派发时不生效。与 loadPluginAgentProfiles
+    // 的 plugin override 同款烘焙模式；user/project 同名 markdown 在数组后方整体替换
+    // 本条目，覆盖不随迁移——替换后走用户自己的模型选择语义。
+    const modelSelection = resolveBundledProfileModelSelection(
+      bundledProfile,
+      agentState.builtInModelSelectionOverrides,
+    );
+    profiles.push(modelSelection ? { ...bundledProfile, modelSelection } : bundledProfile);
+  }
 
   for (const root of roots) {
     for (const filePath of listMarkdownFiles(root.path)) {
@@ -129,7 +157,7 @@ export function loadPluginAgentProfiles(
   const diagnostics: AgentProfileParseDiagnostic[] = [];
   const parsedProfiles: ParsedPluginAgentProfile[] = [];
   const reservedProfileNames = new Set([
-    ...RESERVED_AGENT_NAMES,
+    ...CORE_RESERVED_AGENT_NAMES,
     ...(input.reservedProfileNames ?? []),
   ]);
 
@@ -294,10 +322,14 @@ function normalizeBuiltInSelectionOverrides(
 ): BuiltInSubagentModelSelectionOverrides {
   const result: BuiltInSubagentModelSelectionOverrides = {};
   const structuredRecord = isRecord(structured) ? structured : {};
-  const generalPurpose = modelSelectionSchema.safeParse(structuredRecord["general-purpose"]);
-  const explore = modelSelectionSchema.safeParse(structuredRecord.Explore);
-  if (generalPurpose.success) result["general-purpose"] = generalPurpose.data;
-  if (explore.success) result.Explore = explore.data;
+  // R5：键集单点来自 shared 的 BUILT_IN_SUBAGENT_NAMES（含 bundled 三成员），
+  // 不再按字面二名硬编码；旧 state 文件的未知键照既有 safeParse 方向忽略不报错。
+  for (const name of BUILT_IN_SUBAGENT_NAMES) {
+    const parsed = modelSelectionSchema.safeParse(structuredRecord[name]);
+    if (parsed.success) {
+      result[name] = parsed.data;
+    }
+  }
   return result;
 }
 
@@ -305,16 +337,27 @@ function isDisabledUserProfile(
   profile: AgentProfile,
   disabledAgentIds: ReadonlySet<string>,
 ): boolean {
-  if (profile.source !== "user") {
-    return false;
+  if (profile.source === "user") {
+    return disabledAgentIds.has(
+      createAgentStateId({
+        name: profile.name,
+        scope: "user",
+        source: "user",
+      }),
+    );
   }
-  return disabledAgentIds.has(
-    createAgentStateId({
-      name: profile.name,
-      scope: "user",
-      source: "user",
-    }),
-  );
+  // R5：bundled 预置 agent 是 source "built-in" 且 path 指向包内实际文件的 profile，
+  // 可被 disabledAgentIds 禁用；核心 TS 内置二名无 path，维持不可禁用现状。
+  if (profile.source === "built-in" && profile.path !== undefined) {
+    return disabledAgentIds.has(
+      createAgentStateId({
+        name: profile.name,
+        scope: "built-in",
+        source: "built-in",
+      }),
+    );
+  }
+  return false;
 }
 
 function listMarkdownFiles(root: string): string[] {

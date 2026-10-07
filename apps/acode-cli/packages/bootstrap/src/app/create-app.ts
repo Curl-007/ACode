@@ -80,6 +80,7 @@ import { resolvePluginRuntimeFeatures } from "./plugin-runtime-features.js";
 import { createSessionFacade } from "./session-facade.js";
 import { resolveAppRuntimeConfig, runtimeConfigLogContext } from "./runtime-config.js";
 import { resolveBundledSkillRoots } from "./bundled-skills.js";
+import { createReservedAgentNames, resolveBundledAgentProfiles } from "./bundled-agents.js";
 import { collectDynamicWorkflowDisabledSkillPaths } from "./dynamic-workflow-gate.js";
 import { createWorkspaceHookRuntimeSecurity } from "./workspace-hook-trust.js";
 import { createScriptWorkflowBridge } from "./script-workflow-methods.js";
@@ -116,7 +117,10 @@ import {
   resolveACodeBuiltinPromptCommand,
 } from "../builtin-prompt-command.js";
 import { collectDisabledPaths } from "../skill-command-overrides.js";
-import { loadPluginAgentProfiles, loadACodeAgentProfiles } from "../subagents.js";
+import {
+  loadPluginAgentProfiles,
+  loadACodeAgentProfiles,
+} from "../subagents.js";
 import { createRuntimeAiSdkModelExecutionConfig } from "../model-config.js";
 import { createCliPlatformOpenPort } from "./platform-open-port.js";
 import { ApiProviderModelRuntime } from "./provider-registry-model-runtime.js";
@@ -279,7 +283,12 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
       cliStorageRoot,
       resolveACodeRuntimeEnv(options.env ?? process.env) === "development",
     );
+    // 官方预置 agent（bundled 包 agents/ 目录）：与 bundled 技能同源 pack root，
+    // 先解析再传入 loadACodeAgentProfiles 置于数组合并序最前（R5），
+    // 避免 bootstrap 内部两处各自解析 pack root。包缺席时降级为空，CLI 正常启动（R8）。
+    const bundledAgentOutcome = await resolveBundledAgentProfiles({ cliStorageRoot, logger });
     const acodeSubagentProfileOutcome = await loadACodeAgentProfiles({
+      bundledProfiles: bundledAgentOutcome.profiles,
       logger,
       storageRoot,
       workingDirectory,
@@ -299,7 +308,12 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
     const pluginSubagentProfiles = loadPluginAgentProfiles({
       logger,
       plugins: pluginOutcome.plugins,
-      reservedProfileNames: acodeSubagentProfiles.map((profile) => profile.name),
+      // 保留名单（R5 动态化）：核心二名 ∪ bundled profile 名（含被禁用成员，名单派生自
+      // 包内容而非装配结果），再并入 user/project profile 名（既有语义不变）。
+      reservedProfileNames: [
+        ...createReservedAgentNames(bundledAgentOutcome.profiles),
+        ...acodeSubagentProfiles.map((profile) => profile.name),
+      ],
       modelSelectionOverrides: acodeSubagentProfileOutcome.pluginAgentModelSelectionOverrides,
     }).profiles;
     const pluginRuntimeFeatures = resolvePluginRuntimeFeatures(pluginOutcome);

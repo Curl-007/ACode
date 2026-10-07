@@ -120,15 +120,25 @@ const remoteOfficialPluginPackages = [
 ];
 // 随 CLI 内置的技能包（不是插件）：远端 agent 的 bootstrap 沿官方插件同款候选目录在 acode.cjs 旁
 // 找 packages/bundled-skills 并原地读取；与 packages/desktop/scripts/prepare-agent-node-bundle.mjs 同一份清单。
+// 包内除 skills/ 外还有 agents/（官方预置子代理，specs/builtin-subagent-catalog.md R1）：
+// 顶层白名单漏掉 agents 会在上传前永久裁掉预置 agent，远端 bootstrap 的完整性门
+// （BUNDLED_SKILL_PACK_REQUIRED_PATHS）随即拒绝整包，技能与 agent 一起降级。
 const remoteBundledSkillPack = {
   relativePath: "apps/acode-cli/packages/bundled-skills",
+  // bootstrap BUNDLED_SKILL_PACK_REQUIRED_PATHS 的本地镜像（漂移防护见
+  // apps/acode-cli/tests/sea-bundled-skill-assets.test.mjs 的一致性断言）。
+  // 不直接 import @acode/bootstrap：本脚本以纯 node 运行在远端资产准备阶段，
+  // 此时 workspace 的 dist 尚未构建（本脚本自己负责触发构建），公开入口不可解析。
   requiredPaths: [
     "skills/dynamic-workflows/SKILL.md",
     "skills/dynamic-workflows/patterns.md",
     "skills/dynamic-workflows/examples.md",
+    "agents/Plan.md",
+    "agents/Verify.md",
+    "agents/Review.md",
   ],
   stagedPath: "packages/bundled-skills",
-  topLevelPaths: ["skills"],
+  topLevelPaths: ["skills", "agents"],
 };
 const remoteOfficialPluginTopLevelPaths = new Set([
   ".mcp.json",

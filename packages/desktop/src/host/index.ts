@@ -44,6 +44,7 @@ import {
   createServiceLogger,
   createHostApiNetworkTransport,
   createSettingServiceWithMigrations,
+  resolveBundledAgentsRoot,
   OffPeakPermanentDispatchError,
   type HostApiNetworkTransport,
 } from "@acode/services/node";
@@ -2078,6 +2079,9 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
               hostApiNetworkTransport,
               authorizeLocalMediaPreviewPath,
               runtimeProcessEnvPatch: msg.runtimeProcessEnvPatch,
+              // 官方预置子智能体目录（spec: builtin-subagent-catalog.md R7）：desktop host
+              // 用与 CLI 同款的资源定位链注入；解析不到时保持 undefined，GUI 按缺省姿态降级。
+              bundledAgentsRoot: resolveBundledAgentsRoot(),
               agentRuntimeContext: {
                 getDeviceMid: () => msg.deviceMid,
                 runtimeSurface: "desktop_local_host",

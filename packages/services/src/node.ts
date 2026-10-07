@@ -215,6 +215,7 @@ export { createPluginSyncService } from "./plugin-sync/pluginSyncService.js";
 export { createPluginsService } from "./plugins/pluginsService.js";
 export { createPluginManagementService } from "./plugins/pluginManagementService.js";
 export { createSubagentsService } from "./subagents/subagentsService.js";
+export { resolveBundledAgentsRoot } from "./subagents/subagentStorage.js";
 export { createCommandsService } from "./commands/commandsService.js";
 export { createHooksService } from "./hooks/hooksService.js";
 export { createMemoryService } from "./memory/memoryService.js";
@@ -1342,6 +1343,12 @@ export function createLocalServices(options: {
   };
   /** Windows desktop-local Host 的 CUA turn 状态投影；其它 authority 会在装配层拒绝。 */
   cuaOperationStateReporter?: CuaOperationStateReporter;
+  /**
+   * 随 CLI 内容包分发的官方预置 agent 目录（spec: builtin-subagent-catalog.md R7）。
+   * desktop host 用 resolveBundledAgentsRoot() 注入；缺省（Web/server 环境）时
+   * subagents list 不显示 bundled 成员。
+   */
+  bundledAgentsRoot?: string;
 }): ServiceCollection {
   const isDesktopAttachedRemote = options?.serviceAuthorityMode === "desktop-attached-remote";
   // host / remote server 以前直接沿用当前进程环境启动后续服务。
@@ -1654,6 +1661,7 @@ export function createLocalServices(options: {
   const pluginSyncService = createPluginSyncService();
   const subagentsService = createSubagentsService({
     isDesktopRuntime: true,
+    bundledAgentsRoot: options?.bundledAgentsRoot,
   });
   const commandsService = createCommandsService({ isDesktopRuntime: true });
   const hooksService = createHooksService({

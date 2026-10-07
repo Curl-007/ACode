@@ -308,10 +308,13 @@
   循环、用户文本不变，重复判定只会重复注入同一条。
 - **与灰度门同结论**：`dynamicWorkflowEnabled === false` 时不注入。此时十个 dwf 工具与
   RunWorkflow 都不注册，注入等于把模型指向一个不存在的工具——技能面与命令面做的是同一件事。
-- **正文三件必需的事**：说清是用户的措辞触发的（不是 harness 自作主张）；点名 `RunWorkflow`
+- **正文四件必需的事**：说清是用户的措辞触发的（不是 harness 自作主张）；点名 `RunWorkflow`
   并劝退 `CreateWorkflow`（两套系统，说「用工作流」等于让模型掷骰子）；提醒先加载
-  `script-workflows` 技能（否则白跑一次被技能门拒掉的调用）。另外必须声明**只限本轮**——
-  不说清，模型会把一次关键词当成整个会话的授权。
+  `script-workflows` 技能（否则白跑一次被技能门拒掉的调用）；声明**只限本轮**
+  （不说清，模型会把一次关键词当成整个会话的授权）。
+- **正文是许可，不是命令**（批次 C8 修，见 R14.1）。初版写的是无条件命令句
+  "Use the `RunWorkflow` tool to fulfil the request"，实测把一条**只是在谈论这个词**的
+  prompt 劫持成一次真实编排。判据交回模型，harness 只负责说清「你有权不起」。
 - **未做：会话级常开**。参考产品用一个 10 分钟 sticky 窗口把「打一次关键词」升级成
   「接下来一段时间每轮默认起编排」。本项不实现：那需要一份带过期时间的会话态，而它的
   所有者、与 compact/rewind/冷恢复的交互、以及退出路径都得先定清楚。一份没人拥有、
@@ -545,6 +548,42 @@ R13.4 的**残留边界**：事后 `status()` 查一条历史 run 时拿不到 r
   仍会列出两个工作流技能（实测 16 个不变）。真正过门的是**模型上下文里**那份技能清单
   （`create-app.ts` 的 `disabledPaths`），两者不是同一个读面。别拿 `skills list` 当灰度的判据。
 
+### R14 可发现性与误触发（批次 C8）
+
+R13 之后又在真实面上跑了两条，各暴露一处。两处都不是崩溃，而是「功能在，但用户用不到 /
+用错代价高」——这类缺陷单测结构上就看不见。
+
+- **R14.1 关键词提醒是命令句，会劫持「只是在谈论这个词」的 prompt。**
+  整词匹配能排除子串误命中（`ultracodegen`）与斜杠形态，但排除不了**整词命中而语义不是请求**。
+  实测：一条问「`/help` 的目录里有没有 ultracode 这个条目」的 prompt——纯粹在谈论这个词——
+  被旧正文的无条件命令句（"Use the `RunWorkflow` tool to fulfil the request"）直接劫持成
+  一次真实的多代理编排：问题没被回答，`parallel0/item0/agent0` 已经派出去了。
+  修法是把判断权交回模型而不是在 harness 里再加一层语义判别：「这条消息是在请求编排，
+  还是只是在谈论这个词」是个语义问题，模型本来就比任何正则更擅长回答它；harness 的责任是
+  把**有权拒绝**说清楚。新正文明确 "permission to use it, not an instruction to use it"，
+  给出可操作判据（talking ABOUT the word → 直接回答、do NOT start a run），
+  并把起编排那一支写成带条件的（"Only when the request genuinely calls for…"）。
+  刻意**不**加启发式（例如「带问号就不触发」）：那只会造出第二套会漂移的判据，
+  而 AGENTS.md 明确反对不断增加兜底分支。
+  误判代价不对称，所以正文把「不起」写成默认选择：漏起一次，用户再说一句就好；
+  误起一次，是真实的钱、时间与一堆没人要的子会话。
+  复验：同一条 prompt 重跑，`grep -c '^workflow wf_'` = 0，模型直接作答。
+- **R14.2 `--help` 的命令目录里没有 `/workflow` 与 `/ultracode`。**
+  `acode --help` 那段 "Slash Commands:" 是 `@acode/i18n` 两个 locale 里各一份**硬编码文案**，
+  不从 `BUILTIN_ACODE_SLASH_COMMAND_HELP_ENTRIES` 派生。于是 C1 把 `ultracode` 加进权威表
+  之后 `--help` 里根本没有它——第二套系统唯一的用户入口，在用户最先读的那份目录里隐身。
+  `/workflow` 同样缺席且缺席得更早（既有状况）：`/dwf`（管理 run）在列，两个**启动** run
+  的入口却不在，同一族里自相矛盾。实测原始 `--help` 该段止于 `/goal`，共 15 条。
+  修法：两个 locale 各补两行，文案取权威表的 `usage` 与 `summary` 原文（不另撰第二份措辞）。
+  **刻意不断言两张表全等**：`--help` 那段是精选子集，`plugins` 由顶层 Commands 段承载、
+  `locale` 由 `--locale` 选项承载，塞进 Slash Commands 段反而说谎。只钉两个方向里真正要紧的
+  ——不得凭空发明命令（子集关系），以及工作流这一族必须齐（`dwf`/`workflow`/`ultracode`）；
+  外加两个 locale 的命令集合必须一致，否则中英文用户看到的目录不同。
+  复验：真实 `--help` 与 `--locale zh-CN --help` 都已列出两条，该段 17 条。
+  ⚠ 改了 i18n 的 locale **必须重建 dist** 才能在真实面上看到：CLI 经包名导入 `@acode/i18n`
+  → `dist/`，`tsx src/main.ts` 只让 `packages/cli` 自己走源码。这条与 R13 那批的
+  bootstrap/core 重建是同一个坑。
+
 ## 状态所有者
 
 ```
@@ -748,6 +787,18 @@ export async function runScriptWorkflowChild(input: {...}): Promise<ScriptWorkfl
     缺席与显式 undefined **逐字节相同**（都不印，不编造）；超 8000 字符保留头部并明说被截断；
     循环引用退到 `String()` 且状态行仍在。
 
+### 批次 C8（R14：可发现性与误触发）
+
+35. **关键词提醒是许可不是命令**（R14.1）：正文含 "permission to use it, not an instruction
+    to use it"、给出可操作判据（`only talking ABOUT the word` → `do NOT start a run`）、
+    起编排那一支带条件词（`Only when the request genuinely calls for…`），且旧的无条件命令句
+    `Use the RunWorkflow tool to fulfil the request` **一个字都不许剩**（留着等于同时给出
+    两条互相矛盾的指令）。
+36. **`--help` 与权威命令表一致**（R14.2）：两个 locale 的 Slash Commands 段都不得列出
+    权威表里没有的命令（子集关系，防硬编码文案漂移）；工作流这一族 `dwf` / `workflow` /
+    `ultracode` 三条都在场；两个 locale 的命令集合逐条相同。
+    刻意不断言全等——`--help` 是精选子集，`plugins` 与 `locale` 由别的段承载。
+
 #### 真实运行验证记录（批次 C7，Windows / node 25.8.2 / dev 形态 `tsx src/main.ts`）
 
 以下都是**实际跑出来的观测**，不是推演。命令形如
@@ -773,6 +824,17 @@ export async function runScriptWorkflowChild(input: {...}): Promise<ScriptWorkfl
   该技能；模型据此加载后重试成功——即拒因可执行。
 - 批次一（子代理目录）：Agent 工具的子代理清单里 `Plan` / `Review` / `Verify` 与
   `general-purpose` / `Explore` 并列在场。
+
+批次 C8 补记（R14 的两条都在真实面上复验过）：
+
+- 修复前：`acode --help` 的 Slash Commands 段止于 `/goal`，15 条，`/workflow` 与
+  `/ultracode` 均缺席。修复后该段 17 条，两条都在场，且 `--locale zh-CN` 同样列出
+  （中文文案为「为某个任务设计并启动 dynamic workflow」/「…脚本工作流（多代理扇出）」）。
+- 修复前：一条问「`/help` 目录里有没有 ultracode 这个条目」的 prompt 被劫持成真实编排，
+  进度流出现 `dispatched root/parallel0/item0/agent0@0`，问题没被回答。
+  修复后同一条 prompt 重跑：`grep -c '^workflow wf_'` = **0**，退出码 0，模型直接作答。
+- 两次复验都必须先重建对应包的 dist（i18n 与 core）才看得到变化——CLI 经包名导入它们的
+  `dist/`，只有 `packages/cli` 自己走 tsx 源码。第一次复验忘了重建，看到的是旧行为。
 
 仍未在真实面上观测到的（不是已知缺陷，是本轮没能到达的面）：TUI 工作流卡与方言徽标的
 **实际渲染**（需要交互式 pty）、桌面侧栏/确认窗/聊天卡的**实际渲染**（需要起 Electron 并用

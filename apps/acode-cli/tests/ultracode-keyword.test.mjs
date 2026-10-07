@@ -110,6 +110,26 @@ test("正文点名 RunWorkflow 与技能，劝退另一套，并声明只限本�
   assert.match(body, /current turn only/, "不说清本轮限定，模型会把一次关键词当成整个会话的授权");
 });
 
+test("正文是**许可**而不是命令：模型必须被明确告知可以不起编排", () => {
+  // 实测事故：一条问「/help 目录里有没有 ultracode 这个条目」的 prompt——纯粹在谈论这个词
+  // ——被旧正文的命令句（"Use the RunWorkflow tool to fulfil the request"）劫持成一次真实的
+  // 多代理编排，问题没被回答，钱和时间照花。整词匹配排除不了「整词命中但语义不是请求」，
+  // 而那是个语义问题，只能交给模型判断；harness 的责任是把「有权拒绝」说清楚。
+  const body = buildUltracodeKeywordReminderBody();
+  assert.match(body, /permission to use it, not an instruction to use it/);
+  // 必须给出可操作的判据，否则「自行判断」等于没说：谈论这个词 vs 请求多代理工作。
+  assert.match(body, /only talking ABOUT the word/);
+  assert.match(body, /do NOT start a run/);
+  // 起编排那一支必须带条件词，不能是裸命令句。
+  assert.match(body, /Only when the request genuinely calls for orchestrated multi-agent work/);
+  // 旧的无条件命令句一个字都不许剩：留着就等于同时给出两条互相矛盾的指令。
+  assert.equal(
+    body.includes("Use the `RunWorkflow` tool to fulfil the request"),
+    false,
+    "无条件命令句必须消失，否则模型会照着它起编排",
+  );
+});
+
 // ---------------------------------------------------------------------------
 // 生命周期档位
 // ---------------------------------------------------------------------------

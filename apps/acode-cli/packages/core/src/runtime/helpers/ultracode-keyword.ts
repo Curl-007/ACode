@@ -64,20 +64,38 @@ export function shouldEmitUltracodeKeywordReminder(input: {
 /**
  * reminder 正文。
  *
- * 三件事，一件都不能少：
+ * 四件事，一件都不能少：
  *   1. 说明**是谁**做的选择（用户自己的措辞），这样模型不会把它当成 harness 的自作主张；
  *   2. 点名 `RunWorkflow` 而不是笼统的「多代理编排」——仓库里有两套工作流系统，
  *      说「用工作流」会让模型在 CreateWorkflow 与 RunWorkflow 之间掷骰子；
  *   3. 保留技能前置：RunWorkflow 在未加载 `script-workflows` 前会拒绝接受脚本，
- *      不提醒就会白跑一次被拒的调用。
+ *      不提醒就会白跑一次被拒的调用；
+ *   4. **这是许可，不是命令**——见下。
  *
  * 同时明确**本轮限定**：这不是会话级常开，下一轮回到工具描述里的常规门槛。
  * 不说清这一点，模型会把一次关键词当成整个会话的授权，之后每轮都起编排。
+ *
+ * ## 为什么第 4 条是必需的（实测事故）
+ *
+ * 整词匹配只能排除「子串误命中」（`ultracodegen`）与「斜杠形态」，排除不了**整词命中但
+ * 语义不是请求**。实测：一条问「`/help` 的目录里有没有 ultracode 这个条目」的 prompt——
+ * 纯粹在谈论这个词——被旧正文的命令句（"Use the `RunWorkflow` tool to fulfil the request"）
+ * 直接劫持成一次真实的多代理编排，问题没被回答，钱和时间照花。
+ *
+ * 修法是把判断权交回模型，而不是在 harness 里再加一层语义判别。「这条消息是在请求编排，
+ * 还是只是在谈论这个词」是一个语义问题，模型本来就比任何正则更擅长回答它；harness 该做的
+ * 是把它**有权拒绝**这件事说清楚。加启发式（比如「带问号就不触发」）只会造出第二套
+ * 会漂移的判据，而 AGENTS.md 明确反对不断增加兜底分支。
+ *
+ * 误判代价是不对称的：漏起一次编排，用户再说一句就好；误起一次，是真实的钱、时间与
+ * 一堆没人要的子会话。所以正文把「不起」写成默认的、无需解释的选择，把「起」写成需要
+ * 请求本身确实要求多代理工作的选择。
  */
 export function buildUltracodeKeywordReminderBody(): string {
   return [
-    `The user included the keyword "${ULTRACODE_KEYWORD}" in their own message, opting THIS TURN into script-workflow orchestration.`,
-    "Use the `RunWorkflow` tool to fulfil the request — not `CreateWorkflow` (that is the other workflow system and takes a different script form), and not the `Agent` tool.",
+    `The user included the keyword "${ULTRACODE_KEYWORD}" in their own message. That opts THIS TURN into script-workflow orchestration — it is permission to use it, not an instruction to use it.`,
+    "Decide from the request itself. If the message is only talking ABOUT the word (asking what it does, whether it is available or listed, quoting it, comparing the two workflow systems) rather than asking for multi-agent work, answer directly and do NOT start a run.",
+    "Only when the request genuinely calls for orchestrated multi-agent work, use the `RunWorkflow` tool — not `CreateWorkflow` (that is the other workflow system and takes a different script form), and not the `Agent` tool.",
     "Load the `script-workflows` skill first: `RunWorkflow` refuses a script until that skill has been loaded in this session.",
     "This opt-in covers the current turn only. On later turns the normal rule in the tool description applies again unless the user opts in again.",
   ].join(" ");

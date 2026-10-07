@@ -59,6 +59,8 @@ Slash Commands:
   /compact [instructions]  Compact the current conversation
   /expert [status|resume|stop|<task>]  Run or manage the expert workflow
   /dwf [list|cancel|resume]  List, cancel, or resume dynamic workflow runs
+  /workflow [what the workflow should accomplish]  Design and launch a dynamic workflow for a task
+  /ultracode [what the workflow should accomplish]  Design and launch a script workflow (multi-agent fan-out) for a task
   /fork [latest|checkpointId]  Fork a new session from a workspace checkpoint
   /mcp [list|status|connect|disconnect]  Show or manage MCP servers
   /mode [mode]          Show or switch permission mode: build, edit, plan, or yolo

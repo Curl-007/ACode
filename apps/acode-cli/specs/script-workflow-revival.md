@@ -656,22 +656,75 @@ R12 登记的三条边界（冷恢复、run 目录、侧栏主体）在这一批
 
 #### R15 的残留边界（诚实声明）
 
-1. **轮尾摘要卡仍吃静态图。** `WorkflowRunDigest` 拿 `digest.graph`，脚本 run 没有图，
-   所以对话里那张卡仍是降级形态。侧栏有了第二主体，摘要卡还没有——要接需要把
-   `workflowRunActivity` 的分组结果再喂给摘要卡的渲染路径，是另一件事。
-2. **冷回放的合成结算不写回行。** 投影说 `stopped`，而 `workflow_run` 行仍是 `running`，
-   于是 `scriptWorkflowStatus` 与后台任务快照这两个**模型面**读到的仍是旧词。
-   给脚本工作流补一套孤儿收敛（像 dwf 那样在构造期改写行）才能消掉这个分叉。
-   实测这个状态真实存在：库里就有一条 `wf_a33b872a…` 停在 `running`（宿主进程被外部 timeout
-   打死的遗物）。
+> ⚠ 第 1、2 条已被批次 C10（R16）补掉，保留原文与标注以便看清演进；当前仍成立的见第 3、4 条
+> 与 R16 自己的残留边界。
+
+1. **轮尾摘要卡仍吃静态图。** → **已补（R16.3）**。`WorkflowRunDigest` 拿 `digest.graph`，
+   脚本 run 没有图，于是 `workflowCardDetail` 整块返回 undefined，卡上只剩一个状态词，
+   连「几个阶段、几个子代理」都说不出来——而这些数字投影里一直都有。
+2. **冷回放的合成结算不写回行。** → **已补（R16.1 + R16.2）**。投影说 `stopped` 而行仍是
+   `running`，于是 `scriptWorkflowStatus` 与后台任务快照这两个模型面读到旧词。
+   补法是给脚本工作流加一套构造期孤儿收敛（与 dwf 同款时机与边界）。
+   当时实测这个状态真实存在：库里就有一条 `wf_a33b872a…` 停在 `running`
+   （宿主被外部 timeout 打死的遗物）；C10 之后对着同一个库复验，它已自愈，
+   且库里剩余非终态行为 **0**。
 3. **存量行没有 `tool_call_id`。** migration 之前跑过的 run 无事实可回填，它们在目录里
    照旧被剔除、也联不回工具卡——与 dwf 那些 `tool_call_id` 落库之前的老 run 同一个处境。
-4. **GUI 渲染未在真实面上观测到。** 三条实现都有行为级单测（分组规则、回放产出、摘要映射），
-   存储层也对着真实库验证过（`tool_call_id` 列在场、迁移账本有 `0027`、新 run 带真实
-   toolCallId、存量行为 null），但 TUI 卡与桌面侧栏/目录的**实际像素**没有取到证：
-   TUI 需要交互式 pty（本仓自己的发布记录就写着 Windows 上 node-pty conpty 代理
-   AttachConsole 会挂起），桌面需要起 Electron 并用 GUI 自动化驱动，app-server 的 stdio
-   分帧与握手未能在本轮摸清。这三条是「够不到」，不是「已验证通过」。
+4. **GUI 渲染未在真实面上观测到。** 各条实现都有行为级单测（分组规则、回放产出、摘要映射、
+   状态编解码），存储层也对着真实库验证过（`tool_call_id` 列在场、迁移账本有 `0027`、
+   新 run 带真实 toolCallId、存量行为 null、孤儿行自愈成 `cancelled`+code），
+   但 TUI 卡与桌面侧栏/目录的**实际像素**没有取到证：TUI 需要交互式 pty（本仓自己的发布
+   记录就写着 Windows 上 node-pty conpty 代理 AttachConsole 会挂起），桌面需要起 Electron
+   并用 GUI 自动化驱动，app-server 的 stdio 分帧与握手未能摸清。
+   这几条是「够不到」，不是「已验证通过」。
+
+### R16 孤儿收敛与状态的双层词汇（批次 C10）
+
+- **R16.1 构造期收敛本会话的孤儿 run**（`script-workflow-reconcile.ts`）。
+  run 起跑后宿主进程被关掉，行就永远停在 `running`，而每个读面都照行回答——永不自愈。
+  与 dwf 的 `reconcileOrphanRuns` 同款时机（构造期，此刻本实例名下零个在飞 run，所以属于
+  本会话的任何非终态行都只可能是遗物；二次构造天然幂等）与同款三条边界：只收敛本会话
+  （全局清扫会把兄弟会话在飞的 run 标死）、不合成事件（事件表的契约是「运行期真发过什么」，
+  清扫者无权往里写；状态权威在行上）、失败不拖垮构造（查询失败与单行写失败各自 catch 成
+  warn）。上界 64 行，一次构造不该被一张病态的历史表拖住。
+  接线在 `createScriptWorkflowBridge` 里**发射后不管**：桥的构造是同步的而 store 是异步的，
+  等它会把一次 app 构造变成一次数据库往返。安全前提是两条——那个函数永不 reject，
+  且冷回放不依赖收敛跑完（它按行铸造结算，非终态一律归 interrupted，所以「收敛前回放」
+  与「收敛后回放」得到同一个投影状态，竞态良性）。
+- **R16.2 状态是双层词汇，映射只有一个所有者**（`script-workflow-run-status.ts`）。
+  `workflow_run.status` 带建表 CHECK 约束，物理词汇固定六个词，放宽它要重建整张表
+  （`workflow_activity` / `workflow_event` / `session_task_link` 三张表外键引用它）。
+  而业务上要区分**三件**终态，于是：脚本自己错了 → 物理 `failed`；用户停了 → 物理
+  `cancelled` 且**不写** failure；宿主没了 → 物理 `cancelled` 且 failure 带结构化 code
+  `ScriptWorkflowInterrupted`。判据只认 code，**绝不解析 message 文本**——dwf 对同一件事
+  的裁决写得很硬（「同码就只能靠 message 文本区分」是被明确拒绝的做法），而 dwf 自己的
+  落法逐字同构：`dwf_run.status` 的 CHECK 集同样不含 `stopped`，逻辑态 `stopped{reason}`
+  编码成物理 `cancelled` + `{"stopReason": …}` 信封，映射只活在 `dwf-journal-codecs.ts`。
+  三个消费点（目录摘要、冷回放的结算铸造、后台任务快照的 `workflowTaskStatus`）一律经
+  `logicalScriptWorkflowStatus` 读，谁都不许自己 sniff failure。
+  ⚠ **走过的弯路，留着以防有人再走**：最初直接往 `SCRIPT_WORKFLOW_RUN_STATUSES` 加了
+  `interrupted`。类型全绿、假 store 的单测全绿、`turbo typecheck` 25/25 全绿，
+  直到对着**真实库**跑一遍才炸：`CHECK constraint failed: status in (...)`。
+  存储层的约束是单测桩替不了的那一类事实。诊断路径也记一下：先在真库里查那条孤儿行
+  （仍是 running）→ 确认 dist 里有接线（符号链接 + 符号计数）→ 确认日志里没有我埋的 warn
+  → 用同一条 SQL 直接查库证明查询能命中 → 才加临时 stderr 探针打出真实错误。
+  探针用完即删。
+- **R16.3 摘要卡在没有图时也要说得出规模**（`card-detail.ts` 的 `projectionOnlyCardDetail`）。
+  段的选择与键都复用有图那条路（`workflowHeaderDetail`）：卡上只说阶段与子代理，
+  不说步数/token/轮次/产物；`agentsPart` 在 running 时数「工作中的」且**无条件**出这一段，
+  退化路照抄——多一个「大于零才出」的守卫就是多一处会漂移的分叉。
+  抽成独立模块而不是留在 `timeline-summary.ts`，是因为后者经 `subagent-model-label`
+  拖进了 SVG 资源导入，node 测试加载不了；纯规则要能被穷举单测（与 `workflowRunActivity.ts`
+  同一个理由）。
+
+#### R16 的残留边界
+
+1. **物理词 `cancelled` 承载两种逻辑态**，所以任何**直接读存储**的新代码都必须经
+   `logicalScriptWorkflowStatus`，不能裸读 `row.status`。这是双层词汇的固有代价，
+   dwf 那边同款（它的 codec 文件头就写着「映射只活在本文件」）。
+2. **收敛上界 64 行**：一个会话若有超过 64 条遗物，剩下的要等下一次构造。刻意不加
+   分页——构造期不该为了清理历史而循环写库。
+3. R15 残留边界的第 3、4 条仍然成立（存量行没有 tool_call_id；GUI 像素未取证）。
 
 ## 状态所有者
 
@@ -913,6 +966,25 @@ export async function runScriptWorkflowChild(input: {...}): Promise<ScriptWorkfl
 42. **真实库验证**（migration 0027）：`pragma table_info(workflow_run)` 含 `tool_call_id`；
     迁移账本含 `0027_workflow_run_tool_call_id`；新 run 的行带真实 `call_*` id；
     存量行为 null。已实测通过。
+
+### 批次 C10（R16：孤儿收敛与状态双层词汇）
+
+43. **孤儿收敛**（R16.1）：非终态行写成物理 `cancelled` + 结构化 code（**不是** `interrupted`
+    ——CHECK 约束里没有那个词，写它会被真实库拒掉）；查询按 `parentSessionId` 作用域、
+    只捞非终态、有上界；查询失败只 warn 不抛；单行写失败不牵连其余；构造期确实接上了。
+44. **物理 ↔ 逻辑解码只有一个所有者**（R16.2）：`cancelled` 无 failure → 逻辑 `cancelled`；
+    `cancelled` + code 命中 → 逻辑 `interrupted`；code 不命中 → 退回 `cancelled`
+    （一个拼错的 code 不该把用户取消改判成进程死亡）；**message 文本改写成什么都不影响判定**；
+    其余物理词原样透传。
+45. **三个消费点都按逻辑词说话**：目录摘要把「宿主没了」翻成 `stopped/interrupted`、
+    把「用户停了」翻成 `stopped/user`；冷回放对收敛过的行铸造 `workflow_interrupted`
+    （而不是 `workflow_cancelled`）；后台任务快照把它报成 `lost`（而不是 `cancelled`）。
+46. **摘要卡在没有图时也说得出规模**（R16.3）：阶段数与子代理数复用有图那条路的**同一批
+    i18n 键**（断言键名而不只是文案，键换了就等于两套措辞各自漂移）；running 时数「工作中的」
+    且无条件出这一段；1 个走单数键；子代理模型名跟在最后一段；连投影都没有才整块缺席。
+47. **真实库验证孤儿自愈**：恢复那条遗留会话后，`wf_a33b872a…` 的物理状态变成 `cancelled`、
+    `failure_json` 带 `ScriptWorkflowInterrupted`、`time_completed` 已写，
+    且库里剩余非终态行为 **0**。已实测通过。
 
 #### 真实运行验证记录（批次 C7，Windows / node 25.8.2 / dev 形态 `tsx src/main.ts`）
 

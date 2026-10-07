@@ -1,5 +1,11 @@
-import type { DynamicWorkflowRunSessionSummary } from "@acode/contracts";
-import type { ScriptWorkflowRunRecord, ScriptWorkflowRunStatus } from "@acode/contracts";
+import type {
+  DynamicWorkflowRunSessionSummary,
+  ScriptWorkflowRunRecord,
+} from "@acode/contracts";
+import {
+  logicalScriptWorkflowStatus,
+  type ScriptWorkflowLogicalStatus,
+} from "./script-workflow-run-status.js";
 
 /**
  * 脚本工作流的 run 记录 → run 目录摘要。
@@ -40,7 +46,9 @@ import type { ScriptWorkflowRunRecord, ScriptWorkflowRunStatus } from "@acode/co
 export function toScriptWorkflowRunSummary(
   row: ScriptWorkflowRunRecord,
 ): DynamicWorkflowRunSessionSummary {
-  const { status, stopReason } = toDirectoryStatus(row.status);
+  // 按**逻辑**状态翻译，不是物理状态：物理词 `cancelled` 同时承载「用户停的」与「宿主没了」，
+  // 两者在目录页必须是两句话（stopped by you / stopped process exited）。
+  const { status, stopReason } = toDirectoryStatus(logicalScriptWorkflowStatus(row));
   const failure = readFailureMessage(row.failure);
   return {
     dialect: "script",
@@ -58,7 +66,7 @@ export function toScriptWorkflowRunSummary(
   };
 }
 
-function toDirectoryStatus(status: ScriptWorkflowRunStatus): {
+function toDirectoryStatus(status: ScriptWorkflowLogicalStatus): {
   status: DynamicWorkflowRunSessionSummary["status"];
   stopReason?: DynamicWorkflowRunSessionSummary["stopReason"];
 } {
@@ -69,6 +77,10 @@ function toDirectoryStatus(status: ScriptWorkflowRunStatus): {
       return { status: "errored" };
     case "cancelled":
       return { status: "stopped", stopReason: "user" };
+    // 宿主进程死了：与 dwf 的孤儿收敛逐字同一个词（stopped + interrupted），
+    // 于是两套 run 在目录页对同一件事说同一句话，渲染成「stopped (process exited)」。
+    case "interrupted":
+      return { status: "stopped", stopReason: "interrupted" };
     default:
       // pending / running / paused：都还活着。
       return { status: "running" };

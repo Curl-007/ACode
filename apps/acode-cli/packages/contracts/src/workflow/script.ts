@@ -68,6 +68,19 @@ export const WorkflowAgentCallInputSchema = z
   .strict();
 export type WorkflowAgentCallInput = z.infer<typeof WorkflowAgentCallInputSchema>;
 
+/**
+ * `workflow_run.status` 的**物理**词汇——受建表 CHECK 约束，不迁移。
+ *
+ * ⚠ 这不是逻辑词汇。「宿主进程在 run 结算前退出」这件事**没有**自己的物理词，它落成
+ * `cancelled` + `failure_json` 里的结构化 code（见 bootstrap 的 script-workflow-run-status.ts）。
+ * 这与 dwf 逐字同构：`dwf_run.status` 的 CHECK 集同样不含 `stopped`，dwf 把逻辑态
+ * `stopped{reason}` 编码成物理 `cancelled` + `{"stopReason": …}` 信封，映射只活在
+ * `dwf-journal-codecs.ts` 一个文件里。
+ *
+ * 曾经试图往这里加一个 `interrupted`：CHECK 约束当场拒写（`CHECK constraint failed: status in`），
+ * 而假 store 的单测撞不到它——只有对着真实库跑一遍才暴露。放宽约束要重建整张表
+ * （三张表外键引用它），代价与风险都远大于按既有模式编码。
+ */
 export const SCRIPT_WORKFLOW_RUN_STATUSES = [
   "pending",
   "running",

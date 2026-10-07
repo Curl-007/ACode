@@ -189,6 +189,52 @@ test("行非终态但事件流已结算 → 不再补第二条结算（以事件
   assert.equal(run.error, "boom");
 });
 
+test("结算以**行**为准：收敛过的行没有终态事件，也必须按行的词投影", async () => {
+  // 孤儿收敛只改写行、**不合成事件**（事件表的契约是「运行期真发过什么」，清扫者无权往里写）。
+  // 于是收敛后的行事件流里永远没有终态；只看事件的话投影会停在 running——卡片亮灯、
+  // Cancel 可点而后端无事可取消。这条与上一条合起来才是完整的「以行为准」：
+  // 事件流有终态就听事件，没有就听行。
+  const halfRun = [
+    event("workflow_started"),
+    event("script_phase", { title: "P" }),
+    event("activity_started", { activityId: "a", callPath: "root/agent0", phase: "P" }),
+  ];
+  const cases = [
+    // 物理 cancelled + 结构化 code = 宿主死了；物理 cancelled 且无 failure = 用户停的。
+    // 两者共用一个物理词（CHECK 约束里没有 interrupted），却必须翻成不同的 dwf 终态。
+    [
+      { failure: { code: "ScriptWorkflowInterrupted" }, status: "cancelled" },
+      "stopped",
+      "interrupted",
+      undefined,
+    ],
+    [{ status: "cancelled" }, "stopped", "user", undefined],
+    [{ failure: { message: "boom" }, status: "failed" }, "errored", undefined, "boom"],
+    [{ status: "completed" }, "completed", undefined, undefined],
+    // 收敛还没轮到的遗物：非终态行一律按 interrupted 投影，绝不留在 running。
+    [{ status: "running" }, "stopped", "interrupted", undefined],
+  ];
+  for (const [rowOverrides, status, stopReason, error] of cases) {
+    const { store } = fakeStore({
+      events: { "wf_row-1": halfRun },
+      runs: [{ id: "wf_row-1", ...rowOverrides }],
+    });
+    const payloads = await replayScriptWorkflowRuns(depsFor(store), {
+      excludeRunIds: new Set(),
+    });
+    const settles = payloads.filter((entry) => entry.eventType === "run-settled");
+    assert.equal(
+      settles.length,
+      1,
+      `行是 ${JSON.stringify(rowOverrides)} 时必须恰好补一条结算`,
+    );
+    const [projected] = project(payloads);
+    assert.equal(projected.status, status, `${JSON.stringify(rowOverrides)} 的终态词`);
+    assert.equal(projected.stopReason, stopReason, `${JSON.stringify(rowOverrides)} 的 stopReason`);
+    assert.equal(projected.error, error, `${JSON.stringify(rowOverrides)} 的错误文案`);
+  }
+});
+
 test("枚举失败降级成「没有历史 run」，不抛（冷回放是补齐观察面，不是启动路径）", async () => {
   const warnings = [];
   const { store } = fakeStore({ failList: true });

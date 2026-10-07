@@ -83,6 +83,20 @@ type ScriptWorkflowRunOptions = {
   onEvent?: (event: unknown) => void | Promise<void>;
 } & Parameters<PrepareUserExecutionBoundary>[0];
 
+/**
+ * `run()` / `resume()` 返回值里的状态词——只有这两个方法**自己会写**的那三个。
+ *
+ * 为什么不直接用 `ScriptWorkflowRunStatus`：那个词表还含 `interrupted`（孤儿收敛写的，
+ * 见 script-workflow-reconcile.ts）与 `pending`/`running`/`paused`（起跑前 / 在飞）。
+ * 这两个方法在返回之前一定已经亲手结算过这条 run，所以返回值只可能是三者之一。
+ *
+ * 收窄不是装饰：facade 的返回类型是 `ExpertWorkflowCommandResult`，它的 `status` 用的是
+ * **expert workflow 自己的**词汇（`WorkflowRunStatus`）。把更宽的词表塞过去编译不过，
+ * 而为了迁就它去给另一套系统的词表加值是错的耦合——两套工作流系统各有各的状态词，
+ * 只在投影/目录那一层翻译（script-workflow-run-summary.ts）。
+ */
+export type ScriptWorkflowSettleStatus = "cancelled" | "completed" | "failed";
+
 export class ScriptWorkflowRuntime {
   // 与 workflow run service / 进程级治理器同一份天花板实现；legacy 工具仍只有本地 limiter，不接治理器。
   private readonly concurrency = resolveWorkflowConcurrencyCeiling();
@@ -182,7 +196,7 @@ export class ScriptWorkflowRuntime {
   ): Promise<{
     response: string;
     runId: string;
-    status: ScriptWorkflowRunStatus;
+    status: ScriptWorkflowSettleStatus;
     traceId: string;
   }> {
     await this.deps.prepareUserExecutionBoundary(options);
@@ -220,6 +234,9 @@ export class ScriptWorkflowRuntime {
     // 脚本 return 的值，只在成功那条路上被赋值；失败/取消时保持 undefined，
     // formatter 据此不印 result 节（failure 节已经说了发生了什么）。
     let resultValue: unknown;
+    // 报**自己写过的那个词**，而不是事后再读一遍行。读回来的值可能被并发改写
+    // （孤儿收敛、兄弟进程），而本方法的返回值该说的是「我把它结算成了什么」。
+    let settleStatus: ScriptWorkflowSettleStatus = "completed";
 
     try {
       await this.store().updateScriptWorkflowRun({
@@ -271,6 +288,7 @@ export class ScriptWorkflowRuntime {
       // 与后台任务快照把一次用户主动停止报成带错误信息的失败。dwf 的 settleStopped 同款取舍
       // （只有 interrupted / provider 两种 reason 才随车带 error）。
       const cancelled = options?.abortSignal?.aborted === true;
+      settleStatus = cancelled ? "cancelled" : "failed";
       await this.store().updateScriptWorkflowRun({
         completedAt: Date.now(),
         ...(cancelled ? {} : { failure: serializeError(error) }),
@@ -295,7 +313,8 @@ export class ScriptWorkflowRuntime {
     return {
       response: formatScriptWorkflowRun({ activities, run: finalRun, result: resultValue }),
       runId: run.id,
-      status: finalRun.status,
+      // 报自己写过的那个词（见 settleStatus 的声明处）：读回来的行可能被并发改写。
+      status: settleStatus,
       traceId: this.deps.traceContext.traceId,
     };
   }
@@ -306,7 +325,8 @@ export class ScriptWorkflowRuntime {
   ): Promise<{
     response: string;
     runId: string;
-    status: ScriptWorkflowRunStatus;
+    // resume 委托给 run()，所以能返回的词与它逐字同一套（理由见 ScriptWorkflowSettleStatus）。
+    status: ScriptWorkflowSettleStatus;
     traceId: string;
   }> {
     const run = await this.store().getScriptWorkflowRun(input.runId);

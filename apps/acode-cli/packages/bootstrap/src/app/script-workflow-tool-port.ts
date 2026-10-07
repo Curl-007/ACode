@@ -20,6 +20,10 @@ import {
 import { readWorkflowScriptDocument } from "./script-workflow-meta.js";
 import type { ScriptWorkflowRuntime } from "./script-workflow-runtime.js";
 import { isScriptWorkflowStore } from "./script-workflow-utils.js";
+import {
+  logicalScriptWorkflowStatus,
+  type ScriptWorkflowLogicalStatus,
+} from "./script-workflow-run-status.js";
 
 const WORKFLOW_SCRIPT_SUFFIX = ".workflow.js";
 const WORKFLOW_NAME_PATTERN = /^[A-Za-z0-9_.-]+$/;
@@ -256,14 +260,20 @@ async function getWorkflowTaskSnapshot(
   if (!isScriptWorkflowStore(deps.sessionStore)) return undefined;
   const run = await deps.sessionStore.getScriptWorkflowRun(taskId);
   if (!run) return undefined;
-  const status = workflowTaskStatus(run.status);
+  // 读**逻辑**状态：物理词 `cancelled` 同时承载「用户停的」与「宿主没了」，后者该报 `lost`
+  // （我们再也不知道它怎么样了），前者才是 `cancelled`。判据是 failure 上的结构化 code，
+  // 解码只有 script-workflow-run-status.ts 一处。
+  const status = workflowTaskStatus(logicalScriptWorkflowStatus(run));
   return {
     completedAt: run.completedAt ? new Date(run.completedAt) : undefined,
     description: run.name,
     error: failureMessage(run.failure),
     name: run.name,
     output:
-      status === "completed" || status === "failed" || status === "cancelled"
+      // `lost` 也在列：孤儿收敛之后行的状态是 `interrupted` → 映射成 `lost`，
+      // 而「我们把它丢了」本身就是一个确定的结局，TaskOutput 该给一句准话而不是空手而归
+      // （否则模型会以为还在跑、继续等一个永不到来的结果）。
+      status === "completed" || status === "failed" || status === "cancelled" || status === "lost"
         ? {
             backgroundTaskId: run.id,
             name: run.name,
@@ -429,10 +439,13 @@ function workflowFileName(name: string): string {
   return name.endsWith(WORKFLOW_SCRIPT_SUFFIX) ? name : `${name}${WORKFLOW_SCRIPT_SUFFIX}`;
 }
 
-function workflowTaskStatus(status: ScriptWorkflowRunStatus): WorkflowTaskStatus {
+function workflowTaskStatus(status: ScriptWorkflowLogicalStatus): WorkflowTaskStatus {
   if (status === "completed") return "completed";
   if (status === "failed") return "failed";
   if (status === "cancelled") return "cancelled";
+  // 宿主进程死了留下的遗物：不是脚本失败、也不是用户取消，而是「我们再也不知道它怎么样了」。
+  // `lost` 正是这个词在后台任务词汇表里的既有含义，不是兜底凑数。
+  if (status === "interrupted") return "lost";
   if (status === "pending" || status === "running" || status === "paused") return "running";
   return "lost";
 }

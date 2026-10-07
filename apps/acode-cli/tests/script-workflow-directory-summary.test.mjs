@@ -29,19 +29,27 @@ function row(overrides = {}) {
 
 test("状态词按 dwf 的五值词汇翻译，一个都不许错", () => {
   const cases = [
-    ["completed", "completed", undefined],
-    ["failed", "errored", undefined],
+    [{ status: "completed" }, "completed", undefined],
+    [{ status: "failed" }, "errored", undefined],
     // 用户停下不是脚本崩了：与实时投影的 workflow_cancelled 同一笔语义。
-    ["cancelled", "stopped", "user"],
-    ["pending", "running", undefined],
-    ["running", "running", undefined],
+    [{ status: "cancelled" }, "stopped", "user"],
+    // 宿主进程死了：物理词同样是 cancelled（CHECK 约束里没有 interrupted），
+    // 靠 failure 的结构化 code 分辨。与 dwf 的孤儿收敛逐字同一个词，于是两套 run
+    // 在目录页对同一件事说同一句话（渲染成「stopped (process exited)」）。
+    [
+      { failure: { code: "ScriptWorkflowInterrupted" }, status: "cancelled" },
+      "stopped",
+      "interrupted",
+    ],
+    [{ status: "pending" }, "running", undefined],
+    [{ status: "running" }, "running", undefined],
     // paused 的 run 确实还活着；说成 stopped 会让读者以为可以不管了。
-    ["paused", "running", undefined],
+    [{ status: "paused" }, "running", undefined],
   ];
-  for (const [from, to, stopReason] of cases) {
-    const summary = toScriptWorkflowRunSummary(row({ status: from }));
-    assert.equal(summary.status, to, `${from} 必须翻成 ${to}`);
-    assert.equal(summary.stopReason, stopReason, `${from} 的 stopReason`);
+  for (const [rowOverrides, to, stopReason] of cases) {
+    const summary = toScriptWorkflowRunSummary(row(rowOverrides));
+    assert.equal(summary.status, to, `${JSON.stringify(rowOverrides)} 必须翻成 ${to}`);
+    assert.equal(summary.stopReason, stopReason, `${JSON.stringify(rowOverrides)} 的 stopReason`);
   }
 });
 

@@ -1,7 +1,11 @@
-import type { DynamicWorkflowRunProgressPayload } from "@acode/contracts";
+import type {
+  DynamicWorkflowRunProgressPayload,
+  ScriptWorkflowRunStatus,
+  ScriptWorkflowStorePort,
+} from "@acode/contracts";
 import { WORKFLOW_RUNS_LIMITS } from "@acode/shared/acode-protocol-v4";
-import type { ScriptWorkflowStorePort } from "@acode/contracts";
 import { createScriptWorkflowProgressAdapter } from "./script-workflow-progress-adapter.js";
+import { logicalScriptWorkflowStatus } from "./script-workflow-run-status.js";
 
 /**
  * 脚本工作流 run 的**冷回放**：把历史 run 的事件重新翻译成 dwf 进度信封。
@@ -29,19 +33,23 @@ import { createScriptWorkflowProgressAdapter } from "./script-workflow-progress-
  *   - **`excludeRunIds` 跳过调用方内存里已有事件的 run**：本进程跑过 / 正在跑的 run 再喂一遍，
  *     只会让 `run-started` 把相位打回起点。
  *
- * ## 非终态行按 interrupted 合成结算
+ * ## 结算以**行**为准
  *
- * 进程死亡时正在飞的 run，它的事件表里**没有**任何终态事件，而行还停在 `running`。
- * 原样回放的话投影会永远亮着 running——卡片亮灯、Cancel 可点而后端无事可取消，
- * 正是 dwf reducer 注释里记过的那个静默失败。所以这里给非终态行补一条
- * `run-settled { status: "stopped", stopReason: "interrupted" }`（渲染成「stopped (process
- * exited)」），与 dwf 的 harness 沙箱故障归一同一笔语义。
+ * 事件流里没有终态事件时，按行的状态词铸造一条内存态结算。两种情况会走到这里：
  *
- * 这条合成**只在内存里**，绝不写回 `workflow_run` 行——回放是读路径，不该有写副作用
- * （dwf 的同款约定：「追加一条内存态合成 settle 载荷，绝不写进 journal」）。
- * 残留的边界如实记在 spec：行本身仍是 `running`，所以 `scriptWorkflowStatus` 与后台任务
- * 快照这两个**模型面**读到的仍是旧词。给脚本工作流补一套孤儿收敛（像 dwf 那样改写行）
- * 是另一件事。
+ *   - 行被孤儿收敛改写过（`script-workflow-reconcile.ts`）。收敛**只写行、不合成事件**
+ *     ——事件表的契约是「运行期真发过什么」，清扫者无权往里写。于是一条收敛成
+ *     `interrupted` 的行，事件流里永远没有终态；只看事件的话投影会停在 running：
+ *     卡片亮灯、Cancel 可点而后端无事可取消，正是 dwf reducer 注释里记过的静默失败。
+ *   - 收敛还没轮到它（或收敛失败了）而进程已经换过一世。冷回放只在冷物化时跑，此刻
+ *     本进程名下零个在飞 run，所以一条非终态行只可能是遗物——把它说成 running 是那句
+ *     永不自愈的谎言，说成 interrupted 是事实。
+ *
+ * 反过来，事件流里**已有**终态时绝不补第二条：进程可能在写完终态事件与改写行之间死掉，
+ * 那时行还是 running 而事件已经 errored，补一条会把 errored 的 run 改写成 stopped。
+ *
+ * 这条铸造**只在内存里**，回放作为读路径绝不写库（dwf 同款约定：「追加一条内存态合成
+ * settle 载荷，绝不写进 journal」）。改写行是收敛的职责，两者分工不重叠。
  */
 export interface ScriptWorkflowReplayDeps {
   logger?: {
@@ -50,9 +58,6 @@ export interface ScriptWorkflowReplayDeps {
   parentSessionId: string;
   store: ScriptWorkflowStorePort;
 }
-
-/** 非终态：进程死亡时会停在这三个词上的行。 */
-const NON_TERMINAL_STATUSES = new Set(["pending", "running", "paused"]);
 
 export async function replayScriptWorkflowRuns(
   deps: ScriptWorkflowReplayDeps,
@@ -98,7 +103,12 @@ export async function replayScriptWorkflowRuns(
 
 async function replayOneRun(
   deps: ScriptWorkflowReplayDeps,
-  row: { id: string; status: string; toolCallId?: string },
+  row: {
+    failure?: unknown;
+    id: string;
+    status: ScriptWorkflowRunStatus;
+    toolCallId?: string;
+  },
 ): Promise<DynamicWorkflowRunProgressPayload[]> {
   const captured: DynamicWorkflowRunProgressPayload[] = [];
   const adapter = createScriptWorkflowProgressAdapter({
@@ -120,14 +130,67 @@ async function replayOneRun(
   for (const event of events) {
     adapter.onEvent({ payload: event.payload, runId: row.id, type: event.type });
   }
-  // 非终态行补一条内存态结算（理由见文件头）。已经终态的行不补：它的事件流里
-  // 必有一条 workflow_completed / workflow_failed / workflow_cancelled。
-  // `workflow_interrupted` 是适配器的**合成**事件型（事件表里不存在），专供这条路径。
-  if (NON_TERMINAL_STATUSES.has(row.status) && !hasSettledEvent(events)) {
-    adapter.onEvent({ payload: {}, runId: row.id, type: "workflow_interrupted" });
+  // **结算以行为准**（dwf 的 dynamic-workflow-run-replay.ts 同一条纪律）：事件流里没有终态时，
+  // 按行的状态词铸造一条内存态结算。
+  //
+  // 为什么不能只依赖事件：孤儿收敛（script-workflow-reconcile.ts）**只改写行、不合成事件**
+  // ——事件表的契约是「运行期真发过什么」，清扫者无权往里写。于是一条被收敛成 `interrupted`
+  // 的行，它的事件流里永远没有终态事件；只看事件的话投影会停在 running，卡片亮灯、
+  // Cancel 可点而后端无事可取消。
+  //
+  // 反过来，事件流里**已有**终态时绝不补第二条：进程可能在写完终态事件与改写行之间死掉，
+  // 那时行还是 running 而事件已经 errored——补一条会把一条已经 errored 的 run 改写成 stopped。
+  if (!hasSettledEvent(events)) {
+    adapter.onEvent({
+      payload: settlePayloadForRow(row),
+      runId: row.id,
+      type: settleEventTypeForRow(row),
+    });
   }
   adapter.forgetRun(row.id);
   return captured;
+}
+
+/**
+ * 行的状态词 → 该补哪一种终态事件。
+ *
+ * 读的是**逻辑**状态（`logicalScriptWorkflowStatus`）：物理词 `cancelled` 同时承载
+ * 「用户停的」与「宿主没了」，两者要翻成不同的 dwf 终态（`stopped/user` vs
+ * `stopped/interrupted`），只看物理词就会把一次进程死亡报成用户取消。
+ *
+ * `pending` / `running` / `paused` 也归到 interrupted：冷回放只在冷物化时跑，此刻本进程名下
+ * 零个在飞 run，所以一条非终态行只可能是死进程的遗物——只是收敛还没轮到它（或收敛失败了）。
+ * 把它说成 running 是那句永不自愈的谎言，说成 interrupted 是事实。
+ */
+function settleEventTypeForRow(row: { failure?: unknown; status: ScriptWorkflowRunStatus }): string {
+  switch (logicalScriptWorkflowStatus(row)) {
+    case "completed":
+      return "workflow_completed";
+    case "failed":
+      return "workflow_failed";
+    case "cancelled":
+      return "workflow_cancelled";
+    case "interrupted":
+      return "workflow_interrupted";
+    default:
+      // 一切非终态：宿主已经换过一世，它就是遗物。
+      return "workflow_interrupted";
+  }
+}
+
+/** 结算载荷：只搬行上真有的东西，缺就不带（适配器对缺席的 message 本来就不印错误行）。 */
+function settlePayloadForRow(row: {
+  failure?: unknown;
+  status: string;
+}): Record<string, unknown> {
+  if (row.status !== "failed") return {};
+  const failure = row.failure;
+  if (typeof failure === "string") return { message: failure };
+  if (failure && typeof failure === "object" && "message" in failure) {
+    const message = (failure as { message?: unknown }).message;
+    if (typeof message === "string" && message.length > 0) return { message };
+  }
+  return {};
 }
 
 /**

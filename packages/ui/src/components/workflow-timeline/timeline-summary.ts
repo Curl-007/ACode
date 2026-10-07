@@ -2,6 +2,7 @@ import { workflowRunStepCounts, type WorkflowRunState } from "@acode/shared/acod
 import type { WorkflowCausalityGraphData } from "@/components/workflow-graph/types.js";
 import { workflowSubagentModelCardLabel } from "./subagent-model-label.js";
 import type { WorkflowTimelineModel } from "./timeline-model.js";
+import { count, projectionOnlyCardDetail } from "./card-detail.js";
 
 /**
  * 卡片表头细节与页脚摘要行的文案素材。侧栏状态头的摘要行也读这里——同一个 run 在两个面上必须说同一句话。
@@ -40,10 +41,6 @@ export function timelineRounds(model: WorkflowTimelineModel): number {
     if (station.onLoop && station.rounds > rounds) rounds = station.rounds;
   }
   return rounds;
-}
-
-function count(format: FormatMessage, one: string, many: string, value: number): string {
-  return format({ id: value === 1 ? one : many }, { count: value.toLocaleString() });
 }
 
 /**
@@ -115,7 +112,8 @@ export function workflowHeaderDetail(
 
 /**
  * 表头细节串 + 它的 tooltip，一次算完：两张卡（v4 轮尾摘要、旧宿主运行卡）必须说同一句话，
- * 所以「模型名加不加」「tooltip 里放什么」只有这一份实现。建不出时间线模型时整块缺席。
+ * 所以「模型名加不加」「tooltip 里放什么」只有这一份实现。建不出时间线模型时退回
+ * {@link projectionOnlyCardDetail}（只吃投影的计数，住在 card-detail.ts），连投影都没有才整块缺席。
  */
 export function workflowCardDetail(
   format: FormatMessage,
@@ -125,16 +123,26 @@ export function workflowCardDetail(
   /** providerId → provider 名；缺席即拼名退回裸 modelId（永远不显示 provider id）。 */
   providerName?: (providerId: string) => string | undefined,
 ): { detail: string; title?: string } | undefined {
-  if (model === undefined) {
-    return undefined;
-  }
+  if (model === undefined && run === undefined) return undefined;
   const subagentModel = workflowSubagentModelCardLabel(run?.subagentModel, {
     formatMessage: format,
     ...(providerName === undefined ? {} : { providerName }),
   });
+  const title = subagentModel === undefined ? {} : { title: subagentModel.title };
+  if (model === undefined) {
+    // 没有静态图 → 建不出时间线模型（脚本工作流永远如此；dwf 则是发起行滚出了可见窗口）。
+    // 此前整块细节缺席，于是脚本工作流的摘要卡上只剩一个状态词，连「几个阶段、几个子代理」
+    // 都说不出来——而那些数字投影里都有。补一条只吃投影的细节串，**复用同一批 i18n 键**：
+    // 同一个 run 在两张卡上必须说同一句话，而那句话的措辞只该有一份。
+    // 数字全部来自投影的计数字段，不做任何推断。
+    return {
+      detail: projectionOnlyCardDetail(format, run!, subagentModel?.name),
+      ...title,
+    };
+  }
   return {
     detail: workflowHeaderDetail(format, model, graph, run, subagentModel?.name),
-    ...(subagentModel === undefined ? {} : { title: subagentModel.title }),
+    ...title,
   };
 }
 

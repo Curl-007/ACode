@@ -515,7 +515,8 @@ journal 的 RPC，不是 `workflowRuns` 投影。补法是把宿主能力 `listD
   跳过已 `destroyed`/`writableEnded` 的流、写入走回调形式。两者缺一都不够：只挂监听器，
   同步写失败仍可能抛；只用回调，流上异步 emit 的 `'error'` 仍无接收者。
 - **R13.3 headless 下 RunWorkflow 必然被拒。** headless 从不构造 permissionBroker，core 退到
-  `createDenyPermissionBroker()`，而 `alwaysAsk` 这道 gate 在任何模式下都要过 broker（yolo 也不跳）。
+  `createDenyPermissionBroker()`，而 `alwaysAsk` 这道 gate 在非完全访问模式下都要过 broker。
+  （批次 C11 起 yolo 在服务层即放行、不再走到 broker；headless 缺省非 yolo，本条结论不变。）
   `createHeadlessPermissionBroker` 早已为 dwf 开了按名例外（CreateWorkflow / AmendWorkflow），
   但 RunWorkflow 同样带 `alwaysAsk` 却不在名单里，于是 `-p` 下必然
   `No permission client configured for RunWorkflow`——第二套系统在 headless 里根本用不了，
@@ -817,6 +818,28 @@ export async function runScriptWorkflowChild(input: {...}): Promise<ScriptWorkfl
 10. **run 目录里没有脚本 run**（清单来自 dwf journal 的 RPC，不是投影）。
     详见 R12 已知边界第 2 条。
 
+### R17 完全访问模式放行工作流 alwaysAsk（批次 C11）
+
+- **R17.1 yolo 不再为工作流族弹窗。** 用户裁决：完全访问（`yolo`）模式下
+  `CreateWorkflow` / `RunWorkflow` / `AmendWorkflow` / `SaveWorkflow` 的 `alwaysAsk`
+  确认门**放行**，不再单独弹窗。落点 `permission/service.ts` 的 `checkAlwaysAsk`：
+  在项目 deny 之后、会话 allow 之前加一条 yolo 分支，条件与 `checkPermissionByMode`
+  的 yolo 直通**逐字同档**——`planEnabled` 时不放行、策略地板
+  `disableBypassPermissionsMode` 时不放行。项目 deny 仍在本分支之前收口，压过一切放行；
+  会话 allow 规则与 owner-Amend 在其后，结论同为放行，顺序不改变结果。
+  裁决前的旧语义（ask 压过所有放行分支、yolo 也不跳）由本条取代；R13.3 关于 headless
+  的结论不受影响（headless 缺省非 yolo，仍走 broker 名单）。
+- **R17.2 真实面取证补记（批次 C11）。** 此前「桌面侧栏/确认窗/聊天卡的实际渲染」被列为
+  未观测面；本轮经 `pnpm dev:web`（server:3030 + vite:5173）+ 浏览器自动化在 **web 客户端**
+  完成了一次真实 live run（`wf_2210b80a…`，completed，2 子代理，`tool_call_id` 落库）并截图：
+  权限确认块、轮尾摘要卡、侧栏活动主体 + `ultracode` 方言徽标、run 目录行 + 徽标，
+  以及 `/` 命令目录里 `/workflow` 与 `/ultracode` 同时在场。
+- **R17.3 发行 bundle 是独立陷阱。** 桌面/web 的 agent 入口是
+  `apps/acode-cli/packages/cli/dist/acode.cjs`（`acodeAgentProcessManager.ts` 的
+  `findUpward`），**不是** tsx 源码。该 bundle 若未随源码重建，所有 CLI 侧修复对桌面/web
+  一律不生效——本轮实测 bundle 停在修复提交之前、内含会被 CHECK 拒掉的旧写法。
+  纪律：改 CLI 侧代码后必须重建该 bundle 再做真实面验证。
+
 ## 验收场景
 
 1. `RunWorkflow({script})` 提交一段合法脚本（含 `export const meta`）→ 编译/解析通过 →
@@ -986,6 +1009,16 @@ export async function runScriptWorkflowChild(input: {...}): Promise<ScriptWorkfl
     `failure_json` 带 `ScriptWorkflowInterrupted`、`time_completed` 已写，
     且库里剩余非终态行为 **0**。已实测通过。
 
+### 批次 C11（R17：完全访问放行 + 真实面取证）
+
+48. **yolo 放行 alwaysAsk**（R17.1）：`mode: "yolo"` 且能力带 `alwaysAsk` 时
+    `checkPermission` 回 `allow`（ruleId `mode.yolo.alwaysAsk`）；`build` 模式同能力回
+    `ask`；yolo 但 `planEnabled`、或地板 `disableBypassPermissionsMode` 时回 `ask`；
+    yolo + 项目 deny 回 `deny`（deny 压过一切放行）。
+49. **真实面取证**（R17.2）：web 客户端 live run 后，权限块、轮尾摘要卡、侧栏活动主体与
+    `ultracode` 徽标、run 目录行与徽标四处均有截图；`/` 命令目录含 `/workflow` 与
+    `/ultracode`。
+
 #### 真实运行验证记录（批次 C7，Windows / node 25.8.2 / dev 形态 `tsx src/main.ts`）
 
 以下都是**实际跑出来的观测**，不是推演。命令形如
@@ -1023,10 +1056,11 @@ export async function runScriptWorkflowChild(input: {...}): Promise<ScriptWorkfl
 - 两次复验都必须先重建对应包的 dist（i18n 与 core）才看得到变化——CLI 经包名导入它们的
   `dist/`，只有 `packages/cli` 自己走 tsx 源码。第一次复验忘了重建，看到的是旧行为。
 
-仍未在真实面上观测到的（不是已知缺陷，是本轮没能到达的面）：TUI 工作流卡与方言徽标的
-**实际渲染**（需要交互式 pty）、桌面侧栏/确认窗/聊天卡的**实际渲染**（需要起 Electron 并用
-GUI 自动化驱动）、`usage-updated` 与子代理 sessionId 在**投影里**的落地
-（headless 的 stderr 进度刻意不打印这两类，桌面 GUI 才有读面）。
+批次 C11 已在 **web 客户端**（与桌面共用同一份 `packages/ui` 与同一条 v4 投影）补上桌面侧
+的观测：权限块、轮尾摘要卡、侧栏活动主体 + 徽标、run 目录行 + 徽标四处截图在案（R17.2）。
+仍未观测到的：TUI 工作流卡与方言徽标的**实际渲染**（需要交互式 pty，Windows conpty 会挂）、
+桌面 Electron 壳本体的渲染（web 已覆盖同一 UI 层，Electron 壳未单独验）、`usage-updated` 与
+子代理 sessionId 在**投影里**的落地（headless 的 stderr 进度刻意不打印这两类）。
 另记一处**词表不一致**（非缺陷，但值得知道）：同一次取消在四个读面上是四个词——
 TaskOutput `<status>killed</status>`、通知 `status stopped`、通知正文 `workflow cancelled`、
 进度行 `stopped/user`。各自都有出处（BackgroundTaskInfoStatus / dwf RunStatus /

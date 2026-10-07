@@ -21,18 +21,29 @@ function fingerprint(rule, file, detail = "") {
   return createHash("sha256").update(`${rule}\0${file}\0${detail}`).digest("hex").slice(0, 16);
 }
 
+// 基线必须跨机器稳定：walk 产出的是绝对路径，若直接入指纹，基线就只认生成它的那台
+// 机器（CI 的 /home/runner/… 永远对不上本地的 C:/…，baseline 恒为 0、全量判 new，
+// 2026-10-07 release/0.0.4 的 CI verify 即死于此）。这里把绝对路径折成相对进程 cwd
+// （checkArchitecture 的 cwd 即仓库根）的形式；折不出去（跨盘/外部路径）时原样保留。
+function repoRelative(file) {
+  if (!path.isAbsolute(file)) return file;
+  const rel = path.relative(process.cwd(), file);
+  return rel.startsWith("..") ? file : rel;
+}
+
 // legacy ratchet 的豁免面：测试/评测文件不参与「超限文件只减不增」基线，
 // 避免门禁阻碍补测试（长测试文件是常态，且测试不是生产代码债）。
 const RATCHET_EXEMPT_PATTERN = /(?:\.test\.[cm]?[jt]sx?$)|(?:^|\/)(?:tests?|__tests__|evals)(?:\/|$)/;
 
 function violation({ rule, file, detail, message, module, global = false }) {
+  const relative = posix(repoRelative(file));
   return {
     rule,
-    file: posix(file),
+    file: relative,
     module: module?.id ?? null,
     detail,
     message,
-    fingerprint: fingerprint(rule, posix(file), detail),
+    fingerprint: fingerprint(rule, relative, detail),
     global,
   };
 }

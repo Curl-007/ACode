@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 
 /**
  * eval runner v1 验收测试（specs/prompt-eval-runner.md 验收场景 1-5）：
@@ -28,7 +29,8 @@ const { loadScenarios } = await import("../evals/judge.mjs");
 
 const EVALS_DIR = new URL("../evals/", import.meta.url);
 const RECIPES_DIR = new URL("../evals/recipes/", import.meta.url);
-const CLI_ROOT_PATH = join(new URL("..", import.meta.url).pathname.replace(/^\//, ""), "");
+// pathname 手切首斜杠是 Windows 假设（POSIX 上丢开头的 "/"），用 fileURLToPath 两平台都正确。
+const CLI_ROOT_PATH = fileURLToPath(new URL("..", import.meta.url));
 
 // 合成 NDJSON：覆盖全部保留事件 + 须丢弃的噪声 + 乱行 + 超长工具输出 + 空 assistant 消息。
 const LONG_OUTPUT = "x".repeat(4000);

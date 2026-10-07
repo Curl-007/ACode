@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 /**
  * 内置技能包新增（research-report / code-review）验收测试。
@@ -161,7 +162,9 @@ test("(场景4/R4) 技能文件正文无 CJK", async () => {
 });
 
 test("(场景5/R3) 发现链路冒烟：bundled skills 目录扫出全部内置技能", async () => {
-  const rootPath = SKILLS_ROOT.pathname.replace(/^\//, "");
+  // URL.pathname 在 Windows 是 "/C:/…"、在 POSIX 是 "/home/…"，手切首斜杠只在 Windows 对；
+  // CI（ubuntu）曾因此扫出空集合（release/0.0.4 门禁实测）。fileURLToPath 两平台都正确。
+  const rootPath = fileURLToPath(SKILLS_ROOT);
   const files = await scanSkillFilesUnderRoot(join(rootPath));
   const names = files.map((file) => file.split(/[\\/]/).at(-2)).sort();
   // 批次二两个技能 + 批次三 verify/run（specs/bundled-verify-run-skills.md 验收场景 6）

@@ -3,6 +3,7 @@ import { access } from "node:fs/promises";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 /**
  * W8 验收测试：提示词行为回归 eval 脚手架 v0。
@@ -76,7 +77,9 @@ test("(场景1/R2,R6) 语料 schema：12 场景、覆盖表齐全、specRefs 指
     assert.ok(scenario.passThreshold > 0 && scenario.passThreshold <= 1, scenario.id);
     for (const ref of scenario.specRefs) {
       const refPath = ref.split("#")[0];
-      await access(join(REPO_ROOT.pathname.replace(/^\//, ""), refPath));
+      // 同 bundled-research-review-skills：pathname 手切首斜杠是 Windows 假设，POSIX 上
+      // 会丢开头的 "/"（CI 实测 ENOENT 'home/runner/…'）。用 fileURLToPath。
+      await access(join(fileURLToPath(REPO_ROOT), refPath));
     }
     // rubric criterion 禁条件式措辞（R2）：不以 if/when 开头的假设句形态粗查
     for (const item of scenario.rubric) {
@@ -213,7 +216,7 @@ test("(场景6/红线) evals 无 ACODE_ env；产品运行时源码不引用 eva
     hits = execFileSync(
       "grep",
       ["-rl", "--include=*.ts", "evals/", "packages"],
-      { cwd: new URL("..", import.meta.url).pathname.replace(/^\//, ""), encoding: "utf8" },
+      { cwd: fileURLToPath(new URL("..", import.meta.url)), encoding: "utf8" },
     );
   } catch {
     hits = ""; // grep 无命中时退出码 1

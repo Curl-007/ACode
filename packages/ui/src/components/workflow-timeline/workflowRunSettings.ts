@@ -51,9 +51,17 @@ export type WorkflowRunSettingsChange = Omit<AmendWorkflowRunSettingsPayload, "w
  * pending / running 能（节流或换模型的主场景）；stopped 能，除非是被一次修订替代掉的（活的是它的
  * 后继）；errored 能（换个模型重试是最常见的修复）；completed 不能（每个 ask 都会从缓存重放，没有
  * 东西会在新设置下跑）；不在投影里的 run 没有设置可显示。宿主回调与灰度门由调用方另叠。
+ *
+ * **方言门在本谓词里，不在调用方**：脚本工作流（`dialect === "script"`）的 run 恒不可配置。
+ * Apply 走的是 `amendWorkflowRunSettings`，那是 dwf 专属命令，打到 `wf_` 前缀的 run 上必然被拒
+ * ——两套各有自己的存储、端口与 run 语义，dwf 的 run service 根本没有这条 run。
+ * 放在这里而不是各个调用方，是因为已经有过一个调用方（会话里的轮尾摘要卡）漏叠这道门：
+ * 按钮亮着、点了报错，而那比不显示更坏——它读起来像「这里能配置」。谓词是唯一所有者，
+ * 新增读面就不会再漏。`dialect` 缺席即 dwf（schema 记明的约定）。
  */
 export function isWorkflowRunConfigurable(run: WorkflowRunState | undefined): boolean {
   if (run === undefined) return false;
+  if (run.dialect === "script") return false;
   switch (run.status) {
     case "pending":
     case "running":

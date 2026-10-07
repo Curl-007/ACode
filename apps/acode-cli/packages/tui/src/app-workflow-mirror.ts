@@ -119,6 +119,12 @@ export function workflowRunStepCounts(run: WorkflowRunState): {
 export type TuiWorkflowCard = {
   runId: string;
   status: WorkflowRunState["status"];
+  /**
+   * 跑这条 run 的是哪套工作流系统。缺席即 dwf（schema 记明的约定）。
+   * 卡片据此挂一枚徽标：两套 run 现在共用同一个投影与同一张卡，不标出来用户既无从分辨，
+   * 也无从理解为什么 `/dwf resume` 对这条 run 不管用。
+   */
+  dialect?: WorkflowRunState["dialect"];
   /** `stopped` 的原因；reducer 从 run-settled 载荷搬运。 */
   stopReason?: WorkflowRunState["stopReason"];
   nodesSettled: number;
@@ -156,6 +162,7 @@ function cardFromRun(run: WorkflowRunState, mirror: TuiWorkflowMirror): TuiWorkf
   return {
     runId: run.runId,
     status: run.status,
+    ...(run.dialect === undefined ? {} : { dialect: run.dialect }),
     ...(run.stopReason === undefined ? {} : { stopReason: run.stopReason }),
     nodesSettled,
     nodesTotal,

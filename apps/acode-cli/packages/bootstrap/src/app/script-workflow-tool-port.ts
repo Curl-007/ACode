@@ -39,7 +39,20 @@ interface ScriptWorkflowToolPortDeps {
 export function createScriptWorkflowToolPort(deps: ScriptWorkflowToolPortDeps): WorkflowPort {
   const completionSnapshots = new Map<string, Promise<WorkflowTaskSnapshot | undefined>>();
   const launchSnapshots = new Map<string, WorkflowTaskSnapshot>();
+  /**
+   * 在飞 run 的中止句柄。`start` 刻意让 run 脱离发起它的 turn（见下面的注释），
+   * 于是这张表是**唯一**能碰到那个 run 的通道——`cancel` 读它，run 结算时清它。
+   */
+  const runAbortControllers = new Map<string, AbortController>();
   return {
+    async cancel(taskId): Promise<boolean> {
+      const controller = runAbortControllers.get(taskId);
+      if (controller === undefined) return false;
+      controller.abort();
+      // 不在这里删表项：run 结算路径的 finally 会删。删两次无害，但让「谁负责清理」
+      // 只有一个答案比省一次 Map.delete 更重要。
+      return true;
+    },
     async getTask(taskId): Promise<WorkflowTaskSnapshot | undefined> {
       return (await getWorkflowTaskSnapshot(deps, taskId)) ?? launchSnapshots.get(taskId);
     },
@@ -62,6 +75,16 @@ export function createScriptWorkflowToolPort(deps: ScriptWorkflowToolPortDeps): 
       if (!WORKFLOW_RUN_ID_PATTERN.test(runId)) {
         throw new Error(`Invalid workflow run id: ${runId}`);
       }
+      // resume 前的并发守卫。同一个 runId 上一次的 run 还没结算就再起一份，两份 agent 会写
+      // 同一批 activity 行、抢同一组缓存键，于是 resume 赖以成立的「(prompt, opts) 未变即命中」
+      // 不再可信——命中的可能是另一份 run 刚写下的结果。fail-loud 而不是排队或静默接管：
+      // 只有调用方能决定是等还是停。
+      // 判据复用 completionSnapshots（run promise 未结算即在飞），不另立第二份运行态。
+      if (completionSnapshots.has(runId)) {
+        throw new Error(
+          `Workflow run ${runId} has not exited yet. Stop it with TaskStop, or wait for it to finish, before resuming — two live copies would write the same journal and corrupt the resume cache.`,
+        );
+      }
       const startedAt = new Date();
       launchSnapshots.set(runId, {
         description: source.name ?? runId,
@@ -74,7 +97,10 @@ export function createScriptWorkflowToolPort(deps: ScriptWorkflowToolPortDeps): 
 
       const runtime = deps.getRuntime();
       // 后台 workflow 已脱离当前 tool call；父 turn 取消不应中止已返回 runId 的任务。
+      // 代价是必须有另一条中止通道，否则没有任何东西能停掉它——那条通道就是 cancel()
+      // 与下面这张表。
       const runAbortController = new AbortController();
+      runAbortControllers.set(runId, runAbortController);
       const runPromise = source.scriptPath
         ? runtime.run(
             {
@@ -82,6 +108,11 @@ export function createScriptWorkflowToolPort(deps: ScriptWorkflowToolPortDeps): 
               resumeFromRunId: request.resumeFromRunId,
               runId,
               scriptPath: source.scriptPath,
+              // 投影靠它把 run 卡联接到聊天里发起它的那一行。缺席只是少一个联接，
+              // run 照跑、进度照进投影。
+              ...(request.parentToolCallId === undefined
+                ? {}
+                : { toolCallId: String(request.parentToolCallId) }),
             },
             { abortSignal: runAbortController.signal },
           )
@@ -127,6 +158,7 @@ export function createScriptWorkflowToolPort(deps: ScriptWorkflowToolPortDeps): 
         runId,
         completion.finally(() => {
           completionSnapshots.delete(runId);
+          runAbortControllers.delete(runId);
         }),
       );
       void completion;
@@ -134,7 +166,7 @@ export function createScriptWorkflowToolPort(deps: ScriptWorkflowToolPortDeps): 
       return {
         backgroundTaskId: runId,
         name: source.name,
-        response: `Workflow started as ${runId}. Use /workflows ${runId} to watch progress.`,
+        response: runWorkflowLaunchResponse(runId, source.scriptPath),
         runId,
         scriptPath: source.scriptPath,
         status: "backgrounded",
@@ -142,6 +174,30 @@ export function createScriptWorkflowToolPort(deps: ScriptWorkflowToolPortDeps): 
       };
     },
   };
+}
+
+/**
+ * 启动成功回给模型的那句话。
+ *
+ * 它必须只点名**真实存在**的通道：原文写的是 "Use /workflows <runId> to watch progress"，
+ * 而 ACode 没有 `/workflows` 命令（dwf 那边是 `/dwf list`，且它列的是 dwf 的 run，
+ * 前缀 dwfrun_ 而不是 wf_）。让模型去用一个不存在的命令，它会要么编一个、要么反复重试，
+ * 两种都比直说「等通知」更贵。
+ *
+ * 三条通道都是接好的：完成通知走 backgroundSource:"workflow"，TaskOutput 走端口的
+ * getTask/waitForTask，TaskStop 走新加的 cancel()。
+ */
+function runWorkflowLaunchResponse(runId: string, scriptPath: string | undefined): string {
+  const lines = [
+    `Workflow started in the background as ${runId}. It is still running — you will be notified with the final result when it completes, so do not poll it.`,
+    `To block until it finishes use TaskOutput with taskId ${runId}; to stop it use TaskStop with the same id.`,
+  ];
+  if (scriptPath !== undefined) {
+    lines.push(
+      `The script was saved to ${scriptPath}. To iterate, edit that file and call RunWorkflow again with the same \`scriptPath\` instead of resending the whole script.`,
+    );
+  }
+  return lines.join(" ");
 }
 
 function waitForWorkflowTaskCompletion(

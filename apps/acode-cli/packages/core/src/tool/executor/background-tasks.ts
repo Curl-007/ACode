@@ -606,10 +606,15 @@ export class BackgroundTaskTracker {
     snapshot: BackgroundTaskSnapshot | undefined,
     output?: Record<string, unknown>,
   ): string | undefined {
-    // workflow run 复用 legacy Workflow 的通知格式（复用 formatWorkflowTaskNotification）。
-    // legacy "Workflow" 保持独立并列：它没有 dwf 的产物/reports 语义，只在共享格式器里
-    // 走自己的 output.response 回退分支。
-    if (toolCall.name === "Workflow" || isDynamicWorkflowRunDispatchToolName(toolCall.name)) {
+    // 脚本工作流（RunWorkflow）与 dwf run 复用同一个通知格式器。
+    // RunWorkflow 保持独立并列：它没有 dwf 的产物/reports 语义，只在共享格式器里
+    // 走自己的 output.response 回退分支。死名 "Workflow" 一并保留，理由与
+    // background-task-registry.ts 的同款分支一致（从历史重建的 toolCall 也会走到这里）。
+    if (
+      toolCall.name === "RunWorkflow" ||
+      toolCall.name === "Workflow" ||
+      isDynamicWorkflowRunDispatchToolName(toolCall.name)
+    ) {
       return this.formatWorkflowTaskNotification(toolCall, taskId, status, snapshot, output);
     }
     if (toolCall.name !== "Bash") return undefined;
@@ -778,16 +783,19 @@ export class BackgroundTaskTracker {
       };
     }
 
-    if (toolCall.name === "Workflow") {
-      // legacy Workflow：只有快照与等待，没有取消——停止入口从未接过（保持泛化前的 false）。
-      const getTask = deps.workflowPort?.getTask;
-      const waiter = getWorkflowTaskWaiter(deps.workflowPort);
+    if (toolCall.name === "RunWorkflow" || toolCall.name === "Workflow") {
+      // 脚本工作流：快照与等待来自 WorkflowPort。取消能力**按端口实况**报，不写死——
+      // 端口没有 cancel 时 cancellable 必须是 false，否则 TaskStop 会答应一件做不到的事。
+      // （契约里「resume 前先 TaskStop」这句话成立的前提就是端口实现了 cancel。）
+      const port = deps.workflowPort;
+      const getTask = port?.getTask;
+      const waiter = getWorkflowTaskWaiter(port);
       return {
-        ...(getTask
-          ? { getSnapshot: (taskId: string) => getTask.call(deps.workflowPort, taskId) }
+        ...(getTask && port
+          ? { getSnapshot: (taskId: string) => getTask.call(port, taskId) }
           : {}),
         ...(waiter ? { waitForTerminal: (taskId: string) => waiter.waitForTask(taskId) } : {}),
-        cancellable: false,
+        cancellable: typeof port?.cancel === "function",
       };
     }
 

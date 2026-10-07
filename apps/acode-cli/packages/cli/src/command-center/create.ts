@@ -253,11 +253,13 @@ export function createCommandCenter(deps: CommandCenterDeps): TuiSubmitPrompt {
         return attachCurrentSessionMetadata(await app.submitPrompt(prompt, options), deps, app);
       }
 
-      if (command.name === "workflow") {
+      // `/workflow`（dwf → CreateWorkflow）与 `/ultracode`（脚本工作流 → RunWorkflow）
+      // 在 CLI 侧完全同形：都是把原文交给 app.submitPrompt，由 bootstrap 的 builtin resolver
+      // 展开成「先加载对应技能，再写脚本调对应工具」的提示词。两者的差别全在展开出的正文里，
+      // 所以这里合成一支；分开写只会得到两份必须同步维护的同样代码。
+      if (command.name === "workflow" || command.name === "ultracode") {
         const app = await deps.getApp();
-        const prompt = command.args ? `/workflow ${command.args}` : "/workflow";
-        // 与 /init 同款：原文交给 app.submitPrompt，由 bootstrap 的 builtin resolver 展开成
-        // 「先加载 dynamic-workflows 技能，再写脚本调 CreateWorkflow」的提示词。
+        const prompt = command.args ? `/${command.name} ${command.args}` : `/${command.name}`;
         return attachCurrentSessionMetadata(await app.submitPrompt(prompt, options), deps, app);
       }
 

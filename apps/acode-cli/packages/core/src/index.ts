@@ -25,6 +25,15 @@ export type {
 export { createToolRegistry, ToolRegistry, ToolRegistryImpl } from "./tool/registry.js";
 export { createToolExecutor, ToolExecutor, ToolExecutorImpl } from "./tool/executor.js";
 export { builtInTools, registerBuiltInTools } from "./tool/handlers/index.js";
+// 闲时派发轮 / cron automation 轮要隐藏的工具名单。**导出是为了消掉跨包的同值副本**：
+// core 的 turn-loop-state 是唯一所有者，而 bootstrap 的 v4 prompt-turn 与 legacy
+// server-operations 各自手抄了一份——加一个工具就得同时改三处（RunWorkflow 落地时正是如此），
+// 漏一处就等于在派发轮里放行一个能在本轮 modelExecution 之外重启子 Agent 的入口。
+// 两个 bootstrap 消费方都改为 import 这里的导出。
+export {
+  AUTOMATION_MUTATION_TOOL_NAMES,
+  OFF_PEAK_MUTATION_TOOL_NAMES,
+} from "./runtime/methods/turn-loop-state.js";
 // Open 工具的平台端口类型：宿主（bootstrap 的 CLI native opener / desktop host 下发链）
 // 实现此接口注入，缺席则工具不注册（K9 R2 port 门控）。
 export type { OpenPlatformPort } from "./tool/handlers/open.js";

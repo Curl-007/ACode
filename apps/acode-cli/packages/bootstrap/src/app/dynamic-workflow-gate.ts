@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import type { SkillRoot } from "@acode/contracts";
+import { RUN_WORKFLOW_SKILL_NAME, type SkillRoot } from "@acode/contracts";
 import { DYNAMIC_WORKFLOW_SKILL_NAME } from "./bundled-skills.js";
 
 /**
@@ -9,6 +9,20 @@ import { DYNAMIC_WORKFLOW_SKILL_NAME } from "./bundled-skills.js";
  */
 
 const SKILL_MANIFEST_FILE_NAME = "SKILL.md";
+
+/**
+ * 受同一道可用性开关管辖的两份编写契约：dwf 的 `dynamic-workflows`（CreateWorkflow 家族）
+ * 与脚本工作流的 `script-workflows`（RunWorkflow）。
+ *
+ * 为什么是同一个开关：core 的 GATED_WORKFLOW_TOOL_NAMES 把 dwf 十个工具与 RunWorkflow 一起
+ * 下架，技能面必须跟着同一结论走。少剔一份的后果不是「多一段没用的文档」——那两份技能都写着
+ * 「未加载就拒绝接受脚本」，留着一份指向已下架工具的编写契约，只会让模型加载它、然后对着一个
+ * 不存在的工具反复重试。
+ */
+const GATED_WORKFLOW_SKILL_NAMES: readonly string[] = [
+  DYNAMIC_WORKFLOW_SKILL_NAME,
+  RUN_WORKFLOW_SKILL_NAME,
+];
 
 /**
  * 动态工作流关闭时要从技能发现中剔除的 SKILL.md 绝对路径。
@@ -21,7 +35,9 @@ const SKILL_MANIFEST_FILE_NAME = "SKILL.md";
 export function collectDynamicWorkflowDisabledSkillPaths(
   bundledSkillRoots: readonly SkillRoot[],
 ): string[] {
-  return bundledSkillRoots.map((root) =>
-    join(root.path, DYNAMIC_WORKFLOW_SKILL_NAME, SKILL_MANIFEST_FILE_NAME),
+  return bundledSkillRoots.flatMap((root) =>
+    GATED_WORKFLOW_SKILL_NAMES.map((skillName) =>
+      join(root.path, skillName, SKILL_MANIFEST_FILE_NAME),
+    ),
   );
 }

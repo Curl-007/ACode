@@ -323,8 +323,9 @@ Slash Commands:
         actors: "actors:",
         actorRow: ({ name, status }) => `${name} - ${status}`,
         usage: ({ spentTokens }) => `usage: ${spentTokens} tokens`,
-        collapsed: ({ label, status, nodesSettled, nodesTotal }) =>
-          `Workflow ${label} - ${status} (${nodesSettled}/${nodesTotal} steps)`,
+        collapsed: ({ dialect, label, status, nodesSettled, nodesTotal }) =>
+          `Workflow ${label}${dialect === undefined ? "" : ` [${dialect}]`} - ${status} (${nodesSettled}/${nodesTotal} steps)`,
+        dialectScript: "ultracode",
         error: (message) => `error: ${message}`,
         expandHint: "+ to expand",
         collapseHint: "- to collapse",

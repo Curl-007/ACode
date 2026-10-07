@@ -1,8 +1,9 @@
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
+import { writeChildEntryFile, type HarnessWarning } from "@acode/dynamic-workflow-runtime";
 import type { WorkflowScriptDocument } from "./script-workflow-meta.js";
-import { SCRIPT_WORKFLOW_CHILD_SOURCE } from "./script-workflow-child-source.js";
+import { renderScriptWorkflowChildEntry } from "./script-workflow-child-source.js";
 
 const WORKFLOW_CHILD_STDERR_LIMIT = 64 * 1024;
 
@@ -28,26 +29,34 @@ export async function runScriptWorkflowChild(input: {
   document: WorkflowScriptDocument;
   handleEvent(event: ScriptWorkflowChildEvent): Promise<void> | void;
   handleRequest(request: ScriptWorkflowChildRequest): Promise<unknown>;
+  /** 入口文件写不进项目目录、回落到临时目录时的非致命告知。 */
+  onEntryFileWarning?(warning: HarnessWarning): void;
+  /** 入口文件名即 `<runId>.mjs`；与 dwf 共用目录而靠前缀（wf_ vs dwfrun_）不冲突。 */
+  runId: string;
   signal?: AbortSignal;
   workingDirectory: string;
 }): Promise<ScriptWorkflowChildRunResult> {
-  const payload = Buffer.from(
-    JSON.stringify({
-      args: input.args,
-      budgetTotal: input.budgetTotal,
+  // 入口文件落盘，不再经 argv。契约允许 512KB 脚本（WORKFLOW_SCRIPT_MAX_LENGTH），而 Windows
+  // 命令行上限是 32767 字符——旧写法把 base64url 后的 payload 塞进 argv，脚本超过约 24KB
+  // 就必然 spawn 失败，且失败信息是操作系统的而不是「脚本太大」。
+  // 复用 dwf 的 writeChildEntryFile 而不是自己写一份：`.acode/workflow-runs/` 的落点、
+  // 目录内 .gitignore、临时目录回落与失败语义因此只有一个所有者（它用的同步 fs 也是既有的，
+  // 一次 run 启动只写一个小文件；再写一份异步实现等于给同一目录开第二条写入路径）。
+  const entry = writeChildEntryFile({
+    cwd: input.workingDirectory,
+    onWarning: input.onEntryFileWarning,
+    runId: input.runId,
+    source: renderScriptWorkflowChildEntry({
+      ...(input.args === undefined ? {} : { args: input.args }),
+      ...(input.budgetTotal === undefined ? {} : { budgetTotal: input.budgetTotal }),
       scriptBody: input.document.body,
       scriptUrl: pathToFileURL(input.document.path).href,
     }),
-    "utf8",
-  ).toString("base64url");
-  const child = spawn(
-    process.execPath,
-    ["--input-type=module", "--eval", SCRIPT_WORKFLOW_CHILD_SOURCE, "--", payload],
-    {
-      cwd: input.workingDirectory,
-      stdio: ["pipe", "pipe", "pipe"],
-    },
-  );
+  });
+  const child = spawn(process.execPath, [entry.path], {
+    cwd: input.workingDirectory,
+    stdio: ["pipe", "pipe", "pipe"],
+  });
 
   let stderr = "";
   let completed:

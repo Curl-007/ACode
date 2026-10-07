@@ -102,6 +102,7 @@ import { getWorkflowConcurrencyGovernor } from "./workflow-concurrency-governor.
 import { createDynamicWorkflowSnippetService } from "./dynamic-workflow-snippet-service.js";
 import { createModelCatalogPort } from "./model-catalog-port.js";
 import { createDynamicWorkflowRunProgressSink } from "./dynamic-workflow-run-progress-sink.js";
+import { createScriptWorkflowProgressAdapter } from "./script-workflow-progress-adapter.js";
 import { createScriptWorkflowAgentRuntime } from "./script-workflow-child-runtime.js";
 import { workflowActorModelPolicy } from "./workflow-actor-model.js";
 import { workflowActorToolPolicy } from "./workflow-actor-tools.js";
@@ -650,6 +651,15 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
     // runtime 与 expert workflow facade 都**共享**父会话这一份 factory——Registry 视图更新后
     // 新建的 Model 才看得到，child 不各自冻结一份。
     const modelFactory = providerModelRuntime.modelFactory;
+    // dwf 进度汇**只造一份**，dwf run service 与脚本工作流的投影适配器共用它。
+    // 两份的话就有两条 append 路径，而身份闸门 / runtime 未就绪 / append 失败这三条降级
+    // 语义（连同它们的单测）都住在这个汇里——复制一份等于让其中一份的降级悄悄漂移。
+    const workflowRunProgressSink = createDynamicWorkflowRunProgressSink({
+      // 惰性：run service 与脚本工作流桥都在 runtime 构造之前建好（它们是 AgentRuntime 的依赖）。
+      getRuntime,
+      logger,
+      sessionId,
+    });
     const scriptWorkflowFacade = createScriptWorkflowBridge({
       appOptions: options,
       appVersion,
@@ -664,6 +674,9 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
       modelFactory,
       permissionService,
       prepareUserExecutionBoundary,
+      // 脚本工作流的 run 也进 dwf 的 workflowRuns 投影（事件经适配器翻译），于是时间线卡、
+      // 状态面板、run 目录与详情侧栏整套复用。边界与映射表见适配器文件头。
+      progressAdapter: createScriptWorkflowProgressAdapter({ emit: workflowRunProgressSink }),
       getRuntime,
       runtimeConfig,
       sessionId,
@@ -776,12 +789,7 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
             //
             // 身份闸门、runtime 未就绪与 append 失败三条降级路径都在这个汇里（连同它们的单测），
             // 见 dynamic-workflow-run-progress-sink.ts 的文件头。
-            onRunEvent: createDynamicWorkflowRunProgressSink({
-              // 惰性：run service 在 runtime 构造之前就建好了（它是 AgentRuntime 的依赖之一）。
-              getRuntime,
-              logger,
-              sessionId,
-            }),
+            onRunEvent: workflowRunProgressSink,
             // 孤儿收敛的作用域：本 app 的会话。构造时把**这个会话**留在 journal 里的非终态
             // run（死进程的遗物）收敛成 failed；兄弟会话的在飞 run 因此绝不会被误伤。
             parentSessionId: sessionId,

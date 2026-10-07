@@ -13,9 +13,15 @@ import { logger } from "@/logger.js";
 //   - 不带 forceRefresh。Host 用同一份 1h 快照推导发给 CLI 的工具策略，
 //     renderer 单独 force 一次会让「界面有入口 / 模型没工具」这类分歧成为可能；
 //     要强制重取走 refresh()；
-//   - 请求失败按 disabled 处理（fail-closed，与 resolveDynamicWorkflowClientConfig 同一裁决），
-//     但**不记住失败**：换一份 service 实例会重试。手机 `/remote` 在工作区桥接前拿到的是
-//     unsupported 代理，必然抛错，桥接完成后 accessor 会换一份，那一次必须能纠正回来。
+//   - service **抛异常**时按不可用处理，但**不记住失败**：换一份 service 实例会重试。
+//     手机 `/remote` 在工作区桥接前拿到的是 unsupported 代理，必然抛错，桥接完成后 accessor
+//     会换一份，那一次必须能纠正回来。
+//     注意这条**不是**灰度的缺省档位，也不要与 resolveDynamicWorkflowClientConfig 混为一谈：
+//     那边「远端没说 / 说了非法值 / 请求失败」落的是 DEFAULT_DYNAMIC_WORKFLOW_MODE（当前
+//     alwaysOn，fail-open），并且 provider 自己就把网络失败收敛成 default 快照、从不抛到这里。
+//     所以本 store 的 catch 只可能被装配级异常触发（如上面的 unsupported 代理），
+//     它是 renderer 的防御姿态，不是灰度语义。档位事实的唯一所有者在 shared，见
+//     packages/shared/specs/dynamic-workflow-availability.md R2/R3。
 
 export type DynamicWorkflowAvailabilityStatus = "loading" | "ready";
 

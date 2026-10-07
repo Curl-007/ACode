@@ -434,6 +434,9 @@ function runtimeTaskTypeFromBackgroundInfo(
     case "Agent":
       return "local_agent";
     case "Workflow":
+    // "Workflow" 是 RunWorkflow 落地前的名字，条目已移出 builtInTools，但旧会话的 rollout
+    // 里仍有这个名字的后台任务记录——保留这一支是为了让历史记录还能投影出正确的任务类型。
+    case "RunWorkflow":
       return "local_workflow";
     case "CreateWorkflow":
     case "AmendWorkflow":
@@ -450,7 +453,9 @@ function toolNameFromRuntimeTaskType(type: RuntimeTaskType): string {
     case "local_bash":
       return "Bash";
     case "local_workflow":
-      return "Workflow";
+      // 反向投影用**活名**：这是展示标签，指向一个已经不存在的工具名只会误导读者。
+      // 正向那一支保留 "Workflow" 是为了读旧 rollout，两个方向的取舍刻意不同。
+      return "RunWorkflow";
     case "local_dynamic_workflow":
       return "CreateWorkflow";
     case "monitor_mcp":

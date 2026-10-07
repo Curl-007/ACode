@@ -164,12 +164,16 @@ test("(场景5/R3) 发现链路冒烟：bundled skills 目录扫出全部内置�
   const rootPath = SKILLS_ROOT.pathname.replace(/^\//, "");
   const files = await scanSkillFilesUnderRoot(join(rootPath));
   const names = files.map((file) => file.split(/[\\/]/).at(-2)).sort();
-  // 批次二两个技能 + 批次三 verify/run（specs/bundled-verify-run-skills.md 验收场景 6）：
+  // 批次二两个技能 + 批次三 verify/run（specs/bundled-verify-run-skills.md 验收场景 6）
+  // + 脚本工作流的 script-workflows（specs/script-workflow-revival.md R8）。
+  // 这条断言的价值正在「新技能必须被显式登记进期望集合」：技能包靠目录扫描发现，
+  // 一个没人预期到的目录悄悄出现（或该出现的没出现）都不会有别的地方报错。
   assert.deepEqual(names, [
     "code-review",
     "dynamic-workflows",
     "research-report",
     "run",
+    "script-workflows",
     "verify",
   ]);
 });

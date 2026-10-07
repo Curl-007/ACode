@@ -1,6 +1,10 @@
 import { join } from "node:path";
 import { parseOvernightDuration } from "@acode/core";
 import {
+  BUILTIN_ULTRACODE_COMMAND_NAME,
+  expandBuiltinUltracodeCommandPrompt,
+} from "./builtin-ultracode-command.js";
+import {
   BUILTIN_WORKFLOW_COMMAND_NAME,
   expandBuiltinWorkflowCommandPrompt,
 } from "./builtin-workflow-command.js";
@@ -50,10 +54,10 @@ export function resolveACodeBuiltinHostCommand(input: string): ACodeBuiltinHostC
 
 interface ResolveACodeBuiltinPromptCommandOptions {
   /**
-   * 动态工作流开关：只有显式 false 才禁止展开 `/workflow`。
+   * 动态工作流开关：只有显式 false 才禁止展开 `/workflow` 与 `/ultracode`。
    * TUI 使用默认开启策略；headless 按本次 `--enable-workflow` 显式传入 true/false，默认 false。
-   * 关闭时返回 undefined；`workflow` 是保留名，自定义命令解析也不会展开它，原文作为普通 prompt
-   * 交给模型。这与命令目录隐藏该入口的规则一致。
+   * 关闭时返回 undefined；两个命令名都是保留名，自定义命令解析也不会展开它们，原文作为普通
+   * prompt 交给模型。这与命令目录隐藏这两个入口的规则一致。
    */
   dynamicWorkflowEnabled?: boolean;
   workingDirectory?: string;
@@ -77,11 +81,19 @@ export function resolveACodeBuiltinPromptCommand(
     });
   }
 
-  if (invocation.name === BUILTIN_WORKFLOW_COMMAND_NAME) {
+  // `/workflow` 与 `/ultracode` 是两套工作流系统各自的入口，但受**同一道**可用性开关约束
+  // （理由见 core/src/tool/handlers/workflow-tool-names.ts：工具面也是一起下架的，
+  // 命令面与工具面必须同结论，否则会出现"命令能展开、工具不存在"）。
+  if (
+    invocation.name === BUILTIN_WORKFLOW_COMMAND_NAME ||
+    invocation.name === BUILTIN_ULTRACODE_COMMAND_NAME
+  ) {
     if (options.dynamicWorkflowEnabled === false) {
       return undefined;
     }
-    return expandBuiltinWorkflowCommandPrompt(invocation.args);
+    return invocation.name === BUILTIN_WORKFLOW_COMMAND_NAME
+      ? expandBuiltinWorkflowCommandPrompt(invocation.args)
+      : expandBuiltinUltracodeCommandPrompt(invocation.args);
   }
 
   return undefined;

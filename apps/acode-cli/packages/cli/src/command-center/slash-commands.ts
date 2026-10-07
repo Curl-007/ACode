@@ -109,6 +109,18 @@ export function parseSlashCommand(input: string): SlashCommand | null {
     };
   }
 
+  // `/ultracode` 与 `/workflow` 完全同形（同为 bootstrap 展开的内置 prompt 命令、同受动态工作流
+  // 开关约束），只是展开成正文不同的另一套系统入口。刻意写成独立分支而不是与上面合并：
+  // 两者的 `name` 字面量不同，合并要靠 rawName 反推联合成员，反而把类型收窄这件事藏起来。
+  if (rawName === "ultracode") {
+    return {
+      args,
+      name: "ultracode",
+      rawName,
+      type: "known",
+    };
+  }
+
   if (rawName === "login") {
     return {
       args,

@@ -3,16 +3,7 @@
 // ============================================================
 
 import {
-  AMEND_WORKFLOW_TOOL_NAME,
-  CREATE_WORKFLOW_TOOL_NAME,
-  EVAL_WORKFLOW_SNIPPET_TOOL_NAME,
-  GET_WORKFLOW_RUN_TOOL_NAME,
-  LIST_MODELS_TOOL_NAME,
-  LIST_SAVED_WORKFLOWS_TOOL_NAME,
-  LIST_WORKFLOW_RUNS_TOOL_NAME,
-  RESOLVE_WORKFLOW_QUESTION_TOOL_NAME,
-  RESUME_WORKFLOW_RUN_TOOL_NAME,
-  SAVE_WORKFLOW_TOOL_NAME,
+  RUN_WORKFLOW_TOOL_NAME,
   SUBMIT_RESULT_TOOL_NAME,
   type JsonSchema,
 } from "@acode/contracts";
@@ -68,6 +59,10 @@ import { evalWorkflowSnippetToolEntry } from "./eval-workflow-snippet.js";
 import { listWorkflowRunsToolEntry } from "./list-workflow-runs.js";
 import { getWorkflowRunToolEntry } from "./get-workflow-run.js";
 import { resumeWorkflowRunToolEntry } from "./resume-workflow-run.js";
+// 脚本工作流（纯 JS DSL）的入口，与上面 dwf 那十个是两套独立系统；
+// 灰度门控名单抽到 workflow-tool-names.ts，理由见那个文件的头注释。
+import { runWorkflowToolEntry } from "./run-workflow.js";
+import { GATED_WORKFLOW_TOOL_NAMES } from "./workflow-tool-names.js";
 import { sessionSearchToolEntry } from "./session-search.js";
 import { createOpenToolEntry, type OpenPlatformPort } from "./open.js";
 import { createPlanCompleteGateToolEntry } from "./plan-complete-gate.js";
@@ -148,27 +143,12 @@ export const builtInTools: ToolEntry[] = [
   // `subagent_model`。不进 WORKFLOW_CHILD_DISALLOWED_TOOLS
   // ——那条禁令的理由是 alwaysAsk 在 child 里无窗可弹，只读查询不适用。
   listModelsToolEntry,
+  // 脚本工作流（RunWorkflow）排在 dwf 那十个之后：两套系统相邻便于对照，但它是**另一套**——
+  // 纯 JS、以 `export const meta` 开头、无类型检查、runId 前缀 wf_ 而非 dwfrun_、
+  // 落 workflow_activity 表而非 dwf_* 表。注册门也不同：它要 `includeWorkflow`（端口在场）
+  // 与 `includeDynamicWorkflow`（灰度）两道门同时放行，见下面过滤链的两支。
+  runWorkflowToolEntry,
 ];
-
-/**
- * 动态工作流灰度门关闭时不注册的十个工具。
- * 灰度关的语义是「没有任何办法开始一条工作流」，所以创建、修订、保存、快照实验与四个
- * run 面工具一起下架；只读的 run 内省工具也在列，因为关闭态下它们只会指向用户无法再操作的历史。
- * `ListModels` 也在列：它唯一的用途是给一次 run 挑 `subagent_model`，没有 CreateWorkflow 可填时留着它只会把模型引向不存在的工具。
- * 旧的 `Workflow` 工具（`/expert` 脚本通道）是另一个功能，**不在**这份名单里。
- */
-const DYNAMIC_WORKFLOW_TOOL_NAMES: ReadonlySet<string> = new Set([
-  CREATE_WORKFLOW_TOOL_NAME,
-  AMEND_WORKFLOW_TOOL_NAME,
-  SAVE_WORKFLOW_TOOL_NAME,
-  LIST_SAVED_WORKFLOWS_TOOL_NAME,
-  LIST_MODELS_TOOL_NAME,
-  EVAL_WORKFLOW_SNIPPET_TOOL_NAME,
-  LIST_WORKFLOW_RUNS_TOOL_NAME,
-  GET_WORKFLOW_RUN_TOOL_NAME,
-  RESUME_WORKFLOW_RUN_TOOL_NAME,
-  RESOLVE_WORKFLOW_QUESTION_TOOL_NAME,
-]);
 
 interface RegisterBuiltInToolsOptions {
   bashTimeoutPolicy?: BashTimeoutPolicy;
@@ -184,6 +164,14 @@ interface RegisterBuiltInToolsOptions {
   submitResultSchema?: JsonSchema;
   /** actor 的升级通道；门与 includeSubmitResult 同款（注入了 WorkflowEscalatePort 才注册）。 */
   includeEscalate?: boolean;
+  /**
+   * 脚本工作流（RunWorkflow）的**端口门**：注入了 `WorkflowPort` 才注册。极性是「只有显式
+   * true 才注册」，与 includeOffPeak / includeAutomation 同族，所以 embedded-search-branch.ts
+   * 那个精简入口省略它是安全的（省略 = 不注册，与首次装配同结论）。
+   * 这个选项曾长期是死代码（它匹配的 `"Workflow"` 条目早已移出 builtInTools）；RunWorkflow
+   * 落地后重新生效，判据仍是 `Boolean(deps.workflowPort)`。与 includeDynamicWorkflow 是
+   * **两道独立的门**（能力 vs 可用性），都放行才注册。
+   */
   includeWorkflow?: boolean;
   includeAutomation?: boolean;
   /** Off-Peak 会话内创建工具面；由 host 的 offPeakToolEnabled flag（灰度/远程门）驱动。 */
@@ -219,10 +207,11 @@ interface RegisterBuiltInToolsOptions {
     onScheduleCreated?(item: ScheduledItem): void;
   };
   /**
-   * 动态工作流灰度门。**只有显式 false
-   * 才下架** DYNAMIC_WORKFLOW_TOOL_NAMES：缺席代表调用方不参与灰度（TUI、headless、
-   * workflow_child），它们必须保留全部工具面；fail-closed 的缺省值落在协议服务端的
-   * appRuntimePreferences，不在这一层。
+   * 动态工作流可用性门。**只有显式 false 才下架** GATED_WORKFLOW_TOOL_NAMES（dwf 十个 +
+   * RunWorkflow）：缺席代表调用方不参与灰度（TUI、headless、workflow_child），必须保留全部
+   * 工具面。这一层**不持有**缺省档位——协议服务端 appRuntimePreferences 里的 `false` 只是
+   * 「Host 判定还没到」的占位，档位的唯一所有者是 shared 的 dynamic-workflow-feature.ts。
+   * 两套工作流共用这一道门而不是各设一道，理由见 workflow-tool-names.ts。
    */
   includeDynamicWorkflow?: boolean;
   /** node_repl（js）默认关闭，由官方 browser-use 插件启用。 */
@@ -279,7 +268,10 @@ export function registerBuiltInTools(
     if (entry.metadata.name === "escalate" && options.includeEscalate !== true) {
       continue;
     }
-    if (entry.metadata.name === "Workflow" && options.includeWorkflow !== true) {
+    // 端口门：没有 WorkflowPort 就没有能启动 run 的东西。这里原本比较的是死名 "Workflow"
+    // （那个条目早已移出 builtInTools，所以这一支永不命中）；RunWorkflow 落地后换成活名，
+    // 极性不变。死名本身按「永不回收」纪律不在别处复活。
+    if (entry.metadata.name === RUN_WORKFLOW_TOOL_NAME && options.includeWorkflow !== true) {
       continue;
     }
     if (
@@ -299,7 +291,7 @@ export function registerBuiltInTools(
     }
     if (
       options.includeDynamicWorkflow === false &&
-      DYNAMIC_WORKFLOW_TOOL_NAMES.has(entry.metadata.name)
+      GATED_WORKFLOW_TOOL_NAMES.has(entry.metadata.name)
     ) {
       continue;
     }

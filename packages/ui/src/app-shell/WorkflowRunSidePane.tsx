@@ -227,8 +227,15 @@ const WorkflowRunContent = memo(function WorkflowRunContent({
   // ——状态头、时间线、产物一件不少——唯独 Resume 收起来，因为按下去会真的起一台引擎。
   // 快照未就绪时 enabled 为 false，按未命中处理：宁可按钮晚半拍出现，也不给一个随时会消失的按钮。
   const { enabled: dynamicWorkflowEnabled } = useDynamicWorkflowAvailability();
+  // 方言门住在两个谓词里（`isWorkflowRunResumable` / `isWorkflowRunConfigurable`），不在这里
+  // 重新推导：`resumeWorkflowRun` 与 `amendWorkflowRunSettings` 都是 **dwf 专属**命令，打到脚本
+  // 工作流的 run 上必然失败（两套各有自己的存储、端口与 run 语义）。两套 run 现在共用这一个投影
+  // 与这一个侧栏，所以门必须在谓词那一个所有者上——这里曾自己叠过一道，而会话里的轮尾摘要卡
+  // 漏叠了，于是同一条 run 在两处给出不同的按钮。
+  // 漏叠了，于是同一条 run 在两处给出不同的按钮。方言徽标也不在这里：状态头自己按 run.dialect 判。
+  // Cancel 不受方言影响：它走 cancelBackgroundWork（workId ≡ runId），对两套都成立。
   const resumable = isWorkflowRunResumable(run) && dynamicWorkflowEnabled;
-  // 「配置」：与 Resume 同一道灰度门；
+  // 「配置」：与 Resume 同一道灰度门 + 同一道方言门（后者在谓词里）；
   // 被接受后面板跟着工作流走到新 run（useWorkflowRunPaneSettings）。
   const settings = useWorkflowRunPaneSettings({
     enabled: dynamicWorkflowEnabled,

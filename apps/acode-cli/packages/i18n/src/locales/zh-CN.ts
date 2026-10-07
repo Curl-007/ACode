@@ -321,8 +321,9 @@ Slash Commands:
         actors: "actors：",
         actorRow: ({ name, status }) => `${name} - ${status}`,
         usage: ({ spentTokens }) => `用量：${spentTokens} tokens`,
-        collapsed: ({ label, status, nodesSettled, nodesTotal }) =>
-          `工作流 ${label} - ${status}（${nodesSettled}/${nodesTotal} 步）`,
+        collapsed: ({ dialect, label, status, nodesSettled, nodesTotal }) =>
+          `工作流 ${label}${dialect === undefined ? "" : `［${dialect}］`} - ${status}（${nodesSettled}/${nodesTotal} 步）`,
+        dialectScript: "ultracode",
         error: (message) => `错误：${message}`,
         expandHint: "+ 展开",
         collapseHint: "- 收起",

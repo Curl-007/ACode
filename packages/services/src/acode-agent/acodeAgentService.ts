@@ -648,8 +648,10 @@ function buildSessionCreateParams(
     ...(params.offPeakToolEnabled === true && !omittedFields.has("offPeakToolEnabled")
       ? { offPeakToolEnabled: true }
       : {}),
-    // 动态工作流灰度：同 Off-Peak 的下发形状，
-    // 关闭时不写字段——CLI 的缺省就是不注册那九个工具。
+    // 动态工作流灰度：同 Off-Peak 的下发形状，关闭时不写字段——CLI 的缺省就是不注册
+    // 那一批工作流工具。这里刻意不写具体数量：名单的唯一所有者是 core 的
+    // GATED_WORKFLOW_TOOL_NAMES（dwf 十个 + 脚本工作流的 RunWorkflow），写死数字的注释
+    // 已经错过一次（曾写「九个」而当时是十个），第二次不会有人再发现。
     ...(params.dynamicWorkflowEnabled === true && !omittedFields.has("dynamicWorkflowEnabled")
       ? { dynamicWorkflowEnabled: true }
       : {}),
@@ -3250,8 +3252,13 @@ export function createACodeAgentService(
    *   1. 同一次判定同时喂给 workspace/updateDynamicWorkflowPolicy 和 session flag，两者不会
    *      出现"策略说开、create 说关"的裂口；
    *   2. 判定落在 client 就绪路径上，不能每次建会话都等远端——3.12.2 已因此回归过一次；
-   *   3. 读取失败 fail-closed 且不再重试，避免离线时每条 create 都赔上一次请求超时；
-   *      服务端翻转灰度按设计在下一个 Host 进程生效（provider 侧另有 1h 快照与 forceRefresh）。
+   *   3. 读取**抛异常**时本进程按不可用处理且不再重试。这一条不是灰度的缺省档位——档位
+   *      （包括请求失败落什么）由 provider 与 shared 的 DEFAULT_DYNAMIC_WORKFLOW_MODE 唯一
+   *      裁决，而 provider 自己就把网络失败收敛成 default 快照、从不抛到这里。所以这个 catch
+   *      实际只剩一种触发方式：装配出了问题（resolver 没接对、依赖构造失败）。那种情况下按
+   *      不可用处理是防御姿态，不是灰度语义；不重试则是为了避免离线时每条 create 都赔上一次
+   *      请求超时。服务端翻转灰度按设计在下一个 Host 进程生效（provider 侧另有 1h 快照与
+   *      forceRefresh）。
    * 与 Off-Peak 不同：远程 workspace 同样可用，所以这里不看 workspaceIdentity / remoteSessionId。
    */
   function resolveDynamicWorkflowGate(): Promise<boolean> {
@@ -3261,7 +3268,7 @@ export function createACodeAgentService(
       try {
         return (await resolve())?.enabled === true;
       } catch (error) {
-        logger.warn(undefined, "动态工作流灰度读取失败，按关闭处理", {
+        logger.warn(undefined, "动态工作流灰度读取异常，本进程按不可用处理", {
           errorMessage: error instanceof Error ? error.message : String(error),
         });
         return false;
@@ -3286,8 +3293,9 @@ export function createACodeAgentService(
         payload: {
           ...payload,
           ...(offPeakToolEnabled ? { offPeakToolEnabled: true } : {}),
-          // 动态工作流灰度：V4 createSession 是桌面新会话的实际创建路径，不透传则九个工具
-          // 永不注册。
+          // 动态工作流灰度：V4 createSession 是桌面新会话的实际创建路径，不透传则那一批
+          // 工作流工具（core 的 GATED_WORKFLOW_TOOL_NAMES）永不注册。数量刻意不写进注释，
+          // 理由同 buildSessionCreateParams 里的同款说明。
           ...(dynamicWorkflowEnabled ? { dynamicWorkflowEnabled: true } : {}),
         },
       };

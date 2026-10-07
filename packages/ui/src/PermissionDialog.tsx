@@ -47,7 +47,8 @@ import { resolveToolCallIdentity } from "@/lib/toolIdentity.js";
 import { InteractionRequestOriginBadge } from "@/InteractionRequestOriginBadge.js";
 import { WorkflowPermissionBlock } from "@/WorkflowPermissionBlock.js";
 import { SaveWorkflowPermissionBlock } from "@/SaveWorkflowPermissionBlock.js";
-import { isSaveWorkflowToolCall } from "@/lib/workflowToolNames.js";
+import { ScriptWorkflowPermissionBlock } from "@/ScriptWorkflowPermissionBlock.js";
+import { isRunWorkflowToolCall, isSaveWorkflowToolCall } from "@/lib/workflowToolNames.js";
 import { useACodeStoreWithDefault } from "@/store/StoreProvider.js";
 import { DEFAULT_CODE_PREVIEW_SETTINGS } from "@/lib/codePreviewSettings.js";
 import { useACodeIntl } from "./i18n/IntlProvider.js";
@@ -63,6 +64,7 @@ type PermissionBlockKind =
   | "skill"
   | "workflow"
   | "saveWorkflow"
+  | "scriptWorkflow"
   | "fallback";
 
 interface PermissionBlockInteraction {
@@ -285,6 +287,15 @@ function resolvePermissionBlockKind(
     return "saveWorkflow";
   }
 
+  // RunWorkflow 同款，且理由更硬：它的入参既有 `scriptPath`（一个路径）又有完整 `script`，
+  // 下面的文件摘要启发式会把它吸进 edit 块——而 edit 块讲的是「改哪几个文件、diff 长什么样」，
+  // 对一次「批准运行这段编排脚本」完全是错的语言。它也不在 workflow family 里（刻意不登记，
+  // 见 lib/workflowToolNames.ts），所以不排在 family 分流之后就会被 fallback 摊成 raw JSON，
+  // 而 fallback 恰恰会让 alwaysAsk 这道控制形同虚设（脚本被渲染成 JSON 转义串，没法读）。
+  if (isRunWorkflowToolCall(toolCall)) {
+    return "scriptWorkflow";
+  }
+
   if (rawFileSummaries.length > 0 || preview.fileChanges.length > 0) {
     return "edit";
   }
@@ -335,10 +346,13 @@ function getPermissionBlockInteraction(blockKind: PermissionBlockKind): Permissi
     case "execute":
     case "workflow":
     case "saveWorkflow":
+    case "scriptWorkflow":
     case "fallback":
       // 这里是权限弹窗的中间态展示，不提供收起/展开交互，避免用户把关键内容藏起来。
-      // workflow / saveWorkflow 只为穷尽性列在这里：它们由各自的专用块直接渲染，不走通用块，
-      // 块内脚本折叠是 spec 记录的刻意例外（图、名称与落点仍不可折叠）。
+      // workflow / saveWorkflow / scriptWorkflow 只为穷尽性列在这里：它们由各自的专用块
+      // 直接渲染，不走通用块，块内脚本折叠是 spec 记录的刻意例外（图、名称与落点仍不可折叠）。
+      // scriptWorkflow 连这个例外都不用：它的脚本**不折叠**，长脚本走段内滚动——
+      // 脚本是这个请求里唯一需要用户读的东西。
       return {
         canToggle: false,
         forceOpen: true,
@@ -701,6 +715,9 @@ export function PermissionDialog({
   const shouldUseWorkflowBlock = blockKind === "workflow";
   // 保存确认窗同理，但问句、内容与选项都不同：没有图、没有 Refine，主体是落点 + 元数据 + 脚本。
   const shouldUseSaveWorkflowBlock = blockKind === "saveWorkflow";
+  // 脚本工作流的确认块同理：问句由块自己给出，协议 reason 是诊断用的
+  // （"runWorkflow.runConfirmation: ..."），不该念给用户听。
+  const shouldUseScriptWorkflowBlock = blockKind === "scriptWorkflow";
   return (
     <div className="w-full shrink-0 relative z-1">
       <div className="w-full overflow-hidden rounded-2xl border border-border bg-popover shadow-xs">
@@ -715,6 +732,7 @@ export function PermissionDialog({
             {!shouldUseSwitchModePlaceholder &&
             !shouldUseWorkflowBlock &&
             !shouldUseSaveWorkflowBlock &&
+            !shouldUseScriptWorkflowBlock &&
             displayReason ? (
               <p className="text-ui-base leading-5 text-foreground">{displayReason}</p>
             ) : null}
@@ -749,6 +767,10 @@ export function PermissionDialog({
             ) : shouldUseSaveWorkflowBlock ? (
               // 同上：保存 gate 的问句（保存 / 覆盖两句）由块自己给出，不复用协议 reason。
               <SaveWorkflowPermissionBlock request={request} />
+            ) : shouldUseScriptWorkflowBlock ? (
+              // RunWorkflow 的 alwaysAsk 是整个脚本工作流安全论证的落点（沙箱没有全关，
+              // 见 specs/script-workflow-revival.md R4），所以这里必须让用户真能读到脚本。
+              <ScriptWorkflowPermissionBlock request={request} />
             ) : (
               <PermissionBlock {...blockContext} />
             )}

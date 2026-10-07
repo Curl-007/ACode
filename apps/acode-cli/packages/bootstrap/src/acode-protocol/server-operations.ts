@@ -8,7 +8,11 @@ import { resolveEffectiveBashShellSelection } from "@acode/adapters/exec";
 import { inputIntentMetadata } from "../acode-protocol-v4/commands/input-intent.js";
 import { createModelExecutionContext } from "./model-execution.js";
 import type { SendInputOptions } from "../app/types.js";
-import { repairPersistedRemoteSessionPaths, type TurnAttachment } from "@acode/core";
+import {
+  OFF_PEAK_MUTATION_TOOL_NAMES,
+  repairPersistedRemoteSessionPaths,
+  type TurnAttachment,
+} from "@acode/core";
 import {
   CoreErrorType,
   SESSION_ENTRY_TARGET_COMPLETION_VERIFICATION,
@@ -2407,9 +2411,12 @@ function buildPromptTurnToolDisallowlist(
   if (activeAutomationId) tools.add("CronCreate");
   // 闲时派发轮隐藏 OffPeakCreate（防递归自我派生）；OffPeakList 只读保留。
   // 注意 automation 轮不加 OffPeakCreate——cron 轮放行（定时派生闲时任务）。
-  // SendMessage / Workflow 同样隐藏，与 V4 prompt-turn 及 core turn-loop-state 同值。
+  // 名单从 core 导入而不是内联字面量：这里原本是同值名单的第三份副本，加一个工具要同时
+  // 改三处（RunWorkflow 落地时正是如此）。唯一所有者是 core 的 turn-loop-state。
   if (activeOffPeakTaskId) {
-    for (const toolName of ["OffPeakCreate", "SendMessage", "Workflow"]) tools.add(toolName);
+    for (const toolName of OFF_PEAK_MUTATION_TOOL_NAMES) {
+      tools.add(toolName);
+    }
   }
   return tools.size > 0 ? [...tools] : undefined;
 }

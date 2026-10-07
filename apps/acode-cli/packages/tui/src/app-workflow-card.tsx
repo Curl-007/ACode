@@ -68,6 +68,8 @@ export function WorkflowRunCardView({
   const workflowCopy = copy.transcript.workflow;
   const width = Math.max(20, terminalWidth - CARD_DETAIL_INDENT.length);
   const collapsedLine = workflowCopy.collapsed({
+    // 徽标只挂在脚本工作流上：dwf 是缺省方言，给每条既有 run 都挂一枚只是噪音。
+    ...(card.dialect === "script" ? { dialect: workflowCopy.dialectScript } : {}),
     // label 只有服务端知道（冷补种带回）；没有就退回 runId，绝不在这里造一个假名字。
     label: card.label ?? card.runId,
     status: workflowStatusLabel(card.status, workflowCopy, card.stopReason),

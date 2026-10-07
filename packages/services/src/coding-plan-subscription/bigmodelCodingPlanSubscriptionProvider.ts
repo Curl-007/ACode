@@ -241,8 +241,11 @@ export class BigModelCodingPlanSubscriptionProvider {
    *   1. 本地覆盖（ACODE_DYNAMIC_WORKFLOW_MODE）在任何网络动作之前裁决，命中即返回——
    *      preview 构建和开发者手测因此不受 1h 快照与首次 Host 竞态影响；
    *   2. forceRefresh 与 Off-Peak 同义，清掉快照后重拉（灰度翻转最长 1h 不可见）；
-   *   3. 请求失败 fail-closed：返回 default（disabled）并 warn，绝不把异常抛给调用方——
-   *      调用方在 session create/client 就绪路径上，灰度读失败不能阻断普通聊天。
+   *   3. 请求失败**不抛给调用方**：返回 default 快照并 warn。调用方在 session create/client
+   *      就绪路径上，灰度读失败不能阻断普通聊天。default 的档位由 shared 的
+   *      DEFAULT_DYNAMIC_WORKFLOW_MODE 决定（当前 `alwaysOn`，即 fail-open），
+   *      本层不复述取值——见 shared/specs/dynamic-workflow-availability.md R2。
+   *      注意这一点与闲时任务灰度**刻意不同**：那边请求失败按关闭处理。
    */
   async getDynamicWorkflowClientConfig(options?: {
     forceRefresh?: boolean;
@@ -262,10 +265,14 @@ export class BigModelCodingPlanSubscriptionProvider {
         env: process.env,
       });
     } catch (error) {
-      log.warn(undefined, "动态工作流灰度配置读取失败，按关闭处理", {
+      // 日志不复述档位：写死「按关闭处理」这类措辞会在缺省值反转后变成反话（本次已发生过一次）。
+      // 落哪个档位是 shared 常量的事实，这里只把它如实带进字段。
+      const fallback = createDynamicWorkflowClientConfig(DEFAULT_DYNAMIC_WORKFLOW_MODE, "default");
+      log.warn(undefined, "动态工作流灰度配置读取失败，落缺省档位", {
         errorMessage: error instanceof Error ? error.message : String(error),
+        fallbackMode: fallback.mode,
       });
-      return createDynamicWorkflowClientConfig(DEFAULT_DYNAMIC_WORKFLOW_MODE, "default");
+      return fallback;
     }
   }
 

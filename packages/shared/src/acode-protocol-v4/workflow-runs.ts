@@ -373,6 +373,20 @@ export const workflowRunSchema = z.object({
    */
   resumedFrom: z.string().min(1).max(128).optional(),
   supersededBy: z.string().min(1).max(128).optional(),
+  /**
+   * 这个 run 属于哪一套工作流系统。随 `run-started` 载荷到达。
+   *
+   * 为什么必须有它：两套系统现在共用同一个 `workflowRuns` 投影与同一批渲染组件
+   * （脚本工作流的事件经 bootstrap 的适配器翻译成同一份 eventType 词表），但它们的
+   * **可用动作不同**——`resumeWorkflowRun` / `amendWorkflowRunSettings` 是 dwf 专属命令，
+   * 打到脚本工作流的 run 上必然失败。没有判别字段，侧栏就会摆出两个点了报错的按钮，
+   * 那比不显示更坏：它读起来像"这里能恢复"。
+   *
+   * 缺席即 `"dwf"`。这不是偷懒而是兼容性要求：所有既有 run（老 CLI 发的、journal 里冷回放
+   * 出来的）都没有这个键，而它们全部是 dwf 的。追加可选字段是本 schema 既定的偏斜安全做法
+   * （见上面 lineage 两端的同款理由），不是往闭集枚举里加值——后者才是破坏性偏斜。
+   */
+  dialect: z.enum(["dwf", "script"]).optional(),
   usage: workflowRunUsageSchema,
   error: z.string().min(1).max(WORKFLOW_RUNS_LIMITS.maxErrorLength).optional(),
   /**

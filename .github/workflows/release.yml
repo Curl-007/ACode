@@ -66,6 +66,11 @@ jobs:
       - name: Knip (files & dependencies gate)
         run: pnpm knip:gate
 
+      # 与 ci.yml 同因：Tests 经 tsx 引 apps/acode-cli 源码，源码按包名解析兄弟包 dist/，
+      # 干净检出没有 dist 会 ERR_MODULE_NOT_FOUND（2026-10-07 release/0.0.4 实测）。
+      - name: Build CLI workspace packages
+        run: npx turbo --skip-infer --cwd apps/acode-cli run build --filter='!@acode/cli'
+
       - name: Tests (all packages)
         run: pnpm test
 

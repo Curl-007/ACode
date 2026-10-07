@@ -53,5 +53,12 @@ jobs:
       - name: Knip (files & dependencies gate)
         run: pnpm knip:gate
 
+      # 测试经 tsx 直接引 apps/acode-cli 各包源码，而这些源码按包名解析兄弟包的 dist/；
+      # 根 typecheck 的 tsc -b 只覆盖 packages/*，不构建 apps/acode-cli 的 dist。干净检出
+      # 没有 dist 时 Tests 会 ERR_MODULE_NOT_FOUND（@acode/contracts/dist/index.js，
+      # 2026-10-07 release/0.0.4 的 CI 实测）：本地因开发者构建过而永远绿，CI 必须先构建。
+      - name: Build CLI workspace packages
+        run: npx turbo --skip-infer --cwd apps/acode-cli run build --filter='!@acode/cli'
+
       - name: Tests (all packages)
         run: pnpm test

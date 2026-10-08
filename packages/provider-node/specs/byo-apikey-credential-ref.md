@@ -120,6 +120,11 @@ P1-5 首版实现漏了「**谁读 vault 化的 provider_config.json，谁就得
 
 - provisioning 导出的凭据 allowlist 必须包含 `provider:apikey:<providerId>`（scope `provider-apikey`）。
   信封里 personalConfig 带 ref、credentials 带真值；目标端保存真值后经同一 hydration 生效。
+- **传输加密门槛（安全审计 M5）**：信封的 credentials 是 cipher 解密后的明文，只允许经加密传输
+  跨环境（wss/TLS、SSH/WSL/Docker stdio）；桌面连 server kind 的 ws:// 明文连接时 Main 不注册
+  provisioning lane、整体跳过同步并告警（schemaVersion 1 的 replace-allowlist 目标语义下，
+  `credentials: []` 的「仅配置」信封会清空远端凭据，不可作为降级形态）。判定与门槛唯一实现见
+  `packages/desktop/specs/provisioning-transport-encryption-gate.md`。
 - 目标端 replace-allowlist 删除语义同样覆盖该 scope：`readProvisioningCredentials` 的 scope 解析、
   `listProviderProvisioningCredentialKeys` 的物理键枚举、`validateCredentialEntries` 的 scope↔key 校验、
   `captureBeforeState` 的 before 键收集，四处匹配**必须一致**，否则出现「信封带配置不带 Key」或

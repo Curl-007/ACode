@@ -41,7 +41,7 @@ function createAbortError(): Error {
   return error;
 }
 
-/** 从用户输入的 url 推导 server-info(HTTP) 与 ws 两个端点；token 只经 query 注入，绝不入日志。 */
+/** 从用户输入的 url 推导 server-info(HTTP) 与 ws 两个端点；token 只经 Authorization 头注入，绝不入日志/URL。 */
 function resolveServerEndpoints(url: string): { infoUrl: URL; wsUrl: URL } {
   const parsed = new URL(url.trim());
   // HTTP 端点：ws/wss 归一回 http/https，便于 fetch /api/server-info。
@@ -108,7 +108,7 @@ function wrapNodeWebSocket(ws: WebSocket): ISocket {
  * 附着到一个已运行的 ACode/ZCode server。
  *
  * 步骤：1) GET /api/server-info 校验协议版本与能力（zod literal 把关，不符即明确失败）；
- * 2) 打开 /ws（token 经 query）；3) ISocket→SocketProtocol→ChannelClient→RemoteServiceAccess。
+ * 2) 打开 /ws（token 经 Authorization: Bearer 头）；3) ISocket→SocketProtocol→ChannelClient→RemoteServiceAccess。
  * 全程不部署、不 detect、不 handshake——server 已在运行。
  */
 export async function connectToRemoteServerTarget(
@@ -167,13 +167,18 @@ export async function connectToRemoteServerTarget(
   }
   throwIfAborted();
 
-  // 2) 打开 /ws；token 仅经 query 注入——标准 WebSocket API 无法携带自定义 header，
-  //    server 侧 R2 收缩后 /ws* 升级握手是 query token 的唯一保留面（server-auth.md）。
+  // 2) 打开 /ws。安全修复（审计 M5，spec: specs/provisioning-transport-encryption-gate.md）：
+  //    token 改经 Authorization: Bearer 头注入，不再写 URL query——query 会泄漏进代理/访问
+  //    日志/历史记录。「标准 WebSocket API 无法携带自定义 header」的限制只适用于浏览器客户端；
+  //    这里是 Node `ws`，支持 ClientOptions.headers。服务端全局 token 中间件对 /ws 升级请求
+  //    同样优先读 Bearer 头（packages/server/src/http.ts 的 app.use("*") 覆盖升级路径，裁决
+  //    本体 resolveServerTokenAuth 接受顺序 Bearer > cookie > query 仅 /ws*），query 仅为
+  //    浏览器客户端保留兼容面，故本改动不触碰服务端语义。
   const wsUrl = new URL(endpoints.wsUrl.toString());
-  if (token) {
-    wsUrl.searchParams.set("token", token);
-  }
-  const ws = new WebSocket(wsUrl.toString());
+  const ws = new WebSocket(
+    wsUrl.toString(),
+    token ? { headers: { authorization: `Bearer ${token}` } } : undefined,
+  );
   let settled = false;
   let openTimeout: ReturnType<typeof setTimeout> | undefined;
   const removeAbortListener = options.signal

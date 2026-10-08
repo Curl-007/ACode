@@ -476,7 +476,7 @@ export default {
   // pnpm workspace + semver range（如 ^41.0.3）下，electron-builder
   // 有时无法从依赖树里稳定推导出 Electron 版本，导致 bundle 直接中断。
   // 显式写死当前桌面端使用的 Electron 版本，避免打包阶段再做不可靠的猜测。
-  electronVersion: "41.0.3",
+  electronVersion: "41.10.7",
   // 安全加固 P2 #3：fuse 取值见 scripts/desktop-electron-fuses.mjs 与
   // specs/electron-hardening.md §5；electron-builder 会在 afterPack 之后、签名之前 flip。
   electronFuses: desktopElectronFuses,

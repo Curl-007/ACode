@@ -79,6 +79,7 @@ import { createPluginFacadeForApp } from "./plugin-facade.js";
 import { resolvePluginRuntimeFeatures } from "./plugin-runtime-features.js";
 import { createSessionFacade } from "./session-facade.js";
 import { resolveAppRuntimeConfig, runtimeConfigLogContext } from "./runtime-config.js";
+import { loadProjectMcpTrustSnapshot } from "./project-mcp-trust.js";
 import { resolveBundledSkillRoots } from "./bundled-skills.js";
 import { createReservedAgentNames, resolveBundledAgentProfiles } from "./bundled-agents.js";
 import { collectDynamicWorkflowDisabledSkillPaths } from "./dynamic-workflow-gate.js";
@@ -335,24 +336,53 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
     const persistedMode = options.runtimeConfig?.mode
       ? undefined
       : readProjectPermissionMode(localSettingStore, projectID);
-    let { configuredMcpServers, runtimeConfig, untrustedProjectMcpServers } =
-      resolveAppRuntimeConfig({
-        cliStorageRoot,
-        configResult,
-        options,
-        persistedMode,
-        pluginHooks: pluginOutcome.hooks,
-        pluginMcpServers: pluginOutcome.mcpServers,
-        builtInMcpServers,
-        pluginRuntimeFeatures,
-        builtInSubagentModelSelectionOverrides:
-          acodeSubagentProfileOutcome.builtInModelSelectionOverrides,
-        subagentOutputRootDir: join(cliStorageRoot, "agents"),
-        subagentProfiles,
-        storageRoot,
-        workingDirectory,
-        workspaceIdentity: options.runtimeConfig?.memory?.workspaceIdentity,
+    // 安全修复 H2（specs/project-mcp-trust-gate.md）：项目 stdio MCP 的信任快照在
+    // 装配期加载一次（与 hooks trust 的 per-session load 同哲学）；读取失败/损坏
+    // fail-closed（空信任集），不阻断会话启动。
+    const projectMcpTrust = await loadProjectMcpTrustSnapshot({
+      workingDirectory,
+      workspaceIdentity: options.runtimeConfig?.memory?.workspaceIdentity,
+      userConfigPath: configResult.sources.user.path,
+      logger,
+    });
+    let {
+      configuredMcpServers,
+      runtimeConfig,
+      untrustedProjectMcpServers,
+      pendingProjectMcpServers,
+    } = resolveAppRuntimeConfig({
+      cliStorageRoot,
+      configResult,
+      options,
+      persistedMode,
+      pluginHooks: pluginOutcome.hooks,
+      pluginMcpServers: pluginOutcome.mcpServers,
+      builtInMcpServers,
+      pluginRuntimeFeatures,
+      builtInSubagentModelSelectionOverrides:
+        acodeSubagentProfileOutcome.builtInModelSelectionOverrides,
+      projectMcpTrust,
+      subagentOutputRootDir: join(cliStorageRoot, "agents"),
+      subagentProfiles,
+      storageRoot,
+      workingDirectory,
+      workspaceIdentity: options.runtimeConfig?.memory?.workspaceIdentity,
+    });
+    if (pendingProjectMcpServers.length > 0) {
+      // headless/无 UI 场景的日志提示（spec R7）：不 spawn、不注册工具；审查入口是
+      // `acode mcp trust review`。CLI -p 的 stderr 提示由 prompt-command 另行投影。
+      logger.info("Project MCP servers pending trust were skipped", {
+        event: "mcp.project_trust.pending",
+        module: "bootstrap",
+        pendingServers: pendingProjectMcpServers.map(
+          (server) => `${server.name} (${server.displayCommand})`,
+        ),
+        reasonCode: "project_mcp_pending_trust",
+        reviewHint: "acode mcp trust review",
+        status: "completed",
+        workspaceIdentity: projectMcpTrust.workspaceIdentity,
       });
+    }
     const browserControlPort = options.browserControlPort;
     if (
       browserControlPort &&

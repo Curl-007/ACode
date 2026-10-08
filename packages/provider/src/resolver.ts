@@ -46,7 +46,14 @@ export function serializeRegistryProviderConfig(
       config.access.type !== "zhipu-account"
         ? {
             type: config.access.type,
-            apiKey: config.access.apiKey,
+            // 安全修复（审计 M3，spec: specs/model-selection-view-apikey-stripping.md）：
+            // 本序列化结果的唯一消费链是 ModelSelectionView 投影（projectModelSelectionProviderView /
+            // buildOffPeakModelSelectionView），视图经 IModelSelectionService RPC 广播给所有客户端
+            // （renderer/web/手机远控）。vault hydrate 后的 apiKey 是 Host 内存运行期真值（P1-5），
+            // 此前这里无条件输出 `apiKey: config.access.apiKey`，等于在 ApiKeyAccessConfig.toJSON
+            // 的落盘剥离之外开了第二条明文越界面。全仓核查 selection 视图消费点只读
+            // access.type/mode/accountType（无代码读取 apiKey 值），故明文与 credentialRef 一律
+            // 不发；执行链读的是 Registry 内的类实例，不经此函数，不受影响。
             ...(config.access.apiKeyManagementUrl === undefined
               ? {}
               : { apiKeyManagementUrl: config.access.apiKeyManagementUrl }),

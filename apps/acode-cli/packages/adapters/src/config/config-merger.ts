@@ -42,6 +42,12 @@ export function mergeConfigs(...configs: PrioritizedConfig[]): RuntimeConfigPatc
         : inputConfig;
     const previousHooks = result.hooks;
     const previousPlugins = result.plugins;
+    // B1 收口（specs/project-mcp-trust-gate.md R11）：mcp 与 hooks/plugins 同理必须在
+    // Object.assign 之前快照——assign 会把 result.mcp 整体替换成当前层的对象，下面
+    // servers 展开里读到的 result.mcp?.servers 其实是**本层自己**的 servers，跨文件/
+    // 跨层的按名并集形同虚设（后一个提供 mcp 的文件整体覆盖前者）。项目层多文件
+    // （根 .acode + cwd .acode + .agents/mcp.json fallback）因此丢条目。
+    const previousMcp = result.mcp;
     // 安全加固 P1-6 补漏：必须在 Object.assign 之前快照继承来的 disallowedTools。
     // Object.assign(result, config) 会把 result.permission 整体替换成项目层的对象，
     // 之后再读 result.permission.disallowedTools 拿到的已经是项目值，与项目值并集等于没并集。
@@ -106,10 +112,12 @@ export function mergeConfigs(...configs: PrioritizedConfig[]): RuntimeConfigPatc
     }
     if (config.mcp) {
       result.mcp = {
-        ...result.mcp,
+        // 必须从 previousMcp 开始构造（同 plugins 的理由）：Object.assign 已把
+        // result.mcp 指向当前层，直接展开 result.mcp 会丢掉先前层的 servers。
+        ...previousMcp,
         ...config.mcp,
         servers: {
-          ...result.mcp?.servers,
+          ...previousMcp?.servers,
           ...config.mcp.servers,
         },
       };

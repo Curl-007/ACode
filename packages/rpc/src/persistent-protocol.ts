@@ -14,9 +14,9 @@
  */
 
 import { VSBuffer } from "./buffer.js";
+import { ChunkStream } from "./chunk-stream.js";
 import { Emitter, DisposableStore } from "./foundation.js";
 import {
-  ChunkStream,
   HEADER_SIZE,
   ProtocolMessage,
   ProtocolMessageType,
@@ -25,6 +25,12 @@ import {
   type IMessagePassingProtocol,
   type ISocket,
 } from "./protocol.js";
+import {
+  TRANSPORT_FRAME_ASSEMBLY_IDLE_TIMEOUT_MS,
+  TRANSPORT_FRAME_MAX_PAYLOAD_BYTES,
+  TransportFrameError,
+  unrefTimer,
+} from "./transport-frame-limits.js";
 
 /** PersistentProtocol 可调参数（v4 通道层补丁）。 */
 export interface PersistentProtocolOptions {
@@ -36,6 +42,16 @@ export interface PersistentProtocolOptions {
   replayBufferMaxBytes?: number;
   /** 重放缓冲时间宽限窗（ms）：最老未 ACK 消息超龄同样放弃会话。 */
   replayBufferGraceMs?: number;
+  /**
+   * 单帧声明 payload 长度硬上限；默认 TRANSPORT_FRAME_MAX_PAYLOAD_BYTES。
+   * 阈值依据见 specs/rpc-frame-hardening.md 规则 5；选项主要供测试注入小值。
+   */
+  maxFramePayloadBytes?: number;
+  /**
+   * 半帧组装空闲超时（ms）；默认 TRANSPORT_FRAME_ASSEMBLY_IDLE_TIMEOUT_MS。
+   * 语义（空闲计时、每有新字节重新计时）见 specs/rpc-frame-hardening.md 规则 6。
+   */
+  frameAssemblyIdleTimeoutMs?: number;
 }
 
 interface UnackEntry {
@@ -88,12 +104,21 @@ export class PersistentProtocol implements IMessagePassingProtocol, ConnectionFl
   private readonly replayBufferMaxBytes: number;
   private readonly replayBufferGraceMs: number;
 
+  // 传输帧加固（specs/rpc-frame-hardening.md 规则 5/6）：声明长度硬上限 + 半帧空闲 watchdog。
+  private readonly maxFramePayloadBytes: number;
+  private readonly frameAssemblyIdleTimeoutMs: number;
+  private assemblyIdleTimer: ReturnType<typeof setTimeout> | null = null;
+  private transportFailed = false;
+
   constructor(socket: ISocket, options: PersistentProtocolOptions = {}) {
     this.saturationHighWaterMarkBytes = options.saturationHighWaterMarkBytes ?? 1024 * 1024;
     this.saturationLowWaterMarkBytes =
       options.saturationLowWaterMarkBytes ?? Math.floor(this.saturationHighWaterMarkBytes / 4);
     this.replayBufferMaxBytes = options.replayBufferMaxBytes ?? 8 * 1024 * 1024;
     this.replayBufferGraceMs = options.replayBufferGraceMs ?? 45_000;
+    this.maxFramePayloadBytes = options.maxFramePayloadBytes ?? TRANSPORT_FRAME_MAX_PAYLOAD_BYTES;
+    this.frameAssemblyIdleTimeoutMs =
+      options.frameAssemblyIdleTimeoutMs ?? TRANSPORT_FRAME_ASSEMBLY_IDLE_TIMEOUT_MS;
     this.socket = socket;
     this.bindSocket();
     this.startKeepAlive();
@@ -110,6 +135,7 @@ export class PersistentProtocol implements IMessagePassingProtocol, ConnectionFl
       this.socket.onData((data) => {
         this.chunkStream.acceptChunk(data);
         this.readMessages();
+        this.rearmAssemblyIdleTimer();
       }),
     );
 
@@ -150,6 +176,10 @@ export class PersistentProtocol implements IMessagePassingProtocol, ConnectionFl
     this.disposables.dispose();
     this.disposables = new DisposableStore();
     this.chunkStream = new ChunkStream();
+    // 重连后的新 socket 是干净字节流：复位传输违规标志并清掉旧 watchdog，
+    // 新会话重新受声明长度上限与半帧空闲超时保护（specs/rpc-frame-hardening.md 规则 5/6）。
+    this.transportFailed = false;
+    this.clearAssemblyIdleTimer();
     this.socket = newSocket;
     this.bindSocket();
 
@@ -178,6 +208,21 @@ export class PersistentProtocol implements IMessagePassingProtocol, ConnectionFl
       const id = header.readUInt32BE(1);
       const ack = header.readUInt32BE(5);
       const length = header.readUInt32BE(9);
+
+      // 修复依据（specs/rpc-frame-hardening.md 规则 5）：与 SocketProtocol 同构的
+      // 无界读帧点——声明长度此前无上限（uint32 可声明 ~4 GiB），被动慢速连接
+      // 永不超时（ACK_TIMEOUT 只覆盖发送侧 outgoingUnackMsg），恶意对端声明超大帧
+      // 并慢速滴字节即可无界占用堆外内存。超限立即终结连接，不做任何按声明长度
+      // 的分配。
+      if (length > this.maxFramePayloadBytes) {
+        this.failTransport(
+          new TransportFrameError(
+            "declared-payload-too-large",
+            `declared payload length ${length} exceeds transport frame limit ${this.maxFramePayloadBytes}`,
+          ),
+        );
+        return;
+      }
 
       const totalFrameLength = HEADER_SIZE + length;
       if (this.chunkStream.byteLength < totalFrameLength) {
@@ -234,6 +279,60 @@ export class PersistentProtocol implements IMessagePassingProtocol, ConnectionFl
   }
 
   /**
+   * 半帧组装空闲 watchdog（specs/rpc-frame-hardening.md 规则 6）：
+   * 仅在接收缓冲存在未完成帧字节时武装，每有新字节到达即重新计时（空闲语义）。
+   * 慢但持续推进的合法大帧不受影响；停滞半帧到期后走 failTransport 释放内存与连接槽。
+   */
+  private rearmAssemblyIdleTimer(): void {
+    if (this.transportFailed) {
+      return;
+    }
+    this.clearAssemblyIdleTimer();
+    if (this.chunkStream.byteLength === 0) {
+      return;
+    }
+    this.assemblyIdleTimer = setTimeout(() => {
+      this.assemblyIdleTimer = null;
+      this.failTransport(
+        new TransportFrameError(
+          "assembly-idle-timeout",
+          `partial frame assembly stalled (${this.chunkStream.byteLength} buffered bytes) for ${this.frameAssemblyIdleTimeoutMs}ms`,
+        ),
+      );
+    }, this.frameAssemblyIdleTimeoutMs);
+    unrefTimer(this.assemblyIdleTimer);
+  }
+
+  private clearAssemblyIdleTimer(): void {
+    if (this.assemblyIdleTimer !== null) {
+      clearTimeout(this.assemblyIdleTimer);
+      this.assemblyIdleTimer = null;
+    }
+  }
+
+  /**
+   * 传输层帧违规收口：记 warn（只含声明长度/超时值，不含 payload 内容）、停止解析、
+   * 终结底层连接，并发出 onSocketClose——与 ACK 超时同一信号，消费方
+   * （RemoteAgentConnection 等）走既有 close/重连路径，不新增事件面。
+   * replaceSocket 会复位 transportFailed，重连会话重新受保护。
+   */
+  private failTransport(error: TransportFrameError): void {
+    if (this.transportFailed) {
+      return;
+    }
+    this.transportFailed = true;
+    this.clearAssemblyIdleTimer();
+    console.warn(
+      `[rpc] PersistentProtocol transport frame violation (${error.reason}): ${error.message}; closing connection`,
+    );
+    // 先摘除当前 socket 的 data/close 监听：违规对端的后续字节被忽略，
+    // 也避免 end() 触发的底层 close 再经旧绑定重复 fire onSocketClose。
+    this.disposables.dispose();
+    this.socket.end();
+    this._onSocketClose.fire();
+  }
+
+  /**
    * 重放缓冲越界（字节/宽限窗）：这条协议会话已不可能无损续传，
    * 主动断开走 onClose，客户端用 subscribe(base) 语义层恢复。
    */
@@ -279,6 +378,7 @@ export class PersistentProtocol implements IMessagePassingProtocol, ConnectionFl
   }
 
   dispose(): void {
+    this.clearAssemblyIdleTimer();
     if (this.keepAliveTimer) {
       clearInterval(this.keepAliveTimer);
     }

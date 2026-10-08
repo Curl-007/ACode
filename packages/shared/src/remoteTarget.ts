@@ -32,7 +32,7 @@ export interface ServerConnectOptions {
   url: string;
   /** 用户给定的展示名；缺省时身份解析回落到 URL host。 */
   name?: string;
-  /** server 的 lite token（ACODE_SERVER_TOKEN）；secret，只存在于当前连接流程内存态。 */
+  /** server 的 lite token（ACODE_SERVER_AUTH_TOKEN，全仓唯一鉴权变量名）；secret，只存在于当前连接流程内存态。 */
   token?: string;
   /** 连接后默认打开的 server 端工作目录；留空则连上后再选目录。 */
   workspacePath?: string;

@@ -1,7 +1,7 @@
 /* eslint-disable max-lines -- HTTP、WebSocket 与静态资源路由集中注册，保持同一鉴权顺序。 */
 import { randomUUID } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
-import { basename, extname, relative, resolve, sep } from "node:path";
+import { basename, extname, isAbsolute, relative, resolve } from "node:path";
 import { hostname } from "node:os";
 import { Hono, type Context, type MiddlewareHandler } from "hono";
 import { serve } from "@hono/node-server";
@@ -19,6 +19,7 @@ import {
   ServiceCollection,
   IACodeAgentService,
   createACodeAgentConnectionScope,
+  ICredentialService,
   IFileService,
   IGitService,
   ISystemService,
@@ -43,12 +44,15 @@ import {
   ANONYMOUS_HOST_CAPABILITY_PRINCIPAL,
   assertServerAuthInvariant,
   createHostCapabilityStore,
+  createTerminalClientCredentialGuard,
   describeNoAuthLoopbackWarning,
   fingerprintPrincipal,
-  parseBearerToken,
+  isTokenProtectedPathname,
+  readPresentedServerToken,
   resolveHostCapabilityBinding,
   resolveRequestOriginTrust,
-  timingSafeTokenEquals,
+  resolveServerTokenAuth,
+  type ServerTokenRequestView,
 } from "@acode/shared/node";
 
 function wrapWebSocket(ws: WebSocket): ISocket {
@@ -130,6 +134,21 @@ function setupChannelServer(
       },
     });
   }
+  // M4：Credential 通道承载全仓明文凭据（OAuth token / JWT / BYO API Key / MCP token /
+  // bot secret），此前无差别注册给每条连接——默认 loopback 无 token 姿态下本机任意进程/
+  // 恶意网页可 dump 全部凭据。与上方 Provisioning 先例同模式，在传输注册层（overrides）
+  // 按 clientMode 收窄：desktop-continuous 保持全量（renderer 登录态与 remote-workspace
+  // token 流依赖）；terminal-client 仅放行 allowlist 键的只读 load（allowlist 证据与拒绝
+  // 语义的唯一所有者在 @acode/shared/node credentialChannelAccess，两套 server 共用）。
+  if (clientMode !== "desktop-continuous") {
+    const credentialService = services.getOptional(ICredentialService);
+    if (credentialService) {
+      overrides.set(
+        ICredentialService.channelName,
+        createTerminalClientCredentialGuard(credentialService),
+      );
+    }
+  }
   services.exposeOnChannelServer(server, overrides);
   socket.onClose(() => {
     void connectionScope?.dispose();
@@ -139,6 +158,16 @@ function setupChannelServer(
 
 /** 存储 web 模式下的远程连接，key 为随机 ID */
 const remoteConnections = new Map<string, RemoteConnection>();
+
+/**
+ * 待认领（已 spawn 但尚未被 `/ws/remote/:id` WS 客户端认领）远程连接的硬上限（M11）。
+ *
+ * 根因：条目只在 WS 认领时删除，`POST /api/connect-remote` 又可被盲刷——每次成功都会
+ * spawn 真实后端（SSH 外联 / WSL / Docker），未认领条目无限累积即内存与进程句柄 DoS。
+ * Origin 裁决封死浏览器攻击者后，本上限是有界性兜底：达上限即 503 拒绝新连接。
+ * 风险登记（server-auth.md）：本次不引入 TTL 定时驱逐，陈旧未认领条目存活至进程重启。
+ */
+const MAX_PENDING_REMOTE_CONNECTIONS = 32;
 
 function generateId(): string {
   return Math.random().toString(36).slice(2) + Date.now().toString(36);
@@ -181,7 +210,10 @@ function resolveServerWorkspaces(options: HttpServerOptions): ServerRemoteWorksp
   ];
 }
 
-function createServerInfo(options: HttpServerOptions): ServerRemoteInfo {
+function createServerInfo(
+  options: HttpServerOptions,
+  resolvedAuthToken?: string,
+): ServerRemoteInfo {
   return {
     serverId: resolveServerId(options),
     ...(options.name?.trim() || readTrimmedEnv("ACODE_SERVER_NAME")
@@ -189,7 +221,13 @@ function createServerInfo(options: HttpServerOptions): ServerRemoteInfo {
       : {}),
     version: ACODE_VERSION,
     protocolVersion: SERVER_REMOTE_PROTOCOL_VERSION,
-    authRequired: options.authRequired ?? Boolean(readTrimmedEnv("ACODE_SERVER_TOKEN")),
+    // M2 修复：authRequired 必须如实反映「鉴权中间件是否真的挂载」。此前 fallback 读
+    // ACODE_SERVER_TOKEN，而真实强制点（entry-http.ts）只读 ACODE_SERVER_AUTH_TOKEN 并经
+    // options.authToken 传入——按文档配置旧变量名会得到「自报已鉴权、实际无鉴权」。
+    // 现在以调用方实际用于挂中间件的 resolvedAuthToken 为准，不再读任何环境变量；
+    // 全仓唯一鉴权 env 名 = ACODE_SERVER_AUTH_TOKEN（本包读取点在 entry-http.ts；
+    // Server Core 在 server-core/http.ts 另有自己的单一读取点，见 server-auth.md）。
+    authRequired: options.authRequired ?? Boolean(resolvedAuthToken),
     workspaces: resolveServerWorkspaces(options),
     capabilities: {
       desktopContinuous: true,
@@ -198,15 +236,20 @@ function createServerInfo(options: HttpServerOptions): ServerRemoteInfo {
   };
 }
 
-const acodeLiteTokenCookieName = "acode_lite_token";
-
-interface LiteTokenAuthResult {
-  valid: boolean;
-  /**
-   * HTTP 路由上出示了**合法**的 `?token=` query 并被拒绝（R2 收缩后 query 只在 WebSocket
-   * 升级握手有效）；调用点据此打印一次性「已移除」告警，给旧客户端明确迁移路径。
-   */
-  viaDeprecatedQuery: boolean;
+/**
+ * hono Context → 共享 token 裁决的请求视图。
+ *
+ * 裁决本体（凭据接受顺序 Bearer > lite token cookie > query 仅 `/ws*`、cookie 名与安全解码、
+ * 受保护路径判定）已收敛到 `@acode/shared/node` serverAuth 的 `resolveServerTokenAuth` /
+ * `readPresentedServerToken` / `isTokenProtectedPathname`，与 Server Core 共用单一实现；
+ * 本文件只保留这一层 Context 适配，不再维护第二份接受顺序或 cookie 解码。
+ */
+function serverTokenRequestView(c: Context): ServerTokenRequestView {
+  return {
+    authorizationHeader: c.req.header("authorization"),
+    cookieHeader: c.req.header("cookie"),
+    url: c.req.url,
+  };
 }
 
 // `?token=` 移除告警每进程只打印一次，避免刷屏，同时确保旧客户端能被明确告知迁移路径。
@@ -239,112 +282,19 @@ const staticMimeTypes: Record<string, string> = {
   ".woff2": "font/woff2",
 };
 
-function parseCookieHeader(header: string | undefined): Map<string, string> {
-  const cookies = new Map<string, string>();
-  if (!header) {
-    return cookies;
-  }
-  for (const part of header.split(";")) {
-    const separator = part.indexOf("=");
-    if (separator <= 0) {
-      continue;
-    }
-    const name = part.slice(0, separator).trim();
-    const value = part.slice(separator + 1).trim();
-    if (name) {
-      cookies.set(name, value);
-    }
-  }
-  return cookies;
-}
-
-/**
- * 读取 `acode_lite_token` cookie 的值，与写入端（`encodeURIComponent`）对称地安全解码。
- *
- * **为什么必须有这一个 helper**：鉴权（`hasValidLiteToken`）与主体绑定
- * （`readPresentedLiteToken`）必须对「本次请求出示的是哪个 token」给出**完全相同**的答案。
- * 此前两处各自读 cookie——一处比较原值、一处 `decodeURIComponent`——导致含 `%XX` 的 token
- * 会出现「中间件认可、绑定校验算出不同主体」的分叉：合法 cookie 升级被 403（principal-mismatch），
- * 含裸 `%` 的 token 还会让 `decodeURIComponent` 抛 URIError → 500。
- *
- * 解码失败时回退原值而不是抛错：cookie 可能来自旧客户端或非本服务写入，
- * 鉴权/绑定都不应因为一个畸形值而 500，比较不上自然就是「不匹配」。
- */
-function readLiteTokenCookie(c: Context): string | undefined {
-  const raw = parseCookieHeader(c.req.header("cookie")).get(acodeLiteTokenCookieName);
-  if (raw === undefined) {
-    return undefined;
-  }
-  try {
-    return decodeURIComponent(raw);
-  } catch {
-    return raw;
-  }
-}
-
-function hasValidLiteToken(c: Context, token: string): LiteTokenAuthResult {
-  // P0-2：token 校验优先走 `Authorization: Bearer`，其次 cookie（浏览器兼容）。
-  const bearer = parseBearerToken(c.req.header("authorization"));
-  if (timingSafeTokenEquals(bearer, token)) {
-    return { valid: true, viaDeprecatedQuery: false };
-  }
-  if (timingSafeTokenEquals(readLiteTokenCookie(c), token)) {
-    return { valid: true, viaDeprecatedQuery: false };
-  }
-  // R2（批次 4，server-auth.md）：HTTP 路由的 `?token=` 兼容窗已按原承诺（「仍接受一个
-  // 版本」）关闭——query 会泄漏进日志/历史/Referer。唯一保留的 query 面 = WebSocket 升级
-  // 握手：标准 WebSocket API 无法携带自定义 header，desktop /ws 附着依赖 query 注入
-  // （desktop/host/serverRemoteConnection.ts）。cookie 回写随之移除：HTTP 路由不再接受
-  // query，升级握手（101）上的 Set-Cookie 无消费方。HTTP 路由出示合法 query token →
-  // 401 + 一次性告警，给旧客户端明确迁移路径。
-  const url = new URL(c.req.url);
-  const queryToken = url.searchParams.get("token") ?? undefined;
-  if (!timingSafeTokenEquals(queryToken, token)) {
-    return { valid: false, viaDeprecatedQuery: false };
-  }
-  if (isWebSocketUpgradePathname(url.pathname)) {
-    return { valid: true, viaDeprecatedQuery: false };
-  }
-  return { valid: false, viaDeprecatedQuery: true };
-}
-
-/**
- * 取出本次请求实际出示的 token（`Authorization: Bearer` > cookie > query）。
- *
- * P0-1 需要它来**真正执行**能力与主体的绑定：`hasValidLiteToken` 只回答「合不合法」，
- * 而绑定校验要的是「出示的是哪一个主体」。两者必须同源——cookie 一律经
- * `readLiteTokenCookie` 读取，避免出现「中间件认可 A、绑定校验取到 B」的分叉。
- * R2 收缩后 query 只在 WS 升级路径构成有效凭据（唯一调用点即 `/ws/host` 绑定），HTTP
- * 路由上合法 query 已被中间件 401，走不到主体解析，优先级顺序保持两者答案一致。
- */
-function readPresentedLiteToken(c: Context): string | undefined {
-  const bearer = parseBearerToken(c.req.header("authorization"));
-  if (bearer) {
-    return bearer;
-  }
-  const fromCookie = readLiteTokenCookie(c);
-  if (fromCookie) {
-    return fromCookie;
-  }
-  return new URL(c.req.url).searchParams.get("token") ?? undefined;
-}
-
-/** WebSocket 升级路径（`/ws`、`/ws/host`、`/ws/remote/:id`）；R2 后 query token 的唯一有效面。 */
-function isWebSocketUpgradePathname(pathname: string): boolean {
-  return pathname === "/ws" || pathname.startsWith("/ws/");
-}
-
-function isTokenProtectedPath(pathname: string): boolean {
-  return isWebSocketUpgradePathname(pathname) || pathname.startsWith("/api/");
-}
-
 function isStaticFallbackAllowed(pathname: string): boolean {
-  return !isTokenProtectedPath(pathname);
+  return !isTokenProtectedPathname(pathname);
 }
 
 function isInsideDirectory(root: string, candidate: string): boolean {
+  // M10 修复：Windows 上 path.win32.relative 在 root 与 candidate 位于**不同盘符根**时
+  // 原样返回 candidate 的绝对路径（如 relative("D:\\web", "C:\\Windows\\win.ini") ===
+  // "C:\\Windows\\win.ini"），它不以 ".." 开头——旧判定 !startsWith("..") 会把
+  // `GET /C:/Windows/win.ini` 这类跨盘符请求误判为「目录内」，而静态路由匿名可达
+  // （不在 token 保护面），等于任意文件读取。relative() 的合法结果只可能是空串、
+  // 目录内相对路径或 ".." 逃逸；出现绝对路径必然是跨盘符/跨根逃逸，一律拒绝。
   const diff = relative(root, candidate);
-  return diff === "" || (!diff.startsWith("..") && !diff.includes(`..${sep}`));
+  return diff === "" || (!diff.startsWith("..") && !isAbsolute(diff));
 }
 
 async function resolveStaticFile(
@@ -432,11 +382,12 @@ export function createHttpServer(
   if (authToken) {
     app.use("*", async (c, next) => {
       const pathname = new URL(c.req.url).pathname;
-      const auth = hasValidLiteToken(c, authToken);
+      // 裁决本体在共享 resolveServerTokenAuth（两套 server 单一实现），这里只做一次性告警。
+      const auth = resolveServerTokenAuth(serverTokenRequestView(c), authToken);
       if (auth.viaDeprecatedQuery) {
         warnDeprecatedQueryTokenOnce();
       }
-      if (!isTokenProtectedPath(pathname) || auth.valid) {
+      if (!isTokenProtectedPathname(pathname) || auth.valid) {
         await next();
         return;
       }
@@ -444,7 +395,8 @@ export function createHttpServer(
     });
   }
 
-  app.get("/api/server-info", (c) => c.json(createServerInfo(options)));
+  // M2：传入实际用于挂中间件的 authToken，server-info 的 authRequired 如实反映强制状态。
+  app.get("/api/server-info", (c) => c.json(createServerInfo(options, authToken)));
   // P0-1：铸造 trusted-host 能力受鉴权门控。配置 token 时，未鉴权请求已被上面的中间件
   // 拦为 401；走到这里说明请求已通过该 token 鉴权，故主体即该 token 的指纹（单 token=单主体）。
   // 未配置 token 的 loopback 场景主体为 anonymous，仍受非 loopback fail-closed 不变量约束。
@@ -539,7 +491,7 @@ export function createHttpServer(
     const binding = resolveHostCapabilityBinding({
       boundPrincipal: principal,
       configuredToken: authToken,
-      presentedToken: readPresentedLiteToken(c),
+      presentedToken: readPresentedServerToken(serverTokenRequestView(c)),
     });
     if (!binding.allowed) {
       return c.json({ error: `Host capability rejected: ${binding.reason}` }, 403);
@@ -550,6 +502,27 @@ export function createHttpServer(
 
   // Web 模式下发起远程连接
   app.post("/api/connect-remote", async (c) => {
+    // M11 修复：与 capability 铸造端点、三处 WS 升级同一个 resolveRequestOriginTrust 裁决，
+    // 且必须在 body 解析与任何副作用**之前**。根因：hono c.req.json() 不校验 Content-Type，
+    // 跨源 text/plain simple POST 免 CORS 预检即可执行本路由——恶意网页可盲触发
+    // createRemoteBackend（真实 SSH 外联 / WSL / Docker spawn），并靠未认领连接累积刷 DoS
+    // （下方 :ws/remote/:id 注释自认的攻击链）。浏览器带 Origin 且不在白名单 → 403；
+    // 原生客户端不带 Origin → 放行（仓库内合法调用方 packages/web 为同源/loopback Origin）。
+    const connectTrust = resolveRequestOriginTrust({
+      origin: c.req.header("origin"),
+      host: c.req.header("host"),
+      allowedOrigins: options.allowedOrigins,
+    });
+    if (!connectTrust.allowed) {
+      // 安全拒绝是生产可用事件（AGENTS.md 日志分级），记 warn 且不打敏感数据。
+      warn(`SECURITY: POST /api/connect-remote rejected: untrusted ${connectTrust.reason}`);
+      return c.json({ error: `Connect rejected: untrusted ${connectTrust.reason}` }, 403);
+    }
+    // M11：待认领连接硬上限——条目只在 WS 认领时删除，盲刷可累积真实后端连接（见
+    // MAX_PENDING_REMOTE_CONNECTIONS 注释与 server-auth.md 风险登记）。
+    if (remoteConnections.size >= MAX_PENDING_REMOTE_CONNECTIONS) {
+      return c.json({ error: "Pending remote connection budget exhausted; retry later" }, 503);
+    }
     const rawBody = await c.req.json();
     const parsedBody = remoteTargetSchema.safeParse(rawBody);
     if (!parsedBody.success) {

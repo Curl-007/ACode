@@ -20,6 +20,8 @@ const read = (path) => readFile(new URL(path, root), "utf8");
 // 真实共享原语（dependency-light leaf，可直接 import）。
 const serverAuth = await import("../node_modules/@acode/shared/src/node/serverAuth.ts");
 const hostCapability = await import("../node_modules/@acode/shared/src/node/hostCapability.ts");
+const credentialAccess =
+  await import("../node_modules/@acode/shared/src/node/credentialChannelAccess.ts");
 const serverRemote = await import("../node_modules/@acode/shared/src/server-remote.ts");
 
 async function load(path, imports = {}) {
@@ -89,6 +91,7 @@ const ServiceCollection = makeServiceCollectionStub();
 const servicesStub = {
   ServiceCollection,
   IACodeAgentService: { channelName: "agent" },
+  ICredentialService: { channelName: "credential" },
   IFileService: {},
   IGitService: {},
   ISystemService: {},
@@ -117,8 +120,9 @@ const nodeOs = await import("node:os");
 // 原生 WebSocket 客户端（不带 Origin 头）：模拟 Node `ws` / SSH 隧道内的合法客户端。
 const RawWebSocket = (await import("ws")).default ?? (await import("ws"));
 
-// server-core 的 createServiceLogger stub 捕获 warn，供 P0-3 拒绝日志断言。
+// server-core 的 createServiceLogger stub 捕获 warn/info，供 P0-3 拒绝日志与 M1 启动告警断言。
 const coreWarnLines = [];
+const coreInfoLines = [];
 
 async function loadServerHttp() {
   return load("packages/server/src/http.ts", {
@@ -132,7 +136,7 @@ async function loadServerHttp() {
     "@acode/rpc": rpcStub,
     "@acode/services": servicesStub,
     "@acode/shared": sharedStub,
-    "@acode/shared/node": { ...serverAuth, ...hostCapability },
+    "@acode/shared/node": { ...serverAuth, ...hostCapability, ...credentialAccess },
     "./remote/index.js": remoteStub,
   });
 }
@@ -149,11 +153,12 @@ async function loadServerCoreHttp() {
     "@acode/services/node": {
       createServiceLogger: () => ({
         debug: () => undefined,
+        info: (...args) => coreInfoLines.push(args.join(" ")),
         warn: (...args) => coreWarnLines.push(args.join(" ")),
       }),
     },
     "@acode/shared": sharedStub,
-    "@acode/shared/node": { ...serverAuth, ...hostCapability },
+    "@acode/shared/node": { ...serverAuth, ...hostCapability, ...credentialAccess },
   });
 }
 
@@ -911,4 +916,481 @@ test("static: both /ws upgrade gates adjudicate with the same shared helper (13)
   assert.match(serverHttp, /app\.use\(\s*"\/ws\/remote\/:id",\s*rejectUntrustedUpgradeOrigin\s*\)/);
   // Server Core：/ws 升级裁决内联调用同一个共享 helper。
   assert.match(coreHttp, /app\.use\(\s*"\/ws",[\s\S]*?resolveRequestOriginTrust\(/);
+});
+
+// ── 安全修复 M1/M2/M4/M10/M11（server-auth.md 验收场景 14-20）──────────────────
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** 轮询等待谓词成立（WS onOpen 装配是异步的），超时抛错防止测试卡死。 */
+async function waitFor(predicate, timeoutMs = 3000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await sleep(10);
+  }
+  throw new Error("waitFor: condition not met within timeout");
+}
+
+test("shared: resolveServerTokenAuth / readPresentedServerToken single adjudication (20)", () => {
+  const view = (over = {}) => ({ url: "http://127.0.0.1:3030/api/x", ...over });
+  // Bearer 优先。
+  assert.deepEqual(
+    serverAuth.resolveServerTokenAuth(view({ authorizationHeader: "Bearer t" }), "t"),
+    { valid: true, viaDeprecatedQuery: false },
+  );
+  // cookie 安全解码：与写入端 encodeURIComponent 对称，%XX 编码比较解码后的原值。
+  assert.deepEqual(
+    serverAuth.resolveServerTokenAuth(view({ cookieHeader: "acode_lite_token=abc%41" }), "abcA"),
+    { valid: true, viaDeprecatedQuery: false },
+  );
+  // 含裸 % 的 cookie 不抛 URIError，按「不匹配」处理。
+  assert.deepEqual(
+    serverAuth.resolveServerTokenAuth(view({ cookieHeader: "acode_lite_token=100%" }), "t"),
+    { valid: false, viaDeprecatedQuery: false },
+  );
+  // HTTP 路由出示合法 query → 拒绝且 viaDeprecatedQuery=true（调用点打一次性迁移告警）。
+  assert.deepEqual(
+    serverAuth.resolveServerTokenAuth(view({ url: "http://127.0.0.1:3030/api/x?token=t" }), "t"),
+    { valid: false, viaDeprecatedQuery: true },
+  );
+  // /ws* 升级路径 query 是唯一保留面 → 有效。
+  assert.deepEqual(
+    serverAuth.resolveServerTokenAuth(view({ url: "http://127.0.0.1:3030/ws?token=t" }), "t"),
+    { valid: true, viaDeprecatedQuery: false },
+  );
+  // readPresentedServerToken 与裁决同源：Bearer > cookie > query。
+  assert.equal(serverAuth.readPresentedServerToken(view({ authorizationHeader: "Bearer a" })), "a");
+  assert.equal(
+    serverAuth.readPresentedServerToken(view({ cookieHeader: "acode_lite_token=b%42" })),
+    "bB",
+  );
+  assert.equal(serverAuth.readPresentedServerToken(view({ url: "http://x/ws?token=q" })), "q");
+  // 受保护路径单一判定。
+  assert.equal(serverAuth.isTokenProtectedPathname("/api/server-info"), true);
+  assert.equal(serverAuth.isTokenProtectedPathname("/ws/host"), true);
+  assert.equal(serverAuth.isTokenProtectedPathname("/index.html"), false);
+  assert.equal(serverAuth.isTokenProtectedPathname("/"), false);
+});
+
+test("static: cross-drive Windows path is rejected by containment (14/M10)", async () => {
+  // 注入 win32 path 语义 + 内存 fs stub：CI 为 ubuntu，测试必须 OS 无关，验证的是
+  // isInsideDirectory 在 path.win32.relative 跨盘符语义下的纯函数行为与路由级结果。
+  const files = new Map([
+    ["C:\\Windows\\win.ini", "[extensions]"], // 攻击目标：另一盘符上的敏感文件
+    ["D:\\web\\index.html", "<html>root-index</html>"], // staticRoot 内合法文件
+    ["D:\\secret.txt", "TOP-SECRET"], // 同盘但 staticRoot 外
+  ]);
+  const fsStub = {
+    stat: async (p) => {
+      if (!files.has(p)) throw Object.assign(new Error(`ENOENT ${p}`), { code: "ENOENT" });
+      return { isDirectory: () => false, isFile: () => true };
+    },
+    readFile: async (p) => {
+      if (!files.has(p)) throw Object.assign(new Error(`ENOENT ${p}`), { code: "ENOENT" });
+      return files.get(p);
+    },
+  };
+  const { createHttpServer } = await load("packages/server/src/http.ts", {
+    "node:crypto": nodeCrypto,
+    "node:fs/promises": fsStub,
+    "node:path": nodePath.win32,
+    "node:os": nodeOs,
+    hono,
+    "@hono/node-server": nodeServer,
+    "@hono/node-ws": nodeWs,
+    "@acode/rpc": rpcStub,
+    "@acode/services": servicesStub,
+    "@acode/shared": sharedStub,
+    "@acode/shared/node": { ...serverAuth, ...hostCapability, ...credentialAccess },
+    "./remote/index.js": remoteStub,
+  });
+  const server = createHttpServer(new ServiceCollection(), 0, {
+    host: "127.0.0.1",
+    staticRoot: "D:\\web",
+    spaFallback: true,
+  });
+  await sleep(120);
+  const port = server.address().port;
+  try {
+    // 修复前：path.win32.relative("D:\\web","C:\\Windows\\win.ini") 原样返回绝对路径
+    // （不以 ".." 开头）→ 旧判定放行 → 200 泄漏文件内容。修复后必须在进入 fs 前拒绝。
+    const crossDrive = await fetch(`http://127.0.0.1:${port}/C:/Windows/win.ini`);
+    assert.equal(crossDrive.status, 404, "cross-drive static path must be rejected");
+    assert.ok(!(await crossDrive.text()).includes("[extensions]"));
+    // 同盘目录内合法文件仍正常服务（正控）。
+    const inside = await fetch(`http://127.0.0.1:${port}/index.html`);
+    assert.equal(inside.status, 200);
+    assert.equal(await inside.text(), "<html>root-index</html>");
+    // `..` 逃逸（%2e%2e%2f 全编码，绕过 URL 规范化）不得读到 staticRoot 外内容——
+    // 包含判定失败在进入 fs 前直接 null → 404（不走 SPA fallback）。
+    const traversal = await fetch(`http://127.0.0.1:${port}/%2e%2e%2fsecret.txt`);
+    assert.equal(traversal.status, 404);
+    const traversalBody = await traversal.text();
+    assert.ok(!traversalBody.includes("TOP-SECRET"), "traversal must not leak outside staticRoot");
+  } finally {
+    await closeWithTimeout(() => new Promise((resolve) => server.close(() => resolve())));
+  }
+});
+
+test("server: /api/connect-remote rejects browser Origin before side effects (15/M11)", async () => {
+  const { createHttpServer } = await loadServerHttp();
+  const ctx = await startHttp(createHttpServer, {});
+  try {
+    // 跨源 text/plain simple POST（免 CORS 预检的现实攻击形态）→ 403，先于 body 解析与
+    // createRemoteBackend（SSH 外联 / WSL / Docker spawn）副作用。
+    const evil = await fetch(`http://127.0.0.1:${ctx.port}/api/connect-remote`, {
+      method: "POST",
+      headers: { origin: "http://evil.test", "content-type": "text/plain;charset=UTF-8" },
+      body: JSON.stringify({ kind: "wsl" }),
+    });
+    assert.equal(evil.status, 403);
+    assert.match((await evil.json()).error, /untrusted origin/i);
+    // 无 Origin 的原生客户端 → 正常进入 body 校验（stub schema 恒 fail → 400，证明已过 Origin 门）。
+    const native = await fetch(`http://127.0.0.1:${ctx.port}/api/connect-remote`, {
+      method: "POST",
+      body: "{}",
+    });
+    assert.equal(native.status, 400);
+    // loopback Origin（同源 Web 客户端）→ 不被 Origin 门拒绝。
+    const loopback = await fetch(`http://127.0.0.1:${ctx.port}/api/connect-remote`, {
+      method: "POST",
+      headers: { origin: `http://127.0.0.1:${ctx.port}` },
+      body: "{}",
+    });
+    assert.equal(loopback.status, 400);
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("server: /api/connect-remote caps pending unclaimed connections (16/M11)", async () => {
+  // 自定义 stub：schema 通过、backend 连接成功，使条目真正落入 remoteConnections。
+  let spawned = 0;
+  const remoteOkStub = {
+    createRemoteBackend: async () => {
+      spawned += 1;
+      return { kind: "wsl" };
+    },
+    connectRemote: async () => ({
+      services: {},
+      dispose: async () => undefined,
+      disposeAndWait: async () => undefined,
+    }),
+  };
+  const { createHttpServer } = await load("packages/server/src/http.ts", {
+    "node:crypto": nodeCrypto,
+    "node:fs/promises": nodeFsPromises,
+    "node:path": nodePath,
+    "node:os": nodeOs,
+    hono,
+    "@hono/node-server": nodeServer,
+    "@hono/node-ws": nodeWs,
+    "@acode/rpc": rpcStub,
+    "@acode/services": servicesStub,
+    "@acode/shared": {
+      ...sharedStub,
+      remoteTargetSchema: { safeParse: (data) => ({ success: true, data }) },
+    },
+    "@acode/shared/node": { ...serverAuth, ...hostCapability, ...credentialAccess },
+    "./remote/index.js": remoteOkStub,
+  });
+  // 上限常量从源码解析，避免测试与实现各写一份魔法数。
+  const src = await read("packages/server/src/http.ts");
+  const maxPending = Number(src.match(/MAX_PENDING_REMOTE_CONNECTIONS = (\d+)/)?.[1] ?? "0");
+  assert.ok(maxPending > 0 && maxPending <= 1000, "cap must be a bounded positive constant");
+  const ctx = await startHttp(createHttpServer, {});
+  try {
+    for (let i = 0; i < maxPending; i += 1) {
+      const res = await fetch(`http://127.0.0.1:${ctx.port}/api/connect-remote`, {
+        method: "POST",
+        body: "{}",
+      });
+      assert.equal(res.status, 200, `pending connection #${i} must succeed under the cap`);
+      assert.equal(typeof (await res.json()).id, "string");
+    }
+    const overflow = await fetch(`http://127.0.0.1:${ctx.port}/api/connect-remote`, {
+      method: "POST",
+      body: "{}",
+    });
+    assert.equal(overflow.status, 503, "budget exhausted must be 503");
+    assert.equal(spawned, maxPending, "rejected request must not spawn another backend");
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("server: server-info reports authRequired truthfully; legacy env name is dead (17/M2)", async () => {
+  const { createHttpServer } = await loadServerHttp();
+  // 只传 authToken（不显式传 authRequired）：中间件已挂载 → server-info 必须如实报 true
+  // （修复前 fallback 读错变量名会报 false，即「实际有鉴权、自报无鉴权」的反向分叉）。
+  const ctx = await startHttp(createHttpServer, { authToken: "secret-token" });
+  try {
+    const res = await fetch(`http://127.0.0.1:${ctx.port}/api/server-info`, {
+      headers: { authorization: "Bearer secret-token" },
+    });
+    assert.equal(res.status, 200);
+    assert.equal((await res.json()).authRequired, true);
+  } finally {
+    await ctx.close();
+  }
+
+  // legacy 变量名 ACODE_SERVER_TOKEN 已无任何消费点：只设它 → authRequired:false 且无中间件
+  // （修复前 createServerInfo 会因它误报 true →「自报已鉴权、实际无鉴权」）。
+  const legacyName = "ACODE_SERVER_TOKEN";
+  const savedLegacy = process.env[legacyName];
+  process.env[legacyName] = "legacy-token";
+  try {
+    const ctx2 = await startHttp(createHttpServer, {});
+    try {
+      const res2 = await fetch(`http://127.0.0.1:${ctx2.port}/api/server-info`);
+      assert.equal(res2.status, 200, "no middleware must be attached from the legacy env name");
+      assert.equal((await res2.json()).authRequired, false);
+    } finally {
+      await ctx2.close();
+    }
+  } finally {
+    if (savedLegacy === undefined) delete process.env[legacyName];
+    else process.env[legacyName] = savedLegacy;
+  }
+
+  // 静态守护：http.ts 源码不再出现 "ACODE_SERVER_TOKEN" 字面量（只允许 AUTH 变量名）。
+  const src = await read("packages/server/src/http.ts");
+  assert.ok(!src.includes('"ACODE_SERVER_TOKEN"'), "legacy env literal must be gone");
+  const coreSrc = await read("packages/acode-server-cli/src/server-core/http.ts");
+  assert.ok(!coreSrc.includes('"ACODE_SERVER_TOKEN"'), "legacy env literal must be gone");
+});
+
+/** 捕获 exposeOnChannelServer(server, overrides) 的服务集合 stub + 真实凭据服务 fixture。 */
+function makeCredentialCaptureCollection() {
+  const captures = [];
+  const realCredential = {
+    load: async (key) => `value:${key}`,
+    save: async () => {
+      throw new Error("real credential save must not be reachable from a narrowed connection");
+    },
+    delete: async () => {
+      throw new Error("real credential delete must not be reachable from a narrowed connection");
+    },
+  };
+  class CapturingServiceCollection {
+    getOptional(descriptor) {
+      if (descriptor && descriptor.channelName === "credential") return realCredential;
+      return undefined;
+    }
+    exposeOnChannelServer(_server, overrides) {
+      captures.push(overrides ?? new Map());
+    }
+    register() {
+      return this;
+    }
+  }
+  return { CapturingServiceCollection, captures, realCredential };
+}
+
+/** 断言 terminal-client 的 credential guard：allowlist 键只读放行，其余 load/save/delete 拒绝。 */
+async function assertTerminalCredentialGuard(guard) {
+  assert.equal(await guard.load("oauth:active_provider"), "value:oauth:active_provider");
+  assert.equal(await guard.load("oauth:zai:access_token"), "value:oauth:zai:access_token");
+  assert.equal(
+    await guard.load("oauth:bigmodel:access_token"),
+    "value:oauth:bigmodel:access_token",
+  );
+  await assert.rejects(() => guard.load("remote-workspace:any:token"), /restricted/i);
+  await assert.rejects(() => guard.load("mcp:server:token"), /restricted/i);
+  await assert.rejects(() => guard.load("auth_token"), /restricted/i);
+  await assert.rejects(() => guard.save("oauth:zai:access_token", "x"), /restricted/i);
+  await assert.rejects(() => guard.delete("oauth:active_provider"), /restricted/i);
+}
+
+test("server: credential channel narrowed for terminal-client, full for desktop (18/M4)", async () => {
+  const { createHttpServer } = await loadServerHttp();
+  const { CapturingServiceCollection, captures } = makeCredentialCaptureCollection();
+  const server = createHttpServer(new CapturingServiceCollection(), 0, { host: "127.0.0.1" });
+  await sleep(120);
+  const port = server.address().port;
+  try {
+    // terminal-client（/ws）：overrides 必须含 credential guard。
+    const terminal = await wsHandshake(`ws://127.0.0.1:${port}/ws`);
+    await waitFor(() => captures.length >= 1);
+    const terminalOverrides = captures[0];
+    assert.ok(
+      terminalOverrides.has("credential"),
+      "terminal-client must get a narrowed credential channel",
+    );
+    await assertTerminalCredentialGuard(terminalOverrides.get("credential"));
+    terminal.socket.terminate();
+
+    // desktop-continuous（/ws/host + capability）：不收窄，保持全量（renderer 登录态依赖）。
+    const mint = await fetch(`http://127.0.0.1:${port}/api/rpc-host-capability`, {
+      method: "POST",
+    });
+    const { capability } = await mint.json();
+    const desktop = await wsHandshake(`ws://127.0.0.1:${port}/ws/host`, {
+      "x-acode-rpc-host-capability": capability,
+    });
+    await waitFor(() => captures.length >= 2);
+    assert.equal(desktop.opened, true);
+    assert.equal(
+      captures[1].has("credential"),
+      false,
+      "desktop-continuous must keep the full credential channel",
+    );
+    desktop.socket.terminate();
+  } finally {
+    await closeWithTimeout(() => new Promise((resolve) => server.close(() => resolve())));
+  }
+});
+
+test("server-core: credential channel narrowed for terminal-client, full for desktop (18/M4)", async () => {
+  const { createCoreHttpServer } = await loadServerCoreHttp();
+  const { CapturingServiceCollection, captures } = makeCredentialCaptureCollection();
+  const core = await createCoreHttpServer(new CapturingServiceCollection(), { host: "127.0.0.1" });
+  try {
+    const terminal = await wsHandshake(`ws://127.0.0.1:${core.port}/ws`);
+    await waitFor(() => captures.length >= 1);
+    assert.ok(
+      captures[0].has("credential"),
+      "terminal-client must get a narrowed credential channel",
+    );
+    await assertTerminalCredentialGuard(captures[0].get("credential"));
+    terminal.socket.terminate();
+
+    const mint = await fetch(`http://127.0.0.1:${core.port}/api/rpc-host-capability`, {
+      method: "POST",
+    });
+    const { capability } = await mint.json();
+    const desktop = await wsHandshake(`ws://127.0.0.1:${core.port}/ws/host`, {
+      "x-acode-rpc-host-capability": capability,
+    });
+    await waitFor(() => captures.length >= 2);
+    assert.equal(desktop.opened, true);
+    assert.equal(
+      captures[1].has("credential"),
+      false,
+      "desktop-continuous must keep the full credential channel",
+    );
+    desktop.socket.terminate();
+  } finally {
+    await closeWithTimeout(() => core.close());
+  }
+});
+
+test("server-core: token auth gates server-info, mint and /ws (19/M1)", async () => {
+  const { createCoreHttpServer } = await loadServerCoreHttp();
+  const ctx = await startCore(createCoreHttpServer, { authToken: "core-secret" });
+  try {
+    // 无凭据：HTTP 面与 WS 升级面全部 401（此前 server-core 完全无 token 鉴权）。
+    assert.equal((await fetch(`http://127.0.0.1:${ctx.port}/api/server-info`)).status, 401);
+    assert.equal(
+      (await fetch(`http://127.0.0.1:${ctx.port}/api/rpc-host-capability`, { method: "POST" }))
+        .status,
+      401,
+    );
+    const noToken = await wsHandshake(`ws://127.0.0.1:${ctx.port}/ws`);
+    noToken.socket.terminate();
+    assert.equal(noToken.opened, false);
+    assert.equal(noToken.status, 401);
+
+    // Bearer：server-info 200 且 authRequired 如实为 true。
+    const info = await fetch(`http://127.0.0.1:${ctx.port}/api/server-info`, {
+      headers: { authorization: "Bearer core-secret" },
+    });
+    assert.equal(info.status, 200);
+    assert.equal((await info.json()).authRequired, true);
+
+    // Bearer 铸造 → 200；/ws?token= 升级握手（标准 WebSocket API 无法带头）→ 101。
+    const mint = await fetch(`http://127.0.0.1:${ctx.port}/api/rpc-host-capability`, {
+      method: "POST",
+      headers: { authorization: "Bearer core-secret" },
+    });
+    assert.equal(mint.status, 200);
+    const withToken = await wsHandshake(`ws://127.0.0.1:${ctx.port}/ws?token=core-secret`);
+    withToken.socket.terminate();
+    assert.equal(withToken.opened, true, "query token must remain valid on /ws* upgrades");
+    // 错误 token → 401。
+    const badToken = await wsHandshake(`ws://127.0.0.1:${ctx.port}/ws?token=wrong`);
+    badToken.socket.terminate();
+    assert.equal(badToken.status, 401);
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("server-core: ACODE_SERVER_AUTH_TOKEN env enables auth; no-token default warns (19/M1)", async () => {
+  const { createCoreHttpServer } = await loadServerCoreHttp();
+  // env 单一读取点：ACODE_SERVER_AUTH_TOKEN（与 packages/server 同名）。
+  const envName = "ACODE_SERVER_AUTH_TOKEN";
+  const saved = process.env[envName];
+  process.env[envName] = "env-core-token";
+  try {
+    const ctx = await startCore(createCoreHttpServer);
+    try {
+      assert.equal((await fetch(`http://127.0.0.1:${ctx.port}/api/server-info`)).status, 401);
+      const ok = await fetch(`http://127.0.0.1:${ctx.port}/api/server-info`, {
+        headers: { authorization: "Bearer env-core-token" },
+      });
+      assert.equal(ok.status, 200);
+      assert.equal((await ok.json()).authRequired, true);
+    } finally {
+      await ctx.close();
+    }
+  } finally {
+    if (saved === undefined) delete process.env[envName];
+    else process.env[envName] = saved;
+  }
+
+  // 缺省 loopback 无 token：行为与现状一致（server-info 匿名可读、authRequired:false），
+  // 且启动告警与 packages/server 对齐（同一串共享文案）。
+  const ctx2 = await startCore(createCoreHttpServer);
+  try {
+    const res = await fetch(`http://127.0.0.1:${ctx2.port}/api/server-info`);
+    assert.equal(res.status, 200);
+    assert.equal((await res.json()).authRequired, false);
+    assert.ok(
+      coreInfoLines.some((line) => /SECURITY WARNING/i.test(line) && /no auth token/i.test(line)),
+      `expected the shared no-auth loopback warning, got: ${JSON.stringify(coreInfoLines)}`,
+    );
+  } finally {
+    await ctx2.close();
+  }
+});
+
+test("static: both servers share token adjudication and credential guard (20)", async () => {
+  // 不变量守护：token 裁决与 credential 收窄都必须走共享单一实现，
+  // 任一侧不得内联第二份 cookie 解码 / 接受顺序 / allowlist。
+  const serverHttp = await read("packages/server/src/http.ts");
+  const coreHttp = await read("packages/acode-server-cli/src/server-core/http.ts");
+  for (const [name, src] of [
+    ["packages/server", serverHttp],
+    ["server-core", coreHttp],
+  ]) {
+    assert.match(src, /resolveServerTokenAuth\(/, `${name} must use the shared token adjudication`);
+    assert.match(
+      src,
+      /readPresentedServerToken\(/,
+      `${name} must use the shared presented-token reader`,
+    );
+    assert.match(
+      src,
+      /isTokenProtectedPathname\(/,
+      `${name} must use the shared protected-path predicate`,
+    );
+    assert.match(
+      src,
+      /createTerminalClientCredentialGuard\(/,
+      `${name} must use the shared credential guard`,
+    );
+    assert.ok(
+      !src.includes("acode_lite_token"),
+      `${name} must not inline a second cookie name/decode`,
+    );
+    assert.ok(
+      !src.includes("oauth:active_provider"),
+      `${name} must not inline a second credential allowlist`,
+    );
+  }
+  // Core 的 /ws/host 绑定必须传真实 token（不再是不提供屏障的字面量 null）。
+  assert.match(coreHttp, /configuredToken:\s*authToken/);
+  assert.match(coreHttp, /presentedToken:\s*readPresentedServerToken\(/);
 });

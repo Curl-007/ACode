@@ -499,4 +499,7 @@ export {
   resolveWorkspaceStorageDir,
   type ConfigFactoryOptions,
   type ConfigResult,
+  // 项目 MCP 信任门（specs/project-mcp-trust-gate.md）：bootstrap 需要按有效来源
+  // 标记（project/user/env/cli/system）判定门控范围，跨包只走公开入口。
+  type McpServerConfigSource,
 } from "./config-factory.js";

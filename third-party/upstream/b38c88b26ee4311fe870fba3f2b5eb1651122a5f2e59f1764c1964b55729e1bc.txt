@@ -1,9 +1,13 @@
-License
--------
+https-proxy-agent@5.0.1
+Publisher-declared license: MIT
+Evidence: https://registry.npmjs.org/https-proxy-agent/5.0.1
+The versioned npm archive and the GitHub tag tree (TooTallNate/node-https-proxy-agent tag 5.0.1) contain no standalone LICENSE file.
+The text below is the LICENSE published by the same publisher in adjacent versions of the same package line (https-proxy-agent@7.0.6, identical to agent-base@7.1.4); its copyright line (2013) predates the pinned version.
+This is not a claim that the pinned version itself published a LICENSE file.
 
 (The MIT License)
 
-Copyright (c) 2014 Nathan Rajlich &lt;nathan@tootallnate.net&gt;
+Copyright (c) 2013 Nathan Rajlich <nathan@tootallnate.net>
 
 Permission is hereby granted, free of charge, to any person obtaining
 a copy of this software and associated documentation files (the
@@ -23,5 +27,3 @@ IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
 CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
 TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
 SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-[rfc]: http://tools.ietf.org/html/rfc2397

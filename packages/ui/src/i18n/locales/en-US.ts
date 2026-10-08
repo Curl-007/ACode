@@ -2655,6 +2655,11 @@ const enUS: Record<string, string> = {
   "settings.modelProvider.startPlan.balance.title": "Today's balance",
   "settings.modelProvider.startPlan.balance.remaining": "{value} tokens remaining",
   "settings.modelProvider.startPlan.balance.used": "{value} used",
+  "settings.modelProvider.balance.title": "Account balance",
+  "settings.modelProvider.balance.refresh": "Refresh balance",
+  "settings.modelProvider.balance.notConfigured": "Enter an API key to check the balance.",
+  "settings.modelProvider.balance.unauthorized": "The API key is invalid or expired.",
+  "settings.modelProvider.balance.error": "Could not load the balance. Try again later.",
   "settings.modelProvider.startPlan.highlight.trial.label": "Trial period",
   "settings.modelProvider.startPlan.highlight.trial.value": "5 calendar days",
   "settings.modelProvider.startPlan.highlight.trial.description":
@@ -3533,6 +3538,8 @@ const enUS: Record<string, string> = {
   "settings.plugins.marketplaces.refreshCatalogHint": "Refresh to load the Z.AI catalog.",
   "settings.plugins.marketplacePlugins.title": "Marketplace plugins",
   "settings.plugins.marketplacePlugins.empty": "No marketplace plugins found",
+  "settings.plugins.store.officialMarketplaceDisabled":
+    "The Z.AI official plugin marketplace is off. Enable \"Z.AI marketplace and CDN\" under Settings → Z.AI services.",
   "settings.plugins.marketplacePlugins.install": "Install",
   "settings.plugins.marketplacePlugins.installed": "Installed",
   "settings.plugins.marketplace.searchPlaceholder": "Search Plugins, Skills, MCPs...",

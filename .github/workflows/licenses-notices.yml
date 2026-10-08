@@ -1,15 +1,21 @@
-# 许可声明重生成与漂移闸门（移植自上游 ZCodium af944d13，按 ACode 适配：
-# 发布矩阵不含 musl 产物（Linux 仅 glibc AppImage），故去掉上游的 musl
-# supportedArchitectures 临时补丁步骤，安装口径与 release.yml build job 一致）。
+# 许可声明重生成与漂移闸门（移植自上游 ZCodium af944d13）。
 #
 # 为什么以 Linux CI 为台账的规范生成环境：
 # scripts/licenses.mjs 的 notices 走 collectNpmNotices -> scanInstalledPackages，
-# 按「磁盘上真实安装的 node_modules」收集许可文件。pnpm-workspace.yaml 的
-# supportedArchitectures 覆盖 darwin/linux/win32 × x64/arm64，各平台安装树
-# 应当一致；用与 release.yml build 相同的 ubuntu-latest + pnpm 10.33.2 + node 24
-# 重生成，才能保证 inventory 与实际发版构建机的依赖树一致（third-party/README.md）。
+# 按「磁盘上真实安装的 node_modules」收集许可文件，而不是只读锁文件；生产图里
+# 含平台/libc 变体（@napi-rs/canvas-* 等），pnpm 只落当前平台能匹配的份。
+# 用与 release.yml build 相同的 ubuntu-latest + pnpm 10.33.2 + node 24 重生成，
+# 才能保证 inventory 与实际发版构建机的依赖树一致（third-party/README.md）。
 # 收集顺序已做确定性处理（包按 key 排序、notices 成员按名称 localeCompare），
 # 跨平台字节一致由下面的 diff 校验兜底。
+#
+# 为什么保留上游的 musl 临时补丁（2026-10-08 首跑实证）：
+# pnpm-workspace.yaml 的 supportedArchitectures.libc 只列 current + glibc，
+# 但锁文件生产图包含 musl 变体（@napi-rs/canvas-linux-*-musl）；glibc runner
+# 上不装 musl 份，missingProductionPackages 直接抛 Missing installed dependency
+# （首跑 run 37760002705 即此败因）。发布矩阵虽不含 musl 产物，台账仍需覆盖
+# 锁文件登记的全部变体，故安装期临时补 musl、装完立即还原——inventory 会把
+# pnpm-workspace.yaml 记进 inputs 哈希，带补丁生成会记录仓库中不存在的文件。
 #
 # 产物不自动提交：THIRD-PARTY-NOTICES.md 与 third-party/inventory.json 通过
 # actions/upload-artifact 交回，人工 review diff 后再入库，避免 CI 直接改分支。
@@ -72,10 +78,45 @@ jobs:
           node-version: 24
           cache: pnpm
 
+      # 锁文件生产图包含 musl 变体，而 supportedArchitectures.libc 只列 current +
+      # glibc，musl 份在任何 glibc runner 上都装不出来，missingProductionPackages
+      # 会直接抛 `Missing installed dependency`（首跑实测）。那是「不是本机」而不是
+      # 「装不上」——锁文件登记的变体，声明台账都应该覆盖其许可文本。
+      # supportedArchitectures 不写进锁文件 settings（只记 autoInstallPeers /
+      # excludeLinksFromLockfile），所以这里临时补一项不会让 --frozen-lockfile 失效。
+      #
+      # 这个补丁只对「把文件装到磁盘上」这一件事有意义，所以下面 install 结束立刻
+      # 还原。generate-third-party-notices.mjs 会把 pnpm-workspace.yaml 本身作为
+      # 输入记进 inventory.inputs 哈希；若带着补丁生成，台账记录的就是仓库里并不
+      # 存在的那个文件，任何非 CI 环境重生成都会被判成「不可复现」。
+      - name: Add musl to supported libc for this job only
+        run: |
+          set -euo pipefail
+          node -e '
+          const fs = require("node:fs");
+          const file = "pnpm-workspace.yaml";
+          const anchor = "  libc:\n    - current\n    - glibc\n";
+          const source = fs.readFileSync(file, "utf8");
+          if (!source.includes(anchor)) {
+            console.error("::error::pnpm-workspace.yaml 的 supportedArchitectures.libc 结构已变，先对齐再跑本工作流");
+            process.exit(1);
+          }
+          if (source.includes("- musl")) process.exit(0);
+          fs.writeFileSync(file, source.replace(anchor, anchor + "    - musl\n"));
+          '
+          sed -n "/^supportedArchitectures:/,/^[a-z]/p" pnpm-workspace.yaml
+
       # 与 release.yml 的 build job 保持同一安装口径（prod + dev 全量）。
       # notices 声明只取生产图，但许可标识门禁作用于全量实装包，两者需同一棵树。
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: |
+          set -euo pipefail
+          pnpm install --frozen-lockfile
+          # musl 产物已经落盘，工作区文件的作用期结束。还原后才能保证 inventory
+          # 记录的输入哈希与仓库实际内容一致。
+          git checkout -- pnpm-workspace.yaml
+          git --no-pager diff --exit-code -- pnpm-workspace.yaml \
+            || { echo "::error::pnpm-workspace.yaml 未能还原，台账输入哈希会失真"; exit 1; }
 
       - name: Regenerate third-party notices
         run: node scripts/licenses.mjs notices

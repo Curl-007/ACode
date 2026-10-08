@@ -54,6 +54,13 @@ export {
 } from "./serialization.js";
 
 // Layer 2: 传输协议
+export { ChunkStream } from "./chunk-stream.js";
+export {
+  TRANSPORT_FRAME_MAX_PAYLOAD_BYTES,
+  TRANSPORT_FRAME_ASSEMBLY_IDLE_TIMEOUT_MS,
+  TransportFrameError,
+  type TransportFrameViolationReason,
+} from "./transport-frame-limits.js";
 export {
   type IMessagePassingProtocol,
   type ConnectionFlowControl,
@@ -61,10 +68,11 @@ export {
   type MessagePortFlowState,
   type MessagePortPayload,
   type ISocket,
-  ChunkStream,
   SocketProtocol,
+  type SocketProtocolOptions,
   ProtocolMessageType,
   ProtocolMessage,
+  HEADER_SIZE,
   MessagePortProtocol,
   type MessagePortLike,
   createQueuePair,

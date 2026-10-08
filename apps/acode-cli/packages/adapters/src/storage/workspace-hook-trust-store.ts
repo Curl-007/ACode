@@ -128,7 +128,13 @@ export interface WorkspaceHookTrustStorePathOptions {
   userConfigPath?: string;
 }
 
-export async function resolveWorkspaceHookTrustStorePath(
+/**
+ * 安全类持久化的存储根（`storage.dir` 重定位后的 `~/.acode` 层）。
+ * 单一所有者：hook trust store 与 MCP trust store（workspace-mcp-trust-store.ts）
+ * 共用本解析，保证两个信任存储永远落在同一 `security/` 目录，受同一套
+ * 「相对路径绑定用户目录、不随 workspace cwd 漂移」的安全规则约束。
+ */
+export async function resolveSecurityStorageRoot(
   options: WorkspaceHookTrustStorePathOptions = {},
 ): Promise<string> {
   const home = resolve(options.homeDir ?? homedir());
@@ -138,8 +144,20 @@ export async function resolveWorkspaceHookTrustStorePath(
   const config = await readUserConfig(userConfigPath);
   const storage = isRecord(config.storage) ? config.storage : {};
   const configured = typeof storage.dir === "string" ? storage.dir.trim() : "";
-  const storageRoot = configured ? resolveTrustedUserPath(configured, home) : join(home, ".acode");
-  return join(storageRoot, SECURITY_DIRECTORY, TRUST_STORE_FILE);
+  return configured ? resolveTrustedUserPath(configured, home) : join(home, ".acode");
+}
+
+/** 安全目录（`<storageRoot>/security/`）：两个信任存储文件的共同落点。 */
+export async function resolveSecurityDirectory(
+  options: WorkspaceHookTrustStorePathOptions = {},
+): Promise<string> {
+  return join(await resolveSecurityStorageRoot(options), SECURITY_DIRECTORY);
+}
+
+export async function resolveWorkspaceHookTrustStorePath(
+  options: WorkspaceHookTrustStorePathOptions = {},
+): Promise<string> {
+  return join(await resolveSecurityDirectory(options), TRUST_STORE_FILE);
 }
 
 export async function createDefaultFileWorkspaceHookTrustStore(

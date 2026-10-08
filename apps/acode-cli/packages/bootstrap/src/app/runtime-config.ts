@@ -11,6 +11,12 @@ import {
   type McpServerConfig,
 } from "@acode/contracts";
 import { omitMcpServers, resolveTrustedOfficialCuaServerNames } from "../mcp-config.js";
+import {
+  collectProjectDeclaredStdioServers,
+  resolveUntrustedProjectMcpServers,
+  type ProjectMcpTrustSnapshot,
+  type UntrustedProjectMcpServer,
+} from "./project-mcp-trust.js";
 import { resolveDefaultEmbeddedSearchBackend } from "./embedded-search-backend.js";
 import { getProjectMemoryRoot } from "./paths.js";
 import type { ACodeAppOptions } from "./types.js";
@@ -24,6 +30,8 @@ interface ResolvedAppRuntimeConfig {
   configuredMcpServers: Record<string, McpServerConfig>;
   runtimeConfig: AgentRuntimeConfig;
   untrustedProjectMcpServers: Set<string>;
+  /** 被信任门拦下的项目 stdio server（日志/headless 提示用，spec R7）。 */
+  pendingProjectMcpServers: UntrustedProjectMcpServer[];
 }
 
 interface ResolvedInitialRegistrySelection extends ResolvedRegistrySelection {
@@ -40,6 +48,12 @@ export function resolveAppRuntimeConfig(input: {
   pluginHooks?: Partial<Record<HookEventName, HookMatcherConfig[]>>;
   pluginMcpServers?: Record<string, McpServerConfig>;
   pluginRuntimeFeatures?: AgentRuntimeConfig["runtimeFeatures"];
+  /**
+   * 项目 MCP 信任快照（specs/project-mcp-trust-gate.md，安全修复 H2）。
+   * 调用方（create-app）异步加载后注入，本工厂保持同步纯装配。
+   * 缺省 = 空信任集 = fail-closed：全部项目 stdio server 视为 untrusted。
+   */
+  projectMcpTrust?: ProjectMcpTrustSnapshot;
   subagentOutputRootDir: string;
   subagentProfiles?: readonly AgentProfile[];
   storageRoot?: string;
@@ -90,9 +104,11 @@ export function resolveAppRuntimeConfig(input: {
   // Protocol session/create 传入的 mcp.servers 只包含 UI MCP 设置里的用户配置，
   // 不包含插件注册的 MCP。宿主内建 server 最后合并并保留其 identity，避免用户或第三方
   // 用同名配置劫持 mcp__node_repl__*；普通 plugin MCP 仍允许显式用户配置覆盖。
+  const configLayerMcpServers =
+    options.runtimeConfig?.mcp?.servers ?? configResult.config.mcp.servers;
   const configuredMcpServers = {
     ...pluginMcpServers,
-    ...(options.runtimeConfig?.mcp?.servers ?? configResult.config.mcp.servers),
+    ...configLayerMcpServers,
     ...builtInMcpServers,
   };
   const trustedOfficialCuaServerNames = resolveTrustedOfficialCuaServerNames(
@@ -106,8 +122,28 @@ export function resolveAppRuntimeConfig(input: {
     // 通用 node_repl 结果被误送进 exact-raster gate，Browser 截图和 console 日志都会失败。
     cuaBridgeServerNames.add("node_repl");
   }
-  // 产品决定 workspace MCP 开箱即用：project 作用域 MCP 默认 trusted，并自动连接。
-  const untrustedProjectMcpServers = new Set<string>();
+  // 安全修复 H2 + B1 收口（specs/project-mcp-trust-gate.md）：项目作用域 stdio MCP
+  // 不再「开箱即用」——clone+打开仓库曾直接 spawn 仓库声明的 command/args（早于任何
+  // 用户输入，即 RCE）。无内容 digest 信任记录的项目 stdio server 一律剔除出自动连接
+  // 集合（不 spawn、不注册工具），状态投影为既有 untrusted 状态；http/sse 不 spawn
+  // 本地进程维持自动连接；builtin/plugin（宿主 authority）经引用相等判定豁免（防同名
+  // 声明 DoS）。B1：显式 params（desktop 会把仓库携带的 .acode/.agents server 一并
+  // 下发，legacy wire 无 cwd/scope）按 R10 内容命中判定过同一 digest 门——判定依据
+  // 是「内容可能来自 workspace 文件」，不信任 client 侧任何来源标签。快照缺省 =
+  // fail-closed。
+  const projectMcpServerSources = configResult.sources.mcp?.serverSources;
+  const projectMcpGate = resolveUntrustedProjectMcpServers({
+    configuredMcpServers,
+    configLayerServers: configLayerMcpServers,
+    serverSources: projectMcpServerSources,
+    projectDeclaredServers: collectProjectDeclaredStdioServers({
+      servers: configResult.config.mcp.servers,
+      serverSources: projectMcpServerSources,
+    }),
+    workingDirectory,
+    ...(input.projectMcpTrust ? { trust: input.projectMcpTrust } : {}),
+  });
+  const untrustedProjectMcpServers = projectMcpGate.untrustedServerNames;
   const autoConnectMcpServers = omitMcpServers(
     configuredMcpServers,
     untrustedProjectMcpServers,
@@ -197,6 +233,7 @@ export function resolveAppRuntimeConfig(input: {
     configuredMcpServers,
     runtimeConfig,
     untrustedProjectMcpServers,
+    pendingProjectMcpServers: projectMcpGate.pendingServers,
   };
 }
 

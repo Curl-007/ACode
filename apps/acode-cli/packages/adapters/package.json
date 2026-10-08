@@ -106,7 +106,7 @@
     "@ai-sdk/anthropic": "3.0.81",
     "@ai-sdk/openai": "^3.0.58",
     "@ai-sdk/openai-compatible": "^2.0.58",
-    "@modelcontextprotocol/client": "2.0.0",
+    "@modelcontextprotocol/client": "2.3.1",
     "@acode/contracts": "workspace:*",
     "@acode/dynamic-workflow": "workspace:*",
     "@acode/model-option-map": "workspace:*",

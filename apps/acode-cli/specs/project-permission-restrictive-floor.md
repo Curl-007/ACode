@@ -17,7 +17,10 @@
 - **项目配置只能收紧、不能放宽**。放宽类字段（`allowedTools`、`autoApproveHighRisk`、`allowMediumRiskInAuto`、`mode`）在项目来源被**剥离**；收紧类字段（`disallowedTools`）**保留**——剥离它会削弱安全（用户明确禁用的工具又活了）。
 - 剥离时发出 `config_project_permission_restricted` 诊断（warning），消息列出被忽略的键名，让用户知道仓库携带的权限放宽未生效。
 - 全部 permission 字段都是放宽类时，`permission` 键整体移除（不留空对象参与合并）。
-- 与 permission 无关的项目配置（`ui`、`mcp`、`storage`…）不受影响。
+- 与 permission 无关的项目配置（`ui`、`storage`…）不受影响。`mcp` 当时同样不受本规则
+  影响，但项目作用域的 **stdio 型** MCP server 已另行纳入信任门（默认 untrusted、不自动
+  spawn，见 `specs/project-mcp-trust-gate.md`）——仓库携带的可执行进程声明与 hooks 同级
+  门控，不再属于「不受影响」清单。
 
 ## 为什么用「restrictive floor」而不是接进 hooks 信任管线
 

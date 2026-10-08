@@ -23,6 +23,7 @@ import { DEFAULT_ENABLED_OFFICIAL_PLUGIN_IDS } from "@acode/shared";
 import type { ICommandsService } from "./commands.js";
 import { CommandFileParser, type CommandFileFormat } from "./commandFileParser.js";
 import { readInstalledPluginRoots } from "#src/plugins/installedPluginRoots.js";
+import { confinePath } from "#src/fs/pathConfinement.js";
 
 function resolveUserHomeDir() {
   const envHome = process.env.HOME?.trim() || process.env.USERPROFILE?.trim();
@@ -493,7 +494,81 @@ function getCommandFileName(config: CommandConfig, agentSource: CommandAgentSour
   const descriptor = getCommandSourceDescriptor(agentSource);
   const rawName = config.name.replace(/^\//, "");
   const relativeName = descriptor.namespaceSeparator === ":" ? rawName.replace(/:/g, "/") : rawName;
+  assertSafeCommandRelativeName(relativeName);
   return `${relativeName}${descriptor.fileExtension}`;
+}
+
+/** 控制字符（<0x20）不能出现在文件名段中；用 charCode 判定避免正则携带控制字符。 */
+function containsControlCharacter(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    if (value.charCodeAt(index) < 0x20) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * 逐段校验命令相对名（M8 根因修复）。
+ * 根因：getCommandFileName 过去只去前导 "/" 并按 separator 转换 ":"，config.name 是 RPC
+ * 裸 string，"../../x"、"C:/x"、"a\\b" 等值 join 后可穿越 commandsRoot 写出；再配合
+ * updateCommandFile 以 newFilePath!==oldFilePath 为前提的存在性检查，令 oldFilePath 等于
+ * 穿越后的 newFilePath 即跳过检查、覆盖任意已存在文件。
+ * 修复：拒绝 ".." 段、"." 段、空段、反斜杠、冒号（挡盘符与 NTFS ADS，且 ":"→"/" 转换发生
+ * 在本校验之前，不影响分层语义）与控制字符；保留 "/" 分层（嵌套命令目录是既有语义，
+ * getCommandName 会从嵌套目录生成分层名）。字符集不在此收窄到 UI 表单白名单，盘上手写/
+ * CLI 生成的合法文件名（含点号等）不受影响；防穿越另由 resolveCommandFilePathInsideRoot
+ * 双保险兜底。
+ * 依据：packages/services/specs/service-fs-path-confinement.md R3；风格参考
+ * subagentsService.validateUserAgentConfig 的 name 白名单。
+ */
+function assertSafeCommandRelativeName(relativeName: string): void {
+  if (!relativeName.trim()) {
+    throw new Error("Command name is required");
+  }
+  for (const segment of relativeName.split("/")) {
+    if (
+      !segment ||
+      segment === "." ||
+      segment === ".." ||
+      /[\\:]/.test(segment) ||
+      containsControlCharacter(segment)
+    ) {
+      throw new Error(`Invalid command name: "${relativeName}"`);
+    }
+  }
+}
+
+/**
+ * 双保险：即使段校验被未来改动绕过，join 后的最终写入路径也必须严格位于 commandsRoot 内，
+ * 否则拒绝（spec: service-fs-path-confinement.md R3）。
+ */
+function resolveCommandFilePathInsideRoot(commandsRoot: string, fileName: string): string {
+  const filePath = join(commandsRoot, fileName);
+  const relativePath = relative(commandsRoot, filePath);
+  if (relativePath === "" || relativePath.startsWith("..") || isAbsolute(relativePath)) {
+    throw new Error(`Command file path escapes commands root: ${fileName}`);
+  }
+  return filePath;
+}
+
+/**
+ * 命令文件写删操作的受控根集合（M7 修复；spec: service-fs-path-confinement.md R2）。
+ * 仅覆盖 `.acode` 来源：`.agents/commands` 在 UI 是只读来源（isEditableUserCommand 要求
+ * location.source==="acode"），插件命令文件由插件管理，均不进入可写删根。
+ * 用户级根恒在列；项目级根仅在参数携带 workspacePath 时可解析（覆盖编辑时切换 scope 的
+ * 跨根改名场景）。
+ */
+function collectCommandConfinementRoots(params: {
+  descriptor: CommandAgentSourceDescriptor;
+  workspacePath?: string;
+}): string[] {
+  const roots = [getUserCommandsRootForDescriptor(params.descriptor)];
+  const workspacePath = params.workspacePath?.trim();
+  if (workspacePath) {
+    roots.push(join(workspacePath, ...params.descriptor.workspaceDirectorySegments));
+  }
+  return roots;
 }
 
 function getWritableCommandConfig(
@@ -582,7 +657,7 @@ export function createCommandsService(_options?: CommandsServiceOptions): IComma
     await mkdir(commandsRoot, { recursive: true });
 
     const fileName = getCommandFileName(params.config, agentSource);
-    const filePath = join(commandsRoot, fileName);
+    const filePath = resolveCommandFilePathInsideRoot(commandsRoot, fileName);
 
     // 检查文件是否已存在
     try {
@@ -639,16 +714,37 @@ export function createCommandsService(_options?: CommandsServiceOptions): IComma
     });
     const { commandsRoot } = target;
     const newFileName = getCommandFileName(params.config, agentSource);
-    const newFilePath = join(commandsRoot, newFileName);
+    const newFilePath = resolveCommandFilePathInsideRoot(commandsRoot, newFileName);
     const enabledOverrides = await readCommandEnabledOverridesFromUserConfig();
-    const existingContent = params.oldFilePath
-      ? await readFile(params.oldFilePath, "utf-8").catch(() => undefined)
-      : undefined;
+
+    // 根因（M7）：oldFilePath 是 RPC 裸 string，原实现直接 readFile（内容经返回值
+    // command.content 外泄）并 rm——被攻破的客户端可读取/删除任意文件。
+    // 修复：oldFilePath 必须位于受控根集合内（用户级 ∪ 项目级），越界在任何读/删/写之前
+    // 抛错拒绝；absent（已不存在）按原 catch(()=>undefined) 语义降级为无旧内容、跳过删除。
+    // 依据：packages/services/specs/service-fs-path-confinement.md R2。
+    const confinedOld = params.oldFilePath
+      ? await confinePath({
+          target: params.oldFilePath,
+          roots: collectCommandConfinementRoots({
+            descriptor,
+            ...(params.workspacePath ? { workspacePath: params.workspacePath } : {}),
+          }),
+        })
+      : null;
+    if (confinedOld?.status === "outside") {
+      throw new Error(
+        `Command file path is outside managed command directories: ${params.oldFilePath}`,
+      );
+    }
+    const existingContent =
+      confinedOld?.status === "inside"
+        ? await readFile(confinedOld.path, "utf-8").catch(() => undefined)
+        : undefined;
 
     // 如果文件名变了，需要删除旧文件
-    if (params.oldFilePath && params.oldFilePath !== newFilePath) {
+    if (confinedOld?.status === "inside" && params.oldFilePath !== newFilePath) {
       try {
-        await rm(params.oldFilePath);
+        await rm(confinedOld.path);
       } catch {
         // 旧文件可能已被移除，忽略删除失败（ENOENT 属正常情况）。
       }
@@ -718,14 +814,32 @@ export function createCommandsService(_options?: CommandsServiceOptions): IComma
   }
 
   async function deleteCommandFile(params: CommandDeleteParams): Promise<void> {
-    try {
-      await rm(params.filePath);
-    } catch (error) {
-      const err = error as NodeJS.ErrnoException;
-      if (err.code === "ENOENT") {
-        // 文件不存在，当作成功
-      } else {
-        throw error;
+    // 根因（M7）：filePath 是 RPC 裸 string，原实现直接 rm——被攻破的客户端可删除任意文件。
+    // 修复：CommandDeleteParams 不携带 workspacePath，项目级命令文件用结构兜底收口
+    // （目标必须位于某个 <ws>/.acode/commands 目录内），用户级命令文件走真实根收口；
+    // 越界抛错拒绝，absent 保持原 ENOENT-as-success 幂等语义（override 清理照常执行）。
+    // 依据：packages/services/specs/service-fs-path-confinement.md R2。
+    const descriptor = getCommandSourceDescriptor(params.agentSource);
+    const confined = await confinePath({
+      target: params.filePath,
+      roots: [getUserCommandsRootForDescriptor(descriptor)],
+      fallbackDirectorySegments: [descriptor.workspaceDirectorySegments],
+    });
+    if (confined.status === "outside") {
+      throw new Error(
+        `Command file path is outside managed command directories: ${params.filePath}`,
+      );
+    }
+    if (confined.status === "inside") {
+      try {
+        await rm(confined.path);
+      } catch (error) {
+        const err = error as NodeJS.ErrnoException;
+        if (err.code === "ENOENT") {
+          // 文件不存在，当作成功
+        } else {
+          throw error;
+        }
       }
     }
     await writeUserCliConfig(

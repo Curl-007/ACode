@@ -19,6 +19,7 @@ import {
 } from "@acode/shared";
 import type { RemoteAssetDirs } from "./desktopRuntimeEnv.js";
 import { ProviderProvisioningEnvironmentCoordinator } from "./providerProvisioningEnvironmentCoordinator.js";
+import { resolveProvisioningTransportSecurity } from "./remoteTargetTransportSecurity.js";
 
 interface RemoteWorkspaceSessionContext {
   workspacePath: string;
@@ -341,14 +342,43 @@ export function createRemoteWorkspaceSessionManager(options: {
     };
     routesBySessionId.set(descriptor.remoteSessionId, route);
     const environmentKey = buildRemoteEnvironmentKey(descriptor.target);
-    const registration = providerProvisioningCoordinator.register(
-      environmentKey,
-      descriptor.remoteSessionId,
-      (trigger) =>
-        executeProviderProvisioning(child, descriptor.remoteSessionId, environmentKey, trigger),
-    );
-    route.providerProvisioningDispose = registration.dispose;
-    void registration.initialSync
+    // 安全修复（审计 M5，spec: specs/provisioning-transport-encryption-gate.md）：
+    // provisioning 信封携带 cipher 解密后的明文凭据（OAuth access/refresh、acodejwttoken、
+    // BYO provider:apikey:*），而 server kind 连接的协议由用户 URL 决定——ws:// 明文链路上
+    // 信封会整体过网、可被中间人截获。这里是 provisioning 的唯一调度点（initialSync 与
+    // source 变化的 requestAll 都只经 coordinator 注册触达 Host 执行器），未加密传输不注册
+    // lane，信封整体（含配置条目）不发往该环境，连接本身照常建立。不降级为「仅配置同步」
+    // 的原因：schemaVersion 1 目标端是 replace-allowlist 语义，credentials:[] 的信封会把远端
+    // 已有凭据删除（ref 形态配置 hydrate 得 null、BYO provider 静默失效），属于比明文流动
+    // 更糟的数据丢失。SSH（隧道内 stdio）与 WSL/Docker（同机 stdio）属加密链路，照常注册。
+    const transportSecurity = resolveProvisioningTransportSecurity(descriptor.target);
+    let provisioningInitialSync: Promise<void>;
+    if (transportSecurity.encrypted) {
+      const registration = providerProvisioningCoordinator.register(
+        environmentKey,
+        descriptor.remoteSessionId,
+        (trigger) =>
+          executeProviderProvisioning(child, descriptor.remoteSessionId, environmentKey, trigger),
+      );
+      route.providerProvisioningDispose = registration.dispose;
+      provisioningInitialSync = registration.initialSync;
+    } else {
+      options.logger.warn("[provider-provisioning] Skip sync over unencrypted transport", {
+        environmentKey,
+        sessionId: descriptor.remoteSessionId,
+        targetKind: descriptor.target.kind,
+        reason: transportSecurity.reason,
+      });
+      emitConnectionLog(pending.win, {
+        requestId,
+        sessionId: descriptor.remoteSessionId,
+        level: "warn",
+        message:
+          "当前远程连接未加密，已跳过模型 Provider 配置与凭据同步（Provider Provisioning）；如需同步请改用 wss:// 或 SSH 等加密连接",
+      });
+      provisioningInitialSync = Promise.resolve();
+    }
+    void provisioningInitialSync
       .then(() => attachRendererPort(pending.win, route, "connect"))
       .then(() => {
         emitConnectionLog(pending.win, {

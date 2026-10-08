@@ -15,6 +15,9 @@ import type {
   inspectWorkspaceHookTrust,
   grantWorkspaceHookTrust,
   revokeWorkspaceHookTrustCli,
+  inspectProjectMcpTrust,
+  grantProjectMcpTrust,
+  revokeProjectMcpTrustCli,
   inspectACodeCustomCommand,
   InspectACodeCustomCommandOptions,
   InspectACodeSkillOptions,
@@ -69,6 +72,9 @@ export interface RunDependencies extends PluginsCommandOverrides {
   inspectWorkspaceHookTrust?: typeof inspectWorkspaceHookTrust;
   grantWorkspaceHookTrust?: typeof grantWorkspaceHookTrust;
   revokeWorkspaceHookTrustCli?: typeof revokeWorkspaceHookTrustCli;
+  inspectProjectMcpTrust?: typeof inspectProjectMcpTrust;
+  grantProjectMcpTrust?: typeof grantProjectMcpTrust;
+  revokeProjectMcpTrustCli?: typeof revokeProjectMcpTrustCli;
   inspectCustomCommand?: (
     options: InspectACodeCustomCommandOptions,
   ) => ReturnType<typeof inspectACodeCustomCommand>;

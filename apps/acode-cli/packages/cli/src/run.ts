@@ -13,6 +13,7 @@ import {
 } from "./env.js";
 import { formatCliHelp } from "./help.js";
 import { runHooksCommand } from "./hooks-trust-command.js";
+import { runMcpCommand } from "./mcp-trust-command.js";
 import { detectCliLocale } from "./locale.js";
 import { loadBootstrapModule } from "./bootstrap-loader.js";
 import { runEmbeddedSearchCli } from "./internal-search/embedded-search-cli.js";
@@ -322,6 +323,12 @@ export const run = async (ctx: RunContext, deps: RunDependencies = {}): Promise<
 
   if (ctx.argv[0] === "hooks") {
     return await runHooksCommand(ctx, deps, version);
+  }
+
+  // `mcp trust`（项目 MCP 信任门，specs/project-mcp-trust-gate.md R9）与 hooks 同构地
+  // 提前分流：--server/--all 等子命令选项会被全局 strict parseArgs 直接报未知参数。
+  if (ctx.argv[0] === "mcp") {
+    return await runMcpCommand(ctx, deps, version);
   }
 
   // `doctor --provider` 自带严格 argv 解析（`--provider` 允许裸标志=全部 provider），

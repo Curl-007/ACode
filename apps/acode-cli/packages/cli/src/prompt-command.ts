@@ -335,6 +335,10 @@ export const runPrompt = async (
       events: result.events,
       workingDirectory,
     });
+    // 安全修复 H2（specs/project-mcp-trust-gate.md R7）：项目 stdio MCP 被信任门
+    // 拦下时，headless 场景与 hooks 同款给出 skip + 审查提示。事实来源是 App 自己的
+    // 状态投影（untrusted 状态），不在 CLI 重新解析配置——单一所有者。
+    const mcpTrustDiagnostic = await resolveHeadlessProjectMcpTrustDiagnostic(app);
 
     if (streamsEvents) {
       // Closing summary, on its own line and tagged so it can be told apart
@@ -392,6 +396,14 @@ export const runPrompt = async (
                 },
               }
             : {}),
+          ...(mcpTrustDiagnostic
+            ? {
+                projectMcpTrust: {
+                  reasonCode: "project_mcp_pending_trust",
+                  servers: mcpTrustDiagnostic.servers,
+                },
+              }
+            : {}),
           projection: {
             status: result.projection.status,
             turnCount: result.projection.turnCount,
@@ -405,6 +417,7 @@ export const runPrompt = async (
     }
 
     if (hookTrustDiagnostic) writeHeadlessWorkspaceHookTrustDiagnostic(ctx, hookTrustDiagnostic);
+    if (mcpTrustDiagnostic) writeHeadlessProjectMcpTrustDiagnostic(ctx, mcpTrustDiagnostic);
     // 每个回合的文本按到达序打印，所以最后一段自然就是结算后的总结。
     // 单回合时这与 `${result.response}\n` 逐字节相同。
     ctx.stdout.write(`${turnResponses.join("\n\n")}\n`);
@@ -628,6 +641,39 @@ function writeHeadlessWorkspaceHookTrustDiagnostic(
         .filter((item) => item.configuredEnabled && item.trustState !== "trusted_persistent")
         .map((item) => `pending digest: ${item.hookDeclarationDigest}`),
       `Review with: acode hooks trust review --workspace ${JSON.stringify(status.workspaceIdentity)}`,
+    ].join("\n") + "\n",
+  );
+}
+
+/**
+ * 项目 MCP 信任门的 headless 诊断：读取 App 的 MCP 状态投影，收集被拦下的
+ * untrusted server 名单。诊断不得影响主流程——App 面缺席或查询失败都按
+ * 「无诊断」处理（提示是 courtesy，门本身在 bootstrap 已经生效）。
+ */
+async function resolveHeadlessProjectMcpTrustDiagnostic(
+  app: { listMcpServers?: () => Promise<Record<string, { status: string }>> } | undefined,
+): Promise<{ servers: string[] } | undefined> {
+  try {
+    if (typeof app?.listMcpServers !== "function") return undefined;
+    const statuses = await app.listMcpServers();
+    const servers = Object.entries(statuses)
+      .filter(([, status]) => status.status === "untrusted")
+      .map(([name]) => name);
+    return servers.length > 0 ? { servers } : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function writeHeadlessProjectMcpTrustDiagnostic(
+  ctx: RunContext,
+  diagnostic: { servers: string[] },
+): void {
+  ctx.stderr.write(
+    [
+      "Project MCP servers skipped: project_mcp_pending_trust",
+      ...diagnostic.servers.map((name) => `server: ${name}`),
+      "Review with: acode mcp trust review",
     ].join("\n") + "\n",
   );
 }

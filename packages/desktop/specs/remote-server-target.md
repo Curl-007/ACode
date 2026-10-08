@@ -5,8 +5,9 @@
 ## 产品规则
 
 - **server kind 是平台无关的**：不像 WSL 受 Windows 桌面门控、Docker 受守护进程探测门控，server 入口始终展示。
-- 连接表单字段：`url`（必填，http/https/ws/wss 均可）、`name`（可选展示名）、`token`（可选，对应 server 的 `ACODE_SERVER_TOKEN`）、`workspacePath`（可选默认工作目录，留空则连上后再选目录）。
-- **token 是 secret**：只存在于当前连接流程内存态。落盘快照（`ServerRemoteTargetSnapshot`）与跨进程 descriptor 永不写原始 token，只写 `tokenCredentialKey`，恢复时再从 `ICredentialService` 读取——与 SSH `passwordCredentialKey` 同款。
+- 连接表单字段：`url`（必填，http/https/ws/wss 均可）、`name`（可选展示名）、`token`（可选，对应 server 的 `ACODE_SERVER_AUTH_TOKEN`）、`workspacePath`（可选默认工作目录，留空则连上后再选目录）。
+- **token 是 secret**：只存在于当前连接流程内存态。落盘快照（`ServerRemoteTargetSnapshot`）与跨进程 descriptor 永不写原始 token，只写 `tokenCredentialKey`，恢复时再从 `ICredentialService` 读取——与 SSH `passwordCredentialKey` 同款。传输时 token 一律经 `Authorization: Bearer` 头（server-info 与 /ws 升级握手两处一致），不写 URL query（安全修复 M5，见 `provisioning-transport-encryption-gate.md`）。
+- **明文 ws:// 连接不触发 Provider Provisioning**：连接建立时 Main 按传输加密分类决定是否注册 provisioning lane；ws:// 整体跳过同步并告警（信封携带解密后的明文凭据，replace-allowlist 语义下也无法安全降级为仅配置），见 `provisioning-transport-encryption-gate.md`。
 - 附着前用 `/api/server-info` 校验协议版本与能力（`serverRemoteInfoSchema` 的 `protocolVersion: literal(1)`、`capabilities.desktopContinuous/websocketRpc: literal(true)` 已用 zod literal 固定，safeParse 失败即视为不兼容并给出明确连接错误，不允许半开信道）。
 - server kind **没有 stdio backend**：不部署、不 detect、不 handshake、不能经 `createRemoteBackend`。prompt 附件不在 host 侧 eager 物化（无 `backend.exec/upload`），直接复用 server 经 RPC 暴露的 `promptAttachmentTransferService`（与纯 Web 附着同模型）。
 - server kind 不提供「在外部编辑器打开」（无 VS Code Remote-SSH/WSL URI），`createOpenInEditorRemoteTarget` 返回 `undefined`；也不纳入 RemoteSyncActions（仅 ssh/wsl）。
@@ -49,9 +50,15 @@
          └─ host connect-remote-workspace → createWindowRemoteConnectionHandle
               ├─ target.kind === "server"
               │    └─ connectToRemoteServerTarget:
-              │         1. GET <base>/api/server-info?token= → serverRemoteInfoSchema.safeParse
+              │         1. GET <base>/api/server-info（Authorization: Bearer <token> 头）→
+              │            serverRemoteInfoSchema.safeParse
               │            （版本/能力不符或 authRequired 缺 token → 明确连接错误）
-              │         2. new WebSocket(<wsBase>/ws?token=) → wrapNodeWebSocket(ISocket)
+              │         2. new WebSocket(<wsBase>/ws, { headers: { authorization: Bearer } }) →
+              │            wrapNodeWebSocket(ISocket)
+              │            （安全修复 M5：token 不再走 URL query——Node ws 客户端支持自定义
+              │            header，服务端 token 裁决 resolveServerTokenAuth 对升级请求同样
+              │            优先读 Bearer 头，query 仅为浏览器客户端保留；
+              │            见 provisioning-transport-encryption-gate.md）
               │         3. SocketProtocol → ChannelClient → RemoteServiceAccess
               │         4. 返回 { services, client, dispose, disposeAndWait }（无 backend）
               ├─ createRemoteWorkspaceServiceCollection（passthrough 附件 wrapper +

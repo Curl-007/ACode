@@ -9,7 +9,14 @@
  */
 
 import { VSBuffer } from "./buffer.js";
+import { ChunkStream } from "./chunk-stream.js";
 import { Event, Emitter, IDisposable, DisposableStore } from "./foundation.js";
+import {
+  TRANSPORT_FRAME_ASSEMBLY_IDLE_TIMEOUT_MS,
+  TRANSPORT_FRAME_MAX_PAYLOAD_BYTES,
+  TransportFrameError,
+  unrefTimer,
+} from "./transport-frame-limits.js";
 
 // ============================================================================
 // 核心传输接口
@@ -75,108 +82,6 @@ export interface ISocket extends IDisposable {
 }
 
 // ============================================================================
-// ChunkStream —— 处理 TCP 的分片和粘包
-// ============================================================================
-
-/**
- * TCP 是流式协议，一次 write 不代表对面一次 read 就能完整收到。
- * ChunkStream 把收到的碎片攒起来，按需读取指定字节数。
- */
-export class ChunkStream {
-  private chunks: VSBuffer[] = [];
-  private totalLength = 0;
-
-  get byteLength(): number {
-    return this.totalLength;
-  }
-
-  acceptChunk(chunk: VSBuffer): void {
-    this.chunks.push(chunk);
-    this.totalLength += chunk.byteLength;
-  }
-
-  /**
-   * 预览前 byteCount 字节，但不消费底层缓冲。
-   *
-   * Socket/stdio 传输天然可能分片。
-   * 之前协议层在 body 还没收全时就先把 header read 掉，后续再来的 body
-   * 会失去对应的帧头，导致消息永远卡住。这里提供 peek，让调用方先判断
-   * “整帧是否已经到齐”，确认足够后再真正消费。
-   */
-  peek(byteCount: number): VSBuffer | null {
-    if (this.totalLength < byteCount) {
-      return null;
-    }
-
-    if (this.chunks[0].byteLength >= byteCount) {
-      return this.chunks[0].slice(0, byteCount);
-    }
-
-    const result = VSBuffer.alloc(byteCount);
-    let offset = 0;
-    for (const chunk of this.chunks) {
-      if (offset >= byteCount) {
-        break;
-      }
-
-      const remaining = byteCount - offset;
-      const copyLength = Math.min(chunk.byteLength, remaining);
-      result.set(copyLength === chunk.byteLength ? chunk : chunk.slice(0, copyLength), offset);
-      offset += copyLength;
-    }
-
-    return result;
-  }
-
-  /** 丢弃前 byteCount 字节 */
-  skip(byteCount: number): void {
-    const discarded = this.read(byteCount);
-    if (!discarded) {
-      throw new Error(`ChunkStream.skip(${byteCount}) 超出可读范围`);
-    }
-  }
-
-  /** 读取 byteCount 字节，不够就返回 null */
-  read(byteCount: number): VSBuffer | null {
-    if (this.totalLength < byteCount) {
-      return null;
-    }
-
-    if (this.chunks[0].byteLength === byteCount) {
-      const result = this.chunks.shift()!;
-      this.totalLength -= byteCount;
-      return result;
-    }
-
-    if (this.chunks[0].byteLength > byteCount) {
-      const result = this.chunks[0].slice(0, byteCount);
-      this.chunks[0] = this.chunks[0].slice(byteCount);
-      this.totalLength -= byteCount;
-      return result;
-    }
-
-    // 需要跨多个 chunk 拼接
-    const result = VSBuffer.alloc(byteCount);
-    let offset = 0;
-    while (offset < byteCount) {
-      const chunk = this.chunks[0];
-      const needed = byteCount - offset;
-      if (chunk.byteLength <= needed) {
-        result.set(chunk, offset);
-        offset += chunk.byteLength;
-        this.chunks.shift();
-      } else {
-        result.set(chunk.slice(0, needed), offset);
-        this.chunks[0] = chunk.slice(needed);
-        offset += needed;
-      }
-    }
-    this.totalLength -= byteCount;
-    return result;
-  }
-}
-
-// ============================================================================
 // Protocol —— 在 ISocket 上实现 IMessagePassingProtocol
 // ============================================================================
 
@@ -230,6 +135,19 @@ export function writeProtocolMessage(msg: ProtocolMessage): VSBuffer {
 }
 
 /**
+ * SocketProtocol 可调参数。
+ *
+ * 缺省值即传输层加固常量；选项存在的意义是让测试注入小阈值验证行为，
+ * 生产调用方（server WS / stdio / remote client）不传，统一受默认上限保护。
+ */
+export interface SocketProtocolOptions {
+  /** 单帧声明 payload 长度硬上限；默认 TRANSPORT_FRAME_MAX_PAYLOAD_BYTES。 */
+  maxFramePayloadBytes?: number;
+  /** 半帧组装空闲超时（ms）；默认 TRANSPORT_FRAME_ASSEMBLY_IDLE_TIMEOUT_MS。 */
+  frameAssemblyIdleTimeoutMs?: number;
+}
+
+/**
  * 基础 Protocol: 在 ISocket 上加消息帧，实现 IMessagePassingProtocol。
  * 只做消息分帧，不做 ACK/重连（那是 PersistentProtocol 的事）。
  */
@@ -240,11 +158,25 @@ export class SocketProtocol implements IMessagePassingProtocol {
   private readonly chunkStream = new ChunkStream();
   private readonly disposables = new DisposableStore();
 
-  constructor(private socket: ISocket) {
+  private readonly maxFramePayloadBytes: number;
+  private readonly frameAssemblyIdleTimeoutMs: number;
+  /** 半帧组装空闲 watchdog；仅在缓冲存在未完成帧字节时武装（spec 规则 6）。 */
+  private assemblyIdleTimer: ReturnType<typeof setTimeout> | null = null;
+  /** 传输层违规标志：置位后停止解析、忽略后续字节，断开只做一次。 */
+  private transportFailed = false;
+
+  constructor(
+    private socket: ISocket,
+    options: SocketProtocolOptions = {},
+  ) {
+    this.maxFramePayloadBytes = options.maxFramePayloadBytes ?? TRANSPORT_FRAME_MAX_PAYLOAD_BYTES;
+    this.frameAssemblyIdleTimeoutMs =
+      options.frameAssemblyIdleTimeoutMs ?? TRANSPORT_FRAME_ASSEMBLY_IDLE_TIMEOUT_MS;
     this.disposables.add(
       socket.onData((data) => {
         this.chunkStream.acceptChunk(data);
         this.readMessages();
+        this.rearmAssemblyIdleTimer();
       }),
     );
   }
@@ -268,6 +200,21 @@ export class SocketProtocol implements IMessagePassingProtocol {
       const _id = header.readUInt32BE(1);
       const _ack = header.readUInt32BE(5);
       const length = header.readUInt32BE(9);
+
+      // 修复依据（specs/rpc-frame-hardening.md 规则 5）：声明长度此前无上限
+      // （uint32 可声明 ~4 GiB），恶意对端声明超大帧并慢速滴字节即可让接收缓冲
+      // 无界累积、吃光堆外内存。流式传输上无法安全跳过永远不会到齐的半帧再同步
+      // 字节流，因此超限立即终结连接。检查在 body 到达之前基于 header 完成，
+      // 不会按恶意声明长度做任何分配。
+      if (length > this.maxFramePayloadBytes) {
+        this.failTransport(
+          new TransportFrameError(
+            "declared-payload-too-large",
+            `declared payload length ${length} exceeds transport frame limit ${this.maxFramePayloadBytes}`,
+          ),
+        );
+        return;
+      }
 
       const totalFrameLength = HEADER_SIZE + length;
       if (this.chunkStream.byteLength < totalFrameLength) {
@@ -296,11 +243,64 @@ export class SocketProtocol implements IMessagePassingProtocol {
     }
   }
 
+  /**
+   * 半帧组装空闲 watchdog（specs/rpc-frame-hardening.md 规则 6）：
+   * 仅在接收缓冲存在未完成帧字节时武装；每次 onData（即每个到达的字节批）都会
+   * 走到这里重新计时，因此"慢但持续推进"的合法大帧不会被误杀，停滞的半帧到期断开。
+   * 缓冲清空（整帧收齐）后不再武装，纯空闲连接不受影响。
+   */
+  private rearmAssemblyIdleTimer(): void {
+    if (this.transportFailed) {
+      return;
+    }
+    this.clearAssemblyIdleTimer();
+    if (this.chunkStream.byteLength === 0) {
+      return;
+    }
+    this.assemblyIdleTimer = setTimeout(() => {
+      this.assemblyIdleTimer = null;
+      this.failTransport(
+        new TransportFrameError(
+          "assembly-idle-timeout",
+          `partial frame assembly stalled (${this.chunkStream.byteLength} buffered bytes) for ${this.frameAssemblyIdleTimeoutMs}ms`,
+        ),
+      );
+    }, this.frameAssemblyIdleTimeoutMs);
+    unrefTimer(this.assemblyIdleTimer);
+  }
+
+  private clearAssemblyIdleTimer(): void {
+    if (this.assemblyIdleTimer !== null) {
+      clearTimeout(this.assemblyIdleTimer);
+      this.assemblyIdleTimer = null;
+    }
+  }
+
+  /**
+   * 传输层帧违规收口：记 warn（只含声明长度/超时值，不含 payload 内容）、停止解析、
+   * 终结底层连接。消费方（server WS/stdio、remote client）都有 close 驱动的既有清理
+   * 路径（socket.onClose / ws close / stream close），断开即复用这些路径，不新增事件面。
+   */
+  private failTransport(error: TransportFrameError): void {
+    if (this.transportFailed) {
+      return;
+    }
+    this.transportFailed = true;
+    this.clearAssemblyIdleTimer();
+    console.warn(
+      `[rpc] SocketProtocol transport frame violation (${error.reason}): ${error.message}; closing connection`,
+    );
+    // 先 dispose（摘除 onData 订阅，违规对端的后续字节被忽略），再 end 通知对端关闭。
+    this.dispose();
+    this.socket.end();
+  }
+
   async drain(): Promise<void> {
     return this.socket.drain();
   }
 
   dispose(): void {
+    this.clearAssemblyIdleTimer();
     this.disposables.dispose();
     this._onMessage.dispose();
   }

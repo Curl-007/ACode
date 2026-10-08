@@ -781,9 +781,12 @@ export default {
     // 安装盘图标统一使用安装专用素材，避免复用应用图标导致安装识别度不足。
     icon: "build/icon_installer.icns",
     contents: [
-      // 实验性调整：为隐藏资源文件显式指定图标坐标，尽量把它们移到角落区域。
-      { x: 640, y: 56, type: "file", path: ".background.tiff" },
-      { x: 640, y: 56, type: "file", path: ".VolumeIcon.icns" },
+      // 不再为 .background.tiff / .VolumeIcon.icns 指定实验性坐标条目：这两个是 dmgbuild 在
+      // DMG 卷内生成的隐藏资源文件，磁盘上不存在对应相对路径。electron-builder 26.15.x 换用
+      // Python dmgbuild 后，contents 的 file 条目一律经 `ditto <path> <卷内路径>` 从进程 cwd 拷贝，
+      // 相对路径解析失败即 `ditto: Cannot get the real path for source '.background.tiff'`，
+      // mac DMG 打包必挂（0.0.5 发布 run #9 macos-14/macos-15-intel 实证；26.8.1 旧管线无此行为）。
+      // 卷图标由上面的 dmg.icon 提供，隐藏文件定位仅为观感实验，删除条目无功能影响。
       // 应用图标与 Applications 链接上移：Finder 窗口外框比图标视图内容区高约 70px（工具栏），
       // 背景（620x560）比可见内容区更高，所有元素必须排在顶部可见区内，否则需要滚动才能看到说明文件。
       { x: 150, y: 120 },

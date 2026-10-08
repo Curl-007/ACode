@@ -3118,6 +3118,12 @@ export const acodePluginsOverviewResultSchema = z
     installedPlugins: z.array(acodeInstalledPluginSummarySchema),
     restorableBuiltins: z.array(acodeAvailablePluginSummarySchema),
     diagnostics: z.array(acodePluginDiagnosticSchema),
+    /**
+     * Host 注入的展示态：官方插件市场开关是否开启。
+     * agent 不返回；关闭时 Host 已同时过滤掉官方市场与官方候选插件，
+     * UI 据此在“公开”分段展示引导用户去设置打开的提示。缺省视为可用（旧客户端兼容）。
+     */
+    officialMarketplaceEnabled: z.boolean().optional(),
     capability: z
       .object({
         supported: z.boolean(),

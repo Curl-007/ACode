@@ -8,12 +8,18 @@ import { pdfJsCMapsPlugin } from "../ui/vite/pdfJsCMapsPlugin.js";
 import { thirdPartyNoticesVitePlugin } from "../../scripts/third-party-notices.mjs";
 // Vite 配置在 Node 加载期执行，不能导入 @acode/shared 根入口。
 // 根入口包含 NodeNext 风格的源码 re-export，Node 会按真实文件查找 .js 并在 bootstrap 阶段失败。
+//
+// 子路径 @acode/shared/acodeEndpoint 同样不行：它仍指向同一份 TS 源码，一旦该文件内部
+// 出现值级相对 import（如 "./env-names.js"），Vite 会把 workspace 包交给 Node 原生加载，
+// 而 Node 24 的 strip-types 不做 .js→.ts 重映射，bootstrap 阶段直接 ERR_MODULE_NOT_FOUND。
+// 与 packages/desktop/tsup.config.ts 同一处理：改从相对路径引源码，交给 Vite 自身打包。
+// （上游 ZCodium 740b7c18 同款修复；当前 acodeEndpoint.ts 仅有 type-only import 未触发，属预防性对齐。）
 import {
   resolveRuntimeACodeEndpointOrigin,
   pickProductEndpointEnv,
   resolveZaiOAuthClientId,
   resolveZaiOAuthOrigin,
-} from "@acode/shared/acodeEndpoint";
+} from "../shared/src/acodeEndpoint.js";
 
 const HERE = fileURLToPath(new URL(".", import.meta.url));
 const REPO_ROOT = resolve(HERE, "../..");

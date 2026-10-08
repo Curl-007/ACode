@@ -690,7 +690,21 @@ export class PermissionService {
       );
     }
 
-    if (this.isMcpToolCapability(capability) && !capability.destructive) {
+    // 安全修复 H1（specs/plan-mode-mcp-gate.md R1）：MCP 分支此前只判 !destructive
+    // 即放行。destructive 来自服务端自报的 annotations.destructiveHint（缺省 fail-open），
+    // 而 MCP 桥对宿主 node_repl js 明确标注 system/high/needsApproval、对全部 MCP 工具
+    // 硬编码 needsApproval——三个安全属性在旧分支全部失效，「只读」plan 模式可免审批
+    // 执行任意代码。收紧为逐条显式合取（风格对齐 checkBuildMode）：critical 与 high
+    // 一并拒绝，否则更严等级反而放行（严重度倒挂）。不满足即走下方 plan 既有拒绝路径，
+    // 与原生 node_repl 工具（permission 名非 "mcp"）在 plan 下的结论一致（R4）。
+    if (
+      this.isMcpToolCapability(capability) &&
+      !capability.destructive &&
+      !capability.needsApproval &&
+      capability.riskLevel !== "high" &&
+      capability.riskLevel !== "critical" &&
+      capability.sideEffectScope !== "system"
+    ) {
       return this.allow(
         context,
         capability,

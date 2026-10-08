@@ -479,6 +479,10 @@ runtime/methods/subagent.ts        permissionMode plan 地板 + 工具白名单�
    （readOnly false）被 `mode.plan.nonReadOnly` 拒绝。功能级实测 10/10
    （6 条只读命令全放行、rm/git commit/pnpm install/sed -i 全判非只读）。
    Plan / Review 的 plan 地板与只读 Bash 调研兼容，白名单降级分支不触发。
+   补注（安全修复 H1，2026-10-08）：plan 地板此前对 MCP 工具存在例外——
+   `mode.plan.mcp` 分支非破坏即放行，`mcp__node_repl__js` 可在 plan 下免审批
+   执行代码；已按 `specs/plan-mode-mcp-gate.md` 收紧，「plan 只读」意图对 MCP
+   工具同样成立（只读 MCP 经 `mode.plan.readOnly` 照常放行）。
 7. **架构 ratchet 触发的辅助函数迁移**（2026-10-06 集成验证批次）：
    `bootstrap/src/subagents.ts` 因 R5/R9 追加超过 400 行 legacy ratchet 上限，
    把 `CORE_RESERVED_AGENT_NAMES` / `createReservedAgentNames` /

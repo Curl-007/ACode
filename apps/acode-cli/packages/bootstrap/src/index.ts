@@ -92,3 +92,14 @@ export type {
   WorkspaceHookTrustCliStatus,
   WorkspaceHookTrustCliTarget,
 } from "./workspace-hook-trust-cli.js";
+// 项目 MCP 信任门（specs/project-mcp-trust-gate.md）：CLI `acode mcp trust` 的命令面。
+export {
+  grantProjectMcpTrust,
+  inspectProjectMcpTrust,
+  revokeProjectMcpTrustCli,
+} from "./project-mcp-trust-cli.js";
+export type {
+  ProjectMcpTrustCliItem,
+  ProjectMcpTrustCliStatus,
+  ProjectMcpTrustCliTarget,
+} from "./project-mcp-trust-cli.js";

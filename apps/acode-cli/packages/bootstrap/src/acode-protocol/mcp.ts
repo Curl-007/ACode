@@ -10,6 +10,11 @@ import {
   omitMcpServers,
   resolveTrustedOfficialCuaServerNames,
 } from "../mcp-config.js";
+import {
+  collectProjectDeclaredStdioServers,
+  loadProjectMcpTrustSnapshot,
+  resolveUntrustedProjectMcpServers,
+} from "../app/project-mcp-trust.js";
 import { StartupTimer, startupNow } from "../startup-logging.js";
 import { getCliStorageRoot } from "../app/paths.js";
 import { resolveStartupPlugins } from "../app/startup-marks.js";
@@ -71,8 +76,31 @@ export async function listMcpServers(
     configuredMcpServers,
     pluginOutcome.mcpServers,
   );
-  // 产品决定 workspace MCP 开箱即用：project 作用域 MCP 默认 trusted，并自动连接。
-  const untrustedProjectMcpServers = new Set<string>();
+  // 安全修复 H2（specs/project-mcp-trust-gate.md）：mcp/list 不再持有第二份「空集」
+  // 真值——与 resolveAppRuntimeConfig 共用同一对 gate helper（快照加载 + 纯函数判定），
+  // connect 收敛与状态投影对同一 workspace 得出同一 untrusted 结论。
+  const configLayerMcpServers = explicitMcpServersProvided
+    ? (explicitRuntimeMcp?.servers ?? {})
+    : configResult.config.mcp.servers;
+  const projectMcpTrust = await loadProjectMcpTrustSnapshot({
+    workingDirectory,
+    workspaceIdentity: params.workspace.workspaceIdentity,
+    userConfigPath: configResult.sources.user.path,
+    logger: context.logger ?? noopLogger,
+  });
+  const { untrustedServerNames: untrustedProjectMcpServers } = resolveUntrustedProjectMcpServers({
+    configuredMcpServers,
+    configLayerServers: configLayerMcpServers,
+    serverSources: configResult.sources.mcp?.serverSources,
+    // B1 收口（spec R10）：mcp/list 的显式 params 由 desktop 下发，可能回声仓库
+    // 携带的 .acode/.agents 内容——内容命中项目声明的 stdio server 同样过 digest 门。
+    projectDeclaredServers: collectProjectDeclaredStdioServers({
+      servers: configResult.config.mcp.servers,
+      serverSources: configResult.sources.mcp?.serverSources,
+    }),
+    workingDirectory,
+    trust: projectMcpTrust,
+  });
   const mcpPort = context.deps.mcpPort;
   if (mcpPort) {
     if (params.mode === "status") {

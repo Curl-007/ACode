@@ -1,4 +1,5 @@
-import { basename, dirname, isAbsolute, resolve } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import type { McpServerConfig, RuntimeConfigPatch } from "@acode/contracts";
 import {
   createWorkspaceHookSourceInput,
@@ -7,6 +8,7 @@ import {
   type WorkspaceHookSourceInput,
 } from "@acode/shared/workspace-hook-discovery";
 import { loadFileConfig, type LoadedConfig } from "./file-config.adapter.js";
+import { parseConfigFileToRuntimePatchWithDiagnostics, type ConfigDiagnostic } from "./schema.js";
 
 const CURRENT_DIRECTORY = ".";
 
@@ -98,7 +100,86 @@ export function loadProjectConfigs(
     }),
   );
 
+  // B1 收口（specs/project-mcp-trust-gate.md R11）：`.agents/mcp.json` 是 desktop
+  // main 的 workspace MCP fallback 来源；此前 agent 项目发现面对它不可见——仓库只放
+  // `.agents/mcp.json` 时 serverSources 无 project 标记，信任门被整体绕过（显式
+  // params 回声路径直接 spawn）。这里把它并入项目层**最低优先级**（unshift：项目层
+  // 按名合并、后合并者胜，于是同名 server 仍以 acode.json/.acode/config.json 为准，
+  // 对齐 desktop 的「.acode 强优先」；.agents 独有条目同样进入 serverSources=project，
+  // 保证 R10 的内容命中判定对任何 workspace 声明都不留盲区）。
+  const agentsMcpFile = loadAgentsMcpJsonProjectConfig(
+    join(resolvedWorkingDirectory, ".agents", "mcp.json"),
+    resolvedWorkingDirectory,
+  );
+  if (agentsMcpFile) {
+    files.unshift(agentsMcpFile);
+  }
+
   return summarizeProjectConfigs(files);
+}
+
+/**
+ * 读取 `.agents/mcp.json`（`{ mcpServers: {...} }` 通用目录格式）并折算成项目配置
+ * 文件条目。解析/诊断/cwd 绝对化全部复用既有 config 文件管线（单一所有者）：
+ * `parseConfigFileToRuntimePatchWithDiagnostics`（type 推断、env 归一、逐 server
+ * `config_mcp_server_invalid` 诊断）+ `normalizeProjectConfig`（permission 剥离、
+ * cwd 规范化）。文件不存在或没有 mcpServers 映射 → undefined（不参与发现）。
+ */
+function loadAgentsMcpJsonProjectConfig(
+  path: string,
+  workingDirectory: string,
+): ProjectConfigFile | undefined {
+  if (!existsSync(path)) return undefined;
+  const invalidFile = (message: string, loaded: boolean): ProjectConfigFile => ({
+    baseDir: workingDirectory,
+    config: {},
+    diagnostics: [
+      {
+        code: "config_file_invalid",
+        filePath: path,
+        message,
+        severity: "warning",
+      },
+    ],
+    loaded,
+    path,
+  });
+  let serverMap: unknown;
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(path, "utf-8"));
+    if (!isPlainRecord(parsed) || !isPlainRecord(parsed.mcpServers)) return undefined;
+    serverMap = parsed.mcpServers;
+  } catch (error) {
+    return invalidFile(
+      `Failed to parse .agents/mcp.json: ${error instanceof Error ? error.message : String(error)}`,
+      false,
+    );
+  }
+  try {
+    const result = parseConfigFileToRuntimePatchWithDiagnostics({
+      mcp: { servers: serverMap },
+    });
+    const diagnostics: ConfigDiagnostic[] = result.diagnostics.map((diagnostic) => ({
+      ...diagnostic,
+      filePath: diagnostic.filePath ?? path,
+    }));
+    return {
+      baseDir: workingDirectory,
+      config: normalizeProjectConfig(result.config, workingDirectory),
+      diagnostics,
+      loaded: true,
+      path,
+    };
+  } catch (error) {
+    return invalidFile(
+      `Invalid .agents/mcp.json: ${error instanceof Error ? error.message : String(error)}`,
+      false,
+    );
+  }
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 export function loadProjectConfigFile(

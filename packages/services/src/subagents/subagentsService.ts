@@ -1,5 +1,5 @@
 /* eslint-disable max-lines */
-import { access, lstat, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { access, lstat, mkdir, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import {
   createAgentStateId,
@@ -38,6 +38,7 @@ import {
 } from "./subagentStorage.js";
 import type { ISubagentsService } from "./subagents.js";
 import { atomicWriteText } from "#src/fs/atomicFileUtils.js";
+import { confinePath } from "#src/fs/pathConfinement.js";
 import {
   migrateUserSubagentMarkdown,
   migrateSubagentStateFile,
@@ -369,6 +370,14 @@ function isBuiltInAgentAliasPath(filePath: string | undefined): boolean {
   if (!filePath) return false;
   return filePath.startsWith(BUNDLED_AGENT_PATH_PREFIX) || filePath.startsWith("built-in:");
 }
+
+/**
+ * 与 resolveWorkspaceSubagentRoot 一致的项目级 agent 根目录段。
+ * deleteAgent 的 RPC 参数（AgentDeleteParams）不携带 workspacePath，项目级 agent 文件
+ * 只能按结构兜底收口：目标必须位于某个 <workspace>/.acode/agents 目录内。
+ * spec: packages/services/specs/service-fs-path-confinement.md R4。
+ */
+const WORKSPACE_SUBAGENT_ROOT_SEGMENTS = [".acode", "agents"] as const;
 
 /** 仅 bundled 预置成员随 disabledAgentIds 启停；核心二内置（built-in:）恒 enabled。 */
 function isBundledAgentPath(filePath: string): boolean {
@@ -856,6 +865,22 @@ export function createSubagentsService(options?: SubagentsServiceOptions): ISuba
           ? resolveWorkspaceSubagentRoot(requireWorkspacePath(params.workspacePath))
           : await resolveUserSubagentRoot(storageOptions);
       const filePath = join(agentDir, `${params.config.name.trim().toLowerCase()}.md`);
+
+      // 根因（M9）：oldFilePath 是 RPC 裸 string，原实现改名后直接 rm(force)——被攻破的
+      // 客户端可删除任意路径。修复：删除前断言 oldFilePath 位于当前 scope 的受控 agent
+      // 根内（realpath 规范化后比较），校验前置在任何写盘/状态迁移之前，越界抛错拒绝；
+      // absent（已不存在）跳过删除，保持原 force:true 幂等语义。
+      // 依据：packages/services/specs/service-fs-path-confinement.md R4。
+      const confinedOld =
+        params.oldFilePath && params.oldFilePath !== filePath
+          ? await confinePath({ target: params.oldFilePath, roots: [agentDir] })
+          : null;
+      if (confinedOld?.status === "outside") {
+        throw new Error(
+          `Agent file path is outside managed agent directories: ${params.oldFilePath}`,
+        );
+      }
+
       await mkdir(agentDir, { recursive: true });
 
       if (params.oldFilePath && params.oldFilePath !== filePath && (await exists(filePath))) {
@@ -869,8 +894,15 @@ export function createSubagentsService(options?: SubagentsServiceOptions): ISuba
       // enabled 状态按 agent id 存储；重命名会生成新 id，必须迁移旧禁用记录，
       // 否则用户禁用的 agent 改名后会被 runtime 当成新启用 profile 重新加载。
       await migrateDisabledAgentId(params.agentId, agent.id, storageOptions);
-      if (params.oldFilePath && params.oldFilePath !== filePath) {
-        await rm(params.oldFilePath, { force: true });
+      if (confinedOld?.status === "inside") {
+        // old==new 判定必须与 rm 消费的路径同形态（canonical）：oldFilePath 以异拼写
+        // （软链/大小写别名）指向新路径同一文件时，原始字符串比较会把它当"改名"，
+        // 在写盘后把刚写入的新文件删掉。写入后 filePath 必然存在，realpath 可靠；
+        // 解析失败时退回词法路径（维持原比较形态，不额外扩大跳过面）。
+        const canonicalFilePath = await realpath(filePath).catch(() => filePath);
+        if (confinedOld.path !== canonicalFilePath) {
+          await rm(confinedOld.path, { force: true });
+        }
       }
       return { agent };
     },
@@ -881,7 +913,22 @@ export function createSubagentsService(options?: SubagentsServiceOptions): ISuba
       if (isBuiltInAgentAliasPath(params.filePath)) {
         throw new Error("Built-in agents are read-only and cannot be deleted");
       }
-      await rm(params.filePath, { force: true });
+      // 根因（M9）：filePath 是 RPC 裸 string，原实现直接 rm(force)——被攻破的客户端可
+      // 删除任意路径。修复：目标必须位于用户级 agent 根内；AgentDeleteParams 不携带
+      // workspacePath，项目级 agent 文件按结构兜底（位于某个 <ws>/.acode/agents 内）。
+      // 越界抛错拒绝；absent 保持幂等（下方 disabledAgentIds 状态清理照常执行）。
+      // 依据：packages/services/specs/service-fs-path-confinement.md R4。
+      const confined = await confinePath({
+        target: params.filePath,
+        roots: [await resolveUserSubagentRoot(storageOptions)],
+        fallbackDirectorySegments: [WORKSPACE_SUBAGENT_ROOT_SEGMENTS],
+      });
+      if (confined.status === "outside") {
+        throw new Error(`Agent file path is outside managed agent directories: ${params.filePath}`);
+      }
+      if (confined.status === "inside") {
+        await rm(confined.path, { force: true });
+      }
 
       const state = await readAgentStateFile(storageOptions);
       const disabledSet = new Set(state.disabledAgentIds);

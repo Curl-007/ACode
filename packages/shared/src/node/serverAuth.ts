@@ -88,6 +88,135 @@ export function parseBearerToken(header: string | undefined): string | undefined
   return token ? token : undefined;
 }
 
+// ── 请求 token 裁决单一实现（M1 配套：Server Core 接入 token 时从 packages/server 提取）──
+//
+// 此前「cookie 名 / cookie 安全解码 / 凭据接受顺序 / 受保护路径判定」只存在于
+// packages/server/src/http.ts。Server Core 接入同一 token 能力时若再写一份，就是第二套
+// 可分叉的实现（server-auth.md 明确禁止）。提取到这里后两套 server 共用同一裁决，
+// 语义与原 http.ts 完全一致（既有 server-auth 测试即回归护栏）。
+
+/** lite token cookie 名（浏览器兼容路径；与历史写入端同名）。 */
+export const SERVER_LITE_TOKEN_COOKIE_NAME = "acode_lite_token";
+
+/** WebSocket 升级路径（`/ws`、`/ws/**`）；R2 收缩后 query token 的唯一有效面。 */
+export function isWebSocketUpgradePathname(pathname: string): boolean {
+  return pathname === "/ws" || pathname.startsWith("/ws/");
+}
+
+/** 配置 token 后必须携带合法凭据的路径：`/ws*` 升级与 `/api/**`；静态资源/SPA fallback 不在内。 */
+export function isTokenProtectedPathname(pathname: string): boolean {
+  return isWebSocketUpgradePathname(pathname) || pathname.startsWith("/api/");
+}
+
+function parseCookieHeaderValue(header: string | undefined): Map<string, string> {
+  const cookies = new Map<string, string>();
+  if (!header) {
+    return cookies;
+  }
+  for (const part of header.split(";")) {
+    const separator = part.indexOf("=");
+    if (separator <= 0) {
+      continue;
+    }
+    const name = part.slice(0, separator).trim();
+    const value = part.slice(separator + 1).trim();
+    if (name) {
+      cookies.set(name, value);
+    }
+  }
+  return cookies;
+}
+
+/**
+ * 读取 `acode_lite_token` cookie 的值，与写入端（`encodeURIComponent`）对称地安全解码。
+ *
+ * **为什么必须有这一个 helper**：鉴权（`resolveServerTokenAuth`）与主体绑定
+ * （`readPresentedServerToken`）必须对「本次请求出示的是哪个 token」给出**完全相同**的答案。
+ * 历史上两处各自读 cookie——一处比较原值、一处 `decodeURIComponent`——导致含 `%XX` 的 token
+ * 会出现「中间件认可、绑定校验算出不同主体」的分叉：合法 cookie 升级被 403（principal-mismatch），
+ * 含裸 `%` 的 token 还会让 `decodeURIComponent` 抛 URIError → 500。
+ *
+ * 解码失败时回退原值而不是抛错：cookie 可能来自旧客户端或非本服务写入，
+ * 鉴权/绑定都不应因为一个畸形值而 500，比较不上自然就是「不匹配」。
+ */
+function readLiteTokenCookieValue(cookieHeader: string | undefined): string | undefined {
+  const raw = parseCookieHeaderValue(cookieHeader).get(SERVER_LITE_TOKEN_COOKIE_NAME);
+  if (raw === undefined) {
+    return undefined;
+  }
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
+}
+
+/** 请求侧只读视图：两套 server 从各自框架（hono Context）适配出这三项后交给共享裁决。 */
+export interface ServerTokenRequestView {
+  /** `Authorization` 请求头原值。 */
+  authorizationHeader?: string;
+  /** `Cookie` 请求头原值。 */
+  cookieHeader?: string;
+  /** 完整请求 URL（含 pathname 与 query）。 */
+  url: string;
+}
+
+export interface ServerTokenAuthResult {
+  valid: boolean;
+  /**
+   * HTTP 路由上出示了**合法**的 `?token=` query 并被拒绝（R2 收缩后 query 只在 WebSocket
+   * 升级握手有效）；调用点据此打印一次性「已移除」告警，给旧客户端明确迁移路径。
+   */
+  viaDeprecatedQuery: boolean;
+}
+
+/**
+ * 裁决请求出示的 token 是否合法：`Authorization: Bearer` 优先，其次 `acode_lite_token`
+ * cookie（浏览器兼容），最后 `?token=` query——query 仅在 `/ws*` 升级路径构成有效凭据；
+ * HTTP 路由出示合法 query 返回 `{valid:false, viaDeprecatedQuery:true}`（query 会泄漏进
+ * 日志/历史/Referer，兼容窗已按 server-auth.md R2 关闭）。
+ */
+export function resolveServerTokenAuth(
+  view: ServerTokenRequestView,
+  expectedToken: string,
+): ServerTokenAuthResult {
+  const bearer = parseBearerToken(view.authorizationHeader);
+  if (timingSafeTokenEquals(bearer, expectedToken)) {
+    return { valid: true, viaDeprecatedQuery: false };
+  }
+  if (timingSafeTokenEquals(readLiteTokenCookieValue(view.cookieHeader), expectedToken)) {
+    return { valid: true, viaDeprecatedQuery: false };
+  }
+  const url = new URL(view.url);
+  const queryToken = url.searchParams.get("token") ?? undefined;
+  if (!timingSafeTokenEquals(queryToken, expectedToken)) {
+    return { valid: false, viaDeprecatedQuery: false };
+  }
+  if (isWebSocketUpgradePathname(url.pathname)) {
+    return { valid: true, viaDeprecatedQuery: false };
+  }
+  return { valid: false, viaDeprecatedQuery: true };
+}
+
+/**
+ * 取出本次请求实际出示的 token（`Authorization: Bearer` > cookie > query）。
+ *
+ * 主体绑定校验要的是「出示的是哪一个主体」，必须与 `resolveServerTokenAuth` **同源**读取——
+ * cookie 一律经 `readLiteTokenCookieValue`，避免「中间件认可 A、绑定校验取到 B」的分叉。
+ * R2 收缩后 query 只在 WS 升级路径构成有效凭据，优先级顺序保持两者答案一致。
+ */
+export function readPresentedServerToken(view: ServerTokenRequestView): string | undefined {
+  const bearer = parseBearerToken(view.authorizationHeader);
+  if (bearer) {
+    return bearer;
+  }
+  const fromCookie = readLiteTokenCookieValue(view.cookieHeader);
+  if (fromCookie) {
+    return fromCookie;
+  }
+  return new URL(view.url).searchParams.get("token") ?? undefined;
+}
+
 /**
  * 已认证主体指纹：`sha256(token)` 前 16 hex。用于把铸造的 host capability 绑定到主体，
  * **绝不**含原始 token，可安全落日志。

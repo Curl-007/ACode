@@ -58,6 +58,7 @@ import { useCodingPlanUpgradeDialog } from "@/settings/CodingPlanUpgradeDialogPr
 import { useProviderSettingsView } from "@/hooks/useProviderSettingsView.js";
 import type { ProviderSettingsView } from "@acode/services";
 import type { SavePersonalModelDraftInput } from "@acode/provider";
+import { ProviderBalanceCard } from "./ProviderBalanceCard.js";
 import { resolveAccountProviderInspectionAccess } from "@/lib/accountProviderAccess.js";
 import { projectProviderSettingsViewToFormProviders } from "@/lib/providerSettingsFormProjection.js";
 
@@ -218,6 +219,17 @@ function resolvePlanSettingsProvider({
     );
   }
   return fallback?.providerId === providerId ? fallback : null;
+}
+
+/**
+ * 余额卡重查指纹：API Key 或 baseUrl 保存成功后指纹变化，触发余额重新查询。
+ * 指纹只在渲染内比较，不进入日志、快照或持久化。
+ * 与 `providerBalanceTargetResolver` 一致，仅普通 `api-key` Provider 参与余额查询。
+ */
+function resolveProviderBalanceRecheckKey(provider: ProviderSettingsFormProvider): string {
+  const access = provider.config.access;
+  const apiKey = access?.type === "api-key" ? (access.apiKey ?? "") : "";
+  return `${apiKey}\u0000${provider.config.api?.baseUrl ?? ""}`;
 }
 
 export function ModelProviderSectionDetail({
@@ -428,6 +440,16 @@ export function ModelProviderSectionDetail({
           nameEditable={false}
           headerVisible={!familySpec}
           headerActionsVisible={familySpec ? false : undefined}
+          statusSection={
+            presetProvider.config.access?.type === "api-key" ? (
+              <ProviderBalanceCard
+                providerId={presetProvider.providerId}
+                recheckKey={resolveProviderBalanceRecheckKey(presetProvider)}
+              />
+            ) : undefined
+          }
+          // 余额卡与头部共存：不能用 statusSection 的“替代头部”语义隐藏名称/开关/操作入口。
+          statusSectionSuppressesHeader={false}
         />
       </ProviderFamilyDetailShell>
     );
@@ -836,6 +858,16 @@ export function ModelProviderSectionDetail({
             }
           : undefined
       }
+      statusSection={
+        customProvider.config.access?.type === "api-key" ? (
+          <ProviderBalanceCard
+            providerId={customProvider.providerId}
+            recheckKey={resolveProviderBalanceRecheckKey(customProvider)}
+          />
+        ) : undefined
+      }
+      // 自定义 Provider 没有外层 family 头部，余额卡必须与卡片头部共存。
+      statusSectionSuppressesHeader={false}
     />
   );
 }

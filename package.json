@@ -99,7 +99,15 @@
       "hono@4": "^4.12.25",
       "ip-address@10": "^10.5.1",
       "postcss@8": "^8.5.18",
-      "smol-toml@1": "^1.7.1"
+      "smol-toml@1": "^1.7.1",
+      "mermaid@11": "^11.16.1",
+      "dompurify@3": "^3.4.16",
+      "linkify-it@3": "^5.0.2",
+      "tar@7": "^7.5.21",
+      "tinypool@2": "^2.1.2",
+      "source-map-js@1": "^1.2.2",
+      "@xmldom/xmldom@0.8": "^0.8.15",
+      "tmp@0": "^0.2.6"
     },
     "patchedDependencies": {
       "@ai-sdk/openai-compatible@2.0.60": "patches/@ai-sdk__openai-compatible@2.0.60.patch",

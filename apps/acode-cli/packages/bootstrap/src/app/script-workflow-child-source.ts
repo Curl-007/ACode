@@ -110,9 +110,10 @@ Math.random = function random() {
  * 入口文件的正文：假定 `payload`、`AsyncLocalStorage`、`Console`、`createInterface`、`vm`
  * 五个绑定已在作用域内（由 {@link renderScriptWorkflowChildEntry} 的 import 与 payload 常量提供）。
  *
- * 这段是**字符串**，esbuild 不会重排或重命名里面的任何东西，所以内层函数可以放心带名字——
- * dwf 那条「内层函数一律不许有名字」的约束针对的是 `childMain.toString()`（真函数被当源码内嵌，
- * `minify + keepNames` 会给它套模块作用域的 `__name` helper），这里不适用。
+ * 这段是**字符串**，esbuild 不会重排或重命名里面的任何东西，所以内层函数可以放心带名字。
+ * dwf 一侧现在同为构建期物化的字符串常量（specs/workflow-child-entry-rendering.md），不再受
+ * `minify + keepNames` 的 `__name` helper 影响；那条「内层函数一律不许有名字」的约束在
+ * childMain 里保留为防御。
  */
 const SCRIPT_WORKFLOW_CHILD_MAIN = String.raw`
 const nodeProcess = process;

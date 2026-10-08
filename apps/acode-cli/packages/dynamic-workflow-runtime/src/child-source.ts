@@ -1,7 +1,8 @@
 /**
  * 沙箱子进程逻辑。**一份实现，一份入口文件，两种启动方式**：
- *   - {@link renderChildEntry} 把 {@link childMain} 经 `toString()` 与 payload 一起渲染成一份
- *     自包含 ESM，harness 写到 `<cwd>/.acode/workflow-runs/<runId>.mjs`（child-entry-file.ts）；
+ *   - {@link renderChildEntry} 把 {@link childMain} 的构建期物化源文本常量
+ *     （`generated/child-main-text.ts`，见 specs/workflow-child-entry-rendering.md）与 payload
+ *     一起渲染成一份自包含 ESM，harness 写到 `<cwd>/.acode/workflow-runs/<runId>.mjs`（child-entry-file.ts）；
  *   - 普通 Node：`node --max-old-space-size=N <entry>`，入口文件发现自己就是进程入口时自启；
  *   - SEA 单文件二进制：CLI 的隐藏子命令 `__acode-dwf-child <entry>` `import()` 这份文件并调
  *     它导出的 `start(deps)`，注入 CLI 进程的 vm/readline/stdio（SEA 主程序不解释 Node CLI
@@ -31,6 +32,7 @@
  */
 
 import type { ChildPayload } from "./protocol.js";
+import { CHILD_MAIN_TEXT } from "./generated/child-main-text.js";
 
 /** {@link childMain} 用到的 `node:vm` 全部表面（窄到只有两个函数——这就是子进程的 vm 契约）。 */
 export interface ChildVmModule {
@@ -70,13 +72,16 @@ export interface ChildMainDeps {
  * 就同步返回"，watchdog 会在 run 刚起步时把整个子进程强退。入口文件自启时不需要这个 promise
  * （事件循环空了自然退出），但两条入口共用一个实现，所以由 childMain 统一给出终结信号。
  *
- * ⚠ 自包含约束（载荷性，不是风格）。{@link renderChildEntry} 靠 `childMain.toString()` 把本函数
- * 当**源码**内嵌，所以函数体必须是一段能独立成立的程序，两条规矩：
+ * ⚠ 自包含约束（载荷性，不是风格）。{@link renderChildEntry} 把本函数的**源文本**（构建期物化为
+ * `generated/child-main-text.ts` 常量——运行期 `toString()` 在字节码形态不可用，见
+ * specs/workflow-child-entry-rendering.md）当源码内嵌，所以函数体必须是一段能独立成立的程序，两条规矩：
  *   1. 只引用参数、语言 intrinsics 与 `Buffer` 这类 Node 全局，**绝不引用模块作用域的任何绑定**
  *      （常量、辅助函数、import）。沙箱 bootstrap 也因此内联在函数体里，而不是模块级常量。
  *   2. **内层函数一律不许有名字**——理由和踩过的坑见函数体里那段注释（esbuild 的
  *      `minify + keepNames` 会给它们套上模块作用域的 `__name` helper）。
- * 两条约束都需要在真实打包/压缩形态下验证，光靠源码测试抓不到这类回归。
+ * 物化文本经 tsx 非压缩转译捕获，规矩 2 的 `__name` 风险当前不存在，保留为防御（捕获形态变化时防回归）。
+ * 两条约束都需要在真实打包/压缩/字节码形态下验证，光靠源码测试抓不到这类回归——字节码形态
+ * 曾击穿「运行期 toString」本身（等长空格），修复与守护见 specs/workflow-child-entry-rendering.md。
  */
 export function childMain(deps: ChildMainDeps): Promise<void> {
   /**
@@ -330,7 +335,7 @@ function safeRunId(runId: string): string {
  *     比较 realpath 而不是裸路径：macOS 的 tmpdir 经 `/var → /private/var` 符号链接，
  *     `import.meta.url` 是解析后的真实路径，裸比较会让子进程静默不启动。
  *
- * 唯一的插值是 childMain 的源文本与 payload JSON。childMain 自己带着模板字面量不成问题——插值是
+ * 唯一的插值是物化常量 CHILD_MAIN_TEXT 与 payload JSON。childMain 自己带着模板字面量不成问题——插值是
  * **运行期的字符串拼接**，嵌进来的文本不会被再解析一次；真正的风险在 childMain 的自包含约束
  * 那一侧（见其注释）。生成的顶层代码刻意不用模板字面量，免得与外层的 `${}` 打架。
  */
@@ -346,7 +351,7 @@ import vm from "node:vm";
 
 export const payload = ${JSON.stringify(payload)};
 
-const main = ${childMain.toString()};
+const main = ${CHILD_MAIN_TEXT};
 
 export const start = (deps) => main({ ...deps, payload });
 

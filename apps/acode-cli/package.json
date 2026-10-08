@@ -7,7 +7,9 @@
   "scripts": {
     "build": "turbo run build",
     "build:sea": "pnpm --filter @acode/cli build:sea",
-    "check": "pnpm registry:check && turbo run typecheck",
+    "check": "pnpm registry:check && pnpm child-main:check && turbo run typecheck",
+    "child-main:check": "node --import tsx scripts/generate-child-main.mjs --check",
+    "child-main:generate": "node --import tsx scripts/generate-child-main.mjs",
     "clean": "turbo run clean",
     "cli:build": "pnpm --filter @acode/cli build",
     "cli:dev": "pnpm --filter @acode/cli dev",

@@ -4,7 +4,7 @@
 
 本文展开[总建议中的 U02、U05、U10](../project-upgrade-recommendations-2026-10.md)。这是实施意见，文中“拟新增”接口、测试和脚本尚未实现；已有接口的存在也不代表下列验收已经通过。
 
-调查日期：2026-10-09；本轮检出 `fix/cli-subagent-inheritance`，commit `39880f8d2916`。实施时重新执行 `node scripts/check-workspace-freshness.mjs`，不要以本文替代新基线检查。
+调查日期：2026-10-09。原细化检出的 `fix/cli-subagent-inheritance` commit `39880f8d2916` 已不在任何分支上（`git branch -a --contains 39880f8d2916` 为空），其内容以 squash 形式落在 `dev/0.0.8` 的 `118fde37`；本文源码基线改指 `118fde37`，注意 `dev/0.0.7` 不含这项改动。统一类型/Lint/架构实测记录在[总建议](../project-upgrade-recommendations-2026-10.md)的 `f9ed8961` 复测行，两棵树不同，实施时重新执行 `node scripts/check-workspace-freshness.mjs`，不要以本文替代新基线检查。
 
 本轮只阅读源码、spec 与现有测试；没有运行真实子进程、模型、恢复链路或设备冒烟。统一类型、Lint 与架构检查结果由[总建议](../project-upgrade-recommendations-2026-10.md)记录。
 
@@ -196,13 +196,13 @@ sequenceDiagram
 P01–P13 均运行 `desktop-continuous` 与 `web-remote-replayable` 两种配置；某模式不支持的行为用 spec 规定的拒绝/省略作为断言，不人为统一结果。
 
 | 编号 | 前置条件                                    | 操作                                  | 权威断言                                                                            | 必留证据                                      |
-| ---- | ------------------------------------------- | ------------------------------------- | ----------------------------------------------------------------------------------- | --------------------------------------------- | ---------------------------------- | ------------------------------------- |
+| ---- | ------------------------------------------- | ------------------------------------- | ----------------------------------------------------------------------------------- | --------------------------------------------- |
 | P01  | 会话正在流式响应且已有已接受输入            | 断线再重连                            | 实时模式按实时契约重订阅；回放模式按 snapshot/logEpoch/seq 恢复；不重执行已接受输入 | 两条连接 trace、runtime 执行计数、投影对账    |
 | P02  | 已有 snapshot 和若干 delta                  | 交换到达顺序并重复帧                  | 按现有 mode 契约处理；重复 seq 不重复效果，缺口不会静默伪装成完整状态               | 注入帧序列、游标、最终 snapshot               |
 | P03  | 待处理 permission 与 input 各一条           | 断线后恢复并重复提交答复              | exact ID 绑定原询问；处理一次；已结算询问不复活；有意的 pending 字段差异保留        | inquiry ID、answer 次数、两模式字段           |
 | P04  | runtime 有旧 generation 和日志 epoch        | 重启 runtime 后送入旧帧               | 新投影只接受对应 generation/epoch；旧帧不改游标/任务事实                            | 新旧 generation/logEpoch、拒绝原因、投影 diff |
 | P05  | workspacePath 相同、workspaceIdentity 不同  | 同 commandId 向两身份提交与查询       | admission、缓存、队列和订阅隔离；身份不按路径折叠                                   | identity、缓存 key、Host 路由与结果           |
-| P06  | 本地 workspace 没有显式 identity            | 提交、绑定与恢复                      | key 保持 `workspaceIdentity?.trim()                                                 |                                               | workspacePath`；文件/cwd 使用 path | binding key、执行 cwd、无远程格式手写 |
+| P06  | 本地 workspace 没有显式 identity            | 提交、绑定与恢复                      | key 保持 `workspaceIdentity?.trim() \|\| workspacePath`；文件/cwd 使用 path         | binding key、执行 cwd、无远程格式手写         |
 | P07  | remoteSessionId A/B 与相同路径              | 用 B attachment 查询/答复 A 的对象    | mismatch 或 stale attachment 按契约拒绝；identity 与 session 贯穿链路               | route envelope、拒绝回执、对象零变更          |
 | P08  | UI 调用参数包含伪造 mode/profile/connection | 创建可信 scope 后发送                 | facade 清除或覆盖伪造值；wire 上只有可信握手确定的 mode                             | 清洗前后 fixture、hello 与 transport metadata |
 | P09  | 非 owner Host 或 lease 已过期               | 尝试执行，另用合法跨 Host 路由对照    | 前者拒绝；合法 owner 路由成功；不通过删 guard 让两者同时通过                        | owner/lease、route receipt、执行计数          |
@@ -213,12 +213,12 @@ P01–P13 均运行 `desktop-continuous` 与 `web-remote-replayable` 两种配�
 
 ### 3.6 删除门禁、依赖与估算
 
-| 里程碑 | 数量门禁                                                                | 额外验收                                             |
-| ------ | ----------------------------------------------------------------------- | ---------------------------------------------------- | ---------------------------------------------------- |
-| M1     | `rg acodeSessionProjection packages/ui/src` 无命中；退出码 1 表示无匹配 | UI 包测试；只迁读路径，不混入组件拆分                |
-| M2     | `rg 'acodeProtocolMethods                                               | acodeProtocolClient' packages/services/src` 无命中   | services/Desktop 测试，双模式真实冒烟，node 装配收口 |
-| M3     | legacy server 目录和其中 `v4-bridge.ts` 均不存在；V4 不反向依赖 legacy  | CLI 测试、ACP 冒烟、Desktop 一轮对话和恢复           |
-| M4     | shared legacy 宿主文件删除；分类清单无未处理项；指令/技能残留清零       | 全仓测试/类型/架构；knip 相关 backlog 按实际结果下降 |
+| 里程碑 | 数量门禁                                                                      | 额外验收                                             |
+| ------ | ----------------------------------------------------------------------------- | ---------------------------------------------------- |
+| M1     | `rg acodeSessionProjection packages/ui/src` 无命中；退出码 1 表示无匹配       | UI 包测试；只迁读路径，不混入组件拆分                |
+| M2     | `rg 'acodeProtocolMethods\|acodeProtocolClient' packages/services/src` 无命中 | services/Desktop 测试，双模式真实冒烟，node 装配收口 |
+| M3     | legacy server 目录和其中 `v4-bridge.ts` 均不存在；V4 不反向依赖 legacy        | CLI 测试、ACP 冒烟、Desktop 一轮对话和恢复           |
+| M4     | shared legacy 宿主文件删除；分类清单无未处理项；指令/技能残留清零             | 全仓测试/类型/架构；knip 相关 backlog 按实际结果下降 |
 
 每个里程碑另执行根 `pnpm lint`，双模式 P01–P13 不能缺项；无法运行的真实入口标为阻断该里程碑完成。grep 是必要条件，不能替代行为验收。
 
@@ -239,7 +239,7 @@ P01–P13 均运行 `desktop-continuous` 与 `web-remote-replayable` 两种配�
 
 ### 4.1 范围和现有保护
 
-[状态所有权 spec](../../apps/acode-cli/specs/runtime-state-ownership.md) 已将 Runtime 类型分成七簇；[internal.ts](../../apps/acode-cli/packages/core/src/runtime/internal.ts) 仍组合为扁平字段，[methods 安装入口](../../apps/acode-cli/packages/core/src/runtime/methods/index.ts) 仍使用 prototype 注入。
+[状态所有权 spec](../../apps/acode-cli/specs/runtime-state-ownership.md) 已将 Runtime 类型分成七簇，不变量断言已扩到 I1–I8（2026-10-09 批二新增 I5 通知封口、I6 model selection、I7 完全访问授权原子预约、I8 模型切换 timeline，各自有 owner 与行为测试）；[internal.ts](../../apps/acode-cli/packages/core/src/runtime/internal.ts) 仍组合为扁平字段，[methods 安装入口](../../apps/acode-cli/packages/core/src/runtime/methods/index.ts) 仍使用 prototype 注入。
 
 [prompt admission](../../apps/acode-cli/packages/core/src/runtime/methods/prompt-admission.ts)、[reservation](../../apps/acode-cli/packages/core/src/runtime/methods/steering.ts)、[drain](../../apps/acode-cli/packages/core/src/runtime/methods/runtime-command-queue.ts) 和[generation fencing](../../apps/acode-cli/packages/core/src/runtime/methods/runtime-command-generation.ts) 已有保护。本项强化测试和写入口，不据此断言当前存在双 turn bug。
 
@@ -249,14 +249,18 @@ Runtime 首批不重写整体对象、不改变公开协议、不搬迁业务状
 
 ### 4.2 不变量、所有者与拟新增接口
 
-| 不变量         | 唯一写入方                       | 必须保留的精确定义                                                                                                                         |
-| -------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| I1 reservation | core/runtime admission/turn 编排 | 同步建立 reservation 后才进入异步窗口；最多一个 active reservation/turn admission；正常排队输入仍允许                                      |
-| I2 drain       | core/runtime command queue 编排  | `runtimeCommandDrainActive` 为 true 时不再进入 drain 工作；finally 释放；正常入队触发 guard 返回不是违规                                   |
-| I3 generation  | core/runtime branch lifecycle    | 活动分支生命周期单调，rewind 增代；新 Runtime resume 从持久化 `session.revert?.branchGeneration ?? 0` 初始化，不能要求跨冷实例全局计数单调 |
-| I4 once flags  | 每个 flag 的 Runtime 消费点      | 按各自资格语义消费；同 Runtime 不 true→false；新 Runtime 自然初始化，不复用旧进程旗标                                                      |
+| 不变量                   | 唯一写入方                                            | 必须保留的精确定义                                                                                                                                                                                                       |
+| ------------------------ | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| I1 reservation           | core/runtime admission/turn 编排                      | 同步建立 reservation 后才进入异步窗口；最多一个 active reservation/turn admission；正常排队输入仍允许                                                                                                                    |
+| I2 drain                 | core/runtime command queue 编排                       | `runtimeCommandDrainActive` 为 true 时不再进入 drain 工作；finally 释放；正常入队触发 guard 返回不是违规                                                                                                                 |
+| I3 generation            | core/runtime branch lifecycle                         | 活动分支生命周期单调，rewind 增代；新 Runtime resume 从持久化 `session.revert?.branchGeneration ?? 0` 初始化，不能要求跨冷实例全局计数单调                                                                               |
+| I4 once flags            | 每个 flag 的 Runtime 消费点                           | 按各自资格语义消费；同 Runtime 不 true→false；新 Runtime 自然初始化，不复用旧进程旗标                                                                                                                                    |
+| I5 notification seal     | `runtime-notification-seal.ts` 的 seal owner          | child 后台 Bash 通知只在 terminal/cancel 后封口一次；首次 reason 冻结，重复 seal 幂等；普通 runtime 不受影响                                                                                                             |
+| I6 model selection       | `runtime-model-selection.ts` 的 model selection owner | clone-safe set/get；execution-scope 模型不覆盖 session 事实；直接 writer 被拒                                                                                                                                            |
+| I7 permission grant      | `runtime-permission-grant.ts` 的 grant owner          | 完全访问授权先经 `tryBeginPermissionFullAccess()` 原子预约再改队列/模式，释放只在授权 finally，无预约释放是 no-op；`lastPermissionGrantId` 只有 permission-full-access 与 permission-grant-resume 两处写方经 set-replace |
+| I8 model change timeline | `runtime-model-change-timeline.ts` 的 timeline owner  | `pendingModelChangeTimeline` 只经 set/consume 写入，consume 即取出并清空，空时返回 `undefined`；replace-or-clear 规则留在 `recordPendingModelChange`，存储记录浅冻结                                                     |
 
-拟新增内部 turn/lifecycle 写入接口只服务 core/runtime，限制 reservation、drain、generation 与 once flag 的写路径；实际名称在 spec 中确定，不扩展 shared 公共 API。
+拟新增内部 turn/lifecycle 写入接口只服务 core/runtime，限制 reservation、drain、generation、once flag 与 I5–I8 各 owner 的写路径；实际名称在 spec 中确定，不扩展 shared 公共 API。I5–I8 已在批二落地 owner 与行为测试，本项首批不重复建设，只在收窄写入口时保证其不回退。
 
 bootstrap 继续提交命令并读取回执，不能获得 Runtime 字段 setter。一次收敛一簇，字段、事件和依赖所有者保持现有方向。
 
@@ -281,7 +285,7 @@ sequenceDiagram
 
 ### 4.3 实施步骤
 
-1. 更新 ownership spec，逐字段登记写入点、I1–I4 和 R01–R10；补充 resume、once flag 与 registry 终态例外。
+1. 更新 ownership spec，逐字段登记写入点、I1–I8 和 R01–R10；补充 resume、once flag 与 registry 终态例外。I5–I8 已有断言，登记时引用现有 owner 与测试，不重写。
 2. 先以真实 Runtime、桩模型/SessionStore/ExecutionPort 写 barrier 测试；同时保留已有 Inbox、stale branch 与重启提醒测试。
 3. 在测试能捕获破坏后增加 dev-only 断言，区分正常 guard 返回与实际重入；生产路径不因诊断抛出新异常。
 4. 先收窄 turn 簇，再收窄 lifecycle/generation 写入点；用内部接口替代散落赋值，每批只迁一簇。
@@ -304,12 +308,12 @@ sequenceDiagram
 
 ### 4.5 完成门禁、工时与回退
 
-| 门禁   | 定量标准                                                                                   |
-| ------ | ------------------------------------------------------------------------------------------ |
-| 不变量 | I1–I4 各有真实 Runtime 行为测试；R01–R10 无缺项；dev-only 断言均有破坏对照                 |
-| 确定性 | barrier 调度场景连续 100 次运行，0 双 active、0 drain 重入、0 stale 注入、0 once flag 回退 |
-| 写入口 | 首批 turn/lifecycle 目标字段 100% 登记；簇外未登记写入 0；无新增跨层依赖或 baseline 放宽   |
-| 回归   | 相关 CLI/Runtime 测试及根类型/Lint/测试/架构通过；生产行为与 trace 契约保持                |
+| 门禁   | 定量标准                                                                                                     |
+| ------ | ------------------------------------------------------------------------------------------------------------ |
+| 不变量 | I1–I8 各有真实 Runtime 行为测试（I5–I8 已具备，本项验证其不回退）；R01–R10 无缺项；dev-only 断言均有破坏对照 |
+| 确定性 | barrier 调度场景连续 100 次运行，0 双 active、0 drain 重入、0 stale 注入、0 once flag 回退                   |
+| 写入口 | 首批 turn/lifecycle 目标字段 100% 登记；簇外未登记写入 0；无新增跨层依赖或 baseline 放宽                     |
+| 回归   | 相关 CLI/Runtime 测试及根类型/Lint/测试/架构通过；生产行为与 trace 契约保持                                  |
 
 | 任务                      | 人日    | 依赖                                          |
 | ------------------------- | ------- | --------------------------------------------- |

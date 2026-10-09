@@ -42,6 +42,14 @@ const cliWorkspaceBuilds = [
   { packageName: "@acode/dynamic-workflow-runtime", packageDir: "dynamic-workflow-runtime" },
   { packageName: "@acode/core", packageDir: "core" },
   { packageName: "@acode/adapters", packageDir: "adapters" },
+  // W1-R3 拆包新增的 workspace 包：类型入口都是 dist/*.d.ts，干净 CI 里必须先于
+  // 消费方构建，否则 bootstrap 的 tsc 解析 @acode/cli-workflow/contract 等报 TS2307
+  // （dev/0.0.7 CI 的 Remote SSH release smoke 红灯根因）。插入顺序按依赖：
+  // workflow-run-command ← contracts；workflow-run-read ← adapters/dynamic-workflow；
+  // cli-workflow ← 上述两者 + core/adapters，且先于 bootstrap。
+  { packageName: "@acode/workflow-run-command", packageDir: "workflow-run-command" },
+  { packageName: "@acode/workflow-run-read", packageDir: "workflow-run-read" },
+  { packageName: "@acode/cli-workflow", packageDir: "cli-workflow" },
   { packageName: "@acode/i18n", packageDir: "i18n" },
   { packageName: "@acode/bootstrap", packageDir: "bootstrap" },
 ];

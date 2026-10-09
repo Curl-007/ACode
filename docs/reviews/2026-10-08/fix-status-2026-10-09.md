@@ -72,6 +72,7 @@
 3. 例外登记的超限文件偿还（contracts 11、w1r3 11、shared 26、server 9、session 7、provider 4、server-cli 3、formal-proof 2、disable 各若干；均 expires 2026-12-31，到期即门禁红）。
 4. M2-M4 legacy 协议退役与 W2（依赖 M3）；CLI runtime 其余状态簇（context/turn/projection/cache）封装。
 5. 提交与推送状态（2026-10-09 复核）：批一+批二已提交为 `c453fca5`，其后 CI 修复为 `34068e2f`（architecture-discovery 不对分隔符做平台假设）、`1b28e52b`（构建顺序清单补 W1-R3 拆包三包）、`f9ed8961`（server-cli ESM bundle 注入 createRequire）、`f023d641`（smoke 以显式 opt-out 起 daemon，并修错误文案被吞）。`dev/0.0.7` 与 `origin/dev/0.0.7` 同步于 `f023d641`；`dev/0.0.8` 侧的合并提交 `bbcc8d15`、`6476de3b` 尚未推送，`origin/dev/0.0.8` 仍停在 `f4da4b0e`。
+6. 上表「acode-cli 1327/1327」在本机不可复现（2026-10-09 复核，Windows 11 / Node 25.9.0 / git 同机）：同样 6 个用例在 `c453fca5`、`dev/0.0.7`（`f023d641`）与 `dev/0.0.8` 上一致失败。`c453fca5` 上四个相关文件为 118 tests / 112 pass / 6 fail；`dev/0.0.8` 全量 CLI 套件为 1337 / 1331 pass / 6 fail（U01 新增的 7 个门禁用例全绿）。失败用例在 `dev/0.0.7` 与 `dev/0.0.8` 上逐个核对为同一组：`bash-confirm-reflexive-gate` R8（yolo 下 `rm -rf node_modules` 期望 allow、实得 deny）、`npm-script-body-scan` 的 deny 优先级与原 ruleId 保留、`bash-target-blast-radius` 的 confirm/catastrophic riskLevel 与 readonly 快路径、D2 executor 的 clean 脚本 yolo 直通，以及 `workflow-worktree-isolation` 场景 1 与场景 4（`git worktree add` 报 missing but already registered）。与 U01 无关：把 U01 的全部改动 stash 后原样复现。根因未定位，登记为开放项；按 AGENTS.md 先与用户对齐，不自行增加兜底分支。
 
 ## 执行与安全缺陷
 

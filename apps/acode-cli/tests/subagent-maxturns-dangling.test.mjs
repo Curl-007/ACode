@@ -69,7 +69,7 @@ test("(3) 装配链已拆除：maxTurns 不再写进 child runtime config，声�
   // 修正项 #1：此前「默认 4」被一路装配进 child runtime config 而下游无人读。两处装配点
   // （subagent.ts 的方案 D3 引用的默认值、workflow 子 runtime 的同款装配）都已删除。
   const subagent = await read(`${CLI}/core/src/runtime/methods/subagent.ts`);
-  const childRuntime = await read(`${CLI}/bootstrap/src/app/script-workflow-child-runtime.ts`);
+  const childRuntime = await read(`${CLI}/cli-workflow/src/script-workflow-child-runtime.ts`);
   assert.doesNotMatch(subagent, /maxTurns/u, "subagent.ts 重新装配 maxTurns：悬空字段回退");
   assert.doesNotMatch(
     childRuntime,

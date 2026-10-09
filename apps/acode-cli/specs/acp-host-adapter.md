@@ -49,16 +49,16 @@ ACP 全特性对齐（编辑器侧 LSP/补全类能力不属 agent 协议）；�
 
 ### R2 消息映射表（核心契约）
 
-| ACP（client ↔ 适配层） | harness API（适配层 ↔ 引擎） |
-| --- | --- |
-| `initialize` | 进程内握手（版本/能力声明；无引擎调用） |
-| `session/new`（prompt/cwd/systemPrompt…） | `create_session`（schema 字段映射；ACP 的 cwd 合法性校验后透传） |
-| `session/prompt` | `send_message` + 订阅该 session 事件流 |
+| ACP（client ↔ 适配层）                         | harness API（适配层 ↔ 引擎）                                                                                                                           |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `initialize`                                   | 进程内握手（版本/能力声明；无引擎调用）                                                                                                                |
+| `session/new`（prompt/cwd/systemPrompt…）      | `create_session`（schema 字段映射；ACP 的 cwd 合法性校验后透传）                                                                                       |
+| `session/prompt`                               | `send_message` + 订阅该 session 事件流                                                                                                                 |
 | `session/update`（notification，agent→client） | harness 事件翻译：`TextDelta`→`agent_message_chunk`；`ToolCallStarted/Finished`→`tool_call` 更新组；`PermissionRequested`→`session/request_permission` |
-| `session/request_permission`（双向请求） | `PermissionRequested` 透传（选项映射：ACP 的 allow/reject 选项集 ↔ 引擎权限档位；**映射不到的档位按更严侧折叠**） |
-| `session/cancel` | `cancel_turn` |
-| `fs/read` 等（可选） | 缺省不开（`initialize` 能力声明不含 fs——client 自管文件；将来开走 harness read_file） |
-| 模型选择（ACP 配置面） | `get_models` / `set_model` |
+| `session/request_permission`（双向请求）       | `PermissionRequested` 透传（选项映射：ACP 的 allow/reject 选项集 ↔ 引擎权限档位；**映射不到的档位按更严侧折叠**）                                      |
+| `session/cancel`                               | `cancel_turn`                                                                                                                                          |
+| `fs/read` 等（可选）                           | 缺省不开（`initialize` 能力声明不含 fs——client 自管文件；将来开走 harness read_file）                                                                  |
+| 模型选择（ACP 配置面）                         | `get_models` / `set_model`                                                                                                                             |
 
 - **流形态**：ACP 的 agent 输出有 `agent_message_chunk`（append/replace 语义）——
   harness `TextDelta` 映射 append；**replace 语义（TextReplace 类）** 若 K7 v1 事件
@@ -79,12 +79,12 @@ ACP 全特性对齐（编辑器侧 LSP/补全类能力不属 agent 协议）；�
 
 ### R4 状态所有权
 
-| 状态 | 所有者 | 生命周期 |
-| --- | --- | --- |
-| ACP JSON-RPC 帧收发 | 适配进程 stdio 循环 | 进程 |
-| acpSession↔harnessSession 映射 | 适配层内存 map | 进程 |
-| 会话/turn 真实状态 | 引擎（services，经 harness 桥） | 不变 |
-| 事件流缓冲（replace 语义） | 适配层 per-session | 会话 |
+| 状态                           | 所有者                          | 生命周期 |
+| ------------------------------ | ------------------------------- | -------- |
+| ACP JSON-RPC 帧收发            | 适配进程 stdio 循环             | 进程     |
+| acpSession↔harnessSession 映射 | 适配层内存 map                  | 进程     |
+| 会话/turn 真实状态             | 引擎（services，经 harness 桥） | 不变     |
+| 事件流缓冲（replace 语义）     | 适配层 per-session              | 会话     |
 
 不变量：适配层无持久状态（重启即新映射，引擎侧会话可经 `list_sessions` 重新 attach
 ——attach 恢复是 K7 面）；映射表是唯一会话关联事实源；单向数据流（ACP 帧→harness
@@ -93,13 +93,13 @@ import harness SDK 面）。
 
 ## 常量
 
-| 常量 | 值 | 出处 |
-| --- | --- | --- |
-| `ACP_MAX_CONCURRENT_SESSIONS` | `8` | R1（IDE 场景足够，防失控） |
-| `ACP_UNKNOWN_ERROR_CODE` | `-32603`（JSON-RPC internal） | R2 |
-| `ACP_SESSION_BUSY` | `-32052`（自用段，F9 改码；原 -32001） | 附录 A.4 |
-| `ACP_LINE_TOO_LONG` | `-32053`（自用段，F4 新增） | 附录 A.4 |
-| `ACP_PROMPT_TIMEOUT_MS` | `600000`（镜像 K7 `RUN_DEFAULT_TIMEOUT_MS` 量级，F3） | 附录 A.4 |
+| 常量                          | 值                                                    | 出处                       |
+| ----------------------------- | ----------------------------------------------------- | -------------------------- |
+| `ACP_MAX_CONCURRENT_SESSIONS` | `8`                                                   | R1（IDE 场景足够，防失控） |
+| `ACP_UNKNOWN_ERROR_CODE`      | `-32603`（JSON-RPC internal）                         | R2                         |
+| `ACP_SESSION_BUSY`            | `-32052`（自用段，F9 改码；原 -32001）                | 附录 A.4                   |
+| `ACP_LINE_TOO_LONG`           | `-32053`（自用段，F4 新增）                           | 附录 A.4                   |
+| `ACP_PROMPT_TIMEOUT_MS`       | `600000`（镜像 K7 `RUN_DEFAULT_TIMEOUT_MS` 量级，F3） | 附录 A.4                   |
 
 ## 接口
 
@@ -190,12 +190,12 @@ NDJSON 帧协议）。R4/验收 8 的 import 断言相应落地为：适配层�
    换行）；stderr 仅日志；stdout 不得输出非 ACP 消息（transports.md 原文）。
    **不是** LSP 的 `Content-Length` 分帧；
 2. **initialize**（client→agent 请求）：params `{protocolVersion, clientCapabilities?,
-   clientInfo?}` → result `{protocolVersion, agentCapabilities, authMethods: [],
-   agentInfo}`；版本协商：agent 支持即回显，否则回自己最新版（=1）；
+clientInfo?}` → result `{protocolVersion, agentCapabilities, authMethods: [],
+agentInfo}`；版本协商：agent 支持即回显，否则回自己最新版（=1）；
    fs 读写是 **client 能力**（agent→client 请求 `fs/read_text_file` 等）——本适配层
    不发这类请求，等价于「fs 不开」（R2 表最后一行的现行语义）；
 3. **session/new**：params `{cwd(绝对路径,必填), mcpServers(必填数组),
-   additionalDirectories?}` → result `{sessionId, modes?, configOptions?}`。
+additionalDirectories?}` → result `{sessionId, modes?, configOptions?}`。
    注：v1 稳定版 **没有** `prompt`/`systemPrompt` 入参（映射表按现行规范执行）；
 4. **session/prompt**：params `{sessionId, prompt: ContentBlock[]}` →
    result `{stopReason: end_turn|max_tokens|max_turn_requests|refusal|cancelled}`；
@@ -205,7 +205,7 @@ NDJSON 帧协议）。R4/验收 8 的 import 断言相应落地为：适配层�
    `current_mode_update`/`config_option_update`/`session_info_update`/`usage_update`。
    chunk 为 append 语义，`messageId` 变更表示新消息（无显式 replace 指令）；
 6. **session/request_permission**（agent→client 请求）：params `{sessionId,
-   toolCall: ToolCallUpdate, options:[{optionId, kind, name, description?}]}` →
+toolCall: ToolCallUpdate, options:[{optionId, kind, name, description?}]}` →
    result `{outcome:{outcome:"selected",optionId}|{outcome:"cancelled"}}`；
    `PermissionOptionKind` 仅四值：`allow_once`/`allow_always`/`reject_once`/
    `reject_always`；
@@ -217,41 +217,41 @@ NDJSON 帧协议）。R4/验收 8 的 import 断言相应落地为：适配层�
 
 ### A.3 映射落点（R2 表按 A.2 快照的具体化）
 
-| 决策点 | 落点 |
-| --- | --- |
-| `session/new.cwd` 校验 | 必须绝对路径，且解析后等于或位于适配进程启动 cwd（workspace 边界）之内；越界 → `-32602` 拒绝创建 |
-| `session/new.mcpServers` | harness v1 无 MCP 面：静默丢弃（非空时 stderr 记录）；harness 落地 MCP 面后 additive 透传 |
-| ACP sessionId | 直接复用 harness sessionId（opaque），映射表仍是唯一关联事实源 |
-| 工具裁剪 | K7 `configure_tools` 为 not_supported（翻译桥如实降级）——按本附录替代路径用 `create_session.toolDenylist` 禁 `AskUserQuestion`、`Open`（`sideEffectScope:"userInteraction"` 的两个 UI 交互工具） |
-| 流 reset 标记 | 每 turn 递增会话内计数器，ACP 出向 `messageId = "acp-" + turnCounter + "-" + harnessMessageId`——turn 边界即隐式 reset，吸收引擎重发/替换语义，不反向要求 K7 加事件 |
-| `tool_call_started` | `tool_call` 更新（status `in_progress`，kind 按工具名分类，title=description‖toolName） |
-| `tool_call_finished` | `tool_call_update` 更新（status `completed`/`failed` + 文本 content） |
-| `permission_requested` | 先发 `tool_call`（status `pending`，未播报过的 toolCallId）再发 `session/request_permission` |
-| 权限档位折叠 | 引擎 kind 精确命中四枚举则保留；含 deny/reject/block 语义词 → `reject_once`；其余（allow 族未知档位）→ `allow_once`——**家族内取更严侧**（绝不折叠出 `allow_always`）。client 应答的 optionId 经双向映射还原引擎 optionId，还原失败按 deny 处理 |
-| 无响应权限 | 复用 harness-sdk `SDK_PERMISSION_TIMEOUT_MS`（120s，测试可注入）：超时自动回执引擎 deny 选项（fail-closed），迟到应答忽略 |
-| 模型选择 | `session/new` 返回 `configOptions:[{id:"acode.model", type:"select"}]`（值 `providerId/modelId`，源自 `get_models` best-effort）；`session/set_config_option(configId="acode.model")` → `set_model` |
-| turn 错误 | `turn_done(resultType=error)` → prompt 请求回 JSON-RPC `-32603`（data 带 engine 人话 message，无栈）；cancelled → `stopReason:"cancelled"`；success → `"end_turn"` |
-| prompt 内容 | 只声明 text 能力（image/audio/embeddedContext=false）；`text` 块按行拼接，`resource_link` 降级为 `name: uri` 文本行；其余块类型 → `-32602` |
-| 引擎错误码 | `invalid_params`→`-32602`、`unknown_method`→`-32601`、其余（not_supported/unavailable/run_timeout/internal_error…）→`-32603`（data.reason 保留段位语义，message 人话化，不透内部栈） |
-| 未实现 ACP 方法 | `session/load`/`session/set_mode`/`session/list`/… → `-32601`（能力未声明即不存在） |
+| 决策点                   | 落点                                                                                                                                                                                                                                           |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `session/new.cwd` 校验   | 必须是已存在的目录绝对路径；`realpath` 后等于或位于适配进程启动 cwd 的 `realpath`（workspace 边界）之内，并按完整路径段判断（例如 `..cache` 不等于 `..`）；越界的 symlink/junction、缺失路径、跨盘路径 → `-32602` 结构化参数错误               |
+| `session/new.mcpServers` | harness v1 无 MCP 面：静默丢弃（非空时 stderr 记录）；harness 落地 MCP 面后 additive 透传                                                                                                                                                      |
+| ACP sessionId            | 直接复用 harness sessionId（opaque），映射表仍是唯一关联事实源                                                                                                                                                                                 |
+| 工具裁剪                 | K7 `configure_tools` 为 not_supported（翻译桥如实降级）——按本附录替代路径用 `create_session.toolDenylist` 禁 `AskUserQuestion`、`Open`（`sideEffectScope:"userInteraction"` 的两个 UI 交互工具）                                               |
+| 流 reset 标记            | 每 turn 递增会话内计数器，ACP 出向 `messageId = "acp-" + turnCounter + "-" + harnessMessageId`——turn 边界即隐式 reset，吸收引擎重发/替换语义，不反向要求 K7 加事件                                                                             |
+| `tool_call_started`      | `tool_call` 更新（status `in_progress`，kind 按工具名分类，title=description‖toolName）                                                                                                                                                        |
+| `tool_call_finished`     | `tool_call_update` 更新（status `completed`/`failed` + 文本 content）                                                                                                                                                                          |
+| `permission_requested`   | 先发 `tool_call`（status `pending`，未播报过的 toolCallId）再发 `session/request_permission`                                                                                                                                                   |
+| 权限档位折叠             | 引擎 kind 精确命中四枚举则保留；含 deny/reject/block 语义词 → `reject_once`；其余（allow 族未知档位）→ `allow_once`——**家族内取更严侧**（绝不折叠出 `allow_always`）。client 应答的 optionId 经双向映射还原引擎 optionId，还原失败按 deny 处理 |
+| 无响应权限               | 复用 harness-sdk `SDK_PERMISSION_TIMEOUT_MS`（120s，测试可注入）：超时自动回执引擎 deny 选项（fail-closed），迟到应答忽略                                                                                                                      |
+| 模型选择                 | `session/new` 返回 `configOptions:[{id:"acode.model", type:"select"}]`（值 `providerId/modelId`，源自 `get_models` best-effort）；`session/set_config_option(configId="acode.model")` → `set_model`                                            |
+| turn 错误                | `turn_done(resultType=error)` → prompt 请求回 JSON-RPC `-32603`（data 带 engine 人话 message，无栈）；cancelled → `stopReason:"cancelled"`；success → `"end_turn"`                                                                             |
+| prompt 内容              | 只声明 text 能力（image/audio/embeddedContext=false）；`text` 块按行拼接，`resource_link` 降级为 `name: uri` 文本行；其余块类型 → `-32602`                                                                                                     |
+| 引擎错误码               | `invalid_params`→`-32602`、`unknown_method`→`-32601`、其余（not_supported/unavailable/run_timeout/internal_error…）→`-32603`（data.reason 保留段位语义，message 人话化，不透内部栈）                                                           |
+| 未实现 ACP 方法          | `session/load`/`session/set_mode`/`session/list`/… → `-32601`（能力未声明即不存在）                                                                                                                                                            |
 
 ### A.4 K8 对抗复核修复记录（F1-F11，2026-10-04）
 
 对首批实现做对抗复核后落地的精确修复（测试见 `acp-host-adapter.test.mjs` 的
 「K8 对抗复核回归（F1-F8/F11）」组）：
 
-| 编号 | 缺陷 | 修复落点 |
-| --- | --- | --- |
-| F1（P1） | `requiresProviderRuntime` 白名单缺 `acp` → `acode acp` 第一道检查即 throw（入口断裂） | `provider-runtime-env.ts` 白名单加 `acp` |
-| F2 | `settlePrompt` 无归属过滤，任意 `turn_done` 都释放 busy 锁 | 对齐 K7 H1：prompt 预分配 `acp-prompt-<uuid>` 随 `send_message` 下发；终态只接受 inputId 匹配 / turnId∈owned / 退化路径「prompt 后 TurnStarted→TurnDone 完整对」 |
-| F3 | pendingPrompt 无超时；`subscribe_events` 失败返回哑会话；cancel 不清计时器 | `ACP_PROMPT_TIMEOUT_MS`（超时回 `-32603`+释放锁）；订阅失败→`session/new` 直接失败并回收；cancel 成功即以 `cancelled` 收口 |
-| F4 | ACP stdin 行长无上限（OOM 面） | `createStreamLineSource` 接入 `HARNESS_MAX_LINE_LENGTH`（`@acode/shared/harness-api` 单一出处），超限回 `line_too_long` 语义错误（`-32053`）后断链 |
-| F5 | console 边界安装时机晚于 run/bootstrap 求值 | `main.ts` 的边界条件加 `isAcpInvocation(argv)`（import run 前安装）；`acp-command.ts` 内安装保留为幂等兜底 |
-| F6 | 会话零回收 + create 前 check-then-set 竞态 | 硬检查移到 `create_session` 成功后原子登记（并发恰一过，未登记者 detach 后拒绝）；注册表加 `closeSession`（unsubscribe + detach best-effort + map 删除） |
-| F7 | loopback 单侧死亡静默 | `request()` 在 `readEnded` 时立即 reject（可读错误）；`sendFrame` 记 warn 不静默；transport dispose 经 `link.onClose` 回调面触发适配层 `failPendingPrompts` |
-| F8 | 两份 `node-forge.d.ts` 可能漂移 | **2026-10-05 起收敛为单一事实源**：权威声明仅存 `packages/services/src/runtime-tools/node-forge.d.ts`（node-forge 依赖与唯一消费方 `appCaCert.ts` 都在 services）；cli 包 tsconfig 以 `files` 显式引用该文件，不再保存第二份副本。测试改为断言单一事实源（cli 下出现第二份副本、或 tsconfig 丢失引用即红）。原「declare 块逐字一致」断言依赖两份文件字节相同，在 `core.autocrlf=true` 的 Windows 工作区会因检出/直写行尾不一致而误红（实测 979/980 的唯一失败即此） |
-| F9 | `-32001` 占用上游保留段低段有撞位风险 | 自用段改码：`ACP_SESSION_BUSY=-32052`、`ACP_LINE_TOO_LONG=-32053` |
-| F11 | prompt 预递增与 `turn_started` 递增并存，重复帧二次递增 | `turn_started` 按 turnId 幂等计数（同 turn 已计数则跳过） |
+| 编号     | 缺陷                                                                                  | 修复落点                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| -------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| F1（P1） | `requiresProviderRuntime` 白名单缺 `acp` → `acode acp` 第一道检查即 throw（入口断裂） | `provider-runtime-env.ts` 白名单加 `acp`                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| F2       | `settlePrompt` 无归属过滤，任意 `turn_done` 都释放 busy 锁                            | 对齐 K7 H1：prompt 预分配 `acp-prompt-<uuid>` 随 `send_message` 下发；终态只接受 inputId 匹配 / turnId∈owned / 退化路径「prompt 后 TurnStarted→TurnDone 完整对」                                                                                                                                                                                                                                                                                                    |
+| F3       | pendingPrompt 无超时；`subscribe_events` 失败返回哑会话；cancel 不清计时器            | `ACP_PROMPT_TIMEOUT_MS`（超时回 `-32603`+释放锁）；订阅失败→`session/new` 直接失败并回收；cancel 成功即以 `cancelled` 收口                                                                                                                                                                                                                                                                                                                                          |
+| F4       | ACP stdin 行长无上限（OOM 面）                                                        | `createStreamLineSource` 接入 `HARNESS_MAX_LINE_LENGTH`（`@acode/shared/harness-api` 单一出处），超限回 `line_too_long` 语义错误（`-32053`）后断链                                                                                                                                                                                                                                                                                                                  |
+| F5       | console 边界安装时机晚于 run/bootstrap 求值                                           | `main.ts` 的边界条件加 `isAcpInvocation(argv)`（import run 前安装）；`acp-command.ts` 内安装保留为幂等兜底                                                                                                                                                                                                                                                                                                                                                          |
+| F6       | 会话零回收 + create 前 check-then-set 竞态                                            | 硬检查移到 `create_session` 成功后原子登记（并发恰一过，未登记者 detach 后拒绝）；注册表加 `closeSession`（unsubscribe + detach best-effort + map 删除）                                                                                                                                                                                                                                                                                                            |
+| F7       | loopback 单侧死亡静默                                                                 | `request()` 在 `readEnded` 时立即 reject（可读错误）；`sendFrame` 记 warn 不静默；transport dispose 经 `link.onClose` 回调面触发适配层 `failPendingPrompts`                                                                                                                                                                                                                                                                                                         |
+| F8       | 两份 `node-forge.d.ts` 可能漂移                                                       | **2026-10-05 起收敛为单一事实源**：权威声明仅存 `packages/services/src/runtime-tools/node-forge.d.ts`（node-forge 依赖与唯一消费方 `appCaCert.ts` 都在 services）；cli 包 tsconfig 以 `files` 显式引用该文件，不再保存第二份副本。测试改为断言单一事实源（cli 下出现第二份副本、或 tsconfig 丢失引用即红）。原「declare 块逐字一致」断言依赖两份文件字节相同，在 `core.autocrlf=true` 的 Windows 工作区会因检出/直写行尾不一致而误红（实测 979/980 的唯一失败即此） |
+| F9       | `-32001` 占用上游保留段低段有撞位风险                                                 | 自用段改码：`ACP_SESSION_BUSY=-32052`、`ACP_LINE_TOO_LONG=-32053`                                                                                                                                                                                                                                                                                                                                                                                                   |
+| F11      | prompt 预递增与 `turn_started` 递增并存，重复帧二次递增                               | `turn_started` 按 turnId 幂等计数（同 turn 已计数则跳过）                                                                                                                                                                                                                                                                                                                                                                                                           |
 
 **上游缺口登记（不在本批实现）**：
 
@@ -287,18 +287,17 @@ K8/K7 合入后 CLI **CJS bundle**（`dist/acode.cjs`）全链不可用——tsx
 980 项测试与 tsc 全绿掩盖了该断裂，仅编译产物路径可复现：
 
 1. **run.ts 静态导入 acp-command 引爆模块求值链**：`run.ts → acp-command.ts →
-   server harness-inprocess → services/node.ts（host 全量装配）→ terminalService
-   等顶层 `createRequire(import.meta.url)``；esbuild CJS 产物中 `import.meta.url`
-   为 undefined，**任何**走到 `import("./run.js")` 的命令（app-server、agent、
+server harness-inprocess → services/node.ts（host 全量装配）→ terminalService
+等顶层 `createRequire(import.meta.url)``；esbuild CJS 产物中 `import.meta.url`为 undefined，**任何**走到`import("./run.js")` 的命令（app-server、agent、
    prepare-storage worker）在模块求值期即 exit 1，桌面 debug 构建的 host 存储
    准备因此 transport_closed、启动卡死。修复双管：
    - `case "acp"` 改**动态 import**（对齐 main.ts F5 的惰性纪律：acp 专属重依赖
      不得由所有命令的求值路径承担）；
    - `build.mjs` banner 注入 `const importMetaUrl = pathToFileURL(__filename).href`
-     + `define: {"import.meta.url": "importMetaUrl"}`——services host 装配链在 CJS
-     下恢复可用（`acode acp` 自身仍需该链）。`import.meta.dirname` **不** shim：
-     既有消费方（providerRuntimeResolver 等）按 CJS 下 undefined 做了显式空值
-     保护，shim 成 dist 目录反而构造错误候选路径。
+     - `define: {"import.meta.url": "importMetaUrl"}`——services host 装配链在 CJS
+       下恢复可用（`acode acp` 自身仍需该链）。`import.meta.dirname` **不** shim：
+       既有消费方（providerRuntimeResolver 等）按 CJS 下 undefined 做了显式空值
+       保护，shim 成 dist 目录反而构造错误候选路径。
 2. **esbuild alias 漏注册三个 shared 子路径**：`@acode/shared/harness-api`（K7 新
    导出面，cli 的 acp 入口与 harness-sdk 引用）、`workspaceFileSearch` /
    `workspaceFileEntriesCodec`（K5 起 services 导入链进入 CLI bundle 依赖图后暴露

@@ -41,7 +41,48 @@ export interface IMediaPreviewService {
 
 export const IMediaPreviewService = createServiceDescriptor<IMediaPreviewService>(
   ServiceChannels.MediaPreview,
+  {
+    allowedMethods: ["prepare", "refreshPlaybackUrl", "release"],
+    argumentValidators: {
+      prepare: (args) => {
+        const params = requireParams(args);
+        requireString(params.path, "path");
+        // expectedKind 为封闭枚举（"audio" | "video"），成员由服务实现校验。
+        requireString(params.expectedKind, "expectedKind");
+      },
+      refreshPlaybackUrl: (args) => {
+        const params = requireParams(args);
+        requireNonEmptyString(params.previewId, "previewId");
+      },
+      release: (args) => {
+        const params = requireParams(args);
+        requireNonEmptyString(params.previewId, "previewId");
+      },
+    },
+  },
 );
+
+// —— 文件内私有 RPC 参数校验辅助（边界迁移规则禁止跨文件共享 helper，先例 file.ts）——
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** 恰好一个参数且必须是非 null、非数组对象。 */
+function requireParams(args: readonly unknown[]): Record<string, unknown> {
+  if (args.length !== 1) throw new Error("expected one params object");
+  const value = args[0];
+  if (!isRecord(value)) throw new Error("expected one params object");
+  return value;
+}
+
+function requireString(value: unknown, field: string): void {
+  if (typeof value !== "string") throw new Error(`invalid ${field}`);
+}
+
+function requireNonEmptyString(value: unknown, field: string): void {
+  if (typeof value !== "string" || value.length === 0) throw new Error(`invalid ${field}`);
+}
 
 export function createMediaPreviewService(options: {
   fileService: IFileService;

@@ -2,7 +2,10 @@
 // Tool Contract - shared tool declaration surface
 // ============================================================
 
-import type { RiskLevel } from "../interfaces/session.port.js";
+// 架构断环（specs/architecture-contracts-module.md）：RiskLevel 从叶子文件导入——
+// model/protocol-types 依赖本文件的工具声明词汇，若本文件经 session.port 取 RiskLevel，
+// 会与 session.events → model/index → protocol-types → 本文件闭合成果级 import 环。
+import type { RiskLevel } from "../interfaces/session-shared.js";
 
 export type ToolSideEffectScope =
   | "none"

@@ -68,7 +68,81 @@ export type OnboardingRecordServiceFactory = (
 
 export const IOnboardingRecordService = createServiceDescriptor<IOnboardingRecordService>(
   ServiceChannels.OnboardingRecord,
+  {
+    allowedMethods: [
+      "appendRecord",
+      "shouldOnboard",
+      "dismissOnboarding",
+      "claimAnonymousRecord",
+      "getLatestEntry",
+      "syncSettingsFromRecord",
+      "updateRecordPreferences",
+      "getRecords",
+      "clearRecords",
+    ],
+    argumentValidators: {
+      appendRecord: (args) => {
+        if (args.length !== 2) throw new Error("expected deviceMid and entry");
+        requireNonEmptyString(args[0], "deviceMid");
+        // entry 字段多为 nullable（occupation/interfaceMode/开关均可空），完整成员校验
+        // 由服务端 onboardingRecordEntrySchema 负责；边界只挡非对象这类明显畸形输入。
+        requireRecordField(args[1], "entry");
+      },
+      shouldOnboard: (args) => {
+        if (args.length !== 1) throw new Error("expected deviceMid");
+        requireNonEmptyString(args[0], "deviceMid");
+      },
+      dismissOnboarding: (args) => {
+        if (args.length !== 1) throw new Error("expected deviceMid");
+        requireNonEmptyString(args[0], "deviceMid");
+      },
+      claimAnonymousRecord: (args) => requireNoArguments(args),
+      getLatestEntry: (args) => requireNoArguments(args),
+      syncSettingsFromRecord: (args) => requireNoArguments(args),
+      updateRecordPreferences: (args) => {
+        const patch = requireParams(args);
+        requireOptionalBoolean(patch.memoryEnabled, "memoryEnabled");
+        requireOptionalBoolean(
+          patch.proactiveSuggestionsEnabled,
+          "proactiveSuggestionsEnabled",
+        );
+      },
+      getRecords: (args) => requireNoArguments(args),
+      clearRecords: (args) => requireNoArguments(args),
+    },
+  },
 );
+
+// —— 文件内私有 RPC 参数校验辅助（边界迁移规则禁止跨文件共享 helper，先例 file.ts）——
+
+function requireNoArguments(args: readonly unknown[]): void {
+  if (args.length !== 0) throw new Error("expected no arguments");
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** 恰好一个参数且必须是非 null、非数组对象。 */
+function requireParams(args: readonly unknown[]): Record<string, unknown> {
+  if (args.length !== 1) throw new Error("expected one params object");
+  const value = args[0];
+  if (!isRecord(value)) throw new Error("expected one params object");
+  return value;
+}
+
+function requireRecordField(value: unknown, field: string): Record<string, unknown> {
+  if (!isRecord(value)) throw new Error(`invalid ${field}`);
+  return value;
+}
+
+function requireNonEmptyString(value: unknown, field: string): void {
+  if (typeof value !== "string" || value.length === 0) throw new Error(`invalid ${field}`);
+}
+
+function requireOptionalBoolean(value: unknown, field: string): void {
+  if (value !== undefined && typeof value !== "boolean") throw new Error(`invalid ${field}`);
+}
 
 export type {
   OnboardingDecision,

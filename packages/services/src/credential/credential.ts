@@ -16,4 +16,29 @@ export interface ICredentialService {
 
 export const ICredentialService = createServiceDescriptor<ICredentialService>(
   ServiceChannels.Credential,
+  {
+    allowedMethods: ["load", "save", "delete"],
+    argumentValidators: {
+      load: (args) => {
+        if (args.length !== 1 || typeof args[0] !== "string" || args[0].length === 0) {
+          throw new Error("expected one non-empty key");
+        }
+      },
+      save: (args) => {
+        if (
+          args.length !== 2 ||
+          typeof args[0] !== "string" ||
+          args[0].length === 0 ||
+          typeof args[1] !== "string"
+        ) {
+          throw new Error("expected key and value strings");
+        }
+      },
+      delete: (args) => {
+        if (args.length !== 1 || typeof args[0] !== "string" || args[0].length === 0) {
+          throw new Error("expected one non-empty key");
+        }
+      },
+    },
+  },
 );

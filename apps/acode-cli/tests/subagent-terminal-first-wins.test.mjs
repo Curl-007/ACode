@@ -31,15 +31,17 @@ const read = (path) =>
   readFile(new URL(path, root), "utf8").then((text) => text.replace(/\r\n/gu, "\n"));
 const CLI = "apps/acode-cli/packages";
 
-const { InMemoryRuntimeTaskRegistry, isTerminalRuntimeTask } = await import(
-  "../packages/core/src/runtime-task/registry.ts"
-);
+const { InMemoryRuntimeTaskRegistry, isTerminalRuntimeTask } =
+  await import("../packages/core/src/runtime-task/registry.ts");
 const {
   claimRuntimeBackgroundTaskNotification,
   registerRuntimeBackgroundTask,
   releaseRuntimeBackgroundTaskNotification,
   updateRuntimeBackgroundTask,
 } = await import("../packages/core/src/tool/executor/background-task-registry.ts");
+const { projectTask } =
+  await import("../packages/core/src/tool/handlers/task-output-projection.ts");
+const { taskOutputToolEntry } = await import("../packages/core/src/tool/handlers/task-output.ts");
 const { createExploreSubagentPort } = await import("../packages/core/src/subagent/runner.ts");
 
 function snapshot(overrides = {}) {
@@ -104,7 +106,10 @@ test("(4) 场景 4：写入被拒时返回赢家快照，不是 undefined", () =
   assert.equal(rejected.resultText, "winner artifact", "返回的不是赢家快照");
 
   // 对照：条目不存在时仍返回 undefined（两个信号必须可区分）。
-  assert.equal(registry.update("task_missing", (task) => task), undefined);
+  assert.equal(
+    registry.update("task_missing", (task) => task),
+    undefined,
+  );
 
   // 写入生效时返回新快照。
   const live = new InMemoryRuntimeTaskRegistry();
@@ -247,6 +252,62 @@ test("(6) 场景 6：重臂走 register()，不被守卫触及；updateRuntimeBa
   assert.equal(registry.get("task_dwf").status, "completed");
   registry.update("task_dwf", (task) => ({ ...task, status: "failed" }));
   assert.equal(registry.get("task_dwf").status, "completed");
+});
+
+test("Script Workflow：终态快照的 response 进入 TaskOutput，resume 会重臂通知令牌", async () => {
+  const registry = new InMemoryRuntimeTaskRegistry();
+  registry.setActiveBranchGeneration(4);
+  const deps = { runtimeTaskRegistry: registry };
+  const call = { id: "toolu_script", input: {}, name: "RunWorkflow" };
+  registerRuntimeBackgroundTask(deps, call, "wf_script", {});
+  updateRuntimeBackgroundTask(deps, call, "wf_script", "completed", {
+    completedAt: new Date(),
+    description: "review",
+    output: {
+      backgroundTaskId: "wf_script",
+      response: "result: 42",
+      runId: "wf_script",
+      status: "completed",
+      traceId: "trace_script",
+    },
+    runId: "wf_script",
+    startedAt: new Date(),
+    status: "completed",
+    taskId: "wf_script",
+  });
+
+  const task = registry.get("wf_script");
+  assert.equal(task.resultText, "result: 42");
+  const projected = await projectTask(task, {
+    abortSignal: new AbortController().signal,
+  });
+  assert.equal(projected.output, "result: 42");
+
+  // 首次读取认领上一轮通知；同一 run resume 后必须重置 claim 令牌，并盖当前分支代。
+  assert.equal(claimRuntimeBackgroundTaskNotification(deps, call, "wf_script"), true);
+  registry.setActiveBranchGeneration(5);
+  registerRuntimeBackgroundTask(deps, call, "wf_script", {});
+  assert.equal(registry.get("wf_script").status, "running");
+  assert.equal(registry.get("wf_script").notified, false);
+  assert.equal(registry.get("wf_script").branchGeneration, 5);
+});
+
+test("Script Workflow：空 completed 快照不会抢先 claim 后台通知", async () => {
+  const registry = new InMemoryRuntimeTaskRegistry();
+  registry.register({
+    agentId: "wf_empty",
+    description: "empty result",
+    startedAt: new Date(),
+    status: "completed",
+    taskId: "wf_empty",
+    type: "local_workflow",
+  });
+  const result = await taskOutputToolEntry.handler(
+    { task_id: "wf_empty" },
+    { abortSignal: new AbortController().signal, runtimeTaskRegistry: registry },
+  );
+  assert.equal(result.retrieval_status, "success");
+  assert.equal(registry.get("wf_empty").notified, undefined);
 });
 
 test("(7) 场景 7：晚挂载合并（终态 → running，走 update）不被误挡", () => {
@@ -401,10 +462,7 @@ test("(9c) 场景 10③：双重 stopTask 并发（killed-over-killed），单�
 
   // 两个 stopTask 都在对方提交前通过快速路径判读（条目仍 running），各自挂进 I/O 窗口；
   // 微任务顺序保证第一个先提交 killed 并认领，第二个的写入撞上已终态条目。
-  const [first, second] = await Promise.all([
-    port.stopTask("task_dup"),
-    port.stopTask("task_dup"),
-  ]);
+  const [first, second] = await Promise.all([port.stopTask("task_dup"), port.stopTask("task_dup")]);
 
   assert.equal(first?.status, "killed");
   assert.equal(second?.status, "killed", "后到的 stop 没有拿到赢家快照（修复前此处 throw + 回滚）");

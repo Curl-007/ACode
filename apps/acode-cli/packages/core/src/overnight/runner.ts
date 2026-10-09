@@ -7,10 +7,7 @@
 // （coordinator 任务端口、preflight 采集、runtime-task registry）组装成一个可驱动的 run。
 // 所有副作用仍走注入面——bootstrap 装配处绑定真实端口，单测绑 mock（验收场景 7/8/9）。
 import type { MessageWithParts, ModelSelection, SessionInfo } from "@acode/contracts";
-import type {
-  RuntimeTaskRegistry,
-  RuntimeTaskSnapshot,
-} from "../runtime-task/registry.js";
+import type { RuntimeTaskRegistry, RuntimeTaskSnapshot } from "../runtime-task/contract.js";
 import { formatOvernightDuration } from "./duration.js";
 import { createOvernightManifest, computeOvernightPhase } from "./manifest.js";
 import {
@@ -19,10 +16,7 @@ import {
   type OvernightPreflightCollectors,
 } from "./preflight.js";
 import { buildInitialCoordinatorPrompt } from "./prompts.js";
-import {
-  projectOvernightParentMessages,
-  type OvernightCoordinatorPort,
-} from "./coordinator.js";
+import { projectOvernightParentMessages, type OvernightCoordinatorPort } from "./coordinator.js";
 import {
   createOvernightSupervisor,
   type OvernightRunResult,
@@ -183,7 +177,9 @@ export async function startOvernightRun(deps: OvernightRunnerDeps): Promise<Over
   const supervisor = createOvernightSupervisor({
     manifest,
     runCoordinatorTurn: (pokePrompt) => {
-      const input = initialPromptDelivered ? pokePrompt : `${initialPrompt}\n\n---\n\n${pokePrompt}`;
+      const input = initialPromptDelivered
+        ? pokePrompt
+        : `${initialPrompt}\n\n---\n\n${pokePrompt}`;
       initialPromptDelivered = true;
       return lease.runCoordinatorTurn(input);
     },
@@ -224,7 +220,11 @@ export async function startOvernightRun(deps: OvernightRunnerDeps): Promise<Over
       const first = memoryTrend[0]!;
       const last = memoryTrend[memoryTrend.length - 1]!;
       patchOvernightSummary({
-        memoryTrend: { samples: memoryTrend.length, firstRssBytes: first.rssBytes, lastRssBytes: last.rssBytes },
+        memoryTrend: {
+          samples: memoryTrend.length,
+          firstRssBytes: first.rssBytes,
+          lastRssBytes: last.rssBytes,
+        },
       });
     },
     ...(deps.sleep ? { sleep: deps.sleep } : {}),

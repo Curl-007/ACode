@@ -1,0 +1,6 @@
+{
+  "$schema": "../../node_modules/oxlint/configuration_schema.json",
+  "extends": ["../../.oxlintrc.json"],
+  // 根配置忽略这套独立 workspace；CLI 包必须就近继承规则并恢复源码选择。
+  "ignorePatterns": []
+}

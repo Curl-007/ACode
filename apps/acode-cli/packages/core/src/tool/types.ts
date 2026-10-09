@@ -60,7 +60,7 @@ import type {
   PersistedReadFileStateTool,
 } from "./read-file-state-metadata.js";
 import type { PackageScriptSource } from "./handlers/bash-target-risk/types.js";
-import type { RuntimeTaskRegistry } from "../runtime-task/registry.js";
+import type { RuntimeTaskRegistry } from "../runtime-task/contract.js";
 
 // -----------------------------------------------
 // Tool Metadata
@@ -358,8 +358,9 @@ export interface ToolEntry extends ToolContractDeclaration {
     input: unknown,
     context: ToolRuntimePermissionCapabilityContext,
   ) => Promise<
-    Partial<Pick<ToolRuntimePermissionCapabilityContext, "packageScripts" | "scannedDirectories">>
-  | undefined>;
+    | Partial<Pick<ToolRuntimePermissionCapabilityContext, "packageScripts" | "scannedDirectories">>
+    | undefined
+  >;
   resolvePermissionRulePolicy?: (
     input: unknown,
     context?: ToolRuntimePermissionCapabilityContext,

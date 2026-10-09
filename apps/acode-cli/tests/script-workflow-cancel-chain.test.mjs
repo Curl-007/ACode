@@ -22,7 +22,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { formatScriptWorkflowRun } from "../packages/bootstrap/src/app/script-workflow-format.ts";
+import { formatScriptWorkflowRun } from "../packages/cli-workflow/src/script-workflow-format.ts";
 
 function readSource(relativePath) {
   return readFileSync(new URL(relativePath, import.meta.url), "utf8");
@@ -129,7 +129,7 @@ test("workflowPort 真的挂到了 runtime 实例上（否则分派拿到了也�
 // ---------------------------------------------------------------------------
 
 test("子进程 stdin 挂了 error 监听器，且写入走回调形式", () => {
-  const code = codeLines(readSource("../packages/bootstrap/src/app/script-workflow-process.ts"));
+  const code = codeLines(readSource("../packages/cli-workflow/src/script-workflow-process.ts"));
   // 这两条缺一不可：只挂监听器，同步的写失败仍可能抛；只用回调，流上异步 emit 的
   // 'error' 仍然没有接收者，Node 会把它抛成未捕获异常。
   assert.match(code, /child\.stdin\?\.on\("error", \(\) => undefined\);/);

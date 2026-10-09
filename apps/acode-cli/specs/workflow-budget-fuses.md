@@ -15,11 +15,11 @@ provider 配额、用户取消或进程被杀。
 
 仓库里已经有**三组** cap，它们确立了本 spec 必须遵守的设计惯例：
 
-| cap 模块 | 执行侧 | 溢出策略 | 关键论证（模块注释原文要点） |
-| --- | --- | --- | --- |
-| `facade/world-read-caps.ts`（`WORLD_READ_CAPS`：glob 2000 文件、grep 2000 命中 / 256 KB、git.log 100 条、world.run stdout/stderr 各 256 KB） | driver | **节点级拒绝**（`WorldReadCapExceeded`，脚本可 `catch`） | 「绝不截断后加个标志位」——截断把悄悄残缺的世界视图交给脚本，而脚本接下来拿它去扇出，扇出才是贵的那一步。常量住纯包（数字即契约），执行在 driver（只有它能「不生产」） |
-| `facade/report-caps.ts`（`REPORT_CAPS`：每 run 256 条、单条序列化 32 KB） | 引擎核心 | **失败整个 run**（`ReportCapExceeded`） | 不是严重程度的判断，而是**拒绝通道**的事实：`report` 返回 `void`，脚本没地方 `catch`。也正因作者写不出恢复路径，数字必须宽到讲道理的脚本永远碰不到 |
-| `facade/artifact-caps.ts`（`ARTIFACT_CAPS`：32 个 id、每 id 16 版、file 20 MB、markdown 256 KB、title 120 字符、description 500 字符、spec 8 KB、id 64 字符） | **按成员族分裂**：id 数/版本数在引擎核心，字节数/文本长度在 driver | **按成员族分裂**：内容成员（`file`/`markdown`）返回 promise → 节点级拒绝（`ArtifactTooLarge` / `ArtifactVersionCapExceeded` / `ArtifactCapExceeded`）；预置成员返回 void → failRun | 同一条论证：有无 catch 通道决定拒绝层级 |
+| cap 模块                                                                                                                                                      | 执行侧                                                             | 溢出策略                                                                                                                                                                           | 关键论证（模块注释原文要点）                                                                                                                                          |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `facade/world-read-caps.ts`（`WORLD_READ_CAPS`：glob 2000 文件、grep 2000 命中 / 256 KB、git.log 100 条、world.run stdout/stderr 各 256 KB）                  | driver                                                             | **节点级拒绝**（`WorldReadCapExceeded`，脚本可 `catch`）                                                                                                                           | 「绝不截断后加个标志位」——截断把悄悄残缺的世界视图交给脚本，而脚本接下来拿它去扇出，扇出才是贵的那一步。常量住纯包（数字即契约），执行在 driver（只有它能「不生产」） |
+| `facade/report-caps.ts`（`REPORT_CAPS`：每 run 256 条、单条序列化 32 KB）                                                                                     | 引擎核心                                                           | **失败整个 run**（`ReportCapExceeded`）                                                                                                                                            | 不是严重程度的判断，而是**拒绝通道**的事实：`report` 返回 `void`，脚本没地方 `catch`。也正因作者写不出恢复路径，数字必须宽到讲道理的脚本永远碰不到                    |
+| `facade/artifact-caps.ts`（`ARTIFACT_CAPS`：32 个 id、每 id 16 版、file 20 MB、markdown 256 KB、title 120 字符、description 500 字符、spec 8 KB、id 64 字符） | **按成员族分裂**：id 数/版本数在引擎核心，字节数/文本长度在 driver | **按成员族分裂**：内容成员（`file`/`markdown`）返回 promise → 节点级拒绝（`ArtifactTooLarge` / `ArtifactVersionCapExceeded` / `ArtifactCapExceeded`）；预置成员返回 void → failRun | 同一条论证：有无 catch 通道决定拒绝层级                                                                                                                               |
 
 **这条惯例就是本 spec 的判定规则**：溢出走哪一层，取决于脚本有没有 catch 通道；常量一律住
 纯包（`facade/*-caps.ts`）并有名字，让引擎测试与 driver 测试断言同一份常量而不是各抄一份。
@@ -114,7 +114,7 @@ export const BUDGET_CAPS = {
 
 - **计数口径**：一个 run 内**派发过**的 ask 节点总数（含 repair/nudge 重试轮？——**不含**：
   `REPAIR_ATTEMPTS`/`NUDGE_ATTEMPTS` 是同一个 ask 节点内的往返，journal 里仍是同一行；
-  计数按 `kind:"ask"` 的**行数**，与 `reportCount` 的 `nodes.filter(n => n.kind === "report").length`
+  计数按已准入的 `kind:"ask"` **行数**（排除无 `actorSeq` 的预算拒绝行），与 `reportCount` 的 `nodes.filter(n => n.kind === "report").length`
   同法，`engine.ts:355`）。
 - **恢复法**：resume 时按 journal 行重建（与 `reportCount` / `artifacts` 同一处、同一次
   `listNodes` 读取——`engine.ts:354` 的注释已说明「节点行只读一次，下面的报告计数与产物恢复
@@ -181,6 +181,7 @@ export const BUDGET_CAPS = {
   不因超顶而多发或少发。
   > **实现记录（2026-09-29，D2 P2）**：R4 已按本节落地，三处执行细节的精确化（均在本节
   > 规则边界内，测试 T1–T8 钉住）：
+  >
   > 1. **判定点的落位**：记账与判定住在 `engine-caps.ts` 的 `recordAskUsage`
   >    （`engine.askStats` 的方法体——engine.ts 抵 oxlint max-lines 门，按仓库既定拆分
   >    先例迁出，公开面不变）。顺序是载荷性的：累加 → `updateRunUsage` 落库 →（run 已
@@ -223,8 +224,9 @@ export const BUDGET_CAPS = {
   并给出「amend 不是刷预算的后门」的论证——`imported-cache.ts` 的导入命中不产生新 ask，
   所以缓存命中的那部分工作天然不重复计费）。
   > **实现记录（2026-09-29，D2 P1）：amend 采用「按本 run 物化行起账」**。后继 run 的
-  > `askTotalCount` = **它自己 journal** 里 `kind:"ask"` 的行数——导入命中物化的行计入、
+  > `askTotalCount` = **它自己 journal** 里已准入的 `kind:"ask"` 行数——导入命中物化的行计入、
   > 每行恰好一次，不叠加前驱计数。论证（本小节要求的「amend 不是刷预算的后门」）：
+  >
   > 1. **攻击面与闸门不重叠**：保险丝防的是脚本内的失控回环，而回环只能烧它所在的那个
   >    run；amend 是外部显式动作（`AmendWorkflow` 由主代理/用户发起，前驱被 supersede
   >    停掉），脚本侧没有任何代码路径能触发它——失控脚本无法自己刷新自己的预算。
@@ -359,7 +361,7 @@ journal（JournalStorePort）         持久化事实的唯一所有者；三个
    （脚本能在有限时间内结算）。
 3. **resume 预算连续**：跑到接近上限 → 停（`stopped(interrupted)`）→ resume →
    计数器从 journal 恢复到停之前的值（不是从 0 起），再派发同样数量即触发闸；
-   断言 journal 的 `kind:"ask"` 行数与引擎内存计数一致。
+   断言 journal 的已准入 `kind:"ask"` 行数与引擎内存计数一致（拒绝行不计预算）。
 4. **反复 resume 不刷预算**：连续 resume 三次，每次都试图派发新 ask → 第三次仍触发同一道闸
    （回归 `engine.ts:207,216` 注释点明的攻击面）。
 5. **amend 记账回归**：`resumedFrom` 路径下 `inheritedTokens` 起账（`engine.ts:308-309`）
@@ -387,11 +389,102 @@ journal（JournalStorePort）         持久化事实的唯一所有者；三个
 > 实现 PR 填写。每行记：常量、定值、依据（现有脚本/workflow 的实测最大用量 × 安全倍数，
 > 或其他可复核依据）。**未填写即视为定值无依据，PR 不得合入。**
 
-| 常量 | 定值 | 依据 |
-| --- | --- | --- |
-| `maxAsksPerRun` | 4096 | （2026-09-29 实测）仓库内唯一现存 workflow 脚本 `.zcode/workflow-drafts/实施-CLI-调度与提示词升级方案.dwf.ts`（492 行，即本项实施所在 run 的编排脚本）有 17 个 `agent()` 调用站点——定值 ≈ 实测用量 × 240。代码库自己对「大 run」的设计规模参照是 2000 个 agent（`engine/types.ts` 的 `node-dispatched` 事件注释：「2000 个 agent 的 run 会在头几秒里把全部 actor-created / node-queued 发完」，读面表正是按它设计的）——定值 ≈ 设计规模 × 2。讲道理的脚本碰不到，失控回环仍在有限步内被停住（测试 E4 按常量实跑验证）。 |
-| `maxPendingAsks` | 2048 | 同一实测脚本的同步扇出 join 最宽为 4（三处 `Promise.all`，宽度 3/2/4）。设计规模参照同上：2000-agent run「头几秒全部排队」⇒ 单 burst 积压可达约 2000，定值取覆盖它的 2 的幂。**不变式：严格小于 `maxAsksPerRun`**——否则 R3 永远不会先于 R2 触发，单 burst 的行洪峰（每条准入即落一行 running）失去独立刹车（测试 S1 钉住该不变式；E3 验证宽松显式值被常量压回）。 |
+| 常量              | 定值             | 依据                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ----------------- | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `maxAsksPerRun`   | 4096             | （2026-09-29 实测）仓库内唯一现存 workflow 脚本 `.zcode/workflow-drafts/实施-CLI-调度与提示词升级方案.dwf.ts`（492 行，即本项实施所在 run 的编排脚本）有 17 个 `agent()` 调用站点——定值 ≈ 实测用量 × 240。代码库自己对「大 run」的设计规模参照是 2000 个 agent（`engine/types.ts` 的 `node-dispatched` 事件注释：「2000 个 agent 的 run 会在头几秒里把全部 actor-created / node-queued 发完」，读面表正是按它设计的）——定值 ≈ 设计规模 × 2。讲道理的脚本碰不到，失控回环仍在有限步内被停住（测试 E4 按常量实跑验证）。                                                                                                                                      |
+| `maxPendingAsks`  | 2048             | 同一实测脚本的同步扇出 join 最宽为 4（三处 `Promise.all`，宽度 3/2/4）。设计规模参照同上：2000-agent run「头几秒全部排队」⇒ 单 burst 积压可达约 2000，定值取覆盖它的 2 的幂。**不变式：严格小于 `maxAsksPerRun`**——否则 R3 永远不会先于 R2 触发，单 burst 的行洪峰（每条准入即落一行 running）失去独立刹车（测试 S1 钉住该不变式；E3 验证宽松显式值被常量压回）。                                                                                                                                                                                                                                                                                           |
 | `maxTokensPerRun` | 2000000000（2B） | （2026-09-29 实测）本机生产 journal（`~/.zcode/cli/db/db.sqlite`，只读查询 `dwf_run`）：已完结 run 的最大 `spent_tokens` = 121,264,599（9 个 ask），进行中 run 已达 115,643,265（15 个 ask，仍在增长）——实测单 ask 均价 ≈ 13M tokens（子代理是整段实现任务的重型会话）。计量口径：driver 每轮 turn 解析回报 `usage.totalTokens`（`workflow-driver-helpers.ts:187`），多轮 ask 逐轮累加，故数字远大于终态上下文。定值 ≈ 实测最大用量 × 16：重型 ask 有 ≈150 个任务的额度、轻型 ask（审阅/解析类，250K 量级）有 ≈8000 个的额度——轻型面先被 R2 的 4096 拦住、重型面由 R4 拦住，两闸互补；失控回环的最坏烧钱（4096 ask × 最坏 ≈30M/ask ≈ 123B）被截在 2B 量级。 |
+
+## 动态运行边界修复（DWF-01～DWF-03）
+
+本节记录与预算闸同一条动态运行主线上的三个确定性边界，避免取消与恢复路径绕开引擎状态机。
+
+### DWF-01：world.run 的取消传播
+
+- 引擎拥有 run 级 lifecycle controller；外部 `RunWorkflowOptions.signal` 是停止输入，转发到
+  lifecycle signal。driver、`WorldReadDeps` 和 `ExecutionPort` 接收同一个 lifecycle signal。
+- `complete`、`stop`、`fail` 全部先关闭新 admission，再 abort lifecycle signal。正常 return
+  也必须取消 `Promise.race` 输家和未 await 的 world 操作；只透传外部 signal 不满足此规则。
+- 引擎登记每条在飞 world 操作的 drain promise；终态 journal / `run-settled` /
+  `engine.settled` 只在 execution 返回后发布。不得关闭共享 adapter，兄弟 run 不受影响。
+- 中止的 world 行保留 `running`，同 ask 的恢复边界一致：resume 可重新执行，外部副作用仍无
+  exactly-once 保证；当前执行补发 `node-settled(cancelled)`，不得把迟到结果写成 completed。
+- 事件顺序：终态 admission → lifecycle abort → execution child 终止并 drain → cancelled
+  节点观察 → run terminal。run 裁决仍归引擎，driver 只执行副作用。
+
+```mermaid
+sequenceDiagram
+    participant S as Script / stop input
+    participant E as Engine（run 与 admission owner）
+    participant L as Engine WorldLifecycle（取消与 drain）
+    participant X as Driver / ExecutionPort
+    participant J as Journal（持久事实）
+    E->>L: 登记 world operation
+    L->>X: execute(lifecycle signal)
+    S->>E: complete / stop / fail
+    E->>E: 关闭新 admission（first wins）
+    E->>L: abort 并等待在飞 operation
+    L->>X: signal.abort
+    X-->>L: child 终止且 IO drain 完成
+    E->>J: cancelled 节点观察、run terminal
+    E-->>S: engine.settled
+```
+
+### DWF-02：预算拒绝不得制造 actorSeq 空洞
+
+- fresh ask 只有在总量/积压预算通过、并且真正命中导入缓存或创建 journal 节点时，才提交当前
+  actor 的 `actorSeq` 并推进 `nextAdmitSeq`。
+- 任一道预算拒绝都以该 `(siteId, ordinal, inputHash)` 写 `kind:ask,status:failed` journal 行，
+  保留结构化拒绝与 `node-settled(failed)` 的首生顺序。拒绝行缺席 `actorSeq`，表示未准入；
+  **不计预算、不消耗 actorSeq**。下一次成功 admission 复用序号，actor drain 无空洞。
+- resume 优先重放拒绝行，按全 run settle order 释放；不得重新根据此时 pending 数判断，
+  否则缓存结算更快会把首生 catch 分支改成成功分支，进而改变 shared site 的 ordinal/inputHash。
+- 复用既有节点字段与 SQL 表，不新增 migration；旧已准入 ask 仍按原逻辑读取，旧未记录拒绝
+  无法补造。amend 仅导入真正准入的 actor 前缀，拒绝不进入转录缓存。
+- `EngineConfig` 构造契约单独放在 `engine-config.ts` 并由原入口再导出；ask 的 journal 物化
+  规则归 `scheduler-types.ts`，预算与拒绝持久化归 `scheduler-budget.ts`。没有新状态所有者。
+- 拒绝仍返回结构化 `WorkflowError(code:"AgentBudgetExceeded")`，既有
+  `details.limit`（`total`/`pending`）语义不变。
+
+### DWF-03：同一 runId 的 resume 单一 admission
+
+- `resume(runId)` 在第一次 await（脚本编译、导入缓存 rebuild 或 launch）之前，必须在
+  run service 所有者内完成一次同步 reservation。
+- reservation 与 `runs` Map 同属 service；`runs` 仍是成功启动后的权威状态，reservation
+  只防止并发入口在 rebuild await 期间重复启动。第二个并发调用立即返回
+  `already_running`，不得编译、重建缓存或 launch。
+- 所有失败/拒绝路径（not resumable、compile/hash mismatch、rebuild 失败、launch 抛错）在
+  退出前释放 reservation；成功路径先 `runs.set(runId, entry)` 再释放 reservation。这样
+  后续调用看到的是 live entry，而不是短暂的“空窗”。
+
+### DWF-04：内容 artifact 版本的并发串行化
+
+- `artifact.file` / `artifact.markdown` 的版本号由引擎 owner 分配；同一 `id` 的 fresh publish
+  必须经过该 id 的单一 FIFO admission tail。后一个 publish 只能在前一个成功或失败完成后
+  读取新的 `state.artifacts`，不得在异步 store 写入前复用旧的 completed 版本计数。
+- 尚未出现在 `state.artifacts` 的新 id 共用一条 admission lane；新 id 的 run 级数量上限在
+  进入 driver/store 前串行裁决，避免并发首版同时通过 32 个 id 的 cap。已有 id 的版本发布
+  仍按各自 id tail 并行。
+- 版本成功提交后严格递增且唯一；两份不同内容必须得到不同 `(id, version)`，读接口可以分别
+  按版本取回。失败不消费版本：前一个发布失败后，队列中的下一次重试可复用该版本。
+- 版本分配与 `putNode(running)`、driver store 写入、`putNode(completed|failed)` 同属引擎
+  的 artifact owner；不得只在返回值上改版本，也不得让 driver 或 store 自己重排版本。
+- queue tail 只做 admission guard，不写第二份 journal 事实；resume 仍从 completed artifact
+  行重建 `state.artifacts`。running 行在恢复时复用其原 ordinal，外部 store 写入允许按既有
+  幂等语义重跑，不能把旧完成结果覆盖新版本。
+
+### 新增验收场景
+
+11. **取消 world.run**：使用真实 Node 子进程，在 ready 后开始定时写 marker；complete、
+    user/model/interrupted/provider/superseded stop 和 fail 均先终止并 drain 子进程，再发布终态，
+    终态后 marker 不再增长；并验证共享 adapter 的兄弟 run 仍能完成。
+12. **预算拒绝重放**：触发一次预算拒绝后，下一次成功 ask 使用连续的 actorSeq，journal
+    保存拒绝行且不计预算；同脚本 resume 后拒绝仍走 catch 分支、后续 shared ask 站点的
+    ordinal/inputHash/result 完全相同，零 live 派发，重复 resume 同样成立。
+13. **并发 resume**：两个并发 `resume(runId)` 只有一个进入 rebuild/launch，另一个同步返回
+    `already_running`；失败后 reservation 可释放并允许后续一次 resume。
+14. **并发 artifact 版本**：同一 id 的两个 publish 乱序完成仍得到唯一递增版本；先失败后
+    成功可复用失败版本；resume 后下一版从 completed 行继续，不能回到旧版本或覆盖新版本。
 
 ## 不在本项范围
 

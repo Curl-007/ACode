@@ -11,6 +11,7 @@ import {
   unpublishedPermissionGrants,
   recoverPendingPermissionGrant,
 } from "./permission-grant-recovery.js";
+import { getRuntimePermissionGrantPort } from "./runtime-permission-grant.js";
 
 const appliedGrants = new WeakMap<AgentRuntimeInternal, Set<string>>();
 
@@ -31,7 +32,13 @@ export async function grantPermissionFullAccess(
   const unpublished = unpublishedPermissionGrants.get(this);
   if (unpublished && unpublished.interactionId !== interactionId)
     await recoverPendingPermissionGrant(this);
-  this.permissionFullAccessPending = true;
+  // CLI-05 I7：预约必须在 recover 之后——recover 会以重入方式再跑一次本函数，
+  // 若外层先预约会把重入授权按 busy 拒绝，破坏既有的 unpublished grant 恢复语义。
+  // tryBegin 把「检查 + 置位」收进 owner 的同一同步片：并发第二个授权在这里得到
+  // 与入口检查一致的 busy 拒绝，而不是双方都进入事务。
+  const grantPort = getRuntimePermissionGrantPort(this);
+  if (!grantPort.tryBeginPermissionFullAccess())
+    throw new Error("Queue mutation is busy; retry approval");
   try {
     signal?.throwIfAborted();
     const receiptId = `${this.sessionId}:permission-full-access:${interactionId}`;
@@ -88,7 +95,8 @@ export async function grantPermissionFullAccess(
     // 事务已提交：之后即使传输取消也必须完成内存和投影发布，不能制造半个授权。
     const applied = appliedGrants.get(this) ?? new Set<string>();
     if (!applied.has(interactionId)) {
-      this.lastPermissionGrantId = interactionId;
+      // 唯一写方之一（另一处是 permission-grant-resume 的重置/恢复）；replace 语义。
+      grantPort.setLastPermissionGrantId(interactionId);
       this.config.mode = payload.mode;
       this.config.planEnabled = payload.planEnabled;
       for (const item of this.activeTurn?.pendingInputs ?? []) {
@@ -105,6 +113,7 @@ export async function grantPermissionFullAccess(
     unpublishedPermissionGrants.delete(this);
     return String(event.id);
   } finally {
-    this.permissionFullAccessPending = false;
+    // 释放只发生在这里：成功、失败与取消都归还预约，后续授权可以重试。
+    grantPort.endPermissionFullAccess();
   }
 }

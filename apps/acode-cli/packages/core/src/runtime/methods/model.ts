@@ -25,6 +25,7 @@ import { getOrCreateReasoningBlock } from "./reasoning-stream.js";
 import { createRefreshRuntimeHeadersBeforeModelAttempt } from "./model-runtime-headers.js";
 import { resolveModelRequestSessionTypeFromTaskType } from "./model-request-session-type.js";
 import { isOutputTokenLimitFinishReason } from "./turn-output-token-continuation.js";
+import { assertRuntimeModelBranchCurrent } from "./runtime-command-generation.js";
 
 const TOOL_INPUT_STREAM_DELTA_FALLBACK_FLUSH_CHARS = 4096;
 
@@ -51,6 +52,8 @@ export async function runModelTextRequest(
     options.messages,
     this.artifactStore,
   );
+  // 媒体读取与之前的 request persistence 均含 await；不能把旧 turn 的通知交给新分支模型。
+  assertRuntimeModelBranchCurrent(this, options.branchGeneration);
   const capabilityProjection = projectMessagesForInputFormat(
     mediaPathMessages,
     model.properties.inputFormat,

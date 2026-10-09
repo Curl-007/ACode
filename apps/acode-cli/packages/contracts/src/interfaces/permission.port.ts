@@ -2,10 +2,16 @@
 // Permission Broker Port - async client permission boundary
 // ============================================================
 
-import type { PermissionDecision } from "../events/session.events.js";
+// 架构断环（specs/architecture-contracts-module.md）：PermissionDecision 的定义从
+// session.events.ts 下沉到本文件（本文件的请求/结果类型引用它，而 session.events
+// 反向引用 PermissionOptionsPolicy/PermissionUpdate，定义留在那边即成环）；
+// session.events.ts 原样再导出，包导出面逐名不变。CollaborationMode/RiskLevel
+// 同理改从叶子文件 session-shared.ts 导入。
 import type { ModelToolSideEffectScope } from "../model/index.js";
-import type { CollaborationMode, RiskLevel } from "./session.port.js";
+import type { CollaborationMode, RiskLevel } from "./session-shared.js";
 import type { InteractionRequestOrigin, SessionId, ToolCallId, TraceId, TurnId } from "./shared.js";
+
+export type PermissionDecision = "allow" | "deny" | "escalate" | "modify";
 
 export type PermissionRuleBehavior = "allow" | "deny" | "ask";
 

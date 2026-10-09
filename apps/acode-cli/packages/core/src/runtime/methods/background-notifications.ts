@@ -5,7 +5,10 @@ import { createRuntimeCommandId, type TaskNotificationRuntimeCommand } from "../
 import { runtimeInputMetadata } from "../../agent/runtime-input-presentation.js";
 import type { AgentRuntimeInternal } from "../internal.js";
 import type { SealBackgroundTaskNotificationsInput } from "../types.js";
-import { shouldSuppressSealedSubagentBashNotification } from "../../runtime-task/notification-policy.js";
+import { shouldSuppressSealedSubagentBashNotification } from "../../runtime-task/contract.js";
+import { getRuntimeBranchRestorePort } from "../turn-coordination.js";
+import { isStaleBranchRuntimeCommand } from "./runtime-command-generation.js";
+import { getRuntimeNotificationSealPort } from "../runtime-notification-seal.js";
 
 export function enqueueBackgroundTaskNotification(
   this: AgentRuntimeInternal,
@@ -86,9 +89,7 @@ export function sealBackgroundTaskNotifications(
   this: AgentRuntimeInternal,
   input: SealBackgroundTaskNotificationsInput,
 ): void {
-  if (this.config.taskType !== "subagent_child") return;
-  this.backgroundTaskNotificationsSealed = true;
-  this.backgroundTaskNotificationSealReason = input.reason;
+  if (!getRuntimeNotificationSealPort(this).seal(input.reason)) return;
   this.logger?.info?.("Subagent runtime background task notifications sealed", {
     ...traceContextToLogContext(input.traceContext ?? this.rootTraceContext),
     event: "runtime.background_task_notifications.sealed",
@@ -100,9 +101,9 @@ export function sealBackgroundTaskNotifications(
 export async function persistBackgroundTaskNotificationCommand(
   this: AgentRuntimeInternal,
   command: TaskNotificationRuntimeCommand,
-): Promise<MessageId> {
+): Promise<MessageId | null> {
   const persisted = await persistBackgroundTaskNotificationBatch.call(this, [command], true);
-  return persisted.messageId;
+  return persisted?.messageId ?? null;
 }
 
 interface PersistedBackgroundTaskNotificationBatch {
@@ -167,54 +168,66 @@ export async function persistBackgroundTaskNotificationBatch(
   this: AgentRuntimeInternal,
   commands: readonly [TaskNotificationRuntimeCommand, ...TaskNotificationRuntimeCommand[]],
   midTurn = false,
-): Promise<PersistedBackgroundTaskNotificationBatch> {
+): Promise<PersistedBackgroundTaskNotificationBatch | null> {
   const firstCommand = commands[0];
+  if (commands.some((command) => command.branchGeneration !== firstCommand.branchGeneration)) {
+    throw new Error("Cannot persist a mixed-generation notification batch");
+  }
   const backgroundSource = resolveBackgroundTaskNotificationSource(commands);
   const originMeta = resolveBackgroundTaskNotificationOriginMeta(commands);
   const text = commands.map((command) => command.text).join("\n\n");
-  await this.ensureContextInitialized(firstCommand.traceContext);
-  const messageID = createMessageId();
-  const inputPresentation = midTurn ? "task_notification_steer" : "task_notification";
-  this.messageHistory.addUser(text, runtimeInputMetadata(inputPresentation));
-  await this.persistSyntheticUserNoticeForSession({
-    messageID,
-    metadata: {
-      inputPresentation,
-      ...(originMeta ? { originMeta } : {}),
-      visibility: "model-only",
-    },
-    sessionId: this.sessionId,
-    source: "background_task",
-    text,
-    traceContext: firstCommand.traceContext,
-    visibility: "model-only",
-  });
-  // outer drain 过去逐条持久化并逐条启动模型轮，pending 数量会线性放大
-  // request 数。整批只写一条 synthetic message，同时仍逐项结算 ledger 身份。
-  for (const command of commands) {
-    await this.sessionStore
-      ?.markSessionInputPromoted?.({
-        id: String(command.id),
-        sessionID: this.sessionId,
-        promotedMessageID: messageID,
-      })
-      .catch((error) => {
-        this.logger?.warn("Failed to mark background notification promoted", {
-          ...traceContextToLogContext(command.traceContext),
-          commandId: command.id,
-          errorMessage: error instanceof Error ? error.message : String(error),
-          event: "session_input.promote_mark_failed",
-          module: "core.runtime",
-          status: "failed",
-        });
+  const persisted = await getRuntimeBranchRestorePort(this).persistNotificationIfCurrent(
+    firstCommand.branchGeneration,
+    async () => {
+      await this.ensureContextInitialized(firstCommand.traceContext);
+      const messageID = createMessageId();
+      const inputPresentation = midTurn ? "task_notification_steer" : "task_notification";
+      this.messageHistory.addUser(text, runtimeInputMetadata(inputPresentation));
+      await this.persistSyntheticUserNoticeForSession({
+        messageID,
+        metadata: {
+          inputPresentation,
+          ...(originMeta ? { originMeta } : {}),
+          visibility: "model-only",
+        },
+        sessionId: this.sessionId,
+        source: "background_task",
+        text,
+        traceContext: firstCommand.traceContext,
+        visibility: "model-only",
       });
+      // outer drain 过去逐条持久化并逐条启动模型轮，pending 数量会线性放大
+      // request 数。整批只写一条 synthetic message，同时仍逐项结算 ledger 身份。
+      for (const command of commands) {
+        await this.sessionStore
+          ?.markSessionInputPromoted?.({
+            id: String(command.id),
+            sessionID: this.sessionId,
+            promotedMessageID: messageID,
+          })
+          .catch((error) => {
+            this.logger?.warn("Failed to mark background notification promoted", {
+              ...traceContextToLogContext(command.traceContext),
+              commandId: command.id,
+              errorMessage: error instanceof Error ? error.message : String(error),
+              event: "session_input.promote_mark_failed",
+              module: "core.runtime",
+              status: "failed",
+            });
+          });
+      }
+      return {
+        ...(backgroundSource ? { backgroundSource } : {}),
+        messageId: messageID,
+        ...(originMeta ? { originMeta } : {}),
+        text,
+      };
+    },
+  );
+  if (!persisted) {
+    for (const command of commands) isStaleBranchRuntimeCommand(this, command);
   }
-  return {
-    ...(backgroundSource ? { backgroundSource } : {}),
-    messageId: messageID,
-    ...(originMeta ? { originMeta } : {}),
-    text,
-  };
+  return persisted;
 }
 
 export function shouldSuppressTaskNotificationRuntimeCommand(

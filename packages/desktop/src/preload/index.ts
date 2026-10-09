@@ -59,6 +59,8 @@ import type {
   PrintPageToPdfResult,
   SSHConfigAliasOption,
   RemoteConnectionRuntimeLog,
+  RemoteSSHHostKeyChallenge,
+  RespondSSHHostKeyChallengeRequest,
   WindowControlsOverlayMetrics,
   WindowControlsOverlayReadyPayload,
   CreateTempTextAttachmentRequest,
@@ -275,6 +277,16 @@ contextBridge.exposeInMainWorld("acode", {
     ipcRenderer.on(PlatformChannels.RemoteConnectionLog, handler);
     return () => ipcRenderer.removeListener(PlatformChannels.RemoteConnectionLog, handler);
   },
+  /** 订阅认证前 SSH 主机密钥挑战，返回 disposer */
+  onRemoteSSHHostKeyChallenge: (callback: (challenge: RemoteSSHHostKeyChallenge) => void) => {
+    const handler = (_event: unknown, payload: unknown) =>
+      callback(payload as RemoteSSHHostKeyChallenge);
+    ipcRenderer.on(PlatformChannels.RemoteSSHHostKeyChallenge, handler);
+    return () => ipcRenderer.removeListener(PlatformChannels.RemoteSSHHostKeyChallenge, handler);
+  },
+  /** 回传绑定到单次 challenge 的 SSH 主机密钥决策 */
+  respondSSHHostKeyChallenge: (payload: RespondSSHHostKeyChallengeRequest): Promise<void> =>
+    ipcRenderer.invoke(PlatformChannels.RespondSSHHostKeyChallenge, payload),
   /** 订阅当前窗口内远程 session 关闭事件，返回 disposer */
   onRemoteSessionClosed: (callback: (event: RemoteSessionClosedEvent) => void) => {
     const handler = (_event: unknown, payload: unknown) =>

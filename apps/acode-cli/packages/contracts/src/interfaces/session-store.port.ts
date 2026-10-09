@@ -29,7 +29,10 @@ import type {
 import type { TodoItem } from "../tools/todo.js";
 import type { SessionGoal, GoalStatus } from "../tools/target.js";
 import type { PermissionRuleset } from "./permission.port.js";
-import type { CollaborationMode } from "./session.port.js";
+// 架构断环（specs/architecture-contracts-module.md）：session 基础词汇从叶子文件导入——
+// session.events 引用本文件的 SyntheticUserMessageSource 等类型，本文件若反向经
+// session.port 取 CollaborationMode/TurnInputIntentMetadata 即成环。
+import type { CollaborationMode } from "./session-shared.js";
 import type { EnvInfo } from "./context-source.port.js";
 
 export const SESSION_TASK_TYPES = [
@@ -1071,6 +1074,17 @@ export interface LocalSettingStorePort {
 }
 
 export interface SessionStorePort {
+  /** Durable owner lease shared by Dynamic/Script Workflow (legacy hosts may omit it). */
+  claimWorkflowSessionOwner?(input: {
+    leaseMs?: number;
+    now?: number;
+    ownerToken: string;
+    parentSessionId: SessionId;
+  }): Promise<{
+    leaseExpiresAt: number;
+    ownerGeneration: number;
+    ownerToken: string;
+  } | null>;
   createSession(input: CreateSessionInput): Promise<SessionInfo>;
   /** legacy 兼容原语；V4 stable/compact-edit fork 禁止调用，统一走 commitForkBundle。 */
   createForkedSessionWithMetadata?(
@@ -1136,7 +1150,7 @@ export interface SessionStorePort {
     updates: Array<{
       delivery?: SessionInputDelivery;
       id: string;
-      intent?: import("./session.port.js").TurnInputIntentMetadata;
+      intent?: import("./session-shared.js").TurnInputIntentMetadata;
       text?: string;
       queuePosition?: number;
     }>;

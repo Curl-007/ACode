@@ -36,8 +36,10 @@ import {
 import type { AgentRuntime, RuntimeTaskRegistry } from "@acode/core";
 import { executeNodeSubsession } from "@acode/core";
 import { createChildTraceContext, createSessionId } from "@acode/contracts";
-import { createScriptWorkflowAgentRuntime } from "./script-workflow-child-runtime.js";
-import type { ScriptWorkflowAgentRuntimeDeps } from "./script-workflow-child-runtime.js";
+import {
+  createScriptWorkflowAgentRuntime,
+  type ScriptWorkflowAgentRuntimeDeps,
+} from "@acode/cli-workflow/contract";
 
 export interface CreateSwarmPlanWiringDeps extends Omit<ScriptWorkflowAgentRuntimeDeps, "runtime"> {
   runtimeTaskRegistry: RuntimeTaskRegistry;

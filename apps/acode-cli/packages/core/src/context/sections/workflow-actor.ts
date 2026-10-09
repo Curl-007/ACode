@@ -35,7 +35,7 @@ function buildWorkflowContract(): string {
     "# Working inside a workflow",
     `- ${TOOL_SURFACE}`,
     "- Each ask states what to do. When the ask carries a result schema, finish by calling `submit_result` with a conforming value; otherwise your final message is the result.",
-    // ask 的四条时序（bootstrap/src/app/workflow-driver.ts 头注释）在提示词层的对应：
+    // ask 的四条时序（cli-workflow/src/workflow-driver.ts 头注释）在提示词层的对应：
     // accept = 提交通过、ask 结算、turn 结束；reject = 违规清单成为 error tool_result，
     // 同 turn 内修复重交；nudge = turn 结束仍未提交时引擎另起一轮的引擎文本；
     // escalate = 停驻等主代理答案，答案落地后就地继续。机制细节归各工具描述

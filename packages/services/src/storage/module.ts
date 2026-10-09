@@ -6,5 +6,5 @@ export const storageModule = {
   id: "storage",
   requires: ["shared", "rpc", "services"],
   provides: ["storage-service"],
-  publicEntrypoints: ["contract.ts"],
+  publicEntrypoints: ["contract.ts", "node.ts"],
 } as const;

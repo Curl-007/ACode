@@ -1409,6 +1409,16 @@ const zhCN: Record<string, string> = {
   "ssh.connect": "连接",
   "ssh.cancel": "取消",
   "ssh.connecting": "正在连接...",
+  "ssh.hostKeyUnknown.title": "批准 SSH 主机密钥？",
+  "ssh.hostKeyUnknown.description":
+    "SSH 主机 {host}:{port} 尚未受信任。请先核对指纹，再决定是否批准：{candidate}。",
+  "ssh.hostKeyUnknown.approve": "批准主机密钥",
+  "ssh.hostKeyChanged.title": "SSH 主机密钥已变化",
+  "ssh.hostKeyChanged.description":
+    "SSH 主机 {host}:{port} 提交了不同的密钥。新指纹：{candidate}。此前信任：{expected}。只有确认这是预期变更时才替换。",
+  "ssh.hostKeyChanged.replace": "替换受信密钥",
+  "ssh.hostKey.reject": "拒绝",
+  "ssh.hostKey.none": "无",
   "ssh.success": "已连接，并在新窗口中打开。",
   "ssh.validation.required": "主机和用户名不能为空",
   "ssh.validation.passwordRequired": "密码不能为空",

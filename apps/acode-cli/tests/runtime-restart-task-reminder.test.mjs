@@ -186,8 +186,7 @@ test("(场景5/R3) turn-loop 一次性接线：flag 消费块 + 注入位置（�
     new URL("../packages/core/src/runtime/methods/turn-loop.ts", import.meta.url),
     "utf8",
   );
-  assert.ok(turnLoop.includes("!this.runtimeRestartReminderEmitted"));
-  assert.ok(turnLoop.includes("this.runtimeRestartReminderEmitted = true"));
+  assert.ok(turnLoop.includes("getRuntimeLifecyclePort(this).consumeRuntimeRestartReminder()"));
   assert.ok(turnLoop.includes('systemReminderAttachmentEntry("runtime_restart_tasks"'));
   assert.ok(turnLoop.includes("findOrphanedBackgroundTaskIds"));
   assert.ok(turnLoop.includes("this.runtimeTaskRegistry.get(taskId) !== undefined"));
@@ -204,7 +203,7 @@ test("(场景5/R3) turn-loop 一次性接线：flag 消费块 + 注入位置（�
     new URL("../packages/core/src/runtime/internal.ts", import.meta.url),
     "utf8",
   );
-  assert.ok(internal.includes("runtimeRestartReminderEmitted: boolean"));
+  assert.ok(internal.includes("extends RuntimeLifecycleView"));
 });
 
 test("(场景6/R4) 正文要素齐备且无 CJK", () => {

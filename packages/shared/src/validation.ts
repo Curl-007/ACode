@@ -214,6 +214,25 @@ export const hostCancelRemoteWorkspaceConnectMessageSchema = z
   })
   .strict();
 
+export const hostSSHHostKeyDecisionMessageSchema = z
+  .object({
+    type: z.literal("ssh-host-key-decision"),
+    requestId: nonEmptyStringSchema,
+    challengeId: nonEmptyStringSchema,
+    candidateFingerprint: nonEmptyStringSchema,
+    action: z.enum(["approve", "replace", "reject"]),
+  })
+  .strict();
+
+export const respondSSHHostKeyChallengeRequestSchema = z
+  .object({
+    requestId: nonEmptyStringSchema,
+    challengeId: nonEmptyStringSchema,
+    candidateFingerprint: nonEmptyStringSchema,
+    action: z.enum(["approve", "replace", "reject"]),
+  })
+  .strict();
+
 export const hostBindRemoteWorkspaceContextMessageSchema = z
   .object({
     type: z.literal("bind-remote-workspace-context"),
@@ -454,6 +473,7 @@ export const hostIncomingMessageSchema = z.discriminatedUnion("type", [
   hostInitLocalMessageSchema,
   hostConnectRemoteWorkspaceMessageSchema,
   hostCancelRemoteWorkspaceConnectMessageSchema,
+  hostSSHHostKeyDecisionMessageSchema,
   hostBindRemoteWorkspaceContextMessageSchema,
   hostDisposeRemoteWorkspaceSessionMessageSchema,
   hostAttachServicePortMessageSchema,
@@ -493,6 +513,19 @@ export const hostRemoteWorkspaceConnectionLogResponseSchema = z
     requestId: nonEmptyStringSchema,
     level: z.enum(["info", "warn", "error"]),
     message: nonEmptyStringSchema,
+  })
+  .strict();
+
+export const hostRemoteSSHHostKeyChallengeResponseSchema = z
+  .object({
+    type: z.literal("remote-ssh-host-key-challenge"),
+    requestId: nonEmptyStringSchema,
+    challengeId: nonEmptyStringSchema,
+    host: nonEmptyStringSchema,
+    port: z.number().int().positive().max(65_535),
+    status: z.enum(["unknown", "changed"]),
+    candidateFingerprint: nonEmptyStringSchema,
+    expectedFingerprints: z.array(nonEmptyStringSchema),
   })
   .strict();
 
@@ -925,6 +958,7 @@ export const hostResponseMessageSchema = z.discriminatedUnion("type", [
     .strict(),
   hostResourceUsageSnapshotResultResponseSchema,
   hostRemoteWorkspaceConnectionLogResponseSchema,
+  hostRemoteSSHHostKeyChallengeResponseSchema,
   hostRemoteWorkspaceConnectedResponseSchema,
   hostRemoteWorkspaceConnectFailedResponseSchema,
   hostRemoteWorkspaceClosedResponseSchema,

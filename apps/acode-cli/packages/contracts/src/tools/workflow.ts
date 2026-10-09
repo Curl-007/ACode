@@ -68,7 +68,7 @@ export const WorkflowInputSchema = z
       .min(1)
       .optional()
       .describe(
-        "Path to a workflow script file on disk. Every RunWorkflow invocation persists its script under the session directory and returns the path in the tool result. To iterate, edit that file with Write/Edit and re-invoke RunWorkflow with the same `scriptPath` instead of re-sending the full script. Takes precedence over `script` and `name`.",
+        "Path to a workflow script file on disk. Every RunWorkflow invocation persists its script under the session directory and returns the path in the tool result. To iterate, edit that file with Write/Edit and re-invoke RunWorkflow with the same `scriptPath` instead of re-sending the full script. Takes precedence over `script` and `name`; it cannot be combined with `resumeFromRunId`.",
       ),
     title: z
       .string()
@@ -77,6 +77,17 @@ export const WorkflowInputSchema = z
   })
   .strict()
   .superRefine((input, context) => {
+    if (
+      input.resumeFromRunId &&
+      (input.scriptPath !== undefined || input.script !== undefined || input.name !== undefined)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          "RunWorkflow cannot combine resumeFromRunId with scriptPath, script, or name; resume the existing run by id alone.",
+        path: ["resumeFromRunId"],
+      });
+    }
     if (input.scriptPath || input.script || input.name || input.resumeFromRunId) return;
     context.addIssue({
       code: z.ZodIssueCode.custom,

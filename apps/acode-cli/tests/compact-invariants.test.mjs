@@ -19,16 +19,12 @@ import { test } from "node:test";
 const coreRoot = new URL("../packages/core/src/", import.meta.url);
 const readCore = (path) => readFile(new URL(path, coreRoot), "utf8");
 
-const { COMPACT_ESTIMATE_INLINE_MEDIA_TOKENS, estimateMessageTokens } = await import(
-  "../packages/core/src/compact/manual.ts"
-);
-const { getAutoCompactThreshold, shouldAutoCompact } = await import(
-  "../packages/core/src/compact/policy.ts"
-);
-const {
-  COMPACT_PAYLOAD_RECOVERY_MEDIA_BUDGET_BYTES,
-  nextCompactPayloadRecoveryMediaBudget,
-} = await import("../packages/core/src/compact/payload-recovery.ts");
+const { COMPACT_ESTIMATE_INLINE_MEDIA_TOKENS, estimateMessageTokens } =
+  await import("../packages/core/src/compact/manual.ts");
+const { getAutoCompactThreshold, shouldAutoCompact } =
+  await import("../packages/core/src/compact/policy.ts");
+const { COMPACT_PAYLOAD_RECOVERY_MEDIA_BUDGET_BYTES, nextCompactPayloadRecoveryMediaBudget } =
+  await import("../packages/core/src/compact/payload-recovery.ts");
 const { groupByAssistantStartedRounds } = await import("../packages/core/src/compact/rounds.ts");
 const { hasEnoughMessagesToCompact } = await import("../packages/core/src/compact/manual.ts");
 const {
@@ -37,23 +33,20 @@ const {
   selectCompactEntriesAfterPromptTooLong,
   truncateCompactSummaryRequestEntriesAfterPromptTooLong,
 } = await import("../packages/core/src/runtime/helpers/compact-selection.ts");
-const { projectMessagesForMediaBudget } = await import(
-  "../packages/core/src/runtime/helpers/media-budget.ts"
-);
+const { projectMessagesForMediaBudget } =
+  await import("../packages/core/src/runtime/helpers/media-budget.ts");
 const {
   isModelContextExceededError,
   isModelMediaTooLargeError,
   isModelRequestPayloadTooLargeError,
 } = await import("../packages/core/src/runtime/helpers/model-errors.ts");
-const { estimateCurrentModelInputTokens } = await import(
-  "../packages/core/src/runtime/methods/compact.ts"
-);
-const { beginActiveTurn, finishActiveTurn } = await import(
-  "../packages/core/src/runtime/methods/steering.ts"
-);
-const { modelMessageContentBlockToText } = await import(
-  "../packages/contracts/src/model/index.ts"
-);
+const { estimateCurrentModelInputTokens } =
+  await import("../packages/core/src/runtime/methods/compact.ts");
+const { beginActiveTurn, finishActiveTurn } =
+  await import("../packages/core/src/runtime/methods/steering.ts");
+const { initializeRuntimeTurnCoordination } =
+  await import("../packages/core/src/runtime/turn-coordination.ts");
+const { modelMessageContentBlockToText } = await import("../packages/contracts/src/model/index.ts");
 const { CompactTrigger } = await import("../packages/contracts/src/compact/index.ts");
 
 // ---------------------------------------------------------------------------
@@ -126,7 +119,11 @@ test("(I1-1) 内联图片按平价计费，且不随 base64 长度放大", () =>
   const large = estimateMessageTokens([userMessage([imageBlock("image/png", 4_000_000)])]);
 
   assert.equal(small, IMAGE_MEDIA_TOKENS);
-  assert.equal(large, IMAGE_MEDIA_TOKENS, "平价计费：体积不得影响 token 估算（jcode 事故：高估 100 倍）");
+  assert.equal(
+    large,
+    IMAGE_MEDIA_TOKENS,
+    "平价计费：体积不得影响 token 估算（jcode 事故：高估 100 倍）",
+  );
   assert.ok(
     large > 100,
     "占位文本低估（修正前 7 token）必须消失，否则无 usage anchor 时阈值看不见图片",
@@ -135,11 +132,7 @@ test("(I1-1) 内联图片按平价计费，且不随 base64 长度放大", () =>
 
 test("(I1-2) 多张图片线性累加，正文与 toolCalls 入参仍按字符计费", () => {
   const messages = [
-    userMessage([
-      { type: "text", text: "x".repeat(300) },
-      imageBlock(),
-      imageBlock("image/jpeg"),
-    ]),
+    userMessage([{ type: "text", text: "x".repeat(300) }, imageBlock(), imageBlock("image/jpeg")]),
     {
       ...assistantMessage("done"),
       toolCalls: [{ name: "Write", input: { content: "y".repeat(600) } }],
@@ -159,7 +152,9 @@ test("(I1-3) video 与无正文 file 附件同样平价计费；带正文的 fil
   assert.equal(video, IMAGE_MEDIA_TOKENS);
 
   const pdfWithoutText = estimateMessageTokens([
-    userMessage([{ type: "file", mediaType: "application/pdf", dataUrl: "data:application/pdf;base64,AAAA" }]),
+    userMessage([
+      { type: "file", mediaType: "application/pdf", dataUrl: "data:application/pdf;base64,AAAA" },
+    ]),
   ]);
   assert.equal(pdfWithoutText, IMAGE_MEDIA_TOKENS);
 
@@ -194,10 +189,7 @@ test("(I1-4) reasoning 独立投影零回归：估算仍计入 reasoning 正文"
 test("(I1-5) 共享正文投影语义未被改动：image 仍投影为占位文本", () => {
   // memory、错误文案、UI 摘要都消费 modelMessageContentBlockToText；平价计费只能落在
   // compact 自己的估算投影里（与 reasoning 独立投影同一先例）。
-  assert.equal(
-    modelMessageContentBlockToText(imageBlock("image/png")),
-    "[Attached image/png]",
-  );
+  assert.equal(modelMessageContentBlockToText(imageBlock("image/png")), "[Attached image/png]");
 });
 
 test("(I1-6) 阈值效果：20 张截图在 estimate 模式下触发 auto compact（修正前不触发）", () => {
@@ -300,17 +292,19 @@ test("(I2-3) 决策只认唯一事实来源：provider override 覆盖估算，�
 });
 
 test("(I2-4) provider 轨道的本地增量段也吃到图片平价计费", () => {
-  const messages = [
-    userMessage("hello"),
-    assistantMessage("ok"),
-    userMessage([imageBlock()]),
-  ];
+  const messages = [userMessage("hello"), assistantMessage("ok"), userMessage([imageBlock()])];
   const sourceEntries = [
     undefined,
     {
       kind: "message",
       message: { role: "assistant", content: "ok" },
-      tokens: { input: 10_000, output: 500, total: 10_500, reasoning: 0, cache: { read: 0, write: 0 } },
+      tokens: {
+        input: 10_000,
+        output: 500,
+        total: 10_500,
+        reasoning: 0,
+        cache: { read: 0, write: 0 },
+      },
     },
     undefined,
   ];
@@ -434,10 +428,7 @@ test("(I3-4) 「配不齐就放弃压缩」的 ACode 等价语义：不足两轮
     toolEntry("t1"),
   ];
   assert.equal(hasEnoughRuntimeEntriesToCompact(singleRound), false);
-  assert.equal(
-    hasEnoughMessagesToCompact(singleRound.map((entry) => entry.message)),
-    false,
-  );
+  assert.equal(hasEnoughMessagesToCompact(singleRound.map((entry) => entry.message)), false);
 
   const twoRounds = [...singleRound, userEntry("q2"), assistantEntry("answer")];
   assert.equal(hasEnoughRuntimeEntriesToCompact(twoRounds), true);
@@ -508,7 +499,14 @@ test("(I4-2) 单活跃 turn 互斥：compact turn 不能与在途 turn 并存", 
   );
 
   const idleRuntime = {};
-  const activeTurn = beginActiveTurn.call(idleRuntime, "turn_compact", TRACE_CONTEXT, "compact", false);
+  initializeRuntimeTurnCoordination(idleRuntime);
+  const activeTurn = beginActiveTurn.call(
+    idleRuntime,
+    "turn_compact",
+    TRACE_CONTEXT,
+    "compact",
+    false,
+  );
   assert.equal(idleRuntime.activeTurn, activeTurn);
   assert.throws(
     () => beginActiveTurn.call(idleRuntime, "turn_other", TRACE_CONTEXT, "regular", true),
@@ -574,7 +572,10 @@ test("(I5-2) 413 判定不误命中：4130、限流、token 超窗文案", () =>
     adapterError("Provider authentication failed.", { statusCode: 403 }),
     // token 轨道的文案里出现三位数不得被抢判成字节轨道。
     adapterError("prompt is too long: 413 tokens > 200 maximum", { statusCode: 400 }),
-    { code: "MODEL_CONTEXT_EXCEEDED", message: "Model request exceeded the provider context window." },
+    {
+      code: "MODEL_CONTEXT_EXCEEDED",
+      message: "Model request exceeded the provider context window.",
+    },
     adapterError("image exceeds maximum size", { code: "media_payload_too_large" }),
     new Error("Model stream failed"),
     undefined,
@@ -626,7 +627,10 @@ test("(I5-4) 预算阶梯：12MiB → 0 → 耗尽，非法值不产生无限重
 
 test("(I5-5) 恢复动作：按预算 oldest-first 剥离内联媒体，占位文案保留 media_type", () => {
   const messages = [
-    { role: "user", content: [{ type: "text", text: "old screenshot" }, imageBlock("image/png", 5_000_000)] },
+    {
+      role: "user",
+      content: [{ type: "text", text: "old screenshot" }, imageBlock("image/png", 5_000_000)],
+    },
     { role: "assistant", content: "ok" },
     { role: "user", content: [imageBlock("image/jpeg", 100_000)] },
   ];
@@ -662,7 +666,9 @@ test("(I5-6) 接线守卫：compact summary 请求存在独立 413 轨道且顺�
   const source = await readCore("runtime/methods/compact-active.ts");
 
   const payloadIndex = source.indexOf("if (isModelRequestPayloadTooLargeError(error)) {");
-  const mediaIndex = source.indexOf("if (isModelMediaTooLargeError(error) && !stripMediaForSummary) {");
+  const mediaIndex = source.indexOf(
+    "if (isModelMediaTooLargeError(error) && !stripMediaForSummary) {",
+  );
   const contextIndex = source.indexOf("if (isModelContextExceededError(error)) {");
   assert.ok(payloadIndex > 0, "缺少 413 恢复分支");
   assert.ok(mediaIndex > payloadIndex, "413 轨道必须先于单媒体过大轨道（字节阶梯更渐进）");

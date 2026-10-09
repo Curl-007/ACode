@@ -11,6 +11,7 @@ import type {
 } from "../deps.js";
 import { emptyTokenUsageInfo } from "../helpers/index.js";
 import type { AgentRuntimeInternal } from "../internal.js";
+import { getRuntimeModelChangeTimelinePort } from "../runtime-model-change-timeline.js";
 
 export function recordPendingModelChange(
   this: AgentRuntimeInternal,
@@ -21,30 +22,34 @@ export function recordPendingModelChange(
     toModelLabel: string;
   },
 ): void {
+  // CLI-05 I8：写入只经 owner 的 set 端口；replace-or-clear 规则保持在本同步片内
+  // 计算（读 getter → 判定等价 → set），getter 返回的是冻结记录，不能原地改写。
+  const timelinePort = getRuntimeModelChangeTimelinePort(this);
   const existing = this.pendingModelChangeTimeline;
   const fromModel = existing?.fromModel ?? input.fromModel;
   const fromModelLabel = existing?.fromModelLabel ?? input.fromModelLabel;
   if (fromModel && isSameModelSelection(fromModel, input.toModel)) {
-    this.pendingModelChangeTimeline = undefined;
+    timelinePort.setPendingModelChangeTimeline(undefined);
     return;
   }
-  this.pendingModelChangeTimeline = {
+  timelinePort.setPendingModelChangeTimeline({
     createdAt: existing?.createdAt ?? Date.now(),
     fromModel,
     fromModelLabel,
     requestId: existing?.requestId ?? String(createPartId()),
     toModel: input.toModel,
     toModelLabel: input.toModelLabel,
-  };
+  });
 }
 
 export async function persistPendingModelChangeTimeline(
   this: AgentRuntimeInternal,
   traceContext: TraceContext,
 ): Promise<void> {
-  const pending = this.pendingModelChangeTimeline;
+  // consume 即取出并清空：持久化 await 期间的新记录留给下一次 consume，
+  // 同一条记录不会被两次发布。
+  const pending = getRuntimeModelChangeTimelinePort(this).consumePendingModelChangeTimeline();
   if (!pending) return;
-  this.pendingModelChangeTimeline = undefined;
 
   const created = Date.now();
   await this.persistAssistantTimelinePartForSession({

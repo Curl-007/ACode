@@ -69,6 +69,7 @@ import { appendBrowserTurnScreenshot } from "./browser-turn-screenshot.js";
 import { clearBrowserTurnState } from "../../repl/browser-turn-state.js";
 import { applySubmissionExecutionState, createTurnModel } from "./turn-model.js";
 import { rebuildContextPrefix } from "./context-refresh.js";
+import { assertRuntimeModelBranchCurrent } from "./runtime-command-generation.js";
 
 const TARGET_RUN_HEARTBEAT_MS = 15_000;
 
@@ -107,6 +108,7 @@ export async function executeTurnCommand(
   // 这里在任何 await 之前冻结本轮事实；后续配置变化只作用于下一轮。
   const admittedModelSelection = options?.intent?.modelSelection ?? this.getSessionModelSelection();
   const admittedOutputStyle = this.config.outputStyle;
+  const admittedBranchGeneration = this.branchGeneration;
   const compactInstructions = parseCompactCommand(input);
   const rewindCommand = parseRewindCommand(input);
   const turnId = startReservation?.turnId ?? createTurnId();
@@ -240,6 +242,7 @@ export async function executeTurnCommand(
         admittedModel,
       );
       completeTurnPhase("session_start_hooks", phaseStartedAt);
+      assertRuntimeModelBranchCurrent(this, admittedBranchGeneration);
       this.injectHookAdditionalContextIntoMessageHistory(
         HookEventName.SessionStart,
         sessionStartHookResult.additionalContexts,
@@ -529,6 +532,7 @@ export async function executeTurnCommand(
         }
         loopState = {
           activeTurn,
+          branchGeneration: admittedBranchGeneration,
           ...(options?.automationId ? { automationId: options.automationId } : {}),
           // 闲时派发轮的身份进入 loop state，供工具执行边界 deny OffPeakCreate。
           ...(options?.offPeakTaskId ? { offPeakTaskId: options.offPeakTaskId } : {}),

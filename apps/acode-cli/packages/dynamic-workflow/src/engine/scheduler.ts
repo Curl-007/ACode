@@ -17,13 +17,17 @@ import {
   hashMismatch,
   describeCause,
   headOfInstructions,
-  journaledStats,
-  runBudgetGatedAdmission,
+  recordForAskNode,
   type Actor,
   type AskNode,
   type Deferred,
   type SchedulerHost,
 } from "./scheduler-types.js";
+import {
+  isAskAdmissionRefusal,
+  recordAskAdmissionRefusal,
+  runBudgetGatedAdmission,
+} from "./scheduler-budget.js";
 import {
   handleNoteStats,
   handleSubmitAttempted,
@@ -53,7 +57,7 @@ export class AskScheduler {
   private readonly liveNodes = new Map<string, AskNode>();
   /**
    * 「转录早于本次派发」的 ask 实例（`siteId@ordinal`）：续跑前驱在飞 ask 的，以及 resume 时
-   * 据 running 行重新派发的。它们落 journal 的 stats 要抹掉 `worldToolCalls`，见 {@link journaledStats}。
+   * 据 running 行重新派发的。它们落 journal 的 stats 要抹掉 `worldToolCalls`，见 scheduler-types.ts 的 stats 规则。
    * 结算后不清理——迟到的 stats 回填还要查它。
    */
   private readonly priorTranscriptAsks = new Set<string>();
@@ -93,7 +97,11 @@ export class AskScheduler {
     const recordedCount = this.journal
       .listNodes(this.host.runId)
       .filter(
-        (n) => n.kind === "ask" && n.actorSiteId === ref.siteId && n.actorOrdinal === ref.ordinal,
+        (n) =>
+          n.kind === "ask" &&
+          !isAskAdmissionRefusal(n) &&
+          n.actorSiteId === ref.siteId &&
+          n.actorOrdinal === ref.ordinal,
       ).length;
     const actor: Actor = {
       ref,
@@ -140,6 +148,10 @@ export class AskScheduler {
         this.host.failRun(err);
         return Promise.reject(err);
       }
+      if (isAskAdmissionRefusal(recorded)) {
+        this.releaseCachedAsk(instance, recorded, deferred);
+        return deferred.promise;
+      }
       const seq = recorded.actorSeq ?? 0;
       const reconcile = (): void =>
         actor.imported?.reconcileRecorded(
@@ -168,15 +180,21 @@ export class AskScheduler {
 
     // 未命中（fresh）：注册到 pendingLive，按到达顺序在记录节点排空后准入并分配新的 actorSeq。
     // 分配到 seq 之后先过预算闸、再问导入缓存（amend-resume）：命中即 cached settle，不 live。
-    // 闸门次序与记账规则集中在 runBudgetGatedAdmission（scheduler-types.ts）。
+    // 闸门与拒绝落库集中在 scheduler-budget.ts；拒绝不进入 actor FIFO。
     actor.pendingLive.push(() => {
-      const seq = actor.nextAdmitSeq++;
+      // 预算拒绝不能先消费 actorSeq，否则重放会留下序号空洞并卡住 admission drain。
+      const seq = actor.nextAdmitSeq;
       runBudgetGatedAdmission(
         this.host,
         this.liveNodes.size,
-        deferred,
-        () => this.tryImportedSettle(instance, actor, seq, hash, deferred),
+        (error) => recordAskAdmissionRefusal(this.host, instance, actor.ref, hash, deferred, error),
         () => {
+          const imported = this.tryImportedSettle(instance, actor, seq, hash, deferred);
+          if (imported) actor.nextAdmitSeq++;
+          return imported;
+        },
+        () => {
+          actor.nextAdmitSeq++;
           // 未命中之后才知道它是不是「续跑前驱的在飞 ask」——判定在 take 里随分歧一起做出。
           const carried = actor.imported?.carriedAt(seq) === true;
           this.admitLive(instance, actor, seq, instructions, hash, spec, deferred, carried);
@@ -192,7 +210,7 @@ export class AskScheduler {
    * 把一个 ask 作为 live 节点准入：建节点、准入即落 running 记录、入队并记事件。
    *
    * `priorTranscript` 为真表示这一条不是从空转录开跑的（续跑前驱在飞 ask，或 resume 据 running
-   * 行重新派发）——它只影响 stats 怎么落库，见 {@link journaledStats}。
+   * 行重新派发）——它只影响 stats 怎么落库，见 scheduler-types.ts 的 stats 规则。
    */
   private admitLive(
     instance: InstanceRef,
@@ -471,7 +489,12 @@ export class AskScheduler {
   private settleOk(node: AskNode, artifact: unknown): void {
     if (node.settled) return;
     node.settled = true;
-    this.journal.putNode(this.nodeRecordFor(node, { status: "completed", result: artifact }));
+    this.journal.putNode(
+      recordForAskNode(this.host.runId, this.priorTranscriptAsks, node, {
+        status: "completed",
+        result: artifact,
+      }),
+    );
     this.host.record({ type: "node-settled", instance: node.instance, outcome: "ok" });
     this.finishLiveNode(node);
     node.deferred.resolve(artifact);
@@ -482,7 +505,12 @@ export class AskScheduler {
     node.settled = true;
     // 结算失败必须落 journal（覆盖准入时的 running）：失败是"完结"，且脚本可能已观察到该 rejection
     // 并据此分支，replay 必须复现它——journal 化失败是重放正确性的硬性要求，而非可选。
-    this.journal.putNode(this.nodeRecordFor(node, { status: "failed", error: error.toJSON() }));
+    this.journal.putNode(
+      recordForAskNode(this.host.runId, this.priorTranscriptAsks, node, {
+        status: "failed",
+        error: error.toJSON(),
+      }),
+    );
     this.host.record({
       type: "node-settled",
       instance: node.instance,
@@ -501,29 +529,5 @@ export class AskScheduler {
       this.activeAsks--;
     }
     this.pumpAll();
-  }
-
-  private nodeRecordFor(
-    node: AskNode,
-    outcome:
-      | { status: "completed"; result: unknown }
-      | { status: "failed"; error: NodeRecord["error"] },
-  ): NodeRecord {
-    const record: NodeRecord = {
-      runId: this.host.runId,
-      siteId: node.instance.siteId,
-      ordinal: node.instance.ordinal,
-      kind: "ask",
-      actorSiteId: node.actor.ref.siteId,
-      actorOrdinal: node.actor.ref.ordinal,
-      actorSeq: node.actorSeq,
-      inputHash: node.hash,
-      status: outcome.status,
-    };
-    if (outcome.status === "completed") record.result = outcome.result;
-    else record.error = outcome.error;
-    if (node.lastStats !== undefined)
-      record.stats = journaledStats(this.priorTranscriptAsks, node.instance, node.lastStats);
-    return record;
   }
 }

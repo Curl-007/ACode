@@ -127,7 +127,7 @@ const instanceLabel = (payload: Record<string, unknown>): string | undefined => 
 /**
  * 引擎事件种类中的**状态迁移**面（`text` 模式 stderr 只讲这些 + `log`）。
  *
- * 词汇表来自 `toProtocolEvent` 的契约注释（`bootstrap/src/app/dynamic-workflow-run-launch.ts`）：
+ * 词汇表来自 `toProtocolEvent` 的契约注释（`cli-workflow/src/dynamic-workflow-run-launch.ts`）：
  * run-started / actor-created / node-queued / node-dispatched / node-repairing /
  * node-nudged / node-settled / usage-updated / log / run-settled。
  * `usage-updated` 与 `actor-created` 刻意不打印：前者是纯计数、后者不是迁移。

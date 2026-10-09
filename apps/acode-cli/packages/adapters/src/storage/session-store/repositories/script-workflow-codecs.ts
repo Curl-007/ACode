@@ -38,7 +38,10 @@ export interface WorkflowRunRow {
   id: string;
   kind: "script";
   name: string;
+  owner_generation?: number | null;
+  owner_token?: string | null;
   parent_session_id: SessionId | null;
+  result_json?: string | null;
   script_hash: string;
   script_path: string | null;
   stats_json: string | null;
@@ -49,6 +52,10 @@ export interface WorkflowRunRow {
   time_updated: number;
   /** 发起这次 run 的工具调用 id（migration 0027 加列，存量行为 null）。 */
   tool_call_id: string | null;
+  /** 稳定 workspace owner（migration 0028；存量行为 null）。 */
+  workspace_identity: string | null;
+  /** 远程 session owner（migration 0028；本地行为 null）。 */
+  remote_session_id: string | null;
 }
 
 export interface WorkflowActivityRow {
@@ -135,13 +142,18 @@ export function decodeRun(row: WorkflowRunRow): ScriptWorkflowRunRecord {
     id: row.id,
     kind: row.kind,
     name: row.name,
+    ...(row.owner_generation == null ? {} : { ownerGeneration: row.owner_generation }),
+    ...(row.owner_token ? { ownerToken: row.owner_token } : {}),
     parentSessionId: row.parent_session_id ?? undefined,
+    ...(row.remote_session_id ? { remoteSessionId: row.remote_session_id } : {}),
     scriptHash: row.script_hash,
     scriptPath: row.script_path ?? undefined,
+    result: decodeJson(row.result_json ?? null),
     startedAt: row.time_started ?? undefined,
     stats: decodeJson(row.stats_json),
     status: row.status,
     updatedAt: row.time_updated,
+    ...(row.workspace_identity ? { workspaceIdentity: row.workspace_identity } : {}),
     // 存量行与迁移前的 run 都没有这个事实（当时没记），缺席即缺席，不用空串顶替。
     ...(row.tool_call_id ? { toolCallId: row.tool_call_id } : {}),
   };

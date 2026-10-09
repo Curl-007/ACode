@@ -44,4 +44,78 @@ export interface IOffPeakTaskService {
 
 export const IOffPeakTaskService = createServiceDescriptor<IOffPeakTaskService>(
   ServiceChannels.OffPeakTask,
+  {
+    allowedMethods: [
+      "getCodingPlanSupport",
+      "getTakeNumberAvailability",
+      "createTask",
+      "cancelTask",
+      "pauseTask",
+      "continueTask",
+      "deleteTask",
+      "deleteHistory",
+      "updateTask",
+      "list",
+      "get",
+    ],
+    argumentValidators: {
+      getCodingPlanSupport: (args) => requireNoArguments(args),
+      getTakeNumberAvailability: (args) => requireNoArguments(args),
+      // 写入入口：只做顶层确定检查（workspacePath 路径 + modelSelection 对象），
+      // title/prompt/permissionMode 等业务字段的完整校验留在 service 层，不在此重复。
+      createTask: (args) => {
+        const value = requireObjectArg(args, ["workspacePath"]);
+        const modelSelection = value.modelSelection;
+        if (!modelSelection || typeof modelSelection !== "object" || Array.isArray(modelSelection)) {
+          throw new Error("invalid modelSelection");
+        }
+      },
+      cancelTask: (args) => requireStringArg(args, "invalid offPeakTaskId"),
+      pauseTask: (args) => requireStringArg(args, "invalid offPeakTaskId"),
+      continueTask: (args) => requireStringArg(args, "invalid offPeakTaskId"),
+      deleteTask: (args) => requireStringArg(args, "invalid offPeakTaskId"),
+      deleteHistory: (args) => requireStringArg(args, "invalid offPeakTaskId"),
+      updateTask: (args) => {
+        if (args.length !== 2) throw new Error("expected task id and params");
+        if (typeof args[0] !== "string" || args[0].length === 0) {
+          throw new Error("invalid offPeakTaskId");
+        }
+        const params = args[1];
+        if (!params || typeof params !== "object" || Array.isArray(params)) {
+          throw new Error("expected params object");
+        }
+      },
+      list: (args) => requireNoArguments(args),
+      get: (args) => requireStringArg(args, "invalid offPeakTaskId"),
+    },
+  },
 );
+
+function requireNoArguments(args: readonly unknown[]): void {
+  if (args.length !== 0) throw new Error("expected no arguments");
+}
+
+function requireStringArg(args: readonly unknown[], message: string): void {
+  if (args.length !== 1 || typeof args[0] !== "string" || args[0].length === 0) {
+    throw new Error(message);
+  }
+}
+
+function requireObjectArg(
+  args: readonly unknown[],
+  requiredStringFields: readonly string[],
+): Record<string, unknown> {
+  if (args.length !== 1) throw new Error("expected a single parameter object");
+  const value = args[0];
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("expected a parameter object");
+  }
+  const record = value as Record<string, unknown>;
+  for (const field of requiredStringFields) {
+    const fieldValue = record[field];
+    if (typeof fieldValue !== "string" || fieldValue.length === 0) {
+      throw new Error(`invalid ${field}`);
+    }
+  }
+  return record;
+}

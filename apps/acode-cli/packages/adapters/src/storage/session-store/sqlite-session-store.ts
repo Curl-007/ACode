@@ -8,6 +8,7 @@ import type {
   RepairRemoteSessionPathsInput,
   CreateScriptWorkflowActivityInput,
   CreateScriptWorkflowRunInput,
+  RecordScriptWorkflowActivityUsageInput,
   CreateSessionTaskLinkInput,
   CreateSessionInput,
   FileDiff,
@@ -96,6 +97,7 @@ import { ensureParentDir, getDefaultSessionDbPath } from "./paths.js";
 import { maybeThrowStorageFsFault } from "../fs-fault-injection.js";
 import * as debugRepository from "./repositories/debug.js";
 import { createDwfJournalStore } from "./repositories/dwf-journal.js";
+import { claimWorkflowSessionOwner } from "./repositories/workflow-run-owner.js";
 import * as inputHistoryRepository from "./repositories/input-history.js";
 import * as localSettingsRepository from "./repositories/local-settings.js";
 import * as messageRepository from "./repositories/messages.js";
@@ -850,6 +852,19 @@ export class SqliteSessionStore
     return scriptWorkflowRunRepository.upsertScriptWorkflowDefinition(this.db, input);
   }
 
+  async claimWorkflowSessionOwner(input: {
+    leaseMs?: number;
+    now?: number;
+    ownerToken: string;
+    parentSessionId: SessionId;
+  }): Promise<{
+    leaseExpiresAt: number;
+    ownerGeneration: number;
+    ownerToken: string;
+  } | null> {
+    return claimWorkflowSessionOwner(this.db, input);
+  }
+
   async createScriptWorkflowRun(
     input: CreateScriptWorkflowRunInput,
   ): Promise<ScriptWorkflowRunRecord> {
@@ -860,6 +875,12 @@ export class SqliteSessionStore
     input: UpdateScriptWorkflowRunInput,
   ): Promise<ScriptWorkflowRunRecord> {
     return scriptWorkflowRunRepository.updateScriptWorkflowRun(this.db, input);
+  }
+
+  async recordScriptWorkflowActivityUsage(
+    input: RecordScriptWorkflowActivityUsageInput,
+  ): Promise<ScriptWorkflowRunRecord> {
+    return scriptWorkflowRunRepository.recordScriptWorkflowActivityUsage(this.db, input);
   }
 
   async getScriptWorkflowRun(runId: string): Promise<ScriptWorkflowRunRecord | null> {

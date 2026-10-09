@@ -17,14 +17,11 @@ import type {
   RuntimeBackgroundStopTarget,
   TypedRuntimeBackgroundStopTarget,
 } from "./background-stop-types.js";
-import type {
-  RuntimeTaskSnapshot,
-  RuntimeTaskType,
-} from "../../runtime-task/registry.js";
+import type { RuntimeTaskSnapshot, RuntimeTaskType } from "../../runtime-task/contract.js";
 import {
   hasRunningBackgroundRuntimeTask,
   isTerminalRuntimeTask,
-} from "../../runtime-task/registry.js";
+} from "../../runtime-task/contract.js";
 
 // 停止分派的类型集中在 background-stop-types.ts（供各分支模块共用）；这里 re-export
 // 保持既有 import 路径不变。
@@ -308,9 +305,7 @@ export async function cancelRunningRuntimeBackgroundTasks(
   const traceContext = input.traceContext ?? this.rootTraceContext;
   const tasks = Object.values(this.runtimeTaskRegistry.all()).filter(
     (task) =>
-      task.type === "local_bash" &&
-      task.isBackgrounded === true &&
-      task.status === "running",
+      task.type === "local_bash" && task.isBackgrounded === true && task.status === "running",
   );
 
   for (const task of tasks) {
@@ -405,8 +400,7 @@ export function buildBackgroundTaskPayload(
 function backgroundInfoFromRuntimeTask(task: RuntimeTaskSnapshot): BackgroundTaskInfo {
   return {
     taskId: task.taskId,
-    toolCallId:
-      typeof task.parentToolCallId === "string" ? task.parentToolCallId : undefined,
+    toolCallId: typeof task.parentToolCallId === "string" ? task.parentToolCallId : undefined,
     toolName: toolNameFromRuntimeTaskType(task.type),
     cancellable: task.status === "running",
     command: commandFromRuntimeTask(task, undefined),
@@ -482,9 +476,7 @@ function toolNameFromRuntimeTaskType(type: RuntimeTaskType): string {
   }
 }
 
-function isTerminalBackgroundTaskInfoStatus(
-  status: BackgroundTaskInfoStatus | undefined,
-): boolean {
+function isTerminalBackgroundTaskInfoStatus(status: BackgroundTaskInfoStatus | undefined): boolean {
   return Boolean(status && status !== "running");
 }
 

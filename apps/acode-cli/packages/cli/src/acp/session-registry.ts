@@ -9,7 +9,8 @@
 // ============================================================
 
 import { randomUUID } from "node:crypto";
-import { isAbsolute, relative, resolve } from "node:path";
+import { realpath, stat } from "node:fs/promises";
+import { isAbsolute, relative, resolve, sep } from "node:path";
 import { SDK_PERMISSION_TIMEOUT_MS } from "@acode/harness-sdk";
 import type { HarnessEvent, PermissionRequestedEvent } from "@acode/shared/harness-api";
 import {
@@ -125,7 +126,9 @@ function parseClientResponse(line: string): Record<string, unknown> | undefined 
 }
 
 /** 解析 client→agent 的请求/通知；非法形态返回 undefined（调用方回协议错误）。 */
-function parseClientCall(line: string): { id?: number | string; method: string; params?: unknown } | undefined {
+function parseClientCall(
+  line: string,
+): { id?: number | string; method: string; params?: unknown } | undefined {
   let raw: unknown;
   try {
     raw = JSON.parse(line);
@@ -140,9 +143,16 @@ function parseClientCall(line: string): { id?: number | string; method: string; 
   if ("id" in record) {
     const id = record.id;
     if (typeof id !== "number" && typeof id !== "string") return undefined;
-    return { id, method: record.method, ...(record.params !== undefined ? { params: record.params } : {}) };
+    return {
+      id,
+      method: record.method,
+      ...(record.params !== undefined ? { params: record.params } : {}),
+    };
   }
-  return { method: record.method, ...(record.params !== undefined ? { params: record.params } : {}) };
+  return {
+    method: record.method,
+    ...(record.params !== undefined ? { params: record.params } : {}),
+  };
 }
 
 /**
@@ -315,8 +325,7 @@ export class AcpHostAdapter {
     //    turnId（liveTurnIds），且尚未捕获任何归属信号——迟到重复终态/
     //    prompt 之前已在途的旧 turn 终态一律丢弃，不误释放 busy 锁。
     const byInputId = event.inputId !== undefined && event.inputId === pending.inputId;
-    const byOwnedTurnId =
-      event.turnId !== undefined && pending.ownedTurnIds.has(event.turnId);
+    const byOwnedTurnId = event.turnId !== undefined && pending.ownedTurnIds.has(event.turnId);
     const byLiveTurnId =
       !pending.sawOwnershipSignal &&
       event.turnId !== undefined &&
@@ -345,7 +354,9 @@ export class AcpHostAdapter {
     }
     const stopReason = resultTypeToStopReason(event.resultType);
     if (!stopReason) {
-      pending.reject(new AcpProtocolError(ACP_UNKNOWN_ERROR_CODE, "agent turn ended in an unknown state"));
+      pending.reject(
+        new AcpProtocolError(ACP_UNKNOWN_ERROR_CODE, "agent turn ended in an unknown state"),
+      );
       return;
     }
     pending.resolve(stopReason);
@@ -412,9 +423,7 @@ export class AcpHostAdapter {
     pending.settled = true;
     clearTimeout(pending.timer);
     record.pendingPermissions.delete(requestId);
-    let engineOptionId = acpOptionId
-      ? pending.engineOptionIdByAcpId.get(acpOptionId)
-      : undefined;
+    let engineOptionId = acpOptionId ? pending.engineOptionIdByAcpId.get(acpOptionId) : undefined;
     if (!engineOptionId) {
       // 还原失败（未知 optionId / cancelled outcome / 超时）→ 拒绝档。
       engineOptionId = pickEngineDenyOption(pending.engineEvent)?.optionId;
@@ -471,26 +480,53 @@ export class AcpHostAdapter {
     return record;
   }
 
-  /** cwd 边界（R3）：绝对路径且在启动根内（含根自身）。 */
-  #validateCwd(cwd: unknown): string {
+  /**
+   * cwd 边界（R3）：绝对路径、已存在目录，且 realpath 后在启动根内（含根自身）。
+   *
+   * 这里必须先 realpath 再做边界比较：仅比较词法路径会放过指向 workspace
+   * 外部的 symlink/junction；同时 relative() 的完整路径段判断避免把合法的
+   * `..cache` 误当作父目录 `..`。
+   */
+  async #validateCwd(cwd: unknown): Promise<string> {
     if (typeof cwd !== "string" || cwd === "") {
-      throw new AcpProtocolError(JSONRPC_INVALID_PARAMS, "session/new requires a non-empty cwd");
+      throw new AcpProtocolError(JSONRPC_INVALID_PARAMS, "session/new requires a non-empty cwd", {
+        reason: "invalid_cwd",
+      });
     }
     if (!isAbsolute(cwd)) {
       throw new AcpProtocolError(
         JSONRPC_INVALID_PARAMS,
         `session/new cwd must be an absolute path (received '${cwd}')`,
+        { reason: "invalid_cwd" },
       );
     }
     const resolved = resolve(cwd);
-    const rel = relative(this.#options.allowedRoot, resolved);
-    if (rel.startsWith("..") || isAbsolute(rel)) {
+    let rootRealpath: string;
+    let cwdRealpath: string;
+    try {
+      rootRealpath = await realpath(this.#options.allowedRoot);
+      cwdRealpath = await realpath(resolved);
+      const cwdStat = await stat(cwdRealpath);
+      if (!cwdStat.isDirectory()) throw new Error("cwd is not a directory");
+    } catch {
+      // 把 ENOENT、非目录和 realpath 失败收敛为稳定的参数错误，不能把 fs 内部
+      // 异常（含平台路径细节）透传成 ACP internal error。
+      throw new AcpProtocolError(
+        JSONRPC_INVALID_PARAMS,
+        `session/new cwd '${cwd}' must be an existing directory`,
+        { reason: "invalid_cwd" },
+      );
+    }
+    const rel = relative(rootRealpath, cwdRealpath);
+    // 仅拒绝完整的 `..` 路径段；startsWith("..") 会错误拒绝合法的 `..cache`。
+    if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
       throw new AcpProtocolError(
         JSONRPC_INVALID_PARAMS,
         `session/new cwd '${cwd}' is outside the agent workspace '${this.#options.allowedRoot}'`,
+        { reason: "invalid_cwd" },
       );
     }
-    return resolved;
+    return cwdRealpath;
   }
 
   // ── client→agent 方法面 ──
@@ -521,7 +557,7 @@ export class AcpHostAdapter {
 
   async #handleNewSession(id: number | string, params: unknown): Promise<void> {
     const request = (params ?? {}) as Record<string, unknown>;
-    const workspacePath = this.#validateCwd(request.cwd);
+    const workspacePath = await this.#validateCwd(request.cwd);
     // F6：软预检保留（已满时快速拒绝，不白打引擎调用）；硬检查移到
     // create_session 响应成功后的原子登记（并发窗口内两个 create 都成功时
     // 恰好一个登记，另一个回收引擎侧会话后拒绝）。
@@ -680,7 +716,7 @@ export class AcpHostAdapter {
       if (options.length === 0) return undefined;
       const currentValue = models.preferredSelection
         ? `${models.preferredSelection.providerId}/${models.preferredSelection.modelId}`
-        : ((options[0] as { id: string }).id);
+        : (options[0] as { id: string }).id;
       return {
         id: ACP_MODEL_CONFIG_ID,
         name: "Model",
@@ -891,11 +927,7 @@ export class AcpHostAdapter {
     }
   }
 
-  async #dispatchRequest(
-    id: number | string,
-    method: string,
-    params: unknown,
-  ): Promise<void> {
+  async #dispatchRequest(id: number | string, method: string, params: unknown): Promise<void> {
     try {
       if (method === "initialize") {
         this.#handleInitialize(id, params);

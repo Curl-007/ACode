@@ -29,6 +29,7 @@ export interface WindowRemoteConnectionHandle<TServices, TCapabilities = never> 
 }
 
 interface WindowRemoteConnectionConnectRequest {
+  requestId: string;
   target: RemoteTarget;
   remoteAssets: WindowRemoteAssetDirs;
   signal: AbortSignal;
@@ -390,6 +391,7 @@ export function createWindowRemoteConnectionRegistry<TServices, TCapabilities = 
 
   function createEntry(params: {
     key: string;
+    requestId: string;
     target: RemoteTarget;
     remoteAssets: WindowRemoteAssetDirs;
   }): ConnectionEntry<TServices, TCapabilities> {
@@ -409,6 +411,7 @@ export function createWindowRemoteConnectionRegistry<TServices, TCapabilities = 
     };
     entry.ready = options
       .connect({
+        requestId: params.requestId,
         target: params.target,
         remoteAssets: params.remoteAssets,
         signal: abortController.signal,
@@ -459,6 +462,7 @@ export function createWindowRemoteConnectionRegistry<TServices, TCapabilities = 
 
   function resolveEntry(params: {
     key: string;
+    requestId: string;
     target: RemoteTarget;
     remoteAssets: WindowRemoteAssetDirs;
   }): ConnectionEntry<TServices, TCapabilities> {
@@ -469,6 +473,12 @@ export function createWindowRemoteConnectionRegistry<TServices, TCapabilities = 
       !existing.abortController.signal.aborted &&
       (existing.state === "connecting" || existing.state === "online")
     ) {
+      if (existing.state === "connecting" && params.target.kind === "ssh") {
+        // SSH host-key approval is bound to the first requestId that opened the
+        // handshake. Reusing a connecting entry would let a canceled first
+        // renderer strand the second waiter behind an unreachable challenge.
+        throw new Error("同一 SSH 目标正在等待主机密钥确认，请等待当前连接结束后重试");
+      }
       clearIdleTimer(existing);
       return existing;
     }
@@ -493,6 +503,7 @@ export function createWindowRemoteConnectionRegistry<TServices, TCapabilities = 
     const key = buildConnectionKey(params.target, remoteSessionId);
     const entry = resolveEntry({
       key,
+      requestId: params.requestId,
       target: params.target,
       remoteAssets: params.remoteAssets,
     });

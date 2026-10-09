@@ -13,7 +13,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 const { reconcileOrphanScriptWorkflowRuns } = await import(
-  "../packages/bootstrap/src/app/script-workflow-reconcile.ts"
+  "../packages/cli-workflow/src/script-workflow-reconcile.ts"
 );
 
 const SESSION = "sess_owner-1";
@@ -56,7 +56,7 @@ test("非终态行收敛成物理 cancelled + 结构化 interrupted code", async
 
 test("用户取消与宿主死亡共用物理词，但靠 code 可分辨（不读 message 文本）", async () => {
   const { logicalScriptWorkflowStatus } = await import(
-    "../packages/bootstrap/src/app/script-workflow-run-status.ts"
+    "../packages/cli-workflow/src/script-workflow-run-status.ts"
   );
   // dwf 对同一件事的裁决：「同码就只能靠 message 文本区分」是被明确拒绝的做法。
   assert.equal(

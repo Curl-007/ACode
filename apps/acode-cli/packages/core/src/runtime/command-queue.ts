@@ -40,6 +40,8 @@ export interface PromptRuntimeCommand extends RuntimeCommandBase {
 
 export interface TargetContinuationRuntimeCommandOptions {
   readonly abortSignal?: AbortSignal;
+  /** 内部 continuation 的原分支身份，不能在 verifier await 后重捕获。 */
+  readonly branchGeneration?: number;
   readonly inputId?: string;
   readonly intent?: ExecuteTurnOptions["intent"];
   readonly traceContext: TraceContext;

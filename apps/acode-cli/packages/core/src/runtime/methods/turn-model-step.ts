@@ -235,6 +235,7 @@ async function runModelBackedTurnStepImpl(
     });
     result = await this.runModelTextRequest({
       abortSignal: state.turnAbortSignal,
+      branchGeneration: state.branchGeneration,
       assistantMessageId,
       events: state.events,
       maxOutputTokens: resolveModelStepMaxOutputTokens({

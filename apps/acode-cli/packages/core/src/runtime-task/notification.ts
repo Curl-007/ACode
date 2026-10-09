@@ -1,10 +1,11 @@
-import type {
-  DynamicWorkflowRunError,
-  DynamicWorkflowRunLifecycleStatus,
-  DynamicWorkflowRunStopReason,
-  ModelUsage,
-} from "@acode/contracts";
-import type { RuntimeTaskType } from "./registry.js";
+import type { DynamicWorkflowRunStopReason } from "@acode/contracts";
+import type { TaskNotificationInput } from "./types.js";
+import {
+  escapeXml,
+  escapeLocalBashXml,
+  truncateTaskNotification,
+} from "./notification-primitives.js";
+export { escapeXml, truncateTaskNotification } from "./notification-primitives.js";
 import { formatWorkflowProviderStopError } from "./workflow-notification-copy.js";
 
 export {
@@ -14,79 +15,6 @@ export {
   type WorkflowEscalationNotificationInput,
   type WorkflowStallNotificationInput,
 } from "./workflow-notification-copy.js";
-
-const TASK_NOTIFICATION_MAX_CHARS = 120_000;
-
-export interface TaskNotificationInput {
-  agentId?: string;
-  description?: string;
-  error?: string;
-  outputFile?: string;
-  /**
-   * workflow run 的渐进产物（`report(item)`），completed / failed / cancelled 一律携带。
-   * `count` 是**真实总条数**，`shown` 是预览里的条数——两者不等即预览是局部的，全量经 run id 可取。
-   * 缺席即整节 `<reports>` 不出现（零条时不发空节）。
-   */
-  reports?: { count: number; preview: string; shown: number };
-  /**
-   * workflow run 的**用户面产物**，completed / failed / cancelled
-   * 一律携带。字段语义与 `reports` 同规：`count` 是真实总件数，`shown` 是清单里的行数。
-   * 缺席即整节 `<artifacts>` 不出现（零件时不发空节）。
-   *
-   * ⚠ 术语：这里的 artifact 是脚本发布给用户看的产出，与本结构的 `result`（脚本顶层返回值，
-   * 引擎内部也叫 artifact）无关——两者在同一条通知里并列出现。
-   */
-  artifacts?: { count: number; preview: string; shown: number };
-  /**
-   * workflow run 专属：在 XML 之后追加交付物呈现指引。
-   * legacy `Workflow` 与 dwf 共用 `local_workflow` 通知形状，但它的通知逐字节不变，所以由调用方
-   * 按分派名显式打开，而不是按 taskType 推断。
-   */
-  deliveryGuidance?: boolean;
-  result?: string;
-  status: string;
-  /**
-   * dwf run 的真实终态词：`status` 是后台任务追踪器
-   * 的通用词汇（stopped 折成 killed、errored 折成 failed），`<status>` 行与呈现指引要说真话
-   * 就读这个；缺席即 legacy `Workflow` / 非终态，照旧走 `status`。
-   */
-  runStatus?: Extract<DynamicWorkflowRunLifecycleStatus, "completed" | "errored" | "stopped">;
-  /**
-   * workflow run 为什么停下（只在 `runStatus === "stopped"` 时在场）。`user` 让呈现指引明说
-   * 「这是用户的决定，不要自行恢复」；`model` 是模型自己 TaskStop 的；`provider` 是确定性
-   * 模型侧错误（`failure.providerStop` 带明细）；`interrupted` 是持有进程亡故。
-   */
-  stopReason?: DynamicWorkflowRunStopReason;
-  /**
-   * workflow run 的脚本文件，**已经写成模型面该看到的样子**（工作区相对或绝对，
-   * `describeWorkflowScriptPath`）。在场时
-   * `errored` 与 `stopped(model)` 的呈现指引把下一步从「改好脚本再内联提交」换成「就地编辑
-   * 那个文件、再用 `path` 修订」——一份两万 token 的脚本不该为了改一行再流一遍。
-   *
-   * 缺席即这个 run 没有可编辑的文件（草稿写不下去的项目、本特性之前发起的 run），指引逐字节
-   * 退回旧话。相对化在调用方做一次：本模块是纯格式器，不认识工作目录。
-   */
-  scriptPath?: string;
-  /**
-   * workflow run 的结构化失败（errored 恒在场；stopped 只对 provider / interrupted 在场）。带
-   * `providerStop` 时 `<error>` 块由文案表铸造（原因 → 动作 → 事实行 → 原文行），而不是
-   * 只贴一句 provider 原文——主代理读完必须知道该做什么。
-   */
-  failure?: DynamicWorkflowRunError;
-  stderrFile?: string;
-  stdoutFile?: string;
-  subagentType?: string;
-  summary: string;
-  taskId: string;
-  taskType: RuntimeTaskType;
-  toolUseId?: string;
-  usage?: {
-    durationMs?: number;
-    modelUsage?: ModelUsage;
-    toolUseCount?: number;
-    totalTokens?: number;
-  };
-}
 
 export function formatTaskNotification(input: TaskNotificationInput): string {
   if (input.taskType === "local_agent") {
@@ -185,7 +113,8 @@ function formatLocalWorkflowTaskNotification(input: TaskNotificationInput): stri
   // 渐进产物排在 result / error **之后**：run 的收场是模型首先要读的，产物是补充材料。
   // 顺序也决定了 120k 总截断先斩谁——被斩掉的应该是这一节，而不是 run 的结果。
   if (input.reports !== undefined) {
-    const shown = input.reports.shown < input.reports.count ? ` shown="${input.reports.shown}"` : "";
+    const shown =
+      input.reports.shown < input.reports.count ? ` shown="${input.reports.shown}"` : "";
     lines.push(
       `<reports count="${input.reports.count}"${shown}>`,
       escapeXml(input.reports.preview),
@@ -275,7 +204,9 @@ function workflowDeliveryGuidance(input: {
       // 有文件时多一句「编辑它、传 `path`」：这一支的整个论证就是「你是为改脚本才停的」，
       // 而改脚本最便宜的做法是 Edit 那个文件，不是把整份脚本再贴一遍。
       `You stopped this workflow with TaskStop. If you stopped it to fix the script, do that now: call AmendWorkflow with this run's ID and the corrected script — everything that settled before the stop is imported as cache, and the sooner the fix runs the less it re-pays. (Next time, amend the running run directly: AmendWorkflow stops it for you.)${
-        scriptPath === undefined ? "" : ` Its script is at ${scriptPath}: edit that file and pass \`path\`.`
+        scriptPath === undefined
+          ? ""
+          : ` Its script is at ${scriptPath}: edit that file and pass \`path\`.`
       }`,
       "Otherwise present what it finished: the reported items above are finished findings — show them individually with their evidence. Resume it unchanged only if that is what the user wants.",
       ...artifactsShort,
@@ -375,43 +306,4 @@ function formatUsage(input: TaskNotificationInput["usage"]): string[] {
     lines.push(`<reasoning-tokens>${input.modelUsage.reasoningTokens}</reasoning-tokens>`);
   }
   return lines;
-}
-
-export function truncateTaskNotification(value: string): string {
-  if (value.length <= TASK_NOTIFICATION_MAX_CHARS) return value;
-  return `${value.slice(0, TASK_NOTIFICATION_MAX_CHARS)}\n[truncated]`;
-}
-
-export function escapeXml(value: string): string {
-  return value.replace(/[<>&'"]/gu, (char) => {
-    switch (char) {
-      case "<":
-        return "&lt;";
-      case ">":
-        return "&gt;";
-      case "&":
-        return "&amp;";
-      case "'":
-        return "&apos;";
-      case '"':
-        return "&quot;";
-      default:
-        return char;
-    }
-  });
-}
-
-function escapeLocalBashXml(value: string): string {
-  return value.replace(/[<>&]/gu, (char) => {
-    switch (char) {
-      case "<":
-        return "&lt;";
-      case ">":
-        return "&gt;";
-      case "&":
-        return "&amp;";
-      default:
-        return char;
-    }
-  });
 }

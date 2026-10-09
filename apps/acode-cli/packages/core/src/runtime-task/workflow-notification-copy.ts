@@ -6,7 +6,7 @@
 // provider 停下；后者由终态通知与 GetWorkflowRun 共用。
 
 import type { DynamicWorkflowRunError } from "@acode/contracts";
-import { escapeXml, truncateTaskNotification } from "./notification.js";
+import { escapeXml, truncateTaskNotification } from "./notification-primitives.js";
 
 /**
  * `stopped(provider)` 的 `<error>` 块：

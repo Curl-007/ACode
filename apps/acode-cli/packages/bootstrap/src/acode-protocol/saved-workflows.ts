@@ -36,11 +36,11 @@ import {
   type ACodeWorkflowsUpdateMetaResult,
 } from "@acode/shared";
 import type { JournalStorePort } from "@acode/dynamic-workflow";
-import { artifactsOf } from "../app/dynamic-workflow-run-observation.js";
 import {
+  artifactsOf,
   resolveDynamicWorkflowJournalStore,
   supportsRunIntrospection,
-} from "../app/dynamic-workflow-run-service.js";
+} from "@acode/cli-workflow/contract";
 import { parseParams, type ACodeProtocolAgentServerContext } from "./server-types.js";
 
 // 缺省即 `project`：不给 scope 的旧 GUI 与项目档调用逐字走本项目根，形状不变（版本偏斜）。

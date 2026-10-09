@@ -16,6 +16,8 @@ import type {
   ToolCallId,
   TurnId,
 } from "../interfaces/shared.js";
+// 架构断环（specs/architecture-contracts-module.md）：session 基础词汇从叶子文件
+// session-shared.ts 导入（session.port 反向导入本文件的 SessionEvent，桶级互指即成环）。
 import type {
   CollaborationMode,
   RiskLevel,
@@ -24,7 +26,7 @@ import type {
   TurnSteerRejectReason,
   TurnSteerSource,
   TurnInputIntentMetadata,
-} from "../interfaces/session.port.js";
+} from "../interfaces/session-shared.js";
 import type {
   ModelNetworkStatusEvent,
   ModelSelection,
@@ -33,7 +35,8 @@ import type {
 } from "../model/index.js";
 import type { HttpClientEgressInfo } from "../interfaces/http-client.port.js";
 import { createModelUsageSummary } from "../model/index.js";
-import type { ModelApiErrorPhase, ModelFailureExceptionKind } from "../telemetry/index.js";
+// 观测词汇走 telemetry 叶子文件（telemetry/index 反向引用 model 侧类型，桶级互指即成环）。
+import type { ModelApiErrorPhase, ModelFailureExceptionKind } from "../telemetry/observations.js";
 import type {
   CompactBoundaryPayload,
   CompactTimelinePayload,
@@ -51,7 +54,13 @@ import type {
   SyntheticUserMessageSource,
 } from "../interfaces/session-store.port.js";
 import type { SavedWorkflowScope } from "../tools/saved-workflow.js";
-import type { PermissionOptionsPolicy, PermissionUpdate } from "../interfaces/permission.port.js";
+// PermissionDecision 的定义已下沉到 permission.port.ts（该文件反向引用本文件的事件类型，
+// 定义留在本文件即成环）；本文件 import 供 payload 使用 + 原样再导出，导出面不变。
+import type {
+  PermissionDecision,
+  PermissionOptionsPolicy,
+  PermissionUpdate,
+} from "../interfaces/permission.port.js";
 import type {
   StreamRecoveryAnchorPayload,
   StreamRecoveryAnchorSelectedPayload,
@@ -63,7 +72,8 @@ import type {
 } from "./stream-recovery.events.js";
 
 // Re-export for convenience
-export type { CollaborationMode, RiskLevel } from "../interfaces/session.port.js";
+export type { CollaborationMode, RiskLevel } from "../interfaces/session-shared.js";
+export type { PermissionDecision } from "../interfaces/permission.port.js";
 
 // Re-export ModelToolCall as ToolCall for core usage
 export type { ModelToolCall as ToolCall } from "../model/index.js";
@@ -1051,8 +1061,6 @@ export interface WorkspaceHookAdmissionUpdatedPayload {
   bundleDigest: string;
   workspaceIdentity?: string;
 }
-
-export type PermissionDecision = "allow" | "deny" | "escalate" | "modify";
 
 export type TargetChangedAction =
   | "set"

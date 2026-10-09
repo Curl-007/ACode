@@ -191,21 +191,19 @@ export { createAccountProviderCredentialService } from "./model-provider/account
 export { createUsageStatsService } from "./usage-stats/usageStatsService.js";
 export { createProviderBalanceTargetResolver } from "./usage-stats/providers/providerBalanceTargetResolver.js";
 // Storage：service 与 adapters 工厂；desktop host 负责组装（Worker runner 在 desktop 包内）
-export { createStorageService } from "./storage/app/storageService.js";
-export type {
-  FsCleanerPort as StorageFsCleanerPort,
-  RootsResolverPort as StorageRootsResolverPort,
-  ScanRunnerPort as StorageScanRunnerPort,
-  StorageScanProgress,
-  StorageScanRunRequest,
-} from "./storage/app/ports.js";
-export { createFsStorageCleaner } from "./storage/adapters/fsCleaner.js";
 export {
+  createStorageService,
+  createFsStorageCleaner,
   createStorageRootsResolver,
   resolveStorageRoots,
-} from "./storage/adapters/rootsResolver.js";
-export { createFsVolumeProbe } from "./storage/adapters/volumeProbe.js";
-export { runStorageScan } from "./storage/adapters/inProcessScanRunner.js";
+  createFsVolumeProbe,
+  runStorageScan,
+  type StorageFsCleanerPort,
+  type StorageRootsResolverPort,
+  type StorageScanRunnerPort,
+  type StorageScanProgress,
+  type StorageScanRunRequest,
+} from "./storage/node.js";
 export { createCodingPlanSubscriptionService } from "./coding-plan-subscription/codingPlanSubscriptionService.js";
 export { createClientConfigService } from "./client-config/clientConfigService.js";
 export { createClientScenesService } from "./client-scenes/clientScenesService.js";

@@ -42,7 +42,7 @@ export async function drainPendingRuntimeCommandsForActiveLoop(
     if (!removed) continue;
     if (isStaleBranchRuntimeCommand(this, removed)) continue;
 
-    let messageId: MessageId;
+    let messageId: MessageId | null;
     if (removed.mode === "task-notification") {
       if (shouldSuppressTaskNotificationRuntimeCommand.call(this, removed)) {
         continue;
@@ -53,6 +53,7 @@ export async function drainPendingRuntimeCommandsForActiveLoop(
     } else {
       continue;
     }
+    if (!messageId || isStaleBranchRuntimeCommand(this, removed)) continue;
 
     consumedCommandIds.push(removed.id);
     // active-loop 不会创建新的 TurnStarted；这里把已消费事实带到当前 turn 的终态，且只认结构化 subagent 来源，避免 Bash 混入。

@@ -1,3 +1,5 @@
+// 架构断环（specs/architecture-contracts-module.md）：从具体定义文件导入而不是
+// ./index.js 桶文件——index.ts `export * from "./model.js"`，反向引用桶文件即成环。
 import type {
   JsonSchema,
   ModelInputMessage,
@@ -6,7 +8,7 @@ import type {
   ModelStreamEvent,
   ModelTextResult,
   ModelToolContract,
-} from "./index.js";
+} from "./protocol-types.js";
 import { modelSelectionSchema, type ModelSelection } from "@acode/shared/model-selection";
 import type { ModelPropertiesData, ModelOptionSpecsData } from "@acode/shared/model-config";
 

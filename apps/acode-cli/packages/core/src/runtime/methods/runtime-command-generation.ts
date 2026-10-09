@@ -2,6 +2,21 @@ import { SessionEventType, traceContextToLogContext } from "../deps.js";
 import type { SessionEvent } from "../deps.js";
 import type { RuntimeCommand } from "../command-queue.js";
 import type { AgentRuntimeInternal } from "../internal.js";
+import { createTurnCancelledError } from "../helpers/turn-errors.js";
+
+export function assertRuntimeModelBranchCurrent(
+  runtime: AgentRuntimeInternal,
+  expectedGeneration: number | undefined,
+): void {
+  if (expectedGeneration === undefined || expectedGeneration === runtime.branchGeneration) return;
+  runtime.logger?.info("Dropped stale-branch model request", {
+    branchGeneration: expectedGeneration,
+    currentBranchGeneration: runtime.branchGeneration,
+    event: "runtime.model_request.stale_branch_dropped",
+    module: "core.runtime",
+  });
+  throw createTurnCancelledError(new Error("Runtime branch changed before model invocation"));
+}
 
 export function isStaleBranchRuntimeCommand(
   runtime: AgentRuntimeInternal,

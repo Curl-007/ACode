@@ -53,6 +53,11 @@ export interface ArtifactIdState {
 export interface EngineState {
   readonly runId: string;
   readonly driver: WorkflowDriver;
+  /** 引擎拥有的 lifecycle signal；所有终态都会取消 world.run。 */
+  readonly signal: AbortSignal;
+  trackWorld<T>(start: () => Promise<T>): Promise<T>;
+  /** 中止 world 并等执行 drain 后发布终态。 */
+  finishWorld(error: WorkflowError, settle: () => void): void;
   readonly journal: JournalStorePort;
   /**
    * 本 run 每个**用户面产物** id 的状态。resume 时从 journal
@@ -61,6 +66,8 @@ export interface EngineState {
    * ⚠ 术语：artifact = 用户面产物，不是 `RunSettlement.artifact`（顶层返回值）。
    */
   readonly artifacts: Map<string, ArtifactIdState>;
+  /** 内容 artifact 按 id 串行的 admission tail；不承载 journal 事实，只防异步版本竞态。 */
+  readonly artifactPublishTails: Map<string | symbol, Promise<void>>;
   /** amend-resume 的导入缓存（纯数据，缺席即本次不是修订续跑）。 */
   readonly importedCache: ImportedRunCache | undefined;
   /** world 导入队列的消费游标（第 n 次出现对第 n 条）。 */

@@ -3,7 +3,7 @@
 // 公开面仍从 task-output.ts 导出。
 import { open } from "node:fs/promises";
 import type { TaskOutputTask } from "@acode/contracts";
-import type { RuntimeTaskSnapshot } from "../../runtime-task/registry.js";
+import type { RuntimeTaskSnapshot } from "../../runtime-task/contract.js";
 import type { ToolExecutionContext } from "../types.js";
 import { projectBashTask } from "./task-output-bash.js";
 
@@ -39,6 +39,9 @@ export async function projectTask(
   if (task.type === "local_dynamic_workflow") {
     return projectDynamicWorkflowTask(task, context);
   }
+  if (task.type === "local_workflow") {
+    return projectScriptWorkflowTask(task);
+  }
 
   const output = await readTaskOutputFile(task.outputFile, context);
   return {
@@ -48,6 +51,18 @@ export async function projectTask(
     description: task.description,
     output,
     ...(task.outputFile ? { outputFile: task.outputFile } : {}),
+  };
+}
+
+function projectScriptWorkflowTask(task: RuntimeTaskSnapshot): TaskOutputTask {
+  return {
+    task_id: task.taskId,
+    task_type: task.type,
+    status: task.status,
+    description: task.description,
+    output: task.resultText ?? "",
+    ...(task.resultText === undefined ? {} : { result: task.resultText }),
+    ...(task.error ? { error: task.error } : {}),
   };
 }
 

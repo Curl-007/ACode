@@ -24,14 +24,15 @@
   },
   "dependencies": {
     "@acode/adapters": "workspace:*",
+    "@acode/cli-workflow": "workspace:*",
     "@acode/contracts": "workspace:*",
     "@acode/core": "workspace:*",
     "@acode/dynamic-workflow": "workspace:*",
-    "@acode/dynamic-workflow-runtime": "workspace:*",
     "@acode/i18n": "workspace:*",
     "@acode/provider": "workspace:*",
     "@acode/provider-node": "workspace:*",
     "@acode/shared": "workspace:*",
+    "@acode/workflow-run-command": "workspace:*",
     "diff": "^9.0.0",
     "zod": "4.6.5"
   },

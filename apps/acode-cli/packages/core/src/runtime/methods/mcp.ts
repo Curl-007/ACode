@@ -125,6 +125,28 @@ export async function initializeMcp(
 ): Promise<void> {
   if (this.mcpToolsRegistered) return;
 
+  // MCP startup 可能同时被 constructor residency、首轮 turn 和 settings refresh 触发。
+  // 先占住同一个 promise，再 await，避免两个调用都通过 false 检查并重复注册工具。
+  if (this.mcpInitializationPromise !== undefined) {
+    await this.mcpInitializationPromise;
+    return;
+  }
+
+  const initialization = initializeMcpOnce.call(this, traceContext);
+  this.mcpInitializationPromise = initialization;
+  try {
+    await initialization;
+  } finally {
+    this.mcpInitializationPromise = undefined;
+  }
+}
+
+async function initializeMcpOnce(
+  this: AgentRuntimeInternal,
+  traceContext: TraceContext,
+): Promise<void> {
+  if (this.mcpToolsRegistered) return;
+
   const startup = this.startMcpStartup(traceContext);
   const mcpPort = this.mcpPort;
   if (!startup || !mcpPort) {

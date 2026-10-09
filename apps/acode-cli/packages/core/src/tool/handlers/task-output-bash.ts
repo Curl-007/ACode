@@ -1,6 +1,6 @@
 import { open } from "node:fs/promises";
 import type { BackgroundExecutionSnapshot, TaskOutputTask } from "@acode/contracts";
-import type { RuntimeTaskSnapshot } from "../../runtime-task/registry.js";
+import type { RuntimeTaskSnapshot } from "../../runtime-task/contract.js";
 import type { ToolExecutionContext } from "../types.js";
 
 interface ProjectBashTaskOptions {

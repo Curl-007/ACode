@@ -4,7 +4,9 @@ import { createRuntimeCommandId, type SubagentMessageRuntimeCommand } from "../c
 import type { AgentRuntimeInternal } from "../internal.js";
 import type { EnqueueSubagentMessageInput } from "../types.js";
 import { runtimeInputMetadata } from "../../agent/runtime-input-presentation.js";
-import { escapeXml } from "../../runtime-task/notification.js";
+import { escapeXml } from "../../runtime-task/contract.js";
+import { getRuntimeBranchRestorePort } from "../turn-coordination.js";
+import { isStaleBranchRuntimeCommand } from "./runtime-command-generation.js";
 
 function formatSubagentMessage(input: {
   agentId: string;
@@ -78,29 +80,36 @@ export async function persistSubagentMessageCommand(
   this: AgentRuntimeInternal,
   command: SubagentMessageRuntimeCommand,
   midTurn = false,
-): Promise<MessageId> {
-  await this.ensureContextInitialized(command.traceContext);
-  const messageID = createMessageId();
-  const inputPresentation = midTurn ? "subagent_reply_steer" : "subagent_reply";
-  this.messageHistory.addUser(command.text, runtimeInputMetadata(inputPresentation));
-  await this.persistSyntheticUserNoticeForSession({
-    messageID,
-    sessionId: this.sessionId,
-    source: "subagent_message",
-    text: command.text,
-    traceContext: command.traceContext,
-    visibility: "model-only",
-    metadata: {
-      inputPresentation,
-      subagentMessage: {
-        responseId: command.responseId,
-        agentId: command.agentId,
-        agentType: command.agentType,
-        childSessionId: command.childSessionId,
-        childToolCallId: command.childToolCallId,
-        ...(command.parentToolCallId ? { parentToolCallId: command.parentToolCallId } : {}),
-      },
+): Promise<MessageId | null> {
+  const messageId = await getRuntimeBranchRestorePort(this).persistNotificationIfCurrent(
+    command.branchGeneration,
+    async () => {
+      await this.ensureContextInitialized(command.traceContext);
+      const messageID = createMessageId();
+      const inputPresentation = midTurn ? "subagent_reply_steer" : "subagent_reply";
+      this.messageHistory.addUser(command.text, runtimeInputMetadata(inputPresentation));
+      await this.persistSyntheticUserNoticeForSession({
+        messageID,
+        sessionId: this.sessionId,
+        source: "subagent_message",
+        text: command.text,
+        traceContext: command.traceContext,
+        visibility: "model-only",
+        metadata: {
+          inputPresentation,
+          subagentMessage: {
+            responseId: command.responseId,
+            agentId: command.agentId,
+            agentType: command.agentType,
+            childSessionId: command.childSessionId,
+            childToolCallId: command.childToolCallId,
+            ...(command.parentToolCallId ? { parentToolCallId: command.parentToolCallId } : {}),
+          },
+        },
+      });
+      return messageID;
     },
-  });
-  return messageID;
+  );
+  if (!messageId) isStaleBranchRuntimeCommand(this, command);
+  return messageId;
 }

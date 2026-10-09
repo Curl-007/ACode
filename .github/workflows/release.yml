@@ -71,6 +71,16 @@ jobs:
       - name: Build CLI workspace packages
         run: npx turbo --skip-infer --cwd apps/acode-cli run build --filter='!@acode/cli'
 
+      # 发布验证覆盖 CLI 入口，并用独立 workspace 的包级脚本再验证 lint。
+      - name: Typecheck CLI entry
+        run: pnpm --dir apps/acode-cli/packages/cli typecheck
+
+      - name: Typecheck Desktop renderer
+        run: pnpm exec tsc -p packages/desktop/tsconfig.renderer.json --noEmit
+
+      - name: Lint CLI workspace
+        run: pnpm exec turbo --cwd apps/acode-cli run lint
+
       - name: Tests (all packages)
         run: pnpm test
 

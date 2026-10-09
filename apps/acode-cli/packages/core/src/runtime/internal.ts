@@ -2,7 +2,6 @@ import { PermissionService, ToolScheduler } from "./deps.js";
 import type { PromptCacheMissCause } from "@acode/contracts";
 import type {
   Logger,
-  ModelSelection,
   EventReducer,
   MessageId,
   TurnId,
@@ -39,19 +38,16 @@ import type {
 } from "./deps.js";
 import type {
   ActiveTurnSteeringState,
-  ActiveTurnStartReservation,
   ActiveForegroundExecutionState,
   ForegroundPromotionLeaseState,
   AgentRuntimeConfig,
   AgentRuntimeDeps,
-  BackgroundTaskNotificationSealReason,
-  PendingModelChangeTimeline,
   ProviderRuntimeHeadersPort,
   MainTurnCacheHitAggregate,
   RuntimeTurnFileChangeMap,
 } from "./types.js";
 import type { RuntimeCommandQueue } from "./command-queue.js";
-import type { RuntimeTaskRegistry } from "../runtime-task/registry.js";
+import type { RuntimeTaskRegistry } from "../runtime-task/contract.js";
 import type { SwarmPlanPort } from "../swarm/port.js";
 import type { AgentRuntimeCoreMethods } from "./internal-methods.js";
 import type { AgentRuntimeTurnMethods } from "./internal-turn-methods.js";
@@ -60,15 +56,22 @@ import type { ProjectMemoryExtractionScheduler } from "./helpers/project-memory-
 import type { MemorySemanticRecallChannel } from "./helpers/memory-semantic-recall.js";
 import type { RuntimeTelemetryFacade } from "../telemetry/runtime-telemetry.js";
 import type { WorkspaceHookRuntimeAdmissionPort } from "../hooks/workspace-hook-runtime-admission.js";
+import type { RuntimeTurnCoordinationView } from "./turn-coordination.js";
+import type { RuntimeLifecycleView } from "./runtime-lifecycle.js";
+import type { RuntimeNotificationSealView } from "./runtime-notification-seal.js";
+import type { RuntimeModelSelectionView } from "./runtime-model-selection.js";
+import type { RuntimeSessionPersistenceView } from "./runtime-session-persistence.js";
+import type { RuntimePermissionGrantView } from "./runtime-permission-grant.js";
+import type { RuntimeModelChangeTimelineView } from "./runtime-model-change-timeline.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AgentRuntimeInternal 状态所有权分簇（specs/runtime-state-ownership.md）。
 //
-// 背景：methods/ 下 95 个文件经 installAgentRuntimeMethods 原型注入共享同一个
-// `this: AgentRuntimeInternal`，约 110 个可变字段曾以扁平列表堆放，任何新模块都
+// 背景：methods/ 下 102 个文件经 installAgentRuntimeMethods 原型注入共享同一个
+// `this: AgentRuntimeInternal`，93 个 property 曾以扁平列表堆放，任何新模块都
 // 能悄悄读写任意字段，时序不变量只存在于注释（2026-10-05 深度审查 P2）。
-// 本次重构把字段按所有权分簇为下面的子接口：字段仍是扁平的（extends 组合，
-// 所有 this.fieldX 访问零改动、零运行时变化），但每个簇有明确的所有者语义——
+// 分簇仍保留扁平读面；CLI-05 将 reservation/drain/generation 委托给私有 owner，
+// 只提供 readonly getter，写者显式使用有限 port。其余簇继续明确所有者语义——
 // 新增字段必须先回答「属于哪个簇、谁是唯一写入方」，跨簇读写在评审时可见。
 // 簇间时序不变量清单与断言化计划见 spec；分簇接口不导出（避免扩公共 API 面）。
 // ─────────────────────────────────────────────────────────────────────────────
@@ -158,6 +161,7 @@ interface RuntimeContextMemoryState {
    */
   memorySemanticRecallChannel?: MemorySemanticRecallChannel;
   mcpStartupPromise?: Promise<McpConnectionSnapshot>;
+  mcpInitializationPromise?: Promise<void>;
   mcpInitialized: boolean;
   mcpToolsRegistered: boolean;
   skillLoadOutcome?: SkillLoadOutcome;
@@ -172,11 +176,9 @@ interface RuntimeContextMemoryState {
  * - runtimeCommandDrainActive 期间不得重入 drain；
  * - branchGeneration 单调递增，resume/rewind 重建后旧分支写入必须被拒。
  */
-interface RuntimeTurnState {
+interface RuntimeTurnState extends RuntimeTurnCoordinationView {
   turnNumber: number;
-  branchGeneration: number;
   activeTurn?: ActiveTurnSteeringState;
-  activeTurnStartReservation?: ActiveTurnStartReservation;
   activeForegroundExecution?: ActiveForegroundExecutionState;
   foregroundPromotionLease?: ForegroundPromotionLeaseState;
   pendingInputSequence: number;
@@ -185,10 +187,8 @@ interface RuntimeTurnState {
   queueAutoDrain: boolean;
   queueExternalDrainActive: boolean;
   runtimeCommandQueue: RuntimeCommandQueue;
-  runtimeCommandDrainActive: boolean;
   currentTurnFileChanges: RuntimeTurnFileChangeMap;
   lastAssistantCompletedAtMs?: number;
-  needsPlanModeExitReminder: boolean;
 }
 
 /** 消息 ID 投影：event 发布路径派生的最近 ID 游标（写入方 = 事件发布/reducer 路径）。 */
@@ -213,26 +213,17 @@ interface RuntimeCacheDiagnosticsState {
 }
 
 /** 会话级状态与生命周期旗标：一次性 flag 与开关（各自的消费点即写入点，评估即消费）。 */
-interface RuntimeSessionLifecycleState {
-  sessionModelSelection: ModelSelection | undefined;
-  sessionPersisted: boolean;
-  sessionStartHookRan: boolean;
-  sessionTitleGenerationAttempted: boolean;
-  /**
-   * 重启孤儿任务提醒的一次性 flag（specs/runtime-restart-task-reminder.md R3）：
-   * 每个 runtime 实例首 turn 评估一次、评估即消费；进程内不落盘。
-   */
-  runtimeRestartReminderEmitted: boolean;
-  permissionFullAccessPending?: boolean;
-  lastPermissionGrantId?: string;
-  shuttingDown: boolean;
-  backgroundTaskNotificationsSealed: boolean;
-  backgroundTaskNotificationSealReason?: BackgroundTaskNotificationSealReason;
-  pendingModelChangeTimeline?: PendingModelChangeTimeline;
-}
+interface RuntimeSessionLifecycleState
+  extends RuntimeLifecycleView,
+    RuntimeNotificationSealView,
+    RuntimeModelSelectionView,
+    RuntimeSessionPersistenceView,
+    RuntimePermissionGrantView,
+    RuntimeModelChangeTimelineView {}
 
 export interface AgentRuntimeInternal
-  extends AgentRuntimeCoreMethods,
+  extends
+    AgentRuntimeCoreMethods,
     AgentRuntimeTurnMethods,
     AgentRuntimeHookMethods,
     RuntimeIdentityConfig,

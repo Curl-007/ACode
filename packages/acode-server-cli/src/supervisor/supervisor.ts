@@ -21,6 +21,7 @@ import { recoverSupervisorStartup } from "../runtime/startupRecovery.js";
 import { waitForUpdateReady } from "../runtime/updateReadiness.js";
 import { createRollbackFailure, updateErrorMessage } from "../runtime/updateErrors.js";
 import { CrashBudget } from "./crashBudget.js";
+import { CoreHealthMonitor } from "./coreHealth.js";
 
 // 生命周期事件按运维排障判据用 info/warn/error（出问题时运维要能在日志里看到）；
 // 高频 heartbeat/task-activity 明细走 debug，避免生产日志膨胀。
@@ -40,6 +41,10 @@ interface SupervisorOptions {
   /** 测试可缩短 Core 优雅退出和强杀后的终态等待；生产分别默认 5 秒和 2 秒。 */
   coreStopGraceTimeoutMs?: number;
   coreKillTimeoutMs?: number;
+  /** Core 心跳新鲜度窗口；默认 30 秒（Core 默认每 10 秒发送一次）。 */
+  coreHeartbeatTimeoutMs?: number;
+  /** 测试可缩短健康检查轮询间隔；默认不超过 1 秒。 */
+  coreHeartbeatCheckIntervalMs?: number;
   now?: () => number;
   onStopped?: () => void;
 }
@@ -50,6 +55,7 @@ export class Supervisor {
   private readonly layout: ServerLayout;
   private readonly lock: DataRootLock;
   private readonly crashBudget: CrashBudget;
+  private readonly coreHealth: CoreHealthMonitor;
   private readonly releaseManager: ReleaseManager;
   private core: ChildProcess | undefined;
   private control: Awaited<ReturnType<typeof createControlServer>> | undefined;
@@ -65,11 +71,17 @@ export class Supervisor {
     | { kind: LifecycleOperationKind; promise: Promise<unknown> }
     | undefined;
   private activeRelease: ReleaseManifest | null = null;
+  private coreHealthTimer: NodeJS.Timeout | undefined;
+  private automaticReadyTimer: NodeJS.Timeout | undefined;
 
   public constructor(private readonly options: SupervisorOptions) {
     this.layout = options.layout ?? resolveServerLayout();
     this.lock = new DataRootLock(this.layout.lockFile);
     this.crashBudget = new CrashBudget({ now: options.now });
+    this.coreHealth = new CoreHealthMonitor({
+      timeoutMs: options.coreHeartbeatTimeoutMs ?? 30_000,
+      now: options.now,
+    });
     this.releaseManager = new ReleaseManager(this.layout);
     this.persistStatusSnapshot = createStatusPersister(
       this.layout.statusFile,
@@ -341,16 +353,19 @@ export class Supervisor {
       lastExitReason: this.lastExitReason,
       serviceRegistered: this.options.serviceRegistered ?? false,
       runningTaskCount: this.runningTaskCount,
+      coreHealth: this.coreHealth.snapshot(this.options.now?.() ?? Date.now()).health,
+      lastHeartbeatAt: this.coreHealth.snapshot().lastHeartbeatAt,
       crashBudget: this.crashBudget.snapshot(),
       updatedAt: Date.now(),
     };
   }
 
-  private launchCore(): void {
+  private launchCore(automaticRestart = false): void {
     const generation = ++this.generation;
     const child = this.options.launcher.launch(generation, this.activeRelease);
     this.core = child;
     this.clearCoreScopedStatus();
+    this.scheduleCoreHealthCheck(child, generation);
     log.info("launching server core", { generation, pid: child.pid });
     child.on("message", (raw: unknown) => this.handleCoreMessage(child, generation, raw));
     let terminalObserved = false;
@@ -370,27 +385,7 @@ export class Supervisor {
       }
       this.core = undefined;
       this.clearCoreScopedStatus();
-      this.state = "crashed";
-      this.lastExitReason = reason;
-      const decision = this.crashBudget.recordCrash();
-      if (!decision.shouldRestart) {
-        this.state = "crash-loop-stopped";
-        log.error("server core crash budget exhausted, entering crash-loop-stopped", {
-          lastExitReason: this.lastExitReason,
-        });
-        void this.persistStatusSnapshot();
-        return;
-      }
-      log.warn("server core crashed, scheduling restart", {
-        lastExitReason: this.lastExitReason,
-        delayMs: decision.delayMs,
-      });
-      void this.persistStatusSnapshot();
-      setTimeout(() => {
-        if (this.state !== "crashed") return;
-        this.state = "starting";
-        this.launchCore();
-      }, decision.delayMs).unref();
+      this.recordCoreFailure(reason);
     };
     // fork 的 execPath 不存在/不可执行时 Node 只发 error + close，不发 exit。
     // error 与 exit 必须共用一次性终态，否则未处理的 error 会杀死 Supervisor，并让更新
@@ -411,6 +406,54 @@ export class Supervisor {
         spawnErrorReason ?? `core closed code=${code ?? "null"} signal=${signal ?? "none"}`,
       );
     });
+    if (automaticRestart) this.scheduleAutomaticReadyDeadline(child, generation);
+  }
+
+  private recordCoreFailure(reason: string): void {
+    const failedGeneration = this.generation;
+    this.state = "crashed";
+    this.lastExitReason = reason;
+    const decision = this.crashBudget.recordCrash();
+    if (!decision.shouldRestart) {
+      this.state = "crash-loop-stopped";
+      log.error("server core crash budget exhausted, entering crash-loop-stopped", {
+        lastExitReason: reason,
+      });
+      void this.persistStatusSnapshot();
+      return;
+    }
+    log.warn("server core failed, scheduling restart", { reason, delayMs: decision.delayMs });
+    void this.persistStatusSnapshot();
+    setTimeout(() => {
+      if (
+        this.state !== "crashed" ||
+        this.generation !== failedGeneration ||
+        this.lifecycleOperation
+      )
+        return;
+      this.state = "starting";
+      this.launchCore(true);
+      void this.persistStatusSnapshot();
+    }, decision.delayMs).unref();
+  }
+
+  private scheduleAutomaticReadyDeadline(child: ChildProcess, generation: number): void {
+    this.automaticReadyTimer = setTimeout(() => {
+      if (this.core !== child || this.generation !== generation || this.state !== "starting")
+        return;
+      if (this.lifecycleOperation) return;
+      // 自动恢复以前只等 exit，活着但从未 ready 的 Core 会永久占住 starting。
+      // 复用已有启动上界与 lifecycle gate，先证明 OS 终态，再消费 crash budget；不能丢引用另起进程。
+      void this.runLifecycleOperation("restart", async () => {
+        const reason = "automatic restart Core ready deadline exceeded";
+        await this.stopCore(reason);
+        this.recordCoreFailure(reason);
+        return this.status();
+      }).catch((error) =>
+        log.error("automatic restart Core failed to stop after ready timeout", error),
+      );
+    }, this.options.coreReadyTimeoutMs ?? 15_000);
+    this.automaticReadyTimer.unref();
   }
 
   private handleCoreMessage(child: ChildProcess, expectedGeneration: number, raw: unknown): void {
@@ -427,17 +470,24 @@ export class Supervisor {
       // 不能复活已经收口或进入不确定终态的 Supervisor。
       if (message.generation !== expectedGeneration || this.state !== "starting") return;
       this.state = "ready";
+      if (this.automaticReadyTimer) clearTimeout(this.automaticReadyTimer);
+      this.automaticReadyTimer = undefined;
       this.host = message.host;
       this.port = message.port;
       this.generation = message.generation;
       this.startedAt = Date.now();
+      this.coreHealth.markReady(this.options.now?.() ?? Date.now());
       log.info("server core ready", {
         host: this.host,
         port: this.port,
         generation: this.generation,
       });
     } else if (message.type === "heartbeat" || message.type === "task-activity") {
+      // 心跳只能刷新已 ready 的 Core；提前或停止中的迟到消息不能把 unknown
+      // 变成 healthy，也不能在停止期间重新写入已经收口的任务计数。
+      if (this.state !== "ready") return;
       this.runningTaskCount = message.runningTaskCount;
+      this.coreHealth.markHeartbeat(this.options.now?.() ?? Date.now());
       log.debug("core activity snapshot", {
         type: message.type,
         runningTaskCount: message.runningTaskCount,
@@ -459,10 +509,43 @@ export class Supervisor {
   }
 
   private clearCoreScopedStatus(): void {
+    if (this.automaticReadyTimer) clearTimeout(this.automaticReadyTimer);
+    this.automaticReadyTimer = undefined;
+    if (this.coreHealthTimer) clearTimeout(this.coreHealthTimer);
+    this.coreHealthTimer = undefined;
+    this.coreHealth.reset();
     this.host = null;
     this.port = null;
     this.startedAt = null;
     this.runningTaskCount = 0;
+  }
+
+  private scheduleCoreHealthCheck(child: ChildProcess, generation: number): void {
+    if (this.coreHealthTimer) clearTimeout(this.coreHealthTimer);
+    const timeoutMs = this.options.coreHeartbeatTimeoutMs ?? 30_000;
+    const intervalMs = Math.max(
+      50,
+      Math.min(this.options.coreHeartbeatCheckIntervalMs ?? 1_000, timeoutMs / 2),
+    );
+    const check = (): void => {
+      if (this.core !== child || this.generation !== generation) return;
+      if (this.state === "stopping" || this.state === "stopped" || this.state === "stop-failed")
+        return;
+      const before = this.coreHealth.currentHealth();
+      const after = this.coreHealth.evaluate(this.options.now?.() ?? Date.now());
+      if (before !== after.health) {
+        log.warn("server core heartbeat health changed", {
+          health: after.health,
+          generation,
+          lastHeartbeatAt: after.lastHeartbeatAt,
+        });
+        void this.persistStatusSnapshot();
+      }
+      this.coreHealthTimer = setTimeout(check, intervalMs);
+      this.coreHealthTimer.unref();
+    };
+    this.coreHealthTimer = setTimeout(check, intervalMs);
+    this.coreHealthTimer.unref();
   }
 
   private async handleControl(request: ControlRequest): Promise<unknown> {

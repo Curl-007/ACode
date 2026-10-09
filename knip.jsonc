@@ -7,16 +7,14 @@
         ".release-it.mjs",
         ".vscode/*.mjs",
         // 运维/手工脚本：由根 package.json scripts、CI 或人工按需调用，彼此无 import 关系
-        "scripts/**/*.{mjs,cjs}"
+        "scripts/**/*.{mjs,cjs}",
       ],
       "ignoreDependencies": [
         // release-it 插件，由 .release-it.mjs 的 plugins 配置以字符串加载，不是 ESM import
         "@release-it/conventional-changelog",
         // 根 package.json 的 peerDependencies（本任务不可改字段）声明了该包，devDependencies 用于满足该 peer；实际消费者 packages/ui 已自行声明
         "@tanstack/react-virtual",
-        // apps/acode-cli/evals/runner.mjs 显式调用 ../../node_modules/.bin/turbo；cli 的 build:sea 脚本用 pnpm --dir <仓库根> exec turbo，消费的都是根 workspace 的 turbo 二进制
-        "turbo"
-      ]
+      ],
     },
     "packages/desktop": {
       "entry": [
@@ -25,7 +23,10 @@
         "scripts/**/*.{mjs,cjs}",
         "src/renderer/*.html",
         "src/renderer/cuaPermissionPanel.ts",
-        "src/renderer/src/resource-manager.tsx"
+        "src/renderer/src/resource-manager.tsx",
+        // tsconfig.renderer.json 编译的伴生声明：不产生运行时 import，但提供 bridge / CSS 类型。
+        "src/renderer/src/ambient.d.ts",
+        "src/renderer/src/css.d.ts",
       ],
       // powershell-command.d.mts / target-platform.d.mts：同目录 .mjs 运维脚本的类型伴生文件（ambient 声明，不会被 import）
       "ignore": ["scripts/*.d.mts"],
@@ -55,12 +56,14 @@
         // scripts/node-pty-rebuild.mjs（postinstall）经平台条件变量 spawn "electron-rebuild"/"electron-rebuild.cmd" 二进制，knip binaries 检测识别不了变量形式
         "@electron/rebuild",
         // vite.config.ts 用 createRequire 加载 istanbul-lib-instrument 做 ACODE_E2E_COVERAGE=1 构建的插桩，knip 静态分析不可见
-        "istanbul-lib-instrument"
-      ]
+        "istanbul-lib-instrument",
+      ],
     },
     "packages/server": {
-      // src/index.ts 是 knip 默认 entry、build-remote.ts 由 package.json build:remote 脚本覆盖，均无需重复声明
-      "entry": ["src/entry-stdio.ts"],
+      // src/index.ts 是 knip 默认 entry、build-remote.ts 由 package.json build:remote 脚本覆盖，均无需重复声明；
+      // module.ts/contract.example.ts 是架构 context 消费的治理工件（契约示例只用于编译与
+      // 文档验证），生产 API 经 package.json exports（src/contract.ts 被 example 导入，无需声明）。
+      "entry": ["src/entry-stdio.ts", "src/module.ts", "src/contract.example.ts"],
       "ignoreDependencies": [
         // 以下 4 项是 node-pty 的平台预编译二进制：acode-server-cli 的 tsup externals/packaging/stage.ts 与远程部署链路按目标平台复制分发，无 JS import
         "@lydell/node-pty-darwin-arm64",
@@ -84,12 +87,48 @@
         // 同上外置策略（云内容 ZIP 解包链路，CJS require("fs") 不能内联）
         "yauzl",
         // 同上外置策略；导入方是被内联的 ../services/src/feedback/feedbackLogArchive.ts
-        "yazl"
-      ]
+        "yazl",
+      ],
     },
     "packages/services": {
-      // src/index.ts 是 knip 默认 entry，无需重复声明
-      "entry": ["src/storage/module.ts"]
+      // src/index.ts 是 knip 默认 entry，无需重复声明；storage 与 session 两组治理工件
+      //（模块清单 + 契约示例）供架构 context 消费，契约示例只用于编译与文档验证。
+      "entry": [
+        "src/storage/module.ts",
+        "src/storage/contract.example.ts",
+        "src/session/module.ts",
+        "src/session/contract.example.ts",
+      ],
+    },
+    "packages/shared": {
+      // 架构 context 消费模块清单，契约示例只用于编译与文档验证（治理工件，无运行时/
+      // 构建消费）。生产 API 经 package.json 的 20 个子路径 exports（src/index.ts 是
+      // knip 默认 entry；src/contract.ts 被 example 导入，无需声明）。
+      "entry": ["src/module.ts", "src/contract.example.ts"],
+    },
+    "packages/rpc": {
+      // 架构 context 消费模块清单，契约示例只用于编译与文档验证；生产 API 经 src/index.ts（src/contract.ts 逐名转发它）。
+      "entry": ["src/module.ts", "src/contract.example.ts"],
+    },
+    "packages/client": {
+      // 架构 context 消费模块清单，契约示例只用于编译与文档验证；生产 API 经 src/index.ts（与 src/contract.ts 符号一致）。
+      "entry": ["src/module.ts", "src/contract.example.ts"],
+    },
+    "packages/provider": {
+      // 架构 context 消费模块清单，契约示例只用于编译与文档验证；生产 API 经 src/index.ts（src/contract.ts 整体转发它）。
+      "entry": ["src/module.ts", "src/contract.example.ts"],
+    },
+    "packages/provider-node": {
+      // 架构 context 消费模块清单，契约示例只用于编译与文档验证；生产 API 经 src/index.ts（src/contract.ts 整体转发它）。
+      "entry": ["src/module.ts", "src/contract.example.ts"],
+    },
+    "packages/formal-proof": {
+      // 架构 context 消费模块清单，契约示例只用于编译与文档验证；生产导出经 ./model（src/model.ts，src/contract.ts 逐名转发它），main.ts 由 index.html 消费。
+      "entry": ["src/module.ts", "src/contract.example.ts"],
+    },
+    "packages/model-option-map": {
+      // 架构 context 消费模块清单，契约示例只用于编译与文档验证；生产 API 经 src/index.ts（src/contract.ts 逐名转发内部文件）。
+      "entry": ["src/module.ts", "src/contract.example.ts"],
     },
     "packages/ui": {
       "ignoreDependencies": [
@@ -97,12 +136,23 @@
         "@rive-app/react-webgl2",
         "@xyflow/react",
         "ansi-to-react",
-        "use-stick-to-bottom"
-      ]
+        "use-stick-to-bottom",
+      ],
     },
     "packages/acode-server-cli": {
-      // verify-remote-ssh*.mjs 是手工运维脚本，无 import 关系
-      "entry": ["scripts/**/*.mjs"]
+      // verify-remote-ssh*.mjs 是手工运维脚本，无 import 关系；module.ts/contract.example.ts
+      // 是架构 context 消费的治理工件（契约示例只用于编译与文档验证），生产 API 经
+      // src/index.ts 与 src/main.ts（src/contract.ts 整体转发 index.ts）。
+      "entry": ["scripts/**/*.mjs", "src/module.ts", "src/contract.example.ts"],
+    },
+    "packages/acode-cua": {
+      // 架构 context 消费模块清单，契约示例只用于编译与文档验证（治理工件，
+      // 无运行时/构建消费）。生产 API 经 package.json exports 的 12 个扁平子路径。
+      "entry": ["module.ts", "contract.example.ts"],
+    },
+    "packages/harness-sdk": {
+      // 架构 context 消费模块清单，契约示例只用于编译与文档验证；生产 API 经 src/index.ts（转发 src/contract.ts）。
+      "entry": ["src/module.ts", "src/contract.example.ts"],
     },
     "apps/acode-cli": {
       // shadow-replay.mjs 与 evals recipes 由人工/evals runner 按需调用
@@ -111,19 +161,41 @@
         // 嵌套包 lint 脚本（core/adapters/tui/node-repl-host/browser-use-plugin 等均未自行声明）裸调 oxlint，二进制由 workspace 根 node_modules/.bin 提供，跨 workspace knip 无法归因
         "oxlint",
         // packages/cli/scripts/build-sea.mjs 直接 import postject 做 SEA 注入，cli 未自行声明，沿目录链解析到 workspace 根的声明
-        "postject"
-      ]
+        "postject",
+      ],
+    },
+    "apps/acode-cli/packages/contracts": {
+      // 架构 context 消费的治理工件（模块清单 + 契约示例只用于编译与文档验证）；
+      // 生产 API 经 package.json exports（src/index.ts 是 knip 默认 entry；
+      // src/contract.ts 被 example 导入，无需声明）。
+      "entry": ["src/module.ts", "src/contract.example.ts"],
     },
     "apps/acode-cli/packages/node-repl-host": {
       // tsc emitDeclarationOnly 的包 types 入口产物（tsconfig outDir=dist-types），已入 git、随 build 再生，不作源码分析
-      "ignore": ["dist-types/**"]
+      "ignore": ["dist-types/**"],
+    },
+    "apps/acode-cli/packages/core": {
+      // 架构 context 消费模块清单，TypeScript 编译契约示例；生产 API 仍经 src/index.ts。
+      "entry": ["src/runtime-task/module.ts", "src/runtime-task/contract.example.ts"],
+    },
+    "apps/acode-cli/packages/workflow-run-read": {
+      // 架构 context 消费模块清单，契约示例只用于编译与文档验证；生产 API 经 contract.ts。
+      "entry": ["src/module.ts", "src/contract.example.ts"],
+    },
+    "apps/acode-cli/packages/workflow-run-command": {
+      // 契约示例只用于编译与文档验证（module.ts 已由 index.ts 再导出，无需登记）；生产 API 经 contract.ts。
+      "entry": ["src/contract.example.ts"],
+    },
+    "apps/acode-cli/packages/cli-workflow": {
+      // 架构 context 消费模块清单，契约示例只用于编译与文档验证；生产 API 经 contract.ts。
+      "entry": ["src/module.ts", "src/contract.example.ts"],
     },
     "apps/acode-cli/packages/browser-use-plugin": {
-      "entry": ["src/browser-client.ts"]
-    }
+      "entry": ["src/browser-client.ts"],
+    },
   },
   // `**/.acode/**` 是运行时产物（工作流 run 脚本等会落进仓库树内的嵌套 .acode 目录，
   // 运行时自带 .gitignore 挡住 git 但挡不住 knip）：谁在树里跑过一次工作流，
   // knip:gate 就红一片 Unused files。2026-10-07 release/0.0.4 验证时实测复现。
-  "ignore": [".agents/**", "**/.acode/**", "packages/ui/src/components/**"]
+  "ignore": [".agents/**", "**/.acode/**", "packages/ui/src/components/**"],
 }

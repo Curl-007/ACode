@@ -118,4 +118,103 @@ export interface ICodingPlanSubscriptionService {
 }
 
 export const ICodingPlanSubscriptionService =
-  createServiceDescriptor<ICodingPlanSubscriptionService>(ServiceChannels.CodingPlanSubscription);
+  createServiceDescriptor<ICodingPlanSubscriptionService>(ServiceChannels.CodingPlanSubscription, {
+    allowedMethods: [
+      "batchPreview",
+      "getStaticProducts",
+      "getStaticTeamProducts",
+      "getStartPlanPreview",
+      "getOffPeakClientConfig",
+      "getDynamicWorkflowClientConfig",
+      "getModelContextBudgetStrategy",
+      "getForceUpdateConfig",
+      "productInfo",
+      "preview",
+      "createSign",
+      "updateSign",
+      "checkPayment",
+      "checkPendingOrders",
+      "queryStripeCards",
+      "bindStripeCard",
+      "unbindStripeCard",
+      "payStripe",
+      "checkPaypalSupport",
+      "createPaypalSetupToken",
+      "subscribePaypal",
+      "getEnterprisePricing",
+      "getEnterpriseBalance",
+      "calculateEnterpriseOrder",
+      "createEnterpriseOrder",
+      "getEnterprisePendingOrders",
+      "cancelEnterpriseOrder",
+      "continueEnterpriseOrderPayment",
+      "checkEnterpriseOrderStatus",
+    ],
+    argumentValidators: {
+      // 读取类无参入口：拒绝任何多余实参。
+      getStaticProducts: (args) => requireNoArguments(args),
+      getStaticTeamProducts: (args) => requireNoArguments(args),
+      getStartPlanPreview: (args) => requireNoArguments(args),
+      getModelContextBudgetStrategy: (args) => requireNoArguments(args),
+      getForceUpdateConfig: (args) => requireNoArguments(args),
+      getEnterpriseBalance: (args) => requireNoArguments(args),
+      getEnterprisePendingOrders: (args) => requireNoArguments(args),
+      // 可选 request 对象：接受缺省/undefined/null；存在时必须是非数组对象。
+      batchPreview: (args) => optionalSingleObjectArg(args),
+      getOffPeakClientConfig: (args) => optionalSingleObjectArg(args),
+      getDynamicWorkflowClientConfig: (args) => optionalSingleObjectArg(args),
+      checkPendingOrders: (args) => optionalSingleObjectArg(args),
+      queryStripeCards: (args) => optionalSingleObjectArg(args),
+      checkPaypalSupport: (args) => optionalSingleObjectArg(args),
+      getEnterprisePricing: (args) => optionalSingleObjectArg(args),
+      // 必填 request 对象：只校验明确的必需 id 字段（productId/bizId/orderNo/支付回调 URL），
+      // 金额、订阅周期等业务字段的完整校验留在 service 层，保持宽容避免误拒。
+      productInfo: (args) => requireObjectArg(args, ["productId"]),
+      preview: (args) => requireObjectArg(args, ["productId"]),
+      createSign: (args) => requireObjectArg(args, ["bizId"]),
+      updateSign: (args) => requireObjectArg(args, ["bizId"]),
+      checkPayment: (args) => requireObjectArg(args, ["bizId"]),
+      bindStripeCard: (args) => requireObjectArg(args, ["paymentMethodId"]),
+      unbindStripeCard: (args) => requireObjectArg(args, ["paymentMethodId"]),
+      payStripe: (args) => requireObjectArg(args, ["productId"]),
+      createPaypalSetupToken: (args) => requireObjectArg(args, ["returnUrl", "cancelUrl"]),
+      subscribePaypal: (args) => requireObjectArg(args, ["productId"]),
+      calculateEnterpriseOrder: (args) => requireObjectArg(args, ["productId"]),
+      createEnterpriseOrder: (args) => requireObjectArg(args, ["productId"]),
+      cancelEnterpriseOrder: (args) => requireObjectArg(args, ["orderNo"]),
+      continueEnterpriseOrderPayment: (args) => requireObjectArg(args, ["orderNo"]),
+      checkEnterpriseOrderStatus: (args) => requireObjectArg(args, ["orderNo"]),
+    },
+  });
+
+function requireNoArguments(args: readonly unknown[]): void {
+  if (args.length !== 0) throw new Error("expected no arguments");
+}
+
+function optionalSingleObjectArg(args: readonly unknown[]): void {
+  if (args.length > 1) throw new Error("expected at most one argument");
+  const value = args[0];
+  if (args.length === 0 || value === undefined || value === null) return;
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("expected an optional parameter object");
+  }
+}
+
+function requireObjectArg(
+  args: readonly unknown[],
+  requiredStringFields: readonly string[],
+): Record<string, unknown> {
+  if (args.length !== 1) throw new Error("expected a single request object");
+  const value = args[0];
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("expected a request object");
+  }
+  const record = value as Record<string, unknown>;
+  for (const field of requiredStringFields) {
+    const fieldValue = record[field];
+    if (typeof fieldValue !== "string" || fieldValue.length === 0) {
+      throw new Error(`invalid ${field}`);
+    }
+  }
+  return record;
+}

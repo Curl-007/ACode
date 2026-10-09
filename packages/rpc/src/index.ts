@@ -102,7 +102,11 @@ export {
 } from "./ipc.js";
 
 // Layer 5: 服务代理
-export { ProxyChannel } from "./proxy-channel.js";
+export {
+  ProxyChannel,
+  RpcArgumentError,
+  type RpcArgumentValidator,
+} from "./proxy-channel.js";
 
 // 日志中间件 —— 装饰 ChannelServer/ChannelClient，统一记录 RPC 调用
 export {

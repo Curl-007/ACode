@@ -9,7 +9,8 @@ import {
 } from "@acode/shared";
 import { TooltipProvider } from "@/components/ui/tooltip.js";
 import { Button } from "@/components/ui/button.js";
-import { PlatformProvider } from "@/hooks/usePlatform.js";
+import { PlatformProvider, usePlatform } from "@/hooks/usePlatform.js";
+import { useConfirmDialog } from "@/hooks/useConfirmDialog.js";
 import { ServiceProvider } from "@/hooks/useServices.js";
 import { useDynamicWorkflowAvailabilityLoader } from "@/hooks/useDynamicWorkflowAvailability.js";
 import { useTabPersistence } from "@/hooks/useTabPersistence.js";
@@ -182,6 +183,8 @@ function RootInner({
   useDynamicWorkflowAvailabilityLoader(services.codingPlanSubscriptionService);
 
   const { intl, locale } = useACodeIntl();
+  const platformService = usePlatform();
+  const requestConfirmation = useConfirmDialog();
   const theme = useACodeStore((state) => state.theme);
   const user = useACodeStore((state) => state.user);
   const isRestoringOAuthSession = useACodeStore((state) => state.isRestoringOAuthSession);
@@ -204,6 +207,54 @@ function RootInner({
     useState(false);
   const loginEntryRequest = useACodeStore((state) => state.loginEntryRequest);
   const rootModelSelectionRead = useModelSelectionServiceView(services.modelSelectionService);
+
+  useEffect(() => {
+    const onRemoteSSHHostKeyChallenge = platformService.onRemoteSSHHostKeyChallenge;
+    const respondSSHHostKeyChallenge = platformService.respondSSHHostKeyChallenge;
+    if (!isDesktop || !onRemoteSSHHostKeyChallenge || !respondSSHHostKeyChallenge) {
+      return;
+    }
+
+    let active = true;
+    const dispose = onRemoteSSHHostKeyChallenge((challenge) => {
+      void (async () => {
+        const changed = challenge.status === "changed";
+        const confirmed = await requestConfirmation({
+          title: intl.formatMessage({
+            id: changed ? "ssh.hostKeyChanged.title" : "ssh.hostKeyUnknown.title",
+          }),
+          description: intl.formatMessage(
+            { id: changed ? "ssh.hostKeyChanged.description" : "ssh.hostKeyUnknown.description" },
+            {
+              host: challenge.host,
+              port: challenge.port,
+              candidate: challenge.candidateFingerprint,
+              expected: challenge.expectedFingerprints.join(", ") || intl.formatMessage({ id: "ssh.hostKey.none" }),
+            },
+          ),
+          confirmLabel: intl.formatMessage({
+            id: changed ? "ssh.hostKeyChanged.replace" : "ssh.hostKeyUnknown.approve",
+          }),
+          cancelLabel: intl.formatMessage({ id: "ssh.hostKey.reject" }),
+          confirmVariant: changed ? "destructive" : "default",
+          showCloseButton: true,
+        });
+        if (!active) return;
+        await respondSSHHostKeyChallenge({
+          requestId: challenge.requestId,
+          challengeId: challenge.challengeId,
+          candidateFingerprint: challenge.candidateFingerprint,
+          action: confirmed ? (changed ? "replace" : "approve") : "reject",
+        });
+      })().catch((error: unknown) => {
+        logger.warn("SSH host key challenge handling failed", error);
+      });
+    });
+    return () => {
+      active = false;
+      dispose();
+    };
+  }, [intl, isDesktop, platformService, requestConfirmation]);
   const rootModelSelectionView =
     rootModelSelectionRead.state.status === "ready" ? rootModelSelectionRead.state.view : null;
   const rootModelSelectionErrorNode =

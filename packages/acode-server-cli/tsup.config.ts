@@ -25,7 +25,11 @@ export default defineConfig({
   sourcemap: true,
   splitting: false,
   banner: {
-    js: 'import { fileURLToPath as __acodeFileURLToPath } from "node:url"; import { dirname as __acodeDirname } from "node:path"; const __filename = __acodeFileURLToPath(import.meta.url); const __dirname = __acodeDirname(__filename);',
+    // createRequire 兜底（dev/0.0.7 CI 的 Remote SSH smoke 红灯根因）：noExternal 会把
+    // @acode/services 的传递 CJS 依赖（如 yazl）内联进 ESM 单文件产物，esbuild 的
+    // __require shim 在纯 ESM 里拿不到 require，启动即抛 Dynamic require of "fs"。
+    // banner 注入模块级 require 后 shim 回落真实 require，单文件部署形态不变。
+    js: 'import { fileURLToPath as __acodeFileURLToPath } from "node:url"; import { dirname as __acodeDirname } from "node:path"; import { createRequire as __acodeCreateRequire } from "node:module"; const require = __acodeCreateRequire(import.meta.url); const __filename = __acodeFileURLToPath(import.meta.url); const __dirname = __acodeDirname(__filename);',
   },
   noExternal: ["@acode/shared", "@acode/shared/node", "@acode/rpc", "@acode/services"],
   define: SERVER_CLI_DEFINES,

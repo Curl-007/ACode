@@ -56,7 +56,13 @@ function run(command, args, { input, allowFailure = false, quiet = false } = {})
       if (code === 0 || allowFailure) {
         resolvePromise({ code: code ?? 1, stdout, stderr });
       } else {
-        if (!quiet) console.error(stderr || stdout);
+        if (!quiet) {
+          // 不能 stderr || stdout：stderr 只有警告（如 SQLite experimental）时会把
+          // stdout 上 daemon 的真实错误 JSON 吞掉（dev/0.0.7 CI smoke 的错误文案
+          // 因此隐藏了数轮，只能看到 exit code）。失败时两路都打。
+          if (stderr) console.error(stderr);
+          if (stdout) console.error(stdout);
+        }
         rejectPromise(new Error(`${command} ${args.join(" ")} exited with code ${code ?? "null"}`));
       }
     });
@@ -182,7 +188,13 @@ async function main() {
   );
 
   log("start daemon on remote");
-  const { stdout: daemonOutput } = await ssh("/root/acode-server/bin/acode serve --daemon --json");
+  // 容器里没有 user systemd，而 smoke 验证的是 daemon 生命周期与 ingress 合同、
+  // 不是服务注册；cli.ts 的设计出口是显式 opt-out 走 detached fallback
+  // （ACODE_SERVER_SKIP_SERVICE_REGISTRATION=1）。不 opt-out 时注册必失败，
+  // --json 下错误只进 stdout 并以 exit 1 收场（本 job 自 c453fca5 新增后从未绿过）。
+  const { stdout: daemonOutput } = await ssh(
+    "ACODE_SERVER_SKIP_SERVICE_REGISTRATION=1 /root/acode-server/bin/acode serve --daemon --json",
+  );
   const daemonStatus = JSON.parse(daemonOutput.trim().split("\n").pop());
   assert(daemonStatus.state === "ready", `daemon ready, got: ${daemonOutput}`);
   assert(

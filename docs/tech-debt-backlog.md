@@ -11,7 +11,7 @@
 | bootstrap 跨包深导入 | 0（当前干净） | `apps/acode-cli/tests/bootstrap-boundary.test.mjs` | `apps/acode-cli/specs/bootstrap-app-boundary.md` W1/W2 |
 | node-forge 环境声明副本 | 1 份权威（services） | `apps/acode-cli/tests/acp-host-adapter.test.mjs` F8 | 已收敛（单一事实源） |
 | 遥测/官方平台回归 | 0 | desktop/ui/shared 各自 no-telemetry、no-official-platform 测试 | 已收敛 |
-| renderer / CLI 自身入口类型检查 | 0 个诊断（2026-10-09 于 `f9ed8961` 复测；2026-10-05 的 renderer 112 个错误已修完） | `ci.yml` 第 66/69 行与 `release.yml` verify job 第 76/79 行的独立 `tsc` 步骤 | `docs/upgrades/quality-and-release-2026-10.md` U01：根 `pnpm typecheck` 清单与 release `build`/`desktop` job 尚未接入，注入测试未建 |
+| renderer / CLI 自身入口类型检查 | 0 个诊断（2026-10-09；2026-10-05 的 renderer 112 个错误已修完） | 单一入口 `scripts/typecheck-gate.mjs`（根 `pnpm typecheck`）：`packages` barrier 后 renderer 与 CLI 并行；`apps/acode-cli/tests/typecheck-gate.test.mjs` 7/7 覆盖注入必红与 workflow 旁路扫描 | 已收敛（U01 完成）；剩余为 Node `24.14.0`、clean checkout 与三平台 runner 的首次 CI 确认，规则见 `docs/specs/cli-validation-gates.md` 第 3-6 条 |
 | RPC descriptor 方法/事件表与参数校验 | 全部 `createServiceDescriptor` 的方法与 `onDynamicXxx` 事件均登记 `argumentValidators`（2026-10-09 批二清零） | `packages/services/tests/rpc-descriptor-surface.test.mjs`：缺表、表外键或漏登记校验器即红（复测 1/1 通过） | `packages/rpc/specs/rpc-service-boundary.md` 规则 7；普通 `onXxx` 事件的豁免依据写在 spec 与门禁注释 |
 | managed 模块例外登记 | 42 条 `expires: "2026-12-31"`（`max-file-lines` 28、`disable-count` 14） | `pnpm architecture:check`：到期或超出登记范围即红；例外不刷新 `.architecture-baseline.json` | 各模块边界 spec（`cli-workflow-package-boundary.md`、`architecture-contracts-module.md`、各 `module-boundary.md`）；到期前拆文件偿还 |
 

@@ -1,6 +1,6 @@
 # 质量门禁、交互验证、发布与性能实施计划
 
-U01 的 renderer 与 CLI 入口检查已在 CI 与 release verify 落地，剩余是统一入口与注入验证；接着按 U03、U04、U06 建立可重复的交互、产物和性能验收。
+U01 已实现：单一入口 `scripts/typecheck-gate.mjs` 覆盖 packages、renderer 与 CLI，本地、CI 与 release 同源；接着按 U03、U04、U06 建立可重复的交互、产物和性能验收。
 
 本文细化 [项目升级建议](../project-upgrade-recommendations-2026-10.md) 中的 U01、U03、U04、U06，是立项与实施依据；本文没有新增脚本、测试或流水线。
 调查日期为 2026-10-09，细化时检出分支 `fix/cli-subagent-inheritance` 已不在当前仓库中，其证据不可复核。
@@ -24,35 +24,34 @@ U01 的 renderer 与 CLI 入口检查已在 CI 与 release verify 落地，剩�
 
 ## U01：完整类型门禁
 
-目标是让 renderer 或 CLI 自身入口的类型错误能够阻断本地检查、CI 和发布；原估 4–8 人日，按 `f9ed8961` 复测后剩余 1–2 人日。
+目标是让 renderer 或 CLI 自身入口的类型错误能够阻断本地检查、CI 和发布。**本项已实现**（原估 4–8 人日）：单一入口为 [scripts/typecheck-gate.mjs](../../scripts/typecheck-gate.mjs)，根 `pnpm typecheck` 与 CI、release 的 verify/build/desktop 全部只调用它。
 
 ### 范围与当前证据
 
 `c453fca5`（ARCH-03 / CLI-01）已把两条检查接进流水线：[ci.yml](../../.github/workflows/ci.yml) 第 66/69 行、[release.yml](../../.github/workflows/release.yml) verify job 第 76/79 行各有「Typecheck CLI entry」与「Typecheck Desktop renderer」独立步骤。
 复测结果（Node `25.9.0`、pnpm `10.33.2`、commit `f9ed8961`）：renderer `--noEmit` 退出码 0，覆盖 414 个非 `node_modules` 文件；`pnpm --dir apps/acode-cli/packages/cli typecheck` 退出码 0；根 `pnpm typecheck` 退出码 0。
 此前记录的 renderer 112 个诊断属历史快照，已修到 0，不再作为当前事实。
-根 [package.json](../../package.json) 第 29 行的 `typecheck` 清单仍只有 `packages/*` 与 Desktop host/main/preload/scheduler；本地单跑该命令时 renderer 与 CLI 入口的错误不会红。
-release.yml 的 `build`（第 295 行）与 `desktop`（第 372 行）job 只调用根 `pnpm typecheck`，没有那两条步骤。
+上面两条缺口已闭合：根 [package.json](../../package.json) 的 `typecheck` 改为 `node scripts/typecheck-gate.mjs`；ci.yml 与 release.yml 删掉内联的「Typecheck CLI entry」「Typecheck Desktop renderer」两步，verify/build/desktop 三处都只跑 `pnpm typecheck`。
+门禁阶段清单只在脚本内声明一份：`packages`（照搬原 `tsc -b` 工程集合，覆盖面不变）是 barrier，完成后 `desktop-renderer` 与 `cli` 并行；`cli` 用 `turbo --cwd apps/acode-cli run typecheck`，兄弟包声明顺序由 turbo 的 `dependsOn: ["^build"]` 负责，脚本不另建一份顺序事实。
+barrier 的理由：renderer 经 project references 读 `packages/*` 的 `.d.ts`，与 `tsc -b` 的写入并发会读到半成品声明并产生假失败。
 [CLI 包](../../apps/acode-cli/packages/cli/package.json) 的 `tsc --noEmit` 与生产 build 的 esbuild 仍是两件事，后者不能替代类型检查。
 本项只处理类型门禁与诊断，不借机重写 UI、迁移协议或调整运行时状态所有权。
 
 ### 所有者与接口
 
 构建设施拥有检查集合和依赖顺序；包维护者负责修复本包声明、导入边界与真实类型错误。
-拟定义一个统一组合入口，先生成被引用包所需声明，再检查所有生产入口，任一失败返回非零。
+统一组合入口已实现为 `scripts/typecheck-gate.mjs`：先生成被引用包声明（`packages` 阶段），再检查全部生产入口，任一阶段失败返回非零并打印该阶段的复现命令。
 现有 `@acode/cli` 是 CLI 子包名；`apps/acode-cli` 的根包名是 `acode-cli`，两者脚本不可混写。
-拟在构建门禁 spec 中列出入口清单及遗漏检测方法；具体脚本名在实现评审时确定。
+[CLI 独立交付门禁 spec](../specs/cli-validation-gates.md) 第 3-6 条已写入阶段清单、barrier 语义、`--only`/`--stages-file` 的使用边界与失败不得静默降级的要求。
 生产 API 不因补检查而改变；禁止通过大面积 `any`、忽略诊断或关闭严格检查制造通过。
 
 ### 实施步骤
 
-1. 把「根 typecheck + CLI 入口 + renderer」收敛成单一可复用入口，明确 sibling 声明生成顺序，任一失败返回非零。
-2. 根 `pnpm typecheck` 与 release.yml 的 `build`、`desktop` job 改为调用该入口，删掉重复的内联命令。
-3. 建立门禁覆盖测试，在临时副本中分别注入 renderer 与 CLI 类型错误，确认入口可重复暴露失败。
-4. 在干净检出和有缓存工作区各运行一轮，校验注入失败、恢复通过和无额外产物污染。
-5. 在 `mise.toml` 固定的 Node `24.14.0` 下复跑一次，更新构建门禁 spec 与 [技术债登记册](../tech-debt-backlog.md) 的入口清单。
-
-诊断修复与入口接线已不需要单列步骤：`f9ed8961` 上三个入口诊断均为 0。
+1. 已完成：三个入口收敛为 `scripts/typecheck-gate.mjs`，按 `dependsOn` 分波并发，任一失败退出非零。
+2. 已完成：根 `pnpm typecheck`、ci.yml verify、release.yml verify/build/desktop 全部改为调用该入口，内联命令删除。
+3. 已完成：[typecheck-gate.test.mjs](../../apps/acode-cli/tests/typecheck-gate.test.mjs) 7/7——注入错误阶段必红且指名阶段、移除注入后同一入口绿、依赖失败时下游显式 `skipped`、并行性以互相等待的 fixture 证明（`--sequential` 对照必须超时失败）、默认清单逐项覆盖三入口、workflow 与根 `package.json` 旁路扫描。
+4. 已完成（有缓存工作区）：真机注入 `performanceTimelineCleanup.ts` 与 `bootstrap-loader.ts` 各一行类型错误，单次 `pnpm typecheck` 两阶段分别报 TS2322、退出码 1；撤回后恢复 0。干净检出的一轮尚未执行。
+5. 未完成：在 `mise.toml` 固定的 Node `24.14.0` 下复跑，以及 clean checkout / 三平台 runner 的首次 CI 确认。
 
 ### 验收场景
 
@@ -64,7 +63,12 @@ release.yml 的 `build`（第 295 行）与 `desktop`（第 372 行）job 只调
 | T04  | 清除构建声明和缓存               | 从干净状态重新检查              | 按正确依赖顺序生成声明，无缺失引用或缓存假通过  | 清理范围与执行日志      |
 | T05  | 本地、PR CI、release 相同 commit | 对比三条流程                    | 调用同一检查实现；没有跳过 renderer/CLI 的旁路  | workflow 与入口调用记录 |
 
-当前状态（`f9ed8961` 复测）：T01 的三个入口分别执行均退出码 0，但还没有「统一类型门禁」这一单一入口；T02、T03 的注入场景未执行，没有证据证明门禁会红；T04 未在清除声明与缓存后复跑；T05 不成立——release 的 `build` 与 `desktop` job 仍跳过 renderer/CLI。
+当前状态（实现后本机实测，Node `25.9.0` / pnpm `10.33.2`）：
+
+- T01 成立：`pnpm typecheck` 一次跑完三个阶段，退出码 0，热态约 1.5s（`packages` 0.2s 后 renderer 1.2s 与 cli 0.3s 并行）。
+- T02、T03 成立：真机注入 renderer 与 CLI 各一行类型错误，同一次运行两个阶段分别报 TS2322 并退出码 1；fixture 级注入测试同样红→绿各重复通过。
+- T04 部分成立：有缓存工作区已验证；清除声明与缓存后的干净检出一轮未执行。
+- T05 成立：ci.yml 与 release.yml 中含 `typecheck` 的 `run` 逐字都是 `pnpm typecheck`，两个 workflow 都不再出现 `tsconfig.renderer.json`、`apps/acode-cli/packages/cli typecheck`、`--only` 或 `--stages-file`；该断言由测试机械拦截，不靠人工检查。
 
 ### 完成门槛与失败处理
 
@@ -77,13 +81,13 @@ CI 与 release 在门禁失败后不得继续标记可发布；不得临时关�
 
 ### 依赖、工作量与命令
 
-诊断分类与类型修复已由 `c453fca5` 完成（原估 2.5–5 人日）；剩余统一入口约 0.5–1 人日，注入测试和三条流程验证 0.5–1 人日。
+诊断分类与类型修复由 `c453fca5` 完成（原估 2.5–5 人日）；统一入口、workflow 接线与注入/旁路测试本次完成（原估 1–2 人日）。剩余为 Node `24.14.0` 与 clean checkout / 三平台 runner 的确认。
 依赖 shared/ui/client 与 CLI sibling 的声明生成；不要求先完成 U03。
 现有根命令：`pnpm typecheck`。
 现有 renderer 命令：`pnpm exec tsc -p packages/desktop/tsconfig.renderer.json --noEmit`。
 现有 CLI 命令：`pnpm --filter @acode/cli typecheck`，执行前满足 sibling 声明前置条件。
 现有 CLI 聚合命令：`pnpm --dir apps/acode-cli typecheck`；child-main 校验为 `pnpm --dir apps/acode-cli child-main:check`。
-统一入口和注入验证脚本是拟新增内容，实施完成前不要在 README 或 CI 说明中写成已有能力。
+统一入口已是现有能力：`pnpm typecheck`（完整门禁）、`node scripts/typecheck-gate.mjs --list`（打印阶段清单）、`--only <stage>`（开发快循环，CI/release 禁用）、`--sequential`（调试输出交错）、`--stages-file <path>`（测试装配）。
 
 ## U03：可重复的桌面与手机 Web E2E
 
@@ -298,4 +302,4 @@ spec 与探针 1 人日，fixture/角色采样 1–2 人日，比较器与校准
 现有构建命令可产生测量产物，但仓库尚无可复用的统一性能入口。
 拟新增 `pnpm perf:baseline`、`pnpm perf:compare`；实现前由实验 spec 确定参数、结果 schema 与适用机器。
 
-下一步：实现 U01 的单一类型检查入口，把根 `typecheck` 与 release.yml `build`/`desktop` 两个 job 接上去，并补 renderer、CLI 各一条注入测试。
+下一步：U02——为 `node-execution-adapter` 与 `ConversationV4Gateway` 建真实子进程 fixture，先落 E01/E02（spawn 前取消、运行中取消各只结算一次）。U01 的剩余确认项（Node 24、clean checkout、三平台 runner）随下一次 CI 运行收口。

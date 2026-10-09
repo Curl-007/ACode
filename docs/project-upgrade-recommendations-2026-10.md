@@ -1,6 +1,6 @@
 # ACode 项目升级建议（2026-10）
 
-类型门禁的 renderer 与 CLI 自身入口已在 CI 与 release verify 落地且诊断为 0，U01 只剩统一入口、release 两个 job 与注入验证；接着补真实执行故障测试，再建设交互 E2E、发布产物启动验证，随后推进现有协议与状态收敛计划。产品侧优先完成长对话导航和首次配置诊断。
+类型门禁已收敛为单一入口 `scripts/typecheck-gate.mjs`，本地、CI 与 release 的每个 job 都只调用它（U01 完成）；接着补真实执行故障测试，再建设交互 E2E、发布产物启动验证，随后推进现有协议与状态收敛计划。产品侧优先完成长对话导航和首次配置诊断。
 
 本文是升级建议与立项依据，不代表以下改动已经实现，也不替代各模块 spec。实施前先更新对应 spec，明确状态所有者、接口、事件顺序和验收场景。
 
@@ -10,22 +10,22 @@
 
 范围包括 Desktop、手机 Web、共享 UI、services、CLI/runtime、协议、CI/release 和已有升级计划。采用当前检出源码与脚本作为事实依据；历史报告中的数量和性能数字不直接视为当前结果。
 
-| 检查                                                                | 复测结果（`f9ed8961`）                                                                                                                                                        | 结论边界                                                                                                                                                                                 |
-| ------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `node scripts/check-workspace-freshness.mjs`                        | 通过；`dev/0.0.7` 与 `origin/dev/0.0.7` 同步，相对 `origin/main` ahead 6 / behind 0                                                                                           | 仅表示复测时本地已知引用的基线状态；首次调查在 `f4da4b0e` 记为 ahead 2                                                                                                                   |
-| `pnpm typecheck`                                                    | 通过，退出码 0                                                                                                                                                                | 清单仍只有 `packages/*` 与 Desktop host/main/preload/scheduler，不含 renderer 和 CLI 自身入口                                                                                            |
-| `pnpm lint`                                                         | 通过，145 warnings、0 errors，扫描 4330 个文件                                                                                                                                | 存量 warning 仍存在。首次调查记为 73 warnings / 2633 文件；扫描面变大的方向与批一+批二取消整目录 ignore、把 CLI 两级 lint 配置纳入 Turbo 一致，warning 增量未逐项归因                    |
-| `pnpm architecture:check`                                           | 通过；violations 415、baseline 415、new 0、regrown 0；managed 18 模块 776 文件，legacy 5 模块 3461 文件                                                                       | 首次调查记为 491/491、managed 5 模块 43 文件；批二纳管 5→18 并收紧 baseline 491→415。相对基线没有新增违规，不等于技术债归零                                                              |
-| `pnpm exec tsc -p packages/desktop/tsconfig.renderer.json --noEmit` | 通过，退出码 0；覆盖 414 个非 `node_modules` 文件                                                                                                                             | 首次调查在 `f4da4b0e` 记为 112 个诊断、退出码 2，已在批一+批二修复。`packages/desktop/src/renderer` 只有 12 个文件，renderer UI 主体在 `packages/ui`，其余来自 shared/ui/client 工程引用 |
-| `pnpm --dir apps/acode-cli/packages/cli typecheck`                  | 通过，退出码 0                                                                                                                                                                | CLI 自身入口可单独检查，已进 CI 与 release verify，但仍未纳入根 `pnpm typecheck` 单命令                                                                                                  |
-| CI 与 release 的类型步骤                                            | [ci.yml](../.github/workflows/ci.yml) 第 43/66/69 行、[release.yml](../.github/workflows/release.yml) verify job 第 58/76/79 行都跑「根 typecheck + CLI 入口 + renderer」三条 | release.yml 的 `build`（第 295 行）与 `desktop`（第 372 行）job 只跑根 `pnpm typecheck`，缺另外两条                                                                                      |
-| 运行环境                                                            | Node `25.9.0`，pnpm `10.33.2`                                                                                                                                                 | `mise.toml` 固定 Node `24.14.0`；复测未在该固定 Node 下执行                                                                                                                              |
+| 检查                                                                | 复测结果（`f9ed8961`）                                                                                                                                                        | 结论边界                                                                                                                                                                                     |
+| ------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `node scripts/check-workspace-freshness.mjs`                        | 通过；`dev/0.0.7` 与 `origin/dev/0.0.7` 同步，相对 `origin/main` ahead 6 / behind 0                                                                                           | 仅表示复测时本地已知引用的基线状态；首次调查在 `f4da4b0e` 记为 ahead 2                                                                                                                       |
+| `pnpm typecheck`                                                    | 通过，退出码 0                                                                                                                                                                | 复测时清单仍只有 `packages/*` 与 Desktop host/main/preload/scheduler，不含 renderer 和 CLI 自身入口。**U01 实现后已改变**：该命令现在执行 `scripts/typecheck-gate.mjs` 的三个阶段            |
+| `pnpm lint`                                                         | 通过，145 warnings、0 errors，扫描 4330 个文件                                                                                                                                | 存量 warning 仍存在。首次调查记为 73 warnings / 2633 文件；扫描面变大的方向与批一+批二取消整目录 ignore、把 CLI 两级 lint 配置纳入 Turbo 一致，warning 增量未逐项归因                        |
+| `pnpm architecture:check`                                           | 通过；violations 415、baseline 415、new 0、regrown 0；managed 18 模块 776 文件，legacy 5 模块 3461 文件                                                                       | 首次调查记为 491/491、managed 5 模块 43 文件；批二纳管 5→18 并收紧 baseline 491→415。相对基线没有新增违规，不等于技术债归零                                                                  |
+| `pnpm exec tsc -p packages/desktop/tsconfig.renderer.json --noEmit` | 通过，退出码 0；覆盖 414 个非 `node_modules` 文件                                                                                                                             | 首次调查在 `f4da4b0e` 记为 112 个诊断、退出码 2，已在批一+批二修复。`packages/desktop/src/renderer` 只有 12 个文件，renderer UI 主体在 `packages/ui`，其余来自 shared/ui/client 工程引用     |
+| `pnpm --dir apps/acode-cli/packages/cli typecheck`                  | 通过，退出码 0                                                                                                                                                                | 复测时 CLI 自身入口可单独检查、已进 CI 与 release verify，但未纳入根 `pnpm typecheck` 单命令。**U01 实现后已改变**：由门禁的 `cli` 阶段经 turbo 覆盖，workflow 不再内联该命令                |
+| CI 与 release 的类型步骤                                            | [ci.yml](../.github/workflows/ci.yml) 第 43/66/69 行、[release.yml](../.github/workflows/release.yml) verify job 第 58/76/79 行都跑「根 typecheck + CLI 入口 + renderer」三条 | 复测时 release.yml 的 `build` 与 `desktop` job 只跑根 `pnpm typecheck`，缺另外两条。**U01 实现后已改变**：两个 workflow 都只剩 `pnpm typecheck` 一条命令，内联步骤已删除，旁路由测试机械拦截 |
+| 运行环境                                                            | Node `25.9.0`，pnpm `10.33.2`                                                                                                                                                 | `mise.toml` 固定 Node `24.14.0`；复测未在该固定 Node 下执行                                                                                                                                  |
 
 复测只跑了上表中的静态检查与单入口类型检查，没有运行全量测试、浏览器/Electron E2E、构建、模型调用或设备测试；全量测试与 Electron smoke 的证据见 [fix-status-2026-10-09.md](./reviews/2026-10-08/fix-status-2026-10-09.md) 与 [external-e2e-2026-10-09.md](./reviews/2026-10-08/external-e2e-2026-10-09.md)。以下交互、性能和恢复收益均为待验收目标，不是复测测量结论。
 
 ## 2. 优先级与投入原则
 
-1. **P0（主体已落地）：收敛类型门禁入口。** renderer 与 CLI 自身入口已在 CI 与 release verify 独立成步骤、诊断为 0；剩余是根单命令覆盖、release `build`/`desktop` 两个 job，以及证明门禁真会红的注入测试。
+1. **P0（已完成）：类型检查覆盖已收敛为单一入口。** `pnpm typecheck` 现在跑 `scripts/typecheck-gate.mjs` 的三个阶段（packages → renderer ∥ CLI），CI 与 release 的 verify/build/desktop 全部只调用它，注入测试与旁路扫描已进门禁。详见 U01。
 2. **P0：验证真实执行与 Gateway 的失败路径。** 优先覆盖取消、超时、重复命令和进程清理。
 3. **P1：建立桌面与手机交互 E2E。** 为未读、面板订阅、恢复链路和后续组件拆分提供回归依据。
 4. **P1：验证发行产物能启动。** 将现有跨平台构建矩阵延伸到安装后运行验证。
@@ -34,11 +34,15 @@
 
 ## 3. P0：先补齐验证缺口
 
-### U01. 完整类型门禁（原估 4–8 人日，剩余 1–2 人日）
+### U01. 完整类型门禁（已完成；原估 4–8 人日）
 
 **已实现（`c453fca5`，对应 ARCH-03 / CLI-01）：** [ci.yml](../.github/workflows/ci.yml) 第 66/69 行与 [release.yml](../.github/workflows/release.yml) verify job 第 76/79 行新增「Typecheck CLI entry」与「Typecheck Desktop renderer」两条独立步骤；renderer 的 112 个历史诊断已修到 0，CLI 自身入口 0 诊断。CLI 就近 lint 配置消除了整目录 ignore，Turbo 纳入两级 lint 配置。
 
-**剩余缺口：** 根 [package.json](../package.json) 第 29 行的 `typecheck` 清单仍是 `packages/*` 加 Desktop host/main/preload/scheduler，本地单跑 `pnpm typecheck` 时 renderer 与 CLI 入口的类型错误不会红；release.yml 的 `build`（第 295 行）与 `desktop`（第 372 行）job 只调用根 `pnpm typecheck`；三个入口没有注入测试证明失败可阻断（对应 [实施意见](./upgrades/quality-and-release-2026-10.md) 的 T02/T03）；复测在 Node `25.9.0` 而非 `mise.toml` 固定的 `24.14.0` 下执行。
+**本次实现（U01 收尾）：** 新增 [scripts/typecheck-gate.mjs](../scripts/typecheck-gate.mjs) 作为唯一类型门禁入口，阶段清单只在该脚本内声明一份：`packages`（原 `tsc -b` 工程集合，逐项照搬不改覆盖面）是 barrier，完成后 `desktop-renderer` 与 `cli`（`turbo --cwd apps/acode-cli run typecheck`，含 `@acode/cli` 自身入口，兄弟包声明顺序交给 turbo 的 `dependsOn: ["^build"]`）并行执行。根 [package.json](../package.json) 的 `typecheck` 改为调用它；[ci.yml](../.github/workflows/ci.yml) 与 [release.yml](../.github/workflows/release.yml) 删掉内联的 renderer / CLI 单入口步骤，verify、build、desktop 三处都只跑 `pnpm typecheck`，旁路消失。规则与验收写进 [CLI 独立交付门禁 spec](./specs/cli-validation-gates.md) 第 3-6 条。
+
+**注入与旁路证据：** [apps/acode-cli/tests/typecheck-gate.test.mjs](../apps/acode-cli/tests/typecheck-gate.test.mjs) 7/7 通过——含类型错误的 fixture 阶段让门禁退出非零并指名阶段、移除注入后同一入口退出 0、依赖失败时下游显式 `skipped` 而非静默不跑、barrier 之后两阶段真实并行（`--sequential` 对照必须超时失败）、默认清单逐项覆盖三个入口、workflow 与根 `package.json` 不存在跳过 renderer/CLI 的第二条路径。另做真机注入：同时向 `packages/desktop/src/renderer/src/performanceTimelineCleanup.ts` 与 `apps/acode-cli/packages/cli/src/bootstrap-loader.ts` 各写一行 `const x: number = "..."`，单次 `pnpm typecheck` 两个阶段分别报出 TS2322 并退出码 1，撤回注入后恢复 0。
+
+**仍未验证：** 全部结果在 Node `25.9.0` / pnpm `10.33.2` 下取得，未在 `mise.toml` 固定的 Node `24.14.0` 下复跑；clean checkout 与三平台 runner 上的表现待 CI 首次运行确认。
 
 **建议与所有者：** 构建/CI 入口统一维护完整类型检查集合，把三条检查收敛成一个可复用入口（脚本或 turbo pipeline），本地、CI 与 release 的 verify/build/desktop 全部调用它；不用整体关闭严格检查制造通过。
 
@@ -174,11 +178,11 @@ sequenceDiagram
 
 ## 7. 建议交付顺序
 
-| 批次                  | 范围                                                                               | 进入下一批的条件                                                        |
-| --------------------- | ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| A：先使问题可见       | U01 残余（统一入口 + release `build`/`desktop` job + 注入测试）、U02；并行完成 U09 | 单一类型入口可阻断错误且被注入测试证明，执行故障有稳定复现与终态断言    |
-| B：建立交互与发行保障 | U03、U04、U06                                                                      | 桌面/手机关键交互可重复，产物在仓库外可启动，性能实验可复现             |
-| C：完成既有收敛与体验 | U05 分里程碑，U07、U08                                                             | 双链路契约稳定，legacy 消费者按阶段减少，历史定位与首次配置通过交互验收 |
-| D：按证据逐项优化     | U10、U11、U12                                                                      | 不变量、媒体成本和用户诊断需求有明确基线，每项独立验收                  |
+| 批次                  | 范围                            | 进入下一批的条件                                                        |
+| --------------------- | ------------------------------- | ----------------------------------------------------------------------- |
+| A：先使问题可见       | U02；并行完成 U09（U01 已完成） | 执行故障有稳定复现与终态断言，文档事实与当前实现对齐                    |
+| B：建立交互与发行保障 | U03、U04、U06                   | 桌面/手机关键交互可重复，产物在仓库外可启动，性能实验可复现             |
+| C：完成既有收敛与体验 | U05 分里程碑，U07、U08          | 双链路契约稳定，legacy 消费者按阶段减少，历史定位与首次配置通过交互验收 |
+| D：按证据逐项优化     | U10、U11、U12                   | 不变量、媒体成本和用户诊断需求有明确基线，每项独立验收                  |
 
-下一项具体工作：把根 `pnpm typecheck` 与 release.yml 的 `build`/`desktop` 两个 job 接到同一个类型检查入口，并给 renderer 与 CLI 各补一条注入测试。其余建议先保留为待排期项，不同时启动多个跨域重构。
+下一项具体工作：U02——为 `node-execution-adapter` 与 `ConversationV4Gateway` 建立真实子进程 fixture，先落 E01/E02（spawn 前取消、运行中取消各只结算一次），再扩到 E03-E10。其余建议先保留为待排期项，不同时启动多个跨域重构。

@@ -5,12 +5,12 @@
 
 ## 现状：三代协议面并存
 
-| 协议面 | 位置 | 规模（实测） | 状态 |
-| --- | --- | --- | --- |
-| legacy 协议 schema | `packages/shared/src/acode-protocol/index.ts` | 3,714 行、约 257 个导出 | 头注已声明删除边界：「上述旧协议 client/server 组删除时，本文件整体删除」 |
-| legacy 协议 server | `apps/acode-cli/packages/bootstrap/src/acode-protocol/` | 48 文件 / 14,713 行 | 与 v4 并存，靠 `v4-bridge.ts` 单向依赖（只允许旧目录 → v4 目录）做 strangler 迁移 |
-| v4 协议 | `packages/shared/src/acode-protocol-v4/` + `apps/acode-cli/packages/bootstrap/src/acode-protocol-v4/` | shared 侧约 10.8k 行；bootstrap 侧 51 文件 / 21,737 行 | 目标形态，263 个文件已引用 v4/V4_METHODS |
-| （相关面）ACP 适配 | `apps/acode-cli/packages/cli/src/acp/` | 约 1.8k 行 | 独立对外协议面，不在本收敛范围，但依赖 v4 gateway，M3 需一并回归 |
+| 协议面             | 位置                                                                                                  | 规模（实测）                                           | 状态                                                                              |
+| ------------------ | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------ | --------------------------------------------------------------------------------- |
+| legacy 协议 schema | `packages/shared/src/acode-protocol/index.ts`                                                         | 3,714 行、约 257 个导出                                | 头注已声明删除边界：「上述旧协议 client/server 组删除时，本文件整体删除」         |
+| legacy 协议 server | `apps/acode-cli/packages/bootstrap/src/acode-protocol/`                                               | 48 文件 / 14,713 行                                    | 与 v4 并存，靠 `v4-bridge.ts` 单向依赖（只允许旧目录 → v4 目录）做 strangler 迁移 |
+| v4 协议            | `packages/shared/src/acode-protocol-v4/` + `apps/acode-cli/packages/bootstrap/src/acode-protocol-v4/` | shared 侧约 10.8k 行；bootstrap 侧 51 文件 / 21,737 行 | 目标形态，263 个文件已引用 v4/V4_METHODS                                          |
+| （相关面）ACP 适配 | `apps/acode-cli/packages/cli/src/acp/`                                                                | 约 1.8k 行                                             | 独立对外协议面，不在本收敛范围，但依赖 v4 gateway，M3 需一并回归                  |
 
 混合调用的直接证据：`packages/services/src/acode-agent/acodeAgentService.ts` 同时调用 legacy `acodeProtocolMethods.*` 与 `V4_METHODS.*`；`v4-bridge.ts` 头注列出的过渡钩子（`ensureModelReady` / `afterLegacyStateMutation` / `closeSession` / `createSessionRecord` / child record registration / `resumePersistedSession`）全部注入旧协议实现，「随旧协议一同删除」。
 
@@ -52,6 +52,20 @@
 - 验收：`git grep -l "acodeProtocolMethods\|acodeProtocolClient" -- packages/services/src` 归零；services/desktop 测试绿。
 - 风险（AGENTS.md 要求）：`desktop-continuous` 与 `web-remote-replayable` 两种语义必须同时验证——迁移触及 stream/snapshot/queue 时，本地窗口链路与手机远控恢复链路各跑一遍真实冒烟；owner/lease 与 stale run 防护不得因改名/换路径被绕过。
 
+#### M2-B — shared schema 边界（已落地，2026-10-09）
+
+v4 命令校验仍需要兼容的 MCP server 与 browser ambient context 载荷，但这些 schema
+不能从 `packages/shared/src/acode-protocol/index.ts` 反向导入。两份 schema 已搬到
+`packages/shared/src/acode-protocol-shared.ts`；legacy barrel 只重导出以保持现有
+consumer API，v4 command 直接依赖中立模块。这样 M4 删除 legacy barrel 时，v4 不会
+形成反向依赖或被迫回迁兼容 schema。
+
+验收固定为两层：`apps/acode-cli/tests/architecture-coverage.test.mjs` 的 fixture 必须
+拒绝 `acode-protocol-v4 → acode-protocol`，改为 `acode-protocol-shared` 后通过；同时
+`packages/shared/src/acode-protocol-v4/command.ts` 的源码不得出现 legacy barrel import。
+该 slice 不改变 wire schema、解析结果或 desktop-continuous / web-remote-replayable
+传输语义。
+
 ### M3 — 删除 CLI legacy 协议 server（依赖 M2）
 
 - 内容：删除 `bootstrap/src/acode-protocol/` 48 文件；`v4-bridge.ts` 的过渡钩子内联进 v4 gateway 后删除桥文件；services 作为对端已在 M2 切换，此步是纯删除。
@@ -66,10 +80,15 @@
 
 ## 进度指标（每次发布级验证时更新）
 
-| 指标 | 2026-10-05 基线 | 目标 |
-| --- | --- | --- |
-| services legacy 消费文件数 | 7 | 0（M2） |
-| UI 旧投影消费文件数 | 8 | 0（M1） |
-| bootstrap legacy server 文件数/行数 | 48 / 14,713 | 0（M3） |
-| shared legacy 协议文件行数 | 3,714 | 0（M4） |
-| v4-bridge 过渡钩子数 | 6（见桥头注） | 0（M3） |
+| 指标                                | 2026-10-05 基线 | 2026-10-09 实测                                                         | 目标    |
+| ----------------------------------- | --------------- | ----------------------------------------------------------------------- | ------- |
+| services legacy 消费文件数          | 7               | 6（independentPlanSupport 已切 v4，仅剩 type-only 引用）                | 0（M2） |
+| UI 旧投影消费文件数                 | 8               | 10（新增 v4/composer 两处 `parseModelPickerValue` 消费，M1 需一并迁移） | 0（M1） |
+| bootstrap legacy server 文件数/行数 | 48 / 14,713     | 48（M3 未启动）                                                         | 0（M3） |
+| shared legacy 协议文件行数          | 3,714           | 3,662（M2-B 已外移 MCP/browser schema 至 acode-protocol-shared）        | 0（M4） |
+| v4-bridge 过渡钩子数                | 6（见桥头注）   | 6                                                                       | 0（M3） |
+
+2026-10-09 说明：本批只落地 M2-B（shared schema 边界）与 `v4/capabilities/query` 最小切片；
+其余 legacy 调用（plugins/mcp/skills/workflows hub/automation/offPeak/provider/workspace 写路径与
+inbound interaction 处理）多数尚无 v4 契约，迁移前需先按「新命令只进 v4」扩展协议面并满足
+desktop-continuous / web-remote-replayable 双链路真实冒烟验收，继续按批次推进。

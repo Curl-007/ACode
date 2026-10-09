@@ -212,9 +212,11 @@ export interface SubmitPromptOptionsBase {
 export type SubmitPromptOptions = SubmitPromptOptionsBase &
   import("@acode/contracts").TurnBackgroundAttribution;
 
-export type PrepareUserExecutionBoundary = (
-  options?: Pick<SubmitPromptOptions, "abortSignal" | "traceContext">,
-) => Promise<void>;
+// W1-R3 宿主解耦（specs/cli-workflow-package-boundary.md 规则 1）：全仓唯一定义移入
+// @acode/cli-workflow（host-types.ts），结构不变（abortSignal + traceContext 的可选参数）；
+// 本文件改为 re-export，既有消费方（input-facade / session-facade / workflow facades /
+// create-app / script-workflow-runtime 装配面）形状不变。
+export type { PrepareUserExecutionBoundary } from "@acode/cli-workflow/contract";
 
 export interface SteerTurnOptions {
   inputId?: string;

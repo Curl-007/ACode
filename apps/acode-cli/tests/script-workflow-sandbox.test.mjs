@@ -10,9 +10,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-const { runScriptWorkflowChild } = await import(
-  "../packages/bootstrap/src/app/script-workflow-process.ts"
-);
+const { runScriptWorkflowChild } =
+  await import("../packages/cli-workflow/src/script-workflow-process.ts");
 
 /** 造一份最小合法的脚本文档；body 是**已剥掉 meta 头**的正文（与生产一致）。 */
 function makeDocument(body, dir) {
@@ -73,6 +72,81 @@ test("R4: 脚本在沙箱里跑通，agent() 经 stdio 打到父进程并带回�
   assert.deepEqual(agents[0].payload.prompt, "first");
   assert.equal(agents[0].payload.callPath, "root/agent0");
   assert.equal(agents[1].payload.callPath, "root/agent1");
+});
+
+test("P1 SWF-01: child close 后仍排空已接纳的 agent 请求，再返回脚本结果", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "script-workflow-drain-"));
+  let requestSeen;
+  const seen = new Promise((resolve) => {
+    requestSeen = resolve;
+  });
+  let release;
+  let requestDone = false;
+  const request = new Promise((resolve) => {
+    release = resolve;
+  });
+  try {
+    const run = runScriptWorkflowChild({
+      document: makeDocument('void agent("in-flight"); return "done";', dir),
+      handleEvent: () => {},
+      handleRequest: async () => {
+        requestSeen();
+        await request;
+        requestDone = true;
+        return { value: "agent-result" };
+      },
+      runId: "wf_drain-request",
+      workingDirectory: dir,
+    });
+    await seen;
+    // 脚本正文已 return，若只等待 child close，run 会在这里提前 resolve；真实 owner 仍未排空。
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    assert.equal(requestDone, false);
+    let settled = false;
+    void run.finally(() => {
+      settled = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    assert.equal(settled, false, "child close 不能越过仍在飞的父侧 request");
+    release();
+    const result = await run;
+    assert.equal(result.value, "done");
+    assert.equal(requestDone, true, "终态前必须排空 agent handler");
+  } finally {
+    await rm(dir, { force: true, recursive: true });
+  }
+});
+
+test("P1 SWF-04: already-aborted signal 在入口落盘与 spawn 前 fail closed", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "script-workflow-aborted-"));
+  const controller = new AbortController();
+  controller.abort(new Error("already aborted"));
+  let eventCount = 0;
+  let requestCount = 0;
+  try {
+    await assert.rejects(
+      runScriptWorkflowChild({
+        document: makeDocument('log("must not run"); return 1;', dir),
+        handleEvent: () => {
+          eventCount += 1;
+        },
+        handleRequest: async () => {
+          requestCount += 1;
+          return null;
+        },
+        runId: "wf_already-aborted",
+        signal: controller.signal,
+        workingDirectory: dir,
+      }),
+      /already aborted/,
+    );
+    assert.equal(eventCount, 0);
+    assert.equal(requestCount, 0);
+    const { access } = await import("node:fs/promises");
+    await assert.rejects(access(join(dir, ".acode", "workflow-runs", "wf_already-aborted.mjs")));
+  } finally {
+    await rm(dir, { force: true, recursive: true });
+  }
 });
 
 test("R4: ALS 上下文跨 realm 传播——parallel() 的每个 thunk 拿到自己的 callPath", async () => {
@@ -176,10 +250,7 @@ test("R4: budget 三态——有上限时 spent/remaining 随 agent 结算递增
 });
 
 test("R4: 脚本抛错 → run 以该错误结算，不静默成功", async () => {
-  await assert.rejects(
-    () => runScript(`throw new Error("boom from script");`),
-    /boom from script/,
-  );
+  await assert.rejects(() => runScript(`throw new Error("boom from script");`), /boom from script/);
 });
 
 // ---------------------------------------------------------------------------

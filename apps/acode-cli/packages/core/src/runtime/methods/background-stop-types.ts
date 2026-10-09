@@ -9,7 +9,7 @@
 // internal-turn-methods.ts 的既有 import 路径不变。
 
 import type { BackgroundTaskInfo, BackgroundTaskInfoStatus } from "../deps.js";
-import type { RuntimeTaskSnapshot, RuntimeTaskType } from "../../runtime-task/registry.js";
+import type { RuntimeTaskSnapshot, RuntimeTaskType } from "../../runtime-task/contract.js";
 import type { TraceContext } from "../deps.js";
 
 export type RuntimeBackgroundStopFailureReason =

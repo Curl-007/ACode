@@ -16,7 +16,7 @@ import {
   type GetWorkflowRunOutput,
   type ModelMessageContent,
 } from "@acode/contracts";
-import { formatWorkflowProviderStopError } from "../../runtime-task/notification.js";
+import { formatWorkflowProviderStopError } from "../../runtime-task/contract.js";
 import { formatPublishedArtifactLine } from "../executor/workflow-published-artifacts.js";
 import {
   formatWorkflowRunHealthBlock,

@@ -66,7 +66,7 @@ import {
   type RuntimeTaskPendingMessage,
   type RuntimeTaskRegistry,
   type RuntimeTaskSnapshot,
-} from "../runtime-task/registry.js";
+} from "../runtime-task/contract.js";
 
 export interface ExploreSubagentRuntimeRequest {
   agentId: string;

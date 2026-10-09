@@ -17,8 +17,14 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, readdirSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  symlinkSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -30,12 +36,10 @@ const CLI_SRC = join(REPO_ROOT, "apps", "acode-cli", "packages", "cli", "src");
 
 const { ServiceCollection, IACodeAgentService, IACodeTaskService, IModelSelectionService } =
   await import("../../../packages/services/src/index.ts");
-const { AcpHostAdapter, ACP_TOOL_DENYLIST } = await import(
-  "../packages/cli/src/acp/session-registry.ts"
-);
-const { createInProcessHarnessLink } = await import(
-  "../packages/cli/src/acp/in-process-harness.ts"
-);
+const { AcpHostAdapter, ACP_TOOL_DENYLIST } =
+  await import("../packages/cli/src/acp/session-registry.ts");
+const { createInProcessHarnessLink } =
+  await import("../packages/cli/src/acp/in-process-harness.ts");
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -198,7 +202,12 @@ function createStubServices() {
     session.turnCounter += 1;
     const turnId = `turn-${session.turnCounter}`;
     const complete = (payload) => appendEvent(session, "turn.completed", payload, turnId);
-    appendEvent(session, "turn.started", { turnNumber: session.turnCounter, input: content }, turnId);
+    appendEvent(
+      session,
+      "turn.started",
+      { turnNumber: session.turnCounter, input: content },
+      turnId,
+    );
 
     // F7 测试用：永不终态且不占事件循环句柄（无 setTimeout）。
     if (content.includes("HANG")) {
@@ -233,7 +242,12 @@ function createStubServices() {
         complete({ response: "", tokenCount: 0, duration: 5, resultType: "cancelled" });
         return;
       }
-      appendEvent(session, "part.delta", { messageId: "m-1", field: "text", delta: "allowed path" }, turnId);
+      appendEvent(
+        session,
+        "part.delta",
+        { messageId: "m-1", field: "text", delta: "allowed path" },
+        turnId,
+      );
       complete({ response: "allowed path", tokenCount: 8, duration: 5, resultType: "success" });
       return;
     }
@@ -276,7 +290,12 @@ function createStubServices() {
         { kind: "result", toolCallId: "tc-1", toolName: "Bash", duration: 12 },
         turnId,
       );
-      appendEvent(session, "part.delta", { messageId: "m-1", field: "text", delta: "tool done" }, turnId);
+      appendEvent(
+        session,
+        "part.delta",
+        { messageId: "m-1", field: "text", delta: "tool done" },
+        turnId,
+      );
       complete({ response: "tool done", tokenCount: 5, duration: 5, resultType: "success" });
       return;
     }
@@ -292,14 +311,34 @@ function createStubServices() {
     }
 
     if (content.includes("MULTI")) {
-      appendEvent(session, "part.delta", { messageId: "m-1", field: "text", delta: "Hello " }, turnId);
-      appendEvent(session, "part.delta", { messageId: "m-1", field: "text", delta: "world" }, turnId);
+      appendEvent(
+        session,
+        "part.delta",
+        { messageId: "m-1", field: "text", delta: "Hello " },
+        turnId,
+      );
+      appendEvent(
+        session,
+        "part.delta",
+        { messageId: "m-1", field: "text", delta: "world" },
+        turnId,
+      );
       complete({ response: "Hello world", tokenCount: 2, duration: 5, resultType: "success" });
       return;
     }
 
-    appendEvent(session, "part.delta", { messageId: "m-1", field: "text", delta: `Hello from stub: ${content}` }, turnId);
-    complete({ response: `Hello from stub: ${content}`, tokenCount: 12, duration: 3, resultType: "success" });
+    appendEvent(
+      session,
+      "part.delta",
+      { messageId: "m-1", field: "text", delta: `Hello from stub: ${content}` },
+      turnId,
+    );
+    complete({
+      response: `Hello from stub: ${content}`,
+      tokenCount: 12,
+      duration: 3,
+      resultType: "success",
+    });
   };
 
   const stubAgentService = {
@@ -470,7 +509,11 @@ test("验收1: initialize 能力声明（fs 两形态）且非 ACP 输入回协�
     assert.equal(withFs.result.protocolVersion, 1);
     const caps = withFs.result.agentCapabilities;
     assert.equal(caps.loadSession, false);
-    assert.deepEqual(caps.promptCapabilities, { image: false, audio: false, embeddedContext: false });
+    assert.deepEqual(caps.promptCapabilities, {
+      image: false,
+      audio: false,
+      embeddedContext: false,
+    });
     assert.deepEqual(caps.mcpCapabilities, { http: false, sse: false });
     assert.deepEqual(caps.sessionCapabilities, {});
     assert.deepEqual(withFs.result.authMethods, []);
@@ -503,7 +546,9 @@ test("验收1: initialize 能力声明（fs 两形态）且非 ACP 输入回协�
     await sleep(50);
     h.client.pump();
     assert.equal(
-      h.client.frames.some((frame) => typeof frame.method === "string" && frame.method.startsWith("fs/")),
+      h.client.frames.some(
+        (frame) => typeof frame.method === "string" && frame.method.startsWith("fs/"),
+      ),
       false,
       "适配层不得发送 fs/* 请求",
     );
@@ -552,11 +597,11 @@ test("验收2: 生命周期与流 chunk 顺序——首块新 messageId、append
       sessionId,
       prompt: [{ type: "text", text: "MULTI again" }],
     });
-    await h.client.waitForUpdates(
-      () => h.client.updatesFor(sessionId).length >= 4,
-      "第二轮 chunk",
-    );
-    const secondRound = h.client.updatesFor(sessionId).slice(2).map((params) => params.update);
+    await h.client.waitForUpdates(() => h.client.updatesFor(sessionId).length >= 4, "第二轮 chunk");
+    const secondRound = h.client
+      .updatesFor(sessionId)
+      .slice(2)
+      .map((params) => params.update);
     assert.equal(secondRound.length, 2);
     const secondId = secondRound[0].messageId;
     assert.equal(secondId, secondRound[1].messageId);
@@ -696,9 +741,9 @@ test("验收4a: 权限桥 allow 路径——选项折叠正确、allow 后引擎
     // 引擎收到的是引擎侧 optionId（双向映射还原）。
     assert.equal(h.stub.calls.respondPermission.length, 1);
     assert.equal(h.stub.calls.respondPermission[0].optionId, "allow_once");
-    const texts = h.client.updatesFor(sessionId).map((p) =>
-      p.update.sessionUpdate === "agent_message_chunk" ? p.update.content.text : "",
-    );
+    const texts = h.client
+      .updatesFor(sessionId)
+      .map((p) => (p.update.sessionUpdate === "agent_message_chunk" ? p.update.content.text : ""));
     assert.ok(texts.includes("allowed path"), "allow 后应有 delta");
   } finally {
     await stopAdapter(h);
@@ -747,7 +792,11 @@ test("验收4c: 权限桥无响应——超时按拒绝（fail-closed），绝�
     );
     assert.deepEqual(h.client.responses.get(502).result, { stopReason: "cancelled" });
     assert.equal(h.stub.calls.respondPermission.length, 1);
-    assert.equal(h.stub.calls.respondPermission[0].optionId, "deny", "超时必须回执 deny，不得自动 allow");
+    assert.equal(
+      h.stub.calls.respondPermission[0].optionId,
+      "deny",
+      "超时必须回执 deny，不得自动 allow",
+    );
   } finally {
     await stopAdapter(h);
   }
@@ -801,7 +850,10 @@ test("验收6: 引擎错误映射 JSON-RPC internal + 人话 data 无栈泄漏�
     assert.equal(rejected.error.code, -32602);
     assert.match(rejected.error.message, /outside the agent workspace/);
 
-    const relative = await h.client.request("session/new", { cwd: "relative/path", mcpServers: [] });
+    const relative = await h.client.request("session/new", {
+      cwd: "relative/path",
+      mcpServers: [],
+    });
     assert.equal(relative.error.code, -32602);
     assert.match(relative.error.message, /absolute/);
 
@@ -839,6 +891,49 @@ test("验收6: 引擎错误映射 JSON-RPC internal + 人话 data 无栈泄漏�
     assert.equal(concurrent.error.code, -32052);
     await h.client.notify("session/cancel", { sessionId });
     await h.client.waitForUpdates(() => h.client.responses.has(700), "挂起 prompt 收口");
+  } finally {
+    await stopAdapter(h);
+  }
+});
+
+test("验收6补充: cwd realpath 边界允许 ..cache，拒绝链接越界与缺失目录", async (t) => {
+  const h = await startAdapter();
+  try {
+    await h.client.request("initialize", initializeParams());
+
+    // 词法上以两个点开头但不是父目录段的目录必须允许。
+    const cacheDir = join(h.allowedRoot, "..cache");
+    mkdirSync(cacheDir);
+    const cacheSession = await h.client.request("session/new", {
+      cwd: cacheDir,
+      mcpServers: [],
+    });
+    assert.equal(cacheSession.error, undefined, "合法的 ..cache 目录不应被前缀判断误拒");
+
+    const missing = join(h.allowedRoot, "missing-cwd");
+    const missingResponse = await h.client.request("session/new", {
+      cwd: missing,
+      mcpServers: [],
+    });
+    assert.equal(missingResponse.error.code, -32602);
+    assert.equal(missingResponse.error.data.reason, "invalid_cwd");
+    assert.match(missingResponse.error.message, /existing directory/);
+
+    const outside = mkdtempSync(join(tmpdir(), "acode-acp-outside-"));
+    const link = join(h.allowedRoot, "escape-link");
+    try {
+      symlinkSync(outside, link, process.platform === "win32" ? "junction" : "dir");
+    } catch (error) {
+      // 某些受限 Windows 环境禁用创建链接；其余 cwd 契约仍由本用例覆盖。
+      t.skip(
+        `cannot create directory link: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return;
+    }
+    const linkResponse = await h.client.request("session/new", { cwd: link, mcpServers: [] });
+    assert.equal(linkResponse.error.code, -32602);
+    assert.equal(linkResponse.error.data.reason, "invalid_cwd");
+    assert.match(linkResponse.error.message, /outside the agent workspace/);
   } finally {
     await stopAdapter(h);
   }
@@ -946,7 +1041,9 @@ test("验收8: 适配层源码只 import harness-sdk/server 公开面，零 serv
   // 引擎内部面零命中（services/runtime 等）。
   for (const file of files) {
     const source = readFileSync(file, "utf8");
-    const forbidden = source.match(/@acode\/(services|core|bootstrap|adapters|contracts|rpc|client|tui)[/\s"']/);
+    const forbidden = source.match(
+      /@acode\/(services|core|bootstrap|adapters|contracts|rpc|client|tui)[/\s"']/,
+    );
     assert.equal(forbidden, null, `${file} 不得引用 services/runtime 内部模块`);
   }
 });
@@ -959,7 +1056,8 @@ test("验收8: 适配层零凭据引用", async () => {
       .map((name) => join(acpDir, name)),
     join(CLI_SRC, "acp-command.ts"),
   ];
-  const credentialPattern = /credential|api[-_]?key|password|passphrase|secret|bearer|access[-_]?token|refresh[-_]?token/i;
+  const credentialPattern =
+    /credential|api[-_]?key|password|passphrase|secret|bearer|access[-_]?token|refresh[-_]?token/i;
   for (const file of files) {
     const source = readFileSync(file, "utf8");
     const hit = source.match(credentialPattern);
@@ -967,16 +1065,29 @@ test("验收8: 适配层零凭据引用", async () => {
   }
 });
 
-test("验收8: acode-protocol v4 与 Desktop/Web 零 diff；命令分发只一处注册", async () => {
-  const git = (args) =>
-    execFileSync("git", args, { cwd: REPO_ROOT, encoding: "utf8" }).trim();
-  const protocolDiff = git(["diff", "--name-only", "--", "packages/shared/src/acode-protocol"]);
-  assert.equal(protocolDiff, "", `acode-protocol v4 必须零 diff（实际：${protocolDiff}）`);
-  const protocolStatus = git(["status", "--porcelain", "--", "packages/shared/src/acode-protocol"]);
-  assert.equal(protocolStatus, "", `acode-protocol v4 不得有未跟踪变更（实际：${protocolStatus}）`);
+test("验收8: protocol schema 依赖方向稳定；命令分发只一处注册", async () => {
+  const v4Command = readFileSync(
+    join(REPO_ROOT, "packages/shared/src/acode-protocol-v4/command.ts"),
+    "utf8",
+  );
+  const legacyProtocol = readFileSync(
+    join(REPO_ROOT, "packages/shared/src/acode-protocol/index.ts"),
+    "utf8",
+  );
+  // v4 使用中立 schema，legacy 只保留兼容导出；避免新协议重新依赖 legacy barrel。
+  assert.match(v4Command, /acode-protocol-shared\.js/);
+  assert.doesNotMatch(v4Command, /acode-protocol\/index(?:\.js|\.ts)?/);
+  assert.doesNotMatch(
+    legacyProtocol,
+    /acode-protocol-v4[\\/](?:command|capabilities|transport|core)(?:\.js|\.ts)?/,
+  );
 
   const runSource = readFileSync(join(CLI_SRC, "run.ts"), "utf8");
-  assert.equal((runSource.match(/runAcpCommand/g) ?? []).length, 2, "run.ts 应恰好一处 import + 一处调用注册");
+  assert.equal(
+    (runSource.match(/runAcpCommand/g) ?? []).length,
+    2,
+    "run.ts 应恰好一处 import + 一处调用注册",
+  );
   assert.match(runSource, /case "acp":/);
 });
 
@@ -994,7 +1105,8 @@ test("验收9: 全部出向帧符合 ACP v1 快照（jsonrpc 信封/方法名/up
       prompt: [{ type: "text", text: "TOOLCALL" }],
     });
     await h.client.waitForUpdates(
-      () => h.client.updatesFor(sessionId).some((p) => p.update.sessionUpdate === "tool_call_update"),
+      () =>
+        h.client.updatesFor(sessionId).some((p) => p.update.sessionUpdate === "tool_call_update"),
       "工具事件",
     );
     h.client.pump();
@@ -1053,9 +1165,8 @@ test("验收9: 全部出向帧符合 ACP v1 快照（jsonrpc 信封/方法名/up
 // ── F1：入口断裂——`acp` 子命令必须能物化 provider runtime env ──
 
 test("F1: argv=[acp] 物化 provider runtime env；runAcpCommand 通过第一道检查", async () => {
-  const { prepareCliProviderRuntimeEnv } = await import(
-    "../packages/cli/src/provider-runtime-env.ts"
-  );
+  const { prepareCliProviderRuntimeEnv } =
+    await import("../packages/cli/src/provider-runtime-env.ts");
   const { runAcpCommand } = await import("../packages/cli/src/acp-command.ts");
 
   // 最简启动测试形态（任务指定）：直接断言 prepareCliProviderRuntimeEnv
@@ -1227,12 +1338,10 @@ test("F3: subscribe_events 失败 → session/new 直接失败（不返回哑会
 // ── F4：ACP stdin 行长上限（单一出处 HARNESS_MAX_LINE_LENGTH）──
 
 test("F4: 超长行断链——onOversize 回调后行源完结，常规行不受影响", async () => {
-  const { createStreamLineSource, ACP_LINE_TOO_LONG } = await import(
-    "../packages/cli/src/acp/protocol.ts"
-  );
-  const { HARNESS_MAX_LINE_LENGTH } = await import(
-    "../../../packages/shared/src/harness-api/index.ts"
-  );
+  const { createStreamLineSource, ACP_LINE_TOO_LONG } =
+    await import("../packages/cli/src/acp/protocol.ts");
+  const { HARNESS_MAX_LINE_LENGTH } =
+    await import("../../../packages/shared/src/harness-api/index.ts");
   assert.equal(ACP_LINE_TOO_LONG, -32053, "F9：line_too_long 占自用段 -32053");
 
   const stream = new PassThrough();
@@ -1287,7 +1396,11 @@ test("F6: 并发 session/new 恰一过（原子登记）+ closeSession 后可再
     ]);
     const rejected = [a, b].filter((r) => r.error);
     const accepted = [a, b].filter((r) => !r.error);
-    assert.equal(rejected.length, 1, `并发两请求应恰一过（实际 ${JSON.stringify([a.error?.code, b.error?.code])}）`);
+    assert.equal(
+      rejected.length,
+      1,
+      `并发两请求应恰一过（实际 ${JSON.stringify([a.error?.code, b.error?.code])}）`,
+    );
     assert.equal(accepted.length, 1);
     assert.equal(rejected[0].error.code, -32052);
     assert.match(
@@ -1391,7 +1504,9 @@ test("F8: node-forge.d.ts 以 services 为单一事实源，cli 经 tsconfig fil
 
   const cliTsconfigPath = join(CLI_SRC, "..", "tsconfig.json");
   const cliTsconfig = JSON.parse(readFileSync(cliTsconfigPath, "utf8"));
-  const references = (cliTsconfig.files ?? []).map((entry) => resolve(dirname(cliTsconfigPath), entry));
+  const references = (cliTsconfig.files ?? []).map((entry) =>
+    resolve(dirname(cliTsconfigPath), entry),
+  );
   assert.ok(
     references.includes(resolve(servicesDeclarePath)),
     `cli tsconfig.files 应引用 services 的 node-forge.d.ts（当前 files: ${JSON.stringify(cliTsconfig.files ?? [])}）`,

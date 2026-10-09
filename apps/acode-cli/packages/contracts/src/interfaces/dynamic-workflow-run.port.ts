@@ -16,6 +16,11 @@ import type {
   DynamicWorkflowRunWorkspaceNodeResult,
   DynamicWorkflowRunWorkspaceNodeResultQuery,
 } from "./dynamic-workflow-run-workspace.port.js";
+// 架构断环（specs/architecture-contracts-module.md）：结构化失败类型下沉到叶子文件
+// dynamic-workflow-run-error.port.ts——workspace 文件引用 DynamicWorkflowRunError，
+// 本文件又 `export type * from` workspace 文件，定义留在本文件即成两文件级 import 环。
+// 此处 import 供本文件使用 + 原样再导出，`@acode/contracts` 的导入路径与导出面不变。
+import type { DynamicWorkflowRunError } from "./dynamic-workflow-run-error.port.js";
 import type { DynamicWorkflowRunProgressPayload } from "../events/session.events.js";
 import type { ModelSelection } from "../model/model.js";
 import type { SessionId, ToolCallId } from "./shared.js";
@@ -864,28 +869,8 @@ export interface DynamicWorkflowRunLogEntry {
   at?: number;
 }
 
-/** 结构化失败。`code` 是稳定判别键——模型必须能分辨「进程死了」与「脚本真失败」。 */
-export interface DynamicWorkflowRunError {
-  code: string;
-  message: string;
-  /** 只在 `code === "ProviderStop"` 时在场（引擎 `ProviderStopDetails` 的 JSON 镜像）。 */
-  providerStop?: DynamicWorkflowRunProviderStop;
-}
-
-/** `ProviderStop` 的结构化明细（引擎 `ProviderStopDetails` 的镜像，端口只承载 JSON 形状）。 */
-export interface DynamicWorkflowRunProviderStop {
-  kind: "auth" | "not_configured" | "model_unavailable" | "invalid_request" | "quota" | "other";
-  reason: string;
-  providerId?: string;
-  providerLabel?: string;
-  modelId?: string;
-  providerCode?: string;
-  subagent?: string;
-  subagentName?: string;
-  phase?: string;
-  rawMessage?: string;
-  resetAt?: number;
-}
+// 结构化失败的两个类型住在 dynamic-workflow-run-error.port.ts（断环叶子），原样再导出。
+export type * from "./dynamic-workflow-run-error.port.js";
 
 // 情势截面（阶段 / 子代理 / 健康）的类型住在 dynamic-workflow-run-roster.port.ts（同上），
 // 此处原样再导出以保持 `@acode/contracts` 的导入路径不变。

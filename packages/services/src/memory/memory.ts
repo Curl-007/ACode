@@ -32,4 +32,36 @@ export interface IMemoryService {
   }): Promise<{ content: string; updatedAt: number }>;
 }
 
-export const IMemoryService = createServiceDescriptor<IMemoryService>(ServiceChannels.Memory);
+export const IMemoryService = createServiceDescriptor<IMemoryService>(ServiceChannels.Memory, {
+  allowedMethods: ["listProjectMemories", "readProjectMemoryFile"],
+  argumentValidators: {
+    listProjectMemories: (args) => requireNoArguments(args),
+    readProjectMemoryFile: (args) => {
+      const params = requireParams(args);
+      // workspaceId/fileName 为定位标识：空值属明显异常。
+      // 路径包含性（防越界）由 MemoryService 实现校验，边界只挡畸形形状。
+      requireNonEmptyString(params.workspaceId, "workspaceId");
+      requireNonEmptyString(params.fileName, "fileName");
+    },
+  },
+});
+
+// —— 文件内私有 RPC 参数校验辅助（边界迁移规则禁止跨文件共享 helper，先例 file.ts）——
+
+function requireNoArguments(args: readonly unknown[]): void {
+  if (args.length !== 0) throw new Error("expected no arguments");
+}
+
+/** 恰好一个参数且必须是非 null、非数组对象。 */
+function requireParams(args: readonly unknown[]): Record<string, unknown> {
+  if (args.length !== 1) throw new Error("expected one params object");
+  const value = args[0];
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("expected one params object");
+  }
+  return value as Record<string, unknown>;
+}
+
+function requireNonEmptyString(value: unknown, field: string): void {
+  if (typeof value !== "string" || value.length === 0) throw new Error(`invalid ${field}`);
+}

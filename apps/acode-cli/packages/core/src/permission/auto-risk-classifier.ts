@@ -149,8 +149,13 @@ export function serializeAutoRiskClassifierInput(input: unknown): string {
  */
 export function parseAutoRiskVerdict(raw: string): AutoRiskVerdict | null {
   const withoutThinking = raw.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
-  const candidates = [withoutThinking, extractFencedJson(withoutThinking), extractBraceSlice(withoutThinking)]
-    .filter((candidate): candidate is string => typeof candidate === "string" && candidate.length > 0);
+  const candidates = [
+    withoutThinking,
+    extractFencedJson(withoutThinking),
+    extractBraceSlice(withoutThinking),
+  ].filter(
+    (candidate): candidate is string => typeof candidate === "string" && candidate.length > 0,
+  );
   for (const candidate of candidates) {
     const verdict = parseAutoRiskVerdictCandidate(candidate);
     if (verdict) return verdict;
@@ -179,7 +184,14 @@ function parseAutoRiskVerdictCandidate(text: string): AutoRiskVerdict | null {
     typeof record.reason === "string"
       ? record.reason.slice(0, AUTO_CLASSIFIER_REASON_MAX_CHARS)
       : "";
-  return { kind: "verdict", verdict, confidence: normalizedConfidence, reasonCode, reason, via: "model" };
+  return {
+    kind: "verdict",
+    verdict,
+    confidence: normalizedConfidence,
+    reasonCode,
+    reason,
+    via: "model",
+  };
 }
 
 function extractFencedJson(text: string): string | null {
@@ -199,9 +211,7 @@ function extractBraceSlice(text: string): string | null {
 // ------------------------------------------------------------
 
 export function buildAutoRiskCacheKey(toolName: string, input: unknown): string {
-  const digest = createHash("sha256")
-    .update(serializeAutoRiskClassifierInput(input))
-    .digest("hex");
+  const digest = createHash("sha256").update(serializeAutoRiskClassifierInput(input)).digest("hex");
   return `${toolName}\u0000${digest}`;
 }
 
@@ -280,7 +290,9 @@ export async function resolveAutoGrayZoneDecision(
       toolName: input.toolName,
       input: input.executionInput,
       riskLevel: input.decision.riskLevel,
-      ...(input.decision.sideEffectScope ? { sideEffectScope: input.decision.sideEffectScope } : {}),
+      ...(input.decision.sideEffectScope
+        ? { sideEffectScope: input.decision.sideEffectScope }
+        : {}),
       turnId: input.turnId,
       traceContext: input.traceContext,
       ...(input.signal ? { signal: input.signal } : {}),
@@ -407,14 +419,28 @@ export interface AutoClassifierAuditEntry {
 export type AutoClassifierAuditSink = (entry: AutoClassifierAuditEntry) => void;
 
 let autoClassifierAuditSink: AutoClassifierAuditSink | null = null;
+const sessionAutoClassifierAuditSinks = new Map<string, AutoClassifierAuditSink>();
 
 export function setAutoClassifierAuditSink(sink: AutoClassifierAuditSink | null): void {
   autoClassifierAuditSink = sink;
 }
 
+/** 注册一个 app/session 的分类器审计 sink，返回幂等释放函数。 */
+export function registerAutoClassifierAuditSink(
+  sessionId: string,
+  sink: AutoClassifierAuditSink,
+): () => void {
+  sessionAutoClassifierAuditSinks.set(sessionId, sink);
+  return () => {
+    if (sessionAutoClassifierAuditSinks.get(sessionId) === sink) {
+      sessionAutoClassifierAuditSinks.delete(sessionId);
+    }
+  };
+}
+
 export function writeAutoClassifierAuditEntry(entry: AutoClassifierAuditEntry): void {
   try {
-    autoClassifierAuditSink?.(entry);
+    (sessionAutoClassifierAuditSinks.get(entry.sessionId) ?? autoClassifierAuditSink)?.(entry);
   } catch {
     // 审计失败不得影响权限决策链路。
   }

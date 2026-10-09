@@ -51,4 +51,60 @@ export interface IBroadcastService {
 
 export const IBroadcastService = createServiceDescriptor<IBroadcastService>(
   ServiceChannels.Broadcast,
+  {
+    allowedMethods: [
+      "send",
+      "acquireClaim",
+      "commitClaim",
+      "releaseClaim",
+      "tryClaim",
+      "onMessage",
+    ],
+    argumentValidators: {
+      send: (args) => {
+        if (args.length !== 1) throw new Error("expected one broadcast message");
+        const message = requireRecordField(args[0], "message");
+        requireNonEmptyString(message.channel, "channel");
+        // payload 类型为 unknown：任意值（含缺省）都合法，由接收端按 channel 语义解释。
+      },
+      acquireClaim: (args) => requireClaimKey(args),
+      commitClaim: (args) => requireClaimLease(args),
+      releaseClaim: (args) => requireClaimLease(args),
+      tryClaim: (args) => requireClaimKey(args),
+      // onMessage 是普通事件：订阅走 listen 缓存路径、没有调用参数面，此校验器运行时
+      // 不会执行；登记它只为补全 allowedMethods 全成员的参数校验器声明（ARCH-01 迁移规则）。
+      onMessage: (args) => requireNoArguments(args),
+    },
+  },
 );
+
+// —— 文件内私有 RPC 参数校验辅助（边界迁移规则禁止跨文件共享 helper，先例 file.ts）——
+
+function requireNoArguments(args: readonly unknown[]): void {
+  if (args.length !== 0) throw new Error("expected no arguments");
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function requireRecordField(value: unknown, field: string): Record<string, unknown> {
+  if (!isRecord(value)) throw new Error(`invalid ${field}`);
+  return value;
+}
+
+function requireNonEmptyString(value: unknown, field: string): void {
+  if (typeof value !== "string" || value.length === 0) throw new Error(`invalid ${field}`);
+}
+
+function requireClaimKey(args: readonly unknown[]): void {
+  if (args.length !== 1) throw new Error("expected one claim key");
+  requireNonEmptyString(args[0], "key");
+}
+
+function requireClaimLease(args: readonly unknown[]): void {
+  if (args.length !== 1) throw new Error("expected one claim lease");
+  const lease = requireRecordField(args[0], "lease");
+  requireNonEmptyString(lease.key, "key");
+  requireNonEmptyString(lease.token, "token");
+}

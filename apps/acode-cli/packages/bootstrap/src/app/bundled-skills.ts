@@ -2,7 +2,9 @@ import { createHash, randomUUID } from "node:crypto";
 import { access, mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import type { Logger, SkillRoot } from "@acode/contracts";
-import { DYNAMIC_WORKFLOW_SKILL_NAME } from "@acode/contracts";
+// W1-R3（spec 规则 3）：常量经 @acode/cli-workflow 公开面消费（其唯一定义仍在 contracts，
+// core 的技能门也读它）；bootstrap → 新包方向合法。
+import { DYNAMIC_WORKFLOW_SKILL_NAME } from "@acode/cli-workflow/contract";
 import { candidateBaseDirs } from "./bundled-plugins.js";
 
 /**

@@ -13,7 +13,7 @@ import type { AgentRuntimeDeps } from "../types.js";
 import { resolveRuntimeEmbeddedSearchEnabled } from "../methods/embedded-search-branch.js";
 import { getSessionShellSelectionFromConfig } from "../methods/session-shell-environment.js";
 import { createRuntimeSessionModePort } from "../session-mode-port.js";
-import { shouldSuppressSealedSubagentBashNotification } from "../../runtime-task/notification-policy.js";
+import { shouldSuppressSealedSubagentBashNotification } from "../../runtime-task/contract.js";
 import {
   resolveBuiltInToolAllowlist,
   resolveRuntimeDisallowedTools,
@@ -87,10 +87,10 @@ function registerRuntimeBuiltInTools(runtime: AgentRuntimeInternal, deps: AgentR
     // 提醒）&& 端口在场（bootstrap 装配的 queue 与 nudge 闭包；automationPort 同款
     // 流向）。sessionId 取 runtime 自己的——创建来源会话即提醒投递目标。
     ...(deps.ambientSchedulePort === undefined ||
-        runtime.config.ambient?.enabled !== true ||
-        runtime.config.taskType === "subagent_child" ||
-        runtime.config.taskType === "workflow_child" ||
-        runtime.config.taskType === "nested_workflow_child"
+    runtime.config.ambient?.enabled !== true ||
+    runtime.config.taskType === "subagent_child" ||
+    runtime.config.taskType === "workflow_child" ||
+    runtime.config.taskType === "nested_workflow_child"
       ? {}
       : {
           includeAmbientSchedule: true,

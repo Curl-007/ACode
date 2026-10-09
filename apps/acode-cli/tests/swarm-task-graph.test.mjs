@@ -2272,7 +2272,7 @@ test("2b 装配：worker 子会话继承父会话 mode——configOverrides 显�
   );
   // 工厂本身不动（dwf actor 的 yolo 假设属 dynamic-workflow 域，越界不改）。
   const factory = await fs.readFile(
-    path.resolve(packageRoot(), "packages/bootstrap/src/app/script-workflow-child-runtime.ts"),
+    path.resolve(packageRoot(), "packages/cli-workflow/src/script-workflow-child-runtime.ts"),
     "utf8",
   );
   assert.ok(

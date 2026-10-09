@@ -72,4 +72,65 @@ export interface IOAuthService {
   cancelPending(provider?: OAuthProviderId): Promise<void>;
 }
 
-export const IOAuthService = createServiceDescriptor<IOAuthService>(ServiceChannels.OAuth);
+export const IOAuthService = createServiceDescriptor<IOAuthService>(ServiceChannels.OAuth, {
+  // OAuthService 是 class 实现，private 方法仍存在于运行时 prototype；RPC 只能暴露接口面。
+  allowedMethods: [
+    "getProviders",
+    "getActiveProvider",
+    "restoreCachedSession",
+    "restoreCachedSessionState",
+    "restoreSession",
+    "startOAuth",
+    "startOAuthWithPolling",
+    "pollPendingOAuth",
+    "handleCallback",
+    "refreshToken",
+    "logout",
+    "logoutAll",
+    "cancelPending",
+  ],
+  argumentValidators: {
+    // 只读入口：无参数，拒绝任何多余实参，避免被误当作携带 payload 的写入口。
+    getProviders: (args) => requireNoArguments(args),
+    getActiveProvider: (args) => requireNoArguments(args),
+    restoreCachedSession: (args) => requireNoArguments(args),
+    restoreCachedSessionState: (args) => requireNoArguments(args),
+    restoreSession: (args) => requireNoArguments(args),
+    pollPendingOAuth: (args) => requireNoArguments(args),
+    logoutAll: (args) => requireNoArguments(args),
+    startOAuth: (args) => {
+      if (args.length !== 1 || typeof args[0] !== "string" || args[0].length === 0) {
+        throw new Error("expected provider id");
+      }
+    },
+    startOAuthWithPolling: (args) => {
+      if (args.length !== 1 || typeof args[0] !== "string" || args[0].length === 0) {
+        throw new Error("expected provider id");
+      }
+    },
+    handleCallback: (args) => {
+      if (args.length !== 1 || typeof args[0] !== "string" || args[0].length === 0) {
+        throw new Error("expected callback URL");
+      }
+    },
+    refreshToken: (args) => {
+      if (args.length > 1 || (args.length === 1 && (typeof args[0] !== "string" || args[0].length === 0))) {
+        throw new Error("expected optional provider id");
+      }
+    },
+    logout: (args) => {
+      if (args.length > 1 || (args.length === 1 && (typeof args[0] !== "string" || args[0].length === 0))) {
+        throw new Error("expected optional provider id");
+      }
+    },
+    cancelPending: (args) => {
+      if (args.length > 1 || (args.length === 1 && (typeof args[0] !== "string" || args[0].length === 0))) {
+        throw new Error("expected optional provider id");
+      }
+    },
+  },
+});
+
+function requireNoArguments(args: readonly unknown[]): void {
+  if (args.length !== 0) throw new Error("expected no arguments");
+}

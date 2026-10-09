@@ -27,6 +27,7 @@ import {
   todoReminderRuntimeMetadata,
 } from "../../agent/message-history.js";
 import type { AgentRuntimeInternal } from "../internal.js";
+import { getRuntimeLifecyclePort } from "../runtime-lifecycle.js";
 import { runModelBackedTurnStep } from "./turn-model-step.js";
 import {
   AUTOMATION_MUTATION_TOOL_NAMES,
@@ -123,8 +124,10 @@ export async function runRegularTurnLoop(
         ? this.getTools(state.model).filter((tool) => !turnDisallowedTools.has(tool.name))
         : this.getTools(state.model);
     finishTools();
-    if (!outputTokenRecoveryActive && this.needsPlanModeExitReminder) {
-      this.needsPlanModeExitReminder = false;
+    if (
+      !outputTokenRecoveryActive &&
+      getRuntimeLifecyclePort(this).consumePlanModeExitReminder()
+    ) {
       commitTurnRequestEntries(this, state.turnRequestState, [
         systemReminderAttachmentEntry("plan_mode_exit", buildPlanModeExitReminderBody()),
       ]);
@@ -144,8 +147,10 @@ export async function runRegularTurnLoop(
     // 重启孤儿任务提醒：per-request 档 + runtime_local 一次性触发，评估即消费
     // （specs/runtime-restart-task-reminder.md R2/R3）。首 turn 时本进程尚无后台任务
     // （launch 只发生在 turn 内），registry 谓词在该时点恒真；flag 防同进程重复注入。
-    if (!outputTokenRecoveryActive && !this.runtimeRestartReminderEmitted) {
-      this.runtimeRestartReminderEmitted = true;
+    if (
+      !outputTokenRecoveryActive &&
+      getRuntimeLifecyclePort(this).consumeRuntimeRestartReminder()
+    ) {
       const orphanedTaskIds = findOrphanedBackgroundTaskIds({
         entries: state.turnRequestState.entries,
         isTaskKnownToRuntime: (taskId) => this.runtimeTaskRegistry.get(taskId) !== undefined,

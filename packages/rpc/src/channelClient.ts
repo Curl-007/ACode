@@ -83,10 +83,16 @@ export class ChannelClient implements IChannelClient, IDisposable {
             case ResponseType.PromiseError: {
               this.handlers.delete(id);
               this.pendingRejections.delete(id);
-              const error = new Error(response.data.message) as Error & Record<string, unknown>;
-              error.name = response.data.name;
-              if (response.data.stack) {
-                error.stack = response.data.stack.join("\n");
+              const errorData = response.data as {
+                message: string;
+                name: string;
+                stack?: string[];
+                [key: string]: unknown;
+              };
+              const error = new Error(errorData.message) as Error & Record<string, unknown>;
+              error.name = errorData.name;
+              if (errorData.stack) {
+                error.stack = errorData.stack.join("\n");
               }
               const passthroughKeys = [
                 "code",
@@ -98,9 +104,10 @@ export class ChannelClient implements IChannelClient, IDisposable {
                 "details",
                 "taskId",
                 "traceId",
+                "method",
               ] as const;
               for (const key of passthroughKeys) {
-                const value = response.data[key];
+                const value = errorData[key];
                 if (value !== undefined) {
                   error[key] = value;
                 }

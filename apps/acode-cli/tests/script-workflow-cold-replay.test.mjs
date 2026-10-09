@@ -13,12 +13,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-const { replayScriptWorkflowRuns } = await import(
-  "../packages/bootstrap/src/app/script-workflow-replay.ts"
-);
-const { reduceWorkflowRunsState } = await import(
-  "../../../packages/shared/src/acode-protocol-v4/workflow-runs-reducer.ts"
-);
+const { replayScriptWorkflowRuns } =
+  await import("../packages/cli-workflow/src/script-workflow-replay.ts");
+const { reduceWorkflowRunsState } =
+  await import("../../../packages/shared/src/acode-protocol-v4/workflow-runs-reducer.ts");
 
 const SESSION = "sess_parent-1";
 
@@ -78,7 +76,7 @@ const COMPLETED_EVENTS = [
 
 test("跑完的 run 回放后进投影，方言/阶段/名册/终态一项不少", async () => {
   const { store } = fakeStore({
-    events:  { "wf_cold-1": COMPLETED_EVENTS },
+    events: { "wf_cold-1": COMPLETED_EVENTS },
     runs: [{ id: "wf_cold-1", status: "completed" }],
   });
   const payloads = await replayScriptWorkflowRuns(depsFor(store), {
@@ -175,7 +173,10 @@ test("行非终态但事件流已结算 → 不再补第二条结算（以事件
   const { store } = fakeStore({
     // 进程可能在写完终态事件与改写行之间死掉：此时行还是 running 而事件已经 errored。
     events: {
-      "wf_halfdead-1": [...COMPLETED_EVENTS.slice(0, 4), event("workflow_failed", { message: "boom" })],
+      "wf_halfdead-1": [
+        ...COMPLETED_EVENTS.slice(0, 4),
+        event("workflow_failed", { message: "boom" }),
+      ],
     },
     runs: [{ id: "wf_halfdead-1", status: "running" }],
   });
@@ -187,6 +188,30 @@ test("行非终态但事件流已结算 → 不再补第二条结算（以事件
   const [run] = project(payloads);
   assert.equal(run.status, "errored");
   assert.equal(run.error, "boom");
+});
+
+test("P2 SWF-03：resume 后最新 attempt 没有终态时，旧 attempt 结算不能阻止 interrupted 补偿", async () => {
+  const resumedEvents = [
+    event("workflow_started", { scriptPath: "/tmp/a.workflow.js" }),
+    event("workflow_failed", { message: "first attempt failed" }),
+    event("workflow_started", { scriptPath: "/tmp/a.workflow.js" }),
+  ];
+  const { store } = fakeStore({
+    events: { "wf_resume-cold": resumedEvents },
+    runs: [
+      {
+        failure: { code: "ScriptWorkflowInterrupted", message: "owner exited" },
+        id: "wf_resume-cold",
+        status: "cancelled",
+      },
+    ],
+  });
+  const payloads = await replayScriptWorkflowRuns(depsFor(store), { excludeRunIds: new Set() });
+  const settles = payloads.filter((entry) => entry.eventType === "run-settled");
+  assert.equal(settles.length, 2, "旧失败 + 最新 attempt 的 interrupted 各自结算一次");
+  const [run] = project(payloads);
+  assert.equal(run.status, "stopped");
+  assert.equal(run.stopReason, "interrupted");
 });
 
 test("结算以**行**为准：收敛过的行没有终态事件，也必须按行的词投影", async () => {
@@ -223,11 +248,7 @@ test("结算以**行**为准：收敛过的行没有终态事件，也必须按�
       excludeRunIds: new Set(),
     });
     const settles = payloads.filter((entry) => entry.eventType === "run-settled");
-    assert.equal(
-      settles.length,
-      1,
-      `行是 ${JSON.stringify(rowOverrides)} 时必须恰好补一条结算`,
-    );
+    assert.equal(settles.length, 1, `行是 ${JSON.stringify(rowOverrides)} 时必须恰好补一条结算`);
     const [projected] = project(payloads);
     assert.equal(projected.status, status, `${JSON.stringify(rowOverrides)} 的终态词`);
     assert.equal(projected.stopReason, stopReason, `${JSON.stringify(rowOverrides)} 的 stopReason`);
@@ -253,8 +274,11 @@ test("枚举失败降级成「没有历史 run」，不抛（冷回放是补齐�
 test("单条 run 回放失败不牵连其余（一条损坏的历史不该让整个会话的观察面空白）", async () => {
   const warnings = [];
   const { store } = fakeStore({
-    events:  { "wf_ok-1": COMPLETED_EVENTS },
-    runs: [{ id: "wf_ok-1", status: "completed" }, { id: "wf_bad-1", status: "completed" }],
+    events: { "wf_ok-1": COMPLETED_EVENTS },
+    runs: [
+      { id: "wf_ok-1", status: "completed" },
+      { id: "wf_bad-1", status: "completed" },
+    ],
   });
   // 让 wf_bad-1 的事件读取抛错。
   const original = store.listScriptWorkflowEvents.bind(store);
@@ -277,9 +301,8 @@ test("回放产出与 live 同形：同一段事件走两条路得到逐字节�
   // 这是「复用同一个适配器而不是为冷态另写一份映射」的可执行版本。两份映射就会漂移：
   // live 时 activity_failed 翻成 node-settled{failed}、冷回放时翻成别的，同一条 run
   // 重启前后于是长得不一样。
-  const { createScriptWorkflowProgressAdapter } = await import(
-    "../packages/bootstrap/src/app/script-workflow-progress-adapter.ts"
-  );
+  const { createScriptWorkflowProgressAdapter } =
+    await import("../packages/cli-workflow/src/script-workflow-progress-adapter.ts");
   const live = [];
   const adapter = createScriptWorkflowProgressAdapter({ emit: (progress) => live.push(progress) });
   adapter.registerRun({ parentSessionId: SESSION, runId: "wf_cold-1" });
@@ -288,7 +311,7 @@ test("回放产出与 live 同形：同一段事件走两条路得到逐字节�
   }
 
   const { store } = fakeStore({
-    events:  { "wf_cold-1": COMPLETED_EVENTS },
+    events: { "wf_cold-1": COMPLETED_EVENTS },
     runs: [{ id: "wf_cold-1", status: "completed" }],
   });
   const cold = await replayScriptWorkflowRuns(depsFor(store), { excludeRunIds: new Set() });

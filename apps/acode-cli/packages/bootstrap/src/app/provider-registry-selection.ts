@@ -6,7 +6,12 @@ import {
   type ProviderModel,
 } from "@acode/provider";
 import type { ACodeModelOption } from "@acode/shared";
+// W1-R3：纯解析函数下沉到 @acode/shared/model-selection（workflow 引擎共用同一实现），
+// 本文件保留 re-export，既有消费方（协议层 model-mapper / session-flow）形状不变。
+import { parseProviderQualifiedModelSelection } from "@acode/shared/model-selection";
 import type { ProviderRegistryModelSource } from "./provider-registry-model-runtime.js";
+
+export { parseProviderQualifiedModelSelection };
 
 export interface ResolvedRegistrySelection {
   readonly provider: Provider;
@@ -78,17 +83,6 @@ function parseRequestedModelSelection(
   const normalized = requested.trim();
   if (normalized === "main") return configuredDefault;
   return parseProviderQualifiedModelSelection(normalized);
-}
-
-export function parseProviderQualifiedModelSelection(
-  requested: string,
-): ModelSelection | undefined {
-  const normalized = requested.trim();
-  const separator = normalized.indexOf("/");
-  if (separator <= 0 || separator === normalized.length - 1) return undefined;
-  const providerId = normalized.slice(0, separator).trim();
-  const modelId = normalized.slice(separator + 1).trim();
-  return providerId && modelId ? { providerId, modelId } : undefined;
 }
 
 /**

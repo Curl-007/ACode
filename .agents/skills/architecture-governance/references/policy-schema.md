@@ -2,7 +2,12 @@
 
 `architecture-policy.yaml` contains `version: 1`, `modules`, global thresholds and optional exceptions. The current parser is `scripts/architecture/policy.mjs`.
 
-Each module declares an `id`, one or more `roots`, optional `managed: true`, `requires`, `publicEntrypoints`, `layers`, `layerOrder` and `owner`. Existing legacy modules can remain unmanaged. Dependencies must name registered module IDs.
+Each module declares an `id`, one or more `roots`, optional `managed: true`, `requires`, `publicEntrypoints`, `layers`, `layerOrder`, `owner` and optional `aliasRules`. Existing legacy modules can remain unmanaged. Dependencies must name registered module IDs.
+
+`aliasRules` may be declared globally or on a module. Each rule accepts `pattern`/`target` (or the
+equivalent `from`/`to` or `prefix`/`root`) and supports one `*` wildcard. The checker resolves
+relative imports, workspace package names from `package.json`, these aliases, and literal dynamic
+`import()` calls to source files before applying dependency and public-entrypoint rules.
 
 Global keys are `maxFileLines`, `maxContractLines`, `maxPublicMethods`, `forbidCycles`, `forbidDeepImports` and `managedOnly`. Layer names and ordering come from each module's configuration; do not assume a global layer list.
 

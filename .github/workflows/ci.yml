@@ -60,5 +60,36 @@ jobs:
       - name: Build CLI workspace packages
         run: npx turbo --skip-infer --cwd apps/acode-cli run build --filter='!@acode/cli'
 
+      # 根 typecheck 不包含 CLI 入口；CLI 各包再经自己的配置执行 lint，
+      # 确保独立 workspace 的交付门禁与根扫描同时有效。
+      - name: Typecheck CLI entry
+        run: pnpm --dir apps/acode-cli/packages/cli typecheck
+
+      - name: Typecheck Desktop renderer
+        run: pnpm exec tsc -p packages/desktop/tsconfig.renderer.json --noEmit
+
+      - name: Lint CLI workspace
+        run: pnpm exec turbo --cwd apps/acode-cli run lint
+
       - name: Tests (all packages)
         run: pnpm test
+
+  remote-ssh:
+    name: Remote SSH release smoke
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Stage Linux server release
+        run: pnpm --filter @acode/server-cli stage --target linux-x64
+      - name: Verify remote SSH lifecycle
+        run: pnpm --filter @acode/server-cli verify:remote-ssh

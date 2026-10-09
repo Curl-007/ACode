@@ -3,6 +3,7 @@ import { traceContextToLogContext } from "../deps.js";
 import type { RuntimeCommand, TaskNotificationRuntimeCommand } from "../command-queue.js";
 import { uuidv7 } from "@acode/shared";
 import type { AgentRuntimeInternal } from "../internal.js";
+import { getRuntimeCommandDrainPort } from "../turn-coordination.js";
 import {
   persistBackgroundTaskNotificationBatch,
   shouldSuppressTaskNotificationRuntimeCommand,
@@ -36,9 +37,8 @@ export function enqueueRuntimeCommand(this: AgentRuntimeInternal, command: Runti
 }
 
 export async function drainRuntimeCommandQueue(this: AgentRuntimeInternal): Promise<void> {
-  if (this.runtimeCommandDrainActive) return;
-
-  this.runtimeCommandDrainActive = true;
+  const drainLease = getRuntimeCommandDrainPort(this).tryAcquire();
+  if (!drainLease) return;
   try {
     let commands: readonly RuntimeCommand[];
     // 将同批后台通知合并到一个模型轮，避免每条通知都单独发起请求。
@@ -62,7 +62,7 @@ export async function drainRuntimeCommandQueue(this: AgentRuntimeInternal): Prom
       await runRuntimeCommand.call(this, firstCommand);
     }
   } finally {
-    this.runtimeCommandDrainActive = false;
+    drainLease.release();
   }
 
   if (this.runtimeCommandQueue.hasPending() && this.foregroundPromotionLease === undefined) {
@@ -169,6 +169,7 @@ async function runPostCommandActiveTargetLoop(
     try {
       return await runActiveTargetContinuationLoop.call(this, {
         abortSignal,
+        branchGeneration: command.branchGeneration,
         traceContext: command.traceContext,
         trigger: "task-notification",
         verifyBeforeFirstContinue: true,
@@ -269,6 +270,7 @@ async function runRuntimeCommand(
         summary: command.summary.slice(0, 200),
       });
       const messageId = await persistSubagentMessageCommand.call(this, command);
+      if (!messageId || isStaleBranchRuntimeCommand(this, command)) return;
       await this.executeTurnCommand(command.text, undefined, {
         abortSignal: foregroundExecution.controller.signal,
         inputSource: "subagent_message",
@@ -334,6 +336,7 @@ async function runTaskNotificationBatch(
       this,
       eligibleCommands as [TaskNotificationRuntimeCommand, ...TaskNotificationRuntimeCommand[]],
     );
+    if (!persisted || isStaleBranchRuntimeCommand(this, firstCommand)) return;
     this.logger?.info?.("Background task notification batch started", {
       ...traceContextToLogContext(firstCommand.traceContext),
       batchSize: eligibleCommands.length,
@@ -365,6 +368,7 @@ async function runTaskNotificationBatch(
       skipUserPromptSubmitHooks: true,
       traceContext: firstCommand.traceContext,
     });
+    if (isStaleBranchRuntimeCommand(this, firstCommand)) return;
     await runPostCommandActiveTargetLoop.call(
       this,
       firstCommand,

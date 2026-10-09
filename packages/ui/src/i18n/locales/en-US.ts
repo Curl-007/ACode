@@ -1493,6 +1493,16 @@ const enUS: Record<string, string> = {
   "ssh.connect": "Connect",
   "ssh.cancel": "Cancel",
   "ssh.connecting": "Connecting...",
+  "ssh.hostKeyUnknown.title": "Approve SSH host key?",
+  "ssh.hostKeyUnknown.description":
+    "The SSH host {host}:{port} is not trusted yet. Verify this fingerprint before approving: {candidate}.",
+  "ssh.hostKeyUnknown.approve": "Approve host key",
+  "ssh.hostKeyChanged.title": "SSH host key changed",
+  "ssh.hostKeyChanged.description":
+    "The SSH host {host}:{port} presented a different key. New fingerprint: {candidate}. Previously trusted: {expected}. Replace the trusted key only if you verified this change.",
+  "ssh.hostKeyChanged.replace": "Replace trusted key",
+  "ssh.hostKey.reject": "Reject",
+  "ssh.hostKey.none": "none",
   "ssh.success": "Connected. Opened in a new window.",
   "ssh.validation.required": "Host and username are required",
   "ssh.validation.passwordRequired": "Password is required",

@@ -445,7 +445,8 @@ test("(review F10) bootstrap wires the audit sink to the info-level logger", asy
     join(import.meta.dirname, "..", "packages", "bootstrap", "src", "app", "create-app.ts"),
     "utf8",
   );
-  assert.match(source, /setBashReflexAuditSink\(/);
+  // 多 App 场景使用按 session 路由的注册 API，避免进程级 sink 串线。
+  assert.match(source, /registerBashReflexAuditSink\(/);
   assert.match(source, /permissionAuditLogger\.info\(/);
   assert.match(source, /entry\.justification/);
   assert.match(source, /entry\.command/);

@@ -13,7 +13,7 @@ import {
   type TaskOutputResult,
   type TaskOutputTask,
 } from "@acode/contracts";
-import type { RuntimeTaskSnapshot } from "../../runtime-task/registry.js";
+import type { RuntimeTaskSnapshot } from "../../runtime-task/contract.js";
 import { formatPersistedOutputEnvelope } from "../result-persistence-format.js";
 import type {
   ToolEntry,
@@ -61,7 +61,7 @@ const taskOutputHandler: ToolHandler = async (input, context) => {
     // abort 时吞掉后续 completion notification。异步投影不会被外层取消竞态强制
     // 停止，因此 await 返回后必须再次检查 signal，再提交 claim。
     throwIfAborted(context.abortSignal);
-    markTaskNotified(initialTask, context);
+    if (canClaimTaskResult(initialTask)) markTaskNotified(initialTask, context);
     return taskOutputResult("success", projectedTask);
   }
 
@@ -75,7 +75,7 @@ const taskOutputHandler: ToolHandler = async (input, context) => {
   }
   const projectedTask = await projectTask(task, context);
   throwIfAborted(context.abortSignal);
-  markTaskNotified(task, context);
+  if (canClaimTaskResult(task)) markTaskNotified(task, context);
   return taskOutputResult("success", projectedTask);
 };
 
@@ -253,6 +253,16 @@ const isTaskActive = (status: string): boolean => status === "running" || status
 function markTaskNotified(task: RuntimeTaskSnapshot, context: ToolExecutionContext): void {
   context.runtimeTaskRegistry?.update(task.taskId, (current) =>
     current.notified ? current : { ...current, notified: true },
+  );
+}
+
+/**
+ * Script Workflow 的完成快照必须先带回 `output.response` 才算交付；老的空快照不能抢走
+ * 后台通知，避免 TaskOutput 返回空字符串后模型永远收不到真实结果。
+ */
+function canClaimTaskResult(task: RuntimeTaskSnapshot): boolean {
+  return (
+    task.type !== "local_workflow" || task.status !== "completed" || task.resultText !== undefined
   );
 }
 

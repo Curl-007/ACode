@@ -1,14 +1,15 @@
 /* eslint-disable max-lines -- 通信频道和请求响应映射必须集中定义，避免跨进程 channel 字符串散落。 */
+// 直引具体叶子模块而非 "./index.js" barrel：index.ts 对本文件 export *，
+// 反向引用 barrel 会形成 channels ↔ index 的文件级循环依赖（forbidCycles 命中）。
 import type {
-  ResourceUsageSnapshot,
   LoadCliMcpFromUserDirectoryRequest,
   LoadCliMcpFromUserDirectoryResult,
   MigrateLegacyCommonMcpRequest,
   MigrateLegacyCommonMcpResult,
   SaveCliMcpToUserDirectoryRequest,
-} from "./index.js";
+} from "./mcp.js";
 import type { OAuthStateRegistration } from "./oauth.js";
-import type { AppSettings, Locale } from "./protocol.js";
+import type { AppSettings, Locale, ResourceUsageSnapshot } from "./protocol.js";
 import type { StorageCleanRequest, StorageCleanResult, StorageUsageSnapshot } from "./storage.js";
 import type {
   CancelPendingRemoteConnectionRequest,
@@ -159,6 +160,10 @@ export const PlatformChannels = {
   PrintToPdf: "acode:print-to-pdf",
   /** Main → Renderer：转发远程连接过程日志 */
   RemoteConnectionLog: "acode:remote-connection-log",
+  /** Main → Renderer：认证前等待用户确认的 SSH 主机密钥候选 */
+  RemoteSSHHostKeyChallenge: "acode:remote-ssh-host-key-challenge",
+  /** Renderer → Main：回传绑定 requestId/challengeId 的 SSH 主机密钥决策 */
+  RespondSSHHostKeyChallenge: "acode:respond-ssh-host-key-challenge",
   /** Main → Renderer：远程 workspace session 已关闭 */
   RemoteSessionClosed: "acode:remote-session-closed",
   /** Main → Renderer：Bot 已触发远端 workspace 重连成功 */
@@ -478,6 +483,8 @@ export const HostMessageTypes = {
   ConnectRemoteWorkspace: "connect-remote-workspace",
   /** main → window Host：取消尚未完成的远程连接 */
   CancelRemoteWorkspaceConnect: "cancel-remote-workspace-connect",
+  /** main → window Host：回传已绑定 request/challenge 的 SSH 主机密钥决策 */
+  SSHHostKeyDecision: "ssh-host-key-decision",
   /** main → window Host：为 logical session 绑定 canonical workspace 身份 */
   BindRemoteWorkspaceContext: "bind-remote-workspace-context",
   /** main → window Host：释放一个远程 logical session */
@@ -534,6 +541,8 @@ export const HostResponseTypes = {
   DatabaseStartupState: "database-startup-state",
   /** window Host → main：按 requestId 上报远程连接过程日志 */
   RemoteWorkspaceConnectionLog: "remote-workspace-connection-log",
+  /** window Host → main：认证前等待 Renderer 决策的 SSH 主机密钥候选 */
+  RemoteSSHHostKeyChallenge: "remote-ssh-host-key-challenge",
   /** window Host → main：远程 logical session 已建立 */
   RemoteWorkspaceConnected: "remote-workspace-connected",
   /** window Host → main：远程 logical session 建立失败 */
@@ -660,6 +669,14 @@ export interface PlatformChannelMap {
       message: string;
       timestamp: string;
     };
+    response: void;
+  };
+  [PlatformChannels.RemoteSSHHostKeyChallenge]: {
+    request: import("./platform.js").RemoteSSHHostKeyChallenge;
+    response: void;
+  };
+  [PlatformChannels.RespondSSHHostKeyChallenge]: {
+    request: import("./platform.js").RespondSSHHostKeyChallengeRequest;
     response: void;
   };
   [PlatformChannels.RemoteSessionClosed]: {

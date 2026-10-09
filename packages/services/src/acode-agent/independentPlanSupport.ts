@@ -1,5 +1,10 @@
-import { acodeProtocolMethods, acodeRuntimeCapabilitiesSchema } from "@acode/shared";
 import type { ACodeProtocolClient } from "./acodeProtocolClient.js";
+import {
+  V4_CAPABILITY_KEYS,
+  V4_METHODS,
+  v4CapabilityQueryParamsSchema,
+  v4CapabilityQueryResultSchema,
+} from "@acode/shared/acode-protocol-v4";
 
 const checks = new WeakMap<object, Promise<void>>();
 
@@ -10,9 +15,18 @@ export function ensureIndependentPlanSupport(
   const cached = checks.get(client);
   if (cached) return cached;
   const check = client
-    .request(acodeProtocolMethods.runtimeCapabilities, {}, acodeRuntimeCapabilitiesSchema)
+    .request(
+      V4_METHODS.capabilitiesQuery,
+      v4CapabilityQueryParamsSchema.parse({ capability: V4_CAPABILITY_KEYS.independentPlanState }),
+      v4CapabilityQueryResultSchema,
+    )
     .then((result) => {
-      if (result.independentPlanState !== true) throw new Error("proto.independentPlanUnsupported");
+      if (
+        result.capability !== V4_CAPABILITY_KEYS.independentPlanState ||
+        result.supported !== true
+      ) {
+        throw new Error("proto.independentPlanUnsupported");
+      }
     })
     .catch((cause: unknown) => {
       checks.delete(client);

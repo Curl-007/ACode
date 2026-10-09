@@ -1,7 +1,11 @@
-import { gitFileNames } from "./git-file-names.mjs";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
+import { discoverTsconfigAliases, discoverWorkspacePackages } from "./discovery.mjs";
+import { cycleViolations } from "./graph.mjs";
+import { architectureCoverage } from "./coverage.mjs";
+import { countPhysicalLines, gitHeadLineCount, RATCHET_EXEMPT_PATTERN } from "./ratchet.mjs";
+import { changedFilesFromGit, readBaseline, updateBaseline } from "./state.mjs";
 
 import {
   countPublicMethods,
@@ -15,6 +19,7 @@ import {
   posix,
   publicEntrypointMatches,
   resolveImport,
+  isResolvableWorkspaceSpecifier,
 } from "./policy.mjs";
 
 function fingerprint(rule, file, detail = "") {
@@ -31,9 +36,17 @@ function repoRelative(file) {
   return rel.startsWith("..") ? file : rel;
 }
 
+function isSharedV4ToLegacyProtocolImport(file, target, cwd) {
+  const importer = posix(path.relative(cwd, file));
+  const imported = posix(path.relative(cwd, target));
+  return (
+    importer.startsWith("packages/shared/src/acode-protocol-v4/") &&
+    imported.startsWith("packages/shared/src/acode-protocol/")
+  );
+}
+
 // legacy ratchet 的豁免面：测试/评测文件不参与「超限文件只减不增」基线，
 // 避免门禁阻碍补测试（长测试文件是常态，且测试不是生产代码债）。
-const RATCHET_EXEMPT_PATTERN = /(?:\.test\.[cm]?[jt]sx?$)|(?:^|\/)(?:tests?|__tests__|evals)(?:\/|$)/;
 
 function violation({ rule, file, detail, message, module, global = false }) {
   const relative = posix(repoRelative(file));
@@ -48,54 +61,12 @@ function violation({ rule, file, detail, message, module, global = false }) {
   };
 }
 
-function cycleViolations(edges, policy, modulesByFile) {
-  const state = new Map();
-  const stack = [];
-  const cycles = [];
-  function visit(node) {
-    state.set(node, 1);
-    stack.push(node);
-    for (const next of edges.get(node) ?? []) {
-      if (!modulesByFile.get(next)?.managed && policy.global.managedOnly) continue;
-      if (state.get(next) === 1) {
-        const index = stack.indexOf(next);
-        cycles.push(stack.slice(index).concat(next));
-      } else if (!state.get(next)) visit(next);
-    }
-    stack.pop();
-    state.set(node, 2);
-  }
-  for (const node of edges.keys()) if (!state.get(node)) visit(node);
-  const unique = new Map();
-  for (const cycle of cycles) {
-    const detail = [...new Set(cycle)].sort().join(" -> ");
-    const file = cycle[0];
-    unique.set(
-      detail,
-      violation({
-        rule: "cycle",
-        file,
-        detail,
-        module: modulesByFile.get(file),
-        message: `检测到循环依赖：${cycle.map((item) => posix(item)).join(" -> ")}`,
-        global: true,
-      }),
-    );
-  }
-  return [...unique.values()];
-}
-
-async function readBaseline(cwd) {
-  try {
-    return JSON.parse(await fs.readFile(path.join(cwd, ".architecture-baseline.json"), "utf8"));
-  } catch {
-    return { version: 1, violations: [] };
-  }
-}
-
 export async function checkArchitecture({ cwd = process.cwd(), changedFiles = null } = {}) {
   const policy = await loadPolicy(cwd);
   const files = await discoverFiles(policy);
+  const workspacePackages = await discoverWorkspacePackages(policy);
+  const tsconfigAliases = await discoverTsconfigAliases(policy);
+  const aliasRules = [...policy.global.aliasRules, ...tsconfigAliases];
   const knownFiles = new Set(files);
   const modulesByFile = new Map(files.map((file) => [file, moduleForFile(file, policy)]));
   const edges = new Map(files.map((file) => [file, []]));
@@ -177,12 +148,11 @@ export async function checkArchitecture({ cwd = process.cwd(), changedFiles = nu
   for (const file of files) {
     const module = modulesByFile.get(file);
     if (!module) continue;
-    // 未纳管模块只参与 max-file-lines 的「只减不增」ratchet，其余规则维持
-    // managedOnly 语义（2026-10-05 深度审查：此前 15/16 模块未纳管导致
-    // 400 行上限对 99% 代码完全不生效，489 个超限文件无一被度量）。
+    // legacy 仍不冒充全面纳管，但 imports 必须进入反向图，并遵守目标 managed 模块入口。
     const legacyRatchet = policy.global.managedOnly && !module.managed;
     const source = await fs.readFile(file, "utf8");
-    const lines = source.split(/\r?\n/).length;
+    // 与 gitHeadLineCount 使用相同的物理行定义，避免末尾换行造成假回长。
+    const lines = countPhysicalLines(source);
     if (
       lines > policy.global.maxFileLines &&
       !isException(policy, "max-file-lines", file, cwd) &&
@@ -204,47 +174,48 @@ export async function checkArchitecture({ cwd = process.cwd(), changedFiles = nu
         }),
       );
     }
-    if (legacyRatchet) continue;
-    if (path.basename(file).startsWith("contract.") && lines > policy.global.maxContractLines) {
-      violations.push(
-        violation({
-          rule: "max-contract-lines",
-          file,
-          detail: String(lines),
-          module,
-          message: `契约 ${lines} 行，超过上限 ${policy.global.maxContractLines} 行`,
-        }),
-      );
+    if (!legacyRatchet) {
+      if (path.basename(file).startsWith("contract.") && lines > policy.global.maxContractLines) {
+        violations.push(
+          violation({
+            rule: "max-contract-lines",
+            file,
+            detail: String(lines),
+            module,
+            message: `契约 ${lines} 行，超过上限 ${policy.global.maxContractLines} 行`,
+          }),
+        );
+      }
+      const disableCount = source
+        .split(/\r?\n/)
+        .filter((line) => /(?:oxlint|eslint)-disable/.test(line)).length;
+      if (disableCount > 0 && !isException(policy, "disable-count", file, cwd)) {
+        violations.push(
+          violation({
+            rule: "disable-count",
+            file,
+            detail: String(disableCount),
+            module,
+            message: `文件包含 ${disableCount} 条 lint disable`,
+          }),
+        );
+      }
+      if (
+        path.basename(file) === "contract.ts" &&
+        countPublicMethods(source) > policy.global.maxPublicMethods
+      ) {
+        violations.push(
+          violation({
+            rule: "max-public-methods",
+            file,
+            detail: String(countPublicMethods(source)),
+            module,
+            message: `契约公开方法超过上限 ${policy.global.maxPublicMethods}`,
+          }),
+        );
+      }
     }
-    const disableCount = source
-      .split(/\r?\n/)
-      .filter((line) => /(?:oxlint|eslint)-disable/.test(line)).length;
-    if (disableCount > 0 && !isException(policy, "disable-count", file, cwd)) {
-      violations.push(
-        violation({
-          rule: "disable-count",
-          file,
-          detail: String(disableCount),
-          module,
-          message: `文件包含 ${disableCount} 条 lint disable`,
-        }),
-      );
-    }
-    if (
-      path.basename(file) === "contract.ts" &&
-      countPublicMethods(source) > policy.global.maxPublicMethods
-    ) {
-      violations.push(
-        violation({
-          rule: "max-public-methods",
-          file,
-          detail: String(countPublicMethods(source)),
-          module,
-          message: `契约公开方法超过上限 ${policy.global.maxPublicMethods}`,
-        }),
-      );
-    }
-    const importerLayer = layerForFile(file, module);
+    const importerLayer = legacyRatchet ? null : layerForFile(file, module);
     const layerOrder = module.layerOrder ?? [];
     for (const specifier of importsOf(file, source)) {
       if (
@@ -261,8 +232,43 @@ export async function checkArchitecture({ cwd = process.cwd(), changedFiles = nu
           }),
         );
       }
-      const target = resolveImport(file, specifier, knownFiles);
-      if (!target) continue;
+      const target = resolveImport(file, specifier, knownFiles, {
+        aliasRules,
+        cwd,
+        module,
+        workspacePackages,
+      });
+      if (!target) {
+        if (
+          !legacyRatchet &&
+          isResolvableWorkspaceSpecifier(specifier, {
+            aliasRules: [...aliasRules, ...module.aliasRules],
+            workspacePackages,
+          })
+        ) {
+          violations.push(
+            violation({
+              rule: "unresolved-workspace-import",
+              file,
+              detail: specifier,
+              module,
+              message: `工作区导入无法解析到源码文件: ${specifier}`,
+            }),
+          );
+        }
+        continue;
+      }
+      if (isSharedV4ToLegacyProtocolImport(file, target, cwd)) {
+        violations.push(
+          violation({
+            rule: "v4-imports-legacy-protocol",
+            file,
+            detail: target,
+            module,
+            message: "protocol v4 不能反向依赖 legacy acode-protocol；共享 schema 必须位于中立模块",
+          }),
+        );
+      }
       edges.get(file).push(target);
       const targetModule = modulesByFile.get(target);
       if (targetModule?.id === module.id) {
@@ -285,7 +291,11 @@ export async function checkArchitecture({ cwd = process.cwd(), changedFiles = nu
           );
         }
       }
-      if (module.id === "ui" && /(?:^|\/)(repo|runtime|services?)(?:\/|$)/i.test(posix(target))) {
+      if (
+        !legacyRatchet &&
+        module.id === "ui" &&
+        /(?:^|\/)(repo|runtime|services?)(?:\/|$)/i.test(posix(target))
+      ) {
         violations.push(
           violation({
             rule: "ui-implementation-import",
@@ -300,7 +310,7 @@ export async function checkArchitecture({ cwd = process.cwd(), changedFiles = nu
         continue;
       }
       const declaredRequires = manifestRequiresByModule.get(module.id) ?? module.requires;
-      if (!declaredRequires.includes(targetModule.id)) {
+      if (!legacyRatchet && !declaredRequires.includes(targetModule.id)) {
         violations.push(
           violation({
             rule: "module-dependency",
@@ -311,7 +321,11 @@ export async function checkArchitecture({ cwd = process.cwd(), changedFiles = nu
           }),
         );
       }
-      if (policy.global.forbidDeepImports && targetModule.publicEntrypoints.length > 0) {
+      if (
+        policy.global.forbidDeepImports &&
+        targetModule.publicEntrypoints.length > 0 &&
+        (!legacyRatchet || (targetModule.managed && !RATCHET_EXEMPT_PATTERN.test(posix(file))))
+      ) {
         const targetRelative = posix(path.relative(cwd, target));
         const allowed = publicEntrypointMatches(target, targetModule, cwd);
         if (!allowed) {
@@ -340,7 +354,8 @@ export async function checkArchitecture({ cwd = process.cwd(), changedFiles = nu
     }
   }
 
-  if (policy.global.forbidCycles) violations.push(...cycleViolations(edges, policy, modulesByFile));
+  if (policy.global.forbidCycles)
+    violations.push(...cycleViolations(edges, policy, modulesByFile, violation));
   const baseline = await readBaseline(cwd);
   const baselineFingerprints = new Set(baseline.violations.map((item) => item.fingerprint));
   const changed = changedFiles
@@ -364,8 +379,30 @@ export async function checkArchitecture({ cwd = process.cwd(), changedFiles = nu
   const scoped = changed
     ? violations.filter((item) => item.global || changed.has(path.resolve(cwd, item.file)))
     : violations;
-  const baselineViolations = scoped.filter((item) => baselineFingerprints.has(item.fingerprint));
-  const newViolations = scoped.filter((item) => !baselineFingerprints.has(item.fingerprint));
+  const regrown = [];
+  const baselineViolations = [];
+  const newViolations = [];
+  for (const item of scoped) {
+    if (!baselineFingerprints.has(item.fingerprint)) {
+      newViolations.push(item);
+      continue;
+    }
+    // Legacy ratchet 的 fingerprint 不含行数；一旦 HEAD 中该文件已经收回上限，
+    // 工作树再次超限就是回长，必须重新成为 new，而不能靠旧 baseline 永久放行。
+    if (item.rule === "max-file-lines" && item.detail === "legacy-over-limit") {
+      const headLines = await gitHeadLineCount(cwd, path.resolve(cwd, item.file));
+      if (headLines !== null && headLines <= policy.global.maxFileLines) {
+        regrown.push({
+          ...item,
+          rule: "max-file-lines-regrown",
+          message: `${item.message}；文件在 HEAD 已收回上限后再次超限`,
+        });
+        newViolations.push(regrown[regrown.length - 1]);
+        continue;
+      }
+    }
+    baselineViolations.push(item);
+  }
   // ratchet 总量从未过滤的全量违规统计（--changed 模式下 scoped 只是子集，
   // 报告里需要看到全仓存量趋势，判断「只减不增」是否在兑现）。
   const legacyOverLimit = violations.filter(
@@ -376,24 +413,11 @@ export async function checkArchitecture({ cwd = process.cwd(), changedFiles = nu
     violations: scoped,
     baselineViolations,
     newViolations,
+    regrown,
     baseline,
+    coverage: architectureCoverage(policy, files, modulesByFile),
     summary: { legacyOverLimit },
   };
-}
-
-export async function updateBaseline({ cwd = process.cwd(), violations }) {
-  const entries = [...violations].sort((a, b) => a.fingerprint.localeCompare(b.fingerprint));
-  const filename = path.join(cwd, ".architecture-baseline.json");
-  await fs.writeFile(filename, `${JSON.stringify({ version: 1, violations: entries }, null, 2)}\n`);
-  return entries;
-}
-
-export async function changedFilesFromGit(cwd = process.cwd()) {
-  const [diff, untracked] = await Promise.all([
-    gitFileNames(cwd, ["diff", "--name-only", "-z", "HEAD"]),
-    gitFileNames(cwd, ["ls-files", "--others", "--exclude-standard", "-z"]),
-  ]);
-  return [...new Set([...diff, ...untracked])];
 }
 
 // generateContext / formatReport / formatMarkdownReport 已抽至 reporting.mjs
@@ -401,4 +425,4 @@ export async function changedFilesFromGit(cwd = process.cwd()) {
 // （architecture-check.mjs 与技能脚本从本模块导入）。
 export { generateContext, formatReport, formatMarkdownReport } from "./reporting.mjs";
 
-export { loadPolicy };
+export { loadPolicy, updateBaseline, changedFilesFromGit };

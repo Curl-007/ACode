@@ -1,11 +1,12 @@
 import type { SubmitPromptOptions, ACodeApp } from "./types.js";
+import type { ScriptWorkflowStorePort } from "@acode/contracts";
 import {
+  isScriptWorkflowStore,
+  reconcileOrphanScriptWorkflowRuns,
   ScriptWorkflowRuntime,
+  createScriptWorkflowToolPort,
   type ScriptWorkflowRuntimeDeps,
-} from "./script-workflow-runtime.js";
-import { createScriptWorkflowToolPort } from "./script-workflow-tool-port.js";
-import { reconcileOrphanScriptWorkflowRuns } from "./script-workflow-reconcile.js";
-import { isScriptWorkflowStore } from "./script-workflow-utils.js";
+} from "@acode/cli-workflow/contract";
 
 type ScriptWorkflowFacade = Pick<
   ACodeApp,
@@ -24,10 +25,7 @@ type ScriptWorkflowBridgeDeps = Omit<ScriptWorkflowRuntimeDeps, "runtime"> & {
   getRuntime: () => ScriptWorkflowRuntimeDeps["runtime"];
 };
 
-type ScriptWorkflowRuntimeOptions = Pick<
-  SubmitPromptOptions,
-  "abortSignal" | "traceContext"
-> & {
+type ScriptWorkflowRuntimeOptions = Pick<SubmitPromptOptions, "abortSignal" | "traceContext"> & {
   onEvent?: (event: unknown) => void | Promise<void>;
 };
 
@@ -42,17 +40,45 @@ export function createScriptWorkflowBridge(deps: ScriptWorkflowBridgeDeps): Scri
   //   2. 冷回放**不依赖收敛已经跑完**——它按行铸造结算，而行的状态词非终态时一律归到
   //      interrupted（script-workflow-replay.ts 的 settleEventTypeForRow）。
   //      于是「收敛前回放」与「收敛后回放」得到同一个投影状态，竞态是良性的。
+  const ownerToken = deps.ownerToken ?? crypto.randomUUID();
+  const ownerReady = deps.ownerReady ??
+    (isScriptWorkflowStore(deps.sessionStore) && deps.sessionStore.claimWorkflowSessionOwner
+      ? deps.sessionStore
+          .claimWorkflowSessionOwner({ ownerToken, parentSessionId: deps.sessionId })
+          .then((lease) =>
+            lease === null
+              ? null
+              : { ownerGeneration: lease.ownerGeneration, ownerToken: lease.ownerToken },
+          )
+          .catch((error) => {
+            deps.logger?.warn?.("Script workflow owner lease claim failed", {
+              errorMessage: error instanceof Error ? error.message : String(error),
+              event: "script_workflow.owner.claim_failed",
+              module: "bootstrap.app",
+            });
+            return null;
+          })
+      : Promise.resolve(undefined));
   if (isScriptWorkflowStore(deps.sessionStore)) {
-    void reconcileOrphanScriptWorkflowRuns({
-      logger: deps.logger,
-      parentSessionId: deps.sessionId,
-      store: deps.sessionStore,
+    void ownerReady.then((owner) => {
+      // A foreign active owner must never be reconciled by this process.
+      if (owner === null) return;
+      void reconcileOrphanScriptWorkflowRuns({
+        logger: deps.logger,
+        parentSessionId: deps.sessionId,
+        store: deps.sessionStore as unknown as ScriptWorkflowStorePort,
+        ...(owner === undefined ? {} : owner),
+      });
     });
   }
 
   let runtime: ScriptWorkflowRuntime | undefined;
   const getRuntime = () => {
-    runtime ??= new ScriptWorkflowRuntime({ ...deps, runtime: deps.getRuntime() });
+    runtime ??= new ScriptWorkflowRuntime({
+      ...deps,
+      ownerReady,
+      runtime: deps.getRuntime(),
+    });
     return runtime;
   };
   return {
@@ -67,8 +93,10 @@ export function createScriptWorkflowBridge(deps: ScriptWorkflowBridgeDeps): Scri
       logger: deps.logger,
       sessionId: deps.sessionId,
       sessionStore: deps.sessionStore,
+      remoteSessionId: deps.remoteSessionId,
       storageRoot: deps.storageRoot,
       traceContext: deps.traceContext,
+      workspaceIdentity: deps.workspaceIdentity,
       workingDirectory: deps.workingDirectory,
     }),
   };

@@ -68,6 +68,8 @@ export interface BashReflexAuditEntry {
   readonly justification: string;
   readonly assessmentReasons: readonly string[];
   readonly timestamp: string;
+  /** 多 App 进程内路由；legacy 调用方可缺席。 */
+  readonly sessionId?: string;
 }
 
 const REFLEX_GATE_RULE_ID_PREFIX = "gate.bashConfirmReflex.";
@@ -161,7 +163,8 @@ const ACKNOWLEDGEMENT_WORDS: ReadonlySet<string> = new Set([
   "直接",
   "现在",
 ]);
-const ACK_PUNCTUATION_PATTERN = /^[\s.!?,;:'"“”‘’。！？，；：、]+|[\s.!?,;:'"“”‘’。！？，；：、]+$/g;
+const ACK_PUNCTUATION_PATTERN =
+  /^[\s.!?,;:'"“”‘’。！？，；：、]+|[\s.!?,;:'"“”‘’。！？，；：、]+$/g;
 const ACK_TOKEN_SPLIT_PATTERN = /[\s,，、;；.。!！?？]+/;
 /**
  * 对抗复核 F1 变体 1：拼接确认词判定前的归一化——把标点/符号/数字/空白全部剥去，
@@ -232,14 +235,17 @@ export class BashConfirmReflexGate {
         // 收敛到 ask 交用户裁决，而不是继续循环 deny（R7）。
         // 对抗复审 N6：breakerAsk 决策此前无任何专门留痕（ruleId 只在 debug 级日志，
         // 生产不落盘），落一条与 auditedAllow 同构的审计，靠 event 名区分。
-        emitAudit({
-          event: "bash_reflex_gate_breaker_ask",
-          ruleId: REFLEX_RULE_IDS.breakerAsk,
-          command: redactForAudit(command).slice(0, AUDIT_COMMAND_MAX_LENGTH),
-          justification: redactForAudit(justification),
-          assessmentReasons: assessment.findings.map((finding) => finding.reason),
-          timestamp: new Date().toISOString(),
-        });
+        emitAudit(
+          {
+            event: "bash_reflex_gate_breaker_ask",
+            ruleId: REFLEX_RULE_IDS.breakerAsk,
+            command: redactForAudit(command).slice(0, AUDIT_COMMAND_MAX_LENGTH),
+            justification: redactForAudit(justification),
+            assessmentReasons: assessment.findings.map((finding) => finding.reason),
+            timestamp: new Date().toISOString(),
+          },
+          request.sessionId,
+        );
         return outcome(
           "ask",
           REFLEX_RULE_IDS.breakerAsk,
@@ -256,25 +262,24 @@ export class BashConfirmReflexGate {
     if (request.decision === "allow") {
       // 对抗复审 N2：command 与 justification 先做值级脱敏再落盘（先脱敏后截断——
       // 先截断会把凭据切碎成模式匹配不到的残片）。
-      emitAudit({
-        event: "bash_reflex_gate_audited_allow",
-        ruleId: REFLEX_RULE_IDS.auditedAllow,
-        command: redactForAudit(command).slice(0, AUDIT_COMMAND_MAX_LENGTH),
-        justification: redactForAudit(justification),
-        assessmentReasons: assessment.findings.map((finding) => finding.reason),
-        timestamp: new Date().toISOString(),
-      });
+      emitAudit(
+        {
+          event: "bash_reflex_gate_audited_allow",
+          ruleId: REFLEX_RULE_IDS.auditedAllow,
+          command: redactForAudit(command).slice(0, AUDIT_COMMAND_MAX_LENGTH),
+          justification: redactForAudit(justification),
+          assessmentReasons: assessment.findings.map((finding) => finding.reason),
+          timestamp: new Date().toISOString(),
+        },
+        request.sessionId,
+      );
       return outcome(
         "allow",
         REFLEX_RULE_IDS.auditedAllow,
         "Bash command allowed under bypass mode with an audited justification",
       );
     }
-    return outcome(
-      "ask",
-      REFLEX_RULE_IDS.ask,
-      buildAskReason(justification, assessment.findings),
-    );
+    return outcome("ask", REFLEX_RULE_IDS.ask, buildAskReason(justification, assessment.findings));
   }
 
   /** 仅供测试观察挑战登记状态。 */
@@ -434,6 +439,7 @@ const defaultAuditSink: BashReflexAuditSink = (entry) => {
 };
 
 let auditSink: BashReflexAuditSink = defaultAuditSink;
+const sessionAuditSinks = new Map<string, BashReflexAuditSink>();
 
 /**
  * 替换审计 sink（进程级注册点，与 setProcessManagedPolicyFloor 同一接线形态）。
@@ -443,9 +449,23 @@ export function setBashReflexAuditSink(sink: BashReflexAuditSink | undefined): v
   auditSink = sink ?? defaultAuditSink;
 }
 
-function emitAudit(entry: BashReflexAuditEntry): void {
+/** 注册一个 app/session 的审计 sink，返回幂等释放函数。 */
+export function registerBashReflexAuditSink(
+  sessionId: string,
+  sink: BashReflexAuditSink,
+): () => void {
+  sessionAuditSinks.set(sessionId, sink);
+  return () => {
+    if (sessionAuditSinks.get(sessionId) === sink) sessionAuditSinks.delete(sessionId);
+  };
+}
+
+function emitAudit(entry: BashReflexAuditEntry, sessionId?: string): void {
   try {
-    auditSink(entry);
+    const routedEntry = sessionId === undefined ? entry : { ...entry, sessionId };
+    (sessionId === undefined ? auditSink : (sessionAuditSinks.get(sessionId) ?? auditSink))(
+      routedEntry,
+    );
   } catch {
     // 审计 sink 故障不得反向放宽/收紧权限决策：放行仍然放行，失败静默。
   }
@@ -492,9 +512,7 @@ function buildRetryPrompt(findings: readonly { reason: string; target?: string }
   ].join("\n");
 }
 
-function buildInsufficientPrompt(
-  findings: readonly { reason: string; target?: string }[],
-): string {
+function buildInsufficientPrompt(findings: readonly { reason: string; target?: string }[]): string {
   return [
     "This command is still not run. The justification provided does not explain what the user asked for: confirmation words or a reflexive short phrase do not count.",
     "",
@@ -532,13 +550,17 @@ function formatFindings(findings: readonly { reason: string; target?: string }[]
   const lines = findings.map(
     (finding) => `- ${finding.reason}${finding.target ? ` (target: ${finding.target})` : ""}`,
   );
-  return lines.length > 0 ? lines.join("\n") : "- the destructive target could not be determined statically";
+  return lines.length > 0
+    ? lines.join("\n")
+    : "- the destructive target could not be determined statically";
 }
 
 function summarizeFindings(findings: readonly { reason: string; target?: string }[]): string {
   if (findings.length === 0) return "the destructive target could not be determined statically";
   return findings
-    .map((finding) => (finding.target ? `${finding.reason} (target: ${finding.target})` : finding.reason))
+    .map((finding) =>
+      finding.target ? `${finding.reason} (target: ${finding.target})` : finding.reason,
+    )
     .join("; ");
 }
 

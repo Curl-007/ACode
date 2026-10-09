@@ -58,3 +58,20 @@ export function parseModelPickerValue(value: string): ModelSelection {
     options: { reasoningLevel: rawModelId.slice(reasoningSeparatorIndex + 1) },
   });
 }
+
+/**
+ * 解析 `providerId/modelId` 全限定选择；不合法即返回 undefined（不抛、不带 reasoning 档位）。
+ * W1-R3 从 bootstrap `app/provider-registry-selection.ts` 原样下沉（纯函数、无宿主耦合）：
+ * workflow 引擎（script-workflow-child-runtime / workflow-actor-model）与 bootstrap 协议层
+ * 共用同一实现，bootstrap 侧改为 re-export，保持全仓单一定义。
+ */
+export function parseProviderQualifiedModelSelection(
+  requested: string,
+): ModelSelection | undefined {
+  const normalized = requested.trim();
+  const separator = normalized.indexOf("/");
+  if (separator <= 0 || separator === normalized.length - 1) return undefined;
+  const providerId = normalized.slice(0, separator).trim();
+  const modelId = normalized.slice(separator + 1).trim();
+  return providerId && modelId ? { providerId, modelId } : undefined;
+}

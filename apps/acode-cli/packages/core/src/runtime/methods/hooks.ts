@@ -2,6 +2,7 @@ import { HookEventName } from "../deps.js";
 import type { HookRunResult, Model, TraceContext, TurnState } from "../deps.js";
 import type { HookEventName as HookEventNameType } from "@acode/contracts";
 import type { AgentRuntimeInternal } from "../internal.js";
+import { getRuntimeLifecyclePort } from "../runtime-lifecycle.js";
 import {
   systemReminderAttachmentEntry,
   type RuntimeMessageEntry,
@@ -24,27 +25,39 @@ export async function runSessionStartHooks(
   signal?: AbortSignal,
   model?: Pick<Model, "providerId" | "modelId">,
 ): Promise<HookRunResult> {
-  if (this.sessionStartHookRan) return EMPTY_HOOK_RESULT;
-  await this.workspaceHookAdmission?.activate(source, signal);
-  this.sessionStartHookRan = true;
-  if (!this.hookRunner) return EMPTY_HOOK_RESULT;
+  const lifecycle = getRuntimeLifecyclePort(this);
+  // activate 可能跨 await；先领取再执行，避免并发 startup/resume 重复运行 Hook，失败时在 catch 释放以便重试。
+  if (!lifecycle.tryClaimSessionStartHook()) return EMPTY_HOOK_RESULT;
 
-  const selectedModel = model ?? this.getSessionModelSelection();
-  return this.hookRunner.run(
-    {
-      agentName: this.config.agentName,
-      cwd: this.workingDirectory,
-      hookEventName: HookEventName.SessionStart,
-      mode: this.getMode(),
-      model: selectedModel ? `${selectedModel.providerId}/${selectedModel.modelId}` : undefined,
-      sessionId: this.sessionId,
-      source,
-      timestamp: new Date().toISOString(),
-      traceId: traceContext.traceId,
-      turnId: traceContext.turnId,
-    },
-    { matchValue: source, signal },
-  );
+  try {
+    await this.workspaceHookAdmission?.activate(source, signal);
+    if (!this.hookRunner) {
+      lifecycle.commitSessionStartHook();
+      return EMPTY_HOOK_RESULT;
+    }
+
+    const selectedModel = model ?? this.getSessionModelSelection();
+    const result = await this.hookRunner.run(
+      {
+        agentName: this.config.agentName,
+        cwd: this.workingDirectory,
+        hookEventName: HookEventName.SessionStart,
+        mode: this.getMode(),
+        model: selectedModel ? `${selectedModel.providerId}/${selectedModel.modelId}` : undefined,
+        sessionId: this.sessionId,
+        source,
+        timestamp: new Date().toISOString(),
+        traceId: traceContext.traceId,
+        turnId: traceContext.turnId,
+      },
+      { matchValue: source, signal },
+    );
+    lifecycle.commitSessionStartHook();
+    return result;
+  } catch (error) {
+    lifecycle.releaseSessionStartHookClaim();
+    throw error;
+  }
 }
 
 export async function runUserPromptSubmitHooks(

@@ -330,6 +330,7 @@ export type RoutedTopicWireCandidate = z.infer<typeof routedTopicWireCandidateSc
 // 载体复用现有 JSON-RPC（stdio NDJSON / socket），方法名带 v4/ 前缀与旧协议并存；
 // 旧 session/* 方法删除后，这里就是唯一协议面。
 export const V4_METHODS = {
+  capabilitiesQuery: "v4/capabilities/query",
   connectionFlow: "v4/connection/flow",
   controllerSubscribe: "v4/controller/subscribe",
   controllerResync: "v4/controller/resync",

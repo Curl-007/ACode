@@ -20,6 +20,10 @@ import {
 import { createServiceDescriptor } from "../descriptors.js";
 import type { ModelConnectivityResult } from "@acode/shared";
 import { createServiceLogger } from "../logger/serviceLogger.js";
+import {
+  modelSelectionArgumentValidators,
+  providerSettingsArgumentValidators,
+} from "./providerFacadeServices.validators.js";
 
 export type {
   ProviderSettingsProviderView,
@@ -73,6 +77,27 @@ export interface IProviderSettingsService {
 
 export const IProviderSettingsService = createServiceDescriptor<IProviderSettingsService>(
   ServiceChannels.ProviderSettings,
+  {
+    allowedMethods: [
+      "onDidChange",
+      "getView",
+      "refresh",
+      "createPersonalProvider",
+      "resolveModelConfig",
+      "savePersonalProviderOverlay",
+      "deletePersonalProvider",
+      "reorderPersonalProviders",
+      "reorderPersonalModels",
+      "addPersonalModel",
+      "renamePersonalModel",
+      "deletePersonalModel",
+      "savePersonalModelDraft",
+      "setPersonalModelEnabled",
+      "testModelConnectivity",
+    ],
+    // 校验表拆到同目录伴生文件，避免本文件超过 400 行门禁；键仍受 interface keyof 约束。
+    argumentValidators: providerSettingsArgumentValidators,
+  },
 );
 
 export interface ProviderSettingsConnectivityTestInput {
@@ -105,6 +130,10 @@ export interface ModelSelectionConfiguredDefaultSource {
 
 export const IModelSelectionService = createServiceDescriptor<IModelSelectionService>(
   ServiceChannels.ModelSelection,
+  {
+    allowedMethods: ["onDidChange", "getView"],
+    argumentValidators: modelSelectionArgumentValidators,
+  },
 );
 
 export function createProviderSettingsService(

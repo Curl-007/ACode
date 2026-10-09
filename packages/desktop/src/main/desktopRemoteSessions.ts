@@ -9,6 +9,7 @@ import {
   HostMessageTypes,
   HostResponseTypes,
   hostResponseMessageSchema,
+  respondSSHHostKeyChallengeRequestSchema,
   InternalChannels,
   normalizeServerEndpoint,
   PlatformChannels,
@@ -16,6 +17,7 @@ import {
   type RemoteTarget,
   type ProviderProvisioningTrigger,
   type WindowHostRemoteWorkspaceDescriptor,
+  type RespondSSHHostKeyChallengeRequest,
 } from "@acode/shared";
 import type { RemoteAssetDirs } from "./desktopRuntimeEnv.js";
 import { ProviderProvisioningEnvironmentCoordinator } from "./providerProvisioningEnvironmentCoordinator.js";
@@ -517,6 +519,20 @@ export function createRemoteWorkspaceSessionManager(options: {
         });
         return;
       }
+      if (parsed.data.type === HostResponseTypes.RemoteSSHHostKeyChallenge) {
+        const pending = pendingByRequestKey.get(requestKey(webContentsId, parsed.data.requestId));
+        if (!pending || pending.win.isDestroyed() || pending.win.webContents.isDestroyed()) return;
+        pending.win.webContents.send(PlatformChannels.RemoteSSHHostKeyChallenge, {
+          requestId: parsed.data.requestId,
+          challengeId: parsed.data.challengeId,
+          host: parsed.data.host,
+          port: parsed.data.port,
+          status: parsed.data.status,
+          candidateFingerprint: parsed.data.candidateFingerprint,
+          expectedFingerprints: [...parsed.data.expectedFingerprints],
+        });
+        return;
+      }
       if (parsed.data.type === HostResponseTypes.ProviderProvisioningSourceChanged) {
         void providerProvisioningCoordinator.requestAll(parsed.data.trigger);
         return;
@@ -762,6 +778,41 @@ export function createRemoteWorkspaceSessionManager(options: {
     }
   }
 
+  function respondSSHHostKeyChallenge(
+    webContentsId: WebContentsId,
+    payload: RespondSSHHostKeyChallengeRequest,
+  ): void {
+    const parsed = respondSSHHostKeyChallengeRequestSchema.safeParse(payload);
+    if (!parsed.success) {
+      options.logger.warn("[ssh-host-key] ignore invalid renderer decision", parsed.error.issues);
+      return;
+    }
+    const pending = pendingByRequestKey.get(requestKey(webContentsId, parsed.data.requestId));
+    if (!pending) {
+      options.logger.warn("[ssh-host-key] ignore stale renderer decision", {
+        webContentsId,
+        requestId: parsed.data.requestId,
+      });
+      return;
+    }
+    const child = options.windowHostProcessMap.get(webContentsId);
+    if (!child || child.pid == null) return;
+    try {
+      child.postMessage({
+        type: HostMessageTypes.SSHHostKeyDecision,
+        requestId: parsed.data.requestId,
+        challengeId: parsed.data.challengeId,
+        candidateFingerprint: parsed.data.candidateFingerprint,
+        action: parsed.data.action,
+      });
+    } catch (error) {
+      options.logger.warn("[ssh-host-key] failed to forward renderer decision", {
+        requestId: parsed.data.requestId,
+        error,
+      });
+    }
+  }
+
   function hasRemoteWorkspaceSessionForTarget(
     win: BrowserWindow,
     target: RemoteTarget,
@@ -926,6 +977,7 @@ export function createRemoteWorkspaceSessionManager(options: {
       routesBySessionId.clear();
     },
     cancelPendingRemoteWorkspaceSessionsForWindow,
+    respondSSHHostKeyChallenge,
     handleWorkspaceRunningTaskCountChanged: () => {
       // Running-task 事实现在由窗口 Host registry/ControllerProjection 持有；Main 不再维护 WSL pool。
     },

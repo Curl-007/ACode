@@ -8,9 +8,11 @@ import type { ServiceDescriptor } from "./descriptors.js";
  */
 export class ServiceCollection {
   private readonly _services = new Map<string, unknown>();
+  private readonly _descriptors = new Map<string, ServiceDescriptor<unknown>>();
 
   register<T>(descriptor: ServiceDescriptor<T>, instance: T): this {
     this._services.set(descriptor.channelName, instance);
+    this._descriptors.set(descriptor.channelName, descriptor as ServiceDescriptor<unknown>);
     return this;
   }
 
@@ -35,7 +37,11 @@ export class ServiceCollection {
       const exposed = overrides.get(channelName) ?? instance;
       server.registerChannel(
         channelName,
-        ProxyChannel.fromService(exposed as Record<string, unknown>),
+        ProxyChannel.fromService(exposed as Record<string, unknown>, undefined, {
+          // JS 调用方或旧测试替身可能缺少表；必须按空表拒绝，不能退回原型发现。
+          allowedMethods: this._descriptors.get(channelName)?.allowedMethods ?? [],
+          argumentValidators: this._descriptors.get(channelName)?.argumentValidators,
+        }),
       );
     }
   }

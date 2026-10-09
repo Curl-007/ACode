@@ -24,6 +24,7 @@ import type {
   StoredEvent,
 } from "@acode/dynamic-workflow";
 import { encodeJson } from "../json.js";
+import { isWorkflowSessionOwner } from "./workflow-run-owner.js";
 // 产物读面自成一个模块：它只要一个 db 句柄，与 run/actor/node/event 的写入-读取无共享状态，
 // 而它的两条查询各自带着一大段「为什么是这个取数源、这个排序、这个游标」的论证。
 import {
@@ -86,8 +87,9 @@ class SqliteDwfJournalStore implements JournalStorePort, DwfRunIntrospectionQuer
           insert into dwf_run (
             id, parent_session_id, cwd, name, script_text, script_hash, tool_call_id,
             args_json, resumed_from, caps_max_concurrency,
-            spent_tokens, status, failure_json, result_json, time_created, time_updated
-          ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            spent_tokens, status, failure_json, result_json, time_created, time_updated,
+            owner_token, owner_generation
+          ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `,
         )
         .run(
@@ -116,6 +118,8 @@ class SqliteDwfJournalStore implements JournalStorePort, DwfRunIntrospectionQuer
           encodeResultJson(record.result),
           now,
           now,
+          record.ownerToken ?? null,
+          record.ownerGeneration ?? null,
         );
     } catch (error) {
       // 重复 run 是调用方的契约错误，值得一条能直接读懂的消息；其余失败（FK、磁盘、约束）原样上抛。
@@ -135,6 +139,34 @@ class SqliteDwfJournalStore implements JournalStorePort, DwfRunIntrospectionQuer
 
   updateRunStatus(runId: string, status: RunStatus, settlement?: RunSettlementRecord): void {
     const now = Date.now();
+    const owner = this.getRun(runId);
+    const takeover =
+      settlement?.ownerTakeover === true &&
+      settlement.ownerToken !== undefined &&
+      settlement.ownerGeneration !== undefined;
+    if (takeover) {
+      if (
+        !owner?.parentSessionId ||
+        !isWorkflowSessionOwner(this.db, {
+          parentSessionId: owner.parentSessionId,
+          ownerToken: settlement.ownerToken!,
+          ownerGeneration: settlement.ownerGeneration!,
+        })
+      ) {
+        throw new Error(`Stale workflow owner takeover rejected: ${runId}`);
+      }
+    } else if (
+      owner?.parentSessionId &&
+      owner.ownerToken !== undefined &&
+      owner.ownerGeneration !== undefined &&
+      !isWorkflowSessionOwner(this.db, {
+        parentSessionId: owner.parentSessionId,
+        ownerToken: owner.ownerToken,
+        ownerGeneration: owner.ownerGeneration,
+      })
+    ) {
+      throw new Error(`Stale workflow owner write rejected: ${runId}`);
+    }
     // 非终态 = 无 settlement：resume 把 run 翻回 running 时必须清掉上一世的 failure_json /
     // result_json——引擎的 resume 分支不带结算袋，「缺席键 = 不触碰」的终态语义会让孤儿收敛
     // 写下的 Interrupted 失败与 running 并存。矛盾的结算袋（非终态却携带 failure/result）
@@ -167,18 +199,26 @@ class SqliteDwfJournalStore implements JournalStorePort, DwfRunIntrospectionQuer
     // `result_json` 保留 coalesce：产物的语义是「缺席 = 不触碰」（契约用例「keeps an
     // already-settled artifact when a later write omits it」），一次不带产物的重复结算不该抹掉它。
     const encoded = encodeRunSettlement(status, settlement);
+    const ownerColumns = takeover ? ", owner_token = ?, owner_generation = ?" : "";
     const { changes } = this.db
       .prepare(
         `
         update dwf_run set
           status = ?,
           failure_json = ?,
-          result_json = coalesce(?, result_json),
+          result_json = coalesce(?, result_json)${ownerColumns},
           time_updated = ?
         where id = ?
         `,
       )
-      .run(encoded.status, encoded.failureJson, encodeResultJson(settlement?.result), now, runId);
+      .run(
+        encoded.status,
+        encoded.failureJson,
+        encodeResultJson(settlement?.result),
+        ...(takeover ? [settlement!.ownerToken!, settlement!.ownerGeneration!] : []),
+        now,
+        runId,
+      );
     this.assertRunTouched(changes, runId);
   }
 
@@ -205,7 +245,7 @@ class SqliteDwfJournalStore implements JournalStorePort, DwfRunIntrospectionQuer
   /**
    * 某个父会话名下所有**非终态**的 run。刻意不在 `JournalStorePort` 上：引擎从不按父会话找
    * run，这条查询只服务于宿主侧的孤儿收敛——一个进程被杀掉的 run 会永远停在 `running`，
-   * 由下一次同会话的 app 构造把它收敛掉（`bootstrap/src/app/dynamic-workflow-run-service.ts`，
+   * 由下一次同会话的 app 构造把它收敛掉（`cli-workflow/src/dynamic-workflow-run-service.ts`，
    * 按能力探测调用本方法）。
    *
    * 本方法只出 SQL：终态集在这里是**索引友好的预筛**，判定权威留在 service 侧（它拿到记录后

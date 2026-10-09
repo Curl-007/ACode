@@ -57,87 +57,13 @@ import type {
   WorldReadOp,
 } from "./types.js";
 import { refToString, WorkflowError } from "./types.js";
-import { runLaunchedEvent, type RunLaunchConfig } from "./engine-launch.js";
+import { runLaunchedEvent } from "./engine-launch.js";
 import { enrichProviderStopPhase, stampBirthPhase } from "./engine-phase-stamp.js";
+import { WorldLifecycle } from "./world-lifecycle.js";
+import { isAskAdmissionRefusal } from "./scheduler-budget.js";
 
-/** 引擎构造配置。 */
-export interface EngineConfig {
-  runId: string;
-  driver: WorkflowDriver;
-  caps: Caps;
-  /**
-   * 每 ask 站点的静态规格（typed + schema）。**必须覆盖脚本里的每一个 ask 站点**——
-   * 站点表与 schema 合成来自同一次编译，因此缺席只可能是接线错误，引擎按硬错误处理
-   * （MissingAskSpec）。untyped 站点要显式记为 `{ typed: false }`。
-   */
-  askSpecs: ReadonlyMap<string, AskSpec>;
-  /** 注入的 schema 校验器（核心不 import schema 实现）。 */
-  validate: ValidateFn;
-  /** run 元数据（落 dwf_run，仅在本次 createRun 时写入；resume 时不覆写记录）。 */
-  scriptText?: string;
-  /**
-   * run 的展示名（`CreateWorkflow` 的可选 `input.name`）。引擎不读它，只在建 run 时随
-   * `scriptText` 一起落库——宿主的枚举面据它给 run 起标签。见 {@link RunRecord.name}。
-   */
-  name?: string;
-  /**
-   * 脚本文本的哈希。resume 时与 journal 记录里的值比对：两侧都有且不同即拒绝本次 resume
-   * （V1 的 resume 只对逐字节相同的脚本有效）。
-   */
-  scriptHash?: string;
-  /**
-   * 本次 run 的实参（已校验回填）。引擎不读它，只在建 run 时随 `scriptText` 一起落库；
-   * 沙箱侧的注入走 harness 的 spawn payload，不经引擎。见 {@link RunRecord.args}。
-   */
-  args?: Record<string, unknown>;
-  parentSessionId?: string;
-  cwd?: string;
-  /**
-   * 发起 run 的 CreateWorkflow 工具调用 id（见 {@link RunRecord.toolCallId}）。
-   * 引擎不读它，只随其余元数据在 createRun 时落库。
-   */
-  toolCallId?: string;
-  /**
-   * 本次 run 修订自哪个前驱 run（见 {@link RunRecord.resumedFrom}）。引擎不读它，
-   * 只随其余元数据在 createRun 时落库——导入缓存的构建在 run service，不在核心。
-   */
-  resumedFrom?: string;
-  /**
-   * 发起 run 那一轮的锚点。引擎不读它，只在建 run 那一世
-   * 紧跟首条 `run-started` 记一条 `run-launched`；resume 命中既有行时不再记（锚点跨生命周期唯一）。
-   * `phaseNames` 随锚点同车：脚本声明的阶段表，引擎同样不读，只落 journal。`phaseAlongside`
-   * 与它按位置对齐（下标指向同一张表），同车同规。
-   * `subagentModel` 也同车：本 run 子代理的选型（规范 picker 串），引擎同样不读——模型面整个
-   * 在宿主侧（bootstrap 的 workflow-actor-model.ts），宿主从这条事件读回它，零 SQL。
-   * `scriptPath` 同车同规：本 run 的脚本来自哪个文件（绝对路径），引擎不读，宿主从这条事件
-   * 读回它交给模型面。
-   */
-  launch?: RunLaunchConfig;
-  /**
-   * 建 run 时的用量起点：前驱 run 的 `spentTokens`。amend 路径给出，全新 submit 缺席（= 从零起账），
-   * resume 路径给了也无用——命中既有行时用量从行里恢复。
-   *
-   * 语义是「本 run 报的是整条 lineage 的花费」：每个前驱的数字本身已是累计值，所以链式修订
-   * 按构造求和，没人需要走 `resumed_from` 链。命中缓存不再加钱（那笔账就在这个继承值里），
-   * 只有本次现跑的 live turn 往上加。
-   */
-  inheritedTokens?: number;
-  /**
-   * 本次 run 的 token 预算显式阈值（R4，specs/workflow-budget-fuses.md）。生效值 = 它与
-   * `BUDGET_CAPS.maxTokensPerRun` 取更严，装配进 `caps.maxTokensPerRun` 后随 run-started
-   * 事件落 journal（零 SQL）；resume 从 journal 读回，**绝不接受调用方给的新阈值**——与
-   * `args` 同一条纪律（见下面 args 的注释）。缺席 = 用常量；归一（非有限值与非正数按缺席、
-   * 小数下取整）在 engine-caps.ts 的 creationCaps 一处做。
-   */
-  tokenBudget?: number;
-  /**
-   * amend-resume 的导入缓存（{@link ImportedRunCache}）。**纯数据注入**——核心因此仍是
-   * 零 I/O 的确定性状态机：读前驱 journal、走 `resumed_from` 链、解析转录源，全部发生在
-   * run service，引擎只拿到一张构建好的表并按运行期身份（actor 名 + persona、
-   * `{op,args}` 内容 + 出现序）比对。缺席即本次不是修订续跑。
-   */
-  importedCache?: ImportedRunCache;
-}
+import type { EngineConfig } from "./engine-config.js";
+export type { EngineConfig } from "./engine-config.js";
 
 /** run 的最终结算（定义随结算模块的接缝迁到 engine-state.ts，这里原地再导出）。 */
 export type { RunSettlement } from "./engine-state.js";
@@ -217,12 +143,12 @@ export class WorkflowEngine implements WorkflowHostApi, WorkflowReportSink {
   private reportCount = 0;
   /**
    * 本 run 已准入的 ask 行数（BUDGET_CAPS.maxAsksPerRun 的计数器，总量保险丝 R2）。
-   * 与 `reportCount` 同一条恢复法：resume 时按 journal 里 `kind:"ask"` 的行数恢复（共用
+   * 与 `reportCount` 同一条恢复法：resume 时按 journal 里已准入 `kind:"ask"` 行数恢复（共用
    * 同一次 listNodes 读取）——上限是 run 级的事实，跨 resume 必须连续计数，否则一个反复
    * resume 的 run 可以无限派发。记账由调度器在**行创建的同一同步步骤里**回调
-   * （countAskAdmitted），所以本计数与 journal ask 行数恒等，恢复法与在生命周期内的
-   * 维护法给出同一个数。被闸拒绝的 ask 不写行、不记账（拒绝可由计数在 resume 时确定性
-   * 复现，无需 journal 化）。amend 的后继 run 按自己物化的行起账（含导入命中的行——
+   * （countAskAdmitted），所以本计数与 journal 已准入 ask 行数恒等，恢复法与在生命周期内的
+   * 维护法给出同一个数。预算拒绝行不计账、不消耗 actorSeq，但必须 journal 化以保留分支。
+   * amend 的后继 run 按自己物化的行起账（含导入命中的行——
    * 每行恰好计一次，不从「前驱计数 + 本 run 行」双重累加），论证见
    * specs/workflow-budget-fuses.md R5。
    */
@@ -236,6 +162,8 @@ export class WorkflowEngine implements WorkflowHostApi, WorkflowReportSink {
    * ⚠ 术语：artifact = 用户面产物，不是 `RunSettlement.artifact`（顶层返回值）。
    */
   private readonly artifacts = new Map<string, ArtifactIdState>();
+  /** 内容 artifact 的按 id admission tails，防止异步 store 写入之间重复分配版本。 */
+  private readonly artifactPublishTails = new Map<string | symbol, Promise<void>>();
   /** 累计 token 用量（观察面：只记账、只广播，永远不会让 run 失败）。 */
   private spentTokens = 0;
   private runSettled = false;
@@ -264,12 +192,17 @@ export class WorkflowEngine implements WorkflowHostApi, WorkflowReportSink {
       resolve = res;
     });
     this.settledDeferred = { promise, resolve };
+    const worldLifecycle = new WorldLifecycle();
 
     this.state = {
       runId: this.runId,
       driver: this.driver,
+      signal: worldLifecycle.signal,
+      trackWorld: (start) => worldLifecycle.track(start),
+      finishWorld: (error, settle) => worldLifecycle.finish(error, settle),
       journal: this.journal,
       artifacts: this.artifacts,
+      artifactPublishTails: this.artifactPublishTails,
       importedCache: this.importedCache,
       importedWorld: this.importedWorld,
       isRunSettled: () => this.runSettled,
@@ -361,6 +294,8 @@ export class WorkflowEngine implements WorkflowHostApi, WorkflowReportSink {
         ...(config.parentSessionId === undefined
           ? {}
           : { parentSessionId: config.parentSessionId }),
+        ...(config.ownerGeneration === undefined ? {} : { ownerGeneration: config.ownerGeneration }),
+        ...(config.ownerToken === undefined ? {} : { ownerToken: config.ownerToken }),
         ...(config.cwd === undefined ? {} : { cwd: config.cwd }),
         ...(config.toolCallId === undefined ? {} : { toolCallId: config.toolCallId }),
         // lineage 也只在建 run 时写一次：修订是 supersede（新 run），前驱行零触碰。
@@ -392,7 +327,9 @@ export class WorkflowEngine implements WorkflowHostApi, WorkflowReportSink {
       // 报告计数按 journal 里 kind:"report" 的行数恢复；用量从记录恢复（跨生命周期连续）。
       this.reportCount = nodes.filter((n) => n.kind === "report").length;
       // ask 总量计数同法、同一趟节点行恢复（R2 保险丝跨 resume 连续，见字段注释）。
-      this.askTotalCount = nodes.filter((n) => n.kind === "ask").length;
+      this.askTotalCount = nodes.filter(
+        (n) => n.kind === "ask" && !isAskAdmissionRefusal(n),
+      ).length;
       // 产物状态与 reportCount 同席恢复：id 归属（种类、预置 spec）与已成功版本数全部由
       // journal 行派生，所以崩溃恢复后第 3 版仍然是第 3 版，而不是从 1 重新数起。
       for (const node of nodes) {
@@ -424,6 +361,7 @@ export class WorkflowEngine implements WorkflowHostApi, WorkflowReportSink {
     // 更糟：投影会一直停在 0，直到冷回放才对得上行值。
     // 零不发：reset 本身已经说了零，再发一条是每个全新 run 都要付的一条噪音事件。
     if (this.spentTokens > 0) this.record({ type: "usage-updated", spentTokens: this.spentTokens });
+    worldLifecycle.connect(config.signal);
   }
 
   /** run 结算 promise：完成/失败/取消时兑现。 */

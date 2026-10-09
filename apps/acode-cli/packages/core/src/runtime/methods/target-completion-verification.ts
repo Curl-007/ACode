@@ -25,7 +25,8 @@ import { resolveModelRequestSessionTypeFromTaskType } from "./model-request-sess
 import { createRuntimeModel } from "./runtime-model.js";
 import { isStartPlanBusyStreamRecoveryFailure } from "./streaming-recovery.js";
 import { recordModelUsageFact } from "./usage-observability.js";
-import { runTargetCompletionVerificationWithTelemetry } from "./target-completion-verification-telemetry.js";
+import { assertRuntimeModelBranchCurrent } from "./runtime-command-generation.js";
+import { getRuntimeBranchRestorePort } from "../turn-coordination.js";
 
 export interface TargetCompletionVerificationResult {
   target: SessionGoal;
@@ -38,60 +39,11 @@ const START_PLAN_TARGET_VERIFIER_RETRY_PROVIDER_IDS = new Set([
   "account:zai-start-plan",
 ]);
 
-export async function verifyActiveTargetCompletionForContinuation(
+export async function verifyTargetCompletion(
   this: AgentRuntimeInternal,
   input: {
     abortSignal?: AbortSignal;
-    target: SessionGoal;
-    traceContext: TraceContext;
-  },
-): Promise<TargetCompletionVerificationResult | null> {
-  if (this.config.targetCompletionVerification?.enabled === false) return null;
-  if (!this.sessionStore) return null;
-  if (input.target.status !== "active") return null;
-
-  const execute = async (): Promise<TargetCompletionVerificationResult> => {
-    const events: SessionEvent[] = [];
-    const verification = await verifyTargetCompletion.call(this, {
-      abortSignal: input.abortSignal,
-      events,
-      target: input.target,
-      traceContext: input.traceContext,
-    });
-
-    if (!verification.passed) {
-      return {
-        target: input.target,
-        verification,
-      };
-    }
-
-    const previousTarget = await this.readSessionTargetForContext(input.traceContext);
-    const completedTarget =
-      (await this.sessionStore!.updateTargetStatus({
-        sessionID: this.sessionId,
-        status: "complete",
-      })) ?? input.target;
-    await this.recordTargetChanged({
-      action: "status_updated",
-      previousTarget,
-      source: "runtime",
-      target: completedTarget,
-      traceContext: input.traceContext,
-    });
-
-    return {
-      target: completedTarget,
-      verification,
-    };
-  };
-  return runTargetCompletionVerificationWithTelemetry(this, input, execute);
-}
-
-async function verifyTargetCompletion(
-  this: AgentRuntimeInternal,
-  input: {
-    abortSignal?: AbortSignal;
+    branchGeneration: number;
     events: SessionEvent[];
     target: SessionGoal;
     traceContext: TraceContext;
@@ -170,6 +122,7 @@ async function verifyTargetCompletion(
   try {
     const result = await generateTargetCompletionVerificationText.call(this, {
       abortSignal: input.abortSignal,
+      branchGeneration: input.branchGeneration,
       events: input.events,
       messages,
       model,
@@ -235,6 +188,8 @@ async function verifyTargetCompletion(
       status: input.abortSignal?.aborted ? "cancelled" : "error",
       traceContext: modelTraceContext,
     });
+    // 旧分支结果不进入 fail-open、目标暂停或完成路径，保留已有模型用量事实。
+    assertRuntimeModelBranchCurrent(this, input.branchGeneration);
     if (input.abortSignal?.aborted) {
       const preserveQueueAutoDrainOnCancel =
         this.activeForegroundExecution?.preserveQueueAutoDrainOnCancel === true;
@@ -260,7 +215,10 @@ async function verifyTargetCompletion(
       // 用户 Stop 或队列“立即发送”打断 goal verifier 时，当前没有普通
       // executeTurn 的取消收口路径会暂停 target。如果仍保持 active，后续
       // resumeSession + sendPrompt 会被 agent 当成 goal continuation，普通用户消息会继续输出 checkpoint。
-      await this.pauseActiveTargetForCancellation(modelTraceContext);
+      await getRuntimeBranchRestorePort(this).commitTargetStateIfCurrent(
+        input.branchGeneration,
+        () => this.pauseActiveTargetForCancellation(modelTraceContext),
+      );
       throw error;
     }
     this.logger?.warn("Goal completion verification failed open", {
@@ -312,6 +270,7 @@ async function generateTargetCompletionVerificationText(
   this: AgentRuntimeInternal,
   input: {
     abortSignal?: AbortSignal;
+    branchGeneration: number;
     events: SessionEvent[];
     messages: ReturnType<typeof buildRuntimeProviderRequestMessages>["messages"];
     model: Model;
@@ -320,6 +279,7 @@ async function generateTargetCompletionVerificationText(
 ) {
   const maxAttempts = TARGET_VERIFIER_START_PLAN_BUSY_RETRY_DELAYS_MS.length + 1;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    assertRuntimeModelBranchCurrent(this, input.branchGeneration);
     try {
       const invocationContext = {
         metadata: traceContextToLogContext(input.traceContext),

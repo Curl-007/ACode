@@ -5,13 +5,17 @@ import {
   type TraceContext,
 } from "@acode/contracts";
 import type { AgentRuntimeInternal } from "../internal.js";
+import { getRuntimePermissionGrantPort } from "../runtime-permission-grant.js";
 
 /** 授权 receipt 在恢复时仅提供辅助标记；格式损坏不能阻断历史及执行状态恢复。 */
 export async function restorePermissionGrantMarker(
   runtime: AgentRuntimeInternal,
   traceContext: TraceContext,
 ): Promise<void> {
-  runtime.lastPermissionGrantId = undefined;
+  // CLI-05 I7：receipt 标记归 RuntimePermissionGrantOwner；恢复路径是仅有的两个
+  // 写方之一，只能整体 replace/clear，不能读-改-写。
+  const grantPort = getRuntimePermissionGrantPort(runtime);
+  grantPort.setLastPermissionGrantId(undefined);
   const entries = await runtime.sessionStore?.sessionEntries?.({
     sessionID: runtime.sessionId,
     type: PERMISSION_FULL_ACCESS_ENTRY,
@@ -29,5 +33,5 @@ export async function restorePermissionGrantMarker(
     });
     return;
   }
-  runtime.lastPermissionGrantId = receipt.data.interactionId;
+  grantPort.setLastPermissionGrantId(receipt.data.interactionId);
 }

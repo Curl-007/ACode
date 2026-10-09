@@ -46,7 +46,13 @@
       "cache": false,
       "persistent": true
     },
-    "lint": {},
+    "lint": {
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/.oxlintrc.json",
+        "$TURBO_ROOT$/../../.oxlintrc.json"
+      ]
+    },
     "lint:fix": {},
     "typecheck": {
       "dependsOn": ["^build"]

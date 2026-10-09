@@ -1,6 +1,8 @@
 import { z } from "zod";
 import type { ModelToolSideEffectScope } from "../model/index.js";
-import type { CollaborationMode, RiskLevel } from "../interfaces/session.port.js";
+// 架构断环（specs/architecture-contracts-module.md）：session.events 引用本文件的
+// HookRunLifecyclePayload，本文件若经 session.port 取基础词汇即成环；改走叶子文件。
+import type { CollaborationMode, RiskLevel } from "../interfaces/session-shared.js";
 import type { PermissionUpdate } from "../interfaces/permission.port.js";
 import type { SessionId, ToolCallId, TraceId, TurnId } from "../interfaces/shared.js";
 

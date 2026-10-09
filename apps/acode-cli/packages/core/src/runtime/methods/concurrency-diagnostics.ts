@@ -19,7 +19,7 @@ import { traceContextToLogContext } from "../deps.js";
 import type { ModelRequestAdmissionBucketSnapshot, TraceContext } from "../deps.js";
 import { planResearchAgentCount } from "../helpers/runtime-reminders.js";
 import { EXPLORE_AGENT_TYPE } from "../../subagent/explore.js";
-import type { RuntimeTaskSnapshot } from "../../runtime-task/registry.js";
+import type { RuntimeTaskSnapshot } from "../../runtime-task/contract.js";
 import type { AgentRuntimeInternal } from "../internal.js";
 
 /** 四个固定域 id（spec R1）；新增域必须先改 spec 的口径表。 */

@@ -71,5 +71,8 @@ packages/desktop/.e2e-network-capture/
 # 本地 agent 工作流产物（.zcode/）与临时对照文件（.tmp-*），均不入库。
 .zcode/
 .tmp-*
+# 仓库树内的 ACode 运行时数据目录（工作流 run 脚本、会话产物等）。knip 已按
+# **/.acode/** 忽略；根 .acode/ 此前未被 git 忽略，存在把本地用户数据误提交的风险。
+.acode/
 # scripts/dependency-graph.mjs 的生成产物，可再生，不入库。
 dependency-graph.mmd

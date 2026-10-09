@@ -18,7 +18,7 @@ import { isSubagentDispatchToolName } from "../compat.js";
 import type { ExecutableToolCall } from "../types.js";
 import type { ToolExecutorDeps } from "./types.js";
 import { isRecord } from "./utils.js";
-import { formatTaskNotification } from "../../runtime-task/notification.js";
+import { formatTaskNotification } from "../../runtime-task/contract.js";
 import { describeWorkflowScriptPath } from "../handlers/workflow-script-path.js";
 import {
   claimRuntimeBackgroundTaskNotification,
@@ -791,9 +791,7 @@ export class BackgroundTaskTracker {
       const getTask = port?.getTask;
       const waiter = getWorkflowTaskWaiter(port);
       return {
-        ...(getTask && port
-          ? { getSnapshot: (taskId: string) => getTask.call(port, taskId) }
-          : {}),
+        ...(getTask && port ? { getSnapshot: (taskId: string) => getTask.call(port, taskId) } : {}),
         ...(waiter ? { waitForTerminal: (taskId: string) => waiter.waitForTask(taskId) } : {}),
         cancellable: typeof port?.cancel === "function",
       };

@@ -42,7 +42,7 @@ import type { ProviderStopDetails } from "./run-terminal.js";
  *   猜测）：可能超顶一个在飞 ask 的量，刻意取舍。
  * - 构造期（run 尚未开始，引擎构造函数同步抛出）：ScriptHashMismatch
  * - 宿主级（**引擎从不产出**）：Interrupted——拥有该 run 的进程在结算之前就没了，由宿主在
- *   下一次构造时收敛那行永远停在 running 的记录（`bootstrap/src/app/dynamic-workflow-run-service.ts`
+ *   下一次构造时收敛那行永远停在 running 的记录（`cli-workflow/src/dynamic-workflow-run-service.ts`
  *   的孤儿收敛）。它必须是**独立的码**而不是复用 DriverError：脚本
  *   自己抛错也编码成 DriverError（`dynamic-workflow-runtime/src/harness.ts:311`），两者若同码，
  *   「进程被杀」与「脚本真失败」就只能靠 message 文本区分——而这正是本联合类型要避免的。

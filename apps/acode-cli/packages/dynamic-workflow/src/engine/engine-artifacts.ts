@@ -21,13 +21,10 @@ import {
 } from "./engine-artifacts-primary.js";
 import { validateArtifactSpec } from "./artifact-spec.js";
 import { hashMismatch } from "./scheduler.js";
+import { NEW_ARTIFACT_ID_QUEUE_KEY, queueArtifactPublish } from "./artifact-publish-queue.js";
+import { publishFreshArtifact } from "./engine-artifact-content.js";
 import type { EngineState } from "./engine-state.js";
-import type {
-  ArtifactPublishRequest,
-  ArtifactRef,
-  ArtifactVersionRecord,
-  InstanceRef,
-} from "./types.js";
+import type { ArtifactRef, ArtifactVersionRecord, InstanceRef } from "./types.js";
 import { refToString, WorkflowError } from "./types.js";
 
 /**
@@ -126,64 +123,14 @@ export function publishContentArtifact(
     // 而版本号从**已 completed 的行数**派生，所以重跑不会跳号）。
   }
 
-  // 粘着：这个 id 已经是 primary，则这一版也是，不管本次有没有再写 `primary`。
-  const idState = state.artifacts.get(id);
-  const primary = primaryOption === true || idState?.primary === true;
-  const admission = admitArtifact(state, id, op, primary);
-  if (admission !== undefined) {
-    return Promise.reject(settleArtifactFailure(state, instance, hash, { id, op }, admission));
-  }
-
-  const version = (idState?.versions ?? 0) + 1;
-  const publish = state.driver.executeArtifactPublish;
-  if (publish === undefined) {
-    // 装配没有 driver 侧的发布能力（纯 replay / 没接 store 的 fake）。**大声的一条命名失败**，
-    // 不是静默降级成「发布了一个空产物」——脚本看得见、节点以 failed 落库。
-    return Promise.reject(
-      settleArtifactFailure(
-        state,
-        instance,
-        hash,
-        { id, op },
-        new WorkflowError(
-          "ArtifactStoreUnavailable",
-          `Cannot publish "${id}": this host has no artifact store (at ${refToString(instance)}).`,
-        ),
-      ),
-    );
-  }
-
-  state.journal.putNode({
-    runId: state.runId,
-    siteId,
-    ordinal,
-    kind: "artifact",
-    inputHash: hash,
-    status: "running",
-    artifactId: id,
-  });
-
-  const request: ArtifactPublishRequest = {
-    runId: state.runId,
-    siteId,
-    ordinal,
-    op,
-    id,
-    version,
-    ...(op === "file" ? { path: payload } : { content: payload }),
-    ...(args[2] === undefined ? {} : { opts: args[2] }),
-  };
-  return publish.call(state.driver, request).then(
-    (record) => settleArtifactPublish(state, instance, hash, { id, op, version, primary }, record),
-    (cause: unknown) => {
-      const err =
-        cause instanceof WorkflowError
-          ? cause
-          : new WorkflowError("DriverError", `Artifact publish failed: ${op} "${id}".`, {
-              cause,
-            });
-      throw settleArtifactFailure(state, instance, hash, { id, op }, err);
-    },
+  // 同一 id 的异步 store 写入串行，版本只在前一个发布完成后读取 completed 状态。
+  const queueKey = state.artifacts.has(id) ? id : NEW_ARTIFACT_ID_QUEUE_KEY;
+  return queueArtifactPublish(state, queueKey, () =>
+    publishFreshArtifact(state, siteId, op, args, instance, id, payload, primaryOption, hash, {
+      admitArtifact,
+      settleArtifactFailure,
+      settleArtifactPublish,
+    }),
   );
 }
 

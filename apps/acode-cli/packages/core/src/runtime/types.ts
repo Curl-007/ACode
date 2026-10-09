@@ -110,7 +110,7 @@ import type {
   OutputStylePromptConfig,
 } from "./deps.js";
 import type { AgentProfile } from "../subagent/profile.js";
-import type { RuntimeTaskRegistry } from "../runtime-task/registry.js";
+import type { RuntimeTaskRegistry } from "../runtime-task/contract.js";
 import type { AmbientScheduleQueue, ScheduledItem } from "../ambient/queue.js";
 import type { BashTimeoutPolicy } from "../tool/bash-timeout-policy.js";
 import type { OpenPlatformPort } from "../tool/handlers/open.js";
@@ -293,7 +293,7 @@ export interface ResumeSessionOptions {
   /** 中止 cold-resume admission wait；不会伪造 Workspace Hook review decision。 */
   abortSignal?: AbortSignal;
   traceContext?: TraceContext;
-  /** 冷恢复调用方提供的调用级已物化结果；不进入生命周期缓存，修补后按返回值重新读取。 */
+  /** 兼容已有调用方；数组未绑定代际/修订，恢复使用锁内权威读取并要求上层重新读取。 */
   persistedMessages?: MessageWithParts[];
   /**
    * 本次 invocation 已解析出的 mode。显式 --mode 与 headless 默认 yolo 都属于调用级覆盖，
@@ -876,6 +876,8 @@ export interface ProviderContextUsageSnapshot {
 
 export interface RunModelTextRequestOptions {
   abortSignal?: AbortSignal;
+  /** 普通 turn 的固定分支代际；provider 调用边界复查，不从实时状态重新捕获。 */
+  branchGeneration?: number;
   assistantMessageId: MessageId;
   events: SessionEvent[];
   maxOutputTokens?: number;

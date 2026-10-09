@@ -157,4 +157,69 @@ export interface IACodeSessionService {
 
 export const IACodeSessionService = createServiceDescriptor<IACodeSessionService>(
   ServiceChannels.ACodeSession,
+  {
+    allowedMethods: [
+      "initializeWorkspace",
+      "getWorkspaceRuntimeIdentity",
+      "readWorkspacePresentation",
+      "createSession",
+      "resumeSession",
+      "listSessions",
+      "readSession",
+      "readSessionMessages",
+      "readSessionEvents",
+      "promoteDeferredDraftSession",
+      "closeSession",
+      "closeDeferredDraftSession",
+      "setModel",
+      "setThoughtLevel",
+      "setMode",
+    ],
+    argumentValidators: {
+      // 所有方法都接收单一 params 对象，最少带 workspacePath；任务级方法再带 sessionId。
+      // 只做顶层确定检查，不解析 model/importedHistory 等嵌套结构，保持宽容。
+      initializeWorkspace: (args) => requireSessionParams(args, ["workspacePath"]),
+      getWorkspaceRuntimeIdentity: (args) => requireSessionParams(args, ["workspacePath"]),
+      readWorkspacePresentation: (args) => requireSessionParams(args, ["workspacePath"]),
+      createSession: (args) => requireSessionParams(args, ["workspacePath"]),
+      resumeSession: (args) => requireSessionParams(args, ["workspacePath", "sessionId"]),
+      listSessions: (args) => requireSessionParams(args, ["workspacePath"]),
+      readSession: (args) => requireSessionParams(args, ["workspacePath", "sessionId"]),
+      readSessionMessages: (args) => requireSessionParams(args, ["workspacePath", "sessionId"]),
+      readSessionEvents: (args) => requireSessionParams(args, ["workspacePath", "sessionId"]),
+      promoteDeferredDraftSession: (args) =>
+        requireSessionParams(args, ["workspacePath", "sessionId"]),
+      closeSession: (args) => requireSessionParams(args, ["workspacePath", "sessionId"]),
+      closeDeferredDraftSession: (args) =>
+        requireSessionParams(args, ["workspacePath", "sessionId"]),
+      setModel: (args) => {
+        const value = requireSessionParams(args, ["workspacePath", "sessionId"]);
+        const model = value.model;
+        if (!model || typeof model !== "object" || Array.isArray(model)) {
+          throw new Error("invalid model");
+        }
+      },
+      setThoughtLevel: (args) => requireSessionParams(args, ["workspacePath", "sessionId"]),
+      setMode: (args) => requireSessionParams(args, ["workspacePath", "sessionId", "mode"]),
+    },
+  },
 );
+
+function requireSessionParams(
+  args: readonly unknown[],
+  requiredStringFields: readonly string[],
+): Record<string, unknown> {
+  if (args.length !== 1) throw new Error("expected a single params object");
+  const value = args[0];
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("expected a params object");
+  }
+  const record = value as Record<string, unknown>;
+  for (const field of requiredStringFields) {
+    const fieldValue = record[field];
+    if (typeof fieldValue !== "string" || fieldValue.length === 0) {
+      throw new Error(`invalid ${field}`);
+    }
+  }
+  return record;
+}

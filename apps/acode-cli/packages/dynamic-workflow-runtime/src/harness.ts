@@ -136,6 +136,8 @@ export interface RunWorkflowOptions {
    */
   scriptHash?: string;
   parentSessionId?: string;
+  ownerGeneration?: number;
+  ownerToken?: string;
   /** run 的展示名（宿主枚举面的标签来源）。与 `scriptText` 同路，harness 只转交。 */
   name?: string;
   /**
@@ -223,6 +225,7 @@ export async function runWorkflowScript(options: RunWorkflowOptions): Promise<Ru
   engine = new WorkflowEngine({
     runId,
     driver,
+    ...(options.signal === undefined ? {} : { signal: options.signal }),
     caps: options.caps,
     askSpecs: options.askSpecs,
     validate: options.validate,
@@ -233,6 +236,8 @@ export async function runWorkflowScript(options: RunWorkflowOptions): Promise<Ru
     ...(options.args === undefined ? {} : { args: options.args }),
     ...(options.scriptHash === undefined ? {} : { scriptHash: options.scriptHash }),
     ...(options.parentSessionId === undefined ? {} : { parentSessionId: options.parentSessionId }),
+    ...(options.ownerGeneration === undefined ? {} : { ownerGeneration: options.ownerGeneration }),
+    ...(options.ownerToken === undefined ? {} : { ownerToken: options.ownerToken }),
     ...(options.toolCallId === undefined ? {} : { toolCallId: options.toolCallId }),
     ...(options.resumedFrom === undefined ? {} : { resumedFrom: options.resumedFrom }),
     ...(options.launch === undefined ? {} : { launch: options.launch }),

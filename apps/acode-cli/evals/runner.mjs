@@ -40,7 +40,13 @@ const CLI_SRC_PACKAGES = ["core", "contracts", "bootstrap", "cli"];
 const REAL_V2_DIR = join(homedir(), ".acode", "v2");
 const REPORTS_DIR = join(HERE, "reports");
 const RAW_DIR = join(REPORTS_DIR, "raw");
-const SPEC_REF = "apps/acode-cli/specs/prompt-eval-runner.md";
+import {
+  SPEC_REF,
+  checkDistFreshness,
+  judgeFingerprintFor,
+  buildReport,
+} from "./runner-report.mjs";
+export { checkDistFreshness, judgeFingerprintFor, buildReport } from "./runner-report.mjs";
 
 /** 数据根两个 env 是白名单全集（红线：runner 不新增 ACODE_ 开关面）。 */
 const ENV_STORAGE = "ACODE_STORAGE_DIR";
@@ -51,92 +57,8 @@ export const NOT_SUPPORTED_V1 = {
   "restart-orphan-handling": "§R7-6 kill+resume 编排未验证",
 };
 
-const TOOL_INPUT_CHARS = 1200;
-const TOOL_RESULT_CHARS = 3000;
-
-function truncate(text, max) {
-  return text.length > max ? `${text.slice(0, max)}\n…[runner-truncated ${text.length - max} chars]` : text;
-}
-
-/**
- * 整形纯函数（spec §R3 映射表）：raw stream-json → judge 可读转录。
- * raw 流不可直送 judge（试点实证：2665/2808 行是 token delta，60k 截断预算被噪声
- * 吃满）——本函数是 runner 硬需求「转录整形」的唯一实现。乱行跳过不崩。
- */
-export function shapeTranscript(ndjson) {
-  const blocks = [];
-  const textByMessage = new Map();
-  let eventsTotal = 0;
-  for (const line of ndjson.split(/\r?\n/)) {
-    if (!line.trim()) continue;
-    let ev;
-    try {
-      ev = JSON.parse(line);
-    } catch {
-      continue; // 半截行/非 JSON 噪声：跳过，不中断整形
-    }
-    eventsTotal += 1;
-    const p = ev.payload ?? {};
-    if (ev.type === "turn.started") {
-      blocks.push(`[user] ${p.input}`);
-    } else if (ev.type === "model.streaming") {
-      if (p.kind === "text_delta") {
-        textByMessage.set(p.assistantMessageId, (textByMessage.get(p.assistantMessageId) ?? "") + (p.delta ?? ""));
-      } else if (p.kind === "text_end") {
-        const text = (textByMessage.get(p.assistantMessageId) ?? "").trim();
-        if (text) blocks.push(`[assistant] ${text}`);
-      } else if (p.kind === "tool_call") {
-        blocks.push(`[tool call ${p.toolCallId}] ${p.toolName}\n${truncate(JSON.stringify(p.input, null, 1), TOOL_INPUT_CHARS)}`);
-      }
-      // reasoning_*、start/finish、tool_input_* 等一律丢弃（§R3 映射表）
-    } else if (ev.type === "tool.updated" && p.kind === "result") {
-      const content = typeof p.result?.content === "string" ? p.result.content : JSON.stringify(p.result?.content ?? null);
-      blocks.push(`[tool result ${p.toolCallId}] success=${p.result?.success} duration=${p.duration}ms\n${truncate(content ?? "", TOOL_RESULT_CHARS)}`);
-    } else if (ev.type === "result") {
-      blocks.push(`[final assistant message] ${ev.response}`);
-    }
-  }
-  const text = `${blocks.join("\n\n")}\n`;
-  return { text, eventsTotal, blocksShaped: blocks.length, shapedChars: text.length };
-}
-
-/**
- * 子转录整形（spec §R3 子转录规则，EXP1 实证源）：子会话 rollout model-io jsonl 的
- * **末行** `request.body.messages` 是完整消息链（含全部 tool_use/tool_result）；映射为
- * 与父转录同族的块，末尾追加 output.txt 全文为 [final report]（报告契约面判分对象）。
- * system 不在 messages 里，天然丢弃。
- */
-export function shapeChildTranscript(modelIoNdjson, finalReport) {
-  let last;
-  for (const line of modelIoNdjson.split(/\r?\n/)) {
-    if (!line.trim()) continue;
-    try {
-      last = JSON.parse(line);
-    } catch {
-      continue;
-    }
-  }
-  const messages = last?.request?.body?.messages ?? [];
-  const blocks = [];
-  for (const msg of messages) {
-    const parts = typeof msg.content === "string" ? [{ type: "text", text: msg.content }] : (msg.content ?? []);
-    for (const part of parts) {
-      if (part.type === "text" && msg.role === "user") {
-        blocks.push(`[user] ${part.text}`);
-      } else if (part.type === "text" && msg.role === "assistant") {
-        blocks.push(`[assistant] ${part.text}`);
-      } else if (part.type === "tool_use") {
-        blocks.push(`[tool call ${part.id}] ${part.name}\n${truncate(JSON.stringify(part.input ?? {}, null, 1), TOOL_INPUT_CHARS)}`);
-      } else if (part.type === "tool_result") {
-        const content = typeof part.content === "string" ? part.content : JSON.stringify(part.content ?? "");
-        blocks.push(`[tool result ${part.tool_use_id}]\n${truncate(content, TOOL_RESULT_CHARS)}`);
-      }
-    }
-  }
-  if (finalReport?.trim()) blocks.push(`[final report] ${finalReport.trim()}`);
-  const text = `${blocks.join("\n\n")}\n`;
-  return { text, blocksShaped: blocks.length, shapedChars: text.length };
-}
+import { shapeTranscript, shapeChildTranscript } from "./runner-transcript.mjs";
+export { shapeTranscript, shapeChildTranscript } from "./runner-transcript.mjs";
 
 /**
  * 子代理工件定位（EXP1 实证）：`cli/agents/<parentSess>/agent_<id>/metadata.json` 给
@@ -161,19 +83,6 @@ export function locateChildArtifacts(storageRoot, parentSessionId) {
   return found;
 }
 
-/** dist 新鲜度守护（spec §R2，试点教训：陈旧 dist = 测旧提示词 = 基线保真不成立）。 */
-export function checkDistFreshness(distMtimeMs, srcLatestMtimeMs) {
-  if (srcLatestMtimeMs > distMtimeMs) {
-    return {
-      ok: false,
-      reason:
-        `CLI dist is older than packages src (dist ${new Date(distMtimeMs).toISOString()} < src ${new Date(srcLatestMtimeMs).toISOString()}). ` +
-        `Rebuild first: cd apps/acode-cli && ../../node_modules/.bin/turbo run build --filter="@acode/cli..."`,
-    };
-  }
-  return { ok: true };
-}
-
 function latestSrcMtimeMs() {
   let latest = 0;
   const walk = (dir) => {
@@ -188,26 +97,6 @@ function latestSrcMtimeMs() {
     if (existsSync(src)) walk(src);
   }
   return latest;
-}
-
-/** judgeFingerprint（spec §R4）：指纹不同的报告不得互算 delta。 */
-export function judgeFingerprintFor(mode, { model, endpointHost } = {}) {
-  if (mode === "live") return { mode, model: model ?? "unknown", ...(endpointHost ? { endpointHost } : {}) };
-  if (mode === "operator") return { mode, model: model ?? "unspecified" };
-  return { mode: "pending" };
-}
-
-/** 报告形状（spec §R5）：scoreScenario 报告 + 采集元数据。 */
-export function buildReport({ scenarioId, runId, status, judgeFingerprint, collection, score }) {
-  return {
-    spec: SPEC_REF,
-    scenarioId,
-    runId,
-    status, // "awaiting-judgement" | "scored"
-    judgeFingerprint,
-    collection,
-    ...(score ?? {}),
-  };
 }
 
 /**
@@ -229,7 +118,9 @@ export function cleanupEvalRoot(evalRoot, { keepRoot = false } = {}) {
 export function assertScenarioSupported(scenarioId) {
   const blocked = NOT_SUPPORTED_V1[scenarioId];
   if (blocked) {
-    throw new Error(`scenario "${scenarioId}" is not-supported-v1: ${blocked}（见 ${SPEC_REF} §R7）`);
+    throw new Error(
+      `scenario "${scenarioId}" is not-supported-v1: ${blocked}（见 ${SPEC_REF} §R7）`,
+    );
   }
 }
 
@@ -239,7 +130,9 @@ async function loadRecipe(scenarioId) {
     return await import(pathToFileURL(join(HERE, "recipes", `${scenarioId}.mjs`)).href);
   } catch (error) {
     if (error?.code === "ERR_MODULE_NOT_FOUND") {
-      throw new Error(`no recipe for scenario "${scenarioId}"（recipes/${scenarioId}.mjs 缺席 = not-supported，见 ${SPEC_REF} §R6）`);
+      throw new Error(
+        `no recipe for scenario "${scenarioId}"（recipes/${scenarioId}.mjs 缺席 = not-supported，见 ${SPEC_REF} §R6）`,
+      );
     }
     throw error;
   }
@@ -298,9 +191,17 @@ async function judgeResponseFlow(scenario, runDirArg) {
   }
   const responseFile = join(runDir, "response.json");
   if (!existsSync(responseFile)) {
-    throw new Error(`${responseFile} 不存在：把 dry 请求（request.json）交给判分模型，响应存为该文件后重跑 --judge response`);
+    throw new Error(
+      `${responseFile} 不存在：把 dry 请求（request.json）交给判分模型，响应存为该文件后重跑 --judge response`,
+    );
   }
-  const reportFile = join(REPORTS_DIR, `report-${scenario.id}-${runDir.split(/[\\/]/).pop().slice(scenario.id.length + 1)}.json`);
+  const reportFile = join(
+    REPORTS_DIR,
+    `report-${scenario.id}-${runDir
+      .split(/[\\/]/)
+      .pop()
+      .slice(scenario.id.length + 1)}.json`,
+  );
   const prior = existsSync(reportFile) ? JSON.parse(readFileSync(reportFile, "utf-8")) : undefined;
   const parsed = parseJudgeResponse(readFileSync(responseFile, "utf-8"));
   const score = scoreScenario(scenario, parsed);
@@ -316,7 +217,13 @@ async function judgeResponseFlow(scenario, runDirArg) {
     score: { ...score, judgeRaw: parsed.ok ? undefined : readFileSync(responseFile, "utf-8") },
   });
   writeFileSync(reportFile, `${JSON.stringify(report, null, 2)}\n`, "utf-8");
-  console.log(JSON.stringify({ reportFile, pass: report.pass, passRate: report.passRate, invalid: report.invalid }, null, 2));
+  console.log(
+    JSON.stringify(
+      { reportFile, pass: report.pass, passRate: report.passRate, invalid: report.invalid },
+      null,
+      2,
+    ),
+  );
   return report;
 }
 
@@ -338,7 +245,8 @@ async function dryFlow(scenario, recipe, evalRootArg) {
   mkdirSync(fixtureDir, { recursive: true });
   // 凭据/配置复制（copy method：真实 profile 零触碰）。
   for (const name of readdirSync(REAL_V2_DIR)) {
-    if (name.endsWith(".json")) copyFileSync(join(REAL_V2_DIR, name), join(dataBase, ".acode", "v2", name));
+    if (name.endsWith(".json"))
+      copyFileSync(join(REAL_V2_DIR, name), join(dataBase, ".acode", "v2", name));
   }
 
   let server;
@@ -352,7 +260,9 @@ async function dryFlow(scenario, recipe, evalRootArg) {
       // 子/后台会话，父侧投递语由 recipe.parentPrompt 声明；缺声明 = 支持面登记错误，
       // fail-loud 而不是把指示当 prompt 发出去。
       if (!recipe.parentPrompt) {
-        throw new Error(`scenario "${scenario.id}" prompt is a stage direction and the recipe declares no parentPrompt（见 ${SPEC_REF} §R6）`);
+        throw new Error(
+          `scenario "${scenario.id}" prompt is a stage direction and the recipe declares no parentPrompt（见 ${SPEC_REF} §R6）`,
+        );
       }
       deliverablePrompt = recipe.parentPrompt;
     }
@@ -384,12 +294,16 @@ async function dryFlow(scenario, recipe, evalRootArg) {
     let judgedFile = join(runDir, "transcript-shaped.txt");
     let childMeta;
     if (recipe.judgeTarget === "child") {
-      const parentSessionId = JSON.parse(ndjson.split(/\r?\n/).find((line) => line.trim()) ?? "{}").sessionId;
+      const parentSessionId = JSON.parse(
+        ndjson.split(/\r?\n/).find((line) => line.trim()) ?? "{}",
+      ).sessionId;
       const children = locateChildArtifacts(storage, parentSessionId);
       if (children.length !== 1) {
         throw new Error(
           `scenario "${scenario.id}" expects exactly one child session artifact, found ${children.length}` +
-            (children.length ? `（${children.map((c) => c.description).join("; ")}）` : "（子代理未派发？检查父转录）"),
+            (children.length
+              ? `（${children.map((c) => c.description).join("; ")}）`
+              : "（子代理未派发？检查父转录）"),
         );
       }
       const child = children[0];
@@ -407,7 +321,9 @@ async function dryFlow(scenario, recipe, evalRootArg) {
     if (code !== 0) notes.push(`cli-exit-${code}`);
     if (recipe.experimental && !/notification|task-notification/i.test(ndjson)) {
       // §R6 experimental：进程早退未观察到后台完成事件——本身即产品行为发现，不算采集失败。
-      notes.push("background-orphan: process exited without observable background completion events");
+      notes.push(
+        "background-orphan: process exited without observable background completion events",
+      );
     }
     const collection = {
       distCommit: currentCommit(),
@@ -424,21 +340,40 @@ async function dryFlow(scenario, recipe, evalRootArg) {
 
     // judge：三件套齐备走 live（复用 judge.mjs，不复制网络代码）；否则 dry 落请求文件。
     const liveEnvReady =
-      process.env.PROMPT_EVAL_JUDGE_BASE_URL && process.env.PROMPT_EVAL_JUDGE_API_KEY && process.env.PROMPT_EVAL_JUDGE_MODEL;
+      process.env.PROMPT_EVAL_JUDGE_BASE_URL &&
+      process.env.PROMPT_EVAL_JUDGE_API_KEY &&
+      process.env.PROMPT_EVAL_JUDGE_MODEL;
     let status = "awaiting-judgement";
     let fingerprint = judgeFingerprintFor("pending");
     let score;
     const request = buildJudgeRequest(scenario, judgedText);
-    writeFileSync(join(runDir, "request.json"), `${JSON.stringify({ scenarioId: scenario.id, ...request }, null, 2)}\n`, "utf-8");
+    writeFileSync(
+      join(runDir, "request.json"),
+      `${JSON.stringify({ scenarioId: scenario.id, ...request }, null, 2)}\n`,
+      "utf-8",
+    );
     if (liveEnvReady) {
       const liveOut = join(runDir, "live-report.json");
-      await runChild(process.execPath, [join(HERE, "judge.mjs"), "--scenario", scenario.id, "--transcript", judgedFile, "--json-out", liveOut, "--live"], {
-        cwd: CLI_ROOT,
-        env: process.env,
-        stdoutFile: join(runDir, "judge-stdout.log"),
-        stderrFile: join(runDir, "judge-stderr.log"),
-        timeoutMs: 5 * 60 * 1000,
-      });
+      await runChild(
+        process.execPath,
+        [
+          join(HERE, "judge.mjs"),
+          "--scenario",
+          scenario.id,
+          "--transcript",
+          judgedFile,
+          "--json-out",
+          liveOut,
+          "--live",
+        ],
+        {
+          cwd: CLI_ROOT,
+          env: process.env,
+          stdoutFile: join(runDir, "judge-stdout.log"),
+          stderrFile: join(runDir, "judge-stderr.log"),
+          timeoutMs: 5 * 60 * 1000,
+        },
+      );
       score = JSON.parse(readFileSync(liveOut, "utf-8"));
       status = "scored";
       fingerprint = judgeFingerprintFor("live", {
@@ -446,7 +381,14 @@ async function dryFlow(scenario, recipe, evalRootArg) {
         endpointHost: new URL(process.env.PROMPT_EVAL_JUDGE_BASE_URL).host,
       });
     }
-    const report = buildReport({ scenarioId: scenario.id, runId, status, judgeFingerprint: fingerprint, collection, score });
+    const report = buildReport({
+      scenarioId: scenario.id,
+      runId,
+      status,
+      judgeFingerprint: fingerprint,
+      collection,
+      score,
+    });
     const reportFile = join(REPORTS_DIR, `report-${scenario.id}-${runId}.json`);
     writeFileSync(reportFile, `${JSON.stringify(report, null, 2)}\n`, "utf-8");
     console.log(
@@ -456,9 +398,10 @@ async function dryFlow(scenario, recipe, evalRootArg) {
           runDir,
           status,
           ...(score ? { pass: score.pass, passRate: score.passRate } : {}),
-          next: status === "awaiting-judgement"
-            ? `把 ${join(runDir, "request.json")} 交给判分模型，响应存为 ${join(runDir, "response.json")}，再跑 --judge response --run ${scenario.id}-${runId}`
-            : undefined,
+          next:
+            status === "awaiting-judgement"
+              ? `把 ${join(runDir, "request.json")} 交给判分模型，响应存为 ${join(runDir, "response.json")}，再跑 --judge response --run ${scenario.id}-${runId}`
+              : undefined,
         },
         null,
         2,
@@ -488,7 +431,9 @@ async function main() {
   const scenarios = await loadScenarios();
   const scenario = scenarios.find((item) => item.id === scenarioId);
   if (!scenario) {
-    console.error(`unknown scenario id: ${scenarioId}\navailable: ${scenarios.map((s) => s.id).join(", ")}`);
+    console.error(
+      `unknown scenario id: ${scenarioId}\navailable: ${scenarios.map((s) => s.id).join(", ")}`,
+    );
     process.exit(2);
   }
   if (judgeMode === "response") {
@@ -500,7 +445,9 @@ async function main() {
   process.exit(0);
 }
 
-const isMain = typeof process.argv[1] === "string" && fileURLToPath(import.meta.url) === resolve(process.argv[1]);
+const isMain =
+  typeof process.argv[1] === "string" &&
+  fileURLToPath(import.meta.url) === resolve(process.argv[1]);
 if (isMain) {
   main().catch((error) => {
     console.error(`runner failed: ${error.message}`);

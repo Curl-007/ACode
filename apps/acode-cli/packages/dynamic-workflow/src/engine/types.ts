@@ -322,7 +322,7 @@ export interface WorkflowDriver {
    * 执行一次世界读取。`args` 是脚本调用点的**位置实参**，lowering 原样打包、不做任何检查；
    * 每个 op 的元数与实参校验归 driver（见 {@link WorkflowHostApi.worldRead}）。
    */
-  executeWorldRead(op: WorldReadOp, args: unknown[]): Promise<unknown>;
+  executeWorldRead(op: WorldReadOp, args: unknown[], signal?: AbortSignal): Promise<unknown>;
   /**
    * 发布一个内容产物的字节：校验实参形状、
    * 解析工作区相对路径（越界拒绝）、读字节（cap+1 探测，超限拒绝不截断）、按扩展名定
@@ -766,6 +766,9 @@ export interface RunRecord {
   failure?: WorkflowErrorJson;
   /** 脚本的顶层返回值。Present only for completed runs（`undefined` 产物即整字段缺席）。 */
   result?: unknown;
+  /** Durable process owner facts used by bootstrap reconcile/CAS. */
+  ownerGeneration?: number;
+  ownerToken?: string;
 }
 
 /** dwf_actor 记录，unique(runId, siteId, ordinal)。 */
@@ -806,7 +809,8 @@ export type NodeRecordStatus = "running" | "completed" | "failed";
 /**
  * dwf_node 记录。unique(runId, siteId, ordinal)；对 ask 另有
  * unique(runId, actorSiteId, actorOrdinal, actorSeq)。world-read 与 report 的 actor* 与
- * actorSeq 均空；report 行还满足：一次写入、status 恒为 `completed`、`result` 即被报告的 item、
+ * actorSeq 均空；预算拒绝 ask 行缺席 actorSeq（未准入），failed error 为 AgentBudgetExceeded，
+ * 恢复时重放拒绝但不计总量/FIFO。report 行还满足：一次写入、status 恒为 `completed`、`result` 即被报告的 item、
  * `inputHash` 覆盖该 item（replay 命中时防御性比对）。
  */
 export interface NodeRecord {
@@ -887,6 +891,9 @@ export interface RunSettlementRecord {
   supersededBy?: string;
   failure?: WorkflowErrorJson;
   result?: unknown;
+  ownerGeneration?: number;
+  ownerToken?: string;
+  ownerTakeover?: boolean;
 }
 
 /**

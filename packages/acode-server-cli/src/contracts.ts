@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { CORE_HEALTH_VALUES } from "./supervisor/coreHealth.js";
 
 export const SERVER_CLI_PROTOCOL_VERSION = 1;
 export const SERVER_RUNTIME_NODE_VERSION = "22.16.0";
@@ -18,6 +19,7 @@ export const lifecycleStateSchema = z.enum([
   "uninstalling",
   "uninstalled",
 ]);
+export const coreHealthSchema = z.enum(CORE_HEALTH_VALUES);
 
 export const crashBudgetSchema = z.object({
   windowStartedAt: z.number().int().nonnegative().optional(),
@@ -39,6 +41,8 @@ export const serverStatusSchema = z
     lastExitReason: z.string().max(500).nullable().default(null),
     serviceRegistered: z.boolean(),
     runningTaskCount: z.number().int().nonnegative(),
+    coreHealth: coreHealthSchema.default("unknown"),
+    lastHeartbeatAt: z.number().int().nonnegative().nullable().default(null),
     crashBudget: crashBudgetSchema,
     updatedAt: z.number().int().nonnegative(),
   })
@@ -72,6 +76,8 @@ export function createStoppedServerStatus(
     lastExitReason: null,
     serviceRegistered: options.serviceRegistered ?? false,
     runningTaskCount: 0,
+    coreHealth: "unknown",
+    lastHeartbeatAt: null,
     crashBudget: {
       crashCount: 0,
       nextRestartDelayMs: CRASH_BACKOFF_MS[0],

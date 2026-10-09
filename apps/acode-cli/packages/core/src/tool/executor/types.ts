@@ -37,7 +37,7 @@ import type {
 import type { HookRunner } from "../../hooks/index.js";
 import type { PermissionService } from "../../permission/service.js";
 import type { AutoRiskClassifierPort } from "../../permission/auto-risk-classifier.js";
-import type { RuntimeTaskRegistry } from "../../runtime-task/registry.js";
+import type { RuntimeTaskRegistry } from "../../runtime-task/contract.js";
 import type { ToolRegistry } from "../registry.js";
 import type { ToolSchedule } from "../scheduler.js";
 import type {

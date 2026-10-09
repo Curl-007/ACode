@@ -39,6 +39,7 @@ import type {
   WorkspaceRewindResult,
 } from "../types.js";
 import type { AgentRuntimeInternal } from "../internal.js";
+import { getRuntimeBranchRestorePort, type RuntimeBranchTransition } from "../turn-coordination.js";
 import { rebuildContextPrefix } from "./context-refresh.js";
 import { mainTurnCacheHitAggregateFromMessages } from "./turn-model-step-usage.js";
 
@@ -387,7 +388,7 @@ type ConversationRewindPlan =
       // 但 available plan 已经完成 active-chain 校验，后续落事件必须有 evaluation。
       evaluation: NonNullable<ConversationRewindResult["evaluation"]>;
       branchCutAfterMessageId: MessageId;
-      branchGeneration: number;
+      branchTransition: RuntimeBranchTransition;
       keptMessages: MessageWithParts[];
       kind: "available";
       persistedMessages: MessageWithParts[];
@@ -526,7 +527,7 @@ async function buildConversationRewindPlan(
   return {
     evaluation,
     branchCutAfterMessageId: persistedMessages.at(-1)!.info.id as MessageId,
-    branchGeneration: (session?.revert?.branchGeneration ?? 0) + 1,
+    branchTransition: getRuntimeBranchRestorePort(this).prepareRewind(session),
     keptMessages: activeMessages.slice(0, targetIndex),
     kind: "available",
     persistedMessages,
@@ -552,58 +553,67 @@ async function applyConversationRewindPlan(
   throwIfTurnAborted(options.abortSignal);
   const {
     branchCutAfterMessageId,
-    branchGeneration,
+    branchTransition,
     evaluation,
     keptMessages,
     persistedMessages,
     removedTurnIds,
     rewindId,
   } = options.plan;
-  await cancelRemovedBranchBackgroundTasks.call(this, {
-    removedTurnIds,
-    traceContext: options.traceContext,
-  });
-  await this.sessionStore!.setRevert({
-    sessionID: this.sessionId,
-    revert: {
-      // 只保存 target/created 无法在连续编辑或重启后还原旧 rewind 前缀。
-      // keptMessageIDs 保存的是本次 rewind 前 active branch 的保留前缀，避免旧分支重新浮出。
-      keptMessageIDs: keptMessages.map((message) => message.info.id as MessageId),
-      branchCutAfterMessageID: branchCutAfterMessageId,
-      branchGeneration,
-      messageID: keptMessages.at(-1)?.info.id ?? options.targetMessageId,
-      kind: "conversation_rewind",
-      scope: RewindScope.Conversation,
-      targetMessageID: options.targetMessageId,
+  const branchGeneration = branchTransition.generation;
+  const committed = await branchTransition.commitAfterPersist(
+    async () => {
+      throwIfTurnAborted(options.abortSignal);
+      await cancelRemovedBranchBackgroundTasks.call(this, {
+        removedTurnIds,
+        traceContext: options.traceContext,
+      });
+      throwIfTurnAborted(options.abortSignal);
+      await this.sessionStore!.setRevert({
+        sessionID: this.sessionId,
+        revert: {
+          // 只保存 target/created 无法在连续编辑或重启后还原旧 rewind 前缀。
+          // keptMessageIDs 保存的是本次 rewind 前 active branch 的保留前缀，避免旧分支重新浮出。
+          keptMessageIDs: keptMessages.map((message) => message.info.id as MessageId),
+          branchCutAfterMessageID: branchCutAfterMessageId,
+          branchGeneration,
+          messageID: keptMessages.at(-1)?.info.id ?? options.targetMessageId,
+          kind: "conversation_rewind",
+          scope: RewindScope.Conversation,
+          targetMessageID: options.targetMessageId,
+        },
+      });
     },
-  });
-  this.branchGeneration = branchGeneration;
-  this.runtimeTaskRegistry.setActiveBranchGeneration?.(branchGeneration);
+    async () => {
+      // owner 已推进 durable generation，重建和事件仍持有授权，新通知不能插入 reset/hydrate。
+      await rebuildConversationDerivedState.call(this, {
+        branchCutAfterMessageId,
+        keptMessageIds: keptMessages.map((message) => message.info.id as MessageId),
+        persistedMessages,
+        targetMessageId: options.targetMessageId,
+        traceContext: options.traceContext,
+      });
 
-  await rebuildConversationDerivedState.call(this, {
-    branchCutAfterMessageId,
-    keptMessageIds: keptMessages.map((message) => message.info.id as MessageId),
-    persistedMessages,
-    targetMessageId: options.targetMessageId,
-    traceContext: options.traceContext,
-  });
-
-  const event = this.createEvent(
-    SessionEventType.RewindTriggered,
-    {
-      rewindId,
-      scope: RewindScope.Conversation,
-      strategy: evaluation.strategy,
-      targetMessageId: options.targetMessageId,
-      compactBoundaryId: evaluation.compactBoundaryId,
-      branchCutAfterMessageId,
-      branchGeneration,
-      reason: evaluation.reason,
+      const event = this.createEvent(
+        SessionEventType.RewindTriggered,
+        {
+          rewindId,
+          scope: RewindScope.Conversation,
+          strategy: evaluation.strategy,
+          targetMessageId: options.targetMessageId,
+          compactBoundaryId: evaluation.compactBoundaryId,
+          branchCutAfterMessageId,
+          branchGeneration,
+          reason: evaluation.reason,
+        },
+        options.traceContext,
+      );
+      await this.appendEvent(event, options.traceContext);
+      options.events.push(event);
     },
-    options.traceContext,
   );
-  await this.appendEvent(event, options.traceContext);
-  options.events.push(event);
+  // 旧转换在取消/持久化之前就被拒绝，不能先覆写 store 再发现 runtime 已经进入下一代。
+  if (!committed) throw new Error("Conversation rewind branch transition is stale");
 
   this.logger?.info("Conversation rewind applied", {
     ...traceContextToLogContext(options.traceContext),

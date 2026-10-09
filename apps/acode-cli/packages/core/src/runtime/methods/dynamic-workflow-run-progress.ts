@@ -6,7 +6,7 @@ import {
 import {
   formatWorkflowEscalationNotification,
   formatWorkflowStallNotification,
-} from "../../runtime-task/notification.js";
+} from "../../runtime-task/contract.js";
 import type { AgentRuntimeInternal } from "../internal.js";
 
 /**

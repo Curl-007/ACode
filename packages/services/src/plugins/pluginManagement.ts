@@ -90,4 +90,85 @@ export interface IPluginManagementService {
 
 export const IPluginManagementService = createServiceDescriptor<IPluginManagementService>(
   ServiceChannels.PluginManagement,
+  {
+    allowedMethods: [
+      "listPlugins",
+      "getPluginReferenceCatalog",
+      "resolveSuggestedPluginReference",
+      "onDynamicPluginOperationProgress",
+      "getPluginsOverview",
+      "addPluginMarketplace",
+      "removePluginMarketplace",
+      "updatePluginMarketplace",
+      "installPlugin",
+      "cancelPluginOperation",
+      "uninstallPlugin",
+      "updatePlugin",
+      "restoreBuiltinPlugin",
+      "configurePlugin",
+      "resetPluginConfig",
+      "validatePlugin",
+      "describePlugin",
+      "setPluginEnabled",
+    ],
+    argumentValidators: {
+      // 除 cancelPluginOperation（只带 operationId）与动态事件外，方法都接收单一 params 对象，
+      // 以 workspacePath 定位 workspace agent client。只做顶层确定检查，不解析插件配置嵌套结构。
+      listPlugins: (args) => requirePluginParams(args, ["workspacePath"]),
+      getPluginReferenceCatalog: (args) => requirePluginParams(args, ["workspacePath"]),
+      resolveSuggestedPluginReference: (args) =>
+        requirePluginParams(args, ["workspacePath", "stableId", "operationId"]),
+      // 动态事件：listen 传入单一 operationId，校验其字符串形态（对齐 terminal 动态事件）。
+      onDynamicPluginOperationProgress: (args) => {
+        if (args.length !== 1 || typeof args[0] !== "string" || args[0].length === 0) {
+          throw new Error("expected operation id");
+        }
+      },
+      getPluginsOverview: (args) => requirePluginParams(args, ["workspacePath"]),
+      addPluginMarketplace: (args) => requirePluginParams(args, ["workspacePath", "source"]),
+      removePluginMarketplace: (args) =>
+        requirePluginParams(args, ["workspacePath", "marketplace"]),
+      updatePluginMarketplace: (args) => requirePluginParams(args, ["workspacePath"]),
+      installPlugin: (args) =>
+        requirePluginParams(args, ["workspacePath", "marketplace", "pluginName"]),
+      cancelPluginOperation: (args) => requirePluginParams(args, ["operationId"]),
+      uninstallPlugin: (args) => requirePluginParams(args, ["workspacePath"]),
+      updatePlugin: (args) => requirePluginParams(args, ["workspacePath"]),
+      restoreBuiltinPlugin: (args) => requirePluginParams(args, ["workspacePath", "pluginId"]),
+      configurePlugin: (args) => {
+        const value = requirePluginParams(args, ["workspacePath", "pluginId"]);
+        const options = value.options;
+        if (!options || typeof options !== "object" || Array.isArray(options)) {
+          throw new Error("invalid options");
+        }
+      },
+      resetPluginConfig: (args) => requirePluginParams(args, ["workspacePath", "pluginId"]),
+      validatePlugin: (args) => requirePluginParams(args, ["workspacePath"]),
+      describePlugin: (args) =>
+        requirePluginParams(args, ["workspacePath", "marketplace", "pluginName"]),
+      setPluginEnabled: (args) => {
+        const value = requirePluginParams(args, ["workspacePath", "pluginId"]);
+        if (typeof value.enabled !== "boolean") throw new Error("invalid enabled");
+      },
+    },
+  },
 );
+
+function requirePluginParams(
+  args: readonly unknown[],
+  requiredStringFields: readonly string[],
+): Record<string, unknown> {
+  if (args.length !== 1) throw new Error("expected a single params object");
+  const value = args[0];
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("expected a params object");
+  }
+  const record = value as Record<string, unknown>;
+  for (const field of requiredStringFields) {
+    const fieldValue = record[field];
+    if (typeof fieldValue !== "string" || fieldValue.length === 0) {
+      throw new Error(`invalid ${field}`);
+    }
+  }
+  return record;
+}

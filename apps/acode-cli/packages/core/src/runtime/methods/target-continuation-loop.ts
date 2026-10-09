@@ -4,8 +4,10 @@ import { createRuntimeCommandId } from "../command-queue.js";
 import type { TargetContinuationLoopRuntimeCommand } from "../command-queue.js";
 import { executeTargetContinuationCommand } from "./target.js";
 import { enqueueCancellableRuntimeCommand } from "./runtime-command-submit.js";
+import { assertRuntimeModelBranchCurrent } from "./runtime-command-generation.js";
 
 interface RunActiveTargetContinuationLoopOptions extends ContinueActiveTargetLoopOptions {
+  branchGeneration?: number;
   yieldBeforeFirstContinue?: boolean;
 }
 
@@ -48,11 +50,13 @@ export async function runActiveTargetContinuationLoop(
 ): Promise<TurnResult | null> {
   const traceContext = options.traceContext ?? this.rootTraceContext;
   let verifyBeforeContinue = options.verifyBeforeFirstContinue === true;
+  const branchGeneration = options.branchGeneration ?? this.branchGeneration;
   let lastResult: TurnResult | null = null;
   let yieldToPendingCommands = options.yieldBeforeFirstContinue !== false;
   let continuationIntent = options.intent;
 
   while (!options.abortSignal?.aborted) {
+    assertRuntimeModelBranchCurrent(this, branchGeneration);
     if (yieldToPendingCommands && this.runtimeCommandQueue.hasPending()) {
       return lastResult;
     }
@@ -66,6 +70,7 @@ export async function runActiveTargetContinuationLoop(
     }
 
     const result = await executeTargetContinuationCommand.call(this, {
+      branchGeneration,
       ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
       ...(options.inputId !== undefined ? { inputId: options.inputId } : {}),
       ...(continuationIntent ? { intent: continuationIntent } : {}),

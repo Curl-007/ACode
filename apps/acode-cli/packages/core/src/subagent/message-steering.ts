@@ -1,5 +1,5 @@
 import type { TraceContext, TurnSteerInput, TurnSteerResult } from "@acode/contracts";
-import type { RuntimeTaskMessageSink } from "../runtime-task/registry.js";
+import type { RuntimeTaskMessageSink } from "../runtime-task/contract.js";
 
 interface SteerableRuntime {
   steerTurn(input: string | TurnSteerInput): Promise<TurnSteerResult>;

@@ -22,11 +22,10 @@ import {
   AgentRuntime,
   InMemoryRuntimeTaskRegistry,
   PermissionService,
-  setAutoClassifierAuditSink,
-  setBashReflexAuditSink,
+  registerAutoClassifierAuditSink,
+  registerBashReflexAuditSink,
   setProcessManagedPolicyFloor,
   buildPluginReferenceCatalog,
-  type AmendWorkflowRunSettingsInput,
   type ResumeSessionResult,
 } from "@acode/core";
 import {
@@ -73,6 +72,8 @@ import {
   readProjectPermissionMode,
   readSessionModelSelection,
 } from "./session-store.js";
+import { createWorkflowWiring } from "./workflow-wiring.js";
+import { createWorkflowAppFacade } from "./workflow-app-facade.js";
 import { createWorkflowFacade } from "./workflow-facade.js";
 import { createInputFacade } from "./input-facade.js";
 import { createPluginFacadeForApp } from "./plugin-facade.js";
@@ -82,34 +83,16 @@ import { resolveAppRuntimeConfig, runtimeConfigLogContext } from "./runtime-conf
 import { loadProjectMcpTrustSnapshot } from "./project-mcp-trust.js";
 import { resolveBundledSkillRoots } from "./bundled-skills.js";
 import { createReservedAgentNames, resolveBundledAgentProfiles } from "./bundled-agents.js";
-import { collectDynamicWorkflowDisabledSkillPaths } from "./dynamic-workflow-gate.js";
+import {
+  collectDynamicWorkflowDisabledSkillPaths,
+  createDynamicWorkflowSnippetService,
+  getWorkflowConcurrencyGovernor,
+} from "@acode/cli-workflow/contract";
 import { createWorkspaceHookRuntimeSecurity } from "./workspace-hook-trust.js";
-import { createScriptWorkflowBridge } from "./script-workflow-methods.js";
-import {
-  createOvernightController,
-  type OvernightController,
-} from "./overnight-controller.js";
-import {
-  createAmbientRuntimeWiring,
-  type AmbientRuntimeWiring,
-} from "./ambient-runtime.js";
+import { createOvernightController, type OvernightController } from "./overnight-controller.js";
+import { createAmbientRuntimeWiring, type AmbientRuntimeWiring } from "./ambient-runtime.js";
 import { createSwarmPlanWiring, type SwarmPlanWiring } from "./swarm-plan-runtime.js";
-import {
-  createDynamicWorkflowRunService,
-  isDynamicWorkflowTaskLinkStore,
-  resolveDynamicWorkflowJournalStore,
-} from "./dynamic-workflow-run-service.js";
-import { getWorkflowConcurrencyGovernor } from "./workflow-concurrency-governor.js";
-import { createDynamicWorkflowSnippetService } from "./dynamic-workflow-snippet-service.js";
 import { createModelCatalogPort } from "./model-catalog-port.js";
-import { createDynamicWorkflowRunProgressSink } from "./dynamic-workflow-run-progress-sink.js";
-import { createScriptWorkflowProgressAdapter } from "./script-workflow-progress-adapter.js";
-import { replayScriptWorkflowRuns } from "./script-workflow-replay.js";
-import { toScriptWorkflowRunSummary } from "./script-workflow-run-summary.js";
-import { isScriptWorkflowStore } from "./script-workflow-utils.js";
-import { createScriptWorkflowAgentRuntime } from "./script-workflow-child-runtime.js";
-import { workflowActorModelPolicy } from "./workflow-actor-model.js";
-import { workflowActorToolPolicy } from "./workflow-actor-tools.js";
 import {
   createNodeReplBrowserBroker,
   injectNodeReplBrowserBroker,
@@ -122,10 +105,7 @@ import {
   resolveACodeBuiltinPromptCommand,
 } from "../builtin-prompt-command.js";
 import { collectDisabledPaths } from "../skill-command-overrides.js";
-import {
-  loadPluginAgentProfiles,
-  loadACodeAgentProfiles,
-} from "../subagents.js";
+import { loadPluginAgentProfiles, loadACodeAgentProfiles } from "../subagents.js";
 import { createRuntimeAiSdkModelExecutionConfig } from "../model-config.js";
 import { createCliPlatformOpenPort } from "./platform-open-port.js";
 import { ApiProviderModelRuntime } from "./provider-registry-model-runtime.js";
@@ -226,7 +206,7 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
     ...traceContextToLogContext(traceContext),
     module: "core.permission",
   });
-  setBashReflexAuditSink((entry) => {
+  const unregisterBashReflexAuditSink = registerBashReflexAuditSink(sessionId, (entry) => {
     permissionAuditLogger.info("Bash reflex gate allowed a confirm-level command", {
       assessmentReasons: entry.assessmentReasons,
       command: entry.command,
@@ -239,7 +219,7 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
   });
   // auto 分类器审计（specs/auto-mode-risk-classifier.md R6）：同一 JSONL 本地落盘形态，
   // 每次灰区裁决一条（verdict/reasonCode/confidence/latency/cache/fallback）。
-  setAutoClassifierAuditSink((entry) => {
+  const unregisterAutoClassifierAuditSink = registerAutoClassifierAuditSink(sessionId, (entry) => {
     permissionAuditLogger.info("Auto risk classifier verdict", {
       cache: entry.cache,
       confidence: entry.confidence,
@@ -684,16 +664,7 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
     // runtime 与 expert workflow facade 都**共享**父会话这一份 factory——Registry 视图更新后
     // 新建的 Model 才看得到，child 不各自冻结一份。
     const modelFactory = providerModelRuntime.modelFactory;
-    // dwf 进度汇**只造一份**，dwf run service 与脚本工作流的投影适配器共用它。
-    // 两份的话就有两条 append 路径，而身份闸门 / runtime 未就绪 / append 失败这三条降级
-    // 语义（连同它们的单测）都住在这个汇里——复制一份等于让其中一份的降级悄悄漂移。
-    const workflowRunProgressSink = createDynamicWorkflowRunProgressSink({
-      // 惰性：run service 与脚本工作流桥都在 runtime 构造之前建好（它们是 AgentRuntime 的依赖）。
-      getRuntime,
-      logger,
-      sessionId,
-    });
-    const scriptWorkflowFacade = createScriptWorkflowBridge({
+    const { scriptWorkflowFacade, dynamicWorkflowRunPort } = createWorkflowWiring({
       appOptions: options,
       appVersion,
       artifactStore,
@@ -707,9 +678,6 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
       modelFactory,
       permissionService,
       prepareUserExecutionBoundary,
-      // 脚本工作流的 run 也进 dwf 的 workflowRuns 投影（事件经适配器翻译），于是时间线卡、
-      // 状态面板、run 目录与详情侧栏整套复用。边界与映射表见适配器文件头。
-      progressAdapter: createScriptWorkflowProgressAdapter({ emit: workflowRunProgressSink }),
       getRuntime,
       runtimeConfig,
       sessionId,
@@ -717,134 +685,11 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
       storageRoot,
       traceContext,
       workingDirectory,
+      executionPort,
+      concurrency: workflowConcurrencyGovernor,
+      remoteSessionId: runtimeConfig.remoteSessionId,
+      workspaceIdentity: runtimeConfig.memory?.workspaceIdentity,
     });
-
-    // workflow run service：CreateWorkflow 的确认窗 Allow 之后真启动引擎的那一侧。
-    // journal 窄化失败（store 不带 dwf_* 表）时**不构造**服务——端口保持 undefined，
-    // CreateWorkflow 因此回到占位诊断路径。这是一个记了日志的可见降级，而不是一条
-    // 会静默丢掉持久化的运行路径（详见 dynamic-workflow-run-service.ts 的文件头）。
-    const dynamicWorkflowJournal = resolveDynamicWorkflowJournalStore(sessionStore, logger);
-    const dynamicWorkflowRunPort =
-      dynamicWorkflowJournal === undefined
-        ? undefined
-        : createDynamicWorkflowRunService({
-            concurrency: workflowConcurrencyGovernor,
-            createActorRuntime: ({
-              persona,
-              pinnedModel,
-              runSubagentModel,
-              sessionId: actorSessionId,
-              submitPort,
-              submitProfile,
-              escalatePort,
-              modelRequestAdmission,
-            }) =>
-              createScriptWorkflowAgentRuntime({
-                childSessionId: actorSessionId,
-                configOverrides: {
-                  // persona 的身份（有效名 + system）→ context builder 的工作流子代理路径。
-                  // 匿名 / 无 system 时字段缺席，builder 据此省略 named 从句与 persona 段。
-                  workflowActor: {
-                    ...(persona.name === undefined ? {} : { name: persona.name }),
-                    ...(persona.system === undefined ? {} : { persona: persona.system }),
-                  },
-                  // actor 的工具面是减法（全集减去会悬挂/越权的交互工具），只能经 configOverrides
-                  // 表达（request.opts.tools 只有 allowlist）。
-                  ...workflowActorToolPolicy(),
-                  // 模型面：`runSubagentModel` 是本 run 自己的选择（`subagent_model`），在场时整条
-                  // 覆盖，排在 pin 之上——主代理不受它影响。没有它也没有 pin 就不覆盖——child runtime
-                  // 的基线本就是父会话当前模型（工厂的基线，见 script-workflow-child-runtime.ts）。
-                  // resume 带来的 pin 钉住上一次实际跑的模型（persona 冻结不变式的持久化那一半，见
-                  // workflow-actor-model.ts 的优先级表）；parentSelection 取父会话**当前**的选择，
-                  // 与工厂基线同源，pin 比对才不会漂移。
-                  ...workflowActorModelPolicy(
-                    {
-                      parentSelection: getRuntime().getSessionModelSelection(),
-                      ...(runSubagentModel === undefined ? {} : { runSelection: runSubagentModel }),
-                    },
-                    pinnedModel,
-                  ).configOverrides,
-                },
-                deps: {
-                  appOptions: options,
-                  appVersion,
-                  artifactStore,
-                  configResult,
-                  fileSystemPort,
-                  httpClientPort,
-                  imageProcessorPort,
-                  logger,
-                  mcpPort,
-                  // 父会话的 model factory：actor 与主 turn 从同一份 Registry 视图造 Model，
-                  // 不各自冻结一份。
-                  modelFactory,
-                  permissionService,
-                  runtime: getRuntime(),
-                  runtimeConfig,
-                  sessionId,
-                  sessionStore,
-                  storageRoot,
-                  workingDirectory,
-                },
-                // persona 不再经 request.opts.systemPrompt 整段替换子代理的系统提示，而是经
-                // workflowActor 叠加到基座之上。
-                // request 在这里只是工厂签名的占位：opts 为空即「不覆盖任何东西」。
-                request: { opts: {} } as never,
-                traceContext,
-                // submit profile → submit_result 形态：
-                // `untyped` 不注入端口（core 的注册门是端口在场，于是没有这个工具——全 untyped 的子代理
-                // 本来就无处可提交）；`mono` 注入端口 + typed 声明；`generic` 只注入端口（通用声明）。
-                ...(submitProfile.kind === "untyped" ? {} : { workflowSubmitPort: submitPort }),
-                // 展开：dwf 的 JsonSchema 是无索引签名的 interface，contracts 的是 Record；
-                // 字面量展开拿到隐式索引签名，不必在两包之间造一个转换函数。
-                ...(submitProfile.kind === "mono"
-                  ? { workflowSubmitSchema: { ...submitProfile.schema } }
-                  : {}),
-                // 升级端口与 submit 端口同进同出：两者都是 actor 会话的控制通道，而端口在场
-                // 就是 core 侧的注册门。恒传（端口在 run service 里恒被构造），不做 opt-in——
-                // 最可能撞上未预见之墙的 actor 恰是作者没标记的那一个。
-                workflowEscalatePort: escalatePort,
-                // 请求级准入端口：driver 在治理器在场时给出，runner 每次尝试先过闸门。
-                ...(modelRequestAdmission === undefined ? {} : { modelRequestAdmission }),
-              }),
-            // 边界记账与转录截断都读写 actor 会话的消息，走的必须是同一个 store。
-            actorTranscriptStore: sessionStore,
-            // 用户面产物的字节落点：与主会话、workflow 子
-            // 代理共用同一个 tool-artifact store，产物因此和别的大结果落在同一棵目录树下。
-            artifactStore,
-            executionPort,
-            fileSystemPort,
-            journal: dynamicWorkflowJournal,
-            logger,
-            // 进度投影的接缝：一条引擎事件 → 一条父会话的会话事件 → v4 的 workflowRuns 状态键。
-            // 走 runtime 的 append 链路（而不是直接推 eventSink）是必需的：只有它同时做持久化、
-            // 补 sequenceNumber 与扇出，冷恢复与 replayable 重连因此免费。
-            //
-            // 身份闸门、runtime 未就绪与 append 失败三条降级路径都在这个汇里（连同它们的单测），
-            // 见 dynamic-workflow-run-progress-sink.ts 的文件头。
-            onRunEvent: workflowRunProgressSink,
-            // 孤儿收敛的作用域：本 app 的会话。构造时把**这个会话**留在 journal 里的非终态
-            // run（死进程的遗物）收敛成 failed；兄弟会话的在飞 run 因此绝不会被误伤。
-            parentSessionId: sessionId,
-            // 在飞的引擎把本会话钉成常驻。
-            // 惰性取 runtime 同 onRunEvent：run service 是 AgentRuntime 的依赖，构造更早；
-            // 而启动只来自工具调用或 v4 命令，那时 runtime 必已就绪。
-            registerResidencyBlockingWork: (work) => {
-              void getRuntime().trackResidencyBlockingWork(work);
-            },
-            // 发起锚点：CreateWorkflow 在父会话的活动轮里执行，
-            // 那一轮的 inputId 就是子代理 agent_step 要挂的 message。trace.turnId 对不上活动轮
-            // （理论上不该发生）就交回 submit 侧兜底铸值，绝不把别的轮的 id 记成锚点。
-            resolveLaunchInputId: (trace) => {
-              const active = getRuntime().getActiveTurnInfo();
-              return active !== undefined && active.turnId === trace.turnId
-                ? active.inputId
-                : undefined;
-            },
-            ...(isDynamicWorkflowTaskLinkStore(sessionStore)
-              ? { taskLinkStore: sessionStore }
-              : {}),
-          });
     // dwf snippet service：EvalWorkflowSnippet 的执行面。刻意**不**依赖 dwf journal——
     // snippet 完全瞬态（内存 journal），不该被 run service 的 durability 前提连坐；
     // 所以即使 run 端口因 journal 缺席而不构造，实验通道仍然可用。
@@ -1360,6 +1205,8 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
       ...sessionFacade,
       close: async () => {
         try {
+          unregisterBashReflexAuditSink();
+          unregisterAutoClassifierAuditSink();
           // K3 R1：app 关闭 = overnight run 终止（收口 runtime-task 投影，不等待在飞 turn）。
           overnightController.dispose();
           // K6：app 关闭 = ambient runner 停循环释放 claim + 账本缓冲落盘（生命周期
@@ -1375,200 +1222,15 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
       },
       ...workflowFacade,
       ...scriptWorkflowFacade,
-      // dwf 事件日志的读面。**可选能力**：journal 不可用时 run service 整个不构造，
-      // 这个方法随之缺席，v4 网关据此回结构化的能力不支持错误——「没有事件」与
-      // 「这个会话没有这个能力」必须能被 renderer 区分。
-      ...(dynamicWorkflowRunPort === undefined
-        ? {}
-        : {
-            listDynamicWorkflowRunEvents: async (input: {
-              runId: string;
-              afterSequence?: number;
-              limit?: number;
-            }) =>
-              dynamicWorkflowRunPort.listEvents(input.runId, {
-                ...(input.afterSequence === undefined
-                  ? {}
-                  : { afterSequence: input.afterSequence }),
-                ...(input.limit === undefined ? {} : { limit: input.limit }),
-              }),
-          }),
-      // workflow run 的**用户面产物**读面。三条一起注册、
-      // 一起缺席：它们是同一个 journal 读面的三个切片，部分在场只会让 UI 拿到一张有卡片
-      // 却打不开的侧板。三个端口成员都是可选的（stub 端口不陪跑），所以逐个探测。
-      // ⚠ 术语：artifact = 脚本发布给用户看的产出，不是端口上的 `output`（顶层返回值）。
-      ...(dynamicWorkflowRunPort === undefined ||
-      typeof dynamicWorkflowRunPort.listArtifacts !== "function" ||
-      typeof dynamicWorkflowRunPort.listArtifactItems !== "function" ||
-      typeof dynamicWorkflowRunPort.readArtifact !== "function"
-        ? {}
-        : {
-            listDynamicWorkflowRunArtifacts: async (input: { runId: string }) =>
-              dynamicWorkflowRunPort.listArtifacts!(input.runId),
-            listDynamicWorkflowRunArtifactItems: async (input: {
-              runId: string;
-              artifactId: string;
-              afterSequence?: number;
-              limit: number;
-            }) =>
-              dynamicWorkflowRunPort.listArtifactItems!(input.runId, input.artifactId, {
-                ...(input.afterSequence === undefined
-                  ? {}
-                  : { afterSequence: input.afterSequence }),
-                limit: input.limit,
-              }),
-            readDynamicWorkflowRunArtifact: async (input: {
-              runId: string;
-              artifactId: string;
-              version: number;
-            }) =>
-              dynamicWorkflowRunPort.readArtifact!(input.runId, input.artifactId, input.version),
-          }),
-      // workflow run 的工作区 transcript：两条一起
-      // 注册、一起缺席，理由同产物的三条。
-      ...(dynamicWorkflowRunPort === undefined ||
-      typeof dynamicWorkflowRunPort.listWorkspaceNodes !== "function" ||
-      typeof dynamicWorkflowRunPort.readWorkspaceNodeResult !== "function"
-        ? {}
-        : {
-            listDynamicWorkflowRunWorkspaceNodes: async (input: { runId: string }) =>
-              dynamicWorkflowRunPort.listWorkspaceNodes!(input.runId),
-            readDynamicWorkflowRunNodeResult: async (input: {
-              runId: string;
-              siteId: string;
-              ordinal: number;
-              maxBytes: number;
-            }) =>
-              dynamicWorkflowRunPort.readWorkspaceNodeResult!(
-                input.runId,
-                input.siteId,
-                input.ordinal,
-                { maxBytes: input.maxBytes },
-              ),
-          }),
-      // workflow run 的会话级生命周期读面（在飞计数 + 结算订阅）。消费者是宿主的 provider registry
-      // 安全边界：子代理共用本会话的 live adapter，在飞 run 期间不能 replace registry。缺席条件同上。
-      ...(dynamicWorkflowRunPort === undefined ? {} : {}),
-      // workflow run 的枚举面（重启后的发现查询）。**两个来源**合成一个能力，与下面的冷回放
-      // 同一条理由：目录页是「这个会话跑过哪些工作流」的发现面，只列 dwf 就少一半。
-      // 注册条件同样是「任一来源在场」，不再以 dwf 端口为准。
-      ...(() => {
-        const dwfList =
-          dynamicWorkflowRunPort !== undefined &&
-          typeof dynamicWorkflowRunPort.listRunsForSession === "function"
-            ? dynamicWorkflowRunPort.listRunsForSession.bind(dynamicWorkflowRunPort)
-            : undefined;
-        const scriptStore = isScriptWorkflowStore(sessionStore) ? sessionStore : undefined;
-        if (dwfList === undefined && scriptStore === undefined) return {};
-        return {
-          listDynamicWorkflowRuns: async (input: { limit?: number }) => {
-            const [dwf, script] = await Promise.all([
-              dwfList === undefined ? [] : dwfList(input.limit),
-              scriptStore === undefined
-                ? []
-                : (
-                    await scriptStore.listScriptWorkflowRuns({
-                      ...(input.limit === undefined ? {} : { limit: input.limit }),
-                      parentSessionId: sessionId,
-                    })
-                  ).map(toScriptWorkflowRunSummary),
-            ]);
-            // 两个来源各自都是「最近更新在前」，但拼接之后就不是了。目录的时间列与
-            // 「运行中 / 已结束」两段都依赖这个序，所以在这里按 updatedAt 归并一次再截断。
-            // 缺席 updatedAt 的排最后（无从比较，不该抢占有时间的条目的位置）。
-            const merged = [...dwf, ...script].sort(
-              (left, right) => (right.updatedAt ?? 0) - (left.updatedAt ?? 0),
-            );
-            return input.limit === undefined ? merged : merged.slice(0, input.limit);
-          },
-        };
-      })(),
-      // workflow run 的冷回放。**两个来源**合成一个能力：
-      //   - dwf：journal（端口的 replayProgressForSession，可选成员，缺席即无这一半）；
-      //   - 脚本工作流：自己的 workflow_run / workflow_event 表（script-workflow-replay.ts）。
-      // 注册条件从「dwf 端口在场」放宽成「任一来源在场」：两套 run 共用同一个投影与同一个
-      // 消费者（v4-bridge.ts），只因为 dwf 端口缺席就把整个能力摘掉，会让脚本 run 也一起
-      // 从冷启动的投影里消失——而它的真相明明在自己的表里。
-      // 顺序是 dwf 在前、脚本在后：两边都按「最旧优先」各自排好，拼接不保证跨系统的全局时序，
-      // 而 reducer 的序号是**每 run 各自**水位的，跨 run 的到达序只影响 8-run 上限的淘汰先后。
-      ...(() => {
-        const dwfReplay =
-          dynamicWorkflowRunPort !== undefined &&
-          typeof dynamicWorkflowRunPort.replayProgressForSession === "function"
-            ? dynamicWorkflowRunPort.replayProgressForSession.bind(dynamicWorkflowRunPort)
-            : undefined;
-        const scriptStore = isScriptWorkflowStore(sessionStore) ? sessionStore : undefined;
-        if (dwfReplay === undefined && scriptStore === undefined) return {};
-        return {
-          replayDynamicWorkflowRuns: async (input: { excludeRunIds: ReadonlySet<string> }) => {
-            const [dwf, script] = await Promise.all([
-              dwfReplay === undefined ? [] : dwfReplay(input),
-              scriptStore === undefined
-                ? []
-                : replayScriptWorkflowRuns(
-                    { logger, parentSessionId: sessionId, store: scriptStore },
-                    input,
-                  ),
-            ]);
-            return [...dwf, ...script];
-          },
-        };
-      })(),
-      // dwf run 的恢复。能力缺席条件同上；此外
-      // 端口的 resume 是可选成员（stub 端口不陪跑），方法缺席时本能力同样不注册——
-      // 对 renderer「端口缺席」与「方法缺席」是同一个业务事实。
-      ...(dynamicWorkflowRunPort === undefined ||
-      typeof dynamicWorkflowRunPort.resume !== "function"
-        ? {}
-        : {
-            resumeWorkflowRun: async (input: { workId: string; name?: string }) => {
-              const result = await dynamicWorkflowRunPort.resume!(input.workId);
-              if (result.ok) {
-                // 追踪重臂必须紧随成功的 resume：registry 登记（回收护栏）、backgroundWorks
-                // 条目（cancellable）、终态通知。port.resume 已先替换注册表条目，
-                // waiter 因此挂在新的结算 promise 上（run service 文件头不变式 5）。
-                await getRuntime().trackResumedDynamicWorkflowRun({
-                  runId: result.runId,
-                  ...(result.toolCallId === undefined ? {} : { toolCallId: result.toolCallId }),
-                  ...(input.name === undefined ? {} : { name: input.name }),
-                  traceContext,
-                });
-              }
-              return result;
-            },
-          }),
-      // 中枢直接启动一个已保存的工作流。能力缺席条件与
-      // resumeWorkflowRun 家族一致：dwf 端口整体缺席（stub / 单测宿主）时不注册——GUI 据此拿到
-      // 能力不支持错误并原样显示，而不是把「不支持直接启动」误当成一次失败的启动。
-      // 与 /goal 控制轮同构：先走统一用户执行边界（否则首次持久化前 shell selection 为空，
-      // 冷恢复退回 legacy fallback），再由 runtime 解析 + 校验 + 编译 + 落启动轮 + submit。
-      ...(dynamicWorkflowRunPort === undefined
-        ? {}
-        : {
-            startSavedWorkflow: async (input: {
-              name: string;
-              scope?: "project" | "global";
-              args?: Record<string, unknown>;
-            }) => {
-              await prepareUserExecutionBoundary({ traceContext });
-              return await getRuntime().startSavedWorkflowRun({ ...input, traceContext });
-            },
-          }),
-      // GUI「配置」。它
-      // 沿用前驱的脚本，所以端口必须既能 amend 又能读回脚本；缺一就不注册，GUI 拿到能力不支持。
-      // 与 startSavedWorkflow 同一条用户执行边界：冷恢复的会话先恢复 Session 边界再落设置轮。
-      ...(dynamicWorkflowRunPort === undefined ||
-      typeof dynamicWorkflowRunPort.amend !== "function" ||
-      typeof dynamicWorkflowRunPort.getScript !== "function"
-        ? {}
-        : {
-            amendWorkflowRunSettings: async (
-              input: Omit<AmendWorkflowRunSettingsInput, "traceContext">,
-            ) => {
-              await prepareUserExecutionBoundary({ traceContext });
-              return await getRuntime().amendWorkflowRunSettings({ ...input, traceContext });
-            },
-          }),
+      ...createWorkflowAppFacade({
+        getRuntime,
+        prepareUserExecutionBoundary,
+        dynamicWorkflowRunPort,
+        sessionStore,
+        sessionId,
+        logger,
+        traceContext,
+      }),
       ...createPluginFacadeForApp({ configResult, options, workingDirectory }),
       getPluginReferenceCatalog: () => pluginReferenceCatalog,
       getSkillCatalog: async () => {

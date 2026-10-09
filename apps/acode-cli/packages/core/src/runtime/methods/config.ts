@@ -24,7 +24,7 @@ import {
 } from "../helpers/child-client-ports.js";
 import type { ActiveTurnInfo, RuntimeConfigUpdatePatch } from "../types.js";
 import type { AgentRuntimeInternal } from "../internal.js";
-import { cloneModelSelection } from "../model-selection.js";
+import { getRuntimeModelSelectionPort } from "../runtime-model-selection.js";
 import { applyRuntimeExecutionState } from "../execution-state.js";
 import { resolveOutputStyleSelection } from "../../context/output-styles.js";
 
@@ -33,6 +33,7 @@ import { projectToolModelContract } from "../../tool/model-contract.js";
 import { logToolsSchemaTokenMetric } from "./tools-schema-token-metric.js";
 import { rebuildContextPrefix } from "./context-refresh.js";
 import { filterEmbeddedSearchRuntimeVisibleTools } from "./embedded-search-branch.js";
+import { getRuntimeLifecyclePort } from "../runtime-lifecycle.js";
 import {
   getSessionShellSelection as readSessionShellSelection,
   initializeSessionShellEnvironmentIfNeeded as initializeSessionShellEnvironment,
@@ -52,8 +53,8 @@ export function updateConfig(this: AgentRuntimeInternal, patch: RuntimeConfigUpd
     const previous = resolveExecutionState(this.config);
     const next = resolveExecutionState(patch, previous);
     Object.assign(this.config, next);
-    if (previous.planEnabled !== next.planEnabled)
-      this.needsPlanModeExitReminder = !next.planEnabled;
+    if (previous.planEnabled && !next.planEnabled)
+      getRuntimeLifecyclePort(this).armPlanModeExitReminder();
   }
   if (patch.language !== undefined) {
     this.config.language = patch.language;
@@ -101,7 +102,7 @@ export function getPlanEnabled(this: AgentRuntimeInternal): boolean {
 }
 
 export function getSessionModelSelection(this: AgentRuntimeInternal): ModelSelection | undefined {
-  return this.sessionModelSelection && cloneModelSelection(this.sessionModelSelection);
+  return getRuntimeModelSelectionPort(this).get();
 }
 
 export function setSessionModelSelection(
@@ -109,7 +110,7 @@ export function setSessionModelSelection(
   selection: ModelSelection | undefined,
 ): void {
   // 恢复/配置刷新可以清除失效选择；未绑定不应借用默认模型，也不影响正在执行的 Active Model。
-  this.sessionModelSelection = selection && cloneModelSelection(selection);
+  getRuntimeModelSelectionPort(this).set(selection);
 }
 
 export function getProjectId(this: AgentRuntimeInternal): ProjectId {

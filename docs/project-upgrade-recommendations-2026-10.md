@@ -8,6 +8,8 @@
 
 调查日期：2026-10-09。首次调查基线：`dev/0.0.8`，commit `f4da4b0e`；同日在 commit `f9ed8961`（`dev/0.0.7`，含 2026-10-08 审查修复批一+批二 `c453fca5` 与其后三条 CI 修复）复测，下表以复测结果为准，首次调查的差异写在结论边界里。根 `package.json` 版本为 `0.0.6`；分支名不等于软件发布版本。
 
+当前复核（2026-10-09 17:34）：基线已移到 `dev/0.0.8` HEAD `fa9d6d0c`（相对 `origin/dev/0.0.8` ahead 19，相对 `origin/main` ahead 21 / behind 0）。U01 已实现并落地：根 `pnpm typecheck` 现为单一门禁 `scripts/typecheck-gate.mjs`（packages → renderer ∥ cli），ci.yml/release.yml 的 verify/build/desktop 全部只调 `pnpm typecheck`，内联旁路已删。下表 `f9ed8961` 行中的静态检查已在本基线重跑并一致（typecheck 退出 0、lint 145 warnings / 0 errors、architecture OK 415/415 new 0），差异：lint 扫描文件 4330→4333、legacy 文件 3461→3463、managed 仍 18 模块 776 文件；全量测试从 `f9ed8961` 时的 1991 pass 升到 2004 tests / 2001 pass / 3 skip / 0 fail（增量来自 U01 门禁测试与 renderer 守护修复）。
+
 范围包括 Desktop、手机 Web、共享 UI、services、CLI/runtime、协议、CI/release 和已有升级计划。采用当前检出源码与脚本作为事实依据；历史报告中的数量和性能数字不直接视为当前结果。
 
 | 检查                                                                | 复测结果（`f9ed8961`）                                                                                                                                                        | 结论边界                                                                                                                                                                                     |
@@ -42,7 +44,7 @@
 
 **注入与旁路证据：** [apps/acode-cli/tests/typecheck-gate.test.mjs](../apps/acode-cli/tests/typecheck-gate.test.mjs) 7/7 通过——含类型错误的 fixture 阶段让门禁退出非零并指名阶段、移除注入后同一入口退出 0、依赖失败时下游显式 `skipped` 而非静默不跑、barrier 之后两阶段真实并行（`--sequential` 对照必须超时失败）、默认清单逐项覆盖三个入口、workflow 与根 `package.json` 不存在跳过 renderer/CLI 的第二条路径。另做真机注入：同时向 `packages/desktop/src/renderer/src/performanceTimelineCleanup.ts` 与 `apps/acode-cli/packages/cli/src/bootstrap-loader.ts` 各写一行 `const x: number = "..."`，单次 `pnpm typecheck` 两个阶段分别报出 TS2322 并退出码 1，撤回注入后恢复 0。
 
-**仍未验证：** 全部结果在 Node `25.9.0` / pnpm `10.33.2` 下取得，未在 `mise.toml` 固定的 Node `24.14.0` 下复跑；clean checkout 与三平台 runner 上的表现待 CI 首次运行确认。
+**仍未验证：** U01 已实现并在当前基线 `fa9d6d0c` 上复跑（typecheck 三阶段退出 0、renderer 与 CLI 均经单一入口），结果在 Node `25.9.0` / pnpm `10.33.2` 下取得，未在 `mise.toml` 固定的 Node `24.14.0` 下复跑；clean checkout 与三平台 runner 上的表现待 CI 首次运行确认。
 
 **建议与所有者：** 构建/CI 入口统一维护完整类型检查集合，把三条检查收敛成一个可复用入口（脚本或 turbo pipeline），本地、CI 与 release 的 verify/build/desktop 全部调用它；不用整体关闭严格检查制造通过。
 

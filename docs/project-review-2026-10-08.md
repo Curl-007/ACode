@@ -6,7 +6,9 @@
 
 补充复核：2026-10-09。已完成对应生产修复，并新增 SSH 主机密钥、双 App 审计归属、Script 失败用量结算、结果读取、meta AST 解析、跨 session resume owner、workflow run owner lease、v4 capability query、CLI model-selection owner 与 Workflow read boundary 测试。
 
-补充复核（第二批）：2026-10-09 晚。ARCH-01 校验器迁移完成并加覆盖门禁；W1-R3 物理拆包完成（bootstrap/src/app -14,940 行）；纳管模块 5→18（776 文件）、baseline 收紧 491→415；RuntimeSessionLifecycleState 可写扁平字段清零；Electron 启动闭环 smoke 落地。统一门禁：根 test 1991 pass/2 skip/0 fail、根+CLI typecheck/lint 全绿、architecture 0 new/0 regrown、knip/pre-push exit 0。
+补充复核（第二批）：2026-10-09 晚。ARCH-01 校验器迁移完成并加覆盖门禁；W1-R3 物理拆包完成（bootstrap/src/app -14,940 行）；纳管模块 5→18（776 文件）、baseline 收紧 491→415；RuntimeSessionLifecycleState 可写扁平字段清零；Electron 启动闭环 smoke 落地。第二批当时门禁：根 test 1991 pass/2 skip/0 fail、根+CLI typecheck/lint 全绿、architecture 0 new/0 regrown、knip/pre-push exit 0。
+
+当前复核（2026-10-09 17:34，`dev/0.0.8` @ `fa9d6d0c`，见[修复记录](reviews/2026-10-08/fix-status-2026-10-09.md)文首表）：第二批后又落地 U01（类型检查收敛为单一门禁入口 `scripts/typecheck-gate.mjs`，`8b9450ba`）与 worktree 短名路径修复（`ef474d76`），并修复 U01 自身引入的 renderer 守护测试回归（`fa9d6d0c`）。实跑门禁：根 test 2004 / 2001 pass / 3 skip / 0 fail，CLI 全套 1338 / 1337 pass / 1 skip / 0 fail，typecheck（三阶段）与 lint（145 warnings / 0 errors）退出 0，architecture 全量 OK（415/415、new 0）、managed 18 模块 776 文件 / legacy 5 模块 3463 文件，knip:gate 与 diff --check 通过。第二批表中「CLI 1327/1327」的 6 个既有失败已定位（本机 `%TEMP%` 为 8.3 短名）并修复。
 
 ## 修复复核（2026-10-09）
 

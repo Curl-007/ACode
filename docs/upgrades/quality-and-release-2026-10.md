@@ -4,7 +4,7 @@ U01 已实现：单一入口 `scripts/typecheck-gate.mjs` 覆盖 packages、rend
 
 本文细化 [项目升级建议](../project-upgrade-recommendations-2026-10.md) 中的 U01、U03、U04、U06，是立项与实施依据；本文没有新增脚本、测试或流水线。
 调查日期为 2026-10-09，细化时检出分支 `fix/cli-subagent-inheritance` 已不在当前仓库中，其证据不可复核。
-本文已按 commit `f9ed8961`（`dev/0.0.7`，含 2026-10-08 审查修复批一+批二 `c453fca5`）复测并同步 U01 现状；其余各项仍是提案。
+本文已按 commit `f9ed8961`（`dev/0.0.7`，含 2026-10-08 审查修复批一+批二 `c453fca5`）复测并同步 U01 现状；其余各项仍是提案。当前基线已移到 `dev/0.0.8` HEAD `fa9d6d0c`（2026-10-09 17:34 复核，相对 `origin/dev/0.0.8` ahead 19），U01 仍为单一入口门禁（typecheck 三阶段退出 0），并新增 `fa9d6d0c`：renderer 类型守护测试改盯统一门禁清单而非已删的内联命令。实测汇总见[修复记录](../reviews/2026-10-08/fix-status-2026-10-09.md)文首当前复核表。
 实施者在开始时重新记录 commit、工作区状态、工具链和本轮检查结果，避免混用分支证据。
 
 ## 共同实施规则
@@ -51,7 +51,7 @@ barrier 的理由：renderer 经 project references 读 `packages/*` 的 `.d.ts`
 2. 已完成：根 `pnpm typecheck`、ci.yml verify、release.yml verify/build/desktop 全部改为调用该入口，内联命令删除。
 3. 已完成：[typecheck-gate.test.mjs](../../apps/acode-cli/tests/typecheck-gate.test.mjs) 7/7——注入错误阶段必红且指名阶段、移除注入后同一入口绿、依赖失败时下游显式 `skipped`、并行性以互相等待的 fixture 证明（`--sequential` 对照必须超时失败）、默认清单逐项覆盖三入口、workflow 与根 `package.json` 旁路扫描。
 4. 已完成（有缓存工作区）：真机注入 `performanceTimelineCleanup.ts` 与 `bootstrap-loader.ts` 各一行类型错误，单次 `pnpm typecheck` 两阶段分别报 TS2322、退出码 1；撤回后恢复 0。干净检出的一轮尚未执行。
-5. 未完成：在 `mise.toml` 固定的 Node `24.14.0` 下复跑，以及 clean checkout / 三平台 runner 的首次 CI 确认。
+5. 未完成：在 `mise.toml` 固定的 Node `24.14.0` 下复跑，以及 clean checkout / 三平台 runner 的首次 CI 确认。当前基线 `fa9d6d0c` 上 U01 门禁已随根 `pnpm typecheck` 重跑（三阶段退出 0、cli 经 turbo 31/31），并修复了 renderer 守护测试盯旧内联命令的回归（`fa9d6d0c`）；仍未在固定 Node 与干净检出下验证。
 
 ### 验收场景
 

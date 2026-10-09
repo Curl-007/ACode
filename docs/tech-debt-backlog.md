@@ -1,6 +1,6 @@
 # 技术债登记册（Tech Debt Backlog）
 
-> 建立于 2026-10-05 深度审查落地批次，2026-10-09 按 commit `f9ed8961`（`dev/0.0.7`）复测同步。本文件是**索引**：每项债务的动机、方案与验收标准在各自的 spec/计划文档里，这里只登记状态与量化基线。原则（与 architecture ratchet 相同）：每项债务要么有只减不增的门禁，要么有带验收标准的计划文档——不允许无登记的债务。
+> 建立于 2026-10-05 深度审查落地批次，2026-10-09 按 commit `f9ed8961`（`dev/0.0.7`）复测同步。当前量化基线（2026-10-09 17:34，`dev/0.0.8` @ `fa9d6d0c`，相对 `origin/dev/0.0.8` ahead 19 / 相对 `origin/main` ahead 21）：architecture 超限 415 / new 0 / regrown 0，managed 18 模块 776 文件 / legacy 5 模块 3463 文件；lint 145 warnings / 0 errors（扫描 4333 文件）；根 `pnpm test` 2004 tests / 2001 pass / 3 skip / 0 fail，CLI 全套 1338 / 1337 pass / 1 skip / 0 fail；typecheck 单一门禁三阶段退出 0。实测证据见[修复记录](reviews/2026-10-08/fix-status-2026-10-09.md)文首当前复核表。本文件是**索引**：每项债务的动机、方案与验收标准在各自的 spec/计划文档里，这里只登记状态与量化基线。原则（与 architecture ratchet 相同）：每项债务要么有只减不增的门禁，要么有带验收标准的计划文档——不允许无登记的债务。
 
 ## 有门禁的债务（恶化即红）
 
@@ -11,7 +11,7 @@
 | bootstrap 跨包深导入 | 0（当前干净） | `apps/acode-cli/tests/bootstrap-boundary.test.mjs` | `apps/acode-cli/specs/bootstrap-app-boundary.md` W1/W2 |
 | node-forge 环境声明副本 | 1 份权威（services） | `apps/acode-cli/tests/acp-host-adapter.test.mjs` F8 | 已收敛（单一事实源） |
 | 遥测/官方平台回归 | 0 | desktop/ui/shared 各自 no-telemetry、no-official-platform 测试 | 已收敛 |
-| renderer / CLI 自身入口类型检查 | 0 个诊断（2026-10-09；2026-10-05 的 renderer 112 个错误已修完） | 单一入口 `scripts/typecheck-gate.mjs`（根 `pnpm typecheck`）：`packages` barrier 后 renderer 与 CLI 并行；`apps/acode-cli/tests/typecheck-gate.test.mjs` 7/7 覆盖注入必红与 workflow 旁路扫描 | 已收敛（U01 完成）；剩余为 Node `24.14.0`、clean checkout 与三平台 runner 的首次 CI 确认，规则见 `docs/specs/cli-validation-gates.md` 第 3-6 条 |
+| renderer / CLI 自身入口类型检查 | 0 个诊断（2026-10-09；2026-10-05 的 renderer 112 个错误已修完） | 单一入口 `scripts/typecheck-gate.mjs`（根 `pnpm typecheck`）：`packages` barrier 后 renderer 与 CLI 并行；`apps/acode-cli/tests/typecheck-gate.test.mjs` 7/7 覆盖注入必红与 workflow 旁路扫描 | 已收敛（U01 完成）；`fa9d6d0c` 修正 renderer 守护测试盯已删内联命令的回归。剩余为 Node `24.14.0`、clean checkout 与三平台 runner 的首次 CI 确认，规则见 `docs/specs/cli-validation-gates.md` 第 3-6 条 |
 | RPC descriptor 方法/事件表与参数校验 | 全部 `createServiceDescriptor` 的方法与 `onDynamicXxx` 事件均登记 `argumentValidators`（2026-10-09 批二清零） | `packages/services/tests/rpc-descriptor-surface.test.mjs`：缺表、表外键或漏登记校验器即红（复测 1/1 通过） | `packages/rpc/specs/rpc-service-boundary.md` 规则 7；普通 `onXxx` 事件的豁免依据写在 spec 与门禁注释 |
 | managed 模块例外登记 | 42 条 `expires: "2026-12-31"`（`max-file-lines` 28、`disable-count` 14） | `pnpm architecture:check`：到期或超出登记范围即红；例外不刷新 `.architecture-baseline.json` | 各模块边界 spec（`cli-workflow-package-boundary.md`、`architecture-contracts-module.md`、各 `module-boundary.md`）；到期前拆文件偿还 |
 

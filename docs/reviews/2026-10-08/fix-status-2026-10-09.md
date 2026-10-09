@@ -1,6 +1,24 @@
 # 2026-10-09 项目审查修复与验证
 
-本页对应 [完整审查](../../project-review-2026-10-08.md)、[CLI](cli.md)、[Dynamic Workflow](dynamic-workflow.md) 和 [Script Workflow](script-workflow.md)。历史源码位置、错误日志与统计属于原始审查基线；本页记录当前工作区。修复按 spec、行为测试、实现与实际门禁推进。本页写完时的「未提交或推送」已失效：批一+批二提交为 `c453fca5`，其后 CI 修复为 `34068e2f`、`1b28e52b`、`f9ed8961`、`f023d641`。
+本页对应 [完整审查](../../project-review-2026-10-08.md)、[CLI](cli.md)、[Dynamic Workflow](dynamic-workflow.md) 和 [Script Workflow](script-workflow.md)。历史源码位置、错误日志与统计属于原始审查基线；本页记录当前工作区。修复按 spec、行为测试、实现与实际门禁推进。本页写完时的「未提交或推送」已失效：批一+批二提交为 `c453fca5`，其后 CI 修复为 `34068e2f`、`1b28e52b`、`f9ed8961`、`f023d641`；`dev/0.0.8` 侧后续又有 `1c6821fe`（登记 6 个失败）、`8b9450ba`（U01 单一类型门禁入口）、`b856467f`（同步升级文档）、`ef474d76`（worktree 短名路径修复）、`fa9d6d0c`（renderer 类型守护改盯门禁清单）。
+
+## 当前复核（2026-10-09 17:34，`dev/0.0.8` @ `fa9d6d0c`）
+
+本轮实跑门禁，用于替换下文中已过期的测试计数与推送状态。环境 Windows 11 / Node v25.9.0 / pnpm 10.33.2（`mise.toml` 固定 Node `24.14.0`，本轮未在固定版本下复跑）。
+
+| 检查 | 结果 |
+| --- | --- |
+| `node scripts/check-workspace-freshness.mjs` | 通过：`dev/0.0.8` 相对 `origin/dev/0.0.8` ahead 19 / behind 0，相对 `origin/main` ahead 21 / behind 0 |
+| `pnpm typecheck`（U01 单一门禁） | 退出 0；三阶段 `packages`(0.2s) → `desktop-renderer`(1.1s) ∥ `cli`(0.3s)，cli 经 turbo 31/31 |
+| `pnpm lint` | 退出 0；145 warnings / 0 errors，扫描 4333 文件 |
+| `pnpm architecture:check`（全量） | OK：violations 415 / baseline 415 / new 0 / regrown 0；managed 18 模块 776 文件，legacy 5 模块 **3463** 文件 |
+| `pnpm architecture:check --changed` | OK：changed violations 0 / new 0 / regrown 0 |
+| `pnpm --dir apps/acode-cli test`（CLI 全套） | **1338 tests / 1337 pass / 1 skip / 0 fail**；skip 为 `workflow-worktree-isolation` 场景 4b（本机 `%TEMP%` 已是长名规范形态，无法构造短名/长名词法差异，见剩余工作第 7 条） |
+| 根 `pnpm test`（全 workspace） | 退出 0：**2004 tests / 2001 pass / 3 skip / 0 fail**（skip = CLI 场景 4b 1 + services 文件软链 Windows 权限 2）；acode-cli 1338、services 225、shared 106、ui 109、server 74、desktop 72、rpc 30、provider 16、harness-sdk 15、provider-node 13、server-cli 6 |
+| `pnpm knip:gate` | 退出 0（1 条 `**/.acode/**` ignore 配置提示，非失败） |
+| `git diff --check` | 无空白错误 |
+
+本轮相对第二批验证表的差异：根 test 计数从「1991 pass / 2 skip」升到「2001 pass / 3 skip」，增量来自 U01 的 `typecheck-gate.test.mjs`（7）与 `fa9d6d0c` 修复的 renderer 守护测试；CLI 全套从「1327」升到「1337 pass / 1 skip」，即第 6/7 条 6 个失败的修复与场景 4b 的显式 skip。architecture legacy 文件数 3463（下文第二批表记的 3472 为当时快照，现随工作树变动为 3463）。
 
 ## 第二批修复（2026-10-09 晚）：结构性里程碑推进
 
@@ -34,7 +52,7 @@
 - 59 个引擎族文件迁入新受管包 `@acode/cli-workflow`（连同新建 `dynamic-workflow-run-deps.ts`、`host-types.ts` 与整体移入的 `skill-command-overrides.ts` 共 66 文件 / 15,085 行）；`bootstrap/src/app` 26,739 → 11,799 行（-14,940），只剩 workflow-wiring / workflow-app-facade / workflow-facade / workflow-methods / script-workflow-methods 五个装配接缝。
 - 唯一公开面 `contract.ts`（61 行纯 re-export，21 值 + 5 类型）；12 个生产消费方全部经包名入口；22 个测试文件只改 import 路径不改断言；守护测试扩展 3 项（引擎文件不在 bootstrap、深导入即红、人为 fixture 自检红→绿）。
 - 解环 2 处（`DynamicWorkflowRunServiceDeps`+`DynamicWorkflowActorRuntimeInput` → deps 叶子；`ActorSessionQuiescence` → driver-types），迁移后包内 66 文件 0 环。宿主解耦 5 条规则全部落地；偏差如实登记：`ScriptWorkflowHostOptions` 按实测 8 个消费字段窄化，ambient 装配侧 widen 回 `ACodeAppOptions` 结构化传入。
-- 治理：managed 模块 `acode-cli-workflow` + 14 条 `w1r3-*` 例外（11 实测超限 + 3 disable）；bootstrap 移除 3 个迁出后不再使用的依赖；根 lockfile 经 `npx pnpm@10.33.2`（与仓库 pin 一致）真实重同步，diff 仅新包条目。CLI 全量 1327/1327。
+- 治理：managed 模块 `acode-cli-workflow` + 14 条 `w1r3-*` 例外（11 实测超限 + 3 disable）；bootstrap 移除 3 个迁出后不再使用的依赖；根 lockfile 经 `npx pnpm@10.33.2`（与仓库 pin 一致）真实重同步，diff 仅新包条目。CLI 全量当时记为 1327/1327（该数字在本机不可复现，且 6 个失败已在剩余工作第 6/7 条定位并修复；当前复核为 1338 tests / 1337 pass / 1 skip / 0 fail）。
 
 ### CLI-05 本批：RuntimeSessionLifecycleState 可写扁平字段清零
 
@@ -59,7 +77,7 @@
 | 根 `pnpm typecheck` / renderer tsc                                                  | exit 0 / exit 0                                                                                                                                                                                                                                                                                                                                  |
 | 根 `pnpm lint`                                                                      | exit 0：0 errors / 145 warnings（均为既有）                                                                                                                                                                                                                                                                                                      |
 | CLI typecheck / lint（turbo，经根二进制；嵌套 `.bin` 缺 turbo shim 为既有环境问题） | 31/31 / 16/16，exit 0                                                                                                                                                                                                                                                                                                                            |
-| `architecture:check`（全量）                                                        | OK：baseline 415 / new 0 / regrown 0；managed 18 模块 776 文件；legacy 5 模块 3472 文件                                                                                                                                                                                                                                                          |
+| `architecture:check`（全量）                                                        | OK：baseline 415 / new 0 / regrown 0；managed 18 模块 776 文件；legacy 5 模块 3472 文件（当时快照；当前复核为 3463，见文首当前复核表）                                                                                                                                                                                                                                                          |
 | baseline 收紧                                                                       | 491 → 415（只删陈旧条目；收紧后复查仍 OK/0 new）                                                                                                                                                                                                                                                                                                 |
 | `knip:gate` / `verify:pre-push` / `git diff --check`                                | exit 0 / exit 0 / 无空白错误                                                                                                                                                                                                                                                                                                                     |
 | 格式                                                                                | 本批触碰且被 oxfmt --check 标记的文件（11 个代码/测试/包内文档 + 5 个审查文档）已全部格式化清洁，格式化后复跑相关测试 26/26、smoke 脚本语法校验通过；全仓 `fmt:check` 存在 422 文件既有漂移（含大量两批均未触碰文件，属本机 checkout/格式化器版本噪音；CI 不以 fmt 为门禁，AGENTS.md 强制门禁为 typecheck/lint），本批不扩大改动面去重排无关文件 |
@@ -71,8 +89,8 @@
 2. ui/web/desktop/services/acode-cli 五个 legacy 模块纳管（已定价；前置为 checker resolver 三缺口：exports map 解析、通配入口、asset 导入豁免）。
 3. 例外登记的超限文件偿还（contracts 11、w1r3 11、shared 26、server 9、session 7、provider 4、server-cli 3、formal-proof 2、disable 各若干；均 expires 2026-12-31，到期即门禁红）。
 4. M2-M4 legacy 协议退役与 W2（依赖 M3）；CLI runtime 其余状态簇（context/turn/projection/cache）封装。
-5. 提交与推送状态（2026-10-09 复核）：批一+批二已提交为 `c453fca5`，其后 CI 修复为 `34068e2f`（architecture-discovery 不对分隔符做平台假设）、`1b28e52b`（构建顺序清单补 W1-R3 拆包三包）、`f9ed8961`（server-cli ESM bundle 注入 createRequire）、`f023d641`（smoke 以显式 opt-out 起 daemon，并修错误文案被吞）。`dev/0.0.7` 与 `origin/dev/0.0.7` 同步于 `f023d641`；`dev/0.0.8` 侧的合并提交 `bbcc8d15`、`6476de3b` 尚未推送，`origin/dev/0.0.8` 仍停在 `f4da4b0e`。
-6. 上表「acode-cli 1327/1327」在本机不可复现（2026-10-09 复核，Windows 11 / Node 25.9.0 / git 同机）：同样 6 个用例在 `c453fca5`、`dev/0.0.7`（`f023d641`）与 `dev/0.0.8` 上一致失败。`c453fca5` 上四个相关文件为 118 tests / 112 pass / 6 fail；`dev/0.0.8` 全量 CLI 套件为 1337 / 1331 pass / 6 fail（U01 新增的 7 个门禁用例全绿）。失败用例逐个核对为同一组：`bash-confirm-reflexive-gate` R8（yolo 下 `rm -rf node_modules` 期望 allow、实得 deny）、`npm-script-body-scan` 的 deny 优先级与原 ruleId 保留、`bash-target-blast-radius` 的 confirm/catastrophic riskLevel 与 readonly 快路径、D2 executor 的 clean 脚本 yolo 直通，以及 `workflow-worktree-isolation` 场景 1 与场景 4（`git worktree add` 报 missing but already registered）。与 U01 无关：把 U01 的全部改动 stash 后原样复现。
+5. 提交与推送状态（2026-10-09 17:34 复核）：批一+批二已提交为 `c453fca5`，其后 CI 修复为 `34068e2f`（architecture-discovery 不对分隔符做平台假设）、`1b28e52b`（构建顺序清单补 W1-R3 拆包三包）、`f9ed8961`（server-cli ESM bundle 注入 createRequire）、`f023d641`（smoke 以显式 opt-out 起 daemon，并修错误文案被吞）。`dev/0.0.7` 相对 `origin/dev/0.0.7`（`f023d641`）ahead 1（`0b175fa5` 未推送）。`dev/0.0.8` HEAD 为 `fa9d6d0c`，相对 `origin/dev/0.0.8`（仍停在 `f4da4b0e`）ahead 19、behind 0——含 `8b9450ba`（U01 单一类型门禁）、`1c6821fe`/`b856467f`（文档同步）、`ef474d76`（worktree 短名路径修复）、`fa9d6d0c`（renderer 类型守护改盯门禁清单）等，全部尚未推送。
+6. 上表「acode-cli 1327/1327」在本机不可复现（2026-10-09 复核，Windows 11 / Node 25.9.0 / git 同机）：同样 6 个用例在 `c453fca5`、`dev/0.0.7`（`f023d641`）与 `dev/0.0.8` 上一致失败。`c453fca5` 上四个相关文件为 118 tests / 112 pass / 6 fail；`dev/0.0.8` 全量 CLI 套件为 1337 / 1331 pass / 6 fail（U01 新增的 7 个门禁用例全绿）。失败用例逐个核对为同一组：`bash-confirm-reflexive-gate` R8（yolo 下 `rm -rf node_modules` 期望 allow、实得 deny）、`npm-script-body-scan` 的 deny 优先级与原 ruleId 保留、`bash-target-blast-radius` 的 confirm/catastrophic riskLevel 与 readonly 快路径、D2 executor 的 clean 脚本 yolo 直通，以及 `workflow-worktree-isolation` 场景 1 与场景 4（`git worktree add` 报 missing but already registered）。与 U01 无关：把 U01 的全部改动 stash 后原样复现。（本条 6 个失败已在第 7 条定位并修复；当前复核 CLI 全套 0 fail，仅场景 4b 因宿主 `%TEMP%` 为长名规范形态而显式 skip。）
 7. 上条 6 个失败**根因已定位并修复，同源一处**：本机 `%TEMP%` 是 Windows 8.3 短名（`os.tmpdir()` 返回 `C:\Users\ADMINI~1\...`，`realpathSync.native` 才返回长名），而探针实证——把短名路径交给 `git worktree add`，`git worktree list --porcelain` 登记的仍是长名；短名侧 `resolve()` 比不上登记项，`realpathSync.native` 能比上。两条链路各自踩到同一个形态差：(a) 四个权限用例的假 workspace 用短名，相对删除目标命中「8.3 长名无法静态验证」的反射门，yolo 下 `rm -rf node_modules` 被判 deny；(b) `workflow-worktree-manager.ts` 的 `normalizeForCompare` 只做大小写与分隔符归一，于是 `ensureWorktree` 把**活的已登记 worktree** 当未登记残骸 `rmSync` 再 `add`（被 git 拒绝），`#prune` 同理会把超过老龄阈值的活 worktree 当孤儿删除——即 agent 产物的数据丢失路径。修复：`normalizeForCompare` 改取真实路径（`realpathSync.native`，路径不存在时回退 `resolve`）；四个测试文件的临时目录做长名归一，去掉平台形态假设；新增场景 4b 在短名 `%TEMP%` 宿主上直接复现，撤掉产品侧修复即以 missing but already registered 失败（破坏对照已实际执行），长名宿主显式 skip 并写明原因。修复后 CLI 全套 1338/1338 通过。
 8. 仍未裁决的产品侧问题：当用户 workspace 本身位于 8.3 短名路径下时，目标 blast-radius 分级会把每个相对删除目标送进反射门。这属于刻意保守，还是应当对上下文路径（cwd / workspaceRoot / homedir 是宿主事实，非命令可控）先做真实路径归一，需要单独对齐；本次不动安全分级逻辑。
 

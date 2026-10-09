@@ -1,6 +1,6 @@
 # 2026-10-09 项目审查修复与验证
 
-本页对应 [完整审查](../../project-review-2026-10-08.md)、[CLI](cli.md)、[Dynamic Workflow](dynamic-workflow.md) 和 [Script Workflow](script-workflow.md)。历史源码位置、错误日志与统计属于原始审查基线；本页记录当前工作区。修复按 spec、行为测试、实现与实际门禁推进，未提交或推送。
+本页对应 [完整审查](../../project-review-2026-10-08.md)、[CLI](cli.md)、[Dynamic Workflow](dynamic-workflow.md) 和 [Script Workflow](script-workflow.md)。历史源码位置、错误日志与统计属于原始审查基线；本页记录当前工作区。修复按 spec、行为测试、实现与实际门禁推进。本页写完时的「未提交或推送」已失效：批一+批二提交为 `c453fca5`，其后 CI 修复为 `34068e2f`、`1b28e52b`、`f9ed8961`、`f023d641`。
 
 ## 第二批修复（2026-10-09 晚）：结构性里程碑推进
 
@@ -71,7 +71,7 @@
 2. ui/web/desktop/services/acode-cli 五个 legacy 模块纳管（已定价；前置为 checker resolver 三缺口：exports map 解析、通配入口、asset 导入豁免）。
 3. 例外登记的超限文件偿还（contracts 11、w1r3 11、shared 26、server 9、session 7、provider 4、server-cli 3、formal-proof 2、disable 各若干；均 expires 2026-12-31，到期即门禁红）。
 4. M2-M4 legacy 协议退役与 W2（依赖 M3）；CLI runtime 其余状态簇（context/turn/projection/cache）封装。
-5. 两批修复均未提交或推送（延续第一批纪律）。
+5. 提交与推送状态（2026-10-09 复核）：批一+批二已提交为 `c453fca5`，其后 CI 修复为 `34068e2f`（architecture-discovery 不对分隔符做平台假设）、`1b28e52b`（构建顺序清单补 W1-R3 拆包三包）、`f9ed8961`（server-cli ESM bundle 注入 createRequire）、`f023d641`（smoke 以显式 opt-out 起 daemon，并修错误文案被吞）。`dev/0.0.7` 与 `origin/dev/0.0.7` 同步于 `f023d641`；`dev/0.0.8` 侧的合并提交 `bbcc8d15`、`6476de3b` 尚未推送，`origin/dev/0.0.8` 仍停在 `f4da4b0e`。
 
 ## 执行与安全缺陷
 

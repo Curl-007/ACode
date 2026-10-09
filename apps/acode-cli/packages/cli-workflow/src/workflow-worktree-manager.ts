@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, realpathSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -102,10 +102,32 @@ export function buildWorktreeBranchName(
   }`;
 }
 
-/** Windows 大小写不敏感 + 分隔符归一，用于 worktree list 的路径比对。 */
+/**
+ * worktree list 的路径比对归一：大小写不敏感 + 分隔符归一 + 规范形态（真实路径）。
+ *
+ * 为什么必须取真实路径而不能只做词法归一（2026-10-09 本机实证）：
+ * git 在 `.git/worktrees` 里登记的是长名形态（`c:/users/administrator/...`），而宿主
+ * `%TEMP%` 可能是 Windows 8.3 短名形态（`os.tmpdir()` 返回 `C:\Users\ADMINI~1\...`，
+ * `fs.realpathSync.native` 才返回长名）。只做大小写/分隔符归一时两边比不上，后果有两处：
+ * 1. `ensureWorktree` 把「git 仍登记的活 worktree」误判成未登记残骸，先 `rmSync` 再
+ *    `git worktree add`，被 git 以 "missing but already registered" 拒绝——既销毁了
+ *    agent 产物，又让隔离 fail-loud；
+ * 2. `#prune` 的孤儿判定同样比不上，超过 ORPHAN_AGE_THRESHOLD_MS 的**活** worktree
+ *    会被当作未登记残骸删除。
+ * 符号链接/junction 指向同一目录时是同一类问题，一并由真实路径归一解决。
+ *
+ * 保持同步：本模块的目录原语（existsSync/rmSync/readdirSync/statSync）本就是同步面，
+ * 且比对结果要立即作为 Set/Map 的键使用；路径不存在时没有可展开的短名或链接事实，
+ * 回退纯词法 `resolve`，与既有行为一致。
+ */
 function normalizeForCompare(path: string): string {
-  const resolved = resolve(path);
-  return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+  let canonical: string;
+  try {
+    canonical = realpathSync.native(path);
+  } catch {
+    canonical = resolve(path);
+  }
+  return process.platform === "win32" ? canonical.toLowerCase() : canonical;
 }
 
 const LOCK_RETRY_DELAY_MS = 250;

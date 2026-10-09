@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { realpathSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -502,7 +503,10 @@ test("assessment is total over garbage input and worst finding wins", () => {
 
 // ── R5 接线点 2：熔断器 catastrophic 命中类（deny 级） ───────────────
 
-const WORKSPACE = join(tmpdir(), "acode-j1-target-risk-workspace");
+// %TEMP% 在本机是 Windows 8.3 短名（C:\Users\ADMINI~1\...）：短名 workspace 会让相对
+// 目标命中「8.3 长名无法静态验证」的反射门，R5 接线点断言测到的就是短名形态而不是
+// catastrophic/confirm 分档语义。只展开已存在的 %TEMP%，避免对未创建目录调 realpath。
+const WORKSPACE = join(realpathSync.native(tmpdir()), "acode-j1-target-risk-workspace");
 
 function bashContext(command, extra = {}) {
   return { toolName: "Bash", input: { command }, ...extra };

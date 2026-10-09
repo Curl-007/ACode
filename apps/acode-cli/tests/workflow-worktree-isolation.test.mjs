@@ -5,6 +5,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   utimesSync,
   writeFileSync,
@@ -24,7 +25,11 @@ const { WorkflowWorktreeManager, buildWorktreeBranchName } =
 
 const tempDirs = [];
 function tempDir(prefix) {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
+  // 用 realpath.native 把 %TEMP% 展开成长名：本机 %TEMP% 是 Windows 8.3 短名
+  // （C:\Users\ADMINI~1\...），而 git worktree list --porcelain 登记长名
+  // （c:/users/administrator/...）。不归一时场景 1 的登记路径断言必然失配，
+  // 测的是短名形态而不是隔离语义。
+  const dir = mkdtempSync(join(realpathSync.native(tmpdir()), prefix));
   tempDirs.push(dir);
   return dir;
 }
@@ -261,6 +266,56 @@ test("(场景4) 同 handle 重复 ensure 复用已登记 worktree；未登记残
   assert.ok(existsSync(join(rebuilt.path, "README.md")));
   await staleManager.releaseWorktree(rebuilt);
 });
+
+// ── 场景 4b：宿主路径是 8.3 短名时，ensure 必须认出 git 已登记的同一 worktree ──
+//
+// 回归 2026-10-09 本机实证（探针逐字记录）：即使把短名路径交给 `git worktree add`，
+// git 在 `worktree list --porcelain` 里登记的仍是长名（传入
+// `C:\Users\ADMINI~1\...\run-x-act-y`，登记 `C:/Users/Administrator/.../run-x-act-y`）。
+// 归一只做大小写与分隔符时 `resolve()` 比不上登记项，于是第二次 ensure 把**活**的已登记
+// worktree 当成未登记残骸：先 `rmSync` 毁掉 agent 产物，再 `git worktree add` 被 git 以
+// "missing but already registered" 拒绝；同一处比不上还会让 `#prune` 把超过老龄阈值的活
+// worktree 当孤儿删除。修复是 `normalizeForCompare` 取真实路径（`realpathSync.native`）。
+//
+// 触发条件是宿主 %TEMP% 本身为短名形态；长名宿主上两种归一结果相同、无从构造差异，
+// 此时显式 skip 并写明原因，不假装通过。
+const shortTmpRootForm = tmpdir();
+const longTmpRootForm = realpathSync.native(tmpdir());
+test(
+  "(场景4b) 短名 %TEMP% 下第二次 ensure 复用已登记 worktree，不误删重建",
+  {
+    skip:
+      shortTmpRootForm === longTmpRootForm
+        ? `宿主 %TEMP% 已是规范形态（${longTmpRootForm}），无法构造短名/长名词法差异`
+        : false,
+  },
+  async () => {
+    const repo = createRealRepo();
+    // 刻意用未归一的 tmpdir()：这就是受影响宿主的真实形态。
+    const shortNamespaceRoot = mkdtempSync(join(shortTmpRootForm, "acode-wt-short-"));
+    tempDirs.push(shortNamespaceRoot);
+    assert.notEqual(
+      resolve(shortNamespaceRoot),
+      realpathSync.native(shortNamespaceRoot),
+      "前置条件：本用例必须建立在词法形态与真实路径不一致的目录上",
+    );
+
+    const manager = new WorkflowWorktreeManager({ tmpRoot: shortNamespaceRoot });
+    const input = { activityId: "act-short", label: "short", repoDir: repo, runId: "run-short" };
+    const first = await manager.ensureWorktree(input);
+    assert.ok(first.path.startsWith(shortNamespaceRoot), "落点必须在注入的命名空间下");
+
+    const marker = join(first.path, "agent-work.txt");
+    writeFileSync(marker, "uncommitted agent output\n", "utf-8");
+
+    // git 登记的是长名，manager 算出的是短名；第二次 ensure 必须认出是同一个 worktree，
+    // 而不是走「未登记残骸 → rmSync → add」分支。
+    const second = await manager.ensureWorktree(input);
+    assert.equal(second.path, first.path);
+    assert.ok(existsSync(marker), "已登记的活 worktree 不得被当作残骸删除（R5 材料优先）");
+    assert.equal(readFileSync(marker, "utf-8"), "uncommitted agent output\n");
+  },
+);
 
 // ── 场景 5/6：串行化、锁重试、分支已存在、prune ────────────────────
 

@@ -78,10 +78,14 @@ test("repository policy discovers the real UI tsconfig alias", async () => {
   }
   const policy = await loadPolicy(cwd);
   const aliases = await discoverTsconfigAliases(policy);
+  // 修复依据：原断言硬编码 Windows 反斜杠分隔（packages\\ui\\src\\*），Linux CI 上
+  // discoverTsconfigAliases 产出斜杠形态 target 必然失配（dev/0.0.7 CI 红灯根因）。
+  // 断言不应对分隔符形态做平台假设：统一归一到 posix 后比较，两平台同语义。
+  const toPosix = (value) => value.split("\\").join("/");
   assert.ok(
     aliases.some(
       ({ pattern, target }) =>
-        pattern === "@/*" && target.endsWith("packages\\ui\\src\\*"),
+        pattern === "@/*" && toPosix(target).endsWith("packages/ui/src/*"),
     ),
     "packages/ui/tsconfig.json alias must enter the architecture resolver",
   );

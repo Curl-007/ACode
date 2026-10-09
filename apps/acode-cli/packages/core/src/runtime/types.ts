@@ -254,6 +254,13 @@ export interface AgentRuntimeConfig {
   agentName?: string; // Default: "acode-agent"
   workingDirectory?: string; // Required for context builder
   /**
+   * 工作区身份根（权限熔断锚点、projectId 推导）：构造期锁定、runtime 生命周期内不变。
+   * 缺省 = workingDirectory（主会话等既有构造点）。子代理派生必须显式传父 runtime 的
+   * 锁定根——否则父 Bash cd 漂移后，child 会把漂移后的 cwd 当工作区根，
+   * breaker.pathEscapeWrite 对工作区内文件误报（specs/subagent-parent-inheritance.md R1）。
+   */
+  workspaceRoot?: string;
+  /**
    * 调用方传入的实际工作区路径表示，用于 session 持久化与本地身份恢复。
    * 文件和命令执行仍只使用规范化后的 workingDirectory。
    */

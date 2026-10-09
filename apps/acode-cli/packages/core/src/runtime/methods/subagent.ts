@@ -253,6 +253,11 @@ export function createDefaultSubagentPort(
           modelSelection: cloneModelSelection(childSelection),
           modelContextBudgetStrategy: this.config.modelContextBudgetStrategy,
           workingDirectory: request.workingDirectory,
+          // 工作区身份锚定父的锁定根（specs/subagent-parent-inheritance.md R1）：
+          // 修复依据——此前 child 的 workspaceRoot 由构造器回退到本行 driftable cwd，
+          // 父 Bash cd 漂移后，child 写真实工作区内（漂移目录外）的文件会被
+          // breaker.pathEscapeWrite 误报，任何模式（含 yolo）都弹审批。
+          workspaceRoot: request.workspaceRoot,
           // 执行模型只由 child Active Model 投影进 Context；envInfo 不保存第二份模型事实。
           envInfo: childRuntimeEnvInfo,
           // Explore 子运行时之前没有继承主会话的流式配置，Protocol 桌面端虽已默认
@@ -372,8 +377,15 @@ export function createDefaultSubagentPort(
 
       const resumesExistingChild = request.resumeFromStore === true;
       if (resumesExistingChild) {
+        // 子模式跟随父当前档（specs/subagent-parent-inheritance.md R2）：不传 override 时
+        // resume.ts 会用 child 创建时刻落库的旧模式覆盖上面刚解析的 childMode——
+        // 「build 时派生、授完全访问后 SendMessage」会以 build 复活重新弹审批。
+        // plan 豁免：override 只带 mode，resolveExecutionState 会把 planEnabled 归 false，
+        // 传了会静默拆 plan 地板；plan 由创建时刻落库的 execution-state entry 恢复。
+        const resumeModeOverride = resolveSubagentResumeModeOverride(childMode);
         await childRuntime.resumeFromStore({
           traceContext: request.traceContext,
+          ...(resumeModeOverride === undefined ? {} : { modeOverride: resumeModeOverride }),
         });
       } else {
         // 父会话过去先发布 SubagentSpawned，child 的首轮 executeTurn 才落库。
@@ -496,6 +508,20 @@ export function resolveSubagentPermissionMode(
     default:
       return parentMode;
   }
+}
+
+/**
+ * resume 分支的 modeOverride 决策（specs/subagent-parent-inheritance.md R2）。
+ * 非 plan childMode 原样透出：resume.ts 的 modeOverride 是最高优先级通道，让
+ * SendMessage/冷恢复后的子模式跟随父当前档，而非 child 创建时刻落库的旧值。
+ * "plan" 返回 undefined（豁免）：modeOverride 只携带 mode，resolveExecutionState
+ * 会把 planEnabled 归 false，传了会静默拆 plan 地板；plan 由创建时刻落库的
+ * execution-state entry 正确恢复。导出供回归测试钉住该边界。
+ */
+export function resolveSubagentResumeModeOverride(
+  childMode: AgentRuntimeInternal["config"]["mode"],
+): "build" | "edit" | "yolo" | "auto" | undefined {
+  return childMode === "plan" ? undefined : childMode;
 }
 
 function resolveSubagentToolAllowlist(

@@ -134,6 +134,20 @@ import type { WorkspaceHookRuntimeAdmissionPort } from "../hooks/workspace-hook-
 import { disposeNodeReplSession } from "../tool/handlers/node-repl.js";
 import { cloneModelSelection } from "./model-selection.js";
 
+/**
+ * 工作区身份根的构造期归一化（specs/subagent-parent-inheritance.md R1）：
+ * 显式 config.workspaceRoot 优先（子代理派生传父 runtime 的锁定根——父 Bash cd 漂移后，
+ * 若回退到漂移的 workingDirectory，breaker.pathEscapeWrite 会对工作区内文件误报）；
+ * 缺省/空白回退 workingDirectory（主会话等既有构造点行为不变）。
+ * 与 resolveSubagentPermissionMode 同一先例：导出纯函数供测试钉住优先级。
+ */
+export function resolveRuntimeWorkspaceRoot(
+  config: Pick<AgentRuntimeConfig, "workspaceRoot" | "workingDirectory">,
+): string {
+  const explicit = config.workspaceRoot?.trim();
+  return explicit && explicit.length > 0 ? explicit : (config.workingDirectory ?? ".");
+}
+
 // oxlint-disable typescript-eslint/no-unsafe-declaration-merging
 export class AgentRuntime {
   private sessionId: SessionId;
@@ -312,7 +326,10 @@ export class AgentRuntime {
     // GUI「配置」解析子代理模型用的目录（与工具上下文拿的是同一个端口）。
     this.modelCatalogPort = deps.modelCatalogPort;
     this.registry = deps.toolRegistry ?? createToolRegistry();
-    this.workspaceRoot = this.workingDirectory;
+    // 工作区身份根：显式 config.workspaceRoot（子代理继承父锁定根）优先，
+    // 缺省回退 workingDirectory——cd 漂移只应改变相对路径解析，不改变工作区身份
+    // （specs/subagent-parent-inheritance.md R1；与 setWorkingDirectory 同一不变量）。
+    this.workspaceRoot = resolveRuntimeWorkspaceRoot(config);
     const tooling = initializeRuntimeTooling(runtime, deps, sessionId);
     this.hookRunner = tooling.hookRunner;
     this.workspaceHookAdmission = deps.workspaceHookAdmission;

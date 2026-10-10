@@ -286,6 +286,16 @@ export async function executeTurnCommand(
         module: "core.runtime",
         status: "started",
       });
+      // turn 起点 drain 钩子（specs/subagent-pending-message-drain.md R1/R2）：turn 激活
+      // 是 steer 可投递的确定性边界——子代理 sink 注册期的 flush 与本点之间存在竞态
+      // （no_active_turn 重试窗口仅 ~200ms），竞态输掉的挂起消息由钩子补投。契约是
+      // 不抛；violations 由这里的兜底吸收（turn 优先于观察性钩子）。
+      try {
+        options?.onTurnStarted?.();
+      } catch {
+        // 钩子违反不抛契约：吞掉。drain 失败的消息仍留在队列（re-queue 语义），
+        // resume 路径重注册 sink 时会再冲。
+      }
 
       turnMachine = new TurnMachineImpl(turnMachine.start());
       phaseStartedAt = startTurnPhase("session_persistence");

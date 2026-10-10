@@ -160,6 +160,8 @@ export interface ToolExecutionContext {
   subagentModelOverride?: SubagentRunOptions["modelOverride"];
   skillPort?: SkillPort;
   subagentPort?: SubagentPort;
+  /** peer 窄面（specs/agent-peer-messaging.md R1/R2）：flag 开启时注入 child runtime。 */
+  peerMessagingPort?: import("../subagent/peer-messaging.js").PeerMessagingPort;
   coordinatorResponsePort?: CoordinatorResponsePort;
   /** 工作流 actor 提交终态结果并等待引擎裁决的端口；仅在 workflow actor 会话注入。 */
   workflowSubmitPort?: WorkflowSubmitPort;

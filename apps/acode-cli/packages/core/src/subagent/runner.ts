@@ -55,6 +55,23 @@ import { EXPLORE_AGENT_ALLOWED_TOOLS } from "./explore-tools.js";
 import { formatLocalAgentTaskNotification } from "./completion-notification.js";
 import { filterSubagentChildToolNames } from "./tool-policy.js";
 import {
+  subagentEdgeCommandFromEvent,
+  type SubagentEdgeCommand,
+} from "./edge-persistence.js";
+import {
+  createPeerMessagingPort,
+  type PeerMailboxWriteSeam,
+  type PeerMessagingPort,
+  type PeerMirrorInput,
+} from "./peer-messaging.js";
+import { deliverPendingMessageViaSink } from "./message-delivery.js";
+import {
+  claimTreeBudgetSlot,
+  recordTreeBudgetTokens,
+  releaseTreeBudgetSlot,
+} from "./tree-budget.js";
+import { registerTreeAddress, unregisterTreeAddress } from "./tree-addressing.js";
+import {
   ErrorPayloadRole,
   selectExecutionErrorMessage,
   withErrorPayloadRole,
@@ -83,6 +100,17 @@ export interface ExploreSubagentRuntimeRequest {
   prompt: string;
   profile: AgentProfile;
   registerMessageSink?: (sink: RuntimeTaskMessageSink) => void;
+  /**
+   * turn 起点 drain 钩子（specs/subagent-pending-message-drain.md R1）：child runtime
+   * 的 executeTurn options.onTurnStarted 转调——sink 注册 flush 与 turn 启动的竞态
+   * 输掉后回队的挂起消息，在 turn 激活的确定性边界补投。
+   */
+  drainQueuedMessages?: () => void;
+  /**
+   * peer 窄面（specs/agent-peer-messaging.md R1/R2）：flag 开启时由 runner 铸造并随
+   * 请求下发，subagent.ts 传入 child deps；缺席 = child 无 SendMessage（现状）。
+   */
+  peerMessagingPort?: PeerMessagingPort;
   reportActivity?: () => void;
   resumeFromStore?: boolean;
   systemPrompt?: string;
@@ -114,6 +142,45 @@ export interface ExploreSubagentPortOptions {
     options?: SubagentRunOptions,
   ) => Promise<ExploreSubagentRuntimeResult>;
   emitParentEvent: (event: SessionEvent, traceContext: TraceContext) => Promise<void>;
+  /**
+   * 编排方案 Phase 1（specs/subagent-topology-persistence.md R2/R8）：拓扑边持久化钩子。
+   * 缺席 = 无持久化降级（测试替身 / 无边表能力的 store），事件链行为不变。
+   */
+  persistSubagentEdge?: (command: SubagentEdgeCommand) => Promise<void>;
+  /**
+   * 编排方案 Phase 3（specs/agent-peer-messaging.md R0）：peer 通信开关（装配期定值，
+   * 默认关闭 = 子工具面零变化）。
+   */
+  peerMessaging?: { enabled: boolean };
+  /** R5 持久镜像回调：父 runtime 提供；peer port 受理成功后调用，失败吞掉留痕。 */
+  persistPeerMirror?: (input: PeerMirrorInput) => Promise<void>;
+  /**
+   * 跨进程 mailbox 写入接缝（specs/agent-peer-messaging-cross-process.md R0/R1）：
+   * subagent.ts 铸造下发；缺席 = peer 对 registry 外目标按 P0 拒绝（逐字节不变）。
+   * 发送方会话 id 不由本字段携带——runner 在 port 构造期以 lifecycle.childSessionId
+   * 铸造（模型不可伪造，R2）。
+   */
+  peerMailbox?: PeerMailboxWriteSeam;
+  /**
+   * 树级预算的键 = 树根 sessionId（specs/subagent-nesting-budget.md R4）。缺席（测试
+   * 替身/旧装配）= 无预算降级；在场时准入/释放/记账全部以它为键——键必须是树根而不是
+   * runtime 实例，否则 depth≥2 各算各的，树总量回到 10^depth。
+   */
+  treeBudgetRootKey?: string;
+  /**
+   * 整树寻址表的根键（specs/agent-peer-tree-addressing.md R0/R5）：peerMessaging
+   * flag 开启时下发，**无深度条件**——与预算键的 depth≥1 刻意不同：预算只计嵌套
+   * 派发，寻址覆盖全树（depth-1 叔辈同样是跨层目标）。缺席 = 不登记不查询（P0/P1
+   * 行为不变）。
+   */
+  treeAddressingRootKey?: string;
+  /**
+   * 闲时轮 override 的谱系继承事实（specs/subagent-nesting-budget.md R5-1 / 审计 §6.1）：
+   * 显式 modelOverride 只作用当层，但 override 模型经工厂链传到任意深度、孙层的
+   * launchOptions.modelOverride 为 undefined——deny 门因此对孙层失效。事实随 config
+   * 透传后，本标志让 background 拒绝在任意深度生效。
+   */
+  offPeakInherited?: boolean;
   // background completion 必须同步写入父 runtime command queue；
   // 返回 undefined 可让 TypeScript 拒绝 async enqueue，避免 fake-notified。
   enqueueParentTaskNotification?: EnqueueParentTaskNotification;
@@ -148,8 +215,10 @@ export function createExploreSubagentPort(options: ExploreSubagentPortOptions): 
       // profile.background 默认；仅 undefined 才跟随 profile。
       const backgroundRequested = rawRequest.runInBackground ?? profile.background === true;
       if (backgroundRequested) {
-        if (launchOptions?.modelOverride?.background === "deny") {
+        if (launchOptions?.modelOverride?.background === "deny" || options.offPeakInherited === true) {
           // 单次执行的模型与动态鉴权不能脱离父 loop 生命周期进入后台。
+          // offPeakInherited：闲时轮 override 经模型工厂链事实性传到任意深度（审计 §6.1），
+          // 孙层的 launchOptions 无显式 override——按「有效 override」判定，deny 门不再逐层失效。
           throw createCoreError(
             CoreErrorType.ToolExecutionFailed,
             "Idle-time tasks do not support background agents. Re-dispatch with run_in_background: false to run this agent in the foreground.",
@@ -939,18 +1008,10 @@ async function deliverMessageToRunningAgent(
   task: RuntimeTaskSnapshot,
   message: RuntimeTaskPendingMessage,
 ): Promise<SubagentSendMessageResult> {
-  if (task.messageSink) {
-    try {
-      const delivery = await task.messageSink.send(message);
-      return createSendMessageSuccess(task, message, delivery);
-    } catch {
-      registry.queueMessage(task.taskId, message);
-      return createSendMessageSuccess(task, message, "queued");
-    }
-  }
-
-  registry.queueMessage(task.taskId, message);
-  return createSendMessageSuccess(task, message, "queued");
+  // 投递单一实现（message-delivery.ts，specs/agent-peer-messaging.md R4）：父→子与
+  // peer→兄弟两条路径共用 sink 投递与回队语义，不再各自漂移。
+  const delivery = await deliverPendingMessageViaSink(registry, task, message);
+  return createSendMessageSuccess(task, message, delivery);
 }
 
 async function resumeTerminalAgentInBackground(
@@ -1129,6 +1190,73 @@ async function runAgentToCompletion(
     await executionOptions.onSessionReady?.();
     sessionReady = true;
   };
+  // 编排方案 Phase 4 第二批（specs/subagent-nesting-budget.md R4）：树级预算准入闸。
+  // 单一执行原语 = 单一准入点（前台 run / 后台 start / resume 三路全经本函数）；
+  // 溢出是结构化拒绝不静默截断——Agent 可并行派发（Promise.all 论证同 dwf：每个被拒
+  // 的派发都必须拿到结果）。释放走 emitSubagentEvent 的 settle 单点（终态事件是
+  // run 生命周期的唯一出口，八个发射点全经它）。
+  if (options.treeBudgetRootKey !== undefined) {
+    const claim = claimTreeBudgetSlot({
+      agentId: lifecycle.agentId,
+      rootKey: options.treeBudgetRootKey,
+    });
+    if (!claim.ok) {
+      throw createCoreError(
+        CoreErrorType.ToolExecutionFailed,
+        `Agent tree budget exceeded (${claim.reason}: ${claim.current}/${claim.cap} for this session tree). Wait for in-flight agents to settle, dispatch fewer agents at once, or handle this step directly.`,
+        {
+          context: {
+            agentType: request.agentType,
+            code: AgentErrorCode.TREE_BUDGET_EXCEEDED,
+            parentToolCallId: request.parentToolCallId,
+            reason: claim.reason,
+          },
+          recoverable: true,
+        },
+      );
+    }
+  }
+  // 编排方案 Phase 5 P2（specs/agent-peer-tree-addressing.md R5）：整树寻址登记与
+  // 预算准入同点配对——单一执行原语 = 单一登记点（前台/后台/resume 三路全经）；
+  // 放在 claim 之后，溢出被拒的派发不留表项。注销在 emitSubagentEvent settle 单点。
+  if (options.treeAddressingRootKey !== undefined) {
+    registerTreeAddress({
+      entry: {
+        agentId: lifecycle.agentId,
+        childSessionId: lifecycle.childSessionId,
+        registry,
+      },
+      rootKey: options.treeAddressingRootKey,
+    });
+  }
+  // 编排方案 Phase 3（specs/agent-peer-messaging.md R0/R1）：flag 开启时的 peer 窄面——
+  // 以父 registry + 本 run 身份构造，child 只拿到 listPeers/sendMessage 两个能力。
+  const peerMessagingPort =
+    options.peerMessaging?.enabled === true
+      ? createPeerMessagingPort({
+          agentId: lifecycle.agentId,
+          agentType: request.agentType,
+          ...(options.logger ? { logger: options.logger } : {}),
+          // 跨进程 P1（cross-process spec R2）：mailbox 接缝在场才开 fallback 分支；
+          // senderSessionId = 本 child 的 lifecycle 事实，构造期铸造。
+          ...(options.peerMailbox
+            ? {
+                mailbox: {
+                  senderSessionId: lifecycle.childSessionId,
+                  seam: options.peerMailbox,
+                },
+              }
+            : {}),
+          // 整树寻址 P2（tree-addressing spec R1/R2）：同树跨层 live 目标经树表投递，
+          // 查询顺序本地 registry → 树表 → mailbox → 拒绝（即时性递减）。
+          ...(options.treeAddressingRootKey !== undefined
+            ? { treeAddressing: { rootKey: options.treeAddressingRootKey } }
+            : {}),
+          ...(options.persistPeerMirror ? { mirror: options.persistPeerMirror } : {}),
+          parentSessionId: request.sessionId,
+          registry,
+        })
+      : undefined;
   const childResult = await options.runExploreAgent(
     {
       agentId: lifecycle.agentId,
@@ -1149,6 +1277,15 @@ async function runAgentToCompletion(
       prompt: request.prompt,
       profile: lifecycle.profile,
       registerMessageSink: createMessageSinkRegistration(options, lifecycle, registry),
+      drainQueuedMessages: () => {
+        // 竞态兜底（subagent-pending-message-drain.md R1/R3）：注册 flush 输掉竞态后
+        // 回队的消息在 turn 激活点补投。drainMessages 原子取批——与注册 flush 并发
+        // 不会双投递；终态任务不 drain（resume 路径自会重注册 sink 并 flush）。
+        const task = registry.get(lifecycle.agentId);
+        if (!task || !task.messageSink || isTerminalRuntimeTask(task)) return;
+        void flushPendingMessages(options, lifecycle, registry, task.messageSink);
+      },
+      ...(peerMessagingPort ? { peerMessagingPort } : {}),
       reportActivity: monitorOptions.reportActivity,
       resumeFromStore: executionOptions.resumeFromStore,
       systemPrompt: lifecycle.profile.systemPrompt,
@@ -1946,6 +2083,51 @@ async function emitSubagentEvent(
     turnId: request.turnId,
     traceId: traceContext.traceId,
   });
+  // 编排方案 Phase 1（specs/subagent-topology-persistence.md R2/R3）：拓扑边单点铸造——
+  // 八个发射点全经本函数，钩子放这里天然全覆盖。先边后事件（durable 优先：事件存储
+  // 缺省是内存的，边表才是崩溃后剩下的那份）；失败吞掉留痕——边表是投影/审计权威，
+  // 永不反向影响事件发射与代理执行。
+  const edgeCommand = subagentEdgeCommandFromEvent({
+    payload,
+    request,
+    timestampMs: event.timestamp.getTime(),
+    type,
+  });
+  // 树级预算的释放/记账单点（specs/subagent-nesting-budget.md R4）：settle 事件是
+  // run 生命周期的唯一出口。释放幂等（Set）；token 事后累加（BackgroundTaskCompleted
+  // 不带 usage，stopped 路径的用量欠账是已登记取舍，见 spec「未做与取舍」#6）。
+  if (edgeCommand?.kind === "settle" && options.treeBudgetRootKey !== undefined) {
+    releaseTreeBudgetSlot({ agentId: edgeCommand.agentId, rootKey: options.treeBudgetRootKey });
+    if (edgeCommand.totalTokens !== null) {
+      recordTreeBudgetTokens({
+        rootKey: options.treeBudgetRootKey,
+        tokens: edgeCommand.totalTokens,
+      });
+    }
+  }
+  // 整树寻址注销（tree-addressing spec R5）：与预算释放同点——settle 是 run 生命周期
+  // 唯一出口；幂等（delete），resume 重臂经准入点自动重登记。
+  if (edgeCommand?.kind === "settle" && options.treeAddressingRootKey !== undefined) {
+    unregisterTreeAddress({
+      agentId: edgeCommand.agentId,
+      rootKey: options.treeAddressingRootKey,
+    });
+  }
+  if (edgeCommand && options.persistSubagentEdge) {
+    try {
+      await options.persistSubagentEdge(edgeCommand);
+    } catch (error) {
+      options.logger?.warn("Failed to persist subagent topology edge", {
+        agentId: edgeCommand.agentId,
+        edgeKind: edgeCommand.kind,
+        errorMessage: error instanceof Error ? error.message : String(error),
+        event: "subagent.edge.persistence_failed",
+        module: "core.subagent",
+        status: "failed",
+        ...traceContextToLogContext(traceContext),
+      });
+    }
+  }
   await options.emitParentEvent(event, traceContext);
 }
 

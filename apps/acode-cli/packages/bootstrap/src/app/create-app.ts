@@ -1231,6 +1231,9 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
         logger,
         traceContext,
       }),
+      // 编排方案 Phase 2（specs/swarm-observability-projection.md R5）：swarm plan 的
+      // 冷回放读取口——v4-bridge 冷物化时从 plan 行合成 SwarmPlanProgress 事件。
+      readSwarmPlanStatus: async () => swarmPlanWiring.readPlanProgress(),
       ...createPluginFacadeForApp({ configResult, options, workingDirectory }),
       getPluginReferenceCatalog: () => pluginReferenceCatalog,
       getSkillCatalog: async () => {

@@ -43,6 +43,7 @@ import {
   restoreWorkspaceFileRewindEntries,
 } from "./workspace-checkpoint-persistence.js";
 import { mainTurnCacheHitAggregateFromMessages } from "./turn-model-step-usage.js";
+import { convergeSubagentEdgesOnResume } from "../../subagent/edge-persistence.js";
 
 export function toScheduleState(
   this: AgentRuntimeInternal,
@@ -244,6 +245,32 @@ export async function resumeFromStore(
         traceContext,
       });
       await this.discardPersistedPendingSteerInputs(traceContext);
+      // 编排方案 Phase 1（specs/subagent-topology-persistence.md R4）：残留 running 拓扑
+      // 边收敛为 lost——崩溃后后台子进程已死、真实终态不可知，诚实标注而非留假
+      // running（与命令队列 discarded(session_resumed) 同一条裁决）。能力缺席静默跳过；
+      // 收敛失败不阻断 resume（边表是投影权威，不是恢复路径的阻塞依赖，R3）。
+      try {
+        const convergedEdgeCount = await convergeSubagentEdgesOnResume(this.sessionStore, {
+          sessionID: this.sessionId,
+        });
+        if (convergedEdgeCount > 0) {
+          this.logger?.info("Converged stale subagent topology edges on resume", {
+            convergedEdgeCount,
+            event: "subagent.edge.resume_converged",
+            module: "core.runtime",
+            status: "completed",
+            ...traceContextToLogContext(traceContext),
+          });
+        }
+      } catch (error) {
+        this.logger?.warn("Failed to converge subagent topology edges on resume", {
+          errorMessage: error instanceof Error ? error.message : String(error),
+          event: "subagent.edge.resume_converge_failed",
+          module: "core.runtime",
+          status: "failed",
+          ...traceContextToLogContext(traceContext),
+        });
+      }
       const recoveredSteerInputCount = 0;
       const resumedTodos = await this.readSessionTodosForContext(traceContext);
       const resumedTarget = await this.readSessionTargetForContext(traceContext);

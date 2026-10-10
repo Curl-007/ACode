@@ -52,7 +52,12 @@ function registerRuntimeBuiltInTools(runtime: AgentRuntimeInternal, deps: AgentR
     bashTimeoutPolicy: runtime.config.bashTimeoutPolicy,
     includeSkill: Boolean(runtime.skillPort),
     includeAgent: Boolean(runtime.subagentPort),
-    includeSendMessage: runtime.subagentPort?.sendMessage !== undefined,
+    // SendMessage 注册门（specs/agent-peer-messaging.md R2）：父会话按 subagentPort 的
+    // sendMessage 能力（现状）；child 会话按 peer 窄面在场（R0 flag 开启时由 runner 注入）。
+    // 两入口同规则纪律（tool-allowlist.ts）：embedded-search-branch 对本门是「只有 true
+    // 才注册」的省略安全侧，无需重复。
+    includeSendMessage:
+      runtime.subagentPort?.sendMessage !== undefined || Boolean(deps.peerMessagingPort),
     includeRespondToCoordinator:
       runtime.config.taskType === "subagent_child" && Boolean(deps.coordinatorResponsePort),
     // submit_result 只在注入了 workflowSubmitPort 的 workflow actor 会话注册。以端口存在为门，

@@ -61,6 +61,15 @@ export async function runScriptWorkflowChild(input: {
   const child = spawn(process.execPath, [entry.path], {
     cwd: input.workingDirectory,
     stdio: ["pipe", "pipe", "pipe"],
+    // 桌面宿主缺陷修复（specs/script-workflow-revival.md R5 增补）：桌面端 agent 由
+    // Electron Helper 运行（process.execPath 指向 Helper），而 CLI 启动时会把
+    // ELECTRON_RUN_AS_NODE 从自身 env sanitize 掉。不显式带上它，子进程会按完整
+    // Electron/Chromium 应用启动——stdout 变成 GUI 日志行（`[2026-...]` 前缀），
+    // handleChildLine 的 JSON.parse 对它抛「Expected ',' or ']' after array element
+    // in JSON at position 7」，或者干脆卡死在 GPU 初始化永不发声（run 卡在启动）。
+    // dwf harness（dynamic-workflow-runtime/src/harness.ts）与 official-plugin-runtime.ts
+    // 是同款处理的先例；纯 Node 的 execPath 下该变量无效，无副作用。
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
   });
 
   // stdin 必须挂 error 监听器，否则一次 EPIPE 会打死整个宿主进程。

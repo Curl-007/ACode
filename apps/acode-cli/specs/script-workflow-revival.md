@@ -203,6 +203,16 @@
   `<cwd>/.acode/workflow-runs/<runId>.mjs`（目录自带 `.gitignore: *`），失败回落
   `os.tmpdir()/acode-workflow-runs/` 并经 `onWarning` 报一声。
 - payload 里只留**小**字段（`args` / `budgetTotal` / `scriptUrl`），脚本正文由入口文件自持。
+- **spawn 必须显式携带 `ELECTRON_RUN_AS_NODE=1`**（2026-10-11 增补，桌面宿主缺陷修复）：
+  桌面端 agent 由 Electron Helper 运行（`process.execPath` 指向 Helper 二进制），且 CLI
+  启动时会把 `ELECTRON_RUN_AS_NODE` 从自身 env sanitize 掉——不显式带上它，入口子进程会
+  按完整 Electron/Chromium 应用启动：stdout 变成 GUI 日志行（`[2026-...]` 前缀），
+  `handleChildLine` 的 `JSON.parse` 直接抛 `Expected ',' or ']' after array element in
+  JSON at position 7`，或按 harness 注释卡死在 GPU 初始化永不发声。处理与
+  `dynamic-workflow-runtime/src/harness.ts`（dwf 侧同款缺陷已修，桌面端 dwf 因此可用）
+  与 `official-plugin-runtime.ts` 一致；纯 Node 的 `execPath` 下该变量无效、无副作用。
+  守护测试 `tests/script-workflow-desktop-host-env.test.mjs`（源码级，理由同
+  agent-cap 守护：行为级复现需要真实 Electron 宿主）。
 - 现有 `.acode/workflow-runs/` 目录已被 dwf 使用；两套共用同一目录但文件名不冲突
   （dwf 用 `<runId>.mjs`，其 runId 前缀是 `dwfrun_`，脚本工作流是 `wf_`）。共用是有意的：
   该目录已是 machine-owned + git-ignored，再开第二个目录只会多一处要清理的残骸。

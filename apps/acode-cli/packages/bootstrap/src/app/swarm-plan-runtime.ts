@@ -23,7 +23,7 @@
 // bindRuntime 绑定 executeNode 的迟到引用（overnight controller 的同款先后序——fork/turn
 // 驱动都需要 runtime 实例，而调度点只在成功 turn 后才会触发，绑定时序安全）。
 
-import type { SessionStorePort, TraceContext } from "@acode/contracts";
+import type { SessionStorePort, SwarmPlanProgressPayload, SwarmTaskPlan, TraceContext } from "@acode/contracts";
 import {
   bindSwarmPlanPersistenceFromSessionStore,
   createSwarmPlanStore,
@@ -36,6 +36,7 @@ import {
 import type { AgentRuntime, RuntimeTaskRegistry } from "@acode/core";
 import { executeNodeSubsession } from "@acode/core";
 import { createChildTraceContext, createSessionId } from "@acode/contracts";
+import { buildSwarmPlanProgressPayload } from "./swarm-plan-progress.js";
 import {
   createScriptWorkflowAgentRuntime,
   type ScriptWorkflowAgentRuntimeDeps,
@@ -54,6 +55,11 @@ export interface SwarmPlanWiring {
   bindRuntime(runtime: AgentRuntime): void;
   /** 启动/恢复时从持久化行恢复 plan 并同步初始 runtime-task 投影（一次性）。 */
   hydrate(traceContext?: TraceContext): Promise<void>;
+  /**
+   * 冷回放读取口（specs/swarm-observability-projection.md R5）：当前 plan 的有界投影
+   * 载荷；无 plan 返回 undefined。v4-bridge 经 app facade 的 readSwarmPlanStatus 消费。
+   */
+  readPlanProgress(): SwarmPlanProgressPayload | undefined;
   /** app 关闭面：abort 全部在飞 worker 子会话（投影条目随 plan 生命周期收口）。 */
   dispose(): void;
 }
@@ -85,6 +91,24 @@ export function createSwarmPlanWiring(deps: CreateSwarmPlanWiringDeps): SwarmPla
     return boundRuntime;
   };
 
+  // 编排方案 Phase 2（specs/swarm-observability-projection.md R6/R8）：提交投影发射。
+  // 与 abort 推导、runtime-task 同步同一个 onChange 观测口；追加失败只 warn 不反噬图
+  // （观察面纪律——plan-store 的提交事务在此之前已完成，且下一帧是全量状态视图，
+  // 丢帧自愈）。runtime 未绑定（装配期窗口）时跳过：hydrate 的初始发射覆盖同一窗口。
+  const emitPlanProgress = (plan: SwarmTaskPlan | null): void => {
+    const runtime = boundRuntime;
+    if (runtime === undefined) return;
+    const payload: SwarmPlanProgressPayload =
+      plan === null ? { cleared: true } : buildSwarmPlanProgressPayload(plan);
+    void runtime.recordSwarmPlanProgress(payload).catch((error: unknown) => {
+      logger?.warn("Swarm plan progress append failed; projection self-heals on next commit", {
+        errorMessage: error instanceof Error ? error.message : String(error),
+        event: "swarm.plan.progress_append_failed",
+        module: "bootstrap.swarm",
+      });
+    });
+  };
+
   const store = createSwarmPlanStore({
     // 存储边界告警面（H2 hydrate 复位 / L2 clear 写穿失败的生产 warn）。
     logger: deps.logger,
@@ -104,6 +128,8 @@ export function createSwarmPlanWiring(deps: CreateSwarmPlanWiringDeps): SwarmPla
       }
       // runtime-task 投影（R4 唯一可见面）：每次提交后同步一次。
       syncSwarmPlanRuntimeTask({ plan, registry: deps.runtimeTaskRegistry, taskId: runtimeTaskId });
+      // v4 投影链（swarm-observability-projection.md R6）：同一观测口发射提交事件。
+      emitPlanProgress(plan);
     },
     ...(persistence === undefined ? {} : { persistence }),
   });
@@ -219,6 +245,13 @@ export function createSwarmPlanWiring(deps: CreateSwarmPlanWiringDeps): SwarmPla
         registry: deps.runtimeTaskRegistry,
         taskId: runtimeTaskId,
       });
+      // 初始态发射与 runtime-task 同步同点同纪律（R6）：bindRuntime 先于 hydrate
+      // （create-app 的装配序），事件在 app 可用前落进本会话事件流。
+      emitPlanProgress(store.getPlan());
+    },
+    readPlanProgress() {
+      const plan = store.getPlan();
+      return plan === null ? undefined : buildSwarmPlanProgressPayload(plan);
     },
     port,
   };

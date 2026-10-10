@@ -182,6 +182,8 @@ import type {
   OpenScopedPlanDetailSideTabRequest,
   OpenWorkflowRunSideTabRequest,
   OpenWorkflowRunDirectorySideTabRequest,
+  OpenOrchestrationSideTabRequest,
+  OpenScopedOrchestrationSideTabRequest,
   OpenScopedWorkflowActorSessionSideTabRequest,
   OpenScopedWorkflowArtifactSideTabRequest,
   OpenScopedWorkflowRunSideTabRequest,
@@ -293,6 +295,8 @@ export interface SessionPaneProps {
   /** 通知行的产物 chip → 全尺寸查看 tab。 */
   onOpenWorkflowArtifact?: (request: OpenScopedWorkflowArtifactSideTabRequest) => void;
   onOpenWorkflowRunDirectory?: (request: OpenScopedWorkflowRunDirectorySideTabRequest) => void;
+  /** 状态坞菜单的「编排总览」入口 → 统一编排 side pane tab（orchestration-side-pane spec）。 */
+  onOpenOrchestration?: (request: OpenScopedOrchestrationSideTabRequest) => void;
   /** 工具卡上的子代理药丸 → transcript tab；与详情页子代理行同一个宿主处理器。 */
   onOpenWorkflowActorSession?: (request: OpenScopedWorkflowActorSessionSideTabRequest) => void;
   /** 工具卡上的脚本药丸 → 脚本 transcript tab；与详情页脚本行同一个宿主处理器。 */
@@ -467,6 +471,7 @@ export function SessionPane({
   onOpenWorkflowRun,
   onOpenWorkflowArtifact,
   onOpenWorkflowRunDirectory,
+  onOpenOrchestration,
   onOpenWorkflowActorSession,
   onOpenWorkflowWorkspace,
   conversationFindQuery = "",
@@ -1238,6 +1243,21 @@ export function SessionPane({
       });
     },
     [onOpenWorkflowRunDirectory, remoteSessionId, workspaceIdentity, workspacePath],
+  );
+  // 统一编排总览的入口（状态坞菜单项）。同样只补 scope；rootSessionId 供面板段头
+  // 跳转子智能体目录（其 opener 需要），缺席时 creator 回落 parentSessionId。
+  const handleOpenOrchestrationFromPanel = useCallback(
+    (request: OpenOrchestrationSideTabRequest) => {
+      const resolvedRootSessionId = request.rootSessionId ?? rootSessionId;
+      onOpenOrchestration?.({
+        ...request,
+        ...(resolvedRootSessionId ? { rootSessionId: resolvedRootSessionId } : {}),
+        workspacePath,
+        ...(workspaceIdentity ? { workspaceIdentity } : {}),
+        ...(remoteSessionId ? { remoteSessionId } : {}),
+      });
+    },
+    [onOpenOrchestration, remoteSessionId, rootSessionId, workspaceIdentity, workspacePath],
   );
   const handleAddSelectionToCurrentTask = useCallback(
     (reference: ConversationSelectionReference) => {
@@ -3540,6 +3560,7 @@ export function SessionPane({
             onOpenWorkflowRunDirectory={
               onOpenWorkflowRunDirectory ? handleOpenWorkflowRunDirectoryFromPanel : undefined
             }
+            onOpenOrchestration={onOpenOrchestration ? handleOpenOrchestrationFromPanel : undefined}
           />
         ) : null}
 

@@ -71,7 +71,13 @@ export interface SubagentSendMessageOptions {
   signal?: AbortSignal;
 }
 
-export type SubagentSendMessageDelivery = "queued" | "steered" | "resumed_background";
+export type SubagentSendMessageDelivery =
+  | "queued"
+  | "steered"
+  | "resumed_background"
+  // 编排方案 Phase 5 P1（specs/agent-peer-messaging-cross-process.md R3/R8）：
+  // 跨进程 store-and-forward——已落目标会话信箱，目标下次运行时经 hook drain 送达。
+  | "persisted_mailbox";
 
 export interface SubagentSendMessageResult {
   status: "success" | "failed";

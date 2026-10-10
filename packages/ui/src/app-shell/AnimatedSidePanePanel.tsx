@@ -42,6 +42,7 @@ import { Tabs, TabsContent, TabsList } from "@/components/ui/tabs.js";
 import { SidePaneTabOverview } from "@/app-shell/SidePaneTabOverview.js";
 import { SubagentSessionSidePane } from "@/app-shell/SubagentSessionSidePane.js";
 import { SubagentDirectorySidePane } from "@/app-shell/SubagentDirectorySidePane.js";
+import { OrchestrationSidePane } from "@/app-shell/OrchestrationSidePane.js";
 import { SelectionSideChatPane } from "@/app-shell/SelectionSideChatPane.js";
 import { BackgroundBashOutputSidePane } from "@/app-shell/BackgroundBashOutputSidePane.js";
 import { PlanDetailSidePane } from "@/app-shell/PlanDetailSidePane.js";
@@ -78,7 +79,9 @@ import {
   type BrowserUseSidePaneTab,
   type BrowserSidePaneMetadata,
   type OpenScopedSubagentSideTabRequest,
+  type OpenScopedSubagentDirectorySideTabRequest,
   type OpenScopedWorkflowActorSessionSideTabRequest,
+  type OpenScopedWorkflowRunDirectorySideTabRequest,
   type OpenScopedWorkflowWorkspaceSideTabRequest,
   type OpenScopedWorkflowArtifactSideTabRequest,
   type OpenScopedWorkflowRunSideTabRequest,
@@ -321,6 +324,8 @@ export function AnimatedSidePanePanel({
   onOpenCodeViewer,
   onOpenFileLink,
   onOpenSubagentSession,
+  onOpenSubagentDirectory,
+  onOpenWorkflowRunDirectory,
   onOpenWorkflowActorSession,
   onOpenWorkflowWorkspace,
   onOpenWorkflowArtifact,
@@ -387,6 +392,10 @@ export function AnimatedSidePanePanel({
   onOpenFileLink?: (target: MessageFileLinkTarget) => void;
   onOpenBackgroundBash?: (request: OpenBackgroundBashSideTabRequest) => void;
   onOpenSubagentSession: (request: OpenScopedSubagentSideTabRequest) => void;
+  /** 编排总览段头跳转：打开子智能体目录 tab（orchestration-side-pane spec R3）。 */
+  onOpenSubagentDirectory?: (request: OpenScopedSubagentDirectorySideTabRequest) => void;
+  /** 编排总览段头跳转：打开工作流目录 tab。 */
+  onOpenWorkflowRunDirectory?: (request: OpenScopedWorkflowRunDirectorySideTabRequest) => void;
   /** run 详情页里点 ask 节点 → 打开那个 actor 实例的 transcript tab。 */
   onOpenWorkflowActorSession?: (request: OpenScopedWorkflowActorSessionSideTabRequest) => void;
   /** run 详情页里点脚本行 → 打开该 run 的脚本 transcript tab，落到那一站。 */
@@ -899,6 +908,7 @@ export function AnimatedSidePanePanel({
         workflowActorTitle: intl.formatMessage({ id: "sidePane.workflowActor" }),
         workflowScriptTitle: intl.formatMessage({ id: "sidePane.workflowScript" }),
         workflowArtifactTitle: intl.formatMessage({ id: "sidePane.workflowArtifact" }),
+        orchestrationTitle: intl.formatMessage({ id: "sidePane.orchestration" }),
       }}
       onActivateTab={onActivateTab}
       onCloseTab={onCloseTab}
@@ -1159,6 +1169,17 @@ export function AnimatedSidePanePanel({
                               onOpenWorkflowRun={onOpenWorkflowRun}
                             />
                           ) : null
+                        ) : tab.type === "orchestration" ? (
+                          <OrchestrationSidePane
+                            tab={tab}
+                            visible={isVisible && tab.id === visibleActiveTabId}
+                            {...(onOpenSubagentDirectory === undefined
+                              ? {}
+                              : { onOpenSubagentDirectory })}
+                            {...(onOpenWorkflowRunDirectory === undefined
+                              ? {}
+                              : { onOpenWorkflowRunDirectory })}
+                          />
                         ) : tab.type === "workflow-actor-session" ? (
                           <WorkflowActorSessionSidePane
                             tab={tab}

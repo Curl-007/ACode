@@ -134,6 +134,9 @@ const MEMORY_ONLY_EVENT_TYPES = new Set<string>([
   // （兜底分支同样保留），而是每次冷恢复刷一条 unclassified 诊断，把"真的漏了词汇表"这个
   // 信号淹掉。
   SessionEventType.DynamicWorkflowRunProgress,
+  // swarm plan 提交投影：权威事实在 swarm_plan 行与内存事件里（durable transcript 从不
+  // 合成它），与上一条同类——memory-only 权威；冷回放的合成事件同样落这个词汇表。
+  SessionEventType.SwarmPlanProgress,
   SessionEventType.TargetChanged,
   SessionEventType.RewindTriggered,
 ]);

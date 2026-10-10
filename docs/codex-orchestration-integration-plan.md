@@ -2,7 +2,7 @@
 
 本文件是 ACode 基于 OpenAI Codex（Rust 实现，`openai/codex`）agent 编排机制对照分析的集成路线图。Codex 采用「模型即编排器」的单一范式：LLM 在对话里自主 `spawn_agent / send_message / wait_agent / interrupt_agent`，agent 树在运行中自然涌现。本方案把其中经过验证、与 ACode 缺口对齐的机制提炼为可落地的集成项，同时明确划定「不集成」的边界——因为 Codex 的一部分优点恰恰是 ACode 刻意用围栏换掉的东西，全盘搬运会让 zcode 丢掉自己最强的三项能力。适用于所有协作者与 AI 辅助会话；与 [AGENTS.md](../AGENTS.md) 冲突时以 AGENTS.md 为准。
 
-> **文档状态**：方案（plan），**未实施**。本文只做设计与证据登记，不改任何代码、不新建/修改任何 spec。spec-first 与代码实现是后续按 Phase 单独进行的事。
+> **文档状态**：方案（plan），**已全部实施（2026-10-11 更新）**。Phase 1（①）、Phase 2（②，P2a 投影链 + P2b GUI 三键合流）、Phase 3 的 P0（④-P0，flag 默认关）、Phase 4（③，两批 + R5 origin 谱系拆分单元，maxDepth 缺省仍 1）、Phase 5（④-P1/P2，flag 默认关）全部在分支 `feature/cli-subagent-topology-persistence` 实施并全门禁验收——本方案登记的集成项（①②③④-P0/P1/P2）与安全项（R1-R5、peer-1..5、§6 四项）至此全部落地，无未实施单元。各 Phase 的产品规则以对应 spec 为准（subagent-topology-persistence / swarm-observability-projection / orchestration-side-pane / agent-peer-messaging / agent-peer-messaging-cross-process / agent-peer-tree-addressing / subagent-pending-message-drain / subagent-nesting-budget / subagent-interaction-origin-lineage）。本文保留原设计文本；与 spec 冲突处以 spec 为准。
 >
 > **生成日期**：2026-10-09。**核实基线**：分支 `dev/0.0.9`（HEAD `2855cce`，= origin/main / release/0.0.6）。所有 ACode 侧 `file:line` 以该检出为准；实施前需复核（行号会漂移），定位以文件名 + 符号名为主。
 >
@@ -81,11 +81,11 @@
 
 | Phase | 项 | 主题 | 性质 | 影响包 | 工作量 | 前置 | 状态 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| **1** | ① | 持久化 agent 拓扑 + 崩溃恢复 | 基础设施 | adapters/core/bootstrap | M | 无 | 未实施（地基，最低风险，建议首个 PR） |
-| **2** | ② | 统一编排可观测投影（swarm 补 v4/GUI） | 基础设施 | contracts/shared/core/bootstrap/ui | L | ① | 未实施 |
-| **3** | ④-P0 | agent 间点对点（进程内同父兄弟） | 受约束自主 | core/contracts | M | 悬挂 bug 修复 | 未实施 |
-| **4** | ③ | 受约束深度嵌套（安全修复前置 + 全局预算） | 受约束自主 | core/contracts/bootstrap/desktop | L | ① + R1/R2 修复 | 未实施（**最高风险**） |
-| **5** | ④-P1/P2 | 跨进程 + 整树 peer | 受约束自主 | core/adapters/bootstrap | L | ①（P1）/ ③（P2） | 未实施 |
+| **1** | ① | 持久化 agent 拓扑 + 崩溃恢复 | 基础设施 | adapters/core/bootstrap | M | 无 | **已实施**（2026-10-10，`8ed5977`，specs/subagent-topology-persistence.md） |
+| **2** | ② | 统一编排可观测投影（swarm 补 v4/GUI） | 基础设施 | contracts/shared/core/bootstrap/ui | L | ① | **P2a+P2b 已实施**（P2a `5eed9f3`，specs/swarm-observability-projection.md；P2b `db91911`+`9d53f21`，packages/ui/specs/orchestration-side-pane.md） |
+| **3** | ④-P0 | agent 间点对点（进程内同父兄弟） | 受约束自主 | core/contracts | M | 悬挂 bug 修复 | **已实施**（前置 peer-5 修复 `83936c2`；`01c125d`，specs/agent-peer-messaging.md，flag 默认关） |
+| **4** | ③ | 受约束深度嵌套（安全修复前置 + 全局预算） | 受约束自主 | core/contracts/bootstrap/desktop | L | ① + R1/R2 修复 | **已实施**（第一批 `ae34179` + 第二批 `3156708`，specs/subagent-nesting-budget.md；maxDepth 缺省 1 = 现状不变） |
+| **5** | ④-P1/P2 | 跨进程 + 整树 peer | 受约束自主 | core/adapters/bootstrap | L | ①（P1）/ ③（P2） | **P1+P2 已实施**（2026-10-10，P1 `ba09066` + P2 `33251e5`，specs/agent-peer-messaging-cross-process.md + agent-peer-tree-addressing.md，flag 默认关） |
 
 ---
 
@@ -144,6 +144,8 @@
 ### Phase 2 · ② 统一编排可观测投影（补 swarm 的 v4/GUI 面）
 
 **目标**：swarm 在 `packages/shared|ui|rpc|tui` **零命中**（已 grep 核实），补齐「plan 提交 → 父会话事件 → shared reducer → product-projection 状态键 → 冷回放」链；UI 层把 `subagents` / `workflowRuns` / `swarm` 三键合流成统一编排视图。Agent 子代理的 v4 面已完整，本阶段对它是 UI 合流而非补事实。
+
+> **落地记录**：P2a 投影链 `5eed9f3`（specs/swarm-observability-projection.md）；P2b GUI 合流 `db91911` + 徽章谱系收口 `9d53f21`（**packages/ui/specs/orchestration-side-pane.md**——统一编排 side pane 新 `orchestration` tab：三段式只读观察面、段头跳转既有目录 tab 不复制分页查询面、swarmPlan 首次有 GUI 消费、零协议改动；TUI 镜像登记为该 spec 取舍 #2 的后续项）。
 
 **现状与证据**：
 - swarm 已有持久化 + 冷恢复的**一半**：`swarm_plan` 行（migration 0026）+ plan-store hydrate（含 running→queued 复位，`plan-store.ts:154-177`）+ wiring hydrate（`swarm-plan-runtime.ts:204-220`）。缺的只是投影链。
@@ -219,7 +221,7 @@
 **B. 放开嵌套（真实改动面小）**
 - `subagent.ts:287-290`：`enabled: false` → `enabled: (config.subagents?.maxDepth ?? 1) > childDepth`。其余四道门自动跟随，但**第五道门 `embedded-search-branch.ts:31` 必须纳入回归测试**。
 - depth 谱系：`types.ts:143-160` `subagents` 加 `maxDepth?`（策略，装配期定值）；`AgentRuntimeConfig` 加 `subagentDepth?`（事实）+ `rootSessionId?`（与 `:224` parentSessionId 并列）。depth **由父在 `runExploreAgent` 闭包内算 `this.config.subagentDepth+1`**，不由 request 构造方填（照 `child-client-ports.ts:12-14`「父自填、调用方给不了错值」的机械保证；否则 `resumeFromStore` 会读回可能被篡改的 depth）。`ExploreSubagentRuntimeRequest`（`runner.ts:71-92`）加 depth 字段。
-- origin 归属（可拆后续 PR）：`interaction-origin.ts:8-16` 加 `ancestors[]` + `rootSessionId`，`subagent-interaction-broker.ts:35` 合并（外层追加自己）；波及 `contracts/shared.ts:24` + 桌面端。
+- origin 归属（可拆后续 PR）：`interaction-origin.ts:8-16` 加 `ancestors[]` + `rootSessionId`，`subagent-interaction-broker.ts:35` 合并（外层追加自己）；波及 `contracts/shared.ts:24` + 桌面端。**已实施**（2026-10-10，`d9b3e5d`，specs/subagent-interaction-origin-lineage.md：合并单点在 broker、外层后写机械根锚定、shared strict schema additive、投影 waitingChildIds 收 ancestors；UI 徽章谱系展示已随 P2b 收口，`9d53f21`）。
 
 **C. 全局预算（准入闸，绝不是轮数闸）**
 - 照 dwf `budget-caps.ts:2-21` 组织：新纯常量包 `core/src/subagent/tree-budget-caps.ts`，**三闸不合并**（`maxAgentsPerTree` 总量 / `maxLiveAgentsPerTree` 积压 / `maxTokensPerTree` 事后）+ 新维度 `maxDepth`；溢出是**结构化拒绝不静默截断**（`budget-caps.ts:13-15` `Promise.all` 论证，Agent 可并行派发）。
@@ -243,6 +245,10 @@
 - **P1（依赖 ①）**：补 `SessionMailboxPort` **写入方**（envelope schema / 文件适配器 / 路径防护 / hook drain 全现成，`adapters/src/mailbox/index.ts` + `hooks/session-mailbox.ts:44-58`），不可即时投递落盘，目标会话恢复后经现有 hook 点 drain；寻址用 `agentId↔childSessionId` 恒等式 + parentID 链定位属主进程（`background-work-owner.ts` 模式）。`ACODE_MESSAGE_ENABLED` 门控。新增投递语义 `"persisted_mailbox"`。
 - **P2（依赖 ③）**：整树寻址表（挂 root runtime / bootstrap `sessions` 池，`agentId→{sessionId, runtime 弱引用}`，冷态回落 session store 查询）+ 多层镜像逐级向各自父收口 + 跨层环路/深度守卫。
 
+> **P1 落地记录（2026-10-10，`ba09066`，产品规则以 specs/agent-peer-messaging-cross-process.md 为准）**：`SessionMailboxPort.deliver` 写入方（原子写 tmp+rename、drain 序 = 发送序、messageId 文件名安全校验、drain 空扫零副作用）；peer 窄面对 registry 外目标的 store-and-forward fallback（`persisted_mailbox` 语义、恒等式寻址 + `getSession` 存在性校验、限速与 sink 路径共享窗口、信封围栏单源 `formatPeerMessageEnvelope`、受理即镜像发送方父会话、写入方零触 resume/steer）；child runtime 条件转发 mailbox 端口（活的 child 经自己的 hook 点 drain）。与本节原文的已登记偏差：属主进程存活探测（sessions 池遍历）不进写入方——「属主在本进程 → 即时投递」正是 P2 寻址表的职责，P1 写入进程无关（spec「未做与取舍」#2）；跨进程 hop 上限判定随 P2 结构化路由打开（#3）。
+
+> **P2 落地记录（2026-10-10，`33251e5`，产品规则以 specs/agent-peer-tree-addressing.md 为准）**：整树寻址表 `core/src/subagent/tree-addressing.ts`（键 = 树根 sessionId 与树级预算同款键纪律；登记 = runner 准入点、注销 = settle 单点，与预算 claim/release 同点配对）；peer 三级链投递顺序固定：本地 registry（P0）→ 树表（同树跨层 live，复用三语义投递单点）→ mailbox（P1）→ 拒绝；跨树 agentId 结构性 miss（域闸）、终态照拒（peer-1 延伸）、限速三路径共享窗口、镜像逐级向各自父收口（metadata 增 `toAgentSessionId`）；`peerMessaging` flag 随 child config 逐层透传（嵌套时孙代理同样获得窄面）。与本节原文的已登记偏差：表挂 core 模块级（树根键）而非 bootstrap sessions 池——sessions 池级跨树 live 路由 = 事实上的 board（spec 取舍 #3）；「runtime 弱引用」改为确定性注销（spec 取舍 #4）；hop 不累计（无自动转发，spec 取舍 #2）。
+
 ---
 
 ## 5. 安全与护栏汇总（must-do）
@@ -259,6 +265,8 @@
 | **peer-3** | 可观测丢失：mirror 是 live-only | `subagent.ts:335-367` | peer 消息持久化为父会话 synthetic notice（硬性） |
 | **peer-4** | 消息风暴/死循环：无速率/环路控制 | `runtime-command-queue.ts:24-36` enqueue 即 drain | 速率限制 + A→B→A TTL/hop 上限 |
 | **peer-5** | 消息悬挂：pendingMessages 唯一 flush 点是 sink 注册 | `runner.ts:1401-1442`（全仓唯一消费方） | 补 turn 起点 drain（P0 前置 bug 修复） |
+
+> **落地进度（2026-10-10）**：R1 ✅ 天花板锚根 + Explore yolo 限 depth≤1（nesting-budget R1/R2）；R2 ✅ 派发剔除进强制集、按 allowDispatch 与 enabled 闸门同源（policy-floor 增补 R4）；R3 ✅ 树级预算三闸 + 单点准入/释放（nesting-budget R4，只计嵌套派发）；R4 ✅ `offPeakSubagentExecution` 事实随谱系透传、deny 门按「有效 override」判定（nesting-budget R5-1；未采「沿 spawn 链透传显式 override」方案——审计 B4 证实工厂链会无条件重写，护栏必须落在判据侧）；R5 ✅ origin ancestors[] + rootSessionId（`d9b3e5d`，subagent-interaction-origin-lineage：外层后写机械根锚定，depth 1 逐字节不变）。peer-1 ✅ 终态拒绝、零 resume（agent-peer-messaging R7）；peer-2 ✅ 声明行 + escapeXml + 4096 同源截断（R6）；peer-3 ✅ 共同父会话 synthetic notice 镜像（R5）；peer-4 ✅ 发送方/会话对双维度限速（R8）；peer-5 ✅ turn 起点 drain（subagent-pending-message-drain）。④-P1 ✅ 跨进程 mailbox 写入方 + `persisted_mailbox` store-and-forward（`ba09066`，agent-peer-messaging-cross-process.md；peer-1/2/3/4 纪律全部延伸到跨进程形态：写入方零触 resume、围栏单源、受理即镜像、限速共享窗口）。④-P2 ✅ 整树寻址表 + 同树跨层 live 投递（`33251e5`，agent-peer-tree-addressing.md；域闸 = 同树、三路径共享限速、终态照拒、镜像逐级收口）。§6.2 后台孤儿与 §6.3 双重镜像亦已修复（nesting-budget R5-2/R5-3）。
 
 ---
 

@@ -12,7 +12,8 @@ import {
 import type { ToolEntry, ToolHandler } from "../types.js";
 import { assertNotOffPeakTurn } from "./off-peak.js";
 
-const MAX_SEND_MESSAGE_MODEL_BYTES = 4096;
+/** 模型可见内容的截断界。peer 窄面（subagent/peer-messaging.ts R6.3）同源引用，不另立第二份。 */
+export const MAX_SEND_MESSAGE_MODEL_BYTES = 4096;
 /**
  * SendMessage 续跑已完成子 Agent 走
  * resumeTerminalAgentInBackground，不携带闲时轮的 subagentModelOverride，子 Agent 按父会话
@@ -52,7 +53,19 @@ const sendMessageHandler: ToolHandler = async (input, context) => {
     recoverable: true,
   });
 
+  // 编排方案 Phase 3（specs/agent-peer-messaging.md R2/R7）：child runtime 无 subagentPort
+  // 时走 peer 窄面——寻址域仅同父兄弟，终态目标拒绝且不触发 resume。闲时轮防护
+  // （assertNotOffPeakTurn）在本 handler 顶部对两条路径统一生效。
   if (!context.subagentPort?.sendMessage) {
+    if (context.peerMessagingPort) {
+      return context.peerMessagingPort.sendMessage({
+        message: parsed.message,
+        summary: parsed.summary,
+        to: parsed.to,
+        toolCallId: String(context.toolCallId),
+        traceContext: resolveToolTraceContext(context),
+      });
+    }
     throw createCoreError(
       CoreErrorType.ConfigurationError,
       "Subagent port is not configured for SendMessage",

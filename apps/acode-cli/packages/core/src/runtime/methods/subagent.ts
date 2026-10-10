@@ -1,6 +1,10 @@
 /* eslint-disable max-lines -- subagent runtime wiring 集中衔接 child runtime、tool pool、权限、MCP 与 activity watchdog，拆分需单独迁移。 */
-import { RESPOND_TO_COORDINATOR_TOOL_NAME } from "@acode/contracts";
-import type { SubagentRunOptions } from "@acode/contracts";
+import {
+  createMessageId,
+  createSessionId,
+  RESPOND_TO_COORDINATOR_TOOL_NAME,
+} from "@acode/contracts";
+import type { SessionId, SubagentRunOptions } from "@acode/contracts";
 import {
   defaultScheduler,
   PermissionService,
@@ -36,12 +40,17 @@ import {
   matchesRequiredMcpServer,
 } from "../../subagent/mcp-config.js";
 import { mirrorSubagentToolEvent } from "../../subagent/tool-event-mirror.js";
+import { bindSubagentEdgePersistence } from "../../subagent/edge-persistence.js";
+import type { PeerMailboxWriteSeam, PeerMirrorInput } from "../../subagent/peer-messaging.js";
+import {
+  moreRestrictiveMode,
+  resolveChildSubagentsEnabled,
+} from "../../subagent/nesting-policy.js";
 import { isBuiltInExploreAgentProfile } from "../../subagent/profile.js";
 import {
   buildSubagentChildDisallowRules,
   filterSubagentChildToolNames,
 } from "../../subagent/tool-policy.js";
-import { isSubagentDispatchToolName } from "../../tool/compat.js";
 import { resolveEmbeddedSearchBranchCapability } from "../../embedded-search/capability.js";
 import { getSessionShellEnvironment } from "./session-shell-environment.js";
 import { deriveChildClientPorts } from "../helpers/child-client-ports.js";
@@ -68,6 +77,28 @@ export function createDefaultSubagentPort(
   // 一次性会话前台策略（subagent-background-tristate.md R3）：port 构造点单点强制——
   // 超时转后台直接失能，派发请求经 wrapper 重写为前台。runner 不感知会话形态。
   const foregroundPolicy = this.config.subagents?.backgroundPolicy === "foreground";
+  // 编排方案 Phase 1（specs/subagent-topology-persistence.md R2/R8）：拓扑边持久化的
+  // 能力探测——sessionStore 具备边表委托方法（SqliteSessionStore）即接上写入钩子；
+  // 缺席（测试替身/未来远程 store）按无持久化降级，事件链行为不变、不伪装成功。
+  const edgePersistence = bindSubagentEdgePersistence(this.sessionStore);
+  // 编排方案 Phase 5 P1（specs/agent-peer-messaging-cross-process.md R0/R2）：跨进程
+  // mailbox 写入接缝——env 门（ACODE_MESSAGE_ENABLED → deps.sessionMailboxPort）与
+  // store 双在场才铸造。目标解析 = agentId↔childSessionId 恒等式纯推导（与 runner.ts
+  // 的 childSessionId 派生同源）+ getSession 存在性校验；不建整树表（那是 P2）。
+  // 缺席 = peer 对 registry 外目标按 P0 拒绝，行为逐字节不变。
+  const mailboxPort = deps.sessionMailboxPort;
+  const mailboxStore = deps.sessionStore;
+  const peerMailbox: PeerMailboxWriteSeam | undefined =
+    mailboxPort && mailboxStore
+      ? {
+          deliver: (input) => mailboxPort.deliver(input),
+          resolveTargetSession: async (agentId): Promise<SessionId | undefined> => {
+            const targetSessionId = createSessionId(`subagent_${agentId}`);
+            const stored = await mailboxStore.getSession(targetSessionId);
+            return stored ? targetSessionId : undefined;
+          },
+        }
+      : undefined;
   const port = createExploreSubagentPort({
     logger: this.logger,
     inactivityTimeoutMs: this.config.subagents?.inactivityTimeoutMs,
@@ -76,10 +107,50 @@ export function createDefaultSubagentPort(
     profiles: this.config.subagents?.profiles,
     builtInModelSelectionOverrides: this.config.subagents?.builtInModelSelectionOverrides,
     runtimeTaskRegistry: this.runtimeTaskRegistry,
+    // 编排方案 Phase 4 第二批（specs/subagent-nesting-budget.md R4/R5-1）：树级预算
+    // **只计嵌套派发**——本 runtime 自己是子代理（subagentDepth ≥ 1）时才下发预算键，
+    // 它派发的 depth≥2 孙代理受三闸约束；根会话的 depth-1 派发（今天的现实：并行兄弟 +
+    // 后台代理）不进树级闸，并发语义逐字节不变（防的是 10^depth 嵌套失控，不是既有
+    // 工作流；spec「未做与取舍」#7）。键 = 树根 sessionId（不是本 runtime 的会话，
+    // 键纪律见 tree-budget.ts 头注），全树共享同一份计数。
+    ...((this.config.subagentDepth ?? 0) >= 1
+      ? { treeBudgetRootKey: String(this.config.rootSessionId ?? this.sessionId) }
+      : {}),
+    ...(this.config.offPeakSubagentExecution === true ? { offPeakInherited: true } : {}),
     emitParentEvent: async (event, traceContext) => {
       if (isStaleBranchRuntimeTaskEvent(this, event)) return;
       await this.appendEvent(event, traceContext);
     },
+    ...(edgePersistence ? { persistSubagentEdge: edgePersistence.persist } : {}),
+    // 编排方案 Phase 3（specs/agent-peer-messaging.md R0/R5）：peer 通信开关与持久镜像。
+    // 开关装配期定值（默认关 = 子工具面零变化）；镜像按方案原文只用
+    // persistSyntheticUserNoticeForSession（model-only 落共同父会话——冷目录/审计看得到
+    // peer 流量，peer-3）。不注入 live messageHistory：peer 流量的参与者是两个 child，
+    // 父模型不需要实时消费；冷恢复的 hydration 语义由 synthetic-notice-metadata 登记。
+    ...(this.config.subagents?.peerMessaging?.enabled === true
+      ? {
+          peerMessaging: { enabled: true },
+          // 整树寻址 P2（specs/agent-peer-tree-addressing.md R0/R5）：根键每层机械
+          // 自算（rootSessionId 谱系事实），**无深度条件**——与预算键的 depth≥1 刻意
+          // 不同：预算只计嵌套派发，寻址覆盖全树（depth-1 叔辈同样是跨层目标）。
+          treeAddressingRootKey: String(this.config.rootSessionId ?? this.sessionId),
+          // 跨进程 P1（specs/agent-peer-messaging-cross-process.md R0/R1）：mailbox
+          // 写入接缝随 flag 一并下发；env 门关闭（接缝缺席）时 peer 行为与 P0 逐字节一致。
+          ...(peerMailbox ? { peerMailbox } : {}),
+          persistPeerMirror: async (input: PeerMirrorInput) => {
+            await this.ensureContextInitialized(input.traceContext);
+            await this.persistSyntheticUserNoticeForSession({
+              messageID: createMessageId(),
+              metadata: input.metadata,
+              sessionId: this.sessionId,
+              source: "peer_message",
+              text: input.text,
+              traceContext: input.traceContext,
+              visibility: "model-only",
+            });
+          },
+        }
+      : {}),
     enqueueParentTaskNotification: (notification) => {
       this.enqueueBackgroundTaskNotification({
         originMeta: notification.originMeta,
@@ -165,16 +236,29 @@ export function createDefaultSubagentPort(
         request,
         officialCuaServerNames,
       );
+      // 编排方案 Phase 4（specs/subagent-nesting-budget.md R1/R3）：depth 谱系由父闭包
+      // 自算（机械保证——request 构造方给不了错值，resumeFromStore 也读不回被篡改的
+      // depth）。rootMode/rootSessionId 是链根建链时刻的快照：根会话取自身当前值，
+      // 深层原样透传（根后续改模式不放宽天花板）。
+      const childDepth = (this.config.subagentDepth ?? 0) + 1;
+      const parentEffectiveMode = this.getPlanEnabled() ? "plan" : this.config.mode;
+      const rootMode = this.config.rootMode ?? parentEffectiveMode;
+      const childSubagentsEnabled = resolveChildSubagentsEnabled({
+        childDepth,
+        configuredMaxDepth: this.config.subagents?.maxDepth,
+      });
       const childToolAllowlist = resolveSubagentToolAllowlist.call(
         this,
         request,
         childMcpAccess.snapshot?.tools.map((descriptor) => toMcpToolName(descriptor)) ?? [],
+        { allowDispatch: childSubagentsEnabled },
       );
       validateSubagentMcpRequirements(request, childToolAllowlist, childMcpAccess);
       const childMode = resolveSubagentPermissionMode(
-        this.getPlanEnabled() ? "plan" : this.config.mode,
+        parentEffectiveMode,
         request.permissionMode,
         builtInExplore,
+        { depth: childDepth, rootMode },
       );
       const childCuaPolicy = createOfficialCuaPolicy(
         officialCuaServerNames,
@@ -246,6 +330,20 @@ export function createDefaultSubagentPort(
           // 旧 plan 枚举不包含基础权限；拆分后继承完整状态，避免被构造器回退成 build。
           mode: childMode === "plan" ? this.config.mode : childMode,
           planEnabled: childMode === "plan",
+          // 编排方案 Phase 4（specs/subagent-nesting-budget.md R1/R3）：depth 谱系事实，
+          // 父自填（机械保证）。rootSessionId 是树级预算的键（预算闸落地前预留给
+          // origin 归属与审计），rootMode 是天花板锚根的快照。
+          subagentDepth: childDepth,
+          rootSessionId: this.config.rootSessionId ?? this.sessionId,
+          rootMode,
+          // 闲时轮 override 事实随谱系透传（specs/subagent-nesting-budget.md R5-1 /
+          // 审计 §6.1）：显式 override 只作用当层，但 override 模型经 selection/model/
+          // factory 三重继承链传到任意深度——depth-1 置位、深层原样继承，deny 门改判
+          // 「有效 override」，孙层不再因 launchOptions 缺显式参数而放行 background。
+          ...(options?.modelOverride?.background === "deny" ||
+          this.config.offPeakSubagentExecution === true
+            ? { offPeakSubagentExecution: true }
+            : {}),
           // 模型选择的影响不只在最终 request.model：MCS、内建搜索与 token/media 预算会在
           // child runtime 内按 default model 预先塑形。同步 child 因此必须把整套执行
           // 配置都指向父 turn 快照；runner 禁止它转后台，provider registry 则由父 turn
@@ -291,7 +389,22 @@ export function createDefaultSubagentPort(
           nativeSearchEnhancementsEnabled: this.config.nativeSearchEnhancementsEnabled,
           subagents: {
             backgroundBashMaxMs: this.config.subagents?.backgroundBashMaxMs,
-            enabled: false,
+            // 放开闸门（specs/subagent-nesting-budget.md R3/R4）：child 自己可再派发的
+            // 唯一判据 = childDepth < 生效 maxDepth。树级预算闸落地前
+            // resolveEffectiveSubagentMaxDepth 硬封 1（fail-closed）→ 本式恒 false，
+            // 与原 enabled:false 写死逐字节等价；五道结构性保证的其余四道全部由本值派生。
+            enabled: childSubagentsEnabled,
+            // 策略值透传（装配期定值）：更深层用同一个 maxDepth 判定，逐层递增的只有
+            // depth 事实。profiles 刻意不透传：孙代理只见内置目录（spec「未做与取舍」#4）。
+            ...(this.config.subagents?.maxDepth === undefined
+              ? {}
+              : { maxDepth: this.config.subagents.maxDepth }),
+            // 整树寻址 P2（specs/agent-peer-tree-addressing.md R6）：peerMessaging 与
+            // maxDepth 同款逐层透传——嵌套放开时孙代理同样获得窄面（兄弟 + 整树 +
+            // mailbox 三级链）；默认关 = 不透传 = 零变化。
+            ...(this.config.subagents?.peerMessaging === undefined
+              ? {}
+              : { peerMessaging: this.config.subagents.peerMessaging }),
           },
           mcp: childMcpAccess.config,
         },
@@ -303,6 +416,18 @@ export function createDefaultSubagentPort(
           agentTelemetryCausationMode: request.background ? "linked_root" : "child",
           eventStore: this.eventStore,
           sessionStore: deps.sessionStore,
+          // 编排方案 Phase 5 P1（specs/agent-peer-messaging-cross-process.md R7）：
+          // child runtime 转发 mailbox 端口——活的 child session 由此获得自己的 hook
+          // drain（createRuntimeHookRunner 对任意带该 dep 的 runtime 生效，零新机制），
+          // 跨进程来件不再等到独立 resume 才被消费。env 门关闭 = 字段缺席 = 行为
+          // 逐字节不变。
+          ...(deps.sessionMailboxPort ? { sessionMailboxPort: deps.sessionMailboxPort } : {}),
+          // 编排方案 Phase 3（specs/agent-peer-messaging.md R1/R2）：peer 窄面——flag
+          // 开启时由 runner 随请求下发；SendMessage 注册门与 handler 分支经 executor
+          // deps 消费。缺席 = child 无 SendMessage（现状，depth-1 故事不变）。
+          ...(request.peerMessagingPort
+            ? { peerMessagingPort: request.peerMessagingPort }
+            : {}),
           // 子 runtime 继承父的模型请求准入端口：subagent 的请求 provider 同样看得见，
           // 它们该与父一样喂治理器信号（父是 observer 则子也是 observer）。
           modelRequestAdmission: this.modelRequestAdmission,
@@ -349,17 +474,29 @@ export function createDefaultSubagentPort(
                 ...request.traceContext,
                 sessionId: request.sessionId,
               });
-              const mirroredEvent = mirrorSubagentToolEvent(event, {
-                agentId: request.agentId,
-                agentType: request.agentType,
-                background: request.background,
-                childSessionId: request.sessionId,
-                description: request.description,
-                parentSessionId: this.sessionId,
-                parentToolCallId,
-                parentTurnId: request.traceContext.turnId,
-                toolNameByChildToolCallId: mirroredToolNameByChildToolCallId,
-              });
+              // 编排方案 Phase 4 第二批（specs/subagent-nesting-budget.md R5-3 / 审计
+              // §6.3）：多层镜像抑制。两类事件只透传、不再镜像——
+              // ① 镜像产物（payload.source="subagent"，深层已按正确的 agentId 与前缀链
+              //    铸好）：再镜像一次会让同一工具调用在根 timeline 出现两条（镜像的镜像）；
+              // ② 非直接子会话的深层 raw 事件（sessionId ≠ 本 child）：直接镜像会把孙代理
+              //    的调用错归属到 child。透传保留观察面，抑制消除重复与错归属。
+              const isDirectChildEvent = String(event.sessionId) === String(request.sessionId);
+              const isAlreadyMirrored =
+                (event.payload as { source?: unknown } | undefined)?.source === "subagent";
+              const mirroredEvent =
+                isDirectChildEvent && !isAlreadyMirrored
+                  ? mirrorSubagentToolEvent(event, {
+                      agentId: request.agentId,
+                      agentType: request.agentType,
+                      background: request.background,
+                      childSessionId: request.sessionId,
+                      description: request.description,
+                      parentSessionId: this.sessionId,
+                      parentToolCallId,
+                      parentTurnId: request.traceContext.turnId,
+                      toolNameByChildToolCallId: mirroredToolNameByChildToolCallId,
+                    })
+                  : undefined;
               if (!mirroredEvent) return;
 
               // parent mirror 保留原语义：父会话只看到 subagent 摘要/工具活动，raw child
@@ -417,6 +554,16 @@ export function createDefaultSubagentPort(
           // Subagent Turn 在 Trace 和成功率报表里被误归类为 user。
           inputSource: "subagent",
           inputPresentation: "coordinator_input",
+          // turn 起点 drain（specs/subagent-pending-message-drain.md R1/R2）：注册 flush
+          // 与 turn 启动的竞态输掉后，回队消息在 turn 激活的确定性边界补投。钩子不抛
+          // （此处包裹；drain 失败保持 re-queue 语义，resume 路径仍会再冲）。
+          onTurnStarted: () => {
+            try {
+              request.drainQueuedMessages?.();
+            } catch {
+              // drain 是观察性兜底：失败不伤 turn，消息留在队列。
+            }
+          },
           traceContext: request.traceContext,
         });
       } finally {
@@ -431,6 +578,14 @@ export function createDefaultSubagentPort(
             traceContext: request.traceContext,
           });
         }
+        // 编排方案 Phase 4 第二批（specs/subagent-nesting-budget.md R5-2 / 审计 §6.2）：
+        // 级联收口——child turn 已结算（无论完成还是取消），其在飞的子代理不再有任何
+        // 通知消费者（child runtime 即将废弃、其队列无人再读），继续执行 = 孤儿烧 token。
+        // 树随派发 run 同生共死；depth-1 无子代理时为 no-op，行为与现状一致。
+        await childRuntime.stopInFlightSubagentTasks({
+          reason: cancelled ? "subagent_cancelled" : "subagent_terminal",
+          traceContext: request.traceContext,
+        });
       }
     },
   });
@@ -488,25 +643,35 @@ function createSubagentOverrideModelFactory(
 }
 
 /**
- * 子代理权限模式天花板（安全加固 P2，subagent-policy-floor-inheritance R3）。
- * 导出供回归测试钉住：request 显式 yolo/bypassPermissions 走 default 分支回落
- * parentMode——子代理 profile 无法把模式抬到父会话之上；auto/plan 覆盖只会更严。
- * Explore 的缺省 yolo 是设计保留（只读工具面），其安全兜底是熔断器 + 进程级策略地板。
+ * 子代理权限模式天花板（安全加固 P2 subagent-policy-floor-inheritance R3；编排方案
+ * Phase 4 锚根修正 specs/subagent-nesting-budget.md R1/R2）。导出供回归测试钉住。
+ *
+ * - depth ≤ 1（缺省锚值）：天花板 = 直接父，与三参旧签名逐字节同语义——request 显式
+ *   yolo/bypassPermissions 回落 parentMode，Explore 缺省 yolo 是 depth-1 只读工具面的
+ *   设计保留（熔断器 + 进程级策略地板兜底）。
+ * - depth ≥ 2：天花板 = parent 与 **root** 的更严者（R1 提权链封堵：根 build →
+ *   Explore 子 yolo → 孙代理经 undefined 分支继承 yolo + 可写工具面的一跳提权不再
+ *   成立）；Explore 缺省 yolo 限定 depth ≤ 1（depth≥2 的 Explore 可能拿到派发/可写
+ *   面，不再享受只读豁免）。
  */
 export function resolveSubagentPermissionMode(
   parentMode: AgentRuntimeInternal["config"]["mode"],
   permissionMode: ExploreSubagentRuntimeRequest["permissionMode"],
   builtInExplore: boolean,
+  anchors?: { depth: number; rootMode: AgentRuntimeInternal["config"]["mode"] },
 ): AgentRuntimeInternal["config"]["mode"] {
+  const depth = anchors?.depth ?? 1;
+  const ceiling =
+    depth <= 1 ? parentMode : moreRestrictiveMode(parentMode, anchors?.rootMode ?? parentMode);
   switch (permissionMode) {
     case "auto":
       return "auto";
     case "plan":
       return "plan";
     case undefined:
-      return builtInExplore ? "yolo" : parentMode;
+      return builtInExplore && depth <= 1 ? "yolo" : ceiling;
     default:
-      return parentMode;
+      return ceiling;
   }
 }
 
@@ -528,11 +693,12 @@ function resolveSubagentToolAllowlist(
   this: AgentRuntimeInternal,
   request: ExploreSubagentRuntimeRequest,
   visibleMcpToolNames: readonly string[],
+  options?: { allowDispatch?: boolean },
 ): readonly string[] {
-  const disallowedRules = buildSubagentChildDisallowRules([
-    ...(this.config.toolDisallowlist ?? []),
-    ...(request.disallowedTools ?? []),
-  ]);
+  const disallowedRules = buildSubagentChildDisallowRules(
+    [...(this.config.toolDisallowlist ?? []), ...(request.disallowedTools ?? [])],
+    options,
+  );
   const inheritsAvailableTools =
     request.allowedTools.length === 0 || request.allowedTools.includes("*");
   if (inheritsAvailableTools) {
@@ -550,7 +716,8 @@ function resolveSubagentToolAllowlist(
     ];
     return appendCoordinatorResponseTool(
       [...new Set(availableToolNames)]
-        .filter((toolName) => !isSubagentDispatchToolName(toolName))
+        // 派发工具（Agent/Task）的剔除在 tool-policy 强制集单一出处（增补 R4），
+        // 两个分支共用 filterSubagentChildToolNames，不再各留一份内联过滤。
         .filter((toolName) => filterSubagentChildToolNames([toolName], disallowedRules).length > 0),
     );
   }

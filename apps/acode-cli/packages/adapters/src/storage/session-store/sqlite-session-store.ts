@@ -106,6 +106,12 @@ import * as scriptWorkflowRunRepository from "./repositories/script-workflow-run
 import * as sessionEntryRepository from "./repositories/session-entries.js";
 import * as sessionInputRepository from "./repositories/session-inputs.js";
 import * as sessionRepository from "./repositories/sessions.js";
+import * as subagentEdgeRepository from "./repositories/subagent-edges.js";
+import type {
+  SubagentEdgeRow,
+  SubagentEdgeSettleInput,
+  SubagentEdgeUpsertInput,
+} from "./repositories/subagent-edges.js";
 import * as swarmPlanRepository from "./repositories/swarm-plans.js";
 import * as todoRepository from "./repositories/todos.js";
 import * as usageRepository from "./repositories/usage.js";
@@ -668,6 +674,35 @@ export class SqliteSessionStore
   async clearSwarmPlan(input: { sessionID: SessionId }): Promise<void> {
     this.throwBeforeWrite();
     return swarmPlanRepository.clearSwarmPlan(this.db, input);
+  }
+
+  // 编排方案 Phase 1（specs/subagent-topology-persistence.md R8）：agent 拓扑边表的行
+  // 存取——与 swarm plan 同为 sessionStore 专用存储方法，**不进 contracts
+  // SessionStorePort**（duck-typing 纪律，swarm K4 先例）；core 写入钩子与 bootstrap
+  // 合成层经结构化探测消费，测试替身/未来远程 store 缺席时按「无持久化」降级。
+  async readSubagentEdges(input: { sessionID: SessionId }): Promise<SubagentEdgeRow[]> {
+    return subagentEdgeRepository.listSubagentEdges(this.db, input);
+  }
+
+  async listSubagentDescendants(input: {
+    sessionID: SessionId;
+  }): Promise<Array<SubagentEdgeRow & { depth: number }>> {
+    return subagentEdgeRepository.listSubagentDescendants(this.db, input);
+  }
+
+  async upsertSubagentEdge(input: SubagentEdgeUpsertInput): Promise<void> {
+    this.throwBeforeWrite();
+    return subagentEdgeRepository.upsertSubagentEdge(this.db, input);
+  }
+
+  async settleSubagentEdge(input: SubagentEdgeSettleInput): Promise<boolean> {
+    this.throwBeforeWrite();
+    return subagentEdgeRepository.settleSubagentEdge(this.db, input);
+  }
+
+  async convergeSubagentEdges(input: { now?: number; sessionID: SessionId }): Promise<number> {
+    this.throwBeforeWrite();
+    return subagentEdgeRepository.convergeNonTerminalSubagentEdges(this.db, input);
   }
 
   async readTarget(input: { sessionID: SessionId }): Promise<SessionGoal | null> {

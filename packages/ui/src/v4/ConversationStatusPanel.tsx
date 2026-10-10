@@ -69,8 +69,10 @@ import {
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuItem,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu.js";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card.js";
@@ -84,6 +86,7 @@ import type {
   OpenSubagentDirectorySideTabRequest,
   OpenSubagentSideTabRequest,
   OpenWorkflowRunDirectorySideTabRequest,
+  OpenOrchestrationSideTabRequest,
 } from "@/lib/workspaceSidePane.js";
 import type { ChatViewSummaryPanelVariant } from "@/v4/legacyChatViewTypes.js";
 import { resolveConversationStatusPanelVariant } from "@/v4/conversationLayout.js";
@@ -148,6 +151,8 @@ interface ConversationStatusPanelProps {
   onOpenSubagentDirectory?: (request: OpenSubagentDirectorySideTabRequest) => void;
   onOpenWorkflowRun?: (target: ConversationStatusPanelWorkflowRunTarget) => void;
   onOpenWorkflowRunDirectory?: (request: OpenWorkflowRunDirectorySideTabRequest) => void;
+  /** 面板菜单的「编排总览」项 → 统一编排 side pane（orchestration-side-pane spec R3 入口）。 */
+  onOpenOrchestration?: (request: OpenOrchestrationSideTabRequest) => void;
   className?: string;
 }
 
@@ -1742,6 +1747,7 @@ function ConversationStatusPanelImpl({
   onOpenSubagentDirectory,
   onOpenWorkflowRun,
   onOpenWorkflowRunDirectory,
+  onOpenOrchestration,
   className,
 }: ConversationStatusPanelProps) {
   const isOfficeMode = useIsOfficeMode();
@@ -1933,6 +1939,14 @@ function ConversationStatusPanelImpl({
                     })}
                   </DropdownMenuRadioItem>
                 </DropdownMenuRadioGroup>
+                {onOpenOrchestration && parentSessionId ? (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onSelect={() => onOpenOrchestration({ parentSessionId })}>
+                      {intl.formatMessage({ id: "sidePane.orchestration" })}
+                    </DropdownMenuItem>
+                  </>
+                ) : null}
               </DropdownMenuContent>
             </DropdownMenu>
             <ControlHintTooltip

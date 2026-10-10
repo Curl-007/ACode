@@ -46,6 +46,7 @@ import type {
   DynamicWorkflowRunResumeResult,
   DynamicWorkflowRunProgressPayload,
   DynamicWorkflowRunSessionSummary,
+  SwarmPlanProgressPayload,
   ExecutionPort,
   BrowserControlPort,
   FileSystemPort,
@@ -477,6 +478,12 @@ export interface ACodeApp {
   replayDynamicWorkflowRuns?(input: {
     excludeRunIds: ReadonlySet<string>;
   }): Promise<DynamicWorkflowRunProgressPayload[]>;
+  /**
+   * swarm plan 的冷回放读取口（specs/swarm-observability-projection.md R5）：从 plan 行
+   * 合成一条 SwarmPlanProgress 载荷；无 plan 返回 undefined。可选能力：swarm wiring
+   * 缺席的装配（测试替身等）下 v4-bridge 跳过回放，投影链降级为纯 live 事件。
+   */
+  readSwarmPlanStatus?(): Promise<SwarmPlanProgressPayload | undefined>;
   /**
    * workflow run 的**用户面产物**读面。三条能力
    * 一起注册、一起缺席：它们是同一个 journal 读面的三个切片，部分在场只会让 UI 拿到一张

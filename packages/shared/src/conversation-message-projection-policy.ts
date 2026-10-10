@@ -52,6 +52,10 @@ const PROVIDER_CONTEXT_SYNTHETIC_SOURCES = new Set([
   "goal-continuation",
   "goal_completion_verification",
   "goal_state_change",
+  // peer 镜像（specs/agent-peer-messaging.md R5）：model-only 审计痕迹，进 provider
+  // 上下文（冷恢复语义等价）但**刻意不进** MODEL_ONLY_TURN_TRIGGER_SOURCES——
+  // peer 流量的参与者是两个 child，镜像不得触发父会话起轮。
+  "peer_message",
   "plugin_reference",
   "queued_system_notification",
   "resume_goal_state",

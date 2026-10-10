@@ -105,6 +105,7 @@ export interface ToolExecutorOptions {
   nativeSearchEnhancementsEnabled?: boolean;
   skillPort?: SkillPort;
   subagentPort?: SubagentPort;
+  peerMessagingPort?: import("../../subagent/peer-messaging.js").PeerMessagingPort;
   coordinatorResponsePort?: CoordinatorResponsePort;
   workflowSubmitPort?: WorkflowSubmitPort;
   /** actor 的升级端口；存在即为该会话注册 escalate。 */
@@ -213,6 +214,7 @@ export interface ToolExecutorDeps {
   nativeSearchEnhancementsEnabled?: boolean;
   skillPort?: SkillPort;
   subagentPort?: SubagentPort;
+  peerMessagingPort?: import("../../subagent/peer-messaging.js").PeerMessagingPort;
   coordinatorResponsePort?: CoordinatorResponsePort;
   workflowSubmitPort?: WorkflowSubmitPort;
   /** actor 的升级端口；存在即为该会话注册 escalate。 */

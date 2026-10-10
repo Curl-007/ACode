@@ -18,6 +18,9 @@ export const acodeSyntheticUserMessageSourceSchema = z.enum([
   "fork",
   "goal_state_change",
   "goal-continuation",
+  // peer 消息镜像（specs/agent-peer-messaging.md R5）：兄弟间消息落共同父会话的
+  // model-only 合成 notice；词表与 contracts SYNTHETIC_USER_MESSAGE_SOURCES 同步。
+  "peer_message",
   "plugin_reference",
   "rewind",
   "selection_side_chat",
@@ -172,6 +175,22 @@ export const acodeSessionInfoSchema = z
   })
   .strict();
 export type ACodeSessionInfo = z.infer<typeof acodeSessionInfoSchema>;
+// 编排方案 R5/R6（apps/acode-cli/specs/subagent-interaction-origin-lineage.md R4）：
+// 祖先链条目与 CLI contracts 的 SubagentInteractionOriginAncestor 字段一一对应。
+// additive 可选：只有 depth≥2（嵌套被显式解锁）的请求才携带，maxDepth 缺省 1 时
+// 旧客户端永远遇不到带新字段的载荷——strict 校验的版本偏斜安全由此承担。
+export const acodeInteractionOriginAncestorSchema = z
+  .object({
+    agentId: nonEmptyString,
+    agentType: nonEmptyString,
+    sessionId: nonEmptyString,
+    parentSessionId: nonEmptyString,
+    description: z.string().optional(),
+    parentToolCallId: nonEmptyString.optional(),
+    parentTurnId: nonEmptyString.optional(),
+  })
+  .strict();
+export type ACodeInteractionOriginAncestor = z.infer<typeof acodeInteractionOriginAncestorSchema>;
 export const acodeInteractionRequestOriginSchema = z
   .object({
     kind: z.literal("subagent"),
@@ -183,6 +202,9 @@ export const acodeInteractionRequestOriginSchema = z
     parentSessionId: nonEmptyString,
     parentToolCallId: nonEmptyString.optional(),
     parentTurnId: nonEmptyString.optional(),
+    // depth≥2：祖先链内→外 + 客户端可见根会话；depth 1 两字段缺席（历史载荷原样通过）。
+    ancestors: z.array(acodeInteractionOriginAncestorSchema).optional(),
+    rootSessionId: nonEmptyString.optional(),
   })
   .strict();
 export type ACodeInteractionRequestOrigin = z.infer<typeof acodeInteractionRequestOriginSchema>;

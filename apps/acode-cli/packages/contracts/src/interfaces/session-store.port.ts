@@ -57,6 +57,9 @@ export const SYNTHETIC_USER_MESSAGE_SOURCES = [
   "fork",
   "goal_state_change",
   "goal-continuation",
+  // peer 消息镜像（specs/agent-peer-messaging.md R5）：成功受理的兄弟间消息落共同父
+  // 会话的 model-only 合成 notice，冷目录/审计因此看得到 peer 流量。
+  "peer_message",
   "plugin_reference",
   "rewind",
   "selection_side_chat",

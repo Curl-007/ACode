@@ -33,6 +33,7 @@ import {
   workflowRunSchema,
   workflowRunsStateSchema,
 } from "./workflow-runs.js";
+import { swarmPlanStateSchema } from "./swarm-plan.js";
 
 // StatePatch：键级整体替换（Object.assign），键集合封闭。键内绝不深合并。
 export const statePatchSchema = z.object({
@@ -52,6 +53,9 @@ export const statePatchSchema = z.object({
   // workflow run 的实时运行态。容器本身不 strict，所以旧桌面收到这个新键只是**剥离一个键**、
   // 保住 patch 其余全部键——这正是它不需要任何版本偏斜防御的原因。
   workflowRuns: workflowRunsStateSchema.optional(),
+  // swarm plan 投影（specs/swarm-observability-projection.md R4）：键级整体替换，
+  // null = 清除。偏斜语义与 workflowRuns 逐字相同（旧桌面剥离一个键，其余保住）。
+  swarmPlan: swarmPlanStateSchema.nullable().optional(),
   goal: goalStateSchema.nullable().optional(),
   plan: planStateSchema.nullable().optional(),
   // 软门禁：null = pending 清零(提示条消失);对象 = 待审核状态更新。

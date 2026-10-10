@@ -35,6 +35,7 @@ import type {
   SavedWorkflowScope,
   TargetChangedPayload,
   DynamicWorkflowRunProgressPayload,
+  SwarmPlanProgressPayload,
   UserInputAutoResolutionUpdatedPayload,
   ContextSourcePort,
   ExecutionPort,
@@ -579,6 +580,10 @@ export interface AgentRuntime {
   recordDynamicWorkflowRunProgress(
     input: DynamicWorkflowRunProgressPayload & { traceContext?: TraceContext },
   ): Promise<void>;
+  /** swarm plan 提交投影的出回合追加（事件源在 bootstrap 的 swarm-plan-runtime）。 */
+  recordSwarmPlanProgress(
+    input: SwarmPlanProgressPayload & { traceContext?: TraceContext },
+  ): Promise<void>;
   /** 恢复的 workflow run 的追踪重臂（registry 登记 + started 事件 + waiter + 结算通知）。 */
   trackResumedDynamicWorkflowRun(input: {
     runId: string;
@@ -648,6 +653,11 @@ export interface AgentRuntime {
     reason: "subagent_cancelled";
     traceContext?: TraceContext;
   }): Promise<void>;
+  /** 级联收口在飞子代理（specs/subagent-nesting-budget.md R5-2）；返回停止数。 */
+  stopInFlightSubagentTasks(input: {
+    reason: "subagent_cancelled" | "subagent_terminal";
+    traceContext?: TraceContext;
+  }): Promise<number>;
   sealBackgroundTaskNotifications(input: {
     reason: "subagent_terminal" | "subagent_cancelled";
     traceContext?: TraceContext;

@@ -120,6 +120,7 @@ import {
   collectSubagentChildSessionIds,
   paginateEndedSubagents,
   projectSessionSubagents,
+  readPersistedSubagentEdges,
 } from "./subagent-session-query.js";
 import { runSessionModelConfigMutation } from "../acode-protocol-v4/model-config-mutation.js";
 import { runWithSessionResidencyFinalization } from "./session-residency.js";
@@ -1628,7 +1629,16 @@ export async function listSessionSubagents(
   const parentEvents = liveParent
     ? await liveParent.eventStore.getEvents(parentSession.id).catch(() => [])
     : [];
-  const childSessionIds = collectSubagentChildSessionIds(parentSession, messages, parentEvents);
+  // 编排方案 Phase 1（specs/subagent-topology-persistence.md R5）：持久化拓扑边——
+  // 冷启动时 parentEvents 为空，边表是终态的唯一权威；能力缺席/读取失败为空数组，
+  // 合成层回退既有三源路径，行为不变。
+  const edges = await readPersistedSubagentEdges(store, parentSession.id);
+  const childSessionIds = collectSubagentChildSessionIds(
+    parentSession,
+    messages,
+    parentEvents,
+    edges,
+  );
   const childEntries = await Promise.all(
     childSessionIds.map(async (childSessionId) => {
       const childSession = await store.getSession(childSessionId as SessionId);
@@ -1666,6 +1676,7 @@ export async function listSessionSubagents(
     ),
     ...(parentProjection ? { parentProjection } : {}),
     ...(parentEvents.length > 0 ? { parentEvents } : {}),
+    ...(edges.length > 0 ? { edges } : {}),
   });
   const ended = paginateEndedSubagents(projection.ended, {
     cursor: params.endedCursor,

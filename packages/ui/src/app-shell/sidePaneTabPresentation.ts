@@ -19,6 +19,7 @@ export interface SidePaneTabPresentationLabels {
   workflowActorTitle: string;
   workflowScriptTitle: string;
   workflowArtifactTitle: string;
+  orchestrationTitle: string;
 }
 
 export function getSidePaneTabSearchHint(tab: WorkspaceSidePaneTab): string {
@@ -50,6 +51,9 @@ export function getSidePaneTabSearchHint(tab: WorkspaceSidePaneTab): string {
   }
   if (tab.type === "subagent-directory") {
     return `${tab.rootSessionId} ${tab.parentSessionId} subagent directory`;
+  }
+  if (tab.type === "orchestration") {
+    return `${tab.rootSessionId} ${tab.parentSessionId} orchestration overview agents workflows swarm plan`;
   }
   if (tab.type === "browser") return tab.initialUrl ?? "";
   if (tab.type === "browser-use") {
@@ -91,6 +95,7 @@ export function getLocalizedSidePaneTabTitle(
       "sidePane.workflowActor": labels.workflowActorTitle,
       "sidePane.workflowScript": labels.workflowScriptTitle,
       "sidePane.workflowArtifact": labels.workflowArtifactTitle,
+      "sidePane.orchestration": labels.orchestrationTitle,
     };
     return titleByMessageId[descriptor.id] ?? descriptor.id;
   });
@@ -111,6 +116,7 @@ export function getSidePaneTabTypeLabel(
     return tab.subagentType.trim() || labels.subagentTypeLabel;
   }
   if (tab.type === "subagent-directory") return labels.subagentDirectoryTitle;
+  if (tab.type === "orchestration") return labels.orchestrationTitle;
   if (tab.type === "browser" || tab.type === "browser-use") return labels.browserTitle;
   if (tab.type === "git") return labels.reviewTitle;
   if (tab.type === "treemapping") return labels.treemappingTitle;

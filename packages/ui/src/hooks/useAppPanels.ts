@@ -30,6 +30,7 @@ import {
   openWorkflowRunSidePane,
   replaceWorkflowRunSidePane,
   openWorkflowRunDirectorySidePane,
+  openOrchestrationSidePane,
   openWorkflowActorSessionSidePane,
   openWorkflowWorkspaceSidePane,
   openWorkflowArtifactSidePane,
@@ -67,6 +68,7 @@ import {
   type OpenScopedPlanDetailSideTabRequest,
   type OpenScopedWorkflowRunSideTabRequest,
   type OpenScopedWorkflowRunDirectorySideTabRequest,
+  type OpenScopedOrchestrationSideTabRequest,
   type OpenScopedWorkflowActorSessionSideTabRequest,
   type OpenScopedWorkflowArtifactSideTabRequest,
   type OpenScopedWorkflowWorkspaceSideTabRequest,
@@ -969,6 +971,24 @@ export function useAppPanels(options: {
     [commitOpenedSidePaneState],
   );
 
+  const handleOpenOrchestration = useCallback(
+    (request: OpenScopedOrchestrationSideTabRequest) => {
+      const workspaceKey = request.workspaceIdentity?.trim() || request.workspacePath;
+      setIsSidePaneCollapsed(false);
+      commitOpenedSidePaneState((current) =>
+        openOrchestrationSidePane(current, {
+          ...request,
+          workspaceKey,
+        }),
+      );
+      logger.debug("[App] 打开统一编排总览右侧 tab", {
+        parentSessionId: request.parentSessionId,
+        workspaceKey,
+      });
+    },
+    [commitOpenedSidePaneState],
+  );
+
   const handleOpenWorkflowActorSession = useCallback(
     (request: OpenScopedWorkflowActorSessionSideTabRequest) => {
       const workspaceKey = request.workspaceIdentity?.trim() || request.workspacePath;
@@ -1589,6 +1609,7 @@ export function useAppPanels(options: {
     handleOpenPlanDetail,
     handleOpenWorkflowRun,
     handleOpenWorkflowRunDirectory,
+    handleOpenOrchestration,
     handleOpenWorkflowActorSession,
     handleOpenWorkflowWorkspace,
     handleOpenWorkflowArtifact,

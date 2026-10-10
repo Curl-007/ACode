@@ -44,8 +44,13 @@ export interface RuntimeTaskPendingMessage {
   isMeta?: boolean;
   message: string;
   origin?: {
-    kind: "coordinator";
+    /** peer = 同父兄弟经 PeerMessagingPort（specs/agent-peer-messaging.md R3）。 */
+    kind: "coordinator" | "peer";
     toolCallId?: string;
+    /** peer 来件的发送方 agentId（coordinator 来件无此字段）。 */
+    agentId?: string;
+    /** 转发跳数；P0 恒 1，字段先行（hop 上限判定随 P1/P2 打开）。 */
+    hop?: number;
   };
   queuedAt: Date;
   summary?: string;

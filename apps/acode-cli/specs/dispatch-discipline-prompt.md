@@ -27,9 +27,12 @@
   三赢家，转后台后 `:317-330` 挂 completion/failure finalize 并 detach 父 abort）。
 - 后台完成写父队列 + 通知文案由 `subagent/completion-notification.ts:21-51` 单点产出
   （三态 `completed | failed | stopped`，summary 为单行机器可读句）。
-- fan-out 硬深度 1：`runtime/methods/subagent.ts:275-287` 把 `dynamicWorkflowEnabled` 与
-  `subagents: { enabled: false }` 结构性下发给子 runtime；派发工具名集合在
-  `tool/compat.ts:1-14`。
+- fan-out 深度门（2026-10-10 编排方案 Phase 4 修订）：`runtime/methods/subagent.ts` 的 child
+  config 把 `subagents: { enabled: <depth 派生> }` 结构性下发——`enabled = childDepth <
+  生效 maxDepth`（`subagent/nesting-policy.ts` 的 `resolveChildSubagentsEnabled` 单点）；
+  树级预算闸落地前生效 maxDepth 被 fail-closed 硬封 1，与旧「硬深度 1」逐字节等价，
+  详见 `subagent-nesting-budget.md`。派发工具名集合在 `tool/compat.ts`
+  （`SUBAGENT_DISPATCH_TOOL_NAMES`）。
 
 ### 两个已确认缺陷
 
@@ -282,7 +285,8 @@ subagent/completion-notification.ts:21-51      通知文案（运行时事实，
 
 - **运行时硬约束**：不新增「后台强制」「轮询检测」「派发数量上限」。判据类语义只能在提示词层
   表达；运行时侧的总量保护归 `workflow-budget-fuses.md`（D2）。
-- **fan-out 深度**：硬深度 1 现状不动（`runtime/methods/subagent.ts:275-287`）。
+- **fan-out 深度**：本 spec 不触深度门控；深度门控归 `subagent-nesting-budget.md`（编排
+  方案 Phase 4：预算闸落地前 fail-closed 硬封深度 1，与旧「硬深度 1 现状不动」等价）。
 - **fork / team / coordinator / ScheduleWakeup**：方案 D7 判为长期可选，不进本项。
 - **AskUserQuestion 指导段的恢复**：与派发纪律不同承载层，归方案 P1 与
   `system-prompt-section-registry.md`；本 spec 只确立分层判据供其引用。

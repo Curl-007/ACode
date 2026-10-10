@@ -977,6 +977,14 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
     id: "0029_workflow_run_owner_lease",
     sql: WORKFLOW_RUN_OWNER_LEASE_MIGRATION_SQL,
   },
+  {
+    // 编排方案 Phase 1（specs/subagent-topology-persistence.md R7）：agent 拓扑边表，
+    // 崩溃后子代理目录可从边表恢复真实终态。回滚 = 旧代码不读不写，
+    // 见 migrations/0030-subagent-edge.ts 文件头。
+    appVersion: "0.16.9",
+    id: "0030_subagent_edge",
+    sql: SUBAGENT_EDGE_MIGRATION_SQL,
+  },
 ];
 import { OFFICIAL_GLM_SELECTION_MIGRATION_SQL } from "./migrations/0021-official-glm-selection.js";
 import { BACKFILLED_SESSION_REASONING_MIGRATION_SQL } from "./migrations/0022-backfilled-session-reasoning.js";
@@ -987,3 +995,4 @@ import { SWARM_PLAN_ROW_MIGRATION_SQL } from "./migrations/0026-swarm-plan-row.j
 import { WORKFLOW_RUN_TOOL_CALL_ID_MIGRATION_SQL } from "./migrations/0027-workflow-run-tool-call-id.js";
 import { WORKFLOW_RUN_OWNER_MIGRATION_SQL } from "./migrations/0028-workflow-run-owner.js";
 import { WORKFLOW_RUN_OWNER_LEASE_MIGRATION_SQL } from "./migrations/0029-workflow-run-owner-lease.js";
+import { SUBAGENT_EDGE_MIGRATION_SQL } from "./migrations/0030-subagent-edge.js";

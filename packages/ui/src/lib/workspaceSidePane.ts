@@ -285,6 +285,32 @@ export interface OpenWorkflowRunDirectorySideTabRequest {
 }
 
 /**
+ * 统一编排总览 tab（packages/ui/specs/orchestration-side-pane.md R1）。
+ *
+ * 身份是**对话**（parentSessionId）：一条对话一份总览，重复打开幂等聚焦。tab 不带
+ * 任何编排数据——面板挂载后自己经 lease 读三键投影（R0：权威在 CLI v4 投影，冻进
+ * tab 的摘要会在重启恢复后显示过期名单）。`rootSessionId` 只为段头跳转子智能体目录
+ * 携带（其 opener 需要），缺省 = parentSessionId（与 subagent-directory 同款兜底）。
+ */
+export interface OrchestrationSidePaneTab {
+  id: string;
+  type: "orchestration";
+  ownerTaskId?: string | null;
+  openedAt?: number;
+  workspaceKey: string;
+  workspacePath: string;
+  workspaceIdentity?: string;
+  remoteSessionId?: string;
+  rootSessionId: string;
+  parentSessionId: string;
+}
+
+export interface OpenOrchestrationSideTabRequest {
+  rootSessionId?: string;
+  parentSessionId: string;
+}
+
+/**
  * 一个 dwf actor 实例的 transcript tab。
  *
  * 身份是 **actor 会话**：一个实例一条真实持久会话，所以 `actorSessionId` 就是 tab 身份。
@@ -466,6 +492,12 @@ export interface OpenScopedWorkflowRunDirectorySideTabRequest extends OpenWorkfl
   remoteSessionId?: string;
 }
 
+export interface OpenScopedOrchestrationSideTabRequest extends OpenOrchestrationSideTabRequest {
+  workspacePath: string;
+  workspaceIdentity?: string;
+  remoteSessionId?: string;
+}
+
 export interface OpenScopedPlanDetailSideTabRequest extends OpenPlanDetailSideTabRequest {
   workspacePath: string;
   workspaceIdentity?: string;
@@ -530,6 +562,7 @@ export type WorkspaceSidePaneTab =
   | PlanDetailSidePaneTab
   | WorkflowRunSidePaneTab
   | WorkflowRunDirectorySidePaneTab
+  | OrchestrationSidePaneTab
   | WorkflowActorSessionSidePaneTab
   | WorkflowWorkspaceSidePaneTab
   | WorkflowArtifactSidePaneTab;
@@ -840,6 +873,30 @@ function createWorkflowRunDirectorySidePaneTab(
     workspacePath: options.workspacePath,
     ...(options.workspaceIdentity ? { workspaceIdentity: options.workspaceIdentity } : {}),
     ...(options.remoteSessionId ? { remoteSessionId: options.remoteSessionId } : {}),
+    parentSessionId: options.parentSessionId,
+  };
+}
+
+function createOrchestrationSidePaneTab(
+  options: OpenScopedOrchestrationSideTabRequest & { workspaceKey: string },
+): OrchestrationSidePaneTab {
+  const rootSessionId = options.rootSessionId ?? options.parentSessionId;
+  return {
+    // 结构化 id：一条对话只有一份编排总览，重复打开幂等地聚焦同一个 tab
+    // （与 workflow-directory 同款；rootSessionId 不进 id——会话的根唯一，进 id 只会
+    // 让「先无根打开、后带根打开」裂成两个 tab）。
+    id: [
+      "orchestration",
+      encodeSidePaneTabIdPart(options.workspaceKey),
+      encodeSidePaneTabIdPart(options.parentSessionId),
+    ].join(":"),
+    type: "orchestration",
+    openedAt: Date.now(),
+    workspaceKey: options.workspaceKey,
+    workspacePath: options.workspacePath,
+    ...(options.workspaceIdentity ? { workspaceIdentity: options.workspaceIdentity } : {}),
+    ...(options.remoteSessionId ? { remoteSessionId: options.remoteSessionId } : {}),
+    rootSessionId,
     parentSessionId: options.parentSessionId,
   };
 }
@@ -1825,6 +1882,22 @@ export function openWorkflowRunDirectorySidePane(
   const existing = current?.tabs.find(
     (tab): tab is WorkflowRunDirectorySidePaneTab =>
       tab.type === "workflow-directory" && tab.id === nextTab.id,
+  );
+  return activateSidePaneTab(current, existing ? { ...existing, ...nextTab } : nextTab);
+}
+
+/**
+ * 打开或复用一条对话的统一编排总览 tab（orchestration-side-pane spec R1）。
+ * 复用/聚焦语义与两个 directory opener 逐字同款；GC 同样**没有**：面板挂载即经
+ * lease 读投影，恢复出来的旧 tab 不背过期数据。
+ */
+export function openOrchestrationSidePane(
+  current: WorkspaceSidePaneState | null,
+  options: OpenScopedOrchestrationSideTabRequest & { workspaceKey: string },
+): WorkspaceSidePaneState {
+  const nextTab = createOrchestrationSidePaneTab(options);
+  const existing = current?.tabs.find(
+    (tab): tab is OrchestrationSidePaneTab => tab.type === "orchestration" && tab.id === nextTab.id,
   );
   return activateSidePaneTab(current, existing ? { ...existing, ...nextTab } : nextTab);
 }

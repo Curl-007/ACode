@@ -23,7 +23,7 @@ import {
 import {
   acodeBrowserAmbientContextSchema,
   acodeProtocolMcpServerSchema,
-} from "../acode-protocol/index.js";
+} from "../acode-protocol-shared.js";
 
 const createSessionRequestedConfigSchema = z.object({
   modelSelection: modelSelectionSchema.optional(),

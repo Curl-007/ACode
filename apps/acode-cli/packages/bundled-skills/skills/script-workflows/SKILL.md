@@ -181,16 +181,18 @@ vary the prompt or label by index instead of using randomness.
 
 ## 7. Structured output — read this before trusting `schema`
 
-`opts.schema` does two things: it appends "Return only JSON that conforms to the provided JSON
-Schema. Do not wrap it in Markdown." plus the schema to the subagent's prompt, and it then extracts
-and `JSON.parse`s the first JSON value found in the response (unwrapping a ```json fence if present).
-
-What it does **not** do: validate the parsed value against the schema, and retry on mismatch. If the
-subagent returns JSON of the wrong shape, your script receives it as-is. So:
+`opts.schema` appends "Return only JSON that conforms to the provided JSON Schema. Do not wrap it in
+Markdown." plus the schema to the subagent's prompt. The runtime then extracts and parses the first
+JSON value found in the response (unwrapping a ```json fence if present) and validates it against the
+supported JSON Schema subset (`type`, `properties`, `required`, `additionalProperties`, `items`,
+`enum`, `const`, `anyOf`, `$defs`/`$ref`, and scalar/array bounds). Unsupported keywords or malformed
+schemas fail before the child starts; a parsed value with the wrong shape fails the activity and the
+workflow records it as failed. There is no automatic retry on mismatch. So:
 
 - Keep schemas small and shallow; a subagent is more likely to conform to one it can hold in view.
-- Read defensively: `f.verdict?.isReal`, `Array.isArray(x) ? x : []`. A missing field is a normal
-  outcome, not an exceptional one.
+- Read defensively when a field is optional: `f.verdict?.isReal`, `Array.isArray(x) ? x : []`.
+  A missing optional field is a normal outcome; a required or incorrectly typed field fails the
+  activity before its result is committed.
 - If the value is load-bearing, have a later agent confirm it rather than trusting the shape.
 - Non-JSON output throws `Workflow agent returned non-JSON structured output`, which surfaces as a
   `null` slot in `parallel()`/`pipeline()`.

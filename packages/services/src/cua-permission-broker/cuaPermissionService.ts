@@ -52,4 +52,56 @@ export interface ICuaPermissionService extends BrokerICuaPermissionService {}
 
 export const ICuaPermissionService = createServiceDescriptor<BrokerICuaPermissionService>(
   ServiceChannels.CuaPermission,
+  {
+    allowedMethods: ["getStatus", "restartHelper"],
+    argumentValidators: {
+      getStatus: (args) => {
+        if (args.length > 3) throw new Error("expected at most three arguments");
+        requireString(args[0], "workspacePath");
+        requireOptionalString(args[1], "workspaceIdentity");
+        if (args[2] !== undefined) {
+          const options = requireRecordField(args[2], "options");
+          requireOptionalBoolean(options.probeScreenCapture, "probeScreenCapture");
+        }
+      },
+      restartHelper: (args) => {
+        // 三个参数均可选；显式传 undefined 与缺省等价。
+        if (args.length > 3) throw new Error("expected at most three arguments");
+        requireOptionalString(args[0], "workspacePath");
+        requireOptionalString(args[1], "workspaceIdentity");
+        if (args[2] !== undefined) {
+          const options = requireRecordField(args[2], "options");
+          requireOptionalString(options.onboardingSessionId, "onboardingSessionId");
+          requireOptionalString(options.reason, "reason");
+          // beforeFreshStart 为本地直调回调：RPC JSON 序列化不传输函数，
+          // 显式传 undefined 与缺省等价；其他类型属契约违规。
+          const beforeFreshStart = options.beforeFreshStart;
+          if (beforeFreshStart !== undefined && typeof beforeFreshStart !== "function") {
+            throw new Error("invalid beforeFreshStart");
+          }
+        }
+      },
+    },
+  },
 );
+
+// —— 文件内私有 RPC 参数校验辅助（边界迁移规则禁止跨文件共享 helper，先例 file.ts）——
+
+function requireRecordField(value: unknown, field: string): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error(`invalid ${field}`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function requireString(value: unknown, field: string): void {
+  if (typeof value !== "string") throw new Error(`invalid ${field}`);
+}
+
+function requireOptionalString(value: unknown, field: string): void {
+  if (value !== undefined && typeof value !== "string") throw new Error(`invalid ${field}`);
+}
+
+function requireOptionalBoolean(value: unknown, field: string): void {
+  if (value !== undefined && typeof value !== "boolean") throw new Error(`invalid ${field}`);
+}

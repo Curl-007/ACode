@@ -1,4 +1,5 @@
-import { readFile, rename, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
+import { atomicWritePrivateTextFile } from "@acode/shared/node";
 import { serverStatusSchema, type ServerStatus } from "../contracts.js";
 import { resolveServerLayout, type ServerLayout } from "./paths.js";
 
@@ -45,12 +46,9 @@ export function createStatusPersister<T>(
     // 会全部丢失；status.json 只是观测快照，失败时记录告警并继续服务生命周期。
     inFlight = inFlight
       .then(async () => {
-        const temporary = `${statusFile}.${process.pid}.tmp`;
-        await writeFile(temporary, `${JSON.stringify(getStatus(), null, 2)}\n`, {
-          encoding: "utf8",
-          mode: 0o600,
-        });
-        await rename(temporary, statusFile);
+        // Windows 上并发 status 读取会短暂占用目标文件，单次 rename 会丢掉
+        // 唯一一次健康变化快照；复用已有原子写工具的有界共享冲突重试和临时文件清理。
+        await atomicWritePrivateTextFile(statusFile, `${JSON.stringify(getStatus(), null, 2)}\n`);
       })
       .catch((error: unknown) => onError(error));
     await inFlight;

@@ -7,7 +7,6 @@
  * 从这里导入，两侧都不必反向 import 调度器本体。
  */
 
-import { BUDGET_CAPS } from "../facade/budget-caps.js";
 import { INSTRUCTIONS_HEAD_MAX_CHARS, refToString, WorkflowError } from "./types.js";
 import type { ImportedActorState } from "./imported-cache.js";
 import type {
@@ -17,6 +16,7 @@ import type {
   AskStats,
   Caps,
   InstanceRef,
+  NodeRecord,
   PersonaSpec,
   RunEvent,
   SessionRef,
@@ -81,12 +81,12 @@ export interface SchedulerHost {
   wasQueuedBeforeImportClose(instance: InstanceRef): boolean;
   /**
    * R2 总量保险丝的计数：本 run 已准入的 ask 行数（引擎所有；resume 按 journal 的
-   * `kind:"ask"` 行数恢复，跨生命周期连续——上限是 run 级的事实，反复 resume 不得刷新）。
+   * 已准入 `kind:"ask"` 行数恢复（排除无 actorSeq 的预算拒绝），跨生命周期连续）。
    */
   askTotalCount(): number;
   /**
    * 记账一行 ask：调用点在**行创建的同一同步步骤里**（导入命中或 live 准入，见
-   * scheduler.ts 的 pendingLive 闭包），于是「计数 = journal ask 行数」恒等，
+   * scheduler.ts 的 pendingLive 闭包），于是「计数 = journal 已准入 ask 行数」恒等，
    * resume 恢复（数行）与在生命周期内维护（本方法）给出同一个数。
    */
   countAskAdmitted(): void;
@@ -164,87 +164,6 @@ export function describeCause(cause: unknown): string {
 }
 
 /**
- * 两道预算保险丝的**生效上界**（specs/workflow-budget-fuses.md R1/R6）。每次判定现读
- * caps（与 maxConcurrency 的派发闸同一条纪律：上界可以在 run 存活期间变）。
- * 显式 caps 成员只允许更严——生效值取它与 `BUDGET_CAPS` 常量的较小者，宽松方向的显式值
- * 被常量压回（「只能收紧」，与 managed-policy-floor 的地板哲学一致）；非有限值按缺席
- * （脏值必须死在判定之前，与 engine.ts 对 inheritedTokens 的归一同一条纪律）；
- * 下限钳到 1：0/负数会让任何 ask 都无法准入，只可能是配置错误而不是意图。
- */
-function effectiveAskBudget(caps: Caps): { maxTotal: number; maxPending: number } {
-  return {
-    maxTotal: stricterCap(caps.maxAsksPerRun, BUDGET_CAPS.maxAsksPerRun),
-    maxPending: stricterCap(caps.maxPendingAsks, BUDGET_CAPS.maxPendingAsks),
-  };
-}
-
-function stricterCap(explicit: number | undefined, constant: number): number {
-  if (explicit === undefined || !Number.isFinite(explicit)) return constant;
-  return Math.max(1, Math.min(Math.floor(explicit), constant));
-}
-
-/**
- * `AgentBudgetExceeded` 的结构化拒绝（R2/R3 共用一个码，`details.limit` 区分是哪道闸——
- * 恢复动作相同：收窄扇出、少派发）。message 自撰、含三个数，读面不必解析文本就有上下文；
- * 流程判断一律走 code 与 details，绝不匹配这里的字符串。
- */
-function agentBudgetExceeded(
-  limit: "total" | "pending",
-  cap: number,
-  actual: number,
-): WorkflowError {
-  const message =
-    limit === "total"
-      ? `Subagent budget exhausted: this run has already admitted ${actual} ask nodes ` +
-        `(cap ${cap}), so no more can be admitted. Nothing was silently dropped — this ask was ` +
-        `rejected. Catch this error to wind down (report() the finished part survives), or ` +
-        `dispatch fewer subagents.`
-      : `Subagent fan-out backlog cap reached: ${actual} ask nodes are still unsettled ` +
-        `(cap ${cap}). Nothing was silently dropped — this ask was rejected, not queued. ` +
-        `Narrow the fan-out: await some in-flight asks (or split the Promise.all into waves) ` +
-        `before admitting more.`;
-  return new WorkflowError("AgentBudgetExceeded", message, { details: { limit, cap, actual } });
-}
-
-/**
- * fresh ask 准入的预算闸门序列（R2 → 导入缓存 → R3 → live），次序与记账规则集中一处：
- *
- * - **R2 总量闸在行创建之前**：这次准入即将新建一行 ask（导入命中与 live 都落真行），
- *   已准入行数到达上界即节点级拒绝——不写行、不派发、不记账。拒绝不落 journal 也是
- *   replay 安全的：计数按行数恢复，resume 重放同一份脚本会在同一个准入位置到达同一道闸
- *   （准入次序由每 actor FIFO + hold 规则固定），确定性复现同一拒绝。
- * - **导入命中同样记账**：tryImportedSettle 命中会落一行真 dwf_node（importedAskRecord），
- *   计数跟上，「计数 = journal ask 行数」才恒等（恢复法与维护法是同一个数）。
- * - **R3 积压闸只管 live 路**：导入命中不入 liveNodes；resume 的记录再派发不经本函数
- *   （那不是创建新节点，拒掉它会破坏 replay 保真——journal 行已承诺过派发）。
- * - **记账与行创建同一同步步骤**：被任一闸拒绝的 ask 都不计数，行与计数不漂移。
- */
-export function runBudgetGatedAdmission(
-  host: SchedulerHost,
-  liveNodeCount: number,
-  deferred: Deferred<unknown>,
-  tryImportedSettle: () => boolean,
-  goLive: () => void,
-): void {
-  const { maxTotal, maxPending } = effectiveAskBudget(host.caps);
-  const total = host.askTotalCount();
-  if (total >= maxTotal) {
-    deferred.reject(agentBudgetExceeded("total", maxTotal, total));
-    return;
-  }
-  if (tryImportedSettle()) {
-    host.countAskAdmitted();
-    return;
-  }
-  if (liveNodeCount >= maxPending) {
-    deferred.reject(agentBudgetExceeded("pending", maxPending, liveNodeCount));
-    return;
-  }
-  host.countAskAdmitted();
-  goLive();
-}
-
-/**
  * 落 journal 的 ask stats：**转录早于本次派发**的 ask 抹掉 `worldToolCalls`。
  *
  * 根因：driver 的工具计数器是内存态、每次 ask 起跑时清零，所以接着一段既有转录跑的 ask 只数
@@ -297,4 +216,31 @@ export function drainActorAdmission(actor: Actor): void {
       progressed = true;
     }
   }
+}
+
+/** 单一 ask journal 物化规则，成功/失败使用相同身份与 stats 边界。 */
+export function recordForAskNode(
+  runId: string,
+  priorTranscriptAsks: ReadonlySet<string>,
+  node: AskNode,
+  outcome:
+    | { status: "completed"; result: unknown }
+    | { status: "failed"; error: NodeRecord["error"] },
+): NodeRecord {
+  const record: NodeRecord = {
+    runId,
+    siteId: node.instance.siteId,
+    ordinal: node.instance.ordinal,
+    kind: "ask",
+    actorSiteId: node.actor.ref.siteId,
+    actorOrdinal: node.actor.ref.ordinal,
+    actorSeq: node.actorSeq,
+    inputHash: node.hash,
+    status: outcome.status,
+  };
+  if (outcome.status === "completed") record.result = outcome.result;
+  else record.error = outcome.error;
+  if (node.lastStats !== undefined)
+    record.stats = journaledStats(priorTranscriptAsks, node.instance, node.lastStats);
+  return record;
 }

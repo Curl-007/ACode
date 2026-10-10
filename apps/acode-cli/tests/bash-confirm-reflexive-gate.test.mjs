@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -14,7 +15,11 @@ import { test } from "node:test";
 
 const { PermissionService } = await import("../packages/core/src/permission/service.ts");
 
-const WORKSPACE = join(tmpdir(), "acode-j12-reflex-workspace");
+// %TEMP% 在本机是 Windows 8.3 短名（C:\Users\ADMINI~1\...）。目标 blast-radius 分级
+// 刻意拒绝静态无法验证长名解析的 8.3 短名，于是 workspace 用短名时 `rm -rf node_modules`
+// 这类相对目标会被反射门拦下，R8「safe/low 不进门」测到的就是短名形态而不是 yolo 语义。
+// 只展开已存在的 %TEMP% 本身，避免对尚未创建的 workspace 调 realpath 抛错。
+const WORKSPACE = join(realpathSync.native(tmpdir()), "acode-j12-reflex-workspace");
 
 /** confirm 级且不命中既有三类熔断的命令（管道喂给删除类，J1-1 矩阵同款）。 */
 const CONFIRM_CMD = "cat paths.txt | xargs rm -rf";
@@ -445,7 +450,8 @@ test("(review F10) bootstrap wires the audit sink to the info-level logger", asy
     join(import.meta.dirname, "..", "packages", "bootstrap", "src", "app", "create-app.ts"),
     "utf8",
   );
-  assert.match(source, /setBashReflexAuditSink\(/);
+  // 多 App 场景使用按 session 路由的注册 API，避免进程级 sink 串线。
+  assert.match(source, /registerBashReflexAuditSink\(/);
   assert.match(source, /permissionAuditLogger\.info\(/);
   assert.match(source, /entry\.justification/);
   assert.match(source, /entry\.command/);

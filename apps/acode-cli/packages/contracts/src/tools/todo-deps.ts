@@ -3,14 +3,22 @@
 // ============================================================
 // specs/todo-dependency-fields.md R1–R4：规范化（铸派生 id）、环检测、available 派生，
 // 以及写入合法性规则（id 唯一性 / 悬空引用 / 派生 id 引用 / metadata 上界）。
-// J2-1 完成置信度的纯函数在同目录 ./todo-confidence.ts（400 行文件上限，AGENTS.md）。
+// J2-1 完成置信度的枚举 schema 在同目录 ./todo-confidence.ts、门槛纯函数在
+// ./todo-confidence-gate.ts（400 行文件上限，AGENTS.md）。
+// 架构断环（specs/architecture-contracts-module.md）：TodoItem 的 schema 链
+// （TodoItemSchema/StoredTodoItemSchema/TodoItem）从 todo.ts 下沉到本文件——本文件的
+// 纯函数以 TodoItem 为输入，住在上游即成 todo ↔ todo-deps 文件级 import 环；
+// todo.ts 对消费方原样再导出，导出面与 spec「接口」节一致。
 // 单一实现，两处共享：TodoWriteInputSchema.superRefine（写入合法性唯一判定点）与
 // core handler 的输出投影（依赖方向 core→contracts 允许共享，反向不允许——这正是
 // 本文件落在 contracts 而不是 core 的原因，见 spec 实施记录）。
 // 全部纯函数：不读时钟、不做 I/O、不读 DB（R3 对纯包的同款纪律）。
 
 import { z } from "zod";
-import type { TodoItem } from "./todo.js";
+import {
+  TODO_CONFIDENCE_HISTORY_MAX,
+  TodoCompletionConfidenceSchema,
+} from "./todo-confidence.js";
 
 // —— 命名常量（spec R2「常量归口」；物理家在本文件以避免与 todo.ts 的运行时循环导入，
 //    todo.ts 对消费方原样再导出，导出面与 spec「接口」节一致）——
@@ -44,6 +52,54 @@ export const TodoDepsJsonSchema = z
   .strict();
 
 export type TodoDepsJson = z.infer<typeof TodoDepsJsonSchema>;
+
+export const TodoItemSchema = z.object({
+  content: z.string().min(1).describe("Brief description of the task"),
+  status: z.enum(["pending", "in_progress", "completed"]).describe("Current status of the task"),
+  priority: z.enum(["high", "medium", "low"]).describe("Priority level of the task"),
+  // D4 依赖字段（specs/todo-dependency-fields.md R1/R2）：三个键从「被 strip」变成「被解析」，
+  // 仍未知的键继续 strip（不加 .strict()——既有客户端多带一个键不应让整次 TodoWrite 失败，R5）。
+  id: TodoIdSchema.optional().describe(
+    "Stable id, unique within the list; items without one get a position-derived id (todo-<index>) in the stored and returned list",
+  ),
+  blockedBy: TodoBlockedBySchema.optional().describe(
+    "Ids in this same submitted list that must complete before this item can start; each referenced item must carry an explicit id",
+  ),
+  metadata: TodoMetadataSchema.optional().describe(
+    // F3（审计 2026-10-03 登记项）：上界数字由 todo-deps 常量插值渲染，结构上杜绝
+    // 「常量改了、文本还写死旧数」的漂移；渲染结果与原硬编码文本逐字节相同。
+    `Bounded annotation object (max ${TODO_METADATA_MAX_KEYS} keys, ${TODO_METADATA_MAX_KEY_CHARS}-char keys, ${TODO_METADATA_MAX_SERIALIZED_BYTES / 1024} KB serialized, JSON values only); pure annotation, never affects scheduling or counts`,
+  ),
+  // J2-1（specs/todo-confidence-semantics.md R1）：可选完成证据状态。四级语义进 describe
+  // （枚举成员在 JSON schema 天然可见，语义描述不等于门槛披露）；哪个值过完成门槛是
+  // 实现细节，不出现在任何模型可见文案里（R3/R6 保密规则）。
+  completionConfidence: TodoCompletionConfidenceSchema.optional().describe(
+    "Evidence state behind this item's completion, reported from what you actually observed: speculative (unexamined guess), plausible (reasoned but not yet checked), validated (checked against direct evidence), verified (reproduced end to end)",
+  ),
+});
+
+/**
+ * J2-1 存储/域形状（specs/todo-confidence-semantics.md R4）：可写面 + 工具自有
+ * confidenceHistory。history **不是** TodoItemSchema 的成员——模型自报的 history 被 zod
+ * 默认 strip 静默丢弃（任何形状都不报错，R2「只出不进」的类型级表达）；工具在 handler
+ * 唯一写入路径上追加（每项每次写入最多一条观测）。
+ */
+export const StoredTodoItemSchema = TodoItemSchema.extend({
+  confidenceHistory: z
+    .array(TodoCompletionConfidenceSchema)
+    .max(TODO_CONFIDENCE_HISTORY_MAX)
+    .optional()
+    .describe(
+      "Tool-owned append-only trail of completionConfidence observations, oldest first; any submitted value is ignored",
+    ),
+});
+
+/**
+ * 域类型 = 存储形状（D4「TodoItem 变宽、端口签名形状不变」同款手法）：
+ * session-store 端口、codecs、session-mapper 等消费方零改动自动兼容（可选成员加宽
+ * 对读写两个方向都结构兼容）。模型可写面是 z.infer<TodoItemSchema>（不含 history）。
+ */
+export type TodoItem = z.infer<typeof StoredTodoItemSchema>;
 
 /** 规范化后的 todo：id 必在（显式保留，缺席按数组下标铸 todo-<index>）。 */
 export type NormalizedTodo = TodoItem & { id: string };

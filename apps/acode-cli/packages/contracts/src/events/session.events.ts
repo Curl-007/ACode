@@ -16,6 +16,8 @@ import type {
   ToolCallId,
   TurnId,
 } from "../interfaces/shared.js";
+// 架构断环（specs/architecture-contracts-module.md）：session 基础词汇从叶子文件
+// session-shared.ts 导入（session.port 反向导入本文件的 SessionEvent，桶级互指即成环）。
 import type {
   CollaborationMode,
   RiskLevel,
@@ -24,7 +26,7 @@ import type {
   TurnSteerRejectReason,
   TurnSteerSource,
   TurnInputIntentMetadata,
-} from "../interfaces/session.port.js";
+} from "../interfaces/session-shared.js";
 import type {
   ModelNetworkStatusEvent,
   ModelSelection,
@@ -33,7 +35,8 @@ import type {
 } from "../model/index.js";
 import type { HttpClientEgressInfo } from "../interfaces/http-client.port.js";
 import { createModelUsageSummary } from "../model/index.js";
-import type { ModelApiErrorPhase, ModelFailureExceptionKind } from "../telemetry/index.js";
+// 观测词汇走 telemetry 叶子文件（telemetry/index 反向引用 model 侧类型，桶级互指即成环）。
+import type { ModelApiErrorPhase, ModelFailureExceptionKind } from "../telemetry/observations.js";
 import type {
   CompactBoundaryPayload,
   CompactTimelinePayload,
@@ -51,7 +54,13 @@ import type {
   SyntheticUserMessageSource,
 } from "../interfaces/session-store.port.js";
 import type { SavedWorkflowScope } from "../tools/saved-workflow.js";
-import type { PermissionOptionsPolicy, PermissionUpdate } from "../interfaces/permission.port.js";
+// PermissionDecision 的定义已下沉到 permission.port.ts（该文件反向引用本文件的事件类型，
+// 定义留在本文件即成环）；本文件 import 供 payload 使用 + 原样再导出，导出面不变。
+import type {
+  PermissionDecision,
+  PermissionOptionsPolicy,
+  PermissionUpdate,
+} from "../interfaces/permission.port.js";
 import type {
   StreamRecoveryAnchorPayload,
   StreamRecoveryAnchorSelectedPayload,
@@ -63,7 +72,8 @@ import type {
 } from "./stream-recovery.events.js";
 
 // Re-export for convenience
-export type { CollaborationMode, RiskLevel } from "../interfaces/session.port.js";
+export type { CollaborationMode, RiskLevel } from "../interfaces/session-shared.js";
+export type { PermissionDecision } from "../interfaces/permission.port.js";
 
 // Re-export ModelToolCall as ToolCall for core usage
 export type { ModelToolCall as ToolCall } from "../model/index.js";
@@ -141,6 +151,11 @@ export const SessionEventType = {
   // 命名刻意带 dynamic_：legacy `Workflow` 工具的 script run 事件（workflow_started /
   // workflow_completed，script-workflow-runtime.ts）是另一套日志，同名会真的混淆。
   DynamicWorkflowRunProgress: "dynamic_workflow_run_progress",
+  // swarm plan 的提交投影：一次 plan 提交（或清除）一条事件，追加到**父会话**。
+  // v4 侧归约成 swarmPlan 状态键；v3 侧在 shouldExposeSessionEventToProtocol 剥离。
+  // 命名刻意带 swarm_plan_ 前缀（specs/swarm-observability-projection.md R2，
+  // dynamic_workflow_run_progress 同款防混淆纪律）。
+  SwarmPlanProgress: "swarm_plan_progress",
   PermissionRequested: "permission_requested",
   PermissionResolved: "permission_resolved",
   PermissionDenied: "permission_denied",
@@ -976,6 +991,53 @@ export interface DynamicWorkflowRunProgressPayload {
   launchInputId?: string;
 }
 
+/**
+ * 一条 swarm plan 提交投影事件（父会话；specs/swarm-observability-projection.md R2/R7）。
+ * 字段与 shared 的 swarmPlanStateSchema 同形——**一次序列化、两个消费者**（listEvents 的
+ * 事件页与 v4 swarmPlan 状态键用同一个有界载荷）。编译期闸在 bootstrap 的载荷 mapper
+ * （core 状态视图 → 本载荷的 typed 赋值），运行期闸是 shared reducer 的 safeParse。
+ * `cleared: true` 时状态视图字段缺席（清除事件只带代际信息）。
+ */
+export interface SwarmPlanProgressPayload {
+  /** plan 清除（代际终局）：为 true 时以下状态视图字段全部缺席。 */
+  cleared?: boolean;
+  /** 代际键（re-seed = 新代际；版本去重只在同代际内做）。 */
+  createdAtMs?: number;
+  goal?: string;
+  mode?: "light" | "deep";
+  version?: number;
+  noArtifactRequeues?: number;
+  terminalState?: "completed" | "stalled" | "active";
+  counts?: {
+    done: number;
+    failed: number;
+    gates: number;
+    queued: number;
+    running: number;
+    stalled: number;
+  };
+  readyGateIds?: string[];
+  readyWorkerIds?: string[];
+  stalledNodeIds?: string[];
+  nodes?: Array<{
+    id: string;
+    kind: "explore" | "implement" | "verify" | "fix" | "synthesize" | "critique";
+    status: "queued" | "running" | "done" | "failed";
+    isGate: boolean;
+    origin: "seed" | "expand" | "gap" | "gate";
+    owner: string | null;
+    priority: number;
+    dependsOn: string[];
+    expanded: boolean;
+    artifactRequeues: number;
+    /** 节点 content 的有界预览（≤160 字符）；全文走 PlanStatus 工具面。 */
+    contentPreview?: string;
+  }>;
+  /** nodes 触到上限被截断（原始事实仍在 plan 行）。 */
+  truncated?: boolean;
+  updatedAtMs?: number;
+}
+
 export interface PermissionRequestedPayload {
   requestId?: string;
   toolCallId: ToolCallId;
@@ -1051,8 +1113,6 @@ export interface WorkspaceHookAdmissionUpdatedPayload {
   bundleDigest: string;
   workspaceIdentity?: string;
 }
-
-export type PermissionDecision = "allow" | "deny" | "escalate" | "modify";
 
 export type TargetChangedAction =
   | "set"
@@ -1245,6 +1305,7 @@ export type SessionEventPayload =
   | BackgroundTaskUpdatedPayload
   | BackgroundTaskCompletedPayload
   | DynamicWorkflowRunProgressPayload
+  | SwarmPlanProgressPayload
   | PermissionRequestedPayload
   | PermissionResolvedPayload
   | PermissionDeniedPayload

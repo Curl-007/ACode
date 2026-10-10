@@ -114,21 +114,35 @@ export function readWorld(
   });
   state.record({ type: "node-queued", instance, kind });
   state.record({ type: "node-dispatched", instance });
-  return state.driver.executeWorldRead(op, args).then(
-    (value) =>
-      settleWorldRead(state, instance, kind, hash, input, { status: "completed", result: value }),
-    (cause: unknown) => {
-      const err =
-        cause instanceof WorkflowError
-          ? cause
-          : new WorkflowError("DriverError", `World read failed: ${op} ${canonicalJson(args)}.`, {
-              cause,
-            });
-      return settleWorldRead(state, instance, kind, hash, input, {
-        status: "failed",
-        error: err.toJSON(),
-      });
-    },
+  return state.trackWorld(() =>
+    Promise.resolve()
+      .then(() => {
+        state.signal.throwIfAborted();
+        return state.driver.executeWorldRead(op, args, state.signal);
+      })
+      .then(
+        (value) =>
+          settleWorldRead(state, instance, kind, hash, input, {
+            status: "completed",
+            result: value,
+          }),
+        (cause: unknown) => {
+          const err =
+            cause instanceof WorkflowError
+              ? cause
+              : new WorkflowError(
+                  "DriverError",
+                  `World read failed: ${op} ${canonicalJson(args)}.`,
+                  {
+                    cause,
+                  },
+                );
+          return settleWorldRead(state, instance, kind, hash, input, {
+            status: "failed",
+            error: err.toJSON(),
+          });
+        },
+      ),
   );
 }
 
@@ -145,7 +159,11 @@ function settleWorldRead(
     | { status: "completed"; result: unknown }
     | { status: "failed"; error: WorkflowErrorJson },
 ): unknown {
-  if (state.isRunSettled()) throw state.runError();
+  if (state.isRunSettled()) {
+    // 终态先 abort 并 drain；取消行保留 running 供 resume 重执行，迟到结果不能覆盖它。
+    state.record({ type: "node-settled", instance, outcome: "cancelled" });
+    throw state.runError();
+  }
   state.journal.putNode({
     runId: state.runId,
     siteId: instance.siteId,

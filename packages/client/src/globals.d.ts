@@ -21,6 +21,9 @@ import type {
   BrowserViewRestoreTabsRequest,
   BrowserViewportSize,
   ChromeBrowserDataImportResult,
+  ACodeStdioTapDevState,
+  CreateTempTextAttachmentRequest,
+  CreateTempTextAttachmentResult,
   DockerContainerInfo,
   EmbeddedBrowserOpenUrlRequest,
   EditorInfo,
@@ -30,6 +33,8 @@ import type {
   OAuthStateRegistration,
   PostUpdateReleaseNotesPayload,
   RemoteConnectionRuntimeLog,
+  RemoteSSHHostKeyChallenge,
+  RespondSSHHostKeyChallengeRequest,
   RemoteSessionClosedEvent,
   BotRemoteWorkspaceReconnectedEvent,
   RemoteTarget,
@@ -44,6 +49,12 @@ import type {
   UpdateCheckResultPayload,
   UpdateStatePayload,
   OpenInEditorOptions,
+  WindowControlsOverlayMetrics,
+  LoadCliMcpFromUserDirectoryRequest,
+  LoadCliMcpFromUserDirectoryResult,
+  MigrateLegacyCommonMcpRequest,
+  MigrateLegacyCommonMcpResult,
+  SaveCliMcpToUserDirectoryRequest,
 } from "@acode/shared";
 
 /**
@@ -70,7 +81,7 @@ declare global {
         remoteSessionId: string;
         workspacePath: string;
         workspaceIdentity?: string;
-      }): Promise<BrowserGuestAttachResult>;
+      }): Promise<void>;
       /** 释放当前窗口里的远程 session */
       disposeRemoteSession(sessionId: string): Promise<void>;
       /** 检查本机 Docker daemon 是否可用 */
@@ -81,6 +92,15 @@ declare global {
       listDockerContainers(): Promise<DockerContainerInfo[]>;
       /** 列出当前机器 SSH config 里可用于快速填表的 alias */
       listSSHConfigAliases(): Promise<SSHConfigAliasOption[]>;
+      loadMcpFromUserDirectory(
+        payload?: LoadCliMcpFromUserDirectoryRequest,
+      ): Promise<LoadCliMcpFromUserDirectoryResult>;
+      saveMcpToUserDirectory(
+        payload: SaveCliMcpToUserDirectoryRequest,
+      ): Promise<{ success: boolean; error?: string }>;
+      migrateLegacyCommonMcp(
+        payload?: MigrateLegacyCommonMcpRequest,
+      ): Promise<MigrateLegacyCommonMcpResult>;
       /** renderer 日志通过 IPC 传到 main 进程统一存储 */
       log(level: "info" | "warn" | "error", args: unknown[]): void;
       /** 打开系统目录选择框，返回选中路径或 null */
@@ -95,12 +115,19 @@ declare global {
       ): Promise<import("@acode/shared").SaveFileResult>;
       /** 将当前页面的 print 媒体版面导出为 PDF（Chromium 打印引擎，矢量文本） */
       printPageToPdf?(): Promise<import("@acode/shared").PrintPageToPdfResult>;
+      createTempTextAttachment(
+        payload: CreateTempTextAttachmentRequest,
+      ): Promise<CreateTempTextAttachmentResult>;
       /** 从系统拖拽/文件输入得到的 Web File 解析真实本地路径 */
-      getPathForFile?(file: File): string | null;
+      getPathForFile?(file: unknown): string | null;
       /** 订阅当前窗口内远程连接过程日志，返回 disposer */
       onRemoteConnectionLog(handler: (entry: RemoteConnectionRuntimeLog) => void): () => void;
       /** 订阅远程 workspace session 关闭事件，返回 disposer */
       onRemoteSessionClosed(handler: (event: RemoteSessionClosedEvent) => void): () => void;
+      /** 订阅认证前 SSH 主机密钥挑战，返回 disposer */
+      onRemoteSSHHostKeyChallenge(handler: (challenge: RemoteSSHHostKeyChallenge) => void): () => void;
+      /** 回传绑定到单次 challenge 的 SSH 主机密钥决策 */
+      respondSSHHostKeyChallenge(payload: RespondSSHHostKeyChallengeRequest): Promise<void>;
       /** 订阅 Bot 触发的远程 workspace 重连成功事件，返回 disposer */
       onBotRemoteWorkspaceReconnected(
         handler: (event: BotRemoteWorkspaceReconnectedEvent) => void,
@@ -114,10 +141,12 @@ declare global {
       syncActiveTaskSession(sessionId: string | null): void;
       /** 同步需要 main 进程即时感知的应用设置 */
       syncAppSettings?(patch: Partial<AppSettings>): void;
+      setShortcutRecordingActive?(active: boolean): void;
       /** 注册 main 进程要求聚焦指定 workspace tab 的回调，返回 disposer */
       onFocusTab(handler: (path: string) => void): () => void;
       /** 注册 main 进程触发新建 tab 的回调，返回 disposer */
       onNewTab(handler: () => void): () => void;
+      onCloseActiveContextRequest?(handler: () => void): () => void;
       /** 注册内置浏览器 webview 请求打开新页面的回调，返回 disposer */
       onOpenBrowserUrl?(handler: (request: EmbeddedBrowserOpenUrlRequest) => void): () => void;
       onBrowserViewReady?(
@@ -167,6 +196,8 @@ declare global {
       onOpenWorkspace?(handler: () => void): () => void;
       /** 注册 main 进程通过 deep link 直接打开本地工作区目录的回调，返回 disposer */
       onOpenWorkspacePath?(handler: (path: string) => void): () => void;
+      onOpenFeedbackDialog?(handler: () => void): () => void;
+      onOpenTicketsPanel?(handler: () => void): () => void;
       /** 注册窗口全屏状态变化回调，返回 disposer */
       onWindowFullscreenChanged(handler: (isFullscreen: boolean) => void): () => void;
       /** 读取窗口最大化状态与系统原生圆角能力 */
@@ -174,6 +205,10 @@ declare global {
       /** 订阅窗口最大化状态与系统原生圆角能力变化 */
       onDesktopWindowChromeStateChanged?(
         handler: (state: DesktopWindowChromeState) => void,
+      ): () => void;
+      getWindowControlsOverlayMetrics?(): WindowControlsOverlayMetrics | null;
+      onWindowControlsOverlayChanged?(
+        handler: (metrics: WindowControlsOverlayMetrics) => void,
       ): () => void;
       /** 读取当前桌面窗口页面缩放档位 */
       getDesktopZoomLevel?(): Promise<DesktopZoomState>;
@@ -235,7 +270,7 @@ declare global {
         remoteSessionId?: string;
         sessionId?: string;
         residencyGeneration?: number;
-      }): Promise<void>;
+      }): Promise<BrowserGuestAttachResult>;
       /** 重建 `<webview>` 前让 main 精确断开旧 guest 的 CDP。 */
       browserViewDetachGuest?(payload: { key: string; webContentsId: number }): Promise<boolean>;
       browserViewCloseTab?(payload: BrowserViewCloseTabRequest): Promise<void>;
@@ -284,6 +319,7 @@ declare global {
       getDesktopSessionActivity?(): Promise<{
         runningAgentSessionCount: number;
       }>;
+      getACodeStdioTapDevState?(): Promise<ACodeStdioTapDevState>;
       /** 注册更新安装后的版本说明，返回 disposer */
       onPostUpdateReleaseNotes(
         callback: (payload: PostUpdateReleaseNotesPayload) => void,

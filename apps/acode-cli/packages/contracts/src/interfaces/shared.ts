@@ -14,6 +14,24 @@ export type InputHistoryId = string & { readonly __brand: "InputHistoryId" };
 export type ProjectId = string & { readonly __brand: "ProjectId" };
 export type WorkspaceId = string & { readonly __brand: "WorkspaceId" };
 
+/**
+ * 交互请求穿过的祖先层（编排方案 R5/R6，specs/subagent-interaction-origin-lineage.md）：
+ * depth≥2 时由外层 broker 逐层 append，内→外排序。不变量：
+ * `ancestors[0].sessionId === origin.parentSessionId`；相邻层
+ * `prev.parentSessionId === next.sessionId`；末层 `parentSessionId === rootSessionId`。
+ * 客户端由此把发起者一路链回自己认识的根会话。
+ */
+export interface SubagentInteractionOriginAncestor {
+  agentId: string;
+  agentType: string;
+  /** 该祖先层的会话（= 该层视角的 childSessionId）。 */
+  sessionId: SessionId | string;
+  parentSessionId: SessionId | string;
+  description?: string;
+  parentToolCallId?: ToolCallId | string;
+  parentTurnId?: TurnId | string;
+}
+
 export interface SubagentInteractionRequestOrigin {
   kind: "subagent";
   agentId: string;
@@ -24,6 +42,13 @@ export interface SubagentInteractionRequestOrigin {
   parentSessionId: SessionId | string;
   parentToolCallId?: ToolCallId | string;
   parentTurnId?: TurnId | string;
+  /**
+   * depth≥2：祖先链（内→外）。depth 1 缺席——parentSessionId 即根会话，origin
+   * 与历史结构逐字节一致（origin-lineage spec R0）。
+   */
+  ancestors?: SubagentInteractionOriginAncestor[];
+  /** depth≥2：客户端可见的根会话（= 外层最后改写出的 sessionId 同值）。depth 1 缺席。 */
+  rootSessionId?: SessionId | string;
 }
 
 export type InteractionRequestOrigin = SubagentInteractionRequestOrigin;

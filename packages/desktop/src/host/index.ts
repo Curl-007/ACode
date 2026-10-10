@@ -83,6 +83,9 @@ import type {
   RemoteRuntimeNetworkOptions,
   RemoteAssetNetworkPort,
   RemoteConnection,
+  SSHHostKeyChallenge,
+  SSHHostKeyDecision,
+  SSHHostKeyTrust,
 } from "@acode/server/remote";
 import type { RemoteTarget } from "@acode/shared";
 import { wrapElectronPort } from "./electronPort.js";
@@ -176,6 +179,76 @@ const pendingLocalMediaPreviewPathAuthorizations = new Map<
   string,
   PendingLocalMediaPreviewPathAuthorization
 >();
+
+interface PendingSSHHostKeyChallenge {
+  challengeId: string;
+  candidateFingerprint: string;
+  resolve: (decision: SSHHostKeyDecision) => void;
+  reject: (error: Error) => void;
+}
+
+const pendingSSHHostKeyChallenges = new Map<string, PendingSSHHostKeyChallenge>();
+// CancelRemoteWorkspaceConnect 与 SSH 底层握手并不共享同一个同步边界。
+// 取消可能先到，而 ssh2 的 hostVerifier/challenge 回调稍后才抵达；保留请求墓碑，
+// 让迟到回调直接 fail-closed，不能再次向 Main/Renderer 暴露一个已取消的 waiter。
+const cancelledSSHHostKeyRequestIds = new Set<string>();
+let managedSSHHostKeyTrustPromise: Promise<SSHHostKeyTrust> | undefined;
+
+function getManagedSSHHostKeyTrust(): Promise<SSHHostKeyTrust> {
+  managedSSHHostKeyTrustPromise ??= import("@acode/server/remote").then(
+    async ({ composeSSHHostKeyTrust, createKnownHostsTrust, createManagedSSHHostKeyTrust }) => {
+      const [managed, knownHosts] = await Promise.all([
+        createManagedSSHHostKeyTrust(),
+        createKnownHostsTrust(),
+      ]);
+      return composeSSHHostKeyTrust(managed, knownHosts) satisfies SSHHostKeyTrust;
+    },
+  );
+  return managedSSHHostKeyTrustPromise;
+}
+
+function requestSSHHostKeyDecision(
+  requestId: string,
+  challenge: SSHHostKeyChallenge,
+): Promise<SSHHostKeyDecision> {
+  if (!parentPort) {
+    return Promise.reject(new Error("parentPort unavailable，SSH 主机密钥挑战已拒绝"));
+  }
+  if (hasDisposedHostResources) {
+    return Promise.reject(new Error("Host 已释放，SSH 主机密钥挑战已拒绝"));
+  }
+  if (cancelledSSHHostKeyRequestIds.has(requestId)) {
+    return Promise.reject(new Error("远程连接已取消，SSH 主机密钥挑战已拒绝"));
+  }
+  const previous = pendingSSHHostKeyChallenges.get(requestId);
+  if (previous) {
+    previous.reject(new Error("SSH 主机密钥挑战被后续挑战替代"));
+    pendingSSHHostKeyChallenges.delete(requestId);
+  }
+  return new Promise((resolve, reject) => {
+    pendingSSHHostKeyChallenges.set(requestId, {
+      challengeId: challenge.challengeId,
+      candidateFingerprint: challenge.candidateFingerprint,
+      resolve,
+      reject,
+    });
+    try {
+      parentPort.postMessage({
+        type: HostResponseTypes.RemoteSSHHostKeyChallenge,
+        requestId,
+        challengeId: challenge.challengeId,
+        host: challenge.host,
+        port: challenge.port,
+        status: challenge.status,
+        candidateFingerprint: challenge.candidateFingerprint,
+        expectedFingerprints: [...challenge.expectedFingerprints],
+      });
+    } catch (error) {
+      pendingSSHHostKeyChallenges.delete(requestId);
+      reject(error instanceof Error ? error : new Error(String(error)));
+    }
+  });
+}
 
 function authorizeLocalMediaPreviewPath(path: string): Promise<string> {
   if (!parentPort) {
@@ -915,6 +988,7 @@ async function disposeHostRemoteConnection(connection: HostRemoteConnection): Pr
 }
 
 async function createWindowRemoteConnectionHandle(params: {
+  requestId: string;
   target: RemoteTarget;
   remoteAssets: RemoteAssetDirs;
   signal: AbortSignal;
@@ -942,6 +1016,7 @@ async function createWindowRemoteConnectionHandle(params: {
             notifyClose({ exitCode: code, signal: null, ...(reason ? { error: reason } : {}) }),
         })
       : await setupRemoteConnection(
+          params.requestId,
           params.target,
           params.remoteAssets,
           { fetch: requireActiveHostApiNetworkTransport().fetch },
@@ -1372,9 +1447,18 @@ function disposeAttachedServicePorts(): void {
   windowHostAttachmentRegistry.dispose();
 }
 
+function rejectPendingSSHHostKeyChallenges(reason: string): void {
+  for (const pending of pendingSSHHostKeyChallenges.values()) {
+    pending.reject(new Error(reason));
+  }
+  pendingSSHHostKeyChallenges.clear();
+}
+
 async function disposeHostResources(reason: string): Promise<HostShutdownResult> {
   databaseStartup?.dispose();
   pendingStartupAttachments.clear();
+  rejectPendingSSHHostKeyChallenges("Host 已释放，SSH 主机密钥挑战失效");
+  cancelledSSHHostKeyRequestIds.clear();
   if (hasDisposedHostResources) {
     return (
       (await disposeHostResourcesInFlight) ?? {
@@ -1452,6 +1536,8 @@ function disposeHostResourcesBestEffort(reason: string): void {
   hasDisposedHostResources = true;
 
   logger.info(`disposing host resources, reason=${reason}`);
+  rejectPendingSSHHostKeyChallenges("Host 已释放，SSH 主机密钥挑战失效");
+  cancelledSSHHostKeyRequestIds.clear();
   disposeAttachedServicePorts();
   windowHostControllerRuntime.dispose();
   // automation 派发域收口（与 disposeHostResources 同序；best-effort 路径不 await）。
@@ -1563,6 +1649,26 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
   }
   if (msg.type === HostMessageTypes.ResourceUsageSnapshotCancel) {
     hostResourceUsageResponder.cancelRequest(msg.requestId);
+    return;
+  }
+
+  if (msg.type === HostMessageTypes.SSHHostKeyDecision) {
+    const pending = pendingSSHHostKeyChallenges.get(msg.requestId);
+    if (!pending) return;
+    if (
+      pending.challengeId !== msg.challengeId ||
+      pending.candidateFingerprint !== msg.candidateFingerprint
+    ) {
+      pendingSSHHostKeyChallenges.delete(msg.requestId);
+      pending.reject(new Error("SSH 主机密钥决策与当前挑战不匹配"));
+      return;
+    }
+    pendingSSHHostKeyChallenges.delete(msg.requestId);
+    pending.resolve({
+      challengeId: msg.challengeId,
+      candidateFingerprint: msg.candidateFingerprint,
+      action: msg.action,
+    });
     return;
   }
 
@@ -1793,6 +1899,16 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
   }
 
   if (msg.type === HostMessageTypes.ConnectRemoteWorkspace) {
+    // requestId 由 Main 生成并应保持单次使用。取消后保留墓碑直到 Host 释放，
+    // 不能在顶层 cancellation promise 结束时提前清除：底层 SSH handshake 可能仍有迟到回调。
+    if (cancelledSSHHostKeyRequestIds.has(msg.requestId)) {
+      parentPort.postMessage({
+        type: HostResponseTypes.RemoteWorkspaceConnectFailed,
+        requestId: msg.requestId,
+        error: "远程连接 requestId 已取消，不能复用",
+      });
+      return;
+    }
     const workspacePath = msg.workspacePath ?? "/";
     const workspaceIdentity =
       msg.workspaceIdentity ?? buildRemoteWorkspaceIdentity(workspacePath, msg.target);
@@ -1874,6 +1990,12 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
   }
 
   if (msg.type === HostMessageTypes.CancelRemoteWorkspaceConnect) {
+    cancelledSSHHostKeyRequestIds.add(msg.requestId);
+    const pendingChallenge = pendingSSHHostKeyChallenges.get(msg.requestId);
+    if (pendingChallenge) {
+      pendingSSHHostKeyChallenges.delete(msg.requestId);
+      pendingChallenge.reject(new Error("远程连接已取消，SSH 主机密钥挑战失效"));
+    }
     windowRemoteConnectionRegistry.cancelConnect(msg.requestId);
     return;
   }
@@ -2174,6 +2296,7 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
 });
 
 async function setupRemoteConnection(
+  requestId: string,
   target: RemoteTarget,
   remoteAssets: RemoteAssetDirs,
   remoteAssetNetwork: RemoteAssetNetworkPort,
@@ -2185,7 +2308,16 @@ async function setupRemoteConnection(
   // 延迟加载 remote backend，避免 local 模式下因 ssh2 依赖链进入 asar 后崩溃
   const { createRemoteBackend, connectRemote, pickRemoteRuntimeEnv } =
     await import("@acode/server/remote");
-  const backend = await createRemoteBackend(target);
+  const backend = await createRemoteBackend(
+    target,
+    target.kind === "ssh"
+      ? {
+          sshHostKeyTrust: await getManagedSSHHostKeyTrust(),
+          onHostKeyChallenge: (challenge: SSHHostKeyChallenge) =>
+            requestSSHHostKeyDecision(requestId, challenge),
+        }
+      : undefined,
+  );
   const connection = await connectRemote(backend, {
     ...remoteAssets,
     remoteAssetNetwork,

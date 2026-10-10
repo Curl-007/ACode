@@ -17,14 +17,11 @@ import type {
   RuntimeBackgroundStopTarget,
   TypedRuntimeBackgroundStopTarget,
 } from "./background-stop-types.js";
-import type {
-  RuntimeTaskSnapshot,
-  RuntimeTaskType,
-} from "../../runtime-task/registry.js";
+import type { RuntimeTaskSnapshot, RuntimeTaskType } from "../../runtime-task/contract.js";
 import {
   hasRunningBackgroundRuntimeTask,
   isTerminalRuntimeTask,
-} from "../../runtime-task/registry.js";
+} from "../../runtime-task/contract.js";
 
 // 停止分派的类型集中在 background-stop-types.ts（供各分支模块共用）；这里 re-export
 // 保持既有 import 路径不变。
@@ -308,9 +305,7 @@ export async function cancelRunningRuntimeBackgroundTasks(
   const traceContext = input.traceContext ?? this.rootTraceContext;
   const tasks = Object.values(this.runtimeTaskRegistry.all()).filter(
     (task) =>
-      task.type === "local_bash" &&
-      task.isBackgrounded === true &&
-      task.status === "running",
+      task.type === "local_bash" && task.isBackgrounded === true && task.status === "running",
   );
 
   for (const task of tasks) {
@@ -325,6 +320,45 @@ export async function cancelRunningRuntimeBackgroundTasks(
       traceContext,
     });
   }
+}
+
+/**
+ * 级联收口在飞子代理（specs/subagent-nesting-budget.md R5-2 / 审计 §6.2）：child turn
+ * 结算后，其 registry 里仍在飞的 local_agent 任务已无通知消费者（本 runtime 即将废弃、
+ * 队列无人再读；cancelRunningRuntimeBackgroundTasks 只收 local_bash）——不级联停止就是
+ * 孤儿孙代理继续烧 token。经本 runtime 自己的 subagentPort.stopTask 逐个停止：
+ * stopTask 走 runner 的既有停止面（abortController + 终态结算 + 树级预算释放），
+ * 每层只收自己的直接子代理，级联随各层自己的 finally 递归成立。
+ * best-effort：单个 stopTask 失败不中断其余（清理路径不反噬主结算）。
+ */
+export async function stopInFlightSubagentTasks(
+  this: AgentRuntimeInternal,
+  input: { reason: "subagent_cancelled" | "subagent_terminal"; traceContext?: TraceContext },
+): Promise<number> {
+  if (this.config.taskType !== "subagent_child") return 0;
+  const port = this.subagentPort;
+  if (port?.stopTask === undefined) return 0;
+  const traceContext = input.traceContext ?? this.rootTraceContext;
+  const tasks = Object.values(this.runtimeTaskRegistry.all()).filter(
+    (task) => task.type === "local_agent" && task.status === "running",
+  );
+  let stopped = 0;
+  for (const task of tasks) {
+    this.logger?.info?.("Stopping in-flight subagent during child runtime settlement", {
+      ...traceContextToLogContext(traceContext),
+      event: "runtime.subagent.cascade_stop",
+      module: "core.runtime",
+      reason: input.reason,
+      taskId: task.taskId,
+    });
+    try {
+      await port.stopTask(task.taskId);
+      stopped += 1;
+    } catch {
+      // best-effort：终态纪律由 stopTask/registry 自身保证，这里不反抛。
+    }
+  }
+  return stopped;
 }
 
 export function buildBackgroundTaskPayload(
@@ -405,8 +439,7 @@ export function buildBackgroundTaskPayload(
 function backgroundInfoFromRuntimeTask(task: RuntimeTaskSnapshot): BackgroundTaskInfo {
   return {
     taskId: task.taskId,
-    toolCallId:
-      typeof task.parentToolCallId === "string" ? task.parentToolCallId : undefined,
+    toolCallId: typeof task.parentToolCallId === "string" ? task.parentToolCallId : undefined,
     toolName: toolNameFromRuntimeTaskType(task.type),
     cancellable: task.status === "running",
     command: commandFromRuntimeTask(task, undefined),
@@ -482,9 +515,7 @@ function toolNameFromRuntimeTaskType(type: RuntimeTaskType): string {
   }
 }
 
-function isTerminalBackgroundTaskInfoStatus(
-  status: BackgroundTaskInfoStatus | undefined,
-): boolean {
+function isTerminalBackgroundTaskInfoStatus(status: BackgroundTaskInfoStatus | undefined): boolean {
   return Boolean(status && status !== "running");
 }
 

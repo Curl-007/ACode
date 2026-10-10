@@ -5,7 +5,28 @@ export type {
   RemoteUploadProgress,
   StdioStream,
 } from "./backend.js";
-export { createRemoteBackend } from "./create-backend.js";
+export { createRemoteBackend, type RemoteBackendOptions } from "./create-backend.js";
+export { createKnownHostsTrust } from "./sshKnownHosts.js";
+export { composeSSHHostKeyTrust } from "./sshAuth.js";
+export {
+  createManagedSSHHostKeyTrust,
+  resolveManagedSSHHostKeyTrustPath,
+} from "./sshManagedTrust.js";
+export {
+  SSHHostKeyVerificationError,
+  SSHHostKeyDecisionError,
+  buildSSHConnectConfig,
+  createSSHHostKeyVerifier,
+  normalizeSSHHostKeyFingerprint,
+  type SSHConnectConfigInput,
+  type SSHHostKeyChallenge,
+  type SSHHostKeyChallengeHandler,
+  type SSHHostKeyDecision,
+  type SSHHostKeyDecisionAction,
+  type SSHHostKeyResolution,
+  type SSHHostKeyTrust,
+  type SSHHostKeyVerificationStatus,
+} from "./sshAuth.js";
 export {
   connectRemote,
   pickRemoteRuntimeEnv,

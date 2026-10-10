@@ -1,6 +1,7 @@
 /* eslint-disable max-lines -- SSH backend 集中维护连接、exec、SFTP 上传和 fallback 进度链路；集中维护以避免拆分引入远端连接回归。 */
 import { Client as SSHClient } from "ssh2";
 import type { ConnectConfig } from "ssh2";
+import { randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { posix } from "node:path";
 import { Emitter } from "@acode/rpc";
@@ -27,7 +28,15 @@ import {
 import {
   buildSSHConnectConfig,
   createKeyboardInteractiveResponder,
+  normalizeSSHHostKeyFingerprint,
+  SSHHostKeyDecisionError,
   normalizeSSHConnectError,
+  SSHHostKeyVerificationError,
+  type SSHHostKeyChallenge,
+  type SSHHostKeyChallengeHandler,
+  type SSHHostKeyDecision,
+  type SSHHostKeyTrust,
+  type SSHHostKeyVerificationStatus,
 } from "@acode/server/remote/sshAuth.js";
 import {
   createSSHUploadProgressReporter,
@@ -45,6 +54,10 @@ export interface SSHBackendOptions {
   privateKeyPassphrase?: string;
   password?: string;
   agent?: string;
+  /** 已批准 host key 的只读查询；缺省时 SSH host key 全部拒绝。 */
+  hostKeyTrust?: SSHHostKeyTrust;
+  /** Optional host-owned interaction. No handler means unknown/changed keys stay rejected. */
+  onHostKeyChallenge?: SSHHostKeyChallengeHandler;
 }
 
 type SSHUploadFailureKind = "sftp-session" | "sftp-write" | "local-read" | "aborted";
@@ -93,6 +106,8 @@ export class SSHBackend implements IRemoteBackend {
   private client: SSHClient;
   private connected = false;
   private readonly config: ConnectConfig;
+  private readonly hostKeyTrust: SSHHostKeyTrust | undefined;
+  private connecting: Promise<void> | undefined;
   private homeDirPromise: Promise<string> | null = null;
   private execUploadOnly = false;
   private disposed = false;
@@ -100,6 +115,9 @@ export class SSHBackend implements IRemoteBackend {
   private disconnectReported = false;
   private readonly disconnectEmitter = new Emitter<RemoteDisconnectEvent>();
   readonly onDidDisconnect = this.disconnectEmitter.event;
+  private hostKeyDecision: SSHHostKeyVerificationStatus | undefined;
+  private hostKeyChallenge: SSHHostKeyChallenge | undefined;
+  private readonly onHostKeyChallenge: SSHHostKeyChallengeHandler | undefined;
 
   private readonly onClientError = (error: unknown): void => {
     if (this.disposed) {
@@ -124,6 +142,8 @@ export class SSHBackend implements IRemoteBackend {
   };
 
   constructor(options: SSHBackendOptions) {
+    this.hostKeyTrust = options.hostKeyTrust;
+    this.onHostKeyChallenge = options.onHostKeyChallenge;
     this.client = new SSHClient();
     this.client.on("error", this.onClientError);
     this.client.on("close", this.onClientClose);
@@ -136,6 +156,21 @@ export class SSHBackend implements IRemoteBackend {
       passphrase: options.privateKeyPassphrase,
       password: options.password,
       agent: options.agent,
+      hostKeyTrust: options.hostKeyTrust,
+       onHostKeyDecision: (status, keyHash, expectedFingerprints) => {
+        this.hostKeyDecision = status;
+         this.hostKeyChallenge =
+           status === "unknown" || status === "changed"
+             ? {
+                 challengeId: randomUUID(),
+                 host: options.host,
+                 port: options.port ?? 22,
+                 status,
+                 candidateFingerprint: normalizeSSHHostKeyFingerprint(keyHash),
+                 expectedFingerprints: expectedFingerprints.map(normalizeSSHHostKeyFingerprint),
+               }
+             : undefined;
+      },
     });
     if (resolveACodeRuntimeEnv(process.env) === "development") {
       this.config.debug = (message: string) => {
@@ -171,13 +206,94 @@ export class SSHBackend implements IRemoteBackend {
   }
 
   private async ensureConnected(): Promise<void> {
+    this.assertNotDisposed();
+    if (this.connected) return;
+    if (this.connecting) return this.connecting;
+    // 异步 trust refresh 与多条 exec/detect 可能交错；每个 backend 只准入一个握手，
+    // 其他调用等待同一个结果，避免在刷新期间对同一 ssh2 client 重复 connect。
+    const connecting = this.connectWithChallenge();
+    this.connecting = connecting;
+    try {
+      await connecting;
+    } finally {
+      if (this.connecting === connecting) this.connecting = undefined;
+    }
+  }
+
+  private async connectWithChallenge(): Promise<void> {
+    let challengeRetryCount = 0;
+    for (;;) {
+      try {
+        await this.connect();
+        return;
+      } catch (error) {
+        if (
+          !(error instanceof SSHHostKeyVerificationError) ||
+          !error.challenge ||
+          !this.onHostKeyChallenge ||
+          challengeRetryCount >= 1
+        ) {
+          throw error;
+        }
+        challengeRetryCount += 1;
+        const challenge = error.challenge;
+        let decision: SSHHostKeyDecision;
+        try {
+          decision = await this.onHostKeyChallenge(challenge);
+        } catch (handlerError) {
+          throw new SSHHostKeyDecisionError(
+            handlerError instanceof Error ? handlerError.message : "SSH 主机密钥决策失败",
+          );
+        }
+        if (
+          !decision ||
+          decision.challengeId !== challenge.challengeId ||
+          normalizeSSHHostKeyFingerprint(decision.candidateFingerprint) !==
+            challenge.candidateFingerprint
+        ) {
+          throw new SSHHostKeyDecisionError();
+        }
+        if (decision.action === "reject") {
+          throw error;
+        }
+        if (
+          (challenge.status === "unknown" && decision.action !== "approve") ||
+          (challenge.status === "changed" && decision.action !== "replace")
+        ) {
+          throw new SSHHostKeyDecisionError(
+            challenge.status === "unknown"
+              ? "未知 SSH 主机密钥只能执行 approve"
+              : "变化的 SSH 主机密钥必须显式 replace",
+          );
+        }
+        if (!this.hostKeyTrust?.commitDecision) {
+          throw new SSHHostKeyDecisionError("当前 SSH 信任存储不支持交互批准");
+        }
+        await this.hostKeyTrust.commitDecision(challenge, decision.action);
+        await this.hostKeyTrust.refresh?.();
+      }
+    }
+  }
+
+  private async connect(): Promise<void> {
     // 连接取消会先释放 backend，但迟到的 deploy/cleanup continuation 仍可能
     // 调用 ensureConnected。ssh2 Client 支持 end 后再次 connect，必须在 backend 边界阻止旧凭据复活。
     this.assertNotDisposed();
-    if (this.connected) return;
+    await this.hostKeyTrust?.refresh?.();
+    this.assertNotDisposed();
     return new Promise((resolve, reject) => {
       const handleReady = () => {
         this.client.off("error", handleConnectError);
+        if (this.hostKeyDecision && this.hostKeyDecision !== "trusted") {
+          this.client.end();
+          reject(
+            new SSHHostKeyVerificationError(
+              this.hostKeyDecision as Exclude<SSHHostKeyVerificationStatus, "trusted">,
+              this.hostKeyChallenge,
+            ),
+          );
+          return;
+        }
         if (this.disposed) {
           // dispose 与 ssh2 ready 可能交错；迟到的 ready 若重新标记 connected，
           // 后续 detect 会继续使用已取消连接的旧凭据。再次关闭 socket，并让原调用失败。
@@ -192,10 +308,19 @@ export class SSHBackend implements IRemoteBackend {
       };
       const handleConnectError = (error: unknown) => {
         this.client.off("ready", handleReady);
-        reject(normalizeSSHConnectError(error));
+        reject(
+          this.hostKeyDecision && this.hostKeyDecision !== "trusted"
+            ? new SSHHostKeyVerificationError(
+                this.hostKeyDecision as Exclude<SSHHostKeyVerificationStatus, "trusted">,
+                  this.hostKeyChallenge,
+              )
+            : normalizeSSHConnectError(error),
+        );
       };
       this.client.once("ready", handleReady);
       this.client.once("error", handleConnectError);
+      this.hostKeyDecision = undefined;
+      this.hostKeyChallenge = undefined;
       this.client.connect(this.config);
     });
   }

@@ -1,5 +1,2 @@
-export * from "./compiler.js";
-export * from "./merge-patch.js";
-export * from "./option-maps.js";
-export * from "./tokenizer.js";
-export * from "./types.js";
+// 保留包根导入兼容性；架构治理将 contract.ts 作为模块公开契约。
+export * from "./contract.js";

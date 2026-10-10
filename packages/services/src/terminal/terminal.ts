@@ -25,4 +25,69 @@ export interface ITerminalService {
   onDynamicExit(id: string): Event<number>;
 }
 
-export const ITerminalService = createServiceDescriptor<ITerminalService>(ServiceChannels.Terminal);
+export const ITerminalService = createServiceDescriptor<ITerminalService>(
+  ServiceChannels.Terminal,
+  {
+    allowedMethods: ["create", "write", "resize", "dispose", "onDynamicData", "onDynamicExit"],
+    argumentValidators: {
+      create: (args) => {
+        const value = args[0];
+        if (
+          args.length !== 1 ||
+          !value ||
+          typeof value !== "object" ||
+          typeof (value as { cols?: unknown }).cols !== "number" ||
+          typeof (value as { rows?: unknown }).rows !== "number"
+        ) {
+          throw new Error("expected terminal dimensions");
+        }
+      },
+      write: (args) => {
+        const value = args[0];
+        if (
+          args.length !== 1 ||
+          !value ||
+          typeof value !== "object" ||
+          typeof (value as { id?: unknown }).id !== "string" ||
+          typeof (value as { data?: unknown }).data !== "string"
+        ) {
+          throw new Error("expected terminal id and data");
+        }
+      },
+      resize: (args) => {
+        const value = args[0];
+        if (
+          args.length !== 1 ||
+          !value ||
+          typeof value !== "object" ||
+          typeof (value as { id?: unknown }).id !== "string" ||
+          typeof (value as { cols?: unknown }).cols !== "number" ||
+          typeof (value as { rows?: unknown }).rows !== "number"
+        ) {
+          throw new Error("expected terminal id and dimensions");
+        }
+      },
+      dispose: (args) => {
+        const value = args[0];
+        if (
+          args.length !== 1 ||
+          !value ||
+          typeof value !== "object" ||
+          typeof (value as { id?: unknown }).id !== "string"
+        ) {
+          throw new Error("expected terminal id");
+        }
+      },
+      onDynamicData: (args) => {
+        if (args.length !== 1 || typeof args[0] !== "string") {
+          throw new Error("expected terminal id");
+        }
+      },
+      onDynamicExit: (args) => {
+        if (args.length !== 1 || typeof args[0] !== "string") {
+          throw new Error("expected terminal id");
+        }
+      },
+    },
+  },
+);

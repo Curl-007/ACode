@@ -13,7 +13,7 @@ import type { AgentRuntimeDeps } from "../types.js";
 import { resolveRuntimeEmbeddedSearchEnabled } from "../methods/embedded-search-branch.js";
 import { getSessionShellSelectionFromConfig } from "../methods/session-shell-environment.js";
 import { createRuntimeSessionModePort } from "../session-mode-port.js";
-import { shouldSuppressSealedSubagentBashNotification } from "../../runtime-task/notification-policy.js";
+import { shouldSuppressSealedSubagentBashNotification } from "../../runtime-task/contract.js";
 import {
   resolveBuiltInToolAllowlist,
   resolveRuntimeDisallowedTools,
@@ -52,7 +52,12 @@ function registerRuntimeBuiltInTools(runtime: AgentRuntimeInternal, deps: AgentR
     bashTimeoutPolicy: runtime.config.bashTimeoutPolicy,
     includeSkill: Boolean(runtime.skillPort),
     includeAgent: Boolean(runtime.subagentPort),
-    includeSendMessage: runtime.subagentPort?.sendMessage !== undefined,
+    // SendMessage 注册门（specs/agent-peer-messaging.md R2）：父会话按 subagentPort 的
+    // sendMessage 能力（现状）；child 会话按 peer 窄面在场（R0 flag 开启时由 runner 注入）。
+    // 两入口同规则纪律（tool-allowlist.ts）：embedded-search-branch 对本门是「只有 true
+    // 才注册」的省略安全侧，无需重复。
+    includeSendMessage:
+      runtime.subagentPort?.sendMessage !== undefined || Boolean(deps.peerMessagingPort),
     includeRespondToCoordinator:
       runtime.config.taskType === "subagent_child" && Boolean(deps.coordinatorResponsePort),
     // submit_result 只在注入了 workflowSubmitPort 的 workflow actor 会话注册。以端口存在为门，
@@ -87,10 +92,10 @@ function registerRuntimeBuiltInTools(runtime: AgentRuntimeInternal, deps: AgentR
     // 提醒）&& 端口在场（bootstrap 装配的 queue 与 nudge 闭包；automationPort 同款
     // 流向）。sessionId 取 runtime 自己的——创建来源会话即提醒投递目标。
     ...(deps.ambientSchedulePort === undefined ||
-        runtime.config.ambient?.enabled !== true ||
-        runtime.config.taskType === "subagent_child" ||
-        runtime.config.taskType === "workflow_child" ||
-        runtime.config.taskType === "nested_workflow_child"
+    runtime.config.ambient?.enabled !== true ||
+    runtime.config.taskType === "subagent_child" ||
+    runtime.config.taskType === "workflow_child" ||
+    runtime.config.taskType === "nested_workflow_child"
       ? {}
       : {
           includeAmbientSchedule: true,

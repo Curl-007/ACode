@@ -23,22 +23,37 @@ import type { SessionGoal } from "../tools/target.js";
 import type { GoalCompletionVerificationOutput } from "../tools/target.js";
 import type { PermissionOptionsPolicy, PermissionUpdate } from "./permission.port.js";
 import type { ToolResultDisplayPayload } from "../tools/tool-result-metadata.js";
-import type { ModelSelection } from "../model/model.js";
+// 架构断环（specs/architecture-contracts-module.md）：CollaborationMode/RiskLevel/
+// TurnSteer*/TurnInputIntentMetadata 下沉到叶子文件 session-shared.ts——session.events、
+// permission.port、session-store.port、hooks、tools/contract 都要反向引用它们，
+// 住在本文件即与 session.events 成环。此处 import 供本文件使用 + 原样再导出，
+// 既有导入路径（./session.port.js）与包导出面逐名不变。
+import type {
+  CollaborationMode,
+  RiskLevel,
+  TurnInputIntentMetadata,
+  TurnSteerCommandKind,
+  TurnSteerDeliveryMode,
+  TurnSteerRejectReason,
+  TurnSteerSource,
+} from "./session-shared.js";
+
+export type {
+  CollaborationMode,
+  RiskLevel,
+  TurnInputIntentMetadata,
+  TurnSteerCommandKind,
+  TurnSteerDeliveryMode,
+  TurnSteerRejectReason,
+  TurnSteerSource,
+} from "./session-shared.js";
 
 // -----------------------------------------------
 // Collaboration Mode and Risk Level
 // -----------------------------------------------
 
-export type CollaborationMode = "plan" | "build" | "edit" | "yolo" | "auto";
 export type SessionStatus = "idle" | "running" | "waiting" | "paused" | "completed" | "error";
-export type RiskLevel = "low" | "medium" | "high" | "critical";
 export type InputDelivery = "auto" | "start_turn" | "steer_active_turn";
-export type TurnSteerRejectReason =
-  | "no_active_turn"
-  | "expected_turn_mismatch"
-  | "turn_not_steerable"
-  | "empty_input"
-  | "input_too_large";
 
 // -----------------------------------------------
 // Session Event Store Port
@@ -264,51 +279,6 @@ export interface TurnSteerInput {
   traceContext?: TraceContext;
   /** 当前输入消费时不向 provider 暴露的工具名。 */
   toolDisallowlist?: readonly string[];
-}
-
-export type TurnSteerCommandKind = "sendText" | "sendGoalCommand" | "compact";
-export type TurnSteerSource = "plan_approval_feedback" | "workflow_refine_feedback";
-
-/**
- * 输入投递语义：
- * - "queue"：排队的未来意图，消费时切新 product turn（每条一轮，自己的回复/工时/edit 范围）；
- * - "guide"：对进行中工作的补充引导，内联在当前轮，不切轮。
- * runtime 注入机制两者相同（boundary 注入），差异只在产品呈现与账本语义。
- */
-export type TurnSteerDeliveryMode = "guide" | "queue";
-
-/** 协议无关的输入 intent metadata；bootstrap v4 在事件边界组装为 ConversationInputIntent。 */
-export interface TurnInputIntentMetadata {
-  planEnabled?: boolean;
-  sourceCommandId: string;
-  queueItemId: string;
-  clientId: string;
-  kind: TurnSteerCommandKind;
-  /** transcript hydration 贯穿完整 ConversationInputIntent 的 canonical command text。 */
-  text?: string;
-  /** Admission 时固定；Queue/Guide 后续不得重新读取 Composer 或 Session 最新选择。 */
-  modelSelection?: ModelSelection;
-  /** 与本次用户 Submission 一起固定的协作模式。 */
-  mode?: "build" | "edit" | "plan" | "yolo";
-  admissionSeq: number;
-  admittedAt: number;
-  requestedDelivery: "auto" | "startNow" | "queue" | "guide";
-  admittedDelivery: "startNow" | "queue" | "guide";
-  queuePosition?: number;
-  fallbackReasonCode?: string;
-  attachmentRefs?: Array<{
-    ref: string;
-    fileName: string;
-    mime: string;
-    bytes: number;
-    previewRef?: string;
-  }>;
-  /** edit/retry 重建的新 command 对原始 canonical input cause 的稳定追溯。 */
-  provenance?: {
-    sourceCommandId: string;
-    queueItemId?: string;
-    clientId?: string;
-  };
 }
 
 /** queue 内保留尚未 resolve 的附件描述；消费时与普通 turn 使用同一 resolver。 */

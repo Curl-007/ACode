@@ -19,6 +19,7 @@ import type {
   McpConnectionSnapshot,
   TargetChangedPayload,
   DynamicWorkflowRunProgressPayload,
+  SwarmPlanProgressPayload,
   UserInputAutoResolutionUpdatedPayload,
   TraceContext,
   TurnSteerInput,
@@ -97,6 +98,10 @@ export interface AgentRuntimeCoreMethods {
   ): Promise<void>;
   recordDynamicWorkflowRunProgress(
     input: DynamicWorkflowRunProgressPayload & { traceContext?: TraceContext },
+  ): Promise<void>;
+  /** swarm plan 提交投影的出回合追加（事件源在 bootstrap 的 swarm-plan-runtime）。 */
+  recordSwarmPlanProgress(
+    input: SwarmPlanProgressPayload & { traceContext?: TraceContext },
   ): Promise<void>;
   maybeStartGoalSummaryTitleGeneration(
     input: string,

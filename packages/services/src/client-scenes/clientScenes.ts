@@ -62,4 +62,16 @@ export interface IClientScenesService {
 
 export const IClientScenesService = createServiceDescriptor<IClientScenesService>(
   ServiceChannels.ClientScenes,
+  {
+    allowedMethods: ["list"],
+    argumentValidators: {
+      list: (args) => requireNoArguments(args),
+    },
+  },
 );
+
+// —— 文件内私有 RPC 参数校验辅助（边界迁移规则禁止跨文件共享 helper，先例 file.ts）——
+
+function requireNoArguments(args: readonly unknown[]): void {
+  if (args.length !== 0) throw new Error("expected no arguments");
+}

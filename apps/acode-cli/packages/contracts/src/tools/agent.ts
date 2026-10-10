@@ -133,6 +133,8 @@ export const AgentErrorCode = {
   BACKGROUND_UNAVAILABLE: "agent_background_unavailable",
   UNKNOWN_AGENT_TYPE: "agent_unknown_type",
   CHILD_RUNTIME_FAILED: "agent_child_runtime_failed",
+  // 树级预算准入拒绝（specs/subagent-nesting-budget.md R4）：结构化拒绝不静默截断。
+  TREE_BUDGET_EXCEEDED: "agent_tree_budget_exceeded",
 } as const;
 
 export type AgentErrorCode = (typeof AgentErrorCode)[keyof typeof AgentErrorCode];

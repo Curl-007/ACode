@@ -18,7 +18,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-const RUNTIME = "../packages/bootstrap/src/app/script-workflow-runtime.ts";
+const RUNTIME = "../packages/cli-workflow/src/script-workflow-runtime.ts";
 
 function readSource(relativePath) {
   return readFileSync(new URL(relativePath, import.meta.url), "utf8");

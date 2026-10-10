@@ -13,7 +13,7 @@ import {
   isTerminalRuntimeTask,
   type RuntimeTaskSnapshot,
   type RuntimeTaskType,
-} from "../../runtime-task/registry.js";
+} from "../../runtime-task/contract.js";
 import type { ExecutableToolCall } from "../types.js";
 import type { ToolExecutorDeps } from "./types.js";
 import { isRecord } from "./utils.js";
@@ -54,7 +54,8 @@ export function registerRuntimeBackgroundTask(
   const taskType = runtimeTaskTypeForToolCall(toolCall);
   if (!taskType || !deps.runtimeTaskRegistry) return;
   const existing = deps.runtimeTaskRegistry.get(taskId);
-  const description = runtimeTaskDescription(toolCall, output) ?? defaultRuntimeTaskDescription(taskType);
+  const description =
+    runtimeTaskDescription(toolCall, output) ?? defaultRuntimeTaskDescription(taskType);
   const outputFile = backgroundTaskOutputMetadata(output).outputFile;
   // 同进程 cancel 终态 → 未重启即 resume（dwf 的 resume 重臂，
   // v4 命令路径与工具路径在 trackBackgroundTask 汇合同病）时，既有条目携带上一轮 claim 的
@@ -75,7 +76,9 @@ export function registerRuntimeBackgroundTask(
   //
   // outputFile 有意**不**随结算面复位：workflow run 从不写 outputFile，existing 兜底仅为产物
   // 外部化预留的透传；外部化落地时应随其语义重新裁决（勿顺手清空、也勿顺手扩大语义）。
-  const rearm = isDynamicWorkflowRunDispatchToolName(toolCall.name);
+  const rearm =
+    isDynamicWorkflowRunDispatchToolName(toolCall.name) ||
+    isScriptWorkflowDispatchToolName(toolCall.name);
   // 新生命 = 在**终态**条目上重臂。它必须走 register() 而非 update()：register 会用当前
   // activeBranchGeneration 重盖 branchGeneration，而 update 的 {...existing} 会把上一段生命
   // 周期的分支代带进新生命——cancel → rewind（分支代 +1）→ resume 时，新生命的任务事件会被
@@ -130,8 +133,7 @@ export function updateRuntimeBackgroundTask(
       : {
           ...current,
           completedAt: runtimeTaskCompletedAt(status, snapshot) ?? current.completedAt,
-          description:
-            runtimeTaskDescription(toolCall, undefined, snapshot) ?? current.description,
+          description: runtimeTaskDescription(toolCall, undefined, snapshot) ?? current.description,
           error: runtimeTaskError(snapshot) ?? current.error,
           exitCode: runtimeTaskExitCode(snapshot) ?? current.exitCode,
           isBackgrounded: true,
@@ -148,21 +150,29 @@ export function updateRuntimeBackgroundTask(
 }
 
 /**
- * workflow run 的产物文本。只在 dwf 分派名（CreateWorkflow / ResumeWorkflowRun）的**终态**
- * 快照上取：TaskOutput 的投影只读得到 registry 条目（dwf 从不写 outputFile），产物不存在
- * 条目上就在重启后彻底不可达。
- *
- * legacy `Workflow` 刻意不参与——它的结果经 `output.response` 走既有通知路径，契约不变。
+ * workflow run 的产物文本。终态快照上的 `output.response` 是 Script Workflow 的 durable
+ * 返回面；dynamic workflow 则由 serializeWorkflowArtifact 保留其结构化 output。TaskOutput
+ * 只读 registry 条目，所以这里必须在 tracker 结算时把它复制进 resultText。
  */
 function runtimeTaskResultText(
   toolCall: ExecutableToolCall,
   status: string,
   snapshot: BackgroundTaskSnapshot | undefined,
 ): string | undefined {
+  if (isScriptWorkflowDispatchToolName(toolCall.name)) {
+    if (status === "running") return undefined;
+    if (!snapshot || !("output" in snapshot)) return undefined;
+    const output = snapshot.output;
+    return isRecord(output) && typeof output.response === "string" ? output.response : undefined;
+  }
   if (!isDynamicWorkflowRunDispatchToolName(toolCall.name)) return undefined;
   if (status === "running") return undefined;
   if (!snapshot || !("output" in snapshot)) return undefined;
   return serializeWorkflowArtifact(snapshot.output);
+}
+
+function isScriptWorkflowDispatchToolName(name: string): boolean {
+  return name === "RunWorkflow" || name === "Workflow";
 }
 
 export function claimRuntimeBackgroundTaskNotification(

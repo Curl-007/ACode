@@ -28,8 +28,10 @@ export function settleCompleted(state: EngineState, artifact: unknown): void {
   );
   // 产物随终态一笔落库。分两笔写会造出「completed 但产物丢失」的崩溃窗口，而 journal
   // 行是产物唯一的持久化家（`run-settled` 事件刻意不加宽）。
-  finishRun(state, "completed", { result: artifact });
-  state.resolveSettled({ status: "completed", artifact });
+  state.finishWorld(state.runError(), () => {
+    finishRun(state, "completed", { result: artifact });
+    state.resolveSettled({ status: "completed", artifact });
+  });
 }
 
 /**
@@ -49,16 +51,18 @@ export function settleStopped(
   state.abortInFlight(new WorkflowError("Cancelled", "Run stopped."), true);
   // `superseded` 的后继 id 与原因**同一笔**落库：
   // stopped 信封整体重写，分两笔写就有一个「已 superseded 却不知道被谁替代」的窗口。
-  finishRun(state, "stopped", {
-    stopReason: reason,
-    ...(supersededBy === undefined ? {} : { supersededBy }),
-    ...(error === undefined ? {} : { failure: error.toJSON() }),
-  });
-  state.resolveSettled({
-    status: "stopped",
-    reason,
-    ...(supersededBy === undefined ? {} : { supersededBy }),
-    ...(error === undefined ? {} : { error }),
+  state.finishWorld(state.runError(), () => {
+    finishRun(state, "stopped", {
+      stopReason: reason,
+      ...(supersededBy === undefined ? {} : { supersededBy }),
+      ...(error === undefined ? {} : { failure: error.toJSON() }),
+    });
+    state.resolveSettled({
+      status: "stopped",
+      reason,
+      ...(supersededBy === undefined ? {} : { supersededBy }),
+      ...(error === undefined ? {} : { error }),
+    });
   });
 }
 
@@ -67,8 +71,10 @@ export function settleFailed(state: EngineState, error: WorkflowError): void {
   if (state.isRunSettled()) return;
   state.markSettled(error);
   state.abortInFlight(error, false);
-  finishRun(state, "errored", { failure: error.toJSON() });
-  state.resolveSettled({ status: "errored", error });
+  state.finishWorld(error, () => {
+    finishRun(state, "errored", { failure: error.toJSON() });
+    state.resolveSettled({ status: "errored", error });
+  });
 }
 
 /**

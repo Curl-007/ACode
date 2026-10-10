@@ -54,6 +54,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # 单一类型门禁入口 scripts/typecheck-gate.mjs：packages（tsc -b）先行，
+      # desktop-renderer 与 cli（turbo，含 @acode/cli 自身入口）在其后并行。
+      # 规则与验收见 docs/specs/cli-validation-gates.md 第 3-6 条。
       - name: Typecheck
         run: pnpm typecheck
 
@@ -68,8 +71,14 @@ jobs:
 
       # 与 ci.yml 同因：Tests 经 tsx 引 apps/acode-cli 源码，源码按包名解析兄弟包 dist/，
       # 干净检出没有 dist 会 ERR_MODULE_NOT_FOUND（2026-10-07 release/0.0.4 实测）。
+      # 类型门禁的 cli 阶段已经经 turbo ^build 产出这些 dist，此步骤保留是为了让 Tests
+      # 的前置不依赖门禁内部阶段顺序；缓存命中时几乎无成本。
       - name: Build CLI workspace packages
         run: npx turbo --skip-infer --cwd apps/acode-cli run build --filter='!@acode/cli'
+
+      # CLI 各包再经自己的就近配置执行 lint，发布验证与根扫描同时有效。
+      - name: Lint CLI workspace
+        run: pnpm exec turbo --cwd apps/acode-cli run lint
 
       - name: Tests (all packages)
         run: pnpm test
@@ -281,7 +290,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build project references
+      # 完整类型门禁，同时由 packages 阶段的 tsc -b 产出后续打包要消费的工程引用声明。
+      - name: Typecheck all entries (builds project references)
         run: pnpm typecheck
 
       - name: Build ACode CLI distribution
@@ -358,7 +368,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build project references
+      # 完整类型门禁，同时由 packages 阶段的 tsc -b 产出 bundle 要消费的工程引用声明；
+      # renderer 类型错误在此阻断，不再只有 verify job 能拦住。
+      - name: Typecheck all entries (builds project references)
         run: pnpm typecheck
 
       - name: Bundle desktop app

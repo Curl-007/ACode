@@ -1,6 +1,9 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { ACodeProviderAccountAccess } from "@acode/shared";
-import type { ModelApiCallObservation } from "../telemetry/index.js";
+// 架构断环（specs/architecture-contracts-module.md）：观测类型走 telemetry 叶子文件、
+// 治理类型走 ./request-status.js 具体定义文件，不引用 index 桶文件（index `export *`
+// 本文件，反向引用桶文件即成环）。
+import type { ModelApiCallObservation } from "../telemetry/observations.js";
 import type { TraceContext } from "../tracing/tracer.js";
 import type {
   ModelRequestAdmission,
@@ -8,7 +11,7 @@ import type {
   ModelRetryBudget,
   ModelStatusSink,
   ModelStreamRecoveryStatus,
-} from "./index.js";
+} from "./request-status.js";
 
 /**
  * Runtime 与 Adapter 之间的调用级执行信息。

@@ -14,34 +14,26 @@ import type {
 } from "@acode/shared/harness-api";
 import { HarnessRpcError, HarnessStructuredOutputError } from "./errors.js";
 import { SDK_PERMISSION_TIMEOUT_MS, SDK_STRUCTURED_RETRY_MAX } from "./constants.js";
-import type { AcodeHarnessClient } from "./client.js";
+// 依赖倒置（纳管后 forbidCycles 生效）：session 不再反向 import client.ts，
+// 只依赖 session-types.ts 的 SessionClientPort；AcodeHarnessClient 结构化满足。
+import type {
+  ConfigureToolsInput,
+  CreateSessionInput,
+  SessionClientPort,
+  SessionRunOptions,
+} from "./session-types.js";
+import { describeZodSchema, parseJsonOutput } from "./structured-output.js";
 
-export interface CreateSessionInput {
-  cwd: string;
-  systemPrompt?: string;
-  model?: HarnessModelSelection;
-  mode?: string;
-  toolDenylist?: string[];
-  workspaceIdentity?: string;
-}
-
-export interface SessionRunOptions {
-  model?: HarnessModelSelection;
-  toolDenylist?: string[];
-}
-
-export interface CustomToolSpec {
-  name: string;
-  description?: string;
-  schema?: Record<string, unknown>;
-  /** v1：自定义工具执行回调——服务端 configure_tools 尚未支持，注册时如实抛 not_supported。 */
-  execute?: (input: unknown) => Promise<unknown>;
-}
-
-export interface ConfigureToolsInput {
-  disable?: string[];
-  custom?: CustomToolSpec[];
-}
+// 公开类型与结构化输出实现分别下沉到 session-types.ts / structured-output.ts
+// （400 行物理上限治理）；此处原样转发，@acode/harness-sdk 包根与既有
+// ./session.js 导入面（含 tests 的 deep import）不变。
+export type {
+  ConfigureToolsInput,
+  CreateSessionInput,
+  CustomToolSpec,
+  SessionRunOptions,
+} from "./session-types.js";
+export { describeZodSchema } from "./structured-output.js";
 
 /**
  * L2：从权限选项里挑「拒绝」语义项——显式匹配 deny/reject
@@ -67,7 +59,7 @@ interface EventQueueEntry {
 }
 
 export class HarnessSession {
-  readonly #client: AcodeHarnessClient;
+  readonly #client: SessionClientPort;
   readonly #sessionId: string;
   readonly #workspacePath: string;
   readonly #workspaceIdentity: string | undefined;
@@ -82,7 +74,7 @@ export class HarnessSession {
   #permissionTimeoutMs: number;
 
   constructor(
-    client: AcodeHarnessClient,
+    client: SessionClientPort,
     input: {
       sessionId: string;
       workspacePath: string;
@@ -221,7 +213,10 @@ export class HarnessSession {
             entry.wakeup = resolve;
           });
         }
-        return { done: false as const, value: entry.queue.shift() as { seq: number; event: HarnessEvent } };
+        return {
+          done: false as const,
+          value: entry.queue.shift() as { seq: number; event: HarnessEvent },
+        };
       },
       // 消费方 break（for await 退出）或显式 return()：停止接收后续帧并真移除条目。
       async return() {
@@ -258,9 +253,7 @@ export class HarnessSession {
       const subscriptionId = this.#subscriptionId;
       this.#subscriptionId = undefined;
       this.#subscriptionPromise = undefined;
-      await this.#client
-        .request("unsubscribe_events", { subscriptionId })
-        .catch(() => undefined);
+      await this.#client.request("unsubscribe_events", { subscriptionId }).catch(() => undefined);
     }
     this.#client.unregisterSession(this);
   }
@@ -380,82 +373,6 @@ export class HarnessSession {
     }
     await this.#client.request("detach_session", this.#target());
   }
-}
-
-/** 提取模型输出里的 JSON 对象（容忍 markdown fence / 前后闲话）。 */
-function parseJsonOutput(
-  output: string,
-): { ok: true; value: unknown } | { ok: false; issue: string } {
-  const text = output.trim();
-  if (text.length === 0) return { ok: false, issue: "empty response" };
-  const candidates = [text];
-  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
-  if (fenced?.[1]) candidates.push(fenced[1].trim());
-  const firstBrace = text.indexOf("{");
-  const lastBrace = text.lastIndexOf("}");
-  if (firstBrace !== -1 && lastBrace > firstBrace)
-    candidates.push(text.slice(firstBrace, lastBrace + 1));
-  for (const candidate of candidates) {
-    try {
-      return { ok: true, value: JSON.parse(candidate) };
-    } catch {
-      // 尝试下一个候选。
-    }
-  }
-  return { ok: false, issue: "response is not valid JSON" };
-}
-
-/**
- * 用 zod 的 def 生成轻量 JSON 描述（不引第三方 schema 转换）。
- * M8：补标量类型识别——此前除 object 外全部落 {type:"any"}，模型收到的
- * requirement 不含任何类型信息（z.number()/z.enum() 全部退化为 any，实证缺陷）。
- * 导出供 SDK 消费方诊断 requirement 与测试回归使用。
- */
-export function describeZodSchema(schema: z.ZodType): unknown {
-  const def = (
-    schema as unknown as {
-      _zod?: {
-        def?: {
-          type?: string;
-          innerType?: unknown;
-          entries?: Record<string, unknown>;
-          values?: unknown[];
-          shape?: Record<string, z.ZodType>;
-        };
-      };
-    }
-  )._zod?.def;
-  if (!def) return { type: "any" };
-  switch (def.type) {
-    case "string":
-      return { type: "string" };
-    case "number":
-      return { type: "number" };
-    case "boolean":
-      return { type: "boolean" };
-    case "enum":
-      return { type: "string", enum: Object.values(def.entries ?? {}) };
-    case "literal":
-      return { type: "literal", value: def.values?.[0] };
-    case "optional":
-    case "nullable":
-    case "default": {
-      // 包装类型：递归内层并标记 optional（nullable/default 近似为可缺省）。
-      const inner = describeZodSchema(def.innerType as z.ZodType);
-      return { ...(inner as Record<string, unknown>), optional: true };
-    }
-    default:
-      break;
-  }
-  if (def.shape) {
-    const out: Record<string, unknown> = { type: "object", properties: {} };
-    const properties = out.properties as Record<string, unknown>;
-    for (const [key, value] of Object.entries(def.shape)) {
-      properties[key] = describeZodSchema(value);
-    }
-    return out;
-  }
-  return { type: "any" };
 }
 
 export { HarnessRpcError };

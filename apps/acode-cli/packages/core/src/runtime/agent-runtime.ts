@@ -35,6 +35,7 @@ import type {
   SavedWorkflowScope,
   TargetChangedPayload,
   DynamicWorkflowRunProgressPayload,
+  SwarmPlanProgressPayload,
   UserInputAutoResolutionUpdatedPayload,
   ContextSourcePort,
   ExecutionPort,
@@ -124,7 +125,7 @@ import type {
   WorkspaceForkResult,
 } from "./types.js";
 import type { AgentRuntimeInternal } from "./internal.js";
-import { InMemoryRuntimeTaskRegistry, type RuntimeTaskRegistry } from "../runtime-task/registry.js";
+import { InMemoryRuntimeTaskRegistry, type RuntimeTaskRegistry } from "../runtime-task/contract.js";
 import type { SwarmPlanPort } from "../swarm/port.js";
 import type { ChildClientPortsContext, ClientFacingPorts } from "./helpers/child-client-ports.js";
 import type { ProjectMemoryExtractionScheduler } from "./helpers/project-memory-extraction.js";
@@ -132,7 +133,27 @@ import { projectPersistentAgentMemoryTools } from "../subagent/persistent-memory
 import { RuntimeTelemetryFacade } from "../telemetry/runtime-telemetry.js";
 import type { WorkspaceHookRuntimeAdmissionPort } from "../hooks/workspace-hook-runtime-admission.js";
 import { disposeNodeReplSession } from "../tool/handlers/node-repl.js";
-import { cloneModelSelection } from "./model-selection.js";
+import { initializeRuntimeTurnCoordination } from "./turn-coordination.js";
+import { getRuntimeLifecyclePort, initializeRuntimeLifecycle } from "./runtime-lifecycle.js";
+import { initializeRuntimeNotificationSeal } from "./runtime-notification-seal.js";
+import { initializeRuntimeModelSelection } from "./runtime-model-selection.js";
+import { initializeRuntimeSessionPersistence } from "./runtime-session-persistence.js";
+import { initializeRuntimePermissionGrant } from "./runtime-permission-grant.js";
+import { initializeRuntimeModelChangeTimeline } from "./runtime-model-change-timeline.js";
+
+/**
+ * 工作区身份根的构造期归一化（specs/subagent-parent-inheritance.md R1）：
+ * 显式 config.workspaceRoot 优先（子代理派生传父 runtime 的锁定根——父 Bash cd 漂移后，
+ * 若回退到漂移的 workingDirectory，breaker.pathEscapeWrite 会对工作区内文件误报）；
+ * 缺省/空白回退 workingDirectory（主会话等既有构造点行为不变）。
+ * 与 resolveSubagentPermissionMode 同一先例：导出纯函数供测试钉住优先级。
+ */
+export function resolveRuntimeWorkspaceRoot(
+  config: Pick<AgentRuntimeConfig, "workspaceRoot" | "workingDirectory">,
+): string {
+  const explicit = config.workspaceRoot?.trim();
+  return explicit && explicit.length > 0 ? explicit : (config.workingDirectory ?? ".");
+}
 
 // oxlint-disable typescript-eslint/no-unsafe-declaration-merging
 export class AgentRuntime {
@@ -160,7 +181,6 @@ export class AgentRuntime {
   private browserControlPort?: AgentRuntimeDeps["browserControlPort"];
   /** 模型请求准入端口；随每次模型请求进调用上下文。 */
   private modelRequestAdmission?: AgentRuntimeDeps["modelRequestAdmission"];
-  private sessionModelSelection: ModelSelection | undefined;
   private messageHistory: MessageHistory;
   private readFileState: ReadFileStateMap;
   private cachedTools: ModelToolContract[] | null = null;
@@ -175,6 +195,8 @@ export class AgentRuntime {
   private skillPort?: SkillPort;
   private mcpPort?: McpPort;
   private mcpStartupPromise?: Promise<McpConnectionSnapshot>;
+  /** MCP tool registration owner：并发 initializeMcp 共享这一 promise。 */
+  private mcpInitializationPromise?: Promise<void>;
   private residencyBlockingWorkCount = 0;
   private mcpInitialized = false;
   private mcpToolsRegistered = false;
@@ -184,7 +206,7 @@ export class AgentRuntime {
   private swarmPlanPort?: SwarmPlanPort;
   private modelCatalogPort?: ModelCatalogPort;
   private runtimeTaskRegistry: RuntimeTaskRegistry;
-  private branchGeneration = 0;
+  declare private readonly branchGeneration: number;
   private artifactStore?: ToolArtifactStorePort;
   private executionPort?: ExecutionPort;
   private fileSystemPort?: FileSystemPort;
@@ -194,9 +216,8 @@ export class AgentRuntime {
   private workingDirectory: string;
   private workspaceRoot: string;
   private sessionStore?: SessionStorePort;
-  private sessionPersisted = false;
-  private needsPlanModeExitReminder = false;
-  private runtimeRestartReminderEmitted = false;
+  declare private readonly sessionPersisted: boolean;
+  declare private readonly runtimeRestartReminderEmitted: boolean;
   private latestConversationMessageId?: MessageId;
   private latestAssistantMessageId?: MessageId;
   private latestAssistantTurnId?: TurnId;
@@ -216,12 +237,14 @@ export class AgentRuntime {
   private lastEmittedLocalDate?: string;
   private autoCompactConsecutiveFailures = 0;
   private runtimeCommandQueue: RuntimeCommandQueue;
-  private runtimeCommandDrainActive = false;
+  declare private readonly runtimeCommandDrainActive: boolean;
   private activeForegroundExecution?: ActiveForegroundExecutionState;
   /** sendQueuedNow 的 Core 调度权；只活在当前进程，匹配 runtime command 出队即消费。 */
   private foregroundPromotionLease?: ForegroundPromotionLeaseState;
   private activeTurn?: ActiveTurnSteeringState;
-  private activeTurnStartReservation?: ActiveTurnStartReservation;
+  declare private readonly activeTurnStartReservation:
+    | Readonly<ActiveTurnStartReservation>
+    | undefined;
   private pendingInputSequence = 0;
   /** sendQueuedNow reservation；只活在当前 CLI 进程，防 drain/多端重复提升。 */
   private pendingInputReservations = new Map<string, string>();
@@ -231,12 +254,8 @@ export class AgentRuntime {
   // 暂停队列恢复后由 CLI 按投影 FIFO 逐项提升。这个窗口内禁止 core 只看当前
   // activeTurn.pendingInputs 做行内 drain，否则新入队消息会越过仍留在投影中的旧暂停项。
   private queueExternalDrainActive = false;
-  private shuttingDown = false;
-  private backgroundTaskNotificationsSealed = false;
-  private backgroundTaskNotificationSealReason?: "subagent_terminal" | "subagent_cancelled";
-  private pendingModelChangeTimeline?: PendingModelChangeTimeline;
-  private sessionStartHookRan = false;
-  private sessionTitleGenerationAttempted = false;
+  declare private readonly shuttingDown: boolean;
+  declare private readonly pendingModelChangeTimeline?: PendingModelChangeTimeline;
   private agentTelemetry: RuntimeTelemetryFacade;
 
   constructor(sessionId: SessionId, config: AgentRuntimeConfig, deps: AgentRuntimeDeps) {
@@ -286,8 +305,6 @@ export class AgentRuntime {
     this.browserControlPort = deps.browserControlPort;
     this.modelRequestAdmission = deps.modelRequestAdmission;
     // 旧会话的选择缺失不能阻断历史恢复；不在这里制造默认模型。
-    this.sessionModelSelection =
-      config.modelSelection && cloneModelSelection(config.modelSelection);
     this.messageHistory = new MessageHistoryImpl();
     this.readFileState = new Map();
     this.runtimeCommandQueue = createRuntimeCommandQueue();
@@ -296,7 +313,13 @@ export class AgentRuntime {
     this.skillPort = deps.skillPort;
     this.mcpPort = deps.mcpPort;
     this.runtimeTaskRegistry = deps.runtimeTaskRegistry ?? new InMemoryRuntimeTaskRegistry();
-    this.runtimeTaskRegistry.setActiveBranchGeneration?.(this.branchGeneration);
+    initializeRuntimeTurnCoordination(runtime);
+    initializeRuntimeLifecycle(runtime);
+    initializeRuntimeNotificationSeal(runtime, () => this.config.taskType === "subagent_child");
+    initializeRuntimeModelSelection(runtime, config.modelSelection);
+    initializeRuntimeSessionPersistence(runtime);
+    initializeRuntimePermissionGrant(runtime);
+    initializeRuntimeModelChangeTimeline(runtime);
     this.artifactStore = deps.artifactStore;
     this.executionPort = deps.executionPort;
     this.fileSystemPort = deps.fileSystemPort;
@@ -312,7 +335,10 @@ export class AgentRuntime {
     // GUI「配置」解析子代理模型用的目录（与工具上下文拿的是同一个端口）。
     this.modelCatalogPort = deps.modelCatalogPort;
     this.registry = deps.toolRegistry ?? createToolRegistry();
-    this.workspaceRoot = this.workingDirectory;
+    // 工作区身份根：显式 config.workspaceRoot（子代理继承父锁定根）优先，
+    // 缺省回退 workingDirectory——cd 漂移只应改变相对路径解析，不改变工作区身份
+    // （specs/subagent-parent-inheritance.md R1；与 setWorkingDirectory 同一不变量）。
+    this.workspaceRoot = resolveRuntimeWorkspaceRoot(config);
     const tooling = initializeRuntimeTooling(runtime, deps, sessionId);
     this.hookRunner = tooling.hookRunner;
     this.workspaceHookAdmission = deps.workspaceHookAdmission;
@@ -346,7 +372,9 @@ export class AgentRuntime {
   beginShutdown(): void {
     // ExecutionPort.close() 会把后台 Bash 收口为 cancelled；若允许
     // teardown terminal event 再唤醒模型，并与随后关闭的 session store 竞态。
-    this.shuttingDown = true;
+    // shuttingDown 归 RuntimeLifecycleOwner（CLI-05 I4）：只能经 commitShutdown
+    // 单调提交一次，重复 beginShutdown 不会回退，也没有布尔 setter 可绕过。
+    getRuntimeLifecyclePort(this).commitShutdown();
     // 关闭单个 session 后进程仍存活，
     // 因此必须先终止该 runtime 的 Extraction，不能只在超时后放弃等待。
     this.memoryExtractionScheduler?.shutdown();
@@ -354,7 +382,8 @@ export class AgentRuntime {
 }
 
 export interface AgentRuntime {
-  lastPermissionGrantId?: string;
+  /** v4 bridge 只读投影；写面仅 RuntimePermissionGrantOwner 的 set 端口（CLI-05 I7）。 */
+  readonly lastPermissionGrantId?: string;
   beginShutdown(): void;
   closeBrowserSession(): Promise<void>;
   updateConfig(patch: RuntimeConfigUpdatePatch): void;
@@ -551,6 +580,10 @@ export interface AgentRuntime {
   recordDynamicWorkflowRunProgress(
     input: DynamicWorkflowRunProgressPayload & { traceContext?: TraceContext },
   ): Promise<void>;
+  /** swarm plan 提交投影的出回合追加（事件源在 bootstrap 的 swarm-plan-runtime）。 */
+  recordSwarmPlanProgress(
+    input: SwarmPlanProgressPayload & { traceContext?: TraceContext },
+  ): Promise<void>;
   /** 恢复的 workflow run 的追踪重臂（registry 登记 + started 事件 + waiter + 结算通知）。 */
   trackResumedDynamicWorkflowRun(input: {
     runId: string;
@@ -620,6 +653,11 @@ export interface AgentRuntime {
     reason: "subagent_cancelled";
     traceContext?: TraceContext;
   }): Promise<void>;
+  /** 级联收口在飞子代理（specs/subagent-nesting-budget.md R5-2）；返回停止数。 */
+  stopInFlightSubagentTasks(input: {
+    reason: "subagent_cancelled" | "subagent_terminal";
+    traceContext?: TraceContext;
+  }): Promise<number>;
   sealBackgroundTaskNotifications(input: {
     reason: "subagent_terminal" | "subagent_cancelled";
     traceContext?: TraceContext;

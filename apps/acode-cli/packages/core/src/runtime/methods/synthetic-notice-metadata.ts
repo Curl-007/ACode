@@ -69,6 +69,10 @@ function syntheticUserNoticeKind(source: SyntheticUserMessageSource): MessageSem
       return "system_reminder";
     case "goal-continuation":
       return "system_reminder";
+    case "peer_message":
+      // peer 镜像（specs/agent-peer-messaging.md R5）：与 subagent_message 同为子代理域的
+      // model-only runtime carrier——兄弟间消息落共同父会话的持久痕迹，冷恢复后语义等价。
+      return "subagent_notification";
     case "plugin_reference":
       return "system_reminder";
     case "rewind":

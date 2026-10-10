@@ -70,6 +70,7 @@ import {
 import type {
   CollaborationMode,
   DynamicWorkflowRunProgressPayload,
+  SwarmPlanProgressPayload,
   EventId,
   ForkCommitBundle,
   GoalStatus,
@@ -232,6 +233,47 @@ async function replayDynamicWorkflowRunEvents(
     sequenceNumber: 0,
     payload,
   }));
+}
+
+/**
+ * 冷物化时把本会话的 swarm plan 从 plan 行回放成一条 `SwarmPlanProgress` 会话事件
+ * （specs/swarm-observability-projection.md R5）。与 replayDynamicWorkflowRunEvents 同款
+ * 三条纪律：只对**直接命中** record 的会话补种；与内存事件的重叠交给 shared reducer 的
+ * 代际+版本去重吸收（回放事件前置、先归约）；回放失败只记日志、回空——观察面绝不让
+ * 冷开失败。无 plan（从未 seed / 已清除）返回空。
+ */
+async function replaySwarmPlanEvent(
+  context: ACodeProtocolAgentServerContext,
+  sessionId: string,
+  record: ACodeProtocolSessionRecord,
+): Promise<SessionEvent[]> {
+  if (context.sessions.get(sessionId) !== record) return [];
+  const readStatus = record.app.readSwarmPlanStatus;
+  if (!readStatus) return [];
+  let payload: SwarmPlanProgressPayload | undefined;
+  try {
+    payload = await readStatus.call(record.app);
+  } catch (error) {
+    context.logger?.warn("v4 hydrate swarm plan replay failed", {
+      error: error instanceof Error ? error.message : String(error),
+      event: "acode_protocol.v4.hydrate_swarm_plan_replay_failed",
+      module: "bootstrap.acode_protocol",
+      sessionId,
+    });
+    return [];
+  }
+  if (!payload) return [];
+  return [
+    {
+      id: "swarm-plan-replay-1" as EventId,
+      sessionId: sessionId as SessionId,
+      type: SessionEventType.SwarmPlanProgress,
+      timestamp: new Date(0),
+      traceId: HYDRATION_TRACE_ID as TraceId,
+      sequenceNumber: 0,
+      payload,
+    },
+  ];
 }
 
 async function resolveConversationBackingRecord(
@@ -1662,7 +1704,13 @@ export function createConversationV4Gateway(
       // 事件前置到内存事件之前——cold merge 已把该类型归为 memory-only 权威（保序进 supplements），
       // 投影经同一个 reducer 归约，`workflowRuns` 因此在重启前后一致。
       const replayed = await replayDynamicWorkflowRunEvents(context, sessionId, record, liveEvents);
-      const events = replayed.length === 0 ? liveEvents : [...replayed, ...liveEvents];
+      // swarm plan 的冷回放（specs/swarm-observability-projection.md R5）：从 plan 行合成
+      // 一条状态视图事件，同样前置——`swarmPlan` 键因此在重启前后一致（同一个 reducer）。
+      const replayedSwarm = await replaySwarmPlanEvent(context, sessionId, record);
+      const events =
+        replayed.length === 0 && replayedSwarm.length === 0
+          ? liveEvents
+          : [...replayed, ...replayedSwarm, ...liveEvents];
       const store = context.deps.sessionStore;
       const source = await loadPersistedConversationMaterialization({
         memoryEvents: events,

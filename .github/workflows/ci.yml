@@ -39,6 +39,10 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # 单一类型门禁入口 scripts/typecheck-gate.mjs：packages（tsc -b）先行，
+      # desktop-renderer 与 cli（turbo，含 @acode/cli 自身入口）在其后并行。
+      # 规则与验收见 docs/specs/cli-validation-gates.md 第 3-6 条；本 workflow
+      # 不再内联 renderer / CLI 单入口命令，避免出现跳过其中之一的旁路。
       - name: Typecheck
         run: pnpm typecheck
 
@@ -53,12 +57,37 @@ jobs:
       - name: Knip (files & dependencies gate)
         run: pnpm knip:gate
 
-      # 测试经 tsx 直接引 apps/acode-cli 各包源码，而这些源码按包名解析兄弟包的 dist/；
-      # 根 typecheck 的 tsc -b 只覆盖 packages/*，不构建 apps/acode-cli 的 dist。干净检出
-      # 没有 dist 时 Tests 会 ERR_MODULE_NOT_FOUND（@acode/contracts/dist/index.js，
-      # 2026-10-07 release/0.0.4 的 CI 实测）：本地因开发者构建过而永远绿，CI 必须先构建。
+      # 测试经 tsx 直接引 apps/acode-cli 各包源码，而这些源码按包名解析兄弟包的 dist/。
+      # 类型门禁的 cli 阶段经 turbo `dependsOn: ["^build"]` 已产出这些 dist，这里仍保留
+      # 显式构建步骤，使 Tests 的前置不依赖门禁内部阶段顺序（干净检出没有 dist 时 Tests
+      # 会 ERR_MODULE_NOT_FOUND，@acode/contracts/dist/index.js，2026-10-07 release/0.0.4
+      # 的 CI 实测）；turbo 缓存命中时该步骤几乎无成本。
       - name: Build CLI workspace packages
         run: npx turbo --skip-infer --cwd apps/acode-cli run build --filter='!@acode/cli'
 
+      # CLI 各包再经自己的就近配置执行 lint，确保独立 workspace 的交付门禁与根扫描同时有效。
+      - name: Lint CLI workspace
+        run: pnpm exec turbo --cwd apps/acode-cli run lint
+
       - name: Tests (all packages)
         run: pnpm test
+
+  remote-ssh:
+    name: Remote SSH release smoke
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Stage Linux server release
+        run: pnpm --filter @acode/server-cli stage --target linux-x64
+      - name: Verify remote SSH lifecycle
+        run: pnpm --filter @acode/server-cli verify:remote-ssh

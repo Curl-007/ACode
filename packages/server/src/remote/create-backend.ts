@@ -3,7 +3,19 @@ import { homedir } from "node:os";
 import type { RemoteTarget } from "@acode/shared";
 import type { IRemoteBackend } from "./backend.js";
 
-export async function createRemoteBackend(target: RemoteTarget): Promise<IRemoteBackend> {
+import type { SSHHostKeyChallengeHandler, SSHHostKeyTrust } from "./sshAuth.js";
+import { createKnownHostsTrust } from "./sshKnownHosts.js";
+
+export interface RemoteBackendOptions {
+  /** SSH host key trust is owned by the host/desktop layer and read-only here. */
+  sshHostKeyTrust?: SSHHostKeyTrust;
+  onHostKeyChallenge?: SSHHostKeyChallengeHandler;
+}
+
+export async function createRemoteBackend(
+  target: RemoteTarget,
+  options?: RemoteBackendOptions,
+): Promise<IRemoteBackend> {
   switch (target.kind) {
     case "ssh": {
       const { SSHBackend } = await import("./ssh-backend.js");
@@ -21,6 +33,9 @@ export async function createRemoteBackend(target: RemoteTarget): Promise<IRemote
         privateKeyPath: target.privateKeyPath,
         privateKeyPassphrase: target.privateKeyPassphrase,
         privateKey,
+        // Host/CLI 可显式注入受管信任；默认只读本机 known_hosts，缺失时继续 fail-closed。
+        hostKeyTrust: options?.sshHostKeyTrust ?? (await createKnownHostsTrust()),
+        onHostKeyChallenge: options?.onHostKeyChallenge,
       });
     }
     case "wsl": {

@@ -11,7 +11,7 @@ import { test } from "node:test";
  * 两道 ask 闸是**节点级拒绝**（`AgentBudgetExceeded`，脚本可 catch——ask 返回 PromiseLike，
  * 拒绝通道存在，按 world-read/artifact 内容成员先例）；只有脚本没 catch 让它冒到顶层时，
  * 才由既有结算路径把 run 落成 errored，且 failure_json 保住原码（harness 侧 script-error.ts
- * 按词汇表 guard 重建）。**绝不静默截断**：被拒的 ask 拿到结构化 rejection，不落行、不派发。
+ * 按词汇表 guard 重建）。**绝不静默截断**：被拒的 ask 拿到结构化 rejection，落拒绝行但不派发。
  * token 闸（R4）走另一条拒绝通道论证：累计发生在 ask 结算之后、不在任何调用的返回通道上，
  * 脚本无处 catch，所以是 run 级 failRun（`TokenBudgetExceeded`，report-caps 的 void 先例）。
  *
@@ -35,6 +35,7 @@ import { test } from "node:test";
 const { BUDGET_CAPS, InMemoryJournalStore, inputHash, validate, WorkflowEngine, WorkflowError } =
   await import("../packages/dynamic-workflow/src/index.ts");
 const { runWorkflowScript } = await import("../packages/dynamic-workflow-runtime/src/index.ts");
+const { executeWorldRead } = await import("../packages/cli-workflow/src/workflow-world-read.ts");
 
 /** 引擎级测试共用的站点规格（untyped：turnEnded 即以末轮文本结算）。 */
 const ASK_SPECS = new Map([
@@ -43,7 +44,8 @@ const ASK_SPECS = new Map([
 ]);
 
 /** 触发总量闸的显式 caps 一律用**小数字**（更严方向合法）；缺省方向的断言只经 BUDGET_CAPS。 */
-const askRows = (journal, runId) => journal.listNodes(runId).filter((n) => n.kind === "ask").length;
+const askRows = (journal, runId) =>
+  journal.listNodes(runId).filter((n) => n.kind === "ask" && n.actorSeq !== undefined).length;
 
 /** 事件轨（StoredEvent → 事件本体）。 */
 const eventsOf = (journal, runId) => journal.listEvents(runId).map((e) => e.event);
@@ -80,8 +82,10 @@ function makeLife(journal, options) {
     tokenBudget,
     resumedFrom,
     importedCache,
+    signal,
   } = options;
   const dispatched = [];
+  const worldSignals = [];
   const holder = {};
   const driver = {
     journal,
@@ -98,7 +102,8 @@ function makeLife(journal, options) {
     },
     respondToSubmit() {},
     cancelAsk() {},
-    executeWorldRead(op, args) {
+    executeWorldRead(op, args, runSignal) {
+      worldSignals.push(runSignal);
       return Promise.resolve({ op, args });
     },
   };
@@ -113,9 +118,10 @@ function makeLife(journal, options) {
     ...(tokenBudget === undefined ? {} : { tokenBudget }),
     ...(resumedFrom === undefined ? {} : { resumedFrom }),
     ...(importedCache === undefined ? {} : { importedCache }),
+    ...(signal === undefined ? {} : { signal }),
   });
   holder.engine = engine;
-  return { dispatched, engine };
+  return { dispatched, engine, worldSignals };
 }
 
 /** 断言一个 rejection 是结构化的预算拒绝（码 + details 三元组），不匹配 message 文本。 */
@@ -130,7 +136,7 @@ function assertBudgetRejection(error, limit, cap, actual) {
 // A 组：R2 总量闸（run 级连续计数）
 // ————————————————————————————————————————————————————————————————
 
-test("(A1) 总量闸：第 N+1 个 ask 被节点级拒绝，不留行不派发；catch 后 report/complete 照常（场景 1）", async () => {
+test("(A1) 总量闸：第 N+1 个 ask 落拒绝行但不派发；catch 后 report/complete 照常（场景 1）", async () => {
   const journal = new InMemoryJournalStore();
   const life = makeLife(journal, {
     runId: "run-a1",
@@ -144,8 +150,11 @@ test("(A1) 总量闸：第 N+1 个 ask 被节点级拒绝，不留行不派发�
     assertBudgetRejection(error, "total", 2, 2);
     return true;
   });
-  // 被拒的 ask：没有 journal 行（拒绝可由计数在 resume 时确定性复现，无需行）、没有派发。
-  assert.equal(journal.getNode("run-a1", "ask#1", 3), undefined);
+  // 拒绝是脚本控制流事实，必须落库；没有 actorSeq，故不计准入预算。
+  const refusal = journal.getNode("run-a1", "ask#1", 3);
+  assert.equal(refusal.status, "failed");
+  assert.equal(refusal.actorSeq, undefined);
+  assert.equal(refusal.error.code, "AgentBudgetExceeded");
   assert.equal(life.dispatched.length, 2);
   // 节点级拒绝**不结算 run**：脚本 catch 之后的收尾动作（report 已完成部分）仍然可用。
   life.engine.report("report#1", { note: "wound down after the budget fuse tripped" });
@@ -153,6 +162,131 @@ test("(A1) 总量闸：第 N+1 个 ask 被节点级拒绝，不留行不派发�
   assert.equal((await life.engine.settled).status, "completed");
   assert.equal(journal.listNodes("run-a1").filter((n) => n.kind === "report").length, 1);
   assert.equal(askRows(journal, "run-a1"), 2);
+});
+
+test("(A1b) 预算拒绝不消耗 actorSeq：下一次 admission 连续且可结算", async () => {
+  const journal = new InMemoryJournalStore();
+  const life = makeLife(journal, {
+    runId: "run-a1b",
+    caps: { maxConcurrency: 1, maxPendingAsks: 1 },
+    settle: "never",
+  });
+  const actor = life.engine.createActor("actor#1", "worker");
+
+  // 第一条占住唯一的 live backlog 槽；第二条明确被 pending 闸拒绝。
+  const first = life.engine.ask("ask#1", actor, "task 1");
+  await assert.rejects(life.engine.ask("ask#1", actor, "task 2"), (error) => {
+    assertBudgetRejection(error, "pending", 1, 1);
+    return true;
+  });
+
+  life.engine.askTurnEnded({ siteId: "ask#1", ordinal: 1 }, "first answer");
+  assert.equal(await first, "first answer");
+
+  // actorSeq=0 被第一条占用；预算拒绝没有制造 seq=1 空洞，下一条成功 admission 使用 seq=1。
+  const third = life.engine.ask("ask#1", actor, "task 3");
+  life.engine.askTurnEnded({ siteId: "ask#1", ordinal: 3 }, "third answer");
+  assert.equal(await third, "third answer");
+  const rows = journal
+    .listNodes("run-a1b")
+    .filter((node) => node.kind === "ask" && node.actorSeq !== undefined);
+  assert.deepEqual(
+    rows.map((node) => node.actorSeq),
+    [0, 1],
+  );
+  assert.equal(journal.getNode("run-a1b", "ask#1", 2).error.code, "AgentBudgetExceeded");
+  life.engine.complete("done");
+  await life.engine.settled;
+});
+
+test("(A1c) world-read 传递 engine lifecycle signal 并响应外部取消", async () => {
+  const journal = new InMemoryJournalStore();
+  const controller = new AbortController();
+  const life = makeLife(journal, { runId: "run-a1c", signal: controller.signal });
+  const result = await life.engine.worldRead("world#1", "git-status", []);
+  assert.deepEqual(result, { op: "git-status", args: [] });
+  assert.equal(life.worldSignals.length, 1);
+  assert.notEqual(life.worldSignals[0], controller.signal);
+  assert.equal(life.worldSignals[0].aborted, false);
+  controller.abort("user");
+  assert.equal(life.worldSignals[0].aborted, true);
+  life.engine.complete("done");
+  await life.engine.settled;
+});
+
+test("(A1d) world.run 将 signal 传给 ExecutionPort，abort 可终止执行 promise", async () => {
+  const controller = new AbortController();
+  let receivedSignal;
+  const executionPort = {
+    run(_request, options) {
+      receivedSignal = options?.signal;
+      return new Promise((_resolve, reject) => {
+        options?.signal?.addEventListener("abort", () => reject(new Error("child aborted")), {
+          once: true,
+        });
+      });
+    },
+  };
+  const running = executeWorldRead(
+    {
+      fileSystemPort: {},
+      executionPort,
+      cwd: process.cwd(),
+      declaredRunCommands: new Set(["node"]),
+      signal: controller.signal,
+    },
+    "run",
+    ["node", ["-e", "setTimeout(() => {}, 1000)"]],
+  );
+  controller.abort();
+  await assert.rejects(running, /child aborted/);
+  assert.equal(receivedSignal, controller.signal);
+});
+
+test("(A1e) files.* 与 git.* 也传递同一个 world lifecycle signal", async () => {
+  const controller = new AbortController();
+  const fileSignals = [];
+  const executionSignals = [];
+  const fileSystemPort = {
+    async searchFiles(_request, options) {
+      fileSignals.push(options?.signal);
+      return { files: [], truncated: false };
+    },
+    async readTextFile(_request, options) {
+      fileSignals.push(options?.signal);
+      return { content: "" };
+    },
+    async searchText(_request, options) {
+      fileSignals.push(options?.signal);
+      return { entries: [], truncated: false };
+    },
+  };
+  const executionPort = {
+    async run(_request, options) {
+      executionSignals.push(options?.signal);
+      return {
+        exitCode: 0,
+        status: "completed",
+        stderr: { bytes: 0, text: "", truncated: false },
+        stdout: { bytes: 0, text: "", truncated: false },
+      };
+    },
+  };
+  const deps = {
+    cwd: process.cwd(),
+    executionPort,
+    fileSystemPort,
+    signal: controller.signal,
+  };
+
+  await executeWorldRead(deps, "glob", ["**/*.ts"]);
+  await executeWorldRead(deps, "read", ["package.json"]);
+  await executeWorldRead(deps, "grep", ["needle"]);
+  await executeWorldRead(deps, "git-status", []);
+  assert.equal(fileSignals.length, 3);
+  assert.ok(fileSignals.every((signal) => signal === controller.signal));
+  assert.equal(executionSignals.length, 2, "git-status performs prefix and status reads");
+  assert.ok(executionSignals.every((signal) => signal === controller.signal));
 });
 
 test("(A2) resume 预算连续：计数按 journal 行数恢复，不是从零起（场景 3）", async () => {
@@ -198,14 +332,18 @@ test("(A3) 反复 resume 不刷新预算：连 resume 三次，每次都触发�
     await next.engine.ask("ask#1", actor, "task A");
     await next.engine.ask("ask#1", actor, "task B");
     await assert.rejects(
-      next.engine.ask("ask#1", actor, `task C of life ${life}`),
+      next.engine.ask("ask#1", actor, "task C"),
       (error) => {
         assertBudgetRejection(error, "total", 2, 2);
         return true;
       },
       `life ${life}: the fuse must stay closed`,
     );
-    assert.equal(askRows(journal, "run-a3"), 2, `life ${life}: rejected asks write no rows`);
+    assert.equal(
+      askRows(journal, "run-a3"),
+      2,
+      `life ${life}: rejected asks do not count as admitted`,
+    );
     next.engine.stop("interrupted", new WorkflowError("Interrupted", "test: host died"));
     await next.engine.settled;
   }
@@ -501,7 +639,7 @@ test("(H1) 端到端扇出：宽度超过积压闸 → 每个被拒元素拿到�
     assert.equal(settlement.status, "completed");
     const expectedCodes = Array(4).fill("AgentBudgetExceeded").join(",");
     assert.equal(settlement.artifact, `settled:6,rejected:4,codes:${expectedCodes}`);
-    // 只有被准入的 2 条落了行；4 条被拒的一个都没被静默塞进行程（无行、无派发、有结果）。
+    // 2 条被准入；4 条拒绝留痕但没有被静默塞进行程（不计预算、无派发、有结果）。
     assert.equal(askRows(journal, "run-h1"), 2);
     // catch 之后的 report 照常落 journal（dts.ts 对 report 存在意义的说明在此成立）。
     assert.equal(journal.listNodes("run-h1").filter((n) => n.kind === "report").length, 1);

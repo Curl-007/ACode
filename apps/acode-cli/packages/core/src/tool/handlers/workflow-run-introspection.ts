@@ -14,7 +14,7 @@
 //   3. **异步引导文案**。两个工具描述都要说清「本会话的 run 会自动送达携产物的通知」，
 //      文案分叉就等于给模型两套默认行为。
 
-import { escapeXml } from "../../runtime-task/notification.js";
+import { escapeXml } from "../../runtime-task/contract.js";
 import type { ToolHandlerFailure } from "../types.js";
 
 /**

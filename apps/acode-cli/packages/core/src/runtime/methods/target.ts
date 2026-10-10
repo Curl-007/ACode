@@ -19,10 +19,13 @@ import type {
   TargetContinuationRuntimeCommand,
   TargetContinuationRuntimeCommandOptions,
 } from "../command-queue.js";
-import { hasRunningBackgroundRuntimeTask } from "../../runtime-task/registry.js";
+import { hasRunningBackgroundRuntimeTask } from "../../runtime-task/contract.js";
 import { wrapSystemReminderForSource } from "../../system-reminder/source.js";
-import { verifyActiveTargetCompletionForContinuation } from "./target-completion-verification.js";
+import { verifyActiveTargetCompletionForContinuation } from "./target-completion-transition.js";
 import { enqueueCancellableRuntimeCommand } from "./runtime-command-submit.js";
+import { assertRuntimeModelBranchCurrent } from "./runtime-command-generation.js";
+import { targetContinuationCandidateForCommand } from "./target-continuation-candidate.js";
+export { targetContinuationCandidate } from "./target-continuation-candidate.js";
 
 export async function recordTargetChanged(
   this: AgentRuntimeInternal,
@@ -79,7 +82,9 @@ export async function executeTargetContinuationCommand(
   options: TargetContinuationRuntimeCommandOptions,
 ): Promise<TurnResult | null> {
   const traceContext = options.traceContext;
+  const branchGeneration = options.branchGeneration ?? this.branchGeneration;
   const target = await targetContinuationCandidateForCommand.call(this, traceContext);
+  assertRuntimeModelBranchCurrent(this, branchGeneration);
   if (!target) return null;
 
   if (
@@ -99,10 +104,12 @@ export async function executeTargetContinuationCommand(
   const verificationResult = options.verifyBeforeContinue
     ? await verifyActiveTargetCompletionForContinuation.call(this, {
         abortSignal: options.abortSignal,
+        branchGeneration,
         target,
         traceContext,
       })
     : null;
+  assertRuntimeModelBranchCurrent(this, branchGeneration);
   if (verificationResult?.verification.passed) {
     this.logger?.info("Goal continuation skipped after completion verifier passed", {
       ...traceContextToLogContext(traceContext),
@@ -126,6 +133,7 @@ export async function executeTargetContinuationCommand(
     return null;
   }
   const latestTarget = await this.readSessionTargetForContext(traceContext);
+  assertRuntimeModelBranchCurrent(this, branchGeneration);
   // 目标校验请求可能在用户点击 Stop 后才返回；队列会保持 stopRequested，
   // 但 verifier 拿到的是校验开始前的 active target。这里必须重读目标状态，避免用旧对象继续续跑。
   if (
@@ -176,28 +184,6 @@ export async function executeTargetContinuationCommand(
     targetId: continuationTarget.targetID,
     traceContext: continuationTrace,
   });
-}
-
-export async function targetContinuationCandidate(
-  this: AgentRuntimeInternal,
-  traceContext: TraceContext,
-): Promise<SessionGoal | null> {
-  if (this.hasActiveOrQueuedTurnWork()) return null;
-  return await targetContinuationCandidateForCommand.call(this, traceContext);
-}
-
-async function targetContinuationCandidateForCommand(
-  this: AgentRuntimeInternal,
-  traceContext: TraceContext,
-): Promise<SessionGoal | null> {
-  if (!this.sessionStore) return null;
-  if (this.getPlanEnabled()) return null;
-  if (this.activeTurn || this.activeTurnStartReservation) return null;
-  if (!this.sessionPersisted) return null;
-
-  const target = await this.readSessionTargetForContext(traceContext);
-  if (!target || target.status !== "active") return null;
-  return target;
 }
 
 async function hasRunningBackgroundTaskForGoalContinuation(

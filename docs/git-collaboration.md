@@ -49,9 +49,10 @@
 ## 发布与版本
 
 - 版本号以根 `package.json` 为准,遵循 semver。
-- 从 `dev` 切 `release/x.y.z`,在发布分支上完成全量验证(typecheck、lint、测试、桌面与 CLI 打包冒烟);验证期间只接受修复类合入。
-- 验证通过后 PR `release/x.y.z` → `main`,以 `merge --no-ff` 合入,保留发布 lineage。
-- 在 Actions 手动触发 [Release](../.github/workflows/release.yml) 工作流出包:勾选预发布得到 `x.y.z-audit.<日期>[.n]` 测试版;不勾选发布正式版 `vx.y.z`(干净 tag,GitHub Latest)。tag 只由工作流创建,不手工打 tag。
+- 从 `dev` 切 `release/x.y.z`,在发布分支上完成全量验证(typecheck、lint、测试、桌面与 CLI 打包冒烟);验证期间只接受修复类合入,修复先落 `release/x.y.z`,不直接提交 `main`。
+- **release 过了才合入 main 发布**(2026-10-08 修订):`release/x.y.z` 上全部门禁通过之前,禁止合入 `main`,也禁止触发正式出包。门禁全绿指:CI verify(typecheck/lint/架构/测试)、licenses-notices 等专项闸门在 release 分支的推送上全部 success;需要预演发布级验证时,以 `--ref release/x.y.z` 触发 Release 工作流并勾选 keep_draft(产物留 draft,不打正式 tag、不公开)。
+- 门禁全绿后 PR `release/x.y.z` → `main`,以 `merge --no-ff` 合入,保留发布 lineage。
+- 合入后在 Actions 手动触发 [Release](../.github/workflows/release.yml) 工作流出包:勾选预发布得到 `x.y.z-audit.<日期>[.n]` 测试版;不勾选发布正式版 `vx.y.z`(干净 tag,GitHub Latest)。tag 只由工作流创建,不手工打 tag。
 - 工作流保证所有产物先传 draft、全部成功后才公开 Release;Release 说明以"相对基线的变化"开头,中英双语安装说明居中,下载列表收尾。
 - 发布完成后将 `main` 回并 `dev`(或经发布分支回并),删除发布分支。
 - 紧急修复走 `hotfix/*`:从 `main` 切出,修复验证后 `--no-ff` 合入 `main` 并尽快发布,随后回并 `dev`。

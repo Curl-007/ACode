@@ -1,126 +1,4 @@
-import type {
-  ModelUsage,
-  SessionId,
-  SubagentTaskSnapshot,
-  TraceContext,
-  TurnId,
-} from "@acode/contracts";
-import type { AgentOutput } from "@acode/contracts";
-
-// local_dynamic_workflow 与 local_workflow 刻意分开：后者是 legacy `Workflow` 工具（不可取消），
-// 前者是 workflow run（经 DynamicWorkflowRunPort.cancel 可取消）。合成一个类型，取消分派就无法区分。
-export type RuntimeTaskType =
-  | "local_agent"
-  | "local_bash"
-  | "local_workflow"
-  | "local_dynamic_workflow"
-  | "monitor_mcp"
-  // K3 overnight run（specs/overnight-execution.md 接口节）：run 的唯一 UI 投影面，
-  // 与 local_* 工具任务区分——它不是工具派生的，生命周期绑定 supervisor（R1）。
-  | "overnight"
-  // K2 对话内 swarm plan（specs/swarm-task-graph.md R4）：plan 的 runtime-task 投影。
-  // 不并入 local_workflow（legacy Workflow 工具，不可取消）也不并入 local_dynamic_workflow
-  // （dwf run，端口取消）：本联合按「取消语义」分组（见顶部注释），plan 的停止面是
-  // PlanControl 工具（模型侧 retry/cancel），GUI TaskStop 分派对它应答 not supported
-  // 而不是误路由到任何 workflow 停止分支——overnight 新增成员的同款先例。
-  | "swarm_plan"
-  // K6 ambient cycle（specs/ambient-budget-scheduler.md R3）：AmbientRunner fork 的隐藏
-  // 后台周期任务。非工具派生（runner 驱动），生命周期绑定 runner cycle——overnight 的
-  // 同款先例（本批写面内允许的唯一联合扩展：一行成员 + 两处 exhaustive switch 标签）。
-  | "ambient";
-
-export interface RuntimeTaskUsageSnapshot {
-  durationMs?: number;
-  modelUsage?: ModelUsage;
-  toolUseCount?: number;
-  totalTokens?: number;
-}
-
-export interface RuntimeTaskPendingMessage {
-  id: string;
-  isMeta?: boolean;
-  message: string;
-  origin?: {
-    kind: "coordinator";
-    toolCallId?: string;
-  };
-  queuedAt: Date;
-  summary?: string;
-  traceContext?: TraceContext;
-}
-
-export interface RuntimeTaskMessageSink {
-  send(message: RuntimeTaskPendingMessage): Promise<"queued" | "steered">;
-}
-
-export interface RuntimeTaskSnapshot extends SubagentTaskSnapshot {
-  /** task 注册时所属 active conversation branch；用于迟到 completion fencing。 */
-  branchGeneration?: number;
-  exitCode?: number;
-  type: RuntimeTaskType;
-  isBackgrounded?: boolean;
-  messageSink?: RuntimeTaskMessageSink;
-  output?: AgentOutput;
-  parentSessionId?: SessionId;
-  pendingMessages?: RuntimeTaskPendingMessage[];
-  prompt?: string;
-  /**
-   * workflow run 产物的序列化文本。TaskOutput 的投影只读得到 registry 条目（dwf 从不写
-   * outputFile），所以产物必须在终态更新时就存到条目上。
-   */
-  resultText?: string;
-  /**
-   * 是谁请求停止这个任务（"user" = GUI / 后台面板，"model" = TaskStop）。dwf 停止分支在调
-   * 端口 cancel 之前写下它；终态通知稍后由 waiter 结算时读它。重臂（resume 新生命）随结算面复位。
-   */
-  stopInitiator?: "user" | "model";
-  taskType?: RuntimeTaskType;
-  traceContext?: TraceContext;
-  turnId?: TurnId;
-  usage?: RuntimeTaskUsageSnapshot;
-  /**
-   * K3 overnight run 的运行面摘要（specs/overnight-execution.md R2/R4/R5）：
-   * phase / 任务卡片计数 / 内存趋势。registry 只存储不解释——它是通用投影面，
-   * overnight 语义归 supervisor 所有；类型收窄为 string 以免 runtime-task 反向依赖
-   * overnight 模块的相位枚举（依赖方向：overnight → runtime-task，单向）。
-   */
-  overnight?: {
-    runId: string;
-    phase: string;
-    cardCount?: number;
-    memoryTrend?: {
-      samples: number;
-      firstRssBytes?: number;
-      lastRssBytes?: number;
-    };
-  };
-}
-
-export interface RuntimeTaskRegistry {
-  all(): Record<string, RuntimeTaskSnapshot>;
-  get(id: string): RuntimeTaskSnapshot | undefined;
-  drainMessages(id: string): RuntimeTaskPendingMessage[];
-  queueMessage(
-    id: string,
-    message: RuntimeTaskPendingMessage,
-  ): RuntimeTaskSnapshot | undefined;
-  register(task: RuntimeTaskSnapshot): void;
-  remove(id: string): void;
-  requestBackground(id: string): boolean;
-  setActiveBranchGeneration?(generation: number): void;
-  update(
-    id: string,
-    patcher: (task: RuntimeTaskSnapshot) => RuntimeTaskSnapshot,
-  ): RuntimeTaskSnapshot | undefined;
-  waitForBackgroundRequest(
-    id: string,
-    options?: { signal?: AbortSignal },
-  ): Promise<RuntimeTaskSnapshot | undefined>;
-  waitForTerminal(
-    id: string,
-    options?: { signal?: AbortSignal },
-  ): Promise<RuntimeTaskSnapshot | undefined>;
-}
+import type { RuntimeTaskPendingMessage, RuntimeTaskSnapshot } from "./types.js";
 
 interface RuntimeTaskWaiter {
   onAbort?: () => void;
@@ -138,7 +16,7 @@ const TERMINAL_STATUSES = new Set<RuntimeTaskSnapshot["status"]>([
   "lost",
 ]);
 
-export class InMemoryRuntimeTaskRegistry implements RuntimeTaskRegistry {
+export class InMemoryRuntimeTaskRegistry {
   private activeBranchGeneration = 0;
   private readonly backgroundWaiters = new Map<string, Set<RuntimeTaskWaiter>>();
   private readonly tasks = new Map<string, RuntimeTaskSnapshot>();
@@ -224,10 +102,7 @@ export class InMemoryRuntimeTaskRegistry implements RuntimeTaskRegistry {
     return Object.fromEntries(this.tasks);
   }
 
-  queueMessage(
-    id: string,
-    message: RuntimeTaskPendingMessage,
-  ): RuntimeTaskSnapshot | undefined {
+  queueMessage(id: string, message: RuntimeTaskPendingMessage): RuntimeTaskSnapshot | undefined {
     return this.update(id, (task) => ({
       ...task,
       pendingMessages: [...(task.pendingMessages ?? []), message],
@@ -301,10 +176,7 @@ export class InMemoryRuntimeTaskRegistry implements RuntimeTaskRegistry {
     }
   }
 
-  private resolveBackgroundWaiters(
-    id: string,
-    task: RuntimeTaskSnapshot | undefined,
-  ): void {
+  private resolveBackgroundWaiters(id: string, task: RuntimeTaskSnapshot | undefined): void {
     this.resolveWaiters(this.backgroundWaiters, id, task);
   }
 
@@ -344,7 +216,9 @@ export function isTerminalRuntimeTask(task: Pick<RuntimeTaskSnapshot, "status">)
   return TERMINAL_STATUSES.has(task.status);
 }
 
-export function hasRunningBackgroundRuntimeTask(registry: RuntimeTaskRegistry): boolean {
+export function hasRunningBackgroundRuntimeTask(registry: {
+  all(): Record<string, RuntimeTaskSnapshot>;
+}): boolean {
   return Object.values(registry.all()).some(
     (task) => task.isBackgrounded === true && task.status === "running",
   );

@@ -18,6 +18,7 @@ import {
   generateTitleCandidate,
   normalizeTitleInput,
 } from "./title-generation-sidecar.js";
+import { getRuntimeLifecyclePort } from "../runtime-lifecycle.js";
 
 const GENERATED_TITLE_EXPECTED_SOURCES: readonly SessionTitleSource[] = [
   "default",
@@ -96,7 +97,9 @@ function maybeStartSessionTitleGenerationFromSeed(
     // 需要刷新 runtime headers 的 provider 先让主 turn 发出去，再异步补标题。
     return false;
   }
-  this.sessionTitleGenerationAttempted = true;
+  // 一次性旗标由 lifecycle owner 评估即消费；methods 不能直接读写布尔状态，
+  // 这样重入或后续重构不会把已消费的标题生成机会回写成 false。
+  if (!getRuntimeLifecyclePort(this).consumeSessionTitleGenerationAttempted()) return false;
   // 标题任务会越过当前 Turn 的生命周期。入队时冻结 causation，避免后续 await、
   // 调度器或实现重构使后台 Trace 静默丢失指向触发 Span 的 Link。
   const causation = this.agentTelemetry.captureCausation();
@@ -140,7 +143,6 @@ function shouldAttemptSessionTitleGeneration(
   input: string,
   options: { bypassShortInputGuard?: boolean } = {},
 ): boolean {
-  if (runtime.sessionTitleGenerationAttempted) return false;
   if (runtime.config.titleGeneration?.enabled === false) return false;
   if (!runtime.config.titleGeneration) return false;
   if (!runtime.sessionStore) return false;

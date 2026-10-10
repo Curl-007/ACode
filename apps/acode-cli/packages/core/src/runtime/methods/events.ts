@@ -22,6 +22,7 @@ import type {
 } from "../deps.js";
 import { titleFromInput, slugify, projectIdFromDirectory } from "../helpers/index.js";
 import type { AgentRuntimeInternal } from "../internal.js";
+import { getRuntimeSessionPersistencePort } from "../runtime-session-persistence.js";
 import { buildPersistedConversationInputIntent } from "./input-intent-persistence.js";
 import { recordToolUsageFromEvent } from "./usage-observability.js";
 import { persistSessionShellEnvironmentSnapshot } from "./session-shell-environment.js";
@@ -613,7 +614,7 @@ export async function ensureSessionPersisted(
     await this.sessionStore.saveSessionEntry?.(
       buildExecutionStateEntry(this.sessionId, readRuntimeExecutionState(this)),
     );
-    this.sessionPersisted = true;
+    getRuntimeSessionPersistencePort(this).markPersisted();
     this.logger?.debug("Session persisted", {
       ...traceContextToLogContext(traceContext),
       event: "session.persisted",

@@ -79,4 +79,86 @@ export interface IFileService {
   writeWorkspaceFileSearchIgnore(params: { rootPath: string; content: string }): Promise<void>;
 }
 
-export const IFileService = createServiceDescriptor<IFileService>(ServiceChannels.File);
+export const IFileService = createServiceDescriptor<IFileService>(ServiceChannels.File, {
+  allowedMethods: [
+    "searchWorkspaceFiles",
+    "readdir",
+    "stat",
+    "checkFilesExist",
+    "resolvePath",
+    "ensureConversationWorkspace",
+    "createDefaultWorkspace",
+    "createScratchWorkspace",
+    "readTextFile",
+    "readMediaPreview",
+    "readFileRange",
+    "readBinaryPreview",
+    "listWorkspaceFilesLength",
+    "listWorkspaceFilesRange",
+    "readWorkspaceFileSearchIgnore",
+    "applyWorkspaceFileSearchIgnoreTransform",
+    "writeWorkspaceFileSearchIgnore",
+  ],
+  argumentValidators: {
+    searchWorkspaceFiles: (args) => requireObjectFields(args, ["rootPath", "query"]),
+    readdir: (args) => requireObjectFields(args, ["path"]),
+    stat: (args) => requireObjectFields(args, ["path"]),
+    checkFilesExist: (args) => {
+      const value = requireObjectFields(args, ["paths"]);
+      const paths = value.paths;
+      if (
+        !Array.isArray(paths) ||
+        !paths.every((path) => typeof path === "string")
+      ) {
+        throw new Error("expected path list");
+      }
+    },
+    resolvePath: (args) => requireObjectFields(args, ["path"]),
+    ensureConversationWorkspace: (args) => requireNoArguments(args),
+    createDefaultWorkspace: (args) => requireNoArguments(args),
+    createScratchWorkspace: (args) => requireObjectFields(args, ["name"]),
+    readTextFile: (args) => requireObjectFields(args, ["path"]),
+    readMediaPreview: (args) => requireObjectFields(args, ["path"]),
+    readFileRange: (args) => requireObjectFields(args, ["path", "offset", "length"]),
+    readBinaryPreview: (args) => requireObjectFields(args, ["path"]),
+    listWorkspaceFilesLength: (args) => requireObjectFields(args, ["rootPath"]),
+    listWorkspaceFilesRange: (args) => requireObjectFields(args, ["rootPath", "offset", "length"]),
+    readWorkspaceFileSearchIgnore: (args) => requireObjectFields(args, ["rootPath"]),
+    applyWorkspaceFileSearchIgnoreTransform: (args) =>
+      requireObjectFields(args, ["rootPath", "transform"]),
+    writeWorkspaceFileSearchIgnore: (args) =>
+      requireObjectFields(args, ["rootPath", "content"]),
+  },
+});
+
+function requireNoArguments(args: readonly unknown[]): void {
+  if (args.length !== 0) throw new Error("expected no arguments");
+}
+
+function requireObjectFields(
+  args: readonly unknown[],
+  fields: readonly string[],
+): Record<string, unknown> {
+  if (args.length !== 1 || !args[0] || typeof args[0] !== "object" || Array.isArray(args[0])) {
+    throw new Error("expected parameter object");
+  }
+  const value = args[0] as Record<string, unknown>;
+  for (const field of fields) {
+    if (!(field in value)) throw new Error(`missing ${field}`);
+    const fieldValue = value[field];
+    if (fieldValue === undefined || fieldValue === null) throw new Error(`invalid ${field}`);
+    if (
+      ["path", "rootPath", "query", "name", "transform", "content"].includes(field) &&
+      typeof fieldValue !== "string"
+    ) {
+      throw new Error(`invalid ${field}`);
+    }
+    if (
+      ["offset", "length"].includes(field) &&
+      (typeof fieldValue !== "number" || !Number.isSafeInteger(fieldValue) || fieldValue < 0)
+    ) {
+      throw new Error(`invalid ${field}`);
+    }
+  }
+  return value;
+}

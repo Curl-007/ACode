@@ -420,6 +420,28 @@ export interface RemoteConnectionRuntimeLog {
   timestamp: string;
 }
 
+export type SSHHostKeyChallengeStatus = "unknown" | "changed";
+export type SSHHostKeyDecisionAction = "approve" | "replace" | "reject";
+
+/** Host → Main → Renderer：认证前等待用户确认的 SSH 主机密钥候选。 */
+export interface RemoteSSHHostKeyChallenge {
+  requestId: string;
+  challengeId: string;
+  host: string;
+  port: number;
+  status: SSHHostKeyChallengeStatus;
+  candidateFingerprint: string;
+  expectedFingerprints: string[];
+}
+
+/** Renderer → Main → Host：绑定到单次 challenge 的 SSH 主机密钥决策。 */
+export interface RespondSSHHostKeyChallengeRequest {
+  requestId: string;
+  challengeId: string;
+  candidateFingerprint: string;
+  action: SSHHostKeyDecisionAction;
+}
+
 export interface RemoteSessionClosedEvent {
   sessionId: string;
   reason: "host-exit";
@@ -561,6 +583,12 @@ export interface IPlatformService {
 
   /** 订阅当前窗口内远程连接过程日志，返回 disposer */
   onRemoteConnectionLog(handler: (entry: RemoteConnectionRuntimeLog) => void): () => void;
+
+  /** 订阅认证前 SSH 主机密钥挑战，返回 disposer */
+  onRemoteSSHHostKeyChallenge?(handler: (challenge: RemoteSSHHostKeyChallenge) => void): () => void;
+
+  /** 回传绑定到单次 challenge 的 SSH 主机密钥决策 */
+  respondSSHHostKeyChallenge?(payload: RespondSSHHostKeyChallengeRequest): Promise<void>;
 
   /** 订阅远程 workspace session 关闭事件，返回 disposer */
   onRemoteSessionClosed(handler: (event: RemoteSessionClosedEvent) => void): () => void;

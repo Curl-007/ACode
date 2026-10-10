@@ -1,30 +1,23 @@
-// 脚本工作流的取消语义与用量计数的并发正确性。
+// 脚本工作流的取消词汇与 runtime 收尾纪律。
 // 依据：apps/acode-cli/specs/script-workflow-revival.md R12（实时进度投影）。
 //
-// 这是**源码级**断言，不是行为断言，理由与隔壁 script-workflow-agent-cap.test.mjs 逐字同一条：
-// 要行为级复现需要桩掉 ScriptWorkflowStorePort 的 11 个方法 + AgentRuntime facade，并真的
-// spawn 子进程跑一段调用 agent() 的脚本。投影那一半（事件 → dwf 信封 → reducer）是纯函数，
-// 已经在 script-workflow-progress-projection.test.mjs 里做了行为级验证；这里只钉 runtime
-// 侧那两个「结构性不变量」——发哪个事件名、写哪个状态词、以及那笔读改写有没有被串行化。
+// 用量幂等、并发累计、失败和取消结算改由 script-workflow-usage-settlement.test.mjs
+// 使用真实 runtime、脚本子进程与 SQLite 验证；这里不再把私有方法名当作正确性的依据。
+// 保留的源码约束是取消词汇与实例 Map 收尾，投影行为另见 progress-projection 测试。
 //
-// 被钉住的两个缺陷：
+// 取消语义的原始缺陷：
 //
-// 1) 用户取消被记成脚本故障。catch 块原先无条件写 `status: "failed"` 并发 `workflow_failed`，
+// 用户取消被记成脚本故障。catch 块原先无条件写 `status: "failed"` 并发 `workflow_failed`，
 //    而适配器把它翻成 `run-settled { status: "errored" }`。后果是一次 TaskStop / Esc 在每一条
 //    读面上都显示成「脚本崩了」（TUI 是 danger 红的错误卡，桌面侧栏是错误面板），而词表里
 //    本来就有 `cancelled`（SCRIPT_WORKFLOW_RUN_STATUSES），tool port 的 workflowTaskStatus 与
 //    终态判定也早就认它——只是从来没被写过。dwf 侧对同一件事走 settleStopped(state, "user")。
-//
-// 2) `addRunStats` 是「读 run → 加 delta → 写回」三步、中间夹两个 await，而 `parallel()` /
-//    `pipeline()` 下多个 agent 会并发走到这里：两次调用读到同一个旧值，后写的把先写的增量
-//    整个覆盖掉，budgetSpent 与 stats 双双少计。少计本身已经是错，而这个总量现在还要经
-//    workflow_usage 投影到卡片上，用户于是会看见 token 数**往回跳**。
 
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-const RUNTIME = "../packages/bootstrap/src/app/script-workflow-runtime.ts";
+const RUNTIME = "../packages/cli-workflow/src/script-workflow-runtime.ts";
 const CONTRACTS = "../packages/contracts/src/workflow/script.ts";
 
 function readSource(relativePath) {
@@ -76,34 +69,6 @@ test("取消不记 failure：abort reason 恒为「被取消」，记下来只�
     1,
     "failure 只该出现在那一个三元里",
   );
-});
-
-test("用量计数按 run 串行化，不再是一笔裸的读改写", () => {
-  const code = codeLines(readSource(RUNTIME));
-  assert.match(code, /private readonly statsWrites = new Map<string, Promise<void>>\(\);/);
-  // 真正落库的那步必须与公开入口分开：入口只负责排队，否则串行化无从谈起。
-  assert.match(code, /private addRunStats\(runId: string, delta: ScriptWorkflowRunStats\): Promise<void> \{/);
-  assert.match(code, /private async writeRunStats\(runId: string, delta: ScriptWorkflowRunStats\): Promise<void> \{/);
-  assert.match(
-    code,
-    /const next = previous\.then\(\(\) => this\.writeRunStats\(runId, delta\)\);/,
-    "后到的写必须挂在前一笔之后",
-  );
-  // 链上存的是吞掉失败的版本：一次写失败不该把这条 run 后续所有的写都堵死。
-  assert.match(code, /this\.statsWrites\.set\(\s*runId,\s*next\.then\(/);
-});
-
-test("用量事件发的是累计总量（reducer 直接覆写，发增量会让读数翻倍）", () => {
-  const code = codeLines(readSource(RUNTIME));
-  assert.match(code, /const spentTokens = \(run\?\.budgetSpent \?\? 0\) \+ delta\.tokens\.total;/);
-  assert.match(code, /await this\.appendEvent\(runId, "workflow_usage", \{ spentTokens \}\);/);
-  // 先落库再投影：这条纪律与 appendEvent 自己的注释同源，顺序反了就会出现
-  // 「投影里有的数字还没 durable」。按单行标记定位，不锁缩进。
-  const writeAt = code.indexOf("budgetSpent: spentTokens,");
-  const emitAt = code.indexOf('await this.appendEvent(runId, "workflow_usage"');
-  assert.ok(writeAt > -1, "落库那一步必须在场");
-  assert.ok(emitAt > -1, "投影那一步必须在场");
-  assert.ok(writeAt < emitAt, "落库必须排在投影之前");
 });
 
 test("两张按 run 建键的 Map 都在结算点清项（runtime 实例活整个会话）", () => {

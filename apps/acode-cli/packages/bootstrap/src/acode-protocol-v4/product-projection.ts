@@ -17,6 +17,7 @@ import type {
   CompactLifecyclePayload,
   AssistantFeedbackUpdatedPayload,
   DynamicWorkflowRunProgressPayload,
+  SwarmPlanProgressPayload,
   HookRunLifecyclePayload,
   ModelCompletePayload,
   ModelNetworkStatusPayload,
@@ -105,6 +106,7 @@ import type {
   UserInputQuestionPayload,
   QueueItem,
   MutableConversationSnapshotAccumulator,
+  SwarmPlanProgressEnvelope,
   WorkflowRunProgressEnvelope,
 } from "@acode/shared/acode-protocol-v4";
 import {
@@ -118,6 +120,7 @@ import {
   applyConversationDeltasMutable,
   createMutableConversationSnapshotAccumulator,
   diffWorkflowRunsState,
+  reduceSwarmPlanState,
   reduceWorkflowRunsState,
   workspaceHookReviewRequestPayloadSchema,
 } from "@acode/shared/acode-protocol-v4";
@@ -1404,6 +1407,8 @@ export class ProductProjection {
         return this.onBackgroundTaskLifecycle(event);
       case SessionEventType.DynamicWorkflowRunProgress:
         return this.onDynamicWorkflowRunProgress(event);
+      case SessionEventType.SwarmPlanProgress:
+        return this.onSwarmPlanProgress(event);
       case SessionEventType.SubagentSpawned:
         return this.onSubagentSpawned(event);
       case SessionEventType.SubagentMessage:
@@ -3899,7 +3904,12 @@ export class ProductProjection {
     for (const interaction of pendingInteractions) {
       if (!("origin" in interaction.payload)) continue;
       const origin = interaction.payload.origin;
-      if (origin?.kind === "subagent") waitingChildIds.add(origin.childSessionId);
+      if (origin?.kind !== "subagent") continue;
+      waitingChildIds.add(origin.childSessionId);
+      // 谱系（specs/subagent-interaction-origin-lineage.md R5）：depth≥2 时发起链整体
+      // 在等同一次授权——祖先层会话也进 waiting，否则根视图只见最内层 childSessionId
+      // （不在根的行集合里），真正被阻塞的直接子行漏标 waiting。
+      for (const ancestor of origin.ancestors ?? []) waitingChildIds.add(ancestor.sessionId);
     }
     const blockedChildIds = new Set(
       backgroundWorks.flatMap((work) =>
@@ -4291,6 +4301,23 @@ export class ProductProjection {
     // `applyAll(prior, diff(prior, next))` 与 next **逐字节**一致是增量协议的契约，
     // 所以 applyEventInternal 把这串 delta 应用回去之后，this.snapshot.workflowRuns 仍是 next。
     return diffWorkflowRunsState(prior, workflowRuns);
+  }
+
+  // ── swarm plan 实时投影：SwarmPlanProgress → swarmPlan 状态键 ──
+  // 一次 plan 提交一条事件，载荷是有界状态视图全量：归约是「代际 + 版本去重后的整体
+  // 替换」，delta 是 state.updated 的键级整体替换（backgroundWorks 同款先例；尺寸账与
+  // 为什么不做节点级 diff 见 specs/swarm-observability-projection.md「未做与取舍」#2）。
+  // 归约本体在 @acode/shared 的 reduceSwarmPlanState（冷回放/P2b 的 TUI、GUI 共用一份）。
+  private onSwarmPlanProgress(event: SessionEvent): ConversationDelta[] {
+    // 先转 contracts 的有界 payload、再赋给 shared 的结构化入参：这行赋值就是「两边形状
+    // 不漂移」的编译期闸（shared 不得反向依赖 contracts，dwf 同款纪律）。
+    const envelope: SwarmPlanProgressEnvelope = event.payload as SwarmPlanProgressPayload;
+    const prior = this.snapshot.swarmPlan;
+    const next = reduceSwarmPlanState(prior, envelope);
+    // undefined = 语义无变化（无效载荷或乱序/重复帧被版本去重吸收）：不产 delta，
+    // revision 不抬。null = plan 清除，键置 null（面板消失）。
+    if (next === undefined) return [];
+    return [{ op: "state.updated", patch: { swarmPlan: next } }];
   }
 
   private removeQueueItems(ids: readonly string[]): ConversationDelta[] {

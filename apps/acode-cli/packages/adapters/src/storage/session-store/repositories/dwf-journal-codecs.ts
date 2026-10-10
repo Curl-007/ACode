@@ -176,6 +176,8 @@ export interface DwfRunRow {
   failure_json: string | null;
   id: string;
   name: string | null;
+  owner_generation?: number | null;
+  owner_token?: string | null;
   parent_session_id: string | null;
   result_json: string | null;
   /** amend-resume 的 lineage 指针（较新迁移添加）。窄投影也 select 它：见 {@link DwfRunMetadataRow}。 */
@@ -350,6 +352,10 @@ function decodeRunMetadata(row: DwfRunMetadataRow): Omit<RunRecord, "failure" | 
   // 早期落库的行没有这一列的值（NULL 即缺席）：解成**缺席的键**而不是 `{}`，让「没有实参」
   // 与「实参是空袋」在记录层面保持可分辨；沙箱侧统一把缺席读作 `{}`（不变式 7）。
   if (row.args_json !== null) record.args = JSON.parse(row.args_json) as Record<string, unknown>;
+  if (row.owner_token) record.ownerToken = row.owner_token;
+  if (row.owner_generation !== null && row.owner_generation !== undefined) {
+    record.ownerGeneration = row.owner_generation;
+  }
   return record;
 }
 

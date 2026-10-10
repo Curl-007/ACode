@@ -965,6 +965,26 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
     id: "0027_workflow_run_tool_call_id",
     sql: WORKFLOW_RUN_TOOL_CALL_ID_MIGRATION_SQL,
   },
+  {
+    // 脚本工作流 resume owner（specs/script-workflow-revival.md R18）。存量行保持可空，
+    // resume gate 会按 legacy 兼容规则处理并对远程身份缺失 fail closed。
+    appVersion: "0.16.9",
+    id: "0028_workflow_run_owner",
+    sql: WORKFLOW_RUN_OWNER_MIGRATION_SQL,
+  },
+  {
+    appVersion: "0.16.9",
+    id: "0029_workflow_run_owner_lease",
+    sql: WORKFLOW_RUN_OWNER_LEASE_MIGRATION_SQL,
+  },
+  {
+    // 编排方案 Phase 1（specs/subagent-topology-persistence.md R7）：agent 拓扑边表，
+    // 崩溃后子代理目录可从边表恢复真实终态。回滚 = 旧代码不读不写，
+    // 见 migrations/0030-subagent-edge.ts 文件头。
+    appVersion: "0.16.9",
+    id: "0030_subagent_edge",
+    sql: SUBAGENT_EDGE_MIGRATION_SQL,
+  },
 ];
 import { OFFICIAL_GLM_SELECTION_MIGRATION_SQL } from "./migrations/0021-official-glm-selection.js";
 import { BACKFILLED_SESSION_REASONING_MIGRATION_SQL } from "./migrations/0022-backfilled-session-reasoning.js";
@@ -973,3 +993,6 @@ import { TODO_CONFIDENCE_JSON_MIGRATION_SQL } from "./migrations/0024-todo-confi
 import { SESSION_MESSAGE_FTS_MIGRATION_SQL } from "./migrations/0025-session-message-fts.js";
 import { SWARM_PLAN_ROW_MIGRATION_SQL } from "./migrations/0026-swarm-plan-row.js";
 import { WORKFLOW_RUN_TOOL_CALL_ID_MIGRATION_SQL } from "./migrations/0027-workflow-run-tool-call-id.js";
+import { WORKFLOW_RUN_OWNER_MIGRATION_SQL } from "./migrations/0028-workflow-run-owner.js";
+import { WORKFLOW_RUN_OWNER_LEASE_MIGRATION_SQL } from "./migrations/0029-workflow-run-owner-lease.js";
+import { SUBAGENT_EDGE_MIGRATION_SQL } from "./migrations/0030-subagent-edge.js";

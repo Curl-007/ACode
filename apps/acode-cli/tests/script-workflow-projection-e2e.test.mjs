@@ -23,10 +23,10 @@ import { join } from "node:path";
 import test from "node:test";
 
 const { runScriptWorkflowChild } = await import(
-  "../packages/bootstrap/src/app/script-workflow-process.ts"
+  "../packages/cli-workflow/src/script-workflow-process.ts"
 );
 const { createScriptWorkflowProgressAdapter } = await import(
-  "../packages/bootstrap/src/app/script-workflow-progress-adapter.ts"
+  "../packages/cli-workflow/src/script-workflow-progress-adapter.ts"
 );
 const { reduceWorkflowRunsState } = await import(
   "../../../packages/shared/src/acode-protocol-v4/workflow-runs-reducer.ts"

@@ -9,7 +9,7 @@
 // （纯内存 runtime 状态面），不伪装成功。
 
 import type { SessionId, SwarmTaskPlan } from "@acode/contracts";
-import type { RuntimeTaskRegistry, RuntimeTaskSnapshot } from "../runtime-task/registry.js";
+import type { RuntimeTaskRegistry, RuntimeTaskSnapshot } from "../runtime-task/contract.js";
 import type { SwarmPlanPersistence } from "./plan-store.js";
 import { buildSwarmPlanStatus } from "./projection.js";
 

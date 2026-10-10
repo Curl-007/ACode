@@ -2,9 +2,9 @@
 // 包含 `files.*`、`git.*` 和 `world.run` 调用的清单行与正文，
 // 由 dynamic-workflow-run.port.ts 统一再导出，调用方通过 `@acode/contracts` 使用。
 
-// 结构化失败的形状留在主文件上（本组的两个字段引用它），所以这里反向 import 一个类型：
-// 纯类型、无运行时边，两个文件各自只描述自己那一组。
-import type { DynamicWorkflowRunError } from "./dynamic-workflow-run.port.js";
+// 结构化失败的形状住在断环叶子文件（specs/architecture-contracts-module.md）：本组的
+// 两个字段引用它，主文件又 `export type * from` 本文件，直接从主文件 import 即成环。
+import type { DynamicWorkflowRunError } from "./dynamic-workflow-run-error.port.js";
 
 /** 工作区节点的种类：journal `dwf_node.kind` 的两个 world 值。 */
 export type DynamicWorkflowRunWorkspaceNodeKind = "world-read" | "world-run";

@@ -15,6 +15,7 @@ import { toolCallDisplaySchema } from "./toolDisplay.js";
 
 import { workspaceHookReviewRequestPayloadSchema } from "./workspace-hook-review.js";
 import { workflowRunsStateSchema } from "./workflow-runs.js";
+import { swarmPlanStateSchema } from "./swarm-plan.js";
 import { sessionConfigStateSchema, sessionModelTransitionSchema } from "./session-config.js";
 export {
   sessionConfigStateSchema,
@@ -485,6 +486,10 @@ export const conversationSnapshotSchema = z.object({
   // 冷快照必须携带 workflowRuns：漏这一处，刷新/重连后正在跑的 run 会静默消失
   // （详情页因此空白，而 run 本身仍在飞）。optional 同样只服务旧快照 wire 兼容。
   workflowRuns: workflowRunsStateSchema.optional(),
+  // swarm plan 实时投影（specs/swarm-observability-projection.md R1）：null = 当前无 plan
+  // （清除后/从未 seed）。冷快照同样必须携带——漏了这一处，重启后正在跑的图会静默消失。
+  // optional 只服务旧快照 wire 兼容；新 CLI 恒携带（有 plan 给状态、无 plan 给 null）。
+  swarmPlan: swarmPlanStateSchema.nullable().optional(),
   goal: goalStateSchema.nullable(),
   plan: planStateSchema.nullable(),
   // 软门禁(Soft Gate)：additive 字段,必须带 default(null)。

@@ -60,7 +60,7 @@ import type {
   PersistedReadFileStateTool,
 } from "./read-file-state-metadata.js";
 import type { PackageScriptSource } from "./handlers/bash-target-risk/types.js";
-import type { RuntimeTaskRegistry } from "../runtime-task/registry.js";
+import type { RuntimeTaskRegistry } from "../runtime-task/contract.js";
 
 // -----------------------------------------------
 // Tool Metadata
@@ -160,6 +160,8 @@ export interface ToolExecutionContext {
   subagentModelOverride?: SubagentRunOptions["modelOverride"];
   skillPort?: SkillPort;
   subagentPort?: SubagentPort;
+  /** peer 窄面（specs/agent-peer-messaging.md R1/R2）：flag 开启时注入 child runtime。 */
+  peerMessagingPort?: import("../subagent/peer-messaging.js").PeerMessagingPort;
   coordinatorResponsePort?: CoordinatorResponsePort;
   /** 工作流 actor 提交终态结果并等待引擎裁决的端口；仅在 workflow actor 会话注入。 */
   workflowSubmitPort?: WorkflowSubmitPort;
@@ -358,8 +360,9 @@ export interface ToolEntry extends ToolContractDeclaration {
     input: unknown,
     context: ToolRuntimePermissionCapabilityContext,
   ) => Promise<
-    Partial<Pick<ToolRuntimePermissionCapabilityContext, "packageScripts" | "scannedDirectories">>
-  | undefined>;
+    | Partial<Pick<ToolRuntimePermissionCapabilityContext, "packageScripts" | "scannedDirectories">>
+    | undefined
+  >;
   resolvePermissionRulePolicy?: (
     input: unknown,
     context?: ToolRuntimePermissionCapabilityContext,

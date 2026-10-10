@@ -11,6 +11,7 @@ import {
   MapIcon,
   MessageSquareTextIcon,
   ListTreeIcon,
+  NetworkIcon,
   NotepadTextIcon,
   PackageIcon,
   PaletteIcon,
@@ -304,6 +305,12 @@ export function SidePaneTabIcon({ tab }: { tab: WorkspaceSidePaneTab }) {
     return <ListTreeIcon className="size-3.5" />;
   }
 
+  // 编排总览是「三键合流的一眼活动图」：与两个目录页（ListTree = 一页名单）用网络
+  // 字形区分——它们的语义不同（总览读活投影，目录背分页历史）。
+  if (tab.type === "orchestration") {
+    return <NetworkIcon className="size-3.5" />;
+  }
+
   if (tab.type === "browser") {
     return <BrowserTabFavicon faviconUrl={tab.faviconUrl} />;
   }
@@ -509,6 +516,10 @@ export function getSidePaneTabTitle(
 
   if (tab.type === "subagent-directory") {
     return formatMessage({ id: "sidePane.subagentDirectory" });
+  }
+
+  if (tab.type === "orchestration") {
+    return formatMessage({ id: "sidePane.orchestration" });
   }
 
   if (tab.type === "browser") {

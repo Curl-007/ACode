@@ -1,5 +1,5 @@
 import type { ModelUsage } from "@acode/contracts";
-import { formatTaskNotification } from "../runtime-task/notification.js";
+import { formatTaskNotification } from "../runtime-task/contract.js";
 
 type LocalAgentTaskNotificationStatus = "completed" | "failed" | "stopped";
 

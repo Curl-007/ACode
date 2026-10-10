@@ -15,6 +15,7 @@ import {
   parseSessionsIndexTopic,
   parseWorkspaceConfigTopic,
 } from "@acode/shared/acode-protocol-v4";
+import { queryV4Capability } from "../acode-protocol-v4/capabilities.js";
 import type {
   ACodeAgentQuiescenceFacts,
   ACodeProtocolError,
@@ -493,6 +494,9 @@ export class ACodeProtocolAgentServer {
   private async dispatchRequest(request: ACodeProtocolRequest) {
     switch (request.method) {
       // ── v4 conversation 通道（竖切，与旧 session/* 并存）──
+      case V4_METHODS.capabilitiesQuery: {
+        return queryV4Capability(request.params);
+      }
       case V4_METHODS.connectionFlow: {
         this.requireV4Gateway().setConnectionFlowState(request.params);
         return {};

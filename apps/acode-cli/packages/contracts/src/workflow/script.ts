@@ -1,5 +1,15 @@
 import { z } from "zod";
 import type { SessionId } from "../interfaces/shared.js";
+// 架构断环（specs/architecture-contracts-module.md）：ScriptWorkflowRunStats 与其 schema
+// 下沉到 ./script-usage.js（该文件引用此类型，定义留在本文件即成文件级 import 环）；
+// 此处 import 供本文件使用 + 原样再导出，导出面逐名不变。
+import type {
+  RecordScriptWorkflowActivityUsageInput,
+  ScriptWorkflowRunStats,
+} from "./script-usage.js";
+
+export type { RecordScriptWorkflowActivityUsageInput, ScriptWorkflowRunStats } from "./script-usage.js";
+export { ScriptWorkflowRunStatsSchema } from "./script-usage.js";
 
 const MAX_WORKFLOW_AGENT_TOOLS = 128;
 const MAX_WORKFLOW_AGENT_SKILLS = 64;
@@ -126,40 +136,6 @@ export interface ScriptWorkflowDefinitionRecord {
   trusted: boolean;
 }
 
-export interface ScriptWorkflowRunStats {
-  agentCalls: number;
-  cachedAgentCalls: number;
-  failedAgentCalls: number;
-  toolCalls: number;
-  tokens: {
-    cacheRead: number;
-    cacheWrite: number;
-    input: number;
-    output: number;
-    reasoning: number;
-    total: number;
-  };
-}
-
-export const ScriptWorkflowRunStatsSchema = z
-  .object({
-    agentCalls: z.number().int().nonnegative(),
-    cachedAgentCalls: z.number().int().nonnegative(),
-    failedAgentCalls: z.number().int().nonnegative(),
-    tokens: z
-      .object({
-        cacheRead: z.number().int().nonnegative(),
-        cacheWrite: z.number().int().nonnegative(),
-        input: z.number().int().nonnegative(),
-        output: z.number().int().nonnegative(),
-        reasoning: z.number().int().nonnegative(),
-        total: z.number().int().nonnegative(),
-      })
-      .strict(),
-    toolCalls: z.number().int().nonnegative(),
-  })
-  .strict();
-
 export interface ScriptWorkflowRunRecord {
   args?: unknown;
   argsHash?: string;
@@ -175,11 +151,20 @@ export interface ScriptWorkflowRunRecord {
   kind: "script";
   name: string;
   parentSessionId?: SessionId;
+  /** Owner identity captured when the run was created; legacy rows may omit it. */
+  remoteSessionId?: string;
+  /** Durable process owner facts; legacy rows may omit them. */
+  ownerGeneration?: number;
+  ownerToken?: string;
+  /** Top-level script result; undefined means no result was committed. */
+  result?: unknown;
   scriptHash: string;
   scriptPath?: string;
   startedAt?: number;
   stats?: ScriptWorkflowRunStats;
   status: ScriptWorkflowRunStatus;
+  /** Stable workspace identity captured when the run was created; legacy rows may omit it. */
+  workspaceIdentity?: string;
   /** 发起这次 run 的工具调用 id；存量行（migration 0027 之前）缺席。见 CreateScriptWorkflowRunInput。 */
   toolCallId?: string;
   updatedAt: number;
@@ -259,6 +244,11 @@ export interface CreateScriptWorkflowRunInput {
   id: string;
   name: string;
   parentSessionId?: SessionId;
+  ownerGeneration?: number;
+  ownerToken?: string;
+  ownerTakeover?: boolean;
+  /** Owner identity captured when the run was created; legacy rows may omit it. */
+  remoteSessionId?: string;
   scriptHash: string;
   scriptPath?: string;
   stats?: ScriptWorkflowRunStats;
@@ -271,6 +261,8 @@ export interface CreateScriptWorkflowRunInput {
    * 缺席只对存量行成立（migration 0027 之前没有记这个事实）。
    */
   toolCallId?: string;
+  /** Stable workspace identity; local callers use workspace path as fallback. */
+  workspaceIdentity?: string;
 }
 
 export interface UpdateScriptWorkflowRunInput {
@@ -279,6 +271,11 @@ export interface UpdateScriptWorkflowRunInput {
   currentPhase?: string | null;
   failure?: unknown;
   id: string;
+  ownerGeneration?: number;
+  ownerToken?: string;
+  /** Allow a verified current session owner to attach a newly claimed owner to this run. */
+  ownerTakeover?: boolean;
+  result?: unknown;
   startedAt?: number | null;
   stats?: ScriptWorkflowRunStats;
   status?: ScriptWorkflowRunStatus;
@@ -361,6 +358,10 @@ export interface ScriptWorkflowStorePort {
     parentSessionId?: string;
     statuses?: readonly ScriptWorkflowRunStatus[];
   }): Promise<ScriptWorkflowRunRecord[]>;
+  /** 同一事务提交累计值及 activity 用量事件；重复 activityId 不再次累计。 */
+  recordScriptWorkflowActivityUsage(
+    input: RecordScriptWorkflowActivityUsageInput,
+  ): Promise<ScriptWorkflowRunRecord>;
   upsertScriptWorkflowDefinition(
     input: UpsertScriptWorkflowDefinitionInput,
   ): Promise<ScriptWorkflowDefinitionRecord>;

@@ -69,6 +69,7 @@ import { appendBrowserTurnScreenshot } from "./browser-turn-screenshot.js";
 import { clearBrowserTurnState } from "../../repl/browser-turn-state.js";
 import { applySubmissionExecutionState, createTurnModel } from "./turn-model.js";
 import { rebuildContextPrefix } from "./context-refresh.js";
+import { assertRuntimeModelBranchCurrent } from "./runtime-command-generation.js";
 
 const TARGET_RUN_HEARTBEAT_MS = 15_000;
 
@@ -107,6 +108,7 @@ export async function executeTurnCommand(
   // 这里在任何 await 之前冻结本轮事实；后续配置变化只作用于下一轮。
   const admittedModelSelection = options?.intent?.modelSelection ?? this.getSessionModelSelection();
   const admittedOutputStyle = this.config.outputStyle;
+  const admittedBranchGeneration = this.branchGeneration;
   const compactInstructions = parseCompactCommand(input);
   const rewindCommand = parseRewindCommand(input);
   const turnId = startReservation?.turnId ?? createTurnId();
@@ -240,6 +242,7 @@ export async function executeTurnCommand(
         admittedModel,
       );
       completeTurnPhase("session_start_hooks", phaseStartedAt);
+      assertRuntimeModelBranchCurrent(this, admittedBranchGeneration);
       this.injectHookAdditionalContextIntoMessageHistory(
         HookEventName.SessionStart,
         sessionStartHookResult.additionalContexts,
@@ -283,6 +286,16 @@ export async function executeTurnCommand(
         module: "core.runtime",
         status: "started",
       });
+      // turn 起点 drain 钩子（specs/subagent-pending-message-drain.md R1/R2）：turn 激活
+      // 是 steer 可投递的确定性边界——子代理 sink 注册期的 flush 与本点之间存在竞态
+      // （no_active_turn 重试窗口仅 ~200ms），竞态输掉的挂起消息由钩子补投。契约是
+      // 不抛；violations 由这里的兜底吸收（turn 优先于观察性钩子）。
+      try {
+        options?.onTurnStarted?.();
+      } catch {
+        // 钩子违反不抛契约：吞掉。drain 失败的消息仍留在队列（re-queue 语义），
+        // resume 路径重注册 sink 时会再冲。
+      }
 
       turnMachine = new TurnMachineImpl(turnMachine.start());
       phaseStartedAt = startTurnPhase("session_persistence");
@@ -529,6 +542,7 @@ export async function executeTurnCommand(
         }
         loopState = {
           activeTurn,
+          branchGeneration: admittedBranchGeneration,
           ...(options?.automationId ? { automationId: options.automationId } : {}),
           // 闲时派发轮的身份进入 loop state，供工具执行边界 deny OffPeakCreate。
           ...(options?.offPeakTaskId ? { offPeakTaskId: options.offPeakTaskId } : {}),

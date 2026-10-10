@@ -11,7 +11,7 @@ import { test } from "node:test";
  * - specs/dispatch-discipline-prompt.md R1 分层判据在恢复段上的落地
  *   （去重的机器化断言在 dispatch-discipline-prompt.test.mjs 场景 6）；
  * - workflow-driver 四时序（accept/reject/nudge/escalate，
- *   bootstrap/src/app/workflow-driver.ts 头注释）在 actor 契约里的对应说明。
+ *   cli-workflow/src/workflow-driver.ts 头注释）在 actor 契约里的对应说明。
  *
  * 快照式断言 = 测试内冻结的 golden 全文（人工审读后冻结，改文本必须同步改 golden）。
  */

@@ -220,7 +220,7 @@ test("(场景 3) 降级投影：AIMD 压低或冷却中 → degraded；恢复 �
 
 test("(R4) 治理器 observer 实现契约成员 concurrencyBuckets：只读、准入语义不变", async () => {
   const { getWorkflowConcurrencyGovernor } = await import(
-    "../packages/bootstrap/src/app/workflow-concurrency-governor.ts"
+    "../packages/cli-workflow/src/workflow-concurrency-governor.ts"
   );
   const admission = getWorkflowConcurrencyGovernor().observer();
   assert.equal(typeof admission.concurrencyBuckets, "function");

@@ -7,6 +7,7 @@ import {
   type SessionEntryInfo,
 } from "@acode/contracts";
 import type { AgentRuntimeInternal } from "./internal.js";
+import { getRuntimeLifecyclePort } from "./runtime-lifecycle.js";
 import {
   unpublishedPermissionGrants,
   recoverPendingPermissionGrant,
@@ -71,8 +72,6 @@ export async function applyRuntimeExecutionState(
   await persistExecutionState(runtime, next);
   runtime.config.mode = next.mode;
   runtime.config.planEnabled = next.planEnabled;
-  if (previous.planEnabled !== next.planEnabled)
-    runtime.needsPlanModeExitReminder = !next.planEnabled;
   const trace = cause.traceContext ?? runtime.rootTraceContext;
   await runtime.appendEvent(
     runtime.createEvent(
@@ -88,5 +87,7 @@ export async function applyRuntimeExecutionState(
     ),
     trace,
   );
+  if (previous.planEnabled && !next.planEnabled)
+    getRuntimeLifecyclePort(runtime).armPlanModeExitReminder();
   return next;
 }

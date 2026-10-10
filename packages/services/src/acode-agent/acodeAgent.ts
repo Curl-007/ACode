@@ -863,4 +863,296 @@ export interface IACodeAgentService {
 
 export const IACodeAgentService = createServiceDescriptor<IACodeAgentService>(
   ServiceChannels.ACodeAgent,
+  {
+    allowedMethods: [
+      "prepareStorage",
+      "getStorageStartupState",
+      "onDynamicStorageStartupState",
+      "initialize",
+      "syncAppRuntimePreferences",
+      "getWorkspaceRuntimeIdentity",
+      "createSession",
+      "resumeSession",
+      "listSessions",
+      "listSessionSubagents",
+      "getAppUsageStats",
+      "getTaskTokenUsage",
+      "readSession",
+      "readSessionMessages",
+      "readSessionDebug",
+      "readSessionEvents",
+      "readWorkspacePresentation",
+      "grantWorkspaceHookTrust",
+      "listMcpServerStatuses",
+      "listPlugins",
+      "getPluginReferenceCatalog",
+      "getSkillReferenceCatalog",
+      "listSavedWorkflows",
+      "getSavedWorkflow",
+      "updateSavedWorkflowMeta",
+      "deleteSavedWorkflow",
+      "listSavedWorkflowRuns",
+      "moveSavedWorkflow",
+      "resolveSuggestedPluginReference",
+      "onDynamicPluginOperationProgress",
+      "getPluginsOverview",
+      "collectLocalRuntimeChildProcesses",
+      "addPluginMarketplace",
+      "removePluginMarketplace",
+      "updatePluginMarketplace",
+      "installPlugin",
+      "cancelPluginOperation",
+      "uninstallPlugin",
+      "updatePlugin",
+      "restoreBuiltinPlugin",
+      "configurePlugin",
+      "resetPluginConfig",
+      "validatePlugin",
+      "describePlugin",
+      "setPluginEnabled",
+      "listAutomations",
+      "listAllAutomations",
+      "createAutomation",
+      "updateAutomation",
+      "deleteAutomation",
+      "setAutomationEnabled",
+      "restartAutomation",
+      "runAutomationNow",
+      "listAutomationRuns",
+      "deleteAutomationRun",
+      "generateWorkspaceText",
+      "testModelConnectivity",
+      "sendPrompt",
+      "compactSession",
+      "goalSession",
+      "closeSession",
+      "setModel",
+      "setThoughtLevel",
+      "setMode",
+      "respondSessionRuntimePreferences",
+      "onDynamicSessionRuntimePreferencesRequest",
+      "onDynamicProcessResourceSample",
+      "onDynamicMcpTelemetry",
+      "onDynamicMcpResourceSamples",
+      "onDynamicToolExecResource",
+      "onDynamicSessionEvent",
+      "helloConversationV4",
+      "initializeConversationV4",
+      "setConnectionFlowStateV4",
+      "subscribeConversationV4",
+      "resyncConversationV4",
+      "unsubscribeConversationV4",
+      "conversationRowsRangeV4",
+      "conversationPlansV4",
+      "conversationWorkflowRunEventsV4",
+      "conversationWorkflowRunsV4",
+      "conversationWorkflowRunArtifactsV4",
+      "conversationWorkflowRunArtifactDataV4",
+      "conversationWorkflowRunArtifactReadV4",
+      "conversationWorkflowRunWorkspaceV4",
+      "conversationWorkflowRunNodeResultV4",
+      "backgroundBashOutputV4",
+      "conversationFileChangesV4",
+      "conversationFileRewindPreviewV4",
+      "sendConversationCommandV4",
+      "queryConversationCommandsV4",
+      "attachmentBeginV4",
+      "attachmentChunkV4",
+      "attachmentCommitV4",
+      "attachmentAbortV4",
+      "attachmentPreviewSourceV4",
+      "attachmentReadV4",
+      "conversationAttachmentReadV4",
+      "conversationAttachmentStatV4",
+      "onDynamicConversationFrame",
+      "onDynamicLocalTtftFacts",
+      "onDynamicConversationTelemetryFact",
+      "onDynamicCuaPermissionObservation",
+      "subscribeSessionsIndexV4",
+      "resyncSessionsIndexV4",
+      "unsubscribeSessionsIndexV4",
+      "onDynamicSessionsIndexFrame",
+      "subscribeWorkspaceConfigV4",
+      "resyncWorkspaceConfigV4",
+      "unsubscribeWorkspaceConfigV4",
+      "onDynamicWorkspaceConfigFrame",
+      "onAgentRuntimeRestarted",
+      "onAgentRuntimeLifecycle",
+      "hasActiveCuaOperationTurn",
+      "disposeWorkspace",
+      "disposeAll",
+    ],
+    // ARCH-01 参数校验器：全部成员按 TS 签名做传输边界形状守卫（arity + 顶层类型）。
+    // 校验发生在服务方法体执行前，失败统一归一为 rpc-invalid-arguments；错误文本不回显参数值。
+    argumentValidators: {
+      prepareStorage: requireSingleParamsObject,
+      getStorageStartupState: requireSingleParamsObject,
+      // 动态事件经 listen 订阅：proxy 把订阅参数包成单元素数组（无参数时为空数组）再交给校验器。
+      onDynamicStorageStartupState: requireSingleParamsObject,
+      initialize: requireSingleParamsObject,
+      syncAppRuntimePreferences: requireSingleParamsObject,
+      getWorkspaceRuntimeIdentity: requireSingleParamsObject,
+      createSession: requireSingleParamsObject,
+      resumeSession: requireSingleParamsObject,
+      listSessions: requireSingleParamsObject,
+      listSessionSubagents: requireSingleParamsObject,
+      getAppUsageStats: requireSingleParamsObject,
+      getTaskTokenUsage: requireSingleParamsObject,
+      readSession: requireSingleParamsObject,
+      readSessionMessages: requireSingleParamsObject,
+      readSessionDebug: requireSingleParamsObject,
+      readSessionEvents: requireSingleParamsObject,
+      readWorkspacePresentation: requireSingleParamsObject,
+      grantWorkspaceHookTrust: requireSingleParamsObject,
+      listMcpServerStatuses: requireSingleParamsObject,
+      listPlugins: requireSingleParamsObject,
+      getPluginReferenceCatalog: requireSingleParamsObject,
+      getSkillReferenceCatalog: requireSingleParamsObject,
+      listSavedWorkflows: requireSingleParamsObject,
+      getSavedWorkflow: requireSingleParamsObject,
+      updateSavedWorkflowMeta: requireSingleParamsObject,
+      deleteSavedWorkflow: requireSingleParamsObject,
+      listSavedWorkflowRuns: requireSingleParamsObject,
+      moveSavedWorkflow: requireSingleParamsObject,
+      resolveSuggestedPluginReference: requireSingleParamsObject,
+      onDynamicPluginOperationProgress: requireSingleString,
+      getPluginsOverview: requireSingleParamsObject,
+      collectLocalRuntimeChildProcesses: (args) => {
+        // signal 是可选 AbortSignal：进程内调用方可能传 signal 对象，RPC wire 调用方通常省略
+        // （AbortSignal 不可 JSON 序列化，序列化后退化形态也不可控）。只守 arity 与顶层类型，
+        // 不要求在场、不校验内部形状，避免把合法省略或宿主侧包装对象误拒。
+        if (args.length > 1) throw new Error("expected at most one abort signal");
+        const signal = args[0];
+        if (signal !== undefined && signal !== null && typeof signal !== "object") {
+          throw new Error("expected an abort signal object");
+        }
+      },
+      addPluginMarketplace: requireSingleParamsObject,
+      removePluginMarketplace: requireSingleParamsObject,
+      updatePluginMarketplace: requireSingleParamsObject,
+      installPlugin: requireSingleParamsObject,
+      cancelPluginOperation: requireSingleParamsObject,
+      uninstallPlugin: requireSingleParamsObject,
+      updatePlugin: requireSingleParamsObject,
+      restoreBuiltinPlugin: requireSingleParamsObject,
+      configurePlugin: requireSingleParamsObject,
+      resetPluginConfig: requireSingleParamsObject,
+      validatePlugin: requireSingleParamsObject,
+      describePlugin: requireSingleParamsObject,
+      setPluginEnabled: requireSingleParamsObject,
+      listAutomations: requireSingleParamsObject,
+      listAllAutomations: requireNoArguments,
+      createAutomation: requireSingleParamsObject,
+      updateAutomation: requireSingleParamsObject,
+      deleteAutomation: requireSingleParamsObject,
+      setAutomationEnabled: requireSingleParamsObject,
+      restartAutomation: requireSingleParamsObject,
+      runAutomationNow: requireSingleParamsObject,
+      listAutomationRuns: requireSingleParamsObject,
+      deleteAutomationRun: requireSingleParamsObject,
+      generateWorkspaceText: requireSingleParamsObject,
+      testModelConnectivity: requireSingleParamsObject,
+      sendPrompt: requireSingleParamsObject,
+      compactSession: requireSingleParamsObject,
+      goalSession: requireSingleParamsObject,
+      closeSession: requireSingleParamsObject,
+      setModel: requireSingleParamsObject,
+      setThoughtLevel: requireSingleParamsObject,
+      setMode: requireSingleParamsObject,
+      respondSessionRuntimePreferences: requireSingleParamsObject,
+      onDynamicSessionRuntimePreferencesRequest: requireNoArguments,
+      onDynamicProcessResourceSample: requireNoArguments,
+      onDynamicMcpTelemetry: requireNoArguments,
+      onDynamicMcpResourceSamples: requireNoArguments,
+      onDynamicToolExecResource: requireNoArguments,
+      onDynamicSessionEvent: requireSingleParamsObject,
+      helloConversationV4: requireNoArguments,
+      initializeConversationV4: requireSingleParamsObject,
+      setConnectionFlowStateV4: requireSingleParamsObject,
+      subscribeConversationV4: requireSingleParamsObject,
+      resyncConversationV4: requireSingleParamsObject,
+      unsubscribeConversationV4: requireSingleParamsObject,
+      conversationRowsRangeV4: requireSingleParamsObject,
+      conversationPlansV4: requireSingleParamsObject,
+      conversationWorkflowRunEventsV4: requireSingleParamsObject,
+      conversationWorkflowRunsV4: requireSingleParamsObject,
+      conversationWorkflowRunArtifactsV4: requireSingleParamsObject,
+      conversationWorkflowRunArtifactDataV4: requireSingleParamsObject,
+      conversationWorkflowRunArtifactReadV4: requireSingleParamsObject,
+      conversationWorkflowRunWorkspaceV4: requireSingleParamsObject,
+      conversationWorkflowRunNodeResultV4: requireSingleParamsObject,
+      backgroundBashOutputV4: requireSingleParamsObject,
+      conversationFileChangesV4: requireSingleParamsObject,
+      conversationFileRewindPreviewV4: requireSingleParamsObject,
+      sendConversationCommandV4: requireSingleParamsObject,
+      queryConversationCommandsV4: requireSingleParamsObject,
+      attachmentBeginV4: requireSingleParamsObject,
+      attachmentChunkV4: requireSingleParamsObject,
+      attachmentCommitV4: requireSingleParamsObject,
+      attachmentAbortV4: requireSingleParamsObject,
+      attachmentPreviewSourceV4: requireSingleParamsObject,
+      attachmentReadV4: requireSingleParamsObject,
+      conversationAttachmentReadV4: requireSingleParamsObject,
+      conversationAttachmentStatV4: requireSingleParamsObject,
+      onDynamicConversationFrame: requireSingleParamsObject,
+      onDynamicLocalTtftFacts: requireSingleParamsObject,
+      onDynamicConversationTelemetryFact: requireSingleParamsObject,
+      onDynamicCuaPermissionObservation: requireNoArguments,
+      subscribeSessionsIndexV4: requireSingleParamsObject,
+      resyncSessionsIndexV4: requireSingleParamsObject,
+      unsubscribeSessionsIndexV4: requireSingleParamsObject,
+      onDynamicSessionsIndexFrame: requireSingleParamsObject,
+      subscribeWorkspaceConfigV4: requireSingleParamsObject,
+      resyncWorkspaceConfigV4: requireSingleParamsObject,
+      unsubscribeWorkspaceConfigV4: requireSingleParamsObject,
+      onDynamicWorkspaceConfigFrame: requireSingleParamsObject,
+      onAgentRuntimeRestarted: requireOptionalListener,
+      onAgentRuntimeLifecycle: requireOptionalListener,
+      hasActiveCuaOperationTurn: requireNoArguments,
+      disposeWorkspace: requireSingleParamsObject,
+      disposeAll: requireNoArguments,
+    },
+  },
 );
+
+// ── 文件内参数校验辅助（遵循 file.ts 的 requireNoArguments/requireObjectFields 先例）──
+// 这是传输边界加固，不是业务 schema 校验（rpc-service-boundary spec 规则 7）：
+// 只做 arity 与顶层类型守卫。错误文本必须稳定且永不回显参数值——proxy 层会把
+// message 归一为 RpcArgumentError.details，任何插值都可能把路径、sessionId 或凭据带出边界。
+
+function requireNoArguments(args: readonly unknown[]): void {
+  if (args.length !== 0) throw new Error("expected no arguments");
+}
+
+/**
+ * 单 params 对象入参的统一守卫。刻意不校验对象内部字段：
+ * connection scope / trusted host relay facade 会在 host 内层改写并注入字段
+ * （workspacePath、__acodeTrustedV4Connection、subscriberScope 等），且现有生产
+ * wire 报文允许缺少 interface 标注为必填的字段（如 setConnectionFlowStateV4 只带
+ * state）；在边界要求内部字段会误拒合法链路。深层形状由服务体自己的 zod/业务校验负责。
+ */
+function requireSingleParamsObject(args: readonly unknown[]): void {
+  if (args.length !== 1) throw new Error("expected exactly one params object");
+  const value = args[0];
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("expected a non-null params object");
+  }
+}
+
+function requireSingleString(args: readonly unknown[]): void {
+  if (args.length !== 1 || typeof args[0] !== "string") {
+    throw new Error("expected a single string argument");
+  }
+}
+
+/**
+ * 普通事件（onXxx）经 listen 订阅，listener 由客户端本地持有，不会出现在 RPC wire
+ * 报文中（proxy-channel 只对动态事件与 call 方法执行校验器）。此处按签名做防御性
+ * 登记：允许无参数（listen 形态）或单个函数（进程内直调形态），不做更严要求。
+ */
+function requireOptionalListener(args: readonly unknown[]): void {
+  if (args.length > 1) throw new Error("expected at most one listener argument");
+  if (args.length === 1 && typeof args[0] !== "function") {
+    throw new Error("expected a listener function");
+  }
+}

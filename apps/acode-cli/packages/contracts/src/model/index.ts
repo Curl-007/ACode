@@ -2,318 +2,39 @@
 // ============================================================
 // Model Protocol - provider-neutral model contracts
 // ============================================================
+// 架构断环下沉（specs/architecture-contracts-module.md）：被 model/model.ts、
+// model/invocation-context.ts、telemetry/index.ts 反向引用的基础类型与请求治理类型
+// 分别下沉到 ./protocol-types.ts 与 ./request-status.ts（本文件对两者 `export *`，
+// 公开导出面逐名不变）。本文件保留错误/工厂、usage 投影函数、请求聚合类型与
+// JSON schema 常量；它们只被上游（events/session、tools、core 消费方）引用，
+// 不构成回边。禁止在本文件新增对 telemetry/index.ts 或 session/events 桶文件的导入。
 
-import type { QueryId, SessionId, TraceId, TurnId } from "../interfaces/shared.js";
-import type {
-  ProviderNativeToolSpec,
-  ToolExecutionMode,
-  ToolPermissionSpec,
-  ToolResultBudget,
-} from "../tools/contract.js";
 import type { TraceContext } from "../tracing/tracer.js";
+import type { ModelApiCallObservation } from "../telemetry/observations.js";
 import type {
-  ModelApiCallObservation,
-  ModelApiErrorPhase,
-  ResolvedModelApiCallObservation,
-} from "../telemetry/index.js";
+  JsonSchema,
+  ModelId,
+  ModelInputMessage,
+  ModelMessageContent,
+  ModelMessageContentBlock,
+  ModelProviderId,
+  ModelToolContract,
+  ModelUsage,
+} from "./protocol-types.js";
+import { ModelErrorCode, ModelFailureReason, ModelTransportKind } from "./request-status.js";
+import type {
+  ModelRequestAdmission,
+  ModelRequestSessionType,
+  ModelRetryBudget,
+  ModelStatusSink,
+  ModelStreamRecoveryStatus,
+} from "./request-status.js";
 
+export * from "./protocol-types.js";
+export * from "./request-status.js";
 export * from "./image-media.js";
 export * from "./model.js";
 export * from "./invocation-context.js";
-
-export type JsonSchema = Record<string, unknown>;
-
-export type ModelProviderId = string & { readonly __brand: "ModelProviderId" };
-export type ModelId = string & { readonly __brand: "ModelId" };
-
-export const ModelRequestSessionType = {
-  Main: "main",
-  Other: "other",
-  Subagent: "subagent",
-} as const;
-
-/**
- * 模型请求的重试预算档位（runtime-only）。
- * - `default`：adapter 构造时解析出的 maxAttempts（默认 10 次重试）。
- * - `unbounded`：**瞬态**失败无上限重试（退避曲线不变、封顶 60s 后无限探测），永久失败照旧立即抛。
- *   给 workflow actor（taskType workflow_child / nested_workflow_child）使用：模型错误绝不是
- *   workflow 错误，唯一出口是用户 cancel。
- */
-export const ModelRetryBudget = {
-  Default: "default",
-  Unbounded: "unbounded",
-} as const;
-
-export type ModelRetryBudget = (typeof ModelRetryBudget)[keyof typeof ModelRetryBudget];
-
-/**
- * 一次模型请求尝试的准入票据（runtime-only）。
- *
- * 它同时是**这一次尝试**的状态事件汇：runner 把该尝试的 ModelNetworkStatus 事件
- * （`model_request_started` / `model_request_completed` / `model_request_failed` /
- * `model_retry_scheduled`）原样也投递给它，治理器据此判定这次请求的结果（成功 / 限流 / 瞬态失败 /
- * 终结），不需要 runner 在每个失败分支上另写一遍结果。`release()` 是兜底：尝试无论如何结束（成功、
- * 抛出、消费者提前放弃流）runner 都在 finally 里调一次；未见终结事件即按终结处理。**幂等**。
- */
-export interface ModelRequestAdmissionTicket extends ModelStatusSink {
-  release(): void;
-}
-
-/**
- * 模型请求的准入端口（runtime-only）。runner 在**每一次尝试发出前**先试同步快路径
- * `tryAcquire`，未命中再 `acquire` 排队；拿到票据后才发请求；尝试结束即 `release`，退避 sleep 期间
- * 不持票——所以进程级并发 cap 约束的是 provider 真正看到的在飞请求数。`signal` 被 abort 时
- * `acquire` 以 `signal.reason` reject。
- *
- * `tryAcquire` 未命中是 runner 发 `model_request_queued` / `model_request_admitted` 的唯一依据
- * 没有快路径的实现 runner 无法分辨「排了队」与「立即放行」，一律不发这两条事件。
- *
- * 端口绑定在 runtime 的模型工厂上：runtime 交出的每一个模型句柄——turn step、工具内部
- * 的模型调用、压缩、标题 sidecar——都带它；缺席即不设闸门（runner 行为逐字不变）。主代理拿的是
- * 治理器的 observer 实现：`tryAcquire` 总命中、只喂信号。
- */
-export interface ModelRequestAdmission {
-  /** 同步快路径：闸门开着且无人排队即给票；否则 undefined，runner 转 `acquire` 并报排队。 */
-  tryAcquire?(input: { model: ModelRequestTarget }): ModelRequestAdmissionTicket | undefined;
-  acquire(input: {
-    model: ModelRequestTarget;
-    signal?: AbortSignal;
-  }): Promise<ModelRequestAdmissionTicket>;
-  /**
-   * D5 并发只读诊断投影（`specs/concurrency-diagnostics-projection.md` R4）：返回全部治理桶
-   * （每个 provider key 一桶）的只读快照。**纯投影**——实现不得因它改变任何准入决策，也不得
-   * 因此新增状态。可选成员（先例：`tryAcquire?`、`DynamicWorkflowRunPort.concurrencyCeiling?`）：
-   * 缺席 = 宿主未装配投影面，消费方（runtime 诊断面）投影「未知」，不得猜测。
-   */
-  concurrencyBuckets?(): ModelRequestAdmissionBucketSnapshot[];
-}
-
-/**
- * 一个 provider key 治理桶的只读事实（D5 投影的最小形状，字段口径见
- * `specs/concurrency-diagnostics-projection.md` R1/R3）。刻意是 `ConcurrencyControllerSnapshot`
- * 的收窄投影：诊断面只要 caps/current/degraded 能算出来的那几个数，epoch/streak 等控制器
- * 内部状态不外泄到跨包契约上。
- */
-export interface ModelRequestAdmissionBucketSnapshot {
-  /** provider key：`${providerId}/${modelId}`。 */
-  key: string;
-  /** CPU 推导天花板（桶的初值与上界）。 */
-  ceiling: number;
-  /** AIMD 当前并发 cap。 */
-  cap: number;
-  /** 已准入未结算的模型请求数。 */
-  inFlight: number;
-  /** 排队等待准入的请求数。 */
-  waiters: number;
-  /** Retry-After 冷却截止（ms epoch）；缺席 = 不在冷却。 */
-  cooldownUntil?: number;
-}
-
-/**
- * 准入端口看到的模型身份：配额键的最小事实。既不是 Selection（那是执行意图），也不是
- * Active Model（那带完整配置）——treaty 只要 provider/model 两段。
- */
-export interface ModelRequestTarget {
-  providerId: string;
-  modelId: string;
-}
-
-export type ModelRequestSessionType =
-  (typeof ModelRequestSessionType)[keyof typeof ModelRequestSessionType];
-
-export const ModelErrorCode = {
-  InvalidModelSelection: "invalid_model_selection",
-  ModelConfigMissing: "model_config_missing",
-  ProviderNotFound: "provider_not_found",
-  ProviderNotConfigured: "provider_not_configured",
-  ModelNotFound: "model_not_found",
-  InvalidModelRequest: "invalid_model_request",
-  InvalidModelResponse: "invalid_model_response",
-  ModelRequestFailed: "model_request_failed",
-  ModelRequestAuthMissing: "model_request_auth_missing",
-  ModelRequestCancelled: "model_request_cancelled",
-  ModelRequestTimeout: "model_request_timeout",
-  ModelRateLimited: "model_rate_limited",
-  ModelContextExceeded: "model_context_exceeded",
-} as const;
-
-export type ModelErrorCode = (typeof ModelErrorCode)[keyof typeof ModelErrorCode];
-
-export const ModelTransportKind = {
-  Http: "http",
-  Sse: "sse",
-  WebSocket: "websocket",
-} as const;
-
-export type ModelTransportKind = (typeof ModelTransportKind)[keyof typeof ModelTransportKind];
-
-export const ModelRetryReason = {
-  RateLimited: "rate_limited",
-  ProviderOverloaded: "provider_overloaded",
-  ServerError: "server_error",
-  NetworkError: "network_error",
-  Timeout: "timeout",
-  StreamIdleTimeout: "stream_idle_timeout",
-  StaleConnection: "stale_connection",
-  AuthRefresh: "auth_refresh",
-  /** Anthropic 明确拒绝历史 thinking signature 后，对请求副本清理并立即重试一次。 */
-  ReasoningSignatureRepair: "reasoning_signature_repair",
-  /** off-peak 闲时排队（429/3105+Retry-After）：豁免重试预算、无限探测（仅 idle plan provider）。 */
-  OffpeakQueued: "offpeak_queued",
-} as const;
-
-export type ModelRetryReason = (typeof ModelRetryReason)[keyof typeof ModelRetryReason];
-
-export const ModelFailureReason = {
-  ...ModelRetryReason,
-  AuthFailed: "auth_failed",
-  Cancelled: "cancelled",
-  ContextExceeded: "context_exceeded",
-  InvalidRequest: "invalid_request",
-  ProviderNotConfigured: "provider_not_configured",
-  ProxyError: "proxy_error",
-  TlsError: "tls_error",
-  Unknown: "unknown",
-} as const;
-
-export type ModelFailureReason = (typeof ModelFailureReason)[keyof typeof ModelFailureReason];
-
-interface ModelNetworkStatusBase {
-  timestamp: string;
-  traceId: TraceId;
-  queryId?: QueryId;
-  sessionId?: SessionId;
-  turnId?: TurnId;
-  parentSessionId?: SessionId;
-  toolCallId?: string;
-  spanId?: string;
-  parentSpanId?: string;
-  querySource?: string;
-  requestId: string;
-  providerId: ModelProviderId;
-  modelId: ModelId;
-  baseURL?: string;
-  providerKind?: string;
-  transport: ModelTransportKind;
-  attempt: number;
-  /**
-   * 本次请求的重试预算总尝试数（含首次）。**`0` = 无上限**（`ModelRetryBudget.Unbounded`）：`Infinity` 不可序列化，而 0 不占用任何既有合法值。
-   * 消费方渲染「第 n/N 次」或推导 maxRetries 时必须特判 0。
-   */
-  maxAttempts: number;
-  streamRecovery?: ModelStreamRecoveryStatus;
-  requestHeaders?: Record<string, string>;
-  responseHeaders?: Record<string, string>;
-  requestHeaderCount?: number;
-  responseHeaderCount?: number;
-  modelCall?: ResolvedModelApiCallObservation;
-}
-
-export interface ModelStreamRecoveryStatus {
-  attemptId: string;
-  retryNumber: number;
-  maxRetries: number;
-  recoveredFromRequestId?: string;
-  anchorId?: string;
-}
-
-export interface ModelRequestStartedStatusEvent extends ModelNetworkStatusBase {
-  type: "model_request_started";
-}
-
-/**
- * 准入等待的两端：runner 的 `tryAcquire` 未命中
- * 即发 `queued`，拿到票即发 `admitted`（带排队时长）。它们是 runtime 观测——driver 据此报「等待槽位」，
- * 工具执行器据此暂停工具超时——不进 provider 请求；协议侧凡枚举状态类型的消费方显式忽略。
- */
-export interface ModelRequestQueuedStatusEvent extends ModelNetworkStatusBase {
-  type: "model_request_queued";
-}
-
-export interface ModelRequestAdmittedStatusEvent extends ModelNetworkStatusBase {
-  type: "model_request_admitted";
-  queuedMs: number;
-}
-
-export interface ModelRequestCompletedStatusEvent extends ModelNetworkStatusBase {
-  type: "model_request_completed";
-  durationMs: number;
-  finishReason?: string;
-  usage?: ModelUsage;
-  providerRequestId?: string;
-  timeToFirstProviderEventMs?: number;
-  timeToFirstContentMs?: number;
-  timeToFirstTextMs?: number;
-  streamMaxIdleMs?: number;
-  streamStallCount?: number;
-  streamOutputCommitted?: boolean;
-}
-
-export interface ModelRequestFailedStatusEvent extends ModelNetworkStatusBase {
-  type: "model_request_failed";
-  durationMs?: number;
-  reason: ModelFailureReason;
-  retryable: boolean;
-  message: string;
-  statusCode?: number;
-  errorCode?: ModelErrorCode;
-  providerErrorCode?: string;
-  providerErrorMessage?: string;
-  providerRequestId?: string;
-  retryAfterMs?: number;
-  errorPhase?: ModelApiErrorPhase;
-  exceptionType?: string;
-  streamOutputCommitted?: boolean;
-}
-
-export interface ModelRetryScheduledStatusEvent extends ModelNetworkStatusBase {
-  type: "model_retry_scheduled";
-  delayMs: number;
-  nextAttempt: number;
-  reason: ModelRetryReason;
-  message: string;
-  statusCode?: number;
-  errorCode?: ModelErrorCode;
-  providerErrorCode?: string;
-  providerErrorMessage?: string;
-  providerRequestId?: string;
-  retryAfterMs?: number;
-}
-
-export interface ModelStreamStalledStatusEvent extends ModelNetworkStatusBase {
-  type: "model_stream_stalled";
-  idleMs: number;
-  timeoutMs: number;
-  message: string;
-}
-
-/**
- * 仅供实时观测 Sink 消费的 Provider 里程碑。它们不进入 SessionEvent/回放协议，
- * 避免为了 Trace 事件扩大产品状态面。
- */
-export interface ModelTelemetryMilestoneStatusEvent extends ModelNetworkStatusBase {
-  type: "model_first_provider_event" | "model_first_content" | "model_first_text";
-  elapsedMs: number;
-}
-
-export type ModelNetworkStatusEvent =
-  | ModelRequestQueuedStatusEvent
-  | ModelRequestAdmittedStatusEvent
-  | ModelRequestStartedStatusEvent
-  | ModelRequestCompletedStatusEvent
-  | ModelRequestFailedStatusEvent
-  | ModelRetryScheduledStatusEvent
-  | ModelStreamStalledStatusEvent
-  | ModelTelemetryMilestoneStatusEvent;
-
-export interface ModelStatusSink {
-  publish(event: ModelNetworkStatusEvent): void | Promise<void>;
-  /**
-   * Transport 捕获失败时可把原始异常直接交给进程级观测 Sink。产品 SessionEvent/日志仍只消费
-   * publish(event)，避免原始异常对象和消息正文进入持久化领域状态。
-   */
-  publishFailure?(event: ModelRequestFailedStatusEvent, error: unknown): void | Promise<void>;
-}
 
 export class ModelProtocolError extends Error {
   readonly code: ModelErrorCode;
@@ -344,100 +65,6 @@ export function createModelId(modelId: string): ModelId {
     throw new ModelProtocolError(ModelErrorCode.InvalidModelSelection, "Model id is empty");
   }
   return normalized as ModelId;
-}
-
-export type ModelMessageRole = "system" | "user" | "assistant" | "tool";
-
-export interface ModelToolCall {
-  id: string;
-  name: string;
-  input: unknown;
-  providerExecuted?: boolean;
-}
-
-export type AttachmentKind = "local_file" | "resource" | "inline";
-
-export interface AttachmentRef {
-  id: string;
-  kind: AttachmentKind;
-  uri?: string;
-  path?: string;
-  mimeType?: string;
-  sizeBytes?: number;
-  sha256?: string;
-  placeholder?: string;
-}
-
-export interface ModelTextContentBlock {
-  type: "text";
-  text: string;
-}
-
-export interface ModelReasoningContentBlock {
-  type: "reasoning";
-  text: string;
-  providerOptions?: Record<string, unknown>;
-}
-
-export interface ModelImageContentBlock {
-  type: "image";
-  mediaType: string;
-  dataUrl: string;
-  detail?: "auto" | "low" | "high" | "original";
-  source?: AttachmentRef;
-}
-
-export interface ModelFileContentBlock {
-  type: "file";
-  mediaType: string;
-  name?: string;
-  uri?: string;
-  dataUrl?: string;
-  text?: string;
-  source?: AttachmentRef;
-}
-
-/** 视频输入内容块（provider-neutral，与 image 同构；只承载 base64 dataUrl）。 */
-export interface ModelVideoContentBlock {
-  type: "video";
-  mediaType: string;
-  dataUrl: string;
-  source?: AttachmentRef;
-}
-
-export interface ModelResourceLinkContentBlock {
-  type: "resource_link";
-  uri: string;
-  name?: string;
-  title?: string;
-}
-
-export type ModelMessageContentBlock =
-  | ModelTextContentBlock
-  | ModelReasoningContentBlock
-  | ModelImageContentBlock
-  | ModelVideoContentBlock
-  | ModelFileContentBlock
-  | ModelResourceLinkContentBlock;
-
-export type ModelMessageContent = string | ModelMessageContentBlock[];
-
-export interface ModelCacheControl {
-  type: "ephemeral";
-  ttl?: "5m" | "1h";
-  scope?: "global" | "org";
-}
-
-export interface ModelInputMessage {
-  role: ModelMessageRole;
-  content: ModelMessageContent;
-  cacheControl?: ModelCacheControl;
-  toolCalls?: ModelToolCall[];
-  toolCallId?: string;
-  toolName?: string;
-  isError?: boolean;
-  providerId?: ModelProviderId;
-  modelId?: ModelId;
 }
 
 export function modelMessageContentToText(content: ModelMessageContent): string {
@@ -472,45 +99,6 @@ function attachmentPlaceholder(prefix: string, mediaType: string, name?: string)
   return name && name.length > 0 ? `[${prefix} ${mediaType}: ${name}]` : `[${prefix} ${mediaType}]`;
 }
 
-export interface ModelToolExecutionContext {
-  toolCallId: string;
-  abortSignal?: AbortSignal;
-  traceId?: string;
-  metadata?: Record<string, unknown>;
-}
-
-export type ModelToolSideEffectScope =
-  | "none"
-  | "workspace"
-  | "git"
-  | "network"
-  | "system"
-  | "session"
-  | "userInteraction";
-
-export interface ModelToolContract {
-  name: string;
-  description?: string;
-  capability?: string;
-  executionMode?: ToolExecutionMode;
-  providerNative?: ProviderNativeToolSpec;
-  inputSchema: JsonSchema;
-  outputSchema?: JsonSchema;
-  /** 见 ToolContractDeclaration.strict：严格模式的资格声明，adapter 按 provider/model 落地。 */
-  strict?: boolean;
-  readOnly?: boolean;
-  destructive?: boolean;
-  concurrentSafe?: boolean;
-  requiresUserInteraction?: boolean;
-  maxOutputBytes?: number;
-  timeoutMs?: number;
-  needsApproval?: boolean;
-  sideEffectScope?: ModelToolSideEffectScope;
-  permission?: ToolPermissionSpec;
-  resultBudget?: ToolResultBudget;
-  execute?: (input: unknown, context: ModelToolExecutionContext) => Promise<unknown> | unknown;
-}
-
 export type ModelToolChoice =
   | "auto"
   | "none"
@@ -519,21 +107,6 @@ export type ModelToolChoice =
       type: "tool";
       toolName: string;
     };
-
-export interface ModelServerToolUsage {
-  webSearchRequests?: number;
-  webFetchRequests?: number;
-}
-
-export interface ModelUsage {
-  inputTokens?: number;
-  outputTokens?: number;
-  totalTokens?: number;
-  cacheReadTokens?: number;
-  cacheWriteTokens?: number;
-  reasoningTokens?: number;
-  serverToolUse?: ModelServerToolUsage;
-}
 
 export interface ModelUsageSummary {
   source: "provider";
@@ -709,133 +282,6 @@ export interface ModelTextRequest extends ModelRequestSettings {
    */
   preserveProviderStreamBoundaries?: boolean;
 }
-
-export interface ModelSource {
-  type: "source";
-  sourceType: "url" | "document";
-  id?: string;
-  url?: string;
-  title?: string;
-  mediaType?: string;
-  filename?: string;
-  providerMetadata?: Record<string, unknown>;
-}
-
-export interface ModelToolResult {
-  id: string;
-  name: string;
-  input: unknown;
-  output: unknown;
-  providerExecuted?: boolean;
-  providerMetadata?: Record<string, unknown>;
-}
-
-export interface ModelTextResult {
-  text: string;
-  finishReason: string;
-  usage: ModelUsage;
-  reasoning?: ModelReasoningContentBlock[];
-  toolCalls?: ModelToolCall[];
-  toolResults?: ModelToolResult[];
-  sources?: ModelSource[];
-  providerMetadata?: Record<string, unknown>;
-}
-
-export type ModelStreamEvent =
-  | {
-      type: "start";
-    }
-  | {
-      /**
-       * Compact-only replay boundary。Adapter 从 raw provider stream 提炼真实边界；
-       * 无 raw provenance 的 direct tool-call 校验失败可补一个 inferred commit。
-       * 事件不携带 provider 正文，也不进入 session/UI streaming。
-       */
-      type: "compact_stream_boundary";
-      boundary: "provider_response_start" | "inferred_content_block_stop";
-    }
-  | {
-      type: "compact_stream_boundary";
-      boundary: "provider_content_block_start";
-      blockType: string | null;
-      index: number | null;
-    }
-  | {
-      /** Raw delta 只携带 provenance type，不携带正文。 */
-      type: "compact_stream_boundary";
-      boundary: "provider_content_block_delta";
-      deltaType: string | null;
-      index: number | null;
-    }
-  | {
-      type: "compact_stream_boundary";
-      boundary: "provider_content_block_stop";
-      index: number | null;
-    }
-  | {
-      /** 每个 provider message_delta 覆盖当前 stop reason 状态，后续 null 会清掉先前值。 */
-      type: "compact_stream_boundary";
-      boundary: "provider_stop_reason";
-      present: boolean;
-    }
-  | {
-      type: "text_start";
-      id: string;
-    }
-  | {
-      type: "text_delta";
-      id?: string;
-      text: string;
-    }
-  | {
-      type: "text_end";
-      id: string;
-    }
-  | {
-      type: "reasoning_start";
-      id: string;
-      providerMetadata?: Record<string, unknown>;
-    }
-  | {
-      type: "reasoning_delta";
-      id?: string;
-      text: string;
-      providerMetadata?: Record<string, unknown>;
-    }
-  | {
-      type: "reasoning_end";
-      id: string;
-      providerMetadata?: Record<string, unknown>;
-    }
-  | {
-      type: "tool_input_start";
-      id: string;
-      toolName: string;
-      providerExecuted?: boolean;
-    }
-  | {
-      type: "tool_input_delta";
-      id: string;
-      delta: string;
-    }
-  | {
-      type: "tool_input_end";
-      id: string;
-    }
-  | {
-      type: "tool_call";
-      toolCall: ModelToolCall;
-    }
-  | {
-      type: "finish";
-      finishReason: string;
-      providerMetadata?: Record<string, unknown>;
-      usage: ModelUsage;
-    }
-  | {
-      type: "error";
-      error: unknown;
-    };
 
 export const modelSelectionJsonSchema = {
   type: "object",
@@ -1085,6 +531,6 @@ export const modelNetworkStatusEventJsonSchema = {
 } satisfies JsonSchema;
 
 // Re-export for backwards compatibility with code using ToolCall
-export type { ModelToolCall as ToolCall };
+export type { ModelToolCall as ToolCall } from "./protocol-types.js";
 
 export * from "./content-protection.js";

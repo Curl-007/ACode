@@ -4,44 +4,158 @@ version: 1
 modules:
   - id: rpc
     roots: [packages/rpc/src]
-    managed: false
+    managed: true
+    owner: rpc-transport
+    requires: []
+    publicEntrypoints: [packages/rpc/src/contract.ts, packages/rpc/src/index.ts]
+    # 单层 app（harness-sdk 同款形态）：传输实现直接持有 socket/MessagePort/定时器
+    #（0 处 workspace 依赖、0 处 node: 导入，双侧可用），与批次内其余模块形态一致。
+    layers: { app: "." }
+    layerOrder: [app]
   - id: shared
     roots: [packages/shared/src]
-    managed: false
+    managed: true
+    owner: shared-protocol
+    requires: [model-option-map]
+    # 权威公开面 = packages/shared/package.json 的 20 个子路径 exports（逐字 lifted
+    # 为源文件）+ contract.ts（治理精选视图）。deep-import 对所有消费方（含 legacy
+    # 模块）生效：纳管前实测全部非测试豁免入边都命中这些入口（acode-cli 测试的
+    # 相对路径 deep import 命中 RATCHET_EXEMPT 面）。存量超限/抑制见下方
+    # onboard-b3-shared-* 例外；无环纪律与两处解环修复见 specs/module-boundary.md。
+    publicEntrypoints:
+      [
+        packages/shared/src/contract.ts,
+        packages/shared/src/index.ts,
+        packages/shared/src/runtimeEnv.ts,
+        packages/shared/src/mcp.ts,
+        packages/shared/src/runtime-tool-runtime.ts,
+        packages/shared/src/browser-use/nodeReplBroker.ts,
+        packages/shared/src/process-diagnostic.ts,
+        packages/shared/src/model-selection.ts,
+        packages/shared/src/account-provider-state.ts,
+        packages/shared/src/model-config.ts,
+        packages/shared/src/config-schema.ts,
+        packages/shared/src/node.ts,
+        packages/shared/src/acodeEndpoint.ts,
+        packages/shared/src/workspaceFileSearch.ts,
+        packages/shared/src/workspaceFileEntriesCodec.ts,
+        packages/shared/src/acode-protocol-v4/index.ts,
+        packages/shared/src/harness-api/index.ts,
+        packages/shared/src/workspace-hook-discovery.ts,
+        packages/shared/src/workspace-hook-mutation.ts,
+        packages/shared/src/workspace-hook-review-monotonicity.ts,
+        packages/shared/src/workspace-hook-trust-store-file.ts,
+      ]
+    # 单层 app：34 处 node: 导入（node/ 凭据链 crypto/keychain 子进程等），
+    # 声明 domain 层会触发 domain-io；模块内无层间方向约束需求。
+    layers: { app: "." }
+    layerOrder: [app]
   - id: provider
     roots: [packages/provider/src]
-    managed: false
+    managed: true
+    owner: provider-config
+    requires: [shared]
+    publicEntrypoints: [packages/provider/src/contract.ts, packages/provider/src/index.ts]
+    # 单层 app：0 处 node: IO（文件/网络物化由 provider-node 经接口注入），
+    # 与批次内其余模块形态一致；存量超限/抑制文件见下方 onboard-provider-* 例外。
+    layers: { app: "." }
+    layerOrder: [app]
   - id: provider-node
     roots: [packages/provider-node/src]
-    managed: false
+    managed: true
+    owner: provider-node-runtime
+    requires: [provider, shared]
+    publicEntrypoints: [packages/provider-node/src/contract.ts, packages/provider-node/src/index.ts]
+    # 单层 app：本模块的存在意义就是持有文件/网络/定时器 IO（12 处 node: 导入），
+    # 声明 domain 层会触发 domain-io。CLI 测试对 3 个内部文件的 deep import 命中
+    # legacy importer + 测试豁免，登记为潜在债（packages/provider-node/specs/module-boundary.md）。
+    layers: { app: "." }
+    layerOrder: [app]
   - id: services
     roots: [packages/services/src]
     managed: false
   - id: session
     roots: [packages/services/src/session]
-    managed: false
-    requires: [shared]
-    # contract.ts 是 session 的迁移目标入口；文件落地前不在这里声明——
-    # checker 会校验 publicEntrypoints 的存在性（missing-public-entrypoint），
-    # 幻影声明会让治理报告失真（2026-10-05 审查发现并移除）。
+    managed: true
     owner: conversation
+    requires: [provider, rpc, services, shared]
+    # contract.ts（迁移目标入口）已落地为 src/session/contract.ts，但
+    # publicEntrypoints 有意留空：checker 只在列表非空时校验 deep-import
+    #（scripts/architecture/index.mjs），空列表让 services→session 的 31 条
+    # 内部边保持惰性——这是登记的迁移状态，不是幻影声明（2026-10-05 移除的
+    # 是「声明了不存在的文件」；本文件真实存在，收敛时先注册它再逐条迁移
+    # 内部边，详见 packages/services/specs/session-module-boundary.md）。
+    publicEntrypoints: []
+    # 单层 app：55 处 node: 导入（含 node:sqlite 直连），声明 domain 层会触发 domain-io。
+    layers: { app: "." }
+    layerOrder: [app]
   - id: storage
     roots: [packages/services/src/storage]
     managed: true
     requires: [shared, rpc, services]
-    publicEntrypoints: [packages/services/src/storage/contract.ts]
+    publicEntrypoints:
+      [packages/services/src/storage/contract.ts, packages/services/src/storage/node.ts]
     layers: { domain: domain, app: app, adapters: adapters }
     layerOrder: [domain, app, adapters]
     owner: desktop-settings
   - id: client
     roots: [packages/client/src]
-    managed: false
+    managed: true
+    owner: remote-client-bridge
+    requires: [rpc, services, shared]
+    publicEntrypoints: [packages/client/src/contract.ts, packages/client/src/index.ts]
+    # "./globals" 导出（src/globals.d.ts，window.acode ambient 类型）不登记为入口：
+    # checker 的入口解析不落到 .d.ts，且全仓无源码文件 import 它
+    #（packages/client/specs/module-boundary.md）。
+    layers: { app: "." }
+    layerOrder: [app]
   - id: server
     roots: [packages/server/src]
-    managed: false
+    managed: true
+    owner: remote-server
+    requires: [client, rpc, services, shared]
+    # 权威公开面 = packages/server/package.json exports。"./remote/*.js" 是通配
+    # 子路径，而 checker 的入口匹配是精确路径（publicEntrypointMatches 不支持
+    # 通配），因此被跨模块实际消费的 remote 文件逐一显式登记（实测入边：
+    # desktop→remote/index.ts ×10、posixShell、remoteConnectionProgressContext、
+    # wsl-backend、wsl-detect；acode-cli→harness/index.ts、harness-inprocess.ts ×2）。
+    # 通配面在治理侧欠声明是有意的 ratchet：新的跨模块 deep import 会失败并
+    # 迫使回到这里显式补登。存量超限/抑制见下方 onboard-b3-server-* 例外。
+    publicEntrypoints:
+      [
+        packages/server/src/contract.ts,
+        packages/server/src/index.ts,
+        packages/server/src/stdio.ts,
+        packages/server/src/harness/index.ts,
+        packages/server/src/harness-inprocess.ts,
+        packages/server/src/remote/index.ts,
+        packages/server/src/remote/posixShell.ts,
+        packages/server/src/remote/remoteConnectionProgressContext.ts,
+        packages/server/src/remote/wsl-backend.ts,
+        packages/server/src/remote/wsl-detect.ts,
+      ]
+    # 单层 app：71 处 node: 导入（socket/PTY/子进程/文件 IO），声明 domain 层会触发 domain-io。
+    layers: { app: "." }
+    layerOrder: [app]
   - id: acode-server-cli
     roots: [packages/acode-server-cli/src]
-    managed: false
+    managed: true
+    owner: server-cli-supervisor
+    requires: [rpc, services, shared]
+    # main.ts 是 bin 真实入口（package.json exports "./main"），与包根 index.ts、
+    # 治理契约面 contract.ts 一并登记。注意 src/contracts.ts（复数，223 行，
+    # 16 个模块内 importer）是内部 zod schema 实现文件，保持原名不改动；
+    # max-contract-lines 只匹配 basename 以 contract. 开头的文件，contracts.ts 不受其约束。
+    publicEntrypoints:
+      [
+        packages/acode-server-cli/src/contract.ts,
+        packages/acode-server-cli/src/index.ts,
+        packages/acode-server-cli/src/main.ts,
+      ]
+    # 单层 app：CLI/Supervisor 直接持有进程/文件/网络 IO（80+ 处 node: 导入），
+    # 声明 domain 层会触发 domain-io；存量超限/抑制文件见下方 onboard-server-cli-* 例外。
+    layers: { app: "." }
+    layerOrder: [app]
   - id: ui
     roots: [packages/ui/src]
     managed: false
@@ -53,10 +167,133 @@ modules:
     managed: false
   - id: formal-proof
     roots: [packages/formal-proof/src]
-    managed: false
+    managed: true
+    owner: formal-proof-model
+    requires: []
+    # 包导出只有 "./model"（无 "." 根导出）：入口登记 contract.ts（治理契约面，
+    # 逐名转发 model.ts）与 model.ts 本身；main.ts/styles.css 是 vite 应用内部。
+    # model.ts 920 行不触发 max-contract-lines（该规则只匹配 basename 以
+    # contract. 开头的文件）；超限债见下方 onboard-formal-proof-over-limit 例外。
+    publicEntrypoints: [packages/formal-proof/src/contract.ts, packages/formal-proof/src/model.ts]
+    layers: { app: "." }
+    layerOrder: [app]
+  - id: harness-sdk
+    roots: [packages/harness-sdk/src]
+    managed: true
+    owner: harness-sdk-client
+    requires: [shared]
+    publicEntrypoints: [packages/harness-sdk/src/contract.ts, packages/harness-sdk/src/index.ts]
+    # 单层 app（workflow-run-command 同款形态）：SDK 直接持有子进程/文件 IO
+    #（spawn、fs、crypto、string_decoder），声明 domain 层会触发 domain-io。
+    layers: { app: "." }
+    layerOrder: [app]
+  - id: model-option-map
+    roots: [packages/model-option-map/src]
+    managed: true
+    owner: model-option-map-compiler
+    requires: []
+    publicEntrypoints:
+      [packages/model-option-map/src/contract.ts, packages/model-option-map/src/index.ts]
+    layers: { domain: "." }
+    layerOrder: [domain]
+  - id: acode-cua
+    roots: [packages/acode-cua]
+    managed: true
+    owner: cua-permission-broker
+    requires: []
+    # 扁平 JS 占位包（.js/.d.ts 直接在包根，无 src/）：workspace 解析器的
+    # <pkgRoot>/src/<subpath> 约定不适用，子路径→文件的映射声明在下方
+    # global.aliasRules；publicEntrypoints 与 package.json exports 一一对应
+    #（跨模块 deep-import 校验以这些文件为准）。
+    publicEntrypoints:
+      [
+        packages/acode-cua/index.js,
+        packages/acode-cua/frame-contract.js,
+        packages/acode-cua/host-display-contract.js,
+        packages/acode-cua/request-access-contract.js,
+        packages/acode-cua/pip-session.js,
+        packages/acode-cua/pip-session-node.js,
+        packages/acode-cua/broker.js,
+        packages/acode-cua/broker-server.js,
+        packages/acode-cua/broker-ports.js,
+        packages/acode-cua/broker-socket-path.js,
+        packages/acode-cua/broker-helper-constants.js,
+        packages/acode-cua/broker-helper-health.js,
+      ]
+    # 占位实现只用 node 内建模块（crypto/os/path），单层即可；broker.js 等
+    # 运行时文件与治理工件（module.ts/contract.ts）同层，无方向约束需求。
+    layers: { app: "." }
+    layerOrder: [app]
   - id: acode-cli
     roots: [apps/acode-cli]
     managed: false
+  - id: acode-cli-contracts
+    roots: [apps/acode-cli/packages/contracts/src]
+    managed: true
+    owner: cli-contracts
+    # 只依赖 shared（@acode/shared 及 model-selection/model-config/
+    # workspace-hook-trust-store-file/acode-protocol-v4 子路径）+ 外部 zod；
+    # 不导入 apps/acode-cli 其他包（方向与 workflow-run-read 相反：那边消费 CLI 包）。
+    requires: [shared]
+    # contract.ts 是模块架构契约（策展稳定面），index.ts 是包主入口；
+    # plugins/index.ts 与 tools/node-repl.ts 是 package.json 合法子路径导出
+    #（./plugins ← cli/plugin-host-command.ts；./tools/node-repl ← node-repl-host/server.ts），
+    # 按入口登记而不是改调用方。其余子路径（./browser-control、./mcp 等）映射到
+    # dist/interfaces/*.port.js，检查器按 src/<subpath> 解析不到源码文件，无边可判。
+    publicEntrypoints:
+      [
+        apps/acode-cli/packages/contracts/src/contract.ts,
+        apps/acode-cli/packages/contracts/src/index.ts,
+        apps/acode-cli/packages/contracts/src/plugins/index.ts,
+        apps/acode-cli/packages/contracts/src/tools/node-repl.ts,
+      ]
+    # 单层 app（harness-sdk / workflow-run-command 同款形态）：包内存在
+    # node:async_hooks / node:net 的类型与上下文工具面（invocation-context、
+    # public-egress-ip、tracer），声明 domain 层会触发 domain-io。
+    layers: { app: "." }
+    layerOrder: [app]
+  - id: acode-cli-runtime-task
+    roots: [apps/acode-cli/packages/core/src/runtime-task]
+    managed: true
+    owner: runtime-task-registry
+    requires: [acode-cli-contracts]
+    publicEntrypoints: [apps/acode-cli/packages/core/src/runtime-task/contract.ts]
+    layers: { domain: "." }
+    layerOrder: [domain]
+  - id: acode-cli-workflow-run-read
+    roots: [apps/acode-cli/packages/workflow-run-read/src]
+    managed: true
+    owner: workflow-run-read-model
+    requires: [acode-cli, acode-cli-contracts]
+    publicEntrypoints: [apps/acode-cli/packages/workflow-run-read/src/contract.ts]
+    layers: { domain: domain, app: app }
+    layerOrder: [domain, app]
+  - id: acode-cli-workflow-run-command
+    roots: [apps/acode-cli/packages/workflow-run-command/src]
+    managed: true
+    owner: workflow-run-command-context
+    requires: [acode-cli-contracts]
+    publicEntrypoints: [apps/acode-cli/packages/workflow-run-command/src/contract.ts]
+    layers: { app: "." }
+    layerOrder: [app]
+  - id: acode-cli-workflow
+    roots: [apps/acode-cli/packages/cli-workflow/src]
+    managed: true
+    owner: cli-workflow-engine
+    requires:
+      [
+        shared,
+        acode-cli,
+        acode-cli-contracts,
+        acode-cli-workflow-run-read,
+        acode-cli-workflow-run-command,
+      ]
+    publicEntrypoints: [apps/acode-cli/packages/cli-workflow/src/contract.ts]
+    # W1-R3 物理拆包（specs/cli-workflow-package-boundary.md）：包内含 IO/子进程
+    #（world-read、worktree、child runtime、artifact 发布），不设 domain 层
+    #（harness-sdk / workflow-run-command 同款单层 app 形态）。
+    layers: { app: "." }
+    layerOrder: [app]
 
 global:
   # max-file-lines 对未纳管（managed: false）模块以「只减不增」ratchet 生效：
@@ -70,5 +307,338 @@ global:
   forbidCycles: true
   forbidDeepImports: true
   managedOnly: true
+  # @acode/acode-cua 是扁平 JS 占位包（无 src/ 目录），workspace 解析回退
+  # <pkgRoot>/src/<subpath> 解析不到任何导出。这里按 package.json exports 表
+  # 把 12 个子路径逐一显式映射到实际文件（精确 pattern；单个 * 通配无法表达
+  # broker/server 这类「子路径斜杠 → 文件名连字符」的映射）。
+  # 之所以声明在 global 而非 acode-cua 模块级：policy.mjs 的 resolveImport
+  # 只合并 global 规则与「导入方所在模块」的规则，而 acode-cua 的导入方在
+  # services / desktop / acode-cli，模块级 aliasRules 对它们不生效。
+  aliasRules:
+    - pattern: "@acode/acode-cua"
+      target: packages/acode-cua/index.js
+    - pattern: "@acode/acode-cua/frame-contract"
+      target: packages/acode-cua/frame-contract.js
+    - pattern: "@acode/acode-cua/host-display-contract"
+      target: packages/acode-cua/host-display-contract.js
+    - pattern: "@acode/acode-cua/request-access-contract"
+      target: packages/acode-cua/request-access-contract.js
+    - pattern: "@acode/acode-cua/pip-session"
+      target: packages/acode-cua/pip-session.js
+    - pattern: "@acode/acode-cua/pip-session/node"
+      target: packages/acode-cua/pip-session-node.js
+    - pattern: "@acode/acode-cua/broker"
+      target: packages/acode-cua/broker.js
+    - pattern: "@acode/acode-cua/broker/server"
+      target: packages/acode-cua/broker-server.js
+    - pattern: "@acode/acode-cua/broker/ports"
+      target: packages/acode-cua/broker-ports.js
+    - pattern: "@acode/acode-cua/broker/socketPath"
+      target: packages/acode-cua/broker-socket-path.js
+    - pattern: "@acode/acode-cua/broker/helperConstants"
+      target: packages/acode-cua/broker-helper-constants.js
+    - pattern: "@acode/acode-cua/broker/helperHealth"
+      target: packages/acode-cua/broker-helper-health.js
 
-exceptions: []
+# W1-R3 物理拆包的实存例外（specs/cli-workflow-package-boundary.md §治理登记）：
+# 迁移时超过 400 物理行的 11 个引擎文件登记 max-file-lines；带 lint disable 头注的
+# 3 个文件登记 disable-count。**不刷新 .architecture-baseline.json**；例外到期前由
+# 后续批次拆 file 偿还。
+exceptions:
+  - id: w1r3-max-file-lines-script-workflow-runtime
+    rule: max-file-lines
+    expires: "2026-12-31"
+    paths: [apps/acode-cli/packages/cli-workflow/src/script-workflow-runtime.ts]
+  - id: w1r3-max-file-lines-dynamic-workflow-run-launch
+    rule: max-file-lines
+    expires: "2026-12-31"
+    paths: [apps/acode-cli/packages/cli-workflow/src/dynamic-workflow-run-launch.ts]
+  - id: w1r3-max-file-lines-workflow-world-read
+    rule: max-file-lines
+    expires: "2026-12-31"
+    paths: [apps/acode-cli/packages/cli-workflow/src/workflow-world-read.ts]
+  - id: w1r3-max-file-lines-dynamic-workflow-run-observation
+    rule: max-file-lines
+    expires: "2026-12-31"
+    paths: [apps/acode-cli/packages/cli-workflow/src/dynamic-workflow-run-observation.ts]
+  - id: w1r3-max-file-lines-workflow-driver
+    rule: max-file-lines
+    expires: "2026-12-31"
+    paths: [apps/acode-cli/packages/cli-workflow/src/workflow-driver.ts]
+  - id: w1r3-max-file-lines-dynamic-workflow-run-submit
+    rule: max-file-lines
+    expires: "2026-12-31"
+    paths: [apps/acode-cli/packages/cli-workflow/src/dynamic-workflow-run-submit.ts]
+  - id: w1r3-max-file-lines-script-workflow-tool-port
+    rule: max-file-lines
+    expires: "2026-12-31"
+    paths: [apps/acode-cli/packages/cli-workflow/src/script-workflow-tool-port.ts]
+  - id: w1r3-max-file-lines-dynamic-workflow-import
+    rule: max-file-lines
+    expires: "2026-12-31"
+    paths: [apps/acode-cli/packages/cli-workflow/src/dynamic-workflow-import.ts]
+  - id: w1r3-max-file-lines-workflow-artifact-publish
+    rule: max-file-lines
+    expires: "2026-12-31"
+    paths: [apps/acode-cli/packages/cli-workflow/src/workflow-artifact-publish.ts]
+  - id: w1r3-max-file-lines-dynamic-workflow-run-service
+    rule: max-file-lines
+    expires: "2026-12-31"
+    paths: [apps/acode-cli/packages/cli-workflow/src/dynamic-workflow-run-service.ts]
+  - id: w1r3-max-file-lines-workflow-git-world-read
+    rule: max-file-lines
+    expires: "2026-12-31"
+    paths: [apps/acode-cli/packages/cli-workflow/src/workflow-git-world-read.ts]
+  - id: w1r3-disable-count-script-workflow-runtime
+    rule: disable-count
+    expires: "2026-12-31"
+    paths: [apps/acode-cli/packages/cli-workflow/src/script-workflow-runtime.ts]
+  - id: w1r3-disable-count-script-workflow-tool-port
+    rule: disable-count
+    expires: "2026-12-31"
+    paths: [apps/acode-cli/packages/cli-workflow/src/script-workflow-tool-port.ts]
+  - id: w1r3-disable-count-workflow-world-read
+    rule: disable-count
+    expires: "2026-12-31"
+    paths: [apps/acode-cli/packages/cli-workflow/src/workflow-world-read.ts]
+  # acode-cli-contracts 纳管（ARCH-04，specs/architecture-contracts-module.md）的实存
+  # 例外：11 个 >400 物理行的存量文件登记 max-file-lines；6 个带 eslint-disable max-lines
+  # 头注的文件登记 disable-count。**不刷新 .architecture-baseline.json**；到期前由后续
+  # 批次按职责拆分偿还（拆分一个删一条）。cycle/deep-import/max-contract-lines
+  # 不可例外，已在纳管同批实修（断环叶子文件见 spec）。
+  - id: contracts-onboarding-max-file-lines-session-events
+    rule: max-file-lines
+    expires: "2026-12-31"
+    paths: [apps/acode-cli/packages/contracts/src/events/session.events.ts]
+  - id: contracts-onboarding-max-file-lines-session-store-port
+    rule: max-file-lines
+    expires: "2026-12-31"
+    paths: [apps/acode-cli/packages/contracts/src/interfaces/session-store.port.ts]
+  - id: contracts-onboarding-max-file-lines-model-index
+    rule: max-file-lines
+    expires: "2026-12-31"
+    paths: [apps/acode-cli/packages/contracts/src/model/index.ts]
+  - id: contracts-onboarding-max-file-lines-dynamic-workflow-run-port
+    rule: max-file-lines
+    expires: "2026-12-31"
+    paths: [apps/acode-cli/packages/contracts/src/interfaces/dynamic-workflow-run.port.ts]
+  - id: contracts-onboarding-max-file-lines-workflow-index
+    rule: max-file-lines
+    expires: "2026-12-31"
+    paths: [apps/acode-cli/packages/contracts/src/workflow/index.ts]
+  - id: contracts-onboarding-max-file-lines-event-reducer
+    rule: max-file-lines
+    expires: "2026-12-31"
+    paths: [apps/acode-cli/packages/contracts/src/events/event-reducer.ts]
+  - id: contracts-onboarding-max-file-lines-browser-control-port
+    rule: max-file-lines
+    expires: "2026-12-31"
+    paths: [apps/acode-cli/packages/contracts/src/interfaces/browser-control.port.ts]
+  - id: contracts-onboarding-max-file-lines-create-workflow
+    rule: max-file-lines
+    expires: "2026-12-31"
+    paths: [apps/acode-cli/packages/contracts/src/tools/create-workflow.ts]
+  - id: contracts-onboarding-max-file-lines-target
+    rule: max-file-lines
+    expires: "2026-12-31"
+    paths: [apps/acode-cli/packages/contracts/src/tools/target.ts]
+  - id: contracts-onboarding-max-file-lines-config-index
+    rule: max-file-lines
+    expires: "2026-12-31"
+    paths: [apps/acode-cli/packages/contracts/src/config/index.ts]
+  - id: contracts-onboarding-max-file-lines-hooks-index
+    rule: max-file-lines
+    expires: "2026-12-31"
+    paths: [apps/acode-cli/packages/contracts/src/hooks/index.ts]
+  - id: contracts-onboarding-disable-count-event-reducer
+    rule: disable-count
+    expires: "2026-12-31"
+    paths: [apps/acode-cli/packages/contracts/src/events/event-reducer.ts]
+  - id: contracts-onboarding-disable-count-session-events
+    rule: disable-count
+    expires: "2026-12-31"
+    paths: [apps/acode-cli/packages/contracts/src/events/session.events.ts]
+  - id: contracts-onboarding-disable-count-browser-control-port
+    rule: disable-count
+    expires: "2026-12-31"
+    paths: [apps/acode-cli/packages/contracts/src/interfaces/browser-control.port.ts]
+  - id: contracts-onboarding-disable-count-session-store-port
+    rule: disable-count
+    expires: "2026-12-31"
+    paths: [apps/acode-cli/packages/contracts/src/interfaces/session-store.port.ts]
+  - id: contracts-onboarding-disable-count-model-index
+    rule: disable-count
+    expires: "2026-12-31"
+    paths: [apps/acode-cli/packages/contracts/src/model/index.ts]
+  - id: contracts-onboarding-disable-count-workflow-index
+    rule: disable-count
+    expires: "2026-12-31"
+    paths: [apps/acode-cli/packages/contracts/src/workflow/index.ts]
+  # ARCH-04 batch 2 legacy 模块纳管（rpc/client/provider-node/formal-proof/provider/
+  # acode-server-cli，各包 specs/module-boundary.md）的实存例外：存量 >400 物理行文件
+  # 登记 max-file-lines；带首行 max-lines 抑制头注的文件登记 disable-count。
+  # **不刷新 .architecture-baseline.json**；到期前由后续批次按职责拆分/清理偿还
+  #（拆一个删一条）。rpc/client/provider-node 无超限文件、无 lint disable，零例外。
+  - id: onboard-formal-proof-over-limit
+    rule: max-file-lines
+    expires: "2026-12-31"
+    paths: [packages/formal-proof/src/main.ts, packages/formal-proof/src/model.ts]
+  - id: onboard-provider-over-limit
+    rule: max-file-lines
+    expires: "2026-12-31"
+    paths:
+      [
+        packages/provider/src/config-service.ts,
+        packages/provider/src/config/model-config.ts,
+        packages/provider/src/config/provider-config.ts,
+        packages/provider/src/facades.ts,
+      ]
+  - id: onboard-provider-disables
+    rule: disable-count
+    expires: "2026-12-31"
+    paths:
+      [
+        packages/provider/src/config-service.ts,
+        packages/provider/src/config/model-config.ts,
+        packages/provider/src/config/provider-config.ts,
+        packages/provider/src/facades.ts,
+        packages/provider/src/resolver.ts,
+      ]
+  - id: onboard-server-cli-over-limit
+    rule: max-file-lines
+    expires: "2026-12-31"
+    paths:
+      [
+        packages/acode-server-cli/src/cli.ts,
+        packages/acode-server-cli/src/packaging/stage.ts,
+        packages/acode-server-cli/src/supervisor/supervisor.ts,
+      ]
+  - id: onboard-server-cli-disables
+    rule: disable-count
+    expires: "2026-12-31"
+    paths:
+      [
+        packages/acode-server-cli/src/cli.ts,
+        packages/acode-server-cli/src/packaging/stage.ts,
+        packages/acode-server-cli/src/supervisor/supervisor.ts,
+      ]
+  # ARCH-04 batch 3 legacy 模块纳管（shared/server/session；packages/shared/specs/
+  # module-boundary.md、packages/server/specs/module-boundary.md、packages/services/
+  # specs/session-module-boundary.md）的实存例外：存量 >400 物理行文件登记
+  # max-file-lines；带 lint disable 头注的文件登记 disable-count。
+  # **不刷新 .architecture-baseline.json**；例外只冻结存量（纳管语义下新增超限
+  # 文件/新增 disable 仍阻断），到期前按职责拆分偿还（拆一个删一条）。
+  # cycle/deep-import/max-contract-lines 不可例外：shared 的 2 处文件级环已在
+  # 纳管同批实修（account-access-types.ts 叶子 + channels 直引叶子）。
+  - id: onboard-b3-shared-over-limit
+    rule: max-file-lines
+    expires: "2026-12-31"
+    paths:
+      [
+        packages/shared/src/acode-protocol-legacy-types.ts,
+        packages/shared/src/acode-protocol-v4/command.ts,
+        packages/shared/src/acode-protocol-v4/rows.ts,
+        packages/shared/src/acode-protocol-v4/snapshot.ts,
+        packages/shared/src/acode-protocol-v4/transport.ts,
+        packages/shared/src/acode-protocol-v4/wire-assembler.ts,
+        packages/shared/src/acode-protocol-v4/workflow-runs-delta.ts,
+        packages/shared/src/acode-protocol-v4/workflow-runs-eviction.ts,
+        packages/shared/src/acode-protocol-v4/workflow-runs-reducer.ts,
+        packages/shared/src/acode-protocol-v4/workflow-runs.ts,
+        packages/shared/src/acode-protocol/index.ts,
+        packages/shared/src/acode-task-types-core.ts,
+        packages/shared/src/background-task-controls.ts,
+        packages/shared/src/bots.ts,
+        packages/shared/src/browser-use/commands.ts,
+        packages/shared/src/channels.ts,
+        packages/shared/src/coding-plan-subscription.ts,
+        packages/shared/src/harness-api/methods.ts,
+        packages/shared/src/node/credentialKeychain.ts,
+        packages/shared/src/node/credentialMasterKey.ts,
+        packages/shared/src/platform.ts,
+        packages/shared/src/task-realtime-core.ts,
+        packages/shared/src/test-ids.ts,
+        packages/shared/src/usage-stats.ts,
+        packages/shared/src/validation.ts,
+        packages/shared/src/validationAppSettings.ts,
+      ]
+  - id: onboard-b3-shared-disables
+    rule: disable-count
+    expires: "2026-12-31"
+    paths:
+      [
+        packages/shared/src/acode-protocol-legacy-types.ts,
+        packages/shared/src/acode-protocol-v4/snapshot.ts,
+        packages/shared/src/acode-protocol-v4/transport.ts,
+        packages/shared/src/acode-protocol-v4/wire-assembler.ts,
+        packages/shared/src/acode-protocol/index.ts,
+        packages/shared/src/acode-task-types-core.ts,
+        packages/shared/src/acode-task-types.ts,
+        packages/shared/src/bots.ts,
+        packages/shared/src/browser-use/commands.ts,
+        packages/shared/src/channels.ts,
+        packages/shared/src/coding-plan-subscription.ts,
+        packages/shared/src/model-provider-types.ts,
+        packages/shared/src/platform.ts,
+        packages/shared/src/task-realtime-core.ts,
+        packages/shared/src/task-realtime.ts,
+        packages/shared/src/usage-stats.ts,
+        packages/shared/src/validation.ts,
+        packages/shared/src/validationAppSettings.ts,
+      ]
+  - id: onboard-b3-server-over-limit
+    rule: max-file-lines
+    expires: "2026-12-31"
+    paths:
+      [
+        packages/server/src/harness/translate.ts,
+        packages/server/src/http.ts,
+        packages/server/src/remote/acodeAgentDevDeploy.ts,
+        packages/server/src/remote/deploy.ts,
+        packages/server/src/remote/localTarGz.ts,
+        packages/server/src/remote/remoteAssetCache.ts,
+        packages/server/src/remote/remoteAssetInstaller.ts,
+        packages/server/src/remote/ssh-backend.ts,
+        packages/server/src/remote/wsl-backend.ts,
+      ]
+  - id: onboard-b3-server-disables
+    rule: disable-count
+    expires: "2026-12-31"
+    paths:
+      [
+        packages/server/src/harness/translate.ts,
+        packages/server/src/http.ts,
+        packages/server/src/remote/acodeAgentDevDeploy.ts,
+        packages/server/src/remote/deploy.ts,
+        packages/server/src/remote/remoteAssetCache.ts,
+        packages/server/src/remote/remoteAssetInstaller.ts,
+        packages/server/src/remote/ssh-backend.ts,
+        packages/server/src/remote/wsl-backend.ts,
+      ]
+  - id: onboard-b3-session-over-limit
+    rule: max-file-lines
+    expires: "2026-12-31"
+    paths:
+      [
+        packages/services/src/session/acodeTaskService.ts,
+        packages/services/src/session/automationRepo.ts,
+        packages/services/src/session/automationService.ts,
+        packages/services/src/session/offPeakMockGateway.ts,
+        packages/services/src/session/offPeakTaskRepo.ts,
+        packages/services/src/session/offPeakTaskService.ts,
+        packages/services/src/session/taskIndexRepo.ts,
+      ]
+  - id: onboard-b3-session-disables
+    rule: disable-count
+    expires: "2026-12-31"
+    paths:
+      [
+        packages/services/src/session/acodeTaskService.ts,
+        packages/services/src/session/automationRepo.ts,
+        packages/services/src/session/claude-native/claudeNativeSessionImportParser.ts,
+        packages/services/src/session/offPeakMockGateway.ts,
+        packages/services/src/session/offPeakRuntimeModel.ts,
+        packages/services/src/session/offPeakTaskRepo.ts,
+        packages/services/src/session/offPeakTaskService.ts,
+        packages/services/src/session/taskIndexRepo.ts,
+      ]

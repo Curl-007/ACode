@@ -119,7 +119,7 @@ export type { BrowserClientTransport } from "./browser-client/index.js";
 export * from "./subagent/index.js";
 
 // Runtime task components
-export * from "./runtime-task/index.js";
+export * from "./runtime-task/contract.js";
 
 // Overnight 挂机执行（K3，specs/overnight-execution.md）：接缝层（fork 端口/runner）与
 // 纯模块层一起从包入口导出——bootstrap 装配处与宿主经 @acode/core 公开入口消费，
@@ -185,9 +185,11 @@ export {
   setProcessManagedPolicyFloor,
   // J1-2：反射门审计 sink 的进程级注册点（create-app 唯一调用方，接 info 级 Logger
   // 落 JSONL；缺省 sink 写 stderr，见 specs/bash-confirm-reflexive-gate.md R6）。
+  registerBashReflexAuditSink,
   setBashReflexAuditSink,
   // auto 分类器审计 sink 的进程级注册点（create-app 唯一调用方，同一 JSONL 形态，
   // 见 specs/auto-mode-risk-classifier.md R6；缺省无 sink，测试环境零输出）。
+  registerAutoClassifierAuditSink,
   setAutoClassifierAuditSink,
 } from "./permission/index.js";
 export type {

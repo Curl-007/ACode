@@ -69,7 +69,7 @@ export const desktopBrowserPlatformBridge = {
         originsSkipped: 0,
         originsFailed: 0,
       },
-      error: "unsupported",
+      error: "chrome_import_not_supported",
     }),
   clearEmbeddedBrowserData: (mode) =>
     window.acode.clearEmbeddedBrowserData?.(mode) ??

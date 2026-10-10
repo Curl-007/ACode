@@ -82,6 +82,8 @@ export interface TurnRequestState {
 
 export interface RegularTurnLoopState {
   activeTurn?: ActiveTurnSteeringState;
+  /** 首次 await 前捕获，恢复/rewind 后禁止发送旧 provider request entries。 */
+  branchGeneration?: number;
   /** Host admission 显式传入的本轮 automation 身份；不能从持久 task metadata 推断。 */
   automationId?: string;
   /** Host admission 显式传入的本轮闲时任务身份；与 automationId 互斥，不从持久 meta 推断。 */

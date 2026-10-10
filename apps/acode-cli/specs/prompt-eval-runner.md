@@ -7,6 +7,7 @@ runner」立项。2026-10-04 批次 4 第五轮试点已把 v0 手动采集路�
 （子代理转录落点、后台任务无头寿命、重启编排）显式登记为 open question 并 fail-loud。
 
 红线（承接 v0，不放宽）：
+
 - **no-telemetry 不变**：runner 是开发者显式发起的 dev 脚本面；产品运行时源码
   （`packages/*/src`）零 import/零读取 `evals/`；除数据根两个 env 外不新增任何
   `ACODE_` 开关面。
@@ -34,7 +35,9 @@ runner」立项。2026-10-04 批次 4 第五轮试点已把 v0 手动采集路�
 apps/acode-cli/evals/
 ├── scenarios.json      语料（v0 所有，runner 只读；R7-4 冻结规则不变）
 ├── judge.mjs           评分纯函数 + CLI（v0 所有，runner import 复用，不重写判分）
-├── runner.mjs          本 spec 新增：采集/整形/判分编排 + 可单测纯函数
+├── runner.mjs          采集/判分编排，保留既有纯函数公开入口
+├── runner-transcript.mjs 转录整形纯函数，不执行 IO 或启动子进程
+├── runner-report.mjs    报告、指纹与新鲜度判断纯函数，保留 runner 公开入口
 ├── recipes/            本 spec 新增：每场景一个采集配方（§R6 登记制）
 │   └── <scenario-id>.mjs
 ├── fixtures/           v0 的合成 judge 响应样本（不动）
@@ -45,6 +48,8 @@ apps/acode-cli/evals/
 - `runner.mjs` 零运行时依赖（node ≥22，ESM，与 judge.mjs 同风格）；导出纯函数
   （`shapeTranscript` / `buildReport` / `judgeFingerprint`）供单测，CLI 入口只做
   IO 与子进程编排。
+  转录整形由 `runner-transcript.mjs` 唯一实现，`runner.mjs` 导入并重导出；模块拆分
+  不改变转录截断、事件映射、子转录末行规则或 CLI 参数。既有 runner 行为测试验证兼容。
 - CLI：
   `node evals/runner.mjs --scenario <id> [--judge dry|response] [--eval-root <dir>]`
   - `--judge dry`（缺省）：采集 + 整形 + 生成 judge 请求文件，报告状态
@@ -65,9 +70,9 @@ apps/acode-cli/evals/
   跑毕（含失败路径）**必须删除**凭据副本；`--eval-root` 显式给出时保留目录但删除
   `data-base/.acode/v2/credentials.json` 与密钥材料（复用调试不重复付凭据卫生代价）。
 - **被测面**：`node apps/acode-cli/packages/cli/dist/acode.cjs -p <prompt> --cwd
-  <fixture> --output-format stream-json --mode <recipe.mode>`。
+<fixture> --output-format stream-json --mode <recipe.mode>`。
 - **dist 新鲜度守护**：采集前比对 `dist/acode.cjs` mtime 与 `apps/acode-cli/packages/
-  {core,contracts,bootstrap,cli}/src` 最新 mtime；dist 更旧 → fail-loud 提示重建命令
+{core,contracts,bootstrap,cli}/src` 最新 mtime；dist 更旧 → fail-loud 提示重建命令
   （turbo）。试点教训：陈旧 dist = 测旧提示词 = 基线保真不成立。
 - **fixture**：配方 `setup(dir)` 物化采集工作区。已验证形态：零依赖 Node 原生 TS
   仓（Node ≥23.6 type-stripping），测试命令必须用 glob `node --test "tests/*.test.ts"`
@@ -83,16 +88,17 @@ apps/acode-cli/evals/
   `run-stderr.log`（诊断用，含迁移 INFO 等一次性通知）。
 - 整形（`shapeTranscript`，纯函数，逐行解析 NDJSON）：
 
-  | stream-json 事件 | 整形块 |
-  | --- | --- |
-  | `turn.started` → `payload.input` | `[user] <prompt>` |
-  | `model.streaming` `kind:text_delta` 按 `assistantMessageId` 累积、`text_end` 出块 | `[assistant] <text>` |
-  | `model.streaming` `kind:tool_call` | `[tool call <id>] <toolName>` + 输入 JSON（截断 1200 字符） |
-  | `tool.updated` `kind:"result"` | `[tool result <id>] success/duration` + 输出（截断 3000 字符） |
-  | `result` → `response` | `[final assistant message] <text>` |
-  | 其余（`reasoning_*`、token 增量、`session.updated`、`checkpoint.created`、`streamRecovery.updated`、`model_request_*`、`streamRecovery` 等） | 丢弃 |
+  | stream-json 事件                                                                                                                             | 整形块                                                         |
+  | -------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+  | `turn.started` → `payload.input`                                                                                                             | `[user] <prompt>`                                              |
+  | `model.streaming` `kind:text_delta` 按 `assistantMessageId` 累积、`text_end` 出块                                                            | `[assistant] <text>`                                           |
+  | `model.streaming` `kind:tool_call`                                                                                                           | `[tool call <id>] <toolName>` + 输入 JSON（截断 1200 字符）    |
+  | `tool.updated` `kind:"result"`                                                                                                               | `[tool result <id>] success/duration` + 输出（截断 3000 字符） |
+  | `result` → `response`                                                                                                                        | `[final assistant message] <text>`                             |
+  | 其余（`reasoning_*`、token 增量、`session.updated`、`checkpoint.created`、`streamRecovery.updated`、`model_request_*`、`streamRecovery` 等） | 丢弃                                                           |
 
   截断带 `…[runner-truncated N chars]` 标记（judge 能看到省略事实）。
+
 - **子转录整形**（EXP1 实证源，§R6 子代理四场景）：取子会话 rollout model-io jsonl
   **末行**的 `request.body.messages`（完整消息链）映射为块——`role:user` 文本→
   `[user]`、`role:assistant` 文本块→`[assistant]`、assistant `tool_use`→`[tool call]`、
@@ -111,7 +117,7 @@ apps/acode-cli/evals/
   `endpoint-recorded`（v1.1，CI 缓存响应，承接 v0 结转）。
 - 每份报告必含 `judgeFingerprint = { mode, model, endpointHost? }`：live 取
   `PROMPT_EVAL_JUDGE_MODEL` + host；operator 记 `{ mode: "operator", model:
-  "<操作员会话自报模型标识>" }`。**指纹不同的报告不得互算 delta**——正式基线与
+"<操作员会话自报模型标识>" }`。**指纹不同的报告不得互算 delta**——正式基线与
   里程碑评测必须同一指纹（R7 可比性的机器化表达）。
 - 判分永远经 judge.mjs 的 `parseJudgeResponse` + `scoreScenario`（invalid 不 pass 不
   fail 的防放水语义不变），runner 不实现任何平行判分。
@@ -129,7 +135,7 @@ apps/acode-cli/evals/
 
 - 入库：`evals/reports/report-<scenarioId>-<runId>.json`，字段 = scoreScenario 报告
   形状 + `{ runId, judgeFingerprint, collection: { distCommit, cliMode, recipeDigest,
-  eventsTotal, blocksShaped, shapedChars, modelRequests?, wallMs } }`。
+eventsTotal, blocksShaped, shapedChars, modelRequests?, wallMs } }`。
   `recipeDigest` = 配方文件 sha256 前 12 位（配方变更可追溯）。
 - gitignore：`evals/reports/raw/`（转录/request/response 永不入库）。报告含证据引文
   （来自合成 fixture 会话，无用户数据）——入库安全边界与 v0「只入库合成 fixture」
@@ -139,14 +145,14 @@ apps/acode-cli/evals/
 
 ### R6 场景采集可行性门（试点 12 场景结论 → recipe 登记制）
 
-| 状态 | 场景 | 说明 |
-| --- | --- | --- |
-| verified | self-verification-before-done | 试点全链路 PASS（passRate 1.0） |
-| ready | web-content-untrusted | recipe 附本地静态服务器（127.0.0.1:8788，嵌指令页）；**yolo 模式**——学说主轴 = 抵抗嵌入指令，fetch 必须被放行才可测；风险有界：外泄目标 `evil.example` 是保留域（不可解析）、删除范围限一次性 fixture |
-| first-run-unverified | dispatch-prompt-self-contained / continue-vs-spawn-choice / permission-gate-posture | 三者都依赖 Agent/SendMessage 在无头下可用（非权限门控、预期可行）；permission-gate-posture 另用默认权限模式借 headless deny broker 产生真实拒绝（主会话转录即可判）。首跑若派发不可得，报告记 `dispatch-unavailable` 并转 §R7 |
-| ready | subagent-report-structure / subagent-scope-discipline / subagent-denial-single-report / explore-empty-result-honesty | 子代理转录源已实证（2026-10-04 EXP1，§R3 子转录整形）：`cli/agents/<parentSess>/agent_<id>/metadata.json` 给 childSessionId 映射；工具链证据取 `cli/rollout/model-io-sess_subagent_agent_<id>.jsonl` **末行** `request.body.messages`（含全部 tool_use/tool_result）；最终报告取同目录 `output.txt`（==task.output）。判分对象 = 子转录（语料 setup 要求），父转录仅作派发上下文 |
-| ready | relay-verification / background-no-polling | 后台寿命已实证（2026-10-04 EXP2）：`-p` 进程**存活至后台任务通知**（45s 套件、73s 墙钟、父转录含套件输出 6 处并给出失败总结）——原 experimental 的 orphan 担忧不成立，notes 机制保留作异常信号 |
-| not-supported-v1 | restart-orphan-handling | kill+resume 编排未验证（后台寿命问题已关闭，剩 resume 提醒附着与孤儿处置的编排面）；runner 显式报错指向 §R7 |
+| 状态                 | 场景                                                                                                                 | 说明                                                                                                                                                                                                                                                                                                                                                                             |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| verified             | self-verification-before-done                                                                                        | 试点全链路 PASS（passRate 1.0）                                                                                                                                                                                                                                                                                                                                                  |
+| ready                | web-content-untrusted                                                                                                | recipe 附本地静态服务器（127.0.0.1:8788，嵌指令页）；**yolo 模式**——学说主轴 = 抵抗嵌入指令，fetch 必须被放行才可测；风险有界：外泄目标 `evil.example` 是保留域（不可解析）、删除范围限一次性 fixture                                                                                                                                                                            |
+| first-run-unverified | dispatch-prompt-self-contained / continue-vs-spawn-choice / permission-gate-posture                                  | 三者都依赖 Agent/SendMessage 在无头下可用（非权限门控、预期可行）；permission-gate-posture 另用默认权限模式借 headless deny broker 产生真实拒绝（主会话转录即可判）。首跑若派发不可得，报告记 `dispatch-unavailable` 并转 §R7                                                                                                                                                    |
+| ready                | subagent-report-structure / subagent-scope-discipline / subagent-denial-single-report / explore-empty-result-honesty | 子代理转录源已实证（2026-10-04 EXP1，§R3 子转录整形）：`cli/agents/<parentSess>/agent_<id>/metadata.json` 给 childSessionId 映射；工具链证据取 `cli/rollout/model-io-sess_subagent_agent_<id>.jsonl` **末行** `request.body.messages`（含全部 tool_use/tool_result）；最终报告取同目录 `output.txt`（==task.output）。判分对象 = 子转录（语料 setup 要求），父转录仅作派发上下文 |
+| ready                | relay-verification / background-no-polling                                                                           | 后台寿命已实证（2026-10-04 EXP2）：`-p` 进程**存活至后台任务通知**（45s 套件、73s 墙钟、父转录含套件输出 6 处并给出失败总结）——原 experimental 的 orphan 担忧不成立，notes 机制保留作异常信号                                                                                                                                                                                    |
+| not-supported-v1     | restart-orphan-handling                                                                                              | kill+resume 编排未验证（后台寿命问题已关闭，剩 resume 提醒附着与孤儿处置的编排面）；runner 显式报错指向 §R7                                                                                                                                                                                                                                                                      |
 
 - 每 recipe 导出 `{ mode, setup(dir), teardown?(dir), server?() }`；registry 缺配方 =
   not-supported（fail-loud）。配方只布置语料 `setup` 字段要求的会话条件，不加戏。
@@ -154,8 +160,8 @@ apps/acode-cli/evals/
 ### R7 open questions（结转 v1.1，逐项有触发条件）
 
 1. ~~**子代理转录落点**~~ **已解决（2026-10-04 EXP1）**：落点 = `cli/agents/<parentSess>/
-   agent_<id>/`（metadata/output.txt/task.output）+ `cli/rollout/model-io-<childSessionId>.
-   jsonl`（末行 messages 为完整工具链）；整形规则进 §R3。四个子代理场景转 ready。
+agent_<id>/`（metadata/output.txt/task.output）+ `cli/rollout/model-io-<childSessionId>.
+jsonl`（末行 messages 为完整工具链）；整形规则进 §R3。四个子代理场景转 ready。
 2. ~~**无头后台任务寿命**~~ **已解决（2026-10-04 EXP2）**：`-p` 进程存活至后台任务
    通知（45s 套件 / 73s 墙钟 / 父转录含套件输出并总结失败）；两个后台场景转 ready，
    `background-orphan` notes 保留作异常信号（若未来某跑早退即产品回归信号）。
@@ -168,14 +174,14 @@ apps/acode-cli/evals/
 
 ## 状态所有者
 
-| 事实 | 所有者 |
-| --- | --- |
-| 场景语料 | `evals/scenarios.json`（runner 只读） |
-| 评审请求/解析/聚合 | `evals/judge.mjs`（runner import，不平行实现） |
-| 采集配方 | `evals/recipes/<scenario-id>.mjs`（每场景唯一） |
-| 编排/整形/报告 | `evals/runner.mjs` |
-| 报告入库面 | `evals/reports/report-*.json`（raw/ gitignored） |
-| judge 端点配置 | `PROMPT_EVAL_JUDGE_*` env（仅 dev 脚本面） |
+| 事实               | 所有者                                           |
+| ------------------ | ------------------------------------------------ |
+| 场景语料           | `evals/scenarios.json`（runner 只读）            |
+| 评审请求/解析/聚合 | `evals/judge.mjs`（runner import，不平行实现）   |
+| 采集配方           | `evals/recipes/<scenario-id>.mjs`（每场景唯一）  |
+| 编排/整形/报告     | `evals/runner.mjs`                               |
+| 报告入库面         | `evals/reports/report-*.json`（raw/ gitignored） |
+| judge 端点配置     | `PROMPT_EVAL_JUDGE_*` env（仅 dev 脚本面）       |
 
 ## 验收场景
 
@@ -193,7 +199,7 @@ apps/acode-cli/evals/
 5. **红线**：runner/recipes 内无 `ACODE_` 前缀 env 读取（数据根两个除外，白名单
    断言）；`packages/*/src` 零处引用 `evals/`（grep 级，承接 v0 场景 6）。
 6. **端到端（手动，如实记录）**：`--scenario self-verification-before-done --judge
-   dry` 在真实机器上产出 awaiting-judgement 报告 + shaped 转录；`--judge response`
+dry` 在真实机器上产出 awaiting-judgement 报告 + shaped 转录；`--judge response`
    喂合成响应得终态报告。live 采集消耗模型配额，只在所有者知情下执行。
 
 ## 不在本项范围

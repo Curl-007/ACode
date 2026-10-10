@@ -24,20 +24,20 @@
 
 ### 已存在且完整的部分（休眠实现的主体）
 
-| 面 | 位置 | 状态 |
-| --- | --- | --- |
-| 工具契约 | `contracts/src/tools/workflow.ts:12-66` | 完整。`script`/`scriptPath`/`name`/`resumeFromRunId`/`args` 五入参 `.strict()` + superRefine；`scriptPath` 优先；脚本上限 `WORKFLOW_SCRIPT_MAX_LENGTH = 524_288`（:9）；runId 正则 `/^wf_[a-z0-9-]{6,}$/`（:10） |
-| 契约文案 | `contracts/src/tools/workflow.ts:45` | 逐字要求 `export const meta = { name, description, phases }`（纯字面量）+ `agent()/parallel()/pipeline()/phase()` |
-| meta / opts schema | `contracts/src/workflow/script.ts:8-39, 44-59` | 完整。phase 带 `title/detail?/model?` 且标题去重；agent opts 含 `agentType/instructions/isolation/label/model/phase/schema/skills/systemPrompt/timeoutMs/tools` |
-| 运行记录与存储端口 | `contracts/src/workflow/script.ts:150-171, 306-343` | 完整。`ScriptWorkflowRunRecord.kind: "script"` 是判别字段；`findCachedScriptWorkflowActivity({callPath, inputHash, runId})` 是 resume 缓存查询 |
-| 存储实现 | `adapters/src/storage/session-store/repositories/script-workflow-{activities,codecs,runs}.ts` | 完整，独立 `workflow_activity` 表 |
-| 八个 DSL 全局 | `bootstrap/src/app/script-workflow-child-source.ts:66-138` | 完整。`agent/parallel/pipeline/log/phase/workflow/args/budget`，`budget` 含 `total/spent()/remaining()` |
-| 确定性禁令 | `script-workflow-child-source.ts:140-159` | 完整。`Date.now()` / 无参 `new Date()` / `Math.random()` 三者抛错，`Date.parse`/`Date.UTC`/`new Date(ms)` 刻意保留 |
-| meta 提取 | `script-workflow-meta.ts:70-190` | 完整且鲁棒：`findObjectLiteralEnd` + `scanString`/`scanLineComment`/`scanBlockComment` 正确处理字符串与注释里的假 `}` |
-| 进程与 NDJSON 协议 | `script-workflow-process.ts:25-183` | 完整。stdio 行协议 `request/response/event/complete`，与 dwf 的 harness 同构 |
-| resume 缓存 | `script-workflow-runtime.ts:277-295` | 完整。键 = `(runId, callPath, inputHash)`，`inputHash = stableHash({opts, phase, prompt})`；`callPath` 由 `AsyncLocalStorage` 铸造（`child-source.ts:52-64`） |
-| worktree 隔离 | `workflow-worktree-manager.ts` | S1 已落地，10 个测试绿 |
-| app 方法与端口 | `create-app.ts:653, 920, 1336`；`script-workflow-methods.ts:44-53`；`script-workflow-tool-port.ts` | 全部接线完成 |
+| 面                 | 位置                                                                                               | 状态                                                                                                                                                                                                             |
+| ------------------ | -------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 工具契约           | `contracts/src/tools/workflow.ts:12-66`                                                            | 完整。`script`/`scriptPath`/`name`/`resumeFromRunId`/`args` 五入参 `.strict()` + superRefine；`scriptPath` 优先；脚本上限 `WORKFLOW_SCRIPT_MAX_LENGTH = 524_288`（:9）；runId 正则 `/^wf_[a-z0-9-]{6,}$/`（:10） |
+| 契约文案           | `contracts/src/tools/workflow.ts:45`                                                               | 逐字要求 `export const meta = { name, description, phases }`（纯字面量）+ `agent()/parallel()/pipeline()/phase()`                                                                                                |
+| meta / opts schema | `contracts/src/workflow/script.ts:8-39, 44-59`                                                     | 完整。phase 带 `title/detail?/model?` 且标题去重；agent opts 含 `agentType/instructions/isolation/label/model/phase/schema/skills/systemPrompt/timeoutMs/tools`                                                  |
+| 运行记录与存储端口 | `contracts/src/workflow/script.ts:150-171, 306-343`                                                | 完整。`ScriptWorkflowRunRecord.kind: "script"` 是判别字段；`findCachedScriptWorkflowActivity({callPath, inputHash, runId})` 是 resume 缓存查询                                                                   |
+| 存储实现           | `adapters/src/storage/session-store/repositories/script-workflow-{activities,codecs,runs}.ts`      | 完整，独立 `workflow_activity` 表                                                                                                                                                                                |
+| 八个 DSL 全局      | `bootstrap/src/app/script-workflow-child-source.ts:66-138`                                         | 完整。`agent/parallel/pipeline/log/phase/workflow/args/budget`，`budget` 含 `total/spent()/remaining()`                                                                                                          |
+| 确定性禁令         | `script-workflow-child-source.ts:140-159`                                                          | 完整。`Date.now()` / 无参 `new Date()` / `Math.random()` 三者抛错，`Date.parse`/`Date.UTC`/`new Date(ms)` 刻意保留                                                                                               |
+| meta 提取          | `script-workflow-meta.ts:70-190`                                                                   | 完整且鲁棒：`findObjectLiteralEnd` + `scanString`/`scanLineComment`/`scanBlockComment` 正确处理字符串与注释里的假 `}`                                                                                            |
+| 进程与 NDJSON 协议 | `script-workflow-process.ts:25-183`                                                                | 完整。stdio 行协议 `request/response/event/complete`，与 dwf 的 harness 同构                                                                                                                                     |
+| resume 缓存        | `script-workflow-runtime.ts:277-295`                                                               | 完整。键 = `(runId, callPath, inputHash)`，`inputHash = stableHash({opts, phase, prompt})`；`callPath` 由 `AsyncLocalStorage` 铸造（`child-source.ts:52-64`）                                                    |
+| worktree 隔离      | `workflow-worktree-manager.ts`                                                                     | S1 已落地，10 个测试绿                                                                                                                                                                                           |
+| app 方法与端口     | `create-app.ts:653, 920, 1336`；`script-workflow-methods.ts:44-53`；`script-workflow-tool-port.ts` | 全部接线完成                                                                                                                                                                                                     |
 
 ### 已确认的缺口
 
@@ -133,15 +133,15 @@
 
 ### R3 七处遗留面按新名接线
 
-| # | 位置 | 改动 |
-| --- | --- | --- |
-| 1 | `core/src/tool/provider-visible-order.ts:27` | 按字母序补 `RunWorkflow`；`Workflow` 那行**不动**（仍由 `LEGACY_TOLERATED` 容忍） |
-| 2 | `core/src/runtime/methods/background.ts:436, 452` | 正向映射补 `case "RunWorkflow": return "local_workflow"`，**保留** `case "Workflow"`（旧会话 rollout 里仍有该名字）；反向 `local_workflow → "RunWorkflow"`（活名优先） |
-| 3 | `core/src/tool/executor/background-task-registry.ts:207, 222` | 同 #2 |
-| 4 | `core/src/tool/executor/background-tasks.ts:612, 781` | 通知格式器与 `cancellable` 分支补新名；`:610-611` 的注释同步（它现在只提 legacy `"Workflow"`） |
-| 5 | `OFF_PEAK_MUTATION_TOOL_NAMES` 三份同值副本：`core/src/runtime/methods/turn-loop-state.ts:34`、`bootstrap/src/acode-protocol-v4/commands/prompt-turn.ts:292`、`bootstrap/src/acode-protocol/server-operations.ts:2412`（**内联字面量，不是具名常量**） | 三处都补 `RunWorkflow`；随后**把副本消掉**（见 R9 的实现决定回写）：core 的 turn-loop-state 是唯一所有者，经 `core/src/index.ts` 导出，两个 bootstrap 消费方改为 import。同款处理 `AUTOMATION_MUTATION_TOOL_NAMES`（同样是 core 一份、prompt-turn 一份手抄） |
-| 6 | `packages/shared/src/tool-identity.ts` | **刻意不登记**（原方案写错，实施时纠正，见下面「R3 补注」） |
-| 7 | `apps/acode-cli/tests/provider-visible-order-hygiene.test.mjs:29` | `LEGACY_TOLERATED` 保持 `new Set(["Workflow"])` 不变（新名是**真实注册**的，走 `registered.has(name)` 分支） |
+| #   | 位置                                                                                                                                                                                                                                                   | 改动                                                                                                                                                                                                                                                         |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1   | `core/src/tool/provider-visible-order.ts:27`                                                                                                                                                                                                           | 按字母序补 `RunWorkflow`；`Workflow` 那行**不动**（仍由 `LEGACY_TOLERATED` 容忍）                                                                                                                                                                            |
+| 2   | `core/src/runtime/methods/background.ts:436, 452`                                                                                                                                                                                                      | 正向映射补 `case "RunWorkflow": return "local_workflow"`，**保留** `case "Workflow"`（旧会话 rollout 里仍有该名字）；反向 `local_workflow → "RunWorkflow"`（活名优先）                                                                                       |
+| 3   | `core/src/tool/executor/background-task-registry.ts:207, 222`                                                                                                                                                                                          | 同 #2                                                                                                                                                                                                                                                        |
+| 4   | `core/src/tool/executor/background-tasks.ts:612, 781`                                                                                                                                                                                                  | 通知格式器与 `cancellable` 分支补新名；`:610-611` 的注释同步（它现在只提 legacy `"Workflow"`）                                                                                                                                                               |
+| 5   | `OFF_PEAK_MUTATION_TOOL_NAMES` 三份同值副本：`core/src/runtime/methods/turn-loop-state.ts:34`、`bootstrap/src/acode-protocol-v4/commands/prompt-turn.ts:292`、`bootstrap/src/acode-protocol/server-operations.ts:2412`（**内联字面量，不是具名常量**） | 三处都补 `RunWorkflow`；随后**把副本消掉**（见 R9 的实现决定回写）：core 的 turn-loop-state 是唯一所有者，经 `core/src/index.ts` 导出，两个 bootstrap 消费方改为 import。同款处理 `AUTOMATION_MUTATION_TOOL_NAMES`（同样是 core 一份、prompt-turn 一份手抄） |
+| 6   | `packages/shared/src/tool-identity.ts`                                                                                                                                                                                                                 | **刻意不登记**（原方案写错，实施时纠正，见下面「R3 补注」）                                                                                                                                                                                                  |
+| 7   | `apps/acode-cli/tests/provider-visible-order-hygiene.test.mjs:29`                                                                                                                                                                                      | `LEGACY_TOLERATED` 保持 `new Set(["Workflow"])` 不变（新名是**真实注册**的，走 `registered.has(name)` 分支）                                                                                                                                                 |
 
 #### R3 补注：为什么 RunWorkflow 不进 `tool-identity.ts`
 
@@ -203,23 +203,33 @@
   `<cwd>/.acode/workflow-runs/<runId>.mjs`（目录自带 `.gitignore: *`），失败回落
   `os.tmpdir()/acode-workflow-runs/` 并经 `onWarning` 报一声。
 - payload 里只留**小**字段（`args` / `budgetTotal` / `scriptUrl`），脚本正文由入口文件自持。
+- **spawn 必须显式携带 `ELECTRON_RUN_AS_NODE=1`**（2026-10-11 增补，桌面宿主缺陷修复）：
+  桌面端 agent 由 Electron Helper 运行（`process.execPath` 指向 Helper 二进制），且 CLI
+  启动时会把 `ELECTRON_RUN_AS_NODE` 从自身 env sanitize 掉——不显式带上它，入口子进程会
+  按完整 Electron/Chromium 应用启动：stdout 变成 GUI 日志行（`[2026-...]` 前缀），
+  `handleChildLine` 的 `JSON.parse` 直接抛 `Expected ',' or ']' after array element in
+  JSON at position 7`，或按 harness 注释卡死在 GPU 初始化永不发声。处理与
+  `dynamic-workflow-runtime/src/harness.ts`（dwf 侧同款缺陷已修，桌面端 dwf 因此可用）
+  与 `official-plugin-runtime.ts` 一致；纯 Node 的 `execPath` 下该变量无效、无副作用。
+  守护测试 `tests/script-workflow-desktop-host-env.test.mjs`（源码级，理由同
+  agent-cap 守护：行为级复现需要真实 Electron 宿主）。
 - 现有 `.acode/workflow-runs/` 目录已被 dwf 使用；两套共用同一目录但文件名不冲突
   （dwf 用 `<runId>.mjs`，其 runId 前缀是 `dwfrun_`，脚本工作流是 `wf_`）。共用是有意的：
   该目录已是 machine-owned + git-ignored，再开第二个目录只会多一处要清理的残骸。
 
 ### R6 与 dwf 的边界（两套独立，互不写对方状态）
 
-| 维度 | dwf（现役） | 脚本工作流（本项复活） |
-| --- | --- | --- |
-| 工具 | `CreateWorkflow` 等十个 | `RunWorkflow` 一个 |
-| 脚本语言 | TypeScript，编译期类型检查 | 纯 JavaScript，无类型检查 |
-| 头部 | 禁止 `export`（脚本被包进函数体） | 必须以 `export const meta = {...}` 开头 |
-| DSL | `agent(name,persona).ask<T>()` / `world.*` / `artifact.*` / `report()` | `agent(prompt,opts)` / `pipeline()` / `parallel()` / `budget` |
-| 站点身份 | 编译期静态 site id × ordinal | 运行期 `callPath`（AsyncLocalStorage）+ `inputHash` |
-| 执行面 | 子进程 + `vm.createContext` | 子进程 + `vm.createContext`（R4 之后一致） |
-| 存储 | `dwf_run` / `dwf_actor` / `dwf_node` / `dwf_event` | `workflow_activity` + `ScriptWorkflowRunRecord`（`kind:"script"`） |
-| 事件 | `dynamic_workflow_run_progress` | `script_*` 前缀 |
-| runId | `dwfrun_*` | `wf_*` |
+| 维度     | dwf（现役）                                                            | 脚本工作流（本项复活）                                             |
+| -------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| 工具     | `CreateWorkflow` 等十个                                                | `RunWorkflow` 一个                                                 |
+| 脚本语言 | TypeScript，编译期类型检查                                             | 纯 JavaScript，无类型检查                                          |
+| 头部     | 禁止 `export`（脚本被包进函数体）                                      | 必须以 `export const meta = {...}` 开头                            |
+| DSL      | `agent(name,persona).ask<T>()` / `world.*` / `artifact.*` / `report()` | `agent(prompt,opts)` / `pipeline()` / `parallel()` / `budget`      |
+| 站点身份 | 编译期静态 site id × ordinal                                           | 运行期 `callPath`（AsyncLocalStorage）+ `inputHash`                |
+| 执行面   | 子进程 + `vm.createContext`                                            | 子进程 + `vm.createContext`（R4 之后一致）                         |
+| 存储     | `dwf_run` / `dwf_actor` / `dwf_node` / `dwf_event`                     | `workflow_activity` + `ScriptWorkflowRunRecord`（`kind:"script"`） |
+| 事件     | `dynamic_workflow_run_progress`                                        | `script_*` 前缀                                                    |
+| runId    | `dwfrun_*`                                                             | `wf_*`                                                             |
 
 - 事件命名早已为共存做过隔离：`contracts/src/events/session.events.ts:141-142` 明写
   「命名刻意带 `dynamic_`：legacy `Workflow` 工具的 script run 事件（`workflow_started` /
@@ -770,8 +780,8 @@ export const RUN_WORKFLOW_TOOL_NAME = "RunWorkflow";
 export const runWorkflowToolEntry: ToolEntry;
 
 // core/src/tool/handlers/workflow-tool-names.ts（从 index.ts 抽出）
-export const DYNAMIC_WORKFLOW_TOOL_NAMES: ReadonlySet<string>;  // dwf 十个，语义不变
-export const GATED_WORKFLOW_TOOL_NAMES: ReadonlySet<string>;    // 十个 + RunWorkflow
+export const DYNAMIC_WORKFLOW_TOOL_NAMES: ReadonlySet<string>; // dwf 十个，语义不变
+export const GATED_WORKFLOW_TOOL_NAMES: ReadonlySet<string>; // 十个 + RunWorkflow
 ```
 
 改动（签名不变，只改实现）：
@@ -793,7 +803,9 @@ export async function runScriptWorkflowChild(input: {...}): Promise<ScriptWorkfl
    脚本工作流没有。后果：确认窗无法展示因果图，`parallel()` 里的具名冲突只能在运行期发现。
    本项不补。
 2. **无 typed schema 合成**。`agent(prompt, {schema})` 的 schema 是模型手写的 JSON Schema，
-   运行期校验；dwf 那边是从 TS 类型合成 + `submit_result` 强制。
+   运行期按 Dynamic Workflow 共用的受限 JSON Schema 子集校验；不支持的关键字、坏 schema
+   或结果形状不符都会让 activity 失败且不提交结果，但不会自动重试。dwf 那边则从 TS 类型
+   合成 schema，并由 `submit_result` 工具强制提交。
 3. **resume 缓存只在同一 runId 内**。`findCachedScriptWorkflowActivity` 的 where 子句带
    `run_id = ?`，跨 run 的「最长未改前缀」要靠 `resumeFromRunId` 复用同一行
    （`script-workflow-prepare.ts`）。dwf 的 amend-resume（新 runId + 导入缓存）语义更强，
@@ -840,6 +852,98 @@ export async function runScriptWorkflowChild(input: {...}): Promise<ScriptWorkfl
   一律不生效——本轮实测 bundle 停在修复提交之前、内含会被 CHECK 拒掉的旧写法。
   纪律：改 CLI 侧代码后必须重建该 bundle 再做真实面验证。
 
+### R18 Resume 所有者闸门与中止前置检查（批次 P1）
+
+`resumeFromRunId` 是一个带副作用的读取入口，必须先证明 run 属于当前执行上下文，再读取脚本或
+进入 runtime。所有者键由三部分组成：
+
+- `parentSessionId` 必须精确等于当前会话 id；
+- workspace 身份统一取 `workspaceIdentity?.trim() || workspacePath`，其中本地路径 fallback 使用
+  规范化的工作区路径；
+- 远程上下文还必须精确匹配 `remoteSessionId`。本地上下文不接受带远程 id 的 run。
+
+闸门发生在 `findResumeSource` 读取 `scriptPath`、校验脚本、写 definition/activity/event 或
+启动子进程之前。run 不存在与所有者不匹配都返回结构化的 not-found/owner-mismatch 错误；错误不得
+通过错误文本判断。foreign run 不得读取脚本正文、写任何工作流状态、派生 child session 或 spawn。
+并发守卫仍在所有者闸门之后、runtime 启动之前执行。
+
+所有新建 run 必须携带这三个所有者事实。历史记录没有 workspace 或远程字段时，只能在能从其
+`parentSessionId` 解析出同一 workspace 且当前为本地上下文时兼容恢复；远程上下文对缺失远程所有者
+事实 fail closed。若持久化这些字段需要新增 SQLite 列，必须以显式 migration 完成，不能在 adapter
+中静默丢弃字段。
+
+`AbortSignal` 已经处于 aborted 状态时，脚本工作流必须在入口文件落盘和子进程 spawn 之前拒绝；
+spawn 后注册监听与再次检查之间的竞态也必须 fail closed，并杀掉已创建的 child。该拒绝不得产生
+`workflow_started`、activity/event 或 child session。
+
+#### R18.1 Resume 组合输入必须先过 owner gate
+
+`resumeFromRunId` 一旦出现就是一次带副作用的 resume 读取。它与 `script`、`scriptPath` 或
+`name` 不得组成“脚本优先、runId 只复用”的混合请求：工具契约应明确拒绝这种组合，端口的
+运行时防线仍必须先读取 run 并执行 owner gate，再报告组合输入错误。这样即使调用方绕过
+Zod 直接调用端口，也不会用 foreign run 的持久化身份启动另一份脚本。
+
+#### R18.2 Runtime facade 也必须执行 owner gate
+
+`ScriptWorkflowRuntime.run` 与 `resume` 是可被 app facade 直接调用的入口，不能假定所有调用
+都经过 `WorkflowPort.start`。只要带有 `resumeFromRunId`，runtime 必须在读取脚本、写 definition、
+写 run/event/activity 或 spawn child 前，以同一 `parentSessionId + workspaceIdentity +
+remoteSessionId` 规则校验 owner；否则绕过 tool port 会重新打开 SWF-08。
+
+#### R18.3 world-read 的取消信号必须贯穿所有外部操作
+
+同一个 Dynamic Workflow run 的 `signal` 必须传入 `files.glob`、`files.read`、`files.grep`
+以及所有 `git.*` 的 `FileSystemPort`/`ExecutionPort` 调用；`world.run` 已有的传递规则继续保持。
+取消必须只影响当前 run，并让外部适配器尽快释放资源，不能因文件或 Git 操作未收到 signal 而
+延迟整个 world lifecycle 的收口。
+
+### R19 后台结果、子进程收口、resume 回放与 worktree 身份（批次 P2）
+
+- **R19.1 子进程收口**：`runScriptWorkflowChild` 以 run 为 owner 登记每个已接纳的
+  `request` handler。child `close` 只停止新的 admission；父侧 handler 必须先全部 settle，
+  再把脚本值交给 runtime 写 `workflow_completed`。取消信号沿既有 runtime signal 传入，
+  不得用 child close 代替 agent activity/usage 已完成的事实。
+- **R19.2 后台结果与通知**：Script Workflow 的终态 `WorkflowTaskSnapshot.output.response`
+  是 durable 结果，tracker 必须写入 `RuntimeTaskSnapshot.resultText`，`TaskOutput` 从该字段
+  投影并保留错误；没有真实结果的空 completed 快照不能抢先 claim completion notification。
+  `RunWorkflow`/历史 `Workflow` 的 resume 在终态条目上重臂结算面（含 notified、错误、结果与
+  branch generation），同一生命周期的晚挂载仍保留原 claim。
+- **R19.3 最新 attempt 回放**：事件簿按最后一个 `workflow_started` 划分 attempt；只有最新
+  attempt 的 `workflow_completed`/`workflow_failed`/`workflow_cancelled`/`workflow_interrupted`
+  能阻止冷回放补偿。旧 attempt 终态不得把 resume 后未结算的 run 显示成 running。
+- **R19.4 worktree 身份**：label 只是显示片段；分支名必须同时包含 activityId（唯一业务身份）。
+  相同、slug 归一化相同或截断后相同的 label 也必须创建独立 worktree，并在 clean/dirty 回收时
+  保持各自句柄。
+- **R19.5 metadata 静态解析**：只解析首条 `export const meta = <object literal>` 的 AST；允许
+  标量、数组、对象、负数和无插值模板字面量，拒绝调用、成员访问、spread、computed key、
+  method/accessor、模板插值以及首条语句之前的任何代码。解析过程不启动 Node 子进程，不执行
+  metadata 表达式；Zod 只负责最终 schema，不承担纯度或首条语句判定。
+- **R19.6 activity 用量结算幂等**：每个 agent activity 的 child session 用量必须在 completed、
+  failed、cancelled 或结果解析失败后入账一次。run 统计更新与该 activity 的 durable usage ledger
+  必须同一事务提交；`workflow_usage` 只是投影，写入失败不得改变 activity 终态，也不得让重试
+  重复累计 token、toolCalls 或 failedAgentCalls。进程重启后仍能依据 activity 身份判断该笔用量
+  是否已入账；phase/status 等元数据更新只能写本次显式指定的列，不得把旧统计覆写回 run。
+  无法读取或持久化用量时须在 activity result 记录不完整状态，不得伪造零值；
+  `workflow_usage_incomplete` 通知事件是该标记的观察面，其写入失败只记录 warn，
+  不能把已完成的 activity 或 run 改判为失败。入账或不完整状态已结算后，后续观察事件失败
+  不得再次触发用量结算或覆盖 activity 结果。
+
+```mermaid
+sequenceDiagram
+  participant Child as child runtime（session 用量 owner）
+  participant Runtime as ScriptWorkflowRuntime（activity 结算 owner）
+  participant Store as SQLite store（run 统计与 ledger owner）
+  participant View as 实时投影 / 冷恢复读面
+  Child->>Store: 持久化 assistant tokens 与工具结果
+  Runtime->>Store: 读取 child session 用量
+  Runtime->>Store: 持久化 activity 终态
+  Runtime->>Store: recordActivityUsage(activityId, delta)
+  Note over Store: 同一事务更新统计 + workflow_usage<br/>activityId 跨重试 / 重启幂等
+  Store-->>Runtime: durable 累计值
+  Runtime-->>View: 按 run 串行投影累计值
+  Note over Runtime,View: 无法结算时 activity result 标为 incomplete<br/>观察事件失败只 warn，读面显示未知用量
+```
+
 ## 验收场景
 
 1. `RunWorkflow({script})` 提交一段合法脚本（含 `export const meta`）→ 编译/解析通过 →
@@ -852,11 +956,11 @@ export async function runScriptWorkflowChild(input: {...}): Promise<ScriptWorkfl
    `globalThis.Buffer`、`require("node:child_process")`、`await import("node:fs")`、
    `Function("return process")()` → 全部拿不到 Node 能力（`undefined` 或
    `ReferenceError`/`TypeError`），run 以错误结算。
-5a. **沙箱：已知的残余逸出面如实记录，不假装关闭**（R4）：
+   5a. **沙箱：已知的残余逸出面如实记录，不假装关闭**（R4）：
    `agent.constructor.constructor("return process")()` 这类经注入函数的原型链上溯**仍能**拿到
    外层 realm 的 Node 全局。测试把这条钉成「已知且与 dwf 同姿态」，而不是钉成失败——
    否则下一个人会以为它被堵住了。真正的控制是 `alwaysAsk` 确认门。
-5b. 上述两条必须在真实打包/压缩形态下也跑一次（R4 的 `__name` 约束只有压缩产物能暴露）。
+   5b. 上述两条必须在真实打包/压缩形态下也跑一次（R4 的 `__name` 约束只有压缩产物能暴露）。
    （编号用 5/5a/5b 而不顺延，是为了不打乱下面既有场景的编号引用。）
 6. 确定性禁令在 realm 内生效：`Date.now()` / 无参 `new Date()` / `Math.random()` 抛错；
    `Date.parse(x)` / `Date.UTC(...)` / `new Date(ms)` 正常。
@@ -910,7 +1014,7 @@ export async function runScriptWorkflowChild(input: {...}): Promise<ScriptWorkfl
     且经真 reducer 归约后 `run.actors[0].sessionId === childSessionId`。
     `node-dispatched` 也带一份（reducer 的 `dispatchActor` 会在派发时重铸 actor 条目）。
 25. **用户取消不是脚本故障**：`workflow_cancelled → run-settled{status:"stopped",
-    stopReason:"user"}`，归约后 `run.status === "stopped"`、`run.stopReason === "user"`、
+stopReason:"user"}`，归约后 `run.status === "stopped"`、`run.stopReason === "user"`、
     `run.resumable !== true`。runtime 侧写存储 `status: "cancelled"`、**不写** `failure`，
     且判据只认 run 级 `options?.abortSignal?.aborted`（per-agent 超时的 `mergedSignal`
     中止不算取消）。
@@ -986,9 +1090,10 @@ export async function runScriptWorkflowChild(input: {...}): Promise<ScriptWorkfl
     `cancelled→stopped+user`、`pending/running/paused→running`；`resumable` 恒 false；
     `dialect: "script"`；`toolCallId` 在场时带上（它决定目录页会不会把整行剔除）；
     两来源合成后按 `updatedAt` 归并重排再截断。
-42. **真实库验证**（migration 0027）：`pragma table_info(workflow_run)` 含 `tool_call_id`；
-    迁移账本含 `0027_workflow_run_tool_call_id`；新 run 的行带真实 `call_*` id；
-    存量行为 null。已实测通过。
+42. **真实库验证**（migration 0027/0028）：`pragma table_info(workflow_run)` 含
+    `tool_call_id`、`workspace_identity`、`remote_session_id`；迁移账本含
+    `0027_workflow_run_tool_call_id` 与 `0028_workflow_run_owner`；新 run 的行带真实
+    `call_*` 与 owner facts，存量行为保持 nullable。适配器不得静默丢弃 owner 字段。
 
 ### 批次 C10（R16：孤儿收敛与状态双层词汇）
 

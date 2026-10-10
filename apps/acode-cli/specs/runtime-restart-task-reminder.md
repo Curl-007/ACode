@@ -103,7 +103,7 @@ id 列表按首次出现顺序去重，注入上限 **10** 个（超出部分以
 | --- | --- | --- |
 | launch/终态记录 | session store（经 message history entries） | 只读派生，不回写 |
 | 本进程任务在册性 | `runtimeTaskRegistry`（runtime 内部成员） | 只读谓词 `get(id) !== undefined` |
-| 一次性触发 | runtime 实例 flag（turn-loop 消费） | 进程内状态，不落盘 |
+| 一次性触发 | `RuntimeLifecycleOwner`（`core/src/runtime/runtime-lifecycle.ts`）持有 flag；turn-loop 仅调用 `consumeRuntimeRestartReminder()` | `WeakMap` 绑定 runtime、进程内状态，不落盘；消费后无 reset/set 回写路径 |
 | reminder 分类 | `system-reminder/source.ts` | 单点登记（R2） |
 | 提醒文本 | `runtime/helpers/runtime-reminders.ts` | 单点，禁止调用方拼接 |
 

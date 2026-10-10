@@ -373,6 +373,13 @@ export function shouldExposeSessionEventToProtocol(event: SessionEvent): boolean
     return false;
   }
 
+  if (event.type === SessionEventType.SwarmPlanProgress) {
+    // 与 DynamicWorkflowRunProgress 同一个 seam、同一个理由：v4 面已有权威投影
+    // （swarmPlan 状态键），v3 mapper 不消费；剥离纯粹是带宽与语义干净
+    // （specs/swarm-observability-projection.md R2 的 v4-only 裁决）。
+    return false;
+  }
+
   if (event.type !== SessionEventType.ModelStreaming) {
     return true;
   }

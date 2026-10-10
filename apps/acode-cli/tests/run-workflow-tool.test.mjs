@@ -13,6 +13,8 @@ import test from "node:test";
 
 const CORE = "../packages/core/src";
 const BOOTSTRAP = "../packages/bootstrap/src";
+// W1-R3：workflow 引擎族已迁入 @acode/cli-workflow（specs/cli-workflow-package-boundary.md）。
+const CLI_WORKFLOW = "../packages/cli-workflow/src";
 
 function readSource(relativePath) {
   return readFileSync(new URL(relativePath, import.meta.url), "utf8");
@@ -193,7 +195,11 @@ test("R8: 拒绝文案点名 script-workflows，且与 dwf 的技能门互不串
   assert.equal(requireWorkflowSkill({}, "RunWorkflow", "script-workflows"), undefined);
   // 已加载对应技能 = 放行。
   assert.equal(
-    requireWorkflowSkill({ hasLoadedSkill: (name) => name === "script-workflows" }, "RunWorkflow", "script-workflows"),
+    requireWorkflowSkill(
+      { hasLoadedSkill: (name) => name === "script-workflows" },
+      "RunWorkflow",
+      "script-workflows",
+    ),
     undefined,
   );
 });
@@ -219,7 +225,10 @@ test("R3#2/#3: 后台任务类型映射认 RunWorkflow，且保留死名以读�
   assert.match(background, /case "RunWorkflow":\s*\n\s*return "local_workflow"/);
   assert.match(background, /case "Workflow":/, "旧会话 rollout 里仍有该名字，正向映射必须保留");
   // 反向投影用活名：指向一个不存在的工具名只会误导读者。
-  assert.match(background, /case "local_workflow":\s*\n(?:\s*\/\/[^\n]*\n)*\s*return "RunWorkflow"/);
+  assert.match(
+    background,
+    /case "local_workflow":\s*\n(?:\s*\/\/[^\n]*\n)*\s*return "RunWorkflow"/,
+  );
 
   const registry = readSource(`${CORE}/tool/executor/background-task-registry.ts`);
   assert.match(registry, /case "RunWorkflow":/);
@@ -277,9 +286,8 @@ test("R3 补注: RunWorkflow 刻意不登记进 tool-identity 的 workflow famil
   // 登记进去会让它渲染成 dwf 的 CreateWorkflow 卡（resolveRenderer 的 workflow 分支
   // 除 submit_result 外一律走那张卡），长出它根本没有的因果图与 Refine 选项。
   // 这条断言钉的是「不说谎」，专用渲染器属于批次 C。
-  const { ACODE_KNOWN_TOOL_NAMES, getACodeToolFamilyForName } = await import(
-    "../../../packages/shared/src/tool-identity.ts"
-  );
+  const { ACODE_KNOWN_TOOL_NAMES, getACodeToolFamilyForName } =
+    await import("../../../packages/shared/src/tool-identity.ts");
   assert.ok(!ACODE_KNOWN_TOOL_NAMES.includes("RunWorkflow"));
   assert.equal(getACodeToolFamilyForName("RunWorkflow"), null);
   // 对照：dwf 的创建入口是登记了的，所以这条不是「忘了登记」而是刻意区分。
@@ -292,7 +300,7 @@ test("R3 补注: RunWorkflow 刻意不登记进 tool-identity 的 workflow famil
 
 test("缺口8: 端口暴露 cancel，未知 taskId 回 false", async () => {
   const { createScriptWorkflowToolPort } = await import(
-    `${BOOTSTRAP}/app/script-workflow-tool-port.ts`
+    `${CLI_WORKFLOW}/script-workflow-tool-port.ts`
   );
   // cancel 对未知 id 不触碰任何依赖，所以这里可以用最小桩装配。
   const port = createScriptWorkflowToolPort({
@@ -311,7 +319,7 @@ test("缺口8: 端口暴露 cancel，未知 taskId 回 false", async () => {
 });
 
 test("缺口9: resume 并发守卫与 cancel 通道在源码里成对存在", () => {
-  const source = readSource(`${BOOTSTRAP}/app/script-workflow-tool-port.ts`);
+  const source = readSource(`${CLI_WORKFLOW}/script-workflow-tool-port.ts`);
   // 守卫的判据必须复用 completionSnapshots（run promise 未结算即在飞），不另立第二份运行态。
   assert.match(source, /if \(completionSnapshots\.has\(runId\)\)/);
   assert.match(source, /has not exited yet/);
@@ -333,4 +341,126 @@ test("缺口9: resume 并发守卫与 cancel 通道在源码里成对存在", ()
   );
   // 回执由具名函数产出，而不是内联模板字符串——内联的那份正是旧文案藏身的地方。
   assert.match(source, /response: runWorkflowLaunchResponse\(runId, source\.scriptPath\)/);
+});
+
+test("P1 SWF-08: resume 在读取脚本前拒绝 foreign owner，且不触碰 runtime", async () => {
+  const { createScriptWorkflowToolPort } = await import(
+    `${CLI_WORKFLOW}/script-workflow-tool-port.ts`
+  );
+  let runtimeCalls = 0;
+  let sessionLookupCalls = 0;
+  const sessionStore = {
+    createScriptWorkflowActivity: () => undefined,
+    createScriptWorkflowRun: () => undefined,
+    getScriptWorkflowRun: async () => ({
+      cwd: "/workspace/other",
+      id: "wf_foreign1",
+      kind: "script",
+      name: "foreign",
+      parentSessionId: "sess-other",
+      scriptPath: "/workspace/other/secret.workflow.js",
+    }),
+    getSession: async () => {
+      sessionLookupCalls += 1;
+      return null;
+    },
+  };
+  const port = createScriptWorkflowToolPort({
+    fileSystemPort: {},
+    getRuntime: () => {
+      runtimeCalls += 1;
+      throw new Error("foreign resume must not start runtime");
+    },
+    sessionId: "sess-current",
+    sessionStore,
+    storageRoot: "/tmp",
+    traceContext: { traceId: "trace-test" },
+    workingDirectory: "/workspace/current",
+    workspaceIdentity: "workspace-current",
+  });
+
+  await assert.rejects(
+    port.start(
+      {
+        parentToolCallId: "tool-1",
+        resumeFromRunId: "wf_foreign1",
+        sessionId: "sess-current",
+        trace: { traceId: "trace-test" },
+        workingDirectory: "/workspace/current",
+        workspaceRoot: "/workspace/current",
+        workspaceIdentity: "workspace-current",
+      },
+      undefined,
+    ),
+    (error) => error?.context?.ownerMismatch === true,
+  );
+  assert.equal(runtimeCalls, 0);
+  assert.equal(sessionLookupCalls, 0, "parent session mismatch must fail before workspace lookup");
+});
+
+test("P1 SWF-08: resume 与 scriptPath 的组合先过 owner gate，且不会走 scriptPath 优先级", async () => {
+  const { createScriptWorkflowToolPort } = await import(
+    `${CLI_WORKFLOW}/script-workflow-tool-port.ts`
+  );
+  let runtimeCalls = 0;
+  let scriptReads = 0;
+  const sessionStore = {
+    createScriptWorkflowActivity: () => undefined,
+    createScriptWorkflowRun: () => undefined,
+    getScriptWorkflowRun: async () => ({
+      cwd: "/workspace/other",
+      id: "wf_foreign_combo",
+      kind: "script",
+      name: "foreign",
+      parentSessionId: "sess-other",
+      scriptPath: "/workspace/other/secret.workflow.js",
+    }),
+    getSession: async () => {
+      throw new Error("workspace lookup must not happen after parent mismatch");
+    },
+  };
+  const port = createScriptWorkflowToolPort({
+    fileSystemPort: {
+      async readTextFile() {
+        scriptReads += 1;
+        throw new Error("foreign script must not be read");
+      },
+    },
+    getRuntime: () => {
+      runtimeCalls += 1;
+      throw new Error("foreign resume must not start runtime");
+    },
+    sessionId: "sess-current",
+    sessionStore,
+    storageRoot: "/tmp",
+    traceContext: { traceId: "trace-test" },
+    workingDirectory: "/workspace/current",
+    workspaceIdentity: "workspace-current",
+  });
+
+  await assert.rejects(
+    port.start({
+      parentToolCallId: "tool-1",
+      resumeFromRunId: "wf_foreign_combo",
+      scriptPath: "./edited.workflow.js",
+      sessionId: "sess-current",
+      trace: { traceId: "trace-test" },
+      workingDirectory: "/workspace/current",
+      workspaceRoot: "/workspace/current",
+      workspaceIdentity: "workspace-current",
+    }),
+    (error) => error?.context?.ownerMismatch === true,
+  );
+  assert.equal(runtimeCalls, 0);
+  assert.equal(scriptReads, 0);
+});
+
+test("P1 SWF-08: schema 明确拒绝 resumeFromRunId 与其他 source 的组合", async () => {
+  const { WorkflowInputSchema } = await import("../packages/contracts/src/tools/workflow.ts");
+  const parsed = WorkflowInputSchema.safeParse({
+    resumeFromRunId: "wf_abc123",
+    scriptPath: "./edited.workflow.js",
+  });
+  assert.equal(parsed.success, false);
+  assert.match(parsed.error.issues[0].message, /cannot combine resumeFromRunId/);
 });

@@ -34,8 +34,10 @@ import {
   type OvernightPreflightGitSnapshot,
   type OvernightRunHandle,
 } from "@acode/core";
-import { createScriptWorkflowAgentRuntime } from "./script-workflow-child-runtime.js";
-import type { ScriptWorkflowAgentRuntimeDeps } from "./script-workflow-child-runtime.js";
+import {
+  createScriptWorkflowAgentRuntime,
+  type ScriptWorkflowAgentRuntimeDeps,
+} from "@acode/cli-workflow/contract";
 import type { ACodeBuiltinHostCommand } from "../builtin-prompt-command.js";
 
 export interface CreateOvernightControllerDeps extends ScriptWorkflowAgentRuntimeDeps {

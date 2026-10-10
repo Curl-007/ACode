@@ -9,6 +9,7 @@ import {
   resolveZaiBusinessBaseUrl,
   PlatformChannels,
   remoteTargetSchema,
+  respondSSHHostKeyChallengeRequestSchema,
   type RemoteTarget,
 } from "@acode/shared";
 import { dispatchTaskNotification } from "./desktopNotifications.js";
@@ -155,6 +156,10 @@ export function registerRemoteIpcHandlers(options: {
   confirmRendererAttachmentReady: (
     webContentsId: WebContentsId,
     payload: { sessionId: string; attachmentId: string },
+  ) => void;
+  respondSSHHostKeyChallenge: (
+    webContentsId: WebContentsId,
+    payload: import("@acode/shared").RespondSSHHostKeyChallengeRequest,
   ) => void;
   isDockerDaemonAvailable: () => Promise<boolean>;
   listAvailableWSLDistros: () => Promise<unknown[]>;
@@ -324,6 +329,18 @@ export function registerRemoteIpcHandlers(options: {
       return { success: false, error: normalizedError.message };
     }
   });
+
+  ipcMain.handle(
+    PlatformChannels.RespondSSHHostKeyChallenge,
+    async (event, rawPayload: unknown) => {
+      const parsed = respondSSHHostKeyChallengeRequestSchema.safeParse(rawPayload);
+      if (!parsed.success) {
+        options.logger.warn("[ssh-host-key] blocked invalid renderer decision", parsed.error.issues);
+        return;
+      }
+      options.respondSSHHostKeyChallenge(asWebContentsId(event.sender.id), parsed.data);
+    },
+  );
 
   ipcMain.handle(
     PlatformChannels.CancelPendingRemoteConnection,

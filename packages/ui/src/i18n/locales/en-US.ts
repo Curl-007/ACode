@@ -761,6 +761,7 @@ const enUS: Record<string, string> = {
   "sidePane.workflowActor": "Workflow subagent",
   "sidePane.workflowScript": "Script steps",
   "sidePane.workflowArtifact": "Artifact",
+  "sidePane.orchestration": "Orchestration",
   "subagentDirectory.title": "Subagents",
   "subagentDirectory.running": "Running",
   "subagentDirectory.runningEmpty": "No running subagents",
@@ -784,6 +785,20 @@ const enUS: Record<string, string> = {
   "workflowDirectory.empty": "No workflow has run in this conversation yet",
   "workflowDirectory.truncated": "Showing the {count} most recent runs only",
   "workflowDirectory.unavailable": "Workflow runs can't be listed for this conversation",
+  // 统一编排 side pane（packages/ui/specs/orchestration-side-pane.md）。段标题复用
+  // chat.statusPanel.agents/workflows，状态词复用 subagentDirectory.status.* 与
+  // chat.toolCall.workflow.run.status.*；这里只有 swarm 段与页面自己的结构文案。
+  "orchestration.title": "Orchestration",
+  "orchestration.empty": "No orchestration activity in this conversation yet",
+  "orchestration.swarm": "Swarm plan",
+  "orchestration.swarm.gate": "Gate",
+  "orchestration.swarm.stalled": "Stalled",
+  "orchestration.swarm.status.queued": "Queued",
+  "orchestration.swarm.status.running": "Running",
+  "orchestration.swarm.status.done": "Done",
+  "orchestration.swarm.status.failed": "Failed",
+  "orchestration.swarm.nodesShown": "Showing the first {count} nodes only",
+  "orchestration.swarm.truncated": "Node list truncated at the projection limit",
   "chat.selections.addToTask": "Add to chat",
   "chat.selections.askInSideChat": "Add in side chat",
   "chat.selections.sideBlocked":
@@ -1493,6 +1508,16 @@ const enUS: Record<string, string> = {
   "ssh.connect": "Connect",
   "ssh.cancel": "Cancel",
   "ssh.connecting": "Connecting...",
+  "ssh.hostKeyUnknown.title": "Approve SSH host key?",
+  "ssh.hostKeyUnknown.description":
+    "The SSH host {host}:{port} is not trusted yet. Verify this fingerprint before approving: {candidate}.",
+  "ssh.hostKeyUnknown.approve": "Approve host key",
+  "ssh.hostKeyChanged.title": "SSH host key changed",
+  "ssh.hostKeyChanged.description":
+    "The SSH host {host}:{port} presented a different key. New fingerprint: {candidate}. Previously trusted: {expected}. Replace the trusted key only if you verified this change.",
+  "ssh.hostKeyChanged.replace": "Replace trusted key",
+  "ssh.hostKey.reject": "Reject",
+  "ssh.hostKey.none": "none",
   "ssh.success": "Connected. Opened in a new window.",
   "ssh.validation.required": "Host and username are required",
   "ssh.validation.passwordRequired": "Password is required",
@@ -5365,6 +5390,7 @@ const enUS: Record<string, string> = {
   "chat.permission.workflow.save.args.default": "Default",
   "chat.interactionOrigin.subagent": "Subagent",
   "chat.interactionOrigin.subagent.title": "Request from subagent: {agentType}",
+  "chat.interactionOrigin.subagent.nestedTitle": "Request from subagent: {agentType} (via {chain})",
   "chat.cuaPermission.openAccessibility": "Open Accessibility Settings",
   "chat.cuaPermission.openScreenRecording": "Open Screen Recording",
   "chat.cuaPermission.opening": "Opening...",

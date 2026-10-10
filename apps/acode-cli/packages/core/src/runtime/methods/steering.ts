@@ -1,5 +1,6 @@
 /* eslint-disable max-lines -- 存量基线豁免:该文件先于 CLI lint 门禁建立即超限(根 lint 的 ignorePatterns 排除 apps/acode-cli,turbo lint 因此从未变绿)。头注豁免以恢复门禁信号;拆分重构超出本批范围。 */
 import { parseRuntimeInputPresentation } from "@acode/contracts";
+import { getRuntimeTurnReservationPort } from "../turn-coordination.js";
 import {
   unpublishedPermissionGrants,
   recoverPendingPermissionGrant,
@@ -319,7 +320,7 @@ export function beginActiveTurn(
     turnId,
     ...(options?.inputId === undefined ? {} : { inputId: options.inputId }),
   };
-  this.activeTurnStartReservation = undefined;
+  getRuntimeTurnReservationPort(this).release(turnId);
   this.activeTurn = activeTurn;
   return activeTurn;
 }
@@ -330,23 +331,15 @@ export function reserveTurnStart(
   traceContext: TraceContext,
   kind: ActiveTurnKind,
 ): void {
-  if (this.activeTurn) {
-    throw createTurnInProgressError(kind, this.activeTurn.turnId, turnId);
-  }
-  if (this.activeTurnStartReservation) {
-    throw createTurnInProgressError(kind, this.activeTurnStartReservation.turnId, turnId);
-  }
-  this.activeTurnStartReservation = {
+  getRuntimeTurnReservationPort(this).reserve({
     kind,
     traceContext,
     turnId,
-  };
+  });
 }
 
 export function releaseTurnStart(this: AgentRuntimeInternal, turnId: TurnId): void {
-  if (this.activeTurnStartReservation?.turnId === turnId) {
-    this.activeTurnStartReservation = undefined;
-  }
+  getRuntimeTurnReservationPort(this).release(turnId);
 }
 
 export function finishActiveTurn(

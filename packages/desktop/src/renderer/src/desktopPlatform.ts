@@ -14,6 +14,8 @@ export function createDesktopPlatform(options: {
     selectFiles: () => window.acode.selectFiles?.() ?? Promise.resolve([]),
     createTempTextAttachment: (payload) => window.acode.createTempTextAttachment(payload),
     onRemoteConnectionLog: (handler) => window.acode.onRemoteConnectionLog(handler),
+    onRemoteSSHHostKeyChallenge: (handler) => window.acode.onRemoteSSHHostKeyChallenge(handler),
+    respondSSHHostKeyChallenge: (payload) => window.acode.respondSSHHostKeyChallenge(payload),
     onRemoteSessionClosed: (handler) => window.acode.onRemoteSessionClosed(handler),
     onBotRemoteWorkspaceReconnected: (handler) =>
       window.acode.onBotRemoteWorkspaceReconnected(handler),

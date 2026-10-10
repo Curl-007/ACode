@@ -24,19 +24,15 @@ import { test } from "node:test";
 
 // handlers 必须经 index.ts 进入：session-flow.ts ↔ v4-gateway.ts 存在模块环，
 // 直接以 session-flow.ts 为入口会触发 TDZ（Cannot access 'sessionFlowHandlers'）。
-const { NATIVE_HANDLERS } = await import(
-  "../packages/bootstrap/src/acode-protocol-v4/commands/handlers/index.ts"
-);
-const { shouldAutoDrainV4QueueHead } = await import(
-  "../packages/bootstrap/src/acode-protocol-v4/queue-auto-drain.ts"
-);
-const { admitPrompt } = await import(
-  "../packages/core/src/runtime/methods/prompt-admission.ts"
-);
+const { NATIVE_HANDLERS } =
+  await import("../packages/bootstrap/src/acode-protocol-v4/commands/handlers/index.ts");
+const { shouldAutoDrainV4QueueHead } =
+  await import("../packages/bootstrap/src/acode-protocol-v4/queue-auto-drain.ts");
+const { admitPrompt } = await import("../packages/core/src/runtime/methods/prompt-admission.ts");
 const steering = await import("../packages/core/src/runtime/methods/steering.ts");
-const commandQueue = await import(
-  "../packages/core/src/runtime/methods/runtime-command-queue.ts"
-);
+const commandQueue = await import("../packages/core/src/runtime/methods/runtime-command-queue.ts");
+const { initializeRuntimeTurnCoordination } =
+  await import("../packages/core/src/runtime/turn-coordination.ts");
 const { SessionEventType } = await import("../packages/contracts/src/index.ts");
 
 const SESSION_ID = "sess-cron-idle-trigger";
@@ -108,10 +104,7 @@ function createRuntimeHarness() {
 
     appendEvent: async (event) => {
       events.push(event);
-      if (
-        event.type === SessionEventType.TurnSteerQueued &&
-        event.payload?.delivery === "queue"
-      ) {
+      if (event.type === SessionEventType.TurnSteerQueued && event.payload?.delivery === "queue") {
         heldQueue.push({
           pendingInputId: event.payload.pendingInputId,
           targetTurnId: event.payload.targetTurnId,
@@ -137,6 +130,7 @@ function createRuntimeHarness() {
     hasPendingInput: steering.hasPendingInput,
   };
 
+  initializeRuntimeTurnCoordination(runtime);
   return { runtime, events, pendingCommands, heldQueue };
 }
 
@@ -151,7 +145,8 @@ function createHostHarness(runtime) {
       getPlanEnabled: () => false,
       acquireForegroundPromotionLease: (options) =>
         runtime.acquireForegroundPromotionLease(options),
-      releaseForegroundPromotionLease: (leaseId) => runtime.releaseForegroundPromotionLease(leaseId),
+      releaseForegroundPromotionLease: (leaseId) =>
+        runtime.releaseForegroundPromotionLease(leaseId),
     },
     // 与 bootstrap input-facade.sendInput 相同的 receipt 映射（started → started_turn）。
     sendInput: async (input, options) => {
@@ -175,7 +170,8 @@ function createHostHarness(runtime) {
   // computeInputRouting（projection-state.ts）：idle → startNow；running + followupMode=queue → enqueue。
   const host = {
     getRecord: (sessionId) => (sessionId === runtime.sessionId ? record : undefined),
-    getInputRoutingMode: () => (runtime.activeTurn || runtime.activeTurnStartReservation ? "enqueue" : "startNow"),
+    getInputRoutingMode: () =>
+      runtime.activeTurn || runtime.activeTurnStartReservation ? "enqueue" : "startNow",
     hasUsableRuntimeModelTarget: () => true,
     ensureModelReady: async () => {},
     afterLegacyStateMutation: async () => {},
@@ -225,7 +221,10 @@ test("(1) idle 到期：startNow 直启，命令以 next 档入队并携带 auto
   const { host, record } = createHostHarness(runtime);
   const runId = `${AUTOMATION_ID}:1700000000000`;
 
-  const result = await NATIVE_HANDLERS.sendText(host, cronSendTextEnvelope(runId, "cron 巡检：汇报状态"));
+  const result = await NATIVE_HANDLERS.sendText(
+    host,
+    cronSendTextEnvelope(runId, "cron 巡检：汇报状态"),
+  );
 
   assert.deepEqual(result, { type: "inputAccepted", delivery: "startNow", inputId: runId });
   assert.equal(pendingCommands.length, 1);
@@ -234,10 +233,7 @@ test("(1) idle 到期：startNow 直启，命令以 next 档入队并携带 auto
   assert.equal(command.mode, "prompt");
   assert.equal(command.options.automationId, AUTOMATION_ID);
   // automation 轮守卫：Cron 写工具在本 turn 工具面被移除（prompt-turn.ts buildTurnToolDisallowlist）。
-  assert.deepEqual(
-    [...command.options.toolDisallowlist].sort(),
-    [...CRON_WRITE_TOOLS].sort(),
-  );
+  assert.deepEqual([...command.options.toolDisallowlist].sort(), [...CRON_WRITE_TOOLS].sort());
   assert.equal(record.activeAutomationId, AUTOMATION_ID, "turn 期间记录 automation 归属");
   assert.equal(runtime.activeTurn, undefined, "admission 不等待 turn 启动");
 });
@@ -254,7 +250,10 @@ test("(2) 到期落在 in-flight turn：延迟入队而非中断，也不 steer 
 
   // 第二条 cron 到期，落在第一轮 in-flight 中。
   const runId2 = `${AUTOMATION_ID}:1700000060001`;
-  const result = await NATIVE_HANDLERS.sendText(host, cronSendTextEnvelope(runId2, "第二轮 cron prompt"));
+  const result = await NATIVE_HANDLERS.sendText(
+    host,
+    cronSendTextEnvelope(runId2, "第二轮 cron prompt"),
+  );
 
   // —— 延迟入队（queue lane），不是 startNow ——
   assert.deepEqual(result, { type: "inputAccepted", delivery: "queue", inputId: runId2 });
@@ -324,7 +323,10 @@ test("(4) turn 结束后空闲提升：idle-only lease + requireIdle 直启，�
   await NATIVE_HANDLERS.sendText(host, cronSendTextEnvelope(runId1, "第一轮 cron prompt"));
   const first = startEnqueuedTurn(runtime, { inputId: runId1 });
   const runId2 = `${AUTOMATION_ID}:1700000060003`;
-  const queued = await NATIVE_HANDLERS.sendText(host, cronSendTextEnvelope(runId2, "第二轮 cron prompt"));
+  const queued = await NATIVE_HANDLERS.sendText(
+    host,
+    cronSendTextEnvelope(runId2, "第二轮 cron prompt"),
+  );
   assert.equal(queued.delivery, "queue");
 
   // 第一轮真实完成（prompt-turn 后台 finally 等价：finishActiveTurn + 归因还原）。
@@ -358,7 +360,11 @@ test("(4) turn 结束后空闲提升：idle-only lease + requireIdle 直启，�
   assert.equal(promotion.kind, "started");
   assert.equal(pendingCommands.length, 1);
   assert.equal(pendingCommands[0].priority, "next");
-  assert.equal(pendingCommands[0].options.inputId, runId2, "提升必须沿用原 runId，终态才能与派发对账");
+  assert.equal(
+    pendingCommands[0].options.inputId,
+    runId2,
+    "提升必须沿用原 runId，终态才能与派发对账",
+  );
   assert.equal(pendingCommands[0].options.automationId, AUTOMATION_ID);
   runtime.releaseForegroundPromotionLease(`queue-promotion:${runId2}`);
 });

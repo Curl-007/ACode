@@ -39,12 +39,21 @@ import {
   type AmbientRunnerHandle,
   type ScheduledItem,
 } from "@acode/core";
-import type { ScriptWorkflowAgentRuntimeDeps } from "./script-workflow-child-runtime.js";
-import { createScriptWorkflowAgentRuntime } from "./script-workflow-child-runtime.js";
+import {
+  createScriptWorkflowAgentRuntime,
+  type ScriptWorkflowAgentRuntimeDeps,
+} from "@acode/cli-workflow/contract";
 import { createAmbientQuotaSnapshotPort } from "./ambient-quota.js";
+import type { ACodeAppOptions } from "./types.js";
 
 export interface CreateAmbientRuntimeWiringDeps
-  extends Omit<ScriptWorkflowAgentRuntimeDeps, "runtime"> {
+  extends Omit<ScriptWorkflowAgentRuntimeDeps, "runtime" | "appOptions"> {
+  /**
+   * W1-R3：引擎只消费窄宿主面（ScriptWorkflowHostOptions），而 bootstrap 装配期还要读
+   * providerRegistry / providerRuntimeHeadersPort（ambient quota 快照），所以本侧 deps
+   * 保留完整 ACodeAppOptions；传入引擎时结构化可赋值，行为不变。
+   */
+  appOptions: ACodeAppOptions;
   /** ambient cycle/spawn 的 runtime-task 投影面（create-app 装配期注入 runtime 的同一份）。 */
   runtimeTaskRegistry: RuntimeTaskRegistry;
   /** fork/reminder/registry 投影共用的根 trace（overnight controller 的同款必填项）。 */

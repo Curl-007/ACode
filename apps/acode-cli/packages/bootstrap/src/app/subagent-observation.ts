@@ -12,6 +12,7 @@ import {
   collectSubagentChildSessionIds,
   paginateEndedSubagents,
   projectSessionSubagents,
+  readPersistedSubagentEdges,
 } from "../acode-protocol/subagent-session-query.js";
 
 export interface SubagentTranscriptSnapshot {
@@ -40,7 +41,10 @@ export function createSubagentObservation(deps: ObservationDeps) {
         return { revision: 0, childSessionIds: [], running: [], ended: { total: 0, items: [] } };
       const messages = await deps.sessionStore.messages({ sessionID: deps.sessionId });
       const parentEvents = await eventStore.getEvents(deps.sessionId);
-      const ids = collectSubagentChildSessionIds(parentSession, messages, parentEvents);
+      // 编排方案 Phase 1（specs/subagent-topology-persistence.md R5）：持久化拓扑边，
+      // 冷启动（eventStore 无事件）时是终态唯一权威；能力缺席为空数组，行为回退。
+      const edges = await readPersistedSubagentEdges(deps.sessionStore, deps.sessionId);
+      const ids = collectSubagentChildSessionIds(parentSession, messages, parentEvents, edges);
       const children = await Promise.all(
         ids.map(async (id) => {
           const sessionId = id as SessionId;
@@ -76,6 +80,7 @@ export function createSubagentObservation(deps: ObservationDeps) {
             child.projection ? [[child.session.id, child.projection] as const] : [],
           ),
         ),
+        ...(edges.length > 0 ? { edges } : {}),
       });
       const ended = paginateEndedSubagents(projection.ended, {
         cursor: input.endedCursor,

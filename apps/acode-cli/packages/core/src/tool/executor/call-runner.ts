@@ -423,6 +423,7 @@ async function executeToolCallImpl(
       },
       skillPort: deps.skillPort,
       subagentPort: deps.subagentPort,
+      peerMessagingPort: deps.peerMessagingPort,
       coordinatorResponsePort: deps.coordinatorResponsePort,
       workflowSubmitPort: deps.workflowSubmitPort,
       workflowEscalatePort: deps.workflowEscalatePort,

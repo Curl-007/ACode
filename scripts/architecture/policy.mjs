@@ -49,6 +49,7 @@ function validatePolicy(raw, cwd) {
       layers: module.layers ?? {},
       layerOrder: module.layerOrder ?? Object.keys(module.layers ?? {}),
       owner: module.owner ?? null,
+      aliasRules: [...(module.aliasRules ?? [])],
     };
   });
   const moduleIds = new Set(modules.map((module) => module.id));
@@ -70,7 +71,15 @@ function validatePolicy(raw, cwd) {
     ...exception,
     paths: exception.paths ?? [],
   }));
-  return { version: 1, modules, global, exceptions };
+  return {
+    version: 1,
+    modules,
+    global: {
+      ...global,
+      aliasRules: [...(raw.global?.aliasRules ?? raw.aliasRules ?? [])],
+    },
+    exceptions,
+  };
 }
 
 export function layerForFile(file, module) {
@@ -149,9 +158,7 @@ export async function discoverFiles(policy) {
   return [...new Set(files)].sort();
 }
 
-export function resolveImport(from, specifier, knownFiles) {
-  if (!specifier.startsWith(".")) return null;
-  let base = path.resolve(path.dirname(from), specifier);
+function resolveKnownFile(base, knownFiles) {
   if (SOURCE_EXTENSIONS.some((extension) => base.endsWith(extension))) {
     base = base.slice(0, base.lastIndexOf("."));
   }
@@ -159,6 +166,54 @@ export function resolveImport(from, specifier, knownFiles) {
   for (const extension of SOURCE_EXTENSIONS) candidates.push(`${base}${extension}`);
   for (const extension of SOURCE_EXTENSIONS) candidates.push(path.join(base, `index${extension}`));
   return candidates.find((candidate) => knownFiles.has(candidate)) ?? null;
+}
+
+function aliasTarget(specifier, rule) {
+  const pattern = String(rule.pattern ?? rule.from ?? rule.prefix ?? "");
+  const target = String(rule.target ?? rule.to ?? rule.root ?? "");
+  if (!pattern || !target) return null;
+  const marker = pattern.indexOf("*");
+  if (marker < 0) return specifier === pattern ? target : null;
+  const prefix = pattern.slice(0, marker);
+  const suffix = pattern.slice(marker + 1);
+  if (!specifier.startsWith(prefix) || !specifier.endsWith(suffix)) return null;
+  const middle = specifier.slice(prefix.length, specifier.length - suffix.length);
+  return target.replaceAll("*", middle);
+}
+
+/** Resolve relative imports, policy aliases, workspace package names and TS-style paths. */
+export function resolveImport(from, specifier, knownFiles, options = {}) {
+  if (specifier.startsWith(".")) {
+    return resolveKnownFile(path.resolve(path.dirname(from), specifier), knownFiles);
+  }
+  const aliases = [...(options.aliasRules ?? []), ...(options.module?.aliasRules ?? [])];
+  for (const rule of aliases) {
+    const target = aliasTarget(specifier, rule);
+    if (target) {
+      const candidate = resolveKnownFile(
+        path.resolve(options.cwd ?? process.cwd(), target),
+        knownFiles,
+      );
+      if (candidate) return candidate;
+    }
+  }
+  for (const [name, root] of Object.entries(options.workspacePackages ?? {})) {
+    if (specifier !== name && !specifier.startsWith(`${name}/`)) continue;
+    const subpath = specifier === name ? "" : specifier.slice(name.length + 1);
+    const sourceRoot = path.join(root, "src");
+    const candidate = resolveKnownFile(path.join(sourceRoot, subpath), knownFiles);
+    if (candidate) return candidate;
+  }
+  return null;
+}
+
+export function isResolvableWorkspaceSpecifier(specifier, options = {}) {
+  if ([...(options.aliasRules ?? [])].some((rule) => aliasTarget(specifier, rule) !== null)) {
+    return true;
+  }
+  return Object.keys(options.workspacePackages ?? {}).some(
+    (name) => specifier === name || specifier.startsWith(`${name}/`),
+  );
 }
 
 export function importsOf(file, source) {
@@ -171,6 +226,14 @@ export function importsOf(file, source) {
     if (ts.isImportEqualsDeclaration(node) && ts.isExternalModuleReference(node.moduleReference)) {
       if (ts.isStringLiteral(node.moduleReference.expression))
         imports.push(node.moduleReference.expression.text);
+    }
+    if (
+      ts.isCallExpression(node) &&
+      node.expression.kind === ts.SyntaxKind.ImportKeyword &&
+      node.arguments.length === 1 &&
+      ts.isStringLiteral(node.arguments[0])
+    ) {
+      imports.push(node.arguments[0].text);
     }
     ts.forEachChild(node, visit);
   }

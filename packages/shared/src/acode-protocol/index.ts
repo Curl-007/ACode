@@ -41,6 +41,16 @@ import { integratedTerminalShellSelectionSchema } from "../validationAppSettings
 import { acodeTaskModeSchema } from "../acode-task-mode-schema.js";
 import { OFFICIAL_MCP_AUTH_PORT_FAILURE_REASONS } from "../official-mcp-auth.js";
 import {
+  acodeBrowserAmbientContextSchema,
+  acodeProtocolMcpServerSchema,
+} from "../acode-protocol-shared.js";
+export {
+  acodeBrowserAmbientContextSchema,
+  acodeProtocolMcpServerSchema,
+  type ACodeBrowserAmbientContext,
+  type ACodeProtocolMcpServer,
+} from "../acode-protocol-shared.js";
+import {
   acodeDeliveryKindSchema,
   acodeMessageVisibilitySchema,
   acodeSyntheticUserMessageSourceSchema as legacyAcodeSyntheticUserMessageSourceSchema,
@@ -611,62 +621,6 @@ export const acodePermissionOptionSchema = z
   })
   .strict();
 
-const acodeProtocolMcpEntrySchema = z
-  .object({
-    name: nonEmptyString,
-    value: z.string(),
-  })
-  .strict();
-
-const acodeProtocolMcpOAuthSchema = z.union([
-  z
-    .object({
-      type: z.literal("client_credentials"),
-      clientId: nonEmptyString,
-      clientSecret: nonEmptyString,
-      clientName: nonEmptyString.optional(),
-      scope: z.string().optional(),
-    })
-    .strict(),
-  z
-    .object({
-      type: z.literal("authorization_code"),
-      clientId: nonEmptyString.optional(),
-      clientSecret: nonEmptyString.optional(),
-      clientName: nonEmptyString.optional(),
-      redirectPath: nonEmptyString.optional(),
-      scope: z.string().optional(),
-    })
-    .strict(),
-]);
-
-export const acodeProtocolMcpServerSchema = z.union([
-  z
-    .object({
-      name: nonEmptyString,
-      command: nonEmptyString,
-      args: z.array(z.string()),
-      env: z.array(acodeProtocolMcpEntrySchema),
-      isolation: z.enum(["session", "workspace"]).optional(),
-      protocolVersion: z.enum(["legacy", "auto", "2026-07-28"]).optional(),
-      timeoutMs: z.number().int().positive().optional(),
-    })
-    .strict(),
-  z
-    .object({
-      name: nonEmptyString,
-      type: z.enum(["http", "sse"]),
-      url: nonEmptyString,
-      headers: z.array(acodeProtocolMcpEntrySchema),
-      oauth: acodeProtocolMcpOAuthSchema.optional(),
-      isolation: z.enum(["session", "workspace"]).optional(),
-      protocolVersion: z.enum(["legacy", "auto", "2026-07-28"]).optional(),
-      timeoutMs: z.number().int().positive().optional(),
-    })
-    .strict(),
-]);
-export type ACodeProtocolMcpServer = z.infer<typeof acodeProtocolMcpServerSchema>;
-
 export const acodeMcpServerStatusKindSchema = z.enum([
   "connecting",
   "connected",
@@ -795,44 +749,21 @@ export const acodeModelOptionSchema = z
   .strict();
 export type ACodeModelOption = z.infer<typeof acodeModelOptionSchema>;
 
-export const acodeAccountAccessSchema = z.discriminatedUnion("planKind", [
-  z
-    .object({
-      type: z.literal("zhipu-account"),
-      family: z.enum(["zai", "bigmodel"]),
-      planKind: z.literal("start-plan"),
-    })
-    .strict(),
-  z
-    .object({
-      type: z.literal("zhipu-account"),
-      family: z.enum(["zai", "bigmodel"]),
-      planKind: z.literal("individual-coding-plan"),
-    })
-    .strict(),
-  z
-    .object({
-      type: z.literal("zhipu-account"),
-      family: z.enum(["zai", "bigmodel"]),
-      planKind: z.literal("team-coding-plan"),
-      productId: nonEmptyString,
-      organizationId: nonEmptyString,
-      projectId: nonEmptyString,
-    })
-    .strict(),
-]);
-export type ACodeAccountAccess = z.infer<typeof acodeAccountAccessSchema>;
-
-/** Active Model 固定的账号访问类别；当前商品和 Team scope 由账号服务在请求期解析。 */
-export const acodeProviderAccountAccessSchema = z
-  .object({
-    type: z.literal("zhipu-account"),
-    accountType: z.enum(["zai", "bigmodel"]),
-    mode: z.enum(["start-plan", "individual-coding-plan", "team-coding-plan", "off-peak"]),
-    entitled: z.boolean(),
-  })
-  .strict();
-export type ACodeProviderAccountAccess = z.infer<typeof acodeProviderAccountAccessSchema>;
+// Account Access schema/类型的唯一事实源已迁至 ../account-access-types.ts（无环叶子）：
+// 本文件从 ../usage-stats.js 导入值，而 usage-stats.ts 需要这两个类型；定义留在
+// 本文件会形成文件级循环依赖（forbidCycles 命中）。这里 re-export 保持公开 API 名不变。
+import {
+  acodeAccountAccessSchema,
+  acodeProviderAccountAccessSchema,
+  type ACodeAccountAccess,
+  type ACodeProviderAccountAccess,
+} from "../account-access-types.js";
+export {
+  acodeAccountAccessSchema,
+  acodeProviderAccountAccessSchema,
+  type ACodeAccountAccess,
+  type ACodeProviderAccountAccess,
+};
 
 export type ACodeSessionMode = z.infer<typeof acodeSessionModeSchema>;
 export type ACodeSessionKind = z.infer<typeof acodeSessionKindSchema>;
@@ -1709,18 +1640,6 @@ export const acodeSessionRuntimePreferencesResultSchema = z
 export type ACodeSessionRuntimePreferencesResult = z.infer<
   typeof acodeSessionRuntimePreferencesResultSchema
 >;
-
-/**
- * App 在提交 prompt 前只读采集的 IAB 可见状态。该字段只用于 provider-visible
- * ambient context，不进入用户可见 transcript；内容有界，禁止携带页面正文或凭据。
- */
-export const acodeBrowserAmbientContextSchema = z
-  .object({
-    tabCount: z.number().int().positive().max(100),
-    currentUrl: z.string().trim().min(1).max(4096).optional(),
-  })
-  .strict();
-export type ACodeBrowserAmbientContext = z.infer<typeof acodeBrowserAmbientContextSchema>;
 
 export const acodeSessionSendParamsSchema = z
   .object({

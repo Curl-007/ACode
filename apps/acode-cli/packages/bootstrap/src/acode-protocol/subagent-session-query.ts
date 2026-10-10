@@ -57,6 +57,11 @@ interface ProjectSessionSubagentsInput {
   childProjectionsById: ReadonlyMap<string, SessionProjection>;
   parentProjection?: SessionProjection;
   parentEvents?: readonly SessionEvent[];
+  /**
+   * 持久化拓扑边（specs/subagent-topology-persistence.md R5）：崩溃后唯一剩下的终态
+   * 事实源。可选输入——缺席时行为与既有三源合成逐字节一致。
+   */
+  edges?: readonly PersistedSubagentEdge[];
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -98,6 +103,110 @@ function contentBlocksToText(value: unknown): string | undefined {
     .filter((item): item is string => Boolean(item))
     .join("\n\n");
   return text || undefined;
+}
+
+// ---------------------------------------------------------------------------
+// 持久化拓扑边的读侧（specs/subagent-topology-persistence.md R5/R8）
+// ---------------------------------------------------------------------------
+
+/** subagent_edge 行的读侧视图：列名 snake_case 原样，防御性读取（行无 contracts schema）。 */
+export interface PersistedSubagentEdge {
+  agentId: string;
+  agentType?: string;
+  background?: boolean;
+  childSessionId?: string;
+  description?: string;
+  endedAt?: number;
+  error?: string;
+  outputFile?: string;
+  parentSessionId?: string;
+  parentToolCallId?: string;
+  startedAt?: number;
+  status: string;
+  totalTokens?: number;
+}
+
+function optionalInt(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function normalizeEdgeRow(value: unknown): PersistedSubagentEdge | null {
+  const row = asRecord(value);
+  const agentId = nonEmptyString(row.agent_id);
+  const status = nonEmptyString(row.status);
+  // 缺主键/状态的坏行不采用也不清存储（swarm-plans 同款纪律：schema 校验在消费边界）。
+  if (!agentId || !status) return null;
+  const agentType = nonEmptyString(row.agent_type);
+  const childSessionId = nonEmptyString(row.child_session_id);
+  const description = nonEmptyString(row.description);
+  const endedAt = optionalInt(row.ended_at);
+  const error = nonEmptyString(row.error);
+  const outputFile = nonEmptyString(row.output_file);
+  const parentSessionId = nonEmptyString(row.parent_session_id);
+  const parentToolCallId = nonEmptyString(row.parent_tool_call_id);
+  const startedAt = optionalInt(row.started_at);
+  const totalTokens = optionalInt(row.total_tokens);
+  return {
+    agentId,
+    status,
+    background: row.background === 1 || row.background === true,
+    ...(agentType ? { agentType } : {}),
+    ...(childSessionId ? { childSessionId } : {}),
+    ...(description ? { description } : {}),
+    ...(endedAt !== undefined ? { endedAt } : {}),
+    ...(error ? { error } : {}),
+    ...(outputFile ? { outputFile } : {}),
+    ...(parentSessionId ? { parentSessionId } : {}),
+    ...(parentToolCallId ? { parentToolCallId } : {}),
+    ...(startedAt !== undefined ? { startedAt } : {}),
+    ...(totalTokens !== undefined ? { totalTokens } : {}),
+  };
+}
+
+/**
+ * store 能力探测（R8 duck-typing）：无 readSubagentEdges 方法（测试替身/远程 store）
+ * 或读取失败 → 空数组，合成层回退既有事件/工具部件路径，不伪装成功。
+ */
+export async function readPersistedSubagentEdges(
+  store: unknown,
+  sessionID: string,
+): Promise<PersistedSubagentEdge[]> {
+  if (typeof store !== "object" || store === null) return [];
+  const candidate = store as {
+    readSubagentEdges?: (input: { sessionID: string }) => Promise<unknown>;
+  };
+  if (typeof candidate.readSubagentEdges !== "function") return [];
+  try {
+    const rows = await candidate.readSubagentEdges({ sessionID });
+    if (!Array.isArray(rows)) return [];
+    return rows
+      .map(normalizeEdgeRow)
+      .filter((edge): edge is PersistedSubagentEdge => edge !== null);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * 边终态 → 目录 ended 词表（R9 词表的读侧映射）。running/未知词 → undefined：
+ * 边的 running 不是 live 事实（崩溃残留由 resume 收敛负责，R4/R5）。
+ */
+const EDGE_TERMINAL_TO_ENDED_STATUS: Readonly<
+  Record<string, ACodeSessionEndedSubagent["status"]>
+> = {
+  completed: "success",
+  failed: "failed",
+  cancelled: "cancelled",
+  killed: "cancelled",
+  stopped: "cancelled",
+  lost: "lost",
+};
+
+function edgeEndedStatus(
+  edge: PersistedSubagentEdge | undefined,
+): ACodeSessionEndedSubagent["status"] | undefined {
+  if (!edge) return undefined;
+  return EDGE_TERMINAL_TO_ENDED_STATUS[edge.status];
 }
 
 function subagentEventRelations(
@@ -234,10 +343,21 @@ export function collectSubagentChildSessionIds(
   session: SessionInfo,
   messages: readonly MessageWithParts[],
   parentEvents?: readonly SessionEvent[],
+  edges?: readonly PersistedSubagentEdge[],
 ): string[] {
-  return collectCandidates(session, messages, parentEvents).map(
+  const ids = collectCandidates(session, messages, parentEvents).map(
     (candidate) => candidate.childSessionId,
   );
+  // R5：边表兜底——工具部件缺失/不可解析（launch ACK 未落盘等窗口）时，边是子会话
+  // id 的另一份持久事实；合并进目录加载集，恒等式兜底（subagent_<agentId>）保持不变。
+  const known = new Set(ids);
+  for (const edge of edges ?? []) {
+    if (edge.childSessionId && !known.has(edge.childSessionId)) {
+      known.add(edge.childSessionId);
+      ids.push(edge.childSessionId);
+    }
+  }
+  return ids;
 }
 
 function lastChildOutcome(messages: readonly MessageWithParts[] | undefined): {
@@ -295,6 +415,7 @@ function runningStatus(input: {
   candidate: SubagentCandidate;
   childOutcome: ReturnType<typeof lastChildOutcome>;
   childProjection?: SessionProjection;
+  edge?: PersistedSubagentEdge;
   parentProjection?: SessionProjection;
 }): ACodeSessionRunningSubagent["status"] | undefined {
   if (input.background?.status === "running") {
@@ -307,12 +428,15 @@ function runningStatus(input: {
   // tool part 会把 child 误判为 ended，并在 cold seed 时清空 V4 running 行。
   // child 还没有终态输出、spawn relation 也没有 stop 时，background input 本身
   // 是可恢复的 running 事实；真实终态仍由 background/child projection/outcome 优先。
+  // 边表终态（R5）压过这条乐观推断：崩溃残留的后台代理经 resume 收敛为 lost 后，
+  // 冷目录必须呈现 ended(lost)，不得再被当作可恢复的 running。
   if (
     input.candidate.runInBackground &&
     input.background === undefined &&
     input.childProjection === undefined &&
     input.candidate.stoppedStatus === undefined &&
-    input.childOutcome.status === undefined
+    input.childOutcome.status === undefined &&
+    edgeEndedStatus(input.edge) === undefined
   ) {
     return "running";
   }
@@ -356,6 +480,8 @@ function endedStatus(input: {
   candidate: SubagentCandidate;
   childOutcome: ReturnType<typeof lastChildOutcome>;
   childProjection?: SessionProjection;
+  /** 边表终态映射（R5）：live 源之后、事件合成与 state/outcome 兜底之前。 */
+  edgeStatus?: ACodeSessionEndedSubagent["status"];
 }): ACodeSessionEndedSubagent["status"] {
   const backgroundStatus = terminalBackgroundStatus(input.background);
   if (backgroundStatus) return backgroundStatus;
@@ -364,6 +490,10 @@ function endedStatus(input: {
   if (input.candidate.part.state.status === "error") {
     return CANCELLATION_PATTERN.test(input.candidate.part.state.error) ? "cancelled" : "failed";
   }
+  // R5：崩溃后真实终态只剩边表（事件缺省内存，冷启动 relation 为空）——边终态压过
+  // 事件合成与 async_launched/outcome 兜底，目录不再整体退化成 "lost"。part error
+  // 保持既有优先级：launch 失败场景多半无边行，两者几乎不相交。
+  if (input.edgeStatus) return input.edgeStatus;
   if (input.candidate.stoppedStatus) return input.candidate.stoppedStatus;
   const outputStatus = stringField(input.candidate.output ?? {}, "status");
   if (outputStatus === "cancelled" || outputStatus === "stopped") return "cancelled";
@@ -376,9 +506,11 @@ function endedStatus(input: {
 function startedAt(
   candidate: SubagentCandidate,
   background?: BackgroundTaskInfo,
+  edge?: PersistedSubagentEdge,
 ): number | undefined {
   if (background?.startedAt) return background.startedAt.getTime();
   if (candidate.startedAt !== undefined) return candidate.startedAt;
+  if (edge?.startedAt !== undefined) return edge.startedAt;
   return "time" in candidate.part.state ? candidate.part.state.time.start : undefined;
 }
 
@@ -387,6 +519,12 @@ export function projectSessionSubagents(
 ): SessionSubagentProjection {
   const running: ACodeSessionRunningSubagent[] = [];
   const ended: ACodeSessionEndedSubagent[] = [];
+  // R5：边按 childSessionId 挂到候选上（候选键就是 childSessionId）；无 childSessionId
+  // 的边行不参与投影（恒等式兜底已覆盖该场景的 id 推导）。
+  const edgesByChildSessionId = new Map<string, PersistedSubagentEdge>();
+  for (const edge of input.edges ?? []) {
+    if (edge.childSessionId) edgesByChildSessionId.set(edge.childSessionId, edge);
+  }
   for (const candidate of collectCandidates(
     input.parentSession,
     input.messages,
@@ -397,11 +535,13 @@ export function projectSessionSubagents(
     const childProjection = input.childProjectionsById.get(candidate.childSessionId);
     const background = findBackgroundTask(input.parentProjection, candidate);
     const childOutcome = lastChildOutcome(input.childMessagesById.get(candidate.childSessionId));
+    const edge = edgesByChildSessionId.get(candidate.childSessionId);
     const liveStatus = runningStatus({
       background,
       candidate,
       childOutcome,
       childProjection,
+      ...(edge ? { edge } : {}),
       parentProjection: input.parentProjection,
     });
     const common = {
@@ -410,8 +550,8 @@ export function projectSessionSubagents(
       toolCallId: candidate.part.callID,
       subagentType: candidate.subagentType,
       title: candidate.title,
-      ...(startedAt(candidate, background) !== undefined
-        ? { startedAt: startedAt(candidate, background) }
+      ...(startedAt(candidate, background, edge) !== undefined
+        ? { startedAt: startedAt(candidate, background, edge) }
         : {}),
     };
     if (liveStatus) {
@@ -422,14 +562,22 @@ export function projectSessionSubagents(
       "time" in candidate.part.state && "end" in candidate.part.state.time
         ? candidate.part.state.time.end
         : undefined;
+    const edgeStatus = edgeEndedStatus(edge);
     ended.push({
       ...common,
-      status: endedStatus({ background, candidate, childOutcome, childProjection }),
+      status: endedStatus({
+        background,
+        candidate,
+        childOutcome,
+        childProjection,
+        ...(edgeStatus ? { edgeStatus } : {}),
+      }),
       ...(candidate.summary || childOutcome.summary
         ? { summary: candidate.summary ?? childOutcome.summary }
         : {}),
       endedAt:
         background?.completedAt?.getTime() ??
+        edge?.endedAt ??
         candidate.stoppedAt ??
         stateEndedAt ??
         childOutcome.endedAt ??

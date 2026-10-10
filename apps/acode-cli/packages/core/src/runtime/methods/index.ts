@@ -24,6 +24,7 @@ import { getContextBuilder } from "./config.js";
 import { getPendingPermissionRequests } from "./config.js";
 import { recordUserInputAutoResolutionUpdate } from "./interaction-auto-resolution.js";
 import { recordDynamicWorkflowRunProgress } from "./dynamic-workflow-run-progress.js";
+import { recordSwarmPlanProgress } from "./swarm-plan-progress.js";
 import { trackResumedDynamicWorkflowRun } from "./dynamic-workflow-run-track.js";
 import { startSavedWorkflowRun } from "./dynamic-workflow-run-start.js";
 import { amendWorkflowRunSettings } from "./dynamic-workflow-run-settings.js";
@@ -163,6 +164,7 @@ import {
   cancelRunningRuntimeBackgroundTasks,
   hasRunningBackgroundTasks,
   stopBackgroundTask,
+  stopInFlightSubagentTasks,
 } from "./background.js";
 import { buildBackgroundTaskPayload } from "./background.js";
 import { readBackgroundBashOutput } from "./background-bash-output.js";
@@ -231,6 +233,7 @@ export function installAgentRuntimeMethods(ctor: AgentRuntimeConstructor): void 
   proto.getPendingPermissionRequests = getPendingPermissionRequests;
   proto.recordUserInputAutoResolutionUpdate = recordUserInputAutoResolutionUpdate;
   proto.recordDynamicWorkflowRunProgress = recordDynamicWorkflowRunProgress;
+  proto.recordSwarmPlanProgress = recordSwarmPlanProgress;
   proto.trackResumedDynamicWorkflowRun = trackResumedDynamicWorkflowRun;
   proto.startSavedWorkflowRun = startSavedWorkflowRun;
   proto.amendWorkflowRunSettings = amendWorkflowRunSettings;
@@ -364,6 +367,7 @@ export function installAgentRuntimeMethods(ctor: AgentRuntimeConstructor): void 
   proto.cancelBackgroundTask = cancelBackgroundTask;
   proto.stopBackgroundTask = stopBackgroundTask;
   proto.cancelRunningRuntimeBackgroundTasks = cancelRunningRuntimeBackgroundTasks;
+  proto.stopInFlightSubagentTasks = stopInFlightSubagentTasks;
   proto.hasRunningBackgroundTasks = hasRunningBackgroundTasks;
   proto.buildBackgroundTaskPayload = buildBackgroundTaskPayload;
   proto.createEvent = createEvent;

@@ -1,1 +1,1 @@
-export * from "../runtime-task/registry.js";
+export * from "../runtime-task/contract.js";

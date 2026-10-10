@@ -184,6 +184,7 @@ export type {
   StreamingToolLedgerPayload,
   StreamingToolLedgerStatus,
   DynamicWorkflowRunProgressPayload,
+  SwarmPlanProgressPayload,
   TargetChangedPayload,
   UserInputAutoResolutionUpdatedPayload,
   TargetCompletionVerificationPayload,

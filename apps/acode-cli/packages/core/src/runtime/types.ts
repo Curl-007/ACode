@@ -110,7 +110,7 @@ import type {
   OutputStylePromptConfig,
 } from "./deps.js";
 import type { AgentProfile } from "../subagent/profile.js";
-import type { RuntimeTaskRegistry } from "../runtime-task/registry.js";
+import type { RuntimeTaskRegistry } from "../runtime-task/contract.js";
 import type { AmbientScheduleQueue, ScheduledItem } from "../ambient/queue.js";
 import type { BashTimeoutPolicy } from "../tool/bash-timeout-policy.js";
 import type { OpenPlatformPort } from "../tool/handlers/open.js";
@@ -157,6 +157,13 @@ export interface AgentRuntimeConfig {
     // 任何后台化都等于丢结果（subagent-background-tristate.md R3）。
     // 缺省 "honor"：尊重调用三态与 profile.background 默认，交互式会话零变化。
     backgroundPolicy?: "honor" | "foreground";
+    // 编排方案 Phase 3（specs/agent-peer-messaging.md R0）：同父兄弟点对点通信。
+    // 装配期定值、默认关闭——不 flag 化就等于默认削弱现有 depth-1 安全故事；运行中不翻转。
+    peerMessaging?: { enabled?: boolean };
+    // 编排方案 Phase 4（specs/subagent-nesting-budget.md R3）：子代理链的最大深度
+    // （策略值，装配期定值；缺省 1 = 现状硬深度 1）。生效值经
+    // resolveEffectiveSubagentMaxDepth——树级预算闸落地前硬封 1（fail-closed）。
+    maxDepth?: number;
   };
   toolAllowlist?: readonly string[];
   toolDisallowlist?: readonly string[];
@@ -223,6 +230,21 @@ export interface AgentRuntimeConfig {
   };
   parentSessionId?: SessionId;
   taskType?: SessionTaskType;
+  // 编排方案 Phase 4（specs/subagent-nesting-budget.md R1/R3）：depth 谱系事实。
+  // 三者都由父在 child config 构造点自填（机械保证，调用方给不了错值）：
+  /** 本 runtime 在子代理链中的深度；根会话缺席（≡0），depth-1 child 为 1。 */
+  subagentDepth?: number;
+  /** 链根的会话 id（树级预算的键与 origin 归属用；根会话缺席 ≡ 自身 sessionId）。 */
+  rootSessionId?: SessionId;
+  /** 链根建链时刻的模式快照——权限天花板锚根（R1）；根会话缺席 ≡ 自身当前模式。 */
+  rootMode?: CollaborationMode;
+  /**
+   * 闲时轮执行事实（specs/subagent-nesting-budget.md R5-1 / 审计 §6.1）：本 runtime 的
+   * 模型执行携带 off-peak 闲时轮 override 语义时置位。显式 override 只作用当层，但
+   * override 模型经工厂链传到任意深度、孙层的 launchOptions 看不到显式参数——事实随
+   * config 透传后，background 派发拒绝按「有效 override」判定，不再逐层失效。
+   */
+  offPeakSubagentExecution?: boolean;
   /**
    * 动态工作流开关：Host 判定后经
    * ACode Protocol 下发，runtime 只消费。**缺席即开启**，保留 TUI 默认值；
@@ -253,6 +275,13 @@ export interface AgentRuntimeConfig {
   outputStyle?: OutputStylePromptConfig;
   agentName?: string; // Default: "acode-agent"
   workingDirectory?: string; // Required for context builder
+  /**
+   * 工作区身份根（权限熔断锚点、projectId 推导）：构造期锁定、runtime 生命周期内不变。
+   * 缺省 = workingDirectory（主会话等既有构造点）。子代理派生必须显式传父 runtime 的
+   * 锁定根——否则父 Bash cd 漂移后，child 会把漂移后的 cwd 当工作区根，
+   * breaker.pathEscapeWrite 对工作区内文件误报（specs/subagent-parent-inheritance.md R1）。
+   */
+  workspaceRoot?: string;
   /**
    * 调用方传入的实际工作区路径表示，用于 session 持久化与本地身份恢复。
    * 文件和命令执行仍只使用规范化后的 workingDirectory。
@@ -286,7 +315,7 @@ export interface ResumeSessionOptions {
   /** 中止 cold-resume admission wait；不会伪造 Workspace Hook review decision。 */
   abortSignal?: AbortSignal;
   traceContext?: TraceContext;
-  /** 冷恢复调用方提供的调用级已物化结果；不进入生命周期缓存，修补后按返回值重新读取。 */
+  /** 兼容已有调用方；数组未绑定代际/修订，恢复使用锁内权威读取并要求上层重新读取。 */
   persistedMessages?: MessageWithParts[];
   /**
    * 本次 invocation 已解析出的 mode。显式 --mode 与 headless 默认 yolo 都属于调用级覆盖，
@@ -371,6 +400,8 @@ export interface AgentRuntimeDeps {
   skillPort?: SkillPort;
   mcpPort?: McpPort;
   subagentPort?: SubagentPort;
+  /** child runtime 的 peer 窄面（specs/agent-peer-messaging.md R1）；flag 开启时由 runner 铸造、subagent.ts 注入。 */
+  peerMessagingPort?: import("../subagent/peer-messaging.js").PeerMessagingPort;
   coordinatorResponsePort?: CoordinatorResponsePort;
   /** 工作流 actor 提交终态结果的端口；存在即作为 submit_result 工具的注册门。 */
   workflowSubmitPort?: WorkflowSubmitPort;
@@ -524,6 +555,13 @@ export interface ExecuteTurnOptionsBase {
   traceContext?: TraceContext;
   /** 当前 Submission 的 Selection 只用于本次执行，并可绑定逐请求依赖。 */
   modelExecution?: ModelExecutionContext;
+  /**
+   * turn 激活（beginActiveTurn 之后）时回调一次。编排方案 Phase 3 前置修复
+   * （specs/subagent-pending-message-drain.md R1）：子代理的 sink 注册 flush 与 turn
+   * 启动存在竞态，竞态输掉的挂起消息在 turn 起点经该钩子补投。钩子不得抛（调用方
+   * 包裹；turn.ts 侧另有兜底），缺席安全——其余 executeTurn 调用方零影响。
+   */
+  onTurnStarted?: () => void;
 }
 
 export type ExecuteTurnOptions = ExecuteTurnOptionsBase &
@@ -869,6 +907,8 @@ export interface ProviderContextUsageSnapshot {
 
 export interface RunModelTextRequestOptions {
   abortSignal?: AbortSignal;
+  /** 普通 turn 的固定分支代际；provider 调用边界复查，不从实时状态重新捕获。 */
+  branchGeneration?: number;
   assistantMessageId: MessageId;
   events: SessionEvent[];
   maxOutputTokens?: number;

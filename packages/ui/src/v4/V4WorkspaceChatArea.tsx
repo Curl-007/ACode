@@ -20,6 +20,7 @@ import type {
   OpenScopedWorkflowRunSideTabRequest,
   OpenScopedWorkflowActorSessionSideTabRequest,
   OpenScopedWorkflowRunDirectorySideTabRequest,
+  OpenScopedOrchestrationSideTabRequest,
   OpenScopedWorkflowWorkspaceSideTabRequest,
   SyncSubagentSessionTabsRequest,
 } from "@/lib/workspaceSidePane.js";
@@ -114,6 +115,7 @@ interface V4WorkspaceChatAreaProps {
   onOpenWorkflowRun?: (request: OpenScopedWorkflowRunSideTabRequest) => void;
   onOpenWorkflowArtifact?: (request: OpenScopedWorkflowArtifactSideTabRequest) => void;
   onOpenWorkflowRunDirectory?: (request: OpenScopedWorkflowRunDirectorySideTabRequest) => void;
+  onOpenOrchestration?: (request: OpenScopedOrchestrationSideTabRequest) => void;
   onOpenWorkflowActorSession?: (request: OpenScopedWorkflowActorSessionSideTabRequest) => void;
   onOpenWorkflowWorkspace?: (request: OpenScopedWorkflowWorkspaceSideTabRequest) => void;
   conversationFindQuery?: string;
@@ -175,6 +177,7 @@ export function V4WorkspaceChatArea({
   onOpenWorkflowRun,
   onOpenWorkflowArtifact,
   onOpenWorkflowRunDirectory,
+  onOpenOrchestration,
   onOpenWorkflowActorSession,
   onOpenWorkflowWorkspace,
   conversationFindQuery = "",
@@ -300,6 +303,7 @@ export function V4WorkspaceChatArea({
       onOpenWorkflowRun,
       onOpenWorkflowArtifact,
       onOpenWorkflowRunDirectory,
+      onOpenOrchestration,
       onOpenWorkflowActorSession,
       onOpenWorkflowWorkspace,
       conversationFindQuery,
@@ -345,6 +349,7 @@ export function V4WorkspaceChatArea({
       onOpenWorkflowRun,
       onOpenWorkflowArtifact,
       onOpenWorkflowRunDirectory,
+      onOpenOrchestration,
       onOpenWorkflowActorSession,
       onOpenWorkflowWorkspace,
       conversationFindQuery,

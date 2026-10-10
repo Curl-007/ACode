@@ -8,9 +8,13 @@ import type { TraceContext } from "../tracing/tracer.js";
 
 export interface WorkflowStartRequest extends WorkflowInput {
   parentToolCallId: ToolCallId | string;
+  /** Persisted owner boundary for resume; local callers may omit and use workspaceRoot. */
+  remoteSessionId?: string;
   sessionId: SessionId;
   trace: TraceContext;
   turnId?: TurnId;
+  /** Stable workspace identity; when absent, workspaceRoot is the local fallback. */
+  workspaceIdentity?: string;
   workingDirectory: string;
   workspaceRoot: string;
 }

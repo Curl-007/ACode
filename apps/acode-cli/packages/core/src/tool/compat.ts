@@ -1,7 +1,14 @@
-const AGENT_TOOL_NAME = "Agent";
+export const AGENT_TOOL_NAME = "Agent";
 export const TASK_TOOL_NAME = "Task";
 
-const subagentDispatchToolNames = new Set<string>([AGENT_TOOL_NAME, TASK_TOOL_NAME]);
+/**
+ * 派发工具面的单一事实源（specs/subagent-policy-floor-inheritance.md 增补 R4）：
+ * 注册门（handlers/index.ts 与 embedded-search-branch.ts 两入口）与子代理强制剔除集
+ * （subagent/tool-policy.ts）共用同一份名单，两侧永不各写一份字面量。
+ */
+export const SUBAGENT_DISPATCH_TOOL_NAMES: readonly string[] = [AGENT_TOOL_NAME, TASK_TOOL_NAME];
+
+const subagentDispatchToolNames = new Set<string>(SUBAGENT_DISPATCH_TOOL_NAMES);
 
 const hookMatcherAliasesByToolName = new Map<string, readonly string[]>([
   [AGENT_TOOL_NAME, [TASK_TOOL_NAME]],

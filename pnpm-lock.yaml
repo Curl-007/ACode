@@ -205,6 +205,9 @@ importers:
       '@acode/adapters':
         specifier: workspace:*
         version: link:../adapters
+      '@acode/cli-workflow':
+        specifier: workspace:*
+        version: link:../cli-workflow
       '@acode/contracts':
         specifier: workspace:*
         version: link:../contracts
@@ -214,9 +217,6 @@ importers:
       '@acode/dynamic-workflow':
         specifier: workspace:*
         version: link:../dynamic-workflow
-      '@acode/dynamic-workflow-runtime':
-        specifier: workspace:*
-        version: link:../dynamic-workflow-runtime
       '@acode/i18n':
         specifier: workspace:*
         version: link:../i18n
@@ -229,6 +229,9 @@ importers:
       '@acode/shared':
         specifier: workspace:*
         version: link:../../../../packages/shared
+      '@acode/workflow-run-command':
+        specifier: workspace:*
+        version: link:../workflow-run-command
       diff:
         specifier: ^9.0.0
         version: 9.0.0
@@ -300,6 +303,40 @@ importers:
       playwright-core:
         specifier: 1.59.1
         version: 1.59.1
+
+  apps/acode-cli/packages/cli-workflow:
+    dependencies:
+      '@acode/adapters':
+        specifier: workspace:*
+        version: link:../adapters
+      '@acode/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@acode/core':
+        specifier: workspace:*
+        version: link:../core
+      '@acode/dynamic-workflow':
+        specifier: workspace:*
+        version: link:../dynamic-workflow
+      '@acode/dynamic-workflow-runtime':
+        specifier: workspace:*
+        version: link:../dynamic-workflow-runtime
+      '@acode/shared':
+        specifier: workspace:*
+        version: link:../../../../packages/shared
+      '@acode/workflow-run-command':
+        specifier: workspace:*
+        version: link:../workflow-run-command
+      '@acode/workflow-run-read':
+        specifier: workspace:*
+        version: link:../workflow-run-read
+      meriyah:
+        specifier: ^7.1.1
+        version: 7.1.2
+    devDependencies:
+      '@types/node':
+        specifier: ^24.0.0
+        version: 24.12.2
 
   apps/acode-cli/packages/contracts:
     dependencies:
@@ -504,6 +541,32 @@ importers:
       '@types/react':
         specifier: 19.2.0
         version: 19.2.0
+
+  apps/acode-cli/packages/workflow-run-command:
+    dependencies:
+      '@acode/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+    devDependencies:
+      '@types/node':
+        specifier: ^24.0.0
+        version: 24.12.2
+
+  apps/acode-cli/packages/workflow-run-read:
+    dependencies:
+      '@acode/adapters':
+        specifier: workspace:*
+        version: link:../adapters
+      '@acode/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@acode/dynamic-workflow':
+        specifier: workspace:*
+        version: link:../dynamic-workflow
+    devDependencies:
+      '@types/node':
+        specifier: ^24.0.0
+        version: 24.12.2
 
   apps/acode-cli/tools/prompt-trajectory:
     devDependencies:

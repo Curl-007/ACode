@@ -8,7 +8,7 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import { toScriptWorkflowRunSummary } from "../packages/bootstrap/src/app/script-workflow-run-summary.ts";
+import { toScriptWorkflowRunSummary } from "../packages/cli-workflow/src/script-workflow-run-summary.ts";
 
 /** 最小合法的 run 记录；只有 status 与各用例关心的字段在变。 */
 function row(overrides = {}) {

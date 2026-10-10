@@ -15,6 +15,7 @@ import type {
   OpenScopedWorkflowArtifactSideTabRequest,
   OpenScopedWorkflowRunSideTabRequest,
   OpenScopedWorkflowRunDirectorySideTabRequest,
+  OpenScopedOrchestrationSideTabRequest,
   OpenScopedWorkflowWorkspaceSideTabRequest,
   OpenScopedSubagentDirectorySideTabRequest,
   OpenScopedSubagentSideTabRequest,
@@ -64,6 +65,7 @@ interface V4ChatPaneProps {
   onOpenWorkflowRun?: (request: OpenScopedWorkflowRunSideTabRequest) => void;
   onOpenWorkflowArtifact?: (request: OpenScopedWorkflowArtifactSideTabRequest) => void;
   onOpenWorkflowRunDirectory?: (request: OpenScopedWorkflowRunDirectorySideTabRequest) => void;
+  onOpenOrchestration?: (request: OpenScopedOrchestrationSideTabRequest) => void;
   onOpenWorkflowActorSession?: (request: OpenScopedWorkflowActorSessionSideTabRequest) => void;
   onOpenWorkflowWorkspace?: (request: OpenScopedWorkflowWorkspaceSideTabRequest) => void;
   conversationFindQuery?: string;
@@ -110,6 +112,7 @@ export function V4ChatPane({
   onOpenWorkflowRun,
   onOpenWorkflowArtifact,
   onOpenWorkflowRunDirectory,
+  onOpenOrchestration,
   onOpenWorkflowActorSession,
   onOpenWorkflowWorkspace,
   conversationFindQuery = "",
@@ -154,6 +157,7 @@ export function V4ChatPane({
         onOpenWorkflowRun={onOpenWorkflowRun}
         onOpenWorkflowArtifact={onOpenWorkflowArtifact}
         onOpenWorkflowRunDirectory={onOpenWorkflowRunDirectory}
+        onOpenOrchestration={onOpenOrchestration}
         onOpenWorkflowActorSession={onOpenWorkflowActorSession}
         onOpenWorkflowWorkspace={onOpenWorkflowWorkspace}
         conversationFindQuery={conversationFindQuery}

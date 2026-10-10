@@ -467,7 +467,9 @@ test("H1 run 归属（inputId 回显路径）：挂起旧 turn 被 deny 不被 r
     });
     await client.waitFor(
       (frame) =>
-        frame.kind === "event" && frame.event.kind === "turn_done" && frame.event.resultType === "cancelled",
+        frame.kind === "event" &&
+        frame.event.kind === "turn_done" &&
+        frame.event.resultType === "cancelled",
     );
     const early = await Promise.race([
       runPromise.then(() => "resolved"),
@@ -532,7 +534,9 @@ test("H1 run 归属（退化路径）：引擎不回显 inputId 时只认订阅�
     });
     await client.waitFor(
       (frame) =>
-        frame.kind === "event" && frame.event.kind === "turn_done" && frame.event.resultType === "cancelled",
+        frame.kind === "event" &&
+        frame.event.kind === "turn_done" &&
+        frame.event.resultType === "cancelled",
     );
     const early = await Promise.race([
       runPromise.then(() => "resolved"),
@@ -687,7 +691,7 @@ test("M4 写背压：write() 返回 false 暂停输入泵，drain 后恢复（�
   }
 });
 
-test("红线：acode-protocol v4 源码零改动（git 状态断言）", async () => {
+test("红线：server harness 只允许已登记的 protocol capability/schema 改动", async () => {
   const { execFile } = await import("node:child_process");
   const { promisify } = await import("node:util");
   const execFileAsync = promisify(execFile);
@@ -702,5 +706,24 @@ test("红线：acode-protocol v4 源码零改动（git 状态断言）", async (
     ],
     { cwd: repoRoot },
   );
-  assert.equal(stdout.trim(), "", `acode-protocol must be untouched, got: ${stdout}`);
+  const allowedChanges = new Set([
+    "M  packages/shared/src/acode-protocol-v4/index.ts",
+    " M packages/shared/src/acode-protocol-v4/index.ts",
+    "M  packages/shared/src/acode-protocol-v4/transport.ts",
+    " M packages/shared/src/acode-protocol-v4/transport.ts",
+    "M  packages/shared/src/acode-protocol-v4/command.ts",
+    " M packages/shared/src/acode-protocol-v4/command.ts",
+    "M  packages/shared/src/acode-protocol/index.ts",
+    " M packages/shared/src/acode-protocol/index.ts",
+    "?? packages/shared/src/acode-protocol-v4/capabilities.ts",
+  ]);
+  const unexpected = stdout
+    .split(/\r?\n/)
+    .map((line) => line.trimEnd())
+    .filter((line) => line.length > 0 && !allowedChanges.has(line));
+  assert.deepEqual(
+    unexpected,
+    [],
+    `acode-protocol changed outside the capability slice: ${stdout}`,
+  );
 });

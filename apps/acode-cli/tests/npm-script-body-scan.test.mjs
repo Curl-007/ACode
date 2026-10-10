@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { realpathSync } from "node:fs";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -205,7 +206,9 @@ test("A15 bun x（包运行器 payload）在 map 注入时递归评估", () => {
 // ── B：接线层预取（OS temp 造假 package.json 树） ─────────────────────
 
 async function withTempTree(run) {
-  const root = await mkdtemp(join(tmpdir(), "npm-script-scan-"));
+  // 长名归一：%TEMP% 在本机是 8.3 短名，短名 workspace 会让目标 blast-radius 分级
+  // 走「无法静态验证」的反射门，测到短名形态而不是 script body 扫描语义。
+  const root = realpathSync.native(await mkdtemp(join(tmpdir(), "npm-script-scan-")));
   try {
     return await run(root);
   } finally {

@@ -1,12 +1,12 @@
 import { ASK_USER_QUESTION_TOOL_NAME, SEND_MESSAGE_TOOL_NAME } from "@acode/contracts";
-import { isSubagentDispatchToolName } from "../tool/compat.js";
+import { AGENT_TOOL_NAME, isSubagentDispatchToolName } from "../tool/compat.js";
 import { EXPLORE_AGENT_TYPE } from "../subagent/explore.js";
 import type { ContextBuilderConfig, ContextSection } from "./types.js";
 import { estimateTokens } from "./utils.js";
 
-// 工具名字面量收敛为命名常量（compat.ts 的 AGENT_TOOL_NAME 未导出，Skill 在 contracts 里没有
-// 常量——builder.ts:37 同款做法是本地常量，两处各自持有字面量是既有现状，这里不扩别人的导出面）。
-const AGENT_TOOL_NAME = "Agent";
+// 工具名字面量收敛为命名常量（AGENT_TOOL_NAME 自 compat.ts 导入——派发工具名单单一
+// 事实源化后（subagent-policy-floor-inheritance.md 增补 R4）不再本地复制；Skill 在
+// contracts 里没有常量，builder.ts:37 同款做法是本地常量，维持既有现状）。
 const SKILL_TOOL_NAME = "Skill";
 const GREP_TOOL_NAME = "Grep";
 const GLOB_TOOL_NAME = "Glob";

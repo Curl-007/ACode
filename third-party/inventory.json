@@ -226,8 +226,9 @@
     ".agents/skills/react-best-practices/SKILL.md": "b7d246acb440bee224ab33614979a5b8debe5fdb13d0304967aa19358eb69d9f",
     "apps/acode-cli/package.json": "5e48e9dbf6d054a7826e30554763e188c7ef2f6ed9d9247e7f261b29c37e5096",
     "apps/acode-cli/packages/adapters/package.json": "cf388f3c5ce199daf35cbc984e04c01a00c789aa243c68d1bdfab4ce2dd331d1",
-    "apps/acode-cli/packages/bootstrap/package.json": "8575965beda8c6be664d6806cf6f8d66ef66c314a5721c02eb492dd1144b39a9",
+    "apps/acode-cli/packages/bootstrap/package.json": "139c4bf188c58bb1f63dd4e05e073a94e74bc5fda69a36febcc5006b7046498f",
     "apps/acode-cli/packages/browser-use-plugin/package.json": "dad5da2e437ff3cd0d475654b0ddec4d63c3f2eb7cb0b752058a6e0badc9612c",
+    "apps/acode-cli/packages/cli-workflow/package.json": "5c447b6653769c01f58a0638ddb850f68e046f47a146ea48c6fbe6547b14e12f",
     "apps/acode-cli/packages/cli/package.json": "cef2722ebcf0b336b0094d6725352edcbb90ba70a12056940657f8b0ca67057c",
     "apps/acode-cli/packages/contracts/package.json": "741929b9f0ae9518785175bb59768c3a0c44fb2356a9261c9564f66baf59f131",
     "apps/acode-cli/packages/core/package.json": "20cb98de2a565bf9f2da6ae866dcf48134a9c88a37bfd4c4198cbf2366020d4e",
@@ -241,13 +242,15 @@
     "apps/acode-cli/packages/superpowers-plugin/LICENSE": "a37e0e9697144819e1d965176ac4ae5bc3fa02d11e7812036bbcadf6dafe2400",
     "apps/acode-cli/packages/swift-bridge/package.json": "ce6faea4cb21cc5ab94db1b38ae4b5d772b5fd90af554a44a89c5962e860854b",
     "apps/acode-cli/packages/tui/package.json": "bd8533a9cd88fb80636774f89b9f34164e002bbef0ce4512fcd468772290ff69",
+    "apps/acode-cli/packages/workflow-run-command/package.json": "c95fa27e059dc23a6e91f154f9eedfcb414b933be588d337a336dee36ebaff54",
+    "apps/acode-cli/packages/workflow-run-read/package.json": "d4659d598d8320400e86695cef751c86bc8cc7cca3508858c6e42957a86d5b6c",
     "apps/acode-cli/tools/prompt-trajectory/package.json": "c0b79b8c11694062afce19807a3e527541b3d262b77aae07b40479d5ee73346c",
     "apps/acode-cli/tools/typescript/package.json": "916bb98a7a42a80a690c6460038da943c80e2c005fc528d8bfddc930ff67a13c",
-    "package.json": "089626a316d870d9647715823e4787a6ede4731bd64bdf4af6ac66de427529a0",
+    "package.json": "c9a754b6277756276879622a1b6f8e7759c53ec0ecfc6ac6242346165568122f",
     "packages/acode-cua/package.json": "faa859923517a6a948141b87bea3fa6ac885ef737ebde7be9ae9f9abd3d9a752",
-    "packages/acode-server-cli/package.json": "e67d85653aedb64e2c05efa395f76bdbff5a50cbfd4e1881e2c3645434b023d1",
+    "packages/acode-server-cli/package.json": "5e9445eb2bce9eb54e320723dcd327354ee6798e93dafb01b3532d14d0287bc3",
     "packages/client/package.json": "34842bccbb96748d785cd56230ca0e36d230b913cc57ef455680d87c999b939c",
-    "packages/desktop/package.json": "bf71674da50724e0642193a88d1c81ea6941647e3e9ff4b31f693921712398b2",
+    "packages/desktop/package.json": "b434cf91ef0f6df54afa3ed4f6268186fa36b2b6f280aa702ed565b956ad7637",
     "packages/desktop/src/renderer/public/material-icons/3d.svg": "9527b849f0fba57ca7640e2717b3a19cb5f5e046712cbbd8b75d73af338c68fb",
     "packages/desktop/src/renderer/public/material-icons/abap.svg": "1335bd7eb9a0ed49deb622330d680c2e97731726a7a5eee8e4f46dc1e5db4de4",
     "packages/desktop/src/renderer/public/material-icons/abc.svg": "d1a68020e8f020ef29dca5f94dc8613b7ae8fb5b212d8b1cc23b0f975ac7acda",
@@ -1396,7 +1399,7 @@
     "packages/desktop/src/renderer/public/material-icons/zip.svg": "dad79a45f756542d37abd422502ecfbea15720b92ea1c9d80ef0439ab6b9448a",
     "packages/formal-proof/package.json": "7b075bca8de7a9f369ef51c5324f044e001e51f31afeb6e61a0bb38227e8afab",
     "packages/harness-sdk/package.json": "d7041913b344cf7c0841de08596f066e27d0cf685c8337bfc3321e8eafce87b5",
-    "packages/model-option-map/package.json": "2aa0bfd5c219a26fd9e986785edfcf4ba1caff512002ea3e28886f262af24987",
+    "packages/model-option-map/package.json": "008c5fbc09f78b1b61a4f51e5821fa9d4be555c86af3c08aa9e4ff2375d494b6",
     "packages/provider-node/package.json": "0b9438bd14790b95aef9326272b80519fb486eb6360f50974e391ad7232f2ed8",
     "packages/provider/package.json": "b3f4d147a65fb3f39bf3e44df775ed3208e6dcca152b725de3d6d574e9af8918",
     "packages/rpc/examples/01-basic-ipc.ts": "bb4423c1642918846010f9307262c379536ca9541d79df6ebba120b5cf792f3e",
@@ -1405,20 +1408,24 @@
     "packages/rpc/examples/04-remote-connection.ts": "fe43a2d631ba54a1cf63a86e344b6e2e58d83c2e8c95f2f8b7371f63e6442541",
     "packages/rpc/package.json": "039570ac9054728821768eb6ba9fa7cb58df1b21999354db4b32f83a3aa79197",
     "packages/rpc/src/buffer.ts": "6bc6a44e6abd088f72d57616d9556d78ce078b6f3813bf75402dde386781492c",
-    "packages/rpc/src/channelClient.ts": "d2504929253ebb18f020e6f35e51a3741190558875d18a47192f9af78ca3f8ac",
+    "packages/rpc/src/channelClient.ts": "794529406db7e2319f36d5d5500e6490b42a2970e7f2d552194d0ebd4f0be529",
     "packages/rpc/src/channels.shared.ts": "e2d3ce17dfb23d53ea8fef6cd4dc87bef4558ff6e72b458e50fd456b0b2a6ae2",
     "packages/rpc/src/channels.ts": "afaba1724055a3d2e6b8b379553569489b71ac6eb252f636ab91649657485209",
-    "packages/rpc/src/channelServer.ts": "406146da1f9fb6df942d9ed6b12bc20ec654e0fc7b13e31b23f54008e6b2adc0",
+    "packages/rpc/src/channelServer.ts": "977b342c9d983fc6727d1e92cd291612ebdecb4cc86d1e9d10292628c8f15d3e",
     "packages/rpc/src/chunk-stream.ts": "595388c4c73747647a920ffa05feb3d936387a339bfd4610621bb049a58cac79",
+    "packages/rpc/src/contract.example.ts": "58a78d184d5bd58fdb3ffeb3f019514d015bd4928694110f46450a540d6d9ba1",
+    "packages/rpc/src/CONTRACT.md": "467ae94cd3b65f251a30042742fda638a711210e51d40aed54e6d96534a355fc",
+    "packages/rpc/src/contract.ts": "8a9fdf5713d13e459a44c31ab8ac2cb95aa18ba3d042505d66120e6c7ab7d338",
     "packages/rpc/src/delayedChannel.ts": "e7607b7fe9f35c742db206df90852e2ccafb75abc088606cf1ddbae801574ecf",
     "packages/rpc/src/foundation.ts": "ef6f5259609a3d25dce285229668fdf8b94b6943986977db3f402d82cb31414f",
-    "packages/rpc/src/index.ts": "cd15827b6f142b720d003f610920243945933e30035825dc463e46d40f94438d",
+    "packages/rpc/src/index.ts": "d2e8fa8cdec764eb55847125856241f7731a889604a18219a1f71ae845612c33",
     "packages/rpc/src/ipc.ts": "2ec3dfe0654a68300dbed7afd5ac436b563abf983d6e0f59a2b028469fdf71ef",
     "packages/rpc/src/logging-middleware.ts": "20edfd8e5d054097186f2498ec4e9c08c61740ed003fc69eecea8176a15fe025",
+    "packages/rpc/src/module.ts": "ec99f1f4a96054af64b5eca33a96e5641b29905a0ea978ef55075166738ebda9",
     "packages/rpc/src/network-telemetry-middleware.ts": "18a7cde46e6c65e0138af0623d07bf883ce278acf44654bc5144ecaadd36a536",
     "packages/rpc/src/persistent-protocol.ts": "066b1a1fdce95de28aa55d17ea08d7ceec3759a94d3dd145d9b7d9074fd24fa3",
     "packages/rpc/src/protocol.ts": "c218ddb63c2453c18926873e3793cb88c46805e519ec3b403172f8486cbcf5dc",
-    "packages/rpc/src/proxy-channel.ts": "ec5b43e6a3a622a88a8aaa6af9cb37dbfe517932ee7f4a337019ec138bb2d513",
+    "packages/rpc/src/proxy-channel.ts": "c8b0721c3ae1703870b23ed30658ab55094b2fa987c5b74cf420f4b823653a65",
     "packages/rpc/src/remote.ts": "a11e072d5df7e1c1ce64814a68f72afc081246b364f0da409b5c9d22bc815957",
     "packages/rpc/src/serialization.ts": "d33aa4ae9c29b678b88b45359d39c0a74b2282bb93a4f4dfdfc28019bbbe6ec2",
     "packages/rpc/src/transport-frame-limits.ts": "ea32f6436e885edd1948642819544bc4d809e206442f98a86caebd4f7e47f1f4",
@@ -2669,7 +2676,7 @@
     "packages/web/public/material-icons/zip.svg": "dad79a45f756542d37abd422502ecfbea15720b92ea1c9d80ef0439ab6b9448a",
     "patches/@ai-sdk__anthropic@3.0.81.patch": "d3a7c381eba7f5157f765a0528003af17cf84544911dfb7412c7800168e01c18",
     "patches/@ai-sdk__openai-compatible@2.0.60.patch": "9632fe9d821b3dc20939ae509cc35b968d90d018bbd1d812390718898182a38b",
-    "pnpm-lock.yaml": "ee5263ef92b7fd3f0cc88893acde0872286ab0cc6f2695c39c4e1fa0a79621c8",
+    "pnpm-lock.yaml": "d646345b0029385e7ac53e8126b064e30617ca64f689eefc229fdc52d438d2f4",
     "pnpm-workspace.yaml": "a9c2ba737409e152c3904e65fec268247194ea5a33050b630f00e14eb644e2cb",
     "scripts/license-texts/Apache-2.0.txt": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
     "scripts/native-search-tools-config.mjs": "54cee5ce2aa05e1c47f15758a700567ce4c822213c3f68392c18309142aa77ab",
@@ -24423,16 +24430,20 @@
       "license": "MIT",
       "files": [
         {
+          "file": "packages/rpc/src/CONTRACT.md",
+          "sha256": "467ae94cd3b65f251a30042742fda638a711210e51d40aed54e6d96534a355fc"
+        },
+        {
           "file": "packages/rpc/src/buffer.ts",
           "sha256": "6bc6a44e6abd088f72d57616d9556d78ce078b6f3813bf75402dde386781492c"
         },
         {
           "file": "packages/rpc/src/channelClient.ts",
-          "sha256": "d2504929253ebb18f020e6f35e51a3741190558875d18a47192f9af78ca3f8ac"
+          "sha256": "794529406db7e2319f36d5d5500e6490b42a2970e7f2d552194d0ebd4f0be529"
         },
         {
           "file": "packages/rpc/src/channelServer.ts",
-          "sha256": "406146da1f9fb6df942d9ed6b12bc20ec654e0fc7b13e31b23f54008e6b2adc0"
+          "sha256": "977b342c9d983fc6727d1e92cd291612ebdecb4cc86d1e9d10292628c8f15d3e"
         },
         {
           "file": "packages/rpc/src/channels.shared.ts",
@@ -24447,6 +24458,14 @@
           "sha256": "595388c4c73747647a920ffa05feb3d936387a339bfd4610621bb049a58cac79"
         },
         {
+          "file": "packages/rpc/src/contract.example.ts",
+          "sha256": "58a78d184d5bd58fdb3ffeb3f019514d015bd4928694110f46450a540d6d9ba1"
+        },
+        {
+          "file": "packages/rpc/src/contract.ts",
+          "sha256": "8a9fdf5713d13e459a44c31ab8ac2cb95aa18ba3d042505d66120e6c7ab7d338"
+        },
+        {
           "file": "packages/rpc/src/delayedChannel.ts",
           "sha256": "e7607b7fe9f35c742db206df90852e2ccafb75abc088606cf1ddbae801574ecf"
         },
@@ -24456,7 +24475,7 @@
         },
         {
           "file": "packages/rpc/src/index.ts",
-          "sha256": "cd15827b6f142b720d003f610920243945933e30035825dc463e46d40f94438d"
+          "sha256": "d2e8fa8cdec764eb55847125856241f7731a889604a18219a1f71ae845612c33"
         },
         {
           "file": "packages/rpc/src/ipc.ts",
@@ -24465,6 +24484,10 @@
         {
           "file": "packages/rpc/src/logging-middleware.ts",
           "sha256": "20edfd8e5d054097186f2498ec4e9c08c61740ed003fc69eecea8176a15fe025"
+        },
+        {
+          "file": "packages/rpc/src/module.ts",
+          "sha256": "ec99f1f4a96054af64b5eca33a96e5641b29905a0ea978ef55075166738ebda9"
         },
         {
           "file": "packages/rpc/src/network-telemetry-middleware.ts",
@@ -24480,7 +24503,7 @@
         },
         {
           "file": "packages/rpc/src/proxy-channel.ts",
-          "sha256": "ec5b43e6a3a622a88a8aaa6af9cb37dbfe517932ee7f4a337019ec138bb2d513"
+          "sha256": "c8b0721c3ae1703870b23ed30658ab55094b2fa987c5b74cf420f4b823653a65"
         },
         {
           "file": "packages/rpc/src/remote.ts",

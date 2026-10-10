@@ -691,6 +691,18 @@ export function createACodeTaskIndexSyncer(
       });
       return;
     }
+    // 终态 → 非终态 = 重启/换代后的「复活」：app 重启会让 sessions-index 基线把既有会话
+    // 以终态入册，用户继续对话时 phase 回到 running。旧迁移表没有此分支，任务行的
+    // status/updatedAt 会永久冻结在重启前水位，侧栏与权威会话状态漂移
+    // （2026-10-11 事故第二失效面，specs/task-index-v4-ingest.md）。
+    const reactivatedFromTerminal =
+      previous !== undefined && isTerminalPhase(previous.phase) && !isTerminalPhase(next.phase);
+    if (reactivatedFromTerminal) {
+      void resyncTaskIndexRowFromAgent(target, "session.reactivated", {
+        moveGroupedTaskToTop: true,
+      });
+      return;
+    }
     if (becameVisibleTask) {
       // v4 预热 session 从 draft 提升，或 online delta 首次出现新 session 时，
       // 不经过 acodeSessionService.createSession。此处是最早且不依赖标题时序的新任务边界；

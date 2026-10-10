@@ -1620,6 +1620,21 @@ export async function listSessionSubagents(
       operation: "session_subagents",
       sessionId: params.sessionId,
     });
+    // live record 存在而持久行缺失 = deferred 持久化新任务的必经状态（首条 sendText
+    // 前只有内存 record）。此处抛 Session not found 会让 v4 hydrate 的 loadPersistedEvents
+    // 整体 reject，gateway 退回空事件 + sourceEventSeq=0 基线；runtime 事件从 raw seq≥3
+    // 起到达时连续 drain 永远等不到缺失的低序号，全部滞留 pendingByRawSeq——会话正文与
+    // sessions-index fan-out 双通道静默失声（2026-10-11「任务对话被吞」事故，
+    // specs/v4-deferred-session-hydration.md）。会话存在性的事实源是 live 注册表 ∪
+    // SessionStore；live 存在时返回空种子，只有两边都没有才保留 not-found 错误。
+    if (liveParent) {
+      return {
+        revision: liveParent.stateRevision ?? 0,
+        childSessionIds: [],
+        running: [],
+        ended: { total: 0, items: [] },
+      };
+    }
     throw new ProtocolRequestError(
       acodeProtocolErrorCodes.sessionUnavailable,
       `Session not found: ${params.sessionId}`,

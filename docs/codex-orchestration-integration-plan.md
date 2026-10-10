@@ -6,6 +6,8 @@
 >
 > **生成日期**：2026-10-09。**核实基线**：分支 `dev/0.0.9`（HEAD `2855cce`，= origin/main / release/0.0.6）。所有 ACode 侧 `file:line` 以该检出为准；实施前需复核（行号会漂移），定位以文件名 + 符号名为主。
 >
+> **复核记录（2026-10-10）**：已在 `dev/0.0.7`（HEAD `372f40f`，已合并 dev/0.0.9）上按上述约定完成实施前复核——5 路独立核对 65 条承重论断 + 1 路独立反驳复核（9/9 confirmed），完整报告见 [codex-orchestration-plan-audit-2026-10-10.md](codex-orchestration-plan-audit-2026-10-10.md)。结论：「未实施」自述仍成立（五个 Phase 零实施痕迹）；`c453fca` 的并行改动使本文两处陈述失效（迁移编号 0028 已被占用、`session-store.port.ts` 契约面已破例出现 workflow 方法），已定点修订进正文；§6 四个未验证项已全部核实并回写结果。
+>
 > **方法**：源自会话 `sess_78ec1b24`（对 `openai/codex` 浅克隆的源码级只读调研，含单 agent turn 循环、app-server 协议层、多 agent 编排三份报告）+ 5 路只读 Explore 子代理对 ACode 当前检出源码的 file:line 核实 + 对最高风险论断（R1 提权路径、R2 allowlist 洞、SessionMailboxPort 底座、peer 呈现文案）的亲自复核。
 >
 > **边界（务必遵守）**：
@@ -119,9 +121,9 @@
 **Codex 参照机制**：`agent-graph-store`（SQLite，`upsert_thread_spawn_edge / set_thread_spawn_edge_status / list_thread_spawn_descendants`，边状态 `Open|Closed`），用于进程重启后恢复 agent 树元数据、resume 时递归拉起子树。
 
 **关键改动（全部有现成模板）**：
-- 新 migration `adapters/src/storage/session-store/migrations/0028-subagent-edge.ts`（照抄 `0026-swarm-plan-row.ts:1-13` 形状：头注 + `export const *_MIGRATION_SQL`，**无 down migration**，`migration-runner.ts:300-315` 强制历史不可变），在 `migrations.ts:10` 的 `SQLITE_MIGRATIONS` 注册（最新是 `0027`，`:960-967`）。表 `subagent_edge`：`agent_id PK, parent_session_id, child_session_id, agent_type, parent_tool_call_id, description, background, model, output_file, status, started_at, ended_at, total_tokens, error`。**不加 FK**（照 0019 纪律 `migrations.ts:798-831`：子会话可能无 session 行，FK 会挡合法记录）。
+- 新 migration `adapters/src/storage/session-store/migrations/0030-subagent-edge.ts`（照抄 `0026-swarm-plan-row.ts:1-13` 形状：头注 + `export const *_MIGRATION_SQL`，**无 down migration**，`migration-runner.ts:300-315` 强制历史不可变），在 `migrations.ts:10` 的 `SQLITE_MIGRATIONS` 注册（最新已到 `0029`，`:972-989`：`c453fca` 追加了 0028/0029 workflow-run-owner 族，本文原预留的 0028 号已被占用——2026-10-10 复核修订）。表 `subagent_edge`：`agent_id PK, parent_session_id, child_session_id, agent_type, parent_tool_call_id, description, background, model, output_file, status, started_at, ended_at, total_tokens, error`。**不加 FK**（照 0019 纪律 `migrations.ts:798-831`：子会话可能无 session 行，FK 会挡合法记录）。
 - 新 repository `repositories/subagent-edges.ts`（照 `repositories/swarm-plans.ts` 纯函数 + db 第一参 + upsert `on conflict(agent_id) do update`；值类型 `unknown`，schema 校验放 core hydrate 边界，坏行不采用也不清存储）。事件追加序号分配照 `dwf-journal.ts:386-411`（`coalesce((select max(sequence)+1 …),0) … returning`，防多进程竞争）。
-- `sqlite-session-store.ts` 加委托方法（照 `:653-668` swarm 委托、`:930-933` 懒加载句柄；**不进 contracts**——`session-store.port.ts` 契约面冻结，无 swarm/dwf 方法）。
+- `sqlite-session-store.ts` 加委托方法（照 `:653-668` swarm 委托、`:930-933` 懒加载句柄；**不进 contracts**——`session-store.port.ts` 契约面无 swarm 方法。**2026-10-10 复核修订**：原文「契约面冻结，无 swarm/dwf 方法」不再字面成立——`c453fca` 已在 port 新增可选方法 `claimWorkflowSessionOwner`（Dynamic/Script Workflow 共享的 durable owner lease）；swarm 方法仍不在 port、duck-typing 纪律对 swarm 依然有效，但「不进 contracts」的论证实施前须按该新先例重评）。
 - core 侧 `subagent-edge-binding.ts` duck-typing 能力探测 + 降级（照 `core/src/swarm/runtime-binding.ts:5-9/27-48`：三方法全有或全无，缺席按纯内存降级、不伪装成功；探测纪律照 `dynamic-workflow-run-journal.ts:38-56`「绝不静默退回内存」）。
 - **写入钩子单点**：`core/src/subagent/runner.ts:1938-1950` 的 `emitSubagentEvent`（八个发射点全经它：`236-254/354-369/399-413/482-502/1025-1042/1547-1564/1627-1643/1830-1857`，字段足够铸边）——发事件的同时 upsert 边表。payload 无 contracts 级 schema（`Record<string,unknown>`），按消费侧惯例防御性读字段或新立 schema。
 - **崩溃收敛**：照 dwf `listNonTerminalRuns`（`dwf-journal.ts:216-229`，执行体 `dynamic-workflow-run-service.ts`）加「非终态边收敛」查询；session resume 时把残留 running 边收口为 `lost`/`interrupted`（对齐 `subagent-session-query.ts:371-373` 既有 `lost` 语义 + `registry.ts:132-139` 的 `TERMINAL_STATUSES`）。
@@ -250,7 +252,7 @@
 | **R1** | 权限提权：Explore 缺省 yolo 经嵌套传染给可写孙代理 | `subagent.ts:495`（已核实） | `resolveSubagentPermissionMode` 加 `rootMode`，天花板锚根；Explore yolo 限 depth===1 |
 | **R2** | 显式 allowlist 绕过派发工具剔除 | `subagent.ts:527` 只在 inherits 分支（已核实） | 剔除移出两分支之外 / 加进 `tool-policy.ts` 强制集，按 depth 判定 |
 | **R3** | 失控：Agent handler 零准入检查，10^depth | `agent.ts:179-216`、`scheduler.ts:50-53` | 树级全局预算（准入闸、键=根、结构化拒绝、三闸不合并） |
-| **R4** | 计费泄漏：闲时轮 + 嵌套 modelOverride 不传递 | `send-message.ts:16-23` 先例 | Agent handler 加 `assertNotOffPeakTurn`（照 `:50-53`）或显式沿 spawn 链透传 override（**待核实**） |
+| **R4** | 计费泄漏：闲时轮 + 嵌套 modelOverride **已核实：传递**（2026-10-10，经 selection/model/factory 三重继承链到任意深度；孙层 background deny 门因判据要求显式 override 在场而失效——详见 §6.1） | `send-message.ts:16-23` 先例；`createSubagentOverrideModelFactory` 无条件重写任意 target selection | Agent handler 加 `assertNotOffPeakTurn`（照 `:50-53`），**且**护栏落在工厂链/deny 门判据——仅显式透传 override 不够（孙代理经工厂 fallback 继承 override 模型时 `launchOptions.modelOverride` 为 undefined） |
 | **R5** | 归属退化：origin 只留最内层、parentSessionId 客户端不可见 | `interaction-origin.ts:18-33` | 加 `ancestors[]` + `rootSessionId`（可拆后续 PR） |
 | **peer-1** | peer 触发 resume = 兄弟互相复活（算力/计费提权） | `runner.ts:956-1063` | P0 禁用 peer resume 或父授权 |
 | **peer-2** | 提示注入：peer 内容是兄弟模型产出 | `dataflow.ts:22-24` 同威胁模型 | 不可信声明行 + escapeXml + 4096 截断 |
@@ -260,12 +262,18 @@
 
 ---
 
-## 6. 落地前必须核实的未验证项（③④ 阻塞）
+## 6. 落地前必须核实的未验证项（③④ 阻塞）——已于 2026-10-10 全部核实
+
+> 四条均已核实出明确结论（独立复核员逐环重追 confirmed）。以下保留原问题文本，逐条附加核实结果；完整证据链见 [审计报告](codex-orchestration-plan-audit-2026-10-10.md) §2.5。除特别注明外，结论均为「放开嵌套为条件」的反事实推演（当前嵌套被五道门硬关）。
 
 1. **闲时轮 `subagentModelOverride` 是否传递到 depth≥2**（R4 计费泄漏）：`subagent.ts:110-115` 的 override 只作用当层，孙代理走 `resolveSubagentSelection`（`:104-109`）+ `inheritedModel`（`:111`）——传递链未核实。
+   **核实结果：传递，R4 成立。** 显式选项确实只作用当层（child `executeTurn` 不传 `modelExecution`/`intent`，孙层 loopState 无 `subagentModelOverride`），但 override **模型**经三条继承链到达任意深度孙代理：① childSelection（= override selection）→ child `config.modelSelection` → 孙层 `resolveSubagentSelection` 的 parentSelection；② `context.model`（child 活动模型）→ 孙层 `inheritedModel`；③ 最强——`createSubagentOverrideModelFactory` 作为 childModelFactory 的 fallback，把任意 target selection 无条件重写为 override.selection（孙代理 profile 显式指定模型也不豁免）。放大项：background deny 门（`runner.ts:151`）以 `launchOptions.modelOverride` **存在**为判据，孙层无显式 override → 门失效，孙代理可携闲时轮凭据转后台。护栏须落在工厂链/deny 门判据上，仅显式透传 override 不够。
 2. **`options?.signal` 的 AbortSignal 链在 depth≥2 是否完整**：child runtime 的 `runtimeTaskRegistry` 是新建独立实例（`agent-runtime.ts:298`，`subagent.ts:293-370` 未传该 dep），级联取消依赖 signal 链（`subagent.ts:402-403`）而非 registry。若断链，取消根会话会留下孤儿孙代理继续烧 token（放大 R3/R4）。
+   **核实结果：前台链结构上任意深度完整**（linkAbortSignal → context.abortSignal → launch signal → taskAbort 挂 parentSignal，逐层派生）；**断链只发生在 background 路径且系有意设计**（`port.start` 的 taskAbort 不挂 parentSignal、前台转后台 `detachParent()`）。孤儿风险确认：child 的 registry 新建独立实例，且取消兜底 `cancelRunningRuntimeBackgroundTasks` 只过滤 `local_bash`（子代理任务恒为 `local_agent`）——根取消后，后台孙代理既脱离 signal 链又不在根 registry 可见范围。锚点漂移：`agent-runtime.ts:298→314`、`subagent.ts:293-370→298-375`、`:402-403→414-415`。
 3. **多层 `mirrorSubagentToolEvent` 的实际可观测性**：嵌套后逐层镜像，根 timeline 会不会被压成「摘要的摘要」。
+   **核实结果：成立且比预期更糟。** 叙事层：镜像白名单只含 ToolCall*/Permission* 事件，assistant 正文任何层都不镜像——孙代理正文永远到不了根 timeline（根只见「child 的 Agent 工具结果内嵌孙摘要，再包一层 child 最终摘要」）。工具事件层存在**双重镜像**：child 层把 raw 事件原样转发又发镜像产物，父层对两者都再镜像一次 → 同一孙代理工具调用在根 timeline 至少两条重复（raw 直接镜像那条 agentId 归属错乱，镜像的镜像那条 toolCallId 前缀叠加）。当前无「已镜像产物不再镜像」抑制——**放开嵌套的新增阻塞前置**。
 4. **`runtimeScope`（`runtime-tools.ts:265`）的全部下游消费点**是否需要 depth 维度（当前二值 `"subagent"|"main"`，嵌套后无法区分 depth-1 与 depth-N）。
+   **核实结果：约半数消费点深度无关、不失真**（respond-to-coordinator、browser 拒绝、bash-cwd 策略、后台时限）；真正失真的是 **MCP `runtime_scope` 协议透传**（shared 的 zod enum 把二值固化进跨进程协议，加 depth 维度须改协议 schema）与 tool-perf 遥测归因（影响轻）。锚点 `:265` 未漂移。
 
 ---
 
@@ -290,4 +298,4 @@
 
 ## 附：行号时效性与复核约定
 
-本文 ACode 侧 `file:line` 以基线 `dev/0.0.9 @ 2855cce` 检出为准，来自 5 路只读 Explore 子代理的逐行核实 + 对最高风险论断的亲自复核。行号会随后续提交漂移；**实施前必须复核，定位以文件名 + 符号名为主**（如 `resolveSubagentPermissionMode`、`emitSubagentEvent`、`budget-caps.ts`）。Codex 侧机制描述来自会话 `sess_78ec1b24` 对公开仓库的源码级调研，属外部参照，不在本仓举证。四项集成中 ①② 为纯增量基础设施、③④ 为带围栏的受约束自主，均全程 spec-first、③④ feature-flag 默认保持现状。
+本文 ACode 侧 `file:line` 以基线 `dev/0.0.9 @ 2855cce` 检出为准，来自 5 路只读 Explore 子代理的逐行核实 + 对最高风险论断的亲自复核。行号会随后续提交漂移；**实施前必须复核，定位以文件名 + 符号名为主**（如 `resolveSubagentPermissionMode`、`emitSubagentEvent`、`budget-caps.ts`）。**该复核已于 2026-10-10 在 `dev/0.0.7`（HEAD `372f40f`）完成**：65 条承重论断 39 holds / 23 drifted / 3 invalid / 0 implemented，漂移以 ±16 行内的行号位移为主，逐条登记见 [codex-orchestration-plan-audit-2026-10-10.md](codex-orchestration-plan-audit-2026-10-10.md)。Codex 侧机制描述来自会话 `sess_78ec1b24` 对公开仓库的源码级调研，属外部参照，不在本仓举证。四项集成中 ①② 为纯增量基础设施、③④ 为带围栏的受约束自主，均全程 spec-first、③④ feature-flag 默认保持现状。

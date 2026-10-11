@@ -62,6 +62,13 @@ export interface ScriptWorkflowRuntimeDeps extends ScriptWorkflowAgentRuntimeDep
   ownerGeneration?: number;
   ownerToken?: string;
   ownerReady?: Promise<{ ownerGeneration: number; ownerToken: string } | null | undefined>;
+  /**
+   * 租约的惰性重试（specs/workflow-owner-lease.md R3）：`ownerReady` 为 null（启动窗口
+   * 内他人活跃租约/瞬时 DB 错误）时经它重试一次；缺席则 null 仍即时抛错（旧语义）。
+   */
+  ownerReclaim?: () => Promise<
+    { ownerGeneration: number; ownerToken: string } | null | undefined
+  >;
   traceContext: TraceContext;
   workspaceIdentity?: string;
   /** 测试注入点；缺省惰性构造真实 manager（S1，workflow-worktree-isolation.md R2）。 */
@@ -218,7 +225,12 @@ export class ScriptWorkflowRuntime {
       await this.assertResumeOwner(input.resumeFromRunId);
     }
     await this.deps.prepareUserExecutionBoundary(options);
-    const owner = await this.deps.ownerReady;
+    let owner = await this.deps.ownerReady;
+    if (owner === null && this.deps.ownerReclaim !== undefined) {
+      // 惰性重试：一次性 claim 的失败不再是进程级判决——旧租约若已过期，这里当场
+      // 取得所有权（specs/workflow-owner-lease.md D2/R3）。
+      owner = await this.deps.ownerReclaim();
+    }
     if (owner === null) throw new Error("Workflow session owner lease is held by another process");
     this.ownerLeaseFacts = owner ??
       (this.deps.ownerToken === undefined || this.deps.ownerGeneration === undefined

@@ -77,6 +77,13 @@ export interface DynamicWorkflowActorRuntimeInput {
 export interface DynamicWorkflowRunServiceDeps {
   /** Shared durable workflow owner claim; absent only for legacy in-memory hosts. */
   workflowOwnerReady?: Promise<{ ownerGeneration: number; ownerToken: string } | null | undefined>;
+  /**
+   * 租约的惰性重试（specs/workflow-owner-lease.md R3/R5）：初始 claim 为 null 时在
+   * ensure 路径重试一次，成功后补跑构造期被跳过的孤儿收敛。缺席则 null 仍即时抛错。
+   */
+  workflowOwnerReclaim?: () => Promise<
+    { ownerGeneration: number; ownerToken: string } | null | undefined
+  >;
   ownerGeneration?: number;
   ownerToken?: string;
   /** durable journal（dwf_* 表）。缺失即不构造本服务，见文件头不变式 3。 */

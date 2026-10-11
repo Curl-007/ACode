@@ -43,6 +43,15 @@ export type { WorkflowConcurrencyPort } from "./workflow-concurrency-governor.js
 export { collectDynamicWorkflowDisabledSkillPaths } from "./dynamic-workflow-gate.js";
 export { createDynamicWorkflowSnippetService } from "./dynamic-workflow-snippet-service.js";
 
+// ── Owner lease 生命周期（specs/workflow-owner-lease.md：心跳续租 + 惰性 reclaim） ──
+export { createWorkflowOwnerLeaseManager } from "./workflow-owner-lease.js";
+export type {
+  WorkflowOwnerClaimPort,
+  WorkflowOwnerLease,
+  WorkflowOwnerLeaseFacts,
+  WorkflowOwnerLeaseManager,
+} from "./workflow-owner-lease.js";
+
 // ── Script Workflow 引擎 ────────────────────────────────────────────────
 export { createScriptWorkflowAgentRuntime } from "./script-workflow-child-runtime.js";
 export type { ScriptWorkflowAgentRuntimeDeps } from "./script-workflow-child-runtime.js";

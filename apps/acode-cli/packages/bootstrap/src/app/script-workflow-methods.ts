@@ -1,6 +1,7 @@
 import type { SubmitPromptOptions, ACodeApp } from "./types.js";
 import type { ScriptWorkflowStorePort } from "@acode/contracts";
 import {
+  createWorkflowOwnerLeaseManager,
   isScriptWorkflowStore,
   reconcileOrphanScriptWorkflowRuns,
   ScriptWorkflowRuntime,
@@ -41,28 +42,45 @@ export function createScriptWorkflowBridge(deps: ScriptWorkflowBridgeDeps): Scri
   //      interrupted（script-workflow-replay.ts 的 settleEventTypeForRow）。
   //      于是「收敛前回放」与「收敛后回放」得到同一个投影状态，竞态是良性的。
   const ownerToken = deps.ownerToken ?? crypto.randomUUID();
-  const ownerReady = deps.ownerReady ??
-    (isScriptWorkflowStore(deps.sessionStore) && deps.sessionStore.claimWorkflowSessionOwner
-      ? deps.sessionStore
-          .claimWorkflowSessionOwner({ ownerToken, parentSessionId: deps.sessionId })
-          .then((lease) =>
-            lease === null
-              ? null
-              : { ownerGeneration: lease.ownerGeneration, ownerToken: lease.ownerToken },
-          )
-          .catch((error) => {
-            deps.logger?.warn?.("Script workflow owner lease claim failed", {
-              errorMessage: error instanceof Error ? error.message : String(error),
-              event: "script_workflow.owner.claim_failed",
-              module: "bootstrap.app",
-            });
-            return null;
-          })
-      : Promise.resolve(undefined));
+  // 桥自己的 fallback（仅 deps.ownerReady 缺席的宿主触发；桌面 wiring 恒传共享 owner）
+  // 同样走 lease manager：claim/renew/心跳/惰性重试只有一份实现
+  // （specs/workflow-owner-lease.md），这里不再留第二份「一次性 claim 失败即缓存成
+  // 进程级判决」的租约逻辑。
+  const ownerClaimPort = (() => {
+    if (deps.ownerReady !== undefined) return undefined;
+    if (!isScriptWorkflowStore(deps.sessionStore)) return undefined;
+    const claimMethod = deps.sessionStore.claimWorkflowSessionOwner;
+    if (claimMethod === undefined) return undefined;
+    const store = deps.sessionStore;
+    return (input: { leaseMs?: number; ownerToken: string }) =>
+      claimMethod.call(store, {
+        ...(input.leaseMs === undefined ? {} : { leaseMs: input.leaseMs }),
+        ownerToken: input.ownerToken,
+        parentSessionId: deps.sessionId,
+      });
+  })();
+  const fallbackLease =
+    ownerClaimPort === undefined
+      ? undefined
+      : createWorkflowOwnerLeaseManager({
+          claim: ownerClaimPort,
+          logger: deps.logger,
+          ownerToken,
+          parentSessionId: deps.sessionId,
+        });
+  const ownerReady =
+    deps.ownerReady ?? fallbackLease?.ownerReady ?? Promise.resolve(undefined);
+  // 构造期收敛（script workflow 侧）。claim 失败（null）时跳过并挂起 deferred 标记：
+  // 首次 reclaim 成功后补跑一次（spec R5）。安全论证与 dwf 侧构造期收敛相同：
+  // 本进程此前从未持有所有权 ⇒ 名下零在飞 script run ⇒ 非终态行只可能是死进程遗物。
+  let deferredScriptReconcile = false;
   if (isScriptWorkflowStore(deps.sessionStore)) {
     void ownerReady.then((owner) => {
       // A foreign active owner must never be reconciled by this process.
-      if (owner === null) return;
+      if (owner === null) {
+        deferredScriptReconcile = true;
+        return;
+      }
       void reconcileOrphanScriptWorkflowRuns({
         logger: deps.logger,
         parentSessionId: deps.sessionId,
@@ -71,12 +89,30 @@ export function createScriptWorkflowBridge(deps: ScriptWorkflowBridgeDeps): Scri
       });
     });
   }
+  const baseReclaim = deps.ownerReclaim ?? fallbackLease?.reclaim;
+  const ownerReclaim =
+    baseReclaim === undefined
+      ? undefined
+      : async () => {
+          const owner = await baseReclaim();
+          if (owner !== null && owner !== undefined && deferredScriptReconcile) {
+            deferredScriptReconcile = false;
+            void reconcileOrphanScriptWorkflowRuns({
+              logger: deps.logger,
+              parentSessionId: deps.sessionId,
+              store: deps.sessionStore as unknown as ScriptWorkflowStorePort,
+              ...owner,
+            });
+          }
+          return owner;
+        };
 
   let runtime: ScriptWorkflowRuntime | undefined;
   const getRuntime = () => {
     runtime ??= new ScriptWorkflowRuntime({
       ...deps,
       ownerReady,
+      ...(ownerReclaim === undefined ? {} : { ownerReclaim }),
       runtime: deps.getRuntime(),
     });
     return runtime;

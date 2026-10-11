@@ -68,12 +68,13 @@ FillWorkflowHole 的 alwaysAsk 批准门与 wake 正交：wake turn 仍可能停
   可信度由三层组成：formatter/边界单测、进度汇接线源码断言、以及 hole-reached 与
   stall/escalation 共用同一条进度汇→enqueueBackgroundTaskNotification 生产先例。
   干净环境（无 zombie lease）下的 live 验收留待提交后首轮实机补跑。
-- **新发现（2026-10-12，独立立项候选）**：workflow session owner lease 在 owner 进程
-  死亡后**未观察到回收**——zombie run（owner 已死）仍让同会话的 CreateWorkflow 报
-  「lease is held by another process」，干净重启后的新进程也拿不到租约。多进程安全是
-  lease 的存在理由，但死 owner 的回收（pid 活性探测 / owner_generation 超时 / 显式
-  release 台账清理）缺失会把一次崩溃变成长期阻塞。本批次不修（安全面语义需独立设计），
-  登记待立项；live wake 验收亦被它挡住第二次。
+- **新发现（2026-10-12，已立项实施 → specs/workflow-owner-lease.md）**：workflow
+  session owner lease 在 owner 进程死亡后**未观察到回收**——zombie run（owner 已死）
+  仍让同会话的 CreateWorkflow 报「lease is held by another process」，干净重启后的新
+  进程也拿不到租约。后续排查（现场 db 实证）修正了归因：租约原语本有 30s 时间语义，
+  真正缺陷是接线层「一次性 claim 失败缓存成进程级判决 + 无续租心跳」；修复走
+  workflow-owner-lease.md（心跳续租 + 惰性 reclaim + 补收敛），不引入 pid 探测或
+  release 台账。live wake 验收的 lease 阻塞随之解除。
 
 ## 验收场景
 

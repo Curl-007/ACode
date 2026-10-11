@@ -171,12 +171,18 @@ export function createDynamicWorkflowRunService(
 
   // 先拿共享 owner。claim 失败时只能让当前实例读/停留，不能把另一个进程的 live run
   // 当成孤儿收敛；legacy 内存装配没有 owner gate，保持原有直接收敛语义。
+  // claim 失败（null）不再是终局：ensure 路径经 workflowOwnerReclaim 惰性重试，
+  // 首次成功后补跑这里被跳过的收敛（deferredOwnerReconcile，spec R5）。
+  const deferredOwnerReconcile = { pending: false };
   const ownerReady = deps.workflowOwnerReady;
   if (ownerReady === undefined) {
     reconcileOrphanRuns(deps);
   } else {
     void ownerReady.then((owner) => {
-      if (owner === null) return;
+      if (owner === null) {
+        deferredOwnerReconcile.pending = true;
+        return;
+      }
       if (owner !== undefined) {
         deps.ownerToken = owner.ownerToken;
         deps.ownerGeneration = owner.ownerGeneration;
@@ -249,13 +255,13 @@ export function createDynamicWorkflowRunService(
       request: DynamicWorkflowRunSubmitRequest,
     ): Promise<DynamicWorkflowRunSubmitResult> {
       assertOpen();
-      await ensureWorkflowOwner(deps);
+      await ensureWorkflowOwner(deps, deferredOwnerReconcile);
       return submitDynamicWorkflowRun(entryContext, request);
     },
 
     async amend(request: DynamicWorkflowRunAmendRequest): Promise<DynamicWorkflowRunAmendResult> {
       assertOpen();
-      await ensureWorkflowOwner(deps);
+      await ensureWorkflowOwner(deps, deferredOwnerReconcile);
       return amendDynamicWorkflowRun(entryContext, request);
     },
 
@@ -281,7 +287,7 @@ export function createDynamicWorkflowRunService(
 
     async resume(runId: string): Promise<DynamicWorkflowRunResumeResult> {
       assertOpen();
-      await ensureWorkflowOwner(deps);
+      await ensureWorkflowOwner(deps, deferredOwnerReconcile);
       return resumeDynamicWorkflowRun(entryContext, runId);
     },
 
@@ -411,7 +417,7 @@ export function createDynamicWorkflowRunService(
       request: DynamicWorkflowFillHoleRequest,
     ): Promise<DynamicWorkflowFillHoleResult> {
       assertOpen();
-      await ensureWorkflowOwner(deps);
+      await ensureWorkflowOwner(deps, deferredOwnerReconcile);
       return fillWorkflowHole(entryContext, request);
     },
 
@@ -541,8 +547,23 @@ export function createDynamicWorkflowRunService(
   };
 }
 
-async function ensureWorkflowOwner(deps: DynamicWorkflowRunServiceDeps): Promise<void> {
-  const owner = await deps.workflowOwnerReady;
+async function ensureWorkflowOwner(
+  deps: DynamicWorkflowRunServiceDeps,
+  deferredOwnerReconcile: { pending: boolean },
+): Promise<void> {
+  let owner = await deps.workflowOwnerReady;
+  if (owner === null && deps.workflowOwnerReclaim !== undefined) {
+    // 惰性重试：一次性 claim 的失败（启动窗口内他人活跃租约/瞬时 DB 错误）不再是
+    // 进程级判决——旧租约若已过期，这里当场取得所有权（specs/workflow-owner-lease.md R3）。
+    owner = await deps.workflowOwnerReclaim();
+    if (owner !== null && owner !== undefined && deferredOwnerReconcile.pending) {
+      // R5：构造期收敛因 claim 失败被跳过；首次取得所有权时补跑一次。安全论证与
+      // 构造期相同：本进程此前从未持有所有权 ⇒ 名下零在飞 run ⇒ 本会话 journal 里的
+      // 非终态行只可能是死进程遗物（现场证据：冻结在 running 的 dwfrun-ba4e6ad0）。
+      deferredOwnerReconcile.pending = false;
+      reconcileOrphanRuns({ ...deps, ...owner });
+    }
+  }
   if (owner === null) throw new Error("Workflow session owner lease is held by another process");
   if (owner !== undefined) {
     deps.ownerToken = owner.ownerToken;

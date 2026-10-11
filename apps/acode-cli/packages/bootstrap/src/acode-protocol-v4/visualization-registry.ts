@@ -7,21 +7,39 @@
 //   ② 按会话注册表核对 name——只有 WriteVisualizationFragment 写过的片段才
 //      翻译成 artifactRow；未命中按纯文本降级（指令留在正文里，用户可见）。
 //
-// 注册表是**模块级单例**而不是投影构造参数：ProductProjection 由
+// 注册表是**模块级、按 sessionId 键控的 Map**而不是投影构造参数：ProductProjection 由
 // conversation-topic-publisher 在深层构造（sessionId/logEpoch 两参），把 store 一路
-// 穿过去要动 publisher/gateway/bridge 三层签名；而一个 CLI 进程同一时刻只有一个
-// active app（create-app 装配时 setActive，dispose 时清空），模块级绑定与
-// 「端口本体由 bootstrap 在 runtime 构造前装配完成」的既有纪律同档。
+// 穿过去要动 publisher/gateway/bridge 三层签名；模块级绑定与「端口本体由 bootstrap
+// 在 runtime 构造前装配完成」的既有纪律同档。
+//
+// 为什么必须键控而不是单一 activeStore（2026-10-12 实机 Bug 6，specs/gen-ui-visualize.md）：
+// 桌面 app-server 一个进程承载多会话 = 多 app 并存，单例是 last-writer-wins，且任一
+// app dispose 置 null 会把其他在世 app 的绑定清掉——投影 lookup 静默 miss、卡片永不
+// 渲染（工具写入走 app 本地 tool context 不受影响，症状是「片段已存、卡不出」）。
+// 注销带实例身份校验：同会话旧 app 的迟到 dispose 不得误删新 app 的绑定。
 
 import type { VisualizationFragmentMeta, VisualizationFragmentStorePort } from "@acode/contracts";
 
-let activeStore: VisualizationFragmentStorePort | null = null;
+const storesBySession = new Map<string, VisualizationFragmentStorePort>();
 
-/** create-app 装配时调用；dispose 时传 null 清空（测试复位同一入口）。 */
-export function setActiveVisualizationFragmentStore(
-  store: VisualizationFragmentStorePort | null,
+/** create-app 装配时注册本会话的 store。 */
+export function registerVisualizationFragmentStore(
+  sessionId: string,
+  store: VisualizationFragmentStorePort,
 ): void {
-  activeStore = store;
+  storesBySession.set(sessionId, store);
+}
+
+/**
+ * app dispose / 启动失败时注销。**仅当当前绑定就是本实例才删**：同会话重建（re-attach）
+ * 后旧 app 的迟到 dispose 不得把新 app 的注册清掉。
+ */
+export function unregisterVisualizationFragmentStore(
+  sessionId: string,
+  store: VisualizationFragmentStorePort | undefined,
+): void {
+  if (store === undefined) return;
+  if (storesBySession.get(sessionId) === store) storesBySession.delete(sessionId);
 }
 
 /** 投影层的同步注册表查询（收口处不能做 IO，见 store 端口注释）。 */
@@ -29,7 +47,7 @@ export function lookupVisualizationFragment(
   sessionId: string,
   name: string,
 ): VisualizationFragmentMeta | undefined {
-  return activeStore?.lookupVisualizationFragment(sessionId, name);
+  return storesBySession.get(sessionId)?.lookupVisualizationFragment(sessionId, name);
 }
 
 /** 每轮至多解析的引用条数（与 renderer 侧同源镜像；超出部分按纯文本留底）。 */

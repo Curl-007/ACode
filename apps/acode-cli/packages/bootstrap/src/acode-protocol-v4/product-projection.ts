@@ -507,8 +507,12 @@ export class ProductProjection {
     this.snapshot = createInitialConversationSnapshot(sessionId, logEpoch);
   }
 
-  /** 会话身份（构造期固定）：::visualize 引用的注册表核对与 ref 构造用它。 */
-  private readonly sessionId: string;
+  /**
+   * 会话身份（构造期固定）：::visualize 引用的注册表核对与 ref 构造用它。
+   * 非 readonly 是 cloneProjection 的硬需求（live 发布逐事件走原子 clone，清单必须
+   * 能写入本字段）；「构造后不变」由约定保证——除 clone 清单外无人写它。
+   */
+  private sessionId: string;
 
   getSnapshot(): ConversationSnapshot {
     return this.snapshot;
@@ -1055,6 +1059,11 @@ export class ProductProjection {
 
   private cloneProjection(): ProductProjection {
     const clone = Object.create(ProductProjection.prototype) as ProductProjection;
+    // 构造期身份字段也必须进清单：漏拷会让 clone 上 this.sessionId === undefined，
+    // ::visualize 的注册表核对（visualizationArtifactRows）在 live 发布链
+    // （applyEventAtomically 逐事件走 clone）永远 MISS——卡片只在冷恢复（真实例）
+    // 出现、live 轮永不出现（2026-10-12 实机 E 卡片缺口根因，specs/gen-ui-visualize.md）。
+    clone.sessionId = this.sessionId;
     clone.snapshot = this.snapshot;
     clone.rowIndexById = new Map(this.rowIndexById);
     clone.hydrationAccumulator = null;

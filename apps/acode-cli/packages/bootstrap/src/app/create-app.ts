@@ -37,6 +37,7 @@ import {
   createSessionEvent,
   type ExecutionShellSelection,
   type MessageId,
+  type VisualizationFragmentStorePort,
 } from "@acode/contracts";
 import {
   ACODE_APP_IS_PACKAGED_ENV,
@@ -110,7 +111,10 @@ import { loadPluginAgentProfiles, loadACodeAgentProfiles } from "../subagents.js
 import { createRuntimeAiSdkModelExecutionConfig } from "../model-config.js";
 import { createCliPlatformOpenPort } from "./platform-open-port.js";
 import { ApiProviderModelRuntime } from "./provider-registry-model-runtime.js";
-import { setActiveVisualizationFragmentStore } from "../acode-protocol-v4/visualization-registry.js";
+import {
+  registerVisualizationFragmentStore,
+  unregisterVisualizationFragmentStore,
+} from "../acode-protocol-v4/visualization-registry.js";
 import {
   completeAppStartup,
   debugRuntimeConfigResolved,
@@ -263,6 +267,9 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
   let nodeReplBrowserBroker: NodeReplBrowserBroker | undefined;
   let ownedNodeReplBrowserBroker: NodeReplBrowserBroker | undefined;
   let providerModelRuntime: ApiProviderModelRuntime | undefined;
+  // 启动失败路径（catch）看不到 try 内的 const；注册过的可视化 store 单独提一份供
+  // 身份校验注销（specs/gen-ui-visualize.md 注册表绑定小节）。
+  let registeredVisualizationFragmentStore: VisualizationFragmentStorePort | undefined;
   try {
     const storageRoot = resolvePath(configResult.config.storage.dir);
     const cliStorageRoot = getCliStorageRoot(storageRoot);
@@ -477,9 +484,11 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
       createNodeVisualizationFragmentStore({
         rootDir: join(storageRoot, "cli", "artifacts"),
       });
-    // 投影层的注册表查询走模块级绑定（visualization-registry.ts 头注的论证）：
-    // ProductProjection 的构造链太深，store 不逐层穿签名。
-    setActiveVisualizationFragmentStore(visualizationFragmentStore);
+    // 投影层的注册表查询走模块级、按 sessionId 键控的绑定（visualization-registry.ts
+    // 头注的论证 + Bug 6 教训）：ProductProjection 的构造链太深，store 不逐层穿签名；
+    // 键控保证多 app 进程（桌面 app-server 每会话一 app）互不覆盖、互不清空。
+    registerVisualizationFragmentStore(sessionId, visualizationFragmentStore);
+    registeredVisualizationFragmentStore = visualizationFragmentStore;
     const imageProcessorPort = options.imageProcessorPort ?? createJimpImageProcessorAdapter();
     const messageEnabled = isMessageEnabled(options.env ?? process.env);
     const sessionMailboxPort =
@@ -1237,8 +1246,9 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
           await closeSession?.();
         } finally {
           providerModelRuntime?.dispose();
-          // 投影层的注册表绑定随 app 生命周期清空（一个进程同一时刻只有一个 active app）。
-          setActiveVisualizationFragmentStore(null);
+          // 只注销**本 app 自己的**绑定（实例身份校验在 registry 里）：同会话新 app
+          // 已接管时，这里的迟到 dispose 不得把它的注册清掉。
+          unregisterVisualizationFragmentStore(sessionId, visualizationFragmentStore);
         }
       },
       ...workflowFacade,
@@ -1275,7 +1285,7 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
     };
   } catch (error) {
     providerModelRuntime?.dispose();
-    setActiveVisualizationFragmentStore(null);
+    unregisterVisualizationFragmentStore(sessionId, registeredVisualizationFragmentStore);
     void ownedNodeReplBrowserBroker?.close();
     startupTimer.fail("ACode app startup failed", error, {
       context: { sessionId, workingDirectory },

@@ -62,12 +62,21 @@ FillWorkflowHole 的 alwaysAsk 批准门与 wake 正交：wake turn 仍可能停
   GetWorkflowRun pendingHoles 仍可发现并人工或新 turn 介入）。restore-wake 需要
   attach 时 journal 扫描 + cast 台账，独立批次再做；验收场景 4 的「无 wake-cast 且仍
   在等 → 恰好一次 wake」在该批次实现前不成立，如实标注。
-- **live wake E2E 状态（2026-10-11）**：未跑通，原因是测试战役的环境污染而非代码——
-  反复 dev 重启留下 zombie run 与旧 agent 进程，CreateWorkflow 报
-  「Workflow session owner lease is held by another process」拒建新 run。wake 链的
-  可信度由三层组成：formatter/边界单测、进度汇接线源码断言、以及 hole-reached 与
-  stall/escalation 共用同一条进度汇→enqueueBackgroundTaskNotification 生产先例。
-  干净环境（无 zombie lease）下的 live 验收留待提交后首轮实机补跑。
+- **live wake E2E 状态（2026-10-12 复跑：通过）**：干净环境（残留进程清零 +
+  owner lease 修复后重打 acode.cjs）dev 实机验证：
+  - **wake 路径**：脚本内 `world.run` 睡 30s 后挖洞，确保 hole 到达时会话空闲——
+    hole-reached 后**无任何用户输入**自动开轮（观察到两个连续自动轮：第一轮报告
+    「已睡醒并真实停驻在 hole#1@1」，第二轮维持停驻不代填）；「工作流等待填洞」
+    通知行随轮渲染。
+  - **intel 路径**（先行一轮实证）：hole 在活动轮内到达时通知行同样渲染，模型在
+    轮内看到并自行 FillWorkflowHole + Amend，run 走到 completed——in-flight turn
+    收 intel 不打断，与 wake 语义一致。
+  - **通知行展开体**：`data-testid="workflow-notification-hole-waiting"` 实机在场，
+    四段俱全（body 的 hole_ref+stage、「洞在索要」prompt 原文、「下一步：…
+    FillWorkflowHole（需批准）」、查看实例详情链接）。
+  - **填洞闭环**：wake 后按提示 FillWorkflowHole → 前驱 run cancelled、后继 run
+    completed（splice 停前驱起新 run + 缓存回放，30s 睡眠不重跑）。
+  - 心跳续租同场实证：会话 owner 行 22 个不同 time_updated、严格 10s 步进。
 - **新发现（2026-10-12，已立项实施 → specs/workflow-owner-lease.md）**：workflow
   session owner lease 在 owner 进程死亡后**未观察到回收**——zombie run（owner 已死）
   仍让同会话的 CreateWorkflow 报「lease is held by another process」，干净重启后的新

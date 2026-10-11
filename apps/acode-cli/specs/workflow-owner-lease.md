@@ -93,6 +93,14 @@ export function createWorkflowOwnerLeaseManager(deps: {
 
 ## 验收场景（tests/workflow-owner-lease-manager.test.mjs，真 sqlite store）
 
+**live 实机证据（2026-10-12，dev 桌面 + 重打 acode.cjs）**：新会话 owner 行在运行期
+留下 22 个不同 `time_updated`、严格 10s 步进（心跳实证，R1）；CreateWorkflow → hole →
+FillWorkflowHole → Amend → completed 全链路零 lease 拒绝（对照：修复前同环境连续
+「held by another process」）；claim 后 134s 与 8 分钟的 gated 写入（superseded 结算、
+fill 的前驱 cancelled/后继 completed）全部过闸——修复前这些写入必被
+`Stale workflow owner write rejected` 拒绝（D1 直接反证）；三个死会话的 owner 行
+纹丝不动（R2 自然过期语义不变）。
+
 1. 心跳延寿：manager 持有（小 leaseMs），租约名义过期后外部 claim 仍 `null`；
    `dispose()` 后到期外部 claim 成功且 generation 递增。
 2. 惰性回收：外部活跃租约下 manager 初始 claim → `ownerReady` 为 `null`；外部租约

@@ -4,14 +4,15 @@
 // bootstrap 既有黄金测试族（两 profile 终态一致）与集成层覆盖，这里不重复。
 
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile, readdir } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
 import {
   parseVisualizeReferences,
-  setActiveVisualizationFragmentStore,
+  registerVisualizationFragmentStore,
+  unregisterVisualizationFragmentStore,
   lookupVisualizationFragment,
 } from "../packages/bootstrap/src/acode-protocol-v4/visualization-registry.ts";
 import {
@@ -135,18 +136,53 @@ test("片段 store：写入/读取/注册表/同名覆盖/冷重建", async (t) 
   assert.ok(entries.includes("chart.html"));
 });
 
-test("注册表模块级绑定：set/lookup/清空", async (t) => {
+test("注册表按会话键控：register/lookup/unregister 与多会话隔离", async (t) => {
   const rootDir = await mkdtemp(join(tmpdir(), "acode-viz-reg-"));
+  const store = createNodeVisualizationFragmentStore({ rootDir });
   t.after(() => {
-    setActiveVisualizationFragmentStore(null);
+    unregisterVisualizationFragmentStore("s", store);
+    unregisterVisualizationFragmentStore("s2", store);
     void rm(rootDir, { recursive: true, force: true });
   });
-  const store = createNodeVisualizationFragmentStore({ rootDir });
-  setActiveVisualizationFragmentStore(store);
+  registerVisualizationFragmentStore("s", store);
   await store.writeVisualizationFragment({ sessionId: "s", name: "a.html", content: "<i/>" });
   assert.ok(lookupVisualizationFragment("s", "a.html"));
-  setActiveVisualizationFragmentStore(null);
+  // 未注册会话查不到（键控隔离，不再共享单例）。
+  assert.equal(lookupVisualizationFragment("s2", "a.html"), undefined);
+  unregisterVisualizationFragmentStore("s", store);
   assert.equal(lookupVisualizationFragment("s", "a.html"), undefined);
+});
+
+test("注册表身份校验：旧实例的迟到注销不得清掉同会话新实例（Bug 6）", async (t) => {  const rootDir = await mkdtemp(join(tmpdir(), "acode-viz-reg-id-"));
+  const oldStore = createNodeVisualizationFragmentStore({ rootDir });
+  const newStore = createNodeVisualizationFragmentStore({ rootDir });
+  t.after(() => {
+    unregisterVisualizationFragmentStore("s3", newStore);
+    void rm(rootDir, { recursive: true, force: true });
+  });
+  registerVisualizationFragmentStore("s3", oldStore);
+  // 同会话重建：新 app 注册顶替旧绑定。
+  registerVisualizationFragmentStore("s3", newStore);
+  await newStore.writeVisualizationFragment({ sessionId: "s3", name: "b.html", content: "<b/>" });
+  // 旧 app 的迟到 dispose：身份不匹配，绑定必须幸存。
+  unregisterVisualizationFragmentStore("s3", oldStore);
+  assert.ok(lookupVisualizationFragment("s3", "b.html"));
+  // 另一个会话的 dispose 与本会话无关。
+  unregisterVisualizationFragmentStore("other-session", oldStore);
+  assert.ok(lookupVisualizationFragment("s3", "b.html"));
+});
+
+test("create-app 接线：按会话注册、dispose/启动失败均身份注销（源码断言）", async () => {
+  const src = await readFile(
+    join(import.meta.dirname, "..", "packages/bootstrap/src/app/create-app.ts"),
+    "utf8",
+  );
+  assert.match(src, /registerVisualizationFragmentStore\(sessionId, visualizationFragmentStore\)/);
+  // dispose finally 与启动失败 catch 各一次注销，均带实例参数（身份校验在 registry 内）。
+  const unregisters = src.match(/unregisterVisualizationFragmentStore\(sessionId, /g) ?? [];
+  assert.equal(unregisters.length, 2);
+  // 旧单例 setter 不留残余调用点。
+  assert.equal(src.includes("setActiveVisualizationFragmentStore"), false);
 });
 
 test("网络观测：安装/卸载、记录形状、相位归属", async (t) => {
@@ -243,7 +279,7 @@ const projEvent = (type, payload) => ({
 async function projectionWithRegisteredFragment(t) {
   const dir = await mkdtemp(join(tmpdir(), "acode-viz-proj-"));
   t.after(async () => {
-    setActiveVisualizationFragmentStore(null);
+    unregisterVisualizationFragmentStore(PROJ_SID, store);
     await rm(dir, { recursive: true, force: true });
   });
   const store = createNodeVisualizationFragmentStore({ rootDir: dir });
@@ -252,7 +288,7 @@ async function projectionWithRegisteredFragment(t) {
     name: "x.html",
     content: '<div id="root">hi</div>',
   });
-  setActiveVisualizationFragmentStore(store);
+  registerVisualizationFragmentStore(PROJ_SID, store);
   return new ProductProjection(PROJ_SID, "epoch-proj");
 }
 
@@ -279,6 +315,19 @@ test("投影收口：text_end 路径产出可视化 artifactRow", async (t) => {
   openTurnWithDirective(projection);
   const closed = projection.applyEvent(projEvent("model_streaming", { kind: "text_end", assistantMessageId: "msg-1" }));
   assert.deepEqual(artifactRefs(closed), [`acode-visualization://${PROJ_SID}/x.html`]);
+});
+
+test("投影收口：applyEventAtomically 的 clone 路径同样产出 artifactRow（clone 清单含 sessionId）", async (t) => {
+  // live 发布链逐事件走 applyEventAtomically（clone → reduce → adopt）；clone 清单
+  // 漏拷 sessionId 时注册表核对在 live 永远 MISS（2026-10-12 实机 E 卡片缺口根因）。
+  const projection = await projectionWithRegisteredFragment(t);
+  openTurnWithDirective(projection);
+  const deltas = projection.applyEventAtomically(
+    projEvent("model_streaming", { kind: "text_end", assistantMessageId: "msg-1" }),
+    () => true,
+  );
+  assert.ok(deltas);
+  assert.deepEqual(artifactRefs(deltas), [`acode-visualization://${PROJ_SID}/x.html`]);
 });
 
 test("投影收口：新 text 段顶替旧行路径产出 artifactRow", async (t) => {

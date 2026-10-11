@@ -63,6 +63,54 @@ conversationVisualizationRead
 `workflowRunArtifactRead` 的分块纪律（含 base64 superRefine）。分享投影**不**包含
 visualization artifactRow 的 ref（沿用 rows.ts:221 的本地引用裁剪规则）。
 
+### 注册表绑定（2026-10-12 实机修复：多 app 进程）
+
+投影的 name 核对走 visualization-registry.ts 的模块级绑定（ProductProjection 构造链
+太深，store 不逐层穿签名）。初版是**单一 activeStore 单例**，前提「一个进程同一时刻
+只有一个 active app」——桌面 app-server 不成立：每 workspace 一个 agent 进程、每会话
+一个 create-app，多 app 并存。实机后果（2026-10-12 E 卡片复现，Bug 6）：
+
+- last-writer-wins：后建 app 覆盖先建 app 的 store 绑定；
+- dispose 无条件置 null：任一 app 关闭（UI 切走任务即触发）把**其他在世 app** 的
+  绑定一并清掉。该轮 `WriteVisualizationFragment` 正常落盘（工具走 app 本地 tool
+  context，不经单例）、`::visualize` 指令逐字发出、renderer 剥离正常，但投影
+  lookup miss → 按「未命中不产 row」静默降级 → 卡片永不出现。
+
+修复：注册表按 **sessionId 键控**（Map）：
+
+- `registerVisualizationFragmentStore(sessionId, store)`——create-app 装配时；
+- `unregisterVisualizationFragmentStore(sessionId, store)`——dispose 与启动失败路径，
+  **实例身份校验**：同会话旧 app 的迟到 dispose 不得误删新 app 的绑定；
+- `lookupVisualizationFragment(sessionId, name)` 按 sessionId 取 store 再查其索引。
+
+单例 setter（setActiveVisualizationFragmentStore）删除，不留兼容面——调用点仅
+create-app 三处与测试，全部改造。
+
+### live 发射缺口（2026-10-12 实机修复：clone 清单漏 sessionId，Bug 7）
+
+注册表键控修复后 live 轮仍不产 row，%TEMP% 诊断日志判决：live 投影实例
+`this.sessionId === undefined`，hydrate 实例正常。根因在
+`ProductProjection.cloneProjection()`：live 发布链逐事件走
+`applyEventAtomically`（clone → reduce → adopt），clone 用 `Object.create` +
+**手工字段清单**复制约三十个 side-map/标量，唯独漏了构造期身份字段 `sessionId`
+（文件内注释本就警告「遗漏该侧表会让…丢失」这类清单漂移）。于是 live 收口处
+`visualizationArtifactRows` 的注册表核对以 undefined 为键必 MISS；hydrate 走真实例
+不受影响——这正是「冷恢复有卡、live 无卡」的不对称。
+
+修复：clone 清单补 `clone.sessionId = this.sessionId`；`sessionId` 字段去掉
+`readonly`（clone 清单的写入需求；「构造后不变」改由约定保证，除 clone 外无人写）。
+回归测试：`applyEventAtomically` 路径（text_end 收口）必须产出 artifactRow——
+把 clone 清单钉进测试，防同类漂移。
+
+### live 验收（2026-10-12，双修复后）
+
+干净 live 轮（新任务、不杀进程）：模型加载 visualize 技能 →
+WriteVisualizationFragment 落盘 → 最终回复两行（描述 + 逐字指令）→ **卡片在 live
+轮内渲染**：`data-v4-visualization-card` 在场、iframe `sandbox="allow-scripts"`、
+815×196 可视、指令行被剥离不泄漏；诊断日志确认 atomic 路径 sessionId 正确、
+注册表 hit。此前各轮（E2/e3/e5/e6）的失败分别由 Bug 6（注册表单例）与 Bug 7
+（clone 清单）解释，均已闭环。
+
 ## 技能：`bundled-skills/skills/visualize/`
 
 - `SKILL.md`（frontmatter：name `visualize` + description/when_to_use）：教模型

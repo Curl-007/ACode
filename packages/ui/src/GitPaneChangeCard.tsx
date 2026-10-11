@@ -3,6 +3,7 @@ import type { GitDiffResult } from "@acode/shared";
 import { ChevronDownIcon, CopyIcon, FolderOpenIcon, ListTreeIcon } from "lucide-react";
 import { DiffViewer } from "@/components/ui/diff-viewer.js";
 import { cn } from "@/components/lib/utils.js";
+import { FileTypeIcon } from "@/components/FileTypeIcon.js";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -99,9 +100,14 @@ export function GitPaneChangeCard({
                 React 提交阶段。这里改成普通按钮 + 仅展开行渲染内容，保留交互同时减少打开成本。 */}
             <div className="min-w-0 flex-1 overflow-hidden">
               <div className="flex min-w-0 items-center gap-2 overflow-hidden">
+                {/* 文件类型图标走 lucide 映射（chat-small-ux-file-icons.md §2）：
+                    FileDisplayInline 默认的 material 图标在 public/ 无产物时只剩通用占位，
+                    这里显式换成按扩展名着形的 FileTypeIcon，文件名展示照旧。 */}
+                <FileTypeIcon className="size-3.5 shrink-0" name={change.workspaceRelativePath} />
                 <FileDisplayInline
                   path={change.workspaceRelativePath}
                   options={{
+                    showIcon: false,
                     showFilePath: true,
                     className: "inline-flex min-w-0 max-w-full items-center gap-2",
                     fileNameClassName: "truncate text-ui-base text-foreground",

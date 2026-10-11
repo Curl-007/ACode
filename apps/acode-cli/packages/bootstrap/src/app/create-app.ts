@@ -3,6 +3,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import {
   createInMemorySessionEventStore,
   createNodeToolArtifactStore,
+  createNodeVisualizationFragmentStore,
 } from "@acode/adapters/storage";
 import { createNodeLoggerFactory } from "@acode/adapters/logging";
 import { createConfig, resolvePath } from "@acode/adapters/config";
@@ -109,6 +110,7 @@ import { loadPluginAgentProfiles, loadACodeAgentProfiles } from "../subagents.js
 import { createRuntimeAiSdkModelExecutionConfig } from "../model-config.js";
 import { createCliPlatformOpenPort } from "./platform-open-port.js";
 import { ApiProviderModelRuntime } from "./provider-registry-model-runtime.js";
+import { setActiveVisualizationFragmentStore } from "../acode-protocol-v4/visualization-registry.js";
 import {
   completeAppStartup,
   debugRuntimeConfigResolved,
@@ -468,6 +470,16 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
         rootDir: join(storageRoot, "cli", "artifacts"),
         videoCacheRootDir: join(storageRoot, "cli", "video-cache"),
       });
+    // 对话内可视化片段存储（specs/gen-ui-visualize.md）：与 artifactStore 同根
+    // （<rootDir>/<sessionId>/visualize/），随 session 清理策略走。
+    const visualizationFragmentStore =
+      options.visualizationFragmentStore ??
+      createNodeVisualizationFragmentStore({
+        rootDir: join(storageRoot, "cli", "artifacts"),
+      });
+    // 投影层的注册表查询走模块级绑定（visualization-registry.ts 头注的论证）：
+    // ProductProjection 的构造链太深，store 不逐层穿签名。
+    setActiveVisualizationFragmentStore(visualizationFragmentStore);
     const imageProcessorPort = options.imageProcessorPort ?? createJimpImageProcessorAdapter();
     const messageEnabled = isMessageEnabled(options.env ?? process.env);
     const sessionMailboxPort =
@@ -595,6 +607,12 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
 
       try {
         const resumeTraceContext = resumeOptions?.traceContext ?? traceContext;
+        // 冷恢复先重建可视化注册表（specs/gen-ui-visualize.md）：hydration 重放历史
+        // assistantText 时，投影层要按注册表核对 ::visualize 引用；进程重启后内存
+        // 注册表是空的，从磁盘目录回填（displayName 不可恢复，回退 name）。
+        await visualizationFragmentStore
+          .rebuildVisualizationFragments(sessionId)
+          .catch(() => undefined);
         const modelSelection = await restorePersistedModelSelection();
         await initializeSessionShellEnvironment();
         const result = await runtime.resumeFromStore({
@@ -775,6 +793,7 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
       imageProcessorPort,
       pdfDocumentPort,
       artifactStore,
+      visualizationFragmentStore,
       contextSourcePort:
         options.contextSourcePort ?? createNodeContextSourceAdapter({ env: options.env }),
       skillPort:
@@ -1218,6 +1237,8 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
           await closeSession?.();
         } finally {
           providerModelRuntime?.dispose();
+          // 投影层的注册表绑定随 app 生命周期清空（一个进程同一时刻只有一个 active app）。
+          setActiveVisualizationFragmentStore(null);
         }
       },
       ...workflowFacade,
@@ -1234,6 +1255,13 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
       // 编排方案 Phase 2（specs/swarm-observability-projection.md R5）：swarm plan 的
       // 冷回放读取口——v4-bridge 冷物化时从 plan 行合成 SwarmPlanProgress 事件。
       readSwarmPlanStatus: async () => swarmPlanWiring.readPlanProgress(),
+      // 对话内可视化片段的字节（specs/gen-ui-visualize.md）：store 侧已做 name 消毒与
+      // 会话目录隔离，这里只补会话身份（bridge 已按 record 校验 sessionId 归属）。
+      readVisualizationFragment: async (input: { name: string }) =>
+        visualizationFragmentStore.readVisualizationFragment({
+          sessionId,
+          name: input.name,
+        }),
       ...createPluginFacadeForApp({ configResult, options, workingDirectory }),
       getPluginReferenceCatalog: () => pluginReferenceCatalog,
       getSkillCatalog: async () => {
@@ -1247,6 +1275,7 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
     };
   } catch (error) {
     providerModelRuntime?.dispose();
+    setActiveVisualizationFragmentStore(null);
     void ownedNodeReplBrowserBroker?.close();
     startupTimer.fail("ACode app startup failed", error, {
       context: { sessionId, workingDirectory },

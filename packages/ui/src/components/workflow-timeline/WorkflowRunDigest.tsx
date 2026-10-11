@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import {
   MessageCircleQuestionIcon,
+  PuzzleIcon,
   RotateCcwIcon,
   SlidersHorizontalIcon,
   SquareIcon,
@@ -16,6 +17,7 @@ import type { WorkflowRunCardSummary } from "@/ToolCallBlocks/fileSummaryTypes.j
 import { buildWorkflowTimeline, type TimelinePill } from "./timeline-model.js";
 import { workflowCardDetail } from "./timeline-summary.js";
 import {
+  DigestChip,
   WORKFLOW_RUN_ENDED_KIND_ID,
   WorkflowCardHeader,
   workflowRunKindMessageId,
@@ -42,6 +44,11 @@ export interface WorkflowRunDigestProps {
   summary: WorkflowRunCardSummary | undefined;
   /** 该 run 停驻的待答问题数；> 0 时表头出现警示色芯片。 */
   pendingQuestions?: number;
+  /**
+   * 该 run 停驻的 workflow hole 数（挖洞-填充）；> 0 时表头出现确认色芯片。与待答问题芯片
+   * 并排：两件事都让 run 停着，但欠的东西不同（值 vs 代码），颜色分开设觉。
+   */
+  pendingHoles?: number;
   /**
    * 打开 run 详情；缺席即无 ⤢、芯片不可点、「还有 n 个」那一行是静态的。带 `landing` 时详情页落到
    * 那一站：只有那一行会带，⤢ 与问题芯片开的是整个 run。
@@ -84,6 +91,7 @@ export function WorkflowRunDigest({
   onResume,
   onCancel,
   pendingQuestions = 0,
+  pendingHoles = 0,
   runId,
   settingsHost,
   subagentModelProviderName,
@@ -143,25 +151,39 @@ export function WorkflowRunDigest({
           { count: pendingQuestions },
         )
       : undefined;
+  // 停驻洞芯片与问题芯片同形态（DigestChip）：都让 run 停着，但欠的东西不同
+  // （值 vs 代码），tone 分开设觉——见 DigestChip 的色调注释。
+  const holesLabel =
+    pendingHoles > 0
+      ? format(
+          {
+            id:
+              pendingHoles === 1
+                ? "chat.toolCall.workflow.digest.hole"
+                : "chat.toolCall.workflow.digest.holes",
+          },
+          { count: pendingHoles },
+        )
+      : undefined;
   const questions =
-    questionsLabel === undefined ? undefined : onOpenRun === undefined ? (
-      <span
-        className="wf-arrive flex shrink-0 items-center gap-1 rounded-full bg-[color-mix(in_oklab,var(--color-warning)_12%,transparent)] py-0.5 pl-1.5 pr-2 text-ui-xs font-medium text-warning"
-        data-testid="workflow-digest-questions"
-      >
-        <MessageCircleQuestionIcon aria-hidden className="size-3" />
-        {questionsLabel}
-      </span>
-    ) : (
-      <button
-        className="wf-arrive flex shrink-0 cursor-pointer items-center gap-1 rounded-full bg-[color-mix(in_oklab,var(--color-warning)_12%,transparent)] py-0.5 pl-1.5 pr-2 text-ui-xs font-medium text-warning outline-none transition-colors hover:bg-[color-mix(in_oklab,var(--color-warning)_20%,transparent)] focus-visible:ring-2 focus-visible:ring-ring/40"
-        data-testid="workflow-digest-questions"
-        onClick={() => onOpenRun()}
-        type="button"
-      >
-        <MessageCircleQuestionIcon aria-hidden className="size-3" />
-        {questionsLabel}
-      </button>
+    questionsLabel === undefined ? undefined : (
+      <DigestChip
+        icon={<MessageCircleQuestionIcon aria-hidden className="size-3" />}
+        label={questionsLabel}
+        onOpen={onOpenRun}
+        testId="workflow-digest-questions"
+        tone="warning"
+      />
+    );
+  const holes =
+    holesLabel === undefined ? undefined : (
+      <DigestChip
+        icon={<PuzzleIcon aria-hidden className="size-3" />}
+        label={holesLabel}
+        onOpen={onOpenRun}
+        testId="workflow-digest-holes"
+        tone="confirmation"
+      />
     );
   const resume =
     summary?.resumable === true && onResume !== undefined ? (
@@ -226,7 +248,14 @@ export function WorkflowRunDigest({
         {...(cardDetail?.title === undefined ? {} : { detailTitle: cardDetail.title })}
         expanded={expanded}
         kind={kind}
-        leading={questions}
+        leading={
+          questions === undefined && holes === undefined ? undefined : (
+            <>
+              {questions}
+              {holes}
+            </>
+          )
+        }
         live={live}
         name={name}
         trailing={

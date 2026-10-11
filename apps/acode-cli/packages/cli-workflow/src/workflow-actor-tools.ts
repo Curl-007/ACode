@@ -16,6 +16,7 @@ import {
   ASK_USER_QUESTION_TOOL_NAME,
   ENTER_PLAN_MODE_TOOL_NAME,
   EXIT_PLAN_MODE_TOOL_NAME,
+  FILL_WORKFLOW_HOLE_TOOL_NAME,
   READ_SESSION_CONTEXT_TOOL_NAME,
   RESOLVE_WORKFLOW_QUESTION_TOOL_NAME,
 } from "@acode/contracts";
@@ -43,6 +44,11 @@ const ACTOR_DISALLOWED_TOOLS: readonly string[] = [
   // 交给创建这条工作流的那一方；让另一个 actor 顺手作答，等于把它悄悄退化成 actor 之间的
   // 互相说服。actor 提问用 `escalate`（恒注册），作答只属于主会话。
   RESOLVE_WORKFLOW_QUESTION_TOOL_NAME,
+  // 洞的填充与作答同一条身份论证（specs/workflow-holes.md）：hole 欠的是主代理要写的
+  // **代码**，splice 后的新脚本是一份新的可执行面（新的 world.run 命令集），必须过人类
+  // 的确认窗重新授权——actor 会话无窗可弹，也轮不到一个被同一份脚本指挥的 actor 替整个
+  // run 决定拓扑。与 CreateWorkflow/AmendWorkflow 的嵌套编排禁令同席。
+  FILL_WORKFLOW_HOLE_TOOL_NAME,
 ];
 
 /**

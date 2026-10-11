@@ -22,6 +22,7 @@ import { useACodeIntl } from "@/i18n/IntlProvider.js";
 import { invalidateDeferredDraftSessionForSkillChange } from "@/lib/acodeDraftSkillInvalidation.js";
 import { logger } from "@/logger.js";
 import { SettingsGroupCard, SettingsRow } from "@/settings/SettingsPageParts.js";
+import { EmbeddedBrowserSitePermissionsCard } from "@/settings/EmbeddedBrowserSitePermissionsCard.js";
 import { usePluginManagementStore } from "@/store/pluginManagementStore.js";
 import { useSkillStore } from "@/store/skillStore.js";
 import { formatImportSummary } from "./browserImportSummary.js";
@@ -298,6 +299,10 @@ export function BrowserSettingsSection({
           </SettingsGroupCard>
         </section>
       ) : null}
+
+      {/* 站点权限管理面（specs/embedded-browser-site-permissions.md）：列表 origin×权限×状态、
+          逐项重置与一键清空。平台方法缺席（Web）时卡片自身整区隐藏。 */}
+      <EmbeddedBrowserSitePermissionsCard />
 
       <section className="space-y-3">
         <div className="text-ui-base font-medium text-foreground-subtle">

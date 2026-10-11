@@ -28,8 +28,11 @@ export const WORKFLOW_FUNCTION_NAME = "__workflowScript__";
 // script so the facade declarations are in scope without imports.
 // No return-type annotation: an annotated Promise<unknown> would demand a return
 // statement (TS2355), but scripts may legitimately end without one.
-const SCRIPT_PRELUDE = `async function ${WORKFLOW_FUNCTION_NAME}() {\n`;
-const SCRIPT_EPILOGUE = "\n}\nexport {};\n";
+//
+// 导出给 hole 的 splice（hole/splice.ts）：它按 AST 定位洞调用在 wrapped 文本里的精确区间，
+// 换入一个完整的 IIFE 表达式后按这两个定长常量剥出作者脚本——不重排、不重猜边界。
+export const SCRIPT_PRELUDE = `async function ${WORKFLOW_FUNCTION_NAME}() {\n`;
+export const SCRIPT_EPILOGUE = "\n}\nexport {};\n";
 const PRELUDE_LINES = 1;
 
 const COMPILER_OPTIONS: ts.CompilerOptions = {

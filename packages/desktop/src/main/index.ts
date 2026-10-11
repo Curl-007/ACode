@@ -111,6 +111,9 @@ import {
 } from "./desktopApplicationMenu.js";
 import { applyAppIcon } from "./desktopWindowChrome.js";
 import { installDesktopSessionPermissionPolicies } from "./desktopSessionPermissionPolicy.js";
+import { EmbeddedBrowserSitePermissionStore } from "./browserView/embeddedBrowserSitePermissionStore.js";
+import { EmbeddedBrowserSitePermissionController } from "./browserView/embeddedBrowserSitePermissionController.js";
+import { handleNetworkCaptureAgentRuntimeReady } from "./desktopNetworkCaptureIpc.js";
 // main 编译单元无法为构建期 .mjs 脚本提供类型（TS7016），改用 src/main 内的类型化镜像；
 // 修改 scripts/desktop-product-identity.mjs 的 appId/AUMID 时必须同步该镜像。
 import { resolveWindowsAppUserModelIdForFlavor } from "./desktopWindowsAppUserModelId.js";
@@ -256,6 +259,17 @@ function reconcileKeepAwakeBlocker(): void {
 const embeddedBrowserDialogController = new EmbeddedBrowserJavaScriptDialogController({
   iconPath,
   getLocale: () => currentApplicationLocale,
+  logger,
+});
+// 嵌入式浏览器站点权限（specs/embedded-browser-site-permissions.md）：
+// main 是持久表的唯一写者，userData 下的平台层持久化，不进 session/task 业务状态。
+const embeddedBrowserSitePermissionController = new EmbeddedBrowserSitePermissionController({
+  store: new EmbeddedBrowserSitePermissionStore(
+    join(app.getPath("userData"), "embedded-browser-site-permissions.json"),
+    {
+      onWarning: (message) => logger.warn(`[embedded-browser-permissions] ${message}`),
+    },
+  ),
   logger,
 });
 ipcMain.on(PlatformChannels.EmbeddedBrowserJavaScriptDialog, (event, payload: unknown) => {
@@ -1593,6 +1607,9 @@ function createWindowInstance(startupBootstrap: StartupWindowBootstrap = {}) {
           taskRealtimeBus,
           windowHostProcessMap,
           hostRunningTaskCountMap,
+          // specs/runtime-network-capture.md：agent 进程换代/新会话 ready 后，
+          // 由 main 按记忆重发 networkCaptureSetEnabled（开关保持语义）。
+          onAgentProcessReady: () => handleNetworkCaptureAgentRuntimeReady(logger),
           onCuaOperationStateChanged: (source, event) =>
             windowsCuaOperationIndicator.handleState(source, event),
           onCuaOperationStateSourceExited: (source) =>
@@ -1804,7 +1821,8 @@ app.whenReady().then(async () => {
   // Electron 默认放行全部权限请求，内嵌浏览器加载的任意页面可无确认拿摄像头/麦克风/屏幕捕获。
   // 这里在 defaultSession 与两个 webview partition 上统一挂「默认拒绝 + 最小放行」策略，
   // 必须先于任何窗口创建执行；recorder 临时 partition 刻意不覆盖（见 spec）。
-  installDesktopSessionPermissionPolicies(session, logger);
+  // 站点权限控制器只作用于 embedded-browser partition（specs/embedded-browser-site-permissions.md）。
+  installDesktopSessionPermissionPolicies(session, logger, embeddedBrowserSitePermissionController);
   // Electron 的 net.request 只能在 app ready 后使用；灰度请求仍是旁路预热，不阻塞首个 Host。
   void desktopContextPromptRollout?.refresh();
   installBrowserRestoreBootstrapProtocol(
@@ -2032,6 +2050,7 @@ app.whenReady().then(async () => {
     syncAppSettings: syncImmediateAppSettings,
     setShortcutRecordingActive,
     deviceMid,
+    sitePermissionController: embeddedBrowserSitePermissionController,
   });
   registerRemoteIpcHandlers({
     logger,

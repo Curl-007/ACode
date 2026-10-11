@@ -4,6 +4,7 @@
 
 import { STATUS_CODES } from "node:http";
 import {
+  runWithNetworkCapturePhase,
   WebFetchInputJsonSchema,
   WebFetchInputSchema,
   WebFetchOutputJsonSchema,
@@ -211,7 +212,9 @@ export const webFetchToolEntry: ToolEntry = {
     riskLevel: "medium",
     needsApproval: true,
   },
-  handler: webFetchHandler,
+  // 网络观测相位标注（specs/runtime-network-capture.md）：handler 全程在 ALS 上下文里，
+  // 其下的全部出站 fetch 归 "webfetch"。未开启观测时 runWith 是纯透传（零开销路径）。
+  handler: (input, context) => runWithNetworkCapturePhase("webfetch", () => webFetchHandler(input, context)),
   formatModelContent: formatWebFetchModelContent,
   inputSchema: WebFetchInputJsonSchema,
   outputSchema: WebFetchOutputJsonSchema,

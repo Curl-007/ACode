@@ -233,6 +233,7 @@ function createRuntimeToolExecutor(
     workflowSubmitPort: deps.workflowSubmitPort,
     workflowEscalatePort: deps.workflowEscalatePort,
     artifactStore: deps.artifactStore,
+    visualizationFragmentStore: deps.visualizationFragmentStore,
     automationPort: deps.automationPort,
     offPeakPort: deps.offPeakPort,
     sessionStore: deps.sessionStore,

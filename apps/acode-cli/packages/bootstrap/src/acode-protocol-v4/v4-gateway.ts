@@ -104,6 +104,13 @@ import {
   v4ConversationWorkflowRunArtifactDataResultSchema,
   v4ConversationWorkflowRunArtifactReadParamsSchema,
   v4ConversationWorkflowRunArtifactReadResultSchema,
+  v4ConversationVisualizationReadParamsSchema,
+  v4ConversationVisualizationReadResultSchema,
+  type V4ConversationVisualizationReadResult,
+  v4NetworkCaptureSetEnabledParamsSchema,
+  v4NetworkCaptureSetEnabledResultSchema,
+  type V4NetworkCaptureSetEnabledResult,
+  type V4NetworkCaptureRecordsNotification,
   v4ConversationWorkflowRunArtifactsParamsSchema,
   v4ConversationWorkflowRunArtifactsResultSchema,
   v4ConversationWorkflowRunNodeResultParamsSchema,
@@ -126,6 +133,10 @@ import {
   type ColdSessionResumeOutcome,
 } from "./cold-session-resume.js";
 import { CommandInbox } from "./command-inbox.js";
+import {
+  installNetworkCaptureObservation,
+  uninstallNetworkCaptureObservation,
+} from "./network-capture-observation.js";
 import {
   ConversationTopicPublisher,
   ProjectionPayloadTooLargeError,
@@ -399,6 +410,21 @@ export interface V4GatewayHost {
     sessionId: string,
     input: { runId: string; artifactId: string; version: number },
   ): Promise<DynamicWorkflowRunArtifactBytes | undefined>;
+  /**
+   * 对话内可视化片段的字节（specs/gen-ui-visualize.md）。授权在宿主侧：sessionId 必须是
+   * 发起方会话、name 必须经注册表/磁盘核对存在（renderer 传参绝不拼路径）；拒绝与未知
+   * 都回 `undefined`，归一成结构化 not found。
+   */
+  readVisualizationFragment?(
+    sessionId: string,
+    input: { name: string },
+  ): Promise<Uint8Array | undefined>;
+  /**
+   * 网络观测批量上报的发送面（specs/runtime-network-capture.md）。仅 live：不进
+   * snapshot/recovery（与 cuaPermissionObservation 同一纪律）；缺席时开关照常应答，
+   * 观测静默不发送（不缓存——live 事实）。
+   */
+  emitNetworkCaptureRecords?(notification: V4NetworkCaptureRecordsNotification): void;
   /**
    * workflow run 的工作区 transcript：两条一起在场、
    * 一起缺席。授权在宿主侧（run 属于本会话）；拒绝与未知都回 `undefined`。
@@ -1696,6 +1722,64 @@ export class ConversationV4Gateway {
       totalBytes,
       nextOffset: end < totalBytes ? end : null,
     });
+  }
+
+  /**
+   * 对话内可视化片段的字节，一次一块（specs/gen-ui-visualize.md）。
+   * 与 workflowRunArtifactRead 同族：只读、无状态、超时重发安全；授权在宿主端口侧
+   * （会话 + 注册名核对），网关只校参数与分块。`offset` 越界不是错误：空块 + null，
+   * 与读到尾同一形态。宿主未提供读面（旧装配）= 能力缺席。
+   */
+  async visualizationRead(
+    rawParams: unknown,
+  ): Promise<V4ConversationVisualizationReadResult> {
+    const params = v4ConversationVisualizationReadParamsSchema.parse(rawParams);
+    if (!this.host.readVisualizationFragment) {
+      throw new V4CapabilityUnsupportedError("readVisualizationFragment", params.sessionId);
+    }
+    await this.ensureHostRecordForJournalRead(params.sessionId);
+    const bytes = await this.host.readVisualizationFragment(params.sessionId, {
+      name: params.name,
+    });
+    if (bytes === undefined) {
+      // 与 readWorkflowArtifactPayload 同一 not-found 约定：fault 前缀由 wire 层翻译，
+      // 不另铸错误类（越权与未知同一形态，不告诉调用方猜对了哪一半）。
+      throw new Error(`fault.visualizationRead.notFound: ${params.name}`);
+    }
+    const totalBytes = bytes.byteLength;
+    const start = Math.min(params.offset, totalBytes);
+    const end = Math.min(start + params.limit, totalBytes);
+    const chunk = bytes.subarray(start, end);
+    return v4ConversationVisualizationReadResultSchema.parse({
+      dataBase64: Buffer.from(chunk).toString("base64"),
+      mediaType: "text/html",
+      totalBytes,
+      nextOffset: end < totalBytes ? end : null,
+    });
+  }
+
+  /**
+   * 网络观测开关（specs/runtime-network-capture.md）。进程级事实，不是 conversation 命令：
+   * 开启即包装 global fetch 并按 captureId 对账批量上报；关闭还原并清缓冲。
+   * 重复开启同一 captureId 幂等；captureId 缺席时由网关生成（调用方随后从结果读不到 id——
+   * 对账 id 的所有权在开启方，见 shared schema 注释）。
+   */
+  async networkCaptureSetEnabled(
+    rawParams: unknown,
+  ): Promise<V4NetworkCaptureSetEnabledResult> {
+    const params = v4NetworkCaptureSetEnabledParamsSchema.parse(rawParams);
+    if (!params.enabled) {
+      uninstallNetworkCaptureObservation();
+      return v4NetworkCaptureSetEnabledResultSchema.parse({ enabled: false });
+    }
+    const emit = this.host.emitNetworkCaptureRecords;
+    installNetworkCaptureObservation({
+      captureId: params.captureId,
+      emit: emit
+        ? (records) => emit({ captureId: params.captureId, records })
+        : () => {},
+    });
+    return v4NetworkCaptureSetEnabledResultSchema.parse({ enabled: true });
   }
 
   /**

@@ -278,6 +278,15 @@ export interface WorkflowHostApi {
    */
   declareArtifact(siteId: string, op: ArtifactPresetOp, args: unknown[]): void;
   log(message: string): void;
+  /**
+   * 停靠在一个洞站点（挖洞-填充）：铸 ordinal、发 `hole-reached`（journal 双轨经引擎的
+   * record），然后**永不兑现**——fill 不回到这次调用（它把洞调用 splice 成代码并 supersede
+   * 本 run），run 结算时停驻 promise 以 Cancelled 拒绝（与 abortInFlight 同一姿态），沙箱
+   * 随之被收走。`askedAt` 由宿主传入：引擎没有时钟，与 escalation 的 askedAt 同一条纪律。
+   *
+   * 不写 dwf_node 行（等待不是工作量）；不消费 driver（停靠没有可执行的东西）。
+   */
+  hole(siteId: string, stage: string, prompt: string, askedAt: number): Promise<never>;
 }
 
 // ————————————————————————————————————————————————————————————————
@@ -636,6 +645,44 @@ export type RunEvent =
    * 回边。resume 时脚本重跑会把前缀再发一遍（没有 journal 行可去重），消费者单调归约即免疫。
    */
   | { type: "phase-entered"; name: string; ordinal: number }
+  /**
+   * 脚本停在一个 `hole<T>(stage, prompt)` 站点（挖洞-填充）。与 `phase-entered` 一样**不写
+   * dwf_node 行**（等待不是工作量，与 escalation 同一条 doctrine），但**有站点身份**：
+   * `holeId` = `${siteId}@${ordinal}`（首达 ordinal），FillWorkflowHole 按它定位并 splice。
+   *
+   * 循环语义（filled-once-run-per-reach）：同一站点**只有首次到达**停驻——fill 是 supersede
+   * 链（新 run 的脚本里洞调用已被替换为 IIFE），本 run 的后续轮次不会再到这一站；resume
+   * 重跑时洞没有 journal 节点可短路，重新到达、重新停驻（holeId 由确定性 ordinal 复算，
+   * 与首达相同）。`askedAt` 由宿主写入（引擎没有时钟，与 escalation-raised 同一条纪律）。
+   */
+  | {
+      type: "hole-reached";
+      /** 复合身份 `${siteId}@${ordinal}`；消费面（投影 reducer / FillWorkflowHole）按它去重与定位。 */
+      holeId: string;
+      siteId: string;
+      ordinal: number;
+      /** 站点名（`hole<T>(stage, prompt)` 的第一个字面量，编译期已保证）。 */
+      stage: string;
+      /** 提示词（含插值后的进展账目）。 */
+      prompt: string;
+      /** 到达时刻（epoch 毫秒），宿主写入。 */
+      askedAt: number;
+    }
+  /**
+   * 一个停驻中的洞已被填充（run service 在 fill 的 supersede 链上发出，引擎核心从不产）：
+   * fill 语句已 splice 进脚本、前驱被后继替代，洞不再欠着。`succeededBy` 是 splice 后的新
+   * run；`previousScriptHash` / `nextScriptHash` 记录修订链两端的脚本身份；`fillPath` 指向
+   * 落盘的 fill 文件（审计面）。与 escalation-resolved 同形：住在 RunEvent 词汇表里是因为
+   * 它走与其他 run 事件相同的两条轨（journal + emit）。
+   */
+  | {
+      type: "hole-filled";
+      holeId: string;
+      succeededBy: string;
+      previousScriptHash?: string;
+      nextScriptHash?: string;
+      fillPath?: string;
+    }
   /**
    * 一条被发布的中间结果，每个**未被跳过**的 report 调用恰好一次（replay 命中即静默跳过，
    * 不重发）。走与其他 run 事件完全相同的路线（进度汇 → 有界会话事件 → 投影 reducer），

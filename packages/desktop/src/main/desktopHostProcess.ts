@@ -45,6 +45,12 @@ import {
 } from "./resourceManagerWindow.js";
 import { resolveHostResourceUsageResult } from "./resourceManagerHostSampling.js";
 import {
+  bindNetworkCaptureHostChild,
+  receiveNetworkCaptureRecords,
+  receiveNetworkCaptureSetEnabledResult,
+  unbindNetworkCaptureHostChild,
+} from "./desktopNetworkCaptureIpc.js";
+import {
   buildHostProcessEnv,
   hostModulePath,
   resolveBundledGlmBinaryPath,
@@ -323,6 +329,15 @@ export function spawnHostProcess(
     // Host 自采的 60 秒样本：main 只取 heap 作 host 角色事件的 heap 维度。
     if (result.data.type === HostResponseTypes.ResourceUsageSnapshotResult) {
       resolveHostResourceUsageResult(label, result.data);
+      return;
+    }
+    // 网络抓包（specs/runtime-network-capture.md）：host 镜像的 agent 观测批量与开关结算。
+    if (result.data.type === HostResponseTypes.NetworkCaptureRecords) {
+      receiveNetworkCaptureRecords(result.data);
+      return;
+    }
+    if (result.data.type === HostResponseTypes.NetworkCaptureSetEnabledResult) {
+      receiveNetworkCaptureSetEnabledResult(result.data);
       return;
     }
     if (result.data.type === HostResponseTypes.LocalMediaPreviewPathAuthorizeRequest) {
@@ -707,9 +722,12 @@ export function spawnHostProcess(
   }
 
   registerHostProcess(label, child);
+  // 网络抓包的 host 发送目标：本 child 存续期间接受开关请求扇出；退出即解绑。
+  bindNetworkCaptureHostChild(child);
 
   child.on("exit", (code) => {
     exitedHostProcesses.add(child);
+    unbindNetworkCaptureHostChild(child);
     // Host exit 是 fail-hidden 权威边界；不能依赖即将退出的 Host 再补发 inactive。
     dependencies.onCuaOperationStateSourceExited?.(child);
     hostLogRelay.flushRawLogs();

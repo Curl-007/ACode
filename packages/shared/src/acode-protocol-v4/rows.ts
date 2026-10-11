@@ -244,6 +244,23 @@ export const artifactRowSchema = z.object({
   sha256: z.string().regex(/^[0-9a-f]{64}$/u),
   ref: z.string().trim().min(1),
   state: z.literal("current"),
+  /**
+   * artifactType 专属载荷（additive、optional：旧生产者不发即缺席）。当前唯一住户是
+   * 对话内可视化（::visualize，见 apps/acode-cli/specs/gen-ui-visualize.md）的
+   * `visualization.mode`。共享分享投影照常剥离 ref；meta 不含路径。
+   */
+  meta: z
+    .object({
+      visualization: z
+        .object({
+          /** wide = 全宽渲染（app mockup / 并排面板）；缺席 = 标准宽。 */
+          mode: z.literal("wide").optional(),
+        })
+        .strict()
+        .optional(),
+    })
+    .strict()
+    .optional(),
 });
 export type ArtifactRow = z.infer<typeof artifactRowSchema>;
 

@@ -222,6 +222,7 @@ export type {
   SubagentTaskSnapshot,
   ToolArtifactStorePort,
   ToolCallId,
+  VisualizationFragmentStorePort,
   WorkflowPort,
   WorkflowEscalatePort,
   WorkflowSubmitPort,
@@ -322,3 +323,4 @@ export {
 } from "../subagent/index.js";
 export type { AgentProfile, ExploreSubagentRuntimeRequest } from "../subagent/index.js";
 export { registerMcpTools } from "../mcp/index.js";
+export { registerMcpResourceTools } from "../mcp/resources.js";

@@ -30,9 +30,13 @@ import type {
   DesktopTitleBarTheme,
   DockerContainerInfo,
   EmbeddedBrowserOpenUrlRequest,
+  EmbeddedBrowserPermissionPromptPayload,
+  EmbeddedBrowserPermissionResolvePayload,
+  EmbeddedBrowserSitePermissionDecision,
   EditorInfo,
   CreateTempTextAttachmentRequest,
   CreateTempTextAttachmentResult,
+  MaterializeWorkflowArtifactFilePayload,
   SaveFileRequest,
   SaveFileResult,
   PrintPageToPdfResult,
@@ -394,6 +398,27 @@ export const PlatformChannels = {
   MigrateLegacyCommonMcp: "acode:migrate-legacy-common-mcp",
   /** Renderer → Main：获取当前设备的稳定标识符（deviceMid） */
   GetDeviceId: "acode:get-device-id",
+  // ── 嵌入式浏览器站点权限（specs/embedded-browser-site-permissions.md）──
+  /** Main → Renderer：未决权限请求弹窗（单向 send；弹窗窗不可用时 main 同步拒） */
+  EmbeddedBrowserPermissionPrompt: "acode:embedded-browser-permission-prompt",
+  /** Renderer → Main：弹窗应答（单向 send；未知/过期 requestId 按 deny-once 结算） */
+  EmbeddedBrowserPermissionResolve: "acode:embedded-browser-permission-resolve",
+  /** Renderer → Main：读取站点权限持久表（设置页管理面） */
+  GetEmbeddedBrowserSitePermissions: "acode:get-embedded-browser-site-permissions",
+  /** Renderer → Main：重置某 origin 的某权限（删该条记录） */
+  ResetEmbeddedBrowserSitePermission: "acode:reset-embedded-browser-site-permission",
+  /** Renderer → Main：清空全部站点权限 */
+  ClearEmbeddedBrowserSitePermissions: "acode:clear-embedded-browser-site-permissions",
+  // ── workflow artifact 物化（specs/workflow-artifact-materialization.md）──
+  /** Renderer → Main：把 renderer 已持有的产物字节落盘为一次性文件并返回本地路径 */
+  MaterializeWorkflowArtifactFile: "acode:materialize-workflow-artifact-file",
+  // ── 运行时网络观测（specs/runtime-network-capture.md）──
+  /** Renderer（资源管理器）→ Main：开关 agent 网络抓包（main 经 host 转 v4 命令） */
+  NetworkCaptureSetEnabled: "acode:network-capture-set-enabled",
+  /** Renderer → Main：读取抓包开关状态（agent 重启后按此重发） */
+  NetworkCaptureGetState: "acode:network-capture-get-state",
+  /** Main → Renderer：观测记录批量推送（单向 send，仅资源管理器窗口接收） */
+  NetworkCaptureRecords: "acode:network-capture-records",
 } as const;
 
 export type PlatformChannelName = (typeof PlatformChannels)[keyof typeof PlatformChannels];
@@ -534,6 +559,8 @@ export const HostMessageTypes = {
   /** main → host：资源管理器请求 Host 采样其后代进程（Agent / MCP / 终端）的 CPU 与内存 */
   ResourceUsageSnapshotRequest: "resource-usage-snapshot-request",
   ResourceUsageSnapshotCancel: "resource-usage-snapshot-cancel",
+  /** main → host：网络抓包开关（specs/runtime-network-capture.md；host 转成 v4 命令发给 agent） */
+  NetworkCaptureSetEnabledRequest: "network-capture-set-enabled-request",
 } as const;
 
 /** host process → main process 的反馈消息类型 */
@@ -569,6 +596,10 @@ export const HostResponseTypes = {
   ToolExecResource: "tool-exec-resource",
   /** host → main：资源管理器采样结果（按 requestId 关联） */
   ResourceUsageSnapshotResult: "resource-usage-snapshot-result",
+  /** host → main：网络抓包开关结果（按 requestId 关联） */
+  NetworkCaptureSetEnabledResult: "network-capture-set-enabled-result",
+  /** host → main：网络观测批量推送（v4 networkCaptureRecords 通知的镜像，仅 live） */
+  NetworkCaptureRecords: "network-capture-records",
   /** host 内当前正在执行 prompt 的 agent session 数量变化 */
   AgentRunningTaskCountChanged: "agent-running-task-count-changed",
   /** host 内指定 workspace 当前仍未 terminal 的 task 数量变化 */
@@ -1095,6 +1126,47 @@ export interface PlatformChannelMap {
   };
   [PlatformChannels.SetTitleBarTheme]: {
     request: DesktopTitleBarTheme;
+    response: void;
+  };
+  // ── 嵌入式浏览器站点权限 ──
+  // 两条单向 send 不是 invoke：prompt 由 main 主动推、resolve 必须可达
+  // （窗口关了 main 也按 deny-once 结算，不能挂等一个再也不会来的 invoke）。
+  [PlatformChannels.EmbeddedBrowserPermissionPrompt]: {
+    request: EmbeddedBrowserPermissionPromptPayload;
+    response: void;
+  };
+  [PlatformChannels.EmbeddedBrowserPermissionResolve]: {
+    request: EmbeddedBrowserPermissionResolvePayload;
+    response: void;
+  };
+  [PlatformChannels.GetEmbeddedBrowserSitePermissions]: {
+    request: void;
+    response: { permissions: Record<string, Record<string, EmbeddedBrowserSitePermissionDecision>> };
+  };
+  [PlatformChannels.ResetEmbeddedBrowserSitePermission]: {
+    request: { origin: string; permission: string };
+    response: { success: boolean; error?: string };
+  };
+  [PlatformChannels.ClearEmbeddedBrowserSitePermissions]: {
+    request: void;
+    response: { success: boolean; error?: string };
+  };
+  // ── workflow artifact 物化 ──
+  [PlatformChannels.MaterializeWorkflowArtifactFile]: {
+    request: MaterializeWorkflowArtifactFilePayload;
+    response: { localPath: string } | { error: string };
+  };
+  // ── 运行时网络观测 ──
+  [PlatformChannels.NetworkCaptureSetEnabled]: {
+    request: { enabled: boolean };
+    response: { success: boolean; error?: string };
+  };
+  [PlatformChannels.NetworkCaptureGetState]: {
+    request: void;
+    response: { enabled: boolean; captureId: string | null };
+  };
+  [PlatformChannels.NetworkCaptureRecords]: {
+    request: import("./acode-protocol-v4/network-capture.js").V4NetworkCaptureRecordsNotification;
     response: void;
   };
 }

@@ -12,6 +12,10 @@ import { acodeAgentProviderSchema } from "./acode-agent-policy.js";
 import { modelSelectionSchema } from "./model-selection.js";
 import { providerProvisioningTriggerSchema } from "./provider-provisioning.js";
 import {
+  NETWORK_CAPTURE_MAX_RECORDS_PER_NOTIFICATION,
+  networkCaptureRecordSchema,
+} from "./acode-protocol-v4/network-capture.js";
+import {
   acodeMcpResourceSamplesSchema,
   acodeToolExecResourceSchema,
   acodeProcessResourceSampleSchema,
@@ -462,11 +466,53 @@ export type HostResourceUsageSnapshotRequestMessage = z.infer<
   typeof hostResourceUsageSnapshotRequestMessageSchema
 >;
 
+// 网络抓包的 main→host 开关请求（specs/runtime-network-capture.md 的最后一跳）。
+// captureId 为 null 表示关闭：关闭不需要对账 id。
+export const hostNetworkCaptureSetEnabledRequestMessageSchema = z
+  .object({
+    type: z.literal("network-capture-set-enabled-request"),
+    requestId: nonEmptyStringSchema,
+    enabled: z.boolean(),
+    captureId: z.string().min(1).max(128).nullable(),
+  })
+  .strict();
+export type HostNetworkCaptureSetEnabledRequestMessage = z.infer<
+  typeof hostNetworkCaptureSetEnabledRequestMessageSchema
+>;
+
+export const hostNetworkCaptureSetEnabledResultResponseSchema = z
+  .object({
+    type: z.literal("network-capture-set-enabled-result"),
+    requestId: nonEmptyStringSchema,
+    ok: z.boolean(),
+    error: z.string().max(512).optional(),
+  })
+  .strict();
+export type HostNetworkCaptureSetEnabledResultResponse = z.infer<
+  typeof hostNetworkCaptureSetEnabledResultResponseSchema
+>;
+
+// host→main 的观测批量推送。载荷即 v4 networkCaptureRecords 通知的镜像（记录 schema 在
+// acode-protocol-v4/network-capture.ts，直接复用，不重复定义）。
+export const hostNetworkCaptureRecordsResponseSchema = z
+  .object({
+    type: z.literal("network-capture-records"),
+    captureId: z.string().min(1).max(128),
+    records: z
+      .array(networkCaptureRecordSchema)
+      .max(NETWORK_CAPTURE_MAX_RECORDS_PER_NOTIFICATION),
+  })
+  .strict();
+export type HostNetworkCaptureRecordsResponse = z.infer<
+  typeof hostNetworkCaptureRecordsResponseSchema
+>;
+
 export const hostIncomingMessageSchema = z.discriminatedUnion("type", [
   z
     .object({ type: z.literal("database-startup-control"), control: databaseStartupControlSchema })
     .strict(),
   hostResourceUsageSnapshotRequestMessageSchema,
+  hostNetworkCaptureSetEnabledRequestMessageSchema,
   z
     .object({ type: z.literal("resource-usage-snapshot-cancel"), requestId: nonEmptyStringSchema })
     .strict(),
@@ -957,6 +1003,8 @@ export const hostResponseMessageSchema = z.discriminatedUnion("type", [
     .object({ type: z.literal("database-startup-state"), state: databaseStartupStateSchema })
     .strict(),
   hostResourceUsageSnapshotResultResponseSchema,
+  hostNetworkCaptureSetEnabledResultResponseSchema,
+  hostNetworkCaptureRecordsResponseSchema,
   hostRemoteWorkspaceConnectionLogResponseSchema,
   hostRemoteSSHHostKeyChallengeResponseSchema,
   hostRemoteWorkspaceConnectedResponseSchema,

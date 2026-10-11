@@ -40,6 +40,8 @@
 
 import type { DwfRunSessionListItem } from "@acode/adapters/storage";
 import type {
+  DynamicWorkflowFillHoleRequest,
+  DynamicWorkflowFillHoleResult,
   DynamicWorkflowRunEvent,
   DynamicWorkflowRunArtifact,
   DynamicWorkflowRunArtifactBytes,
@@ -85,6 +87,9 @@ import {
   submitDynamicWorkflowRun,
   type DynamicWorkflowRunEntryContext,
 } from "./dynamic-workflow-run-submit.js";
+// 挖洞-填充（specs/workflow-holes.md）：fill 的 supersede 续跑链（splice → amend 链 →
+// hole-filled 事件），与三条启动入口共用同一份 ctx。
+import { fillWorkflowHole } from "./dynamic-workflow-hole-fill.js";
 import {
   settleOrAbort,
   snapshotOf,
@@ -395,6 +400,19 @@ export function createDynamicWorkflowRunService(
       answer: string,
     ): Promise<DynamicWorkflowResolveQuestionResult> {
       return escalations.resolve(qid, answer);
+    },
+
+    /**
+     * 填一个停驻中的洞（挖洞-填充，specs/workflow-holes.md；实现体在
+     * dynamic-workflow-hole-fill.ts）。与三条启动入口同过关闭门：它会停前驱并起一个新 run。
+     * splice、在飞/等待判定、hole-filled 事件与 cacheImported 的裁断全在实现体里。
+     */
+    async fillHole(
+      request: DynamicWorkflowFillHoleRequest,
+    ): Promise<DynamicWorkflowFillHoleResult> {
+      assertOpen();
+      await ensureWorkflowOwner(deps);
+      return fillWorkflowHole(entryContext, request);
     },
 
     async cancel(

@@ -12,6 +12,7 @@ import {
   WebSearchOutputSchema,
   createCoreError,
   runWithModelInvocationContext,
+  runWithNetworkCapturePhase,
   toWebSearchProviderNativeArgs,
   type ModelStreamEvent,
   type ModelTextResult,
@@ -151,7 +152,11 @@ export const webSearchToolEntry: ToolEntry = {
     riskLevel: "low",
     needsApproval: false,
   },
-  handler: webSearchHandler as ToolHandler,
+  // 网络观测相位标注（specs/runtime-network-capture.md）：同 webfetch 的理由。
+  handler: ((input, context) =>
+    runWithNetworkCapturePhase("websearch", () =>
+      (webSearchHandler as ToolHandler)(input, context),
+    )) as ToolHandler,
   formatModelContent: formatWebSearchModelContent,
   inputSchema: WebSearchInputJsonSchema,
   outputSchema: WebSearchOutputJsonSchema,

@@ -5,6 +5,7 @@ import { collectFacadeMisuse } from "./facade-misuse.js";
 import { collectWorldRunCommands } from "./world-run.js";
 import { collectArtifactDeclarations, type DeclaredArtifact } from "./artifacts.js";
 import { collectPhaseMarkerDiagnostics } from "./phases.js";
+import { collectHoleDiagnostics } from "./holes.js";
 import { collectDuplicateActorNames, FANOUT_ACTOR_NAME_CODE } from "./actor-names.js";
 import { interpret } from "./interpret.js";
 import { projectSiteGraph } from "./graph.js";
@@ -87,6 +88,7 @@ export function analyzeWorkflowScript(scriptText: string): AnalyzeResult {
     ...worldRun.diagnostics,
     ...artifacts.diagnostics,
     ...collectPhaseMarkerDiagnostics(workflow, table),
+    ...collectHoleDiagnostics(workflow, table),
     ...collectDuplicateActorNames(workflow, table),
   ];
   // fan-out 里的静态 actor 名（9006）是这批里唯一**不扣下图**的一条：它说的是这个脚本跑起来

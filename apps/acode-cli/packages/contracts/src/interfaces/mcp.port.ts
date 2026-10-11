@@ -20,6 +20,14 @@ export interface McpServerConfigBase {
   /** 仅限宿主生成，公共配置 schema 会拒绝该字段。 */
   source?: McpServerRuntimeSource;
   timeoutMs?: number;
+  /**
+   * 允许该 server 发起 sampling/createMessage（specs/mcp-sampling-resources.md）。
+   * 缺省 false = 不声明 capability，fail-closed。⚠ 当前 SDK 在 2026-07-28 协议纪元已把
+   * sampling 标记 deprecated（elicitation 是后继面）——消费面落地前先按 spec 立项对齐。
+   */
+  sampling?: boolean;
+  /** 把该 server 的 resources 暴露为拉取工具（list/read）。缺省 false。 */
+  resources?: boolean;
 }
 
 export interface McpClientCredentialsOAuthConfig {
@@ -287,6 +295,22 @@ export interface OfficialMcpTrustedOriginRegistry {
   }>;
 }
 
+/** 一个 MCP 资源的清单条目（resources/list 的投影；specs/mcp-sampling-resources.md）。 */
+export interface McpResourceDescriptor {
+  uri: string;
+  name?: string;
+  mimeType?: string;
+  description?: string;
+}
+
+/** resources/read 的结果：文本与 base64 二选一（二进制资源走 base64）。 */
+export interface McpReadResourceResult {
+  uri: string;
+  mimeType?: string;
+  text?: string;
+  base64?: string;
+}
+
 export interface McpPort {
   connectConfiguredServers(
     servers: Record<string, McpServerConfig>,
@@ -304,6 +328,17 @@ export interface McpPort {
    * 只有显式 ping 才能把这种"无声死亡"暴露出来。实现可选：未实现时调用方按存活处理。
    */
   pingServer?(name: string, options?: { timeoutMs?: number }): Promise<boolean>;
+  /**
+   * 资源拉取面（specs/mcp-sampling-resources.md）：仅对 `resources: true` 的 server 注册
+   * 拉取工具；实现可选（旧 adapter 缺席时 core 不注册资源工具）。订阅/推送不在本面——
+   * 拉取语义先立住。list 上限 200 条由调用方裁剪。
+   */
+  listResources?(name: string, options?: { timeoutMs?: number }): Promise<McpResourceDescriptor[]>;
+  readResource?(
+    name: string,
+    uri: string,
+    options?: { timeoutMs?: number },
+  ): Promise<McpReadResourceResult | undefined>;
   status(): Promise<Record<string, McpServerStatus>>;
   listTools(): Promise<McpToolDescriptor[]>;
   callTool(request: McpCallToolRequest, options?: McpCallToolOptions): Promise<McpToolCallResult>;

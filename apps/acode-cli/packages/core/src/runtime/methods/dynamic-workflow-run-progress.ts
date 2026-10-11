@@ -5,6 +5,7 @@ import {
 } from "../deps.js";
 import {
   formatWorkflowEscalationNotification,
+  formatWorkflowHoleWaitingNotification,
   formatWorkflowStallNotification,
 } from "../../runtime-task/contract.js";
 import type { AgentRuntimeInternal } from "../internal.js";
@@ -37,6 +38,67 @@ export async function recordDynamicWorkflowRunProgress(
   );
   notifyEscalationRaised.call(this, payload, traceContext);
   notifyRunStalled.call(this, payload, traceContext);
+  notifyHoleWaiting.call(this, payload, traceContext);
+}
+
+/** hole 停靠的事件种类（引擎的 `RunEvent.type`，经进度载荷的 `eventType` 到达）。 */
+const HOLE_REACHED_EVENT_TYPE = "hole-reached";
+
+/**
+ * `hole-reached` → 一条模型可见的中途唤醒通知（specs/workflow-hole-wake.md）。
+ *
+ * 与 escalation/stall 同层同纪律：进度汇是唯一同时看得见 run 事件与 AgentRuntime 的
+ * 地方；每个 reached 恰好一条（引擎每 reach 只发一次进度事件）；不催办，丢弃兜底是
+ * GetWorkflowRun 的 pendingHoles 查询；绝不抛异常（载荷跨端口又被有界化裁剪过）。
+ * 在飞回合收到它当作 run 中情报（可立即填）；空闲会话由通知管线自动开轮——
+ * 这正是 wake 缺口要的语义，不新建 turn 启动路径。
+ */
+function notifyHoleWaiting(
+  this: AgentRuntimeInternal,
+  payload: DynamicWorkflowRunProgressPayload,
+  traceContext: TraceContext,
+): void {
+  if (payload.eventType !== HOLE_REACHED_EVENT_TYPE) return;
+  const holeId = stringField(payload.payload, "holeId");
+  const stage = stringField(payload.payload, "stage");
+  const prompt = stringField(payload.payload, "prompt");
+  const ordinalRaw = payload.payload.ordinal;
+  const ordinal =
+    typeof ordinalRaw === "number" && Number.isFinite(ordinalRaw) ? Math.floor(ordinalRaw) : 0;
+  if (holeId === undefined || stage === undefined || prompt === undefined) {
+    this.logger?.warn?.("Dynamic workflow hole-waiting notification skipped: malformed payload", {
+      event: "dynamic_workflow.hole_waiting.notification_skipped",
+      module: "core.runtime",
+      runId: payload.runId,
+      sequence: payload.sequence,
+    });
+    return;
+  }
+  const runLabel = this.runtimeTaskRegistry.get(payload.runId)?.description ?? payload.runId;
+  this.enqueueBackgroundTaskNotification({
+    originMeta: {
+      backgroundSource: "workflow",
+      title: runLabel,
+      workId: payload.runId,
+      workflowNotification: {
+        kind: "hole-waiting",
+        holeId: holeId.slice(0, 80),
+        ordinal,
+        stage: stage.slice(0, 4000),
+        prompt: prompt.slice(0, 4000),
+      },
+    },
+    taskId: payload.runId,
+    text: formatWorkflowHoleWaitingNotification({
+      runLabel,
+      runId: payload.runId,
+      holeId,
+      ordinal,
+      stage,
+      prompt,
+    }),
+    traceContext,
+  });
 }
 
 /** run 级停滞的事件种类（引擎的 `RunEvent.type`）。 */

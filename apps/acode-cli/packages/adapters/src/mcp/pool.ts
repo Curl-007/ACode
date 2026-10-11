@@ -394,6 +394,20 @@ export function createMcpConnectionPool(options: McpConnectionPoolOptions): McpC
         if (!entry) return false;
         return (await entry.adapter.pingServer?.(serverName, pingOptions)) ?? true;
       },
+      // 资源拉取面（specs/mcp-sampling-resources.md）：与 pingServer 同款 lease 查找；
+      // adapter 未实现（旧装配）时回空表/undefined，由 core 的工具面如实呈现。
+      async listResources(serverName: string, listOptions?: { timeoutMs?: number }) {
+        const key = leased.get(serverName);
+        const entry = key ? entries.get(key) : undefined;
+        if (!entry) return [];
+        return (await entry.adapter.listResources?.(serverName, listOptions)) ?? [];
+      },
+      async readResource(serverName: string, uri: string, readOptions?: { timeoutMs?: number }) {
+        const key = leased.get(serverName);
+        const entry = key ? entries.get(key) : undefined;
+        if (!entry) return undefined;
+        return await entry.adapter.readResource?.(serverName, uri, readOptions);
+      },
       async status(): Promise<Record<string, McpServerStatus>> {
         return (await snapshot()).statuses;
       },

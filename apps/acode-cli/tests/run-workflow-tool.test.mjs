@@ -28,6 +28,8 @@ function makeRegistry() {
   };
 }
 
+// dwf 的门控名单（workflow-tool-names.ts）。挖洞-填充（specs/workflow-holes.md）把
+// FillWorkflowHole 加进 dwf 名单后为十一个；名字集合在此钉住，扩容必须连这里一起改。
 const DWF_TEN = [
   "CreateWorkflow",
   "AmendWorkflow",
@@ -39,6 +41,7 @@ const DWF_TEN = [
   "GetWorkflowRun",
   "ResumeWorkflowRun",
   "ResolveWorkflowQuestion",
+  "FillWorkflowHole",
 ];
 
 // ---------------------------------------------------------------------------
@@ -102,7 +105,7 @@ test("R7: 端口门——只有 includeWorkflow === true 才注册", async () =>
   assert.ok(present.entries.has("RunWorkflow"), "端口在场即注册");
 });
 
-test("R7: 灰度门——显式 false 下架 RunWorkflow 与 dwf 十个；缺席全部保留", async () => {
+test("R7: 灰度门——显式 false 下架 RunWorkflow 与 dwf 十一个；缺席全部保留", async () => {
   const { registerBuiltInTools } = await import(`${CORE}/tool/handlers/index.ts`);
 
   // 灰度关：十一个一起消失。两套系统共用同一道可用性开关，一开一关会让
@@ -128,19 +131,23 @@ test("R7: 灰度门——显式 false 下架 RunWorkflow 与 dwf 十个；缺席
   }
 });
 
-test("R7: 门控名单 = dwf 十个 + RunWorkflow，且 dwf 那份语义未被扩容", async () => {
+test("R7: 门控名单 = dwf 十一个 + RunWorkflow，且 dwf 那份语义未被静默扩容", async () => {
   const { DYNAMIC_WORKFLOW_TOOL_NAMES, GATED_WORKFLOW_TOOL_NAMES } = await import(
     `${CORE}/tool/handlers/workflow-tool-names.ts`
   );
 
-  assert.equal(DYNAMIC_WORKFLOW_TOOL_NAMES.size, 10, "dwf 恒为十个：多处注释按这个含义引用它");
+  assert.equal(
+    DYNAMIC_WORKFLOW_TOOL_NAMES.size,
+    11,
+    "dwf 恒为十一个（FillWorkflowHole 随挖洞-填充入列）：多处注释按这个含义引用它",
+  );
   for (const name of DWF_TEN) assert.ok(DYNAMIC_WORKFLOW_TOOL_NAMES.has(name), name);
   assert.ok(
     !DYNAMIC_WORKFLOW_TOOL_NAMES.has("RunWorkflow"),
-    "RunWorkflow 不属于 dwf 那十个（它是另一套系统）",
+    "RunWorkflow 不属于 dwf 那十一个（它是另一套系统）",
   );
 
-  assert.equal(GATED_WORKFLOW_TOOL_NAMES.size, 11);
+  assert.equal(GATED_WORKFLOW_TOOL_NAMES.size, 12);
   assert.ok(GATED_WORKFLOW_TOOL_NAMES.has("RunWorkflow"));
   for (const name of DWF_TEN) assert.ok(GATED_WORKFLOW_TOOL_NAMES.has(name), name);
 });

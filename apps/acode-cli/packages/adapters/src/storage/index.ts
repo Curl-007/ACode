@@ -24,6 +24,8 @@ import { maybeThrowStorageFsFault } from "./fs-fault-injection.js";
 
 export * from "./session-store.js";
 export * from "./session-store/repositories/workflow-run-owner.js";
+// 对话内可视化片段（::visualize）的磁盘 + 注册表 store（specs/gen-ui-visualize.md）。
+export * from "./visualization-fragment-store.js";
 
 // 内存 event store 实现已下沉到 @acode/contracts，
 // 这里保持 `@acode/adapters/storage` 的导出路径不变，避免调用方改 import。

@@ -16,6 +16,7 @@ import {
   Globe2,
   Cable,
   WandSparkles,
+  Workflow,
   Keyboard,
   FileSearch,
   ShieldCheck,
@@ -102,6 +103,14 @@ const BASE_SETTINGS_SECTIONS: SettingsSectionDefinition[] = [
     id: "skill",
     icon: WandSparkles,
     titleId: "settings.skills.title",
+    groupId: "agentCapabilities",
+  },
+  // 动态工作流紧跟「技能」：它的灰度门同时决定 dynamic-workflows 内置技能与十个创作工具的
+  // 可见性（dynamic-workflow-availability.md R7 的减法面），用户在同一处理解两者的关系。
+  {
+    id: "dynamicWorkflow",
+    icon: Workflow,
+    titleId: "settings.dynamicWorkflow.title",
     groupId: "agentCapabilities",
   },
   {

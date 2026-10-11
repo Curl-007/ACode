@@ -172,6 +172,14 @@ export type ACodeAgentMcpServer =
       isolation?: "session" | "workspace";
       protocolVersion?: "legacy" | "auto" | "2026-07-28";
       timeoutMs?: number;
+      /**
+       * 允许该 server 发起 sampling/createMessage（server→client 的模型采样）。
+       * 缺省 false = 不声明 capability（SDK 层拒绝），fail-closed。
+       * 见 apps/acode-cli/specs/mcp-sampling-resources.md。
+       */
+      sampling?: boolean;
+      /** 把该 server 的 resources 暴露为拉取工具（list/read）。缺省 false。 */
+      resources?: boolean;
     }
   | {
       name: string;
@@ -182,6 +190,10 @@ export type ACodeAgentMcpServer =
       headers: Array<{ name: string; value: string }>;
       oauth?: McpOAuthConfig;
       timeoutMs?: number;
+      /** 同上：缺省 false，fail-closed。 */
+      sampling?: boolean;
+      /** 同上：缺省 false。 */
+      resources?: boolean;
     };
 
 export interface McpClientCredentialsOAuthConfig {
@@ -305,6 +317,10 @@ export function convertToACodeAgentMcpServer(
       ...(isMcpProtocolVersion(config.protocolVersion)
         ? { protocolVersion: config.protocolVersion }
         : {}),
+      // sampling/resources 开关（specs/mcp-sampling-resources.md）：只在显式 true 时透传，
+      // 缺省 false = fail-closed（不声明 capability / 不注册资源工具）。
+      ...(config.sampling === true ? { sampling: true } : {}),
+      ...(config.resources === true ? { resources: true } : {}),
     };
   } else if (config.url && inferredType) {
     const normalizedType: "http" | "sse" = inferredType === "sse" ? "sse" : "http";
@@ -323,6 +339,8 @@ export function convertToACodeAgentMcpServer(
       // HTTP/SSE MCP 与 stdio 一样需要保留超时配置，避免 UI 保存后真实 session 丢字段。
       ...(isValidMcpTimeoutMs(config.timeoutMs) ? { timeoutMs: config.timeoutMs } : {}),
       ...(isMcpIsolation(config.isolation) ? { isolation: config.isolation } : {}),
+      ...(config.sampling === true ? { sampling: true } : {}),
+      ...(config.resources === true ? { resources: true } : {}),
       ...(isMcpProtocolVersion(config.protocolVersion)
         ? { protocolVersion: config.protocolVersion }
         : {}),

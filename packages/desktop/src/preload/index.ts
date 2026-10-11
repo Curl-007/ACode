@@ -66,6 +66,7 @@ import type {
   CreateTempTextAttachmentRequest,
   OpenCuaPermissionOnboardingOptions,
 } from "@acode/shared";
+import type { PlatformChannelMap } from "@acode/shared";
 import { InternalChannels, PlatformChannels, formatACodeRendererProcessName } from "@acode/shared";
 import { createOAuthCallbackHandler } from "./oauthCallbackBridge.js";
 const updateReadyCallbacks = new Set<(version: string) => void>();
@@ -82,6 +83,17 @@ const WINDOWS_TITLE_BAR_HEIGHT_PX = 48;
 const DESKTOP_ZOOM_FACTOR_STEP = 1.1;
 const DESKTOP_ZOOM_MIN_LEVEL = -3;
 const DESKTOP_ZOOM_MAX_LEVEL = 5;
+
+// 站点权限/物化的载荷类型在 shared/platform.ts，未从 @acode/shared 入口再导出；
+// 经由已导出的 PlatformChannelMap 对同名通道索引派生（desktopMainIpcPlatform.ts 先例）。
+type EmbeddedBrowserPermissionPromptPayload =
+  PlatformChannelMap[(typeof PlatformChannels)["EmbeddedBrowserPermissionPrompt"]]["request"];
+type EmbeddedBrowserPermissionResolvePayload =
+  PlatformChannelMap[(typeof PlatformChannels)["EmbeddedBrowserPermissionResolve"]]["request"];
+type EmbeddedBrowserSitePermissionDecision =
+  PlatformChannelMap[(typeof PlatformChannels)["GetEmbeddedBrowserSitePermissions"]]["response"]["permissions"][string][string];
+type MaterializeWorkflowArtifactFilePayload =
+  PlatformChannelMap[(typeof PlatformChannels)["MaterializeWorkflowArtifactFile"]]["request"];
 let latestWindowControlsOverlayMetrics: WindowControlsOverlayMetrics | null = null;
 let latestDesktopZoomLevel = 0;
 
@@ -270,6 +282,35 @@ contextBridge.exposeInMainWorld("acode", {
   /** 长文本粘贴落盘为真正的本地附件，避免正文和 prompt payload 被撑大 */
   createTempTextAttachment: (payload: CreateTempTextAttachmentRequest) =>
     ipcRenderer.invoke(PlatformChannels.CreateTempTextAttachment, payload),
+  // ── workflow artifact 物化（specs/workflow-artifact-materialization.md）──
+  /** 把 renderer 已持有的产物字节物化为本地文件并返回路径；「在文件夹中显示」复用 openInFileManager */
+  materializeWorkflowArtifactFile: (payload: MaterializeWorkflowArtifactFilePayload) =>
+    ipcRenderer.invoke(PlatformChannels.MaterializeWorkflowArtifactFile, payload),
+  // ── 嵌入式浏览器站点权限（specs/embedded-browser-site-permissions.md）──
+  /** 读取站点权限持久表（设置页管理面） */
+  getEmbeddedBrowserSitePermissions: (): Promise<{
+    permissions: Record<string, Record<string, EmbeddedBrowserSitePermissionDecision>>;
+  }> => ipcRenderer.invoke(PlatformChannels.GetEmbeddedBrowserSitePermissions),
+  /** 重置某 origin 的某权限记录（下次请求重新弹窗） */
+  resetEmbeddedBrowserSitePermission: (payload: { origin: string; permission: string }) =>
+    ipcRenderer.invoke(PlatformChannels.ResetEmbeddedBrowserSitePermission, payload),
+  /** 清空全部站点权限 */
+  clearEmbeddedBrowserSitePermissions: (): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke(PlatformChannels.ClearEmbeddedBrowserSitePermissions),
+  /** 订阅 main 推送的未决权限请求弹窗，返回 disposer */
+  onEmbeddedBrowserPermissionPrompt: (
+    callback: (payload: EmbeddedBrowserPermissionPromptPayload) => void,
+  ): (() => void) => {
+    const handler = (_event: unknown, payload: unknown) =>
+      callback(payload as EmbeddedBrowserPermissionPromptPayload);
+    ipcRenderer.on(PlatformChannels.EmbeddedBrowserPermissionPrompt, handler);
+    return () =>
+      ipcRenderer.removeListener(PlatformChannels.EmbeddedBrowserPermissionPrompt, handler);
+  },
+  /** 弹窗应答（单向 send：main 对未知/过期 requestId 按 deny-once 结算） */
+  resolveEmbeddedBrowserPermission: (payload: EmbeddedBrowserPermissionResolvePayload) => {
+    ipcRenderer.send(PlatformChannels.EmbeddedBrowserPermissionResolve, payload);
+  },
   /** 订阅当前窗口内远程连接过程日志，返回 disposer */
   onRemoteConnectionLog: (callback: (entry: RemoteConnectionRuntimeLog) => void) => {
     const handler = (_event: unknown, payload: unknown) =>

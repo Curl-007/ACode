@@ -71,6 +71,15 @@ export const workflowNotificationMetaSchema = z.discriminatedUnion("kind", [
     reason: z.string().max(64).optional(),
     cap: z.number().int().nonnegative().optional(),
   }),
+  // hole 停靠中途唤醒（specs/workflow-hole-wake.md）：每个 hole-reached 至多一条。
+  // 字段界与 workflowRunPendingHoleSchema 同源（holeId≤80 / stage,prompt≤maxQuestionLength）。
+  z.object({
+    kind: z.literal("hole-waiting"),
+    holeId: z.string().min(1).max(80),
+    ordinal: z.number().int().nonnegative(),
+    stage: z.string().min(1).max(4000),
+    prompt: z.string().min(1).max(4000),
+  }),
 ]);
 export type WorkflowNotificationMeta = z.infer<typeof workflowNotificationMetaSchema>;
 

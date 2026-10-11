@@ -8,6 +8,7 @@ import {
 } from "@acode/shared";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs.js";
 import { useACodeIntl } from "@/i18n/index.js";
+import { NetworkSection, type ResourceManagerNetworkBridge } from "./NetworkSection.js";
 import { StorageSection } from "./storage/StorageSection.js";
 import { UNSAMPLED_PLACEHOLDER, UsageGroup, UsageMeter } from "./resourceUsageParts.js";
 import {
@@ -24,17 +25,23 @@ export interface ResourceManagerAppProps {
   setSamplingActive?: (active: boolean) => void;
   /** 存储管理桥（window.resourceManager.storage）；缺省时「存储」tab 显示接口不可用 */
   storage?: StorageManagementBridge;
+  /**
+   * 网络观测桥（window.resourceManager.network）；缺省时「网络」tab 显示接口不可用。
+   * 形状是局部类型（desktop 侧挂载点传入），见 NetworkSection.tsx 头注释。
+   */
+  network?: ResourceManagerNetworkBridge;
   refreshIntervalMs?: number;
   /** 初始 tab，默认 CPU */
   initialTab?: ResourceManagerTab;
 }
 
-export type ResourceManagerTab = "cpu" | "memory" | "storage";
-const RESOURCE_MANAGER_TABS: ResourceManagerTab[] = ["cpu", "memory", "storage"];
+export type ResourceManagerTab = "cpu" | "memory" | "storage" | "network";
+const RESOURCE_MANAGER_TABS: ResourceManagerTab[] = ["cpu", "memory", "storage", "network"];
 const TAB_LABEL_IDS: Record<ResourceManagerTab, string> = {
   cpu: "resourceManager.cpu",
   memory: "resourceManager.memory",
   storage: "resourceManager.storage",
+  network: "resourceManager.network.tab",
 };
 
 const DEFAULT_REFRESH_INTERVAL_MS = 1_000;
@@ -52,13 +59,15 @@ export function ResourceManagerApp({
   getSnapshot,
   setSamplingActive,
   storage,
+  network,
   refreshIntervalMs = DEFAULT_REFRESH_INTERVAL_MS,
   initialTab = "cpu",
 }: ResourceManagerAppProps) {
   const { intl } = useACodeIntl();
   const [tab, setTab] = useState<ResourceManagerTab>(initialTab);
-  // CPU / 内存共用一份进程快照；存储 tab 激活时停止轮询，避免和扫盘争抢 IO。
-  const pollingActive = tab !== "storage";
+  // CPU / 内存共用一份进程快照；存储与网络 tab 激活时停止轮询（存储避免和扫盘争抢 IO，
+  // 网络自带事件订阅、不需要快照）。
+  const pollingActive = tab !== "storage" && tab !== "network";
   const [snapshot, setSnapshot] = useState<ResourceUsageSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Record<ResourceUsageCategory, boolean>>({
@@ -149,6 +158,8 @@ export function ResourceManagerApp({
       <div className="min-h-0 flex-1 overflow-auto bg-background-alt p-4">
         {tab === "storage" ? (
           <StorageSection bridge={storage} active={tab === "storage"} />
+        ) : tab === "network" ? (
+          <NetworkSection bridge={network} active={tab === "network"} />
         ) : (
           <UsageTabContent
             metric={tab}

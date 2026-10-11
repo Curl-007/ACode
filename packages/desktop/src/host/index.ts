@@ -49,6 +49,7 @@ import {
   type HostApiNetworkTransport,
 } from "@acode/services/node";
 import { createHostResourceUsageResponder } from "./hostResourceUsage.js";
+import { createHostNetworkCaptureForwarder } from "./hostNetworkCapture.js";
 import {
   HostMessageTypes,
   HostResponseTypes,
@@ -948,6 +949,21 @@ const hostResourceUsageResponder = createHostResourceUsageResponder({
   getAgentService: () => activeServices?.getOptional(IACodeAgentService),
   postMessage: (message) => parentPort?.postMessage(message),
 });
+// 网络抓包转发：服务集合激活后订阅 agent 观测事件镜像给 main；dispose 时退订。
+// workspace 目标取 InitLocal 携带的值（路由 v4 开关命令到本 host 名下的 agent runtime）。
+let activeHostWorkspaceTarget: { workspacePath: string; workspaceIdentity?: string; remoteSessionId?: string } | null =
+  null;
+const hostNetworkCaptureForwarder = createHostNetworkCaptureForwarder({
+  getAgentService: () => activeServices?.getOptional(IACodeAgentService),
+  getWorkspaceTarget: () => activeHostWorkspaceTarget,
+  postMessage: (message) => parentPort?.postMessage(message),
+  logger: {
+    warn: (message, detail) => {
+      reportHostLog("warn", [message, detail].filter((part) => part !== undefined));
+    },
+  },
+});
+let stopHostNetworkCaptureForwarding: (() => void) | null = null;
 let activeSessionRealtimePort: ReturnType<typeof createTaskRealtimeBridgeForHostInit> = null;
 let hasDisposedHostResources = false;
 let disposeHostResourcesInFlight: Promise<HostShutdownResult> | null = null;
@@ -1488,6 +1504,8 @@ async function disposeHostResources(reason: string): Promise<HostShutdownResult>
 
     const servicesToDispose = activeServices;
     activeServices = null;
+    stopHostNetworkCaptureForwarding?.();
+    stopHostNetworkCaptureForwarding = null;
     // Registry 是全部远端 connection 的唯一 owner；释放失败不能阻塞本地服务继续收口。
     const shutdownResult = await runHostShutdownPhases(
       [
@@ -1556,6 +1574,8 @@ function disposeHostResourcesBestEffort(reason: string): void {
     } finally {
       activeServices = null;
       activeHostApiNetworkTransport = null;
+      stopHostNetworkCaptureForwarding?.();
+      stopHostNetworkCaptureForwarding = null;
     }
   }
 
@@ -1649,6 +1669,10 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
   }
   if (msg.type === HostMessageTypes.ResourceUsageSnapshotCancel) {
     hostResourceUsageResponder.cancelRequest(msg.requestId);
+    return;
+  }
+  if (msg.type === HostMessageTypes.NetworkCaptureSetEnabledRequest) {
+    void hostNetworkCaptureForwarder.handleSetEnabled(msg);
     return;
   }
 
@@ -2136,6 +2160,14 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
   }
 
   if (msg.type === HostMessageTypes.InitLocal) {
+    // 网络抓包开关命令按 workspace 路由：记下本 host 的 workspace 目标（spec 的
+    // Workspace Identity 纪律——identity 优先、路径兜底）。
+    activeHostWorkspaceTarget = msg.workspacePath
+      ? {
+          workspacePath: msg.workspacePath,
+          ...(msg.workspaceIdentity ? { workspaceIdentity: msg.workspaceIdentity } : {}),
+        }
+      : null;
     if (!port) {
       logger.error("init-local message missing MessagePort");
       return;
@@ -2243,6 +2275,9 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
             });
             activeServices = initializedServices;
             activeHostApiNetworkTransport = hostApiNetworkTransport;
+            // 服务就绪才可能订阅成功；重复激活时先退订上一轮（Event 订阅是进程级的）。
+            stopHostNetworkCaptureForwarding?.();
+            stopHostNetworkCaptureForwarding = hostNetworkCaptureForwarder.startForwarding();
             return initializedServices;
           },
         });

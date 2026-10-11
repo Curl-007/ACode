@@ -47,6 +47,7 @@ import { respondToCoordinatorToolEntry } from "./respond-to-coordinator.js";
 import { createSubmitResultToolEntry, submitResultToolEntry } from "./submit-result.js";
 import { escalateToolEntry } from "./escalate.js";
 import { resolveWorkflowQuestionToolEntry } from "./resolve-workflow-question.js";
+import { fillWorkflowHoleToolEntry } from "./fill-workflow-hole.js";
 import { taskOutputToolEntry } from "./task-output.js";
 import { taskStopToolEntry } from "./task-stop.js";
 import { readSessionContextToolEntry } from "./read-session-context.js";
@@ -64,6 +65,8 @@ import { resumeWorkflowRunToolEntry } from "./resume-workflow-run.js";
 import { runWorkflowToolEntry } from "./run-workflow.js";
 import { GATED_WORKFLOW_TOOL_NAMES } from "./workflow-tool-names.js";
 import { sessionSearchToolEntry } from "./session-search.js";
+// 对话内可视化写入工具：技能门 visualize，落点会话存储（specs/gen-ui-visualize.md）。
+import { writeVisualizationFragmentToolEntry } from "./write-visualization-fragment.js";
 import { createOpenToolEntry, type OpenPlatformPort } from "./open.js";
 import { createPlanCompleteGateToolEntry } from "./plan-complete-gate.js";
 import { createPlanControlToolEntry } from "./plan-control.js";
@@ -115,6 +118,8 @@ export const builtInTools: ToolEntry[] = [
   // 跨会话全文搜索（K4）：本地只读、无 gate，与 ReadSessionContext 同级——
   // 都消费 sessionStore 面且不产生副作用，handler 运行时经 context 取存储能力。
   sessionSearchToolEntry,
+  // 对话内可视化片段写入（specs/gen-ui-visualize.md）：技能门 visualize；只写会话存储。
+  writeVisualizationFragmentToolEntry,
   agentToolEntry,
   taskToolEntry,
   skillToolEntry,
@@ -137,6 +142,9 @@ export const builtInTools: ToolEntry[] = [
   // 同一个 dwf run 端口、同款 typeof 探测失败。与它们的不同点在下游：它进 actor 会话的
   // 禁用名单（bootstrap 的 workflowActorToolPolicy），子代理不许替主代理作答。
   resolveWorkflowQuestionToolEntry,
+  // 挖洞-填充的主代理侧（specs/workflow-holes.md）：与 ResolveWorkflowQuestion 同族，
+  // 同样进 actor 禁用名单（洞欠的是主代理的代码；splice 后要过确认窗，child 无窗可弹）。
+  fillWorkflowHoleToolEntry,
   // 定义清单（与上面两个 run 工具是两件事：那是历史，这是可跑的东西）。同为只读、无 gate。
   listSavedWorkflowsToolEntry,
   // 模型目录：同为只读、无 gate 的发现面，服务于 CreateWorkflow / AmendWorkflow 的

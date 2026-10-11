@@ -3,6 +3,8 @@ import {
   executionOutputPreviewSchema,
 } from "@acode/shared/acode-protocol-v4";
 import { ExecuteOutput } from "@/ToolCallBlocks/renderers/ExecuteOutput.js";
+// 命令折叠区拆在兄弟文件（max-file-lines 门）；阈值纯函数也从那里再导出供单测。
+import { ExecuteCommandArea, executeCommandNeedsCollapse } from "./execute-command-area.js";
 import { SquareTerminalIcon } from "lucide-react";
 import { useCallback, useMemo } from "react";
 import { useACodeIntl } from "@/i18n/IntlProvider.js";
@@ -297,14 +299,7 @@ export function ExecuteToolCallBlock(context: ToolCallBlockRenderContext) {
   const renderContent = useCallback(
     () => (
       <div className="space-y-3 mb-2 rounded-xl border border-border bg-panel px-4 py-3">
-        <div className="space-y-1">
-          <div className="flex items-start gap-2 font-sans text-ui-base text-foreground">
-            <span className="shrink-0 text-foreground-subtle">$</span>
-            <pre className="min-w-0 flex-1 block max-h-15 overflow-over truncate whitespace-pre-wrap break-words">
-              {contentParts.executionCommand}
-            </pre>
-          </div>
-        </div>
+        <ExecuteCommandArea command={contentParts.executionCommand} />
 
         {outputPreview || failureVisibleText || resultText ? (
           <ExecuteOutput

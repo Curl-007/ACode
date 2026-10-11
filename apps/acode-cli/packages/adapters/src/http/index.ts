@@ -10,6 +10,7 @@ import { ProxyAgent } from "proxy-agent";
 import {
   createHttpClientError,
   isHttpClientPortError,
+  recordNetworkCaptureObservation,
   type HttpClientEgressInfo,
   type HttpClientPort,
   type HttpClientRequest,
@@ -199,6 +200,19 @@ function fetchHttpResponse(
     : undefined;
 
   return new Promise((resolve, reject) => {
+    // 自定义传输分支（代理 / 自定义 CA / public egress DNS 预检）不经过 global fetch，
+    // 进程级 fetch 包装看不见它：观测在分支点补记，与 plain 分支（全局包装记）互斥分工，
+    // 一个请求恰好一行（2026-10-11 实机：WebFetch 行缺失即因该分支绕过包装）。
+    const captureStartedAt = Date.now();
+    const finishCapture = (status: number | null): void => {
+      recordNetworkCaptureObservation({
+        method: request.method ?? "GET",
+        url: url.toString(),
+        status,
+        startedAt: captureStartedAt,
+        durationMs: Date.now() - captureStartedAt,
+      });
+    };
     const requestOptions: http.RequestOptions = {
       agent,
       headers: headersToOutgoing(headers),
@@ -226,6 +240,7 @@ function fetchHttpResponse(
           }
         }
 
+        finishCapture(message.statusCode ?? 502);
         resolve(
           new Response(Readable.toWeb(message) as ReadableStream<Uint8Array>, {
             headers: responseHeaders,
@@ -236,7 +251,10 @@ function fetchHttpResponse(
       },
     );
 
-    clientRequest.once("error", reject);
+    clientRequest.once("error", (error) => {
+      finishCapture(null);
+      reject(error);
+    });
     clientRequest.end(request.body ? Buffer.from(request.body) : undefined);
   });
 }

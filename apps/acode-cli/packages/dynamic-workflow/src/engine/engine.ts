@@ -29,6 +29,7 @@ import {
   rememberArtifactRow,
 } from "./engine-artifacts.js";
 import { publishReport } from "./engine-report.js";
+import { parkHole, withdrawParkedHoles } from "./engine-hole.js";
 import { closeImportCache, readWorld, recoverImportClosure } from "./engine-world.js";
 import { recoverSettleOrder, ReplaySettleOrder } from "./replay-order.js";
 import { settleCompleted, settleFailed, settleStopped } from "./engine-settlement.js";
@@ -164,6 +165,11 @@ export class WorkflowEngine implements WorkflowHostApi, WorkflowReportSink {
   private readonly artifacts = new Map<string, ArtifactIdState>();
   /** 内容 artifact 的按 id admission tails，防止异步 store 写入之间重复分配版本。 */
   private readonly artifactPublishTails = new Map<string | symbol, Promise<void>>();
+  /**
+   * 停靠中的洞（挖洞-填充）的 rejector 表（键 `holeId`）。登记在 parkHole，撤下在
+   * markSettled 的钩子——见 engine-state.ts 的 {@link ParkedHoles}。
+   */
+  private readonly parkedHoles = new Map<string, (error: WorkflowError) => void>();
   /** 累计 token 用量（观察面：只记账、只广播，永远不会让 run 失败）。 */
   private spentTokens = 0;
   private runSettled = false;
@@ -203,6 +209,7 @@ export class WorkflowEngine implements WorkflowHostApi, WorkflowReportSink {
       journal: this.journal,
       artifacts: this.artifacts,
       artifactPublishTails: this.artifactPublishTails,
+      parkedHoles: this.parkedHoles,
       importedCache: this.importedCache,
       importedWorld: this.importedWorld,
       isRunSettled: () => this.runSettled,
@@ -224,6 +231,8 @@ export class WorkflowEngine implements WorkflowHostApi, WorkflowReportSink {
       markSettled: (failure) => {
         this.runSettled = true;
         if (failure !== undefined) this.runFailure = failure;
+        // 撤下停驻中的洞（挖洞-填充，见 engine-hole.ts 的 withdrawParkedHoles）。
+        withdrawParkedHoles(this.parkedHoles, failure);
         // 闸门随结算永久打开：还挂在次序表上的释放动作一律放掉，否则脚本那侧的 promise
         // 永不兑现（沙箱会被关掉，但同进程跑脚本的装配就此挂死）。
         this.replaySettleOrder.open();
@@ -492,6 +501,15 @@ export class WorkflowEngine implements WorkflowHostApi, WorkflowReportSink {
   /** 发布一条中间结果（Boundary A 的 `report`）：方法体在 engine-report.ts 的 publishReport。 */
   report(siteId: string, item: unknown, artifactId?: string): void {
     publishReport(this.state, siteId, item, artifactId);
+  }
+
+  /**
+   * 停靠在一个洞站点（Boundary A 的 `hole`，挖洞-填充）：方法体在 engine-hole.ts 的
+   * {@link parkHole}。**不写 dwf_node 行、不消费 driver**——停靠没有可执行的东西；
+   * fill 不回到这次调用（supersede 链），promise 挂到结算被撤下钩子拒绝。
+   */
+  hole(siteId: string, stage: string, prompt: string, askedAt: number): Promise<never> {
+    return parkHole(this.state, siteId, stage, prompt, askedAt);
   }
 
   /**

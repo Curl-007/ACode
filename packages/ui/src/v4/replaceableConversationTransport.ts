@@ -176,6 +176,12 @@ export class ReplaceableConversationTransport implements ConversationTransport {
     return this.current.workflowRunArtifactRead(params);
   }
 
+  visualizationRead(
+    params: Parameters<ConversationTransport["visualizationRead"]>[0],
+  ): ReturnType<ConversationTransport["visualizationRead"]> {
+    return this.current.visualizationRead(params);
+  }
+
   // dwf 脚本 transcript 的两条读面。
   workflowRunWorkspace(
     params: Parameters<ConversationTransport["workflowRunWorkspace"]>[0],

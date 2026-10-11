@@ -7,6 +7,8 @@ import type {
   V4ConversationWorkflowRunArtifactDataResult,
   V4ConversationWorkflowRunArtifactReadParams,
   V4ConversationWorkflowRunArtifactReadResult,
+  V4ConversationVisualizationReadParams,
+  V4ConversationVisualizationReadResult,
   V4ConversationWorkflowRunArtifactsParams,
   V4ConversationWorkflowRunArtifactsResult,
   V4ConversationWorkflowRunEventsParams,
@@ -27,6 +29,7 @@ export function createWorkflowRunTransportMethods(input: {
     | "conversationWorkflowRunArtifactsV4"
     | "conversationWorkflowRunArtifactDataV4"
     | "conversationWorkflowRunArtifactReadV4"
+    | "conversationVisualizationReadV4"
     | "conversationWorkflowRunWorkspaceV4"
     | "conversationWorkflowRunNodeResultV4"
   >;
@@ -92,6 +95,19 @@ export function createWorkflowRunTransportMethods(input: {
         runId: params.runId,
         artifactId: params.artifactId,
         version: params.version,
+        offset: params.offset,
+        limit: params.limit,
+      });
+    },
+    // 对话内可视化（::visualize）的字节读面；授权在 CLI 侧（会话+注册名核对）。
+    async visualizationRead(
+      params: V4ConversationVisualizationReadParams,
+    ): Promise<V4ConversationVisualizationReadResult> {
+      await ensureHandshake();
+      return agentService.conversationVisualizationReadV4({
+        ...workspace,
+        sessionId: params.sessionId,
+        name: params.name,
         offset: params.offset,
         limit: params.limit,
       });

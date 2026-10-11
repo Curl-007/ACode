@@ -26,6 +26,7 @@ import type {
   TurnHeaderRow,
   V4ConversationFileChangesResult,
   V4ConversationFileRewindPreviewResult,
+  V4ConversationVisualizationReadParams,
 } from "@acode/shared/acode-protocol-v4";
 
 export type ConversationFileChangesState = Exclude<
@@ -184,6 +185,34 @@ export interface ConversationRowRenderContext {
   readAttachmentRange?: (
     params: Parameters<ConversationTransport["attachmentReadRange"]>[0],
   ) => ReturnType<ConversationTransport["attachmentReadRange"]>;
+  /**
+   * 对话内可视化（`::visualize` → artifactRow html）的字节分块读
+   * （v4 query `conversationVisualizationRead`，schema 见 shared visualization-read.ts）。
+   *
+   * 接缝现状：services 的 `IACodeAgentService` 尚无 `conversationVisualizationReadV4`，
+   * UI 的 `ConversationTransport` 也没有对应方法，宿主（SessionPane → V4ConversationContext）
+   * 暂时无法注入。本回调缺席时卡片走 `v4/visualizationReadChannel.ts` 的占位通道
+   * （直接拒绝 → loadFailed 降级卡）；整合方接线后在此注入即可生效。
+   */
+  readVisualization?: (
+    params: ConversationVisualizationReadRequest,
+  ) => Promise<ConversationVisualizationReadChunk>;
+}
+
+/** conversationVisualizationRead 的 renderer 侧参数（线上 schema + 取消语义，与 attachmentRead 同型）。 */
+export interface ConversationVisualizationReadRequest extends V4ConversationVisualizationReadParams {
+  /** 卡片卸载 / 重试时停止后续分块请求。 */
+  signal?: AbortSignal;
+}
+
+/** 一块解码后的读取结果（mediaType 恒为 text/html，写入侧强制 .html）。 */
+export interface ConversationVisualizationReadChunk {
+  bytes: Uint8Array;
+  mediaType: "text/html";
+  /** 片段总字节数（≤ VISUALIZATION_LIMITS.maxBytes）。 */
+  totalBytes: number;
+  /** 下一块 offset；读到尾为 null。 */
+  nextOffset: number | null;
 }
 
 export interface ConversationFileChangesRequestOptions {

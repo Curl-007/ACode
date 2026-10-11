@@ -299,6 +299,14 @@ export type WorkflowNotificationMeta =
       sinceMs: number;
       reason?: string;
       cap?: number;
+    }
+  /** hole 停靠中途唤醒（specs/workflow-hole-wake.md）：每个 hole-reached 至多一条。 */
+  | {
+      kind: "hole-waiting";
+      holeId: string;
+      ordinal: number;
+      stage: string;
+      prompt: string;
     };
 
 /** 独立后台结果轮的展示元信息；批量轮可复用代表任务身份并合成 title，不从通知文本反向解析。 */

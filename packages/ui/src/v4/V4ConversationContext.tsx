@@ -19,6 +19,8 @@ import type {
   V4ConversationWorkflowRunArtifactDataResult,
   V4ConversationWorkflowRunArtifactReadParams,
   V4ConversationWorkflowRunArtifactReadResult,
+  V4ConversationVisualizationReadParams,
+  V4ConversationVisualizationReadResult,
   V4ConversationWorkflowRunArtifactsParams,
   V4ConversationWorkflowRunArtifactsResult,
   V4ConversationWorkflowRunNodeResultParams,
@@ -69,6 +71,10 @@ export interface V4ConversationContextValue {
   workflowRunArtifactRead(
     params: V4ConversationWorkflowRunArtifactReadParams,
   ): Promise<V4ConversationWorkflowRunArtifactReadResult>;
+  /** 对话内可视化片段的字节，一次一块（≤ 512 KiB）；授权在 CLI 侧（会话+注册名）。 */
+  visualizationRead(
+    params: V4ConversationVisualizationReadParams,
+  ): Promise<V4ConversationVisualizationReadResult>;
   /** dwf 脚本 transcript 的清单（files.* / git.* / world.run 行，不带正文）。 */
   workflowRunWorkspace(
     params: V4ConversationWorkflowRunWorkspaceParams,
@@ -143,6 +149,8 @@ function ReadyV4ConversationProvider({
         transport.workflowRunArtifactData(params),
       workflowRunArtifactRead: (params: V4ConversationWorkflowRunArtifactReadParams) =>
         transport.workflowRunArtifactRead(params),
+      visualizationRead: (params: V4ConversationVisualizationReadParams) =>
+        transport.visualizationRead(params),
       workflowRunWorkspace: (params: V4ConversationWorkflowRunWorkspaceParams) =>
         transport.workflowRunWorkspace(params),
       workflowRunNodeResult: (params: V4ConversationWorkflowRunNodeResultParams) =>
@@ -307,6 +315,8 @@ function ReadyV4PaneConversationProvider({
           lease.transport.workflowRunArtifactData(params),
         workflowRunArtifactRead: (params: V4ConversationWorkflowRunArtifactReadParams) =>
           lease.transport.workflowRunArtifactRead(params),
+        visualizationRead: (params: V4ConversationVisualizationReadParams) =>
+          lease.transport.visualizationRead(params),
         workflowRunWorkspace: (params: V4ConversationWorkflowRunWorkspaceParams) =>
           lease.transport.workflowRunWorkspace(params),
         workflowRunNodeResult: (params: V4ConversationWorkflowRunNodeResultParams) =>

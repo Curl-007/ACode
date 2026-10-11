@@ -1,6 +1,6 @@
 /* eslint-disable max-lines -- 权限矩阵、session 目标解析与 Electron 接线共享同一条安全判定链。 */
 import { session as electronSession } from "electron";
-import type { Session } from "electron";
+import type { Session, WebContents } from "electron";
 
 /**
  * 全局权限请求策略（安全加固 P2 #2b，specs/electron-hardening.md §2）。
@@ -68,6 +68,25 @@ export interface DesktopSessionProvider {
   fromPartition(partition: string): Session;
 }
 
+/**
+ * 站点权限控制器的结构端口（实现见 browserView/embeddedBrowserSitePermissionController.ts）。
+ * 用本地结构类型而不是直接 import class：控制器依赖本模块的
+ * 纯判定函数，反向值导入会形成模块环。
+ */
+export interface EmbeddedBrowserSitePermissionControllerLike {
+  handlePermissionRequest(
+    webContents: WebContents,
+    permission: string,
+    callback: (permissionGranted: boolean) => void,
+    details: { requestingUrl?: string; mediaTypes?: string[] },
+  ): void;
+  checkPermission(
+    requestingOrigin: string | undefined,
+    permission: string,
+    mediaType?: string,
+  ): boolean;
+}
+
 interface PermissionPolicyLogger {
   info: (...args: unknown[]) => void;
 }
@@ -103,11 +122,17 @@ let permissionPolicyInstalled = false;
  *
  * 临时 recorder partition（acode-browser-video-recorder-*）刻意不覆盖：
  * 它是我们自己的录制页，已由 main 侧 setDisplayMediaRequestHandler 精确供流，
- * 不属于不可信页面（specs/electron-hardening.md §2）。
+ * 不属于不可信页面（specs/electron-hardening.md §2）；该豁免语义不被站点权限 store 覆盖
+ * （specs/embedded-browser-site-permissions.md：录制临时 partition 不参与站点决策）。
+ *
+ * sitePermissionController 缺省时（测试/降级）保持纯静态矩阵：可询问权限同样同步拒绝，
+ * 不存在任何 prompt 路径。提供时仅 embedded-browser session 走站点权限链；
+ * coding-plan-webview 是第一方官网面，维持静态矩阵不变。
  */
 export function installDesktopSessionPermissionPolicies(
   sessionProvider: DesktopSessionProvider,
   logger: PermissionPolicyLogger,
+  sitePermissionController?: EmbeddedBrowserSitePermissionControllerLike,
 ): void {
   if (permissionPolicyInstalled) {
     return;
@@ -116,7 +141,16 @@ export function installDesktopSessionPermissionPolicies(
   // 也避免让日志行再触发一次 session 解析。
   const targets = resolveDesktopPermissionPolicyTargets(sessionProvider);
   for (const target of targets) {
-    target.session.setPermissionRequestHandler((_webContents, permission, callback, details) => {
+    const sitePermissions =
+      target.name === "embedded-browser" && sitePermissionController
+        ? sitePermissionController
+        : undefined;
+    target.session.setPermissionRequestHandler((webContents, permission, callback, details) => {
+      if (sitePermissions) {
+        // 站点权限链自身保持 fail-closed：闭集外同步拒绝、store 读取失败收敛为拒绝。
+        sitePermissions.handlePermissionRequest(webContents, permission, callback, details);
+        return;
+      }
       const decision = resolveDesktopPermissionRequestDecision({
         permission,
         servesArbitraryWebPages: target.servesArbitraryWebPages,
@@ -132,10 +166,19 @@ export function installDesktopSessionPermissionPolicies(
       }
       callback(decision === "granted");
     });
+    if (sitePermissions) {
+      // 同步探测（setPermissionCheckHandler）只认 store "allow" 与 session-allow，
+      // 从不触发弹窗（spec 产品规则）；静态矩阵放行项镜像放行避免探测/请求结论互相矛盾。
+      target.session.setPermissionCheckHandler(
+        (_webContents, permission, requestingOrigin, details) =>
+          sitePermissions.checkPermission(requestingOrigin, permission, details?.mediaType),
+      );
+    }
   }
   permissionPolicyInstalled = true;
   logger.info("[desktop-permissions] permission request policies installed", {
     sessions: targets.map((target) => target.name),
+    sitePermissionsEnabled: Boolean(sitePermissionController),
   });
 }
 

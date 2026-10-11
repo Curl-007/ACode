@@ -5,8 +5,8 @@ fan-out, salvage, artifacts, return shape — so read one when you want to see h
 sit together rather than looking up a single shape (`patterns.md` is for that).
 
 Every script here is submitted as the `script` argument of the `CreateWorkflow` tool. The
-API surface they are written against is `SKILL.md` §16 (the facade block in §16.2 and the
-rules in §16.3), not the tool description.
+API surface they are written against is `SKILL.md` §17 (the facade block in §17.2 and the
+rules in §17.3), not the tool description.
 
 ---
 

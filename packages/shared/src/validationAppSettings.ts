@@ -1,6 +1,7 @@
 /* oxlint-disable eslint(max-lines) -- AppSettings schema 聚合历史迁移、默认值和 patch 校验，拆分会削弱设置迁移的单一入口。 */
 import { z } from "zod";
 import type { AppSettings } from "./protocol.js";
+import { DYNAMIC_WORKFLOW_MODES } from "./dynamic-workflow-feature.js";
 import { REMOTE_ASSET_INSTALL_MODES } from "./remoteAssetInstallMode.js";
 import { isKnownRemoteResourcePackageId } from "./remoteResourcePackages.js";
 import { wslUserSchema } from "./wslUserValidation.js";
@@ -35,6 +36,9 @@ const nonEmptyStringSchema = z.string().trim().min(1);
 export const localeSchema = z.enum(["zh-CN", "en-US"]);
 const localePreferenceSchema = z.enum(["system", "zh-CN", "en-US"]);
 const acodeInteractionBehaviorSchema = z.enum(["queue", "guide"]);
+// 动态工作流三档本地覆盖：缺席即「跟随 Host 决策链」，因此不给 default——
+// 写默认值会把某档冻结进用户配置，之后翻转缺省语义救不回来（同 officialServices 教训）。
+const dynamicWorkflowModeSchema = z.enum(DYNAMIC_WORKFLOW_MODES);
 const electronReleaseChannelSchema = z.enum(["stable", "preview"]);
 const desktopZoomLevelSchema = z.number().int().min(-3).max(5);
 const desktopWindowSizeSchema = z.object({
@@ -496,6 +500,9 @@ const appSettingsObjectSchema = z.object({
   // 官方服务开关必须登记在存储 schema 里：只进 patch schema 会在写盘时被 zod strip，
   // 开关看起来能切但永远读不回来，UI 表现为点击后立刻回弹。
   officialServices: officialServiceSwitchesSchema.optional(),
+  // 动态工作流三档同理：只进 TS 类型与 patch schema 时，update 写盘被 strip，
+  // 设置页点选看似成功但 setting.json 永远读不回（2026-10-11 实机实测发现）。
+  dynamicWorkflowMode: dynamicWorkflowModeSchema.optional(),
 });
 
 export const appSettingsSchema = z.preprocess(
@@ -544,6 +551,7 @@ export const appSettingsPatchSchema = z.object({
   toolGroupingTerminalEnabled: z.boolean().optional(),
   toolGroupingChangesEnabled: z.boolean().optional(),
   acodeInteractionBehavior: acodeInteractionBehaviorSchema.optional(),
+  dynamicWorkflowMode: dynamicWorkflowModeSchema.optional(),
   askUserQuestionAutoResolutionEnabled: z.boolean().optional(),
   botPermissionLocalApprovalEnabled: z.boolean().optional(),
   modelIoFullRetentionEnabled: z.boolean().optional(),

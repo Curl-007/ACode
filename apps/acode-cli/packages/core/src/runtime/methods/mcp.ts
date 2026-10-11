@@ -4,7 +4,7 @@ import {
   ACODE_CUA_PLUGIN_AUTHORITY_ENV_KEY,
   ACODE_PLUGIN_ID_ENV_KEY,
 } from "@acode/shared";
-import { registerMcpTools, traceContextToLogContext } from "../deps.js";
+import { registerMcpResourceTools, registerMcpTools, traceContextToLogContext } from "../deps.js";
 import type { McpConnectionSnapshot, McpServerConfig, TraceContext } from "../deps.js";
 import type { AgentRuntimeInternal } from "../internal.js";
 
@@ -165,7 +165,14 @@ async function initializeMcpOnce(
         new Set(this.config.mcp?.trustedOfficialCuaServerNames ?? []),
       ),
     });
-    if (registered.length > 0) {
+    // 资源拉取面（specs/mcp-sampling-resources.md）：只对 resources:true 的 server 注册；
+    // 与工具注册同一失效面（新工具进 registry 才需要 invalidateToolCache）。
+    const resourceTools = registerMcpResourceTools(
+      this.registry,
+      mcpPort,
+      this.config.mcp?.servers ?? {},
+    );
+    if (registered.length > 0 || resourceTools.length > 0) {
       this.invalidateToolCache();
     }
     this.logger?.info("MCP tools registered", {

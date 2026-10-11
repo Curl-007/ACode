@@ -189,6 +189,8 @@ import type {
   ACodeAgentListMcpServerStatusesParams,
   ACodeAgentWorkspaceTarget,
   ACodeAgentCuaPermissionObservation,
+  ACodeAgentNetworkCaptureSetEnabledParams,
+  ACodeAgentNetworkCaptureSetEnabledResult,
   ACodeAgentCreateAutomationParams,
   ACodeAgentUpdateAutomationParams,
   ACodeAgentAutomationIdParams,
@@ -211,6 +213,7 @@ import type {
   ACodeAgentConversationWorkflowRunArtifactDataParams,
   ACodeAgentConversationWorkflowRunArtifactReadParams,
   ACodeAgentConversationWorkflowRunArtifactsParams,
+  ACodeAgentConversationVisualizationReadParams,
   ACodeAgentConversationWorkflowRunNodeResultParams,
   ACodeAgentConversationWorkflowRunWorkspaceParams,
   ACodeAgentConversationWorkflowRunsParams,
@@ -235,6 +238,9 @@ import {
   conversationTopicWireCandidateSchema,
   conversationTelemetryFactSchema,
   cuaPermissionObservationSchema,
+  v4NetworkCaptureRecordsNotificationSchema,
+  v4NetworkCaptureSetEnabledParamsSchema,
+  v4NetworkCaptureSetEnabledResultSchema,
   sessionsIndexTopic,
   sessionsIndexTopicWireCandidateSchema,
   MAX_LEGACY_TASK_IDS_PER_SUBSCRIBE,
@@ -260,6 +266,7 @@ import {
   v4ConversationWorkflowRunEventsResultSchema,
   v4ConversationWorkflowRunArtifactDataResultSchema,
   v4ConversationWorkflowRunArtifactReadResultSchema,
+  v4ConversationVisualizationReadResultSchema,
   v4ConversationWorkflowRunArtifactsResultSchema,
   v4ConversationWorkflowRunNodeResultResultSchema,
   v4ConversationWorkflowRunWorkspaceResultSchema,
@@ -281,6 +288,7 @@ import {
   type SessionsIndexTopicWireCandidate,
   type WorkspaceConfigTopicWireCandidate,
   type CommandEnvelope,
+  type V4NetworkCaptureRecordsNotification,
 } from "@acode/shared/acode-protocol-v4";
 import {
   readTrustedACodeAgentV4Connection,
@@ -1139,6 +1147,9 @@ export function createACodeAgentService(
   const conversationFrameEmitters = new Map<string, Emitter<ConversationTopicWireCandidate>>();
   const conversationTelemetryFactEmitters = new Map<string, Emitter<ConversationTelemetryFact>>();
   const cuaPermissionObservationEmitter = new Emitter<ACodeAgentCuaPermissionObservation>();
+  // v4 networkCaptureRecords（agent→host，仅 live）的进程级 fan-out；
+  // 消费者是 desktop main 的 sink（资源管理器 network tab），不进任何 session/conversation 状态。
+  const networkCaptureRecordsEmitter = new Emitter<V4NetworkCaptureRecordsNotification>();
   // sessions-index 帧 fan-out：与 conversation 同一 conversationFrame 通知，按 topic 前缀分流到此 emitter。
   const sessionsIndexFrameEmitters = new Map<string, Emitter<SessionsIndexTopicWireCandidate>>();
   // workspace-config 帧 fan-out：配置目录活性（task-index syncer 消费），同一通知按前缀分流。
@@ -1179,6 +1190,26 @@ export function createACodeAgentService(
     PendingSessionRuntimePreferencesRequest
   >();
   const activeClientsByWorkspaceKey = new Map<string, ActiveWorkspaceClient>();
+  // 网络观测开关的 host 进程级 wire 状态：RM 开关的产品语义是「观测本 host 的 agent」，
+  // 而 v4 命令按 workspace 路由只到一个 agent；这里记住 wire 参数，开启时循环补发既有
+  // client，新 workspace client 入池时再补发一次（2026-10-11 实机：按需 spawn 的
+  // workspace agent 永远收不到 setEnabled，Network tab 恒空）。
+  let networkCaptureWireState: { enabled: true; captureId: string } | null = null;
+  /** 补发观测开关到单个 agent client；尽力而为，失败不影响目标 workspace 的开关响应。 */
+  function pushNetworkCaptureWire(
+    client: ACodeProtocolClient,
+    wire: { enabled: boolean; captureId: string },
+  ): void {
+    client
+      .request(
+        V4_METHODS.networkCaptureSetEnabled,
+        v4NetworkCaptureSetEnabledParamsSchema.parse(wire),
+        v4NetworkCaptureSetEnabledResultSchema,
+      )
+      .catch(() => {
+        // 单个 agent 补发失败静默：观测是尽力而为的 live 面。
+      });
+  }
   const interactionPreferenceSyncByWorkspaceKey = new Map<string, Promise<void>>();
   let latestAppRuntimePreferences: ACodeAgentAppRuntimePreferences | undefined;
   /** 动态工作流灰度门的进程内单次判定；见 resolveDynamicWorkflowGate 的注释。 */
@@ -2044,6 +2075,23 @@ export function createACodeAgentService(
               issues: parsed.error.issues.map((issue) => ({
                 code: issue.code,
                 message: issue.message,
+                path: issue.path.join("."),
+              })),
+              workspaceKey: resolveWorkspaceKey(workspace),
+            });
+          }
+          return;
+        }
+
+        if (message.method === V4_NOTIFICATIONS.networkCaptureRecords) {
+          const parsed = v4NetworkCaptureRecordsNotificationSchema.safeParse(message.params);
+          if (parsed.success) {
+            networkCaptureRecordsEmitter.fire(parsed.data);
+          } else {
+            // 脱敏纪律的第二道闸：schema 拒绝的记录整批丢弃，不宽松透传到资源管理器。
+            logger.warn(undefined, "丢弃无效 v4 network capture records", {
+              issues: parsed.error.issues.map((issue) => ({
+                code: issue.code,
                 path: issue.path.join("."),
               })),
               workspaceKey: resolveWorkspaceKey(workspace),
@@ -2948,6 +2996,8 @@ export function createACodeAgentService(
       workspace: params,
     };
     activeClientsByWorkspaceKey.set(workspaceKey, entry);
+    // 观测开启期间新 spawn 的 workspace agent 入池即补发开关（host 级观测语义）。
+    if (networkCaptureWireState) pushNetworkCaptureWire(client, networkCaptureWireState);
     const interactionPreferencesReady = (async () => {
       let appliedSnapshot: ACodeAgentAppRuntimePreferences | undefined;
       while (latestAppRuntimePreferences && latestAppRuntimePreferences !== appliedSnapshot) {
@@ -3114,6 +3164,8 @@ export function createACodeAgentService(
         modelExecutionEnabled: false,
         workspace: params,
       });
+      // 观测开启期间既有 client 被重新 wire 入池：同样补发开关。
+      if (networkCaptureWireState) pushNetworkCaptureWire(existingClient, networkCaptureWireState);
       return existingClient;
     }
     return (await getOrStartReadOnlyClient(params)).client;
@@ -3210,6 +3262,7 @@ export function createACodeAgentService(
     }
     conversationTelemetryFactEmitters.clear();
     cuaPermissionObservationEmitter.dispose();
+    networkCaptureRecordsEmitter.dispose();
     for (const emitter of workspaceConfigFrameEmitters.values()) {
       emitter.dispose();
     }
@@ -5384,6 +5437,22 @@ export function createACodeAgentService(
       );
     },
 
+    // 对话内可视化（::visualize）的字节读面。同族：只读、无状态、超时重发安全；
+    // 授权在 CLI 侧（会话 visualize 目录 + 注册名核对，renderer 传参不拼路径）。
+    async conversationVisualizationReadV4(params: ACodeAgentConversationVisualizationReadParams) {
+      const client = await getReadOnlyClient(params);
+      return client.request(
+        V4_METHODS.conversationVisualizationRead,
+        {
+          sessionId: params.sessionId,
+          name: params.name,
+          offset: params.offset,
+          limit: params.limit,
+        },
+        v4ConversationVisualizationReadResultSchema,
+      );
+    },
+
     // dwf 工作区 transcript 的两条读面。同族：
     // 只读、无状态、超时重发安全，走只读客户端。maxBytes 的缺省与钳制在 CLI 网关侧。
     async conversationWorkflowRunWorkspaceV4(
@@ -5484,6 +5553,56 @@ export function createACodeAgentService(
 
     onDynamicCuaPermissionObservation() {
       return cuaPermissionObservationEmitter.event;
+    },
+
+    async networkCaptureSetEnabledV4(
+      params: ACodeAgentNetworkCaptureSetEnabledParams,
+    ): Promise<ACodeAgentNetworkCaptureSetEnabledResult> {
+      try {
+        // existing-only：开关命令绝不为抓包单独拉起 agent 进程；无运行时时上报
+        // runtime_unavailable，由 main 按记忆在新会话 attach/进程 ready 时重发。
+        const client = await getReadOnlyClient(params, "existing-only");
+        const wireParams = v4NetworkCaptureSetEnabledParamsSchema.parse({
+          enabled: params.enabled,
+          captureId: params.captureId ?? randomUUID(),
+        });
+        const result = await client.request(
+          V4_METHODS.networkCaptureSetEnabled,
+          wireParams,
+          v4NetworkCaptureSetEnabledResultSchema,
+        );
+        // 产品语义是 host 级观测：目标 workspace 成功后把同一 wire 状态补发给池内其余
+        // agent（各自进程独立观测环），并记住状态供后续入池的 client 补发。
+        if (params.enabled) {
+          networkCaptureWireState = { enabled: true, captureId: wireParams.captureId };
+        } else {
+          networkCaptureWireState = null;
+        }
+        const targetKey = resolveWorkspaceKey(params);
+        for (const [key, entry] of activeClientsByWorkspaceKey) {
+          if (key === targetKey) continue;
+          pushNetworkCaptureWire(entry.client, wireParams);
+        }
+        return { ok: true, enabled: result.enabled };
+      } catch (error) {
+        if (isProtocolMethodNotFoundError(error)) {
+          // 旧 CLI 未登记 networkCaptureSetEnabled 方法：诚实返回 unsupported，
+          // 让资源管理器 network tab 显示不可用而不是假装已开启。
+          return { ok: false, reason: "unsupported" };
+        }
+        if (
+          error instanceof Error &&
+          "code" in error &&
+          error.code === ACODE_AGENT_RUNTIME_UNAVAILABLE_CODE
+        ) {
+          return { ok: false, reason: "runtime_unavailable" };
+        }
+        throw error;
+      }
+    },
+
+    onDynamicNetworkCaptureRecords() {
+      return networkCaptureRecordsEmitter.event;
     },
 
     // ── sessions-index 通道（列表活性）：复用 conversationSubscribe RPC，

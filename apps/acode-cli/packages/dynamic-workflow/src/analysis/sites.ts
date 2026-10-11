@@ -171,6 +171,39 @@ export interface PhaseMarkerSite {
   nameExpr: ts.Expression | undefined;
 }
 
+/**
+ * A `hole<T>(stage, prompt)` call site（挖洞-填充）。与 {@link ReportSite} 同一族：**sited but
+ * drawn in neither graph**——洞是「脚本的形状在这里停住」，不是别人能等的一步工作；它要 id
+ * 是因为停靠需要 journal 键（`hole-reached` 事件按 `hole#N` × 首达 ordinal 定位，
+ * FillWorkflowHole 按它 splice）。它的实参**不是 taint sink**：stage/prompt 是给作者看的
+ * 展示文本，不流向任何站点。
+ *
+ * `hole#N` 是自己的 per-kind 计数器，所以既有 `ask#N` / `actor#N` / `report#N` /
+ * `artifact#N` / `world-read#N` id 逐字节不动（site-id stability 规则）。与 report 一样
+ * 消耗全局 `order` 发现序。
+ *
+ * `funcDepth` 记收集时的函数嵌套深度（0 = 顶层）：fan-out 回调内的 hole 由诊断趟
+ * （analysis/holes.ts，9005）按它拒绝——回调体逐元素并发执行，一个等作者来填的洞会把
+ * 整个 fan-out 挂在没人能解锁的停靠上。
+ */
+export interface HoleSite {
+  id: string;
+  order: number;
+  loc: ScriptLoc;
+  /** `hole(stage, prompt)` 调用。 */
+  call: ts.CallExpression;
+  /** stage 字面量——只有无洞字符串字面量才读得出；缺席留给诊断趟按 stageExpr 定位拒绝。 */
+  stage?: string;
+  /** stage 实参原样保留（缺席时 undefined），供诊断定位到出问题的表达式上。 */
+  stageExpr: ts.Expression | undefined;
+  /** prompt 字面量；同 stage 规则。 */
+  prompt?: string;
+  /** prompt 实参原样保留。 */
+  promptExpr: ts.Expression | undefined;
+  /** 收集时的函数嵌套深度（顶层 0）；诊断趟据它拒绝 fan-out 回调内的洞。 */
+  funcDepth: number;
+}
+
 export interface WorldReadSite {
   id: string;
   order: number;
@@ -249,6 +282,8 @@ export interface SiteTable {
   worldReads: WorldReadSite[];
   /** `report(...)` sites — sited but drawn in neither graph (see {@link ReportSite}). */
   reports: ReportSite[];
+  /** `hole<T>(...)` sites — sited but drawn in neither graph (see {@link HoleSite}). */
+  holes: HoleSite[];
   /** `artifact.*(...)` sites — sited but drawn in neither graph (see {@link ArtifactSite}). */
   artifacts: ArtifactSite[];
   /** `phase("…")` markers — collected but NOT sited (see {@link PhaseMarkerSite}). */
@@ -268,6 +303,7 @@ export function collectSites(workflow: WorkflowProgram): SiteTable {
     actors: [],
     artifacts: [],
     asks: [],
+    holes: [],
     iterations: [],
     joins: [],
     phases: [],
@@ -282,6 +318,7 @@ export function collectSites(workflow: WorkflowProgram): SiteTable {
   const joinCounter = new Counter();
   const reportCounter = new Counter();
   const artifactCounter = new Counter();
+  const holeCounter = new Counter();
 
   const locOf = (node: ts.Node): ScriptLoc => toScriptLoc(node.getStart(scriptFile));
 
@@ -421,6 +458,27 @@ export function collectSites(workflow: WorkflowProgram): SiteTable {
       });
       return;
     }
+    if (fn === "hole") {
+      // stage/prompt 只有**无洞字符串字面量**才读得出（与 phase 名 / 产物 id 同一条规则：
+      // 停靠站在确认后的观察面上要有可展示的对象）；其余形状留给 holes 诊断趟按
+      // stageExpr/promptExpr 定位拒绝——这里绝不猜一个值出来。
+      const stageExpr = node.arguments[0];
+      const promptExpr = node.arguments[1];
+      const stage = literalText(stageExpr);
+      const prompt = literalText(promptExpr);
+      table.holes.push({
+        call: node,
+        funcDepth,
+        id: `hole#${holeCounter.next()}`,
+        loc: locOf(node),
+        ...(prompt === undefined ? {} : { prompt }),
+        promptExpr,
+        ...(stage === undefined ? {} : { stage }),
+        stageExpr,
+        order: order++,
+      });
+      return;
+    }
     // `phase("…")` is a marker, not a site: no id and no counter of any kind is consumed
     // here (see PhaseMarkerSite). Resolved by declaration like the calls above — a
     // script-local function named `phase` is somebody else's function.
@@ -438,12 +496,31 @@ export function collectSites(workflow: WorkflowProgram): SiteTable {
 
   const walk = (node: ts.Node, funcDepth: number): void => {
     classify(node, funcDepth);
-    const childDepth = funcDepth + (isFunctionLike(node) ? 1 : 0);
+    const childDepth = funcDepth + (isFunctionLike(node) && !isImmediatelyInvoked(node) ? 1 : 0);
     ts.forEachChild(node, (child) => walk(child, childDepth));
   };
   for (const statement of body.statements) walk(statement, 0);
 
   return table;
+}
+
+/**
+ * 一个函数体是否**就地立即调用**（`(async () => { … })()` 的 IIFE 形态）。
+ * IIFE 对 funcDepth **透明**：它不是回调（没人稍后按元素调它），而是外层语句的就地延伸——
+ * 挖洞-填充的 splice 正是把洞调用换成这样一个 IIFE，fill 语句里允许再留 tail hole（嵌套
+ * 生长，specs/workflow-holes.md），把 IIFE 算作嵌套函数会让每一次嵌套生长都被 9005 误杀。
+ * `xs.map(async (x) => …)` 的箭头是**实参**（调用发生在 map 内部），不在本判定之列。
+ */
+function isImmediatelyInvoked(node: ts.Node): boolean {
+  const parent = node.parent;
+  if (parent === undefined || !ts.isParenthesizedExpression(parent)) return false;
+  const grandparent = parent.parent;
+  return (
+    grandparent !== undefined &&
+    ts.isCallExpression(grandparent) &&
+    grandparent.expression === parent &&
+    grandparent.arguments.length === 0
+  );
 }
 
 /**

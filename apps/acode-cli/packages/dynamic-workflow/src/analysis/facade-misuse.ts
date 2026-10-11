@@ -142,6 +142,9 @@ export function collectFacadeMisuse(
     ...table.actors.map((site) => site.call),
     ...table.worldReads.map((site) => site.call),
     ...table.reports.map((site) => site.call),
+    // 洞站点与 report 同席：hole 产生站点（registry，停靠需要 journal 键），
+    // 所以已 site 的直接调用不得被误报，而收集漏掉的那一次必须被报出来。
+    ...table.holes.map((site) => site.call),
     // 产物站点与 report 同席：它们产生站点（registry），
     // 所以已 site 的直接调用不得被误报，而收集漏掉的那一次必须被报出来。
     ...table.artifacts.map((site) => site.call),

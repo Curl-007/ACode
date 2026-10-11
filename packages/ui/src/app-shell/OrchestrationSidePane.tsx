@@ -1,26 +1,19 @@
 import { memo, useEffect, useMemo, useState } from "react";
-import {
-  BanIcon,
-  CheckCircle2Icon,
-  CircleAlertIcon,
-  CircleDashedIcon,
-  ListTreeIcon,
-  LoaderCircleIcon,
-  PauseCircleIcon,
-} from "lucide-react";
+import { ListTreeIcon, LoaderCircleIcon, PauseCircleIcon } from "lucide-react";
 import { cn } from "@/components/lib/utils.js";
 import { Button } from "@/components/ui/button.js";
 import { useACodeIntl } from "@/i18n/IntlProvider.js";
+import { OrchestrationWorkflowRowView } from "@/app-shell/OrchestrationWorkflowRowView.js";
 import {
   buildOrchestrationPanelModel,
   ORCHESTRATION_SWARM_LAMP_CLASS,
   ORCHESTRATION_SWARM_NODE_DISPLAY_LIMIT,
   type OrchestrationSwarmNodeRow,
-  type OrchestrationWorkflowRow,
 } from "@/app-shell/orchestrationPanelModel.js";
 import type {
   OpenScopedSubagentDirectorySideTabRequest,
   OpenScopedWorkflowRunDirectorySideTabRequest,
+  OpenScopedWorkflowRunSideTabRequest,
   OrchestrationSidePaneTab,
 } from "@/lib/workspaceSidePane.js";
 import { formatTaskRelativeTime } from "@/lib/taskListItemPresentation.js";
@@ -44,22 +37,6 @@ function AgentStatusIcon({ status }: { status: "running" | "waiting" | "blocked"
     case "waiting":
     case "blocked":
       return <PauseCircleIcon aria-hidden className={className} />;
-  }
-}
-
-function WorkflowStatusIcon({ status }: { status: OrchestrationWorkflowRow["status"] }) {
-  const className = "size-4 shrink-0";
-  switch (status) {
-    case "pending":
-      return <CircleDashedIcon aria-hidden className={className} />;
-    case "running":
-      return <LoaderCircleIcon aria-hidden className={`${className} animate-spin`} />;
-    case "completed":
-      return <CheckCircle2Icon aria-hidden className={cn(className, "text-success")} />;
-    case "errored":
-      return <CircleAlertIcon aria-hidden className={cn(className, "text-destructive")} />;
-    case "stopped":
-      return <BanIcon aria-hidden className={className} />;
   }
 }
 
@@ -116,11 +93,14 @@ export const OrchestrationSidePane = memo(function OrchestrationSidePane({
   visible,
   onOpenSubagentDirectory,
   onOpenWorkflowRunDirectory,
+  onOpenWorkflowRun,
 }: {
   tab: OrchestrationSidePaneTab;
   visible: boolean;
   onOpenSubagentDirectory?: (request: OpenScopedSubagentDirectorySideTabRequest) => void;
   onOpenWorkflowRunDirectory?: (request: OpenScopedWorkflowRunDirectorySideTabRequest) => void;
+  /** 停驻洞行的「打开运行」：走宿主既有的 onOpenWorkflowRun 链（与 run 详情 tab 同一入口）。 */
+  onOpenWorkflowRun?: (request: OpenScopedWorkflowRunSideTabRequest) => void;
 }) {
   const scope = useMemo<PaneWorkspaceScope>(
     () => ({
@@ -137,6 +117,7 @@ export const OrchestrationSidePane = memo(function OrchestrationSidePane({
         visible={visible}
         onOpenSubagentDirectory={onOpenSubagentDirectory}
         onOpenWorkflowRunDirectory={onOpenWorkflowRunDirectory}
+        onOpenWorkflowRun={onOpenWorkflowRun}
       />
     </V4PaneConversationProvider>
   );
@@ -147,11 +128,13 @@ const OrchestrationContents = memo(function OrchestrationContents({
   visible,
   onOpenSubagentDirectory,
   onOpenWorkflowRunDirectory,
+  onOpenWorkflowRun,
 }: {
   tab: OrchestrationSidePaneTab;
   visible: boolean;
   onOpenSubagentDirectory?: (request: OpenScopedSubagentDirectorySideTabRequest) => void;
   onOpenWorkflowRunDirectory?: (request: OpenScopedWorkflowRunDirectorySideTabRequest) => void;
+  onOpenWorkflowRun?: (request: OpenScopedWorkflowRunSideTabRequest) => void;
 }) {
   const { intl } = useACodeIntl();
   const { layer } = useV4Conversation();
@@ -270,35 +253,12 @@ const OrchestrationContents = memo(function OrchestrationContents({
                 : {})}
             />
             {model.workflows.rows.map((run) => (
-              <div
+              <OrchestrationWorkflowRowView
                 key={run.runId}
-                className="flex w-full min-w-0 items-start gap-3 rounded-lg px-3 py-2 text-ui-base"
-              >
-                <span className="mt-0.5 text-foreground-subtle">
-                  <WorkflowStatusIcon status={run.status} />
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="flex min-w-0 items-center gap-2">
-                    <span
-                      className={cn(
-                        "truncate font-medium text-foreground",
-                        !run.title && "font-mono text-ui-sm",
-                      )}
-                    >
-                      {run.title ?? run.runId}
-                    </span>
-                    <span className="shrink-0 text-ui-sm text-foreground-subtlest">
-                      {intl.formatMessage({
-                        id: `chat.toolCall.workflow.run.status.${run.status}`,
-                      })}
-                    </span>
-                  </span>
-                  <span className="mt-0.5 block text-ui-sm text-foreground-subtle">
-                    {run.nodesSettled}/{run.nodesTotal}
-                    {run.startedAt ? ` · ${formatTaskRelativeTime(run.startedAt, intl)}` : null}
-                  </span>
-                </span>
-              </div>
+                run={run}
+                tab={tab}
+                {...(onOpenWorkflowRun === undefined ? {} : { onOpenWorkflowRun })}
+              />
             ))}
           </section>
         ) : null}

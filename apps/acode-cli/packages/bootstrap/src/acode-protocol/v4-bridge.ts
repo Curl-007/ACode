@@ -1404,6 +1404,12 @@ export function createConversationV4Gateway(
         method: V4_NOTIFICATIONS.cuaPermissionObservation,
         params: observation,
       }),
+    // 网络观测批量上报（specs/runtime-network-capture.md）：仅 live，不进 snapshot/recovery。
+    emitNetworkCaptureRecords: (notification) =>
+      context.notify({
+        method: V4_NOTIFICATIONS.networkCaptureRecords,
+        params: notification,
+      }),
     // ── config 种子：投影初值 = runtime 真值 ─────────────
     // 覆盖三个种子来源：启动缺省（Workspace 模型偏好 + 项目持久化 mode）、
     // createSession.config（handler 先应用到 runtime 再种）、历史会话 resume
@@ -1630,6 +1636,18 @@ export function createConversationV4Gateway(
         throw new V4CapabilityUnsupportedError("readDynamicWorkflowRunArtifact", sessionId);
       }
       return record.app.readDynamicWorkflowRunArtifact(input);
+    },
+    // 对话内可视化片段的字节（specs/gen-ui-visualize.md）：会话归属在此校验，
+    // name 消毒与目录隔离在 store 侧；能力缺席（旧装配）= 结构化 unsupported。
+    readVisualizationFragment: async (sessionId, input) => {
+      const record = context.sessions.get(sessionId);
+      if (!record) {
+        throw new Error(`fault.visualizationRead.sessionNotFound: ${sessionId}`);
+      }
+      if (!record.app.readVisualizationFragment) {
+        throw new V4CapabilityUnsupportedError("readVisualizationFragment", sessionId);
+      }
+      return record.app.readVisualizationFragment(input);
     },
     // dwf 工作区 transcript 的两个读面：能力条件同上。
     listDynamicWorkflowRunWorkspaceNodes: async (sessionId, input) => {

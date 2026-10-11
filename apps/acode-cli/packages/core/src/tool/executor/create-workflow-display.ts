@@ -10,6 +10,7 @@ import {
   CREATE_WORKFLOW_DISPLAY_MAX_MESSAGE_CHARS,
   CREATE_WORKFLOW_TOOL_NAME,
   CreateWorkflowOutputSchema,
+  FILL_WORKFLOW_HOLE_TOOL_NAME,
   type ToolResultDisplayPayload,
 } from "@acode/contracts";
 
@@ -21,8 +22,14 @@ export function createCreateWorkflowDisplay(
   toolName: string,
   output: unknown,
 ): ToolResultDisplayPayload | undefined {
-  // 两个启动工具共用同一个 display kind：图、草稿笔与诊断卡在 UI 侧只有一份实现
-  if (toolName !== CREATE_WORKFLOW_TOOL_NAME && toolName !== AMEND_WORKFLOW_TOOL_NAME) {
+  // 三个启动工具共用同一个 display kind：图、草稿笔与诊断卡在 UI 侧只有一份实现。
+  // FillWorkflowHole（挖洞-填充）也重开确认窗——splice 后是新可执行代码（新 world.run
+  // 命令集），用户要批的正是这张重算的图（specs/workflow-holes.md 的确认窗条目）。
+  if (
+    toolName !== CREATE_WORKFLOW_TOOL_NAME &&
+    toolName !== AMEND_WORKFLOW_TOOL_NAME &&
+    toolName !== FILL_WORKFLOW_HOLE_TOOL_NAME
+  ) {
     return undefined;
   }
   const parsed = CreateWorkflowOutputSchema.safeParse(output);

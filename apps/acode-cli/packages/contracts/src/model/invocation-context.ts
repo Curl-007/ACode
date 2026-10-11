@@ -4,6 +4,8 @@ import type { ACodeProviderAccountAccess } from "@acode/shared";
 // 治理类型走 ./request-status.js 具体定义文件，不引用 index 桶文件（index `export *`
 // 本文件，反向引用桶文件即成环）。
 import type { ModelApiCallObservation } from "../telemetry/observations.js";
+// 叶子文件直引（同上方断环纪律：不经 index 桶）。
+import { runWithNetworkCapturePhase } from "../network-capture-phase.js";
 import type { TraceContext } from "../tracing/tracer.js";
 import type {
   ModelRequestAdmission,
@@ -79,7 +81,11 @@ export function getCurrentModelInvocationContext(): ModelInvocationContext | und
 }
 
 export function runWithModelInvocationContext<T>(context: ModelInvocationContext, run: () => T): T {
-  const result = modelInvocationStorage.run(context, run);
+  // 网络观测相位（specs/runtime-network-capture.md）：模型调用 ALS 是全部模型出站请求
+  // （主轮次/compact/sidecar）的唯一漏斗，在这里同时进 "model" 相位，一处覆盖所有路径。
+  const result = modelInvocationStorage.run(context, () =>
+    runWithNetworkCapturePhase("model", run),
+  );
   if (!isAsyncIterable(result)) return result;
 
   const source = result;
@@ -88,7 +94,9 @@ export function runWithModelInvocationContext<T>(context: ModelInvocationContext
       const iterator = source[Symbol.asyncIterator]();
       return {
         next: (value?: unknown) =>
-          modelInvocationStorage.run(context, () => iterator.next(value as never)),
+          modelInvocationStorage.run(context, () =>
+            runWithNetworkCapturePhase("model", () => iterator.next(value as never)),
+          ),
         return: (value?: unknown) =>
           modelInvocationStorage.run(context, () =>
             iterator.return

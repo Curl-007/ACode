@@ -9,6 +9,7 @@ import {
 import { FACADE_FILE_NAME } from "../facade/dts.js";
 import { isArtifactPresetOp, type ArtifactOp, type WorldReadOp } from "../facade/registry.js";
 import { collectFacadeMisuse } from "../analysis/facade-misuse.js";
+import { collectHoleDiagnostics } from "../analysis/holes.js";
 import {
   collectSites,
   isFacadeDeclared,
@@ -33,6 +34,7 @@ import {
  *                                       __host.worldRead("world-read#2", "read", [p])
  *        report(x)                   -> __host.report("report#1", x)
  *        report(x, "perf")           -> __host.report("report#1", x, "perf")
+ *        hole<T>(stage, prompt)      -> __host.hole("hole#1", stage, prompt)（停靠）
  *        artifact.file(id, p, o)     -> __host.publishArtifact("artifact#1", "file", [id, p, o])
  *        artifact.chart(id, spec)    -> __host.declareArtifact("artifact#2", "chart", [id, spec])
  *        log(msg)                    -> __host.log(msg)
@@ -82,6 +84,8 @@ type SiteEmit =
   | { kind: "actor"; siteId: string }
   | { kind: "artifact"; siteId: string; op: ArtifactOp }
   | { kind: "ask"; siteId: string }
+  /** 洞停靠：无 journal 节点行，只有 `hole-reached` 事件（等待不是工作量）。 */
+  | { kind: "hole"; siteId: string }
   /** 阶段标记：无 site id，只带去了两端空白的名字（名字缺席的标记退回 `void 0`）。 */
   | { kind: "phase"; name: string | undefined }
   | { kind: "report"; siteId: string }
@@ -99,6 +103,10 @@ export function lowerWorkflowScript(scriptText: string): LowerResult {
   const table = collectSites(workflow);
   const misuse = collectFacadeMisuse(workflow, table);
   if (misuse.length > 0) return { diagnostics: misuse, ok: false };
+  // 洞的编译期规则（9005）与 misuse 同席：一个回调内/非 await/非字面量的洞降级后就是
+  // 沙箱里一次没有可停靠语义的 `__host.hole`，脏脚本不降级。
+  const holes = collectHoleDiagnostics(workflow, table);
+  if (holes.length > 0) return { diagnostics: holes, ok: false };
 
   return { diagnostics, lowered: lowerWorkflow(workflow, table), ok: true };
 }
@@ -236,6 +244,15 @@ export function lowerWorkflow(workflow: WorkflowProgram, table: SiteTable): Lowe
           ...call.arguments.map(visitExpr),
         ]);
       }
+      if (emit.kind === "hole") {
+        // hole<T>(stage, prompt) -> __host.hole(siteId, stage, prompt)（丢弃类型实参 <T>，
+        // ask 先例）。stage/prompt 9005 诊断已保证是字面量，但改写仍是**通用实参透传**
+        // （与 world-read 同规）：lowering 不做校验，只按位置转发。
+        return factory.createCallExpression(hostMember("hole"), undefined, [
+          siteArg(emit.siteId),
+          ...call.arguments.map(visitExpr),
+        ]);
+      }
       // files.glob(arg)/files.read(arg) -> __host.worldRead(siteId, op, [arg])
       // 实参**原样按位置**打包进数组字面量：lowering 不看 op、不看元数、不做任何校验。每个 op 的元数与实参校验归 driver，
       // 所以加一个 world-read 原语在这一趟里是零改动。
@@ -287,6 +304,7 @@ function buildSiteMap(table: SiteTable): Map<ts.CallExpression, SiteEmit> {
     map.set(site.call, { kind: "artifact", op: site.op, siteId: site.id });
   }
   for (const site of table.asks) map.set(site.call, { kind: "ask", siteId: site.id });
+  for (const site of table.holes) map.set(site.call, { kind: "hole", siteId: site.id });
   for (const marker of table.phases) map.set(marker.call, { kind: "phase", name: marker.name });
   for (const site of table.reports) map.set(site.call, { kind: "report", siteId: site.id });
   for (const site of table.worldReads) {
@@ -301,6 +319,7 @@ function sourceOrderSiteIds(table: SiteTable): string[] {
     ...table.actors,
     ...table.artifacts,
     ...table.asks,
+    ...table.holes,
     ...table.reports,
     ...table.worldReads,
   ];

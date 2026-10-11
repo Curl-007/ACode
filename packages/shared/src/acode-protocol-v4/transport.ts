@@ -357,6 +357,12 @@ export const V4_METHODS = {
   conversationWorkflowRunArtifacts: "v4/conversation/workflowRunArtifacts",
   conversationWorkflowRunArtifactData: "v4/conversation/workflowRunArtifactData",
   conversationWorkflowRunArtifactRead: "v4/conversation/workflowRunArtifactRead",
+  // 对话内可视化（::visualize）的字节分块读；schema 在 visualization-read.ts。
+  // 同族：只读、无状态、超时重发安全；新方法对旧桌面天然偏斜安全。
+  conversationVisualizationRead: "v4/conversation/visualizationRead",
+  // 运行时网络观测的开关（host → CLI）；schema 在 network-capture.ts。
+  // 不是 conversation 命令：抓的是 agent 进程的进程级事实，资源管理器是唯一消费方。
+  networkCaptureSetEnabled: "v4/networkCapture/setEnabled",
   // workflow run 的工作区 transcript。两条同族，
   // 照产物的 ①/③ 拆法：Workspace 是轻行清单（不带正文），NodeResult 是一个节点的有界正文。
   conversationWorkflowRunWorkspace: "v4/conversation/workflowRunWorkspace",
@@ -412,6 +418,9 @@ export const V4_NOTIFICATIONS = {
   conversationTelemetryFact: "v4/telemetry/event",
   // 仅当前进程 live ToolCallResult 产生；历史与 replayable 链路不得补造。
   cuaPermissionObservation: "v4/cua/permission-observation",
+  // 仅 live 的 agent 进程网络观测批量上报（schema 在 network-capture.ts）；
+  // 进程内事实，重放不补造——与 cuaPermissionObservation 同一条纪律。
+  networkCaptureRecords: "v4/networkCapture/records",
 } as const;
 
 /** 3.3.6 SSH 历史任务归属证明与 sessions-index 冷种子共享同一有界窗口。 */

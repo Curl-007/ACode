@@ -11,6 +11,7 @@ export type SettingsSectionId =
   | "plugin"
   | "mcp"
   | "skill"
+  | "dynamicWorkflow"
   | "plugins"
   | "usage"
   | "subagents"
@@ -78,7 +79,8 @@ function isSettingsSectionId(value: string): value is SettingsSectionId {
     value === "workspaceFileSearch" ||
     value === "computerUse" ||
     value === "automations" ||
-    value === "shortcuts"
+    value === "shortcuts" ||
+    value === "dynamicWorkflow"
   );
 }
 

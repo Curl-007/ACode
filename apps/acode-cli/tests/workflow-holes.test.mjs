@@ -38,6 +38,7 @@ const {
 } = dwf;
 const { runWorkflowScript } = await import("../packages/dynamic-workflow-runtime/src/index.ts");
 const { fillWorkflowHole } = await import("../packages/cli-workflow/src/dynamic-workflow-hole-fill.ts");
+const { toProgressPayload } = await import("../packages/cli-workflow/src/dynamic-workflow-run-launch.ts");
 const { createWorkflowRunControl } = await import("../packages/cli-workflow/src/workflow-run-control.ts");
 const { createWorkflowEscalationRegistry } = await import(
   "../packages/cli-workflow/src/workflow-escalation-registry.ts"
@@ -470,6 +471,106 @@ test("WH-F2: 坏 fill（语法 / 类型）在停前驱之前被拒：fill_compil
       assert.equal(ctx.runs.get("parked").scriptText, SEED_TAIL);
       assert.equal(journal.getRun("parked").scriptText, SEED_TAIL);
     }
+  });
+});
+
+test("WH-F3: resume 后重新到达的洞仍可填——等待闸与投影 reducer 在跨代事件流上判定一致", async () => {
+  await withTempDir(async (cwd) => {
+    // 跨代事件流（park → stop → resume → re-park），逐条对齐 engine 正常路径产出的事实：
+    //   gen1: run-started, hole-reached(hole#1@1)
+    //   stop: run-settled(stopped, user)   ← 可恢复（isResumableRecord = stopped && !superseded）
+    //   gen2: run-started, hole-reached(hole#1@1)  ← resume 同 runId、确定性 ordinal 复算同 holeId
+    // 关键：run-settled 之后**还有**一条同 id 的 hole-reached。等待窗必须重新打开。
+    const journal = new InMemoryJournalStore();
+    journal.createRun({
+      runId: "resumed",
+      caps: { maxConcurrency: 2 },
+      spentTokens: 0,
+      status: "running",
+      scriptText: SEED_TAIL,
+    });
+    const reached = (askedAt) => ({
+      type: "hole-reached",
+      holeId: "hole#1@1",
+      siteId: "hole#1",
+      ordinal: 1,
+      stage: "第1步：决定导览结构",
+      prompt: "盘点：空",
+      askedAt,
+    });
+    journal.appendEvent("resumed", { type: "run-started", runId: "resumed", caps: { maxConcurrency: 2 } });
+    journal.appendEvent("resumed", reached(1_700_000_000_000));
+    journal.appendEvent("resumed", { type: "run-settled", status: "stopped", stopReason: "user" });
+    journal.appendEvent("resumed", { type: "run-started", runId: "resumed", caps: { maxConcurrency: 2 } });
+    journal.appendEvent("resumed", reached(1_700_000_000_999));
+
+    const stored = journal.listEvents("resumed", {});
+
+    // 发现面（权威）：GetWorkflowRun.pendingHoles 就是 reduceRunState 的产物，喂同一份
+    // journal 字节（经 toProgressPayload 铸成信封，与线上投影同一条链）。
+    let projected;
+    for (const item of stored) {
+      const envelope = toProgressPayload({ event: item.event, runId: "resumed", sequence: item.sequence });
+      projected = reduceWorkflowRunsState(projected, envelope) ?? projected;
+    }
+    const run = projected.runs.find((entry) => entry.runId === "resumed");
+    assert.equal(run.status, "running");
+    assert.equal(run.pendingHoles.length, 1);
+    assert.equal(run.pendingHoles[0].holeId, "hole#1@1");
+
+    // 填充面：注册表条目 resume 后是活的（terminal===undefined），洞在 journal 里等待中。
+    // 用一个坏 fill 做零副作用探针——若等待闸**放行**，它会在停前驱之前撞上重编译闸
+    // （fill_compile_failed，WH-F2 同型）；若闸门错误地在 gen1 的 run-settled 上早拒，
+    // 得到的是 hole_not_waiting（bug 面）。修复前这里是 hole_not_waiting，测试因此变红。
+    const ctx = makeFillCtx(journal);
+    ctx.runs.set("resumed", makeRegistryEntry(SEED_TAIL, cwd));
+    const admitted = await fillWorkflowHole(ctx, {
+      runId: "resumed",
+      holeId: "hole#1@1",
+      fill: "return (((",
+      cwd,
+      trace: TRACE,
+    });
+    assert.equal(admitted.ok, false);
+    assert.equal(
+      admitted.reason,
+      "fill_compile_failed",
+      `等待闸应放行 resume 后重新到达的洞（reducer 说它在等），却得到 ${admitted.reason}`,
+    );
+    // 放行但被编译闸挡下：零副作用（前驱未停、草稿未变、无 hole-filled）。
+    assert.equal(eventsOf(journal, "resumed").some((event) => event.type === "hole-filled"), false);
+    assert.equal(ctx.runs.get("resumed").terminal, undefined);
+    assert.equal(ctx.runs.get("resumed").scriptText, SEED_TAIL);
+
+    // 正向对照：最后一条 hole-reached 之后再补一条 run-settled（没有更晚的 reached），
+    // 洞就不再等待——证明修复不是简单地删掉 run-settled 判定，而是「只看最后一段」。
+    journal.appendEvent("resumed", { type: "run-settled", status: "stopped", stopReason: "user" });
+    const closed = await fillWorkflowHole(ctx, {
+      runId: "resumed",
+      holeId: "hole#1@1",
+      fill: 'return "filled";',
+      cwd,
+      trace: TRACE,
+    });
+    assert.equal(closed.ok, false);
+    assert.equal(closed.reason, "hole_not_waiting");
+
+    // 正向对照：一条更晚的 hole-filled 同样终结等待窗（每 run 每洞至多一次 fill）。
+    journal.appendEvent("resumed", reached(1_700_000_002_000));
+    journal.appendEvent("resumed", {
+      type: "hole-filled",
+      holeId: "hole#1@1",
+      succeededBy: "resumed-successor",
+    });
+    const filled = await fillWorkflowHole(ctx, {
+      runId: "resumed",
+      holeId: "hole#1@1",
+      fill: 'return "filled";',
+      cwd,
+      trace: TRACE,
+    });
+    assert.equal(filled.ok, false);
+    assert.equal(filled.reason, "hole_not_waiting");
   });
 });
 

@@ -203,6 +203,26 @@ export async function fillWorkflowHole(
 /**
  * journal 事件里这个洞的「等待事实」：最后一条 hole-reached(holeId) 之后没有 hole-filled
  * 同 id、也没有 run-settled ⇒ 在等。返回那条 reached 事件（供诊断），否则 undefined。
+ *
+ * 修复依据（Bug：resume 后重新到达的洞永远填不了）：本函数读的是**整段跨代事件流**——
+ * resume 走同一个 runId，把 gen1 的 `run-settled` 与 gen2 的 `run-started` + 重新到达的
+ * `hole-reached`（确定性 ordinal 复算同 holeId，见 engine-hole.ts:33-35「消费面据此幂等」）
+ * 追加在同一条流上。原实现在**第一条** `run-settled` 就 `return undefined`，于是 gen2 的
+ * `hole-reached` 永远扫不到：填充闸与它的两个发现面就此分家——投影 reducer 的
+ * `reduceHoleReached` 对每条 hole-reached **无条件 upsert**（workflow-runs-holes.ts:26，
+ * run-settled 只清空、更晚的 reached 再填回），GetWorkflowRun.pendingHoles 与 hole-wake
+ * 都据它把 hole#1@1 广告给模型，模型照着调 FillWorkflowHole 却被这道闸永远拒为
+ * `hole_not_waiting`。
+ *
+ * 修法：与 reducer 逐事件同构（last-writer-wins），只保留一次 `return reached`：
+ *   - hole-reached(holeId)  ⇒ 记下这条 reached（= reduceHoleReached 的 upsert）；
+ *   - hole-filled(holeId)   ⇒ 清零、继续（= reduceHoleFilled 把这个 id 划掉）；
+ *   - run-settled           ⇒ 清零、继续（= reducer 终态清空整张 pendingHoles）；
+ *   - run-started           ⇒ **不动**（= reduceRunStarted 不触碰 pendingHoles）。
+ * 绝不在中途 `return undefined`：那正是把 resume 后更晚的重新到达挡在闸外的根因。清零而非
+ * 早退让「最后一段 reached→(filled|settled)」的事实说了算，与 reducer 在**任意**事件序上判定
+ * 一致（含 run-started 不清空这条——它是 reduceRunStarted 的既有语义，闸门照抄而不是自作主张
+ * 加一条兜底清零，否则又会与权威发现面分家）。
  */
 function waitingHoleOf(
   stored: readonly { event: RunEvent }[],
@@ -212,8 +232,8 @@ function waitingHoleOf(
   for (const item of stored) {
     const { event } = item;
     if (event.type === "hole-reached" && event.holeId === holeId) reached = item;
-    if (event.type === "hole-filled" && event.holeId === holeId) return undefined;
-    if (event.type === "run-settled") return undefined;
+    else if (event.type === "hole-filled" && event.holeId === holeId) reached = undefined;
+    else if (event.type === "run-settled") reached = undefined;
   }
   return reached;
 }

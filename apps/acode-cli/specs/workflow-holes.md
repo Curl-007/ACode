@@ -53,8 +53,19 @@ run 沿 amend/supersede 链继续。子代理返回**值**，hole 返回**代码
 - fill 文件：与 run 草稿同目录（`.acode` 会话 workflows 目录族），被拒后可 Edit 再
   以 `path` 重提。
 - `hole_not_waiting`：run 不在飞或不在该洞等待（已填/未到达/未知 id）。
+- **等待窗的判定必须与投影 reducer 逐事件同构**（`reduceHoleReached` 的无条件 upsert）：
+  一个洞「还在等」当且仅当**最后一条** `hole-reached(holeId)` 之后**没有** `hole-filled(holeId)`、
+  也**没有** `run-settled`。判定读整段跨代事件流，因此 `run-settled` / `hole-filled`
+  只能**结束当前这一段**等待（把追踪到的 reached 清零、继续扫描），**不得**在第一条
+  `run-settled` 上直接返回「不在等」——那会让 resume 后重新到达的洞永远填不了
+  （`FillWorkflowHole` 的定位 half 与 reducer 的 upsert half 就此分家，见 engine-hole.ts:33-35
+  确定性 ordinal 的注释）。`run-started`（resume 重臂）**不清空**已追踪的 reached——与
+  `reduceRunStarted` 不触碰 pendingHoles 逐字对齐；等待窗只由 reached / hole-filled /
+  run-settled 三种事件决定。GetWorkflowRun.pendingHoles 与 hole-wake 都按 reducer 广告这个洞
+  在等，填充闸就必须同意。
 - 停靠超时/撤销：run 停止（stop/失败）时撤下 pendingHoles（同
-  `withdrawSessionEscalations` 先例）；resume 已停 run 后洞重新询问。
+  `withdrawSessionEscalations` 先例）；resume 已停 run 后洞重新询问——重新询问即
+  再发一条 `hole-reached`，等待窗据此**重新打开**（哪怕前面那条 `run-settled` 曾把它关掉）。
 
 ## 语义钉死（循环与多次到达）
 
@@ -96,7 +107,11 @@ contracts `tools/fill-workflow-hole.ts`；core `tool/handlers/fill-workflow-hole
 5. fan-out 回调内 hole → 编译期 9005 拒绝。
 6. snippet 含 hole → 编译期拒绝（SNIPPET_FACADE_DTS 不含）。
 7. 子代理调用 FillWorkflowHole → 工具不在其工具面。
-8. 测试：`apps/acode-cli/tests/workflow-holes.test.mjs`（编译/停靠/splice/supersede/
+8. resume 已停 run 后洞重新到达 → 填充闸放行（reducer 广告 pendingHoles 在等、hole-wake
+   唤醒模型、FillWorkflowHole 不再误拒 hole_not_waiting）；最后一条 reached 之后再补
+   run-settled / hole-filled 则重新拒绝。等待闸与投影 reducer 在跨代事件流上判定一致
+   （测试 WH-F3）。
+9. 测试：`apps/acode-cli/tests/workflow-holes.test.mjs`（编译/停靠/splice/supersede/
    循环/拒绝路径）+ shared reducer 单测。
 
 ## 最大风险（实现时盯住）

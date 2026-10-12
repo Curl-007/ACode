@@ -37,6 +37,21 @@ claim 痕迹，与「claim 失败 → 缓存 null → 不再尝试」一致。
 两个缺陷同根：**租约的「时间语义」只有原语层实现，接线层把它当成了一次性的
 进程身份**。
 
+**D3：消费端写闸门读冻结的初始 claim，不读 live 所有权——被接管对写路径不可见。**
+manager 把 live 所有权记在可变的 `current`（workflow-owner-lease.ts），心跳被接管时
+清成 `null` 并停表；但 `current` 的唯一读者是 `reclaim()` 的快路径。两个写消费端
+（`ensureWorkflowOwner`、script runtime `run()`）此前都写成
+`let owner = await ownerReady; if (owner === null) owner = await reclaim();`——
+`ownerReady = attemptClaim()` 是一次性 promise，初始 claim 成功后**永久冻结**在首份
+facts，于是 `owner === null` 恒假、`reclaim()` 在接管后永不触发，闸门拿到的是陈旧
+`(T1, gen1)`。后果链：`createRun` 不带闸门 → 陈旧 facts 的行照样落库；首个 gated
+`updateRunStatus` 撞上 `(T2, gen2)` → `Stale workflow owner write rejected` → 行永远
+冻结在非终态（**D1 从第二条路径复活**）；且 `reclaim` 不可达 → 惰性收敛与自愈
+（R3/R5）永不发生 → 本进程此后每次 submit 都重复此路径（**D2 的进程级永久锁死**）。
+这与本模块自己的注释「R4 在消费端下一次 ensure 时即时可见」和 R3/R4 直接矛盾：
+接管信号对写路径结构性不可见。根因与 D1/D2 同源——**时间语义只活在原语层，消费端
+把一次性身份当成了 live 所有权**。
+
 ## 产品规则
 
 - **R1 唯一写者 = 会话宿主进程，进程在世即所有权在世。** 持有期间以
@@ -48,9 +63,20 @@ claim 痕迹，与「claim 失败 → 缓存 null → 不再尝试」一致。
   `run()`）看到 `null` 时先经 `reclaim()` 惰性重试一次：此刻旧租约若已过期即当场
   取得所有权；仍被活跃外部 owner 持有才抛既有错误。reclaim 并发去重（同一
   in-flight promise）。
-- **R4 被接管后原 owner 必须停写。** 心跳续租收到 `null`（外部活跃 token 夺走）
-  即停表并把自身置为非 owner（后续 reclaim 会再试）；generation 不匹配的写入由
-  既有写闸门拒绝——闸门不改。
+- **R4 被接管后原 owner 必须停写，且接管对消费端下一次写立即可见。** 心跳续租收到
+  `null`（外部活跃 token 夺走）即停表并把自身置为非 owner（`current = null`）；
+  generation 不匹配的写入由既有写闸门拒绝——闸门不改。**关键：消费端的写边界必须
+  读 live 所有权（经 `reclaim()`），不得读冻结的一次性 `ownerReady`。** `reclaim()`
+  的快路径在仍持有时直接回缓存 `current`（不打 DB，happy path 零额外开销；`current`
+  由心跳每 renewIntervalMs 续新），在被接管（`current === null`）时重发 claim——旧租约
+  已过期即当场取回所有权并重新武装心跳，仍被活跃外部 owner 持有才回 `null` 让消费端
+  抛既有错误。写时的最终权威仍是既有 DB 闸门（`isWorkflowSessionOwner`）：快路径缓存
+  的 `current` 至多滞后一个心跳窗，那段窗口内的写入由闸门兜住并抛
+  `Stale workflow owner write rejected`；helper 只负责把「接管已被 manager 侦测到」这一
+  live 事实暴露给消费端。于是「被接管 → 停写 → 下次 ensure 自愈或干净失败」这条链在
+  写路径上真正闭合，D3 的「陈旧 facts 落库 + 首个 gated 写被拒 + 进程级锁死」不再发生。
+  **闸门收敛到单一 helper（`resolveWriteBoundaryOwner`），dwf 与 script 两个消费端共用，
+  杜绝两份租约读取逻辑各自漂移。**
 - **R5 惰性孤儿收敛（两侧）。** 构造时 claim 失败 ⇒ 构造期收敛被跳过；首次 reclaim
   成功后补跑一次（dwf 侧 `reconcileOrphanRuns` 在 run service 的 ensure 路径；script
   侧 `reconcileOrphanScriptWorkflowRuns` 在 bridge 包装的 reclaim 里）。安全论证与
@@ -80,12 +106,24 @@ export function createWorkflowOwnerLeaseManager(deps: {
   reclaim(): Promise<WorkflowOwnerLeaseFacts | null | undefined>;
   dispose(): void;           // 停心跳（测试/拆卸用；生产不调——interval 已 unref）
 };
+
+/**
+ * 写边界闸门（R4）：两个消费端（dwf `ensureWorkflowOwner`、script `run()`）共用的
+ * **唯一**一处「读 live 所有权」逻辑。返回 live facts / null（被他人持有，调用方抛既有
+ * 错误）/ undefined（无能力面）。**恒经 reclaim() 读取**——绝不读冻结的 ownerReady，
+ * 否则接管对写路径不可见（D3）。ownerReady 缺席（无能力面）时直通 undefined。
+ */
+export async function resolveWriteBoundaryOwner(deps: {
+  ownerReady?: Promise<WorkflowOwnerLeaseFacts | null | undefined>;
+  ownerReclaim?: () => Promise<WorkflowOwnerLeaseFacts | null | undefined>;
+}): Promise<WorkflowOwnerLeaseFacts | null | undefined>;
 ```
 
 **消费端**（均为可选 dep，缺席时行为与今天逐字节一致）：
 
 - `DynamicWorkflowRunServiceDeps.workflowOwnerReclaim?: () => Promise<facts|null|undefined>`
-  ——`ensureWorkflowOwner` 在 `null` 时先 reclaim；成功后按需补 R5 收敛。
+  ——`ensureWorkflowOwner` 经 `resolveWriteBoundaryOwner` 读 live 所有权；成功后按需补
+  R5 收敛。
 - `ScriptWorkflowRuntimeDeps.ownerReclaim?`——`run()` 的 owner 门同上。
 - bridge（script-workflow-methods）：`ownerReclaim` 透传给 runtime；bridge 自己的
   fallback claim（`deps.ownerReady` 缺席的宿主）也改走 manager，杜绝第二份租约逻辑。
@@ -109,7 +147,13 @@ fill 的前驱 cancelled/后继 completed）全部过闸——修复前这些写
    （活跃外部 owner），不返回旧 facts。
 4. 无能力面：`claim` 缺席 → ready/reclaim 均 `undefined`，不起心跳。
 5. 接线断言（source-text，swarm-test 模式）：wiring/run-service/script-runtime/bridge
-   的 reclaim 路径与 R5 补收敛 flag 在场。
+   的 reclaim 路径与 R5 补收敛 flag 在场；两个写消费端都经 `resolveWriteBoundaryOwner`
+   读 live 所有权（不再出现「读冻结 ownerReady 后才 reclaim」的旧闸门形状，D3）。
+6. **写边界闸门读 live 所有权（D3 回归）**：`resolveWriteBoundaryOwner` 在 manager 被
+   接管后（live `current === null`）**不再**回陈旧 facts——外部租约仍活跃时回 `null`
+   （消费端据此抛「held by another process」，绝不落库陈旧行）；外部租约已过期时回
+   新 facts（generation 递增，当场自愈）。对照：冻结 `ownerReady` 恒回首份 facts，
+   正是 D3 的病根。此场景直接驱动 helper，覆盖两个消费端共用的那唯一一处闸门。
 
 ## 未做与取舍
 

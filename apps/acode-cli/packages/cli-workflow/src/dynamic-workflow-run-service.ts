@@ -109,6 +109,7 @@ import {
   createWorkflowEscalationRegistry,
   type WorkflowEscalationRegistry,
 } from "./workflow-escalation-registry.js";
+import { resolveWriteBoundaryOwner } from "./workflow-owner-lease.js";
 // W1-R3 解环：deps 类型住在中立文件（见 dynamic-workflow-run-deps.ts 头注），
 // launch/submit 从那里导入；此处 re-export 保持既有消费面形状不变。
 import type { DynamicWorkflowRunServiceDeps } from "./dynamic-workflow-run-deps.js";
@@ -551,21 +552,24 @@ async function ensureWorkflowOwner(
   deps: DynamicWorkflowRunServiceDeps,
   deferredOwnerReconcile: { pending: boolean },
 ): Promise<void> {
-  let owner = await deps.workflowOwnerReady;
-  if (owner === null && deps.workflowOwnerReclaim !== undefined) {
-    // 惰性重试：一次性 claim 的失败（启动窗口内他人活跃租约/瞬时 DB 错误）不再是
-    // 进程级判决——旧租约若已过期，这里当场取得所有权（specs/workflow-owner-lease.md R3）。
-    owner = await deps.workflowOwnerReclaim();
-    if (owner !== null && owner !== undefined && deferredOwnerReconcile.pending) {
+  // D3/R4 修复：写边界恒经 resolveWriteBoundaryOwner 读 **live** 所有权（内部走 reclaim），
+  // 不再读冻结的一次性 workflowOwnerReady。旧形状 `owner = await ownerReady; if (owner ===
+  // null) owner = await reclaim()` 在初始 claim 成功后 ownerReady 永久非 null，于是接管后
+  // reclaim 永不触发、闸门拿陈旧 facts 继续写（不带闸门的 createRun 落库陈旧行，首个 gated
+  // 写入被拒，行冻结在非终态；且 reclaim 不可达 → 自愈/收敛永不发生 → 进程级锁死）。
+  const owner = await resolveWriteBoundaryOwner({
+    ownerReady: deps.workflowOwnerReady,
+    ownerReclaim: deps.workflowOwnerReclaim,
+  });
+  if (owner === null) throw new Error("Workflow session owner lease is held by another process");
+  if (owner !== undefined) {
+    if (deferredOwnerReconcile.pending) {
       // R5：构造期收敛因 claim 失败被跳过；首次取得所有权时补跑一次。安全论证与
       // 构造期相同：本进程此前从未持有所有权 ⇒ 名下零在飞 run ⇒ 本会话 journal 里的
       // 非终态行只可能是死进程遗物（现场证据：冻结在 running 的 dwfrun-ba4e6ad0）。
       deferredOwnerReconcile.pending = false;
       reconcileOrphanRuns({ ...deps, ...owner });
     }
-  }
-  if (owner === null) throw new Error("Workflow session owner lease is held by another process");
-  if (owner !== undefined) {
     deps.ownerToken = owner.ownerToken;
     deps.ownerGeneration = owner.ownerGeneration;
   }

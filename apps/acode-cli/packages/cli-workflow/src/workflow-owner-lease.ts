@@ -46,6 +46,42 @@ export interface WorkflowOwnerLeaseManager {
   dispose(): void;
 }
 
+/**
+ * 写边界闸门（spec R4/D3）：两个写消费端（dwf `ensureWorkflowOwner`、script runtime
+ * `run()`）共用的**唯一**一处「读 live 所有权」逻辑。收敛到一个 helper 是为了杜绝两份
+ * 租约读取实现各自漂移（AGENTS.md「单一写入路径」）。
+ *
+ * **病根（D3）**：此前两个消费端各自写成 `let owner = await ownerReady; if (owner === null)
+ * owner = await reclaim();`。`ownerReady` 是一次性 promise，初始 claim 成功后**永久冻结**
+ * 在首份 facts，于是 `owner === null` 恒假、`reclaim()` 在接管后永不触发——manager 的 live
+ * `current = null`（心跳被接管时清）对写路径结构性不可见，消费端拿陈旧 `(T1, gen1)` 继续
+ * 走：不带闸门的 `createRun` 把陈旧行落库，首个 gated 写入撞 `(T2, gen2)` 被拒，行永远
+ * 冻结在非终态（D1 从第二条路径复活），且 reclaim 不可达 → 自愈/惰性收敛永不发生 →
+ * 进程级永久锁死（D2）。
+ *
+ * **修复依据（R4）**：恒经 `reclaim()` 读 live 所有权，绝不读冻结的 `ownerReady`。
+ * `reclaim()` 的快路径在仍持有时直接回缓存 `current`（不打 DB，happy path 零额外开销；
+ * `current` 由心跳每 renewIntervalMs 续新）；在被接管（`current === null`）时重发 claim——
+ * 旧租约已过期即当场取回所有权并重新武装心跳，仍被活跃外部 owner 持有才回 `null` 让
+ * 消费端抛既有错误。写时的最终权威仍是既有 DB 闸门（`isWorkflowSessionOwner`）：快路径的
+ * 「缓存 current 可能滞后一个心跳窗」由那道闸门兜住并抛 `Stale workflow owner write
+ * rejected`，本 helper 只负责把「接管已被 manager 侦测到」这一 live 事实暴露给消费端。
+ *
+ * `ownerReady` 缺席（store 无能力面，legacy in-memory host，R6）时直通 `undefined`，
+ * 消费端走既有「无 owner facts」路径，语义逐字节不变。
+ */
+export async function resolveWriteBoundaryOwner(deps: {
+  ownerReady?: Promise<WorkflowOwnerLeaseFacts | null | undefined>;
+  ownerReclaim?: () => Promise<WorkflowOwnerLeaseFacts | null | undefined>;
+}): Promise<WorkflowOwnerLeaseFacts | null | undefined> {
+  if (deps.ownerReady === undefined) return undefined;
+  // 仍持有：reclaim 快路径回缓存 current（廉价续租）。被接管/初始失败：reclaim 重发
+  // claim（自愈或回 null）。无 reclaim 能力（仅 ownerReady 的宿主）：退回冻结 facts——
+  // 这类宿主没有 live 所有权可读，维持既有行为。
+  if (deps.ownerReclaim === undefined) return deps.ownerReady;
+  return deps.ownerReclaim();
+}
+
 const DEFAULT_LEASE_MS = 30_000;
 
 function toFacts(lease: WorkflowOwnerLease): WorkflowOwnerLeaseFacts {

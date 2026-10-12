@@ -18,6 +18,7 @@ import type { PrepareUserExecutionBoundary } from "./host-types.js";
 import { readWorkflowScriptDocument, stableHash } from "./script-workflow-meta.js";
 import { prepareScriptWorkflowRun } from "./script-workflow-prepare.js";
 import { resolveWorkflowConcurrencyCeiling } from "./workflow-concurrency-ceiling.js";
+import { resolveWriteBoundaryOwner } from "./workflow-owner-lease.js";
 import {
   runScriptWorkflowChild,
   type ScriptWorkflowChildRequest,
@@ -225,12 +226,14 @@ export class ScriptWorkflowRuntime {
       await this.assertResumeOwner(input.resumeFromRunId);
     }
     await this.deps.prepareUserExecutionBoundary(options);
-    let owner = await this.deps.ownerReady;
-    if (owner === null && this.deps.ownerReclaim !== undefined) {
-      // 惰性重试：一次性 claim 的失败不再是进程级判决——旧租约若已过期，这里当场
-      // 取得所有权（specs/workflow-owner-lease.md D2/R3）。
-      owner = await this.deps.ownerReclaim();
-    }
+    // D3/R4 修复：写边界恒经 resolveWriteBoundaryOwner 读 **live** 所有权（内部走 reclaim），
+    // 不再读冻结的一次性 ownerReady。旧形状在初始 claim 成功后 ownerReady 永久非 null，接管后
+    // reclaim 永不触发 → run() 拿陈旧 facts 越过闸门、落库陈旧行（见 dwf ensureWorkflowOwner
+    // 同处注释与 specs/workflow-owner-lease.md D3）。
+    const owner = await resolveWriteBoundaryOwner({
+      ownerReady: this.deps.ownerReady,
+      ownerReclaim: this.deps.ownerReclaim,
+    });
     if (owner === null) throw new Error("Workflow session owner lease is held by another process");
     this.ownerLeaseFacts = owner ??
       (this.deps.ownerToken === undefined || this.deps.ownerGeneration === undefined

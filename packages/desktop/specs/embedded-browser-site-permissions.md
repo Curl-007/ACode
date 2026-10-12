@@ -23,7 +23,13 @@
   - `allow-session`：只写内存 session-allow 集合（该 Electron session 生命周期内）；
   - `block-always`：写 store `"deny"`；
   - `deny-once`：什么都不写。
-- 弹窗期间**同一 (origin, permission) 去重**：并发请求共享同一个未决 Promise。
+- 弹窗期间**同一 (origin, 细分权限集合) 去重**：并发请求共享同一个未决 Promise。
+  去重键必须用 `media` 细分后的子权限集合（camera/microphone 等，排序后拼接），**不能**
+  用原始 `permission` 字符串。原因：并发的 `media(video)` 与 `media(audio)` 会命中同一个
+  `origin\0media` 键，后到的音频请求没有自己的弹窗、直接继承摄像头弹窗的决策被静默放行
+  （fail-open 隐私泄露），违背「`media` 按 `mediaTypes` 细分后逐项征求同意」的产品规则。
+  按细分集合去重后，只有解析出**同一**同意范围的并发请求才共享 Promise；需要不同子权限
+  的请求各自弹窗。
 - `clipboard-read` / `usb` / `hid` / `serial` / 屏幕捕获**不在**可询问集合：屏幕捕获与
   设备选择保持同步拒绝（zcode 3.15.1 有 source picker，ACode 本轮不做，登记为后续项）。
 - 同步探测（`setPermissionCheckHandler`）只认 store 的 `"allow"` 与 session-allow；
@@ -97,6 +103,9 @@ sequenceDiagram
    resolve → warn + deny-once。
 6. `desktopSessionPermissionPolicy` 现有单测全绿 + 新增：可询问集合判定、四档动作
    落点、去重、check-handler 镜像、损坏文件容错。
+7. 并发 `media(video)` 与 `media(audio)`（disjoint mediaTypes）各自弹窗、各自征求同意：
+   对摄像头弹窗 allow-always **只**写 `camera=allow`，音频请求**不得**继承摄像头决策被放行，
+   必须挂在自己的弹窗上（去重键用细分集合而非原始 `permission`）。
 
 i18n：`browser.permission.*`（wantsToUse / siteInfo / settings / saved / readError /
 saveError / allowAlways / allowSession / blockAlways / deny / close / camera /

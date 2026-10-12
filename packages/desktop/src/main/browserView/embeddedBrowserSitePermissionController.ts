@@ -23,8 +23,8 @@ type EmbeddedBrowserPermissionPromptPayload =
  * 嵌入式浏览器站点权限：main 侧唯一决策者（specs/embedded-browser-site-permissions.md）。
  * 判定纯函数 + 弹窗状态机；IPC registrar 见 desktopSitePermissionIpc.ts。
  * 纪律：闭集外同步 denied（无 prompt 路径）；同步探测只认 store allow 与 session-allow；
- * 弹窗期同 (origin, permission) 去重共享未决 Promise；未知/过期 requestId 的 resolve →
- * warn 后按 deny-once 结算语义（什么都不写），不抛错——弹窗可能已被用户关闭。
+ * 弹窗期同 (origin, 细分权限集合) 去重共享未决 Promise（media 按子权限建键，详见 spec）；
+ * 未知/过期 requestId 的 resolve → warn 后按 deny-once 结算语义（什么都不写），不抛错。
  */
 
 /** 可询问权限闭集（spec 产品规则；clipboard-read/usb/hid/serial/屏幕捕获刻意不在内）。 */
@@ -232,10 +232,12 @@ export class EmbeddedBrowserSitePermissionController {
       return;
     }
 
-    const key = `${promptOrigin}\0${permission}`;
+    // 去重键用细分后的子权限集合而非原始 permission：否则并发 media(video)/media(audio)
+    // 命中同一 `origin\0media`，后到者静默继承摄像头决策（fail-open；见 spec）。
+    const key = `${promptOrigin}\0${[...outcome.permissions].sort().join(",")}`;
     const pendingExisting = this.pendingByKey.get(key);
     if (pendingExisting) {
-      // 同一 (origin, permission) 去重：并发请求共享同一个未决 Promise（spec 产品规则）。
+      // 同一 (origin, 细分权限集合) 去重：并发请求共享同一个未决 Promise（spec 产品规则）。
       callback(await pendingExisting);
       return;
     }

@@ -266,6 +266,80 @@ test("去重：并发同 (origin,permission) 共享一个未决弹窗与同一�
   assert.deepEqual(second, [true], "并发请求共享同一决策");
 });
 
+test("去重键用细分集合：并发 media(video) 与 media(audio) 各自弹窗，摄像头决策不静默放行麦克风", async () => {
+  // 回归：pending 去重键曾按原始 permission（`origin\0media`）计算，导致并发的
+  // media(video) 与 media(audio) 命中同一个键——音频请求没有自己的弹窗，直接 await
+  // 摄像头弹窗的 Promise 并被其决策静默放行（fail-open 隐私泄露）。
+  const harness = createHarness();
+  const videoResults = [];
+  const audioResults = [];
+  harness.controller.handlePermissionRequest(
+    { id: 1 },
+    "media",
+    (granted) => videoResults.push(granted),
+    { requestingUrl: "https://example.com/page", mediaTypes: ["video"] },
+  );
+  await harness.flush(2);
+  harness.controller.handlePermissionRequest(
+    { id: 2 },
+    "media",
+    (granted) => audioResults.push(granted),
+    { requestingUrl: "https://example.com/page", mediaTypes: ["audio"] },
+  );
+  await harness.flush();
+
+  // 两个 disjoint 的子权限集合必须各弹一个窗，绝不折叠成同一个。
+  assert.equal(harness.fakeWindow.sent.length, 2, "disjoint 子权限集合必须各自弹窗");
+  assert.deepEqual(
+    harness.fakeWindow.sent.map((entry) => entry.payload.requestId),
+    ["req-1", "req-2"],
+  );
+
+  // 只对摄像头弹窗 allow-always：音频请求必须仍挂在它自己的弹窗上未决。
+  harness.controller.resolvePrompt("req-1", "allow-always");
+  await harness.flush();
+  await harness.controller.whenIdle();
+  assert.deepEqual(videoResults, [true], "摄像头请求放行");
+  assert.deepEqual(audioResults, [], "麦克风不得继承摄像头决策被静默放行");
+  assert.deepEqual(
+    harness.persisted(),
+    { "https://example.com": { camera: "allow" } },
+    "allow-always 只写摄像头，不写麦克风",
+  );
+
+  // 音频请求仍可由它自己的弹窗独立结算（这里选择拒绝，验证不被摄像头决策污染）。
+  harness.controller.resolvePrompt("req-2", "deny-once");
+  await harness.flush();
+  assert.deepEqual(audioResults, [false], "麦克风由自己的弹窗按 deny-once 结算");
+});
+
+test("去重键用细分集合：并发 media(video) 与 media(video) 仍共享一个弹窗", async () => {
+  // 反向保护：相同子权限集合的并发 media 请求仍必须去重，修复不得退化成每请求都弹窗。
+  const harness = createHarness();
+  const first = [];
+  const second = [];
+  harness.controller.handlePermissionRequest(
+    { id: 1 },
+    "media",
+    (granted) => first.push(granted),
+    { requestingUrl: "https://example.com/a", mediaTypes: ["video"] },
+  );
+  await harness.flush(2);
+  harness.controller.handlePermissionRequest(
+    { id: 2 },
+    "media",
+    (granted) => second.push(granted),
+    { requestingUrl: "https://example.com/b", mediaTypes: ["video"] },
+  );
+  await harness.flush();
+  assert.equal(harness.fakeWindow.sent.length, 1, "相同子权限集合仍去重共享弹窗");
+
+  harness.controller.resolvePrompt("req-1", "allow-always");
+  await harness.flush();
+  assert.deepEqual(first, [true]);
+  assert.deepEqual(second, [true], "并发同集合请求共享同一决策");
+});
+
 test("未知/过期 requestId：warn + 按 deny-once 结算（不抛错、不影响未决弹窗）", async () => {
   const harness = createHarness();
   await harness.request("camera");

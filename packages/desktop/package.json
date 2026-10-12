@@ -26,7 +26,9 @@
     "lint": "oxlint",
     "lint:fix": "oxlint --fix",
     "test": "node --import tsx --test \"tests/**/*.test.mjs\"",
-    "e2e:smoke": "node scripts/e2e-smoke.mjs"
+    "e2e:smoke": "node scripts/e2e-smoke.mjs",
+    "e2e:genui-card": "node scripts/e2e-visualization-card-render.mjs",
+    "e2e:netcapture-auth": "node scripts/e2e-network-capture-auth.mjs"
   },
   "dependencies": {
     "@acode/acode-cua": "workspace:*",

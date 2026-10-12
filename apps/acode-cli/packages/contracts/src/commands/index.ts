@@ -237,3 +237,27 @@ export function detectUnsupportedDynamicSyntax(content: string): "shell" | undef
   }
   return undefined;
 }
+
+/**
+ * 斜杠命令已被 CLI 展开的展示元数据（spec: docs/specs/custom-command-invocation-echo.md）。
+ * 只在展开成功时产生；GUI 以它的有无判断「命令是否触发」，不得从输入文本反推。
+ * 自 anker-code@6e698ada 移植。
+ */
+export interface CustomCommandInvocationMeta {
+  name: string;
+  scope: CustomCommandScope | "builtin";
+  source?: CustomCommandSource;
+  description?: string;
+}
+
+export function toCustomCommandInvocationMeta(
+  metadata: Pick<CustomCommandMetadata, "description" | "name" | "scope" | "source">,
+): CustomCommandInvocationMeta {
+  const description = metadata.description.trim();
+  return {
+    name: metadata.name,
+    scope: metadata.scope,
+    source: metadata.source,
+    ...(description ? { description } : {}),
+  };
+}

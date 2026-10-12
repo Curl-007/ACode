@@ -1,7 +1,15 @@
 import type { ConfigResult } from "@acode/adapters/config";
 import { resolveInitialModelSelection, type ModelSelectionOptions } from "@acode/provider";
-import { resolveBashTimeoutPolicy, type AgentProfile, type AgentRuntimeConfig } from "@acode/core";
-import { type BuiltInSubagentModelSelectionOverrides } from "@acode/shared";
+import {
+  resolveBashTimeoutPolicy,
+  type AgentProfile,
+  type AgentRuntimeConfig,
+  type LoadCurrentSubagentProfiles,
+} from "@acode/core";
+import {
+  type BuiltInSubagentModelSelectionOverrides,
+  type PluginSubagentModelSelectionOverrides,
+} from "@acode/shared";
 import {
   type CollaborationMode,
   type HookConfigSource,
@@ -9,8 +17,10 @@ import {
   type HookMatcherConfig,
   type HooksRuntimeConfig,
   type McpServerConfig,
+  type PluginMetadata,
 } from "@acode/contracts";
 import { omitMcpServers, resolveTrustedOfficialCuaServerNames } from "../mcp-config.js";
+import { applyPluginAgentModelOverrides } from "../subagents.js";
 import {
   collectProjectDeclaredStdioServers,
   resolveUntrustedProjectMcpServers,
@@ -38,6 +48,13 @@ interface ResolvedInitialRegistrySelection extends ResolvedRegistrySelection {
   readonly selectionOptions?: ModelSelectionOptions;
 }
 
+/** 派生边界读取到的最新已提交配置快照；字段是 core 消费所需的最小面。 */
+export interface LiveSubagentProfilesSnapshot {
+  builtInModelSelectionOverrides: BuiltInSubagentModelSelectionOverrides;
+  pluginAgentModelSelectionOverrides: PluginSubagentModelSelectionOverrides;
+  profiles: readonly AgentProfile[];
+}
+
 export function resolveAppRuntimeConfig(input: {
   cliStorageRoot: string;
   configResult: ConfigResult;
@@ -56,6 +73,8 @@ export function resolveAppRuntimeConfig(input: {
   projectMcpTrust?: ProjectMcpTrustSnapshot;
   subagentOutputRootDir: string;
   subagentProfiles?: readonly AgentProfile[];
+  /** 派生边界读取回调；由 create-app 组合（含无覆盖插件基线）后注入 core。 */
+  subagentLoadCurrentProfiles?: LoadCurrentSubagentProfiles;
   storageRoot?: string;
   workingDirectory: string;
   workspaceIdentity?: string;
@@ -208,6 +227,9 @@ export function resolveAppRuntimeConfig(input: {
         ...runtimeBuiltInModelSelectionOverrides,
       },
       profiles: [...(options.runtimeConfig?.subagents?.profiles ?? []), ...subagentProfiles],
+      ...(subagentLoadCurrentProfiles
+        ? { loadCurrentProfiles: subagentLoadCurrentProfiles }
+        : {}),
     },
     // K6 ambient flag（specs/ambient-budget-scheduler.md R5 红线）：默认关闭——开启是
     // 显式用户决策。对齐 runtimeFeatures 的「装配期推导注入」形态：CLI/协议
@@ -234,6 +256,59 @@ export function resolveAppRuntimeConfig(input: {
     runtimeConfig,
     untrustedProjectMcpServers,
     pendingProjectMcpServers: projectMcpGate.pendingServers,
+  };
+}
+
+/**
+ * 构造 core 的派生边界读取回调（纯组合，不读磁盘）。每次新派生子 Agent 时：
+ * 1. 由调用方注入的 `loadCurrentProfiles` 异步读取最新 Markdown 与 agents-state；
+ * 2. 用**启动时无覆盖的插件基线**套用最新插件/general-purpose 覆盖——基线只取一次，
+ *    避免把启动时烘焙进 profile 的旧插件覆盖在覆盖被删除后继续保留；
+ * 3. 按启动装配的同一顺序拼接：调用方显式 profiles → 最新用户/项目 profiles →
+ *    最新插件 profiles；内置覆盖沿用「最新磁盘状态被调用方显式覆盖压过」的优先级。
+ *
+ * 插件目录/启停/配置仍来自启动快照，本回调只刷新模型覆盖，不重新扫描插件。
+ */
+export function createLiveSubagentProfilesLoader(input: {
+  callerBuiltInModelSelectionOverrides?: BuiltInSubagentModelSelectionOverrides;
+  callerProfiles?: readonly AgentProfile[];
+  loadCurrentProfiles: (agentType: string) => Promise<LiveSubagentProfilesSnapshot>;
+  pluginProfiles: readonly AgentProfile[];
+  plugins: readonly PluginMetadata[];
+}): LoadCurrentSubagentProfiles {
+  return async (agentType) => {
+    const current = await input.loadCurrentProfiles(agentType);
+    const pluginProfiles = applyPluginAgentModelOverrides({
+      profiles: input.pluginProfiles,
+      plugins: input.plugins,
+      modelSelectionOverrides: current.pluginAgentModelSelectionOverrides,
+      builtInModelSelectionOverrides: current.builtInModelSelectionOverrides,
+    });
+    const reservedNames = new Set([
+      ...(input.callerProfiles ?? []).map((profile) => profile.name),
+      ...current.profiles.map((profile) => profile.name),
+    ]);
+    const canonicalPaths = new Set(
+      pluginProfiles
+        .filter((profile) =>
+          input.plugins.some((plugin) => profile.name.startsWith(`${plugin.name}:`)),
+        )
+        .map((profile) => profile.path),
+    );
+    const availablePluginProfiles = pluginProfiles.filter(
+      (profile) =>
+        !reservedNames.has(profile.name) ||
+        !profile.path ||
+        !canonicalPaths.has(profile.path) ||
+        input.plugins.some((plugin) => profile.name.startsWith(`${plugin.name}:`)),
+    );
+    return {
+      builtInModelSelectionOverrides: {
+        ...current.builtInModelSelectionOverrides,
+        ...input.callerBuiltInModelSelectionOverrides,
+      },
+      profiles: [...(input.callerProfiles ?? []), ...current.profiles, ...availablePluginProfiles],
+    };
   };
 }
 

@@ -136,6 +136,19 @@ export type EnqueueParentTaskNotification = (
   notification: ParentTaskNotificationCommand,
 ) => undefined;
 
+/** 派生边界读取到的最新候选 profile 快照；每次调用都是独立完整结果。 */
+export interface CurrentSubagentProfiles {
+  builtInModelSelectionOverrides?: BuiltInSubagentModelSelectionOverrides;
+  pluginAgentModelSelectionOverrides?: PluginSubagentModelSelectionOverrides;
+  profiles: readonly AgentProfile[];
+}
+
+/**
+ * 新派生边界的最新配置读取入口。由 bootstrap 注入磁盘读取；core 只消费结果，
+ * 不缓存跨派生的可变 profile 快照。
+ */
+export type LoadCurrentSubagentProfiles = (agentType: string) => Promise<CurrentSubagentProfiles>;
+
 export interface ExploreSubagentPortOptions {
   runExploreAgent: (
     request: ExploreSubagentRuntimeRequest,
@@ -187,6 +200,8 @@ export interface ExploreSubagentPortOptions {
   outputRootDir?: string;
   profiles?: readonly AgentProfile[];
   builtInModelSelectionOverrides?: BuiltInSubagentModelSelectionOverrides;
+  /** 每次新 launch/run/start 读取最新已提交配置；缺席时只用启动快照。 */
+  loadCurrentProfiles?: LoadCurrentSubagentProfiles;
   runtimeTaskRegistry?: RuntimeTaskRegistry;
   createAgentId?: () => string;
   getAllowedTools?: (profile: AgentProfile) => readonly string[];

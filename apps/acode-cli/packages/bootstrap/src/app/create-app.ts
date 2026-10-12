@@ -81,7 +81,11 @@ import { createInputFacade } from "./input-facade.js";
 import { createPluginFacadeForApp } from "./plugin-facade.js";
 import { resolvePluginRuntimeFeatures } from "./plugin-runtime-features.js";
 import { createSessionFacade } from "./session-facade.js";
-import { resolveAppRuntimeConfig, runtimeConfigLogContext } from "./runtime-config.js";
+import {
+  createLiveSubagentProfilesLoader,
+  resolveAppRuntimeConfig,
+  runtimeConfigLogContext,
+} from "./runtime-config.js";
 import { loadProjectMcpTrustSnapshot } from "./project-mcp-trust.js";
 import { resolveBundledSkillRoots } from "./bundled-skills.js";
 import { createReservedAgentNames, resolveBundledAgentProfiles } from "./bundled-agents.js";
@@ -107,7 +111,7 @@ import {
   resolveACodeBuiltinPromptCommand,
 } from "../builtin-prompt-command.js";
 import { collectDisabledPaths } from "../skill-command-overrides.js";
-import { loadPluginAgentProfiles, loadACodeAgentProfiles } from "../subagents.js";
+import { loadPluginAgentProfiles, loadACodeAgentProfiles, loadCurrentACodeAgentProfiles } from "../subagents.js";
 import { createRuntimeAiSdkModelExecutionConfig } from "../model-config.js";
 import { createCliPlatformOpenPort } from "./platform-open-port.js";
 import { ApiProviderModelRuntime } from "./provider-registry-model-runtime.js";
@@ -310,6 +314,16 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
       ],
       modelSelectionOverrides: acodeSubagentProfileOutcome.pluginAgentModelSelectionOverrides,
     }).profiles;
+    // 派生边界刷新用的**无覆盖插件基线**：启动时只取一次。若刷新时直接从带覆盖的
+    // 启动快照重算，被删除的插件覆盖会继续留在 profile 上（旧模型被烘焙进去）。
+    const pristinePluginSubagentProfiles = loadPluginAgentProfiles({
+      logger,
+      plugins: pluginOutcome.plugins,
+      reservedProfileNames: [
+        ...createReservedAgentNames(bundledAgentOutcome.profiles),
+        ...acodeSubagentProfiles.map((profile) => profile.name),
+      ],
+    }).profiles;
     const pluginRuntimeFeatures = resolvePluginRuntimeFeatures(pluginOutcome);
     const builtInMcpServers = resolveBuiltInNodeReplMcpServers({
       pluginOutcome,
@@ -317,6 +331,22 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
     });
     // 用户目录已在 loader 前完成原地迁移；不能给项目/插件旧身份加内存兼容旁路。
     const subagentProfiles = [...acodeSubagentProfiles, ...pluginSubagentProfiles];
+    // 派生边界刷新：每次新派生子 Agent 异步重读 Markdown 与 agents-state，
+    // 并用无覆盖插件基线套用最新覆盖。插件目录/启停/配置仍是启动快照（不重扫）。
+    const subagentLoadCurrentProfiles = createLiveSubagentProfilesLoader({
+      callerBuiltInModelSelectionOverrides:
+        options.runtimeConfig?.subagents?.builtInModelSelectionOverrides,
+      callerProfiles: options.runtimeConfig?.subagents?.profiles,
+      loadCurrentProfiles: (agentType) =>
+        loadCurrentACodeAgentProfiles({
+          logger,
+          storageRoot,
+          workingDirectory,
+          agentType,
+        }),
+      pluginProfiles: pristinePluginSubagentProfiles,
+      plugins: pluginOutcome.plugins,
+    });
     const ownsSessionStore = options.sessionStore === undefined;
     const sessionStore =
       options.sessionStore ?? (await openStartupSessionStore(configResult, startupTimer));
@@ -353,6 +383,7 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
       projectMcpTrust,
       subagentOutputRootDir: join(cliStorageRoot, "agents"),
       subagentProfiles,
+      subagentLoadCurrentProfiles,
       storageRoot,
       workingDirectory,
       workspaceIdentity: options.runtimeConfig?.memory?.workspaceIdentity,

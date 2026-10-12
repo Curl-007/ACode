@@ -111,6 +111,7 @@ import type {
   OutputStylePromptConfig,
 } from "./deps.js";
 import type { AgentProfile } from "../subagent/profile.js";
+import type { LoadCurrentSubagentProfiles } from "../subagent/runner.js";
 import type { RuntimeTaskRegistry } from "../runtime-task/contract.js";
 import type { AmbientScheduleQueue, ScheduledItem } from "../ambient/queue.js";
 import type { BashTimeoutPolicy } from "../tool/bash-timeout-policy.js";
@@ -153,6 +154,12 @@ export interface AgentRuntimeConfig {
     // 原内联二名 Record 与契约漂移：bootstrap 实际穿透的是五键对象（含 bundled 预置三名），
     // 类型面却只声明二键，收敛到 shared 类型避免第二份硬编码键集。
     builtInModelSelectionOverrides?: BuiltInSubagentModelSelectionOverrides;
+    /**
+     * 每次新派生子 Agent 前读取最新已提交配置（Markdown + agents-state.json）。
+     * 由 bootstrap 注入；core 只消费结果，不缓存跨派生的可变 profile 快照。
+     * 缺席时沿用启动快照（旧宿主）；恢复既有 child 始终使用启动快照。
+     */
+    loadCurrentProfiles?: LoadCurrentSubagentProfiles;
     // 一次性会话（-p）装配期声明 "foreground"：port 层单点把全部派发重写为前台
     // （runInBackground→false）并压制 autoBackgroundMs——一次性进程在最终消息后退出，
     // 任何后台化都等于丢结果（subagent-background-tristate.md R3）。

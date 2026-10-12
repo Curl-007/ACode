@@ -477,8 +477,8 @@ Desktop 现有 zip 导出继续可用，与轻量 JSON 的范围分别说明。J
 
 > 初稿曾在本阶段写「在 `packages/acode-cua/package.json` 声明 `acodeCuaRuntime` 契约」——**该说法错误，已删除**。契约校验的对象是 dev root / staged helper root 处的 `package.json`（`resolveDevelopmentRuntime` 读 `join(root, PACKAGE_JSON)`），而非仓库内的占位包；占位包也没有 `entry`/`nativeAddon` 两个 artifact，在它那处声明等于写下永不被读取、且指向不存在文件的假元数据。契约声明属阶段 1（随 `cua-producer/` 落地）。
 
-**阶段 1：建 producer 目录骨架 + 移植规范与 Apache-2.0 资产 + 裁决角色 B 路径（1.5–2.5 人日）**
-按决策二建 `cua-producer/`（角色 A：`name: "@acode/acode-cua"` + `acodeCuaRuntime` 契约声明），**并在同一提交内**把 `cua-producer` 加入 `scripts/architecture/discovery.mjs` 的 `SKIP_DIRECTORIES`（两步是原子改动，缺第二步会让架构检查器的 `@acode/acode-cua` 映射被劫持到 producer 目录，实测已证实）。**同时裁决角色 B 的落地路径**（决策二残留子决策：B-1 在占位包内补实 / B-2 引入上游 shadow 机制；本文倾向 B-1），因为角色 B 决定 host 侧能否连上 Helper，是端到端链路的前置。移植 54 份规范文档（保留出处与修改标注），写 producer spec（模块边界、Windows 权限模型、失败码、降级语义、两阶段就绪时序）。同步移植 133 KiB 源码资产并登记 `third-party/copied-components.json`（含 `referenceRevision` 指向上游 commit、`sha256`、`provenance`、`scope`、`license: Apache-2.0`）。新增 `express` 与 `sharp` 依赖（当前 ACode 两者皆无），并按上游口径移植 `sharp-package-assets.mjs`（ACode 缺此脚本）。适配决策二记载的偏离：上游 staging 脚本缺省解析 `node_modules/@zcode/zcode-cua`，ACode 无此缺省路径，需增加指向 `cua-producer/` 的解析或构建期显式传 `ACODE_CUA_HELPER_RUNTIME_PACKAGE_DIR`。
+**阶段 1：建 producer 目录骨架 + 移植规范与 Apache-2.0 资产（1.5–2.5 人日）**
+按决策二建 `cua-producer/`（角色 A：`name: "@acode/acode-cua"` + `acodeCuaRuntime` 契约声明），**并在同一提交内**把 `cua-producer` 加入 `scripts/architecture/discovery.mjs` 的 `SKIP_DIRECTORIES`（两步是原子改动，缺第二步会让架构检查器的 `@acode/acode-cua` 映射被劫持到 producer 目录，实测已证实）。角色 B 的落地路径已裁决为 **B-1**（在 `packages/acode-cua` 内补实，见 §7.8 决策二），其实现在阶段 2；本阶段只做 `module-boundary.md` 不变量 1 收窄的登记草案。移植 54 份规范文档（保留出处与修改标注），写 producer spec（模块边界、Windows 权限模型、失败码、降级语义、两阶段就绪时序）。同步移植 133 KiB 源码资产并登记 `third-party/copied-components.json`（含 `referenceRevision` 指向上游 commit、`sha256`、`provenance`、`scope`、`license: Apache-2.0`）。新增 `express` 与 `sharp` 依赖（当前 ACode 两者皆无），并按上游口径移植 `sharp-package-assets.mjs`（ACode 缺此脚本）。适配决策二记载的偏离：上游 staging 脚本缺省解析 `node_modules/@zcode/zcode-cua`，ACode 无此缺省路径，需增加指向 `cua-producer/` 的解析或构建期显式传 `ACODE_CUA_HELPER_RUNTIME_PACKAGE_DIR`。
 
 **阶段 2：最小可用链路——host 侧 RPC 客户端 + Helper 指针/键盘（5–8 人日）**
 本阶段目标是让端到端链路**首次跑通**（验收 C05），故角色 A 与角色 B 必须一起落地：
@@ -560,19 +560,24 @@ B 的已知代价须如实登记：引入 MSVC + C++/WinRT 工具链与跨 arch�
 
 **与上游形态的一处已知偏离（须登记）**：上游 `windows-cua-helper-assets.mjs` 的 `resolveWindowsCuaHelperSourceRoot` 在无显式 env 时**缺省解析 `node_modules/@zcode/zcode-cua`**（即 producer 是独立安装的包），而 ACode 的 `windowsCuaDevRuntime.ts` **没有** node_modules 缺省路径，只有 `ACODE_CUA_DEV_ROOT`（dev）与 `resources/tools/cua-helper`（产品）两条。故移植该 staging 脚本时必须适配这一差异：要么为 ACode 增加指向 `cua-producer/` 的缺省解析，要么在构建期显式传 `ACODE_CUA_HELPER_RUNTIME_PACKAGE_DIR`。上游 pointer 规范的「关联仓库：`z-code`、`C:\Users\dev\zcode-cua`」也印证 producer 在上游是**独立目录/仓库**，本仓选择把它放进仓内是有意偏离，理由是让 release 构建能在 `windows-latest` runner 上本地编译、消除外部供应链依赖。
 
-**⚠ 裁决后核实发现：`@acode/acode-cua` 承担两个角色，解析路径不同，「放 glob 外」只解决其中一个。** 这一点此前未拆清，现据实补正——它不推翻用户的选择，但**收窄其适用范围**并暴露一个残留子决策。
+**⚠ 裁决后核实发现：`@acode/acode-cua` 承担两个角色，解析路径不同，「放 glob 外」只解决其中一个。** 这一点此前未拆清，现据实补正——它不推翻用户的选择，但**收窄其适用范围**，并派生出的角色 B 子决策已于同日裁决为 B-1（见下）。
 
 - **角色 A：Helper 侧原生 producer**（`ax_native.node` + `windows-helper.js` + 14 个工具处理器）。经 **路径加载**：dev 走 `ACODE_CUA_DEV_ROOT`、产品走 `resources/tools/cua-helper`，由 `windowsCuaDevHelperHost` 以 `process.execPath` + `ELECTRON_RUN_AS_NODE=1` fork。**放 `cua-producer/`（glob 外）完全可行**——它不进 workspace 解析图，靠路径被 fork，不参与按名 import。用户的选择对这个角色成立。
 - **角色 B：Host 侧 broker RPC 客户端**（§7.3 表里 `broker.js` 的 5 个占位函数 `callBrokerMethod`/`dispatchRequest`/`handleRequestLine`/`parseRequestLine`/`probeHelperHealth` + `index.js` 的 `createComputerUseRuntime`）。经 **按名 import**：`node-repl-host/src/server.ts:17` 从 `@acode/acode-cua` 导入 `createComputerUseRuntime`，三个包（node-repl-host / services / desktop）的 `package.json` 均以 `"@acode/acode-cua": "workspace:*"` 依赖它 → **pnpm 只会解析到 workspace 内的 `packages/acode-cua` 占位包**。放 glob 外的 `cua-producer/` **不会被这些按名 import 解析到**。故角色 B 若仍留在占位包，host 侧永远 fail-closed，即使 Helper 存在也连不上——整条链路不通。
 
 **上游如何解决**：上游让真 producer 是一个**已安装的包**（`catalog:` pin → `node_modules/@zcode/zcode-cua`），在同名解析路径上 **shadow** 开源占位包，并用 `computer-use-producer.mjs` 读 `package.json.zcodeCuaPlaceholder` 标志区分「占位 vs 真实」。ACode 当前用 `workspace:*`（非 catalog），且占位包**没有** `acodeCuaPlaceholder` 标志（实测缺席），也无 `computer-use-producer.mjs` 检测脚本（实测缺失）。
 
-**角色 B 的两条可选路径（残留子决策，须在阶段 1 前定）**：
+**角色 B 的落地路径 = B-1（2026-10-12 用户裁决，残留子决策已闭合）**：
 
-- **B-1（推荐，简单）**：角色 B 的 6 个函数**直接在 `packages/acode-cua` 内实现**（补实占位）。合规性已核实：这些函数只需 node 内建（`node:net` 是 builtin，实测；`node:crypto`/`node:os`/`node:path` 已在用），**满足 `module-boundary.md` 不变量 2「只 import node 内建、`requires: []`」**；实现真实逻辑会使不变量 1「fail-closed」对这 6 个函数不再成立——但那**正是本特性要达成的行为变更**，需在 `module-boundary.md` 显式登记为「host 侧 RPC 客户端已实现，helper 侧与原生层仍 fail-closed 直至 producer 就位」。角色 A 仍留在 glob 外的 `cua-producer/`，两者解耦：host 侧纯 JS 连 socket，原生只在被 fork 的 Helper 进程里。
-- **B-2（对齐上游，重）**：引入上游的 shadow 机制——把三处 `workspace:*` 改为可解析到 `cua-producer/` 的 catalog/file: 链接，移植 `computer-use-producer.mjs` 检测脚本，给占位包加 `acodeCuaPlaceholder: true`。角色 A/B 同处一个包身份、靠安装态切换。好处是与上游 789 KiB 规范逐字对齐、未来跟随上游演进零翻译；代价是改动三个包的依赖声明 + 引入 pnpm catalog 机制 + 移植检测脚本，且 `workspace:*`→catalog 的切换会影响所有非 CUA 构建的解析。
+- **B-1（已选定）**：角色 B 的 6 个函数**直接在 `packages/acode-cua` 内实现**（补实占位）。合规性已核实：这些函数只需 node 内建（`node:net` 是 builtin，实测；`node:crypto`/`node:os`/`node:path` 已在用），**满足 `module-boundary.md` 不变量 2「只 import node 内建、`requires: []`」**；实现真实逻辑会使不变量 1「fail-closed」对这 6 个函数不再成立——但那**正是本特性要达成的行为变更**，需在 `module-boundary.md` 显式登记为「host 侧 RPC 客户端已实现，helper 侧与原生层仍 fail-closed 直至 producer 就位」。角色 A 仍留在 glob 外的 `cua-producer/`，两者解耦：host 侧纯 JS 连 socket，原生只在被 fork 的 Helper 进程里。选定理由：host 侧 RPC 客户端纯 JS、无原生依赖、逻辑边界清晰（连 socket + 行协议编解码），放进现有占位包不引入构建步骤、不破坏不变量 2/4，改动面最小；角色 A 的原生 producer 才是需要独立目录与构建链的部分，放 glob 外正合适。
+- **B-2（未选定，记录备查）**：引入上游的 shadow 机制——把三处 `workspace:*` 改为可解析到 `cua-producer/` 的 catalog/file: 链接，移植 `computer-use-producer.mjs` 检测脚本，给占位包加 `acodeCuaPlaceholder: true`。角色 A/B 同处一个包身份、靠安装态切换。好处是与上游 789 KiB 规范逐字对齐、未来跟随上游演进零翻译；代价是改动三个包的依赖声明 + 引入 pnpm catalog 机制 + 移植检测脚本，且 `workspace:*`→catalog 的切换会影响所有非 CUA 构建的解析。**未选定的原因**：B-2 的 shadow 机制在「producer 是外部独立安装的闭源包」场景才必要，而本项 producer 就在仓内、随 release 一起构建，无需 shadow；且 catalog 切换的爆炸半径（所有非 CUA 构建）远超其收益。若将来 producer 转为外部独立分发的闭源包，应重新评估 B-2。
 
-**倾向 B-1**：host 侧 RPC 客户端是纯 JS、无原生依赖、逻辑边界清晰（连 socket + 行协议编解码），放进现有占位包不引入构建步骤、不破坏不变量 2/4，改动面最小；角色 A 的原生 producer 才是需要独立目录与构建链的部分，放 glob 外正合适。B-2 的 shadow 机制在「producer 是外部独立安装的闭源包」场景才必要，而本项 producer 就在仓内、随 release 一起构建，无需 shadow。
+**B-1 的落地约束（阶段 2 实施时必须遵守）**：
+
+- 只能 import node 内建模块（不变量 2），不得为角色 B 引入任何 workspace 依赖或第三方包，否则 `requires: []` 与「单层 `layers: { app: "." }`」的架构登记需一并修订。
+- 必须在 `packages/acode-cua/specs/module-boundary.md` 登记不变量 1 的收窄，且措辞要精确到函数：`callBrokerMethod` / `dispatchRequest` / `handleRequestLine` / `parseRequestLine` / `probeHelperHealth` / `createComputerUseRuntime` 六个为已实现，其余（helper 侧、原生层、PiP、installer）仍 fail-closed。**不得把收窄写成整包不再是占位**——角色 A 就位前整条链路仍不可用。
+- 失败语义须与既有占位一致地 fail-closed：Helper 不存在/未就绪/鉴权失败时抛 `BrokerError`/`CuaHelperError`，不得静默返回成功；`probeHelperHealth` 探测失败须返回「不可用」而非 `{ bundleId: null, pid: null }` 这种看似成功的空值（该空值形态正是当前占位的返回值，补实后必须改为真实探测结果或明确的不可用信号）。
+- 角色 B 的行为变更会改变 `computer-use-operation-event.ts` 与 UI 渲染层的可观测输出（此前恒为 unavailable 文本），阶段 2 须同步复核 CUA cell 识别与 `ToolCallBlocks/renderers/cua*` 的降级分支不会因真实结果形态而误判。
 
 **这对阶段划分的影响**：§7.5 阶段 1 的「建 `cua-producer/` 目录」只覆盖角色 A；角色 B（host 侧 6 函数补实 + `module-boundary.md` 不变量 1 的登记修订）应并入阶段 2（最小可用 producer），因为两者要一起才能让端到端链路首次跑通（C05）。
 

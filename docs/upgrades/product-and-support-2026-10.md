@@ -325,13 +325,19 @@ Desktop 现有 zip 导出继续可用，与轻量 JSON 的范围分别说明。J
 
 回退时隐藏新 JSON 入口，保留 Desktop 原有 zip；不删除用户已下载文件，不改变服务事实。任何凭据/正文泄露、默认上传或缺失字段伪造通过均阻止发布。上线前只使用合成数据审查样例，不收集真实用户数据验证脱敏。
 
-## 7. U14：Windows Computer Use producer 自建（复用已接线的宿主基础设施）
+## 7. U14：Windows Computer Use —— 移植上游 Apache-2.0 资产 + 自写原生 producer
 
 ### 7.1 用户目标与当前事实
 
 用户希望 ACode 能操控本机桌面应用（读 UI 树、移动鼠标、输入键盘、截图）。当前任何 CUA 请求都返回 `"Computer Use is not available in this build."`。
 
-**调查结论与直觉相反：宿主侧基础设施已经建好并且已接线，缺的只有 producer（原生执行体）。** 逐项核实（基线 `dev/0.0.9`）：
+**调查结论（基线 `dev/0.0.9`，逐项核实）：这不是「从零做一个功能」，而是「填一个边界已完全画好的洞」。** 三个关键事实：
+
+1. **ACode 宿主侧基础设施已建好且已接线**——1806 行 Windows CUA 生产代码 + 完整 UI 渲染层 + 权限 UI + 桥/broker 传输都在，`node.ts:484` 真实 import、能力谓词已含 win32、CUA 默认 ON。占位包只把执行体换成了 fail-closed。
+2. **上游 `zai-org/ZCode` 是 Apache-2.0 开源**（`Copyright 2026 Z.AI Co., Ltd`，7704 stars，ACode 即其 fork），其中 CUA 客户端（58 KB 真实实现，非占位）、skill、Windows Helper 打包脚本、以及 789 KiB 权威规范**都可合法移植**（须署名 + 登记台账 + 过闸门）。
+3. **真正缺的只有原生 producer**（`ax_native.node` 等价物 + `windows-helper.js` + 14 个 broker 工具处理器）——上游开源仓库、npm、逆向树**三处都没有**（`binding.gyp`/`IUIAutomation`/`windows-helper.js` 全仓 code search 命中 0）。这是本项唯一必须自写的工程，且契约（14 个工具、10 个变更类方法、错误码映射、两阶段就绪、打包签名闭环）已被上游规范完整定义。
+
+**立项初稿的一处错误已在本版修正**：初稿 §7.2 曾把 `zcode-recovered`（逆向还原树）与 `zai-org/ZCode`（官方开源仓库）混为一谈，据此判「法律阻断、不可搬运」。实际是：逆向树**禁止**复制源码（本仓 `capability-uplift-plan.md` 第 5 节），但官方 Apache-2.0 仓库**允许**复制（须履行署名义务）。混淆二者会白白放弃约 133 KiB 可复用源码与 789 KiB 规范。详见 §7.2、§7.3。
 
 | 层                        | 位置                                                                                                                                                                                 | 现状                                                                                                                                                                                                                                                              |
 | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -362,87 +368,161 @@ Desktop 现有 zip 导出继续可用，与轻量 JSON 的范围分别说明。J
 
 **测试覆盖为零。** 全仓 `find` 无任何 CUA 测试文件（`packages/services/tests`、`packages/desktop/tests`、`apps/acode-cli/tests` 均无 cua/computer-use 命中）。即上述 1806 行生产代码**从未被测试覆盖**，这既是风险也是本项必须先补的部分。
 
-### 7.2 为什么不能从 zcode-recovered 搬运（法律与技术双重阻断）
+### 7.2 许可与可复用资产：两个来源必须严格区分
 
-**法律：** 该目录是 ZCode 桌面端 v3.15.1（Z.ai / 北京智谱华章）**已签名安装产物的逆向还原**，无 sourcemap、无 LICENSE/NOTICE，靠 AST + 调试名恢复。`plugin.json` 内的 `"license": "MIT"` 是**逆向产物内部的自我声明**，不等于 Z.ai 授权再分发。本仓 [capability-uplift-plan.md 第 5 节](../capability-uplift-plan.md) 已立下硬约束：zoode 产物「**禁止再分发**」，「只搬运机制设计，所有落地代码为 ACode 自有实现，**不复制 zoode 还原的专有源码或逐字提示词**」。AGENTS.md 亦要求引入第三方代码前确认来源与许可。故路径 B（从 bundle 提取引擎）与本项不相容。
+本节修正立项初稿的一处错误判断。初稿称「法律阻断，不能搬运」，该结论对 `zcode-recovered` 成立、对**官方开源仓库不成立**，混淆二者会白白放弃大量可合法复用的资产。
 
-**技术：** 即使不顾许可，该树也**不含可运行的执行体**。CUA 分三层，只有前两层在树里：
+**来源一：`zcode-recovered`（禁止复制源码）。** 该目录是 ZCode 桌面端 v3.15.1 已签名安装产物的**逆向还原**——无 sourcemap、无 LICENSE/NOTICE，靠 AST + 调试名恢复。其 `plugin.json` 内的 `"license": "MIT"` 是逆向产物内部的自我声明，不构成 Z.ai 的授权。本仓 [capability-uplift-plan.md 第 5 节](../capability-uplift-plan.md) 的硬约束对此依然有效：zoode 产物「禁止再分发」，只可搬运机制设计。**从该树提取代码（包括内联在 5 MB bundle 里的编排引擎）与本项不相容。**
 
-| 层                                                           | 在 zcode-recovered 里的状态                                                                                  |
-| ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------ |
-| skill 文档 + 客户端包装（`computer-use-client.mjs` 1202 行） | 未压缩真源码，完整                                                                                           |
-| 编排引擎 `@zcode/zcode-cua`                                  | 内联进 `node-repl-host/dist/mcp/server.js`（5 MB、11.7 万行、平均行长 43 字符 = 未压缩），可提取但属逆向产物 |
-| **Computer Use Helper**（真正动鼠标键盘、读 AX 树）          | **不在树里**——签名 macOS 二进制，运行时从服务器下载                                                          |
+**来源二：`zai-org/ZCode`（Apache-2.0，可复制，须署名）。** 上游已正式开源：`Copyright 2026 Z.AI Co., Ltd`，Apache License 2.0，7704 stars，默认分支 `main`，最近推送 2026-10-10（即 3.15.1 同期）。ACode 本身就是该仓库的 fork（结构完全同源：AGENTS.md / CONTEXT.md / DESIGN.md / architecture-policy.yaml / third-party/ / specs/ / .oxlintrc.json / knip.json / mise.toml）。**Apache-2.0 明确授予复制与制作衍生作品的权利**，义务是保留版权与许可声明、标注修改。本仓已有同类先例：`third-party/copied-components.json` 登记了 shadcn(MIT)、ai-elements(Apache-2.0) 等，字段为 id / referenceRevision / source / file / sha256 / importRevision / provenance / roots / scope / license，且必须过 licenses-notices 闸门。
 
-第三层缺失的证据：bundle 内原生控制原语几乎为零（`AXUIElement` 0 次、`SendInput` 0、`mouse_event` 0、`keybd_event` 0、`UIAutomation` 0、`CGEvent` 仅 1 次且在注释里），而 Helper 相关全是安装/下载/校验逻辑（`helperInstaller` 8、`CUA_HELPER` 30、`.app` 3368、`codesign` 15、`spctl` 4，以及 `resolveCuaHelperInstallPlan`、`resolveExpectedCuaHelperBuildId` 的 build-id 钉版与 `createDownloadSizeLimiter`）。
+**官方仓库里可合法复用的真实源码（实测字节数）：**
 
-**且该 Helper 只支持 macOS。** bundle 内安装计划显式拒绝其他平台：
+| 资产                | 官方路径                                                                                                          | 规模                  | 性质                                                                         |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------- | --------------------- | ---------------------------------------------------------------------------- |
+| CUA 客户端包装      | `apps/zcode-cli/packages/zcode-cua-plugin/scripts/computer-use-client.mjs`                                        | **58154 B / 1203 行** | **真实实现**，非占位。与逆向树版本逐字相同（差异仅行尾），可交叉印证         |
+| computer-use skill  | 同上 `skills/computer-use/SKILL.md`                                                                               | 14290 B / 307 行      | 真实提示词与用法                                                             |
+| Windows Helper 打包 | `packages/desktop/scripts/prepare-windows-cua-helper.mjs`（41 行）+ `windows-cua-helper-assets.mjs`（**984 行**） | ~1025 行              | 真实 staging/manifest/PE 校验/签名闭环                                       |
+| CUA 规范            | `docs/cua/`（14 文件 142803 B）+ `docs/cua-permission-broker/`（9 文件 80950 B）                                  | **~223 KB**           | 权威设计文档，含 broker 协议、Windows 产品运行时、源码开发手册、懒启动、诊断 |
 
-```js
-if (platform !== "darwin") {
-  throw new CuaHelperError(
-    "install_failed",
-    `ZCode Computer Use auto-install is only supported on macOS, got ${platform}`,
-  );
+**官方仓库里同样缺失的部分（这才是真正必须自写的）：** `packages/zcode-cua` 在官方仓库里**也是 fail-closed 占位包**，其 README 与 ACode 的 `packages/acode-cua/README.md` **逐字相同**；`zcodeCuaRuntime` 契约键在官方 `package.json` 中同样缺席。全仓 code search 实测：`binding.gyp` / `*.gyp` 命中 **0**、`IUIAutomation` **0**、`filename:windows-helper.js` **0**；`ax_native` 的 17 处命中与 `windows-helper.js` 的 12 处命中**全部落在 `docs/` 里，无一处是源码**。`.gitignore` 引用的 `packages/ax-macos` 经 API 查询返回 `Not Found`，npm 上 `@zcode/zcode-cua` 返回 404。
+
+**结论：原生 producer（Windows 侧的 `ax_native.node` 等价物 + `windows-helper.js` 入口 + broker 方法处理器）是真正的闭源部分，官方开源仓库、npm、逆向树三处都没有。** 因此本项的性质是：**在一份 223 KB 的权威规范约束下，实现一个契约完全已知的原生 producer，并复用 Apache-2.0 的客户端/skill/打包脚本**——而不是从零设计一个功能。这比初稿的估计好得多，因为工具面、错误码、变更语义、就绪时序、打包与签名闭环全部已有成文定义。
+
+**规范已固定的 producer 契约（无需再设计）：**
+
+- **14 个 broker 工具**（客户端 `Object.freeze` 数组，权威）：`list_apps`、`list_windows`、`get_app_state`、`left_click`、`scroll`、`left_click_drag`、`type`、`set_value`、`select_text`、`key`、`perform_action`、`paste`、`request_access`、`stop_computer_control`。
+- **10 个变更类方法**（决定 `possibly_sent` 判定路径，即「可能已产生副作用、绝不重放」）：`left_click`、`scroll`、`left_click_drag`、`type`、`set_value`、`select_text`、`key`、`perform_action`、`paste`、`stop_computer_control`。
+- **平台排除机制** `PLATFORM_EXCLUDED_METHODS` 当前为空对象（`open_application` 已于 2026-09-16 在 producer 侧整体删除，启动/激活并入 `get_app_state` 的透明拉起）。机制保留，两侧（producer handler 注册 与 客户端挂载）必须一致，否则模型会看见一个调用即报错的方法。
+- **错误码映射** 15+ 条 broker code → SDK code（`permission_denied`→`PERMISSION_DENIED`、`broker_unavailable`→`HELPER_UNAVAILABLE`、`version_mismatch`→`VERSION_MISMATCH`、`unimplemented`→`ACTION_UNAVAILABLE` 等），未知码归 `INTERNAL`，**绝不静默成功**。
+- **Windows 产品形态**（`windows-product-runtime.md`）：不复用 macOS 的 `.app`/SEA + TCC 形式；Helper 由安装包内 Electron Node 运行时以 `ELECTRON_RUN_AS_NODE=1` fork，原生 `ax_native.node` 作为安装资源发布于 `resources/tools/cua-helper`，外置运行依赖为 `express` 与 `sharp`（含目标平台 `@img/*` 预编译包）；签名走 electron-builder `signExts(.node/.dll)`，**先签名再用已签名字节刷新 `manifest.sha256`**，随后严格校验 manifest / PE machine / hash / 依赖闭包 / realpath containment。
+- **两阶段就绪**（`windows-transport-ready.md`）：Windows named pipe 没有 Unix socket 的 `.pending → final` 原子让渡语义，故 Helper 先发 `transport_ready`（仅表示 pipe 已绑定并完成认证配置），再发 `ready`（完整 health probe 成功）。功能层仍在初始化时，工具调用以**可重试**的 `broker_unavailable` 表示 warming-up；动作请求仍遵守 delivery-state，不自动重放可能已发送的副作用。旧 Helper 只发 `ready` 时 Host 将其同时视为 transport ready（向后兼容）。
+
+**一处 ACode 落后于上游的架构差异（必须决策，见 7.7）。** 上游已**整体删除 broker token 鉴权**，改为 native peer-identity（`getPeerCredentials` / code-signature / `parentProcessPid`），`ZCODE_CUA_PERMISSION_BROKER_TOKEN` 在上游只剩「必须被剥离的敌意输入」语义；正式凭据收缩为 socket + `pluginAuthority` 二元组。而 ACode 的 `cua-broker.ts` 仍在使用 token（`assertToken` + `timingSafeEqual`，实测 4 处命中），且全仓无 `getPeerCredentials` / `peerIdentity` 实现。但上游文档同时记载：Windows 侧 peer 校验**尚未落地**，自 producer `37a0c9ef` 起该门在 Windows 上被临时放开（常量 `WINDOWS_PEER_IDENTITY_GATE_TEMPORARILY_OPEN`，因打包版 `app.isPackaged` 注入的 `ZCODE_RUNTIME_ENV=production` 使所有 localDev 判据恒为 false）。即 **Windows 上 token 鉴权仍是当前实际可用的路径**，peer-identity 迁移不是本项前置。
+
+### 7.3 差距盘点：167 个上游 CUA 文件里 ACode 已有 90 个
+
+按 `zai-org/ZCode@main` 的完整 git tree（17876 个条目，`truncated: false`）与 ACode 工作树逐路径比对（`apps/zcode-cli`→`apps/acode-cli`、`packages/zcode-cua`→`packages/acode-cua`、`zcode-protocol`→`acode-protocol`、`zcode-agent`→`acode-agent` 映射后），CUA 相关条目共 178 个，其中 **167 个是文件**（blob）、11 个是目录（tree）。按文件统计：**ACode 已有 90 个、缺 77 个**。
+
+**已有（无需移植）**：整套 UI 渲染层（`packages/ui/src/ToolCallBlocks/renderers/cua.tsx`、`CuaScreenshotSection.tsx`、`cuaActionDetail.ts`、`cuaDetails.tsx`、`cuaErrorDetails.ts`、`cuaScreenshotDetails.ts`、`cuaResultState.ts` 等）、权限 UI（`packages/ui/src/cua-permission/`、`useCuaPermissionStatus.ts`、`V4ComposerCuaEntry.tsx`、`cuaPlatform.ts`）、shared 契约（`cuaAccessibilitySettings.ts`、`acode-protocol-v4/cuaPermission.ts`、`cua-app-snapshot.ts`、`cua-permission-observation.ts`）、desktop main 十个 `cua*.ts` 文件（含 `windowsCuaOperationIndicator` 485 行）、preload/renderer 权限面板、services 的 `cuaHelperInstaller` / `cuaPermissionService` / `cuaPipSession*` / 三个 `windowsCua*` 宿主文件、node-repl-host 的 `cua-bridge.ts` / `cua-broker.ts`、core 的 `official-cua-media.ts`、bootstrap 的 `computer-use-operation-event.ts`。
+
+**缺失且可从上游 Apache-2.0 移植（实测字节数，合计约 133 KiB）**：
+
+| 资产                                          | 上游路径                                                                                            | 字节  |
+| --------------------------------------------- | --------------------------------------------------------------------------------------------------- | ----- |
+| CUA 客户端（真实实现，非占位）                | `apps/zcode-cli/packages/zcode-cua-plugin/scripts/computer-use-client.mjs`                          | 58154 |
+| Windows Helper 打包/manifest/PE 校验/签名闭环 | `packages/desktop/scripts/windows-cua-helper-assets.mjs`                                            | 34386 |
+| computer-use skill                            | `.../zcode-cua-plugin/skills/computer-use/SKILL.md`                                                 | 14290 |
+| `cua-bridge` 测试                             | `apps/zcode-cli/packages/node-repl-host/test/cua-bridge.test.ts`                                    | 9461  |
+| plugin 其余脚本                               | `sync-cache.mjs` 5154 / `check-sdk.mjs` 152 / `resolve-pnpm-invocation.mjs` 1331                    | 6637  |
+| producer 检测脚本                             | `packages/desktop/scripts/computer-use-producer.mjs`                                                | 1800  |
+| `prepare-windows-cua-helper.mjs`              | 同上目录                                                                                            | 1460  |
+| 三个 services 文件                            | `cuaAgentAdmissionGate.ts` 2737 / `stableCuaTransport.ts` 1560 / `cuaStandaloneStatusLaunch.ts` 816 | 5113  |
+| dev 环境脚本                                  | `scripts/dev-desktop-cua-env.mjs` 2292 / `scripts/stage-dev-cua-plugin-runtime.mjs` 1686            | 3978  |
+| onboarding 测试                               | `.../node-repl-host/test/computer-use-onboarding.test.ts`                                           | 2627  |
+| plugin 清单与配置                             | `.zcode-plugin/plugin.json`、`package.json`、`tsconfig.json`、`docs/computer-use.md`                | 小    |
+
+三个 services 文件在 ACode 现有代码中**引用数为 0**（实测 grep），说明它们是上游新增能力而非 fork 时丢失的断链——移植属「引入新特性」，需连同其消费者一起评估，不能只搬文件。
+
+**缺失且必须自写（三处来源都没有）**：Windows 原生 producer——`ax_native.node` 等价物、`windows-helper.js` 入口、14 个 broker 工具的处理器实现。这是本项的全部真实工程量所在。
+
+**另有约 789 KiB / 54 份 CUA 规范文档**（`docs/cua/` 14 份、`docs/cua-permission-broker/` 9 份、`docs/superpowers/{plans,specs}/` 31 份）在 ACode 中全部缺失。它们不是代码而是**权威设计约束**，移植后可直接作为 ACode 的 producer spec 依据（须按 Apache-2.0 保留出处与修改标注），避免自行重新发明已由上游踩过的坑（如 WGC 视觉捕获、指针基础、原生剪贴板、能力真实性、指示器置顶与阴影、frame 像素缩放回归、AX 动作状态一致性）。
+
+### 7.4 所有者与接口
+
+原生控制能力归 **producer**——它必须发布为 `@acode/acode-cua` 这个包身份（`windowsCuaDevRuntime.ts:9` 硬编码 `EXPECTED_PACKAGE_NAME`，三处校验；不能新建独立包，详见 §7.8 决策二），在 `packages/acode-cua` 内实现占位包已定义的导出面；权限/生命周期状态仍归 `packages/services/src/cua-permission-broker`；宿主桥与 broker 传输归 `node-repl-host`（已实现，移植上游 `cua-bridge.test.ts` 后即可锁定其行为）；OS 支持判定归 `packages/desktop/src/main/cuaOsSupport.ts`；打包归 `packages/desktop/scripts/`。
+
+producer 必须实现的导出面（`packages/acode-cua/broker-server.js` 已定义签名、当前全部 unavailable）：`loadRealNativeAddon`、`resolveInTreeAddonPath` / `resolvePackagedNativeAddonPath`、`createAxReadOnlyMethods`（Windows 侧为 UIA 只读方法表）、`ROLE_TO_KIND` / `roleToKind`、`isCuaLocalDevelopmentRuntime`、`createProductCuaHelperHost`、`queryScreenCaptureProbe`、`queryPermissionStatus`、`buildHelperOpenArgs`、`resolveHelperPermissionSubjectIdentity`、`createCuaHelperInstaller`（Windows 侧为「从安装资源解析」而非下载）、`CuaHelperLifecycleManager`。
+
+`package.json` 必须声明的契约（上游规范原文，ACode 侧键名为 `acodeCuaRuntime`）：
+
+```json
+{
+  "acodeCuaRuntime": {
+    "schema": 1,
+    "windows": {
+      "entry": "dist/windows-helper.js",
+      "nativeAddon": "build/Release/ax_native.node"
+    }
+  }
 }
 ```
 
-`.exe` 在 bundle 中只命中一次 `applicationframehost.exe`（进程名识别，非 Helper），无 Windows 形态。**结论：即使完整搬运上游架构，在 Windows 上仍然跑不起来**——这反而与 ACode 自建 Windows producer 的方向一致。
+契约对象与 `windows` 子对象**不允许未知字段**；两个 artifact 都必须是规范的 `/` 分隔相对路径，不能相同，不能含反斜杠、绝对路径、空段、`.`、`..`、ADS 冒号或 NUL；消费端不得固定生产者版本号或 artifact 目录。`entry` 是含裸 `import` 的 ESM，故运行时根必须有声明 `"type": "module"` 的 `package.json`（上游标为硬性要求）。
 
-### 7.3 所有者与拟议接口
+### 7.5 实施步骤（估 14–24 人日，六阶段，每阶段可独立交付）
 
-原生控制能力归 **acode-cua producer**（新建，实现占位包已定义的导出面）；权限/生命周期状态仍归 `packages/services/src/cua-permission-broker`；宿主桥与 broker 传输归 `node-repl-host`（已实现，不改）；OS 支持判定归 `packages/desktop/src/main/cuaOsSupport.ts`。
+**阶段 0：移植上游测试 + 补宿主不变量测试 + 声明契约（2–3 人日，与选型无关，可立即开工）**
+先移植 `cua-bridge.test.ts`（9461 B）与 `computer-use-onboarding.test.ts`（2627 B）并按 ACode 命名适配；再为现有 1806 行零覆盖的 Windows CUA 宿主代码补不变量测试（`windowsCuaDevRuntime` 的 12 类解析失败原因、路径逃逸拒绝、契约键精确匹配；`windowsCuaDevHelperHost` 的代际/停止竞态/健康探测；broker 的 token 校验与 1 MiB / 32 MiB 上限）。在 `packages/acode-cua/package.json` 声明 `acodeCuaRuntime` 契约。**此阶段即使不做 producer 也有净收益**：当前这些生产代码零覆盖，任何改动都是盲改。
 
-**待定架构决策（实施前必须裁决，见 7.6）：** 原生控制层的技术选型。三个候选：
+**阶段 1：移植规范与 Apache-2.0 资产 + 裁决选型（1.5–2.5 人日）**
+移植 54 份规范文档（保留出处与修改标注），据此裁决 7.7 的原生层选型，再写 producer spec（模块边界、Windows 权限模型、失败码、降级语义、就绪时序）。同步移植 133 KiB 源码资产并登记 `third-party/copied-components.json`（含 `referenceRevision` 指向上游 commit、`sha256`、`provenance`、`scope`、`license: Apache-2.0`）。新增 `express` 与 `sharp` 依赖（当前 ACode 两者皆无），并按上游口径纳入 `sharp-package-assets.mjs`（ACode 缺此脚本，需一并移植）。
 
-| 候选                     | 做法                                                                                                      | 代价                                                                                                                 |
-| ------------------------ | --------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| A. koffi + Win32         | 沿用 `windows-job-object.ts` 范式，koffi 调 `user32.dll`（`SendInput`/`GetCursorPos`）+ GDI `BitBlt` 截图 | 依赖已在树内、零新增构建步骤；但 **UI Automation 是 COM 接口**，koffi 表达 vtable 调用非常笨重，读 UI 树可能做不到   |
-| B. node-addon-api（C++） | 写真正的 N-API addon，可用 Windows SDK 的 UIAutomationClient                                              | 能力完整（UIA 一等公民）；引入 node-gyp/prebuild 工具链、跨 arch 预编译、签名与分发复杂度                            |
-| C. 外部辅助进程 + 协议   | 独立可执行体（任意语言）讲 `acode-cua-windows-dev/v1`，Node 侧只 fork + 通信                              | 与现有 `windowsCuaDevHelperHost` 的 fork 模型天然吻合；语言自由（C#/Rust 对 UIA 支持最好）；但需自建分发与完整性校验 |
+**阶段 2：最小可用 producer（4–7 人日）**
+截图 + 鼠标（`left_click`、`scroll`、`left_click_drag`）+ 键盘（`type`、`key`、`paste`）先落地，这三类用 Win32 即可、不依赖 UIA。经 `ACODE_CUA_DEV_ROOT` dev 模式接进现有宿主验证端到端，不改产品打包。上游已记载 dev 模式的严格前置：根不能是 symlink/junction，`package.json` 与契约 entry/nativeAddon 必须是非链接普通文件且 `realpath` 位于该 root 内，准入失败不回退安装包资源。
 
-拟议 producer 必须实现的导出面（占位包已定义签名，`broker-server.js` 中当前全部 unavailable）：`loadRealNativeAddon`、`resolveInTreeAddonPath` / `resolvePackagedNativeAddonPath`、`createAxReadOnlyMethods`（Windows 侧应为 UIA 只读方法表）、`ROLE_TO_KIND` / `roleToKind`、`isCuaLocalDevelopmentRuntime`、`createProductCuaHelperHost`、`queryScreenCaptureProbe`、`queryPermissionStatus`。
+**阶段 3：UI 树读取（4–7 人日，选型依赖）**
+Windows UI Automation 对应 macOS 的 AX 树，`list_apps` / `list_windows` / `get_app_state` / `set_value` / `select_text` / `perform_action` 依赖它。这是工作量与风险的主要来源，选型 A 下可能不可行。上游 `docs/superpowers/specs/` 已有 pointer-foundation、wgc-visual-capture、native-clipboard、ax-action-state-consistency、frame-pixel-zoom-regression 五份设计可直接参照，避免重踩坑。
 
-### 7.4 实施步骤（估 10–18 人日，分阶段可独立交付）
+**阶段 4：平台判定、权限契约与两阶段就绪收口（1–2 人日）**
+`request-access-contract` 的 `platform` 字面量类型扩为联合（当前硬编码 `"darwin"`）；`resolveCuaOsSupport` 增加 Windows 分支与版本地板（当前 `platform !== "darwin"` 一律 `not-applicable`）；复核 `node.ts:2182/2193` 懒启动分支；实现 `transport_ready` → `ready` 两阶段就绪（Windows named pipe 无 Unix socket 的原子让渡语义），warming-up 期间以可重试的 `broker_unavailable` 响应，动作请求遵守 delivery-state 不自动重放。
 
-1. **阶段 0：补测试 + 契约声明（1.5–2.5 人日，可独立交付且有净收益）**。为现有 1806 行 Windows CUA 宿主代码补不变量测试（`windowsCuaDevRuntime` 的 12 类解析失败原因、路径逃逸拒绝、契约键精确匹配；`windowsCuaDevHelperHost` 的代际/停止竞态/健康探测；broker 的 token 校验与 1 MiB 上限）。在 `packages/acode-cua/package.json` 声明 `acodeCuaRuntime` 契约。**此阶段即使不做 producer 也值得**：当前这些生产代码零覆盖，任何改动都是盲改。
-2. **阶段 1：裁决 7.6 的技术选型并写 producer spec（0.5–1 人日）**。先定选型，再定模块边界、权限模型（Windows 无 macOS 的 AX/录屏 TCC，但有 UAC、UIAccess、受保护进程不可控等自有约束）、失败码与降级语义。
-3. **阶段 2：最小可用 producer（4–8 人日）**。截图 + 鼠标点击/移动 + 键盘输入先落地（这三项用 Win32 就够，不依赖 UIA）；经 `ACODE_CUA_DEV_ROOT` dev 模式接进现有宿主验证端到端，不改产品打包。
-4. **阶段 3：UI 树读取（3–6 人日，选型依赖）**。Windows 的 UI Automation 对应 macOS 的 AX 树；`get_app_state` / `list_apps` 依赖它。这是工作量与风险的主要来源，A 选型下可能不可行，需 B 或 C。
-5. **阶段 4：平台判定与权限契约收口（0.5–1 人日）**。`request-access-contract` 的 `platform` 字面量扩为联合类型；`resolveCuaOsSupport` 增加 Windows 分支与版本地板；复核 `node.ts:2182/2193` 懒启动分支。
-6. **阶段 5：产品打包与完整性校验（1–2 人日）**。`resources/tools/cua-helper` 的 `runtime-manifest.json`、artifact 完整性（`artifact-integrity-mismatch` 已实现）、原生 addon 的 arch 匹配与签名策略。
+**阶段 5：产品打包、签名与完整性校验（2–3 人日）**
+移植 `windows-cua-helper-assets.mjs`（984 行）+ `prepare-windows-cua-helper.mjs` + `computer-use-producer.mjs`，产出 `bundled-tools/win32-{x64|arm64}/cua-helper`；electron-builder `extraResources` + `signExts(.node/.dll)`；**先签名最终目录中的 `.node`/`.dll`，再用已签名字节刷新 `manifest.sha256`**，随后严格校验 manifest / PE machine / hash / 依赖闭包 / realpath containment。须处理 Windows Smart App Control：未经 Trusted Root Program CA 签名的 `ax_native.node` 会被 Code Integrity 拒绝加载，「成功编译不等于当前机器可执行」——不得为通过验收而自动关闭系统安全策略。
 
-### 7.5 编号验收场景
+### 7.6 编号验收场景
 
-| 编号 | 前置条件                                           | 操作                                                     | 必须满足的断言                                                                   | 证据                |
-| ---- | -------------------------------------------------- | -------------------------------------------------------- | -------------------------------------------------------------------------------- | ------------------- |
-| C01  | 阶段 0 完成，producer 仍为占位                     | 跑新增的宿主不变量测试                                   | 全绿；覆盖 `windowsCuaDevRuntime` 12 类失败原因与路径逃逸拒绝                    | 测试输出与覆盖率    |
-| C02  | 契约已声明，`ACODE_CUA_DEV_ROOT` 指向缺 addon 的根 | 解析 Windows runtime                                     | 以 `missing-native-addon` 稳定失败，不抛底层 IO 文本                             | 错误码断言          |
-| C03  | 契约 `windows` 多一个键 / `entry === nativeAddon`  | 解析 Windows runtime                                     | 以 `invalid-package` 拒绝（键必须精确匹配）                                      | 错误码断言          |
-| C04  | producer 就绪，Windows 真机                        | 模型发一次 CUA cell（含 `setupComputerUseRuntime` 引导） | broker 建 named pipe、token 校验通过、`execute` 返回真实结果而非 unavailable     | 端到端 trace 与截图 |
-| C05  | 同上，subagent 作用域                              | 从子代理发 CUA cell                                      | 被拒绝（`Computer Use is not available in subagent`），不触达原生层              | 拒绝路径断言        |
-| C06  | producer 就绪                                      | 截图 + 鼠标点击 + 键盘输入各一次                         | 三项动作真实生效；截图字节有界；动作可被 `stop_computer_control` 中断            | 真机录屏与中断时序  |
-| C07  | producer 就绪                                      | `list_apps` / `get_app_state`                            | 返回真实 UI 树（若阶段 3 未完成，须显式报 not-implemented 而非返回空树冒充成功） | 树文本与元素计数    |
-| C08  | Windows 低版本 / 受保护进程                        | 请求访问                                                 | 按平台语义明确拒绝并给出可操作原因，不静默降级为「看起来可用」                   | 权限状态与错误文案  |
-| C09  | 非 Windows 平台                                    | 启用 CUA                                                 | macOS 保持既有语义；Linux 明确 not-applicable，不产生半成品路径                  | 三平台判定矩阵      |
+| 编号 | 前置条件                                                                 | 操作                                                     | 必须满足的断言                                                                                                                   | 证据                     |
+| ---- | ------------------------------------------------------------------------ | -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | ------------------------ |
+| C01  | 阶段 0 完成，producer 仍为占位                                           | 跑移植 + 新增的宿主不变量测试                            | 全绿；覆盖 `windowsCuaDevRuntime` 全部 12 类失败原因与路径逃逸拒绝                                                               | 测试输出与覆盖率         |
+| C02  | 契约已声明，`ACODE_CUA_DEV_ROOT` 指向缺 addon 的根                       | 解析 Windows runtime                                     | 以 `missing-native-addon` 稳定失败，不抛底层 IO 文本                                                                             | 错误码断言               |
+| C03  | 契约 `windows` 多一个键 / `entry === nativeAddon` / 路径含 `..` 或反斜杠 | 解析 Windows runtime                                     | 以 `invalid-package` 或 `invalid-artifact-path` 拒绝（键必须精确匹配，路径必须规范）                                             | 错误码断言               |
+| C04  | `ACODE_CUA_DEV_ROOT` 是 symlink/junction                                 | 解析 Windows runtime                                     | 准入失败且**不回退**安装包资源，报 `development-root-not-found` 类稳定码                                                         | 错误码与无回退断言       |
+| C05  | producer 就绪，Windows 真机                                              | 模型发一次 CUA cell（含 `setupComputerUseRuntime` 引导） | broker 建 named pipe、鉴权通过、`execute` 返回真实结果而非 unavailable                                                           | 端到端 trace 与截图      |
+| C06  | 同上，subagent 作用域                                                    | 从子代理发 CUA cell                                      | 被拒绝（`Computer Use is not available in subagent`），不触达原生层                                                              | 拒绝路径断言             |
+| C07  | producer 就绪                                                            | 截图 + 鼠标 + 键盘各一次                                 | 三项动作真实生效；截图字节有界；动作可被 `stop_computer_control` 中断                                                            | 真机录屏与中断时序       |
+| C08  | producer 就绪                                                            | 10 个变更类方法各触发一次失败注入                        | 每次均按 `possibly_sent` 语义处理：不自动重放可能已产生的副作用                                                                  | delivery-state 断言      |
+| C09  | producer 就绪                                                            | `list_apps` / `list_windows` / `get_app_state`           | 返回真实 UI 树；阶段 3 未完成时须显式报 `unimplemented`→`ACTION_UNAVAILABLE`，**绝不返回空树冒充成功**                           | 树文本、元素计数、错误码 |
+| C10  | Helper 功能层仍在初始化                                                  | 立即发工具调用                                           | 返回可重试的 `broker_unavailable`（warming-up），而非失败或假成功；`ready` 后同一调用成功                                        | 两阶段就绪时序记录       |
+| C11  | 未知 broker 错误码                                                       | 触发一次                                                 | 归 `INTERNAL`，绝不静默成功                                                                                                      | 错误码映射断言           |
+| C12  | `ax_native.node` 未签名且 Smart App Control 强制                         | 启动 Helper                                              | live smoke 以退出码 2 报告 native addon blocked/unavailable，不静默降级                                                          | 退出码与诊断             |
+| C13  | 产品安装包                                                               | 校验 `resources/tools/cua-helper`                        | manifest / PE machine / sha256 / 依赖闭包 / realpath containment 全部通过；篡改任一 `.node` 字节即 `artifact-integrity-mismatch` | 校验步骤日志与篡改对照   |
+| C14  | 非 Windows 平台                                                          | 启用 CUA                                                 | macOS 保持既有语义；Linux 明确 not-applicable，不产生半成品路径                                                                  | 三平台判定矩阵           |
+| C15  | 移植的 Apache-2.0 资产                                                   | 跑 licenses-notices 闸门                                 | `third-party/copied-components.json` 登记完整（source/sha256/license/provenance），台账可复现，闸门绿                            | 闸门 run 与台账 diff     |
 
-### 7.6 量化门槛与退出条件
+### 7.7 量化门槛与退出条件
 
-- **阶段 0 门槛（必须先过）**：新增测试覆盖 `windowsCuaDevRuntime` 全部 12 类 `WindowsCuaDevRuntimeResolutionReason`、路径逃逸拒绝、契约键精确匹配（多键/少键/`entry === nativeAddon` 均拒）；broker 的 token 不等长与不等值均拒、请求超 1 MiB 拒、响应超 32 MiB 拒。**当前 1806 行零覆盖，阶段 0 未完成前不得改动宿主代码。**
-- **安全门槛**：CUA 是最高权限能力（可操控整机）。必须保留 subagent 拒绝（C05）、token 鉴权、请求/响应字节上限；原生层不得接受来自模型的任意路径或 DLL 名；截图与 UI 树内容按 `web-content-untrusted-discipline` 同等对待（不可信输入，不得当指令执行）。
-- **隐私门槛**：截图与 UI 树可能含凭据、令牌、私人正文。日志与事件载荷只记 reason/artifact/errorName（`node.ts` 现有诊断已如此），绝不落屏幕内容；诊断报告（U12）若纳入 CUA 事实，只记计数与可用性，不记内容。
-- **回退**：producer 未就绪时保持占位包的 fail-closed 语义（返回 unavailable，不静默降级）。任何阶段失败不得让 CUA「看起来可用」——`module-boundary.md` 不变量 1 是硬约束。
-- **许可门槛**：全部代码为 ACode 自有实现。可参考 zcode-recovered 的**机制设计**（分层、broker 协议形状、失败码语义），**不得复制其源码或逐字文档**；引入的第三方原生库须登记进 `third-party/copied-components.json` 或 `npm-overrides.json` 并过 licenses-notices 闸门。
+- **阶段 0 门槛（必须先过）**：覆盖 `windowsCuaDevRuntime` 全部 **12 类** `WindowsCuaDevRuntimeResolutionReason`（`unsupported-platform`、`development-root-not-absolute`、`development-root-not-found`、`invalid-package`、`missing-helper-entry`、`missing-native-addon`、`missing-resources-path`、`resources-path-not-absolute`、`invalid-runtime-manifest`、`incompatible-runtime-manifest`、`invalid-artifact-path`、`artifact-integrity-mismatch`）、路径逃逸拒绝、契约键精确匹配；broker 的 token 不等长与不等值均拒、请求超 1 MiB 拒、响应超 32 MiB 拒。**当前 1806 行零覆盖，阶段 0 未完成前不得改动宿主代码。**
+- **安全门槛**：CUA 是最高权限能力（可操控整机）。保留 subagent 拒绝、broker 鉴权、请求/响应字节上限；原生层不得接受来自模型的任意路径或 DLL 名；截图与 UI 树内容按 `web-content-untrusted-discipline` 同等对待（不可信输入，不得当指令执行）；`pluginAuthority` 是当前唯一敏感凭据，不得出现在 child argv、进程标题、日志、错误文本、telemetry 或可复制 UI 文本中。
+- **隐私门槛**：日志与事件载荷只记 reason/artifact/errorName（`node.ts` 现有诊断已如此），绝不落屏幕内容；诊断报告（U12）若纳入 CUA 事实，只记计数与可用性，不记内容。
+- **回退**：producer 未就绪时保持占位包 fail-closed 语义（返回 unavailable，不静默降级）。任何阶段失败不得让 CUA「看起来可用」——`packages/acode-cua/specs/module-boundary.md` 不变量 1 是硬约束。**能力真实性优先于覆盖面**：宁可少实现几个方法并显式报 `ACTION_UNAVAILABLE`，也不得返回空结果冒充成功（上游 `2026-07-29-windows-cua-capability-truthfulness` 即此议题）。
+- **许可门槛**：从 `zai-org/ZCode`（Apache-2.0，`Copyright 2026 Z.AI Co., Ltd`）移植的每一份资产都必须登记进 `third-party/copied-components.json`（字段齐备：id / referenceRevision / source / file / sha256 / importRevision / provenance / roots / scope / license），保留上游版权与许可声明、标注 ACode 侧修改，并过 licenses-notices 闸门（C15）。**从 `zcode-recovered` 逆向树复制任何源码仍被禁止**（本仓 `capability-uplift-plan.md` 第 5 节：zoode 产物禁止再分发，只可搬运机制设计）。引入的第三方原生库（如 `sharp` 及其 `@img/*` 预编译包、`express`）同样须登记。
+- **平台门槛**：Windows x64 与 arm64 双架构均需 PE machine 校验通过；`ubuntu`/`linux` 明确 not-applicable；macOS 行为不因本项改变（ACode 无 macOS Helper 资产，上游 macOS 走签名 `.app` 下载路径，不在本项范围）。
 
-### 7.7 待定架构决策（阻塞阶段 2 及以后）
+### 7.8 待定架构决策（阻塞阶段 2 及以后）
 
-7.3 的三个选型直接决定阶段 3（UI 树读取）是否可行，也决定工作量落在 10 人日还是 18 人日：
+**决策一：原生控制层技术选型。**
 
-- **A（koffi + Win32）** 最快见效且零新增工具链，但 UI Automation 是 COM vtable，koffi 表达困难，可能只能交付「截图 + 鼠标键盘」而无法交付 UI 树——即 `get_app_state`/`list_apps` 永远 not-implemented，Computer Use 的可用性大打折扣（模型无法感知界面元素，只能盲点坐标）。
-- **B（node-addon-api）** 能力最完整，但引入 node-gyp/prebuild 与跨 arch 预编译，且与仓库「保持默认发布路径为标准 Node.js CLI 打包方式」（`apps/acode-cli/AGENTS.md`）存在张力。
-- **C（外部辅助进程）** 与现有 `windowsCuaDevHelperHost` 的 fork + 协议模型天然吻合，语言自由（C#/Rust 对 UIA 支持最好），且上游 macOS 侧正是这种形态（下载的签名 Helper）；代价是需自建分发、完整性校验与签名策略。
+| 候选                           | 做法                                                                                                                                                                                      | 代价                                                                                                                                                                                                                              |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A. koffi + Win32               | 沿用 `windows-job-object.ts` 范式（`koffi@2.15.6` 已是 adapters 真实依赖且已在 `pnpm-workspace.yaml` 的 `allowBuilds` 放行），调 `user32.dll`（`SendInput`/`GetCursorPos`）+ WGC/GDI 截图 | 零新增构建步骤；但 **UI Automation 是 COM vtable**，koffi 表达困难，阶段 3 可能做不到 → `get_app_state`/`list_apps` 永远 not-implemented，模型只能盲点坐标                                                                        |
+| B. node-addon-api（C++ N-API） | 写真正的 addon，可用 Windows SDK 的 UIAutomationClient                                                                                                                                    | 能力完整（UIA 一等公民）；`node-addon-api` 与 `node-gyp` 已在 node_modules；但引入跨 arch 预编译、签名与分发复杂度，且与 `apps/acode-cli/AGENTS.md`「保持默认发布路径为标准 Node.js CLI 打包方式」存在张力                        |
+| C. 外部辅助进程 + 协议         | 独立可执行体讲 `acode-cua-windows-dev/v1`，Node 侧只 fork + 通信                                                                                                                          | 与现有 `windowsCuaDevHelperHost` 的 fork 模型天然吻合；语言自由（C#/Rust 对 UIA 支持最好）；但需自建分发与完整性校验。**注意上游实际形态是「Electron Node 运行时 fork + `ax_native.node` addon」，即 B 的一种，而非独立语言进程** |
 
-**阶段 0（补测试 + 声明契约）与该决策无关，可立即开工并有独立净收益。**
+上游选择的是 B 形态（`ELECTRON_RUN_AS_NODE=1` fork Helper entry + 加载 `ax_native.node`），且 `windowsCuaDevHelperHost` 已按此实现（`command: process.execPath`、`commandEnv: { ELECTRON_RUN_AS_NODE: "1" }`）。**偏离上游形态会同时偏离那 789 KiB 规范的适用性**，这是选型时最重要的权衡。
+
+**决策二：producer 代码放在哪里。** 此项受一处硬约束限制：`windowsCuaDevRuntime.ts:9` 硬编码 `EXPECTED_PACKAGE_NAME = "@acode/acode-cua"`，并在三处校验（`:155` manifest、`:311` 产品模式、`:546` dev 模式）；上游同处钉的是 `@zcode/zcode-cua`，机制相同。因此**producer 必须发布为 `@acode/acode-cua` 这个包身份**，不能新建 `packages/acode-cua-producer`（包名不符会以 `invalid-package` 直接拒绝）。立项初稿曾把「新建独立包」列为选项，据本约束否决。
+
+剩下的真实取舍是 `packages/acode-cua` 内部形态：
+
+- **B1. 保持占位包扁平布局，真实实现按平台条件加载**：`loadRealNativeAddon` 等在 Windows 上解析 addon、其余平台维持 fail-closed。优点是 `module-boundary.md` 的不变量 2（`requires: []`，只 import node 内建）与不变量 4（布局冻结：扁平 `.js`/`.d.ts`、无 `src/`、无构建步骤）可原样保留，架构策略与 `global.aliasRules` 零改动。缺点是把原生依赖的**运行期解析**留在一个声明「无依赖」的包里，需在 spec 里说清「无静态 import 依赖」与「运行期按需加载 addon」的区别。
+- **B2. 按上游形态把 `packages/acode-cua` 升级为含 `src/` + 构建步骤的 producer 包**：与上游 `zcode-cua`（`pnpm rebuild:native` + `pnpm build` 产出 `dist/windows-helper.js` 与 `build/Release/ax_native.node`）一致，移植 789 KiB 规范时不需要翻译布局差异。缺点是要修订 `module-boundary.md` 的不变量 4、`architecture-policy.yaml` 的 `global.aliasRules`（12 个导出子路径映射），以及 `knip` 入口登记。
+
+**倾向 B2**：因为原生 producer 必然需要构建步骤（addon 编译 + Helper 打包），B1 的「无构建步骤」不变量本来就守不住；而且上游规范全部按 B2 的布局书写，照搬可避免系统性翻译成本。但 B2 触及架构治理工件，需在阶段 1 与 `architecture-governance` 技能一并对齐，不得绕过架构检查。
+
+**决策三：broker 鉴权是否跟进上游迁移。** 上游已整体删除 broker token、改用 native peer-identity；但上游文档同时记载 Windows 侧 peer 校验**尚未落地**、自 producer `37a0c9ef` 起临时放开（`WINDOWS_PEER_IDENTITY_GATE_TEMPORARILY_OPEN`）。故 ACode 保留现有 token 鉴权是当前唯一可用路径，peer-identity 迁移应作为独立后续项，不阻塞本项。
+
+**阶段 0 与三项决策全部无关，可立即开工并有独立净收益。**
 
 ---
 

@@ -2,7 +2,7 @@
 
 先为 U07、U08 更新模块 spec 和验收夹具，再实现产品入口；U09 可独立完成文档校准，U11、U12 按依赖顺序推进。
 
-本文细化[项目升级建议](../project-upgrade-recommendations-2026-10.md)中的 U07/U08/U09/U11/U12，仅定义拟议实施标准，不代表行为已经实现。调查日期为 2026-10-09，事实以本文链接的当前源码和 spec 为准。
+本文细化[项目升级建议](../project-upgrade-recommendations-2026-10.md)中的 U07/U08/U09/U11/U12，以及 2026-10-12 调查 zcode-recovered 后新立的 U14（Windows Computer Use producer），仅定义拟议实施标准，不代表行为已经实现。U07–U12 调查日期为 2026-10-09，U14 调查日期为 2026-10-12，事实以本文链接的当前源码和 spec 为准。
 
 ## 1. 共用实施约束
 
@@ -325,7 +325,128 @@ Desktop 现有 zip 导出继续可用，与轻量 JSON 的范围分别说明。J
 
 回退时隐藏新 JSON 入口，保留 Desktop 原有 zip；不删除用户已下载文件，不改变服务事实。任何凭据/正文泄露、默认上传或缺失字段伪造通过均阻止发布。上线前只使用合成数据审查样例，不收集真实用户数据验证脱敏。
 
-## 7. 交付资料与进入实现的条件
+## 7. U14：Windows Computer Use producer 自建（复用已接线的宿主基础设施）
+
+### 7.1 用户目标与当前事实
+
+用户希望 ACode 能操控本机桌面应用（读 UI 树、移动鼠标、输入键盘、截图）。当前任何 CUA 请求都返回 `"Computer Use is not available in this build."`。
+
+**调查结论与直觉相反：宿主侧基础设施已经建好并且已接线，缺的只有 producer（原生执行体）。** 逐项核实（基线 `dev/0.0.9`）：
+
+| 层                        | 位置                                                                                                                                                                                 | 现状                                                                                                                                                                                                                                                              |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 占位包（12 个导出子路径） | [packages/acode-cua](../../packages/acode-cua) v0.6.3                                                                                                                                | 全部 fail-closed；`loadRealNativeAddon` 抛 `CuaHelperError`；`createComputerUseRuntime().execute()` 直接返回 unavailable                                                                                                                                          |
+| node_repl 桥与 broker     | [cua-bridge.ts](../../apps/acode-cli/packages/node-repl-host/src/cua-bridge.ts)（204 行）、[cua-broker.ts](../../apps/acode-cli/packages/node-repl-host/src/cua-broker.ts)（181 行） | **真实源码**：named pipe（win32）/ Unix socket 双形态、`randomBytes(32)` 熵的 hex token（64 字符）+ 先比长度再 `timingSafeEqual`、generation 防陈旧绑定、subagent 拒绝、1 MiB 请求（`MAX_REQUEST_BYTES`）/ 32 MiB 响应（`MAX_RESPONSE_BYTES`）上限                |
+| Windows Helper 宿主       | `windowsCuaDevHelperHost.ts`（506）、`windowsCuaDevRuntime.ts`（576）、`windowsCuaHelperHostSupport.ts`（239）                                                                       | **真实源码共 1321 行**，含 fork 生命周期、健康探测、代际管理、路径逃逸校验、稳定错误码（`WindowsCuaDevRuntimeResolutionReason` 共 **12 类**，含 `missing-native-addon` / `artifact-integrity-mismatch` / `invalid-package` / `incompatible-runtime-manifest` 等） |
+| Windows 操作指示器 UI     | `windowsCuaOperationIndicator.ts`（403）+ `Content.ts`（82）                                                                                                                         | **真实源码 485 行**                                                                                                                                                                                                                                               |
+| 接线                      | [node.ts:484](../../packages/services/src/node.ts) 真实 `import { WindowsCuaHelperHost }`；能力谓词 `node.ts:685` 已含 win32（`platform === "darwin" \|\| platform === "win32"`）    | **已接线，非死代码**                                                                                                                                                                                                                                              |
+| CUA cell 识别             | [computer-use-operation-event.ts](../../apps/acode-cli/packages/bootstrap/src/acode-protocol/computer-use-operation-event.ts)                                                        | 已实现，锚点为 `setupComputerUseRuntime`                                                                                                                                                                                                                          |
+| 原生 FFI 范式             | [windows-job-object.ts](../../apps/acode-cli/packages/adapters/src/mcp/windows-job-object.ts)（202 行）经 koffi 调 `kernel32.dll`                                                    | **已有成熟范式**；`koffi@2.15.6` 是 adapters 真实依赖，`pnpm-workspace.yaml` 的 `allowBuilds` 已放行                                                                                                                                                              |
+
+即：ACode 作为 ZCode 3.14.x fork（[capability-uplift-plan.md:3](../capability-uplift-plan.md) 自述），保留了完整链路的**形状**，只把执行体换成 fail-closed 占位。`packages/acode-cua/specs/module-boundary.md` 的不变量 3 明写「导出名与类型签名保持与上游真实 CUA 包一致，消费者零改动」——所以只要补上 producer，上述 1300+ 行宿主代码无需改动即可驱动它。
+
+**producer 契约（已实现方精确规定，非拟议）。** [windowsCuaDevRuntime.ts:118-145](../../packages/services/src/cua-permission-broker/windowsCuaDevRuntime.ts) 的 `requireExpectedPackage` 要求 `package.json` 满足：
+
+- `name === "@acode/acode-cua"`，`version` 非空
+- 存在 `acodeCuaRuntime` 对象，**键恰好**为 `["schema","windows"]`，`schema === 1`
+- `windows` **键恰好**为 `["entry","nativeAddon"]`，两者均为规范相对路径且互不相同
+
+**该契约当前在 `packages/acode-cua/package.json` 中缺席**（实测 `acodeCuaRuntime` 不存在），这是 producer 未接的第一个可观测事实。dev 模式经 `ACODE_CUA_DEV_ROOT` 注入开发根（必须是绝对路径），产品模式只读 `resources/tools/cua-helper` 下的 `runtime-manifest.json`。控制协议常量已在占位包里定义：`WINDOWS_DEV_CONTROL_PROTOCOL = "acode-cua-windows-dev/v1"`、`HELPER_ADDON_ENV = "ACODE_CUA_HELPER_ADDON"`。
+
+**两处剩余 darwin 硬编码**（启用 Windows 必须处理，均已定位到行）：
+
+1. [request-access-contract.d.ts:5](../../packages/acode-cua/request-access-contract.d.ts) —— `platform: "darwin"` 是字面量类型，Windows 权限状态无法表达。
+2. [cuaOsSupport.ts:20](../../packages/desktop/src/main/cuaOsSupport.ts) —— `if (platform !== "darwin") return { kind: "not-applicable" }`，Windows 一律判为不适用；该文件的版本地板常量（`CUA_MINIMUM_MACOS_VERSION`）也全是 macOS 语义。
+
+另 `node.ts:2182/2193` 的懒启动分支仍 `process.platform === "darwin"` 门控（win32 走 token 模式 acquire，注释已说明），需按实际接线复核而非直接改。
+
+**测试覆盖为零。** 全仓 `find` 无任何 CUA 测试文件（`packages/services/tests`、`packages/desktop/tests`、`apps/acode-cli/tests` 均无 cua/computer-use 命中）。即上述 1806 行生产代码**从未被测试覆盖**，这既是风险也是本项必须先补的部分。
+
+### 7.2 为什么不能从 zcode-recovered 搬运（法律与技术双重阻断）
+
+**法律：** 该目录是 ZCode 桌面端 v3.15.1（Z.ai / 北京智谱华章）**已签名安装产物的逆向还原**，无 sourcemap、无 LICENSE/NOTICE，靠 AST + 调试名恢复。`plugin.json` 内的 `"license": "MIT"` 是**逆向产物内部的自我声明**，不等于 Z.ai 授权再分发。本仓 [capability-uplift-plan.md 第 5 节](../capability-uplift-plan.md) 已立下硬约束：zoode 产物「**禁止再分发**」，「只搬运机制设计，所有落地代码为 ACode 自有实现，**不复制 zoode 还原的专有源码或逐字提示词**」。AGENTS.md 亦要求引入第三方代码前确认来源与许可。故路径 B（从 bundle 提取引擎）与本项不相容。
+
+**技术：** 即使不顾许可，该树也**不含可运行的执行体**。CUA 分三层，只有前两层在树里：
+
+| 层                                                           | 在 zcode-recovered 里的状态                                                                                  |
+| ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------ |
+| skill 文档 + 客户端包装（`computer-use-client.mjs` 1202 行） | 未压缩真源码，完整                                                                                           |
+| 编排引擎 `@zcode/zcode-cua`                                  | 内联进 `node-repl-host/dist/mcp/server.js`（5 MB、11.7 万行、平均行长 43 字符 = 未压缩），可提取但属逆向产物 |
+| **Computer Use Helper**（真正动鼠标键盘、读 AX 树）          | **不在树里**——签名 macOS 二进制，运行时从服务器下载                                                          |
+
+第三层缺失的证据：bundle 内原生控制原语几乎为零（`AXUIElement` 0 次、`SendInput` 0、`mouse_event` 0、`keybd_event` 0、`UIAutomation` 0、`CGEvent` 仅 1 次且在注释里），而 Helper 相关全是安装/下载/校验逻辑（`helperInstaller` 8、`CUA_HELPER` 30、`.app` 3368、`codesign` 15、`spctl` 4，以及 `resolveCuaHelperInstallPlan`、`resolveExpectedCuaHelperBuildId` 的 build-id 钉版与 `createDownloadSizeLimiter`）。
+
+**且该 Helper 只支持 macOS。** bundle 内安装计划显式拒绝其他平台：
+
+```js
+if (platform !== "darwin") {
+  throw new CuaHelperError(
+    "install_failed",
+    `ZCode Computer Use auto-install is only supported on macOS, got ${platform}`,
+  );
+}
+```
+
+`.exe` 在 bundle 中只命中一次 `applicationframehost.exe`（进程名识别，非 Helper），无 Windows 形态。**结论：即使完整搬运上游架构，在 Windows 上仍然跑不起来**——这反而与 ACode 自建 Windows producer 的方向一致。
+
+### 7.3 所有者与拟议接口
+
+原生控制能力归 **acode-cua producer**（新建，实现占位包已定义的导出面）；权限/生命周期状态仍归 `packages/services/src/cua-permission-broker`；宿主桥与 broker 传输归 `node-repl-host`（已实现，不改）；OS 支持判定归 `packages/desktop/src/main/cuaOsSupport.ts`。
+
+**待定架构决策（实施前必须裁决，见 7.6）：** 原生控制层的技术选型。三个候选：
+
+| 候选                     | 做法                                                                                                      | 代价                                                                                                                 |
+| ------------------------ | --------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| A. koffi + Win32         | 沿用 `windows-job-object.ts` 范式，koffi 调 `user32.dll`（`SendInput`/`GetCursorPos`）+ GDI `BitBlt` 截图 | 依赖已在树内、零新增构建步骤；但 **UI Automation 是 COM 接口**，koffi 表达 vtable 调用非常笨重，读 UI 树可能做不到   |
+| B. node-addon-api（C++） | 写真正的 N-API addon，可用 Windows SDK 的 UIAutomationClient                                              | 能力完整（UIA 一等公民）；引入 node-gyp/prebuild 工具链、跨 arch 预编译、签名与分发复杂度                            |
+| C. 外部辅助进程 + 协议   | 独立可执行体（任意语言）讲 `acode-cua-windows-dev/v1`，Node 侧只 fork + 通信                              | 与现有 `windowsCuaDevHelperHost` 的 fork 模型天然吻合；语言自由（C#/Rust 对 UIA 支持最好）；但需自建分发与完整性校验 |
+
+拟议 producer 必须实现的导出面（占位包已定义签名，`broker-server.js` 中当前全部 unavailable）：`loadRealNativeAddon`、`resolveInTreeAddonPath` / `resolvePackagedNativeAddonPath`、`createAxReadOnlyMethods`（Windows 侧应为 UIA 只读方法表）、`ROLE_TO_KIND` / `roleToKind`、`isCuaLocalDevelopmentRuntime`、`createProductCuaHelperHost`、`queryScreenCaptureProbe`、`queryPermissionStatus`。
+
+### 7.4 实施步骤（估 10–18 人日，分阶段可独立交付）
+
+1. **阶段 0：补测试 + 契约声明（1.5–2.5 人日，可独立交付且有净收益）**。为现有 1806 行 Windows CUA 宿主代码补不变量测试（`windowsCuaDevRuntime` 的 12 类解析失败原因、路径逃逸拒绝、契约键精确匹配；`windowsCuaDevHelperHost` 的代际/停止竞态/健康探测；broker 的 token 校验与 1 MiB 上限）。在 `packages/acode-cua/package.json` 声明 `acodeCuaRuntime` 契约。**此阶段即使不做 producer 也值得**：当前这些生产代码零覆盖，任何改动都是盲改。
+2. **阶段 1：裁决 7.6 的技术选型并写 producer spec（0.5–1 人日）**。先定选型，再定模块边界、权限模型（Windows 无 macOS 的 AX/录屏 TCC，但有 UAC、UIAccess、受保护进程不可控等自有约束）、失败码与降级语义。
+3. **阶段 2：最小可用 producer（4–8 人日）**。截图 + 鼠标点击/移动 + 键盘输入先落地（这三项用 Win32 就够，不依赖 UIA）；经 `ACODE_CUA_DEV_ROOT` dev 模式接进现有宿主验证端到端，不改产品打包。
+4. **阶段 3：UI 树读取（3–6 人日，选型依赖）**。Windows 的 UI Automation 对应 macOS 的 AX 树；`get_app_state` / `list_apps` 依赖它。这是工作量与风险的主要来源，A 选型下可能不可行，需 B 或 C。
+5. **阶段 4：平台判定与权限契约收口（0.5–1 人日）**。`request-access-contract` 的 `platform` 字面量扩为联合类型；`resolveCuaOsSupport` 增加 Windows 分支与版本地板；复核 `node.ts:2182/2193` 懒启动分支。
+6. **阶段 5：产品打包与完整性校验（1–2 人日）**。`resources/tools/cua-helper` 的 `runtime-manifest.json`、artifact 完整性（`artifact-integrity-mismatch` 已实现）、原生 addon 的 arch 匹配与签名策略。
+
+### 7.5 编号验收场景
+
+| 编号 | 前置条件                                           | 操作                                                     | 必须满足的断言                                                                   | 证据                |
+| ---- | -------------------------------------------------- | -------------------------------------------------------- | -------------------------------------------------------------------------------- | ------------------- |
+| C01  | 阶段 0 完成，producer 仍为占位                     | 跑新增的宿主不变量测试                                   | 全绿；覆盖 `windowsCuaDevRuntime` 12 类失败原因与路径逃逸拒绝                    | 测试输出与覆盖率    |
+| C02  | 契约已声明，`ACODE_CUA_DEV_ROOT` 指向缺 addon 的根 | 解析 Windows runtime                                     | 以 `missing-native-addon` 稳定失败，不抛底层 IO 文本                             | 错误码断言          |
+| C03  | 契约 `windows` 多一个键 / `entry === nativeAddon`  | 解析 Windows runtime                                     | 以 `invalid-package` 拒绝（键必须精确匹配）                                      | 错误码断言          |
+| C04  | producer 就绪，Windows 真机                        | 模型发一次 CUA cell（含 `setupComputerUseRuntime` 引导） | broker 建 named pipe、token 校验通过、`execute` 返回真实结果而非 unavailable     | 端到端 trace 与截图 |
+| C05  | 同上，subagent 作用域                              | 从子代理发 CUA cell                                      | 被拒绝（`Computer Use is not available in subagent`），不触达原生层              | 拒绝路径断言        |
+| C06  | producer 就绪                                      | 截图 + 鼠标点击 + 键盘输入各一次                         | 三项动作真实生效；截图字节有界；动作可被 `stop_computer_control` 中断            | 真机录屏与中断时序  |
+| C07  | producer 就绪                                      | `list_apps` / `get_app_state`                            | 返回真实 UI 树（若阶段 3 未完成，须显式报 not-implemented 而非返回空树冒充成功） | 树文本与元素计数    |
+| C08  | Windows 低版本 / 受保护进程                        | 请求访问                                                 | 按平台语义明确拒绝并给出可操作原因，不静默降级为「看起来可用」                   | 权限状态与错误文案  |
+| C09  | 非 Windows 平台                                    | 启用 CUA                                                 | macOS 保持既有语义；Linux 明确 not-applicable，不产生半成品路径                  | 三平台判定矩阵      |
+
+### 7.6 量化门槛与退出条件
+
+- **阶段 0 门槛（必须先过）**：新增测试覆盖 `windowsCuaDevRuntime` 全部 12 类 `WindowsCuaDevRuntimeResolutionReason`、路径逃逸拒绝、契约键精确匹配（多键/少键/`entry === nativeAddon` 均拒）；broker 的 token 不等长与不等值均拒、请求超 1 MiB 拒、响应超 32 MiB 拒。**当前 1806 行零覆盖，阶段 0 未完成前不得改动宿主代码。**
+- **安全门槛**：CUA 是最高权限能力（可操控整机）。必须保留 subagent 拒绝（C05）、token 鉴权、请求/响应字节上限；原生层不得接受来自模型的任意路径或 DLL 名；截图与 UI 树内容按 `web-content-untrusted-discipline` 同等对待（不可信输入，不得当指令执行）。
+- **隐私门槛**：截图与 UI 树可能含凭据、令牌、私人正文。日志与事件载荷只记 reason/artifact/errorName（`node.ts` 现有诊断已如此），绝不落屏幕内容；诊断报告（U12）若纳入 CUA 事实，只记计数与可用性，不记内容。
+- **回退**：producer 未就绪时保持占位包的 fail-closed 语义（返回 unavailable，不静默降级）。任何阶段失败不得让 CUA「看起来可用」——`module-boundary.md` 不变量 1 是硬约束。
+- **许可门槛**：全部代码为 ACode 自有实现。可参考 zcode-recovered 的**机制设计**（分层、broker 协议形状、失败码语义），**不得复制其源码或逐字文档**；引入的第三方原生库须登记进 `third-party/copied-components.json` 或 `npm-overrides.json` 并过 licenses-notices 闸门。
+
+### 7.7 待定架构决策（阻塞阶段 2 及以后）
+
+7.3 的三个选型直接决定阶段 3（UI 树读取）是否可行，也决定工作量落在 10 人日还是 18 人日：
+
+- **A（koffi + Win32）** 最快见效且零新增工具链，但 UI Automation 是 COM vtable，koffi 表达困难，可能只能交付「截图 + 鼠标键盘」而无法交付 UI 树——即 `get_app_state`/`list_apps` 永远 not-implemented，Computer Use 的可用性大打折扣（模型无法感知界面元素，只能盲点坐标）。
+- **B（node-addon-api）** 能力最完整，但引入 node-gyp/prebuild 与跨 arch 预编译，且与仓库「保持默认发布路径为标准 Node.js CLI 打包方式」（`apps/acode-cli/AGENTS.md`）存在张力。
+- **C（外部辅助进程）** 与现有 `windowsCuaDevHelperHost` 的 fork + 协议模型天然吻合，语言自由（C#/Rust 对 UIA 支持最好），且上游 macOS 侧正是这种形态（下载的签名 Helper）；代价是需自建分发、完整性校验与签名策略。
+
+**阶段 0（补测试 + 声明契约）与该决策无关，可立即开工并有独立净收益。**
+
+---
+
+## 8. 交付资料与进入实现的条件
 
 每项交付需附 spec diff、模块/接口边界、编号验收结果、执行命令和机器可读计数；存在交互时附桌面与手机截图/trace。测试未运行、平台未覆盖和真实 provider 未授权分别列出，不把静态检查写成运行结果。
 

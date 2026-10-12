@@ -156,7 +156,7 @@
 - **S1 worktree 隔离**（`script-workflow-runtime.ts:282` 抛 not-implemented）：dynamic-workflow 的 `isolation:"worktree"` 落地——为每个 workflow agent 建 git worktree 隔离工作区。工作量 L，风险中（git 状态/清理/并发）。spec：`apps/acode-cli/specs/workflow-worktree-isolation.md`。
 - **S2 ApplyPatch handler**（contract 有、`handlers/index.ts:79` 注释、无 handler）：实现 handler 或正式移除 contract（避免悬空）。工作量 M。
 - **S3 保留工具名**（`provider-visible-order.ts:11-19` EnterWorktree/ExitWorktree/LSP/NotebookEdit/ScheduleWakeup 无 handler）：要么落地，要么从 provider-visible 顺序移除以免占位误导（与 C6 联动）。工作量 S–M。
-- **CUA fail-closed**：本构建故意，不在本方案范围（除非决定启用 Computer Use）。
+- **CUA fail-closed**：本构建故意。2026-10-12 已决定启用并立项 **U14（Windows Computer Use producer 自建）**，见 [product-and-support-2026-10.md 第 7 节](./upgrades/product-and-support-2026-10.md) 与 [project-upgrade-recommendations-2026-10.md U14](./project-upgrade-recommendations-2026-10.md)。核心事实：宿主侧基础设施（bridge/broker/Windows Helper 宿主共 1806 行）已建好且已接线，缺的只有 producer（原生执行体）；不能从 zoode 逆向产物搬运（法律：本方案第 5 节禁止再分发 zoode 产物；技术：该树的 Computer Use Helper 是 macOS-only 的下载式签名二进制，不在树内）。阶段 0（为现有零覆盖宿主代码补测试 + 声明 `acodeCuaRuntime` 契约）与原生层选型无关，可立即开工。
 
 **安全收尾（zoode 方案 P0–P2 的残留，非新漏洞）**
 
@@ -452,22 +452,22 @@ riskLevel fail-closed。关键接线：三个协议源 schema 本就必带 riskL
 P2 清单与其 09-27 提升方案一样系统性过时，e5f0fe1/070eaec/580f7a5 的 P0–P2 加固批次
 已覆盖全部条目：
 
-| # | 条目 | 状态 | 证据（当前源码） |
-| --- | --- | --- | --- |
-| 1 | 子进程 env 白名单 | ✅ 已落地 | `shared/src/runtimeEnv.ts` allowlist 机制 + spec `subprocess-env-credential-allowlist.md` + `subprocess-env-allowlist.test.mjs` |
-| 2a | 主窗 will-navigate/windowOpen | ✅ 已落地 | `desktopWebContentsGuard.ts`（专职守卫模块） |
-| 2b | setPermissionRequestHandler | ✅ 已落地 | `desktopSessionPermissionPolicy.ts`（三 session 安装）+ `main/index.ts` P2 #2b 注释 |
-| 2c | 主 renderer CSP | ✅ 已落地 | `renderer/index.html:18` + spec §3（wasm-unsafe-eval 有据） |
-| 2d | openExternal 收敛 file: | ✅ 已落地 | `desktopMainIpcRemote.ts:198` P2 #2d（file: 一律不进 openExternal） |
-| 3 | Electron fuse | ✅ 已落地 | `scripts/desktop-electron-fuses.mjs` + builder 接线（RunAsNode 偏离有文档化理由：打包 agent 依赖宿主 Node 语义） |
-| 4 | agent 命令 env 门禁 | ✅ 已落地 | `acodeAgentProcessManager.ts:498` + `providerRuntimeResolver.ts:55`（打包态忽略 env 族）+ `agent-command-env-gate.test.mjs` |
-| 5 | 工作区路径收敛 | ✅ 按设计收敛 | 硬拦缺席是**明文产品决定**（`path-policy.ts` 注释 + managed-policy-floor spec「ask 而非 deny」一致）；熔断兜底 `breaker.pathEscapeWrite` 已落地且本批扩展到 ApplyPatch |
-| 6 | OAuth PKCE | ✅ 已落地 | `oauth/providers/pkce.js` 复用 + spec `oauth-pkce.md`（deep-link 流程带 code_verifier） |
-| 7 | http 明文端点告警 | ✅ 已落地 | `provider/config/provider-endpoint-security.ts` P2 #7 + spec `provider-http-endpoint-warning.md` + UI 内联警告 |
-| 8 | 插件 git 源 commit 固定 | ✅ 已落地 | `plugins/git-source-pinning.ts`（判定唯一事实源：commit 固定 + host 白名单）+ `plugin-git-source-pinning.test.mjs` |
-| 9 | Chrome 提权解密门 | ✅ 已落地 | IPC 契约死字段已移除（`desktopBrowserDataIpc.ts:59`）；开关 main 进程持有 + 用户确认框 `confirmElevatedChromeDecryptionWithUser` |
-| 10 | 遥测残留 | ✅ 已收敛 | `globals.d.ts` 死类型已删（grep 零命中）；`X-Device-Mid` 评估=**保留**——活跃业务消费方（主动反馈设备关联、Start Plan 权益、help/rollout 配置 source headers），非被动遥测通道 |
-| 11 | 子代理模式继承 | ✅ 已落地 | `resolveSubagentPermissionMode` 天花板（子代理不可高于父）+ spec `subagent-policy-floor-inheritance.md` R3 + `subagent-policy-floor.test.mjs` |
+| #   | 条目                          | 状态          | 证据（当前源码）                                                                                                                                                              |
+| --- | ----------------------------- | ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | 子进程 env 白名单             | ✅ 已落地     | `shared/src/runtimeEnv.ts` allowlist 机制 + spec `subprocess-env-credential-allowlist.md` + `subprocess-env-allowlist.test.mjs`                                               |
+| 2a  | 主窗 will-navigate/windowOpen | ✅ 已落地     | `desktopWebContentsGuard.ts`（专职守卫模块）                                                                                                                                  |
+| 2b  | setPermissionRequestHandler   | ✅ 已落地     | `desktopSessionPermissionPolicy.ts`（三 session 安装）+ `main/index.ts` P2 #2b 注释                                                                                           |
+| 2c  | 主 renderer CSP               | ✅ 已落地     | `renderer/index.html:18` + spec §3（wasm-unsafe-eval 有据）                                                                                                                   |
+| 2d  | openExternal 收敛 file:       | ✅ 已落地     | `desktopMainIpcRemote.ts:198` P2 #2d（file: 一律不进 openExternal）                                                                                                           |
+| 3   | Electron fuse                 | ✅ 已落地     | `scripts/desktop-electron-fuses.mjs` + builder 接线（RunAsNode 偏离有文档化理由：打包 agent 依赖宿主 Node 语义）                                                              |
+| 4   | agent 命令 env 门禁           | ✅ 已落地     | `acodeAgentProcessManager.ts:498` + `providerRuntimeResolver.ts:55`（打包态忽略 env 族）+ `agent-command-env-gate.test.mjs`                                                   |
+| 5   | 工作区路径收敛                | ✅ 按设计收敛 | 硬拦缺席是**明文产品决定**（`path-policy.ts` 注释 + managed-policy-floor spec「ask 而非 deny」一致）；熔断兜底 `breaker.pathEscapeWrite` 已落地且本批扩展到 ApplyPatch        |
+| 6   | OAuth PKCE                    | ✅ 已落地     | `oauth/providers/pkce.js` 复用 + spec `oauth-pkce.md`（deep-link 流程带 code_verifier）                                                                                       |
+| 7   | http 明文端点告警             | ✅ 已落地     | `provider/config/provider-endpoint-security.ts` P2 #7 + spec `provider-http-endpoint-warning.md` + UI 内联警告                                                                |
+| 8   | 插件 git 源 commit 固定       | ✅ 已落地     | `plugins/git-source-pinning.ts`（判定唯一事实源：commit 固定 + host 白名单）+ `plugin-git-source-pinning.test.mjs`                                                            |
+| 9   | Chrome 提权解密门             | ✅ 已落地     | IPC 契约死字段已移除（`desktopBrowserDataIpc.ts:59`）；开关 main 进程持有 + 用户确认框 `confirmElevatedChromeDecryptionWithUser`                                              |
+| 10  | 遥测残留                      | ✅ 已收敛     | `globals.d.ts` 死类型已删（grep 零命中）；`X-Device-Mid` 评估=**保留**——活跃业务消费方（主动反馈设备关联、Start Plan 权益、help/rollout 配置 source headers），非被动遥测通道 |
+| 11  | 子代理模式继承                | ✅ 已落地     | `resolveSubagentPermissionMode` 天花板（子代理不可高于父）+ spec `subagent-policy-floor-inheritance.md` R3 + `subagent-policy-floor.test.mjs`                                 |
 
 附带修正一处 spec 文本漂移：`electron-hardening.md` §3b 仍写「辅助窗缺 CSP、后续补齐」，
 实际两窗 HTML 早已带与 spec 指令一致的 CSP meta 与实施注释——§3b 已加实施状态标注。
@@ -566,7 +566,7 @@ P2 清单与其 09-27 提升方案一样系统性过时，e5f0fe1/070eaec/580f7a
     （Node 25 type-stripping；注意 `node --test tests/` 目录形式不匹配 `.test.ts`，
     须用 glob `tests/*.test.ts`）。
   - **采集**：`node dist/acode.cjs -p "<prompt>" --cwd <fixture> --output-format
-    stream-json --mode yolo` → stdout NDJSON（2808 事件 / 1.26MB / 9 次模型请求 /
+stream-json --mode yolo` → stdout NDJSON（2808 事件 / 1.26MB / 9 次模型请求 /
     墙钟分钟级）。
   - **整形（关键发现，runner 硬需求）**：raw stream-json 直送 judge 不可行——2665/2808
     行是 token 级 delta（text/reasoning），60k 截断上限会被噪声吃满。试点验证的整形
@@ -584,10 +584,10 @@ P2 清单与其 09-27 提升方案一样系统性过时，e5f0fe1/070eaec/580f7a
     进程内的 R1-b 迁移**（credential-key.json → DPAPI blob + 文件删除 + INFO 通知），
     随后 9 次模型请求成功 = 迁移后解密链全程可用。R1-b 由此获得产品进程级真机证据。
 - **无头面事实（runner spec 输入）**：`-p/--prompt` + `--cwd` + `--mode
-  build|plan|edit|yolo|auto` + `--output-format text|json|stream-json` + `--resume`；
+build|plan|edit|yolo|auto` + `--output-format text|json|stream-json` + `--resume`；
   headless 无审批 client，alwaysAsk 一律经 deny broker 拒绝（拒绝类场景天然可采，
   审批类场景在无头下不可达）；隔离 storage 树 = `cli/{artifacts,exec,memories,plugins,
-  rollout}/`，无头运行不建 db.sqlite（不进会话列表），`rollout/model-io-<sess>.jsonl`
+rollout}/`，无头运行不建 db.sqlite（不进会话列表），`rollout/model-io-<sess>.jsonl`
   是 stdout 之外的备用转录源。
 - **12 场景可行性表（试点结论 + 待验证项）**：
   - **主会话类 5**（dispatch-prompt-self-contained / continue-vs-spawn-choice /
@@ -623,7 +623,7 @@ P2 清单与其 09-27 提升方案一样系统性过时，e5f0fe1/070eaec/580f7a
   operator dry→response / recorded 结转）+ judgeFingerprint 冻结规则机器化。验收测试
   6/6（合成 NDJSON 零模型调用）；**live 端到端闭环**：dev 集 self-verification-
   before-done 经 runner 采集（2596 事件→20 块整形）→ dry 请求 → operator 判分 →
-  **首份入库报告 passRate 1.0**（reports/report-*.json，raw gitignored 裁决落地）。
+  **首份入库报告 passRate 1.0**（reports/report-\*.json，raw gitignored 裁决落地）。
   CLI 全套件 785/785（当轮）。正式基线前置只剩：judge 端点配置冻结（§R7-3，所有者侧）。
 - **② F6 关闭（提交 b5f36b7 + 3f90704）**：立项前普查**推翻审计前提**——OS 注册面
   （electron-builder protocols / setAsDefaultProtocolClient / x-scheme-handler）自 fork
@@ -634,11 +634,11 @@ P2 清单与其 09-27 提升方案一样系统性过时，e5f0fe1/070eaec/580f7a
   豁免）。修复：双发射端对齐 acode://（Finder WORKFLOW_VERSION 5→6 借内容比对自动
   刷新已装机）、DEEP_LINK_SCHEME 导出为单一事实源；**裁决不做旧协议兼容注册**（无
   存量外链可保，注册反与上游抢 handler）。钉桩：desktop deep-link-scheme 4 组不变量
-  + oauthPkce redirect 断言。附带战果：补跑桌面套件浮出 **2 个继承性带病测试**
-  （git 考古证实初始提交即红：ACODE.Z.AI. 宿主项从未在策略名单、边界守卫注入面停留
-  在平台级旧名而产品面早已 per-service 化）——修复后桌面 51/51，**桌面 .mjs 套件自此
-  纳入每轮验证矩阵**（此前漏跑面）。外部依赖登记：官网中转页若有 redirect scheme
-  白名单（仓库外），发布验证轮跑真实 OAuth 流程确认。
+  - oauthPkce redirect 断言。附带战果：补跑桌面套件浮出 **2 个继承性带病测试**
+    （git 考古证实初始提交即红：ACODE.Z.AI. 宿主项从未在策略名单、边界守卫注入面停留
+    在平台级旧名而产品面早已 per-service 化）——修复后桌面 51/51，**桌面 .mjs 套件自此
+    纳入每轮验证矩阵**（此前漏跑面）。外部依赖登记：官网中转页若有 redirect scheme
+    白名单（仓库外），发布验证轮跑真实 OAuth 流程确认。
 - **③ S1 worktree 隔离落地（提交 f3e8142）**：「全都做了」推翻缓做裁决。spec
   `workflow-worktree-isolation.md` 立项：范围裁决 R1 = legacy 脚本路径（契约
   isolation:"worktree" 声明处、桩所在地）兑现既有契约；dwf 引擎面显式非目标（给灰度

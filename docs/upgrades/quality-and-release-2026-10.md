@@ -2,7 +2,7 @@
 
 U01 已实现：单一入口 `scripts/typecheck-gate.mjs` 覆盖 packages、renderer 与 CLI，本地、CI 与 release 同源；接着按 U03、U04、U06 建立可重复的交互、产物和性能验收。
 
-本文细化 [项目升级建议](../project-upgrade-recommendations-2026-10.md) 中的 U01、U03、U04、U06，是立项与实施依据；本文没有新增脚本、测试或流水线。
+本文细化 [项目升级建议](../project-upgrade-recommendations-2026-10.md) 中的 U01、U03、U04、U06，以及 2026-10-12 发布 v0.0.8 时新立的 U13，是立项与实施依据；本文没有新增脚本、测试或流水线。
 调查日期为 2026-10-09，细化时检出分支 `fix/cli-subagent-inheritance` 已不在当前仓库中，其证据不可复核。
 本文已按 commit `f9ed8961`（`dev/0.0.7`，含 2026-10-08 审查修复批一+批二 `c453fca5`）复测并同步 U01 现状；其余各项仍是提案。当前基线已移到 `dev/0.0.8` HEAD `fa9d6d0c`（2026-10-09 17:34 复核，相对 `origin/dev/0.0.8` ahead 19），U01 仍为单一入口门禁（typecheck 三阶段退出 0），并新增 `fa9d6d0c`：renderer 类型守护测试改盯统一门禁清单而非已删的内联命令。实测汇总见[修复记录](../reviews/2026-10-08/fix-status-2026-10-09.md)文首当前复核表。
 实施者在开始时重新记录 commit、工作区状态、工具链和本轮检查结果，避免混用分支证据。
@@ -302,4 +302,77 @@ spec 与探针 1 人日，fixture/角色采样 1–2 人日，比较器与校准
 现有构建命令可产生测量产物，但仓库尚无可复用的统一性能入口。
 拟新增 `pnpm perf:baseline`、`pnpm perf:compare`；实现前由实验 spec 确定参数、结果 schema 与适用机器。
 
-下一步：U02——为 `node-execution-adapter` 与 `ConversationV4Gateway` 建真实子进程 fixture，先落 E01/E02（spawn 前取消、运行中取消各只结算一次）。U01 的剩余确认项（Node 24、clean checkout、三平台 runner）随下一次 CI 运行收口。
+## U13：发布台账门禁的触发面对齐与可复现性单一入口
+
+目标是让第三方台账（`licenses-notices`）闸门在**改动发生时**就发现漂移，而不是在发布合并那一刻才暴露；并把 [git-collaboration.md](../git-collaboration.md) 第 53 行声称的门禁从「执行者记得去派发」变成自动化强制。预计 2–3 人日。
+
+### 范围与当前证据
+
+调查日期 2026-10-12，基线 `dev/0.0.8` HEAD `548c468`（v0.0.8 已发布，tag `v0.0.8` → `ae8c1b7`，由 Release 工作流创建）。共三个缺口，第三个是根因级的。
+
+**缺口一：触发面与开发面不重合。** [licenses-notices.yml](../../.github/workflows/licenses-notices.yml) 第 45-46 行的 `push` 只列 `branches: [main]`，**不含** `dev/**` 与 `release/**`。对照 [ci.yml](../../.github/workflows/ci.yml) 第 13-17 行覆盖 `["main", "dev/**", "release/**", "hotfix/**"]` 四类。于是台账漂移在 dev 线累积期间完全不可见，直到发布合并推送 main 才第一次被验出——发现点落在整条流程里最晚、修复代价最高的位置。
+
+**缺口二（根因）：PR 的 paths 过滤只覆盖台账追踪面的 15.9%。** licenses-notices.yml 第 29-44 行的 `pull_request.paths` 列了 `pnpm-lock.yaml`、`**/package.json`、`third-party/**`、`.agents/skills/**`、`scripts/**` 等。把这份清单与台账 `inputs` 的 2869 个条目逐条比对：**只覆盖 455 项，2414 项改动不会触发闸门**。未覆盖项含 `packages/ui/src/components/ai-elements/`（46 个）、`packages/ui/src/components/ui/`（45 个）、`packages/rpc/src`（22 个）、以及 2292 个 material-icons SVG（desktop 与 web 各 1146）。这意味着即使走 PR，绝大多数被台账追踪的文件改了也不会触发校验。本次 0.0.8 漂移的 `attachments.tsx` 与 `message.tsx` **都在未覆盖集里**——走 PR 同样不会拦住。两份必须一致的清单（paths 过滤 / 台账 inputs）各自手工维护，是这类漏检的结构性来源。
+
+**缺口三：release.yml 根本不跑这道闸门。** [release.yml](../../.github/workflows/release.yml) verify job 的八个步骤为 Install dependencies / Typecheck / Lint / Architecture check / Knip / Build CLI workspace packages / Lint CLI workspace / Tests，全文件对 `licenses`、`inventory`、`notices` 零命中。但 git-collaboration.md 第 53 行写的是「CI verify（typecheck/lint/架构/测试）、licenses-notices 等专项闸门在 release 分支的推送上全部 success」——这条规则**没有任何自动化强制**：release 分支推送不触发该工作流，发布 verify job 也不重跑它。规则文字与机制之间是断的。
+
+**后果实证：连续三个发布同型返工。** 触及 `third-party/inventory.json` 的提交共五个，需分两类：`34b1766`、`39f54f7` 是常规重生成（`chore(licenses)`，随批入账），非闸门失败；真正由发布闸门逼出的「采用 CI Linux 规范产物替换」是 `b926b9e`（0.0.6）、`390f73c`（0.0.7）、`572733a`（0.0.8）三个**连续发布**，每次都在 main 合并那一刻才发现漂移。0.0.8 现场：main 合并推送（`675b644`）触发 run `38202911921`，失败于「Report diff against committed ledger」步骤，`inventory.json` 漂移 6 行（6+/6-）而 `THIRD-PARTY-NOTICES.md` 逐字节相同；四个变动哈希逐一对应四个改动过的文件（根 `package.json` 版本号 bump、`packages/desktop/package.json` 新增两条 e2e 脚本条目、`attachments.tsx` 与 `message.tsx` 由 `9859b84` 在 dev 线改动）。本次靠对 `release/0.0.8` 手动 `workflow_dispatch`（run `38204073228` → success）才在合入 main **之前**拿到权威结论，比 0.0.7「先合入 main 才暴露」前进一步——但依赖执行者记得去做，属人工纪律而非机制。
+
+**复现性检查目前没有单一入口。** [scripts/licenses.mjs](../../scripts/licenses.mjs) 只有 `notices`（生成）与 `check`（allowlist + 声明新鲜度）两个子命令，**不含**复现性校验；「重生成 → 与已入库台账 diff → 非空即失败」的逻辑内联在 licenses-notices.yml 的三步 YAML 里（第 121-166 行）。这正是 U01 收敛前「三个入口各自内联类型检查命令」的同一形状：同一规则散在 workflow 文本里，无法被测试引用，也无法被 CI/release 共用。
+
+**前置探测可行性（已实测，非提案）。** 台账 `inputs` 是 2869 个仓库源文件的 SHA-256，按其头部声明口径（`UTF-8 with CRLF normalized to LF`）在干净工作树全量重算并比对：**0 mismatch / 0 missing，耗时 1.6s，不需要任何 install 或构建**。
+
+能力边界必须如实划出，不得夸大：`inputs` 是源文件派生（本地秒级可验），而 `packages`（814 项）、`notInstalled`、`noticesSha256` 派生自**已安装依赖树**，只能在 CI Linux 口径重生成（该工作流还须临时给 `supportedArchitectures.libc` 补 musl 才能装出锁文件登记的全部变体）。因此本地探测只能覆盖「源文件哈希」那一半；依赖树变化必须由 CI 全量重生成兜住。本次 0.0.8 的实际漂移恰好全落在源文件那一半。
+
+**不在范围内：** 不改台账 schema，不把 CI Linux 规范产物换成任何本机重生成产物（`b926b9e`/`390f73c`/`572733a` 三次均采用 CI 工件，理由见 licenses-notices.yml 内注释：本机 Windows 重生成会把不一致重新带回去），不重做生成器，也不借机调整 musl 补丁逻辑。
+
+### 所有者与接口
+
+发布设施拥有台账生成口径、复现性校验入口与闸门触发面；各包维护者负责自己改动引入的哈希漂移。
+
+**选定方案：B 为最终权威，C 为单一入口实现，A 以「生成 paths」而非「扩大 push」落地。** 三者角色与阻断级别：
+
+- **C（实现层，唯一事实来源）**：给 `scripts/licenses.mjs` 增加 `reproducibility` 子命令，把 licenses-notices.yml 内联的「重生成 → diff → 非空即失败」抽成单一实现，两种模式共用同一份代码：`--inputs-only` 只重算 2869 个源文件哈希（1.6s、零 install，本地与快反馈用）；默认模式做 CI Linux 全量重生成（含依赖树派生字段）。licenses-notices.yml 改为调用它，YAML 里不再保留第二份逻辑。这一步是 U01「检查由单一入口组合」纪律的直接套用，也是 A/B 的前置。
+- **B（发布阻断级，最终权威）**：把 `licenses.mjs reproducibility`（全量模式）加为 release.yml verify job 的第九步。失败即不得出包。这是**唯一**能看到依赖树派生字段的检查，故为最终权威；git-collaboration.md 第 53 行那句话自此由机制强制，不再靠人记得派发。代价是发布 verify 增加实测 72–102s（run `38204073228` 72s / `38202911921` 73s / `38077639394` 91s / `38074358843` 102s），发布频次低，可接受。
+- **A（开发期阻断级，发现点前移）**：**不**给 licenses-notices.yml 的 `push` 加 `dev/**`（那会让每次 dev 推送跑一次 Linux install + 全量生成，且 dev 中途态必然频繁红灯）。改为把 C 的 `--inputs-only` 模式挂进 **ci.yml 的 verify job**——ci.yml 第 13-17 行的触发面**已经**覆盖 `main`/`dev/**`/`release/**`/`hotfix/**` 四类，无需新建触发面，且零 install 成本（1.6s）。该步在 ci.yml 里为阻断级（失败即红），但**不是**发布权威；它只负责提前暴露源文件哈希漂移。
+
+**缺口二的根因修法：paths 过滤从台账生成，不再手写。** 新增 `node scripts/licenses.mjs paths-filter` 输出「台账 `inputs` 按目录/文件名归纳后的 paths 清单」，licenses-notices.yml 的 `pull_request.paths` 与 ci.yml 新步骤的条件都由它产出（或由其产出的清单在测试中机械比对）。两份必须一致的清单收敛为一个事实来源，杜绝再次漂移。
+
+### 实施步骤
+
+1. 先更新 spec：在 [third-party/README.md](../../third-party/README.md) 或新建发布门禁 spec 中写明复现性校验的两种模式、各自的覆盖范围（源文件哈希 / 依赖树派生字段）、阻断级别与最终权威归属。
+2. 抽出单一入口：给 `scripts/licenses.mjs` 加 `reproducibility`（默认全量 / `--inputs-only`）与 `paths-filter` 两个子命令；licenses-notices.yml 改为调用，删除内联逻辑。先补能暴露缺口的测试再改 workflow。
+3. 补测试：`--inputs-only` 在干净树上 0 mismatch 且秒级返回；注入一处被追踪文件的改动（含一个**当前 paths 未覆盖**的文件，如 `packages/ui/src/components/ai-elements/*.tsx`）必须红；`paths-filter` 的输出与台账 inputs 的覆盖率断言为 100%（当前实测 15.9%，该断言即红）。
+4. 接线 B：release.yml verify job 增加全量复现性步骤，置于 Tests 之后（失败时先看测试结论）。
+5. 接线 A：ci.yml verify job 增加 `--inputs-only` 步骤，条件由 `paths-filter` 产出。
+6. 回写 git-collaboration.md 第 53 行：把「licenses-notices 等专项闸门在 release 分支的推送上全部 success」改为准确描述——发布权威是 release.yml verify 内的全量复现性步骤；release 分支推送另经 ci.yml 的 `--inputs-only` 提前暴露源文件漂移。使规则文字与机制一致。
+
+### 验收场景
+
+| 编号 | 前置条件                                     | 操作                                         | 必须满足的断言                                                                     | 证据                     |
+| ---- | -------------------------------------------- | -------------------------------------------- | ---------------------------------------------------------------------------------- | ------------------------ |
+| L01  | 干净工作树、依赖已安装                       | `licenses.mjs reproducibility --inputs-only` | 退出码 0，0 mismatch / 0 missing，耗时秒级（实测 1.6s / 2869 项）                  | 命令输出与计时           |
+| L02  | 改动一个**当前 paths 未覆盖**的被追踪源文件  | 同上                                         | 退出码非零并指名该文件；证明检查不依赖 paths 过滤也能发现漂移                      | 注入 diff 与失败输出     |
+| L03  | CI Linux、依赖已安装                         | `licenses.mjs reproducibility`（全量）       | 与已入库台账一致则退出 0；不一致时打印文件级 diff 且退出非零，不静默降级           | 步骤日志与退出码         |
+| L04  | 台账 inputs 与 paths-filter 输出             | 比对两份清单的覆盖率                         | 覆盖率 100%；人为从台账删一项后该断言变红（清单不得再手工漂移）                    | 覆盖率数字与断言结果     |
+| L05  | release 分支推送                             | 观察 ci.yml verify 与 release.yml verify     | 两处都跑复现性检查；ci.yml 为 inputs-only、release.yml 为全量；任一失败则阻断      | 两个 workflow 的步骤记录 |
+| L06  | 制造一处依赖树漂移（改 lock 但不重生成台账） | 跑全量模式与 inputs-only 模式各一次          | 全量模式必须红；inputs-only 可以绿——如实证明本地探测覆盖不到依赖树，不夸大为可替代 | 两次运行的结论对比       |
+
+### 定量门槛与失败处理
+
+覆盖率必须为 100%（paths-filter 输出 vs 台账 inputs），当前实测 15.9%，该门槛即现状红灯。
+`--inputs-only` 在干净树上误报数必须为 0，耗时上限 10s（实测 1.6s，留余量给慢盘）；不得靠跳过文件降低耗时。
+全量模式在 CI Linux 上耗时预算 120s（实测 72–102s）；超预算先查 install 缓存，不放宽校验。
+复现性失败一律阻断：ci.yml 里红该步、release.yml 里不得出包。不得用 `continue-on-error` 把发布路径上的失败降级为警告。
+修复只能采用 CI Linux 重生成的规范产物（沿用 `b926b9e`/`390f73c`/`572733a` 口径），禁止提交本机 Windows 重生成结果。
+若单一入口实现出现设施缺陷，可回滚该实现，但必须保留 licenses-notices.yml 原有的阻断作用，不得让校验整体消失。
+
+### 依赖、工作量与命令
+
+依赖已存在的 licenses-notices.yml 生成链与 musl 补丁步骤；不依赖 U03/U04/U06。
+抽出单一入口 + 测试 1 人日，paths-filter 生成与覆盖率断言 0.5 人日，两处 workflow 接线与规则回写 0.5–1 人日。
+现有命令：`node scripts/licenses.mjs notices`（生成）、`node scripts/licenses.mjs check [--strict]`（allowlist 与声明新鲜度）。
+拟新增命令（实现前由 spec 定稿参数）：`node scripts/licenses.mjs reproducibility [--inputs-only]`、`node scripts/licenses.mjs paths-filter`；根 `package.json` 视需要暴露 `pnpm licenses:preflight` 作为 `--inputs-only` 的快捷入口。
+现有等价门禁：licenses-notices.yml 第 159-166 行「Report diff against committed ledger」，抽出后该步骤改为调用单一入口。
+
+下一步：U02——为 `node-execution-adapter` 与 `ConversationV4Gateway` 建真实子进程 fixture，先落 E01/E02（spawn 前取消、运行中取消各只结算一次）。U01 的剩余确认项（Node 24、clean checkout、三平台 runner）随下一次 CI 运行收口。U13 的 L04 覆盖率断言可先落地，作为把缺口二钉成红灯的最小起点。

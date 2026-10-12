@@ -178,13 +178,21 @@ sequenceDiagram
 
 **验收：** 手机可下载报告，离线也可生成客户端部分；报告明确未采集/不可用字段，不把无法检查显示为健康；含 token/header/路径的测试夹具通过脱敏；Desktop 现有 zip 导出保持可用。Web 不声称能够读取桌面的全部日志。
 
+### U13. 发布台账门禁的触发面对齐与可复现性单一入口（2–3 人日）
+
+**证据：** 三个缺口。（一）[licenses-notices.yml](../.github/workflows/licenses-notices.yml) 第 45-46 行的 `push` 只列 `branches: [main]`，**不含** `dev/**` 与 `release/**`（对照 [ci.yml](../.github/workflows/ci.yml) 第 13-17 行覆盖四类分支），台账漂移因此在 dev 线累积期间不可见，直到发布合并推送 main 才第一次被验出。（二，根因）该文件第 29-44 行的 `pull_request.paths` 与台账 `inputs`（2869 项）逐条比对只覆盖 **455 项（15.9%）**，2414 项改动不触发闸门——含 `packages/ui/src/components/ai-elements/`(46)、`components/ui/`(45)、`packages/rpc/src`(22) 及 2292 个 material-icons SVG；本次 0.0.8 漂移的两个文件都在未覆盖集里，走 PR 同样拦不住。（三）[release.yml](../.github/workflows/release.yml) verify job 的八个步骤不含任何 licenses/inventory 校验，故 [git-collaboration.md](./git-collaboration.md) 第 53 行「licenses-notices 等专项闸门在 release 分支的推送上全部 success」无自动化强制。后果：由发布闸门逼出的「采用 CI Linux 规范产物替换台账」已连续三个发布同型返工（`b926b9e` 0.0.6、`390f73c` 0.0.7、`572733a` 0.0.8；另有 `34b1766`、`39f54f7` 两次属常规重生成非闸门失败）。0.0.8 现场为 main 推送 run `38202911921` 失败于「Report diff against committed ledger」（licenses-notices.yml 第 159 行），`inventory.json` 漂移 6 行而 `THIRD-PARTY-NOTICES.md` 逐字节相同。此外 [scripts/licenses.mjs](../scripts/licenses.mjs) 只有 `notices`/`check` 两子命令，复现性校验（重生成→diff→非空即失败）内联在 YAML 三步里，无单一入口——与 U01 收敛前「三处内联类型检查命令」同形状。
+
+**建议与所有者：** 发布设施拥有台账生成口径、复现性校验入口与闸门触发面；各包维护者负责自己改动引入的哈希漂移。选定方案 **B 为发布权威、C 为单一入口实现、A 以生成 paths 而非扩大 push 落地**：C 给 licenses.mjs 加 `reproducibility`（默认全量 / `--inputs-only` 只重算 2869 源文件哈希，实测 0 mismatch / 1.6s / 零 install）与 `paths-filter` 两子命令，把内联的复现性逻辑抽成单一实现供 workflow 调用；B 把全量 `reproducibility` 加为 release.yml verify 第九步（唯一能看到依赖树派生字段的检查，故为最终权威，代价 +72~102s）；A **不**给 licenses-notices.yml 扩 push（每次 dev 推送跑 Linux install 且中途态频繁红灯），改为把 `--inputs-only` 挂进 ci.yml verify——ci.yml 触发面已覆盖四类分支、零 install、1.6s。缺口二的根因修法：`paths-filter` 子命令从台账 `inputs` 归纳生成 paths 清单，两份必须一致的清单收敛为一个事实来源。能力边界如实划出：`inputs` 源文件派生可本地验，而 `packages`(814)、`noticesSha256` 派生自**已安装依赖树**，只能 CI Linux 重生成，本地探测不能完整替代闸门（L06 专门验证此边界）。不改台账 schema，不把 CI 规范产物换成本机重生成产物。
+
+**验收：** 六个场景 L01–L06（干净树 `--inputs-only` 退出 0 且秒级；改动一个当前 paths 未覆盖的被追踪源文件即红；CI Linux 全量一致退出 0、不一致打文件级 diff；paths-filter 对台账 inputs 覆盖率断言 100%，当前 15.9% 即红；release 分支推送 ci.yml 与 release.yml 两处都跑复现性检查；制造依赖树漂移时全量模式必红而 inputs-only 可绿，如实证明本地探测覆盖不到依赖树）。定量门槛：覆盖率 100%、inputs-only 干净树误报 0、耗时上限 10s、全量 CI 预算 120s、复现性失败一律阻断（不得 `continue-on-error` 降级），修复只采用 CI Linux 重生成产物。git-collaboration.md 第 53 行回写为准确描述，使规则文字与机制一致。细化见 [U13](./upgrades/quality-and-release-2026-10.md)。
+
 ## 7. 建议交付顺序
 
-| 批次                  | 范围                            | 进入下一批的条件                                                        |
-| --------------------- | ------------------------------- | ----------------------------------------------------------------------- |
-| A：先使问题可见       | U02；并行完成 U09（U01 已完成） | 执行故障有稳定复现与终态断言，文档事实与当前实现对齐                    |
-| B：建立交互与发行保障 | U03、U04、U06                   | 桌面/手机关键交互可重复，产物在仓库外可启动，性能实验可复现             |
-| C：完成既有收敛与体验 | U05 分里程碑，U07、U08          | 双链路契约稳定，legacy 消费者按阶段减少，历史定位与首次配置通过交互验收 |
-| D：按证据逐项优化     | U10、U11、U12                   | 不变量、媒体成本和用户诊断需求有明确基线，每项独立验收                  |
+| 批次                  | 范围                                 | 进入下一批的条件                                                               |
+| --------------------- | ------------------------------------ | ------------------------------------------------------------------------------ |
+| A：先使问题可见       | U02、U13；并行完成 U09（U01 已完成） | 执行故障有稳定复现与终态断言，文档事实与当前实现对齐；台账漂移在改动分支即可见 |
+| B：建立交互与发行保障 | U03、U04、U06                        | 桌面/手机关键交互可重复，产物在仓库外可启动，性能实验可复现                    |
+| C：完成既有收敛与体验 | U05 分里程碑，U07、U08               | 双链路契约稳定，legacy 消费者按阶段减少，历史定位与首次配置通过交互验收        |
+| D：按证据逐项优化     | U10、U11、U12                        | 不变量、媒体成本和用户诊断需求有明确基线，每项独立验收                         |
 
 下一项具体工作：U02——为 `node-execution-adapter` 与 `ConversationV4Gateway` 建立真实子进程 fixture，先落 E01/E02（spawn 前取消、运行中取消各只结算一次），再扩到 E03-E10。其余建议先保留为待排期项，不同时启动多个跨域重构。

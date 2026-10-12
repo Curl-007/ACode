@@ -102,11 +102,17 @@ function createHarness() {
     },
   };
 
-  const repoCalls = { seedIfMissing: [], syncTaskMeta: [], updateTaskState: [] };
+  const repoCalls = { seedIfMissing: [], syncTaskMeta: [], updateTaskState: [], applyAgentPatch: [] };
   const taskIndexRepo = {
     seedTaskMetaIfMissing: async (meta) => {
       repoCalls.seedIfMissing.push(meta);
       return meta;
+    },
+    // 返回 null = 「行缺失」，让 applyTerminalTransition 的 .then 走回源分支而不广播，
+    // 把断言聚焦在迁移表是否触发 applyAgentPatch（status/lastError 收敛）这一决策点上。
+    applyAgentPatch: async (params) => {
+      repoCalls.applyAgentPatch.push(params);
+      return null;
     },
     syncTaskMeta: async ({ meta }) => {
       repoCalls.syncTaskMeta.push(meta);
@@ -306,3 +312,77 @@ test("R4（事故回归）：终态→running（重启后恢复活动）的 delt
   );
   h.syncer.disposeAll();
 });
+
+// R5/R6（conflated snapshot 缺口）：断档降级 snapshot 只携带每会话的最新 phase，
+// 落后期间 error→running→completedSuccess 被折叠成一次 error↔completedSuccess 迁移。
+// 迁移表原本无「终态→不同 kind 终态」分支 → 四个旧分支全部 false → 任务行 status/
+// updatedAt/lastError 永久冻结在旧终态。这里用「基线 snapshot + 第二帧 snapshot（更高
+// toSeq）」直灌 applySessionsIndexFrame 的断档降级 diff 路径复现该缺口。
+function emitSnapshot(h, toSeq, sessions) {
+  h.emitFrame({
+    topic: TOPIC,
+    subscriptionId: "sub-1",
+    fromSeq: toSeq - 1,
+    toSeq,
+    sentAt: Date.now(),
+    payload: {
+      kind: "snapshot",
+      snapshot: {
+        protocolVersion: 1,
+        workspaceId: WORKSPACE_PATH,
+        logEpoch: LOG_EPOCH,
+        sessions,
+      },
+    },
+  });
+}
+
+test("R5（conflated snapshot 缺口）：error→completedSuccess 的断档 diff 必须收敛为 completed", async () => {
+  const h = createHarness();
+  h.fireRuntimeAvailable();
+  await new Promise((r) => setTimeout(r, 20));
+
+  // 基线 snapshot：会话以 error 入册（seeded=true，state.summaries 记录 S=error）。
+  emitSnapshot(h, 1, [summary("sess_retry", "error", 1000)]);
+  await new Promise((r) => setTimeout(r, 30));
+
+  // 落后期间用户重试成功：断档降级 snapshot 只带最新 phase completedSuccess，
+  // 中间的 running 被 conflate 掉 → diff 变成 error→completedSuccess。
+  h.stubSnapshot(summary("sess_retry", "completedSuccess", 5000));
+  emitSnapshot(h, 2, [summary("sess_retry", "completedSuccess", 5000)]);
+  await new Promise((r) => setTimeout(r, 30));
+
+  const converged = h.repoCalls.applyAgentPatch.some(
+    (p) => p.taskId === "sess_retry" && p.patch.status === "completed",
+  );
+  assert.ok(
+    converged,
+    "终态(error)→不同 kind 终态(completedSuccess) 的 conflated snapshot diff 必须经 applyTerminalTransition 收敛 status=completed（缺口：侧栏永久显示 error、lastError 不清空、updatedAt 冻结）",
+  );
+  h.syncer.disposeAll();
+});
+
+test("R6（conflated snapshot 缺口）：completedSuccess→error 的断档 diff 必须收敛为 error", async () => {
+  const h = createHarness();
+  h.fireRuntimeAvailable();
+  await new Promise((r) => setTimeout(r, 20));
+
+  // 基线 snapshot：会话以 completedSuccess 入册。
+  emitSnapshot(h, 1, [summary("sess_regress", "completedSuccess", 1000)]);
+  await new Promise((r) => setTimeout(r, 30));
+
+  // 落后期间恢复对话后失败：断档降级 snapshot 折叠成 completedSuccess→error。
+  h.stubSnapshot(summary("sess_regress", "error", 6000));
+  emitSnapshot(h, 2, [summary("sess_regress", "error", 6000)]);
+  await new Promise((r) => setTimeout(r, 30));
+
+  const converged = h.repoCalls.applyAgentPatch.some(
+    (p) => p.taskId === "sess_regress" && p.patch.status === "error",
+  );
+  assert.ok(
+    converged,
+    "终态(completedSuccess)→不同 kind 终态(error) 的 conflated snapshot diff 必须经 applyTerminalTransition 收敛 status=error（缺口：侧栏永久显示 completed/绿色而会话实际失败）",
+  );
+  h.syncer.disposeAll();
+});
+

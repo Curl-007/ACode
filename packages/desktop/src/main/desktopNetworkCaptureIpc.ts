@@ -4,7 +4,8 @@ import type { IpcMainInvokeEvent } from "electron";
 import { PlatformChannels } from "@acode/shared";
 import type { V4NetworkCaptureRecordsNotification } from "@acode/shared/acode-protocol-v4";
 import { z } from "zod";
-import { getResourceManagerWindowId } from "./resourceManagerWindow.js";
+import { getResourceManagerWebContentsId, getResourceManagerWindowId } from "./resourceManagerWindow.js";
+import { asWebContentsId } from "./desktopWindowIds.js";
 
 /**
  * 运行时网络观测的 desktop main 侧（specs/runtime-network-capture.md）。
@@ -92,9 +93,20 @@ export function receiveNetworkCaptureRecords(notification: {
   });
 }
 
+/**
+ * 发送方鉴权：必须是资源管理器窗口本身。
+ * 修复依据（specs/runtime-network-capture.md 桌面链路）：event.sender.id 是 WebContents id，
+ * 只能与 RM 窗口的 webContents.id 同空间比较；此前误比 getResourceManagerWindowId()
+ * （BrowserWindow.id，另一套计数器），导致合法 RM 开关被 forbidden、且撞上该窗口 id 的
+ * 无关 renderer 越权。取值口径与 resourceManagerWindow 的 setResourceUsageSamplingActive /
+ * getResourceUsageSnapshot（均比 instance.webContents.id）一致。
+ */
 function isResourceManagerSender(event: IpcMainInvokeEvent): boolean {
-  const resourceManagerWindowId = getResourceManagerWindowId();
-  return resourceManagerWindowId !== null && event.sender.id === resourceManagerWindowId;
+  const resourceManagerWebContentsId = getResourceManagerWebContentsId();
+  return (
+    resourceManagerWebContentsId !== null &&
+    asWebContentsId(event.sender.id) === resourceManagerWebContentsId
+  );
 }
 
 async function forwardNetworkCaptureEnabledToHosts(logger: {

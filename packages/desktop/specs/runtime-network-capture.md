@@ -44,6 +44,19 @@ http-mitm-proxy（避免与设置页用户代理共用 env 键互相覆盖、避
 - 开关按钮在 network tab 内：renderer → main IPC（`PlatformChannels` 新
   `NetworkCaptureSetEnabled`/`NetworkCaptureGetState`）→ host → agent v4 命令；
   agent 重启后开关状态由 main 记忆并在新会话 attach 时重发。
+- **发送方鉴权（ID 空间纪律）**：`NetworkCaptureSetEnabled` 是变更操作，只允许资源
+  管理器窗口发起。鉴权必须在 **同一 ID 空间**内比较——`event.sender.id`（WebContents
+  id）对 资源管理器窗口的 `webContents.id`，与既有 `setResourceUsageSamplingActive` /
+  `getResourceUsageSnapshot`（`resourceManagerWindow.ts:78/87`）同一取值口径。
+  **绝不能**拿 `event.sender.id` 去比 `BrowserWindow.id`：Electron 的 WindowId 与
+  WebContentsId 是两套彼此独立的整数计数器（见 `desktopWindowIds.ts`），本 App 还会
+  创建大量无窗口的 webContents（`<webview>` guest、WebContentsView/CUA、辅助 renderer、
+  DevTools），RM 窗口的 `webContents.id` 必然 > 其 `BrowserWindow.id`。混用两种后果：
+  合法 RM 发送方被判 `forbidden`（本特性静默失效，违背验收场景 1），或某个
+  `webContents.id` 恰好等于 RM `BrowserWindow.id` 的无关 renderer 越权开关（鉴权旁路）。
+  因此资源管理器暴露两个各自品牌的取值点：`getResourceManagerWindowId()`（WindowId，供
+  `BrowserWindow.fromId` 推送记录）与 `getResourceManagerWebContentsId()`（WebContentsId，
+  供发送方鉴权）；两者不可互换。`NetworkCaptureGetState` 是纯读取，不限制发送方。
 - i18n：`resourceManager.network.*`（description/filter/clear/unavailable/count/
   previous/next/time/process/method/empty/noMatches）。
 
@@ -73,3 +86,41 @@ sequenceDiagram
 5. 单测：interceptor 记录与脱敏（mock fetch）、环形缓冲上限、批量上报批大小；
    v4 命令/事件 schema 校验测试。
 6. remote workspace：经远端 host 同链路可用（事件透传）。
+7. 发送方鉴权：资源管理器窗口（其 `webContents.id` 与 `BrowserWindow.id` 不相等，模拟
+   真实 App 里 webContents 计数器超前的常态）发 `NetworkCaptureSetEnabled(true)` 必须放行
+   并转发 host；`webContents.id` 恰等于 RM `BrowserWindow.id` 的无关 renderer 必须被
+   `forbidden` 拒绝（防鉴权旁路）；RM 窗口未开时任何发送方一律 `forbidden`。
+   单测（`tests/network-capture-sender-authorization.test.mjs`）以 `loadMain` 转译注入跑
+   真实模块，但两套 id 是**手挑常量**（RM_WINDOW_ID=2 / RM_WEBCONTENTS_ID=3），只证明判定
+   逻辑，不证明真实 Electron 里两套计数器的关系。
+8. 真机 Electron 验收（`packages/desktop/scripts/e2e-network-capture-auth.mjs`，
+   `pnpm --filter @acode/desktop e2e:netcapture-auth`）：补场景 7 的缺口——由 **Electron
+   亲自分配**两套 id 计数器，串起**真实 `openResourceManager()` 单例 + 真实构建出的
+   `out/preload/resourceManager.cjs`（真 `contextBridge` 桥）+ 真跨进程 `ipcRenderer.invoke`
+   → 真 `isResourceManagerSender`**。harness 先建 3 个 offscreen webContents 推高
+   webContents 计数器，复现真实 App 里 `webContents.id > BrowserWindow.id` 的分叉前提。
+   2026-10-12 实测（Windows / Electron Chrome 146）：真实 `BrowserWindow.id=1` 而
+   `webContents.id=4`（`event.sender.id=4`，即鉴权真正比对的值）——
+   - 修复后：合法 RM 经真实桥开关返回 `{success:true}`，`GetState` 记忆 `enabled=true`
+     且生成 `captureId`；挂同一真实 preload 但非 RM 单例的另一真实窗口发同一开关返回
+     `{success:false,error:"forbidden"}`（不借道）；
+   - 破坏对照 `--control`（把当前源码里的修复**机械逆回**旧 WindowId 口径后经内存插件构建进
+     同一 harness、同一真实 Electron 运行时；对照自洽于工作树，不依赖 `git show HEAD`，因此
+     修复与 harness 同批提交后仍可长期复现）：同一分叉下合法 RM 开关返回
+     `{success:false,error:"forbidden"}`、`GetState` 记忆 `enabled=false`——旧 bug 在真实
+     Electron 里复现（拿 `sender.id` 比 `BrowserWindow.id`，二者本就不等）。
+   构建注意：真实 main 模块被 esbuild 打成 ESM，需注入 `createRequire` banner 兜底内联的
+   CJS 依赖（yaml 等），否则 `require("process")` 在纯 ESM 下抛 Dynamic require 不支持
+   （与 `f9ed896` server-cli 同一手法）；隔离走 `--user-data-dir`，不可覆盖 `USERPROFILE`
+   （实证会让 Electron 在 `app.whenReady()` 前以 STATUS_BREAKPOINT 崩）。临时目录与进程树
+   在两个方向都验证清理干净。
+   harness 自身的保真纪律（两条，破坏对照的结论可信度依赖它们）：
+   - **产物新鲜度守护**：本 harness 验的是真实构建产物 `out/preload/resourceManager.cjs`，
+     跑之前比它与 `src/preload/resourceManager.ts` 的 mtime，产物更旧就 fail-loud 并给出
+     重建命令——否则「改了桥没重建」会拿旧桥验收新代码而静默通过（口径同
+     `apps/acode-cli/evals/runner-report.mjs` 的 `checkDistFreshness`）。
+   - **破坏对照不落盘**：`--control` 的 HEAD 源码经 esbuild 插件（虚拟 namespace +
+     `resolveDir` 指向真实 `src/main`）**只在内存里**供出，绝不写进 `src/main`。src 树被
+     tsconfig include 与 oxlint 扫描，落盘副本一旦因信号中断留在盘上会污染下一轮门禁。
+   两个真机 harness 共用的 Electron 运行时骨架（二进制解析、argv、带超时 spawn、进程树
+   清理、checkpoint 记账）收敛在 `scripts/e2e-electron-harness.mjs`，机制层单份实现。

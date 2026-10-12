@@ -11,6 +11,7 @@ import {
   embeddedBrowserViewportPreferenceSchema,
 } from "./browser-use/command-metadata.js";
 import { providerFamilyConnectionSelectionSettingsSchema } from "./provider-family-connection-selection.js";
+import { autoTranslateSettingsSchema, DEFAULT_AUTO_TRANSLATE_SETTINGS } from "./auto-translate.js";
 
 /** 引导职业枚举；单独导出供 onboarding 记录回填 settings 时做窄化校验。 */
 const appSettingsOccupationSchema = z.enum([
@@ -452,6 +453,7 @@ const appSettingsObjectSchema = z.object({
   httpProxy: nonEmptyStringSchema.optional(),
   httpProxyNoProxy: nonEmptyStringSchema.optional(),
   httpProxyCaCertPath: nonEmptyStringSchema.optional(),
+  autoTranslate: autoTranslateSettingsSchema.default(() => DEFAULT_AUTO_TRANSLATE_SETTINGS),
   embeddedBrowserAllowInsecureCertificates: z.boolean().default(false),
   embeddedBrowserViewportPreference: embeddedBrowserViewportPreferenceSchema.default(
     DEFAULT_EMBEDDED_BROWSER_VIEWPORT_PREFERENCE,
@@ -532,6 +534,7 @@ export const appSettingsPatchSchema = z.object({
   integratedTerminalShell: integratedTerminalShellSelectionSchema.optional(),
   httpProxy: nonEmptyStringSchema.optional(),
   httpProxyNoProxy: nonEmptyStringSchema.optional(),
+  autoTranslate: autoTranslateSettingsSchema.optional(),
   httpProxyCaCertPath: nonEmptyStringSchema.optional(),
   embeddedBrowserAllowInsecureCertificates: z.boolean().optional(),
   embeddedBrowserViewportPreference: embeddedBrowserViewportPreferenceSchema.optional(),

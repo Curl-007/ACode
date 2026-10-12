@@ -31,6 +31,23 @@ export {
   type IConversationTelemetryService,
 } from "./conversation-telemetry/conversationTelemetry.js";
 
+// Conversation export — rows → IR 分片服务
+export { IConversationExportService } from "./conversation-export/conversationExport.js";
+export type {
+  ConversationExportBlockingReason,
+  ConversationExportChunk,
+  ConversationExportChunkInput,
+  ConversationExportChunkResult,
+  ConversationExportFormat,
+  ConversationExportIrAttachment,
+  ConversationExportIrRow,
+  ConversationExportPreflightInput,
+  ConversationExportPreflightResult,
+  ConversationExportSelection,
+  ConversationExportTarget,
+} from "./conversation-export/conversationExport.js";
+export { EXPORT_TOOL_OUTPUT_MAX_CHARS } from "./conversation-export/conversationExportIr.js";
+
 // File service — IFileService is both a type (interface) and value (descriptor)
 export { IFileService } from "./file/file.js";
 export { IMediaPreviewService } from "./media-preview/mediaPreview.js";
@@ -256,6 +273,18 @@ export { ISubagentsService } from "./subagents/subagents.js";
 
 // Commands service — ICommandsService is both a type (interface) and value (descriptor)
 export { ICommandsService } from "./commands/commands.js";
+
+// Snippets service — ISnippetsService is both a type (interface) and value (descriptor)
+export { ISnippetsService } from "./snippets/snippets.js";
+export type {
+  PromptSnippetBuiltinUsageEntry,
+  PromptSnippetDeleteParams,
+  PromptSnippetListParams,
+  PromptSnippetUpdateParams,
+  PromptSnippetUseParams,
+  PromptSnippetWriteParams,
+  PromptSnippetsListResult,
+} from "./snippets/snippets.js";
 
 export { ISettingsSyncService } from "./settings-sync/settingsSync.js";
 

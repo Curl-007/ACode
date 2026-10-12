@@ -136,6 +136,8 @@ export const ServiceChannels = {
   Feedback: "feedback",
   /** Composer 附件在 host-local 与 remote runtime 之间的预传服务 */
   PromptAttachmentTransfer: "prompt-attachment-transfer",
+  /** Prompt 片段管理服务 */
+  Snippets: "snippets",
   /** 闲时任务管理服务（与 automation 服务面独立） */
   OffPeakTask: "off-peak-task",
   /** Onboarding 完成记录服务（本地持久化，后续上传服务器） */

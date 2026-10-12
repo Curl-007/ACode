@@ -292,3 +292,8 @@ export * from "./session-debug.js";
 export { redactFeedbackText } from "./feedbackPrivacy.js";
 
 export * from "./remoteWorkspaceConnection.js";
+
+export * from "./prompt-snippets.js";
+
+// Auto-translate（PRD auto-translate-outgoing）：共享 schema 与常量
+export * from "./auto-translate.js";

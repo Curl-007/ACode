@@ -306,7 +306,7 @@ spec 与探针 1 人日，fixture/角色采样 1–2 人日，比较器与校准
 
 目标是让第三方台账（`licenses-notices`）闸门在**改动发生时**就发现漂移，而不是在发布合并那一刻才暴露；并把 [git-collaboration.md](../git-collaboration.md) 第 53 行声称的门禁从「执行者记得去派发」变成自动化强制。预计 2–3 人日。
 
-**状态（2026-10-12，`dev/0.0.9`）：缺口一与缺口二已落地，缺口三因 musl 约束待决。** 单一入口 `scripts/third-party-reproducibility.mjs` + 三个子命令已实现，ci.yml verify 已接 `--inputs-only`，licenses-notices.yml 的 diff 判定已改为调用 `--diff-only`（YAML 不再保留第二份逻辑）；8 个测试用例 RED→GREEN 且破坏对照已实跑。release.yml 侧未接线（见「未落地项」），故第 53 行的规则文字本次**未**回写——避免规则先于机制改动而失准。
+**状态（2026-10-12，`dev/0.0.9`）：缺口一、二、三全部落地。** 判定逻辑收敛到单一入口 `scripts/third-party-reproducibility.mjs`，`licenses.mjs` 新增 `reproducibility`（三模式）与 `paths-filter` 两个子命令（该 CLI 共四个子命令）；ci.yml verify 已接 `--inputs-only`（缺口二）；licenses-notices.yml 的 diff 判定改为调用 `--diff-only`（缺口一的复现性单一入口）、其 `push.branches` 加 `release/**`（缺口三，使 git-collaboration.md:53 由机制强制而非靠人工 dispatch）；9 个测试用例 RED→GREEN 且两处破坏对照已实跑。第 53 行规则文字在选定方案下已准确，无需改动。
 
 ### 范围与当前证据
 
@@ -326,7 +326,7 @@ spec 与探针 1 人日，fixture/角色采样 1–2 人日，比较器与校准
 
 **缺口三：release.yml 根本不跑这道闸门。** [release.yml](../../.github/workflows/release.yml) verify job 的八个步骤为 Install dependencies / Typecheck / Lint / Architecture check / Knip / Build CLI workspace packages / Lint CLI workspace / Tests，全文件对 `licenses`、`inventory`、`notices` 零命中。但 git-collaboration.md 第 53 行写的是「CI verify（typecheck/lint/架构/测试）、licenses-notices 等专项闸门在 release 分支的推送上全部 success」——这条规则**没有任何自动化强制**：release 分支推送不触发该工作流，发布 verify job 也不重跑它。规则文字与机制之间是断的。
 
-**缺口三的修法受一个立项时未预见的约束限制（实现后据实登记）。** 原方案是把全量 `reproducibility` 加为 release.yml verify 的第九步。但全量重生成**依赖 musl libc 补丁**——licenses-notices.yml 第 92-108 行临时给 `pnpm-workspace.yaml` 的 `supportedArchitectures.libc` 补 musl、install 后立即还原，否则锁文件登记的 musl 变体装不出来、生成器直接抛 `Missing installed dependency`。release.yml 完全没有这套补丁。照原方案接线就得把 musl 逻辑再抄一份进 release.yml——**恰好违反 U13 自己要建立的单一来源纪律**。因此缺口三本次**不落地**，保留为待决项（见「未落地项」）。
+**缺口三的原方案为何被否决（立项时的判断，实现后修正）。** 原方案是把全量 `reproducibility` 加为 release.yml verify 的第九步。但全量重生成**依赖 musl libc 补丁**——licenses-notices.yml 第 92-108 行临时给 `pnpm-workspace.yaml` 的 `supportedArchitectures.libc` 补 musl、install 后立即还原，否则锁文件登记的 musl 变体装不出来、生成器直接抛 `Missing installed dependency`。release.yml 完全没有这套补丁，照原方案接线就得把 musl 逻辑再抄一份进 release.yml——**恰好违反 U13 自己要建立的单一来源纪律**。实现时进一步核实：release.yml verify job 对 `notices`/`inventory`/`licenses.mjs` 零命中，即它从不重生成台账，在那里加 `--diff-only` 等于比较两个从未被改动的东西、必然恒绿，是**空洞门禁**，比没有门禁更糟。最终修法见下节「缺口三：已选定方向与两个被否决的方案」。
 
 **后果实证：连续三个发布同型返工。** 触及 `third-party/inventory.json` 的提交共五个，需分两类：`34b1766`、`39f54f7` 是常规重生成（`chore(licenses)`，随批入账），非闸门失败；真正由发布闸门逼出的「采用 CI Linux 规范产物替换」是 `b926b9e`（0.0.6）、`390f73c`（0.0.7）、`572733a`（0.0.8）三个**连续发布**，每次都在 main 合并那一刻才发现漂移。0.0.8 现场：main 合并推送（`675b644`）触发 run `38202911921`，失败于「Report diff against committed ledger」步骤，`inventory.json` 漂移 6 行（6+/6-）而 `THIRD-PARTY-NOTICES.md` 逐字节相同；四个变动哈希逐一对应四个改动过的文件（根 `package.json` 版本号 bump、`packages/desktop/package.json` 新增两条 e2e 脚本条目、`attachments.tsx` 与 `message.tsx` 由 `9859b84` 在 dev 线改动）。本次靠对 `release/0.0.8` 手动 `workflow_dispatch`（run `38204073228` → success）才在合入 main **之前**拿到权威结论，比 0.0.7「先合入 main 才暴露」前进一步——但依赖执行者记得去做，属人工纪律而非机制。
 
@@ -342,42 +342,51 @@ spec 与探针 1 人日，fixture/角色采样 1–2 人日，比较器与校准
 
 发布设施拥有台账生成口径、复现性校验入口与闸门触发面；各包维护者负责自己改动引入的哈希漂移。
 
-实现落在 [scripts/third-party-reproducibility.mjs](../../scripts/third-party-reproducibility.mjs)（判定逻辑唯一实现），由 [scripts/licenses.mjs](../../scripts/licenses.mjs) 派发三个子命令；`hashBytes` 与 CRLF→LF 归一口径复用 [third-party-npm.mjs](../../scripts/third-party-npm.mjs) 与生成器同源，不另起一份哈希实现。
+实现落在 [scripts/third-party-reproducibility.mjs](../../scripts/third-party-reproducibility.mjs)（判定逻辑唯一实现），由 [scripts/licenses.mjs](../../scripts/licenses.mjs) 派发（该 CLI 现共四个子命令：原有 `notices`、`check`，本次新增 `reproducibility` 与 `paths-filter`）；`hashBytes` 与 CRLF→LF 归一口径复用 [third-party-npm.mjs](../../scripts/third-party-npm.mjs) 与生成器同源，不另起一份哈希实现。
 
 - **`reproducibility --inputs-only`（已落地，开发期阻断级）**：重算台账 `inputs` 的 2869 个源文件哈希并与工作树比对，零 install，实测内部 310ms / 墙钟约 385ms。接进 ci.yml verify job（Knip 之后、build 之前），ci.yml 触发面已覆盖 `main`/`dev/**`/`release/**`/`hotfix/**`。这是缺口二的修法：源文件哈希漂移在四类分支上都会被无条件检出，不再只在 main push 时被顺带发现。**不是**发布权威——看不见依赖树派生字段。
 - **`reproducibility`（全量，已落地为 CLI，未接进任何 workflow）**：调生成器全量重生成后与已入库台账 diff。需要 musl 补丁过的已安装依赖树，只能在 CI Linux 跑。
 - **`reproducibility --diff-only`（已落地，发布权威判定）**：跳过重生成，只 diff 工作树与已入库台账。licenses-notices.yml 的「Report diff against committed ledger」步骤改为调用它——该 workflow 已在前一步带 musl 补丁重生成，`--diff-only` 只复用同一份漂移判定，YAML 不再保留第二份 diff 逻辑。这是缺口一/复现性单一入口的落地部分。
 - **`paths-filter [--coverage]`（已落地，诊断与文档职责）**：从台账 `inputs` 归纳最小目录覆盖集（实测 2869 项 → 27 条、未覆盖 0），`--coverage` 以 100% 为硬门槛。职责据实现后的认识收窄：它**不**接进 licenses-notices.yml 的 paths（那会让改一个 SVG 触发约 90s 全量重生成，而 SVG 改动不可能影响依赖树），只用于断言「台账追踪面 ⊇ 手写 paths 的依赖树相关部分」这一不变量（L04），防止将来有人误把两份清单对齐。
 
-### 未落地项（待决，需对齐）
+### 缺口三：已选定方向与两个被否决的方案
 
-- **缺口三（release.yml 不跑台账闸门）本次未修。** 原方案「把全量 `reproducibility` 加为 release.yml verify 第九步」被一个立项时未预见的约束挡住：全量重生成依赖 musl libc 补丁（licenses-notices.yml 第 92-108 行临时改 `pnpm-workspace.yaml` 的 `supportedArchitectures.libc`、install 后还原），而 release.yml 没有这套补丁。照原方案接线就得把 musl 逻辑再抄一份进 release.yml——违反 U13 自己的单一来源纪律。三个可选方向，需与用户对齐后再动：
-  1. 把 musl 补丁 + install + 全量重生成抽成一个 GitHub composite action，licenses-notices.yml 与 release.yml 共用（真正单一来源，但新增一个 action 抽象）；
-  2. release.yml verify 只加 `--diff-only`（不重生成，只校验已入库台账与工作树一致）——成本近零，但校验强度弱于全量重生成，发现不了「台账本就该重生成却没重生成」的情况；
-  3. 维持现状，把 git-collaboration.md 第 53 行的措辞改成准确描述：release 分支的台账权威来自 licenses-notices.yml 的手动 `workflow_dispatch`（本次 0.0.8 即如此），而非 release.yml verify。
-     在选定前，第 53 行「licenses-notices 等专项闸门在 release 分支的推送上全部 success」仍无 release.yml 侧的自动化强制——如实登记为未闭合。
+**选定：把 `release/**`加进 licenses-notices.yml 的`push.branches`（现只有 `[main]`）。** 依据是 git-collaboration.md 第 53 行的原文——「licenses-notices 等专项闸门**在 release 分支的推送上**全部 success」：规则要的是这道闸门**在 release 分支上跑**，而不是要 release.yml 自己重跑一遍台账校验。licenses-notices.yml 是分支无关的（全文唯一的 ref 引用是 concurrency group，且已按 `${{ github.ref }}`隔离），故加一个分支模式即可让规则**字面成立**，并天然复用该 workflow 已有的 musl 补丁与全量重生成，零逻辑重复。发布路径上的台账权威自此由 push 自动触发，不再依赖执行者记得手动`workflow_dispatch`（0.0.8 那次即靠人工派发才在合入 main 前拿到结论）。
+
+代价：release 分支每次推送多跑一次约 72–102s 的 job（实测 run `38204073228` 72s / `38202911921` 73s / `38077639394` 91s / `38074358843` 102s）。release 分支生命周期短、推送次数少，可接受。**不加 `dev/**`**：dev 线推送频繁且中途态常改依赖，会让该 job 频繁红灯而噪音淹没信号；dev 线的源文件哈希漂移已由 ci.yml 的 inputs-only 步覆盖（ci.yml 触发面含 `dev/\*\*`）。
+
+**否决方案二（release.yml verify 加 `--diff-only`）：它是空洞的。** release.yml verify job 的八个步骤对 `notices`、`inventory`、`licenses.mjs` **零命中**，即该 job 从不重生成台账、也不改动台账文件。在其中加 `--diff-only`（只 diff 工作树与已入库台账）等价于「比较两个从未被改动过的东西」，必然恒绿，与台账是否可复现无关。这比没有门禁更糟：它会显示为一个通过的检查，给出虚假的安全感。
+
+**否决方案一（抽 composite action 让两个 workflow 共用 musl 逻辑）：不必要。** 它解决的问题是「release.yml 想自己跑全量重生成但没有 musl 补丁」，而选定方案根本不需要 release.yml 跑重生成——让已有 musl 补丁的那个 workflow 在 release 分支上跑即可。抽 action 会新增一层抽象、并把 musl 逻辑从它唯一的消费者里搬走，属为不存在的需求付复杂度成本。若将来确需第三处消费同一套 musl 重生成流程，再抽不迟。
+
+**能力边界的补充核实（修正立项时的一处判断）。** 立项时把缺口二写成「根因」并隐含认为只有 musl 全量重生成能抓漂移。实现后核实：0.0.8 那次漂移的四个文件（根 `package.json`、`packages/desktop/package.json`、`attachments.tsx`、`message.tsx`）**全部在台账 `inputs` 里**，且 `THIRD-PARTY-NOTICES.md` 逐字节未变（CI 实测 `1 file changed, 6 insertions(+), 6 deletions(-)`）——即那类漂移 **inputs-only 就能检出**，已由 ci.yml 的新步骤覆盖。真正只能靠 musl 全量重生成的只有**依赖树漂移**（`pnpm-lock.yaml` 变了但台账未重生成，会牵动 `packages`/`noticesSha256`/notices 正文），那正是 0.0.7 `390f73c` 的失败类别（W1-R3 拆包使 pnpm-lock 落入 meriyah 等新依赖）。故缺口三保留 musl 全量是必要的，但理由比立项时写的窄且准确：它是**依赖树漂移的唯一防线**，不是「所有台账漂移的唯一防线」。
+
+**规则回写。** git-collaboration.md 第 53 行的措辞在选定方案下已经准确（闸门确实在 release 分支推送上跑），故**不需要改文字**；需要的是让机制追上文字。第 53 行另有一句「以 `--ref release/x.y.z` 触发 Release 工作流并勾选 keep_draft」用于预演发布级验证，与本次改动无冲突，保留不动。
 
 ### 实施步骤（实际执行记录）
 
 1. 已完成：更新 [third-party/README.md](../../third-party/README.md)，写明两种模式、各自覆盖范围、阻断级别与能力边界（inputs-only 可绿而 full 可红，不得互相冒充）。
 2. 已完成：抽出单一入口 `scripts/third-party-reproducibility.mjs`，`licenses.mjs` 加 `reproducibility`（`--inputs-only` / `--diff-only` / 默认全量）与 `paths-filter`（`--coverage`）子命令；licenses-notices.yml 的 diff 步骤改为调用 `--diff-only`，删除内联 YAML 判定。
-3. 已完成：先补测试再改 workflow。`apps/acode-cli/tests/third-party-reproducibility.test.mjs` 8 个用例覆盖 L01/L02/L02b/L03/L04/L04b/L06 与 CRLF 归一口径，RED→GREEN 已实跑（模块缺失时 ERR_MODULE_NOT_FOUND 红；实现后 8/8 绿）。破坏对照实跑：移除 CRLF 归一化后 L01 与 CRLF 用例双红（L01 在真实树上也红，因 Windows `core.autocrlf=true` 工作树确为 CRLF），还原后逐字节一致、复跑 8/8 绿。
-4. 未落地（见「未落地项」）：release.yml verify 的接线因 musl 约束暂缓，待方向选定。
+3. 已完成：先补测试再改 workflow。`apps/acode-cli/tests/third-party-reproducibility.test.mjs` 9 个用例覆盖 L01/L02/L02b/L03/L04/L04b/L06/L07 与 CRLF 归一口径，RED→GREEN 已实跑（模块缺失时 ERR_MODULE_NOT_FOUND 红；实现后 9/9 绿）。破坏对照实跑两处：(a) 移除 CRLF 归一化后 L01 与 CRLF 用例双红（L01 在真实树上也红，因 Windows `core.autocrlf=true` 工作树确为 CRLF），还原后逐字节一致、复跑全绿；(b) 从 licenses-notices.yml 移除 `release/**` 后 L07 红并指名缺口三回归，还原后绿。
+4. 缺口三：licenses-notices.yml 的 `push.branches` 加 `release/**`，并补机械守卫测试（沿用 U01 `typecheck-gate.test.mjs:246-265` 扫描 workflow YAML 的先例）钉住「release/\*\* 必须在 push 分支列表里」与「release.yml 不得出现空洞的台账 diff 步骤」。
 5. 已完成：ci.yml verify job 增加 `reproducibility --inputs-only` 步骤（Knip 之后）。
-6. 未落地：git-collaboration.md 第 53 行回写随缺口三的方向选定一并处理，避免规则文字先于机制改动而失准。
+6. 第 53 行规则文字无需改动（见上「规则回写」）。
+7. 已完成：ci.yml verify job 增加 `reproducibility --inputs-only` 步骤（Knip 之后）。
+8. 未落地：git-collaboration.md 第 53 行回写随缺口三的方向选定一并处理，避免规则文字先于机制改动而失准。
 
 ### 验收场景
 
-| 编号 | 前置条件                                     | 操作                                         | 必须满足的断言                                                                       | 证据                     |
-| ---- | -------------------------------------------- | -------------------------------------------- | ------------------------------------------------------------------------------------ | ------------------------ |
-| L01  | 干净工作树                                   | `licenses.mjs reproducibility --inputs-only` | 退出码 0，0 mismatch / 0 missing，2869 项全覆盖且在 10s 预算内（实测内部 310ms）     | 命令输出与计时           |
-| L02  | 改动一个**当前 paths 未覆盖**的被追踪源文件  | 同上                                         | 退出码非零并指名该文件；证明检查不依赖 paths 过滤也能发现漂移                        | 注入 diff 与失败输出     |
-| L03  | 台账文件相对 HEAD 有 diff                    | `licenses.mjs reproducibility --diff-only`   | 退出码非零并指名漂移文件；干净树上退出 0。workflow 复用同一份判定，YAML 无第二份逻辑 | 命令输出与退出码         |
-| L04  | 台账 inputs 与 paths-filter 输出             | 比对两份清单的覆盖率                         | 生成清单覆盖率 100%（实测 2869/2869、27 条）；手写清单显著低于 100%（实测 15.9%）    | 覆盖率数字与断言结果     |
-| L05  | release 分支推送                             | 观察 ci.yml verify 与 release.yml verify     | ci.yml 跑 inputs-only；release.yml 侧因 musl 约束**本次未接线**，仍靠手动 dispatch   | 两个 workflow 的步骤记录 |
-| L06  | 制造一处依赖树漂移（改 lock 但不重生成台账） | 跑全量模式与 inputs-only 模式各一次          | 全量模式必须红；inputs-only 可以绿——如实证明本地探测覆盖不到依赖树，不夸大为可替代   | 两次运行的结论对比       |
+| 编号 | 前置条件                                     | 操作                                         | 必须满足的断言                                                                                                               | 证据                     |
+| ---- | -------------------------------------------- | -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | ------------------------ |
+| L01  | 干净工作树                                   | `licenses.mjs reproducibility --inputs-only` | 退出码 0，0 mismatch / 0 missing，2869 项全覆盖且在 10s 预算内（实测内部 310ms）                                             | 命令输出与计时           |
+| L02  | 改动一个**当前 paths 未覆盖**的被追踪源文件  | 同上                                         | 退出码非零并指名该文件；证明检查不依赖 paths 过滤也能发现漂移                                                                | 注入 diff 与失败输出     |
+| L03  | 台账文件相对 HEAD 有 diff                    | `licenses.mjs reproducibility --diff-only`   | 退出码非零并指名漂移文件；干净树上退出 0。workflow 复用同一份判定，YAML 无第二份逻辑                                         | 命令输出与退出码         |
+| L04  | 台账 inputs 与 paths-filter 输出             | 比对两份清单的覆盖率                         | 生成清单覆盖率 100%（实测 2869/2869、27 条）；手写清单显著低于 100%（实测 15.9%）                                            | 覆盖率数字与断言结果     |
+| L05  | release 分支推送                             | 观察 licenses-notices.yml 与 ci.yml          | 两者都在 release 分支上自动触发：licenses-notices.yml 跑 musl 全量（台账权威），ci.yml 跑 inputs-only；不再依赖手动 dispatch | 两个 workflow 的触发记录 |
+| L06  | 制造一处依赖树漂移（改 lock 但不重生成台账） | 跑全量模式与 inputs-only 模式各一次          | 全量模式必须红；inputs-only 可以绿——如实证明本地探测覆盖不到依赖树，不夸大为可替代                                           | 两次运行的结论对比       |
+| L07  | workflow YAML 现状                           | 守卫测试机械扫描两个 workflow 文本           | licenses-notices.yml 的 push.branches 含 `release/**`；release.yml 不得出现台账 diff 步骤（防空洞门禁回归）                  | 守卫测试断言与退出码     |
 
-L01–L04、L06 已由 `apps/acode-cli/tests/third-party-reproducibility.test.mjs` 的 8 个用例机械钉住（含 CRLF 归一口径），RED→GREEN 与破坏对照均已实跑。L03 的 workflow 侧（licenses-notices.yml 调 `--diff-only`）与 L05 的 ci.yml 接线需在 CI 上观察确认，本机无法复现 Linux install 口径。L05 的 release.yml 半边为未落地项。
+L01–L04、L06、L07 由 `apps/acode-cli/tests/third-party-reproducibility.test.mjs` 机械钉住（含 CRLF 归一口径与 workflow 文本守卫，后者沿用 U01 `typecheck-gate.test.mjs` 扫描 YAML 的先例）。L03 的 workflow 侧（licenses-notices.yml 调 `--diff-only`）已在真实 CI 观察确认：dev/0.0.9 上 dispatch 的 run `38215896152` 的 notices job success，「Report diff against committed ledger」步骤在 musl 全量重生成管线内跑通。L05 的 ci.yml 半边已确认（run `38218018161` 的「Third-party ledger inputs freshness」步骤在干净 Linux checkout 上 success）；licenses-notices.yml 在 release 分支自动触发那半边需在下次真实 release 分支推送时观察。
 
 ### 定量门槛与失败处理
 
@@ -396,4 +405,4 @@ L01–L04、L06 已由 `apps/acode-cli/tests/third-party-reproducibility.test.mj
 本次新增命令（已实现）：`node scripts/licenses.mjs reproducibility [--inputs-only|--diff-only]`、`node scripts/licenses.mjs paths-filter [--coverage]`。根 `package.json` 暂未暴露 `pnpm licenses:preflight` 快捷入口（ci.yml 直接调 node 脚本，避免多一层间接）。
 原有内联门禁：licenses-notices.yml 第 159-166 行「Report diff against committed ledger」，已改为调用 `reproducibility --diff-only`。
 
-下一步：U02——为 `node-execution-adapter` 与 `ConversationV4Gateway` 建真实子进程 fixture，先落 E01/E02（spawn 前取消、运行中取消各只结算一次）。U01 的剩余确认项（Node 24、clean checkout、三平台 runner）随下一次 CI 运行收口。U13 已落地缺口一/二与复现性单一入口；缺口三（release.yml 侧）待用户在「未落地项」三个方向中选定后继续。
+下一步：U02——为 `node-execution-adapter` 与 `ConversationV4Gateway` 建真实子进程 fixture，先落 E01/E02（spawn 前取消、运行中取消各只结算一次）。U01 的剩余确认项（Node 24、clean checkout、三平台 runner）随下一次 CI 运行收口。U13 三个缺口均已落地；唯一待观察项是 licenses-notices.yml 在**真实 release 分支推送**上的自动触发（本机无法构造，需在下次发布切 `release/*` 分支时确认该 workflow 被 push 事件拉起并 success）。

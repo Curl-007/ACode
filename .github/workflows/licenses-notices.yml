@@ -43,7 +43,18 @@ on:
       - "scripts/**"
       - ".github/workflows/licenses-notices.yml"
   push:
-    branches: [main]
+    # release/** 使 git-collaboration.md:53「licenses-notices 等专项闸门在 release 分支的
+    # 推送上全部 success」由机制强制，而非依赖执行者记得手动 workflow_dispatch（U13 缺口三；
+    # 0.0.8 发布即靠人工派发才在合入 main 前拿到台账结论）。本 workflow 分支无关：唯一的 ref
+    # 引用是下面按 ${{ github.ref }} 隔离的 concurrency group，故加一个分支模式即复用已有的
+    # musl 补丁与全量重生成，零逻辑重复。
+    #
+    # 刻意不含 dev/**：dev 线推送频繁且中途态常改依赖，会让这个约 72-102s 的 musl 全量 job
+    # 频繁红灯、噪音淹没信号；dev 线的源文件哈希漂移已由 ci.yml verify 的 inputs-only 步覆盖
+    # （ci.yml 触发面含 dev/**）。真正只能靠本 job 全量重生成发现的是依赖树漂移
+    # （pnpm-lock 变了但台账未重生成，牵动 packages / noticesSha256 / notices 正文），
+    # 即 0.0.7 的 390f73c 失败类别。
+    branches: [main, "release/**"]
     paths:
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"

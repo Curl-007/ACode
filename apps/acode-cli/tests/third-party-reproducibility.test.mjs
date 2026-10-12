@@ -249,6 +249,56 @@ test("L03: --diff-only 在工作树台账被改动后失败并指名文件（wor
   );
 });
 
+test("L07: workflow 触发面守卫——release 分支自动跑台账闸门，且 release.yml 无空洞 diff", async () => {
+  // 沿用 U01 typecheck-gate.test.mjs:246-265 扫描 workflow YAML 的先例：把「规则文字」
+  // 与「机制」的一致性钉成机械断言，防止将来有人删掉触发分支或加回空洞检查。
+  // 读入后统一把 CRLF 归一为 LF：仓库 core.autocrlf=true 时 Windows 检出的 YAML 是 CRLF
+  // （实测 175 个 CR），而下面的正则用 \n 锚定行边界，不归一会全部匹配不到——与台账哈希
+  // 的 inputHashEncoding 同一条纪律（口径不一致会让断言静默失效而非报错）。
+  const readWorkflow = async (rel) =>
+    (await readFile(join(repoRoot, ".github/workflows", rel), "utf8")).replaceAll("\r\n", "\n");
+  const licensesYaml = await readWorkflow("licenses-notices.yml");
+  const releaseYaml = await readWorkflow("release.yml");
+
+  // (1) git-collaboration.md:53 要求「licenses-notices 等专项闸门在 release 分支的推送上
+  // 全部 success」。规则要的是闸门在 release 分支上跑，故 push.branches 必须含 release/**。
+  const pushBlock = licensesYaml.match(/^ {2}push:\n((?: {4}.*\n| {6}.*\n)*)/m)?.[1] ?? "";
+  const branchesLine = pushBlock.match(/branches:\s*\[([^\]]*)\]/)?.[1] ?? "";
+  const branches = branchesLine.split(",").map((b) => b.trim().replace(/^["']|["']$/g, ""));
+  assert.ok(
+    branches.includes("main"),
+    `licenses-notices.yml 的 push.branches 必须保留 main（现有触发面），实测：${JSON.stringify(branches)}`,
+  );
+  assert.ok(
+    branches.includes("release/**"),
+    `licenses-notices.yml 的 push.branches 必须含 release/**，否则 git-collaboration.md:53` +
+      ` 声称的「release 分支推送上全部 success」无自动化强制（缺口三回归）。实测：${JSON.stringify(branches)}`,
+  );
+
+  // (2) 不得把 dev/** 加进该 workflow：dev 线推送频繁且中途态常改依赖，会让约 72-102s 的
+  // musl 全量 job 频繁红灯；dev 线的源文件哈希漂移由 ci.yml 的 inputs-only 步覆盖。
+  assert.ok(
+    !branches.some((b) => b.startsWith("dev")),
+    `licenses-notices.yml 不应在 dev/** 上跑 musl 全量重生成（噪音淹没信号），实测：${JSON.stringify(branches)}`,
+  );
+
+  // (3) release.yml 不得出现台账 diff 步骤。其 verify job 从不重生成台账，在那里 diff
+  // 等于比较两个从未被改动的东西 → 恒绿，是空洞门禁，比没有门禁更糟（给出虚假安全感）。
+  const vacuous = /reproducibility\s+--diff-only|diff\s+--numstat\s+--\s+THIRD-PARTY-NOTICES/;
+  assert.ok(
+    !vacuous.test(releaseYaml),
+    "release.yml 出现台账 diff 步骤：该 job 不重生成台账，此类检查恒绿、属空洞门禁。" +
+      "发布路径的台账权威应来自 licenses-notices.yml 在 release 分支上的 musl 全量重生成。",
+  );
+
+  // (4) ci.yml 必须有 inputs-only 步（缺口二的修法），且不得用 paths 过滤绕过它。
+  const ciYaml = await readFile(join(repoRoot, ".github/workflows/ci.yml"), "utf8");
+  assert.ok(
+    /reproducibility --inputs-only/.test(ciYaml),
+    "ci.yml verify 必须保留 inputs-only 台账新鲜度步骤（缺口二：源文件哈希漂移在四类分支上无条件检出）",
+  );
+});
+
 test("台账编码口径：CRLF 与 LF 视为同一内容，不因行尾差异误报漂移", async () => {
   const root = await fixtureRoot();
   try {

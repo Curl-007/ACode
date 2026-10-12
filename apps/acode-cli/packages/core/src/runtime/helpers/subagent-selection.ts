@@ -16,9 +16,20 @@ export function resolveSubagentSelection(input: {
   profileSelection?: ModelSelection | null;
   parentSelection?: ModelSelection | null;
   overrideSelection?: ModelSelection;
+  requireExplicitModelSelection?: boolean;
   resolveSelection?: (selection: ModelSelection) => EffectiveModelSelectionResult;
 }): { hasConcreteModel: boolean; selection: ModelSelection } {
   const explicit = input.profileSelection;
+  if (input.requireExplicitModelSelection && !explicit && !input.overrideSelection) {
+    throw createCoreError(
+      CoreErrorType.ConfigurationError,
+      "Cannot start AgentTeams member: configure a model for agent-teams:member or general-purpose under Subagents, or enable inheritCaptainModel in the AgentTeams plugin settings.",
+      {
+        recoverable: true,
+        context: { selectionIssue: "selection-missing", reason: "selection-missing" },
+      },
+    );
+  }
   const result: EffectiveModelSelectionResult = input.overrideSelection
     ? { effectiveSelection: input.overrideSelection }
     : explicit

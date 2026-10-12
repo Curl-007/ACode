@@ -156,16 +156,11 @@ jobs:
 
       # 台账已进入仓库后重跑，diff 应为空——非空说明生成结果不可复现（依赖树随机器
       # 漂移、文件行尾，或某个输入没被纳入哈希），必须先查清再入库。
+      # 判定逻辑收敛到 scripts/third-party-reproducibility.mjs（U13）：重生成已由上面带
+      # musl 补丁的 install 步骤完成，这里用 --diff-only 只复用同一份漂移判定，YAML 不再
+      # 保留第二份 diff 逻辑，避免与 ci.yml/release.yml 各自漂移。
       - name: Report diff against committed ledger
-        run: |
-          set -euo pipefail
-          changed=$(git --no-pager diff --numstat -- THIRD-PARTY-NOTICES.md third-party/inventory.json | wc -l)
-          git --no-pager diff --stat -- THIRD-PARTY-NOTICES.md third-party/inventory.json
-          if [ "$changed" -ne 0 ]; then
-            echo "::error::重生成结果与已入库台账不一致（$changed 个文件有差异），生成不可复现"
-            exit 1
-          fi
-          echo "重生成结果与已入库台账一致：生成可复现 ✓"
+        run: node scripts/licenses.mjs reproducibility --diff-only
 
       # 门禁失败时也必须把产物交出去：作者需要的正是这份「应该长什么样」的文件，
       # 直接提交即可修复。always() 保证差异校验拦下 run 时不会把出路一起拦掉。

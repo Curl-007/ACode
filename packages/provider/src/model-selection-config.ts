@@ -54,15 +54,29 @@ export function resolveInitialModelSelection(input: {
   return { source: "none" };
 }
 
-/** 仅在用户主动选模型或全新初始化时构造最高档；不能用于恢复/重解析已有选择。 */
+/** 主动选模型 / 新建任务时推理强度的默认取法：列表第一项或最高档（最后一项）。 */
+export type DefaultReasoningLevelPick = "first" | "highest";
+
+/**
+ * 仅在用户主动选模型或全新初始化时构造默认档位；不能用于恢复/重解析已有选择。
+ *
+ * 修复原因（自 anker-code@4c2796f1 移植）：原先推理取列表最后一项、速度按调用方取最高档（fast），
+ * 导致用户按「高、中、关闭」维护的模型切换后落到「关闭」，速度落到「快速」，与新建任务预期不一致。
+ * 修复依据：产品规则改为「模型配置里排在最前面的即默认」，推理与速度统一取第一项
+ * （内置速度表为 standard→fast，第一项即「标准」）。
+ */
 export function completeNewModelSelection(
   registry: ModelSelectionCompletionView,
   selection: ModelSelection,
+  defaults: { readonly reasoningLevel?: DefaultReasoningLevelPick } = {},
 ): ModelSelection | undefined {
   const model = registry.providers
     .find((provider) => provider.providerId === selection.providerId)
     ?.models.find((candidate) => candidate.modelId === selection.modelId);
-  const reasoningLevel = model?.config.optionSpecs.reasoningLevel.values.at(-1);
+  const reasoningValues = model?.config.optionSpecs.reasoningLevel.values;
+  // 用户可在设置里改为「最高档」（列表最后一项），省去每次切模型后手动调档。
+  const reasoningLevel =
+    defaults.reasoningLevel === "highest" ? reasoningValues?.at(-1) : reasoningValues?.[0];
   if (!reasoningLevel) return undefined;
   return {
     providerId: selection.providerId,

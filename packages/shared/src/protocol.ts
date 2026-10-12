@@ -267,6 +267,12 @@ export interface AppSettings {
    * 覆盖语义为整组替换（如 openCommandCenter 的双默认绑定被覆盖时同时失效）。
    */
   shortcutBindings?: Record<string, string[]>;
+  /**
+   * 切换模型 / 新建任务时推理强度默认取「列表第一项」还是「最高档」；缺省 first。
+   * 自 anker-code@4c2796f1 移植：原先切模型取推理列表的最后一项、速度按调用方取最高档（fast），
+   * 改为档位默认取列表第一项、速度固定取第一项。
+   */
+  defaultReasoningLevelPick?: "first" | "highest";
   /** 界面语言偏好；locale 保存偏好解析后的实际语言，供 main/menu/远控等非浏览器上下文使用。 */
   localePreference?: LocalePreference;
   /** 是否尽量继承系统终端 profile、shell 环境和字体 */

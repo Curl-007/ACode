@@ -14,7 +14,7 @@ import {
   type ModelSelectFooterAction,
   type ModelSelectGroup,
 } from "@/ModelConfigSelect.js";
-import { useZCodeIntl } from "@/i18n/IntlProvider.js";
+import { useACodeIntl } from "@/i18n/IntlProvider.js";
 import {
   SubagentReasoningField,
   type SubagentReasoningFieldState,
@@ -75,7 +75,7 @@ export function SubagentModelBatchBar({
   onApply: (value: SubagentModelBatchValue) => void;
   onExit: () => void;
 }) {
-  const { intl } = useZCodeIntl();
+  const { intl } = useACodeIntl();
   const inheritLabel = intl.formatMessage({ id: "settings.subagents.model.inherit" });
   const selectModelLabel = intl.formatMessage({ id: "settings.subagents.model.select" });
   const [model, setModel] = useState<string | undefined>(undefined);

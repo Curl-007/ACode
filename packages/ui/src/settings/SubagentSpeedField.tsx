@@ -1,14 +1,14 @@
 import { CircleHelp, GaugeIcon, Loader2 } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select.js";
 import { ControlHintTooltip } from "@/ControlHintTooltip.js";
-import type { useZCodeIntl } from "@/i18n/IntlProvider.js";
+import type { useACodeIntl } from "@/i18n/IntlProvider.js";
 
 export type SubagentSpeedFieldState =
   | { kind: "not-applicable" }
   | { kind: "unknown"; status: "loading" | "unavailable" }
   | { kind: "supported"; values: readonly string[] };
 
-function speedLabel(value: string, intl: ReturnType<typeof useZCodeIntl>["intl"]): string {
+function speedLabel(value: string, intl: ReturnType<typeof useACodeIntl>["intl"]): string {
   if (value === "fast") {
     return intl.formatMessage({ id: "chat.toolbar.speed.fast" });
   }
@@ -32,7 +32,7 @@ export function SubagentSpeedField({
   value,
 }: {
   disabled: boolean;
-  intl: ReturnType<typeof useZCodeIntl>["intl"];
+  intl: ReturnType<typeof useACodeIntl>["intl"];
   labelVisibilityClassName: string;
   onValueCommit: (value: string) => void;
   state: SubagentSpeedFieldState;

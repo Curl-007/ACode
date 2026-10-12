@@ -1,7 +1,7 @@
 import { SquareSlash } from "lucide-react";
 import type { UserInputRow } from "@acode/shared/acode-protocol-v4";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip.js";
-import { useZCodeIntl } from "@/i18n/IntlProvider.js";
+import { useACodeIntl } from "@/i18n/IntlProvider.js";
 
 type CustomCommandInvocation = NonNullable<UserInputRow["customCommand"]>;
 
@@ -17,7 +17,7 @@ export function ConversationUserInputCommandEcho({
 }: {
   command: CustomCommandInvocation | undefined;
 }) {
-  const { intl } = useZCodeIntl();
+  const { intl } = useACodeIntl();
   if (!command) return null;
 
   const sourceLabel =

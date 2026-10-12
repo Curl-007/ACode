@@ -3,6 +3,7 @@ import type {
   RunningSubagentSummary,
   SubagentProjectionState,
   SwarmPlanState,
+  WorkflowRunPendingHole,
   WorkflowRunState,
   WorkflowRunsState,
 } from "@acode/shared/acode-protocol-v4";
@@ -48,6 +49,12 @@ export interface OrchestrationWorkflowRow {
   toolCallId?: string;
   dialect?: "dwf" | "script";
   startedAt?: number;
+  /**
+   * 停驻中的 workflow hole（挖洞-填充，见 apps/acode-cli/specs/workflow-holes.md 观测链）。
+   * 零条时整键缺席——与投影 schema 的「无则缺席」惯例同一条，面板据此不渲染那一节。
+   * 模型只搬运投影事实，不推导。
+   */
+  pendingHoles?: readonly WorkflowRunPendingHole[];
 }
 
 export interface OrchestrationSwarmNodeRow {
@@ -113,6 +120,9 @@ function buildWorkflowRows(
       ...(run.toolCallId ? { toolCallId: run.toolCallId } : {}),
       ...(run.dialect ? { dialect: run.dialect } : {}),
       ...(work ? { title: work.title, startedAt: work.startedAt } : {}),
+      ...(run.pendingHoles && run.pendingHoles.length > 0
+        ? { pendingHoles: run.pendingHoles }
+        : {}),
     };
   });
 }

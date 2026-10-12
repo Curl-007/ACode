@@ -76,7 +76,12 @@ import {
   ACODE_FILE_STREAMING_TOOL_INPUT_PREVIEW_MIN_INTERVAL_MS,
   acodeBackgroundTaskNotificationToolUpdateStatus,
 } from "@acode/shared";
+import {
+  lookupVisualizationFragment,
+  parseVisualizeReferences,
+} from "./visualization-registry.js";
 import type {
+  ArtifactRow,
   AssistantTextRow,
   ApiRetryState,
   BackgroundWorkSummary,
@@ -498,8 +503,16 @@ export class ProductProjection {
   private normalizationDiagnostics: ConversationNormalizationDiagnostic[] = [];
 
   constructor(sessionId: string, logEpoch: string) {
+    this.sessionId = sessionId;
     this.snapshot = createInitialConversationSnapshot(sessionId, logEpoch);
   }
+
+  /**
+   * 会话身份（构造期固定）：::visualize 引用的注册表核对与 ref 构造用它。
+   * 非 readonly 是 cloneProjection 的硬需求（live 发布逐事件走原子 clone，清单必须
+   * 能写入本字段）；「构造后不变」由约定保证——除 clone 清单外无人写它。
+   */
+  private sessionId: string;
 
   getSnapshot(): ConversationSnapshot {
     return this.snapshot;
@@ -1046,6 +1059,11 @@ export class ProductProjection {
 
   private cloneProjection(): ProductProjection {
     const clone = Object.create(ProductProjection.prototype) as ProductProjection;
+    // 构造期身份字段也必须进清单：漏拷会让 clone 上 this.sessionId === undefined，
+    // ::visualize 的注册表核对（visualizationArtifactRows）在 live 发布链
+    // （applyEventAtomically 逐事件走 clone）永远 MISS——卡片只在冷恢复（真实例）
+    // 出现、live 轮永不出现（2026-10-12 实机 E 卡片缺口根因，specs/gen-ui-visualize.md）。
+    clone.sessionId = this.sessionId;
     clone.snapshot = this.snapshot;
     clone.rowIndexById = new Map(this.rowIndexById);
     clone.hydrationAccumulator = null;
@@ -2162,7 +2180,7 @@ export class ProductProjection {
         : undefined;
 
     const deltas: ConversationDelta[] = [
-      ...this.closeStreamingRows(streamClose),
+      ...this.closeStreamingRows(streamClose, event),
       // turn 终态一并收口在飞的 foreground tool row（收口不变量：被 profile
       // 过滤的 inputText 流必须被不可过滤的 row.upserted 蕴含，见 profiles.ts）。
       ...this.closeOpenToolRows(event, payload.resultType === "cancelled" ? "cancelled" : "error"),
@@ -2466,8 +2484,12 @@ export class ProductProjection {
           },
         ];
       }
-      case "text_end":
-        return this.closeTextRow("complete");
+      case "text_end": {
+        const closed = this.closeTextRow("complete");
+        // ::visualize 引用在正文收口处翻译成 artifactRow（specs/gen-ui-visualize.md）：
+        // live 与冷恢复（hydration 合成同族事件）共用本投影，一处解析覆盖两条链。
+        return [...closed, ...this.visualizationArtifactRows(closed, event, fact)];
+      }
       case "reasoning_start":
         return this.openReasoningRow(event, fact);
       case "reasoning_delta": {
@@ -2542,7 +2564,12 @@ export class ProductProjection {
       if (fact.transcriptMessageId) {
         this.messageIdByRowId.set(row.rowId, fact.transcriptMessageId);
       }
-      return [...close, { op: "row.upserted", row }];
+      // 被新段收口的旧正文同样过可视化扫描（text_end 缺失的 runtime 靠这里兜住）。
+      return [
+        ...close,
+        ...this.visualizationArtifactRows(close, event, fact),
+        { op: "row.upserted", row },
+      ];
     }
 
     // 不变量：非 output-token Continue 的新段必然新 rowId；已有 streaming 行先收口。
@@ -2561,7 +2588,11 @@ export class ProductProjection {
     if (fact.transcriptMessageId) {
       this.messageIdByRowId.set(row.rowId, fact.transcriptMessageId);
     }
-    return [...close, { op: "row.appended", row }];
+    return [
+      ...close,
+      ...this.visualizationArtifactRows(close, event, fact),
+      { op: "row.appended", row },
+    ];
   }
 
   private closeTextRow(state: "complete" | "interrupted"): ConversationDelta[] {
@@ -2570,6 +2601,51 @@ export class ProductProjection {
     this.streamingTextRowId = null;
     if (row?.kind !== "assistantText") return [];
     return [{ op: "row.upserted", row: { ...row, state } }];
+  }
+
+  /**
+   * 把收口正文里的 `::visualize{"name":...}` 引用翻译成 artifactRow（html）。
+   *
+   * 核对纪律（specs/gen-ui-visualize.md）：name 必须在该会话注册表里（写入工具是唯一
+   * 注册者；冷恢复经 rebuild 从磁盘回填）——未命中**不**产 row，指令按纯文本留在正文
+   * （降级可见）。正文原样保留，剥离是 renderer 投影层的事（citation 同款分工）。
+   * 行序 = 引用在正文中的出现序，插在该 assistantText row 之后。
+   */
+  private visualizationArtifactRows(
+    closed: ConversationDelta[],
+    event: SessionEvent,
+    fact?: CanonicalAssistantSegmentFact,
+  ): ConversationDelta[] {
+    const upsert = closed.find((delta) => delta.op === "row.upserted");
+    const row = upsert?.op === "row.upserted" ? upsert.row : undefined;
+    if (!row || row.kind !== "assistantText" || row.text.length === 0) return [];
+    const references = parseVisualizeReferences(row.text);
+    if (references.length === 0) return [];
+    // entityId 优先取 rowId 映射：turn 终态收口（closeStreamingRows）没有 segment fact，
+    // 而指令按技能契约恰在最终回复里——只挂 text_end 会漏掉整条主路径
+    // （2026-10-11 实机：卡片不渲染的根因）。
+    const baseEntityId = this.entityIdByRowId.get(row.rowId) ?? fact?.entityId ?? `row:${row.rowId}`;
+    const deltas: ConversationDelta[] = [];
+    for (const reference of references) {
+      const meta = lookupVisualizationFragment(this.sessionId, reference.name);
+      if (!meta) continue;
+      const artifact: ArtifactRow = {
+        ...this.rowBase(event, this.turnIdOf(event), `${baseEntityId}::viz::${reference.name}`),
+        kind: "artifact",
+        artifactVersionId: `${this.sessionId}/visualize/${reference.name}`,
+        logicalArtifactKey: `visualize/${reference.name}`,
+        displayName: meta.displayName ?? reference.name,
+        artifactType: "html",
+        mimeType: "text/html",
+        sizeBytes: meta.bytes,
+        sha256: meta.sha256,
+        ref: `acode-visualization://${this.sessionId}/${reference.name}`,
+        state: "current",
+        ...(reference.mode === undefined ? {} : { meta: { visualization: { mode: reference.mode } } }),
+      };
+      deltas.push({ op: "row.appended", row: artifact });
+    }
+    return deltas;
   }
 
   private onAssistantFeedbackUpdated(event: SessionEvent): ConversationDelta[] {
@@ -2617,8 +2693,17 @@ export class ProductProjection {
     return [{ op: "row.upserted", row: { ...row, state } }];
   }
 
-  private closeStreamingRows(state: "complete" | "interrupted"): ConversationDelta[] {
-    return [...this.closeTextRow(state), ...this.closeReasoningRow(state)];
+  private closeStreamingRows(
+    state: "complete" | "interrupted",
+    event?: SessionEvent,
+  ): ConversationDelta[] {
+    // turn 终态收口的正文同样要过可视化扫描：最终回复的 ::visualize 指令通常由这里收口。
+    const closedText = this.closeTextRow(state);
+    const viz =
+      state === "complete" && event !== undefined
+        ? this.visualizationArtifactRows(closedText, event)
+        : [];
+    return [...closedText, ...viz, ...this.closeReasoningRow(state)];
   }
 
   // turn 终态收口所有 foreground 未终态 tool row（迟到终态不复活由 isRunning 闸保证）；

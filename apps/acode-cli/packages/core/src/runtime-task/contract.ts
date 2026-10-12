@@ -11,9 +11,11 @@ export { escapeXml, truncateTaskNotification } from "./notification-primitives.j
 export { shouldSuppressSealedSubagentBashNotification } from "./notification-policy.js";
 export {
   formatWorkflowEscalationNotification,
+  formatWorkflowHoleWaitingNotification,
   formatWorkflowProviderStopError,
   formatWorkflowStallNotification,
   type WorkflowEscalationNotificationInput,
+  type WorkflowHoleWaitingNotificationInput,
   type WorkflowStallNotificationInput,
 } from "./workflow-notification-copy.js";
 

@@ -283,3 +283,62 @@ export function WorkflowCardFooter({
     </div>
   );
 }
+
+/**
+ * 表头停驻芯片（WorkflowRunDigest 的问题/洞共用形态）：无 onOpen 时是纯 span，
+ * 有则可点开详情。tone 分两套色——warning 是待答问题（存量色），confirmation 是
+ * 停驻洞（DESIGN.md 规定等待徽章统一走 confirmation 处理）。
+ */
+const DIGEST_CHIP_TONES = {
+  warning: {
+    base: "bg-[color-mix(in_oklab,var(--color-warning)_12%,transparent)] text-warning",
+    interactive: "hover:bg-[color-mix(in_oklab,var(--color-warning)_20%,transparent)]",
+  },
+  confirmation: {
+    base: "bg-[var(--color-interaction-confirmation-surface)] text-[var(--color-interaction-confirmation-foreground)]",
+    interactive: "hover:brightness-95",
+  },
+} as const;
+
+export function DigestChip({
+  icon,
+  label,
+  onOpen,
+  testId,
+  tone,
+}: {
+  icon: ReactNode;
+  label: string;
+  onOpen?: () => void;
+  testId: string;
+  tone: keyof typeof DIGEST_CHIP_TONES;
+}) {
+  const toneClasses = DIGEST_CHIP_TONES[tone];
+  const shared = cn(
+    "wf-arrive flex shrink-0 items-center gap-1 rounded-full py-0.5 pl-1.5 pr-2 text-ui-xs font-medium",
+    toneClasses.base,
+  );
+  if (onOpen === undefined) {
+    return (
+      <span className={shared} data-testid={testId}>
+        {icon}
+        {label}
+      </span>
+    );
+  }
+  return (
+    <button
+      className={cn(
+        shared,
+        "cursor-pointer outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/40",
+        toneClasses.interactive,
+      )}
+      data-testid={testId}
+      onClick={() => onOpen()}
+      type="button"
+    >
+      {icon}
+      {label}
+    </button>
+  );
+}

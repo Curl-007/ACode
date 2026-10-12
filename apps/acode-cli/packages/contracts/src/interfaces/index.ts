@@ -22,6 +22,8 @@ export * from "./model-catalog.port.js";
 export * from "./automation.port.js";
 export * from "./mcp.port.js";
 export * from "./browser-control.port.js";
+// 对话内可视化片段（::visualize）的存储边界：写入工具 / 投影注册表 / v4 分块读共用。
+export * from "./visualization-fragment.port.js";
 export * from "./shared.js";
 
 export * from "./permission-full-access.js";

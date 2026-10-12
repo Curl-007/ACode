@@ -14,6 +14,10 @@ export * from "./node-repl.js";
 export * from "./glob.js";
 export * from "./grep.js";
 export * from "./webfetch.js";
+// 对话内可视化（::visualize）的写入工具契约；技能门常量 VISUALIZE_SKILL_NAME 也在此。
+export * from "./write-visualization-fragment.js";
+// MCP 资源拉取工具的输出契约（specs/mcp-sampling-resources.md）。
+export * from "./mcp-resources.js";
 export * from "./agent.js";
 export * from "./skill.js";
 export * from "./todo.js";
@@ -51,6 +55,10 @@ export * from "./resume-workflow-run.js";
 // 名单读走，漏掉这两行会让那两处静默失效（照 resume-workflow-run 的同款注释）。
 export * from "./escalate.js";
 export * from "./resolve-workflow-question.js";
+// 挖洞-填充的主代理侧（apps/acode-cli/specs/workflow-holes.md）：向停驻中的洞提交该处
+// 函数体的语句。名字常量被 core 的工具注册/灰度门与 cli-workflow 的 actor 禁用名单
+// 读走，漏掉这行会让那两处静默失效（照 resolve-workflow-question 的同款注释）。
+export * from "./fill-workflow-hole.js";
 // 跨会话全文搜索（K4）与开箱（K9）工具：名字常量与 schema 被 core 工具注册面读走，
 // 漏掉这两行会让 handler 拿不到契约（照 escalate/resolve 的同款注释）。
 export * from "./session-search.js";

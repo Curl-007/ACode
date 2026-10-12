@@ -149,8 +149,13 @@ export function isArtifactPresetOp(op: string): op is ArtifactPresetOp {
  */
 const ASK_MEMBER = { container: "Agent", member: "ask" } as const;
 
-/** 顶层 facade 函数中产生站点的那些（无容器）。`log` 不产生站点，故不在此。 */
-const SITE_PRODUCING_FUNCTIONS = ["agent", "report"] as const;
+/**
+ * 顶层 facade 函数中产生站点的那些（无容器）。`log` 不产生站点，故不在此。
+ * `hole` 与 `report` 同一条理由入列：停靠需要 journal 键（`hole-reached` 事件按
+ * `hole#N` × ordinal 定位），一次没有站点的 hole 调用就是一个没有键的停靠点——
+ * facade-siting 规则（只许直接调用）必须约束它。
+ */
+const SITE_PRODUCING_FUNCTIONS = ["agent", "hole", "report"] as const;
 
 /**
  * 顶层产生站点的 facade 函数名。`sites.ts` 的裸 callee 分支按它分派，所以"哪个顶层函数

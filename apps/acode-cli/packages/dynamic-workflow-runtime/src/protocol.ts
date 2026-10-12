@@ -7,7 +7,7 @@
  * import 这些类型，保证桥接代码有严格类型。
  *
  * 方向约定：
- *   child → parent：create-actor（即发即忘）/ request（ask/world-read/publish-artifact，需应答）/
+ *   child → parent：create-actor（即发即忘）/ request（ask/world-read/publish-artifact/hole，需应答）/
  *                   event（log、report、declare-artifact）/ complete
  *   parent → child：response（应答 request，并搭载最新预算快照）
  *
@@ -51,21 +51,30 @@ export interface CreateActorMessage {
 }
 
 /**
- * 需应答的 host 调用：ask、world-read，或**内容产物的发布**。
+ * 需应答的 host 调用：ask、world-read、**内容产物的发布**，或**洞的停靠**（hole）。
  *
  * 产物的两族在这里分道：内容成员（`file`/`markdown`）是
  * 效应，脚本 await 它、要能 catch 它的拒绝，所以走 request/response；预置成员是声明，返回
  * void，走下面的事件通道。
+ *
+ * hole 走 request/response 但**应答永远不会来**：fill 是 supersede 链（splice 换脚本、停旧
+ * run、起新 run），不回到这次调用——选这条通道只因形态与 ask 同形（`await` 一个外部输入），
+ * 停靠期 child 的 promise 挂着、parent 不回 response；run 被停（supersede/取消/失败）时
+ * 子进程随 harness 收尾被 kill，挂着的 promise 与进程同命。
  */
 export interface RequestMessage {
   kind: "request";
   id: string;
-  type: "ask" | "world-read" | "publish-artifact";
+  type: "ask" | "world-read" | "publish-artifact" | "hole";
   siteId: string;
   /** ask 专属：child-local actor 句柄。 */
   actor?: string;
   /** ask 专属：指令正文。 */
   instructions?: string;
+  /** hole 专属：站名（`hole<T>(stage, prompt)` 的第一个字面量）。 */
+  stage?: string;
+  /** hole 专属：提示词（含插值后的进展账目）。 */
+  prompt?: string;
   /** world-read 专属：op（词汇表由 world-read 注册表推导，加原语不改本文件）。 */
   op?: WorldReadOp;
   /**

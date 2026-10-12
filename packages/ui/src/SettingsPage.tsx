@@ -75,6 +75,8 @@ import { MemorySettingsSection } from "@/settings/MemorySettingsSection.js";
 import { OfficialServicesSettingsSection } from "@/settings/OfficialServicesSection.js";
 import { BrowserSettingsSection } from "@/settings/BrowserSettingsSection.js";
 import { ComputerUseSection } from "@/settings/ComputerUseSection.js";
+import { DynamicWorkflowSection } from "@/settings/DynamicWorkflowSection.js";
+import type { DynamicWorkflowMode } from "@acode/shared";
 import { ShortcutSettingsSection } from "@/settings/ShortcutSettingsSection.js";
 import { MigrationSection } from "@/settings/MigrationSection.js";
 import { SETTINGS_FRAME_CONTENT_CLASSNAME } from "@/settings/SettingsPageParts.js";
@@ -86,6 +88,7 @@ import {
 import { useACodeStore } from "@/store/StoreProvider.js";
 import { useTabStore } from "@/store/TabStoreProvider.js";
 import { isWorkspaceTab } from "@/store/tabStore.js";
+import { useDynamicWorkflowAvailabilityStore } from "@/store/dynamicWorkflowAvailabilityStore.js";
 import type { Theme } from "@/useTheme.js";
 import { WindowsTopLeftLogo } from "@/WindowsTopLeftLogo.js";
 
@@ -809,6 +812,19 @@ export function SettingsPage({
     async (enabled: boolean) => {
       await services.settingService.update({ terminalInheritSystemProfile: enabled });
       setTerminalInheritSystemProfile(enabled);
+    },
+    [services.settingService],
+  );
+  const handleDynamicWorkflowModeSelect = useCallback(
+    async (mode: DynamicWorkflowMode) => {
+      // 只落盘；选中态由 dynamicWorkflowAvailabilityStore 的 Host 判定快照呈现，这里不写第二份。
+      await services.settingService.update({ dynamicWorkflowMode: mode });
+      // Host 决策链每次调用都重读设置，但 store 缺省一个 app 会话只取一次：不主动 refresh
+      // 单选会停在旧快照，用户点完看到旧档仍选中，形同保存失败（2026-10-11 实机实测）。
+      await useDynamicWorkflowAvailabilityStore
+        .getState()
+        .refresh(services.codingPlanSubscriptionService)
+        .catch(() => undefined);
     },
     [services.settingService],
   );
@@ -1538,6 +1554,14 @@ export function SettingsPage({
                               requestPluginStoreOpen({ returnScopeKey: "user", intent });
                               onBack?.();
                             }}
+                          />
+                        ) : activeSection === "dynamicWorkflow" ? (
+                          // 三档的选中态读 dynamicWorkflowAvailabilityStore（Host 决策链的
+                          // renderer 快照）；写入经 AppSettings.dynamicWorkflowMode 落盘，
+                          // Host 在 resolveDynamicWorkflowClientConfig 折叠为最高优先的本地
+                          // 覆盖（随 Host 判定刷新生效）。
+                          <DynamicWorkflowSection
+                            onSelect={handleDynamicWorkflowModeSelect}
                           />
                         ) : activeSection === "migration" ? (
                           <MigrationSection

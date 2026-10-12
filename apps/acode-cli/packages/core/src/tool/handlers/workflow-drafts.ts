@@ -58,6 +58,12 @@ interface WriteWorkflowDraftInput {
    * （端口 stub / 无会话上下文），此时无处可写，与写失败同义。
    */
   cwd: string | undefined;
+  /**
+   * 覆盖落点目录（缺省 = `.acode/workflow-drafts/`）。挖洞-填充用它把 **fill 文件**写进
+   * run 草稿的同目录（`.acode` 会话 workflows 目录族）：被拒的 fill 是模型接下来要 Edit
+   * 再以 `path` 重提的东西，与 run 的脚本草稿住同一个目录才找得到（specs/workflow-holes.md）。
+   */
+  directory?: string;
   /** run 的展示名，用来铸文件名。 */
   name: string;
   /** 要写下的字节，逐字不改（saved 来源连元数据块一起）。 */
@@ -76,7 +82,7 @@ export async function writeWorkflowDraft(
 ): Promise<{ path: string } | undefined> {
   if (input.cwd === undefined || input.cwd === "") return undefined;
   try {
-    const dir = path.join(input.cwd, WORKFLOW_DRAFTS_DIR);
+    const dir = input.directory ?? path.join(input.cwd, WORKFLOW_DRAFTS_DIR);
     await mkdir(dir, { recursive: true });
     await writeDraftGitignore(dir);
     const slug = workflowDraftSlug(input.name);

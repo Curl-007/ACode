@@ -178,3 +178,49 @@ export function formatWorkflowEscalationNotification(
   );
   return truncateTaskNotification(lines.join("\n"));
 }
+
+/**
+ * run 停在一个 hole 上等填充（specs/workflow-hole-wake.md）。
+ *
+ * 与 escalation 同族（一个还没被满足的义务、没有超时兜底），差别在义务对象：hole 欠的是
+ * **主代理自己**要写的填充语句，而不是给子代理的回答。文案说死四件事：哪个 run 哪个洞
+ * （hole_ref 逐字可抄）、洞要什么（stage/prompt）、逐字下一步（FillWorkflowHole 带
+ * hole_ref）、以及 run 其余部分没在等（控制流停在洞上、无子代理空转）。
+ * 每个 hole-reached 恰好一条：进度汇每事件一次，丢弃兜底是 GetWorkflowRun 的
+ * pendingHoles 查询，不重发不催办。
+ */
+export interface WorkflowHoleWaitingNotificationInput {
+  /** run 的展示名（registry 里的 description；缺席时调用方已回落到 runId）。 */
+  runLabel: string;
+  runId: string;
+  /** 逐字可抄进 FillWorkflowHole 的 hole_ref（`hole#N@ordinal`）。 */
+  holeId: string;
+  ordinal: number;
+  stage: string;
+  prompt: string;
+}
+
+export function formatWorkflowHoleWaitingNotification(
+  input: WorkflowHoleWaitingNotificationInput,
+): string {
+  const lines = [
+    "[SYSTEM NOTIFICATION - NOT USER INPUT]",
+    "This is an automated workflow event, NOT a message from the user.",
+    "Do NOT interpret this as user acknowledgement, confirmation, or response to any pending question.",
+    "",
+    "<workflow-hole-waiting>",
+    `  <run-id>${escapeXml(input.runId)}</run-id>`,
+    `  <run>${escapeXml(input.runLabel)}</run>`,
+    `  <hole-ref>${escapeXml(input.holeId)}</hole-ref>`,
+    `  <ordinal>${input.ordinal}</ordinal>`,
+    `  <stage>${escapeXml(input.stage)}</stage>`,
+    `  <prompt>${escapeXml(input.prompt)}</prompt>`,
+    "</workflow-hole-waiting>",
+    "",
+    `Workflow run ${input.runLabel} (${input.runId}) is parked at hole ${input.holeId} (stage: ${input.stage}); it needs a fill statement from you and nothing times out on its behalf.`,
+    `The hole asks for: ${input.prompt}`,
+    `Next step: call FillWorkflowHole with run_id="${input.runId}", hole_ref="${input.holeId}" and your fill statement (the call is approval-gated; if you cannot decide the fill yourself, ask the user first).`,
+    "Only the hole is parked — do not rebuild or cancel the run. If this notification is ever lost, GetWorkflowRun lists this run's pending holes with their refs.",
+  ];
+  return truncateTaskNotification(lines.join("\n"));
+}

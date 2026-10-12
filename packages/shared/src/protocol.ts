@@ -6,6 +6,7 @@ import type { ProviderFamilyConnectionSelectionSettings } from "./provider-famil
 import type { ACodeProvider } from "./acode-task-types-core.js";
 import type { WorkspacePurpose } from "./workspacePurpose.js";
 import type { EmbeddedBrowserViewportPreference } from "./browser-use/command-metadata.js";
+import type { DynamicWorkflowMode } from "./dynamic-workflow-feature.js";
 
 // ── Domain types ──
 
@@ -297,6 +298,13 @@ export interface AppSettings {
   taskAutoArchiveEnabled?: boolean;
   /** 自动归档阈值；当任务最后更新时间早于该天数时允许被归档 */
   taskAutoArchiveOlderThanDays?: number;
+  /**
+   * 动态工作流触发策略的用户设置（disabled/onDemand/alwaysOn；specs/workflow-holes.md
+   * 的设置项，对齐 dynamic-workflow-availability 的 Host 决策链）。缺省 = 未设置，走
+   * 既有折叠（env 覆盖 > 远端 > 缺省档）；设置后作为**最高优先的本地覆盖**折叠进
+   * resolveDynamicWorkflowClientConfig——用户显式选择压过环境变量与远端。
+   */
+  dynamicWorkflowMode?: DynamicWorkflowMode;
   /** Windows 桌面端关闭窗口时隐藏到托盘；其它平台忽略 */
   closeToTrayOnWindows?: boolean;
   /** 存在执行中的闲时任务时阻止系统闲置休眠（手动开关，防不了合盖）。 */

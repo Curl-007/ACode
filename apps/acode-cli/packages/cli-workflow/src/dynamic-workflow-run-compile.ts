@@ -2,6 +2,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
   buildAskSpecs,
+  collectHoleDiagnostics,
   collectSites,
   collectWorldRunCommands,
   createWorkflowProgram,
@@ -54,6 +55,15 @@ export function compileProgram(
   if (worldRun.diagnostics.length > 0) {
     throw new Error(
       `dynamic workflow submit received a script with non-literal world.run commands (${worldRun.diagnostics.length} diagnostics); no run was created`,
+    );
+  }
+  // 洞的编译期规则（9005）在这里是**第二道**闸：正门在工具层的 analyzeScript（作者看到的
+  // 是结构化诊断而不是异常），这条服务侧防御守的是 fill 的重编译——fill 语句里嵌进
+  // fan-out 回调的洞只能在这里被挡下（splice 产物直接走 startNewRun，不经工具层）。
+  const holeDiagnostics = collectHoleDiagnostics(workflow, table);
+  if (holeDiagnostics.length > 0) {
+    throw new Error(
+      `dynamic workflow submit received a script with invalid hole calls (${holeDiagnostics.length} diagnostics); no run was created`,
     );
   }
 

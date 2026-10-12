@@ -439,6 +439,8 @@ import {
   buildOfficialServiceEnvPatch,
   createOfficialMcpTrustedOriginRegistry,
   OFFICIAL_MCP_DEV_TRUSTED_ORIGINS_ENV,
+  createDynamicWorkflowClientConfig,
+  normalizeDynamicWorkflowMode,
 } from "@acode/shared";
 import {
   BROKER_SOCKET_ENV,
@@ -2069,6 +2071,23 @@ export function createLocalServices(options: {
       return buildOffPeakModelSelectionView(providerRuntime.registryService.getView());
     },
   });
+  // 动态工作流三档本地覆盖的唯一折叠出口：设置页显式选择最高优先，未设置落既有链
+  // （env/远端/缺省）。Agent 工具供给（resolveDynamicWorkflowClientConfig）与渲染层灰度
+  // 快照（ICodingPlanSubscriptionService.getDynamicWorkflowClientConfig）必须同走这里——
+  // 两条决策路分叉时设置页单选会停在官方链快照、不跟随落盘值（2026-10-11 实机实测）。
+  const resolveDynamicWorkflowClientConfigWithLocalOverride = async () => {
+    try {
+      const userMode = normalizeDynamicWorkflowMode(
+        (await settingService.get()).dynamicWorkflowMode,
+      );
+      if (userMode) {
+        return createDynamicWorkflowClientConfig(userMode, "override");
+      }
+    } catch {
+      // 设置读取失败不阻断灰度判定：落既有链（env/远端/缺省）。
+    }
+    return codingPlanSubscriptionService.getDynamicWorkflowClientConfig();
+  };
   // OffPeakTaskService 单例在下方 DI register IIFE 中创建（晚于 agent service）；
   // 用前向引用 holder 惰性绑定——offPeak/create 协议请求只会发生在服务集合装配完成后。
   let offPeakTaskServiceForAgent: OffPeakTaskService | undefined;
@@ -2091,8 +2110,7 @@ export function createLocalServices(options: {
     // 动态工作流灰度：与 Off-Peak 不同，
     // 这里不按 serviceAuthorityMode 裁剪——SSH/WSL/Docker 的 desktop-attached-remote Host
     // 是它自己那些 workspace 的唯一裁决者，灰度开启时远程 workspace 同样提供工作流。
-    resolveDynamicWorkflowClientConfig: () =>
-      codingPlanSubscriptionService.getDynamicWorkflowClientConfig(),
+    resolveDynamicWorkflowClientConfig: () => resolveDynamicWorkflowClientConfigWithLocalOverride(),
     commandResolver: options?.acodeAgentCommandResolver,
     presentationSurface: resolveACodeAgentPresentationSurface({
       runtimeSurface: options?.agentRuntimeContext?.runtimeSurface,
@@ -2438,7 +2456,12 @@ export function createLocalServices(options: {
         ),
       }),
     )
-    .register(ICodingPlanSubscriptionService, codingPlanSubscriptionService)
+    // 渲染层灰度快照与 Agent 工具供给同走本地覆盖折叠出口：直接注册原 service 会让
+    // 设置页三档只影响工具面、单选呈现仍停在官方链（2026-10-11 实机实测的分叉）。
+    .register(ICodingPlanSubscriptionService, {
+      ...codingPlanSubscriptionService,
+      getDynamicWorkflowClientConfig: () => resolveDynamicWorkflowClientConfigWithLocalOverride(),
+    })
     .register(
       IClientConfigService,
       createClientConfigService({

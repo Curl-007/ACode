@@ -54,6 +54,7 @@ const TERMINAL_KIND_LABEL_ID: Record<"completed" | "errored" | "stopped", string
 
 /** stall 行的 kindLabel：run 还在跑，只是 20 分钟没有一次成功的模型请求。 */
 const STALL_KIND_LABEL_ID = "chat.backgroundResult.workflow.stall";
+const HOLE_WAITING_KIND_LABEL_ID = "chat.backgroundResult.workflow.holeWaiting";
 const STALL_ICON = <Hourglass className="size-4 shrink-0 text-foreground-subtle" />;
 
 /** 展开体里的一个 `label: value` 事实行（stall 的等待时长 / 原因 / 并发数）。 */
@@ -132,6 +133,7 @@ export function WorkflowNotificationToolRow({
 
   const isEscalation = notification.kind === "escalation";
   const isStall = notification.kind === "stall";
+  const isHoleWaiting = notification.kind === "hole-waiting";
 
   // kindLabel + primaryText + 展开体，按三类通知分别铸造。
   const escalationView = isEscalation ? escalationState(pendingQids, notification.qid) : undefined;
@@ -145,12 +147,18 @@ export function WorkflowNotificationToolRow({
     ? intl.formatMessage({ id: `chat.backgroundResult.workflow.${escalationView!}` })
     : isStall
       ? intl.formatMessage({ id: STALL_KIND_LABEL_ID })
-      : stopReason !== undefined
-        ? `${intl.formatMessage({ id: TERMINAL_KIND_LABEL_ID[notification.status] })} · ${intl.formatMessage({ id: `chat.toolCall.workflow.run.stopReason.${stopReason}` })}`
-        : intl.formatMessage({ id: TERMINAL_KIND_LABEL_ID[notification.status] });
+      : isHoleWaiting
+        ? intl.formatMessage({ id: HOLE_WAITING_KIND_LABEL_ID })
+        : stopReason !== undefined
+          ? `${intl.formatMessage({ id: TERMINAL_KIND_LABEL_ID[notification.status] })} · ${intl.formatMessage({ id: `chat.toolCall.workflow.run.stopReason.${stopReason}` })}`
+          : intl.formatMessage({ id: TERMINAL_KIND_LABEL_ID[notification.status] });
 
   const primaryText = useMemo(() => {
-    if (notification.kind === "terminal" || notification.kind === "stall") {
+    if (
+      notification.kind === "terminal" ||
+      notification.kind === "stall" ||
+      notification.kind === "hole-waiting"
+    ) {
       return (
         <span className="inline-flex min-w-0 items-center gap-2">
           <span aria-hidden>·</span>
@@ -184,7 +192,9 @@ export function WorkflowNotificationToolRow({
   // 展开门：终态看 artifact（errored / provider 停下的 error，否则 result），升级恒有问题正文，
   // stall 恒有等待事实。
   const hasDetails =
-    notification.kind === "escalation" || notification.kind === "stall"
+    notification.kind === "escalation" ||
+    notification.kind === "stall" ||
+    notification.kind === "hole-waiting"
       ? true
       : notification.error !== undefined
         ? true
@@ -237,6 +247,28 @@ export function WorkflowNotificationToolRow({
                 "cap",
               )
             : null}
+          {openRunLink}
+        </div>
+      );
+    }
+
+    if (notification.kind === "hole-waiting") {
+      return (
+        <div className="space-y-1" data-testid="workflow-notification-hole-waiting">
+          <p className={`${PANEL_CLASS} text-foreground`}>
+            {intl.formatMessage(
+              { id: "chat.backgroundResult.workflow.holeWaiting.body" },
+              { holeRef: notification.holeId, stage: notification.stage },
+            )}
+          </p>
+          {factLine(
+            intl.formatMessage({ id: "chat.backgroundResult.workflow.holeWaiting.prompt" }),
+            notification.prompt,
+            "prompt",
+          )}
+          <p className="text-ui-sm text-foreground-subtle">
+            {intl.formatMessage({ id: "chat.backgroundResult.workflow.holeWaiting.next" })}
+          </p>
           {openRunLink}
         </div>
       );

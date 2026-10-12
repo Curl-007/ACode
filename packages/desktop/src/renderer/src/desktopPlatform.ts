@@ -1,10 +1,43 @@
-import { DesktopCommandIds, buildLocalMediaPreviewUrl, type IPlatformService } from "@acode/shared";
+import { DesktopCommandIds, PlatformChannels, buildLocalMediaPreviewUrl } from "@acode/shared";
+import type { IPlatformService, PlatformChannelMap } from "@acode/shared";
 
 import { desktopBrowserPlatformBridge } from "./desktopBrowserPlatformBridge.js";
+
+// 载荷/决策类型在 shared/platform.ts，未从 @acode/shared 入口再导出；
+// 经由已导出的 PlatformChannelMap 对同名通道索引派生（desktopMainIpcPlatform.ts 先例）。
+type MaterializeWorkflowArtifactFilePayload =
+  PlatformChannelMap[(typeof PlatformChannels)["MaterializeWorkflowArtifactFile"]]["request"];
+type EmbeddedBrowserSitePermissionDecision =
+  PlatformChannelMap[(typeof PlatformChannels)["GetEmbeddedBrowserSitePermissions"]]["response"]["permissions"][string][string];
+
+/**
+ * window.acode 的新增桌面面（workflow artifact 物化 + 站点权限管理）。
+ * 桥类型权威在 packages/client/src/globals.d.ts，本任务无权修改 client 包；
+ * 这里用结构化交集收窄（非 any 断言）承载类型，client 侧补齐声明后可整体删除该视图。
+ */
+type DesktopAcodeBridgeWithRecentSurface = typeof window.acode & {
+  materializeWorkflowArtifactFile?: (
+    payload: MaterializeWorkflowArtifactFilePayload,
+  ) => Promise<{ localPath: string } | { error: string }>;
+  getEmbeddedBrowserSitePermissions?: () => Promise<{
+    permissions: Record<string, Record<string, EmbeddedBrowserSitePermissionDecision>>;
+  }>;
+  resetEmbeddedBrowserSitePermission?: (payload: {
+    origin: string;
+    permission: string;
+  }) => Promise<{ success: boolean; error?: string }>;
+  clearEmbeddedBrowserSitePermissions?: () => Promise<{ success: boolean; error?: string }>;
+};
 
 export function createDesktopPlatform(options: {
   isLocalDevelopmentRuntime: boolean;
 }): IPlatformService {
+  const acodeBridge = window.acode as DesktopAcodeBridgeWithRecentSurface;
+  // 先捕获再判存：方法存在性在窗口生命周期内不变（contextBridge 冻结），避免回调里重复判空。
+  const materializeWorkflowArtifactFile = acodeBridge.materializeWorkflowArtifactFile;
+  const getEmbeddedBrowserSitePermissions = acodeBridge.getEmbeddedBrowserSitePermissions;
+  const resetEmbeddedBrowserSitePermission = acodeBridge.resetEmbeddedBrowserSitePermission;
+  const clearEmbeddedBrowserSitePermissions = acodeBridge.clearEmbeddedBrowserSitePermissions;
   return {
     canSelectFilePath: true,
     createLocalMediaPreviewUrl: buildLocalMediaPreviewUrl,
@@ -41,6 +74,20 @@ export function createDesktopPlatform(options: {
     canOpenCommunity: (locale) => window.acode.canOpenCommunity(locale),
     openInFileManager: (path) => window.acode.openInFileManager(path),
     openExternalFile: (path) => window.acode.openExternalFile(path),
+    // 物化 + 站点权限管理面：preload 桥缺席（旧 preload）时保持 undefined，
+    // UI 按 IPlatformService 可选方法缺席隐藏入口（AGENTS.md UI 边界）。
+    materializeWorkflowArtifactFile: materializeWorkflowArtifactFile
+      ? (payload) => materializeWorkflowArtifactFile(payload)
+      : undefined,
+    getEmbeddedBrowserSitePermissions: getEmbeddedBrowserSitePermissions
+      ? () => getEmbeddedBrowserSitePermissions()
+      : undefined,
+    resetEmbeddedBrowserSitePermission: resetEmbeddedBrowserSitePermission
+      ? (origin, permission) => resetEmbeddedBrowserSitePermission({ origin, permission })
+      : undefined,
+    clearEmbeddedBrowserSitePermissions: clearEmbeddedBrowserSitePermissions
+      ? () => clearEmbeddedBrowserSitePermissions()
+      : undefined,
     openCuaPermissionOnboarding: window.acode.openCuaPermissionOnboarding
       ? (permissionOptions) =>
           window.acode.openCuaPermissionOnboarding?.(permissionOptions) ??

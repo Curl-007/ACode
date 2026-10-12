@@ -91,6 +91,7 @@ import type {
   V4ConversationWorkflowRunEventsResult,
   V4ConversationWorkflowRunArtifactDataResult,
   V4ConversationWorkflowRunArtifactReadResult,
+  V4ConversationVisualizationReadResult,
   V4ConversationWorkflowRunArtifactsResult,
   V4ConversationWorkflowRunNodeResultResult,
   V4ConversationWorkflowRunWorkspaceResult,
@@ -98,6 +99,7 @@ import type {
   V4ConversationRowsRangeResult,
   V4ConversationResyncResult,
   V4ConversationSubscribeResult,
+  V4NetworkCaptureRecordsNotification,
   V4SessionsIndexSubscribeResult,
   V4WorkspaceConfigSubscribeResult,
   WorkspaceConfigTopicWireCandidate,
@@ -144,6 +146,24 @@ import type {
 export interface ACodeAgentSessionTarget extends ACodeAgentWorkspaceTarget {
   sessionId: string;
 }
+
+/**
+ * v4 networkCaptureSetEnabled 的 service 参数（specs/runtime-network-capture.md）。
+ * 不是 conversation 命令（不带 sessionId）：抓的是 agent 进程的进程级事实。
+ */
+export interface ACodeAgentNetworkCaptureSetEnabledParams extends ACodeAgentWorkspaceTarget {
+  enabled: boolean;
+  /** 开启方生成的对账 id；缺省由 service 侧生成（randomUUID）。 */
+  captureId?: string;
+}
+
+/**
+ * 开关转发的服务级结果（区别于 v4 wire result schema）：
+ * runtime 未运行与旧 CLI 不支持都是可预期降级，不是异常。
+ */
+export type ACodeAgentNetworkCaptureSetEnabledResult =
+  | { ok: true; enabled: boolean }
+  | { ok: false; reason: "runtime_unavailable" | "unsupported" };
 
 export interface ACodeAgentResumeSessionParams extends ACodeAgentSessionTarget {
   model?: ModelSelection;
@@ -413,6 +433,13 @@ export interface ACodeAgentConversationWorkflowRunArtifactReadParams extends ACo
   runId: string;
   artifactId: string;
   version: number;
+  offset: number;
+  limit: number;
+}
+
+/** 对话内可视化片段的字节，一次一块（specs/gen-ui-visualize.md；授权按会话+注册名）。 */
+export interface ACodeAgentConversationVisualizationReadParams extends ACodeAgentSessionTarget {
+  name: string;
   offset: number;
   limit: number;
 }
@@ -768,6 +795,10 @@ export interface IACodeAgentService {
   conversationWorkflowRunArtifactReadV4(
     params: ACodeAgentConversationWorkflowRunArtifactReadParams,
   ): Promise<V4ConversationWorkflowRunArtifactReadResult>;
+  /** 对话内可视化片段的字节，一次一块；授权在 CLI 侧（会话 visualize 目录 + 注册名核对）。 */
+  conversationVisualizationReadV4(
+    params: ACodeAgentConversationVisualizationReadParams,
+  ): Promise<V4ConversationVisualizationReadResult>;
   /** dwf 工作区 transcript 的清单。 */
   conversationWorkflowRunWorkspaceV4(
     params: ACodeAgentConversationWorkflowRunWorkspaceParams,
@@ -818,6 +849,15 @@ export interface IACodeAgentService {
   ): Event<ConversationTelemetryFact>;
   /** 当前窗口全部本地 live task 的 CUA 权限观察；历史、远程与 replayable 不在此事件面。 */
   onDynamicCuaPermissionObservation(): Event<ACodeAgentCuaPermissionObservation>;
+  /**
+   * v4 networkCaptureSetEnabled（host→CLI）：agent 进程级网络观测开关。
+   * existing-only 语义：无运行时返回 runtime_unavailable，由调用方按记忆重发。
+   */
+  networkCaptureSetEnabledV4(
+    params: ACodeAgentNetworkCaptureSetEnabledParams,
+  ): Promise<ACodeAgentNetworkCaptureSetEnabledResult>;
+  /** v4 networkCaptureRecords（agent→host，仅 live）的批量观测记录事件面。 */
+  onDynamicNetworkCaptureRecords(): Event<V4NetworkCaptureRecordsNotification>;
   // ── sessions-index 通道（列表活性）──
   subscribeSessionsIndexV4(
     params: ACodeAgentSessionsIndexSubscribeParams,
@@ -949,6 +989,7 @@ export const IACodeAgentService = createServiceDescriptor<IACodeAgentService>(
       "conversationWorkflowRunArtifactsV4",
       "conversationWorkflowRunArtifactDataV4",
       "conversationWorkflowRunArtifactReadV4",
+      "conversationVisualizationReadV4",
       "conversationWorkflowRunWorkspaceV4",
       "conversationWorkflowRunNodeResultV4",
       "backgroundBashOutputV4",
@@ -968,6 +1009,8 @@ export const IACodeAgentService = createServiceDescriptor<IACodeAgentService>(
       "onDynamicLocalTtftFacts",
       "onDynamicConversationTelemetryFact",
       "onDynamicCuaPermissionObservation",
+      "networkCaptureSetEnabledV4",
+      "onDynamicNetworkCaptureRecords",
       "subscribeSessionsIndexV4",
       "resyncSessionsIndexV4",
       "unsubscribeSessionsIndexV4",
@@ -1079,6 +1122,7 @@ export const IACodeAgentService = createServiceDescriptor<IACodeAgentService>(
       conversationWorkflowRunArtifactsV4: requireSingleParamsObject,
       conversationWorkflowRunArtifactDataV4: requireSingleParamsObject,
       conversationWorkflowRunArtifactReadV4: requireSingleParamsObject,
+      conversationVisualizationReadV4: requireSingleParamsObject,
       conversationWorkflowRunWorkspaceV4: requireSingleParamsObject,
       conversationWorkflowRunNodeResultV4: requireSingleParamsObject,
       backgroundBashOutputV4: requireSingleParamsObject,
@@ -1098,6 +1142,8 @@ export const IACodeAgentService = createServiceDescriptor<IACodeAgentService>(
       onDynamicLocalTtftFacts: requireSingleParamsObject,
       onDynamicConversationTelemetryFact: requireSingleParamsObject,
       onDynamicCuaPermissionObservation: requireNoArguments,
+      networkCaptureSetEnabledV4: requireSingleParamsObject,
+      onDynamicNetworkCaptureRecords: requireNoArguments,
       subscribeSessionsIndexV4: requireSingleParamsObject,
       resyncSessionsIndexV4: requireSingleParamsObject,
       unsubscribeSessionsIndexV4: requireSingleParamsObject,

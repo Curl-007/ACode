@@ -7,6 +7,10 @@ import type {
   OpenCuaPermissionOnboardingOptions,
   PrepareCuaHelperPermissionDragResult,
   AppSettings,
+  EmbeddedBrowserPermissionPromptPayload,
+  EmbeddedBrowserPermissionResolvePayload,
+  EmbeddedBrowserSitePermissionDecision,
+  MaterializeWorkflowArtifactFilePayload,
   BrowserViewOperationPayload,
   BrowserGuestAttachResult,
   BrowserViewScreenshotSurfacePreparePayload,
@@ -224,6 +228,35 @@ declare global {
       openInFileManager(path: string): Promise<{ success: boolean; error?: string }>;
       /** 使用系统默认应用打开本地文件 */
       openExternalFile(path: string): Promise<{ success: boolean; error?: string }>;
+      /**
+       * 站点权限：订阅嵌入式浏览器未决权限请求（specs/embedded-browser-site-permissions.md）。
+       * Desktop only；Web 平台缺席。
+       */
+      onEmbeddedBrowserPermissionPrompt?(
+        handler: (payload: EmbeddedBrowserPermissionPromptPayload) => void,
+      ): () => void;
+      /** 站点权限：弹窗应答。 */
+      resolveEmbeddedBrowserPermission?(
+        payload: EmbeddedBrowserPermissionResolvePayload,
+      ): void;
+      /** 站点权限：读取持久表（设置页管理面）。 */
+      getEmbeddedBrowserSitePermissions?(): Promise<{
+        permissions: Record<string, Record<string, EmbeddedBrowserSitePermissionDecision>>;
+      }>;
+      /** 站点权限：重置某 origin 的某权限。 */
+      resetEmbeddedBrowserSitePermission?(payload: {
+        origin: string;
+        permission: string;
+      }): Promise<{ success: boolean; error?: string }>;
+      /** 站点权限：清空全部。 */
+      clearEmbeddedBrowserSitePermissions?(): Promise<{ success: boolean; error?: string }>;
+      /**
+       * workflow artifact 物化（specs/workflow-artifact-materialization.md）。
+       * Desktop only。
+       */
+      materializeWorkflowArtifactFile?(payload: MaterializeWorkflowArtifactFilePayload): Promise<
+        { localPath: string } | { error: string }
+      >;
       /** 打开 ACode Computer Use 完整权限引导 */
       openCuaPermissionOnboarding?(
         options?: OpenCuaPermissionOnboardingOptions,

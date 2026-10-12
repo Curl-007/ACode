@@ -27,6 +27,8 @@ import type {
   McpContentBlock,
   McpOAuthConfig,
   McpPort,
+  McpReadResourceResult,
+  McpResourceDescriptor,
   McpServerConfig,
   McpServerStatus,
   McpToolCallResult,
@@ -434,6 +436,87 @@ class NodeMcpAdapter implements McpPort {
 
   async listTools(): Promise<McpToolDescriptor[]> {
     return Array.from(this.records.values()).flatMap((record) => record.tools);
+  }
+
+  /**
+   * 资源清单（specs/mcp-sampling-resources.md）。未连接/旧 server 无 resources 能力时
+   * 返回空表而不是抛错——拉取面是尽力而为，工具侧把空表如实呈现给模型。
+   * 200 条裁剪在 adapter 侧执行（线上上限，见 spec）。
+   */
+  async listResources(
+    name: string,
+    options: { timeoutMs?: number } = {},
+  ): Promise<McpResourceDescriptor[]> {
+    const record = this.records.get(name);
+    if (!record?.client || record.status.status !== "connected") return [];
+    const timeoutMs = Math.min(
+      options.timeoutMs ?? DEFAULT_MCP_TIMEOUT_MS,
+      record.config.timeoutMs ?? DEFAULT_MCP_TIMEOUT_MS,
+    );
+    try {
+      const listed = await record.client.listResources({}, { timeout: timeoutMs });
+      const resources = Array.isArray(listed.resources) ? listed.resources : [];
+      return resources.slice(0, 200).map((resource) => ({
+        uri: String(resource.uri ?? ""),
+        ...(resource.name === undefined ? {} : { name: String(resource.name) }),
+        ...(resource.mimeType === undefined ? {} : { mimeType: String(resource.mimeType) }),
+        ...(resource.description === undefined
+          ? {}
+          : { description: String(resource.description) }),
+      })).filter((resource) => resource.uri.length > 0);
+    } catch (error) {
+      this.logger?.warn("MCP listResources failed", {
+        ...this.connectionContext,
+        error: error instanceof Error ? error.message : String(error),
+        event: "mcp.resources.list.failed",
+        mcpServerName: name,
+      });
+      return [];
+    }
+  }
+
+  /**
+   * 读一个资源。返回 undefined = server 未实现 / uri 不存在 / 未连接——调用方
+   * （core 的 read_resource 工具）把它归一成结构化的 not found，不猜原因。
+   * 单次 ≤ 512 KiB：超限截断并如实标注（spec 的分段策略由 server 侧资源设计承担）。
+   */
+  async readResource(
+    name: string,
+    uri: string,
+    options: { timeoutMs?: number } = {},
+  ): Promise<McpReadResourceResult | undefined> {
+    const record = this.records.get(name);
+    if (!record?.client || record.status.status !== "connected") return undefined;
+    const timeoutMs = Math.min(
+      options.timeoutMs ?? DEFAULT_MCP_TIMEOUT_MS,
+      record.config.timeoutMs ?? DEFAULT_MCP_TIMEOUT_MS,
+    );
+    try {
+      const result = await record.client.readResource({ uri }, { timeout: timeoutMs });
+      const contents = Array.isArray(result.contents) ? result.contents : [];
+      const content = contents[0];
+      if (!content) return undefined;
+      // SDK 的 contents 是 text | blob 判别联合：用 in 收窄，不猜字段。
+      const text = "text" in content && typeof content.text === "string" ? content.text : undefined;
+      const base64 = "blob" in content && typeof content.blob === "string" ? content.blob : undefined;
+      const MAX_READ_BYTES = 512 * 1024;
+      return {
+        uri: typeof content.uri === "string" && content.uri.length > 0 ? content.uri : uri,
+        ...(content.mimeType === undefined ? {} : { mimeType: String(content.mimeType) }),
+        ...(text === undefined
+          ? {}
+          : { text: text.length > MAX_READ_BYTES ? `${text.slice(0, MAX_READ_BYTES)}\n…[truncated]` : text }),
+        ...(base64 === undefined ? {} : { base64 }),
+      };
+    } catch (error) {
+      this.logger?.warn("MCP readResource failed", {
+        ...this.connectionContext,
+        error: error instanceof Error ? error.message : String(error),
+        event: "mcp.resources.read.failed",
+        mcpServerName: name,
+      });
+      return undefined;
+    }
   }
 
   async callTool(

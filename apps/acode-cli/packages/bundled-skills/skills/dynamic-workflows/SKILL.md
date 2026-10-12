@@ -1,6 +1,6 @@
 ---
 name: dynamic-workflows
-description: "Use when writing, debugging, or resubmitting a dynamic-workflow script for the CreateWorkflow tool: choosing subagent topology, typing subagent results, fanning out over files or git, gating loops on world.run commands, testing pieces with EvalWorkflowSnippet, planner-reviewer loops, confirming findings before reporting them, report() salvage, the report shape a run returns, publishing artifacts the user opens, and handling a backgrounded run."
+description: "Use when writing, debugging, or resubmitting a dynamic-workflow script for the CreateWorkflow tool: choosing subagent topology, typing subagent results, fanning out over files or git, gating loops on world.run commands, testing pieces with EvalWorkflowSnippet, planner-reviewer loops, confirming findings before reporting them, report() salvage, the report shape a run returns, publishing artifacts the user opens, growing a run through holes (hole() and FillWorkflowHole), and handling a backgrounded run."
 when_to_use: "Only for CreateWorkflow scripts. A single delegation or a few independent lookups belong to the Agent tool instead."
 ---
 
@@ -8,7 +8,7 @@ when_to_use: "Only for CreateWorkflow scripts. A single delegation or a few inde
 
 This skill is the whole authoring contract for `CreateWorkflow`. The tool descriptions are
 short on purpose; the facade the compiler checks against, the rules a script must satisfy and
-the fields each tool takes are in §16, and `CreateWorkflow`, `AmendWorkflow`, `SaveWorkflow`
+the fields each tool takes are in §17, and `CreateWorkflow`, `AmendWorkflow`, `FillWorkflowHole`, `SaveWorkflow`
 and `EvalWorkflowSnippet` refuse to run until this skill has been loaded in the session. The
 rest is the judgment layer: how many subagents a request deserves, which of them should share
 a context, what each one should hand back, and how to keep the run's work from dying with the
@@ -732,6 +732,8 @@ and §10 already carry its rules.
 | `Promise.all` between two stages whose items map one to one (review every file, *then* confirm every finding) | The slowest reviewer gates every confirmer while the slots idle; chain the stages per item and join once (§7) |
 | Waited for a run you already knew was wrong to finish, or stopped it and left it | Everything after the fix point is re-paid either way; call `AmendWorkflow` on it now, while it runs (§13) |
 | Pasted a whole revised script inline after a diagnostic or an error, instead of editing the file the tool named | Twenty thousand tokens re-streamed to change one line, on a provider that may stall on the resubmit — and a script compaction has dropped is one you can no longer paste; the file is on disk, so the revision is an `Edit` and a `path` (§13) |
+| A hole for what an `if` or a subagent could decide, or one inside a fan-out callback | A run parked on you for nothing (a value is an ask, not a hole); the fan-out case does not compile — the items would wait on a gap nobody can fill for them (§15) |
+| Pasted the fill statements inline again after a rejection, instead of editing the fill file the response named | Same cost as re-pasting a script, plus the refusal you get for byte-identical statements; the fill file is on disk — the retry is an `Edit` and a `path` (§15) |
 
 ## 13. After you submit
 
@@ -750,6 +752,10 @@ as before.)
 On a clean compile the run starts in the background and you get a run ID. **Do not poll it.**
 The completion notification arrives on its own and carries the final return value plus every
 reported item. Go do other work, unless the user asked you to wait.
+
+A run that reaches a `hole()` does not end — it parks there, waiting for the statements of
+that gap's body (§15). Filling one is not polling: answer the hole when you have decided
+what the next step's code is, with `FillWorkflowHole` on the ids GetWorkflowRun lists.
 
 When you genuinely need to look at a run:
 
@@ -905,7 +911,75 @@ One ask gets three escalations. The fourth comes back as an ordinary result tell
 subagent its escalation allowance is spent and to proceed on its own best judgement — a guard against
 chatter, not an allowance to spend.
 
-## 15. Going deeper
+## 15. Holes: growing the run where knowing stops
+
+`hole<T>()` is the other mid-run request — §14 is a subagent's, this one is yours. A script
+is what you know for sure; a hole is where knowing stops. When the workflow's *shape* — which
+phases come next, which subagents exist, what each is told — is only knowable from what the
+run itself finds, write the part you know, end it in a hole, and let the findings write the
+rest. A request whose shape you can plan up front has no holes, and that is fine too.
+
+A subagent returns a **value**; a hole returns **code**. Ask a subagent when the script
+already knows what to do with the answer and only the data is missing. Leave a hole when
+what is missing is the rest of the workflow. If you could write the code now and only the
+data is missing, it is not a hole.
+
+| The unknown is… | Use |
+| --- | --- |
+| an answer the script knows how to consume | a subagent ask; fresh eyes if it is a judgment (§3) |
+| a branch among outcomes you can enumerate now | a typed result and an `if` or a loop, in the script |
+| the rest of the workflow, knowable only from what the run found | a hole |
+| a question a subagent hits mid-task that only you can answer | escalation (§14) |
+
+```ts
+phase("盘点仓库顶层目录");
+const survey = await agent("勘察员").ask<Survey>("列出顶层目录，各用一句话说明作用。");
+return await hole<Guide>("第1步：决定导览结构", `盘点：${JSON.stringify(survey)}`);
+```
+
+- **`T` is always written out.** It is the contract the fill is checked against: the
+  statements either `return` a `T` (a tail hole's fill ends the run with it) or bind one.
+- **The stage is a station name, in the user's language** ("决定导览结构"), and the prompt is
+  the one channel for values: interpolate what the decision needs (the survey's findings, the
+  failing output), the fill reads values there and types from the surrounding code. Both must
+  be string literals.
+- **The call must be `await hole(...)` as its own statement.** `const x = hole(...)` reads a
+  *value* — that is an ask, not a hole — and a call in an initializer or an argument has no
+  statement position to splice into.
+- **Never inside a callback or nested function** (a `.map` body above all): the callback runs
+  once per item and in parallel, while the hole parks until you write its body — the items
+  would wait on a gap nobody can fill for them. The compiler rejects it (9005). Hoist the
+  decision out: ask per item, or decide once before the fan-out.
+- **Holes do not exist in snippets.** `EvalWorkflowSnippet` compiles against a reduced facade
+  without `hole` — a snippet has no run to park; rehearse the *fixed* logic there, not the
+  gap.
+
+**Filling one.** The run parks, its panel shows a waiting hole row, and `GetWorkflowRun`
+lists the holes a run still owes code to, ids included (`hole#N@ordinal`). Then:
+
+1. Read the run's draft around the hole (GetWorkflowRun names the script's file): the body
+   compiles where the hole stands and sees every binding declared before it, none after.
+2. Send only the **statements** with `FillWorkflowHole` (`run_id`, `hole_ref`, and the
+   statements as `script` or a file as `path`). The tool splices them in as
+   `await (async () => { <statements> })()` and recompiles; top-level await is legal, a
+   `return` yields the hole's `T`, and the statements may end in a **new tail hole** when the
+   step after them is still unknown — that is how a task whose shape appears as the work
+   proceeds grows one step at a time.
+3. The spliced script is new executable code, so the user confirms it again — new
+   `world.run` commands included — and on confirmation the parked run is stopped and
+   superseded by its continuation, which imports the finished work as cache. Filled once per
+   run per reach: after a fill the spliced body runs on every later arrival at that site
+   (each round with that round's bindings) and never parks again.
+4. Diagnostics mean nothing was spliced and the hole still waits: the response names the
+   fill file — **edit it and resubmit with `path`**, never paste the statements again (§13),
+   and resubmitting byte-identical statements is refused as unchanged. A fill that throws at
+   run time fails the continuation like any script error; amend as usual.
+
+Spend holes on shape, never on answers: a verdict, a summary, a choice among options, an
+answer per item — those are subagent asks, and any branch an `if` over a typed result can
+express belongs in the script you already have.
+
+## 16. Going deeper
 
 - `${ACODE_SKILL_DIR}/patterns.md` — the topology catalogue: fan-out/fan-in, review sweeps,
   planner-reviewer loops, judge panels, staged pipelines, bounded discovery,
@@ -914,16 +988,17 @@ chatter, not an allowance to spend.
 - `${ACODE_SKILL_DIR}/examples.md` — complete worked scripts, including a two-subagent
   adversarial prove/disprove loop. Read one when you want to see a whole script's arc.
 
-## 16. Tool reference
+## 17. Tool reference
 
-The four authoring tools — `CreateWorkflow`, `AmendWorkflow`, `SaveWorkflow` and
-`EvalWorkflowSnippet` — carry one-paragraph descriptions on purpose, and each of them refuses
+The five authoring tools — `CreateWorkflow`, `AmendWorkflow`, `FillWorkflowHole`,
+`SaveWorkflow` and `EvalWorkflowSnippet` — carry one-paragraph descriptions on purpose, and
+each of them refuses
 to run until this skill has been loaded in the session. This section is the part of their
 contract that the descriptions do not carry: the facade the compiler checks against, the
 rules a script must satisfy, and the fields each tool takes. Read it before writing or
 revising a script; the compiler holds you to it.
 
-### 16.1 `CreateWorkflow`
+### 17.1 `CreateWorkflow`
 
 Typechecks the script; on a clean compile asks the user to confirm and starts the run in the
 background; you are notified with the script's final `return` value when the run settles.
@@ -963,9 +1038,9 @@ Either way the user confirms the run, and the confirmation shows the actual scri
   it lists or call `ListModels`. You stay on the session model either way.
 
 This tool starts a new run. To change a run that exists — errored, completed, stopped or
-still running — call `AmendWorkflow` (§13, §16.4), never `CreateWorkflow` again.
+still running — call `AmendWorkflow` (§13, §17.4), never `CreateWorkflow` again.
 
-### 16.2 The facade
+### 17.2 The facade
 
 Every script and snippet is checked against these declarations. They are the same constant
 the compiler is fed, so what you read here is what typechecks. The block uses `declare`
@@ -1346,7 +1421,7 @@ declare const world: {
 ```
 <!-- facade-dts:end -->
 
-### 16.3 Rules the compiler and the analyzer enforce
+### 17.3 Rules the compiler and the analyzer enforce
 
 - Plain TypeScript. Define result types with a plain `interface Foo { ... }` or
   `type Foo = ...` and pass them as `ask<T>` type arguments.
@@ -1396,7 +1471,7 @@ declare const world: {
 - On diagnostics, edit the file the result names and call the tool again with `path`; never
   paste the script a second time.
 
-### 16.4 `AmendWorkflow`
+### 17.4 `AmendWorkflow`
 
 Revises an existing run: it starts a new run that supersedes the old one and imports its
 finished work as a cache, so only what you changed is paid for again. §13 has the cache
@@ -1450,7 +1525,7 @@ first. The result names the run that was superseded (if one was stopped) and the
 id. The superseded run sends no notification of its own; the new run notifies when it
 settles. Do not wait for it or poll it with `TaskOutput`.
 
-### 16.5 `SaveWorkflow`
+### 17.5 `SaveWorkflow`
 
 Saves a script with its metadata so it can be run again by name — through `CreateWorkflow`'s
 `saved` source, discovered with `ListSavedWorkflows`. Project definitions go in
@@ -1493,11 +1568,11 @@ project on this machine.
 
 The saved file is valid TypeScript: a `/* acode-workflow` block of YAML metadata, then the
 script verbatim. The script is typechecked by the same compiler as `CreateWorkflow`, before
-the user is asked; diagnostics mean nothing was written. The rules in §16.3 apply, phases
+the user is asked; diagnostics mean nothing was written. The rules in §17.3 apply, phases
 included — future callers did not see this conversation, so the phase names are all they
 get.
 
-### 16.6 `EvalWorkflowSnippet`
+### 17.6 `EvalWorkflowSnippet`
 
 Compiles and runs a small snippet synchronously against the same compiler, sandbox and
 world-read execution path a real run uses, and returns the result in the tool call. Nothing
@@ -1512,9 +1587,31 @@ there is no `agent()` here.
 - `timeoutMs`: the wall clock for the whole snippet in milliseconds; default 60000, at most
   600000.
 - The snippet facade is the `args`, `log`, `files`/`git` and `world.run` parts of the block
-  in §16.2; `agent()`, `report()`, `artifact.*` and the `phase` marker do not exist here and
+  in §17.2; `agent()`, `report()`, `artifact.*`, the `phase` marker and `hole()` do not
+  exist here and
   fail typechecking. The language rules are a script's: plain interfaces, top-level `await`, a
   final `return <value>`. The returned value is serialized into the result, so return a
   summary, not a dump; over 256KB fails the call. `log(...)` lines come back in order. A
   snippet that contains `world.run` asks the user for confirmation before running. On
   diagnostics nothing ran: fix the snippet and call again.
+
+### 17.7 `FillWorkflowHole`
+
+Fills one hole in a RUNNING run (§15): the statements of the gap's body, spliced in as
+`await (async () => { <statements> })()` and continued along the revision chain. The
+judgment layer — when a hole at all, and what belongs in a fill — is §15; this is the
+field contract.
+
+- `run_id`: the parked run, and `hole_ref`: its hole's id (`hole#N@ordinal`), from the
+  notification or from GetWorkflowRun's pending holes — the only discovery surface for ids.
+- `script` or `path`, never both: the statements inline, or a file holding them. On a
+  rejection the fill file is named in the response — edit it and resubmit with `path`;
+  byte-identical statements are refused as unchanged.
+- On a clean compile the user confirms the spliced script again (it is new executable code —
+  a fill that introduces a new `world.run` command does not inherit the old approval), the
+  parked run is stopped and superseded by its continuation, and the finished work is imported
+  as cache. The response says so, and says it honestly when the cache could not be fully
+  trusted (the run's workspace had changed since some results) — those steps re-run.
+- The fill sees every binding declared before the hole, none after; it may `return` the
+  hole's `T` or end in a new tail hole. Nothing about the fill changes the parked run: on
+  any refusal the hole is still waiting and the draft is untouched.

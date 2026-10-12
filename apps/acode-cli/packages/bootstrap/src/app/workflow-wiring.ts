@@ -5,6 +5,7 @@ import {
   createDynamicWorkflowRunService,
   createScriptWorkflowAgentRuntime,
   createScriptWorkflowProgressAdapter,
+  createWorkflowOwnerLeaseManager,
   isDynamicWorkflowTaskLinkStore,
   resolveDynamicWorkflowJournalStore,
   workflowActorModelPolicy,
@@ -51,28 +52,27 @@ export function createWorkflowWiring(deps: WorkflowWiringDeps): WorkflowWiring {
     concurrency: workflowConcurrencyGovernor,
   } = deps;
   const workflowOwnerToken = crypto.randomUUID();
-  const workflowOwnerReady = deps.sessionStore.claimWorkflowSessionOwner
-    ? deps.sessionStore
-        .claimWorkflowSessionOwner({
-          ownerToken: workflowOwnerToken,
-          parentSessionId: sessionId,
-        })
-        .then((lease) =>
-          lease === null
-            ? null
-            : lease === undefined
-              ? undefined
-              : { ownerGeneration: lease.ownerGeneration, ownerToken: lease.ownerToken },
-        )
-        .catch((error) => {
-          logger?.warn?.("Workflow owner lease claim failed", {
-            errorMessage: error instanceof Error ? error.message : String(error),
-            event: "workflow.owner.claim_failed",
-            module: "bootstrap.app",
-          });
-          return null;
-        })
-    : Promise.resolve(undefined);
+  // 租约的完整生命周期（初始 claim / 心跳续租 / 惰性 reclaim）在 manager 里单点发生；
+  // 此前的一次性 claim 把「启动窗口内失败」缓存成进程级永久锁死，且活 owner 的租约
+  // 30s 后过期导致它自己的写闸门拒自己（specs/workflow-owner-lease.md D1/D2）。
+  const workflowOwnerLease = createWorkflowOwnerLeaseManager({
+    ...(deps.sessionStore.claimWorkflowSessionOwner === undefined
+      ? {}
+      : {
+          // manager 的端口收 string（它只做日志与转发）；真正的 claim 用闭包里捕获的
+          // branded SessionId，避免在 manager 里复刻品牌类型。
+          claim: (input: { leaseMs?: number; ownerToken: string }) =>
+            deps.sessionStore.claimWorkflowSessionOwner!({
+              ...(input.leaseMs === undefined ? {} : { leaseMs: input.leaseMs }),
+              ownerToken: input.ownerToken,
+              parentSessionId: sessionId,
+            }),
+        }),
+    logger,
+    ownerToken: workflowOwnerToken,
+    parentSessionId: sessionId,
+  });
+  const workflowOwnerReady = workflowOwnerLease.ownerReady;
   // dwf 进度汇**只造一份**，dwf run service 与脚本工作流的投影适配器共用它。
   // 两份的话就有两条 append 路径，而身份闸门 / runtime 未就绪 / append 失败这三条降级
   // 语义（连同它们的单测）都住在这个汇里——复制一份等于让其中一份的降级悄悄漂移。
@@ -109,6 +109,7 @@ export function createWorkflowWiring(deps: WorkflowWiringDeps): WorkflowWiring {
     workspaceIdentity: deps.workspaceIdentity,
     workingDirectory,
     ownerReady: workflowOwnerReady,
+    ownerReclaim: workflowOwnerLease.reclaim,
     ownerToken: workflowOwnerToken,
   });
 
@@ -220,6 +221,7 @@ export function createWorkflowWiring(deps: WorkflowWiringDeps): WorkflowWiring {
           // run（死进程的遗物）收敛成 failed；兄弟会话的在飞 run 因此绝不会被误伤。
           parentSessionId: sessionId,
           workflowOwnerReady,
+          workflowOwnerReclaim: workflowOwnerLease.reclaim,
           // 在飞的引擎把本会话钉成常驻。
           // 惰性取 runtime 同 onRunEvent：run service 是 AgentRuntime 的依赖，构造更早；
           // 而启动只来自工具调用或 v4 命令，那时 runtime 必已就绪。

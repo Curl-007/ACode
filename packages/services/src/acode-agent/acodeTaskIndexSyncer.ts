@@ -691,6 +691,40 @@ export function createACodeTaskIndexSyncer(
       });
       return;
     }
+    // 终态 → 非终态 = 重启/换代后的「复活」：app 重启会让 sessions-index 基线把既有会话
+    // 以终态入册，用户继续对话时 phase 回到 running。旧迁移表没有此分支，任务行的
+    // status/updatedAt 会永久冻结在重启前水位，侧栏与权威会话状态漂移
+    // （2026-10-11 事故第二失效面，specs/task-index-v4-ingest.md）。
+    const reactivatedFromTerminal =
+      previous !== undefined && isTerminalPhase(previous.phase) && !isTerminalPhase(next.phase);
+    if (reactivatedFromTerminal) {
+      void resyncTaskIndexRowFromAgent(target, "session.reactivated", {
+        moveGroupedTaskToTop: true,
+      });
+      return;
+    }
+    // 终态 → 不同 kind 终态 = 断档降级 conflated snapshot 的折叠迁移。syncer 落后于
+    // sessions-index 时（CLI 侧 deltaLog 溢出 maxDeltaLog=512 或物理帧丢失），publisher
+    // 退化为 snapshotFrame；投影按 sessionId 收敛只保留最新 phase，落后期间的
+    // error→running→completedSuccess 会被折叠成一次 error→completedSuccess 迁移，中间的
+    // running 被 conflate 掉。旧迁移表只覆盖非终态↔终态与终态→非终态，此分支全为 false
+    // （becameTerminal 要求 previous 非终态、reactivatedFromTerminal 要求 next 非终态），
+    // 任务行 status/updatedAt/lastError 永久冻结在旧终态，侧栏显示错误颜色、完成/失败
+    // 未读信号丢失——与 d14d1ca（终态→非终态）同类的冻结行缺陷，只是迁移方向不同。
+    // online delta 路径安全（每个 phase 各自 fan-out 一条 delta，两终态间必先观察到非终态），
+    // 故只在 kind 变化时收敛：completed↔error 必须重写，同 kind（completedSuccess↔
+    // completedInterrupted 都映射 completed）保持幂等不重复写库。
+    const terminalKindChanged =
+      previous !== undefined &&
+      isTerminalPhase(previous.phase) &&
+      isTerminalPhase(next.phase) &&
+      taskStatusFromSummaryPhase(previous.phase) !== taskStatusFromSummaryPhase(next.phase);
+    if (terminalKindChanged) {
+      applyTerminalTransition(target, next, {
+        moveGroupedTaskToTop: false,
+      });
+      return;
+    }
     if (becameVisibleTask) {
       // v4 预热 session 从 draft 提升，或 online delta 首次出现新 session 时，
       // 不经过 acodeSessionService.createSession。此处是最早且不依赖标题时序的新任务边界；

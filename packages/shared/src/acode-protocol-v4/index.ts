@@ -25,6 +25,10 @@ export * from "./workflow-artifact.js";
 // ⚠ 与上一行只差一个 s，且两个 artifact 不同义：单数 = 引擎内部的「脚本顶层返回值」的
 // 序列化；复数 = 脚本 `artifact.*` 发布给用户看的产出。见 workflow-artifacts.ts 的文件头。
 export * from "./workflow-artifacts.js";
+// 对话内可视化（::visualize）的分块读取契约。
+export * from "./visualization-read.js";
+// 运行时网络观测（agent 进程内）的 v4 词汇。
+export * from "./network-capture.js";
 // 工作区 transcript（files.* / git.* / world.run 的回放）。
 export * from "./workflow-workspace.js";
 export * from "./attachment-ref.js";

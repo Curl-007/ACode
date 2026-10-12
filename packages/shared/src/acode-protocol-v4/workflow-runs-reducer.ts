@@ -34,6 +34,7 @@ import {
 } from "./workflow-runs.js";
 
 import { serializeWorkflowArtifact } from "./workflow-artifact.js";
+import { reduceHoleFilled, reduceHoleReached, withoutPendingHoles } from "./workflow-runs-holes.js";
 import { withDerivedWorkflowActorStatuses } from "./workflow-runs-actor-status.js";
 import {
   countTaggedReport,
@@ -501,6 +502,16 @@ function applyWorkflowRunEvent(
     }
 
     /**
+     * hole-reached / hole-filled：脚本进程停在洞站点 / 主代理已填充续跑
+     * （apps/acode-cli/specs/workflow-holes.md）。规则在同族的 workflow-runs-holes.ts
+     * （max-lines 门拆出，先例见 workflow-runs-concurrency.ts）。
+     */
+    case "hole-reached":
+      return reduceHoleReached(run, payload);
+    case "hole-filled":
+      return reduceHoleFilled(run, payload);
+
+    /**
      * concurrency-changed：进程级治理器调整了本 run 所在 provider key 的 cap。不碰 `nodes[]` 与 actor 状态：
      * cap 是闸门，不是任何节点的事。规则在 workflow-runs-concurrency.ts。
      */
@@ -532,7 +543,9 @@ function applyWorkflowRunEvent(
       // 若还挂着 pending，那也只是一条永远不会有下文的残影。
       // 冷却是"新派发被冻结到何时"，终态 run 不再派发任何东西——留着它只会让状态头显示一个
       // 没有对象的倒计时。cap / ceiling 照留：它们是这次 run 跑在什么并发下的历史事实。
-      const cleared = withoutCooldown(withoutPendingQuestions(run, () => false));
+      const cleared = withoutCooldown(
+        withoutPendingHoles(withoutPendingQuestions(run, () => false), () => false),
+      );
       // actor 三态里 waiting / completed 的分界看 run 是否终态，所以终态要重新派生一遍：
       // 一个建了却没被 ask 过的 actor 在 run 结束那一刻从「等待」变成「已完成」。
       // 三终态词；`stopReason` 只在 stopped 时搬运，

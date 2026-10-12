@@ -26,6 +26,13 @@ import type {
 } from "./types.js";
 
 /**
+ * 一个停驻中的洞（挖洞-填充）的 rejector，键 = `holeId`（`${siteId}@${ordinal}`）。
+ * run 结算时整表撤下（markSettled 的钩子，engine.ts）：终态 run 按定义没有在等代码的人，
+ * 留着只会让沙箱侧的 await 永远悬挂——同 cli-workflow 撤下停驻升级的先例。
+ */
+export type ParkedHoles = Map<string, (error: WorkflowError) => void>;
+
+/**
  * run 的最终结算：`completed`（脚本 return）/
  * `errored`（脚本之错，不可 resume）/ `stopped`（被停下，一律可 resume；`error` 只对
  * `provider` / `interrupted` 在场）。
@@ -118,4 +125,9 @@ export interface EngineState {
   abortInFlight(error: WorkflowError, emitCancelled: boolean): void;
   /** 兑现 `engine.settled`。 */
   resolveSettled(settlement: RunSettlement): void;
+  /**
+   * 停靠中的洞（挖洞-填充）的 rejector 表；登记在 engine-hole.ts 的 parkHole，
+   * 撤下在 markSettled 的钩子。与 `artifacts` 同一族：引擎私有状态的显式接缝。
+   */
+  readonly parkedHoles: ParkedHoles;
 }

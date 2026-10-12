@@ -424,6 +424,28 @@ const FACADE_ARGS_SEGMENT = String.raw`
 declare const args: Readonly<Record<string, unknown>>;
 `;
 
+/**
+ * 挖洞-填充：hole()。脚本形状不能预先写死时，把未知段留成洞——运行停靠等待，作者事后
+ * 提交该处函数体的**语句**，由 FillWorkflowHole splice 进脚本重编译并沿修订链续跑。
+ * 子代理返回**值**（缺数据用 ask），hole 返回**代码**（缺拓扑用 hole）。snippet 刻意不含：
+ * 片段没有 run、没有停靠点，一个等谁来填的洞只会悬挂（与 `agent` / `artifact` 同姿态）。
+ */
+const FACADE_HOLE_SEGMENT = String.raw`
+/**
+ * Leave one gap in the workflow that only the run's findings can close. The call parks the
+ * script there; the author later submits the STATEMENTS of this hole's body (FillWorkflowHole),
+ * spliced in as await (async () => { <statements> })() along the revision chain.
+ *
+ * A subagent returns a value; a hole returns code — leave one when what is missing is the
+ * rest of the workflow (which phases come next, which subagents exist), not when only data
+ * is missing. stage is the station's user-facing name; prompt is the one channel for values:
+ * interpolate what the decision needs. Both must be compile-time string literals, and the
+ * call must be awaited in its own statement position — never inside a fan-out callback.
+ * Filled once per run per reach: after a fill the spliced body runs on every later reach.
+ */
+declare function hole<T>(stage: string, prompt: string): Promise<T>;
+`;
+
 export const FACADE_DTS =
   FACADE_ACTOR_SEGMENT +
   FACADE_ARGS_SEGMENT +
@@ -431,6 +453,7 @@ export const FACADE_DTS =
   FACADE_REPORT_SEGMENT +
   FACADE_ARTIFACT_SEGMENT +
   FACADE_PHASE_SEGMENT +
+  FACADE_HOLE_SEGMENT +
   FACADE_WORLD_SEGMENT +
   FACADE_WORLD_RUN_SEGMENT;
 

@@ -9,6 +9,7 @@
 import { Button } from "../ui/button.js";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "../ui/hover-card.js";
 import { cn } from "../lib/utils.js";
+import { FileTypeIcon } from "../FileTypeIcon.js";
 import type { FileUIPart, SourceDocumentUIPart } from "ai";
 import {
   FileTextIcon,
@@ -337,6 +338,22 @@ export const AttachmentPreview = ({
           src={data.url}
         />
       );
+    }
+
+    // 会话附件行的文件类型图标（chat-small-ux-file-icons.md §2 消费点）：文档/来源/未知
+    // 类附件有文件名时按扩展名解析图标（lucide 映射），无文件名才回退媒体类别的通用图标。
+    // 图片/视频/音频维持原行为——它们的预览本身就是内容。
+    const filename =
+      data.type === "source-document"
+        ? data.filename
+        : data.type === "file"
+          ? data.filename
+          : undefined;
+    if (
+      (mediaCategory === "document" || mediaCategory === "source" || mediaCategory === "unknown") &&
+      filename
+    ) {
+      return <FileTypeIcon className={cn(iconSize, "text-muted-foreground")} name={filename} />;
     }
 
     const Icon = mediaCategoryIcons[mediaCategory];

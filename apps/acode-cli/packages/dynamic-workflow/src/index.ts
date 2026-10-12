@@ -41,6 +41,14 @@ export {
   type WorldRunCommands,
 } from "./analysis/world-run.js";
 export { collectPhaseMarkerDiagnostics, PHASE_MARKER_CODE } from "./analysis/phases.js";
+// 挖洞-填充：洞调用的编译期校验（9005）与 fill 语句的 AST 级 splice。
+export { collectHoleDiagnostics, HOLE_CALL_CODE } from "./analysis/holes.js";
+export {
+  spliceWorkflowHole,
+  type HoleSpliceFailureReason,
+  type HoleSpliceResult,
+} from "./hole/splice.js";
+export type { HoleSite } from "./analysis/sites.js";
 export {
   toActorGraph,
   type ActorEdge,

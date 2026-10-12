@@ -46,6 +46,11 @@ export const WORKFLOW_RUNS_LIMITS = {
    * 它同时是一道防线——一个疯掉的脚本不该能把一个高频状态键撑爆。
    */
   maxPendingQuestions: 32,
+  /**
+   * 同时停驻的 hole 条数。一个脚本同时等洞是罕见形态（多数是单尾洞）；8 是
+   * 「够用 + 疯脚本撑不爆高频状态键」的同一档防线（见 maxPendingQuestions 注释）。
+   */
+  maxPendingHoles: 8,
   /** 问题与补充说明的展示上界。与事件载荷的字符串界（2048）同值，所以正常路径永不截断。 */
   maxQuestionLength: 2_048,
   /** 并发桶的 provider key（`${providerId}/${modelId}`）上界。 */
@@ -358,6 +363,28 @@ export const workflowRunPendingQuestionSchema = z.object({
 });
 export type WorkflowRunPendingQuestion = z.infer<typeof workflowRunPendingQuestionSchema>;
 
+/**
+ * 停驻中的 workflow hole（挖洞-填充，见 apps/acode-cli/specs/workflow-holes.md）。
+ *
+ * 与 `pendingQuestions` 的分工：升级问题欠的是**值**（actor 停在自己那次 ask 里等一句话）；
+ * hole 欠的是**代码**（脚本进程停在洞站点，等主代理用 FillWorkflowHole 提交该处函数体）。
+ * 同一条「零条缺席 / 来回进出 / optional 防旧 CLI 整帧被丢」的惯例，逐字沿用
+ * `pendingQuestions` 头注释的论证。
+ */
+export const workflowRunPendingHoleSchema = z.object({
+  /** 站点 id（`hole#N`）+ 首达 ordinal 的复合身份；FillWorkflowHole 按它定位。 */
+  holeId: z.string().min(1).max(80),
+  /** 站点实例序数（进引擎 nextOrdinal 体系；同洞不同轮次是不同实例）。 */
+  ordinal: z.number().int().nonnegative(),
+  /** 阶段名（脚本里 `hole<T>(stage, prompt)` 的第一个字面量）。 */
+  stage: z.string().min(1).max(WORKFLOW_RUNS_LIMITS.maxQuestionLength),
+  /** 提示词（含插值后的进展账目）。 */
+  prompt: z.string().min(1).max(WORKFLOW_RUNS_LIMITS.maxQuestionLength),
+  /** 到达时刻（epoch 毫秒）。事件侧必填、这里 optional 的理由与 askedAt 逐字相同。 */
+  askedAt: z.number().int().nonnegative().optional(),
+});
+export type WorkflowRunPendingHole = z.infer<typeof workflowRunPendingHoleSchema>;
+
 export const workflowRunSchema = z.object({
   runId: z.string().min(1).max(128),
   /** 发起该 run 的 CreateWorkflow 工具调用（工具卡 → 详情页的关联键）。 */
@@ -423,6 +450,15 @@ export const workflowRunSchema = z.object({
   pendingQuestions: z
     .array(workflowRunPendingQuestionSchema)
     .max(WORKFLOW_RUNS_LIMITS.maxPendingQuestions)
+    .optional(),
+  /**
+   * 停驻中的 workflow hole，按到达顺序。零条时整个键缺席——与 `pendingQuestions` 同一条
+   * 「无则缺席」惯例；optional 的理由（旧 CLI 不发该字段时退化成少一个键，不是整帧被丢）也逐字相同。
+   * run-settled 时清空（见 reducer）。
+   */
+  pendingHoles: z
+    .array(workflowRunPendingHoleSchema)
+    .max(WORKFLOW_RUNS_LIMITS.maxPendingHoles)
     .optional(),
   /**
    * 并发现状（见 {@link workflowRunConcurrencySchema}）。只在**两条界里有一条低于天花板**时

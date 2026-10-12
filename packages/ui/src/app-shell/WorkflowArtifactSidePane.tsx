@@ -13,6 +13,8 @@ import {
   isTextArtifactContentType,
 } from "@/app-shell/workflow-artifacts/artifactPresentation.js";
 import { WorkflowArtifactBody } from "@/app-shell/workflow-artifacts/WorkflowArtifactBody.js";
+import { WorkflowArtifactSaveAsFile } from "@/app-shell/workflow-artifacts/WorkflowArtifactSaveAsFile.js";
+import { FileTypeIcon } from "@/components/FileTypeIcon.js";
 import { useWorkflowRunArtifactBytes } from "@/hooks/useWorkflowRunArtifactBytes.js";
 import { useWorkflowRunArtifactData } from "@/hooks/useWorkflowRunArtifactData.js";
 import {
@@ -215,9 +217,19 @@ function WorkflowArtifactView({
     <>
       <header className="shrink-0 border-b border-border px-4 py-3">
         <div className="flex min-w-0 items-center gap-2">
-          {/* 与产物药丸同一枚方形瓦片：tab 头就是那枚药丸长大了。 */}
+          {/* 与产物药丸同一枚方形瓦片：tab 头就是那枚药丸长大了。file 产物有名字（sourcePath
+              叶子/标题）时换按扩展名着形的 FileTypeIcon（chat-small-ux-file-icons.md §2 消费点），
+              其余种类维持 kind 图标。 */}
           <span className="flex size-[22px] shrink-0 items-center justify-center rounded-md bg-surface-hover text-foreground-subtle">
-            <ArtifactKindIcon className="size-3.5" kind={artifact.kind} />
+            {artifact.kind === "file" &&
+            (artifact.sourcePath !== undefined || artifact.title !== undefined) ? (
+              <FileTypeIcon
+                className="size-3.5"
+                name={artifact.sourcePath ?? artifact.title ?? artifact.id}
+              />
+            ) : (
+              <ArtifactKindIcon className="size-3.5" kind={artifact.kind} />
+            )}
           </span>
           <h2
             className="min-w-0 flex-1 truncate text-ui-base font-medium text-foreground"
@@ -235,7 +247,15 @@ function WorkflowArtifactView({
             version={version}
             versionIndex={versionIndex}
           />
-          <div className="ml-auto flex items-center gap-1">
+          <div className="ml-auto flex flex-wrap items-center justify-end gap-1">
+            {!preset ? (
+              <WorkflowArtifactSaveAsFile
+                artifact={artifact}
+                bytes={bytesState.bytes}
+                runId={tab.runId}
+                version={version}
+              />
+            ) : null}
             {localSourcePath !== undefined && onRevealFileInTree !== undefined ? (
               <Button
                 data-testid="workflow-artifact-reveal"

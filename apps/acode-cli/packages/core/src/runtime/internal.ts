@@ -28,6 +28,7 @@ import type {
   ModelCatalogPort,
   SubagentPort,
   ToolArtifactStorePort,
+  VisualizationFragmentStorePort,
   TraceContext,
   MessageHistory,
   ReadFileStateMap,
@@ -129,6 +130,8 @@ interface RuntimeInjectedDeps {
   modelCatalogPort?: ModelCatalogPort;
   runtimeTaskRegistry: RuntimeTaskRegistry;
   artifactStore?: ToolArtifactStorePort;
+  /** 对话内可视化片段存储（specs/gen-ui-visualize.md）；构造期固定，无 late binding。 */
+  visualizationFragmentStore?: VisualizationFragmentStorePort;
   executionPort?: ExecutionPort;
   fileSystemPort?: FileSystemPort;
   imageProcessorPort?: ImageProcessorPort;

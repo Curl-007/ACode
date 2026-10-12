@@ -1,6 +1,7 @@
 import {
   AMEND_WORKFLOW_TOOL_NAME,
   CREATE_WORKFLOW_TOOL_NAME,
+  FILL_WORKFLOW_HOLE_TOOL_NAME,
   RESOLVE_WORKFLOW_QUESTION_TOOL_NAME,
   RESPOND_TO_COORDINATOR_TOOL_NAME,
   RESUME_WORKFLOW_RUN_TOOL_NAME,
@@ -44,6 +45,11 @@ const WORKFLOW_CHILD_DISALLOWED_TOOLS = [
   // 先例）：那一份是 driver 侧 persona 工具面的减法；这一份按 taskType 覆盖全部 workflow
   // child，不依赖 driver 记得写。
   RESOLVE_WORKFLOW_QUESTION_TOOL_NAME,
+  // FillWorkflowHole 与 ResolveWorkflowQuestion 守**同一条**不变式：洞是脚本作者（创建
+  // run 的主代理）欠的代码，child 也是被编排的一方——让 actor 顺手填洞等于把「拓扑决定
+  // 权交回编排者」退化成演员给自己写剧本。与 workflow-actor-tools.ts 的 persona 侧禁用
+  // 刻意双列（同上）。
+  FILL_WORKFLOW_HOLE_TOOL_NAME,
 ] as const;
 
 /**

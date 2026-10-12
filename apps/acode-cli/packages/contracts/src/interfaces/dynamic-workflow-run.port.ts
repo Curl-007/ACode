@@ -402,6 +402,16 @@ export type DynamicWorkflowResolveQuestionResult =
   | { ok: true; qid: string }
   | { ok: false; reason: DynamicWorkflowResolveQuestionRefusalReason; message: string };
 
+// 挖洞-填充（specs/workflow-holes.md）的请求/结果/停驻洞类型住在叶子文件
+// dynamic-workflow-fill-hole.port.ts（max-file-lines 拆分先例）。此处 import 供本文件使用
+// （fillHole 端口成员与详情的 pendingHoles 字段）+ 原样再导出，导入路径不变。
+import type {
+  DynamicWorkflowFillHoleRequest,
+  DynamicWorkflowFillHoleResult,
+  DynamicWorkflowRunPendingHole,
+} from "./dynamic-workflow-fill-hole.port.js";
+export type * from "./dynamic-workflow-fill-hole.port.js";
+
 export interface DynamicWorkflowRunWaitOptions {
   signal?: AbortSignal;
 }
@@ -682,6 +692,20 @@ export interface DynamicWorkflowRunPort {
    */
   resolveQuestion?(qid: string, answer: string): Promise<DynamicWorkflowResolveQuestionResult>;
   /**
+   * 填一个停驻中的洞（挖洞-填充，apps/acode-cli/specs/workflow-holes.md）。服务
+   * `FillWorkflowHole` 工具。
+   *
+   * 继续 = amend/supersede 链（resume 的 scriptHash 逐字节校验使原地改脚本不可行）：
+   * 服务端读 run 草稿、把洞调用 splice 成 `await (async () => { <fill 语句> })()`、重编译
+   * （诊断 ⇒ 拒绝且洞仍等待）、以 superseded 停下前驱、从前驱导入缓存、启动后继 run，并记
+   * `hole-filled` 事件（含 splice 摘要与新旧 scriptHash）。**每 run 每洞至多一次 fill**：
+   * 前驱 settle 后即 `hole_not_waiting`，语义由 supersede 链天然钉死。
+   *
+   * **可选成员**，照 {@link resolveQuestion} 的先例（消费方 `typeof` 探测）：端口 stub 不必
+   * 为一个填充面全员陪跑；对消费方「端口缺席」与「方法缺席」是同一个业务失败。
+   */
+  fillHole?(request: DynamicWorkflowFillHoleRequest): Promise<DynamicWorkflowFillHoleResult>;
+  /**
    * 本 run 的用户面产物清单（journal `kind = "artifact"` 行按 id 分组、版本升序）。UI 冷恢复与中枢详情的 durable 读法。
    * 未知 runId 返回 `undefined`。**可选成员**，理由同 {@link listRuns}（journal 带产物
    * 读面时才提供；消费方 `typeof` 探测）。
@@ -944,6 +968,16 @@ export interface DynamicWorkflowRunDetail extends DynamicWorkflowRunSummary {
    * 缺了它，那两处承诺都会指向一个什么都不返回的工具。
    */
   pendingQuestions?: readonly DynamicWorkflowRunPendingQuestion[];
+  /**
+   * 此刻停驻在这个 run 上、等主代理提交代码的洞（挖洞-填充）。
+   *
+   * 与 `pendingQuestions` **不同源**：升级的「现在还欠谁」是进程内停驻 deferred 的活事实
+   * （重放在进程亡故后说谎）；洞的等待**就是 journal 事件的事实**（hole-reached 起期、
+   * hole-filled / run-settled 止期），所以这里从事件归约（与 run 面板同一个 shared reducer），
+   * 冷读与热读给出同一份表。零条时整字段缺席，与 `pendingQuestions` 同一条「无则缺席」惯例。
+   * 这是 `FillWorkflowHole` 的 **hole_ref 发现面**：`hole_not_waiting` 的拒绝文案指向这里。
+   */
+  pendingHoles?: readonly DynamicWorkflowRunPendingHole[];
   /**
    * 本 run 的用户面产物（任意状态都附；journal-backed，与 {@link DynamicWorkflowRunSnapshot.artifacts}
    * 同源）。`GetWorkflowRun` 据此告诉模型「这些已经以卡片呈现给用户了，按标题引用即可」。

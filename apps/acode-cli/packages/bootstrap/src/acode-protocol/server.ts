@@ -571,6 +571,12 @@ export class ACodeProtocolAgentServer {
         return await this.requireV4Gateway().workflowRunArtifactData(request.params);
       case V4_METHODS.conversationWorkflowRunArtifactRead:
         return await this.requireV4Gateway().workflowRunArtifactRead(request.params);
+      // 对话内可视化（::visualize）的字节分块读；授权在宿主端口侧（会话 + 注册名核对）。
+      case V4_METHODS.conversationVisualizationRead:
+        return await this.requireV4Gateway().visualizationRead(request.params);
+      // 运行时网络观测开关（agent 进程级事实，不是 conversation 命令）。
+      case V4_METHODS.networkCaptureSetEnabled:
+        return await this.requireV4Gateway().networkCaptureSetEnabled(request.params);
       // dwf 工作区 transcript 的两个读面。同族。
       case V4_METHODS.conversationWorkflowRunWorkspace:
         return await this.requireV4Gateway().workflowRunWorkspace(request.params);

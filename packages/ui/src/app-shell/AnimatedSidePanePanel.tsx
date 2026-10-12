@@ -1179,6 +1179,7 @@ export function AnimatedSidePanePanel({
                             {...(onOpenWorkflowRunDirectory === undefined
                               ? {}
                               : { onOpenWorkflowRunDirectory })}
+                            {...(onOpenWorkflowRun === undefined ? {} : { onOpenWorkflowRun })}
                           />
                         ) : tab.type === "workflow-actor-session" ? (
                           <WorkflowActorSessionSidePane

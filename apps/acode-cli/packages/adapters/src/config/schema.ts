@@ -48,6 +48,11 @@ const mcpServerBaseSchema = {
   protocolVersion: z.enum(["auto", "legacy", "2026-07-28"]).optional(),
   enabled: z.boolean().optional(),
   timeoutMs: positiveNumberSchema.optional(),
+  // resources/sampling 与 protocolVersion 同款教训（2026-10-11 实机：配置写
+  // "resources": true 被 strict 校验判 Unrecognized key，整个 server 被跳过、
+  // 拉取面工具永不合成，日志只留 config.mcp_server.skipped 警告）。
+  resources: z.boolean().optional(),
+  sampling: z.boolean().optional(),
 };
 
 const mcpOAuthSchema = z.union([

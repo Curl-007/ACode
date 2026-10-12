@@ -9,6 +9,7 @@ import { workflowSubagentModelCardLabel } from "@/components/workflow-timeline/s
 import { workflowSummaryParts } from "@/components/workflow-timeline/timeline-summary.js";
 import { WorkflowRunArtifactsSection } from "@/app-shell/WorkflowRunArtifactsSection.js";
 import { WorkflowRunActivityList } from "@/app-shell/WorkflowRunActivityList.js";
+import { WorkflowRunHolesSection } from "@/app-shell/WorkflowRunHoleRow.js";
 import { WorkflowRunPhaseList } from "@/app-shell/WorkflowRunPhaseList.js";
 import { WorkflowRunProvenance } from "@/app-shell/WorkflowRunProvenance.js";
 import {
@@ -391,6 +392,13 @@ const WorkflowRunContent = memo(function WorkflowRunContent({
       )}
 
       <WorkflowRunResultSections result={result} />
+
+      {/*
+       * 停驻洞（挖洞-填充）：`pendingHoles` 的「无则缺席」区——run 在等主代理提交某处函数体时，
+       * 这是面板上最要紧的一节，所以放在主体之前。这里**不**带「打开运行」：读者已经在这条
+       * run 的详情页上，再给一个打开自己的按钮是噪声（编排面板那条才会接 onOpenWorkflowRun）。
+       */}
+      <WorkflowRunHolesSection holes={run?.pendingHoles ?? []} />
 
       {/*
        * 主体三分支，顺序是有意的：

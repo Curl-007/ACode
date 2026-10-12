@@ -5,6 +5,8 @@ import type { ReadFileStateEntry, ReadFileStateMap } from "./types.js";
 export const READ_FILE_STATE_METADATA_SCHEMA_VERSION = 1;
 // `CreateWorkflow` / `AmendWorkflow`：内联草稿的字节就是模型那次调用的 `script` 入参，与 Write
 // 同理记作完整视图（handlers/workflow-draft-read-state.ts）。
+// `FillWorkflowHole`：fill 文件的字节就是模型那次调用的 fill 语句入参，同一条论证
+// （specs/workflow-holes.md：被拒的 fill 要 Edit 后以 `path` 重提）。
 // `ApplyPatch`：多文件补丁，但持久化 metadata 是单文件槽位——每次 recordReadFileStateMetadata
 // 覆盖前一文件，resume 只恢复最后写入的文件，其余文件退回未读态（保守 fail-safe，
 // 模型需重新 Read；spec apply-patch-tool.md 诚实边界）。
@@ -14,7 +16,8 @@ export type PersistedReadFileStateTool =
   | "Edit"
   | "ApplyPatch"
   | "CreateWorkflow"
-  | "AmendWorkflow";
+  | "AmendWorkflow"
+  | "FillWorkflowHole";
 
 export interface PersistedReadFileStateMetadata {
   schemaVersion: typeof READ_FILE_STATE_METADATA_SCHEMA_VERSION;

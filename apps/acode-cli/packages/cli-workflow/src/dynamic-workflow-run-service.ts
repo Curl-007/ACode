@@ -40,6 +40,8 @@
 
 import type { DwfRunSessionListItem } from "@acode/adapters/storage";
 import type {
+  DynamicWorkflowFillHoleRequest,
+  DynamicWorkflowFillHoleResult,
   DynamicWorkflowRunEvent,
   DynamicWorkflowRunArtifact,
   DynamicWorkflowRunArtifactBytes,
@@ -85,6 +87,9 @@ import {
   submitDynamicWorkflowRun,
   type DynamicWorkflowRunEntryContext,
 } from "./dynamic-workflow-run-submit.js";
+// 挖洞-填充（specs/workflow-holes.md）：fill 的 supersede 续跑链（splice → amend 链 →
+// hole-filled 事件），与三条启动入口共用同一份 ctx。
+import { fillWorkflowHole } from "./dynamic-workflow-hole-fill.js";
 import {
   settleOrAbort,
   snapshotOf,
@@ -104,6 +109,7 @@ import {
   createWorkflowEscalationRegistry,
   type WorkflowEscalationRegistry,
 } from "./workflow-escalation-registry.js";
+import { resolveWriteBoundaryOwner } from "./workflow-owner-lease.js";
 // W1-R3 解环：deps 类型住在中立文件（见 dynamic-workflow-run-deps.ts 头注），
 // launch/submit 从那里导入；此处 re-export 保持既有消费面形状不变。
 import type { DynamicWorkflowRunServiceDeps } from "./dynamic-workflow-run-deps.js";
@@ -166,12 +172,18 @@ export function createDynamicWorkflowRunService(
 
   // 先拿共享 owner。claim 失败时只能让当前实例读/停留，不能把另一个进程的 live run
   // 当成孤儿收敛；legacy 内存装配没有 owner gate，保持原有直接收敛语义。
+  // claim 失败（null）不再是终局：ensure 路径经 workflowOwnerReclaim 惰性重试，
+  // 首次成功后补跑这里被跳过的收敛（deferredOwnerReconcile，spec R5）。
+  const deferredOwnerReconcile = { pending: false };
   const ownerReady = deps.workflowOwnerReady;
   if (ownerReady === undefined) {
     reconcileOrphanRuns(deps);
   } else {
     void ownerReady.then((owner) => {
-      if (owner === null) return;
+      if (owner === null) {
+        deferredOwnerReconcile.pending = true;
+        return;
+      }
       if (owner !== undefined) {
         deps.ownerToken = owner.ownerToken;
         deps.ownerGeneration = owner.ownerGeneration;
@@ -244,13 +256,13 @@ export function createDynamicWorkflowRunService(
       request: DynamicWorkflowRunSubmitRequest,
     ): Promise<DynamicWorkflowRunSubmitResult> {
       assertOpen();
-      await ensureWorkflowOwner(deps);
+      await ensureWorkflowOwner(deps, deferredOwnerReconcile);
       return submitDynamicWorkflowRun(entryContext, request);
     },
 
     async amend(request: DynamicWorkflowRunAmendRequest): Promise<DynamicWorkflowRunAmendResult> {
       assertOpen();
-      await ensureWorkflowOwner(deps);
+      await ensureWorkflowOwner(deps, deferredOwnerReconcile);
       return amendDynamicWorkflowRun(entryContext, request);
     },
 
@@ -276,7 +288,7 @@ export function createDynamicWorkflowRunService(
 
     async resume(runId: string): Promise<DynamicWorkflowRunResumeResult> {
       assertOpen();
-      await ensureWorkflowOwner(deps);
+      await ensureWorkflowOwner(deps, deferredOwnerReconcile);
       return resumeDynamicWorkflowRun(entryContext, runId);
     },
 
@@ -395,6 +407,19 @@ export function createDynamicWorkflowRunService(
       answer: string,
     ): Promise<DynamicWorkflowResolveQuestionResult> {
       return escalations.resolve(qid, answer);
+    },
+
+    /**
+     * 填一个停驻中的洞（挖洞-填充，specs/workflow-holes.md；实现体在
+     * dynamic-workflow-hole-fill.ts）。与三条启动入口同过关闭门：它会停前驱并起一个新 run。
+     * splice、在飞/等待判定、hole-filled 事件与 cacheImported 的裁断全在实现体里。
+     */
+    async fillHole(
+      request: DynamicWorkflowFillHoleRequest,
+    ): Promise<DynamicWorkflowFillHoleResult> {
+      assertOpen();
+      await ensureWorkflowOwner(deps, deferredOwnerReconcile);
+      return fillWorkflowHole(entryContext, request);
     },
 
     async cancel(
@@ -523,10 +548,28 @@ export function createDynamicWorkflowRunService(
   };
 }
 
-async function ensureWorkflowOwner(deps: DynamicWorkflowRunServiceDeps): Promise<void> {
-  const owner = await deps.workflowOwnerReady;
+async function ensureWorkflowOwner(
+  deps: DynamicWorkflowRunServiceDeps,
+  deferredOwnerReconcile: { pending: boolean },
+): Promise<void> {
+  // D3/R4 修复：写边界恒经 resolveWriteBoundaryOwner 读 **live** 所有权（内部走 reclaim），
+  // 不再读冻结的一次性 workflowOwnerReady。旧形状 `owner = await ownerReady; if (owner ===
+  // null) owner = await reclaim()` 在初始 claim 成功后 ownerReady 永久非 null，于是接管后
+  // reclaim 永不触发、闸门拿陈旧 facts 继续写（不带闸门的 createRun 落库陈旧行，首个 gated
+  // 写入被拒，行冻结在非终态；且 reclaim 不可达 → 自愈/收敛永不发生 → 进程级锁死）。
+  const owner = await resolveWriteBoundaryOwner({
+    ownerReady: deps.workflowOwnerReady,
+    ownerReclaim: deps.workflowOwnerReclaim,
+  });
   if (owner === null) throw new Error("Workflow session owner lease is held by another process");
   if (owner !== undefined) {
+    if (deferredOwnerReconcile.pending) {
+      // R5：构造期收敛因 claim 失败被跳过；首次取得所有权时补跑一次。安全论证与
+      // 构造期相同：本进程此前从未持有所有权 ⇒ 名下零在飞 run ⇒ 本会话 journal 里的
+      // 非终态行只可能是死进程遗物（现场证据：冻结在 running 的 dwfrun-ba4e6ad0）。
+      deferredOwnerReconcile.pending = false;
+      reconcileOrphanRuns({ ...deps, ...owner });
+    }
     deps.ownerToken = owner.ownerToken;
     deps.ownerGeneration = owner.ownerGeneration;
   }

@@ -77,6 +77,7 @@ import type {
   SkillPort,
   ToolArtifactReadResult,
   ToolArtifactStorePort,
+  VisualizationFragmentStorePort,
   TodoItem,
   QueryId,
   TraceContext,
@@ -164,6 +165,8 @@ export interface ACodeAppOptions {
   imageProcessorPort?: ImageProcessorPort;
   pdfDocumentPort?: PdfDocumentPort;
   artifactStore?: ToolArtifactStorePort;
+  /** 对话内可视化片段存储；缺省 app 用与 artifactStore 同根的目录自建并拥有。 */
+  visualizationFragmentStore?: VisualizationFragmentStorePort;
   contextSourcePort?: ContextSourcePort;
   skillPort?: SkillPort;
   mcpPort?: McpPort;
@@ -521,6 +524,12 @@ export interface ACodeApp {
     artifactId: string;
     version: number;
   }): Promise<DynamicWorkflowRunArtifactBytes | undefined>;
+  /**
+   * 对话内可视化片段的字节（specs/gen-ui-visualize.md）。授权在实现侧：name 必须在该会话
+   * 注册表/磁盘目录里存在，调用方传来的 name 绝不直接拼路径；未知回 `undefined`。
+   * 分块归网关（≤ 512 KiB 一块）。
+   */
+  readVisualizationFragment?(input: { name: string }): Promise<Uint8Array | undefined>;
   /**
    * workflow run 的工作区 transcript：`files.*` /
    * `git.*` / `world.run` 的 journal 行，两条一起注册、一起缺席（清单 + 一个节点的有界正文）。

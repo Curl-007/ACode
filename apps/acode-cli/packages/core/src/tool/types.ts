@@ -30,6 +30,7 @@ import type {
   SubagentRunOptions,
   SubagentPort,
   ToolArtifactStorePort,
+  VisualizationFragmentStorePort,
   TraceContext,
   TraceId,
   TurnId,
@@ -168,6 +169,11 @@ export interface ToolExecutionContext {
   /** 工作流 actor 升级阻塞问题并等待主代理作答的端口；仅在 workflow actor 会话注入。 */
   workflowEscalatePort?: WorkflowEscalatePort;
   artifactStore?: ToolArtifactStorePort;
+  /**
+   * 对话内可视化片段（::visualize）的存储端口；缺席则 WriteVisualizationFragment
+   * 报能力缺席的业务失败（不静默假装写入成功——模型会去发一条永远渲染不出的引用）。
+   */
+  visualizationFragmentStore?: VisualizationFragmentStorePort;
   automationPort?: AutomationPort;
   offPeakPort?: OffPeakPort;
   sessionStore?: SessionStorePort;

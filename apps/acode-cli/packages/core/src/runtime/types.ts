@@ -87,6 +87,7 @@ import type {
   SubagentPort,
   ToolArtifactStorePort,
   ToolCallId,
+  VisualizationFragmentStorePort,
   WorkflowPort,
   WorkflowEscalatePort,
   WorkflowSubmitPort,
@@ -437,6 +438,8 @@ export interface AgentRuntimeDeps {
   modelCatalogPort?: ModelCatalogPort;
   runtimeTaskRegistry?: RuntimeTaskRegistry;
   artifactStore?: ToolArtifactStorePort;
+  /** 对话内可视化片段存储（specs/gen-ui-visualize.md）；缺席时写入工具报不可用、投影不核对。 */
+  visualizationFragmentStore?: VisualizationFragmentStorePort;
   automationPort?: AutomationPort;
   offPeakPort?: OffPeakPort;
   /**

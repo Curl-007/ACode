@@ -24,6 +24,8 @@ import type {
   V4ConversationWorkflowRunArtifactDataResult,
   V4ConversationWorkflowRunArtifactReadParams,
   V4ConversationWorkflowRunArtifactReadResult,
+  V4ConversationVisualizationReadParams,
+  V4ConversationVisualizationReadResult,
   V4ConversationWorkflowRunArtifactsParams,
   V4ConversationWorkflowRunArtifactsResult,
   V4ConversationWorkflowRunNodeResultParams,
@@ -85,6 +87,10 @@ export interface ConversationTransport {
   workflowRunArtifactRead(
     params: V4ConversationWorkflowRunArtifactReadParams,
   ): Promise<V4ConversationWorkflowRunArtifactReadResult>;
+  /** v4/conversation/visualizationRead：对话内可视化片段的字节，一次一块（≤ 512 KiB）。 */
+  visualizationRead(
+    params: V4ConversationVisualizationReadParams,
+  ): Promise<V4ConversationVisualizationReadResult>;
   /**
    * v4/conversation/workflowRunWorkspace：workflow run 的脚本 transcript 清单
    * （files.* / git.* / world.run 的 journal 行，不带正文）。

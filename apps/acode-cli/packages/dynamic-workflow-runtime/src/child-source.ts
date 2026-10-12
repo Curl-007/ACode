@@ -133,6 +133,17 @@ function __enterPhase(name) {
   __emit({ kind: "event", type: "phase-entered", name: String(name) });
 }
 
+function __hole(siteId, stage, prompt) {
+  // 洞的停靠：形态与 ask 同形（await 一个外部输入），但应答永远不会来——fill 走 supersede 链
+  // （splice 换脚本、停旧 run、起新 run），不回到这次调用。promise 就这样挂着，直到 run 被停、
+  // 子进程随 harness 收尾被 kill；与进程同命是设计语义，不是泄漏。
+  var id = "r" + (++__nextReq);
+  return new Promise(function (resolve, reject) {
+    __pending.set(id, { resolve: resolve, reject: reject });
+    __emit({ kind: "request", id: id, type: "hole", siteId: siteId, stage: stage, prompt: prompt });
+  });
+}
+
 function __publishArtifact(siteId, op, args) {
   // 内容产物是效应：脚本 await 它、要能 catch 它的拒绝，所以与 ask / world-read 同走
   // request/response。args 是 lowering 打包的位置实参（[id, path|content, opts]），原样透传。
@@ -170,6 +181,7 @@ globalThis.__host = {
   createActor: __createActor,
   ask: __ask,
   worldRead: __worldRead,
+  hole: __hole,
   publishArtifact: __publishArtifact,
   declareArtifact: __declareArtifact,
   report: __report,

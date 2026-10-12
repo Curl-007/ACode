@@ -12,6 +12,7 @@ import type {
   DynamicWorkflowRunListItem,
   DynamicWorkflowRunListQuery,
   DynamicWorkflowRunListResult,
+  DynamicWorkflowRunPendingHole,
   DynamicWorkflowRunPendingQuestion,
   DynamicWorkflowRunPort,
 } from "@acode/contracts";
@@ -175,6 +176,7 @@ export function createRunIntrospectionMethods(
       // 先经冷回放那条铸造链归约成 run 面板同款状态，再连同节点行 / actor 行喂给情势截面。
       // 两边各读一次就是为同一份数据付两遍钱，而这条查询在长 run 上正是最贵的一段。
       const stored = journal.listEvents(runId, {});
+      const runState = reduceRunState(row, stored, concurrencyCeiling());
       const pendingQuestions = pendingQuestionsOf(escalations, runId, summary.status, entry);
       return {
         ...summary,
@@ -214,7 +216,7 @@ export function createRunIntrospectionMethods(
           .listRecentLogEvents(runId, DEFAULT_LOG_TAIL_LIMIT)
           .map(toLogTailEntry),
         ...buildWorkflowRunRoster({
-          run: reduceRunState(row, stored, concurrencyCeiling()),
+          run: runState,
           events: stored,
           nodes: journal.listNodes(runId),
           actors: journal.listActors(runId),
@@ -227,6 +229,11 @@ export function createRunIntrospectionMethods(
         ...(pendingQuestions === undefined || pendingQuestions.length === 0
           ? {}
           : { pendingQuestions }),
+        // 停驻中的洞（挖洞-填充）：与 run 面板同一个 shared reducer 的投影（事件即事实，
+        // 见 detail 类型上的注释），FillWorkflowHole 的 hole_ref 发现面。零条时缺席。
+        ...(runState?.pendingHoles === undefined || runState.pendingHoles.length === 0
+          ? {}
+          : { pendingHoles: runState.pendingHoles.map(toDetailPendingHole) }),
         // 产物截面：任意状态都附，含 failed / cancelled
         // ——一个死在第 12 步的 run 仍然交付了它前面产出的那张图。与 `listArtifacts` 和终态
         // 快照走**同一个** artifactsOf，三处给出同一份清单（三处各归并一份，迟早会在
@@ -273,6 +280,27 @@ function pendingQuestionsOf(
 ): readonly DynamicWorkflowRunPendingQuestion[] | undefined {
   const known = entry !== undefined || TERMINAL_RUN_STATUSES.has(status);
   return known ? escalations.pendingFor(runId) : undefined;
+}
+
+/**
+ * shared reducer 的停驻洞条目 → 详情面的 {@link DynamicWorkflowRunPendingHole}。
+ * 字段同形，仍逐字段显式映射（端口的 JSON 形状不 import shared 类型，与
+ * `DynamicWorkflowRunLifecycleStatus` 重新声明同一条纪律）。
+ */
+function toDetailPendingHole(hole: {
+  holeId: string;
+  ordinal: number;
+  stage: string;
+  prompt: string;
+  askedAt?: number;
+}): DynamicWorkflowRunPendingHole {
+  return {
+    holeId: hole.holeId,
+    ordinal: hole.ordinal,
+    stage: hole.stage,
+    prompt: hole.prompt,
+    ...(hole.askedAt === undefined ? {} : { askedAt: hole.askedAt }),
+  };
 }
 
 /**

@@ -18,6 +18,7 @@ import type { PrepareUserExecutionBoundary } from "./host-types.js";
 import { readWorkflowScriptDocument, stableHash } from "./script-workflow-meta.js";
 import { prepareScriptWorkflowRun } from "./script-workflow-prepare.js";
 import { resolveWorkflowConcurrencyCeiling } from "./workflow-concurrency-ceiling.js";
+import { resolveWriteBoundaryOwner } from "./workflow-owner-lease.js";
 import {
   runScriptWorkflowChild,
   type ScriptWorkflowChildRequest,
@@ -62,6 +63,13 @@ export interface ScriptWorkflowRuntimeDeps extends ScriptWorkflowAgentRuntimeDep
   ownerGeneration?: number;
   ownerToken?: string;
   ownerReady?: Promise<{ ownerGeneration: number; ownerToken: string } | null | undefined>;
+  /**
+   * 租约的惰性重试（specs/workflow-owner-lease.md R3）：`ownerReady` 为 null（启动窗口
+   * 内他人活跃租约/瞬时 DB 错误）时经它重试一次；缺席则 null 仍即时抛错（旧语义）。
+   */
+  ownerReclaim?: () => Promise<
+    { ownerGeneration: number; ownerToken: string } | null | undefined
+  >;
   traceContext: TraceContext;
   workspaceIdentity?: string;
   /** 测试注入点；缺省惰性构造真实 manager（S1，workflow-worktree-isolation.md R2）。 */
@@ -218,7 +226,14 @@ export class ScriptWorkflowRuntime {
       await this.assertResumeOwner(input.resumeFromRunId);
     }
     await this.deps.prepareUserExecutionBoundary(options);
-    const owner = await this.deps.ownerReady;
+    // D3/R4 修复：写边界恒经 resolveWriteBoundaryOwner 读 **live** 所有权（内部走 reclaim），
+    // 不再读冻结的一次性 ownerReady。旧形状在初始 claim 成功后 ownerReady 永久非 null，接管后
+    // reclaim 永不触发 → run() 拿陈旧 facts 越过闸门、落库陈旧行（见 dwf ensureWorkflowOwner
+    // 同处注释与 specs/workflow-owner-lease.md D3）。
+    const owner = await resolveWriteBoundaryOwner({
+      ownerReady: this.deps.ownerReady,
+      ownerReclaim: this.deps.ownerReclaim,
+    });
     if (owner === null) throw new Error("Workflow session owner lease is held by another process");
     this.ownerLeaseFacts = owner ??
       (this.deps.ownerToken === undefined || this.deps.ownerGeneration === undefined

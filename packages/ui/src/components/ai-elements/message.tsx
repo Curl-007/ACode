@@ -101,6 +101,7 @@ import type { Theme } from "@/useTheme.js";
 import { createACodeFileCitationRemarkPlugin } from "@/lib/acodeFileCitationRemarkPlugin.js";
 import { windowsFileLinkEscapeRemarkPlugin } from "@/lib/windowsFileLinkEscapeRemarkPlugin.js";
 import { projectACodeFileCitations } from "@/lib/acodeFileCitation.js";
+import { projectAssistantVisualizeReferences } from "@/lib/assistantVisualizeReference.js";
 import { rewriteMarkdownArtifactImageSources } from "@acode/shared";
 
 export type MessageProps = HTMLAttributes<HTMLDivElement> & {
@@ -1350,7 +1351,13 @@ export const MessageResponse = memo(
     const projectedCitationMarkdown = useMemo(
       () =>
         renderACodeFileCitations
-          ? projectACodeFileCitations(rawMarkdown, { streaming: renderStreaming }).visibleText
+          ? // ::visualize 引用与 citation 同一投影模式：CLI 把命中的引用翻成 artifactRow，
+            // 但正文保留指令原文——这里先剥为等长空白（卡片由 artifactRow 分支渲染），
+            // citation 的流式尾部隐藏先生效，再叠加 visualize 的剥离。
+            projectAssistantVisualizeReferences(
+              projectACodeFileCitations(rawMarkdown, { streaming: renderStreaming }).visibleText,
+              { streaming: renderStreaming },
+            ).visibleText
           : rawMarkdown,
       [rawMarkdown, renderStreaming, renderACodeFileCitations],
     );

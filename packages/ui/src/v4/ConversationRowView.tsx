@@ -124,6 +124,8 @@ import {
   splitUserInputEpilogue,
 } from "@/v4/ConversationUserInputEpilogue.js";
 import { ConversationHookDetailsAction } from "@/v4/ConversationHookDetailsAction.js";
+import { isVisualizationArtifactRow } from "@/lib/visualizationSandbox.js";
+import { VisualizationArtifactRow } from "@/v4/VisualizationArtifactRow.js";
 import { formatModelChangeLabel } from "@/v4/composer/modelTriggerDisplay.js";
 import { formatMessageTimeLabel } from "@/v4/messageTimeLabel.js";
 
@@ -2126,7 +2128,13 @@ function ConversationRowViewImpl({
     case "subagent":
       return <SubagentRowView row={row} />;
     case "artifact":
-      return <ArtifactRowView row={row} />;
+      // ::visualize 引用被 CLI 投影成 artifactRow(html, acode-visualization://…)：
+      // 分派到沙箱卡片；其余 artifact（脚本产物等）保持既有的文件摘要卡。
+      return isVisualizationArtifactRow(row) ? (
+        <VisualizationArtifactRow row={row} context={context} />
+      ) : (
+        <ArtifactRowView row={row} />
+      );
     default:
       return null;
   }

@@ -16,7 +16,8 @@ import { createReadFileStateMetadataFromEntry } from "../read-file-state-metadat
 import { createReadFileStateKey, normalizeReadFileStateMtimeMs } from "../read-file-state.js";
 import type { ReadFileStateEntry, ToolExecutionContext } from "../types.js";
 
-export type WorkflowDraftAuthoringTool = "CreateWorkflow" | "AmendWorkflow";
+/** 记「模型亲手写过这份字节」的工具名（fill 文件是 FillWorkflowHole 的内联 fill 落盘）。 */
+export type WorkflowDraftAuthoringTool = "CreateWorkflow" | "AmendWorkflow" | "FillWorkflowHole";
 
 const CRLF_PATTERN = /\r\n/gu;
 const LF = "\n";

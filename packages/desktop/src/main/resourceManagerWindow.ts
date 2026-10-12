@@ -16,6 +16,12 @@ import {
 } from "@acode/shared";
 import { logger } from "./logger.js";
 import { normalizeElectronCpuToMachinePercent } from "./electronCpuNormalization.js";
+import {
+  asWebContentsId,
+  asWindowId,
+  type WebContentsId,
+  type WindowId,
+} from "./desktopWindowIds.js";
 import { buildAuxiliaryRendererName } from "./resourceManagerProcessNames.js";
 import {
   forgetHostResourceUsage,
@@ -95,11 +101,32 @@ export async function getResourceUsageSnapshot(senderId: number): Promise<Resour
   return result;
 }
 
-export function getResourceManagerWindowId(): number | null {
+/**
+ * 资源管理器窗口的 BrowserWindow.id（WindowId 空间）。
+ * 仅供 BrowserWindow.fromId 等窗口级查找（推送观测记录）；发送方鉴权请用
+ * getResourceManagerWebContentsId()，两者是彼此独立的整数计数器，不可互换。
+ */
+export function getResourceManagerWindowId(): WindowId | null {
   if (!instance || instance.isDestroyed()) {
     return null;
   }
-  return instance.id;
+  return asWindowId(instance.id);
+}
+
+/**
+ * 资源管理器窗口的 webContents.id（WebContentsId 空间）。
+ * IPC 发送方鉴权的唯一正确口径：event.sender.id 是 WebContents id，必须与它同空间比较
+ * （与 setResourceUsageSamplingActive / getResourceUsageSnapshot 的 instance.webContents.id
+ * 判定一致）。历史 bug：desktopNetworkCaptureIpc 曾拿 sender.id 去比 getResourceManagerWindowId()
+ * （WindowId），因本 App 存在大量无窗口 webContents（<webview> guest、WebContentsView/CUA、
+ * 辅助 renderer、DevTools），RM 的 webContents.id 必然 > BrowserWindow.id，合法开关被误判
+ * forbidden；反向还会让 webContents.id 撞上 RM BrowserWindow.id 的无关 renderer 越权。
+ */
+export function getResourceManagerWebContentsId(): WebContentsId | null {
+  if (!instance || instance.isDestroyed()) {
+    return null;
+  }
+  return asWebContentsId(instance.webContents.id);
 }
 
 /**

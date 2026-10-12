@@ -30,6 +30,7 @@ import type {
   ToolArtifactStorePort,
   TraceContext,
   TurnId,
+  VisualizationFragmentStorePort,
   WorkflowPort,
   WorkflowEscalatePort,
   WorkflowSubmitPort,
@@ -111,6 +112,8 @@ export interface ToolExecutorOptions {
   /** actor 的升级端口；存在即为该会话注册 escalate。 */
   workflowEscalatePort?: WorkflowEscalatePort;
   artifactStore?: ToolArtifactStorePort;
+  /** 对话内可视化片段的存储端口（specs/gen-ui-visualize.md）；缺席时写入工具降级报不可用。 */
+  visualizationFragmentStore?: VisualizationFragmentStorePort;
   automationPort?: AutomationPort;
   offPeakPort?: OffPeakPort;
   sessionStore?: SessionStorePort;
@@ -220,6 +223,8 @@ export interface ToolExecutorDeps {
   /** actor 的升级端口；存在即为该会话注册 escalate。 */
   workflowEscalatePort?: WorkflowEscalatePort;
   artifactStore?: ToolArtifactStorePort;
+  /** 对话内可视化片段的存储端口（specs/gen-ui-visualize.md）；缺席时写入工具降级报不可用。 */
+  visualizationFragmentStore?: VisualizationFragmentStorePort;
   automationPort?: AutomationPort;
   offPeakPort?: OffPeakPort;
   sessionStore?: SessionStorePort;

@@ -254,6 +254,39 @@ export type SaveFileRequest =
       suggestedName: string;
     };
 
+/** 站点权限的持久决策（specs/embedded-browser-site-permissions.md 的 store 值）。 */
+export type EmbeddedBrowserSitePermissionDecision = "allow" | "deny";
+
+/** 弹窗的四档动作。「本次拒绝」不写任何存储，只是不加 allow。 */
+export type EmbeddedBrowserPermissionAction =
+  | "allow-always"
+  | "allow-session"
+  | "block-always"
+  | "deny-once";
+
+/** Main → Renderer：未决权限请求。mediaTypes 仅 camera/microphone 类请求携带。 */
+export interface EmbeddedBrowserPermissionPromptPayload {
+  requestId: string;
+  origin: string;
+  permission: string;
+  mediaTypes?: string[];
+}
+
+/** Renderer → Main：弹窗应答。 */
+export interface EmbeddedBrowserPermissionResolvePayload {
+  requestId: string;
+  action: EmbeddedBrowserPermissionAction;
+}
+
+/** Renderer → Main：物化请求（字节已在 renderer；上限 20 MiB 见 spec）。 */
+export interface MaterializeWorkflowArtifactFilePayload {
+  runId: string;
+  artifactId: string;
+  version: number;
+  fileName: string;
+  data: Uint8Array;
+}
+
 export interface SaveFileResult {
   canceled?: boolean;
   error?: string;
@@ -678,6 +711,31 @@ export interface IPlatformService {
 
   /** 使用系统默认应用打开本地文件；普通 Web 平台返回 unsupported。 */
   openExternalFile?(path: string): Promise<{ success: boolean; error?: string }>;
+
+  /**
+   * 把 renderer 已持有的 workflow 产物字节物化为本地文件并返回路径
+   * （specs/workflow-artifact-materialization.md）。仅 Desktop 实现；Web 端缺席时
+   * UI 不展示「保存为文件」入口。
+   */
+  materializeWorkflowArtifactFile?(
+    payload: MaterializeWorkflowArtifactFilePayload,
+  ): Promise<{ localPath: string } | { error: string }>;
+
+  /**
+   * 读取嵌入式浏览器站点权限持久表（设置页管理面）。仅 Desktop 实现。
+   */
+  getEmbeddedBrowserSitePermissions?(): Promise<{
+    permissions: Record<string, Record<string, EmbeddedBrowserSitePermissionDecision>>;
+  }>;
+
+  /** 重置某 origin 的某权限记录（下次请求重新弹窗）。仅 Desktop 实现。 */
+  resetEmbeddedBrowserSitePermission?(
+    origin: string,
+    permission: string,
+  ): Promise<{ success: boolean; error?: string }>;
+
+  /** 清空全部站点权限。仅 Desktop 实现。 */
+  clearEmbeddedBrowserSitePermissions?(): Promise<{ success: boolean; error?: string }>;
 
   /** 打开 ACode Computer Use 的完整权限引导。Desktop only。 */
   openCuaPermissionOnboarding?(

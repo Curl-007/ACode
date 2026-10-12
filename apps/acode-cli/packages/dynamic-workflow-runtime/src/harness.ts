@@ -559,6 +559,17 @@ function handleRequest(
       return;
     }
     promise = engine.ask(message.siteId, actorId, message.instructions ?? "");
+  } else if (message.type === "hole") {
+    // 洞的停靠（挖洞-填充）：引擎铸 ordinal、双轨发 hole-reached，然后**永不兑现**——
+    // fill 走 supersede 链，不回到这次调用，response 因此永远不发（run 被停时子进程随
+    // finalize 收尾被 kill，这里挂着的 promise 与进程同命）。askedAt 由本层取：引擎没有
+    // 时钟，与 driver 给 escalation 的 askedAt 同一条纪律（宿主写入）。
+    promise = engine.hole(
+      message.siteId,
+      message.stage ?? "",
+      message.prompt ?? "",
+      Date.now(),
+    );
   } else if (message.type === "publish-artifact") {
     const op = message.artifactOp;
     if (op === undefined) {

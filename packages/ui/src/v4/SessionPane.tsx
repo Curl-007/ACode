@@ -331,6 +331,16 @@ const EMPTY_SUBAGENT_PROJECTION: NonNullable<ConversationSnapshot["subagents"]> 
 
 const MAX_CONVERSATION_FILE_CHANGES_CACHE_ENTRIES = 20;
 
+/** base64 → 字节（可视化卡片分块读）。renderer 里 `atob` 恒在（Chromium）。 */
+function decodeVisualizationBase64(value: string): Uint8Array<ArrayBuffer> {
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
+}
+
 function toComposerUiError(
   sessionId: string | null | undefined,
   error: SessionErrorInfo,
@@ -487,6 +497,7 @@ export function SessionPane({
     attachmentPut,
     attachmentRead,
     attachmentReadRange,
+    visualizationRead,
     onRuntimeRestart,
     onRuntimeLifecycle,
     fileChanges,
@@ -1611,6 +1622,16 @@ export function SessionPane({
       applyFileRewind: workspaceFileRewindEnabled ? handleApplyFileRewind : undefined,
       readAttachment: attachmentRead,
       readAttachmentRange: attachmentReadRange,
+      // 对话内可视化卡片的字节读取（v4 conversationVisualizationRead）；缺席时卡片降级。
+      readVisualization: visualizationRead
+        ? (request) =>
+            visualizationRead(request).then((result) => ({
+              bytes: decodeVisualizationBase64(result.dataBase64),
+              mediaType: result.mediaType,
+              totalBytes: result.totalBytes,
+              nextOffset: result.nextOffset,
+            }))
+        : undefined,
     }),
     [
       workspacePath,

@@ -65,6 +65,12 @@ import { createTempTextAttachment } from "./tempTextAttachment.js";
 import { registerDesktopSaveFileIpcHandler } from "./desktopSaveFile.js";
 import { registerDesktopPrintToPdfIpcHandler } from "./desktopPrintToPdf.js";
 import { registerCuaPipActiveSessionIpc } from "./desktopCuaPipIpc.js";
+import {
+  registerDesktopSitePermissionIpcHandlers,
+  type EmbeddedBrowserSitePermissionController,
+} from "./desktopSitePermissionIpc.js";
+import { registerDesktopWorkflowArtifactIpcHandlers } from "./desktopWorkflowArtifactIpc.js";
+import { registerNetworkCaptureIpc } from "./desktopNetworkCaptureIpc.js";
 
 export function registerPlatformIpcHandlers(options: {
   fetchHelpConfig?: () => Promise<unknown>;
@@ -116,6 +122,11 @@ export function registerPlatformIpcHandlers(options: {
   reportBrowserScreenshotSurfaceReady?: ReportBrowserScreenshotSurfaceReady;
   /** Browser tab 关闭、挂起、恢复与跨重启 shell IPC。 */
   browserViewResidencyHandlers?: BrowserViewResidencyIpcHandlers;
+  /**
+   * 嵌入式浏览器站点权限控制器（specs/embedded-browser-site-permissions.md）。
+   * 由 index.ts 持有 store 实例（userData 路径）后注入；缺省不注册站点权限 IPC。
+   */
+  sitePermissionController?: EmbeddedBrowserSitePermissionController;
 }) {
   ipcMain.handle(PlatformChannels.SelectDirectory, async () => {
     const result = await dialog.showOpenDialog({
@@ -149,6 +160,16 @@ export function registerPlatformIpcHandlers(options: {
 
   registerDesktopSaveFileIpcHandler(options.logger);
   registerDesktopPrintToPdfIpcHandler(options.logger);
+  // 三个新平台能力 registrar（specs: embedded-browser-site-permissions /
+  // workflow-artifact-materialization / runtime-network-capture）。
+  if (options.sitePermissionController) {
+    registerDesktopSitePermissionIpcHandlers({
+      controller: options.sitePermissionController,
+      logger: options.logger,
+    });
+  }
+  registerDesktopWorkflowArtifactIpcHandlers(options.logger);
+  registerNetworkCaptureIpc(options.logger);
 
   ipcMain.handle(
     PlatformChannels.CreateTempTextAttachment,

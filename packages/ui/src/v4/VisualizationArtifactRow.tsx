@@ -77,7 +77,13 @@ export const VisualizationArtifactRow = memo(function VisualizationArtifactRow({
   context: ConversationRowRenderContext;
 }) {
   const { intl } = useACodeIntl();
-  const identity = parseVisualizationArtifactRef(row.ref);
+  // parseVisualizationArtifactRef 每次调用都返回全新的 { sessionId, name } 对象字面量，
+  // 引用天然不稳定。裸放进渲染体会让读取 effect 的依赖数组每轮 Object.is 不等 → effect
+  // 每次渲染都重跑 → cleanup 中断在途 conversationVisualizationRead + setState(loading)
+  // 触发下一次渲染，形成没有不动点的活锁：iframe 永远停在 loading、字节缓存永不填充、
+  // RPC 以渲染速率无界洪泛。用 useMemo 键在稳定原语 row.ref 上，依赖才有不动点。
+  // 依据：specs/gen-ui-visualize-card.md「读取 effect 的收敛纪律」。
+  const identity = useMemo(() => parseVisualizationArtifactRef(row.ref), [row.ref]);
   const wide = row.meta?.visualization?.mode === "wide";
   const cardLabel = intl.formatMessage({ id: "chat.visualize.card" });
   const title = row.displayName.trim() || cardLabel;
@@ -134,7 +140,9 @@ export const VisualizationArtifactRow = memo(function VisualizationArtifactRow({
       cancelled = true;
       controller.abort();
     };
-    // readChunk 随 rowContext 引用稳定（宿主 memo 依赖）；retryCount 是显式重试信号。
+    // 依赖全是稳定项：cacheKey 是字符串、identity 已 useMemo 键在 row.ref（见渲染体注释）、
+    // readChunk 随 rowContext 引用稳定（宿主 memo 依赖）、retryCount 是显式重试信号。
+    // 任一漂移都会让读取 effect 重跑并 abort 在途读，务必保持收敛。
   }, [cacheKey, identity, readChunk, retryCount]);
 
   // 主题 token：从卡片容器 computed style 取值；dark class 翻转不改变本组件 props，

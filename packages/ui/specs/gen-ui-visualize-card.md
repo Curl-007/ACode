@@ -45,6 +45,25 @@ CLI 侧把 `::visualize` 引用投影成 `artifactRow(html)`（见
 - 字节缓存：卡片组件内 useRef 缓存，不进全局 store（避免投影全量补拉的教训，
   见 renderer-memory-budget.md）。
 
+## 读取 effect 的收敛纪律（防无限重渲染 + RPC 洪泛）
+
+卡片挂载即发一次 `conversationVisualizationRead`（分块拼装）把字节读进缓存；该读取
+effect 必须**收敛**——同一 `row.ref` 只读一次，读到 `ready` 后渲染 iframe。据此约束：
+
+- `parseVisualizationArtifactRef(row.ref)` 每次调用都返回**全新的** `{ sessionId, name }`
+  对象字面量（引用不稳定）。组件在渲染体里派生的 `identity` 必须用 `useMemo`（键
+  `row.ref`）稳定，**不得**直接把裸调用结果放进任何 effect 依赖数组。
+- 读取 effect 的依赖数组只允许**稳定原语/稳定引用**：`cacheKey`（字符串
+  `${sessionId}/${name}`，已是 identity 的值代表）、宿主注入且 memo 稳定的
+  `readChunk`、显式重试信号 `retryCount`。把引用不稳定的 `identity` 放进依赖 = 每次
+  渲染依赖都 `Object.is` 不等 = effect 必然重跑 = cleanup 中断在途读 + `setState`
+  触发下一次渲染，形成**没有不动点**的环：iframe 永远停在 loading、`fragmentCacheRef`
+  永不填充、`conversationVisualizationRead`（经 gateway → NodeVisualizationFragmentStore
+  真实磁盘 `readFile`）以渲染速率无界洪泛。
+
+失败降级路径（loadFailed / oversized）是**终态**，不是这种活锁环——设计意图始终是
+「读到就渲染 iframe，读不到就干净降级」，绝不能是「读到一半被自己中断，无限重来」。
+
 ## i18n（en-US + zh-CN 同步）
 
 `chat.visualize.card / loadFailed / retry / openStandaloneHint / oversized / wide`。
@@ -58,3 +77,30 @@ CLI 侧把 `::visualize` 引用投影成 `artifactRow(html)`（见
 4. 桌面 dev 构建手测一轮（CDP 9229 截图），Web 端 `pnpm dev:web` 手测一轮；未执行
    须在交付说明里写明。
 5. 手机布局：卡片宽 100%、高度钳制、可滚动。
+6. 读取 effect 收敛（`test/genUiVisualizeCard.test.ts` 结构守护）：`identity` 经
+   `useMemo` 稳定；读取 effect 依赖数组不含裸 `identity`。仓库无 DOM/组件渲染测试先例
+   （无 jsdom / react-test-renderer），此不变量以源码结构断言钉住，防依赖漂移复发活锁。
+7. 真机 DOM 验收（`packages/desktop/scripts/e2e-visualization-card-render.mjs`，
+   `pnpm --filter @acode/desktop e2e:genui-card`）：补场景 6 的缺口——场景 6 只能做源码
+   正则守护与手写 commit-loop 仿真，从未在真实 React 调度器 + 真实 Chromium DOM 下跑过
+   真实组件。该 harness 用仓库已有的真 Electron（`e2e-smoke.mjs` 同一手法：本仓 Electron
+   二进制 + `--user-data-dir` 隔离），把**真实 `VisualizationArtifactRow`** 连同真实
+   `ACodeIntlProvider`、真实 `parseVisualizationArtifactRef` / `fetchVisualizationFragment`
+   挂进真实 DOM，由真实渲染次数（`displayName` getter）、真实 RPC 计数与真实 `AbortSignal`
+   观测收敛。2026-10-12 实测（Windows / Electron Chrome 146）：
+   - 修复后：`renders=4`、`rpcCalls=1`、`abortedCalls=0`、`phase=ready`、iframe
+     `sandbox="allow-scripts"`、`data-v4-visualization-mode="wide"`——真实 DOM 里卡片出现且
+     有不动点；
+   - 破坏对照 `--control`（把当前源码里的 `useMemo` 修复**机械逆回**裸调用后经内存插件构建
+     进同一 harness、同一真实 DOM；对照自洽于工作树，不依赖 `git show HEAD`，因此修复与
+     harness 同批提交后仍可长期复现）：2.5s 内 `renders`/`rpcCalls`/`abortedCalls` 均达两万
+     量级（实测三次分别为 22722、21453、21993，具体值随调度浮动，判据是超过
+     `LIVELOCK_RENDER_FLOOR=20` 即认定没有不动点）、`phase` 恒为 `loading`、无 iframe——
+     活锁在真实 Chromium 下逐字复现。撤掉 `useMemo` 即红。
+   临时目录与 Electron 进程树在两个方向都验证清理干净（无残留、临时目录可删）。
+   harness 保真纪律：`--control` 的 HEAD 源码经 esbuild 插件（虚拟 namespace + `resolveDir`
+   指向真实 `src/v4`）**只在内存里**供出，绝不写进 `src/v4`——src 树被 tsconfig include 与
+   oxlint 扫描，落盘副本一旦因信号中断留在盘上会污染下一轮门禁。Electron 运行时骨架
+   （二进制解析、argv、带超时 spawn、进程树清理、checkpoint 记账）与
+   `e2e-network-capture-auth.mjs` 共用 `packages/desktop/scripts/e2e-electron-harness.mjs`。
+

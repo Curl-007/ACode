@@ -71,6 +71,24 @@ uri 永不拼路径、不落盘；`read_resource` 的 uri 必须出现在最近�
 （防任意 uri 探测，缓存 5 分钟）。资源**订阅**（subscribe/updated 推送）不做——
 拉取面先立住。
 
+### uri 白名单窗口的所有权（不跨会话）
+
+窗口是**进程内存事实**：不落盘、**不跨会话**。其唯一所有者是「一次
+`registerMcpResourceTools` 调用」——即一个 runtime 注册资源工具时新建的窗口 Map，
+被该 runtime 注册的 list/read 工具 handler 闭包持有，随 runtime 生命周期存续。
+
+- **禁止**用「模块级、仅按 `serverName` 键控」的全局 Map 承载窗口。一个 agent 进程
+  同时托管多个并发 runtime（每 session 独立 pool lease、fork/child session、
+  parent+subagent），它们会注册**同名** server（同一份 `.acode/.agents` 配置）却持有
+  **各自独立**的 MCP 连接（per-lease connectionKey，账号/token/可达性可能不同，
+  list 结果因此可能不同甚至为空）。仅按 `serverName` 键控会让 B 的 list **整体覆盖**
+  A 的窗口：A 随后 read 自己刚列出的 uri 被误判 `uri_not_listed`（错误结果）；反向
+  则 B 能 read 只有 A 列过的 uri（越过 per-session 授权边界，正是本窗口要防的探测）。
+- 窗口 Map 必须在 `registerMcpResourceTools` 内部创建、按 `serverName` 键控（该 Map
+  已天然 per-runtime，`serverName` 在其作用域内唯一），并注入 list/read 工具 entry
+  工厂；handler 只读写自己闭包内的 Map，不触碰任何模块级共享状态。
+- 过期即删除对应条目，模型需重新 list（工具结果里如实告知），与既有 5 分钟 TTL 一致。
+
 ## 协议与登记
 
 - McpPort 接口（contracts）扩 `onSamplingRequest`/`listResources`/`readResource`；
@@ -88,3 +106,6 @@ uri 永不拼路径、不落盘；`read_resource` 的 uri 必须出现在最近�
 3. list/read 工具只在 resources:true 时注册；read 未列过的 uri 被拒。
 4. 单测：capability 条件声明、上限钳制、uri 白名单窗口、权限面接线；
    以 in-process mock MCP server（SDK server 侧）做一次 sampling+resources 集成测试。
+5. 白名单窗口不跨会话：两个 runtime 各自 `registerMcpResourceTools` 注册同名 server
+   （各持独立 port，list 返回不同 uri 集）时，A 的 read 只认 A 自己列出的 uri，
+   B 的 list 不覆盖 A 的窗口，B 无法 read 只有 A 列过的 uri（跨 session 误放行）。

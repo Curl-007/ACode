@@ -35,18 +35,32 @@ interface UriWindow {
   expiresAt: number;
 }
 
-const uriWindowsByServer = new Map<string, UriWindow>();
+/**
+ * 白名单窗口的作用域是「一次 registerMcpResourceTools 调用」——即一个 runtime。
+ * 原因（2026-10-12 修复）：窗口曾是模块级、仅按 serverName 键控的全局 Map
+ * （`const uriWindowsByServer = new Map<string, UriWindow>()`）。一个 agent 进程同时
+ * 托管多个并发 runtime（每 session 独立 pool lease、fork/child、parent+subagent），它们
+ * 注册**同名** server（同一份 .acode/.agents 配置）却各持**独立** MCP 连接（per-lease
+ * connectionKey，list 结果可能不同甚至为空）。全局 Map 让 B 的 list 整体覆盖 A 的窗口：
+ * A 随后 read 自己刚列出的 uri 被误判 uri_not_listed（错误结果）；反向则 B 能 read 只有
+ * A 列过的 uri（越过 per-session 授权边界，正是本窗口要防的探测）——违背 specs
+ * mcp-sampling-resources.md「窗口不落盘、不跨会话」与 handler 注释「不跨会话」。
+ * 修复：Map 移入 registerMcpResourceTools 内部按 serverName 键控（该 Map 已天然
+ * per-runtime，serverName 在其作用域内唯一），由 list/read handler 闭包持有，随 runtime
+ * 存续，不再有任何模块级共享写路径。
+ */
+type UriWindows = Map<string, UriWindow>;
 
-/** 仅供测试复位；生产代码不得调用。 */
-export function resetMcpResourceUriWindowsForTest(): void {
-  uriWindowsByServer.clear();
-}
-
-function consumeUriWindow(serverName: string, uri: string, now: number): boolean {
-  const window = uriWindowsByServer.get(serverName);
+function consumeUriWindow(
+  windows: UriWindows,
+  serverName: string,
+  uri: string,
+  now: number,
+): boolean {
+  const window = windows.get(serverName);
   if (!window) return false;
   if (window.expiresAt <= now) {
-    uriWindowsByServer.delete(serverName);
+    windows.delete(serverName);
     return false;
   }
   return window.uris.has(uri);
@@ -64,14 +78,16 @@ export function registerMcpResourceTools(
   if (typeof mcpPort.listResources !== "function" || typeof mcpPort.readResource !== "function") {
     return [];
   }
+  // 每个 runtime 一份独立窗口：闭包被本次注册的 list/read handler 持有，不跨会话共享。
+  const uriWindows: UriWindows = new Map();
   const registered: string[] = [];
   for (const [serverName, config] of Object.entries(servers)) {
     if (config.resources !== true) continue;
     const visible = toModelVisibleMcpNamePart(serverName);
     const listName = `mcp__${visible}__list_resources`;
     const readName = `mcp__${visible}__read_resource`;
-    registry.register(createListResourcesToolEntry(listName, serverName, mcpPort));
-    registry.register(createReadResourceToolEntry(readName, serverName, mcpPort));
+    registry.register(createListResourcesToolEntry(listName, serverName, mcpPort, uriWindows));
+    registry.register(createReadResourceToolEntry(readName, serverName, mcpPort, uriWindows));
     registered.push(listName, readName);
   }
   return registered;
@@ -81,6 +97,7 @@ function createListResourcesToolEntry(
   name: string,
   serverName: string,
   mcpPort: McpPort,
+  uriWindows: UriWindows,
 ): ToolEntry {
   const riskLevel: RiskLevel = "low";
   return {
@@ -126,7 +143,7 @@ function createListResourcesToolEntry(
         timeoutMs: RESOURCE_TOOL_TIMEOUT_MS,
       });
       // 每次 list 整体替换窗口（旧 uri 不残留）：read 的白名单永远来自最近一次清单。
-      uriWindowsByServer.set(serverName, {
+      uriWindows.set(serverName, {
         uris: new Set(resources.map((resource) => resource.uri)),
         expiresAt: Date.now() + URI_WINDOW_TTL_MS,
       });
@@ -146,6 +163,7 @@ function createReadResourceToolEntry(
   name: string,
   serverName: string,
   mcpPort: McpPort,
+  uriWindows: UriWindows,
 ): ToolEntry {
   const riskLevel: RiskLevel = "low";
   return {
@@ -204,7 +222,7 @@ function createReadResourceToolEntry(
       }
       // uri 白名单窗口：不在最近一次 list 结果里（或窗口过期）一律拒绝——不拿模型给的
       // 字符串直接打 server，防任意 uri 探测。
-      if (!consumeUriWindow(serverName, uri, Date.now())) {
+      if (!consumeUriWindow(uriWindows, serverName, uri, Date.now())) {
         return {
           error: "uri_not_listed",
           message: `Uri ${uri} is not in the current list_resources window for ${serverName} (windows expire after 5 minutes). Call the matching list_resources tool first, then read a uri from its result.`,

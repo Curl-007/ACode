@@ -1,0 +1,28 @@
+{
+  "name": "@acode/web-remote-relay",
+  "version": "1.0.0",
+  "private": true,
+  "description": "手机扫码远控的 relay：配对、鉴权与不透明二进制转发",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "dev": "tsx src/main.ts",
+    "build": "tsup",
+    "lint": "oxlint",
+    "lint:fix": "oxlint --fix",
+    "test": "node --import tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@acode/shared": "workspace:*",
+    "ws": "^8.20.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "@types/ws": "^8.18.1",
+    "tsup": "^8.4.0",
+    "tsx": "^4.19.4",
+    "typescript": "^6.0.2"
+  }
+}

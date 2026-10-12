@@ -155,13 +155,13 @@ export const OFFICIAL_PLUGIN_DEFINITIONS: readonly OfficialPluginDefinition[] = 
   },
   ...(
     [
-      ["documents", "docx", "Documents", "Word文档"],
-      ["pdf", "pdf", "PDF", "PDF"],
-      ["presentations", "pptx", "Presentations", "演示文档"],
-      ["spreadsheets", "xlsx", "Spreadsheets", "电子表格"],
+      ["documents", "docx", "Documents", "Word文档", "0.1.7"],
+      ["pdf", "pdf", "PDF", "PDF", "0.2.0"],
+      ["presentations", "pptx", "Presentations", "演示文档", "0.1.7"],
+      ["spreadsheets", "xlsx", "Spreadsheets", "电子表格", "0.1.7"],
     ] as const
   ).map(
-    ([name, skill, displayName, chineseName]): OfficialPluginDefinition => ({
+    ([name, skill, displayName, chineseName, version]): OfficialPluginDefinition => ({
       defaultEnabled: true,
       listing: {
         author: ZAI_AUTHOR,
@@ -180,7 +180,7 @@ export const OFFICIAL_PLUGIN_DEFINITIONS: readonly OfficialPluginDefinition[] = 
         `../../${name}-plugin`,
         `../../../${name}-plugin`,
       ],
-      version: "0.1.7",
+      version,
     }),
   ),
   {
@@ -361,6 +361,69 @@ export const OFFICIAL_PLUGIN_DEFINITIONS: readonly OfficialPluginDefinition[] = 
     // 这里的 version 追踪上游 acode-cua runtime 版本，使插件 UI 展示、缓存路径、
     // marketplace 条目都对齐；具体版本由原子 producer bump 工作流维护。
     version: "0.6.3",
+  },
+  {
+    // 启用后获得 14 个 agent_teams_* 工具与 agent-teams:member subagent。
+    // MCP server 通过 .mcp.json 声明为 stdio 子进程，状态通知走 acode-plugin-state: 前缀
+    // （宿主未接线时被优雅忽略，不影响工具运行）。
+    listing: {
+      author: ZAI_AUTHOR,
+      category: "productivity",
+      displayName: "AgentTeams",
+      displayName_i18n: { "zh-CN": "智能体团队" },
+      icon: OFFICIAL_PLUGIN_ICON,
+      description_i18n: {
+        "zh-CN": "把当前会话升级为队长，组建成员团队：共享任务 DAG、成员邮箱直连、指令式调度与只读团队面板。",
+      },
+      examplePrompts: [
+        "Use AgentTeams to review the last two commits and fix findings",
+        "组建一个团队并行实现这三个模块",
+      ],
+      examplePrompts_i18n: {
+        "zh-CN": ["用 AgentTeams 审查最近两个提交并修复问题", "组建一个团队并行实现这三个模块"],
+      },
+    },
+    name: "agent-teams",
+    rootCandidates: [
+      "packages/agent-teams-plugin",
+      "../agent-teams-plugin",
+      "../../agent-teams-plugin",
+      "../../../agent-teams-plugin",
+    ],
+    requiredSeedPaths: [
+      ".mcp.json",
+      "agents/member.md",
+      "commands/team.md",
+      "dist/mcp/server.js",
+      "skills/agent-teams/SKILL.md",
+    ],
+    version: "0.1.0",
+  },
+  {
+    // 纯内容型插件（只提供 snippets/builtin.json，无 MCP / 无系统依赖），默认启用。
+    // 数据型插件：manifest 不声明组件字段（片段没有对应的组件类），
+    // 数据走 snippets/builtin.json 约定路径，由 ISnippetsService 按插件根 + 固定相对路径读取。
+    // 用户可以停用本插件 —— 停用后片段面板只剩用户自己的片段，这是产品语义。
+    defaultEnabled: true,
+    listing: {
+      author: ZAI_AUTHOR,
+      category: "utilities",
+      displayName: "Prompt Snippets",
+      displayName_i18n: { "zh-CN": "提示词库" },
+      icon: OFFICIAL_PLUGIN_ICON,
+      description_i18n: {
+        "zh-CN": "内置快捷短语与 Prompt 模板库，在输入框用 ! 或命令面板唤起。",
+      },
+    },
+    name: "prompt-snippets",
+    requiredSeedPaths: ["snippets/builtin.json"],
+    rootCandidates: [
+      "packages/prompt-snippets-plugin",
+      "../prompt-snippets-plugin",
+      "../../prompt-snippets-plugin",
+      "../../../prompt-snippets-plugin",
+    ],
+    version: "0.1.0",
   },
 ];
 

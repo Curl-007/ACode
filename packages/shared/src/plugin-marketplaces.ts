@@ -26,6 +26,8 @@ export const DEFAULT_ENABLED_OFFICIAL_PLUGIN_IDS: ReadonlySet<string> = new Set(
   "skill-creator@acode-plugins-official",
   "plugin-creator@acode-plugins-official",
   "acode-guide@acode-plugins-official",
+  // 提示词库：纯数据型插件（snippets/builtin.json），启用后片段面板内置片段立即可用。
+  "prompt-snippets@acode-plugins-official",
   // 电脑控制回退为默认关闭，故 computer-use 不在此名单内。
   // 该集合必须与 official-plugin-definitions.ts 里标了 defaultEnabled 的插件逐一对应，
   // bootstrap 的「Settings 默认启用集合与 CLI 的官方插件声明一致」单测机械对照两者。

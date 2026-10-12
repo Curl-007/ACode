@@ -53,6 +53,9 @@ const includedTopLevelPaths = new Set([
   // filesystem seed 若漏掉 scripts，Dev 会连接 node_repl 成功却在首次 Browser Use 时导入失败。
   "scripts",
   "skills",
+  // prompt-snippets 是数据型插件：片段库落在 snippets/builtin.json。
+  // 白名单漏掉它会让 seed 出一个没有内容的内置库。
+  "snippets",
   "templates",
 ]);
 

@@ -47,7 +47,6 @@ patchedDependencies:
     path: patches/@ai-sdk__openai-compatible@2.0.60.patch
 
 importers:
-
   .:
     dependencies:
       border-beam:
@@ -97,35 +96,10 @@ importers:
         specifier: ^6.0.2
         version: 6.0.2
 
-  apps/acode-cli:
-    devDependencies:
-      '@types/node':
-        specifier: ^24.0.0
-        version: 24.12.2
-      '@withfig/autocomplete':
-        specifier: 2.692.3
-        version: 2.692.3
-      esbuild:
-        specifier: ^0.25.0
-        version: 0.25.12
-      oxfmt:
-        specifier: ^0.47.0
-        version: 0.47.0
-      oxlint:
-        specifier: ^1.62.0
-        version: 1.67.0
-      postject:
-        specifier: ^1.0.0-alpha.6
-        version: 1.0.0-alpha.6
-      tsx:
-        specifier: ^4.20.0
-        version: 4.21.0
-      turbo:
-        specifier: ^2.4.0
-        version: 2.9.14
-      typescript:
-        specifier: ^5.9.0
-        version: 5.9.3
+
+  apps/acode-cli/packages/acode-cua-plugin: {}
+
+  apps/acode-cli/packages/acode-guide-plugin: {}
 
   apps/acode-cli/packages/adapters:
     dependencies:
@@ -200,6 +174,34 @@ importers:
         specifier: ^2.10.3
         version: 2.10.3
 
+
+  apps/acode-cli/packages/agent-teams-plugin:
+    dependencies:
+      '@modelcontextprotocol/server':
+        specifier: 2.0.0
+        version: 2.0.0
+    devDependencies:
+      '@modelcontextprotocol/client':
+        specifier: 2.0.0
+        version: 2.0.0
+      '@types/node':
+        specifier: ^24.0.0
+        version: 24.12.2
+      esbuild:
+        specifier: ^0.25.0
+        version: 0.25.12
+      tsx:
+        specifier: ^4.19.4
+        version: 4.21.0
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+      zod:
+        specifier: 4.6.5
+        version: 4.6.5
+
+  apps/acode-cli/packages/android-emulator-plugin: {}
+
   apps/acode-cli/packages/bootstrap:
     dependencies:
       '@acode/adapters':
@@ -243,6 +245,7 @@ importers:
         specifier: ^24.0.0
         version: 24.12.2
 
+
   apps/acode-cli/packages/browser-use-plugin:
     dependencies:
       '@acode/core':
@@ -261,6 +264,42 @@ importers:
       typescript:
         specifier: ^5.9.0
         version: 5.9.3
+
+
+  apps/acode-cli/packages/cli-workflow:
+    dependencies:
+      '@acode/adapters':
+        specifier: workspace:*
+        version: link:../adapters
+      '@acode/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@acode/core':
+        specifier: workspace:*
+        version: link:../core
+      '@acode/dynamic-workflow':
+        specifier: workspace:*
+        version: link:../dynamic-workflow
+      '@acode/dynamic-workflow-runtime':
+        specifier: workspace:*
+        version: link:../dynamic-workflow-runtime
+      '@acode/shared':
+        specifier: workspace:*
+        version: link:../../../../packages/shared
+      '@acode/workflow-run-command':
+        specifier: workspace:*
+        version: link:../workflow-run-command
+      '@acode/workflow-run-read':
+        specifier: workspace:*
+        version: link:../workflow-run-read
+      meriyah:
+        specifier: ^7.1.1
+        version: 7.1.2
+    devDependencies:
+      '@types/node':
+        specifier: ^24.0.0
+        version: 24.12.2
+
 
   apps/acode-cli/packages/cli:
     dependencies:
@@ -304,39 +343,6 @@ importers:
         specifier: 1.59.1
         version: 1.59.1
 
-  apps/acode-cli/packages/cli-workflow:
-    dependencies:
-      '@acode/adapters':
-        specifier: workspace:*
-        version: link:../adapters
-      '@acode/contracts':
-        specifier: workspace:*
-        version: link:../contracts
-      '@acode/core':
-        specifier: workspace:*
-        version: link:../core
-      '@acode/dynamic-workflow':
-        specifier: workspace:*
-        version: link:../dynamic-workflow
-      '@acode/dynamic-workflow-runtime':
-        specifier: workspace:*
-        version: link:../dynamic-workflow-runtime
-      '@acode/shared':
-        specifier: workspace:*
-        version: link:../../../../packages/shared
-      '@acode/workflow-run-command':
-        specifier: workspace:*
-        version: link:../workflow-run-command
-      '@acode/workflow-run-read':
-        specifier: workspace:*
-        version: link:../workflow-run-read
-      meriyah:
-        specifier: ^7.1.1
-        version: 7.1.2
-    devDependencies:
-      '@types/node':
-        specifier: ^24.0.0
-        version: 24.12.2
 
   apps/acode-cli/packages/contracts:
     dependencies:
@@ -353,6 +359,7 @@ importers:
       '@types/node':
         specifier: ^24.0.0
         version: 24.12.2
+
 
   apps/acode-cli/packages/core:
     dependencies:
@@ -393,6 +400,7 @@ importers:
       '@types/node':
         specifier: ^24.0.0
         version: 24.12.2
+
 
   apps/acode-cli/packages/debug:
     dependencies:
@@ -440,15 +448,8 @@ importers:
         specifier: ^7.3.5
         version: 7.3.7(@types/node@24.12.2)(jiti@2.6.1)(lightningcss@1.33.0)(tsx@4.21.0)(yaml@2.9.0)
 
-  apps/acode-cli/packages/dynamic-workflow:
-    dependencies:
-      typescript:
-        specifier: ^5.9.0
-        version: 5.9.3
-    devDependencies:
-      '@types/node':
-        specifier: ^24.0.0
-        version: 24.12.2
+
+  apps/acode-cli/packages/documents-plugin: {}
 
   apps/acode-cli/packages/dynamic-workflow-runtime:
     dependencies:
@@ -460,11 +461,28 @@ importers:
         specifier: ^24.0.0
         version: 24.12.2
 
+
+  apps/acode-cli/packages/dynamic-workflow:
+    dependencies:
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+    devDependencies:
+      '@types/node':
+        specifier: ^24.0.0
+        version: 24.12.2
+
+
   apps/acode-cli/packages/i18n:
     dependencies:
       '@acode/contracts':
         specifier: workspace:*
         version: link:../contracts
+
+
+  apps/acode-cli/packages/image-search-plugin: {}
+
+  apps/acode-cli/packages/ios-simulator-plugin: {}
 
   apps/acode-cli/packages/node-repl-host:
     dependencies:
@@ -497,13 +515,30 @@ importers:
         specifier: ^5.9.0
         version: 5.9.3
 
+
+  apps/acode-cli/packages/pdf-plugin: {}
+
+  apps/acode-cli/packages/plugin-creator-plugin: {}
+
+  apps/acode-cli/packages/presentations-plugin: {}
+
+  apps/acode-cli/packages/prompt-snippets-plugin: {}
+
+  apps/acode-cli/packages/restore-legacy-sessions-plugin: {}
+
   apps/acode-cli/packages/shared-types:
     devDependencies:
       '@types/node':
         specifier: ^24.0.0
         version: 24.12.2
 
+
+  apps/acode-cli/packages/skill-creator-plugin: {}
+
+  apps/acode-cli/packages/spreadsheets-plugin: {}
+
   apps/acode-cli/packages/swift-bridge: {}
+
 
   apps/acode-cli/packages/tui:
     dependencies:
@@ -542,6 +577,7 @@ importers:
         specifier: 19.2.0
         version: 19.2.0
 
+
   apps/acode-cli/packages/workflow-run-command:
     dependencies:
       '@acode/contracts':
@@ -551,6 +587,7 @@ importers:
       '@types/node':
         specifier: ^24.0.0
         version: 24.12.2
+
 
   apps/acode-cli/packages/workflow-run-read:
     dependencies:
@@ -568,6 +605,7 @@ importers:
         specifier: ^24.0.0
         version: 24.12.2
 
+
   apps/acode-cli/tools/prompt-trajectory:
     devDependencies:
       '@types/node':
@@ -580,9 +618,43 @@ importers:
         specifier: ^5.9.0
         version: 5.9.3
 
+
   apps/acode-cli/tools/typescript: {}
 
+
+  apps/acode-cli:
+    devDependencies:
+      '@types/node':
+        specifier: ^24.0.0
+        version: 24.12.2
+      '@withfig/autocomplete':
+        specifier: 2.692.3
+        version: 2.692.3
+      esbuild:
+        specifier: ^0.25.0
+        version: 0.25.12
+      oxfmt:
+        specifier: ^0.47.0
+        version: 0.47.0
+      oxlint:
+        specifier: ^1.62.0
+        version: 1.67.0
+      postject:
+        specifier: ^1.0.0-alpha.6
+        version: 1.0.0-alpha.6
+      tsx:
+        specifier: ^4.20.0
+        version: 4.21.0
+      turbo:
+        specifier: ^2.4.0
+        version: 2.9.14
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+
+
   packages/acode-cua: {}
+
 
   packages/acode-server-cli:
     dependencies:
@@ -633,6 +705,7 @@ importers:
         specifier: ^6.0.2
         version: 6.0.2
 
+
   packages/client:
     dependencies:
       '@acode/rpc':
@@ -648,6 +721,7 @@ importers:
       typescript:
         specifier: ^6.0.2
         version: 6.0.2
+
 
   packages/desktop:
     dependencies:
@@ -785,6 +859,7 @@ importers:
         specifier: ^8.0.16
         version: 8.3.3(@types/node@25.6.0)(esbuild@0.27.7)(jiti@2.6.1)(tsx@4.21.0)(yaml@2.9.0)
 
+
   packages/formal-proof:
     dependencies:
       d3:
@@ -800,6 +875,7 @@ importers:
       vite:
         specifier: ^8.0.16
         version: 8.3.3(@types/node@25.6.0)(esbuild@0.27.7)(jiti@2.6.1)(tsx@4.21.0)(yaml@2.9.0)
+
 
   packages/harness-sdk:
     dependencies:
@@ -817,24 +893,13 @@ importers:
         specifier: ^6.0.2
         version: 6.0.2
 
+
   packages/model-option-map:
     devDependencies:
       typescript:
         specifier: ^6.0.2
         version: 6.0.2
 
-  packages/provider:
-    dependencies:
-      '@acode/shared':
-        specifier: workspace:*
-        version: link:../shared
-      zod:
-        specifier: 4.6.5
-        version: 4.6.5
-    devDependencies:
-      typescript:
-        specifier: ^6.0.2
-        version: 6.0.2
 
   packages/provider-node:
     dependencies:
@@ -855,6 +920,21 @@ importers:
         specifier: ^6.0.2
         version: 6.0.2
 
+
+  packages/provider:
+    dependencies:
+      '@acode/shared':
+        specifier: workspace:*
+        version: link:../shared
+      zod:
+        specifier: 4.6.5
+        version: 4.6.5
+    devDependencies:
+      typescript:
+        specifier: ^6.0.2
+        version: 6.0.2
+
+
   packages/rpc:
     devDependencies:
       ts-node:
@@ -863,6 +943,7 @@ importers:
       typescript:
         specifier: ^5.9.3
         version: 5.9.3
+
 
   packages/server:
     dependencies:
@@ -961,6 +1042,7 @@ importers:
         specifier: ^6.0.2
         version: 6.0.2
 
+
   packages/services:
     dependencies:
       '@acode/acode-cua':
@@ -1019,6 +1101,7 @@ importers:
         specifier: ^6.0.2
         version: 6.0.2
 
+
   packages/shared:
     dependencies:
       '@acode/model-option-map':
@@ -1031,6 +1114,7 @@ importers:
       typescript:
         specifier: ^6.0.2
         version: 6.0.2
+
 
   packages/ui:
     dependencies:
@@ -1215,6 +1299,34 @@ importers:
       unified:
         specifier: ^11.0.5
         version: 11.0.5
+
+
+  packages/web-remote-relay:
+    dependencies:
+      '@acode/shared':
+        specifier: workspace:*
+        version: link:../shared
+      ws:
+        specifier: ^8.20.0
+        version: 8.20.0
+    devDependencies:
+      '@types/node':
+        specifier: ^25.5.0
+        version: 25.6.0
+      '@types/ws':
+        specifier: ^8.18.1
+        version: 8.18.1
+      tsup:
+        specifier: ^8.4.0
+        version: 8.5.1(jiti@2.6.1)(postcss@8.5.9)(tsx@4.21.0)(typescript@6.0.2)(yaml@2.9.0)
+      tsx:
+        specifier: ^4.19.4
+        version: 4.21.0
+      typescript:
+        specifier: ^6.0.2
+        version: 6.0.2
+
+packages:
 
   packages/web:
     dependencies:

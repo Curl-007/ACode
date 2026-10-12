@@ -1,0 +1,9 @@
+{
+  "name": "prompt-snippets",
+  "version": "0.1.0",
+  "description": "Built-in prompt snippet library (quick phrases and reusable prompt templates) consumed by the ZCode composer's snippet panel. Data-only plugin: it ships snippets/builtin.json and registers no model-visible components.",
+  "author": {
+    "name": "ZCodium"
+  },
+  "license": "MIT"
+}

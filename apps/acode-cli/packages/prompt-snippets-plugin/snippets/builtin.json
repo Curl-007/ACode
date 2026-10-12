@@ -1,0 +1,474 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "id": "builtin:discipline:no-hands",
+      "group": "discipline",
+      "kind": "suffix",
+      "title": { "zh-CN": "先别动手", "en-US": "Don't start yet" },
+      "content": {
+        "zh-CN": "先别动手：先说清你的方案和影响面，等我确认再改代码。",
+        "en-US": "Don't start yet: explain your plan and blast radius first, then wait for my confirmation before changing code."
+      },
+      "requiresMcp": [],
+      "localOnly": false
+    },
+    {
+      "id": "builtin:discipline:no-scope-creep",
+      "group": "discipline",
+      "kind": "suffix",
+      "title": { "zh-CN": "别扩范围", "en-US": "Don't expand scope" },
+      "content": {
+        "zh-CN": "别扩范围：只改我提到的部分，不要顺手重构、格式化或调整无关文件。",
+        "en-US": "Don't expand scope: only touch what I asked for. No opportunistic refactors, reformatting, or unrelated file edits."
+      },
+      "requiresMcp": [],
+      "localOnly": false
+    },
+    {
+      "id": "builtin:discipline:evidence-first",
+      "group": "discipline",
+      "kind": "suffix",
+      "title": { "zh-CN": "实测优先，别推断", "en-US": "Verify, don't infer" },
+      "content": {
+        "zh-CN": "实测优先，别推断：结论要有命令输出、日志或代码位置作证据；不确定就说不确定。",
+        "en-US": "Verify, don't infer: back every conclusion with command output, logs, or a code location. Say so when you are unsure."
+      },
+      "requiresMcp": [],
+      "localOnly": false
+    },
+    {
+      "id": "builtin:discipline:allow-veto",
+      "group": "discipline",
+      "kind": "suffix",
+      "title": { "zh-CN": "允许否决", "en-US": "Feel free to push back" },
+      "content": {
+        "zh-CN": "允许否决：如果你认为我的思路有问题，直接说并给出更好的方案，不要为了顺从而照做。",
+        "en-US": "Feel free to push back: if my approach is wrong, say so and propose a better one instead of complying."
+      },
+      "requiresMcp": [],
+      "localOnly": false
+    },
+    {
+      "id": "builtin:discipline:minimal-diff",
+      "group": "discipline",
+      "kind": "suffix",
+      "title": { "zh-CN": "最小改动", "en-US": "Minimal diff" },
+      "content": {
+        "zh-CN": "最小改动：优先改现有代码而不是新增抽象，能不加依赖就不加。",
+        "en-US": "Minimal diff: prefer editing existing code over adding abstractions, and avoid new dependencies."
+      },
+      "requiresMcp": [],
+      "localOnly": false
+    },
+    {
+      "id": "builtin:discipline:no-placeholder",
+      "group": "discipline",
+      "kind": "suffix",
+      "title": { "zh-CN": "别留占位实现", "en-US": "No placeholder code" },
+      "content": {
+        "zh-CN": "别留占位实现：不要写 TODO、mock 或空壳函数冒充完成；做不完就说清做到哪一步。",
+        "en-US": "No placeholder code: don't pass off TODOs, mocks, or empty stubs as done. Say where you actually stopped."
+      },
+      "requiresMcp": [],
+      "localOnly": false
+    },
+    {
+      "id": "builtin:discipline:ask-when-unsure",
+      "group": "discipline",
+      "kind": "suffix",
+      "title": { "zh-CN": "不确定就问", "en-US": "Ask when unsure" },
+      "content": {
+        "zh-CN": "不确定就问：需求或边界有歧义时先问我一句，不要靠猜测往下做。",
+        "en-US": "Ask when unsure: if the requirement or boundary is ambiguous, ask me first instead of guessing."
+      },
+      "requiresMcp": [],
+      "localOnly": false
+    },
+    {
+      "id": "builtin:discipline:report-blockers",
+      "group": "discipline",
+      "kind": "suffix",
+      "title": { "zh-CN": "卡住就说", "en-US": "Report blockers" },
+      "content": {
+        "zh-CN": "卡住就说：失败两次以上就停下来说明卡点和已排除的假设，不要反复试错。",
+        "en-US": "Report blockers: after two failed attempts, stop and explain the blocker and the hypotheses you ruled out instead of retrying blindly."
+      },
+      "requiresMcp": [],
+      "localOnly": false
+    },
+
+    {
+      "id": "builtin:general:code-review",
+      "group": "general",
+      "kind": "prompt",
+      "title": { "zh-CN": "代码审查", "en-US": "Code review" },
+      "content": {
+        "zh-CN": "请审查以下 {{语言}} 代码，关注 {{审查重点}}，给出改进建议。先列问题再给修改，按严重程度排序，指出具体的文件和行号。",
+        "en-US": "Review the following {{language}} code with a focus on {{focus}}. List problems first, then fixes, ordered by severity, and cite concrete files and line numbers."
+      },
+      "requiresMcp": [],
+      "localOnly": false
+    },
+    {
+      "id": "builtin:general:bug-fix",
+      "group": "general",
+      "kind": "prompt",
+      "title": { "zh-CN": "Bug 修复", "en-US": "Fix a bug" },
+      "content": {
+        "zh-CN": "定位并修复这个 bug：{{问题现象}}。复现步骤：{{复现步骤}}。先说明根因和证据，再给最小修复，最后说明如何验证修复有效。",
+        "en-US": "Locate and fix this bug: {{symptom}}. Reproduction: {{steps}}. Explain the root cause and evidence first, then give the minimal fix, then how you verified it."
+      },
+      "requiresMcp": [],
+      "localOnly": false
+    },
+    {
+      "id": "builtin:general:refactor",
+      "group": "general",
+      "kind": "prompt",
+      "title": { "zh-CN": "重构优化", "en-US": "Refactor" },
+      "content": {
+        "zh-CN": "重构 {{目标范围}}，目标是 {{重构目标}}。行为必须保持不变，先列出要动的文件和函数，再逐步改；不要顺手改无关代码。",
+        "en-US": "Refactor {{scope}} to {{goal}}. Behavior must stay identical. List the files and functions you will touch before changing them, and leave unrelated code alone."
+      },
+      "requiresMcp": [],
+      "localOnly": false
+    },
+    {
+      "id": "builtin:general:unit-tests",
+      "group": "general",
+      "kind": "prompt",
+      "title": { "zh-CN": "生成单元测试", "en-US": "Generate unit tests" },
+      "content": {
+        "zh-CN": "为 {{被测对象}} 补单元测试：覆盖正常路径、边界值和失败分支。沿用仓库现有的测试框架与文件命名，不要引入新依赖，并实际跑一次给出输出。",
+        "en-US": "Add unit tests for {{target}}: cover the happy path, boundaries, and failure branches. Follow the repo's existing test framework and file naming, add no new dependencies, and run them once to show the output."
+      },
+      "requiresMcp": [],
+      "localOnly": false
+    },
+    {
+      "id": "builtin:general:commit-message",
+      "group": "general",
+      "kind": "prompt",
+      "title": { "zh-CN": "写提交信息", "en-US": "Write a commit message" },
+      "content": {
+        "zh-CN": "按 Conventional Commits 写提交信息：先看 `git diff`，type 用真实语义，标题一行说清做了什么，正文用中文列出关键改动与影响面。不要提交代码，只给信息。",
+        "en-US": "Write a Conventional Commits message: read `git diff` first, use a truthful type, one-line subject, and a body listing the key changes and blast radius. Don't commit anything, just give me the message."
+      },
+      "requiresMcp": [],
+      "localOnly": false
+    },
+    {
+      "id": "builtin:general:pr-description",
+      "group": "general",
+      "kind": "prompt",
+      "title": { "zh-CN": "写 PR 描述", "en-US": "Write a PR description" },
+      "content": {
+        "zh-CN": "为 {{变更范围}} 写 PR 描述：包含背景、改了什么、怎么验证、风险与回退方式。只写事实，不要写「提升体验」这类空话。",
+        "en-US": "Write a PR description for {{scope}}: background, what changed, how it was verified, risks, and rollback. Facts only — no vague claims."
+      },
+      "requiresMcp": [],
+      "localOnly": false
+    },
+    {
+      "id": "builtin:general:ui-visual-review",
+      "group": "general",
+      "kind": "prompt",
+      "title": { "zh-CN": "界面视觉核对", "en-US": "Visual UI review" },
+      "content": {
+        "zh-CN": "用 [@浏览器操作](plugin://browser-use@zcode-plugins-official) 打开 {{页面地址}}，核对视觉与交互：间距、对齐、字体层级、深浅色主题、空态与加载态。逐项给出截图证据，发现的问题写清复现步骤。",
+        "en-US": "Use [@Browser Use](plugin://browser-use@zcode-plugins-official) to open {{page URL}} and review the visuals and interactions: spacing, alignment, type hierarchy, light and dark themes, empty and loading states. Give screenshot evidence per item and reproduction steps for issues."
+      },
+      "requiresMcp": ["node_repl"],
+      "localOnly": false
+    },
+    {
+      "id": "builtin:general:accessibility-audit",
+      "group": "general",
+      "kind": "prompt",
+      "title": { "zh-CN": "无障碍检查", "en-US": "Accessibility audit" },
+      "content": {
+        "zh-CN": "用 [@浏览器操作](plugin://browser-use@zcode-plugins-official) 打开 {{页面地址}} 做无障碍检查：键盘可达性、焦点顺序、aria-label、对比度、图片替代文本。按严重程度列问题并给出修复建议。",
+        "en-US": "Use [@Browser Use](plugin://browser-use@zcode-plugins-official) on {{page URL}} to audit accessibility: keyboard reachability, focus order, aria labels, contrast, and image alt text. List issues by severity with fixes."
+      },
+      "requiresMcp": ["node_repl"],
+      "localOnly": false
+    },
+    {
+      "id": "builtin:general:form-validation-check",
+      "group": "general",
+      "kind": "prompt",
+      "title": { "zh-CN": "表单校验检查", "en-US": "Form validation check" },
+      "content": {
+        "zh-CN": "用 [@浏览器操作](plugin://browser-use@zcode-plugins-official) 打开 {{表单地址}}，逐项验证表单：必填校验、非法输入提示、提交后的成功与失败分支、重复提交防护。每个分支给出实际观察结果。",
+        "en-US": "Use [@Browser Use](plugin://browser-use@zcode-plugins-official) to open {{form URL}} and verify the form item by item: required-field validation, invalid-input messaging, success and failure paths after submit, and double-submit protection. Report what you actually observed."
+      },
+      "requiresMcp": ["node_repl"],
+      "localOnly": false
+    },
+    {
+      "id": "builtin:general:perf-profile",
+      "group": "general",
+      "kind": "prompt",
+      "title": { "zh-CN": "性能分析", "en-US": "Performance profiling" },
+      "content": {
+        "zh-CN": "用 [@浏览器操作](plugin://browser-use@zcode-plugins-official) 打开 {{页面地址}}，复现 {{性能问题}}，采集性能数据并定位瓶颈。给出量化对比（改动前/后）和证据，不要只凭猜测给结论。",
+        "en-US": "Use [@Browser Use](plugin://browser-use@zcode-plugins-official) to open {{page URL}}, reproduce {{performance issue}}, collect metrics, and locate the bottleneck. Give a before/after comparison with evidence instead of guesswork."
+      },
+      "requiresMcp": ["node_repl"],
+      "localOnly": false
+    },
+    {
+      "id": "builtin:general:error-log-triage",
+      "group": "general",
+      "kind": "prompt",
+      "title": { "zh-CN": "报错定位", "en-US": "Triage an error" },
+      "content": {
+        "zh-CN": "用 [@浏览器操作](plugin://browser-use@zcode-plugins-official) 打开 {{页面地址}} 复现这个报错：{{报错信息}}。抓取控制台与网络面板输出，定位到具体代码位置，给出根因和修复方案。",
+        "en-US": "Use [@Browser Use](plugin://browser-use@zcode-plugins-official) to open {{page URL}} and reproduce this error: {{error message}}. Capture console and network output, locate the responsible code, and give the root cause and fix."
+      },
+      "requiresMcp": ["node_repl"],
+      "localOnly": false
+    },
+    {
+      "id": "builtin:general:team-review",
+      "group": "general",
+      "kind": "prompt",
+      "title": { "zh-CN": "多智能体并行审查", "en-US": "Parallel review with a team" },
+      "content": {
+        "zh-CN": "用多智能体团队并行审查 {{审查范围}}：一个成员看正确性与边界，一个成员看性能与资源，一个成员看可维护性与命名。汇总成一份带证据的报告，不要重复同一结论。",
+        "en-US": "Review {{scope}} in parallel with a team: one member for correctness and boundaries, one for performance and resources, one for maintainability and naming. Consolidate into one evidence-backed report without duplicating conclusions."
+      },
+      "requiresMcp": ["team"],
+      "localOnly": false
+    },
+
+    {
+      "id": "builtin:automation:smoke-test",
+      "group": "automation",
+      "kind": "prompt",
+      "title": { "zh-CN": "冒烟测试", "en-US": "Smoke test" },
+      "content": {
+        "zh-CN": "用 [@浏览器操作](plugin://browser-use@zcode-plugins-official) 打开 {{环境地址}} 做一轮冒烟：首页可访问、关键流程能走通、控制台无报错、静态资源全部 200。逐项给证据（截图或控制台输出），失败项写清复现步骤。",
+        "en-US": "Use [@Browser Use](plugin://browser-use@zcode-plugins-official) to smoke-test {{environment URL}}: home page reachable, key flow walkable, no console errors, all static assets 200. Give evidence per item (screenshot or console output) and reproduction steps for failures."
+      },
+      "requiresMcp": ["node_repl"],
+      "localOnly": false
+    },
+    {
+      "id": "builtin:automation:login-regression",
+      "group": "automation",
+      "kind": "prompt",
+      "title": { "zh-CN": "登录回归", "en-US": "Login regression" },
+      "content": {
+        "zh-CN": "用 [@浏览器操作](plugin://browser-use@zcode-plugins-official) 在 {{登录地址}} 跑登录回归：正确账号能进、错误密码有提示、空值有校验、退出后受保护页面不可访问。不要记录或输出任何真实凭据。",
+        "en-US": "Use [@Browser Use](plugin://browser-use@zcode-plugins-official) to run login regression on {{login URL}}: valid account signs in, wrong password shows an error, empty values are validated, protected pages are unreachable after sign-out. Never log or echo real credentials."
+      },
+      "requiresMcp": ["node_repl"],
+      "localOnly": false
+    },
+    {
+      "id": "builtin:automation:h5-check",
+      "group": "automation",
+      "kind": "prompt",
+      "title": { "zh-CN": "移动端 H5 检查", "en-US": "Mobile H5 check" },
+      "content": {
+        "zh-CN": "用 [@浏览器操作](plugin://browser-use@zcode-plugins-official) 把视口切成手机尺寸，打开 {{页面地址}} 检查：布局不溢出、点击区够大、软键盘不遮挡输入框、横竖屏切换正常。每项给截图证据。",
+        "en-US": "Use [@Browser Use](plugin://browser-use@zcode-plugins-official) with a phone-sized viewport on {{page URL}}: no layout overflow, tap targets large enough, soft keyboard does not cover inputs, orientation switch works. Screenshot evidence per item."
+      },
+      "requiresMcp": ["node_repl"],
+      "localOnly": false
+    },
+    {
+      "id": "builtin:automation:table-scrape",
+      "group": "automation",
+      "kind": "prompt",
+      "title": { "zh-CN": "表格抓取", "en-US": "Extract a table" },
+      "content": {
+        "zh-CN": "用 [@浏览器操作](plugin://browser-use@zcode-plugins-official) 打开 {{目标网址}}，把页面上的表格抓成结构化数据（Markdown 或 CSV）。分页要抓全，表头要对应，抓不到的单元格留空并说明原因。",
+        "en-US": "Use [@Browser Use](plugin://browser-use@zcode-plugins-official) to open {{target URL}} and extract the table as structured data (Markdown or CSV). Cover all pages, keep headers aligned, and leave unreachable cells empty with an explanation."
+      },
+      "requiresMcp": ["node_repl"],
+      "localOnly": false
+    },
+    {
+      "id": "builtin:automation:frontend-error-trace",
+      "group": "automation",
+      "kind": "prompt",
+      "title": { "zh-CN": "前端报错定位", "en-US": "Trace a frontend error" },
+      "content": {
+        "zh-CN": "用 [@浏览器操作](plugin://browser-use@zcode-plugins-official) 打开 {{页面地址}} 并复现 {{报错信息}}，把控制台堆栈映射回源码位置，说明触发条件与修复方案。区分「已确认原因」与「待验证假设」。",
+        "en-US": "Use [@Browser Use](plugin://browser-use@zcode-plugins-official) to open {{page URL}} and reproduce {{error message}}, map the console stack back to source, and explain the trigger and fix. Separate confirmed causes from unverified hypotheses."
+      },
+      "requiresMcp": ["node_repl"],
+      "localOnly": false
+    },
+    {
+      "id": "builtin:automation:team-orchestrate",
+      "group": "automation",
+      "kind": "prompt",
+      "title": { "zh-CN": "协同编排", "en-US": "Team orchestration" },
+      "content": {
+        "zh-CN": "把 {{任务目标}} 拆成可并行的子任务，用多智能体团队分工执行：先建任务 DAG 与验收标准，再派发，最后汇总每个成员的实际产出与未完成项。",
+        "en-US": "Split {{goal}} into parallelizable subtasks and run them with a team: build the task DAG and acceptance criteria first, dispatch, then report each member's actual output and anything unfinished."
+      },
+      "requiresMcp": ["team"],
+      "localOnly": false
+    },
+
+    {
+      "id": "builtin:ops:deploy-check",
+      "group": "ops",
+      "kind": "prompt",
+      "title": { "zh-CN": "发布前检查清单", "en-US": "Pre-release checklist" },
+      "content": {
+        "zh-CN": "用 [@浏览器操作](plugin://browser-use@zcode-plugins-official) 打开 {{环境地址}}，按发布前清单逐项确认：页面可访问、关键流程可走通、控制台无报错、静态资源 200、版本号与预期一致。逐项给出证据，失败的项写清复现步骤。",
+        "en-US": "Use [@Browser Use](plugin://browser-use@zcode-plugins-official) to open {{environment URL}} and verify the pre-release checklist item by item: page reachable, key flow walkable, no console errors, static assets 200, version string as expected. Evidence per item, reproduction steps for failures."
+      },
+      "requiresMcp": ["node_repl"],
+      "localOnly": false
+    },
+    {
+      "id": "builtin:ops:incident-review",
+      "group": "ops",
+      "kind": "prompt",
+      "title": { "zh-CN": "线上故障复盘", "en-US": "Incident review" },
+      "content": {
+        "zh-CN": "复盘这次故障：{{故障现象}}。用 [@浏览器操作](plugin://browser-use@zcode-plugins-official) 打开 {{环境地址}} 收集现状证据，按时间线写清触发点、影响面、临时处置与根因，最后给出可落地的改进项与负责人。",
+        "en-US": "Review this incident: {{symptom}}. Use [@Browser Use](plugin://browser-use@zcode-plugins-official) on {{environment URL}} to gather current-state evidence, then write the timeline: trigger, blast radius, mitigation, root cause, plus actionable follow-ups with owners."
+      },
+      "requiresMcp": ["node_repl"],
+      "localOnly": false
+    },
+    {
+      "id": "builtin:ops:image-assets",
+      "group": "ops",
+      "kind": "prompt",
+      "title": { "zh-CN": "配图检索", "en-US": "Find images" },
+      "content": {
+        "zh-CN": "用 [@搜图](plugin://image-search@zcode-plugins-official) 为 {{主题}} 找 {{数量}} 张配图，要求 {{风格要求}}。给出每张图的来源与许可信息，不要给无法确认授权的图。",
+        "en-US": "Use [@Image Search](plugin://image-search@zcode-plugins-official) to find {{count}} images for {{topic}} matching {{style}}. Include the source and license for each, and skip anything with unclear licensing."
+      },
+      "requiresMcp": ["image_search"],
+      "localOnly": false
+    },
+    {
+      "id": "builtin:ops:screenshot-verify",
+      "group": "ops",
+      "kind": "prompt",
+      "title": { "zh-CN": "截本机屏幕核对", "en-US": "Verify with a local screenshot" },
+      "content": {
+        "zh-CN": "截取本机当前屏幕并与 {{核对目标}} 逐项比对，指出差异（缺失元素、错位、文案不符）。只描述截图里真实存在的内容，看不清就说看不清。",
+        "en-US": "Capture the current screen of this machine and compare it item by item against {{expected state}}, reporting differences (missing elements, misalignment, wrong copy). Describe only what is actually visible; say so when it is unclear."
+      },
+      "requiresMcp": ["node_repl"],
+      "localOnly": true
+    },
+    {
+      "id": "builtin:ops:local-dev-server",
+      "group": "ops",
+      "kind": "prompt",
+      "title": { "zh-CN": "本机开发服务核对", "en-US": "Verify the local dev server" },
+      "content": {
+        "zh-CN": "启动本机开发服务后用 [@浏览器操作](plugin://browser-use@zcode-plugins-official) 打开 {{本机地址}}，确认首页渲染、热更新生效、接口返回正常；把实际命令输出和页面截图作为证据。",
+        "en-US": "Start the local dev server, then use [@Browser Use](plugin://browser-use@zcode-plugins-official) on {{local URL}} to confirm the page renders, HMR works, and APIs respond. Show the real command output and page screenshot as evidence."
+      },
+      "requiresMcp": ["node_repl"],
+      "localOnly": true
+    },
+    {
+      "id": "builtin:ops:release-notes",
+      "group": "ops",
+      "kind": "prompt",
+      "title": { "zh-CN": "发布说明", "en-US": "Release notes" },
+      "content": {
+        "zh-CN": "根据 {{版本区间}} 的提交与变更写发布说明：按「新增 / 修复 / 破坏性变更」分组，每条写清用户可感知的影响，破坏性变更给迁移步骤。",
+        "en-US": "Write release notes for {{version range}} from the commits and diffs: group into Added / Fixed / Breaking, state the user-visible impact of each, and give migration steps for breaking changes."
+      },
+      "requiresMcp": [],
+      "localOnly": false
+    },
+
+    {
+      "id": "builtin:framework:nextjs-app-router",
+      "group": "framework",
+      "kind": "prompt",
+      "title": {
+        "zh-CN": "Next.js App Router 路由排查",
+        "en-US": "Debug Next.js App Router routing"
+      },
+      "content": {
+        "zh-CN": "排查这个 Next.js App Router 项目里 {{路由}} 的行为：区分 Server Component 与 Client Component 的边界、缓存与 revalidate 策略、以及 `use client` 的位置。给出最小复现和修复方案，不要顺手重构无关文件。",
+        "en-US": "Debug the behavior of {{route}} in this Next.js App Router project: separate Server Component and Client Component boundaries, cache and revalidate strategy, and where `use client` sits. Give a minimal reproduction and a fix; do not refactor unrelated files."
+      },
+      "requiresMcp": [],
+      "localOnly": false,
+      "frameworks": ["next"]
+    },
+    {
+      "id": "builtin:framework:nextjs-browser-verify",
+      "group": "framework",
+      "kind": "prompt",
+      "title": { "zh-CN": "Next.js 页面实测", "en-US": "Verify Next.js pages in a browser" },
+      "content": {
+        "zh-CN": "用 [@浏览器操作](plugin://browser-use@zcode-plugins-official) 打开 {{路由}}，确认 SSR 首屏内容、客户端 hydration 无警告、路由跳转不整页刷新。把控制台输出作为证据，hydrate 不匹配要指出具体节点。",
+        "en-US": "Use [@Browser Use](plugin://browser-use@zcode-plugins-official) on {{route}} to confirm SSR first paint, hydration without warnings, and client-side navigation without a full reload. Use console output as evidence and name the node when hydration mismatches."
+      },
+      "requiresMcp": ["node_repl"],
+      "localOnly": false,
+      "frameworks": ["next"]
+    },
+    {
+      "id": "builtin:framework:react-state",
+      "group": "framework",
+      "kind": "prompt",
+      "title": { "zh-CN": "React 状态与重渲染排查", "en-US": "Debug React state and re-renders" },
+      "content": {
+        "zh-CN": "排查 {{组件}} 的状态与重渲染问题：找出状态所有者、确认是否存在重复状态或多条写入路径、定位不必要的重渲染来源。给出结论依据（代码位置或 profiling 证据）。",
+        "en-US": "Debug state and re-render issues in {{component}}: identify the single state owner, check for duplicated state or multiple write paths, and locate unnecessary re-renders. Back conclusions with code locations or profiling evidence."
+      },
+      "requiresMcp": [],
+      "localOnly": false,
+      "frameworks": ["react"]
+    },
+    {
+      "id": "builtin:framework:vue-composition",
+      "group": "framework",
+      "kind": "prompt",
+      "title": { "zh-CN": "Vue 组合式 API 排查", "en-US": "Debug Vue Composition API" },
+      "content": {
+        "zh-CN": "排查 {{组件}} 的组合式 API 用法：响应式丢失（解构 ref）、watch 与 watchEffect 的触发时机、生命周期顺序、以及 props/emit 的双向绑定问题。给出最小复现。",
+        "en-US": "Debug the Composition API usage in {{component}}: lost reactivity from destructuring refs, watch vs watchEffect timing, lifecycle order, and props/emit two-way binding. Provide a minimal reproduction."
+      },
+      "requiresMcp": [],
+      "localOnly": false,
+      "frameworks": ["vue"]
+    },
+    {
+      "id": "builtin:framework:sveltekit-load",
+      "group": "framework",
+      "kind": "prompt",
+      "title": { "zh-CN": "SvelteKit 数据加载排查", "en-US": "Debug SvelteKit data loading" },
+      "content": {
+        "zh-CN": "排查 {{路由}} 的 SvelteKit 数据加载：区分 server load 与 universal load、确认 invalidation 与 depends 的生效范围、检查 SSR 与客户端导航时的数据一致性。",
+        "en-US": "Debug SvelteKit data loading for {{route}}: separate server load from universal load, verify invalidation and depends scope, and check data consistency between SSR and client-side navigation."
+      },
+      "requiresMcp": [],
+      "localOnly": false,
+      "frameworks": ["svelte"]
+    },
+    {
+      "id": "builtin:framework:tauri-command",
+      "group": "framework",
+      "kind": "prompt",
+      "title": { "zh-CN": "Tauri 命令与权限排查", "en-US": "Debug Tauri commands and permissions" },
+      "content": {
+        "zh-CN": "排查 Tauri 的 {{命令名}} 调用链路：前端 invoke 的参数与错误处理、Rust 侧 command 注册、capabilities/permissions 配置是否允许该调用。分别给出前端与 Rust 侧的修改点。",
+        "en-US": "Debug the Tauri call chain for {{command name}}: front-end invoke arguments and error handling, Rust-side command registration, and whether capabilities/permissions allow the call. Give the front-end and Rust changes separately."
+      },
+      "requiresMcp": [],
+      "localOnly": false,
+      "frameworks": ["tauri"]
+    }
+  ]
+}

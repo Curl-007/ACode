@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json.schemastore.org/package.json",
+  "name": "@acode/prompt-snippets-plugin",
+  "version": "0.1.0",
+  "private": true,
+  "description": "内置提示词库（代码片段 / 快捷短语）：只提供 snippets/builtin.json 数据，不注册任何模型可见组件。",
+  "license": "MIT"
+}

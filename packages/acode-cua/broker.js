@@ -102,6 +102,12 @@ function sendBrokerRequest(socketPath, request, timeoutMs) {
     let settled = false;
     const socket = createConnection(socketPath);
     let buffer = "";
+    // delivery-state 基础（wire spec §5.2 / C08）：请求行是否已写出。已写出 ⇒ 动作**可能已送达**
+    // Helper（possibly_sent），变更类方法绝不可自动重放；未写出（connect 就失败）⇒ 确定未送达，可安全重试。
+    // 这个区分是 possibly_sent 判定的唯一事实来源，故随错误一并上报（BrokerError.details.possiblySent）。
+    let requestWritten = false;
+    const fail = (message, code) =>
+      new BrokerError(message, { code, details: { possiblySent: requestWritten } });
     const finish = (settle, value) => {
       if (settled) return;
       settled = true;
@@ -110,14 +116,15 @@ function sendBrokerRequest(socketPath, request, timeoutMs) {
       settle(value);
     };
     const timer = setTimeout(() => {
-      finish(
-        reject,
-        new BrokerError(`Computer Use broker call timed out after ${timeoutMs}ms`, { code: "timeout" }),
-      );
+      finish(reject, fail(`Computer Use broker call timed out after ${timeoutMs}ms`, "timeout"));
     }, timeoutMs);
     // timer.unref() 不做：callBrokerMethod/probeHelperHealth 是调用方主动 await 的前台操作，
     // 不应因其挂起而让进程提前退出（与 host 侧生命周期 timer 的 unref 语义相反）。
     socket.once("connect", () => {
+      // 同步置位（不等 flush 回调）：一旦调用 write，就必须假定动作可能已送达 Helper。
+      // C08 的 possibly_sent 语义要求保守方向——宁可误判「已发送」而拒绝重放，
+      // 也不可漏判导致变更类动作被重放。若在 write 回调里置位，超时 race 下会漏报。
+      requestWritten = true;
       socket.write(requestLine);
     });
     socket.on("data", (chunk) => {
@@ -125,9 +132,7 @@ function sendBrokerRequest(socketPath, request, timeoutMs) {
       if (Buffer.byteLength(buffer) > MAX_RESPONSE_BYTES) {
         finish(
           reject,
-          new BrokerError(`Computer Use broker response exceeded ${MAX_RESPONSE_BYTES} bytes`, {
-            code: "internal",
-          }),
+          fail(`Computer Use broker response exceeded ${MAX_RESPONSE_BYTES} bytes`, "internal"),
         );
         return;
       }
@@ -137,10 +142,7 @@ function sendBrokerRequest(socketPath, request, timeoutMs) {
       try {
         response = JSON.parse(buffer.slice(0, newline));
       } catch {
-        finish(
-          reject,
-          new BrokerError("Computer Use broker returned a malformed response line", { code: "internal" }),
-        );
+        finish(reject, fail("Computer Use broker returned a malformed response line", "internal"));
         return;
       }
       finish(resolve, response);
@@ -148,19 +150,15 @@ function sendBrokerRequest(socketPath, request, timeoutMs) {
     socket.on("error", (error) => {
       finish(
         reject,
-        new BrokerError(`Computer Use broker connection failed: ${error?.code ?? error?.message ?? "unknown"}`, {
-          code: "broker_unavailable",
-        }),
+        fail(
+          `Computer Use broker connection failed: ${error?.code ?? error?.message ?? "unknown"}`,
+          "broker_unavailable",
+        ),
       );
     });
     socket.on("close", () => {
       // 完整响应行到达前连接关闭：fail-closed，不返回半个响应。
-      finish(
-        reject,
-        new BrokerError("Computer Use broker closed before a complete response", {
-          code: "broker_unavailable",
-        }),
-      );
+      finish(reject, fail("Computer Use broker closed before a complete response", "broker_unavailable"));
     });
   });
 }
@@ -181,12 +179,29 @@ export async function callBrokerMethod(args) {
     method,
     ...(args.params !== undefined ? { params: args.params } : {}),
   };
-  const response = await sendBrokerRequest(socketPath, request, timeoutMs);
+  let response;
+  try {
+    response = await sendBrokerRequest(socketPath, request, timeoutMs);
+  } catch (error) {
+    // 传输层失败也要带上 possiblySent（若已写出请求行则动作可能已送达），供上层 delivery-state 判定。
+    if (error instanceof BrokerError && error.details === undefined) {
+      throw new BrokerError(error.message, { code: error.code, details: { possiblySent: false } });
+    }
+    throw error;
+  }
   // ok:false → 抛 BrokerError 透传 error.code（§4.2），绝不返回 result / undefined（§4.3 红线）。
+  //
+  // possiblySent 只在**传输层歧义**（请求已写出但拿不到收据：超时/提前关闭/非法响应）时为真。
+  // 应用层 ok:false 是 Helper 的**明确回信**——它已受理并拒绝了该请求，故不属歧义：
+  //   - broker_unavailable / stale_socket 更是 Helper 权威声明「未受理」，必须可重试（wire spec §5.3）；
+  //   - 若动作确实可能已落地，那是 producer 自己的判断，经 **ok:true 的收据**携
+  //     dispatch_status:"possibly_sent" 上报（上游 receiptOf/assertOk 即从此读取），
+  //     execute 原样透传，客户端不得凭传输状态伪造。
   if (!response || response.ok !== true) {
     const error = response && typeof response.error === "object" && response.error !== null ? response.error : {};
     throw new BrokerError(error.message ?? "Computer Use broker call failed", {
       code: typeof error.code === "string" ? error.code : "internal",
+      details: { possiblySent: false },
     });
   }
   return response.result;

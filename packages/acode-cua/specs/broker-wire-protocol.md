@@ -468,13 +468,37 @@ SDK 识别规则 `notReadyEnvelopeOf(result)`（上游 computer-use-client.mjs:2
   computer-use-client.mjs:1114-1129、1140 `unwrapEnvelope(await call(...))`）：它对
   「单一 text block」结果 `JSON.parse` 解封，多块/图像原样返回。故 not-ready 信封不会到达
   `unwrapEnvelope`（它在 `call()` 内被拦截重试）。
-- **未钉死项（openQuestion）**：warming-up 期究竟是 (a) Helper 在链路乙直接产出
-  `CUA_NOT_READY` 结果（`ok:true`），还是 (b) Helper 产出 `broker_unavailable` 传输错误
-  （`ok:false`，windows-transport-ready.md:22）再由 `runtime.execute`（角色 B）翻译成
-  `CUA_NOT_READY` 非 error 结果——上游材料未明确指定翻译发生在哪一层。两种都满足 §5.2 的可重试性，
-  但 (b) 更符合「broker 发 `broker_unavailable`、runtime 面向 SDK 归一」的分层。**建议 (b)**，
-  留角色 A/B 对接时最终裁定（见 openQuestions）。无论哪种，§5.4 的「execute 必须返回而非抛」
-  约束不变。
+- **【已裁决 2026-10-13（原 openQuestion #1）：采用方案 (b)】** warming-up 期由 Helper/链路乙产出
+  `broker_unavailable` 传输错误（`ok:false`，windows-transport-ready.md:22），再由
+  `runtime.execute`（角色 B，`index.js`）翻译成 `CUA_NOT_READY` **非 error** 结果信封。
+  裁决理由：(1) 链路甲 `cua-broker.ts:100-104` 会把 `execute` 的**抛错**降成
+  `{ok:false, error:<message 字符串>}`——**错误码在这一层丢失**，而 SDK 的 `brokerErrorCodeOf`
+  只从 result 对象读码，故 `execute` 必须 return 而非 throw；(2) (b) 的分层更清晰
+  （broker 报传输态、runtime 面向 SDK 归一），且 Helper 侧无需了解 SDK 信封格式，
+  角色 A 只需按 windows-transport-ready.md 已有的 `broker_unavailable` 语义实现。
+  **实现锚点**：`index.js` 的 `WARMING_UP_BROKER_CODES = {broker_unavailable, stale_socket}`
+  → `notReadyResult(reasonCode, retryable, message)`；`execute` 全程不抛（除入参非法前的
+  早退也返回 isError 结果）。测试见 `apps/acode-cli/tests/cua-runtime-execute.test.mjs`。
+- **【possibly_sent 的两条来源必须区分（实现时发现并裁决）】**：
+  - **传输层歧义**（客户端可判）：请求行已写出但拿不到收据（超时 / 连上后断开 / 非法响应）。
+    `broker.js` 在 `callBrokerMethod` 抛的 `BrokerError.details.possiblySent` 上报此事实，
+    `execute` 据此产出 `CUA_NOT_READY{reasonCode:"possibly_sent", retryable:false}`——
+    SDK 的 `call()` 环见 `retryable !== true` 直接抛 `ComputerUseError(CONTROLLER_BUSY)`，
+    不再退避重试，即 C08「绝不自动重放可能已产生的副作用」。
+    **置位时机是同步的**（`connect` 后立即置位，不等 write flush 回调）：保守方向要求
+    一旦调用 `write` 就假定动作可能已送达，否则超时 race 下会漏报。
+  - **应用层 ok:false 不置 possiblySent**（`details.possiblySent = false`）：那是 Helper 的
+    **明确回信**——它已受理并拒绝，不属歧义。`broker_unavailable`/`stale_socket` 更是
+    Helper 权威声明「未受理」，必须保持可重试。
+  - **producer 自报 possibly_sent**（角色 A 的判断）：经 **`ok:true` 的收据**携
+    `dispatch_status:"possibly_sent"` / `action_sent:true` 上报，`execute` **原样透传**
+    （上游 `receiptOf`/`assertOk` 即从此读取），客户端不得凭传输状态伪造或改写。
+  - 初版实现曾把应用层 `ok:false` 一律置 `possiblySent=true`，导致 `broker_unavailable`
+    被误判为不可重试、warming-up 重试环失效——由 `cua-runtime-execute.test.mjs` 的
+    `stale_socket` 用例抓出并修正（bug 根因记于 `broker.js` 该处注释）。
+- **§7.2 的分级超时已在 `index.js` 落实**：变更类方法（`isBrokerMethod && !isReadOnlyBrokerMethod`）
+  传 `MUTATING_CALL_TIMEOUT_MS = 10_000`，只读观察类（`get_app_state` 带截图 + UIA 遍历）
+  沿用 `broker.js` 的 30s 缺省。
 
 ---
 
@@ -1004,10 +1028,10 @@ error 是**对象** `{message,code?}`（非链路甲的裸字符串）、响应*
 
 ## 12. openQuestions（钉不死、需主循环/用户裁决）
 
-1. **warming-up 翻译层归属（§5.4）**：`CUA_NOT_READY` 非 error 结果由**谁**产出——(a) Helper
-   在链路乙直接产 `ok:true` not-ready，还是 (b) Helper 产 `broker_unavailable` 传输错误
-   （windows-transport-ready.md:22）、由 `runtime.execute`（角色 B）翻译成 not-ready？本文建议 (b)
-   并钉死「execute 必须返回而非抛」的约束，但翻译层归属上游材料未明确，需角色 A/B 对接时裁定。
+1. ~~**warming-up 翻译层归属（§5.4）**~~ **【已裁决 2026-10-13：方案 (b)】**——见 §5.4「已裁决」条：
+   Helper 产 `broker_unavailable` 传输错误、由 `runtime.execute`（角色 B）翻译成 `CUA_NOT_READY`
+   非 error 信封。已实现并测试（`cua-runtime-execute.test.mjs`）。同时裁决了 possibly_sent 的两条
+   来源区分（传输层歧义 vs producer 自报收据）与 §7.2 分级超时的落实。
 2. **解析失败的 broker code（§9.1）**：`parseRequestLine → undefined` 用 `invalid_request`
    （→SDK `INVALID_APP`，语义偏 app）是 17 码词汇表内的次优选择。是否需要在 §4.1 词汇表**新增**
    一个通用 client-error 码（如 `malformed_request`→`INTERNAL`）？新增码是 wire 契约变更，须两侧

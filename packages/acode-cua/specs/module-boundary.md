@@ -32,6 +32,13 @@ unavailable 语义失败，绝不静默降级为“看起来可用”。
 > 保持 fail-closed，且 `isOfficialCuaPluginEnabledForWorkspace` /
 > `createCuaProductMcpServerResolver` / `CuaProductHelperWorkspaceRegistry` / `isScreenCaptureProbeSuccess`
 > 亦仍占位（最小可用集延后，见下栏）。
+>
+> **（2026-10-14 更新，A1 批次）**：角色 A 的 **A1 骨架 Helper 已在 `cua-producer/` 树内落地**
+> （两阶段 ready、named pipe wire 服务端**自建**、诚实 probe addon；契约与验收见
+> `cua-producer/specs/windows-helper-producer.md`）。14 工具方法一律诚实应答 `unimplemented`
+> （→ SDK `ACTION_UNAVAILABLE`，绝无假成功）——**整条 CUA 链路的能力面仍不可用**，本包占位面
+> 零改动；栏② 的 Helper 服务端原语与原生 seam 按 producer spec §1.2 裁决为「producer 树内
+> 自建、本包占位不再回填」（见下栏② 对应条目的校准）。
 
 ## 状态所有权
 
@@ -103,13 +110,21 @@ unavailable 语义失败，绝不静默降级为“看起来可用”。
 
 **② 仍 fail-closed 直至对应角色就位**
 
-- **Helper 服务端（随角色 A 的 `windows-helper.js`）**：`dispatchRequest`
+- **Helper 服务端（角色 A 已在 producer 树内自建实现）**：`dispatchRequest`
   （`broker.js:82`）/ `handleRequestLine`（`broker.js:86`）/ `parseRequestLine`
   （`broker.js:59`）——虽物理位于 `broker.js`，但**全仓 0 host 消费者**，是 Helper
   服务端原语，归角色 A（§7.8「纠正二」，`product-and-support-2026-10.md:671`/`:678`）。
+  **校准（2026-10-14，A1 批次；`cua-producer/specs/windows-helper-producer.md` §1.2
+  裁决 (b) / §8 openQuestion #1①）**：角色 A 已按 wire 契约在 `cua-producer/` 树内
+  **自建实现**同语义原语（`src/wire-server.ts`，由 `dist/windows-helper.js` 注入
+  backend）——Helper 运行时进程按名解析不到本包（两种加载模式下均无解析路径，回填
+  物理不可行），且 `broker.js` 全文逐字派生自上游 Apache-2.0、回填即触发台账登记的
+  CI-Linux 死局；故 `broker.js`/`broker-server.js` 的占位**保留 API 兼容、不再回填**。
 - **原生 seam（角色 A）**：`loadRealNativeAddon` / `resolvePackagedNativeAddonPath` /
   `resolveInTreeAddonPath` / `createAxReadOnlyMethods` / `ROLE_TO_KIND` / `roleToKind`
-  （6 项，`broker-server.js:45-65`）。
+  （6 项，`broker-server.js:45-65`）。**同理不再回填**（A1 批次校准）：producer 自带
+  native 加载器（`cua-producer/src/native-loader.ts`，env 绝对路径 + `createRequire`），
+  seam 占位保持 fail-closed。
 - **refresh marker（角色 A）**：`cuaBrokerRefreshMarkerPath` /
   `publishCuaBrokerRefreshMarker`（2 项，`broker-server.js:37-43`；standalone-helper 懒启动机制）。
 - **macOS-only 面（阶段 2/3/4 均不触碰，§7.7 平台门槛）**：`buildHelperOpenArgs` /

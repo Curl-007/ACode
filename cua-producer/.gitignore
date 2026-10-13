@@ -1,0 +1,10 @@
+# node-gyp 构建树全量忽略（specs/windows-helper-producer.md §5.4 裁决，与工具链接线同一提交落地）。
+# 实测依据：仓根 .gitignore 对构建树的覆盖只有 macOS/Make 形态（*.o、obj.target/、
+# **/build/Makefile、**/build/Release/*.node 等）；Windows MSVC 构建必产出
+# build/binding.sln、build/ax_native.vcxproj、build/ax_native.vcxproj.filters、
+# build/Release/ax_native.lib、build/Release/ax_native.exp——git check-ignore 对这些路径
+# 零规则命中，且根 .gitignore 注释所指的 CI 卫生门禁脚本不存在（悬空引用），无 CI 兜底。
+# 缺本规则时 `git add -A` 会把 MSVC 工件扫进索引（AC-14 防该回归）。
+# dist/ 与 node_modules/ 已由根 .gitignore（:2/:1）覆盖，本地不重复设规则；
+# package-lock.json 不被任何规则命中 = 应入库（handoff §8 复现性裁决）。
+build/

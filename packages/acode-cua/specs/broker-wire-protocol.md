@@ -814,10 +814,16 @@ const PLATFORM_EXCLUDED_METHODS = Object.freeze({});
 
 ## 9. Helper 服务端（角色 A）：`dispatchRequest` / `handleRequestLine` / `parseRequestLine`
 
-本 spec 同时是**角色 A** Helper 服务端的契约（同一 wire 两端）。三者在物理上位于
-`packages/acode-cua/broker.js`，但**全仓 0 host 消费者**，是 Helper 服务端原语，随角色 A 实现
+本 spec 同时是**角色 A** Helper 服务端的契约（同一 wire 两端）。三者的占位物理位于
+`packages/acode-cua/broker.js`，但**全仓 0 host 消费者**，是 Helper 服务端原语，归角色 A
 （`docs/upgrades/product-and-support-2026-10.md`:671/678 裁决：`dispatchRequest`/`handleRequestLine`/
-`parseRequestLine` 归角色 A，**不属**角色 B）。签名（本仓 broker.d.ts:68/83-90 ≡ 上游 broker.d.ts）：
+`parseRequestLine` 归角色 A，**不属**角色 B）。
+**校准（2026-10-14，A1 批次；`cua-producer/specs/windows-helper-producer.md` §1.2 裁决 (b) /
+§8 openQuestion #1②）**：角色 A 已在 `cua-producer/` 树内按本契约**自建实现**同语义原语
+（`src/wire-server.ts` 的 `parseRequestLine`/`dispatchRequest`/`handleRequestLine`，backend
+注入形状不变，§9.3）——Helper 运行时进程按名解析不到本包（producer spec §1.1），`broker.js`
+的占位**保留 API 兼容、不再回填**。下方签名是本包 `broker.d.ts` 的占位面形态，同时继续作为
+wire 契约词汇来源（producer 自建实现与其同构）。签名（本仓 broker.d.ts:68/83-90 ≡ 上游 broker.d.ts）：
 
 ```ts
 function parseRequestLine(line: string): BrokerRequest | undefined;
@@ -892,13 +898,17 @@ errorResponse(msg, { code:"invalid_request" }); return dispatchRequest(backend, 
 
 - `NativeAutomationBackend = Record<string, unknown>`（本仓 broker.d.ts:77 ≡ 上游 broker.d.ts:77）：
   一个**扁平对象**，键 = 方法名（§8.1 的 14 个 + `broker_info`），值 = `BrokerHandler`
-  （`(params, context?) => Promise<unknown>`）。角色 A 的 `windows-helper.js` 构造此对象并注入
-  `dispatchRequest`/`handleRequestLine`。native 能力（`ax_native.node` 导出的
+  （`(params, context?) => Promise<unknown>`）。角色 A 在 `cua-producer/` 树内
+  （`src/windows-helper.ts`，编译为 `dist/windows-helper.js`）构造此对象并注入**自建的**
+  同语义 `dispatchRequest`/`handleRequestLine`（producer 树内原语，**非** `broker.js` 占位——
+  A1 批次校准，producer spec §1.2 裁决 (b)；A1 只注入 `broker_info` 一个 handler，14 方法
+  零注册 → dispatch 层统一产 `unimplemented`）。native 能力（`ax_native.node` 导出的
   `moveTo`/`scrollAt`/`drag`/`mouseDown`/`mouseUp` 等，`docs/upgrades/product-and-support-2026-10.md:527`）
   由各 handler 内部调用，**不出现在 wire 上**——wire 只见方法名 + params + 结果。
 - `backend` 是**依赖注入**的 seam：占位构建里 `dispatchRequest`/`handleRequestLine` 直接
   `throw new CuaHelperError("Computer Use is not available in this build.")`（本仓 broker.js:82-88），
-  不接 backend；角色 A 就位后才注入真实 backend。
+  不接 backend；角色 A 的真实 backend 注入发生在 producer 树内（A1 已落地：
+  `cua-producer/src/backend-a1.ts` 的 `createBackendA1()`），`broker.js` 占位**不再回填**。
 
 ---
 

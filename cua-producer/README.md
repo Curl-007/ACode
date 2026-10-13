@@ -1,9 +1,24 @@
 # Windows Computer Use 原生 producer（角色 A）骨架
 
 本目录是 U14「Windows Computer Use producer 自建」的**角色 A** 落点：Helper 侧原生
-producer（`ax_native.node` + `windows-helper.js` + 14 个 broker 工具处理器）。当前只是
-**骨架**——仅有 `package.json` 与运行时契约声明，**尚无任何运行时能力**。角色 A 就位前，
-整条 CUA 链路仍 fail-closed（见 `packages/acode-cua/specs/module-boundary.md`）。
+producer（`ax_native.node` + `windows-helper.js` + 14 个 broker 工具处理器）。当前状态 =
+**A1 骨架 Helper 已落地**（契约见 `specs/windows-helper-producer.md`）：可构建、可加载、
+两阶段就绪（transport_ready/ready）、named pipe wire 服务端、诚实 probe addon；**14 个工具
+方法一律诚实应答 `unimplemented`（→ SDK `ACTION_UNAVAILABLE`），绝无假成功**——指针/截图
+（A2）与 UIA 树（阶段 3）落地前，整条 CUA 链路的能力面仍 fail-closed（见
+`packages/acode-cua/specs/module-boundary.md`）。
+
+## 构建与测试（A1）
+
+```bash
+cd cua-producer
+npm install        # producer 自有 npm 安装树与 package-lock.json（在 pnpm workspace 外）
+npm run build      # tsc → dist/（ESM）+ node-gyp rebuild → build/Release/ax_native.node
+```
+
+仅 Windows（VS + node-gyp 13 工具链，见 spec §4.5/§5.2.1）；ubuntu CI 不构建本目录。
+测试落 `apps/acode-cli/tests/cua-producer-contract.test.mjs`（CI 常驻、平台无关）与
+`cua-producer-helper-a1.test.mjs`（双守卫：非 win32 或工件缺失即整文件 skip），见 spec §6。
 
 ## 为什么这里有个和 `packages/acode-cua` 同名的包
 
@@ -64,15 +79,20 @@ producer（`ax_native.node` + `windows-helper.js` + 14 个 broker 工具处理�
 - `"type": "module"` **宿主不校验**，但 `entry` 是含裸 `import` 的 ESM——缺 `type:module` 会通过
   全部解析校验、却在 fork 阶段因 ESM 解析失败而崩，且失败点**不在** 12 类稳定错误码之内。故此约束由 producer 自证，本骨架已带。
 
-**两个 artifact 都是构建产物、都不入库**：`.gitignore` 忽略 `dist/`（:2）与 `**/build/Release/*.node`（:53）。
-所以本骨架只提交 `package.json` + 本 README；契约里的路径是**声明**，不要求文件此刻存在。
-以 `ACODE_CUA_DEV_ROOT` 指向本目录解析，会 fail-closed 到 `missing-helper-entry`（entry 文件缺），
-而非成功——这是骨架阶段的正确可观测行为。
+**两个 artifact 都是构建产物、都不入库**：`dist/` 由根 `.gitignore`（:2）覆盖，整棵 node-gyp
+构建树由**本目录 `.gitignore`** 的 `build/` 规则覆盖（A1 新增，裁决与实测依据见
+`specs/windows-helper-producer.md` §5.4——根规则只盖 macOS/Make 形态，Windows MSVC 的
+`binding.sln`/`*.vcxproj*`/`Release/*.lib`/`Release/*.exp` 零命中）。入库的是源码与接线
+（`src/`、`scripts/`、`binding.gyp`、`tsconfig.json`、`specs/`、`package-lock.json`、本 README）；
+契约里的路径是**声明**，构建后才有实体文件。
 
-> **C02 验收备注**：验收场景 C02 期望「缺 addon 的根」报 `missing-native-addon`。但
-> `resolveDevelopmentRuntime` 先查 entry（`missing-helper-entry`，:130）**后**查 addon
-> （`missing-native-addon`，:140），故裸骨架报的是前者。要命中 C02 的期望码，需角色 A 提供
-> 一个存在的 entry、仅缺 addon——属角色 A 范畴，非骨架。
+构建齐套（dist + addon 都在）后，以 `ACODE_CUA_DEV_ROOT` 指向本目录的 dev 解析**成功**；
+只跑 `build:js` 不跑 `build:native` 时报 `missing-native-addon`（spec §5.5）。
+
+> **C02 验收备注（A1 已闭合）**：裸骨架阶段 entry 缺失，`resolveDevelopmentRuntime` 先查
+> entry（`missing-helper-entry`，:130）后查 addon（`missing-native-addon`，:140），故 C02
+> 期望的 `missing-native-addon` 当时不可真机命中。A1 提供真实 entry 后，「entry 在、仅缺
+> addon」的 C02 场景可真机复现（spec §5.5），缺口关闭。
 
 ## 安全纪律（AGENTS.md / U14 §7.7，随本目录一并生效）
 

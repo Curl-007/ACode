@@ -192,10 +192,13 @@ type WindowsDevHelperControlMessage =
  *
  * "transport_ready" means the named pipe is bound and authenticated, while
  * "ready" remains the full health handshake. "error" is the helper's OWN startup-failure
- * report (windowsDevHelperMain.ts sends `{protocol, type:"error", message}`
- * before exiting 1/2) — previously this fell through to null and the host
- * misclassified it as "Invalid Windows Computer Use Helper control message"
- * (malformed-message), discarding the diagnostic string.
+ * report (the role-A helper entry `cua-producer/src/windows-helper.ts` — shipped as
+ * `dist/windows-helper.js`, see `cua-producer/specs/windows-helper-producer.md` §2.2/§2.7;
+ * an earlier revision of this comment referenced a windowsDevHelperMain.ts that never
+ * existed in ACode, a dangling reference cleaned up in the A1 batch — sends
+ * `{protocol, type:"error", message}` before exiting 1/2) — previously this fell through
+ * to null and the host misclassified it as "Invalid Windows Computer Use Helper control
+ * message" (malformed-message), discarding the diagnostic string.
  * Any future additive message type parses as "ignore" (forward-compatible)
  * instead of failing the generation.
  */

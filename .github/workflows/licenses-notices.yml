@@ -39,6 +39,12 @@ on:
       - "third-party/**"
       # 被登记为 copied 组件的源码
       - ".agents/skills/**"
+      # U14 阶段 1 移植的上游 CUA 设计文档（逐字复制、file-level roots，见
+      # copied-components.json 的 "ZCode CUA design documents"）。与 .agents/skills/** 同因：
+      # copied root 一改就牵动 copied[].files 与 inputs 哈希，须触发全量重生成产出权威台账，
+      # 否则「只改这些文档」的 PR 会被 ci.yml 的 inputs-only 判漂移、却没有自动重生成产物可用。
+      - "docs/cua/**"
+      - "docs/cua-permission-broker/**"
       # 生成器与门禁逻辑
       - "scripts/**"
       - ".github/workflows/licenses-notices.yml"
@@ -63,6 +69,9 @@ on:
       - "THIRD-PARTY-NOTICES.md"
       - "third-party/**"
       - ".agents/skills/**"
+      # 同上 pull_request.paths：U14 阶段 1 移植的 copied CUA 文档 root，须触发全量重生成。
+      - "docs/cua/**"
+      - "docs/cua-permission-broker/**"
       - "scripts/**"
       - ".github/workflows/licenses-notices.yml"
 

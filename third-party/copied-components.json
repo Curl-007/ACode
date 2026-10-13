@@ -250,5 +250,41 @@
     "license": "MIT",
     "scope": "Vendored React/Next.js guidance and local adaptations; local README preserves Shu Ding / Vercel attribution.",
     "reviewRequired": "Pinned upstream README and skill declare MIT, but a complete original copyright/license notice has not been obtained."
+  },
+  {
+    "id": "ZCode CUA design documents",
+    "referenceRevision": "aac4755666d09fdcd70272fcf063c077a639015f",
+    "source": "https://raw.githubusercontent.com/zai-org/ZCode/aac4755666d09fdcd70272fcf063c077a639015f/LICENSE",
+    "file": "third-party/upstream/606c36baf38b973227273df12a74930e4b4137280eea835c5cd623aa4553c13b.txt",
+    "sha256": "606c36baf38b973227273df12a74930e4b4137280eea835c5cd623aa4553c13b",
+    "importRevision": "aac4755666d09fdcd70272fcf063c077a639015f",
+    "provenance": "Verbatim copies of 23 CUA design and specification documents from zai-org/ZCode at commit aac4755666 (release v3.15.1), fetched by shallow clone whose HEAD was verified equal to that commit and whose origin is https://github.com/zai-org/ZCode.git. Byte identity was established against upstream git blob object IDs recorded at copy time and re-verified through three independent paths: the staging manifest sha256 column, a fresh raw.githubusercontent.com fetch into an empty directory, and a direct lookup in the clone git object store. No content was modified. The documents carry no per-file copyright or licence headers upstream, so attribution rests on this ledger entry plus the retained Apache-2.0 licence snapshot. ACode is itself a ZCode derivative; repository-level upstream attribution is handled in NOTICE.md.",
+    "roots": [
+      "docs/cua-permission-broker/2026-09-02-helper-lifecycle-agent-runtime-isolation-spec.md",
+      "docs/cua-permission-broker/2026-09-21-cua-helper-lazy-startup-spec.md",
+      "docs/cua-permission-broker/cua-agent-recovery-admission-gate.md",
+      "docs/cua-permission-broker/cua-dev-mcp-runtime-assets.md",
+      "docs/cua-permission-broker/cua-helper-installation.md",
+      "docs/cua-permission-broker/cua-helper-permission-onboarding.md",
+      "docs/cua-permission-broker/local-dev-helper-runbook.md",
+      "docs/cua-permission-broker/windows-transport-ready.md",
+      "docs/cua-permission-broker/zcode-cua-permission-broker.md",
+      "docs/cua/2026-08-18-ax-action-state-consistency.md",
+      "docs/cua/2026-08-18-frame-pixel-zoom-regression.md",
+      "docs/cua/2026-08-18-subagent-computer-use-unavailable-spec.md",
+      "docs/cua/2026-08-19-cua-target-app-display-metadata-spec.md",
+      "docs/cua/2026-08-24-cua-node-repl-sdk-migration-spec.md",
+      "docs/cua/2026-08-25-cua-authority-verdict-audit.md",
+      "docs/cua/2026-08-25-cua-permission-error-passthrough.md",
+      "docs/cua/2026-08-25-cua-request-access-onboarding-spec.md",
+      "docs/cua/2026-08-27-computer-use-unsupported-environment-ui-spec.md",
+      "docs/cua/2026-09-14-windows-cua-indicator-repair-spec.md",
+      "docs/cua/cua-pip-session-consumer-integration.md",
+      "docs/cua/cua-tool-app-identity-summary.md",
+      "docs/cua/windows-product-runtime.md",
+      "docs/cua/windows-source-development.md"
+    ],
+    "scope": "The 23 upstream CUA design documents listed in roots only, copied verbatim and unmodified. ACode-authored documents later added to docs/cua or docs/cua-permission-broker are not attributed to ZCode, which is why roots enumerates files rather than directories. These files are excluded from oxfmt in .oxfmtrc.json so that the formatter cannot rewrite upstream bytes and silently break the recorded hashes; that exclusion is scoped to the same 23 files.",
+    "license": "Apache-2.0"
   }
 ]

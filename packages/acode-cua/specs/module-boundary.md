@@ -20,15 +20,23 @@ unavailable 语义失败，绝不静默降级为“看起来可用”。
   **不进本包**——原生产物必带 `src/` + addon 构建步骤，与不变量 4 冲突
   （`product-and-support-2026-10.md:621`）。
 
-> **时态说明（强制）**：下文不变量 1 的「角色 B 将实现」栏是**登记收窄的目标状态**，
-> **本收窄随阶段 2 角色 B 实现提交生效**；在该提交落地前，本包仍是全量 fail-closed 占位。
-> **角色 A 就位前，整条 CUA 链路仍不可用**——角色 B 只补 host 侧纯 JS，Helper 缺席时
-> 端到端仍走 unavailable 语义。
+> **实现状态（2026-10-13 更新）**：下文不变量 1 栏① 的**增量 1/2/3 已落地**
+> （`broker.js` wire 客户端 + 谓词 + win32 socket 分支、`broker-server.js` marker 三件套 +
+> `waitForCuaHelperStartup`、`index.js` `createComputerUseRuntime`；提交 562d132 / bcb7f95 / e0cd769）。
+> **但角色 A（Helper 侧原生 + `windows-helper.js`）尚未落地，整条 CUA 链路仍不可用**——角色 B 只补
+> host 侧纯 JS，Helper 缺席时端到端仍走 unavailable / `CUA_NOT_READY`（warming-up）语义，
+> `execute` 对未接线 Helper 返回可重试的 not-ready 信封而非假成功。故「本包不再是占位」的说法
+> **仍不成立**：栏② 的一切（Helper 服务端 `dispatchRequest` 系、原生 seam、mac-only、PiP、installer）
+> 保持 fail-closed，且栏① 中 `isPotentialACodeCuaAgentMcpServer` / `isOfficialCuaPluginEnabledForWorkspace` /
+> `createCuaProductMcpServerResolver` / `CuaProductHelperWorkspaceRegistry` / `isScreenCaptureProbeSuccess`
+> 亦仍占位（最小可用集延后，见下栏）。
 
 ## 状态所有权
 
-- 包本身无持久状态、无后台进程；`CuaHelperLifecycleManager` 仅持有调用方
+- 包本身无**业务持久**状态、无后台进程；`CuaHelperLifecycleManager` 仅持有调用方
   传入的 dispose 回调与当前 managed 引用（占位实现中 create 返回 undefined）。
+  （marker 三件套的 WeakSet 是 host-keyed 的**派生标志位**，见下条——它随 host 回收，
+  不是包自持的业务状态，故不违背「包不持有 host 生命周期」。）
 - marker 三件套（`mark/has/clearCuaProductHelperAgentEnvUnavailable`）补实后是
   **host-keyed** 的 fail-closed 标志：以传入的 host 对象为 key（WeakMap/WeakSet 语义），
   **不同 host 对象互不串扰**，随 host 被回收而自然释放；包不持有 host 生命周期。
@@ -68,10 +76,13 @@ unavailable 语义失败，绝不静默降级为“看起来可用”。
 
 ### 不变量 1：fail-closed 收窄（精确到函数）
 
-原「全部运行时表面 fail-closed」按 U14 §7.8 裁决收窄为**两栏**。收窄**随阶段 2
-角色 B 实现提交生效**；未列进「将实现」栏的一切仍 fail-closed。
+原「全部运行时表面 fail-closed」按 U14 §7.8 裁决收窄为**两栏**。栏① **已随阶段 2
+角色 B 增量 1/2/3 落地**；栏② 与未列进栏① 的一切**仍 fail-closed**（角色 A 就位前不变）。
 
-**① 阶段 2 角色 B 将实现（host 侧纯 JS，B-1 + §7.8 三分裁决）**
+**① 阶段 2 角色 B 已实现（host 侧纯 JS，B-1 + §7.8 三分裁决；提交 562d132/bcb7f95/e0cd769）**
+
+下表「补实后语义」栏描述的是**已落地**的实现（不再是目标状态）。「补实后语义」列名保留以对照
+下方栏② 的 fail-closed 现状。
 
 | 函数                                       | 文件                   | 补实后语义                                                                                                                                                      | 依据                                                                                                    |
 | ------------------------------------------ | ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
@@ -227,7 +238,7 @@ U14 §7.8 裁决已**推翻**旧措辞「真实能力经 `@acode/acode-cua-plugi
 - **角色 B（host 侧纯 JS）补实在本包内**（B-1 裁决，`product-and-support-2026-10.md:632-634`）：
   因为它经 `workspace:*` 按名 import 被 5 个包消费，pnpm 只会解析到 workspace 内的
   `packages/acode-cua`，放 glob 外的 `cua-producer/` **不会被按名 import 解析到**
-  （`product-and-support-2026-10.md:628`）。补实随阶段 2 提交生效（见不变量 1 时态说明）。
+  （`product-and-support-2026-10.md:628`）。补实已随阶段 2 增量 1/2/3 落地（见不变量 1「实现状态」）。
 - **角色 A（Helper 侧原生 producer）走仓内 `cua-producer/` 路径加载**
   （`product-and-support-2026-10.md:627`/`:619`）：不进 workspace 解析图，靠
   `ACODE_CUA_DEV_ROOT`（dev）/ `resources/tools/cua-helper`（产品）被
@@ -251,7 +262,11 @@ U14 §7.8 裁决已**推翻**旧措辞「真实能力经 `@acode/acode-cua-plugi
 3. 运行时（仍 fail-closed 面）：消费者调用 Helper 侧 / 原生 / mac-only / PiP / installer
    入口得到明确的 unavailable 错误（`BrokerError` `code: unavailable`、`CuaHelperError`
    `code: helper_unavailable`）或 isError 结果，进程不崩溃。
-4. **角色 B 落地后的运行时验收**（随阶段 2 提交生效）：
+4. **角色 B 落地后的运行时验收（已由测试锁定，2026-10-13）**：测试落 `apps/acode-cli/tests/`
+   （本包无 test 脚本，managed 模块塞测试会被当生产源码严格检查且跑不到）——
+   `cua-broker-wire.test.mjs`（`broker.js` wire 客户端 + 谓词 + win32 socket 分支，22 用例）、
+   `cua-broker-server-host.test.mjs`（marker 三件套 + `waitForCuaHelperStartup`，11 用例）、
+   `cua-runtime-execute.test.mjs`（`index.js` execute 结果契约，18 用例）。
    - **Helper 缺席/未就绪时的可观测行为以 `specs/broker-wire-protocol.md` 为准**（见「失败语义」）：
      `execute` 在 warming-up 期返回 `CUA_NOT_READY` 非 error 信封、不抛错；`probeHelperHealth`
      探测失败必 throw 而非返回 `{null,null}`；`callBrokerMethod` 失败一律抛 `BrokerError`。

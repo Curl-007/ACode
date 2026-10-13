@@ -4,43 +4,52 @@ Computer Use 的 API 兼容包。本包承担两个角色（U14 §7.8「角色�
 **角色 B（host 侧 broker RPC 客户端 + host 编排，纯 JS，补实在本包内）**与
 **角色 A（Helper 侧原生 producer，走仓内 `cua-producer/` 路径加载，不进本包）**。
 
-**收窄随阶段 2 角色 B 实现提交生效**；在该提交落地前，本包仍是全量 fail-closed 占位。
-**角色 A 就位前整条 CUA 链路仍不可用**——角色 B 只补 host 侧纯 JS，Helper 缺席时端到端
-仍走 unavailable 语义，绝不静默降级为“看起来可用”。
+**角色 B 的增量 1/2/3 已落地（2026-10-13，提交 562d132/bcb7f95/e0cd769）**：`broker.js` wire 客户端
 
-- 真实公开面 = `package.json` exports 的 12 个子路径，映射到包根下的扁平
+- 谓词 + win32 socket 分支、`broker-server.js` marker 三件套 + `waitForCuaHelperStartup`、
+  `index.js` `createComputerUseRuntime`。
+  **但角色 A 就位前整条 CUA 链路仍不可用**——角色 B 只补 host 侧纯 JS，Helper 缺席时端到端
+  仍走 unavailable / `CUA_NOT_READY`（warming-up）语义，绝不静默降级为“看起来可用”。
+  角色 B 中**仍占位**的 5 项（`isOfficialCuaPluginEnabledForWorkspace`、`createCuaProductMcpServerResolver`、
+  `isPotentialACodeCuaAgentMcpServer`、`CuaProductHelperWorkspaceRegistry`、`isScreenCaptureProbeSuccess`）
+  见 `specs/module-boundary.md` 不变量 1 栏②。
+
+* 真实公开面 = `package.json` exports 的 12 个子路径，映射到包根下的扁平
   `.js`/`.d.ts` 文件（无 `src/` 目录、无构建步骤）。`contract.ts` 是类型
   精选阅读视图，不新增运行时导出。
-- 跨模块导入只能使用 exports 子路径（如 `@acode/acode-cua/broker/server`）；
+* 跨模块导入只能使用 exports 子路径（如 `@acode/acode-cua/broker/server`）；
   架构检查器经 `architecture-policy.yaml` 的 `global.aliasRules` 把子路径
   解析到实际文件，并以其为 publicEntrypoints 做 deep-import 校验。
 
 ## 类型无法表达的不变量（角色 B 收窄后）
 
 - **谓词不再一律恒 `false`**：`isBrokerMethod`（`broker.js:90`）/ `isReadOnlyBrokerMethod`
-  （`broker.js:94`）补实后依 14 方法能力表返回真实判定（wire spec §8.1/§8.2），
-  **不再恒 `false`**；`isPotentialACodeCuaAgentMcpServer`（`broker-server.js:154`）、
-  `isScreenCaptureProbeSuccess`（`broker-server.js:158`）同样补实。仍恒 `false` 的谓词：
+  （`broker.js:94`）**已补实**，依 14 方法能力表返回真实判定（wire spec §8.1/§8.2），
+  **不再恒 `false`**。仍恒 `false`（角色 B 拥有但阶段 2 首版延后，见 `specs/module-boundary.md`
+  不变量 1 栏②）：`isPotentialACodeCuaAgentMcpServer`（`broker-server.js:154`，不变量 2 单一事实源
+  张力 + 需 services 侧对照测试）、`isScreenCaptureProbeSuccess`（`broker-server.js:158`，
+  经核实 macOS-only 可达、不在 C05 Windows 路径）、`isOfficialCuaPluginEnabledForWorkspace`
+  （`broker-server.js:132`，插件 enablement 默认 OFF，dev/internal 路径被短路）、
   `isOfficialCuaImageRefText`（`frame-contract.js:7`，frame 面仍占位）、
-  `shouldRunCuaScreenCaptureProbe`（`broker-ports.js:5`）、
-  `isOfficialCuaPluginEnabledForWorkspace`（`broker-server.js:132`，插件 enablement 默认 OFF）。
-- **`callBrokerMethod`（`broker.js:39`）将实现为链路乙 wire 客户端**：连 `socketPath`、
+  `shouldRunCuaScreenCaptureProbe`（`broker-ports.js:5`）。
+- **`callBrokerMethod`（`broker.js:39`）已实现为链路乙 wire 客户端**：连 `socketPath`、
   写请求行、读到 `\n` 解析响应；`ok:false` 抛 `BrokerError`（透传 `error.code`），
   连接失败/非法 JSON/缺 result/超时一律抛错，**绝不返回空成功**（wire spec §2/§3/§4.2/§4.3）。
   **`isBrokerMethod` 不是它的传输门**：host 侧带外控制面方法（`node.ts:1926` 的
   `permission_status`、`probeHelperHealth` 的 `broker_info`）不在 14 表内，`callBrokerMethod`
   对 method 名透明转发（不变量 3；wire spec §6.1/§9.2）。
-- **`probeHelperHealth`（`broker.js:43`）** 补实后发带外 `broker_info` 返回真实
-  `{bundleId,pid}`；**探测失败必须 throw，不得返回 `{bundleId:null,pid:null}`**
-  （该空值形态是当前占位返回值，补实后禁止；wire spec §6.4）。
+- **`probeHelperHealth`（`broker.js:43`）已补实**：发带外 `broker_info` 返回真实
+  `{bundleId,pid}`；**探测失败必 throw，不再返回 `{bundleId:null,pid:null}`**
+  （该空值形态曾是占位返回值，现已消除；wire spec §6.4）。Windows 无 CFBundle id 时
+  `bundleId=null` 但探测仍成功（health 门只校 PID）。
 - **`dispatchRequest`（`broker.js:82`）/ `handleRequestLine`（`broker.js:86`）/
   `parseRequestLine`（`broker.js:59`）仍 fail-closed 直至角色 A**：虽物理位于 `broker.js`，
   但全仓 0 host 消费者，是 **Helper 服务端**原语，随角色 A 的 `windows-helper.js` 落地
   （§7.8「纠正二」，`product-and-support-2026-10.md:671`/`:678`）。当前仍以 `CuaHelperError` 拒绝。
 - **marker 三件套**（`mark`/`has`/`clearCuaProductHelperAgentEnvUnavailable`，
-  `broker-server.js:162`/`:164`/`:168`）补实后是 **host-keyed** fail-closed 标志，
-  不同 host 对象互不串扰；门控 `node.ts` 的 spawn 返回 `BROKER_UNAVAILABLE` env 还是
-  broker 凭据元组。`waitForCuaHelperStartup`（`broker-server.js:150`）补实后超时抛
+  `broker-server.js:162`/`:164`/`:168`）**已补实**为 **host-keyed** fail-closed 标志（WeakSet，
+  随 host 回收、不泄漏），不同 host 对象互不串扰；门控 `node.ts` 的 spawn 返回 `BROKER_UNAVAILABLE`
+  env 还是 broker 凭据元组。`waitForCuaHelperStartup`（`broker-server.js:150`）**已补实**为超时抛
   `CuaHelperError` `code:"caller_timeout"`（`node.ts:1211` 精确判），不再忽略 `deadlineMs`。
 - **其余运行时表面仍 fail-closed**：Helper 侧 `dispatchRequest` 系、原生 seam
   （`loadRealNativeAddon` 等）、macOS-only 面（installer / `createProductCuaHelperHost` /

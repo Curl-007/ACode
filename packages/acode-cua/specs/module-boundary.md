@@ -20,14 +20,16 @@ unavailable 语义失败，绝不静默降级为“看起来可用”。
   **不进本包**——原生产物必带 `src/` + addon 构建步骤，与不变量 4 冲突
   （`product-and-support-2026-10.md:621`）。
 
-> **实现状态（2026-10-13 更新）**：下文不变量 1 栏① 的**增量 1/2/3 已落地**
+> **实现状态（2026-10-13 更新，增量 4 落地后）**：下文不变量 1 栏① 的**增量 1/2/3/4 已落地**
 > （`broker.js` wire 客户端 + 谓词 + win32 socket 分支、`broker-server.js` marker 三件套 +
-> `waitForCuaHelperStartup`、`index.js` `createComputerUseRuntime`；提交 562d132 / bcb7f95 / e0cd769）。
+> `waitForCuaHelperStartup` + `isPotentialACodeCuaAgentMcpServer`（增量 4：包内自包含判别 +
+> services 侧防漂移对照测试）、`index.js` `createComputerUseRuntime`；增量 1/2/3 对应提交
+> 562d132 / bcb7f95 / e0cd769）。
 > **但角色 A（Helper 侧原生 + `windows-helper.js`）尚未落地，整条 CUA 链路仍不可用**——角色 B 只补
 > host 侧纯 JS，Helper 缺席时端到端仍走 unavailable / `CUA_NOT_READY`（warming-up）语义，
 > `execute` 对未接线 Helper 返回可重试的 not-ready 信封而非假成功。故「本包不再是占位」的说法
 > **仍不成立**：栏② 的一切（Helper 服务端 `dispatchRequest` 系、原生 seam、mac-only、PiP、installer）
-> 保持 fail-closed，且栏① 中 `isPotentialACodeCuaAgentMcpServer` / `isOfficialCuaPluginEnabledForWorkspace` /
+> 保持 fail-closed，且 `isOfficialCuaPluginEnabledForWorkspace` /
 > `createCuaProductMcpServerResolver` / `CuaProductHelperWorkspaceRegistry` / `isScreenCaptureProbeSuccess`
 > 亦仍占位（最小可用集延后，见下栏）。
 
@@ -79,7 +81,8 @@ unavailable 语义失败，绝不静默降级为“看起来可用”。
 原「全部运行时表面 fail-closed」按 U14 §7.8 裁决收窄为**两栏**。栏① **已随阶段 2
 角色 B 增量 1/2/3 落地**；栏② 与未列进栏① 的一切**仍 fail-closed**（角色 A 就位前不变）。
 
-**① 阶段 2 角色 B 已实现（host 侧纯 JS，B-1 + §7.8 三分裁决；提交 562d132/bcb7f95/e0cd769）**
+**① 阶段 2 角色 B 已实现（host 侧纯 JS，B-1 + §7.8 三分裁决；增量 1/2/3 对应提交
+562d132/bcb7f95/e0cd769，增量 4 = `isPotentialACodeCuaAgentMcpServer` 自包含判别已落地）**
 
 下表「补实后语义」栏描述的是**已落地**的实现（不再是目标状态）。「补实后语义」列名保留以对照
 下方栏② 的 fail-closed 现状。
@@ -92,11 +95,11 @@ unavailable 语义失败，绝不静默降级为“看起来可用”。
 | `isReadOnlyBrokerMethod`                   | `broker.js:94`         | = `isBrokerMethod(method) && !MUTATING_METHODS.has(method)`（14−10=4 只读）                                                                                     | wire spec §8.2                                                                                          |
 | `mintBrokerSocketPath`（win32 分支）       | `broker.js:47`         | 补 win32 named-pipe 分支（`\\.\pipe\...`），非 win32 保持 `tmpdir/*.sock`；恒返回 `.sock` 盘符路径会让 Windows `net.listen` EACCES                              | `product-and-support-2026-10.md:471`/`:582`；链路甲 `node-repl-host/src/cua-broker.ts:27-29` 为同形参照 |
 | `createComputerUseRuntime`                 | `index.js:3`           | `execute` 经 `callBrokerMethod` 走真实 socket，返回 `CallToolResult` 形态                                                                                       | wire spec §5.4；`product-and-support-2026-10.md:676`                                                    |
-| `markCuaProductHelperAgentEnvUnavailable`  | `broker-server.js:162` | host-keyed 置位 fail-closed 标志                                                                                                                                | `node.ts` mark 3 处（`:583`/`:586`/`:1231`）                                                            |
-| `hasCuaProductHelperAgentEnvUnavailable`   | `broker-server.js:164` | host-keyed 读位；门控 spawn 返回 `BROKER_UNAVAILABLE` env 还是 `{BROKER_SOCKET_ENV, ACODE_CUA_PLUGIN_AUTHORITY_ENV_KEY}` 元组                                   | `node.ts` has 8 处（`:1102`/`:1115`/`:1142`/`:1163`/`:1179`/`:1197`/`:1221`）                           |
-| `clearCuaProductHelperAgentEnvUnavailable` | `broker-server.js:168` | host-keyed 清位（健康恢复时）                                                                                                                                   | `node.ts:1110`                                                                                          |
+| `markCuaProductHelperAgentEnvUnavailable`  | `broker-server.js:255` | host-keyed 置位 fail-closed 标志                                                                                                                                | `node.ts` mark 3 处（`:583`/`:586`/`:1231`）                                                            |
+| `hasCuaProductHelperAgentEnvUnavailable`   | `broker-server.js:260` | host-keyed 读位；门控 spawn 返回 `BROKER_UNAVAILABLE` env 还是 `{BROKER_SOCKET_ENV, ACODE_CUA_PLUGIN_AUTHORITY_ENV_KEY}` 元组                                   | `node.ts` has 8 处（`:1102`/`:1115`/`:1142`/`:1163`/`:1179`/`:1197`/`:1221`）                           |
+| `clearCuaProductHelperAgentEnvUnavailable` | `broker-server.js:265` | host-keyed 清位（健康恢复时）                                                                                                                                   | `node.ts:1110`                                                                                          |
 | `waitForCuaHelperStartup`                  | `broker-server.js:150` | 有界 deadline race；**超时须抛 `CuaHelperError` `code:"caller_timeout"`**（语义 = 共享 30s startup 仍在后台跑、不设 retryAt），不得忽略 `deadlineMs` 直接 await | `node.ts:1159`/`:1191`；`:1211` 精确判 `isCuaHelperError(error) && error.code === "caller_timeout"`     |
-| `isPotentialACodeCuaAgentMcpServer`        | `broker-server.js:154` | **包内自包含**匹配 CUA candidate（见不变量 2 补注）；fail-closed 方向**宁可过判不漏判**                                                                         | `node.ts:789` stale-generation 过滤                                                                     |
+| `isPotentialACodeCuaAgentMcpServer`        | `broker-server.js:225` | **包内自包含**匹配 CUA candidate（**已实现，增量 4**：复刻 `mcp.ts` 单一事实源判别面，见不变量 2 补注；防漂移由 services 侧对照测试锁定）；fail-closed 方向**宁可过判不漏判**                                                                         | `node.ts:789` stale-generation 过滤                                                                     |
 
 **② 仍 fail-closed 直至对应角色就位**
 
@@ -127,7 +130,7 @@ unavailable 语义失败，绝不静默降级为“看起来可用”。
   **write-only、无读者**，`node.ts:1685` 构造 + `:2191`/`:2203`/`:2214` 三处 set，无 get）。
 - **端口/探针门控（2026-10-13 主循环核实：`isScreenCaptureProbeSuccess` 属 macOS-only 可达，已从栏①移出）**：
   `shouldRunCuaScreenCaptureProbe`（`broker-ports.js:5`）恒 false，且其下游
-  `isScreenCaptureProbeSuccess`（`broker-server.js:158`）的唯一消费者
+  `isScreenCaptureProbeSuccess`（`broker-server.js:245`）的唯一消费者
   `runCuaScreenCaptureReadinessProbe`（`node.ts:729-742`）只在 `getStatus` 的
   `node.ts:1975` 被调，而 `:1975` 被 `shouldUseCuaPermissionService`（`node.ts:709-714`，
   `platform === "darwin" && cuaEnabled`）门控——Windows 上 `getStatus` 在 `:1894-1902`
@@ -155,6 +158,9 @@ unavailable 语义失败，绝不静默降级为“看起来可用”。
   （`isACodeCuaMcpCommand` / `isACodeCuaMcpPackageArg`，`packages/shared/src/mcp.ts:259`/`:268`）：
   acode-cua `requires: []`，反向 import `@acode/shared` 会破坏不变量 2 与依赖方向。
   故须在**包内自包含匹配**，并**用 services 侧对照测试防漂移**（见下）。
+  **已按此补实（增量 4，`broker-server.js:225`）**：包内复刻 `mcp.ts:228-252` 的
+  `acodeCuaArgLeaf`/`matchesACodeCuaSpec` 与 `mcp-config.ts:178-181` 的 plugin-id env 判别面，
+  对照测试落 `packages/services/test/cuaAgentMcpPredicateParity.test.ts`。
 
   **`node.ts:789` 消费点的 `server` 对象实际形状（本仓核实）**：`node.ts:789` 的
   `servers?.filter((server) => !isPotentialACodeCuaAgentMcpServer(server))` 中，
@@ -180,11 +186,14 @@ unavailable 语义失败，绝不静默降级为“看起来可用”。
      ——官方 plugin server 的 command/args 都不含 acode-cua 字样，只有 `_plugin` id env 可识别
      （`mcp-config.ts:174-182`）。
 
-  **防漂移方案（主循环建议，本 spec 采纳）**：在 **services 侧**（不受本包 `requires: []`
-  约束，可同时 import 两处）加对照测试，对**同一组样本**断言 acode-cua 的
+  **防漂移方案（主循环建议，本 spec 采纳；已随增量 4 落地）**：在 **services 侧**（不受本包
+  `requires: []` 约束，可同时 import 两处）加对照测试，对**同一组样本**断言 acode-cua 的
   `isPotentialACodeCuaAgentMcpServer` 与 `@acode/shared` 的
   `isACodeCuaMcpCommand`/`isACodeCuaMcpPackageArg`（+ name/plugin-id 判别）判定一致，
   把「两处漂移」变成测试可抓。测试文件在 services，不写进 acode-cua，不破坏不变量 2。
+  **已落地为 `packages/services/test/cuaAgentMcpPredicateParity.test.ts`**（样本集覆盖
+  `apps/acode-cli/tests/cua-agent-mcp-predicate.test.mjs` 的全部边界，并以 `expected`
+  字段钉死 spec 语义，防两处同错时空洞通过）。
 
 ### 不变量 3：API 兼容
 
@@ -266,7 +275,10 @@ U14 §7.8 裁决已**推翻**旧措辞「真实能力经 `@acode/acode-cua-plugi
    （本包无 test 脚本，managed 模块塞测试会被当生产源码严格检查且跑不到）——
    `cua-broker-wire.test.mjs`（`broker.js` wire 客户端 + 谓词 + win32 socket 分支，22 用例）、
    `cua-broker-server-host.test.mjs`（marker 三件套 + `waitForCuaHelperStartup`，11 用例）、
-   `cua-runtime-execute.test.mjs`（`index.js` execute 结果契约，18 用例）。
+   `cua-runtime-execute.test.mjs`（`index.js` execute 结果契约，18 用例）、
+   `cua-agent-mcp-predicate.test.mjs`（增量 4 `isPotentialACodeCuaAgentMcpServer` 判别面
+   与畸形输入，19 用例）；防漂移对照测试落 `packages/services/test/cuaAgentMcpPredicateParity.test.ts`
+   （services 有 test 脚本，不受本包 `requires: []` 约束，7 用例）。
    - **Helper 缺席/未就绪时的可观测行为以 `specs/broker-wire-protocol.md` 为准**（见「失败语义」）：
      `execute` 在 warming-up 期返回 `CUA_NOT_READY` 非 error 信封、不抛错；`probeHelperHealth`
      探测失败必 throw 而非返回 `{null,null}`；`callBrokerMethod` 失败一律抛 `BrokerError`。
@@ -284,5 +296,6 @@ U14 §7.8 裁决已**推翻**旧措辞「真实能力经 `@acode/acode-cua-plugi
      `code:"caller_timeout"`（被 `node.ts:1211` 精确捕获，不设 retryAt）。
    - **不变量 3 的控制面透明性验收**：`callBrokerMethod` 能发 `permission_status` /
      `broker_info` 等**非 14 表**方法而不被本地拒绝（`isBrokerMethod` 不 gate 传输）。
-   - **`isPotentialACodeCuaAgentMcpServer` 防漂移验收**：services 侧对照测试断言其与
+   - **`isPotentialACodeCuaAgentMcpServer` 防漂移验收（已落地）**：services 侧对照测试
+     `packages/services/test/cuaAgentMcpPredicateParity.test.ts` 断言其与
      `@acode/shared` 单一事实源在同一组样本上判定一致（不变量 2 补注）。

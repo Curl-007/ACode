@@ -6,9 +6,11 @@
  *   占位 has 恒 false 曾使 node.ts 七处 BROKER_UNAVAILABLE 门控全部失效）；
  * - waitForCuaHelperStartup（有界 deadline race，占位曾忽略 deadlineMs 直接 await）。
  *
- * isPotentialACodeCuaAgentMcpServer / isOfficialCuaPluginEnabledForWorkspace /
+ * isPotentialACodeCuaAgentMcpServer 已随角色 B 增量 4 补实（测试见同目录
+ * cua-agent-mcp-predicate.test.mjs 与 packages/services/test/cuaAgentMcpPredicateParity.test.ts），
+ * 不再属本文件注释的 fail-closed 面。isOfficialCuaPluginEnabledForWorkspace /
  * createCuaProductMcpServerResolver / CuaProductHelperWorkspaceRegistry 仍 fail-closed
- * （不变量 2 单一事实源张力 + 最小可用集延后，见 module-boundary.md），本文件不测其补实。
+ * （最小可用集延后，见 module-boundary.md），本文件不测其补实。
  *
  * 落 apps/acode-cli/tests/（packages/acode-cua 无 test 脚本）；深路径 import broker-server.js。
  */

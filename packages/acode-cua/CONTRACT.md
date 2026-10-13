@@ -4,14 +4,15 @@ Computer Use 的 API 兼容包。本包承担两个角色（U14 §7.8「角色�
 **角色 B（host 侧 broker RPC 客户端 + host 编排，纯 JS，补实在本包内）**与
 **角色 A（Helper 侧原生 producer，走仓内 `cua-producer/` 路径加载，不进本包）**。
 
-**角色 B 的增量 1/2/3 已落地（2026-10-13，提交 562d132/bcb7f95/e0cd769）**：`broker.js` wire 客户端
+**角色 B 的增量 1/2/3/4 已落地（2026-10-13，增量 1/2/3 对应提交 562d132/bcb7f95/e0cd769）**：`broker.js` wire 客户端
 
-- 谓词 + win32 socket 分支、`broker-server.js` marker 三件套 + `waitForCuaHelperStartup`、
-  `index.js` `createComputerUseRuntime`。
+- 谓词 + win32 socket 分支、`broker-server.js` marker 三件套 + `waitForCuaHelperStartup` +
+  `isPotentialACodeCuaAgentMcpServer`（增量 4：包内自包含 CUA candidate 判别 + services 侧
+  防漂移对照测试）、`index.js` `createComputerUseRuntime`。
   **但角色 A 就位前整条 CUA 链路仍不可用**——角色 B 只补 host 侧纯 JS，Helper 缺席时端到端
   仍走 unavailable / `CUA_NOT_READY`（warming-up）语义，绝不静默降级为“看起来可用”。
-  角色 B 中**仍占位**的 5 项（`isOfficialCuaPluginEnabledForWorkspace`、`createCuaProductMcpServerResolver`、
-  `isPotentialACodeCuaAgentMcpServer`、`CuaProductHelperWorkspaceRegistry`、`isScreenCaptureProbeSuccess`）
+  角色 B 中**仍占位**的 4 项（`isOfficialCuaPluginEnabledForWorkspace`、`createCuaProductMcpServerResolver`、
+  `CuaProductHelperWorkspaceRegistry`、`isScreenCaptureProbeSuccess`）
   见 `specs/module-boundary.md` 不变量 1 栏②。
 
 * 真实公开面 = `package.json` exports 的 12 个子路径，映射到包根下的扁平
@@ -25,9 +26,11 @@ Computer Use 的 API 兼容包。本包承担两个角色（U14 §7.8「角色�
 
 - **谓词不再一律恒 `false`**：`isBrokerMethod`（`broker.js:90`）/ `isReadOnlyBrokerMethod`
   （`broker.js:94`）**已补实**，依 14 方法能力表返回真实判定（wire spec §8.1/§8.2），
-  **不再恒 `false`**。仍恒 `false`（角色 B 拥有但阶段 2 首版延后，见 `specs/module-boundary.md`
-  不变量 1 栏②）：`isPotentialACodeCuaAgentMcpServer`（`broker-server.js:154`，不变量 2 单一事实源
-  张力 + 需 services 侧对照测试）、`isScreenCaptureProbeSuccess`（`broker-server.js:158`，
+  **不再恒 `false`**。`isPotentialACodeCuaAgentMcpServer`（`broker-server.js:225`）**已补实**
+  （增量 4）为包内自包含 CUA candidate 判别（`name` / stdio `command`/`args` 包规格 /
+  `env` 数组官方 plugin id 四维，见下「依赖方向与常量表」），**不再恒 `false`**。仍恒 `false`
+  （角色 B 拥有但阶段 2 首版延后，见 `specs/module-boundary.md`
+  不变量 1 栏②）：`isScreenCaptureProbeSuccess`（`broker-server.js:245`，
   经核实 macOS-only 可达、不在 C05 Windows 路径）、`isOfficialCuaPluginEnabledForWorkspace`
   （`broker-server.js:132`，插件 enablement 默认 OFF，dev/internal 路径被短路）、
   `isOfficialCuaImageRefText`（`frame-contract.js:7`，frame 面仍占位）、
@@ -47,7 +50,7 @@ Computer Use 的 API 兼容包。本包承担两个角色（U14 §7.8「角色�
   但全仓 0 host 消费者，是 **Helper 服务端**原语，随角色 A 的 `windows-helper.js` 落地
   （§7.8「纠正二」，`product-and-support-2026-10.md:671`/`:678`）。当前仍以 `CuaHelperError` 拒绝。
 - **marker 三件套**（`mark`/`has`/`clearCuaProductHelperAgentEnvUnavailable`，
-  `broker-server.js:162`/`:164`/`:168`）**已补实**为 **host-keyed** fail-closed 标志（WeakSet，
+  `broker-server.js:255`/`:260`/`:265`）**已补实**为 **host-keyed** fail-closed 标志（WeakSet，
   随 host 回收、不泄漏），不同 host 对象互不串扰；门控 `node.ts` 的 spawn 返回 `BROKER_UNAVAILABLE`
   env 还是 broker 凭据元组。`waitForCuaHelperStartup`（`broker-server.js:150`）**已补实**为超时抛
   `CuaHelperError` `code:"caller_timeout"`（`node.ts:1211` 精确判），不再忽略 `deadlineMs`。
@@ -66,9 +69,11 @@ Computer Use 的 API 兼容包。本包承担两个角色（U14 §7.8「角色�
 - **`requires: []`**——包内只 import node 内建模块；禁止 acode-cua 反向依赖任何
   workspace 模块。角色 B 净新增 import 只有 **`node:net`（builtin）**，`requires: []` 保持。
 - `isPotentialACodeCuaAgentMcpServer` **不能 import `@acode/shared` 的单一事实源**
-  （`isACodeCuaMcpCommand` / `isACodeCuaMcpPackageArg`）——那会破坏 `requires: []`。须在包内
-  **自包含匹配**（对 `ACodeAgentMcpServer` 的 `name` / stdio `command` / `args` /
-  `env: Array<{name,value}>` 中的 `ACODE_PLUGIN_ID` 判别），并用 **services 侧对照测试防漂移**
+  （`isACodeCuaMcpCommand` / `isACodeCuaMcpPackageArg`）——那会破坏 `requires: []`。**已按此
+  补实为包内自包含匹配**（增量 4，`broker-server.js:225`：对 `ACodeAgentMcpServer` 的 `name` /
+  stdio `command` / `args` / `env: Array<{name,value}>` 中的 `ACODE_PLUGIN_ID` 判别，包内复刻
+  `mcp.ts:228-252` 判别面），并用 **services 侧对照测试防漂移**——已落地
+  `packages/services/test/cuaAgentMcpPredicateParity.test.ts`
   （详见 `specs/module-boundary.md` 不变量 2 补注）。
 - **常量表（14 方法表 / 10 变更方法表 / `PLATFORM_EXCLUDED_METHODS` / 17 条错误码映射）
   为 `broker.js` 模块私有**：逐字复制自 Apache-2.0 上游 `computer-use-client.mjs`，

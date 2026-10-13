@@ -172,8 +172,74 @@ export async function waitForCuaHelperStartup(startup, deadlineMs) {
   }
 }
 
-export function isPotentialACodeCuaAgentMcpServer(_server) {
-  return false;
+// ─── CUA candidate MCP server 判别（角色 B 增量 4，module-boundary.md 不变量 1 栏① / 不变量 2 补注）───
+
+// 单一事实源常量（packages/shared/src/mcp.ts:10 ACODE_CUA_OFFICIAL_PLUGIN_ID、:16 ACODE_PLUGIN_ID_ENV_KEY）。
+// 不变量 2（requires:[]）禁止 import @acode/shared，故在包内持有等值字面量；
+// 字面量漂移由 services 侧对照测试兜底（不变量 2 补注「防漂移方案」）。
+const CUA_AGENT_SERVER_NAME = "computer-use";
+const CUA_PLUGIN_ID_ENV_NAME = "ACODE_PLUGIN_ID";
+const CUA_OFFICIAL_PLUGIN_ID = "computer-use@acode-plugins-official";
+
+// 以下两个模块私有函数逐字复刻 packages/shared/src/mcp.ts:228-252 的私有
+// acodeCuaArgLeaf / matchesACodeCuaSpec（单一事实源 isACodeCuaMcpCommand/isACodeCuaMcpPackageArg
+// :259-270 的实现体），保证两处判别面一致：下划线归一（PyPI 视 _/- 等价）、
+// `@`/`==`/`[`/`.` 包规格边界、路径叶子（先去尾部分隔符，防空串叶子漏判 → fail-open）。
+function acodeCuaArgLeaf(value) {
+  return value.replace(/[\\/]+$/, "").split(/[\\/]/).pop() ?? value;
+}
+
+function matchesACodeCuaSpec(candidate) {
+  const c = candidate.replace(/_/g, "-");
+  return (
+    c === "acode-cua" ||
+    c.startsWith("acode-cua[") ||
+    c.startsWith("acode-cua@") ||
+    c.startsWith("acode-cua==") ||
+    // `.` 分支同时覆盖 `acode-cua.git` / `acode-cua.git@v1` 与 `acode-cua.server` 等 python 子模块。
+    c.startsWith("acode-cua.")
+  );
+}
+
+// command 与 args 共用同一包规格判定（shared 中 isACodeCuaMcpCommand 与 isACodeCuaMcpPackageArg
+// 实现体相同）。入参按 unknown 对待：非 string 一律不命中、不抛。
+function isACodeCuaMcpToken(value) {
+  return typeof value === "string" && (matchesACodeCuaSpec(value) || matchesACodeCuaSpec(acodeCuaArgLeaf(value)));
+}
+
+function hasOfficialCuaPluginIdEnv(env) {
+  // 不变量 2 补注字段 4：env 是 Array<{name,value}>（mcp.ts:171，非 Record）。官方 plugin server
+  // 走 __acode-plugin-host，command/args 都不含 acode-cua 字样，只有 _plugin id env 可识别
+  // （mcp-config.ts:174-182）。value 比对对齐 mcp-config.ts:179 的 trim().toLowerCase()。
+  if (!Array.isArray(env)) return false; // Record/畸形形状：不抛、env 维度不命中（入参按 unknown 对待）
+  return env.some(
+    (entry) =>
+      entry !== null &&
+      typeof entry === "object" &&
+      entry.name === CUA_PLUGIN_ID_ENV_NAME &&
+      typeof entry.value === "string" &&
+      entry.value.trim().toLowerCase() === CUA_OFFICIAL_PLUGIN_ID,
+  );
+}
+
+export function isPotentialACodeCuaAgentMcpServer(server) {
+  // 消费点 node.ts:789：resolver 跨过 Helper start/health await 后置 stale-terminal 时，
+  // 从 servers 列表过滤旧代际 CUA candidate，防止把旧 socket/token 交给晚到 Agent。
+  // 漏判 → Agent 回退成 Python 自持 macOS TCC（违反 product broker 边界），故 fail-closed
+  // 方向 = 宁可过判不漏判（不变量 1 栏①）。入参按 unknown 对待（broker-server.d.ts:211）：
+  // null/非对象/字段缺失一律 false、不抛。判别面与 mcp-config.ts:168-186 isACodeCuaStdioServer
+  // 对齐（不变量 2 补注「谓词须匹配的字段 1-4」），任一维度命中即判定。
+  if (server === null || typeof server !== "object") return false;
+  // ① name 维度：ACODE_CUA_OFFICIAL_PLUGIN_ID 的用户露出名（mcp.ts:10-13；node.ts:1073、
+  // mcp-config.ts:173 同字面量判别）。字段 1 未限定变体——http/sse 同名 server 也过判
+  // （过判只是在 stale 窗口多滤一个 server，漏判才是安全违规）。
+  if (server.name === CUA_AGENT_SERVER_NAME) return true;
+  // ②③ stdio 变体的 command / args 任一元素命中 acode-cua 包规格（字段 2/3）。
+  // http/sse 变体无 command/args，typeof/Array.isArray 守卫使其自然跳过、不抛。
+  if (isACodeCuaMcpToken(server.command)) return true;
+  if (Array.isArray(server.args) && server.args.some((arg) => isACodeCuaMcpToken(arg))) return true;
+  // ④ env 数组扫描找官方 plugin id（字段 4）。
+  return hasOfficialCuaPluginIdEnv(server.env);
 }
 
 export function isScreenCaptureProbeSuccess(_probe) {

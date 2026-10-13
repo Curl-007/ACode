@@ -1,0 +1,15 @@
+{
+  "name": "@acode/acode-cua",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Windows Computer Use native producer (role A). Loaded by path via ACODE_CUA_DEV_ROOT / resources/tools/cua-helper, never resolved by package name. Skeleton only: no runtime capability yet.",
+  "license": "MIT",
+  "type": "module",
+  "acodeCuaRuntime": {
+    "schema": 1,
+    "windows": {
+      "entry": "dist/windows-helper.js",
+      "nativeAddon": "build/Release/ax_native.node"
+    }
+  }
+}

@@ -3,29 +3,36 @@
  * （left_click/scroll/left_click_drag/type/key/paste/stop_computer_control）+
  * request_access + broker_info 的 capabilities 增量（§10.9）。
  *
- * 6 个 UIA 工具（list_apps/list_windows/get_app_state/set_value/select_text/
- * perform_action）**不注册**——dispatch 层统一产 unimplemented（C09 红线：A3 前显式
- * 不可用、零假成功，§10.0/§11.2）。
+ * A3 增补（§11.2/§11.3）：
+ * - 指针三工具的 element target 路径（InvokePattern 优先 / clickable point 兜底 /
+ *   皆不可 → action_unavailable；收据 message 固定字面量分支如实标注路径）；
+ * - app_ref 全形态（组合注入 resolveAppRef 时 name/bundle_id 生效；A2-alone 面维持
+ *   pid-only + 专属诚实拒绝字面量）；
+ * - 一切带已解析 app_ref 的动作收据附 _meta targetApp 展示投影（§11.6）。
+ *
+ * 6 个 UIA 工具在 backend-a3.ts（A3）；本文件的 broker_info 是 A2 三键基础面，
+ * capabilities.uia 由 backend-a3 装饰（§10.9）。
  *
  * delivery-state 派发侧契约（§10.12 铁律）：
  * 1. 变更类派发启动后禁止 ok:false——NativeAmbiguousError 一律 possibly_sent 收据、
  *    取消/部分注入一律 interrupted 收据（accepted+action_sent:true）；ok:false 只出现在
- *    「确定未派发」域（参数校验/预检/app_ref 死亡/前台拒绝/队满）；
+ *    「确定未派发」域（参数校验/预检/app_ref 死亡/前台拒绝/队满/stale）；
  * 2. broker_unavailable 仅限 WARMING（wire-server 状态门是唯一产点，本文件结构性不产出）；
  * 3. 只读方法（request_access）不携带 delivery-state 键（缺席即语义）。
  *
- * 收据构造/字面量在 receipts.ts，参数校验在 param-validation.ts（A2 实现批次拆分，
- * §5.3「文件划分可微调」；三者都是纯 TS + 注入 driver——§10.11 模块规则①：不得
- * import native-driver）。
+ * 收据构造/字面量在 receipts.ts，参数校验在 param-validation.ts，target/app_ref 解析与
+ * element 动作面在 target-resolution.ts（A3 拆分，§5.3 先例；三者都是纯 TS + 注入
+ * driver——§10.11 模块规则①：不得 import native-driver/uia-driver）。
  */
 import {
   NativeAmbiguousError,
   NativeRejectedError,
   type CuaNativeDriver,
+  type ElementActionSurface,
   type MouseButtonName,
   type PressKeysEntry,
 } from "./driver-contract.js";
-import { appOwnerScope, type FrameRecord, type FrameRegistry } from "./frame-registry.js";
+import { type FrameRegistry } from "./frame-registry.js";
 import { type InputSession } from "./input-session.js";
 import { parseKeyChord, PASTE_CHORD_SEQUENCE } from "./keymap.js";
 import { createMutatingDispatch } from "./mutating-dispatch.js";
@@ -38,14 +45,16 @@ import {
   STOP_REASON_MAX_CODE_UNITS,
   TYPE_TEXT_MAX_CODE_UNITS,
   invalidParams,
+  parseActionTarget,
   parseAppRefPid,
-  parseCoordinateTarget,
+  parseAppRefShape,
   parseModifiers,
   pickKeys,
   requireFiniteNumber,
   requireOptionalString,
   requireString,
-  type CoordinateTarget,
+  type ActionTarget,
+  type ParsedAppRef,
 } from "./param-validation.js";
 import {
   RECEIPT_MESSAGES,
@@ -54,8 +63,11 @@ import {
   interruptedReceipt,
   possiblySentReceipt,
   receiptResult,
+  targetAppMeta,
   type ToolResultPayload,
 } from "./receipts.js";
+import { createTargetResolution } from "./target-resolution.js";
+import type { AppRefResolver } from "./app-ref.js";
 import {
   BROKER_INFO_METHOD,
   WIRE_ERROR_MESSAGES,
@@ -79,72 +91,38 @@ export interface BackendA2Deps {
   readonly driver: CuaNativeDriver;
   readonly session: InputSession;
   readonly frames: FrameRegistry;
+  /** A3 组合注入：element target 动作面（缺席 = A2-alone，element 诚实拒绝）。 */
+  readonly elements?: ElementActionSurface;
+  /** A3 组合注入：app_ref 全形态解析器（缺席 = pid-only + A2 专属拒绝字面量）。 */
+  readonly resolveAppRef?: AppRefResolver;
+  /**
+   * request_access 的 accessibility 判据（§10.9：A2 判据 = 可输入；A3 起叠加 UIA 可用）。
+   * undefined = A2-alone 面维持原判据（测试兼容）；生产组合注入真实 uia presence。
+   */
+  readonly uiaPresence?: boolean;
 }
 
 export function createBackendA2(deps: BackendA2Deps): BackendRecord {
-  const { driver, session, frames } = deps;
+  const { driver, session } = deps;
   const backend: BackendRecord = {};
   const presence = driver.capabilityPresence;
+  const resolution = createTargetResolution({
+    driver,
+    frames: deps.frames,
+    ...(deps.elements ? { elements: deps.elements } : {}),
+    ...(deps.resolveAppRef ? { resolveAppRef: deps.resolveAppRef } : {}),
+  });
 
-  // 统一 preflight 门（§10.9：每次派发前、admission 内执行；environmentProbe 不缓存——
-  // 锁屏/解锁是动态事实）。返回解析出的 expectedForegroundPid。
-  const preflightAndResolveApp = async (pid: number): Promise<number> => {
-    const env = await driver.environmentProbe();
-    if (!env.interactiveDesktop || env.sessionZero || !env.dpiAware) {
-      throw new WireRequestFailure(
-        WIRE_ERROR_MESSAGES.nonInteractiveDesktop,
-        "permission_denied",
-      );
-    }
-    // app_ref 校验 = 进程存活 + canonical exe 可读（§10.9；path 值绝不进日志/wire）。
-    const exe = await driver.processExecutablePath(pid);
-    if (exe.path === null) {
-      throw new WireRequestFailure(WIRE_ERROR_MESSAGES.appNotRunning, "invalid_request");
-    }
-    return pid;
-  };
-
-  // 坐标 target → 物理像素（§10.9：frame 校验 + producer 自持线性投影）。
-  const resolvePhysicalPoint = (
-    pid: number,
-    target: CoordinateTarget,
-  ): { x: number; y: number } => {
-    let frame: FrameRecord;
-    if (target.frameId !== undefined) {
-      const lookup = frames.resolve(target.frameId);
-      if (!lookup.ok || !lookup.frame) {
-        throw new WireRequestFailure(
-          WIRE_ERROR_MESSAGES.staleObservation,
-          "element_unavailable",
-        );
-      }
-      frame = lookup.frame;
-    } else {
-      // 隐式绑定该 app scope 最近一次可动作 frame；无任何 frame → 固定字面量拒绝
-      // （坐标必须以 producer 发射过的栅格为准——模型未见过的坐标就是猜测，猜测即
-      // fail-closed，§10.9）。
-      const latest = frames.latestForScope(appOwnerScope(pid));
-      if (!latest) {
-        throw new WireRequestFailure(
-          WIRE_ERROR_MESSAGES.staleObservation,
-          "element_unavailable",
-        );
-      }
-      frame = latest;
-    }
-    if (frame.ownerScope !== appOwnerScope(pid)) {
-      // frame owner 不符 → fail-closed（对齐上游 frame_dispatch_identity_mismatch 机制）。
-      throw new WireRequestFailure(WIRE_ERROR_MESSAGES.staleObservation, "element_unavailable");
-    }
-    return frames.projectCoordinates(frame, target.x, target.y);
-  };
+  // app_ref 结构解析（派发前安全区）：组合面走全形态 shape；A2-alone 维持 pid-only
+  // （name/bundle 形态 → 专属诚实拒绝字面量，parseAppRefPid 内钉死）。
+  const parseRef = (value: unknown): ParsedAppRef =>
+    deps.resolveAppRef ? parseAppRefShape(value) : { pid: parseAppRefPid(value) };
 
   // 变更类派发编排（admission 包装 / 二分收口 / cleanup 释放 / 修饰键包裹——
   // mutating-dispatch.ts，§10.4 规则 4/5 + §10.5 + §10.12 铁律 1 的落点）。
-  const { runMutating, releaseQuiet, withModifiers, modifierCleanupReceipt } =
-    createMutatingDispatch({ driver, session });
+  const { runMutating, releaseQuiet, withModifiers } = createMutatingDispatch({ driver, session });
 
-  // ── left_click（§13 行 4）───────────────────────────────────────────────────
+  // ── left_click（§13 行 4；A3 element 路径 §11.2）────────────────────────────
   if (presence.input) {
     backend.left_click = async (params: unknown): Promise<ToolResultPayload> => {
       const p = pickKeys(params, ["target", "app_ref"], [
@@ -164,32 +142,54 @@ export function createBackendA2(deps: BackendA2Deps): BackendRecord {
       }
       const clickCount = clickCountRaw as number;
       const modifiers = parseModifiers(p.modifiers);
-      const pid = parseAppRefPid(p.app_ref);
-      const target = parseCoordinateTarget(p.target);
+      const ref = parseRef(p.app_ref);
+      const target: ActionTarget = parseActionTarget(p.target);
 
       return runMutating("click", async () => {
-        await preflightAndResolveApp(pid);
-        const point = resolvePhysicalPoint(pid, target);
-        const outcome = await withModifiers(pid, modifiers, async () => {
-          // click = moveTo（定位）+ down/up × click_count（多击配对背靠背注入，
-          // 落在系统双击识别窗内，§18 第 9 条）。
-          await driver.moveTo(point.x, point.y, { expectedForegroundPid: pid });
-          for (let click = 0; click < clickCount; click += 1) {
-            await driver.mouseDown(button, { expectedForegroundPid: pid });
-            session.noteHeld(`mouse:${button}`);
-            try {
-              await driver.mouseUp(button, { mode: "action", expectedForegroundPid: pid });
-            } finally {
-              session.noteReleased(`mouse:${button}`);
+        const identity = await resolution.resolveIdentity(ref);
+        const pid = identity.pid;
+        const meta = targetAppMeta(identity);
+
+        // 物理点击序列（坐标路径与 element point 兜底路径共用；前台校验全程适用）。
+        const clickPhysically = async (point: { x: number; y: number }): Promise<ToolResultPayload | undefined> => {
+          const outcome = await withModifiers(pid, modifiers, async () => {
+            await driver.moveTo(point.x, point.y, { expectedForegroundPid: pid });
+            for (let click = 0; click < clickCount; click += 1) {
+              await driver.mouseDown(button, { expectedForegroundPid: pid });
+              session.noteHeld(`mouse:${button}`);
+              try {
+                await driver.mouseUp(button, { mode: "action", expectedForegroundPid: pid });
+              } finally {
+                session.noteReleased(`mouse:${button}`);
+              }
             }
+          });
+          if (outcome?.modifierCleanupAfterBodySuccess) {
+            // 主体成功但修饰 up 业务段失败：cleanup 已收口（规则 5），诚实收据（§10.12.1）。
+            return interruptedReceipt("internal", RECEIPT_MESSAGES.modifierReleaseCleanup, {}, meta);
           }
-        });
-        if (outcome?.modifierCleanupAfterBodySuccess) return modifierCleanupReceipt();
-        return acceptedReceipt();
+          return undefined;
+        };
+
+        if (target.kind === "element") {
+          // ① 语义等价条件（left ∧ 单击 ∧ 无修饰键）→ InvokePattern 优先（后台安全，
+          // 不抢焦点——element 路径不经坐标命中 = §10.7 像素归属残余风险的正面缓解）。
+          // ② 其余形态或无 InvokePattern → GetClickablePoint + 物理点击；③ point 为 null
+          // 的 action_unavailable 在 resolveActionPoint 内产出（§11.2）。
+          const semanticEquivalent =
+            button === "left" && clickCount === 1 && (!modifiers || modifiers.length === 0);
+          if (semanticEquivalent && (await resolution.invokeElement(pid, target.index))) {
+            return acceptedReceipt({ message: RECEIPT_MESSAGES.elementPatternDispatched }, meta);
+          }
+          const cleanup = await clickPhysically(await resolution.resolveActionPoint(pid, target));
+          return cleanup ?? acceptedReceipt({ message: RECEIPT_MESSAGES.elementPointDispatched }, meta);
+        }
+        const cleanup = await clickPhysically(resolution.physicalPoint(pid, target));
+        return cleanup ?? acceptedReceipt({}, meta);
       });
     };
 
-    // ── scroll（§13 行 5）─────────────────────────────────────────────────────
+    // ── scroll（§13 行 5；A3 element 路径 §11.2）──────────────────────────────
     backend.scroll = async (params: unknown): Promise<ToolResultPayload> => {
       const p = pickKeys(params, ["target", "app_ref", "scroll_direction", "scroll_amount"], [
         "strategy",
@@ -199,33 +199,68 @@ export function createBackendA2(deps: BackendA2Deps): BackendRecord {
       if (!SCROLL_DIRECTIONS.has(direction)) invalidParams();
       const amount = requireFiniteNumber(p.scroll_amount);
       if (!(amount > 0)) invalidParams();  // scroll_amount 为正数（页，§10.2）
-      const pid = parseAppRefPid(p.app_ref);
-      const target = parseCoordinateTarget(p.target);
+      const ref = parseRef(p.app_ref);
+      const target = parseActionTarget(p.target);
       // 1 页 = 3×WHEEL_DELTA = 360；up/right 为正（Windows 滚轮惯例），水平走 HWHEEL。
       const delta = Math.round(amount * SCROLL_UNITS_PER_PAGE);
       const deltaX = direction === "right" ? delta : direction === "left" ? -delta : 0;
       const deltaY = direction === "up" ? delta : direction === "down" ? -delta : 0;
 
       return runMutating("scroll", async () => {
-        await preflightAndResolveApp(pid);
-        const point = resolvePhysicalPoint(pid, target);
+        const identity = await resolution.resolveIdentity(ref);
+        const pid = identity.pid;
+        const meta = targetAppMeta(identity);
+        if (target.kind === "element") {
+          // ScrollPattern 在 → ScrollByAmount（后台安全）；不在 → clickable point +
+          // 物理 scrollAt（前台校验）；皆不可 → action_unavailable（§11.2）。
+          const scrolled = await resolution.scrollElement(pid, target.index, deltaX, deltaY);
+          if (scrolled) {
+            return acceptedReceipt({ message: RECEIPT_MESSAGES.elementPatternDispatched }, meta);
+          }
+          const point = await resolution.resolveActionPoint(pid, target);
+          await driver.scrollAt(point.x, point.y, deltaX, deltaY, { expectedForegroundPid: pid });
+          return acceptedReceipt({ message: RECEIPT_MESSAGES.elementPointDispatched }, meta);
+        }
+        const point = resolution.physicalPoint(pid, target);
         await driver.scrollAt(point.x, point.y, deltaX, deltaY, { expectedForegroundPid: pid });
-        return acceptedReceipt();
+        return acceptedReceipt({}, meta);
       });
     };
 
-    // ── left_click_drag（§13 行 6）────────────────────────────────────────────
+    // ── left_click_drag（§13 行 6；A3 两端 target 独立解析 §11.2）──────────────
     backend.left_click_drag = async (params: unknown): Promise<ToolResultPayload> => {
       const p = pickKeys(params, ["from_target", "to", "app_ref"], ["modifiers"]);
       const modifiers = parseModifiers(p.modifiers);
-      const pid = parseAppRefPid(p.app_ref);
-      const fromTarget = parseCoordinateTarget(p.from_target);
-      const toTarget = parseCoordinateTarget(p.to);
+      const ref = parseRef(p.app_ref);
+      const fromTarget = parseActionTarget(p.from_target);
+      const toTarget = parseActionTarget(p.to);
 
       return runMutating("drag", async () => {
-        await preflightAndResolveApp(pid);
-        const from = resolvePhysicalPoint(pid, fromTarget);
-        const to = resolvePhysicalPoint(pid, toTarget);
+        const identity = await resolution.resolveIdentity(ref);
+        const pid = identity.pid;
+        const meta = targetAppMeta(identity);
+        let viaElement = fromTarget.kind === "element" || toTarget.kind === "element";
+        let from: { x: number; y: number };
+        let to: { x: number; y: number };
+        if (fromTarget.kind === "element" && toTarget.kind === "element") {
+          // 无 pattern 等价物——两端 GetClickablePoint + native drag（任一端无 →
+          // action_unavailable，§11.2）。
+          const points = await resolution.dragElementPoints(pid, fromTarget.index, toTarget.index);
+          if (points === null) {
+            throw new WireRequestFailure(
+              WIRE_ERROR_MESSAGES.elementActionNotAdvertised,
+              "action_unavailable",
+            );
+          }
+          from = points.from;
+          to = points.to;
+        } else {
+          const fromPoint = await resolution.resolveActionPoint(pid, fromTarget);
+          const toPoint = await resolution.resolveActionPoint(pid, toTarget);
+          from = fromPoint;
+          to = toPoint;
+          viaElement = fromPoint.viaElement || toPoint.viaElement;
+        }
         let dragResult: { injectedPoints: number; canceled: boolean } | undefined;
         const outcome = await withModifiers(pid, modifiers, async () => {
           dragResult = await driver.drag(from.x, from.y, to.x, to.y, {
@@ -238,7 +273,7 @@ export function createBackendA2(deps: BackendA2Deps): BackendRecord {
           // stop 中断（§10.6）：部分副作用已发生 ⇒ action_sent:true ⇒ SDK retry=reobserve。
           return interruptedReceipt("controller_busy", RECEIPT_MESSAGES.interruptedByStop, {
             injected_points: injectedPoints,
-          });
+          }, meta);
         }
         if (outcome?.modifierCleanupAfterBodySuccess) {
           return receiptResult(
@@ -250,12 +285,15 @@ export function createBackendA2(deps: BackendA2Deps): BackendRecord {
               injected_points: injectedPoints,
             },
             true,
+            meta,
           );
         }
         return acceptedReceipt({
-          message: RECEIPT_MESSAGES.dragCompleted,
+          message: viaElement
+            ? RECEIPT_MESSAGES.elementPointDispatched
+            : RECEIPT_MESSAGES.dragCompleted,
           injected_points: injectedPoints,
-        });
+        }, meta);
       });
     };
 
@@ -266,26 +304,27 @@ export function createBackendA2(deps: BackendA2Deps): BackendRecord {
       const p = pickKeys(params, ["text", "app_ref"], []);
       const text = requireString(p.text);
       if (text.length === 0 || text.length > TYPE_TEXT_MAX_CODE_UNITS) invalidParams();
-      const pid = parseAppRefPid(p.app_ref);
+      const ref = parseRef(p.app_ref);
 
       return runMutating("text", async () => {
-        await preflightAndResolveApp(pid);
+        const identity = await resolution.resolveIdentity(ref);
+        const meta = targetAppMeta(identity);
         // chunk（≤64 code units、代理对不劈裂、chunk 间取消/前台校验）在 native 内执行
-        // （§10.9；injected/total/canceled 是 native 的部分事实通道）。
-        const outcome = await driver.sendText(text, { expectedForegroundPid: pid });
+        //（§10.9；injected/total/canceled 是 native 的部分事实通道）。
+        const outcome = await driver.sendText(text, { expectedForegroundPid: identity.pid });
         if (outcome.canceled) {
           return interruptedReceipt("controller_busy", RECEIPT_MESSAGES.interruptedByStop, {
             injected: outcome.injected,
             total: outcome.total,
-          });
+          }, meta);
         }
         if (outcome.injected < outcome.total) {
           return interruptedReceipt("internal", RECEIPT_MESSAGES.textPartiallyInjected, {
             injected: outcome.injected,
             total: outcome.total,
-          });
+          }, meta);
         }
-        return acceptedReceipt({ injected: outcome.injected, total: outcome.total });
+        return acceptedReceipt({ injected: outcome.injected, total: outcome.total }, meta);
       });
     };
 
@@ -301,19 +340,20 @@ export function createBackendA2(deps: BackendA2Deps): BackendRecord {
         if (holdSeconds < 0 || holdSeconds > HOLD_SECONDS_MAX) invalidParams();
         holdMs = Math.round(holdSeconds * 1000);
       }
-      const pid = parseAppRefPid(p.app_ref);
+      const ref = parseRef(p.app_ref);
 
       return runMutating(holdMs > 0 ? "keys-hold" : "keys", async () => {
-        await preflightAndResolveApp(pid);
+        const identity = await resolution.resolveIdentity(ref);
+        const meta = targetAppMeta(identity);
         const outcome = await driver.pressKeys(chord as PressKeysEntry[], {
-          expectedForegroundPid: pid,
+          expectedForegroundPid: identity.pid,
           ...(holdMs > 0 ? { holdMs } : {}),
         });
         if (outcome.canceled) {
           // hold 中断 = interrupted（§13 行 10；C07 的 stop 中断验收面，§15.2 --pointer）。
-          return interruptedReceipt("controller_busy", RECEIPT_MESSAGES.interruptedByStop);
+          return interruptedReceipt("controller_busy", RECEIPT_MESSAGES.interruptedByStop, {}, meta);
         }
-        return acceptedReceipt();
+        return acceptedReceipt({}, meta);
       });
     };
 
@@ -357,37 +397,38 @@ export function createBackendA2(deps: BackendA2Deps): BackendRecord {
       if (p.format !== undefined && p.format !== "text") invalidParams();  // A2 只实现文本
       const text = requireString(p.text);
       if (text.length > PASTE_TEXT_MAX_CODE_UNITS) invalidParams();
-      const pid = parseAppRefPid(p.app_ref);
+      const ref = parseRef(p.app_ref);
 
       return runMutating("paste", async () => {
-        await preflightAndResolveApp(pid);
+        const identity = await resolution.resolveIdentity(ref);
+        const meta = targetAppMeta(identity);
         // 序列（§10.9）：preflight → app_ref 解析 → clipboardWriteText → Ctrl+V 注入
-        // （同一 admission 项、同一前台校验域）。
+        //（同一 admission 项、同一前台校验域）。
         await driver.clipboardWriteText(text);
         // 剪贴板已写入：自此刻起任何失败都不得 ok:false / not_sent——剪贴板副作用
         // 已发生（§10.9 delivery-state 细节；paste 不恢复原剪贴板内容 = 登记的产品副作用）。
         try {
           const outcome = await driver.pressKeys([...PASTE_CHORD_SEQUENCE], {
-            expectedForegroundPid: pid,
+            expectedForegroundPid: identity.pid,
           });
           if (outcome.canceled) {
             return interruptedReceipt("controller_busy", RECEIPT_MESSAGES.interruptedByStop, {
               clipboard_modified: true,
-            });
+            }, meta);
           }
           return acceptedReceipt({
             message: RECEIPT_MESSAGES.pasteCompletedClipboardModified,
             clipboard_modified: true,
-          });
+          }, meta);
         } catch (error) {
           await releaseQuiet();  // 规则 5 收口：收据前 held 恒空
           if (error instanceof NativeAmbiguousError) {
-            return possiblySentReceipt(error.code, error.reason, { clipboard_modified: true });
+            return possiblySentReceipt(error.code, error.reason, { clipboard_modified: true }, meta);
           }
           if (error instanceof NativeRejectedError) {
             return interruptedReceipt("internal", RECEIPT_MESSAGES.clipboardModifiedPasteIncomplete, {
               clipboard_modified: true,
-            });
+            }, meta);
           }
           throw error;
         }
@@ -409,7 +450,10 @@ export function createBackendA2(deps: BackendA2Deps): BackendRecord {
     // 只读预检快照（§10.9）：Windows 无 TCC，快照 = preflight + 能力在场性。
     const env = await driver.environmentProbe();
     const preflightOk = env.interactiveDesktop && !env.sessionZero && env.dpiAware;
-    const accessibility = preflightOk ? "granted" : "denied";  // "stale" Windows 永不产出（§12.2）
+    // accessibility 判据：A2 = 可输入；A3 起叠加 UIA 可用（§10.9）。uiaPresence 未注入
+    // = A2-alone 面维持原判据（组合面由 entry 注入真实 presence）。
+    const uiaOk = deps.uiaPresence ?? true;
+    const accessibility = preflightOk && uiaOk ? "granted" : "denied";  // "stale" Windows 永不产出（§12.2）
     const screenRecording = !preflightOk
       ? "denied"
       : presence.capture
@@ -437,7 +481,7 @@ export function createBackendA2(deps: BackendA2Deps): BackendRecord {
     };
   };
 
-  // ── broker_info（A2 增量 additive，§10.9）─────────────────────────────────
+  // ── broker_info（A2 增量 additive，§10.9；capabilities.uia 由 backend-a3 装饰）─
   backend[BROKER_INFO_METHOD] = async (): Promise<Record<string, unknown>> => {
     // capabilities = 导出在场性（typeof 检查，构造期完成）∧ environmentProbe 预检，
     // 每请求现算不缓存（能力真实性：声明与 dispatch 行为同源；漂移即被 §10.11 一致性

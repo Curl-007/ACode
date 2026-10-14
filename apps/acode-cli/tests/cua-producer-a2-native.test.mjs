@@ -149,7 +149,7 @@ async function waitForReady(helper, timeoutMs = 15_000) {
 
 // ── addon 只读面（零副作用）───────────────────────────────────────────────────
 
-test("native|导出面封闭：A2 全导出在场且 typeof 精确（§10.1 + processExecutablePath 回写）", { skip: skipReason }, () => {
+test("native|导出面封闭：A2+A3 全导出在场且 typeof 精确（§10.1 + §11 回写；processExecutablePath/A3 十一导出）", { skip: skipReason }, () => {
   const addon = loadAddon();
   const expectedFunctions = [
     "probe",
@@ -170,13 +170,28 @@ test("native|导出面封闭：A2 全导出在场且 typeof 精确（§10.1 + pr
     "clipboardWriteText",
     "captureDisplay",
     "captureWindow",
+    // ── A3 UIA 面（§11；观察五 + pattern 动作六）──
+    "listApplications",
+    "listWindows",
+    "captureUiTree",
+    "releaseStateToken",
+    "uiaWorkerStats",
+    "uiaWorkerShutdown",
+    "elementSetValue",
+    "elementSelectText",
+    "elementPerformAction",
+    "elementClickablePoint",
+    "elementInvoke",
+    "elementScroll",
   ];
   for (const name of expectedFunctions) {
     assert.equal(typeof addon[name], "function", `${name} 必须是函数导出`);
   }
   assert.equal(typeof addon.cancelOperations, "function", "cancelOperations 唯一新增同步导出");
   assert.equal(typeof addon.addonVersion, "string");
-  // 导出面封闭：恰好 20 键（能力面溢出禁止——不导出 clipboardReadText 等，§10.1 注记 4）。
+  // 导出面封闭：恰好 32 键（能力面溢出禁止——不导出 clipboardReadText 等，§10.1 注记 4；
+  // A3 批次 20 → 32：UIA 观察五 + pattern 动作六 + uiaWorkerShutdown 退出收口钩子，
+  // 全部在 §11/§19 第 14 条契约内）。
   assert.deepEqual(Object.keys(addon).sort(), [...expectedFunctions, "addonVersion", "cancelOperations"].sort());
 });
 
@@ -320,7 +335,7 @@ test("native|clipboardWriteText 仅超限拒绝面：8 Mi+1 code units → 参�
   assert.equal(caught.code, undefined, "拒绝发生在参数校验层（无 native 类型化 code）");
 });
 
-test("native|captureWindow（A2 桩）：任何 token → target_changed（窗口注册表属 A3，诚实 fail-closed）", { skip: skipReason }, async () => {
+test("native|captureWindow：未注册/失效 token → target_changed（A3 注册表在场后语义 = stale 观察面，诚实 fail-closed 不变）", { skip: skipReason }, async () => {
   const addon = loadAddon();
   let caught = null;
   try {
@@ -331,7 +346,7 @@ test("native|captureWindow（A2 桩）：任何 token → target_changed（窗�
   } catch (error) {
     caught = error;
   }
-  assert.ok(caught, "A2 无窗口注册表 ⇒ 任何 token 不可解析");
+  assert.ok(caught, "未注册 token 不可解析（A2 桩与 A3 注册表对该输入行为一致）");
   assert.equal(caught.code, "target_changed", "wire → element_unavailable stale 字面量");
 });
 
@@ -384,7 +399,7 @@ test("wire|broker_info capabilities + request_access 快照 + stop 收据（真 
   }
 });
 
-test("wire|负控制夹具全扫：死 pid/前台负控制/非法参数/element 拒绝/无 frame stale/permission_status/UIA unimplemented（零真实注入）", { skip: skipReason }, async () => {
+test("wire|负控制夹具全扫：死 pid/前台负控制/非法参数/element stale/无 frame stale/permission_status/UIA 真实受理（零真实注入）", { skip: skipReason }, async () => {
   const socketPath = mintTestPipe();
   const helper = startHelper(socketPath);
   const deadPid = await mintConfirmedDeadPid();
@@ -440,13 +455,15 @@ test("wire|负控制夹具全扫：死 pid/前台负控制/非法参数/element 
     await expectError("key", { text: "hyper+x", app_ref: { pid: sleeper.pid } }, "invalid_request", WIRE_ERROR_MESSAGES.invalidParams, "key 未知键名");
     await expectError("left_click", { target: { type: "coordinate", x: 1, y: 1 }, app_ref: { pid: sleeper.pid }, evil: true }, "invalid_request", WIRE_ERROR_MESSAGES.invalidParams, "left_click 未知键");
 
-    // ④ element target → A2 诚实拒绝字面量（UIA 面未实现，C09 同律）。
+    // ④ element target 且该 scope 无观察 → stale 字面量（A3 收口后 element 面已实现；
+    //    索引解析按「该 app scope 最新一次观察」，无观察 = fail-closed，§11.4。
+    //    A2 时代的「UIA observation surface 未实现」拒绝字面量仅在 UIA 导出缺席时产出）。
     await expectError(
       "left_click",
       { target: { type: "element", index: 2 }, app_ref: { pid: sleeper.pid } },
       "element_unavailable",
-      WIRE_ERROR_MESSAGES.elementTargetsRequireUia,
-      "element target",
+      WIRE_ERROR_MESSAGES.staleObservation,
+      "element target 无观察",
     );
 
     // ⑤ 坐标 target 无任何 frame → stale 字面量（A2 无观察面 = 运行期常态，§10.0）。
@@ -462,9 +479,16 @@ test("wire|负控制夹具全扫：死 pid/前台负控制/非法参数/element 
     //    method_not_found 是正确行为，实现者不得「顺手」注册）。
     await expectError("permission_status", {}, "method_not_found", WIRE_ERROR_MESSAGES.methodNotFound, "permission_status");
 
-    // ⑦ 6 个 UIA 方法保持 unimplemented（A3 面，C09：显式不可用、零假成功）。
-    for (const method of ["list_apps", "list_windows", "get_app_state", "set_value", "select_text", "perform_action"]) {
-      await expectError(method, {}, "unimplemented", WIRE_ERROR_MESSAGES.unimplemented, `${method}（A3 面）`);
+    // ⑦ 6 个 UIA 方法真实受理（A3-AC-10 同批反转；每方法独立断言不折叠）：只读两法
+    //    空参即成功（真机枚举，只读安全），其余四法空参 → invalid_request（参数面确定
+    //    拒绝）——关键断言是「绝不 unimplemented」（C09 面收口为零）。
+    for (const method of ["list_apps", "list_windows"]) {
+      const outcome = await call(method, {});
+      assert.equal(outcome.error, undefined, `${method}: A3 已注册 → 空参只读成功（绝不 unimplemented）`);
+      assert.equal(outcome.result.isError, undefined, `${method}: 成功面`);
+    }
+    for (const method of ["get_app_state", "set_value", "select_text", "perform_action"]) {
+      await expectError(method, {}, "invalid_request", WIRE_ERROR_MESSAGES.invalidParams, `${method}（A3 已注册 → 参数面拒绝而非 unimplemented）`);
     }
   } finally {
     sleeper.kill();

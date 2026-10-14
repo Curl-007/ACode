@@ -39,6 +39,20 @@ unavailable 语义失败，绝不静默降级为“看起来可用”。
 > （→ SDK `ACTION_UNAVAILABLE`，绝无假成功）——**整条 CUA 链路的能力面仍不可用**，本包占位面
 > 零改动；栏② 的 Helper 服务端原语与原生 seam 按 producer spec §1.2 裁决为「producer 树内
 > 自建、本包占位不再回填」（见下栏② 对应条目的校准）。
+>
+> **（2026-10-14 更新，A2/A3/阶段 4 批次）**：角色 A 的 **A2**（指针/键盘/剪贴板注入 +
+> SendInput 前台纪律 + WGC/D3D11/WIC 截图 + delivery-state 三态收据）与 **A3**（UIA 六工具 +
+> MTA worker 卡死隔离 + element target 路径 + app_ref 全形态 + 窗口 token 注册表）已在
+> `cua-producer/` 树内落地，**14/14 wire handler 齐套、unimplemented 面收口为零**（未实现面
+> 仅剩 A3b 透明拉起，诚实报 `target app is not running`）。宿主侧**阶段 4 平台判定面**同批
+> 收口（`request-access-contract.d.ts`/`cuaPermission.ts`/display schema 的 platform 联合扩面
+> + `cuaOsSupport.ts` Windows 分支与版本地板 17763）。**dev 链
+> （`ACODE_CUA_DEV_ROOT` → `WindowsCuaHelperHost`）已具备端到端物质基础**——真机烟测
+> `--capture/--uia/--host` 实证（producer spec §15）；C05/C07 真机人工验收待执行。**产品链
+> 仍不可用**：阶段 5 打包（`resources/tools/cua-helper` staging + 签名 + 完整性校验）未落地，
+> 本包占位面零改动——`isOfficialCuaPluginEnabledForWorkspace` /
+> `createCuaProductMcpServerResolver` / `CuaProductHelperWorkspaceRegistry` /
+> `isScreenCaptureProbeSuccess` 仍 fail-closed（最小可用集延后裁决不变）。
 
 ## 状态所有权
 

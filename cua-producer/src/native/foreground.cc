@@ -216,10 +216,13 @@ bool IsExpectedForeground(DWORD expectedPid) {
   if (!foreground) return false;  // 无前台窗口 = 无法证明 → fail-closed（§10.4）
   DWORD pid = 0;
   GetWindowThreadProcessId(foreground, &pid);
-  return pid == expectedPid;
-  // A2 已知限制（§10.4 规则 2）：前台是 ApplicationFrameHost.exe（packaged app 宿主）时
-  // 无法经 PKEY_AppUserModel_ID 修正到真实应用 pid——该修正面属 A3（§11.3）。A2 对此类
-  // 目标诚实报 foreground_lost（可能误拒、绝不误放，fail-closed 方向可接受）。
+  if (pid == expectedPid) return true;
+  // A3 收口（§10.4 规则 2 / §11.3 packaged 修正）：前台是 ApplicationFrameHost.exe 承载时，
+  // 经 frame 窗口的 PKEY_AppUserModel_ID + 子窗口/同 AUMID 顶层窗口解析真实应用 pid 再比对；
+  // 解析失败/多候选 → 判负（CorrectedForegroundPid 返回 AFH pid 或 0，均 ≠ expectedPid，
+  // fail-closed 方向不变——可能误拒、绝不误放）。
+  const DWORD corrected = CorrectedForegroundPid();
+  return corrected != 0 && corrected == expectedPid;
 }
 
 Napi::Value ForegroundPid(const Napi::CallbackInfo& info) {

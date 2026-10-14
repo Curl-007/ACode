@@ -55,6 +55,13 @@ export const WIRE_ERROR_MESSAGES = Object.freeze({
   invalidParams: "Invalid Computer Use method parameters.",
   appNotRunning: "Computer Use target app is not running.",
   appRefRequiresPid: "Computer Use app_ref requires a pid in this producer slice.",
+  // ── §4.6.1 A3 生效行（封闭表既有行的实现落地；零插值同律）──
+  appRefMultiple:
+    "Computer Use app_ref resolved to multiple running applications; pass a pid.",
+  noObservableWindow: "Computer Use target app has no observable window.",
+  elementNotSettable: "Computer Use element does not accept a value.",
+  elementNotSelectable: "Computer Use element does not support text selection.",
+  elementActionNotAdvertised: "Computer Use element does not advertise this action.",
   foregroundRequired:
     "Computer Use input requires the target application to be the only foreground application.",
   nonInteractiveDesktop: "Computer Use is not available on a locked or non-interactive desktop.",

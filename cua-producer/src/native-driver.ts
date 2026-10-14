@@ -19,8 +19,8 @@
  * driver-contract.ts 的接口 + 错误类型对接 fake driver）。
  */
 import {
-  NativeAmbiguousError,
   NativeRejectedError,
+  classifyNativeError,
   type CapabilityPresence,
   type CaptureBudget,
   type CaptureRect,
@@ -29,36 +29,15 @@ import {
   type EnvironmentProbeResult,
   type ExpectedForegroundOptions,
   type MouseButtonName,
-  type NativeErrorCode,
   type PressKeysEntry,
 } from "./driver-contract.js";
 
+// A3 起归类函数住 driver-contract（native-driver 与 uia-driver 共用；模块规则②禁止
+// uia-driver import 本文件）。再导出保持既有深导入面兼容（a2 测试/评审引用）。
+export { classifyNativeError } from "./driver-contract.js";
+
 /** addon 加载面形状（native-loader 的 AxNativeAddon + A2 导出经 typeof 检查取用）。 */
 type AddonSurface = Record<string, unknown>;
-
-const KNOWN_NATIVE_CODES: ReadonlySet<string> = new Set<NativeErrorCode>([
-  "foreground_lost",
-  "non_interactive_desktop",
-  "target_changed",
-  "capture_minimized",
-  "capture_failed",
-  "budget_exceeded",
-  "clipboard_busy",
-  "clipboard_denied",
-  "injection_rejected",
-  "uia_timeout",
-  "stale",
-  "not_settable",
-  "not_selectable",
-  "action_unavailable",
-  "canceled",
-  "internal_native",
-]);
-
-interface NativeTypedErrorShape {
-  code?: unknown;
-  dispatchStarted?: unknown;
-}
 
 /** 导出在场性检查（§10.9：capabilities 与 handler 注册的两面同源事实，typeof 判定）。 */
 function hasFunctions(addon: AddonSurface, names: readonly string[]): boolean {
@@ -220,41 +199,4 @@ export function createNativeDriver(addon: object): CuaNativeDriver {
       return callReadOnly<CaptureResult>("captureWindow", windowToken, budget);
     },
   };
-}
-
-/**
- * native 错误 → 二分契约归类（§10.3 判据；纯函数——fake driver 直接抛两个错误类，
- * 真 driver 经本函数由 code + dispatchStarted 决定归类）。
- */
-export function classifyNativeError(error: unknown, mutating: boolean): Error {
-  const shape = (error && typeof error === "object" ? error : {}) as NativeTypedErrorShape;
-  const code = typeof shape.code === "string" && KNOWN_NATIVE_CODES.has(shape.code)
-    ? (shape.code as NativeErrorCode)
-    : undefined;
-  const dispatchStarted = shape.dispatchStarted === true;
-  if (code === undefined) {
-    // 无 code/未知 code：变更类保守 → Ambiguous（结果不可证）；只读 → Rejected。
-    return mutating
-      ? new NativeAmbiguousError("internal_native", "native-dispatch-outcome-unknown")
-      : new NativeRejectedError("internal_native");
-  }
-  if (code === "injection_rejected") {
-    // 恒 Ambiguous：SendInput 报告 0 条注入也可能是 UIPI 静默丢弃——注入面不可证（§10.3）。
-    return new NativeAmbiguousError(code, "native-dispatch-outcome-unknown");
-  }
-  if (code === "uia_timeout") {
-    // §10.3/§11.1 分流：只读 → timeout ok:false；变更类 → possibly_sent。
-    return mutating
-      ? new NativeAmbiguousError(code, "native-timeout")
-      : new NativeRejectedError(code);
-  }
-  if (code === "canceled") {
-    // 取消经结果字段（canceled:true）为常态；抛错形态只出现在只读捕获面 → Rejected。
-    return new NativeRejectedError(code);
-  }
-  if (mutating && dispatchStarted) {
-    // 派发已启动的任何失败（如 chord 主体注入后前台丢失）→ 结果不可证，保守 Ambiguous。
-    return new NativeAmbiguousError(code, "native-dispatch-outcome-unknown");
-  }
-  return new NativeRejectedError(code);
 }

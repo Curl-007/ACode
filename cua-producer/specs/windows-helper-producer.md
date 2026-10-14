@@ -687,7 +687,9 @@ cua-producer/
   binding.gyp  tsconfig.json  package.json  package-lock.json  README.md
   specs/windows-helper-producer.md        # 本文
   scripts/build-native.mjs  scripts/clean.mjs
-  scripts/smoke-real.mjs   # 真机烟测（§15 契约；仓库侧 dev 工具，非 Helper 运行时面）
+  scripts/smoke-real.mjs   # 真机烟测入口（§15 契约；输出纪律/前置/主流程）
+  scripts/smoke-lib.mjs    # 烟测共享机械件（A3 拆分：常量/断言原语/host 面/A3 共享段，§19 第 15 条）
+  scripts/smoke-levels.mjs # 烟测层级实现（runCapture/runUia/runHost/runPointer，ctx 注入输出原语）
   src/windows-helper.ts    # entry：argv/env/IPC/状态机接线/watchdog（薄层）
   src/wire-server.ts       # parse/serialize/dispatch + 状态门（可独立单测，无进程耦合）
   src/backend-a1.ts        # READY 期 backend：仅 broker_info handler
@@ -1072,6 +1074,8 @@ pressKeys(keys: Array<{ vk: number; up: boolean }>,
 // ── held 清理与全局取消 ────────────────────────────────────────
 releaseAllHeldInputs(): Promise<{ released: number }>;     // 幂等；不做前台校验（cleanup 语义）
 cancelOperations(): void;    // 唯一新增同步导出：原子置取消旗标；在途循环 ≤500ms 内以 code:"canceled" 退出
+                             //（A3 实现批次：出现第二个同步导出 uiaWorkerShutdown——退出收口
+                             // 钩子，同族纪律「停止信号不经任何异步队列」；见 §19 第 14 条）
                              // 【A2 实现批次注记】旗标在每个派发类 worker 的 Execute 入口清零——
                              // cancelOperations 只作用于「当前正在执行」的操作，这是「stop 非会话
                              // 闩锁」（§10.6）的结构化落点；stop 编排先阻断出队再置旗（§18 第 6 条）
@@ -1554,7 +1558,9 @@ dispatch_status:"accepted"}` 恰两键（行 1 最小形态；上表事实键只
 - **卡死隔离（poison-detach-rebuild）**：deadline 到期**不等 COM 返回**——把 worker 标记
   poisoned、`detach()` 线程（COM 挂死线程不可安全 kill，泄漏它并如实登记）、本次调用以
   `uia_timeout` 失败、spawn Replacement worker 服务后续调用。poisoned 累计 ≥3 → Helper 以
-  `internal-helper-failure` + exit 1 自终结（§2.7 既有封闭表，**零新增失败类别**；自终结
+  `internal-helper-failure` + exit 1 自终结（**A3 实现批次**：native 只报统计事实
+  `uiaWorkerStats`，≥3 判定与自终结触发在 JS 侧 uia-driver 监督——统计面不经 worker，
+  挂死时必须可用；见 §19 第 8 条）（§2.7 既有封闭表，**零新增失败类别**；自终结
   同样先经 §10.4 规则 3 的统一释放收口——held 零遗留对该路径同样成立）——宿主经
   helper-reported-error 失败该代、按需恢复 fork 新代（windowsCuaDevHelperHost.ts:396-399
   + 代际清理，既成事实）。【ACode 自定；上游机制注记「UIA worker 的进一步隔离尚未完成」
@@ -1597,7 +1603,8 @@ elements() :1073-1084、observe :587-620）：
   - 窗口选择：`window_id` 给 → 该 token（失效 → element_unavailable，**绝不回退最前窗口**
     ——上游的 window_id_fallback 降级形态被 SDK 视为 STALE_STATE 失败（:1032-1040 机制），
     ACode 直接 fail-closed，不产出 `window_id_fallback` 字段）；未给 → 该 pid 的前台窗口
-    （若前台归属它），否则 Z 序最顶可见窗口（确定性规则）；0 窗口 → element_unavailable
+    （若前台归属它），否则 Z 序最顶可见窗口（确定性规则；**A3 实现批次**：非最小化最顶
+    优先，全部最小化才选最小化 Z 顶——见 §19 第 3 条）；0 窗口 → element_unavailable
     专属字面量（"…has no observable window."，§4.6.1——「target app is not running」不
     适用：进程在但无窗口，两种失败对模型的指引不同，字面量分开）。
   - `include_screenshot:true` 时走 §10.7 捕获（窗口捕获 + 前后双复核）；**捕获失败不拖垮
@@ -1641,7 +1648,8 @@ elements() :1073-1084、observe :587-620）：
     TogglePattern 不替代点击（toggle ≠ click 语义，不猜）。
   - `scroll(element)`：ScrollPattern 在 → `ScrollByAmount`（direction/scroll_amount 映射，
     1 页 = 3 单位对齐 §10.2）；不在 → clickable point + `scrollAt`（前台校验）；皆不可 →
-    `action_unavailable`。
+    `action_unavailable`。（**A3 实现批次**：本 SDK 无 IUIAutomationScrollPattern2，实落
+    v1 Scroll 粗粒度枚举映射 + 步数上限——裁决与保真度边界见 §19 第 2 条。）
   - `left_click_drag(element from/to)`：无 pattern 等价物——两端 `GetClickablePoint` +
     native `drag`（前台校验；任一端无 clickable point → `action_unavailable`）。
   - 收据如实标注路径（message 固定字面量分支：pattern-dispatched ∣ point-dispatched——
@@ -1764,7 +1772,8 @@ window: [<window_id>] "<title>"
 ### 11.7 A3 构建接线
 
 - `libraries` 增补：`uiautomationcore.lib`、`dwmapi.lib`（DWM cloaked 判定，
-  list_windows 过滤）。
+  list_windows 过滤）。（**A3 实现批次**：实测另需 `shell32.lib`
+  （SHGetPropertyStoreForWindow）与 `propsys.lib`（PropVariantClear），共四件——§19 第 1 条。）
 - `sources` 增补：§5.3 布局树的 4 个 A3 .cc；`binding.gyp` sources 清单仍为契约面
   （契约测试锁定，§16 A3 批次扩展该断言）。
 - N-API/异常/DPI 纪律不变（§10.10）；UIA COM 初始化在 MTA worker 内（§11.1），addon
@@ -2121,12 +2130,14 @@ A3 批次解除 skip），A3 批次交付 c08-8..10。
   `get_app_state({app_ref:{pid:<前台 pid>}, include_screenshot:true})` → 断言 image 块
   存在、mimeType ∈ {image/png,image/jpeg}、base64 ≤200 KiB、structuredContent.frame_id
   非空（frame 登记发生）。
-- **`--uia`**（A3 起）：**A2 切片 = 诚实桩**（A2 实现批次钉死）——flag 受理、输出
+- **`--uia`**（A3 起）：**A2 切片 = 诚实桩**（A2 实现批次钉死——flag 受理、输出
   `level=uia result=skipped duration_ms=0` + stderr 固定结果码 `uia-level-arrives-in-a3`、
-  整脚本 exit 2（前置失败语义：层级未实现，fail-closed 方向；门禁 A2 只跑 `--capture`，
-  不受影响；A3 批次落地真实现后本桩移除）。**只读**观察当前前台应用（不 spawn、不变更、
-  不抢焦点）：
-  `foregroundPid` → wire `list_apps`（断言非空 ∧ 含该 pid ∧ 条目字段齐套）→
+  整脚本 exit 2；A3 批次已落地真实现、本桩移除）。**只读**观察当前前台应用（不 spawn、
+  不变更、不抢焦点）。**A3 实现批次的目标应用级联**（§19 第 4 条——真机存在隐形前台
+  窗口霸占 GetForegroundWindow 的环境事实）：① list_apps 的 active:true 条目 → ②
+  `foregroundPid` ∈ apps → ③ `list_windows` 首窗（Z 序最顶）→ ④ 无任何可见窗口 →
+  固定结果码 `no-foreground-app` + exit 2（前置不满足，非失败）。断言链：
+  wire `list_apps`（非空 ∧ 目标 pid 在集合 ∧ 条目字段齐套）→
   `list_windows`（断言窗口条目 bounds/title 字段类型合法，**不打印内容**）→
   `get_app_state`（无截图）两次 → 断言：树文本行格式匹配 `^\s*\[[0-9]+\]`（采样行）、
   `elements` 非空 ∨（空 ∧ `truncated===false`）（C09 诚实空树判据，§11.2）、state_id
@@ -2143,7 +2154,10 @@ A3 批次解除 skip），A3 批次交付 c08-8..10。
   4. **A2 切片**：`broker_info` 一次（capabilities 形状断言）；**A3 起追加截图步**：
      `callBrokerMethod(get_app_state, {app_ref:{pid:<前台>}, include_screenshot:true})`
      → image 块断言（同 --capture A3 扩展）；
-  5. `stop()` → 断言子进程退出 ∧ 旧 pipe 拒连（ENOENT）∧ 全程 <5s。
+  5. `stop()` → 断言子进程退出 ∧ 旧 pipe 拒连（ENOENT）∧ **stop 序列 <5s**（A3 实现批次
+     裁决，§19 第 13 条：5s 预算语义 = 宿主生命周期响应性，只钉 stop()→退出→拒连段；
+     A3 起本层级含 UIA 级联+截图步，单次 UIA 观察合法预算即 8s，把观察段计入全程会让
+     合法慢观察结构性击穿断言。层级总时长如实 emit `duration_ms`，闸门钉 `stop_ms`）。
 - **`--pointer`**（A2 起；**人工 C07 专属**，操作者在场、已解锁交互桌面）：内容对齐上游
   pointer 烟测机制（windows-source-development.md:170-185）并保持**非破坏性**：
   1. 记录原始光标位置；取当前前台应用 pid（A2 经 addon `foregroundPid()`；A3 起可与 wire
@@ -2480,3 +2494,126 @@ Windows 本机拆分提交。
     系统性注入会让每一次静止窗口尝试都失败（12 次耗尽 = 诚实炸出）。**门禁运行以
     桌面大体静止为前提**（默认套件在操作者在场的开发机实跑，§10.11 语境；持续剧烈
     移动鼠标的极端场景取证窗口耗尽属诚实失败，非断言放宽）。
+
+## 19. A3 实现批次实证回写（2026-10-14；§5.2.1/§18 先例纪律——真实构建/真机实证后的机制修正与增补登记）
+
+以下各项是 A3 实现批次以真实构建（VS 2026 / v145 / node-gyp 13.1.0）与真机运行实证后
+登记的机制事实/裁决细化；§11 的钉死契约（预算取值、封闭 code 集、纪律条文）**均不变**
+（变动项已在对应节内联标注「A3 实现批次」并在此汇总索引）：
+
+1. **SDK COM C++ API 面事实（10.0.26100，头文件逐项 grep + 编译实证）**：
+   - 缓存属性访问器是 `get_CachedXxx` propget 族（get_CachedControlType / get_CachedName /
+     get_CachedBoundingRectangle / get_CachedIsKeyboardFocusable）；`GetCachedXxx` 便捷方法族
+     **不存在**（GetCachedPropertyValue / GetCachedPatternAs 例外，是方法）。
+   - **RuntimeId 无 cached 变体**：IUIAutomationElement 只有 `GetRuntimeId(SAFEARRAY**)`——
+     冻结快照与活性复验两侧同源走它（复验语义本就是「取当下新值对比冻结快照」，精确吻合）。
+   - 控制类型常量形态 = `const long UIA_ButtonControlTypeId`（uiautomationclient.h）；类型名
+     `CONTROLTYPEID`（无下划线形态，`CONTROLTYPE_ID` 不存在）。
+   - **IUIAutomationScrollPattern2 在本 SDK client 头不存在**（grep 零命中）——§11.2 的
+     ScrollByAmount 细粒度面不可用，落地 v1 IUIAutomationScrollPattern::Scroll 粗粒度枚举
+     （映射裁决见第 2 条）。
+   - IUIAutomationTextRange **无 Collapse 方法**（那是 provider 侧 ITextRangeProvider 面）——
+     折叠到文档起点 = `MoveEndpointByRange(End, range, Start)`（语义等价）。
+   - `SHGetPropertyStoreForWindow` 声明在 **shellapi.h**（WIN32_LEAN_AND_MEAN 将其排除，须显式
+     include）；`UIA_E_ELEMENTNOTAVAILABLE` 头文件零命中，按文档值 0x80040200 本地补常量。
+   - `uiautomation.h` 是伞形头（UIAutomationCore.h + Client.h + CoreApi.h）：
+     ExpandCollapseState / TextUnit / ScrollAmount 枚举在 Core.h。
+   - §11.7 libraries 实测需**四件**增补：uiautomationcore.lib、dwmapi.lib 之外还有
+     shell32.lib（SHGetPropertyStoreForWindow）与 propsys.lib（PropVariantClear）。
+2. **elementScroll 粗粒度映射裁决（ScrollPattern2 缺席的实证替代）**：wire delta 以
+   WHEEL_DELTA(120) 为单位（1 页 = 360，§10.2）；|delta| ≥ 360 → Large 档 × round(页数)
+   （总步数上限 12，防无界 scroll_amount）；不足一页 → Small 档 × round(ticks)（1..3）。
+   方向：wire up/right 为正；UIA Increment = right/down 为正 → 垂直轴取反映射。
+   **保真度损失如实登记**：粗粒度枚举不携带精确幅值（3 页与 12 页同为 12 步 Large 上限）；
+   收据不报步数（零插值红线），该路径的保真度边界即本条。ScrollPattern 缺席 →
+   scrolled:false → clickable point + 物理 scrollAt 兜底（§11.2 ② 不变）。
+3. **get_app_state 窗口选择规则细化**：未给 window_id 时「Z 序最顶可见窗口」精确化为
+   **非最小化的 Z 序最顶**优先；全部最小化才选最小化 Z 顶（capture 诚实报
+   capture_minimized）。理由：最小化窗口居首会让树根 IsOffscreen → 动作面恒 stale、
+   截图恒 capture_minimized 的「可观察不可动作」半死状态——非最小化优先是 §11.2
+   「可观察窗口」语义的诚实落地。
+4. **前台归属的环境事实（隐形前台窗口）**：真机存在以**不可见窗口**长期占据
+   GetForegroundWindow 的工具进程（本机实测 MouseWithoutBordersHelper.exe）——其窗口不进
+   可见枚举集合，list_apps 无 active:true 条目是**诚实行为**（active 语义 =「前台 pid
+   归属于该可见应用」，不是「恒有其一」）。烟测 --uia/--capture 的目标应用级联据此定为：
+   ① active:true 条目 → ② addon.foregroundPid ∈ apps → ③ list_windows 首窗（Z 序最顶）→
+   ④ 无任何可见窗口 → no-foreground-app exit 2（前置不满足）。
+5. **broker_info 的 capabilities.uia 键恒注册**：装饰面不受 presence 门控（presence=false
+   时产出 uia:false）——键缺席会让消费方无法区分「false」与「未装配」；能力真实性两面
+   同源（§13 不变量②）的全量 ⟺ 收口要求键恒在、值同源。
+6. **UIA 变更类任务不随取消弃等**（§11.1「单个 COM 调用不可中断」的实现具体化）：
+   set_value/select_text/perform_action/invoke/scroll 是单个原子 COM 调用——等待方等到
+   3s 预算内报**真实结果**，绝不提前弃等（弃等只能报「未派发」而调用可能已生效，违反
+   铁律 1 的诚实方向）；只读观察类（list/traverse/clickablePoint）可取消弃等 → canceled
+   （重试安全）。stop 的 ≤500ms 中断响应面由 A2 注入循环与观察遍历的元素粒度检查承载
+   （不变）；UIA pattern 调用的最坏收口 = 3s 预算（角色 B MUTATING_CALL_TIMEOUT_MS=10s
+   地板内，session.stop 的「await 在途 settle」覆盖它）。
+7. **captureUiTree 第三参 deadlineMs 覆写**（整数 1..600000，缺省 = 8000）：仅测试/自检面
+   （生产 handler 恒缺省），供 poison-detach-rebuild 真机段确定性触发。deadline 检查粒度
+   = 50ms 等待片，任务真实耗时短于一个等待片时覆写不生效（a3-native 对未触发场景如实
+   登记，不硬凑断言）。
+8. **poison 监督的实现形态**：native 只报事实（`uiaWorkerStats() → {poisoned, generation}`，
+   统计面**不经** UIA worker——worker 挂死时它必须可用，这正是其用途）；「poisoned ≥3 →
+   internal-helper-failure + exit 1」的判定在 JS 侧（uia-driver.ts 对任何 uia_timeout 拒绝
+   后读统计 → onPoisonExhausted 回调 → entry scheduleFailure，统一收口点自动先释放 held，
+   §11.1/§10.4 规则 3）。零新增 native 失败类别 ✓。**generation 为惰性自增**（a3-native
+   真机实证登记）：毒化只置 poisoned 计数，替代 worker 在下一次任务入队时才 spawn 并
+   递增 generation（§11.1「spawn Replacement worker 服务后续调用」的字面语义）——毒化后
+   立即读 stats 的 generation 仍为旧值，断言顺序须「后续调用成功 → 再读 generation」。
+9. **冻结域提交纪律的实现形态**：遍历采集对元素 AddRef 进**任务局部**，任务完成且等待方
+   未离开（!abandoned）才原子提交注册表（generation = 任务开始时的 worker 代）——取消/超时
+   后绝不提交，已采集引用就地 Release（零泄漏）；孤儿代条目查找即 stale，绝不跨代触碰
+   COM 指针；ReleaseFrozenState 对孤儿条目只摘表不 Release（随 detached 线程泄漏，
+   §11.1 如实登记）。native 注册表兜底上限 64 个冻结域（最旧先逐出、同代正常 Release），
+   JS 侧 LRU（8 scope × 16）之外防无界。
+10. **文件布局微调（§5.3「文件划分可微调」条款）**：新增 `src/target-resolution.ts`
+    （统一 preflight 门 + app_ref 解析入口 + 坐标投影 + element 动作面的共享纯 TS 模块，
+    backend-a2/a3 共用——oxlint max-lines 400 硬约束 + 解析面单一写路径）与 `src/app-ref.ts`
+    （§11.3 唯一候选纪律 + 组合一致性裁决）；param-validation.ts 增 parseActionTarget /
+    parseAppRefShape / parseElementTarget / parseTextRange / parseActionName /
+    parseGetAppStateParams。§5.3 布局树以此条为准（A3 增补区实际落地 = 6 个 TS 文件 +
+    4 个 .cc）。
+11. **收据字面量 +3（§10.12.1 表扩展，本批裁决；契约测试锁定）**：
+    | 场景 | message 字面量 |
+    | --- | --- |
+    | set_value 写已发生但读回验证不符（§11.2） | `Computer Use value was written but read-back verification did not match.` |
+    | element 路径 pattern 派发（§11.2 收据路径注记） | `Computer Use action was dispatched through a UI Automation pattern.` |
+    | element 路径 clickable point 物理派发（同上） | `Computer Use action was dispatched at the element's clickable point.` |
+    坐标路径收据保持 A2 最小两键/dragCompleted 形态不变；drag 任一端经 element 解析 →
+    point-dispatched 注记。§4.6.1 的 appRefMultiple / noObservableWindow / not_settable /
+    not_selectable / action_unavailable 五行为既有 spec 行的实现落地（零新增行 ✓）。
+12. **select_text 的 start 越界判定面**：JS 不做 valueLength 预检（冻结域属性事实在
+    native，JS 只持 token 是 §11.1 边界）——native 在任务内以 `Move` 实际位移 < start 判定
+    → 返回**结果字段** `{outcome:"range-invalid"}`（非错误码：封闭 code 集无参数类码，
+    结果字段是 §18 第 7 条 canceled:true 的同型通道），JS 映射 invalid_request（确定性
+    参数错、未派发，ok:false 安全区 ✓）。UiaElementFact.valueLength 事实通道保留
+    （native 采集、未来 delta 面可用；A3 无 JS 消费者）。
+13. **--host 层级 5s 预算的测量语义裁决**：初稿「全程 <5s」在 A3 起结构性不可守——本层级
+    新增 UIA 目标级联 + wire 截图步，而 §11.1 单次 UIA 观察的**合法**预算即 8s（负载态
+    实测层级全程已达 4.2s）。裁决：`host-duration-budget` 断言改为只钉 **stop 序列**
+    （stop() → 子进程退出 → 旧 pipe 拒连，<5s——这才是「宿主生命周期响应性」的本意，
+    对齐宿主 shutdownTimeoutMs 语义）；层级总时长如实 emit（duration_ms + stop_ms 双字段），
+    不设闸。观察段的时长治理归 §11.1 预算与门禁超时，不在烟测层重复设限。
+14. **退出收口与第二同步导出（A3 测试批次评审修复 CUA-A3-SHUTDOWN-CRASH）**：真机 fork
+    测试实证——任何一次真实 UIA 派发后走干净 IPC shutdown，Helper 以 0xC0000409
+    fail-fast 崩溃而非 §2.7 的 exit 0（无 UIA 调用则 exit 0；确定性复现）。根因 =
+    uia_worker.cc 的静态存储期 `std::thread` 在正常路径永不 join/detach（worker 设计为
+    永不返回），`process.exit(0)` 后模块卸载期 CRT 静态析构对 joinable 线程调
+    `std::terminate()` → fail-fast 覆盖退出码；宿主会把每个用过 UIA 的代际关停误判为
+    崩溃代。修复三层：① **spawn 即 detach**——静态线程对象永不 joinable，结构性消除
+    terminate（poison 路径「detach 泄漏挂死线程」语义不变，代码上退化为清 running 状态）；
+    ② **协作式停止旗**——cv 谓词加 g_uiaStop，teardown 期 parked worker 退出循环并
+    CoUninitialize（不留线程触碰静态同步原语）；③ **`uiaWorkerShutdown()` 第二同步导出**
+    （cancelOperations 同族：停止信号必须同步直达、不经任何异步队列），接入 entry 的
+    统一退出收口点 `exitConvergence.cancel`——shutdown/watchdog/scheduleFailure/poison
+    自终结全部退出路径自动覆盖（§10.4 规则 3「枚举会漏、收口点不会」的设计红利兑现）。
+    addon 导出面 31 → 32 键（uia-driver UIA_EXPORTS 同集；契约测试与 helper-a1 导出面
+    断言同步锁定）。停止旗置位后本 addon 实例不复活（进程正在退出）；停止后到来的任务
+    由 deadline 兜底诚实失败（timed_out），绝不静默。
+15. **烟测脚本三件拆分（max-lines 治理，§5.3「文件划分可微调」+ .oxlintrc「拆模块而非
+    加豁免」纪律）**：A3 扩展后 smoke-real.mjs 达 646 有效行（上限 400）——拆为入口
+    （输出纪律 §15.3 单一落点 + flags/前置检查 + loadAddon + 主流程）、smoke-levels.mjs
+    （四个层级函数，ctx = {emit, emitErr, finish, registerSecret, loadAddon} 注入）、
+    smoke-lib.mjs（常量/SmokeAssertionError/host 面深导入/A3 三层共享段——目标级联、
+    wire 截图断言、观察断言）。运行命令与全部 §15 契约语义不变；契约测试的固定码断言
+    按归属文件分面（no-foreground-app 随层级函数在 levels 面）。

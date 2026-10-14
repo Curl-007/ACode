@@ -2,16 +2,21 @@
 
 本目录是 U14「Windows Computer Use producer 自建」的**角色 A** 落点：Helper 侧原生
 producer（`ax_native.node` + `windows-helper.js` + 14 个 broker 工具处理器）。当前状态 =
-**A1 骨架 + A2 切片已落地**（契约见 `specs/windows-helper-producer.md`，A2 实现期实证
-回写见其 §18）：可构建、可加载、两阶段就绪（transport_ready/ready）、named pipe wire
-服务端、诚实 probe addon；**A2 交付**指针/键盘/剪贴板注入（SendInput 前台纪律 + held
-零遗留）、WGC/D3D11/WIC 截图（预算阶梯 ≤2000px / base64 ≤200 KiB）、admission 串行
-会话层、`stop_computer_control` 中断语义、delivery-state 三态收据（accepted /
-possibly_sent / interrupted）与 8 个 wire handler（7 变更类 + `request_access`）。
-**仍诚实 fail-closed 的面**：6 个 UIA 工具（A3）一律 `unimplemented`；A2 切片内
-element target 与 name/bundle_id 形态 app_ref 以固定字面量拒绝（→ SDK
-`ACTION_UNAVAILABLE`/`ELEMENT_UNAVAILABLE`，绝无假成功）；wire 级坐标动作闭环自 A3
-点亮（frame 注册表由 `get_app_state(include_screenshot)` 供给，spec §10.0 登记）。
+**A1 骨架 + A2 切片 + A3 切片已落地，14/14 wire handler 齐套**（契约见
+`specs/windows-helper-producer.md`，A2/A3 实现期实证回写见其 §18/§19）：可构建、可加载、
+两阶段就绪（transport_ready/ready）、named pipe wire 服务端、诚实 probe addon；**A2 交付**
+指针/键盘/剪贴板注入（SendInput 前台纪律 + held 零遗留）、WGC/D3D11/WIC 截图（预算阶梯
+≤2000px / base64 ≤200 KiB）、admission 串行会话层、`stop_computer_control` 中断语义、
+delivery-state 三态收据（accepted / possibly_sent / interrupted）；**A3 交付** UIA 六工具
+（`list_apps` / `list_windows` / `get_app_state` 树观察 + `set_value` / `select_text` /
+`perform_action` 元素动作）——专属常驻 MTA worker、8s/3s 预算、poison-detach-rebuild
+卡死隔离（poisoned ≥3 → Helper 自终结）、冻结元素注册表（COM 引用不出 native、JS 只持
+token）、预算感知树遍历（≤3000 行 ∧ ≤256 KiB、同集合截断）、指针三工具的 element 路径
+（InvokePattern 优先 / clickable point 兜底）、app_ref 全形态解析（唯一候选纪律）、
+窗口 token 注册表 + `captureWindow` 真实现（前后双复核）。
+**仍诚实 fail-closed 的面**：透明拉起（A3b，spec §11.8 延后登记）——未运行的目标应用报
+`target app is not running`，不代启动；一切未实现/不可达面走 `ACTION_UNAVAILABLE` /
+`ELEMENT_UNAVAILABLE` 封闭字面量，绝无假成功（C09 红线）。
 
 ## 构建与测试
 
@@ -23,18 +28,20 @@ npm run build      # tsc → dist/（ESM）+ node-gyp rebuild → build/Release/
 
 仅 Windows（VS + node-gyp 13 工具链，见 spec §4.5/§5.2.1）；ubuntu CI 不构建本目录。
 测试落 `apps/acode-cli/tests/`：`cua-producer-contract.test.mjs`（CI 常驻、平台无关）、
-`cua-producer-a2-logic.test.mjs` 与 `cua-producer-c08.test.mjs`（CI 常驻，tsx 深导入
-`src/**.ts` + fake driver，共享夹具 `cua-producer-a2-fake.mjs`）、
-`cua-producer-helper-a1.test.mjs` 与 `cua-producer-a2-native.test.mjs`（双守卫：非 win32
-或工件缺失即整文件 skip），见 spec §6/§10.11/§14。
+`cua-producer-a2-logic.test.mjs`、`cua-producer-a3-logic.test.mjs` 与
+`cua-producer-c08.test.mjs`（CI 常驻，tsx 深导入 `src/**.ts` + fake driver，共享夹具
+`cua-producer-a2-fake.mjs` / `cua-producer-a3-fake.mjs`）、
+`cua-producer-helper-a1.test.mjs`、`cua-producer-a2-native.test.mjs` 与
+`cua-producer-a3-native.test.mjs`（双守卫：非 win32 或工件缺失即整文件 skip），
+见 spec §6/§10.11/§14/§16.2。
 
 真机烟测（仓库根执行，spec §15 契约）：
 
 ```bash
-node --import tsx cua-producer/scripts/smoke-real.mjs --capture   # WGC 实捕（门禁可执行层级）
-node --import tsx cua-producer/scripts/smoke-real.mjs --host      # Helper 生命周期面（门禁可执行层级）
-# --uia = A3 起（A2 诚实桩 exit 2）；--pointer = 人工 C07 专属（门禁永不执行，
-# 且须 ACODE_CUA_SMOKE_POINTER_LIVE=1 双保险 opt-in）。
+node --import tsx cua-producer/scripts/smoke-real.mjs --capture   # WGC 实捕 + A3 wire 截图段（门禁层级）
+node --import tsx cua-producer/scripts/smoke-real.mjs --uia       # UIA 只读观察（门禁层级，A3 起真实现）
+node --import tsx cua-producer/scripts/smoke-real.mjs --host      # Helper 生命周期 + A3 截图步（门禁层级）
+# --pointer = 人工 C07 专属（门禁永不执行，且须 ACODE_CUA_SMOKE_POINTER_LIVE=1 双保险 opt-in）。
 ```
 
 ## 为什么这里有个和 `packages/acode-cua` 同名的包

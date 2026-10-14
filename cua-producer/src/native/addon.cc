@@ -40,12 +40,21 @@ Napi::Value Probe(const Napi::CallbackInfo& info) {
   return result;
 }
 
-// cancelOperations()：唯一新增同步导出（§10.1）——原子置取消旗标；在途循环
+// cancelOperations()：同步导出（§10.1）——原子置取消旗标；在途循环
 // （sendText chunk 间 / drag 插值点间 / pressKeys hold 等待环 / capture 帧等待环）
 // ≤500ms 内以 canceled 收口。旗标在每个派发类 worker 的 Execute 入口清零
 // （stop 非会话闩锁，§10.6：stop 后的新动作正常受理）。
 Napi::Value CancelOperations(const Napi::CallbackInfo& info) {
   ax::g_cancelRequested.store(true);
+  return info.Env().Undefined();
+}
+
+// uiaWorkerShutdown()：第二个同步导出（A3 评审修复 CUA-A3-SHUTDOWN-CRASH，spec §19
+// 第 14 条）——协作式停止 UIA MTA worker（置旗 + 广播）。停止信号与 cancelOperations
+// 同理必须同步直达（进程退出收口点在 process.exit 前调用，不经任何异步队列）；幂等，
+// 停止后本 addon 实例不再复活（进程正在退出）。
+Napi::Value UiaWorkerShutdown(const Napi::CallbackInfo& info) {
+  ax::StopUiaWorker();
   return info.Env().Undefined();
 }
 
@@ -80,6 +89,22 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   // ── A2 截图（WGC + D3D11 + WIC；编码在同一后台 worker）──
   exports.Set("captureDisplay", Napi::Function::New(env, ax::CaptureDisplay));
   exports.Set("captureWindow", Napi::Function::New(env, ax::CaptureWindow));
+  // ── A3 UIA 观察面（§11.1：全部 UIA COM 在专属常驻 MTA worker；观察类预算 8s）──
+  exports.Set("listApplications", Napi::Function::New(env, ax::ListApplications));
+  exports.Set("listWindows", Napi::Function::New(env, ax::ListWindows));
+  exports.Set("captureUiTree", Napi::Function::New(env, ax::CaptureUiTree));
+  exports.Set("releaseStateToken", Napi::Function::New(env, ax::ReleaseStateToken));
+  exports.Set("uiaWorkerStats", Napi::Function::New(env, ax::UiaWorkerStats));
+  // ── A3 UIA pattern 动作面（§11.2；单 pattern 调用预算 3s；变更类派发后失败 →
+  //    dispatchStarted=true → driver 归类 Ambiguous → possibly_sent 收据）──
+  exports.Set("elementSetValue", Napi::Function::New(env, ax::ElementSetValue));
+  exports.Set("elementSelectText", Napi::Function::New(env, ax::ElementSelectText));
+  exports.Set("elementPerformAction", Napi::Function::New(env, ax::ElementPerformAction));
+  exports.Set("elementClickablePoint", Napi::Function::New(env, ax::ElementClickablePoint));
+  exports.Set("elementInvoke", Napi::Function::New(env, ax::ElementInvoke));
+  exports.Set("elementScroll", Napi::Function::New(env, ax::ElementScroll));
+  // A3 同步导出（退出收口钩子，与 cancelOperations 同族；spec §19 第 14 条）。
+  exports.Set("uiaWorkerShutdown", Napi::Function::New(env, UiaWorkerShutdown));
   return exports;
 }
 

@@ -341,8 +341,9 @@ test("集成|两阶段 ready 时序 + argv 白名单 + 凭据 canary 不泄漏 +
 
     // 步骤 7（wire 面）：原始连接捕获 broker_info 与一个工具方法的精确响应行，canary 不泄漏。
     // A2 增量（§10.9）：broker_info 携带 capabilities 子集（additive）；pid/bundle_id 的
-    // A1 最小诚实面保持（health 门 load-bearing）。工具方法样本改用 list_apps（A3 面，
-    // 保持 unimplemented——left_click 等 8 方法自 A2 起真实受理，见专用测试）。
+    // A1 最小诚实面保持（health 门 load-bearing）。工具方法样本 = list_apps（A3-AC-10
+    // 同批反转：自 A3 起真实受理——只读枚举零副作用；成功信封同样受 canary/pipe 名
+    // 不泄漏断言覆盖。响应含真机应用清单，只断形状、内容不打印）。
     const infoRound = await rawRequest(socketPath, `${JSON.stringify({ method: "broker_info" })}\n`);
     assert.ok(infoRound.text, "READY 期 broker_info 必须应答");
     const info = JSON.parse(infoRound.text);
@@ -352,10 +353,12 @@ test("集成|两阶段 ready 时序 + argv 白名单 + 凭据 canary 不泄漏 +
     assert.ok(info.result.capabilities && typeof info.result.capabilities === "object", "A2 capabilities 增量在场");
     const toolRound = await rawRequest(socketPath, `${JSON.stringify({ method: "list_apps", params: {} })}\n`);
     assert.ok(toolRound.text);
-    assert.deepEqual(JSON.parse(toolRound.text), {
-      ok: false,
-      error: { message: WIRE_MESSAGES.unimplemented, code: "unimplemented" },
-    });
+    const toolResponse = JSON.parse(toolRound.text);
+    assert.equal(toolResponse.ok, true, "list_apps 自 A3 起真实受理（ok:true，不再 unimplemented——A3-AC-10）");
+    assert.ok(
+      Array.isArray(toolResponse.result?.structuredContent?.apps),
+      "list_apps 成功信封：structuredContent.apps 是数组（真机枚举；内容不打印）",
+    );
     for (const text of [infoRound.text, toolRound.text]) {
       assert.ok(!text.includes(canary), "canary 绝不出现在 wire 响应文本（§6.2 步骤 7）");
       assert.ok(!text.includes(socketPath), "pipe 名绝不进 wire 响应");
@@ -387,7 +390,7 @@ test("集成|两阶段 ready 时序 + argv 白名单 + 凭据 canary 不泄漏 +
   }
 });
 
-test("集成|健康握手成立 + 6 UIA 方法逐一 unimplemented + 8 个 A2 方法诚实受理（§6.2 步骤 2/4；AC-5/AC-6；A2 批次修订）", { skip: skipReason }, async () => {
+test("集成|健康握手成立 + 14 方法逐一真实受理（6 UIA A3-AC-10 反转 + 8 A2 保持；§6.2 步骤 2/4；AC-5/AC-6）", { skip: skipReason }, async () => {
   const socketPath = mintTestPipe();
   const helper = startHelper({ socketPath });
   try {
@@ -400,22 +403,78 @@ test("集成|健康握手成立 + 6 UIA 方法逐一 unimplemented + 8 个 A2 �
     assert.equal(health.pid, helper.child.pid, "isExactHealthPid 语义成立（health 门只校 pid）");
     assert.equal(health.bundleId, process.execPath, "bundle_id = canonical exe 绝对路径（wire spec §6.2 规则 2）");
 
-    // A3 面 6 方法逐一（不参数化折叠）→ BrokerError code "unimplemented"（→SDK
-    // ACTION_UNAVAILABLE、retry never；C09：显式不可用、零假成功）。
-    const a3Methods = ["list_apps", "list_windows", "get_app_state", "set_value", "select_text", "perform_action"];
-    assert.equal(a3Methods.length, 6, "A2 切片后仍 unimplemented 的恰是 6 个 UIA 方法（§10.0）");
-    for (const method of a3Methods) {
+    // A3 面 6 方法逐一独立断言（§16.2 A3-AC-10：A1/A2 期的「逐一 unimplemented」同批
+    // 反转、不折叠）——14/14 handler 齐套，unimplemented 面收口为零：2 个只读观察真实
+    // 受理（ok:true 成功，只读安全；真机枚举内容不打印）；4 个空参调用在参数校验域
+    // 确定拒绝（invalid_request——缺 app_ref/target 等必填，派发前拒绝，零 UIA 副作用，
+    // 默认套件安全；每方法 possiblySent===false = 确定未派发域，§10.12）。
+    {
+      // list_apps({})：真机枚举 → ok:true（wire 结果 = CallToolResult 双载体，§11.2）。
+      const result = await callBrokerMethod({ socketPath, method: "list_apps", params: {}, timeoutMs: 8000 });
+      assert.ok(
+        Array.isArray(result.structuredContent?.apps),
+        "list_apps: 真实受理（ok:true），structuredContent.apps 是数组（内容不打印）",
+      );
+    }
+    {
+      // list_windows({})：无 app_ref = 全量枚举 → ok:true（window_id token 面，§11.2）。
+      const result = await callBrokerMethod({ socketPath, method: "list_windows", params: {}, timeoutMs: 8000 });
+      assert.ok(
+        Array.isArray(result.structuredContent?.windows),
+        "list_windows: 真实受理（ok:true），structuredContent.windows 是数组（标题/内容不打印）",
+      );
+    }
+    {
+      // get_app_state({})：缺必填 app_ref → 参数面拒绝（不再是 unimplemented）。
       let caught = null;
       try {
-        await callBrokerMethod({ socketPath, method, params: {}, timeoutMs: 8000 });
+        await callBrokerMethod({ socketPath, method: "get_app_state", params: {}, timeoutMs: 8000 });
       } catch (error) {
         caught = error;
       }
-      assert.ok(caught instanceof BrokerError, `${method}: 必须抛 BrokerError，绝不返回空成功（C09 红线）`);
-      assert.equal(caught.code, "unimplemented", `${method}: code 必须是 unimplemented`);
-      assert.equal(caught.message, WIRE_MESSAGES.unimplemented, `${method}: 封闭字面量、零插值（§4.6）`);
-      // Helper 明确回信（应用层 ok:false）≠ 传输层歧义：possiblySent 必须 false（§5.4）。
-      assert.equal(caught.details?.possiblySent, false, `${method}: 应用层拒绝不得置 possiblySent`);
+      assert.ok(caught instanceof BrokerError, "get_app_state: 空参必须拒绝");
+      assert.equal(caught.code, "invalid_request", "get_app_state: 缺 app_ref → invalid_request（A3-AC-10）");
+      assert.equal(caught.message, WIRE_MESSAGES.invalidParams, "get_app_state: 封闭字面量、零插值（§4.6.1）");
+      assert.equal(caught.details?.possiblySent, false, "get_app_state: 参数校验失败 = 确定未派发");
+    }
+    {
+      // set_value({})：缺必填 target/app_ref/value → 参数面拒绝。
+      let caught = null;
+      try {
+        await callBrokerMethod({ socketPath, method: "set_value", params: {}, timeoutMs: 8000 });
+      } catch (error) {
+        caught = error;
+      }
+      assert.ok(caught instanceof BrokerError, "set_value: 空参必须拒绝");
+      assert.equal(caught.code, "invalid_request", "set_value: 缺 target/app_ref/value → invalid_request（A3-AC-10）");
+      assert.equal(caught.message, WIRE_MESSAGES.invalidParams, "set_value: 封闭字面量、零插值（§4.6.1）");
+      assert.equal(caught.details?.possiblySent, false, "set_value: 参数校验失败 = 确定未派发");
+    }
+    {
+      // select_text({})：缺必填 target/app_ref/text_range → 参数面拒绝。
+      let caught = null;
+      try {
+        await callBrokerMethod({ socketPath, method: "select_text", params: {}, timeoutMs: 8000 });
+      } catch (error) {
+        caught = error;
+      }
+      assert.ok(caught instanceof BrokerError, "select_text: 空参必须拒绝");
+      assert.equal(caught.code, "invalid_request", "select_text: 缺 target/app_ref/text_range → invalid_request（A3-AC-10）");
+      assert.equal(caught.message, WIRE_MESSAGES.invalidParams, "select_text: 封闭字面量、零插值（§4.6.1）");
+      assert.equal(caught.details?.possiblySent, false, "select_text: 参数校验失败 = 确定未派发");
+    }
+    {
+      // perform_action({})：缺必填 target/app_ref/action → 参数面拒绝。
+      let caught = null;
+      try {
+        await callBrokerMethod({ socketPath, method: "perform_action", params: {}, timeoutMs: 8000 });
+      } catch (error) {
+        caught = error;
+      }
+      assert.ok(caught instanceof BrokerError, "perform_action: 空参必须拒绝");
+      assert.equal(caught.code, "invalid_request", "perform_action: 缺 target/app_ref/action → invalid_request（A3-AC-10）");
+      assert.equal(caught.message, WIRE_MESSAGES.invalidParams, "perform_action: 封闭字面量、零插值（§4.6.1）");
+      assert.equal(caught.details?.possiblySent, false, "perform_action: 参数校验失败 = 确定未派发");
     }
 
     // A2 面 8 方法逐一：空参调用必须「诚实受理」——绝不再是 unimplemented。6 个变更/
@@ -438,9 +497,11 @@ test("集成|健康握手成立 + 6 UIA 方法逐一 unimplemented + 8 个 A2 �
     const accessResult = await callBrokerMethod({ socketPath, method: "request_access", params: {}, timeoutMs: 8000 });
     assert.equal(JSON.parse(accessResult.content[0].text).platform, "win32", "request_access 只读快照受理");
 
-    // 步骤 4：经 execute（角色 B runtime）取 A3 面 + A2 参数拒绝面各一，断言 isError 单文本块信封。
+    // 步骤 4：经 execute（角色 B runtime）取 A3 与 A2 参数拒绝面各一，断言 isError 单文本
+    // 块信封（A3-AC-10 后 list_apps 真实受理、不再产错误信封——A3 样本换 get_app_state
+    // 缺 app_ref 的确定拒绝）。
     const runtime = createComputerUseRuntime({ brokerSocketPath: socketPath });
-    for (const [toolName, expectedCode] of [["left_click", "invalid_request"], ["list_apps", "unimplemented"]]) {
+    for (const [toolName, expectedCode] of [["left_click", "invalid_request"], ["get_app_state", "invalid_request"]]) {
       const result = await runtime.execute({ toolName, arguments: {} });
       assert.equal(result.isError, true, `${toolName}: execute 必须返回 isError 信封`);
       assert.ok(Array.isArray(result.content) && result.content.length === 1, `${toolName}: 单文本块`);
@@ -493,7 +554,7 @@ test("集成|协议违规面：method_not_found / invalid_request 欠响应 / >1
   }
 });
 
-test("集成|addon 诚实面：probe napiVersion=9 防漂移锚 + addonVersion=package.json version + 导出面封闭（§6.2 步骤 6；AC-12；A2 导出面）", { skip: skipReason }, () => {
+test("集成|addon 诚实面：probe napiVersion=9 防漂移锚 + addonVersion=package.json version + 导出面封闭（§6.2 步骤 6；AC-12；A3 导出面）", { skip: skipReason }, () => {
   const addon = createRequire(import.meta.url)(addonPath);
   // NAPI_VERSION 防漂移锚（§4.4/§5.2.1）：编译期宏值必须 =9。漂移事实证：includes 接线
   // 缺失时 Node 25 头文件基线给 8，本断言即抓出该形态。
@@ -502,14 +563,18 @@ test("集成|addon 诚实面：probe napiVersion=9 防漂移锚 + addonVersion=p
   assert.ok(addon.addonVersion.length > 0, "addonVersion 非空串");
   const pkg = JSON.parse(readFileSync(join(producerRoot, "package.json"), "utf8"));
   assert.equal(addon.addonVersion, pkg.version, "addonVersion = package.json version 的编译期嵌入（§4.1）");
-  // A2 导出面封闭（§10.1 + processExecutablePath 回写）：恰好 20 键——能力面溢出禁止
-  // （不导出 clipboardReadText 等无工具面支撑的原语，§10.1 注记 4；细粒度 typeof 断言
-  // 在 cua-producer-a2-native.test.mjs）。
+  // A3 导出面封闭（§10.1 + §11.7 + §19 第 14 条）：恰好 32 键 = A2 的 20 键 + UIA 12 导出
+  // （11 功能面 + uiaWorkerShutdown 退出收口钩子；与 uia-driver.ts 的 UIA_EXPORTS 清单
+  // 同集）——能力面溢出禁止（不导出无工具面支撑的原语，§10.1 注记 4；细粒度 typeof
+  // 断言在 cua-producer-a2-native.test.mjs）。
   assert.deepEqual(Object.keys(addon).sort(), [
-    "addonVersion", "asyncKeyState", "cancelOperations", "captureDisplay", "captureWindow",
-    "clipboardWriteText", "cursorPosition", "drag", "environmentProbe", "foregroundPid",
-    "heldInputSnapshot", "mouseDown", "mouseUp", "moveTo", "pressKeys", "probe",
-    "processExecutablePath", "releaseAllHeldInputs", "scrollAt", "sendText",
+    "addonVersion", "asyncKeyState", "cancelOperations", "captureDisplay", "captureUiTree",
+    "captureWindow", "clipboardWriteText", "cursorPosition", "drag", "elementClickablePoint",
+    "elementInvoke", "elementPerformAction", "elementScroll", "elementSelectText",
+    "elementSetValue", "environmentProbe", "foregroundPid", "heldInputSnapshot",
+    "listApplications", "listWindows", "mouseDown", "mouseUp", "moveTo", "pressKeys",
+    "probe", "processExecutablePath", "releaseAllHeldInputs", "releaseStateToken",
+    "scrollAt", "sendText", "uiaWorkerShutdown", "uiaWorkerStats",
   ]);
 });
 

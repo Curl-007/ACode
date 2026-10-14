@@ -32,6 +32,10 @@ import {
   importProducerModule,
 } from "./cua-producer-a2-fake.mjs";
 import {
+  createFakeUiaDriver,
+  countUiaCalls,
+} from "./cua-producer-a3-fake.mjs";
+import {
   BrokerError,
   callBrokerMethod,
   mintBrokerSocketPath,
@@ -39,9 +43,12 @@ import {
 import { createComputerUseRuntime } from "../../../packages/acode-cua/index.js";
 
 const { createBackendA2, RECEIPT_MESSAGES } = await importProducerModule("backend-a2");
+const { createBackendA3, createElementActionSurface } = await importProducerModule("backend-a3");
+const { createAppRefResolver } = await importProducerModule("app-ref");
+const { createStateRegistry } = await importProducerModule("state-registry");
 const { createInputSession } = await importProducerModule("input-session");
 const { createFrameRegistry, appOwnerScope } = await importProducerModule("frame-registry");
-const { createWireDispatcher, WIRE_ERROR_MESSAGES, serializeResponse } =
+const { createWireDispatcher, WIRE_ERROR_MESSAGES, serializeResponse, BROKER_INFO_METHOD } =
   await importProducerModule("wire-server");
 
 // wire spec §4.1 的 17 码词汇表（code 合法性断言锚）。
@@ -52,8 +59,9 @@ const SEVENTEEN_CODES = new Set([
   "stale_socket", "timeout", "unimplemented", "method_not_found", "internal",
 ]);
 
-/** 每段独立的真 socket wire 夹具（字节级行缓冲与 Helper 同构，§17.2）。 */
-async function startWireFixture(behaviors) {
+/** 每段独立的真 socket wire 夹具（字节级行缓冲与 Helper 同构，§17.2）。
+ * options.composed=true 时组合 backend-a2+a3（A3 面 case 用；缺省 false = c08-1..7 原形态不动）。 */
+async function startWireFixture(behaviors, options = {}) {
   const driver = createFakeDriver({ behaviors });
   const session = createInputSession(driver);
   const frames = createFrameRegistry();
@@ -63,7 +71,25 @@ async function startWireFixture(behaviors) {
     bounds: { x: 0, y: 0, width: 8, height: 4 },
     ownerScope: appOwnerScope(TEST_PID),
   });
-  const backend = createBackendA2({ driver, session, frames });
+  let backend = createBackendA2({ driver, session, frames });
+  let uia = null;
+  if (options.composed) {
+    uia = createFakeUiaDriver({ behaviors: options.uiaBehaviors });
+    const states = createStateRegistry({
+      generation: 7,
+      release: (token) => {
+        void uia.releaseState(token);
+      },
+    });
+    const resolveAppRef = createAppRefResolver({ driver, uia });
+    const elements = createElementActionSurface({ uia, states });
+    const a2 = createBackendA2({ driver, session, frames, elements, resolveAppRef, uiaPresence: true });
+    const a3 = createBackendA3({
+      driver, uia, session, frames, states, resolveAppRef,
+      a2BrokerInfo: a2[BROKER_INFO_METHOD],
+    });
+    backend = { ...a2, ...a3 };
+  }
   const dispatcher = createWireDispatcher();
   dispatcher.activate(backend);
 
@@ -106,6 +132,7 @@ async function startWireFixture(behaviors) {
   return {
     socketPath,
     driver,
+    uia,
     async close() {
       for (const socket of sockets) socket.destroy();
       sockets.clear();
@@ -148,9 +175,10 @@ async function assertOkFalseShape(socketPath, method, params, label) {
  * 段 1 断言组：派发后歧义失败 → possibly_sent 收据 + execute 原样透传 +
  * 不自动重放的结构性断言（§14 每 case 两段之一；断言消息含方法名）。
  */
-async function assertAmbiguousSegment(method, params, behaviors, expectedExtra = {}) {
-  const fixture = await startWireFixture(behaviors);
+async function assertAmbiguousSegment(method, params, behaviors, expectedExtra = {}, options = {}) {
+  const fixture = await startWireFixture(behaviors, options);
   try {
+    if (options.setup) await options.setup(fixture);
     // wire 级：ok:true ∧ isError ∧ possibly_sent 收据。
     const result = await callBrokerMethod({
       socketPath: fixture.socketPath,
@@ -195,9 +223,10 @@ async function assertAmbiguousSegment(method, params, behaviors, expectedExtra =
  * 段 2 断言组：派发前确定拒绝 → ok:false ∧ 诚实映射码 ∧ 封闭字面量（零插值）∧
  * 无 result 键 ∧ possiblySent=false ∧ 失败后零追加派发调用（§14）。
  */
-async function assertRejectedSegment(method, params, behaviors, expectedCode, expectedMessage, countChecks) {
-  const fixture = await startWireFixture(behaviors);
+async function assertRejectedSegment(method, params, behaviors, expectedCode, expectedMessage, countChecks, options = {}) {
+  const fixture = await startWireFixture(behaviors, options);
   try {
+    if (options.setup) await options.setup(fixture);
     // wire 级形态：ok:false、无 result 键、码与字面量精确。
     const error = await assertOkFalseShape(fixture.socketPath, method, params, method);
     assert.equal(error.code, expectedCode, `${method}: 诚实映射码`);
@@ -219,6 +248,10 @@ async function assertRejectedSegment(method, params, behaviors, expectedCode, ex
     for (const injectionMethod of Object.keys(countChecks)) {
       baseline[injectionMethod] = countCalls(fixture.driver, injectionMethod);
     }
+    const uiaBaseline = {};
+    for (const injectionMethod of Object.keys(options.uiaCountChecks ?? {})) {
+      uiaBaseline[injectionMethod] = countUiaCalls(fixture.uia, injectionMethod);
+    }
     const runtime = createComputerUseRuntime({ brokerSocketPath: fixture.socketPath });
     const envelope = await runtime.execute({ toolName: method, arguments: params });
     assert.equal(envelope.isError, true, `${method}: execute isError 信封`);
@@ -228,6 +261,13 @@ async function assertRejectedSegment(method, params, behaviors, expectedCode, ex
         countCalls(fixture.driver, injectionMethod) - baseline[injectionMethod],
         expectedCount,
         `${method}: ${injectionMethod} 单次调用增量（Rejected 失败后零追加动作）`,
+      );
+    }
+    for (const [injectionMethod, expectedCount] of Object.entries(options.uiaCountChecks ?? {})) {
+      assert.equal(
+        countUiaCalls(fixture.uia, injectionMethod) - uiaBaseline[injectionMethod],
+        expectedCount,
+        `${method}: ${injectionMethod}（uia 面）单次调用增量（Rejected 失败后零追加动作）`,
       );
     }
   } finally {
@@ -356,10 +396,93 @@ test("c08-7|stop_computer_control：失败注入 → 不自动重放（注入点
   );
 });
 
-// ── c08-8..10（A3 交付；占位注册——文件结构一次成型，A3 批次解除 skip，§14）──────
+// ── c08-8..10（A3 交付：组合 backend + fake uia driver；先观察建立冻结域，再注入失败。
+// 两段模板与 c08-1..7 完全同构——Ambiguous 段验 possibly_sent 收据 + execute 透传 +
+// 不自动重放结构断言；Rejected 段验 ok:false 封闭字面量 + possiblySent=false + 零追加派发）──
 
-test("c08-8|set_value：失败注入 → 不自动重放（两段断言组）", { skip: "A3" }, () => {});
+const setValueParams = { target: { type: "element", index: 1 }, app_ref: { pid: TEST_PID }, value: "v" };
+const selectTextParams = { target: { type: "element", index: 1 }, app_ref: { pid: TEST_PID }, text_range: [0, 2] };
+const performParams = { target: { type: "element", index: 0 }, app_ref: { pid: TEST_PID }, action: "invoke" };
 
-test("c08-9|select_text：失败注入 → 不自动重放（两段断言组）", { skip: "A3" }, () => {});
+/** 前置观察（每段夹具独立执行）：建立该 scope 的冻结域，element target 才可解析。 */
+const observeFirst = async (fixture) => {
+  const observed = await callBrokerMethod({
+    socketPath: fixture.socketPath,
+    method: "get_app_state",
+    params: { app_ref: { pid: TEST_PID } },
+    timeoutMs: 8000,
+  });
+  assert.equal(observed.isError, undefined, "前置观察必须成功（冻结域建立）");
+};
 
-test("c08-10|perform_action：失败注入 → 不自动重放（两段断言组）", { skip: "A3" }, () => {});
+const a3Options = (uiaBehaviors) => ({
+  composed: true,
+  uiaBehaviors,
+  setup: observeFirst,
+});
+
+const ambiguousUia = (code = "internal_native", reason = "native-dispatch-outcome-unknown") => () => {
+  throw new NativeAmbiguousError(code, reason);
+};
+const rejectedUia = (code) => () => {
+  throw new NativeRejectedError(code);
+};
+
+test("c08-8|set_value：失败注入 → 不自动重放（两段断言组）", async () => {
+  // Ambiguous 段：uia_timeout（变更类 pattern 调用超时 = SetValue 可能已生效，§11.1 分流）。
+  await assertAmbiguousSegment(
+    "set_value",
+    setValueParams,
+    {},
+    {},
+    a3Options({ elementSetValue: ambiguousUia("uia_timeout", "native-timeout") }),
+  );
+  // Rejected 段：stale（活性复验失败 = 确定未派发）。
+  await assertRejectedSegment(
+    "set_value",
+    setValueParams,
+    {},
+    "element_unavailable",
+    WIRE_ERROR_MESSAGES.staleObservation,
+    {},
+    { ...a3Options({ elementSetValue: rejectedUia("stale") }), uiaCountChecks: { elementSetValue: 1 } },
+  );
+});
+
+test("c08-9|select_text：失败注入 → 不自动重放（两段断言组）", async () => {
+  await assertAmbiguousSegment(
+    "select_text",
+    selectTextParams,
+    {},
+    {},
+    a3Options({ elementSelectText: ambiguousUia("uia_timeout", "native-timeout") }),
+  );
+  await assertRejectedSegment(
+    "select_text",
+    selectTextParams,
+    {},
+    "not_selectable",
+    WIRE_ERROR_MESSAGES.elementNotSelectable,
+    {},
+    { ...a3Options({ elementSelectText: rejectedUia("not_selectable") }), uiaCountChecks: { elementSelectText: 1 } },
+  );
+});
+
+test("c08-10|perform_action：失败注入 → 不自动重放（两段断言组）", async () => {
+  await assertAmbiguousSegment(
+    "perform_action",
+    performParams,
+    {},
+    {},
+    a3Options({ elementPerformAction: ambiguousUia() }),
+  );
+  await assertRejectedSegment(
+    "perform_action",
+    performParams,
+    {},
+    "action_unavailable",
+    WIRE_ERROR_MESSAGES.elementActionNotAdvertised,
+    {},
+    { ...a3Options({ elementPerformAction: rejectedUia("action_unavailable") }), uiaCountChecks: { elementPerformAction: 1 } },
+  );
+});

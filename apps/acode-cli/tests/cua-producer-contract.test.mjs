@@ -86,9 +86,12 @@ test("binding.gyp：ax_native target + 异常/标准/编码配套 + NAPI_VERSION
   assert.match(gyp, /ADDON_VERSION=/);
 });
 
-test("binding.gyp A2 增量（§10.10，A2-AC-1）：sources 七件 + libraries 九件 + 编译期地板 defines", () => {
+test("binding.gyp A2+A3 增量（§10.10/§11.7，A2-AC-1/A3-AC-11）：sources 十一件 + libraries 十三件 + 编译期地板 defines", () => {
   const gyp = readFileSync(join(producerRoot, "binding.gyp"), "utf8");
-  // sources 清单是契约面（§10.10；文件组织可微调、清单漂移即红）。
+  // sources 清单是契约面（§10.10/§11.7；文件组织可微调、清单漂移即红）。A3 追加 UIA
+  // 四件：uia_worker = 常驻 MTA 线程与卡死隔离（§11.1）、uia_tree = 枚举/遍历/冻结
+  // 注册表（§11.4/§11.5）、uia_patterns = 元素动作面（§11.2）、window_registry =
+  // 窗口 token/AUMID/AFH 修正（§11.3）。
   for (const source of [
     "src/native/addon.cc",
     "src/native/environment.cc",
@@ -97,15 +100,23 @@ test("binding.gyp A2 增量（§10.10，A2-AC-1）：sources 七件 + libraries 
     "src/native/keyboard.cc",
     "src/native/clipboard.cc",
     "src/native/capture.cc",
+    "src/native/uia_worker.cc",
+    "src/native/uia_tree.cc",
+    "src/native/uia_patterns.cc",
+    "src/native/window_registry.cc",
   ]) {
     assert.ok(gyp.includes(`"${source}"`), `sources 必须含 ${source}`);
   }
-  // libraries（§10.10 钉死清单）：d3d11/dxgi = WGC 设备与 surface；windowsapp = C++/WinRT；
-  // user32 = SendInput/前台/光标/桌面；gdi32 = EnumDisplayMonitors；windowscodecs = WIC；
-  // shcore = DPI；ole32 = COM/流；uuid = IID/GUID。
+  // libraries（§10.10 钉死清单 + §11.7 A3 增补）：d3d11/dxgi = WGC 设备与 surface；
+  // windowsapp = C++/WinRT；user32 = SendInput/前台/光标/桌面；gdi32 = EnumDisplayMonitors；
+  // windowscodecs = WIC；shcore = DPI；ole32 = COM/流；uuid = IID/GUID。
+  // A3：uiautomationcore = IUIAutomation COM；dwmapi = DWMWA_CLOAKED 判定（list_windows
+  // 过滤）；shell32 = SHGetPropertyStoreForWindow（PKEY_AppUserModel_ID → AUMID/AFH 修正）；
+  // propsys = PropVariantClear（AUMID PROPVARIANT 清理）。
   for (const lib of [
     "d3d11.lib", "dxgi.lib", "windowsapp.lib", "user32.lib", "gdi32.lib",
     "windowscodecs.lib", "shcore.lib", "ole32.lib", "uuid.lib",
+    "uiautomationcore.lib", "dwmapi.lib", "shell32.lib", "propsys.lib",
   ]) {
     assert.ok(gyp.includes(`"${lib}"`), `libraries 必须含 ${lib}`);
   }
@@ -118,7 +129,7 @@ test("binding.gyp A2 增量（§10.10，A2-AC-1）：sources 七件 + libraries 
   assert.ok(gyp.includes('"WIN32_LEAN_AND_MEAN"'), "WIN32_LEAN_AND_MEAN");
 });
 
-test("A2 源布局齐套（§5.3 布局树 A2 增补；模块划分是契约）", () => {
+test("A2+A3 源布局齐套（§5.3 布局树增补；模块划分是契约）", () => {
   for (const rel of [
     "src/backend-a2.ts",
     "src/input-session.ts",
@@ -137,20 +148,36 @@ test("A2 源布局齐套（§5.3 布局树 A2 增补；模块划分是契约）"
     "src/native/foreground.cc",
     "src/native/environment.cc",
     "scripts/smoke-real.mjs",
+    // A3 拆分（§19 第 15 条 max-lines 治理）：入口 + 层级实现 + 共享机械件三件。
+    "scripts/smoke-lib.mjs",
+    "scripts/smoke-levels.mjs",
+    // ── A3 增补（§5.3 布局树 A3 段 + 实现批次自 backend-a3 拆出的解析/决议面）──
+    "src/backend-a3.ts",
+    "src/uia-driver.ts",
+    "src/tree-text.ts",
+    "src/state-registry.ts",
+    "src/app-ref.ts",
+    "src/target-resolution.ts",
+    "src/native/uia_worker.cc",
+    "src/native/uia_tree.cc",
+    "src/native/uia_patterns.cc",
+    "src/native/window_registry.cc",
   ]) {
     assert.ok(existsSync(join(producerRoot, rel)), `${rel} 必须存在（§5.3）`);
   }
 });
 
-test("A2 模块规则（§10.11 契约，防漂移 = 静态 import 断言）：纯逻辑模块不得 import native-driver；native-driver 只被 entry 组装路径 import", () => {
+test("A2/A3 模块规则（§5.3/§10.11 契约，防漂移 = 静态 import 断言）：纯逻辑模块不得 import native-driver/uia-driver；两 driver 只被 entry 组装路径 import；classifyNativeError 单一来源", () => {
   const srcDir = join(producerRoot, "src");
   // 规则①：backend/input-session/frame-registry/keymap/param-validation/receipts
   // （+driver-contract 契约面）一律纯 TS + 注入 driver——CI 常驻单测的前提；
-  // import native-driver 即红。
+  // import native-driver 即红。A3 同律扩展（§5.3 注记）：backend-a3/tree-text/
+  // state-registry/app-ref/target-resolution 也是纯逻辑面（注入 uia driver）。
   for (const pure of [
     "backend-a2.ts", "input-session.ts", "frame-registry.ts", "keymap.ts",
     "driver-contract.ts", "param-validation.ts", "receipts.ts", "mutating-dispatch.ts",
     "backend-a1.ts", "wire-server.ts",
+    "backend-a3.ts", "tree-text.ts", "state-registry.ts", "app-ref.ts", "target-resolution.ts",
   ]) {
     const text = readFileSync(join(srcDir, pure), "utf8");
     assert.ok(
@@ -159,7 +186,7 @@ test("A2 模块规则（§10.11 契约，防漂移 = 静态 import 断言）：�
     );
     assert.ok(
       !text.includes("./uia-driver"),
-      `${pure} 不得 import uia-driver（规则①，A3 同律预登记）`,
+      `${pure} 不得 import uia-driver（规则①，A3 同律）`,
     );
   }
   // 规则②：native-driver 只被 windows-helper.ts（entry 组装路径）import。
@@ -170,6 +197,40 @@ test("A2 模块规则（§10.11 契约，防漂移 = 静态 import 断言）：�
     if (text.includes(`"./native-driver.js"`)) importers.push(entry);
   }
   assert.deepEqual(importers, ["windows-helper.ts"], "native-driver 的唯一 import 方 = entry 组装路径");
+  // 规则②（A3 扩展，§5.3 注记「native-driver/uia-driver 只被 windows-helper.ts 组装路径
+  // import」）：uia-driver 的唯一 import 方 = windows-helper.ts（同型断言）。
+  const uiaImporters = [];
+  for (const entry of readdirSync(srcDir)) {
+    if (!entry.endsWith(".ts")) continue;
+    const text = readFileSync(join(srcDir, entry), "utf8");
+    if (text.includes(`"./uia-driver.js"`)) uiaImporters.push(entry);
+  }
+  assert.deepEqual(uiaImporters, ["windows-helper.ts"], "uia-driver 的唯一 import 方 = entry 组装路径（规则②，A3）");
+  // 规则③（§10.3 二分错误契约的单一来源）：classifyNativeError 定义只在 driver-contract.ts；
+  // native-driver.ts 只再导出（供既有消费者），uia-driver.ts 直接从 driver-contract import
+  // ——uia-driver 源文本不得出现 "./native-driver"（防经再导出绕出双源/环依赖）。
+  const driverContract = readFileSync(join(srcDir, "driver-contract.ts"), "utf8");
+  const nativeDriver = readFileSync(join(srcDir, "native-driver.ts"), "utf8");
+  const uiaDriver = readFileSync(join(srcDir, "uia-driver.ts"), "utf8");
+  assert.match(
+    driverContract,
+    /export function classifyNativeError/,
+    "classifyNativeError 的定义 = driver-contract.ts（单一来源，§10.3）",
+  );
+  assert.match(
+    nativeDriver,
+    /export \{ classifyNativeError \} from "\.\/driver-contract\.js"/,
+    "native-driver.ts 只再导出 classifyNativeError、不自持实现（防双源漂移）",
+  );
+  assert.ok(
+    !uiaDriver.includes("./native-driver"),
+    "uia-driver.ts 不得经 native-driver 取 classifyNativeError（直接从 driver-contract import，规则③）",
+  );
+  assert.match(
+    uiaDriver,
+    /from "\.\/driver-contract\.js"/,
+    "uia-driver.ts 从 driver-contract import（与 native-driver 同一契约面，规则③）",
+  );
 });
 
 test("MISSING_IPC_CHANNEL_MESSAGE 单源（§17.3 裁决）：windows-helper.ts 不再内联字面量", () => {
@@ -207,7 +268,7 @@ test("watchdog 自适应的事件驱动重臂接线（§10.8，2026-10-14 评审
   assert.match(helper, /clearTimeout\(watchdogTimer\)/, "重臂先清旧定时器（O(1) 重置，§10.8）");
 });
 
-test("wire-server §4.6.1 A2 封闭字面量表齐套（零插值防漂移：逐字面量精确断言）", () => {
+test("wire-server §4.6.1 A2/A3 封闭字面量表齐套（零插值防漂移：逐字面量精确断言）", () => {
   const wireServer = readFileSync(join(producerRoot, "src", "wire-server.ts"), "utf8");
   for (const literal of [
     "Invalid Computer Use method parameters.",
@@ -222,6 +283,17 @@ test("wire-server §4.6.1 A2 封闭字面量表齐套（零插值防漂移：逐
     "Computer Use controller is busy; retry after the current action completes.",
     "Computer Use clipboard is busy.",
     "Computer Use clipboard access was denied.",
+    // ── A3 生效行（§4.6.1 封闭表 A3 增补，A3-AC-11）──
+    // app_ref 解析歧义 ≥2 候选（§11.3：绝不猜 active/枚举第一个）。
+    "Computer Use app_ref resolved to multiple running applications; pass a pid.",
+    // 进程存活但无可观察窗口（§11.2 get_app_state 窗口选择——与 "not running" 字面量分开）。
+    "Computer Use target app has no observable window.",
+    // ValuePattern 缺失/只读元素（§11.2 set_value → not_settable）。
+    "Computer Use element does not accept a value.",
+    // TextPattern 缺失（§11.2 select_text → not_selectable）。
+    "Computer Use element does not support text selection.",
+    // pattern 缺失/未知 action（§11.2 perform_action → action_unavailable）。
+    "Computer Use element does not advertise this action.",
   ]) {
     assert.ok(wireServer.includes(JSON.stringify(literal)), `§4.6.1 字面量必须在封闭表内：${literal}`);
   }
@@ -236,6 +308,13 @@ test("wire-server §4.6.1 A2 封闭字面量表齐套（零插值防漂移：逐
     "Computer Use drag completed; all interpolated points were injected.",
     "Computer Use text input was partially injected before the sequence stopped.",
     "Computer Use action completed; modifier key release required cleanup.",
+    // ── A3 增补（§11.2/§10.12.1 同律零插值）──
+    // set_value 写后读回验证不一致（isError 收据 + action_sent:true——写已发生，诚实上报）。
+    "Computer Use value was written but read-back verification did not match.",
+    // element 动作收据的路径事实分支①：pattern 派发（后台安全路径，§11.2 指针三工具）。
+    "Computer Use action was dispatched through a UI Automation pattern.",
+    // element 动作收据的路径事实分支②：clickable point 物理派发（§11.2）。
+    "Computer Use action was dispatched at the element's clickable point.",
   ]) {
     assert.ok(receipts.includes(JSON.stringify(literal)) || receipts.includes(`"${literal}"`), `收据字面量必须精确（零插值）：${literal}`);
   }
@@ -243,8 +322,11 @@ test("wire-server §4.6.1 A2 封闭字面量表齐套（零插值防漂移：逐
   assert.ok(wireServer.includes("target app is not running"), "SDK isAppNotFound 兼容子串在场");
 });
 
-test("smoke-real.mjs 契约面（§15.1/§15.3）：flags 白名单 + --pointer 双保险 + 自证扫描 + 退出码语义", () => {
+test("smoke-real.mjs 契约面（§15.1/§15.2/§15.3）：flags 白名单 + --pointer 双保险 + 自证扫描 + 退出码语义 + --uia A3 真实现（桩码移除）", () => {
   const smoke = readFileSync(join(producerRoot, "scripts", "smoke-real.mjs"), "utf8");
+  // A3 拆分（§19 第 15 条，max-lines 治理）：入口 = 输出纪律/前置/主流程；层级实现在
+  // smoke-levels.mjs、共享机械件在 smoke-lib.mjs——层级专属固定码在 levels 面断言。
+  const levels = readFileSync(join(producerRoot, "scripts", "smoke-levels.mjs"), "utf8");
   for (const flag of ['"--capture"', '"--uia"', '"--host"', '"--pointer"']) {
     assert.ok(smoke.includes(flag), `flags 白名单必须含 ${flag}`);
   }
@@ -256,6 +338,13 @@ test("smoke-real.mjs 契约面（§15.1/§15.3）：flags 白名单 + --pointer 
   // 非 win32 前置即 exit 2（ubuntu CI 永不执行）。
   assert.match(smoke, /process\.platform !== "win32"/);
   assert.ok(smoke.includes("smoke-requires-win32"), "非 win32 固定结果码");
+  // A3（§15.2 --uia 真实现）：A2 诚实桩结果码必须已移除——桩在场 = --uia 仍是
+  // skipped + exit 2 前置失败语义 = A3-AC-8 真机门禁不可达成。
+  assert.ok(!smoke.includes("uia-level-arrives-in-a3"), "--uia 已是真实现：A2 桩结果码必须移除（§15.2）");
+  assert.ok(!levels.includes("uia-level-arrives-in-a3"), "层级面同样不得残留桩码");
+  // 前台无应用（罕见前置）的固定结果码在场（§15.2：--uia 前台无应用 → exit 2 前置不满足；
+  // A3 拆分后该码由层级函数产出）。
+  assert.ok(levels.includes("no-foreground-app"), "前台无应用固定结果码在场（§15.2）");
 });
 
 test("tsconfig.json 钉死项精确（§5.3）", () => {

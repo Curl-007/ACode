@@ -17,10 +17,17 @@
 
 #include <atomic>
 #include <cstdint>
+#include <functional>
+#include <memory>
 #include <mutex>
 #include <set>
 #include <string>
 #include <vector>
+
+// UIA COM 接口前置声明——必须在全局作用域（namespace ax 内声明会被视为 ax 的成员类型，
+// 遮蔽 ::IUIAutomationElement 真身导致「未定义类型」编译错，A3 实现期实测踩中）。
+struct IUIAutomation;
+struct IUIAutomationElement;
 
 namespace ax {
 
@@ -46,6 +53,12 @@ constexpr const char* kClipboardDenied = "clipboard_denied";
 constexpr const char* kInjectionRejected = "injection_rejected";
 constexpr const char* kCanceled = "canceled";
 constexpr const char* kInternalNative = "internal_native";
+// A3 码位（§10.3 封闭集预留行；实现不得新增，新增先改 spec）。
+constexpr const char* kUiaTimeout = "uia_timeout";
+constexpr const char* kStale = "stale";
+constexpr const char* kNotSettable = "not_settable";
+constexpr const char* kNotSelectable = "not_selectable";
+constexpr const char* kActionUnavailable = "action_unavailable";
 
 // ── held-input 注册表（§10.4 规则 3；鼠标键名 + VK 码）──
 inline std::mutex g_heldMutex;
@@ -168,5 +181,87 @@ Napi::Value PressKeys(const Napi::CallbackInfo& info);             // keyboard.c
 Napi::Value ClipboardWriteText(const Napi::CallbackInfo& info);    // clipboard.cc
 Napi::Value CaptureDisplay(const Napi::CallbackInfo& info);        // capture.cc
 Napi::Value CaptureWindow(const Napi::CallbackInfo& info);         // capture.cc
+Napi::Value ListApplications(const Napi::CallbackInfo& info);      // uia_tree.cc
+Napi::Value ListWindows(const Napi::CallbackInfo& info);           // uia_tree.cc
+Napi::Value CaptureUiTree(const Napi::CallbackInfo& info);         // uia_tree.cc
+Napi::Value ReleaseStateToken(const Napi::CallbackInfo& info);     // uia_tree.cc
+Napi::Value UiaWorkerStats(const Napi::CallbackInfo& info);        // uia_tree.cc
+Napi::Value ElementSetValue(const Napi::CallbackInfo& info);       // uia_patterns.cc
+Napi::Value ElementSelectText(const Napi::CallbackInfo& info);     // uia_patterns.cc
+Napi::Value ElementPerformAction(const Napi::CallbackInfo& info);  // uia_patterns.cc
+Napi::Value ElementClickablePoint(const Napi::CallbackInfo& info); // uia_patterns.cc
+Napi::Value ElementInvoke(const Napi::CallbackInfo& info);         // uia_patterns.cc
+Napi::Value ElementScroll(const Napi::CallbackInfo& info);         // uia_patterns.cc
+
+// ── A3：窗口枚举与 token 注册表（window_registry.cc；§11.5「window_id = native 窗口
+// 注册表不透明整数 token，Helper 代内单调、不复用；使用前复验」）─────────────────
+struct WindowIdentity {
+  HWND hwnd = nullptr;
+  DWORD pid = 0;             // 窗口宿主进程（AFH 承载时 = AFH pid——复验判据用宿主事实）
+  std::wstring exePath;      // 宿主进程 canonical exe（§10.7 前后双复核的身份快照）
+};
+
+struct TopLevelWindowFact {
+  HWND hwnd = nullptr;
+  DWORD pid = 0;             // 归属 pid（AFH → 真实应用修正后，§11.3）
+  DWORD hostPid = 0;         // 窗口宿主进程 pid（AFH 承载时 ≠ pid）
+  std::wstring aumid;        // 窗口 AUMID（PKEY_AppUserModel_ID；可空）
+  std::wstring title;
+  RECT bounds{};
+  bool minimized = false;
+};
+
+std::vector<TopLevelWindowFact> EnumerateVisibleTopLevelWindows();
+std::wstring QueryProcessExePath(DWORD pid);
+std::wstring WindowAumid(HWND hwnd);
+bool IsApplicationFrameHostPid(DWORD pid);
+// AFH 承载的 packaged app：frame 窗口 → 真实应用 pid（AUMID/子窗口双路径，唯一候选
+// 纪律；0 = 不可解析 → fail-closed，§11.3/§10.4 规则 2）。
+DWORD ResolveFrameHostedAppPid(HWND frameHwnd);
+// 前台 pid（AFH 修正后；0 = 无前台/不可解析）。
+DWORD CorrectedForegroundPid();
+uint32_t RegisterWindowToken(HWND hwnd, DWORD hostPid, const std::wstring& hostExePath);
+bool ResolveWindowToken(uint32_t token, WindowIdentity& out);
+
+// ── A3：UIA 专属常驻 MTA worker（uia_worker.cc；§11.1 卡死隔离 poison-detach-rebuild）──
+
+struct UiaTaskSlot {
+  std::function<void()> body;          // 在 MTA worker 上执行；内部自捕获全部异常
+  std::atomic<bool> abandoned{false};  // 等待方已提前离开（取消/超时）——body 提交前检查
+  HANDLE doneEvent = nullptr;          // 由 RunUiaTask 创建；slot 析构关闭（shared_ptr 双持有）
+  ~UiaTaskSlot() {
+    if (doneEvent) CloseHandle(doneEvent);
+  }
+};
+
+enum class UiaTaskOutcome { completed, timed_out, canceled, internal };
+
+// 在 UIA worker 上跑一个任务并等待结果：deadlineMs 到期 → poison-detach-rebuild（不等
+// COM 返回，§11.1）→ timed_out；cancelable 且取消旗置位 → 等待方离开 → canceled（只读
+// 观察面专属——变更类 pattern 调用是单个原子 COM 调用，等到 deadline 内报真实结果，
+// 绝不提前弃等谎称「确定未派发」）。
+UiaTaskOutcome RunUiaTask(const std::shared_ptr<UiaTaskSlot>& slot, DWORD deadlineMs,
+                          bool cancelable);
+uint32_t UiaPoisonedCount();
+uint64_t UiaWorkerGeneration();
+// 协作式停止（同步、幂等；entry 统一退出收口点调用——CUA-A3-SHUTDOWN-CRASH 评审修复，
+// spec §19 第 14 条）：置停止旗 + 广播 cv，parked worker 退出循环，teardown 期不留线程。
+void StopUiaWorker();
+// worker 线程专属：每代 worker 缓存一个 IUIAutomation 实例（CoCreateInstance 一次）。
+IUIAutomation* AcquireUiaAutomation();
+
+// ── A3：冻结元素注册表（uia_tree.cc；COM 引用不出 native，JS 只持不透明 token，§11.5）──
+// elements 的所有权转移进注册表（调用方已 AddRef；ReleaseFrozenState/代际孤儿清理配对
+// Release）。generation = 提交时的 worker 代——孤儿代（poison-detach 后）的条目查找即
+// stale fail-closed，绝不跨代触碰 COM 指针。
+uint32_t CommitFrozenElements(std::vector<IUIAutomationElement*> elements,
+                              std::vector<std::vector<int>> runtimeIds, uint64_t generation);
+bool LookupFrozenElement(uint32_t stateToken, size_t index, uint64_t& generationOut,
+                         IUIAutomationElement** elementOut,
+                         const std::vector<int>** runtimeIdOut);
+void ReleaseFrozenState(uint32_t stateToken);
+// RuntimeId 快照/复验共用助手（uia_tree.cc 实现；COM API 只有 GetRuntimeId 无 cached
+// 变体——冻结与复验两侧同源走它）。
+std::vector<int> RuntimeIdVector(IUIAutomationElement* element);
 
 }  // namespace ax

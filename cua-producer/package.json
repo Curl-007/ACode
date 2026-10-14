@@ -2,7 +2,7 @@
   "name": "@acode/acode-cua",
   "version": "0.0.0",
   "private": true,
-  "description": "Windows Computer Use native producer (role A). Loaded by path via ACODE_CUA_DEV_ROOT / resources/tools/cua-helper, never resolved by package name. A1: two-phase-ready helper + honest probe addon + named-pipe wire server. A2: pointer/keyboard/clipboard injection with foreground discipline and held-zero-residue, WGC/D3D11/WIC capture with budget ladder, admission-serialized session, stop_computer_control interruption, delivery-state receipts (7 mutating handlers + request_access); the 6 UIA tools stay honestly unimplemented until A3 (no fake success).",
+  "description": "Windows Computer Use native producer (role A). Loaded by path via ACODE_CUA_DEV_ROOT / resources/tools/cua-helper, never resolved by package name. A1: two-phase-ready helper + honest probe addon + named-pipe wire server. A2: pointer/keyboard/clipboard injection with foreground discipline and held-zero-residue, WGC/D3D11/WIC capture with budget ladder, admission-serialized session, stop_computer_control interruption, delivery-state receipts. A3: UIA six tools (list_apps/list_windows/get_app_state tree + set_value/select_text/perform_action) on a dedicated MTA worker with poison-detach-rebuild hang isolation, element-target paths for the pointer trio, full app_ref resolution, window capture via token registry — 14/14 wire handlers registered, zero fake success.",
   "license": "MIT",
   "type": "module",
   "gypfile": false,

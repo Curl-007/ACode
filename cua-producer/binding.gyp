@@ -21,7 +21,9 @@
     {
       # → build/Release/ax_native.node（acodeCuaRuntime.windows.nativeAddon 契约路径）。
       "target_name": "ax_native",
-      # A2 增补（§10.10：sources 清单是契约面，契约测试锁定；A3 追加 UIA 四件）。
+      # A2 增补（§10.10：sources 清单是契约面，契约测试锁定；A3 追加 UIA 四件——
+      # uia_worker=常驻 MTA 线程与卡死隔离、uia_tree=枚举/遍历/冻结注册表、
+      # uia_patterns=元素动作面、window_registry=窗口 token/AUMID/AFH 修正）。
       "sources": [
         "src/native/addon.cc",
         "src/native/environment.cc",
@@ -30,6 +32,10 @@
         "src/native/keyboard.cc",
         "src/native/clipboard.cc",
         "src/native/capture.cc",
+        "src/native/uia_worker.cc",
+        "src/native/uia_tree.cc",
+        "src/native/uia_patterns.cc",
+        "src/native/window_registry.cc",
       ],
       # env NAPI_VERSION（build-native.mjs 注入 "9"）→ common.gypi NAPI_VERSION% → defines。
       "includes": ["node_modules/node-addon-api/common.gypi"],
@@ -74,6 +80,10 @@
             # CreateDirect3D11DeviceFromDXGIDevice）；user32 = SendInput/前台/光标/桌面；
             # gdi32 = EnumDisplayMonitors；windowscodecs = WIC PNG/JPEG 编码；
             # shcore = DPI/显示器度量；ole32 = COM 激活与流；uuid = IID/GUID 常量。
+            # A3 增补（§11.7 + 实现批次实测）：uiautomationcore = IUIAutomation COM；
+            # dwmapi = DWMWA_CLOAKED 判定（list_windows 过滤）；shell32 =
+            # SHGetPropertyStoreForWindow（PKEY_AppUserModel_ID → AUMID/AFH 修正）；
+            # propsys = PropVariantClear（AUMID PROPVARIANT 清理）。
             "libraries": [
               "d3d11.lib",
               "dxgi.lib",
@@ -84,6 +94,10 @@
               "shcore.lib",
               "ole32.lib",
               "uuid.lib",
+              "uiautomationcore.lib",
+              "dwmapi.lib",
+              "shell32.lib",
+              "propsys.lib",
             ],
           },
         ],

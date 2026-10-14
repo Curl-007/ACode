@@ -12,6 +12,8 @@
 import { createServer, type Server, type Socket } from "node:net";
 
 import { createBackendA2 } from "./backend-a2.js";
+import { createBackendA3, createElementActionSurface } from "./backend-a3.js";
+import { createAppRefResolver } from "./app-ref.js";
 import {
   EXIT_CODE_BY_FAILURE,
   HELPER_ADDON_ENV,
@@ -32,7 +34,10 @@ import {
 } from "./input-session.js";
 import { loadNativeAddon } from "./native-loader.js";
 import { createNativeDriver } from "./native-driver.js";
+import { createStateRegistry } from "./state-registry.js";
+import { createUiaDriver } from "./uia-driver.js";
 import {
+  BROKER_INFO_METHOD,
   CONNECTION_IDLE_TIMEOUT_MS,
   MAX_REQUEST_LINE_BYTES,
   createWireDispatcher,
@@ -398,23 +403,64 @@ async function main(): Promise<void> {
   const outcome = loadNativeAddon(process.env);
   if (!outcome.ok) fail(outcome.failure, EXIT_CODE_BY_FAILURE[outcome.failure]);
 
-  // READY 装配（§2.4「注入 backend，状态=READY」）：真 driver（native-driver 只被本组装
-  // 路径 import，§10.11 规则②）→ 会话层（admission 队列 + held 镜像）→ frame 注册表 →
-  // A2 backend（8 handler；A2 导出缺席时按 capabilities 诚实降级为不注册 → unimplemented，
-  // §10.9 两面同源）。A1 backend（仅 broker_info）保留给单测/历史面，不再上生产路径。
+  // READY 装配（§2.4「注入 backend，状态=READY」）：真 driver（native-driver/uia-driver
+  // 只被本组装路径 import，§10.11 规则②）→ 会话层（admission 队列 + held 镜像）→
+  // frame/state 注册表 → A2+A3 backend 组合（14/14 handler 齐套，§11.0；导出缺席时按
+  // capabilities 诚实降级为不注册 → unimplemented，§10.9 两面同源）。
   const realDriver = createNativeDriver(outcome.addon);
+  // 卡死隔离自终结（§11.1）：poisoned 累计 ≥3 → internal-helper-failure + exit 1——
+  // scheduleFailure 的统一收口点自动先执行 held 释放（§10.4 规则 3，零遗留对该路径同样成立）。
+  const uiaDriver = createUiaDriver(outcome.addon, {
+    onPoisonExhausted: () => scheduleFailure("internal-helper-failure", 1),
+  });
   // onHeldChange → armWatchdog：held 镜像 0↔非空迁移即时重臂探活间隔（§10.8「间隔重置
   // 成本 O(1)」的结构化落点；仅 tick 边界重算会让 0→非空迁移后的最坏检测延迟仍 ~2000ms，
   // 2026-10-14 评审修复）。armWatchdog 在 startWatchdog 之前是 no-op（parentPid 未装配）。
   const inputSession = createInputSession(realDriver, { onHeldChange: armWatchdog });
   session = inputSession;
   const frames = createFrameRegistry();
+  // state 注册表（§11.5）：generation = process.pid（Helper 代内唯一、代际即失效）；
+  // LRU 逐出/观察覆盖 → 通知 native 释放冻结 COM 引用（best-effort，JS 绝不触 COM）。
+  const states = createStateRegistry({
+    generation: process.pid,
+    release: (nativeStateToken) => {
+      void uiaDriver.releaseState(nativeStateToken);
+    },
+  });
+  const resolveAppRef = createAppRefResolver({ driver: realDriver, uia: uiaDriver });
+  const elements = uiaDriver.presence
+    ? createElementActionSurface({ uia: uiaDriver, states })
+    : undefined;
   exitConvergence = createExitConvergence({
-    cancel: () => realDriver.cancelOperations(),
+    cancel: () => {
+      realDriver.cancelOperations();
+      // UIA worker 协作式停止（A3 评审修复 CUA-A3-SHUTDOWN-CRASH，spec §19 第 14 条）：
+      // 挂在统一收口点——shutdown/watchdog/scheduleFailure/poison 自终结全路径自动覆盖。
+      uiaDriver.shutdownWorker();
+    },
     release: () => realDriver.releaseAllHeldInputs(),
   });
 
-  dispatcher.activate(createBackendA2({ driver: realDriver, session: inputSession, frames }));
+  const backendA2 = createBackendA2({
+    driver: realDriver,
+    session: inputSession,
+    frames,
+    elements,
+    resolveAppRef: uiaDriver.presence ? resolveAppRef : undefined,
+    uiaPresence: uiaDriver.presence,
+  });
+  const backendA3 = createBackendA3({
+    driver: realDriver,
+    uia: uiaDriver,
+    session: inputSession,
+    frames,
+    states,
+    resolveAppRef,
+    a2BrokerInfo: backendA2[BROKER_INFO_METHOD],
+  });
+  // 组合序：a3 的 broker_info 装饰 a2 基础面（capabilities.uia 键，§10.9）；6 UIA 工具
+  // 只在 a3（presence 缺席时 a3 为空记录 → dispatch 层 unimplemented，C09 显式不可用）。
+  dispatcher.activate({ ...backendA2, ...backendA3 });
   sendControl(readyMessage(socketPath, process.pid));
 
   // 就绪后启动 watchdog（§2.8/§10.8 自适应）：父进程消失即自清理退出（先经收口释放

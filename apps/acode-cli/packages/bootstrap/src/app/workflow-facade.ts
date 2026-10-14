@@ -347,6 +347,8 @@ function createWorkflowChildRuntime(
           : { parentTurnId: options.childTraceContext.turnId }),
       }),
       permissionService: deps.permissionService,
+      // R5.2：产品 scratch 暂存区（与 cli/exec 同根约定）——legacy workflow child 同一豁免面。
+      scratchRoot: join(deps.storageRoot, "cli", "scratch"),
       appVersion: deps.appVersion,
       traceContext: options.childTraceContext,
     },

@@ -277,6 +277,9 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
       cliStorageRoot,
       resolveACodeRuntimeEnv(options.env ?? process.env) === "development",
     );
+    // R5.2（spec managed-policy-floor-and-bypass-immune-breakers.md）：产品 scratch 暂存区，
+    // 与 cli/exec、cli/log 同根。pathEscapeWrite 豁免面第二根 + env-info 提示词引导事实源。
+    const scratchRoot = join(cliStorageRoot, "scratch");
     // 官方预置 agent（bundled 包 agents/ 目录）：与 bundled 技能同源 pack root，
     // 先解析再传入 loadACodeAgentProfiles 置于数组合并序最前（R5），
     // 避免 bootstrap 内部两处各自解析 pack root。包缺席时降级为空，CLI 正常启动（R8）。
@@ -825,6 +828,7 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
       eventSink: options.eventSink,
       modelFactory,
       modelIoDir,
+      scratchRoot,
       providerRuntimeHeadersPort: options.providerRuntimeHeadersPort,
       resolveEffectiveModelSelection: options.resolveEffectiveModelSelection,
       isRemoteWorkspace: () =>

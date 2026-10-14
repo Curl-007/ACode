@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "inputHashEncoding": "UTF-8 with CRLF normalized to LF; notice and source snapshot hashes remain byte-exact",
   "scope": "Production dependency union across current workspace projects, copied source/assets and native tools; not a per-installer SBOM or a certification of all licensing obligations.",
-  "noticesSha256": "6c18c0fb74c5a0e156fe7cca6bd1295ccea0999316dbf97b54ce54d5f54bfc01",
+  "noticesSha256": "462fee3f3b26c6861fc2f779afe6d2c057a2d93d50b04b706a2fcefc999fb51a",
   "inputs": {
     ".agents/skills/agent-browser/references/authentication.md": "b7531e028594768e2447547e67559ca1a88fdefba8d5507c07d04bc802c05d09",
     ".agents/skills/agent-browser/references/commands.md": "6eb0e44a3c939c90116092b1a11ae03a2884fb5716d42f2468677870304d11a8",
@@ -225,7 +225,21 @@
     ".agents/skills/react-best-practices/rules/server-serialization.md": "4d025c42043c56e6355196a2e885d168cdb15248d0797146c9db838a57b34946",
     ".agents/skills/react-best-practices/SKILL.md": "b7d246acb440bee224ab33614979a5b8debe5fdb13d0304967aa19358eb69d9f",
     "apps/acode-cli/package.json": "5e48e9dbf6d054a7826e30554763e188c7ef2f6ed9d9247e7f261b29c37e5096",
+    "apps/acode-cli/packages/acode-cua-plugin/.acode-plugin/plugin.json": "596692091429ea4a1e384adf630f42ab5ea990f451038ae52fa05794bf89454e",
+    "apps/acode-cli/packages/acode-cua-plugin/docs/computer-use.md": "5c8de93091578ee9b148b13990f2e68ec424539ba4e46c455eeec700b9e8b2d4",
+    "apps/acode-cli/packages/acode-cua-plugin/LICENSE": "c062d6b1760da9c2dbea8610c1ac5913c034220ddcf2f9066f7fcecba3142e0d",
+    "apps/acode-cli/packages/acode-cua-plugin/NOTICE.md": "978e2f44190aca7e933f87a007b9b52fc9f217997a906aaf54d58723970ba1a9",
+    "apps/acode-cli/packages/acode-cua-plugin/package.json": "61620ea4452a3f5b62cd3db0bde493976a07cd58823c6bf69f0a96bae872da3a",
+    "apps/acode-cli/packages/acode-cua-plugin/scripts/check-sdk.mjs": "a7651f9fcd3484fff90a34597d0c5bf362518c8e7ff8d6bb5f8674c98b00147a",
+    "apps/acode-cli/packages/acode-cua-plugin/scripts/computer-use-client.mjs": "51b071c423c3182324b9ab7b823e8bea893dee124c04320ee3d3681b9394aeb5",
+    "apps/acode-cli/packages/acode-cua-plugin/scripts/computer-use-envelope.mjs": "f6101f50cfd25db2b6547b8c318de0bc28641ff274f4e89c068a635fadba46af",
+    "apps/acode-cli/packages/acode-cua-plugin/scripts/computer-use-errors.mjs": "6e2a9aaa19ea75b9c9d7942a0378334308fecad93913b387c230cfdd91ef1191",
+    "apps/acode-cli/packages/acode-cua-plugin/scripts/computer-use-keys.mjs": "b7d284dc403247bf17a9a82a423629e7957083c9eeda74422d168ef1fe766282",
+    "apps/acode-cli/packages/acode-cua-plugin/scripts/computer-use-target.mjs": "d7bd956219f784f5b56d88dc6227ff4a302fd315696cabd40dad7b8a59436084",
+    "apps/acode-cli/packages/acode-cua-plugin/skills/computer-use/SKILL.md": "277b8fc2150769cfd6efd69dcad6feb81d0d6da0c0620d7725a596b813e70f03",
+    "apps/acode-cli/packages/acode-guide-plugin/package.json": "efcbbeb368b59437d5e270b211df5a371d6c7a5689d5ab1bb7c9cf3b8fee0b96",
     "apps/acode-cli/packages/adapters/package.json": "cf388f3c5ce199daf35cbc984e04c01a00c789aa243c68d1bdfab4ce2dd331d1",
+    "apps/acode-cli/packages/android-emulator-plugin/package.json": "459dcb3c90efa8237278abc84767591fa079337cb485eca53c756a2a7a1531fc",
     "apps/acode-cli/packages/bootstrap/package.json": "139c4bf188c58bb1f63dd4e05e073a94e74bc5fda69a36febcc5006b7046498f",
     "apps/acode-cli/packages/browser-use-plugin/package.json": "dad5da2e437ff3cd0d475654b0ddec4d63c3f2eb7cb0b752058a6e0badc9612c",
     "apps/acode-cli/packages/cli-workflow/package.json": "5c447b6653769c01f58a0638ddb850f68e046f47a146ea48c6fbe6547b14e12f",
@@ -234,11 +248,20 @@
     "apps/acode-cli/packages/core/package.json": "20cb98de2a565bf9f2da6ae866dcf48134a9c88a37bfd4c4198cbf2366020d4e",
     "apps/acode-cli/packages/core/src/tool/handlers/generated/bash-command-registry.ts": "ee85665f0ce0e2f87753198412db342ed4528651637069956ecece49fe4a7e55",
     "apps/acode-cli/packages/debug/package.json": "a75751f22319ac039783809117a4b6364b4978472a51f364cad4d4271665ce2b",
+    "apps/acode-cli/packages/documents-plugin/package.json": "515f784aa00837c700cb8c2270ce2e2b445b8acc5c9676f2763dd054049d9659",
     "apps/acode-cli/packages/dynamic-workflow-runtime/package.json": "329e7f1c86e3927946348398fd870f23cdb79ba9850a8a4e04de76b75547d60d",
     "apps/acode-cli/packages/dynamic-workflow/package.json": "ed32a54eca4551ab7c6fa15a604a86ef4e3747feafebd93bc5b7e440042ae47c",
     "apps/acode-cli/packages/i18n/package.json": "6a4e21c41b675eed44f4c7efb39a9c1b9cfde09a1239d57760e5bd842b995a80",
+    "apps/acode-cli/packages/image-search-plugin/package.json": "1d581deaa65ca94cb3355b1edc3f521ba28a95f9499347954f9635f5c456346e",
+    "apps/acode-cli/packages/ios-simulator-plugin/package.json": "a8a7f85a515b83924085bc8ce46a8cc800f84709dc4da93fb982b0a5ad1e05c1",
     "apps/acode-cli/packages/node-repl-host/package.json": "d51809dd3e05830f48d665b53011398b571fe3da0de6171145067fe5a082d3ea",
+    "apps/acode-cli/packages/pdf-plugin/package.json": "677d39d005471a0de8758ae8829e980e184106303c0b8def109febd5d4cbe366",
+    "apps/acode-cli/packages/plugin-creator-plugin/package.json": "89e6b99c3295eb11bcb74b2c69879484cffb80660a8d3bf0066948ee0194fa86",
+    "apps/acode-cli/packages/presentations-plugin/package.json": "bd32d50f11428fd0d6b5f821f3e00c29576ca78744050d6a19698329d9dc7c5c",
+    "apps/acode-cli/packages/restore-legacy-sessions-plugin/package.json": "d75a26542c7791c0f1b50f0280609b53c4773eba7b6b8529ce70661d0e6546dc",
     "apps/acode-cli/packages/shared-types/package.json": "5ace78f3aabcb23a77ae0473b17bb914ed680bea0c2d3c17431c8804a4a61fdc",
+    "apps/acode-cli/packages/skill-creator-plugin/package.json": "491975633b55e969526531db84efdedb70552a458c3ca4fe23539ee395b29970",
+    "apps/acode-cli/packages/spreadsheets-plugin/package.json": "50e4cd9a55c0d2cbe242c837658d218eb37fdba98b1dac9c00f6179308a6bb1b",
     "apps/acode-cli/packages/superpowers-plugin/LICENSE": "a37e0e9697144819e1d965176ac4ae5bc3fa02d11e7812036bbcadf6dafe2400",
     "apps/acode-cli/packages/swift-bridge/package.json": "ce6faea4cb21cc5ab94db1b38ae4b5d772b5fd90af554a44a89c5962e860854b",
     "apps/acode-cli/packages/tui/package.json": "bd8533a9cd88fb80636774f89b9f34164e002bbef0ce4512fcd468772290ff69",
@@ -246,7 +269,7 @@
     "apps/acode-cli/packages/workflow-run-read/package.json": "d4659d598d8320400e86695cef751c86bc8cc7cca3508858c6e42957a86d5b6c",
     "apps/acode-cli/tools/prompt-trajectory/package.json": "c0b79b8c11694062afce19807a3e527541b3d262b77aae07b40479d5ee73346c",
     "apps/acode-cli/tools/typescript/package.json": "916bb98a7a42a80a690c6460038da943c80e2c005fc528d8bfddc930ff67a13c",
-    "package.json": "e1facf994c36569a59350d0931dbf467d65991bf05a55f6383cb9a3f9222f01e",
+    "package.json": "0927dd68e1b17f6c9c3be986cf71e421b83fc148515013c69d699dbad1d9db81",
     "packages/acode-cua/package.json": "faa859923517a6a948141b87bea3fa6ac885ef737ebde7be9ae9f9abd3d9a752",
     "packages/acode-server-cli/package.json": "5e9445eb2bce9eb54e320723dcd327354ee6798e93dafb01b3532d14d0287bc3",
     "packages/client/package.json": "34842bccbb96748d785cd56230ca0e36d230b913cc57ef455680d87c999b939c",
@@ -2676,12 +2699,12 @@
     "packages/web/public/material-icons/zip.svg": "dad79a45f756542d37abd422502ecfbea15720b92ea1c9d80ef0439ab6b9448a",
     "patches/@ai-sdk__anthropic@3.0.81.patch": "d3a7c381eba7f5157f765a0528003af17cf84544911dfb7412c7800168e01c18",
     "patches/@ai-sdk__openai-compatible@2.0.60.patch": "9632fe9d821b3dc20939ae509cc35b968d90d018bbd1d812390718898182a38b",
-    "pnpm-lock.yaml": "d646345b0029385e7ac53e8126b064e30617ca64f689eefc229fdc52d438d2f4",
+    "pnpm-lock.yaml": "c27898695a68c37e4f240bc04d0fc147121b5194634f435a4777e1f91e43c1df",
     "pnpm-workspace.yaml": "a9c2ba737409e152c3904e65fec268247194ea5a33050b630f00e14eb644e2cb",
     "scripts/license-texts/Apache-2.0.txt": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
     "scripts/native-search-tools-config.mjs": "54cee5ce2aa05e1c47f15758a700567ce4c822213c3f68392c18309142aa77ab",
     "scripts/remote-native-search-tools-config.mjs": "472322a66f84c7452f96aa9e16e9c4e0600f7c2588a03dc6bc869229161b1cb2",
-    "third-party/copied-components.json": "bbd0f2ad584bc922fb51d304cde0d27f5345506751ad510c3bb601a4a821cf6d",
+    "third-party/copied-components.json": "437d74df87b4ed424da8d1601216143d4995889dffbd6a5db5e4fb44b6629349",
     "third-party/embedded-components.json": "9586ccca15897f56d4ca1d703dffe9e02880fedd766c1dff93f7ac1f52ea891a",
     "third-party/native-search/licenses/00373c9bf56a894b2ed67586596bc1e8b0630cabbaf1ab46c75fc754b6bcd1ce.txt": "00373c9bf56a894b2ed67586596bc1e8b0630cabbaf1ab46c75fc754b6bcd1ce",
     "third-party/native-search/licenses/01c266bced4a434da0051174d6bee16a4c82cf634e2679b6155d40d75012390f.txt": "01c266bced4a434da0051174d6bee16a4c82cf634e2679b6155d40d75012390f",
@@ -24879,6 +24902,70 @@
         {
           "file": ".agents/skills/react-best-practices/rules/server-serialization.md",
           "sha256": "4d025c42043c56e6355196a2e885d168cdb15248d0797146c9db838a57b34946"
+        }
+      ]
+    },
+    {
+      "id": "ZCode computer-use plugin SDK",
+      "referenceRevision": "computer-use 0.6.3 (zcode-plugins-official marketplace package version)",
+      "source": "zcode-plugins-official plugin marketplace, computer-use plugin v0.6.3 (@zcode/zcode-cua-plugin, MIT, author Z.ai); the upstream package ships no LICENSE file, so the pinned MIT text is reproduced verbatim from the video2code 0.6.0 plugin LICENSE of the same official marketplace (Copyright (c) 2026 Z.ai).",
+      "file": "apps/acode-cli/packages/acode-cua-plugin/LICENSE",
+      "sha256": "c062d6b1760da9c2dbea8610c1ac5913c034220ddcf2f9066f7fcecba3142e0d",
+      "importRevision": null,
+      "provenance": "Original import revision is not recorded; the plugin was derived from the zcode-plugins-official marketplace package computer-use 0.6.3, which declares MIT in its package.json but ships no LICENSE file. The pinned license text is not asserted to be an original upstream LICENSE file; it is the standard MIT text as published by the same official marketplace.",
+      "roots": [
+        "apps/acode-cli/packages/acode-cua-plugin"
+      ],
+      "scope": "Upstream-derived SDK modules under scripts/ only; locally adapted — the upstream 1208-line monolithic SDK was split into five modules and brand/wiring identifiers were renamed from zcode to acode forms to match this repository's node-repl host. skills/ and docs/ were rewritten for this repository. Details in apps/acode-cli/packages/acode-cua-plugin/NOTICE.md.",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "apps/acode-cli/packages/acode-cua-plugin/.acode-plugin/plugin.json",
+          "sha256": "596692091429ea4a1e384adf630f42ab5ea990f451038ae52fa05794bf89454e"
+        },
+        {
+          "file": "apps/acode-cli/packages/acode-cua-plugin/LICENSE",
+          "sha256": "c062d6b1760da9c2dbea8610c1ac5913c034220ddcf2f9066f7fcecba3142e0d"
+        },
+        {
+          "file": "apps/acode-cli/packages/acode-cua-plugin/NOTICE.md",
+          "sha256": "978e2f44190aca7e933f87a007b9b52fc9f217997a906aaf54d58723970ba1a9"
+        },
+        {
+          "file": "apps/acode-cli/packages/acode-cua-plugin/docs/computer-use.md",
+          "sha256": "5c8de93091578ee9b148b13990f2e68ec424539ba4e46c455eeec700b9e8b2d4"
+        },
+        {
+          "file": "apps/acode-cli/packages/acode-cua-plugin/package.json",
+          "sha256": "61620ea4452a3f5b62cd3db0bde493976a07cd58823c6bf69f0a96bae872da3a"
+        },
+        {
+          "file": "apps/acode-cli/packages/acode-cua-plugin/scripts/check-sdk.mjs",
+          "sha256": "a7651f9fcd3484fff90a34597d0c5bf362518c8e7ff8d6bb5f8674c98b00147a"
+        },
+        {
+          "file": "apps/acode-cli/packages/acode-cua-plugin/scripts/computer-use-client.mjs",
+          "sha256": "51b071c423c3182324b9ab7b823e8bea893dee124c04320ee3d3681b9394aeb5"
+        },
+        {
+          "file": "apps/acode-cli/packages/acode-cua-plugin/scripts/computer-use-envelope.mjs",
+          "sha256": "f6101f50cfd25db2b6547b8c318de0bc28641ff274f4e89c068a635fadba46af"
+        },
+        {
+          "file": "apps/acode-cli/packages/acode-cua-plugin/scripts/computer-use-errors.mjs",
+          "sha256": "6e2a9aaa19ea75b9c9d7942a0378334308fecad93913b387c230cfdd91ef1191"
+        },
+        {
+          "file": "apps/acode-cli/packages/acode-cua-plugin/scripts/computer-use-keys.mjs",
+          "sha256": "b7d284dc403247bf17a9a82a423629e7957083c9eeda74422d168ef1fe766282"
+        },
+        {
+          "file": "apps/acode-cli/packages/acode-cua-plugin/scripts/computer-use-target.mjs",
+          "sha256": "d7bd956219f784f5b56d88dc6227ff4a302fd315696cabd40dad7b8a59436084"
+        },
+        {
+          "file": "apps/acode-cli/packages/acode-cua-plugin/skills/computer-use/SKILL.md",
+          "sha256": "277b8fc2150769cfd6efd69dcad6feb81d0d6da0c0620d7725a596b813e70f03"
         }
       ]
     }

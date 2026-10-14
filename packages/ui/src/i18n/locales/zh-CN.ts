@@ -5734,11 +5734,14 @@ const zhCN: Record<string, string> = {
   "forms.validation.fileExists": "文件 {fileName} 已存在",
   // ---- 动态工作流触发策略（对齐 dynamicWorkflowAvailabilityStore）----
   "settings.dynamicWorkflow.title": "动态工作流",
-  "settings.dynamicWorkflow.description": "何时向 agent 提供动态工作流创作工具（CreateWorkflow 一族）。",
+  "settings.dynamicWorkflow.description":
+    "何时向 agent 提供动态工作流创作工具（CreateWorkflow 一族）。",
   "settings.dynamicWorkflow.option.disabled": "关闭",
-  "settings.dynamicWorkflow.option.disabled.description": "不提供动态工作流工具；已在运行的工作流不受影响。",
+  "settings.dynamicWorkflow.option.disabled.description":
+    "不提供动态工作流工具；已在运行的工作流不受影响。",
   "settings.dynamicWorkflow.option.onDemand": "按需",
-  "settings.dynamicWorkflow.option.onDemand.description": "agent 加载 dynamic-workflows 技能后才提供（默认）。",
+  "settings.dynamicWorkflow.option.onDemand.description":
+    "agent 加载 dynamic-workflows 技能后才提供（默认）。",
   "settings.dynamicWorkflow.option.alwaysOn": "始终开启",
   "settings.dynamicWorkflow.option.alwaysOn.description": "无需加载技能，每个会话都提供该工具。",
   "settings.dynamicWorkflow.defaultTag": "默认",
@@ -6168,6 +6171,10 @@ const zhCN: Record<string, string> = {
   "cuaPermission.osFloorTitle":
     "电脑控制功能需要 macOS {minimum} 或更高版本（当前约为 macOS {current}）",
   "cuaPermission.osFloorDescription": "请先升级系统后再使用。授权设置在低版本系统上无法完成。",
+  "cuaPermission.windowsOsFloorTitle":
+    "电脑控制功能需要 Windows 10 版本 1809（内部版本 {minimum}）或更高版本（当前内部版本 {current}）",
+  "cuaPermission.windowsOsFloorDescription":
+    "请先升级系统后再使用。低版本 Windows 缺少受支持的屏幕捕获能力，电脑控制无法工作。",
   "cuaPermission.ready": "权限已就绪",
   "cuaPermission.ready.sessionValidationHint":
     "首个会话启动时，ACode 会针对该会话精确验证电脑控制工具。",

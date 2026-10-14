@@ -100,8 +100,11 @@ export function OpenSplitButton({
     }
   };
 
+  // 修复：本地 html 等网站类产物也是磁盘文件，同样需要外部 App 打开与复制路径
+  const localFilePath = target.type === "file" ? target.path : target.localPath;
+
   const loadEditors = useCallback(async () => {
-    if (editorsLoaded || loadingEditors || target.type !== "file") {
+    if (editorsLoaded || loadingEditors || !localFilePath) {
       return;
     }
 
@@ -111,13 +114,13 @@ export function OpenSplitButton({
       setEditorsLoaded(true);
     } catch (error) {
       logger.warn("[OpenSplitButton] 获取第三方打开方式失败", {
-        path: target.path,
+        path: localFilePath,
         error: error instanceof Error ? error.message : String(error),
       });
     } finally {
       setLoadingEditors(false);
     }
-  }, [editorsLoaded, loadingEditors, platform, target]);
+  }, [editorsLoaded, loadingEditors, platform, localFilePath]);
 
   const handlePreview = () => {
     if (target.type === "website") {
@@ -147,16 +150,16 @@ export function OpenSplitButton({
   };
 
   const handleOpenInEditor = (editor: EditorInfo) => {
-    if (target.type !== "file") {
+    if (!localFilePath) {
       return;
     }
 
     persistLastSelectedEditorId(editor.id);
     void platform
-      .openInEditor(editor.id, target.path, {
+      .openInEditor(editor.id, localFilePath, {
         pathKind: "file",
         remoteTarget: openInEditorRemoteTarget,
-        workspaceIdentity: target.previewSource?.workspaceIdentity,
+        workspaceIdentity: previewSource?.workspaceIdentity,
       })
       .then((result) => {
         if (result.success) {
@@ -165,7 +168,7 @@ export function OpenSplitButton({
 
         logger.warn("[OpenSplitButton] 第三方 App 打开文件失败", {
           editorId: editor.id,
-          path: target.path,
+          path: localFilePath,
           error: result.error ?? "unknown-error",
         });
       });
@@ -262,7 +265,7 @@ export function OpenSplitButton({
         </DropdownMenuTrigger>
       </div>
       <DropdownMenuContent align="end" side="top" className="w-44" onClick={stopEventPropagation}>
-        {target.type === "website" ? (
+        {target.type === "website" && (
           <DropdownMenuItem onSelect={handleOpenExternal}>
             <ExternalLinkIcon className="size-4" />
             <span>
@@ -271,7 +274,9 @@ export function OpenSplitButton({
               })}
             </span>
           </DropdownMenuItem>
-        ) : (
+        )}
+        {target.type === "website" && localFilePath && <DropdownMenuSeparator />}
+        {localFilePath && (
           <>
             {selectedEditor ? (
               sortedEditors.map((editor) => (
@@ -289,7 +294,7 @@ export function OpenSplitButton({
             )}
             <DropdownMenuSeparator />
             <DropdownMenuItem
-              onSelect={() => void fileActions.copyAbsolutePath({ path: target.path })}
+              onSelect={() => void fileActions.copyAbsolutePath({ path: localFilePath })}
             >
               <CopyIcon className="size-4" />
               {intl.formatMessage({ id: "fileActions.copyAbsolutePath" })}
@@ -297,10 +302,12 @@ export function OpenSplitButton({
             <DropdownMenuItem
               onSelect={() =>
                 void fileActions.copyRelativePath({
-                  path: target.path,
-                  relativePath: target.previewSource?.workspacePath
-                    ? getWorkspaceFileRelativePath(target.previewSource.workspacePath, target.path)
-                    : target.label,
+                  path: localFilePath,
+                  relativePath: previewSource?.workspacePath
+                    ? getWorkspaceFileRelativePath(previewSource.workspacePath, localFilePath)
+                    : target.type === "file"
+                      ? target.label
+                      : localFilePath,
                 })
               }
             >

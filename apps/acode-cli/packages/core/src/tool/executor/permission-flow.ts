@@ -83,6 +83,8 @@ export async function resolveToolPermission(
     // 安全加固 P2：旁路免疫熔断器的「路径逃逸写」判定需要工作区根；拿不到时该类
     // 熔断器不触发（容错哲学与 workingDirectory 一致），其余判定不受影响。
     workspaceRoot: deps.getWorkspaceRoot(),
+    // R5.2：pathEscapeWrite 豁免面第二根（产品 scratch 暂存区）；缺席 = 该豁免不生效。
+    scratchRoot: deps.getScratchRoot?.(),
     // 对抗复审 N3：调用方身份进反射门挑战键——general-purpose/自定义子代理继承父
     // PermissionService 实例，挑战键不含身份时会话 A 的反射挑战会被会话 B 的首调
     // 「继承」，B 携带预填 justification 即可绕过反射轮。
@@ -152,6 +154,14 @@ export async function resolveToolPermission(
     ...(signal ? { signal } : {}),
     ...(deps.logger ? { logger: deps.logger } : {}),
   });
+
+  // R5.4（spec managed-policy-floor-and-bypass-immune-breakers.md）：熔断 ask 的「总是
+  // 允许」结构性无效——熔断判定在 checkPermission 收口处把任何 allow 无条件降级 ask、
+  // 从不咨询项目/会话规则（yolo 更是在规则匹配前提前返回），持久化的授权永远不被
+  // 消费。弹窗不再提供无效的持久授权选项（事件与 broker 请求两个消费点同源置空）；
+  // 「允许一次」语义不变。rule.policy.ask 同构问题按 spec 登记为后续项，不在本裁决内。
+  const effectivePermissionUpdates =
+    permissionDecision.ruleId?.startsWith("breaker.") === true ? [] : suggestedPermissionUpdates;
 
   deps.logger?.debug("Tool permission evaluated", {
     ...traceContextToLogContext(traceContext),
@@ -231,7 +241,7 @@ export async function resolveToolPermission(
     requestId,
     permissionDecision.riskLevel,
     permissionDecision.reason,
-    suggestedPermissionUpdates,
+    effectivePermissionUpdates,
     traceContext,
     approval,
   );
@@ -273,7 +283,7 @@ export async function resolveToolPermission(
             ruleId: permissionDecision.ruleId,
             sessionId: deps.sessionId,
             sideEffectScope: permissionDecision.sideEffectScope,
-            suggestedPermissionUpdates,
+            suggestedPermissionUpdates: effectivePermissionUpdates,
             ...(approval.optionsPolicy ? { optionsPolicy: approval.optionsPolicy } : {}),
             toolCallId: toolCall.id as PermissionBrokerRequest["toolCallId"],
             toolName: toolCall.name,

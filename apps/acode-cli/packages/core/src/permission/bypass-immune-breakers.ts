@@ -17,7 +17,7 @@
 // - 本模块**从不执行**任何外部程序：只对工具入参字符串做静态判定。Bash 文本的结构分析
 //   委托给既有的 bash-command-parser（unbash AST），本模块只消费其纯数据结果；
 //   目标 blast-radius 分级委托给 bash-target-risk（同为纯函数）。
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { isAbsolute, normalize, relative, resolve, sep } from "node:path";
 import {
   analyzeBashCommand,
@@ -54,6 +54,12 @@ export interface BypassImmuneBreakerContext {
    * 时根包 map 充数会漏掉 deny）。缺省 = legacy 调用方，维持 enclosing 信任。
    */
   readonly scannedDirectories?: readonly string[];
+  /**
+   * 产品 scratch 暂存区根（R5.2，spec managed-policy-floor-and-bypass-immune-breakers.md）：
+   * `<storage.dir>/cli/scratch`，由 app 构造期解析后经 deps 下传。缺席 = 该豁免不生效
+   * （与 workspaceRoot 缺席同一容错哲学：宁可多弹不误放）。
+   */
+  readonly scratchRoot?: string;
 }
 
 /**
@@ -229,11 +235,27 @@ function checkPathEscapeWrite(
     const resolved = isAbsolute(rawPath)
       ? normalize(rawPath)
       : resolve(context.workingDirectory?.trim() || workspaceRoot, rawPath);
-    if (!isPathInside(resolved, workspaceRoot)) {
+    // R5 豁免面：系统临时目录 / 产品 scratch 根内不算「逃逸」——这是触发面定义的收窄，
+    // 不是对命中的放行；sensitiveRead 等其余类与策略地板收紧通道均不受影响。
+    if (
+      !isPathInside(resolved, workspaceRoot) &&
+      !isExemptEscapeTarget(resolved, context.scratchRoot)
+    ) {
       return hit("breaker.pathEscapeWrite", "Write target escapes the workspace root");
     }
   }
   return undefined;
+}
+
+/**
+ * R5.1/R5.2 豁免判定：纯静态前缀匹配（无 realpath/fs 探测，本模块纯度不变）。
+ * 已知边界（spec R5.1 接受）：macOS 显式写 `/tmp/...` 而 `tmpdir()` 返回
+ * `/var/folders/...` 时不豁免——豁免跟着 tmpdir 的精确值走。
+ */
+function isExemptEscapeTarget(resolved: string, scratchRoot: string | undefined): boolean {
+  if (isPathInside(resolved, normalize(tmpdir()))) return true;
+  const scratch = scratchRoot?.trim();
+  return scratch !== undefined && scratch.length > 0 && isPathInside(resolved, normalize(scratch));
 }
 
 function isPathInside(child: string, parent: string): boolean {
@@ -337,5 +359,7 @@ export function breakerContextFromPermissionContext(
     ...(context.packageScripts ? { packageScripts: context.packageScripts } : {}),
     // 对抗验证 F1②：扫描覆盖证据同源透传（cd/选择器目标的 enclosing 充数拦截依赖它）。
     ...(context.scannedDirectories ? { scannedDirectories: context.scannedDirectories } : {}),
+    // R5.2：产品 scratch 根透传（豁免面第二个根；缺席即不豁免）。
+    ...(context.scratchRoot ? { scratchRoot: context.scratchRoot } : {}),
   };
 }

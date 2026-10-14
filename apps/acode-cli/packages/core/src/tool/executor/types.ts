@@ -142,6 +142,8 @@ export interface ToolExecutorOptions {
   setWorkingDirectory?: (cwd: string) => Promise<void> | void;
   getWorkspaceRoot?: () => string;
   getMemoryRoot?: () => string | undefined;
+  /** 产品 scratch 暂存区根（R5.2）：pathEscapeWrite 豁免面第二根，缺席即不豁免。 */
+  getScratchRoot?: () => string | undefined;
   traceContext?: TraceContext;
   mode?: CollaborationMode;
   getMode?: () => CollaborationMode;
@@ -249,6 +251,8 @@ export interface ToolExecutorDeps {
   clientMode?: "desktop-continuous" | "web-remote-replayable";
   deliveryKind?: "desktop-continuous" | "web-remote-replayable";
   getMemoryRoot?: () => string | undefined;
+  /** 产品 scratch 暂存区根（R5.2）：pathEscapeWrite 豁免面第二根，缺席即不豁免。 */
+  getScratchRoot?: () => string | undefined;
   runtimeScope: ToolRuntimeScope;
   traceContext?: TraceContext;
   getMode: () => CollaborationMode;

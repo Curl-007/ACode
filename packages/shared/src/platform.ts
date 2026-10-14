@@ -553,16 +553,23 @@ export const DesktopCommandIds = {
 export type DesktopCommandId = (typeof DesktopCommandIds)[keyof typeof DesktopCommandIds];
 
 /**
- * CUA Helper 的操作系统支持态（macOS 版本门槛判定结果，主进程经
+ * CUA Helper 的操作系统支持态（macOS/Windows 版本门槛判定结果，主进程经
  * GetCuaOsSupport 下发给 renderer）。
  * - supported：满足门槛（含非版本因素，如解析失败时按宽松处理）。
  * - macos-below-minimum：macOS 低于承诺地板（Helper LSMinimumSystemVersion 12.0），
  *   低版本上 Helper 会被 LaunchServices -10825 拒启，表象是授权反复无响应。
- * - not-applicable：非 darwin 平台，无 macOS 版本门槛概念。
+ * - windows-below-minimum：Windows 低于承诺地板（Win10 1809 / build 17763，依据 = WGC
+ *   截图 API 契约，见 specs/windows-helper-producer.md §12.3 单一地板裁决）。
+ * - not-applicable：非 darwin/win32 平台（如 linux），无版本门槛概念。
  */
 export type CuaOsSupport =
   | { kind: "supported" }
   | { kind: "macos-below-minimum"; minimumMacOs: string; currentMacOs: string }
+  | {
+      kind: "windows-below-minimum";
+      minimumWindowsBuild: number;
+      currentWindowsBuild: number;
+    }
   | { kind: "not-applicable" };
 
 /**

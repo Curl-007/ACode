@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+// 全部临时文件 IO 走异步 API（AGENTS.md：使用异步文件和网络 IO），不用 mkdtempSync/rmSync/writeFileSync。
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -43,14 +44,19 @@ async function withEnv(vars, fn) {
   }
 }
 
-function withTempFile(name, fn) {
-  const dir = mkdtempSync(join(tmpdir(), "acode-p2-env-gate-"));
+/**
+ * 建临时可执行文件，跑完异步清理。
+ * 注意：findACodeAgentRuntimeBinary 内部用 existsSync 同步探测，故回调 fn 保持同步；
+ * 本函数只把「建/删临时目录」这段磁盘 IO 改为异步，不改变 fn 的调用契约。
+ */
+async function withTempFile(name, fn) {
+  const dir = await mkdtemp(join(tmpdir(), "acode-p2-env-gate-"));
   const filePath = join(dir, name);
-  writeFileSync(filePath, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  await writeFile(filePath, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
   try {
-    return fn(filePath);
+    return await fn(filePath);
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    await rm(dir, { recursive: true, force: true });
   }
 }
 
@@ -86,8 +92,8 @@ test("(2b) unpackaged: ACODE_AGENT_SERVER_COMMAND still honored (zero regression
   );
 });
 
-test("(3) packaged: GLM_BINARY_PATH injection is ignored by the native candidate chain", () => {
-  withTempFile("evil-glm", (fakeBinary) => {
+test("(3) packaged: GLM_BINARY_PATH injection is ignored by the native candidate chain", async () => {
+  await withTempFile("evil-glm", (fakeBinary) => {
     return withEnv({ ...PACKAGED, GLM_BINARY_PATH: fakeBinary }, () => {
       const resolved = findACodeAgentRuntimeBinary();
       assert.notEqual(resolved, fakeBinary, "packaged runtime must not honor GLM_BINARY_PATH");
@@ -95,8 +101,8 @@ test("(3) packaged: GLM_BINARY_PATH injection is ignored by the native candidate
   });
 });
 
-test("(3b) unpackaged: GLM_BINARY_PATH still first candidate (zero regression)", () => {
-  withTempFile("custom-glm", (fakeBinary) => {
+test("(3b) unpackaged: GLM_BINARY_PATH still first candidate (zero regression)", async () => {
+  await withTempFile("custom-glm", (fakeBinary) => {
     return withEnv({ ACODE_APP_IS_PACKAGED: null, GLM_BINARY_PATH: fakeBinary }, () => {
       assert.equal(findACodeAgentRuntimeBinary(), fakeBinary);
     });
@@ -117,9 +123,28 @@ const { resolveWindowsCuaRuntime } = await import(
   "../src/cua-permission-broker/windowsCuaDevRuntime.ts"
 );
 
-/** stat 一律 ENOENT：足以证明「进入了 dev 解析链」，不需要真实目录。 */
+/**
+ * dev-root 一律 ENOENT：足以证明「进入了 dev 解析链」，不需要真实目录。
+ *
+ * 必须注入 lstat 与 realpath（不是 stat）：windowsCuaDevRuntime.ts 从不调用
+ * fileSystem.stat，所有 stat 语义都走 lstatFile(:461) 与 realpathFile(:465)，
+ * 二者对**缺失字段**回退到真实 fs。只注入 stat 的夹具会静默打到宿主磁盘——
+ * 实测：dev-root 指向一个真实存在的目录时 reason 从 development-root-not-found
+ * 变成 invalid-package，即用例通过与否取决于宿主机是否存在该目录（非密封）。
+ */
 const enoentFs = {
+  // 模块从不调用 stat；此占位用于暴露未来回归（若某天模块改用 stat，测试会立刻显式失败，
+  // 而不是静默回退到真实文件系统）。
   stat: async () => {
+    throw new Error("windowsCuaDevRuntime must not call fileSystem.stat (see fixture comment)");
+  },
+  lstat: async () => {
+    throw Object.assign(new Error("ENOENT: no such file or directory"), { code: "ENOENT" });
+  },
+  realpath: async () => {
+    throw Object.assign(new Error("ENOENT: no such file or directory"), { code: "ENOENT" });
+  },
+  readFile: async () => {
     throw Object.assign(new Error("ENOENT: no such file or directory"), { code: "ENOENT" });
   },
 };

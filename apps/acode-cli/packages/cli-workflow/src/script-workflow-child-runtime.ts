@@ -225,6 +225,8 @@ function createRuntimeDeps(
     // permissionBroker + providerRuntimeHeadersPort 都在这里面：父 runtime 派生，路由身份已改写成父会话。
     ...deps.runtime.createChildClientPorts(clientPortsContext),
     permissionService: deps.permissionService,
+    // R5.2：产品 scratch 暂存区（与 cli/exec 同根约定）——dwf actor 与主会话同一豁免面。
+    scratchRoot: join(deps.storageRoot, "cli", "scratch"),
     sessionStore: deps.sessionStore,
     skillPort:
       deps.configResult.config.features.skill && deps.configResult.config.skills.enabled

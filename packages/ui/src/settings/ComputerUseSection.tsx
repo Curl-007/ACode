@@ -100,12 +100,15 @@ export function ComputerUseSection({
   const { status, settled, refresh } = useCuaPermissionStatus(path ?? null, workspaceIdentity);
   const availableStatus = status && isCuaPermissionStatusAvailable(status) ? status : null;
 
-  // macOS 版本门槛：低版本系统上 Helper 被 LaunchServices -10825 拒启，表象是授权反复无响应。
-  // 查询一次主进程判定（GetCuaOsSupport），低于地板时渲染提示卡并隐藏授权操作区。
+  // OS 版本门槛：macOS 低版本上 Helper 被 LaunchServices -10825 拒启，表象是授权反复无响应；
+  // Windows 低于 Win10 1809（build 17763）缺 WGC 截图能力（单一地板裁决，见
+  // specs/windows-helper-producer.md §12.3），电脑控制无法合法工作。
+  // 查询一次主进程判定（GetCuaOsSupport），低于地板时渲染提示卡（macOS 另隐藏授权操作区）。
   // 查询失败按无门槛处理，不阻塞设置页；useCuaPermissionStatus 轮询保留，仅隐藏交互入口。
+  const supportsLocalOsFloorQuery = supportsLocalMacWorkspace || supportsLocalWindowsWorkspace;
   const [osSupport, setOsSupport] = useState<CuaOsSupport | null>(null);
   useEffect(() => {
-    if (!supportsLocalMacWorkspace || typeof platform.executeDesktopCommand !== "function") return;
+    if (!supportsLocalOsFloorQuery || typeof platform.executeDesktopCommand !== "function") return;
     let cancelled = false;
     void platform
       .executeDesktopCommand(DesktopCommandIds.GetCuaOsSupport)
@@ -118,9 +121,12 @@ export function ComputerUseSection({
     return () => {
       cancelled = true;
     };
-  }, [supportsLocalMacWorkspace, platform]);
+  }, [supportsLocalOsFloorQuery, platform]);
 
+  // 只按 kind 精确匹配读取；未知 kind（未来新增成员）对旧消费者 = 无警告的 supported 方向，
+  // 不崩不假成功（防御性读取现状不变）。
   const macOsBelowCuaFloor = osSupport?.kind === "macos-below-minimum";
+  const windowsBelowCuaFloor = osSupport?.kind === "windows-below-minimum";
 
   // 总开关 = acode-cua 插件启用态（读自插件管理 store；切换即同步启用/禁用插件及其 MCP + skill）。
   const plugins = usePluginManagementStore((state) => state.plugins);
@@ -813,6 +819,24 @@ export function ComputerUseSection({
             </SettingsGroupCard>
           ) : null}
         </>
+      ) : null}
+
+      {/* Windows 版本低于 CUA 地板（Win10 1809 / build 17763，缺 WGC 截图能力）时，
+          展示与 macOS 同款的地板警示卡（复用相同警示容器样式，不新造控件，DESIGN.md）。
+          只警示「OS 是否够格」，不翻任何启用门控（红线 3：判定收口 ≠ 功能启用）。 */}
+      {cuaEnabled && supportsLocalWindowsWorkspace && windowsBelowCuaFloor ? (
+        <div className="rounded-lg border border-warning/40 bg-warning/10 p-3 text-sm text-warning">
+          <p className="font-medium">
+            {intl.formatMessage(
+              { id: "cuaPermission.windowsOsFloorTitle" },
+              {
+                minimum: osSupport?.minimumWindowsBuild ?? 17763,
+                current: osSupport?.currentWindowsBuild ?? 0,
+              },
+            )}
+          </p>
+          <p>{intl.formatMessage({ id: "cuaPermission.windowsOsFloorDescription" })}</p>
+        </div>
       ) : null}
     </div>
   );

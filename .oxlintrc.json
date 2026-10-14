@@ -26,6 +26,16 @@
       "rules": {
         "max-lines": "off"
       }
+    },
+    {
+      // 移植的官方插件脚本（android/ios emulator 的 MCP server、computer-use SDK 等）是上游
+      // vendor bundle，与 ignorePatterns 里的 .agents/skills 同属 ported 资产，不是第一方业务
+      // 代码。max-lines 的 400 行上限是给业务代码的可维护性约束，对这些逐字/改写移植的脚本
+      // 会造成误报（且拆分会偏离上游、阻碍后续同步）。仅关闭 max-lines，其余规则照常生效。
+      "files": ["**/*-plugin/scripts/**/*.mjs"],
+      "rules": {
+        "max-lines": "off"
+      }
     }
   ],
   "settings": {

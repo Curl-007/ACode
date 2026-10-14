@@ -91,6 +91,7 @@ const SUBAGENT_ENVIRONMENT_SECTION: SectionDescriptor = {
         agentPrompt: ctx.subagent?.agentPrompt ?? "",
         envInfo: ctx.config.envInfo,
         model: ctx.config.model,
+        scratchDir: ctx.config.scratchDir,
       }),
     }),
 };

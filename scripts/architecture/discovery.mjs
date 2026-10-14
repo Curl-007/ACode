@@ -4,7 +4,7 @@ import ts from "typescript";
 
 // User state is outside architecture inputs. In particular, never inspect the
 // repository's `.acode/` data while discovering workspace manifests/configs.
-const SKIP_DIRECTORIES = new Set(["node_modules", "dist", "out", ".git", ".acode"]);
+const SKIP_DIRECTORIES = new Set(["node_modules", "dist", "out", ".git", ".acode", "cua-producer"]);
 
 function commonAncestor(paths) {
   if (paths.length === 0) return process.cwd();

@@ -177,7 +177,7 @@ const ENV_INFO_SECTION: SectionDescriptor = {
   persistable: false,
   owner: `${OWNER_PREFIX}/sections/env-info.ts`,
   enabled: () => true,
-  build: (ctx) => buildEnvInfoSection(ctx.config.envInfo, ctx.config.model),
+  build: (ctx) => buildEnvInfoSection(ctx.config.envInfo, ctx.config.model, ctx.config.scratchDir),
 };
 
 /** Output Style 附加指令：仅生效 style 在场（resolveActiveOutputStyle 判定）。 */

@@ -3,8 +3,14 @@
 // 三方 license 盘点/声明/门禁 一体脚本
 //
 // 用法：
-//   node scripts/licenses.mjs notices   生成 THIRD-PARTY-NOTICES.md（精确版本、原始版权和许可文本）
-//   node scripts/licenses.mjs check     手动门禁：出现 allowlist 之外或许可未知的包即退出码 1
+//   node scripts/licenses.mjs notices                      生成 THIRD-PARTY-NOTICES.md（精确版本、原始版权和许可文本）
+//   node scripts/licenses.mjs check                        手动门禁：出现 allowlist 之外或许可未知的包即退出码 1
+//   node scripts/licenses.mjs reproducibility [--inputs-only] [--diff-only]
+//                                                          台账可复现性：默认全量重生成后 diff（CI Linux、发布权威），
+//                                                          --inputs-only 只重算源文件哈希（零 install、秒级、开发期信号），
+//                                                          --diff-only 跳过重生成、只 diff 工作树（供已重生成过的 workflow 复用）
+//   node scripts/licenses.mjs paths-filter [--coverage]     从台账 inputs 归纳 workflow 的 paths 过滤清单；
+//                                                          --coverage 报覆盖率并以 100% 为硬门槛
 //
 // 数据口径：
 // - 实装清单 = 全 workspace node_modules 的递归集合，含嵌套版本与符号链接。
@@ -13,6 +19,12 @@
 // - 商用/半开放检查作用于全量实装包（prod+dev）
 import { generateThirdPartyNotices } from "./generate-third-party-notices.mjs";
 import { readVerifiedNotices } from "./third-party-notices.mjs";
+import {
+  derivePathsFilter,
+  formatDrift,
+  measurePathsFilterCoverage,
+  verifyInputsFreshness,
+} from "./third-party-reproducibility.mjs";
 import { readFile } from "node:fs/promises";
 import {
   readWorkspaceProductionGraph,
@@ -26,6 +38,51 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const command = process.argv[2] || "notices";
 if (command === "notices") {
   await generateThirdPartyNotices(ROOT);
+  process.exit(0);
+}
+
+// 台账可复现性与 paths 覆盖率：判定逻辑只在 third-party-reproducibility.mjs 一处，
+// 这里只做 CLI 派发，workflow 与本地共用同一实现（U13，third-party/README.md）。
+if (command === "reproducibility") {
+  const inputsOnly = process.argv.includes("--inputs-only");
+  const diffOnly = process.argv.includes("--diff-only");
+  const result = await verifyInputsFreshness(ROOT, { inputsOnly, diffOnly });
+  console.log(formatDrift(result));
+  if (!result.ok) {
+    console.error(
+      inputsOnly
+        ? "\n处置：运行 `node scripts/licenses.mjs notices` 后**采用 CI Linux 重生成产物**修复台账；" +
+            "不要提交本机（尤其 Windows）重生成结果，行尾与平台依赖变体会把不一致带回去。"
+        : "\n处置：以 CI Linux 规范产物替换已入库台账（沿用 b926b9e/390f73c/572733a 口径）。",
+    );
+    process.exit(1);
+  }
+  process.exit(0);
+}
+
+if (command === "paths-filter") {
+  const patterns = await derivePathsFilter(ROOT);
+  const coverage = await measurePathsFilterCoverage(ROOT, { patterns });
+  if (process.argv.includes("--coverage")) {
+    const percent = (coverage.coverageRatio * 100).toFixed(1);
+    console.log(
+      `paths 覆盖率：${coverage.covered}/${coverage.total} = ${percent}%（清单 ${patterns.length} 条）`,
+    );
+    if (coverage.coverageRatio !== 1) {
+      console.error(
+        `✗ paths-filter 未覆盖全部台账 inputs，未覆盖 ${coverage.uncovered.length} 项，例如：\n` +
+          coverage.uncovered
+            .slice(0, 10)
+            .map((file) => `  - ${file}`)
+            .join("\n"),
+      );
+      process.exit(1);
+    }
+    console.log("✓ 覆盖率 100%：改动任一被台账追踪的文件都会触发闸门");
+    process.exit(0);
+  }
+  // 输出可直接粘进 workflow 的 paths 列表（YAML 片段）。
+  console.log(patterns.map((pattern) => `      - "${pattern}"`).join("\n"));
   process.exit(0);
 }
 
@@ -120,6 +177,6 @@ if (command === "check") {
     `✓ 许可标识与声明新鲜度检查通过：${n} 个实装包（构建依赖复核 ${[...installed.values()].filter((r) => r.bucket.startsWith("yellow")).length} 项）；材料限制见 third-party/README.md`,
   );
 } else {
-  console.error("用法: node scripts/licenses.mjs [notices|check]");
+  console.error("用法: node scripts/licenses.mjs [notices|check|reproducibility|paths-filter]");
   process.exit(2);
 }

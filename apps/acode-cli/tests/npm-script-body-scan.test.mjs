@@ -253,8 +253,15 @@ test("B1 预取：最近 package.json + 子包 + --filter 候选（monorepo 两�
     );
     const dirs = fromRoot.sources.map((source) => source.directory).sort();
     assert.deepEqual(dirs, [join(root), join(root, "packages", "x")]);
+    // 用精确路径而不是 endsWith("x") 选中 packages/x。
+    // 原因（约 1/62 概率的偶发失败，2026-10-12 dev/0.0.9 CI run 38215855706 实测命中）：
+    // withTempTree 的 root 来自 mkdtemp("npm-script-scan-")，其 6 位随机后缀是 base62；
+    // 后缀末位恰为 'x' 时 root 自身也以 'x' 结尾，而 walkForNearest(base) 先把 root 作为
+    // sources[0] 注册，于是 find 命中 root（scripts 只有 clean/lint），断言取 .scripts.evil
+    // 得 undefined。与后缀无关的写法即按完整路径比对（与上一行 dirs 的 deepEqual 同口径）。
+    const pkgX = join(root, "packages", "x");
     assert.equal(
-      fromRoot.sources.find((s) => s.directory.endsWith("x")).scripts.evil,
+      fromRoot.sources.find((s) => s.directory === pkgX)?.scripts.evil,
       "rm -rf /etc/passwd",
     );
     assert.ok(

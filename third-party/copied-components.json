@@ -250,5 +250,17 @@
     "license": "MIT",
     "scope": "Vendored React/Next.js guidance and local adaptations; local README preserves Shu Ding / Vercel attribution.",
     "reviewRequired": "Pinned upstream README and skill declare MIT, but a complete original copyright/license notice has not been obtained."
+  },
+  {
+    "id": "ZCode computer-use plugin SDK",
+    "referenceRevision": "computer-use 0.6.3 (zcode-plugins-official marketplace package version)",
+    "source": "zcode-plugins-official plugin marketplace, computer-use plugin v0.6.3 (@zcode/zcode-cua-plugin, MIT, author Z.ai); the upstream package ships no LICENSE file, so the pinned MIT text is reproduced verbatim from the video2code 0.6.0 plugin LICENSE of the same official marketplace (Copyright (c) 2026 Z.ai).",
+    "file": "apps/acode-cli/packages/acode-cua-plugin/LICENSE",
+    "sha256": "c062d6b1760da9c2dbea8610c1ac5913c034220ddcf2f9066f7fcecba3142e0d",
+    "importRevision": null,
+    "provenance": "Original import revision is not recorded; the plugin was derived from the zcode-plugins-official marketplace package computer-use 0.6.3, which declares MIT in its package.json but ships no LICENSE file. The pinned license text is not asserted to be an original upstream LICENSE file; it is the standard MIT text as published by the same official marketplace.",
+    "roots": ["apps/acode-cli/packages/acode-cua-plugin"],
+    "scope": "Upstream-derived SDK modules under scripts/ only; locally adapted — the upstream 1208-line monolithic SDK was split into five modules and brand/wiring identifiers were renamed from zcode to acode forms to match this repository's node-repl host. skills/ and docs/ were rewritten for this repository. Details in apps/acode-cli/packages/acode-cua-plugin/NOTICE.md.",
+    "license": "MIT"
   }
 ]

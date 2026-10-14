@@ -64,6 +64,11 @@
   `{ workingDirectory: worktree.path }`（其 spread 顺序天然覆盖 deps 直传的父目录）。
 - breaker 收敛随 `workspaceRoot = workingDirectory` 同源自动移动到 worktree（R「背景」
   第 4 条）——隔离 actor 写主 checkout 会被 pathEscapeWrite 判逃逸，这是**期望语义**。
+  **（2026-10-14 过时注记：dwf/workflow child 硬编码 `mode:"yolo"`，而 R6 裁决
+  （managed-policy-floor-and-bypass-immune-breakers.md R6）令 yolo 直通
+  pathEscapeWrite——本条的 ask 兜底在 yolo actor 上不再出现。本特性仍是 fail-loud
+  桩；实现时若需越界确认，须另行设计，不得依赖该熔断器。隔离定位不变：下一行
+  自证「worktree 隔离是状态隔离，不是权限收敛手段」。）**
 - 子代理 `mode: "yolo"` 既有事实不变：worktree 隔离是**状态隔离**（互踩/脏区分离），
   不是权限收敛手段。
 

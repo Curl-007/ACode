@@ -16,6 +16,10 @@ const { evaluateBypassImmuneBreakers } = await import(
 const { PermissionService } = await import("../packages/core/src/permission/service.ts");
 
 const WORKSPACE = join(tmpdir(), "acode-p2-breaker-workspace");
+// R5（2026-10-14 裁决）后 tmpdir 内写入被豁免：逃逸类用例的工作区与目标必须放在
+// 非豁免根（homedir 系虚拟路径，纯字符串判定零 fs 副作用）才能继续钉住 ask 语义。
+const PROJECT = join(homedir(), "acode-p2-breaker-project");
+const SCRATCH = join(homedir(), ".acode", "cli", "scratch");
 
 function bash(command) {
   return { toolName: "Bash", input: { command } };
@@ -69,19 +73,20 @@ test("(8c) unparseable delete text fails closed to the breaker", () => {
 // ── 类 2：路径逃逸写 ──────────────────────────────────────────────────
 
 test("(9) write outside workspaceRoot fires; inside does not; no root no fire", () => {
+  // R5 后逃逸目标必须落在豁免面（tmpdir/scratch）之外：homedir 系路径是非豁免根。
   const outside = evaluateBypassImmuneBreakers({
     toolName: "Write",
-    input: { file_path: join(WORKSPACE, "..", "escaped.txt") },
-    workspaceRoot: WORKSPACE,
-    workingDirectory: WORKSPACE,
+    input: { file_path: join(PROJECT, "..", "escaped.txt") },
+    workspaceRoot: PROJECT,
+    workingDirectory: PROJECT,
   });
   assert.equal(outside?.ruleId, "breaker.pathEscapeWrite");
 
   const inside = evaluateBypassImmuneBreakers({
     toolName: "Edit",
-    input: { file_path: join(WORKSPACE, "src", "ok.ts") },
-    workspaceRoot: WORKSPACE,
-    workingDirectory: WORKSPACE,
+    input: { file_path: join(PROJECT, "src", "ok.ts") },
+    workspaceRoot: PROJECT,
+    workingDirectory: PROJECT,
   });
   assert.equal(inside, undefined);
 
@@ -209,21 +214,144 @@ test("(12) workspace-scoped write in yolo is untouched by breakers", () => {
   assert.equal(decision.ruleId, "mode.yolo");
 });
 
-test("(12b) escaping write in yolo downgrades to ask", () => {
-  const outside = join(WORKSPACE, "..", "pwned.txt");
+test("(12b/19) R6：yolo 下越界写直通（原「降级 ask」由 2026-10-14 二次裁决废止）", () => {
+  // 非豁免根（homedir 系）的越界写在 yolo 下 allow——pathEscapeWrite 不再降级。
+  // 谓词与 C11/fast-path 单一来源（isYoloTrustBypassActive，服务层私有，由三处行为钉住）。
+  const outside = join(PROJECT, "..", "pwned.txt");
   const decision = makeService().checkPermission(
     {
       toolName: "Write",
       input: { file_path: outside },
       riskLevel: "medium",
       mode: "yolo",
-      workingDirectory: WORKSPACE,
-      workspaceRoot: WORKSPACE,
+      workingDirectory: PROJECT,
+      workspaceRoot: PROJECT,
     },
     { readOnly: false, destructive: false, sideEffectScope: "workspace", needsApproval: true },
   );
+  assert.equal(decision.decision, "allow");
+  assert.equal(decision.ruleId, "mode.yolo");
+});
+
+test("(20) R6 只豁免 yolo：build + 项目 allow 规则的越界写照旧被降级 ask", () => {
+  const outside = join(PROJECT, "..", "pwned.txt");
+  const decision = makeService().checkPermission(
+    {
+      toolName: "Write",
+      input: { file_path: outside },
+      riskLevel: "medium",
+      mode: "build",
+      workingDirectory: PROJECT,
+      workspaceRoot: PROJECT,
+    },
+    { readOnly: false, destructive: false, sideEffectScope: "workspace", needsApproval: true },
+    { version: 1, deny: [], ask: [], allow: [{ toolName: "Write" }] },
+  );
   assert.equal(decision.decision, "ask");
   assert.equal(decision.ruleId, "breaker.pathEscapeWrite");
+});
+
+test("(21) yolo + 策略地板 disableBypass：直通失效，越界写回落 build 判定 ask", () => {
+  const outside = join(PROJECT, "..", "pwned.txt");
+  const service = new PermissionService({
+    allowedTools: new Set(),
+    disallowedTools: new Set(),
+    autoApproveHighRisk: false,
+    allowMediumRiskInAutoMode: false,
+    policyFloor: {
+      deny: [],
+      ask: [],
+      disallowedTools: [],
+      disableBypassPermissionsMode: true,
+    },
+  });
+  const decision = service.checkPermission(
+    {
+      toolName: "Write",
+      input: { file_path: outside },
+      riskLevel: "medium",
+      mode: "yolo",
+      workingDirectory: PROJECT,
+      workspaceRoot: PROJECT,
+    },
+    { readOnly: false, destructive: false, sideEffectScope: "workspace", needsApproval: true },
+  );
+  // 地板压过 yolo 直通（R3 第 7 步跳过）→ 副作用写 ask；熔断不覆写既有 ask 的 ruleId。
+  assert.equal(decision.decision, "ask");
+});
+
+// ── R5 豁免面（场景 13-15，2026-10-14 用户裁决）────────────────────────
+
+function escapeWriteCtx(filePath, extra = {}) {
+  return {
+    toolName: "Write",
+    input: { file_path: filePath },
+    workspaceRoot: PROJECT,
+    workingDirectory: PROJECT,
+    ...extra,
+  };
+}
+
+test("(13) writes into the system temp dir are exempt from pathEscapeWrite", () => {
+  // 纯函数面：tmpdir 内目标不再命中（触发面定义收窄，spec R5.1）。
+  assert.equal(
+    evaluateBypassImmuneBreakers(escapeWriteCtx(join(tmpdir(), "agent-out", "f.json"))),
+    undefined,
+  );
+  // 服务集成面：yolo 直通（allow 不再被熔断降级）。
+  const decision = makeService().checkPermission(
+    {
+      ...escapeWriteCtx(join(tmpdir(), "agent-out", "f.json")),
+      riskLevel: "medium",
+      mode: "yolo",
+    },
+    { readOnly: false, destructive: false, sideEffectScope: "workspace", needsApproval: true },
+  );
+  assert.equal(decision.decision, "allow");
+  assert.equal(decision.ruleId, "mode.yolo");
+});
+
+test("(14) scratchRoot exempts; absent/blank scratchRoot still asks (fail-safe)", () => {
+  const target = join(SCRATCH, "sess-1", "draft.md");
+  // 豁免根在场：纯函数与服务层均放行。
+  assert.equal(evaluateBypassImmuneBreakers(escapeWriteCtx(target, { scratchRoot: SCRATCH })), undefined);
+  const allowed = makeService().checkPermission(
+    { ...escapeWriteCtx(target, { scratchRoot: SCRATCH }), riskLevel: "medium", mode: "yolo" },
+    { readOnly: false, destructive: false, sideEffectScope: "workspace", needsApproval: true },
+  );
+  assert.equal(allowed.decision, "allow");
+  assert.equal(allowed.ruleId, "mode.yolo");
+  // 缺席 = 豁免不生效（宁可多弹不误放）；空白字符串与缺席同语义（trim）。
+  assert.equal(
+    evaluateBypassImmuneBreakers(escapeWriteCtx(target))?.ruleId,
+    "breaker.pathEscapeWrite",
+  );
+  assert.equal(
+    evaluateBypassImmuneBreakers(escapeWriteCtx(target, { scratchRoot: "   " }))?.ruleId,
+    "breaker.pathEscapeWrite",
+  );
+});
+
+test("(15) exemption is pathEscapeWrite-only: other breaker classes untouched", () => {
+  // tmpdir 内的敏感读照旧命中（豁免只存在于路径逃逸写的触发面定义里）。
+  assert.equal(
+    evaluateBypassImmuneBreakers({
+      toolName: "Read",
+      input: { file_path: join(tmpdir(), "leaked", "id_rsa") },
+    })?.ruleId,
+    "breaker.sensitiveRead",
+  );
+  // scratch 根内命中凭据位置模式同样照旧。
+  assert.equal(
+    evaluateBypassImmuneBreakers({
+      toolName: "Read",
+      input: { file_path: join(SCRATCH, ".ssh", "config") },
+      scratchRoot: SCRATCH,
+    })?.ruleId,
+    "breaker.sensitiveRead",
+  );
+  // Bash 删除类熔断不受豁免面影响。
+  assert.equal(evaluateBashRootDelete('rm -rf "$OUT"/'), "breaker.bashRootDelete");
 });
 
 // sep 引用防止未使用导入告警（跨平台路径拼接断言里用到）。

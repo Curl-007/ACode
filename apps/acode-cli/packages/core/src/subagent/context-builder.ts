@@ -26,6 +26,8 @@ export interface SubagentContextBuilderConfig {
   skillMetadataBudget?: number;
   skills?: ContextBuilderConfig["skills"];
   userInstructions?: ContextBuilderConfig["userInstructions"];
+  /** 产品 scratch 暂存区根（R5.3）：在场时子代理环境段渲染目录行与指引；缺席零渲染。 */
+  scratchDir?: string;
   /** 本地诊断旗标显式覆盖位（缺席时管线入口解析 env，见 context/registry.ts）。 */
   prompt?: PromptSectionFlags;
   /** 可选诊断出口：管线 warn / manifest trace debug 走它；缺席时静默。 */
@@ -160,6 +162,7 @@ function toBaseContextBuilderConfig(config: SubagentContextBuilderConfig): Conte
     currentDate: config.currentDate,
     skillMetadataBudget: config.skillMetadataBudget,
     skills: config.skills,
+    scratchDir: config.scratchDir,
   };
 }
 

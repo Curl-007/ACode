@@ -33,6 +33,14 @@ const NOT_A_GIT_REPOSITORY_INSTRUCTION = [
   `The working directory is ${NOT_A_GIT_REPOSITORY}: there is no history, no diffs, and no blame to consult, and git commands that expect a repository will fail here.`,
   "Do not describe or infer version-control state you cannot observe — if git context matters for the task, say it is unavailable and work from the files themselves.",
 ].join(" ");
+// R5.3（spec managed-policy-floor-and-bypass-immune-breakers.md）：scratch 暂存区引导。
+// 文本自撰英文（prompt-language-policy.md R7）；仅在 scratchDir 事实在场时渲染，
+// 缺席零渲染（不猜路径、不渲染空行）。
+const SCRATCH_DIRECTORY_LABEL = "Scratch directory (temporary files)";
+const SCRATCH_DIRECTORY_INSTRUCTION = [
+  "Use this product-managed scratch directory for temporary and intermediate files instead of writing to arbitrary paths outside the workspace.",
+  "Writes inside it and inside the system temporary directory do not trigger the workspace-escape confirmation.",
+].join(" ");
 const GIT_SYSTEM_CONTEXT_PREFIX =
   "gitStatus: This is the git status at the start of the conversation. Note that this status is a snapshot in time, and will not update during the conversation.";
 const CURRENT_BRANCH_LABEL = "Current branch";
@@ -44,8 +52,12 @@ const CLEAN_GIT_STATUS = "(clean)";
 const DIRTY_GIT_STATUS = "(dirty)";
 const UNKNOWN_GIT_STATUS = "(unknown)";
 
-export function buildEnvInfoSection(envInfo: EnvInfo, model?: Model): ContextSection {
-  const content = buildEnvInfoContent(envInfo, model);
+export function buildEnvInfoSection(
+  envInfo: EnvInfo,
+  model?: Model,
+  scratchDir?: string,
+): ContextSection {
+  const content = buildEnvInfoContent(envInfo, model, scratchDir);
 
   return {
     name: "Environment Info",
@@ -78,7 +90,7 @@ export function buildGitSystemContextSection(envInfo: EnvInfo): ContextSection |
   };
 }
 
-function buildEnvInfoContent(info: EnvInfo, model?: Model): string {
+function buildEnvInfoContent(info: EnvInfo, model?: Model, scratchDir?: string): string {
   const hasGitRepository = isEnvInfoGitRepository(info);
   const lines: string[] = [
     ENVIRONMENT_HEADING,
@@ -103,6 +115,17 @@ function buildEnvInfoContent(info: EnvInfo, model?: Model): string {
   // P6：not-a-git-repo 显式指令段条件出现——仅非 git 目录渲染（验收：段落条件出现）。
   if (!hasGitRepository) {
     lines.push("", NOT_A_GIT_REPOSITORY_INSTRUCTION);
+  }
+
+  // R5.3：scratch 暂存区引导段条件出现——仅事实在场渲染（验收场景 18：缺席时段内容
+  // 与改动前逐字节一致）。
+  const scratchDirectory = typeof scratchDir === "string" ? scratchDir.trim() : "";
+  if (scratchDirectory.length > 0) {
+    lines.push(
+      "",
+      `${SCRATCH_DIRECTORY_LABEL}: ${scratchDirectory}`,
+      SCRATCH_DIRECTORY_INSTRUCTION,
+    );
   }
 
   return lines.join("\n");

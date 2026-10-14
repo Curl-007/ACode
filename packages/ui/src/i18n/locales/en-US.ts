@@ -3589,7 +3589,7 @@ const enUS: Record<string, string> = {
   "settings.plugins.marketplacePlugins.title": "Marketplace plugins",
   "settings.plugins.marketplacePlugins.empty": "No marketplace plugins found",
   "settings.plugins.store.officialMarketplaceDisabled":
-    "The Z.AI official plugin marketplace is off. Enable \"Z.AI marketplace and CDN\" under Settings → Z.AI services.",
+    'The Z.AI official plugin marketplace is off. Enable "Z.AI marketplace and CDN" under Settings → Z.AI services.',
   "settings.plugins.marketplacePlugins.install": "Install",
   "settings.plugins.marketplacePlugins.installed": "Installed",
   "settings.plugins.marketplace.searchPlaceholder": "Search Plugins, Skills, MCPs...",
@@ -4543,7 +4543,8 @@ const enUS: Record<string, string> = {
   "chat.visualize.card": "Visualization",
   "chat.visualize.loadFailed": "Could not load the visualization.",
   "chat.visualize.retry": "Retry",
-  "chat.visualize.oversized": "This visualization exceeds the inline size limit and cannot be shown.",
+  "chat.visualize.oversized":
+    "This visualization exceeds the inline size limit and cannot be shown.",
   "chat.visualize.wide": "Wide view",
   "chat.toolCall.workflow.amend.writing": "Amending workflow",
   "chat.toolCall.workflow.amend.revising": "Revising amendment",
@@ -4997,8 +4998,7 @@ const enUS: Record<string, string> = {
   "chat.toolCall.workflow.run.activity.cached": "cached",
   "chat.toolCall.workflow.run.activity.lastTool": "last: {name}",
   "chat.toolCall.workflow.run.activity.openActor": "Open this subagent's transcript",
-  "chat.toolCall.workflow.run.activity.actorInert":
-    "No session recorded for this subagent yet",
+  "chat.toolCall.workflow.run.activity.actorInert": "No session recorded for this subagent yet",
   "chat.toolCall.workflow.run.activity.untrackedNode": "unattributed step",
   "chat.toolCall.workflow.run.settings.title": "Configure workflow",
   "chat.toolCall.workflow.run.settings.model": "Subagent model",
@@ -5982,8 +5982,7 @@ const enUS: Record<string, string> = {
   "settings.mcp.sampling.description":
     "Let this server request model completions through ACode. Each request asks for permission and consumes tokens.",
   "settings.mcp.resources.label": "Expose resources",
-  "settings.mcp.resources.description":
-    "Add list/read tools for this server's resources.",
+  "settings.mcp.resources.description": "Add list/read tools for this server's resources.",
   // ---- Scheduled tasks / Automations ----
   "taskList.cronTaskLabel": "Scheduled task",
   "taskList.offPeakTaskLabel": "Idle-time task",
@@ -6437,6 +6436,10 @@ const enUS: Record<string, string> = {
     "Computer Use requires macOS {minimum} or later (currently around macOS {current})",
   "cuaPermission.osFloorDescription":
     "Please upgrade macOS before using it. Permission setup cannot be completed on older versions.",
+  "cuaPermission.windowsOsFloorTitle":
+    "Computer Use requires Windows 10 version 1809 (build {minimum}) or later (current build {current})",
+  "cuaPermission.windowsOsFloorDescription":
+    "Please upgrade Windows before using it. Older versions lack the supported screen capture capability, so Computer Use cannot work.",
   "cuaPermission.ready": "Permissions ready",
   "cuaPermission.ready.sessionValidationHint":
     "ACode will verify the Computer Use tools against the exact session when your first session starts.",

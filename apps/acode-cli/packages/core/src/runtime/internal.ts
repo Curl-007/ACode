@@ -104,6 +104,9 @@ interface RuntimeInjectedDeps {
   workspaceHookAdmission?: WorkspaceHookRuntimeAdmissionPort;
   modelFactory: AgentRuntimeDeps["modelFactory"];
   modelIoDir?: string;
+  /** 产品 scratch 暂存区根（R5.2，spec managed-policy-floor-and-bypass-immune-breakers.md）：
+   * 构造期注入、生命周期内不变（唯一写入方 = 构造函数）；消费方 = context builder（提示词引导）。 */
+  scratchRoot?: string;
   providerRuntimeHeadersPort?: ProviderRuntimeHeadersPort;
   browserControlPort?: AgentRuntimeDeps["browserControlPort"];
   modelRequestAdmission?: AgentRuntimeDeps["modelRequestAdmission"];

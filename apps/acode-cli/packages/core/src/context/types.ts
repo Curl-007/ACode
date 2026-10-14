@@ -111,6 +111,8 @@ export interface ContextBuilderConfig {
   userInstructions?: ResolvedUserInstructions;
   projectContext?: ProjectContext;
   memoryRoot?: string;
+  /** 产品 scratch 暂存区根（R5.3）：在场时 env-info / 子代理环境段渲染目录行与指引；缺席零渲染。 */
+  scratchDir?: string;
   memoryIndexContent?: string;
   skills?: SkillLoadOutcome;
   agentProfiles?: readonly AgentProfile[];

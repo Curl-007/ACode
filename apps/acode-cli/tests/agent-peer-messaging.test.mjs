@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -27,6 +27,36 @@ const root = new URL("../", import.meta.url);
 // core.autocrlf=true 的机器上工作区是 CRLF；归一为 LF 再做位置敏感断言。
 const read = (path) =>
   readFile(new URL(path, root), "utf8").then((text) => text.replace(/\r\n/g, "\n"));
+
+// 平台无关的字面量递归 grep：收集 dir 下内容包含 needle 的文件路径。
+// 目录缺失/不可读时返回空数组——等价于原 `grep -rl ... || true` 的容错语义。
+// 修复依据：原实现经 execSync 调 POSIX grep，Windows 上 execSync 走 cmd.exe（COMSPEC），
+// PATH 无 Git usr/bin 的执行环境（如全量门禁 runner）里 grep/true 都不存在，
+// 直接 exit 1 使场景1 恒红——环境脆弱而非守护面本身的问题，故只换实现不换语义。
+async function grepRecursive(dir, needle) {
+  const hits = [];
+  const walk = async (current) => {
+    let entries;
+    try {
+      entries = await readdir(current, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const child = new URL(entry.name + (entry.isDirectory() ? "/" : ""), current);
+      if (entry.isDirectory()) {
+        await walk(child);
+      } else if (entry.isFile()) {
+        // 读不出来的文件（占用/权限）跳过：守护目标是 TS 源码里的符号字面量，
+        // 与 grep 对文本文件的子串匹配语义一致。
+        const text = await readFile(child, "utf8").catch(() => "");
+        if (text.includes(needle)) hits.push(fileURLToPath(child));
+      }
+    }
+  };
+  await walk(dir);
+  return hits;
+}
 
 const trace = () => ({ traceId: createTraceId() });
 
@@ -311,13 +341,15 @@ test("(场景1/8) 不变量守护：flag 默认关、peer 路径无 resume、窄
     "peer-send-paths 引用了 resume 机制（R7：peer 不得复活已停 agent）",
   );
 
-  // R8（spec）：窄面不进 contracts
-  const { execSync } = await import("node:child_process");
-  const hits = execSync('grep -rl "PeerMessagingPort" packages/contracts/src || true', {
-    cwd: fileURLToPath(new URL("../", import.meta.url)),
-    encoding: "utf8",
-  }).trim();
-  assert.equal(hits, "", "PeerMessagingPort 泄漏进 contracts");
+  // R8（spec）：窄面不进 contracts。改用纯 Node 异步递归扫描（见 grepRecursive 的修复依据），
+  // 语义与 grep -rl 等价：contracts/src 下任何文件含 "PeerMessagingPort" 字面量即泄漏。
+  const hits = await grepRecursive(new URL("packages/contracts/src/", root), "PeerMessagingPort");
+  assert.deepEqual(hits, [], "PeerMessagingPort 泄漏进 contracts");
+  // 正向对照防「守护静默」：扫描必须能命中 contracts/src 的已知符号（本文件顶部就从
+  // packages/contracts/src/interfaces/shared.ts import 了 createTraceId），否则路径写错或
+  // readdir 恒失败会让上面的空断言空洞通过。
+  const control = await grepRecursive(new URL("packages/contracts/src/", root), "createTraceId");
+  assert.ok(control.length > 0, "grepRecursive 对照失败：连已知符号都扫不到，R8 断言无效");
 
   // 接线单点：runner 构造 + handler 分支 + 注册门
   const runner = await read("packages/core/src/subagent/runner.ts");

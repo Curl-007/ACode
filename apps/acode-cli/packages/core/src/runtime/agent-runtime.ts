@@ -177,6 +177,7 @@ export class AgentRuntime {
   private workspaceHookAdmission?: WorkspaceHookRuntimeAdmissionPort;
   private modelFactory: AgentRuntimeDeps["modelFactory"];
   private modelIoDir?: string;
+  private scratchRoot?: string;
   private providerRuntimeHeadersPort?: AgentRuntimeDeps["providerRuntimeHeadersPort"];
   private browserControlPort?: AgentRuntimeDeps["browserControlPort"];
   /** 模型请求准入端口；随每次模型请求进调用上下文。 */
@@ -301,6 +302,7 @@ export class AgentRuntime {
     this.isRemoteWorkspace = deps.isRemoteWorkspace ?? (() => false);
     this.modelFactory = deps.modelFactory;
     this.modelIoDir = deps.modelIoDir;
+    this.scratchRoot = deps.scratchRoot;
     this.providerRuntimeHeadersPort = deps.providerRuntimeHeadersPort;
     this.browserControlPort = deps.browserControlPort;
     this.modelRequestAdmission = deps.modelRequestAdmission;

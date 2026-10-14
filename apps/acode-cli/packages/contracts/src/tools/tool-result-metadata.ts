@@ -46,7 +46,10 @@ export const cuaTargetAppDisplaySchema = z
 export const cuaRequestAccessStatusDisplaySchema = z
   .object({
     schemaVersion: z.literal(1),
-    platform: z.literal("darwin"),
+    // 阶段 4（specs/windows-helper-producer.md §12.2 第四处，oQ13 裁决）：与 v4
+    // cuaPermission.ts 同批扩为 darwin|win32，避免 Windows 状态在 display 投影层
+    // safeParse 失败导致 permissionStatus 字段静默缺席（§7.8 B-1「静默降级」形态）。
+    platform: z.enum(["darwin", "win32"]),
     grantOwner: z.string().trim().min(1).max(512),
     accessibility: z.enum(["granted", "stale", "denied"]),
     screenRecording: z.enum(["granted", "denied", "unknown"]),

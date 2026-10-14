@@ -5,7 +5,10 @@ import { timestampSchema } from "./core.js";
 export const cuaRequestAccessStatusSchema = z
   .object({
     schemaVersion: z.literal(1),
-    platform: z.literal("darwin"),
+    // 阶段 4（specs/windows-helper-producer.md §12.2）：受理面由 darwin 字面量扩为
+    // darwin|win32 联合（v4 既有 schema 的 accept-widening，非新增命令）。
+    // .strict()、schemaVersion、accessibility/screenRecording 值域全部不变（darwin 红线）。
+    platform: z.enum(["darwin", "win32"]),
     grantOwner: z.string().min(1),
     accessibility: z.enum(["granted", "stale", "denied"]),
     screenRecording: z.enum(["granted", "denied", "unknown"]),

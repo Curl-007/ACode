@@ -229,6 +229,12 @@ unavailable 语义失败，绝不静默降级为“看起来可用”。
 导出名与类型签名保持与上游真实 CUA 包一致，消费者零改动。
 
 - 角色 B 补实**只在实现体内**收窄语义，**不新增导出、不改 `.d.ts`**。
+- **阶段 4 校准（2026-10-14，producer spec §12.1/§16.3 P4-AC-6）**：`request-access-contract.d.ts:5`
+  的 `platform: "darwin"` 已扩为 `platform: "darwin" | "win32"`——计划书 §7.5 阶段 4 直接授权，
+  accept-widening 性质（既有消费者读到的 darwin 值域不变、消费者零改动），不违背本不变量
+  「上游真实 CUA 包 API 兼容」对象；「角色 B 补实不改 `.d.ts`」的边界未被突破（本改动非
+  角色 B 补实，是阶段 4 判定面先行扩面）。`request-access-contract.js` 的恒失败 fail-closed
+  safeParse 保持不回填，归属与时点见 oQ8（占位包治理面）。
 - **常量表为 `broker.js` 模块私有**：14 方法表 `COMPUTER_METHOD_NAMES`、10 变更方法表
   `MUTATING_METHODS`、`PLATFORM_EXCLUDED_METHODS`（`Object.freeze({})`）、17 条错误码映射表
   ——逐字复制自 Apache-2.0 上游

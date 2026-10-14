@@ -175,6 +175,21 @@ export class PermissionService {
     return this.config.policyFloor ?? getProcessManagedPolicyFloor();
   }
 
+  /**
+   * yolo 信任直通谓词（R6.1 单一来源）：R3 第 7 步 fast-path、C11 checkAlwaysAsk、
+   * R6 熔断降级豁免三处共用，条件逐字同档——mode=yolo ∧ plan 未生效 ∧ 策略地板未
+   * disableBypassPermissionsMode。此前三份内联拷贝靠注释约定同步（「逐字同档」），
+   * R6 起收敛为单一谓词：任何一处被单独改松都会使三处同红（验收场景 22）。
+   */
+  private isYoloTrustBypassActive(context: PermissionContext): boolean {
+    const planEnabled = context.planEnabled ?? context.mode === "plan";
+    return (
+      context.mode === "yolo" &&
+      !planEnabled &&
+      !this.resolvePolicyFloor()?.disableBypassPermissionsMode
+    );
+  }
+
   checkPermission(
     context: PermissionContext,
     toolCapability?: PermissionToolCapability,
@@ -241,7 +256,18 @@ export class PermissionService {
     // · ask 级（缺省）：维持既有「只降级 allow；已是 ask 保留原 ruleId」语义。
     // deny 决策不经过熔断器：不可能更严，也不可能被放宽。
     if (decision.decision !== "deny") {
-      const breakerHit = evaluateBypassImmuneBreakers(breakerContextFromPermissionContext(context));
+      const rawBreakerHit = evaluateBypassImmuneBreakers(
+        breakerContextFromPermissionContext(context),
+      );
+      // R6（2026-10-14 用户二次裁决 A，spec managed-policy-floor-and-bypass-immune-breakers.md）：
+      // pathEscapeWrite 在 yolo 直通条件下不再降级 allow——完全访问 = 字面完全访问
+      // （对齐上游；Bash 面越界写本就静默，本类的 yolo 兜底防事故不防注入）。判定分层：
+      // 熔断器模块保持模式无关，裁决在收口层叠加。非 yolo 的 allow 来源（build/edit 的
+      // 项目 allow 规则、allowedTools 等）照旧降级；其余熔断类不受本豁免影响。
+      const breakerHit =
+        rawBreakerHit?.ruleId === "breaker.pathEscapeWrite" && this.isYoloTrustBypassActive(context)
+          ? undefined
+          : rawBreakerHit;
       if (breakerHit?.behavior === "deny") {
         return this.deny(context, capability, breakerHit.ruleId, breakerHit.reason);
       }
@@ -360,13 +386,12 @@ export class PermissionService {
     }
 
     const planEnabled = context.planEnabled ?? context.mode === "plan";
-    if (context.mode === "yolo" && !planEnabled) {
-      // 安全加固 P2（R1/R3 步骤 7）：策略地板 disableBypassPermissionsMode=true 时
-      // yolo 直通失效——不返回 allow，落入下方与 build 模式相同的判定（副作用动作 ask）。
-      // 经 resolvePolicyFloor：进程级地板对 Explore 子代理的缺省 yolo 同样生效。
-      if (!this.resolvePolicyFloor()?.disableBypassPermissionsMode) {
-        return this.allow(context, capability, "mode.yolo", "Yolo mode bypasses permission prompts");
-      }
+    // 安全加固 P2（R1/R3 步骤 7）：策略地板 disableBypassPermissionsMode=true 时
+    // yolo 直通失效——不返回 allow，落入下方与 build 模式相同的判定（副作用动作 ask）。
+    // 经 resolvePolicyFloor：进程级地板对 Explore 子代理的缺省 yolo 同样生效。
+    // R6.1：条件谓词与 C11/熔断豁免单一来源（isYoloTrustBypassActive）。
+    if (this.isYoloTrustBypassActive(context)) {
+      return this.allow(context, capability, "mode.yolo", "Yolo mode bypasses permission prompts");
     }
 
     if (context.mode === "auto") {
@@ -631,12 +656,8 @@ export class PermissionService {
     // 完全访问放行（批次 C11 裁决）：条件与 checkPermissionByMode 的 yolo 直通逐字同档——
     // plan 生效时不放行、策略地板 disableBypassPermissionsMode 时不放行。项目 deny 已在
     // 本分支之前收口，仍压过它；会话 allow 与 owner-Amend 在其后，结论同为放行，顺序无碍。
-    const planEnabled = context.planEnabled ?? context.mode === "plan";
-    if (
-      context.mode === "yolo" &&
-      !planEnabled &&
-      !this.resolvePolicyFloor()?.disableBypassPermissionsMode
-    ) {
+    // R6.1：谓词单一来源化（isYoloTrustBypassActive），消除第三份内联拷贝。
+    if (this.isYoloTrustBypassActive(context)) {
       return this.allow(
         context,
         capability,

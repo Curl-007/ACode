@@ -214,8 +214,9 @@ test("(12) workspace-scoped write in yolo is untouched by breakers", () => {
   assert.equal(decision.ruleId, "mode.yolo");
 });
 
-test("(12b) escaping write in yolo downgrades to ask", () => {
-  // R5 后逃逸目标取非豁免根（homedir 系）：tmpdir 内目标已被场景 13 豁免。
+test("(12b/19) R6：yolo 下越界写直通（原「降级 ask」由 2026-10-14 二次裁决废止）", () => {
+  // 非豁免根（homedir 系）的越界写在 yolo 下 allow——pathEscapeWrite 不再降级。
+  // 谓词与 C11/fast-path 单一来源（isYoloTrustBypassActive，服务层私有，由三处行为钉住）。
   const outside = join(PROJECT, "..", "pwned.txt");
   const decision = makeService().checkPermission(
     {
@@ -228,8 +229,55 @@ test("(12b) escaping write in yolo downgrades to ask", () => {
     },
     { readOnly: false, destructive: false, sideEffectScope: "workspace", needsApproval: true },
   );
+  assert.equal(decision.decision, "allow");
+  assert.equal(decision.ruleId, "mode.yolo");
+});
+
+test("(20) R6 只豁免 yolo：build + 项目 allow 规则的越界写照旧被降级 ask", () => {
+  const outside = join(PROJECT, "..", "pwned.txt");
+  const decision = makeService().checkPermission(
+    {
+      toolName: "Write",
+      input: { file_path: outside },
+      riskLevel: "medium",
+      mode: "build",
+      workingDirectory: PROJECT,
+      workspaceRoot: PROJECT,
+    },
+    { readOnly: false, destructive: false, sideEffectScope: "workspace", needsApproval: true },
+    { version: 1, deny: [], ask: [], allow: [{ toolName: "Write" }] },
+  );
   assert.equal(decision.decision, "ask");
   assert.equal(decision.ruleId, "breaker.pathEscapeWrite");
+});
+
+test("(21) yolo + 策略地板 disableBypass：直通失效，越界写回落 build 判定 ask", () => {
+  const outside = join(PROJECT, "..", "pwned.txt");
+  const service = new PermissionService({
+    allowedTools: new Set(),
+    disallowedTools: new Set(),
+    autoApproveHighRisk: false,
+    allowMediumRiskInAutoMode: false,
+    policyFloor: {
+      deny: [],
+      ask: [],
+      disallowedTools: [],
+      disableBypassPermissionsMode: true,
+    },
+  });
+  const decision = service.checkPermission(
+    {
+      toolName: "Write",
+      input: { file_path: outside },
+      riskLevel: "medium",
+      mode: "yolo",
+      workingDirectory: PROJECT,
+      workspaceRoot: PROJECT,
+    },
+    { readOnly: false, destructive: false, sideEffectScope: "workspace", needsApproval: true },
+  );
+  // 地板压过 yolo 直通（R3 第 7 步跳过）→ 副作用写 ask；熔断不覆写既有 ask 的 ruleId。
+  assert.equal(decision.decision, "ask");
 });
 
 // ── R5 豁免面（场景 13-15，2026-10-14 用户裁决）────────────────────────

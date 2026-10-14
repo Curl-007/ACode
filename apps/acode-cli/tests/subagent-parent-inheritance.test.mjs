@@ -9,14 +9,19 @@ import { test } from "node:test";
  * 守护的性质：
  * - 子运行时的 workspaceRoot 唯一来源 = 父 runtime 构造期锁定的根；Bash cd 漂移
  *   只影响 workingDirectory（相对路径解析），不得改变工作区身份（权限熔断锚点）。
- * - 漂移形态下 yolo 写真实工作区内文件不得命中 breaker.pathEscapeWrite；写真实
- *   工作区外仍必须 ask（安全加固 P2 不变量不回归）。
+ * - 锚定正确性钉在熔断器纯函数层（模式无关）：R6（2026-10-14，spec
+ *   managed-policy-floor-and-bypass-immune-breakers.md）裁决 yolo 直通
+ *   pathEscapeWrite 后，误锚不再表现为 yolo 弹窗，但对非 yolo allow 来源与
+ *   projectId/memory 根推导仍 load-bearing。
  * - resume 时非 plan 子模式跟随父当前档（modeOverride 通道）；plan 子代理豁免，
  *   防止 resolveExecutionState 把 planEnabled 归 false 静默拆 plan 地板。
  */
 
 const { PermissionService, defaultPermissionConfig } = await import(
   "../packages/core/src/permission/service.ts"
+);
+const breakerModule = await import(
+  "../packages/core/src/permission/bypass-immune-breakers.ts"
 );
 const { resolveRuntimeWorkspaceRoot } = await import(
   "../packages/core/src/runtime/agent-runtime.ts"
@@ -57,36 +62,66 @@ test("(1) resolveRuntimeWorkspaceRoot：显式 workspaceRoot 优先，缺省/空
   assert.equal(resolveRuntimeWorkspaceRoot({ workspaceRoot: "/root" }), "/root");
 });
 
-test("(2) cd 漂移形态：yolo 写真实工作区内不弹熔断，写真实工作区外仍 ask", () => {
+test("(2) cd 漂移形态：锚定鉴别在纯熔断层钉住；yolo 服务层按 R6 直通", () => {
   const service = new PermissionService(defaultPermissionConfig);
   const root = resolve(join("workspace-anchor", "proj"));
   const driftedCwd = join(root, "sub");
   const insideRootOutsideCwd = join(root, "docs", "note.md");
   const outsideRoot = resolve(join("workspace-anchor", "elsewhere", "note.md"));
 
-  // 修复后形态（child workspaceRoot = 父锁定的 root）：写 root 内、漂移 cwd 外的文件放行。
+  // 锚定正确性的回归钉（熔断器纯函数层，模式无关）：workspaceRoot 误锚到漂移 cwd 时，
+  // root 内路径被误判逃逸；锚定真实 root 则不命中。R6（2026-10-14）后该鉴别不再
+  // 表现为 yolo 弹窗差异，但对非 yolo 的 allow 来源（项目 allow 规则/allowedTools）
+  // 与 projectId/memory 根推导等 workspaceRoot 消费方仍 load-bearing。
+  const { evaluateBypassImmuneBreakers } = breakerModule;
+  const anchored = evaluateBypassImmuneBreakers({
+    toolName: "Write",
+    input: { file_path: insideRootOutsideCwd },
+    workingDirectory: driftedCwd,
+    workspaceRoot: root,
+  });
+  assert.equal(anchored, undefined, "锚定真实 root：root 内写入不命中熔断");
+  const misAnchored = evaluateBypassImmuneBreakers({
+    toolName: "Write",
+    input: { file_path: insideRootOutsideCwd },
+    workingDirectory: driftedCwd,
+    workspaceRoot: driftedCwd,
+  });
+  assert.equal(
+    misAnchored?.ruleId,
+    "breaker.pathEscapeWrite",
+    "缺陷形态（误锚漂移 cwd）：同一路径被误判逃逸——本项消除的误报",
+  );
+  assert.equal(
+    evaluateBypassImmuneBreakers({
+      toolName: "Write",
+      input: { file_path: outsideRoot },
+      workingDirectory: driftedCwd,
+      workspaceRoot: root,
+    })?.ruleId,
+    "breaker.pathEscapeWrite",
+    "真实越界在纯熔断层仍命中（非 yolo allow 来源照旧降级）",
+  );
+
+  // 服务层（yolo）：R6 裁决后 pathEscapeWrite 不再降级 allow——三种锚定形态在 yolo
+  // 下一律直通（漂移误报的 yolo 可见症状随之消失；锚定正确性由上面的纯函数层钉住）。
   const fixed = service.checkPermission(
     writeCtx(insideRootOutsideCwd, { workingDirectory: driftedCwd, workspaceRoot: root }),
     WRITE_CAPABILITY,
   );
   assert.equal(fixed.decision, "allow");
   assert.notEqual(fixed.ruleId, "breaker.pathEscapeWrite");
-
-  // 缺陷形态对照（child workspaceRoot 误锚定漂移 cwd）：同一路径被误报——本项消除的弹窗。
   const buggy = service.checkPermission(
     writeCtx(insideRootOutsideCwd, { workingDirectory: driftedCwd, workspaceRoot: driftedCwd }),
     WRITE_CAPABILITY,
   );
-  assert.equal(buggy.decision, "ask");
-  assert.equal(buggy.ruleId, "breaker.pathEscapeWrite");
-
-  // 安全不变量不回归：写真实工作区外，任何模式（含 yolo）仍强制 ask。
+  assert.equal(buggy.decision, "allow", "R6：yolo 下误锚形态也不再弹窗");
   const escaped = service.checkPermission(
     writeCtx(outsideRoot, { workingDirectory: driftedCwd, workspaceRoot: root }),
     WRITE_CAPABILITY,
   );
-  assert.equal(escaped.decision, "ask");
-  assert.equal(escaped.ruleId, "breaker.pathEscapeWrite");
+  assert.equal(escaped.decision, "allow", "R6：yolo = 字面完全访问，越界写直通");
+  assert.equal(escaped.ruleId, "mode.yolo");
 });
 
 test("(3) resolveSubagentResumeModeOverride：非 plan 透出、plan 豁免", () => {

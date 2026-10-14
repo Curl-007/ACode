@@ -372,13 +372,26 @@ test("breaker: ApplyPatch with inside paths does not fire; malformed patch_text 
 });
 
 test("breaker: existing Write file_path escape behavior unchanged after refactor", () => {
+  // R5（2026-10-14 裁决）后 tmpdir 内目标被豁免：workspace 是 mkdtempSync(tmpdir()) 的
+  // 直接子目录，单级 `..` 逃逸仍落在 tmpdir 内 → 改用两级逃逸（与上面 ApplyPatch 用例
+  // 同一约定）钉住「非豁免根照旧触发」；并补一条单级逃逸 = 豁免的正向断言。
   const hit = evaluateBypassImmuneBreakers({
     toolName: "Write",
-    input: { file_path: join(workspace, "..", "outside.txt"), content: "x" },
+    input: { file_path: join(workspace, "..", "..", "outside.txt"), content: "x" },
     workspaceRoot: workspace,
     workingDirectory: workspace,
   });
   assert.equal(hit?.ruleId, "breaker.pathEscapeWrite");
+  assert.equal(
+    evaluateBypassImmuneBreakers({
+      toolName: "Write",
+      input: { file_path: join(workspace, "..", "outside.txt"), content: "x" },
+      workspaceRoot: workspace,
+      workingDirectory: workspace,
+    }),
+    undefined,
+    "单级 .. 落回 tmpdir 内 → R5.1 豁免，不触发",
+  );
   assert.equal(
     evaluateBypassImmuneBreakers({
       toolName: "Write",

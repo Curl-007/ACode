@@ -458,6 +458,9 @@ export function createDefaultSubagentPort(
           imageProcessorPort: deps.imageProcessorPort,
           pdfDocumentPort: deps.pdfDocumentPort,
           memoryRoot: persistentMemory?.rootDir,
+          // R5.2：scratch 根是产品管理目录（非会话身份），子代理与父同一根——
+          // pathEscapeWrite 豁免与 env-info 引导对子代理一致生效。
+          scratchRoot: deps.scratchRoot,
           mcpPort: childMcpAccess.port,
           skillPort: childSkillPort,
           artifactStore: deps.artifactStore,

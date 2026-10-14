@@ -116,6 +116,8 @@ export function createContextBuilderFromSnapshot(
       skillMetadataBudget: this.config.skillMetadataBudget,
       skills: this.skillLoadOutcome,
       userInstructions: this.config.subagentContext.userInstructions,
+      // R5.3：scratch 引导对子代理同样渲染（子代理是临时文件的主要使用方）。
+      scratchDir: this.scratchRoot,
     });
   }
 
@@ -129,6 +131,8 @@ export function createContextBuilderFromSnapshot(
     projectContext: snapshot.projectContext,
     memoryIndexContent: options.memoryIndexContent,
     memoryRoot,
+    // R5.3：env-info 段的 scratch 引导事实源（构造期注入，见 internal.ts RuntimeInjectedDeps）。
+    scratchDir: this.scratchRoot,
     skills: this.skillLoadOutcome,
     agentProfiles: this.config.subagents?.profiles,
     embeddedSearchEnabled: resolveRuntimeEmbeddedSearchEnabled(this),

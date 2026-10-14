@@ -268,6 +268,8 @@ function createRuntimeToolExecutor(
     deliveryKind: runtime.config.deliveryKind,
     getMemoryRoot: () =>
       deps.memoryRoot ?? resolveEnabledProjectMemoryRoot(runtime.config, runtime.workspaceRoot),
+    // R5.2：scratch 根是产品管理目录（非会话身份），主/子/工作流 runtime 同一根，直接透传。
+    getScratchRoot: () => deps.scratchRoot,
     runtimeScope: runtime.config.taskType === "subagent_child" ? "subagent" : "main",
     permissionTimeoutMs: runtime.config.permissionTimeoutMs,
     sessionId: runtime.sessionId,

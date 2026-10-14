@@ -62,6 +62,12 @@ export interface PermissionContext {
    */
   workspaceRoot?: string;
   /**
+   * 产品 scratch 暂存区根（R5.2，spec managed-policy-floor-and-bypass-immune-breakers.md）。
+   * pathEscapeWrite 豁免面的第二个根（第一个是 os.tmpdir()，熔断器模块内静态取得）；
+   * 可选：缺席时该豁免不生效（宁可多弹不误放），其余判定不受影响。
+   */
+  scratchRoot?: string;
+  /**
    * 调用方身份（对抗复审 N3）：持有本次决策的会话 id。反射门的挑战键把它并入哈希,
    * 防止共享 PermissionService 实例的两个会话（general-purpose/自定义子代理继承父
    * 实例）互用对方的反射挑战——会话 A 触发的挑战对会话 B 不生效，B 首调带

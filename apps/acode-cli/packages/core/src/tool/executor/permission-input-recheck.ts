@@ -55,6 +55,8 @@ export async function recheckPermissionHookModifiedInput(input: {
     workingDirectory: input.deps.getWorkingDirectory(),
     // 安全加固 P2：hook 可能把路径改写到工作区外——熔断器复核必须拿到同一个根。
     workspaceRoot: input.deps.getWorkspaceRoot(),
+    // R5.2：豁免面第二根与首次判定同源（hook 改写路径落进 scratch 时同样不触发）。
+    scratchRoot: input.deps.getScratchRoot?.(),
     // 对抗复审 N3：复核与首次判定必须是同一调用方身份，否则 hook 改写后命中的反射门
     // 挑战键会换一个身份，门把已通过反射的命令重新拒一遍（反之也防跨身份借用挑战）。
     sessionId: input.deps.sessionId,
@@ -124,9 +126,12 @@ export async function recheckPermissionHookModifiedInput(input: {
     return {};
   }
 
-  const suggestedPermissionUpdates =
-    rulePolicy?.suggestedPermissionUpdates ??
-    buildDefaultPermissionUpdates(input.toolCall.name, input.modifiedInput);
+  // R5.4：熔断 ask 的持久授权结构性无效（收口处不咨询任何规则），复核弹窗与首次
+  // 弹窗同一诚实语义——不提供「总是允许」；「允许一次」不变。
+  const suggestedPermissionUpdates = decision.ruleId.startsWith("breaker.")
+    ? []
+    : (rulePolicy?.suggestedPermissionUpdates ??
+      buildDefaultPermissionUpdates(input.toolCall.name, input.modifiedInput));
   const brokerResult = await input.deps.permissionBroker.requestPermission(
     {
       input: input.modifiedInput,

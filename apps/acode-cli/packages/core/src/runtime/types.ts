@@ -465,6 +465,10 @@ export interface AgentRuntimeDeps {
   now?: () => Date;
   isRemoteWorkspace?: () => boolean;
   memoryRoot?: string;
+  /** 产品 scratch 暂存区根（R5.2，spec managed-policy-floor-and-bypass-immune-breakers.md）：
+   * app 构造期解析（`<storage.dir>/cli/scratch`），主会话与全部 child 构造点透传同一根；
+   * pathEscapeWrite 豁免面第二根 + env-info 提示词引导的事实时点。缺席 = 豁免与引导均不生效。 */
+  scratchRoot?: string;
 }
 
 export interface RuntimeModelFactoryInput {

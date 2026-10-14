@@ -5,6 +5,8 @@ export interface SubagentEnvironmentContextOptions {
   agentPrompt: string;
   envInfo: EnvInfo;
   model?: Model;
+  /** 产品 scratch 暂存区根（R5.3）：在场渲染目录行与指引；缺席零渲染。 */
+  scratchDir?: string;
 }
 
 export function buildSubagentCommonNotes(): string {
@@ -25,10 +27,21 @@ export function buildSubagentCommonNotes(): string {
 export function buildSubagentEnvironmentContext(
   options: SubagentEnvironmentContextOptions,
 ): string {
-  const { envInfo, model } = options;
+  const { envInfo, model, scratchDir } = options;
   const modelLine = model
     ? [`You are powered by the model named ${model.providerId}/${model.modelId}.`]
     : [];
+  // R5.3（spec managed-policy-floor-and-bypass-immune-breakers.md）：scratch 引导行仅在
+  // 事实在场时渲染（文本自撰英文，prompt-language-policy.md R7；子代理是临时文件的主要
+  // 使用方，与主会话 env-info 段同一引导语义）。
+  const scratchDirectory = typeof scratchDir === "string" ? scratchDir.trim() : "";
+  const scratchLines =
+    scratchDirectory.length > 0
+      ? [
+          `Scratch directory (temporary files): ${scratchDirectory}`,
+          "Use it for temporary and intermediate files instead of writing to arbitrary paths outside the workspace; writes inside it and inside the system temporary directory do not trigger the workspace-escape confirmation.",
+        ]
+      : [];
 
   return [
     "Here is useful information about the environment you are running in:",
@@ -38,6 +51,7 @@ export function buildSubagentEnvironmentContext(
     `Platform: ${envInfo.platform}`,
     `Shell: ${envInfo.shell}`,
     `OS Version: ${envInfo.osVersion}`,
+    ...scratchLines,
     "</env>",
     ...modelLine,
   ].join("\n");

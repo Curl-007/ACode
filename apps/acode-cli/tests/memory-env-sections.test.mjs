@@ -263,3 +263,47 @@ test("(11) snapshot: memory section full content", () => {
   ].join("\n");
   assert.equal(section.content, expected);
 });
+
+// ── R5.3：scratch 暂存区引导（spec managed-policy-floor-and-bypass-immune-breakers.md 场景 18）──
+
+const { buildSubagentEnvironmentContext } = await import(
+  "../packages/core/src/subagent/system-prompt.ts"
+);
+
+const SCRATCH_DIR = "/home/demo/.acode/cli/scratch";
+
+test("(R5.3-a) env-info 段：scratchDir 在场渲染引导，缺席/空白与基线逐字节一致", () => {
+  const baseline = buildEnvInfoSection(makeEnvInfo()).content;
+  assert.equal(buildEnvInfoSection(makeEnvInfo(), undefined, undefined).content, baseline);
+  assert.equal(buildEnvInfoSection(makeEnvInfo(), undefined, "   ").content, baseline);
+
+  const withScratch = buildEnvInfoSection(makeEnvInfo(), undefined, SCRATCH_DIR).content;
+  assert.ok(withScratch.startsWith(baseline), "引导段追加在段尾，基线内容不动");
+  assert.ok(withScratch.includes(`Scratch directory (temporary files): ${SCRATCH_DIR}`));
+  assert.ok(
+    withScratch.includes("product-managed scratch directory for temporary and intermediate files"),
+  );
+  assert.ok(withScratch.includes("do not trigger the workspace-escape confirmation"));
+});
+
+test("(R5.3-b) 子代理环境段：scratch 行渲染在 <env> 块内，缺席零渲染", () => {
+  const envInfo = makeEnvInfo();
+  const absent = buildSubagentEnvironmentContext({ agentPrompt: "", envInfo });
+  assert.ok(!absent.includes("Scratch directory"), "缺席时零渲染（不猜路径、不留空行）");
+
+  const present = buildSubagentEnvironmentContext({
+    agentPrompt: "",
+    envInfo,
+    scratchDir: SCRATCH_DIR,
+  });
+  assert.ok(present.includes(`Scratch directory (temporary files): ${SCRATCH_DIR}`));
+  assert.ok(
+    present.indexOf("Scratch directory") < present.indexOf("</env>"),
+    "引导行必须在 <env> 块内（子代理读到的环境事实区）",
+  );
+  // 空白字符串与缺席同语义（trim）。
+  assert.equal(
+    buildSubagentEnvironmentContext({ agentPrompt: "", envInfo, scratchDir: "  " }),
+    absent,
+  );
+});

@@ -1,15 +1,26 @@
-# Spec: Windows CUA 原生 producer（角色 A）——A1 骨架 Helper + node-gyp 13 工具链接线
+# Spec: Windows CUA 原生 producer（角色 A）——全实现面契约（A1 已落地 + A2/A3/阶段 4）
 
-> 状态：A1（阶段 2 角色 A 切片 1）实现契约。A2（指针/键盘 + WGC 截图）与阶段 3（UIA 树）
-> 的接口面在 §4.2/§4.3 预留，预留项以「A2 spec / 阶段 3 spec 钉死」标注，不在本文提前实现。
+> 状态：角色 A 全实现面契约。§1–§7 = A1（阶段 2 角色 A 切片 1，**已落地**，提交 `1ef8108`）；
+> §10 = A2（指针/键盘/剪贴板 + WGC 截图 + delivery-state 派发契约）；§11 = A3（UIA 六工具）；
+> §12 = 阶段 4（平台判定收口）；§13 = 14 工具全映射表；§14 = C08 可执行交付物；
+> §15 = 真机烟测契约（`scripts/smoke-real.mjs`）；§16 = 各阶段 AC 验收清单；
+> §17 = A1 评审债务回写（含全文行号修正对照）。
+> §4.2/§4.3 原「A2 spec / 阶段 3 spec 钉死」的预留项**已由 §10/§11 钉死**（本文即 A2/A3 spec；
+> 原节保留为预留历史与机制索引，冲突时以 §10/§11 为准）。§8/§9 维持原编号不重排——外部文档
+> （handoff、wire spec、module-boundary）按「§1.2/§4.6/§8 oQ#n」引用本文，重排会悬空这些引用；
+> 新章节一律追加为 §10+。
 > 本文是 ACode 原创规范：上游材料只作机制参照并逐条注明出处，不复制上游表达（复制表达会触发
 > `third-party/` 台账登记义务，而台账重生成只能在 CI-Linux 落绿，见 `z-work/u14-handoff.md` §4）。
 
 ## 0. 本文地位、权威层级与出处约定
 
 `cua-producer/` 是 U14 阶段 2 **角色 A**（Helper 侧原生 producer）的落点（决策二，
-`docs/upgrades/product-and-support-2026-10.md` §7.8，已裁决不重开）。本文钉死 A1 交付面的
-产品规则、状态所有者、接口与验收场景；实现前不得偏离，偏离须先改本文。
+`docs/upgrades/product-and-support-2026-10.md` §7.8，已裁决不重开）。本文钉死角色 A 全部交付面
+（A1 已落地 + A2/A3/阶段 4 契约）的产品规则、状态所有者、接口与验收场景；实现前不得偏离，
+偏离须先改本文。阶段 4 的判定面改动虽落在宿主文件（`packages/shared`、`packages/desktop`、
+`apps/acode-cli/packages/contracts`），其**设计契约**收口在本文 §12（范围 = 计划书 §7.5 阶段 4
+列举的判定面收口 + 本批次源码核查增补的第四处同型字面量）；宿主文件的实际修改由阶段 4
+实现批次按 §12 执行。
 
 权威层级（冲突时上位优先）：
 
@@ -20,12 +31,18 @@
    Helper 服务端行为的单一事实源。本文只钉 producer 侧实现细节，不复述、不修改 wire 契约。
 3. **宿主既成事实**（源码即契约，本文只登记不改动）：
    `packages/services/src/cua-permission-broker/` 的解析/生命周期/ready 消息校验。
-4. **本文**：producer 模块边界、进程时序、addon 接口面、构建契约、A1 测试与验收。
+4. **本文**：producer 模块边界、进程时序、addon 接口面、构建契约、A1 测试与验收；
+   A2/A3 切片契约（§10/§11）、阶段 4 判定面设计契约（§12）、14 工具映射（§13）、
+   C08 交付物（§14）、真机烟测（§15）与各阶段验收（§16）。
 
 出处标注三类（沿用 wire spec §0 约定）：`本仓 <路径>:<行号>`（均已 Read 核实）；
 `上游 <相对路径>:<行号>`（staging `C:/Users/ZhuanZ/AppData/Local/Temp/claude/cua-upstream-ref/`
 下 `clone-attempt/ZCode/`，PROVENANCE：zai-org/ZCode v3.15.1，Apache-2.0，Copyright 2026
 Z.AI Co., Ltd——只参照机制，不复制表达）；`【ACode 自定】`（权威材料未钉死、本文裁决并给论证）。
+**上游 SDK 客户端引用约定（§10/§11 沿用 wire spec 同型简写）**：`computer-use-client.mjs:<行号>`
+指 staging `upstream/apps/zcode-cli/packages/zcode-cua-plugin/scripts/computer-use-client.mjs`
+（Apache-2.0 同 provenance；本批全部行号经该文件 grep/sed 核实）；其余上游引用默认
+`clone-attempt/ZCode/docs/` 下的设计文档。
 
 ## 1. 模块边界与状态所有者
 
@@ -90,9 +107,16 @@ API 兼容、不再回填」——该文件不在本文改动范围，登记为 
 | backend（方法→handler 注册表） | Helper 进程内               | wire spec §9.3 的注入 seam；A1 只注册 `broker_info`（§2.5）                                                    |
 | 每条 wire 连接             | Helper 的连接处理器            | 单连接单请求（wire spec §1.2）；响应后 server 侧 `end()`；客户端（角色 B）负责 destroy                        |
 | 原生能力事实               | addon                          | 能力只经导出面诚实暴露（§4.6）；JS 层不猜测、不缓存能力声明                                                    |
+| 输入 admission 队列（A2+） | Helper 进程内会话层（`input-session`） | 变更/观察类 native 派发全局串行（并发=1）、队列有界；`stop_computer_control` 与 `broker_info`/`request_access` 旁路（§10.5） |
+| held-input 注册表（A2+）   | addon native 层                | 被按下的鼠标键/按住键的唯一事实源；一切退出路径先幂等释放再 exit（§10.4/§10.8）                                |
+| frame 注册表（A2+）        | Helper 进程内会话层            | `frame_id` → 栅格几何/bounds/owner/显示拓扑世代；坐标投影与 stale 判定的事实源（§10.7）                        |
+| 元素/窗口注册表（A3）      | native（COM 引用）+ 会话层（元数据） | `state_id`→冻结 UIA 元素引用（COM 引用绝不出 MTA worker）；`window_id`→HWND+身份快照（§11.5）             |
 
-Helper **无持久状态、无磁盘写入**（A1 全程零文件写；A2 截图若需落盘 artifact（frame-contract 的
-`image_ref` 路径，本仓 frame-contract.d.ts）须在 A2 spec 单独钉存储位置与清理义务）。
+Helper **无持久状态、无磁盘写入**——该不变量在 A2/A3 钉死后**仍然成立**：截图走内联 base64，
+`image_ref` 落盘 artifact **不启用**（宿主 frame-contract 面当前全部 fail-closed 占位——本仓
+frame-contract.js:7-37 恒 false/undefined/passthrough，本批核实；启用 image_ref 须宿主实现先落地，
+见 §10.7 与 §8 oQ9）。A2/A3 引入的进程内可变状态 = 上表四个注册表/队列，全部是单进程内存态、
+随进程消亡；仍无跨代记忆、无磁盘写入、无 stdout 输出（§2.7 纪律不变）。
 
 ## 2. 进程模型与就绪时序
 
@@ -127,8 +151,8 @@ Helper 侧 argv/env 契约【ACode 自定，实现须遵守】：
 
 控制协议常量 `WINDOWS_DEV_CONTROL_PROTOCOL = "acode-cua-windows-dev/v1"`（本仓 broker-server.js:4，
 经 windowsCuaHelperHostSupport.ts:10/15 别名 `CONTROL_PROTOCOL`）。宿主校验函数
-`parseReadyMessage`（本仓 windowsCuaHelperHostSupport.ts:202-228）是消息形态的**裁决者**，
-Helper 发送面必须逐字段满足：
+`parseReadyMessage`（本仓 windowsCuaHelperHostSupport.ts:205-231，行号已按当前检出修正，§17.1）
+是消息形态的**裁决者**，Helper 发送面必须逐字段满足：
 
 - **transport_ready**（named pipe 已 bind，功能层未就绪）：
   ```json
@@ -137,19 +161,19 @@ Helper 发送面必须逐字段满足：
   ```
   （JSON 转义示意；进程内对象即 `{protocol, type, socketPath, pid}` 经 `process.send` 发送，
   不手工序列化。`socketPath` 必须是 argv `--socket` 原值回显，`pid` 必须是正整数
-  `process.pid`——宿主 :215-221 校验非空串 + 正整数，:401 校验与本代 mint 值全等（不等则**静默
+  `process.pid`——宿主 :218-224 校验非空串 + 正整数，:401 校验与本代 mint 值全等（不等则**静默
   忽略**该消息），:402-403 校验与 fork 出的 child.pid 全等（不等则 fail `ready-pid-mismatch`）。）
 - **ready**（功能层就绪，可受理 health 探测）：同形态，`type: "ready"`。宿主收到后发起
   `healthProbe`（windowsCuaDevHelperHost.ts:408-441，300ms/次、30s 预算，wire spec §6.3）。
 - **error**（Helper 自报启动失败）：`{ protocol, type: "error", message: <非空稳定字面量> }`
-  （parseReadyMessage :208-213 要求 message 为非空字符串，否则整条被判 malformed）。宿主转
+  （parseReadyMessage :211-216 要求 message 为非空字符串，否则整条被判 malformed）。宿主转
   `fail(new Error(message), "helper-reported-error")`（windowsCuaDevHelperHost.ts:396-399），该
   message 会进宿主日志（node.ts:1237 通路）——**只允许 §2.7 枚举的稳定失败类别字面量，禁止
   插值任何动态内容**（wire spec §9.2 第 5 条隐私硬约束：不得含窗口标题/元素名/文本内容；本文
   收紧为完全无插值）。
 - **入站 shutdown**：宿主经 IPC 发 `{ protocol, type: "shutdown" }`（windowsCuaHelperHostSupport.ts:95-101）。
   Helper 收到即进 STOPPING（§2.4）。其它入站消息（协议不符或未知 type）一律忽略——与宿主
-  parseReadyMessage 对未知 type 返回 `"ignore"` 的前向兼容语义对称（:199-200/214）。
+  parseReadyMessage 对未知 type 返回 `"ignore"` 的前向兼容语义对称（:202-203/217）。
 
 顺序契约：**transport_ready 必须先于 ready**，且各恰好发送一次（宿主对同一代重复 ready 无完整
 幂等保护——每条匹配消息都会重入 resolveTransport 并再次发起 healthProbe，:404-409——Helper
@@ -245,7 +269,8 @@ transport_ready→load native + build backend→ready）】：
   server 侧 `socket.end()`；同连接再收到请求行 → `destroy()`（协议违约不应答）。
 - 连接空闲 30s → `destroy()`（对齐 wire spec §7.2 客户端缺省超时，防句柄泄漏）。
 - server 不并发限流（每连接独立处理）；A1 无共享可变 native 状态，A2 引入输入序列化时须重审
-  （变更类动作的 admission 串行属 A2 spec）。
+  （变更类动作的 admission 串行属 A2 spec——**A2 已重审并钉死：所有派发 native 的操作经单一
+  admission 队列串行、限流发生在 admission 而非连接层，见 §10.5**）。
 
 ### 2.7 失败面与退出码（封闭枚举）
 
@@ -253,7 +278,7 @@ IPC error 消息 / 退出码是**封闭表**，实现不得新增（新增须先
 
 | 场景                                             | IPC error message 字面量     | exit code | 依据                                                              |
 | ------------------------------------------------ | ---------------------------- | --------- | -------------------------------------------------------------------- |
-| argv/env 校验失败、平台不符、bind 失败、内部异常 | `invalid-helper-arguments` / `unsupported-platform` / `transport-bind-failed` / `internal-helper-failure` | 1         | 配置/环境类失败对齐上游「exit 1/2」约定（本仓 windowsCuaHelperHostSupport.ts:196-197 注释） |
+| argv/env 校验失败、平台不符、bind 失败、内部异常 | `invalid-helper-arguments` / `unsupported-platform` / `transport-bind-failed` / `internal-helper-failure` | 1         | 配置/环境类失败对齐上游「exit 1/2」约定（本仓 windowsCuaHelperHostSupport.ts:199-200 注释，行号按当前检出修正，§17.1） |
 | `ACODE_CUA_HELPER_ADDON` 缺失                    | `native-addon-env-missing`   | 2         | C12「native addon blocked/unavailable 以退出码 2 报告」（计划文档 §7.6 C12；上游 windows-source-development.md:27-31 机制） |
 | addon 加载失败（SAC 拦截、ABI 不符、文件损坏、路径不存在） | `native-addon-load-failed` | 2 | 同上；**绝不降级为「无 addon 模式」继续跑**（能力真实性，§4.6） |
 | 无 IPC 通道（非 fork 启动）                      | （无法发 IPC；stderr 同名字面量） | 1    | 【ACode 自定】                                                        |
@@ -274,7 +299,8 @@ Helper 永不写 stdout（控制面只有 IPC；stdout 继承到宿主控制台�
 `EPERM` 及其它错误 → 视为存活（保守方向：宁可不退，不可误退）。定时器 `unref()`。A1 无输入
 能力，orphan Helper 无副作用面；watchdog 防的是进程与 pipe 实例泄漏。A2 落地输入后，本 watchdog
 是「父进程消失不遗留按住键」纪律（计划文档 §7.5 阶段 2）的触发器之一，届时 STOPPING 路径必须
-先经 native 释放所有 held input 再退出（A2 spec 钉）。
+先经 native 释放所有 held input 再退出（**A2 已钉死该义务与自适应轮询间隔：held 非空时收紧至
+250ms，见 §10.4/§10.8——oQ6 随之闭合**）。
 
 ## 3. 安全
 
@@ -312,9 +338,9 @@ host 内存铸造（windowsCuaDevHelperHost.ts:34/88，randomBytes(16).hex）
 - IPC error message 只用 §2.7 封闭字面量；wire error message 只用 §4.6 封闭字面量表；两者零插值
   → 结构上排除「窗口标题/元素名/文本内容/路径/凭据」进入宿主日志（wire spec §9.2 第 5 条 +
   计划文档 §7.7 隐私门槛的 producer 侧落实）。
-- 上游同型验收（「token 未出现在 argv 或捕获日志」，上游 windows-product-runtime.md:236-237）
-  在 ACode 语境下对象是 pluginAuthority canary 与 pipe 路径（pipe 名即链路乙的全部访问控制，
-  wire spec §2.3，故按凭据同级对待）。
+- 上游同型验收（「token 未出现在 argv 或捕获日志」，上游 windows-product-runtime.md:238，
+  行号按 staging 文件复核修正，§17.1）在 ACode 语境下对象是 pluginAuthority canary 与 pipe 路径
+  （pipe 名即链路乙的全部访问控制，wire spec §2.3，故按凭据同级对待）。
 
 ### 3.3 pipe 访问控制现状（如实登记，不粉饰）
 
@@ -353,7 +379,11 @@ probe/version 的导出在 A1 都没有真实能力支撑，导出了就得按 �
 （能力真实性优先于覆盖面，计划文档 §7.7 回退条款）。`probe` 同步是刻意例外（§4.2 全异步）：
 它在加载校验路径上被调用一次，无并发/阻塞面。
 
-### 4.2 A2 预留（指针/键盘 + WGC 截图）——签名与形态，A2 spec 钉死前不实现
+### 4.2 A2 预留（指针/键盘 + WGC 截图）——签名与形态，**已由 §10 钉死**
+
+> **状态更新（本批次）**：本节保留为预留历史与决策一引文索引。A2 的导出名、参数形态、
+> 语义与纪律以 **§10** 为准（§10.1 在本节提案基础上细化：指针五导出名保持不变，
+> `captureDisplay`/`captureWindow` 命名确认，oQ3 闭合；新增键盘/剪贴板/预检/held 释放面）。
 
 决策一已锁定的机制（计划文档 §7.8 决策一，引上游 wgc/pointer 设计）：C++/WinRT + D3D11 + WIC，
 经 **N-API 异步 Promise** 暴露；PNG 编码在后台 worker 执行不阻塞 N-API/V8 主线程；addon 导出
@@ -394,7 +424,10 @@ A2 必须一并承接的不变量（本文预登记，A2 spec 展开）：
    教训参照上游 2026-08-18-frame-pixel-zoom-regression.md——macOS WindowServer 机制不直接迁移，
    但「坐标命中判定必须基于真实归属证据」的纪律适用于 WGC/遮挡场景）。
 
-### 4.3 阶段 3 预留（UIA 树）
+### 4.3 阶段 3 预留（UIA 树）——**已由 §11 钉死**
+
+> **状态更新（本批次）**：A3（UIA 六工具）的导出面、worker 模型、预算与树文本契约以
+> **§11** 为准；本节保留为机制约束索引（下列三条约束全部被 §11 承接并细化）。
 
 `list_apps`/`list_windows`/`get_app_state`/`set_value`/`select_text`/`perform_action` 依赖 UIA
 （计划文档 §7.5 阶段 3）。预留原语面（名称由阶段 3 spec 钉，本文只锁机制约束）：
@@ -415,7 +448,7 @@ A2 必须一并承接的不变量（本文预登记，A2 spec 展开）：
 | 装载 runtime                                | Node        | `process.versions.napi` | 来源                                                     |
 | ------------------------------------------- | ----------- | ----------------------- | ------------------------------------------------------------ |
 | Electron 41.10.7（desktop pin，产品 Helper 宿主） | 24.18.0 | **10**                  | 本机实测：`ELECTRON_RUN_AS_NODE=1 electron.exe -p process.versions`（packages/desktop devDep electron=41.10.7） |
-| Electron 41.0.3（上游产品验收用）           | 24.14.0     | **10**                  | 上游 windows-product-runtime.md:232-234 记载                   |
+| Electron 41.0.3（上游产品验收用）           | 24.14.0     | **10**                  | 上游 windows-product-runtime.md:234-235 记载（行号按 staging 复核修正，§17.1）                   |
 | 仓 pin Node（mise.toml `node = "24.14.0"`） | 24.14.0     | 10（据上行同版本文档记载；本机未直测 24.14.0） | mise.toml:2 + 上游同文 |
 
 生产路径 Helper 经 `ELECTRON_RUN_AS_NODE=1` fork（本仓 windowsCuaDevRuntime.ts:149），dev 路径
@@ -470,7 +503,7 @@ N-API 特性（Promise/AsyncWorker/TSFN ≤ N-API 4，Buffer/TypedArray ≤ N-AP
 - `parseRequestLine` 判据与 wire spec §9.1 一致：对象（非数组非 null）且 `typeof method === "string"`；
   `id`（若有）须 `string|null`；`params` 不校验（校验属 handler，A1 无 handler）。
 - **`broker_info` 最小诚实面 = `{pid, bundle_id}`**：pid 是 health 门的 load-bearing 字段
-  （`isExactHealthPid` 只校 pid，本仓 windowsCuaHelperHostSupport.ts:230-235；
+  （`isExactHealthPid` 只校 pid，本仓 windowsCuaHelperHostSupport.ts:233-238；
   `probeHelperHealth` 只投影 bundle_id/pid，本仓 broker.js:234-243）。bundle_id 按 wire spec §6.2
   Windows 优先级取规则 2 = canonical exe 绝对路径（`process.execPath`）——规则 1（AUMID）对
   fork 出的 node-mode 进程不适用（无 AUMID 注册）；`bundleId` 在 Windows 非 load-bearing，
@@ -481,6 +514,43 @@ N-API 特性（Promise/AsyncWorker/TSFN ≤ N-API 4，Buffer/TypedArray ≤ N-AP
 - 14 方法表以 wire spec §8.1 为单一事实源。producer 在自有树内持有该名单（14 个方法名字符串是
   wire 契约词汇/接口事实，非表达；名单的**实现代码**为 ACode 原创，不从 broker.js 复制表达——
   §1.2 理由 2 的台账纪律同样适用于常量字面量的成段拷贝）。
+
+#### 4.6.1 封闭表扩充（A2/A3 生效行 + dispatch 防御分支；§17.5 债务回写）
+
+A1 表（上）在 A2/A3 注册真实 handler 后**不再是全集**。扩充如下——纪律不变：全部为稳定
+字面量、**零插值**（§3.2 红线），码全部取自 wire spec §4.1 的 17 码词汇表（**零新码**），
+实现不得新增行（新增须先改本文）。`wire-server.ts` 的 `WIRE_ERROR_MESSAGES.internal`
+（"Computer Use broker failed to handle the request."，wire-server.ts:53）是 dispatch 防御
+分支字面量（handler 抛非类型化异常 / 空成功违约），A1 结构上不可达、**A2 起可达**，正式
+入表：
+
+| 场景（生效切片）                                   | message 字面量                                                                              | code                 |
+| -------------------------------------------------- | ------------------------------------------------------------------------------------------- | -------------------- |
+| handler 抛非类型化异常 / 空成功违约（防御分支，A2+ 可达） | `Computer Use broker failed to handle the request.`                                     | `internal`           |
+| 参数校验失败：类型不符/未知键/缺必填/超限（A2）    | `Invalid Computer Use method parameters.`                                                     | `invalid_request`    |
+| app_ref 解析失败：pid 死亡/不可读（A2）、0 候选（A3）——**须含 SDK isAppNotFound 兼容子串**（§10.9/§11.3） | `Computer Use target app is not running.`                              | `invalid_request`    |
+| app_ref 解析歧义：≥2 候选（A3，绝不猜 active/第一个） | `Computer Use app_ref resolved to multiple running applications; pass a pid.`                | `invalid_request`    |
+| A2 切片 app_ref 非 pid 形态（§10.9 能力诚实）      | `Computer Use app_ref requires a pid in this producer slice.`                                 | `invalid_request`    |
+| 前台校验失败：目标应用非唯一前台（A2，指针纪律 §10.4） | `Computer Use input requires the target application to be the only foreground application.` | `foreground_required` |
+| 非交互桌面：锁屏/Session 0/非默认输入桌面/DPI 上下文失败（A2，§10.9） | `Computer Use is not available on a locked or non-interactive desktop.`   | `permission_denied`  |
+| 元素/frame/window 引用 stale 或未知、frame owner 不符、显示拓扑换代（A2/A3） | `Computer Use observation state is stale; observe the application again.` | `element_unavailable` |
+| 目标应用进程存活但无可观察窗口（A3，get_app_state 窗口选择） | `Computer Use target app has no observable window.`                        | `element_unavailable` |
+| A2 切片 element target（UIA 面未实现，C09 同律诚实拒绝，§10.9） | `Computer Use element targets require the UIA observation surface.`            | `element_unavailable` |
+| 截图目标失败：最小化/目标变化/WGC 拒绝/预算穷尽（A2，§10.7） | `Computer Use capture target changed or is not capturable.`                              | `element_unavailable` |
+| native 操作超时（只读类 / 派发前，A2/A3）          | `Computer Use operation timed out.`                                                           | `timeout`            |
+| 元素不接受赋值（A3，ValuePattern 缺失）            | `Computer Use element does not accept a value.`                                               | `not_settable`       |
+| 元素不支持文本选择（A3，TextPattern 缺失）         | `Computer Use element does not support text selection.`                                       | `not_selectable`     |
+| 动作未被元素广告（A3，pattern 缺失/未知 action）   | `Computer Use element does not advertise this action.`                                        | `action_unavailable` |
+| admission 忙：队列满 / 排队超时 / 被 stop 清空（A2，§10.5/§10.6） | `Computer Use controller is busy; retry after the current action completes.`  | `controller_busy`    |
+| 剪贴板打开失败：互斥预算耗尽（A2，§10.9 paste）    | `Computer Use clipboard is busy.`                                                             | `controller_busy`    |
+| 剪贴板打开被拒（A2，交互桌面异常）                 | `Computer Use clipboard access was denied.`                                                   | `permission_denied`  |
+
+**铁律（§10.12 摘要）**：变更类方法一旦 native 派发已启动，**禁止**以 `ok:false` 应答
+（应用层 `ok:false` 不携带 delivery-state、角色 B 不置 possiblySent——wire spec §5.4；
+`ok:false timeout` 会被 SDK 归为可重试 → 重放风险）。派发后失败一律走 `ok:true` +
+`isError:true` 收据（possibly_sent / accepted+interrupted，字面量见 §10.12 表）。
+`broker_unavailable` 仍**仅限 WARMING**（READY 后任何 handler 不得产出——wire spec §5.3）。
+上表 `ok:false` 各行均只用于「确定未派发」的失败。
 
 ## 5. 构建契约
 
@@ -548,7 +618,8 @@ typescript `^6.0.2` 对齐仓内已装 6.0.2（实测；**不追** npm latest 7.
         "ExceptionHandling": 1,                        # /EHsc，配合 NAPI_CPP_EXCEPTIONS
         "AdditionalOptions": ["/std:c++17"]            # C++/WinRT 地板（§4.5）
       }}
-      # A2 预留（A2 spec 钉死再启用）："libraries": ["d3d11.lib","dxgi.lib","windowsapp.lib", …]
+      # A2/A3 增量已钉死（本批次）：libraries/defines/sources 清单见 §10.10（A2）与 §11.7（A3），
+      # 随对应切片落地并由契约测试锁定（§16 A2-AC-1）。
     }]]
   }]
 }
@@ -604,22 +675,44 @@ tsconfig 钉死项：`module/moduleResolution: nodenext`、`target: es2023`（No
 （dist 消费者是 fork 运行时与测试，无 .d.ts 需求）、`types: ["node"]`。相对导入一律带 `.js`
 后缀（nodenext ESM 规则）。
 
-A1 源布局（模块划分是契约——§6.3 的单元测试依赖 wire-server 可独立导入；文件内组织是实现细节）：
+A1 源布局（模块划分是契约——§6.3 的单元测试依赖 wire-server 可独立导入；文件内组织是实现细节）。
+**A2/A3 增补（本批次登记，`.npmrc` 与 `scripts/smoke-real.mjs` 为已存在/已钉死项）**：
 
 ```
 cua-producer/
   .gitignore               # 规则 build/（§5.4 裁决，与工具链接线同一提交）
+  .npmrc                   # producer 自有安装树的 registry 钉定（官方源；§5.4/§17.4——已入库，
+                           #   防漂移 = 契约测试的 resolved-host 断言，cua-producer-contract.test.mjs）
   binding.gyp  tsconfig.json  package.json  package-lock.json  README.md
   specs/windows-helper-producer.md        # 本文
   scripts/build-native.mjs  scripts/clean.mjs
+  scripts/smoke-real.mjs   # 真机烟测（§15 契约；仓库侧 dev 工具，非 Helper 运行时面）
   src/windows-helper.ts    # entry：argv/env/IPC/状态机接线/watchdog（薄层）
   src/wire-server.ts       # parse/serialize/dispatch + 状态门（可独立单测，无进程耦合）
   src/backend-a1.ts        # READY 期 backend：仅 broker_info handler
   src/native-loader.ts     # env 路径 + createRequire 加载 + fail-closed（§2.7 exit 2 面）
   src/control-protocol.ts  # 协议常量与消息构造（ACode 原创实现，不从占位包复制表达）
   src/native/addon.cc      # NAPI 入口：addonVersion + probe（§4.1）
+  # ── A2 增补（§10）──────────────────────────────────────────────
+  src/backend-a2.ts        # A2 wire handlers（7 变更类 + request_access）；纯逻辑 + 注入 driver
+  src/input-session.ts     # admission 队列 + held 镜像 + stop/cancel 编排（§10.5/§10.6）
+  src/frame-registry.ts    # frame_id → 栅格几何/bounds/owner/拓扑世代（§10.7）
+  src/native-driver.ts     # 真 driver（包 addon 导出）；**只允许 entry 组装路径 import**（§10.11 模块规则）
+  src/keymap.ts            # chord/键名 → VK 封闭映射表（§10.9）
+  src/native/pointer.cc  keyboard.cc  clipboard.cc  capture.cc  foreground.cc  environment.cc
+  # ── A3 增补（§11）──────────────────────────────────────────────
+  src/backend-a3.ts        # UIA 六工具 handlers；纯逻辑 + 注入 uia driver
+  src/uia-driver.ts        # 真 UIA driver（包 addon UIA 导出）；同 native-driver 隔离规则
+  src/tree-text.ts         # 树文本渲染 + 预算/截断（§11.4，CI 可单测）
+  src/state-registry.ts    # state_id/window_id 会话层元数据（§11.5）
+  src/native/uia_worker.cc  uia_tree.cc  uia_patterns.cc  window_registry.cc
   dist/  build/  node_modules/            # 全部构建产物/安装树，不入库（§5.4）
 ```
+
+（A2/A3 的文件划分随实现批次可微调，但**三条模块规则是契约**：① backend/input-session/
+registry/tree-text/keymap 一律纯 TS + 注入 driver，不得 import native-driver/uia-driver
+（CI 常驻单测的前提，§14；防漂移 = 契约测试静态断言 import 面）；② native-driver/uia-driver
+只被 windows-helper.ts 组装路径 import；③ driver 接口 = §10.3 的类型化错误二分契约。）
 
 ### 5.4 工件与 gitignore 边界
 
@@ -650,8 +743,11 @@ package-lock.json 不命中 = 应入库，符合预期）。且根 `.gitignore:3
 
 - **不入库**：`dist/`、`build/`、`node_modules/`（均为构建产物/安装树；规则来源见上）。
 - **入库**：`package-lock.json`（不被任何 ignore 规则命中，实测；handoff §8 裁决「应随构建
-  接线一并提交（复现性）」）、`cua-producer/.gitignore` 自身、binding.gyp、tsconfig.json、
-  scripts/、src/、specs/。
+  接线一并提交（复现性）」）、`cua-producer/.gitignore` 自身、**`.npmrc`（§17.4 债务回写：
+  2026-10-14 评审修复产物，钉定官方 registry、防个人 `~/.npmrc` 镜像偏好固化进 lockfile
+  resolved；只含公开 registry URL、绝无凭据——防漂移由契约测试的 resolved-host 与
+  「无凭据赋值形态」两条断言把守，本批核实已落地）**、binding.gyp、tsconfig.json、
+  scripts/（含 §15 的 smoke-real.mjs）、src/、specs/。
 - **台账边界**：`cua-producer/package.json` 不在 licenses 台账 inputs（handoff §8 实测
   `grep cua-producer third-party/inventory.json` = 0 命中），producer 加 devDeps 不触发 L01；
   producer 内全部文件为 ACode 原创（机制参照不复制表达），不产生 copied-components 登记义务。
@@ -707,7 +803,7 @@ process.execPath, env})` 拉起 Helper，随后按序断言：
 
 1. **两条 ready 消息**：transport_ready 先于 ready；两条均 `protocol ===
    "acode-cua-windows-dev/v1"`、`socketPath === 传入值`、`pid === child.pid`（正整数）——即
-   `parseReadyMessage` 逐字段过（对齐本仓 windowsCuaHelperHostSupport.ts:202-228）。
+   `parseReadyMessage` 逐字段过（对齐本仓 windowsCuaHelperHostSupport.ts:205-231）。
 2. **健康握手（即任务书所称「token 握手」的 ACode 现行等价物，§3.1：链路乙无 token，握手 =
    ready 时序 + broker_info 探测 + 凭据不泄漏断言）**：用**真角色 B 客户端**打通两侧契约——
    `probeHelperHealth(pipe, {timeoutMs:5000})`（深导入 `packages/acode-cua/broker.js`）返回
@@ -781,35 +877,68 @@ npm run build` 成功（AC-1 本身即验收项）。
 
 C05（端到端真实结果）/C07（真动作）属 A2，不在 A1 验收；A1 交付的是其传输/就绪/健康/诚实面地基。
 C10 的计时行为在 A2 完整（A1 交付机制 + 单元证据）；C09 的真实 UI 树在阶段 3（A1 交付
-「绝不空树冒充」的机制证据）。
+「绝不空树冒充」的机制证据）。**A2/A3/阶段 4 的验收清单见 §16；C07 的真机人工面 = §15
+`--pointer`（门禁永不执行）；C08 可执行交付物 = §14；C05 的完整模型面自 A3 起（A2 达成
+机制面最小可达，§10.0 登记）。**
 
-## 8. openQuestions（本文钉不死或需上位裁决）
+## 8. openQuestions（本文钉不死或需上位裁决；2026-10-14 扩充批次更新）
 
-1. **宿主侧 spec 措辞同步校准（两处）**：角色 A 自建后，① module-boundary.md 不变量 1 栏②
-   「Helper 服务端（随角色 A 的 windows-helper.js）仍 fail-closed 直至角色 A 就位」应更新为
-   「已在 producer 树内自建实现；broker.js/broker-server.js 占位保留 API 兼容、不再回填」
-   （§1.2）；② wire spec §9/§9.3（broker-wire-protocol.md:815-833/:891-901）「三者在物理上
-   位于 packages/acode-cua/broker.js…随角色 A 实现」与「角色 A 的 windows-helper.js 构造此
-   对象并注入 dispatchRequest/handleRequestLine」须同批校准为「角色 A 在 cua-producer 树内
-   按本契约实现同语义原语（backend 注入形状不变）」——否则两份宿主 spec 与本文 §1.2 裁决
-   读出矛盾。两文件属 packages/acode-cua/specs/，不在本文改动范围，需随 A1 实现批次同批校准。
-2. **「token 握手」术语**：本文按 wire spec §2.3（链路乙无 token，已裁决）把任务书 A1 断言链中的
-   「token 握手」解释为「两阶段 ready + broker_info 健康握手 + pluginAuthority canary 不泄漏」。
-   若需求方本意是在链路乙引入应用层 token 校验，则与已裁决事项冲突，须上升裁决，本文不私改。
-3. **A2 截图导出命名**：上游 wgc-visual-capture 设计 spec 不在 staging 材料内（本机 find 零命中），
-   `captureDisplay`/`captureWindow` 及参数形态为 ACode 自定提案，A2 spec 定稿。
-4. **broker_info richer 字段**（version/kind/display_name/capabilities）：运行期版本事实的来源
+1. ~~**宿主侧 spec 措辞同步校准（两处）**：module-boundary.md 不变量 1 栏② 与 wire spec
+   §9/§9.3 须校准为「角色 A 已在 producer 树内自建实现」~~
+   **已闭合（2026-10-14，A1 实现批次）**：两文件已随 A1 同批校准（module-boundary.md
+   「实现状态（2026-10-14 更新，A1 批次）」段与栏② 校准注、wire spec §9 头部「校准
+   （2026-10-14，A1 批次）」段，本批 Read 核实）；handoff §3 同批登记。
+2. ~~**「token 握手」术语**~~ **已闭合（A1 实现批次）**：按本文解释落地并被测试锁定
+   （cua-producer-helper-a1.test.mjs 步骤 2 注释：链路乙无 token，握手 = ready 时序 +
+   broker_info 探测 + 凭据 canary 不泄漏）。需求方未在 A1 评审中提出异议。
+3. ~~**A2 截图导出命名**~~ **已闭合（本批次）**：§10.1 钉死 `captureDisplay`/`captureWindow`
+   及全部 A2 导出面（上游 wgc-visual-capture 设计 spec 仍不在 staging 材料内——本批再次
+   find 复核零命中，命名与参数形态为 ACode 自定，机制约束以决策一引文 + 上游
+   windows-source-development.md:268/:342-350 记载为准）。
+4. **broker_info richer 字段**（version/kind/display_name）：运行期版本事实的来源
    依赖阶段 5 staging 布局裁决（staged 根是否含 package.json / 是否读 runtime-manifest.json），
-   A1 最小化为 `{pid, bundle_id}`，阶段 5 前补裁决。
-5. **架构检查器对 apps/acode-cli/tests → cua-producer/dist 深导入的行为未实测**：SKIP_DIRECTORIES
-   已排除 producer（discovery.mjs:7 实测），但 import 侧是否触发 unresolved/deep-import 规则须在
-   实现批次以 `pnpm architecture:check -- --changed` 实证；违规则单元断言移入 producer 本地手工
-   测试入口（不进 CI）。
-6. **watchdog 2s 轮询间隔**为 ACode 自定（上游无成文规范）；A2 引入 held-input 后若 2s 粒度的
-   orphan 窗口不可接受（按键遗留最长 2s），须在 A2 收紧为事件式父进程句柄等待。
+   阶段 5 前补裁决。**本批更新**：`capabilities` 子集已随 A2 钉死并可用（§10.9——由导出面
+   在场性 + 预检推导，不依赖 staging 布局）；`version` 等其余字段维持延后。
+5. ~~**架构检查器对 apps/acode-cli/tests → cua-producer/dist 深导入的行为未实测**~~
+   **已闭合（A1 实现批次实证）**：`pnpm architecture:check -- --changed` 绿（handoff §3/§9
+   门禁记录），dist 深导入不违规。**残留验证项**：§14 C08 文件对 `cua-producer/src/**.ts`
+   的 tsx 深导入是同模式外推（SKIP 目录 + tests glob），A2 批次以同一命令复核（计入
+   §16 A2-AC-11），违规则 C08 落点回退为 producer 本地手工入口（不进 CI）。
+6. ~~**watchdog 2s 轮询间隔**~~ **已闭合（本批次）**：§10.8 裁决自适应间隔（held 非空时
+   250ms），orphan 按键遗留窗口 ≤250ms + 释放时长；不引入 native 父进程句柄等待
+   （复杂度不成比例，250ms 已满足「不遗留按住键」纪律的可验证面）。
 7. ~~**node-addon-api 8.x 的最低 NAPI_VERSION 要求**（发布说明称 ≥6）本机未复核（§4.5）~~
    **已闭合（2026-10-14，A1 实现批次）**：8.9.2 + NAPI_VERSION=9 本机端到端构建绿、probe 回读 9
    （§5.2.1），无需动用升 NAPI_VERSION / 降大版本预案；gyp 接线机制差异已按 §4.5 纪律回写 §5.2.1。
+8. **request-access-contract.js 占位 safeParse 的补实归属与时点**：阶段 4（§12.1/§12.2）只扩
+   类型与两处 zod；本仓 result-display.ts:32-35/310 消费的是占位包 `.js` 的恒失败 safeParse
+   （request-access-contract.js:3-10，本批核实）——补实前 Windows/甚至 macOS 的
+   permissionStatus 都无法经 CLI display 链投影（静默缺字段，fail-closed 方向）。补实属
+   占位包治理面（module-boundary 栏② 同类），归角色 B 后续增量还是阶段 5，需上位裁决。
+9. **宿主 frame-contract 实现时点（final-raster / image_ref 面）**：frame-contract.js 全部
+   fail-closed 占位（本批核实 :7-37）。§10.7 的预算阶梯使 CUA 图像对宿主通用归一化恒等
+   （≤200 KiB inline），结构性绕开了对它的依赖；但若未来需要 >200 KiB 高保真栅格
+   （zoom 类需求、精确栅格凭证），须宿主实现 frame-contract + producer 增 image_ref 面
+   ——独立 spec，A2/A3 不做。
+10. **渲染层 Windows 兼容复核**（cuaResultState.ts:28 的 `[A-Za-z0-9.-]+` 正则 vs Windows
+    身份 token）：§11.4 的净化 token 是 best-effort；结构化 JSON 路径（优先）依赖宿主对
+    node_repl CUA 结果的序列化是否携带 structured 标记——A3 批次以真实工具结果过 UI 展示链
+    复核（§16 A3-AC-9），不兼容则同批改渲染层（计划书 §7.8 B-1 约束已授权该路径）。
+11. **list_apps 显示名质量**：A3 v1 取 exe basename（+AUMID display name best-effort，
+    §11.2）；若产品要求本地化显示名（版本资源 `FileDescription`），归 A3 实现批次酌情并
+    回写本文（身份字段 pid/exe_path/AUMID 始终权威，显示名只服务 UI/模型可读性）。
+12. **delta 快照 / 索引位移台账 / 稀疏索引裁剪**：§11.8 延后。上游设计细节不在 staging
+    （pointer-foundation/wgc/clipboard 三份设计 spec 本批 find 复核仍零命中），实现前须先
+    补机制调研；SDK 侧对 full-only 天然兼容（§11.4），延后无正确性代价。
+13. **第四处判定面纳入阶段 4 范围的确认**：`tool-result-metadata.ts:49` 的
+    `cuaRequestAccessStatusDisplaySchema` `platform: z.literal("darwin")`（本批 grep 发现，
+    §12.2）——计划书阶段 4 原文只列三处。本文裁决为**必须同批扩**（否则 Windows 状态在
+    display 投影层静默丢弃，正是计划书 §7.8 B-1 约束点名警告的静默降级形态）；若范围守护
+    认为超阶段 4 授权，可拆独立子批次，但不得留半闭状态。
+14. **wire spec 行号批量漂移**：角色 B 增量 1-4 补实后 broker.js 行号全变（如 wire spec
+    §1.1 引 mint `broker.js:47-50`，现值 :264；§3.1 引 :63-80，现值 :287-304，本批核实）——
+    wire spec 的行号引用属该文件维护面（packages/acode-cua/specs/，不在本文改动范围），
+    登记转角色 B/wire spec owner；本文对 broker.js 的引用已全部按当前检出核实（§17.1）。
 
 ## 9. 自查（零冲突对照）
 
@@ -818,7 +947,7 @@ C10 的计时行为在 A2 完整（A1 交付机制 + 单元证据）；C09 的�
   token、§3.3 禁空成功——本文全部沿用，无新增 wire 字段、无新错误码（§4.6 表内四个码均在
   17 码词汇表内）。限额取客户端同值（1 MiB/30s 空闲）为服务端对偶，非新契约。
 - **与 parseReadyMessage / 宿主生命周期**：消息字段、顺序、pid/socketPath 全等回显、error 消息
-  非空串、shutdown 应答时限（<1s）逐一对齐本仓 windowsCuaHelperHostSupport.ts:95-101/202-228、
+  非空串、shutdown 应答时限（<1s）逐一对齐本仓 windowsCuaHelperHostSupport.ts:95-101/205-231、
   windowsCuaDevHelperHost.ts:308-326/396-409。
 - **与 requireExpectedPackage**：契约块键集/路径规范/互不相等/name/version 全部保持现值（§5.1
   冻结区 = 现 package.json 实文，本机 Read 核实）。
@@ -828,3 +957,1346 @@ C10 的计时行为在 A2 完整（A1 交付机制 + 单元证据）；C09 的�
 - **出处纪律**：本文全部上游引用为机制参照 + 短引注行号，无成段表达复制；producer 实现代码
   同样禁止从上游或占位包复制表达（§1.2 理由 2、§4.6 末条），违者触发台账义务即触发 CI-Linux
   死局（handoff §4）。
+
+### 9.1 扩充批次自查（§10–§17，2026-10-14）
+
+- **与 wire spec（§10–§14 新增面）**：错误码零新增（§4.6.1 全表 ⊆ 17 码词汇表，实用 13 码）；
+  收据键 ⊆ SDK `receiptOf` 挖掘词汇（state_id/frame_id/action_sent/dispatch_status/
+  state_sync_status/code/reason/snapshot_mode/base_state_id，wire spec §3.3 引上游
+  computer-use-client.mjs:184-195）；结果形态 = MCP CallToolResult 状载荷（wire spec §3.3）；
+  `broker_unavailable` 仍限 WARMING（wire spec §5.3）；`permission_status` **不实现**——
+  其唯一发起点被 darwin 门控（node.ts:1886-1891 getStatus 非-darwin 早退，本批核实），
+  Windows Helper 收到即 `method_not_found`（§4.6 表行 3，正确行为，实现者不得「顺手」注册）。
+- **与 SDK 消费面（上游 computer-use-client.mjs，机制核实）**：`appStateOf` 四必备字段
+  （state_id/elements/app/window，:516/:537-552）恒供给（§11.2）；`isAppNotFound` 的
+  「target app is not running」子串兼容（:409-413 → §4.6.1 字面量）；`bindTarget` 的
+  element/coordinate 两形态（:312-369 → §10.9/§11.4）；`text_range` = `[start,length]`
+  整数二元组（:813-815 → §11.2）；`assertOk` 的 possibly_sent→actionSent→reobserve 三分
+  （:278-297 → §10.12）；`frameIdOf` 读收据 frame_id（:209-220 → §11.2 structuredContent）。
+- **与宿主既成事实（§12）**：node.ts:2182/2193 复核零改动（§12.4，本批逐行核实）；
+  getStatus darwin-only 门（node.ts:1886-1891）不动；CuaOsSupport 联合为 additive 扩展
+  （platform.ts:563-566 现有三 kind 语义不变）；desktop electron=41.10.7
+  （packages/desktop/package.json:74，本批复核）→ napi 10 > pin 9（§12.5）。
+- **与决策一/二（不重开）**：指针五导出名 moveTo/scrollAt/drag/mouseDown/mouseUp 保留
+  （§10.1）；WGC+D3D11+WIC、N-API 异步 Promise、PNG 编码后台 worker、指针纪律、能力真实性
+  全部承接（§10.4/§10.7/§10.9）；producer 树位置/解析隔离/自有工具链零变化。
+- **与 macOS 红线（§12.0）**：darwin 判定分支、TCC 语义、`stale` 值域、12.0/Darwin 21 地板、
+  getStatus 门控全部零改动；阶段 4 只扩 win32 受理面，不翻任何产品启用门。
+- **出处纪律（扩充部分）**：§10–§17 全部为 ACode 原创表达；上游引用均为机制转述 + 行号短注
+  （staging 路径见 §0），无成段复制；本批新增上游行号引用（windows-source-development.md
+  :170-185/:187-202/:204-221/:268/:272-287/:318-322/:342-350/:355-359、windows-product-runtime.md
+  :234-235/:238、2026-08-18-frame-pixel-zoom-regression.md:9/:34/:53/:58-59、
+  2026-08-18-ax-action-state-consistency.md:14-16/:44-51/:123-124、windows-transport-ready.md
+  :22/:26/:32）均已逐条对照 staging 文件核实。
+
+## 10. A2 切片：指针/键盘/剪贴板 + WGC 截图 + delivery-state 派发契约
+
+### 10.0 范围、前置与诚实登记
+
+**交付面**：① addon A2 导出（§10.1）；② 8 个 wire handler——7 个变更类
+（`left_click`/`scroll`/`left_click_drag`/`type`/`key`/`paste`/`stop_computer_control`）+
+`request_access`（§10.9）；③ admission/held/frame 三个会话层机制（§10.4–§10.7）；
+④ delivery-state 派发侧契约（§10.12，C08 的 spec-first 前置——计划书 §7.6 C08 补记）；
+⑤ C08-A2 七个独立注入 case（§14）；⑥ 烟测 `--capture`（addon 直载）与 `--host`
+（生命周期面，§15）；⑦ §17 债务项（UTF-8 Helper 侧、MISSING_IPC 单源）随 A2 同批修复
+（它们在 A2 的改动半径内）。
+
+**仍诚实 unavailable 的面（C09 纪律延伸）**：6 个 UIA 工具（A3）；A2 切片内 element target、
+name/bundle_id 形态 app_ref（§10.9 固定字面量拒绝，绝不假装可用）。
+
+**登记（模型面可用性）**：A2 的指针链路在 wire 级端到端**尚不可用**——坐标 target 绑定
+「最近一次可动作栅格」（frame 注册表由 `get_app_state(include_screenshot)` 供给，A3 才有
+wire 观察面），故 A2 的 wire 级变更动作实际可走通的是 `type`/`key`/`paste`/`stop`/
+`request_access`（无 target 依赖）；指针三工具 handler 全量实现并以 fake frame 注册表单测
+（§10.11），wire 级指针闭环自 A3 点亮。C05 相应分层：A2 = 机制面最小可达（真实收据、
+非 unavailable）；C05 完整模型面（观察→动作闭环）与 C07 wire 级真动作自 A3。C07 的
+A2 真机面 = `--pointer` addon 级人工烟测（§15）。
+
+**前置**：A1 全绿（已落地）；工具链裁决不变（node-gyp 13/自有 lockfile/禁根 override）。
+
+### 10.1 addon A2 导出面（钉死签名）
+
+决策一锁定指针五导出名 `moveTo`/`scrollAt`/`drag`/`mouseDown`/`mouseUp`（计划文档 §7.8
+决策一引上游 pointer 设计）；其余导出名为【ACode 自定】钉死（oQ3 闭合）。除 A1 `probe` 与
+`cancelOperations` 外**全部异步**（N-API Promise；AsyncWorker/TSFN 完成端 resolve，决策一
+「N-API 异步 Promise」）；类型化错误携带稳定 `code`（封闭集 §10.3）。坐标空间恒为
+**虚拟桌面物理像素**（主显左上原点，副屏负坐标合法——上游机制：负坐标副屏使用 virtual
+desktop 映射，上游 windows-source-development.md:268）。
+
+```ts
+// ── 预检与环境事实 ─────────────────────────────────────────────
+environmentProbe(): Promise<{ interactiveDesktop: boolean; sessionZero: boolean; dpiAware: boolean }>;
+foregroundPid(): Promise<{ pid: number | null }>;          // 诊断/烟测面；派发时校验在 native 内部（§10.4）
+heldInputSnapshot(): Promise<{ buttons: string[]; keys: number[] }>;  // 本进程 held 注册表（诊断面）
+asyncKeyState(vk: number): Promise<{ down: boolean }>;     // GetAsyncKeyState 只读投影——**系统级**事实，
+                                                           // 可跨进程佐证「Helper 无遗留按住键」（§15 --pointer）
+cursorPosition(): Promise<{ x: number; y: number }>;       // GetCursorPos 只读投影——--pointer 的
+                                                           // 「保存/复原光标 + ≤2px 容差」纪律与 moveTo 负控制的断言载体（§10.4/§15.2）
+
+// ── 指针（expectedForegroundPid 必现、无缺省——§10.4 指针纪律的结构化落点）──
+moveTo(x: number, y: number, opts: { expectedForegroundPid: number }): Promise<void>;
+scrollAt(x: number, y: number, deltaX: number, deltaY: number,
+         opts: { expectedForegroundPid: number }): Promise<void>;   // delta 单位 = WHEEL_DELTA(120) 倍数
+drag(fromX: number, fromY: number, toX: number, toY: number,
+     opts: { expectedForegroundPid: number; button?: "left" | "right" | "middle" }):
+  Promise<{ injectedPoints: number; canceled: boolean }>;
+mouseDown(button: "left" | "right" | "middle",
+          opts: { expectedForegroundPid: number }): Promise<void>;
+mouseUp(button: "left" | "right" | "middle",
+        opts: { mode: "action"; expectedForegroundPid: number } | { mode: "cleanup" }): Promise<void>;
+
+// ── 键盘（chord→VK 解析在 JS 侧 §10.9；native 只注入，文本走 KEYEVENTF_UNICODE）──
+sendText(text: string, opts: { expectedForegroundPid: number }):
+  Promise<{ injected: number; total: number; canceled: boolean }>;
+pressKeys(keys: Array<{ vk: number; up: boolean }>,
+          opts: { expectedForegroundPid: number; holdMs?: number }): Promise<{ canceled: boolean }>;
+
+// ── held 清理与全局取消 ────────────────────────────────────────
+releaseAllHeldInputs(): Promise<{ released: number }>;     // 幂等；不做前台校验（cleanup 语义）
+cancelOperations(): void;    // 唯一新增同步导出：原子置取消旗标；在途循环 ≤500ms 内以 code:"canceled" 退出
+
+// ── 剪贴板（CF_UNICODETEXT + async worker；互斥预算 250ms、OpenClipboard 有界重试 8×10ms、
+//    文本上限 8 Mi UTF-16 code units——上游机制记载 windows-source-development.md:318-322）──
+clipboardWriteText(text: string): Promise<void>;
+
+// ── 截图（WGC + D3D11 + WIC；PNG/JPEG 编码在同一后台 worker，不阻塞 N-API/V8 主线程）──
+captureDisplay(target: { monitorIndex: number } | { bounds: Rect }, opts: CaptureBudget): Promise<CaptureResult>;
+captureWindow(windowToken: number, opts: CaptureBudget): Promise<CaptureResult>;  // token=A3 窗口注册表；A2 烟测走 captureDisplay
+type Rect = { x: number; y: number; width: number; height: number };               // 虚拟桌面物理像素
+interface CaptureBudget { maxDimension: number; inlineBase64BudgetBytes: number }  // §10.7 钉死取值
+interface CaptureResult { image: Uint8Array; encoding: "png" | "jpeg"; width: number; height: number;
+                          bounds: Rect; scaled: boolean; budgetFit: boolean }
+```
+
+【ACode 自定】设计注记：(1) `expectedForegroundPid` 由 wire 层 app_ref 解析产出、作为参数
+下传——native 只负责「派发瞬间验证该 pid 仍是唯一前台」，目标身份判定与注入验证分层，
+TOCTOU 窗口收敛到单次 native 调用内；(2) `mouseUp` 的 `mode:"cleanup"` **不做前台校验**
+（上游机制：`left_mouse_up` 仅作已按下键的清理操作，可在焦点变化后释放，上游
+windows-source-development.md:268）；(3) `cancelOperations` 同步是刻意例外（停止信号必须
+不被任何异步队列延迟——§10.6 的 stop 旁路依赖它）；(4) 不导出 `clipboardReadText`——
+14 工具面无 read_clipboard，加导出 = 能力面溢出（§4.1 能力真实性同律）；烟测的剪贴板
+读回验证延后至该工具面出现（§15 登记）。
+
+### 10.2 wire handler 参数校验（封闭 schema，手写验证器）
+
+- producer 禁裸包 import（§1.1）→ 参数校验 = 手写 TS 验证器（纯函数、CI 可单测）。
+  **未知键拒绝**（每方法封闭参数集，§13 表为单一事实源）——与 SDK 侧工具 schema `.strict()`
+  的同型纪律（上游机制：凭空发明的键会让每次观察被打回，computer-use-client.mjs:588-593 注释）。
+- 类型不符/未知键/缺必填/超限 → `ok:false invalid_request`（§4.6.1 固定字面量，零插值、
+  绝不回显参数内容——type/paste 的文本是用户内容，进错误消息即隐私泄漏）。
+- `strategy`（string，可选）：Windows 单一 SendInput 派发机制，**接受并忽略**——拒绝会破坏
+  SDK/模型侧沿上游习惯传参的调用（§13）。【ACode 自定】
+- `modifiers` 封闭词汇 `{ctrl, alt, shift, win}`（数组，可选）：实现为同一 native 序列内
+  「修饰键 down → 主体 → 修饰键 up」；未知修饰键 → invalid_request。
+- `click_count` ∈ {1,2,3}；`mouse_button` ∈ {left,right,middle}；`scroll_direction` ∈
+  {up,down,left,right}；`scroll_amount` 为正数（页；1 页 = 3×WHEEL_DELTA=360，水平走
+  HWHEEL）【ACode 自定，Windows 滚轮惯例】；`hold_seconds` ∈ [0,30]；`format`（paste）∈
+  {"text"}（其余 → invalid_request，A2 只实现文本，诚实拒绝）。
+- 文本上限：`type.text` ≤ 32,768 UTF-16 code units【ACode 自定：超此应走 paste】；
+  `paste.text` ≤ 8 Mi code units（对齐上游剪贴板上限机制）；`set_value.value` ≤ 8 Mi
+  （A3）；超限 → invalid_request 固定字面量。
+- `reason`（stop_computer_control，string ≤512，可选）：**接受即丢弃**——不回显、不入日志、
+  不进收据（模型自由文本，任何回显路径都是隐私面）。【ACode 自定】
+- 参数校验失败都发生在**派发前**（§10.12：ok:false 安全区）。
+
+### 10.3 native 类型化错误封闭集与 wire 映射
+
+addon → JS 的类型化错误 `code` 封闭集（native 侧同律零插值；实现不得新增，新增先改本文）：
+
+| native code               | 语义                                     | wire 结果（§4.6.1/§10.12）                        |
+| ------------------------- | ---------------------------------------- | -------------------------------------------------- |
+| `foreground_lost`         | 派发瞬间前台校验失败                     | `ok:false foreground_required`（未注入，确定）      |
+| `non_interactive_desktop` | 锁屏/Session 0/非默认输入桌面            | `ok:false permission_denied`                        |
+| `target_changed`          | 窗口捕获前后身份复核不一致               | `ok:false element_unavailable`                      |
+| `capture_minimized`       | 目标最小化（IsIconic 为真后才判定）      | `ok:false element_unavailable`                      |
+| `capture_failed`          | WGC/D3D 拒绝（含更高完整性级别目标）     | `ok:false element_unavailable`                      |
+| `budget_exceeded`         | §10.7 阶梯穷尽                           | `ok:false element_unavailable`                      |
+| `clipboard_busy`          | 250ms 互斥预算耗尽                       | `ok:false controller_busy`                          |
+| `clipboard_denied`        | OpenClipboard 拒绝                       | `ok:false permission_denied`                        |
+| `injection_rejected`      | SendInput 报告 0 条注入（UIPI 等）       | 变更类：possibly_sent 收据（注入面不可证）；只读语义无此码 |
+| `uia_timeout`（A3）       | §11.1 预算超时                           | 只读 → `ok:false timeout`；变更类 → possibly_sent 收据 |
+| `stale`（A3）             | RuntimeId 复核不一致/引用失效            | `ok:false element_unavailable`                      |
+| `not_settable` / `not_selectable` / `action_unavailable`（A3） | pattern 缺失 | 对应同码 `ok:false`（§4.6.1） |
+| `canceled`                | stop/cancelOperations 中断               | §10.6 interrupted 收据（accepted + action_sent:true） |
+| `internal_native`         | 未预期 native 失败                       | 派发前 → `ok:false internal`；派发后 → possibly_sent 收据 |
+
+**二分判据接口（C08 注入面，§14）**：driver 抛错分两类——`NativeRejectedError(code)`
+（**确定未产生副作用**：校验/预检/前台拒绝/0 注入前的失败）→ 允许 `ok:false`；
+`NativeAmbiguousError(code)`（**派发已启动、结果不可证**：注入中途异常、超时、部分注入后
+状态未知）→ 必须 possibly_sent 收据，禁止 ok:false。真 driver 由 native code 决定归类
+（上表「wire 结果」列即归类事实源）；fake driver 直接抛对应类注入失败。
+
+### 10.4 指针纪律（实现要求 + 可注入 seam 单测方案）
+
+纪律来源：计划文档 §7.5 阶段 2（「全局 SendInput 前验证目标应用仍是唯一前台应用、无法证明
+时 fail closed；任何部分失败/Helper 停止/父进程消失后不遗留被 CUA 按下的鼠标按钮」）+
+§7.8 决策一引上游 pointer 设计；上游机制记载 windows-source-development.md:268/:355-359
+（键盘只在证明目标 pid 唯一前台后才转全局 SendInput；cleanup 释放可在焦点变化后）。
+
+**实现要求（五条，全部硬性；覆盖计划文档 §7.5 阶段 2 纪律的全部三条路径——部分失败 /
+Helper 停止 / 父进程消失，即 §4.2 预登记不变量 1 的展开）**：
+
+1. **派发瞬间前台校验**：每个注入批次（一次 click 的 down+up、drag 的整段、type 的每 chunk、
+   chord 的每段）在 native 层注入前执行 `GetForegroundWindow → GetWindowThreadProcessId`，
+   pid ≠ `expectedForegroundPid` → 拒绝（`foreground_lost`），**零注入**。校验与注入必须
+   同一 native 调用内（JS 层校验无效——跨调用 TOCTOU 不可接受）。
+2. **packaged app 前台修正**：前台 pid 为 `ApplicationFrameHost.exe` 时不能直接判负——
+   A3 落地 AUMID→真实 pid 修正（§11.3，经顶层 HWND 的 `PKEY_AppUserModel_ID`，上游机制
+   windows-source-development.md:280-287）；**A2 切片登记为已知限制**（A2 无 AUMID 解析面，
+   packaged app 前台校验可能误拒——诚实报 foreground_lost，方向 fail-closed 可接受）。
+3. **held 零遗留（退出路径 = 「Helper 停止/父进程消失」两条）**：native 维护 held 注册表
+   （按下的鼠标键 + 按住的键）；**一切退出路径**——IPC shutdown、watchdog 父进程消失、
+   scheduleFailure（含 uncaughtException/unhandledRejection）、正常 stop、**§11.1
+   poisoned≥3 自终结（A3）**——在 `process.exit` 前幂等执行 `releaseAllHeldInputs()`，
+   预算 ≤300ms（宿主 shutdownTimeoutMs=1s 地板内，windowsCuaDevHelperHost.ts:37）；超时
+   兜底 = 同步快速释放路径（直接 pressKeys-up/mouseUp-cleanup 序列，绕过 Promise 编排）后
+   仍退出。**结构性要求**：释放挂接在 scheduleFailure/beginShutdown 的**统一收口点**，
+   不散落在各退出调用点——枚举会漏、收口点不会，后续切片新增退出路径自动被覆盖。
+   **如实登记残余风险**：宿主 kill -9 / 蓝屏等硬终止路径无法执行释放，按键遗留
+   至系统下一次输入状态复位——该窗口无法用软件消除，登记为已接受残余（宿主 blocker 日志
+   可观测，windowsCuaHelperHostSupport.ts:88-92）。
+4. **部分失败不续注入**：多段序列任一段失败/取消即停止后续**业务段**，已注入段如实进收据
+   （accepted + action_sent:true + partial 事实，§10.12）；绝不为「凑完整」重试补注入
+   （重试 = 重放，C08 红线）。
+5. **动作内收口释放（非退出路径 = 「任何部分失败」一条）**：多段序列中途失败/取消而
+   **进程继续运行**时，在收口后、产出收据**前**，必须对本动作已产生的全部 held 幂等执行
+   cleanup 释放（免前台校验——cleanup 语义同 `mouseUp mode:"cleanup"` 裁决）。典型场景：
+   chord「修饰键 down → 主体 → 修饰键 up」（§10.2）的主体段失败时，规则 4 跳过修饰 up
+   ——若不收口，幻影修饰键**跨动作残留**（admission 串行下，后续每个注入都被 ctrl/shift
+   污染，直至下一次 stop/进程退出）。规则 4 的「不续注入」约束的是**业务注入**；cleanup
+   释放不推进动作语义、只把输入状态归零，**不构成「续注入」**，两者不矛盾且必须同时成立。
+   **可测不变量**：任何变更类收据（accepted/possibly_sent/interrupted 三态）产出时点，
+   held 注册表必须为空（`heldInputSnapshot()` = ∅）——seam 单测按此断言（下）。
+
+**可注入 seam 单测方案（CI 常驻，fake driver）**：
+
+- `foreground_lost`（fake driver 从注入调用抛出）→ 断言 `ok:false foreground_required` ∧
+  handler 在该失败后**零追加注入调用**（fake 调用计数不再增长——校验失败绝不重试补注入，
+  §10.4 要求 4 的 seam 面）。
+- `NativeAmbiguousError` 在「注入已开始」标记后抛出 → possibly_sent 收据（§14 case 模板）。
+- held 生命周期（退出路径，规则 3）：mouseDown(action) → 会话层 held 镜像非空 → STOPPING
+  触发 → 断言 releaseAllHeldInputs 调用计数 ≥1 且先于退出路径其余步骤（顺序断言）；
+  释放挂接点 = 统一收口（fake 面断言 scheduleFailure/beginShutdown 路径都经过它，
+  含 A3 poison 自终结分支的桩）。
+- **chord 修饰键残留场景（规则 5，部分失败路径）**：fake driver 在 chord 主体段抛
+  Rejected（及 Ambiguous 变体）→ 断言 ①cleanup 释放调用发生且**先于收据产出**（顺序）、
+  ②held 镜像在收据时点为空、③业务段零续注入（修饰 up 作为**业务**段不被重放——释放
+  走 cleanup 通道，与规则 4 的区分由调用面/参数区分断言）。
+- **收据不变量横扫（规则 5）**：三态收据（accepted/possibly_sent/interrupted）在全部
+  变更类方法的 fake-driver 产出路径上，产出时点 held 镜像恒空（逐方法断言，不折叠）。
+- stop 时序：在途 drag（fake 慢速分段）→ stop → 断言 ①cancelOperations 先于一切、
+  ②在途调用以 canceled 收据收口、③releaseAllHeldInputs 执行、④队列被清（各得
+  controller_busy）。
+- 真机面（win32 守卫）：`expectedForegroundPid` = 确认已死 pid → 真 addon 报
+  foreground_lost 且 `cursorPosition()` 前后一致（光标零移动 = 零注入的系统事实佐证）；
+  真注入面（光标位移/零滚动/hold+中断）= `--pointer` 人工烟测（§15.2）；**鼠标键实压
+  配对不在任何默认自动化面**（§15.2 破坏性边界登记——真机点击证据归 A3 wire 级人工
+  C07，操作者指定安全目标）。
+
+### 10.5 admission 串行化（§2.6 重审义务的裁决）
+
+- **单一 FIFO admission 队列**：所有派发 native 的操作（7 变更类 + A3 观察类 + 截图）串行，
+  并发 = 1。理由：① SendInput 序列交错会互相污染（drag 的 down-move-up、chord 的修饰键
+  包裹必须原子）；② UIA MTA worker 本就串行（§11.1）；③ 截图与输入互斥避免「截图期间
+  光标移动」的合成态（上游烟测「保存并复原光标」的同型考量，windows-source-development.md:238-239）。
+- **队列有界**：深度上限 8；入队即满 → `ok:false controller_busy`（未入队 = 确定未派发）。
+- **排队超时**：请求在队列等待 >5s → 放弃入队执行，`ok:false controller_busy`——保证在
+  角色 B 的 `MUTATING_CALL_TIMEOUT_MS=10s`（本仓 index.js:19/23，已落地）内给出**确定
+  not_sent** 的应答，而不是让客户端超时进入传输层 possiblySent 歧义（更保守的结果被更
+  诚实的结果替代）。【ACode 自定】
+- **旁路（不入队）**：`broker_info`（health 300ms ping 预算不得被长观察饿死——wire spec
+  §6.3；结构保证：health 探测永不被 admission 阻塞）、`request_access`（轻量预检快照）、
+  `stop_computer_control`（它就是取消信号，排队即自废——§10.6）。
+- 连接层不变（§2.6：单连接单请求、1 MiB、30s 空闲）；限流只发生在 admission。
+
+### 10.6 stop_computer_control 中断语义
+
+**时序（钉死，测试按序断言）**：① `cancelOperations()`（同步置旗：sendText 的 chunk 间、
+drag 的插值点间、pressKeys 的 hold 等待环、capture 的帧等待环都在 ≤500ms 内检查并以
+`canceled` 退出）；② await 当前 admission 在途操作 settle；③ `releaseAllHeldInputs()`；
+④ 清空队列（每个被清的变更类请求以 `ok:false controller_busy` 收口——排队未派发 = 确定
+not_sent，诚实）；⑤ 返回 stop 自身收据 `{action_sent:true, dispatch_status:"accepted",
+message:"Computer Use control stopped; held inputs released."}`。
+
+- **被中断在途动作的应答**：isError:true 收据
+  `{dispatch_status:"accepted", action_sent:true, code:"controller_busy",
+  message:"Computer Use action was interrupted by stop_computer_control."}`——部分副作用
+  已发生 ⇒ action_sent:true ⇒ SDK retry=reobserve（绝不盲重放，wire spec §4.5 三分）。
+  在途动作若尚未开始派发（还在校验/排队）→ `ok:false controller_busy`（not_sent）。
+- **stop 非会话闩锁**：14 工具面无「resume」原语，闩锁会死锁会话；stop 后的新动作正常
+  受理。【ACode 自定】（SDK 的 `CONTROL_STOPPED` 是其内部码、不由链路乙产出——wire spec
+  §4.5 已登记；producer 不自造该码。）
+- stop 自身失败（releaseAllHeldInputs 抛 NativeAmbiguousError）→ possibly_sent 收据
+  （释放可能部分完成——保守方向）。C08 case 10（§14）。
+- C07「动作可被 stop_computer_control 中断」= 本节机制 + §15 `--pointer` 人工时序验证
+  （hold 5s 期间 stop → ≤1.5s 内释放并干净收口——上游同型验收机制
+  windows-source-development.md:183-185）。
+
+### 10.7 WGC 截图：机制、预算阶梯、多显示器/DPI 边界
+
+**机制（决策一钉死，不重开）**：C++/WinRT + D3D11 + WIC；N-API 异步 Promise；PNG 编码在
+后台 worker 执行、不阻塞 N-API/V8 主线程。实现要点【ACode 自定】：worker 线程 WinRT MTA
+apartment；D3D11 device + `Direct3D11CaptureFramePool` + `GraphicsCaptureSession`；显示器
+按 HMONITOR、窗口按 HWND（A3 token）建 `GraphicsCaptureItem`；帧等待有界 5s
+（FrameArrived/TryGetNextFrame）→ 超时 = `capture_failed`（只读，retry 安全）；staging
+texture CPU 读回 → 缩放 → WIC 编码，全程同一 worker。PNG 为 8-bit BGRA→RGB SDR 语义、
+保留系统默认 capture border、不承诺 HDR/色彩管理保真（上游机制记载
+windows-source-development.md:268）。
+
+**截图诚实（红线，计划文档 §7.8 决策一能力真实性 + 上游 :268 机制）**：锁屏/Session 0/
+非默认输入桌面 → `non_interactive_desktop`；最小化（`IsIconic` 为真后才判定——上游机制：
+不得用「信号已消费」代替 Win32 状态事实，windows-source-development.md:367-369）→
+`capture_minimized`；窗口捕获前后两次复核（HWND 存活 + pid + canonical exe + bounds）不
+一致 → `target_changed`；更高完整性级别目标（WGC 拒绝）→ `capture_failed`。**绝不用空白
+像素或任何 fallback 冒充成功**；失败类别也绝不伪报成「成功但空图」。
+
+**像素归属边界（如实登记）**：参照上游 2026-08-18-frame-pixel-zoom-regression.md:9/:34 的
+教训（macOS WindowServer 事件掩码判据**不迁移**——机制平台专属），适用的纪律是「坐标命中
+判定必须基于真实归属证据」：WGC 窗口捕获拿到的是目标窗口**自身**像素、被遮挡时仍像素等价
+（上游遮挡等价烟测机制 windows-source-development.md:215-221），而坐标点击的命中判定归 OS
+（遮挡窗/穿透层可截走点击）。ACode 缓解 = §10.4 前台校验（目标应用须唯一前台）+ A3 起
+element 路径优先（UIA pattern 不经坐标命中，§11.2）；**残余风险**（前台应用内部的覆盖窗、
+点击穿透层）如实登记，不伪称已消除。
+
+**预算阶梯（producer 自持 byte budget——上游机制：resize、byte-budget、DPI、投影全部在
+producer 内完成、不得要求模型计算，2026-08-18-frame-pixel-zoom-regression.md:58-59）**：
+
+- `maxDimension = 2000`（对齐宿主模型图像上限 `HOST_NODE_REPL_MODEL_IMAGE_MAX_DIMENSION`，
+  本仓 image-normalization.ts:25，评审二轮按当前检出复核修正）。
+- `inlineBase64BudgetBytes = 200 KiB`（对齐本仓 frame-contract.js:5
+  `OFFICIAL_CUA_IMAGE_INLINE_BASE64_BYTES` 与 image-normalization.ts:21
+  `MCP_IMAGE_INLINE_BASE64_BYTES`，评审二轮复核修正）。
+- 阶梯：原生分辨率捕获 → 最长边缩放至 ≤2000 → PNG 编码 → base64 ≤200 KiB？否 → 最长边
+  1600→1280→1024 逐级重编 → 仍超 → JPEG q80→q60（同尺寸，有损但几何不变）→ 仍超 →
+  `budget_exceeded` 诚实失败。【ACode 自定】
+- **论证（load-bearing）**：宿主通用归一化对 base64 ≤200 KiB 的图像块恒等放行
+  （image-normalization.ts:131 `base64Bytes <= MCP_IMAGE_INLINE_BASE64_BYTES` 直接 return，
+  评审二轮按当前检出复核修正）；producer 保证预算内 ⇒ 「模型所见栅格 = frame 注册表登记的
+  producer 栅格」
+  **结构性成立**，坐标投影（§10.9）不失配——这正是 frame-pixel 教训（所见非所击）在
+  ACode 宿主现状（frame-contract 占位、无 final-raster 权威通道）下的结构性规避。超出
+  200 KiB 的图像会被宿主压缩（尺寸可能变化）或转 artifact 文本（模型失视觉），两者都
+  破坏坐标一致性，故预算是硬契约不是优化。
+- JPEG 仅出现在 PNG 阶梯穷尽后（照片型内容）；几何不变 ⇒ 坐标投影仍成立；`encoding` 字段
+  如实上报。frame 注册表登记实际发射的栅格尺寸/bounds。
+
+**多显示器/DPI 边界（如实登记）**：
+
+- bounds/坐标恒为虚拟桌面物理像素；Helper 进程在 addon Init 设 Per-Monitor-V2 DPI
+  awareness（`SetProcessDpiAwarenessContext`；地板 17763 > 1703 保证 API 存在）——失败 →
+  `environmentProbe.dpiAware=false` → 输入/捕获 preflight 拒绝（§10.9），**绝不带病派发**
+  （DPI 虚拟化会让 WGC bounds、UIA 矩形与 SendInput 归一化坐标三者失配）。
+- 显示拓扑变化（增删显示器/改分辨率）→ frame 注册表**拓扑世代** +1，旧世代 frame 一律
+  stale（element_unavailable，reobserve 语义正确）；世代对照 = 捕获/使用时
+  `EnumDisplayMonitors` 指纹（monitor 集合 + 各 bounds），不依赖事件订阅（A2 无常驻
+  监听面）。【ACode 自定】
+- 副屏负坐标：全链一致虚拟桌面空间（capture bounds、frame 登记、坐标投影、SendInput
+  `MOUSEEVENTF_VIRTUALDESK` 归一化），上游机制同向（:268）。
+
+**落盘**：无（§1.3 不变量；image_ref 延后，oQ9）。
+
+### 10.8 watchdog 自适应收紧（oQ6 裁决落地）
+
+A1 的 2000ms 固定探活（windows-helper.ts:34）在 A2 改为**自适应**：会话层 held 镜像为空 →
+2000ms；非空（任何 mouseDown/hold 在途）→ 250ms。held 事实在 JS 层全量镜像（一切 held 都
+由 JS 调用发起，无需轮询 native），interval 重置成本 O(1)。父进程消失 → 按键遗留窗口从
+≤2s 收紧到 ≤250ms + 释放时长（§10.4 第 3 条路径）。不引入 native 父进程句柄等待
+（复杂度不成比例，oQ6 论证）。
+
+### 10.9 wire handler 行为面（预检门、app_ref、target、键盘解析、paste、request_access）
+
+**统一 preflight 门**（输入/捕获/paste 类 handler，每次派发前、admission 内执行；
+`environmentProbe` 结果**不缓存**——锁屏/解锁是动态事实，probe 本身 <5ms）：
+`interactiveDesktop=false ∨ sessionZero=true ∨ dpiAware=false` → `ok:false permission_denied`
+（§4.6.1 字面量）。A3 的 UIA 读走同一门（保守方向：非交互桌面上「能读不能动」的半可用
+状态会误导模型，整体诚实拒绝）。
+
+**app_ref（A2 切片）**：只接受 `{pid: 正整数}`（可附 `window_id`，A2 忽略——无窗口注册表；
+A3 生效）。校验 = 进程存活 + `QueryFullProcessImageName` 可读 canonical exe（死亡/不可读 →
+「target app is not running」字面量，§4.6.1）。name/bundle_id 形态 → A2 固定字面量
+`invalid_request`（"…requires a pid in this producer slice."）——**能力诚实：不做半套名称
+解析**；A3 收口全形态（§11.3）。`expectedForegroundPid` = 解析出的 pid。
+
+**target（A2 切片）**：
+- `{type:"element", index}` → `ok:false element_unavailable`（§4.6.1 A2 行——UIA 面未实现，
+  C09 同律诚实拒绝；SDK 侧 ELEMENT_UNAVAILABLE→reobserve→get_app_state 仍 unimplemented→
+  ACTION_UNAVAILABLE→never，链条诚实终止，模型不会无限打转）。
+- `{type:"coordinate", x, y, frame_id?}`：x/y 非负整数（模型栅格像素，SDK bindTarget 同判据
+  :334-341）。`frame_id` 有 → frame 注册表校验（未知/stale/拓扑换代 → element_unavailable；
+  frame.ownerPid ≠ app_ref 解析 pid → element_unavailable——对齐上游
+  `frame_dispatch_identity_mismatch` fail-closed 机制，computer-use-client.mjs:350-357 注释）；
+  无 → 绑定该 app scope 最近一次可动作 frame；**无任何 frame** → element_unavailable 固定
+  字面量（stale 行——「no actionable frame」语义；坐标必须以 producer 发射过的栅格为准，
+  不接受「裸屏幕坐标」——模型未见过的坐标就是猜测，猜测即 fail-closed）。
+- **坐标投影（producer 自持）**：`x_phys = frame.bounds.x + x_model × (frame.bounds.width /
+  frame.rasterWidth)`（y 同型）；§10.7 预算保证 model 栅格 = 登记栅格，投影为纯线性算术，
+  单测覆盖（含副屏负 bounds、缩放帧、非整数舍入——四舍五入到物理像素，越界 clamp 到
+  bounds 内并如实保留）。
+
+**键盘解析（JS 侧，`keymap.ts` 封闭映射表）**：`key.text` = 规范化 chord（SDK
+`normalizeKeyChord` 已做平台归一，producer **不信任**、按封闭词汇重解析）：`+` 连接
+修饰键与主键（如 `ctrl+shift+a`、`alt+f4`、`enter`）；键名封闭集 = a-z、0-9、f1-f24、
+esc/tab/space/enter/backspace/delete/insert/home/end/pageup/pagedown/方向键四、
+ctrl/alt/shift/win、常见标点（`- = [ ] \ ; ' , . /` 与反引号）；未知键名 → invalid_request
+固定字面量。文本输入走 `sendText`（KEYEVENTF_UNICODE，布局无关——不依赖目标键盘布局，
+上游机制同向 :268「CF_UNICODETEXT 与 async worker」的 Unicode 纪律延伸）；命名键/chord 走
+`pressKeys`（VK 序列）。`type.text` 按 ≤64 code units 分 chunk 注入（chunk 间检查 cancel，
+≤500ms 中断响应，§10.6）；chunk 边界绝不在代理对中间切分（UTF-16 完整性）。
+
+**paste（A2）**：序列 = preflight → app_ref 解析 → 前台校验 → `clipboardWriteText(text)` →
+`Ctrl+V` 注入（同一 admission 项、同一前台校验域）。delivery-state 细节：剪贴板已写入但
+`Ctrl+V` 未注入即失败 → **accepted + action_sent:true** 收据（剪贴板副作用已发生——
+message 固定字面量如实标注 clipboard-modified；绝不是 not_sent）。**剪贴板遗留**：paste
+不恢复原剪贴板内容——paste 的契约就是写剪贴板，恢复会与目标应用异步读剪贴板竞态；
+覆盖原内容（含非文本格式丢失）是**登记的产品副作用**（上游 clipboard 烟测的「恢复原文本」
+是测试夹具义务、非 paste 工具义务，windows-source-development.md:198-202 机制辨析）。
+
+**request_access（A2，只读快照）**：不入队。params `{capabilities?: string[]}`（接受，用于
+过滤报告；未知 capability 名忽略）。上游语义 = 只读权限快照、不直接触发系统 prompt
+（上游 2026-08-25-cua-request-access-onboarding-spec.md:9 机制）。Windows 无 TCC，快照 =
+preflight + 能力在场性：结果 = 单文本块 JSON
+`{ready, platform:"win32", accessibility, screen_recording}` + `_meta` 状态块（§12.2 形态，
+键 = `CUA_REQUEST_ACCESS_STATUS_META_KEY`，本仓 request-access-contract.js:1）：
+- `ready` = interactiveDesktop ∧ input 导出在场；
+- `accessibility` = "granted" ⇔ preflight 过（A2 判据 = 可输入；A3 起叠加 UIA 可用），
+  否则 "denied"；**"stale" 在 Windows 永不产出**（TCC 专属概念，§12.2）；
+- `screen_recording` = "granted" ⇔ preflight 过 ∧ capture 导出在场；"denied" ⇔ preflight
+  失败；"unknown" ⇔ capture 面未实现（A2 前过渡态）。判据 = 预检 + 导出在场双条件，
+  **不做 live 截图探针**（对齐上游 clipboard 能力上报机制：交互桌面预检 + 读写导出同时
+  成立才报 true，windows-source-development.md:318-320）。
+- 非交互桌面 → `ok:true` + `{ready:false, accessibility:"denied", screen_recording:"denied"}`
+  ——只读快照诚实报告不可用 ≠ 方法失败（SDK requestAccess 解析首文本块即得，
+  computer-use-client.mjs:1155-1160 机制）。
+- 结果**永不失败**（除 invalid_request 参数面）——它是探针，不是动作。
+
+**broker_info（A2 增量，additive）**：result 增 `capabilities` 子集
+`{input: boolean, capture: boolean, clipboard: boolean}`——由「导出在场性（typeof 检查）∧
+environmentProbe 预检」推导，每请求现算不缓存（能力真实性：声明与 dispatch 行为同源，
+漂移即被 §10.11 一致性测试抓住）。`uia` 键 A3 加入。wire spec §6.1「可以携带」richer
+字段 ✓；`probeHelperHealth` 只投影 bundle_id/pid（本仓 broker.js:237-243）→ health 门零
+影响；`version`/`kind`/`display_name` 仍延后（oQ4）。
+
+### 10.10 构建接线（binding.gyp A2 增量）
+
+- `libraries`（win 条件内）：`d3d11.lib`、`dxgi.lib`、`windowsapp.lib`（C++/WinRT）、
+  `user32.lib`（SendInput/前台/光标）、`gdi32.lib`、`windowscodecs.lib`（WIC）、
+  `shcore.lib`（DPI）、`ole32.lib`、`uuid.lib`。
+- `defines` 增补：`_WIN32_WINNT=0x0A00`、`NTDDI_VERSION=0x0A000006`（RS5=1809）——
+  **编译期地板与 §12.3 运行时地板（17763）对齐**：addon 只导入 1809+ API，更低版本系统
+  加载即失败 → §2.7 `native-addon-load-failed` exit 2 诚实报告，结构性排除「低版本跑
+  半套」。
+- `sources` 增补：§5.3 布局树的 6 个 A2 .cc（文件组织可微调，binding.gyp sources 清单是
+  契约面，契约测试锁定，§16 A2-AC-1）。
+- N-API 纪律不变：pin 9（AsyncWorker/TSFN/Promise/Buffer/TypedArray 全部 ≤9，§4.4）；
+  `NAPI_CPP_EXCEPTIONS` + `/EHsc` 既有（§4.5——C++/WinRT `hresult_error` 走异常通道，
+  A1 的裁决在 A2 兑现）；worker 线程内允许阻塞等待（`.get()`），**V8 主线程绝不阻塞**。
+- Electron 地板复核（计划文档必读项）：desktop pin `electron=41.10.7`
+  （packages/desktop/package.json:74，本批按当前检出复核）→ 内嵌 Node 24.x → napi 10 >
+  pin 9，无需任何 ABI 动作（§4.4 地板表结论不变，§12.5 同文）。
+
+### 10.11 A2 模块规则与测试落点
+
+**模块规则（契约，§5.3 布局树注记的展开）**：
+1. `backend-a2.ts`/`input-session.ts`/`frame-registry.ts`/`keymap.ts` 纯 TS + 注入 driver，
+   **不得 import** `native-driver.ts`（防漂移 = 契约测试对源文本做静态 import 断言，
+   CI 常驻）；
+2. `native-driver.ts` 只被 `windows-helper.ts` 组装路径 import；
+3. driver 接口 = §10.3 二分错误契约 + §10.1 签名（fake/real 同接口）。
+
+**测试落点**：
+- `apps/acode-cli/tests/cua-producer-a2-logic.test.mjs`（**CI 常驻**，tsx 深导入
+  `cua-producer/src/**.ts`，fake driver）：参数验证器全边界、admission（串行/队满/排队
+  超时/旁路）、stop 五步时序、§10.4 五条 seam 单测（含 chord 修饰键残留场景与收据
+  held-空不变量横扫）、**三态收据的 happy-path 全覆盖**（accepted/possibly_sent/
+  interrupted——真实副作用在 CI 不可达，fake driver 是成功路径形态断言的唯一落点）、
+  坐标投影算术、keymap 封闭集、paste 剪贴板遗留语义、request_access 形态、broker_info
+  capabilities 一致性（capability=true ⟺ handler 注册；false ⟺ unimplemented——两面同源）。
+- `apps/acode-cli/tests/cua-producer-a2-native.test.mjs`（**win32 + 工件双守卫**，§6.1
+  同律）。**默认套件零真实副作用纪律（硬规则）**：本文件在 win32 开发机上随
+  `pnpm --dir apps/acode-cli test` **实跑**，任何用例都不得向开发机留下真实注入、剪贴板
+  覆写或前台应用可见变更——逐用例钉死如下（评审二轮补钉）：
+
+  | 用例 | 允许的真实面 | 副作用判定与夹具纪律 |
+  | ---- | ------------ | ---------------------- |
+  | environmentProbe / foregroundPid / cursorPosition / asyncKeyState / heldInputSnapshot 真实性 | 只读查询 | 零副作用；heldInputSnapshot 断言**初值为空**（不断言非空——非空须实压，默认套件禁实压） |
+  | moveTo 负控制 | 确认已死 pid → `foreground_lost` + cursorPosition 前后一致 | 零注入（校验先于注入拒绝，§10.4 规则 1） |
+  | captureDisplay 实捕 | WGC 单次屏幕读回 | 只读；断言魔数/尺寸 ≤2000/base64 ≤200 KiB/bounds>0/budgetFit；**图像字节不落盘、不打印、断言即弃**（屏幕内容是隐私面） |
+  | clipboardWriteText | **仅超限拒绝面**：8 Mi+1 code units → 拒绝错误 | 参数校验先于 OpenClipboard——零剪贴板写。**happy-path 写入不进默认套件**：真实覆写开发机剪贴板且不可恢复——producer 无读回导出（§10.1 设计注记 4），上游「恢复原文本 = 测试夹具义务」机制（windows-source-development.md:198-202）在 ACode 导出面上**结构性不可履行**，故裁决默认套件不写剪贴板；真实写入闭环 = paste 动作本身，归人工 C07（§15.2 / A3 wire 级人工验收，操作者知情目标） |
+  | held 释放 | **不实压任何键/鼠**（实压 = 真实注入） | held 语义的真机面 = `--pointer` 步骤 4（f13 hold + wire stop + asyncKeyState 跨进程佐证，§15.2）；默认套件的顺序/计数/镜像断言全在 a2-logic fake 面 |
+  | wire 级 8 handler 形态（真 fork + 真 pipe + 真角色 B） | **仅负控制夹具**：app_ref=确认已死 pid（→「target app is not running」，派发前拒绝）、前台负控制（→ foreground_required，零注入）、非法参数/未知键（→ invalid_request）、element target（→ A2 诚实拒绝字面量）、request_access（只读预检快照） | 全部落「确定未派发」域（§10.12）——零真实注入/零剪贴板写/零破坏；happy-path 三态收据形态归 a2-logic（fake）与 C08（§14），真实注入的 happy path 只存在于 `--pointer`/人工 C07 |
+
+- C08-A2 七 case：§14（CI 常驻，fake driver——真 native 的失败注入不可确定化，§14 已裁决）。
+- 烟测：§15 `--capture`/`--host`（真机门禁）+ `--pointer`（人工 C07）。
+
+### 10.12 delivery-state 派发侧契约（C08 的 spec-first 前置；计划书 §7.6 C08 补记 (1)）
+
+**哪些响应携带 delivery-state**（wire 层完整枚举）：
+
+| 响应形态                                   | 载体与键                                                                | 适用                                                       |
+| ------------------------------------------ | ------------------------------------------------------------------------ | ------------------------------------------------------------ |
+| `ok:true` 成功收据                          | `structuredContent` + 单文本块 JSON 同键：`{action_sent:true, dispatch_status:"accepted"}` | 全部变更类成功（10/10，含 stop）；**变更类成功必须携带**（wire spec §3.3 禁空成功） |
+| `ok:true` + `isError:true` 歧义失败收据     | `{dispatch_status:"possibly_sent", action_sent:true, code:<17 码内>, reason:"native-dispatch-outcome-unknown"｜"native-timeout", message:<固定字面量>}` | 派发已启动且结果不可证（§10.3 NativeAmbiguousError 类）      |
+| `ok:true` + `isError:true` 中断/部分收据    | `{dispatch_status:"accepted", action_sent:true, code:"controller_busy"｜"internal", message:<固定字面量>}` | stop 中断（§10.6）、injection_partial                        |
+| `ok:false`                                  | **无 delivery-state 字段**（error 形态无 result 载体）                    | 仅限「确定未派发」失败（校验/预检/前台拒绝/队满/not_sent 类） |
+
+**铁律（三条，全部可测）**：
+1. 变更类方法**派发启动后禁止 `ok:false`**——角色 B 对应用层 `ok:false` 恒置
+   `possiblySent=false`（wire spec §5.4，已落地并测试），`ok:false timeout` 会被 SDK 归
+   TIMEOUT→retry→**重放风险**；派发后失败一律走 ok:true isError 收据（execute 原样透传，
+   本仓 index.js:97-99「不改写成功结果的形态」，已核实；assertOk 挖 action_sent ⇒
+   retry=reobserve，wire spec §4.5）。
+2. `broker_unavailable` 仅限 WARMING（READY 后结构性禁产——handler 层无产出路径；
+   wire-server 状态门是唯一产点，A1 已锁定单向性）。warming 期请求根本不触达 native
+   （§2.5）⇒ 天然 not_sent ⇒ 可重试（wire spec §5.3 约束的 producer 侧落实）。
+3. 只读方法（list_apps/list_windows/get_app_state/request_access）**不携带** delivery-state
+   （无副作用可交付；重试恒安全）——收据键缺席即语义，不得画蛇添足填 `action_sent:false`
+   混淆 SDK 判定面（receiptOf 对 undefined 不合并，computer-use-client.mjs:169-201 机制）。
+
+**失败注入语义** = §10.3 二分判据接口（Rejected/Ambiguous）；C08 十 case 以 fake driver
+按该接口注入（§14）。**下游链条（已落地，只引不改）**：producer 收据 → execute 透传 →
+链路甲 → SDK assertOk（actionSent ∨ possibly_sent ⇒ reobserve，绝不盲重放）；传输层歧义
+（超时/断连）→ 角色 B `details.possiblySent=true` → execute 产 `CUA_NOT_READY
+{reasonCode:"possibly_sent", retryable:false}`（本仓 index.js:107-119，已核实）。两条来源
+在 SDK 汇成同一保证：**可能已产生副作用的动作绝不自动重放**。
+
+## 11. A3 切片：UIA 六工具（阶段 3 的 producer 落地面）
+
+### 11.0 范围
+
+**交付面**：① 6 个 UIA wire handler（`list_apps`/`list_windows`/`get_app_state`/`set_value`/
+`select_text`/`perform_action`）——**14/14 handler 齐套**，A1 的 unimplemented 面收口为零
+（A1 集成测试的「14 方法逐一 unimplemented」用例须同批反转，§16 A3-AC-10）；② app_ref
+全形态解析（§11.3）与 A2 element-target 拒绝面收口；③ MTA worker + 卡死隔离（§11.1）；
+④ 树文本/元素索引契约（§11.4）；⑤ 三注册表（§11.5）；⑥ `_meta` targetApp 展示投影
+（§11.6）；⑦ C08-A3 三 case（§14）；⑧ 烟测 `--uia` + `--host`/`--capture` 的 wire 扩展
+（§15）。**透明拉起延后至 A3b**（§11.8，设计要求已留档）。
+
+### 11.1 MTA worker 线程要求（计划文档 §7.5 阶段 3 点名难点的裁决）
+
+- **专属常驻 MTA 线程**：全部 UIA COM（`IUIAutomation` 及元素/pattern 调用）只在一个
+  `CoInitializeEx(COINIT_MULTITHREADED)` 的专属 std::thread 上执行；JS 主线程只经
+  Promise/TSFN 收结果（A1 §4.3 机制约束的落地形态）。**COM 接口指针绝不过线程边界**
+  （冻结元素引用留在 native 注册表，§11.5；JS 只持不透明 token）。
+- **任务模型**：FIFO 任务队列 + 每任务 deadline + cancel 原子旗（与 §10.6 的
+  cancelOperations 同源）。树遍历在**元素粒度**检查 cancel/deadline——单个 COM 属性调用
+  不可中断（UIA 跨进程调用可被无响应目标挂死，这是平台事实，不是实现缺陷）。
+- **预算（钉死）**：观察类（captureUiTree/listWindows/listApplications）8s——对齐上游
+  实测记载的 8 秒遍历期限机制（Godot AX 树超期安全返回错误、未派发动作，上游
+  2026-08-18-ax-action-state-consistency.md:123-124）；单 pattern 调用（SetValue/
+  SetSelection/Invoke/SetFocus/…）3s；超时 → `uia_timeout` 类型化错误。
+- **卡死隔离（poison-detach-rebuild）**：deadline 到期**不等 COM 返回**——把 worker 标记
+  poisoned、`detach()` 线程（COM 挂死线程不可安全 kill，泄漏它并如实登记）、本次调用以
+  `uia_timeout` 失败、spawn Replacement worker 服务后续调用。poisoned 累计 ≥3 → Helper 以
+  `internal-helper-failure` + exit 1 自终结（§2.7 既有封闭表，**零新增失败类别**；自终结
+  同样先经 §10.4 规则 3 的统一释放收口——held 零遗留对该路径同样成立）——宿主经
+  helper-reported-error 失败该代、按需恢复 fork 新代（windowsCuaDevHelperHost.ts:396-399
+  + 代际清理，既成事实）。【ACode 自定；上游机制注记「UIA worker 的进一步隔离尚未完成」
+  （windows-source-development.md:268 末句）——本方案即 ACode 对隔离面的钉死，实现批次
+  发现更优形态须回写本文】
+- **`uia_timeout` 的 delivery-state 分流（§10.12 铁律 1 的 A3 具体化）**：只读观察 →
+  `ok:false timeout`（未派发，重试安全）；变更类 pattern 调用已发出 → **possibly_sent
+  收据**（SetValue 可能已在目标进程生效——不可证即保守）。
+- **UIA 树内容 = 不可信输入**（A1 §4.3 / handoff §10 纪律）：不当指令执行、不整树进日志
+  （value 截断 §11.4）、不回显进任何错误消息（§4.6.1 零插值已结构性保证）。
+
+### 11.2 六工具 wire 契约（params → result；params 封闭集的单一事实源 = §13 表）
+
+SDK 消费面已机制核实（computer-use-client.mjs：appStateOf :516-560、inventory :1089-1100、
+elements() :1073-1084、observe :587-620）：
+
+- **`list_apps({})`** → 单文本块 JSON `{apps:[{pid, name, bundle_id, exe_path, active,
+  window_count}]}` + `structuredContent` 同构。app 集合 = 有 ≥1 个可见顶层窗口的进程
+  （EnumWindows 收集 → pid 去重；含 shell——Progman/WorkerW 也是可观察目标，如实列出）；
+  `name` = exe basename（+AUMID display name best-effort，oQ11）；`bundle_id` = AUMID ∣
+  null；`exe_path` = canonical 全路径（`QueryFullProcessImageName`）；`active` = 前台 pid
+  归属；按 pid 升序（确定性）。
+- **`list_windows({app_ref?})`** → `{windows:[{window_id, title, app:{pid,name,exe_path},
+  bounds, minimized}]}`。`window_id` = native 窗口注册表不透明整数 token（Helper 代内单调、
+  不复用；失效 token → element_unavailable）；`title` 截断 ≤512 code units（用户内容——
+  只进 wire 结果（产品面），绝不进日志/stderr/IPC/错误消息）；cloaked 窗口（DWM
+  `DWMWA_CLOAKED`）过滤不列（UWP 挂起态等非真实可见窗口——列出来就是给模型假目标）。
+- **`get_app_state({app_ref, window_id?, include_screenshot?, disable_diffing?,
+  tree_shown_to_model?, detail?})`** → CallToolResult：
+  - `content` = [树文本块（§11.4 格式）] + [image 块（`include_screenshot:true` 且捕获
+    成功时；`{type:"image", data:<base64>, mimeType:"image/png"|"image/jpeg"}`）]；
+  - `structuredContent` = `{state_id, app:{pid,name,bundle_id,exe_path}, window:{window_id,
+    title, bounds}, elements:[{index, role, name, value?, bounds?, patterns?}], text,
+    snapshot_mode:"full", frame_id?, truncated?}`——**appStateOf 四必备字段
+    （state_id/elements/app/window）恒在**（缺失 → SDK 结构性失败
+    STRUCTURED_STATE_UNAVAILABLE，:537-552 机制；producer 侧任何失败都走 error 面，绝不
+    产出缺字段的成功结果）；`frame_id` 在发射图像时恒登记并回报（SDK frameIdOf :209-220
+    挖掘点）；
+  - `_meta` targetApp（§11.6）；
+  - 窗口选择：`window_id` 给 → 该 token（失效 → element_unavailable，**绝不回退最前窗口**
+    ——上游的 window_id_fallback 降级形态被 SDK 视为 STALE_STATE 失败（:1032-1040 机制），
+    ACode 直接 fail-closed，不产出 `window_id_fallback` 字段）；未给 → 该 pid 的前台窗口
+    （若前台归属它），否则 Z 序最顶可见窗口（确定性规则）；0 窗口 → element_unavailable
+    专属字面量（"…has no observable window."，§4.6.1——「target app is not running」不
+    适用：进程在但无窗口，两种失败对模型的指引不同，字面量分开）。
+  - `include_screenshot:true` 时走 §10.7 捕获（窗口捕获 + 前后双复核）；**捕获失败不拖垮
+    树**：树照常返回 + 告知性文本块 `[screenshot unavailable: <固定原因码>]` +
+    `structuredContent.non_actionable_reason`（SDK getScreenshot/getAXStateAndScreenshot 对
+    该形态已有消费面——:653-694 机制；坐标 actionability 随帧缺席诚实收敛：无新 frame
+    登记）。`screenshot_blank` 告知位：A3 v1 不做空白检测（WGC 失败已 fail-closed，
+    「成功但全黑」在锁屏排除后主要是合法内容——如实登记不做启发式冒充）。
+  - `disable_diffing`/`tree_shown_to_model`/`detail`：接受（封闭 schema 内）；A3 v1 恒
+    full 快照（`snapshot_mode:"full"`、无 `base_state_id`——SDK 对 full 天然兼容，
+    observe :587-620 机制），`tree_shown_to_model` 记录进 state 注册表元数据（诊断/未来
+    位移台账用，§11.8 延后项），**不作 load-bearing 判定**（登记为已知取舍：上游位移台账
+    设计细节不在 staging，宁可不做也不做错——SDK 侧已有「只截图观察后强制整树」的
+    自防护，:600-616 机制）。
+- **`set_value({target, app_ref, value})`** → 收据。element target 必备（坐标 target →
+  invalid_request 固定字面量——set_value 无坐标语义）；ValuePattern（或 LegacyIAccessible
+  Value）→ 缺失 `not_settable`；只读元素（IsReadOnly）→ `not_settable`；成功 =
+  accepted 收据 + 写入后**读回验证**（CurrentValue 对比，不一致 → isError 收据
+  `code:"internal"` + action_sent:true——写已发生但结果不符，诚实上报）。
+- **`select_text({target, app_ref, text_range})`** → 收据。`text_range = [start, length]`
+  整数二元组（SDK resolveTextRange :813-815 已核实；负数/非整数/length 缺省 0 合法 =
+  光标折叠）；TextPattern/TextPattern2 `SetSelection`（DocumentRange 克隆 + MoveEndpointByUnit）
+  → 缺失 `not_selectable`；start 越出元素 value 长度 → invalid_request（确定性参数错，
+  未派发）。
+- **`perform_action({target, app_ref, action})`** → 收据。`action` 封闭词汇（A3 v1）=
+  `{invoke, toggle, expand, collapse, select, focus}`，映射：`invoke`→InvokePattern、
+  `toggle`→TogglePattern、`expand`/`collapse`→ExpandCollapsePattern、
+  `select`→SelectionItemPattern.Select、`focus`→IUIAutomationElement.SetFocus。滚动语义
+  **一律走 `scroll` 工具**（element target 的 ScrollPattern 路径见下条「指针三工具」），
+  perform_action 不受理 scroll 类 action——词汇外或元素未广告（观察树 patterns 注记
+  未列出，§11.4）→ `action_unavailable`（SDK guidance「do not guess one」同律，
+  :791-798 机制）。
+- **指针三工具的 element target 路径（A3 收口 §10.9 的 A2 拒绝面）**——「AX element →
+  visual fallback → verify」运行时契约的 Windows 落地（上游机制：只要树能定位并表达动作
+  就用 element 路径、保持后台安全不抢焦点，2026-08-18-frame-pixel-zoom-regression.md:53；
+  element 路径不经坐标命中 = §10.7 像素归属残余风险的正面缓解）：
+  - `left_click(element)`：① 语义等价条件（mouse_button=left ∧ click_count=1 ∧ 无
+    modifiers）→ InvokePattern.Invoke 优先（后台安全）；② 其余形态（右键/中键/多击/
+    修饰键）或无 InvokePattern → `GetClickablePoint` + SendInput 物理点击（§10.4 前台
+    校验全程适用）；③ 两者皆不可 → `action_unavailable`（元素无法表达该点击）。
+    TogglePattern 不替代点击（toggle ≠ click 语义，不猜）。
+  - `scroll(element)`：ScrollPattern 在 → `ScrollByAmount`（direction/scroll_amount 映射，
+    1 页 = 3 单位对齐 §10.2）；不在 → clickable point + `scrollAt`（前台校验）；皆不可 →
+    `action_unavailable`。
+  - `left_click_drag(element from/to)`：无 pattern 等价物——两端 `GetClickablePoint` +
+    native `drag`（前台校验；任一端无 clickable point → `action_unavailable`）。
+  - 收据如实标注路径（message 固定字面量分支：pattern-dispatched ∣ point-dispatched——
+    零插值，模型/排障可见「动作如何落地」的事实类别）。
+- **元素活性复验（一切 element 动作的统一前置）**：动作执行前在 MTA worker 上取
+  `CurrentRuntimeId` 与冻结快照对比 + `IsOffscreen` 检查 → 不一致/消失 → `stale` →
+  `ok:false element_unavailable`（fail-closed；与 SDK「索引在观察时冻结、元素消失由
+  Helper fail-closed」的契约一致——act() 注释 :621-644 机制）。复验与 pattern 调用同一
+  worker 任务内（不跨任务留窗口）。
+
+**C09 落实（红线，计划书 §7.6）**：A3 未完成/未注册的面上**绝不返回空树冒充成功**——
+`elements:[]` 只在遍历真实成功且 0 个可及元素时出现（判定基准：native captureUiTree
+成功返回 ∧ 枚举计数为 0 ∧ truncated=false）；native 失败/超时/挂死一律 error 面
+（timeout/element_unavailable/internal），**结构上不存在「失败读成空树」的路径**
+（captureUiTree 的错误与空结果是两个类型化出口）。A3 落地前（A2 切片）六工具保持 A1 的
+`unimplemented`（→ACTION_UNAVAILABLE→never）——显式不可用，零假成功。
+
+### 11.3 app_ref 全形态解析（A3 收口 §10.9 的 A2 限制）
+
+- **形态**：`{pid}` / `{name}` / `{bundle_id}` / 组合（+`window_id?`）。SDK 绑定收敛后
+  通常携 `{pid, bundle_id}`（:1013-1030 机制）——组合形态须**一致**（pid 与 bundle_id
+  解析结果冲突 → invalid_request，绝不择一）。
+- **解析顺序与判据**：
+  1. `pid`：进程存活 + canonical exe 可读（`QueryFullProcessImageName`）；
+  2. `bundle_id`：先 AUMID 精确匹配（packaged app：经可见顶层 HWND 的
+     `PKEY_AppUserModel_ID` 反查唯一 pid——0 或多候选 fail-closed，上游机制
+     windows-source-development.md:280-287）；再 canonical exe 全路径匹配（大小写不敏感
+     ——NTFS 语义；路径规范化后比较）；
+  3. `name`：在 list_apps 集合内做 display name / exe basename 大小写不敏感匹配。
+- **唯一候选纪律**：0 候选 → `Computer Use target app is not running.`（§4.6.1；
+  **含 SDK isAppNotFound 兼容子串** "target app is not running"，:409-413 正则机制——
+  该子串是 SDK alternateAppRef 换字段重试的触发器，字面量改动须两侧同审）；≥2 候选 →
+  `invalid_request`（"…pass a pid." 字面量）——**绝不猜 active、绝不取枚举第一个**
+  （上游 launcher 纪律的解析侧同型：禁止通过 active 或枚举第一项猜测，
+  windows-source-development.md:272 机制）。
+- **前台校验的 packaged 修正（收口 §10.4 限制 2）**：`GetForegroundWindow` 的 pid 为
+  `ApplicationFrameHost.exe` 时，经该 HWND 的 `PKEY_AppUserModel_ID` 解析真实应用 pid
+  再与 expectedForegroundPid 比对；解析失败 → 判负（fail-closed 方向不变）。
+- **identity 展示与解析分离**：解析只用 pid/exe_path/AUMID（canonical 身份）；本地化
+  display name 只服务展示（`_meta`/树文本头部）——上游「本地化名只在第一跳解决一次、
+  后续拿无歧义身份」的收敛纪律（SDK :1013-1030 机制）在 producer 侧的对偶就是
+  「身份字段永远 canonical」。
+
+### 11.4 树文本格式与元素索引稳定性
+
+**格式（ACode 原创；兼容既有渲染层解析面——本仓 cuaResultState.ts:163/:175 的
+`^\s*\[(\d+)\]\s+(.+)$` 行判据、readElementName 的 " = " 分隔与 " (…)" 后缀剥离约定，
+:128-146，本批核实）**：
+
+```
+app: <identity-token> pid=<pid> "<display name>"
+window: [<window_id>] "<title>"
+[0] window <name>
+  [2] pane <name>
+    [5] edit Document = <value 截断至 200 code units>… (editable, focusable)
+```
+
+- 每行 = 深度×两空格缩进 + `[index] role name[ = value][ (patterns 注记)]`；
+- `role` = UIA ControlType 的**稳定英文名**（button/edit/text/list/list-item/pane/window/
+  menu-item/…封闭映射表，绝不本地化——渲染层 `/^text\s+/iu` 特判与模型习惯都依赖稳定
+  词汇）；
+- `value` 单行化（换行/回车 → 空格）、截断 ≤200 code units 加 `…`（隐私 + 预算：整树进
+  模型上下文的量必须受控）；
+- patterns 注记 = 该元素广告的动作词汇（§11.2 perform_action 封闭集 ∩ 元素实有 pattern，
+  如 `(invokable)`、`(editable, focusable)`、`(toggleable)`）——模型「do not guess one」
+  的供给侧对偶：**只广告真实存在的动作**；
+- **头部 identity-token**：AUMID 优先、否则 exe basename，再经 `[^A-Za-z0-9.-]` → `-`
+  净化（唯一目的 = 渲染层文本回退正则 `[A-Za-z0-9.-]+` 的 best-effort 兼容，
+  cuaResultState.ts:28；**身份权威永远是 structuredContent.app 与 _meta**——净化 token
+  只作展示，绝不用于任何解析/派发判定）。渲染层 Windows 完整兼容 = §12.7 复核项（oQ10）。
+- **预算**：≤3000 行 ∧ ≤256 KiB 文本；超限 → 遍历即停（native 侧预算感知），末行固定注记
+  `[tree truncated: showing first <N> of <M> elements]`，`structuredContent.truncated=true`，
+  `elements` 数组与文本行**同集合截断**（不变量：文本里可见的 index ⇔ 注册表可解析——
+  截断外的 index 不进文本也不进注册表可动作集，模型引用不到；M 如实报告总量）。
+- **索引稳定性契约**：`index` = 遍历序（document order，确定性）；观察即冻结——native
+  元素注册表以 stateToken 键持冻结 COM 引用 + RuntimeId 快照（§11.5）；动作按
+  「**该 app scope 最新一次观察**」解析索引（SDK 契约：索引身份只有 app + index、
+  wire 不携观察凭证，:302-308 注释机制）；新观察覆盖注册表 → 旧 state_id 的 element
+  target → `element_unavailable`（stale → SDK reobserve ✓）；索引在最新观察中不存在 →
+  同码。**跨观察索引兼容被结构性排除**：每次观察是独立冻结域，「旧树索引在新树静默
+  指向另一元素」不可能发生（旧域已废 → fail-closed，而非错派发）——SDK 侧同型教训
+  （同一 `[35]` 在两棵树里指向不同元素，:1050-1052 注释，评审二轮复核修正）在 producer
+  侧的根除。
+- 树内**不含**：元素全量属性转储、任何凭据/pipe 名、截断外的 value 全文——树是模型的
+  操作视图，不是诊断转储（渲染层 forDisplay 对 elements 全表已有 32KB 级预算顾虑，
+  :490-508 机制；producer 侧从源头节制）。
+
+### 11.5 三注册表（state/window/frame）
+
+- **state 注册表**（会话层元数据 + native 冻结域）：`state_id`（不透明串
+  `st-<generation>-<counter>`，代内唯一、不复用）→ {appScope(pid), nativeStateToken,
+  windowId, createdAt, elementCount, treeShownToModel}；**每 app scope ≤16 个 state LRU、
+  ≤8 个 app scope**（内存有界）；逐出 = 通知 native 释放冻结 COM 引用（AddRef/Release
+  配对是 native 职责，JS 绝不触 COM）。
+- **window 注册表**（native）：`window_id` token → HWND + 身份快照（pid/exe/AUMID）；
+  使用前复验（`IsWindow` + pid 比对）→ 失效 `element_unavailable`。
+- **frame 注册表**（§10.7）：`frame_id`（`fr-<generation>-<counter>`）→ {rasterWidth/Height,
+  bounds, ownerScope(pid ∣ "display:<n>"), topologyEpoch}；get_app_state(include_screenshot)
+  成功捕获即登记（该 app scope 的最新可动作帧）；坐标 target 的隐式绑定与投影按 §10.9。
+- 三注册表全为进程内存态（§1.3）：**代际即失效**——新 Helper 代的一切 token 全新，旧代
+  token 一律 unknown → element_unavailable（SDK 侧 STALE_STATE/reobserve 语义自然承接，
+  无需跨代协议）。
+
+### 11.6 结果 `_meta`：targetApp 展示投影
+
+- app-scoped 结果（get_app_state + 一切带已解析 app_ref 的动作收据）附
+  `_meta["acode.cua/target-app-display-v1"]`（键值 = 本仓 contracts 常量，
+  tool-result-metadata.ts:23，本批核实）`= {schemaVersion:1, displayName?, iconLocators:[…]}`；
+  `iconLocators` ≤3、形态过本仓 `cuaTargetAppDisplaySchema`（tool-result-metadata.ts:25-44，
+  strict）：`{kind:"windows-executable-path", value:<canonical exe 全路径>}` 恒在 +
+  `{kind:"windows-aumid", value:<AUMID>}`（有则附）；`displayName` ≤512 截断。
+- **权威边界（上游 target-app-display 机制 :44-52）**：展示身份只来自**本次调用已验证
+  解析**的身份（绝不回填模型输入的 app_ref 原文；模型给的 name/bundle_id 只是待验证
+  引用）；renderer/desktop 禁止按 PID 反查。
+- `CUA_APP_ASSOCIATIONS_META_KEY`（host-display-contract.js:1）**不产出**——本仓 grep
+  零消费者需求（本批核实其常量面存在、无 producer 侧义务），加产出 = 无消费方的未验证面，
+  延后至出现真实消费者。
+- `CUA_REQUEST_ACCESS_STATUS_META_KEY` 由 request_access 产出（§10.9/§12.2）。
+
+### 11.7 A3 构建接线
+
+- `libraries` 增补：`uiautomationcore.lib`、`dwmapi.lib`（DWM cloaked 判定，
+  list_windows 过滤）。
+- `sources` 增补：§5.3 布局树的 4 个 A3 .cc；`binding.gyp` sources 清单仍为契约面
+  （契约测试锁定，§16 A3 批次扩展该断言）。
+- N-API/异常/DPI 纪律不变（§10.10）；UIA COM 初始化在 MTA worker 内（§11.1），addon
+  Init 不碰 UIA（加载面零 UIA 依赖——probe/加载失败面不因 UIA 环境扩大）。
+
+### 11.8 延后登记（不在 A3 v1；设计要求留档，实现批次须先补机制调研）
+
+- **A3b 透明拉起**（上游把 `open_application` 于 2026-09-16 整体删除、启动/激活并入
+  `get_app_state` 透明拉起的语义——wire spec §8.3 已照录上游 computer-use-client.mjs
+  :52-57 注释；launcher/rebind 机制 = windows-source-development.md:272-287）：A3 v1 对
+  未运行 app 诚实报「target app is not running」（模型/用户可自行启动后重试）。A3b
+  实现时的**硬性纪律**（上游机制转述留档）：启动前异步采集一次 UIA PID/identity 快照；
+  launcher pid 可解析时优先；无窗口 launcher 换绑 GUI child 须同时满足「不在启动前快照 +
+  非空 canonical executable 身份 + 与 launcher 解析身份精确相等 + 当前仍由 UIA 暴露 +
+  候选唯一」；旧进程/仅 basename 相同/不同路径同名/多候选一律 fail-closed；禁止 active/
+  枚举第一项猜测；packaged app 走 `IApplicationActivationManager` + AUMID → 可见顶层
+  HWND `PKEY_AppUserModel_ID` 唯一 pid（0/多候选 fail-closed）；UIA 注册可比 spawn 晚
+  约 2s → 有界 30×100ms 等待，延长预算不得放宽任一条件；canonical lookup 缺失/抛错/
+  非绝对路径 → 不得把 preferred pid 当成功证据（TOCTOU/PID 复用防护）；UIA 缺席时
+  spawn 前拒绝。启动是高副作用面——A3b 须独立 AC（含「已有 app 绝不二次启动」「PID
+  分支绝不把窗口标题送启动器」——上游实机曾踩的两缺陷，:356-357 机制记载）。
+- **delta 快照 / 稀疏索引裁剪 / 位移台账**（`snapshot_mode:"delta"`、`base_state_id`、
+  `tree_shown_to_model` 的 load-bearing 化）：SDK 对 full-only 天然兼容（§11.4）；
+  延后无正确性代价（oQ12）。
+- **空白栅格检测**（`screenshot_blank` 告知位）：§11.2 登记的理由（锁屏已排除后全黑多为
+  合法内容）；若真机验收发现「成功但无意义栅格」实态，再补启发式（须回写本文）。
+
+## 12. 阶段 4：平台判定、权限契约收口（设计契约；宿主文件改动由阶段 4 实现批次执行）
+
+### 12.0 范围与红线
+
+范围 = 计划书 §7.5 阶段 4 列举的判定面收口（request-access-contract.d.ts:5 类型字面量、
+cuaPermission.ts:8 运行期 zod、cuaOsSupport.ts:20 resolveCuaOsSupport、node.ts:2182/2193
+复核）+ 本批源码核查**增补的第四处同型字面量**（§12.2，oQ13 登记确认）。
+
+**红线（三条，全部可测）**：
+1. **macOS 语义零改动**：darwin 判定分支行为、TCC grant 语义、`stale` 值域、12.0/Darwin 21
+   地板（cuaOsSupport.ts:7-10 常量不动）、LaunchServices 授权流、getStatus 的 darwin-only
+   门（node.ts:1886-1891 非-darwin 早退，本批核实）全部不变。阶段 4 只**扩 win32 受理面**，
+   不改任何 darwin 路径的可观测行为（C14「macOS 保持既有语义」）。
+2. **Linux 明确 not-applicable**：不产生半成品路径（C14）；`resolveCuaOsSupport` 的
+   非-darwin/非-win32 分支返回值不变。
+3. **判定收口 ≠ 功能启用**：本阶段不翻任何产品启用门（`isCuaEnabledForContext`、
+   internal/dev 特性 flag、官方插件 enablement 都是另一套事实源）；Windows CUA 的用户
+   可见启用由既有门控体系决定，判定面只负责「OS 是否够格」这一层诚实回答。
+
+### 12.1 request-access-contract.d.ts:5（类型字面量）
+
+`packages/acode-cua/request-access-contract.d.ts:5` 的 `platform: "darwin"` →
+`platform: "darwin" | "win32"`（本批核实现值：`CuaRequestAccessStatus` 接口内，
+schemaVersion/grantOwner/accessibility/screenRecording 四字段不变）。
+`request-access-contract.js` 的占位 `safeParse`（恒 `{success:false}`，:3-10，本批核实）
+**保持 fail-closed 不回填**——补实属占位包治理面，归属与时点见 oQ8；阶段 4 只扩类型与
+两处 zod（下节），类型面先行不产生运行时行为变化（.d.ts 无运行时）。
+**不变量 3 兼容性论证**：`platform` 从字面量扩为联合是**放宽受理**（accept-widening）——
+既有消费者读到的 darwin 值域不变；写侧（未来 Windows producer 状态）获得合法形态。
+module-boundary.md 不变量 3「导出名与类型签名保持一致」的对象是**上游真实 CUA 包的
+API 兼容**（消费者零改动）；本改动由计划书阶段 4 直接授权（「`platform` 类型字面量扩为
+联合」原文），且需在 module-boundary.md 同批登记一行校准（登记义务写入 §16 P4-AC）。
+
+### 12.2 cuaPermission.ts:8（运行期 zod）+ 第四处同型字面量（本批发现）
+
+- `packages/shared/src/acode-protocol-v4/cuaPermission.ts:8`：`z.literal("darwin")` →
+  `z.enum(["darwin", "win32"])`；`.strict()`、`schemaVersion: z.literal(1)`、
+  accessibility/screenRecording 值域、`requiredCuaPermissionsForRequestAccessStatus`
+  （:16-27）全部不变。v4 协议面纪律：这是**新命令/事件只进 v4** 的既有 schema 的受理面
+  扩展，非新增命令（AGENTS.md 协议边界遵守：不改 legacy 面）。
+- **第四处（grep 增补，oQ13）**：`apps/acode-cli/packages/contracts/src/tools/
+  tool-result-metadata.ts:49` 的 `cuaRequestAccessStatusDisplaySchema` 同样
+  `platform: z.literal("darwin")`（schema :46-54；被 :130 的 CUA display payload
+  `permissionStatus` 消费，评审二轮按当前检出复核修正行号）。不扩则 Windows 状态在
+  display 投影层 safeParse 失败 → 字段静默缺席
+  （不报错、不假成功，但 UI 身份/权限展示降级）——正是计划书 §7.8 B-1 约束点名警告的
+  「静默降级」形态。**裁决：与 cuaPermission.ts 同批同矩阵扩为 `z.enum(["darwin","win32"])`**；
+  计划书阶段 4 原文只列三处，此处为本批源码核查增补，范围确认登记 oQ13（若拆独立子批次，
+  不得留「v4 受理、display 拒绝」的半闭状态）。
+- **Windows 字段语义钉死（能力真实性口径，producer 产出面 = §10.9 request_access）**：
+  - `grantOwner` = Helper canonical exe 绝对路径（`process.execPath`——Windows 上输入/
+    捕获能力归属的进程身份；与 broker_info.bundle_id 取值规则 2 同源，wire spec §6.2）。
+  - `accessibility`："granted" ⇔ 交互桌面预检过（A2 判据 = 可输入；A3 起叠加 UIA 可用）；
+    否则 "denied"。**"stale" Windows 永不产出**（TCC 授权过期是 macOS 专属概念；schema
+    值域保留它是 darwin 红线 1 的一部分）。
+  - `screenRecording`："granted" ⇔ 预检过 ∧ capture 导出在场；"denied" ⇔ 预检失败；
+    "unknown" ⇔ 捕获面未实现（A2 落地前过渡态）。判据 = 预检 + 导出在场，不做 live
+    截图探针（§10.9 同文；对齐上游能力上报机制）。
+  - `requiredCuaPermissionsForRequestAccessStatus` 行为不变：Windows "denied" 值会推出
+    accessibility/screen_recording 权限项——其消费面（UI 权限引导 attachment）依赖
+    `getStatus`（Windows 恒 unavailable，node.ts:1886-1891）故不会触发 macOS 式引导流；
+    该「推导出但无引导面」的组合是**有意的 fail-closed 闲置**（Windows 权限引导 UX 属
+    未来产品面，阶段 4 不造）。
+- **生产/消费链登记（本批源码核实）**：Windows 状态的产出口 = producer request_access
+  结果 `_meta`（§10.9）；v4 观测链的生产方 = `CuaPermissionObservationNormalizer`
+  （bootstrap/src/acode-protocol-v4/cua-permission-observation.ts:17-56）——它把
+  **request_access 工具结果的 display.permissionStatus** 投影成观测事件，**平台无关**；
+  而 display.permissionStatus 的解析口 = result-display.ts:308-311 经占位包
+  request-access-contract.js 的恒失败 safeParse（:3-10）——即**当前任何平台都不产出
+  permissionStatus/观测**（fail-closed 现状，非 Windows 专属缺口）。故 §12.2 的 zod 扩面
+  是**先行契约一致性**（不引入新事件流）；Windows（及 macOS）观测链真正可达依赖 oQ8 的
+  占位补实，届时 win32 状态因本批扩面而可受理，无需再动 v4 schema。
+
+### 12.3 cuaOsSupport.ts:20（resolveCuaOsSupport Windows 分支）+ **Windows 版本地板裁决**
+
+**地板裁决：单一地板 = Windows 10 1809（build 17763），不做分能力地板。**
+
+具体 build 号与依据：
+- **WGC（Windows.Graphics.Capture）需 Win10 1809 / build 17763+**（Microsoft 平台事实：
+  GraphicsCaptureItem/Direct3D11CaptureFramePool 属 UniversalApiContract 7.0，1809 引入；
+  任务书引文同口径）。WGC 是截图唯一合法路径——决策一显式否决 BitBlt/PrintWindow/
+  PowerShell/外部命令/desktopCapturer 全部 fallback（计划书 §7.8 决策一），故 <17763 上
+  截图能力**不存在合法实现**。
+- **UIA 更早**（UIAutomationCore COM API 自 Win7；SendInput 自 Win2000；WIC 自 Vista；
+  D3D11 自 Win7 SP1——均低于 17763）。交集由 WGC 决定 = **17763**。
+- **不取分能力地板的论证**：分能力地板（UIA 可用、截图不可用）产出半成品路径——
+  `get_app_state(include_screenshot)` 永久无图、坐标链路（frame 注册表依赖截图）整体失效、
+  模型拿树无栅格只能盲动 element 索引；C14 对 Linux 的「不产生半成品路径」纪律同理适用
+  于低版本 Windows。截图是一等观察面（SDK getScreenshot/getAXStateAndScreenshot），缺它
+  = 产品面残缺，诚实整体拒绝优于半套供给。
+- **17763 无实际损失**：低于 1809 的 Win10（10240–17762，2015–2018）全部 EOL；且
+  Electron 41（desktop pin，packages/desktop/package.json:74）自身地板为 Win10+
+  （Electron 23 起随 Chromium 110 放弃 Win7/8/8.1）——宿主根本跑不起来的系统不在判定
+  受众内；判定真正区隔的人群 = 10240–17762，无支持价值。
+- **编译期对齐（双保险）**：§10.10 的 `NTDDI_VERSION=0x0A000006`（RS5）使 addon 只导入
+  1809+ API——低版本系统加载即失败 → exit 2 诚实报告（判定层 + 二进制层同地板）。
+
+**分支设计（钉死）**：
+
+```ts
+// packages/desktop/src/main/cuaOsSupport.ts
+const CUA_MINIMUM_WINDOWS_BUILD = 17_763; // Win10 1809；依据 = WGC API 契约（§12.3）
+
+export function resolveCuaOsSupport(
+  platform = process.platform,
+  osRelease = release(),        // 第二参从 darwinRelease 泛化（darwin/win32 共用注入点，测试可注入口径不变）
+): CuaOsSupport {
+  if (platform === "win32") {
+    const build = Number.parseInt(osRelease.split(".")[2] ?? "", 10); // "10.0.26300" → 26300
+    if (Number.isNaN(build)) return { kind: "supported" };            // 对齐 darwin 分支宽松方向（:22 现行语义）：
+                                                                      // 真门槛是运行时 preflight fail-closed（§10.9），静态判定不承担安全
+    if (build < CUA_MINIMUM_WINDOWS_BUILD) {
+      return { kind: "windows-below-minimum", minimumWindowsBuild: CUA_MINIMUM_WINDOWS_BUILD, currentWindowsBuild: build };
+    }
+    return { kind: "supported" };
+  }
+  if (platform !== "darwin") return { kind: "not-applicable" };       // linux/其它：现状零改动
+  /* darwin 分支现状逐字保留（红线 1）：major 解析、21 地板、macos-below-minimum 形态 */
+}
+```
+
+- `CuaOsSupport` 联合（packages/shared/src/platform.ts:563-566，本批核实）新增成员
+  `{ kind: "windows-below-minimum"; minimumWindowsBuild: number; currentWindowsBuild: number }`
+  （additive；:555-561 的注释 doc 同步补一行 Windows 地板语义）。
+- Win11 事实：报告为 `10.0.22000+`（os.release() 第三段 ≥22000 即 Win11；本机实测
+  `10.0.26300`）——build 号逻辑对 Win10/Win11 统一，无需特判。
+- **UI 消费面**：packages/ui/src/settings/ComputerUseSection.tsx（现状只读
+  macos-below-minimum，:123，本批核实）增 `windows-below-minimum` 分支：复用同款地板
+  警示 UI（minimum/current 展示，字段名按新成员），i18n 文案新增；未知 kind 的防御性
+  读取现状不变（新成员对未更新消费者 = 无警告的 supported 方向，不崩不假成功）。
+- **签名变更影响面**：`resolveCuaOsSupport` 消费者仅 desktopCommandHandlers.ts:28/:685
+  （GetCuaOsSupport 命令 handler，本批核实）+ 新测试；第二参默认值语义不变（release()）。
+
+### 12.4 node.ts:2182/2193 复核结论（预期无改动——本批已复核，登记结论）
+
+按当前检出逐行核实（2026-10-14 本批次）：
+- **node.ts:2182**：`: process.platform === "darwin"`——位于 `resolveSpawnEnv` 的 Helper
+  取得三元链（:2177-2184）：有现役 peeked helper → 复用；darwin → `undefined`（懒启动，
+  SDK 首调自行拉起）；**非-darwin（含 win32）→ `await getOrCreateDefaultCuaProductHelper(
+  context)`**（:2184，acquire 拉起 WindowsCuaHelperHost）。win32 路径已是「acquire/token
+  模式」，与计划书预期一致。
+- **node.ts:2193**：`if (!helper && cuaPluginEnabled && process.platform === "darwin")`
+  ——稳定 socket + authority 直铸的懒启动 env 注入分支，darwin-only；win32 不进入（其
+  helper 来自 acquire，走 :2205 起的 host env 分支，凭据由 host 铸造）。
+- **结论：启用 Windows 对这两处零改动**（计划书阶段 4「复核确认即可，不作为改动项」的
+  预期成立）。本复核即该验收项的交付证据（§16 P4-AC-4）；实现批次无需触碰 node.ts。
+
+### 12.5 N-API 地板复核（计划文档必读项，登记结论）
+
+desktop pin `electron = "41.10.7"`（packages/desktop/package.json:74，本批按当前检出
+复核）→ A1 实测其 node 模式 `process.versions.napi = 10`（§4.4 地板表）> pin 9；A2/A3
+新增 N-API 使用面（AsyncWorker/TSFN/Promise/Buffer/TypedArray）全部 ≤ N-API 4 特性。
+**结论：pin 9 不变，无任何 ABI 动作**；未来装载者地板变化时按 §4.4 纪律重新对照裁决。
+
+### 12.6 C14 三平台判定矩阵测试（新增三文件，全部入既有 runner glob）
+
+1. **packages/desktop/tests/cua-os-support.test.mjs**（glob `tests/**/*.test.mjs`，
+   package.json:28，本批核实）——`resolveCuaOsSupport` 纯函数矩阵，**每行独立断言且
+   断言消息含输入**（表驱动生成 case，非折叠单断言）：
+   | 输入 (platform, osRelease)      | 期望                                                        |
+   | ------------------------------- | ------------------------------------------------------------ |
+   | ("darwin", "21.6.0")            | supported                                                     |
+   | ("darwin", "20.6.0")            | macos-below-minimum {minimumMacOs:"12.0", currentMacOs:"11"}  |
+   | ("darwin", "garbage")           | supported（NaN 宽松方向，现状语义回归锚）                      |
+   | ("win32", "10.0.26300")         | supported（Win11 实测形态）                                    |
+   | ("win32", "10.0.22000")         | supported（Win11 下界）                                        |
+   | ("win32", "10.0.17763")         | supported（**地板边界**）                                      |
+   | ("win32", "10.0.17762")         | windows-below-minimum {17763, 17762}（**边界-1**）             |
+   | ("win32", "10.0.10240")         | windows-below-minimum                                          |
+   | ("win32", "6.3.9600")           | windows-below-minimum（Win8.1；纯函数不掺 Electron 地板事实）  |
+   | ("win32", "unparseable")        | supported（NaN 宽松；运行时 preflight 才是真门槛）             |
+   | ("linux", "6.8.0")              | not-applicable（C14 Linux 红线）                               |
+   | (undefined→process.platform 缺省路径) | 按宿主平台（测试内 stub 或跳过注记，不硬编码 CI 平台）   |
+2. **packages/shared/test/cua-permission-platform.test.ts**（glob `test/**/*.test.ts`，
+   package.json:30，本批核实）——v4 zod 受理矩阵：darwin 现值全形态通过（**macOS 回归
+   红线锚**：accessibility 三值、screenRecording 三值、strict 未知键拒绝、grantOwner 非空）；
+   win32 全形态通过；`platform:"linux"` 拒绝；`platform:"darwin "`（带空格）拒绝；
+   `requiredCuaPermissionsForRequestAccessStatus` 对 darwin/win32 同值输入行为一致（函数
+   零改动的回归锚）。
+3. **apps/acode-cli/tests/cua-request-access-display.test.mjs**——第四处 display schema
+   （tool-result-metadata.ts:46-54）同矩阵：win32 通过、darwin 回归、linux 拒绝、
+   iconLocators 形态不变（该文件同仓落点与 C08 一致，深导入 contracts 源，先例 =
+   A1 批次对 services TS 的 tsx 深导入）。
+
+**C14 验收映射**：macOS 既有语义 = 矩阵 1 的 darwin 行 + 矩阵 2 的 darwin 回归锚 +
+既有 desktop/ui 权限测试全绿；Linux not-applicable = 矩阵 1 linux 行；「不产生半成品
+路径」= §12.3 单一地板裁决 + 矩阵边界行。
+
+### 12.7 阶段 4 复核项（非改动，执行登记）
+
+- **ComputerUseSection Windows 呈现复核**：判定扩面后，设置页在 Windows 上的 CUA 区块
+  可见性/交互不得绕过启用门控（红线 3）——实现批次以人工核查 + 组件现有测试回归登记
+  （若发现判定面被误当启用面消费，修 UI 消费点而非回退判定）。
+- **渲染层 Windows 兼容**（oQ10）：A3 批次执行（§16 A3-AC-9），非阶段 4 范围。
+- **broker.js:240 注释行号漂移**（引 support :230-235，现值 :233-238）：代码注释，登记
+  转角色 B 下批顺带修正——本文范围仅 spec 文件，不改代码（§17.1 同文登记）。
+
+## 13. 14 工具全映射表（方法 → 归属 → 参数/结果 → delivery-state → 测试落点）
+
+方法名单一事实源 = wire spec §8.1（producer 侧常量 `WIRE_METHOD_NAMES`，wire-server.ts:15-30）。
+params 封闭集 = 本表（§10.2 校验纪律）；「三态收据」= §10.12 表的 accepted / possibly_sent /
+interrupted 三形态。测试落点缩写：`c08` = §14 文件；`a2L`/`a3L` = logic（CI 常驻）；
+`a2N`/`a3N` = native（win32 守卫）；`smoke` = §15 层级；`A1` = 既有用例（A3 批次按
+A3-AC-10 反转 unimplemented 断言）。
+
+| #  | 方法                   | 归属       | params 封闭集（? = 可选）                                                        | 成功结果形态                                                              | delivery-state                       | 专属失败码（∪ §4.6.1 通用面）        | 测试落点                          |
+| -- | ---------------------- | ---------- | ---------------------------------------------------------------------------------- | --------------------------------------------------------------------------- | ------------------------------------ | -------------------------------------- | --------------------------------- |
+| 1  | `list_apps`            | A3         | `{}`                                                                               | `{apps:[…]}` 文本块 + structuredContent（§11.2）                            | 只读，不适用                         | timeout / permission_denied            | a3L, a3N, smoke --uia             |
+| 2  | `list_windows`         | A3         | `{app_ref?}`                                                                       | `{windows:[…]}`（window_id token）                                           | 只读，不适用                         | 同上 + element_unavailable（app_ref stale） | a3L, a3N, smoke --uia        |
+| 3  | `get_app_state`        | A3（截图机制 A2） | `{app_ref, window_id?, include_screenshot?, disable_diffing?, tree_shown_to_model?, detail?}` | 树文本 + structuredContent（state_id/app/window/elements/frame_id?）+ image? + `_meta` | 只读，不适用                    | 四必备字段恒在；截图失败降级为告知块（§11.2） | a3L, a3N, smoke --uia/--capture/--host |
+| 4  | `left_click`           | A2 坐标 + A3 元素 | `{target, app_ref, mouse_button?, click_count?, modifiers?, strategy?}`        | 三态收据                                                                     | accepted / possibly_sent / interrupted | foreground_required, element_unavailable（A2 元素/无帧/stale） | c08-1, a2L, a2N, smoke --pointer(人工) |
+| 5  | `scroll`               | A2 坐标 + A3 元素 | `{target, app_ref, scroll_direction, scroll_amount, strategy?}`                | 三态收据                                                                     | 同上                                 | 同上                                   | c08-2, a2L, a2N, smoke --pointer(人工) |
+| 6  | `left_click_drag`      | A2 坐标 + A3 元素 | `{from_target, to, app_ref, modifiers?}`                                       | 三态收据（injectedPoints 事实进 message 固定字面量分支）                     | 同上                                 | 同上                                   | c08-3, a2L, a2N, smoke --pointer(人工) |
+| 7  | `type`                 | A2         | `{text, app_ref}`（≤32,768 code units）                                           | 三态收据（injected/total 部分事实）                                          | 同上                                 | invalid_request（超限）                | c08-4, a2L, a2N, smoke --pointer(人工) |
+| 8  | `set_value`            | A3         | `{target(element), app_ref, value}`（≤8 Mi）                                      | 三态收据（写后读回验证，§11.2）                                              | 同上                                 | not_settable, element_unavailable      | c08-8, a3L, a3N                   |
+| 9  | `select_text`          | A3         | `{target(element), app_ref, text_range:[start,length]}`                           | 三态收据                                                                     | 同上                                 | not_selectable, invalid_request（range 非法）, element_unavailable | c08-9, a3L, a3N          |
+| 10 | `key`                  | A2         | `{text(chord), app_ref, hold_seconds?, strategy?}`                                | 三态收据                                                                     | 同上（hold 中断 = interrupted）      | invalid_request（未知键名）            | c08-5, a2L, a2N, smoke --pointer(人工) |
+| 11 | `perform_action`       | A3         | `{target(element), app_ref, action}`（封闭词汇 §11.2）                            | 三态收据                                                                     | 同上                                 | action_unavailable, element_unavailable | c08-10, a3L, a3N                  |
+| 12 | `paste`                | A2         | `{app_ref, text, format?:"text"}`（≤8 Mi）                                        | 三态收据（clipboard-modified 事实进 message 固定分支）                       | 同上（剪贴板已写 = 副作用已发生）    | invalid_request（format/超限）, controller_busy/permission_denied（剪贴板面） | c08-6, a2L, a2N, smoke --pointer(人工) |
+| 13 | `request_access`       | A2         | `{capabilities?}`                                                                  | `{ready, platform:"win32", accessibility, screen_recording}` 文本块 + `_meta` 状态块 | 只读（预检快照），**结果永不失败**（除参数面） | invalid_request（仅参数面）      | a2L, a2N, §12.6 矩阵 3            |
+| 14 | `stop_computer_control`| A2         | `{reason?}`（接受即丢弃，§10.2）                                                   | accepted 收据（§10.6 固定字面量）                                            | 三态（自身是变更类；释放不可证 → possibly_sent） | controller_busy（极端）          | c08-7, a2L, smoke --pointer(中断时序) |
+| 带外 | `broker_info`        | A1（capabilities 增量 A2/A3） | `{}`                                                                    | `{pid, bundle_id, capabilities}`（§4.6/§10.9）                              | 不适用（health 面）                  | —（WARMING 期 broker_unavailable）     | A1 用例 + a2L 一致性断言          |
+
+**一致性不变量（契约测试锚定）**：① 表内 14 方法 = `WIRE_METHOD_NAMES` 全集，零遗漏零
+超出（A1 已锁名单，本表锁归属/形态）；② `capabilities.X=true ⟺ 对应 handler 已注册`
+（能力真实性两面同源，§10.9/§10.11）；③ 变更类 10 方法（wire spec §8.2）成功路径**必须**
+携带 delivery-state 收据键（§10.12 铁律），只读 4 方法**必须不**携带（铁律 3）；
+④ `permission_status` 不在表内、不注册（§9.1——darwin-only 控制面，Windows 收到即
+method_not_found 是正确行为）。
+
+## 14. C08 可执行交付物（10 个变更类方法 × 独立失败注入 case）
+
+计划书 §7.6 C08 补记的可执行交付物：「10 个变更类方法**各注入一次失败 → 断言不自动
+重放**，逐一独立断言，不得参数化只断一次」。拆到 A2（7 个）与 A3（3 个）。
+
+**落点**：`apps/acode-cli/tests/cua-producer-c08.test.mjs`——**CI 常驻（ubuntu 必跑）**：
+tsx 深导入 `cua-producer/src/**.ts`（源文件恒在库、非构建工件，无 §6.1 的工件守卫需求；
+导入纪律先例 = A1 批次对 services TS 的深导入，oQ5 实证）。**夹具 = 真 unix socket**
+（tmpdir 铸名）挂 `createWireDispatcher` + `createBackendA2/A3(fakeDriver)`，再经**真角色 B**
+`callBrokerMethod` / `createComputerUseRuntime().execute` 走完整链路乙——ubuntu 上首次形成
+delivery-state 两侧互证（win32 真 native 面由 a2N/a3N 与 smoke 覆盖；真 native 的失败注入
+不可确定化，故 C08 的注入面以 driver seam 为准，§10.3 二分接口）。
+
+**10 个独立 `test()` case（每个方法一个，禁止折叠）**：
+
+| case    | 方法                    | 归属切片 |
+| ------- | ----------------------- | -------- |
+| c08-1   | `left_click`            | A2       |
+| c08-2   | `scroll`                | A2       |
+| c08-3   | `left_click_drag`       | A2       |
+| c08-4   | `type`                  | A2       |
+| c08-5   | `key`                   | A2       |
+| c08-6   | `paste`                 | A2       |
+| c08-7   | `stop_computer_control` | A2       |
+| c08-8   | `set_value`             | A3       |
+| c08-9   | `select_text`           | A3       |
+| c08-10  | `perform_action`        | A3       |
+
+**每 case 两段注入（同一 case 内的两个独立断言组）**：
+
+1. **派发后歧义失败**（fake driver 在「dispatchStarted」标记后抛 `NativeAmbiguousError`）：
+   - wire 级：响应 = `ok:true` ∧ `result.isError === true` ∧ 收据文本块 JSON 含
+     `dispatch_status:"possibly_sent"` ∧ `action_sent:true` ∧ `code` ∈ 17 码词汇表；
+   - execute 级：信封**原样透传**（含 possibly_sent 键——角色 B 不改写成功结果，
+     index.js:97-99）；
+   - **不自动重放的结构性断言**：信封 ≠ `CUA_NOT_READY` 可重试形态（`kind:"CUA_NOT_READY"`
+     ∧ `retryable:true` 的组合绝不出现）；SDK 侧「possibly_sent ⇒ actionSent ⇒ reobserve」
+     三分已由角色 B/上游映射测试锁定（wire spec §4.5/§5.4），此处只验 producer 供给正确
+     ——不重复断言 SDK 内部。
+2. **派发前确定拒绝**（fake driver 抛 `NativeRejectedError("foreground_lost")` 或该方法
+   的等价前置失败）：
+   - wire 级：`ok:false` ∧ `error.code` = 诚实映射码 ∧ `error.message` = §4.6.1 封闭字面量
+     （零插值断言）∧ 响应无 result 键；
+   - 角色 B 级：抛 `BrokerError` ∧ `details.possiblySent === false`（应用层 ok:false 不置
+     possiblySent——wire spec §5.4 已裁决语义，此处验 producer 供给的失败**形状**没把它
+     污染成歧义）；
+   - fake driver 调用计数断言：Rejected 失败后 handler **零追加派发调用**（无重试/补注入；
+     拒绝本身发生在派发前或首次派发即被 native 确定性拒绝——两形态都满足「无第二动作」）。
+
+**纪律**：断言消息含方法名（失败即定位）；case 间零共享状态（每 case 独立 socket/
+dispatcher/backend 实例）；允许复用断言 helper 函数（「不得参数化只断一次」禁的是单 case
+扫全表，helper 复用不违反——10 个 `test()` 注册一个都不能少）。stop_computer_control
+（c08-7）的注入点特殊：Ambiguous 段注入在 `releaseAllHeldInputs`（释放不可证 →
+possibly_sent），Rejected 段注入在 cancelOperations 前的参数面（→ ok:false 合法域）。
+
+**门禁归属**：本文件进 `pnpm --dir apps/acode-cli test`（CI 常驻，ubuntu 实跑）；A2 批次
+交付 c08-1..7（A3 handler 缺席时 8-10 以 `skip: "A3"` 占位注册——文件结构一次成型，
+A3 批次解除 skip），A3 批次交付 c08-8..10。
+
+## 15. 真机烟测契约（`cua-producer/scripts/smoke-real.mjs`）
+
+### 15.1 定位与运行形态
+
+- **精确路径**：`cua-producer/scripts/smoke-real.mjs`（入库，§5.3/§5.4）。它是**仓库侧
+  dev/验收工具，不是 Helper 运行时面**——§1.1 解析隔离只约束 `dist/windows-helper.js`
+  进程（Helper 永不 import 本脚本）；脚本本身允许经 tsx 深导入 workspace TS
+  （`packages/services` 的 host/runtime——与测试文件同先例，A1 AC-3 已实证该导入路径）。
+  与 §6.1「测试不落 `cua-producer/`」不冲突：该纪律的对象是 node:test 测试文件（runner
+  glob/CI 入口约束）；smoke 不是 `*.test.mjs`、不进任何 runner glob，是与
+  `build-native.mjs`/`clean.mjs` 同类的包内工具脚本，由门禁/人工按 §15.1 命令显式执行。
+- **运行命令（仓库根执行，钉死）**：`node --import tsx cua-producer/scripts/smoke-real.mjs <flags>`
+  （根 devDependency tsx 可解析——package.json:66，本批实测 `require.resolve` 成功）。
+  flags：`--capture` `--uia` `--host` `--pointer`（前三个可组合；`--pointer` 必须单独
+  出现，与任何其它 flag 组合 → exit 2）；无 flag/未知 flag → usage + exit 2。
+- **门禁层级裁决**：`--capture`/`--uia`/`--host` = **真机门禁可执行层级**（Windows
+  交互桌面本机上，实现批次的 AC 直接引用它们，§16）；ubuntu CI 永不执行（非 win32 前置
+  即 exit 2，且 CI 工作流不调用本脚本——ci.yml 无 Windows runner，计划书 §7.7 CI 覆盖
+  边界）。`--pointer` = **仅供人工 C07，门禁永不执行**（任何 CI/verify/批次门禁脚本禁止
+  含该 flag；**双保险** = flag 之外还须环境变量 `ACODE_CUA_SMOKE_POINTER_LIVE=1`，缺一
+  → exit 2——门禁脚本永不设该 env，结构上排除误执行）。
+
+### 15.2 层级定义
+
+- **`--capture`**（A2 起）：直载 addon（路径 = `ACODE_CUA_HELPER_ADDON` env，缺省回退
+  `build/Release/ax_native.node`——**工具侧解析规则**，不受 §2.1 的 Helper env 单一来源
+  约束，那条纪律只约束 Helper 运行时进程）→ `environmentProbe`（非交互 → exit 2）→
+  `captureDisplay(主显示器)` → 断言：PNG 魔数（或 JPEG SOI，encoding 一致）、
+  width/height ≤2000 且 >0、base64 折算 ≤200 KiB、bounds 宽高 >0、`budgetFit===true`、
+  `scaled` 与尺寸事实一致。**A3 扩展**：再经真 fork Helper + wire
+  `get_app_state({app_ref:{pid:<前台 pid>}, include_screenshot:true})` → 断言 image 块
+  存在、mimeType ∈ {image/png,image/jpeg}、base64 ≤200 KiB、structuredContent.frame_id
+  非空（frame 登记发生）。
+- **`--uia`**（A3 起）：**只读**观察当前前台应用（不 spawn、不变更、不抢焦点）：
+  `foregroundPid` → wire `list_apps`（断言非空 ∧ 含该 pid ∧ 条目字段齐套）→
+  `list_windows`（断言窗口条目 bounds/title 字段类型合法，**不打印内容**）→
+  `get_app_state`（无截图）两次 → 断言：树文本行格式匹配 `^\s*\[[0-9]+\]`（采样行）、
+  `elements` 非空 ∨（空 ∧ `truncated===false`）（C09 诚实空树判据，§11.2）、state_id
+  非空、`app.pid ===` 前台 pid、两次 state_id 不同、structuredContent 四必备字段恒在。
+  前台无应用（罕见）→ 固定结果码 `no-foreground-app` + exit 2（前置不满足，非失败）。
+- **`--host`**（A2 起；**不需要模型 cell 即可达成——裁决为定义它**，达成路径 = host 公开面
+  `start()/running/socketPath/stop()` + 角色 B `probeHelperHealth`/`callBrokerMethod`，
+  全部是已落地的宿主/角色 B 事实）：
+  1. `resolveWindowsCuaRuntime({platform:"win32", env:{ACODE_CUA_DEV_ROOT: <repo>/
+     cua-producer}})`（真解析器，dev 链）；
+  2. `new WindowsCuaHelperHost({runtime, logger:<捕获型 logger>})` → `start()`；
+  3. 断言 **`host.running === true`**（C05 split-brain 教训：仅 env tuple 不算数——
+     计划书 §7.6 C05 补记）∧ `probeHelperHealth` 的 pid === handle.pid；
+  4. **A2 切片**：`broker_info` 一次（capabilities 形状断言）；**A3 起追加截图步**：
+     `callBrokerMethod(get_app_state, {app_ref:{pid:<前台>}, include_screenshot:true})`
+     → image 块断言（同 --capture A3 扩展）；
+  5. `stop()` → 断言子进程退出 ∧ 旧 pipe 拒连（ENOENT）∧ 全程 <5s。
+- **`--pointer`**（A2 起；**人工 C07 专属**，操作者在场、已解锁交互桌面）：内容对齐上游
+  pointer 烟测机制（windows-source-development.md:170-185）并保持**非破坏性**：
+  1. 记录原始光标位置；取当前前台应用 pid（A2 经 addon `foregroundPid()`；A3 起可与 wire
+     `list_apps` 的 `active:true` 条目互证）为 app_ref；
+  2. addon 级 `moveTo` 向所在显示器中心移动 ≤24 坐标单位 → `foregroundPid` 复核 →
+     `moveTo` 还原原位，断言 ≤2px 容差；
+  3. `scrollAt(amount:0)` 探针（零滚动量，无副作用）；
+  4. **wire 级中断时序（fork 真 Helper；对齐上游 hold_key 中断验收机制
+     windows-source-development.md:183-185）**：经 wire 发
+     `key({text:"f13", app_ref:{pid:<前台>}, hold_seconds:5})`（f13 = 无害键，标准键盘
+     无此物理键、应用极少绑定）→ ~1s 后经 wire 发 `stop_computer_control` → 断言：key
+     调用在 ≤1.5s 内以 interrupted 收据收口（`dispatch_status:"accepted"` ∧
+     `action_sent:true` ∧ `code:"controller_busy"`，§10.6）∧ stop 收据 ∧ **烟测进程自载
+     addon 的 `asyncKeyState(VK_F13).down === false`**（系统级全局键态——跨进程独立佐证
+     Helper 无 held 遗留；held 注册表是 Helper 进程内的，烟测进程读不到，故必须用系统
+     事实面验证）（**C07「动作可被 stop 中断」+ held 零遗留的时序验证**）；
+  5. finally：还原光标位置（≤2px 断言）→ Helper shutdown → exit 0。
+  **破坏性边界（如实登记；评审二轮修正）**：本脚本**不含任何真实点击/键入用户应用**——
+  初稿曾列的 addon 级 `mouseDown(left)+mouseUp(left)` 实压配对已**删除**：即便在「还原后的
+  原光标位置」，左键按下/抬起配对仍是对前台应用的一次真实点击（可激活按钮/链接/改焦点），
+  与「非破坏性」声明矛盾。上游同型烟测亦只有光标移动/还原 + 零滚动量探针 + hold_key
+  中断，无真实点击（windows-source-development.md:183-185，已核实）。**鼠标键 held 的
+  实压闭环迁移**：① 机制面 = a2-logic seam 覆盖（鼠标 held 与键 held 共用同一 held
+  注册表与 releaseAllHeldInputs/cleanup 释放面，§10.4 规则 3/5——机制同源性是登记论证，
+  不当作真机证据）；② 真机面 = A3 批次 wire 级人工 C07（操作者指定安全目标，如空白
+  记事本文本区内的 left_click/left_click_drag，录屏留档）。C07「鼠标键盘真实生效」在
+  A2 阶段由步骤 2 的光标位移/还原事实 + 步骤 4 的 hold/中断时序构成；真实点击生效
+  如实登记为 A3 人工项，不在 A2 冒充。
+
+### 15.3 退出码语义（封闭）与输出纪律
+
+- **exit 0** = 所选层级全部断言通过；**exit 1** = 断言/契约失败（能力被执行但未达诚实
+  预期——含输出纪律自证失败，见下）；**exit 2** = 前置失败（非 win32、工件缺失、addon
+  加载被拒（C12 同语义）、非交互桌面/锁屏、`--pointer` 缺 env 或与其它 flag 组合、
+  未知 flag/无 flag、前台无应用）。前置检查在任何 Helper/fork 启动**之前**完成（上游
+  同型纪律：未 opt-in/锁屏/签名阻断时在启动任何子进程前退出，
+  windows-source-development.md:220-221 机制）。
+- **stdout 纪律**：只输出固定键值行——`level=<name> result=<pass|fail|skipped>
+  duration_ms=<n>` + 层级专属数值/布尔/固定枚举字段（`png_bytes` `width` `height`
+  `scaled` `budget_fit` `element_count` `state_id_distinct` `running` `pid_match`
+  `exit_code` `released_count` `cursor_delta_px` 等）。**绝不输出**：凭据、pipe 名、
+  窗口标题、树文本、元素名、截图字节/base64、临时路径、内部服务地址、用户文档内容
+  （AGENTS.md/handoff §10 纪律；上游同型：stdout 只打印布尔值、尺寸、固定结果码和退出
+  事实，windows-source-development.md:219-221 机制）。
+- **stderr 纪律**：只输出错误类名与 §15.3 固定结果码；不含栈内插值的路径/pipe/标题。
+- **输出纪律自证（结构性）**：脚本退出前扫描自身累计 stdout/stderr 文本——命中
+  `\\.\pipe\` 前缀、`--host` 层 host 铸造的 socketPath/authority 原值、或前台窗口标题
+  （步骤内已知值）→ 固定消息 `smoke-self-leak` + exit 1（泄漏即失败，不依赖人工审读）。
+
+## 16. 各阶段 AC 验收清单（逐条可映射测试/命令）
+
+前置（各阶段共通）：Windows 本机（VS 2026 + node-gyp 13 接线不变），
+`cd cua-producer && npm install && npm run build` 绿；治理门禁基线 = handoff §9 命令组。
+
+### 16.1 A2 验收清单
+
+| #        | 断言                                                                                       | 验证方式（映射）                                                        |
+| -------- | -------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| A2-AC-1  | binding.gyp A2 增量（libraries/defines/sources，§10.10）落地且防漂移                        | `cua-producer-contract.test.mjs` 扩展断言（CI 常驻；含 §5.3 模块规则①的 import 面静态断言） |
+| A2-AC-2  | 真 addon 面（**零真实副作用纪律**，§10.11 逐用例表）：environmentProbe/foregroundPid/cursorPosition/asyncKeyState 真实性、heldInputSnapshot 初值为空、moveTo 负控制（死 pid → foreground_lost ∧ cursorPosition 前后一致）、captureDisplay 实捕（魔数/≤2000/≤200 KiB/bounds/budgetFit，图像字节不落盘不打印）、clipboardWriteText **仅超限拒绝面**（8 Mi+1，零剪贴板写；happy-path 写入归人工 C07） | `cua-producer-a2-native.test.mjs`（win32+工件守卫）                          |
+| A2-AC-3  | 8 个 wire handler 形态：三态收据 **happy-path 全覆盖 = a2-logic（fake driver）**、§4.6.1 字面量零插值、element target 诚实拒绝、app_ref pid-only 拒绝面、坐标投影算术（含副屏负 bounds/缩放帧/舍入/clamp）、request_access 快照形态 + `_meta`、broker_info capabilities；a2-native wire 段 = **仅负控制夹具**（死 pid/非法参数/未知键/element 拒绝——零真实注入、零剪贴板写、零破坏，§10.11 纪律表） | a2-logic（CI）+ a2-native wire 段（真 fork+真 pipe+真角色 B）                |
+| A2-AC-4  | admission：串行（并发两请求第二个排队）、队满 controller_busy、排队 >5s 放弃（not_sent）、broker_info/request_access/stop 旁路不被长操作阻塞 | a2-logic（CI 常驻，fake 慢 driver）                                          |
+| A2-AC-5  | C08-A2 七独立 case（c08-1..7，两段注入全断言）                                              | `cua-producer-c08.test.mjs`（CI 常驻）                                       |
+| A2-AC-6  | held 零遗留双路径（§10.4 规则 3/5）：① 一切退出路径（shutdown/watchdog/scheduleFailure/含 A3 poison 自终结桩）释放先于 exit 且挂接**统一收口点**（顺序+计数断言）；② 动作内中途失败/取消收口（chord 修饰键残留场景）cleanup 释放先于收据、业务段零续注入；③ 三态收据产出时点 held 镜像恒空（逐方法横扫）；watchdog 自适应（held 非空 → 250ms） | a2-logic（CI，fake 面全量）+ `--pointer` 步骤 4（真机 held 闭环，人工门禁）  |
+| A2-AC-7  | UTF-8 两侧修复：跨 chunk 多字节劈裂（中文/emoji 分裂点）请求/响应解析无损 + 1 MiB cap 按原始字节判定（§17.2） | helper-a1 扩展 case（win32）+ `cua-broker-wire.test.mjs` 扩展 case（CI）     |
+| A2-AC-8  | MISSING_IPC_CHANNEL_MESSAGE 单源（常量引用，无双写字面量）+ spawn 无 IPC 负样本（stderr 字面量 + exit 1）（§17.3） | 契约测试静态断言 + helper-a1 扩展 case                                       |
+| A2-AC-9  | smoke `--capture`（addon 直载段）与 `--host`（A2 段：running/pid_match/stop/拒连）真机 exit 0；输出纪律自证通过 | 本机命令（§15.2）+ 输出扫描断言                                             |
+| A2-AC-10 | capabilities 一致性：`capabilities.X=true ⟺ handler 注册`；false ⟺ 对应方法 unimplemented（两面同源） | a2-logic（CI）                                                              |
+| A2-AC-11 | 治理门禁全绿：`pnpm typecheck`、`pnpm lint`、`pnpm architecture:check -- --changed`（含 C08 的 src TS 深导入复核，oQ5 残留项）、`pnpm knip:gate`、`pnpm --dir apps/acode-cli test` | 本机命令（handoff §9 基线口径）                                             |
+
+**A2 真机人工项（不自动化、不关系统安全策略）**：真 SAC 拦截场景维持 A1 AC-11 登记；
+`--pointer` 首次人工执行（C07 的 A2 部分：光标移动/还原、零滚轮、hold+stop 中断时序、
+held 零遗留）——人工验收记录随批次登记。
+
+### 16.2 A3 验收清单
+
+| #        | 断言                                                                                       | 验证方式（映射）                                                        |
+| -------- | -------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| A3-AC-1  | MTA worker：预算（观察 8s/pattern 3s）、poison-detach-rebuild（fake 挂死 → 本次 timeout + 后续调用走新 worker）、poisoned ≥3 → internal-helper-failure exit 1、COM 指针不出 worker（静态断言 uia driver 接口面只 token 进出） | `cua-producer-a3-logic.test.mjs`（CI 常驻，fake uia driver）+ a3-native 真 UIA 段 |
+| A3-AC-2  | 六工具 wire 形态：appStateOf 四必备恒在、树文本行格式、`elements:[]` 仅真实 0 元素（native 失败绝不读成空树——错误/空是不同类型化出口）、window_id 失效不回退最前窗口、截图失败降级为告知块不拖垮树 | a3-logic（CI）+ a3-native（win32，前台应用只读）                             |
+| A3-AC-3  | 树预算/截断一致性：>3000 行样本 → truncated 注记 + elements 同集合截断 + M 如实；文本可见 index ⇔ 注册表可解析（双向） | a3-logic（fake 大树）                                                        |
+| A3-AC-4  | 索引稳定性：新观察覆盖 → 旧 state_id element target → element_unavailable；RuntimeId 复验 stale 面；跨观察索引兼容被排除（旧域 index 在新域即使数值存在也 fail-closed） | a3-logic（fake 注册表）                                                      |
+| A3-AC-5  | app_ref 全形态：pid/name/bundle_id/组合冲突拒绝；0 候选 → 「target app is not running」字面量（SDK isAppNotFound 子串断言）；≥2 候选 → invalid_request；AUMID 路径（packaged app 真机项） | a3-logic + a3-native（Calculator 类 packaged app 真机人工项登记）             |
+| A3-AC-6  | C08-A3 三独立 case（c08-8..10，解除 skip）                                                   | `cua-producer-c08.test.mjs`（CI 常驻）                                       |
+| A3-AC-7  | `_meta` targetApp 形状过 contracts `cuaTargetAppDisplaySchema`（strict）；identity 只来自已验证解析（模型输入原文绝不回填——fake 输入含毒样本断言） | a3-logic（深导入 contracts 源断言）                                          |
+| A3-AC-8  | smoke `--uia`、`--host`（A3 截图步）、`--capture`（wire 扩展段）真机 exit 0                  | 本机命令（§15.2）                                                            |
+| A3-AC-9  | 渲染层兼容复核（oQ10）：真实工具结果过 UI 展示链，应用身份/pid 展示不静默降级；不兼容则同批改渲染层并回写本文 | 人工复核 + 记录登记（计划书 §7.8 B-1 授权路径）                              |
+| A3-AC-10 | 14/14 handler 齐套：A1「14 方法逐一 unimplemented」用例同批反转为「逐一真实受理」（每方法仍独立断言，不折叠）；unimplemented 面仅剩「A2 element 拒绝/A3b 未拉起」的诚实字面量 | helper-a1 测试修订 + a3-native                                              |
+| A3-AC-11 | binding.gyp A3 增量 + 契约测试扩展；治理门禁全绿（A2-AC-11 同口径）                          | 本机命令                                                                     |
+
+**A3 真机默认套件纪律（§10.11 零真实副作用硬规则的同律延伸）**：a3-native 默认用例
+（随 `pnpm --dir apps/acode-cli test` 在 win32 开发机实跑）只允许 ① 只读观察
+（list_apps/list_windows/get_app_state——前台应用只读，树内容/标题不打印、不落盘、
+断言即弃）与 ② 负控制（确认已死 pid、失效 window_id/state_id token、非法参数——全部
+落「确定未派发」域）。**变更类真机实变更（set_value/select_text/perform_action/element
+target 点击对真实应用的写入）不进默认套件**——真机实变更面 = 人工 C07/C09 验收
+（操作者指定安全目标，如空白记事本文本区；录屏/记录留档）；机制形态断言全量在
+a3-logic（fake uia driver，CI 常驻）。
+
+### 16.3 阶段 4 验收清单
+
+| #       | 断言                                                                                     | 验证方式（映射）                                                          |
+| ------- | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------ |
+| P4-AC-1 | C14 三平台判定矩阵三文件全绿（§12.6：地板边界 17763/17762、Win11 形态、NaN 宽松、linux not-applicable） | `pnpm --dir packages/desktop test`、`pnpm --dir packages/shared test`、`pnpm --dir apps/acode-cli test` |
+| P4-AC-2 | macOS 回归红线：darwin 矩阵行 + v4 zod darwin 全形态 + 既有 desktop/ui 权限相关测试全绿零改动 | 同上 + `pnpm test` 全量对照基线                                              |
+| P4-AC-3 | 第四处 display schema 扩面落地（oQ13 确认后）且矩阵覆盖                                    | apps/acode-cli 测试（§12.6 文件 3）                                           |
+| P4-AC-4 | node.ts:2182/2193 零改动（复核结论 = §12.4，本文即交付证据；实现批次以 `git diff` 空核对登记） | 复核记录                                                                      |
+| P4-AC-5 | CuaOsSupport 新联合成员 + ComputerUseSection windows-below-minimum 警示分支 + i18n；未知 kind 消费者不崩 | packages/ui 组件面（人工核查/截图登记）+ desktop 测试                         |
+| P4-AC-6 | module-boundary.md 同批登记一行校准（§12.1 不变量 3 论证）；治理门禁全绿                    | `pnpm architecture:check -- --changed` + 登记核对                             |
+
+## 17. A1 评审债务回写（2026-10-14 扩充批次）
+
+### 17.1 行号修正对照表（「全文行号按当前检出核实修正」的交付记录）
+
+本批对全文**全部** `本仓 <路径>:<行号>` 与 `上游 <路径>:<行号>` 引用逐条按当前检出/staging
+文件核实。修正 8 处（漂移根因 = A1 实现批次对 windowsCuaHelperHostSupport.ts:190-204 注释的
+悬空引用清理使函数体 +3 行；上游两处为本批复核 staging 文件的精确化）：
+
+| 原引用                                            | 修正为            | 出现处（本文）              |
+| -------------------------------------------------- | ----------------- | --------------------------- |
+| windowsCuaHelperHostSupport.ts:202-228（parseReadyMessage） | :205-231   | §2.2、§6.2 步骤 1、§9       |
+| windowsCuaHelperHostSupport.ts:208-213（error 分支）        | :211-216   | §2.2                        |
+| windowsCuaHelperHostSupport.ts:215-221（socketPath/pid 校验）| :218-224  | §2.2                        |
+| windowsCuaHelperHostSupport.ts:199-200/214（ignore 语义）   | :202-203/217 | §2.2                        |
+| windowsCuaHelperHostSupport.ts:230-235（isExactHealthPid）  | :233-238   | §4.6                        |
+| windowsCuaHelperHostSupport.ts:196-197（exit 1/2 注释）     | :199-200   | §2.7 表                     |
+| 上游 windows-product-runtime.md:232-234（41.0.3/napi 10）   | :234-235   | §4.4 表                     |
+| 上游 windows-product-runtime.md:236-237（token 不入 argv/日志）| :238     | §3.2                        |
+
+**复核无漂移的引用（抽样列举，全部经本批 Read/grep 核实）**：windowsCuaDevHelperHost.ts
+:34/:36-37/:47-50/:63/:84-88/:97-99/:137/:230/:233-243/:308-326/:396-409/:401-403/:404-408/
+:418-419/:422-431/:428/:440；windowsCuaDevRuntime.ts :9/:82-87/:101/:124/:130/:134/:140/
+:148-149/:153-166/:197-224/:217-224/:292/:311/:319-321/:333-354/:372/:414-443/:526-572/
+:544-556/:546/:549/:552-555/:564-566；node.ts :1172-1173/:1185-1186/:1205-1206/:1226-1227/
+:1237/:1886-1891/:1935/:2177-2184/:2182/:2193；broker.js :91/:131/:159-162/:237-243/:264/
+:283-285/:306-312；broker-server.js :3-4/:45-65；index.js :14/:19-23/:97-99/:107-119；
+discovery.mjs :7；.gitignore :1-2/:37-38/:40-46/:47-51/:52-53；mise.toml :2；
+apps/acode-cli/package.json :33；packages/desktop/package.json :74；frame-contract.js :5；
+host-display-contract.js :3；cuaResultState.ts :28/:128-146/:163/:175；cuaErrorDetails.ts :32；
+tool-result-metadata.ts :23/:25-44/:46-54/:49/:130；platform.ts :555-566；
+image-normalization.ts :21/:25/:131；
+上游 windows-source-development.md :27-31/:47-49/:93-101/:170-185/:187-202/:204-221/:253-262/
+:264-266/:268/:270-287/:280-287/:318-322/:342-350/:355-359/:367-369；windows-transport-ready.md
+:5/:22/:26/:32；2026-08-18-ax-action-state-consistency.md :14-16/:44-51/:123-124；
+2026-08-18-frame-pixel-zoom-regression.md :9/:34/:53/:58-59；computer-use-client.mjs
+:169-201/:184-195/:209-220/:278-297/:302-308/:312-369/:350-357/:409-413/:516-560/:537-552/
+:587-620/:621-644/:791-798/:813-815/:1032-1040/:1050-1052/:1073-1084/:1089-1100/:1155-1160。
+
+**评审二轮修正（2026-10-14 扩充批次自查后、评审抓出的三组新增章节引用漂移，已修正）**：
+① image-normalization.ts：`MCP_IMAGE_INLINE_BASE64_BYTES` :22→**:21**、
+`HOST_NODE_REPL_MODEL_IMAGE_MAX_DIMENSION` :26→**:25**、恒等放行 return :133→**:131**
+（首检误把相邻常量行 `MCP_IMAGE_INLINE_RAW_BYTES` :22 / `HOST_NODE_REPL_IMAGE_MAX_DIMENSION`
+:23 当作锚点——按错误引用查阅会拿错值，契约数值本身 200 KiB/2000/恒等放行经 grep 复核
+全部为真）；② tool-result-metadata.ts：platform 字面量 :50→**:49**（:50 是 grantOwner）、
+schema 范围 :46-56→**:46-54**；③ computer-use-client.mjs：「[35] 两棵树」教训注释
+:1058-1064→**:1050-1052**（原引范围实为 elements() 成员注记）。教训登记：「本批核实」
+标注必须以 grep -n 精确锚定，不得以区间印象代替；三组修正值均已重新 grep 落钉。
+
+**转登不改的两处（代码文件行号，超出本文改动范围）**：① broker.js:240 注释引
+support :230-235（现值 :233-238）——转角色 B 下批顺带修正；② wire spec 对 broker.js 的
+行号引用批量漂移（如 §1.1 引 mint :47-50，现值 :264）——转 wire spec owner（oQ14）。
+
+### 17.2 UTF-8 解码两侧钉死（跨 chunk 多字节劈裂）
+
+**缺陷事实（本批核实）**：两侧 framing 都用 `buffer += chunk.toString("utf8")` 逐 chunk
+解码累积——本仓 windows-helper.ts:206（请求行）与 packages/acode-cua/broker.js:131
+（响应行）。多字节 UTF-8 字符跨 chunk 劈裂时，逐 chunk 解码产生 U+FFFD 替换符且**不可逆**
+（后续 chunk 无法续接前 chunk 的半个字符）； Helper 侧还有第二缺陷：1 MiB cap 判定用
+`Buffer.byteLength(buffer)`（windows-helper.ts:207）——对已损坏重编码的字符串量长，
+与 wire 原始字节数漂移。响应行含大量树文本/中文（A3 起常态），劈裂概率真实存在。
+
+**裁决（两侧同律）**：改为**字节级缓冲**——累积 `Buffer`（`Buffer.concat`），在字节域
+扫描 `0x0A` 切行，行字节一次性 `toString("utf8")`（完整行无劈裂可能），cap 判定对原始
+字节长度。不选 `string_decoder.StringDecoder` 的理由：它解决解码续接但不解决「cap 须按
+wire 原始字节判定」——字节域方案两个问题一并消除，且 JSON 行内容天然无裸 `\n`
+（wire spec §1.3 单行契约），字节切行安全。
+
+**测试要求（两侧，A2 批次同批落地）**：
+- 构造含多字节字符（中文 + emoji/代理对）的合法请求/响应行，**强制在字符中间劈裂**为
+  ≥2 个 socket 写入（第一段末尾落在某 UTF-8 序列内部），断言解析成功且内容与原文
+  逐字节相等；
+- 三字节/四字节序列各至少一个劈裂样本；
+- 超限 + 多字节混合：原始字节数刚过/刚不过 1 MiB 的边界样本各一（断言按 wire 字节
+  判定，劈裂不改变判定结果）；
+- 落点：Helper 侧 = helper-a1 测试文件扩展 case（win32 守卫）；角色 B 侧 =
+  `cua-broker-wire.test.mjs` 扩展 case（CI 常驻，fixture server 分段写入）。
+
+**治理注记**：broker.js 已是修改态派生文件（角色 B 增量 1-4 补实 + 逐字常量表；台账
+登记计划 = wire spec §8.5，原子单元只能 CI-Linux 落绿，handoff §4）。本修复属该文件
+ACode 修改清单的又一项，**不新增义务类别**；§8.5 的 scope 句登记时应包含「framing
+字节级缓冲修复」。正确性修复不因台账阻塞而延后（§17.6 同律）。
+
+### 17.3 MISSING_IPC_CHANNEL_MESSAGE 双写裁决
+
+**事实（本批核实）**：字面量 `"missing-ipc-channel"` 双写——control-protocol.ts:32 定义
+常量 `MISSING_IPC_CHANNEL_MESSAGE`，windows-helper.ts:271 又内联硬编码同串写 stderr。
+漂移风险：改一处漏一处 → stderr 诊断面与封闭表失配。
+
+**裁决**：单一来源 = control-protocol.ts 常量；windows-helper.ts 改为
+``process.stderr.write(`${MISSING_IPC_CHANNEL_MESSAGE}\n`)``（同树相对导入，§1.1 合规；
+该常量本就为 stderr 面定义，保留在 control-protocol.ts 而非删除——§2.7 封闭表第 4 行的
+字面量事实源）。**补测试缺口**：A1 负样本未覆盖「非 fork 启动」路径（本批核实
+helper-a1 测试无 spawn-without-IPC case）——A2 批次补：`spawn(process.execPath, [entry,
+"--socket", …, "--parent-pid", …])`（无 IPC 通道）→ 断言 stderr 含该字面量 ∧ exit 1 ∧
+无 transport_ready（STARTING 期最早失败）。契约测试加静态断言：windows-helper.ts 源文本
+不再含内联 `"missing-ipc-channel"` 字面量（防回归双写）。
+
+### 17.4 `.npmrc` 登记（§5.3/§5.4 已修订）
+
+`cua-producer/.npmrc`（2026-10-14 评审修复产物：producer 自有 npm 树的 registry 钉定
+官方源；根因 = npm 的 project 级 .npmrc 取被安装 package.json 所在目录，仓库根 .npmrc
+不参与，个人 `~/.npmrc` 镜像偏好曾固化进 lockfile 24/24 条 resolved）已入库但 A1 版
+§5.3 布局树/§5.4 入库清单漏登——本批补齐（两处已改）。防漂移断言已在
+cua-producer-contract.test.mjs 落地（resolved-host 集合 + 无凭据赋值形态，本批核实
+:137-177）；凭据纪律 = AGENTS.md/handoff §10（authToken 类只允许用户级/密钥服务）。
+
+### 17.5 §4.6 封闭表扩充（已落地为 §4.6.1）
+
+A1 表缺 dispatch 防御分支的 `internal` 字面量行（wire-server.ts:48-54 已实现、
+A1 结构不可达）与全部 A2/A3 场景行——本批以 §4.6.1 补齐（含铁律：变更类派发后禁
+ok:false）。§4.6 原表保持 A1 语义不变（WARMING/READY 门与 14 方法 unimplemented 行为
+在各切片按 §13 归属逐步收口，字面量零改动）。
+
+### 17.6 broker.js 治理耦合登记（台账现状如实）
+
+本批核实：`third-party/copied-components.json` 无 acode-cua 条目（grep 零命中）；
+broker.js/index.js/broker-server.js 无 `"Modified by ACode:"` 标注；broker.js 已含逐字
+常量表（COMPUTER_METHOD_NAMES :46 起，注明上游行号出处）与角色 B 增量 1-4 的原创补实
+——即该文件**已是「修改态派生 + 未登记」**，归属缺口先于本批存在（wire spec §8.5/oQ4
+已登记方案与原子性约束）。本批新增的 broker.js 改动需求（§17.2 UTF-8 修复）随同一
+清单结算，不扩大义务类别；**实现批次纪律**：改任何 `third-party/*.json` 前先跑
+`pnpm --dir apps/acode-cli test`（含 L01，handoff §4 操作纪律），且台账原子单元
+（条目 + Modified 标注 + CI-Linux 重生成 inventory/NOTICES）只能一次性落绿，不得
+Windows 本机拆分提交。

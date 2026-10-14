@@ -127,6 +127,10 @@ importers:
         specifier: ^5.9.0
         version: 5.9.3
 
+  apps/acode-cli/packages/acode-cua-plugin: {}
+
+  apps/acode-cli/packages/acode-guide-plugin: {}
+
   apps/acode-cli/packages/adapters:
     dependencies:
       '@acode/acode-cua':
@@ -199,6 +203,8 @@ importers:
       '@types/yauzl':
         specifier: ^2.10.3
         version: 2.10.3
+
+  apps/acode-cli/packages/android-emulator-plugin: {}
 
   apps/acode-cli/packages/bootstrap:
     dependencies:
@@ -440,6 +446,8 @@ importers:
         specifier: ^7.3.5
         version: 7.3.7(@types/node@24.12.2)(jiti@2.6.1)(lightningcss@1.33.0)(tsx@4.21.0)(yaml@2.9.0)
 
+  apps/acode-cli/packages/documents-plugin: {}
+
   apps/acode-cli/packages/dynamic-workflow:
     dependencies:
       typescript:
@@ -465,6 +473,10 @@ importers:
       '@acode/contracts':
         specifier: workspace:*
         version: link:../contracts
+
+  apps/acode-cli/packages/image-search-plugin: {}
+
+  apps/acode-cli/packages/ios-simulator-plugin: {}
 
   apps/acode-cli/packages/node-repl-host:
     dependencies:
@@ -497,11 +509,23 @@ importers:
         specifier: ^5.9.0
         version: 5.9.3
 
+  apps/acode-cli/packages/pdf-plugin: {}
+
+  apps/acode-cli/packages/plugin-creator-plugin: {}
+
+  apps/acode-cli/packages/presentations-plugin: {}
+
+  apps/acode-cli/packages/restore-legacy-sessions-plugin: {}
+
   apps/acode-cli/packages/shared-types:
     devDependencies:
       '@types/node':
         specifier: ^24.0.0
         version: 24.12.2
+
+  apps/acode-cli/packages/skill-creator-plugin: {}
+
+  apps/acode-cli/packages/spreadsheets-plugin: {}
 
   apps/acode-cli/packages/swift-bridge: {}
 

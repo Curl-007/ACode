@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json.schemastore.org/package.json",
+  "name": "@acode/restore-legacy-sessions-plugin",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "description": "Recovers ZCode conversations recorded by an older client build so they reopen in the current task list."
+}

@@ -7,6 +7,8 @@ import type {
 import { cn } from "@/components/lib/utils.js";
 import { usePlatform } from "@/hooks/usePlatform.js";
 import { useWebElementPicker } from "@/hooks/useWebElementPicker.js";
+import { parseAssistantFileUrlPath } from "@/lib/assistantFileReferences.js";
+import { toast } from "@/components/ui/toast.js";
 import { useACodeIntl } from "@/i18n/IntlProvider.js";
 import { logger } from "@/logger.js";
 import { BrowserToolbar } from "@/EmbeddedBrowserPaneParts.js";
@@ -920,9 +922,26 @@ export function UnifiedBrowserView({
       const currentUrl = webview.getURL();
       // 安全边界：系统默认浏览器入口只允许 Web URL 和 file URL，仍禁止 about/data 等内联协议。
       if (!isDefaultBrowserOpenableUrl(currentUrl)) return;
+      const localPath = parseAssistantFileUrlPath(currentUrl);
+      if (localPath && platform.openExternalFile) {
+        // file URL 直接走外部网址打开在 Windows 上可能无响应；复用文件卡片的本地路径打开接口。
+        const reportFailure = (error: unknown) => {
+          logger.warn("[browser-use] 浏览器打开本地文件失败", {
+            error: error instanceof Error ? error.message : String(error),
+          });
+          toast(intl.formatMessage({ id: "chat.previewCards.openExternalFailed" }));
+        };
+        void platform
+          .openExternalFile(localPath)
+          .then((result) => {
+            if (!result.success) reportFailure(result.error ?? "unknown-error");
+          })
+          .catch(reportFailure);
+        return;
+      }
       platform.openExternal(currentUrl);
     });
-  }, [browserState.isReady, platform, runWebviewAction, webview]);
+  }, [browserState.isReady, intl, platform, runWebviewAction, webview]);
 
   const handleTogglePicker = useCallback(() => {
     if (!webview || !browserState.isReady) return;

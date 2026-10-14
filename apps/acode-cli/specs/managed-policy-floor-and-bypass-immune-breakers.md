@@ -6,6 +6,8 @@
    不能放宽的策略，任何用户/项目/CLI 配置都无法放松它。
 2. **旁路免疫熔断器（bypass-immune circuit breakers）**：一组内置的危险动作检查，
    **即使 yolo/bypass 也强制弹窗**——把「yolo = 无条件放行」改成「yolo = 放行除熔断器外的一切」。
+   （R6 校准，2026-10-14：pathEscapeWrite 类退出 yolo 兜底面——「yolo = 放行除
+   **其余**熔断类外的一切」；sensitiveRead/删除类/灾难目标 deny 的 yolo 兜底不变。）
 
 P1-6 的项目 restrictive floor 是本骨架的特例（见 `project-permission-restrictive-floor.md`
 末段）；本骨架落地后，项目层、用户层、策略层共用同一套「只能收紧」的表达。
@@ -62,7 +64,7 @@ P1-6 的项目 restrictive floor 是本骨架的特例（见 `project-permission
 | 类 | ruleId | 触发条件 |
 |---|---|---|
 | 空变量根删除 | `breaker.bashRootDelete` | Bash 命令经 `analyzeBashCommand` AST 解析后，存在删除类命令（`rm`/`rmdir`/`del`/`Remove-Item`）携带递归/强制旗标，且其路径参数满足任一：① 含未解析展开（ParameterExpansion/SimpleExpansion/CommandExpansion，即 `rm -rf "$DIR"` 形态——变量为空时等价于删根）；② 解析后等于文件系统根或用户 home；③ 参数为空字符串 |
-| 路径逃逸写 | `breaker.pathEscapeWrite` | Write/Edit/ApplyPatch 的目标路径（经 `resolveWorkspacePath` 以 workingDirectory 解析）落在 workspaceRoot 之外（workspaceRoot 已知时）。**ask 而非 deny**：与 `path-policy.ts:36-38` 的既有产品决定一致（子代理可能需要查看用户指定的兄弟仓库），但 yolo 下不再静默放行。**豁免面见 R5**（系统临时目录 + 产品 scratch 区，2026-10-14 用户裁决） |
+| 路径逃逸写 | `breaker.pathEscapeWrite` | Write/Edit/ApplyPatch 的目标路径（经 `resolveWorkspacePath` 以 workingDirectory 解析）落在 workspaceRoot 之外（workspaceRoot 已知时）。**ask 而非 deny**：与 `path-policy.ts:36-38` 的既有产品决定一致（子代理可能需要查看用户指定的兄弟仓库），但 yolo 下不再静默放行。**豁免面见 R5**（系统临时目录 + 产品 scratch 区，2026-10-14 用户裁决）；**yolo 直通见 R6**（2026-10-14 用户二次裁决：yolo 下本类不再降级 allow，非 yolo 的 allow 来源照旧） |
 | 敏感位置读 | `breaker.sensitiveRead` | Read/Glob/Grep/Bash 的目标命中**封闭清单**的凭据位置模式（ssh 私钥、系统/用户凭据库、浏览器 profile、云 CLI 凭据目录）。清单是代码内常量，不接受配置扩展（扩展走策略地板的 deny/ask） |
 
 - Bash 解析失败/超长（`hasParseErrors`）时，删除类命令按「含未解析展开」同等对待
@@ -82,7 +84,8 @@ checkPermission(context, capability, projectRules, rulePolicy)
   ├─ 3. plan-mode transition（既有）
   ├─ 4. requiresUserInteraction（既有）
   ├─ 5. alwaysAsk（既有，含 session/workflow-owner 免确认）
-  ├─ 6. bypass-immune breakers 命中      → ask    （在 yolo 直通之前；只降级 allow）
+  ├─ 6. bypass-immune breakers 命中      → ask    （在 yolo 直通之前；只降级 allow。
+  │        R6：pathEscapeWrite 命中在 yolo 直通条件成立时不降级——判定分层见 R6.2）
   ├─ 7. yolo fast-path（policyFloor.disableBypassPermissionsMode=true 时跳过，
   │        落入 build 判定）
   └─ 8. auto / project rules / plan / allowedTools / edit / build（既有顺序不变）
@@ -163,6 +166,42 @@ checkPermission(context, capability, projectRules, rulePolicy)
   照旧触发。熔断器「只收紧、永不放宽」的语义在豁免后仍成立：豁免是**触发面
   定义**的一部分（什么算「逃逸」），不是对命中的放行。
 
+### R6 yolo 直通 pathEscapeWrite（2026-10-14 用户二次裁决 A）
+
+**裁决背景**：R5 落地后复盘「完全访问」语义——用户裁决：yolo（完全访问）下
+写工作区外任意路径**不应弹窗**。三个支撑事实：① 不对称性——Bash 重定向写工作区
+外在 yolo 下本就静默通过（pathEscapeWrite 只覆盖 Write/Edit/ApplyPatch/MultiEdit），
+熔断防得住「无意识越界」防不住「被注入后有意越界」，安全增量只剩防事故；
+② 上游对照——ZCode 无此熔断器，yolo 越界写零弹窗（实测）；③ R5.4 已把熔断
+弹窗的「总是允许」置空（结构性无效），剩余弹窗是纯一次性摩擦，无记忆效应。
+
+**规则**：
+
+- **R6.1 yolo 直通**：`breaker.pathEscapeWrite` 命中在 yolo 下**不再把 allow 降级
+  ask**。直通条件与 C11（checkAlwaysAsk）及 R3 第 7 步 yolo fast-path **逐字同档**：
+  `mode === "yolo"` ∧ plan 未生效 ∧ 策略地板未 `disableBypassPermissionsMode`。
+  三处判定单一来源化为 `PermissionService` 私有谓词 `isYoloTrustBypassActive(context)`
+  （消除三份内联拷贝的漂移面）。
+- **R6.2 判定位分层**：熔断器模块**保持模式无关**（纯函数、无 mode 入参——R5 的
+  触发面收窄在模块内，R6 的模式裁决在 service 收口层叠加）。非 yolo 模式的 allow
+  来源（build/edit 下的项目 allow 规则、allowedTools、workflow 草稿免确认等）命中
+  pathEscapeWrite **照旧降级 ask**——熔断器在非 yolo 面完整保留。
+- **R6.3 其余熔断类不受影响**：sensitiveRead（读/命令文本凭据位置）、bashRootDelete、
+  bashTargetCatastrophic（deny 级）、反射门在 yolo 下行为不变——「yolo = 放行除
+  熔断器外的一切」收窄为「yolo = 放行除**其余**熔断类外的一切（pathEscapeWrite
+  除外）」。R2 开篇的总语义按此校准。
+- **R6.4 与 R5 的关系**：R5 豁免面（tmpdir/scratch）保留且继续服务非 yolo 的 allow
+  来源（build 下项目 allow 规则写 tmpdir 不再被熔断降级）；yolo 下两者叠加后
+  pathEscapeWrite 实际不可达（R6 直通先生效）。
+- **已知交互登记**：workflow-worktree-isolation.md R4 曾把「隔离 actor 写主 checkout
+  被 pathEscapeWrite 判逃逸 ask」记为期望语义——dwf/workflow child 硬编码
+  `mode:"yolo"`，R6 后该 ask 不再出现。该特性仍是 fail-loud 桩（未实现），且其
+  spec 自证「worktree 隔离是状态隔离，不是权限收敛手段」；实现时如需越界确认，
+  须另行设计（不依赖本熔断器），已在该 spec 加过时注记。
+
+**验收场景（19-22）**：见下节；场景 9 的 yolo ask 断言由本裁决废止（改写为非 yolo
+allow 来源形态）。
+
 ## 接口
 
 - `adapters/src/config/managed-policy.ts`：
@@ -173,7 +212,9 @@ checkPermission(context, capability, projectRules, rulePolicy)
 - `core/src/permission/service.ts`：`PermissionConfig.policyFloor?: ManagedPolicyFloor`；
   `PermissionContext.workspaceRoot?: string`（熔断器路径判定用，缺省时路径类熔断器不触发，
   与既有「拿不到工作目录照常判定」同一容错哲学）；`PermissionContext.scratchRoot?: string`
-  （R5.2 豁免根，缺省时该豁免不生效）。
+  （R5.2 豁免根，缺省时该豁免不生效）；私有谓词 `isYoloTrustBypassActive(context)`
+  （R6.1：三处 yolo 直通条件的单一来源——R3 第 7 步 fast-path、C11 checkAlwaysAsk、
+  R6 熔断降级豁免共用，防三份内联拷贝漂移）。
 - `core/src/permission/bypass-immune-breakers.ts`：
   `evaluateBypassImmuneBreakers(context, capability): { ruleId: string; reason: string } | undefined`；
   `BypassImmuneBreakerContext.scratchRoot?: string`（R5.2，经
@@ -210,7 +251,9 @@ checkPermission(context, capability, projectRules, rulePolicy)
 **熔断器**
 8. yolo 下 `rm -rf "$UNSET_VAR"` / `rm -rf /` / `rm -rf ~` → ask（breaker.bashRootDelete）；
    `rm -rf ./build` → 不触发（既有 yolo 直通）。
-9. yolo 下 Write 到 workspaceRoot 之外 → ask（breaker.pathEscapeWrite）；workspace 内 → 不触发。
+9. ~~yolo 下 Write 到 workspaceRoot 之外 → ask~~（**R6 废止 yolo 形态**，见 19-22）；
+   熔断器模块纯函数面不变：workspaceRoot 外的 Write/Edit/ApplyPatch 目标仍判命中
+   （模式无关），workspace 内不触发。
 10. yolo 下 Read `~/.ssh/id_rsa` → ask（breaker.sensitiveRead）；workspace 内文件 → 不触发。
 11. 熔断器不覆写已有 deny / ask 的 ruleId；alwaysAsk 工具照常走 alwaysAsk。
 12. Bash 解析失败时删除类命令 fail-closed 到 ask；非删除类不受影响。
@@ -229,6 +272,18 @@ checkPermission(context, capability, projectRules, rulePolicy)
     派生的子代理写 scratch 内路径不弹窗。
 18. env-info 段：scratchDir 在场 → 渲染目录行与指引各一；缺席 → 段内容与改动前
     逐字节一致（零渲染，不猜路径）。
+
+**R6 yolo 直通 pathEscapeWrite**
+19. yolo 下 Write 到工作区外（非豁免根）→ allow（`mode.yolo`），零弹窗零 broker 请求；
+    子代理同语义（child 模式继承 yolo → 同一直通谓词）。
+20. **非 yolo 的 allow 来源照旧降级**：build 模式 + 项目 allow 规则（或 allowedTools）
+    放行的工作区外 Write → ask（`breaker.pathEscapeWrite`）——R6 只豁免 yolo 直通面。
+21. yolo + 策略地板 `disableBypassPermissionsMode=true` → 直通失效，工作区外写回落
+    build 判定（副作用 ask）；yolo + plan 生效 → 写入本就被 plan deny（熔断不放宽 deny）。
+22. 三处 yolo 直通谓词（R3 第 7 步 fast-path / C11 checkAlwaysAsk / R6 熔断降级豁免）
+    单一来源 `isYoloTrustBypassActive`：任一处条件被单独改松都会使三处同红（回归钉）。
+23. 其余熔断类在 yolo 不直通：Read `~/.ssh/id_rsa` → ask（`breaker.sensitiveRead`）、
+    `rm -rf "$X"/` → ask、灾难目标 → deny（既有场景 8/10/11 不回归）。
 
 ## 不在本骨架范围
 

@@ -32,6 +32,11 @@
   cd 漂移），不受洞 1 影响；其 `mode: "yolo"` 为设计内硬编码。
 - 熔断器对工作区外目标的 ask 本体：洞 1 修复后，写真实工作区之外**仍然弹**——这是
   安全加固 P2 的有意设计，本项不松动。
+  **（2026-10-14 校准：managed-policy-floor-and-bypass-immune-breakers.md R6 裁决后，
+  yolo 下 pathEscapeWrite 不再降级 ask——本条「仍然弹」仅对非 yolo 的 allow 来源
+  （build/edit 项目 allow 规则、allowedTools 等）继续成立。洞 1 的锚定正确性不受影响：
+  workspaceRoot 仍是 projectId / project memory 根推导 / 非 yolo 熔断判定的身份锚，
+  回归钉移到熔断器纯函数层（模式无关）。）**
 
 ## 产品规则
 
@@ -91,8 +96,9 @@
    `workingDirectory`（既有构造点兼容）。
 2. 漂移场景（决策层，与 executor 喂给 PermissionService 的 context 同形）：root=工作区根、
    cwd=root/sub 时，yolo 下写 root 内（sub 外）路径 → allow、无 `breaker.pathEscapeWrite`；
-   写 root 外路径 → 仍 ask（安全不变量不回归）；对照组 workspaceRoot=root/sub（缺陷形态）
-   → 同一路径误报 ask，演示本项消除的误报。
+   ~~写 root 外路径 → 仍 ask~~（**R6 校准：yolo 下改为 allow 直通**）；对照组
+   workspaceRoot=root/sub（缺陷形态）的误报鉴别**移到熔断器纯函数层**（模式无关，
+   钉住锚定正确性对非 yolo allow 来源与其余 workspaceRoot 消费方仍然 load-bearing）。
 3. `resolveSubagentResumeModeOverride`：非 plan childMode 原样透出（resume 后跟随父当前
    yolo）；`"plan"` 返回 undefined（plan 地板不拆，由持久化 execution-state entry 恢复）。
 

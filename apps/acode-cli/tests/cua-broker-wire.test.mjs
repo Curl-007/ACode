@@ -33,7 +33,9 @@ import {
 /**
  * 起一个真实 net server 监听一个 minted socket path，按 onRequest(request) 决定响应。
  * onRequest 返回：{ respond: <对象> } 写一行响应后 end；{ hold: true } 只连不响应（测超时）；
- * { raw: <string> } 写裸字节（测非法 JSON）；{ closeImmediately: true } 连上就关（测提前关闭）。
+ * { raw: <string> } 写裸字节（测非法 JSON）；{ rawChunks: <Buffer[]> } 分段写裸字节
+ * （§17.2 多字节跨 chunk 劈裂样本，段间 20ms 间隔保证独立 chunk）；
+ * { closeImmediately: true } 连上就关（测提前关闭）。
  * server 与每个 socket 都挂 error handler——client 命中上限/超时后 destroy 会让 server 侧
  * write 抛 EPIPE，未处理会崩测试进程（phase-0 T4 实测教训）。
  */
@@ -58,6 +60,21 @@ async function startBrokerFixture(onRequest) {
       if (decision.hold) return; // 不响应，让 client 超时
       if (decision.closeImmediately) {
         socket.destroy();
+        return;
+      }
+      if (Array.isArray(decision.rawChunks)) {
+        // 分段写入：制造「多字节 UTF-8 字符跨 chunk 劈裂」的传输形态（§17.2）。
+        let index = 0;
+        const writeNext = () => {
+          if (index >= decision.rawChunks.length) {
+            socket.end();
+            return;
+          }
+          const part = decision.rawChunks[index];
+          index += 1;
+          socket.write(part, () => setTimeout(writeNext, 20));
+        };
+        writeNext();
         return;
       }
       if (typeof decision.raw === "string") {
@@ -306,6 +323,34 @@ test("callBrokerMethod：超时（server hold 不响应）→ BrokerError code t
     );
   } finally {
     await fx.close();
+  }
+});
+
+test("callBrokerMethod：多字节 UTF-8 字符跨 chunk 劈裂（三字节 CJK + 四字节 emoji）→ 字节级缓冲无损解析（producer spec §17.2 / A2-AC-7）", async () => {
+  // 缺陷背景（§17.2）：旧实现 `buffer += chunk.toString("utf8")` 逐 chunk 解码累积——
+  // 多字节字符跨 chunk 劈裂时产生不可逆 U+FFFD 替换符（响应行含树文本/中文自 A3 起
+  // 是常态）。修复 = Buffer 累积 + 字节域切行 + 完整行一次性解码。
+  const text = "中文树文本🀄😀 mixed ascii end";
+  const payload = { ok: true, result: { content: [{ type: "text", text }] } };
+  const line = Buffer.from(`${JSON.stringify(payload)}\n`, "utf8");
+  // 三字节序列（中 = E4 B8 AD）与四字节序列（😀 = F0 9F 98 80）各取内部劈裂点，
+  // 四字节覆盖多个内部偏移（§17.2 测试要求：三字节/四字节各至少一个劈裂样本）。
+  const cjkOffset = line.indexOf(Buffer.from("中", "utf8"));
+  const emojiOffset = line.indexOf(Buffer.from("😀", "utf8"));
+  assert.ok(cjkOffset > 0 && emojiOffset > cjkOffset, "样本前提：两种序列都在响应行内");
+  const splitPoints = [cjkOffset + 1, emojiOffset + 1, emojiOffset + 2, emojiOffset + 3];
+  for (const splitAt of splitPoints) {
+    const fx = await startBrokerFixture(() => ({
+      rawChunks: [line.subarray(0, splitAt), line.subarray(splitAt)],
+    }));
+    try {
+      const got = await callBrokerMethod({ socketPath: fx.socketPath, method: "get_app_state", timeoutMs: 5000 });
+      assert.deepEqual(got, payload.result, `split@${splitAt}: 解析结果与原文逐字段相等`);
+      assert.equal(got.content[0].text, text, `split@${splitAt}: 字符串内容逐字节相等（无损）`);
+      assert.ok(!got.content[0].text.includes("\uFFFD"), `split@${splitAt}: 绝无 U+FFFD 替换符`);
+    } finally {
+      await fx.close();
+    }
   }
 });
 

@@ -65,12 +65,14 @@ const FOURTEEN_METHODS = [
   "stop_computer_control",
 ];
 
-// §4.6 封闭 wire error 字面量表（断言锚：响应必须是这些字面量，零插值）。
+// §4.6/§4.6.1 封闭 wire error 字面量表（断言锚：响应必须是这些字面量，零插值）。
 const WIRE_MESSAGES = {
   warming: "Computer Use Helper is starting up.",
   unimplemented: "Computer Use method is not implemented by this producer.",
   methodNotFound: "Unknown Computer Use broker method.",
   invalidRequest: "Invalid Computer Use broker request line.",
+  invalidParams: "Invalid Computer Use method parameters.",
+  appNotRunning: "Computer Use target app is not running.",
 };
 
 // ── 双重守卫（§6.1）───────────────────────────────────────────────────────────
@@ -110,7 +112,7 @@ function startHelper(options) {
   const socketPath = options.socketPath ?? mintTestPipe();
   const argv =
     options.argvOverride ?? ["--socket", socketPath, "--parent-pid", String(options.parentPid ?? process.pid)];
-  const env = { ...process.env, ELECTRON_RUN_AS_NODE: "1", ...(options.extraEnv ?? {}) };
+  const env = { ...process.env, ELECTRON_RUN_AS_NODE: "1", ...options.extraEnv };
   if (options.omitAddonEnv) delete env[ADDON_ENV];
   else env[ADDON_ENV] = options.addonEnv ?? addonPath;
   const child = fork(entryPath, argv, {
@@ -237,15 +239,74 @@ async function mintConfirmedDeadPid() {
   throw new Error("could not mint a confirmed-dead pid");
 }
 
-/** parseReadyMessage 逐字段对齐（windowsCuaHelperHostSupport.ts:202-228 的测试侧复刻）。 */
+/**
+ * 分段写入的原始往返（§17.2 测试夹具）：payload 以 Buffer 在 splitAt 字节处切成两次
+ * 独立 socket 写入（间隔 gapMs 保证服务端收到两个独立 chunk）——用于构造「多字节字符
+ * 跨 chunk 劈裂」与「1 MiB cap 按 wire 原始字节判定」样本。返回形态同 rawRequest。
+ */
+function rawRequestSplit(socketPath, payload, splitAt, { gapMs = 60, timeoutMs = 15_000 } = {}) {
+  return new Promise((resolvePromise, rejectPromise) => {
+    const socket = connect(socketPath);
+    let buffer = Buffer.alloc(0);
+    let errorCode = null;
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      socket.destroy();
+      const newline = buffer.indexOf(0x0a);
+      resolvePromise({
+        text: newline === -1 ? null : buffer.subarray(0, newline).toString("utf8"),
+        errorCode,
+      });
+    };
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      rejectPromise(new Error(`split raw request to pipe timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+    socket.once("connect", () => {
+      socket.on("data", (chunk) => {
+        buffer = buffer.length === 0 ? chunk : Buffer.concat([buffer, chunk]);
+        if (buffer.indexOf(0x0a) !== -1) finish();
+      });
+      socket.on("error", (error) => {
+        errorCode = errorCode ?? error?.code ?? "error";
+        finish();
+      });
+      socket.on("close", finish);
+      try {
+        socket.write(payload.subarray(0, splitAt));
+      } catch {
+        return; // 超大 payload 首段写入即被拆：error/close 路径接管。
+      }
+      setTimeout(() => {
+        try {
+          socket.write(payload.subarray(splitAt));
+        } catch {
+          // 第二段写入期间被服务端拆连接（超限样本的预期形态）：error 路径接管。
+        }
+      }, gapMs);
+    });
+  });
+}
+
+/**
+ * parseReadyMessage 逐字段对齐（windowsCuaHelperHostSupport.ts:205-231 的测试侧复刻；
+ * 行号 2026-10-14 A2 批次按当前检出校准——旧注释引 :202-228/:207/:216-217/:218-220 已漂移，
+ * 现值：protocol 判定 :210、socketPath 非空串 :219-220、pid 正整数 :221-222；
+ * 回显/pid 全等校验在 windowsCuaDevHelperHost.ts:401/:402-403）。
+ */
 function assertReadyMessageShape(message, type, socketPath, pid) {
-  assert.equal(message.protocol, CONTROL_PROTOCOL, "protocol 必须匹配（:207）");
+  assert.equal(message.protocol, CONTROL_PROTOCOL, "protocol 必须匹配（support :210）");
   assert.equal(message.type, type);
   assert.equal(typeof message.socketPath, "string");
-  assert.ok(message.socketPath.length > 0, "socketPath 非空串（:216-217）");
-  assert.equal(message.socketPath, socketPath, "socketPath 必须是传入值逐字回显（:401）");
-  assert.ok(Number.isInteger(message.pid) && message.pid > 0, "pid 正整数（:218-220）");
-  assert.equal(message.pid, pid, "pid 必须与 fork 出的 child.pid 全等（:402-403）");
+  assert.ok(message.socketPath.length > 0, "socketPath 非空串（support :219-220）");
+  assert.equal(message.socketPath, socketPath, "socketPath 必须是传入值逐字回显（host :401）");
+  assert.ok(Number.isInteger(message.pid) && message.pid > 0, "pid 正整数（support :221-222）");
+  assert.equal(message.pid, pid, "pid 必须与 fork 出的 child.pid 全等（host :402-403）");
 }
 
 // ── 集成断言面（§6.2，真子进程 + 真 named pipe + 真角色 B 客户端）─────────────
@@ -279,11 +340,17 @@ test("集成|两阶段 ready 时序 + argv 白名单 + 凭据 canary 不泄漏 +
     assert.equal(helper.ipcMessages.filter((message) => message?.type === "ready").length, 1);
 
     // 步骤 7（wire 面）：原始连接捕获 broker_info 与一个工具方法的精确响应行，canary 不泄漏。
+    // A2 增量（§10.9）：broker_info 携带 capabilities 子集（additive）；pid/bundle_id 的
+    // A1 最小诚实面保持（health 门 load-bearing）。工具方法样本改用 list_apps（A3 面，
+    // 保持 unimplemented——left_click 等 8 方法自 A2 起真实受理，见专用测试）。
     const infoRound = await rawRequest(socketPath, `${JSON.stringify({ method: "broker_info" })}\n`);
     assert.ok(infoRound.text, "READY 期 broker_info 必须应答");
     const info = JSON.parse(infoRound.text);
-    assert.deepEqual(info, { ok: true, result: { pid: helper.child.pid, bundle_id: process.execPath } });
-    const toolRound = await rawRequest(socketPath, `${JSON.stringify({ method: "left_click", params: {} })}\n`);
+    assert.equal(info.ok, true);
+    assert.equal(info.result.pid, helper.child.pid, "pid = child.pid（isExactHealthPid 面）");
+    assert.equal(info.result.bundle_id, process.execPath, "bundle_id = canonical exe（wire spec §6.2 规则 2）");
+    assert.ok(info.result.capabilities && typeof info.result.capabilities === "object", "A2 capabilities 增量在场");
+    const toolRound = await rawRequest(socketPath, `${JSON.stringify({ method: "list_apps", params: {} })}\n`);
     assert.ok(toolRound.text);
     assert.deepEqual(JSON.parse(toolRound.text), {
       ok: false,
@@ -320,7 +387,7 @@ test("集成|两阶段 ready 时序 + argv 白名单 + 凭据 canary 不泄漏 +
   }
 });
 
-test("集成|健康握手成立 + 14 方法逐一 unimplemented + execute 信封诚实失败（§6.2 步骤 2/4；AC-5/AC-6）", { skip: skipReason }, async () => {
+test("集成|健康握手成立 + 6 UIA 方法逐一 unimplemented + 8 个 A2 方法诚实受理（§6.2 步骤 2/4；AC-5/AC-6；A2 批次修订）", { skip: skipReason }, async () => {
   const socketPath = mintTestPipe();
   const helper = startHelper({ socketPath });
   try {
@@ -333,10 +400,11 @@ test("集成|健康握手成立 + 14 方法逐一 unimplemented + execute 信封
     assert.equal(health.pid, helper.child.pid, "isExactHealthPid 语义成立（health 门只校 pid）");
     assert.equal(health.bundleId, process.execPath, "bundle_id = canonical exe 绝对路径（wire spec §6.2 规则 2）");
 
-    // 步骤 4：14 方法逐一（不参数化折叠）→ BrokerError code "unimplemented"（→SDK
-    // ACTION_UNAVAILABLE、retry never；映射表由角色 B 测试锁定，此处只验 producer 侧供给）。
-    assert.equal(FOURTEEN_METHODS.length, 14);
-    for (const method of FOURTEEN_METHODS) {
+    // A3 面 6 方法逐一（不参数化折叠）→ BrokerError code "unimplemented"（→SDK
+    // ACTION_UNAVAILABLE、retry never；C09：显式不可用、零假成功）。
+    const a3Methods = ["list_apps", "list_windows", "get_app_state", "set_value", "select_text", "perform_action"];
+    assert.equal(a3Methods.length, 6, "A2 切片后仍 unimplemented 的恰是 6 个 UIA 方法（§10.0）");
+    for (const method of a3Methods) {
       let caught = null;
       try {
         await callBrokerMethod({ socketPath, method, params: {}, timeoutMs: 8000 });
@@ -350,16 +418,36 @@ test("集成|健康握手成立 + 14 方法逐一 unimplemented + execute 信封
       assert.equal(caught.details?.possiblySent, false, `${method}: 应用层拒绝不得置 possiblySent`);
     }
 
-    // 步骤 4：经 execute（角色 B runtime）取变更类 + 只读类各一，断言 isError 单文本块信封。
+    // A2 面 8 方法逐一：空参调用必须「诚实受理」——绝不再是 unimplemented。6 个变更/
+    // 校验面方法以 invalid_request 固定字面量拒绝空参（派发前确定拒绝，零真实注入——
+    // 默认套件安全）；stop/request_access 空参合法 → ok 结果（stop 空态 no-op 释放）。
+    const invalidParamMethods = ["left_click", "scroll", "left_click_drag", "type", "key", "paste"];
+    for (const method of invalidParamMethods) {
+      let caught = null;
+      try {
+        await callBrokerMethod({ socketPath, method, params: {}, timeoutMs: 8000 });
+      } catch (error) {
+        caught = error;
+      }
+      assert.ok(caught instanceof BrokerError, `${method}: 空参必须拒绝`);
+      assert.equal(caught.code, "invalid_request", `${method}: A2 已注册 → 参数面拒绝而非 unimplemented`);
+      assert.equal(caught.details?.possiblySent, false, `${method}: 参数校验失败 = 确定未派发`);
+    }
+    const stopResult = await callBrokerMethod({ socketPath, method: "stop_computer_control", params: {}, timeoutMs: 8000 });
+    assert.equal(stopResult.structuredContent?.dispatch_status, "accepted", "stop 空态 no-op → accepted 收据");
+    const accessResult = await callBrokerMethod({ socketPath, method: "request_access", params: {}, timeoutMs: 8000 });
+    assert.equal(JSON.parse(accessResult.content[0].text).platform, "win32", "request_access 只读快照受理");
+
+    // 步骤 4：经 execute（角色 B runtime）取 A3 面 + A2 参数拒绝面各一，断言 isError 单文本块信封。
     const runtime = createComputerUseRuntime({ brokerSocketPath: socketPath });
-    for (const toolName of ["left_click", "list_apps"]) {
+    for (const [toolName, expectedCode] of [["left_click", "invalid_request"], ["list_apps", "unimplemented"]]) {
       const result = await runtime.execute({ toolName, arguments: {} });
       assert.equal(result.isError, true, `${toolName}: execute 必须返回 isError 信封`);
       assert.ok(Array.isArray(result.content) && result.content.length === 1, `${toolName}: 单文本块`);
       assert.equal(result.content[0].type, "text");
       const payload = JSON.parse(result.content[0].text);
-      assert.equal(payload.code, "unimplemented", `${toolName}: 信封内 code（SDK brokerErrorCodeOf 挖掘点）`);
-      assert.equal(payload.error?.code, "unimplemented");
+      assert.equal(payload.code, expectedCode, `${toolName}: 信封内 code（SDK brokerErrorCodeOf 挖掘点）`);
+      assert.equal(payload.error?.code, expectedCode);
     }
   } finally {
     helper.child.kill();
@@ -405,7 +493,7 @@ test("集成|协议违规面：method_not_found / invalid_request 欠响应 / >1
   }
 });
 
-test("集成|addon 诚实面：probe napiVersion=9 防漂移锚 + addonVersion=package.json version + 导出面封闭（§6.2 步骤 6；AC-12）", { skip: skipReason }, () => {
+test("集成|addon 诚实面：probe napiVersion=9 防漂移锚 + addonVersion=package.json version + 导出面封闭（§6.2 步骤 6；AC-12；A2 导出面）", { skip: skipReason }, () => {
   const addon = createRequire(import.meta.url)(addonPath);
   // NAPI_VERSION 防漂移锚（§4.4/§5.2.1）：编译期宏值必须 =9。漂移事实证：includes 接线
   // 缺失时 Node 25 头文件基线给 8，本断言即抓出该形态。
@@ -414,8 +502,15 @@ test("集成|addon 诚实面：probe napiVersion=9 防漂移锚 + addonVersion=p
   assert.ok(addon.addonVersion.length > 0, "addonVersion 非空串");
   const pkg = JSON.parse(readFileSync(join(producerRoot, "package.json"), "utf8"));
   assert.equal(addon.addonVersion, pkg.version, "addonVersion = package.json version 的编译期嵌入（§4.1）");
-  // A1 导出面只此两项（§4.1：任何超出都没有真实能力支撑）。
-  assert.deepEqual(Object.keys(addon).sort(), ["addonVersion", "probe"]);
+  // A2 导出面封闭（§10.1 + processExecutablePath 回写）：恰好 20 键——能力面溢出禁止
+  // （不导出 clipboardReadText 等无工具面支撑的原语，§10.1 注记 4；细粒度 typeof 断言
+  // 在 cua-producer-a2-native.test.mjs）。
+  assert.deepEqual(Object.keys(addon).sort(), [
+    "addonVersion", "asyncKeyState", "cancelOperations", "captureDisplay", "captureWindow",
+    "clipboardWriteText", "cursorPosition", "drag", "environmentProbe", "foregroundPid",
+    "heldInputSnapshot", "mouseDown", "mouseUp", "moveTo", "pressKeys", "probe",
+    "processExecutablePath", "releaseAllHeldInputs", "scrollAt", "sendText",
+  ]);
 });
 
 test("集成|AC-3：构建齐套后 ACODE_CUA_DEV_ROOT 指向 producer 的 dev 解析成功（§5.5，宿主真解析器）", { skip: skipReason }, async () => {
@@ -527,6 +622,127 @@ test("负样本|--socket 非 \\\\.\\pipe\\ 前缀 → invalid-helper-arguments +
     assert.equal(error.message, "invalid-helper-arguments", "任意文件系统路径不得交给 net.listen（§2.1）");
     const exitInfo = await waitForExit(helper, 5_000);
     assert.equal(exitInfo.code, 1);
+  } finally {
+    helper.child.kill();
+  }
+});
+
+test("负样本|非 fork 启动（无 IPC 通道）→ stderr missing-ipc-channel + exit 1 + pipe 从未 bind（§2.7/§17.3 补测试缺口）", { skip: skipReason }, async () => {
+  // §17.3：A1 负样本未覆盖「非 fork 启动」路径——spawn（stdio pipe、无 IPC 通道）复现。
+  // 字面量单一来源 = control-protocol.ts 的 MISSING_IPC_CHANNEL_MESSAGE（双写已按 §17.3
+  // 裁决消除；防回归的静态断言在 cua-producer-contract.test.mjs）。
+  const socketPath = mintTestPipe();
+  const child = spawn(
+    process.execPath,
+    [entryPath, "--socket", socketPath, "--parent-pid", String(process.pid)],
+    {
+      cwd: producerRoot,
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", [ADDON_ENV]: addonPath },
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+    },
+  );
+  let stderr = "";
+  let stdout = "";
+  child.stderr.setEncoding("utf8");
+  child.stdout.setEncoding("utf8");
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk;
+  });
+  child.stdout.on("data", (chunk) => {
+    stdout += chunk;
+  });
+  const exitCode = await new Promise((resolvePromise) => child.once("exit", (code) => resolvePromise(code)));
+  assert.equal(exitCode, 1, "无 IPC → exit 1（§2.7 封闭表第 4 行）");
+  assert.match(stderr, /missing-ipc-channel/, "stderr 稳定字面量（无法发 IPC，stderr 同名）");
+  assert.equal(stdout, "", "stdout 纪律不变（§2.7）");
+  assert.ok(!stderr.includes(socketPath), "stderr 不含 pipe 名（§2.7 纪律）");
+  // STARTING 期最早失败：pipe 从未 bind（新连接 ENOENT）。
+  const afterExit = await rawRequest(socketPath, `${JSON.stringify({ method: "broker_info" })}\n`);
+  assert.equal(afterExit.text, null);
+  assert.equal(afterExit.errorCode, "ENOENT", "失败早于 listen——pipe 从未存在");
+});
+
+test("UTF-8|多字节字符跨 chunk 劈裂的请求行无损解析 + 1 MiB cap 按 wire 原始字节判定（§17.2/A2-AC-7）", { skip: skipReason }, async () => {
+  const socketPath = mintTestPipe();
+  const helper = startHelper({ socketPath });
+  const deadPid = await mintConfirmedDeadPid();
+  try {
+    await waitForReady(helper);
+
+    // 判据设计（零插值纪律下的无损性证明）：wire 响应绝不回显参数内容，故用「长度敏感」
+    // 载荷区分无损/损坏——type.text 恰为 32,768 code units（§10.2 上限内）且含劈裂点
+    // 多字节字符：字节级缓冲无损 ⇒ 通过参数校验 ⇒ 走到 app_ref 解析 ⇒ 死 pid 得
+    // 「target app is not running」；旧逐-chunk 解码损坏 ⇒ 每个残缺字节变 U+FFFD ⇒
+    // 长度超 32,768 ⇒ 「Invalid Computer Use method parameters.」。两个字面量可区分。
+    const typeRequest = (text) =>
+      Buffer.from(`${JSON.stringify({ method: "type", params: { text, app_ref: { pid: deadPid } } })}\n`, "utf8");
+
+    // 三字节序列（中 = E4 B8 AD）劈裂：text 恰 32,768 units，切点落在 中 的第 1 字节后。
+    {
+      const text = `${"a".repeat(32_767)}中`;
+      assert.equal(text.length, 32_768, "样本前提：恰在上限");
+      const payload = typeRequest(text);
+      const charOffset = payload.indexOf(Buffer.from("中", "utf8"));
+      assert.ok(charOffset > 0);
+      const round = await rawRequestSplit(socketPath, payload, charOffset + 1);
+      assert.ok(round.text, "劈裂请求仍欠一行响应");
+      assert.deepEqual(
+        JSON.parse(round.text),
+        { ok: false, error: { message: WIRE_MESSAGES.appNotRunning, code: "invalid_request" } },
+        "三字节劈裂无损：走到 app_ref 解析（损坏形态会是 invalidParams 超限制）",
+      );
+    }
+
+    // 四字节序列（😀 = F0 9F 98 80，UTF-16 代理对 = 2 code units）劈裂：切点落在第 2 字节后。
+    {
+      const text = `${"a".repeat(32_766)}😀`;
+      assert.equal(text.length, 32_768, "样本前提：恰在上限（emoji 占 2 units）");
+      const payload = typeRequest(text);
+      const charOffset = payload.indexOf(Buffer.from("😀", "utf8"));
+      assert.ok(charOffset > 0);
+      const round = await rawRequestSplit(socketPath, payload, charOffset + 2);
+      assert.ok(round.text, "劈裂请求仍欠一行响应");
+      assert.deepEqual(
+        JSON.parse(round.text),
+        { ok: false, error: { message: WIRE_MESSAGES.appNotRunning, code: "invalid_request" } },
+        "四字节劈裂无损（代理对完整性，§10.9 同律）",
+      );
+    }
+
+    // cap + 多字节混合：原始 wire 字节数恰 = 1 MiB（含 \n）→ 不拆、有响应（按原始字节
+    // 判定；对损坏重编码字符串量长的旧实现会漂移判定）。text 超限 → invalidParams，
+    // 关键是「得到响应行」本身（未超限拆连接）。
+    {
+      const head = '{"method":"type","params":{"text":"中中';
+      const tail = `","app_ref":{"pid":${deadPid}}}}\n`;
+      const fillerLength = 1024 * 1024 - Buffer.byteLength(head, "utf8") - Buffer.byteLength(tail, "utf8");
+      const payload = Buffer.from(`${head}${"a".repeat(fillerLength)}${tail}`, "utf8");
+      assert.equal(payload.length, 1024 * 1024, "样本前提：原始 wire 字节恰 = 1 MiB");
+      const splitAt = Buffer.byteLength('{"method":"type","params":{"text":"中', "utf8") + 1;
+      const round = await rawRequestSplit(socketPath, payload, splitAt, { timeoutMs: 20_000 });
+      assert.ok(round.text, "恰 1 MiB（含多字节劈裂）不得拆连接——cap 按原始字节判定");
+      assert.deepEqual(
+        JSON.parse(round.text),
+        { ok: false, error: { message: WIRE_MESSAGES.invalidParams, code: "invalid_request" } },
+        "text 超限 → 参数面拒绝（响应行存在即 cap 判定正确）",
+      );
+    }
+
+    // 恰 1 MiB + 1 字节 → 超限拆连接、无响应行（边界另一侧；多字节劈裂不改变判定）。
+    {
+      const head = '{"method":"type","params":{"text":"中中';
+      const tail = `","app_ref":{"pid":${deadPid}}}}\n`;
+      const fillerLength = 1024 * 1024 + 1 - Buffer.byteLength(head, "utf8") - Buffer.byteLength(tail, "utf8");
+      const payload = Buffer.from(`${head}${"a".repeat(fillerLength)}${tail}`, "utf8");
+      assert.equal(payload.length, 1024 * 1024 + 1, "样本前提：原始 wire 字节 = 1 MiB + 1");
+      const splitAt = Buffer.byteLength('{"method":"type","params":{"text":"中', "utf8") + 1;
+      const round = await rawRequestSplit(socketPath, payload, splitAt, { timeoutMs: 20_000 });
+      assert.equal(round.text, null, "超限（按 wire 原始字节）→ 拆连接且无响应行（§2.6）");
+      // 拆连接后 server 仍健康（每连接独立处理）。
+      const after = await rawRequest(socketPath, `${JSON.stringify({ method: "broker_info" })}\n`);
+      assert.ok(after.text, "超限拆连接后 server 必须继续服务");
+    }
   } finally {
     helper.child.kill();
   }

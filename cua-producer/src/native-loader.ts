@@ -17,10 +17,17 @@ export interface AxNativeProbeResult {
   napiVersion: number;
 }
 
-/** A1 addon 导出面（§4.1：只此两项，任何超出都没有真实能力支撑）。 */
+/**
+ * addon 导出面（§4.1 A1 核心两项 + A2 导出经索引签名取用）。
+ * 加载校验只钉 A1 核心（addonVersion + probe 回读）——A2 导出的在场性由
+ * native-driver.ts 以 typeof 检查推导 capabilities（§10.9「导出在场性」判据），
+ * 缺失导出 = 能力诚实降级（capabilities=false → 对应方法不注册 → unimplemented），
+ * 绝不是加载失败（A1 形态 addon 仍可诚实服务 health/A1 面）。
+ */
 export interface AxNativeAddon {
   readonly addonVersion: string;
   probe(): AxNativeProbeResult;
+  readonly [exportName: string]: unknown;
 }
 
 /** 失败类别对应 §2.7 封闭表的两行（均 exit 2）。 */

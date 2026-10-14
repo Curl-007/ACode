@@ -11,17 +11,27 @@
  */
 import { createServer, type Server, type Socket } from "node:net";
 
-import { createBackendA1 } from "./backend-a1.js";
+import { createBackendA2 } from "./backend-a2.js";
 import {
   EXIT_CODE_BY_FAILURE,
   HELPER_ADDON_ENV,
+  MISSING_IPC_CHANNEL_MESSAGE,
   errorControlMessage,
   isShutdownMessage,
   readyMessage,
   transportReadyMessage,
   type HelperFailureMessage,
 } from "./control-protocol.js";
+import { createFrameRegistry } from "./frame-registry.js";
+import {
+  createExitConvergence,
+  createInputSession,
+  watchdogIntervalMs,
+  type ExitConvergence,
+  type InputSession,
+} from "./input-session.js";
 import { loadNativeAddon } from "./native-loader.js";
+import { createNativeDriver } from "./native-driver.js";
 import {
   CONNECTION_IDLE_TIMEOUT_MS,
   MAX_REQUEST_LINE_BYTES,
@@ -30,8 +40,6 @@ import {
   type WireDispatcher,
 } from "./wire-server.js";
 
-/** parent-pid watchdog 探活间隔（§2.8：ACode 自定 2000ms；A2 引入 held-input 后须收紧）。 */
-const WATCHDOG_INTERVAL_MS = 2000;
 /** argv --socket 在 win32 上必须以此前缀开头（§2.1：防把任意文件系统路径交给 net.listen）。 */
 const WINDOWS_PIPE_PREFIX = "\\\\.\\pipe\\";
 
@@ -43,8 +51,14 @@ interface HelperArguments {
 // 运行期可变状态（entry 是单进程状态机 owner，§1.3；不被单测导入，故用模块级状态）。
 let server: Server | undefined;
 const trackedSockets = new Set<Socket>();
-let watchdogTimer: ReturnType<typeof setInterval> | undefined;
+let watchdogTimer: ReturnType<typeof setTimeout> | undefined;
 let shuttingDown = false;
+// A2 会话层（READY 后装配）：session（admission/held 镜像）供 watchdog 自适应判据；
+// driver 经 exitConvergence 闭包持有（组装局部），无模块级读者。
+let session: InputSession | undefined;
+// 退出收口点（§10.4 规则 3「统一收口」）：scheduleFailure / beginShutdown / A3 poison
+// 自终结全部经它幂等执行「取消在途 + 释放 held ≤300ms」后再退出。
+let exitConvergence: ExitConvergence | undefined;
 
 /**
  * argv 严格白名单解析（§2.1）：只接受 `--socket <非空、win32 须 \\.\pipe\ 前缀>` 与
@@ -104,32 +118,46 @@ class HelperFailureSignal extends Error {
 let failing = false;
 
 /**
- * 排程失败退出（§2.7 封闭表，幂等）：先尽力把 error 控制消息 flush 到宿主，再按退出码退出。
- * 用 process.send 的回调保证消息落地后才 exit（同步 exit 可能丢消息，宿主把该 message 进
- * 日志作诊断，windowsCuaDevHelperHost.ts:396-399）；回调丢失（通道已断）时 100ms 非-unref
- * 定时器兜底强制退出——远小于宿主 shutdownTimeoutMs 地板（1s）。首个失败类别胜出（根因
- * 先于级联），重复调用 no-op。
+ * 退出前的 held 释放收口（§10.4 规则 3）：一切退出路径在 process.exit 前经
+ * exitConvergence.converge() 幂等执行「cancelOperations + releaseAllHeldInputs」，
+ * 预算 ≤300ms（宿主 shutdownTimeoutMs=1s 地板内）；超时/失败不阻断退出（兜底后仍退出）。
+ * 收口点在 scheduleFailure/beginShutdown 内统一挂接——枚举会漏、收口点不会，后续切片
+ * 新增退出路径（含 A3 poisoned≥3 自终结）自动被覆盖。
+ */
+async function convergeBeforeExit(): Promise<void> {
+  if (!exitConvergence) return;
+  await exitConvergence.converge();
+}
+
+/**
+ * 排程失败退出（§2.7 封闭表，幂等）：拆运行时 → held 释放收口（≤300ms）→ 尽力把 error
+ * 控制消息 flush 到宿主 → 按退出码退出。用 process.send 的回调保证消息落地后才 exit
+ * （同步 exit 可能丢消息，宿主把该 message 进日志作诊断，windowsCuaDevHelperHost.ts:396-399）；
+ * 回调丢失（通道已断）时 100ms 非-unref 定时器兜底强制退出。首个失败类别胜出（根因先于
+ * 级联），重复调用 no-op。最坏路径 300+100=400ms，仍在宿主 1s 终止预算内。
  */
 function scheduleFailure(message: HelperFailureMessage, exitCode: 1 | 2): void {
   if (failing) return;
   failing = true;
   teardownRuntime();
-  let exited = false;
-  const exitOnce = (): void => {
-    if (exited) return;
-    exited = true;
-    process.exit(exitCode);
-  };
-  if (typeof process.send === "function") {
-    try {
-      process.send(errorControlMessage(message), exitOnce);
-    } catch {
+  void convergeBeforeExit().then(() => {
+    let exited = false;
+    const exitOnce = (): void => {
+      if (exited) return;
+      exited = true;
+      process.exit(exitCode);
+    };
+    if (typeof process.send === "function") {
+      try {
+        process.send(errorControlMessage(message), exitOnce);
+      } catch {
+        exitOnce();
+      }
+      setTimeout(exitOnce, 100); // 刻意不 unref：保证进程活到退出落地。
+    } else {
       exitOnce();
     }
-    setTimeout(exitOnce, 100); // 刻意不 unref：保证进程活到退出落地。
-  } else {
-    exitOnce();
-  }
+  });
 }
 
 /** 主流程失败入口：排程退出 + 抛哨兵中止后续控制流（永不返回，TS never）。 */
@@ -141,7 +169,7 @@ function fail(message: HelperFailureMessage, exitCode: 1 | 2): never {
 /** STOPPING 拆除（§2.4）：停 accept、destroy 在途连接、close server、清 watchdog。 */
 function teardownRuntime(): void {
   if (watchdogTimer !== undefined) {
-    clearInterval(watchdogTimer);
+    clearTimeout(watchdogTimer);
     watchdogTimer = undefined;
   }
   if (server !== undefined) {
@@ -162,12 +190,16 @@ function teardownRuntime(): void {
   trackedSockets.clear();
 }
 
-/** 进入 STOPPING 并 exit 0（§2.4/§2.7：shutdown 或 parent 消失，宿主 1s 内须完成）。 */
+/**
+ * 进入 STOPPING 并 exit 0（§2.4/§2.7：shutdown 或 parent 消失，宿主 1s 内须完成）。
+ * A2 增量（§10.4 规则 3）：exit 前经统一收口点幂等释放 held input（≤300ms 预算，
+ * converge 内先 cancelOperations 令在途注入循环尽快退出）。
+ */
 function beginShutdown(): void {
   if (shuttingDown) return;
   shuttingDown = true;
   teardownRuntime();
-  process.exit(0);
+  void convergeBeforeExit().then(() => process.exit(0));
 }
 
 /**
@@ -181,7 +213,13 @@ function handleConnection(socket: Socket, dispatcher: WireDispatcher): void {
     return;
   }
   trackedSockets.add(socket);
-  let buffer = "";
+  // 字节级行缓冲（spec §17.2 修复）：旧实现按 chunk 逐个 toString("utf8") 累积字符串，
+  // 多字节 UTF-8 字符（中文 3 字节 / emoji 4 字节）跨 chunk 劈裂时产生不可逆 U+FFFD 损坏；
+  // 且 1 MiB cap 对已损坏重编码的字符串量长，与 wire 原始字节数漂移。
+  // 修复 = Buffer.concat 累积原始字节、字节域扫描 0x0A 切行、完整行字节一次性 toString、
+  // cap 按原始字节长度判定（请求行 JSON 无裸 \n，wire spec §1.3，字节切行安全）。
+  // 注：本注释刻意不复现旧缺陷代码形态——契约测试对源文本做 doesNotMatch 回归断言。
+  let buffer: Buffer = Buffer.alloc(0);
   let responded = false;
   let settled = false;
 
@@ -203,14 +241,14 @@ function handleConnection(socket: Socket, dispatcher: WireDispatcher): void {
       socket.destroy();
       return;
     }
-    buffer += chunk.toString("utf8");
-    if (Buffer.byteLength(buffer, "utf8") > MAX_REQUEST_LINE_BYTES) {
-      socket.destroy(); // 行缓冲超 1 MiB：直接拆，不应答（§2.6）。
+    buffer = buffer.length === 0 ? chunk : Buffer.concat([buffer, chunk]);
+    if (buffer.length > MAX_REQUEST_LINE_BYTES) {
+      socket.destroy(); // 行缓冲超 1 MiB（按 wire 原始字节判定，§17.2）：直接拆，不应答（§2.6）。
       return;
     }
-    const newline = buffer.indexOf("\n");
+    const newline = buffer.indexOf(0x0a);
     if (newline === -1) return; // 完整请求行未到，继续等（空闲定时器兜底）。
-    const line = buffer.slice(0, newline);
+    const line = buffer.subarray(0, newline).toString("utf8");
     responded = true;
     void dispatcher.handleRequestLine(line).then(
       (response) => {
@@ -245,30 +283,63 @@ function listenPipeServer(target: Server, socketPath: string): Promise<void> {
 }
 
 /**
- * parent-pid watchdog（§2.8 ACode 自定）：每 2000ms `process.kill(parentPid, 0)` 探活；
- * ESRCH → 父进程消失 → STOPPING 同路径清理并 exit 0（stderr 字面量 parent-process-gone）；
- * EPERM 及其它错误 → 视为存活（保守：宁可不退，不可误退）。定时器 unref。
+ * parent-pid watchdog（§2.8 ACode 自定 + §10.8 A2 自适应收紧）：`process.kill(parentPid, 0)`
+ * 探活；ESRCH → 父进程消失 → STOPPING 同路径清理并 exit 0（stderr 字面量
+ * parent-process-gone；退出前经统一收口释放 held——「父进程消失不遗留按住键」纪律，
+ * 按键遗留窗口 ≤250ms + 释放时长）；EPERM 及其它错误 → 视为存活（保守：宁可不退，
+ * 不可误退）。
+ *
+ * 间隔自适应（§10.8）：held 镜像为空 → 2000ms；非空（任何 mouseDown/hold/drag 在途）
+ * → 250ms。**重臂是事件驱动而非仅 tick 边界重算**（2026-10-14 评审修复）：session 的
+ * onHeldChange（held 镜像 0↔非空迁移，O(1)）直接接 armWatchdog——若只在 tick 边界
+ * 重算，held 0→非空迁移发生在 idle tick 刚过之后时，检测延迟最坏仍 ~2000ms，
+ * §10.8「按键遗留窗口从 ≤2s 收紧到 ≤250ms+释放时长」在该角落不成立。迁移即重臂后，
+ * held 非空期间的最坏检测延迟 = 250ms（当前间隔），spec 主张结构性成立。
+ * 定时器 unref。
  */
-function startWatchdog(parentPid: number): void {
-  watchdogTimer = setInterval(() => {
-    try {
-      process.kill(parentPid, 0);
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code;
-      if (code === "ESRCH") {
-        process.stderr.write("parent-process-gone\n");
-        beginShutdown();
-      }
-      // EPERM / 其它：保守视为存活，不退出。
-    }
-  }, WATCHDOG_INTERVAL_MS);
+let watchdogParentPid: number | undefined;
+
+/** 按当前 held 状态（重）臂 watchdog；startWatchdog 前 / STOPPING / 失败路径中为 no-op。 */
+function armWatchdog(): void {
+  if (watchdogTimer !== undefined) {
+    clearTimeout(watchdogTimer);
+    watchdogTimer = undefined;
+  }
+  if (watchdogParentPid === undefined || shuttingDown || failing) return;
+  watchdogTimer = setTimeout(watchdogTick, watchdogIntervalMs(session?.hasHeldInput() ?? false));
   watchdogTimer.unref?.();
+}
+
+function watchdogTick(): void {
+  watchdogTimer = undefined;
+  if (shuttingDown || failing || watchdogParentPid === undefined) return;
+  let alive = true;
+  try {
+    process.kill(watchdogParentPid, 0);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ESRCH") alive = false;
+    // EPERM / 其它：保守视为存活，不退出。
+  }
+  if (!alive) {
+    process.stderr.write("parent-process-gone\n");
+    beginShutdown();
+    return;
+  }
+  armWatchdog();
+}
+
+function startWatchdog(parentPid: number): void {
+  watchdogParentPid = parentPid;
+  armWatchdog();
 }
 
 async function main(): Promise<void> {
   // 无 IPC 通道（非 fork 启动）：无法向宿主报告任何事，stderr 稳定字面量后 exit 1（§2.1/§2.7）。
+  // 字面量单一来源 = control-protocol.ts 的 MISSING_IPC_CHANNEL_MESSAGE（§17.3 双写裁决，
+  // 防「改一处漏一处」的 stderr 诊断面与封闭表失配）。
   if (typeof process.send !== "function") {
-    process.stderr.write("missing-ipc-channel\n");
+    process.stderr.write(`${MISSING_IPC_CHANNEL_MESSAGE}\n`);
     process.exit(1);
   }
   // 平台双保险（§2.1：宿主解析层已挡 non-win32，此处再挡一次）。
@@ -327,11 +398,27 @@ async function main(): Promise<void> {
   const outcome = loadNativeAddon(process.env);
   if (!outcome.ok) fail(outcome.failure, EXIT_CODE_BY_FAILURE[outcome.failure]);
 
-  // READY：注入 backend（A1 仅 broker_info）+ 单向切 ready，随后发 ready 控制消息（§2.4）。
-  dispatcher.activate(createBackendA1());
+  // READY 装配（§2.4「注入 backend，状态=READY」）：真 driver（native-driver 只被本组装
+  // 路径 import，§10.11 规则②）→ 会话层（admission 队列 + held 镜像）→ frame 注册表 →
+  // A2 backend（8 handler；A2 导出缺席时按 capabilities 诚实降级为不注册 → unimplemented，
+  // §10.9 两面同源）。A1 backend（仅 broker_info）保留给单测/历史面，不再上生产路径。
+  const realDriver = createNativeDriver(outcome.addon);
+  // onHeldChange → armWatchdog：held 镜像 0↔非空迁移即时重臂探活间隔（§10.8「间隔重置
+  // 成本 O(1)」的结构化落点；仅 tick 边界重算会让 0→非空迁移后的最坏检测延迟仍 ~2000ms，
+  // 2026-10-14 评审修复）。armWatchdog 在 startWatchdog 之前是 no-op（parentPid 未装配）。
+  const inputSession = createInputSession(realDriver, { onHeldChange: armWatchdog });
+  session = inputSession;
+  const frames = createFrameRegistry();
+  exitConvergence = createExitConvergence({
+    cancel: () => realDriver.cancelOperations(),
+    release: () => realDriver.releaseAllHeldInputs(),
+  });
+
+  dispatcher.activate(createBackendA2({ driver: realDriver, session: inputSession, frames }));
   sendControl(readyMessage(socketPath, process.pid));
 
-  // 就绪后启动 watchdog（§2.8）：父进程消失即自清理退出，防进程与 pipe 实例泄漏。
+  // 就绪后启动 watchdog（§2.8/§10.8 自适应）：父进程消失即自清理退出（先经收口释放
+  // held），防进程、pipe 实例与按住键泄漏。
   startWatchdog(parentPid);
 }
 

@@ -1,10 +1,11 @@
-# Spec: Windows CUA 原生 producer（角色 A）——全实现面契约（A1 已落地 + A2/A3/阶段 4）
+# Spec: Windows CUA 原生 producer（角色 A）——全实现面契约（A1/A2 已落地 + A3/阶段 4）
 
 > 状态：角色 A 全实现面契约。§1–§7 = A1（阶段 2 角色 A 切片 1，**已落地**，提交 `1ef8108`）；
-> §10 = A2（指针/键盘/剪贴板 + WGC 截图 + delivery-state 派发契约）；§11 = A3（UIA 六工具）；
+> §10 = A2（指针/键盘/剪贴板 + WGC 截图 + delivery-state 派发契约，**已落地**——2026-10-14
+> A2 实现批次，实现期实证回写见 §18，债务项 §17.2/§17.3 同批修复）；§11 = A3（UIA 六工具）；
 > §12 = 阶段 4（平台判定收口）；§13 = 14 工具全映射表；§14 = C08 可执行交付物；
 > §15 = 真机烟测契约（`scripts/smoke-real.mjs`）；§16 = 各阶段 AC 验收清单；
-> §17 = A1 评审债务回写（含全文行号修正对照）。
+> §17 = A1 评审债务回写（含全文行号修正对照）；§18 = A2 实现批次实证回写。
 > §4.2/§4.3 原「A2 spec / 阶段 3 spec 钉死」的预留项**已由 §10/§11 钉死**（本文即 A2/A3 spec；
 > 原节保留为预留历史与机制索引，冲突时以 §10/§11 为准）。§8/§9 维持原编号不重排——外部文档
 > （handoff、wire spec、module-boundary）按「§1.2/§4.6/§8 oQ#n」引用本文，重排会悬空这些引用；
@@ -695,10 +696,21 @@ cua-producer/
   src/native/addon.cc      # NAPI 入口：addonVersion + probe（§4.1）
   # ── A2 增补（§10）──────────────────────────────────────────────
   src/backend-a2.ts        # A2 wire handlers（7 变更类 + request_access）；纯逻辑 + 注入 driver
-  src/input-session.ts     # admission 队列 + held 镜像 + stop/cancel 编排（§10.5/§10.6）
+  src/param-validation.ts  # A2 参数校验（§10.2/§13 封闭 schema 手写验证器；A2 实现批次自
+                           #   backend-a2 拆出——oxlint max-lines 400 硬约束 + 校验面独立单测）
+  src/receipts.ts          # 三态收据构造 + RECEIPT_MESSAGES 字面量表 + native→wire 映射
+                           #   （§10.12/§10.12.1；同批拆出，契约测试逐字面量锁定）
+  src/mutating-dispatch.ts # 变更类派发编排（admission 包装/二分收口/cleanup 释放/修饰键
+                           #   包裹——§10.4 规则 4/5 + §10.5 + §10.12 铁律 1；同批拆出）
+  src/input-session.ts     # admission 队列 + held 镜像 + stop/cancel 编排 + 退出收口原语（§10.5/§10.6/§10.4 规则 3）
   src/frame-registry.ts    # frame_id → 栅格几何/bounds/owner/拓扑世代（§10.7）
-  src/native-driver.ts     # 真 driver（包 addon 导出）；**只允许 entry 组装路径 import**（§10.11 模块规则）
+  src/driver-contract.ts   # driver 接口 + NativeRejected/NativeAmbiguous 错误类型（§10.3 二分契约；
+                           #   A2 实现批次增补文件：纯逻辑模块与 native-driver 的共享契约面——
+                           #   规则① 禁 import native-driver，故接口/错误类型独立成文件，fake/real 同接口）
+  src/native-driver.ts     # 真 driver（包 addon 导出 + native 错误二分归类）；**只允许 entry 组装路径 import**（§10.11 模块规则）
   src/keymap.ts            # chord/键名 → VK 封闭映射表（§10.9）
+  src/native/ax_internal.h # native 共享设施（取消旗/held 注册表/类型化错误 worker 基类；A2 实现批次增补，
+                           #   头文件不进 binding.gyp sources 清单）
   src/native/pointer.cc  keyboard.cc  clipboard.cc  capture.cc  foreground.cc  environment.cc
   # ── A3 增补（§11）──────────────────────────────────────────────
   src/backend-a3.ts        # UIA 六工具 handlers；纯逻辑 + 注入 uia driver
@@ -1032,6 +1044,12 @@ asyncKeyState(vk: number): Promise<{ down: boolean }>;     // GetAsyncKeyState �
                                                            // 可跨进程佐证「Helper 无遗留按住键」（§15 --pointer）
 cursorPosition(): Promise<{ x: number; y: number }>;       // GetCursorPos 只读投影——--pointer 的
                                                            // 「保存/复原光标 + ≤2px 容差」纪律与 moveTo 负控制的断言载体（§10.4/§15.2）
+processExecutablePath(pid: number): Promise<{ path: string | null }>;
+                                                           // 【A2 实现批次补录，2026-10-14】§10.9 的 app_ref 校验
+                                                           // （「进程存活 + QueryFullProcessImageName 可读 canonical exe」）
+                                                           // 需要 native 进程查询原语，原表未列 = spec 缺口；本导出补齐该缺口
+                                                           // （死亡/不可读 → path:null；path 值只用于存在性判定与 A3 _meta 展示
+                                                           // 投影，绝不进日志/错误文本/wire——§3.2 同律。A3 list_apps exe_path 同源复用）
 
 // ── 指针（expectedForegroundPid 必现、无缺省——§10.4 指针纪律的结构化落点）──
 moveTo(x: number, y: number, opts: { expectedForegroundPid: number }): Promise<void>;
@@ -1054,6 +1072,9 @@ pressKeys(keys: Array<{ vk: number; up: boolean }>,
 // ── held 清理与全局取消 ────────────────────────────────────────
 releaseAllHeldInputs(): Promise<{ released: number }>;     // 幂等；不做前台校验（cleanup 语义）
 cancelOperations(): void;    // 唯一新增同步导出：原子置取消旗标；在途循环 ≤500ms 内以 code:"canceled" 退出
+                             // 【A2 实现批次注记】旗标在每个派发类 worker 的 Execute 入口清零——
+                             // cancelOperations 只作用于「当前正在执行」的操作，这是「stop 非会话
+                             // 闩锁」（§10.6）的结构化落点；stop 编排先阻断出队再置旗（§18 第 6 条）
 
 // ── 剪贴板（CF_UNICODETEXT + async worker；互斥预算 250ms、OpenClipboard 有界重试 8×10ms、
 //    文本上限 8 Mi UTF-16 code units——上游机制记载 windows-source-development.md:318-322）──
@@ -1062,10 +1083,19 @@ clipboardWriteText(text: string): Promise<void>;
 // ── 截图（WGC + D3D11 + WIC；PNG/JPEG 编码在同一后台 worker，不阻塞 N-API/V8 主线程）──
 captureDisplay(target: { monitorIndex: number } | { bounds: Rect }, opts: CaptureBudget): Promise<CaptureResult>;
 captureWindow(windowToken: number, opts: CaptureBudget): Promise<CaptureResult>;  // token=A3 窗口注册表；A2 烟测走 captureDisplay
+                             // 【A2 实现批次注记】A2 桩语义：窗口注册表属 A3（window_registry.cc），
+                             // A2 无观察面 ⇒ 不存在任何合法 token ⇒ 任何 token 一律 target_changed
+                             // （wire → element_unavailable stale 字面量）。绝不拿裸数值当 HWND 猜测
+                             // 身份绕过前后双复核（§10.7）；A3 落地注册表后收口为真实现。
 type Rect = { x: number; y: number; width: number; height: number };               // 虚拟桌面物理像素
 interface CaptureBudget { maxDimension: number; inlineBase64BudgetBytes: number }  // §10.7 钉死取值
 interface CaptureResult { image: Uint8Array; encoding: "png" | "jpeg"; width: number; height: number;
-                          bounds: Rect; scaled: boolean; budgetFit: boolean }
+                          bounds: Rect; scaled: boolean; budgetFit: boolean;
+                          topologyFingerprint?: string }
+                          // 【A2 实现批次补录】topologyFingerprint = 捕获时的 EnumDisplayMonitors
+                          // 指纹（monitor 集合 + 各 bounds 序列化串）——§10.7「世代对照 = 捕获/使用时
+                          // 指纹」的供给面（A2 无常驻监听面，指纹随捕获产出；frame-registry 以其
+                          // 换代判定 stale）。additive 可选键，A1 形态 addon 无此字段。
 ```
 
 【ACode 自定】设计注记：(1) `expectedForegroundPid` 由 wire 层 app_ref 解析产出、作为参数
@@ -1094,7 +1124,10 @@ windows-source-development.md:268）；(3) `cancelOperations` 同步是刻意例
   {"text"}（其余 → invalid_request，A2 只实现文本，诚实拒绝）。
 - 文本上限：`type.text` ≤ 32,768 UTF-16 code units【ACode 自定：超此应走 paste】；
   `paste.text` ≤ 8 Mi code units（对齐上游剪贴板上限机制）；`set_value.value` ≤ 8 Mi
-  （A3）；超限 → invalid_request 固定字面量。
+  （A3）；超限 → invalid_request 固定字面量。**空 `type.text` 同判 invalid_request**
+  （A2 实现批次钉死：空文本注入是无意义 no-op，受理它就得产 `action_sent:true` 的
+  成功收据——对「零注入」谎报 delivery-state，违反能力真实性；拒绝方向保守且 SDK
+  不会发送空 type）。
 - `reason`（stop_computer_control，string ≤512，可选）：**接受即丢弃**——不回显、不入日志、
   不进收据（模型自由文本，任何回显路径都是隐私面）。【ACode 自定】
 - 参数校验失败都发生在**派发前**（§10.12：ok:false 安全区）。
@@ -1351,10 +1384,13 @@ message 固定字面量如实标注 clipboard-modified；绝不是 not_sent）�
 覆盖原内容（含非文本格式丢失）是**登记的产品副作用**（上游 clipboard 烟测的「恢复原文本」
 是测试夹具义务、非 paste 工具义务，windows-source-development.md:198-202 机制辨析）。
 
-**request_access（A2，只读快照）**：不入队。params `{capabilities?: string[]}`（接受，用于
-过滤报告；未知 capability 名忽略）。上游语义 = 只读权限快照、不直接触发系统 prompt
-（上游 2026-08-25-cua-request-access-onboarding-spec.md:9 机制）。Windows 无 TCC，快照 =
-preflight + 能力在场性：结果 = 单文本块 JSON
+**request_access（A2，只读快照）**：不入队。params `{capabilities?: string[]}`（接受；
+未知 capability 名忽略。**A2 实现批次钉死：「过滤报告」为 no-op**——四键结果形态
+`{ready, platform, accessibility, screen_recording}` 是 SDK/宿主投影的钉死消费面
+（§12.2 的 permissionStatus 解析依赖两权限键恒在），按键过滤会破坏该形态；capabilities
+只做参数校验（非数组/含非字符串 → invalid_request），内容不影响输出形状）。上游语义 =
+只读权限快照、不直接触发系统 prompt（上游 2026-08-25-cua-request-access-onboarding-spec.md:9
+机制）。Windows 无 TCC，快照 = preflight + 能力在场性：结果 = 单文本块 JSON
 `{ready, platform:"win32", accessibility, screen_recording}` + `_meta` 状态块（§12.2 形态，
 键 = `CUA_REQUEST_ACCESS_STATUS_META_KEY`，本仓 request-access-contract.js:1）：
 - `ready` = interactiveDesktop ∧ input 导出在场；
@@ -1384,7 +1420,9 @@ environmentProbe 预检」推导，每请求现算不缓存（能力真实性：
 - `defines` 增补：`_WIN32_WINNT=0x0A00`、`NTDDI_VERSION=0x0A000006`（RS5=1809）——
   **编译期地板与 §12.3 运行时地板（17763）对齐**：addon 只导入 1809+ API，更低版本系统
   加载即失败 → §2.7 `native-addon-load-failed` exit 2 诚实报告，结构性排除「低版本跑
-  半套」。
+  半套」。**A2 实现批次增补（同批回写）**：`NOMINMAX` + `WIN32_LEAN_AND_MEAN`——
+  windows.h 的 min/max 宏与 std::min/max 冲突、无关子系统头拖慢编译并引入宏污染，
+  C++/WinRT 工程的标准配套（契约测试锁定全部五项 define）。
 - `sources` 增补：§5.3 布局树的 6 个 A2 .cc（文件组织可微调，binding.gyp sources 清单是
   契约面，契约测试锁定，§16 A2-AC-1）。
 - N-API 纪律不变：pin 9（AsyncWorker/TSFN/Promise/Buffer/TypedArray 全部 ≤9，§4.4）；
@@ -1411,6 +1449,9 @@ environmentProbe 预检」推导，每请求现算不缓存（能力真实性：
   interrupted——真实副作用在 CI 不可达，fake driver 是成功路径形态断言的唯一落点）、
   坐标投影算术、keymap 封闭集、paste 剪贴板遗留语义、request_access 形态、broker_info
   capabilities 一致性（capability=true ⟺ handler 注册；false ⟺ unimplemented——两面同源）。
+- `apps/acode-cli/tests/cua-producer-a2-fake.mjs`（A2 实现批次增补，非 `*.test.mjs`、
+  不进 runner glob）：可编程 fake driver 共享夹具——a2-logic 与 c08 两文件复用
+  （§14「允许复用断言 helper 函数」的同律：夹具复用不违反 case 独立性纪律）。
 - `apps/acode-cli/tests/cua-producer-a2-native.test.mjs`（**win32 + 工件双守卫**，§6.1
   同律）。**默认套件零真实副作用纪律（硬规则）**：本文件在 win32 开发机上随
   `pnpm --dir apps/acode-cli test` **实跑**，任何用例都不得向开发机留下真实注入、剪贴板
@@ -1458,6 +1499,32 @@ environmentProbe 预检」推导，每请求现算不缓存（能力真实性：
 （超时/断连）→ 角色 B `details.possiblySent=true` → execute 产 `CUA_NOT_READY
 {reasonCode:"possibly_sent", retryable:false}`（本仓 index.js:107-119，已核实）。两条来源
 在 SDK 汇成同一保证：**可能已产生副作用的动作绝不自动重放**。
+
+#### 10.12.1 收据 message 字面量表与事实键（A2 实现批次钉死，2026-10-14；零插值同律）
+
+上表 `message:<固定字面量>` 的精确文本（单一来源 = `src/backend-a2.ts` 的
+`RECEIPT_MESSAGES`，契约测试逐字面量锁定；§10.6 已钉的两条照录）：
+
+| 场景                                                     | message 字面量                                                                             |
+| -------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| stop 自身收据（§10.6 ⑤）                                 | `Computer Use control stopped; held inputs released.`                                        |
+| 被 stop 中断的在途动作（§10.6）                          | `Computer Use action was interrupted by stop_computer_control.`                              |
+| possibly_sent 收据（行 2）                               | `Computer Use action may have been dispatched; the native outcome could not be verified.`    |
+| paste：剪贴板已写入但 Ctrl+V 未注入即失败（§10.9）       | `Computer Use clipboard was modified but the paste keystroke was not dispatched.`            |
+| paste 成功（剪贴板遗留 = 登记的产品副作用，§13 行 12）   | `Computer Use paste completed; the clipboard now holds the pasted text.`                     |
+| drag 完成分支（§13 行 6「injectedPoints 事实进 message 固定字面量分支」） | `Computer Use drag completed; all interpolated points were injected.`     |
+| type 部分注入（injected<total ∧ 未取消，行 3）           | `Computer Use text input was partially injected before the sequence stopped.`                |
+| 修饰键包裹动作：主体成功但修饰 up 业务段失败（§10.4 规则 5 收口走 cleanup） | `Computer Use action completed; modifier key release required cleanup.`   |
+
+**structuredContent 事实键（additive，非 delivery-state 键）**：收据在 §10.12 的
+delivery-state 键（action_sent/dispatch_status/code/reason/message）之外可携带方法专属
+部分事实——`injected`/`total`（type，§13 行 7）、`injected_points`（drag，行 6）、
+`clipboard_modified`（paste，行 12）、`released_inputs`（stop）。它们不在 SDK `receiptOf`
+挖掘词汇内（§9.1 约束的对象是 delivery-state 键），只作模型/排障可读的诚实事实上报；
+数值绝不进 message（零插值红线）。
+
+**成功收据最小形态**：left_click/scroll/key 的成功收据 = `{action_sent:true,
+dispatch_status:"accepted"}` 恰两键（行 1 最小形态；上表事实键只在对应方法出现）。
 
 ## 11. A3 切片：UIA 六工具（阶段 3 的 producer 落地面）
 
@@ -1950,10 +2017,17 @@ A3-AC-10 反转 unimplemented 断言）。
 
 **一致性不变量（契约测试锚定）**：① 表内 14 方法 = `WIRE_METHOD_NAMES` 全集，零遗漏零
 超出（A1 已锁名单，本表锁归属/形态）；② `capabilities.X=true ⟺ 对应 handler 已注册`
-（能力真实性两面同源，§10.9/§10.11）；③ 变更类 10 方法（wire spec §8.2）成功路径**必须**
-携带 delivery-state 收据键（§10.12 铁律），只读 4 方法**必须不**携带（铁律 3）；
-④ `permission_status` 不在表内、不注册（§9.1——darwin-only 控制面，Windows 收到即
-method_not_found 是正确行为）。
+（能力真实性两面同源，§10.9/§10.11。**A2 实现批次注记**：结构性落实 = handler 注册以
+driver 的导出在场性为键、capabilities = 在场性 ∧ preflight——同源事实驱动两面；
+`input` ⟺ 指针/键盘/stop 六 handler、`clipboard` ⟺ paste（另需 input 面）在 A2 即成立；
+`capture` ⟺ get_app_state 的绑定自 A3 生效——A2 的 capture=true 由真实 captureDisplay
+导出支撑（smoke --capture / a2-native 实捕验证），wire 观察 handler 缺席是 §10.0 已登记
+限制，一致性测试在 A2 按「在场性两面同源」断言、A3 起收口为全量 ⟺；preflight 失败时
+capability 动态为 false 而 handler 仍注册（应答 permission_denied）——注册是静态在场性
+事实、capability 是动态可用性事实，两判据分层不矛盾）；③ 变更类 10 方法（wire spec §8.2）
+成功路径**必须**携带 delivery-state 收据键（§10.12 铁律），只读 4 方法**必须不**携带
+（铁律 3）；④ `permission_status` 不在表内、不注册（§9.1——darwin-only 控制面，Windows
+收到即 method_not_found 是正确行为）。
 
 ## 14. C08 可执行交付物（10 个变更类方法 × 独立失败注入 case）
 
@@ -2047,7 +2121,11 @@ A3 批次解除 skip），A3 批次交付 c08-8..10。
   `get_app_state({app_ref:{pid:<前台 pid>}, include_screenshot:true})` → 断言 image 块
   存在、mimeType ∈ {image/png,image/jpeg}、base64 ≤200 KiB、structuredContent.frame_id
   非空（frame 登记发生）。
-- **`--uia`**（A3 起）：**只读**观察当前前台应用（不 spawn、不变更、不抢焦点）：
+- **`--uia`**（A3 起）：**A2 切片 = 诚实桩**（A2 实现批次钉死）——flag 受理、输出
+  `level=uia result=skipped duration_ms=0` + stderr 固定结果码 `uia-level-arrives-in-a3`、
+  整脚本 exit 2（前置失败语义：层级未实现，fail-closed 方向；门禁 A2 只跑 `--capture`，
+  不受影响；A3 批次落地真实现后本桩移除）。**只读**观察当前前台应用（不 spawn、不变更、
+  不抢焦点）：
   `foregroundPid` → wire `list_apps`（断言非空 ∧ 含该 pid ∧ 条目字段齐套）→
   `list_windows`（断言窗口条目 bounds/title 字段类型合法，**不打印内容**）→
   `get_app_state`（无截图）两次 → 断言：树文本行格式匹配 `^\s*\[[0-9]+\]`（采样行）、
@@ -2300,3 +2378,105 @@ broker.js/index.js/broker-server.js 无 `"Modified by ACode:"` 标注；broker.j
 `pnpm --dir apps/acode-cli test`（含 L01，handoff §4 操作纪律），且台账原子单元
 （条目 + Modified 标注 + CI-Linux 重生成 inventory/NOTICES）只能一次性落绿，不得
 Windows 本机拆分提交。
+
+## 18. A2 实现批次实证回写（2026-10-14；§5.2.1 先例纪律——真实构建/真机实证后的机制修正与增补登记）
+
+以下各项是 A2 实现批次以真实构建与真机运行实证后登记的机制事实/裁决细化；§10 的
+钉死签名、封闭 code 集、预算取值、纪律条文**均不变**（变动项已在对应节内联标注
+「A2 实现批次」并在此汇总索引）：
+
+1. **WGC 帧 surface 的 COM 互操作通道**：`Direct3D11CaptureFrame.Surface()` 的 WinRT
+   包装在本机（Win11 26300 + SDK 10.0.26100）**不直接暴露 IDXGISurface**（QI 实测
+   E_NOINTERFACE）；规范通道 = `IDirect3DDxgiInterfaceAccess::GetInterface(IID_ID3D11Texture2D)`
+   （`windows.graphics.directx.direct3d11.interop.h` 记载的官方互操作面；该接口在原始
+   `::Windows::Graphics::DirectX::Direct3D11` 命名空间，非 winrt:: 投影空间）。
+   capture.cc 按此落地，真机实捕验证绿（2520×1680 主显 → 预算阶梯 PNG@2000→1600→1280→
+   1024→JPEG q80 = 106 KiB ≤ 200 KiB，§10.7 阶梯全路径实测走通）。
+2. **SDK 内嵌 C++/WinRT 的 apartment API 形态**：`winrt::init_apartment` 返回 void
+   （无 apartment_token 形态，新 NuGet 版才有）；MtaApartment RAII 按 void 签名落地。
+   另 `IWICImagingFactory` 的缩放器工厂方法名 = `CreateBitmapScaler`（非 CreateScaler）。
+3. **CreateFreeThreaded 的版本带**：`Direct3D11CaptureFramePool::CreateFreeThreaded` 需
+   Win10 1903+（build 18362）；17763–18361 区间（1809–1903，2018–2019 EOL 边际带）该
+   调用抛 hresult → `capture_failed` 诚实失败（fail-closed，无 fallback）。§12.3 的
+   17763 单一地板裁决不变（宿主判定面不因该边际带分叉），producer 运行时以类型化
+   失败诚实收敛——如实登记，不伪称 17763 全能力。
+4. **AsyncWorker 类型化错误的路由关键**：node-addon-api 的框架按「SetError 是否被调用」
+   决定走 OnError/OnOK——PromiseWorker 基类的 FailAx 必须同时 SetError(code)，否则失败
+   被当成功 resolve（实现期真机实测踩中并修复；错误对象形态 = message 为 code 字面量 +
+   `code`/`dispatchStarted` 属性，零插值）。
+5. **DPI awareness 的双分支判定**：Electron 宿主 manifest 已声明 PMv2 → fork 出的 Helper
+   进程 `SetProcessDpiAwarenessContext` 失败（已设置，ACCESS_DENIED）——environment.cc
+   以 `GetThreadDpiAwarenessContext + AreDpiAwarenessContextsEqual(PMv2)` 查询兜底判定
+   达标（裸 node 是 unaware → Set 成功分支）。§10.7「addon Init 设 PMv2」的语义精确化为
+   「设置成功 **或** 查询确认已达标」，两分支 dpiAware=true；其余形态 false → preflight 拒绝。
+6. **stop 与取消旗的竞态收口（§10.6 实现细化）**：native 取消旗在每个派发类 worker 的
+   Execute 入口清零（「stop 非会话闩锁」的结构化落点）；因此 JS 侧 stop 编排必须**先
+   阻断 admission 出队、再 cancelOperations**——否则 ② settle 后 admission 立即出队下一项，
+   其 Execute 入口清零会吃掉取消旗。input-session.ts 的 stopping 闩按此实现，a2-logic
+   的 stop 五步时序测试锁定。
+7. **driver 二分归类的操作化规则（§10.3 判据的实现形态）**：① 同步 throw（native 参数
+   校验，worker 未入队）恒 Rejected(internal_native)——结构性零副作用；② `injection_rejected`
+   恒 Ambiguous（SendInput 报 0 也可能是 UIPI 静默丢弃，注入面不可证）；③ 变更类 ∧
+   `dispatchStarted=true` 的任何 code → Ambiguous（含 chord 主体注入后前台丢失的
+   foreground_lost——§10.3 该行「未注入，确定」仅指 0 注入形态）；④ `canceled` 抛错形态
+   只出现在只读捕获面 → Rejected（变更类的取消经结果字段 `canceled:true` 上报）；
+   ⑤ 无 code 的 rejection：变更类 → Ambiguous（保守），只读 → Rejected(internal_native)。
+8. **键盘/点击的中途前台丢失分流（§10.4 规则 1 × §10.12 铁律 1 的交点）**：sendText 在
+   0 注入时抛 foreground_lost(Rejected)；已注入部分后前台丢失 → 以 `injected<total` 的
+   部分事实**正常返回**（backend 映射 interrupted 收据，绝不谎称「确定未派发」）。
+   pressKeys 的 down 段注入后前台丢失 → cleanup 释放本调用按键后抛
+   foreground_lost(dispatchStarted=true) → possibly_sent 收据（保守方向）。
+9. **修饰键包裹的实现形态（§10.2「同一 native 序列」在 A2 导出面的具体化）**：A2 无
+   composite native 导出，chord 包裹 = admission 串行域内的连续 driver 调用
+   （pressKeys(mods-down) → 主体 → pressKeys(mods-up)），前台校验逐段适用（比单次校验
+   更严）；admission 并发=1 保证序列相对其它 CUA 操作原子。主体失败 → up 业务段跳过
+   （规则 4）+ `releaseAllHeldInputs` cleanup 收口（规则 5）；主体成功但 up 段失败 →
+   cleanup 收口 + `modifierReleaseCleanup` 诚实收据（§10.12.1，主体副作用已发生 ⇒
+   铁律 1 禁 ok:false）。left_click 本体 = moveTo（定位）+ down/up × click_count
+   （多击配对背靠背注入，落系统双击识别窗内）。
+10. **剪贴板 busy/denied 的判据细化（§10.3 两行的操作化）**：剪贴板被他进程打开时
+    OpenClipboard 同样报 ERROR_ACCESS_DENIED，错误码无法单独区分「竞争」与「拒绝」——
+    实现以 8×10ms 有界重试 + 250ms 互斥预算耗尽 → 再探交互桌面事实：非交互 →
+    `clipboard_denied`（桌面异常）、交互 → `clipboard_busy`（竞争）。方向保守且两者
+    都是「确定未派发」的 ok:false 安全区。OpenClipboard 成功后的失败（EmptyClipboard/
+    SetClipboardData）→ internal_native(dispatchStarted=true)——原剪贴板内容已被清空
+    （副作用已发生）→ possibly_sent。
+11. **显示器枚举序与 bounds 形态语义（§10.1 captureDisplay target 的操作化）**：
+    monitorIndex 的枚举序 = 主显恒 0、其余按 (left, top) 升序（确定性；smoke「主显示器」
+    = index 0）；`{bounds}` 形态 = 取相交面积最大的显示器捕获后裁剪到相交矩形
+    （bounds 与任何显示器零相交 → capture_failed 诚实失败）。索引越界 → capture_failed
+    （不猜主显）。
+12. **烟测 --pointer 步骤 2 的几何来源**：「向所在显示器中心移动 ≤24 坐标单位」的
+    显示器几何经 captureDisplay(monitorIndex:0) 的 bounds 取得（只读；图像断言即弃）；
+    光标不在主显时以「向主显中心方向 ≤24 单位」best-effort（人工烟测的操作者语境下
+    非破坏性不变）。finally 的光标还原以**当前**前台 pid 为 expectedForegroundPid
+    （还原是 cleanup 性质的尽力动作；前台已变化时以现值校验，失败 → stderr 固定码
+    `pointer-cursor-restore-failed`，不静默）。
+13. **§17 债务项落地状态**：§17.2 UTF-8 两侧修复（broker.js 响应行 + windows-helper.ts
+    请求行均改字节级缓冲，1 MiB/32 MiB cap 按 wire 原始字节判定；测试 = helper-a1 的
+    三字节/四字节劈裂 + 恰 1 MiB/1 MiB+1 边界样本、cua-broker-wire 的劈裂响应无损断言，
+    A2-AC-7 达成）；§17.3 MISSING_IPC 单源（windows-helper.ts 引用常量，契约测试静态
+    断言无双写；spawn-无-IPC 负样本补齐：stderr 字面量 + exit 1 + pipe 从未 bind，
+    A2-AC-8 达成）。broker.js 的本批改动仍按 §17.6 随既有修改清单结算（不新增义务类别，
+    台账原子单元纪律不变）。
+14. **A2 验收映射（本批实测登记）**：A2-AC-1（binding.gyp 增量 + 模块规则静态断言 =
+    contract 测试 18 例）；A2-AC-2/3（a2-native 9 例，真机实跑：只读投影真实性、moveTo
+    负控制零注入、captureDisplay 实捕预算断言、clipboardWriteText 仅超限拒绝面、wire
+    负控制全扫零真实注入）；A2-AC-4/5/6/10（a2-logic 34 例 + c08 7 例，CI 常驻 fake 面）；
+    A2-AC-7/8（见第 13 条）；A2-AC-9（smoke --capture/--host 真机 exit 0，本机实测：
+    capture 455ms/host 694ms–4.6s，输出纪律自证通过）；A2-AC-11（治理门禁随批次门禁跑）。
+    **--pointer 已实现未自动执行**（人工 C07 专属：门禁永不执行 + opt-in env 双保险；
+    首次人工执行随批次验收记录登记——本批实现者未运行它，真机注入面不冒未授权风险）。
+15. **A2 独立评审两项 medium 修复（2026-10-14 同批落地）**：
+    ① **watchdog 自适应重臂改事件驱动**（§10.8 结构化落点）：原实现只在 tick 边界重算
+    间隔，held 0→非空迁移发生在 idle tick 刚过之后时检测延迟最坏仍 ~2000ms——修复 =
+    `createInputSession(realDriver, { onHeldChange: armWatchdog })`，迁移即时清定时器按
+    新间隔重臂（O(1)，§10.8「间隔重置成本 O(1)」的字面落实），held 非空期间最坏检测
+    延迟 = 250ms，「按键遗留窗口 ≤250ms+释放时长」主张结构性成立；契约测试加静态
+    接线断言（防回归）。② **光标零移动断言的静止窗口取证**（a2-native 两处：moveTo
+    负控制 + wire 前台负控制）：全等判据是 §10.4 钉死项（不删、不加容差），但暴露于
+    操作者物理鼠标移动瞬态（评审首跑实测 3px 假红、复跑绿）——改为有界重采样：每次
+    尝试先确认光标静止（双采样相等）再执行 action 再全等复核，瞬态不等 ⇒ 重试，
+    系统性注入会让每一次静止窗口尝试都失败（12 次耗尽 = 诚实炸出）。**门禁运行以
+    桌面大体静止为前提**（默认套件在操作者在场的开发机实跑，§10.11 语境；持续剧烈
+    移动鼠标的极端场景取证窗口耗尽属诚实失败，非断言放宽）。

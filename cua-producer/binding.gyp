@@ -21,8 +21,16 @@
     {
       # → build/Release/ax_native.node（acodeCuaRuntime.windows.nativeAddon 契约路径）。
       "target_name": "ax_native",
-      # A2/A3 追加 .cc/.cpp 于此（§5.2）。
-      "sources": ["src/native/addon.cc"],
+      # A2 增补（§10.10：sources 清单是契约面，契约测试锁定；A3 追加 UIA 四件）。
+      "sources": [
+        "src/native/addon.cc",
+        "src/native/environment.cc",
+        "src/native/foreground.cc",
+        "src/native/pointer.cc",
+        "src/native/keyboard.cc",
+        "src/native/clipboard.cc",
+        "src/native/capture.cc",
+      ],
       # env NAPI_VERSION（build-native.mjs 注入 "9"）→ common.gypi NAPI_VERSION% → defines。
       "includes": ["node_modules/node-addon-api/common.gypi"],
       "include_dirs": ["<!@(node -p \"require('node-addon-api').include\")"],
@@ -30,10 +38,20 @@
       # C++ 异常开启（§4.5）：A2/A3 的 C++/WinRT 以 hresult_error 异常为主要错误通道。
       # _HAS_EXCEPTIONS=1 是 MSVC STL 侧的配套宏（node-addon-api except.gypi 同型配方；
       # node-gyp 缺省注入 _HAS_EXCEPTIONS=0，会关掉 STL 异常机构，与 NAPI_CPP_EXCEPTIONS 矛盾）。
+      # A2 defines 增补（§10.10）：_WIN32_WINNT/NTDDI_VERSION = 编译期地板与 §12.3 运行时
+      # 地板（Win10 1809 / build 17763，RS5）对齐——addon 只导入 1809+ API，更低版本系统
+      # 加载即失败 → §2.7 native-addon-load-failed exit 2 诚实报告，结构性排除「低版本跑半套」。
+      # NOMINMAX/WIN32_LEAN_AND_MEAN：windows.h 的 min/max 宏与 std::min/max 冲突、以及
+      # 无关子系统头（含 GDI 旧面）拖慢编译并引入宏污染——C++/WinRT 工程的标准配套
+      # （A2 实现期增补，spec §10.10 同批回写登记）。
       "defines": [
         "NAPI_CPP_EXCEPTIONS",
         "_HAS_EXCEPTIONS=1",
         "ADDON_VERSION=\"<(addon_version)\"",
+        "_WIN32_WINNT=0x0A00",
+        "NTDDI_VERSION=0x0A000006",
+        "NOMINMAX",
+        "WIN32_LEAN_AND_MEAN",
       ],
       "cflags_cc": ["-fexceptions"],
       "conditions": [
@@ -51,7 +69,22 @@
                 "AdditionalOptions": ["/std:c++17", "/utf-8"],
               },
             },
-            # A2 预留（A2 spec 钉死再启用）："libraries": ["d3d11.lib","dxgi.lib","windowsapp.lib", …]
+            # A2 libraries（§10.10 钉死清单，契约测试锁定）：d3d11/dxgi = WGC 设备与
+            # surface；windowsapp = C++/WinRT 伞形库（GraphicsCaptureItem interop /
+            # CreateDirect3D11DeviceFromDXGIDevice）；user32 = SendInput/前台/光标/桌面；
+            # gdi32 = EnumDisplayMonitors；windowscodecs = WIC PNG/JPEG 编码；
+            # shcore = DPI/显示器度量；ole32 = COM 激活与流；uuid = IID/GUID 常量。
+            "libraries": [
+              "d3d11.lib",
+              "dxgi.lib",
+              "windowsapp.lib",
+              "user32.lib",
+              "gdi32.lib",
+              "windowscodecs.lib",
+              "shcore.lib",
+              "ole32.lib",
+              "uuid.lib",
+            ],
           },
         ],
       ],

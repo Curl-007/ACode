@@ -101,7 +101,14 @@ function sendBrokerRequest(socketPath, request, timeoutMs) {
     }
     let settled = false;
     const socket = createConnection(socketPath);
-    let buffer = "";
+    // 字节级行缓冲（producer spec §17.2 修复，2026-10-14 A2 批次）：旧实现按 chunk 逐个
+    // `chunk.toString("utf8")` 累积字符串——多字节 UTF-8 字符（中文 3 字节 / emoji 4 字节）
+    // 跨 chunk 劈裂时逐 chunk 解码产生不可逆的 U+FFFD 替换符（响应行含树文本/中文时是常态，
+    // A3 起概率真实存在）；且 cap 判定对已损坏重编码的字符串量长，与 wire 原始字节数漂移。
+    // 修复 = 累积 Buffer（Buffer.concat），在字节域扫描 0x0A 切行，完整行字节一次性
+    // toString("utf8")（单行内无劈裂可能），cap 按 wire 原始字节长度判定。
+    // JSON 行内容天然无裸 \n（wire spec §1.3 单行契约），字节切行安全。
+    let buffer = Buffer.alloc(0);
     // delivery-state 基础（wire spec §5.2 / C08）：请求行是否已写出。已写出 ⇒ 动作**可能已送达**
     // Helper（possibly_sent），变更类方法绝不可自动重放；未写出（connect 就失败）⇒ 确定未送达，可安全重试。
     // 这个区分是 possibly_sent 判定的唯一事实来源，故随错误一并上报（BrokerError.details.possiblySent）。
@@ -128,19 +135,21 @@ function sendBrokerRequest(socketPath, request, timeoutMs) {
       socket.write(requestLine);
     });
     socket.on("data", (chunk) => {
-      buffer += chunk.toString("utf8");
-      if (Buffer.byteLength(buffer) > MAX_RESPONSE_BYTES) {
+      // §17.2 字节级缓冲：concat 累积原始 wire 字节，cap 与切行都在字节域判定。
+      buffer = buffer.length === 0 ? chunk : Buffer.concat([buffer, chunk]);
+      if (buffer.length > MAX_RESPONSE_BYTES) {
         finish(
           reject,
           fail(`Computer Use broker response exceeded ${MAX_RESPONSE_BYTES} bytes`, "internal"),
         );
         return;
       }
-      const newline = buffer.indexOf("\n");
+      const newline = buffer.indexOf(0x0a);
       if (newline === -1) return;
       let response;
       try {
-        response = JSON.parse(buffer.slice(0, newline));
+        // 完整行字节一次性解码：多字节字符即使跨 chunk 劈裂也无损（§17.2）。
+        response = JSON.parse(buffer.subarray(0, newline).toString("utf8"));
       } catch {
         finish(reject, fail("Computer Use broker returned a malformed response line", "internal"));
         return;

@@ -39,11 +39,11 @@ export const MAX_REQUEST_LINE_BYTES = 1024 * 1024;
 export const CONNECTION_IDLE_TIMEOUT_MS = 30_000;
 
 /**
- * 封闭 wire error 字面量表（producer spec §4.6 A1 可达场景全集，零插值——§3.2 红线：
- * 结构上排除窗口标题/元素名/文本内容/路径/凭据进入 wire 响应）。码取自 wire spec §4.1
- * 的 17 码词汇表。`internal` 对应防御分支（handler 抛错 / 空成功违约）：A1 的 backend 只
- * 注册同步纯函数 broker_info，该分支结构上不可达；保留它是为 wire「每请求欠一行响应」
- * 义务兜底（wire spec §9.1），A2 注册真实 handler 前须先扩充 producer spec §4.6 表。
+ * 封闭 wire error 字面量表（producer spec §4.6 A1 全集 + §4.6.1 A2 扩充行，零插值——
+ * §3.2 红线：结构上排除窗口标题/元素名/文本内容/路径/凭据进入 wire 响应）。码取自
+ * wire spec §4.1 的 17 码词汇表（零新码）。`internal` 对应 dispatch 防御分支（handler 抛
+ * 非类型化异常 / 空成功违约，A2 起可达）；A2 各行经 WireRequestFailure 由 handler 产出
+ * （只用于「确定未派发」的失败——变更类派发启动后禁止 ok:false，§10.12 铁律 1）。
  */
 export const WIRE_ERROR_MESSAGES = Object.freeze({
   warming: "Computer Use Helper is starting up.",
@@ -51,7 +51,38 @@ export const WIRE_ERROR_MESSAGES = Object.freeze({
   methodNotFound: "Unknown Computer Use broker method.",
   invalidRequest: "Invalid Computer Use broker request line.",
   internal: "Computer Use broker failed to handle the request.",
+  // ── §4.6.1 A2 生效行（封闭表；实现不得新增，新增须先改 spec）──
+  invalidParams: "Invalid Computer Use method parameters.",
+  appNotRunning: "Computer Use target app is not running.",
+  appRefRequiresPid: "Computer Use app_ref requires a pid in this producer slice.",
+  foregroundRequired:
+    "Computer Use input requires the target application to be the only foreground application.",
+  nonInteractiveDesktop: "Computer Use is not available on a locked or non-interactive desktop.",
+  staleObservation: "Computer Use observation state is stale; observe the application again.",
+  elementTargetsRequireUia: "Computer Use element targets require the UIA observation surface.",
+  captureTarget: "Computer Use capture target changed or is not capturable.",
+  operationTimeout: "Computer Use operation timed out.",
+  controllerBusy: "Computer Use controller is busy; retry after the current action completes.",
+  clipboardBusy: "Computer Use clipboard is busy.",
+  clipboardDenied: "Computer Use clipboard access was denied.",
 } as const);
+
+/**
+ * handler → dispatch 的类型化 wire 失败通道（§4.6.1）：只携带封闭字面量 + 17 码词汇表内
+ * 的 code。与防御分支的区分是结构性的——WireRequestFailure 用自己的 message（各行封闭
+ * 字面量），非类型化异常才落 `internal` 防御字面量（绝不把异常 message 插值上 wire，
+ * §3.2 零插值红线）。变更类 handler 只允许在「确定未派发」域抛出本错误（§10.12 铁律 1：
+ * 派发启动后一律 ok:true isError 收据）。
+ */
+export class WireRequestFailure extends Error {
+  constructor(
+    readonly wireMessage: string,
+    readonly wireCode: string,
+  ) {
+    super(wireCode);
+    this.name = "WireRequestFailure";
+  }
+}
 
 /** 请求行形状（wire spec §2.1：id 可选仅信息性、method 必填字符串、params 任意）。 */
 export interface BrokerRequestLine {
@@ -155,6 +186,13 @@ export async function dispatchRequest(
     if (result === undefined) return errorResponse(WIRE_ERROR_MESSAGES.internal, "internal");
     return okResponse(result);
   } catch (error) {
+    // 类型化 wire 失败（§4.6.1 封闭行）：handler 只允许在「确定未派发」域抛出——
+    // message/code 均为封闭字面量，原样产出。
+    if (error instanceof WireRequestFailure) {
+      return errorResponse(error.wireMessage, error.wireCode);
+    }
+    // 防御分支（§4.6.1 internal 行，A2 起可达）：非类型化异常只透传 code（限非空字符串），
+    // message 恒为封闭 internal 字面量——绝不把异常 message 插值上 wire（§3.2 零插值红线）。
     const code =
       error && typeof error === "object" && typeof (error as { code?: unknown }).code === "string"
         ? ((error as { code: string }).code.length > 0 ? (error as { code: string }).code : "internal")

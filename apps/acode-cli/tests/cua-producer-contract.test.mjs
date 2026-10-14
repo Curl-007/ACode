@@ -16,7 +16,7 @@
  * env 注入产出 ABI 漂移工件）。
  */
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -72,7 +72,6 @@ test("binding.gyp：ax_native target + 异常/标准/编码配套 + NAPI_VERSION
   const gyp = readFileSync(join(producerRoot, "binding.gyp"), "utf8");
   // target_name 决定契约路径 build/Release/ax_native.node。
   assert.match(gyp, /"target_name":\s*"ax_native"/);
-  assert.match(gyp, /"sources":\s*\["src\/native\/addon\.cc"\]/);
   assert.match(gyp, /NAPI_CPP_EXCEPTIONS/, "C++ 异常开启（§4.5）");
   assert.match(gyp, /"ExceptionHandling":\s*1/, "/EHsc（§4.5）");
   assert.match(gyp, /\/std:c\+\+17/, "C++/WinRT 地板（§4.5）");
@@ -85,6 +84,178 @@ test("binding.gyp：ax_native target + 异常/标准/编码配套 + NAPI_VERSION
   assert.doesNotMatch(gyp, /"NAPI_VERSION=/, "NAPI_VERSION 必须由 env 经 common.gypi 翻译，不得在 gyp 内双写");
   // addonVersion = package.json version 的编译期嵌入（§4.1/§5.2.1 第 5 条）。
   assert.match(gyp, /ADDON_VERSION=/);
+});
+
+test("binding.gyp A2 增量（§10.10，A2-AC-1）：sources 七件 + libraries 九件 + 编译期地板 defines", () => {
+  const gyp = readFileSync(join(producerRoot, "binding.gyp"), "utf8");
+  // sources 清单是契约面（§10.10；文件组织可微调、清单漂移即红）。
+  for (const source of [
+    "src/native/addon.cc",
+    "src/native/environment.cc",
+    "src/native/foreground.cc",
+    "src/native/pointer.cc",
+    "src/native/keyboard.cc",
+    "src/native/clipboard.cc",
+    "src/native/capture.cc",
+  ]) {
+    assert.ok(gyp.includes(`"${source}"`), `sources 必须含 ${source}`);
+  }
+  // libraries（§10.10 钉死清单）：d3d11/dxgi = WGC 设备与 surface；windowsapp = C++/WinRT；
+  // user32 = SendInput/前台/光标/桌面；gdi32 = EnumDisplayMonitors；windowscodecs = WIC；
+  // shcore = DPI；ole32 = COM/流；uuid = IID/GUID。
+  for (const lib of [
+    "d3d11.lib", "dxgi.lib", "windowsapp.lib", "user32.lib", "gdi32.lib",
+    "windowscodecs.lib", "shcore.lib", "ole32.lib", "uuid.lib",
+  ]) {
+    assert.ok(gyp.includes(`"${lib}"`), `libraries 必须含 ${lib}`);
+  }
+  // 编译期地板与 §12.3 运行时地板（Win10 1809 / 17763）对齐：低版本系统加载即失败 →
+  // exit 2 诚实报告，结构性排除「低版本跑半套」。
+  assert.ok(gyp.includes('"_WIN32_WINNT=0x0A00"'), "_WIN32_WINNT 地板（§10.10）");
+  assert.ok(gyp.includes('"NTDDI_VERSION=0x0A000006"'), "NTDDI RS5 地板（§10.10）");
+  // 实现期增补（A2 批次回写）：NOMINMAX/WIN32_LEAN_AND_MEAN——windows.h 宏污染防护。
+  assert.ok(gyp.includes('"NOMINMAX"'), "NOMINMAX（std::min/max 与 windows.h 宏冲突防护）");
+  assert.ok(gyp.includes('"WIN32_LEAN_AND_MEAN"'), "WIN32_LEAN_AND_MEAN");
+});
+
+test("A2 源布局齐套（§5.3 布局树 A2 增补；模块划分是契约）", () => {
+  for (const rel of [
+    "src/backend-a2.ts",
+    "src/input-session.ts",
+    "src/frame-registry.ts",
+    "src/native-driver.ts",
+    "src/keymap.ts",
+    "src/driver-contract.ts",
+    "src/param-validation.ts",
+    "src/receipts.ts",
+    "src/mutating-dispatch.ts",
+    "src/native/ax_internal.h",
+    "src/native/pointer.cc",
+    "src/native/keyboard.cc",
+    "src/native/clipboard.cc",
+    "src/native/capture.cc",
+    "src/native/foreground.cc",
+    "src/native/environment.cc",
+    "scripts/smoke-real.mjs",
+  ]) {
+    assert.ok(existsSync(join(producerRoot, rel)), `${rel} 必须存在（§5.3）`);
+  }
+});
+
+test("A2 模块规则（§10.11 契约，防漂移 = 静态 import 断言）：纯逻辑模块不得 import native-driver；native-driver 只被 entry 组装路径 import", () => {
+  const srcDir = join(producerRoot, "src");
+  // 规则①：backend/input-session/frame-registry/keymap/param-validation/receipts
+  // （+driver-contract 契约面）一律纯 TS + 注入 driver——CI 常驻单测的前提；
+  // import native-driver 即红。
+  for (const pure of [
+    "backend-a2.ts", "input-session.ts", "frame-registry.ts", "keymap.ts",
+    "driver-contract.ts", "param-validation.ts", "receipts.ts", "mutating-dispatch.ts",
+    "backend-a1.ts", "wire-server.ts",
+  ]) {
+    const text = readFileSync(join(srcDir, pure), "utf8");
+    assert.ok(
+      !text.includes("./native-driver"),
+      `${pure} 不得 import native-driver（规则①：纯逻辑 + 注入 driver）`,
+    );
+    assert.ok(
+      !text.includes("./uia-driver"),
+      `${pure} 不得 import uia-driver（规则①，A3 同律预登记）`,
+    );
+  }
+  // 规则②：native-driver 只被 windows-helper.ts（entry 组装路径）import。
+  const importers = [];
+  for (const entry of readdirSync(srcDir)) {
+    if (!entry.endsWith(".ts")) continue;
+    const text = readFileSync(join(srcDir, entry), "utf8");
+    if (text.includes(`"./native-driver.js"`)) importers.push(entry);
+  }
+  assert.deepEqual(importers, ["windows-helper.ts"], "native-driver 的唯一 import 方 = entry 组装路径");
+});
+
+test("MISSING_IPC_CHANNEL_MESSAGE 单源（§17.3 裁决）：windows-helper.ts 不再内联字面量", () => {
+  const helper = readFileSync(join(producerRoot, "src", "windows-helper.ts"), "utf8");
+  const protocol = readFileSync(join(producerRoot, "src", "control-protocol.ts"), "utf8");
+  // 单一来源 = control-protocol.ts 常量（§2.7 封闭表第 4 行的字面量事实源）。
+  assert.match(protocol, /MISSING_IPC_CHANNEL_MESSAGE = "missing-ipc-channel"/, "常量定义在 control-protocol.ts");
+  // windows-helper.ts 引用常量、不再双写内联字面量（防「改一处漏一处」回归）。
+  assert.ok(helper.includes("MISSING_IPC_CHANNEL_MESSAGE"), "entry 引用常量");
+  assert.ok(
+    !helper.includes('"missing-ipc-channel"') && !helper.includes("`missing-ipc-channel"),
+    "entry 源文本不再含内联 missing-ipc-channel 字面量（§17.3 静态断言）",
+  );
+});
+
+test("UTF-8 字节级行缓冲（§17.2 裁决）：两侧 framing 不再逐 chunk toString 累积", () => {
+  const helper = readFileSync(join(producerRoot, "src", "windows-helper.ts"), "utf8");
+  const broker = readFileSync(join(repoRoot, "packages", "acode-cua", "broker.js"), "utf8");
+  // 回归锚：旧缺陷形态 `buffer += chunk.toString("utf8")` 一旦复活即红（多字节跨 chunk
+  // 劈裂 → U+FFFD 不可逆损坏；cap 判定对损坏重编码字符串量长 → 与 wire 原始字节漂移）。
+  assert.doesNotMatch(helper, /buffer \+= chunk\.toString/, "Helper 侧请求行必须字节级缓冲");
+  assert.doesNotMatch(broker, /buffer \+= chunk\.toString/, "角色 B 侧响应行必须字节级缓冲");
+  assert.match(helper, /Buffer\.concat/, "Helper 侧 Buffer 累积");
+  assert.match(broker, /Buffer\.concat/, "角色 B 侧 Buffer 累积");
+  assert.match(helper, /indexOf\(0x0a\)/, "Helper 侧字节域切行");
+  assert.match(broker, /indexOf\(0x0a\)/, "角色 B 侧字节域切行");
+});
+
+test("watchdog 自适应的事件驱动重臂接线（§10.8，2026-10-14 评审修复）：entry 以 onHeldChange 接 armWatchdog", () => {
+  const helper = readFileSync(join(producerRoot, "src", "windows-helper.ts"), "utf8");
+  // 结构性主张：held 0↔非空迁移即时重臂（仅 tick 边界重算会让迁移后的最坏检测延迟
+  // 仍 ~2000ms，§10.8「≤250ms+释放时长」在角落不成立——评审 medium 发现的回归锚）。
+  assert.match(helper, /onHeldChange:\s*armWatchdog/, "createInputSession 必须传 onHeldChange 重臂回调");
+  assert.match(helper, /function armWatchdog/, "重臂原语在场（clearTimeout + 按当前 held 状态定间隔）");
+  assert.match(helper, /clearTimeout\(watchdogTimer\)/, "重臂先清旧定时器（O(1) 重置，§10.8）");
+});
+
+test("wire-server §4.6.1 A2 封闭字面量表齐套（零插值防漂移：逐字面量精确断言）", () => {
+  const wireServer = readFileSync(join(producerRoot, "src", "wire-server.ts"), "utf8");
+  for (const literal of [
+    "Invalid Computer Use method parameters.",
+    "Computer Use target app is not running.",
+    "Computer Use app_ref requires a pid in this producer slice.",
+    "Computer Use input requires the target application to be the only foreground application.",
+    "Computer Use is not available on a locked or non-interactive desktop.",
+    "Computer Use observation state is stale; observe the application again.",
+    "Computer Use element targets require the UIA observation surface.",
+    "Computer Use capture target changed or is not capturable.",
+    "Computer Use operation timed out.",
+    "Computer Use controller is busy; retry after the current action completes.",
+    "Computer Use clipboard is busy.",
+    "Computer Use clipboard access was denied.",
+  ]) {
+    assert.ok(wireServer.includes(JSON.stringify(literal)), `§4.6.1 字面量必须在封闭表内：${literal}`);
+  }
+  // §10.6/§10.9/§10.12.1 收据固定字面量（receipts.ts 的 RECEIPT_MESSAGES 表——单一来源）。
+  const receipts = readFileSync(join(producerRoot, "src", "receipts.ts"), "utf8");
+  for (const literal of [
+    "Computer Use control stopped; held inputs released.",
+    "Computer Use action was interrupted by stop_computer_control.",
+    "Computer Use clipboard was modified but the paste keystroke was not dispatched.",
+    "Computer Use action may have been dispatched; the native outcome could not be verified.",
+    "Computer Use paste completed; the clipboard now holds the pasted text.",
+    "Computer Use drag completed; all interpolated points were injected.",
+    "Computer Use text input was partially injected before the sequence stopped.",
+    "Computer Use action completed; modifier key release required cleanup.",
+  ]) {
+    assert.ok(receipts.includes(JSON.stringify(literal)) || receipts.includes(`"${literal}"`), `收据字面量必须精确（零插值）：${literal}`);
+  }
+  // isAppNotFound 兼容子串（SDK alternateAppRef 触发器，§4.6.1/§11.3——两侧同审纪律）。
+  assert.ok(wireServer.includes("target app is not running"), "SDK isAppNotFound 兼容子串在场");
+});
+
+test("smoke-real.mjs 契约面（§15.1/§15.3）：flags 白名单 + --pointer 双保险 + 自证扫描 + 退出码语义", () => {
+  const smoke = readFileSync(join(producerRoot, "scripts", "smoke-real.mjs"), "utf8");
+  for (const flag of ['"--capture"', '"--uia"', '"--host"', '"--pointer"']) {
+    assert.ok(smoke.includes(flag), `flags 白名单必须含 ${flag}`);
+  }
+  // --pointer 双保险：flag 之外还须 env（门禁脚本永不设该 env，结构上排除误执行）。
+  assert.ok(smoke.includes("ACODE_CUA_SMOKE_POINTER_LIVE"), "--pointer opt-in env 双保险");
+  assert.ok(smoke.includes("pointer-flag-must-be-alone"), "--pointer 必须单独出现");
+  // 输出纪律自证（结构性）：泄漏即失败。
+  assert.ok(smoke.includes("smoke-self-leak"), "退出前自证扫描");
+  // 非 win32 前置即 exit 2（ubuntu CI 永不执行）。
+  assert.match(smoke, /process\.platform !== "win32"/);
+  assert.ok(smoke.includes("smoke-requires-win32"), "非 win32 固定结果码");
 });
 
 test("tsconfig.json 钉死项精确（§5.3）", () => {

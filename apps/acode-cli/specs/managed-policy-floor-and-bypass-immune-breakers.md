@@ -62,7 +62,7 @@ P1-6 的项目 restrictive floor 是本骨架的特例（见 `project-permission
 | 类 | ruleId | 触发条件 |
 |---|---|---|
 | 空变量根删除 | `breaker.bashRootDelete` | Bash 命令经 `analyzeBashCommand` AST 解析后，存在删除类命令（`rm`/`rmdir`/`del`/`Remove-Item`）携带递归/强制旗标，且其路径参数满足任一：① 含未解析展开（ParameterExpansion/SimpleExpansion/CommandExpansion，即 `rm -rf "$DIR"` 形态——变量为空时等价于删根）；② 解析后等于文件系统根或用户 home；③ 参数为空字符串 |
-| 路径逃逸写 | `breaker.pathEscapeWrite` | Write/Edit/ApplyPatch 的目标路径（经 `resolveWorkspacePath` 以 workingDirectory 解析）落在 workspaceRoot 之外（workspaceRoot 已知时）。**ask 而非 deny**：与 `path-policy.ts:36-38` 的既有产品决定一致（子代理可能需要查看用户指定的兄弟仓库），但 yolo 下不再静默放行 |
+| 路径逃逸写 | `breaker.pathEscapeWrite` | Write/Edit/ApplyPatch 的目标路径（经 `resolveWorkspacePath` 以 workingDirectory 解析）落在 workspaceRoot 之外（workspaceRoot 已知时）。**ask 而非 deny**：与 `path-policy.ts:36-38` 的既有产品决定一致（子代理可能需要查看用户指定的兄弟仓库），但 yolo 下不再静默放行。**豁免面见 R5**（系统临时目录 + 产品 scratch 区，2026-10-14 用户裁决） |
 | 敏感位置读 | `breaker.sensitiveRead` | Read/Glob/Grep/Bash 的目标命中**封闭清单**的凭据位置模式（ssh 私钥、系统/用户凭据库、浏览器 profile、云 CLI 凭据目录）。清单是代码内常量，不接受配置扩展（扩展走策略地板的 deny/ask） |
 
 - Bash 解析失败/超长（`hasParseErrors`）时，删除类命令按「含未解析展开」同等对待
@@ -110,6 +110,59 @@ checkPermission(context, capability, projectRules, rulePolicy)
 （复用 P0-3 的 `modeRemoteForbidden` 同款拒绝语义，本地来源回 `modePolicyForbidden`）。
 决策层（R3 第 7 步）的跳过是安全底线；模式切换拒绝是 UX 一致性，两者都必须有。
 
+### R5 pathEscapeWrite 豁免面 + 熔断弹窗诚实性（2026-10-14 用户裁决）
+
+**背景（用户反馈「yolo 会话子智能体依旧上报权限审批」的四个已核实事实）**：
+
+1. 子代理写工作区外临时目录是真实高频需求（path-policy.ts:36-38 的既有产品判断
+   「子代理可能需要访问兄弟仓库/外部文件」在写方向的延伸）；pathEscapeWrite 对
+   此类写入在任何模式（含 yolo）弹 ask，用户感知为「完全访问不生效」。
+2. **弹窗上的「总是允许」对熔断器 ask 结构性无效**：熔断判定位于 checkPermission
+   收口处（R3 第 6 步语义的实现位），把任何 allow 无条件降级 ask、从不咨询项目/
+   会话规则；yolo 更是在规则匹配之前提前返回。用户点「本项目总是允许」持久化的
+   allow 规则永远不被消费 → 下次照弹（2026-10-11 本机日志实证：同会话
+   「Approved once」→「Approved for this project」→ 38 分钟后同熔断器第三次弹窗）。
+   这是暗黑模式：UI 提供了不起作用的选项。
+3. **不对称性**：pathEscapeWrite 只覆盖 Write/Edit/ApplyPatch/MultiEdit；Bash 重定向
+   写工作区外在 yolo 下静默通过（Bash 面只有灾难目标 deny 与 sensitiveRead 文本
+   匹配）。熔断器的真实安全增量是「防工具族无意识越界写」，不是硬边界——豁免
+   临时目录的边际安全成本≈0。
+4. **上游对照实测**：ZCode 3.15.x（yolo 会话）写系统临时目录零弹窗——上游没有
+   pathEscapeWrite；本熔断器是 ACode 自研加固，比上游严。
+
+**裁决（用户选定：豁免系统临时目录 + 修无效授权暗黑模式 + 产品管理暂存区与提示词
+引导；未选「让授权真正生效」重方案）**：
+
+- **R5.1 tmpdir 豁免**：checkPathEscapeWrite 的 resolved 目标路径位于 `os.tmpdir()`
+  内时不触发。豁免是**纯静态前缀判定**（normalize 后 isPathInside），不做 realpath/
+  fs 探测——熔断器模块「从不执行任何外部程序、只做静态判定」的既有纯度不变。
+  已知边界（接受）：macOS 上模型显式写 `/tmp/...` 而 `os.tmpdir()` 返回
+  `/var/folders/...` 时不豁免（照旧 ask）；豁免跟着 tmpdir 的精确值走。
+- **R5.2 产品 scratch 暂存区**：`<storage.dir>/cli/scratch`（`storage.dir` 为既有
+  配置字段，与 `cli/exec`、`cli/log` 同根；create-app 处 `storageRoot` 已在作用域）。
+  经 `AgentRuntimeDeps.scratchRoot` 接线，四个 AgentRuntime 构造点（create-app 主
+  会话、subagent child、workflow-facade child、script-workflow child）一致透传——
+  子代理与父同一 scratch 根（产品管理目录，非会话身份，无需按会话分根；模型可
+  自行建子目录）。checkPathEscapeWrite 对 scratchRoot 内的 resolved 路径不触发；
+  **scratchRoot 缺席 → 该豁免不生效**（与 workspaceRoot 缺席同一容错哲学，宁可
+  多弹不误放）。
+- **R5.3 提示词引导**：env-info 段（`core/src/context/sections/env-info.ts`）在
+  scratchDir 事实在场时渲染一行目录 + 一句指引（自撰英文，prompt-language-policy
+  R7）：临时/中间文件写 scratch 目录，不要写工作区外任意路径。缺席时零渲染
+  （不猜路径、不渲染空行）。
+- **R5.4 熔断弹窗授权诚实性**：permission-flow 的 `suggestedPermissionUpdates` 在
+  最终 `permissionDecision.ruleId` 以 `breaker.` 开头时恒置空（事件与 broker 请求
+  两个消费点同源）——弹窗不再提供永远无法生效的「总是允许」；「允许一次」语义
+  不变。`rule.policy.ask` 存在同构问题（策略地板压过一切 allow 规则），**登记为
+  后续项不在本次裁决范围**（托管策略场景罕见，且涉及管理员语义需单独裁决）。
+- **不变量**：豁免面封闭为两个根（tmpdir + scratchRoot），**不加配置开关**（R2
+  「清单是代码内常量」哲学延续；托管策略仍可用 deny/ask 规则对任何路径收紧，
+  策略地板压过豁免——豁免只存在于熔断器触发判定内，位于 R3 第 0/1 步之后）。
+  sensitiveRead、bashRootDelete、bashTargetCatastrophic、反射门全部不受影响；
+  tmpdir/scratch 内的路径若命中 sensitiveRead 清单（如 scratch 里放 id_rsa 副本）
+  照旧触发。熔断器「只收紧、永不放宽」的语义在豁免后仍成立：豁免是**触发面
+  定义**的一部分（什么算「逃逸」），不是对命中的放行。
+
 ## 接口
 
 - `adapters/src/config/managed-policy.ts`：
@@ -119,9 +172,24 @@ checkPermission(context, capability, projectRules, rulePolicy)
   disableBypassPermissionsMode 的 wire 形态）。
 - `core/src/permission/service.ts`：`PermissionConfig.policyFloor?: ManagedPolicyFloor`；
   `PermissionContext.workspaceRoot?: string`（熔断器路径判定用，缺省时路径类熔断器不触发，
-  与既有「拿不到工作目录照常判定」同一容错哲学）。
+  与既有「拿不到工作目录照常判定」同一容错哲学）；`PermissionContext.scratchRoot?: string`
+  （R5.2 豁免根，缺省时该豁免不生效）。
 - `core/src/permission/bypass-immune-breakers.ts`：
-  `evaluateBypassImmuneBreakers(context, capability): { ruleId: string; reason: string } | undefined`
+  `evaluateBypassImmuneBreakers(context, capability): { ruleId: string; reason: string } | undefined`；
+  `BypassImmuneBreakerContext.scratchRoot?: string`（R5.2，经
+  `breakerContextFromPermissionContext` 从 PermissionContext 透传）。
+- `core/src/runtime/types.ts`：`AgentRuntimeDeps.scratchRoot?: string`（R5.2，与
+  `memoryRoot` 同位）；`core/src/runtime/helpers/runtime-tools.ts` 以
+  `getScratchRoot: () => deps.scratchRoot` 下传；`core/src/tool/executor/types.ts`：
+  `ToolExecutorDeps.getScratchRoot?: () => string | undefined`（与 `getMemoryRoot`
+  同型接缝）；permission-flow 与 permission-input-recheck 两个 PermissionContext
+  构造点同源填充。
+- `bootstrap/src/app/create-app.ts`：`scratchRoot = join(storageRoot, "cli", "scratch")`
+  注入主会话 deps；`core/src/runtime/methods/subagent.ts`、
+  `bootstrap/src/app/workflow-facade.ts`、`cli-workflow/src/script-workflow-child-runtime.ts`
+  三个 child 构造点透传。
+- `core/src/context/sections/env-info.ts`：`buildEnvInfoSection(envInfo, model?, scratchDir?)`
+  第三参可选；在场渲染 `Scratch directory (temporary files)` 行 + 一句指引，缺席零渲染。
 
 ## 验收场景
 
@@ -146,6 +214,21 @@ checkPermission(context, capability, projectRules, rulePolicy)
 10. yolo 下 Read `~/.ssh/id_rsa` → ask（breaker.sensitiveRead）；workspace 内文件 → 不触发。
 11. 熔断器不覆写已有 deny / ask 的 ruleId；alwaysAsk 工具照常走 alwaysAsk。
 12. Bash 解析失败时删除类命令 fail-closed 到 ask；非删除类不受影响。
+
+**R5 豁免面与弹窗诚实性**
+13. yolo 下 Write 到 `os.tmpdir()` 内路径 → 不触发 pathEscapeWrite（allow 直通）；
+    Write 到 tmpdir 与 scratchRoot 之外的工作区外路径 → 照旧 ask。
+14. yolo 下 Write 到 scratchRoot 内路径 → 不触发；scratchRoot 缺席（undefined）时
+    同一路径 → 照旧 ask（容错方向 = 宁可多弹）。
+15. 豁免只作用于 pathEscapeWrite：tmpdir/scratch 内路径命中 sensitiveRead 清单
+    （如 scratch 内 `id_rsa` 文件名）→ 照旧触发；bashRootDelete/灾难目标/反射门不受影响。
+16. 熔断 ask（ruleId 以 `breaker.` 开头）的 permission-requested 事件与 broker 请求
+    `suggestedPermissionUpdates` 恒为空数组；非熔断 ask（如 `rule.project.ask`、
+    `tool.alwaysAsk`）的建议规则照常携带。
+17. 子代理 child runtime 继承父 `scratchRoot`（subagent spawn 构造点透传）：yolo 父
+    派生的子代理写 scratch 内路径不弹窗。
+18. env-info 段：scratchDir 在场 → 渲染目录行与指引各一；缺席 → 段内容与改动前
+    逐字节一致（零渲染，不猜路径）。
 
 ## 不在本骨架范围
 

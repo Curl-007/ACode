@@ -70,6 +70,15 @@ export * from "./schedule.js";
 export * from "./workflow-observation-display.js";
 export * from "./tool-result-metadata.js";
 export * from "./performance.js";
+// 会话级 git worktree 生命周期三工具（specs/session-worktree-lifecycle.md）：
+// EnterSessionWorktree / MergeBaseBranch / ReapSessionWorktrees 的名字常量、闭集
+// reason 词表与写围栏 env 键（core 的 path-policy 与 adapters 的注入缝共同读取，
+// 两包互不 import，键的单一事实源只能在这里）。漏掉这行 handler 拿不到契约。
+export * from "./session-worktree.js";
+// 回合收尾协议（apps/acode-cli/specs/turn-wrap-up.md）：TurnWrapUp 的 schema 与名字
+// 常量（名字/上限的单一事实源在 shared v4，这里是 zod v3 producer 镜像）。core 的
+// handler 与 turn 漏斗、TUI 的工具行分派读走；漏掉这行消费方拿不到契约。
+export * from "./turn-wrap-up.js";
 
 // Shared types (only once to avoid duplicates)
 export type { DiffHunk, GitDiff } from "./write.js";

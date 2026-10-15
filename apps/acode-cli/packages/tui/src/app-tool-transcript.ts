@@ -124,6 +124,8 @@ export function buildToolTranscriptProjection(
   if (normalized === "webfetch") return { detailLines: webFetchDetails(record) };
   if (normalized === "todowrite") return { detailLines: todoWriteDetails(record) };
   if (normalized === "todoread") return { detailLines: ["todos: read current state"] };
+  // 回合收尾最小呈现（apps/acode-cli/specs/turn-wrap-up.md R9）：下一步一行，不做富渲染。
+  if (normalized === "turnwrapup") return { detailLines: turnWrapUpDetails(record) };
   if (normalized === "agent") return { detailLines: agentDetails(record) };
   if (normalized === "skill")
     return {
@@ -311,6 +313,13 @@ function todoWriteDetails(record: Record<string, unknown>): string[] {
       ? `in_progress: ${previewText(stringField(inProgress, "content") ?? "")}`
       : undefined,
   ]);
+}
+
+// 收尾载荷只取 nextStep 一行（compactLines 负责限宽截断）；recap/建议卡属于富渲染，
+// TUI 刻意不呈现（specs/turn-wrap-up.md R9）。
+function turnWrapUpDetails(record: Record<string, unknown>): string[] {
+  const nextStep = stringField(record, "nextStep");
+  return compactLines([nextStep ? `next: ${nextStep}` : undefined]);
 }
 
 function agentDetails(record: Record<string, unknown>): string[] {

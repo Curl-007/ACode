@@ -69,6 +69,7 @@ import { appendBrowserTurnScreenshot } from "./browser-turn-screenshot.js";
 import { clearBrowserTurnState } from "../../repl/browser-turn-state.js";
 import { applySubmissionExecutionState, createTurnModel } from "./turn-model.js";
 import { runStopFailureHooks } from "./hooks.js";
+import { logTurnWrapUpObligationOutcome } from "./turn-wrap-up.js";
 import { rebuildContextPrefix } from "./context-refresh.js";
 import { assertRuntimeModelBranchCurrent } from "./runtime-command-generation.js";
 
@@ -701,6 +702,9 @@ export async function executeTurnCommand(
           status: "completed",
           toolCallCount: loopState.toolCallCount,
         });
+        // 收尾义务评估（specs/turn-wrap-up.md R3）：成功收口路径唯一评估点；
+        // 只落日志（recorded/missing/stale），不阻塞收口、不发新事件。
+        logTurnWrapUpObligationOutcome(this, loopState);
         // 单轮执行策略只抑制本次成功 Turn 的后台提取，不修改 Session Memory 配置。
         if (options?.modelExecution?.memoryExtraction !== "skip") {
           scheduleProjectMemoryExtraction(this, {

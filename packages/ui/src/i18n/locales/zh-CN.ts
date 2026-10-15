@@ -1768,6 +1768,13 @@ const zhCN: Record<string, string> = {
   "chat.turnNavigator.emptyAssistant": "暂无助手正文",
   "chat.turnNavigator.runningAssistant": "助手仍在工作",
   "chat.turnNavigator.userFallback": "用户输入",
+  "chat.turnWrapUp.nextStep": "下一步",
+  "chat.turnWrapUp.suggestedTask": "建议任务",
+  "chat.turnWrapUp.showPrompt": "展开 prompt",
+  "chat.turnWrapUp.hidePrompt": "收起 prompt",
+  "chat.turnWrapUp.startAsNewTask": "发起为新任务",
+  "chat.turnWrapUp.copyPrompt": "复制 prompt",
+  "chat.turnWrapUp.copiedPrompt": "已复制 prompt",
   "chat.rewind.conflictConfirm":
     "以下文件在该轮之后被外部修改过，强制回滚可能导致冲突：\n\n{paths}",
   "taskNav.back": "后退",

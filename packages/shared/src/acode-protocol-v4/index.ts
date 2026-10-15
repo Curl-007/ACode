@@ -56,6 +56,9 @@ export * from "./controller.js";
 export * from "./workspace-hook-review.js";
 export * from "./cuaPermission.js";
 export * from "./capabilities.js";
+// 回合收尾载荷（apps/acode-cli/specs/turn-wrap-up.md）：工具名/上限的单一事实源 +
+// 客户端解析面。承载通道是 toolCall row 的 input（无 schema 透传），本文件不加 row kind。
+export * from "./turn-wrap-up.js";
 
 export {
   executionOutputPreviewSchema,

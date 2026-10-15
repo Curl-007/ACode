@@ -80,6 +80,17 @@ export interface TurnRequestState {
   outputTokenContinuationCount: number;
 }
 
+/**
+ * 回合收尾义务事实（specs/turn-wrap-up.md R3）：每回合新建、收口即释放；
+ * 不持久化、不跨回合、不发事件——唯一读者是 turn 成功收口路径的评估日志。
+ */
+export interface TurnWrapUpObligationState {
+  /** 本回合已执行的义务信号工具数（workspace 写 / TodoWrite；spec R2 闭集）。 */
+  workSignalCount: number;
+  /** 最近一次 TurnWrapUp 成功时的 workSignalCount；null = 本回合从未成功调用。 */
+  recordedAtWorkSignalCount: number | null;
+}
+
 export interface RegularTurnLoopState {
   activeTurn?: ActiveTurnSteeringState;
   /** 首次 await 前捕获，恢复/rewind 后禁止发送旧 provider request entries。 */
@@ -133,6 +144,8 @@ export interface RegularTurnLoopState {
   /** 当前 Turn 捕获的 provider-visible output style；不表示显式 subagent model override。 */
   turnOutputStyle?: OutputStylePromptConfig;
   turnTraceContext: TraceContext;
+  /** 收尾义务事实（specs/turn-wrap-up.md R3）；undefined = 尚无信号也无调用。 */
+  turnWrapUp?: TurnWrapUpObligationState;
   userMessageId: MessageId;
 }
 

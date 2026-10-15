@@ -6,6 +6,7 @@ import {
   RESPOND_TO_COORDINATOR_TOOL_NAME,
   RESUME_WORKFLOW_RUN_TOOL_NAME,
   SAVE_WORKFLOW_TOOL_NAME,
+  TURN_WRAP_UP_TOOL_NAME,
 } from "@acode/contracts";
 import { EXPLORE_AGENT_ALLOWED_TOOLS } from "../../subagent/explore-tools.js";
 import type { AgentRuntimeConfig } from "../types.js";
@@ -50,6 +51,10 @@ const WORKFLOW_CHILD_DISALLOWED_TOOLS = [
   // 权交回编排者」退化成演员给自己写剧本。与 workflow-actor-tools.ts 的 persona 侧禁用
   // 刻意双列（同上）。
   FILL_WORKFLOW_HOLE_TOOL_NAME,
+  // TurnWrapUp 是主对话专属的收尾协议面（specs/turn-wrap-up.md R5：义务评估显式排除
+  // workflow child / subagent / 无人值守）——child 里注册它只会产出无人消费且被评估
+  // 面忽略的载荷，与升级问答同理属结构性禁用而非交互挂起。
+  TURN_WRAP_UP_TOOL_NAME,
 ] as const;
 
 /**

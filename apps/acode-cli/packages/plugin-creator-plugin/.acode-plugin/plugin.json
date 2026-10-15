@@ -1,6 +1,7 @@
 {
   "name": "plugin-creator",
   "version": "0.1.1",
+  "tier": "always",
   "description": "Author and validate ZCode plugins through a local dev marketplace, then hand off installation, trials and updates to the user.",
   "author": {
     "name": "Z.ai"

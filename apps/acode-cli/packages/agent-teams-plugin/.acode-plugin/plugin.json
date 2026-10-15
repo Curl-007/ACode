@@ -1,6 +1,7 @@
 {
   "name": "agent-teams",
   "version": "0.1.0",
+  "tier": "always",
   "description": "AgentTeams 多智能体协作：当前会话成为队长，组建可续跑的成员团队，把目标拆成依赖任务 DAG，经成员邮箱直连协作，由指令式调度推进，并提供只读团队面板。",
   "description_i18n": {
     "en": "AgentTeams multi-agent collaboration: the current session becomes a captain, assembles continuable members, splits a goal into a dependency task DAG, coordinates via member mailboxes with directive scheduling, and exposes a read-only team panel.",

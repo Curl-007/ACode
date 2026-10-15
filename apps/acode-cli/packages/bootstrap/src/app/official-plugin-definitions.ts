@@ -13,7 +13,10 @@ import {
 // 类型与共享常量因架构 ratchet 400 行上限下沉到 official-plugin-shared.ts
 // （specs/agent-teams-derived-config.md R8）；对外导出面经 re-export 保持不变，
 // 既有消费方无需改 import 路径。
-export type { OfficialPluginDefinition, OfficialPluginListingSeed } from "./official-plugin-shared.js";
+export type {
+  OfficialPluginDefinition,
+  OfficialPluginListingSeed,
+} from "./official-plugin-shared.js";
 export { OFFICIAL_BROWSER_USE_REQUIRED_SEED_PATHS };
 
 const OFFICIAL_BROWSER_USE_PLUGIN_NAME = "browser-use";
@@ -107,7 +110,7 @@ export const OFFICIAL_PLUGIN_DEFINITIONS: readonly OfficialPluginDefinition[] = 
       category: "productivity",
       displayName: "Image Search",
       displayName_i18n: { "zh-CN": "搜图" },
-      description_i18n: { "zh-CN": "查找插图与参考配图。" },
+      description_i18n: { "zh-CN": "搜图 MCP 服务，用于查找插图与参考配图。" },
     },
     name: "image-search",
     requiredSeedPaths: [".mcp.json"],
@@ -238,7 +241,7 @@ export const OFFICIAL_PLUGIN_DEFINITIONS: readonly OfficialPluginDefinition[] = 
       "../../acode-guide-plugin",
       "../../../acode-guide-plugin",
     ],
-    version: "0.2.0",
+    version: "0.3.0",
   },
   {
     // 产品决策：电脑控制回退为默认关闭，需用户在设置页显式开启。
@@ -297,7 +300,8 @@ export const OFFICIAL_PLUGIN_DEFINITIONS: readonly OfficialPluginDefinition[] = 
       displayName_i18n: { "zh-CN": "智能体团队" },
       icon: OFFICIAL_PLUGIN_ICON,
       description_i18n: {
-        "zh-CN": "把当前会话升级为队长，组建成员团队：共享任务 DAG、成员邮箱直连、指令式调度与只读团队面板。",
+        "zh-CN":
+          "AgentTeams 多智能体协作：当前会话成为队长，组建可续跑的成员团队，把目标拆成依赖任务 DAG，经成员邮箱直连协作，由指令式调度推进，并提供只读团队面板。",
       },
       examplePrompts: [
         "Use AgentTeams to review the last two commits and fix findings",

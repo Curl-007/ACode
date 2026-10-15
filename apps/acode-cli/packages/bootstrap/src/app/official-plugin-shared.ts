@@ -47,7 +47,8 @@ export interface OfficialPluginDefinition {
 
 export const ZAI_AUTHOR = { name: "Z.ai", url: "https://z.ai" } as const;
 // 审计版不连接官方 CDN；使用内嵌图标，保留本地插件定义。
-export const OFFICIAL_PLUGIN_ICON = "data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2232%22 height=%2232%22%3E%3Crect width=%2232%22 height=%2232%22 rx=%226%22 fill=%22%23666%22/%3E%3C/svg%3E";
+export const OFFICIAL_PLUGIN_ICON =
+  "data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2232%22 height=%2232%22%3E%3Crect width=%2232%22 height=%2232%22 rx=%226%22 fill=%22%23666%22/%3E%3C/svg%3E";
 
 export const OFFICIAL_NODE_REPL_HOST_REQUIRED_SEED_PATHS = ["dist/mcp/server.js"] as const;
 
@@ -70,24 +71,50 @@ export const OFFICIAL_CUA_REQUIRED_SEED_PATHS = [
 ] as const;
 
 // acode-guide 原本没有 requiredSeedPaths，seed 丢文件时会静默装出一个
-// 没有 /workflow 命令的插件——症状是命令不存在，没有任何诊断。commands/ 与技能正文都钉住。
-export const OFFICIAL_ACODE_GUIDE_REQUIRED_SEED_PATHS = [
-  "commands/workflow.md",
-  "skills/dynamic-workflows/SKILL.md",
-  "skills/dynamic-workflows/examples.md",
-  "skills/dynamic-workflows/patterns.md",
-] as const;
+// 没有 /workflow 命令的插件——症状是命令不存在，没有任何诊断。commands/ 钉住。
+// dynamic-workflows 技能副本已按裁决删除（specs/skill-seeding-registration.md R4，
+// 2026-10-15 方案 b）：bundled 技能包是该技能唯一来源，/workflow 的
+// `skills: dynamic-workflows` 按名字解析到 bundled root，插件不再携带同名副本。
+export const OFFICIAL_ACODE_GUIDE_REQUIRED_SEED_PATHS = ["commands/workflow.md"] as const;
 
 /** documents/pdf/presentations/spreadsheets 四个同构文档插件的表驱动定义段。 */
 export const DOCUMENT_STYLE_OFFICIAL_PLUGIN_DEFINITIONS: readonly OfficialPluginDefinition[] = (
   [
-    ["documents", "docx", "Documents", "Word文档", "0.1.7"],
-    ["pdf", "pdf", "PDF", "PDF", "0.2.0"],
-    ["presentations", "pptx", "Presentations", "演示文档", "0.1.7"],
-    ["spreadsheets", "xlsx", "Spreadsheets", "电子表格", "0.1.7"],
+    [
+      "documents",
+      "docx",
+      "Documents",
+      "Word文档",
+      "0.1.7",
+      "面向 DOCX 的 Word 文档制作技能：创建、编辑、排版、审阅与批注。",
+    ],
+    [
+      "pdf",
+      "pdf",
+      "PDF",
+      "PDF",
+      "0.2.0",
+      "基于 LaTeX 工具链的 PDF 制作技能：报告、简历、海报与学术论文。",
+    ],
+    [
+      "presentations",
+      "pptx",
+      "Presentations",
+      "演示文档",
+      "0.1.7",
+      "面向 PPTX 的演示文稿制作技能，并提供视觉验收评审 Agent。",
+    ],
+    [
+      "spreadsheets",
+      "xlsx",
+      "Spreadsheets",
+      "电子表格",
+      "0.1.7",
+      "面向 XLSX 的电子表格制作技能：公式、格式、重算与校验。",
+    ],
   ] as const
 ).map(
-  ([name, skill, displayName, chineseName, version]): OfficialPluginDefinition => ({
+  ([name, skill, displayName, chineseName, version, zhDescription]): OfficialPluginDefinition => ({
     defaultEnabled: true,
     listing: {
       author: ZAI_AUTHOR,
@@ -96,7 +123,9 @@ export const DOCUMENT_STYLE_OFFICIAL_PLUGIN_DEFINITIONS: readonly OfficialPlugin
       displayName_i18n: { "zh-CN": chineseName },
       // 复用已发布的文档图标，拆分插件无需依赖新 CDN 资源。
       icon: OFFICIAL_PLUGIN_ICON,
-      description_i18n: { "zh-CN": `创建、编辑与审阅${chineseName}（${skill.toUpperCase()}）。` },
+      // zh-CN 回退文案必须与包内 plugin.json 的 description_i18n["zh-CN"] 逐字一致
+      // （specs/skill-seeding-registration.md R3；plugin-registration-description-parity 守护）。
+      description_i18n: { "zh-CN": zhDescription },
     },
     name,
     requiredSeedPaths: ["agents/visual-judge.md", `skills/${skill}/SKILL.md`],

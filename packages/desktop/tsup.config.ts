@@ -143,6 +143,9 @@ export default defineConfig([
       "main/acodeDataSizeWorker": "src/main/acodeDataSizeWorker.ts",
       // 资源管理器「存储」tab 的扫描 Worker：main 持有 StorageService，遍历放独立线程，供 new Worker(new URL()) 解析。
       "main/storageScanWorker": "src/main/storageScanWorker.ts",
+      // 主进程卡顿自诊断监控线程（specs/main-stall-diagnostics.md）：worker_threads +
+      // inspector connectToMainThread，供 stallSampler.ts 的 new Worker(new URL()) 解析。
+      "main/stallSamplerWorker": "src/main/stallSamplerWorker.ts",
     },
     outDir: "out",
     format: "esm",

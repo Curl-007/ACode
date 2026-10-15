@@ -71,6 +71,7 @@ import {
   HostMessageTypes,
 } from "@acode/shared";
 import { logger } from "./logger.js";
+import { startMainStallSampler } from "./stallSampler.js";
 import { markMainLaunchAppReady } from "./desktopLaunchMarks.js";
 import { createCuaPipFocusRouter, resolveCuaPipWindowKey } from "./cuaPipFocusRouter.js";
 import {
@@ -225,6 +226,11 @@ process.title = runtimeApplicationName;
 process.on("unhandledRejection", (reason) => {
   logger.error("unhandledRejection:", reason);
 });
+
+// 主进程卡顿自诊断（specs/main-stall-diagnostics.md）：模块初始化段即启动，覆盖
+// app ready 之前的启动期同步重活；开发态与打包态都生效，ACODE_MAIN_STALL_SAMPLER=0
+// 完全禁用。停止统一收口在 prepareAppQuit（与其余 main 侧资源同批 dispose）。
+const mainStallSampler = startMainStallSampler({ logger });
 
 const iconPath =
   process.platform === "win32"
@@ -939,6 +945,8 @@ async function prepareAppQuit(reason: string, kind: AppShutdownKind = "normal"):
   }
 
   markForceQuit(reason);
+  // stall-sampler 先停：退出路径本身有同步重活，别再把它记成停跳告警。
+  mainStallSampler?.stop();
   windowsCuaOperationIndicator.dispose();
   browserScreenshotSurfaceCoordinator.dispose();
   const cronSchedulerToDispose = cronScheduler;

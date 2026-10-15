@@ -174,7 +174,14 @@ export const taskTools: readonly ToolDefinition[] = [
     async handler(input, context): Promise<ToolResult> {
       const parsed = claimSchema.parse(input);
       const team = context.requireTeam();
-      const memberName = context.requireMember(team);
+      // 修复原因：工具描述与 docs/protocol.md 均约定「captain claims via reassign
+      // (takeover)」，但原 requireMember 未放行队长——reassign(assignee:"captain")
+      // 之后 claim 报 caller_not_member、update_task 又因无 active attempt 被拒，
+      // 接管后没有任何官方工具路径能记 done，形成协议死锁（2026-10-15 真实模型
+      // E2E 实测发现）。修复依据：与 update_task 既有的 allowCaptain 语义同款
+      // （registry.ts requireMember 注释「队长兼成员（takeover 后更新任务）」），
+      // 认领后 attempt owner 记 "captain"，update_task 的队长旁路可直接完成记账。
+      const memberName = context.requireMember(team, { allowCaptain: true });
       const tasks = context.store.readTasks();
       const task = tasks.find((item) => item.taskId === parsed.taskId);
       if (!task) {

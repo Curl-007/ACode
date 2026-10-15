@@ -347,6 +347,33 @@ build-desktop-agent-cli.mjs / prepare-prebuilds.mjs   四份发布暂存清单�
    license 及 browser-use-plugin 先例不一致，按第一方血统（姊妹仓、author Z.ai）
    对齐为 MIT；不进 copied-components.json（非第三方市场包搬运，与 acode-cua 的
    SDK 二手搬运形态不同）。
+7. **captain 接管协议死锁修复**（2026-10-15 真实模型 E2E 发现，插件行为相对
+   上游的唯一改动）：工具描述与 docs/protocol.md 均约定「captain claims via
+   reassign (takeover)」，但 `claim_task` 的 `requireMember` 未放行队长——
+   `reassign(assignee:"captain")` 之后 claim 报 `caller_not_member`、
+   `update_task` 又因无 active attempt 被拒，接管后没有任何官方工具路径能记
+   done。修复 = claim 的 requireMember 加 `{ allowCaptain: true }`（与
+   update_task 既有语义同款，registry 注释本就写着「队长兼成员（takeover 后
+   更新任务）」）；回归用例 `tests/tools.test.ts` 的 captain takeover describe。
+8. **真实模型 E2E 实测结论**（2026-10-15，dev 形态 + 真实凭据 + 隔离工作区，
+   同 builtin-subagent-catalog 回写第 12 条的实测姿态）：
+   - **自动生效** ✓：未做任何手动启用，`plugins list` 显示
+     `agent-teams@acode-plugins-official [enabled]`，`/team` 命令进入可用命令
+     清单，MCP server 拉起、面板服务真实监听，`agent-teams:member` 可派发。
+   - **全链走通** ✓：create → approve（预批准原话）→ add/bind member →
+     create_task → 成员（真实模型、inheritCaptainModel 经**工作区级**
+     `.acode/config.json` 的 plugins.options 注入——该层配置实证可用）实质
+     交付文件并字节级自验 → 成员在自己会话里经团队 MCP claim 任务（磁盘
+     attempt 记录核实）→ 会话中断后续跑会话恢复 → 队长校验 → done 记账 →
+     archive 归档（归档目录落盘核实）。
+   - **-p 一次性模式限制**（既有登记语义，非本链缺陷）：父进程在最终消息后
+     退出，经 SendMessage 后台唤醒的成员随进程消亡、补记中断——与
+     builtin-subagent-catalog 回写第 12 条登记的 -p × background 语义一致；
+     交互式会话（TUI/desktop）不受影响。续跑会话实证可恢复（usage.md §5 路径）。
+   - 观察项：`-p` 的命令解析接受裸 `/team`、拒绝命名空间形式
+     `/agent-teams:team`（命令发现是通用插件基建，非 AgentTeams 特有面），
+     登记不改；R4 fail-closed 拒绝路径由单测钉住（无真实配置状态下未跑
+     负对照，省一次真实模型消耗）。
 
 ## 修订记录
 

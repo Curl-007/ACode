@@ -533,4 +533,60 @@ describe("max reassign rounds normalization", () => {
   });
 });
 
+describe("captain takeover (reassign → claim → update done)", () => {
+  let root: string;
+  let store: TeamStore;
+  const captain = () => makeContext({ store, role: "captain" });
+
+  before(() => {
+    root = mkdtempSync(join(tmpdir(), "agent-teams-takeover-"));
+    store = new TeamStore(root);
+  });
+
+  after(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("reassign 给队长后，队长可 claim 并记 done（协议死锁修复回归）", async () => {
+    // 修复前：claim_task 的 requireMember 未放行队长，reassign(assignee:"captain")
+    // 之后 claim 报 caller_not_member、update_task 又无 active attempt——接管后
+    // 没有任何官方工具路径能记 done（2026-10-15 真实模型 E2E 实测死锁）。
+    await tool("agent_teams_create").handler({ goal: "takeover" }, captain());
+    await tool("agent_teams_create_task").handler(
+      { title: "t-takeover", objective: "o", acceptance: ["a"] },
+      captain(),
+    );
+    await tool("agent_teams_reassign_task").handler(
+      { taskId: "t-1", assignee: "captain", reason: "captain takeover" },
+      captain(),
+    );
+
+    const claimed = (await tool("agent_teams_claim_task").handler(
+      { taskId: "t-1" },
+      captain(),
+    )) as { ok: boolean; attempt_id: string };
+    assert.equal(claimed.ok, true);
+    assert.ok(claimed.attempt_id, "队长认领必须产生 attempt_id 供 update_task 使用");
+
+    const done = (await tool("agent_teams_update_task").handler(
+      {
+        taskId: "t-1",
+        attemptId: claimed.attempt_id,
+        status: "done",
+        summary: "captain takeover completed",
+        verify: "ls hello.txt (实测)",
+      },
+      captain(),
+    )) as { ok: boolean; status: string };
+    assert.equal(done.ok, true);
+    assert.equal(done.status, "done");
+
+    const task = store.readTask("t-1");
+    assert.equal(task?.status, "done");
+    const attempt = task?.attempts.find((item) => item.id === claimed.attempt_id);
+    assert.equal(attempt?.owner, "captain");
+    assert.equal(attempt?.outcome, "done");
+  });
+});
+
 void randomUUID;

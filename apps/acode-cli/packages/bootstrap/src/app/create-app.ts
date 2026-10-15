@@ -27,8 +27,10 @@ import {
   registerBashReflexAuditSink,
   setMcpCallAuditSink,
   setProcessManagedPolicyFloor,
+  setSessionWorktreeFenceWarnSink,
   TtlApprovalStore,
   buildPluginReferenceCatalog,
+  buildSessionWorktreeFenceEnv,
   type ResumeSessionResult,
 } from "@acode/core";
 import {
@@ -279,6 +281,16 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
       callStatus: entry.status,
       toolName: entry.toolName,
     });
+  });
+  // 会话 worktree 围栏 warn 档遥测（specs/session-worktree-lifecycle.md R4）：warn 档
+  // 缺省 no-op，装配层接 service logger——这份遥测正是 enforce 缺省化迁移判据的
+  // 证据通道。进程级 set 语义与 MCP 审计 sink 相同，close 时一并复位。
+  const worktreeFenceLogger = loggerFactory.createLogger("acode").child({
+    ...traceContextToLogContext(traceContext),
+    module: "core.worktree",
+  });
+  setSessionWorktreeFenceWarnSink((message, details) => {
+    worktreeFenceLogger.warn(message, details);
   });
   const startupTimer = new StartupTimer(
     logger,
@@ -642,6 +654,10 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
         },
         outputRootDir: join(storageRoot, "cli", "exec"),
         processEnv: options.env ?? process.env,
+        // 会话 worktree 写围栏 env（specs/session-worktree-lifecycle.md R7）：按本次
+        // 执行 cwd 向子进程注入 ACODE_SESSION_WORKTREE* 边界键；未绑定时清空陈旧
+        // 继承值（键名单单一事实源在 contracts/src/tools/session-worktree.ts）。
+        sessionWorktreeEnv: (cwd) => buildSessionWorktreeFenceEnv(cwd, options.env ?? process.env),
       });
     const ownsExecutionPort = options.executionPort === undefined;
     const pdfDocumentPort =
@@ -1346,6 +1362,8 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
           // MCP 写审计 sink 复位为缺省 stderr 兜底（call-audit 模块的进程级 set 语义；
           // 同进程还有其他 app 时其审计回落兜底通道，不丢记录）。
           setMcpCallAuditSink(undefined);
+          // 围栏 warn sink 同款复位（进程级 set 语义，见装配处注释）。
+          setSessionWorktreeFenceWarnSink(undefined);
           // TTL 授权落盘收口（specs/mcp-lifecycle-ttl-approval.md R4）：内存是唯一读源、
           // 落盘异步 best-effort——进程收口前等待挂起写入完成，避免最后一笔批准丢失
           // （丢失方向是回落 ask，安全但打扰用户）。flush 内部串行链自带 catch，不抛。

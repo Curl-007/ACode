@@ -81,6 +81,14 @@ export interface NodeExecutionAdapterOptions {
   progressIntervalMs?: number;
   progressTailBytes?: number;
   progressThresholdMs?: number;
+  /**
+   * 会话 worktree 写围栏的 env provider（specs/session-worktree-lifecycle.md R7-5）：
+   * 按 request cwd 返回要注入子进程的边界 env（ACODE_SESSION_WORKTREE*）。bootstrap
+   * 把它接到 core 的围栏注册表（adapters 不 import core，缝只能经装配注入）。
+   * 语义：provider 在场即「已接线」——返回结果里缺席的名单键会从子进程 env 删除
+   * （防父进程环境里的陈旧边界值漏给未绑定会话）；provider 缺席 = 零行为变化。
+   */
+  sessionWorktreeEnv?: (cwd: string | undefined) => Record<string, string> | undefined;
 }
 
 export type OutputPersistenceMode = "none" | "on_truncate" | "always";

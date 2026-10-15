@@ -229,6 +229,13 @@ export type {
 export { AgentRuntime } from "./runtime.js";
 export { createExternalTurnFaultError } from "./runtime/helpers/turn-errors.js";
 export { repairPersistedRemoteSessionPaths } from "./runtime/helpers/persisted-remote-session-path-repair.js";
+// 会话级 worktree 写围栏（specs/session-worktree-lifecycle.md R7）：bootstrap 装配经
+// sessionWorktreeEnv provider 向子进程注入边界 env；warn 档遥测缺省 no-op，装配层
+// 接 service logger（不 console 刷屏）。
+export {
+  buildSessionWorktreeFenceEnv,
+  setSessionWorktreeFenceWarnSink,
+} from "./worktree/session-worktree-fence.js";
 // 「按值把一段转录复制进另一个会话」的克隆器。fork 之外的第二个消费者是 dwf 的 amend-resume
 // 转录截断（bootstrap 的 workflow-actor-transcript.ts）：同一个动作——新会话用本地 id 续写，
 // parentID / part 内嵌锚点随之重映射。导出而不是让它再写一份，是因为漏掉任何一处重映射的症状

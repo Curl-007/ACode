@@ -60,10 +60,17 @@ export class NodeExecutionAdapterProcess extends NodeExecutionAdapterResults {
   }
 
   protected async prepareChildSpawn(request: ExecutionRequest): Promise<PreparedChildSpawn> {
+    // 会话 worktree 写围栏缝（specs/session-worktree-lifecycle.md R7-5）：provider 在场
+    // 即已接线——按本次执行的 cwd 取边界 env；缺席键由 buildExecutionEnv 从继承 env
+    // 删除。provider 未注入（bootstrap 未接线）时 undefined = 零行为变化。
+    const sessionWorktreeEnv = this.options.sessionWorktreeEnv
+      ? (this.options.sessionWorktreeEnv(request.cwd) ?? {})
+      : undefined;
     const env = buildExecutionEnv(request.env, {
       network: this.options.network,
       platform: this.platform,
       processEnv: this.processEnv,
+      ...(sessionWorktreeEnv === undefined ? {} : { sessionWorktree: sessionWorktreeEnv }),
     });
     const resolvedCommand = resolveExecutionCommand(request.command, {
       cwd: request.cwd,

@@ -111,6 +111,10 @@ export const workspaceHookReviewRequestPayloadSchema = z
       z
         .object({
           reviewItemId: nonEmptyStringSchema,
+          // Hook 事件面全集 17 成员（apps/acode-cli/specs/hook-event-surface.md F9）：
+          // 审查面与 CLI contracts 的 HookEventName 同步扩宽。向后兼容：既有 7 值不变；
+          // 产出侧（workspace 信任 bundle 发现面）按 D1 裁决仍只产 7 事件，新事件成员
+          // 为插件 hooks.json / 程序化配置面（F2 后续批次）的审查展示预留。
           event: z.enum([
             "SessionStart",
             "UserPromptSubmit",
@@ -118,7 +122,17 @@ export const workspaceHookReviewRequestPayloadSchema = z
             "PermissionRequest",
             "PostToolUse",
             "PostToolUseFailure",
+            "PostToolBatch",
             "Stop",
+            "StopFailure",
+            "PreCompact",
+            "PostCompact",
+            "PreModelSwitch",
+            "PostModelSwitch",
+            "SessionEnd",
+            "TaskCreated",
+            "TaskCompleted",
+            "CwdChanged",
           ]),
           matcher: z.string().optional(),
           type: z.enum(["command", "process"]),

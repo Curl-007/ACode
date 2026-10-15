@@ -1742,7 +1742,16 @@ export class ProductProjection {
     eventName: HookRunLifecyclePayload["hookEventName"],
   ): HookInvocationRow["lane"] {
     if (eventName === "PreToolUse" || eventName === "PermissionRequest") return "toolBefore";
-    if (eventName === "PostToolUse" || eventName === "PostToolUseFailure") return "toolAfter";
+    // PostToolBatch 归 toolAfter（specs/hook-event-surface.md F8 裁决）：它是并行组
+    // 结算事件，锚定在工具批次之后；其余新事件（StopFailure/Pre|PostCompact/
+    // Pre|PostModelSwitch/SessionEnd/Task*/CwdChanged）走缺省 assistantWork。
+    if (
+      eventName === "PostToolUse" ||
+      eventName === "PostToolUseFailure" ||
+      eventName === "PostToolBatch"
+    ) {
+      return "toolAfter";
+    }
     return "assistantWork";
   }
 

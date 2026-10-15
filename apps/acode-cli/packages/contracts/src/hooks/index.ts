@@ -1,41 +1,13 @@
 import { z } from "zod";
-import type { ModelToolSideEffectScope } from "../model/index.js";
-// 架构断环（specs/architecture-contracts-module.md）：session.events 引用本文件的
-// HookRunLifecyclePayload，本文件若经 session.port 取基础词汇即成环；改走叶子文件。
-import type { CollaborationMode, RiskLevel } from "../interfaces/session-shared.js";
-import type { PermissionUpdate } from "../interfaces/permission.port.js";
-import type { SessionId, ToolCallId, TraceId, TurnId } from "../interfaces/shared.js";
+import type { ToolCallId } from "../interfaces/shared.js";
+import { HookSpecificOutputSchema } from "./hook-event-io.js";
+import type { HookSpecificOutput } from "./hook-event-io.js";
+import type { HookEventName, HookOutcome, HookSourceKind } from "./hook-event-names.js";
 
-export const HookEventName = {
-  SessionStart: "SessionStart",
-  UserPromptSubmit: "UserPromptSubmit",
-  PreToolUse: "PreToolUse",
-  PermissionRequest: "PermissionRequest",
-  PostToolUse: "PostToolUse",
-  PostToolUseFailure: "PostToolUseFailure",
-  Stop: "Stop",
-} as const;
-
-export type HookEventName = (typeof HookEventName)[keyof typeof HookEventName];
-
-export const HookOutcome = {
-  Success: "success",
-  Blocked: "blocked",
-  Failed: "failed",
-  Cancelled: "cancelled",
-  TimedOut: "timed_out",
-} as const;
-
-export type HookOutcome = (typeof HookOutcome)[keyof typeof HookOutcome];
-
-export const HookSourceKind = {
-  User: "user",
-  Plugin: "plugin",
-  Project: "project",
-  Internal: "internal",
-} as const;
-
-export type HookSourceKind = (typeof HookSourceKind)[keyof typeof HookSourceKind];
+// 事件名/词汇枚举与事件 payload 契约拆分在两个叶子文件里（oxlint max-lines 门禁 +
+// 避免 index ↔ io 值循环）；公开 API 不变，全部经这里原样再导出。
+export * from "./hook-event-names.js";
+export * from "./hook-event-io.js";
 
 /** Runtime-only provenance attached after user/plugin config validation. */
 export interface HookConfigSource {
@@ -57,144 +29,6 @@ export interface HookExecutionDescriptor {
   timeoutMs: number;
 }
 
-export const HookPermissionDecision = {
-  Allow: "allow",
-  Ask: "ask",
-  Deny: "deny",
-} as const;
-
-export type HookPermissionDecision =
-  (typeof HookPermissionDecision)[keyof typeof HookPermissionDecision];
-
-export interface BaseHookInput {
-  agentName?: string;
-  cwd: string;
-  hookEventName: HookEventName;
-  mode: CollaborationMode;
-  sessionId: SessionId;
-  timestamp: string;
-  traceId: TraceId;
-  turnId?: TurnId;
-}
-
-export interface PreToolUseHookInput extends BaseHookInput {
-  hookEventName: typeof HookEventName.PreToolUse;
-  riskLevel: RiskLevel;
-  sideEffectScope?: ModelToolSideEffectScope;
-  toolCallId: ToolCallId | string;
-  toolInput: unknown;
-  toolName: string;
-}
-
-export interface PermissionRequestHookInput extends BaseHookInput {
-  permissionSuggestions?: PermissionUpdate[];
-  hookEventName: typeof HookEventName.PermissionRequest;
-  reason: string;
-  requestId: string;
-  riskLevel: RiskLevel;
-  sideEffectScope?: ModelToolSideEffectScope;
-  toolCallId: ToolCallId | string;
-  toolInput: unknown;
-  toolName: string;
-}
-
-export interface PostToolUseHookInput extends BaseHookInput {
-  artifactRefs?: string[];
-  hookEventName: typeof HookEventName.PostToolUse;
-  toolCallId: ToolCallId | string;
-  toolInput: unknown;
-  toolName: string;
-  toolResponse: unknown;
-  toolResultPreview: string;
-}
-
-export interface PostToolUseFailureHookInput extends BaseHookInput {
-  error: {
-    message: string;
-    type: string;
-  };
-  hookEventName: typeof HookEventName.PostToolUseFailure;
-  isInterrupt?: boolean;
-  toolCallId: ToolCallId | string;
-  toolInput: unknown;
-  toolName: string;
-}
-
-export interface UserPromptSubmitHookInput extends BaseHookInput {
-  attachmentsSummary?: string;
-  hookEventName: typeof HookEventName.UserPromptSubmit;
-  prompt: string;
-}
-
-export interface SessionStartHookInput extends BaseHookInput {
-  hookEventName: typeof HookEventName.SessionStart;
-  model?: string;
-  source: "startup" | "resume" | "clear" | "compact";
-}
-
-export interface StopHookInput extends BaseHookInput {
-  hookEventName: typeof HookEventName.Stop;
-  responsePreview: string;
-  responseText?: string;
-  stopHookActive: boolean;
-  toolCallCount: number;
-}
-
-export type HookInput =
-  | PreToolUseHookInput
-  | PermissionRequestHookInput
-  | PostToolUseHookInput
-  | PostToolUseFailureHookInput
-  | UserPromptSubmitHookInput
-  | SessionStartHookInput
-  | StopHookInput;
-
-export type PermissionRequestHookDecision =
-  | {
-      behavior: "allow";
-      permissionUpdates?: PermissionUpdate[];
-      updatedPermissions?: PermissionUpdate[];
-      updatedInput?: unknown;
-    }
-  | {
-      behavior: "deny";
-      interrupt?: boolean;
-      message?: string;
-    };
-
-export type HookSpecificOutput =
-  | {
-      additionalContext?: string;
-      hookEventName: typeof HookEventName.PreToolUse;
-      permissionDecision?: HookPermissionDecision;
-      permissionDecisionReason?: string;
-      updatedInput?: unknown;
-    }
-  | {
-      additionalContext?: string;
-      hookEventName: typeof HookEventName.UserPromptSubmit;
-    }
-  | {
-      additionalContext?: string;
-      hookEventName: typeof HookEventName.SessionStart;
-    }
-  | {
-      additionalContext?: string;
-      hookEventName: typeof HookEventName.PostToolUse;
-    }
-  | {
-      additionalContext?: string;
-      hookEventName: typeof HookEventName.PostToolUseFailure;
-    }
-  | {
-      decision?: PermissionRequestHookDecision;
-      hookEventName: typeof HookEventName.PermissionRequest;
-    }
-  | {
-      additionalContext?: string;
-      hookEventName: typeof HookEventName.Stop;
-    };
-
 export interface HookJSONOutput {
   additionalContext?: string;
   additional_context?: string;
@@ -206,80 +40,6 @@ export interface HookJSONOutput {
   suppressOutput?: boolean;
   systemMessage?: string;
 }
-
-const PermissionRequestHookDecisionSchema = z.union([
-  z.object({
-    behavior: z.literal("allow"),
-    permissionUpdates: z
-      .array(
-        z.object({
-          type: z.literal("addRules"),
-          behavior: z.enum(["allow", "deny", "ask"]),
-          rules: z.array(
-            z.object({
-              toolName: z.string().min(1),
-              ruleContent: z.string().optional(),
-            }),
-          ),
-        }),
-      )
-      .optional(),
-    updatedPermissions: z
-      .array(
-        z.object({
-          type: z.literal("addRules"),
-          behavior: z.enum(["allow", "deny", "ask"]),
-          rules: z.array(
-            z.object({
-              toolName: z.string().min(1),
-              ruleContent: z.string().optional(),
-            }),
-          ),
-        }),
-      )
-      .optional(),
-    updatedInput: z.unknown().optional(),
-  }),
-  z.object({
-    behavior: z.literal("deny"),
-    interrupt: z.boolean().optional(),
-    message: z.string().optional(),
-  }),
-]);
-
-export const HookSpecificOutputSchema = z.discriminatedUnion("hookEventName", [
-  z.object({
-    additionalContext: z.string().optional(),
-    hookEventName: z.literal(HookEventName.PreToolUse),
-    permissionDecision: z.enum(["allow", "ask", "deny"]).optional(),
-    permissionDecisionReason: z.string().optional(),
-    updatedInput: z.unknown().optional(),
-  }),
-  z.object({
-    additionalContext: z.string().optional(),
-    hookEventName: z.literal(HookEventName.UserPromptSubmit),
-  }),
-  z.object({
-    additionalContext: z.string().optional(),
-    hookEventName: z.literal(HookEventName.SessionStart),
-  }),
-  z.object({
-    additionalContext: z.string().optional(),
-    hookEventName: z.literal(HookEventName.PostToolUse),
-  }),
-  z.object({
-    additionalContext: z.string().optional(),
-    hookEventName: z.literal(HookEventName.PostToolUseFailure),
-  }),
-  z.object({
-    decision: PermissionRequestHookDecisionSchema.optional(),
-    hookEventName: z.literal(HookEventName.PermissionRequest),
-  }),
-  z.object({
-    additionalContext: z.string().optional(),
-    hookEventName: z.literal(HookEventName.Stop),
-  }),
-]);
 
 export const HookJSONOutputSchema = z.object({
   additionalContext: z.string().optional(),
@@ -418,7 +178,17 @@ export const HooksRuntimeConfigPatchSchema = z.object({
       PermissionRequest: z.array(HookMatcherConfigSchema).optional(),
       PostToolUse: z.array(HookMatcherConfigSchema).optional(),
       PostToolUseFailure: z.array(HookMatcherConfigSchema).optional(),
+      PostToolBatch: z.array(HookMatcherConfigSchema).optional(),
       Stop: z.array(HookMatcherConfigSchema).optional(),
+      StopFailure: z.array(HookMatcherConfigSchema).optional(),
+      PreCompact: z.array(HookMatcherConfigSchema).optional(),
+      PostCompact: z.array(HookMatcherConfigSchema).optional(),
+      PreModelSwitch: z.array(HookMatcherConfigSchema).optional(),
+      PostModelSwitch: z.array(HookMatcherConfigSchema).optional(),
+      SessionEnd: z.array(HookMatcherConfigSchema).optional(),
+      TaskCreated: z.array(HookMatcherConfigSchema).optional(),
+      TaskCompleted: z.array(HookMatcherConfigSchema).optional(),
+      CwdChanged: z.array(HookMatcherConfigSchema).optional(),
     })
     .strict()
     .optional(),

@@ -33,6 +33,11 @@ import {
 
 const SETTINGS_FILE = "settings.json";
 const ACODE_CONFIG_FILE = "config.json";
+// Hook 事件面全集（apps/acode-cli/specs/hook-event-surface.md F9）：展示/解析面与
+// shared 的 HookEvent（17 成员）同步——legacy settings.json 里声明的新事件可被识别
+// 展示（只读，enabled=false）。用户配置文件的**可写**事件面仍是存量 7 事件
+// （workspace-hook-config strict schema，D1/F2 裁决），写回守护见
+// workspaceHookSettingsModel.toACodeHooksEvents。
 const HOOK_EVENTS: readonly HookEvent[] = [
   "SessionStart",
   "UserPromptSubmit",
@@ -40,7 +45,17 @@ const HOOK_EVENTS: readonly HookEvent[] = [
   "PermissionRequest",
   "PostToolUse",
   "PostToolUseFailure",
+  "PostToolBatch",
   "Stop",
+  "StopFailure",
+  "PreCompact",
+  "PostCompact",
+  "PreModelSwitch",
+  "PostModelSwitch",
+  "SessionEnd",
+  "TaskCreated",
+  "TaskCompleted",
+  "CwdChanged",
 ];
 
 interface ACodeConfigFile {

@@ -34,6 +34,7 @@ import { logToolsSchemaTokenMetric } from "./tools-schema-token-metric.js";
 import { rebuildContextPrefix } from "./context-refresh.js";
 import { filterEmbeddedSearchRuntimeVisibleTools } from "./embedded-search-branch.js";
 import { getRuntimeLifecyclePort } from "../runtime-lifecycle.js";
+import { runCwdChangedHooksDetached } from "./hooks.js";
 import {
   getSessionShellSelection as readSessionShellSelection,
   initializeSessionShellEnvironmentIfNeeded as initializeSessionShellEnvironment,
@@ -120,7 +121,13 @@ export function getProjectId(this: AgentRuntimeInternal): ProjectId {
 
 export function setWorkingDirectory(this: AgentRuntimeInternal, cwd: string): void {
   // Bash cwd 持久化只应影响当前 runtime 会话，不能改变工作区身份。
+  const previousCwd = this.workingDirectory;
   this.workingDirectory = cwd;
+  if (previousCwd !== cwd) {
+    // CwdChanged 通知类、异步旁路（specs/hook-event-surface.md）：本方法是同步接口
+    // 且 bash 已实际 cd（事实不可回滚），hook 不得阻塞工具链路；失败只 warn。
+    runCwdChangedHooksDetached(this, previousCwd, cwd);
+  }
 }
 
 export async function ensureSessionPersistedForExternalActivity(

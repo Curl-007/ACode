@@ -65,6 +65,7 @@ import {
   persistCompactTimelineEvent,
 } from "./compact-active-helpers.js";
 import { runCompactSummaryModelRequest } from "./compact-summary-model-request.js";
+import { runPostCompactHooks, runPreCompactHooks } from "./hooks.js";
 import { resolveNormalRequestMaxOutputTokens } from "./model-token-limits.js";
 import { createRefreshRuntimeHeadersBeforeModelAttempt } from "./model-runtime-headers.js";
 import { recordModelUsageFact } from "./usage-observability.js";
@@ -132,6 +133,25 @@ export async function compactActiveConversation(
       );
       compactTelemetry.setOutputTokens(result.tokenCount);
       compactTelemetry.finishCompleted();
+      if (result.outcome === "compacted") {
+        // PostCompact 通知类（specs/hook-event-surface.md）：压缩已经成功结算，
+        // hook 故障绝不允许把成功的 compact 变成失败。
+        try {
+          await runPostCompactHooks(
+            this,
+            { postCompactTokenCount: result.tokenCount, trigger },
+            turnTraceContext,
+            options.abortSignal,
+          );
+        } catch (error) {
+          this.logger?.warn("PostCompact hook run failed", {
+            ...traceContextToLogContext(turnTraceContext),
+            error: error instanceof Error ? error.message : String(error),
+            event: "hook.post_compact.run_failed",
+            module: "core.runtime",
+          });
+        }
+      }
       return result;
     } catch (error) {
       if (isTurnCancellationError(error, options.abortSignal)) {
@@ -236,6 +256,48 @@ async function compactActiveConversationImpl(
     );
     return {
       displayText: "Context is up to date; no compression needed",
+      entries: activeEntries,
+      outcome: "skipped",
+      tokenCount: preCompactTokenCount,
+    };
+  }
+
+  // PreCompact 阻断类（specs/hook-event-surface.md）：block/preventContinuation ⇒
+  // 放弃压缩。落 Skipped timeline（reason blocked_by_hook）保证 UI 横线收口，
+  // 返回 skipped 而不是抛错——「hook 拒绝」是合法决定，不是系统故障。
+  const preCompactHookResult = await runPreCompactHooks(
+    this,
+    {
+      ...(customInstructions !== undefined ? { customInstructions } : {}),
+      preCompactTokenCount,
+      trigger,
+    },
+    turnTraceContext,
+    options.abortSignal,
+  );
+  if (preCompactHookResult.blockRequested || preCompactHookResult.preventContinuation) {
+    const blockedPayload = this.buildCompactTimelinePayload(compactTimeline, {
+      endedAt: Date.now(),
+      reason: "blocked_by_hook",
+      replace: true,
+      status: CompactTimelineStatus.Skipped,
+    });
+    await persistCompactTimelineEvent(
+      this,
+      SessionEventType.CompactCompleted,
+      blockedPayload,
+      turnTraceContext,
+      events,
+    );
+    this.logger?.info("Compact blocked by PreCompact hook", {
+      ...traceContextToLogContext(turnTraceContext),
+      event: "compact.blocked_by_hook",
+      module: "core.runtime",
+      stopReason: preCompactHookResult.stopReason,
+      trigger,
+    });
+    return {
+      displayText: preCompactHookResult.stopReason ?? "Compact blocked by PreCompact hook",
       entries: activeEntries,
       outcome: "skipped",
       tokenCount: preCompactTokenCount,

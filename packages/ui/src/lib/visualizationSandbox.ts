@@ -5,6 +5,8 @@
 // 分块读取循环。安全设计依据 packages/ui/specs/gen-ui-visualize-card.md：
 // sandbox 只开 allow-scripts（绝无 allow-same-origin），网络/表单/导航面由 srcdoc
 // 内的 meta CSP 收口（connect-src 'none' 拦 fetch/XHR/WebSocket），不依赖应用 CSP。
+// mermaid/chart.js 等钉版渲染库走本地资产（lib/visualizationVendor.ts）：CSP 只加
+// script-src 本地窄源，connect-src 'none' 与 sandbox 面红线不动。
 import {
   PROTOCOL_V4_LIMITS,
   VISUALIZATION_LIMITS,
@@ -14,6 +16,10 @@ import type {
   ConversationVisualizationReadChunk,
   ConversationVisualizationReadRequest,
 } from "@/v4/conversationRowContext.js";
+import {
+  rewriteVisualizationVendorReferences,
+  type VisualizationVendorRuntime,
+} from "@/lib/visualizationVendor.js";
 
 /** artifactRow.ref 的协议前缀；后接 `<sessionId>/<name>`。 */
 export const VISUALIZATION_REF_PREFIX = "acode-visualization://";
@@ -35,18 +41,31 @@ const CSP_CDN_SOURCES = [
 /**
  * srcdoc 文档自身的 CSP。default-src 'none' 让任何未列出的面默认拒绝；
  * connect-src 'none' 是关键防线——沙箱挡不住 fetch 本身，片段里的外联数据通道
- * 必须在这里掐断。
+ * 必须在这里掐断（vendored 钉版库进来后这条红线不动：本地库走 script-src，
+ * 与 connect 面无关）。
+ *
+ * vendorScriptSources：本地 vendored 渲染库源（lib/visualizationVendor.ts 解析），
+ * 只进 script-src，且是「源+目录前缀」或桌面自定义 scheme 的窄面；CDN 白名单
+ * 保留为回退但不再是唯一路径。
  */
-export const VISUALIZATION_CSP_DIRECTIVE = [
-  "default-src 'none'",
-  `script-src 'unsafe-inline' blob: data: ${CSP_CDN_SOURCES.join(" ")}`,
-  `style-src 'unsafe-inline' data: blob: ${CSP_CDN_SOURCES.join(" ")}`,
-  `img-src data: blob: ${CSP_CDN_SOURCES.join(" ")}`,
-  `font-src data: ${CSP_CDN_SOURCES.join(" ")}`,
-  "connect-src 'none'",
-  "form-action 'none'",
-  "base-uri 'none'",
-].join("; ");
+export function buildVisualizationCspDirective(
+  vendorScriptSources: readonly string[] = [],
+): string {
+  const scriptSources = [...vendorScriptSources, ...CSP_CDN_SOURCES].join(" ");
+  return [
+    "default-src 'none'",
+    `script-src 'unsafe-inline' blob: data: ${scriptSources}`,
+    `style-src 'unsafe-inline' data: blob: ${CSP_CDN_SOURCES.join(" ")}`,
+    `img-src data: blob: ${CSP_CDN_SOURCES.join(" ")}`,
+    `font-src data: ${CSP_CDN_SOURCES.join(" ")}`,
+    "connect-src 'none'",
+    "form-action 'none'",
+    "base-uri 'none'",
+  ].join("; ");
+}
+
+/** 无本地 vendor 源时的基线 CSP（测试与静态分析引用的稳定常量）。 */
+export const VISUALIZATION_CSP_DIRECTIVE = buildVisualizationCspDirective();
 
 /** 一块的字节数与块数刹车：1 MiB / 512 KiB = 2 块，余量防不收敛实现。 */
 export const VISUALIZATION_CHUNK_BYTES = PROTOCOL_V4_LIMITS.attachmentChunkMaxBytes;
@@ -181,18 +200,29 @@ const WIDGET_STATE_SCRIPT = `
  * fragment（无 doctype/html/head/body 的 HTML 片段）→ 可独立渲染的沙箱文档。
  * 顺序约束：widgetState shim 必须先于 fragment 执行（片段脚本依赖它）；高度上报
  * 脚本必须后于 fragment（需要 body 存在才能挂 ResizeObserver）。
+ *
+ * vendor：本地钉版渲染库运行态（lib/visualizationVendor.ts）。提供时：
+ * 1. CSP script-src 增加对应本地源（origin 目录前缀或 acode-viz-vendor: scheme）；
+ * 2. 桌面生产（file: 页面）把片段里的规范相对引用重写为 scheme URL——
+ *    opaque-origin 沙箱 iframe 加载 file: 子资源会被 Chromium 拒绝，重写是
+ *    桌面离线可用的唯一通路（实验判决见 specs/gen-ui-visualize-card.md）。
  */
 export function buildVisualizationSandboxDocument(
   fragment: string,
   themeVariables: string,
+  vendor?: VisualizationVendorRuntime,
 ): string {
+  const resolvedFragment = vendor
+    ? rewriteVisualizationVendorReferences(fragment, vendor)
+    : fragment;
+  const cspDirective = buildVisualizationCspDirective(vendor ? [vendor.cspSource] : []);
   return [
     "<!doctype html>",
     "<html>",
     "<head>",
     '<meta charset="utf-8">',
     '<meta http-equiv="Content-Security-Policy" content="',
-    VISUALIZATION_CSP_DIRECTIVE,
+    cspDirective,
     '">',
     "<style>",
     ":root{",
@@ -205,7 +235,7 @@ export function buildVisualizationSandboxDocument(
     "</script>",
     "</head>",
     "<body>",
-    fragment,
+    resolvedFragment,
     "<script>",
     HEIGHT_REPORT_SCRIPT,
     "</script>",

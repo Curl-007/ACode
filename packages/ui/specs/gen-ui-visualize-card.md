@@ -22,15 +22,114 @@ CLI 侧把 `::visualize` 引用投影成 `artifactRow(html)`（见
   `postMessage` 可通（高度上报用，父侧校验 `event.source === iframe.contentWindow`）。
 - `wrapFragment` 注入两层防线（srcdoc 文档自身生效，不依赖应用 CSP）：
   1. `<meta http-equiv="Content-Security-Policy">`：`default-src 'none';
-     script-src 'unsafe-inline' blob: data: <CDN 白名单>; style-src 'unsafe-inline'
-     data: blob: <CDN>; img-src data: blob: <CDN>; font-src data: <CDN>;
-     connect-src 'none'; form-action 'none'; base-uri 'none'`；
+     script-src 'unsafe-inline' blob: data: <本地 vendor 源> <CDN 白名单>;
+     style-src 'unsafe-inline' data: blob: <CDN>; img-src data: blob: <CDN>;
+     font-src data: <CDN>; connect-src 'none'; form-action 'none'; base-uri 'none'`；
+     本地 vendor 源只进 script-src（见「vendored 钉版渲染库」节），connect-src
+     'none' 红线不因本地库而松动；
   2. 高度上报脚本（ResizeObserver → postMessage）与主题 CSS 变量（从卡片容器
      computed style 取当前主题 token，映射为上游技能同名的 `--background/
      --foreground/--card/--muted/...` 变量表）。
 - widgetState：v1 提供**内存态** shim（`window.acodeViz.widgetState/get/set`，
   生命周期=卡片挂载期）；持久化登记为后续项。
 - 卡片默认渲染高度上限 640px 内可滚动；`mode:"wide"` 占满会话栏宽。
+
+## vendored 钉版渲染库与 CSP 本地源（2026-10-15）
+
+片段过去只能从 CDN 白名单取 mermaid/chart.js：断网不可用，且供应链面开放
+（CDN 内容非钉版）。本节把两个库钉版为**本地资产**，CSP 增加本地源，CDN
+白名单保留为回退（其余库/字体仍走 CDN），红线不动：iframe sandbox 仍只有
+`allow-scripts`，`connect-src 'none'`、`form-action 'none'`、`base-uri 'none'`
+逐字保留，本地源只进 `script-src`。
+
+### 钉版目录与完整性
+
+- 钉版：`mermaid@11.17.2`、`chart.js@4.5.0`（packages/ui 的 **exact** 依赖，
+  与本轮价值提取参考证据的版本对齐；升级必须显式改目录常量并复核 license）。
+- 目录常量：`src/lib/visualizationVendor.ts` 的 `VISUALIZATION_VENDOR_LIBRARIES`
+  ——文件名、sha256、npm 包内 dist 路径、可选 license banner 的单一事实源。
+- 命名约定 `npm_<pkg>@<ver>_<dist路径，/ 换 _>`（钉版文件名即内容身份，可
+  `max-age=31536000, immutable` 强缓存）：
+  - `npm_mermaid@11.17.2_mermaid.min.js`（esbuild IIFE 构建剥掉了 license 头，
+    构建期前置一行 MIT banner 再哈希；暴露 `window.mermaid`）
+  - `npm_chart.js@4.5.0_chart.umd.min.js`（UMD 自带 MIT banner，原样；暴露
+    `window.Chart`）
+- 构建期校验：`packages/ui/vite/visualizationVendorPlugin.ts` 从 node_modules
+  读钉版 dist → 组装工件 → sha256 与目录比对，**mismatch 即抛
+  `VisualizationVendorIntegrityError`，dev/build 都失败**（fail-fast 挂
+  buildStart）。产物 emit 到 `visualization-vendor/`（库文件 + `manifest.json`
+  完整性清单，确定性字节：无时间戳、按 fileName 排序）。Web dist 由静态服务
+  托管；桌面 `out/renderer/visualization-vendor/` 随 electron-builder
+  `files: out/**/*` 进包。dev 态由同一插件的中间件按同一份已校验内存工件服务。
+
+### 加载路径（两运行态；2026-10-15 Electron 41 实验判决）
+
+沙箱 iframe 是 opaque origin（无 allow-same-origin），srcdoc 文档**继承父文档
+base URL**。实验实测（真 Electron + 真 sandbox 属性 + 真 meta CSP）：
+
+| 路径 | 结果 |
+| --- | --- |
+| file: 页面里相对路径 `visualization-vendor/x.js` | **失败**（opaque-origin 文档加载 file: 子资源被 Chromium 拒绝，onerror） |
+| 自定义 privileged scheme `acode-viz-vendor://vendor/x.js` | 成功（protocol.handle 应答） |
+| 同 scheme + SRI（integrity + crossorigin，corsEnabled + ACAO:\*） | 成功（备用强化面，本轮未启用） |
+
+因此运行态二分（`resolveVisualizationVendorRuntime(baseURI)`，纯函数）：
+
+- **父策略交集**：srcdoc 文档继承宿主页面 CSP，脚本装载须同时通过「父策略 ∩
+  iframe 自身 meta 策略」。桌面主窗 `src/renderer/index.html` 的 meta CSP
+  script-src 因此同步加了 `acode-viz-vendor:`（specs/electron-hardening.md §3；
+  缺它时实验实测装载被拦，负对照 mermaid 全局缺席）。Web 宿主页无应用级 CSP，
+  仅 iframe meta 策略生效。
+- **origin 运行态**（Web dev/prod、桌面 dev——页面在 http(s) 上）：片段的规范
+  相对引用经 base 继承直接落到应用源；CSP script-src 增加
+  `<文档目录>/visualization-vendor/` 的「源+目录前缀」窄面（不是裸 origin），
+  不重写片段。
+- **scheme 运行态**（桌面生产——loadFile 的 file: 页面）：宿主把片段里对目录内
+  库的规范相对引用**字面量重写**为 `acode-viz-vendor://vendor/<file>`
+  （`rewriteVisualizationVendorReferences`；文件名钉版、逐串替换，不触碰片段
+  其余字节）；CSP script-src 增加 `acode-viz-vendor:`。协议处理器在
+  `packages/desktop/src/main/visualizationVendorProtocol.ts`：
+  - 只认单 host（`vendor`）+ 钉版文件名形状的单段路径（decode 后再校验，
+    `%2F`/NUL/嵌套路径全拒）；
+  - **运行态第二道完整性闸（fail-closed）**：每次装载按资产旁 manifest.json
+    复核 sha256，mismatch/缺 manifest/缺文件一律 404，绝不带病进沙箱；已校验
+    字节进内存缓存（钉版文件名即缓存键）。
+
+### 片段侧契约（技能教同一张表）
+
+片段引用钉版库用规范相对路径（在线/离线、桌面/Web 同一写法，宿主负责两态解析）：
+
+```html
+<script src="visualization-vendor/npm_mermaid@11.17.2_mermaid.min.js"></script>
+<script src="visualization-vendor/npm_chart.js@4.5.0_chart.umd.min.js"></script>
+```
+
+CDN 引用不重写、仍按白名单放行（回退路径）；目录外文件名的
+`visualization-vendor/...` 引用不参与重写，由 CSP 自然裁决。
+
+### 跨包字面量与后续项
+
+- scheme 字面量在 ui（重写侧）与 desktop main（协议侧）各持一份——
+  packages/shared 本轮禁触无法上收单一事实源；两侧一致性由
+  `packages/desktop/tests/visualization-vendor-protocol.test.mjs` 钉住。
+  后续项：上收 packages/shared（与 `LOCAL_MEDIA_PREVIEW_SCHEME` 同居）。
+- 后续项：SRI（integrity 属性）启用——实验已证明通路成立，需要 renderer 侧
+  重写为「注入完整 script 标签」而非路径替换，收益（运行态字节钉死）已由
+  main 侧 manifest 复核覆盖大半，暂不引入。
+
+### 离线验收（手工步骤）
+
+1. 桌面：`pnpm dev:desktop` 起 dev（origin 运行态）或安装生产包（scheme 运行
+   态）；断开网络（关 Wi-Fi/拔网线，dev 态另需先加载完页面）；
+2. 让模型加载 visualize 技能后产出一张引用
+   `visualization-vendor/npm_mermaid@11.17.2_mermaid.min.js` 的卡片（或手工经
+   WriteVisualizationFragment 写入含该 script 标签的片段）；
+3. 断言：卡片内 SVG 渲染出现（`#mm svg` 在场），DevTools Network 面板无外域
+   请求，`acode-viz-vendor://`（生产）或同源 `/visualization-vendor/`（dev/Web）
+   命中 200；
+4. 2026-10-15 已按等价路径实机验证：真 Electron 41 + file: 宿主页 + 真协议
+   模块 + 真 vite 产物资产，沙箱 iframe 内 mermaid `render()` 出 SVG、
+   chart.js 画布绘制成功（`connect-src 'none'` 全程生效）。
 
 ## 挂点
 

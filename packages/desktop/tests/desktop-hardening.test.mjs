@@ -232,8 +232,22 @@ test("main renderer index.html carries a CSP that blocks remote script while ser
   assert.deepEqual(directives.get("default-src"), ["'none'"]);
   assert.deepEqual(
     directives.get("script-src"),
-    ["'self'", "file:", "'unsafe-inline'", "'wasm-unsafe-eval'"],
-    "script-src must allow self + file: (packaged loadFile) + inline (startup script / vite dev) + wasm (Shiki)",
+    ["'self'", "file:", "acode-viz-vendor:", "'unsafe-inline'", "'wasm-unsafe-eval'"],
+    "script-src must allow self + file: (packaged loadFile) + acode-viz-vendor: (可视化沙箱 iframe 继承本 CSP，vendored 钉版渲染库经该本地协议装载) + inline (startup script / vite dev) + wasm (Shiki)",
+  );
+  // 回归守护：srcdoc 沙箱 iframe 继承主窗 CSP，脚本装载须同时通过「父策略 ∩ iframe
+  // 自身 meta 策略」。桌面生产（file:）可视化卡片的 vendored mermaid/chart.js 走
+  // acode-viz-vendor:（main 的 visualizationVendorProtocol，仅服务打包资产目录 +
+  // manifest sha256 fail-closed），父策略缺该 scheme 时 2026-10-15 Electron 41
+  // 实验实测装载被拦（mermaid 全局缺席）。见 packages/ui/specs/gen-ui-visualize-card.md。
+  assert.ok(
+    directives.get("script-src").includes("acode-viz-vendor:"),
+    "script-src must keep acode-viz-vendor: for visualization sandbox vendored libraries",
+  );
+  // 收紧面守护：本地协议只进 script-src，不得扩散到 connect-src（外联数据红线）。
+  assert.ok(
+    !directives.get("connect-src").includes("acode-viz-vendor:"),
+    "connect-src must not carry acode-viz-vendor: (visualization data channel stays closed)",
   );
   // 回归守护：主窗 Shiki 代码高亮经 WebAssembly.instantiate 编译，缺 'wasm-unsafe-eval' 会被 CSP
   // 拦下（代码高亮/diff/office 预览全坏）。dev desktop 启动冒烟实测到过该违规，故钉死。

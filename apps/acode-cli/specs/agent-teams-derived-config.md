@@ -313,6 +313,41 @@ build-desktop-agent-cli.mjs / prepare-prebuilds.mjs   四份发布暂存清单�
 - AgentTeams 插件本体功能演进（DAG 调度、面板、邮箱协议按上游原样，改动归插件后续批次）。
 - GUI 侧 AgentTeams 专属界面（插件经既有 marketplace/settings 面暴露，无新 UI）。
 
+## 实现决定回写
+
+1. **多团队死代码不随迁**（2026-10-15 插件移植批次）：R1 的「按分支原样移植」对
+   四个文件不成立——`src/tools/tasks-captain.ts`、`src/tools/tasks-progress.ts`
+   （多团队版工具族，server.ts 与全部测试只接线单团队族，零消费者）、
+   `src/tools/team-status.ts`（引用单团队 `TeamStore` 不存在的 `findTeam` 等
+   API，分支 typecheck 必红的直接来源）、`src/tools/team-adopt.ts`（零消费者；
+   真实 adopt_team 工具在 team.ts 内），以及 `tests/multi-team.test.ts`（为 PRD 0.2
+   多团队里程碑预写、断言 `agent_teams_create` 返回 teamId 等未实现行为，分支上
+   必红）。五者整体删除，不移植。将来做多团队时从上游重新引入。
+2. **ratchet 拆分落点**（同批）：store.ts 408→378（模块级 fs 辅助抽到
+   `src/state/fs-helpers.ts`）、tasks.ts 410→327（reassign 工具抽到
+   `src/tools/task-reassign.ts`，taskTools 数组顺序不变）；bootstrap 侧比 R8 表多
+   一个微文件 `subagent-profile-shared.ts`（禁用/清洗谓词 + 状态/结果类型单点，
+   subagents.ts 与 subagent-live-state.ts 共用，避免双向依赖）。
+3. **移植测试落位 apps/acode-cli/tests/*.test.mjs**（同批）：本仓 apps/acode-cli
+   无 co-located .test.ts 惯例（bootstrap/core 包无 test script），上游两份 .ts
+   测试转为本仓 tsx 直读 TS 源惯例的 .mjs，逻辑逐字保留；两处必要适配——import
+   按拆分后模块归位、删除 `maxTurns` 断言（本仓已删除该悬空装配链，
+   `subagent-maxturns-dangling.test.mjs` 修正项 #1；fixture 保留该字段钉住
+   「未知键忽略、不产 diagnostic」）。
+4. **默认启用名单 parity 单测补建**（同批）：plugin-marketplaces.ts 注释宣称的
+   「Settings 默认启用集合与 CLI 官方插件声明一致」单测在本仓从未存在，
+   `agent-teams-registration-parity.test.mjs` 补上（并钉住版本四处一致、
+   SEA/远端/桌面/预构建清单镜像）；首跑即抓出远端合同缺 `.mcp.json` 条目，
+   同批修复（R2 清单第 5 处的必需资产含 `.mcp.json` + dist + member/team/SKILL）。
+5. **身份链无需宿主改动**（同批核实）：插件 `_meta["com.acode/request-context"]`
+   身份推导与本仓 `adapters/src/mcp/index.ts` 的 `mcpRequestMeta`（扁平键 +
+   命名空间键双发，含 session_id/runtime_scope/workspace_key）逐字段对齐，
+   `sess_subagent_<agentId>` 派生规则与 core 一致；captain/member 区分开箱可用。
+6. **license 对齐 MIT**（同批）：上游 package.json 标 Apache-2.0，与本仓根
+   license 及 browser-use-plugin 先例不一致，按第一方血统（姊妹仓、author Z.ai）
+   对齐为 MIT；不进 copied-components.json（非第三方市场包搬运，与 acode-cua 的
+   SDK 二手搬运形态不同）。
+
 ## 修订记录
 
 （首版，2026-10-15：合入 0cc983f 剔除的 AgentTeams 链并偿还三缺口；默认启用为

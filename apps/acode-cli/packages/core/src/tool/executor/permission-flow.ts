@@ -10,6 +10,7 @@ import {
   type PermissionRuleset,
   type TraceContext,
   type ToolExecutionSpanWriter,
+  type TtlPermissionGrantOrigin,
 } from "@acode/contracts";
 import type { HookRunResult } from "../../hooks/index.js";
 import { isBashReflexGateRuleId } from "../../permission/bash-confirm-reflex-gate.js";
@@ -46,6 +47,17 @@ type ToolPermissionFlowResult =
   | { allowed: true; executionInput: unknown; permissionWaitMs?: number }
   | { allowed: false; result: ToolExecutionResult };
 
+/**
+ * 本轮派生事实（specs/mcp-lifecycle-ttl-approval.md R4「无人值守默认带期限」）：
+ * automationTurn（cron/automation 派发）与 offPeakTurn（闲时派发）是
+ * ToolExecuteOptions 已有的轮级事实，批准链路据此把持久授权的 origin 标记为
+ * "unattended"——TTL 存储对 unattended 一律限期（缺省 7 天、上限 30 天）。
+ */
+export interface ToolPermissionTurnFacts {
+  automationTurn?: boolean;
+  offPeakTurn?: boolean;
+}
+
 export async function resolveToolPermission(
   deps: ToolExecutorDeps,
   toolCall: ExecutableToolCall,
@@ -56,6 +68,7 @@ export async function resolveToolPermission(
   traceContext: TraceContext,
   signal?: AbortSignal,
   telemetry?: ToolExecutionSpanWriter,
+  turnFacts?: ToolPermissionTurnFacts,
 ): Promise<ToolPermissionFlowResult> {
   const baseRuntimePermissionContext = resolveRuntimePermissionContext(deps);
   // R6 边界⑥收口（spec npm-script-body-scan.md R1/R5）：权限链路的异步前置。仅声明
@@ -471,11 +484,21 @@ export async function resolveToolPermission(
   if (resolvedPermission.sessionPermissionUpdates?.length) {
     // 会话免确认：只进内存里的会话 ruleset，
     // 与上面的项目级持久化互不可见。
-    deps.permissionService.grantSessionPermission(resolvedPermission.sessionPermissionUpdates);
+    // origin 标记（specs/mcp-lifecycle-ttl-approval.md R4）：cron/off-peak/automation
+    // 派发轮的批准按无人值守处理——带 expiresAt 的 allow 更新在 PermissionService 内
+    // 分流进 TTL 存储时一律限期（缺省 7 天、夹紧 30 天），绝不永久。
+    const sessionGrantOrigin: TtlPermissionGrantOrigin =
+      turnFacts?.automationTurn === true || turnFacts?.offPeakTurn === true
+        ? "unattended"
+        : "interactive";
+    deps.permissionService.grantSessionPermission(resolvedPermission.sessionPermissionUpdates, {
+      origin: sessionGrantOrigin,
+    });
     deps.logger?.info("Session permission granted", {
       ...traceContextToLogContext(traceContext),
       event: "tool.permission.session_grant.applied",
       module: "core.tool.executor",
+      origin: sessionGrantOrigin,
       requestId,
       status: "completed",
       toolCallId: toolCall.id,

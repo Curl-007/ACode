@@ -191,6 +191,16 @@ export {
   // 见 specs/auto-mode-risk-classifier.md R6；缺省无 sink，测试环境零输出）。
   registerAutoClassifierAuditSink,
   setAutoClassifierAuditSink,
+  // TTL 持久授权（specs/mcp-lifecycle-ttl-approval.md R4）：装配层 await
+  // TtlApprovalStore.create() 后注入 PermissionConfig.ttlApprovals；落盘路径与
+  // 期限常量随存储本体一并导出，宿主（desktop 设置页「已记住的批准」合并展示等
+  // 后续批次）经公开入口消费同一事实源，不深入实现路径。
+  DEFAULT_MAX_TTL_DAYS,
+  DEFAULT_UNATTENDED_TTL_DAYS,
+  defaultTtlApprovalFilePath,
+  MAX_UNATTENDED_TTL_DAYS,
+  parseTtlPermissionGrantFile,
+  TtlApprovalStore,
 } from "./permission/index.js";
 export type {
   ManualPermissionBrokerOptions,
@@ -206,6 +216,13 @@ export type {
   AutoClassifierAuditSink,
   AutoRiskClassifierPort,
   AutoRiskVerdict,
+} from "./permission/index.js";
+export type {
+  ParseTtlPermissionGrantFileResult,
+  TtlApprovalGrantInput,
+  TtlApprovalReader,
+  TtlApprovalStoreOptions,
+  TtlApprovalWriter,
 } from "./permission/index.js";
 
 // Runtime

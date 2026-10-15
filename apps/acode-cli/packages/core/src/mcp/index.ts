@@ -21,6 +21,12 @@ import type { ToolRegistry } from "../tool/registry.js";
 import type { ToolEntry } from "../tool/types.js";
 import { createToolRuleNameSet } from "../tool/tool-visibility.js";
 import {
+  auditMcpToolCall,
+  deriveMcpToolIsWrite,
+  warnUncoveredMcpWriteTools,
+  type McpFirstPartyBasis,
+} from "./call-audit.js";
+import {
   asDataUrl,
   base64PayloadFromMcpImageData,
   normalizeMcpToolResultForModel,
@@ -34,6 +40,17 @@ export {
   MCP_IMAGE_INLINE_BASE64_BYTES,
   MCP_IMAGE_INLINE_RAW_BYTES,
 } from "./image-normalization.js";
+
+// 第一方写审计（specs/mcp-lifecycle-ttl-approval.md R3）：sink 注册点与推导纯函数
+// 再导出，装配层（bootstrap）从 core 公开入口接线，不深入实现路径。
+export {
+  deriveMcpToolIsWrite,
+  setMcpCallAuditSink,
+  type McpCallAuditEvent,
+  type McpCallAuditSink,
+  type McpToolCallAuditEntry,
+  type McpUncoveredWriteToolsEntry,
+} from "./call-audit.js";
 
 const MCP_TOOL_TIMEOUT_MS = 30_000;
 const OFFICIAL_CUA_PERMISSION_CAPABILITY_GROUP = "official_cua" satisfies PermissionCapabilityGroup;
@@ -67,6 +84,11 @@ export function registerMcpTools(
   const allowed = options.allowedTools ? new Set(options.allowedTools) : undefined;
   const disallowed = createToolRuleNameSet(options.disallowedTools);
   const registered: string[] = [];
+  // R3「未覆盖写工具」告警面：第一方 server 的写工具被 allowedTools 显式放行 =
+  // 默认审批门（needsApproval 恒真）被持久 allow 规则关掉。按 server 聚合，
+  // 每次注册派发一次（runtime 保证一个 runtime 只注册一次，见
+  // specs/runtime-mcp-lifecycle.md）。
+  const uncoveredWriteTools = new Map<string, string[]>();
 
   for (const descriptor of descriptors) {
     const officialCuaAuthorityVerified =
@@ -77,11 +99,47 @@ export function registerMcpTools(
     // denylist 会静默失效并放行。新旧名称任一命中 deny 即拒绝，任一命中 allow 即接受。
     if (allowed && !allowed.has(name) && !allowed.has(descriptorName)) continue;
     if (disallowed?.has(name) || disallowed?.has(descriptorName)) continue;
-    registry.register(createMcpToolEntry(name, descriptor, mcpPort, officialCuaAuthorityVerified));
+    const firstPartyBasis = resolveMcpFirstPartyBasis(descriptor, officialCuaAuthorityVerified);
+    if (firstPartyBasis && deriveMcpToolIsWrite(descriptor.annotations)) {
+      // 走到这里且 allowed 存在 ⇒ 该工具被 allow 规则覆盖（上面的 continue 已过滤
+      // 未列入的）；allowed 缺席 ⇒ 默认审批门仍然生效，无需告警。
+      if (allowed) {
+        const tools = uncoveredWriteTools.get(descriptor.serverName) ?? [];
+        tools.push(descriptor.toolName);
+        uncoveredWriteTools.set(descriptor.serverName, tools);
+      }
+    }
+    registry.register(
+      createMcpToolEntry(name, descriptor, mcpPort, officialCuaAuthorityVerified, firstPartyBasis),
+    );
     registered.push(name);
   }
 
+  for (const [serverName, toolNames] of uncoveredWriteTools) {
+    warnUncoveredMcpWriteTools({
+      kind: "uncovered-write-tools",
+      serverName,
+      toolNames: [...new Set(toolNames)],
+    });
+  }
+
   return registered;
+}
+
+/**
+ * 内置/第一方 server 判定（spec R3）：官方 http server（宿主 origin 校验置位
+ * descriptor.official）、宿主内置 node_repl、经不可伪造 authority 验明的官方 CUA。
+ * 名称本身不构成第一方证据——第三方 server 起名 node_repl 也会命中内置判定，但
+ * 该命名空间由宿主装配占用（与既有 isHostNodeReplExecution 判定同一口径）。
+ */
+function resolveMcpFirstPartyBasis(
+  descriptor: Pick<McpToolDescriptor, "official" | "serverName">,
+  officialCuaAuthorityVerified: boolean,
+): McpFirstPartyBasis | undefined {
+  if (officialCuaAuthorityVerified) return "official-cua";
+  if (descriptor.serverName === "node_repl") return "builtin-node-repl";
+  if (descriptor.official === true) return "official-http";
+  return undefined;
 }
 
 function toRegisteredMcpToolName(
@@ -105,9 +163,13 @@ function createMcpToolEntry(
   descriptor: McpToolDescriptor,
   mcpPort: McpPort,
   officialCuaAuthorityVerified: boolean,
+  firstPartyBasis?: McpFirstPartyBasis,
 ): ToolEntry {
   const readOnly = descriptor.annotations?.readOnlyHint === true;
   const destructive = descriptor.annotations?.destructiveHint === true;
+  // R3 审计口径的 is_write（fail-closed：hint 缺席按写对待）；与上面的权限投影
+  // （readOnly/riskLevel）同源于 annotations，但各自推导、互不覆写。
+  const isWrite = deriveMcpToolIsWrite(descriptor.annotations);
   const isHostNodeReplExecution =
     descriptor.serverName === "node_repl" && descriptor.toolName === "js";
   const isCuaAppObservation = isACodeCuaGetAppState(descriptor);
@@ -213,36 +275,70 @@ function createMcpToolEntry(
       recordOutput: "summary",
     },
     handler: async (input, context) => {
-      const result = await mcpPort.callTool(
-        {
-          serverName: descriptor.serverName,
-          toolName: descriptor.toolName,
-          arguments: toMcpRuntimeArguments(input, isCuaAppObservation),
-          trace: {
-            traceId: context.traceId,
-            spanId: context.spanId,
-            parentSpanId: context.parentSpanId,
-            sessionId: context.sessionId,
-            turnId: context.turnId,
+      // R3：第一方 server 的每次工具调用记审计（server/tool/is_write/耗时/状态）。
+      // 计时覆盖整个 callTool（含懒重连等待），status 区分 in-band isError
+      // （tool-error）与传输级异常（failed）；异常照常冒泡，审计只是旁路。
+      const auditStartedAt = Date.now();
+      const auditBase = firstPartyBasis
+        ? ({
+            kind: "tool-call",
+            serverName: descriptor.serverName,
+            toolName: descriptor.toolName,
+            registeredName: name,
+            isWrite,
+            firstPartyBasis,
+            ...(context.sessionId ? { sessionId: context.sessionId } : {}),
+          } as const)
+        : undefined;
+      let result: McpToolCallResult;
+      try {
+        result = await mcpPort.callTool(
+          {
+            serverName: descriptor.serverName,
+            toolName: descriptor.toolName,
+            arguments: toMcpRuntimeArguments(input, isCuaAppObservation),
+            trace: {
+              traceId: context.traceId,
+              spanId: context.spanId,
+              parentSpanId: context.parentSpanId,
+              sessionId: context.sessionId,
+              turnId: context.turnId,
+            },
+            runtimeScope: context.runtimeScope ?? "main",
+            workspacePath: context.workingDirectory,
+            ...(context.remoteSessionId ? { remoteSessionId: context.remoteSessionId } : {}),
+            ...(context.workspaceIdentity?.trim()
+              ? {
+                  workspaceIdentity: context.workspaceIdentity.trim(),
+                  workspaceKey: context.workspaceIdentity.trim(),
+                }
+              : { workspaceKey: context.workingDirectory }),
+            ...(context.turnId ? { turnId: context.turnId } : {}),
+            clientMode: context.clientMode ?? "desktop-continuous",
+            deliveryKind: context.deliveryKind ?? "desktop-continuous",
           },
-          runtimeScope: context.runtimeScope ?? "main",
-          workspacePath: context.workingDirectory,
-          ...(context.remoteSessionId ? { remoteSessionId: context.remoteSessionId } : {}),
-          ...(context.workspaceIdentity?.trim()
-            ? {
-                workspaceIdentity: context.workspaceIdentity.trim(),
-                workspaceKey: context.workspaceIdentity.trim(),
-              }
-            : { workspaceKey: context.workingDirectory }),
-          ...(context.turnId ? { turnId: context.turnId } : {}),
-          clientMode: context.clientMode ?? "desktop-continuous",
-          deliveryKind: context.deliveryKind ?? "desktop-continuous",
-        },
-        {
-          signal: context.abortSignal,
-          timeoutMs,
-        },
-      );
+          {
+            signal: context.abortSignal,
+            timeoutMs,
+          },
+        );
+      } catch (error) {
+        if (auditBase) {
+          auditMcpToolCall({
+            ...auditBase,
+            durationMs: Date.now() - auditStartedAt,
+            status: "failed",
+          });
+        }
+        throw error;
+      }
+      if (auditBase) {
+        auditMcpToolCall({
+          ...auditBase,
+          durationMs: Date.now() - auditStartedAt,
+          status: result.isError ? "tool-error" : "completed",
+        });
+      }
       // MCP server 会返回大 base64 图片；resultBudget 只看到图片占位文本，
       // 必须在 handler 阶段保存副本并替换模型可见内容，避免 provider 请求体被打爆。
       return normalizeMcpToolResultForModel({

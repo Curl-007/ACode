@@ -24,3 +24,23 @@ export type {
   AutoRiskClassifierPort,
   AutoRiskVerdict,
 } from "./auto-risk-classifier.js";
+// TTL 持久授权（specs/mcp-lifecycle-ttl-approval.md R4）：存储本体 + 判定侧窄读
+// 接口 + 期限常量。装配层 await TtlApprovalStore.create() 后注入
+// PermissionConfig.ttlApprovals；批准链路经 grantSessionPermission（带 expiresAt 的
+// allow 更新）或 store.applyPermissionUpdates 写入。
+export {
+  DEFAULT_MAX_TTL_DAYS,
+  DEFAULT_UNATTENDED_TTL_DAYS,
+  defaultTtlApprovalFilePath,
+  MAX_UNATTENDED_TTL_DAYS,
+  TtlApprovalStore,
+} from "./ttl-approvals.js";
+export type {
+  TtlApprovalGrantInput,
+  TtlApprovalReader,
+  TtlApprovalStoreOptions,
+  TtlApprovalWriter,
+} from "./ttl-approvals.js";
+// 落盘文件形态（版本号 / 逐条校验 / 迁移的 fail-closed 作废）单独成模块。
+export { parseTtlPermissionGrantFile } from "./ttl-approval-file.js";
+export type { ParseTtlPermissionGrantFileResult } from "./ttl-approval-file.js";

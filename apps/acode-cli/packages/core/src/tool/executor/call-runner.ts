@@ -317,6 +317,12 @@ async function executeToolCallImpl(
     traceContext,
     options?.signal,
     telemetry,
+    // 轮级派生事实透传（specs/mcp-lifecycle-ttl-approval.md R4）：批准链路的
+    // grantSessionPermission 据此把无人值守轮的持久授权标记为 origin:"unattended"。
+    {
+      automationTurn: options?.automationTurn,
+      offPeakTurn: options?.offPeakTurn,
+    },
   );
   if (!permissionResult.allowed) {
     const result = appendPreToolAdditionalContextsToErrorResult(

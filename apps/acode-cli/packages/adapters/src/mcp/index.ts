@@ -31,6 +31,10 @@ import type {
   McpResourceDescriptor,
   McpServerConfig,
   McpServerStatus,
+  McpServerStatusChange,
+  McpServerStatusChangeListener,
+  McpServerStatusChangeTrigger,
+  McpServerStatusKind,
   McpToolCallResult,
   McpToolDescriptor,
   OfficialMcpAuthFailureReason,
@@ -40,6 +44,11 @@ import type {
 } from "@acode/contracts";
 import { ACODE_MCP_SERVER_REQUEST_ID_META_KEY } from "@acode/contracts";
 import { normalizeMcpToolDescriptor } from "./descriptor.js";
+import {
+  createSingleflightRunner,
+  McpReconnectBudget,
+  type McpReconnectGateVerdict,
+} from "./reconnect-budget.js";
 import {
   createOfficialMcpAuthFetch,
   OfficialMcpAuthError,
@@ -114,6 +123,20 @@ export interface CreateMcpAdapterOptions {
   mcpOAuth?: McpOAuthRuntimeOptions;
   network?: NetworkEgressEnvPolicy;
   /**
+   * 连接状态跃迁监听（specs/mcp-lifecycle-ttl-approval.md R2）。desktop 设置页 /
+   * TUI 侧栏等上层经此被动感知断开、失败与重连挂起；监听器故障不影响连接生命周期。
+   */
+  onStatusChange?: McpServerStatusChangeListener;
+  /**
+   * 自动重连预算（specs/mcp-lifecycle-ttl-approval.md R1）：连续失败熔断与最小
+   * 重试间隔。缺省 crashBudget=3、minRetryIntervalMs=30s。只门禁自动（懒）重连，
+   * 显式连接永远放行并复位预算。
+   */
+  reconnect?: {
+    crashBudget?: number;
+    minRetryIntervalMs?: number;
+  };
+  /**
    * 官方 Server MCP 鉴权依赖。trustedOrigins 缺失时仍 fail closed；authHeadersPort
    * 可缺省，此时各请求匿名降级并交给服务端做权威判定。
    */
@@ -187,6 +210,17 @@ export {
   type McpTelemetryTracker,
   type McpTrackedProcess,
 } from "./telemetry.js";
+// 自动重连预算（specs/mcp-lifecycle-ttl-approval.md R1）：预算类与 singleflight
+// 工具对外导出，供装配层调参与测试直连；判定门禁在 adapter 内部，不单独暴露。
+export {
+  createSingleflightRunner,
+  DEFAULT_MCP_RECONNECT_CRASH_BUDGET,
+  DEFAULT_MCP_RECONNECT_MIN_RETRY_INTERVAL_MS,
+  McpReconnectBudget,
+  type McpReconnectBudgetOptions,
+  type McpReconnectGateVerdict,
+  type McpReconnectSuspensionState,
+} from "./reconnect-budget.js";
 
 class NodeMcpAdapter implements McpPort {
   private readonly adapterInstanceId = randomUUID();
@@ -199,6 +233,11 @@ class NodeMcpAdapter implements McpPort {
   private readonly network?: NetworkEgressEnvPolicy;
   private readonly officialMcpAuth?: CreateMcpAdapterOptions["officialMcpAuth"];
   private readonly telemetry?: McpTelemetryTracker;
+  private readonly onStatusChange?: McpServerStatusChangeListener;
+  /** 自动重连预算（R1）：连续失败熔断 + 最小重试间隔；显式连接复位。 */
+  private readonly reconnectBudget: McpReconnectBudget;
+  /** 同一 server 的并发自动重连共享一个 in-flight promise（R1 singleflight）。 */
+  private readonly autoReconnectSingleflight = createSingleflightRunner<string, McpServerStatus>();
   private readonly connectionGenerations = new Map<string, number>();
   private credentialStore?: SharedACodeCredentialStore;
   /**
@@ -238,6 +277,8 @@ class NodeMcpAdapter implements McpPort {
     this.network = options.network;
     this.officialMcpAuth = options.officialMcpAuth;
     this.telemetry = options.telemetry;
+    this.onStatusChange = options.onStatusChange;
+    this.reconnectBudget = new McpReconnectBudget({ ...options.reconnect });
     this.workingDirectory = options.workingDirectory;
   }
 
@@ -306,9 +347,21 @@ class NodeMcpAdapter implements McpPort {
     config: McpServerConfig,
     options: McpConnectOptions = {},
   ): Promise<McpServerStatus> {
+    // 显式连接（设置页刷新、session 启动、配置变更下发的全量收敛）：先复位自动重连
+    // 预算——挂起/冷却只拦自动路径，用户必须永远保有恢复手段（spec R1）。
+    return await this.connectServerInternal(name, config, options, { auto: false });
+  }
+
+  private async connectServerInternal(
+    name: string,
+    config: McpServerConfig,
+    options: McpConnectOptions = {},
+    invocation: { auto: boolean },
+  ): Promise<McpServerStatus> {
     const startedAt = Date.now();
     const timeoutMs = config.timeoutMs ?? DEFAULT_MCP_TIMEOUT_MS;
     const generation = this.nextConnectionGeneration(name);
+    if (!invocation.auto) this.reconnectBudget.reset(name);
     this.lastOfficialAuthKind.delete(name);
     this.connectionDiagnosticByServer.delete(name);
     this.logger?.info("MCP server connection started", {
@@ -318,11 +371,13 @@ class NodeMcpAdapter implements McpPort {
       timeoutMs,
       transport: config.type,
     });
+    const previousStatusKind = this.records.get(name)?.status.status;
     await this.closeRecord(name);
 
     if (config.enabled === false) {
       const status = this.createStatus(config, "disabled");
       this.records.set(name, { config, status, tools: [] });
+      this.emitStatusChange(name, previousStatusKind, status, "disabled");
       this.logger?.info("MCP server connection skipped", {
         durationMs: Date.now() - startedAt,
         event: "mcp.server.connect.skipped",
@@ -353,6 +408,7 @@ class NodeMcpAdapter implements McpPort {
       tools: [],
     };
     this.records.set(name, record);
+    this.emitStatusChange(name, previousStatusKind, connectingStatus, "connect-started");
     const connecting = this.openServerConnection({
       config,
       generation,
@@ -376,6 +432,7 @@ class NodeMcpAdapter implements McpPort {
     const record = this.records.get(name);
     if (!record) return undefined;
 
+    const previousStatusKind = record.status.status;
     this.nextConnectionGeneration(name);
     await this.closeRecord(name);
     const status = this.createStatus(record.config, "disconnected");
@@ -384,6 +441,9 @@ class NodeMcpAdapter implements McpPort {
       status,
       tools: [],
     });
+    // 显式断开也清预算：下次显式/自动连接从干净计数开始（挂起状态不跨显式操作存活）。
+    this.reconnectBudget.reset(name);
+    this.emitStatusChange(name, previousStatusKind, status, "disconnected");
     return status;
   }
 
@@ -421,6 +481,7 @@ class NodeMcpAdapter implements McpPort {
           error: "MCP server did not answer ping",
           failureKind: "unexpected_disconnect",
         });
+        this.emitStatusChange(name, "connected", current.status, "disconnected");
       }
       this.logger?.warn("MCP server ping failed", {
         ...this.connectionContext,
@@ -539,11 +600,13 @@ class NodeMcpAdapter implements McpPort {
     // stdio MCP 子进程死亡后（如 node_repl 被异步错误击穿），此前没有任何恢复路径：
     // 连接只在 session 创建时建立一次，session resume 也不重建，该会话的工具从此永远失败。
     // 这里在调用前对已断连的 record 重连一次；server 进程内状态（如 REPL 变量）不可恢复，
-    // 但工具本身恢复可用。
-    const disconnected = this.records.get(request.serverName);
-    if (disconnected && disconnected.status.status === "disconnected") {
+    // 但工具本身恢复可用。自动重连受预算门禁（specs/mcp-lifecycle-ttl-approval.md R1）：
+    // 挂起/冷却期内直接拒绝并抛出带模型指引的错误，不再 spawn。
+    const stale = this.records.get(request.serverName);
+    if (stale && isAutoReconnectableStatus(stale.status)) {
+      this.assertAutoReconnectAllowed(request.serverName);
       await waitWithinMcpDeadline(
-        this.reconnectForCall(request.serverName, disconnected.config),
+        this.reconnectForCall(request.serverName, stale.config),
         deadline,
         timeoutMessage,
         options.signal,
@@ -552,7 +615,9 @@ class NodeMcpAdapter implements McpPort {
 
     const record = this.records.get(request.serverName);
     if (!record?.client || record.status.status !== "connected") {
-      throw new Error(`MCP server is not connected: ${request.serverName}`);
+      // 失败文案即模型的下一步（spec R2.1）：裸的 "not connected" 会诱导模型循环重试，
+      // 这里显式给出「不要循环重试」指引与应采取的动作。
+      throw new Error(buildMcpNotConnectedMessage(request.serverName, record?.status));
     }
 
     try {
@@ -581,6 +646,9 @@ class NodeMcpAdapter implements McpPort {
       // 防 onclose 尚未派发的竞态：SDK 在 transport 已断时抛裸 "Not connected"。
       // 只对这一种确定的断连错误重连重试一次，其余错误原样冒泡。
       if (!(error instanceof Error) || error.message !== "Not connected") throw error;
+      // 预算门禁在发起重连**之前**拒绝：挂起/冷却时把带指引的错误直接抛给模型，
+      // 而不是让它落进下面的 catch 再抛一次裸 "Not connected"（spec R1/R2.1）。
+      this.assertAutoReconnectAllowed(request.serverName);
       try {
         await waitWithinMcpDeadline(
           this.reconnectForCall(request.serverName, record.config),
@@ -595,10 +663,22 @@ class NodeMcpAdapter implements McpPort {
           mcpServerName: request.serverName,
           status: "failed",
         });
-        throw error;
+        // 裸 "Not connected" 对模型没有信息量：换成带当前状态（含挂起事实）与
+        // 「不要循环重试」指引的文案，原错误进 cause 链（spec R2.1）。
+        throw new Error(
+          buildMcpNotConnectedMessage(
+            request.serverName,
+            this.records.get(request.serverName)?.status,
+          ),
+          { cause: error },
+        );
       }
       const revived = this.records.get(request.serverName);
-      if (!revived?.client || revived.status.status !== "connected") throw error;
+      if (!revived?.client || revived.status.status !== "connected") {
+        throw new Error(buildMcpNotConnectedMessage(request.serverName, revived?.status), {
+          cause: error,
+        });
+      }
       return await this.callToolOnClient(
         revived.client,
         request,
@@ -849,14 +929,57 @@ class NodeMcpAdapter implements McpPort {
     }
   }
 
-  private async reconnectForCall(name: string, config: McpServerConfig): Promise<void> {
-    this.logger?.warn("MCP server reconnecting after lost connection", {
-      event: "mcp.server.reconnect.started",
-      mcpServerName: name,
-      status: "started",
-      transport: config.type,
+  private reconnectForCall(name: string, config: McpServerConfig): Promise<McpServerStatus> {
+    // singleflight（spec R1）：并发工具调用共享同一次自动重连，不重复 spawn/握手；
+    // 失败结果原样共享给所有等待者——去重的是执行，不是错误。
+    return this.autoReconnectSingleflight(name, async () => {
+      this.reconnectBudget.beginAttempt(name);
+      this.logger?.warn("MCP server reconnecting after lost connection", {
+        event: "mcp.server.reconnect.started",
+        mcpServerName: name,
+        status: "started",
+        transport: config.type,
+      });
+      return await this.connectServerInternal(name, config, {}, { auto: true });
     });
-    await this.connectServer(name, config);
+  }
+
+  /**
+   * 自动重连门禁：挂起（预算耗尽）或冷却期（< 最小重试间隔）内拒绝发起，
+   * 抛出带模型指引的错误（spec R1/R2.1）。显式连接不经过本门禁。
+   */
+  private assertAutoReconnectAllowed(serverName: string): void {
+    const verdict = this.reconnectBudget.check(serverName);
+    if (verdict.allowed) return;
+    throw buildMcpReconnectRefusalError(serverName, verdict);
+  }
+
+  /**
+   * 状态跃迁事件派发（spec R2）。监听器故障不得反向影响连接生命周期——
+   * 与遥测旁路同一哲学，try/catch 吞掉。
+   */
+  private emitStatusChange(
+    name: string,
+    previousStatus: McpServerStatusKind | undefined,
+    status: McpServerStatus,
+    trigger: McpServerStatusChangeTrigger,
+  ): void {
+    if (!this.onStatusChange) return;
+    try {
+      const change: McpServerStatusChange = {
+        serverName: name,
+        ...(previousStatus ? { previousStatus } : {}),
+        status,
+        trigger,
+        ...(this.connectionContext
+          ? { connectionId: this.connectionContext.mcpConnectionId }
+          : {}),
+        at: new Date().toISOString(),
+      };
+      this.onStatusChange(change);
+    } catch {
+      // 旁路故障静默：状态事件消费方（UI）异常不能拆连接。
+    }
   }
 
   /**
@@ -1189,6 +1312,9 @@ class NodeMcpAdapter implements McpPort {
         tools,
         transport,
       });
+      // 连接成功 = 最强的恢复证据：清零连续失败计数并解除挂起（spec R1）。
+      this.reconnectBudget.recordSuccess(name);
+      this.emitStatusChange(name, "connecting", status, "connected");
       const mcpTransportPid = getStdioTransportPid(transport);
       const mcpProcessIdentity =
         mcpTransportPid != null && this.connectionContext
@@ -1206,10 +1332,14 @@ class NodeMcpAdapter implements McpPort {
         if (!current || current.client !== client) return;
         const recentStderr = getRecentStderr?.();
         const processExit = getStdioTransportExitInfo(transport);
+        const previousStatusKind = current.status.status;
         current.status = this.createStatus(current.config, "disconnected", {
           error: "MCP server connection closed unexpectedly",
           failureKind: "unexpected_disconnect",
         });
+        // server 进程关闭只标记状态、派发事件，不后台自旋重连——恢复走懒重连
+        // （下次 callTool，受预算门禁；spec R1「重连触发点」）。
+        this.emitStatusChange(name, previousStatusKind, current.status, "disconnected");
         this.logger?.warn("MCP server connection lost", {
           ...this.connectionContext,
           event: "mcp.server.connection_lost",
@@ -1464,6 +1594,14 @@ class NodeMcpAdapter implements McpPort {
         ? { serverRequestId: responseDiagnostic.serverRequestId }
         : {}),
     });
+    // 连续失败计数累积（显式与自动路径都记——连续失败是 server 的客观事实）；
+    // 预算耗尽即挂起：状态携带 reconnectSuspension，自动重连停止，等待显式操作
+    // （specs/mcp-lifecycle-ttl-approval.md R1）。
+    const budgetOutcome = this.reconnectBudget.recordFailure(name);
+    const suspension = budgetOutcome.suspended
+      ? this.reconnectBudget.suspension(name)
+      : undefined;
+    if (suspension) status.reconnectSuspension = suspension;
     const recentStderr = getRecentStderr?.();
     const mcpTransportPid = getStdioTransportPid(transport);
     await this.closeClientAndTransport(name, client, transport);
@@ -1471,6 +1609,19 @@ class NodeMcpAdapter implements McpPort {
       return this.records.get(name)?.status ?? status;
     }
     this.records.set(name, { config, status, tools: [] });
+    if (suspension) {
+      this.logger?.warn("MCP server automatic reconnection suspended", {
+        ...this.connectionContext,
+        consecutiveFailures: suspension.consecutiveFailures,
+        event: "mcp.server.reconnect.suspended",
+        mcpServerName: name,
+        status: "failed",
+        transport: config.type,
+      });
+      this.emitStatusChange(name, "connecting", status, "reconnect-suspended");
+    } else {
+      this.emitStatusChange(name, "connecting", status, "connect-failed");
+    }
     this.logger?.warn("MCP server connection failed", {
       ...this.connectionContext,
       connectDurationMs,
@@ -2031,4 +2182,52 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function isPeerAnsweredError(error: unknown): boolean {
   if (error instanceof ProtocolError) return true;
   return isRecord(error) && typeof error.code === "number";
+}
+
+/**
+ * 自动重连被拒（挂起/冷却）时的模型指引文案（specs/mcp-lifecycle-ttl-approval.md R2.1）。
+ * 失败文案即模型的下一步：说明事实（哪个 server、失败几次/还需等待多久），显式给出
+ * 「不要在循环里重试」的指引与正确动作；不粘贴堆栈、不含 env/凭据。
+ */
+function buildMcpReconnectRefusalError(
+  serverName: string,
+  verdict: Exclude<McpReconnectGateVerdict, { allowed: true }>,
+): Error {
+  if (verdict.reason === "suspended") {
+    return new Error(
+      `MCP server "${serverName}" is unavailable: automatic reconnection was suspended after ${verdict.consecutiveFailures} consecutive connection failures. Do not retry this tool in a loop - every attempt will fail until the server recovers. Tell the user this MCP server needs attention (check its configuration and logs); reconnecting it explicitly from the MCP settings will resume automatic recovery.`,
+    );
+  }
+  const retryAfterSeconds = Math.max(1, Math.ceil(verdict.retryAfterMs / 1000));
+  return new Error(
+    `MCP server "${serverName}" is unavailable: its last automatic reconnection failed and the next attempt is throttled for about ${retryAfterSeconds}s. Do not retry this tool in a loop; continue with other work or report the failure to the user.`,
+  );
+}
+
+/** 工具调用发现 server 未连接时的失败文案（R2.1）：保留既有前缀，追加模型指引。 */
+function buildMcpNotConnectedMessage(serverName: string, status?: McpServerStatus): string {
+  const base = `MCP server is not connected: ${serverName}`;
+  const suspension = status?.reconnectSuspension;
+  if (suspension) {
+    return `${base} (automatic reconnection suspended after ${suspension.consecutiveFailures} consecutive failures). Do not retry this tool in a loop; tell the user the MCP server needs attention - an explicit reconnect from the MCP settings will resume automatic recovery.`;
+  }
+  return `${base}. Do not retry this tool in a loop while the server stays disconnected; continue with other work or report the failure to the user.`;
+}
+
+/**
+ * 懒重连触发面（spec R1）：disconnected（server 进程关闭 / ping 判死）与非鉴权类
+ * failed。failed 也进懒重连——否则一次自动重连失败后 record 永远停在 failed，
+ * 崩溃预算无法经工具调用耗尽，server 只能等显式操作复活。鉴权类失败例外：
+ * OAuth 授权未完成 / 官方 origin 不可信的自动重试会重新拉起浏览器授权流程，
+ * 那是显式操作的副作用面，不由工具调用循环触发（对齐参考机制的
+ * needsInteractiveAuth 独立分支）。
+ */
+function isAutoReconnectableStatus(status: McpServerStatus): boolean {
+  if (status.status === "disconnected") return true;
+  return (
+    status.status === "failed" &&
+    status.failureKind !== "oauth_authorization_failed" &&
+    status.failureKind !== "official_origin_untrusted" &&
+    status.authorization === undefined
+  );
 }

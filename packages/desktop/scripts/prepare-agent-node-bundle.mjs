@@ -113,6 +113,18 @@ const officialPluginPackages = [
     runtimeBuildScript: "scripts/build.mjs",
     stagedPath: "packages/node-repl-host",
   },
+  {
+    // AgentTeams：dist 依赖型官方插件（esbuild 单文件 MCP server，dist 不入库），
+    // 默认启用（specs/agent-teams-derived-config.md R1/R2）——桌面安装包缺它的 dist
+    // 会让全量用户首启 seed 出「市场可见但不可用」的插件。构建经 runtimeBuildScript
+    //（tsc 声明 + esbuild bundle），stage 走下方顶层白名单（含 dist）。
+    packageName: "@acode/agent-teams-plugin",
+    relativePath: "apps/acode-cli/packages/agent-teams-plugin",
+    requiresRuntime: true,
+    requiredRuntimePaths: ["dist/mcp/server.js"],
+    runtimeBuildScript: "scripts/build.mjs",
+    stagedPath: "packages/agent-teams-plugin",
+  },
 ];
 // 随 CLI 内置的技能包（不是插件）：bootstrap 的 resolveBundledSkillRoots 沿官方插件同款候选目录
 // 在 acode.cjs 旁找 packages/bundled-skills 并原地读取。漏 stage 它，桌面包的 /workflow 会展开成

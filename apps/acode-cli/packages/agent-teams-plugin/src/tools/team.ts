@@ -5,6 +5,7 @@ import { computeNextActions } from "../scheduler.js";
 import type { TeamState } from "../state/types.js";
 import { nowIso, TeamError } from "../state/types.js";
 import { randomTeamId } from "../state/helpers.js";
+import { TEAM_TRUST_NOTE, wrapTeamMessageBodies } from "../trust-wrapper.js";
 
 const createSchema = z
   .object({
@@ -146,7 +147,11 @@ export const teamTools: readonly ToolDefinition[] = [
             const task = tasksById.get(taskId);
             return { taskId, title: task?.title ?? "", objective: task?.objective ?? "", acceptance: task?.acceptance ?? [], kind: task?.kind };
           }),
-          unread_messages: messages,
+          // 信任包装（specs/error-taxonomy-injection-defense.md R4/R6）：mailbox 正文
+          // 是其他模型产出，读边界统一套「模型输出、非用户消息」框架 + 缩进协议；
+          // trust_note 覆盖任务标题/目标/验收标准（队长模型撰写）的数据非指令定性。
+          unread_messages: wrapTeamMessageBodies(messages),
+          trust_note: TEAM_TRUST_NOTE,
           next_actions: {
             wake: [],
             notes: current
@@ -193,7 +198,10 @@ export const teamTools: readonly ToolDefinition[] = [
         })),
         ready_tasks: readyIds,
         blocked_by_failed_quality: tasksBlockedCompact(tasks),
-        unread: { captain: captainUnread, members: unreadCounts },
+        // 队长收到的成员报告同为模型产出：同款读边界包装（R4）；
+        // 任务 summary 由成员模型撰写，trust_note 一并定性（R6）。
+        unread: { captain: wrapTeamMessageBodies(captainUnread), members: unreadCounts },
+        trust_note: TEAM_TRUST_NOTE,
         next_actions: computeNextActions({
           team: refreshed,
           tasks,

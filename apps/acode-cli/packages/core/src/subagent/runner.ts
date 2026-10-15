@@ -5,6 +5,7 @@
 
 import {
   AgentErrorCode,
+  AgentLaunchFailureReason,
   CoreErrorType,
   DEFAULT_MODEL_STREAM_IDLE_TIMEOUT_MS,
   SessionEventType,
@@ -21,6 +22,7 @@ import {
   type BackgroundResultOriginMeta,
   type AgentCompletedOutput,
   type AgentOutput,
+  type CoreError,
   type Logger,
   type ModelUsage,
   type SessionEvent,
@@ -56,6 +58,7 @@ import {
 } from "./profile.js";
 import { EXPLORE_AGENT_ALLOWED_TOOLS } from "./explore-tools.js";
 import { formatLocalAgentTaskNotification } from "./completion-notification.js";
+import { wrapSubagentHandback } from "./handback-trust.js";
 import { filterSubagentChildToolNames } from "./tool-policy.js";
 import {
   subagentEdgeCommandFromEvent,
@@ -260,6 +263,9 @@ export function createExploreSubagentPort(options: ExploreSubagentPortOptions): 
             {
               context: {
                 code: AgentErrorCode.BACKGROUND_UNAVAILABLE,
+                // 闭集 reason（specs/error-taxonomy-injection-defense.md R2.1）：
+                // 遥测/UI 可聚合；message 保持自由文本承担模型可读的下一步指引。
+                reason: AgentLaunchFailureReason.BackgroundUnavailable,
                 agentType: rawRequest.agentType,
                 parentToolCallId: rawRequest.parentToolCallId,
               },
@@ -299,7 +305,7 @@ export function createExploreSubagentPort(options: ExploreSubagentPortOptions): 
         // 启动元数据写入失败时，child runtime 还没有开始执行；
         // 保留 running task 会让父 runtime 误以为仍有后台任务并持续 defer。
         registry.remove(lifecycle.agentId);
-        throw error;
+        throw wrapStartupMetadataWriteFailure(error, lifecycle, request);
       }
 
       const taskAbort = createSubagentTaskAbortController(
@@ -528,6 +534,7 @@ export function createExploreSubagentPort(options: ExploreSubagentPortOptions): 
           context: withErrorPayloadRole(
             {
               code: AgentErrorCode.CHILD_RUNTIME_FAILED,
+              reason: AgentLaunchFailureReason.ChildRuntimeFailed,
               agentId: lifecycle.agentId,
               agentType: request.agentType,
               parentToolCallId: request.parentToolCallId,
@@ -566,7 +573,7 @@ export function createExploreSubagentPort(options: ExploreSubagentPortOptions): 
       } catch (error) {
         // setup 失败时移除 registry 记录，避免 fake running background task。
         registry.remove(lifecycle.agentId);
-        throw error;
+        throw wrapStartupMetadataWriteFailure(error, lifecycle, request);
       }
 
       const taskAbort = createSubagentTaskAbortController(abortControllers, lifecycle.agentId);
@@ -839,6 +846,7 @@ function resolveAgentProfileForRequest(
       {
         context: {
           code: AgentErrorCode.UNKNOWN_AGENT_TYPE,
+          reason: AgentLaunchFailureReason.UnknownAgentType,
           agentType: request.agentType,
           matches: resolution.matches,
           parentToolCallId: request.parentToolCallId,
@@ -854,6 +862,7 @@ function resolveAgentProfileForRequest(
     {
       context: {
         code: AgentErrorCode.UNKNOWN_AGENT_TYPE,
+        reason: AgentLaunchFailureReason.UnknownAgentType,
         agentType: request.agentType,
         availableAgentTypes: resolution.availableAgentTypes,
         parentToolCallId: request.parentToolCallId,
@@ -1247,8 +1256,12 @@ async function runAgentToCompletion(
           context: {
             agentType: request.agentType,
             code: AgentErrorCode.TREE_BUDGET_EXCEEDED,
+            // reason 收全局闭集 token；claim.reason（agents/tokens/live）是树预算的
+            // 局部拒绝维度，移到 budgetReason，不与全局词表混键
+            // （specs/error-taxonomy-injection-defense.md R2.1）。
+            reason: AgentLaunchFailureReason.TreeBudgetExceeded,
+            budgetReason: claim.reason,
             parentToolCallId: request.parentToolCallId,
-            reason: claim.reason,
           },
           recoverable: true,
         },
@@ -1352,7 +1365,10 @@ async function runAgentToCompletion(
     content: [
       {
         type: "text",
-        text: childResult.response,
+        // hand-back 信任包装（specs/error-taxonomy-injection-defense.md R3）：
+        // 单一漏斗——前台 tool result、后台通知 <result>、产物文件三路回流
+        // 全部继承包装；空回复不包装，保留父侧「no output」回退语义。
+        text: wrapSubagentHandback(childResult.response),
       },
     ],
     totalToolUseCount,
@@ -1405,6 +1421,7 @@ function createSubagentActivityWatchdog(options: {
         {
           context: {
             code: AgentErrorCode.CHILD_RUNTIME_FAILED,
+            reason: AgentLaunchFailureReason.InactivityTimeout,
             agentId: options.lifecycle.agentId,
             agentType: options.request.agentType,
             idleMs,
@@ -1476,6 +1493,7 @@ function guardSubagentPromiseWithAbort<T>(
               cause: signal.reason instanceof Error ? signal.reason : undefined,
               context: {
                 code: AgentErrorCode.CHILD_RUNTIME_FAILED,
+                reason: AgentLaunchFailureReason.CancelledBeforeCompletion,
                 agentId: lifecycle.agentId,
                 agentType: request.agentType,
                 parentToolCallId: request.parentToolCallId,
@@ -2267,6 +2285,37 @@ async function writeAgentMetadataFile(
       null,
       2,
     )}\n`,
+  );
+}
+
+/**
+ * 启动元数据写入失败的统一包装（specs/error-taxonomy-injection-defense.md R2.1）：
+ * 裸 rethrow 改为 wrapper 角色的 CoreError——context.reason 收闭集 token
+ * （startup_metadata_write_failed），cause 保留原始错误。error-payload 投影对
+ * wrapper frame 让位：主摘要仍取最深非 wrapper frame 的 message，UI 可见文本不回退。
+ */
+function wrapStartupMetadataWriteFailure(
+  error: unknown,
+  lifecycle: SubagentLifecycle,
+  request: SubagentRunRequest,
+): CoreError {
+  return createCoreError(
+    CoreErrorType.ToolExecutionFailed,
+    "Subagent startup metadata could not be written; the agent was not started",
+    {
+      cause: error instanceof Error ? error : undefined,
+      context: withErrorPayloadRole(
+        {
+          code: AgentErrorCode.CHILD_RUNTIME_FAILED,
+          reason: AgentLaunchFailureReason.StartupMetadataWriteFailed,
+          agentId: lifecycle.agentId,
+          agentType: request.agentType,
+          parentToolCallId: request.parentToolCallId,
+        },
+        ErrorPayloadRole.Wrapper,
+      ),
+      recoverable: true,
+    },
   );
 }
 

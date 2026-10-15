@@ -32,4 +32,7 @@ const WEBFETCH_ERROR_CODE_MAP = {
   ResponseTooLarge: "webfetch_response_too_large",
   FetchFailed: "webfetch_fetch_failed",
   ProcessingFailed: "webfetch_processing_failed",
+  // 溯源闸门拒绝（specs/error-taxonomy-injection-defense.md R5）：不可重试
+  // （retryable 仅 FetchFailed/ProcessingFailed），与「重试必失败」的闸门语义一致。
+  UnprovenancedUrl: "webfetch_unprovenanced_url",
 } as const;

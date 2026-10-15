@@ -106,6 +106,9 @@ export function createDefaultSubagentPort(
     outputRootDir: this.config.subagents?.outputRootDir,
     profiles: this.config.subagents?.profiles,
     builtInModelSelectionOverrides: this.config.subagents?.builtInModelSelectionOverrides,
+    // GAP-A 桥转发（specs/agent-teams-derived-config.md R7）：config 里的派生边界
+    // live 读取回调必须传到 port，否则 runner 只见启动快照，整条 live 链是死代码。
+    loadCurrentProfiles: this.config.subagents?.loadCurrentProfiles,
     runtimeTaskRegistry: this.runtimeTaskRegistry,
     // 编排方案 Phase 4 第二批（specs/subagent-nesting-budget.md R4/R5-1）：树级预算
     // **只计嵌套派发**——本 runtime 自己是子代理（subagentDepth ≥ 1）时才下发预算键，
@@ -176,6 +179,9 @@ export function createDefaultSubagentPort(
         profileSelection: request.profile.modelSelection,
         parentSelection: this.getSessionModelSelection(),
         overrideSelection: options?.modelOverride?.selection,
+        // AgentTeams 成员 fail-closed（specs/agent-teams-derived-config.md R4）：
+        // 标记由 bootstrap 的插件覆盖烘焙写入 profile，无模型配置时拒绝派生。
+        requireExplicitModelSelection: request.profile.requireExplicitModelSelection,
         resolveSelection: deps.resolveEffectiveModelSelection,
       });
       const modelOverride = options?.modelOverride;

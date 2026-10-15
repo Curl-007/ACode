@@ -57,6 +57,7 @@ export const REMOTE_AGENT_OFFICIAL_PLUGIN_REQUIRED_RELATIVE_PATHS = [
   // AgentTeams 的必需资产与 bootstrap official-plugin-definitions.ts 的 requiredSeedPaths
   // 镜像（manifest 由 PACKAGE_NAMES 派生，dist 是 esbuild 产物、不入库，缺它即
   // 「市场可见但 MCP 起不来」的半启动状态）。
+  "agent-teams-plugin/.mcp.json",
   "agent-teams-plugin/dist/mcp/server.js",
   "agent-teams-plugin/agents/member.md",
   "agent-teams-plugin/commands/team.md",

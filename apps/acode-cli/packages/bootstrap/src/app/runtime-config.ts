@@ -1,6 +1,11 @@
 import type { ConfigResult } from "@acode/adapters/config";
 import { resolveInitialModelSelection, type ModelSelectionOptions } from "@acode/provider";
-import { resolveBashTimeoutPolicy, type AgentProfile, type AgentRuntimeConfig } from "@acode/core";
+import {
+  resolveBashTimeoutPolicy,
+  type AgentProfile,
+  type AgentRuntimeConfig,
+  type LoadCurrentSubagentProfiles,
+} from "@acode/core";
 import { type BuiltInSubagentModelSelectionOverrides } from "@acode/shared";
 import {
   type CollaborationMode,
@@ -56,6 +61,11 @@ export function resolveAppRuntimeConfig(input: {
   projectMcpTrust?: ProjectMcpTrustSnapshot;
   subagentOutputRootDir: string;
   subagentProfiles?: readonly AgentProfile[];
+  /**
+   * 派生边界读取回调；由 create-app 组合（含无覆盖插件基线与 bundled live 语义，
+   * app/subagent-live-profiles-loader.ts）后注入 core（specs/agent-teams-derived-config.md R6/R7）。
+   */
+  subagentLoadCurrentProfiles?: LoadCurrentSubagentProfiles;
   storageRoot?: string;
   workingDirectory: string;
   workspaceIdentity?: string;
@@ -70,6 +80,7 @@ export function resolveAppRuntimeConfig(input: {
     pluginRuntimeFeatures,
     subagentOutputRootDir,
     subagentProfiles = [],
+    subagentLoadCurrentProfiles,
     workingDirectory,
     workspaceIdentity,
   } = input;
@@ -208,6 +219,11 @@ export function resolveAppRuntimeConfig(input: {
         ...runtimeBuiltInModelSelectionOverrides,
       },
       profiles: [...(options.runtimeConfig?.subagents?.profiles ?? []), ...subagentProfiles],
+      // 派生边界 live 重读回调（specs/agent-teams-derived-config.md R7）：缺席时
+      // core 沿用启动快照，旧宿主/测试替身行为逐字节不变。
+      ...(subagentLoadCurrentProfiles
+        ? { loadCurrentProfiles: subagentLoadCurrentProfiles }
+        : {}),
     },
     // K6 ambient flag（specs/ambient-budget-scheduler.md R5 红线）：默认关闭——开启是
     // 显式用户决策。对齐 runtimeFeatures 的「装配期推导注入」形态：CLI/协议

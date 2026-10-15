@@ -2,7 +2,15 @@ import { posix } from "node:path";
 
 export const REMOTE_AGENT_OFFICIAL_PLUGIN_DIR_NAME = "packages";
 
-export const REMOTE_AGENT_OFFICIAL_PLUGIN_PACKAGE_NAMES = ["browser-use-plugin"] as const;
+export const REMOTE_AGENT_OFFICIAL_PLUGIN_PACKAGE_NAMES = [
+  "browser-use-plugin",
+  // AgentTeams 默认启用（apps/acode-cli/specs/agent-teams-derived-config.md R1/R2），
+  // 远端 shared-host 同样承载：MCP server 是纯 Node stdio 进程、团队状态落远端
+  // workspace，与 bua/cua（远端明确不承载，见下方注释）不同。dev 远端部署从工作树
+  // stage，需要本地先 `pnpm --filter @acode/agent-teams-plugin build`（与本地 seed
+  // 对 dist 的要求同款）；生产 remote 由 prepare-prebuilds.mjs 构建后 stage。
+  "agent-teams-plugin",
+] as const;
 
 export const REMOTE_AGENT_OFFICIAL_PLUGIN_INCLUDED_TOP_LEVEL_PATHS = [
   ".mcp.json",
@@ -46,6 +54,14 @@ export const REMOTE_AGENT_OFFICIAL_PLUGIN_REQUIRED_RELATIVE_PATHS = [
   "browser-use-plugin/skills/control-browser/SKILL.md",
   "browser-use-plugin/skills/web-gui-tester/SKILL.md",
   // 仅校验 manifest 无法发现文档插件缺少技能正文或视觉评审 Agent。
+  // AgentTeams 的必需资产与 bootstrap official-plugin-definitions.ts 的 requiredSeedPaths
+  // 镜像（manifest 由 PACKAGE_NAMES 派生，dist 是 esbuild 产物、不入库，缺它即
+  // 「市场可见但 MCP 起不来」的半启动状态）。
+  "agent-teams-plugin/.mcp.json",
+  "agent-teams-plugin/dist/mcp/server.js",
+  "agent-teams-plugin/agents/member.md",
+  "agent-teams-plugin/commands/team.md",
+  "agent-teams-plugin/skills/agent-teams/SKILL.md",
 ] as const;
 
 export function buildRemoteAgentOfficialPluginDir(remoteProviderDir: string): string {

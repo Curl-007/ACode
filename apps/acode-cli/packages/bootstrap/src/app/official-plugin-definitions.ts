@@ -1,22 +1,20 @@
 import { ACODE_OFFICIAL_PLUGIN_MARKETPLACE } from "@acode/contracts";
+import {
+  DOCUMENT_STYLE_OFFICIAL_PLUGIN_DEFINITIONS,
+  OFFICIAL_ACODE_GUIDE_REQUIRED_SEED_PATHS,
+  OFFICIAL_BROWSER_USE_REQUIRED_SEED_PATHS,
+  OFFICIAL_CUA_REQUIRED_SEED_PATHS,
+  OFFICIAL_NODE_REPL_HOST_REQUIRED_SEED_PATHS,
+  OFFICIAL_PLUGIN_ICON,
+  ZAI_AUTHOR,
+  type OfficialPluginDefinition,
+} from "./official-plugin-shared.js";
 
-// 内置插件的商店信息 seed（原样写入官方 marketplace.json 的条目 raw，键名与 CDN 目录
-// schema 一致：displayName_i18n / examplePrompts_i18n 等），解析复用 adapter 的
-// parseEntryStoreListing。icon 指向官方 assets CDN；请求失败时 UI 会安全降级为默认图标。
-export interface OfficialPluginListingSeed {
-  displayName?: string;
-  displayName_i18n?: Record<string, string>;
-  description_i18n?: Record<string, string>;
-  category?: string;
-  author?: { name: string; url?: string };
-  icon?: string;
-  homepage?: string;
-  privacyPolicy?: string;
-  termsOfService?: string;
-  heroImage?: string;
-  examplePrompts?: string[];
-  examplePrompts_i18n?: Record<string, string[]>;
-}
+// 类型与共享常量因架构 ratchet 400 行上限下沉到 official-plugin-shared.ts
+// （specs/agent-teams-derived-config.md R8）；对外导出面经 re-export 保持不变，
+// 既有消费方无需改 import 路径。
+export type { OfficialPluginDefinition, OfficialPluginListingSeed } from "./official-plugin-shared.js";
+export { OFFICIAL_BROWSER_USE_REQUIRED_SEED_PATHS };
 
 const OFFICIAL_BROWSER_USE_PLUGIN_NAME = "browser-use";
 export const OFFICIAL_BROWSER_USE_PLUGIN_ID = `${OFFICIAL_BROWSER_USE_PLUGIN_NAME}@${ACODE_OFFICIAL_PLUGIN_MARKETPLACE}`;
@@ -33,59 +31,6 @@ export const OFFICIAL_NODE_REPL_HOST_PLUGIN_NAME = "node-repl-host";
 export const OFFICIAL_NODE_REPL_HOST_PLUGIN_ID = `${OFFICIAL_NODE_REPL_HOST_PLUGIN_NAME}@${ACODE_OFFICIAL_PLUGIN_MARKETPLACE}`;
 const OFFICIAL_CUA_PLUGIN_NAME = "computer-use";
 export const OFFICIAL_CUA_PLUGIN_ID = `${OFFICIAL_CUA_PLUGIN_NAME}@${ACODE_OFFICIAL_PLUGIN_MARKETPLACE}`;
-
-export interface OfficialPluginDefinition {
-  // 内容型 plugin (无 MCP server / 无系统依赖) 可以设为 true,
-  // 这样用户首次 `/skill <name>` 就能用,不必先 `acode plugins enable`。
-  // 默认 false 保持 ios-simulator / android-emulator 这类重负载 plugin 原来行为。
-  defaultEnabled?: boolean;
-  listing?: OfficialPluginListingSeed;
-  /**
-   * 由宿主为该官方插件提供、但不属于 plugin manifest 的 MCP server。
-   * 仅用于产品归属和设置页状态展示；运行时仍保留宿主 identity。
-   */
-  hostMcpServerNames?: readonly string[];
-  name: string;
-  /** filesystem/SEA seed 缺少任一项时拒绝生成残缺的官方插件缓存。 */
-  requiredSeedPaths?: readonly string[];
-  rootCandidates: readonly string[];
-  /** Extra top-level paths intentionally staged as plugin runtime assets. */
-  runtimeTopLevelPaths?: readonly string[];
-  version: string;
-}
-
-const ZAI_AUTHOR = { name: "Z.ai", url: "https://z.ai" } as const;
-// 审计版不连接官方 CDN；使用内嵌图标，保留本地插件定义。
-const OFFICIAL_PLUGIN_ICON = "data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2232%22 height=%2232%22%3E%3Crect width=%2232%22 height=%2232%22 rx=%226%22 fill=%22%23666%22/%3E%3C/svg%3E";
-
-const OFFICIAL_NODE_REPL_HOST_REQUIRED_SEED_PATHS = ["dist/mcp/server.js"] as const;
-
-export const OFFICIAL_BROWSER_USE_REQUIRED_SEED_PATHS = [
-  "docs/api.json",
-  "docs/documents.json",
-  "docs/overview.md",
-  // documents.json 已注册 recording lookup；若不强制校验正文，会 seed 出无法读取录屏指南的残缺插件。
-  "docs/recording.md",
-  "docs/workflow.md",
-  "scripts/browser-client.mjs",
-  "skills/control-browser/SKILL.md",
-  "skills/web-gui-tester/SKILL.md",
-] as const;
-
-const OFFICIAL_CUA_REQUIRED_SEED_PATHS = [
-  "docs/computer-use.md",
-  "scripts/computer-use-client.mjs",
-  "skills/computer-use/SKILL.md",
-] as const;
-
-// acode-guide 原本没有 requiredSeedPaths，seed 丢文件时会静默装出一个
-// 没有 /workflow 命令的插件——症状是命令不存在，没有任何诊断。commands/ 与技能正文都钉住。
-const OFFICIAL_ACODE_GUIDE_REQUIRED_SEED_PATHS = [
-  "commands/workflow.md",
-  "skills/dynamic-workflows/SKILL.md",
-  "skills/dynamic-workflows/examples.md",
-  "skills/dynamic-workflows/patterns.md",
-] as const;
 
 export const OFFICIAL_PLUGIN_DEFINITIONS: readonly OfficialPluginDefinition[] = [
   {
@@ -153,36 +98,7 @@ export const OFFICIAL_PLUGIN_DEFINITIONS: readonly OfficialPluginDefinition[] = 
     // package、manifest、definition 三处版本应保持一致，避免发布内容和安装版本再次分叉。
     version: "0.5.1",
   },
-  ...(
-    [
-      ["documents", "docx", "Documents", "Word文档", "0.1.7"],
-      ["pdf", "pdf", "PDF", "PDF", "0.2.0"],
-      ["presentations", "pptx", "Presentations", "演示文档", "0.1.7"],
-      ["spreadsheets", "xlsx", "Spreadsheets", "电子表格", "0.1.7"],
-    ] as const
-  ).map(
-    ([name, skill, displayName, chineseName, version]): OfficialPluginDefinition => ({
-      defaultEnabled: true,
-      listing: {
-        author: ZAI_AUTHOR,
-        category: "productivity",
-        displayName,
-        displayName_i18n: { "zh-CN": chineseName },
-        // 复用已发布的文档图标，拆分插件无需依赖新 CDN 资源。
-        icon: OFFICIAL_PLUGIN_ICON,
-        description_i18n: { "zh-CN": `创建、编辑与审阅${chineseName}（${skill.toUpperCase()}）。` },
-      },
-      name,
-      requiredSeedPaths: ["agents/visual-judge.md", `skills/${skill}/SKILL.md`],
-      rootCandidates: [
-        `packages/${name}-plugin`,
-        `../${name}-plugin`,
-        `../../${name}-plugin`,
-        `../../../${name}-plugin`,
-      ],
-      version,
-    }),
-  ),
+  ...DOCUMENT_STYLE_OFFICIAL_PLUGIN_DEFINITIONS,
   {
     // 沿用原聚合文档插件的官方搜图能力，仅拆出独立开关；认证仍由官方 MCP adapter 注入。
     defaultEnabled: true,
@@ -361,6 +277,51 @@ export const OFFICIAL_PLUGIN_DEFINITIONS: readonly OfficialPluginDefinition[] = 
     // 这里的 version 追踪上游 acode-cua runtime 版本，使插件 UI 展示、缓存路径、
     // marketplace 条目都对齐；具体版本由原子 producer bump 工作流维护。
     version: "0.6.3",
+  },
+  {
+    // 默认启用是 2026-10-15 产品拍板（specs/agent-teams-derived-config.md R1），
+    // 与源分支的 opt-in 形态不同：开箱即得 14 个 agent_teams_* 工具、/team 命令与
+    // agent-teams:member subagent。这是对「defaultEnabled 仅限内容型插件」旧约定的
+    // 显式例外（本插件携带 stdio MCP server，会话按需拉起子进程）；例外理由与
+    // 四份发布暂存清单的硬验收登记在 spec R1/R2。改默认值需同步
+    // packages/shared/src/plugin-marketplaces.ts 的镜像名单（parity 单测机械对照两者）。
+    //
+    // MCP server 通过 .mcp.json 声明为 stdio 子进程，状态通知走 acode-plugin-state: 前缀
+    // （宿主未接线时被优雅忽略，不影响工具运行）。dist/mcp/server.js 是 esbuild 产物
+    // （gitignore，不入库），发布链四份清单负责构建暂存；seed 完整性门把它钉为必需资产。
+    defaultEnabled: true,
+    listing: {
+      author: ZAI_AUTHOR,
+      category: "productivity",
+      displayName: "AgentTeams",
+      displayName_i18n: { "zh-CN": "智能体团队" },
+      icon: OFFICIAL_PLUGIN_ICON,
+      description_i18n: {
+        "zh-CN": "把当前会话升级为队长，组建成员团队：共享任务 DAG、成员邮箱直连、指令式调度与只读团队面板。",
+      },
+      examplePrompts: [
+        "Use AgentTeams to review the last two commits and fix findings",
+        "组建一个团队并行实现这三个模块",
+      ],
+      examplePrompts_i18n: {
+        "zh-CN": ["用 AgentTeams 审查最近两个提交并修复问题", "组建一个团队并行实现这三个模块"],
+      },
+    },
+    name: "agent-teams",
+    rootCandidates: [
+      "packages/agent-teams-plugin",
+      "../agent-teams-plugin",
+      "../../agent-teams-plugin",
+      "../../../agent-teams-plugin",
+    ],
+    requiredSeedPaths: [
+      ".mcp.json",
+      "agents/member.md",
+      "commands/team.md",
+      "dist/mcp/server.js",
+      "skills/agent-teams/SKILL.md",
+    ],
+    version: "0.1.0",
   },
 ];
 

@@ -1,0 +1,51 @@
+{
+  "name": "agent-teams",
+  "version": "0.1.0",
+  "description": "AgentTeams 多智能体协作：当前会话成为队长，组建可续跑的成员团队，把目标拆成依赖任务 DAG，经成员邮箱直连协作，由指令式调度推进，并提供只读团队面板。",
+  "description_i18n": {
+    "en": "AgentTeams multi-agent collaboration: the current session becomes a captain, assembles continuable members, splits a goal into a dependency task DAG, coordinates via member mailboxes with directive scheduling, and exposes a read-only team panel.",
+    "zh-CN": "AgentTeams 多智能体协作：当前会话成为队长，组建可续跑的成员团队，把目标拆成依赖任务 DAG，经成员邮箱直连协作，由指令式调度推进，并提供只读团队面板。"
+  },
+  "author": {
+    "name": "Z.ai",
+    "url": "https://z.ai"
+  },
+  "keywords": ["agent-teams", "multi-agent", "orchestration", "task-dag"],
+  "userConfig": {
+    "stateDir": {
+      "title": "State directory override",
+      "description": "Team state root. Empty (default) means <workspace>/.agent-teams.",
+      "type": "directory",
+      "default": "",
+      "required": false
+    },
+    "maxMembers": {
+      "title": "Maximum members per team",
+      "description": "Upper bound of team roster size (captain excluded).",
+      "type": "number",
+      "default": 8,
+      "required": false
+    },
+    "maxReassignRounds": {
+      "title": "Maximum reassign rounds per task",
+      "description": "Upper bound of how many times a single task can be reassigned before the captain must stop and report. Reassigning beyond this is refused.",
+      "type": "number",
+      "default": 3,
+      "required": false
+    },
+    "panelEnabled": {
+      "title": "Enable read-only team panel",
+      "description": "Serve a localhost read-only panel from the MCP server process.",
+      "type": "boolean",
+      "default": true,
+      "required": false
+    },
+    "inheritCaptainModel": {
+      "title": "Inherit captain model for members",
+      "description": "Off (default): use the configured AgentTeams member model, then the general-purpose subagent model; refuse to spawn if neither is configured. On: members without a dedicated model inherit the captain model.",
+      "type": "boolean",
+      "default": false,
+      "required": false
+    }
+  }
+}

@@ -9,8 +9,6 @@ import {
 import type { Logger, PluginMetadata } from "@acode/contracts";
 import {
   BUILT_IN_SUBAGENT_NAMES,
-  createAgentStateId,
-  createPluginAgentStateId,
   parsePluginSubagentModelSelectionOverrides,
   modelSelectionSchema,
   type BuiltInSubagentModelSelectionOverrides,
@@ -22,6 +20,23 @@ import {
   CORE_RESERVED_AGENT_NAMES,
   resolveBundledProfileModelSelection,
 } from "./app/bundled-agents.js";
+// 插件 profile 构造与模型覆盖单点在 subagent-plugin-overrides.ts（启动装配与派生
+// 边界 live 刷新共用，specs/agent-teams-derived-config.md R3/R8）；禁用/清洗谓词与
+// 状态形状单点在 subagent-profile-shared.ts；live 重读在 subagent-live-state.ts。
+import {
+  applyPluginAgentModelOverrides,
+  countBareProfileNames,
+  namespacePluginAgentProfile,
+  parsePluginAgentProfile,
+  type ParsedPluginAgentProfile,
+} from "./subagent-plugin-overrides.js";
+import {
+  isDisabledUserProfile,
+  isRecord,
+  sanitizeProjectAgentProfile,
+  type AgentStateSnapshot,
+  type LoadACodeAgentProfilesResult,
+} from "./subagent-profile-shared.js";
 
 interface LoadACodeAgentProfilesInput {
   /**
@@ -35,25 +50,14 @@ interface LoadACodeAgentProfilesInput {
   workingDirectory: string;
 }
 
-interface LoadACodeAgentProfilesResult {
-  builtInModelSelectionOverrides: BuiltInSubagentModelSelectionOverrides;
-  pluginAgentModelSelectionOverrides: PluginSubagentModelSelectionOverrides;
-  diagnostics: AgentProfileParseDiagnostic[];
-  profiles: AgentProfile[];
-}
-
 interface LoadPluginAgentProfilesInput {
   logger?: Logger;
   plugins: readonly PluginMetadata[];
   reservedProfileNames?: Iterable<string>;
   /** 来自已完成存储迁移的启动快照；不在插件 loader 另读磁盘或查询账号。 */
   modelSelectionOverrides?: PluginSubagentModelSelectionOverrides;
-}
-
-interface ParsedPluginAgentProfile {
-  bareName: string;
-  plugin: PluginMetadata;
-  profile: AgentProfile;
+  /** 同一启动快照的内置覆盖；AgentTeams 成员的 general-purpose 回退借用它（spec R3）。 */
+  builtInModelSelectionOverrides?: BuiltInSubagentModelSelectionOverrides;
 }
 
 export async function loadACodeAgentProfiles(
@@ -140,17 +144,6 @@ export async function loadACodeAgentProfiles(
   };
 }
 
-function sanitizeProjectAgentProfile(profile: AgentProfile): AgentProfile {
-  if (profile.source !== "project" || profile.permissionMode === undefined) {
-    return profile;
-  }
-
-  // 项目级 .acode/agents/*.md 是仓库内容，不能通过 frontmatter
-  // 把 child runtime 切到 bypass/yolo；用户级与受信插件 profile 不受影响。
-  const { permissionMode: _permissionMode, ...safeProfile } = profile;
-  return safeProfile;
-}
-
 export function loadPluginAgentProfiles(
   input: LoadPluginAgentProfilesInput,
 ): LoadACodeAgentProfilesResult {
@@ -172,21 +165,17 @@ export function loadPluginAgentProfiles(
     }
   }
 
+  // 先构造不含模型覆盖的基线 profile（命名空间名 + 唯一裸名别名），
+  // 再用与派生边界共用的纯函数套用覆盖，保证两处选择优先级完全一致。
   const bareNameCounts = countBareProfileNames(parsedProfiles);
-  const profiles: AgentProfile[] = [];
+  const baseProfiles: AgentProfile[] = [];
   for (const parsed of parsedProfiles) {
-    const override =
-      input.modelSelectionOverrides?.[createPluginAgentStateId(parsed.plugin.id, parsed.bareName)];
-    // 先替换完整选择再展开别名，避免同一插件的两个调用入口使用不同模型/档位。
-    const canonical = {
-      ...namespacePluginAgentProfile(parsed),
-      ...(override ? { modelSelection: override } : {}),
-    };
-    profiles.push(canonical);
+    const canonical = namespacePluginAgentProfile(parsed);
+    baseProfiles.push(canonical);
 
     const bareName = parsed.bareName.trim();
     if (bareNameCounts.get(bareName) === 1 && !reservedProfileNames.has(bareName)) {
-      profiles.push({ ...canonical, name: bareName });
+      baseProfiles.push({ ...canonical, name: bareName });
     } else if (reservedProfileNames.has(bareName)) {
       diagnostics.push({
         code: "agent_ambiguous_name",
@@ -202,6 +191,13 @@ export function loadPluginAgentProfiles(
     }
   }
 
+  const profiles = applyPluginAgentModelOverrides({
+    profiles: baseProfiles,
+    plugins: input.plugins,
+    modelSelectionOverrides: input.modelSelectionOverrides,
+    builtInModelSelectionOverrides: input.builtInModelSelectionOverrides,
+  });
+
   input.logger?.debug("Plugin agent profiles loaded", {
     diagnosticCount: diagnostics.length,
     module: "bootstrap.subagents",
@@ -216,76 +212,7 @@ export function loadPluginAgentProfiles(
   };
 }
 
-function parsePluginAgentProfile(input: {
-  filePath: string;
-  logger?: Logger;
-  plugin: PluginMetadata;
-}): { diagnostic?: AgentProfileParseDiagnostic; parsed?: ParsedPluginAgentProfile } {
-  try {
-    const content = readFileSync(input.filePath, "utf8");
-    const result = parseAgentProfileFromMarkdown({
-      content,
-      path: input.filePath,
-      source: "user",
-    });
-    if (result.diagnostic) {
-      input.logger?.warn("Plugin agent profile diagnostic", {
-        code: result.diagnostic.code,
-        message: result.diagnostic.message,
-        module: "bootstrap.subagents",
-        path: input.filePath,
-        pluginId: input.plugin.id,
-      });
-      if (!result.profile) return { diagnostic: result.diagnostic };
-    }
-    if (!result.profile) return {};
-    return {
-      ...(result.diagnostic ? { diagnostic: result.diagnostic } : {}),
-      parsed: {
-        bareName: result.profile.name,
-        plugin: input.plugin,
-        profile: result.profile,
-      },
-    };
-  } catch (error) {
-    return {
-      diagnostic: {
-        code: "agent_read_failed",
-        message:
-          error instanceof Error ? error.message : `Failed to read plugin agent: ${input.filePath}`,
-        path: input.filePath,
-      },
-    };
-  }
-}
-
-function namespacePluginAgentProfile(parsed: ParsedPluginAgentProfile): AgentProfile {
-  return {
-    ...parsed.profile,
-    name: `${parsed.plugin.name}:${parsed.bareName}`,
-  };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function countBareProfileNames(
-  parsedProfiles: readonly ParsedPluginAgentProfile[],
-): Map<string, number> {
-  const counts = new Map<string, number>();
-  for (const parsed of parsedProfiles) {
-    const name = parsed.bareName.trim();
-    counts.set(name, (counts.get(name) ?? 0) + 1);
-  }
-  return counts;
-}
-
-function readAgentState(storageRoot: string): {
-  builtInModelSelectionOverrides: BuiltInSubagentModelSelectionOverrides;
-  pluginAgentModelSelectionOverrides: PluginSubagentModelSelectionOverrides;
-  disabledAgentIds: Set<string>;
-} {
+function readAgentState(storageRoot: string): AgentStateSnapshot {
   try {
     const raw = readFileSync(join(storageRoot, "v2", "agents-state.json"), "utf8");
     const parsed = JSON.parse(raw) as {
@@ -331,33 +258,6 @@ function normalizeBuiltInSelectionOverrides(
     }
   }
   return result;
-}
-
-function isDisabledUserProfile(
-  profile: AgentProfile,
-  disabledAgentIds: ReadonlySet<string>,
-): boolean {
-  if (profile.source === "user") {
-    return disabledAgentIds.has(
-      createAgentStateId({
-        name: profile.name,
-        scope: "user",
-        source: "user",
-      }),
-    );
-  }
-  // R5：bundled 预置 agent 是 source "built-in" 且 path 指向包内实际文件的 profile，
-  // 可被 disabledAgentIds 禁用；核心 TS 内置二名无 path，维持不可禁用现状。
-  if (profile.source === "built-in" && profile.path !== undefined) {
-    return disabledAgentIds.has(
-      createAgentStateId({
-        name: profile.name,
-        scope: "built-in",
-        source: "built-in",
-      }),
-    );
-  }
-  return false;
 }
 
 function listMarkdownFiles(root: string): string[] {

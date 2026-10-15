@@ -42,7 +42,10 @@ import {
 } from "@acode/contracts";
 // 内置覆盖键集单一事实源 = shared（builtin-subagent-catalog.md R5）；原内联二名 Record
 // 与 runtime/types.ts 同款契约漂移，一并收敛，不再出现硬编码键集。
-import type { BuiltInSubagentModelSelectionOverrides } from "@acode/shared";
+import type {
+  BuiltInSubagentModelSelectionOverrides,
+  PluginSubagentModelSelectionOverrides,
+} from "@acode/shared";
 import { mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -136,6 +139,19 @@ export type EnqueueParentTaskNotification = (
   notification: ParentTaskNotificationCommand,
 ) => undefined;
 
+/** 派生边界读取到的最新候选 profile 快照；每次调用都是独立完整结果。 */
+export interface CurrentSubagentProfiles {
+  builtInModelSelectionOverrides?: BuiltInSubagentModelSelectionOverrides;
+  pluginAgentModelSelectionOverrides?: PluginSubagentModelSelectionOverrides;
+  profiles: readonly AgentProfile[];
+}
+
+/**
+ * 新派生边界的最新配置读取入口。由 bootstrap 注入磁盘读取；core 只消费结果，
+ * 不缓存跨派生的可变 profile 快照（specs/agent-teams-derived-config.md R7）。
+ */
+export type LoadCurrentSubagentProfiles = (agentType: string) => Promise<CurrentSubagentProfiles>;
+
 export interface ExploreSubagentPortOptions {
   runExploreAgent: (
     request: ExploreSubagentRuntimeRequest,
@@ -187,6 +203,8 @@ export interface ExploreSubagentPortOptions {
   outputRootDir?: string;
   profiles?: readonly AgentProfile[];
   builtInModelSelectionOverrides?: BuiltInSubagentModelSelectionOverrides;
+  /** 每次新 launch/run/start 读取最新已提交配置；缺席时只用启动快照。 */
+  loadCurrentProfiles?: LoadCurrentSubagentProfiles;
   runtimeTaskRegistry?: RuntimeTaskRegistry;
   createAgentId?: () => string;
   getAllowedTools?: (profile: AgentProfile) => readonly string[];
@@ -199,9 +217,25 @@ export function createExploreSubagentPort(options: ExploreSubagentPortOptions): 
   const registry = options.runtimeTaskRegistry ?? new InMemoryRuntimeTaskRegistry();
   const abortControllers = new Map<string, AbortController>();
   const borrowedForegroundAgentIds = new Set<string>();
-  const profiles = normalizeAgentProfiles(options.profiles ?? [], {
+  const startupProfiles = normalizeAgentProfiles(options.profiles ?? [], {
     builtInModelSelectionOverrides: options.builtInModelSelectionOverrides,
   });
+  // GAP-A 消费点（specs/agent-teams-derived-config.md R7）：loadCurrentProfiles 在场时，
+  // 每次**新**派生前重读最新已提交配置（bootstrap live 链：最新 user/project markdown +
+  // agents-state、bundled 成员按最新禁用/覆盖重烘焙、插件覆盖从 pristine 基线重算）。
+  // 缺席时沿用启动快照——旧宿主、测试替身与恢复既有 child 的语义逐字节不变。
+  // loader 抛错（含 ACodeAgentConfigError）原样上抛：派生被 fail-closed 拒绝，
+  // 不回退旧快照、不吞错。
+  const resolveDerivationProfiles = async (
+    agentType: string,
+  ): Promise<readonly AgentProfile[]> => {
+    if (!options.loadCurrentProfiles) return startupProfiles;
+    const current = await options.loadCurrentProfiles(agentType);
+    return normalizeAgentProfiles(current.profiles, {
+      builtInModelSelectionOverrides:
+        current.builtInModelSelectionOverrides ?? options.builtInModelSelectionOverrides,
+    });
+  };
   const autoBackgroundMs = normalizeAutoBackgroundMs(options.autoBackgroundMs);
 
   const port: SubagentPort & { start: NonNullable<SubagentPort["start"]> } = {
@@ -209,7 +243,8 @@ export function createExploreSubagentPort(options: ExploreSubagentPortOptions): 
       rawRequest: SubagentLaunchRequest,
       launchOptions?: SubagentLaunchOptions,
     ): Promise<AgentOutput> {
-      const { profile, request } = resolveAgentProfileForRequest(profiles, rawRequest);
+      const derivationProfiles = await resolveDerivationProfiles(rawRequest.agentType);
+      const { profile, request } = resolveAgentProfileForRequest(derivationProfiles, rawRequest);
       const executionRequest = toSubagentExecutionRequest(request);
       // 三态判定（subagent-background-tristate.md R1）：显式 false 强制前台并压过
       // profile.background 默认；仅 undefined 才跟随 profile。
@@ -244,7 +279,8 @@ export function createExploreSubagentPort(options: ExploreSubagentPortOptions): 
       rawRequest: SubagentRunRequest,
       runOptions?: SubagentRunOptions,
     ): Promise<AgentOutput> {
-      const { profile, request } = resolveAgentProfileForRequest(profiles, rawRequest);
+      const derivationProfiles = await resolveDerivationProfiles(rawRequest.agentType);
+      const { profile, request } = resolveAgentProfileForRequest(derivationProfiles, rawRequest);
       const lifecycle = createSubagentLifecycle(options, request, profile);
       const startedAt = new Date(lifecycle.startedAt);
 
@@ -510,7 +546,8 @@ export function createExploreSubagentPort(options: ExploreSubagentPortOptions): 
       rawRequest: SubagentStartRequest,
       startOptions?: SubagentStartOptions,
     ): Promise<AgentBackgroundedOutput> {
-      const { profile, request } = resolveAgentProfileForRequest(profiles, rawRequest);
+      const derivationProfiles = await resolveDerivationProfiles(rawRequest.agentType);
+      const { profile, request } = resolveAgentProfileForRequest(derivationProfiles, rawRequest);
       const lifecycle = createSubagentLifecycle(options, request, profile);
       const startedAt = new Date(lifecycle.startedAt);
       const output = createAgentBackgroundedOutput(request, lifecycle);
@@ -641,7 +678,9 @@ export function createExploreSubagentPort(options: ExploreSubagentPortOptions): 
     ): Promise<SubagentSendMessageResult> {
       return sendMessageToLocalAgent(
         options,
-        profiles,
+        // SendMessage 是恢复既有 child 的通道，不走 live 重读（spec R7）：
+        // 始终用启动快照，与 resumeFromStore 语义一致。
+        startupProfiles,
         registry,
         abortControllers,
         request,

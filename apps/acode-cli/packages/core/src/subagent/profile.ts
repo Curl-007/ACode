@@ -33,6 +33,14 @@ export interface AgentProfile {
   name: string;
   path?: string;
   permissionMode?: AgentPermissionMode;
+  /**
+   * AgentTeams 成员在 `!inheritCaptainModel` 时的 fail-closed 标记
+   * （specs/agent-teams-derived-config.md R4）：无插件专属覆盖且无可借用的
+   * general-purpose 选择时，resolveSubagentSelection 拒绝派生而不是隐式继承父模型。
+   * 写入方是 bootstrap 的 applyPluginAgentModelOverrides（插件覆盖烘焙单点），
+   * 读取方是 resolveSubagentSelection；用户/项目 Markdown 不产生该标记。
+   */
+  requireExplicitModelSelection?: boolean;
   skills?: readonly string[];
   source: AgentProfileSource;
   systemPrompt: string;

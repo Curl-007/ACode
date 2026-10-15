@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "team": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "${ACODE_PLUGIN_ROOT}/dist/mcp/server.js"
+      ],
+      "env": {
+        "AGENT_TEAMS_STATE_DIR": "${user_config.stateDir}",
+        "AGENT_TEAMS_MAX_MEMBERS": "${user_config.maxMembers}",
+        "AGENT_TEAMS_MAX_REASSIGN_ROUNDS": "${user_config.maxReassignRounds}",
+        "AGENT_TEAMS_PANEL_ENABLED": "${user_config.panelEnabled}"
+      },
+      "enabled": true,
+      "timeoutMs": 600000
+    }
+  }
+}

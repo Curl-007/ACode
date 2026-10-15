@@ -43,6 +43,27 @@ export const officialSeaPlugins = [
     // 导致发布产物不 seed browser-use，进而无法装配宿主 node_repl MCP。
     version: "0.5.1",
   },
+  {
+    // AgentTeams：dist 依赖型官方插件（esbuild 把 TS src 打成单文件 MCP server，
+    // dist 不入库）。构建由 build:sea 的 turbo 前置步（--filter=!@acode/cli）带起
+    // @acode/agent-teams-plugin 的 build script；漏构建时 assertPluginRuntime 提前失败。
+    // requiredSeedPaths 镜像 bootstrap official-plugin-definitions.ts 的同名清单
+    //（specs/agent-teams-derived-config.md R2：四份发布暂存清单登记之一）。
+    marketplace: "acode-plugins-official",
+    name: "agent-teams",
+    packageName: "@acode/agent-teams-plugin",
+    requiresRuntime: true,
+    requiredRuntimePaths: ["dist/mcp/server.js"],
+    requiredSeedPaths: [
+      ".mcp.json",
+      "agents/member.md",
+      "commands/team.md",
+      "dist/mcp/server.js",
+      "skills/agent-teams/SKILL.md",
+    ],
+    rootPath: join("packages", "agent-teams-plugin"),
+    version: "0.1.0",
+  },
 ];
 
 export const collectSeaOfficialPluginAssets = async ({

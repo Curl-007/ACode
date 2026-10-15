@@ -104,6 +104,10 @@
 
 ## 不在本项范围
 
+- **模型（非权限）继承的边界**：本 spec 只管 workspaceRoot 锚定与 resume 模式跟随。
+  子代理模型选择优先级（override > profile > 父继承）归 `resolveSubagentSelection`；
+  AgentTeams 成员的 `inheritCaptainModel` 两分支与 fail-closed 标记见
+  `agent-teams-derived-config.md` R3/R4（2026-10-15 合入批次）。
 - 运行中 child 不接收父事后的模式变更（无传播通道，属新特性）。
 - 子弹窗刻意隐藏「完全访问」授予（`product-projection.ts` 设计内），不放开。
 - 熔断器对工作区外目标的 ask 本体（安全加固 P2 不变量）。

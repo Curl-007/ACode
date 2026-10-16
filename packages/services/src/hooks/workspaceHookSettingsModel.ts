@@ -17,6 +17,7 @@ import {
   type WorkspaceHookSourceInput,
   type WorkspaceHooksConfig,
 } from "@acode/shared/workspace-hook-discovery";
+import { resolveWorkspaceHookDisplayTrustState } from "./workspaceHookValueHash.js";
 
 interface LegacyHookDefinition {
   type?: "command" | "process" | string;
@@ -166,9 +167,23 @@ export function fromProjectSnapshot(input: {
   workspaceIdentity: string;
   workspacePath: string;
   persistentTrustedDigests?: ReadonlySet<string>;
+  /**
+   * 记录派生的等价索引（值哈希扩展，spec: hooks-trust-value-hash.md）：
+   * slot 等价（同位置值变）与改名等价（值同路径变）命中时分类为 stale_digest，
+   * 而非全新 pending_trust；两者都绝不升级 trusted_persistent（runtime 精确 digest 强制）。
+   */
+  persistentTrustEquivalence?: {
+    recordSlotKeys: ReadonlySet<string>;
+    recordDisplayValueHashes: ReadonlySet<string>;
+  };
 }): Hook[] {
   const snapshot = input.snapshot;
   if (!snapshot) return [];
+  const emptyEquivalence = {
+    recordSlotKeys: new Set<string>(),
+    recordDisplayValueHashes: new Set<string>(),
+  };
+  const equivalence = input.persistentTrustEquivalence ?? emptyEquivalence;
   return snapshot.hooks.map((entry) => {
     const source = input.sources[entry.sourceFileIndex];
     if (!source) throw new Error(`Workspace Hook source is missing for ${entry.reviewItemId}`);
@@ -186,9 +201,13 @@ export function fromProjectSnapshot(input: {
         workspaceIdentity: input.workspaceIdentity,
         bundleDigest: snapshot.bundleDigest,
         hookDeclarationDigest: entry.hookDeclarationDigest,
-        trustState: input.persistentTrustedDigests?.has(entry.hookDeclarationDigest)
-          ? "trusted_persistent"
-          : "pending_trust",
+        trustState: resolveWorkspaceHookDisplayTrustState({
+          entry,
+          sourceDiscoveryOrder: source.discoveryOrder,
+          trustedDigests: input.persistentTrustedDigests ?? new Set<string>(),
+          recordSlotKeys: equivalence.recordSlotKeys,
+          recordDisplayValueHashes: equivalence.recordDisplayValueHashes,
+        }),
       },
     });
   });

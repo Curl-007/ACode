@@ -30,6 +30,10 @@ import {
   toACodeHooksEvents,
   type LegacyHooksConfig,
 } from "./workspaceHookSettingsModel.js";
+import {
+  computeWorkspaceHookRecordDisplayValueHash,
+  computeWorkspaceHookRecordSlotKey,
+} from "./workspaceHookValueHash.js";
 
 const SETTINGS_FILE = "settings.json";
 const ACODE_CONFIG_FILE = "config.json";
@@ -165,11 +169,26 @@ async function loadLegacyHooksFromLocation(
  * 注意：存储目录解析（storage.dir 的 ~/、相对路径处理）与 Runtime 侧
  * resolveWorkspaceHookTrustStorePath（adapters）逻辑等价但各自内联——架构上 services
  * 不应反向依赖 adapters，统一需下沉到 shared 层，此处仅记录该重复。
+ *
+ * 值哈希扩展（T2-s5①）：除精确 digest 集合外，同一批记录还派生 slot 等价键与展示
+ * 值哈希两个索引（workspaceHookValueHash.ts，单源计算）——供展示面把「同位置值变」
+ * 与「改名（值同路径变）」分类为 stale_digest 而非全新 pending_trust。任何读取失败/
+ * corrupt 时三个索引一并置空（fail-closed：等价判定不得基于半份记录生效）。
  */
-async function readPersistentWorkspaceHookTrustDigests(
+async function readPersistentWorkspaceHookTrustIndex(
   workspaceIdentity: string,
   logger: ServiceLogger,
-): Promise<{ digests: Set<string>; corrupt: boolean }> {
+): Promise<{
+  digests: Set<string>;
+  slotKeys: Set<string>;
+  displayValueHashes: Set<string>;
+  corrupt: boolean;
+}> {
+  const emptyIndex = () => ({
+    digests: new Set<string>(),
+    slotKeys: new Set<string>(),
+    displayValueHashes: new Set<string>(),
+  });
   const userConfig = (await readJsonFile<Record<string, unknown>>(getConfigPath("acode"))) ?? {};
   const storage = isRecord(userConfig.storage) ? userConfig.storage : {};
   const configured = typeof storage.dir === "string" ? storage.dir.trim() : "";
@@ -191,8 +210,8 @@ async function readPersistentWorkspaceHookTrustDigests(
     content = await readFile(trustFilePath, "utf8");
   } catch (error) {
     if (isNodeError(error, "ENOENT")) {
-      // 文件不存在 ⇒ 合理无记录，返回空集且不标记 corrupt。
-      return { digests: new Set<string>(), corrupt: false };
+      // 文件不存在 ⇒ 合理无记录，返回空索引且不标记 corrupt。
+      return { ...emptyIndex(), corrupt: false };
     }
     // services 层曾直接 console.warn，无法进入统一服务日志文件，也无法在
     // 测试中注入 sink。改用可注入 ServiceLogger；此为低频可恢复降级，使用 warn。
@@ -204,7 +223,7 @@ async function readPersistentWorkspaceHookTrustDigests(
         error: error instanceof Error ? error.message : String(error),
       },
     );
-    return { digests: new Set<string>(), corrupt: true };
+    return { ...emptyIndex(), corrupt: true };
   }
 
   // JSON 语法错误与 schema 校验失败统一判 corrupt（与 runtime/adapters 同判）。
@@ -215,15 +234,19 @@ async function readPersistentWorkspaceHookTrustDigests(
       "Workspace Hook Trust store 结构不符合 schema，已 fail-closed 忽略全部持久信任记录",
       { path: trustFilePath },
     );
-    return { digests: new Set<string>(), corrupt: true };
+    return { ...emptyIndex(), corrupt: true };
   }
 
-  const digests = new Set<string>(
-    parsedStore.file.records
-      .filter((record) => record.workspaceIdentity === workspaceIdentity)
-      .map((record) => record.hookDeclarationDigest),
-  );
-  return { digests, corrupt: false };
+  const index = emptyIndex();
+  for (const record of parsedStore.file.records) {
+    if (record.workspaceIdentity !== workspaceIdentity) continue;
+    index.digests.add(record.hookDeclarationDigest);
+    const slotKey = computeWorkspaceHookRecordSlotKey(record);
+    if (slotKey) index.slotKeys.add(slotKey);
+    const displayValueHash = computeWorkspaceHookRecordDisplayValueHash(record);
+    if (displayValueHash) index.displayValueHashes.add(displayValueHash);
+  }
+  return { ...index, corrupt: false };
 }
 
 async function loadHooksImpl(
@@ -253,15 +276,18 @@ async function loadHooksImpl(
     sources: projectSources,
     runtimeRoot,
   });
-  const persistentTrust = await readPersistentWorkspaceHookTrustDigests(workspaceIdentity, logger);
-  const persistentTrustedDigests = persistentTrust.digests;
+  const persistentTrust = await readPersistentWorkspaceHookTrustIndex(workspaceIdentity, logger);
   const hooks = [
     ...fromProjectSnapshot({
       sources: projectSources,
       snapshot: workspaceHookSnapshot,
       workspaceIdentity,
       workspacePath,
-      persistentTrustedDigests,
+      persistentTrustedDigests: persistentTrust.digests,
+      persistentTrustEquivalence: {
+        recordSlotKeys: persistentTrust.slotKeys,
+        recordDisplayValueHashes: persistentTrust.displayValueHashes,
+      },
     }),
     ...(await loadLegacyHooksFromLocation("agents", workspacePath)),
     ...(await loadLegacyHooksFromLocation("claude", workspacePath)),

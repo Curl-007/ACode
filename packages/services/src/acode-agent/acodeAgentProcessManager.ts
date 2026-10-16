@@ -29,6 +29,7 @@ import {
   acodeRuntimeIdleExitParamsSchema,
   appendMaxOldSpaceToNodeOptions,
   isPackagedACodeDesktopRuntime,
+  isSensitiveLogKeyName,
   resolveMaxOldSpaceMb,
   resolveWorkspaceKey,
   resolveACodeRuntimeEnv,
@@ -346,15 +347,48 @@ const errorLog = (...args: unknown[]) => serviceLog.error(undefined, ...args);
 
 const AGENT_STDERR_TAIL_MAX_LINES = 20;
 const AGENT_STDERR_LINE_MAX_CHARS = 1_000;
-const AGENT_STDERR_SENSITIVE_ASSIGNMENT_PATTERN =
-  /(["']?(?:api[-_]?key|authorization|cookie|credential|password|secret|token)["']?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;}]+)/gi;
+// 词表收敛（packages/shared/specs/log-privacy-redaction.md R1）：敏感赋值判定不再
+// 持有本地 7 词子串表，键名是否敏感交 shared sensitiveKeyNames 单源谓词——与 CLI
+// jsonl redactor、反馈面、桌面导出面同源，消除同一日志多出口脱敏强度不一致
+// （单源词族更宽且带 max_tokens 类白名单）。
+// 结构说明：键捕获与值捕获拆成两个正则，用 exec 循环组装——非敏感键**不消费**其值
+// 继续前扫，防止 `env: password=x` 形态里前置键把后续敏感赋值吞进值位漏遮
+// （String.replace 的整段消费语义做不到这一点；旧词表锚定正则因只在敏感词起匹
+// 而天然免疫，改谓词判定后必须显式保序）。
+const AGENT_STDERR_ASSIGNMENT_KEY_PATTERN = /["']?[A-Za-z0-9][A-Za-z0-9._-]*["']?\s*[:=]\s*/gi;
+const AGENT_STDERR_ASSIGNMENT_VALUE_PATTERN = /^(?:"[^"]*"|'[^']*'|[^\s,;}]+)/;
 const AGENT_STDERR_AUTH_SCHEME_PATTERN = /\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/gi;
 const AGENT_STDERR_API_KEY_PATTERN = /\b(sk-)[A-Za-z0-9_-]{16,}\b/gi;
 
+function redactSensitiveAssignments(value: string): string {
+  let result = "";
+  // 已消费（原样或遮盖后）前缀的边界；敏感命中的值段整体跳过防重复扫描。
+  let consumed = 0;
+  AGENT_STDERR_ASSIGNMENT_KEY_PATTERN.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = AGENT_STDERR_ASSIGNMENT_KEY_PATTERN.exec(value)) !== null) {
+    // 单源判定内部先归一化（剥非字母数字+小写），键前缀粗提取即可。
+    const key = match[0].replace(/[^A-Za-z0-9]/g, "");
+    if (key.length === 0 || !isSensitiveLogKeyName(key)) {
+      continue;
+    }
+    const valueStart = match.index + match[0].length;
+    const valueMatch = AGENT_STDERR_ASSIGNMENT_VALUE_PATTERN.exec(value.slice(valueStart));
+    if (!valueMatch) {
+      // 空值不遮（与旧正则一致：值段是必选成分）。
+      continue;
+    }
+    const valueEnd = valueStart + valueMatch[0].length;
+    result += `${value.slice(consumed, match.index)}${match[0]}<redacted>`;
+    consumed = valueEnd;
+    AGENT_STDERR_ASSIGNMENT_KEY_PATTERN.lastIndex = valueEnd;
+  }
+  return result + value.slice(consumed);
+}
+
 function redactAgentDiagnostic(value: string): string {
   return (
-    value
-      .replace(AGENT_STDERR_SENSITIVE_ASSIGNMENT_PATTERN, "$1<redacted>")
+    redactSensitiveAssignments(value)
       .replace(AGENT_STDERR_AUTH_SCHEME_PATTERN, "$1 <redacted>")
       // 裸 key 也必须在跨进程诊断和生产日志之前遮盖。
       .replace(AGENT_STDERR_API_KEY_PATTERN, "$1<redacted>")

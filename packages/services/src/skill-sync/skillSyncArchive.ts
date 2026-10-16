@@ -1,9 +1,13 @@
-import { lstat, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { dirname, join, posix, resolve } from "node:path";
 import { Readable } from "node:stream";
 import { promisify } from "node:util";
 import { createGunzip, gzip } from "node:zlib";
-import { normalizeSkillSyncRelativePath, resolveSkillSyncPathWithin } from "./skillSyncPath.js";
+import {
+  ARCHIVE_OWNER_EXECUTABLE_FILE_MODE,
+  ArchiveExtractionSession,
+} from "@acode/shared/node";
+import { normalizeSkillSyncRelativePath } from "./skillSyncPath.js";
 import { createSkillSyncSizeLimitError } from "./skillSyncErrors.js";
 
 const gzipAsync = promisify(gzip);
@@ -38,6 +42,11 @@ export async function extractSkillSyncArchive(
   const targetRoot = resolve(targetDir);
   await mkdir(targetRoot, { recursive: true });
   const maxExtractedBytes = options.maxExtractedBytes;
+  // 信任档 local（同一用户自有设备间同步）：档位旗标与检查序见
+  // packages/services/specs/file-containment-trust-tiers.md R3/R4/R6.3。
+  // 总量上限刻意不进会话：既有 SkillSyncSizeLimitError 携带跨 RPC 稳定 code，
+  // UI 依赖它分阶段展示，保持在会话外手工闸以保错误形状不变。
+  const session = new ArchiveExtractionSession({ rootDir: targetRoot, tier: "local" });
   const input = Readable.from([Buffer.from(archive)]);
   const gunzipStream = createGunzip();
   const reader = new TarStreamReader(input.pipe(gunzipStream));
@@ -59,17 +68,31 @@ export async function extractSkillSyncArchive(
         throw new Error("invalid skill sync archive entry size");
       }
       const typeFlag = readTarString(header, 156, 1) || "0";
+      const isDirectory = typeFlag === "5";
+      if (!isDirectory && typeFlag !== "0" && typeFlag !== "\0") {
+        throw new Error(`unsupported skill archive entry type: ${typeFlag}`);
+      }
       const archivePath = normalizeArchivePath(readTarEntryPath(header));
-      const targetPath = resolveWithin(targetRoot, archivePath);
+      // tar 条目无逐条目压缩体积（gzip 作用于整流），compressedSize 按原值传入：
+      // local 档比率闸关闭，该字段仅保持描述符完整。
+      const plan = session.planEntry({
+        compressedSize: size,
+        isDirectory,
+        name: archivePath,
+        uncompressedSize: size,
+        unixMode: readTarOctal(header, 100, 8),
+      });
 
-      if (typeFlag === "5") {
+      if (plan.action === "skip") {
+        // OS 垃圾条目：跳过数据块，不落盘、不计入总量。
         await reader.skipExactly(tarPaddedBytes(size));
-        await mkdir(targetPath, { recursive: true });
         continue;
       }
 
-      if (typeFlag !== "0" && typeFlag !== "\0") {
-        throw new Error(`unsupported skill archive entry type: ${typeFlag}`);
+      if (plan.action === "directory") {
+        await reader.skipExactly(tarPaddedBytes(size));
+        await mkdir(plan.targetPath, { recursive: true });
+        continue;
       }
 
       const nextExtractedBytes = extractedBytes + size;
@@ -89,8 +112,23 @@ export async function extractSkillSyncArchive(
         throw new Error("truncated skill sync archive entry");
       }
       await reader.skipExactly(tarPaddedBytes(size) - size);
-      await mkdir(dirname(targetPath), { recursive: true });
-      await writeFile(targetPath, data);
+      await mkdir(dirname(plan.targetPath), { recursive: true });
+      try {
+        // wx 独占写兜底：归一化碰撞预检漏网的同名冲突（含落盘竞态）一律拒绝，
+        // 绝不静默覆盖目标目录里的既有文件。
+        await writeFile(plan.targetPath, data, { flag: "wx" });
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+          throw new Error(
+            `skill archive entry collides after filesystem name normalization: ${archivePath}`,
+          );
+        }
+        throw error;
+      }
+      if (plan.restoreOwnerExecutable && process.platform !== "win32") {
+        // 可执行位策略：仅归档 mode 带 owner-exec 才恢复，且固定收敛为 0o700。
+        await chmod(plan.targetPath, ARCHIVE_OWNER_EXECUTABLE_FILE_MODE);
+      }
       extractedBytes = nextExtractedBytes;
     }
   } finally {
@@ -323,12 +361,6 @@ function writeTarChecksum(buffer: Buffer, checksum: number): void {
 
 function normalizeArchivePath(path: string): string {
   return normalizeSkillSyncRelativePath(path, {
-    unsafePathLabel: "unsafe skill archive path",
-  });
-}
-
-function resolveWithin(targetRoot: string, archivePath: string): string {
-  return resolveSkillSyncPathWithin(targetRoot, archivePath, {
     unsafePathLabel: "unsafe skill archive path",
   });
 }

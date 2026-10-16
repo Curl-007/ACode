@@ -265,6 +265,10 @@ export {
   OffPeakPermanentDispatchError,
 } from "./session/offPeakRuntimeModel.js";
 export { createServiceLogger } from "./logger/serviceLogger.js";
+// 运行期收名（specs/log-privacy-redaction.md services R3）：SSH/远程连接建立点
+// 把对端主机名登记进服务层脱敏注册表；桌面 main 侧收名走 logPrivacyIdentity 的
+// registerLogHostName（desktopMainIpcRemote 接线归 IPC 包装批次）。
+export { registerServiceLogHostName } from "./logger/logPrivacy.js";
 export {
   buildOfficialMcpAuthHeaders,
   createOfficialMcpAuthHeadersResolver,

@@ -207,7 +207,7 @@ async function executeBashHandler(
   const request = createExecutionRequest(parsed, context, timeoutPolicy);
   const progressTiming: BashProgressTiming = {};
   const commandTelemetry = startBashCommandTelemetry(parsed, context);
-  const runOptions = createExecutionRunOptions(context, progressTiming, commandTelemetry);
+  const runOptions = createExecutionRunOptions(context, "Bash", progressTiming, commandTelemetry);
   // 后台命令完成后 runTaskNotificationBatch 会另起一轮通知 turn，该 turn 不带
   // turnExecutionModel，闲时 turn 结束/失败后就会落到用户自己的套餐上跑完整 agent loop。
   // 与 subagent runner 的 BACKGROUND_UNAVAILABLE 对称：闲时 turn 拒绝显式后台，也关闭超时自动转后台。
@@ -303,7 +303,9 @@ async function executeBashHandler(
   return output;
 }
 
-function emptyBashOutput(input: BashInput): BashOutput {
+// W2-PS（specs/powershell-tool.md R1）：PowerShell 工具复用 Bash 契约形状，空命令/
+// 后台/telemetry 结算/进度事件这些「shell 工具通用管线」导出共用，绝不各写一套。
+export function emptyBashOutput(input: BashInput): BashOutput {
   return attachToolExecutionTelemetry(
     {
       stdout: "",
@@ -318,7 +320,7 @@ function emptyBashOutput(input: BashInput): BashOutput {
   );
 }
 
-function toBackgroundedBashOutput(
+export function toBackgroundedBashOutput(
   task: BackgroundExecutionStartResult,
   input: BashInput,
 ): BashOutput {
@@ -339,8 +341,9 @@ function toBackgroundedBashOutput(
   );
 }
 
-function createExecutionRunOptions(
+export function createExecutionRunOptions(
   context: ToolExecutionContext,
+  toolName: string,
   progressTiming?: BashProgressTiming,
   telemetry?: CommandExecutionSpanWriter,
 ): ExecutionRunOptions {
@@ -356,7 +359,7 @@ function createExecutionRunOptions(
         progressTiming.firstOutputMs = Math.max(0, Math.round(event.elapsedMs));
         telemetry?.markFirstOutput();
       }
-      await emitProgressEvent(event, context);
+      await emitProgressEvent(event, context, toolName);
     },
   };
 }
@@ -375,7 +378,7 @@ function startBashCommandTelemetry(
   });
 }
 
-function finishBashCommandTelemetry(
+export function finishBashCommandTelemetry(
   telemetry: CommandExecutionSpanWriter | undefined,
   result: ExecutionResult,
 ): void {
@@ -402,7 +405,7 @@ function finishBashCommandTelemetry(
   }
 }
 
-function commandCategory(command: string): CommandCategory {
+export function commandCategory(command: string): CommandCategory {
   switch (classifyCommand(command)) {
     case "git":
       return "git";
@@ -423,7 +426,10 @@ function commandShellKind(
   selection: ToolExecutionContext["bashShellSelection"],
 ): CommandShellKind | undefined {
   const displayName = selection?.display.name.toLowerCase();
-  if (displayName?.includes("powershell")) return "powershell";
+  // W2-PS 对齐（specs/powershell-tool.md R6）：独立 PowerShell 工具在自己的 telemetry
+  // 里结构性上报 shellKind="powershell"；本函数仍服务 Bash 工具的 displayName 启发，
+  // 补上 pwsh 拼写（现状只认 "powershell"，pwsh 选择会误落 other/cmd）。
+  if (displayName?.includes("powershell") || displayName?.includes("pwsh")) return "powershell";
   if (displayName?.includes("zsh")) return "zsh";
   if (displayName?.includes("bash")) return "bash";
   if (selection?.dialect === "cmd") return "cmd";
@@ -434,6 +440,7 @@ function commandShellKind(
 async function emitProgressEvent(
   event: Extract<ExecutionEvent, { type: "progress" }>,
   context: ToolExecutionContext,
+  toolName: string,
 ): Promise<void> {
   if (!context.emitEvent) return;
 
@@ -447,7 +454,7 @@ async function emitProgressEvent(
     sequenceNumber: 0,
     payload: {
       toolCallId: context.toolCallId,
-      toolName: "Bash",
+      toolName,
       elapsedMs: event.elapsedMs,
       pid: event.pid,
       stdoutBytes: event.stdoutBytes,
@@ -626,7 +633,7 @@ function createBashTimeoutBudgetResolver(
   };
 }
 
-function createBashInputJsonSchema(timeoutPolicy: BashTimeoutPolicy): Record<string, unknown> {
+export function createBashInputJsonSchema(timeoutPolicy: BashTimeoutPolicy): Record<string, unknown> {
   const schema = BashInputJsonSchema as Record<string, unknown>;
   const properties = schema.properties as Record<string, unknown> | undefined;
   const timeoutProperty = properties?.timeout as Record<string, unknown> | undefined;

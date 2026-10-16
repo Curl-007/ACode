@@ -358,3 +358,46 @@ test("(15) exemption is pathEscapeWrite-only: other breaker classes untouched", 
 test("path separator sanity", () => {
   assert.ok(sep.length > 0);
 });
+
+// ── PowerShell 门补位（specs/powershell-tool.md R8②，安全关键接线）────────
+// 三道命令文本门（catastrophic 目标 / 空变量根删除 / 敏感位置读）对 PowerShell
+// 同样生效：缺这道补位时 catastrophic PS 命令在 yolo 下没有 deny 级熔断兜底。
+
+test("(PS-1) catastrophic PowerShell target fires the deny-level breaker", () => {
+  const hit = evaluateBypassImmuneBreakers({
+    toolName: "PowerShell",
+    input: { command: "Remove-Item -Recurse -Force ~" },
+  });
+  assert.equal(hit?.ruleId, "breaker.bashTargetCatastrophic");
+  assert.equal(hit?.behavior, "deny");
+  assert.match(hit.reason, /PowerShell command blocked/);
+  assert.match(hit.reason, /never permitted/);
+});
+
+test("(PS-2) unresolved-expansion PS delete falls back to the root-delete breaker", () => {
+  const hit = evaluateBypassImmuneBreakers({
+    toolName: "PowerShell",
+    input: { command: 'Remove-Item -Recurse -Force "$env:TARGET"' },
+  });
+  assert.equal(hit?.ruleId, "breaker.bashRootDelete");
+});
+
+test("(PS-3) PS command text referencing credential locations hits sensitive-read", () => {
+  assert.equal(
+    evaluateBypassImmuneBreakers({
+      toolName: "PowerShell",
+      input: { command: "Get-Content $HOME\\.ssh\\id_rsa" },
+    })?.ruleId,
+    "breaker.sensitiveRead",
+  );
+});
+
+test("(PS-4) ordinary PowerShell commands do not fire any breaker", () => {
+  assert.equal(
+    evaluateBypassImmuneBreakers({
+      toolName: "PowerShell",
+      input: { command: "Get-ChildItem ./build" },
+    }),
+    undefined,
+  );
+});

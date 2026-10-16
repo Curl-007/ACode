@@ -95,7 +95,9 @@ export function approvalPermissionScopes(
   for (const update of permissionUpdatesForApproval(request)) {
     if (update.type !== "addRules" || update.behavior !== "allow") continue;
     for (const rule of update.rules) {
-      if (rule.toolName.toLowerCase() !== "bash") continue;
+      // PowerShell 一等工具（specs/powershell-tool.md R7）：命令 scope 展示与 Bash 同款。
+      const ruleToolName = rule.toolName.toLowerCase();
+      if (ruleToolName !== "bash" && ruleToolName !== "powershell") continue;
       const content = rule.ruleContent?.trim();
       if (!content) continue;
       scopes.push(

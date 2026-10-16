@@ -23,6 +23,7 @@ import {
   AgentRuntime,
   InMemoryRuntimeTaskRegistry,
   PermissionService,
+  detectNoShellToolWarning,
   registerAutoClassifierAuditSink,
   registerBashReflexAuditSink,
   setMcpCallAuditSink,
@@ -565,6 +566,28 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
       // plan 拒写之后被 checkPermission 消费，只收紧不放宽的总原则不变。
       ttlApprovals: ttlApprovalStore,
     });
+    // 双 shell 联动警告（specs/powershell-tool.md R5/R8③ 接线）：Bash 与 PowerShell
+    // 同时被 bare deny → 终端命令能力全灭，启动期显式警告。事实 = disallowedTools ∪
+    // 策略地板 deny ∪ 项目 deny 规则集（projectID 已在上方解析）。警告面 best-effort：
+    // 项目规则读取失败只跳过警告，不阻断装配（deny 事实仍由 PermissionService 逐项裁决）。
+    try {
+      const projectPermission = await sessionStore.getProjectPermission(projectID);
+      const noShellWarning = detectNoShellToolWarning({
+        disallowedTools: configResult.config.permission.disallowedTools,
+        denyRules: [
+          ...(configResult.config.permission.policy?.deny ?? []),
+          ...(projectPermission?.deny ?? []),
+        ],
+      });
+      if (noShellWarning) {
+        permissionAuditLogger.warn(noShellWarning.message, {
+          code: noShellWarning.code,
+          event: "permission.no_shell_tools",
+        });
+      }
+    } catch {
+      // 见上：警告面失败静默降级，装配照常。
+    }
     const inputHistoryStore = options.inputHistoryStore ?? asInputHistoryStore(sessionStore);
     const artifactStore =
       options.artifactStore ??
@@ -906,6 +929,21 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
       workingDirectory,
       ...(pdfDocumentPort ? { pdfDocumentPort } : {}),
     });
+    // GUIDE 宿主接线④（specs/guide-live-build-section.md「宿主接线登记」）：bundled +
+    // plugin agents 名单投影。插件 profile 的裸名别名与规范名同 path，按 path 去重
+    // 只留首个（规范名先入列）；只列「名 (来源类别)」，配置事实一律不进快照。
+    const hostAgentNames: string[] = bundledAgentOutcome.profiles.map(
+      (profile) => `${profile.name} (bundled)`,
+    );
+    {
+      const seenPluginAgentPaths = new Set<string>();
+      for (const profile of pluginSubagentProfiles) {
+        const key = profile.path ?? profile.name;
+        if (seenPluginAgentPaths.has(key)) continue;
+        seenPluginAgentPaths.add(key);
+        hostAgentNames.push(`${profile.name} (plugin)`);
+      }
+    }
     runtime = new AgentRuntime(sessionId, runtimeConfig, {
       runtimeTaskRegistry,
       swarmPlanPort: swarmPlanWiring.port,
@@ -965,6 +1003,15 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
       // 接入后由宿主侧替换注入，此处保持 CLI 形态的兜底实现。
       platformOpenPort: createCliPlatformOpenPort(),
       appVersion,
+      // GUIDE 宿主接线②：内置 slash 命令表投影随主 runtime deps 下发（executor 的
+      // liveBuildSnapshotPort 在 runtime-tools 装配点合成）；子 runtime 由 subagent.ts
+      // 随谱系透传。缺席 = 快照命令子节保持磁盘 best-effort 面。
+      ...(options.builtInSlashCommandNames
+        ? { builtInSlashCommandNames: options.builtInSlashCommandNames }
+        : {}),
+      // GUIDE 宿主接线④：plugin/bundled agents 名单只读投影（只列名与来源类别，
+      // 不泄配置；skill-live-build 的 agents 子节据此收起「not visible」降级注记）。
+      hostAgentNames,
       traceContext,
     });
     markRuntimeConstructed({

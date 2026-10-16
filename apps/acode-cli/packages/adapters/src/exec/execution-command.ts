@@ -6,6 +6,7 @@ import {
   resolveEffectiveBashShellSelection,
   type BashShellProvider,
 } from "./bash-shell-provider.js";
+import { applyExecHijackEnvGuard } from "./exec-hijack-env-guard.js";
 import { applyExecutionTextEnv } from "./outputEncoding.js";
 import { windowsExecutableCandidates } from "./windows-executable.js";
 import type {
@@ -59,6 +60,14 @@ export function buildExecutionEnv(
     // 用户可经 ACODE_TOOL_ENV_INHERIT_ALLOWLIST 显式放行，overlay.set 的显式注入在下方
     // 后置、不受剥离影响。
     sanitizeACodeRuntimeEnvInPlace(env, { stripSensitiveCredentials: true });
+    // 安全加固 P2 扩展（specs/subprocess-env-credential-allowlist.md R4，W2-SEC5）：
+    // 同一剥离点挂第二类封闭键集——执行劫持向量（代码注入/网络重定向/shell 行为）。
+    // 威胁不是泄密而是让子进程执行攻击者代码/降级 TLS；固定黑名单键（NODE_OPTIONS/
+    // ELECTRON_RUN_AS_NODE/代理/证书）在上一步已无条件剥离，本键集覆盖其余劫持面，
+    // allowlist 语义与凭据类共用 ACODE_TOOL_ENV_INHERIT_ALLOWLIST 通道。必须在
+    // applyNetworkEgressEnv 之前执行：代理/CA 的受控重建（ACODE_* 显式来源）后置生效。
+    // win32 的 COMSPEC 规范重建（SystemRoot 推导）在 guard 内完成。
+    applyExecHijackEnvGuard(env, { platform });
   }
 
   applyExecutionTextEnv(env, platform);

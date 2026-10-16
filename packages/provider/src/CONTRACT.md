@@ -7,8 +7,10 @@ config-overlay 的 `ProviderConfigLayerSnapshot`/`ProviderConfigLayerUpdate`）�
 Registry 视图与选择校验（`ProviderRegistry`/`validateModelSelectionOptions`）、
 账号 Provider 状态与解析（account-provider-_）、模型选择配置
 （model-selection-config/effective-model-selection）、BYO API Key 凭据接口
-（`ProviderApiKeyVault`）、设置/选择投影视图（facades 的
-`ProviderSettingsView`/`ModelSelectionView` 等）与配置数据 schema（config/_）。
+（`ProviderApiKeyVault`）、凭据获取上下文词表（`credential-helper-context` 的
+五值闭集，接口预留，见 specs/credential-helper-context.md）、设置/选择投影视图
+（facades 的 `ProviderSettingsView`/`ModelSelectionView` 等）与配置数据 schema
+（config/_）。
 
 owner 是 `provider-config`。状态所有权：Provider 事实（revision、providers 列表、
 id 索引、变更监听器）的唯一所有者是 `ProviderRegistry` 实例——视图冻结、replace

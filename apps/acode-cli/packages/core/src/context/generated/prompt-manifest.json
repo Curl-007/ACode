@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generatedAt": "2026-10-02T19:50:18.007Z",
+  "generatedAt": "2026-10-16T12:35:28.045Z",
   "sections": [
     {
       "id": "prefix.cli",
@@ -14,7 +14,7 @@
       "group": "system-stable",
       "source": "identity",
       "owner": "apps/acode-cli/packages/core/src/context/sections/identity.ts",
-      "hash": "53b0061ec95a090f7aa5298e04e5aa17fedc67b766b5c25cf24eecff9038ff05"
+      "hash": "86e3951727b61e4f422edd23fb05d25f058475a7bc9496ea0f803d4e3ebf05a8"
     },
     {
       "id": "surface.desktop",
@@ -45,5 +45,5 @@
       "hash": "a34c8da890bceca1f2dba113942eac873ba78a490f8b52b1239a5fd52978af84"
     }
   ],
-  "sectionsHash": "6211b118ccb9ecaefe99be011cc96ec127bce1b83f13c9352913a7d9826df5dc"
+  "sectionsHash": "c9a782c397be3324591e90cab4d72bacd602ace2cf2582c120ed6a0022d0e9a5"
 }

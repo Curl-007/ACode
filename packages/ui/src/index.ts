@@ -88,5 +88,11 @@ export {
   loadUiFontSizePx,
   subscribeToUiFontSizeStorageChanges,
 } from "./lib/uiFontSize.js";
+// 三轴外观偏好（specs/appearance-preference-axes.md）：独立窗口（resource-manager/
+// update-status）启动收口消费，与 uiFontSize 同款先例；主窗口经 store/applyTheme 路径。
+export {
+  applyPersistedAppearancePreferences,
+  subscribeToAppearanceStorageChanges,
+} from "./lib/appearancePreferences.js";
 export { generateMobileDeviceFingerprint, setStreamClientId } from "./lib/streamClientId.js";
 export { GlobalDatabaseStartupLoading } from "./root/GlobalDatabaseStartupLoading.js";

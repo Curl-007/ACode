@@ -49,6 +49,24 @@ User-facing theme choices are:
 
 Default light and dark CSS variables still exist as fallback foundations, but new UI should be validated against Zai Light and Zai Dark as the active light/dark experiences.
 
+## Appearance preference axes
+
+Appearance preferences beyond theme live on the root element as `data-*` attributes and are consumed through CSS attribute selectors only — zero JS recomputation on change, zero prop drilling into components:
+
+| Axis           | Attribute                   | Values                        | Default       |
+| -------------- | --------------------------- | ----------------------------- | ------------- |
+| Density        | `data-acode-density`        | `comfortable` · `compact`     | `comfortable` |
+| Text size      | `data-acode-text-size`      | `sm` · `md` · `lg`            | `md`          |
+| Reduced motion | `data-acode-reduce-motion`  | `auto` · `reduce`             | `auto`        |
+
+Rules:
+
+- Consumption is opt-in per component. A component that has not adapted keeps its default treatment under every axis value (progressive enhancement). Never route an axis through component props, context, or a resize-time JS pass.
+- `compact` density tightens vertical rhythm and spacing of adapted dense components. It must not remove content, and never shrinks hit areas below the Sizing baselines.
+- The text-size axis shifts the typographic role step of opted-in components within the `text-ui-*` scale. `--ui-font-size` remains owned solely by the Appearance font-size slider; axis consumers must not write that variable.
+- Reduced motion `auto` follows the OS `prefers-reduced-motion` media query, which stays the baseline for every animation. `reduce` is the in-app override that forces reduction regardless of the OS setting, consumed through `[data-acode-reduce-motion="reduce"]` selectors. New motion-bearing CSS ships both gates (the media query and the attribute) so the in-app override can stop it too.
+- The single attribute writer is `packages/ui/src/lib/appearancePreferences.ts` (closed-set validation, localStorage persistence, applied at startup together with the theme). Full contract, demonstration points, and migration status: `packages/ui/specs/appearance-preference-axes.md`.
+
 ## Color Palette
 
 ### Core semantic colors

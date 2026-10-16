@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
+import { applyPersistedAppearancePreferences } from "@/lib/appearancePreferences.js";
 
 export type Theme = "light" | "dark" | "zai-light" | "zai-dark" | "system";
 export type ResolvedTheme = "light" | "dark";
@@ -67,6 +68,13 @@ export function applyTheme(theme: Theme) {
   document.documentElement.classList.toggle("theme-zai-light", appliedTheme === "zai-light");
   document.documentElement.classList.toggle("theme-zai-dark", appliedTheme === "zai-dark");
   syncBrowserThemeSurface(resolved);
+  // 多轴外观偏好属性在主题应用点收口（specs/appearance-preference-axes.md R6）：
+  // applyTheme 是主窗口 store 创建、setTheme（含广播）、system 主题变化与 useTheme
+  // hook 的公共路径，对齐 syncBrowserThemeSurface 的「根属性随主题应用一并写」模式，
+  // 各窗口零新增接线即获得 data-acode-density/-text-size/-reduce-motion 属性面。
+  // setAttribute 幂等，主题反复切换不产生重算成本；偏好自身的写入口在
+  // lib/appearancePreferences.ts（设置页接线后直接调它，不经主题绕路）。
+  applyPersistedAppearancePreferences();
 }
 
 function isTheme(value: string | null): value is Theme {

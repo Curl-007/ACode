@@ -79,6 +79,16 @@ export * from "./session-worktree.js";
 // 常量（名字/上限的单一事实源在 shared v4，这里是 zod v3 producer 镜像）。core 的
 // handler 与 turn 漏斗、TUI 的工具行分派读走；漏掉这行消费方拿不到契约。
 export * from "./turn-wrap-up.js";
+// 会话舰队七工具（apps/acode-cli/specs/session-fleet.md）：StartSession /
+// SendToSession / ListSessions / HandOffToSession / SetSessionPermissionMode /
+// ArchiveSession / DeleteSessions 的名字常量、schema、闭集 reason 词表与 note
+// 截断单一事实源。core 的 fleet 模块与 handler、TUI 的工具行分派读走；漏掉这行
+// 消费方拿不到契约（照 session-worktree 的同款注释）。
+export * from "./session-fleet.js";
+// 周期摘要（apps/acode-cli/specs/periodic-digest.md）：GenerateDigest 的分节/降级
+// 警告闭集词汇唯一权威源。core/src/digest 模块与工具条目读走；漏掉这行
+// generate-digest-tool.ts 报 TS2305（6 个词汇不解析）。
+export * from "./digest.js";
 
 // Shared types (only once to avoid duplicates)
 export type { DiffHunk, GitDiff } from "./write.js";

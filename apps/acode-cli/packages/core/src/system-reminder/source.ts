@@ -29,6 +29,9 @@ export const SYSTEM_REMINDER_PERSISTED_SOURCES = [
   "goal_state_change",
   "plugin_reference",
   "target_continuation",
+  // 跨回合 auto-resume 注入（specs/turn-auto-resume.md）：与 target_continuation 同档——
+  // 整段 wrapped 文本作为 model-only synthetic user notice 持久化，冷恢复按原文重建。
+  "auto_resume",
   "goal_completion_verification",
   "rewind_notice",
   "conversation_fork",
@@ -86,6 +89,8 @@ const NON_MID_CONVERSATION_SYSTEM_SOURCES = new Set<SystemReminderSource>([
   "selection_side_chat",
   "plan_file_reference",
   "target_continuation",
+  // auto-resume 注入本身就是完整 user-role 输入（goal-continuation 同形），不参与 MCS 重排。
+  "auto_resume",
   "tool_result_warning",
   "goal_completion_verification",
 ]);
@@ -167,6 +172,9 @@ const SYSTEM_REMINDER_DESCRIPTORS: Record<SystemReminderSource, DescriptorShape>
   ),
   goal_state_change: descriptor("mid_turn_event", "mid_turn_event", true, "sr.goal_state_change"),
   target_continuation: descriptor("real_user", "real_user", false, "sr.target_continuation"),
+  // auto-resume 与 target_continuation 同款形态：整段注入是 user-role 输入本体，
+  // 不是 mid-conversation meta 提醒（specs/turn-auto-resume.md「注入路径」）。
+  auto_resume: descriptor("real_user", "real_user", false, "sr.auto_resume"),
   goal_completion_verification: descriptor(
     "tool_result",
     "tool_result",

@@ -235,6 +235,26 @@ export type {
 export { AgentRuntime } from "./runtime.js";
 export { createExternalTurnFaultError } from "./runtime/helpers/turn-errors.js";
 export { repairPersistedRemoteSessionPaths } from "./runtime/helpers/persisted-remote-session-path-repair.js";
+// 跨回合 auto-resume 命令面（specs/turn-auto-resume.md）：解析/回执/host 工厂经公开入口
+// 给 cli command-center 与 bootstrap v4 handler leaf 复用（bootstrap 不得反向依赖 cli，
+// 故单一实现本体住 core；先例 = overnight/duration.ts 的 parseOvernightDuration）。
+export {
+  AUTO_RESUME_MAX_MESSAGE_LENGTH,
+  AUTO_RESUME_MAX_PAUSE_MS,
+  createAutoResumeCommandHost,
+  formatAutoResumeDuration,
+  handleAutoResumeCommand,
+  parseAutoResumeCommand,
+  parseAutoResumeDuration,
+} from "./runtime/auto-resume/command.js";
+export type {
+  AutoResumeCommandAppLike,
+  AutoResumeCommandHost,
+  AutoResumeCommandIntent,
+  AutoResumeCommandOutcome,
+  AutoResumeLocale,
+} from "./runtime/auto-resume/command.js";
+export type { AutoResumeStatusSnapshot } from "./runtime/auto-resume/types.js";
 // 会话级 worktree 写围栏（specs/session-worktree-lifecycle.md R7）：bootstrap 装配经
 // sessionWorktreeEnv provider 向子进程注入边界 env；warn 档遥测缺省 no-op，装配层
 // 接 service logger（不 console 刷屏）。
@@ -290,6 +310,11 @@ export type {
   WorkspaceRewindResult,
   RuntimeFactory,
 } from "./runtime.js";
+
+// /usage 命令族的单一实现（specs/usage-statusbar.md「/usage 命令族」节）：
+// 参数解析 + 取数组合 + 纯文本报表渲染；cli command-center 与 bootstrap v4 handler
+// 都是薄宿主。导出面 = index 的公开组合（executeUsageQuery 为唯一入口）。
+export * from "./usage-query/index.js";
 
 // Output helpers
 export { color, formatJson, supportsColor } from "./output.js";

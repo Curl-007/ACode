@@ -14,6 +14,7 @@ import { createTurnCancelledError } from "../helpers/index.js";
 import { executeTargetContinuationCommand } from "./target.js";
 import { runActiveTargetContinuationLoop } from "./target-continuation-loop.js";
 import { isStaleBranchRuntimeCommand } from "./runtime-command-generation.js";
+import { abortAutoResumeChain } from "../auto-resume/runtime-api.js";
 import type {
   AcquireForegroundPromotionLeaseResult,
   ActiveForegroundExecutionState,
@@ -452,6 +453,10 @@ export function stopActiveForegroundExecution(
   this: AgentRuntimeInternal,
   options: StopActiveForegroundExecutionOptions = {},
 ): StopActiveForegroundExecutionResult {
+  // 停止命令的定时器纪律（specs/turn-auto-resume.md）：用户显式停止必须取消 pending
+  // 自动继续定时器并清零链——即使当前没有前台执行（turn 失败后的空闲窗口正是
+  // auto-resume 定时器唯一存活的窗口），也要先收口再返回 idle。
+  abortAutoResumeChain(this, "stop_command");
   const active = this.activeForegroundExecution;
   if (!active || active.controller.signal.aborted) {
     return { kind: "idle" };

@@ -126,6 +126,19 @@ export function logModelNetworkStatus(
       });
       return;
 
+    case "auto_resume_scheduled":
+      // 跨回合 auto-resume（specs/turn-auto-resume.md「状态上报」）：TUI 走本既有
+      // logModelNetworkStatus 通道；调度决定时 delayMs=退避时长，注入前 delayMs=0。
+      this.logger?.warn("Cross-turn auto-resume scheduled", {
+        ...baseContext,
+        delayMs: statusEvent.delayMs,
+        errorSummary: statusEvent.errorSummary,
+        event: "model.network.auto_resume_scheduled",
+        module: "core.runtime",
+        status: "waiting",
+      });
+      return;
+
     case "model_stream_stalled":
       this.logger?.warn("Model network stream stalled", {
         ...baseContext,

@@ -69,6 +69,7 @@ import {
   recordMainTurnCacheHitUsage,
   recordMainTurnModelUsage,
 } from "./turn-model-step-usage.js";
+import { computeModelStepTiming } from "./usage-observability.js";
 import { estimateCurrentModelInputTokens } from "./compact.js";
 import {
   resolveModelStepMaxOutputTokens,
@@ -596,6 +597,15 @@ async function runModelBackedTurnStepImpl(
     supportsTurnFileChanges && toolCalls.length === 0
       ? buildTurnFileChangeSummary(this.currentTurnFileChanges)
       : undefined;
+  // timing 与下方 recordMainTurnModelUsage 的落库事实同源（usage-observability 单点口径）；
+  // 首字时间戳缺失时 timeToFirstTokenMs 缺席，不造假值。
+  const modelCompleteTiming = computeModelStepTiming({
+    completedAt: Date.now(),
+    events: state.events,
+    networkEventStartIndex,
+    reasoningTokens: usage.reasoningTokens,
+    startedAt: modelStartedAt,
+  });
   const modelCompleteEvent = this.createEvent(
     SessionEventType.ModelComplete,
     {
@@ -606,6 +616,7 @@ async function runModelBackedTurnStepImpl(
       ...(querySource === "main_turn" && executionContextWindow !== undefined
         ? { contextWindow: executionContextWindow }
         : {}),
+      generationMs: modelCompleteTiming.generationMs,
       querySource,
       stopReason: result.finishReason,
       usage: result.usage,
@@ -613,6 +624,9 @@ async function runModelBackedTurnStepImpl(
       ...(fileChanges ? { fileChanges } : {}),
       ...(querySource === "main_turn" && result.contextUsageBreakdown
         ? { contextUsageBreakdown: result.contextUsageBreakdown }
+        : {}),
+      ...(modelCompleteTiming.timeToFirstTokenMs !== undefined
+        ? { timeToFirstTokenMs: modelCompleteTiming.timeToFirstTokenMs }
         : {}),
       toolCallCount: toolCalls.length,
     },

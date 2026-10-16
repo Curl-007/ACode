@@ -74,6 +74,10 @@ import { runStopFailureHooks } from "./hooks.js";
 import { logTurnWrapUpObligationOutcome } from "./turn-wrap-up.js";
 import { rebuildContextPrefix } from "./context-refresh.js";
 import { assertRuntimeModelBranchCurrent } from "./runtime-command-generation.js";
+import {
+  notifyAutoResumeTurnFailure,
+  notifyAutoResumeTurnSettled,
+} from "../auto-resume/runtime-api.js";
 
 const TARGET_RUN_HEARTBEAT_MS = 15_000;
 
@@ -436,6 +440,8 @@ export async function executeTurnCommand(
           );
           await this.appendEvent(completeEvent, turnTraceContext);
           events.push(completeEvent);
+          // 成功结局（hook 拦截的 success 收口同样计入）：auto-resume 链清零。
+          notifyAutoResumeTurnSettled(this, "success");
           await recordTurnUsageFact(this, {
             completedAt: Date.now(),
             events,
@@ -683,6 +689,8 @@ export async function executeTurnCommand(
         );
         await this.appendEvent(completeEvent, turnTraceContext);
         events.push(completeEvent);
+        // 成功 turn = auto-resume 链重置条件（specs/turn-auto-resume.md）。
+        notifyAutoResumeTurnSettled(this, "success");
         await recordTurnUsageFact(this, {
           completedAt: Date.now(),
           events,
@@ -831,6 +839,16 @@ export async function executeTurnCommand(
           },
           turnTraceContext,
         );
+        // 跨回合 auto-resume 观察挂点（specs/turn-auto-resume.md）：throw 前把结构化
+        // 失败归因交给 coordinator（取消走重置档；transient 分类排定退避注入）。
+        // containment 在挂点内部——不改既有事件语义、不吞原始 turn error。
+        // 安全红线事实（automationId/offPeakTaskId/工具面/execution 模型选择）随
+        // options 透传，注入 turn 继承同款无人值守限制。
+        await notifyAutoResumeTurnFailure(this, {
+          coreError,
+          traceContext: turnTraceContext,
+          ...(options ? { turnOptions: options } : {}),
+        });
         throw coreError;
       }
     }).then(

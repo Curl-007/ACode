@@ -107,6 +107,7 @@ import type {
   ProjectContext,
   UserInstructionsOptions,
   AutoCompactPolicyConfig,
+  AutoResumeConfig,
   ModelAnomalyGuardConfig,
   OutputStylePromptConfig,
 } from "./deps.js";
@@ -202,6 +203,12 @@ export interface AgentRuntimeConfig {
     browserDocumentationRoot?: string;
   };
   modelAnomalyGuard?: Partial<ModelAnomalyGuardConfig>;
+  /**
+   * 跨回合 auto-resume 参数与长期开关（specs/turn-auto-resume.md「配置面」，
+   * modelAnomalyGuard 同构）：bootstrap 从 config 链物化；运行态计数/定时器/暂停
+   * overlay 只住 core runtime/auto-resume coordinator 的进程内内存。
+   */
+  autoResume?: Partial<AutoResumeConfig>;
   mcp?: {
     enabled?: boolean;
     servers?: Record<string, McpServerConfig>;

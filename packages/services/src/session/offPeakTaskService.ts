@@ -70,6 +70,10 @@ const VALID_CREATE_PERMISSION_MODES = new Set([
   "auto",
   "autoEdit",
   "build",
+  // dontAsk（权限批 2 R1，拒绝代替询问）：shared acodeTaskModeSchema / ACodeTaskMode
+  // 已扩集该档，本门是手写字面副本，漏扩会让 Off-peak 表单选 dontAsk 保存被误判
+  // client_validation（静默拒绝）。值域与 acodeTaskModeSchema 保持同步。
+  "dontAsk",
 ]);
 
 function isValidCreateParams(params: ACodeOffPeakTaskCreateParams): boolean {

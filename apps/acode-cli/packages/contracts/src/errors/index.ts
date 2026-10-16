@@ -5,6 +5,9 @@
 // 闭集 reason 词表（specs/error-taxonomy-injection-defense.md R1）：
 // 经本入口再导出，contracts 包出口（src/index.ts 的 export *）零改动。
 export * from "./reasons.js";
+// 文本分类器与上报点收窄总入口（自 reasons.ts 按 ratchet 行数门禁拆出，
+// 逻辑逐字保留）；单向依赖 reasons.js，无环。
+export * from "./reasons-classify.js";
 
 import { narrowExternalReasonToken, PermissionDenialReason } from "./reasons.js";
 

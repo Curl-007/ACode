@@ -14,7 +14,10 @@
 
 import type { ModelSelection } from "@acode/shared/model-selection";
 
-export type CollaborationMode = "plan" | "build" | "edit" | "yolo" | "auto";
+// dontAsk（specs/permission-adjudication-batch2.md R1，接线项 1 落地）：无人可问的
+// 裁决姿态——allow 白名单照常放行、deny 照常拒，唯一变化是一切 ask 收敛为不弹卡
+// deny。cron/off-peak/-p 无头场景的安全默认位候选；桌面/远端审批面语义不变。
+export type CollaborationMode = "plan" | "build" | "edit" | "yolo" | "auto" | "dontAsk";
 export type RiskLevel = "low" | "medium" | "high" | "critical";
 export type TurnSteerRejectReason =
   | "no_active_turn"

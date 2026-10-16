@@ -3,7 +3,8 @@
 // (specs/error-taxonomy-injection-defense.md R1)
 // ============================================================
 //
-// 三组封闭 token 集：agent 启动/进程失败面、权限/会话拒绝面、会话错误分类。
+// 四组封闭 token 集：agent 启动/进程失败面、权限/会话拒绝面、会话错误分类、
+// 启动拒绝面（org/gateway/provider 族，specs/permission-adjudication-batch2.md R4）。
 // 纪律（R1）：
 // - 遥测与 UI 可见的 reason 只收本文件的闭集 token；
 // - 自由错误文本只进 detail/debug 通道（error-payload 的 formatContextDetail）；
@@ -35,6 +36,11 @@ export const AgentLaunchFailureReason = {
   ChildRuntimeFailed: "child_runtime_failed",
   /** 树级预算准入拒绝（局部拒绝维度在 context.budgetReason）。 */
   TreeBudgetExceeded: "tree_budget_exceeded",
+  /**
+   * 声明式 worktree 隔离的进入被拒（specs/subagent-declarative-keys.md 接线需求 8）：
+   * 取代对 subagent_unavailable 的复用；局部维度仍在 context.isolationReason 聚合。
+   */
+  WorktreeIsolationUnavailable: "worktree_isolation_unavailable",
   /** 启动元数据写入失败，child runtime 未开始执行。 */
   StartupMetadataWriteFailed: "startup_metadata_write_failed",
   /** 活动看门狗：子代理静默超时被中止。 */
@@ -91,6 +97,15 @@ export const PermissionDenialReason = {
   PermissionRequestFailed: "permission_request_failed",
   /** 用户在弹窗里显式拒绝。 */
   UserDenied: "user_denied",
+  /**
+   * 审批参数绑定失效（specs/permission-adjudication-batch2.md R4）：批准绑定到
+   * 弹卡时呈现的那份参数；应答回来时参数已不同（hook 改写等），批准不可复用、
+   * 调用不执行。现行复核路径（permission-input-recheck 重新弹卡）在结构上已
+   * 保证不复用旧批准——本 token 供该语义进入上报面时收窄。
+   */
+  ApprovalArgumentsMismatch: "approval_arguments_mismatch",
+  /** dontAsk 模式拒绝（批 2 R1）：无人可问，未白名单即拒不弹卡。 */
+  DontAskModeDenied: "dontask_mode_denied",
 } as const;
 
 export type PermissionDenialReason =
@@ -137,20 +152,70 @@ export function isSessionErrorClass(value: unknown): value is SessionErrorClass 
 }
 
 // -----------------------------------------------
+// 4. 启动拒绝面（org/gateway/provider/托管设置类）
+// -----------------------------------------------
+
+/**
+ * 第四组闭集（specs/permission-adjudication-batch2.md R4；词表增补证据 =
+ * 价值提取第二轮 T3-C「启动失败词表 18 项映射」的 org/gateway/provider 族）。
+ * **前瞻词表**：ACode 的 org/gateway 启动链路尚无抛错点——本组先把可聚合的
+ * token 面备好（远程服务器 CLI 启动、桌面托管设置、provider 准入面接线时
+ * 直接消费），文本分类器规则按纪律**暂不配**（分类器只映射仓库自有文案，
+ * 抛错点落地时同批补规则）。与 AgentLaunchFailureReason 的分工：那组是
+ * 「子代理/后台派发为什么失败」，本组是「app/会话为什么起不来或进不去」。
+ */
+export const LaunchRefusalReason = {
+  /** 托管设置（组织下发的 managed settings）拒绝本次启动。 */
+  ManagedSettingsRefused: "managed_settings_refused",
+  /** 组织配置校验失败，启动被拒。 */
+  OrgConfigRefused: "org_config_refused",
+  /** 必需的组织配置不可用（拉取失败/缺失）。 */
+  OrgConfigUnavailable: "org_config_unavailable",
+  /** 组织设备/主机钉扎不匹配：该账号不被允许在这台机器上使用。 */
+  OrgPinMismatch: "org_pin_mismatch",
+  /** 组织凭据在本上下文不被允许（credential 与 org 策略不匹配）。 */
+  OrgCredentialNotAllowed: "org_credential_not_allowed",
+  /** 组织策略显式拒绝（通用档：具体策略面在 detail 通道）。 */
+  OrgPolicyDenied: "org_policy_denied",
+  /** 网关需要（重新）登录：sign-in 缺失或已过期。 */
+  GatewaySigninRequired: "gateway_signin_required",
+  /** 网关拒绝访问（鉴权通过但准入被拒）。 */
+  GatewayAccessDenied: "gateway_access_denied",
+  /** 网关会话过期（与 signin_required 分立：会话失效 vs 从未登录）。 */
+  GatewaySessionExpired: "gateway_session_expired",
+  /** 组织策略不允许该 provider/模型（provider 准入族）。 */
+  ProviderNotAllowed: "provider_not_allowed",
+  /** root/管理员身份被禁止使用 bypass 权限档启动。 */
+  BypassPermissionsRootBlocked: "bypass_permissions_root_blocked",
+  /** 会话 worktree 无法验证（缺失/不可信），拒绝进入。 */
+  WorktreeUnverified: "worktree_unverified",
+} as const;
+
+export type LaunchRefusalReason = (typeof LaunchRefusalReason)[keyof typeof LaunchRefusalReason];
+
+const LAUNCH_REFUSAL_REASONS: readonly string[] = Object.freeze(Object.values(LaunchRefusalReason));
+
+export function isLaunchRefusalReason(value: unknown): value is LaunchRefusalReason {
+  return typeof value === "string" && LAUNCH_REFUSAL_REASONS.includes(value);
+}
+
+// -----------------------------------------------
 // 联合视图与收窄工具
 // -----------------------------------------------
 
 export type ClosedErrorReasonToken =
   | AgentLaunchFailureReason
   | PermissionDenialReason
-  | SessionErrorClass;
+  | SessionErrorClass
+  | LaunchRefusalReason;
 
 /** 值是否已是任一闭集词表的成员（精确、区分大小写）。 */
 export function isClosedErrorReasonToken(value: unknown): value is ClosedErrorReasonToken {
   return (
     isAgentLaunchFailureReason(value) ||
     isPermissionDenialReason(value) ||
-    isSessionErrorClass(value)
+    isSessionErrorClass(value) ||
+    isLaunchRefusalReason(value)
   );
 }
 
@@ -169,94 +234,20 @@ export function narrowExternalReasonToken<T extends string>(
   return (vocabulary as readonly string[]).includes(candidate) ? (candidate as T) : undefined;
 }
 
-/** 对三个词表依次做 narrowExternalReasonToken。 */
-export function narrowExternalClosedReasonToken(value: unknown): ClosedErrorReasonToken | undefined {
+/** 对四个词表依次做 narrowExternalReasonToken。 */
+export function narrowExternalClosedReasonToken(
+  value: unknown,
+): ClosedErrorReasonToken | undefined {
   return (
-    narrowExternalReasonToken(value, AGENT_LAUNCH_FAILURE_REASONS as readonly AgentLaunchFailureReason[]) ??
-    narrowExternalReasonToken(value, PERMISSION_DENIAL_REASONS as readonly PermissionDenialReason[]) ??
-    narrowExternalReasonToken(value, SESSION_ERROR_CLASSES as readonly SessionErrorClass[])
+    narrowExternalReasonToken(
+      value,
+      AGENT_LAUNCH_FAILURE_REASONS as readonly AgentLaunchFailureReason[],
+    ) ??
+    narrowExternalReasonToken(
+      value,
+      PERMISSION_DENIAL_REASONS as readonly PermissionDenialReason[],
+    ) ??
+    narrowExternalReasonToken(value, SESSION_ERROR_CLASSES as readonly SessionErrorClass[]) ??
+    narrowExternalReasonToken(value, LAUNCH_REFUSAL_REASONS as readonly LaunchRefusalReason[])
   );
-}
-
-// -----------------------------------------------
-// 文本分类器（显式正则白名单，映射不了返回 undefined）
-// -----------------------------------------------
-
-interface TextClassificationRule<T extends string> {
-  token: T;
-  pattern: RegExp;
-}
-
-/**
- * 仓库自有拒绝文案 → PermissionDenialReason。
- * 正则来源：permission/service.ts 与 executor 的既有字面文案（spec R2 分批接线前，
- * 上报点收窄先用它们把自由文本折叠成 token）。顺序即优先级：先具体后通用。
- */
-const PERMISSION_DENIAL_TEXT_RULES: readonly TextClassificationRule<PermissionDenialReason>[] = [
-  { token: PermissionDenialReason.PolicyDenied, pattern: /denied by managed policy|managed policy floor/i },
-  { token: PermissionDenialReason.DisallowedTool, pattern: /explicitly disallowed|disallowed tool/i },
-  { token: PermissionDenialReason.ProjectRuleDenied, pattern: /denied by project permission rules|project rule/i },
-  { token: PermissionDenialReason.SessionRuleDenied, pattern: /denied by session (?:permission )?rules?|session rule/i },
-  { token: PermissionDenialReason.PlanModeRequiresReadOnly, pattern: /plan mode only allows read-only|plan mode .*read-only/i },
-  { token: PermissionDenialReason.BreakerDenied, pattern: /breaker|bypass-immune/i },
-  { token: PermissionDenialReason.HookDenied, pattern: /blocked by pretooluse hook|pretooluse hook/i },
-  { token: PermissionDenialReason.CriticalRiskRequiresApproval, pattern: /critical risk/i },
-  { token: PermissionDenialReason.HighRiskRequiresApproval, pattern: /high risk/i },
-  { token: PermissionDenialReason.PermissionRequestFailed, pattern: /permission request failed/i },
-  { token: PermissionDenialReason.UserDenied, pattern: /user (?:denied|rejected|declined)|denied by user|user doesn'?t want to proceed/i },
-  { token: PermissionDenialReason.ModeRequiresApproval, pattern: /requires (?:explicit )?approval/i },
-];
-
-export function classifyPermissionDenialText(text: unknown): PermissionDenialReason | undefined {
-  if (typeof text !== "string" || text.trim().length === 0) return undefined;
-  for (const rule of PERMISSION_DENIAL_TEXT_RULES) {
-    if (rule.pattern.test(text)) return rule.token;
-  }
-  return undefined;
-}
-
-/**
- * 会话错误文本 → SessionErrorClass。顺序即优先级：
- * 磁盘/限速/认证等具体信号先判，通用的 network/model 垫后；
- * git_not_found 先于 git_operation_failed（「git 不存在」比「git 操作失败」更具体）。
- */
-const SESSION_ERROR_TEXT_RULES: readonly TextClassificationRule<SessionErrorClass>[] = [
-  { token: SessionErrorClass.DiskFull, pattern: /\bENOSPC\b|no space left on device|disk full|out of disk space/i },
-  { token: SessionErrorClass.RateLimit, pattern: /\brate.?limit|\b429\b|too many requests|quota exceeded/i },
-  { token: SessionErrorClass.AuthError, pattern: /\b401\b|\b403\b|unauthorized|unauthenticated|invalid[ _-]?(?:api[ _-]?)?key|authentication (?:error|failed)|invalid credentials|access denied|forbidden|sign.?in (?:required|expired)/i },
-  { token: SessionErrorClass.ContextExceeded, pattern: /context (?:length|window|limit)|maximum context|context_exceeded|prompt is too long|too many tokens/i },
-  { token: SessionErrorClass.Timeout, pattern: /\bETIMEDOUT\b|\bESOCKETTIMEDOUT\b|\bECONNABORTED\b|timed? ?out|timeout|deadline exceeded/i },
-  { token: SessionErrorClass.GitNotFound, pattern: /'git' is not recognized|git: command not found|command not found: git|git .*not (?:found|installed)/i },
-  { token: SessionErrorClass.GitOperationFailed, pattern: /fatal: not a git repository|git (?:checkout|merge|rebase|clone|push|pull|fetch|commit) .*failed|could not read from remote repository|index\.lock/i },
-  { token: SessionErrorClass.StorageError, pattern: /\bEIO\b|\bEROFS\b|\bSQLITE_\w+|database is locked|storage (?:error|failure)/i },
-  { token: SessionErrorClass.ConfigurationError, pattern: /configuration (?:error|invalid)|invalid (?:configuration|config|setting)|misconfigured/i },
-  { token: SessionErrorClass.Cancelled, pattern: /\bcancelled\b|\bcanceled\b|\baborted\b|request was aborted|user requested (?:stop|cancel)/i },
-  {
-    token: SessionErrorClass.Network,
-    pattern:
-      /\bENETUNREACH\b|\bEHOSTUNREACH\b|\bECONNREFUSED\b|\bECONNRESET\b|\bEAI_AGAIN\b|\bENOTFOUND\b|\bEPIPE\b|\bUND_ERR_\w+|network (?:error|unreachable)|socket hang up|fetch failed|connection (?:closed|reset|refused)/i,
-  },
-  {
-    token: SessionErrorClass.ModelError,
-    pattern: /\b50[0-9]\b|internal server error|bad gateway|service unavailable|overloaded|model (?:error|failed)|provider (?:error|failure)|api error/i,
-  },
-];
-
-export function classifySessionErrorText(text: unknown): SessionErrorClass | undefined {
-  if (typeof text !== "string" || text.trim().length === 0) return undefined;
-  for (const rule of SESSION_ERROR_TEXT_RULES) {
-    if (rule.pattern.test(text)) return rule.token;
-  }
-  return undefined;
-}
-
-/**
- * 上报点收窄总入口（error-payload 用）：原始 reason 值依次过
- * 「精确成员 → 拒绝文案分类器 → 会话错误分类器」；全不过返回 undefined。
- * 精确成员检查区分大小写（闭集 token 本身是小写形态）；分类器负责自由文本。
- */
-export function narrowErrorReasonToClosedToken(value: unknown): ClosedErrorReasonToken | undefined {
-  if (isClosedErrorReasonToken(value)) return value;
-  if (typeof value !== "string") return undefined;
-  return classifyPermissionDenialText(value) ?? classifySessionErrorText(value);
 }

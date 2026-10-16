@@ -41,11 +41,12 @@ const HAND_OFF_TIMEOUT_MS = 300_000;
 const HAND_OFF_TO_SESSION_DESCRIPTION = [
   "Hand the task you are working on over to another session - either an existing fleet session you own, or a new one created for it.",
   "",
-  "When to use: the user sent a new direction mid-task and the current work belongs in its own session; or a piece of the work is self-contained and should continue in parallel while you handle something else here.",
+  "When to use: the user sent a new direction mid-task and the current work belongs in its own session; or a piece of the work is self-contained and should continue in parallel while you handle something here.",
   "",
   "- With session_id: the hand-off prompt is delivered to that session (it keeps its context). Without session_id: a NEW session is started from title + prompt (title required) and you own it like a StartSession result.",
-  "- After the hand-off, each time the target session completes a turn, the first 400 characters of its latest report are recorded as a note on it (visible via ListSessions); the full report still arrives through the standard completion notification.",
-  "- Handing off is not abandoning: state what was done, what remains, and where the materials live (branch/worktree paths) in the prompt.",
+  "- A NEW session starts fresh and sees nothing of this conversation: state what was done, what remains, and where the materials live (branch/worktree paths) in the prompt, and pass background (>= 80 characters: overall goal, decisions and constraints so far, how the piece fits) whenever the task is not fully self-contained.",
+  "- Handing off is not abandoning: the brief names the files/area and what done looks like, in your own words.",
+  "- After the hand-off, each time the target session completes a turn, the first 400 characters of its latest report are recorded as a note on it (visible via ListSessions); the full report still arrives through the standard completion notification. A note is that report, not proof: check the result or diff before telling the user it is done.",
 ].join("\n");
 
 function makeHandler(deps: FleetToolDeps): ToolHandler {
@@ -139,6 +140,7 @@ function makeHandler(deps: FleetToolDeps): ToolHandler {
       {
         title: parsed.title,
         prompt: parsed.prompt,
+        ...(parsed.background === undefined ? {} : { background: parsed.background }),
         ...(parsed.permission_mode === undefined ? {} : { permissionMode: parsed.permission_mode }),
         ...(parsed.use_worktree === undefined ? {} : { useWorktree: parsed.use_worktree }),
         ...(parsed.branch_name === undefined ? {} : { branchName: parsed.branch_name }),

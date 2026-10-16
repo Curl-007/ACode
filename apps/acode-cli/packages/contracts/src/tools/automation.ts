@@ -279,7 +279,10 @@ export const CronAutomationSchema = z
     recurring: z.boolean(),
     maxRuns: z.number().int().positive().optional(),
     modelSelection: cronModelSelectionSchema.optional(),
-    mode: z.enum(["build", "edit", "plan", "yolo"]).optional(),
+    // dontAsk（specs/permission-adjudication-batch2.md R1）：无人值守调度的安全默认位
+    // 候选——ask 一律收敛为不弹卡 deny，绝不挂起等不到人。协议侧 ACodeAutomation
+    // 已含该词（shared 面），此处闭集同步收词使 bootstrap 归一化透传（不再投影 build）。
+    mode: z.enum(["build", "edit", "plan", "yolo", "dontAsk"]).optional(),
     // 自定义重复规则；缺省时调度回退到解析 cronExpr。会话卡片必须读到本字段才能展示
     // cron 无法表达的真实间隔（如每50小时、每40天，兼容 cronExpr 只是 0 * * * *）。
     scheduleRule: CronAutomationScheduleRuleSchema.optional(),

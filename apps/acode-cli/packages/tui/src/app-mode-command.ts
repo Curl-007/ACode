@@ -1,8 +1,8 @@
 import React from "react";
 import type { ModeCommandSelectionState } from "./app-model.js";
-import { TUI_SWITCHABLE_MODES, type TuiSwitchableMode } from "./app-mode.js";
+import { TUI_SWITCHABLE_MODES } from "./app-mode.js";
 import { matchesText } from "./state.js";
-import type { TuiModeOption } from "./types.js";
+import type { TuiModeOption, TuiSwitchableMode } from "./types.js";
 
 const MODE_COMMAND_NAME = "/mode";
 const MODE_COMMAND_WITH_SPACE = `${MODE_COMMAND_NAME} `;
@@ -12,13 +12,26 @@ const MODE_DESCRIPTIONS: Record<TuiSwitchableMode, string> = {
   edit: "Edit selected files or relevant workspace files automatically.",
   plan: "Inspect the code and present a plan before editing.",
   yolo: "Edit and run commands with fewer confirmations.",
+  // dontAsk（specs/permission-adjudication-batch2.md R1）：语义 = 无人可问即拒绝——
+  // 规则已放行的一律照常执行，其余全部当场拒掉，永远不弹审批窗。
+  dontAsk: "Never prompt: anything not already allowed by rules is denied on the spot.",
 };
 
-const TUI_MODE_OPTIONS: readonly TuiModeOption[] = TUI_SWITCHABLE_MODES.map((mode) => ({
-  description: MODE_DESCRIPTIONS[mode],
-  id: mode,
-  label: formatModeLabel(mode),
-}));
+// dontAsk 只进 /mode 菜单、不进键盘循环（app-mode.ts TUI_SWITCHABLE_MODES 保持四档）：
+// Shift+Tab 循环误触会切进「未白名单全拒」档，打断正在跑的活；显式敲 /mode 才是
+// 有意识的选择。菜单选项 = 循环四档 + dontAsk 尾项。
+const TUI_MODE_OPTIONS: readonly TuiModeOption[] = [
+  ...TUI_SWITCHABLE_MODES.map((mode) => ({
+    description: MODE_DESCRIPTIONS[mode],
+    id: mode,
+    label: formatModeLabel(mode),
+  })),
+  {
+    description: MODE_DESCRIPTIONS.dontAsk,
+    id: "dontAsk",
+    label: formatModeLabel("dontAsk"),
+  },
+];
 
 function modeCommandQuery(draft: string): string | undefined {
   if (draft === MODE_COMMAND_NAME) return "";

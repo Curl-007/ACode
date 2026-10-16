@@ -37,6 +37,7 @@ import {
   HandIcon,
   NotepadText,
   ShieldAlertIcon,
+  ShieldBanIcon,
   ShieldCheckIcon,
   type LucideIcon,
 } from "lucide-react";
@@ -206,6 +207,12 @@ function isHighPermissionModeValue(value: unknown): boolean {
 export function resolveModeOptionIcon(value: unknown): LucideIcon {
   if (isHighPermissionModeValue(value)) {
     return ShieldAlertIcon;
+  }
+
+  // dontAsk（权限批 2）：从不发起询问、需批准的动作一律拒绝——盾牌加禁止符
+  // 表达「保持防护、不予放行」，与 yolo 的警告色盾牌方向相反。
+  if (typeof value === "string" && value.toLocaleLowerCase() === "dontask") {
+    return ShieldBanIcon;
   }
 
   // build 对应常规确认模式，使用确认图标。

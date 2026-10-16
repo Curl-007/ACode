@@ -1,14 +1,15 @@
 import {
   ENTER_PLAN_MODE_TOOL_NAME,
   EXIT_PLAN_MODE_TOOL_NAME,
-  type CollaborationMode,
 } from "@acode/contracts";
+import type { PermissionAdjudicationMode } from "./dont-ask-mode.js";
 
 interface PlanModeTransitionContext {
   toolName: string;
-  mode: CollaborationMode;
+  /** 裁决模式（批 2 R1 放宽：CollaborationMode + dontAsk；本判定只比较 "plan"）。 */
+  mode: PermissionAdjudicationMode;
   planEnabled?: boolean;
-  prePlanMode?: Exclude<CollaborationMode, "plan">;
+  prePlanMode?: Exclude<PermissionAdjudicationMode, "plan">;
 }
 
 interface PlanModeTransitionPermission {

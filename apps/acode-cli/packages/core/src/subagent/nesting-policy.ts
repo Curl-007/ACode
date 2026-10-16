@@ -16,15 +16,25 @@ import { TREE_BUDGET_CAPS } from "./tree-budget.js";
 export const TREE_BUDGET_ADMISSION_LANDED = true;
 
 /**
- * 模式严苛度序（严 → 宽）：auto（当前语义全拒）< plan（只读）< edit < build < yolo。
+ * 模式严苛度序（严 → 宽）：auto（当前语义全拒）< dontAsk（无人可问即拒）<
+ * plan（只读）< edit < build < yolo。
  * 「天花板 = 不高于根会话」的比较基准；未知值按最严处理（fail-closed）。
+ *
+ * dontAsk 排位裁决（specs/permission-adjudication-batch2.md 接线项 3，接线波落定，
+ * 理由同步记录在 specs/subagent-nesting-budget.md 修订记录）：
+ * - 严于 plan（序位更低）：plan 的结构拒写仍保留 ask 面（alwaysAsk 工具会弹卡），
+ *   无人值守根会话下会挂起等不到人；dontAsk 把一切 ask 终局化为 deny，永不挂起，
+ *   作为天花板能保证整棵子树继承「无人可问」姿态（cron/off-peak/-p 的一致安全默认）。
+ * - 宽于 auto：auto 是全拒/分类器灰区语义，仍是最严档；dontAsk 的 allow 白名单
+ *   （规则+policy floor 双重压制下的放行）照常生效，白名单由规则而非档位决定。
  */
 const MODE_SEVERITY: Readonly<Record<CollaborationMode, number>> = {
   auto: 0,
-  plan: 1,
-  edit: 2,
-  build: 3,
-  yolo: 4,
+  dontAsk: 1,
+  plan: 2,
+  edit: 3,
+  build: 4,
+  yolo: 5,
 };
 
 /** 取两者中更严的模式（R2）。任一侧未知词按最严序位处理；双侧缺席 → "auto"（fail-closed）。 */

@@ -51,6 +51,10 @@ const NATIVE_PERMISSION_MODES: readonly ACodeAgentPermissionMode[] = [
   "edit",
   "plan",
   "yolo",
+  // P1 dontAsk 模式的可达面（specs 权限裁决批2）：ask 漏斗收敛为 deny，不弹窗。
+  // 注意 bot-remote-guard 的天花板集**不含** dontAsk 属正确语义（远程无人应答即拒，
+  // 不是一种可远程授予的模式），不要为「对齐」把它加进那个集合。
+  "dontAsk",
 ] as const;
 
 /**

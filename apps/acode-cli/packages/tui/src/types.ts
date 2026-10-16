@@ -25,7 +25,12 @@ export type TuiSessionMetadata = Pick<
   "locale" | "model" | "theme" | "thoughtLevel" | "modelOptions" | "effortOptions" | "loginRequired"
 >;
 
-export type TuiSwitchableMode = Extract<CollaborationMode, "plan" | "build" | "edit" | "yolo">;
+// dontAsk（specs/permission-adjudication-batch2.md 接线项 2）：进 /mode 菜单词汇；
+// 键盘循环（app-mode.ts TUI_SWITCHABLE_MODES）刻意保持四档，见 app-mode-command.ts。
+export type TuiSwitchableMode = Extract<
+  CollaborationMode,
+  "plan" | "build" | "edit" | "yolo" | "dontAsk"
+>;
 
 export type TuiSetModeResult = {
   mode: CollaborationMode;

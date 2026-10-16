@@ -33,6 +33,12 @@ const ACODE_AGENT_MODE_OPTIONS = [
     name: "Full access",
     description: "Edit and run commands with fewer confirmations.",
   },
+  {
+    // P1 dontAsk：需要确认的动作一律拒绝并说明原因，绝不弹窗等待（文案自撰）。
+    id: "dontAsk",
+    name: "Deny instead of asking",
+    description: "Never prompt; anything that would need confirmation is denied with a reason.",
+  },
 ] as const satisfies readonly ACodeTaskModeInfo[];
 const ACODE_AGENT_MODE_ID_SET = new Set<string>(ACODE_AGENT_MODE_OPTIONS.map((mode) => mode.id));
 

@@ -1,21 +1,19 @@
 // ============================================================
 // Session Fleet Tools - agent 可管理的并行会话工具族契约
 // ============================================================
-// 七个工具面（apps/acode-cli/specs/session-fleet.md）：
-//   - StartSession：启动用户可见的后台舰队会话（一等对象，返回 session_id 确立所有权）。
-//   - SendToSession：跟进消息路由到持有上下文的既有舰队会话（session_id 寻址，非显示名）。
-//   - ListSessions：只列本会话自身行 + 本会话所有的舰队会话（权限信息最小化）。
-//   - HandOffToSession：任务移交既有/新建会话；被移交会话每收口一个回合记一条
-//     「最新报告前 400 字符」的 note（定量截断防刷屏）。
-//   - SetSessionPermissionMode：降权/平调直通；升权永不静默——交互式过用户审批
-//     （requiresUserInteraction → ask，先于 yolo 直通），无人值守直接拒绝。
-//   - ArchiveSession：停跟进、移入归档、对话保留可重开；共享 worktree 或已完成的
-//     side 会话级联；在跑的拒绝而非强制；支持 "self"。
-//   - DeleteSessions：批量 ≤25；所有权限模式（含 yolo）都过用户审批（bypass 免疫，
-//     走既有 requiresUserInteraction ask 面）；绝不删本会话。
+// 七个工具面（apps/acode-cli/specs/session-fleet.md R1-R8）：StartSession（启动
+// 用户可见后台舰队会话，返回 session_id 确立所有权）/ SendToSession（session_id
+// 寻址跟进路由，非显示名）/ ListSessions（只列自身行 + 本会话所有的舰队行）/
+// HandOffToSession（任务移交，目标每收口一回合记最新报告前 400 字符 note）/
+// SetSessionPermissionMode（降权/平调直通，升权必过用户，无人值守拒绝）/
+// ArchiveSession（在跑拒绝而非强制、worktree/已完成 side 会话级联、支持 self）/
+// DeleteSessions（批量 ≤25、全模式过用户审批、绝不删本会话）。
 //
 // 拒绝是**普通工具结果**而非错误（对齐 escalate / session-worktree 的裁决）：模型
 // 需要读到闭集 reason 改道，而不是把可预期的边界当成可重试的故障反复撞墙。
+//
+// 批 2（spec R11-R15）：initiation 三值闭集（offer 阻塞卡 / user_asked 立即启动 /
+// own_initiative 提案卡）、proposal 面、background 上下文契约（≥80 字符）、会话短名。
 
 import { z } from "zod";
 import { toToolJsonSchema } from "./json-schema.js";
@@ -28,20 +26,14 @@ export const SET_SESSION_PERMISSION_MODE_TOOL_NAME = "SetSessionPermissionMode";
 export const ARCHIVE_SESSION_TOOL_NAME = "ArchiveSession";
 export const DELETE_SESSIONS_TOOL_NAME = "DeleteSessions";
 
-/** report-back note 的定量截断界（spec R5）：最新报告前 400 字符。 */
+/** 定量界（spec R5/R7/R8 + 批 2 R13）：note 截断 400 / 删除单批 25 / 标题 120 / background 最短 80（结构强制，不替代 prompt）；self = ArchiveSession 自指别名。 */
 export const FLEET_NOTE_MAX_CHARS = 400;
-/** DeleteSessions 单批上限（spec R8）。 */
 export const FLEET_DELETE_BATCH_MAX = 25;
-/** 会话标题上限。 */
 export const FLEET_TITLE_MAX_CHARS = 120;
-/** ArchiveSession 的自指别名（spec R7）。 */
 export const FLEET_SELF_SESSION_ALIAS = "self";
+export const FLEET_BACKGROUND_MIN_CHARS = 80;
 
-/**
- * 舰队面的权限模式词表：CollaborationMode 去掉 `auto`（auto 是内部无人值守档，
- * 不作为舰队会话的可请求模式）。严苛度序的单一事实源在 core 的 nesting-policy
- * （MODE_SEVERITY），本枚举只是可请求值的闭集。
- */
+/** 舰队可请求模式闭集（CollaborationMode 去 auto；严苛度序单一事实源在 core 的 nesting-policy）。 */
 export const FleetPermissionModeSchema = z.enum(["plan", "build", "edit", "yolo"]);
 export type FleetPermissionMode = z.infer<typeof FleetPermissionModeSchema>;
 
@@ -58,7 +50,7 @@ export const FleetSessionStatusSchema = z.enum([
 ]);
 export type FleetSessionStatus = z.infer<typeof FleetSessionStatusSchema>;
 
-/** 拒绝理由闭集（spec R2-R8）。 */
+/** 拒绝理由闭集（spec R2-R8；批 2 增 proposal/start_needs_brief 五值，R11）。 */
 export const FleetRejectReasonSchema = z.enum([
   "unknown_session",
   "not_owned_by_caller",
@@ -79,8 +71,21 @@ export const FleetRejectReasonSchema = z.enum([
   "delivery_failed",
   /** HandOffToSession 新建会话缺 title。 */
   "new_session_needs_title",
+  // 批 2 R11 五值：start_needs_brief = 既无 proposal_id 也缺 title/prompt；
+  // proposal_budget_exceeded = 超每回合预算（≤3）；proposal_duplicate = 同一事项
+  // 重复提案（归一 title 判重）；proposal_expired = 提案过期（一周）；
+  // proposal_unknown = proposal_id 无记录或非本会话所有。
+  "start_needs_brief",
+  "proposal_budget_exceeded",
+  "proposal_duplicate",
+  "proposal_expired",
+  "proposal_unknown",
 ]);
 export type FleetRejectReason = z.infer<typeof FleetRejectReasonSchema>;
+
+/** 批 2 R11：initiation 三值闭集——offer = 用户最新消息点名的任务（唯一会等待的调用 = 阻塞式确认卡）；user_asked = 用户用词要求分开/并行/后台（立即启动）；own_initiative = 自己提案（不启动，产 proposal 卡）。 */
+export const FleetInitiationSchema = z.enum(["offer", "user_asked", "own_initiative"]);
+export type FleetInitiation = z.infer<typeof FleetInitiationSchema>;
 
 // ── StartSession ────────────────────────────────────────────────────
 
@@ -90,11 +95,35 @@ export const StartSessionInputSchema = z
       .string()
       .min(1)
       .max(FLEET_TITLE_MAX_CHARS)
-      .describe("Short human-readable session title shown in the session list."),
+      .optional()
+      .describe(
+        "Short human-readable session title shown in the session list. Required unless proposal_id is given.",
+      ),
     prompt: z
       .string()
       .min(1)
-      .describe("Self-contained task prompt; the new session has no other context."),
+      .optional()
+      .describe(
+        "Self-contained task brief: name the files/area it touches and what done looks like, in your own words. The new session has no other context. Required unless proposal_id is given.",
+      ),
+    initiation: FleetInitiationSchema.optional().describe(
+      "Whose task this is: 'offer' = a task the user named in their latest message (the call waits for the user's New session / Do it here decision); 'user_asked' = the user asked in words for separate, parallel or background work (starts now); 'own_initiative' = work you propose yourself (registers a proposal card instead of starting anything). A task the user's message tells you to do is never own_initiative. Omit only for a plain user-asked start.",
+    ),
+    proposal_id: z
+      .string()
+      .min(1)
+      .optional()
+      .describe(
+        "Start a proposal YOU registered earlier with own_initiative, after the user gave the go-ahead (a click or words). The proposal carries its own title/prompt; this consumes it.",
+      ),
+    background: z
+      .string()
+      .min(FLEET_BACKGROUND_MIN_CHARS)
+      .max(4000)
+      .optional()
+      .describe(
+        "Context for a fresh session, at least 80 characters: the overall goal, decisions and constraints so far, and how this piece fits. Complements prompt; never replaces it.",
+      ),
     permission_mode: FleetPermissionModeSchema.optional().describe(
       "Permission mode for the new session. It can never be higher than your current mode (tighten-only). 'plan' launches a read-only planning session; omit to inherit your current mode.",
     ),
@@ -102,7 +131,7 @@ export const StartSessionInputSchema = z
       .boolean()
       .optional()
       .describe(
-        "true = isolate the session in a fresh git worktree cut from the current HEAD (uncommitted changes are NOT carried over). Default false = run in the current working directory.",
+        "true = isolate the session in a fresh git worktree cut from the current HEAD (uncommitted changes are NOT carried over). Default false = run in the current working directory with no overwrite protection: when its edits may overlap yours or another session's, pass true.",
       ),
     branch_name: z
       .string()
@@ -116,12 +145,16 @@ export type StartSessionInput = z.infer<typeof StartSessionInputSchema>;
 
 export const StartSessionOutputSchema = z
   .object({
-    outcome: z.enum(["started", "rejected"]),
+    outcome: z.enum(["started", "proposed", "rejected"]),
     reason: FleetRejectReasonSchema.optional(),
     /** 所有权凭据：后续舰队工具只认这个 id（spec R3）。 */
     session_id: z.string().optional(),
     /** runtime-task id（≡ agentId）：既有 TaskOutput / TaskStop 观测与停止面。 */
     task_id: z.string().optional(),
+    /** 批 2 R14 会话短名（显示键，寻址仍只认 id）；R11 提案 id 与过期时刻（一周）。 */
+    name: z.string().optional(),
+    proposal_id: z.string().optional(),
+    proposal_expires_at: z.string().optional(),
     title: z.string().optional(),
     /** 在案的权限模式（recorded mode，spec R4）。 */
     mode: FleetPermissionModeSchema.optional(),
@@ -166,9 +199,7 @@ export const SendToSessionOutputSchema = z
 export type SendToSessionOutput = z.infer<typeof SendToSessionOutputSchema>;
 
 // ── ListSessions ────────────────────────────────────────────────────
-// 输入类型刻意命名为 ListFleetSessions*：`ListSessionsInput` 已被
-// interfaces/session-store.port.ts 的存储面占用（barrel 同名冲突），而舰队列表
-// 本来就是另一个东西——只列本 transcript 所有的舰队会话，不是 store 目录。
+// 输入类型刻意命名为 ListFleetSessions*：`ListSessionsInput` 已被存储面占用（barrel 同名冲突）。
 
 export const ListFleetSessionsInputSchema = z
   .object({
@@ -183,8 +214,9 @@ export type ListFleetSessionsInput = z.infer<typeof ListFleetSessionsInputSchema
 export const ListSessionsRowSchema = z
   .object({
     session_id: z.string(),
-    /** self = 调用方自身行；fleet = 调用方启动的舰队会话。 */
+    /** self = 调用方自身行；fleet = 调用方启动的舰队会话。name = 批 2 R14 短名（显示键）。 */
     kind: z.enum(["self", "fleet"]),
+    name: z.string().optional(),
     title: z.string().optional(),
     status: FleetSessionStatusSchema.optional(),
     /** 权限信息最小化（spec R3）：只在 self 与 fleet 行上出现。 */
@@ -228,6 +260,14 @@ export const HandOffToSessionInputSchema = z
       .max(FLEET_TITLE_MAX_CHARS)
       .optional()
       .describe("Title for the new session (required when session_id is omitted)."),
+    background: z
+      .string()
+      .min(FLEET_BACKGROUND_MIN_CHARS)
+      .max(4000)
+      .optional()
+      .describe(
+        "Context for a NEW session (ignored with session_id), at least 80 characters: overall goal, decisions and constraints so far, how the piece fits.",
+      ),
     permission_mode: FleetPermissionModeSchema.optional(),
     use_worktree: z.boolean().optional(),
     branch_name: z.string().min(1).max(64).optional(),
@@ -267,11 +307,7 @@ export const SetSessionPermissionModeOutputSchema = z
     session_id: z.string().optional(),
     mode: FleetPermissionModeSchema.optional(),
     previous_mode: FleetPermissionModeSchema.optional(),
-    /**
-     * 生效边界（spec R4 诚实语义）：`next_turn_boundary` = plan 系会话下一次
-     * resume 起绑定；`cold_restore` = 天花板系会话绑定冷恢复面（热 resume 按既有
-     * 继承裁决重锚到发起者当前模式，结构天花板独立兜底）。
-     */
+    /** 生效边界（spec R4 诚实语义）：`next_turn_boundary` = plan 系会话下一次 resume 起绑定；`cold_restore` = 天花板系会话绑定冷恢复面（热 resume 按既有继承裁决重锚，结构天花板独立兜底）。 */
     binding: z.enum(["next_turn_boundary", "cold_restore"]).optional(),
     message: z.string(),
   })
@@ -354,11 +390,7 @@ export const DeleteSessionsOutputJsonSchema = toToolJsonSchema(DeleteSessionsOut
 
 // ── note 截断（单一事实源：core 的 watcher 与测试共用） ─────────────
 
-/**
- * 报告 → note 的定量截断（spec R5）：前 {@link FLEET_NOTE_MAX_CHARS} 字符；
- * 截断时追加标记（标记不占 400 配额——「前 400 字符」是内容界，不是总长界）。
- * 空报告回 undefined（不产生空 note）。
- */
+/** 报告 → note 定量截断（spec R5）：前 {@link FLEET_NOTE_MAX_CHARS} 字符；截断追加标记（标记不占 400 配额）；空报告回 undefined（不产生空 note）。 */
 export function buildFleetReportNote(report: string): string | undefined {
   const text = report.trim();
   if (text.length === 0) return undefined;

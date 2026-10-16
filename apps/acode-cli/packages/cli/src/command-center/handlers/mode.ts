@@ -1,7 +1,7 @@
 import type { TuiSubmitPromptResult } from "@acode/tui";
 import {
   formatAvailableCommandCenterModes,
-  isSwitchableCommandCenterMode,
+  normalizeSwitchableCommandCenterMode,
 } from "../modes.js";
 import type { CommandCenterDeps } from "../types.js";
 
@@ -17,8 +17,9 @@ export async function handleModeCommand(
     };
   }
 
-  const requested = args.toLowerCase();
-  if (!isSwitchableCommandCenterMode(requested)) {
+  // 大小写不敏感归一回规范词汇（dontAsk 是 camelCase）；setMode 只吃规范值。
+  const requested = normalizeSwitchableCommandCenterMode(args);
+  if (!requested) {
     return {
       mode: current,
       response: `Unsupported mode: ${args}. Available modes: ${formatAvailableCommandCenterModes()}.`,

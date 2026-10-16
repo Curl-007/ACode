@@ -35,7 +35,10 @@ export function isCollaborationMode(value: unknown): value is CollaborationMode 
     value === "build" ||
     value === "edit" ||
     value === "yolo" ||
-    value === "auto"
+    value === "auto" ||
+    // dontAsk（specs/permission-adjudication-batch2.md 接线项 1/2）：落库模式解码面
+    // 同步收词——缺了它 dontAsk 会话 resume 时会被静默降级成缺省档。
+    value === "dontAsk"
   );
 }
 

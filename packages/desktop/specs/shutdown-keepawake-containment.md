@@ -1,6 +1,6 @@
 # Spec：退出看门狗+退出证据链、keep-awake 认领台账、Windows 孤儿进程围堵
 
-> 状态：**已实施**（波次 W1-4）。
+> 状态：**已实施**（波次 W1-4；keep-awake 认领数据源 B2 节为 W2 批次）。
 > 机制来源：外部桌面应用「关停任务记账 / 电源保持认领 / 子进程围堵验证」工程范式
 > （第二轮价值提取研究文档 T2-m3、T2-m2、T2-m5 节，zoode 研究产出）。按边界纪律只
 > 搬运机制设计（三名单关停注册表 + 逐 handler 记账 + 看门狗 + 退出证据持久化回读；
@@ -136,6 +136,65 @@ outcome, claim_kind, session_id(截断 64), claims, held_ms, max_away_ms}`；
   deps 注入 logger/powerSaveBlocker/powerMonitor/getMasterSwitch，保持 index.ts
   为唯一 Electron 接触点（本轮不改 index.ts，接线需求见实施报告）。
 
+### B2. keep-awake 认领数据源（keepAwakeClaimSources.ts，波次 W2）
+
+台账（B 节）落地后无生产调用方；本节把三类 claim 接到 main 侧既有生命周期事件面。
+事件面实查结论：main 没有逐会话运行明细——host 只上报聚合计数
+（`AgentRunningTaskCountChanged` → `hostRunningTaskCountMap.set/delete`，
+desktopHostProcess.ts:520-527/:735），scheduler 的 `offpeak-active-count` 只携带
+count（schedulerProtocolTypes.ts:48）；唯一带稳定运行标识的链路是 cron run
+（派发请求与结算回执都经 main，runId 全局唯一）。因此数据源按「合成会话 id」记账：
+
+```text
+host AgentRunningTaskCountChanged → desktopHostProcess 写 hostRunningTaskCountMap
+   │（可观察 Map 实例：set/delete/clear 钩子，turn claim 唯一数据源，写路径零改动）
+   ▼
+installKeepAwakeClaimSources({claims, logger})   ← inert-until-wired，DI 可单测
+   │ turn:             host:<hostOrdinal>:<slot>（每 host 进程对象分配序号，slot=1..count）
+   │ loop:             cron:<runId>（派发成功 acquire；结算 releaseSession(ok?close:error)）
+   │ background_task:  offpeak:<slot>（offpeak-active-count 计数驱动，slot=1..count）
+   ▼
+claims.acquire / claims.releaseSession(终结态)   （台账仍是唯一 claim 所有者与 blocker 写路径）
+```
+
+- **R19 合成会话 id 语义**：数据源没有真实会话明细，按槽位合成会话 id——turn=
+  `host:<hostOrdinal>:<slot>`（hostOrdinal 按 host 进程对象递增分配，delete 后保留，
+  同一 host 计数回来沿用同一序号段）；background_task=`offpeak:<slot>`（槽位身份=
+  位置，不指向固定 task：同一计数下 task 集合可能换血，keep-awake 语义只关心
+  「多少闲时任务在跑」+ 逐 claim 持有计量）；loop=`cron:<runId>`（天然唯一，不需
+  槽位）。合成 id 只进 claim 台账与日志（台账 sanitizeForLog 净化/截断），不回写
+  任何会话/task 状态，不与会话 id 空间混用。
+- **R20 turn 数据源**：唯一写入口 = `createHostRunningTaskCountMap()` 创建的可观察
+  Map（index.ts 在 hostRunningTaskCountMap 声明处替换实例）。set 上升→逐槽
+  acquire("turn")；set 下降或 delete（含 host exit）→逐槽 releaseSession(close)。
+  钩子只叠加 claim 记账，**map 写入永远透传**：该 map 同时是退出屏障
+  `getRunningAgentSessionCount()` 的口径，数据源不得拦截或改写。无效计数
+  （非整数/负数/NaN）拒绝记 claim + warn（`outcome:"invalid_count"`）；计数 clamp
+  上限 256 槽（warn `outcome:"count_clamped"`），防异常计数把台账无限吹大。
+- **R21 loop 数据源**：desktopCronScheduler 把 CronRun 成功转发给 host 后上报
+  `onCronRunDispatched({runId, automationId})`（转发失败路径已按 transient 回执、
+  run 未起跑，不上报）→ acquire("loop", `cron:<runId>`)；main 的 forwardCronRunResult
+  结算 → releaseSession(`cron:<runId>`, ok?close:error)。重复派发上报幂等；迟到/
+  重复结算幂等（releaseSession 无 claim 时 no-op，不 warn——scheduler 协议本就允许
+  仅凭 runId 迟到结算）。host 崩溃等漏结算由台账 R9.3 的 2h 上限兜底。
+- **R22 background_task 数据源**：`offpeak-active-count`（scheduler 侧已做「仅值变化
+  上报」减噪）→ 计数驱动槽位合成：升→acquire("background_task", `offpeak:<slot>`)，
+  降→releaseSession(`offpeak:<slot>`, close)。无效计数拒绝+warn、clamp 同 R20，
+  2h 上限兜底同 R21。
+- **R23 终结态映射闭集子集**：数据源只产生 `{close, error}`——运行完成/host 退出/
+  槽位回落→close；cron 结算 ok=false→error。`stopped/paused/archived/deleted` 是
+  真实会话面的终结态，main 当前无逐会话事件链可映射，数据源不伪造；未知/映射不到
+  的状态沿用台账 releaseSession 的「拒绝+warn」语义（R10），数据源不旁路。
+- **R24 inert-until-wired 与收口**：import 无副作用；install 显式注入 claims/logger。
+  dispose 后所有事件入口静默 no-op（退出路径事件迟到属常态，不刷 warn）；claim
+  teardown 由 `keepAwakeClaims.dispose()` 单点承担（清 timer、停 blocker），数据源
+  不逐项释放，避免退出路径重复释放日志。数据源自身无 blocker/claim 状态，无双写。
+- **接线**（本轮不改 index.ts，插入点见 W2 实施报告）：①install 于 keepAwakeClaims
+  之后；②hostRunningTaskCountMap 声明处换成 createHostRunningTaskCountMap()；
+  ③spawnCronScheduler deps 接 onOffPeakActiveCountChanged/onCronRunDispatched；
+  ④forwardCronRunResult 先结算 claim 再转发 scheduler；⑤退出路径在
+  keepAwakeClaims.dispose() 前先 keepAwakeClaimSources.dispose()。
+
 ### C. Windows 孤儿进程围堵（processContainment.ts + processContainmentCore.ts，台账形态）
 
 - **R14 形态判决与 outcome 闭集**：`not_windows`（非 win32 直接跳过）/ `disabled`
@@ -194,3 +253,9 @@ covered"|"check_failed"}`）；检查异常累计 3 次 → 放弃并退订（wa
    台账记录/退出回填/容量淘汰/command 净化；首 spawn 验证 covered/missed/3 次
    异常退订；sweep 跳过 taskkill 自身、只杀活项；真实 `node -e` spawn 集成验证
    频道载荷形状（pid 在 spawn 事件才可用）。
+4. keep-awake-claim-sources.test.mjs（B2 节）：fake 事件源驱动全生命周期——host
+   计数升降/delete/clear → turn 槽位 acquire/releaseSession(close)；无效计数拒绝
+   （warn invalid_count）且 map 写入透传；计数 clamp 256；offpeak 计数 → 槽位合成；
+   cron 派发/结算 → loop claim 与 close/error 终结态映射、重复派发与迟到结算幂等、
+   空 runId 拒绝；dispose 后全入口 no-op；与真台账端到端（blocker 随合成 claim
+   起停、快照清空）。

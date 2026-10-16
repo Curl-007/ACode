@@ -104,6 +104,8 @@ import { maybeRelaunchWithCappedDeepLinkArgv } from "./argvBudget.js";
 import { inspectDeepLinkWorkspacePath } from "./deepLinkHardening.js";
 // W1-4 关停/keep-awake/进程围堵（specs/shutdown-keepawake-containment.md）。
 import { installKeepAwakeClaims } from "./keepAwakeClaims.js";
+// W2-CLAIM 认领数据源（同 spec B2 节 R19-R24）：turn/loop/background_task 三类 claim。
+import { installKeepAwakeClaimSources } from "./keepAwakeClaimSources.js";
 import {
   initializeShutdownEvidence,
   SHUTDOWN_EVIDENCE_FILE_NAME,
@@ -357,15 +359,22 @@ let closeToTrayOnWindows = true;
 // keep-awake：全局开关 keepAwakeWhileRunning 保留为总开关（设置页「常规」与
 // Automations 入口镜像同一配置）。blocker 起停收敛到认领台账的唯一 reconcile 写
 // 路径（specs/shutdown-keepawake-containment.md R8-R13）：策略门（总开关/电池重估/
-// loop 类 2h 上限）与 away-ms 计量由台账承载。claim 数据源（turn←host 运行计数、
-// loop/background_task←cron offpeak-active-count）属跨 owner 后续批次；接线前
-// 台账无 claim，行为与原全局布尔一致（总开关开=reconcile 起 blocker）。
+// loop 类 2h 上限）与 away-ms 计量由台账承载。claim 数据源已接线（B2 节 R19-R24）：
+// turn←host 运行计数（可观察 map）、loop←cron 派发/结算、background_task←
+// offpeak-active-count 计数槽位；台账仍是唯一 claim 所有者与 blocker 写路径。
 let keepAwakeWhileRunning = false;
 const keepAwakeClaims = installKeepAwakeClaims({
   logger,
   powerSaveBlocker,
   powerMonitor,
   getMasterSwitch: () => keepAwakeWhileRunning,
+});
+// W2-CLAIM：数据源句柄（inert-until-wired 已收口，B2 节 R24）——可观察 map 工厂、
+// cron/off-peak 事件入口与 dispose 都由本文件显式调用；数据源只写注入的台账，
+// 不触碰 blocker，不持有 claim 状态。
+const keepAwakeClaimSources = installKeepAwakeClaimSources({
+  claims: keepAwakeClaims,
+  logger,
 });
 
 const embeddedBrowserDialogController = new EmbeddedBrowserJavaScriptDialogController({
@@ -718,7 +727,11 @@ const cuaPipFocusRouter = createCuaPipFocusRouter({
     });
   },
 });
-const hostRunningTaskCountMap = new Map<ElectronUtilityProcess, number>();
+// W2-CLAIM R20：可观察 map（set/delete/clear 钩子同步调整 turn claim 槽位）；
+// 钩子只叠加 claim 记账，写入永远透传——本 map 同时是退出屏障
+// getRunningAgentSessionCount() 的计数口径，数据源不拦截、不改写。
+const hostRunningTaskCountMap =
+  keepAwakeClaimSources.createHostRunningTaskCountMap<ElectronUtilityProcess>();
 const windowsCuaOperationIndicator = createWindowsCuaOperationIndicator({
   platform: process.platform,
   getLocale: () => currentApplicationLocale,
@@ -728,9 +741,12 @@ const windowsCuaOperationIndicator = createWindowsCuaOperationIndicator({
 // 常驻 cron scheduler 进程句柄；app ready 后拉起，退出前销毁。
 let cronScheduler: CronSchedulerHandle | null = null;
 // host → main 的定时任务派发结果，转交给 scheduler 结算。经模块变量转发以避免 spawn 顺序耦合。
+// W2-CLAIM R21：先结算 loop claim（ok→close / 非 ok→error；迟到/重复结算幂等），
+// 再转发 scheduler——即使 scheduler 句柄缺席（退出竞态），claim 也不会漏结算。
 function forwardCronRunResult(
   result: Parameters<CronSchedulerHandle["handleCronRunResult"]>[0],
 ): void {
+  keepAwakeClaimSources.handleCronRunSettled({ runId: result.runId, ok: result.ok });
   cronScheduler?.handleCronRunResult(result);
 }
 function forwardOffPeakRunResult(
@@ -1082,6 +1098,10 @@ async function prepareAppQuit(reason: string, kind: AppShutdownKind = "normal"):
   // stall-sampler 先停：退出路径本身有同步重活，别再把它记成停跳告警。
   mainStallSampler?.stop();
   // W1-4：keep-awake 台账同批收口（停 blocker、清电池/away-ms 采样与上限 timer）。
+  // W2-CLAIM R24：数据源先于台账收口——dispose 后事件迟到静默 no-op（退出路径事件
+  // 迟到属常态，不刷 warn）；claim 台账 teardown 由 keepAwakeClaims.dispose() 单点
+  // 承担，数据源不逐项释放，避免退出路径重复释放日志。
+  keepAwakeClaimSources.dispose();
   keepAwakeClaims.dispose();
   windowsCuaOperationIndicator.dispose();
   browserScreenshotSurfaceCoordinator.dispose();
@@ -2139,8 +2159,12 @@ app.whenReady().then(async () => {
         hostProcessLocalEnv,
         logger,
         resolveDispatchHost: resolveCronDispatchHost,
-        // keep-awake 已改为纯设置驱动；计数上报保留给后续诊断/配额用途，不再联动 blocker。
-        onOffPeakActiveCountChanged: () => {},
+        // W2-CLAIM R21/R22：keep-awake 认领数据源——off-peak 活动计数驱动
+        // background_task 槽位 claim；cron 派发成功上报驱动 loop claim
+        // （结算在 forwardCronRunResult，失败转发路径 scheduler 侧不上报）。
+        onOffPeakActiveCountChanged: (count) =>
+          keepAwakeClaimSources.handleOffPeakActiveCountChanged(count),
+        onCronRunDispatched: (info) => keepAwakeClaimSources.handleCronRunDispatched(info),
       });
     } catch (error) {
       logger.error("[cron-scheduler] failed to spawn scheduler process:", error);

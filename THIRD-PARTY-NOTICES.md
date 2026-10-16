@@ -136,6 +136,8 @@ Original copyright, license and NOTICE text is retained below. Identical text is
 
 - @jimp/utils@1.6.1 — MIT
 
+- @kurkle/color@0.3.4 — MIT
+
 - @larksuiteoapi/node-sdk@1.61.1 — MIT
 
 - @larksuiteoapi/node-sdk@1.64.0 — MIT
@@ -649,6 +651,8 @@ Original copyright, license and NOTICE text is retained below. Identical text is
 - character-entities@2.0.2 — MIT
 
 - character-reference-invalid@2.0.1 — MIT
+
+- chart.js@4.5.0 — MIT
 
 - class-variance-authority@0.7.1 — Apache-2.0
 
@@ -3053,6 +3057,38 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+````
+
+### Notice 89ba0032731489153d552db918b727feb05128cf9eca20092875a9ad14147671
+
+- @kurkle/color@0.3.4: LICENSE.md
+
+
+
+````text
+The MIT License (MIT)
+
+Copyright (c) 2018-2024 Jukka Kurkela
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+````
+
+### Notice bcb7ca9ca99522b2cc6a2913987a46114a1926896b9ebbe0fca67423aad0c5d5
+
+- @kurkle/color@0.3.4: README.md (license section)
+
+
+
+````text
+## License
+
+`@kurkle/color` is available under the [MIT license](https://github.com/kurkle/color/blob/main/LICENSE.md).
 
 ````
 
@@ -6768,6 +6804,38 @@ MIT © [Sindre Sorhus](https://sindresorhus.com)
 [contribute]: https://opensource.guide/how-to-contribute/
 
 [source]: https://html.spec.whatwg.org/multipage/parsing.html#table-charref-overrides
+
+````
+
+### Notice 41a84aa2caba645f966a18d9c2056b73e6d3a81d80bc0046bc0011a2634d4cce
+
+- chart.js@4.5.0: LICENSE.md
+
+
+
+````text
+The MIT License (MIT)
+
+Copyright (c) 2014-2024 Chart.js Contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+````
+
+### Notice c8849bac944d8177fa253a79fe27c849f99b176196c60e158004e2f71ed48da9
+
+- chart.js@4.5.0: README.md (license section)
+
+
+
+````text
+## License
+
+Chart.js is available under the [MIT license](LICENSE.md).
 
 ````
 

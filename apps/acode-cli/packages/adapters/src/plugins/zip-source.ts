@@ -1,9 +1,7 @@
-/* eslint-disable max-lines -- 存量基线豁免:初始导入即超限(根 lint 的 ignorePatterns 排除 apps/acode-cli,CLI turbo lint 门禁因此从未变绿)。先恢复门禁信号,拆分重构另行立项。 */
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
-import * as yauzl from "yauzl";
+import { isAbsolute, join, posix, relative, resolve, sep } from "node:path";
 import { createNodeWebFetchHttpClientAdapter } from "../http/index.js";
 import {
   appendPluginSourceCleanupError,
@@ -11,11 +9,11 @@ import {
   directoryExists,
   fileExists,
 } from "./helpers.js";
+import { extractZipArchiveTrustTiered } from "./zip-trust-extract.js";
 
+// 解包面上限常量（解压总量/条目数/单文件）随两阶段引擎迁至 zip-trust-extract.ts，
+// 语义原样保留；下载面常量仍归本文件所有。
 const ZIP_DOWNLOAD_MAX_BYTES = 200 * 1024 * 1024;
-const ZIP_EXTRACT_MAX_BYTES = 500 * 1024 * 1024;
-const ZIP_MAX_ENTRIES = 20_000;
-const ZIP_MAX_SINGLE_FILE_BYTES = 50 * 1024 * 1024;
 const ZIP_MAX_REDIRECTS = 5;
 const ZIP_DOWNLOAD_TIMEOUT_MS = 180_000;
 const ZIP_TEMP_PREFIX = "acode-plugin-zip-";
@@ -26,6 +24,14 @@ const ZIP_DENIED_HEADERS = new Set([
   "set-cookie",
 ]);
 const ZIP_REQUIRED_SHA256_PATTERN = /^[a-f0-9]{64}$/u;
+
+// 预览不解包面（manifest+icon，拒远程 URL icon）：实现与规格见 zip-preview.ts。
+export {
+  readZipPluginArchivePreview,
+  ZIP_PREVIEW_ICON_MAX_BYTES,
+  ZIP_PREVIEW_MANIFEST_MAX_BYTES,
+  type ZipPluginArchivePreview,
+} from "./zip-preview.js";
 
 export interface ResolvedZipPluginSourceRoot {
   cleanup: () => Promise<void>;
@@ -62,12 +68,6 @@ export class PluginZipDownloadError extends Error {
     if (status !== undefined) this.status = status;
   }
 }
-
-interface ZipExtractResult {
-  topLevelSegments: Set<string>;
-}
-
-type ZipEntryKind = "directory" | "file";
 
 export async function resolveZipPluginSource(
   input: ResolveZipPluginSourceInput,
@@ -113,7 +113,9 @@ export async function resolveHttpZipSource(
       );
     }
 
-    const extracted = await extractZipArchive({
+    // 解包经 store 信任档两阶段引擎（先全量元数据判定、后落盘）：
+    // 规格 apps/acode-cli/specs/file-containment-trust-tiers.md R1。
+    const extracted = await extractZipArchiveTrustTiered({
       archiveBytes: zipBytes,
       signal: input.signal,
       targetRoot: extractRoot,
@@ -216,84 +218,6 @@ async function downloadZipArchive(input: {
   throw new Error(`Plugin zip download exceeded redirect limit: ${input.url}`);
 }
 
-/**
- * 从内存解压 zip。
- *
- * 修复依据：yauzl（3.3.0/3.4.0 均验证）的 fd 流式读取路径在解压部分 deflate 条目时会永久挂起
- * ——openReadStream 回调已触发，但 data/end/error 事件都不再出现（用 545KB PNG 构造的最小 zip
- * 可复现；同一份数据 stored 压缩、yauzl.fromBuffer 或系统 unzip 均正常）。
- * GitHub 源（zipball）随仓库体积增大更易命中，表现为市场添加静默卡死。
- * 整包下载本来已按 200MB 上限驻留内存，改为内存解压不引入新的内存开销。
- */
-async function extractZipArchive(input: {
-  archiveBytes: Uint8Array;
-  signal?: AbortSignal;
-  targetRoot: string;
-}): Promise<ZipExtractResult> {
-  const targetRoot = resolve(input.targetRoot);
-  await mkdir(targetRoot, { recursive: true });
-  const zipFile = await openZipFileFromBuffer(Buffer.from(input.archiveBytes));
-  const topLevelSegments = new Set<string>();
-  let entryCount = 0;
-  let extractedBytes = 0;
-
-  try {
-    await new Promise<void>((resolvePromise, rejectPromise) => {
-      const rejectOnce = (error: unknown): void => {
-        zipFile.close();
-        rejectPromise(error);
-      };
-      zipFile.once("error", rejectOnce);
-      zipFile.once("end", () => {
-        zipFile.removeListener("error", rejectOnce);
-        resolvePromise();
-      });
-      zipFile.on("entry", (entry) => {
-        void (async () => {
-          try {
-            throwIfAborted(input.signal);
-            entryCount += 1;
-            if (entryCount > ZIP_MAX_ENTRIES) {
-              throw new Error(`Plugin zip has too many entries: ${entryCount}/${ZIP_MAX_ENTRIES}`);
-            }
-
-            const normalizedPath = normalizeZipRelativePath(entry.fileName);
-            topLevelSegments.add(normalizedPath.split("/")[0] ?? normalizedPath);
-            const targetPath = resolveZipPathWithin(targetRoot, normalizedPath);
-            const kind = classifyZipEntry(entry);
-            if (kind === "directory") {
-              await mkdir(targetPath, { recursive: true });
-              zipFile.readEntry();
-              return;
-            }
-
-            if (entry.uncompressedSize > ZIP_MAX_SINGLE_FILE_BYTES) {
-              throw new Error(`Plugin zip entry exceeds single file limit: ${entry.fileName}`);
-            }
-            const bytes = await readZipEntryBuffer(zipFile, entry, input.signal);
-            extractedBytes += bytes.byteLength;
-            if (extractedBytes > ZIP_EXTRACT_MAX_BYTES) {
-              throw new Error(
-                `Plugin zip extracted content exceeds limit: ${extractedBytes}/${ZIP_EXTRACT_MAX_BYTES}`,
-              );
-            }
-            await mkdir(dirname(targetPath), { recursive: true });
-            await writeFile(targetPath, bytes);
-            zipFile.readEntry();
-          } catch (error) {
-            rejectOnce(error);
-          }
-        })();
-      });
-      zipFile.readEntry();
-    });
-  } finally {
-    zipFile.close();
-  }
-
-  return { topLevelSegments };
-}
-
 function resolveZipRoot(input: {
   extractRoot: string;
   path?: string;
@@ -341,90 +265,6 @@ function hasPluginManifest(rootPath: string): boolean {
     fileExists(join(rootPath, ".codex-plugin", "plugin.json")) ||
     fileExists(join(rootPath, ".cursor-plugin", "plugin.json"))
   );
-}
-
-// 关闭依据见 extractZipArchive 上的说明：避开 yauzl fd 读取路径的挂起缺陷，只用内存句柄打开。
-function openZipFileFromBuffer(bytes: Buffer): Promise<yauzl.ZipFile> {
-  return new Promise((resolvePromise, rejectPromise) => {
-    yauzl.fromBuffer(bytes, { lazyEntries: true, validateEntrySizes: true }, (error, zipFile) => {
-      if (error) {
-        rejectPromise(error);
-        return;
-      }
-      if (!zipFile) {
-        rejectPromise(new Error("Failed to open plugin zip archive"));
-        return;
-      }
-      resolvePromise(zipFile);
-    });
-  });
-}
-
-function readZipEntryBuffer(
-  zipFile: yauzl.ZipFile,
-  entry: yauzl.Entry,
-  signal?: AbortSignal,
-): Promise<Buffer> {
-  return new Promise((resolvePromise, rejectPromise) => {
-    zipFile.openReadStream(entry, (error, stream) => {
-      if (error) {
-        rejectPromise(error);
-        return;
-      }
-      if (!stream) {
-        rejectPromise(new Error(`Failed to read plugin zip entry: ${entry.fileName}`));
-        return;
-      }
-
-      const chunks: Buffer[] = [];
-      let bytesRead = 0;
-      const cleanup = (): void => {
-        signal?.removeEventListener("abort", onAbort);
-      };
-      const onAbort = (): void => {
-        stream.destroy(new Error("Plugin operation cancelled"));
-      };
-      signal?.addEventListener("abort", onAbort, { once: true });
-
-      stream.on("data", (chunk: Buffer | string) => {
-        const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-        bytesRead += buffer.byteLength;
-        if (bytesRead > ZIP_MAX_SINGLE_FILE_BYTES) {
-          stream.destroy(
-            new Error(`Plugin zip entry exceeds single file limit: ${entry.fileName}`),
-          );
-          return;
-        }
-        chunks.push(buffer);
-      });
-      stream.once("error", (streamError) => {
-        cleanup();
-        rejectPromise(streamError);
-      });
-      stream.once("end", () => {
-        cleanup();
-        resolvePromise(Buffer.concat(chunks));
-      });
-    });
-  });
-}
-
-function classifyZipEntry(entry: yauzl.Entry): ZipEntryKind {
-  const isDirectoryByName = entry.fileName.endsWith("/");
-  if ((entry.generalPurposeBitFlag & 0x1) !== 0) {
-    throw new Error(`Encrypted plugin zip entries are not supported: ${entry.fileName}`);
-  }
-
-  const unixMode = (entry.externalFileAttributes >>> 16) & 0xffff;
-  const fileType = unixMode & 0o170000;
-  if (fileType === 0o120000) {
-    throw new Error(`Plugin zip entry symlinks are not supported: ${entry.fileName}`);
-  }
-  if (fileType !== 0 && fileType !== 0o100000 && fileType !== 0o040000) {
-    throw new Error(`Unsupported plugin zip entry type: ${entry.fileName}`);
-  }
-  if (fileType === 0o040000 || isDirectoryByName) return "directory";
-  return "file";
 }
 
 function normalizeZipRelativePath(path: string): string {

@@ -2,9 +2,16 @@
 import {
   createMessageId,
   createSessionId,
+  DefaultHooksRuntimeConfig,
+  HooksRuntimeConfigPatchSchema,
   RESPOND_TO_COORDINATOR_TOOL_NAME,
 } from "@acode/contracts";
-import type { SessionId, SubagentRunOptions } from "@acode/contracts";
+import type {
+  CollaborationMode,
+  HooksRuntimeConfig,
+  SessionId,
+  SubagentRunOptions,
+} from "@acode/contracts";
 import {
   defaultScheduler,
   PermissionService,
@@ -47,6 +54,7 @@ import {
   resolveChildSubagentsEnabled,
 } from "../../subagent/nesting-policy.js";
 import { isBuiltInExploreAgentProfile } from "../../subagent/profile.js";
+import type { AgentHooksDeclaration } from "../../subagent/profile.js";
 import {
   buildSubagentChildDisallowRules,
   filterSubagentChildToolNames,
@@ -103,6 +111,10 @@ export function createDefaultSubagentPort(
     logger: this.logger,
     inactivityTimeoutMs: this.config.subagents?.inactivityTimeoutMs,
     autoBackgroundMs: foregroundPolicy ? undefined : this.config.subagents?.autoBackgroundMs,
+    // 一次性会话前台策略透传（specs/subagent-declarative-keys.md 接线需求 4）：
+    // -p 前台策略下跳过声明式背景观察者孵化——背景代理随进程消亡，背景语义不成立
+    //（observer.ts 的 skip:"foreground_policy" 判定位）；缺省 honor 不影响交互式会话。
+    ...(foregroundPolicy ? { backgroundPolicy: "foreground" as const } : {}),
     outputRootDir: this.config.subagents?.outputRootDir,
     profiles: this.config.subagents?.profiles,
     builtInModelSelectionOverrides: this.config.subagents?.builtInModelSelectionOverrides,
@@ -330,6 +342,10 @@ export function createDefaultSubagentPort(
         childSessionId: request.sessionId,
         agentType: request.agentType,
       });
+      // 代理级 hooks（specs/subagent-declarative-keys.md R5 / 接线需求 1，
+      // plugin-hook-middleware 注册面联动）：解析侧已剥离 project 源并丢弃畸形，
+      // 这里是注册前第二道 schema 闸（fail-closed）。
+      const childHooks = resolveChildHooksConfig(request.profile.hooks);
       const childRuntime = new AgentRuntime(
         request.sessionId,
         {
@@ -413,6 +429,10 @@ export function createDefaultSubagentPort(
               : { peerMessaging: this.config.subagents.peerMessaging }),
           },
           mcp: childMcpAccess.config,
+          // 作用域 = child 生命周期：config 注入经 createRuntimeHookRunner 由 child
+          // 自建 hook runner，随 child runtime 废弃自然消亡——不另设注销路径
+          //（「单一注册路径」纪律；事件形状与 settings.json hooks 同款）。
+          ...(childHooks ? { hooks: childHooks } : {}),
         },
         {
           agentTelemetry: this.agentTelemetry.port,
@@ -431,9 +451,7 @@ export function createDefaultSubagentPort(
           // 编排方案 Phase 3（specs/agent-peer-messaging.md R1/R2）：peer 窄面——flag
           // 开启时由 runner 随请求下发；SendMessage 注册门与 handler 分支经 executor
           // deps 消费。缺席 = child 无 SendMessage（现状，depth-1 故事不变）。
-          ...(request.peerMessagingPort
-            ? { peerMessagingPort: request.peerMessagingPort }
-            : {}),
+          ...(request.peerMessagingPort ? { peerMessagingPort: request.peerMessagingPort } : {}),
           // 子 runtime 继承父的模型请求准入端口：subagent 的请求 provider 同样看得见，
           // 它们该与父一样喂治理器信号（父是 observer 则子也是 observer）。
           modelRequestAdmission: this.modelRequestAdmission,
@@ -471,6 +489,12 @@ export function createDefaultSubagentPort(
           skillPort: childSkillPort,
           artifactStore: deps.artifactStore,
           appVersion: this.appVersion,
+          // GUIDE 宿主接线②④随谱系透传：child 会话加载 guide 技能时命令表与
+          // agents 名单投影同款可见。
+          ...(deps.builtInSlashCommandNames
+            ? { builtInSlashCommandNames: deps.builtInSlashCommandNames }
+            : {}),
+          ...(deps.hostAgentNames ? { hostAgentNames: deps.hostAgentNames } : {}),
           eventSink: {
             onSessionEvent: async (event) => {
               request.reportActivity?.();
@@ -694,7 +718,9 @@ export function resolveSubagentPermissionMode(
  */
 export function resolveSubagentResumeModeOverride(
   childMode: AgentRuntimeInternal["config"]["mode"],
-): "build" | "edit" | "yolo" | "auto" | undefined {
+  // dontAsk 进 CollaborationMode 后按 Exclude 收词（permission-adjudication-batch2
+  // 接线项 1 的类型贯通面）：resume 的 modeOverride 通道接受除 plan 外全部档位。
+): Exclude<CollaborationMode, "plan"> | undefined {
   return childMode === "plan" ? undefined : childMode;
 }
 
@@ -1125,4 +1151,31 @@ function traceStringAttribute(
 ): string | undefined {
   const value = traceContext.attributes?.[key];
   return typeof value === "string" ? value : undefined;
+}
+
+/**
+ * profile.hooks（内联 JSON，形状同 settings.json hooks）→ child runtime 的
+ * HooksRuntimeConfig（specs/subagent-declarative-keys.md 接线需求 1）。经配置文件
+ * 同款 HooksRuntimeConfigPatchSchema 校验（事件键 strict、hook 条目闭集）；畸形 →
+ * 整体丢弃（fail-closed，绝不带病注册——解析期诊断面在 profile-declarative，这里
+ * 不重复出诊断）。空 events → 缺席（与未声明 hooks 零行为差异）。timeout/输出上限
+ * 缺省取 DefaultHooksRuntimeConfig（与 runtime-tools 的空配置常量同值）。
+ */
+function resolveChildHooksConfig(
+  declaration: AgentHooksDeclaration | undefined,
+): HooksRuntimeConfig | undefined {
+  if (!declaration) return undefined;
+  const parsed = HooksRuntimeConfigPatchSchema.safeParse(declaration);
+  if (!parsed.success) return undefined;
+  const events = parsed.data.events ?? {};
+  if (Object.keys(events).length === 0) return undefined;
+  return {
+    ...DefaultHooksRuntimeConfig,
+    enabled: parsed.data.enabled ?? true,
+    events,
+    ...(parsed.data.maxOutputBytes === undefined
+      ? {}
+      : { maxOutputBytes: parsed.data.maxOutputBytes }),
+    ...(parsed.data.timeoutMs === undefined ? {} : { timeoutMs: parsed.data.timeoutMs }),
+  };
 }

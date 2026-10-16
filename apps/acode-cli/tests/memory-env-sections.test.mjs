@@ -25,6 +25,15 @@ const {
 // 虚构固定值（不使用真实用户目录）；快照对照要求确定性。
 const MEMORY_ROOT = "/home/demo/.acode/memory";
 
+// filesystem 语义段·主会话变体（specs/subagent-declarative-keys.md R6 / 接线需求 7，
+// 波 2 接线波落入 env-info.ts）：恒真静态文本，紧跟事实行、排在条件段之前。
+// 快照逐字对照 env-info.ts 的 FILESYSTEM_SEMANTICS_INSTRUCTION。
+const FILESYSTEM_SEMANTICS = [
+  "Filesystem semantics: the working directory above is a real folder on the user's computer - your reads and writes hit their disk directly, there is no backup copy, and deletions cannot be undone.",
+  "The files you write are the lasting artifacts of this session: create them where the task calls for them, and deliver findings in your replies instead of writing self-made report copies of what you can simply say.",
+  "Product configuration is made of real files too (agents, skills, memory and settings under the user's ACode directory and the workspace .acode folder): editing them rewrites how future sessions behave, so treat such edits as consequential self-modification and make them only when the task explicitly asks.",
+].join(" ");
+
 function makeEnvInfo(overrides = {}) {
   return {
     cwd: "/work/demo-project",
@@ -121,6 +130,8 @@ test("(5) snapshot: env section content for a git directory", () => {
     "- OS Version: win32 10.0.26200 x64",
     "- Operating system: Windows (10.0.26200 x64)",
     "- Node version: v22.14.0",
+    "",
+    FILESYSTEM_SEMANTICS,
   ].join("\n");
   assert.equal(section.content, expected);
   assert.equal(section.name, "Environment Info");
@@ -145,6 +156,8 @@ test("(6) snapshot: env section content for a non-git directory", () => {
     "- Operating system: Windows (10.0.26200 x64)",
     "- Node version: v22.14.0",
     "",
+    FILESYSTEM_SEMANTICS,
+    "",
     "The working directory is not a git repository: there is no history, no diffs, and no blame to consult, and git commands that expect a repository will fail here. Do not describe or infer version-control state you cannot observe — if git context matters for the task, say it is unavailable and work from the files themselves.",
   ].join("\n");
   assert.equal(section.content, expected);
@@ -156,7 +169,11 @@ test("(7) model line still renders last among the fact lines when a model is pro
     modelId: "demo-model",
   });
   const lines = section.content.split("\n");
-  assert.equal(lines[lines.length - 1], "- You are powered by the model named acode/demo-model.");
+  // R6 主会话变体后，模型行仍是事实块的最后一行：其后紧跟 filesystem 语义段。
+  const modelIndex = lines.indexOf("- You are powered by the model named acode/demo-model.");
+  assert.ok(modelIndex >= 0, "模型行必须在场");
+  assert.equal(lines[modelIndex + 1], "");
+  assert.equal(lines[modelIndex + 2], FILESYSTEM_SEMANTICS);
 });
 
 // ── memory 段：条件出现 ───────────────────────────────────────────────

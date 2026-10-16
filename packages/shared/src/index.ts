@@ -217,6 +217,7 @@ export type { ACodeTaskCreateResult } from "./acode-task-types.js";
 export * from "./acode-task-types.js";
 export * from "./automation-types.js";
 export * from "./automation-notice.js";
+export * from "./automation-manual-trigger.js";
 export * from "./off-peak-types.js";
 export * from "./background-task-control-merge.js";
 export * from "./background-task-controls.js";

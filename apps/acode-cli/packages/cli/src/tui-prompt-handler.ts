@@ -5,6 +5,7 @@ import { DEFAULT_LOCALE, type SupportedLocale } from "@acode/i18n";
 import type { TuiRequestPermission } from "@acode/tui";
 import type { GlobalOptions } from "@acode/shared-types";
 import { createCommandCenter, parseSlashCommand } from "./command-center.js";
+import { AVAILABLE_COMMANDS } from "./command-center/slash-commands.js";
 import type { CommandCenterApp } from "./command-center.js";
 import { resolveDisplayLocale } from "./locale.js";
 import { createCliHeadlessBrowserRuntime } from "./headless-browser.js";
@@ -171,6 +172,8 @@ export function createTuiSubmitPrompt(
         uiLocale: activeUiLocale,
         userConfigPath: deps.userConfigPath,
         version,
+        // GUIDE 宿主接线②（specs/guide-live-build-section.md）：内置 slash 命令表只读投影。
+        builtInSlashCommandNames: AVAILABLE_COMMANDS,
       });
     } catch (error) {
       await runCliCleanupWithTimeout(async () => browserRuntime?.close(), cleanupTimeoutMs);

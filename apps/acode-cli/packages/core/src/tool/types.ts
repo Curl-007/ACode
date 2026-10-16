@@ -202,8 +202,32 @@ export interface ToolExecutionContext {
   memoryRoot?: string;
   runtimeScope?: ToolRuntimeScope;
   providerVisibleToolNames?: readonly string[];
+  /**
+   * GUIDE 宿主接线（specs/guide-live-build-section.md「宿主接线登记」①②③）：
+   * 运行中构建的事实只读投影，Skill 工具装配点（skill-live-build）消费。
+   * 缺席 = 快照子节按 R3 降级（version 标 unavailable、命令/MCP 保持磁盘 best-effort）。
+   */
+  liveBuildSnapshotPort?: LiveBuildSnapshotPort;
   sessionId: SessionId;
   turnId?: TurnId;
+}
+
+/** GUIDE 实时节宿主事实端口（装配链：cli __CLI_VERSION__/command-center → runtime deps → executor）。 */
+export interface LiveBuildSnapshotPort {
+  /** ① CLI 版本（构建期 __CLI_VERSION__ 经 createACodeApp options.version 透传）。 */
+  version?: string;
+  /** ② 内置 slash 命令表只读投影（cli command-center 注册表）。 */
+  builtInCommandNames?: readonly string[];
+  /** ④ plugin/bundled agents 名单投影（"名 (来源类别)" 行，只列名不泄配置）。 */
+  hostAgentNames?: readonly string[];
+  /** ③ MCP 连接态 name→state 投影（「已配置」升级「已连」）；失败/缺席 = 磁盘配置面。 */
+  getMcpConnectionStates?: () => Promise<readonly LiveBuildMcpConnectionState[]>;
+}
+
+/** MCP 连接态投影条目（state 取 McpServerStatusKind 词汇，字符串透传不做第二闭集）。 */
+export interface LiveBuildMcpConnectionState {
+  name: string;
+  state: string;
 }
 
 export interface ToolEmbeddedSearchContext {

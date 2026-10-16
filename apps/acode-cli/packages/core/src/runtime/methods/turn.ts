@@ -1,6 +1,8 @@
 /* eslint-disable max-lines -- 存量基线豁免:该文件先于 CLI lint 门禁建立即超限(根 lint 的 ignorePatterns 排除 apps/acode-cli,turbo lint 因此从未变绿)。头注豁免以恢复门禁信号;拆分重构超出本批范围。 */
 import { beginLocalTurnPreparation, type LocalTtftDetail } from "@acode/contracts";
 import { runtimeInputMetadata } from "../../agent/runtime-input-presentation.js";
+// 技能激活期作用域（skill-frontmatter-governance R4）：回合边界重算触发点。
+import { refreshSessionSkillActivationScope } from "../../agent/skill-activation-scope.js";
 import {
   CoreErrorType,
   HookEventName,
@@ -136,6 +138,15 @@ export async function executeTurnCommand(
   // D5 并发只读诊断投影（specs/concurrency-diagnostics-projection.md R5）：每 turn 至多一条。
   // 并发治理事实的变化粒度是 turn 级，每模型请求/每工具批只会重复噪声；debug 级只走本地日志。
   logConcurrencyDiagnostics(this, turnTraceContext);
+  // 技能激活期作用域重算（skill-frontmatter-governance R4 消费接线）：回合边界
+  // 单点重算——compaction 把 Skill 调用挤出历史、resume/rewind 重建历史，作用域
+  // 在这里随之自然收敛（store 是缓存不是事实源；另一触发点在 tools.ts 的
+  // Skill 调用成功后，两处走同一个重算函数 = 唯一写路径）。
+  refreshSessionSkillActivationScope({
+    sessionId: this.sessionId,
+    entries: this.messageHistory.borrowReadOnlyRuntimeEntries(),
+    catalog: this.skillLoadOutcome?.skills ?? [],
+  });
 
   const turnAbortScope = createTurnAbortScope(options?.abortSignal);
   const turnAbortSignal = turnAbortScope.signal;

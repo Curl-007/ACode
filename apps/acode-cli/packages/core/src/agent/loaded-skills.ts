@@ -52,3 +52,37 @@ function skillInputNames(input: unknown): string | undefined {
   if (typeof fields.name === "string") return fields.name;
   return undefined;
 }
+
+/**
+ * 历史里**所有**成功加载过的技能名（按首次加载序去重）。与 sessionHasLoadedSkill
+ * 同一判据（成功=调用有对应非错误 tool 结果；技能名同时认 `{ skill }` 与 `{ name }`
+ * 两种输入形），供技能激活期作用域重算使用（specs/skill-frontmatter-governance.md
+ * R4：作用域锚历史存在性，compaction/resume 后自然重算，不另立第二套激活状态）。
+ * 名字取模型调用时传入的原文（可能是 name 或 qualifiedName），目录身份解析由
+ * 消费方对技能目录完成。
+ */
+export function collectLoadedSkillNames(entries: readonly RuntimeMessageEntry[]): string[] {
+  const pendingNameByCallId = new Map<string, string>();
+  const loaded: string[] = [];
+  const seen = new Set<string>();
+  for (const entry of entries) {
+    if (entry.kind === "attachment") continue;
+    const message = entry.message;
+    if (message.role === "assistant") {
+      for (const call of message.toolCalls ?? []) {
+        if (call.name !== SKILL_TOOL_NAME) continue;
+        const name = skillInputNames(call.input);
+        if (name !== undefined) pendingNameByCallId.set(call.id, name);
+      }
+      continue;
+    }
+    if (message.role !== "tool" || message.toolCallId === undefined || message.isError === true) {
+      continue;
+    }
+    const name = pendingNameByCallId.get(message.toolCallId);
+    if (name === undefined || seen.has(name)) continue;
+    seen.add(name);
+    loaded.push(name);
+  }
+  return loaded;
+}

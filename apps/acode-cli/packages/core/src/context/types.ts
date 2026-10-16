@@ -115,6 +115,11 @@ export interface ContextBuilderConfig {
   scratchDir?: string;
   memoryIndexContent?: string;
   skills?: SkillLoadOutcome;
+  /**
+   * 会话身份（skill-frontmatter-governance R5 消费接线）：skills 清单段按它查
+   * paths 触发激活集；缺席 = 不过滤（子代理 builder / 测试路径零回归）。
+   */
+  sessionId?: string;
   agentProfiles?: readonly AgentProfile[];
   embeddedSearchEnabled?: boolean;
   skillMetadataBudget?: number;

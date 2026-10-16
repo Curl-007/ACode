@@ -157,6 +157,11 @@ function formatHumanSkillInspection(
   if (metadata.pluginName) lines.push(`pluginName: ${metadata.pluginName}`);
   if (metadata.qualifiedName) lines.push(`qualifiedName: ${metadata.qualifiedName}`);
   if (metadata.whenToUse) lines.push(`whenToUse: ${metadata.whenToUse}`);
+  // user-invocable:false 的技能 inspect 保留但标注 hidden（skill-frontmatter-governance
+  // R6 消费接线，与参考 isHidden 语义一致）：列表面已隐藏，显式 inspect 仍给全事实。
+  if (metadata.governance?.userInvocable === false) {
+    lines.push("hidden: yes (user-invocable: false - model-invoked only, not listed for users)");
+  }
   lines.push(`safeToAutoLoad: ${metadata.safeToAutoLoad ? "yes" : "no"}`);
   lines.push(
     `size: ${inspection.skill.bytesRead}/${inspection.skill.sizeBytes} bytes${inspection.skill.truncated ? " (truncated)" : ""}`,
@@ -228,6 +233,10 @@ const formatSkillInspectionJson = (inspection: ACodeSkillInspection, cwd: string
         safeToAutoLoad: inspection.skill.metadata.safeToAutoLoad,
         scope: inspection.skill.metadata.scope,
         source: inspection.skill.metadata.source,
+        // user-invocable:false → inspect 保留但标注 hidden（R6 消费接线，人类面同款）。
+        ...(inspection.skill.metadata.governance?.userInvocable === false
+          ? { hiddenFromUserInvocation: true }
+          : {}),
         ...(inspection.skill.metadata.whenToUse
           ? { whenToUse: inspection.skill.metadata.whenToUse }
           : {}),

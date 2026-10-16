@@ -383,6 +383,17 @@ export interface AgentRuntimeDeps {
   agentTelemetryCausation?: AgentTelemetryCausation;
   agentTelemetryCausationMode?: "child" | "linked_root";
   appVersion?: string;
+  /**
+   * GUIDE 宿主接线②（specs/guide-live-build-section.md「宿主接线登记」）：内置 slash
+   * 命令表只读投影（cli command-center 注册表 → createACodeApp options → 本 deps →
+   * executor liveBuildSnapshotPort）。缺席 = 快照命令子节保持磁盘 best-effort 面。
+   */
+  builtInSlashCommandNames?: readonly string[];
+  /**
+   * GUIDE 宿主接线④：plugin/bundled agents 名单只读投影（"名 (来源类别)" 行，
+   * bootstrap create-app 计算）。缺席 = 快照 agents 子节保持「not visible」注记。
+   */
+  hostAgentNames?: readonly string[];
   eventStore: SessionEventStorePort;
   sessionStore?: SessionStorePort;
   sessionMailboxPort?: SessionMailboxPort;

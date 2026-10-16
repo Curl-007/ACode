@@ -37,6 +37,8 @@ import {
   resolveRuntimePermissionContext,
 } from "./permission-capability.js";
 import { buildDefaultPermissionUpdates } from "./permission-suggestions.js";
+// 技能激活期作用域（skill-frontmatter-governance R4）：权限裁决前取会话快照。
+import { snapshotSessionSkillActivationScope } from "../../agent/skill-activation-scope.js";
 import { recheckPermissionHookModifiedInput } from "./permission-input-recheck.js";
 import type { ToolExecutorDeps } from "./types.js";
 import { summarizeInput } from "./utils.js";
@@ -102,6 +104,10 @@ export async function resolveToolPermission(
     // PermissionService 实例，挑战键不含身份时会话 A 的反射挑战会被会话 B 的首调
     // 「继承」，B 携带预填 justification 即可绕过反射轮。
     sessionId: deps.sessionId,
+    // 技能激活期作用域快照（skill-frontmatter-governance R4 消费接线）：store 是
+    // 缓存、事实源 = provider 可见历史（回合边界 + Skill 成功后重算，见 runtime
+    // methods）；未登记会话返回共享空 scope = 零行为变化。
+    skillActivationRules: snapshotSessionSkillActivationScope(deps.sessionId),
     // R6 边界⑥收口（spec npm-script-body-scan.md R1/R4）：npm/pnpm/yarn/bun run 的
     // script 体预解析 map。bypass-immune-breakers 的 deny 级命中与反射门从这里拿到
     // 注入——yolo 下 body catastrophic 的 deny 通道就在这里接通（breaker 是纯函数，
@@ -419,7 +425,7 @@ export async function resolveToolPermission(
         // hook 改写 input 后的复核也可能落到反射门 deny（新命令无挑战 → 门 deny），
         // 与首次判定同一投递语义：结构化指引不被截断。
         resolvedPermission.preserveReasonFormatting ||
-        isBashReflexGateRuleId(permissionDecision.ruleId)
+          isBashReflexGateRuleId(permissionDecision.ruleId)
           ? { preserveReasonFormatting: true }
           : undefined,
       ),

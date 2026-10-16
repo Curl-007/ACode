@@ -4,6 +4,7 @@ import {
   ACODE_PROTOCOL_VERSION,
   getACodeGoalActiveIterationCount,
   acodeApiRetryFromModelNetworkStatusPayload,
+  acodeAutoResumeFromModelNetworkStatusPayload,
   acodeApiRetryFromStreamRecoveryPayload,
   acodeContextUsageBreakdownSchema,
   type ACodeActiveToolCall,
@@ -498,7 +499,11 @@ function mapModelRequestPayload(payload: unknown): Record<string, unknown> {
 
 function mapModelNetworkStatusPayload(payload: unknown): Record<string, unknown> {
   const record = asRecord(payload);
-  const apiRetry = acodeApiRetryFromModelNetworkStatusPayload(record);
+  // 跨回合 auto-resume（specs/turn-auto-resume.md「状态上报」）：auto_resume_scheduled
+  // 与 model_retry_scheduled 共用 apiRetry 槽，kind 区分文案（additive，不改既有 api_retry 形状）。
+  const apiRetry =
+    acodeAutoResumeFromModelNetworkStatusPayload(record) ??
+    acodeApiRetryFromModelNetworkStatusPayload(record);
   if (apiRetry === undefined) {
     return record;
   }

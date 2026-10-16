@@ -199,6 +199,12 @@ export function resolveAppRuntimeConfig(input: {
       ...configResult.config.modelAnomalyGuard,
       ...options.runtimeConfig?.modelAnomalyGuard,
     },
+    // autoResume（specs/turn-auto-resume.md「配置面」，modelAnomalyGuard 同构）：
+    // config 文件层缺省 → call-level runtimeConfig 覆盖；core coordinator 消费。
+    autoResume: {
+      ...configResult.config.autoResume,
+      ...options.runtimeConfig?.autoResume,
+    },
     mcp: {
       enabled: options.runtimeConfig?.mcp?.enabled ?? configResult.config.features.mcp,
       servers: autoConnectMcpServers,

@@ -8,6 +8,7 @@
 // - 环境能力（模型就绪 / legacy 广播 / shell 解析）是注入钩子：旧协议 binder 在过渡期
 //   提供实现，与旧协议同生命周期——每个钩子都标注过渡归宿，新增钩子必须标注。
 import type {
+  SessionStorePort,
   SessionTaskType,
   StableForkGoalBoundaryMetadata,
   TraceContext,
@@ -187,6 +188,12 @@ export interface V4CommandCoreHost {
       feedback: "like" | "dislike" | null;
     },
   ): Promise<void>;
+  /**
+   * 进程级 session store（含 UsageStorePort 面；v4 原生能力，非过渡钩子）：
+   * 数据查询类命令（/usage）经此取数，与 usageStats / v4/conversation/usage 通道
+   * 同源。缺席 → 命令回「数据源不可用」可读回执，不抛裸异常。
+   */
+  getSessionStore?(): SessionStorePort | undefined;
   /**
    * 交互应答登记表（v4 原生基础设施，非过渡钩子）：interaction-broker 发起
    * 反向请求（permission/AskUserQuestion）时注册 deferred，resolveInteraction 命令

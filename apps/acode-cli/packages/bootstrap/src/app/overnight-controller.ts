@@ -39,7 +39,7 @@ import {
   type ScriptWorkflowAgentRuntimeDeps,
 } from "@acode/cli-workflow/contract";
 import { getCliGitInvocationEnvOverlay } from "@acode/shared";
-import type { ACodeBuiltinHostCommand } from "../builtin-prompt-command.js";
+import type { ACodeOvernightHostCommand } from "../builtin-prompt-command.js";
 
 export interface CreateOvernightControllerDeps extends ScriptWorkflowAgentRuntimeDeps {
   executionPort: ExecutionPort;
@@ -60,7 +60,7 @@ export interface OvernightController {
   cancel(): OvernightStartResult;
   /** 入口拦截面的统一消费点：解析后的结构化动作 → 宿主动作。 */
   handleHostCommand(
-    command: ACodeBuiltinHostCommand,
+    command: ACodeOvernightHostCommand,
     traceContext?: TraceContext,
   ): Promise<OvernightStartResult>;
   getActiveRunId(): string | undefined;

@@ -4,6 +4,9 @@ import type { AiSdkModelAdapter } from "@acode/adapters/model";
 import type {
   AgentRuntime,
   AgentRuntimeConfig,
+  AutoResumeCommandIntent,
+  AutoResumeCommandOutcome,
+  AutoResumeStatusSnapshot,
   ExecuteTurnOptions,
   ExpertWorkflowCommandResult,
   ProviderRuntimeHeadersPort,
@@ -686,6 +689,27 @@ export interface ACodeApp {
     traceId: TraceContext["traceId"];
   }>;
   setLocale(locale: UiLocale): Promise<SetLocaleResult>;
+  /**
+   * /auto-resume 命令面（specs/turn-auto-resume.md）：读取当前会话的 auto-resume 状态
+   * 只读投影。runtime 未装配命令面（旧 runtime/子会话）时返回 undefined，命令模块回执
+   * 「不可用」。
+   */
+  getAutoResumeStatus?(): AutoResumeStatusSnapshot | undefined;
+  /**
+   * /auto-resume 命令面：应用一条命令意图。裸 on/off 与 msg 会持久化 config（照 /locale
+   * 写 config 先例，回执 configPath）；off <时长> 是进程内 pause overlay，不写盘。
+   */
+  applyAutoResumeCommand?(
+    intent: AutoResumeCommandIntent,
+  ): Promise<AutoResumeCommandOutcome> | AutoResumeCommandOutcome;
+  /**
+   * /usage 命令面（apps/acode-cli/specs/usage-statusbar.md）：零 token 本地用量查询；
+   * 数据源 = 进程级 session store（UsageStorePort 面）。ok=false 时 text 是可读回执
+   * （非法参数/数据源缺席/取数失败）。能力缺席时命令回「不可用」。
+   */
+  queryUsage?(input: {
+    args: string;
+  }): Promise<{ ok: boolean; scope: string | null; text: string }>;
   stopExpertWorkflow(options?: {
     abortSignal?: AbortSignal;
     definitionId?: string;

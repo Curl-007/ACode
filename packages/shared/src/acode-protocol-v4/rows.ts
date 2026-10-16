@@ -53,6 +53,21 @@ export const turnWorkSegmentSchema = z.object({
 });
 export type TurnWorkSegment = z.infer<typeof turnWorkSegmentSchema>;
 
+// turnHeader 的每轮模型用量统计（TurnComplete 时由投影写入；specs/usage-statusbar.md）。
+// null = 纯问答轮（无模型事实）；字段缺席 = 旧快照，UI 不渲染本轮用量项。
+// generationMs/timeToFirstTokenMs 口径由 core producer 单点计算，投影只透传。
+export const turnHeaderStatsSchema = z.object({
+  inputTokens: z.number().nonnegative(),
+  outputTokens: z.number().nonnegative(),
+  reasoningTokens: z.number().nonnegative(),
+  cacheReadTokens: z.number().nonnegative(),
+  cacheWriteTokens: z.number().nonnegative(),
+  timeToFirstTokenMs: z.number().nonnegative().optional(),
+  generationMs: z.number().nonnegative().optional(),
+  modelRequestCount: z.number().int().nonnegative(),
+});
+export type TurnHeaderStats = z.infer<typeof turnHeaderStatsSchema>;
+
 // turnHeader：product turn 边界 + 权威工时 + 每轮文件摘要。
 // guide 产生的内部折叠边界由 workSegments 表达；行归属仍由 CLI 决定，客户端零归属逻辑。
 export const turnHeaderRowSchema = z.object({
@@ -93,6 +108,8 @@ export const turnHeaderRowSchema = z.object({
       state: z.enum(["active", "reverted"]).optional(),
     })
     .optional(),
+  // additive：本轮模型统计（状态栏「本轮用量」与回答末尾速率行的数据源）。
+  stats: turnHeaderStatsSchema.nullable().optional(),
 });
 export type TurnHeaderRow = z.infer<typeof turnHeaderRowSchema>;
 

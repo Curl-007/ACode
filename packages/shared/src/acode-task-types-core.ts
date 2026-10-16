@@ -886,6 +886,25 @@ export interface ACodeApiRetryStatus {
   errorStatus: number | null;
   error: string;
 }
+/**
+ * 跨回合 auto-resume 状态（apps/acode-cli/specs/turn-auto-resume.md「状态上报」）：
+ * 与 api_retry 共用 apiRetry 槽，UI 按 kind 区分文案。wire 侧变体 =
+ * acode-protocol-legacy-types.ts 的 acodeSessionAutoResumeStatusSchema（同形）。
+ */
+export interface ACodeAutoResumeStatus {
+  kind: "auto_resume";
+  /** 第几次跨回合自动继续（1-based）。 */
+  attempt: number;
+  /** maxResumes 上限（同会话连续）。 */
+  maxResumes: number;
+  /** 退避等待毫秒（0 = 即将注入）。 */
+  resumeDelayMs: number;
+  errorStatus: number | null;
+  /** 被恢复失败的摘要（core 侧只拼闭集 reason 与 statusCode，无自由文本）。 */
+  error: string;
+}
+/** apiRetry 槽的取值面：既有 api_retry + additive auto_resume。 */
+export type ACodeApiRetrySlotValue = ACodeApiRetryStatus | ACodeAutoResumeStatus;
 /** Agent 推送会话标题等元信息更新 */
 export interface ACodeSessionInfoUpdate {
   type: "session_info_update";
@@ -900,7 +919,7 @@ export interface ACodeSessionInfoUpdate {
    * `null` 表示显式清空重试状态；
    * 对象表示进入/更新重试中。
    */
-  apiRetry?: ACodeApiRetryStatus | null;
+  apiRetry?: ACodeApiRetrySlotValue | null;
   /**
    * acode-cli 通过兼容 session_info_update._meta.acode.target 投影的 /goal 状态补丁。
    * `undefined` 表示本次没有 target 变化；`target: null` 表示清空。
@@ -1009,7 +1028,7 @@ export interface ACodeSessionRuntimeSnapshot {
   /** 当前 session 的 active turn 类型；用于 UI 区分普通 streaming 与 compact 维护态。 */
   activeTurnKind?: ACodeSessionActiveTurnKind;
   /** Agent API 网络重试是运行态提示，只随 snapshot 恢复，不写入 session JSON。 */
-  apiRetry?: ACodeApiRetryStatus | null;
+  apiRetry?: ACodeApiRetrySlotValue | null;
   /** ACode Protocol projection 中的上下文窗口用量，用于恢复旧 task UI 的右下角 context meter。 */
   contextUsage?: {
     used: number;

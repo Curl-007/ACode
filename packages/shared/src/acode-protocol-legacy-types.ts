@@ -14,6 +14,9 @@ const timestampMsSchema = z.number().int().nonnegative();
 export const acodeDeliveryKindSchema = z.enum(["desktop-continuous", "web-remote-replayable"]);
 export const acodeMessageVisibilitySchema = z.enum(["user-visible", "model-only"]);
 export const acodeSyntheticUserMessageSourceSchema = z.enum([
+  // 跨回合 auto-resume（apps/acode-cli/specs/turn-auto-resume.md）：runtime 退避后注入的
+  // model-only 继续指令；词表与 contracts SYNTHETIC_USER_MESSAGE_SOURCES 同步。
+  "auto_resume",
   "background_task",
   "fork",
   "goal_state_change",
@@ -508,6 +511,25 @@ export const acodeSessionApiRetryStatusSchema = z
     error: z.string(),
   })
   .strict();
+// 跨回合 auto-resume 状态（apps/acode-cli/specs/turn-auto-resume.md「状态上报」）：
+// 与 api_retry 共用 apiRetry 槽，UI 按 kind 区分文案。本变体是幸存承重面的维护性
+// 扩集（同 synthetic source 词表镜像的性质）：legacy apiRetry 槽退役时随收敛计划
+// 与 api_retry 一起迁移，不另开新通道。
+export const acodeSessionAutoResumeStatusSchema = z
+  .object({
+    kind: z.literal("auto_resume"),
+    attempt: z.number().int().positive(),
+    maxResumes: z.number().int().nonnegative(),
+    resumeDelayMs: z.number().int().nonnegative(),
+    errorStatus: z.number().int().nonnegative().nullable(),
+    error: z.string(),
+  })
+  .strict();
+export const acodeSessionApiRetrySlotSchema = z.union([
+  acodeSessionApiRetryStatusSchema,
+  acodeSessionAutoResumeStatusSchema,
+]);
+export type ACodeSessionApiRetrySlotValue = z.infer<typeof acodeSessionApiRetrySlotSchema>;
 export const acodeSessionContextCacheUsageSchema = z
   .object({
     inputTokens: z.number().int().nonnegative(),
@@ -566,7 +588,7 @@ export const acodeSessionRuntimeStateSchema = z
     activeTurnId: nonEmptyString.optional(),
     activeTurnKind: z.enum(["regular", "compact", "rewind"]).optional(),
     pendingRequestIds: z.array(nonEmptyString),
-    apiRetry: acodeSessionApiRetryStatusSchema.nullable().optional(),
+    apiRetry: acodeSessionApiRetrySlotSchema.nullable().optional(),
     contextUsage: acodeSessionContextUsageSchema.optional(),
     goalVerifications: z.array(acodeSessionGoalVerificationSchema).optional(),
     goalVerificationTimeline: z.array(acodeSessionGoalVerificationTimelineSchema).optional(),

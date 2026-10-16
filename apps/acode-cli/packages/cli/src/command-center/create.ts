@@ -10,6 +10,8 @@ import { handleDwfCommand } from "./handlers/dwf.js";
 import { handleEffortCommand } from "./handlers/effort.js";
 import { handleExpertCommand } from "./handlers/expert.js";
 import { handleLocaleCommand } from "./handlers/locale.js";
+import { handleUsageCommand } from "./handlers/usage.js";
+import { handleAutoResumeCommand } from "../auto-resume-command/index.js";
 import { handleMcpCommand } from "./handlers/mcp.js";
 import { handleModeCommand } from "./handlers/mode.js";
 import { handleModelCommand } from "./handlers/model.js";
@@ -320,6 +322,14 @@ export function createCommandCenter(deps: CommandCenterDeps): TuiSubmitPrompt {
 
       if (command.name === "locale") {
         return handleLocaleCommand(command.args, deps);
+      }
+
+      if (command.name === "usage") {
+        return handleUsageCommand(command.args, deps);
+      }
+
+      if (command.name === "auto-resume") {
+        return handleAutoResumeCommand(command.args, deps);
       }
 
       if (command.name === "mcp") {

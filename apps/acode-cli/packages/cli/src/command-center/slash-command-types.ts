@@ -136,6 +136,22 @@ export type SlashCommand =
       type: "known";
     }
   | {
+      // 零 token 本地查询（apps/acode-cli/specs/usage-statusbar.md）：create.ts 拦截
+      // 执行 app.queryUsage，不进模型。
+      args: string;
+      name: "usage";
+      rawName: string;
+      type: "known";
+    }
+  | {
+      // 零 token 本地命令（apps/acode-cli/specs/turn-auto-resume.md）：create.ts 拦截
+      // 执行 auto-resume 命令模块，不进模型。
+      args: string;
+      name: "auto-resume";
+      rawName: string;
+      type: "known";
+    }
+  | {
       args: string;
       rawName: string;
       type: "unknown";

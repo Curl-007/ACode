@@ -9,7 +9,11 @@
  *
  * 懒初始化：首次写日志才构建身份（模块加载零副作用，测试可安全 import）。
  */
-import { homedir, hostname, userInfo } from "node:os";
+// 命名空间导入而非命名导入：browser/vite dev 下 node:os 被 externalize 成属性访问
+// 即抛的 stub，命名导入会在模块图求值期解构绑定、直接炸掉 renderer 挂载（本模块
+// 承诺「模块加载零副作用」，顶层命名导入违背该承诺——dev desktop 黑屏实测回归）。
+// 命名空间导入把属性访问推迟到 safe* 调用期，且调用点全部有 try/catch + env 派生兜底。
+import * as nodeOs from "node:os";
 
 import {
   buildLogRedactionIdentity,
@@ -25,7 +29,7 @@ let redactorSingleton: LogRedactor | undefined;
 
 function safeUserInfoUsername(): string {
   try {
-    return userInfo().username ?? "";
+    return nodeOs.userInfo().username ?? "";
   } catch {
     // 容器/服务账户下 userInfo() 可能没有 passwd 条目；env 派生兜底。
     return "";
@@ -34,7 +38,7 @@ function safeUserInfoUsername(): string {
 
 function safeHomedir(): string {
   try {
-    return homedir();
+    return nodeOs.homedir();
   } catch {
     return "";
   }
@@ -42,7 +46,7 @@ function safeHomedir(): string {
 
 function safeHostname(): string {
   try {
-    return hostname();
+    return nodeOs.hostname();
   } catch {
     return "";
   }

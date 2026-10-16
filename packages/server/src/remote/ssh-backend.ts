@@ -39,6 +39,12 @@ import {
   type SSHHostKeyVerificationStatus,
 } from "@acode/server/remote/sshAuth.js";
 import {
+  createHostKeyChallengePromptHandler,
+  createSSHPromptChannel,
+  type SSHPromptChannel,
+} from "@acode/server/remote/sshPromptChannel.js";
+import type { SSHKeyboardInteractiveResponder } from "@acode/server/remote/sshKeyboardInteractive.js";
+import {
   createSSHUploadProgressReporter,
   formatSSHUploadError,
   formatSSHUploadLabel,
@@ -117,7 +123,15 @@ export class SSHBackend implements IRemoteBackend {
   readonly onDidDisconnect = this.disconnectEmitter.event;
   private hostKeyDecision: SSHHostKeyVerificationStatus | undefined;
   private hostKeyChallenge: SSHHostKeyChallenge | undefined;
-  private readonly onHostKeyChallenge: SSHHostKeyChallengeHandler | undefined;
+  /**
+   * 连接期提示通道（specs/ssh-prompt-mediation.md R4/R5）：一次连接（backend）一个
+   * 实例；通道是「对端已确认」状态与 pending 提示表的唯一所有者。host-key challenge
+   * 是第一个消费者；passphrase/otp 单提示经同一通道中介（顺序闸治理）。
+   * 无 onHostKeyChallenge 时不创建（challenge 保持拒绝，行为同现状）。
+   */
+  private readonly promptChannel: SSHPromptChannel | undefined;
+  /** keyboard-interactive responder 实例；认证失败时读取 takeLastRefusal 注入错误归一化 context。 */
+  private readonly keyboardInteractiveResponder?: SSHKeyboardInteractiveResponder;
 
   private readonly onClientError = (error: unknown): void => {
     if (this.disposed) {
@@ -125,7 +139,11 @@ export class SSHBackend implements IRemoteBackend {
       // dispose 期间保留监听器只为吸收这类迟到事件，不能再向上层重复报告或触发未捕获异常。
       return;
     }
-    const normalizedError = normalizeSSHConnectError(error);
+    // R3：认证失败那一轮如果拒绝过交互提示，真实原因是「服务器要求 ACode 无法
+    // 代答的提示形态」而不是密码错误；take 语义防止陈旧拒绝污染后续无关错误。
+    const normalizedError = normalizeSSHConnectError(error, {
+      keyboardInteractiveRefusal: this.keyboardInteractiveResponder?.takeLastRefusal(),
+    });
     // ready 之后如果底层连接抖动，ssh2 仍会发出 "error" 事件。
     // 若没有常驻监听，Node 会把它当成未捕获异常直接抛出，可能导致 host 进程崩溃。
     // 这里先记录错误详情再上报断连；上层收到断连后会退出 host，反过来会丢掉真实 error 文案。
@@ -143,7 +161,17 @@ export class SSHBackend implements IRemoteBackend {
 
   constructor(options: SSHBackendOptions) {
     this.hostKeyTrust = options.hostKeyTrust;
-    this.onHostKeyChallenge = options.onHostKeyChallenge;
+    // 连接期提示通道：存量 SSHHostKeyChallengeHandler（Desktop requestId IPC 闭环）
+    // 经 createHostKeyChallengePromptHandler 适配为通道 handler，既有闭环零改动
+    // 作为通道后端（specs/ssh-prompt-mediation.md R4.5）。
+    this.promptChannel = options.onHostKeyChallenge
+      ? createSSHPromptChannel({
+          handler: createHostKeyChallengePromptHandler(options.onHostKeyChallenge),
+          host: options.host,
+          port: options.port ?? 22,
+          logWarn: (message) => console.warn(`[ssh] ${message}`),
+        })
+      : undefined;
     this.client = new SSHClient();
     this.client.on("error", this.onClientError);
     this.client.on("close", this.onClientClose);
@@ -170,6 +198,9 @@ export class SSHBackend implements IRemoteBackend {
                  expectedFingerprints: expectedFingerprints.map(normalizeSSHHostKeyFingerprint),
                }
              : undefined;
+        // R5 顺序闸：verifier 裁决 trusted 即「对端已确认」，secret 类提示
+        // （passphrase/otp）此后才可交给 handler；其余状态不产生确认。
+        this.promptChannel?.notifyHostKeyOutcome(status);
       },
     });
     if (resolveACodeRuntimeEnv(process.env) === "development") {
@@ -186,15 +217,26 @@ export class SSHBackend implements IRemoteBackend {
     if (typeof options.password === "string" && options.password.length > 0) {
       // `ssh2` 类型定义遗漏了 keyboard-interactive 事件，但运行时确实支持。
       // 这里局部转成 EventEmitter 接口，避免为了一个事件把整段代码降级到 any。
+      // R2/R4.6：responder 注入中介与拒绝回调——单密码提示照旧自动应答；
+      // passphrase/otp/generic 单提示在通道存在时交真人应答（顺序闸治理，
+      // abort 落回拒绝路径）；多提示批次一律拒绝（v1 边界）。
+      const responder = createKeyboardInteractiveResponder(options.password, {
+        ...(this.promptChannel ? { mediator: this.promptChannel } : {}),
+        onRefusal: (refusal) => {
+          // 拒绝记录归 responder 实例所有（takeLastRefusal take 语义，认证失败时
+          // 注入 normalizeSSHConnectError context）；这里只落结构化 reason 日志，
+          // 消毒后的提示快照随归一化错误文案走用户可见通道。
+          console.warn(`[ssh] keyboard-interactive refused: reason=${refusal.reason}`);
+        },
+      });
+      this.keyboardInteractiveResponder = responder;
       (
         this.client as unknown as {
           on(event: string, listener: (...args: unknown[]) => void): void;
         }
       ).on(
         "keyboard-interactive",
-        createKeyboardInteractiveResponder(options.password) as unknown as (
-          ...args: unknown[]
-        ) => void,
+        responder as unknown as (...args: unknown[]) => void,
       );
     }
   }
@@ -230,41 +272,21 @@ export class SSHBackend implements IRemoteBackend {
         if (
           !(error instanceof SSHHostKeyVerificationError) ||
           !error.challenge ||
-          !this.onHostKeyChallenge ||
+          !this.promptChannel ||
           challengeRetryCount >= 1
         ) {
           throw error;
         }
         challengeRetryCount += 1;
         const challenge = error.challenge;
-        let decision: SSHHostKeyDecision;
-        try {
-          decision = await this.onHostKeyChallenge(challenge);
-        } catch (handlerError) {
-          throw new SSHHostKeyDecisionError(
-            handlerError instanceof Error ? handlerError.message : "SSH 主机密钥决策失败",
-          );
-        }
-        if (
-          !decision ||
-          decision.challengeId !== challenge.challengeId ||
-          normalizeSSHHostKeyFingerprint(decision.candidateFingerprint) !==
-            challenge.candidateFingerprint
-        ) {
-          throw new SSHHostKeyDecisionError();
-        }
+        // 委托连接期提示通道（specs/ssh-prompt-mediation.md R4.5）：决策绑定校验
+        // （challengeId/候选指纹回显、unknown→approve、changed→replace、reject 直通）
+        // 收敛在通道内，与既有 backend 规则一致；handler 抛错/绑定不符/abort 一律
+        // 抛 SSHHostKeyDecisionError 语义错误，fail-closed。
+        const decision: SSHHostKeyDecision =
+          await this.promptChannel.requestHostKeyDecision(challenge);
         if (decision.action === "reject") {
           throw error;
-        }
-        if (
-          (challenge.status === "unknown" && decision.action !== "approve") ||
-          (challenge.status === "changed" && decision.action !== "replace")
-        ) {
-          throw new SSHHostKeyDecisionError(
-            challenge.status === "unknown"
-              ? "未知 SSH 主机密钥只能执行 approve"
-              : "变化的 SSH 主机密钥必须显式 replace",
-          );
         }
         if (!this.hostKeyTrust?.commitDecision) {
           throw new SSHHostKeyDecisionError("当前 SSH 信任存储不支持交互批准");
@@ -314,7 +336,12 @@ export class SSHBackend implements IRemoteBackend {
                 this.hostKeyDecision as Exclude<SSHHostKeyVerificationStatus, "trusted">,
                   this.hostKeyChallenge,
               )
-            : normalizeSSHConnectError(error),
+            : // R3：认证失败若本轮拒绝过交互提示，归一化为携带解释文案的拒绝错误
+              // （take 语义防陈旧拒绝污染后续无关错误）；未注入时行为不变。
+              normalizeSSHConnectError(error, {
+                keyboardInteractiveRefusal:
+                  this.keyboardInteractiveResponder?.takeLastRefusal(),
+              }),
         );
       };
       this.client.once("ready", handleReady);
@@ -732,6 +759,9 @@ export class SSHBackend implements IRemoteBackend {
     this.client.off("close", this.onClientClose);
     this.client.off("end", this.onClientEnd);
     this.client.end();
+    // 通道 dispose：全部 pending 提示以 expired 结算，后续请求一律 expired
+    // （specs/ssh-prompt-mediation.md R4.3），防止 backend 退役后 UI 悬挂等待。
+    this.promptChannel?.dispose();
     this.connected = false;
     this.disconnectEmitter.dispose();
   }

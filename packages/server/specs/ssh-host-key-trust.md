@@ -63,6 +63,26 @@
   `@revoked`/changed 规则优先裁决。managed entry 的 override 只由同一 candidate 的显式 `replace`
   决策写入，不能由普通首次 `approve` 设置。
 
+## 连接期提示通道（扩展节）
+
+host-key challenge 的一次性 `challengeId` 闭环已泛化为「连接期提示通道」抽象
+（`sshPromptChannel.ts`，产品规则与验收见 `ssh-prompt-mediation.md`）：
+
+1. host_key 是通道提示种类闭集（host_key/passphrase/otp/generic）的第一个消费者。
+   `requestHostKeyDecision(challenge)` 把 `SSHHostKeyChallenge` 包装为携带
+   challenge 载荷的 host_key 提示；`promptId` 与 `challengeId` 同时存在且都一次性，
+   决策必须回显两者与候选 fingerprint，`unknown→approve`、`changed→replace`、
+   reject 直通的约束与本 spec 产品规则第 6 条一致，校验失败抛
+   `SSHHostKeyDecisionError` 语义错误。
+2. 存量 `SSHHostKeyChallengeHandler`（含 Desktop `(webContentsId, requestId)` IPC
+   闭环）经 `createHostKeyChallengePromptHandler` 适配为通道 handler，行为不变；
+   `SSHBackend.connectWithChallenge` 现行重试循环在本批保持原样，委托通道属后续
+   集成批次（登记于 ssh-prompt-mediation.md）。
+3. 顺序闸以本 spec 的裁决语义为输入：verifier 报 `trusted`，或用户经通道对
+   challenge 作出 approve/replace 决策后，通道才视为「对端已确认」；确认前任何
+   secret 类提示（passphrase/otp）不展示，直接 abort `peer_unconfirmed`。
+   `revoked`/`changed` 未获 replace 前不产生确认状态。
+
 ## 验收场景
 
 1. 无记录的首个 key 被拒绝，且 fake server 未观察到 password/keyboard-interactive 认证尝试。

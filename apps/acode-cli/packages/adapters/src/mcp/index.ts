@@ -9,6 +9,7 @@ import {
   ProtocolError,
   SdkError,
   SdkErrorCode,
+  SdkHttpError,
   SSEClientTransport,
   StreamableHTTPClientTransport,
   UnsupportedProtocolVersionError,
@@ -43,11 +44,24 @@ import type {
   TraceContext,
 } from "@acode/contracts";
 import { ACODE_MCP_SERVER_REQUEST_ID_META_KEY } from "@acode/contracts";
-import { normalizeMcpToolDescriptor } from "./descriptor.js";
+import {
+  exceedsMcpToolNameLimit,
+  MCP_TOOL_NAME_MAX_LENGTH,
+  normalizeMcpToolDescriptor,
+} from "./descriptor.js";
+import {
+  buildMcpAccessDeniedError,
+  buildMcpNotConnectedMessage,
+  buildMcpOutcomeUnknownError,
+  buildMcpReconnectRefusalError,
+} from "./model-guidance.js";
+import {
+  createMcpNegotiationMemory,
+  type McpNegotiationMemory,
+} from "./negotiation-memory.js";
 import {
   createSingleflightRunner,
   McpReconnectBudget,
-  type McpReconnectGateVerdict,
 } from "./reconnect-budget.js";
 import {
   createOfficialMcpAuthFetch,
@@ -136,6 +150,13 @@ export interface CreateMcpAdapterOptions {
     crashBudget?: number;
     minRetryIntervalMs?: number;
   };
+  /**
+   * 协议协商记忆（specs/mcp-protocol-negotiation-increments.md R1）：慢连接 server
+   * 的 legacy 裁决持久记忆，7 天新鲜窗内 auto 协商跳过 server/discover probe。
+   * 缺省创建文件存储（`<数据基目录>/.acode/cli/mcp/protocol-memory.json`，
+   * fail-open）；测试可注入内存实现或临时文件路径。
+   */
+  negotiationMemory?: McpNegotiationMemory;
   /**
    * 官方 Server MCP 鉴权依赖。trustedOrigins 缺失时仍 fail closed；authHeadersPort
    * 可缺省，此时各请求匿名降级并交给服务端做权威判定。
@@ -236,6 +257,18 @@ class NodeMcpAdapter implements McpPort {
   private readonly onStatusChange?: McpServerStatusChangeListener;
   /** 自动重连预算（R1）：连续失败熔断 + 最小重试间隔；显式连接复位。 */
   private readonly reconnectBudget: McpReconnectBudget;
+  /**
+   * 协议协商记忆（specs/mcp-protocol-negotiation-increments.md R1）：慢连接 server
+   * 的 legacy 裁决，7 天新鲜窗内 auto 协商跳过 probe。fail-open：记忆面任何故障
+   * 都退化为「没有记忆、照常探测」。
+   */
+  private readonly negotiationMemory: McpNegotiationMemory;
+  /**
+   * HTTP 403 快速失败标记（negotiation-increments spec R2）：403 = 身份被认出但
+   * 访问被拒，重连不可能改变结果。标记的 server 不再进懒重连循环（不 spawn、
+   * 不消耗预算），callTool 直接抛带解释的快速失败错误；显式连接清除标记。
+   */
+  private readonly permanentAccessDenied = new Set<string>();
   /** 同一 server 的并发自动重连共享一个 in-flight promise（R1 singleflight）。 */
   private readonly autoReconnectSingleflight = createSingleflightRunner<string, McpServerStatus>();
   private readonly connectionGenerations = new Map<string, number>();
@@ -279,6 +312,9 @@ class NodeMcpAdapter implements McpPort {
     this.telemetry = options.telemetry;
     this.onStatusChange = options.onStatusChange;
     this.reconnectBudget = new McpReconnectBudget({ ...options.reconnect });
+    this.negotiationMemory =
+      options.negotiationMemory ??
+      createMcpNegotiationMemory({ env: options.env, logger: this.logger });
     this.workingDirectory = options.workingDirectory;
   }
 
@@ -361,7 +397,12 @@ class NodeMcpAdapter implements McpPort {
     const startedAt = Date.now();
     const timeoutMs = config.timeoutMs ?? DEFAULT_MCP_TIMEOUT_MS;
     const generation = this.nextConnectionGeneration(name);
-    if (!invocation.auto) this.reconnectBudget.reset(name);
+    if (!invocation.auto) {
+      this.reconnectBudget.reset(name);
+      // 403 快速失败标记只由显式操作清除（negotiation-increments spec R2）：用户
+      // 修好凭据/权限后从设置页重连，必须能重新尝试。
+      this.permanentAccessDenied.delete(name);
+    }
     this.lastOfficialAuthKind.delete(name);
     this.connectionDiagnosticByServer.delete(name);
     this.logger?.info("MCP server connection started", {
@@ -603,6 +644,12 @@ class NodeMcpAdapter implements McpPort {
     // 但工具本身恢复可用。自动重连受预算门禁（specs/mcp-lifecycle-ttl-approval.md R1）：
     // 挂起/冷却期内直接拒绝并抛出带模型指引的错误，不再 spawn。
     const stale = this.records.get(request.serverName);
+    // 403 快速失败门（negotiation-increments spec R2）：已确认的永久拒绝不进懒重连
+    // 循环——不 spawn/握手、不消耗重连预算，直接向模型解释「重试不会改变结果」。
+    // 标记只由显式操作（设置页重连 / session 启动收敛）或一次连接成功清除。
+    if (this.permanentAccessDenied.has(request.serverName)) {
+      throw buildMcpAccessDeniedError(request.serverName);
+    }
     if (stale && isAutoReconnectableStatus(stale.status)) {
       this.assertAutoReconnectAllowed(request.serverName);
       await waitWithinMcpDeadline(
@@ -945,6 +992,15 @@ class NodeMcpAdapter implements McpPort {
           if (!verdict.allowed && verdict.reason === "suspended") {
             throw buildMcpReconnectRefusalError(request.serverName, verdict, error);
           }
+        }
+        // 防双跑（negotiation-increments spec R4）：CONNECTION_CLOSED = 请求已写上
+        // 线、响应没有回来——server 可能已执行、仍在执行或根本没收到。裸
+        // "Connection closed" 会诱导模型原样重发（副作用工具 = 双跑）；换成
+        // outcome-unknown 指引，原错误保留在 cause 链。NOT_CONNECTED（发起时已断，
+        // 请求未上线）不包装：callTool 对该消息的「安全一次重试」语义依赖未发送
+        // 事实，包装会破坏它。
+        if (isConnectionClosedMidCall(error)) {
+          throw buildMcpOutcomeUnknownError(request.serverName, request.toolName, error);
         }
       }
       throw error;
@@ -1293,13 +1349,35 @@ class NodeMcpAdapter implements McpPort {
       );
       transport = transportBundle.transport;
       getRecentStderr = this.attachStdioLogging(name, transport);
+      // 协商记忆消费（negotiation-increments spec R1）：auto 协商本来要先跑一轮
+      // server/discover probe；7 天新鲜窗内被记住为「probe 不出结果的 legacy 对端」
+      // 的 server 直接走 legacy 路径，省掉 probe 超时预算（慢连接 server 的启动税）。
+      // 显式 pin/legacy 配置与 sse 不受记忆影响（记忆只作用于 auto）。
+      const configuredNegotiation = resolveVersionNegotiation(config, timeoutMs);
+      let effectiveNegotiation = configuredNegotiation;
+      let probeSkippedByMemory = false;
+      if (
+        configuredNegotiation.mode === "auto" &&
+        (await this.negotiationMemory.isRememberedLegacy(config))
+      ) {
+        effectiveNegotiation = { mode: "legacy" };
+        probeSkippedByMemory = true;
+        this.logger?.debug(
+          "MCP server remembered as a legacy peer from an earlier connect; skipping the discover probe",
+          {
+            ...this.connectionContext,
+            event: "mcp.server.negotiation_memory.hit",
+            mcpServerName: name,
+          },
+        );
+      }
       client = new Client(
         {
           name: this.clientName,
           version: this.clientVersion,
         },
         {
-          versionNegotiation: resolveVersionNegotiation(config, timeoutMs),
+          versionNegotiation: effectiveNegotiation,
         },
       );
       this.updateCurrentRecord(name, generation, {
@@ -1325,8 +1403,14 @@ class NodeMcpAdapter implements McpPort {
         signal,
       );
       listToolsDurationMs = Date.now() - listToolsStartedAt;
-      const tools = listed.tools.map((tool) =>
-        normalizeMcpToolDescriptor(
+      const tools: McpToolDescriptor[] = [];
+      // >128 字符工具名剔除（negotiation-increments spec R3）：模型面工具名超过
+      // provider/MCP SDK 的 128 字符上限时，注册进工具池只会在首次调用或 schema
+      // 校验阶段炸出难以归因的错误。这里在注册边界剔除并**点名**记录被剔工具，
+      // 让日志能直接回答「这个 server 少了哪个工具、为什么」。
+      const droppedOverlongTools: Array<{ toolName: string; name: string; length: number }> = [];
+      for (const tool of listed.tools) {
+        const descriptor = normalizeMcpToolDescriptor(
           name,
           tool,
           config.timeoutMs,
@@ -1339,10 +1423,42 @@ class NodeMcpAdapter implements McpPort {
           // 原判据是 `type !== "sse"`，把 stdio 一起放了进来，等于这道门槛在 stdio 上为零。
           // 注意这不是在挡凭证外泄（那由 origin 校验负责），而是在挡**结果伪造**。
           config.type === "http" && config.auth?.type === ACODE_OFFICIAL_MCP_AUTH_TYPE,
-        ),
-      );
+        );
+        const modelName = descriptor.name ?? descriptor.toolName;
+        if (exceedsMcpToolNameLimit(descriptor)) {
+          droppedOverlongTools.push({
+            toolName: descriptor.toolName,
+            name: modelName,
+            length: modelName.length,
+          });
+          continue;
+        }
+        tools.push(descriptor);
+      }
+      if (droppedOverlongTools.length > 0) {
+        this.logger?.warn("MCP tools dropped: model-facing name exceeds the length limit", {
+          ...this.connectionContext,
+          droppedTools: droppedOverlongTools,
+          event: "mcp.tools.name_too_long_dropped",
+          maxNameLength: MCP_TOOL_NAME_MAX_LENGTH,
+          mcpServerName: name,
+        });
+      }
       const negotiatedProtocolEra = client.getProtocolEra();
       const negotiatedProtocolVersion = client.getNegotiatedProtocolVersion();
+      // 协商记忆记账（negotiation-increments spec R1）：只有真正跑过 probe 的 auto
+      // 协商才产生观察事实。probe 后落在 legacy 纪元 → 记住（7 天窗内跳过 probe）；
+      // modern 纪元 → 清除旧记忆（自愈证据优先）。记忆短路、显式 pin/legacy、sse
+      // 都不记账。写入是 best-effort（模块内部串行化 + 吞错），不阻塞连接成功路径。
+      if (configuredNegotiation.mode === "auto" && !probeSkippedByMemory) {
+        if (negotiatedProtocolEra === "legacy") {
+          void this.negotiationMemory.rememberLegacy(config);
+        } else if (negotiatedProtocolEra === "modern") {
+          void this.negotiationMemory.forget(config);
+        }
+      }
+      // 连接成功 = 403 快速失败标记的解除点之一（另一处是显式连接入口）。
+      this.permanentAccessDenied.delete(name);
       const status = this.createStatus(config, "connected", {
         protocolEra: negotiatedProtocolEra,
         toolCount: tools.length,
@@ -1624,6 +1740,19 @@ class NodeMcpAdapter implements McpPort {
       (error instanceof OfficialMcpAuthError ? error.kind : undefined) ??
       this.lastOfficialAuthKind.get(name);
     this.lastOfficialAuthKind.delete(name);
+    // 403 快速失败标记（negotiation-increments spec R2）：HTTP 403（SDK 结构化
+    // SdkHttpError.status 判定，不按错误文本反解）或官方鉴权 forbidden 分类 =
+    // 身份被认出但访问被拒——重连不可能改变结果。标记后懒重连门禁直接拒绝
+    // （不再「403 → 冷却 → 重连 → 又 403」三连），显式操作或连接成功清除。
+    if (officialAuthKind === "official_auth_forbidden" || isHttpForbiddenFailure(error)) {
+      this.permanentAccessDenied.add(name);
+      this.logger?.warn("MCP server denied access (HTTP 403); automatic retries suppressed", {
+        ...this.connectionContext,
+        event: "mcp.server.access_denied",
+        mcpServerName: name,
+        status: "failed",
+      });
+    }
     const responseDiagnostic = this.connectionDiagnosticByServer.get(name);
     this.connectionDiagnosticByServer.delete(name);
     const failureKind =
@@ -2255,49 +2384,38 @@ function isMidCallTransportDisconnect(error: unknown): boolean {
 }
 
 /**
- * 自动重连被拒（挂起/冷却）时的模型指引文案（specs/mcp-lifecycle-ttl-approval.md R2.1）。
- * 失败文案即模型的下一步：说明事实（哪个 server、失败几次/还需等待多久），显式给出
- * 「不要在循环里重试」的指引与正确动作；不粘贴堆栈、不含 env/凭据。
+ * 「请求已上线后连接断开」的结构化识别（negotiation-increments spec R4 防双跑的
+ * 判据）：只认 SdkError 字符串 code CONNECTION_CLOSED——SDK 在响应等待期 transport
+ * 断开时抛出。NOT_CONNECTED 不在此列：它只在请求**尚未写出**时抛（SDK 的
+ * request/send 入口对 transport 缺席的早期拒绝），是 callTool 安全一次重试的依据。
+ * 与 isMidCallTransportDisconnect 同一哲学：结构化 code 比较，不按错误文本反解，
+ * record 形态兜底多份 SDK 实例下 instanceof 失效。
  */
-function buildMcpReconnectRefusalError(
-  serverName: string,
-  verdict: Exclude<McpReconnectGateVerdict, { allowed: true }>,
-  cause?: unknown,
-): Error {
-  if (verdict.reason === "suspended") {
-    const options = cause !== undefined ? { cause } : {};
-    if (verdict.suspendedBy === "in_call_crashes") {
-      const crashes = verdict.suspension.consecutiveInCallCrashes ?? verdict.consecutiveFailures;
-      return new Error(
-        `MCP server "${serverName}" is unavailable: automatic reconnection was suspended after ${crashes} consecutive tool calls crashed the connection mid-call. Do not retry this tool in a loop - every attempt will fail until the server recovers. Tell the user this MCP server needs attention (check its configuration and logs); reconnecting it explicitly from the MCP settings will resume automatic recovery.`,
-        options,
-      );
-    }
-    return new Error(
-      `MCP server "${serverName}" is unavailable: automatic reconnection was suspended after ${verdict.consecutiveFailures} consecutive connection failures. Do not retry this tool in a loop - every attempt will fail until the server recovers. Tell the user this MCP server needs attention (check its configuration and logs); reconnecting it explicitly from the MCP settings will resume automatic recovery.`,
-      options,
-    );
+function isConnectionClosedMidCall(error: unknown): boolean {
+  if (SdkError.isInstance(error)) {
+    return error.code === SdkErrorCode.ConnectionClosed;
   }
-  const retryAfterSeconds = Math.max(1, Math.ceil(verdict.retryAfterMs / 1000));
-  return new Error(
-    `MCP server "${serverName}" is unavailable: its last automatic reconnection failed and the next attempt is throttled for about ${retryAfterSeconds}s. Do not retry this tool in a loop; continue with other work or report the failure to the user.`,
+  return (
+    isRecord(error) &&
+    typeof error.code === "string" &&
+    error.code === SdkErrorCode.ConnectionClosed
   );
 }
 
-/** 工具调用发现 server 未连接时的失败文案（R2.1）：保留既有前缀，追加模型指引。 */
-function buildMcpNotConnectedMessage(serverName: string, status?: McpServerStatus): string {
-  const base = `MCP server is not connected: ${serverName}`;
-  const suspension = status?.reconnectSuspension;
-  if (suspension) {
-    // 挂起来源维度（spec R1）：中途崩溃挂起挂在 disconnected 状态上，文案按维度
-    // 给出真实计数，避免把中途崩溃说成连接失败。
-    const reason =
-      suspension.suspendedBy === "in_call_crashes"
-        ? `${suspension.consecutiveInCallCrashes ?? suspension.consecutiveFailures} consecutive mid-call crashes`
-        : `${suspension.consecutiveFailures} consecutive failures`;
-    return `${base} (automatic reconnection suspended after ${reason}). Do not retry this tool in a loop; tell the user the MCP server needs attention - an explicit reconnect from the MCP settings will resume automatic recovery.`;
+/**
+ * HTTP 403 的结构化识别（negotiation-increments spec R2）：SDK 把非 2xx 响应包成
+ * SdkHttpError（data.status），沿 cause 链查找。官方鉴权路径的 forbidden 分类走
+ * OfficialMcpAuthError.kind（failConnection 内单独判定），两者取或。
+ */
+function isHttpForbiddenFailure(error: unknown): boolean {
+  const seen = new Set<unknown>();
+  let current: unknown = error;
+  while (current !== undefined && current !== null && !seen.has(current)) {
+    seen.add(current);
+    if (SdkHttpError.isInstance(current) && current.status === 403) return true;
+    current = (current as { cause?: unknown }).cause;
   }
-  return `${base}. Do not retry this tool in a loop while the server stays disconnected; continue with other work or report the failure to the user.`;
+  return false;
 }
 
 /**

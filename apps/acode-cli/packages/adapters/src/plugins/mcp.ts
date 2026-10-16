@@ -12,6 +12,7 @@ import type {
 } from "@acode/contracts";
 import { ACODE_OFFICIAL_PLUGIN_MARKETPLACE } from "@acode/contracts";
 import { ACODE_PLUGIN_ID_ENV_KEY } from "@acode/shared";
+import { isExecHijackEnvKey } from "../exec/exec-hijack-env-guard.js";
 import type { LoadedPlugin } from "./types.js";
 import { isNotFoundError, isPluginOptionValue, isRecord, resolveInside } from "./helpers.js";
 import { buildOfficialProvenance, parseACodeOfficialAuth } from "./mcp-official-auth.js";
@@ -206,6 +207,22 @@ function resolveMcpServerConfig(
       throw new Error(
         `MCP server ${identity.mcpKey}: ${officialAuth.type} auth cannot be combined with oauth`,
       );
+    }
+    // R4 声明面拒绝门（specs/subprocess-env-credential-allowlist.md 接线需求②）：插件
+    // manifest/.mcp.json 声明的 per-server env 命中执行劫持闭集键即拒绝该 server——
+    // 声明面「拒绝」优于消费面「静默剥离」：配置作者能从 diagnostic 看见原因，而不是
+    // 拿到一个行为悄然不同的 server。第一方重写路径豁免：官方市场插件的 manifest 由
+    // bootstrap writeOfficialPluginRuntimeManifest 注入 ELECTRON_RUN_AS_NODE=1（官方
+    // 插件宿主的 Node 模式重建），source.kind === "builtin" 即该路径——marketplace
+    // 身份来自本地 plugin registry，manifest 伪造不了。node_repl 等 bootstrap 直接
+    // 构造的宿主 config 不经过本声明面，天然不在门内。
+    if (source.kind !== "builtin" && isRecord(server.env)) {
+      const hijackKeys = Object.keys(server.env).filter((key) => isExecHijackEnvKey(key));
+      if (hijackKeys.length > 0) {
+        throw new Error(
+          `MCP server ${identity.mcpKey}: env key ${hijackKeys.join(", ")} conflicts with a reserved environment variable (execution-hijack closed set); remove it from the declaration`,
+        );
+      }
     }
     const env = resolveStringRecord(
       {

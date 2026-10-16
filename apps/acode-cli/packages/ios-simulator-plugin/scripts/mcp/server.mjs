@@ -23,6 +23,12 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import {
+  DEVICE_BULK_OUTPUT_MAX_VISIBLE_CHARS,
+  DEVICE_OUTPUT_MAX_VISIBLE_CHARS,
+  sanitizeDeviceText,
+  sanitizeDeviceTextDeep,
+} from "./sanitize.mjs";
 
 const SIMCTL = process.env.IOS_SIM_CTL ?? "simctl";
 const DEFAULT_DEVICE = process.env.IOS_SIM_DEFAULT_DEVICE ?? "iPhone 16";
@@ -221,7 +227,8 @@ const tools = {
       if (!resolved.ok) return toolError(resolved.reason);
       const result = text(xcrun(["install", resolved.device.udid, app_path], { timeoutMs: 180000 }));
       if (!result.ok) return toolError(`install failed: ${result.stderr}`);
-      return jsonResult({ installed: app_path });
+      // 宿主路径回显：路径可以合法超过短字段档，按输出档截断。
+      return jsonResult({ installed: app_path }, DEVICE_OUTPUT_MAX_VISIBLE_CHARS);
     },
   },
 
@@ -307,7 +314,8 @@ const tools = {
       if (!resolved.ok) return toolError(resolved.reason);
       const result = text(xcrun(["openurl", resolved.device.udid, url]));
       if (!result.ok) return toolError(`openurl failed: ${result.stderr}`);
-      return jsonResult({ opened: url });
+      // 深链 URL 可以合法很长：按输出档截断。
+      return jsonResult({ opened: url }, DEVICE_OUTPUT_MAX_VISIBLE_CHARS);
     },
   },
 
@@ -330,7 +338,8 @@ const tools = {
       if (container) args.push(container);
       const result = text(xcrun(args));
       if (!result.ok) return toolError(`get_app_container failed: ${result.stderr}`);
-      return jsonResult({ container: result.stdout.trim() });
+      // 容器路径（宿主文件系统）按输出档截断。
+      return jsonResult({ container: result.stdout.trim() }, DEVICE_OUTPUT_MAX_VISIBLE_CHARS);
     },
   },
 
@@ -366,22 +375,40 @@ const tools = {
       const resolved = resolveDevice(device);
       if (!resolved.ok) return toolError(resolved.reason);
       const result = text(xcrun(["spawn", resolved.device.udid, "/bin/sh", "-c", command], { timeoutMs: 60000 }));
-      return jsonResult({ ok: result.ok, stdout: result.stdout, stderr: result.stderr });
+      // spawn 的 stdout/stderr 是设备侧大块不可信输出：不可见码点全滤 +
+      // 大块档上限（32768 可见字符）。
+      return jsonResult(
+        { ok: result.ok, stdout: result.stdout, stderr: result.stderr },
+        DEVICE_BULK_OUTPUT_MAX_VISIBLE_CHARS,
+      );
     },
   },
 };
 
 // ------------------------------------------------------------------- MCP plumbing
 
-function jsonResult(payload) {
+/**
+ * 设备文本净化收口（specs/device-ui-text-sanitize.md）：所有进模型的结果 payload
+ * 都经这里递归 sanitize——设备名、路径、命令输出都是不可信输入，不可见码点在
+ * 序列化前全部滤除，字符串按档位上限截断（缺省 256 短字段档；路径/URL 回显用
+ * 输出档；命令 stdout 用大块档）。text 与 structuredContent 共用同一份净化后
+ * payload，两个通道不会分叉。
+ */
+function jsonResult(payload, maxVisibleChars) {
+  const sanitized = sanitizeDeviceTextDeep(
+    payload,
+    maxVisibleChars === undefined ? {} : { maxVisibleChars },
+  );
   return {
-    content: [{ type: "text", text: JSON.stringify(payload, null, 2) }],
-    structuredContent: payload,
+    content: [{ type: "text", text: JSON.stringify(sanitized, null, 2) }],
+    structuredContent: sanitized,
   };
 }
 
 function toolError(message) {
-  return { content: [{ type: "text", text: message }], isError: true };
+  // 错误消息内嵌 simctl stderr（设备侧文本）：按输出档净化后再进模型。
+  const sanitized = sanitizeDeviceText(message, DEVICE_OUTPUT_MAX_VISIBLE_CHARS);
+  return { content: [{ type: "text", text: sanitized }], isError: true };
 }
 
 const TOOL_LIST = Object.entries(tools).map(([name, tool]) => ({

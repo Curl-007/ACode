@@ -27,6 +27,13 @@ export type {
   PersistedWorkspaceSessionEntry,
 } from "./protocol.js";
 export type { WorkspacePurpose } from "./workspacePurpose.js";
+// 桌面端 AppSettings 持久化形状与 onboarding 职业闭集（protocol.ts 400 行闸拆分产物）。
+export type {
+  DesktopBootPlaceholderSettings,
+  DesktopBootPlaceholderShape,
+  DesktopWindowSizeSettings,
+} from "./desktopAppSettings.js";
+export type { AppSettingsOccupation } from "./appSettingsOccupation.js";
 export { DEFAULT_LOCALE } from "./protocol.js";
 export { ACODE_VERSION, ACODE_COMMIT, ACODE_BUILD_TIME } from "./version.js";
 export type { HelloMessage, HelloAckMessage } from "./handshake.js";
@@ -198,6 +205,8 @@ export type {
   RemoteSessionClosedEvent,
   RemoteServiceSession,
   SSHConfigAliasOption,
+  SSHConfigAliasUnsupportedReason,
+  SSHConfigAliasUnsupportedInfo,
   DesktopZoomState,
   TaskNotificationPayload,
   UpdateCheckResultPayload,
@@ -293,5 +302,14 @@ export * from "./clientConfig.js";
 export * from "./pluginStoreOrdering.js";
 export * from "./session-debug.js";
 export { redactFeedbackText } from "./feedbackPrivacy.js";
+// 日志隐私脱敏机制（specs/log-privacy-redaction.md）：敏感键名单源、主机名注册表、
+// 身份模型、URL/SID 策略、机密形态、管线工厂与 session id 出网门。
+export * from "./sensitiveKeyNames.js";
+export * from "./logRedactionHostNames.js";
+export * from "./logRedactionIdentity.js";
+export * from "./logRedactionUrls.js";
+export * from "./logRedactionSecrets.js";
+export * from "./logRedactionPipeline.js";
+export * from "./sessionEgressGate.js";
 
 export * from "./remoteWorkspaceConnection.js";

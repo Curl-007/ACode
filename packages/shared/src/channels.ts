@@ -10,6 +10,7 @@ import type {
 } from "./mcp.js";
 import type { OAuthStateRegistration } from "./oauth.js";
 import type { AppSettings, Locale, ResourceUsageSnapshot } from "./protocol.js";
+import type { ContentBreadcrumbWirePayload } from "./contentBreadcrumbWire.js";
 import type { StorageCleanRequest, StorageCleanResult, StorageUsageSnapshot } from "./storage.js";
 import type {
   CancelPendingRemoteConnectionRequest,
@@ -419,9 +420,58 @@ export const PlatformChannels = {
   NetworkCaptureGetState: "acode:network-capture-get-state",
   /** Main → Renderer：观测记录批量推送（单向 send，仅资源管理器窗口接收） */
   NetworkCaptureRecords: "acode:network-capture-records",
+  // ── 页内查找（specs/find-in-page.md）──
+  /** Renderer → Main：页内查找（webContents.findInPage 三路竞速封装；超时/目标丢失 fail-soft 返回 {0,0}） */
+  FindInPage: "acode:find-in-page",
+  /** Renderer → Main：清除查找高亮（查询低于阈值/关闭查找栏，会话保留） */
+  StopFindInPage: "acode:stop-find-in-page",
+  /** Renderer → Main：结束查找会话（清高亮 + 拆失效链监听） */
+  EndFindInPageSession: "acode:end-find-in-page-session",
+  /** Main → Renderer：请求打开查找栏（主菜单/accelerator 入口的单向推送） */
+  OpenFindInPage: "acode:open-find-in-page",
+  // ── 卡顿归因深化层（specs/main-stall-diagnostics.md R11/R12）──
+  /** Renderer → Main：内容状态面包屑（send-only，桶化 payload，main 侧 fail-closed 校验） */
+  ContentBreadcrumb: "acode:content-breadcrumb",
+  /** Renderer → Main：window.print() 前/后上报（send-only boolean，print() 假死守卫） */
+  PrintCall: "acode:print-call",
+  // ── 嵌入内容可编辑焦点让路（specs/embedded-content-focus-yield.md）──
+  /** Renderer → Main：嵌入第三方内容面可编辑焦点上报（send-only boolean） */
+  SyncEmbeddedEditableFocus: "acode:sync-embedded-editable-focus",
+  // ── 支持包导出（specs/log-privacy-redaction.md）──
+  /** Renderer → Main：导出分节支持包，返回保存路径或 null（失败/取消） */
+  ExportSupportBundle: "acode:export-support-bundle",
 } as const;
 
 export type PlatformChannelName = (typeof PlatformChannels)[keyof typeof PlatformChannels];
+
+// ============================================================================
+// 页内查找类型 —— specs/find-in-page.md（desktop main ↔ renderer）
+// ============================================================================
+
+/** 页内查找请求（Renderer → Main）。 */
+export interface FindInPageRequest {
+  /** 查询文本；起搜阈值（CJK 单字即搜、拉丁 3 字符）由两端各自把门。 */
+  text: string;
+  /** true = 增量续搜（输入流）；false = 重开一轮搜索（步进导航语义）。 */
+  findNext: boolean;
+  /** 步进方向；缺省 true（向前）。 */
+  forward?: boolean;
+}
+
+/** 页内查找结果。activeIndex 为 1-based；{0,0} = 无匹配或 fail-soft 收口。 */
+export interface FindInPageResult {
+  activeIndex: number;
+  total: number;
+}
+
+// ============================================================================
+// 卡顿归因深化层类型 —— specs/main-stall-diagnostics.md R11（内容面包屑 wire 契约）
+// ============================================================================
+
+// 契约类型收敛在叶子模块 contentBreadcrumbWire.ts（platform.ts 的
+// IPlatformService.sendContentBreadcrumb 同消费；channels → platform 已有导入边，
+// platform 不得反向导入 channels）。此处 re-export 保持通道面消费入口不变。
+export type { ContentBreadcrumbWirePayload } from "./contentBreadcrumbWire.js";
 
 // ============================================================================
 // 内置 WebView 频道 —— 固定 guest preload ↔ embedder renderer
@@ -1168,5 +1218,44 @@ export interface PlatformChannelMap {
   [PlatformChannels.NetworkCaptureRecords]: {
     request: import("./acode-protocol-v4/network-capture.js").V4NetworkCaptureRecordsNotification;
     response: void;
+  };
+  // ── 页内查找（specs/find-in-page.md）──
+  [PlatformChannels.FindInPage]: {
+    request: FindInPageRequest;
+    /** null = 查询未过阈值/载荷非法/目标不可用；调用方按无匹配收口，不抛错。 */
+    response: FindInPageResult | null;
+  };
+  [PlatformChannels.StopFindInPage]: {
+    request: void;
+    response: void;
+  };
+  [PlatformChannels.EndFindInPageSession]: {
+    request: void;
+    response: void;
+  };
+  [PlatformChannels.OpenFindInPage]: {
+    request: void;
+    response: void;
+  };
+  // ── 卡顿归因深化层（specs/main-stall-diagnostics.md R11/R12）──
+  [PlatformChannels.ContentBreadcrumb]: {
+    request: ContentBreadcrumbWirePayload;
+    response: void;
+  };
+  [PlatformChannels.PrintCall]: {
+    /** true = window.print() 即将阻塞；false = 打印对话框已关闭。非布尔载荷 main 侧丢弃。 */
+    request: boolean;
+    response: void;
+  };
+  // ── 嵌入内容可编辑焦点让路（specs/embedded-content-focus-yield.md）──
+  [PlatformChannels.SyncEmbeddedEditableFocus]: {
+    request: boolean;
+    response: void;
+  };
+  // ── 支持包导出（specs/log-privacy-redaction.md）──
+  [PlatformChannels.ExportSupportBundle]: {
+    request: void;
+    /** 保存路径；null = 失败或取消（错误详情走 main 日志，不回传敏感内容）。 */
+    response: string | null;
   };
 }

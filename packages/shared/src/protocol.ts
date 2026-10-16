@@ -7,6 +7,11 @@ import type { ACodeProvider } from "./acode-task-types-core.js";
 import type { WorkspacePurpose } from "./workspacePurpose.js";
 import type { EmbeddedBrowserViewportPreference } from "./browser-use/command-metadata.js";
 import type { DynamicWorkflowMode } from "./dynamic-workflow-feature.js";
+import type {
+  DesktopBootPlaceholderSettings,
+  DesktopWindowSizeSettings,
+} from "./desktopAppSettings.js";
+import type { AppSettingsOccupation } from "./appSettingsOccupation.js";
 
 // ── Domain types ──
 
@@ -314,13 +319,16 @@ export interface AppSettings {
   /** 桌面端全局页面缩放档位；用于重启后恢复界面缩放，Web/手机端忽略。 */
   desktopZoomLevel?: number;
   /** 桌面主窗口最近一次非最大化宽高及最大化状态；Web/手机端忽略。 */
-  desktopWindowSize?: {
-    width: number;
-    height: number;
-    maximized: boolean;
-  };
+  desktopWindowSize?: DesktopWindowSizeSettings;
   /** 桌面端 Chromium 硬件加速开关；只在下次启动 main 进程早期生效，Web/手机端忽略。 */
   desktopChromiumHardwareAccelerationEnabled?: boolean;
+  /**
+   * 桌面启动骨架占位（契约见 desktopAppSettings.ts，specs/boot-placeholder.md §9）：
+   * desktopBootPlaceholder 是最近一次采样；bootPlaceholderEnabled undefined = 启用
+   * （缺省开，不写 default 冻结缺省语义）。Web/手机端忽略。
+   */
+  desktopBootPlaceholder?: DesktopBootPlaceholderSettings;
+  bootPlaceholderEnabled?: boolean;
   /** 是否在消息流中展示模型思考过程 */
   messageStreamShowReasoning?: boolean;
   // TODO(settings-schema-version): 能证明所有受支持升级路径都已执行本次迁移后，改用统一 settings schema version，并一起删除此 marker、迁移函数和持久化判断。
@@ -354,22 +362,7 @@ export interface AppSettings {
   nativeSearchEnhancementsEnabled?: boolean;
   /** 新建或冷恢复 Session 是否启用 Memory；默认关闭。 */
   memoryEnabled?: boolean;
-  onboardingOccupation?:
-    | "office"
-    | "developer"
-    | "independent"
-    | "infrastructure"
-    | "product"
-    | "design"
-    | "student"
-    | "creator"
-    | "operations"
-    | "marketing"
-    | "finance"
-    | "accounting"
-    | "legal"
-    | "other"
-    | null;
+  onboardingOccupation?: AppSettingsOccupation | null;
   proactiveSuggestionsEnabled?: boolean;
   /** 上次关闭时的完整 workspace 会话（含本地与远端 workspace） */
   lastWorkspaceSession?: PersistedWorkspaceSessionEntry[];

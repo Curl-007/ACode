@@ -127,6 +127,12 @@ export interface ACodeAppOptions {
   sessionId?: SessionId;
   resume?: boolean;
   version?: string;
+  /**
+   * GUIDE 宿主接线②（specs/guide-live-build-section.md「宿主接线登记」）：内置 slash
+   * 命令表只读投影（cli command-center 注册表 AVAILABLE_COMMANDS）。缺席 = 快照的
+   * 命令子节保持磁盘 best-effort 面。
+   */
+  builtInSlashCommandNames?: readonly string[];
   traceContext?: TraceContext;
   runtimeConfig?: ACodeAppRuntimeConfigInput;
   /**

@@ -26,11 +26,12 @@ const { resolveEnabled } = await import("../packages/adapters/src/plugins/manife
 const OFFICIAL_MARKETPLACE = "acode-plugins-official";
 
 /**
- * 例外登记（spec R1）：computer-use 的 plugin.json 被第三方发布台账 sha256 逐字钉住
- * （third-party/inventory.json，L01 门禁），加 tier 必须同批再生台账——批 2 处理。
- * baseline 只许缩小：补上 tier 后必须从这里删除。
+ * 例外登记（spec R1）：plugin.json 被第三方发布台账 sha256 逐字钉住
+ * （third-party/inventory.json，L01 门禁）的插件，加 tier 必须同批再生台账，
+ * 期间在此登记豁免。baseline 只许缩小：computer-use 已于批 2 补 tier
+ * （default_false）并同批再生台账，baseline 现为空——机制保留给未来同类例外。
  */
-const TIER_PENDING_LEDGER_REGENERATION = new Set(["computer-use"]);
+const TIER_PENDING_LEDGER_REGENERATION = new Set([]);
 
 function readPluginManifest(definition) {
   // rootCandidates 首项恒为 "packages/<dir>"，相对 apps/acode-cli 根。

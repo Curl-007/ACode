@@ -183,9 +183,12 @@ description 单一来源、共享校验套件工程法）与 T3 env 归因条目
   一并做（需协调 packages/shared、desktop 设置页）。
 - 已落地（协调裁决后本波补做）：acode-guide dynamic-workflows 副本删除 + 单源化（R4）；
   plugin-creator `references/plugin-json-spec.md` 补 tier 字段文档。
-- 登记待批 2：computer-use 补 tier 需同批再生 `third-party/inventory.json` 的 sha256 钉扎
-  （台账面，R1 例外，本波不动）；tier 提升进 contracts `PluginManifest` + shared 镜像名单
-  退役（禁触面，需协调 packages/shared 与 desktop 设置页）。
+- 批 2 已处理（2026-10-16）：computer-use 补 `tier: "default_false"`（definitions 无
+  `defaultEnabled: true`，R1 同真值守护满足），同批以 CI Linux 规范重生成
+  `third-party/inventory.json` sha256 钉扎回补（licenses-notices workflow_dispatch 产物），
+  tier parity 测试的 `TIER_PENDING_LEDGER_REGENERATION` baseline 缩小为空。仍待批：
+  tier 提升进 contracts `PluginManifest` + shared 镜像名单退役（禁触面，需协调
+  packages/shared 与 desktop 设置页）。
 - 本 spec 不改 `agent-teams-derived-config.md` R1/R2 的注册与清单裁决；唯一交叠是 R3 把
   agent-teams listing 的 zh-CN 回退文案对齐到 plugin.json（「分支原样 listing」的措辞以
   本 spec R3 为准修订）；tier 与 defaultEnabled 在过渡期必须同真值（R1 守护）。

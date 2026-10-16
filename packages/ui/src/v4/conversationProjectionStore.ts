@@ -358,7 +358,22 @@ function mergeOlderRows(
 // 内存诊断计数器：统计存活 store 数与其 rows.window 行数之和，
 // 用于观察窗口数据的内存增长。构造时加入、close() 时移除。
 const liveProjectionStores = new Set<ConversationProjectionStore>();
-uiMemoryDiagnosticsRegistry.register("projection", () => {
+
+export interface LiveProjectionStoreSummary {
+  stores: number;
+  rows: number;
+  turnIndexEntries: number;
+  turnIndexEvictions: number;
+  turnIndexBytes: number;
+}
+
+/**
+ * 存活 projection store 的只读汇总（内存诊断计数器与内容状态面包屑采样共用）。
+ * 面包屑采样在 interval 里跑，刻意不走 uiMemoryDiagnosticsRegistry.collect()：
+ * collect 会逐个调用全部 provider（shiki/xterm/taskQueryCache 等），采样动作本身
+ * 就成了它要归因的同步段开销。这里只遍历 projection store（典型 1-3 个）。
+ */
+export function summarizeLiveProjectionStores(): LiveProjectionStoreSummary {
   let rows = 0;
   let turnIndexEntries = 0;
   let turnIndexEvictions = 0;
@@ -376,7 +391,14 @@ uiMemoryDiagnosticsRegistry.register("projection", () => {
     turnIndexEvictions,
     turnIndexBytes,
   };
-});
+}
+
+uiMemoryDiagnosticsRegistry.register(
+  "projection",
+  (): Record<string, number> => ({
+    ...summarizeLiveProjectionStores(),
+  }),
+);
 
 export class ConversationProjectionStore {
   private state: ConversationStoreState = INITIAL_STATE;

@@ -80,6 +80,7 @@ import type { LexicalChatInputHandle } from "@/LexicalChatInput.js";
 import { ChatPromptEditor } from "@/prompt-editor/ChatPromptEditor.js";
 import { usePromptEditorDragState } from "@/prompt-editor/usePromptEditorDragState.js";
 import { useACodeIntl } from "@/i18n/IntlProvider.js";
+import { publishComposerContentGauge } from "@/v4/composer/composerContentGauge.js";
 import { advanceComposerDraftRevision } from "@/v4/composer/composerDraftRevision.js";
 import type { AppSlashCommand } from "@/slashCommandHelpers.js";
 import { useOptionalServices } from "@/hooks/useServices.js";
@@ -1311,6 +1312,9 @@ function ConversationComposerImpl({
       updateText(value);
       // 正文先进入与 mode/model 相同的内存 Draft；防抖只负责补充最新 Lexical JSON。
       updateComposerContent({ text: value });
+      // 内容状态面包屑的 composer 块数 gauge（specs/main-stall-diagnostics.md R11）：
+      // 采样在 interval 里跑，只能纯内存读，因此由既有 onChange 路径推入。
+      publishComposerContentGauge(value);
       scheduleDraftPersist();
     },
     [scheduleDraftPersist, updateComposerContent, updateText],

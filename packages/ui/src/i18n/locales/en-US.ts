@@ -2101,6 +2101,33 @@ const enUS: Record<string, string> = {
   "settings.keepAwakeWhileRunning": "Keep computer running",
   "settings.keepAwakeWhileRunningDescription":
     "Prevent the system from sleeping due to idle. You can still sleep manually or by closing the lid. Desktop only.",
+  "settings.bootPlaceholder": "Startup skeleton placeholder",
+  "settings.bootPlaceholderDescription":
+    "While the window starts, draw a lightweight placeholder from the last sampled shell skeleton so the first frame is closer to the real layout. Desktop only; applies on next launch.",
+  "settings.supportBundle.title": "Support bundle",
+  "settings.supportBundle.description":
+    "Export a bundle of logs and diagnostics for troubleshooting. Host names, account names, URLs and credentials are withheld before anything is written.",
+  "settings.supportBundle.export": "Export support bundle",
+  "settings.supportBundle.exporting": "Exporting…",
+  "settings.supportBundle.success": "Support bundle saved to {path}",
+  "settings.supportBundle.failure":
+    "Failed to export the support bundle. Check the logs for details.",
+  "findInPage.label": "Find in page",
+  "findInPage.previous": "Previous match",
+  "findInPage.next": "Next match",
+  "findInPage.close": "Close find bar",
+  "findInPage.counter": "{activeIndex} of {total}",
+  "networkEndpoint.usage.updateFeed.label": "Update feed",
+  "networkEndpoint.usage.officialPluginCdn.label": "Official plugin CDN",
+  "networkEndpoint.usage.officialPlatformAccount.label": "Official platform account",
+  "networkEndpoint.usage.providerApi.label": "Model provider API",
+  "networkEndpoint.purpose.updateFeedCheck": "Update feed check",
+  "networkEndpoint.purpose.updateDownload": "Update download",
+  "networkEndpoint.purpose.updateDownloadRedirect": "Update download redirect",
+  "networkEndpoint.purpose.officialPluginMarketplace": "Official plugin marketplace",
+  "networkEndpoint.purpose.bundledAssetCdn": "Bundled asset CDN",
+  "networkEndpoint.purpose.officialPlatformApi": "Official platform API",
+  "networkEndpoint.purpose.officialAccountOAuth": "Official account sign-in",
   "settings.messageStreamShowReasoning": "Show reasoning",
   "settings.messageStreamShowReasoningDescription":
     "Show full reasoning inside the message stream. When off, the first reasoning item in each turn remains visible.",

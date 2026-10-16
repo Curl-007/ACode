@@ -38,6 +38,7 @@ import { useACodeSessionStore } from "@/store/acodeSessionStore.js";
 import { TabStoreProvider, useTabStore, useTabStoreApi } from "@/store/TabStoreProvider.js";
 import { isSettingsTab, isWorkspaceTab } from "@/store/tabStore.js";
 import { logger } from "@/logger.js";
+import { useAppShellContentBreadcrumb } from "@/app-shell/useAppShellContentBreadcrumb.js";
 import { RootShell } from "@/root/RootShell.js";
 import { RootWorkspaceContent } from "@/root/RootWorkspaceContent.js";
 import { resolveRootWorkspaceShellTarget } from "@/root/rootWorkspaceShellTarget.js";
@@ -182,6 +183,10 @@ function RootInner({
   // 工作区级 ServiceProvider 内（远程 Host 的 accessor），由它们取数会拿到另一台 Host 的答案。
   useDynamicWorkflowAvailabilityLoader(services.codingPlanSubscriptionService);
 
+  // 内容状态面包屑（specs/main-stall-diagnostics.md R11）：窗口级挂载，覆盖 workspace 与
+  // 设置页两种 route kind；桥缺席时 hook 自身不启动 interval。
+  useAppShellContentBreadcrumb();
+
   const { intl, locale } = useACodeIntl();
   const platformService = usePlatform();
   const requestConfirmation = useConfirmDialog();
@@ -229,7 +234,9 @@ function RootInner({
               host: challenge.host,
               port: challenge.port,
               candidate: challenge.candidateFingerprint,
-              expected: challenge.expectedFingerprints.join(", ") || intl.formatMessage({ id: "ssh.hostKey.none" }),
+              expected:
+                challenge.expectedFingerprints.join(", ") ||
+                intl.formatMessage({ id: "ssh.hostKey.none" }),
             },
           ),
           confirmLabel: intl.formatMessage({

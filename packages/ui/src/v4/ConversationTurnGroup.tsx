@@ -87,6 +87,7 @@ import type {
 import { formatConversationWorkDuration } from "@/v4/conversationWorkDuration.js";
 import { ConversationTurnRow, resolveAssistantCopyText } from "@/v4/ConversationTurnRow.js";
 import { ConversationHookDetailsAction } from "@/v4/ConversationHookDetailsAction.js";
+import { hasVisibleHookExecutions } from "@/v4/hookRefusalAnnotation.js";
 import { toolCallRowToLegacyNode } from "@/v4/toolCallRowAdapter.js";
 
 interface ConversationTurnGroupProps {
@@ -1186,9 +1187,9 @@ function ConversationTurnGroupImpl({
     // timelineOnly 维护 turn（compact/modelChange marker 轮）即使带历史遗留的
     // didExecute=true Hook row 也不得露出图标，否则 /compact 轮会凭 SessionStart
     // Hook 误挂出一个不可解释的操作栏。
-    !unit.timelineOnly &&
-    !unit.isRunning &&
-    unit.hookInvocations.some((row) => row.executions.some((execution) => execution.didExecute));
+    // 可达性判定含拒绝注记环节（admission-only 被拒也要可观测，W2-ui）；
+    // 旧投影下与既往 didExecute 判定逐点等价，见 v4/hookRefusalAnnotation.ts。
+    !unit.timelineOnly && !unit.isRunning && hasVisibleHookExecutions(unit.hookInvocations);
   const canRetryLatestAssistant = latestAssistantTextRow?.actions?.canRetry === true;
   const canForkLatestAssistant = latestAssistantTextRow?.actions?.canFork === true;
   const backgroundResultTitle = resolveBackgroundResultTitle(unit);

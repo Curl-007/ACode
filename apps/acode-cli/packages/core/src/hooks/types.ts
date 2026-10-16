@@ -18,7 +18,21 @@ import type { WorkspaceHookRuntimeAdmissionPort } from "./workspace-hook-runtime
 export interface HookCallbackContext {
   hookIndex: number;
   signal?: AbortSignal;
+  /**
+   * 中间件专用（specs/plugin-hook-middleware.md 一期最小洋葱）：继续链执行并返回
+   * 下游合并结果；可选传入改写后的事件（身份字段不可变，下游看到 e'）。
+   * 不调用即自答（短路：本环节之后的链内 hook 全部跳过）。
+   * legacy（非 middleware）注册的 callback 不会收到本字段。
+   */
+  next?: HookMiddlewareNext;
 }
+
+/**
+ * 中间件的链续行函数。`next()` = 以当前事件继续；`next(e')` = 改写下游所见。
+ * 纪律：至多调用一次，且只许在自己的 dispatch 期间发起；违例按
+ * `hook_middleware_misuse` 失败处理（fail-open 放行 + 失败可见性注记）。
+ */
+export type HookMiddlewareNext = (event?: HookInput) => Promise<HookRunResult>;
 
 /**
  * 配置 Hook 的执行器可以附带 stderr 等诊断；这些信息只进入生命周期事件，
@@ -58,6 +72,13 @@ export interface HookRegistration {
   descriptor?: HookExecutionDescriptor | ((input: HookInput) => HookExecutionDescriptor);
   event: HookEventName;
   matcher?: string;
+  /**
+   * 一期最小洋葱（specs/plugin-hook-middleware.md）：声明后 callback 才会收到
+   * context.next（不调 next = 自答短路；next(e') = 改写下游所见）。仅程序化注册
+   * 可声明；配置面外部进程 hook 永不带本标志。与 `async:true` 互斥——async 胜出
+   * （后台派发脱离链），本标志被忽略并记 debug 行。
+   */
+  middleware?: boolean;
   source?: string;
   sourceKind?: HookSourceKind;
   timeoutMs?: number;

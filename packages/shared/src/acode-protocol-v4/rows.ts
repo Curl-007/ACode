@@ -309,6 +309,12 @@ export const hookExecutionProjectionSchema = z
     state: z.enum(["running", "completed", "failed"]),
     outcome: z.enum(["success", "blocked", "failed", "cancelled", "timed_out"]).optional(),
     blockReason: z.string().trim().min(1).optional(),
+    // hook 被拒的可观测注记行（apps/acode-cli/specs/plugin-hook-middleware.md 二 /
+    // 接线 W2）：`<hook 名>: <事件> 被拒: <闭集原因>; 已用引擎默认行为`。additive
+    // 运行时增补——只在 admission 拒绝/执行失败的环节出现；hook 显式 block 不携带
+    // （那是 hook 成功表达决策，走 blockReason）。旧投影/旧客户端忽略之，零破坏。
+    // 文案单源：注记只在 CLI runner 的拒绝/失败结算点生成，投影与 UI 只透传/渲染。
+    refusalAnnotation: z.string().trim().min(1).optional(),
     startedAt: timestampSchema,
     endedAt: timestampSchema.optional(),
     durationMs: z.number().nonnegative().optional(),

@@ -1,5 +1,12 @@
 export { createConfiguredHookRunner } from "./configured-runner.js";
 export { createHookExecutionDescriptor, sanitizeHookDisplayText } from "./display-metadata.js";
+export {
+  HOOK_FAILURE_REFUSAL_REASONS,
+  formatHookRefusalAnnotation,
+  resolveHookRefusalName,
+  resolveHookRefusalReason,
+  type HookRefusalReason,
+} from "./hook-refusal-visibility.js";
 export { InMemoryHookRunner, createInMemoryHookRunner } from "./runner.js";
 export { createSessionMailboxHookRegistrations } from "./session-mailbox.js";
 export type {
@@ -8,6 +15,7 @@ export type {
   HookCallbackContext,
   HookCallbackDiagnostics,
   HookCallbackResult,
+  HookMiddlewareNext,
   HookRegistration,
   HookRunOptions,
   HookRunResult,

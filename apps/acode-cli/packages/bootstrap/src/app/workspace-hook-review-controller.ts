@@ -1,6 +1,7 @@
 /* eslint-disable max-lines -- 存量基线豁免:该文件先于 CLI lint 门禁建立即超限(根 lint 的 ignorePatterns 排除 apps/acode-cli,turbo lint 因此从未变绿)。头注豁免以恢复门禁信号;拆分重构超出本批范围。 */
 import {
   SessionEventType,
+  type Logger,
   type WorkspaceHookBundleSnapshot,
   type WorkspaceHookReasonCode,
 } from "@acode/contracts";
@@ -36,12 +37,15 @@ import {
 import { WorkspaceHookReviewTelemetry } from "./workspace-hook-review-telemetry.js";
 import { superviseWorkspaceHookReviewFlow } from "./workspace-hook-review-supervisor.js";
 import { applyWorkspaceHookRevoke } from "./workspace-hook-review-revoke.js";
+import type { WorkspaceHookReviewPinsPort } from "./workspace-hook-review-pins.js";
 
 export class WorkspaceHookReviewController {
   private readonly admission: WorkspaceHookRuntimeAdmissionPort;
   private readonly appVersion?: string;
   private readonly coordinator: WorkspaceHookTrustCoordinator;
   private readonly host: WorkspaceHookReviewHostPort;
+  private readonly logger?: Logger;
+  private readonly pins?: WorkspaceHookReviewPinsPort;
   private readonly telemetry: WorkspaceHookReviewTelemetry;
   private readonly mutation: WorkspaceHookReviewMutationPort;
   private readonly sessionId: string;
@@ -63,6 +67,8 @@ export class WorkspaceHookReviewController {
     this.appVersion = options.appVersion;
     this.coordinator = options.coordinator;
     this.host = options.host;
+    this.logger = options.logger;
+    this.pins = options.pins;
     this.telemetry = new WorkspaceHookReviewTelemetry(
       this.admission,
       options.logger,
@@ -568,7 +574,76 @@ export class WorkspaceHookReviewController {
     this.coordinator.replacePersistentTrustRecords(file.records, {
       status: "ok",
     });
+    // 授予时钉扎（specs/plugin-hook-middleware.md 三 / 接线 W3）：对本次授予的声明
+    // 做三态分类并写 pins。写失败**不回滚授予**——trust 记录是主事实层且已落盘，
+    // pins 是其上的内容级增强（层次定位见 workspace-hook-review-pins.ts 头注）；
+    // 缺 pin 的授予退化为波前形态（复核无从比对即跳过），warn 留诊断。
+    if (this.pins) {
+      try {
+        await this.pins.pinGranted({ reviewItemIds, snapshot });
+      } catch (error) {
+        this.logger?.warn("Workspace hook pin write failed after grant", {
+          errorType: error instanceof Error ? error.name : typeof error,
+          event: "workspace_hook.pins.grant_write_failed",
+          module: "bootstrap.workspace_hook_review",
+        });
+      }
+    }
     return { grantedRecordCount: records.length };
+  }
+
+  /**
+   * dispatch 前 pins 复核（specs/plugin-hook-middleware.md 三.4 / 接线 W3，fail-closed）。
+   * 由 workspace-hook-trust.ts 包装的 admission.activate 调用——activate 是 runtime 每次
+   * 执行事件面 hooks 前必经的异步边界，等价复核必须发生在本轮评估之前。
+   *
+   * 漂移（等价判定不符，含 unpinnable 永不等价）→ 回待信任：撤销对应持久 Trust +
+   * 清理陈旧 pin + 走既有 revoke 面重开审核 flow。复核经 mutationQueue 与
+   * respond/toggle/revoke 串行；自身任何失败只 warn，不阻断 activate（pins 是增强层，
+   * trust 主层的 bundleDigest/declarationDigest 校验不受影响）。
+   */
+  recheckPinsBeforeDispatch(): Promise<void> {
+    if (!this.pins) return Promise.resolve();
+    return this.enqueueMutation(async () => {
+      try {
+        const snapshot = this.admission.getCurrentSnapshot();
+        const drifted = await this.pins!.detectDrift(snapshot);
+        if (drifted.length === 0) return;
+        const entries = snapshot.hooks.filter((entry) =>
+          drifted.includes(entry.hookDeclarationDigest),
+        );
+        this.logger?.warn("Workspace hook pin drift detected; reverting to pending trust", {
+          driftCount: drifted.length,
+          event: "workspace_hook.pins.drift_detected",
+          module: "bootstrap.workspace_hook_review",
+        });
+        let revoked = false;
+        if (entries.length > 0) {
+          const result = await applyWorkspaceHookRevoke({
+            coordinator: this.coordinator,
+            digests: [...drifted],
+            reviewItemIds: entries.map((entry) => entry.reviewItemId),
+            snapshot,
+            store: this.store,
+          });
+          revoked = result.accepted;
+        }
+        // 无论撤销是否成立都清理陈旧 pin：不符的 pin 已非事实，留着会让每次激活
+        // 重复检出同一漂移（重授予时会写入新分类）。
+        await this.pins!.forgetPins(drifted, snapshot);
+        if (!revoked) return;
+        this.telemetry.revoked(snapshot.bundleDigest, drifted.length);
+        // 回待信任后按既有 revoke 面重开审核：漂移的声明重新出现在征询里。
+        await this.refreshPendingFlow(snapshot);
+        await this.emitAdmissionUpdatedAfterMutation();
+      } catch (error) {
+        this.logger?.warn("Workspace hook pin recheck failed; activation continues", {
+          errorType: error instanceof Error ? error.name : typeof error,
+          event: "workspace_hook.pins.recheck_failed",
+          module: "bootstrap.workspace_hook_review",
+        });
+      }
+    });
   }
 
   private enqueueMutation<T>(operation: () => Promise<T>): Promise<T> {

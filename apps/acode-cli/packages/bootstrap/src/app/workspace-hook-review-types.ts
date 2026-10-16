@@ -8,6 +8,7 @@ import {
 } from "@acode/contracts";
 import type { WorkspaceHookRuntimeAdmissionPort, WorkspaceHookTrustCoordinator } from "@acode/core";
 import type { WorkspaceHookReviewRequestPayload } from "@acode/shared/acode-protocol-v4";
+import type { WorkspaceHookReviewPinsPort } from "./workspace-hook-review-pins.js";
 
 export type WorkspaceHookReviewLifecycleEvent =
   | {
@@ -71,6 +72,11 @@ export interface WorkspaceHookReviewControllerOptions {
   host: WorkspaceHookReviewHostPort;
   logger?: Logger;
   mutation: WorkspaceHookReviewMutationPort;
+  /**
+   * hook-pins 三态钉扎端口（specs/plugin-hook-middleware.md 三 / 接线 W3）。缺席 =
+   * pins 面未接线：授予照旧生效，只是不落内容级钉扎（波前形态，零破坏）。
+   */
+  pins?: WorkspaceHookReviewPinsPort;
   sessionId: string;
   store: Promise<WorkspaceHookTrustStoreMutationPort>;
   now?: () => number;

@@ -1,6 +1,11 @@
 import type { WorkspaceHookBundleSnapshot, WorkspaceHookTrustRecord } from "@acode/contracts";
 import { workspaceHookTrustRecordSchema } from "@acode/contracts";
 
+// hook-pins 三态钉扎（第二轮 W2 起）不在本文件：pins 记录层与分类层按 400 行
+// ratchet 拆分先例落在 workspace-hook-pins.ts / workspace-hook-pins-classify.ts，
+// 经 workspace-hook-trust-domain.ts barrel 与本文件的公开导入路径同面再导出。
+// 两记录层同属「授予时事实」：trust 记录按 bundleDigest/declarationDigest 谱系回答
+// 「声明集合是否可信」，pins 回答「声明解析到的内容是否可钉/是否漂移」。
 export function createWorkspaceHookTrustRecords(input: {
   snapshot: WorkspaceHookBundleSnapshot;
   reviewItemIds: readonly string[];

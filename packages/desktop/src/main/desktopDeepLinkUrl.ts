@@ -207,6 +207,16 @@ function trimArgValue(value: string): string {
   return trimmed;
 }
 
+/**
+ * 盘符相对路径（`C:foo`，盘符后无分隔符）判定——深链硬化 §4c 的单一事实源
+ * （desktopDeepLinkUrl 是解析层最上游，deepLinkHardening 复用本谓词）。
+ * Windows 上该形态按「该盘的每 drive CWD」解析，是外部输入注入进程 CWD 语义的面，
+ * 提取层直接拒绝；`C:\foo`、`C:/foo` 是正常的盘符绝对路径，不受影响。
+ */
+export function isDriveRelativeWindowsPath(value: string): boolean {
+  return /^[a-zA-Z]:(?![\\/])/.test(value);
+}
+
 export function extractOpenWorkspacePathFromArgs(args: readonly string[]): string | null {
   for (let index = 0; index < args.length; index++) {
     const arg = args[index];
@@ -217,7 +227,7 @@ export function extractOpenWorkspacePathFromArgs(args: readonly string[]): strin
     if (arg === OPEN_WORKSPACE_ARG) {
       const value = args[index + 1];
       const path = value ? trimArgValue(value) : "";
-      if (path) {
+      if (path && !isDriveRelativeWindowsPath(path)) {
         return path;
       }
       continue;
@@ -225,7 +235,7 @@ export function extractOpenWorkspacePathFromArgs(args: readonly string[]): strin
 
     if (arg.startsWith(`${OPEN_WORKSPACE_ARG}=`)) {
       const path = trimArgValue(arg.slice(OPEN_WORKSPACE_ARG.length + 1));
-      if (path) {
+      if (path && !isDriveRelativeWindowsPath(path)) {
         return path;
       }
     }

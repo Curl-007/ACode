@@ -18,6 +18,7 @@ import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { ZipFile } from "yazl";
 
+import { isSensitiveLogKeyName } from "@acode/shared";
 import {
   createFeedbackDiagnosticArchive,
   getAppConfigDir,
@@ -150,42 +151,12 @@ const EXCLUDED_ARCHIVE_DIRECTORY_NAMES = new Set(["debug"]);
 const DEFAULT_LOG_EXPORT_LOOKBACK_DAYS = 3;
 const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000;
 const REDACTED_PLACEHOLDER = "***REDACTED***";
-// 敏感键名“族”：只要键名里包含这些子串就视为敏感（兜底通配），
-// 从而覆盖自定义命名（如 db_password、my_secret、x-conn-string 等）而不必逐个精确列举。
-// 注意：`token` / `auth` 等是宽松子串，配合下方白名单排除误伤项（如 input_tokens、author）。
-const SENSITIVE_KEY_SUBSTRING_PATTERN = [
-  "password",
-  "passwd",
-  "pwd",
-  "secret",
-  "token",
-  "credential",
-  "api(?:_|-)?key",
-  "access(?:_|-)?key",
-  "private(?:_|-)?key",
-  "auth",
-  "cookie",
-  "dsn",
-  "conn(?:ection)?(?:_|-)?str(?:ing)?",
-  "database(?:_|-)?url",
-  "db(?:_|-)?url",
-].join("|");
-const SENSITIVE_KEY_NAME_REGEX = new RegExp(`(?:${SENSITIVE_KEY_SUBSTRING_PATTERN})`, "i");
-// 白名单：命中敏感子串但实际并非密钥的常见键名，避免脱掉排障需要的上下文。
-// 不能把任意 "*_tokens" 都白名单化，否则 access_tokens/session_tokens 会被原样导出；
-// max_tokens/budget_tokens 是模型输出与思考预算，不是凭据，需保留用于判断 provider 请求是否撞限；
-// 因此这里只放行明确的 LLM token 计数/预算字段，以及 author/authority 这类含 "auth" 的普通词。
-const NON_SENSITIVE_KEY_NAME_ALLOWLIST_REGEX =
-  /^(?:public(?:_|-)?key|keywords?|tokenizer|token(?:_|-)?count|(?:prompt|completion|total|input|output|cached|reasoning|max|budget|accepted(?:_|-)?prediction|rejected(?:_|-)?prediction|tool(?:_|-)?use(?:_|-)?prompt)(?:_|-)?tokens|author(?:s|ity|ed)?)$/i;
+// 敏感键名判定收敛到 shared 单源（specs/log-privacy-redaction.md R1）：
+// 「敏感族子串 + 精确 header + 组合后缀版本号 + 白名单例外」由
+// @acode/shared 的 isSensitiveLogKeyName 统一提供，反馈面/日志管线/导出面
+// 同源消费，禁止在导出侧再维护第二套词表。
 
-function isSensitiveKeyName(keyName: string): boolean {
-  if (NON_SENSITIVE_KEY_NAME_ALLOWLIST_REGEX.test(keyName)) {
-    return false;
-  }
-  return SENSITIVE_KEY_NAME_REGEX.test(keyName);
-}
-
-// 以下正则先宽松捕获“键名 + 值”，再由 isSensitiveKeyName 决定是否脱敏，
+// 以下正则先宽松捕获“键名 + 值”，再由 isSensitiveLogKeyName（shared 单源）决定是否脱敏，
 // 这样键名黑名单不再是硬编码列表，而是“敏感族 + 通配 + 白名单例外”。
 const JSON_STYLE_SENSITIVE_VALUE_REGEX =
   /(["'])([A-Za-z0-9_.-]+)\1(\s*:\s*)("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|[^,\r\n}\]]+)/g;
@@ -252,27 +223,27 @@ function sanitizeSensitiveLogContent(rawContent: string): string {
   // 导出日志不能按文件原样拷贝：会把用户配置和协议日志里的 token/apiKey 一并带出。
   // 线上排障需要“保留文件结构和上下文”，但不应该泄露密钥本体；
   // 这里在导出阶段统一对常见敏感值做脱敏，字段和日志行仍完整保留，支持继续定位问题。
-  // 键名不再是硬编码黑名单，而是“敏感键名族 + 子串通配 + 白名单例外”（isSensitiveKeyName），
+  // 键名判定走 shared 单源 isSensitiveLogKeyName（“敏感族 + 通配 + 白名单例外”），
   // 并叠加按值形态的连接串脱敏，以覆盖数据库连接串等自定义命名的敏感信息。
   return redactConnectionStringCredentials(rawContent)
     .replace(
       JSON_STYLE_SENSITIVE_VALUE_REGEX,
       (match, quote: string, keyName: string, separator: string, rawValue: string) =>
-        isSensitiveKeyName(keyName)
+        isSensitiveLogKeyName(keyName)
           ? `${quote}${keyName}${quote}${separator}${redactValue(rawValue)}`
           : match,
     )
     .replace(
       ASSIGNMENT_STYLE_SENSITIVE_VALUE_REGEX,
       (match, prefix: string, keyName: string, separator: string, rawValue: string) =>
-        isSensitiveKeyName(keyName)
+        isSensitiveLogKeyName(keyName)
           ? `${prefix}${keyName}${separator}${redactValue(rawValue)}`
           : match,
     )
     .replace(
       HEADER_STYLE_SENSITIVE_VALUE_REGEX,
       (match, prefix: string, headerName: string, separator: string, rawValue: string) =>
-        isSensitiveKeyName(headerName)
+        isSensitiveLogKeyName(headerName)
           ? `${prefix}${headerName}${separator}${redactHeaderValue(rawValue)}`
           : match,
     )

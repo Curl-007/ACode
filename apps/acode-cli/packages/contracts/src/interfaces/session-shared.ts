@@ -48,8 +48,11 @@ export interface TurnInputIntentMetadata {
   text?: string;
   /** Admission 时固定；Queue/Guide 后续不得重新读取 Composer 或 Session 最新选择。 */
   modelSelection?: ModelSelection;
-  /** 与本次用户 Submission 一起固定的协作模式。 */
-  mode?: "build" | "edit" | "plan" | "yolo";
+  /** 与本次用户 Submission 一起固定的协作模式。与 shared submissionModeSchema /
+   * CollaborationMode 用户可提交子集保持一致（dontAsk 随权限批 2 扩入——
+   * execution-state 规范化边界曾因缺档把 --mode dontAsk 静默降级回 build，
+   * E2E 决策日志实证，见 shared/test/executionStateDontAsk.test.ts）。 */
+  mode?: "build" | "edit" | "plan" | "yolo" | "dontAsk";
   admissionSeq: number;
   admittedAt: number;
   requestedDelivery: "auto" | "startNow" | "queue" | "guide";

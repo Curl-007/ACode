@@ -67,6 +67,8 @@ export function SubagentReasoningField({
       intl={intl}
       option={state.option}
       provider={ACODE_AGENT_PROVIDER}
+      // 组件默认交互已切为 composer 滑条面板；子智能体推理设置保持既有下拉选择。
+      interactionMode="select"
       onCurrentValueCommit={onValueCommit}
       showInvalidCurrentValue
       disabled={!interactive}

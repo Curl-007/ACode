@@ -45,7 +45,7 @@ import {
   acodeApiRetryFromStreamRecoveryPayload,
   acodeTaskNetworkDebugStatusFromPayload,
   shouldMaterializeACodeStreamingToolInputPreview,
-  type ACodeApiRetryStatus,
+  type ACodeApiRetrySlotValue,
   type ACodeAssistantMessageFeedback,
   type ACodeBackgroundTaskNotificationInfo,
   type ACodeBackgroundTaskControlItem,
@@ -264,7 +264,7 @@ export function createACodeTaskServiceAdapter(
   const taskTargets = new Map<string, TaskTarget>();
   const runtimeCommands = new Map<string, ACodeTaskRuntimeCommand[]>();
   const runtimeCommandDrains = new Map<string, Promise<void>>();
-  const apiRetryByTaskKey = new Map<string, ACodeApiRetryStatus | null>();
+  const apiRetryByTaskKey = new Map<string, ACodeApiRetrySlotValue | null>();
   const backgroundTaskControlsByTaskKey = new Map<string, ACodeBackgroundTaskControlItem[]>();
   const streamedTurnKeys = new Set<string>();
   const activePromptInputIds = new Map<string, InputId>();
@@ -5456,7 +5456,7 @@ function isModelCompleteUsagePayload(payload: Record<string, unknown>): boolean 
 
 function apiRetryFromSessionInfoPayload(
   payload: Record<string, unknown>,
-): ACodeApiRetryStatus | null | undefined {
+): ACodeApiRetrySlotValue | null | undefined {
   if ("apiRetry" in payload) {
     return normalizeACodeApiRetryStatus(payload.apiRetry);
   }

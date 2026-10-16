@@ -2690,6 +2690,8 @@ export function AutomationEditView({
                         intl={intl}
                         option={thoughtLevelOption}
                         provider={ACODE_AGENT_PROVIDER}
+                        // 组件默认交互已切为 composer 滑条面板；自动化编辑保持既有下拉选择。
+                        interactionMode="select"
                         triggerRef={thoughtTriggerRef}
                         indicatorClassName="hidden @xl/composer:block"
                         triggerClassName={cn(

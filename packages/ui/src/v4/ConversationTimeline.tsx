@@ -237,6 +237,30 @@ function getUnitHeightCacheKey(unit: ConversationTurnRenderUnit | undefined): st
   return unit?.key;
 }
 
+/**
+ * 回答末尾速率行落位（specs/usage-statusbar.md「回答末尾速率行」）：只挂当前问题
+ * 最后一个已完成 turn。当前问题起点 = 最后一个含 realUser 可见输入的轮（与轮导航
+ * 目录同款信号）；从问题尾部回扫首个「非运行中、非 timelineOnly、带 stats」的轮。
+ * 找不到则不挂——纯问答轮/运行中/无 stats 一律不显示，绝不显示上一问的统计。
+ */
+function resolveRateLineUnitKey(units: readonly ConversationTurnRenderUnit[]): string | null {
+  let questionStartIndex = 0;
+  for (let index = units.length - 1; index >= 0; index -= 1) {
+    const unit = units[index];
+    if (unit?.visibleUserInputs.some((row) => row.origin === "realUser")) {
+      questionStartIndex = index;
+      break;
+    }
+  }
+  for (let index = units.length - 1; index >= questionStartIndex; index -= 1) {
+    const unit = units[index];
+    if (unit && !unit.isRunning && !unit.timelineOnly && unit.header?.stats) {
+      return unit.key;
+    }
+  }
+  return null;
+}
+
 interface ConversationTimelineProps {
   rows: readonly ConversationRow[];
   /** CLI 权威 queue 中等待 model-step 注入的 guide；只改变 renderer 落位。 */
@@ -397,6 +421,7 @@ function ConversationTimelineImpl({
     [renderUnits],
   );
   const hasRunningUnit = useMemo(() => renderUnits.some((unit) => unit.isRunning), [renderUnits]);
+  const rateLineUnitKey = useMemo(() => resolveRateLineUnitKey(renderUnits), [renderUnits]);
   const turnNavigatorQueryRowIds = useMemo(
     () =>
       new Set(
@@ -1756,6 +1781,7 @@ function ConversationTimelineImpl({
                       <ConversationTurnGroup
                         unit={unit}
                         apiRetry={null}
+                        rateLineVisible={unit.key === rateLineUnitKey}
                         context={rowContext}
                         onFork={onFork}
                         onRetry={onRetry}
@@ -1785,6 +1811,7 @@ function ConversationTimelineImpl({
                   <ConversationTurnGroup
                     unit={liveUnit}
                     apiRetry={apiRetry}
+                    rateLineVisible={liveUnit.key === rateLineUnitKey}
                     context={rowContext}
                     onFork={onFork}
                     onRetry={onRetry}

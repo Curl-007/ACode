@@ -6,6 +6,7 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { resolveACodeEndpointOrigin, pickProductEndpointEnv } from "@acode/shared/acodeEndpoint";
 import { pdfJsCMapsPlugin } from "../ui/vite/pdfJsCMapsPlugin.js";
+import { visualizationVendorPlugin } from "../ui/vite/visualizationVendorPlugin.js";
 import { getBuildMetadata } from "./scripts/build-metadata.mjs";
 import { resolveDesktopProductFlavor } from "./scripts/desktop-product-identity.mjs";
 
@@ -164,6 +165,7 @@ export default defineConfig(({ mode }) => {
   const plugins = [
     ...(e2eCoverageEnabled ? [createE2EUIRendererCoveragePlugin(repoRoot)] : []),
     pdfJsCMapsPlugin(),
+    visualizationVendorPlugin(),
     react(),
     tailwindcss(),
   ];

@@ -13,6 +13,7 @@ import type {
   ExecutionEnvOverlay,
   ExecutionShellDialect,
 } from "@acode/contracts";
+import { SESSION_WORKTREE_ENV_KEYS } from "@acode/contracts";
 
 const WINDOWS_COMMAND_SHIM_EXTENSIONS = new Set([".cmd", ".bat"]);
 
@@ -31,6 +32,14 @@ export function buildExecutionEnv(
     network?: NetworkEgressEnvPolicy;
     platform?: NodeJS.Platform;
     processEnv?: NodeJS.ProcessEnv;
+    /**
+     * 会话 worktree 写围栏 env（specs/session-worktree-lifecycle.md R4-2/R7-5）。
+     * undefined = provider 未接线（零行为变化）；在场（含空对象）= 已接线：
+     * 名单键（SESSION_WORKTREE_ENV_KEYS）按结果 set/delete——缺席键从继承 env 里
+     * 删除，防父进程环境中的陈旧边界值漏给未绑定会话。overlay.set/unset 的显式
+     * 意图仍在后应用、保持优先。
+     */
+    sessionWorktree?: Record<string, string>;
   } = {},
 ): NodeJS.ProcessEnv {
   const platform = options.platform ?? process.platform;
@@ -60,6 +69,18 @@ export function buildExecutionEnv(
     sourceEnv,
     toolEnvPassthrough: overlay?.base !== "empty",
   });
+
+  if (options.sessionWorktree !== undefined) {
+    const injected = options.sessionWorktree;
+    for (const key of SESSION_WORKTREE_ENV_KEYS) {
+      const value = injected[key];
+      if (value === undefined) {
+        deleteEnvKey(env, key, platform);
+      } else {
+        setEnvKey(env, key, value, platform);
+      }
+    }
+  }
 
   for (const key of overlay?.unset ?? []) {
     deleteEnvKey(env, key, platform);

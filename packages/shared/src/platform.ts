@@ -106,6 +106,18 @@ export function buildLocalMediaPreviewUrl(path: string): string {
 }
 
 /**
+ * 桌面生产态（file: 页面）为可视化沙箱卡片服务 vendored 钉版渲染库
+ * （mermaid/chart.js）的自定义 scheme。单一事实源：ui 侧片段引用重写
+ * （packages/ui/src/lib/visualizationVendor.ts）与 main 侧协议处理器
+ * （packages/desktop/src/main/visualizationVendorProtocol.ts）都引用本常量，
+ * 避免两处各持字面量漂移后 renderer 重写与 main 协议互相打空。
+ */
+export const VISUALIZATION_VENDOR_SCHEME = "acode-viz-vendor";
+
+/** VISUALIZATION_VENDOR_SCHEME URL 的固定 host 段：`acode-viz-vendor://vendor/<fileName>`。 */
+export const VISUALIZATION_VENDOR_SCHEME_HOST = "vendor";
+
+/**
  * main→renderer 的关闭通知。
  *
  * 旧 payload 只有 tabId，renderer 只能在“当前活跃 workspace”的 side pane 状态里查找；

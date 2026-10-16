@@ -324,6 +324,10 @@ export const hookInvocationRowSchema = z.object({
   ...rowBaseFields,
   kind: z.literal("hookInvocation"),
   hookInvocationId: z.string().min(1),
+  // Hook 事件面全集 17 成员（apps/acode-cli/specs/hook-event-surface.md F8）：与 CLI
+  // contracts 的 HookEventName 词汇叶子同步。枚举增补是向后扩展——既有 7 值逐字不变，
+  // 旧 row 校验照常通过；未升级的旧客户端遇到新事件名的 row 会按各自校验面拒绝该行
+  // （桌面与 CLI 同版本发布，新事件只由新 runtime 产出）。
   hookEventName: z.enum([
     "SessionStart",
     "UserPromptSubmit",
@@ -331,7 +335,17 @@ export const hookInvocationRowSchema = z.object({
     "PermissionRequest",
     "PostToolUse",
     "PostToolUseFailure",
+    "PostToolBatch",
     "Stop",
+    "StopFailure",
+    "PreCompact",
+    "PostCompact",
+    "PreModelSwitch",
+    "PostModelSwitch",
+    "SessionEnd",
+    "TaskCreated",
+    "TaskCompleted",
+    "CwdChanged",
   ]),
   hookCount: z.number().int().positive(),
   state: z.enum(["running", "completed", "failed"]),

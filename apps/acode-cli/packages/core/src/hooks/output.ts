@@ -134,6 +134,16 @@ function applyHookSpecificOutput(result: HookRunResult, specific: HookSpecificOu
       break;
     case HookEventName.PostToolUse:
     case HookEventName.PostToolUseFailure:
+    case HookEventName.PostToolBatch:
+    case HookEventName.PreCompact:
+    case HookEventName.PostCompact:
+    case HookEventName.PreModelSwitch:
+    case HookEventName.PostModelSwitch:
+    case HookEventName.SessionEnd:
+    case HookEventName.StopFailure:
+    case HookEventName.TaskCreated:
+    case HookEventName.TaskCompleted:
+    case HookEventName.CwdChanged:
     case HookEventName.UserPromptSubmit:
     case HookEventName.SessionStart:
     case HookEventName.Stop:
@@ -152,9 +162,14 @@ function mergePermissionBehavior(
 }
 
 function shouldPreventContinuation(event: HookEventName): boolean {
+  // 阻断类事件闭集（specs/hook-event-surface.md「失败语义」）：这些事件的
+  // continue:false / decision:"block" / 退出码 2 必须让触发点拒绝对应动作。
+  // PreCompact ⇒ 放弃压缩；PreModelSwitch ⇒ 保持 previous selection。
   return (
     event === HookEventName.PreToolUse ||
     event === HookEventName.PermissionRequest ||
-    event === HookEventName.UserPromptSubmit
+    event === HookEventName.UserPromptSubmit ||
+    event === HookEventName.PreCompact ||
+    event === HookEventName.PreModelSwitch
   );
 }

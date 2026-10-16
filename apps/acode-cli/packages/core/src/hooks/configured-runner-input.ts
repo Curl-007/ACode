@@ -29,11 +29,14 @@ export async function createCompatibleHookStdin(input: HookInput): Promise<{
   compatible.transcriptPath = transcriptPath;
 
   if ("toolName" in input) {
-
     // 这里只补无损 alias，继续保留 ACode camelCase 字段作为内部主契约。
     compatible.tool_name = input.toolName;
-    compatible.tool_input = input.toolInput;
     compatible.tool_use_id = input.toolCallId;
+    // TaskCreated/TaskCompleted 只携带 toolName/toolCallId，没有 toolInput 事实，
+    // 不能为凑 alias 形状合成空对象。
+    if ("toolInput" in input) {
+      compatible.tool_input = input.toolInput;
+    }
   }
 
   switch (input.hookEventName) {
@@ -44,10 +47,50 @@ export async function createCompatibleHookStdin(input: HookInput): Promise<{
       compatible.tool_response = input.toolResponse;
       break;
     case HookEventName.PostToolUseFailure:
-
       compatible.error_details = input.error;
       compatible.error = input.error.message;
       compatible.is_interrupt = input.isInterrupt;
+      break;
+    case HookEventName.PostToolBatch:
+      compatible.tool_results = input.toolResults;
+      compatible.success_count = input.successCount;
+      compatible.error_count = input.errorCount;
+      break;
+    case HookEventName.PreCompact:
+      compatible.trigger = input.trigger;
+      compatible.custom_instructions = input.customInstructions;
+      compatible.pre_compact_token_count = input.preCompactTokenCount;
+      break;
+    case HookEventName.PostCompact:
+      compatible.trigger = input.trigger;
+      compatible.pre_compact_token_count = input.preCompactTokenCount;
+      compatible.post_compact_token_count = input.postCompactTokenCount;
+      break;
+    case HookEventName.PreModelSwitch:
+    case HookEventName.PostModelSwitch:
+      compatible.previous_model = input.previousModel;
+      compatible.next_model = input.nextModel;
+      break;
+    case HookEventName.SessionEnd:
+      compatible.reason = input.reason;
+      break;
+    case HookEventName.StopFailure:
+      compatible.error = input.errorMessage;
+      compatible.error_details = { message: input.errorMessage, type: input.errorType };
+      compatible.cancelled = input.cancelled;
+      break;
+    case HookEventName.TaskCreated:
+    case HookEventName.TaskCompleted:
+      compatible.task_id = input.taskId;
+      compatible.task_kind = input.taskKind;
+      compatible.task_description = input.description;
+      if (input.hookEventName === HookEventName.TaskCompleted) {
+        compatible.task_status = input.taskStatus;
+      }
+      break;
+    case HookEventName.CwdChanged:
+      compatible.previous_cwd = input.previousCwd;
+      compatible.new_cwd = input.newCwd;
       break;
     case HookEventName.Stop:
       compatible.last_assistant_message = input.responseText ?? input.responsePreview;

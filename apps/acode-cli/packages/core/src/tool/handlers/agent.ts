@@ -6,6 +6,7 @@ import {
   AgentErrorCode,
   AgentInputJsonSchema,
   AgentInputSchema,
+  AgentLaunchFailureReason,
   AgentOutputSchema,
   AgentType,
   CoreErrorType,
@@ -187,6 +188,10 @@ const agentHandler: ToolHandler = async (input, context) => {
       {
         context: {
           code: AgentErrorCode.SUBAGENT_UNAVAILABLE,
+          // 闭集 reason（specs/error-taxonomy-injection-defense.md R1/R2，WSB 分批
+          // 登记项 4）：code 标识契约面、reason 标识失败原因，两者都可聚合；
+          // error-payload 投影对精确闭集 token 原样放行。
+          reason: AgentLaunchFailureReason.SubagentUnavailable,
           toolCallId: context.toolCallId,
           toolName: "Agent",
         },

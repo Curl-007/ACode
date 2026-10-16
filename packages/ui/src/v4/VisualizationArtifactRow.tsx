@@ -24,6 +24,7 @@ import {
   VISUALIZATION_IFRAME_SANDBOX,
   type ReadVisualizationChunk,
 } from "@/lib/visualizationSandbox.js";
+import { resolveVisualizationVendorRuntimeFromDocument } from "@/lib/visualizationVendor.js";
 import type { ConversationRowRenderContext } from "@/v4/conversationRowContext.js";
 
 /**
@@ -84,6 +85,11 @@ export const VisualizationArtifactRow = memo(function VisualizationArtifactRow({
   // RPC 以渲染速率无界洪泛。用 useMemo 键在稳定原语 row.ref 上，依赖才有不动点。
   // 依据：specs/gen-ui-visualize-card.md「读取 effect 的收敛纪律」。
   const identity = useMemo(() => parseVisualizationArtifactRef(row.ref), [row.ref]);
+  // 本地钉版渲染库运行态（lib/visualizationVendor.ts）：桌面生产 file: 页面把片段里
+  // 的 `visualization-vendor/<file>` 引用重写为 acode-viz-vendor: scheme URL，http(s)
+  // 页面（Web / 桌面 dev）保持相对路径经 base 继承解析。document.baseURI 在组件生命
+  // 周期内不变，空依赖数组即有不动点，不会扰动读取 effect 的收敛纪律。
+  const vendorRuntime = useMemo(() => resolveVisualizationVendorRuntimeFromDocument(), []);
   const wide = row.meta?.visualization?.mode === "wide";
   const cardLabel = intl.formatMessage({ id: "chat.visualize.card" });
   const title = row.displayName.trim() || cardLabel;
@@ -180,9 +186,9 @@ export const VisualizationArtifactRow = memo(function VisualizationArtifactRow({
   const srcDoc = useMemo(
     () =>
       state.phase === "ready"
-        ? buildVisualizationSandboxDocument(state.fragment, themeVariables)
+        ? buildVisualizationSandboxDocument(state.fragment, themeVariables, vendorRuntime)
         : null,
-    [state, themeVariables],
+    [state, themeVariables, vendorRuntime],
   );
 
   // 文档重载（主题变化触发 srcDoc 重建）时复位高度，等待新一轮上报。

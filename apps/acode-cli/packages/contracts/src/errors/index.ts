@@ -2,6 +2,12 @@
 // Core Errors - Error types for the agent loop
 // ============================================================
 
+// 闭集 reason 词表（specs/error-taxonomy-injection-defense.md R1）：
+// 经本入口再导出，contracts 包出口（src/index.ts 的 export *）零改动。
+export * from "./reasons.js";
+
+import { narrowExternalReasonToken, PermissionDenialReason } from "./reasons.js";
+
 // -----------------------------------------------
 // Error Types
 // -----------------------------------------------
@@ -142,8 +148,18 @@ export function toolExecutionFailed(toolName: string, cause?: Error): CoreError 
 }
 
 export function permissionDenied(toolName: string, reason?: string): CoreError {
+  // reason 收窄（specs/error-taxonomy-injection-defense.md R2.3）：context.reason 只收
+  // PermissionDenialReason 闭集 token（可聚合、UI/遥测可见）；自由文本改挂
+  // context.reasonDetail（debug/detail 通道）。签名不变，旧调用方零改动——
+  // 传自由文本的调用方只是失去 context.reason 字段，detail 投影（error-payload 的
+  // formatContextDetail 读 context.reason）随之改读不到自由值，属预期收窄。
+  const narrowedReason = narrowExternalReasonToken(reason, Object.values(PermissionDenialReason));
   return createCoreError(CoreErrorType.PermissionDenied, `Permission denied: ${toolName}`, {
-    context: { toolName, reason },
+    context: {
+      toolName,
+      ...(narrowedReason ? { reason: narrowedReason } : {}),
+      ...(narrowedReason === undefined && reason !== undefined ? { reasonDetail: reason } : {}),
+    },
     recoverable: true,
     retryable: false,
   });

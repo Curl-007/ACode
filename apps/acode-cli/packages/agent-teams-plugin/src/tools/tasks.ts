@@ -5,6 +5,7 @@ import { assertTransition } from "../state/machine.js";
 import { computeNextActions } from "../scheduler.js";
 import { QUALITY_TASK_KINDS, nowIso, TASK_ID_PATTERN, TeamError } from "../state/helpers.js";
 import { reassignTaskTool } from "./task-reassign.js";
+import { TEAM_TRUST_NOTE, wrapTeamMessageBodies } from "../trust-wrapper.js";
 import { randomUUID } from "node:crypto";
 
 const createSchema = z
@@ -235,7 +236,11 @@ export const taskTools: readonly ToolDefinition[] = [
         taskId: parsed.taskId,
         attempt_id: attemptId,
         task: refreshed,
-        unread_messages: messages,
+        // 信任包装（specs/error-taxonomy-injection-defense.md R4/R6）：claim 返回的
+        // mailbox 正文是其他模型产出，读边界统一包装；task 的标题/目标/验收标准
+        // 由队长模型撰写，trust_note 定性为数据非指令。
+        unread_messages: wrapTeamMessageBodies(messages),
+        trust_note: TEAM_TRUST_NOTE,
         next_actions: {
           wake: [],
           notes: ["Execute the task; update via agent_teams_update_task with attempt_id, then follow the returned report instruction."],

@@ -115,11 +115,20 @@ WriteVisualizationFragment 落盘 → 最终回复两行（描述 + 逐字指令
 
 - `SKILL.md`（frontmatter：name `visualize` + description/when_to_use）：教模型
   「什么时候值得做对话内可视化、fragment 契约（fragment-only、字面量标记、根元素
-  唯一 id、无 fetch/XHR/WebSocket、静态资源只从 CSP 白名单 CDN、≤1MB 降采样、
-  主题用 CSS 变量）、`WriteVisualizationFragment` + `::visualize` 引用只在最终响应
-  发、导览模式 wide 的使用边界」。文案自研，不复刻上游文本。
-- CSP 白名单（渲染端执行，技能里教同一张表）：
-  `cdnjs.cloudflare.com esm.sh cdn.jsdelivr.net unpkg.com fonts.googleapis.com fonts.gstatic.com fonts.bunny.net`。
+  唯一 id、无 fetch/XHR/WebSocket、渲染库本地优先、静态资源回退只从 CSP 白名单
+  CDN、≤1MB 降采样、主题用 CSS 变量）、`WriteVisualizationFragment` +
+  `::visualize` 引用只在最终响应发、导览模式 wide 的使用边界」。文案自研，不复刻
+  上游文本。
+- 渲染库取用（2026-10-15 起，**本地优先、CDN 回退**；渲染端机制与安全论证见
+  `packages/ui/specs/gen-ui-visualize-card.md`「vendored 钉版渲染库与 CSP 本地源」）：
+  - mermaid 与 chart.js 已钉版随包分发（mermaid@11.17.2 / chart.js@4.5.0），技能教
+    片段用规范相对路径引用：`visualization-vendor/npm_mermaid@11.17.2_mermaid.min.js`、
+    `visualization-vendor/npm_chart.js@4.5.0_chart.umd.min.js`（全局 `window.mermaid` /
+    `window.Chart`）——离线可渲染，宿主负责 Web/桌面两态解析（http(s) 源直载；桌面
+    生产 file: 页面重写为 `acode-viz-vendor:` 本地协议）；
+  - CSP 白名单 CDN 保留为其余静态资源的回退面（渲染端执行，技能里教同一张表）：
+    `cdnjs.cloudflare.com esm.sh cdn.jsdelivr.net unpkg.com fonts.googleapis.com fonts.gstatic.com fonts.bunny.net`；
+  - 本地源只进 `script-src`；`connect-src 'none'`（无 fetch/XHR/WebSocket）红线不变。
 - 登记进 bundled-skills 完整性清单；`visualize` 工具门常量放 contracts（照
   `DYNAMIC_WORKFLOW_SKILL_NAME` 先例）。
 

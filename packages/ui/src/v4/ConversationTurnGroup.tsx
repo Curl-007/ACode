@@ -66,6 +66,8 @@ import { ConversationWorkflowDigests } from "@/v4/ConversationWorkflowDigests.js
 import { ConversationWorkflowCompletion } from "@/v4/ConversationWorkflowCompletion.js";
 import { resolveWorkflowTurnDigests } from "@/v4/workflowTurnDigests.js";
 import { resolveWorkflowTurnCompletion } from "@/v4/workflowTurnCompletion.js";
+import { ConversationTurnWrapUpCard } from "@/v4/ConversationTurnWrapUpCard.js";
+import { resolveTurnWrapUpCard } from "@/v4/turnWrapUpCards.js";
 import { ConversationAssistantTextActions } from "@/v4/ConversationRowView.js";
 import { readAssistantFeedback } from "@/v4/ConversationRowView.js";
 import type {
@@ -1169,6 +1171,12 @@ function ConversationTurnGroupImpl({
     () => (unit.isRunning ? [] : resolveOffPeakTurnCards(unit.assistantWorkRows)),
     [unit.assistantWorkRows, unit.isRunning],
   );
+  // 收尾卡（packages/ui/specs/turn-wrap-up-card.md）：与 cron/off-peak 同一道缝——
+  // 轮收口后才解析；多次成功调用 last-wins，载荷解析失败安全回落（无卡，行照旧）。
+  const turnWrapUpCard = useMemo(
+    () => (unit.isRunning ? undefined : resolveTurnWrapUpCard(unit.assistantWorkRows)),
+    [unit.assistantWorkRows, unit.isRunning],
+  );
   const canRenderAssistantActions =
     !unit.timelineOnly &&
     latestAssistantTextRow?.state === "complete" &&
@@ -1277,6 +1285,11 @@ function ConversationTurnGroupImpl({
                   : undefined
               }
             />
+          )}
+          {/* 收尾卡：本轮自己的 recap/下一步/建议任务，排轮尾卡序列最前（先于 workflow/cron/
+              off-peak 等副作用卡），紧贴最终正文。 */}
+          {turnWrapUpCard === undefined ? null : (
+            <ConversationTurnWrapUpCard card={turnWrapUpCard} context={context} />
           )}
           {/* 完成卡：这一轮消化的那条 run 做了什么、花了多少，紧跟最后一段正文。 */}
           {workflowTurnCompletion === undefined ? null : (

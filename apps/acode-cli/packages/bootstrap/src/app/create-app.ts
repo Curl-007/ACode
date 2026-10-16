@@ -25,8 +25,12 @@ import {
   PermissionService,
   registerAutoClassifierAuditSink,
   registerBashReflexAuditSink,
+  setMcpCallAuditSink,
   setProcessManagedPolicyFloor,
+  setSessionWorktreeFenceWarnSink,
+  TtlApprovalStore,
   buildPluginReferenceCatalog,
+  buildSessionWorktreeFenceEnv,
   type ResumeSessionResult,
 } from "@acode/core";
 import {
@@ -243,6 +247,50 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
       ...(entry.turnId ? { turnId: entry.turnId } : {}),
       verdict: entry.verdict,
     });
+  });
+  // R3 第一方 MCP 写审计（specs/mcp-lifecycle-ttl-approval.md）：call-audit 模块的缺省
+  // sink 只写一行 stderr，装配期换成 info 级 Logger 落 JSONL——与 setBashReflexAuditSink
+  // 同一接线位。审计是旁路：sink 内部的派发点自带 try/catch，这里的回调不抛。
+  // 注意 sink 是进程级 set（无 sessionId 注册表）：同进程多 app（桌面 app-server）时
+  // 后装配者覆盖、任一 app close 复位为缺省 stderr 兜底——审计不丢，只是回落兜底通道。
+  const mcpAuditLogger = loggerFactory.createLogger("acode").child({
+    ...traceContextToLogContext(traceContext),
+    module: "core.mcp",
+  });
+  setMcpCallAuditSink((entry) => {
+    if (entry.kind === "uncovered-write-tools") {
+      // 注册期告警（spec R3「未覆盖写工具」）：写工具被 allowedTools 放行 = 默认审批门
+      // 被持久规则关掉，warn 一次提醒用户面核对。
+      mcpAuditLogger.warn("MCP first-party write tools are not covered by the approval gate", {
+        event: "mcp.call_audit.uncovered_write_tools",
+        serverName: entry.serverName,
+        toolNames: entry.toolNames,
+      });
+      return;
+    }
+    mcpAuditLogger.info("MCP first-party tool call", {
+      durationMs: entry.durationMs,
+      event: "mcp.call_audit.tool_call",
+      firstPartyBasis: entry.firstPartyBasis,
+      isWrite: entry.isWrite,
+      registeredName: entry.registeredName,
+      serverName: entry.serverName,
+      ...(entry.sessionId ? { sessionId: entry.sessionId } : {}),
+      // 日志上下文的 status 是保留闭集字段（started/waiting/completed/failed/cancelled，
+      // contracts/logging/logger.ts），审计三态含 tool-error 不在集内——改用非保留键。
+      callStatus: entry.status,
+      toolName: entry.toolName,
+    });
+  });
+  // 会话 worktree 围栏 warn 档遥测（specs/session-worktree-lifecycle.md R4）：warn 档
+  // 缺省 no-op，装配层接 service logger——这份遥测正是 enforce 缺省化迁移判据的
+  // 证据通道。进程级 set 语义与 MCP 审计 sink 相同，close 时一并复位。
+  const worktreeFenceLogger = loggerFactory.createLogger("acode").child({
+    ...traceContextToLogContext(traceContext),
+    module: "core.worktree",
+  });
+  setSessionWorktreeFenceWarnSink((message, details) => {
+    worktreeFenceLogger.warn(message, details);
   });
   const startupTimer = new StartupTimer(
     logger,
@@ -491,6 +539,18 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
     // 构造参数纪律覆盖不到；进程注册后任何实例缺省自动携带地板（含 disableBypassPermissionsMode
     // 对 Explore 缺省 yolo 的约束）。undefined = 本机未部署策略文件（清除旧值，测试/复用安全）。
     setProcessManagedPolicyFloor(configResult.config.permission.policy);
+    // TTL 持久授权（specs/mcp-lifecycle-ttl-approval.md R4）：装配层是唯一构造点——
+    // await create() 完成落盘事实加载后注入 PermissionConfig.ttlApprovals（内存为
+    // 唯一读源，落盘异步 best-effort）。加载/落盘失败只 warn，效果等同「授权消失 →
+    // 回落 ask」（fail-safe），绝不放宽判定；文件位置复用存储的缺省数据根解析。
+    const ttlApprovalStore = await TtlApprovalStore.create({
+      warn: (message, details) => {
+        permissionAuditLogger.warn(message, {
+          ...details,
+          event: "permission.ttl_approvals",
+        });
+      },
+    });
     const permissionService = new PermissionService({
       allowedTools: new Set(configResult.config.permission.allowedTools),
       autoApproveHighRisk: configResult.config.permission.autoApproveHighRisk,
@@ -501,6 +561,9 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
       ...(configResult.config.permission.policy
         ? { policyFloor: configResult.config.permission.policy }
         : {}),
+      // R4 判定位次的消费入口：TTL allow 在策略地板/disallowedTools/项目 deny/ask/
+      // plan 拒写之后被 checkPermission 消费，只收紧不放宽的总原则不变。
+      ttlApprovals: ttlApprovalStore,
     });
     const inputHistoryStore = options.inputHistoryStore ?? asInputHistoryStore(sessionStore);
     const artifactStore =
@@ -555,6 +618,28 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
               noProxy: configResult.config.network.noProxy,
               caCertFile: configResult.config.network.caCertFile,
             },
+            // R2 连接状态变更事件（specs/mcp-lifecycle-ttl-approval.md）：装配层落一条
+            // 规范化事件记录（trigger 闭集 + previous/当前状态 + 挂起事实，connectionId
+            // 关联 pool lease）；desktop 设置页/TUI 侧栏的实际消费是后续批次。监听器
+            // 故障不影响连接生命周期（adapter 派发点自带 try/catch）。自动重连预算
+            // 参数（reconnect.crashBudget/minRetryIntervalMs）无配置面，沿用 adapter
+            // 缺省（3 次 / 30s，spec R1 钉住）；宿主调参经 mcpPortFactory 注入。
+            onStatusChange: (change) => {
+              logger.info("MCP server status changed", {
+                ...(change.connectionId ? { connectionId: change.connectionId } : {}),
+                event: "mcp.server.status_changed",
+                ...(change.previousStatus ? { previousStatus: change.previousStatus } : {}),
+                ...(change.status.reconnectSuspension
+                  ? { reconnectSuspension: change.status.reconnectSuspension }
+                  : {}),
+                serverName: change.serverName,
+                // 同 mcp.call_audit：status 是日志保留闭集字段，服务器状态枚举
+                // （含 disabled/suspended 等）不在集内——改用非保留键。
+                serverStatus: change.status.status,
+                timestamp: change.at,
+                trigger: change.trigger,
+              });
+            },
             workingDirectory,
           })));
     const ownsMcpPort = options.mcpPort === undefined && mcpPort !== undefined;
@@ -569,6 +654,10 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
         },
         outputRootDir: join(storageRoot, "cli", "exec"),
         processEnv: options.env ?? process.env,
+        // 会话 worktree 写围栏 env（specs/session-worktree-lifecycle.md R7）：按本次
+        // 执行 cwd 向子进程注入 ACODE_SESSION_WORKTREE* 边界键；未绑定时清空陈旧
+        // 继承值（键名单单一事实源在 contracts/src/tools/session-worktree.ts）。
+        sessionWorktreeEnv: (cwd) => buildSessionWorktreeFenceEnv(cwd, options.env ?? process.env),
       });
     const ownsExecutionPort = options.executionPort === undefined;
     const pdfDocumentPort =
@@ -1270,6 +1359,15 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
         try {
           unregisterBashReflexAuditSink();
           unregisterAutoClassifierAuditSink();
+          // MCP 写审计 sink 复位为缺省 stderr 兜底（call-audit 模块的进程级 set 语义；
+          // 同进程还有其他 app 时其审计回落兜底通道，不丢记录）。
+          setMcpCallAuditSink(undefined);
+          // 围栏 warn sink 同款复位（进程级 set 语义，见装配处注释）。
+          setSessionWorktreeFenceWarnSink(undefined);
+          // TTL 授权落盘收口（specs/mcp-lifecycle-ttl-approval.md R4）：内存是唯一读源、
+          // 落盘异步 best-effort——进程收口前等待挂起写入完成，避免最后一笔批准丢失
+          // （丢失方向是回落 ask，安全但打扰用户）。flush 内部串行链自带 catch，不抛。
+          await ttlApprovalStore.flush();
           // K3 R1：app 关闭 = overnight run 终止（收口 runtime-task 投影，不等待在飞 turn）。
           overnightController.dispose();
           // K6：app 关闭 = ambient runner 停循环释放 claim + 账本缓冲落盘（生命周期

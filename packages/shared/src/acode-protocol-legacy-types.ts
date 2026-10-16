@@ -63,6 +63,12 @@ export const acodePermissionUpdateSchema = z
     type: z.literal("addRules"),
     behavior: acodePermissionRuleBehaviorSchema,
     rules: z.array(acodePermissionRuleValueSchema).min(1),
+    // TTL 持久授权（apps/acode-cli/specs/mcp-lifecycle-ttl-approval.md R4）：带
+    // expiresAt（ISO 8601）的 allow 更新进 TTL 存储、到期回落 ask；不带维持既有
+    // 语义（会话级 sessionRules 或项目持久 ruleset）。可选字段是向后扩展——旧客户端
+    // 不发送它，strict 校验照常通过；期限的语义校验（可解析/夹紧/过期丢弃）由 CLI 侧
+    // TtlApprovalStore fail-closed 收口，wire 层只保证非空字符串。
+    expiresAt: nonEmptyString.optional(),
   })
   .strict();
 export const acodePermissionResponseSchema = z

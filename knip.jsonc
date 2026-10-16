@@ -137,6 +137,11 @@
         "@xyflow/react",
         "ansi-to-react",
         "use-stick-to-bottom",
+        // 可视化卡片 vendored 钉版渲染库（specs/gen-ui-visualize-card.md）：资产型依赖——
+        // vite/visualizationVendorPlugin.ts 构建期从 node_modules 读 dist 物化进
+        // visualization-vendor/ 资产目录（sha256 钉死），源码无 ESM import。
+        "chart.js",
+        "mermaid",
       ],
     },
     "packages/acode-server-cli": {

@@ -1,4 +1,8 @@
-import type { BackgroundBashOutputResult, SessionDebugSnapshot } from "@acode/shared";
+import type {
+  AutomationManualTriggerRejectReason,
+  BackgroundBashOutputResult,
+  SessionDebugSnapshot,
+} from "@acode/shared";
 /* eslint-disable max-lines -- ACode agent service 接口集中声明 protocol/session/workspace 方法，拆分会增加 service descriptor 迁移成本。 */
 import type { Event, IDisposable } from "@acode/rpc";
 import { ServiceChannels } from "@acode/shared";
@@ -111,6 +115,7 @@ export * from "./acodeAgentWorkflowParams.js";
 import type {
   ACodeAgentAddPluginMarketplaceParams,
   ACodeAgentAutomationIdParams,
+  ACodeAgentRunAutomationNowParams,
   ACodeAgentCancelPluginOperationParams,
   ACodeAgentConfigurePluginParams,
   ACodeAgentResetPluginConfigParams,
@@ -186,7 +191,12 @@ export interface ACodeAgentInitializeResult {
 }
 
 export interface ACodeAgentRunAutomationNowResult {
-  status: "queued" | "duplicate";
+  status: "queued" | "duplicate" | "rejected";
+  /**
+   * status="rejected" 时在场：用户激活守卫的闭集拒绝原因
+   *（specs/scheduled-manual-trigger-activation.md R2；拒绝先于 run 落库，无副作用）。
+   */
+  reason?: AutomationManualTriggerRejectReason;
 }
 
 export interface ACodeAgentWorkspaceRuntimeIdentity {
@@ -708,7 +718,9 @@ export interface IACodeAgentService {
   deleteAutomation(params: ACodeAgentAutomationIdParams): Promise<void>;
   setAutomationEnabled(params: ACodeAgentSetAutomationEnabledParams): Promise<void>;
   restartAutomation(params: ACodeAgentAutomationIdParams): Promise<void>;
-  runAutomationNow(params: ACodeAgentAutomationIdParams): Promise<ACodeAgentRunAutomationNowResult>;
+  runAutomationNow(
+    params: ACodeAgentRunAutomationNowParams,
+  ): Promise<ACodeAgentRunAutomationNowResult>;
   listAutomationRuns(params: ACodeAgentAutomationIdParams): Promise<ACodeAutomationRun[]>;
   deleteAutomationRun(params: ACodeAgentDeleteAutomationRunParams): Promise<void>;
   generateWorkspaceText(

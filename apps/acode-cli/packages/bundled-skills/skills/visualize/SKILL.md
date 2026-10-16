@@ -51,7 +51,20 @@ Fragment rules:
 - CSS and JavaScript only when base classes are insufficient. **No `fetch`,
   XHR, WebSocket, or any network call** — `connect-src` is `none` and the call
   will fail silently.
-- Static assets may load from these CDNs only: `cdnjs.cloudflare.com`,
+- **Mermaid and Chart.js ship with the app** — pinned, served locally, working
+  offline. Reference them by their exact versioned paths, never by CDN URL:
+
+  ```html
+  <script src="visualization-vendor/npm_mermaid@11.17.2_mermaid.min.js"></script>
+  <script src="visualization-vendor/npm_chart.js@4.5.0_chart.umd.min.js"></script>
+  ```
+
+  They expose `window.mermaid` and `window.Chart`. For Mermaid, call
+  `mermaid.initialize({ startOnLoad: false })` once, then
+  `await mermaid.render(id, definition)` and insert the returned `svg` into
+  your root element. Any other spelling (a CDN URL, a different version) drops
+  the offline guarantee and may be blocked.
+- Other static assets may load from these CDNs only: `cdnjs.cloudflare.com`,
   `esm.sh`, `cdn.jsdelivr.net`, `unpkg.com`, `fonts.googleapis.com`,
   `fonts.gstatic.com`, `fonts.bunny.net`. Anything else is blocked.
 - `window.acodeViz.getWidgetState()/setWidgetState(...)` persists widget state

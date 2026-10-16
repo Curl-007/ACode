@@ -13,12 +13,21 @@
 // 只读靠提示）。
 
 import {
+  ARCHIVE_SESSION_TOOL_NAME,
   ASK_USER_QUESTION_TOOL_NAME,
+  DELETE_SESSIONS_TOOL_NAME,
   ENTER_PLAN_MODE_TOOL_NAME,
+  ENTER_SESSION_WORKTREE_TOOL_NAME,
   EXIT_PLAN_MODE_TOOL_NAME,
   FILL_WORKFLOW_HOLE_TOOL_NAME,
+  HAND_OFF_TO_SESSION_TOOL_NAME,
+  MERGE_BASE_BRANCH_TOOL_NAME,
   READ_SESSION_CONTEXT_TOOL_NAME,
+  REAP_SESSION_WORKTREES_TOOL_NAME,
   RESOLVE_WORKFLOW_QUESTION_TOOL_NAME,
+  SEND_TO_SESSION_TOOL_NAME,
+  SET_SESSION_PERMISSION_MODE_TOOL_NAME,
+  START_SESSION_TOOL_NAME,
 } from "@acode/contracts";
 
 /** AgentRuntimeConfig 的工具面切片。 */
@@ -49,6 +58,24 @@ const ACTOR_DISALLOWED_TOOLS: readonly string[] = [
   // 的确认窗重新授权——actor 会话无窗可弹，也轮不到一个被同一份脚本指挥的 actor 替整个
   // run 决定拓扑。与 CreateWorkflow/AmendWorkflow 的嵌套编排禁令同席。
   FILL_WORKFLOW_HOLE_TOOL_NAME,
+  // 会话级 worktree 生命周期三工具（specs/session-worktree-lifecycle.md 分域裁决）：
+  // actor 已运行在 workflow 域 worktree 内（acode/workflow/ 前缀、独立台账），再
+  // enter/merge/reap 会话域 worktree 属跨分域双重管理隔离——enter 会挂错台账，
+  // reap 可能收割别的会话的材料。与上面嵌套编排禁令不同根因：这是分域纪律。
+  ENTER_SESSION_WORKTREE_TOOL_NAME,
+  MERGE_BASE_BRANCH_TOOL_NAME,
+  REAP_SESSION_WORKTREES_TOOL_NAME,
+  // 会话舰队六个变更工具（specs/session-fleet.md 分域纪律）：actor 不持有舰队
+  // 所有权（所有权封闭——只有发起 transcript 自己的 StartSession 成功返回才确立），
+  // 也不应在编排内发起/ steer/归档/删除用户的并行会话或改任何会话的权限档；
+  // 无 subagentPort 时本就 fail-closed，收录是与 worktree 三工具同款的分域对齐。
+  // ListSessions 只读保留（与 OffPeakList 只读同理）。
+  START_SESSION_TOOL_NAME,
+  SEND_TO_SESSION_TOOL_NAME,
+  HAND_OFF_TO_SESSION_TOOL_NAME,
+  SET_SESSION_PERMISSION_MODE_TOOL_NAME,
+  ARCHIVE_SESSION_TOOL_NAME,
+  DELETE_SESSIONS_TOOL_NAME,
 ];
 
 /**

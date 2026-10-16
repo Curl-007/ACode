@@ -68,6 +68,8 @@ import { scheduleProjectMemoryExtraction } from "../helpers/project-memory-extra
 import { appendBrowserTurnScreenshot } from "./browser-turn-screenshot.js";
 import { clearBrowserTurnState } from "../../repl/browser-turn-state.js";
 import { applySubmissionExecutionState, createTurnModel } from "./turn-model.js";
+import { runStopFailureHooks } from "./hooks.js";
+import { logTurnWrapUpObligationOutcome } from "./turn-wrap-up.js";
 import { rebuildContextPrefix } from "./context-refresh.js";
 import { assertRuntimeModelBranchCurrent } from "./runtime-command-generation.js";
 
@@ -220,6 +222,17 @@ export async function executeTurnCommand(
           logEvent: "turn.failed",
           logLabel: "Turn",
         });
+        // StopFailure（specs/hook-event-surface.md）：通知类；runStopFailureHooks
+        // 自带 containment，hook 故障绝不掩盖原始 turn error。
+        await runStopFailureHooks(
+          this,
+          {
+            cancelled: coreError.type === CoreErrorType.TurnCancelled,
+            errorMessage: coreError.message,
+            errorType: coreError.type,
+          },
+          turnTraceContext,
+        );
         throw coreError;
       }
       let phaseStartedAt = startTurnPhase("context_initialization");
@@ -689,6 +702,9 @@ export async function executeTurnCommand(
           status: "completed",
           toolCallCount: loopState.toolCallCount,
         });
+        // 收尾义务评估（specs/turn-wrap-up.md R3）：成功收口路径唯一评估点；
+        // 只落日志（recorded/missing/stale），不阻塞收口、不发新事件。
+        logTurnWrapUpObligationOutcome(this, loopState);
         // 单轮执行策略只抑制本次成功 Turn 的后台提取，不修改 Session Memory 配置。
         if (options?.modelExecution?.memoryExtraction !== "skip") {
           scheduleProjectMemoryExtraction(this, {
@@ -790,6 +806,20 @@ export async function executeTurnCommand(
           turnId,
           userMessageId,
         });
+        // StopFailure（specs/hook-event-surface.md）：通知类，在 TurnError outcome 与
+        // usage 结算之后、throw 之前触发；自带 containment，不掩盖原始 turn error。
+        await runStopFailureHooks(
+          this,
+          {
+            cancelled: coreError.type === CoreErrorType.TurnCancelled,
+            errorMessage: coreError.message,
+            errorType: coreError.type,
+            ...(loopState?.toolCallCount !== undefined
+              ? { toolCallCount: loopState.toolCallCount }
+              : {}),
+          },
+          turnTraceContext,
+        );
         throw coreError;
       }
     }).then(

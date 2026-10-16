@@ -71,6 +71,9 @@ import type {
   TurnId,
 } from "./deps.js";
 import { installAgentRuntimeMethods } from "./methods/index.js";
+// SessionEnd 公开桥接的本体（specs/hook-event-surface.md F1）：触发函数住在
+// methods/hooks-extended.ts，经 hooks.ts 再导出——导入路径与既有消费者一致。
+import { runSessionEndHooks as runSessionEndHooksTrigger } from "./methods/hooks.js";
 import type { StartSavedWorkflowRunResult } from "./methods/dynamic-workflow-run-start.js";
 import type { ConcurrencyDiagnosticsSnapshot } from "./methods/concurrency-diagnostics.js";
 import type {
@@ -381,6 +384,21 @@ export class AgentRuntime {
     // 因此必须先终止该 runtime 的 Extraction，不能只在超时后放弃等待。
     this.memoryExtractionScheduler?.shutdown();
   }
+
+  /**
+   * SessionEnd hook（specs/hook-event-surface.md F1）：shutdown 漏斗的公开桥接——
+   * bootstrap session-facade.close 在 beginShutdown 之后调用。本体是
+   * methods/hooks-extended.ts 的「runtime 显式首参」普通函数（spec D6 形态），
+   * 这里只做公开面绑定与缺省 trace context 解析。通知类且内含 containment
+   * （hook 故障只 warn）；调用方另加超时闸门（abort 收掉在飞 hook 进程）。
+   */
+  runSessionEndHooks(
+    input: { reason: string },
+    traceContext?: TraceContext,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    return runSessionEndHooksTrigger(this as unknown as AgentRuntimeInternal, input, traceContext, signal);
+  }
 }
 
 export interface AgentRuntime {
@@ -388,6 +406,12 @@ export interface AgentRuntime {
   readonly lastPermissionGrantId?: string;
   beginShutdown(): void;
   closeBrowserSession(): Promise<void>;
+  /** SessionEnd hook（specs/hook-event-surface.md F1）：通知类、内含 containment；调用方加超时闸门。 */
+  runSessionEndHooks(
+    input: { reason: string },
+    traceContext?: TraceContext,
+    signal?: AbortSignal,
+  ): Promise<void>;
   updateConfig(patch: RuntimeConfigUpdatePatch): void;
   initializeSessionShellEnvironmentIfNeeded(
     selection: ExecutionShellSelection | (() => ExecutionShellSelection),

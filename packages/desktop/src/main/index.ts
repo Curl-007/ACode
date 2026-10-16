@@ -21,6 +21,11 @@ import {
   installLocalMediaPreviewProtocol,
   registerLocalMediaPreviewScheme,
 } from "./localMediaPreviewProtocol.js";
+import {
+  createVisualizationVendorFileServer,
+  installVisualizationVendorProtocol,
+  registerVisualizationVendorScheme,
+} from "./visualizationVendorProtocol.js";
 import { createDesktopBrowserScreenshotSurfaceCoordinator } from "./browserView/browserScreenshotSurfaceCoordinatorWiring.js";
 import { EMBEDDED_BROWSER_PARTITION } from "./browserDataManager.js";
 import { EmbeddedBrowserJavaScriptDialogController } from "./embeddedBrowserJavaScriptDialog.js";
@@ -66,6 +71,7 @@ import {
   HostMessageTypes,
 } from "@acode/shared";
 import { logger } from "./logger.js";
+import { startMainStallSampler } from "./stallSampler.js";
 import { markMainLaunchAppReady } from "./desktopLaunchMarks.js";
 import { createCuaPipFocusRouter, resolveCuaPipWindowKey } from "./cuaPipFocusRouter.js";
 import {
@@ -191,6 +197,8 @@ import {
   WINDOWS_UPDATE_LOCK_RELEASE_GRACE_MS,
 } from "./windowsInstallResourceLocks.js";
 registerLocalMediaPreviewScheme(protocol);
+// 可视化卡片 vendored 钉版渲染库协议：privileged scheme 必须在 app ready 前注册。
+registerVisualizationVendorScheme(protocol);
 const localMediaPreviewPathRegistry = createLocalMediaPreviewPathRegistry();
 
 // e2e 由 Chromedriver 管理远程调试端口；如果这里继续固定到 9229，
@@ -218,6 +226,11 @@ process.title = runtimeApplicationName;
 process.on("unhandledRejection", (reason) => {
   logger.error("unhandledRejection:", reason);
 });
+
+// 主进程卡顿自诊断（specs/main-stall-diagnostics.md）：模块初始化段即启动，覆盖
+// app ready 之前的启动期同步重活；开发态与打包态都生效，ACODE_MAIN_STALL_SAMPLER=0
+// 完全禁用。停止统一收口在 prepareAppQuit（与其余 main 侧资源同批 dispose）。
+const mainStallSampler = startMainStallSampler({ logger });
 
 const iconPath =
   process.platform === "win32"
@@ -932,6 +945,8 @@ async function prepareAppQuit(reason: string, kind: AppShutdownKind = "normal"):
   }
 
   markForceQuit(reason);
+  // stall-sampler 先停：退出路径本身有同步重活，别再把它记成停跳告警。
+  mainStallSampler?.stop();
   windowsCuaOperationIndicator.dispose();
   browserScreenshotSurfaceCoordinator.dispose();
   const cronSchedulerToDispose = cronScheduler;
@@ -1817,6 +1832,17 @@ app.whenReady().then(async () => {
   installLocalMediaPreviewProtocol(session.defaultSession.protocol, {
     isPathAuthorized: localMediaPreviewPathRegistry.isAuthorized,
   });
+  // 可视化卡片 vendored 渲染库（mermaid/chart.js 钉版）：资产由 ui 的
+  // visualizationVendorPlugin 随 renderer 构建 emit 到 out/renderer/visualization-vendor/
+  // （electron-builder files 含 out/**/*，生产包随之携带）。dev 态 renderer 跑在
+  // vite origin，片段走相对路径 + vite 中间件，不经本协议；目录缺席时 load 一律
+  // fail-closed 返回 404。
+  installVisualizationVendorProtocol(
+    session.defaultSession.protocol,
+    createVisualizationVendorFileServer({
+      resolveVendorDir: () => join(import.meta.dirname, "../renderer/visualization-vendor"),
+    }),
+  );
   // 安全加固 P2 #2b（specs/electron-hardening.md §2）：此前全仓没有 setPermissionRequestHandler，
   // Electron 默认放行全部权限请求，内嵌浏览器加载的任意页面可无确认拿摄像头/麦克风/屏幕捕获。
   // 这里在 defaultSession 与两个 webview partition 上统一挂「默认拒绝 + 最小放行」策略，

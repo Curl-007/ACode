@@ -141,6 +141,8 @@ export {
   BROWSER_SCREENSHOT_SURFACE_PREPARE_TIMEOUT_MS,
   BROWSER_VIEW_RESTORE_BOOTSTRAP_URL,
   LOCAL_MEDIA_PREVIEW_SCHEME,
+  VISUALIZATION_VENDOR_SCHEME,
+  VISUALIZATION_VENDOR_SCHEME_HOST,
   DesktopCommandIds,
   buildLocalMediaPreviewUrl,
   createOpenInEditorRemoteTarget,
@@ -215,6 +217,7 @@ export type { ACodeTaskCreateResult } from "./acode-task-types.js";
 export * from "./acode-task-types.js";
 export * from "./automation-types.js";
 export * from "./automation-notice.js";
+export * from "./automation-manual-trigger.js";
 export * from "./off-peak-types.js";
 export * from "./background-task-control-merge.js";
 export * from "./background-task-controls.js";

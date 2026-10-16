@@ -1,5 +1,5 @@
 import { renameSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, sep } from "node:path";
 
 const DEFAULT_RETRY_DURATION_MS = 1_500;
 const RETRY_DELAYS_MS = [25, 50, 100] as const;
@@ -132,4 +132,29 @@ function sleepSync(delayMs: number): void {
   // 官方插件发现链路当前是同步 API。Windows 杀毒/索引器可能短暂占用缓存，
   // 用总预算受限的短等待吸收瞬时 EPERM，避免为热修扩大成整条启动链路异步化。
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delayMs);
+}
+
+export function isNotFoundFsError(error: unknown): error is NodeJS.ErrnoException {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    String((error as NodeJS.ErrnoException).code) === "ENOENT"
+  );
+}
+
+/**
+ * seed 文件落盘权限（自 bundled-plugins.ts 下沉，语义不变）。保留源码执行位，
+ * 并对 SEA/旧 manifest 缺少 mode 的 hook 脚本与 MCP server 产物兜底 0o755，
+ * 否则 polyglot shell wrapper 直接执行会 permission denied。
+ */
+export function modeForSeedFile(filePath: string, sourceMode?: number): number {
+  if (sourceMode !== undefined && (sourceMode & 0o111) !== 0) return 0o755;
+
+  const normalizedPath = filePath.split(sep).join("/");
+  if (/(?:^|\/)dist\/mcp\/server\.js$/i.test(normalizedPath)) return 0o755;
+  if (normalizedPath.startsWith("hooks/") && !/\.(json|md|txt)$/iu.test(normalizedPath)) {
+    return 0o755;
+  }
+
+  return 0o644;
 }

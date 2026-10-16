@@ -16,11 +16,17 @@ import { isACodeCuaInternalFeatureEnabled, ACODE_CUA_OFFICIAL_PLUGIN_ID } from "
 import {
   createOfficialPluginCacheRetryBudget,
   getOfficialPluginCacheRetryAttempts,
+  isNotFoundFsError,
   isTransientOfficialPluginCacheFsError,
+  modeForSeedFile,
   type OfficialPluginCacheRetryBudget,
   removeOfficialPluginCacheDirectory,
   renameOfficialPluginCachePath,
 } from "./official-plugin-cache-fs.js";
+import {
+  findOfficialPluginSeedRejection,
+  parseSeedPluginListing,
+} from "./official-plugin-seed-guard.js";
 import {
   OFFICIAL_PLUGIN_DEFINITIONS,
   type OfficialPluginDefinition,
@@ -105,28 +111,39 @@ function seedBundledOfficialPlugins(input: {
   // 一次成功不查预算），预算耗尽后有争用的锁立即降级，seeding 总等待封顶 15s。
   const seedLockDeadlineAt = Date.now() + SEED_LOCK_TOTAL_BUDGET_MS;
   const failedSeeds: OfficialPluginDefinition[] = [];
+  // seed 生命周期归因（spec R5）：一次 seeding 一条 info 汇总，outcome 闭集。
+  const seedOutcomes: Array<{ outcome: string; pluginId: string; version: string }> = [];
+  const recordSeedOutcome = (plugin: OfficialPluginSeedPluginSource, outcome: string): void => {
+    seedOutcomes.push({
+      outcome,
+      pluginId: `${plugin.definition.name}@${OFFICIAL_PLUGIN_MARKETPLACE}`,
+      version: plugin.definition.version,
+    });
+  };
   for (const plugin of source.plugins) {
     const pluginId = `${plugin.definition.name}@${OFFICIAL_PLUGIN_MARKETPLACE}`;
     const targetRoot = officialPluginCacheRoot(input.storageRoot, plugin.definition);
-    // 入口旁的插件拷贝可能与新定义错配（升级中的桌面包、旧 checkout 未构建 dist）。
-    // 缺 requiredSeedPaths 时 seed 源解析曾直接抛错，一个残缺插件把全部插件连同会话恢复
-    // 一起炸成 resumeFailed。残缺只作用于单插件：拒绝写缓存，按既有降级协议告警并回退到可用旧缓存。
-    if (plugin.missingSeedPaths.length > 0) {
+    // 拒绝只作用于单插件：拒绝写缓存，按既有降级协议告警并回退到可用旧缓存。判定含
+    // requiredSeedPaths 缺失（错配拷贝曾把全部插件炸成 resumeFailed）与条目预算超限（spec R2）。
+    const rejection = findOfficialPluginSeedRejection({
+      fileCount: plugin.files.length,
+      missingSeedPaths: plugin.missingSeedPaths,
+      pluginName: plugin.definition.name,
+    });
+    if (rejection) {
       warnCacheDegraded(input.logger, {
-        error: Object.assign(
-          new Error(
-            `Bundled official plugin ${plugin.definition.name} is missing required seed assets: ${plugin.missingSeedPaths.join(", ")}`,
-          ),
-          { code: "ACODE_PLUGIN_SEED_INCOMPLETE" },
-        ),
-        missingSeedPaths: plugin.missingSeedPaths,
+        error: rejection.error,
+        missingSeedPaths: rejection.missingSeedPaths,
         operation: "seed_plugin",
         pluginId,
         targetRoot,
       });
       failedSeeds.push(plugin.definition);
+      const outcome = rejection.missingSeedPaths ? "rejected_incomplete" : "rejected_oversize";
+      recordSeedOutcome(plugin, outcome);
       continue;
     }
+    let seedOutcome = "written";
     try {
       withOfficialPluginSeedLock(
         targetRoot,
@@ -141,7 +158,10 @@ function seedBundledOfficialPlugins(input: {
               retryBudget,
               rootPath: targetRoot,
             });
-            if (manifestWritten) return;
+            if (manifestWritten) {
+              seedOutcome = "reused";
+              return;
+            }
           }
 
           const temporaryRoot = `${targetRoot}.tmp-${process.pid}-${Date.now()}`;
@@ -183,6 +203,7 @@ function seedBundledOfficialPlugins(input: {
         },
         { timeoutMs: Math.max(0, seedLockDeadlineAt - Date.now()) },
       );
+      recordSeedOutcome(plugin, seedOutcome);
     } catch (error) {
       if (
         isTransientOfficialPluginCacheFsError(error) ||
@@ -203,11 +224,18 @@ function seedBundledOfficialPlugins(input: {
           targetRoot,
         });
         failedSeeds.push(plugin.definition);
+        recordSeedOutcome(plugin, "degraded");
         continue;
       }
       throw error;
     }
   }
+  input.logger?.info("Official plugin seeding completed", {
+    module: "bootstrap.official_plugin_cache",
+    operation: "seed_summary",
+    outcomes: seedOutcomes,
+    source: source.kind,
+  });
   return failedSeeds;
 }
 
@@ -413,16 +441,18 @@ function writeOfficialMarketplace(storageRoot: string, source: OfficialPluginSee
       name: OFFICIAL_PLUGIN_MARKETPLACE,
       plugins: source.plugins.map((plugin) => {
         // 商店信息（listing）与描述随目录条目下发：键名与 CDN 目录 schema 一致，
-        // 由 adapter 的同一套 parseEntryStoreListing 解析，UI 才能给内置插件渲染
-        // 显示名/分类/作者/示例提示词。描述取自插件包内 plugin.json（单一事实源）。
-        const description = readSeedPluginDescription(source, plugin);
+        // 由 adapter 的同一套 parseEntryStoreListing 解析。description / description_i18n
+        // 的事实源是插件包内 plugin.json（spec R3）：包内声明整表覆盖 definitions 的
+        // listing seed 同名字段，未声明时 listing seed 回退。
+        const listing = parseSeedPluginListing(readSeedPluginManifestText(source, plugin));
         return {
           cachePath: officialPluginCacheRoot(storageRoot, plugin.definition),
-          ...(description ? { description } : {}),
+          ...(listing.description ? { description: listing.description } : {}),
           name: plugin.definition.name,
           source: source.kind,
           version: plugin.definition.version,
           ...(plugin.definition.listing ?? {}),
+          ...(listing.descriptionI18n ? { description_i18n: listing.descriptionI18n } : {}),
         };
       }),
       version: 1,
@@ -431,20 +461,15 @@ function writeOfficialMarketplace(storageRoot: string, source: OfficialPluginSee
   });
 }
 
-/** 从 seed 文件集中读插件 plugin.json 的 description；读取/解析失败按 undefined 降级。 */
-function readSeedPluginDescription(
+/** 从 seed 文件集读 plugin.json 原文；缺文件/读取失败按 undefined 降级。 */
+function readSeedPluginManifestText(
   source: OfficialPluginSeedSource,
   plugin: OfficialPluginSeedPluginSource,
 ): string | undefined {
   const manifestFile = plugin.files.find((file) => file.path === ".acode-plugin/plugin.json");
   if (!manifestFile) return undefined;
   try {
-    const parsed = JSON.parse(readSeedFileBytes(source, plugin, manifestFile).toString("utf8")) as {
-      description?: unknown;
-    };
-    return typeof parsed.description === "string" && parsed.description.trim().length > 0
-      ? parsed.description
-      : undefined;
+    return readSeedFileBytes(source, plugin, manifestFile).toString("utf8");
   } catch {
     return undefined;
   }
@@ -575,14 +600,6 @@ function createSeedBackupRoot(targetRoot: string): string {
   return `${targetRoot}.backup-${process.pid}-${Date.now()}`;
 }
 
-function isNotFoundFsError(error: unknown): error is NodeJS.ErrnoException {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    String((error as NodeJS.ErrnoException).code) === "ENOENT"
-  );
-}
-
 function warnCacheDegraded(
   logger: Logger | undefined,
   input: {
@@ -670,25 +687,12 @@ function shouldIncludePluginFile(
   return topLevel !== undefined && allowedTopLevelPaths.has(topLevel);
 }
 
-function modeForSeedFile(filePath: string, sourceMode?: number): number {
-  if (sourceMode !== undefined && (sourceMode & 0o111) !== 0) return 0o755;
-
-  const normalizedPath = toPosixPath(filePath);
-  // official plugin seed 会重写缓存文件权限。部分插件通过 polyglot shell wrapper
-  // 直接执行 hook 脚本，若落盘成 0644 会 permission denied。这里保留源码执行位，
-  // 并对 SEA/旧 manifest 缺少 mode 的 hook 脚本兜底。
-  if (/(?:^|\/)dist\/mcp\/server\.js$/i.test(normalizedPath)) return 0o755;
-  if (/^hooks\//u.test(normalizedPath) && !/\.(json|md|txt)$/iu.test(normalizedPath)) {
-    return 0o755;
-  }
-
-  return 0o644;
-}
-
 function hashSeedFiles(files: OfficialPluginSeedFile[]): string {
-  return hashText(
-    JSON.stringify(
-      files.map((file) => [file.path, file.sha256, modeForSeedFile(file.path, file.mode)]),
+  return hashBytes(
+    Buffer.from(
+      JSON.stringify(
+        files.map((file) => [file.path, file.sha256, modeForSeedFile(file.path, file.mode)]),
+      ),
     ),
   );
 }
@@ -703,8 +707,4 @@ function uniquePaths(paths: string[]): string[] {
 
 function hashBytes(bytes: Buffer): string {
   return createHash("sha256").update(bytes).digest("hex");
-}
-
-function hashText(text: string): string {
-  return hashBytes(Buffer.from(text));
 }

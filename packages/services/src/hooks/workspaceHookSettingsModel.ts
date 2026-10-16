@@ -8,9 +8,11 @@ import type {
 } from "@acode/shared";
 import {
   resolveWorkspaceHookEntries,
+  WORKSPACE_HOOK_EVENT_NAMES,
   type CanonicalWorkspaceHookEntryData,
   type WorkspaceHookBundleSnapshotData,
   type WorkspaceHookDefinition,
+  type WorkspaceHookEventName,
   type WorkspaceHookRuntimeRoot,
   type WorkspaceHookSourceInput,
   type WorkspaceHooksConfig,
@@ -248,9 +250,23 @@ export function fromLegacyHooksConfig(input: {
   return hooks;
 }
 
+/**
+ * 可写事件面守护（apps/acode-cli/specs/hook-event-surface.md D2/F2/F9）：展示面的
+ * HookEvent 已扩到 17 全集，但用户配置文件（acode.json hooks）的可写面仍由
+ * workspace-hook-config 的 strict schema 钉在存量 7 事件（信任 digest 演进策略未定，
+ * F2 后续批次）。携带新事件的 hook 只可能来自 legacy settings.json 的只读展示源
+ * （editable=false，saveHooksImpl 已过滤），这里的守护保证即使未来读边界变化，
+ * 也绝不把 CLI 侧 schema 会拒绝的事件键写进配置文件（strict 校验失败 = 整份 hooks
+ * 配置被丢弃，方向不可接受）。
+ */
+function isWritableWorkspaceHookEvent(event: HookEvent): event is WorkspaceHookEventName {
+  return (WORKSPACE_HOOK_EVENT_NAMES as readonly string[]).includes(event);
+}
+
 export function toACodeHooksEvents(hooks: Hook[]): WorkspaceHooksConfig["events"] {
   const events: WorkspaceHooksConfig["events"] = {};
   for (const hook of hooks) {
+    if (!isWritableWorkspaceHookEvent(hook.event)) continue;
     const eventMatchers = events[hook.event] ?? [];
     let matcher = eventMatchers.find((item) => item.matcher === hook.matcher);
     if (!matcher) {

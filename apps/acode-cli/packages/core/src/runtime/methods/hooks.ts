@@ -8,6 +8,11 @@ import {
   type RuntimeMessageEntry,
 } from "../../agent/message-history.js";
 
+// T1-6 扩展事件面（specs/hook-event-surface.md）的触发函数拆到 hooks-extended.ts：
+// 事件扩到 17 个后本文件越过 400 行架构 ratchet，按仓库惯例拆分；再导出保持公开
+// API 与导入路径兼容——模块内消费者与守护测试仍从 "./hooks.js" 导入，不感知拆分。
+export * from "./hooks-extended.js";
+
 const MAX_STOP_HOOK_CONTINUATIONS = 3;
 
 const EMPTY_HOOK_RESULT: HookRunResult = {

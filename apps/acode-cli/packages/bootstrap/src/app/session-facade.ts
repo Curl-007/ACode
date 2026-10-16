@@ -43,6 +43,15 @@ import {
 } from "./provider-registry-selection.js";
 import type { PrepareUserExecutionBoundary, ACodeApp } from "./types.js";
 
+// SessionEnd hook 收口闸门（apps/acode-cli/specs/hook-event-surface.md F1）：
+// 漏斗级超时上限，独立于 hook runner 的每 hook 超时——关闭链路不得被 hook 无限
+// 拖住；超时即 abort，由 runner 收掉在飞 hook 进程。
+const SESSION_END_HOOKS_TIMEOUT_MS = 30_000;
+// reason 闭集条目（F1 建议集 clear/logout/exit/dispose…）：本装配层单一漏斗的
+// 事实是「宿主回收会话 app」= dispose；更细来源需要 close 签名链路携带原因参数，
+// 登记为后续批次。子会话（dwf child runtime）不经本漏斗，其生命周期事件面归 F5。
+const SESSION_END_HOOK_REASON_DISPOSE = "dispose";
+
 type SessionFacade = Pick<
   ACodeApp,
   | "readBackgroundBashOutput"
@@ -266,6 +275,32 @@ export function createSessionFacade(deps: CreateSessionFacadeDeps): SessionFacad
       closePromise ??= (async () => {
         // 关闭入口先阻止新调度并取消在飞 Memory Extraction，再等待取消链路收口。
         deps.runtime.beginShutdown();
+        // SessionEnd hook（apps/acode-cli/specs/hook-event-surface.md F1）：本 close
+        // 是唯一 awaitable 的 shutdown 漏斗（beginShutdown 是同步接口；closePromise
+        // 保证至多触发一次）。位置在 beginShutdown 之后——shuttingDown 已提交、不会
+        // 有新调度，而 execution/MCP/session store 尚未关闭，hook 看到一致状态。
+        // await 含超时、失败/超时只 warn：通知类事件绝不阻断会话关闭（触发函数内部
+        // 另有 containment，这里兜住超时 abort 与意外抛错）。
+        const sessionEndHooksAbort = new AbortController();
+        const sessionEndHooksTimer = setTimeout(
+          () => sessionEndHooksAbort.abort(),
+          SESSION_END_HOOKS_TIMEOUT_MS,
+        );
+        try {
+          await deps.runtime.runSessionEndHooks(
+            { reason: SESSION_END_HOOK_REASON_DISPOSE },
+            deps.traceContext,
+            sessionEndHooksAbort.signal,
+          );
+        } catch (error: unknown) {
+          deps.logger.warn?.("SessionEnd hooks failed during session close", {
+            errorMessage: error instanceof Error ? error.message : String(error),
+            event: "hook.session_end.close_failed",
+            module: "bootstrap.app",
+          });
+        } finally {
+          clearTimeout(sessionEndHooksTimer);
+        }
         await deps.runtime.drainMemoryExtractions(60_000);
         // 引擎归本 App 所有，所以关闭要主动停下它。
         // 位置是两个约束夹出来的：在 beginShutdown **之后**，结算带出的终态通知才会被丢掉

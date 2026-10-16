@@ -1861,6 +1861,13 @@ const enUS: Record<string, string> = {
   "chat.turnNavigator.emptyAssistant": "No assistant text yet",
   "chat.turnNavigator.runningAssistant": "Assistant is still working",
   "chat.turnNavigator.userFallback": "User query",
+  "chat.turnWrapUp.nextStep": "Next step",
+  "chat.turnWrapUp.suggestedTask": "Suggested task",
+  "chat.turnWrapUp.showPrompt": "Show prompt",
+  "chat.turnWrapUp.hidePrompt": "Hide prompt",
+  "chat.turnWrapUp.startAsNewTask": "Start as new task",
+  "chat.turnWrapUp.copyPrompt": "Copy prompt",
+  "chat.turnWrapUp.copiedPrompt": "Prompt copied",
   "chat.rewind.conflictConfirm":
     "These files changed outside this turn. Force rewinding may create conflicts:\n\n{paths}",
   "taskNav.back": "Go back",

@@ -5,6 +5,7 @@ import { spawn } from "node:child_process";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { Emitter } from "@acode/rpc";
 import {
@@ -43,6 +44,14 @@ import { createServiceLogger } from "#src/logger/serviceLogger.js";
 import { ACodeProtocolClient } from "./acodeProtocolClient.js";
 import { ACodeStdioTransport } from "./acodeStdioTransport.js";
 import { readACodeStdioTapDevState } from "./acodeStdioTapDevConfig.js";
+import {
+  AGENT_SPARE_DISABLED_OUTCOME,
+  AgentSparePrewarmPool,
+  narrowAgentSpareStartOutcome,
+  type AgentSparePoolTiming,
+  type AgentSparePrewarmConfig,
+  type AgentSpareStartOutcome,
+} from "./acodeAgentSparePrewarm.js";
 import type { ACodeAgentPresentationSurface } from "./acodeAgentPresentationSurface.js";
 import { shouldSpawnInDetachedProcessGroup } from "../process/processTreeTerminator.js";
 import type { RuntimeProcessLifecycleReporter } from "../process/runtimeProcessLifecycle.js";
@@ -74,6 +83,32 @@ export interface ACodeAgentCommandResolverContext {
 export type ACodeAgentCommandResolver = (
   context: ACodeAgentCommandResolverContext,
 ) => Promise<ACodeAgentCommand | null> | ACodeAgentCommand | null;
+
+/**
+ * chat lane 备用进程预热装配(spec: packages/services/specs/agent-process-prewarm.md)。
+ * CUA 等 workspace 姿态知识留在装配方(node.ts),manager 只消费两个注入 hook。
+ */
+export interface ACodeAgentSparePrewarmOptions {
+  /** 装配时解析的启用/池大小事实(node.ts 经 resolveAgentSparePrewarmConfig 产出)。 */
+  config?: AgentSparePrewarmConfig;
+  /** 备件 spawn 的中性 cwd;缺省 os.homedir()。认领前备件不绑定任何 workspace(spec R5)。 */
+  prewarmCwd?: string;
+  /** 备件 spawn 时记录的上下文事实(如 cuaEnabled),供认领门禁消费(spec R5)。 */
+  collectSpawnContextFacts?: (context: {
+    workspacePath: string;
+    workspaceKey: string;
+  }) => Record<string, boolean>;
+  /**
+   * 同步认领门禁(spec R2/R5):返回 false 不消耗备件(outcome=spare_miss_ineligible)。
+   * 必须同步可判,否则会破坏认领的全同步单飞语义。
+   */
+  resolveClaimEligibility?: (
+    context: { workspacePath: string; workspaceIdentity?: string; workspaceKey: string },
+    spare: { facts: Record<string, boolean> },
+  ) => boolean;
+  /** 调度参数注入(测试用);生产走 AGENT_SPARE_POOL_TIMING_DEFAULTS。 */
+  timing?: Partial<AgentSparePoolTiming>;
+}
 
 export interface ACodeAgentProcessManagerOptions {
   commandResolver?: ACodeAgentCommandResolver;
@@ -127,6 +162,12 @@ export interface ACodeAgentProcessManagerOptions {
     workspaceKey: string;
     signal?: AbortSignal;
   }) => Promise<void> | void;
+  /**
+   * 备用进程预热(spec: packages/services/specs/agent-process-prewarm.md)。
+   * 只有 chat lane 主 manager 装配;plugin/mcp-status lane 的显式字段装配不透传,
+   * 传入即启用 timing 日志(config.enabled=false 时 outcome 恒 spare_miss_disabled)。
+   */
+  sparePrewarm?: ACodeAgentSparePrewarmOptions;
 }
 
 interface ManagedACodeAgentProcess {
@@ -146,11 +187,42 @@ interface ManagedACodeAgentProcess {
   spawned: boolean;
   startedAt: number;
   terminationIntent?: AgentProcessTerminationIntent;
+  /**
+   * 当前登记的 workspaceKey(spec: agent-process-prewarm.md R2)。普通进程恒等于 spawn 时
+   * 的 key;备件在认领时从合成 prewarm key 改写为真实 key,所有 handler 以本字段为准,
+   * 不得再消费 spawn 闭包捕获的旧 key。
+   */
+  workspaceKey: string;
+  /**
+   * 备件标记:存在即为预热 spawn 的进程。claimed=false 期间不发布任何真实 workspace
+   * 生命周期事件;errorName 供池的失败归因(白名单收窄后进日志)。
+   */
+  prewarm?: {
+    claimed: boolean;
+    facts: Record<string, boolean>;
+    errorName?: string;
+  };
+  /** available/restarted 恰好发布一次的守卫(claim 与 spawn 事件竞态,spec R2)。 */
+  runtimeAvailableAnnounced?: boolean;
   workspace: {
     workspacePath: string;
     workspaceIdentity?: string;
   };
 }
+
+/** 池索引的备件包装;进程事实全部在 managed 上,record 只带认领门禁与记账所需元数据。 */
+interface ManagedSpareRecord {
+  managed: ManagedACodeAgentProcess;
+  facts: Record<string, boolean>;
+  spawnedAt: number;
+}
+
+type SpareClaimDecision =
+  | { client: ACodeProtocolClient; spare: ManagedSpareRecord }
+  | { outcome: AgentSpareStartOutcome };
+
+/** 合成 prewarm key 前缀:含 `__` 与 `:`,不与 resolveWorkspaceKey(identity||path)冲突。 */
+const AGENT_SPARE_PREWARM_KEY_PREFIX = "__acode-agent-spare__";
 
 type AgentProcessCleanupReason =
   | "cli-idle-exit"
@@ -638,6 +710,9 @@ export class ACodeAgentProcessManager {
   private readonly lane: string | undefined;
   private readonly idleTimeoutMs: number | undefined;
   private readonly disableCliIdleExit: boolean;
+  private readonly sparePrewarmOptions: ACodeAgentSparePrewarmOptions | undefined;
+  /** config.enabled=false 时不创建池;timing 日志按 disabled 归因(spec R3/R6)。 */
+  private readonly sparePool: AgentSparePrewarmPool<ManagedSpareRecord> | undefined;
   private readonly runtimeRestartedEmitter = new Emitter<ACodeAgentRuntimeRestartedEvent>();
   private readonly runtimeLifecycleEmitter = new Emitter<ACodeAgentRuntimeLifecycleEvent>();
   private disposeAllInFlight: Promise<void> | undefined;
@@ -660,6 +735,30 @@ export class ACodeAgentProcessManager {
     this.idleTimeoutMs =
       options?.idleTimeoutMs && options.idleTimeoutMs > 0 ? options.idleTimeoutMs : undefined;
     this.disableCliIdleExit = options?.disableCliIdleExit === true;
+    this.sparePrewarmOptions = options?.sparePrewarm;
+    const sparePrewarmConfig = this.sparePrewarmOptions?.config;
+    if (this.sparePrewarmOptions && sparePrewarmConfig?.enabled) {
+      this.sparePool = new AgentSparePrewarmPool<ManagedSpareRecord>(
+        {
+          spawnSpare: () => this.spawnSpareProcess(),
+          logger: {
+            info: (message, context) => log(message, context),
+            warn: (message, context) => warnLog(message, context),
+          },
+        },
+        {
+          poolSize: sparePrewarmConfig.poolSize,
+          ...(this.sparePrewarmOptions.timing ? { timing: this.sparePrewarmOptions.timing } : {}),
+        },
+      );
+      this.sparePool.start();
+      log("ACode agent spare prewarm enabled", { poolSize: sparePrewarmConfig.poolSize });
+    } else if (this.sparePrewarmOptions) {
+      // kill switch / size=0 / 非 desktop-local 缺省策略:只留 disabled 归因,不孵化进程。
+      log("ACode agent spare prewarm disabled", {
+        reason: sparePrewarmConfig?.disabledReason ?? "unconfigured",
+      });
+    }
   }
 
   private reportProcessLifecycle(
@@ -690,7 +789,7 @@ export class ACodeAgentProcessManager {
    * 主动回收整棵进程树（含挂在其下的 MCP 子进程）。归因为 expected/idle-timeout，
    * 不会被监控当作崩溃。到点时有新请求在飞则什么都不做，等下一次归零重新计时。
    */
-  private scheduleIdleReclaim(workspaceKey: string, managed: ManagedACodeAgentProcess): void {
+  private scheduleIdleReclaim(managed: ManagedACodeAgentProcess): void {
     if (!this.idleTimeoutMs || this.disposed || managed.exited) {
       return;
     }
@@ -700,6 +799,9 @@ export class ACodeAgentProcessManager {
       if (this.disposed || managed.exited) {
         return;
       }
+      // 认领可能改写 managed.workspaceKey(spec: agent-process-prewarm.md R2);
+      // 判等与日志一律读当前登记 key,不消费排程时捕获的旧值。
+      const workspaceKey = managed.workspaceKey;
       if (this.processesByWorkspaceKey.get(workspaceKey) !== managed) {
         return;
       }
@@ -922,6 +1024,25 @@ export class ACodeAgentProcessManager {
       return client;
     }
 
+    // 进程获取决策点(spec: agent-process-prewarm.md R2/R3):复用既有进程与并入在飞
+    // 启动都不是获取事件,不打 timing 日志;只有走到认领/冷启动分叉才记 outcome。
+    // 认领全同步(无 await),两个 workspace 并发时恰好一个拿到备件(单飞)。
+    const acquisitionStartedAt = Date.now();
+    let missOutcome: AgentSpareStartOutcome | undefined;
+    if (this.sparePrewarmOptions) {
+      const decision = this.tryClaimSpare(params, workspaceKey);
+      if ("client" in decision) {
+        this.logSessionStartTiming({
+          outcome: "spare_hit",
+          workspaceKey,
+          acquisitionMs: Date.now() - acquisitionStartedAt,
+          spare: decision.spare,
+        });
+        return decision.client;
+      }
+      missOutcome = decision.outcome;
+    }
+
     // agent 启动前置后，host warmup 和 UI 首次 readWorkspacePresentation/sendPrompt
     // 可能同时进入 getClient。这里按 workspaceKey 收敛启动中的 promise，避免同一工作区重复 spawn。
     const startGeneration = this.restartGenerationByWorkspaceKey.get(workspaceKey) ?? 0;
@@ -949,6 +1070,15 @@ export class ACodeAgentProcessManager {
       if (this.startingByWorkspaceKey.get(workspaceKey) === startPromise) {
         this.startingByWorkspaceKey.delete(workspaceKey);
       }
+      if (missOutcome !== undefined) {
+        // 冷启动成败都要落 miss 归因:失败路径的 acquisitionMs 就是失败前的等待时长,
+        // 错误详情由既有 errorLog/reporter 承载,timing 日志不带自由文本(spec R3)。
+        this.logSessionStartTiming({
+          outcome: missOutcome,
+          workspaceKey,
+          acquisitionMs: Date.now() - acquisitionStartedAt,
+        });
+      }
     }
   }
 
@@ -961,6 +1091,48 @@ export class ACodeAgentProcessManager {
   }): ACodeProtocolClient | undefined {
     const managed = this.processesByWorkspaceKey.get(resolveWorkspaceKey(params));
     return managed && !managed.child.killed ? managed.client : undefined;
+  }
+
+  /**
+   * 备件池诊断投影(spec: agent-process-prewarm.md R1/R4):测试与资源管理器只读入口;
+   * 未装配 sparePrewarm 时返回 null(与「装配了但 disabled」可区分)。
+   */
+  getSparePrewarmState(): {
+    configured: true;
+    enabled: boolean;
+    standbyCount: number;
+    consecutiveFailures: number;
+    circuitOpen: boolean;
+    spawnInFlight: boolean;
+    pendingTrigger: string | null;
+    disposed: boolean;
+  } | null {
+    if (!this.sparePrewarmOptions) {
+      return null;
+    }
+    if (!this.sparePool) {
+      return {
+        configured: true,
+        enabled: false,
+        standbyCount: 0,
+        consecutiveFailures: 0,
+        circuitOpen: false,
+        spawnInFlight: false,
+        pendingTrigger: null,
+        disposed: this.disposed,
+      };
+    }
+    const snapshot = this.sparePool.snapshot();
+    return {
+      configured: true,
+      enabled: true,
+      standbyCount: snapshot.standbyCount,
+      consecutiveFailures: snapshot.consecutiveFailures,
+      circuitOpen: snapshot.circuitOpen,
+      spawnInFlight: snapshot.spawnInFlight,
+      pendingTrigger: snapshot.pendingTrigger,
+      disposed: snapshot.disposed || this.disposed,
+    };
   }
 
   /** 资源管理器：当前仍存活的受管 runtime（pid + workspace + client） */
@@ -1008,6 +1180,225 @@ export class ACodeAgentProcessManager {
     this.reportRuntimeReady(managed);
   }
 
+  /**
+   * 孵化一个不绑定 workspace 的备件进程(spec: agent-process-prewarm.md R1/R5)。
+   * 复用 startClient 的完整装配面(env 组装、admission、代际/disposed 检查),
+   * 不另建第二套 spawn 实现;以合成 key 登记,认领时 rekey 到真实 workspace。
+   */
+  private async spawnSpareProcess(): Promise<ManagedSpareRecord> {
+    const prewarmOptions = this.sparePrewarmOptions;
+    if (!prewarmOptions) {
+      throw new Error("ACode agent spare prewarm is not configured.");
+    }
+    const prewarmCwd = prewarmOptions.prewarmCwd?.trim() || homedir();
+    const spareId = randomUUID();
+    const prewarmKey = `${AGENT_SPARE_PREWARM_KEY_PREFIX}:${spareId}`;
+    // 预热 context 无 identity:备件在认领前不携带 workspace 身份 env(spec R5)。
+    const facts =
+      prewarmOptions.collectSpawnContextFacts?.({
+        workspacePath: prewarmCwd,
+        workspaceKey: prewarmKey,
+      }) ?? {};
+    // 与 getClient 同构的 admission 登记:disposeAll 的 abortAllPendingStarts 能中止在飞备件 spawn。
+    const admissionAbortController = new AbortController();
+    let controllers = this.startAdmissionAbortControllersByWorkspaceKey.get(prewarmKey);
+    if (!controllers) {
+      controllers = new Set<AbortController>();
+      this.startAdmissionAbortControllersByWorkspaceKey.set(prewarmKey, controllers);
+    }
+    controllers.add(admissionAbortController);
+    try {
+      await this.startClient(
+        { workspacePath: prewarmCwd },
+        prewarmKey,
+        0,
+        admissionAbortController.signal,
+        facts,
+      );
+    } finally {
+      controllers.delete(admissionAbortController);
+      if (controllers.size === 0) {
+        this.startAdmissionAbortControllersByWorkspaceKey.delete(prewarmKey);
+      }
+    }
+    const managed = this.processesByWorkspaceKey.get(prewarmKey);
+    if (!managed) {
+      // spawn 后进程立即退出且 onClose 已摘除登记:按失败交给池退避,不索引死备件。
+      throw new Error("ACode agent spare prewarm process exited before it was pooled.");
+    }
+    const record: ManagedSpareRecord = { managed, facts, spawnedAt: managed.startedAt };
+    // 丢失观察:client close 是进程退出的权威边界(既有 onClose 回收流程之后触发)。
+    // 认领后的生命周期归 workspace 流程所有,池不再记账(take 已在认领时完成)。
+    managed.client.onClose(() => {
+      if (managed.prewarm?.claimed) return;
+      this.sparePool?.onLost(record, {
+        lifetimeMs: Date.now() - record.spawnedAt,
+        ...(managed.prewarm?.errorName !== undefined
+          ? { errorName: managed.prewarm.errorName }
+          : {}),
+      });
+    });
+    return record;
+  }
+
+  /**
+   * 同步认领决策(spec R2):遍历待命索引,死备件当场按丢失记账淘汰,门禁拒绝不消耗备件;
+   * 命中即 take(池同步单飞)+ rekey 登记。全路径无 await。
+   */
+  private tryClaimSpare(
+    params: { workspacePath: string; workspaceIdentity?: string },
+    workspaceKey: string,
+  ): SpareClaimDecision {
+    const pool = this.sparePool;
+    if (!pool) {
+      return { outcome: AGENT_SPARE_DISABLED_OUTCOME };
+    }
+    const eligibility = this.sparePrewarmOptions?.resolveClaimEligibility;
+    let sawIneligible = false;
+    for (const entry of pool.standbyEntries()) {
+      const managed = entry.managed;
+      if (managed.exited || managed.child.killed || managed.prewarm?.claimed) {
+        // watch 回调尚未送达的死备件:当场淘汰并按短寿/长寿分类进补位调度(幂等)。
+        pool.onLost(entry, {
+          lifetimeMs: Date.now() - entry.spawnedAt,
+          ...(managed.prewarm?.errorName !== undefined
+            ? { errorName: managed.prewarm.errorName }
+            : {}),
+        });
+        continue;
+      }
+      if (
+        eligibility &&
+        !eligibility(
+          {
+            workspacePath: params.workspacePath,
+            ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
+            workspaceKey,
+          },
+          { facts: entry.facts },
+        )
+      ) {
+        sawIneligible = true;
+        continue;
+      }
+      if (!pool.take(entry)) {
+        continue;
+      }
+      this.claimSpareRecord(entry, params, workspaceKey);
+      return { client: managed.client, spare: entry };
+    }
+    if (sawIneligible) {
+      return { outcome: "spare_miss_ineligible" };
+    }
+    return { outcome: pool.missOutcome() };
+  }
+
+  /**
+   * 认领 rekey(spec R2):备件成为目标 workspace 的当前 runtime。登记迁移、代际递增、
+   * identity 重建、事件补发全部同步完成;顺序镜像正常 spawn 的 restarted → available。
+   */
+  private claimSpareRecord(
+    record: ManagedSpareRecord,
+    params: { workspacePath: string; workspaceIdentity?: string },
+    workspaceKey: string,
+  ): void {
+    const managed = record.managed;
+    const prewarmKey = managed.workspaceKey;
+    if (managed.prewarm) {
+      managed.prewarm.claimed = true;
+    }
+    if (this.processesByWorkspaceKey.get(prewarmKey) === managed) {
+      this.processesByWorkspaceKey.delete(prewarmKey);
+    }
+    managed.workspaceKey = workspaceKey;
+    managed.workspace = {
+      workspacePath: params.workspacePath,
+      ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
+    };
+    const generation = (this.runtimeGenerationByWorkspaceKey.get(workspaceKey) ?? 0) + 1;
+    this.runtimeGenerationByWorkspaceKey.set(workspaceKey, generation);
+    managed.runtimeIdentity = {
+      generation,
+      identity: this.lane
+        ? `${workspaceKey}:${generation}:${managed.child.pid ?? "unknown"}:${this.lane}`
+        : `${workspaceKey}:${generation}:${managed.child.pid ?? "unknown"}`,
+      ...(typeof managed.child.pid === "number" ? { processId: managed.child.pid } : {}),
+      ...(this.lane ? { lane: this.lane } : {}),
+      workspaceKey,
+    };
+    this.processesByWorkspaceKey.set(workspaceKey, managed);
+    log("ACode agent spare process claimed", {
+      workspaceKey,
+      pid: managed.child.pid,
+      runtimeIdentity: managed.runtimeIdentity.identity,
+      spareAgeMs: Math.max(0, Date.now() - record.spawnedAt),
+    });
+    if (managed.spawned) {
+      // available 只认真实 spawn 过的进程;claim 早于 spawn 事件的竞态由 spawn handler
+      // 以 claimed=true 补发(announced 守卫保证恰好一次)。
+      this.announceRuntimeAvailable(managed);
+    }
+    // 待命期的 storageStartup 事件用合成 key 发布,真实 key 的订阅方错过了;
+    // 认领时以真实 key 补发一次当前快照(onDidChange 后续增量已读 managed.workspaceKey)。
+    this.storageStartupEmitter.fire({
+      workspaceKey,
+      snapshot: {
+        generation,
+        state: managed.client.storageStartup.snapshot ?? null,
+      },
+    });
+  }
+
+  /** available/restarted 的恰好一次发布点;claim 与 spawn handler 共用(announced 守卫)。 */
+  private announceRuntimeAvailable(managed: ManagedACodeAgentProcess): void {
+    if (managed.runtimeAvailableAnnounced || managed.exited) {
+      return;
+    }
+    const workspaceKey = managed.workspaceKey;
+    if (this.processesByWorkspaceKey.get(workspaceKey) !== managed) {
+      return;
+    }
+    managed.runtimeAvailableAnnounced = true;
+    if (managed.runtimeIdentity.generation > 1) {
+      this.runtimeRestartedEmitter.fire({
+        workspaceKey,
+        runtimeIdentity: managed.runtimeIdentity,
+      });
+    }
+    this.availableRuntimeIdentityByWorkspaceKey.set(workspaceKey, managed.runtimeIdentity.identity);
+    this.runtimeLifecycleEmitter.fire({
+      workspacePath: managed.workspace.workspacePath,
+      ...(managed.workspace.workspaceIdentity
+        ? { workspaceIdentity: managed.workspace.workspaceIdentity }
+        : {}),
+      workspaceKey,
+      runtimeIdentity: managed.runtimeIdentity,
+      state: "available",
+    });
+  }
+
+  /** session start timing 日志(spec R3):outcome 恒经闭集收窄,自由文本不进本日志。 */
+  private logSessionStartTiming(event: {
+    outcome: AgentSpareStartOutcome;
+    workspaceKey: string;
+    acquisitionMs: number;
+    spare?: ManagedSpareRecord;
+  }): void {
+    const outcome = narrowAgentSpareStartOutcome(event.outcome);
+    log("ACode agent session start timing", {
+      ...(outcome ? { outcome } : {}),
+      workspaceKey: event.workspaceKey,
+      acquisitionMs: event.acquisitionMs,
+      ...(event.spare
+        ? {
+            sparePid: event.spare.managed.child.pid,
+            spareAgeMs: Math.max(0, Date.now() - event.spare.spawnedAt),
+            storageReady: event.spare.managed.client.storageStartup.snapshot?.phase === "ready",
+          }
+        : {}),
+    });
+  }
+
   private async startClient(
     params: {
       workspacePath: string;
@@ -1017,6 +1408,8 @@ export class ACodeAgentProcessManager {
     workspaceKey: string,
     startGeneration: number,
     admissionSignal: AbortSignal,
+    /** 存在即为备件 spawn(spec: agent-process-prewarm.md R1):记录认领门禁事实。 */
+    prewarmFacts?: Record<string, boolean>,
   ): Promise<ACodeProtocolClient> {
     const startStartedAt = Date.now();
     const resolveCommandStartedAt = Date.now();
@@ -1128,13 +1521,15 @@ export class ACodeAgentProcessManager {
         if (diagnostic && typeof child.pid === "number") {
           // 根因：只保存 exit tail 会漏掉存活 runtime 的异常；此旁路不依赖 debug 开关。
           // 身份绑定创建时的 child，不能查当前 workspace，避免重启后的迟到事件串进程。
+          // workspace/generation 读 managed 当前值:备件认领后异常必须归属真实 workspace
+          // (spec: agent-process-prewarm.md R2)。
           this.reportProcessLifecycle((reporter) =>
             reporter.onException?.({
               pid: child.pid!,
               provider: engineId,
               ...(this.lane ? { lane: this.lane } : {}),
-              workspacePath: params.workspacePath,
-              runtimeGeneration,
+              workspacePath: managed.workspace.workspacePath,
+              runtimeGeneration: managed.runtimeIdentity.generation,
               runtimeInstanceId,
               diagnostic: {
                 ...diagnostic,
@@ -1197,6 +1592,8 @@ export class ACodeAgentProcessManager {
       runtimeInstanceId,
       spawned: false,
       startedAt,
+      workspaceKey,
+      ...(prewarmFacts ? { prewarm: { claimed: false, facts: prewarmFacts } } : {}),
       workspace: {
         workspacePath: params.workspacePath,
         ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
@@ -1205,23 +1602,28 @@ export class ACodeAgentProcessManager {
     this.processesByWorkspaceKey.set(workspaceKey, managed);
     this.ownedProcesses.add(managed);
     const publishStorage = () => {
-      if (this.processesByWorkspaceKey.get(workspaceKey) !== managed) return;
+      // 登记/发布 key 读 managed 当前值:备件认领后 storage 事件必须归属真实 workspace。
+      const currentWorkspaceKey = managed.workspaceKey;
+      if (this.processesByWorkspaceKey.get(currentWorkspaceKey) !== managed) return;
       if (client.storageStartup.isWaiting) this.clearIdleTimer(managed);
       else if (
         client.storageStartup.snapshot?.phase === "ready" &&
         client.pendingOperationRequestCount === 0
       ) {
-        this.scheduleIdleReclaim(workspaceKey, managed);
+        this.scheduleIdleReclaim(managed);
       }
       this.storageStartupEmitter.fire({
-        workspaceKey,
-        snapshot: { generation: runtimeGeneration, state: client.storageStartup.snapshot ?? null },
+        workspaceKey: currentWorkspaceKey,
+        snapshot: {
+          generation: managed.runtimeIdentity.generation,
+          state: client.storageStartup.snapshot ?? null,
+        },
       });
     };
     client.storageStartup.onDidChange(publishStorage);
     publishStorage();
     if (this.idleTimeoutMs) {
-      client.onPendingRequestsDrained(() => this.scheduleIdleReclaim(workspaceKey, managed));
+      client.onPendingRequestsDrained(() => this.scheduleIdleReclaim(managed));
     }
     // chat lane 空闲回收(spec: packages/services/specs/chat-lane-idle-reclaim.md R3):
     // CLI 完成静默自检后在退出前宣告;Host 据此建立 expected 终止意图,随后的
@@ -1230,11 +1632,11 @@ export class ACodeAgentProcessManager {
     client.onNotification((message) => {
       if (message.method !== acodeProtocolNotifications.runtimeIdleExit) return;
       if (this.disposed || managed.exited) return;
-      if (this.processesByWorkspaceKey.get(workspaceKey) !== managed) return;
+      if (this.processesByWorkspaceKey.get(managed.workspaceKey) !== managed) return;
       const parsed = acodeRuntimeIdleExitParamsSchema.safeParse(message.params);
       if (!parsed.success) {
         warnLog("忽略非法 runtime/idleExit 宣告帧", {
-          workspaceKey,
+          workspaceKey: managed.workspaceKey,
           pid: child.pid,
           issues: parsed.error.issues.map((issue) => issue.code),
         });
@@ -1248,21 +1650,21 @@ export class ACodeAgentProcessManager {
       };
       this.recordTerminationIntent(managed, "cli-idle-exit");
       log("ACode agent announced idle exit", {
-        workspaceKey,
+        workspaceKey: managed.workspaceKey,
         pid: child.pid,
-        runtimeIdentity: runtimeIdentity.identity,
+        runtimeIdentity: managed.runtimeIdentity.identity,
         quiescentMs: parsed.data.quiescentMs,
       });
       // 宽限:宣告后 CLI 走 1.5s 退出链;超时未退说明退出路径卡死,主动回收防悬挂。
       const graceTimer = setTimeout(() => {
         if (this.disposed || managed.exited) return;
-        if (this.processesByWorkspaceKey.get(workspaceKey) !== managed) return;
+        if (this.processesByWorkspaceKey.get(managed.workspaceKey) !== managed) return;
         warnLog("ACode agent idle-exit grace elapsed; reclaiming", {
-          workspaceKey,
+          workspaceKey: managed.workspaceKey,
           pid: child.pid,
           graceMs: ACODE_AGENT_IDLE_EXIT_GRACE_MS,
         });
-        this.processesByWorkspaceKey.delete(workspaceKey);
+        this.processesByWorkspaceKey.delete(managed.workspaceKey);
         this.reportRuntimeUnavailable(managed);
         void this.cleanupManagedProcessWithRetry(
           managed,
@@ -1279,20 +1681,12 @@ export class ACodeAgentProcessManager {
       managed.spawned = true;
       // Node spawn() 会先返回 ChildProcess，再异步报告 cwd/command ENOENT。
       // 旧代码在确认 spawn 成功前就发布 runtimeRestarted，订阅方随即重连并再次触发
-      // 启动，最终形成失败启动 -> 假重启 -> 重连的自激风暴。只有 spawn 事件才表示
+      // 启动，最终形成失败启动 -> 假重启 -> 自激风暴。只有 spawn 事件才表示
       // 新 CLI 运行时真实存在，可以安全通知 v4 订阅方重订。
-      if (runtimeGeneration > 1 && this.processesByWorkspaceKey.get(workspaceKey) === managed) {
-        this.runtimeRestartedEmitter.fire({ workspaceKey, runtimeIdentity });
-      }
-      if (this.processesByWorkspaceKey.get(workspaceKey) === managed) {
-        this.availableRuntimeIdentityByWorkspaceKey.set(workspaceKey, runtimeIdentity.identity);
-        this.runtimeLifecycleEmitter.fire({
-          workspacePath: params.workspacePath,
-          ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
-          workspaceKey,
-          runtimeIdentity,
-          state: "available",
-        });
+      // 备件在认领前不发布任何真实 workspace 事件(spec: agent-process-prewarm.md R2);
+      // 认领早于 spawn 事件的竞态由 claimed 标记接回本发布点,announced 守卫保证恰好一次。
+      if (!(managed.prewarm && !managed.prewarm.claimed)) {
+        this.announceRuntimeAvailable(managed);
       }
       if (typeof child.pid === "number") {
         this.reportProcessLifecycle((reporter) =>
@@ -1300,31 +1694,38 @@ export class ACodeAgentProcessManager {
             pid: child.pid!,
             provider: engineId,
             ...(this.lane ? { lane: this.lane } : {}),
-            workspacePath: params.workspacePath,
+            // 备件如实上报预热 cwd(待命进程事实);认领后的 exit/exception 归属真实
+            // workspace,读 managed 当前值。
+            workspacePath: managed.workspace.workspacePath,
             command: effectiveCommand.command,
             args: effectiveCommand.args ?? [],
             startedAt,
-            runtimeGeneration,
+            runtimeGeneration: managed.runtimeIdentity.generation,
             runtimeInstanceId,
           }),
         );
       }
       this.reportRuntimeReady(managed);
       log("ACode agent process started", {
-        workspaceKey,
+        workspaceKey: managed.workspaceKey,
         command: effectiveCommand.command,
         cwd: spawnPreflight.cwd,
         pid: child.pid,
         durationMs: Date.now() - startStartedAt,
+        ...(managed.prewarm ? { spare: !managed.prewarm.claimed } : {}),
       });
     });
     child.once("error", (error) => {
+      // 备件失败归因:池的熔断 warn 只带白名单收窄后的 error name(spec R3/R4)。
+      if (managed.prewarm) {
+        managed.prewarm.errorName = error.name;
+      }
       errorLog(
         `ACode agent process error${this.processLifecycleReporter?.onError ? ` ${ACODE_AGENT_LIFECYCLE_LOG_MARKER}` : ""}`,
         {
-          workspaceKey,
+          workspaceKey: managed.workspaceKey,
           pid: child.pid,
-          runtimeIdentity: runtimeIdentity.identity,
+          runtimeIdentity: managed.runtimeIdentity.identity,
           errorName: error.name,
           errorMessage: error.message,
           errorStack: error.stack,
@@ -1337,14 +1738,14 @@ export class ACodeAgentProcessManager {
           pid: typeof child.pid === "number" ? child.pid : null,
           provider: engineId,
           ...(this.lane ? { lane: this.lane } : {}),
-          workspacePath: params.workspacePath,
+          workspacePath: managed.workspace.workspacePath,
           command: effectiveCommand.command,
           args: effectiveCommand.args ?? [],
           errorName: error.name || "Error",
           ...(typeof errno.code === "string" ? { errorCode: errno.code } : {}),
           errorMessage: error.message,
           ...(error.stack ? { errorStack: error.stack } : {}),
-          runtimeGeneration,
+          runtimeGeneration: managed.runtimeIdentity.generation,
           runtimeInstanceId,
           occurredAt: Date.now(),
         }),
@@ -1380,15 +1781,17 @@ export class ACodeAgentProcessManager {
           ? classifyAgentEngineError(stderr.tail.join("\n"))
           : "unclassified";
       const exitContext = {
-        workspaceKey,
+        workspaceKey: managed.workspaceKey,
         pid: child.pid,
-        runtimeIdentity: runtimeIdentity.identity,
+        runtimeIdentity: managed.runtimeIdentity.identity,
         engineId,
         code,
         signal,
         terminationKind,
         terminationReason,
         ...(engineErrorKind !== "unclassified" ? { engineErrorKind } : {}),
+        // 未被认领就退出的备件:池按丢失分类补位(spec: agent-process-prewarm.md R4)。
+        ...(managed.prewarm && !managed.prewarm.claimed ? { spare: true } : {}),
       };
       // 之前日志只有新的 "process started"，缺少旧 pid 的退出轨迹。
       // agent native crash 后 UI 只会看到 protocol close/Session is not active，无法判断是崩溃还是主动重启。
@@ -1421,14 +1824,15 @@ export class ACodeAgentProcessManager {
             pid: child.pid!,
             provider: engineId,
             ...(this.lane ? { lane: this.lane } : {}),
-            workspacePath: params.workspacePath,
+            // 认领改绑后退出必须归属真实 workspace,读 managed 当前值(spec R2)。
+            workspacePath: managed.workspace.workspacePath,
             exitCode: code,
             signal,
             endedAt,
             terminationKind,
             runtimeReady: managed.readyAt != null,
             ...(terminationReason ? { terminationReason } : {}),
-            runtimeGeneration,
+            runtimeGeneration: managed.runtimeIdentity.generation,
             runtimeInstanceId,
             uptimeMs: Math.max(0, endedAt - startedAt),
             stderrLineCount: stderr.lineCount,
@@ -1440,14 +1844,14 @@ export class ACodeAgentProcessManager {
       }
     });
     client.onRequestTimeout((event) => {
-      if (this.processesByWorkspaceKey.get(workspaceKey) !== managed) {
+      if (this.processesByWorkspaceKey.get(managed.workspaceKey) !== managed) {
         return;
       }
       if (event.method === "workspace/cancelGenerateText") {
         warnLog(
           "ACode agent cancel notification timed out; keeping client (best-effort control plane)",
           {
-            workspaceKey,
+            workspaceKey: managed.workspaceKey,
             method: event.method,
             requestId: event.requestId,
             timeoutMs: event.timeoutMs,
@@ -1457,13 +1861,13 @@ export class ACodeAgentProcessManager {
         return;
       }
       warnLog("ACode agent request timed out; disposing stale protocol client", {
-        workspaceKey,
+        workspaceKey: managed.workspaceKey,
         method: event.method,
         requestId: event.requestId,
         timeoutMs: event.timeoutMs,
         pid: child.pid,
       });
-      this.processesByWorkspaceKey.delete(workspaceKey);
+      this.processesByWorkspaceKey.delete(managed.workspaceKey);
       this.reportRuntimeUnavailable(managed);
       // timeout 说明协议请求/响应链路已经不可信。旧实现只 reject 当前请求，
       // 但 child 仍未 exit，后续同 workspace 会继续复用坏 client 并反复超时。
@@ -1476,15 +1880,15 @@ export class ACodeAgentProcessManager {
       ).catch(() => undefined);
     });
     client.onClose(() => {
-      const wasActiveClient = this.processesByWorkspaceKey.get(workspaceKey) === managed;
+      const wasActiveClient = this.processesByWorkspaceKey.get(managed.workspaceKey) === managed;
       log("ACode agent protocol client closed", {
-        workspaceKey,
+        workspaceKey: managed.workspaceKey,
         pid: child.pid,
-        runtimeIdentity: runtimeIdentity.identity,
+        runtimeIdentity: managed.runtimeIdentity.identity,
         wasActiveClient,
       });
       if (wasActiveClient) {
-        this.processesByWorkspaceKey.delete(workspaceKey);
+        this.processesByWorkspaceKey.delete(managed.workspaceKey);
       }
       this.reportRuntimeUnavailable(managed);
       if (this.ownedProcesses.has(managed)) {
@@ -1597,6 +2001,9 @@ export class ACodeAgentProcessManager {
 
   disposeAll(): void {
     this.disposed = true;
+    // 池先停:dispose 后不得再排程补位;在飞备件 spawn 由 abortAllPendingStarts 中止,
+    // 已 spawn 的备件在 ownedProcesses 里随下方循环统一回收(spec R1)。
+    this.sparePool?.dispose();
     this.storageStartupEmitter.dispose();
     this.abortAllPendingStarts();
     for (const managed of this.ownedProcesses) {
@@ -1613,6 +2020,7 @@ export class ACodeAgentProcessManager {
       return this.disposeAllInFlight;
     }
     this.disposed = true;
+    this.sparePool?.dispose();
     this.storageStartupEmitter.dispose();
     this.abortAllPendingStarts();
 

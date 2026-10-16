@@ -34,6 +34,7 @@ import type {
 } from "../types.js";
 import type { AgentRuntimeInternal } from "../internal.js";
 import { createMcpToolDisplay } from "../../tool/executor/result-display.js";
+import { runPostToolBatchHooks } from "./hooks.js";
 
 export async function scheduleTools(
   this: AgentRuntimeInternal,
@@ -114,6 +115,33 @@ export async function executeTools(
       );
       await this.appendEvent(batchCompleteEvent, traceContext);
       events.push(batchCompleteEvent);
+      // PostToolBatch（specs/hook-event-surface.md）：与 ToolBatchComplete 会话事件
+      // 同点位、每个并行组结算后一次。通知类——block 输出只记日志不回滚，
+      // additionalContext 不回注模型上下文（executeTools 拿不到 turnRequestState，
+      // 注入会造成 messageHistory 与 turn request entries 分叉）。
+      const batchHookResult = await runPostToolBatchHooks(
+        this,
+        {
+          errorCount: batchResults.filter((result) => !result.success).length,
+          successCount: batchResults.filter((result) => result.success).length,
+          toolResults: batchResults.map((result) => ({
+            ...(result.durationMs !== undefined ? { durationMs: result.durationMs } : {}),
+            success: result.success,
+            toolCallId: result.toolCallId,
+            toolName: result.toolName,
+          })),
+        },
+        traceContext,
+        options?.signal,
+      );
+      if (batchHookResult.blockRequested) {
+        this.logger?.info("PostToolBatch hook requested block; event is notification-only", {
+          ...traceContextToLogContext(traceContext),
+          event: "hook.post_tool_batch.block_ignored",
+          module: "core.runtime",
+          stopReason: batchHookResult.stopReason,
+        });
+      }
     }
   }
 

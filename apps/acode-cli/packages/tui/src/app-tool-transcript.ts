@@ -2,14 +2,26 @@ import { SessionEventType, type SessionEvent } from "@acode/contracts";
 import type React from "react";
 import type { Message, ToolResultDisplay, ToolTranscriptPart } from "./app-model.js";
 import { formatFileDiffDisplay } from "./app-tool-diff-display.js";
+import {
+  fleetArchiveDetails,
+  fleetDeleteDetails,
+  fleetModeDetails,
+  fleetRouteDetails,
+  fleetStartDetails,
+} from "./app-tool-fleet-details.js";
 import { formatToolFilePath } from "./app-tool-path-display.js";
-import { truncateDisplay } from "./app-terminal-width.js";
+import {
+  arrayField,
+  combinedLine,
+  compactLines,
+  fieldLine,
+  MAX_DETAIL_LINES,
+  previewLine,
+  previewText,
+  previewValue,
+  stringArrayField,
+} from "./app-tool-detail-primitives.js";
 import { asRecord, booleanField, stringField } from "./state.js";
-
-const MAX_DETAIL_LINES = 4;
-const MAX_DETAIL_WIDTH = 100;
-const SENSITIVE_KEY_PATTERN = /token|secret|password|api[_-]?key|authorization|credential|cookie/i;
-const LARGE_TEXT_KEYS = new Set(["content", "old_string", "new_string"]);
 
 export { formatFileDiffDisplay } from "./app-tool-diff-display.js";
 
@@ -124,7 +136,18 @@ export function buildToolTranscriptProjection(
   if (normalized === "webfetch") return { detailLines: webFetchDetails(record) };
   if (normalized === "todowrite") return { detailLines: todoWriteDetails(record) };
   if (normalized === "todoread") return { detailLines: ["todos: read current state"] };
+  // 回合收尾最小呈现（apps/acode-cli/specs/turn-wrap-up.md R9）：下一步一行，不做富渲染。
+  if (normalized === "turnwrapup") return { detailLines: turnWrapUpDetails(record) };
   if (normalized === "agent") return { detailLines: agentDetails(record) };
+  // 会话舰队一行态（apps/acode-cli/specs/session-fleet.md R9）：实现拆在
+  // app-tool-fleet-details.ts（max-lines ratchet），这里只留分派。
+  if (normalized === "startsession") return { detailLines: fleetStartDetails(record) };
+  if (normalized === "handofftosession" || normalized === "sendtosession")
+    return { detailLines: fleetRouteDetails(record) };
+  if (normalized === "listsessions") return { detailLines: ["fleet: list owned sessions"] };
+  if (normalized === "setsessionpermissionmode") return { detailLines: fleetModeDetails(record) };
+  if (normalized === "archivesession") return { detailLines: fleetArchiveDetails(record) };
+  if (normalized === "deletesessions") return { detailLines: fleetDeleteDetails(record) };
   if (normalized === "skill")
     return {
       detailLines: compactLines([fieldLine(record, "name"), fieldLine(record, "args")]),
@@ -313,6 +336,13 @@ function todoWriteDetails(record: Record<string, unknown>): string[] {
   ]);
 }
 
+// 收尾载荷只取 nextStep 一行（compactLines 负责限宽截断）；recap/建议卡属于富渲染，
+// TUI 刻意不呈现（specs/turn-wrap-up.md R9）。
+function turnWrapUpDetails(record: Record<string, unknown>): string[] {
+  const nextStep = stringField(record, "nextStep");
+  return compactLines([nextStep ? `next: ${nextStep}` : undefined]);
+}
+
 function agentDetails(record: Record<string, unknown>): string[] {
   return compactLines([
     fieldLine(record, "description"),
@@ -343,61 +373,7 @@ function bashEnvLine(record: Record<string, unknown>): string | undefined {
   return changes ? `env: ${changes}` : undefined;
 }
 
-function fieldLine(record: Record<string, unknown>, key: string): string | undefined {
-  if (!(key in record)) return undefined;
-  return `${key}: ${previewValue(key, record[key])}`;
-}
-
-function previewLine(record: Record<string, unknown>, key: string): string | undefined {
-  const value = stringField(record, key);
-  return value ? `${key}: ${previewText(value)}` : undefined;
-}
-
-function combinedLine(
-  record: Record<string, unknown>,
-  label: string,
-  keys: readonly string[],
-): string | undefined {
-  const fields = keys.flatMap((key) => {
-    if (!(key in record)) return [];
-    return `${key}=${previewValue(key, record[key])}`;
-  });
-  return fields.length > 0 ? `${label}: ${fields.join(", ")}` : undefined;
-}
-
-function compactLines(lines: Array<string | undefined>): string[] {
-  return lines
-    .filter((line): line is string => Boolean(line))
-    .map((line) => truncateDisplay(line, MAX_DETAIL_WIDTH))
-    .slice(0, MAX_DETAIL_LINES);
-}
-
-function previewValue(key: string, value: unknown): string {
-  if (SENSITIVE_KEY_PATTERN.test(key)) return "[redacted]";
-  if (typeof value === "string") {
-    if (LARGE_TEXT_KEYS.has(key)) return `[${value.length} chars]`;
-    return previewText(value);
-  }
-  if (typeof value === "number" || typeof value === "boolean") return String(value);
-  if (Array.isArray(value)) return `[${value.length} items]`;
-  if (value && typeof value === "object") return `{${Object.keys(value).length} keys}`;
-  return String(value);
-}
-
-function previewText(value: string): string {
-  return truncateDisplay(value.replace(/\s+/g, " ").trim(), MAX_DETAIL_WIDTH);
-}
-
 function eventErrorMessage(payload: Record<string, unknown>): string {
   const error = asRecord(payload.error);
   return stringField(error, "message") ?? stringField(payload, "reason") ?? "Tool failed";
-}
-
-function arrayField(record: Record<string, unknown>, key: string): unknown[] {
-  const value = record[key];
-  return Array.isArray(value) ? value : [];
-}
-
-function stringArrayField(record: Record<string, unknown>, key: string): string[] {
-  return arrayField(record, key).filter((item): item is string => typeof item === "string");
 }

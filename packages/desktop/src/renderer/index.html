@@ -13,10 +13,16 @@
       - frame-src http:/https:：内嵌浏览器与 Coding Plan 是 <webview> guest（frame-src 对 webview 生效），
         guest 自身导航白名单仍由 main 侧 will-attach-webview / guest 守卫负责；
       - media-src acode-media:：本地音视频预览走 LOCAL_MEDIA_PREVIEW_SCHEME（packages/shared）。
+      - script-src acode-viz-vendor:：可视化卡片沙箱 iframe 的 srcdoc 文档继承本 CSP，
+        且需同时通过「继承的父策略 ∩ iframe 自身 meta 策略」；桌面生产（file: 页面）
+        vendored 钉版渲染库（mermaid/chart.js）经 main 的 VISUALIZATION_VENDOR_SCHEME
+        本地协议装载（src/main/visualizationVendorProtocol.ts，仅服务打包资产目录、
+        按 manifest sha256 fail-closed），故父策略 script-src 必须放行该 scheme。
+        机制与安全论证见 packages/ui/specs/gen-ui-visualize-card.md「vendored 钉版渲染库」。
     -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'none'; script-src 'self' file: 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' file: 'unsafe-inline'; img-src 'self' file: data: blob: acode-media: https: http:; media-src 'self' file: data: blob: acode-media: https: http:; font-src 'self' file: data:; connect-src 'self' file: data: blob: ws: wss: http: https: acode-media:; worker-src 'self' file: blob:; frame-src http: https: 'self' file:; object-src 'none'; base-uri 'none'; form-action 'none'"
+      content="default-src 'none'; script-src 'self' file: acode-viz-vendor: 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' file: 'unsafe-inline'; img-src 'self' file: data: blob: acode-media: https: http:; media-src 'self' file: data: blob: acode-media: https: http:; font-src 'self' file: data:; connect-src 'self' file: data: blob: ws: wss: http: https: acode-media:; worker-src 'self' file: blob:; frame-src http: https: 'self' file:; object-src 'none'; base-uri 'none'; form-action 'none'"
     />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>ACode</title>

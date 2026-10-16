@@ -27,13 +27,17 @@ ACode 已有四层恢复，本 spec 只补第五层：
 
 | 判定 | 条件 | 行为 |
 | --- | --- | --- |
-| transient | SessionErrorClass ∈ {rate_limit, network, timeout}，或 model_error 且 retryable ≠ false；且 resultType = error_during_execution | 退避后自动继续 |
+| transient | SessionErrorClass ∈ {rate_limit, network, timeout}，或 model_error 且 retryable ≠ false，**或 attribution.retryable === true**（adapter failure-classifier 的权威闭集判定——真实链路上 AiSdkModelAdapterError 经 UnknownError 包装 + reason 闭集收窄投影后，"network_error"/"rate_limited" 等 adapter token 会丢失，retryable/source/statusCode 存活；E2E 实测回归钉住）；且 resultType = error_during_execution | 退避后自动继续 |
 | permanent | auth_error / context_exceeded / configuration_error / disk_full；任何 retryable:false | 放弃 + 计数清零 |
 | budget | resultType ∈ {error_max_turns, error_max_budget, error_max_tool_calls} | 放弃（预算结局不是故障恢复面） |
 | 不干预 | resultType = success；cancelled（用户停止，`isTurnCancellationError` 分流 TurnComplete{cancelled}） | 计数清零 |
 
 源项目的「误报双重防护」（长消息尾部横幅/覆盖率门槛/用户讨论检测）**不移植**——
 那是文本启发式形态的自卫；ACode 判定输入是结构化事件，无该误报面。
+
+**分类单测纪律（E2E D2 教训）**：单测必须喂**真实投影产物形状**（reason 可能被闭集
+收窄丢弃、只剩 retryable/source/statusCode/providerErrorCode），不得只喂理想闭集
+token——接口形状漂移会让全绿单测放行「真实故障静默不触发」的缺陷。
 
 ## 退避、守卫与状态
 

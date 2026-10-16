@@ -67,6 +67,49 @@ describe("classifyAutoResumeFailure - transient", () => {
     assert.equal(result.signature, "rate_limit|429|3007");
     assert.equal(result.errorSummary, "rate_limit (HTTP 429)");
   });
+
+  it("E2E D2 回归：真实投影面 reason 缺席时，retryable:true（adapter 权威判定）兜底 transient", () => {
+    // 真实链路形状（E2E 实测）：AiSdkModelAdapterError → UnknownError 包装，
+    // "network_error"/"rate_limited" 等 adapter token 在 narrowErrorReasonToClosedToken
+    // 边界丢失，归因上只有 retryable/source/statusCode/providerErrorCode 存活。
+    const refused = classifyAutoResumeFailure(
+      facts("unknown_error", {
+        providerErrorCode: "ECONNREFUSED",
+        retryable: true,
+        source: "network",
+      }),
+    );
+    assert.equal(refused.kind, "transient");
+    if (refused.kind !== "transient") return;
+    // reason 缺席时摘要退到 source 闭集词（比 unknown_error 可诊断）。
+    assert.equal(refused.errorSummary, "network");
+
+    const exhausted429 = classifyAutoResumeFailure(
+      facts("unknown_error", { retryable: true, statusCode: 429 }),
+    );
+    assert.equal(exhausted429.kind, "transient");
+    if (exhausted429.kind !== "transient") return;
+    assert.equal(exhausted429.errorSummary, "unknown_error (HTTP 429)");
+
+    // permanent 优先序不被 retryable:true 覆盖（规则次序钉住）。
+    assert.equal(
+      classifyAutoResumeFailure(facts("unknown_error", { reason: "auth_error", retryable: true }))
+        .kind,
+      "permanent",
+    );
+    assert.equal(
+      classifyAutoResumeFailure(facts("model_context_exceeded", { retryable: true })).kind,
+      "permanent",
+    );
+    // retryable 缺席时保守不猜：仅 source 不构成 transient。
+    assert.equal(classifyAutoResumeFailure(facts("unknown_error", { source: "network" })).kind, "none");
+    // retryable:false 仍是最高优先 permanent（规则 1 不受兜底影响）。
+    assert.equal(
+      classifyAutoResumeFailure(facts("unknown_error", { retryable: false, source: "network" }))
+        .kind,
+      "permanent",
+    );
+  });
 });
 
 describe("classifyAutoResumeFailure - permanent", () => {

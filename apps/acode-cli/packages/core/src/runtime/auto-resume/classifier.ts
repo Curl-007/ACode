@@ -127,6 +127,15 @@ export function classifyAutoResumeFailure(facts: AutoResumeFailureFacts): AutoRe
   if (reason === SessionErrorClass.ModelError || coreErrorType === CoreErrorType.ModelError) {
     return transientClassification(facts);
   }
+  // adapter 权威判定兜底（E2E D2 实测回归）：真实网络/限流故障经 AiSdkModelAdapterError
+  // → UnknownError 包装 + narrowErrorReasonToClosedToken 投影，"network_error"/
+  // "rate_limited"/"server_error" 等 adapter token 会在闭集收窄边界丢失（attribution
+  // .reason 缺席），但 retryable 是 failure-classifier 按状态码/错误类闭集映射出的
+  // 结构化判定、随归因存活。置于全部 permanent 早退之后：permanent 分类不会被覆盖，
+  // retryable 缺席时保守不猜（仍走「不干预」档）。
+  if (attribution?.retryable === true) {
+    return transientClassification(facts);
+  }
   return { kind: "none" };
 }
 
@@ -146,9 +155,10 @@ function buildErrorSignature(facts: AutoResumeFailureFacts): string {
   return `${reason}|${statusCode}|${providerCode}`;
 }
 
-/** 上报摘要只拼闭集 token 与状态码，不透传 provider 自由文本。 */
+/** 上报摘要只拼闭集 token 与状态码，不透传 provider 自由文本。reason 被投影边界
+ * 收窄丢弃时退到 source 闭集词（"network" 等），比 unknown_error 更可诊断。 */
 function buildErrorSummary(facts: AutoResumeFailureFacts): string {
-  const reason = facts.attribution?.reason ?? facts.coreErrorType;
+  const reason = facts.attribution?.reason ?? facts.attribution?.source ?? facts.coreErrorType;
   const statusCode = facts.attribution?.statusCode;
   return statusCode === undefined ? reason : `${reason} (HTTP ${statusCode})`;
 }

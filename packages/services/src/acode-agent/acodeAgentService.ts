@@ -194,6 +194,7 @@ import type {
   ACodeAgentCreateAutomationParams,
   ACodeAgentUpdateAutomationParams,
   ACodeAgentAutomationIdParams,
+  ACodeAgentRunAutomationNowParams,
   ACodeAgentSetAutomationEnabledParams,
   ACodeAgentDeleteAutomationRunParams,
   ACodeAgentAttachmentBeginParams,
@@ -297,6 +298,11 @@ import {
 } from "./acodeAgentConnectionScope.js";
 import { createBackgroundSessionEventCoalescer } from "#src/acode-agent/acodeSessionEventCoalescer.js";
 import { AutomationService } from "#src/session/automationService.js";
+import {
+  AutomationManualTriggerRejectedError,
+  type AutomationManualRunTriggerContext,
+} from "#src/session/automationManualTrigger.js";
+import type { AutomationManualTriggerOrigin } from "@acode/shared";
 import { AutomationRepo } from "#src/session/automationRepo.js";
 import { TaskIndexRepo } from "#src/session/taskIndexRepo.js";
 import { ACodeAgentMcpStatusModeUnsupportedError } from "#src/acode-agent/acodeAgentErrors.js";
@@ -887,6 +893,14 @@ interface CreateACodeAgentServiceOptions extends Omit<
     automation: ACodeAutomation;
     run: ACodeAutomationRun;
   }) => Promise<void>;
+  /**
+   * 手动触发的调用来源（specs/scheduled-manual-trigger-activation.md R3）：装配层按
+   * **传输事实**声明（desktop 本地 IPC 装 "local_ui"，远程 channel 装 "remote"），
+   * 禁止做成 wire 入参让调用方自报。缺席 = 兼容窗（trigger 不组装，既有调用方形状），
+   * 但垃圾凭据在任何 origin 下都拒（shared 守卫 R5）。按传输分装的接线（host 命令
+   * 路由/relay 面）属后续批次，见 spec「不在本项范围」。
+   */
+  automationManualTriggerOrigin?: AutomationManualTriggerOrigin;
   /**
    * Off-Peak 会话内创建。config 同时承担曝光门（enabled && Selection View 非空 →
    * session create/resume 下发 offPeakToolEnabled）与缺省解析（model=白名单末位 /
@@ -4371,17 +4385,41 @@ export function createACodeAgentService(
       });
     },
 
-    async runAutomationNow(params: ACodeAgentAutomationIdParams) {
+    async runAutomationNow(params: ACodeAgentRunAutomationNowParams) {
       const dispatch = options?.onAutomationManualRunRequested;
       if (!dispatch) {
         // runNow 会先写 manual run 并占用 single-flight claim；dispatcher
         // 缺失是同步可判定的配置错误，必须在认领前失败，不能依赖 stale 崩溃回收。
         throw new Error("Automation immediate dispatcher is unavailable.");
       }
-      const claimed = await automationService.runNow(params.automationId, {
-        workspacePath: params.workspacePath,
-        workspaceIdentity: params.workspaceIdentity,
-      });
+      // 用户激活守卫（specs/scheduled-manual-trigger-activation.md）：origin 是装配层
+      // 声明的传输事实，activation 是调用方携带的用户动作凭据（wire 形状未知，校验归
+      // shared 守卫）；两者都缺席时 trigger 不组装 = 兼容窗放行。拒绝发生在 runNow 的
+      // repo claim 之前——不产生 run 行、不占 single-flight 锁。
+      const origin = options?.automationManualTriggerOrigin;
+      const trigger: AutomationManualRunTriggerContext | undefined =
+        origin !== undefined || params.userActivation !== undefined
+          ? {
+              ...(origin !== undefined ? { origin } : {}),
+              ...(params.userActivation !== undefined ? { activation: params.userActivation } : {}),
+            }
+          : undefined;
+      let claimed;
+      try {
+        claimed = await automationService.runNow(
+          params.automationId,
+          {
+            workspacePath: params.workspacePath,
+            workspaceIdentity: params.workspaceIdentity,
+          },
+          trigger,
+        );
+      } catch (error) {
+        if (error instanceof AutomationManualTriggerRejectedError) {
+          return { status: "rejected" as const, reason: error.reason };
+        }
+        throw error;
+      }
       if (!claimed) {
         // single-flight 已拒绝重复运行时，旧的空成功返回会被 UI 误判为
         // 新 run 已入队，导致每次重复点击都展示一次“已触发”。

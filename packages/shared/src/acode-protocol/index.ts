@@ -3418,8 +3418,9 @@ export type ACodeAutomationDeleteProtocolResult = z.infer<typeof acodeAutomation
 // ---- Off-Peak（闲时任务）会话内创建协议----
 // 与 automation 兄弟并列（独立域，禁止互相复用标记/表）。workspace 由 host 端从
 // 当前 session 注入，不进协议参数（对称 automation/create）。permissionMode 只开放产品
-// 四档词表；缺省解析在 host 端（yolo / allowed_models 末位 / 最高推理档）。
-export const acodeOffPeakPermissionModeSchema = z.enum(["build", "edit", "plan", "yolo"]);
+// 五档词表（含 P1 dontAsk：闲时无人值守场景「拒绝代替询问」是显式产品档位）；
+// 缺省解析在 host 端（yolo / allowed_models 末位 / 最高推理档）。
+export const acodeOffPeakPermissionModeSchema = z.enum(["build", "edit", "plan", "yolo", "dontAsk"]);
 export type ACodeOffPeakProtocolPermissionMode = z.infer<typeof acodeOffPeakPermissionModeSchema>;
 
 export const acodeOffPeakCreateParamsSchema = z

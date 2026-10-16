@@ -4,8 +4,12 @@ import type { IpcMainInvokeEvent } from "electron";
 import { PlatformChannels } from "@acode/shared";
 import type { V4NetworkCaptureRecordsNotification } from "@acode/shared/acode-protocol-v4";
 import { z } from "zod";
-import { getResourceManagerWebContentsId, getResourceManagerWindowId } from "./resourceManagerWindow.js";
+import {
+  getResourceManagerWebContentsId,
+  getResourceManagerWindowId,
+} from "./resourceManagerWindow.js";
 import { asWebContentsId } from "./desktopWindowIds.js";
+import { deriveIpcSyncLabel, wrapIpcHandle } from "./ipcSyncTiming.js";
 
 /**
  * 运行时网络观测的 desktop main 侧（specs/runtime-network-capture.md）。
@@ -168,25 +172,31 @@ const networkCaptureSetEnabledPayloadSchema = z.object({ enabled: z.boolean() })
 export function registerNetworkCaptureIpc(logger: { warn: (...args: unknown[]) => void }): void {
   ipcMain.handle(
     PlatformChannels.NetworkCaptureSetEnabled,
-    async (event, payload: unknown): Promise<{ success: boolean; error?: string }> => {
-      if (!isResourceManagerSender(event)) {
-        return { success: false, error: "forbidden" };
-      }
-      const parsed = networkCaptureSetEnabledPayloadSchema.safeParse(payload);
-      if (!parsed.success) {
-        return { success: false, error: "invalid_payload" };
-      }
-      // 开启生成新的对账 captureId；关闭即失效（spec：关闭后 captureId 不再被接受）。
-      networkCaptureState = parsed.data.enabled
-        ? { enabled: true, captureId: randomUUID() }
-        : { enabled: false, captureId: null };
-      return forwardNetworkCaptureEnabledToHosts(logger);
-    },
+    wrapIpcHandle(
+      deriveIpcSyncLabel(PlatformChannels.NetworkCaptureSetEnabled),
+      async (event, payload: unknown): Promise<{ success: boolean; error?: string }> => {
+        if (!isResourceManagerSender(event)) {
+          return { success: false, error: "forbidden" };
+        }
+        const parsed = networkCaptureSetEnabledPayloadSchema.safeParse(payload);
+        if (!parsed.success) {
+          return { success: false, error: "invalid_payload" };
+        }
+        // 开启生成新的对账 captureId；关闭即失效（spec：关闭后 captureId 不再被接受）。
+        networkCaptureState = parsed.data.enabled
+          ? { enabled: true, captureId: randomUUID() }
+          : { enabled: false, captureId: null };
+        return forwardNetworkCaptureEnabledToHosts(logger);
+      },
+    ),
   );
-  ipcMain.handle(PlatformChannels.NetworkCaptureGetState, () => ({
-    enabled: networkCaptureState.enabled,
-    captureId: networkCaptureState.captureId,
-  }));
+  ipcMain.handle(
+    PlatformChannels.NetworkCaptureGetState,
+    wrapIpcHandle(deriveIpcSyncLabel(PlatformChannels.NetworkCaptureGetState), () => ({
+      enabled: networkCaptureState.enabled,
+      captureId: networkCaptureState.captureId,
+    })),
+  );
 }
 
 /**

@@ -50,7 +50,13 @@ export const SKILLS_LISTING_SECTION: SectionDescriptor = {
   build: (ctx) => {
     const outcome = ctx.config.skills;
     if (!outcome) return null;
-    return buildSkillsSection({ outcome, metadataBudget: ctx.config.skillMetadataBudget });
+    // sessionId 透传（skill-frontmatter-governance R5 消费接线）：paths 触发激活集
+    // 按会话过滤清单；缺席（子代理/测试路径）= 不过滤，保持既有行为。
+    return buildSkillsSection({
+      outcome,
+      metadataBudget: ctx.config.skillMetadataBudget,
+      ...(ctx.config.sessionId ? { sessionId: ctx.config.sessionId } : {}),
+    });
   },
 };
 

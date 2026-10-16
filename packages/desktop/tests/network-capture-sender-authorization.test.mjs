@@ -72,6 +72,8 @@ async function loadNetworkCaptureIpc(rmStub) {
   };
   // desktopWindowIds.ts 无依赖，直接 transpile 真实实现注入（品牌函数在 JS 层等价恒等）。
   const windowIds = await loadMain("desktopWindowIds", {});
+  // ipcMain.handle 同步段计时包装（W1-6 接线）：注入真实 ipcSyncTiming（纯 Node，无 electron 依赖）。
+  const ipcSyncTiming = await loadMain("ipcSyncTiming", {});
   const module = await loadMain("desktopNetworkCaptureIpc", {
     electron: electronStub,
     // PlatformChannels.* → 用键名当频道字符串（与 desktop-hardening.test.mjs 同法）。
@@ -81,6 +83,7 @@ async function loadNetworkCaptureIpc(rmStub) {
     zod: nodeRequire("zod"),
     "./resourceManagerWindow.js": rmStub,
     "./desktopWindowIds.js": windowIds,
+    "./ipcSyncTiming.js": ipcSyncTiming,
   });
   return { module, handlers };
 }

@@ -37,6 +37,23 @@ import type { TtlApprovalReader, TtlApprovalWriter } from "./ttl-approvals.js";
 import { applyPermissionUpdates } from "../tool/executor/permission-rules.js";
 import { isWebFetchPreapprovedUrl } from "../tool/webfetch-preapproved.js";
 import type { ToolPermissionRulePolicy } from "../tool/types.js";
+// T2-c1 dontAsk（specs/permission-adjudication-batch2.md R1）：无人可问 → ask 漏斗
+// 收敛为不弹卡 deny；模式词汇是权限层扩展闭集（CollaborationMode + dontAsk）。
+import {
+  buildDontAskDenialReason,
+  DONT_ASK_MODE,
+  DONT_ASK_RULE_ID,
+  type PermissionAdjudicationMode,
+} from "./dont-ask-mode.js";
+// 批 2 R2 决策日志 + R9 来源台账喂入（checkPermission 终局单漏斗，见下）。
+import { appendPermissionDecisionLogEntry } from "./decision-log.js";
+import { recordTranscriptFileProvenanceFromAllowedCall } from "./file-provenance-ledger.js";
+// 技能激活期作用域消费（skill-frontmatter-governance R4 接线）：匹配语义裁决在叶子头注。
+import {
+  matchesSkillActivationAllow,
+  matchesSkillActivationDeny,
+} from "./skill-activation-rules.js";
+import type { SkillActivationScope } from "@acode/contracts";
 
 // -----------------------------------------------
 // Types
@@ -49,7 +66,12 @@ export interface PermissionContext {
   toolName: string;
   input: unknown;
   riskLevel: RiskLevel;
-  mode: CollaborationMode;
+  /**
+   * 裁决模式（specs/permission-adjudication-batch2.md R1）：CollaborationMode
+   * 五档 + 权限层扩展档 dontAsk（无人可问 → ask 一律收敛为不弹卡 deny）。
+   * 放宽是向后兼容的：既有调用方传 CollaborationMode 值照常编译。
+   */
+  mode: PermissionAdjudicationMode;
   planEnabled?: boolean;
   prePlanMode?: Exclude<CollaborationMode, "plan">;
   /**
@@ -97,6 +119,15 @@ export interface PermissionContext {
    * 只消费用户级授权（fail-closed）。可选：legacy 调用方缺省按用户级判定。
    */
   permissionScopeKey?: string;
+  /**
+   * 技能激活期作用域（specs/skill-frontmatter-governance.md R4 消费接线）：本会话
+   * provider 可见历史中已加载技能的 governance 规则快照（executor 的 permission-flow
+   * 每次裁决前从共享 store 取）。deny 并入会话级 deny 位次（disallowedTools 同档、
+   * 模式分支之前），allow 并入会话级 allow 位次（allowedTools 同档）——policy floor /
+   * 硬阻断 / plan 结构性压制照常盖过它，frontmatter 授权永不穿透地板。
+   * 匹配语义裁决见 permission/skill-activation-rules.ts 头注。缺席 = 零行为变化。
+   */
+  skillActivationRules?: SkillActivationScope;
 }
 
 export interface PermissionToolCapability {
@@ -120,7 +151,8 @@ export interface PermissionDecisionResult {
   reason?: string;
   modifiedInput?: unknown;
   escalated: boolean;
-  mode: CollaborationMode;
+  /** 裁决模式（含权限层扩展档 dontAsk，specs/permission-adjudication-batch2.md R1）。 */
+  mode: PermissionAdjudicationMode;
   ruleId: string;
   riskLevel: RiskLevel;
   sideEffectScope?: ModelToolSideEffectScope;
@@ -245,6 +277,41 @@ export class PermissionService {
     projectRules?: PermissionRuleset | null,
     rulePolicy?: ToolPermissionRulePolicy,
   ): PermissionDecisionResult {
+    const decision = this.evaluatePermission(context, toolCapability, projectRules, rulePolicy);
+    // 终局单漏斗（specs/permission-adjudication-batch2.md R2 + 分类器 spec 批 2 R9）：
+    // 决策日志每个终局决策恰一条（env 门控，关闭态零 IO，写入失败静默）；中间被
+    // 丢弃的候选决策（如 policy ask 托底时被覆盖的模式层判定）不落。allow 决策把
+    // 写族工具喂进 transcript 文件来源台账（近似性语义见台账模块头注）。
+    appendPermissionDecisionLogEntry(
+      {
+        ts: Date.now(),
+        tool: context.toolName,
+        decision: decision.decision,
+        ruleId: decision.ruleId,
+        mode: decision.mode,
+        riskLevel: decision.riskLevel,
+        ...(decision.sideEffectScope ? { sideEffectScope: decision.sideEffectScope } : {}),
+        ...(context.sessionId ? { sessionId: context.sessionId } : {}),
+        ...(decision.reason ? { reason: decision.reason } : {}),
+      },
+      context.workingDirectory ? { workingDirectory: context.workingDirectory } : {},
+    );
+    if (decision.decision === "allow") {
+      recordTranscriptFileProvenanceFromAllowedCall({
+        sessionId: context.sessionId,
+        toolName: context.toolName,
+        toolInput: context.input,
+      });
+    }
+    return decision;
+  }
+
+  private evaluatePermission(
+    context: PermissionContext,
+    toolCapability?: PermissionToolCapability,
+    projectRules?: PermissionRuleset | null,
+    rulePolicy?: ToolPermissionRulePolicy,
+  ): PermissionDecisionResult {
     const capability = this.resolveCapability(context, toolCapability);
 
     // 安全加固 P2（R3 步骤 0/1）：托管策略地板压过一切分支——deny 绝对最高，
@@ -271,7 +338,13 @@ export class PermissionService {
           `Tool ${context.toolName} is denied by managed policy`,
         );
       }
-      policyAskHit = this.matchesProjectRules(policyRuleset, "ask", context, capability, rulePolicy);
+      policyAskHit = this.matchesProjectRules(
+        policyRuleset,
+        "ask",
+        context,
+        capability,
+        rulePolicy,
+      );
     }
 
     // 安全加固 P2（R3 步骤 2）：disallowedTools 硬禁用前移到所有模式分支之前。
@@ -284,6 +357,25 @@ export class PermissionService {
         capability,
         "rule.disallowedTools",
         `Tool ${context.toolName} is explicitly disallowed`,
+      );
+    }
+
+    // 技能激活期 deny（skill-frontmatter-governance R4 消费接线）：与 disallowedTools
+    // 同位次的会话级 deny——任何模式分支之前收口（yolo 也不复活技能作者显式禁的
+    // 操作）；策略地板 deny 仍在其前（绝对最高位次不变）。匹配语义裁决见
+    // skill-activation-rules.ts 头注。
+    if (
+      matchesSkillActivationDeny({
+        scope: context.skillActivationRules,
+        toolName: context.toolName,
+        toolInput: context.input,
+      })
+    ) {
+      return this.deny(
+        context,
+        capability,
+        "rule.skillActivation.deny",
+        `Tool ${context.toolName} is denied by an active skill's disallowed-tools declaration`,
       );
     }
 
@@ -577,6 +669,25 @@ export class PermissionService {
         capability,
         WORKFLOW_DRAFT_PREAPPROVED_RULE_ID,
         "Workflow draft file is preapproved",
+      );
+    }
+
+    // 技能激活期 allow（skill-frontmatter-governance R4 消费接线）：与 allowedTools
+    // 同档的会话级 allow 位次——排在策略地板 deny/ask、disallowedTools、技能 deny、
+    // 项目 deny/ask、plan 拒写之后：frontmatter 授权永不穿透 policy floor（参考
+    // allowManagedPermissionRulesOnly 压制同构），plan 结构只读照常盖过它。
+    if (
+      matchesSkillActivationAllow({
+        scope: context.skillActivationRules,
+        toolName: context.toolName,
+        toolInput: context.input,
+      })
+    ) {
+      return this.allow(
+        context,
+        capability,
+        "rule.skillActivation.allow",
+        `Tool ${context.toolName} is allowed by an active skill's allowed-tools declaration`,
       );
     }
 
@@ -1044,6 +1155,23 @@ export class PermissionService {
     ruleId: string,
     reason: string,
   ): PermissionDecisionResult {
+    // T2-c1 dontAsk 收敛（specs/permission-adjudication-batch2.md R1）：所有会弹
+    // 审批窗的路径都经本漏斗构造——mode === "dontAsk" 时统一转为不弹卡 deny。
+    // deny 严于 ask，「地板只收紧」不变量成立：policy ask 托底、breakers ask 级、
+    // 反射门 ask lane 全部收敛；原 ruleId/reason 进拒绝文案做归因。deny 终局对
+    // PreToolUse hook 的整体 allow 免疫（hook-flow 首行既有语义）。
+    if (context.mode === DONT_ASK_MODE) {
+      return this.deny(
+        context,
+        capability,
+        DONT_ASK_RULE_ID,
+        buildDontAskDenialReason(context.toolName, {
+          underlyingRuleId: ruleId,
+          underlyingReason: reason,
+          requiresUserInteraction: capability.requiresUserInteraction,
+        }),
+      );
+    }
     return this.result("ask", context, capability, ruleId, reason);
   }
 

@@ -22,7 +22,12 @@ export function resolveAutomationPreferredModelValue(
   return preferred ? encodeCustomModelValue(preferred.providerId, preferred.modelId) : null;
 }
 
-const AUTOMATION_MODE_VALUES = ["build", "edit", "plan", "yolo"] as const;
+// dontAsk（权限批 2，specs/permission-adjudication-batch2.md R1）：运行中从不发起询问，
+// 需批准的动作一律拒绝——无人值守定时任务的显式安全档位。保存链路两侧 schema 均已含该值：
+// services automationRepo 持久化断言走 shared acodeTaskModeSchema，off-peak 会话内创建走
+// acodeOffPeakPermissionModeSchema（断言测试 test/automationModeDontAsk.test.ts）。
+// 展示 label/description 复用 display-help 的 mode.label.glm.dontAsk 映射，无需另配文案。
+const AUTOMATION_MODE_VALUES = ["build", "edit", "plan", "yolo", "dontAsk"] as const;
 
 export function buildAutomationModelSelectGroups(params: {
   selectedProvider: ACodeProvider;

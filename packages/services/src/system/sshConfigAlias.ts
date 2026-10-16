@@ -5,24 +5,20 @@ import { glob, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import type { SSHConfigAliasOption } from "@acode/shared";
+import {
+  buildSSHConfigAliasRejection,
+  detectUnsupportedDirectiveReason,
+  detectUnsupportedInSshGOutput,
+  evaluateMatchApplicability,
+  type ParsedBlock,
+  type SSHConfigAliasUnsupportedInfo,
+} from "./sshConfigAliasUnsupported.js";
 
 const CACHE_TTL_MS = 30_000;
 const MAX_ALIAS_COUNT = 200;
 const SSH_G_TIMEOUT_MS = 1_500;
 const SSH_G_CONCURRENCY = 3;
 const MAX_INCLUDE_DEPTH = 8;
-
-interface ParsedDirective {
-  key: string;
-  value: string;
-}
-
-interface ParsedBlock {
-  patterns: string[];
-  directives: ParsedDirective[];
-  source: string;
-  fromHostDirective: boolean;
-}
 
 interface AliasMeta {
   alias: string;
@@ -246,6 +242,7 @@ async function parseConfigBlocks(
     directives: [],
     source: normalizedPath,
     fromHostDirective: false,
+    fromMatchDirective: false,
   };
   blocks.push(currentBlock);
 
@@ -282,6 +279,27 @@ async function parseConfigBlocks(
         directives: [],
         source: normalizedPath,
         fromHostDirective: true,
+        fromMatchDirective: false,
+      };
+      blocks.push(currentBlock);
+      continue;
+    }
+
+    if (key === "match") {
+      if (tokens.length < 2) {
+        // 裸 Match 行不是合法配置；按无指令行跳过。
+        continue;
+      }
+      // 修复原因：此前 Match 行被当普通指令塞进当前块——条件 token 会参与
+      // Host pattern 匹配，且 Match 之后的指令被误并入前一个 Host 块（条件
+      // 指令被静默当成无条件生效）。现在 Match 自成条件块，适用性交由
+      // evaluateMatchApplicability 静态判定，不可判定块按保守原则拒绝别名。
+      currentBlock = {
+        patterns: tokens.slice(1),
+        directives: [],
+        source: normalizedPath,
+        fromHostDirective: false,
+        fromMatchDirective: true,
       };
       blocks.push(currentBlock);
       continue;
@@ -399,10 +417,42 @@ function buildFallbackOptions(
     let port: number | undefined;
     let username: string | undefined;
     let privateKeyPath: string | undefined;
+    // 指令类拒绝（proxyjump/proxycommand/localcommand）优先于 match_unsupported：
+    // 前者指出具体依赖的指令，更可解释；两者同时命中时取指令类。
+    let directiveRejection: SSHConfigAliasUnsupportedInfo | undefined;
+    let matchRejection: SSHConfigAliasUnsupportedInfo | undefined;
 
     for (const block of blocks) {
-      if (!blockMatchesAlias(block.patterns, meta.alias)) {
+      let blockApplies: boolean;
+      if (block.fromMatchDirective) {
+        const applicability = evaluateMatchApplicability(
+          block.patterns,
+          meta.alias,
+          matchHostPattern,
+        );
+        if (applicability === "indeterminate") {
+          // 含 exec/address/user 等静态不可判定条件：无法确认块是否对本别名
+          // 生效，按保守原则拒绝（宁拒绝也不带着错误生效配置直连）。
+          matchRejection ??= buildSSHConfigAliasRejection(
+            "match_unsupported",
+            "static-fallback",
+          );
+          continue;
+        }
+        blockApplies = applicability === "applies";
+      } else {
+        blockApplies = blockMatchesAlias(block.patterns, meta.alias);
+      }
+      if (!blockApplies) {
         continue;
+      }
+
+      const directiveReason = detectUnsupportedDirectiveReason(block.directives);
+      if (directiveReason) {
+        directiveRejection ??= buildSSHConfigAliasRejection(
+          directiveReason,
+          "static-fallback",
+        );
       }
 
       for (const directive of block.directives) {
@@ -435,6 +485,7 @@ function buildFallbackOptions(
       }
     }
 
+    const unsupported = directiveRejection ?? matchRejection;
     return {
       alias: meta.alias,
       host: host ?? meta.alias,
@@ -442,6 +493,7 @@ function buildFallbackOptions(
       username,
       privateKeyPath,
       source: meta.source,
+      ...(unsupported ? { unsupported } : {}),
     };
   });
 }
@@ -687,6 +739,11 @@ export async function listSSHConfigAliasesFromLocalConfig(): Promise<SSHConfigAl
           }
 
           const parsed = parseSshGOutput(sshOutput);
+          // 修复原因：-G 输出是真实 ssh 求值后的权威结果；proxyjump/proxycommand/
+          // localcommand 生效痕迹必须转成结构化拒绝，不能只取平铺键把代理语义
+          // 静默丢弃（跳板机别名会退化为直连目标地址，表现为超时挂起）。
+          // -G 成功时 Match 已被真实 ssh 求值进平铺键，不再叠加静态回退的拒绝。
+          const unsupported = detectUnsupportedInSshGOutput(sshOutput);
           return {
             alias: meta.alias,
             host: parsed.host ?? fallbackOption.host ?? meta.alias,
@@ -697,6 +754,7 @@ export async function listSSHConfigAliasesFromLocalConfig(): Promise<SSHConfigAl
             // 因此 privateKeyPath 只信任 ssh config 显式解析结果，不再使用 `ssh -G` 的 identityfile。
             privateKeyPath: fallbackOption.privateKeyPath,
             source: meta.source,
+            ...(unsupported ? { unsupported } : {}),
           } satisfies SSHConfigAliasOption;
         });
 

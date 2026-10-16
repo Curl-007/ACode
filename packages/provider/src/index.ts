@@ -4,6 +4,7 @@ export * from "./account-provider-state.js";
 export * from "./config-overlay.js";
 export * from "./config-service.js";
 export * from "./config/index.js";
+export * from "./credential-helper-context.js";
 export * from "./facades.js";
 export * from "./effective-model-selection.js";
 export * from "./model-selection-config.js";

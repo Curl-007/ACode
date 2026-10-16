@@ -38,6 +38,9 @@ async function loadMain(relative, imports = {}) {
   return exports;
 }
 
+// ipcMain.handle 同步段计时包装（W1-6 接线）：注入真实 ipcSyncTiming（纯 Node，无 electron 依赖）。
+const ipcSyncTimingModule = await loadMain("ipcSyncTiming", {});
+
 test("main window navigation guard allows app-owned pages and routes external urls out", async () => {
   const guard = await loadMain("desktopWebContentsGuard", {
     electron: { shell: { openExternal: async () => {} } },
@@ -423,6 +426,7 @@ test("chrome elevated decryption is decided by main, ignoring renderer payload",
   const { resolveElevatedChromeDecryptionAuthorization, registerBrowserDataIpcHandlers } =
     await loadMain("desktopBrowserDataIpc", {
       electron: { BrowserWindow: {}, dialog: {}, ipcMain: { handle() {} } },
+      "./ipcSyncTiming.js": ipcSyncTimingModule,
       "@acode/shared": {
         PlatformChannels: new Proxy({}, { get: (_, key) => String(key) }),
       },
@@ -528,6 +532,7 @@ test("chrome import flow asks the user only after an app-bound sniff hit", { ski
   };
   const module = await loadMain("desktopBrowserDataIpc", {
     electron: electronStub,
+    "./ipcSyncTiming.js": ipcSyncTimingModule,
     "@acode/shared": sharedStub,
     "./browserDataManager.js": browserDataStub,
     "./chromeProfileDiscovery.js": discoveryStub,

@@ -3,7 +3,7 @@
 // (apps/acode-cli/specs/session-fleet.md R2/R4)
 // ============================================================
 // 严苛度序的单一事实源是 subagent/nesting-policy.ts 的 MODE_SEVERITY
-// （auto < plan < edit < build < yolo），本模块只消费其导出的
+// （auto < dontAsk < plan < edit < build < yolo），本模块只消费其导出的
 // moreRestrictiveMode，不另写第二份排序（「不许两处各写一份排序」纪律）。
 //
 // 结构性不变量（既有机制，舰队不重复实现）：child 的有效模式天花板 =

@@ -680,6 +680,9 @@ export function SettingsPage({
     desktopChromiumHardwareAccelerationEnabled,
     setDesktopChromiumHardwareAccelerationEnabled,
   ] = useState(true);
+  // 桌面启动骨架占位（specs/boot-placeholder.md §9）：缺省开，undefined 视为启用。
+  const [bootPlaceholderEnabled, setBootPlaceholderEnabled] = useState(true);
+  const [supportBundleExporting, setSupportBundleExporting] = useState(false);
   const [receivePreviewUpdates, setReceivePreviewUpdates] = useState(false);
   const [autoDownloadAndInstallUpdates, setAutoDownloadAndInstallUpdates] = useState(false);
   const [messageStreamShowReasoning, setMessageStreamShowReasoning] = useState(true);
@@ -764,6 +767,7 @@ export function SettingsPage({
         setDesktopChromiumHardwareAccelerationEnabled(
           settings.desktopChromiumHardwareAccelerationEnabled ?? true,
         );
+        setBootPlaceholderEnabled(settings.bootPlaceholderEnabled ?? true);
         setReceivePreviewUpdates(settings.receivePreviewUpdates ?? false);
         setAutoDownloadAndInstallUpdates(settings.autoDownloadAndInstallUpdates ?? false);
         setMessageStreamShowReasoning(settings.messageStreamShowReasoning ?? true);
@@ -980,6 +984,38 @@ export function SettingsPage({
     },
     [services.settingService, intl],
   );
+  const handleBootPlaceholderEnabledChange = useCallback(
+    async (enabled: boolean) => {
+      await services.settingService.update({ bootPlaceholderEnabled: enabled });
+      // 骨架占位由 main bootstrap 读设置键（specs/boot-placeholder.md §9）；同时经
+      // syncAppSettings 广播同一 patch，避免多窗口/下次启动前设置面出现分叉事实。
+      platform.syncAppSettings?.({ bootPlaceholderEnabled: enabled });
+      setBootPlaceholderEnabled(enabled);
+    },
+    [services.settingService, platform],
+  );
+  // 支持包导出一期最简形态：单按钮、全节默认勾选（节勾选 UI 登记不做）。
+  // 桥缺席（Web/未接线）时直接提示失败，不静默无响应。
+  const handleExportSupportBundle = useCallback(async () => {
+    const exportSupportBundle = platform.exportSupportBundle;
+    if (typeof exportSupportBundle !== "function") {
+      toast(intl.formatMessage({ id: "settings.supportBundle.failure" }));
+      return;
+    }
+    setSupportBundleExporting(true);
+    try {
+      const savedPath = await exportSupportBundle.call(platform);
+      toast(
+        savedPath
+          ? intl.formatMessage({ id: "settings.supportBundle.success" }, { path: savedPath })
+          : intl.formatMessage({ id: "settings.supportBundle.failure" }),
+      );
+    } catch {
+      toast(intl.formatMessage({ id: "settings.supportBundle.failure" }));
+    } finally {
+      setSupportBundleExporting(false);
+    }
+  }, [platform, intl]);
   const handleEmbeddedBrowserAllowInsecureCertificatesChange = useCallback(
     async (enabled: boolean) => {
       await services.settingService.update({ embeddedBrowserAllowInsecureCertificates: enabled });
@@ -1384,6 +1420,8 @@ export function SettingsPage({
                             notificationSoundEnabled={notificationSoundEnabled}
                             closeToTrayOnWindows={closeToTrayOnWindows}
                             keepAwakeWhileRunning={sharedSettings?.keepAwakeWhileRunning ?? false}
+                            bootPlaceholderEnabled={bootPlaceholderEnabled}
+                            supportBundleExporting={supportBundleExporting}
                             desktopChromiumHardwareAccelerationEnabled={
                               desktopChromiumHardwareAccelerationEnabled
                             }
@@ -1440,6 +1478,8 @@ export function SettingsPage({
                             }
                             onCloseToTrayOnWindowsChange={handleCloseToTrayOnWindowsChange}
                             onKeepAwakeWhileRunningChange={handleKeepAwakeWhileRunningChange}
+                            onBootPlaceholderEnabledChange={handleBootPlaceholderEnabledChange}
+                            onExportSupportBundle={handleExportSupportBundle}
                             onDesktopChromiumHardwareAccelerationChange={
                               handleDesktopChromiumHardwareAccelerationChange
                             }
@@ -1560,9 +1600,7 @@ export function SettingsPage({
                           // renderer 快照）；写入经 AppSettings.dynamicWorkflowMode 落盘，
                           // Host 在 resolveDynamicWorkflowClientConfig 折叠为最高优先的本地
                           // 覆盖（随 Host 判定刷新生效）。
-                          <DynamicWorkflowSection
-                            onSelect={handleDynamicWorkflowModeSelect}
-                          />
+                          <DynamicWorkflowSection onSelect={handleDynamicWorkflowModeSelect} />
                         ) : activeSection === "migration" ? (
                           <MigrationSection
                             workspacePath={activeWorkspacePath}

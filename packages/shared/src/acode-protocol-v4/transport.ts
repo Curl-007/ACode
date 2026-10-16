@@ -12,6 +12,8 @@ import {
   timestampSchema,
 } from "./core.js";
 import { conversationDeltaSchema } from "./delta.js";
+import { attachAnswersDeclarationSchema } from "./attach-answers.js";
+import { pendingInteractionHintsSchema } from "./pending-permission-hints.js";
 import { conversationRowSchema, toolCallRowSchema } from "./rows.js";
 import { sessionsIndexDeltaSchema, sessionsIndexSnapshotSchema } from "./sessions-index.js";
 import { WORKFLOW_RUN_STOP_REASONS } from "./workflow-observation-display.js";
@@ -35,6 +37,14 @@ export const hostCapabilitiesSchema = z.object({
    * `state.updated`，并且先经 `clampWorkflowRunsForLegacy` 裁到旧界。
    */
   workflowRunDeltas: z.boolean().optional(),
+  /**
+   * 本 CLI 接受 clientHello 的 `answers` 代答申报并按 roster 路由交互请求
+   * （attach-answers.ts，spec R3）。单向声明纪律与 workflowRunDeltas 同款：缺席 = false，
+   * 客户端见到它才能申报，否则老 CLI 的 strict clientHello 解析失败、握不上手。
+   */
+  interactionAnswerRoster: z.boolean().optional(),
+  /** 本 CLI 会发权限检查慢进度信号（permission-check-status.ts，spec R4）；缺席 = 不发。 */
+  permissionCheckStatus: z.boolean().optional(),
 });
 export type HostCapabilities = z.infer<typeof hostCapabilitiesSchema>;
 
@@ -82,6 +92,12 @@ export const clientHelloSchema = z
          * 是 `.strict()` 的，老 Host 见到不认识的键会整条 clientHello 解析失败、连接握不上手。
          */
         workflowRunDeltas: z.boolean().optional(),
+        /**
+         * 本客户端能代答的交互请求种类（attach-answers.ts，spec R3）。同一单向纪律：
+         * 只有 hello 里见到 `interactionAnswerRoster === true` 才能携带。三态语义由
+         * `resolveAttachAnswers` 收敛：给定列表（含 []）= 整体替换先前申报；缺席 = 保持。
+         */
+        answers: attachAnswersDeclarationSchema.optional(),
       })
       .strict()
       .optional(),
@@ -103,6 +119,24 @@ export function hostSupportsWorkflowRunDeltas(capabilities: HostCapabilities): b
 
 export function clientSupportsWorkflowRunDeltas(clientHello: ClientHello): boolean {
   return clientHello.capabilities?.workflowRunDeltas === true;
+}
+
+export function hostSupportsInteractionAnswerRoster(capabilities: HostCapabilities): boolean {
+  return capabilities.interactionAnswerRoster === true;
+}
+
+export function hostSupportsPermissionCheckStatus(capabilities: HostCapabilities): boolean {
+  return capabilities.permissionCheckStatus === true;
+}
+
+/**
+ * answers 申报原文：`undefined` = 未申报（保持先前，由 resolveAttachAnswers 收敛）；
+ * 数组（含 []）= 整体替换。判断一律经此入口，不得直接读 capabilities 字段。
+ */
+export function clientDeclaredAnswers(
+  clientHello: ClientHello,
+): readonly import("./attach-answers.js").AttachAnswerKind[] | undefined {
+  return clientHello.capabilities?.answers;
 }
 
 // ── §3.1 订阅 ──
@@ -152,6 +186,12 @@ export type ConversationOpenTiming = z.infer<typeof conversationOpenTimingSchema
 
 const conversationSubscribeAckSchema = subscribeAckSchema.extend({
   openTiming: conversationOpenTimingSchema.optional(),
+  /**
+   * attach 时的 pending 交互提示清单（pending-permission-hints.ts，spec R5）。schema 上
+   * optional 是偏斜安全；**发出侧纪律**是新 CLI 起恒在（可空）。读法唯一入口
+   * `readPendingInteractionHints`；权威仍是 snapshot 的 pendingInteractions。
+   */
+  pendingInteractionHints: pendingInteractionHintsSchema.optional(),
 });
 export type ConversationSubscribeAck = z.infer<typeof conversationSubscribeAckSchema>;
 

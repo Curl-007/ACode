@@ -10,6 +10,7 @@ import {
   isDeterministicContentFault,
   parseConversationTopic,
   PROTOCOL_V4_LIMITS,
+  readPendingInteractionHints,
   SUBSCRIPTION_CONTENT_REJECTED,
   type ConversationRow,
   type ConversationSnapshot,
@@ -358,7 +359,22 @@ function mergeOlderRows(
 // 内存诊断计数器：统计存活 store 数与其 rows.window 行数之和，
 // 用于观察窗口数据的内存增长。构造时加入、close() 时移除。
 const liveProjectionStores = new Set<ConversationProjectionStore>();
-uiMemoryDiagnosticsRegistry.register("projection", () => {
+
+export interface LiveProjectionStoreSummary {
+  stores: number;
+  rows: number;
+  turnIndexEntries: number;
+  turnIndexEvictions: number;
+  turnIndexBytes: number;
+}
+
+/**
+ * 存活 projection store 的只读汇总（内存诊断计数器与内容状态面包屑采样共用）。
+ * 面包屑采样在 interval 里跑，刻意不走 uiMemoryDiagnosticsRegistry.collect()：
+ * collect 会逐个调用全部 provider（shiki/xterm/taskQueryCache 等），采样动作本身
+ * 就成了它要归因的同步段开销。这里只遍历 projection store（典型 1-3 个）。
+ */
+export function summarizeLiveProjectionStores(): LiveProjectionStoreSummary {
   let rows = 0;
   let turnIndexEntries = 0;
   let turnIndexEvictions = 0;
@@ -376,7 +392,14 @@ uiMemoryDiagnosticsRegistry.register("projection", () => {
     turnIndexEvictions,
     turnIndexBytes,
   };
-});
+}
+
+uiMemoryDiagnosticsRegistry.register(
+  "projection",
+  (): Record<string, number> => ({
+    ...summarizeLiveProjectionStores(),
+  }),
+);
 
 export class ConversationProjectionStore {
   private state: ConversationStoreState = INITIAL_STATE;
@@ -556,6 +579,24 @@ export class ConversationProjectionStore {
         mode: result.ack.mode,
       };
       this.transport.activate(result.ack.subscriptionId);
+      // attach 链路判代（apps/acode-cli/specs/protocol-attachment-typed-errors.md R5 /
+      // 接线 W4）：ack 上 pendingInteractionHints 的**字段存在性**是响应级判代探针，唯一
+      // 读法 readPendingInteractionHints（services 侧 acodeAgentService 同款判代已透传原
+      // ack）。hints 只是提示性引用：本 store 的 pendingInteractions 水合权威源恒为随后
+      // initial snapshot 帧（整体替换），故这里零状态写入，仅把「对端是老世代 CLI」记成
+      // debug 诊断——缺席不得推断成「无 pending」，也禁止用 wire 版本反推字段存在性。
+      const pendingHintsReading = readPendingInteractionHints(result.ack);
+      if (pendingHintsReading.generation === "legacy") {
+        logger.debug(
+          `[v4-store] subscribe ack 缺少 pendingInteractionHints 字段（老世代 CLI）: ${this.topic}`,
+          {
+            event: "v4.conversation.store.pending_hints_legacy",
+            generation,
+            subscriptionId: result.ack.subscriptionId,
+            topic: this.topic,
+          },
+        );
+      }
       logger.lifecycle.info("v4 conversation store connect completed", {
         durationMs: roundedDuration(subscribeStartedAt, monotonicNow()),
         event: "v4.conversation.store.connect.completed",

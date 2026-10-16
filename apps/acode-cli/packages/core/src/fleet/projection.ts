@@ -53,6 +53,8 @@ export function buildFleetListRows(input: FleetListProjectionInput): ListSession
     return {
       session_id: String(record.sessionId),
       kind: "fleet" as const,
+      // 批 2 R14：linked 台账短名（显示键；波次 1 记录无 name 即缺席）。
+      ...(record.name ? { name: record.name } : {}),
       title: record.title,
       status: projectFleetSessionStatus(record, input.runtimeTaskRegistry),
       ...(mode === undefined ? {} : { permission_mode: mode }),

@@ -207,8 +207,10 @@ export const commandPayloadSchemas = {
   }),
   // additive（冻结面按黄金测试背书演进）：agent 协作模式切换。
   // 值域 = core CollaborationMode 的可切换子集（auto 非用户可切，不进 UI 命令面）。
+  // dontAsk（P1 权限裁决批2，「拒绝代替询问」）随 contracts CollaborationMode 扩集
+  // 进入可切换子集：桌面 picker → services → 本命令 → CLI 的可达链在协议面不缺环。
   switchCollaborationMode: z.object({
-    mode: z.enum(["build", "edit", "plan", "yolo"]),
+    mode: z.enum(["build", "edit", "plan", "yolo", "dontAsk"]),
   }),
   setFollowupMode: z.object({ mode: z.enum(["queue", "guide"]) }),
   pauseGoal: z.object({}),

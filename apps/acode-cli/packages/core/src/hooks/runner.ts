@@ -1,32 +1,18 @@
-/* eslint-disable max-lines -- 存量基线豁免:该文件先于 CLI lint 门禁建立即超限(根 lint 的 ignorePatterns 排除 apps/acode-cli,turbo lint 因此从未变绿)。头注豁免以恢复门禁信号;拆分重构超出本批范围。 */
-import {
-  HookOutcome,
-  SessionEventType,
-  isCoreError,
-  traceContextToLogContext,
-  type HookExecutionDescriptor,
-  type HookInput,
-  type HookJSONOutput,
-  type Logger,
-  type SessionEvent,
-} from "@acode/contracts";
-import { mergeHookRunResult, processHookOutput } from "./output.js";
-import { sanitizeHookDisplayText } from "./display-metadata.js";
-import {
-  HOOK_TIMEOUT_ABORT_REASON,
-  createHookCancelledError,
-  createHookTimeoutError,
-  linkAbortSignal,
-  matchesAnyHookMatcher,
-  readHookErrorMessage,
-  resolveHookDescriptor,
-  resolveHookFailureOutcome,
-  resolveHookRunAdmission,
-} from "./runner-helpers.js";
+// ============================================================
+// InMemoryHookRunner —— hooks 执行入口（拆分后的装配面）
+// ============================================================
+// 中间件链语义落地后本文件曾逼近 400 行 ratchet 的两倍，按仓库先例拆分
+// （specs/plugin-hook-middleware.md）：
+// - runner-chain.ts：链走查（runHookChain/selectMatchingHooks，一期最小洋葱）；
+// - runner-link.ts：前台环节结算 + middleware next 工厂；
+// - runner-lifecycle.ts：生命周期事件发射 / 带超时派发 / async 后台环节 / 结果解包。
+// 公开 API 不变：InMemoryHookRunner 与 createInMemoryHookRunner 仍从本文件导出，
+// 模块内消费者与守护测试的导入路径不感知拆分。
+import type { HookInput, Logger, SessionEvent } from "@acode/contracts";
+import { resolveHookRunAdmission } from "./runner-helpers.js";
+import { runHookChain, selectMatchingHooks } from "./runner-chain.js";
 import type {
   HookRegistration,
-  HookCallbackDiagnostics,
-  HookCallbackResult,
   HookRunOptions,
   HookRunResult,
   HookRunner,
@@ -51,9 +37,7 @@ export class InMemoryHookRunner implements HookRunner {
   }
 
   async run(input: HookInput, options: HookRunOptions = {}): Promise<HookRunResult> {
-    const matchingHooks = this.hooks.filter(
-      (hook) => hook.event === input.hookEventName && matchesAnyHookMatcher(options, hook.matcher),
-    );
+    const matchingHooks = selectMatchingHooks(this.hooks, input, options);
     const result: HookRunResult = {
       additionalContexts: [],
     };
@@ -61,13 +45,14 @@ export class InMemoryHookRunner implements HookRunner {
 
     // skipLifecycle 的 hook 不发事件，不能计入客户端等待完成的 hookCount。
     // 修复：先解析全部 matchingHooks 的 admission，把 skipLifecycle 的从参与列表
-    // 剔除后再计算 clientVisibleHookCount，保证 hookCount === 实际会发事件的 hook 数。
+    // 剔除后再计算 clientVisibleHookCount（计数在 runHookChain 入口完成），保证
+    // hookCount === 实际会发事件的 hook 数。
     //
     // 注意：这里的 admission 结果只用于 skipLifecycle 剔除与 hookCount 计算——
     // 二者取决于「配置是否启用」这一稳定属性。allowed 授权决定绝不能沿用本阶段的
     // 缓存：一次事件匹配多个顺序执行的 Hook 时，前序 Hook 运行期间发生的
     // revoke / policy 收紧 / trust store reload 必须对尚未开始的 Hook 立即生效，
-    // 因此循环内在每个 Hook 实际 dispatch 前重新调用 resolveHookRunAdmission。
+    // 因此链走查在每个 Hook 实际 dispatch 前重新调用 resolveHookRunAdmission。
     const participatingHooks: { hook: HookRegistration }[] = [];
     for (const hook of matchingHooks) {
       const admission = resolveHookRunAdmission(hook, input, this.logger);
@@ -75,387 +60,21 @@ export class InMemoryHookRunner implements HookRunner {
       participatingHooks.push({ hook });
     }
 
-    const clientVisibleHookCount = participatingHooks.filter(
-      ({ hook }) => resolveHookDescriptor(hook, this.defaultTimeoutMs, input).clientVisible,
-    ).length;
-    let clientVisibleHookIndex = 0;
-
-    for (const [runtimeIndex, { hook }] of participatingHooks.entries()) {
-      const descriptor = resolveHookDescriptor(hook, this.defaultTimeoutMs, input);
-      const hookIndex = descriptor.clientVisible ? clientVisibleHookIndex++ : runtimeIndex;
-      const hookRunId = crypto.randomUUID();
-      const startedAt = Date.now();
-      // dispatch 前重新解析授权决定。预扫描结果可能已过时——前序 Hook
-      // 执行期间用户 revoke、管理员收紧 policy 或 trust store reload 都会改变
-      // 结论。security revision 的价值就在执行边界重验，授权决定不得缓存。
-      const admission = resolveHookRunAdmission(hook, input, this.logger);
-      if (!admission.allowed) {
-        await this.emitHookEvent(
-          SessionEventType.HookRunBlocked,
-          input,
-          hookInvocationId,
-          hookRunId,
-          hookIndex,
-          clientVisibleHookCount,
-          hook,
-          descriptor,
-          startedAt,
-          {
-            durationMs: 0,
-            errorCode: admission.reasonCode,
-            outcome: HookOutcome.Blocked,
-            ...(admission.reasonCode
-              ? { blockReason: sanitizeHookDisplayText(admission.reasonCode) }
-              : {}),
-          },
-        );
-        continue;
-      }
-      await this.emitHookEvent(
-        SessionEventType.HookRunStarted,
-        input,
-        hookInvocationId,
-        hookRunId,
-        hookIndex,
-        clientVisibleHookCount,
-        hook,
-        descriptor,
-        startedAt,
-      );
-
-      if (hook.async) {
-        // async command 的生命周期独立于当前 turn；输出不得反向改变已经继续执行的动作。
-        void this.runBackgroundHook({
-          clientVisibleHookCount,
-          descriptor,
-          hook,
-          hookIndex,
-          hookInvocationId,
-          hookRunId,
-          input,
-          parentSignal: options.signal,
-          runtimeIndex,
-          startedAt,
-        }).catch((error) => {
-          this.logger?.warn("Async hook lifecycle reporting failed", {
-            ...traceContextToLogContext({
-              traceId: input.traceId,
-              sessionId: input.sessionId,
-              turnId: input.turnId,
-            }),
-            error: error instanceof Error ? error.message : String(error),
-            event: "hook.run.async_reporting_failed",
-            hookEventName: input.hookEventName,
-            hookIndex,
-            module: "core.hooks",
-            source: hook.source,
-          });
-        });
-        continue;
-      }
-
-      try {
-        const callbackResult = await this.runCallbackWithTimeout(
-          hook,
-          input,
-          runtimeIndex,
-          options.signal,
-        );
-        const { output, diagnostics } = unwrapHookCallbackResult(callbackResult);
-        const durationMs = Date.now() - startedAt;
-        const processed = processHookOutput(input.hookEventName, output);
-        mergeHookRunResult(result, processed);
-        const blocked =
-          processed.permissionBehavior === "deny" ||
-          processed.permissionRequestResult?.behavior === "deny" ||
-          processed.preventContinuation ||
-          processed.blockRequested;
-        // 阻断原因必须随终态事件进入持久化投影；只放在 TurnResult/tooltip 会在
-        // 重放或移动端恢复时丢失，用户无法从 Hooks 明细判断是哪条 Hook 拦截了请求。
-        const blockReason = blocked
-          ? sanitizeHookDisplayText(
-              processed.stopReason ??
-                processed.hookPermissionDecisionReason ??
-                (processed.permissionRequestResult?.behavior === "deny"
-                  ? processed.permissionRequestResult.message
-                  : undefined) ??
-                "Hook blocked execution",
-            )
-          : undefined;
-        const safeDiagnostics = blocked ? sanitizeHookDiagnostics(diagnostics) : undefined;
-
-        await this.emitHookEvent(
-          blocked ? SessionEventType.HookRunBlocked : SessionEventType.HookRunCompleted,
-          input,
-          hookInvocationId,
-          hookRunId,
-          hookIndex,
-          clientVisibleHookCount,
-          hook,
-          descriptor,
-          startedAt,
-          {
-            durationMs,
-            outcome: blocked ? HookOutcome.Blocked : HookOutcome.Success,
-            ...(blockReason ? { blockReason } : {}),
-            ...(safeDiagnostics?.errorMessage
-              ? { errorMessage: safeDiagnostics.errorMessage }
-              : {}),
-            ...(safeDiagnostics?.stderrPreview
-              ? { stderrPreview: safeDiagnostics.stderrPreview }
-              : {}),
-            ...(safeDiagnostics?.stdoutPreview
-              ? { stdoutPreview: safeDiagnostics.stdoutPreview }
-              : {}),
-          },
-        );
-      } catch (error) {
-        const durationMs = Date.now() - startedAt;
-        const outcome = resolveHookFailureOutcome(error);
-        const errorMessage = sanitizeHookDisplayText(readHookErrorMessage(error));
-        await this.emitHookEvent(
-          SessionEventType.HookRunFailed,
-          input,
-          hookInvocationId,
-          hookRunId,
-          hookIndex,
-          clientVisibleHookCount,
-          hook,
-          descriptor,
-          startedAt,
-          {
-            durationMs,
-            errorCode: isCoreError(error) ? error.code : undefined,
-            errorMessage,
-            outcome,
-            stderrPreview: errorMessage,
-          },
-        );
-
-        this.logger?.warn("Hook execution failed", {
-          ...traceContextToLogContext({
-            traceId: input.traceId,
-            sessionId: input.sessionId,
-            turnId: input.turnId,
-          }),
-          durationMs,
-          event: "hook.run.failed",
-          hookEventName: input.hookEventName,
-          hookIndex,
-          matcher: hook.matcher,
-          module: "core.hooks",
-          source: hook.source,
-        });
-      }
-    }
+    await runHookChain({
+      ctx: {
+        defaultTimeoutMs: this.defaultTimeoutMs,
+        emitEvent: this.emitEvent,
+        logger: this.logger,
+      },
+      event: input,
+      hookInvocationId,
+      options,
+      participatingHooks,
+      result,
+    });
 
     return result;
   }
-
-  private async runBackgroundHook(options: {
-    clientVisibleHookCount: number;
-    descriptor: HookExecutionDescriptor;
-    hook: HookRegistration;
-    hookIndex: number;
-    hookInvocationId: string;
-    hookRunId: string;
-    input: HookInput;
-    parentSignal: AbortSignal | undefined;
-    runtimeIndex: number;
-    startedAt: number;
-  }): Promise<void> {
-    const {
-      clientVisibleHookCount,
-      descriptor,
-      hook,
-      hookIndex,
-      hookInvocationId,
-      hookRunId,
-      input,
-      parentSignal,
-      runtimeIndex,
-      startedAt,
-    } = options;
-    try {
-      await this.runCallbackWithTimeout(hook, input, runtimeIndex, parentSignal);
-      await this.emitHookEvent(
-        SessionEventType.HookRunCompleted,
-        input,
-        hookInvocationId,
-        hookRunId,
-        hookIndex,
-        clientVisibleHookCount,
-        hook,
-        descriptor,
-        startedAt,
-        {
-          durationMs: Date.now() - startedAt,
-          outcome: HookOutcome.Success,
-        },
-      );
-    } catch (error) {
-      const durationMs = Date.now() - startedAt;
-      const outcome = resolveHookFailureOutcome(error);
-      const errorMessage = sanitizeHookDisplayText(readHookErrorMessage(error));
-      await this.emitHookEvent(
-        SessionEventType.HookRunFailed,
-        input,
-        hookInvocationId,
-        hookRunId,
-        hookIndex,
-        clientVisibleHookCount,
-        hook,
-        descriptor,
-        startedAt,
-        {
-          durationMs,
-          errorCode: isCoreError(error) ? error.code : undefined,
-          errorMessage,
-          outcome,
-          stderrPreview: errorMessage,
-        },
-      );
-      this.logger?.warn("Async hook execution failed", {
-        ...traceContextToLogContext({
-          traceId: input.traceId,
-          sessionId: input.sessionId,
-          turnId: input.turnId,
-        }),
-        durationMs,
-        event: "hook.run.async_failed",
-        hookEventName: input.hookEventName,
-        hookIndex,
-        matcher: hook.matcher,
-        module: "core.hooks",
-        source: hook.source,
-      });
-    }
-  }
-
-  private async runCallbackWithTimeout(
-    hook: HookRegistration,
-    input: HookInput,
-    hookIndex: number,
-    parentSignal?: AbortSignal,
-  ): Promise<HookJSONOutput | HookCallbackResult | void> {
-    const timeoutMs = hook.timeoutMs ?? this.defaultTimeoutMs;
-    const controller = new AbortController();
-    const unlink = linkAbortSignal(parentSignal, controller);
-    let timer: ReturnType<typeof setTimeout> | undefined;
-
-    try {
-      return await new Promise<HookJSONOutput | HookCallbackResult | void>((resolve, reject) => {
-        if (controller.signal.aborted) {
-          reject(createHookCancelledError());
-          return;
-        }
-
-        timer = setTimeout(() => {
-          controller.abort(HOOK_TIMEOUT_ABORT_REASON);
-          reject(createHookTimeoutError(timeoutMs));
-        }, timeoutMs);
-        timer.unref?.();
-
-        controller.signal.addEventListener(
-          "abort",
-          () => {
-            reject(
-              controller.signal.reason === HOOK_TIMEOUT_ABORT_REASON
-                ? createHookTimeoutError(timeoutMs)
-                : createHookCancelledError(),
-            );
-          },
-          { once: true },
-        );
-
-        Promise.resolve(hook.callback(input, { hookIndex, signal: controller.signal })).then(
-          resolve,
-          reject,
-        );
-      });
-    } finally {
-      if (timer) clearTimeout(timer);
-      unlink();
-    }
-  }
-
-  private async emitHookEvent(
-    type: SessionEventType,
-    input: HookInput,
-    hookInvocationId: string,
-    hookRunId: string,
-    hookIndex: number,
-    hookCount: number,
-    hook: HookRegistration,
-    descriptor: HookExecutionDescriptor,
-    startedAt: number,
-    extra: Partial<SessionEvent["payload"] & Record<string, unknown>> = {},
-  ): Promise<void> {
-    if (!this.emitEvent) return;
-    await this.emitEvent({
-      id: crypto.randomUUID() as any,
-      sessionId: input.sessionId,
-      turnId: input.turnId,
-      type,
-      timestamp: type === SessionEventType.HookRunStarted ? new Date(startedAt) : new Date(),
-      traceId: input.traceId,
-      sequenceNumber: 0,
-      payload: {
-        agentName: input.agentName,
-        descriptor,
-        hookEventName: input.hookEventName,
-        hookIndex,
-        hookCount,
-        hookInvocationId,
-        hookRunId,
-        hookSource: hook.source,
-        matcher: hook.matcher,
-        requestId: "requestId" in input ? input.requestId : undefined,
-        startedAt,
-        toolCallId: "toolCallId" in input ? input.toolCallId : undefined,
-        toolName: "toolName" in input ? input.toolName : undefined,
-        ...extra,
-      },
-    });
-  }
-}
-
-function unwrapHookCallbackResult(result: HookJSONOutput | HookCallbackResult | void): {
-  output: HookJSONOutput | undefined;
-  diagnostics: HookCallbackDiagnostics | undefined;
-} {
-  if (isHookCallbackResult(result)) {
-    return { output: result.output, diagnostics: result.diagnostics };
-  }
-  return { output: result as HookJSONOutput | undefined, diagnostics: undefined };
-}
-
-function isHookCallbackResult(value: unknown): value is HookCallbackResult {
-  return Boolean(
-    value &&
-    typeof value === "object" &&
-    "kind" in value &&
-    (value as { kind?: unknown }).kind === "hookCallbackResult",
-  );
-}
-
-function sanitizeHookDiagnostics(
-  diagnostics: HookCallbackDiagnostics | undefined,
-): HookCallbackDiagnostics | undefined {
-  if (!diagnostics) return undefined;
-  const sanitize = (value: string | undefined): string | undefined => {
-    const trimmed = value?.trim();
-    return trimmed ? sanitizeHookDisplayText(trimmed).slice(0, 4000) : undefined;
-  };
-  const errorMessage = sanitize(diagnostics.errorMessage);
-  const stderrPreview = sanitize(diagnostics.stderrPreview);
-  const stdoutPreview = sanitize(diagnostics.stdoutPreview);
-  if (!errorMessage && !stderrPreview && !stdoutPreview) return undefined;
-  return {
-    ...(errorMessage ? { errorMessage } : {}),
-    ...(stderrPreview ? { stderrPreview } : {}),
-    ...(stdoutPreview ? { stdoutPreview } : {}),
-  };
 }
 
 export function createInMemoryHookRunner(options?: HookRunnerOptions): InMemoryHookRunner {

@@ -15,6 +15,7 @@ import {
   type CuaPermissionDragPanel,
 } from "./cuaPermissionDragPanel.js";
 import { createSystemSettingsWindowWatcher } from "./cuaSystemSettingsWindowWatcher.js";
+import { deriveIpcSyncLabel, wrapIpcHandle } from "./ipcSyncTiming.js";
 
 const execFileAsync = promisify(execFile);
 const MACOS_SYSTEM_SETTINGS_BUNDLE_ID = "com.apple.systempreferences";
@@ -345,18 +346,21 @@ export function registerCuaPermissionIpcHandlers(options: {
   }
 
   // 浮窗挂载时调用：异步 install+verify 并缓存已验证路径 + 指纹，为后续同步拖拽做准备。
-  ipcMain.handle(PlatformChannels.PrepareCuaHelperPermissionDrag, async () => {
-    await refreshVerifiedHelperAppPath();
-    // 指纹是 main 侧的同步 TOCTOU 证据，绝不跨 IPC 返回 renderer。
-    return {
-      success: verifiedHelperAppPath !== null,
-      ...(verifiedHelperAppPath !== null ? { helperAppPath: verifiedHelperAppPath } : {}),
-      ...(verifiedHelperDisplayName !== null
-        ? { helperDisplayName: verifiedHelperDisplayName }
-        : {}),
-      ...(verifiedHelperAppPath === null ? { error: "helper drag preparation failed" } : {}),
-    };
-  });
+  ipcMain.handle(
+    PlatformChannels.PrepareCuaHelperPermissionDrag,
+    wrapIpcHandle(deriveIpcSyncLabel(PlatformChannels.PrepareCuaHelperPermissionDrag), async () => {
+      await refreshVerifiedHelperAppPath();
+      // 指纹是 main 侧的同步 TOCTOU 证据，绝不跨 IPC 返回 renderer。
+      return {
+        success: verifiedHelperAppPath !== null,
+        ...(verifiedHelperAppPath !== null ? { helperAppPath: verifiedHelperAppPath } : {}),
+        ...(verifiedHelperDisplayName !== null
+          ? { helperDisplayName: verifiedHelperDisplayName }
+          : {}),
+        ...(verifiedHelperAppPath === null ? { error: "helper drag preparation failed" } : {}),
+      };
+    }),
+  );
 
   ipcMain.on(PlatformChannels.StartCuaHelperPermissionDrag, (event) => {
     const helperAppPath = verifiedHelperAppPath;
@@ -422,104 +426,110 @@ export function registerCuaPermissionIpcHandlers(options: {
       ?.abort(new Error("CUA permission onboarding surface closed"));
   });
 
-  ipcMain.handle(PlatformChannels.OpenCuaPermissionOnboarding, async (event, payload) => {
-    // 直接打开系统设置对应面板（不再弹确认对话框 + 不再 Finder 暴露 Helper 磁贴/动画）。
-    const payloadRecord =
-      payload && typeof payload === "object" ? (payload as Record<string, unknown>) : undefined;
-    const operationId = normalizeOnboardingOperationId(payloadRecord?.operationId);
-    const requiredPermissions = normalizePermissionList(payloadRecord?.requiredPermissions);
-    const originController = new AbortController();
-    const sender = event.sender as {
-      id?: number;
-      isDestroyed?: () => boolean;
-      once?: (event: "destroyed", listener: () => void) => void;
-      removeListener?: (event: "destroyed", listener: () => void) => void;
-    };
-    const senderId =
-      typeof sender.id === "number" && Number.isInteger(sender.id) ? sender.id : null;
-    const participantOperationKey =
-      senderId !== null && operationId ? operationKey(senderId, operationId) : null;
-    if (participantOperationKey && onboardingControllers.has(participantOperationKey)) {
-      return {
-        success: false,
-        canceled: true,
-        error: "duplicate CUA permission onboarding operation id",
-      };
-    }
-    if (participantOperationKey) {
-      onboardingControllers.set(participantOperationKey, originController);
-    }
-    const abortForDestroyedOrigin = () =>
-      originController.abort(new Error("CUA permission onboarding origin window closed"));
-    if (sender.isDestroyed?.()) abortForDestroyedOrigin();
-    else sender.once?.("destroyed", abortForDestroyedOrigin);
+  ipcMain.handle(
+    PlatformChannels.OpenCuaPermissionOnboarding,
+    wrapIpcHandle(
+      deriveIpcSyncLabel(PlatformChannels.OpenCuaPermissionOnboarding),
+      async (event, payload) => {
+        // 直接打开系统设置对应面板（不再弹确认对话框 + 不再 Finder 暴露 Helper 磁贴/动画）。
+        const payloadRecord =
+          payload && typeof payload === "object" ? (payload as Record<string, unknown>) : undefined;
+        const operationId = normalizeOnboardingOperationId(payloadRecord?.operationId);
+        const requiredPermissions = normalizePermissionList(payloadRecord?.requiredPermissions);
+        const originController = new AbortController();
+        const sender = event.sender as {
+          id?: number;
+          isDestroyed?: () => boolean;
+          once?: (event: "destroyed", listener: () => void) => void;
+          removeListener?: (event: "destroyed", listener: () => void) => void;
+        };
+        const senderId =
+          typeof sender.id === "number" && Number.isInteger(sender.id) ? sender.id : null;
+        const participantOperationKey =
+          senderId !== null && operationId ? operationKey(senderId, operationId) : null;
+        if (participantOperationKey && onboardingControllers.has(participantOperationKey)) {
+          return {
+            success: false,
+            canceled: true,
+            error: "duplicate CUA permission onboarding operation id",
+          };
+        }
+        if (participantOperationKey) {
+          onboardingControllers.set(participantOperationKey, originController);
+        }
+        const abortForDestroyedOrigin = () =>
+          originController.abort(new Error("CUA permission onboarding origin window closed"));
+        if (sender.isDestroyed?.()) abortForDestroyedOrigin();
+        else sender.once?.("destroyed", abortForDestroyedOrigin);
 
-    // 惰性创建：浮窗只在 macOS 的实际引导流程里有意义，且必须逐会话新建/销毁（不做单例，
-    // 避免上一会话的残留窗口被下一会话复用）。非 darwin 保持 null，全部调用点用 ?. 短路。
-    //
-    // 必须包 try/catch：浮窗创建要解析二进制路径、起 watcher 子进程、建 BrowserWindow，
-    // 任何一步抛异常都不该击穿整个授权引导 —— 那样用户连设置页都打不开，而没有浮窗时
-    // 设置页仍可用（用户能自己从 Finder 拖 .app 进列表）。降级 > 全盘失败。
-    let dragPanel: CuaPermissionDragPanel | null = null;
-    if (process.platform === "darwin") {
-      try {
-        dragPanel = createDragPanelForSession(options.logger, options.currentApplicationLocale);
-      } catch (error) {
-        options.logger.warn(
-          "[cua-permission-onboarding] drag panel unavailable; continuing with settings pane only",
-          error instanceof Error ? error.message : String(error),
-        );
-      }
-    }
-    activeDragPanel = dragPanel;
-
-    let result: Awaited<ReturnType<typeof openCuaPermissionOnboarding>>;
-    try {
-      result = await openCuaPermissionOnboarding({
-        initialPermission:
-          payloadRecord?.initialPermission === "screen_recording"
-            ? "screen_recording"
-            : "accessibility",
-        ...(requiredPermissions !== undefined ? { requiredPermissions } : {}),
-        ...(typeof sender.id === "number" && Number.isInteger(sender.id)
-          ? { participantKey: `webContents:${sender.id}` }
-          : {}),
-        signal: originController.signal,
-        // 每个 stage：打开设置页的同时弹出拖拽浮窗（Helper 进入 TCC 列表的唯一途径），
-        // 该 stage 的等待结束就收走。整个会话的终态清理在下面的 finally 里。
-        openSettingsAndWaitForReturn: async (stage) => {
+        // 惰性创建：浮窗只在 macOS 的实际引导流程里有意义，且必须逐会话新建/销毁（不做单例，
+        // 避免上一会话的残留窗口被下一会话复用）。非 darwin 保持 null，全部调用点用 ?. 短路。
+        //
+        // 必须包 try/catch：浮窗创建要解析二进制路径、起 watcher 子进程、建 BrowserWindow，
+        // 任何一步抛异常都不该击穿整个授权引导 —— 那样用户连设置页都打不开，而没有浮窗时
+        // 设置页仍可用（用户能自己从 Finder 拖 .app 进列表）。降级 > 全盘失败。
+        let dragPanel: CuaPermissionDragPanel | null = null;
+        if (process.platform === "darwin") {
           try {
-            await waitForCuaApplicationReturn({
-              ...stage,
-              openSettings: async () => {
-                await stage.openSettings();
-                dragPanel?.show(stage.permission);
-              },
-            });
-          } finally {
-            dragPanel?.hide();
+            dragPanel = createDragPanelForSession(options.logger, options.currentApplicationLocale);
+          } catch (error) {
+            options.logger.warn(
+              "[cua-permission-onboarding] drag panel unavailable; continuing with settings pane only",
+              error instanceof Error ? error.message : String(error),
+            );
           }
-        },
-        logger: options.logger,
-      });
-    } finally {
-      // 会话终态（成功/取消/超时/origin destroyed）一律销毁浮窗。PiP 面板曾因为缺少这条
-      // 无条件清理而凭空常驻，这里放在 finally 里，不依赖任何成功路径。
-      dragPanel?.destroy();
-      if (activeDragPanel === dragPanel) activeDragPanel = null;
-      sender.removeListener?.("destroyed", abortForDestroyedOrigin);
-      if (
-        participantOperationKey &&
-        onboardingControllers.get(participantOperationKey) === originController
-      ) {
-        onboardingControllers.delete(participantOperationKey);
-      }
-    }
-    // onboarding 期间用户可能在系统设置里停留很久，不能把 stage 启动时的旧验签证据在返回后
-    // 继续当作“已验证指纹”。成功后另起一次绑定 verify+fingerprint 的 prepare，供下次拖拽使用。
-    if (result.success) void refreshVerifiedHelperAppPath();
-    return result;
-  });
+        }
+        activeDragPanel = dragPanel;
+
+        let result: Awaited<ReturnType<typeof openCuaPermissionOnboarding>>;
+        try {
+          result = await openCuaPermissionOnboarding({
+            initialPermission:
+              payloadRecord?.initialPermission === "screen_recording"
+                ? "screen_recording"
+                : "accessibility",
+            ...(requiredPermissions !== undefined ? { requiredPermissions } : {}),
+            ...(typeof sender.id === "number" && Number.isInteger(sender.id)
+              ? { participantKey: `webContents:${sender.id}` }
+              : {}),
+            signal: originController.signal,
+            // 每个 stage：打开设置页的同时弹出拖拽浮窗（Helper 进入 TCC 列表的唯一途径），
+            // 该 stage 的等待结束就收走。整个会话的终态清理在下面的 finally 里。
+            openSettingsAndWaitForReturn: async (stage) => {
+              try {
+                await waitForCuaApplicationReturn({
+                  ...stage,
+                  openSettings: async () => {
+                    await stage.openSettings();
+                    dragPanel?.show(stage.permission);
+                  },
+                });
+              } finally {
+                dragPanel?.hide();
+              }
+            },
+            logger: options.logger,
+          });
+        } finally {
+          // 会话终态（成功/取消/超时/origin destroyed）一律销毁浮窗。PiP 面板曾因为缺少这条
+          // 无条件清理而凭空常驻，这里放在 finally 里，不依赖任何成功路径。
+          dragPanel?.destroy();
+          if (activeDragPanel === dragPanel) activeDragPanel = null;
+          sender.removeListener?.("destroyed", abortForDestroyedOrigin);
+          if (
+            participantOperationKey &&
+            onboardingControllers.get(participantOperationKey) === originController
+          ) {
+            onboardingControllers.delete(participantOperationKey);
+          }
+        }
+        // onboarding 期间用户可能在系统设置里停留很久，不能把 stage 启动时的旧验签证据在返回后
+        // 继续当作“已验证指纹”。成功后另起一次绑定 verify+fingerprint 的 prepare，供下次拖拽使用。
+        if (result.success) void refreshVerifiedHelperAppPath();
+        return result;
+      },
+    ),
+  );
 
   // 2026-08 审计曾把 Prepare/StartCuaHelperPermissionDrag 当作死链路删除（当时渲染层无调用方，
   // 权限引导靠 native 弹窗让 Helper 自动进入 TCC 列表）。弹窗被摘除后，拖拽成为

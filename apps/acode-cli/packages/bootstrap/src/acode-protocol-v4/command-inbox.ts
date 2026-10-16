@@ -11,7 +11,10 @@ import {
   COMMANDS_REQUIRING_BASE_REVISION,
   PROTOCOL_V4_LIMITS,
   ROW_TARGETING_COMMANDS,
+  buildSupersededCloseOutAck,
+  isSupersededCloseOutAck,
   parseCommandEnvelope,
+  resolveCommandRedelivery,
 } from "@acode/shared/acode-protocol-v4";
 
 /** guard 裁决结果：拒绝（撤 optimistic）或 noop（晚到者静默收口）。 */
@@ -28,6 +31,13 @@ interface CommandInboxHost {
   getRevision(sessionId: string): number | null;
   /** 会话当前投影代际；CAS 必须先校验 epoch，再校验 revision。 */
   getLogEpoch(sessionId: string): string | null;
+  /**
+   * 重投递取代的 abort 口（specs/protocol-attachment-typed-errors.md R2/W1）：
+   * 取代裁决命中时中止旧投递的在飞执行。缺席 = 无 abort 点；R2 规则 4c 要求
+   * 无可用 abort 点的命令类型不得进入取代闭集。实现必须 best-effort：失败只报
+   * 诊断，不得反向打断新投递的 admission（旧响应已被 suppressed 位压制）。
+   */
+  abortInFlightCommand?(envelope: CommandEnvelope): Promise<void> | void;
   /** row-targeting command 的 entity/action 同源 resolver 裁决。 */
   validateRowTarget?(envelope: CommandEnvelope): GuardDecision;
   /** 业务 guard（product-protocol guard id）。缺省一律放行。 */
@@ -44,6 +54,16 @@ interface InFlightEntry {
   ack: CommandAck;
   final: Promise<CommandAck>;
   resolveFinal: (ack: CommandAck) => void;
+  /** 本投递的原始信封：重投递取代时 abort 精确指向旧运行（同 commandId，不同世代）。 */
+  envelope: CommandEnvelope;
+  /**
+   * 重投递取代位（spec R2 规则 1/2）：置位后本投递的业务终态被压制——settle 变为
+   * no-op（不入 settled LRU、不写持久事实、不触碰同 commandId 的新一代 inFlight/live
+   * 条目），旧 wire 投递只以 close-out ack 收口防 RPC 悬挂。
+   */
+  suppressed?: boolean;
+  /** 本投递持有的 session gate 释放柄：取代时提前放行新投递的串行 admission（release 幂等）。 */
+  releaseSessionGate?: GateRelease;
 }
 
 type CommandFinal = Pick<
@@ -54,6 +74,13 @@ type CommandFinal = Pick<
 interface LiveInputEntry {
   ack: CommandAck;
   intent: ConversationInputIntent;
+  /**
+   * 取代位联动（spec R2）：旧投递被取代时其 live pin 一并标记——lookupExact 跳过它
+   * （否则新投递会被旧 admission ACK 短路成 duplicate），releaseLiveInput 对它的收口
+   * 不写 settled LRU（旧运行的 abort 终态不是业务事实）。新投递 pinLiveInput 会整体
+   * 覆盖本条目，标记随旧对象一起被替换。
+   */
+  suppressed?: boolean;
 }
 
 type CommandInboxOutcome =
@@ -66,8 +93,13 @@ type CommandInboxOutcome =
       admissionSeq: number;
       admittedAt: number;
       queueItemId: string;
-      /** 执行完成后回填终态。必须调用一次，用于释放 per-session admission gate。 */
-      settle: (final: CommandFinal) => void;
+      /**
+       * 执行完成后回填终态。必须调用一次，用于释放 per-session admission gate。
+       * 返回值非空 = 本投递已被重投递取代（spec R2 规则 2）：返回的是旧 wire 投递的
+       * close-out ack（stale + proto.supersededByRedelivery），调用方应以它作为旧 RPC
+       * 的响应收口，不得当作业务终态——业务终态由取代后的新投递唯一持有。
+       */
+      settle: (final: CommandFinal) => CommandAck | undefined;
     };
 
 // createSession 与 null sessionId query 归全局桶。
@@ -133,7 +165,15 @@ export class CommandInbox {
 
     try {
       const pinned = this.inFlight.get(bucketKey)?.get(envelope.commandId);
-      if (pinned) return this.ackOnly(this.retryAck(await pinned.final));
+      if (pinned) {
+        // 重投递裁决（spec protocol-attachment-typed-errors.md R2 / 接线 W1）：默认闭集
+        // 为空 = 全部现役命令保持既有 dedupe（共享 final），supersede 是惰性路径。
+        // 入集命令在此取代旧投递并**继续向下**按新 admission 接管（不返回 duplicate）。
+        if (resolveCommandRedelivery(envelope.type).action !== "supersede") {
+          return this.ackOnly(this.retryAck(await pinned.final));
+        }
+        this.supersedeInFlight(bucketKey, pinned);
+      }
       const existing = await this.lookupExact(key);
       if (existing) return this.ackOnly(this.retryAck(existing));
 
@@ -144,8 +184,14 @@ export class CommandInbox {
         // 等待 session gate 期间，上一条命令可能增量写入了本 key 的持久化事实。
         const afterWaitPinned = this.inFlight.get(bucketKey)?.get(envelope.commandId);
         if (afterWaitPinned) {
-          releaseSession();
-          return this.ackOnly(this.retryAck(await afterWaitPinned.final));
+          // 与 :pinned 首查同一裁决（R2/W1）。key gate 串行下同 commandId 的在飞条目
+          // 理论上不会在本分支出现（防御性对称接线）：命中 supersede 时旧条目已被
+          // 取代收口，本投递继续走下方 admission；命中 dedupe 时保持既有语义。
+          if (resolveCommandRedelivery(envelope.type).action !== "supersede") {
+            releaseSession();
+            return this.ackOnly(this.retryAck(await afterWaitPinned.final));
+          }
+          this.supersedeInFlight(bucketKey, afterWaitPinned);
         }
         const afterWait = await this.lookupExact(key);
         if (afterWait) {
@@ -173,7 +219,13 @@ export class CommandInbox {
         const final = new Promise<CommandAck>((resolve) => {
           resolveFinal = resolve;
         });
-        const entry: InFlightEntry = { ack: decision.ack, final, resolveFinal };
+        const entry: InFlightEntry = {
+          ack: decision.ack,
+          envelope,
+          final,
+          resolveFinal,
+          releaseSessionGate: releaseSession,
+        };
         this.mapFor(this.inFlight, bucketKey).set(envelope.commandId, entry);
 
         // 旧单表 LRU 会在 >512 条 churn 时淘汰仍在执行/队列里的命令，随后
@@ -188,8 +240,19 @@ export class CommandInbox {
           admittedAt,
           queueItemId: queueItemIdForCommand(envelope.commandId),
           settle: (final) => {
-            if (settled) return;
+            if (settled) return undefined;
             settled = true;
+            // 被重投递取代的旧投递（spec R2 规则 1/2）：settle 不产出任何业务事实——
+            // 不入 settled LRU、不覆盖 live pin、不删除同 commandId 的新一代 inFlight
+            // 条目。返回 close-out ack 供 gateway 收口旧 wire 投递（防 RPC 悬挂/误判）；
+            // session gate 已在 supersedeInFlight 提前释放，这里的幂等 release 只是兜底。
+            if (entry.suppressed) {
+              releaseSession();
+              return buildSupersededCloseOutAck(
+                envelope.commandId,
+                decision.ack.revisionAtDecision,
+              );
+            }
             const live = this.liveInputs.get(bucketKey)?.get(envelope.commandId);
             const ack = {
               ...decision.ack,
@@ -248,6 +311,12 @@ export class CommandInbox {
     const bucketKey = this.bucketKey(key.sessionId);
     const live = this.liveInputs.get(bucketKey)?.get(key.commandId);
     this.liveInputs.get(bucketKey)?.delete(key.commandId);
+    // 被取代投递的收口（spec R2 规则 2）：旧运行的 abort/cancel 终态不是业务事实，
+    // 不得进 settled LRU——否则新投递的 lookupExact 会命中它短路成 duplicate(stale)，
+    // 取代永远跑不起来。注意世代边界：新一代 pinLiveInput 会整体覆盖条目（标记随之
+    // 消失），晚于新 pin 到达的旧 release 无法在 inbox 层归因——该竞态属 R2 规则 4b
+    // 的入集评审义务（持久事实层必须能区分世代），取代闭集当前为空集，惰性路径。
+    if (live?.suppressed) return;
     if (finalAck ?? live?.ack) {
       this.rememberSettled(bucketKey, key.commandId, finalAck ?? live!.ack);
     }
@@ -293,7 +362,9 @@ export class CommandInbox {
     const inflight = this.inFlight.get(bucketKey)?.get(key.commandId);
     if (inflight) return await inflight.final;
     const live = this.liveInputs.get(bucketKey)?.get(key.commandId);
-    if (live) return live.ack;
+    // 被取代的旧 live pin 不是可短路的事实（spec R2 规则 2）：跳过它，让新投递按
+    // 正常 admission 接管；条目本体留给 releaseLiveInput 做静默收口。
+    if (live && !live.suppressed) return live.ack;
     const settled = this.settled.get(bucketKey)?.get(key.commandId);
     if (settled) {
       this.touchSettled(bucketKey, key.commandId, settled);
@@ -473,7 +544,45 @@ export class CommandInbox {
     };
   }
 
+  /**
+   * 重投递取代（specs/protocol-attachment-typed-errors.md R2 规则 2 / 接线 W1）：
+   * 「abort 旧运行 + 收口旧投递 + 新运行接管」的 inbox 半边。
+   *
+   * - 旧 wire 投递以 close-out ack（stale + proto.supersededByRedelivery）resolve 其
+   *   final——只防 RPC 悬挂，不是业务终态（isSupersededCloseOutAck 判别）；
+   * - suppressed 位置位后旧 settle 变 no-op：不入 settled LRU、不写持久事实；
+   * - 旧 live pin 同步标记（lookupExact 跳过、releaseLiveInput 静默收口）；
+   * - session gate 提前释放（幂等）：新投递接管本 session 的串行 admission 位次；
+   * - abort 是 best-effort：同步抛错/异步拒绝都不得打断新投递的 admission——响应
+   *   已被压制，abort 未生效最多是旧运行跑完但不产生业务终态（诊断归 gateway 实现）。
+   *
+   * 注意：取代后本投递继续走 handle() 的 lookupExact——若该 commandId 存在**更早世代**
+   * 的 settled/持久事实，仍会被短路成 duplicate。入集评审（R2 规则 4b）必须把这条
+   * 短路纳入「持久事实可被新 run 安全覆盖或封存作废」的验收范围。
+   */
+  private supersedeInFlight(bucketKey: string, pinned: InFlightEntry): void {
+    pinned.suppressed = true;
+    this.inFlight.get(bucketKey)?.delete(pinned.envelope.commandId);
+    const live = this.liveInputs.get(bucketKey)?.get(pinned.envelope.commandId);
+    if (live) live.suppressed = true;
+    pinned.resolveFinal(
+      buildSupersededCloseOutAck(pinned.envelope.commandId, pinned.ack.revisionAtDecision),
+    );
+    pinned.releaseSessionGate?.();
+    try {
+      const aborting = this.host.abortInFlightCommand?.(pinned.envelope);
+      // 异步 abort 失败静默收口：诊断由 host 实现（gateway）自己的 onError 通道负责。
+      if (aborting) Promise.resolve(aborting).catch(() => undefined);
+    } catch {
+      // 同步抛错同上：取代裁决本身已经成立，不因 abort 实现缺陷回退。
+    }
+  }
+
   private retryAck(ack: CommandAck): CommandAck {
+    // close-out 不是业务终态（spec R2 规则 2）：不得被折叠成 duplicate——它只在
+    // 取代路径出现，原样透传才能让请求方按 isSupersededCloseOutAck 判别「旧投递已
+    // 被取代收口」，而不是误读成又一次重复投递。
+    if (isSupersededCloseOutAck(ack)) return ack;
     // failed 是终态事实，不得被 duplicate 状态覆盖后让 UI/服务误判为可接受。
     //
     // **cancel 方向靠归一化覆盖，而不是靠这里点名**：CommandAck.status 的枚举里没有

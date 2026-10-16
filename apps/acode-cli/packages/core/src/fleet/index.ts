@@ -40,11 +40,27 @@ export {
 } from "./worktree-provision.js";
 export {
   FLEET_PLAN_VESSEL_AGENT_TYPE,
+  FLEET_IDENTITY_PREAMBLE,
+  FLEET_SESSION_NAME_MAX_CHARS,
+  buildFleetChildFirstMessage,
+  buildFleetSessionName,
   launchFleetSession,
   type FleetLaunchContext,
   type FleetLaunchInput,
   type FleetLaunchResult,
 } from "./session-launch.js";
+// 批 2 R11：own_initiative 提案卡（预算/判重/过期纯规则；存储归 registry）。
+export {
+  FLEET_PROPOSAL_MAX_PER_TURN,
+  FLEET_PROPOSAL_TTL_MS,
+  buildFleetProposal,
+  evaluateFleetProposalAdmission,
+  isFleetProposalExpired,
+  normalizeFleetProposalTitle,
+  resolveFleetProposalForLaunch,
+  type FleetProposalRecord,
+  type FleetProposalRejection,
+} from "./proposals.js";
 export {
   executeFleetArchive,
   isFleetSessionRunning,

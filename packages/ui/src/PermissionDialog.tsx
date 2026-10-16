@@ -101,7 +101,10 @@ function readPermissionRuleScopes(option: ACodePermissionOption): PermissionRule
   for (const update of option.response?.permissionUpdates ?? []) {
     if (update.type !== "addRules" || update.behavior !== "allow") continue;
     for (const rule of update.rules) {
-      if (rule.toolName.toLowerCase() !== "bash") continue;
+      // 命令行前缀 scope 展示同时覆盖两个 shell 工具（apps/acode-cli/specs/
+      // powershell-tool.md R8③，与 TUI app-approval 的 bash|powershell 过滤同款）。
+      const toolName = rule.toolName.toLowerCase();
+      if (toolName !== "bash" && toolName !== "powershell") continue;
       const content = rule.ruleContent?.trim();
       if (!content?.endsWith(":*")) continue;
       scopes.push(formatPermissionRuleScope(content.slice(0, -2)));

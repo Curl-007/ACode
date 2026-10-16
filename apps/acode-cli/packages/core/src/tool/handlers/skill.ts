@@ -12,8 +12,13 @@ import {
   type SkillRuntimeInput,
 } from "@acode/contracts";
 import type { ToolEntry, ToolHandler } from "../types.js";
+import { injectLiveBuildSection, LIVE_BUILD_PLACEHOLDER } from "./skill-live-build.js";
+// disable-model-invocation 硬门（R6 消费接线）：用户指名标记的唯一消费点。
+import { consumeUserInvokedSkillMarker } from "../../agent/skill-user-invocation.js";
 
 const MAX_SKILL_BYTES = 100_000;
+/** 受门技能被拒的业务失败码（handler 本地闭集，非契约面）。 */
+const SKILL_USER_INVOCATION_ONLY_ERROR_CODE = 1;
 
 const skillHandler: ToolHandler = async (input, context) => {
   const { skill } = SkillInputSchema.parse(input) as SkillRuntimeInput;
@@ -49,17 +54,66 @@ const skillHandler: ToolHandler = async (input, context) => {
     { signal: context.abortSignal },
   );
 
+  // disable-model-invocation 硬门（specs/skill-frontmatter-governance.md R6 消费接线）：
+  // 仅用户可敲的技能，无用户指名标记时拒绝模型面调用（业务失败 + 指位文案，不抛
+  // 配置错——这是可预期的权限性拒绝）。标记唯一写入点 = CLI 手动 /skill 提交路径
+  //（markUserInvokedSkillForTurn），唯一消费点 = 本处，按名匹配一次性消费；
+  // 生命周期与残余窗口见 skill-user-invocation.ts 头注。
+  if (
+    loaded.metadata.governance?.disableModelInvocation === true &&
+    !consumeUserInvokedSkillMarker(context.sessionId, [
+      skill,
+      loaded.metadata.name,
+      ...(loaded.metadata.qualifiedName ? [loaded.metadata.qualifiedName] : []),
+    ])
+  ) {
+    return {
+      result: false,
+      errorCode: SKILL_USER_INVOCATION_ONLY_ERROR_CODE,
+      message:
+        `Skill "${loaded.metadata.name}" is reserved for explicit user invocation ` +
+        "(disable-model-invocation) and the user did not request it here. It was NOT loaded. " +
+        `Do not call it again on your own initiative; tell the user this skill exists so they ` +
+        `can invoke it themselves with /skill ${loaded.metadata.name}.`,
+    };
+  }
+
   context.recordSkillTelemetryMetadata?.({
     ...(loaded.metadata.qualifiedName ? { qualifiedName: loaded.metadata.qualifiedName } : {}),
     ...(loaded.metadata.pluginId ? { pluginId: loaded.metadata.pluginId } : {}),
     source: loaded.metadata.source,
   });
 
+  // T2-c2「Current Build」实时自知（specs/guide-live-build-section.md R1）：正文含
+  // {{ACODE_CURRENT_BUILD}} 占位符的技能，在装配点把占位符替换为运行中 CLI 生成的快照节；
+  // 无占位符的技能零成本透传。注入自身永不抛错（失败落降级节），不影响 Skill 调用成败。
+  const expandedContent = expandSkillContextVariables(loaded.content, loaded.baseDirectory);
+  // 宿主事实投影（spec「宿主接线登记」①②③）：仅占位符在场才查询 MCP 连接态
+  //（保持无占位符零成本透传）；查询失败降级回磁盘「已配置」面（R3），不影响调用成败。
+  const liveBuildPort = context.liveBuildSnapshotPort;
+  const mcpConnectionStates = expandedContent.includes(LIVE_BUILD_PLACEHOLDER)
+    ? await liveBuildPort?.getMcpConnectionStates?.().catch(() => undefined)
+    : undefined;
+  const body = await injectLiveBuildSection(expandedContent, {
+    sessionId: context.sessionId,
+    workingDirectory: context.workingDirectory,
+    workspaceRoot: context.workspaceRoot,
+    toolNames: context.providerVisibleToolNames,
+    skillPort: context.skillPort,
+    signal: context.abortSignal,
+    ...(liveBuildPort?.version ? { version: liveBuildPort.version } : {}),
+    ...(liveBuildPort?.builtInCommandNames
+      ? { builtInCommandNames: liveBuildPort.builtInCommandNames }
+      : {}),
+    ...(liveBuildPort?.hostAgentNames ? { hostAgentNames: liveBuildPort.hostAgentNames } : {}),
+    ...(mcpConnectionStates ? { mcpConnectionStates } : {}),
+  });
+
   return [
     `<skill_content name="${loaded.metadata.name}">`,
     `# Skill: ${loaded.metadata.name}`,
     "",
-    expandSkillContextVariables(loaded.content, loaded.baseDirectory),
+    body,
     "",
     `Base directory for this skill: ${loaded.baseDirectory}`,
     "Relative paths in this skill are relative to this base directory.",

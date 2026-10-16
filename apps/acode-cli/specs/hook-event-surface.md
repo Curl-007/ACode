@@ -74,6 +74,29 @@ workspace 信任门（`workspace-hook-trust`，bundleDigest）的前提下补齐
   fire-and-forget + catch warn（TaskCreated/TaskCompleted/CwdChanged），任何 hook 故障都
   不允许改变业务路径的成败。
 
+## 扩展（第二轮 W2）：链内中间件语义 / 失败可见性 / hook-pins 三态
+
+细节与取舍以 `specs/plugin-hook-middleware.md` 为唯一事实源，本节只钉与本 spec 既有
+裁决的关系：
+
+- **链执行形状**：`InMemoryHookRunner` 的顺序链升级为「链内输入改写 + 短路自答」的
+  最小洋葱（opt-in `middleware` 注册才生效；存量配置 hook 链形状与事件序零变化）。
+  本 spec 的失败语义裁决对链内每个环节继续成立：middleware 环节自身失败（含 next
+  misuse）⇒ `HookRunFailed` + fail-open 放行；middleware 失败不吞掉下游已真实完成的
+  结果。**block/notify 语义不变**：middleware 自答输出仍走 `processHookOutput` 的
+  阻断类/通知类裁决（`shouldPreventContinuation` 闭集不因中间件扩围）。
+- **失败可见性**：在「失败语义」表的两类行上增补可观测行——admission 拒绝
+  （`HookRunBlocked`，hook 未执行）与执行失败（`HookRunFailed`）各产出闭集
+  `refusalReason` + 注记行 `<hook 名>: <事件> 被拒: <闭集原因>; 已用引擎默认行为`：
+  本会话经生命周期事件 payload（transcript 通道，暗字渲染属投影面接线），全部会话
+  无条件 debug log。hook **显式 block** 不属被拒（决策生效，blockReason 链路不变）。
+  注记绝不改变 fail-open 结果。
+- **hook-pins 三态**：trust 记录层扩展每钩钉扎 `{script(path,sha256)|inline|unpinnable}`
+  （`workspace-hook-trust-records.ts`）；与 bundleDigest/declarationDigest 信任门是
+  「授予事实」的同一谱系、不同问题（bundle 面回答声明集合是否可信，pin 面回答声明
+  解析到的内容是否漂移）。CLI 树执行面是 pins 唯一写入方；波 1 services 值哈希投影
+  （展示分类）不得读写 pins（单源义务见 plugin-hook-middleware.md 三.6）。
+
 ## 决定与边界
 
 - **D1 workspace 信任 bundle 面保持 7 事件**：`WORKSPACE_HOOK_SCHEMA_FIELDS.events` 与

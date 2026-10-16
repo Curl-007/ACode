@@ -80,7 +80,9 @@ export function getBotEngineEntry(engine: ACodeProvider | undefined) {
  *
  * 安全加固 P0-3：这是「bot 默认权限模式」卡片的选项源，设置的是 bot 驱动的远程会话默认模式，
  * 因此剔除全权限档（yolo/bypassPermissions），与远程入口天花板（services 派发侧 clampBotPermissionMode）
- * 同源。native 引擎只列 build/edit/plan。需要 yolo 请在桌面本地的任务工具栏显式切换，不经 bot 配置。
+ * 同源。native 引擎列 build/edit/plan/dontAsk——dontAsk（权限批 2）= 拒绝代替询问：
+ * 从不弹窗、需批准的动作一律拒绝，不放大权限，故不被远程天花板剔除，适合 bot 无人值守会话。
+ * 需要 yolo 请在桌面本地的任务工具栏显式切换，不经 bot 配置。
  */
 export function getBotPermissionModesForEngine(
   engine: ACodeProvider | undefined,

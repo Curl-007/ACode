@@ -38,6 +38,7 @@ import {
   createScriptWorkflowAgentRuntime,
   type ScriptWorkflowAgentRuntimeDeps,
 } from "@acode/cli-workflow/contract";
+import { getCliGitInvocationEnvOverlay } from "@acode/shared";
 import type { ACodeBuiltinHostCommand } from "../builtin-prompt-command.js";
 
 export interface CreateOvernightControllerDeps extends ScriptWorkflowAgentRuntimeDeps {
@@ -128,6 +129,9 @@ export function createOvernightController(deps: CreateOvernightControllerDeps): 
           // 不需要会话 shell 选择语义），git 在 PATH 缺席时按采集失败处理。
           command: { mode: "argv", file: "git", args: ["status", "--porcelain=v1", "--branch"] },
           cwd: deps.workingDirectory,
+          // git 调用硬化漏斗 overlay 形态（specs/git-invocation-hardening.md 消费点 #8）：
+          // preflight 采集是无人值守只读面，防弹窗挂死/hooks 停用/防串仓。
+          env: getCliGitInvocationEnvOverlay(),
           timeoutMs: GIT_SNAPSHOT_TIMEOUT_MS,
           trace: deps.traceContext,
         });

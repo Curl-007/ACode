@@ -1,7 +1,7 @@
 /** 仅用于用户反馈的排障材料；不得应用到模型请求或认证载荷。 */
+import { isSensitiveLogKeyName } from "./sensitiveKeyNames.js";
+
 const REDACTED = "[REDACTED]";
-const sensitiveKey =
-  /(?:password|passwd|passphrase|secret|token|apikey|accesskey|privatekey|authorization|cookie|credential)/i;
 const diagnosticBodyKey =
   /^(?:content|messages?|prompt|systemprompt|request|response|body|payload|input|output|toolinput|tooloutput|arguments|args|env|environment|headers|text|completion|result|stdout|stderr|data|params)$/i;
 
@@ -10,8 +10,9 @@ function normalizeKey(key: string): string {
 }
 
 function shouldRedactKey(key: string, diagnostic: boolean): boolean {
-  const normalized = normalizeKey(key);
-  return sensitiveKey.test(normalized) || (diagnostic && diagnosticBodyKey.test(normalized));
+  // 敏感键名判定收敛到 sensitiveKeyNames 单源（specs/log-privacy-redaction.md R1），
+  // 与日志脱敏管线、桌面导出共用一套词表，禁止两套词表漂移。
+  return isSensitiveLogKeyName(key) || (diagnostic && diagnosticBodyKey.test(normalizeKey(key)));
 }
 
 // 与 JSON 对象共用键名判定；带引号、转义和分隔符的字段不能走另一份精简名单。
@@ -37,7 +38,7 @@ function shouldRedactUrlPath(url: URL, diagnostic: boolean): boolean {
   // 签名下载的对象路径也可能是凭据；必须在删除 query 前判定。
   if (
     [...url.searchParams.keys()].some(
-      (key) => shouldRedactKey(key, false) || /^(?:.*signature|sig|code)$/i.test(normalizeKey(key)),
+      (key) => isSensitiveLogKeyName(key) || /^(?:.*signature|sig|code)$/i.test(normalizeKey(key)),
     )
   )
     return true;
@@ -47,7 +48,7 @@ function shouldRedactUrlPath(url: URL, diagnostic: boolean): boolean {
       .some((segment) => {
         const normalized = normalizeKey(segment);
         return (
-          sensitiveKey.test(normalized) ||
+          isSensitiveLogKeyName(segment) ||
           /^(?:webhook\w*|(?:password)?reset(?:password)?|invites?|invitations?|callback|downloads?|signed|verify|verification|activate|magiclink)$/.test(
             normalized.toLowerCase(),
           )

@@ -221,6 +221,16 @@ function createHello(context: ACodeAgentV4ConnectionContext): HelloMessage {
       // 本 Host 会转发 `workflowRun.*` 键级增量；客户端见到它才能在 clientHello 里回声明
       // （那个 capabilities 是 .strict() 的，反过来会让老 Host 握不上手）。
       workflowRunDeltas: true,
+      // 本链路接受 clientHello 的 `answers` 代答申报（attach-answers.ts，spec
+      // protocol-attachment-typed-errors.md R3/W2）：单向声明纪律与 workflowRunDeltas
+      // 同款——客户端见到本位才能在 strict clientHello 里携带 answers 键。三态语义由
+      // resolveAttachAnswers 收敛（给定列表含 [] = 整体替换；缺席 = 保持）。注意：
+      // 按 roster 定向路由交互请求的消费面（CLI gateway / 手机远控 attachment 调度）
+      // 属后续批次；申报与 roster 回显先行，未申报客户端的既有路由行为不变。
+      interactionAnswerRoster: true,
+      // permissionCheckStatus 位**不在此声明**：该位的语义是「本 CLI 会发权限检查慢
+      // 进度信号」（spec R4/W3），发出面（sidecar 4s timer + 事实投影）随 W3 批次落地，
+      // 能力位必须与发出面同批注入——先行声明会造成「声明了但永远收不到信号」的假能力。
     },
     auth: {},
   };

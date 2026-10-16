@@ -121,6 +121,9 @@ export function buildToolTranscriptProjection(
   const normalized = toolName.toLowerCase();
 
   if (normalized === "bash") return { detailLines: bashDetails(record) };
+  // PowerShell 一等工具（specs/powershell-tool.md R7）：入参与 Bash 同形
+  //（command/timeout/run_in_background），详情行复用同一份拼装。
+  if (normalized === "powershell") return { detailLines: bashDetails(record) };
   if (normalized === "read") {
     return readDetails(record, workspaceDirectory);
   }

@@ -1,5 +1,6 @@
 import type { ExecutionPort, TraceContext } from "@acode/contracts";
 import { type MergeBaseBranchOutput, type MergeBaseSelection } from "@acode/contracts";
+import { getCliGitInvocationEnvOverlay } from "@acode/shared";
 
 /**
  * base 分支合并（specs/session-worktree-lifecycle.md R5）：把基分支合并进会话分支。
@@ -32,6 +33,9 @@ export function createHostGitRunnerFromExecutionPort(
     const result = await port.run({
       command: { mode: "argv", file: "git", args: [...args] },
       cwd,
+      // git 调用硬化漏斗 overlay 形态（specs/git-invocation-hardening.md 消费点 #6）：
+      // 防弹窗挂死/hooks 停用（post-merge 不再执行）/防串仓；merge 参数组装语义不动。
+      env: getCliGitInvocationEnvOverlay(),
       // 宿主直跑（spec R5）：不进沙箱——合并要能触碰受保护路径。
       sandbox: { enabled: false },
       ...(trace ? { trace } : {}),

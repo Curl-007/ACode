@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readdirSync, realpathSync, rmSync, statSync } fr
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
+import { getCliGitInvocationEnv } from "@acode/shared";
 
 /**
  * Workflow agent 的 git worktree 隔离（S1，specs/workflow-worktree-isolation.md）。
@@ -34,6 +35,9 @@ const defaultGitRunner: GitRunner = async (args, cwd) => {
   try {
     const { stdout, stderr } = await execFileAsync("git", [...args], {
       cwd,
+      // git 调用硬化漏斗（specs/git-invocation-hardening.md 消费点 #4）：
+      // workflow worktree 隔离在无人值守路径执行，防弹窗挂死/hooks 停用/防串仓。
+      env: getCliGitInvocationEnv(),
       maxBuffer: 8 * 1024 * 1024,
       windowsHide: true,
     });

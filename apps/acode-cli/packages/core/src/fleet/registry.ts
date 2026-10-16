@@ -13,6 +13,7 @@
 
 import type { CollaborationMode, SessionId } from "@acode/contracts";
 import type { FleetRejectReason } from "@acode/contracts";
+import type { FleetProposalRecord } from "./proposals.js";
 
 export interface FleetWorktreeFact {
   path: string;
@@ -34,6 +35,11 @@ export interface FleetSessionRecord {
   /** runtime-task 条目 id（≡ agentId）：TaskOutput/TaskStop/SendMessage 的既有键。 */
   readonly agentId: string;
   readonly title: string;
+  /**
+   * 批 2 R14：linked 台账短名（title slug + 去重后缀）——显示键，寻址仍只认
+   * session_id。可选：波次 1 记录/测试夹具没有它，投影面缺席即不显示。
+   */
+  readonly name?: string;
   /** vessel profile 名（general-purpose / Plan / …）。 */
   readonly agentType: string;
   /** 所有权：成功 StartSession/HandOff 的发起会话。 */
@@ -69,9 +75,42 @@ export type FleetOwnershipResolution =
 export class FleetRegistry {
   private readonly records = new Map<string, FleetSessionRecord>();
   private readonly watcherDisposers = new Map<string, () => void>();
+  /**
+   * 批 2 R11：own_initiative 提案存储（不启动的启动请求）。与会话记录同一
+   * 生命周期哲学：进程内存态、所有权 = launcherSessionId 精确匹配。预算/判重/
+   * 过期的纯规则在 proposals.ts，本处只做存取。
+   */
+  private readonly proposals = new Map<string, FleetProposalRecord>();
 
   register(record: FleetSessionRecord): void {
     this.records.set(record.sessionId, record);
+  }
+
+  /** 短名占用判定（批 2 R14：同 title 多次启动的名字去重）。 */
+  isSessionNameTaken(name: string): boolean {
+    return [...this.records.values()].some((record) => record.name === name);
+  }
+
+  // ── 提案面（批 2 R11） ─────────────────────────────────────────────
+
+  registerProposal(proposal: FleetProposalRecord): void {
+    this.proposals.set(proposal.id, proposal);
+  }
+
+  getProposal(proposalId: string): FleetProposalRecord | undefined {
+    return this.proposals.get(proposalId);
+  }
+
+  /** 消费 = 记录移除（launch 成功后调用；失败/被拒保留可重试）。 */
+  removeProposal(proposalId: string): void {
+    this.proposals.delete(proposalId);
+  }
+
+  /** 某发起会话的全部提案（含过期——过期判定与清理归 proposals.ts 纯规则/调用方）。 */
+  listProposalsByLauncher(launcherSessionId: string): FleetProposalRecord[] {
+    return [...this.proposals.values()].filter(
+      (proposal) => proposal.launcherSessionId === launcherSessionId,
+    );
   }
 
   get(sessionId: string): FleetSessionRecord | undefined {
@@ -134,21 +173,26 @@ export class FleetRegistry {
   ): FleetOwnershipResolution {
     const record = this.records.get(targetSessionId);
     if (!record) {
+      // specs/error-message-style.md R1 模板②④：排除误猜（标题当 id）+ 活路（ListSessions）；
+      // 猜 id 重试是死路，明说不做。既有测试钉 /never inferred|titles/i 保留。
       return {
         ok: false,
         reason: "unknown_session",
         message:
           `No fleet session with id "${targetSessionId}" was started from this transcript. ` +
-          "Fleet tools only accept session ids that your own successful StartSession/HandOffToSession call returned - titles and ids from narration are never inferred.",
+          "Fleet tools only accept session ids that your own successful StartSession/HandOffToSession call returned - titles and ids from narration are never inferred. " +
+          "Do not guess other ids or retry variants of this one; call ListSessions to see the ids you actually own, and if the session you want is not there, tell the user it was not started from this transcript.",
       };
     }
     if (record.launchedBySessionId !== callerSessionId) {
+      // 模板④⑤：所有权封闭是稳定事实，被拒后的行为规定是报告用户，不重试/不猜 id/不擅自重启工作。
       return {
         ok: false,
         reason: "not_owned_by_caller",
         message:
           `Fleet session "${targetSessionId}" was started by another session. ` +
-          "Ownership is closed to the transcript whose StartSession call returned the id.",
+          "Ownership is closed to the transcript whose StartSession call returned the id; no retry will change that. " +
+          "Tell the user this session belongs to another transcript instead of retrying, guessing other ids, or re-starting the same work unasked.",
       };
     }
     if (record.archived && options.allowArchived !== true) {

@@ -151,7 +151,7 @@ export interface ACodeTaskGoalChangedPatch {
 }
 // ---- ACode task 模式 ----
 
-export type ACodeTaskMode = "yolo" | "plan" | "edit" | "auto" | "autoEdit" | "build";
+export type ACodeTaskMode = "yolo" | "plan" | "edit" | "auto" | "autoEdit" | "build" | "dontAsk";
 
 export type ACodeOffPeakRunType = "init" | "resume";
 

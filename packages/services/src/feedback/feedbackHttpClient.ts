@@ -1,7 +1,12 @@
 import { assertOfficialServiceAvailable } from "@acode/shared";
 import { redactFeedbackText } from "@acode/shared";
+import {
+  detectSuspectedSessionTokenLeak,
+  isAllowedEgressSessionValue,
+  isCanonicalACodeSessionId,
+} from "@acode/shared";
 /* eslint-disable max-lines -- 反馈 HTTP 客户端集中维护新后端协议、鉴权头合并、OSS 表单直传和响应归一化。 */
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import { request as httpRequest } from "node:http";
@@ -572,6 +577,23 @@ function unwrapFeedbackResponse<T>(value: unknown): T {
   return envelope.data;
 }
 
+/**
+ * R12 出网形态门（packages/shared/specs/log-privacy-redaction.md）：session/task 类
+ * id 经反馈面离开本机时只允许三种形态——空串、`local_*` 占位、`sha256_[0-9a-f]{64}`
+ * 哈希关联键。裸内部 id（含合法形态的 sess_<uuid>）与「带 id 前缀但形态异常」的
+ * 疑似 token 一律转为 sha256 哈希（shared 门是纯函数，哈希由消费方用 node:crypto
+ * 实施）；非 id 自由文本（如 "desktop-app"）原样通过，行为不变。
+ */
+function toEgressSafeSessionValue(value: string): string {
+  if (isAllowedEgressSessionValue(value)) {
+    return value;
+  }
+  if (isCanonicalACodeSessionId(value) || detectSuspectedSessionTokenLeak(value)) {
+    return `sha256_${createHash("sha256").update(value, "utf8").digest("hex")}`;
+  }
+  return value;
+}
+
 function toFeedbackEnvironment(input: CreateFeedbackTicketInput): Record<string, unknown> {
   const device = input.device ?? {};
   const environment: Record<string, unknown> = {};
@@ -597,7 +619,9 @@ function toFeedbackEnvironment(input: CreateFeedbackTicketInput): Record<string,
   assignDefined(environment, "agent_framework", device.agentFramework ?? input.framework);
   assignDefined(environment, "agent_model", device.agentModel);
   assignDefined(environment, "agent_model_display", device.agentModelDisplay);
-  assignDefined(environment, "source", input.source);
+  // source 是出网自由文本位（调用方可能携带会话上下文）：过 R12 出网形态门，
+  // 会话/任务类 id 哈希后才出网（见 toEgressSafeSessionValue）。
+  assignDefined(environment, "source", input.source && toEgressSafeSessionValue(input.source));
   return environment;
 }
 

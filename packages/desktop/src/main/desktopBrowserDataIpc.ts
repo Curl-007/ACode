@@ -4,6 +4,7 @@ import { PlatformChannels } from "@acode/shared";
 import { clearEmbeddedBrowserData, importChromeBrowserData } from "./browserDataManager.js";
 import { discoverChromeProfile } from "./chromeProfileDiscovery.js";
 import { hasAppBoundEncryptedCookies } from "./chromeCookieManager.js";
+import { deriveIpcSyncLabel, wrapIpcHandle } from "./ipcSyncTiming.js";
 
 type BrowserDataIpcLogger = {
   info: (...args: unknown[]) => void;
@@ -53,43 +54,55 @@ async function confirmElevatedChromeDecryptionWithUser(
 }
 
 export function registerBrowserDataIpcHandlers(logger: BrowserDataIpcLogger) {
-  ipcMain.handle(PlatformChannels.ImportChromeBrowserData, async (event, value: unknown) => {
-    // 安全加固 P2 #9（及后续清理）：renderer 载荷一律不信任。提权解密授权完全由 main 判定：
-    // 平台 + v20 前置嗅探 + 用户显式确认，且授权只在本次调用内有效（不持久化、不缓存）。
-    // IPC 契约已不再携带任何 options（allowElevatedChromeDecryption 死字段已从 shared 类型移除）；
-    // 这里仍防御性忽略任何残余载荷（void value），旧 renderer 进程或伪造请求都无法影响授权。
-    void value;
-    let allowElevatedChromeDecryption = false;
-    if (process.platform === "win32") {
-      const discovered = await discoverChromeProfile({ platform: process.platform });
-      const profilePath = discovered.success ? discovered.source.profilePath : undefined;
-      if (profilePath) {
-        const appBoundCookieRowsPresent = await hasAppBoundEncryptedCookies({
-          profilePath,
-          logger,
-        });
-        if (appBoundCookieRowsPresent === true) {
-          const userConfirmed = await confirmElevatedChromeDecryptionWithUser(
-            BrowserWindow.fromWebContents(event.sender),
-          );
-          allowElevatedChromeDecryption = resolveElevatedChromeDecryptionAuthorization({
-            platform: process.platform,
-            appBoundCookieRowsPresent,
-            userConfirmed,
-          });
-          logger.info("[browser-data] App-Bound 提权解密授权结果", {
-            userConfirmed,
-            authorized: allowElevatedChromeDecryption,
-          });
+  ipcMain.handle(
+    PlatformChannels.ImportChromeBrowserData,
+    wrapIpcHandle(
+      deriveIpcSyncLabel(PlatformChannels.ImportChromeBrowserData),
+      async (event, value: unknown) => {
+        // 安全加固 P2 #9（及后续清理）：renderer 载荷一律不信任。提权解密授权完全由 main 判定：
+        // 平台 + v20 前置嗅探 + 用户显式确认，且授权只在本次调用内有效（不持久化、不缓存）。
+        // IPC 契约已不再携带任何 options（allowElevatedChromeDecryption 死字段已从 shared 类型移除）；
+        // 这里仍防御性忽略任何残余载荷（void value），旧 renderer 进程或伪造请求都无法影响授权。
+        void value;
+        let allowElevatedChromeDecryption = false;
+        if (process.platform === "win32") {
+          const discovered = await discoverChromeProfile({ platform: process.platform });
+          const profilePath = discovered.success ? discovered.source.profilePath : undefined;
+          if (profilePath) {
+            const appBoundCookieRowsPresent = await hasAppBoundEncryptedCookies({
+              profilePath,
+              logger,
+            });
+            if (appBoundCookieRowsPresent === true) {
+              const userConfirmed = await confirmElevatedChromeDecryptionWithUser(
+                BrowserWindow.fromWebContents(event.sender),
+              );
+              allowElevatedChromeDecryption = resolveElevatedChromeDecryptionAuthorization({
+                platform: process.platform,
+                appBoundCookieRowsPresent,
+                userConfirmed,
+              });
+              logger.info("[browser-data] App-Bound 提权解密授权结果", {
+                userConfirmed,
+                authorized: allowElevatedChromeDecryption,
+              });
+            }
+          }
         }
-      }
-    }
-    return importChromeBrowserData({ allowElevatedChromeDecryption, logger });
-  });
-  ipcMain.handle(PlatformChannels.ClearEmbeddedBrowserData, (_event, mode: unknown) => {
-    if (mode !== "cache" && mode !== "all") {
-      return { success: false, error: "invalid_clear_mode" };
-    }
-    return clearEmbeddedBrowserData({ logger, mode });
-  });
+        return importChromeBrowserData({ allowElevatedChromeDecryption, logger });
+      },
+    ),
+  );
+  ipcMain.handle(
+    PlatformChannels.ClearEmbeddedBrowserData,
+    wrapIpcHandle(
+      deriveIpcSyncLabel(PlatformChannels.ClearEmbeddedBrowserData),
+      (_event, mode: unknown) => {
+        if (mode !== "cache" && mode !== "all") {
+          return { success: false, error: "invalid_clear_mode" };
+        }
+        return clearEmbeddedBrowserData({ logger, mode });
+      },
+    ),
+  );
 }

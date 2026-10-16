@@ -1536,6 +1536,13 @@ export class ProductProjection {
     const sourceKind = previousExecution?.sourceKind ?? descriptor?.sourceKind;
     if (sourceKind === undefined || sourceKind === "internal") return [];
     const blockReason = payload.blockReason ?? previousExecution?.blockReason;
+    // hook 被拒注记行（specs/plugin-hook-middleware.md 二 / 接线 W2）：refusalAnnotation
+    // 是 runner 结算点生成的 payload 运行时增补字段（MODS 裁决不改 contracts 类型），
+    // 这里经局部断言读取并原样透传（文案单源在 runner，投影不拼文案）；与 blockReason
+    // 同款单调保持——环节一旦出现过注记，后续同 runId 事件不把它抹掉。
+    const refusalAnnotation =
+      (payload as { refusalAnnotation?: unknown }).refusalAnnotation ??
+      previousExecution?.refusalAnnotation;
     const execution: HookExecutionProjection = {
       hookRunId: String(payload.hookRunId),
       hookIndex: payload.hookIndex,
@@ -1543,6 +1550,11 @@ export class ProductProjection {
       state,
       ...(outcome ? { outcome } : {}),
       ...(blockReason ? { blockReason } : {}),
+      // wire schema（hookExecutionProjectionSchema）要求 trim 后非空；空白值不进 row，
+      // 否则整帧 row 校验失败。非字符串（畸形增补）同样按缺席处理。
+      ...(typeof refusalAnnotation === "string" && refusalAnnotation.trim().length > 0
+        ? { refusalAnnotation }
+        : {}),
       startedAt,
       ...(endedAt !== undefined ? { endedAt } : {}),
       ...(durationMs !== undefined ? { durationMs } : {}),
@@ -2148,6 +2160,7 @@ export class ProductProjection {
       // 除了 draft 的离场（见 leaveDraftAfterControlOnlyTurn）。
       const deltas = [
         ...this.upsertTurnHeader(event, headerState, undefined, payload.historyRoundCount),
+        ...(payload.resultType === "success" ? this.closeShortCircuitedHookRows(event) : []),
         ...this.leaveDraftAfterControlOnlyTurn(
           payload.resultType === "success" ? "completedSuccess" : "completedInterrupted",
         ),
@@ -2193,6 +2206,8 @@ export class ProductProjection {
       // turn 终态一并收口在飞的 foreground tool row（收口不变量：被 profile
       // 过滤的 inputText 流必须被不可过滤的 row.upserted 蕴含，见 profiles.ts）。
       ...this.closeOpenToolRows(event, payload.resultType === "cancelled" ? "cancelled" : "error"),
+      // middleware 短路收口只在成功轮做（见 closeShortCircuitedHookRows 的理由）。
+      ...(payload.resultType === "success" ? this.closeShortCircuitedHookRows(event) : []),
       ...this.upsertTurnHeader(
         event,
         headerState,
@@ -2781,6 +2796,55 @@ export class ProductProjection {
         row.status === "pendingApproval" ||
         row.status === "running")
     );
+  }
+
+  /**
+   * middleware 短路的 hook invocation row 收口 + hookCount 精确化
+   * （specs/plugin-hook-middleware.md 一.6 / 接线 W1）。
+   *
+   * hookCount 是链入口的**预扫描值**（client-visible 参与环节数）；middleware 不调
+   * next 自答短路时，下游环节从未启动、不发任何事件，executions.length < hookCount
+   * 永久成立——row 停在 running 只能等 SessionResumed 的强制 failed 收口，把合法的
+   * 链收口误报成失败。成功收口的轮其前台链必然已走完（前台环节在轮内被 await），
+   * 因此「本轮 row 的全部已记录 execution 都到终态、但数量不足预扫描值」只可能是
+   * 短路：把 hookCount 精确化为实际发事件环节数，按既有终态裁决（failed 存在 →
+   * failed，否则 completed）收口。
+   *
+   * 边界纪律：
+   * - 只在 resultType === "success" 的轮末调用——cancelled/error 轮里「中断」与
+   *   「短路」在事件面不可区分，维持 SessionResumed 强制 failed 的既有 fail-closed
+   *   语义（把中断误标 completed 比多等一次 resume 更糟）；
+   * - 只收口本轮（turnIdOf(event) 的 product turn）的 row，不越轮清算历史 running row；
+   * - 后台（async）环节不受影响：其在飞 execution 是 running 态，谓词不满足；
+   *   晚到的 async 终态事件走既有 onHookRunLifecycle 重算（executions 已齐时照常收口）。
+   */
+  private closeShortCircuitedHookRows(event: SessionEvent): ConversationDelta[] {
+    // row 挂的是 product turnId（turnIdOf 映射），currentTurnId 是 runtime turnId——
+    // 归属比较必须走同一映射，否则 queue-drain 切轮后两者不同名。
+    const productTurnId = this.turnIdOf(event);
+    const deltas: ConversationDelta[] = [];
+    for (const row of this.snapshot.rows.window) {
+      if (row.kind !== "hookInvocation" || row.state !== "running") continue;
+      if (row.turnId !== productTurnId) continue;
+      if (row.executions.length === 0 || row.executions.length >= row.hookCount) continue;
+      if (row.executions.some((execution) => execution.state === "running")) continue;
+      const endedAt = Math.max(
+        ...row.executions.map((execution) => execution.endedAt ?? execution.startedAt),
+      );
+      deltas.push({
+        op: "row.upserted",
+        row: {
+          ...row,
+          hookCount: row.executions.length,
+          state: row.executions.some((execution) => execution.state === "failed")
+            ? "failed"
+            : "completed",
+          endedAt,
+          durationMs: Math.max(0, endedAt - row.startedAt),
+        },
+      });
+    }
+    return deltas;
   }
 
   private updateToolIndexesAfterDeltas(deltas: readonly ConversationDelta[]): void {

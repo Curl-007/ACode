@@ -1,6 +1,7 @@
 import { execFile as execFileCallback } from "node:child_process";
 import { promisify } from "node:util";
 import type { EnvInfo } from "@acode/contracts";
+import { getCliGitInvocationEnv } from "@acode/shared";
 
 const DEFAULT_GIT_COMMAND_TIMEOUT_MS = 3000;
 const DEFAULT_COMMAND_MAX_BUFFER_BYTES = 1024 * 1024;
@@ -126,6 +127,9 @@ async function execGitNoThrow(
   try {
     const result = await execFile(GIT_COMMAND, args, {
       cwd: workingDirectory,
+      // git 调用硬化漏斗（specs/git-invocation-hardening.md 消费点 #1）：
+      // 防弹窗挂死/hooks 停用/协议白名单/防串仓，参数组装语义不动。
+      env: getCliGitInvocationEnv(),
       encoding: "utf8",
       maxBuffer: DEFAULT_COMMAND_MAX_BUFFER_BYTES,
       timeout: DEFAULT_GIT_COMMAND_TIMEOUT_MS,

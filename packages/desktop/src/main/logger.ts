@@ -2,6 +2,7 @@ import { mkdirSync, appendFileSync } from "node:fs";
 import { join } from "node:path";
 import { formatTimestamp } from "@acode/shared";
 import { cleanupExpiredLogFiles, LOG_RETENTION_DAYS } from "./logRetention.js";
+import { getMainLogRedactor } from "./logPrivacyIdentity.js";
 import { getAppConfigDir, maybeThrowInjectedFsFault } from "@acode/services/node";
 
 function getLogDir() {
@@ -74,14 +75,19 @@ function write(level: LogLevel, source: string, ...args: unknown[]) {
   const now = new Date();
   const ts = formatTimestamp(now);
   const pid = process.pid;
-  const message = args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" ");
+  // main 进程日志的单一脱敏漏斗（specs/log-privacy-redaction.md desktop R1-R2）：
+  // main 直调、renderer（fromRenderer）、host 进程（hostLogRelay）全部汇入这里。
+  // 文件行与 console 行使用同一份脱敏后文本；管线任何异常 → 该行 <withheld>（fail-closed）。
+  const redactor = getMainLogRedactor();
+  const redactedArgs = args.map((arg) => redactor.redactArgValue(arg));
+  const message = redactedArgs.join(" ");
   const line = `[${ts}] [${level}] [pid:${pid}] [${source}] ${message}\n`;
   const logDir = getLogDir();
   mkdirSync(logDir, { recursive: true });
   const filePath = join(logDir, `${formatDate(now)}.log`);
 
   // 同时保留 console 输出，方便开发调试；console 也加时间戳和 PID，与文件格式对齐
-  safeConsoleWrite(level, `[${ts}] [pid:${pid}] [${source}]`, ...args);
+  safeConsoleWrite(level, `[${ts}] [pid:${pid}] [${source}]`, ...redactedArgs);
 
   try {
     maybeThrowInjectedFsFault({ operation: "appendFile", path: filePath });

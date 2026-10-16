@@ -3324,6 +3324,10 @@ function toACodeMode(mode: ACodeTaskMode | undefined): ACodeSessionMode | undefi
       return "edit";
     case "yolo":
       return "yolo";
+    case "dontAsk":
+      // P1 dontAsk 档位必须显式映射：漏掉会走 default → 调用方 ?? build，把
+      // 「拒绝代替询问」静默降级成「变更前确认」（与上面 autoEdit 的历史坑同款）。
+      return "dontAsk";
     case "auto":
       return "auto";
     case "build":

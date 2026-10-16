@@ -19,6 +19,7 @@ import {
 import type { IStorageService } from "@acode/services";
 import { logger } from "./logger.js";
 import { createStorageScanWorkerRunner } from "./storageScanWorkerClient.js";
+import { deriveIpcSyncLabel, wrapIpcHandle } from "./ipcSyncTiming.js";
 
 let service: IStorageService | null = null;
 let latestJobId: string | null = null;
@@ -65,32 +66,56 @@ function isPathInsideStorageRoots(absolutePath: string, roots: StorageRootSpec[]
 }
 
 export function registerResourceManagerStorageIpc(): void {
-  ipcMain.handle(PlatformChannels.StorageStartScan, async (event) => {
-    bindSubscriber(event);
-    const result = await getService().startScan();
-    latestJobId = result.jobId;
-    return result;
-  });
-  ipcMain.handle(PlatformChannels.StorageCancelScan, async (_event, jobId: string) => {
-    if (!service) return;
-    await service.cancelScan(jobId);
-    if (latestJobId === jobId) latestJobId = null;
-  });
-  ipcMain.handle(PlatformChannels.StorageGetSnapshot, async () =>
-    service ? service.getSnapshot() : null,
+  ipcMain.handle(
+    PlatformChannels.StorageStartScan,
+    wrapIpcHandle(deriveIpcSyncLabel(PlatformChannels.StorageStartScan), async (event) => {
+      bindSubscriber(event);
+      const result = await getService().startScan();
+      latestJobId = result.jobId;
+      return result;
+    }),
   );
-  ipcMain.handle(PlatformChannels.StorageClean, async (event, request: StorageCleanRequest) => {
-    bindSubscriber(event);
-    return getService().clean(request);
-  });
-  ipcMain.handle(PlatformChannels.StorageRevealPath, async (_event, absolutePath: string) => {
-    const roots = await rootsResolver.resolveRoots();
-    if (typeof absolutePath !== "string" || !isPathInsideStorageRoots(absolutePath, roots)) {
-      logger.warn("[resource-manager] refused to reveal path outside storage roots", {
-        absolutePath,
-      });
-      return;
-    }
-    shell.showItemInFolder(absolutePath);
-  });
+  ipcMain.handle(
+    PlatformChannels.StorageCancelScan,
+    wrapIpcHandle(
+      deriveIpcSyncLabel(PlatformChannels.StorageCancelScan),
+      async (_event, jobId: string) => {
+        if (!service) return;
+        await service.cancelScan(jobId);
+        if (latestJobId === jobId) latestJobId = null;
+      },
+    ),
+  );
+  ipcMain.handle(
+    PlatformChannels.StorageGetSnapshot,
+    wrapIpcHandle(deriveIpcSyncLabel(PlatformChannels.StorageGetSnapshot), async () =>
+      service ? service.getSnapshot() : null,
+    ),
+  );
+  ipcMain.handle(
+    PlatformChannels.StorageClean,
+    wrapIpcHandle(
+      deriveIpcSyncLabel(PlatformChannels.StorageClean),
+      async (event, request: StorageCleanRequest) => {
+        bindSubscriber(event);
+        return getService().clean(request);
+      },
+    ),
+  );
+  ipcMain.handle(
+    PlatformChannels.StorageRevealPath,
+    wrapIpcHandle(
+      deriveIpcSyncLabel(PlatformChannels.StorageRevealPath),
+      async (_event, absolutePath: string) => {
+        const roots = await rootsResolver.resolveRoots();
+        if (typeof absolutePath !== "string" || !isPathInsideStorageRoots(absolutePath, roots)) {
+          logger.warn("[resource-manager] refused to reveal path outside storage roots", {
+            absolutePath,
+          });
+          return;
+        }
+        shell.showItemInFolder(absolutePath);
+      },
+    ),
+  );
 }

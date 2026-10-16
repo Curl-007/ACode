@@ -59,6 +59,18 @@ import {
 import { EXPLORE_AGENT_ALLOWED_TOOLS } from "./explore-tools.js";
 import { formatLocalAgentTaskNotification } from "./completion-notification.js";
 import { wrapSubagentHandback } from "./handback-trust.js";
+import {
+  createObserverRunAttachment,
+  createObserverSpawnHook,
+  type SpawnObserverAgent,
+} from "./observer.js";
+import {
+  buildSubagentWorktreeIsolationNote,
+  enterSubagentWorktreeIsolation,
+  releaseSubagentWorktreeIsolation,
+  type SubagentWorktreeDeps,
+  type SubagentWorktreeIsolation,
+} from "./subagent-worktree.js";
 import { filterSubagentChildToolNames } from "./tool-policy.js";
 import {
   subagentEdgeCommandFromEvent,
@@ -200,6 +212,17 @@ export interface ExploreSubagentPortOptions {
    * 透传后，本标志让 background 拒绝在任意深度生效。
    */
   offPeakInherited?: boolean;
+  /**
+   * 声明式子代理 worktree 隔离（specs/subagent-declarative-keys.md R2）的测试注入面；
+   * 缺席 = 进程级 manager + env 兜底 ledger（生产装配零改动）。
+   */
+  subagentWorktreeDeps?: SubagentWorktreeDeps;
+  /**
+   * 一次性会话前台策略位（subagent-background-tristate.md R3 / declarative-keys spec R3）：
+   * "foreground" 时跳过观察者孵化（-p 下背景代理随进程消亡，背景语义不成立）。
+   * 缺省 honor 照常孵化；装配点透传属接线项（declarative-keys spec 接线需求 4）。
+   */
+  backgroundPolicy?: "honor" | "foreground";
   // background completion 必须同步写入父 runtime command queue；
   // 返回 undefined 可让 TypeScript 拒绝 async enqueue，避免 fake-notified。
   enqueueParentTaskNotification?: EnqueueParentTaskNotification;
@@ -240,6 +263,110 @@ export function createExploreSubagentPort(options: ExploreSubagentPortOptions): 
     });
   };
   const autoBackgroundMs = normalizeAutoBackgroundMs(options.autoBackgroundMs);
+
+  // 背景 start 的单一实现（specs/subagent-declarative-keys.md R3）：port.start 与
+  // 观察者孵化共用——观察者就是普通背景子代理（registry/metadata/完成通知/SendMessage
+  // 全套既有机制），不新造任务形态。executionOptions 供观察者孵化携带 suppressObserver
+  // （防递归）与测试注入的 spawnObserver 覆盖位。
+  const startBackgroundTask = async (
+    rawRequest: SubagentStartRequest,
+    startOptions: SubagentStartOptions | undefined,
+    executionOptions: SubagentExecutionOptions,
+  ): Promise<AgentBackgroundedOutput> => {
+    const derivationProfiles = await resolveDerivationProfiles(rawRequest.agentType);
+    const { profile, request } = resolveAgentProfileForRequest(derivationProfiles, rawRequest);
+    const lifecycle = createSubagentLifecycle(options, request, profile);
+    const startedAt = new Date(lifecycle.startedAt);
+    const output = createAgentBackgroundedOutput(request, lifecycle);
+
+    registry.register(
+      createRuntimeTaskSnapshot({
+        isBackgrounded: true,
+        lifecycle,
+        request,
+        startedAt,
+        status: "running",
+      }),
+    );
+    try {
+      await writeAgentMetadataFile(lifecycle, request, "running");
+    } catch (error) {
+      // setup 失败时移除 registry 记录，避免 fake running background task。
+      registry.remove(lifecycle.agentId);
+      throw wrapStartupMetadataWriteFailure(error, lifecycle, request);
+    }
+
+    const taskAbort = createSubagentTaskAbortController(abortControllers, lifecycle.agentId);
+    if (startOptions?.signal?.aborted) {
+      taskAbort.abort(startOptions.signal.reason);
+    }
+    const readyGate = createSubagentSessionReadyGate();
+    void runBackgroundAgent(
+      options,
+      request,
+      lifecycle,
+      registry,
+      {
+        signal: taskAbort.signal,
+        ...(startOptions?.model ? { model: startOptions.model } : {}),
+      },
+      {
+        ...executionOptions,
+        spawnObserver: executionOptions.spawnObserver ?? spawnObserverAgent,
+        onSessionReady: async () => {
+          await emitSubagentEvent(
+            options,
+            SessionEventType.SubagentSpawned,
+            request,
+            lifecycle.runTraceContext,
+            {
+              agentId: lifecycle.agentId,
+              agentType: request.agentType,
+              background: true,
+              childSessionId: lifecycle.childSessionId,
+              description: request.description,
+              prompt: request.prompt,
+              parentToolCallId: request.parentToolCallId,
+              status: "running",
+              allowedTools: [...resolveAllowedTools(profile, options)],
+              outputFile: lifecycle.outputFile,
+              model: profile.modelSelection
+                ? `${profile.modelSelection.providerId}/${profile.modelSelection.modelId}`
+                : undefined,
+            },
+          );
+          readyGate.resolve();
+        },
+        onSessionStartFailed: readyGate.reject,
+      },
+      taskAbort.dispose,
+    );
+    try {
+      await readyGate.promise;
+    } catch (error) {
+      taskAbort.abort(error);
+      registry.remove(lifecycle.agentId);
+      throw error;
+    }
+
+    options.logger?.info("Explore subagent background task started", {
+      ...traceContextToLogContext(lifecycle.runTraceContext),
+      agentId: lifecycle.agentId,
+      agentType: request.agentType,
+      event: "subagent.background.started",
+      module: "core.subagent",
+      parentToolCallId: request.parentToolCallId,
+      status: "started",
+    });
+    return output;
+  };
+  // 观察者孵化钩子（declarative-keys spec R3）：失败只 warn 返回 undefined（辅助面），
+  // 绝不影响本体派发；钩子经 executionOptions.spawnObserver 下发到单一执行原语。
+  const spawnObserverAgent = createObserverSpawnHook({
+    ...(options.logger ? { logger: options.logger } : {}),
+    startBackground: (request, startOpts, execOpts) =>
+      startBackgroundTask(request, startOpts, execOpts),
+  });
 
   const port: SubagentPort & { start: NonNullable<SubagentPort["start"]> } = {
     async launch(
@@ -343,6 +470,7 @@ export function createExploreSubagentPort(options: ExploreSubagentPortOptions): 
           reportActivity: activityWatchdog.reportActivity,
         },
         {
+          spawnObserver: spawnObserverAgent,
           onSessionReady: async () => {
             await emitSubagentEvent(
               options,
@@ -553,90 +681,9 @@ export function createExploreSubagentPort(options: ExploreSubagentPortOptions): 
       rawRequest: SubagentStartRequest,
       startOptions?: SubagentStartOptions,
     ): Promise<AgentBackgroundedOutput> {
-      const derivationProfiles = await resolveDerivationProfiles(rawRequest.agentType);
-      const { profile, request } = resolveAgentProfileForRequest(derivationProfiles, rawRequest);
-      const lifecycle = createSubagentLifecycle(options, request, profile);
-      const startedAt = new Date(lifecycle.startedAt);
-      const output = createAgentBackgroundedOutput(request, lifecycle);
-
-      registry.register(
-        createRuntimeTaskSnapshot({
-          isBackgrounded: true,
-          lifecycle,
-          request,
-          startedAt,
-          status: "running",
-        }),
-      );
-      try {
-        await writeAgentMetadataFile(lifecycle, request, "running");
-      } catch (error) {
-        // setup 失败时移除 registry 记录，避免 fake running background task。
-        registry.remove(lifecycle.agentId);
-        throw wrapStartupMetadataWriteFailure(error, lifecycle, request);
-      }
-
-      const taskAbort = createSubagentTaskAbortController(abortControllers, lifecycle.agentId);
-      if (startOptions?.signal?.aborted) {
-        taskAbort.abort(startOptions.signal.reason);
-      }
-      const readyGate = createSubagentSessionReadyGate();
-      void runBackgroundAgent(
-        options,
-        request,
-        lifecycle,
-        registry,
-        {
-          signal: taskAbort.signal,
-          ...(startOptions?.model ? { model: startOptions.model } : {}),
-        },
-        {
-          onSessionReady: async () => {
-            await emitSubagentEvent(
-              options,
-              SessionEventType.SubagentSpawned,
-              request,
-              lifecycle.runTraceContext,
-              {
-                agentId: lifecycle.agentId,
-                agentType: request.agentType,
-                background: true,
-                childSessionId: lifecycle.childSessionId,
-                description: request.description,
-                prompt: request.prompt,
-                parentToolCallId: request.parentToolCallId,
-                status: "running",
-                allowedTools: [...resolveAllowedTools(profile, options)],
-                outputFile: lifecycle.outputFile,
-                model: profile.modelSelection
-                  ? `${profile.modelSelection.providerId}/${profile.modelSelection.modelId}`
-                  : undefined,
-              },
-            );
-            readyGate.resolve();
-          },
-          onSessionStartFailed: readyGate.reject,
-        },
-        taskAbort.dispose,
-      );
-      try {
-        await readyGate.promise;
-      } catch (error) {
-        taskAbort.abort(error);
-        registry.remove(lifecycle.agentId);
-        throw error;
-      }
-
-      options.logger?.info("Explore subagent background task started", {
-        ...traceContextToLogContext(lifecycle.runTraceContext),
-        agentId: lifecycle.agentId,
-        agentType: request.agentType,
-        event: "subagent.background.started",
-        module: "core.subagent",
-        parentToolCallId: request.parentToolCallId,
-        status: "started",
-      });
-      return output;
+      // 单一实现提取（declarative-keys spec R3）：port.start 行为逐字节不变，
+      // 观察者孵化复用同一函数（携带 suppressObserver 防递归）。
+      return startBackgroundTask(rawRequest, startOptions, {});
     },
 
     async getTask(taskId: string): Promise<SubagentTaskSnapshot | undefined> {
@@ -692,6 +739,7 @@ export function createExploreSubagentPort(options: ExploreSubagentPortOptions): 
         abortControllers,
         request,
         sendOptions,
+        spawnObserverAgent,
       );
     },
   };
@@ -709,6 +757,12 @@ interface SubagentLifecycle {
   startedAt: number;
   runTraceContext: TraceContext;
   childTraceContext: TraceContext;
+  /**
+   * 声明式 worktree 隔离事实（specs/subagent-declarative-keys.md R2）：enter 成功后
+   * 写入；后续所有 metadata 写入（running 重写与 completed/failed 终态）都携带它——
+   * 父侧/用户从 metadata.json 读到分支名（隔离 child 的持久材料位置）。
+   */
+  worktreeIsolation?: { branch: string; path: string };
 }
 
 type AgentProfileResolution =
@@ -1022,6 +1076,7 @@ async function sendMessageToLocalAgent(
   abortControllers: Map<string, AbortController>,
   request: SubagentSendMessageRequest,
   sendOptions?: SubagentSendMessageOptions,
+  spawnObserver?: SpawnObserverAgent,
 ): Promise<SubagentSendMessageResult> {
   if (sendOptions?.signal?.aborted) {
     return createSendMessageFailure(request, `SendMessage was aborted for ${request.to}.`);
@@ -1048,6 +1103,7 @@ async function sendMessageToLocalAgent(
     task,
     request,
     message,
+    spawnObserver,
   );
 }
 
@@ -1070,6 +1126,7 @@ async function resumeTerminalAgentInBackground(
   task: RuntimeTaskSnapshot,
   request: SubagentSendMessageRequest,
   message: RuntimeTaskPendingMessage,
+  spawnObserver?: SpawnObserverAgent,
 ): Promise<SubagentSendMessageResult> {
   const profile = profiles.find((candidate) => candidate.name === task.agentType);
   if (!profile) {
@@ -1130,6 +1187,9 @@ async function resumeTerminalAgentInBackground(
     { signal: taskAbort.signal },
     {
       resumeFromStore: true,
+      // resume 也是一次「运行」（declarative-keys spec R3）：声明了观察者的代理
+      // 复活时同样孵化（每轮 run 一个观察者，settle digest 后自行收口）。
+      ...(spawnObserver ? { spawnObserver } : {}),
       onSessionReady: async () => {
         await emitSubagentEvent(
           options,
@@ -1238,115 +1298,191 @@ async function runAgentToCompletion(
     await executionOptions.onSessionReady?.();
     sessionReady = true;
   };
-  // 编排方案 Phase 4 第二批（specs/subagent-nesting-budget.md R4）：树级预算准入闸。
-  // 单一执行原语 = 单一准入点（前台 run / 后台 start / resume 三路全经本函数）；
-  // 溢出是结构化拒绝不静默截断——Agent 可并行派发（Promise.all 论证同 dwf：每个被拒
-  // 的派发都必须拿到结果）。释放走 emitSubagentEvent 的 settle 单点（终态事件是
-  // run 生命周期的唯一出口，八个发射点全经它）。
-  if (options.treeBudgetRootKey !== undefined) {
-    const claim = claimTreeBudgetSlot({
-      agentId: lifecycle.agentId,
-      rootKey: options.treeBudgetRootKey,
-    });
-    if (!claim.ok) {
-      throw createCoreError(
-        CoreErrorType.ToolExecutionFailed,
-        `Agent tree budget exceeded (${claim.reason}: ${claim.current}/${claim.cap} for this session tree). Wait for in-flight agents to settle, dispatch fewer agents at once, or handle this step directly.`,
-        {
-          context: {
-            agentType: request.agentType,
-            code: AgentErrorCode.TREE_BUDGET_EXCEEDED,
-            // reason 收全局闭集 token；claim.reason（agents/tokens/live）是树预算的
-            // 局部拒绝维度，移到 budgetReason，不与全局词表混键
-            // （specs/error-taxonomy-injection-defense.md R2.1）。
-            reason: AgentLaunchFailureReason.TreeBudgetExceeded,
-            budgetReason: claim.reason,
-            parentToolCallId: request.parentToolCallId,
-          },
-          recoverable: true,
-        },
-      );
-    }
-  }
-  // 编排方案 Phase 5 P2（specs/agent-peer-tree-addressing.md R5）：整树寻址登记与
-  // 预算准入同点配对——单一执行原语 = 单一登记点（前台/后台/resume 三路全经）；
-  // 放在 claim 之后，溢出被拒的派发不留表项。注销在 emitSubagentEvent settle 单点。
-  if (options.treeAddressingRootKey !== undefined) {
-    registerTreeAddress({
-      entry: {
-        agentId: lifecycle.agentId,
-        childSessionId: lifecycle.childSessionId,
-        registry,
-      },
-      rootKey: options.treeAddressingRootKey,
-    });
-  }
-  // 编排方案 Phase 3（specs/agent-peer-messaging.md R0/R1）：flag 开启时的 peer 窄面——
-  // 以父 registry + 本 run 身份构造，child 只拿到 listPeers/sendMessage 两个能力。
-  const peerMessagingPort =
-    options.peerMessaging?.enabled === true
-      ? createPeerMessagingPort({
-          agentId: lifecycle.agentId,
-          agentType: request.agentType,
-          ...(options.logger ? { logger: options.logger } : {}),
-          // 跨进程 P1（cross-process spec R2）：mailbox 接缝在场才开 fallback 分支；
-          // senderSessionId = 本 child 的 lifecycle 事实，构造期铸造。
-          ...(options.peerMailbox
-            ? {
-                mailbox: {
-                  senderSessionId: lifecycle.childSessionId,
-                  seam: options.peerMailbox,
-                },
-              }
-            : {}),
-          // 整树寻址 P2（tree-addressing spec R1/R2）：同树跨层 live 目标经树表投递，
-          // 查询顺序本地 registry → 树表 → mailbox → 拒绝（即时性递减）。
-          ...(options.treeAddressingRootKey !== undefined
-            ? { treeAddressing: { rootKey: options.treeAddressingRootKey } }
-            : {}),
-          ...(options.persistPeerMirror ? { mirror: options.persistPeerMirror } : {}),
-          parentSessionId: request.sessionId,
-          registry,
-        })
-      : undefined;
-  const childResult = await options.runExploreAgent(
-    {
+  // 声明式 worktree 隔离（specs/subagent-declarative-keys.md R2）：enter 放在树预算/
+  // 寻址认领**之前**——拒绝时尚无预算认领、无寻址登记，emitSubagentEvent 的 settle
+  // 单点保持唯一释放面（subagent-tree-budget 测试钉住的接线不变量）；隔离已建立后
+  // 的早失败（如预算溢出）由下方 finally 回收 worktree。拒绝 = fail-loud 派发拒绝，
+  // 绝不静默降级回共享 cwd。resume 复用同一 childSessionId → ledger 命中既有绑定走
+  // reuse/reattach（分支 tip 材料不丢）。
+  let isolation: SubagentWorktreeIsolation | undefined;
+  if (lifecycle.profile.isolation === "worktree") {
+    isolation = await enterSubagentWorktreeIsolation({
       agentId: lifecycle.agentId,
       agentType: request.agentType,
-      allowedTools: resolveAllowedTools(lifecycle.profile, options),
-      // 显式 background Agent 的 child tool 会被镜像到父会话；
-      // 过去丢失这个来源会让父 turn 把仍在运行的 child tool 误当前台孤儿收口。这里必须
-      // 保留 getter，foreground 后续转后台时，每条 mirror event 才会读取 registry 当前值，
-      // 而不是继续携带 child 启动时的 false 快照。
-      get background() {
-        return registry.get(lifecycle.agentId)?.isBackgrounded === true;
+      childSessionId: lifecycle.childSessionId,
+      repoDir: request.workingDirectory,
+      ...(options.subagentWorktreeDeps ? { deps: options.subagentWorktreeDeps } : {}),
+    });
+  }
+  const effectiveWorkingDirectory = isolation ? isolation.handle.path : request.workingDirectory;
+  if (isolation) {
+    // metadata 诚实（spec R2）：隔离事实挂 lifecycle——本函数内的 running 重写与其后
+    // 全部终态写入（completed/failed）都自动携带 cwd=worktree + 分支事实；重写失败
+    // 只 warn（启动路径 metadata 的 fail-loud 语义归 run/start，不改）。
+    lifecycle.worktreeIsolation = {
+      branch: isolation.handle.branch,
+      path: isolation.handle.path,
+    };
+    await writeAgentMetadataFile(lifecycle, request, "running").catch((error: unknown) => {
+      options.logger?.warn("Failed to rewrite subagent metadata for worktree isolation", {
+        agentId: lifecycle.agentId,
+        errorMessage: error instanceof Error ? error.message : String(error),
+        event: "subagent.isolation.metadata_failed",
+        module: "core.subagent",
+      });
+    });
+  }
+  // 声明式背景观察者（spec R3）：plan/孵化/settle digest 编排在 observer.ts 的
+  // attachment 内；创建即解析跳过面（warn 留痕），孵化推迟到预算准入之后——
+  // 被预算拒绝的派发不留观察者。
+  const observer = createObserverRunAttachment({
+    ...(options.backgroundPolicy === undefined
+      ? {}
+      : { backgroundPolicy: options.backgroundPolicy }),
+    lifecycle,
+    ...(options.logger ? { logger: options.logger } : {}),
+    offPeakInherited: options.offPeakInherited === true,
+    profile: lifecycle.profile,
+    registry,
+    request,
+    ...(runOptions?.signal === undefined ? {} : { signal: runOptions.signal }),
+    ...(executionOptions.spawnObserver ? { spawnObserver: executionOptions.spawnObserver } : {}),
+    suppressed: executionOptions.suppressObserver === true,
+  });
+  let childResult: ExploreSubagentRuntimeResult;
+  try {
+    // 编排方案 Phase 4 第二批（specs/subagent-nesting-budget.md R4）：树级预算准入闸。
+    // 单一执行原语 = 单一准入点（前台 run / 后台 start / resume 三路全经本函数）；
+    // 溢出是结构化拒绝不静默截断——Agent 可并行派发（Promise.all 论证同 dwf：每个被拒
+    // 的派发都必须拿到结果）。释放走 emitSubagentEvent 的 settle 单点（终态事件是
+    // run 生命周期的唯一出口，八个发射点全经它）。
+    if (options.treeBudgetRootKey !== undefined) {
+      const claim = claimTreeBudgetSlot({
+        agentId: lifecycle.agentId,
+        rootKey: options.treeBudgetRootKey,
+      });
+      if (!claim.ok) {
+        throw createCoreError(
+          CoreErrorType.ToolExecutionFailed,
+          `Agent tree budget exceeded (${claim.reason}: ${claim.current}/${claim.cap} for this session tree). Wait for in-flight agents to settle, dispatch fewer agents at once, or handle this step directly.`,
+          {
+            context: {
+              agentType: request.agentType,
+              code: AgentErrorCode.TREE_BUDGET_EXCEEDED,
+              // reason 收全局闭集 token；claim.reason（agents/tokens/live）是树预算的
+              // 局部拒绝维度，移到 budgetReason，不与全局词表混键
+              // （specs/error-taxonomy-injection-defense.md R2.1）。
+              reason: AgentLaunchFailureReason.TreeBudgetExceeded,
+              budgetReason: claim.reason,
+              parentToolCallId: request.parentToolCallId,
+            },
+            recoverable: true,
+          },
+        );
+      }
+    }
+    // 编排方案 Phase 5 P2（specs/agent-peer-tree-addressing.md R5）：整树寻址登记与
+    // 预算准入同点配对——单一执行原语 = 单一登记点（前台/后台/resume 三路全经）；
+    // 放在 claim 之后，溢出被拒的派发不留表项。注销在 emitSubagentEvent settle 单点。
+    if (options.treeAddressingRootKey !== undefined) {
+      registerTreeAddress({
+        entry: {
+          agentId: lifecycle.agentId,
+          childSessionId: lifecycle.childSessionId,
+          registry,
+        },
+        rootKey: options.treeAddressingRootKey,
+      });
+    }
+    observer.start();
+    // 编排方案 Phase 3（specs/agent-peer-messaging.md R0/R1）：flag 开启时的 peer 窄面——
+    // 以父 registry + 本 run 身份构造，child 只拿到 listPeers/sendMessage 两个能力。
+    const peerMessagingPort =
+      options.peerMessaging?.enabled === true
+        ? createPeerMessagingPort({
+            agentId: lifecycle.agentId,
+            agentType: request.agentType,
+            ...(options.logger ? { logger: options.logger } : {}),
+            // 跨进程 P1（cross-process spec R2）：mailbox 接缝在场才开 fallback 分支；
+            // senderSessionId = 本 child 的 lifecycle 事实，构造期铸造。
+            ...(options.peerMailbox
+              ? {
+                  mailbox: {
+                    senderSessionId: lifecycle.childSessionId,
+                    seam: options.peerMailbox,
+                  },
+                }
+              : {}),
+            // 整树寻址 P2（tree-addressing spec R1/R2）：同树跨层 live 目标经树表投递，
+            // 查询顺序本地 registry → 树表 → mailbox → 拒绝（即时性递减）。
+            ...(options.treeAddressingRootKey !== undefined
+              ? { treeAddressing: { rootKey: options.treeAddressingRootKey } }
+              : {}),
+            ...(options.persistPeerMirror ? { mirror: options.persistPeerMirror } : {}),
+            parentSessionId: request.sessionId,
+            registry,
+          })
+        : undefined;
+    childResult = await options.runExploreAgent(
+      {
+        agentId: lifecycle.agentId,
+        agentType: request.agentType,
+        allowedTools: resolveAllowedTools(lifecycle.profile, options),
+        // 显式 background Agent 的 child tool 会被镜像到父会话；
+        // 过去丢失这个来源会让父 turn 把仍在运行的 child tool 误当前台孤儿收口。这里必须
+        // 保留 getter，foreground 后续转后台时，每条 mirror event 才会读取 registry 当前值，
+        // 而不是继续携带 child 启动时的 false 快照。
+        get background() {
+          return registry.get(lifecycle.agentId)?.isBackgrounded === true;
+        },
+        disallowedTools: lifecycle.profile.disallowedTools,
+        sessionId: lifecycle.childSessionId,
+        description: request.description,
+        onSessionReady: notifySessionReady,
+        permissionMode: lifecycle.profile.permissionMode,
+        prompt: request.prompt,
+        profile: lifecycle.profile,
+        registerMessageSink: createMessageSinkRegistration(options, lifecycle, registry),
+        drainQueuedMessages: () => {
+          // 竞态兜底（subagent-pending-message-drain.md R1/R3）：注册 flush 输掉竞态后
+          // 回队的消息在 turn 激活点补投。drainMessages 原子取批——与注册 flush 并发
+          // 不会双投递；终态任务不 drain（resume 路径自会重注册 sink 并 flush）。
+          const task = registry.get(lifecycle.agentId);
+          if (!task || !task.messageSink || isTerminalRuntimeTask(task)) return;
+          void flushPendingMessages(options, lifecycle, registry, task.messageSink);
+        },
+        ...(peerMessagingPort ? { peerMessagingPort } : {}),
+        reportActivity: monitorOptions.reportActivity,
+        resumeFromStore: executionOptions.resumeFromStore,
+        // 隔离 child 必须知道自己跑在临时 worktree 里以及 settle 后的回收语义
+        // （spec R2）：追加自撰英文说明段，profile prompt 原文不动。
+        systemPrompt: isolation
+          ? `${lifecycle.profile.systemPrompt}\n\n${buildSubagentWorktreeIsolationNote(isolation.handle.branch, isolation.handle.path)}`
+          : lifecycle.profile.systemPrompt,
+        workingDirectory: effectiveWorkingDirectory,
+        workspaceRoot: request.workspaceRoot,
+        traceContext: lifecycle.childTraceContext,
       },
-      disallowedTools: lifecycle.profile.disallowedTools,
-      sessionId: lifecycle.childSessionId,
-      description: request.description,
-      onSessionReady: notifySessionReady,
-      permissionMode: lifecycle.profile.permissionMode,
-      prompt: request.prompt,
-      profile: lifecycle.profile,
-      registerMessageSink: createMessageSinkRegistration(options, lifecycle, registry),
-      drainQueuedMessages: () => {
-        // 竞态兜底（subagent-pending-message-drain.md R1/R3）：注册 flush 输掉竞态后
-        // 回队的消息在 turn 激活点补投。drainMessages 原子取批——与注册 flush 并发
-        // 不会双投递；终态任务不 drain（resume 路径自会重注册 sink 并 flush）。
-        const task = registry.get(lifecycle.agentId);
-        if (!task || !task.messageSink || isTerminalRuntimeTask(task)) return;
-        void flushPendingMessages(options, lifecycle, registry, task.messageSink);
-      },
-      ...(peerMessagingPort ? { peerMessagingPort } : {}),
-      reportActivity: monitorOptions.reportActivity,
-      resumeFromStore: executionOptions.resumeFromStore,
-      systemPrompt: lifecycle.profile.systemPrompt,
-      workingDirectory: request.workingDirectory,
-      workspaceRoot: request.workspaceRoot,
-      traceContext: lifecycle.childTraceContext,
-    },
-    runOptions,
-  );
+      runOptions,
+    );
+  } catch (error) {
+    // 失败路径同走观察者 settle digest（spec R3）；隔离回收在 finally 同点。
+    observer.settle({
+      errorMessage: error instanceof Error ? error.message : String(error),
+      outputFile: lifecycle.outputFile,
+      status: "failed",
+      totalDurationMs: Date.now() - lifecycle.startedAt,
+    });
+    throw error;
+  } finally {
+    if (isolation) {
+      await releaseSubagentWorktreeIsolation(isolation, {
+        agentId: lifecycle.agentId,
+        agentType: request.agentType,
+        ...(options.logger ? { logger: options.logger } : {}),
+      });
+    }
+  }
   // 测试桩和旧注入实现可能尚未主动调用 readiness hook；真实 AgentRuntime 会在
   // persist 后调用。回落只保证兼容，不改变生产链路的 persist-before-spawn 顺序。
   await notifySessionReady();
@@ -1376,6 +1512,16 @@ async function runAgentToCompletion(
     ...(totalTokens === undefined ? {} : { totalTokens }),
     ...(usage === undefined ? {} : { usage }),
   };
+
+  // 观察者 final digest（spec R3）：成功路径的 settle 单点；fire-and-forget，
+  // 不阻塞本体收口（失败路径在 catch 内同点投递）。
+  observer.settle({
+    outputFile: lifecycle.outputFile,
+    status: "completed",
+    totalDurationMs,
+    totalToolUseCount,
+    ...(totalTokens === undefined ? {} : { totalTokens }),
+  });
 
   return { events: childResult.events, output };
 }
@@ -1563,6 +1709,10 @@ interface SubagentExecutionOptions {
   resumeFromStore?: boolean;
   onSessionReady?: () => Promise<void>;
   onSessionStartFailed?: (error: unknown) => void;
+  /** 观察者孵化钩子（declarative-keys spec R3）：port 闭包铸造；缺席 = 现状零变化。 */
+  spawnObserver?: SpawnObserverAgent;
+  /** 防递归：观察者自身的 run 不再孵化观察者（结构性保证，spec R3）。 */
+  suppressObserver?: boolean;
 }
 
 function createSubagentSessionReadyGate(): {
@@ -2267,7 +2417,9 @@ async function writeAgentMetadataFile(
         agentId: lifecycle.agentId,
         childSessionId: lifecycle.childSessionId,
         createdAt: new Date(lifecycle.startedAt).toISOString(),
-        cwd: request.workingDirectory,
+        // 隔离 child 的 cwd 反映真实执行目录（worktree），并携带分支事实（R2 metadata
+        // 诚实）；终态重写（completed/failed）同样经过本函数，事实不随 run 结束丢失。
+        cwd: lifecycle.worktreeIsolation?.path ?? request.workingDirectory,
         description: request.description,
         metadataFile: lifecycle.metadataFile,
         outputFile: lifecycle.outputFile,
@@ -2280,6 +2432,12 @@ async function writeAgentMetadataFile(
         taskOutputFile: lifecycle.taskOutputFile,
         updatedAt: new Date().toISOString(),
         workspaceRoot: request.workspaceRoot,
+        ...(lifecycle.worktreeIsolation
+          ? {
+              worktreeBranch: lifecycle.worktreeIsolation.branch,
+              worktreePath: lifecycle.worktreeIsolation.path,
+            }
+          : {}),
         ...extra,
       },
       null,

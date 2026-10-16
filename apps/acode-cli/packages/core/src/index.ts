@@ -25,6 +25,11 @@ export type {
 export { createToolRegistry, ToolRegistry, ToolRegistryImpl } from "./tool/registry.js";
 export { createToolExecutor, ToolExecutor, ToolExecutorImpl } from "./tool/executor.js";
 export { builtInTools, registerBuiltInTools } from "./tool/handlers/index.js";
+// 双 shell 联动警告 detector（specs/powershell-tool.md R5/R8③）：bootstrap 启动
+// 诊断面（create-app 的 permissionAuditLogger）消费；纯函数，事实由接线方投影传入。
+// resolvePowerShellLaunch：`!` 块 shell:powershell 展开（bootstrap custom-command-
+// shell-expansion，skill-frontmatter-governance R7 接线）复用工具同款解析序。
+export { detectNoShellToolWarning, resolvePowerShellLaunch } from "./tool/handlers/powershell.js";
 // 闲时派发轮 / cron automation 轮要隐藏的工具名单。**导出是为了消掉跨包的同值副本**：
 // core 的 turn-loop-state 是唯一所有者，而 bootstrap 的 v4 prompt-turn 与 legacy
 // server-operations 各自手抄了一份——加一个工具就得同时改三处（RunWorkflow 落地时正是如此），

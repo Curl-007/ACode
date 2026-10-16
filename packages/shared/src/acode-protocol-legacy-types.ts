@@ -80,7 +80,7 @@ export const acodePermissionResponseSchema = z
   })
   .strict();
 export type ACodePermissionResponse = z.infer<typeof acodePermissionResponseSchema>;
-export const acodeSessionModeSchema = z.enum(["plan", "build", "edit", "yolo", "auto"]);
+export const acodeSessionModeSchema = z.enum(["plan", "build", "edit", "yolo", "auto", "dontAsk"]);
 /**
  * 引擎权限模式联合（镜像 ZCode kernel:34720 dzi）。
  *

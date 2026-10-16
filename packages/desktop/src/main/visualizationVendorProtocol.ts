@@ -13,14 +13,19 @@
 // - fail-closed 完整性：每次装载都按资产目录旁的 manifest.json 复核 sha256，
 //   mismatch/缺 manifest/缺文件一律拒绝应答（构建期 vite 插件已校过一次，这里是
 //   运行态第二道闸，防打包后被替换）；
+// - 身份层（specs：packages/services/specs/file-containment-trust-tiers.md R6.4）：
+//   默认读取实现走 @acode/shared/node 文件遏制层——lstat 拒 reparse、open 后 fstat
+//   复核 dev/ino（ino==0 平台二次 lstat）、nlink>1 硬链接拒绝、非常规文件拒绝、
+//   经同一已验证句柄读字节后才进 sha256 闸；任何遏制错误按既有 fail-closed 404；
 // - 只读资产目录，不接受任何写/查询语义；协议不注册 stream，不服务 Range。
 //
 // scheme/host 常量单一事实源在 packages/shared（platform.ts），与 ui 侧
 // visualizationVendor.ts 的 renderer 重写引用同一常量；字面量钉死与再导出链
-// 由 tests/visualization-vendor-protocol.test.mjs 守护。
+// 由 tests/visualization-vendor-protocol.test.mjs 守护，身份层替换/硬链接拒绝由
+// tests/visualization-vendor-containment.test.mjs 守护。
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
+import { readContainedFileBytes } from "@acode/shared/node";
 import { VISUALIZATION_VENDOR_SCHEME, VISUALIZATION_VENDOR_SCHEME_HOST } from "@acode/shared";
 
 export { VISUALIZATION_VENDOR_SCHEME, VISUALIZATION_VENDOR_SCHEME_HOST };
@@ -80,8 +85,12 @@ interface VisualizationVendorFileServerDependencies {
 export function createVisualizationVendorFileServer(
   dependencies: VisualizationVendorFileServerDependencies,
 ): VisualizationVendorFileServer {
+  // 默认读取面走文件遏制层（五层身份校验，见文件头注释）；调用方永远以
+  // join(vendorDir, 单段文件名) 传入，因此 dirname/basename 还原即为「根+相对路径」。
+  // 测试替身（readFileBytes 注入）保持原 (path) => bytes 契约不变。
   const readFileBytes =
-    dependencies.readFileBytes ?? (async (path: string) => new Uint8Array(await readFile(path)));
+    dependencies.readFileBytes ??
+    (async (path: string) => readContainedFileBytes(dirname(path), basename(path)));
   const sha256Hex =
     dependencies.sha256Hex ??
     ((bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex"));

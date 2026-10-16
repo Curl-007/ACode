@@ -1,11 +1,14 @@
 import { basename, dirname } from "node:path";
 import {
   type CustomCommandContent,
+  type CustomCommandShellPreference,
+  type ExecutionCommand,
   type HookPluginContext,
   type ExecutionPort,
   type ExecutionResult,
   type TraceContext,
 } from "@acode/contracts";
+import { resolvePowerShellLaunch } from "@acode/core";
 
 const DEFAULT_SHELL_EXPANSION_TIMEOUT_MS = 30_000;
 const DEFAULT_SHELL_EXPANSION_OUTPUT_BYTES = 128 * 1024;
@@ -93,7 +96,38 @@ function pickNextMatch(
 }
 
 function normalizeFencedShellCommand(command: string): string {
-  return command.replace(/^\r?\n/u, "").replace(/\r?\n$/u, "").trim();
+  return command
+    .replace(/^\r?\n/u, "")
+    .replace(/\r?\n$/u, "")
+    .trim();
+}
+
+/**
+ * shell 键选择（specs/skill-frontmatter-governance.md R7 × specs/powershell-tool.md
+ * 交叉登记接线）：缺席/`bash` 走既有 ComSpec/POSIX shell 语义；`powershell` 复用
+ * PowerShell 工具的解析序（pwsh → System32 → PATH）与执行纪律（NoProfile/
+ * NonInteractive）——argv 直发而不是 shell:"<path>"（Windows 下 Node 的 shell 字符串
+ * 会拼 /d /s /c，是 cmd.exe 专属语义）。解析不到可执行文件 fail-closed 抛错，
+ * 绝不静默回落 bash（两种 shell 的引号/变量/管道语义不同，回落会产出错误展开）。
+ */
+function resolveShellExpansionCommand(
+  shell: CustomCommandShellPreference | undefined,
+  shellCommand: string,
+): ExecutionCommand {
+  if (shell !== "powershell") {
+    return { mode: "shell", command: shellCommand };
+  }
+  const launch = resolvePowerShellLaunch();
+  if (!launch) {
+    throw new Error(
+      "Custom command declares shell: powershell, but no PowerShell executable (pwsh or powershell.exe) was resolved on this machine.",
+    );
+  }
+  return {
+    mode: "argv",
+    file: launch.file,
+    args: ["-NoProfile", "-NonInteractive", "-Command", shellCommand],
+  };
 }
 
 async function runShellExpansion(input: {
@@ -118,10 +152,7 @@ async function runShellExpansion(input: {
 
   const result = await input.executionPort.run(
     {
-      command: {
-        mode: "shell",
-        command: input.shellCommand,
-      },
+      command: resolveShellExpansionCommand(input.command.metadata.shell, input.shellCommand),
       cwd: input.workingDirectory,
       env: createShellExpansionEnv({
         plugin,

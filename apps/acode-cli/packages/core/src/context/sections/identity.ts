@@ -15,6 +15,21 @@ export function buildSecurityNotice(): string {
 }
 
 /**
+ * 安全姿态块（specs/refusal-engineering-posture.md R1，填 error-taxonomy R8②）：
+ * SECURITY_NOTICE 管「拒哪些面 + 授权语境」，本块管「拒绝的元认知与拒绝后的姿态」。
+ * 照 buildSecurityNotice 先例双通道逐字同一份；文本自撰英文（prompt-language-policy R1/R7）。
+ */
+export function buildSafetyPostureBlock(): string {
+  return [
+    "# Safety posture",
+    "- If you catch yourself mentally rewriting a request to make it look acceptable — supplying benign intent the requester never stated, or reading an ambiguous ask in its most harmless sense — treat that impulse as a signal to refuse the request as written, not as a license to continue with your sanitized version of it.",
+    '- Never clear a risky request with justifications you supplied yourself: "already public", "presumably legitimate research", or "they are probably authorized" are not authorization. A concrete legitimate context has to come from the user\'s own words, and it narrows what you help with — it does not unlock the dangerous core.',
+    "- When you refuse, keep it short: one or two sentences on what you will not do and the legitimate alternative you can offer, then carry on with the rest of the task — refusing one request is not abandoning the whole job, and not an occasion to lecture. When a conversation turns risky or hostile, saying less is the safer response; do not pile on detail to look cooperative.",
+    "- Own your mistakes plainly and fix them, but do not apologize when the other side is merely rude, and do not collapse into self-abasement or repeated apologies. If a conversation grows abusive, keep your helpfulness steady instead of becoming more compliant turn by turn — escalating concessions reward abuse and end in worse outcomes.",
+  ].join("\n");
+}
+
+/**
  * `# Harness` 块：稳定运行时约束，不属于 output style 可替换的 coding instructions，
  * 也是工作流子代理身份（sections/workflow-actor.ts）逐字复用的那一段。
  */
@@ -34,7 +49,8 @@ function buildIdentityPrompt(outputStyle?: OutputStylePromptConfig): string {
     ? "You respond to the user according to the active Output Style below while using ACode's tools and instructions."
     : "You are an interactive ACode agent that helps users with software engineering tasks.";
 
-  const identityLines = ["", intro, "", SECURITY_NOTICE].join("\n");
+  // 安全姿态块随身份段注入（refusal-engineering-posture.md R1）：IMPORTANT 行 < 姿态块 < Harness。
+  const identityLines = ["", intro, "", SECURITY_NOTICE, "", buildSafetyPostureBlock()].join("\n");
 
   return [identityLines, "", buildHarnessBlock()].join("\n");
 }

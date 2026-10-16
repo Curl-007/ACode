@@ -10,6 +10,11 @@ import { writeToolEntry } from "./write.js";
 import { editToolEntry } from "./edit.js";
 import { applyPatchToolEntry } from "./apply-patch.js";
 import { bashToolEntry, createBashToolEntry } from "./bash.js";
+// PowerShell 工具（specs/powershell-tool.md R8①）：win32 且可解析时注册，timeout 与 Bash 同源。
+import {
+  powerShellToolEntries,
+  resolvePowerShellEntryForBranch,
+} from "./powershell-registration.js";
 import type { BashTimeoutPolicy } from "../bash-timeout-policy.js";
 import { createJsToolEntry, jsToolEntry } from "./node-repl.js";
 import { globToolEntry } from "./glob.js";
@@ -88,6 +93,7 @@ export const builtInTools: ToolEntry[] = [
   // 规格与两段式执行语义见 specs/apply-patch-tool.md。
   applyPatchToolEntry,
   bashToolEntry,
+  ...powerShellToolEntries,
   globToolEntry,
   grepToolEntry,
   webFetchToolEntry,
@@ -351,6 +357,9 @@ function resolveBuiltInToolEntryForBranch(
   entry: ToolEntry,
   options: RegisterBuiltInToolsOptions,
 ): ToolEntry {
+  // PowerShell：与 Bash 同款分支重铸（timeout 策略同源透传，spec powershell-tool.md R8①）。
+  const powerShellBranch = resolvePowerShellEntryForBranch(entry, options.bashTimeoutPolicy);
+  if (powerShellBranch) return powerShellBranch;
   if (entry.metadata.name === "Bash") {
     return createBashToolEntry({
       bashTimeoutPolicy: options.bashTimeoutPolicy,

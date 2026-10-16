@@ -116,7 +116,9 @@ export interface RunDependencies extends PluginsCommandOverrides {
   startProcessProviderRegistryRuntime?: typeof startProcessProviderRegistryRuntime;
 }
 
-export type CliPermissionMode = "build" | "plan" | "edit" | "yolo";
+// dontAsk（specs/permission-adjudication-batch2.md 接线项 2）：无人可问即拒的
+// 无头姿态档，进 --mode 白名单与 /mode 菜单；语义见 contracts session-shared。
+export type CliPermissionMode = "build" | "plan" | "edit" | "yolo" | "dontAsk";
 export type CliRuntimeMode = CliPermissionMode | "auto";
 
 export interface CliModeState {

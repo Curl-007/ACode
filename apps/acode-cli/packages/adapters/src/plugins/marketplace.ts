@@ -7,7 +7,11 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { PluginDiagnostic, PluginManifest, PluginStoreListing } from "@acode/contracts";
 import { isOfficialMarketplaceId, ACODE_OFFICIAL_PLUGIN_MARKETPLACE } from "@acode/contracts";
-import { resolveDefaultPluginMarketplaces, sanitizeACodeRuntimeEnv } from "@acode/shared";
+import {
+  getCliGitInvocationEnv,
+  resolveDefaultPluginMarketplaces,
+  sanitizeACodeRuntimeEnv,
+} from "@acode/shared";
 import { loadPluginMcpServerDefinitions, resolvePluginMcpServers } from "./mcp.js";
 import {
   appendPluginSourceCleanupError,
@@ -1729,7 +1733,12 @@ async function execGitCommand(args: string[], signal?: AbortSignal): Promise<voi
     // 绝对路径，真实证明 Archive 主链路不依赖开发机上偶然存在的 Git。
     const gitBinary = process.env.ACODE_GIT_BINARY?.trim() || "git";
     await execFileAsync(gitBinary, args, {
-      env: buildMarketplaceGitEnv(),
+      // git 调用硬化漏斗（specs/git-invocation-hardening.md 消费点 #2）：叠在
+      // buildMarketplaceGitEnv() 的 sanitize + 网络出口 proxy/CA 恢复之上，
+      // 只加硬化 env 层，clone/sparse-checkout/checkout 参数组装语义不动。
+      // 协议白名单 file:http:https:ssh 封 ext::（marketplace 级 URL 可来自
+      // 配置/协议输入且不再复验 scheme，spawn 层是唯一收口，spec R3）。
+      env: getCliGitInvocationEnv(buildMarketplaceGitEnv()),
       killSignal: "SIGTERM",
       maxBuffer: 1024 * 1024 * 10,
       signal,

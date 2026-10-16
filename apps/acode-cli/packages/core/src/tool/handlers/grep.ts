@@ -22,12 +22,16 @@ import type { ToolEntry, ToolHandler } from "../types.js";
 
 const MAX_GREP_MODEL_BYTES = 20_000;
 const DEFAULT_GREP_TIMEOUT_MS = 30_000;
+// 认知诚实契约（specs/error-message-style.md R2 义务 1/2/3/4）：默认页界 250
+// （adapters fs DEFAULT_GREP_HEAD_LIMIT）、pagination 行读法、count 模式混合计数披露。
 const GREP_TOOL_DESCRIPTION = `Content search built on ripgrep. Prefer this over \`grep\`/\`rg\` via Bash — results integrate with the permission UI and file links.
 
 - Full regex syntax (e.g. "log.*Error", "function\\s+\\w+"). Ripgrep, not grep — escape literal braces (\`interface\\{\\}\`).
 - Filter with \`glob\` (e.g. "**/*.tsx") or \`type\` (e.g. "js", "py", "rust").
 - \`output_mode\`: "content" (matching lines), "files_with_matches" (paths only, default), or "count".
-- \`multiline: true\` for patterns that span lines.`;
+- \`multiline: true\` for patterns that span lines.
+- One call returns at most 250 lines/entries unless you set \`head_limit\` (0 removes the cap); \`offset\` pages further. When the output carries a pagination line, what you got is a partial page: the heading count ("Found N files/lines") covers that page only, so report "at least N" — or page through with \`offset\` / raise \`head_limit\` before stating an exact total.
+- count mode mixes two baselines on purpose: the summary totals (occurrences, files) are complete, while the per-file rows are paginated — quote the totals as totals and the rows as a partial list.`;
 
 const grepHandler: ToolHandler = async (input, context) => {
   const parsed = GrepInputSchema.parse(input) as GrepInput;

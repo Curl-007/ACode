@@ -80,10 +80,20 @@ export function evaluateBypassImmuneBreakers(
 
 // ── 类 4（J1-1）：catastrophic 目标 blast-radius ─────────────────────
 
+/**
+ * shell 命令族工具集（specs/powershell-tool.md R8② 接线）：三道命令文本门
+ * （catastrophic 目标 / 空变量根删除 / 敏感位置读）对 PowerShell 同样生效——
+ * 危险文本形态与 shell 种类无关（删除程序名集本就含 remove-item/del，
+ * assessBashCommandTargetRisk 已覆盖 PS 文本形态），PS 文本经 bash AST 解析
+ * 失败时还有 fail-closed 的关键词文本匹配兜底。缺这道补位时 catastrophic PS
+ * 命令在 yolo 下没有 deny 级熔断通道（capability 面只有 critical+ask，无 deny）。
+ */
+const SHELL_COMMAND_TOOLS: ReadonlySet<string> = new Set(["Bash", "PowerShell"]);
+
 function checkCatastrophicBashTarget(
   context: BypassImmuneBreakerContext,
 ): BypassImmuneBreakerHit | undefined {
-  if (context.toolName !== "Bash") return undefined;
+  if (!SHELL_COMMAND_TOOLS.has(context.toolName)) return undefined;
   const bashText = stringField(context.input, "command");
   if (!bashText) return undefined;
 
@@ -107,7 +117,7 @@ function checkCatastrophicBashTarget(
     : "command targets a path that must never be destroyed";
   return hit(
     "breaker.bashTargetCatastrophic",
-    `Bash command blocked: ${detail}. This target class is never permitted through the Bash tool. ` +
+    `${context.toolName} command blocked: ${detail}. This target class is never permitted through the ${context.toolName} tool. ` +
       "No justification, permission rule, or mode unlocks it — narrow the target to a specific " +
       "workspace path, or ask the user to run the command themselves.",
     "deny",
@@ -143,7 +153,10 @@ const SHORT_FLAG_CLUSTER_PATTERN = /^-[a-z]+$/i;
 function checkForcedRootDelete(
   context: BypassImmuneBreakerContext,
 ): BypassImmuneBreakerHit | undefined {
-  if (context.toolName !== "Bash") return undefined;
+  // PowerShell 补位（spec powershell-tool.md R8②）：删除程序名集与递归/强制旗标集
+  // 本就收录 Remove-Item/-Recurse/-Force 形态；PS 文本解析失败时走下方 fail-closed
+  // 关键词兜底，语义与 Bash 一致。
+  if (!SHELL_COMMAND_TOOLS.has(context.toolName)) return undefined;
   const bashText = stringField(context.input, "command");
   if (!bashText) return undefined;
 
@@ -315,7 +328,9 @@ function checkSensitiveRead(
     }
     return undefined;
   }
-  if (context.toolName === "Bash") {
+  // PowerShell 补位（spec powershell-tool.md R8②）：命令文本引用凭据位置的判定
+  // 是纯字符串形态匹配，与 shell 种类无关。
+  if (SHELL_COMMAND_TOOLS.has(context.toolName)) {
     const bashText = stringField(context.input, "command");
     if (bashText && matchesSensitiveLocation(bashText)) {
       return hit("breaker.sensitiveRead", "Command text references a known credential location");

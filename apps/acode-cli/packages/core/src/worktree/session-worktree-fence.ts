@@ -246,9 +246,11 @@ export function evaluateSessionWorktreeWriteFence(input: {
     module: "core.worktree",
   });
   if (mode === "enforce") {
+    // specs/error-message-style.md R1 模板①④：原子性保证（拒绝发生在任何修改之前，
+    // 目标原样）+ 范围限定（仅主 checkout 写入被拦，防过度泛化）+ 活路（改写进 worktree）。
     throw createCoreError(
       CoreErrorType.PermissionDenied,
-      `Session worktree write fence: this session is isolated in a managed worktree, so writes to the main checkout are refused (target: ${input.targetPath}). Write inside the worktree (${entry.worktreePath}) instead.`,
+      `Session worktree write fence: this session is isolated in a managed worktree, so this write was refused before anything was modified — the target (${input.targetPath}) is untouched and nothing else was changed. Only writes into the main checkout are fenced; reads, commands, and every write inside the worktree work as usual. Redo this write at the matching path inside the worktree (${entry.worktreePath}).`,
       {
         context: {
           fence: "session-worktree",

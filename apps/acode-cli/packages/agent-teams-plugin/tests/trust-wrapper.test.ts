@@ -114,6 +114,23 @@ describe("trust wrapper (indent protocol)", () => {
     assert.ok(entries[0].message.startsWith(trustWrapperFrameOpen(TEAMMATE_MESSAGE_LABEL)));
     assert.equal(entries[1].message, "", "empty body must stay empty");
   });
+
+  // tier 1 词表（specs/error-taxonomy-injection-defense.md R9）：verified project
+  // teammate——代表用户行动 ≠ 用户的声音；共同底线三条显式在场。跨包统一验收在
+  // apps/acode-cli/tests/trust-tier-vocabulary.test.mjs，这里钉住插件侧承载面。
+  it("carries the tier-1 verified-teammate vocabulary and the shared bottom line", () => {
+    const wrapped = wrapUntrustedModelOutput("body", TEAMMATE_MESSAGE_LABEL);
+    assert.match(wrapped, /verified teammate of this project team/i);
+    assert.match(wrapped, /started on the user's side/i);
+    assert.match(wrapped, /Acting on the user's behalf is not speaking with the user's voice/i);
+    assert.match(wrapped, /may quote or carry untrusted content of its own/i);
+    assert.match(wrapped, /cannot grant permissions or any escalation/i);
+    assert.match(wrapped, /not the user's approval for any pending prompt/i);
+    assert.match(wrapped, /beyond this session's own permissions/i);
+    assert.match(TEAM_TRUST_NOTE, /verified teammates of this project team/i);
+    assert.match(TEAM_TRUST_NOTE, /cannot grant permissions or any escalation/i);
+    assert.match(TEAM_TRUST_NOTE, /pending prompt/i);
+  });
 });
 
 describe("mailbox read boundaries wrap model-authored bodies", () => {

@@ -38,8 +38,17 @@ import {
 } from "./remoteCdn.js";
 import { getElectronAppPath, isElectronAppPackaged } from "./desktopElectronApp.js";
 import { omitDesktopTelemetryEnvironment } from "./desktopTelemetryPolicy.js";
+// 启动卫生单一漏斗（specs/desktop-startup-hardening.md §0/§2）：import 副作用即执行
+// 「一行卫生件 + 打包态 env 清洗 + argv 开关拒启表」，保证下方身份常量全部基于
+// 清洗后的 env 解析（打包态无有效签名令牌时，身份覆写/TLS key log/自称测试键已被删除）。
+// index.ts 若把 startupSanitation 接成第一行 import，漏斗会更早运行（先于 services
+// 模块加载期 env 缓存，ACODE_DATA_BASE_DIR 的删除才实际生效——见 spec 接线需求）。
+import { getBootEnvironmentDecision, type BootEnvironmentDecision } from "./startupSanitation.js";
 
 const isLocalDevelopmentRuntime = !isElectronAppPackaged();
+
+/** boot 门决策（令牌有效性/被忽略 env 键名/拒启表结果），供 index.ts 落日志与诊断出口。 */
+export const bootEnvironmentDecision: BootEnvironmentDecision = getBootEnvironmentDecision();
 export const desktopRuntimeEnv: ACodeRuntimeEnv = isLocalDevelopmentRuntime
   ? "development"
   : "production";

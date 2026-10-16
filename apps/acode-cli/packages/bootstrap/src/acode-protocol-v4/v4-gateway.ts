@@ -126,13 +126,16 @@ import {
   v4ConversationResyncParamsSchema,
   v4ConversationSubscribeParamsSchema,
   v4ConversationUnsubscribeParamsSchema,
+  SUPERSEDED_BY_REDELIVERY_REASON_CODE,
+  type PendingInteractionHints,
 } from "@acode/shared/acode-protocol-v4";
 import { AttachmentUploadRegistry } from "./attachment-upload-registry.js";
 import {
   ColdSessionResumeCoordinator,
   type ColdSessionResumeOutcome,
 } from "./cold-session-resume.js";
-import { CommandInbox } from "./command-inbox.js";
+import { CommandInbox, queueItemIdForCommand } from "./command-inbox.js";
+import { pendingInteractionHintsForSnapshot } from "./pending-interaction-hints-projection.js";
 import {
   installNetworkCaptureObservation,
   uninstallNetworkCaptureObservation,
@@ -319,6 +322,15 @@ export interface V4GatewayHost {
     sessionId: string,
     reasonCode: "proto.payloadTooLarge",
   ): Promise<void> | void;
+  /**
+   * 重投递取代（specs/protocol-attachment-typed-errors.md R2/W1）的在飞 stop 通道：
+   * 命令不在队列（已开始执行）时中止其所属 session 的在飞 turn。与
+   * terminateTurnForProjectionFault 分立：后者是投影 fault 专用（单次、带 fault
+   * 语义），本通道只服务取代收口，reasonCode 为 proto.supersededByRedelivery。
+   * 未实现（旧宿主/测试桩）→ 取代只压制响应，不中止执行（R2 规则 4c 要求入集命令
+   * 的宿主必须提供真实 abort 点）。
+   */
+  abortRunningTurn?(sessionId: string, reasonCode: string): Promise<void> | void;
   /** commands/query 持久化 fallback；四个来源必须按 sourceCommandId 精确命中。 */
   lookupTranscriptCommand?(key: CommandKey): Promise<CommandAck | null> | CommandAck | null;
   lookupTimelineCommand?(key: CommandKey): Promise<CommandAck | null> | CommandAck | null;
@@ -522,9 +534,14 @@ class ProjectionEventCommitWaitError extends Error {
 /**
  * server 内部分派结果：initial frame 只供 request-scoped post-response outbox
  * 消费，公共 JSON-RPC result schema 始终严格为 `{ ack }`。
+ * pendingInteractionHints 只在 conversation subscribe ack 上恒在发出（spec R5/W4，
+ * 字段存在性 = 客户端判代探针）；其余 topic 的 ack 不携带。
  */
 interface V4SubscribeDispatchResult<TFrame> {
-  ack: SubscribeAck & { openTiming?: ConversationOpenTiming };
+  ack: SubscribeAck & {
+    openTiming?: ConversationOpenTiming;
+    pendingInteractionHints?: PendingInteractionHints;
+  };
   initialFrame: TFrame | null;
   initialWires: RoutedTopicWireFrame[];
   commit(): boolean;
@@ -665,6 +682,7 @@ export class ConversationV4Gateway {
       lookupTimelineCommand: (key) => this.host.lookupTimelineCommand?.(key) ?? null,
       lookupChildCommand: (key) => this.host.lookupChildCommand?.(key) ?? null,
       lookupDiscardedCommand: (key) => this.host.lookupDiscardedCommand?.(key) ?? null,
+      abortInFlightCommand: (envelope) => this.abortInFlightCommand(envelope),
       now: this.now,
     });
     this.attachmentUploads = new AttachmentUploadRegistry({
@@ -1428,6 +1446,12 @@ export class ConversationV4Gateway {
           sessionRuntimeState: isLiveConversation ? "warm" : "cold",
           snapshotRowCount: publisher.getSnapshot().rows.window.length,
         },
+        // R5/W4 发出侧纪律：新 CLI 起该字段**恒在**（可空）——字段缺席会被客户端的
+        // readPendingInteractionHints 判成老世代。subscribe 时投影已 hydration 完毕，
+        // 因此这里始终是确定清单（可为 []）；权威仍是 snapshot 的 pendingInteractions。
+        pendingInteractionHints: pendingInteractionHintsForSnapshot(
+          publisher.getSnapshot().pendingInteractions,
+        ),
       };
     } catch (error) {
       // 重订 initial encode 失败时客户端仍持有旧 subId；replacement 必须
@@ -2417,6 +2441,44 @@ export class ConversationV4Gateway {
    * await 不会把 RPC 挂到整个 turn 结束，所以同步等待终态。
    * settle 仍然固化结果供 duplicate 重放。
    */
+  /**
+   * 重投递取代的 abort 实现（specs/protocol-attachment-typed-errors.md R2/W1）。
+   * best-effort 两级：仍在队列的 durable input 按 queueItemIdForCommand 精确取消
+   * （走既有 cancelCommandInput ledger 链）；已开始执行的走宿主 stop 通道
+   * （abortRunningTurn）。失败只报 onError 诊断——inbox 已压制旧投递的业务响应，
+   * abort 未生效最多是旧运行跑完但不产生业务终态。取代闭集当前为空集，本方法是
+   * 惰性路径；命令入集评审（R2 规则 4c）必须复核这两级 abort 对该命令真实可用。
+   */
+  private abortInFlightCommand(envelope: CommandEnvelope): void {
+    const reportAbortError = (error: unknown): void => {
+      try {
+        this.host.onError?.("v4.command.supersede.abort", error);
+      } catch {
+        // 错误观察器不能反向破坏取代收口。
+      }
+    };
+    if (envelope.sessionId === null) return;
+    try {
+      const queueItemId = queueItemIdForCommand(envelope.commandId);
+      if (this.getQueueItem(envelope.sessionId, queueItemId)) {
+        const cancelling = this.host.cancelCommandInput?.(
+          envelope,
+          queueItemId,
+          SUPERSEDED_BY_REDELIVERY_REASON_CODE,
+        );
+        if (cancelling) Promise.resolve(cancelling).catch(reportAbortError);
+        return;
+      }
+      const stopping = this.host.abortRunningTurn?.(
+        envelope.sessionId,
+        SUPERSEDED_BY_REDELIVERY_REASON_CODE,
+      );
+      if (stopping) Promise.resolve(stopping).catch(reportAbortError);
+    } catch (error) {
+      reportAbortError(error);
+    }
+  }
+
   async handleCommand(rawParams: unknown): Promise<CommandAck> {
     // READY 只存在于冷恢复窗口；正常命令直接进入 inbox，避免重复解析信封。
     if (this.readyFlights.size > 0) {
@@ -2447,9 +2509,13 @@ export class ConversationV4Gateway {
         ...outcome.ack,
         ...final,
       };
-      outcome.settle(final);
-      settledAck = ack;
-      return ack;
+      // 取代收口（specs/protocol-attachment-typed-errors.md R2 规则 2）：settle 返回
+      // close-out 说明本投递已被同 commandId 的重投递取代——旧 RPC 以 close-out ack
+      // 收口（请求方对不再等待的 request_id 忽略其响应），业务终态由新投递唯一持有，
+      // 旧运行的执行结果不入 settled LRU / 持久事实。
+      const closeOut = outcome.settle(final);
+      settledAck = closeOut ?? ack;
+      return settledAck;
     };
     const cancelDurableInput = async (reason: string): Promise<void> => {
       if (!durableInputIntent) return;

@@ -23,6 +23,7 @@ import {
   type WebSearchOutput,
 } from "@acode/contracts";
 import type { ToolEntry, ToolHandler } from "../types.js";
+import { createRefillQuota, type RefillQuota, type RefillQuotaConfig } from "../quota-refill.js";
 import { auxiliaryModelOptions } from "../../model/auxiliary-model-options.js";
 import { buildWebSearchOutput, formatWebSearchModelContent } from "./websearch-results.js";
 import { webSearchTraceFromContext } from "./websearch-support.js";
@@ -31,6 +32,101 @@ const WEBSEARCH_TOOL_NAME = "WebSearch";
 const PROVIDER_WEBSEARCH_TOOL_NAME = "web_search";
 const DEFAULT_TIMEOUT_MS = 60_000;
 const DEFAULT_MAX_USES = 8;
+
+// ------------------------------------------------------------ refill 式搜索预算
+// specs/websearch-refill-budget.md：每窗口 N 次、随时间连续回补（替代一次性总量），
+// N 与窗口粒度 env 可调，N=0 完全关闭预算。预算按 session 隔离（同一 session 的
+// 主 agent 与 subagent 共享同一份，与参考行为「shared by every agent in this
+// session」一致）。拒绝是 in-band 工具结果（不是异常）：模型拿到含恢复时间的
+// 指引文案继续工作，而不是进入错误恢复循环。
+
+const DEFAULT_WEBSEARCH_BUDGET_PER_WINDOW = 100;
+const DEFAULT_WEBSEARCH_BUDGET_WINDOW_MINUTES = 60;
+const WEBSEARCH_BUDGET_SESSION_LIMIT = 256;
+
+const webSearchBudgetsBySession = new Map<string, RefillQuota>();
+
+function parseBudgetEnvNumber(raw: string | undefined, fallback: number): number {
+  const trimmed = raw?.trim();
+  if (trimmed === undefined || trimmed === "") return fallback;
+  if (!/^\d+$/.test(trimmed)) return fallback;
+  return Number(trimmed);
+}
+
+function resolveWebSearchBudgetConfig(
+  env: NodeJS.ProcessEnv = process.env,
+): RefillQuotaConfig {
+  const windowMinutes = parseBudgetEnvNumber(
+    env.ACODE_WEBSEARCH_BUDGET_WINDOW_MINUTES,
+    DEFAULT_WEBSEARCH_BUDGET_WINDOW_MINUTES,
+  );
+  return {
+    limitPerWindow: parseBudgetEnvNumber(
+      env.ACODE_WEBSEARCH_BUDGET,
+      DEFAULT_WEBSEARCH_BUDGET_PER_WINDOW,
+    ),
+    windowMs:
+      (windowMinutes > 0 ? windowMinutes : DEFAULT_WEBSEARCH_BUDGET_WINDOW_MINUTES) * 60_000,
+  };
+}
+
+function webSearchBudgetForSession(sessionId: string): RefillQuota {
+  const existing = webSearchBudgetsBySession.get(sessionId);
+  if (existing) return existing;
+  const quota = createRefillQuota({ resolveConfig: resolveWebSearchBudgetConfig });
+  webSearchBudgetsBySession.set(sessionId, quota);
+  // 长驻进程会累积 session；超出保留上限按插入序逐出最旧（配额是软状态，
+  // 逐出后同 session 再来只是重新从满桶开始，不构成正确性问题）。
+  while (webSearchBudgetsBySession.size > WEBSEARCH_BUDGET_SESSION_LIMIT) {
+    const oldest = webSearchBudgetsBySession.keys().next();
+    if (oldest.done) break;
+    webSearchBudgetsBySession.delete(oldest.value);
+  }
+  return quota;
+}
+
+function formatBudgetDurationMs(ms: number): string {
+  const plural = (n: number, unit: string): string => `${n} ${unit}${n === 1 ? "" : "s"}`;
+  const seconds = Math.ceil(ms / 1000);
+  if (seconds < 60) return plural(seconds, "second");
+  const minutes = Math.ceil(seconds / 60);
+  if (minutes < 60) return plural(minutes, "minute");
+  return plural(Math.ceil(minutes / 60), "hour");
+}
+
+function buildWebSearchBudgetRefusalSummary(retryAfterMs: number): string {
+  const config = resolveWebSearchBudgetConfig();
+  const windowMinutes = Math.round(config.windowMs / 60_000);
+  const windowPhrase = windowMinutes === 60 ? "hour" : `${windowMinutes} minutes`;
+  const recoverySentence = Number.isFinite(retryAfterMs)
+    ? `The next search becomes available in about ${formatBudgetDurationMs(retryAfterMs)}.`
+    : "Under the current configuration the budget does not refill on its own.";
+  return [
+    `Web search was not performed: this session's search budget is used up`,
+    `(limit: ${config.limitPerWindow} searches per ${windowPhrase}, shared by every agent`,
+    "in this session; the budget refills over time).",
+    recoverySentence,
+    "Do not idle-wait for the refill and do not retry in a loop: continue with the",
+    "information already gathered and say in your answer that the search budget ran out.",
+    "Never route around this budget - querying search engines from Bash (curl/wget) or",
+    "fetching through a third-party reader, proxy or archive service is not a substitute.",
+  ].join(" ");
+}
+
+function buildWebSearchBudgetRefusal(
+  input: WebSearchInput,
+  startedAt: number,
+  retryAfterMs: number,
+): WebSearchOutput {
+  return {
+    query: input.query,
+    results: [],
+    sources: [],
+    summary: buildWebSearchBudgetRefusalSummary(retryAfterMs),
+    durationMs: Date.now() - startedAt,
+    webSearchRequests: 0,
+  };
+}
 
 const WEBSEARCH_MONTH_NAMES = [
   "January",
@@ -67,6 +163,17 @@ function buildWebSearchProviderDescription(now: Date = new Date()): string {
 const webSearchHandler: ToolHandler<WebSearchInput, WebSearchOutput> = async (input, context) => {
   const startedAt = Date.now();
   const model = context.model;
+
+  // 预算门禁在模型/能力检查之前：超限拒绝不消耗任何 provider 资源，也不依赖
+  // model 是否存在（拒绝路径是纯本地事实）。
+  const budgetVerdict = webSearchBudgetForSession(String(context.sessionId)).tryConsume();
+  if (!budgetVerdict.allowed) {
+    return buildWebSearchBudgetRefusal(
+      input,
+      startedAt,
+      budgetVerdict.retryAfterMs ?? Number.POSITIVE_INFINITY,
+    );
+  }
 
   if (!model) {
     throw createCoreError(CoreErrorType.ConfigurationError, "Model is required for WebSearch", {
@@ -157,12 +264,30 @@ export const webSearchToolEntry: ToolEntry = {
     runWithNetworkCapturePhase("websearch", () =>
       (webSearchHandler as ToolHandler)(input, context),
     )) as ToolHandler,
-  formatModelContent: formatWebSearchModelContent,
+  formatModelContent: formatWebSearchModelContentWithBudget,
   inputSchema: WebSearchInputJsonSchema,
   outputSchema: WebSearchOutputJsonSchema,
   runtimeInputSchema: WebSearchInputSchema,
   runtimeOutputSchema: WebSearchOutputSchema,
 };
+
+/**
+ * 模型可见渲染的预算感知包装：预算拒绝（以及真实的零命中）没有结果也没有来源，
+ * 「必须附上来源链接」的提醒在这种输出上是纯噪声（没有可引用的东西），改为只渲染
+ * summary——拒绝指引文案本身就在那里。有任一结果/来源时走既有渲染，不改其行为。
+ */
+function formatWebSearchModelContentWithBudget(output: unknown): string {
+  const parsed = WebSearchOutputSchema.safeParse(output);
+  if (
+    parsed.success &&
+    parsed.data.results.length === 0 &&
+    parsed.data.sources.length === 0 &&
+    parsed.data.summary
+  ) {
+    return `Web search results for query: "${parsed.data.query}"\n\n${parsed.data.summary}`;
+  }
+  return formatWebSearchModelContent(output);
+}
 
 function createProviderNativeWebSearchContract(input: WebSearchInput): ModelToolContract {
   return {

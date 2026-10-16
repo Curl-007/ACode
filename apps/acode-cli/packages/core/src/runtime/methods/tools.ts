@@ -35,6 +35,8 @@ import type {
 import type { AgentRuntimeInternal } from "../internal.js";
 import { createMcpToolDisplay } from "../../tool/executor/result-display.js";
 import { runPostToolBatchHooks } from "./hooks.js";
+// 技能激活期作用域（skill-frontmatter-governance R4）：Skill 成功后的重算触发点。
+import { refreshSessionSkillActivationScope } from "../../agent/skill-activation-scope.js";
 
 export async function scheduleTools(
   this: AgentRuntimeInternal,
@@ -104,6 +106,19 @@ export async function executeTools(
 
     if (next.value.type === "batch_complete") {
       const batchResults = next.value.results;
+      // 技能激活期作用域·Skill 成功触发点（skill-frontmatter-governance R4 消费接线）：
+      // 本批 Skill 调用成功即重算——同一回合的后续权限判定立刻看到新加载技能的
+      // governance 规则（历史此刻尚未入账，故以 extraLoadedSkillNames 并入重算；
+      // 与 turn.ts 回合边界触发点走同一个函数 = 唯一写路径）。
+      const loadedSkillNames = collectSucceededSkillNames(batchResults, executableCalls);
+      if (loadedSkillNames.length > 0) {
+        refreshSessionSkillActivationScope({
+          sessionId: this.sessionId,
+          entries: this.messageHistory.borrowReadOnlyRuntimeEntries(),
+          catalog: this.skillLoadOutcome?.skills ?? [],
+          extraLoadedSkillNames: loadedSkillNames,
+        });
+      }
       const batchCompleteEvent = this.createEvent(
         SessionEventType.ToolBatchComplete,
         {
@@ -329,4 +344,25 @@ export async function resolvePermission(
     traceContext,
   );
   await this.appendEvent(event, traceContext);
+}
+
+/**
+ * 本批成功的 Skill 调用名（激活期作用域重算的 extra 事实源，spec
+ * skill-frontmatter-governance R4）：结果只带 toolCallId，名字从对应调用输入取。
+ */
+function collectSucceededSkillNames(
+  results: readonly ToolExecutionResult[],
+  calls: readonly ExecutableToolCall[],
+): string[] {
+  const names: string[] = [];
+  for (const result of results) {
+    if (!result.success || result.toolName !== "Skill") continue;
+    const input = calls.find((call) => call.id === result.toolCallId)?.input as
+      | { skill?: unknown }
+      | undefined;
+    if (typeof input?.skill === "string" && input.skill.trim().length > 0) {
+      names.push(input.skill.trim());
+    }
+  }
+  return names;
 }

@@ -41,6 +41,15 @@ const SCRATCH_DIRECTORY_INSTRUCTION = [
   "Use this product-managed scratch directory for temporary and intermediate files instead of writing to arbitrary paths outside the workspace.",
   "Writes inside it and inside the system temporary directory do not trigger the workspace-escape confirmation.",
 ].join(" ");
+// filesystem 语义段·主会话变体（specs/subagent-declarative-keys.md R6 / 接线需求 7）：
+// 与子代理变体（subagent/system-prompt.ts 的 FILESYSTEM_SEMANTICS_NOTE）同族自撰文本，
+// outputs 子句按主会话事实改写——主会话的产出就是落盘文件与对话本身，没有 harness
+// 任务输出文件那一层。恒真静态语义，不依赖新事实入参；prompt-language-policy R7。
+const FILESYSTEM_SEMANTICS_INSTRUCTION = [
+  "Filesystem semantics: the working directory above is a real folder on the user's computer - your reads and writes hit their disk directly, there is no backup copy, and deletions cannot be undone.",
+  "The files you write are the lasting artifacts of this session: create them where the task calls for them, and deliver findings in your replies instead of writing self-made report copies of what you can simply say.",
+  "Product configuration is made of real files too (agents, skills, memory and settings under the user's ACode directory and the workspace .acode folder): editing them rewrites how future sessions behave, so treat such edits as consequential self-modification and make them only when the task explicitly asks.",
+].join(" ");
 const GIT_SYSTEM_CONTEXT_PREFIX =
   "gitStatus: This is the git status at the start of the conversation. Note that this status is a snapshot in time, and will not update during the conversation.";
 const CURRENT_BRANCH_LABEL = "Current branch";
@@ -112,6 +121,11 @@ function buildEnvInfoContent(info: EnvInfo, model?: Model, scratchDir?: string):
       : []),
   ];
 
+  // filesystem 语义段（spec subagent-declarative-keys R6 主会话变体）：恒真静态语义，
+  // 紧跟事实行渲染（与子代理变体「事实块 → 语义段」的布局对齐），排在条件段之前——
+  // R5.3 的「引导段追加在段尾、基线内容不动」前缀不变量由此保持。
+  lines.push("", FILESYSTEM_SEMANTICS_INSTRUCTION);
+
   // P6：not-a-git-repo 显式指令段条件出现——仅非 git 目录渲染（验收：段落条件出现）。
   if (!hasGitRepository) {
     lines.push("", NOT_A_GIT_REPOSITORY_INSTRUCTION);
@@ -148,7 +162,9 @@ function osVersionDetail(info: EnvInfo): string {
     return "";
   }
   const platformPrefix = `${info.platform} `;
-  return osVersion.startsWith(platformPrefix) ? osVersion.slice(platformPrefix.length).trim() : osVersion;
+  return osVersion.startsWith(platformPrefix)
+    ? osVersion.slice(platformPrefix.length).trim()
+    : osVersion;
 }
 
 function isNonEmptyText(value: string | undefined): boolean {

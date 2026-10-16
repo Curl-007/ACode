@@ -1,6 +1,6 @@
 /* eslint-disable max-lines -- 存量基线豁免:该文件先于 CLI lint 门禁建立即超限(根 lint 的 ignorePatterns 排除 apps/acode-cli,turbo lint 因此从未变绿)。头注豁免以恢复门禁信号;拆分重构超出本批范围。 */
 import { extname } from "node:path";
-import { formatJson, type PresentationSurface } from "@acode/core";
+import { formatJson, markUserInvokedSkillForTurn, type PresentationSurface } from "@acode/core";
 import type { RunContext, GlobalOptions } from "@acode/shared-types";
 import { loadBootstrapModule } from "./bootstrap-loader.js";
 import {
@@ -9,6 +9,7 @@ import {
   formatSlashCommandHelp,
   parseSlashCommand,
 } from "./command-center.js";
+import { AVAILABLE_COMMANDS } from "./command-center/slash-commands.js";
 import { loadCliDotenv } from "./env.js";
 import { createCliHeadlessBrowserRuntime } from "./headless-browser.js";
 import {
@@ -232,6 +233,8 @@ export const runPrompt = async (
       uiDetectedLocale: options.detectedLocale,
       uiLocale: options.locale,
       version,
+      // GUIDE 宿主接线②（specs/guide-live-build-section.md）：内置 slash 命令表只读投影。
+      builtInSlashCommandNames: AVAILABLE_COMMANDS,
     });
     // 异步身份导入期间可能已收到退出信号；既有的 cleanup 尚拿不到这个 App。
     // 单独释放迟到实例，禁止继续提交，也不重启已结束的进程级清理。
@@ -284,6 +287,12 @@ export const runPrompt = async (
     const subscribeEvents = readRuntimeEventSubscriber(app.runtime);
     detachEvents = subscribeEvents?.({ onSessionEvent: observer.observe });
     const runtimeFacts = readHeadlessRuntimeFacts(app.runtime);
+    // disable-model-invocation 硬门标记（specs/skill-frontmatter-governance.md R6 接线）：
+    // 手动 /skill 指名提交在 submitPrompt 之前落「用户指名」事实（单一写者），
+    // Skill handler 对受门技能按名一次性消费；headless 与 TUI 两条路径同款。
+    if (slashCommand?.type === "known" && slashCommand.name === "skill" && slashCommand.skillName) {
+      markUserInvokedSkillForTurn(app.sessionId, slashCommand.skillName);
+    }
     const result = await app.submitPrompt(
       attachmentPaths.length > 0
         ? {

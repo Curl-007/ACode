@@ -47,8 +47,10 @@ interface CronSchedulerDeps {
   };
   /** 选一个能执行本地 workspace 派发的 host；无可用 host 时返回 null（scheduler 会退避重试）。 */
   resolveDispatchHost: () => ElectronUtilityProcess | null;
-  /** 闲时任务执行中计数变化（keep-awake：main 据此 + 设置切 powerSaveBlocker）。 */
+  /** 闲时任务执行中计数变化（keep-awake background_task 认领数据源，specs/shutdown-keepawake-containment.md B2 节 R22）。 */
   onOffPeakActiveCountChanged?: (count: number) => void;
+  /** W2：cron run 成功转发给 host 后上报（keep-awake loop 认领数据源，R21；未注入则无行为）。 */
+  onCronRunDispatched?: (info: { runId: string; automationId: string }) => void;
 }
 
 export interface CronSchedulerHandle {
@@ -150,6 +152,10 @@ export function spawnCronScheduler(deps: CronSchedulerDeps): CronSchedulerHandle
           workspacePath: msg.workspacePath,
           workspaceIdentity: msg.workspaceIdentity,
         });
+        // W2：keep-awake loop 认领数据源——仅成功转发后上报；上面的失败路径已按
+        // transient 回执、run 未起跑，不记 claim。结算上报走 main 的
+        // forwardCronRunResult（接线见 specs/shutdown-keepawake-containment.md B2 节）。
+        deps.onCronRunDispatched?.({ runId: msg.runId, automationId: msg.automationId });
       } catch (error) {
         deps.logger.warn("[cron-scheduler] forward CronRun to host failed:", error);
         postToScheduler({

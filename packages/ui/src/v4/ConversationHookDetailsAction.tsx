@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button.js";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover.js";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip.js";
 import { useACodeIntl } from "@/i18n/IntlProvider.js";
+import { readHookRefusalAnnotation } from "@/v4/hookRefusalAnnotation.js";
 
 type HookDetailStatus = "running" | "blocked" | "failed" | "cancelled" | "timedOut";
 
@@ -22,6 +23,7 @@ interface HookDetailItem {
   blockReason?: string;
   durationMs?: number;
   eventName: HookInvocationRow["hookEventName"];
+  refusalAnnotation?: string;
   sourceKind: HookExecutionProjection["sourceKind"];
   status: HookDetailStatus | null;
 }
@@ -32,7 +34,12 @@ function buildHookDetailItems(rows: readonly HookInvocationRow[]): HookDetailIte
     for (const execution of row.executions.toSorted(
       (left, right) => left.hookIndex - right.hookIndex,
     )) {
-      if (!execution.didExecute) continue;
+      // 拒绝注记的防御式读取见 v4/hookRefusalAnnotation.ts（W2-ui）；admission/trust
+      // 拒绝的环节 didExecute=false，原本不入明细列表，带注记时必须入列——「每个
+      // 被拒执行都留下带闭集原因的可观测行」（plugin-hook-middleware.md 二）。
+      // 旧投影无该字段，行为与既往一致（零破坏）。
+      const refusalAnnotation = readHookRefusalAnnotation(execution);
+      if (!execution.didExecute && refusalAnnotation === undefined) continue;
       items.push({
         key: `${row.entityId}:${execution.hookRunId}`,
         ...(execution.outcome === "blocked" && execution.blockReason
@@ -42,6 +49,7 @@ function buildHookDetailItems(rows: readonly HookInvocationRow[]): HookDetailIte
           ? { durationMs: execution.durationMs }
           : {}),
         eventName: row.hookEventName,
+        ...(refusalAnnotation ? { refusalAnnotation } : {}),
         sourceKind: execution.sourceKind,
         status: hookDetailStatus(execution),
       });
@@ -110,6 +118,13 @@ const HookDetailItemRow = memo(function HookDetailItemRow({ item }: { item: Hook
           ) : null}
         </div>
       </div>
+      {item.refusalAnnotation ? (
+        // 拒绝/失败注记暗字行：文本由运行时格式化（「<hook 名>: <事件> 被拒: <原因>;
+        // 已用引擎默认行为」），UI 原样渲染不做二次拼接；字段缺席零渲染。
+        <p className="mt-0.5 min-w-0 break-words text-ui-xs text-foreground-subtlest">
+          {item.refusalAnnotation}
+        </p>
+      ) : null}
     </li>
   );
 });

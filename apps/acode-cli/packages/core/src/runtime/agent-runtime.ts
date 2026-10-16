@@ -136,6 +136,10 @@ import { projectPersistentAgentMemoryTools } from "../subagent/persistent-memory
 import { RuntimeTelemetryFacade } from "../telemetry/runtime-telemetry.js";
 import type { WorkspaceHookRuntimeAdmissionPort } from "../hooks/workspace-hook-runtime-admission.js";
 import { disposeNodeReplSession } from "../tool/handlers/node-repl.js";
+// 会话终结的技能缓存清理（skill-frontmatter-governance R4/R5/R6 消费接线）。
+import { clearSessionSkillActivationScope } from "../agent/skill-activation-scope.js";
+import { clearSkillPathActivations } from "../agent/skill-path-activation.js";
+import { clearUserInvokedSkillMarker } from "../agent/skill-user-invocation.js";
 import { initializeRuntimeTurnCoordination } from "./turn-coordination.js";
 import { getRuntimeLifecyclePort, initializeRuntimeLifecycle } from "./runtime-lifecycle.js";
 import { initializeRuntimeNotificationSeal } from "./runtime-notification-seal.js";
@@ -383,6 +387,12 @@ export class AgentRuntime {
     // 关闭单个 session 后进程仍存活，
     // 因此必须先终止该 runtime 的 Extraction，不能只在超时后放弃等待。
     this.memoryExtractionScheduler?.shutdown();
+    // 会话终结即清（skill-frontmatter-governance R4/R5/R6 消费接线）：技能激活期
+    // 作用域缓存、paths 触发激活集与用户指名标记都是会话键控——进程存活的
+    // 多会话轮转不留陈旧状态。
+    clearSessionSkillActivationScope(this.sessionId);
+    clearSkillPathActivations(this.sessionId);
+    clearUserInvokedSkillMarker(this.sessionId);
   }
 
   /**
@@ -397,7 +407,12 @@ export class AgentRuntime {
     traceContext?: TraceContext,
     signal?: AbortSignal,
   ): Promise<void> {
-    return runSessionEndHooksTrigger(this as unknown as AgentRuntimeInternal, input, traceContext, signal);
+    return runSessionEndHooksTrigger(
+      this as unknown as AgentRuntimeInternal,
+      input,
+      traceContext,
+      signal,
+    );
   }
 }
 

@@ -21,7 +21,8 @@ import { logger } from "@/logger.js";
 interface CreateOffPeakTaskInput {
   title: string;
   prompt: string;
-  /** 权限四档（build/edit/plan/yolo）；类型收窄在服务端入参处完成。 */
+  /** 权限五档（build/edit/plan/yolo/dontAsk；dontAsk=拒绝代替询问，需批准的动作
+   * 一律拒绝、从不弹窗，闲时无人值守场景的显式安全档）；类型收窄在服务端入参处完成。 */
   permissionMode: string;
   modelSelection: ModelSelection;
   workspacePath: string;

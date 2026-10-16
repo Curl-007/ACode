@@ -45,8 +45,9 @@ confirmed）。参照机制：Codex `agent_max_depth` / `max_concurrent_threads_
 - 显式 yolo/bypassPermissions 回落天花板（原语义「回落 parentMode」的锚根版）；
   auto/plan 覆盖照旧（只会更严）。
 
-**R2 模式严苛度序（单点，`nesting-policy.ts`）**：`auto < plan < edit < build < yolo`
+**R2 模式严苛度序（单点，`nesting-policy.ts`）**：`auto < dontAsk < plan < edit < build < yolo`
 （auto 当前语义全拒、plan 只读）；未知词按最严处理，双侧缺席回落 auto（fail-closed）。
+dontAsk 序位为 2026-10-15 接线波裁决，理由见文末修订记录 #1。
 
 **R3 depth 谱系：父自填的机械保证。** `AgentRuntimeConfig` 新增事实字段
 `subagentDepth?`（根缺席 ≡ 0）、`rootSessionId?`（根缺席 ≡ 自身 sessionId）、
@@ -200,3 +201,20 @@ false、子工具面无 Agent/Task、`resolveSubagentPermissionMode` 三参调�
    今天的合法工作流形态）不进树级闸，并发语义逐字节不变。三闸防的是嵌套的
    10^depth 失控（R3 失控证据的正是「handler 零准入 + 树总量指数」），不是既有
    depth-1 形态；全树（含各层）共享同一份以树根为键的计数。
+
+## 修订记录
+
+1. **2026-10-15（波 2 接线波 WI2-A）**：CollaborationMode 增 `dontAsk`
+   （specs/permission-adjudication-batch2.md R1/接线项 1）后，R2 严苛度序插入
+   `dontAsk`，排位 **auto 与 plan 之间**（比 plan 严、比 auto 宽）。裁决理由
+   （接线项 3 的建议是「plan 同档或更严」，取更严一档）：
+   - **严于 plan**：plan 的结构拒写仍保留 ask 面（alwaysAsk 工具会弹卡），在
+     无人值守根会话（cron/off-peak/`-p`，dontAsk 的目标场景）下会挂起等不到人；
+     dontAsk 把一切 ask 终局化为不弹卡 deny，永不挂起。天花板语义「不高于根会话」
+     因此要让 dontAsk 根把子代理 clamp 到同款无人姿态，而不是让子代理落到 plan
+     后仍可能弹卡悬挂。
+   - **宽于 auto**：auto 保持最严档（全拒/分类器灰区）；dontAsk 的 allow 白名单
+     照常放行——白名单由规则与 policy floor 决定，不由档位决定（P1 spec 同款表述）。
+   - 舰队面联动：`fleet/mode-policy.ts` 的升权判定经 moreRestrictiveMode 单源消费
+     本序，dontAsk 发起者请求 plan/build 均按「高于发起者」拒绝（fail-closed，
+     收紧只剩 omit 继承一档），无第二份排序。

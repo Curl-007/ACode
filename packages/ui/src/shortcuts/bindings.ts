@@ -16,6 +16,7 @@ import {
   isAppleKeyboardPlatform,
   type KeyboardShortcutPlatformInfo,
 } from "@/lib/keyboardShortcuts.js";
+import { isEmbeddedEditableFocusTarget } from "@/lib/embeddedContentFocus.js";
 import { logger } from "@/logger.js";
 
 /** 匹配/录制所需的键盘事件结构（KeyboardEvent 的子集，测试可构造）。 */
@@ -187,19 +188,20 @@ export function isShiftOnlyPrintableBinding(binding: string): boolean {
 }
 
 /**
- * 快捷键事件的目标是否为可编辑元素（input/textarea/select 或 contenteditable）。
- * 与 isShiftOnlyPrintableBinding 配套：可编辑目标内跳过纯 Shift 可打印键绑定。
+ * 快捷键事件的目标是否为可编辑元素（input/textarea/select/contenteditable）
+ * 或嵌入内容面（IFRAME/FRAME/EMBED/OBJECT/WEBVIEW）。
+ * 与 isShiftOnlyPrintableBinding 配套：这类目标内跳过纯 Shift 可打印键绑定。
+ *
+ * 判定集与 shadowRoot 穿透复用 lib/embeddedContentFocus.ts（单一所有者，
+ * specs/embedded-content-focus-yield.md §1）：嵌入面对宿主是键盘黑洞，内部不可穿透
+ * 时保守视为可编辑——误让路（少触发一次命令）代价远小于误吃键（用户打不出字符）。
  * 无 DOM 环境（node 单测）下恒为 false。
  */
 export function isEditableShortcutEventTarget(target: EventTarget | null): boolean {
-  if (typeof HTMLElement === "undefined" || !(target instanceof HTMLElement)) {
+  if (typeof Element === "undefined" || !(target instanceof Element)) {
     return false;
   }
-  if (target.isContentEditable) {
-    return true;
-  }
-  const tag = target.tagName;
-  return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+  return isEmbeddedEditableFocusTarget(target);
 }
 
 /** 键匹配：event.key 小写比较优先，event.code 兜底（macOS Option 改写、非 US 布局）。 */

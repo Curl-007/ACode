@@ -298,10 +298,21 @@ export const interactionAutoResolutionSchema = z.discriminatedUnion("state", [
 ]);
 export type InteractionAutoResolution = z.infer<typeof interactionAutoResolutionSchema>;
 
+/**
+ * 交互 kind 闭集的单一事实源：attach-answers.ts 的代答申报与 pending-permission-hints.ts
+ * 的提示清单都从这里派生，不得各自手写副本（值域与原内联枚举逐字相同，schema 形状不变）。
+ */
+export const pendingInteractionKindSchema = z.enum([
+  "permission",
+  "userInput",
+  "workspaceHookReview",
+]);
+export type PendingInteractionKind = z.infer<typeof pendingInteractionKindSchema>;
+
 export const pendingInteractionSchema = z
   .object({
     interactionId: z.string(),
-    kind: z.enum(["permission", "userInput", "workspaceHookReview"]),
+    kind: pendingInteractionKindSchema,
     // null = 会话级（如 provider 交互和 workspace Hook review）。
     anchorRowId: z.number().nullable(),
     createdAt: timestampSchema,

@@ -283,6 +283,7 @@ import {
   utf8JsonByteLength,
   ACODE_ATTACHMENT_FAULT_CODES,
   ACodeAttachmentFaultError,
+  readPendingInteractionHints,
   type CommandAck,
   type ConversationTopicWireCandidate,
   type ConversationTelemetryFact,
@@ -5097,6 +5098,20 @@ export function createACodeAgentService(
         },
         v4ConversationSubscribeResultSchema,
       );
+      // attach 链路判代（apps/acode-cli/specs/protocol-attachment-typed-errors.md R5 /
+      // 接线 W4）：pendingInteractionHints 的**字段存在性**是响应级判代探针，唯一读法
+      // readPendingInteractionHints——字段缺席只能推断对端是老世代 CLI，不得推断成
+      // 「无 pending」（完整清单恒以 snapshot 的 pendingInteractions 为权威）。这里只记
+      // debug 诊断供排障；ack 原样透传（含字段缺席形态），UI/手机端的判代消费归各自
+      // attach 面。禁止用 wire 版本反推本字段存在性（R5 规则 3）。
+      const pendingHintsReading = readPendingInteractionHints(result.ack);
+      if (pendingHintsReading.generation === "legacy") {
+        logger.debug(undefined, "V4 subscribe ack 缺少 pendingInteractionHints 字段（老世代 CLI）", {
+          event: "v4.conversation.subscribe.pending_hints_legacy",
+          sessionId: params.sessionId,
+          workspaceKey: resolveWorkspaceKey(params),
+        });
+      }
       const cliRequestMs = Math.max(0, Math.round(performance.now() - cliRequestStartedAt));
       const hostPrepareMs = Math.max(0, Math.round(cliRequestStartedAt - subscribeStartedAt));
       const openTiming = {

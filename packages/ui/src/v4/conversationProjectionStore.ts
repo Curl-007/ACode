@@ -10,6 +10,7 @@ import {
   isDeterministicContentFault,
   parseConversationTopic,
   PROTOCOL_V4_LIMITS,
+  readPendingInteractionHints,
   SUBSCRIPTION_CONTENT_REJECTED,
   type ConversationRow,
   type ConversationSnapshot,
@@ -578,6 +579,24 @@ export class ConversationProjectionStore {
         mode: result.ack.mode,
       };
       this.transport.activate(result.ack.subscriptionId);
+      // attach 链路判代（apps/acode-cli/specs/protocol-attachment-typed-errors.md R5 /
+      // 接线 W4）：ack 上 pendingInteractionHints 的**字段存在性**是响应级判代探针，唯一
+      // 读法 readPendingInteractionHints（services 侧 acodeAgentService 同款判代已透传原
+      // ack）。hints 只是提示性引用：本 store 的 pendingInteractions 水合权威源恒为随后
+      // initial snapshot 帧（整体替换），故这里零状态写入，仅把「对端是老世代 CLI」记成
+      // debug 诊断——缺席不得推断成「无 pending」，也禁止用 wire 版本反推字段存在性。
+      const pendingHintsReading = readPendingInteractionHints(result.ack);
+      if (pendingHintsReading.generation === "legacy") {
+        logger.debug(
+          `[v4-store] subscribe ack 缺少 pendingInteractionHints 字段（老世代 CLI）: ${this.topic}`,
+          {
+            event: "v4.conversation.store.pending_hints_legacy",
+            generation,
+            subscriptionId: result.ack.subscriptionId,
+            topic: this.topic,
+          },
+        );
+      }
       logger.lifecycle.info("v4 conversation store connect completed", {
         durationMs: roundedDuration(subscribeStartedAt, monotonicNow()),
         event: "v4.conversation.store.connect.completed",

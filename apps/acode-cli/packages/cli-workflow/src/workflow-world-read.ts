@@ -21,6 +21,7 @@ import {
   sep,
 } from "node:path";
 import type { ExecutionPort, FileSystemPort } from "@acode/contracts";
+import { getCliGitInvocationEnvOverlay } from "@acode/shared";
 import { WORLD_READ_CAPS, WorkflowError, type WorldReadOp } from "@acode/dynamic-workflow";
 import {
   GIT_SHOW_PREFIX_ARGV,
@@ -216,6 +217,10 @@ async function runGit(
   const result = await deps.executionPort.run({
     command: { mode: "argv", file: "git", args: [...argv] },
     cwd: deps.cwd,
+    // git 调用硬化漏斗 overlay 形态（specs/git-invocation-hardening.md 消费点 #7）：
+    // 只读 git.* 面防弹窗挂死/hooks 停用/防串仓。world.run 的任意命令面不叠加
+    // （不是 git 漏斗消费方，spec R2）。
+    env: getCliGitInvocationEnvOverlay(),
     outputLimit: { maxInlineBytes },
   }, deps.signal === undefined ? undefined : { signal: deps.signal });
   if (result.status !== "completed" || (result.exitCode ?? 0) !== 0) {

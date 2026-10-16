@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { resolve } from "node:path";
+import { getCliGitInvocationEnv } from "@acode/shared";
 import { normalizeForCompare } from "./session-worktree-paths.js";
 
 /**
@@ -29,6 +30,9 @@ export const defaultSessionGitRunner: SessionGitRunner = async (args, cwd) => {
   try {
     const { stdout, stderr } = await execFileAsync("git", [...args], {
       cwd,
+      // git 调用硬化漏斗（specs/git-invocation-hardening.md 消费点 #3）：
+      // 会话 worktree 生命周期面在无人值守路径执行，防弹窗挂死/hooks 停用/防串仓。
+      env: getCliGitInvocationEnv(),
       maxBuffer: 8 * 1024 * 1024,
       windowsHide: true,
     });

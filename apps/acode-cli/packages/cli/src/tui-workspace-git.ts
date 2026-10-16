@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { getCliGitInvocationEnv } from "@acode/shared";
 
 const GIT_COMMAND = "git";
 const GIT_BRANCH_ARGS = ["symbolic-ref", "--quiet", "--short", "HEAD"];
@@ -57,6 +58,9 @@ async function runGitCommand(
     let child: ReturnType<typeof spawn>;
     try {
       child = spawn(file, args, {
+        // git 调用硬化漏斗（specs/git-invocation-hardening.md 消费点 #5）：
+        // TUI 分支徽标是自动触发的只读面，防弹窗挂死/hooks 停用/防串仓。
+        env: getCliGitInvocationEnv(),
         stdio: ["ignore", "pipe", "ignore"],
         windowsHide: true,
       });

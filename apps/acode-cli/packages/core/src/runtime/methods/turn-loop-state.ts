@@ -39,6 +39,22 @@ export const OFF_PEAK_MUTATION_TOOL_NAMES = [
   // 漏藏一个真能派生子会话的入口才有。旧会话 rollout 里仍可能出现该名字。
   "Workflow",
 ] as const;
+
+/**
+ * 会话舰队变更面（specs/session-fleet.md R1 纵深防御）：五个变更工具在 automation
+ * 与 off-peak **两类**无人值守派发轮一律隐藏（ListSessions 只读保留；第一层拒绝在
+ * fleet handler 的 unattended_turn 闭集）。独立常量，绝不并入上面两家：
+ * AUTOMATION_MUTATION_TOOL_NAMES 兼作 isAutomationMutationRestrictedTurn 的哨兵
+ * （本文件尾部 .every() 判定），加词会让旧 host denylist 下的派发轮检测漏判；
+ * OFF_PEAK 家语义是「防递归自我派生」，舰队面是两种派发轮都拒，与两家都不同。
+ */
+export const FLEET_MUTATION_TOOL_NAMES = [
+  "StartSession",
+  "SendToSession",
+  "HandOffToSession",
+  "ArchiveSession",
+  "DeleteSessions",
+] as const;
 // 闲时派发 init 段 traceId 无固定前缀，只有 resume 段是 `${offPeakTaskId}:resume:*`
 // （offpeak- 开头）；前缀只是 resume 兜底信号，主信号必须是显式 offPeakTaskId。
 const OFF_PEAK_QUERY_ID_PREFIX = "offpeak-";

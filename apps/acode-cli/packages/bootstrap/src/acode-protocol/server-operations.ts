@@ -9,6 +9,7 @@ import { inputIntentMetadata } from "../acode-protocol-v4/commands/input-intent.
 import { createModelExecutionContext } from "./model-execution.js";
 import type { SendInputOptions } from "../app/types.js";
 import {
+  FLEET_MUTATION_TOOL_NAMES,
   OFF_PEAK_MUTATION_TOOL_NAMES,
   repairPersistedRemoteSessionPaths,
   type TurnAttachment,
@@ -2441,6 +2442,13 @@ function buildPromptTurnToolDisallowlist(
   // 改三处（RunWorkflow 落地时正是如此）。唯一所有者是 core 的 turn-loop-state。
   if (activeOffPeakTaskId) {
     for (const toolName of OFF_PEAK_MUTATION_TOOL_NAMES) {
+      tools.add(toolName);
+    }
+  }
+  if (activeAutomationId || activeOffPeakTaskId) {
+    // 会话舰队变更面（specs/session-fleet.md R1 纵深防御）：两类无人值守派发轮都
+    // 隐藏；名单唯一所有者是 core 的 turn-loop-state（同上「不内联副本」纪律）。
+    for (const toolName of FLEET_MUTATION_TOOL_NAMES) {
       tools.add(toolName);
     }
   }

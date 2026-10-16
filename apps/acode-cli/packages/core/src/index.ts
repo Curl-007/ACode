@@ -32,6 +32,7 @@ export { builtInTools, registerBuiltInTools } from "./tool/handlers/index.js";
 // 两个 bootstrap 消费方都改为 import 这里的导出。
 export {
   AUTOMATION_MUTATION_TOOL_NAMES,
+  FLEET_MUTATION_TOOL_NAMES,
   OFF_PEAK_MUTATION_TOOL_NAMES,
 } from "./runtime/methods/turn-loop-state.js";
 // Open 工具的平台端口类型：宿主（bootstrap 的 CLI native opener / desktop host 下发链）
@@ -236,6 +237,10 @@ export {
   buildSessionWorktreeFenceEnv,
   setSessionWorktreeFenceWarnSink,
 } from "./worktree/session-worktree-fence.js";
+// 会话舰队（specs/session-fleet.md）：舰队记录/所有权封闭的单一所有者与机制件
+// （launch 编排、note watcher、worktree 重键、归档级联、列表投影、模式裁决）。
+// 导出面向装配层与测试：registry 单例的注入/重置与 mode 裁决纯函数都是公开面。
+export * from "./fleet/index.js";
 // 「按值把一段转录复制进另一个会话」的克隆器。fork 之外的第二个消费者是 dwf 的 amend-resume
 // 转录截断（bootstrap 的 workflow-actor-transcript.ts）：同一个动作——新会话用本地 id 续写，
 // parentID / part 内嵌锚点随之重映射。导出而不是让它再写一份，是因为漏掉任何一处重映射的症状

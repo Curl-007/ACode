@@ -32,6 +32,7 @@ import { runModelBackedTurnStep } from "./turn-model-step.js";
 import {
   AUTOMATION_MUTATION_TOOL_NAMES,
   evaluateRapidRefill,
+  FLEET_MUTATION_TOOL_NAMES,
   isAutomationMutationRestrictedTurn,
   isOffPeakCreateRestrictedTurn,
   MAX_CONSECUTIVE_RAPID_REFILLS,
@@ -308,6 +309,14 @@ function buildTurnDisallowedTools(state: RegularTurnLoopState): Set<string> | nu
     // 闲时执行轮禁止再创建闲时任务（防递归自我派生）；OffPeakList 只读保留。
     // 注意 automation 执行轮不进此分支——cron turn 放行 OffPeakCreate。
     for (const toolName of OFF_PEAK_MUTATION_TOOL_NAMES) {
+      tools.add(toolName);
+    }
+  }
+  if (isAutomationMutationRestrictedTurn(state) || isOffPeakCreateRestrictedTurn(state)) {
+    // 会话舰队变更面（specs/session-fleet.md R1 纵深防御）：两类无人值守派发轮都
+    // 隐藏五个变更工具；ListSessions 只读保留。第一层是 handler 的 unattended_turn
+    // 闭集拒绝，这里是 provider 请求边界的隐藏面。名单唯一所有者是 turn-loop-state。
+    for (const toolName of FLEET_MUTATION_TOOL_NAMES) {
       tools.add(toolName);
     }
   }

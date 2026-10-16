@@ -58,6 +58,11 @@ import { GATED_WORKFLOW_TOOL_NAMES } from "./workflow-tool-names.js";
 import { enterSessionWorktreeToolEntry } from "./enter-session-worktree.js";
 import { mergeBaseBranchToolEntry } from "./merge-base-branch.js";
 import { reapSessionWorktreesToolEntry } from "./reap-session-worktrees.js";
+// 会话舰队七工具（specs/session-fleet.md）按 ratchet 行数门禁抽到
+// fleet-tool-entries.ts，下方原位展开；周期摘要条目随领域模块住 core/src/digest/
+//（specs/periodic-digest.md，handlers/ 目录外的领域模块先例同 dwf 族）。
+import { fleetToolEntries } from "./fleet-tool-entries.js";
+import { generateDigestToolEntry } from "../../digest/generate-digest-tool.js";
 import { sessionSearchToolEntry } from "./session-search.js";
 // 对话内可视化写入工具：技能门 visualize，落点会话存储（specs/gen-ui-visualize.md）。
 import { writeVisualizationFragmentToolEntry } from "./write-visualization-fragment.js";
@@ -97,6 +102,10 @@ export const builtInTools: ToolEntry[] = [
   cronDeleteToolEntry,
   offPeakCreateToolEntry,
   offPeakListToolEntry,
+  // 周期摘要（specs/periodic-digest.md）：只读聚合既有查询面 + session markdown
+  // 产物；周期触发复用既有 cron 面（automation prompt 里点名调用 GenerateDigest），
+  // 不建第二调度器——调度单一所有者是 host cron，digest 是能力不是策略。
+  generateDigestToolEntry,
   enterPlanModeToolEntry,
   exitPlanModeToolEntry,
   askUserQuestionToolEntry,
@@ -135,6 +144,9 @@ export const builtInTools: ToolEntry[] = [
   enterSessionWorktreeToolEntry,
   mergeBaseBranchToolEntry,
   reapSessionWorktreesToolEntry,
+  // 会话舰队（specs/session-fleet.md R1）：清单见 fleet-tool-entries.ts（注释逐字
+  // 保留在该文件）；无注册门，无人值守双层收敛与所有权封闭见彼处说明。
+  ...fleetToolEntries,
 ];
 
 interface RegisterBuiltInToolsOptions {

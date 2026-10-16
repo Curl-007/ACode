@@ -6,6 +6,7 @@
 import { type TurnBackgroundAttribution, type TurnInputIntentMetadata } from "@acode/contracts";
 import {
   AUTOMATION_MUTATION_TOOL_NAMES,
+  FLEET_MUTATION_TOOL_NAMES,
   OFF_PEAK_MUTATION_TOOL_NAMES,
   type TurnAttachment,
 } from "@acode/core";
@@ -242,6 +243,12 @@ function buildTurnToolDisallowlist(
     // 闲时派发轮隐藏 OffPeakCreate（防递归自我派生）；OffPeakList 只读保留。
     // automation 轮不加此项——cron 轮放行 OffPeakCreate（定时派生闲时任务）。
     for (const toolName of OFF_PEAK_MUTATION_TOOL_NAMES) tools.add(toolName);
+  }
+  if (activeAutomationId || activeOffPeakTaskId) {
+    // 会话舰队变更面（specs/session-fleet.md R1 纵深防御）：两类无人值守派发轮都
+    // 隐藏五个变更工具；ListSessions 只读保留。名单唯一所有者是 core 的
+    // turn-loop-state（与 OFF_PEAK 名单同款「不内联第三份副本」纪律）。
+    for (const toolName of FLEET_MUTATION_TOOL_NAMES) tools.add(toolName);
   }
   return tools.size > 0 ? [...tools] : undefined;
 }

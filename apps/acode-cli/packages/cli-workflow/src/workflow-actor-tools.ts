@@ -13,15 +13,21 @@
 // 只读靠提示）。
 
 import {
+  ARCHIVE_SESSION_TOOL_NAME,
   ASK_USER_QUESTION_TOOL_NAME,
+  DELETE_SESSIONS_TOOL_NAME,
   ENTER_PLAN_MODE_TOOL_NAME,
   ENTER_SESSION_WORKTREE_TOOL_NAME,
   EXIT_PLAN_MODE_TOOL_NAME,
   FILL_WORKFLOW_HOLE_TOOL_NAME,
+  HAND_OFF_TO_SESSION_TOOL_NAME,
   MERGE_BASE_BRANCH_TOOL_NAME,
   READ_SESSION_CONTEXT_TOOL_NAME,
   REAP_SESSION_WORKTREES_TOOL_NAME,
   RESOLVE_WORKFLOW_QUESTION_TOOL_NAME,
+  SEND_TO_SESSION_TOOL_NAME,
+  SET_SESSION_PERMISSION_MODE_TOOL_NAME,
+  START_SESSION_TOOL_NAME,
 } from "@acode/contracts";
 
 /** AgentRuntimeConfig 的工具面切片。 */
@@ -59,6 +65,17 @@ const ACTOR_DISALLOWED_TOOLS: readonly string[] = [
   ENTER_SESSION_WORKTREE_TOOL_NAME,
   MERGE_BASE_BRANCH_TOOL_NAME,
   REAP_SESSION_WORKTREES_TOOL_NAME,
+  // 会话舰队六个变更工具（specs/session-fleet.md 分域纪律）：actor 不持有舰队
+  // 所有权（所有权封闭——只有发起 transcript 自己的 StartSession 成功返回才确立），
+  // 也不应在编排内发起/ steer/归档/删除用户的并行会话或改任何会话的权限档；
+  // 无 subagentPort 时本就 fail-closed，收录是与 worktree 三工具同款的分域对齐。
+  // ListSessions 只读保留（与 OffPeakList 只读同理）。
+  START_SESSION_TOOL_NAME,
+  SEND_TO_SESSION_TOOL_NAME,
+  HAND_OFF_TO_SESSION_TOOL_NAME,
+  SET_SESSION_PERMISSION_MODE_TOOL_NAME,
+  ARCHIVE_SESSION_TOOL_NAME,
+  DELETE_SESSIONS_TOOL_NAME,
 ];
 
 /**

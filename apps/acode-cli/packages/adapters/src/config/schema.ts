@@ -229,6 +229,19 @@ const modelAnomalyGuardSchema = z.object({
   maxBudgetWarningsPerTurn: z.number().int().nonnegative().optional(),
 });
 
+// 跨回合 auto-resume（specs/turn-auto-resume.md「配置面」，modelAnomalyGuard 同构）：
+// 参数与长期开关走 config；运行态计数/定时器/暂停 overlay 只住 core coordinator。
+// cooldownFactor 允许小数（>0 即可），其余时长/次数字段为正数。
+const autoResumeSchema = z.object({
+  enabled: z.boolean().optional(),
+  maxResumes: positiveIntegerSchema.optional(),
+  cooldownBaseSec: positiveNumberSchema.optional(),
+  cooldownFactor: positiveNumberSchema.optional(),
+  cooldownMaxSec: positiveNumberSchema.optional(),
+  loopGuardRepeats: positiveIntegerSchema.optional(),
+  continueMessage: z.string().min(1).optional(),
+});
+
 // Hooks schema：
 // 理想态是 re-export shared/workspace-hook-config，但两个 pnpm workspace 解析出物理
 // 不同的 zod 实例（adapters 4.4.3 / shared 4.3.6）：shared schema 嵌入本包组合 schema
@@ -306,6 +319,7 @@ export const ACodeConfigFileSchema = z
     ui: uiSchema.optional(),
     toolConcurrency: toolConcurrencySchema.optional(),
     modelAnomalyGuard: modelAnomalyGuardSchema.optional(),
+    autoResume: autoResumeSchema.optional(),
     hooks: hooksSchema.optional(),
   })
   .passthrough();
@@ -426,6 +440,7 @@ function parsedConfigFileToRuntimePatch(parsed: ACodeConfigFile): RuntimeConfigP
   if (parsed.ui) config.ui = parsed.ui;
   if (parsed.toolConcurrency) config.toolConcurrency = parsed.toolConcurrency;
   if (parsed.modelAnomalyGuard) config.modelAnomalyGuard = parsed.modelAnomalyGuard;
+  if (parsed.autoResume) config.autoResume = parsed.autoResume;
   if (parsed.hooks) config.hooks = parsed.hooks;
 
   return config;

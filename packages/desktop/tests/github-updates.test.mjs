@@ -20,6 +20,8 @@ async function load(relative, imports = {}) {
   return exports;
 }
 const logger = { info() {}, warn() {}, error() {}, debug() {} };
+// ipcMain.handle 同步段计时包装（W1-6 接线）：注入真实 ipcSyncTiming（纯 Node，无 electron 依赖）。
+const ipcSyncTimingModule = await load("ipcSyncTiming", {});
 
 test("update modules have no official endpoint or custom manifest dependency", async () => {
   for (const name of ["autoUpdater", "forceUpdateGuard"]) {
@@ -73,6 +75,11 @@ test("github feed, overrides, manual check and native download/install remain wi
     isDestroyed: () => false,
     webContents: { id: 1, send: (...args) => sent.push(args) },
   };
+  // autoUpdater 新增 ./updateGates.js 门控模块导入（specs/update-gates-endpoint-registry.md）；
+  // 边界替身加载器对未知 import 直接断言失败，这里补载真实 gates 模块（纯计算、无 IO）。
+  const gatesModule = await load("updateGates", {
+    semver: { __esModule: true, default: require("semver") },
+  });
   const module = await load("autoUpdater", {
     electron: {
       app: { isPackaged: true, getVersion: () => "1.0.0" },
@@ -97,6 +104,8 @@ test("github feed, overrides, manual check and native download/install remain wi
     },
     semver: { __esModule: true, default: require("semver") },
     "./logger.js": { logger },
+    "./updateGates.js": gatesModule,
+    "./ipcSyncTiming.js": ipcSyncTimingModule,
   });
   assert.deepEqual(
     module.resolveUpdateFeedSourceFromStartupConfig({

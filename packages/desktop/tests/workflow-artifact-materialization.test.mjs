@@ -30,10 +30,13 @@ async function loadMain(relative, imports = {}) {
   return exports;
 }
 
+// ipcMain.handle 同步段计时包装（W1-6 接线）：注入真实 ipcSyncTiming（纯 Node，无 electron 依赖）。
+const ipcSyncTimingModule = await loadMain("ipcSyncTiming", {});
 const artifactModule = await loadMain("desktopWorkflowArtifactIpc", {
   electron: { ipcMain: { handle() {} } },
   "@acode/shared": sharedModule,
   "@acode/services/node": { getACodeDataRootDir: () => "/unused-root" },
+  "./ipcSyncTiming.js": ipcSyncTimingModule,
 });
 
 class MemoryFs {

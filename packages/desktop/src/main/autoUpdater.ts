@@ -13,10 +13,23 @@ import {
   type UpdateCheckResultPayload,
   type UpdateStatePayload,
 } from "@acode/shared";
-import { app, BrowserWindow, ipcMain, Menu } from "electron";
+import { app, BrowserWindow, ipcMain, Menu, powerMonitor } from "electron";
 import pkg, { CancellationToken } from "electron-updater";
 import semver from "semver";
 import { logger } from "./logger.js";
+import {
+  classifyUpdateFailureGateReason,
+  createUpdateBusyDeferralTracker,
+  evaluateCandidateVersionCap,
+  evaluateCurrentVersionCap,
+  logUpdateGate,
+  resolveUpdateVersionCap,
+  validateCustomUpdateFeedPointer,
+  UPDATE_BUSY_DEFER_RETRY_MS,
+  type ResolvedUpdateVersionCap,
+  type UpdateHostBusySignals,
+} from "./updateGates.js";
+import { deriveIpcSyncLabel, wrapIpcHandle } from "./ipcSyncTiming.js";
 const { autoUpdater } = pkg;
 
 export const CHECK_FOR_UPDATE_MENU_ID = "check-for-update";
@@ -57,6 +70,13 @@ let autoUpdaterSettingService: SettingServiceLike | undefined;
 // （占位 feed、autoDownload 默认值）。任何漏改成按身份判断的入口若仍调用手动检查，
 // 都会对占位 feed 发真实请求。这里记住“本 flavor 已禁用”，让手动检查在模块内部 fail-closed。
 let autoUpdaterDisabledForProductFlavor = false;
+// —— 更新门控状态（判定逻辑唯一所有者在 updateGates.ts，这里只持有解析结果与定时器）——
+let updateVersionCap: ResolvedUpdateVersionCap = { cap: null, invalidValue: null };
+let updateBusyTracker: ReturnType<typeof createUpdateBusyDeferralTracker> | null = null;
+let busyDeferralTimer: NodeJS.Timeout | null = null;
+let invalidUpdateFeedPointer = false;
+let lastCappedGateContext: string | null = null;
+let updateShutdownRunner: UpdateShutdownRunner | undefined;
 
 type SettingServiceLike = Pick<ISettingService, "get" | "update">;
 
@@ -111,6 +131,34 @@ interface InitAutoUpdaterOptions {
   settingService?: SettingServiceLike;
   locale?: Locale;
   updateFeedSource?: RuntimeUpdateFeedSource;
+  /**
+   * 更新门控配置（updateGates.ts 消费）：maxVersion 即 dangerousMaxVersion 封顶——
+   * 当前版本 ≥ cap 或候选版本 > cap 一律不更新（gateReason=capped）。
+   * 企业配置层落地前由 main 显式注入；env/argv 覆盖仅非打包构建生效（P1-7 同哲学）。
+   */
+  updateGates?: { maxVersion?: string };
+  /**
+   * 关停注册表 update-install 段（T2-s7②，注册表模块 shutdownTasks.ts 归关停所有者）：
+   * quitAndInstall 前执行 beforeInstall∪stopsChildProcesses 名单（flush 窗口状态/
+   * 持久化 hints 类任务）；best-effort，失败 warn 不阻断安装
+   * （与 onBeforeQuitAndInstall 的文件锁硬前置不同级）。
+   */
+  shutdownRunner?: UpdateShutdownRunner;
+  /**
+   * 宿主忙碌信号（三信号联合判定，缺省信号由本模块用 electron API 补齐）。
+   * 忙碌门控是显式 opt-in：不注入则不启用忙碌延迟（保持既有后台检查立即执行）。
+   */
+  hostBusySignals?: UpdateHostBusySignals;
+}
+
+/**
+ * 与关停注册表（shutdownTasks.ts 的 ShutdownTaskRegistry）对齐的调用约定：
+ * kind="update-install" 段＝注册表中 beforeInstall ∪ stopsChildProcesses 名单
+ * （更新器重启安装前的收敛面）。更新器只按 kind 触发，不感知任务清单；
+ * 返回的 ShutdownRunResult 由注册表所有者自行落证据，这里只等待完成。
+ */
+export interface UpdateShutdownRunner {
+  runShutdown(kind: "update-install", options?: { reason?: string }): unknown;
 }
 
 let quitAndInstallInFlight = false;
@@ -242,12 +290,54 @@ function readUpdateInfoReleaseChannel(
 }
 
 function beginAutoUpdateCheck(): number {
+  // 任何检查（手动/后台/延迟重试）放行后，待触发的忙碌延迟重试失去意义，先清掉。
+  if (busyDeferralTimer) {
+    clearTimeout(busyDeferralTimer);
+    busyDeferralTimer = null;
+  }
   checkForUpdatesInFlight = true;
   autoUpdateCheckGeneration += 1;
   activeAutoUpdateCheckId = autoUpdateCheckGeneration;
   activeAutoUpdateCheckChannel = availableUpdateChannel;
   settlingAutoUpdateCheckId = null;
   return activeAutoUpdateCheckId;
+}
+
+/**
+ * capped 门控日志按上下文去重：cap 命中后每小时轮询都会再次撞门，
+ * 相同上下文只记一条，避免刷屏；上下文变化（换 cap/换版本）重新记。
+ */
+function logCappedGateOnce(context: Record<string, unknown>): void {
+  const key = JSON.stringify(context);
+  if (key === lastCappedGateContext) {
+    return;
+  }
+  lastCappedGateContext = key;
+  logUpdateGate(logger, "capped", context);
+}
+
+function evaluateCurrentVersionCapGate(trigger: string): boolean {
+  const gate = evaluateCurrentVersionCap({
+    cap: updateVersionCap,
+    currentVersion: getCurrentAppVersionForUpdate(),
+  });
+  if (!gate.gated) {
+    return false;
+  }
+  if (updateVersionCap.invalidValue) {
+    // cap 配置值非法：fail-closed 不更新，但必须可诊断（warn 一次即可，去重仍走 gate 日志）。
+    logger.warn(
+      `[auto-update] update cap value is not a valid version, fail-closed to capped: ${updateVersionCap.invalidValue}`,
+    );
+  }
+  logCappedGateOnce({
+    detail: gate.detail,
+    ...(updateVersionCap.cap ? { cap: updateVersionCap.cap } : {}),
+    ...(updateVersionCap.invalidValue ? { capInvalidValue: updateVersionCap.invalidValue } : {}),
+    currentVersion: getCurrentAppVersionForUpdate(),
+    trigger,
+  });
+  return true;
 }
 
 function completeAutoUpdateCheck(reason: string, checkId: number | null): void {
@@ -388,6 +478,33 @@ function buildDownloadProgressState(
 }
 
 async function quitAndInstallUpdate(rejectUnavailable = false) {
+  if (readyUpdateVersion) {
+    // 纵深防御：ready 包可能来自 cap 变更（下调）之前下载并持久化的版本。
+    // 安装是最后闸口，超过 cap 的 ready 一律清掉，不进入退出准备与安装器。
+    const readyCapGate = evaluateCandidateVersionCap({
+      cap: updateVersionCap,
+      candidateVersion: readyUpdateVersion,
+    });
+    if (readyCapGate.gated) {
+      logCappedGateOnce({
+        detail: readyCapGate.detail,
+        ...(updateVersionCap.cap ? { cap: updateVersionCap.cap } : {}),
+        readyVersion: readyUpdateVersion,
+        trigger: "quit-and-install",
+      });
+      const cappedReadyVersion = readyUpdateVersion;
+      clearReadyUpdateState();
+      clearPersistedPostUpdateReleaseNotesForVersion(cappedReadyVersion, "capped-at-install");
+      clearAvailableUpdateState();
+      clearDownloadingUpdateState();
+      setAutoUpdaterMenuState({ kind: "idle", enabled: true });
+      if (rejectUnavailable) {
+        throw new Error(`Update is above dangerousMaxVersion cap: ${cappedReadyVersion}`);
+      }
+      return;
+    }
+  }
+
   if (
     menuState.kind === "update-downloaded" &&
     readyUpdateVersion &&
@@ -427,6 +544,18 @@ async function quitAndInstallUpdate(rejectUnavailable = false) {
   }
   quitAndInstallInFlight = true;
   logger.info("[auto-update] user requested quit and install");
+  // update-install 关停段（T2-s7②，即注册表 beforeInstall∪stopsChildProcesses 名单）：
+  // flush 窗口状态/持久化 hints 类任务在安装器接管前执行。
+  // best-effort：失败只 warn 不阻断——状态丢失可恢复，与下面释放文件锁的硬前置不同级。
+  if (updateShutdownRunner) {
+    try {
+      await updateShutdownRunner.runShutdown("update-install", {
+        reason: "auto-update quitAndInstall",
+      });
+    } catch (error) {
+      logger.warn("[auto-update] update-install shutdown segment failed (continuing):", error);
+    }
+  }
   // macOS 上 quitAndInstall() 在关窗前不会先走 app.before-quit。
   // 如果仍然只靠 before-quit 去放行窗口 close，现有的“红绿灯关闭=隐藏窗口”逻辑会把退出拦住，
   // 表现成点击更新后界面消失但进程没退、安装流程也不再继续。
@@ -753,7 +882,9 @@ function applyUpdateProvider(options: InitAutoUpdaterOptions): void {
       channel: "latest",
       useMultipleRangeRequest: false,
     });
-    logger.info(`[auto-update] generic provider (custom feed) url=${redactUpdateFeedUrlForLog(customUrl)}`);
+    logger.info(
+      `[auto-update] generic provider (custom feed) url=${redactUpdateFeedUrlForLog(customUrl)}`,
+    );
     return;
   }
   // 我们所有发布（audit.x）都是 GitHub Pre-release：generic 的 /releases/latest 会 404。
@@ -1009,6 +1140,14 @@ function handleAutoUpdateFailure(error: unknown, source: string) {
   }
 
   logger.error(`[auto-update] ${source}:`, error);
+  // 失败也进闭集门控日志：检查/下载网络失败=fetch_failed，退出准备/staging/安装链路=install_failed。
+  logUpdateGate(logger, classifyUpdateFailureGateReason(source), {
+    detail: source,
+    message,
+    ...(menuState.kind === "download-progress" && downloadingUpdateVersion
+      ? { version: downloadingUpdateVersion }
+      : {}),
+  });
   if (menuState.kind === "update-downloaded" && readyUpdateVersion) {
     const failedReadyVersion = readyUpdateVersion;
     // macOS Squirrel 可能在 update-downloaded 后才发现包无法 stage。
@@ -1177,27 +1316,42 @@ async function clearSkippedUpdateVersionForManualCheck(
 
 function downloadAvailableUpdate(reason = "renderer") {
   if (!canUseAutoUpdaterInCurrentRuntime()) {
-    logger.info(`[auto-update] skip ${reason} download: not packaged`);
+    logUpdateGate(logger, "not_packaged", { trigger: `${reason} download` });
     return;
   }
 
   if (menuState.kind === "update-downloaded") {
-    logger.info(`[auto-update] skip ${reason} download: update already ready`);
+    logUpdateGate(logger, "state_conflict", {
+      trigger: `${reason} download`,
+      state: menuState.kind,
+      detail: "update already ready",
+    });
     return;
   }
 
   if (menuState.kind === "download-progress") {
-    logger.info(`[auto-update] skip ${reason} download: download already in progress`);
+    logUpdateGate(logger, "state_conflict", {
+      trigger: `${reason} download`,
+      state: menuState.kind,
+      detail: "download already in progress",
+    });
     return;
   }
 
   if (downloadCancellationToken) {
-    logger.info(`[auto-update] skip ${reason} download: download already requested`);
+    logUpdateGate(logger, "state_conflict", {
+      trigger: `${reason} download`,
+      state: menuState.kind,
+      detail: "download already requested",
+    });
     return;
   }
 
   if (menuState.kind !== "update-available") {
-    logger.info(`[auto-update] skip ${reason} download: state=${menuState.kind}`);
+    logUpdateGate(logger, "state_conflict", {
+      trigger: `${reason} download`,
+      state: menuState.kind,
+    });
     return;
   }
 
@@ -1349,12 +1503,16 @@ export function refreshAutoUpdaterReleaseChannel(
   const nextChannel: ElectronReleaseChannel = "stable";
 
   if (!canUseAutoUpdaterInCurrentRuntime()) {
-    logger.info(`[auto-update] skip ${reason}: not packaged`);
+    logUpdateGate(logger, "not_packaged", { trigger: reason });
     return;
   }
 
   if (menuState.kind === "download-progress" || menuState.kind === "update-downloaded") {
-    logger.info(`[auto-update] skip ${reason}: state=${menuState.kind} channel=${nextChannel}`);
+    logUpdateGate(logger, "state_conflict", {
+      trigger: reason,
+      state: menuState.kind,
+      channel: nextChannel,
+    });
     return;
   }
 
@@ -1363,9 +1521,11 @@ export function refreshAutoUpdaterReleaseChannel(
     // 不能立刻改 availableUpdateChannel，否则旧请求返回时会把旧通道的版本标成新通道；
     // 这里只记录待刷新通道，等当前 check 收口后再重新请求 manifest。
     pendingManifestReleaseChannelRefresh = nextChannel;
-    logger.info(
-      `[auto-update] defer ${reason}: check already in flight, next channel=${nextChannel}`,
-    );
+    logUpdateGate(logger, "already_in_flight", {
+      trigger: reason,
+      nextChannel,
+      detail: "deferred to pending manifest refresh",
+    });
     return;
   }
 
@@ -1459,6 +1619,7 @@ export async function initAutoUpdater(options: InitAutoUpdaterOptions = {}): Pro
       clearInterval(autoUpdatePollTimer);
       autoUpdatePollTimer = null;
     }
+    logUpdateGate(logger, "disabled_by_policy", { detail: "product-flavor" });
     logger.info("[auto-update] disabled for this desktop product flavor");
     return;
   }
@@ -1466,6 +1627,49 @@ export async function initAutoUpdater(options: InitAutoUpdaterOptions = {}): Pro
   if (!canUseAutoUpdaterInCurrentRuntime()) return;
 
   onBeforeQuitAndInstall = options.onBeforeQuitAndInstall;
+  updateShutdownRunner = options.shutdownRunner;
+  if (busyDeferralTimer) {
+    clearTimeout(busyDeferralTimer);
+    busyDeferralTimer = null;
+  }
+  updateBusyTracker = null;
+  lastCappedGateContext = null;
+  // dev 自定义 feed 覆盖（更新指针）先行校验：不可解析的指针不能让 electron-updater
+  // 在 check 阶段才炸出难归因的网络错误，直接按 invalid_pointer 门控住全部检查。
+  invalidUpdateFeedPointer = Boolean(
+    options.updateFeedSource?.url && !validateCustomUpdateFeedPointer(options.updateFeedSource.url),
+  );
+  if (invalidUpdateFeedPointer) {
+    logUpdateGate(logger, "invalid_pointer", {
+      detail: "custom feed url unparseable",
+      url: redactUpdateFeedUrlForLog(options.updateFeedSource?.url ?? ""),
+    });
+  }
+  updateVersionCap = resolveUpdateVersionCap({
+    explicit: options.updateGates?.maxVersion,
+    env: process.env,
+    argv: process.argv,
+    isPackaged: app.isPackaged,
+  });
+  if (updateVersionCap.cap) {
+    logger.info(`[auto-update] update cap configured maxVersion=${updateVersionCap.cap}`);
+  }
+  if (options.hostBusySignals) {
+    // 忙碌门控显式 opt-in：注入了信号源才创建 tracker（未接线时保持既有立即检查行为）。
+    updateBusyTracker = createUpdateBusyDeferralTracker({
+      signals: {
+        hasFocusedWindow: () => {
+          const focused = BrowserWindow.getFocusedWindow();
+          return focused != null && !focused.isDestroyed();
+        },
+        getSystemIdleSeconds: () =>
+          typeof powerMonitor?.getSystemIdleTime === "function"
+            ? powerMonitor.getSystemIdleTime()
+            : 0,
+        ...options.hostBusySignals,
+      },
+    });
+  }
   if (options.locale) {
     menuLocale = options.locale;
   }
@@ -1497,11 +1701,58 @@ export async function initAutoUpdater(options: InitAutoUpdaterOptions = {}): Pro
   // 这里仅在 Windows 关闭“退出即自动安装”，要求用户显式点更新；其他平台保持原有行为，避免改动既有升级链路。
   autoUpdater.autoInstallOnAppQuit = process.platform !== "win32";
   autoUpdater.logger = logger;
-  applyUpdateProvider(options);
+  try {
+    applyUpdateProvider(options);
+  } catch (error) {
+    // feed 配置失败此前会让 initAutoUpdater 整体 reject（调用侧是 void，等于未处理异常），
+    // 且轮询/事件都不会装上。收敛为 invalid_feed 门控：明确记录原因并保持更新器停用。
+    logUpdateGate(logger, "invalid_feed", {
+      detail: error instanceof Error ? error.message : String(error),
+    });
+    return;
+  }
 
   const triggerCheckForUpdates = (reason: string) => {
+    const isBackgroundCheck = reason === "startup" || reason === "poll";
+    if (invalidUpdateFeedPointer) {
+      logUpdateGate(logger, "invalid_pointer", { trigger: reason });
+      return;
+    }
+    if (evaluateCurrentVersionCapGate(reason)) {
+      return;
+    }
+    if (isBackgroundCheck && updateBusyTracker) {
+      // 宿主忙碌感知延迟：只推迟后台检查；手动检查是用户显式意图，不进该门。
+      const decision = updateBusyTracker.sample();
+      if (decision.defer) {
+        if (decision.firstSighting) {
+          // 每个延迟 episode 只记一条（60s 重试不再重复），语义=「宿主忙碌，推迟后台更新检查」。
+          logUpdateGate(logger, "busy_deferred", {
+            detail: "host busy; deferring background update check",
+            busyMinutes: decision.busyMinutes,
+          });
+        }
+        if (!busyDeferralTimer) {
+          busyDeferralTimer = setTimeout(() => {
+            busyDeferralTimer = null;
+            triggerCheckForUpdates("poll");
+          }, UPDATE_BUSY_DEFER_RETRY_MS);
+          busyDeferralTimer.unref?.();
+        }
+        return;
+      }
+      if (decision.forcedAfterBusy) {
+        logger.info(
+          `[auto-update] host busy for ${decision.busyMinutes} min; checking for updates anyway`,
+        );
+      } else if (decision.quietAfterBusy) {
+        logger.info(
+          `[auto-update] host quiet after ${decision.busyMinutes} busy min; checking for updates`,
+        );
+      }
+    }
     if (checkForUpdatesInFlight) {
-      logger.info(`[auto-update] skip ${reason}: check already in flight`);
+      logUpdateGate(logger, "already_in_flight", { trigger: reason });
       return;
     }
 
@@ -1510,10 +1761,11 @@ export async function initAutoUpdater(options: InitAutoUpdaterOptions = {}): Pro
     // 造成无效请求、噪音日志，甚至把用户看到的菜单状态来回覆盖，所以自动轮询只在 idle 或
     // update-downloaded 态进入；后者继续轮询是为了发现取代已下载版本的新版本。
     if (reason === "poll" && !canPollForUpdatesFromState(menuState)) {
-      logger.info(`[auto-update] skip ${reason}: state=${menuState.kind}`);
+      logUpdateGate(logger, "state_conflict", { trigger: reason, state: menuState.kind });
       return;
     }
 
+    updateBusyTracker?.reset();
     const checkId = beginAutoUpdateCheck();
     const checkForUpdatesPromise = options.settingService
       ? (async () => {
@@ -1544,13 +1796,53 @@ export async function initAutoUpdater(options: InitAutoUpdaterOptions = {}): Pro
     if (shouldIgnoreStaleAvailableUpdate(infoChannel)) {
       // 用户切换“接收 preview 版本”时，旧通道的 manifest 请求可能晚于新请求返回。
       // 旧结果如果继续写 menuState，或提前结束当前 generation，会让独立更新弹窗继续显示旧版本/旧 release notes。
-      logger.info(
-        `[auto-update] ignore stale update channel=${infoChannel} expected=${activeAutoUpdateCheckChannel ?? availableUpdateChannel} version=${info.version}`,
-      );
+      logUpdateGate(logger, "stale", {
+        channel: infoChannel,
+        expectedChannel: activeAutoUpdateCheckChannel ?? availableUpdateChannel,
+        version: info.version,
+      });
       return;
     }
 
     void settleAutoUpdateCheckResult("update available", async () => {
+      const candidateCapGate = evaluateCandidateVersionCap({
+        cap: updateVersionCap,
+        candidateVersion: info.version,
+      });
+      if (candidateCapGate.gated) {
+        // 候选版本超过 cap：不进入下载/安装。已有 ready（必然 ≤cap）时保留 ready 状态，
+        // 与 update-not-available 的收敛一致，手动检查得到闭环反馈。
+        logCappedGateOnce({
+          detail: candidateCapGate.detail,
+          ...(updateVersionCap.cap ? { cap: updateVersionCap.cap } : {}),
+          candidateVersion: info.version,
+        });
+        clearAvailableUpdateState();
+        clearDownloadingUpdateState();
+        const readyCapGate = readyUpdateVersion
+          ? evaluateCandidateVersionCap({
+              cap: updateVersionCap,
+              candidateVersion: readyUpdateVersion,
+            })
+          : null;
+        if (readyUpdateVersion && readyCapGate?.gated) {
+          // 已 ready 的版本本身超 cap（cap 下调后的残留）：一并清理，不保留安装入口。
+          clearPersistedPostUpdateReleaseNotesForVersion(readyUpdateVersion, "capped-candidate");
+          clearReadyUpdateState();
+        }
+        if (readyUpdateVersion) {
+          setAutoUpdaterMenuState(buildUpdateDownloadedState(readyUpdateVersion));
+          sendManualCheckResult({ kind: "ready", version: readyUpdateVersion });
+        } else {
+          setAutoUpdaterMenuState({ kind: "idle", enabled: true });
+          sendManualCheckResult({
+            kind: "up-to-date",
+            currentVersion: getCurrentAppVersionForUpdate(),
+          });
+        }
+        return;
+      }
+
       if (!shouldDownloadAvailableUpdate(info.version)) {
         const readyVersion = readyUpdateVersion ?? info.version;
         logger.info(
@@ -1563,9 +1855,7 @@ export async function initAutoUpdater(options: InitAutoUpdaterOptions = {}): Pro
 
       const channel = infoChannel ?? availableUpdateChannel;
       if (await isSkippedUpdateVersion(info.version, channel, options.settingService)) {
-        logger.info(
-          `[auto-update] ignore skipped update channel=${channel} version=${info.version}`,
-        );
+        logUpdateGate(logger, "user_skipped_version", { channel, version: info.version });
         clearAvailableUpdateState();
         setAutoUpdaterMenuState({ kind: "idle", enabled: true });
         sendManualCheckResult({
@@ -1723,28 +2013,43 @@ export async function initAutoUpdater(options: InitAutoUpdaterOptions = {}): Pro
     });
   });
 
-  ipcMain.handle(PlatformChannels.QuitAndInstallUpdate, () =>
-    // renderer 只有在 IPC reject 时才知道安装器没有接管。ready 失效或
-    // 退出准备失败不能返回成功 ACK，否则“重启以更新”会永久保持 pending。
-    quitAndInstallUpdate(true),
+  ipcMain.handle(
+    PlatformChannels.QuitAndInstallUpdate,
+    wrapIpcHandle(deriveIpcSyncLabel(PlatformChannels.QuitAndInstallUpdate), () =>
+      // renderer 只有在 IPC reject 时才知道安装器没有接管。ready 失效或
+      // 退出准备失败不能返回成功 ACK，否则“重启以更新”会永久保持 pending。
+      quitAndInstallUpdate(true),
+    ),
   );
   ipcMain.on(PlatformChannels.QuitAndInstallUpdate, () => {
     void quitAndInstallUpdate();
   });
-  ipcMain.handle(PlatformChannels.DownloadUpdate, () => {
-    downloadAvailableUpdate("renderer");
-  });
-  ipcMain.handle(PlatformChannels.CancelUpdateDownload, () => {
-    cancelDownloadingUpdate("renderer");
-  });
-  ipcMain.handle(PlatformChannels.SkipUpdateVersion, async (_event, version: unknown) => {
-    const validatedVersion = typeof version === "string" ? version.trim() : "";
-    if (!validatedVersion) {
-      logger.warn("[auto-update] ignore empty skipped update version");
-      return;
-    }
-    await skipAvailableUpdateVersion(validatedVersion, options.settingService);
-  });
+  ipcMain.handle(
+    PlatformChannels.DownloadUpdate,
+    wrapIpcHandle(deriveIpcSyncLabel(PlatformChannels.DownloadUpdate), () => {
+      downloadAvailableUpdate("renderer");
+    }),
+  );
+  ipcMain.handle(
+    PlatformChannels.CancelUpdateDownload,
+    wrapIpcHandle(deriveIpcSyncLabel(PlatformChannels.CancelUpdateDownload), () => {
+      cancelDownloadingUpdate("renderer");
+    }),
+  );
+  ipcMain.handle(
+    PlatformChannels.SkipUpdateVersion,
+    wrapIpcHandle(
+      deriveIpcSyncLabel(PlatformChannels.SkipUpdateVersion),
+      async (_event, version: unknown) => {
+        const validatedVersion = typeof version === "string" ? version.trim() : "";
+        if (!validatedVersion) {
+          logger.warn("[auto-update] ignore empty skipped update version");
+          return;
+        }
+        await skipAvailableUpdateVersion(validatedVersion, options.settingService);
+      },
+    ),
+  );
 
   triggerCheckForUpdates("startup");
 
@@ -1779,7 +2084,7 @@ export function checkForUpdateMenuClick(originWindow?: BrowserWindow | null) {
   }
 
   if (!canUseAutoUpdaterInCurrentRuntime()) {
-    logger.info("[auto-update] skip manual check: not packaged");
+    logUpdateGate(logger, "not_packaged", { trigger: "manual check" });
     targetWindow.webContents.send(PlatformChannels.UpdateCheckResult, {
       kind: "dev-skipped",
     } satisfies UpdateCheckResultPayload);
@@ -1788,7 +2093,10 @@ export function checkForUpdateMenuClick(originWindow?: BrowserWindow | null) {
 
   if (autoUpdaterDisabledForProductFlavor) {
     // 入口本应已按产品身份隐藏；这里是最后一道闸，不让未初始化的 updater 实例向占位 feed 发请求。
-    logger.info("[auto-update] skip manual check: updater disabled for this product flavor");
+    logUpdateGate(logger, "disabled_by_policy", {
+      trigger: "manual check",
+      detail: "product-flavor",
+    });
     targetWindow.webContents.send(PlatformChannels.UpdateCheckResult, {
       kind: "dev-skipped",
     } satisfies UpdateCheckResultPayload);
@@ -1820,8 +2128,26 @@ export function checkForUpdateMenuClick(originWindow?: BrowserWindow | null) {
     return;
   }
 
+  if (invalidUpdateFeedPointer) {
+    logUpdateGate(logger, "invalid_pointer", { trigger: "manual check" });
+    targetWindow.webContents.send(PlatformChannels.UpdateCheckResult, {
+      kind: "error",
+      message: "Update feed pointer is invalid.",
+    } satisfies UpdateCheckResultPayload);
+    return;
+  }
+
+  if (evaluateCurrentVersionCapGate("manual check")) {
+    // cap 是安全上限，对手动检查同样生效；给闭环反馈，不悬在 checking。
+    targetWindow.webContents.send(PlatformChannels.UpdateCheckResult, {
+      kind: "up-to-date",
+      currentVersion: getCurrentAppVersionForUpdate(),
+    } satisfies UpdateCheckResultPayload);
+    return;
+  }
+
   if (checkForUpdatesInFlight) {
-    logger.info("[auto-update] skip manual check: check already in flight");
+    logUpdateGate(logger, "already_in_flight", { trigger: "manual check" });
     targetWindow.webContents.send(PlatformChannels.UpdateCheckResult, {
       kind: "error",
       message: "Update check already in progress.",

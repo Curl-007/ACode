@@ -58,6 +58,8 @@ export function createWindow(options: {
   agentWarmupTargets?: readonly StartupWorkspaceWarmupTarget[];
   agentSpawnFallbackCwd: string;
   deviceMid: string;
+  /** 启动骨架占位注入参数（specs/boot-placeholder.md §9.2/§9.3），透传 createBrowserWindow。 */
+  bootPlaceholderArgument?: string;
   initialDesktopZoomLevel?: number;
   initialWindowSize?: DesktopWindowSize;
   currentApplicationLocale?: () => Locale;
@@ -92,6 +94,7 @@ export function createWindow(options: {
     },
     logger: options.logger,
     deviceMid: options.deviceMid,
+    bootPlaceholderArgument: options.bootPlaceholderArgument,
     initialDesktopZoomLevel: options.initialDesktopZoomLevel,
     initialWindowSize: options.initialWindowSize,
     currentApplicationLocale: options.currentApplicationLocale,

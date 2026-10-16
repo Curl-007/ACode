@@ -19,6 +19,17 @@ function parseDeviceIdFromArgs(): string {
 // 在 contextBridge 建立之前就暴露同步值，让 renderer 在 React 渲染前就能读到
 contextBridge.exposeInMainWorld("__ACODE_DEVICE_ID__", parseDeviceIdFromArgs());
 
+// W1-7 启动骨架占位（specs/boot-placeholder.md §9.4）：仿 --device-id 模式解析
+// `--acode-boot-placeholder=<JSON>` 并连同当前 shell zoom 暴露；index.html 的
+// head/body 内联脚本在任何页面脚本前同步读取。bootPlaceholder.ts 零 electron
+// 运行时导入，可安全被 preload bundle 复用（解析/校验器与 main 侧同一份）。
+// flag 缺席/JSON 非法/校验失败 → parsed 为 undefined，展开后 enabled 缺省，
+// head 相位 no-op（fail-safe，启动表现与现状一致）。
+contextBridge.exposeInMainWorld("__ACODE_BOOT_PLACEHOLDER__", {
+  ...parseBootPlaceholderArgv(process.argv),
+  shellZoomFactor: webFrame.getZoomFactor(),
+});
+
 import type {
   AppSettings,
   ApplicationIconRequest,
@@ -35,6 +46,7 @@ import type {
   BrowserViewRestoredTabShell,
   BrowserViewRestoreTabsRequest,
   BrowserViewportSize,
+  ContentBreadcrumbWirePayload,
   DesktopZoomState,
   DesktopWindowChromeState,
   DesktopCommandId,
@@ -69,6 +81,10 @@ import type {
 import type { PlatformChannelMap } from "@acode/shared";
 import { InternalChannels, PlatformChannels, formatACodeRendererProcessName } from "@acode/shared";
 import { createOAuthCallbackHandler } from "./oauthCallbackBridge.js";
+import { findInPageBridge } from "./findInPageBridge.js";
+// W1-7：boot placeholder argv 解析器与 main 侧同一份（bootPlaceholder.ts 零 electron
+// 运行时导入，preload bundle 可安全复用；specs/boot-placeholder.md §9.4）。
+import { parseBootPlaceholderArgv } from "../main/bootPlaceholder.js";
 const updateReadyCallbacks = new Set<(version: string) => void>();
 const updateStateCallbacks = new Set<(payload: UpdateStatePayload) => void>();
 const postUpdateReleaseNotesCallbacks = new Set<(payload: PostUpdateReleaseNotesPayload) => void>();
@@ -363,6 +379,33 @@ contextBridge.exposeInMainWorld("acode", {
   /** 快捷键设置页录制态开关：main 暂时摘除可配置菜单 accelerator，防止录制按键触发原命令 */
   setShortcutRecordingActive: (active: boolean) =>
     ipcRenderer.send(PlatformChannels.SetShortcutRecordingActive, active),
+  /**
+   * W1-8 嵌入第三方内容面（可视化卡片 iframe / 内嵌浏览器 pane）可编辑焦点上报
+   * （specs/embedded-content-focus-yield.md）：main 台账据此动态摘挂菜单 accelerator。
+   * send-only；main 侧带布尔校验器与嵌套帧拒绝，变化才发。
+   */
+  syncEmbeddedEditableFocus: (focused: boolean) =>
+    ipcRenderer.send(PlatformChannels.SyncEmbeddedEditableFocus, focused),
+  /**
+   * W1-6 卡顿归因（specs/main-stall-diagnostics.md R11）：renderer 内容状态面包屑
+   * 周期上报（桶化 payload，极小）。send-only 诊断通道不回错；main 侧 fail-closed
+   * 校验（字段缺失/类型错/闭集外整条丢弃）+ 受信帧校验。
+   * 方法名钉死 sendContentBreadcrumb（IPlatformService 同名可选方法，ui 消费面）。
+   */
+  sendContentBreadcrumb: (payload: ContentBreadcrumbWirePayload) =>
+    ipcRenderer.send(PlatformChannels.ContentBreadcrumb, payload),
+  /**
+   * W1-6 print() 假死守卫（specs/main-stall-diagnostics.md R12）：renderer 执行
+   * window.print() 前/后上报 true/false。send-only；非布尔载荷 main 侧丢弃。
+   */
+  reportPrintCall: (printing: boolean) =>
+    ipcRenderer.send(PlatformChannels.PrintCall, printing),
+  /**
+   * SEC-2 支持包导出（specs/log-privacy-redaction.md）：main 组装分节支持包 zip，
+   * 返回保存路径或 null（失败/取消，详情走 main 日志不回传敏感内容）。
+   */
+  exportSupportBundle: (): Promise<string | null> =>
+    ipcRenderer.invoke(PlatformChannels.ExportSupportBundle),
   /** 注册 main 进程要求聚焦指定 workspace tab 的回调，返回 disposer */
   onFocusTab: (callback: (path: string) => void): (() => void) => {
     const handler = (_event: unknown, path: string) => callback(path);
@@ -780,6 +823,8 @@ contextBridge.exposeInMainWorld("acode", {
     ipcRenderer.invoke(PlatformChannels.SetTitleBarTheme, theme),
   /** 获取桌面端设备标识符（deviceMid） */
   getDeviceId: () => ipcRenderer.invoke(PlatformChannels.GetDeviceId),
+  // ── 页内查找（specs/find-in-page.md）：桥实现独立成文件，入口只 spread ──
+  ...findInPageBridge,
 });
 
 /**

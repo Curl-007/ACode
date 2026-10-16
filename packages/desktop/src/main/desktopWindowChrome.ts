@@ -554,6 +554,12 @@ export function createBrowserWindow(options: {
   logger: { warn: (...args: unknown[]) => void };
   /** 桌面端设备标识符（基于 userData 路径的 SHA-256），用于 renderer 同步读取 */
   deviceMid?: string;
+  /**
+   * 启动骨架占位注入参数（`--acode-boot-placeholder=<JSON>`，specs/boot-placeholder.md §9.2）；
+   * 由接线方经 buildBootPlaceholderArgument(resolveBootPlaceholderPayload(...)) 生成，
+   * preload 在任何页面脚本前解析暴露。缺省不注入（head 相位 no-op，行为同现状）。
+   */
+  bootPlaceholderArgument?: string;
   /** 桌面端持久化页面缩放档位；窗口创建时先应用，避免首屏回到默认大小。 */
   initialDesktopZoomLevel?: number;
   /** 主进程设置服务读取的最近一次普通窗口尺寸与最大化状态。 */
@@ -598,7 +604,12 @@ export function createBrowserWindow(options: {
       // 和 GPU。窗口保持默认节流；截图期只临时唤醒 owner renderer 与当前目标 guest。
       zoomFactor: initialDesktopZoomFactor,
       // 将 deviceMid 透传给 preload，供 renderer 在 React 渲染前同步读取
-      additionalArguments: [`--device-id=${options.deviceMid ?? ""}`],
+      additionalArguments: [
+        `--device-id=${options.deviceMid ?? ""}`,
+        // 启动骨架占位 payload（specs/boot-placeholder.md）：同样走 argv 注入，
+        // preload 在任何页面脚本前解析并暴露 __ACODE_BOOT_PLACEHOLDER__。
+        ...(options.bootPlaceholderArgument ? [options.bootPlaceholderArgument] : []),
+      ],
     },
   });
 

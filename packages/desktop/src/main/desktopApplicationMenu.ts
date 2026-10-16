@@ -20,6 +20,7 @@ import {
   HELP_TOGGLE_ACODE_STDIO_TAP_MENU_ID,
   HELP_TOGGLE_DEV_TOOLS_MENU_ID,
 } from "./desktopCommandHandlers.js";
+import { buildFindInPageMenuItem } from "./desktopApplicationMenuFindInPage.js";
 
 const HELP_ACODE_ENDPOINT_PRODUCTION_MENU_ID = "help.acode-endpoint.production";
 
@@ -57,7 +58,12 @@ interface ApplicationMenuShortcutOptions {
  * 从用户覆盖解析菜单 accelerator：显式空数组 = 抢绑后的「未设置」（无 accelerator）；
  * 覆盖全部非法时回退硬编码默认值（与 renderer 生效表语义一致）。
  * main 进程只需要"命令 → accelerator 字符串"，完整生效表语义在 ui 快捷键内核。
- * 录制态返回 undefined（菜单项不带 accelerator，仍可点击），防止录制按键触发原命令。
+ * disableShortcutAccelerators 时返回 undefined（菜单项不带 accelerator，仍可点击）。
+ * 该开关有两个触发源（specs/embedded-content-focus-yield.md §3 案 A）：
+ * ① 快捷键录制态——防止录制按键直接触发原命令；
+ * ② 嵌入第三方内容面（可视化卡片 iframe / 内嵌浏览器 pane）有可编辑焦点——菜单
+ *   accelerator 在窗口级先于页面吃键（macOS NSMenu performKeyEquivalent 更先于
+ *   before-input-event），让路只能靠动态摘除，焦点离开后由聚合翻转事件重挂。
  */
 function resolveMenuAccelerator(
   options: ApplicationMenuShortcutOptions & { disableShortcutAccelerators?: boolean },
@@ -89,7 +95,7 @@ function buildApplicationMenuTemplate(options: {
   ) => Promise<unknown>;
   currentZoomLevel?: number;
   shortcutBindings?: Record<string, string[]>;
-  /** 快捷键设置页录制态：true 时摘掉全部可配置 accelerator */
+  /** 摘除可配置 accelerator：录制态，或嵌入内容可编辑焦点让路（见 resolveMenuAccelerator 注释） */
   disableShortcutAccelerators?: boolean;
 }): Electron.MenuItemConstructorOptions[] {
   const getLabel = (id: (typeof desktopMenuMessageIds)[keyof typeof desktopMenuMessageIds]) =>
@@ -191,6 +197,13 @@ function buildApplicationMenuTemplate(options: {
         { label: getLabel(desktopMenuMessageIds.editPaste), role: "paste" as const },
         { type: "separator" as const },
         { label: getLabel(desktopMenuMessageIds.editSelectAll), role: "selectAll" as const },
+        { type: "separator" as const },
+        // 页内查找（F3）：条目构造在姊妹模块 desktopApplicationMenuFindInPage.ts
+        // （400 行闸）；F3 让路语义与可配置 accelerator 共用 disableShortcutAccelerators。
+        buildFindInPageMenuItem({
+          currentApplicationLocale: options.currentApplicationLocale,
+          disableShortcutAccelerators: options.disableShortcutAccelerators,
+        }),
       ],
     },
     {
@@ -360,7 +373,7 @@ export function rebuildApplicationMenu(options: {
   ) => Promise<unknown>;
   currentZoomLevel?: number;
   shortcutBindings?: Record<string, string[]>;
-  /** 快捷键设置页录制态：true 时摘掉全部可配置 accelerator */
+  /** 摘除可配置 accelerator：录制态，或嵌入内容可编辑焦点让路（见 resolveMenuAccelerator 注释） */
   disableShortcutAccelerators?: boolean;
 }) {
   Menu.setApplicationMenu(

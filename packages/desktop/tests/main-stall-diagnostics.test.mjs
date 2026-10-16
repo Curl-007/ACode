@@ -659,6 +659,117 @@ test("main 侧：worker 工厂抛错 → sampler_spawn_failed，返回 null 不�
 });
 
 // ---------------------------------------------------------------------------
+// 归因深化层（R13）：enrichStallReport 附加键、向后兼容、归因保留
+// ---------------------------------------------------------------------------
+
+const PRESENCE_FIXTURE = {
+  seconds_since_resume: 12,
+  seconds_since_unlock: 8,
+  idle_seconds: 1,
+  locked: false,
+  on_battery: true,
+};
+
+test("R13 向后兼容：未提供 extras 时日志 payload 与增强前逐键一致", () => {
+  const { calls, logger } = createCollectorLogger();
+  logMainStallReport(logger, validReport());
+  assert.deepEqual(
+    Object.keys(calls[0][2]).sort(),
+    ["captureStatus", "frames", "sampleCount", "stallMs", "startLagMs", "status"].sort(),
+  );
+});
+
+test("R13：extras 提供时以附加键带出 ipcSyncWorst/presence，缺项归 null", () => {
+  const { calls, logger } = createCollectorLogger();
+  logMainStallReport(logger, validReport(), {
+    ipcSyncWorst: { label: "select_directory", syncMs: 480 },
+    presence: PRESENCE_FIXTURE,
+  });
+  assert.deepEqual(calls[0][2].ipcSyncWorst, { label: "select_directory", syncMs: 480 });
+  assert.deepEqual(calls[0][2].presence, PRESENCE_FIXTURE);
+  logMainStallReport(logger, validReport(), {});
+  assert.equal(calls[1][2].ipcSyncWorst, null);
+  assert.equal(calls[1][2].presence, null);
+  // 既有键不受影响
+  assert.equal(calls[1][2].stallMs, 1_500);
+});
+
+test("R13：enrichStallReport 接线后随 stall_report 消费；归因保留在 handle 上", () => {
+  const { calls, logger } = createCollectorLogger();
+  const spawned = [];
+  let consumed = 0;
+  const handle = startMainStallSampler({
+    logger,
+    env: {},
+    config: { heartbeatIntervalMs: 60_000 },
+    workerFactory: (url, options) => {
+      const worker = new FakeWorker(url, options);
+      spawned.push(worker);
+      return worker;
+    },
+    enrichStallReport: () => {
+      consumed += 1;
+      return {
+        ipcSyncWorst: { label: "sync_window_tabs", syncMs: 700 },
+        presence: PRESENCE_FIXTURE,
+      };
+    },
+  });
+  assert.equal(handle.getLastStallAttribution(), null, "无报告时归因为 null");
+
+  const before = Date.now();
+  spawned[0].emit("message", { type: "stall_report", report: validReport() });
+  assert.equal(consumed, 1, "每次 stall_report 恰消费一次（采样即清零语义）");
+  const payload = calls.at(-1)[2];
+  assert.deepEqual(payload.ipcSyncWorst, { label: "sync_window_tabs", syncMs: 700 });
+  assert.deepEqual(payload.presence, PRESENCE_FIXTURE);
+
+  const attribution = handle.getLastStallAttribution();
+  assert.equal(attribution.stallMs, 1_500);
+  assert.equal(attribution.sleepSuspected, false);
+  assert.equal(attribution.captureStatus, "ok");
+  assert.deepEqual(attribution.ipcSyncWorst, { label: "sync_window_tabs", syncMs: 700 });
+  assert.ok(attribution.receivedAtMs >= before && attribution.receivedAtMs <= Date.now());
+
+  // 睡眠疑似报告同样保留（unresponsive 排除误报需要 sleepSuspected）
+  spawned[0].emit("message", {
+    type: "stall_report",
+    report: validReport({ sleepSuspected: true, captureStatus: "unavailable" }),
+  });
+  assert.equal(handle.getLastStallAttribution().sleepSuspected, true);
+  handle.stop();
+});
+
+test("R13 fail-open：enrichStallReport 抛错不得反杀 stall 上报本身", () => {
+  const { calls, logger } = createCollectorLogger();
+  const spawned = [];
+  const handle = startMainStallSampler({
+    logger,
+    env: {},
+    config: { heartbeatIntervalMs: 60_000 },
+    workerFactory: (url, options) => {
+      const worker = new FakeWorker(url, options);
+      spawned.push(worker);
+      return worker;
+    },
+    enrichStallReport: () => {
+      throw new Error("enrichment boom");
+    },
+  });
+  spawned[0].emit("message", { type: "stall_report", report: validReport() });
+  assert.equal(calls.length, 1, "报告仍必须落日志");
+  assert.equal(calls[0][2].status, MAIN_STALL_LOG_STATUS.stalled);
+  assert.deepEqual(
+    Object.keys(calls[0][2]).sort(),
+    ["captureStatus", "frames", "sampleCount", "stallMs", "startLagMs", "status"].sort(),
+    "增强失败时不出现附加键（与无回调形状一致）",
+  );
+  const attribution = handle.getLastStallAttribution();
+  assert.equal(attribution.ipcSyncWorst, null);
+  handle.stop();
+});
+
+// ---------------------------------------------------------------------------
 // 接线守卫（仓库惯例：源码级钉死构建入口与生命周期接线）
 // ---------------------------------------------------------------------------
 
@@ -672,7 +783,8 @@ test("接线守卫：tsup entry、index.ts 启动/停止、worker interval 保�
   const indexSource = readFileSync(join(DESKTOP_ROOT, "src/main/index.ts"), "utf-8");
   assert.match(
     indexSource,
-    /startMainStallSampler\(\{ logger \}\)/u,
+    // 允许后续接线追加选项（如 enrichStallReport，spec R13）：只钉死「以 logger 启动」。
+    /startMainStallSampler\(\{\s*logger\b/u,
     "main 必须启动 stall-sampler",
   );
   assert.match(

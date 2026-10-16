@@ -5,6 +5,7 @@ import { ipcMain } from "electron";
 import { getACodeDataRootDir } from "@acode/services/node";
 import { PlatformChannels } from "@acode/shared";
 import type { PlatformChannelMap } from "@acode/shared";
+import { deriveIpcSyncLabel, wrapIpcHandle } from "./ipcSyncTiming.js";
 
 /**
  * 物化载荷类型定义在 shared/platform.ts 但未从 @acode/shared 入口再导出；
@@ -197,19 +198,22 @@ export function registerDesktopWorkflowArtifactIpcHandlers(logger: {
 }): void {
   ipcMain.handle(
     PlatformChannels.MaterializeWorkflowArtifactFile,
-    async (
-      _event,
-      payload: MaterializeWorkflowArtifactFilePayload,
-    ): Promise<WorkflowArtifactMaterializationResult> => {
-      const result = await materializeWorkflowArtifactFile(payload);
-      if ("error" in result && result.error === "write_failed") {
-        logger.warn("[workflow-artifact] materialize failed", {
-          runId: payload?.runId,
-          artifactId: payload?.artifactId,
-          version: payload?.version,
-        });
-      }
-      return result;
-    },
+    wrapIpcHandle(
+      deriveIpcSyncLabel(PlatformChannels.MaterializeWorkflowArtifactFile),
+      async (
+        _event,
+        payload: MaterializeWorkflowArtifactFilePayload,
+      ): Promise<WorkflowArtifactMaterializationResult> => {
+        const result = await materializeWorkflowArtifactFile(payload);
+        if ("error" in result && result.error === "write_failed") {
+          logger.warn("[workflow-artifact] materialize failed", {
+            runId: payload?.runId,
+            artifactId: payload?.artifactId,
+            version: payload?.version,
+          });
+        }
+        return result;
+      },
+    ),
   );
 }

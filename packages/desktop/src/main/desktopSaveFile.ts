@@ -9,6 +9,7 @@ import type { SaveFileRequest, SaveFileResult } from "@acode/shared";
 import { PlatformChannels } from "@acode/shared";
 import { BrowserWindow, dialog, ipcMain } from "electron";
 import { Agent, fetch as undiciFetch } from "undici";
+import { deriveIpcSyncLabel, wrapIpcHandle } from "./ipcSyncTiming.js";
 
 const MAX_SAVE_FILE_BYTES = 50 * 1024 * 1024;
 const REMOTE_DOWNLOAD_TIMEOUT_MS = 30_000;
@@ -187,52 +188,55 @@ async function downloadRemoteFile(sourceUrl: URL, destinationPath: string): Prom
 export function registerDesktopSaveFileIpcHandler(logger: { warn: (...args: unknown[]) => void }) {
   ipcMain.handle(
     PlatformChannels.SaveFile,
-    async (event, payload: SaveFileRequest): Promise<SaveFileResult> => {
-      if (!payload || typeof payload.suggestedName !== "string") {
-        return { success: false, error: "invalid_file_payload" };
-      }
-      const suggestedName = basename(payload.suggestedName.trim()).slice(0, 120);
-      const sourceUrl = parseRemoteImageUrl(payload.sourceUrl);
-      // SaveFileRequest 是 data/sourceUrl 二选一的判别联合，payload.data 声明上含 undefined；
-      // 布尔变量无法把 instanceof 收窄传递到后续分支，这里把判别结果保存为收窄后的局部引用，
-      // hasData 语义与原实现完全一致（同一 instanceof 判定）。
-      const dataArrayBuffer = payload.data instanceof ArrayBuffer ? payload.data : undefined;
-      const hasData = dataArrayBuffer !== undefined;
-      if (!suggestedName || (sourceUrl === null && !hasData)) {
-        return { success: false, error: "invalid_file_payload" };
-      }
-      if (dataArrayBuffer && dataArrayBuffer.byteLength === 0) {
-        return { success: false, error: "invalid_file_payload" };
-      }
-      if (dataArrayBuffer && dataArrayBuffer.byteLength > MAX_SAVE_FILE_BYTES) {
-        return { success: false, error: "file_too_large" };
-      }
-
-      const senderWindow = BrowserWindow.fromWebContents(event.sender);
-      const dialogOptions = { defaultPath: suggestedName };
-      const result = senderWindow
-        ? await dialog.showSaveDialog(senderWindow, dialogOptions)
-        : await dialog.showSaveDialog(dialogOptions);
-      if (result.canceled || !result.filePath) {
-        return { success: false, canceled: true };
-      }
-
-      try {
-        if (sourceUrl) {
-          await downloadRemoteFile(sourceUrl, result.filePath);
-        } else if (dataArrayBuffer) {
-          await writeFile(result.filePath, new Uint8Array(dataArrayBuffer));
+    wrapIpcHandle(
+      deriveIpcSyncLabel(PlatformChannels.SaveFile),
+      async (event, payload: SaveFileRequest): Promise<SaveFileResult> => {
+        if (!payload || typeof payload.suggestedName !== "string") {
+          return { success: false, error: "invalid_file_payload" };
         }
-        return { success: true, path: result.filePath };
-      } catch (error) {
-        const errorCode = error instanceof SaveFileError ? error.code : "write_failed";
-        logger.warn(
-          `[save-file] 写入失败 path=${result.filePath} error=${
-            error instanceof Error ? error.message : String(error)
-          }`,
-        );
-        return { success: false, error: errorCode };
-      }
-    },
+        const suggestedName = basename(payload.suggestedName.trim()).slice(0, 120);
+        const sourceUrl = parseRemoteImageUrl(payload.sourceUrl);
+        // SaveFileRequest 是 data/sourceUrl 二选一的判别联合，payload.data 声明上含 undefined；
+        // 布尔变量无法把 instanceof 收窄传递到后续分支，这里把判别结果保存为收窄后的局部引用，
+        // hasData 语义与原实现完全一致（同一 instanceof 判定）。
+        const dataArrayBuffer = payload.data instanceof ArrayBuffer ? payload.data : undefined;
+        const hasData = dataArrayBuffer !== undefined;
+        if (!suggestedName || (sourceUrl === null && !hasData)) {
+          return { success: false, error: "invalid_file_payload" };
+        }
+        if (dataArrayBuffer && dataArrayBuffer.byteLength === 0) {
+          return { success: false, error: "invalid_file_payload" };
+        }
+        if (dataArrayBuffer && dataArrayBuffer.byteLength > MAX_SAVE_FILE_BYTES) {
+          return { success: false, error: "file_too_large" };
+        }
+
+        const senderWindow = BrowserWindow.fromWebContents(event.sender);
+        const dialogOptions = { defaultPath: suggestedName };
+        const result = senderWindow
+          ? await dialog.showSaveDialog(senderWindow, dialogOptions)
+          : await dialog.showSaveDialog(dialogOptions);
+        if (result.canceled || !result.filePath) {
+          return { success: false, canceled: true };
+        }
+
+        try {
+          if (sourceUrl) {
+            await downloadRemoteFile(sourceUrl, result.filePath);
+          } else if (dataArrayBuffer) {
+            await writeFile(result.filePath, new Uint8Array(dataArrayBuffer));
+          }
+          return { success: true, path: result.filePath };
+        } catch (error) {
+          const errorCode = error instanceof SaveFileError ? error.code : "write_failed";
+          logger.warn(
+            `[save-file] 写入失败 path=${result.filePath} error=${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+          return { success: false, error: errorCode };
+        }
+      },
+    ),
   );
 }

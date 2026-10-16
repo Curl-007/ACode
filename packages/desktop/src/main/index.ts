@@ -1,8 +1,13 @@
+// 启动卫生件必须最先加载（specs/desktop-startup-hardening.md §0）：一行卫生件、
+// 打包态 boot env 清洗漏斗与 argv 开关拒启表随 import 副作用即执行，且必须先于
+// 任何 @acode/services 导入——services 的 paths.ts 在模块加载期缓存 env，
+// ACODE_DATA_BASE_DIR 等键的删除只有在该缓存发生前执行才真正生效。
+import { getBootEnvironmentDecision } from "./startupSanitation.js";
 import { installOfficialPlatformNetworkPolicy } from "./desktopOfficialPlatformPolicy.js";
 /* eslint-disable max-lines */
 import "./desktopEarlyDataBaseDirBootstrap.js";
 import "./desktopEarlyChromiumHardwareAccelerationBootstrap.js";
-import { powerSaveBlocker } from "electron";
+import { powerMonitor, powerSaveBlocker } from "electron";
 import {
   onLocalDatabaseStartupReady,
   configureDatabaseStartupQuit,
@@ -72,6 +77,39 @@ import {
 } from "@acode/shared";
 import { logger } from "./logger.js";
 import { startMainStallSampler } from "./stallSampler.js";
+// W1-6 卡顿归因深化层（specs/main-stall-diagnostics.md R9-R13）。
+import { consumeWorstIpcSyncOffender } from "./ipcSyncTiming.js";
+import { createPresenceSystemSource, createPresenceTracker } from "./presenceSnapshot.js";
+import { createUnresponsiveReporter } from "./unresponsiveReport.js";
+import {
+  createContentBreadcrumbRegistry,
+  registerContentBreadcrumbIpc,
+} from "./contentBreadcrumb.js";
+import { createPrintCallGuard, registerPrintCallIpc } from "./printCallGuard.js";
+// W1-5 页内查找（specs/find-in-page.md）：invoke 面注册；菜单推送面在 desktopApplicationMenu。
+import { registerFindInPageIpc } from "./findInPageMain.js";
+// W1-8 嵌入内容可编辑焦点让路（specs/embedded-content-focus-yield.md）。
+import {
+  createEditableFocusLedger,
+  registerEmbeddedEditableFocusIpc,
+} from "./editableFocusTracker.js";
+// W1-7 启动骨架占位（specs/boot-placeholder.md）。
+import {
+  attachBootPlaceholderWindow,
+  buildBootPlaceholderArgument,
+  resolveBootPlaceholderPayload,
+} from "./bootPlaceholder.js";
+// W1-3 启动硬化（specs/desktop-startup-hardening.md §4a/§4d）。
+import { maybeRelaunchWithCappedDeepLinkArgv } from "./argvBudget.js";
+import { inspectDeepLinkWorkspacePath } from "./deepLinkHardening.js";
+// W1-4 关停/keep-awake/进程围堵（specs/shutdown-keepawake-containment.md）。
+import { installKeepAwakeClaims } from "./keepAwakeClaims.js";
+import {
+  initializeShutdownEvidence,
+  SHUTDOWN_EVIDENCE_FILE_NAME,
+} from "./shutdownEvidence.js";
+import { createShutdownTaskRegistry, type ShutdownTaskRegistry } from "./shutdownTasks.js";
+import { installProcessContainment } from "./processContainment.js";
 import { markMainLaunchAppReady } from "./desktopLaunchMarks.js";
 import { createCuaPipFocusRouter, resolveCuaPipWindowKey } from "./cuaPipFocusRouter.js";
 import {
@@ -187,7 +225,10 @@ import {
 import { createDesktopHelpConfigReader } from "./desktopHelpConfig.js";
 import { registerPlatformIpcHandlers } from "./desktopMainIpcPlatform.js";
 import { registerRemoteIpcHandlers } from "./desktopMainIpcRemote.js";
-import { applyDesktopChromiumNetworkPolicies } from "./desktopNetworkPolicy.js";
+import {
+  applyDesktopChromiumNetworkPolicies,
+  createEgressDiagnosticsObserver,
+} from "./desktopNetworkPolicy.js";
 import {
   findWindowsProcessesReferencingResourceMarkers,
   probeWindowsPackagedResourceWritable,
@@ -227,10 +268,75 @@ process.on("unhandledRejection", (reason) => {
   logger.error("unhandledRejection:", reason);
 });
 
+// W1-4 Windows 孤儿进程围堵（specs/shutdown-keepawake-containment.md R14-R18）：
+// 必须早于首个 node:child_process spawn 安装——diagnostics_channel 台账与首 spawn
+// 效果验证层以安装点为界，晚装会被验证层点名 missed_first_spawn。非 win32 返回
+// inert 控制器（POSIX 依赖既有 SIGTERM/SIGKILL 屏障与进程组语义）。
+// 顺序注意：logger 首次写日志会懒构建脱敏身份（Windows 下 execFileSync reg.exe，
+// logPrivacyIdentity.ts），因此围堵安装必须先于本段任何 logger 调用。
+const processContainment = installProcessContainment({
+  logger,
+  enabled: process.env.ACODE_PROCESS_CONTAINMENT !== "0",
+  requireJobObject: process.env.ACODE_PROCESS_CONTAINMENT_JOB === "1",
+});
+// 崩溃路径同步钩子：process exit 时对台账仍存活的直接子进程 SIGKILL（无树语义；
+// 树级连坐是 native Job Object 的条件触发项）。优雅退出路径的树杀收口在
+// exitPreparedApp（app-quit）与更新安装前（update-install）两点 sweep。
+processContainment.installExitHook();
+
+// W1-3 boot 决策落日志（specs/desktop-startup-hardening.md §1/§2）：清洗漏斗已随
+// 第一行 import 副作用执行，这里在 logger 就绪后把键名级决策落进生产日志——
+// ignoredEnvKeys 只记键名绝不记值；deniedBootSwitches 非空 = 打包态持有效签名
+// 令牌放行（拒启路径在漏斗内已 process.exit，走不到这里）。
+const bootEnvironmentDecision = getBootEnvironmentDecision();
+if (bootEnvironmentDecision.ignoredEnvKeys.length > 0) {
+  logger.info(
+    `[startup-sanitation] 打包态已忽略环境键: ${bootEnvironmentDecision.ignoredEnvKeys.join(",")}`,
+  );
+}
+if (bootEnvironmentDecision.deniedBootSwitches.length > 0) {
+  logger.warn(
+    `[startup-sanitation] 调试开关经签名令牌放行: ${bootEnvironmentDecision.deniedBootSwitches.join(",")}`,
+  );
+}
+
+// W1-6 presence 快照（specs/main-stall-diagnostics.md R10）：tracker 是 presence
+// 状态唯一所有者；六事件 attach（powerMonitor 五件 + app focus）在 app ready 后
+// 接线，快照供 stall 归因（R13）与 unresponsive 聚合（R12）消费。app ready 前
+// 快照各系统字段为 null（系统源 getter 异常整体全 null，不反杀调用方）。
+const presenceTracker = createPresenceTracker({
+  system: createPresenceSystemSource(powerMonitor),
+});
+
 // 主进程卡顿自诊断（specs/main-stall-diagnostics.md）：模块初始化段即启动，覆盖
 // app ready 之前的启动期同步重活；开发态与打包态都生效，ACODE_MAIN_STALL_SAMPLER=0
 // 完全禁用。停止统一收口在 prepareAppQuit（与其余 main 侧资源同批 dispose）。
-const mainStallSampler = startMainStallSampler({ logger });
+// R13 归因增强：stall_report 到达时消费同步 IPC worst-offender（消费即清零，
+// 归因窗口=相邻两次报告之间）并带出 presence 快照。
+const mainStallSampler = startMainStallSampler({
+  logger,
+  enrichStallReport: () => ({
+    ipcSyncWorst: consumeWorstIpcSyncOffender(),
+    presence: presenceTracker.getSnapshot(),
+  }),
+});
+
+// W1-6 renderer 内容面包屑 + print() 假死守卫（specs/main-stall-diagnostics.md
+// R11/R12）：两条 send-only 诊断通道在模块初始化段挂 ipcMain.on（与
+// EmbeddedBrowserJavaScriptDialog 同款时机）；sender 受信帧校验（主帧 + 应用
+// 自身 origin）与载荷 fail-closed 校验收敛在注册模块内。unresponsive 聚合报告器
+// 组合 presence / 最近 stall 归因 / 内容桶 / print 归因四路事实。
+const contentBreadcrumbRegistry = createContentBreadcrumbRegistry();
+const printCallGuard = createPrintCallGuard();
+const unresponsiveReporter = createUnresponsiveReporter({
+  logger,
+  getPresenceSnapshot: () => presenceTracker.getSnapshot(),
+  contentBreadcrumbs: contentBreadcrumbRegistry,
+  getLastStallAttribution: () => mainStallSampler?.getLastStallAttribution() ?? null,
+  printCallGuard,
+});
+registerContentBreadcrumbIpc({ ipcMain, registry: contentBreadcrumbRegistry, logger });
+registerPrintCallIpc({ ipcMain, guard: printCallGuard, logger });
 
 const iconPath =
   process.platform === "win32"
@@ -248,26 +354,19 @@ const linuxDesktopIntegrationIconPath =
     : iconPath;
 let currentApplicationLocale: Locale = DEFAULT_LOCALE;
 let closeToTrayOnWindows = true;
-// keep-awake：全局开关 keepAwakeWhileRunning。打开后主进程持有
-// powerSaveBlocker("prevent-app-suspension")，阻止系统闲置休眠（防不了合盖/手动睡眠）。
-// 不再绑定闲时任务活跃计数——设置页「常规」与 Automations 入口镜像同一配置。
+// keep-awake：全局开关 keepAwakeWhileRunning 保留为总开关（设置页「常规」与
+// Automations 入口镜像同一配置）。blocker 起停收敛到认领台账的唯一 reconcile 写
+// 路径（specs/shutdown-keepawake-containment.md R8-R13）：策略门（总开关/电池重估/
+// loop 类 2h 上限）与 away-ms 计量由台账承载。claim 数据源（turn←host 运行计数、
+// loop/background_task←cron offpeak-active-count）属跨 owner 后续批次；接线前
+// 台账无 claim，行为与原全局布尔一致（总开关开=reconcile 起 blocker）。
 let keepAwakeWhileRunning = false;
-let powerSaveBlockerId: number | null = null;
-function reconcileKeepAwakeBlocker(): void {
-  const shouldBlock = keepAwakeWhileRunning;
-  if (shouldBlock && powerSaveBlockerId === null) {
-    powerSaveBlockerId = powerSaveBlocker.start("prevent-app-suspension");
-    logger.info(`[keep-awake] powerSaveBlocker started id=${powerSaveBlockerId}`);
-  } else if (!shouldBlock && powerSaveBlockerId !== null) {
-    try {
-      powerSaveBlocker.stop(powerSaveBlockerId);
-    } catch {
-      // 忽略：id 可能已失效。
-    }
-    logger.info(`[keep-awake] powerSaveBlocker stopped id=${powerSaveBlockerId}`);
-    powerSaveBlockerId = null;
-  }
-}
+const keepAwakeClaims = installKeepAwakeClaims({
+  logger,
+  powerSaveBlocker,
+  powerMonitor,
+  getMasterSwitch: () => keepAwakeWhileRunning,
+});
 
 const embeddedBrowserDialogController = new EmbeddedBrowserJavaScriptDialogController({
   iconPath,
@@ -494,6 +593,11 @@ async function runBrowserCommandOnView(params: {
 }
 let currentDesktopZoomLevel = 0;
 let currentDesktopWindowSize: DesktopWindowSize | undefined;
+// W1-7 boot placeholder（specs/boot-placeholder.md §9.3）：bootstrap 读设置一次
+// 缓存到模块态，createWindowInstance 逐窗口生成 additionalArguments 注入体；
+// SyncAppSettings 即时通道到达时刷新（与 closeToTrayOnWindows 同款）。
+let bootPlaceholderPersistedFrame: unknown;
+let bootPlaceholderEnabledSetting: boolean | undefined;
 const preloadPath = join(import.meta.dirname, "../preload/index.cjs");
 // 启动工作区解析必须读**有效数据根**下的设置：硬编码 homedir() 会穿透
 // ACODE_DATA_BASE_DIR / dataBaseDir 的隔离——隔离冒烟/E2E profile 会读到真实的
@@ -503,6 +607,11 @@ const preloadPath = join(import.meta.dirname, "../preload/index.cjs");
 const settingsFile = join(getDataBaseDir(), ".acode", "v2", "setting.json");
 let activeAppShutdownPolicy = resolveAppShutdownPolicy("normal", process.platform);
 let activeAppShutdownKind: AppShutdownKind | null = null;
+// W1-4 关停证据链 + 命名任务注册表（specs/shutdown-keepawake-containment.md R1-R6）：
+// app-ready bootstrap 内初始化（依赖 userData 路径）；初始化失败保持 null，
+// 消费点（before-quit / initAutoUpdater）按缺席跳过——证据链是诊断面，fail-open
+// 不反杀既有退出屏障。
+let shutdownTasks: ShutdownTaskRegistry | null = null;
 const WINDOWS_AGENT_FORCE_KILL_TIMEOUT_MS = 2_000;
 
 const broadcastHub = new BroadcastHub();
@@ -761,6 +870,21 @@ function extractOpenWorkspacePathFromDeepLinkUrl(url: string): string | null {
   }
 }
 
+// W1-3 argv 字节预算 + 防循环 relaunch（specs/desktop-startup-hardening.md §4a）：
+// 必须早于一切 process.argv 消费点与 requestSingleInstanceLock。超预算的深链参数
+// 做 UTF-8 感知截断后 relaunch + exit(0)；带防循环标志的二次启动照常放行。
+const deepLinkArgvCap = maybeRelaunchWithCappedDeepLinkArgv({
+  argv: process.argv,
+  relaunch: (options) => app.relaunch(options),
+  exit: (code) => app.exit(code),
+  warn: (message) => logger.warn(`[argv-budget] ${message}`),
+});
+if (deepLinkArgvCap.relaunched) {
+  // app.exit(0) 已让进程即刻退出；throw 只是防御性阻断同步余波（后续模块级启动
+  // 逻辑与单实例锁都不得在 relaunch 进程里继续执行）。
+  throw new Error("relaunched after deep-link argv cap");
+}
+
 const startupOpenWorkspaceArgPath = extractOpenWorkspacePathFromArgs(process.argv);
 const startupProtocolUrl = extractDeepLinkUrlFromArgs(process.argv);
 const startupDeepLinkWorkspacePath = startupOpenWorkspaceArgPath
@@ -875,7 +999,17 @@ function syncImmediateAppSettings(patch: Partial<AppSettings>) {
 
   if (typeof patch.keepAwakeWhileRunning === "boolean") {
     keepAwakeWhileRunning = patch.keepAwakeWhileRunning;
-    reconcileKeepAwakeBlocker();
+    // W1-4：总开关是台账策略门之一，变化后经唯一 reconcile 写路径重估 blocker。
+    keepAwakeClaims.reconcile("settings-sync");
+  }
+
+  // W1-7：boot placeholder 两设置键即时刷新（下一次 createWindowInstance 生效；
+  // 已开窗口的骨架由 attach 的 resolvePayload 闭包在 did-finish-load 重放时读到新值）。
+  if (patch.desktopBootPlaceholder !== undefined) {
+    bootPlaceholderPersistedFrame = patch.desktopBootPlaceholder;
+  }
+  if (patch.bootPlaceholderEnabled !== undefined) {
+    bootPlaceholderEnabledSetting = patch.bootPlaceholderEnabled;
   }
 
   if (patch.officialServices !== undefined) {
@@ -947,6 +1081,8 @@ async function prepareAppQuit(reason: string, kind: AppShutdownKind = "normal"):
   markForceQuit(reason);
   // stall-sampler 先停：退出路径本身有同步重活，别再把它记成停跳告警。
   mainStallSampler?.stop();
+  // W1-4：keep-awake 台账同批收口（停 blocker、清电池/away-ms 采样与上限 timer）。
+  keepAwakeClaims.dispose();
   windowsCuaOperationIndicator.dispose();
   browserScreenshotSurfaceCoordinator.dispose();
   const cronSchedulerToDispose = cronScheduler;
@@ -1004,6 +1140,11 @@ async function prepareAppQuit(reason: string, kind: AppShutdownKind = "normal"):
 
 function exitPreparedApp(reason: string): never | void {
   logger.info(`[app-quit] exiting prepared app (${reason})`);
+  // W1-4：prepareAppQuit 收口后、真正退出前按 spawn 台账树杀仍存活的 main 亲手
+  // 子进程（win32 taskkill /T /F detached+unref 不阻塞退出；跳过 kill 工具自身）。
+  // 与更新期资源锁实时扫描互补：那边按句柄扫，这边按台账杀（R17 优雅退出路径）。
+  // 看门狗 forceExit 也收口到这里，同一 sweep 语义覆盖卡死退出。
+  processContainment.sweepOrphanedChildProcesses("app-quit");
   if (process.env.ACODE_E2E_RUN_ID?.trim()) {
     flushMainE2ECoverage((error) => {
       logger.warn("[e2e-coverage] main coverage flush failed", error);
@@ -1301,6 +1442,17 @@ let shortcutRecordingActive = false;
 /** 发起录制的 webContents id；窗口关闭/崩溃时 renderer 不会发复位 IPC，main 侧据此收口。 */
 let shortcutRecordingOwnerWebContentsId: number | null = null;
 
+// W1-8 嵌入内容可编辑焦点台账（specs/embedded-content-focus-yield.md）：renderer 上报
+// 嵌入第三方内容面（可视化卡片 iframe / 内嵌浏览器 pane）的可编辑焦点，台账是
+// 「有可编辑焦点的 webContents 集合」唯一所有者（导航/崩溃/销毁收口在台账内部，
+// 不依赖 renderer 合作）。菜单让路方案是动态摘挂（案 A）：聚合翻转（空↔非空）
+// 才 rebuildMenu。若未来在 main 用 before-input-event 派发宿主级快捷键，必须先查
+// hasEditableFocus(event.sender.id) 命中即放行（现状唯一 before-input-event 在
+// desktopWindowChrome 的 guest 修饰键跟踪，不派发宿主命令，无落点）。
+const editableFocusLedger = createEditableFocusLedger({ logger });
+registerEmbeddedEditableFocusIpc({ ipcMain, ledger: editableFocusLedger, logger });
+editableFocusLedger.onAggregateChange(() => rebuildMenu());
+
 function setShortcutRecordingActive(active: boolean, ownerWebContentsId: number | null = null) {
   if (active) {
     shortcutRecordingOwnerWebContentsId = ownerWebContentsId;
@@ -1340,9 +1492,13 @@ function rebuildMenu() {
         currentZoomLevel: resolveFocusedDesktopZoomLevel(),
         // 菜单 accelerator 跟随用户快捷键设置（shortcutBindings 用户覆盖）
         shortcutBindings: settings.shortcutBindings,
-        // 快捷键录制态：摘掉可配置 accelerator，防止录制 menu 通道命令时按键直接触发原命令
-        // （macOS 系统菜单先于 renderer 吃掉按键，renderer 侧 preventDefault 拦不住）。
-        disableShortcutAccelerators: shortcutRecordingActive,
+        // 摘除可配置 accelerator 的两个触发源（specs/embedded-content-focus-yield.md 案 A）：
+        // ① 快捷键录制态——防止录制 menu 通道命令时按键直接触发原命令；
+        // ② 嵌入第三方内容面有可编辑焦点——菜单 accelerator 在窗口级先于页面吃键
+        // （macOS 系统菜单更先于 renderer keydown），让路只能靠动态摘除，
+        // 焦点离开后由聚合翻转事件重挂。
+        disableShortcutAccelerators:
+          shortcutRecordingActive || editableFocusLedger.hasAnyEditableFocus(),
       });
     },
   );
@@ -1745,6 +1901,14 @@ function createWindowInstance(startupBootstrap: StartupWindowBootstrap = {}) {
     // 已恢复 workspace 建立后台索引。始终注入 canonical fallback，才能覆盖非 active 历史目录已删除的情况。
     agentSpawnFallbackCwd: getConversationWorkspaceDir(),
     deviceMid,
+    // W1-7：逐窗口生成 boot placeholder 注入参数（specs/boot-placeholder.md §9.2/§9.3）；
+    // 设置显式关闭 → {enabled:false}（head 相位 no-op），无持久数据 → 合成默认骨架。
+    bootPlaceholderArgument: buildBootPlaceholderArgument(
+      resolveBootPlaceholderPayload({
+        persistedFrame: bootPlaceholderPersistedFrame,
+        settingEnabled: bootPlaceholderEnabledSetting,
+      }),
+    ),
     runtimeProcessEnvPatchPromise: runtimeProcessEnvPreparation.patchPromise,
     runtimeProcessEnvFallbackPatch: runtimeProcessEnvPreparation.fallbackPatch,
     initialDesktopZoomLevel: currentDesktopZoomLevel,
@@ -1759,6 +1923,19 @@ function createWindowInstance(startupBootstrap: StartupWindowBootstrap = {}) {
       await mainSettingService.update({ desktopWindowSize: state });
     },
   });
+  // W1-7：did-finish-load 的 sync 相位重放必须注册在 createWindow 内部既有 zoom
+  // 重放之后（同事件按注册序执行，createWindow 返回后挂即满足，spec §5）——
+  // 生产包 loadFile 导航后 Chromium 会重放 origin 级 zoom，sync 相位以 settle 后的
+  // 最新视口重绘骨架，保证物理尺寸钉住上次会话。
+  attachBootPlaceholderWindow({
+    webContents: win.webContents,
+    resolvePayload: () =>
+      resolveBootPlaceholderPayload({
+        persistedFrame: bootPlaceholderPersistedFrame,
+        settingEnabled: bootPlaceholderEnabledSetting,
+      }),
+    logger,
+  });
   return win;
 }
 
@@ -1766,6 +1943,18 @@ registerDeepLinkProtocol(logger, { iconPath: linuxDesktopIntegrationIconPath });
 app.on("open-url", (event, url) => {
   event.preventDefault();
   const workspacePath = extractOpenWorkspacePathFromDeepLinkUrl(url);
+  // W1-3 UNC hop 断言（specs/desktop-startup-hardening.md §4d）：对路径做任何 stat
+  // 之前拒绝 UNC/设备命名空间/盘符相对形状与指向 UNC 的符号链接 hop（对
+  // \\remote\share 的任何 stat 都会触发 SMB 认证外泄 NTLM hash）；lstat/readlink
+  // 无法验证按 unverifiable fail-closed。与 second-instance（desktopSecondInstanceDeepLink）
+  // 及冷启动 gate（startupWorkspaceDeepLinkGate）同一条断言。
+  if (workspacePath) {
+    const inspection = inspectDeepLinkWorkspacePath(workspacePath);
+    if (!inspection.ok) {
+      logger.warn(`[deep-link] open-url 路径安检拒绝: ${inspection.reason}`);
+      return;
+    }
+  }
   if (workspacePath && forceUpdateMainWindowCreationBlocked) {
     logger.warn("[force-update] 已忽略强制升级期间的 open-url workspace 请求");
     focusForceUpdateGateWindow();
@@ -1783,20 +1972,29 @@ app.on("open-url", (event, url) => {
   handleDeepLink(url, logger, {
     confirmationCopy: resolveExternalWorkspaceConfirmationCopy(),
     resolveApplicationWindow: () => getApplicationWindowsExcludingCuaIndicator()[0] ?? null,
+    resolveLocale: () => currentApplicationLocale,
   });
 });
 const gotTheLock = app.requestSingleInstanceLock(createDeepLinkSingleInstanceData(process.argv));
 if (!gotTheLock) {
   app.quit();
 }
-app.on("second-instance", (_event, argv, _workingDirectory, additionalData) => {
+app.on("second-instance", (_event, argv, workingDirectory, additionalData) => {
   if (
     handleSecondInstanceWorkspaceRequest({
       additionalData,
       argv,
+      // W1-3：去重键 = argv + cwd（specs/desktop-startup-hardening.md §4b）——桌面
+      // 环境/协议处理器可能对同一次深链点击连发多次 second-instance，500ms 内
+      // 同键整体抑制（含窗口聚焦）。
+      workingDirectory,
       focusForceUpdateGateWindow,
       forceUpdateBlocked: forceUpdateMainWindowCreationBlocked,
-      handleDeepLink: (url, options) => handleDeepLink(url, logger, options),
+      handleDeepLink: (url, options) =>
+        handleDeepLink(url, logger, {
+          ...options,
+          resolveLocale: () => currentApplicationLocale,
+        }),
       handleOpenWorkspacePath: (path, options) =>
         handleOpenWorkspacePath(path, logger, {
           allowWithoutReadyWindow: true,
@@ -1804,6 +2002,7 @@ app.on("second-instance", (_event, argv, _workingDirectory, additionalData) => {
           resolveApplicationWindow:
             options?.resolveApplicationWindow ??
             (() => getApplicationWindowsExcludingCuaIndicator()[0] ?? null),
+          resolveLocale: () => currentApplicationLocale,
         }),
       resolveApplicationWindow: () => getApplicationWindowsExcludingCuaIndicator()[0] ?? null,
       logger,
@@ -1825,10 +2024,20 @@ app.on("second-instance", (_event, argv, _workingDirectory, additionalData) => {
   }
 });
 
-installOfficialPlatformNetworkPolicy();
+// W1-11：唯一 onBeforeRequest 所有者内组合未登记出站面诊断观察者（warn-only 不阻断；
+// 只组合 defaultSession，embedded-browser partition 是用户自有浏览面不诊断，
+// specs/update-gates-endpoint-registry.md 接线需求）。工厂经 index.ts 注入，
+// desktopOfficialPlatformPolicy 保持依赖叶子。
+installOfficialPlatformNetworkPolicy({
+  logger,
+  createEgressObserver: createEgressDiagnosticsObserver,
+});
 
 app.whenReady().then(async () => {
   markMainLaunchAppReady();
+  // W1-6：presence 六事件总线接线（powerMonitor suspend/lock/unlock/resume/session
+  // + app browser-window-focus）；应用生命周期内常驻，不摘除。
+  presenceTracker.attach({ powerMonitor, app });
   installLocalMediaPreviewProtocol(session.defaultSession.protocol, {
     isPathAuthorized: localMediaPreviewPathRegistry.isAuthorized,
   });
@@ -1848,12 +2057,50 @@ app.whenReady().then(async () => {
   // 这里在 defaultSession 与两个 webview partition 上统一挂「默认拒绝 + 最小放行」策略，
   // 必须先于任何窗口创建执行；recorder 临时 partition 刻意不覆盖（见 spec）。
   // 站点权限控制器只作用于 embedded-browser partition（specs/embedded-browser-site-permissions.md）。
-  installDesktopSessionPermissionPolicies(session, logger, embeddedBrowserSitePermissionController);
+  installDesktopSessionPermissionPolicies(
+    session,
+    logger,
+    embeddedBrowserSitePermissionController,
+    // B1 pointer-lock 准入（specs/embedded-browser-pane-governance.md 件 5）：
+    // embedded-browser guest 的 pointerLock 请求 consult main 侧准入台账——agent
+    // 合成输入窗/近期合成派发期间或 pane 不可见时拒绝页面拿锁（掐断「借合成输入
+    // 自触发权限升级」），放行即标记 admitted 供退出链在合成派发前强制退锁。
+    {
+      canAdmitGuestPointerLock: (webContentsId) =>
+        browserGuestManager.canAdmitGuestPointerLock(webContentsId),
+      markGuestPointerLockAdmitted: (webContentsId) =>
+        browserGuestManager.markGuestPointerLockAdmitted(webContentsId),
+    },
+  );
   // Electron 的 net.request 只能在 app ready 后使用；灰度请求仍是旁路预热，不阻塞首个 Host。
   void desktopContextPromptRollout?.refresh();
   installBrowserRestoreBootstrapProtocol(
     session.fromPartition(EMBEDDED_BROWSER_PARTITION).protocol,
   );
+  // W1-4 关停证据链（specs/shutdown-keepawake-containment.md R4/R5）：读回并消费
+  // 上次退出记录（读后即删）→ 为本次运行打 boot 点——进程被强杀/崩溃时该记录留存，
+  // 下次启动即可归因「上次退出非干净」，消除读到更早一次干净记录的误归因。
+  // await：证据 store 与命名任务注册表必须在 before-quit / initAutoUpdater 消费点
+  // 之前就绪；读写均 <1KB（退出路径同步 IO 是 spec 登记例外）。
+  try {
+    const { store } = await initializeShutdownEvidence({
+      filePath: join(app.getPath("userData"), SHUTDOWN_EVIDENCE_FILE_NAME),
+      logger,
+      appVersion: app.getVersion(),
+    });
+    shutdownTasks = createShutdownTaskRegistry({
+      evidence: store,
+      logger,
+      // 与 prepareAppQuit 共用同一分档策略来源（含 update-install 只升不降语义）。
+      resolvePolicy: (kind) =>
+        selectAppShutdownPolicy(activeAppShutdownKind, kind, process.platform).policy,
+      appVersion: () => app.getVersion(),
+      forceExit: (reason) => exitPreparedApp(reason),
+    });
+  } catch (error) {
+    // 证据链是诊断面：初始化失败只 warn，退出路径回退既有 prepareAppQuit 屏障。
+    logger.warn("[shutdown-evidence] initialize failed; shutdown task registry disabled", error);
+  }
   // Bootstrap: 从设置文件读取自定义数据目录，在所有 host 进程启动前生效
   let loadedBootstrapLocale = false;
   let bootstrapSettings: AppSettings | undefined;
@@ -1870,8 +2117,13 @@ app.whenReady().then(async () => {
     keepAwakeWhileRunning = bootstrapSettings.keepAwakeWhileRunning ?? false;
     currentDesktopZoomLevel = clampDesktopZoomLevel(bootstrapSettings.desktopZoomLevel ?? 0);
     currentDesktopWindowSize = bootstrapSettings.desktopWindowSize;
-    // 全局 keep-awake：启动时若设置已开，立刻持有 powerSaveBlocker，不必等设置变更事件。
-    reconcileKeepAwakeBlocker();
+    // W1-7：boot placeholder 两设置键缓存（specs/boot-placeholder.md §9.3）；
+    // createWindowInstance 逐窗口读取生成注入参数。
+    bootPlaceholderPersistedFrame = bootstrapSettings.desktopBootPlaceholder;
+    bootPlaceholderEnabledSetting = bootstrapSettings.bootPlaceholderEnabled;
+    // 全局 keep-awake：启动时若设置已开，立刻经台账 reconcile 重估（唯一 blocker
+    // 写路径），不必等设置变更事件。
+    keepAwakeClaims.reconcile("bootstrap");
   } catch {
     // 读取失败不影响启动，使用默认 homedir
   }
@@ -1940,7 +2192,17 @@ app.whenReady().then(async () => {
       if (process.platform === "win32") {
         await prepareWindowsProcessesForUpdateInstall();
       }
+      // W1-4：资源锁扫描收口后再按 spawn 台账树杀仍存活的 main 亲手子进程
+      // （update-install 收敛面；与实时资源锁扫描互补，那边按句柄扫这边按台账杀）。
+      processContainment.sweepOrphanedChildProcesses("update-install");
     },
+    // W1-4/W1-11：关停注册表 update-install 段（beforeInstall∪stopsChildProcesses
+    // 名单，best-effort——失败 warn 不阻断安装，与 onBeforeQuitAndInstall 的文件锁
+    // 硬前置不同级）；注册表初始化失败时缺席即跳过（opt-in 安全方向）。
+    ...(shutdownTasks ? { shutdownRunner: shutdownTasks } : {}),
+    // W1-11 宿主忙碌信号：活跃 agent 会话数（忙碌门控显式 opt-in；聚焦/空闲缺省
+    // 信号由 autoUpdater 用 electron API 补齐，specs/update-gates-endpoint-registry.md）。
+    hostBusySignals: { getRunningAgentSessionCount },
     settingService: mainSettingService,
     locale: currentApplicationLocale,
     updateFeedSource: resolveUpdateFeedSourceFromStartupConfig({
@@ -1976,6 +2238,10 @@ app.whenReady().then(async () => {
     logger,
   });
 
+  // W1-5 页内查找（specs/find-in-page.md）：三条 invoke handler（find/stop/end-session）
+  // 与平台 IPC 同区域注册；OpenFindInPage 推送面由菜单 F3 项触发
+  // （desktopApplicationMenu → requestFindInPageOpen）。
+  registerFindInPageIpc({ logger });
   registerPlatformIpcHandlers({
     fetchHelpConfig: readHelpConfig,
     logger,
@@ -2149,6 +2415,47 @@ app.whenReady().then(async () => {
 
 app.on("browser-window-created", (_, win) => {
   const windowWebContentsId = asWebContentsId(win.webContents.id);
+  // W1-6 unresponsive 聚合报告（specs/main-stall-diagnostics.md R12）：一次
+  // unresponsive → 恰一条结构化日志（surface 分类 + main RSS + 窗口可见性 +
+  // presence 快照 + 60s 内最近 stall 归因 + 内容桶 + print() 假死归因）。
+  // 不外发遥测（no-telemetry 边界），不自动 kill/reload（杀 renderer 是产品行为）。
+  // 窗口类型 hint 由 main 按窗口身份给出（update-status/cua-indicator/main）。
+  win.webContents.on("unresponsive", () => {
+    const winDestroyed = win.isDestroyed();
+    const wcDestroyed = winDestroyed || win.webContents.isDestroyed();
+    unresponsiveReporter.handleUnresponsive({
+      webContentsId: windowWebContentsId,
+      surfaceHint: {
+        windowKind: winDestroyed
+          ? null
+          : win === updateStatusWindow
+            ? "update-status"
+            : windowsCuaOperationIndicator.ownsWindow(win)
+              ? "cua-indicator"
+              : "main",
+        // URL 只用于 main 窗的 login 细分；wc 已销毁时取不到传 null（不猜测）。
+        url: wcDestroyed ? null : win.webContents.getURL(),
+      },
+      window: winDestroyed
+        ? null
+        : {
+            visible: win.isVisible(),
+            minimized: win.isMinimized(),
+            focused: win.isFocused(),
+          },
+    });
+  });
+  // print() 原生对话框不可能跨导航存活：主帧导航即清该 wc 的守卫账本。
+  win.webContents.on("did-start-navigation", () => {
+    printCallGuard.clearForWebContents(windowWebContentsId);
+  });
+  win.webContents.on("did-navigate", () => {
+    printCallGuard.clearForWebContents(windowWebContentsId);
+  });
+  // webContents 销毁清内容面包屑缓存（归因事实随文档失效）。
+  win.webContents.on("destroyed", () => {
+    contentBreadcrumbRegistry.clear(windowWebContentsId);
+  });
   win.on("closed", () => {
     browserScreenshotSurfaceCoordinator.handleWindowDestroyed(win.id);
     browserGuestManager.closeWindow(win.id);
@@ -2193,7 +2500,13 @@ app.on("before-quit", (event) => {
   if (!hasPreparedAppQuit) {
     localMediaPreviewPathRegistry.clear();
     event.preventDefault();
-    void prepareAppQuit("app-before-quit").finally(() => {
+    // W1-4：命名任务注册表（逐 handler 计时 + 证据落盘 + 看门狗 arm）与既有 Host
+    // 清理屏障并行——两者无关闭依赖；runShutdown 自带 in-flight 去重与超时 abort
+    // （abort 只停止等待不取消 handler），注册表缺席（初始化失败）时跳过。
+    void Promise.all([
+      prepareAppQuit("app-before-quit"),
+      shutdownTasks?.runShutdown("normal", { reason: "app-before-quit" }),
+    ]).finally(() => {
       const remainingWindows = getApplicationWindowsExcludingCuaIndicator();
       logger.info(
         `[app-quit] preparation finished, resuming quit with windows=${remainingWindows.length}`,

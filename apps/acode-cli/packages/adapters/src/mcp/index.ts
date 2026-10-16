@@ -128,9 +128,9 @@ export interface CreateMcpAdapterOptions {
    */
   onStatusChange?: McpServerStatusChangeListener;
   /**
-   * 自动重连预算（specs/mcp-lifecycle-ttl-approval.md R1）：连续失败熔断与最小
-   * 重试间隔。缺省 crashBudget=3、minRetryIntervalMs=30s。只门禁自动（懒）重连，
-   * 显式连接永远放行并复位预算。
+   * 自动重连预算（specs/mcp-lifecycle-ttl-approval.md R1）：双计数器（连续连接
+   * 失败 / 连续中途崩溃）熔断与最小重试间隔。缺省 crashBudget=3、
+   * minRetryIntervalMs=30s。只门禁自动（懒）重连，显式连接永远放行并复位预算。
    */
   reconnect?: {
     crashBudget?: number;
@@ -870,6 +870,11 @@ class NodeMcpAdapter implements McpPort {
 
       const durationMs = Date.now() - startedAt;
       const isError = typeof result.isError === "boolean" ? result.isError : false;
+      if (!isError) {
+        // 中途崩溃计数的复位点（spec R1）：一次工具调用完整成功。连接成功不复位该
+        // 计数；in-band isError 也不复位——「崩溃 / 业务报错」交替同样构成 spawn 风暴。
+        this.reconnectBudget.recordToolCallSuccess(request.serverName);
+      }
       // 官方 MCP 的 in-band 失败（配额耗尽、无套餐）是 HTTP 200 + isError，wrapper 那条
       // 非 2xx warn 覆盖不到；request id 也只有 wrapper 能看到，所以在这里按 span 取回。
       const serverRequestId = this.takeServerRequestId(request.trace?.spanId);
@@ -925,6 +930,23 @@ class NodeMcpAdapter implements McpPort {
         // 耗时贴着预算 ⇒ 是我们掐断的；远小于预算 ⇒ 是对端或网络断的。
         ...(timedOut ? { budgetExhausted: durationMs >= timeoutMs * 0.9 } : {}),
       });
+      // 中途崩溃计数（spec R1 第二计数器）：callTool 执行中途 transport 断开。
+      // 达到阈值即挂起：状态附加 reconnectSuspension（含 suspendedBy 来源维度）、
+      // 派发 reconnect-suspended 事件，并把裸断连错误换成 R2.1 模型指引文案
+      // （原错误进 cause 链）；未达阈值时原错误照常冒泡，"Not connected" 仍走
+      // callTool 的既有一次重试竞态路径。注意：显式关闭（disconnectServer /
+      // connectServer 关旧 record）也会让在飞调用收到 CONNECTION_CLOSED 而多计
+      // 一次；显式操作本身先复位预算，残余计数不足以单独触发挂起。
+      if (isMidCallTransportDisconnect(error)) {
+        const outcome = this.reconnectBudget.recordInCallCrash(request.serverName);
+        if (outcome.suspended) {
+          this.applyInCallCrashSuspension(request.serverName, outcome.consecutiveInCallCrashes);
+          const verdict = this.reconnectBudget.check(request.serverName);
+          if (!verdict.allowed && verdict.reason === "suspended") {
+            throw buildMcpReconnectRefusalError(request.serverName, verdict, error);
+          }
+        }
+      }
       throw error;
     }
   }
@@ -952,6 +974,31 @@ class NodeMcpAdapter implements McpPort {
     const verdict = this.reconnectBudget.check(serverName);
     if (verdict.allowed) return;
     throw buildMcpReconnectRefusalError(serverName, verdict);
+  }
+
+  /**
+   * 中途崩溃达到阈值时的挂起状态面（spec R1/R2）：与 connect_failures 挂起同一
+   * reconnectSuspension 附加字段、同一 reconnect-suspended 事件、同一 warn 日志
+   * 事件名（以 suspendedBy 维度区分）。SDK 的 _onclose 先同步派发 client.onclose
+   * 再拒绝挂起请求，因此正常时序下 record 已被 onclose 标为 disconnected，这里
+   * 只把挂起事实附加到当前状态（预算是挂起的唯一读源）。
+   */
+  private applyInCallCrashSuspension(serverName: string, consecutiveInCallCrashes: number): void {
+    const record = this.records.get(serverName);
+    this.logger?.warn("MCP server automatic reconnection suspended", {
+      ...this.connectionContext,
+      consecutiveInCallCrashes,
+      event: "mcp.server.reconnect.suspended",
+      mcpServerName: serverName,
+      status: "failed",
+      suspendedBy: "in_call_crashes",
+      ...(record ? { transport: record.config.type } : {}),
+    });
+    const suspension = this.reconnectBudget.suspension(serverName);
+    if (!suspension || !record || record.status.reconnectSuspension !== undefined) return;
+    const previousStatusKind = record.status.status;
+    record.status = { ...record.status, reconnectSuspension: suspension };
+    this.emitStatusChange(serverName, previousStatusKind, record.status, "reconnect-suspended");
   }
 
   /**
@@ -1337,6 +1384,11 @@ class NodeMcpAdapter implements McpPort {
           error: "MCP server connection closed unexpectedly",
           failureKind: "unexpected_disconnect",
         });
+        // 挂起事实若已存在（如中途崩溃阈值刚刚达到、或状态被 onclose 重写），随
+        // 状态一并携带——预算是挂起的唯一读源，附加不依赖 onclose 与计数点的
+        // 先后时序（正常时序 onclose 先于 callTool catch，这里兜住反序/重写）。
+        const activeSuspension = this.reconnectBudget.suspension(name);
+        if (activeSuspension) current.status.reconnectSuspension = activeSuspension;
         // server 进程关闭只标记状态、派发事件，不后台自旋重连——恢复走懒重连
         // （下次 callTool，受预算门禁；spec R1「重连触发点」）。
         this.emitStatusChange(name, previousStatusKind, current.status, "disconnected");
@@ -2185,6 +2237,24 @@ function isPeerAnsweredError(error: unknown): boolean {
 }
 
 /**
+ * callTool 执行中途 transport 断开的结构化识别（spec R1 中途崩溃计数的判据）：
+ * SdkError 字符串 code CONNECTION_CLOSED（执行中断开）/ NOT_CONNECTED（发起时
+ * 已断，onclose 未及处理的竞态）。不按错误文本反解；code 字符串比较兜底多份 SDK
+ * 实例下 instanceof 失效（与 isPeerAnsweredError 同一哲学）。超时
+ * （REQUEST_TIMEOUT）、in-band isError 与普通请求错误都不计入——不是崩溃证据。
+ */
+function isMidCallTransportDisconnect(error: unknown): boolean {
+  if (SdkError.isInstance(error)) {
+    return error.code === SdkErrorCode.ConnectionClosed || error.code === SdkErrorCode.NotConnected;
+  }
+  return (
+    isRecord(error) &&
+    typeof error.code === "string" &&
+    (error.code === SdkErrorCode.ConnectionClosed || error.code === SdkErrorCode.NotConnected)
+  );
+}
+
+/**
  * 自动重连被拒（挂起/冷却）时的模型指引文案（specs/mcp-lifecycle-ttl-approval.md R2.1）。
  * 失败文案即模型的下一步：说明事实（哪个 server、失败几次/还需等待多久），显式给出
  * 「不要在循环里重试」的指引与正确动作；不粘贴堆栈、不含 env/凭据。
@@ -2192,10 +2262,20 @@ function isPeerAnsweredError(error: unknown): boolean {
 function buildMcpReconnectRefusalError(
   serverName: string,
   verdict: Exclude<McpReconnectGateVerdict, { allowed: true }>,
+  cause?: unknown,
 ): Error {
   if (verdict.reason === "suspended") {
+    const options = cause !== undefined ? { cause } : {};
+    if (verdict.suspendedBy === "in_call_crashes") {
+      const crashes = verdict.suspension.consecutiveInCallCrashes ?? verdict.consecutiveFailures;
+      return new Error(
+        `MCP server "${serverName}" is unavailable: automatic reconnection was suspended after ${crashes} consecutive tool calls crashed the connection mid-call. Do not retry this tool in a loop - every attempt will fail until the server recovers. Tell the user this MCP server needs attention (check its configuration and logs); reconnecting it explicitly from the MCP settings will resume automatic recovery.`,
+        options,
+      );
+    }
     return new Error(
       `MCP server "${serverName}" is unavailable: automatic reconnection was suspended after ${verdict.consecutiveFailures} consecutive connection failures. Do not retry this tool in a loop - every attempt will fail until the server recovers. Tell the user this MCP server needs attention (check its configuration and logs); reconnecting it explicitly from the MCP settings will resume automatic recovery.`,
+      options,
     );
   }
   const retryAfterSeconds = Math.max(1, Math.ceil(verdict.retryAfterMs / 1000));
@@ -2209,7 +2289,13 @@ function buildMcpNotConnectedMessage(serverName: string, status?: McpServerStatu
   const base = `MCP server is not connected: ${serverName}`;
   const suspension = status?.reconnectSuspension;
   if (suspension) {
-    return `${base} (automatic reconnection suspended after ${suspension.consecutiveFailures} consecutive failures). Do not retry this tool in a loop; tell the user the MCP server needs attention - an explicit reconnect from the MCP settings will resume automatic recovery.`;
+    // 挂起来源维度（spec R1）：中途崩溃挂起挂在 disconnected 状态上，文案按维度
+    // 给出真实计数，避免把中途崩溃说成连接失败。
+    const reason =
+      suspension.suspendedBy === "in_call_crashes"
+        ? `${suspension.consecutiveInCallCrashes ?? suspension.consecutiveFailures} consecutive mid-call crashes`
+        : `${suspension.consecutiveFailures} consecutive failures`;
+    return `${base} (automatic reconnection suspended after ${reason}). Do not retry this tool in a loop; tell the user the MCP server needs attention - an explicit reconnect from the MCP settings will resume automatic recovery.`;
   }
   return `${base}. Do not retry this tool in a loop while the server stays disconnected; continue with other work or report the failure to the user.`;
 }

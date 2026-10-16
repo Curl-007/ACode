@@ -119,17 +119,23 @@ export type McpServerStatusKind =
 
 /**
  * 自动重连熔断挂起的附加事实（specs/mcp-lifecycle-ttl-approval.md R1/R2）。
- * 连续自动重连失败耗尽预算后置位；只出现在 `status: "failed"` 上。
+ * 双计数器任一耗尽预算后置位：连续连接失败（挂在 `status: "failed"` 上）或
+ * 连续中途崩溃（callTool 执行中途 transport 断开，挂在崩溃后的
+ * `status: "disconnected"` 上），来源由 `suspendedBy` 区分。
  * 刻意做成**附加字段**而不是新的 McpServerStatusKind 枚举值：wire schema
  * （packages/shared）与 TUI/desktop 消费面对新枚举值的兼容不在本批范围，
- * 忽略本字段的旧消费者至多把挂起显示为普通 failed（fail-safe）。
+ * 忽略本字段的旧消费者至多把挂起显示为普通 failed/disconnected（fail-safe）。
  * 解除挂起的唯一途径是显式操作（设置页重连 / session 启动 / 配置变更下发）。
  */
 export interface McpReconnectSuspension {
-  /** 触发挂起的连续连接失败次数。 */
+  /** 触发挂起的连续连接失败次数（connect_failures 维度计数）。 */
   consecutiveFailures: number;
+  /** 连续中途崩溃次数（in_call_crashes 维度）；仅该维度计数 > 0 时附加，wire fail-safe。 */
+  consecutiveInCallCrashes?: number;
   /** 挂起时刻（ISO 8601）。 */
   suspendedAt: string;
+  /** 挂起来源维度；仅挂起时附加，缺失按 connect_failures 理解（历史形态）；wire fail-safe。 */
+  suspendedBy?: "connect_failures" | "in_call_crashes";
 }
 
 export interface McpServerStatus {

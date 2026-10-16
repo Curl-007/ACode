@@ -45,15 +45,39 @@
   不可信）例外：自动重试会重新拉起浏览器授权流程，那是显式操作的副作用面。
 - **singleflight**：同一 server 的并发自动重连共享同一个 in-flight promise；后到者
   等待同一结果，绝不重复 spawn/握手。
-- **每 server 崩溃预算**：连续连接失败计数达到 `crashBudget`（缺省 3）即**熔断挂起**
-  （suspended）：停止一切自动重试，状态携带 `reconnectSuspension`（连续失败数 +
-  挂起时刻），等待人工处理或下一次显式操作。
+- **每 server 崩溃预算（双计数器）**：以下两个并列的连续计数**任一**达到
+  `crashBudget`（缺省 3）即**熔断挂起**（suspended）：停止一切自动重试，状态携带
+  `reconnectSuspension`（计数 + 挂起时刻 + 来源维度 `suspendedBy`），派发
+  `reconnect-suspended` 事件，等待人工处理或下一次显式操作。两计数器共享同一
+  阈值、同一 suspended 状态面、同一事件与同一显式复位路径：
+  - **连续连接失败计数**（`suspendedBy: "connect_failures"`）：计数点 = 一次连接
+    失败（显式与自动路径都累积）；复位点 = **任一连接成功**。
+  - **连续中途崩溃计数**（`suspendedBy: "in_call_crashes"`）：计数点 = `callTool`
+    执行中途 transport 断开（结构化断连错误：SdkError `CONNECTION_CLOSED` /
+    `NOT_CONNECTED`，不按错误文本猜测）；复位点 = **一次工具调用完整成功**
+    （transport 往返完成且非 in-band isError）。**连接成功不复位本计数**——
+    否则「连接必成功、每次 tools/call 都崩溃」的 server 每轮懒重连的连接成功都会
+    把计数清零，永远到不了阈值（2026-10-16 真实模型 E2E fixture B 实证：五连败、
+    每轮完整 spawn+握手、永不挂起、错误始终是裸 `Connection closed` 无指引，
+    恰是本 spec 背景节动机原文描述却未被旧规则覆盖的形态）。
+  - `suspendedBy` 是 `reconnectSuspension` 的**附加字段**（来源维度），wire 形态
+    保持 fail-safe：忽略它的旧消费者行为不变（至多把挂起显示为普通
+    failed/disconnected）。
+- **两形态预期行为**（真实模型 E2E 实证，验收测试钉住）：
+
+  | server 形态 | 预期行为 |
+  |---|---|
+  | A：连接必成功，每进程第 2 次 tools/call 崩溃（成功/崩溃交替） | 懒重连每轮生效；完整成功的调用复位中途计数 → **永不挂起**（server 半可用，继续服务） |
+  | B：连接必成功，**每次** tools/call 都崩溃 | 第 `crashBudget` 次中途崩溃即挂起（`suspendedBy: "in_call_crashes"`）；下一次调用起即拒：不再 spawn、错误带「不要在循环里重试」指引；显式 `connectServer` 复活且两计数复位 |
+
 - **最小重试间隔**：两次自动重连之间至少间隔 `minRetryIntervalMs`（缺省 30s）；
   冷却期内的自动重连请求被拒（不 spawn），错误文案给出剩余等待语义。
 - **预算复位（解除挂起）的触发点是「显式操作」**：用户/上层显式调用
   `connectServer` / `connectConfiguredServers`（设置页刷新、session 启动、配置变更
-  下发的全量收敛）会先复位该 server 的预算再连接。自动路径永不自我复位。
-- **成功即清零**：任一连接成功复位连续失败计数。
+  下发的全量收敛）会先复位该 server 的预算（**两个计数器同时清零**）再连接。
+  自动路径永不自我复位。
+- **成功即清零（分维度）**：任一连接成功复位连续**连接失败**计数；一次工具调用
+  完整成功复位连续**中途崩溃**计数。两个复位点互不代偿。
 - 失败计数对显式与自动路径都累积（连续失败是 server 的客观事实），但**只有自动
   路径被门禁**——显式连接永远放行，保证用户始终有恢复手段。
 
@@ -157,7 +181,7 @@ cause 链），模型侧不再看到无信息量的 SDK 内部措辞。
 
 | 状态 | 唯一所有者 | 说明 |
 |---|---|---|
-| 连续失败计数 / 冷却 / 挂起 | `McpReconnectBudget`（adapter 实例私有） | 每个 adapter 实例一份；pool 多 entry（多 lease/workspace）各自持有 adapter，预算按连接实例隔离，不跨实例共享 |
+| 连续连接失败计数 / 连续中途崩溃计数 / 冷却 / 挂起 | `McpReconnectBudget`（adapter 实例私有） | 每个 adapter 实例一份；pool 多 entry（多 lease/workspace）各自持有 adapter，预算按连接实例隔离，不跨实例共享。挂起事实以预算为唯一读源，record 状态只携带投影 |
 | 自动重连 in-flight promise | `NodeMcpAdapter.autoReconnects` | singleflight 去重表 |
 | 连接状态与事件派发 | `NodeMcpAdapter`（records + emitStatusChange） | pool 不复制状态 |
 | TTL 授权（内存 + 落盘） | `TtlApprovalStore` | 进程内单实例由装配层持有并注入 `PermissionConfig.ttlApprovals`；内存为唯一读源 |
@@ -181,7 +205,21 @@ callTool → budget.check
                                         → event(reconnect-suspended) → warn 日志
 
 [显式操作]（设置页刷新 / session 启动 / 配置变更）
-connectServer/connectConfiguredServers → budget.reset → 正常连接流程（永不被门禁）
+connectServer/connectConfiguredServers → budget.reset（两计数器同时清零）
+  → 正常连接流程（永不被门禁）
+
+[callTool 执行中途 transport 断开]（第二计数器）
+SDK onclose 同步先派发 → status=disconnected → event(disconnected)
+  → 挂起的 tools/call 以结构化断连错误（CONNECTION_CLOSED / NOT_CONNECTED）拒绝
+callToolOnClient catch → budget.recordInCallCrash
+   ├─ 未达阈值 → 原错误上抛（"Not connected" 竞态维持既有一次重试路径）
+   └─ 达到阈值 → 挂起(suspendedBy=in_call_crashes)
+        → 当前 status 附加 reconnectSuspension → event(reconnect-suspended) → warn 日志
+        → 抛带 R2.1 模型指引的错误（原错误进 cause 链）
+
+[工具调用完整成功]（transport 往返完成且非 in-band isError）
+callToolOnClient → budget.recordToolCallSuccess → 中途崩溃计数清零
+（连接成功只清零连接失败计数，不清中途崩溃计数）
 
 [TTL 授权]
 批准（带 expiresAt 的 allow 更新 / grantSessionPermission / store.grant）
@@ -219,6 +257,12 @@ connectServer/connectConfiguredServers → budget.reset → 正常连接流程�
 13. 存储文件 `version: 2`（未来版本）或损坏 → 整份作废（授权消失、回落 ask）并
     告警；`version` 缺失的 v0 形态按 1 迁移。
 14. 带 scopeKey 的授权不作用于缺省 scopeKey 的判定上下文；同规则重复批准替换旧条目。
+15. 「每次 tools/call 都崩溃、连接必成功」的 server：第 `crashBudget` 次中途崩溃即
+    挂起，状态携带 `reconnectSuspension`（`suspendedBy: "in_call_crashes"`）并派发
+    `reconnect-suspended` 事件；下一次调用不再 spawn、错误含「不要在循环里重试」
+    指引；显式 `connectServer` 复活且两计数器复位（复活后再崩溃从零重新计数）。
+16. 「成功/崩溃交替」（每进程第 2 次 tools/call 崩溃）的 server：≥6 轮交替不挂起
+    ——完整成功的调用复位中途崩溃计数，懒重连每轮正常生效。
 
 ## 范围外接线（后续批次 / 其他所有者）
 

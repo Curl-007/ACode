@@ -7,6 +7,12 @@
 // 手段显式交回用户（设置页重连 / session 重启 / 配置变更），错误文案同时给模型
 // 「不要在循环里重试」的指引（见 index.ts 的 buildReconnectRefusalError）。
 //
+// 双计数器（R1）：「连续连接失败」与「连续中途崩溃」（callTool 执行中途 transport
+// 断开）并列计数，任一达到 crashBudget 即挂起。中途崩溃计数的复位点是一次工具
+// 调用完整成功——连接成功**不**复位它，否则「连接必成功、每次 tools/call 都崩溃」
+// 的 server 每轮懒重连的连接成功都会清零计数，永远到不了阈值（2026-10-16 真实
+// 模型 E2E fixture B 实证的缝）。
+//
 // 状态所有者：本类实例（NodeMcpAdapter 私有字段）。pool 的多 entry 各自持有
 // adapter，预算按连接实例隔离；跨实例共享预算会把「一个 lease 的连接失败」误伤到
 // 另一个 workspace 的独立连接，方向上更糟。
@@ -14,8 +20,11 @@
 export const DEFAULT_MCP_RECONNECT_CRASH_BUDGET = 3;
 export const DEFAULT_MCP_RECONNECT_MIN_RETRY_INTERVAL_MS = 30_000;
 
+/** 挂起来源维度（spec R1）。附加字段，wire fail-safe：旧消费者可忽略。 */
+export type McpReconnectSuspensionSource = "connect_failures" | "in_call_crashes";
+
 export interface McpReconnectBudgetOptions {
-  /** 连续失败预算；耗尽即挂起。缺省 3。 */
+  /** 连续失败预算（两个计数器共用同一阈值）；耗尽即挂起。缺省 3。 */
   crashBudget?: number;
   /** 两次自动重连的最小间隔（ms）。缺省 30s。 */
   minRetryIntervalMs?: number;
@@ -25,8 +34,12 @@ export interface McpReconnectBudgetOptions {
 /** 挂起事实的对外投影（进 McpServerStatus.reconnectSuspension 与状态事件）。 */
 export interface McpReconnectSuspensionState {
   consecutiveFailures: number;
+  /** 连续中途崩溃数；仅该维度计数 > 0 时附加（附加字段，wire fail-safe）。 */
+  consecutiveInCallCrashes?: number;
   /** ISO 8601。 */
   suspendedAt: string;
+  /** 挂起来源维度；仅挂起时附加（附加字段，wire fail-safe）。 */
+  suspendedBy?: McpReconnectSuspensionSource;
 }
 
 export type McpReconnectGateVerdict =
@@ -35,6 +48,7 @@ export type McpReconnectGateVerdict =
       allowed: false;
       reason: "suspended";
       consecutiveFailures: number;
+      suspendedBy: McpReconnectSuspensionSource;
       suspension: McpReconnectSuspensionState;
     }
   | {
@@ -46,8 +60,10 @@ export type McpReconnectGateVerdict =
 
 interface ServerBudgetState {
   consecutiveFailures: number;
+  consecutiveInCallCrashes: number;
   lastAttemptAt?: number;
   suspendedAt?: number;
+  suspendedBy?: McpReconnectSuspensionSource;
 }
 
 export class McpReconnectBudget {
@@ -77,6 +93,7 @@ export class McpReconnectBudget {
         allowed: false,
         reason: "suspended",
         consecutiveFailures: state.consecutiveFailures,
+        suspendedBy: state.suspendedBy ?? "connect_failures",
         suspension: this.toSuspensionState(state),
       };
     }
@@ -109,19 +126,62 @@ export class McpReconnectBudget {
     state.consecutiveFailures += 1;
     if (state.suspendedAt === undefined && state.consecutiveFailures >= this.crashBudget) {
       state.suspendedAt = this.now();
+      state.suspendedBy = "connect_failures";
       return { suspended: true, consecutiveFailures: state.consecutiveFailures };
     }
     return { suspended: false, consecutiveFailures: state.consecutiveFailures };
   }
 
-  /** 连接成功：计数清零，挂起解除（成功本身就是最强的恢复证据）。 */
+  /**
+   * 登记一次中途崩溃（callTool 执行中途 transport 断开，spec R1 第二计数器）。
+   * 复位点是一次工具调用完整成功（recordToolCallSuccess），**连接成功不复位**——
+   * 否则「连接必成功、每次 tools/call 都崩溃」的 server 永远到不了阈值。
+   * 返回是否刚刚挂起。
+   */
+  recordInCallCrash(serverName: string): {
+    suspended: boolean;
+    consecutiveInCallCrashes: number;
+  } {
+    const state = this.ensureState(serverName);
+    state.consecutiveInCallCrashes += 1;
+    if (state.suspendedAt === undefined && state.consecutiveInCallCrashes >= this.crashBudget) {
+      state.suspendedAt = this.now();
+      state.suspendedBy = "in_call_crashes";
+      return { suspended: true, consecutiveInCallCrashes: state.consecutiveInCallCrashes };
+    }
+    return { suspended: false, consecutiveInCallCrashes: state.consecutiveInCallCrashes };
+  }
+
+  /**
+   * 一次工具调用完整成功（transport 往返完成且非 in-band isError）：清零中途崩溃
+   * 计数。in-band isError 不清零——server 半可用不等于恢复了调用能力，交替
+   * 「崩溃 / in-band 报错」的形态同样构成 spawn 风暴。
+   */
+  recordToolCallSuccess(serverName: string): void {
+    const state = this.states.get(serverName);
+    if (!state) return;
+    state.consecutiveInCallCrashes = 0;
+  }
+
+  /**
+   * 连接成功：连续**连接失败**计数清零、冷却锚点清除、connect_failures 挂起解除
+   * （连接成功是连接维度最强的恢复证据）。中途崩溃计数刻意**不**清零，
+   * in_call_crashes 挂起也不在此解除（spec R1「成功即清零（分维度）」）。
+   */
   recordSuccess(serverName: string): void {
-    this.states.delete(serverName);
+    const state = this.states.get(serverName);
+    if (!state) return;
+    state.consecutiveFailures = 0;
+    state.lastAttemptAt = undefined;
+    if (state.suspendedBy !== "in_call_crashes") {
+      state.suspendedAt = undefined;
+      state.suspendedBy = undefined;
+    }
   }
 
   /**
    * 显式操作复位：设置页重连、session 启动、配置变更下发的全量收敛。
-   * 挂起与冷却全部清零——「需人工/下次显式操作」的落点。
+   * 挂起、冷却与两个计数器全部清零——「需人工/下次显式操作」的落点。
    */
   reset(serverName: string): void {
     this.states.delete(serverName);
@@ -136,7 +196,7 @@ export class McpReconnectBudget {
   private ensureState(serverName: string): ServerBudgetState {
     let state = this.states.get(serverName);
     if (!state) {
-      state = { consecutiveFailures: 0 };
+      state = { consecutiveFailures: 0, consecutiveInCallCrashes: 0 };
       this.states.set(serverName, state);
     }
     return state;
@@ -145,7 +205,11 @@ export class McpReconnectBudget {
   private toSuspensionState(state: ServerBudgetState): McpReconnectSuspensionState {
     return {
       consecutiveFailures: state.consecutiveFailures,
+      ...(state.consecutiveInCallCrashes > 0
+        ? { consecutiveInCallCrashes: state.consecutiveInCallCrashes }
+        : {}),
       suspendedAt: new Date(state.suspendedAt ?? this.now()).toISOString(),
+      ...(state.suspendedBy ? { suspendedBy: state.suspendedBy } : {}),
     };
   }
 }

@@ -18,12 +18,16 @@ import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import type { Plugin } from "vite";
+// 只依赖零 import 的数据叶子：本插件被 web/desktop 的 vite.config 在 Node 加载期
+// 引入，若经 visualizationVendor.ts 会连带裸 @acode/shared 根入口——Node 24+ 的
+// strip-types 不做 .js→.ts 重映射，config 加载直接 ERR_MODULE_NOT_FOUND
+// （v0.0.10 Release 构建实败；缘由详见 visualizationVendorData.ts 头注释）。
 import {
   VISUALIZATION_VENDOR_DIRECTORY,
   VISUALIZATION_VENDOR_LIBRARIES,
   isVisualizationVendorFileName,
   type VisualizationVendorLibrary,
-} from "../src/lib/visualizationVendor.js";
+} from "../src/lib/visualizationVendorData.js";
 
 const require = createRequire(import.meta.url);
 

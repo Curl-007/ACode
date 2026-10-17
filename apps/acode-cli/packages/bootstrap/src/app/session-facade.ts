@@ -439,10 +439,17 @@ export function createSessionFacade(deps: CreateSessionFacadeDeps): SessionFacad
       });
     },
     generateWorkspaceText: async (input, options) => {
-      // 辅助文本入口只规范化模型身份；具体的最低档位由 Core 的辅助请求调用点显式决定。
-      const selection =
+      // 辅助文本入口规范化模型身份；registry 严格 Factory 只接受完整执行选择——
+      // 缺 reasoningLevel 的 selection（润色类调用方只传身份）会在创建 Model 前被拒
+      // （E2E D4 回归）。显式档位尊重调用方；缺席时补最低公开档位（与下方
+      // testModelConnectivity 同一兜底语义）。Core 的 GIT_COMMIT_MESSAGE 分支仍
+      // 在调用点显式决定辅助请求档位，本补齐不改变其行为（bind 覆盖同值）。
+      const normalized =
         normalizeModelSelection(deps.providerRegistry.getView(), input.selection) ??
         input.selection;
+      const selection = normalized.options?.reasoningLevel
+        ? normalized
+        : completeAuxiliaryRegistryModelSelection(deps.providerRegistry, normalized);
       return await deps.runtime.generateWorkspaceText(
         { ...input, selection },
         {

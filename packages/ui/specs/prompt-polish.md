@@ -31,7 +31,9 @@
    模型）→ 无可用候选 = **可读错误回执，绝不发出注定失败的请求**（源项目跨机
    「Model is unavailable」根因教训）。可用性判定按既有模型目录字段（凭据齐、未禁用）。
 3. 润色行为：`generateWorkspaceText`（selection=解析结果，querySource="prompt_polish"，
-   合理 maxOutputTokens，operationId 支持取消）；润色指令自撰——语义要素：保留原意/
+   合理 maxOutputTokens，operationId 支持取消）；selection 只带身份（providerId/modelId），
+   host facade 对缺档位的选择补最低公开 reasoningLevel（registry 严格 Factory 只接受
+   完整执行选择——E2E D4 回归；显式档位尊重调用方）；润色指令自撰——语义要素：保留原意/
    语言/关键约束与专名，只提升清晰度与结构，输出仅含润色后草稿正文（无解释前后缀）。
 4. 草稿替换与恢复：成功 → `requestComposerTextInsert(mode:"replace")` 替换（需解除
    sessionId===null 限制以覆盖已有会话 pane——解除时核对该限制的其他消费方，不得

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { access, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { delimiter, join } from "node:path";
+import { join } from "node:path";
 import { after, test } from "node:test";
 
 /**
@@ -69,7 +69,9 @@ test("PS-04: 解析顺序 pwsh 优先；win32 SystemRoot 固定路径兜底；�
   const pwshPath = join("C:\\pwsh-dir", "pwsh.exe");
   const legacyPath = join("C:\\fakeWin", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
   const fromPwsh = resolvePowerShellLaunch({
-    env: { PATH: `C:\\pwsh-dir${delimiter}C:\\other`, SystemRoot: "C:\\fakeWin" },
+    // win32 PATH 恒以 ";" 分隔——不能用宿主 delimiter（Linux CI 上是 ":"，
+    // 会让实现按平台正确切分后反而匹配不到条目）。
+    env: { PATH: "C:\\pwsh-dir;C:\\other", SystemRoot: "C:\\fakeWin" },
     exists: (p) => p === pwshPath,
     platform: "win32",
   });

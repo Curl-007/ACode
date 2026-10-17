@@ -8,6 +8,7 @@ import {
   type PromptPolishModelSelection,
 } from "@/lib/promptPolishPreferences.js";
 import { useACodeSessionStore } from "@/store/acodeSessionStore.js";
+import { subscribeToComposerDraftRevision } from "@/v4/composer/composerDraftRevision.js";
 import {
   preparePromptPolishRequest,
   resolvePromptPolishModel,
@@ -110,7 +111,12 @@ export function usePromptPolish(options: UsePromptPolishOptions): UsePromptPolis
 
   const statusRef = useRef(status);
   statusRef.current = status;
-  const abortRef = useRef<AbortController | null>(null);
+  // 跨 RPC 取消面（specs/prompt-polish.md）：renderer 不得把 AbortSignal 传给服务
+  // 代理——序列化产物缺 addEventListener，host 侧接线即抛 TypeError（E2E D1 回归）。
+  // 取消 = operationId + 服务端 cancelWorkspaceGenerateText（best-effort），本地由
+  // cancelRequested + 代际号保证迟到回包不落地。
+  const activeOpRef = useRef<string | null>(null);
+  const cancelRequestedRef = useRef<string | null>(null);
   // 请求代际号：取消/切会话/卸载后自增，在飞回包比对失败即整体丢弃。
   const requestSeqRef = useRef(0);
   const restoreRef = useRef<{ original: PromptPolishDraftSnapshot; replacedText: string } | null>(
@@ -143,13 +149,29 @@ export function usePromptPolish(options: UsePromptPolishOptions): UsePromptPolis
   const resolvedModel = resolution.status === "resolved" ? resolution.selection : null;
   const resolvedModelSource = resolution.status === "resolved" ? resolution.source : null;
 
+  const cancelActiveOperation = useCallback(() => {
+    const operationId = activeOpRef.current;
+    if (!operationId) return;
+    activeOpRef.current = null;
+    cancelRequestedRef.current = operationId;
+    void agentService
+      .cancelWorkspaceGenerateText({
+        workspacePath,
+        ...(workspaceIdentity ? { workspaceIdentity } : {}),
+        ...(remoteSessionId ? { remoteSessionId } : {}),
+        operationId,
+      })
+      .catch(() => {
+        // best-effort：取消通知失败由代际号/cancelRequested 守卫兜底丢弃回包。
+      });
+  }, [agentService, remoteSessionId, workspaceIdentity, workspacePath]);
+
   const resetToIdle = useCallback(() => {
     requestSeqRef.current += 1;
-    abortRef.current?.abort();
-    abortRef.current = null;
+    cancelActiveOperation();
     restoreRef.current = null;
     setStatus("idle");
-  }, []);
+  }, [cancelActiveOperation]);
 
   // 切换会话/scope：中止在飞请求，还原态与本次 explicit 覆盖都不跨会话保留。
   const lastScopeKeyRef = useRef(scopeKey);
@@ -161,12 +183,14 @@ export function usePromptPolish(options: UsePromptPolishOptions): UsePromptPolis
     setError(null);
   }, [scopeKey, resetToIdle]);
 
-  // 卸载即中止：迟到回包由代际号拦截，不写任何状态。
+  // 卸载即收口：迟到回包由代际号拦截，不写任何状态；在飞请求 best-effort 通知取消。
+  // 经 ref 取最新 cancel 函数，避免其依赖变化触发本 effect 重跑（重跑=误取消在飞请求）。
+  const cancelActiveOperationRef = useRef(cancelActiveOperation);
+  cancelActiveOperationRef.current = cancelActiveOperation;
   useEffect(() => {
     return () => {
       requestSeqRef.current += 1;
-      abortRef.current?.abort();
-      abortRef.current = null;
+      cancelActiveOperationRef.current();
     };
   }, []);
 
@@ -189,8 +213,9 @@ export function usePromptPolish(options: UsePromptPolishOptions): UsePromptPolis
       setError({ kind: prepared.issue });
       return;
     }
-    const controller = new AbortController();
-    abortRef.current = controller;
+    const operationId = generatePolishOperationId();
+    activeOpRef.current = operationId;
+    cancelRequestedRef.current = null;
     const seq = ++requestSeqRef.current;
     const sentRevision = snapshot?.revision ?? 0;
     setError(null);
@@ -207,11 +232,17 @@ export function usePromptPolish(options: UsePromptPolishOptions): UsePromptPolis
         messages: prepared.messages,
         querySource: prepared.querySource,
         maxOutputTokens: prepared.maxOutputTokens,
-        signal: controller.signal,
+        operationId,
         ...(requestTimeoutMs ? { requestTimeoutMs } : {}),
       })
       .then((result) => {
         if (seq !== requestSeqRef.current) return;
+        if (cancelRequestedRef.current === operationId) {
+          // 取消与完成赛跑输了：丢弃结果回待机态，不替换草稿。
+          setStatus("idle");
+          setError({ kind: "cancelled" });
+          return;
+        }
         // revision guard：等待期间用户已编辑 → 丢弃迟到回包，绝不覆盖新编辑。
         const current = getDraftSnapshotRef.current();
         if (!snapshot || !current || current.revision !== sentRevision) {
@@ -235,7 +266,7 @@ export function usePromptPolish(options: UsePromptPolishOptions): UsePromptPolis
       .catch((requestError: unknown) => {
         if (seq !== requestSeqRef.current) return;
         setStatus("idle");
-        if (controller.signal.aborted) {
+        if (cancelRequestedRef.current === operationId) {
           // 取消回到待机态（spec 产品规则 5）。
           setError({ kind: "cancelled" });
           return;
@@ -252,8 +283,8 @@ export function usePromptPolish(options: UsePromptPolishOptions): UsePromptPolis
         setError({ kind: "failed", message });
       })
       .finally(() => {
-        if (seq === requestSeqRef.current && abortRef.current === controller) {
-          abortRef.current = null;
+        if (seq === requestSeqRef.current && activeOpRef.current === operationId) {
+          activeOpRef.current = null;
         }
       });
   }, [
@@ -269,8 +300,8 @@ export function usePromptPolish(options: UsePromptPolishOptions): UsePromptPolis
   ]);
 
   const cancel = useCallback(() => {
-    abortRef.current?.abort();
-  }, []);
+    cancelActiveOperation();
+  }, [cancelActiveOperation]);
 
   const restore = useCallback(() => {
     const saved = restoreRef.current;
@@ -311,14 +342,38 @@ export function usePromptPolish(options: UsePromptPolishOptions): UsePromptPolis
     setError(null);
   }, []);
 
-  // canPolish/canRestore 在渲染期做同步探针：按钮所在工具栏随草稿输入重渲染，
-  // 展示态足够新鲜；restore()/polish() 内部各有权威守卫，不依赖此探针。
-  const draftProbe = getDraftSnapshot();
-  const canPolish = status !== "polishing" && Boolean(draftProbe?.text.trim());
-  const canRestore =
-    status === "restorable" &&
-    restoreRef.current !== null &&
-    draftProbe?.text === restoreRef.current.replacedText;
+  // 展示态探针（E2E D2 回归）：工具栏是 memo 化子树、不随草稿输入重渲染，渲染期
+  // 同步探针会停在陈旧布尔。改为订阅草稿 revision：只在探针布尔翻转时更新局部
+  // state 触发重渲染，避免逐键重渲染整个工具栏；polish()/restore() 内部各有
+  // 权威守卫，不依赖探针新鲜度。
+  const computeDraftProbe = useCallback(() => {
+    const snapshot = getDraftSnapshotRef.current();
+    const saved = restoreRef.current;
+    return {
+      matchesRestore:
+        statusRef.current === "restorable" &&
+        saved !== null &&
+        snapshot?.text === saved.replacedText,
+      nonEmpty: Boolean(snapshot?.text.trim()),
+    };
+  }, []);
+  const [draftProbe, setDraftProbe] = useState(computeDraftProbe);
+  const refreshDraftProbe = useCallback(() => {
+    const next = computeDraftProbe();
+    setDraftProbe((prev) =>
+      prev.nonEmpty === next.nonEmpty && prev.matchesRestore === next.matchesRestore ? prev : next,
+    );
+  }, [computeDraftProbe]);
+  useEffect(() => {
+    refreshDraftProbe();
+    return subscribeToComposerDraftRevision(workspacePath, workspaceIdentity, refreshDraftProbe);
+  }, [refreshDraftProbe, workspaceIdentity, workspacePath]);
+  // 状态迁移（回包替换/还原/取消）不必然伴随 revision 变化：status 变化时补算一次。
+  useEffect(() => {
+    refreshDraftProbe();
+  }, [refreshDraftProbe, status]);
+  const canPolish = status !== "polishing" && draftProbe.nonEmpty;
+  const canRestore = status === "restorable" && draftProbe.matchesRestore;
 
   return {
     status,
@@ -333,4 +388,12 @@ export function usePromptPolish(options: UsePromptPolishOptions): UsePromptPolis
     selectModel,
     dismissError,
   };
+}
+
+function generatePolishOperationId(): string {
+  // renderer 安全上下文有 randomUUID；非安全上下文退化为时间戳+随机串
+  // （operationId 只作取消面关联键，本窗口在飞请求内唯一即可）。
+  return typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID()
+    : `polish_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
 }

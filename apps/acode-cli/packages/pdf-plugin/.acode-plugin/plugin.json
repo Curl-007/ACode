@@ -1,6 +1,7 @@
 {
   "name": "pdf",
   "version": "0.2.0",
+  "tier": "always",
   "description": "PDF production skills driven by a LaTeX toolchain, published as an official ZCode plugin.",
   "description_i18n": {
     "en": "PDF production skills on a LaTeX toolchain: reports, resumes, posters and academic papers.",

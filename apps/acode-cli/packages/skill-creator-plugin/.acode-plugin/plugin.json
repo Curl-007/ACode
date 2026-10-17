@@ -1,6 +1,7 @@
 {
   "name": "skill-creator",
   "version": "0.1.0",
+  "tier": "always",
   "description": "Create, edit, and iterate local ZCode skills.",
   "author": {
     "name": "Z.ai"

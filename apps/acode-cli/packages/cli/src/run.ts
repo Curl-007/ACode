@@ -150,8 +150,11 @@ const normalizePromptMode = (value: string | undefined): CliRuntimeMode | undefi
   // 拒绝——这是预期语义（无人值守别选 auto 干灰区密集的活），不是缺陷。
   if (mode === "build" || mode === "plan" || mode === "edit" || mode === "yolo" || mode === "auto")
     return mode;
+  // dontAsk（specs/permission-adjudication-batch2.md 接线项 2）：无人可问即拒的无头
+  // 姿态档；命令行大小写不敏感，归一回 camelCase 词汇（与 CliRuntimeMode 对齐）。
+  if (mode === "dontask") return "dontAsk";
   throw new Error(
-    `Unsupported --mode value: ${value}. Supported modes: build, edit, plan, yolo, auto.`,
+    `Unsupported --mode value: ${value}. Supported modes: build, edit, plan, yolo, auto, dontAsk.`,
   );
 };
 

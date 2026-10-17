@@ -145,6 +145,7 @@ import type {
   ACodeAgentResetPluginConfigParams,
   ACodeAgentCreateSessionParams,
   ACodeAgentInstallPluginParams,
+  ACodeAgentCancelWorkspaceGenerateTextParams,
   ACodeAgentGenerateWorkspaceTextParams,
   ACodeAgentTestModelConnectivityParams,
   ACodeAgentGoalParams,
@@ -194,6 +195,7 @@ import type {
   ACodeAgentCreateAutomationParams,
   ACodeAgentUpdateAutomationParams,
   ACodeAgentAutomationIdParams,
+  ACodeAgentRunAutomationNowParams,
   ACodeAgentSetAutomationEnabledParams,
   ACodeAgentDeleteAutomationRunParams,
   ACodeAgentAttachmentBeginParams,
@@ -282,6 +284,7 @@ import {
   utf8JsonByteLength,
   ACODE_ATTACHMENT_FAULT_CODES,
   ACodeAttachmentFaultError,
+  readPendingInteractionHints,
   type CommandAck,
   type ConversationTopicWireCandidate,
   type ConversationTelemetryFact,
@@ -297,6 +300,11 @@ import {
 } from "./acodeAgentConnectionScope.js";
 import { createBackgroundSessionEventCoalescer } from "#src/acode-agent/acodeSessionEventCoalescer.js";
 import { AutomationService } from "#src/session/automationService.js";
+import {
+  AutomationManualTriggerRejectedError,
+  type AutomationManualRunTriggerContext,
+} from "#src/session/automationManualTrigger.js";
+import type { AutomationManualTriggerOrigin } from "@acode/shared";
 import { AutomationRepo } from "#src/session/automationRepo.js";
 import { TaskIndexRepo } from "#src/session/taskIndexRepo.js";
 import { ACodeAgentMcpStatusModeUnsupportedError } from "#src/acode-agent/acodeAgentErrors.js";
@@ -887,6 +895,14 @@ interface CreateACodeAgentServiceOptions extends Omit<
     automation: ACodeAutomation;
     run: ACodeAutomationRun;
   }) => Promise<void>;
+  /**
+   * 手动触发的调用来源（specs/scheduled-manual-trigger-activation.md R3）：装配层按
+   * **传输事实**声明（desktop 本地 IPC 装 "local_ui"，远程 channel 装 "remote"），
+   * 禁止做成 wire 入参让调用方自报。缺席 = 兼容窗（trigger 不组装，既有调用方形状），
+   * 但垃圾凭据在任何 origin 下都拒（shared 守卫 R5）。按传输分装的接线（host 命令
+   * 路由/relay 面）属后续批次，见 spec「不在本项范围」。
+   */
+  automationManualTriggerOrigin?: AutomationManualTriggerOrigin;
   /**
    * Off-Peak 会话内创建。config 同时承担曝光门（enabled && Selection View 非空 →
    * session create/resume 下发 offPeakToolEnabled）与缺省解析（model=白名单末位 /
@@ -4371,17 +4387,41 @@ export function createACodeAgentService(
       });
     },
 
-    async runAutomationNow(params: ACodeAgentAutomationIdParams) {
+    async runAutomationNow(params: ACodeAgentRunAutomationNowParams) {
       const dispatch = options?.onAutomationManualRunRequested;
       if (!dispatch) {
         // runNow 会先写 manual run 并占用 single-flight claim；dispatcher
         // 缺失是同步可判定的配置错误，必须在认领前失败，不能依赖 stale 崩溃回收。
         throw new Error("Automation immediate dispatcher is unavailable.");
       }
-      const claimed = await automationService.runNow(params.automationId, {
-        workspacePath: params.workspacePath,
-        workspaceIdentity: params.workspaceIdentity,
-      });
+      // 用户激活守卫（specs/scheduled-manual-trigger-activation.md）：origin 是装配层
+      // 声明的传输事实，activation 是调用方携带的用户动作凭据（wire 形状未知，校验归
+      // shared 守卫）；两者都缺席时 trigger 不组装 = 兼容窗放行。拒绝发生在 runNow 的
+      // repo claim 之前——不产生 run 行、不占 single-flight 锁。
+      const origin = options?.automationManualTriggerOrigin;
+      const trigger: AutomationManualRunTriggerContext | undefined =
+        origin !== undefined || params.userActivation !== undefined
+          ? {
+              ...(origin !== undefined ? { origin } : {}),
+              ...(params.userActivation !== undefined ? { activation: params.userActivation } : {}),
+            }
+          : undefined;
+      let claimed;
+      try {
+        claimed = await automationService.runNow(
+          params.automationId,
+          {
+            workspacePath: params.workspacePath,
+            workspaceIdentity: params.workspaceIdentity,
+          },
+          trigger,
+        );
+      } catch (error) {
+        if (error instanceof AutomationManualTriggerRejectedError) {
+          return { status: "rejected" as const, reason: error.reason };
+        }
+        throw error;
+      }
       if (!claimed) {
         // single-flight 已拒绝重复运行时，旧的空成功返回会被 UI 误判为
         // 新 run 已入队，导致每次重复点击都展示一次“已触发”。
@@ -4414,7 +4454,11 @@ export function createACodeAgentService(
         reason: "workspace_generate_text",
         workspace: params,
       });
-      const operationId = params.signal ? randomUUID() : undefined;
+      // 跨 RPC 调用方（renderer 代理）的 signal 序列化后是缺 addEventListener 的普通
+      // 对象：只有真实 signal 才接本地取消通知；跨界调用方自传 operationId 并走
+      // cancelWorkspaceGenerateText（specs/prompt-polish.md，E2E D1 回归）。
+      const hasLocalSignal = typeof params.signal?.addEventListener === "function";
+      const operationId = params.operationId ?? (hasLocalSignal ? randomUUID() : undefined);
       const cancel = () => {
         if (!operationId) return;
         void client
@@ -4434,7 +4478,7 @@ export function createACodeAgentService(
             });
           });
       };
-      params.signal?.addEventListener("abort", cancel, { once: true });
+      if (hasLocalSignal) params.signal?.addEventListener("abort", cancel, { once: true });
       try {
         return await client.request(
           acodeProtocolMethods.workspaceGenerateText,
@@ -4453,12 +4497,33 @@ export function createACodeAgentService(
           // 先于调用方自身 deadline 触发，并被 onRequestTimeout 误判 stale 杀进程。
           // 调用方显式传入 requestTimeoutMs（自身 deadline + 取消缓冲）时以其为准。
           {
-            signal: params.signal,
+            ...(hasLocalSignal && params.signal ? { signal: params.signal } : {}),
             ...(params.requestTimeoutMs ? { timeoutMs: params.requestTimeoutMs } : {}),
           },
         );
       } finally {
-        params.signal?.removeEventListener("abort", cancel);
+        if (hasLocalSignal) params.signal?.removeEventListener("abort", cancel);
+      }
+    },
+
+    async cancelWorkspaceGenerateText(params: ACodeAgentCancelWorkspaceGenerateTextParams) {
+      const client = await getClient(params);
+      try {
+        return await client.request(
+          acodeProtocolMethods.workspaceCancelGenerateText,
+          { operationId: params.operationId },
+          acodeWorkspaceCancelGenerateTextResultSchema,
+          { timeoutMs: 5_000 },
+        );
+      } catch (error: unknown) {
+        // 取消是 best-effort 控制面：失败不抛回调用方（调用方语义=丢弃回包，由
+        // 代际守卫兜底）；保留 debug 轨迹区分「本地已停等」与「CLI 已收到取消」。
+        logger.debug(undefined, "workspace 模型请求取消通知失败", {
+          operationId: params.operationId,
+          workspaceKey: resolveWorkspaceKey(params),
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return { cancelled: false, operationId: params.operationId };
       }
     },
 
@@ -5059,6 +5124,24 @@ export function createACodeAgentService(
         },
         v4ConversationSubscribeResultSchema,
       );
+      // attach 链路判代（apps/acode-cli/specs/protocol-attachment-typed-errors.md R5 /
+      // 接线 W4）：pendingInteractionHints 的**字段存在性**是响应级判代探针，唯一读法
+      // readPendingInteractionHints——字段缺席只能推断对端是老世代 CLI，不得推断成
+      // 「无 pending」（完整清单恒以 snapshot 的 pendingInteractions 为权威）。这里只记
+      // debug 诊断供排障；ack 原样透传（含字段缺席形态），UI/手机端的判代消费归各自
+      // attach 面。禁止用 wire 版本反推本字段存在性（R5 规则 3）。
+      const pendingHintsReading = readPendingInteractionHints(result.ack);
+      if (pendingHintsReading.generation === "legacy") {
+        logger.debug(
+          undefined,
+          "V4 subscribe ack 缺少 pendingInteractionHints 字段（老世代 CLI）",
+          {
+            event: "v4.conversation.subscribe.pending_hints_legacy",
+            sessionId: params.sessionId,
+            workspaceKey: resolveWorkspaceKey(params),
+          },
+        );
+      }
       const cliRequestMs = Math.max(0, Math.round(performance.now() - cliRequestStartedAt));
       const hostPrepareMs = Math.max(0, Math.round(cliRequestStartedAt - subscribeStartedAt));
       const openTiming = {

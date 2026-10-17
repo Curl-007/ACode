@@ -7,7 +7,7 @@
 import {
   buildNativeSupplierKey,
   ACODE_AGENT_PROVIDER,
-  type ACodeApiRetryStatus,
+  type ACodeApiRetrySlotValue,
   type ModelSelectionGhostReason,
   type ModelSelectionResolution,
   type ACodeWorkspaceInitStatus,
@@ -61,7 +61,8 @@ export interface TaskRuntimeState {
   /** 当前模型上下文窗口容量；模型状态事件只更新这里，不覆盖真实 usage.used。 */
   contextWindow: number | null;
   usage: TaskUsageState | null;
-  apiRetry: ACodeApiRetryStatus | null;
+  /** apiRetry 槽取值面 = api_retry + additive auto_resume（specs/turn-auto-resume.md）。 */
+  apiRetry: ACodeApiRetrySlotValue | null;
   /** Agent 明确上报的后台任务控制项；host 运行期状态，不落盘持久化。 */
   backgroundTaskControls: ACodeBackgroundTaskControlItem[];
   /** 当前 session active turn 的类型；用于区分普通生成和 compact 维护态。 */
@@ -306,7 +307,7 @@ export interface ACodeSessionStoreState {
   setTaskApiRetryStatus: (
     workspacePath: string,
     taskId: string,
-    apiRetry: ACodeApiRetryStatus | null,
+    apiRetry: ACodeApiRetrySlotValue | null,
     workspaceIdentity?: string,
   ) => void;
   setTaskPermissionRequest: (

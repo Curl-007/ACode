@@ -20,6 +20,13 @@ import {
 import { getCodePreviewTheme } from "@/lib/codePreviewPreferences.js";
 import { useACodeIntl } from "@/i18n/IntlProvider.js";
 import type { CodePreviewSettings } from "@/store/index.js";
+import { useACodeStore } from "@/store/StoreProvider.js";
+import {
+  DENSITY_PREFERENCE_VALUES,
+  TEXT_SIZE_PREFERENCE_VALUES,
+  type DensityPreference,
+  type TextSizePreference,
+} from "@/lib/appearancePreferences.js";
 import { THEME_MODES } from "@/settings/settingsPageConfig.js";
 import { MAX_UI_FONT_SIZE_PX, MIN_UI_FONT_SIZE_PX } from "@/lib/uiFontSize.js";
 
@@ -95,6 +102,10 @@ export function AppearanceSectionContent({
 }) {
   const { intl } = useACodeIntl();
   const activePreviewMode = resolveTheme(theme);
+  // 三轴外观偏好（specs/appearance-preference-axes.md）直接走 store，不经 SettingsPage
+  // props 钻透（存量大文件行数棘轮）；写入唯一入口是 store setter → lib。
+  const appearancePreferences = useACodeStore((state) => state.appearancePreferences);
+  const setAppearancePreferences = useACodeStore((state) => state.setAppearancePreferences);
 
   return (
     <>
@@ -149,6 +160,82 @@ export function AppearanceSectionContent({
                   value={uiFontSizePx}
                   onChange={setUiFontSizePx}
                   ariaLabel={intl.formatMessage({ id: "settings.uiFontSize" })}
+                />
+              }
+            />
+            <SettingsRow
+              label={intl.formatMessage({ id: "settings.density" })}
+              description={intl.formatMessage({
+                id: "settings.densityDescription",
+              })}
+              control={
+                <Select
+                  value={appearancePreferences.density}
+                  onValueChange={(value) =>
+                    // 闭集外的值由 lib 归一化收敛默认，这里只做展示层类型标注。
+                    setAppearancePreferences({ density: value as DensityPreference })
+                  }
+                >
+                  <SelectTrigger
+                    size="lg"
+                    className="w-[260px] min-w-0 justify-between"
+                    aria-label={intl.formatMessage({ id: "settings.density" })}
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {DENSITY_PREFERENCE_VALUES.map((value) => (
+                      <SelectItem key={value} value={value}>
+                        {intl.formatMessage({ id: `settings.density.${value}` })}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              }
+            />
+            <SettingsRow
+              label={intl.formatMessage({ id: "settings.textSize" })}
+              description={intl.formatMessage({
+                id: "settings.textSizeDescription",
+              })}
+              control={
+                <Select
+                  value={appearancePreferences.textSize}
+                  onValueChange={(value) =>
+                    setAppearancePreferences({ textSize: value as TextSizePreference })
+                  }
+                >
+                  <SelectTrigger
+                    size="lg"
+                    className="w-[260px] min-w-0 justify-between"
+                    aria-label={intl.formatMessage({ id: "settings.textSize" })}
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {TEXT_SIZE_PREFERENCE_VALUES.map((value) => (
+                      <SelectItem key={value} value={value}>
+                        {intl.formatMessage({ id: `settings.textSize.${value}` })}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              }
+            />
+            <SettingsRow
+              label={intl.formatMessage({ id: "settings.reduceMotion" })}
+              description={intl.formatMessage({
+                id: "settings.reduceMotionDescription",
+              })}
+              control={
+                // 开关语义：开 = in-app 强制减少动效（reduce）；关 = 跟随系统（auto，
+                // 既有 prefers-reduced-motion 媒体查询面原样生效，spec R4）。
+                <Switch
+                  checked={appearancePreferences.reduceMotion === "reduce"}
+                  onCheckedChange={(checked) =>
+                    setAppearancePreferences({ reduceMotion: checked ? "reduce" : "auto" })
+                  }
+                  aria-label={intl.formatMessage({ id: "settings.reduceMotion" })}
                 />
               }
             />

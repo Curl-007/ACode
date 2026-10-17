@@ -1,4 +1,10 @@
 import type { LogContext, LogEntry, LogRedactor } from "@acode/contracts";
+// 词表收敛（packages/shared/specs/log-privacy-redaction.md R1）：敏感键名判定消费
+// shared sensitiveKeyNames 单源，不再持有 CLI 自有子串表——此前多套词表分叉导致
+// 同一份日志在不同出口（CLI jsonl / 反馈面 / 桌面导出）脱敏强度不一致。
+// 单源语义变化：①词族更宽（passwd/pwd/auth/signature/dsn/连接串等）；②带白名单
+// （max_tokens 等 LLM 计数/预算键不再脱敏，排障需要保留以判断 provider 限流）。
+import { isSensitiveLogKeyName } from "@acode/shared";
 
 export interface SerializedLogError {
   name: string;
@@ -13,9 +19,6 @@ export interface SerializedLogError {
 export type SerializableLogEntry = Record<string, unknown>;
 
 export class DefaultLogRedactor implements LogRedactor {
-  private readonly sensitiveKeyPattern =
-    /(?:api[-_]?key|authorization|cookie|credential|password|secret|token)/i;
-
   redact(value: unknown): unknown {
     return this.redactValue(value, new WeakSet(), 0);
   }
@@ -39,7 +42,8 @@ export class DefaultLogRedactor implements LogRedactor {
     return Object.fromEntries(
       Object.entries(value as Record<string, unknown>).map(([key, entryValue]) => [
         key,
-        this.sensitiveKeyPattern.test(key)
+        // 键名判定走单源（归一化剥分隔符+小写后按 白名单→族子串→精确键→组合后缀 判定）。
+        isSensitiveLogKeyName(key)
           ? "[Redacted]"
           : this.redactValue(entryValue, seen, depth + 1),
       ]),

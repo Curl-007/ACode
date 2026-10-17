@@ -14,6 +14,9 @@ const timestampMsSchema = z.number().int().nonnegative();
 export const acodeDeliveryKindSchema = z.enum(["desktop-continuous", "web-remote-replayable"]);
 export const acodeMessageVisibilitySchema = z.enum(["user-visible", "model-only"]);
 export const acodeSyntheticUserMessageSourceSchema = z.enum([
+  // 跨回合 auto-resume（apps/acode-cli/specs/turn-auto-resume.md）：runtime 退避后注入的
+  // model-only 继续指令；词表与 contracts SYNTHETIC_USER_MESSAGE_SOURCES 同步。
+  "auto_resume",
   "background_task",
   "fork",
   "goal_state_change",
@@ -63,6 +66,12 @@ export const acodePermissionUpdateSchema = z
     type: z.literal("addRules"),
     behavior: acodePermissionRuleBehaviorSchema,
     rules: z.array(acodePermissionRuleValueSchema).min(1),
+    // TTL 持久授权（apps/acode-cli/specs/mcp-lifecycle-ttl-approval.md R4）：带
+    // expiresAt（ISO 8601）的 allow 更新进 TTL 存储、到期回落 ask；不带维持既有
+    // 语义（会话级 sessionRules 或项目持久 ruleset）。可选字段是向后扩展——旧客户端
+    // 不发送它，strict 校验照常通过；期限的语义校验（可解析/夹紧/过期丢弃）由 CLI 侧
+    // TtlApprovalStore fail-closed 收口，wire 层只保证非空字符串。
+    expiresAt: nonEmptyString.optional(),
   })
   .strict();
 export const acodePermissionResponseSchema = z
@@ -74,7 +83,7 @@ export const acodePermissionResponseSchema = z
   })
   .strict();
 export type ACodePermissionResponse = z.infer<typeof acodePermissionResponseSchema>;
-export const acodeSessionModeSchema = z.enum(["plan", "build", "edit", "yolo", "auto"]);
+export const acodeSessionModeSchema = z.enum(["plan", "build", "edit", "yolo", "auto", "dontAsk"]);
 /**
  * 引擎权限模式联合（镜像 ZCode kernel:34720 dzi）。
  *
@@ -502,6 +511,25 @@ export const acodeSessionApiRetryStatusSchema = z
     error: z.string(),
   })
   .strict();
+// 跨回合 auto-resume 状态（apps/acode-cli/specs/turn-auto-resume.md「状态上报」）：
+// 与 api_retry 共用 apiRetry 槽，UI 按 kind 区分文案。本变体是幸存承重面的维护性
+// 扩集（同 synthetic source 词表镜像的性质）：legacy apiRetry 槽退役时随收敛计划
+// 与 api_retry 一起迁移，不另开新通道。
+export const acodeSessionAutoResumeStatusSchema = z
+  .object({
+    kind: z.literal("auto_resume"),
+    attempt: z.number().int().positive(),
+    maxResumes: z.number().int().nonnegative(),
+    resumeDelayMs: z.number().int().nonnegative(),
+    errorStatus: z.number().int().nonnegative().nullable(),
+    error: z.string(),
+  })
+  .strict();
+export const acodeSessionApiRetrySlotSchema = z.union([
+  acodeSessionApiRetryStatusSchema,
+  acodeSessionAutoResumeStatusSchema,
+]);
+export type ACodeSessionApiRetrySlotValue = z.infer<typeof acodeSessionApiRetrySlotSchema>;
 export const acodeSessionContextCacheUsageSchema = z
   .object({
     inputTokens: z.number().int().nonnegative(),
@@ -560,7 +588,7 @@ export const acodeSessionRuntimeStateSchema = z
     activeTurnId: nonEmptyString.optional(),
     activeTurnKind: z.enum(["regular", "compact", "rewind"]).optional(),
     pendingRequestIds: z.array(nonEmptyString),
-    apiRetry: acodeSessionApiRetryStatusSchema.nullable().optional(),
+    apiRetry: acodeSessionApiRetrySlotSchema.nullable().optional(),
     contextUsage: acodeSessionContextUsageSchema.optional(),
     goalVerifications: z.array(acodeSessionGoalVerificationSchema).optional(),
     goalVerificationTimeline: z.array(acodeSessionGoalVerificationTimelineSchema).optional(),

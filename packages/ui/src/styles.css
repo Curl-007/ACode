@@ -105,6 +105,25 @@ body {
   }
 }
 
+/* 外观偏好轴·示范消费点（packages/ui/specs/appearance-preference-axes.md R3/R7）：
+ * density=compact 只收纵向节奏与间距——不减内容、不把点击区缩到 Sizing 基线以下；
+ * text-size 轴只调本 opt-in 组件的排版档位，不写 --ui-font-size（Appearance 字号
+ * 滑杆仍是该变量唯一写入者）。高密度组件的全量迁移登记在 spec，本波不做。 */
+@container side-pane-open-tab (min-width: 480px) {
+  [data-acode-density="compact"] .side-pane-open-tab-button {
+    gap: 0.25rem;
+    height: 4.5rem;
+  }
+}
+
+[data-acode-text-size="lg"] .side-pane-open-tab-button-label {
+  font-size: var(--text-ui-lg);
+}
+
+[data-acode-text-size="sm"] .side-pane-open-tab-button-label {
+  font-size: var(--text-ui-sm);
+}
+
 #root {
   /*  Windows 桌面窗口拉伸后，根节点如果只靠内容撑开，Chromium 偶发会把新尺寸区域留给宿主底层。
    * 这里把 React 挂载点固定成完整动态视口，让桌面/Web/手机端都从根节点开始明确铺满可视区。 */
@@ -1027,6 +1046,27 @@ body {
   [data-acode-collapsible-animate-close="true"][data-state="closed"] > * {
     animation: none;
   }
+}
+
+/* reduce-motion 的 in-app 强制档（specs/appearance-preference-axes.md R4）：
+ * OS 为 no-preference 而用户在应用内选择降级时，根属性复制上方 OS 档的同一
+ * 归零集——媒体查询与属性选择器无法并进同一条规则，只能双门并存。
+ * collapsible 两选择器带 !important：其基规则为压 Radix 测量期写入的 inline
+ * style 用了 !important（上方 OS 档块漏带、实际压不住，属既有缺陷——修复登记
+ * 在 spec，属性档先按正确写法落）。 */
+[data-acode-reduce-motion="reduce"] [data-acode-stream-animate="true"],
+[data-acode-reduce-motion="reduce"] [data-acode-stream-marker-animate="true"]::marker,
+[data-acode-reduce-motion="reduce"] [data-acode-tool-stream-animate="true"],
+[data-acode-reduce-motion="reduce"] [data-acode-chat-loading-animate="true"] {
+  animation: none;
+}
+
+[data-acode-reduce-motion="reduce"]
+  [data-acode-collapsible-animate-close="true"][data-state="closed"],
+[data-acode-reduce-motion="reduce"]
+  [data-acode-collapsible-animate-close="true"][data-state="closed"]
+  > * {
+  animation: none !important;
 }
 
 /* 点赞/点踩选中时的反馈动画：参考微信/X 的做法，只做图标回弹 + 细小粒子飞散两段，
@@ -2035,6 +2075,67 @@ body {
     animation: none;
     transition: none;
   }
+}
+
+/* reduce-motion 的 in-app 强制档 · wf 运动词汇（specs/appearance-preference-axes.md
+ * R4 示范双门）：与上方 OS 档同一归零集——动画停、行进线 dashoffset 归零、过渡关、
+ * 瓦片脸只留静态表情。运行灯 .wf-lamp-running 的动画只在 OS no-preference 档挂上，
+ * in-app reduce 同样必须停它，故列进 animation 清单。 */
+[data-acode-reduce-motion="reduce"]
+  :is(
+    .wf-arrive,
+    .wf-mark,
+    .wf-unfold,
+    .wf-swap,
+    .wf-draw,
+    .wf-caret,
+    .wf-rail-grow,
+    .wf-land,
+    .wf-lamp-running,
+    .wf-preview-doc
+  ) {
+  animation: none;
+}
+
+[data-acode-reduce-motion="reduce"] .wf-draw {
+  stroke-dashoffset: 0;
+}
+
+[data-acode-reduce-motion="reduce"]
+  :is(
+    .wf-pill,
+    .wf-pill-avatar,
+    .wf-pill-tile,
+    .wf-pill-name,
+    .wf-pill-go,
+    .wf-mark,
+    .wf-station,
+    .wf-lamp,
+    .wf-ink,
+    .wf-tile-frame,
+    .wf-line,
+    .wf-line-icon,
+    .wf-meter-seg,
+    .wf-digest-plot,
+    .wf-foldable,
+    .wf-folded,
+    .wf-ledge-lamp,
+    .wf-sb
+  ) {
+  transition: none;
+}
+
+[data-acode-reduce-motion="reduce"]
+  :is(
+    .wf-face [data-eye-expression="dots"] circle,
+    .wf-face-body,
+    .wf-face-lids,
+    .wf-face-closed,
+    .wf-face-eyes,
+    .wf-face-bounce
+  ) {
+  animation: none;
+  transition: none;
 }
 
 /* Mention 图标不进入 TextNode DOM，避免首部 img/svg 截断 Lexical 原生选区映射。 */

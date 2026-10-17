@@ -4,6 +4,7 @@ import {
   isCoreError,
   type CollaborationMode,
   type PermissionBrokerResult,
+  type ToolCallId,
   type TraceContext,
 } from "@acode/contracts";
 import type { HookRunResult } from "../../hooks/index.js";
@@ -189,6 +190,73 @@ export async function runPostToolUseFailureHooks(
       matchValues: hookMatcherToolNamesForTool(toolCall.name),
       signal,
     },
+  );
+}
+
+export interface TaskLifecycleHookInfo {
+  description?: string;
+  taskKind?: string;
+  taskId: string;
+  toolCallId?: ToolCallId | string;
+  toolName?: string;
+}
+
+/**
+ * TaskCreated：后台任务（bash/subagent/workflow）登记开始时。通知类；调用方
+ * （background-tasks.ts）以 fire-and-forget 旁路执行——trackBackgroundTask 在工具
+ * 结算路径上被 await，hook 不允许拖慢工具结果（specs/hook-event-surface.md）。
+ */
+export async function runTaskCreatedHooks(
+  deps: ToolExecutorDeps,
+  task: TaskLifecycleHookInfo,
+  traceContext: TraceContext,
+): Promise<HookRunResult> {
+  if (!deps.hookRunner) return { additionalContexts: [] };
+  return deps.hookRunner.run(
+    {
+      cwd: deps.getWorkingDirectory(),
+      ...(task.description !== undefined ? { description: task.description } : {}),
+      hookEventName: HookEventName.TaskCreated,
+      mode: deps.getMode(),
+      sessionId: deps.sessionId,
+      ...(task.taskKind !== undefined ? { taskKind: task.taskKind } : {}),
+      taskId: task.taskId,
+      timestamp: new Date().toISOString(),
+      ...(task.toolCallId !== undefined ? { toolCallId: task.toolCallId } : {}),
+      ...(task.toolName !== undefined ? { toolName: task.toolName } : {}),
+      traceId: traceContext.traceId,
+      turnId: traceContext.turnId ?? deps.turnId,
+    },
+    { matchValue: task.toolName },
+  );
+}
+
+/** TaskCompleted：后台任务进入终态（含 lost）时。通知类、异步旁路（同 TaskCreated）。 */
+export async function runTaskCompletedHooks(
+  deps: ToolExecutorDeps,
+  task: TaskLifecycleHookInfo & { taskStatus: string },
+  traceContext: TraceContext,
+): Promise<HookRunResult> {
+  if (!deps.hookRunner) return { additionalContexts: [] };
+  return deps.hookRunner.run(
+    {
+      cwd: deps.getWorkingDirectory(),
+      ...(task.description !== undefined ? { description: task.description } : {}),
+      hookEventName: HookEventName.TaskCompleted,
+      mode: deps.getMode(),
+      sessionId: deps.sessionId,
+      ...(task.taskKind !== undefined ? { taskKind: task.taskKind } : {}),
+      taskId: task.taskId,
+      // TODO(闭集): completed/failed/cancelled/killed/stopped/lost——待与 runtime-task
+      // 终态词表统一收敛（specs/hook-event-surface.md F7）。
+      taskStatus: task.taskStatus,
+      timestamp: new Date().toISOString(),
+      ...(task.toolCallId !== undefined ? { toolCallId: task.toolCallId } : {}),
+      ...(task.toolName !== undefined ? { toolName: task.toolName } : {}),
+      traceId: traceContext.traceId,
+      turnId: traceContext.turnId ?? deps.turnId,
+    },
+    { matchValue: task.toolName },
   );
 }
 

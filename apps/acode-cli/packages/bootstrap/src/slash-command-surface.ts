@@ -13,6 +13,10 @@ export const APP_PROTOCOL_VISIBLE_BUILTIN_SLASH_COMMAND_NAMES = [
   "ultracode",
   "compact",
   "init",
+  // 零 token 本地命令（specs/usage-statusbar.md、specs/turn-auto-resume.md）：与 CLI
+  // 目录/键入执行同结论收录，避免「可键入执行但面板不可见」的分裂（E2E D3 回归）。
+  "usage",
+  "auto-resume",
 ] as const;
 
 /** 仅供 App Composer 使用的命令，不扩展 CLI TUI/help surface。 */

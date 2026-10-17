@@ -12,7 +12,7 @@ import {
   TID_CHAT_THOUGHT_LEVEL_SELECT_ITEM,
   TID_CHAT_THOUGHT_LEVEL_SELECT_TRIGGER,
   testId,
-  type ACodeApiRetryStatus,
+  type ACodeApiRetrySlotValue,
   type ACodeConfigOption,
   type ACodeConfigSelectValue,
   type ACodeProvider,
@@ -37,6 +37,7 @@ import {
   HandIcon,
   NotepadText,
   ShieldAlertIcon,
+  ShieldBanIcon,
   ShieldCheckIcon,
   type LucideIcon,
 } from "lucide-react";
@@ -85,12 +86,26 @@ function getConfigSelectItemTestId(
   return undefined;
 }
 
+// auto-resume 退避等待的呈现：紧凑 s / m+ss 风格（与速率行耗时同风格），最小进位
+// 1 秒；在本文件内联实现，避免 chat-input-toolbar 反向依赖 v4 目录的格式化模块。
+function formatAutoResumeDelay(formatter: Intl.NumberFormat, delayMs: number): string {
+  const totalSeconds = Math.max(1, Math.round(delayMs / 1000));
+  if (totalSeconds < 60) {
+    return `${formatter.format(totalSeconds)}s`;
+  }
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${formatter.format(minutes)}m${String(seconds).padStart(2, "0")}s`;
+}
+
 export function ChatApiRetryStatus({
   apiRetry,
   intl,
   locale,
 }: {
-  apiRetry: ACodeApiRetryStatus | null;
+  // apiRetry 槽取值面 = api_retry + additive auto_resume（shared/acode-api-retry-status.ts）；
+  // 未知 kind 落回既有 api_retry 文案路径，兜底行为不变。
+  apiRetry: ACodeApiRetrySlotValue | null;
   intl: ReturnType<typeof useACodeIntl>["intl"];
   locale: string;
 }) {
@@ -99,10 +114,33 @@ export function ChatApiRetryStatus({
       return null;
     }
 
+    const formatter = new Intl.NumberFormat(locale);
+    // 跨回合 auto-resume（specs/turn-auto-resume.md「状态上报」）：与 api_retry 共用
+    // apiRetry 槽，按 kind 区分文案；error 只含闭集 reason token + HTTP 码（无自由
+    // 文本），直接拼接呈现；resumeDelayMs=0 表示注入即将发生 → 「正在继续」。
+    if (apiRetry.kind === "auto_resume") {
+      const attempt = formatter.format(apiRetry.attempt);
+      const maxResumes = formatter.format(apiRetry.maxResumes);
+      if (apiRetry.resumeDelayMs <= 0) {
+        return intl.formatMessage(
+          { id: "chat.autoResumeStatus.immediate" },
+          { attempt, error: apiRetry.error, maxResumes },
+        );
+      }
+      return intl.formatMessage(
+        { id: "chat.autoResumeStatus" },
+        {
+          attempt,
+          delay: formatAutoResumeDelay(formatter, apiRetry.resumeDelayMs),
+          error: apiRetry.error,
+          maxResumes,
+        },
+      );
+    }
+
     // 当前 ACode Agent 只会推送某一刻的 retryDelayMs 快照，不会每秒递减。
     // 继续把这个值渲染成“X 秒后继续”会给用户造成倒计时在卡住的错觉。
     // 这里先收敛成稳定的重试状态文案，只展示第几次重试。
-    const formatter = new Intl.NumberFormat(locale);
     return intl.formatMessage(
       { id: "chat.apiRetryStatus" },
       {
@@ -116,8 +154,12 @@ export function ChatApiRetryStatus({
     return null;
   }
 
+  // auto_resume 的 error 文案已含闭集 reason + HTTP 码，不再重复追加 HTTP 后缀；
+  // api_retry（及未知 kind 的既有兜底）保持原样。
   const retryTitle =
-    apiRetry.errorStatus == null ? retryLabel : `${retryLabel} · HTTP ${apiRetry.errorStatus}`;
+    apiRetry.kind === "auto_resume" || apiRetry.errorStatus == null
+      ? retryLabel
+      : `${retryLabel} · HTTP ${apiRetry.errorStatus}`;
 
   return (
     <span
@@ -206,6 +248,12 @@ function isHighPermissionModeValue(value: unknown): boolean {
 export function resolveModeOptionIcon(value: unknown): LucideIcon {
   if (isHighPermissionModeValue(value)) {
     return ShieldAlertIcon;
+  }
+
+  // dontAsk（权限批 2）：从不发起询问、需批准的动作一律拒绝——盾牌加禁止符
+  // 表达「保持防护、不予放行」，与 yolo 的警告色盾牌方向相反。
+  if (typeof value === "string" && value.toLocaleLowerCase() === "dontask") {
+    return ShieldBanIcon;
   }
 
   // build 对应常规确认模式，使用确认图标。

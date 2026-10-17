@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json.schemastore.org/package.json",
+  "name": "@acode/agent-teams-plugin",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AgentTeams 多智能体协作插件：团队协议 + 14 个协调工具 + 持久任务 DAG + 成员邮箱 + 指令式调度 + 只读团队面板。以官方 ACode 插件形态发布，stdio MCP server 由本包提供。",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/mcp/server.js",
+  "scripts": {
+    "build": "tsc && node scripts/build.mjs",
+    "clean": "node ../../scripts/clean-dist.mjs",
+    "typecheck": "tsc --noEmit",
+    "lint": "oxlint src --no-ignore",
+    "test": "node --import tsx --test tests/*.test.ts",
+    "smoke": "node scripts/smoke.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/server": "2.0.0"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/client": "2.0.0",
+    "@types/node": "^24.0.0",
+    "esbuild": "^0.25.0",
+    "tsx": "^4.19.4",
+    "typescript": "^5.9.0",
+    "zod": "4.6.5"
+  }
+}

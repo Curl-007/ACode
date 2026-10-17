@@ -2,9 +2,9 @@ import type { BrowserWindow } from "electron";
 import {
   type ExternalWorkspaceOpenDialogCopy,
   confirmExternalWorkspaceOpen,
-  isNetworkWorkspacePath,
   isValidLocalWorkspaceDirectory,
 } from "./desktopOAuthDeepLink.js";
+import { inspectDeepLinkWorkspacePath } from "./deepLinkHardening.js";
 import {
   createOpenWorkspaceStartupBootstrap,
   type StartupWindowBootstrap,
@@ -65,10 +65,16 @@ export function resolveExplicitStartupWorkspaceBootstrap(
   deps: ResolveExplicitStartupWorkspaceBootstrapDeps,
 ): StartupWindowBootstrap | null {
   if (request.source === "deep-link") {
-    if (isNetworkWorkspacePath(request.path)) {
-      // 冷启动 deep link 不能绕过运行中 deep link 的 UNC 早拒绝；
-      // 网络路径必须在任何 statSync 等 filesystem probe 前停止。
-      deps.logger.warn("[deep-link] 网络工作区路径已拒绝", { path: request.path });
+    // 冷启动 deep link 不能绕过运行中 deep link 的路径安检；升级为与 open-url /
+    // second-instance 同一条 UNC hop 断言（specs/desktop-startup-hardening.md §4d）：
+    // 除 UNC/设备/盘符相对形状外，还拒绝符号链接指向 UNC 的 hop（防 SMB NTLM
+    // 外泄），且全部判定在任何 statSync 等 filesystem probe 之前完成。
+    const inspection = inspectDeepLinkWorkspacePath(request.path);
+    if (!inspection.ok) {
+      deps.logger.warn("[deep-link] 冷启动路径安检已拒绝", {
+        path: request.path,
+        reason: inspection.reason,
+      });
       return null;
     }
 

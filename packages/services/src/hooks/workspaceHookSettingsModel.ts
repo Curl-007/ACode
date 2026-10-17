@@ -8,13 +8,16 @@ import type {
 } from "@acode/shared";
 import {
   resolveWorkspaceHookEntries,
+  WORKSPACE_HOOK_EVENT_NAMES,
   type CanonicalWorkspaceHookEntryData,
   type WorkspaceHookBundleSnapshotData,
   type WorkspaceHookDefinition,
+  type WorkspaceHookEventName,
   type WorkspaceHookRuntimeRoot,
   type WorkspaceHookSourceInput,
   type WorkspaceHooksConfig,
 } from "@acode/shared/workspace-hook-discovery";
+import { resolveWorkspaceHookDisplayTrustState } from "./workspaceHookValueHash.js";
 
 interface LegacyHookDefinition {
   type?: "command" | "process" | string;
@@ -164,9 +167,23 @@ export function fromProjectSnapshot(input: {
   workspaceIdentity: string;
   workspacePath: string;
   persistentTrustedDigests?: ReadonlySet<string>;
+  /**
+   * 记录派生的等价索引（值哈希扩展，spec: hooks-trust-value-hash.md）：
+   * slot 等价（同位置值变）与改名等价（值同路径变）命中时分类为 stale_digest，
+   * 而非全新 pending_trust；两者都绝不升级 trusted_persistent（runtime 精确 digest 强制）。
+   */
+  persistentTrustEquivalence?: {
+    recordSlotKeys: ReadonlySet<string>;
+    recordDisplayValueHashes: ReadonlySet<string>;
+  };
 }): Hook[] {
   const snapshot = input.snapshot;
   if (!snapshot) return [];
+  const emptyEquivalence = {
+    recordSlotKeys: new Set<string>(),
+    recordDisplayValueHashes: new Set<string>(),
+  };
+  const equivalence = input.persistentTrustEquivalence ?? emptyEquivalence;
   return snapshot.hooks.map((entry) => {
     const source = input.sources[entry.sourceFileIndex];
     if (!source) throw new Error(`Workspace Hook source is missing for ${entry.reviewItemId}`);
@@ -184,9 +201,13 @@ export function fromProjectSnapshot(input: {
         workspaceIdentity: input.workspaceIdentity,
         bundleDigest: snapshot.bundleDigest,
         hookDeclarationDigest: entry.hookDeclarationDigest,
-        trustState: input.persistentTrustedDigests?.has(entry.hookDeclarationDigest)
-          ? "trusted_persistent"
-          : "pending_trust",
+        trustState: resolveWorkspaceHookDisplayTrustState({
+          entry,
+          sourceDiscoveryOrder: source.discoveryOrder,
+          trustedDigests: input.persistentTrustedDigests ?? new Set<string>(),
+          recordSlotKeys: equivalence.recordSlotKeys,
+          recordDisplayValueHashes: equivalence.recordDisplayValueHashes,
+        }),
       },
     });
   });
@@ -248,9 +269,23 @@ export function fromLegacyHooksConfig(input: {
   return hooks;
 }
 
+/**
+ * 可写事件面守护（apps/acode-cli/specs/hook-event-surface.md D2/F2/F9）：展示面的
+ * HookEvent 已扩到 17 全集，但用户配置文件（acode.json hooks）的可写面仍由
+ * workspace-hook-config 的 strict schema 钉在存量 7 事件（信任 digest 演进策略未定，
+ * F2 后续批次）。携带新事件的 hook 只可能来自 legacy settings.json 的只读展示源
+ * （editable=false，saveHooksImpl 已过滤），这里的守护保证即使未来读边界变化，
+ * 也绝不把 CLI 侧 schema 会拒绝的事件键写进配置文件（strict 校验失败 = 整份 hooks
+ * 配置被丢弃，方向不可接受）。
+ */
+function isWritableWorkspaceHookEvent(event: HookEvent): event is WorkspaceHookEventName {
+  return (WORKSPACE_HOOK_EVENT_NAMES as readonly string[]).includes(event);
+}
+
 export function toACodeHooksEvents(hooks: Hook[]): WorkspaceHooksConfig["events"] {
   const events: WorkspaceHooksConfig["events"] = {};
   for (const hook of hooks) {
+    if (!isWritableWorkspaceHookEvent(hook.event)) continue;
     const eventMatchers = events[hook.event] ?? [];
     let matcher = eventMatchers.find((item) => item.matcher === hook.matcher);
     if (!matcher) {

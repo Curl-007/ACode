@@ -16,6 +16,7 @@ import {
   type ModelToolSideEffectScope,
   type RiskLevel,
   type ToolPermissionSpec,
+  type TtlPermissionGrantOrigin,
 } from "@acode/contracts";
 import { OFFICIAL_CUA_PERMISSION_RULE_TOOL_NAME } from "@acode/shared";
 import { resolvePlanModeTransitionPermission } from "./plan-mode-policy.js";
@@ -32,9 +33,27 @@ import {
 } from "./bash-confirm-reflex-gate.js";
 import type { PackageScriptSource } from "../tool/handlers/bash-target-risk/types.js";
 import { getProcessManagedPolicyFloor } from "./process-policy-floor.js";
+import type { TtlApprovalReader, TtlApprovalWriter } from "./ttl-approvals.js";
 import { applyPermissionUpdates } from "../tool/executor/permission-rules.js";
 import { isWebFetchPreapprovedUrl } from "../tool/webfetch-preapproved.js";
 import type { ToolPermissionRulePolicy } from "../tool/types.js";
+// T2-c1 dontAsk（specs/permission-adjudication-batch2.md R1）：无人可问 → ask 漏斗
+// 收敛为不弹卡 deny；模式词汇是权限层扩展闭集（CollaborationMode + dontAsk）。
+import {
+  buildDontAskDenialReason,
+  DONT_ASK_MODE,
+  DONT_ASK_RULE_ID,
+  type PermissionAdjudicationMode,
+} from "./dont-ask-mode.js";
+// 批 2 R2 决策日志 + R9 来源台账喂入（checkPermission 终局单漏斗，见下）。
+import { appendPermissionDecisionLogEntry } from "./decision-log.js";
+import { recordTranscriptFileProvenanceFromAllowedCall } from "./file-provenance-ledger.js";
+// 技能激活期作用域消费（skill-frontmatter-governance R4 接线）：匹配语义裁决在叶子头注。
+import {
+  matchesSkillActivationAllow,
+  matchesSkillActivationDeny,
+} from "./skill-activation-rules.js";
+import type { SkillActivationScope } from "@acode/contracts";
 
 // -----------------------------------------------
 // Types
@@ -47,7 +66,12 @@ export interface PermissionContext {
   toolName: string;
   input: unknown;
   riskLevel: RiskLevel;
-  mode: CollaborationMode;
+  /**
+   * 裁决模式（specs/permission-adjudication-batch2.md R1）：CollaborationMode
+   * 五档 + 权限层扩展档 dontAsk（无人可问 → ask 一律收敛为不弹卡 deny）。
+   * 放宽是向后兼容的：既有调用方传 CollaborationMode 值照常编译。
+   */
+  mode: PermissionAdjudicationMode;
   planEnabled?: boolean;
   prePlanMode?: Exclude<CollaborationMode, "plan">;
   /**
@@ -89,6 +113,21 @@ export interface PermissionContext {
    * enclosing 信任）。
    */
   scannedDirectories?: readonly string[];
+  /**
+   * TTL 持久授权的作用域键（specs/mcp-lifecycle-ttl-approval.md R4）：项目标识 /
+   * workspace identity。携带 scopeKey 的授权只对同一键的上下文生效；上下文缺省时
+   * 只消费用户级授权（fail-closed）。可选：legacy 调用方缺省按用户级判定。
+   */
+  permissionScopeKey?: string;
+  /**
+   * 技能激活期作用域（specs/skill-frontmatter-governance.md R4 消费接线）：本会话
+   * provider 可见历史中已加载技能的 governance 规则快照（executor 的 permission-flow
+   * 每次裁决前从共享 store 取）。deny 并入会话级 deny 位次（disallowedTools 同档、
+   * 模式分支之前），allow 并入会话级 allow 位次（allowedTools 同档）——policy floor /
+   * 硬阻断 / plan 结构性压制照常盖过它，frontmatter 授权永不穿透地板。
+   * 匹配语义裁决见 permission/skill-activation-rules.ts 头注。缺席 = 零行为变化。
+   */
+  skillActivationRules?: SkillActivationScope;
 }
 
 export interface PermissionToolCapability {
@@ -112,7 +151,8 @@ export interface PermissionDecisionResult {
   reason?: string;
   modifiedInput?: unknown;
   escalated: boolean;
-  mode: CollaborationMode;
+  /** 裁决模式（含权限层扩展档 dontAsk，specs/permission-adjudication-batch2.md R1）。 */
+  mode: PermissionAdjudicationMode;
   ruleId: string;
   riskLevel: RiskLevel;
   sideEffectScope?: ModelToolSideEffectScope;
@@ -150,8 +190,49 @@ export class PermissionService {
 
   constructor(private config: PermissionConfig = defaultPermissionConfig) {}
 
-  grantSessionPermission(updates: PermissionUpdate[]): void {
-    this.sessionRules = applyPermissionUpdates(this.sessionRules, updates);
+  /**
+   * 批准链路回灌入口。TTL 分流（specs/mcp-lifecycle-ttl-approval.md R4）：
+   * 带 expiresAt 的 allow 更新进 TTL 持久授权存储（落盘、到期回落 ask），其余维持
+   * 既有会话语义。options.origin 由调用方标记（cron/off-peak/automation 派发 =
+   * "unattended"，无人值守的持久批准一律限期）；缺省 interactive。
+   */
+  grantSessionPermission(
+    updates: PermissionUpdate[],
+    options: { origin?: TtlPermissionGrantOrigin; scopeKey?: string } = {},
+  ): void {
+    const store = this.config.ttlApprovals;
+    if (!store) {
+      this.sessionRules = applyPermissionUpdates(this.sessionRules, updates);
+      return;
+    }
+    const sessionUpdates: PermissionUpdate[] = [];
+    const ttlUpdates: PermissionUpdate[] = [];
+    for (const update of updates) {
+      // 只有带期限的 allow 更新属于 TTL 存储；deny/ask 携带 expiresAt 被存储侧
+      // 忽略（收紧类规则没有「到期自动放宽」的语义），这里照常并入会话规则。
+      if (update.behavior === "allow" && typeof update.expiresAt === "string") {
+        ttlUpdates.push(update);
+      } else {
+        sessionUpdates.push(update);
+      }
+    }
+    if (sessionUpdates.length > 0) {
+      this.sessionRules = applyPermissionUpdates(this.sessionRules, sessionUpdates);
+    }
+    if (ttlUpdates.length > 0) {
+      // TtlApprovalReader 窄接口只保证判定侧可读；装配层注入 TtlApprovalStore 本体时
+      // 才具备写入面（同步进内存、异步落盘）。只读注入（测试替身）时 TTL 更新被丢弃
+      // 并回落会话语义——宁可少一层持久授权，不可把限期批准误存成会话永久。
+      const writer = asTtlApprovalWriter(store);
+      if (writer) {
+        writer.applyPermissionUpdates(ttlUpdates, {
+          origin: options.origin ?? "interactive",
+          ...(options.scopeKey ? { scopeKey: options.scopeKey } : {}),
+        });
+      } else {
+        this.sessionRules = applyPermissionUpdates(this.sessionRules, ttlUpdates);
+      }
+    }
   }
 
   /**
@@ -196,6 +277,41 @@ export class PermissionService {
     projectRules?: PermissionRuleset | null,
     rulePolicy?: ToolPermissionRulePolicy,
   ): PermissionDecisionResult {
+    const decision = this.evaluatePermission(context, toolCapability, projectRules, rulePolicy);
+    // 终局单漏斗（specs/permission-adjudication-batch2.md R2 + 分类器 spec 批 2 R9）：
+    // 决策日志每个终局决策恰一条（env 门控，关闭态零 IO，写入失败静默）；中间被
+    // 丢弃的候选决策（如 policy ask 托底时被覆盖的模式层判定）不落。allow 决策把
+    // 写族工具喂进 transcript 文件来源台账（近似性语义见台账模块头注）。
+    appendPermissionDecisionLogEntry(
+      {
+        ts: Date.now(),
+        tool: context.toolName,
+        decision: decision.decision,
+        ruleId: decision.ruleId,
+        mode: decision.mode,
+        riskLevel: decision.riskLevel,
+        ...(decision.sideEffectScope ? { sideEffectScope: decision.sideEffectScope } : {}),
+        ...(context.sessionId ? { sessionId: context.sessionId } : {}),
+        ...(decision.reason ? { reason: decision.reason } : {}),
+      },
+      context.workingDirectory ? { workingDirectory: context.workingDirectory } : {},
+    );
+    if (decision.decision === "allow") {
+      recordTranscriptFileProvenanceFromAllowedCall({
+        sessionId: context.sessionId,
+        toolName: context.toolName,
+        toolInput: context.input,
+      });
+    }
+    return decision;
+  }
+
+  private evaluatePermission(
+    context: PermissionContext,
+    toolCapability?: PermissionToolCapability,
+    projectRules?: PermissionRuleset | null,
+    rulePolicy?: ToolPermissionRulePolicy,
+  ): PermissionDecisionResult {
     const capability = this.resolveCapability(context, toolCapability);
 
     // 安全加固 P2（R3 步骤 0/1）：托管策略地板压过一切分支——deny 绝对最高，
@@ -222,7 +338,13 @@ export class PermissionService {
           `Tool ${context.toolName} is denied by managed policy`,
         );
       }
-      policyAskHit = this.matchesProjectRules(policyRuleset, "ask", context, capability, rulePolicy);
+      policyAskHit = this.matchesProjectRules(
+        policyRuleset,
+        "ask",
+        context,
+        capability,
+        rulePolicy,
+      );
     }
 
     // 安全加固 P2（R3 步骤 2）：disallowedTools 硬禁用前移到所有模式分支之前。
@@ -235,6 +357,25 @@ export class PermissionService {
         capability,
         "rule.disallowedTools",
         `Tool ${context.toolName} is explicitly disallowed`,
+      );
+    }
+
+    // 技能激活期 deny（skill-frontmatter-governance R4 消费接线）：与 disallowedTools
+    // 同位次的会话级 deny——任何模式分支之前收口（yolo 也不复活技能作者显式禁的
+    // 操作）；策略地板 deny 仍在其前（绝对最高位次不变）。匹配语义裁决见
+    // skill-activation-rules.ts 头注。
+    if (
+      matchesSkillActivationDeny({
+        scope: context.skillActivationRules,
+        toolName: context.toolName,
+        toolInput: context.input,
+      })
+    ) {
+      return this.deny(
+        context,
+        capability,
+        "rule.skillActivation.deny",
+        `Tool ${context.toolName} is denied by an active skill's disallowed-tools declaration`,
       );
     }
 
@@ -481,6 +622,19 @@ export class PermissionService {
       return this.checkPlanMode(context, capability);
     }
 
+    // TTL 持久授权（specs/mcp-lifecycle-ttl-approval.md R4）：与项目 allow 同级的
+    // allow 位次——排在策略地板 deny/ask、disallowedTools、项目 deny/ask、plan 拒写
+    // 之后，收紧层全部结构性压过它；命中给 rule.ttl.allow。过期后本分支自然失配，
+    // 判定落回下方模式语义（MCP 写工具 → sideEffect ask），即「过期回落 ask」。
+    if (this.matchesTtlAllow(context, capability, rulePolicy)) {
+      return this.allow(
+        context,
+        capability,
+        "rule.ttl.allow",
+        `Tool ${context.toolName} is allowed by a time-limited approval`,
+      );
+    }
+
     if (this.matchesProjectRules(projectRules, "allow", context, capability, rulePolicy)) {
       return this.allow(
         context,
@@ -518,6 +672,25 @@ export class PermissionService {
       );
     }
 
+    // 技能激活期 allow（skill-frontmatter-governance R4 消费接线）：与 allowedTools
+    // 同档的会话级 allow 位次——排在策略地板 deny/ask、disallowedTools、技能 deny、
+    // 项目 deny/ask、plan 拒写之后：frontmatter 授权永不穿透 policy floor（参考
+    // allowManagedPermissionRulesOnly 压制同构），plan 结构只读照常盖过它。
+    if (
+      matchesSkillActivationAllow({
+        scope: context.skillActivationRules,
+        toolName: context.toolName,
+        toolInput: context.input,
+      })
+    ) {
+      return this.allow(
+        context,
+        capability,
+        "rule.skillActivation.allow",
+        `Tool ${context.toolName} is allowed by an active skill's allowed-tools declaration`,
+      );
+    }
+
     if (this.config.allowedTools.has(context.toolName)) {
       return this.allow(
         context,
@@ -549,6 +722,25 @@ export class PermissionService {
     if (toolRules.length === 0) return false;
     if (rulePolicy) return rulePolicy.evaluateRules(behavior, toolRules);
     return toolRules.some((rule) => this.matchesRule(rule, context, capability));
+  }
+
+  /**
+   * TTL 持久授权命中判定（specs/mcp-lifecycle-ttl-approval.md R4）。匹配语义复用
+   * matchesProjectRules（toolName + ruleContent + 能力域），不另造匹配器；作用域
+   * 过滤在存储侧完成（缺省 scopeKey 的上下文只消费用户级授权，fail-closed）。
+   */
+  private matchesTtlAllow(
+    context: PermissionContext,
+    capability: ResolvedPermissionCapability,
+    rulePolicy?: ToolPermissionRulePolicy,
+  ): boolean {
+    const store = this.config.ttlApprovals;
+    if (!store) return false;
+    const ruleset = store.activeAllowRuleset(
+      context.permissionScopeKey ? { scopeKey: context.permissionScopeKey } : undefined,
+    );
+    if (!ruleset) return false;
+    return this.matchesProjectRules(ruleset, "allow", context, capability, rulePolicy);
   }
 
   private matchesRule(
@@ -665,6 +857,19 @@ export class PermissionService {
         `Yolo mode bypasses the alwaysAsk prompt for tool ${context.toolName}`,
       );
     }
+    // 显式 ask 规则使已记住的免确认失效（specs/mcp-lifecycle-ttl-approval.md R4）：
+    // 项目规则层对该工具存在显式 ask 时，会话 always-allow 与 TTL 持久授权都不消费
+    // ——每次调用重新确认。策略地板 ask 的同类压制由 checkPermission 的
+    // resolvePolicyAskFloorDecision 收口保证（任何 allow 级来源被托底为 ask），
+    // 此处不重复判定。
+    if (this.matchesProjectRules(projectRules, "ask", context, capability, rulePolicy)) {
+      return this.ask(
+        context,
+        capability,
+        "rule.project.ask",
+        `Tool ${context.toolName} requires approval by project permission rules; the explicit ask rule suspends remembered always-allow approvals`,
+      );
+    }
     // 会话免确认：阻断分支之后、ask 之前。命中即放行，不发 permission 事件、不弹窗；
     // 与 gate 本身一样不看模式（yolo / plan / build 一致）。
     if (this.matchesProjectRules(this.sessionRules, "allow", context, capability, rulePolicy)) {
@@ -673,6 +878,15 @@ export class PermissionService {
         capability,
         "rule.session.allow",
         `Tool ${context.toolName} was allowed for this session`,
+      );
+    }
+    // TTL 持久授权：与会话 allow 同位消费（受上面的显式 ask 失效约束）。
+    if (this.matchesTtlAllow(context, capability, rulePolicy)) {
+      return this.allow(
+        context,
+        capability,
+        "rule.ttl.allow",
+        `Tool ${context.toolName} is allowed by a time-limited approval`,
       );
     }
     // 修订免确认：AmendWorkflow 的前驱是
@@ -941,6 +1155,23 @@ export class PermissionService {
     ruleId: string,
     reason: string,
   ): PermissionDecisionResult {
+    // T2-c1 dontAsk 收敛（specs/permission-adjudication-batch2.md R1）：所有会弹
+    // 审批窗的路径都经本漏斗构造——mode === "dontAsk" 时统一转为不弹卡 deny。
+    // deny 严于 ask，「地板只收紧」不变量成立：policy ask 托底、breakers ask 级、
+    // 反射门 ask lane 全部收敛；原 ruleId/reason 进拒绝文案做归因。deny 终局对
+    // PreToolUse hook 的整体 allow 免疫（hook-flow 首行既有语义）。
+    if (context.mode === DONT_ASK_MODE) {
+      return this.deny(
+        context,
+        capability,
+        DONT_ASK_RULE_ID,
+        buildDontAskDenialReason(context.toolName, {
+          underlyingRuleId: ruleId,
+          underlyingReason: reason,
+          requiresUserInteraction: capability.requiresUserInteraction,
+        }),
+      );
+    }
     return this.result("ask", context, capability, ruleId, reason);
   }
 
@@ -1000,6 +1231,14 @@ function buildPolicyAskWithGateReason(toolName: string, gateAskReason: string): 
   ].join("\n");
 }
 
+/** TTL 存储的写入面探测：只读替身（测试/降级装配）缺 applyPermissionUpdates。 */
+function asTtlApprovalWriter(store: TtlApprovalReader): TtlApprovalWriter | undefined {
+  const candidate = store as Partial<TtlApprovalWriter>;
+  return typeof candidate.applyPermissionUpdates === "function"
+    ? (candidate as TtlApprovalWriter)
+    : undefined;
+}
+
 // -----------------------------------------------
 // Configuration
 // -----------------------------------------------
@@ -1016,6 +1255,12 @@ export interface PermissionConfig {
    * 这里只消费 deny/ask 规则与 disableBypassPermissionsMode。
    */
   policyFloor?: ManagedPolicyFloorData;
+  /**
+   * TTL 持久授权（specs/mcp-lifecycle-ttl-approval.md R4）：allow 级位次的限期批准。
+   * 装配层 await TtlApprovalStore.create() 后注入；缺省 = 本构建/本实例未启用 TTL
+   * 授权（零行为变化）。策略地板与项目 deny/ask 结构性压过它（判定位次见 spec）。
+   */
+  ttlApprovals?: TtlApprovalReader;
 }
 
 export const defaultPermissionConfig: PermissionConfig = {

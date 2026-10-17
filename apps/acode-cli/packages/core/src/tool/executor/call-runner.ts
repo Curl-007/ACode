@@ -39,6 +39,13 @@ import {
 } from "./hook-flow.js";
 import { resolveToolCallCapabilityFlags } from "./permission-capability.js";
 import { resolveToolPermission } from "./permission-flow.js";
+// 台账喂入（成功面精确条目，specs/auto-mode-risk-classifier.md R9 接线项⑤）。
+import { recordTranscriptFileProvenanceFromAllowedCall } from "../../permission/file-provenance-ledger.js";
+// paths 触发激活（skill-frontmatter-governance R5 消费接线）：登记 + reminder 文案。
+import {
+  activateSkillsForTouchedToolCall,
+  buildSkillPathActivationReminder,
+} from "../../agent/skill-path-activation.js";
 import { createMcpToolDisplay, createToolResultDisplay } from "./result-display.js";
 import { appendHookAdditionalContexts, serializeOutput } from "./result-serialization.js";
 import {
@@ -317,6 +324,12 @@ async function executeToolCallImpl(
     traceContext,
     options?.signal,
     telemetry,
+    // 轮级派生事实透传（specs/mcp-lifecycle-ttl-approval.md R4）：批准链路的
+    // grantSessionPermission 据此把无人值守轮的持久授权标记为 origin:"unattended"。
+    {
+      automationTurn: options?.automationTurn,
+      offPeakTurn: options?.offPeakTurn,
+    },
   );
   if (!permissionResult.allowed) {
     const result = appendPreToolAdditionalContextsToErrorResult(
@@ -422,6 +435,8 @@ async function executeToolCallImpl(
         ...(deps.nativeSearchEnhancementsEnabled === false ? { findAndGrepEnabled: false } : {}),
       },
       skillPort: deps.skillPort,
+      // GUIDE 宿主接线（guide-live-build-section「宿主接线登记」①②③）：事实投影透传。
+      liveBuildSnapshotPort: deps.liveBuildSnapshotPort,
       subagentPort: deps.subagentPort,
       peerMessagingPort: deps.peerMessagingPort,
       coordinatorResponsePort: deps.coordinatorResponsePort,
@@ -477,6 +492,29 @@ async function executeToolCallImpl(
       throw createToolHandlerFailureError(canonicalToolCall, output);
     }
     validateOutput(output, entry);
+    // transcript 来源台账·执行成功面精确喂入（specs/auto-mode-risk-classifier.md R9
+    // 接线项⑤）：handler 成功 = 文件来源事实成立。PermissionService 终局 allow 处的
+    // 既有喂入是决策面近似（allow 后失败会多记 = fail-safe 更严），本点位补上
+    // ask→批准等决策面不可见路径的精确条目；非写族工具在此为空操作，重复记录
+    // 照常追加（台账头注：时间序即事实序）。
+    recordTranscriptFileProvenanceFromAllowedCall({
+      sessionId: deps.sessionId,
+      toolName: canonicalToolCall.name,
+      toolInput: executionInput,
+    });
+    // paths 触发源（specs/skill-frontmatter-governance.md R5 消费接线）：文件触碰类
+    // 工具成功后取本次目标路径，对声明 pathTriggers 且未激活的技能跑触发判定；
+    // 命中并入本会话激活集（skills 清单段重建时可见）并生成 system-reminder
+    // 随 additionalContexts 回喂模型。判定纯函数 fail-closed（逃逸/上跳不触发）。
+    const pathActivatedSkills = activateSkillsForTouchedToolCall({
+      sessionId: deps.sessionId,
+      catalog: deps.getSkillCatalog?.()?.skills,
+      toolName: canonicalToolCall.name,
+      toolInput: executionInput,
+      workingDirectory: context.workingDirectory,
+    });
+    const skillPathActivationContexts =
+      pathActivatedSkills.length > 0 ? [buildSkillPathActivationReminder(pathActivatedSkills)] : [];
     // node_repl 同时承载 Browser Use 与 CUA，不能在注册时把整个 server 标成 official。
     // CUA SDK 结果带 producer integrity metadata 时，才为本次序列化临时打开原子帧保护；
     // 否则通用 resultBudget 会截断/重排 image_ref，或非 authority 路径会把引用剥掉。
@@ -502,7 +540,13 @@ async function executeToolCallImpl(
     );
     serialization = appendHookAdditionalContexts(
       serialization,
-      [...preToolHookResult.additionalContexts, ...postToolHookResult.additionalContexts],
+      [
+        ...preToolHookResult.additionalContexts,
+        ...postToolHookResult.additionalContexts,
+        // paths 触发的 system-reminder（R5 消费接线）：与 hook additionalContext
+        // 同一回喂通道，模型在本工具结果里即看到新技能可用。
+        ...skillPathActivationContexts,
+      ],
       modelOutputEntry,
     );
     const display = createToolResultDisplay(canonicalToolCall.name, output, {

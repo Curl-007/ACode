@@ -12,6 +12,13 @@ import {
   forceIntervalCarrierRecurring,
 } from "#src/session/automationIntervalCarrier.js";
 export { InvalidAutomationIntervalCarrierError } from "#src/session/automationIntervalCarrier.js";
+// 手动触发用户激活守卫（apps/acode-cli/specs/scheduled-manual-trigger-activation.md）：
+// 语义与闭集词汇在 @acode/shared 纯模块，强制点翻译在 automationManualTrigger.ts
+//（AutomationManualTriggerRejectedError 也从那里导出，本文件不加宽导出面）。
+import {
+  assertAutomationManualTriggerAdmitted,
+  type AutomationManualRunTriggerContext,
+} from "#src/session/automationManualTrigger.js";
 import {
   buildIntervalScheduleRule,
   buildRelativeDelaySchedule,
@@ -449,11 +456,18 @@ export class AutomationService {
     return this.repo.restart(automationId, { nextRunAt }, workspaceKey);
   }
 
-  /** 立即运行：创建供当前 host 直接派发的 manual run，不修改原 cron 计划。 */
+  /**
+   * 立即运行：创建供当前 host 直接派发的 manual run，不修改原 cron 计划。
+   * trigger 是用户激活上下文（specs/scheduled-manual-trigger-activation.md R1/R3/R5）：
+   * origin 由装配层按传输事实声明，remote 无有效凭据在 repo claim 之前即拒；
+   * trigger 缺席 = 接线前既有调用方形状，兼容窗放行（行为与现状一致）。
+   */
   async runNow(
     automationId: string,
     scope?: AutomationWorkspaceScope,
+    trigger?: AutomationManualRunTriggerContext,
   ): Promise<{ automation: ACodeAutomation; run: ACodeAutomationRun } | null> {
+    assertAutomationManualTriggerAdmitted(trigger, automationId, Date.now());
     const workspaceKey = resolveScopeKey(scope);
     const existing = await this.repo.get(automationId, workspaceKey);
     if (!existing) return null;

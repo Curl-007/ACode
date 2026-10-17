@@ -25,6 +25,11 @@ export type {
 export { createToolRegistry, ToolRegistry, ToolRegistryImpl } from "./tool/registry.js";
 export { createToolExecutor, ToolExecutor, ToolExecutorImpl } from "./tool/executor.js";
 export { builtInTools, registerBuiltInTools } from "./tool/handlers/index.js";
+// 双 shell 联动警告 detector（specs/powershell-tool.md R5/R8③）：bootstrap 启动
+// 诊断面（create-app 的 permissionAuditLogger）消费；纯函数，事实由接线方投影传入。
+// resolvePowerShellLaunch：`!` 块 shell:powershell 展开（bootstrap custom-command-
+// shell-expansion，skill-frontmatter-governance R7 接线）复用工具同款解析序。
+export { detectNoShellToolWarning, resolvePowerShellLaunch } from "./tool/handlers/powershell.js";
 // 闲时派发轮 / cron automation 轮要隐藏的工具名单。**导出是为了消掉跨包的同值副本**：
 // core 的 turn-loop-state 是唯一所有者，而 bootstrap 的 v4 prompt-turn 与 legacy
 // server-operations 各自手抄了一份——加一个工具就得同时改三处（RunWorkflow 落地时正是如此），
@@ -32,6 +37,7 @@ export { builtInTools, registerBuiltInTools } from "./tool/handlers/index.js";
 // 两个 bootstrap 消费方都改为 import 这里的导出。
 export {
   AUTOMATION_MUTATION_TOOL_NAMES,
+  FLEET_MUTATION_TOOL_NAMES,
   OFF_PEAK_MUTATION_TOOL_NAMES,
 } from "./runtime/methods/turn-loop-state.js";
 // Open 工具的平台端口类型：宿主（bootstrap 的 CLI native opener / desktop host 下发链）
@@ -191,6 +197,16 @@ export {
   // 见 specs/auto-mode-risk-classifier.md R6；缺省无 sink，测试环境零输出）。
   registerAutoClassifierAuditSink,
   setAutoClassifierAuditSink,
+  // TTL 持久授权（specs/mcp-lifecycle-ttl-approval.md R4）：装配层 await
+  // TtlApprovalStore.create() 后注入 PermissionConfig.ttlApprovals；落盘路径与
+  // 期限常量随存储本体一并导出，宿主（desktop 设置页「已记住的批准」合并展示等
+  // 后续批次）经公开入口消费同一事实源，不深入实现路径。
+  DEFAULT_MAX_TTL_DAYS,
+  DEFAULT_UNATTENDED_TTL_DAYS,
+  defaultTtlApprovalFilePath,
+  MAX_UNATTENDED_TTL_DAYS,
+  parseTtlPermissionGrantFile,
+  TtlApprovalStore,
 } from "./permission/index.js";
 export type {
   ManualPermissionBrokerOptions,
@@ -207,11 +223,49 @@ export type {
   AutoRiskClassifierPort,
   AutoRiskVerdict,
 } from "./permission/index.js";
+export type {
+  ParseTtlPermissionGrantFileResult,
+  TtlApprovalGrantInput,
+  TtlApprovalReader,
+  TtlApprovalStoreOptions,
+  TtlApprovalWriter,
+} from "./permission/index.js";
 
 // Runtime
 export { AgentRuntime } from "./runtime.js";
 export { createExternalTurnFaultError } from "./runtime/helpers/turn-errors.js";
 export { repairPersistedRemoteSessionPaths } from "./runtime/helpers/persisted-remote-session-path-repair.js";
+// 跨回合 auto-resume 命令面（specs/turn-auto-resume.md）：解析/回执/host 工厂经公开入口
+// 给 cli command-center 与 bootstrap v4 handler leaf 复用（bootstrap 不得反向依赖 cli，
+// 故单一实现本体住 core；先例 = overnight/duration.ts 的 parseOvernightDuration）。
+export {
+  AUTO_RESUME_MAX_MESSAGE_LENGTH,
+  AUTO_RESUME_MAX_PAUSE_MS,
+  createAutoResumeCommandHost,
+  formatAutoResumeDuration,
+  handleAutoResumeCommand,
+  parseAutoResumeCommand,
+  parseAutoResumeDuration,
+} from "./runtime/auto-resume/command.js";
+export type {
+  AutoResumeCommandAppLike,
+  AutoResumeCommandHost,
+  AutoResumeCommandIntent,
+  AutoResumeCommandOutcome,
+  AutoResumeLocale,
+} from "./runtime/auto-resume/command.js";
+export type { AutoResumeStatusSnapshot } from "./runtime/auto-resume/types.js";
+// 会话级 worktree 写围栏（specs/session-worktree-lifecycle.md R7）：bootstrap 装配经
+// sessionWorktreeEnv provider 向子进程注入边界 env；warn 档遥测缺省 no-op，装配层
+// 接 service logger（不 console 刷屏）。
+export {
+  buildSessionWorktreeFenceEnv,
+  setSessionWorktreeFenceWarnSink,
+} from "./worktree/session-worktree-fence.js";
+// 会话舰队（specs/session-fleet.md）：舰队记录/所有权封闭的单一所有者与机制件
+// （launch 编排、note watcher、worktree 重键、归档级联、列表投影、模式裁决）。
+// 导出面向装配层与测试：registry 单例的注入/重置与 mode 裁决纯函数都是公开面。
+export * from "./fleet/index.js";
 // 「按值把一段转录复制进另一个会话」的克隆器。fork 之外的第二个消费者是 dwf 的 amend-resume
 // 转录截断（bootstrap 的 workflow-actor-transcript.ts）：同一个动作——新会话用本地 id 续写，
 // parentID / part 内嵌锚点随之重映射。导出而不是让它再写一份，是因为漏掉任何一处重映射的症状
@@ -256,6 +310,11 @@ export type {
   WorkspaceRewindResult,
   RuntimeFactory,
 } from "./runtime.js";
+
+// /usage 命令族的单一实现（specs/usage-statusbar.md「/usage 命令族」节）：
+// 参数解析 + 取数组合 + 纯文本报表渲染；cli command-center 与 bootstrap v4 handler
+// 都是薄宿主。导出面 = index 的公开组合（executeUsageQuery 为唯一入口）。
+export * from "./usage-query/index.js";
 
 // Output helpers
 export { color, formatJson, supportsColor } from "./output.js";

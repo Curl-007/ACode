@@ -50,6 +50,10 @@ import {
 } from "@/chat-input-toolbar/StartPlanContextBalance.js";
 import { ThoughtLevelCycleControl } from "@/chat-input-toolbar/ThoughtLevelCycleControl.js";
 import { getNextThoughtLevelValue } from "@/chat-input-toolbar/thoughtLevelOptions.js";
+import { PromptPolishButton } from "@/v4/composer/PromptPolishButton.js";
+import { usePromptPolish, type PromptPolishDraftSnapshot } from "@/v4/composer/usePromptPolish.js";
+import type { PromptPolishModelSelection } from "@/lib/promptPolishPreferences.js";
+import { useACodeStoreWithDefault } from "@/store/StoreProvider.js";
 import type { V4ComposerConfigPicker } from "@/v4/composer/configPickerState.js";
 import { useToolbarShortcutBindings } from "@/v4/composer/toolbarShortcuts.js";
 import {
@@ -109,6 +113,16 @@ function noop(): void {}
 export interface ModelSelectionSource {
   provider: string;
   model: string;
+}
+
+/**
+ * 润色草稿注入通道（specs/prompt-polish.md）：草稿事实与还原都住在 ConversationComposer
+ * （inputApiRef + textRef + composerDraftRevision，restoreSubmittedDraft 同款语义），
+ * 工具条只把通道透传给 usePromptPolish，不触碰编辑器。
+ */
+export interface V4ComposerPromptPolishDraftApi {
+  getDraftSnapshot: () => PromptPolishDraftSnapshot | null;
+  restoreDraftSnapshot: (snapshot: PromptPolishDraftSnapshot) => boolean | void;
 }
 
 type V4ContextPlanConnection =
@@ -320,6 +334,8 @@ function resolveContextCodingPlanUsageSource(params: {
 export interface V4ComposerToolbarProps {
   workspacePath: string;
   workspaceIdentity?: string;
+  /** 远控会话 id；润色的 generateWorkspaceText 通道需要它路由到目标 Host。 */
+  remoteSessionId?: string;
   modelSelectionView?: ModelSelectionView | null;
   modelSelectionState?: ModelSelectionState;
   modelSelectionReload?: () => void;
@@ -356,15 +372,19 @@ export interface V4ComposerToolbarProps {
     sourceModel: ModelSelectionSource | null,
   ) => Promise<void> | void;
   onSendCompressionCommand?: (command: string) => void;
+  /** 润色草稿快照/还原通道；缺席（非 ConversationComposer 宿主）时不渲染润色按钮。 */
+  promptPolishDraftApi?: V4ComposerPromptPolishDraftApi | null;
 }
 
 /** 模型 / 思考深度 / context usage 簇（渲染在发送键左侧，与旧 UI 同位）。 */
 function V4ComposerModelControlsImpl({
   workspacePath,
   workspaceIdentity,
+  remoteSessionId,
   modelSelectionView = null,
   modelSelectionState = MODEL_SELECTION_LOADING_STATE,
   modelSelectionReload,
+  sessionId,
   provider,
   isMobileViewport = false,
   draftMode = false,
@@ -377,6 +397,7 @@ function V4ComposerModelControlsImpl({
   onSelectThought,
   onSendCompressionCommand,
   onRecoverCustomModelSelection,
+  promptPolishDraftApi = null,
 }: V4ComposerToolbarProps) {
   const { intl, locale } = useACodeIntl();
   const { openCodingPlanUpgrade } = useCodingPlanUpgradeDialog();
@@ -942,8 +963,43 @@ function V4ComposerModelControlsImpl({
       size: contextWindow.maxTokens,
       ...(contextWindow.cache ? { cache: contextWindow.cache } : {}),
       ...(contextWindow.breakdown ? { breakdown: contextWindow.breakdown } : {}),
+      // auto-compact 阈值供给上下文环分档（specs/usage-statusbar.md 协议面 5）；
+      // 投影未填真值时为 null = 不分档。
+      autoCompactThresholdTokens: contextWindow.autoCompactThresholdTokens ?? null,
     };
   }, [usage?.contextWindow]);
+
+  // ── 提示词一键润色（specs/prompt-polish.md 产品规则 1–6）──
+  // 解析阶梯 explicit → persisted → session 在 hook 内每次现算；这里只供给宿主事实：
+  // catalog = 目标 Host ModelSelectionView（ModelConfigSelect 同源）、session 档 = 当前
+  // 草稿模型、scopeKey = sessionId（切会话即中止在飞请求并清还原态）。偏好写入走
+  // store setter（promptPolishModel 切片已进 BROADCAST_FIELDS，获得跨窗广播）。
+  const setPromptPolishModel = useACodeStoreWithDefault(
+    (state) => state.setPromptPolishModel,
+    null,
+  );
+  const promptPolishSessionSelection = useMemo<PromptPolishModelSelection | null>(
+    () =>
+      effectiveConfig?.provider && effectiveConfig?.model
+        ? { providerId: effectiveConfig.provider, modelId: effectiveConfig.model }
+        : null,
+    [effectiveConfig?.model, effectiveConfig?.provider],
+  );
+  // 无草稿通道（非 ConversationComposer 宿主）时探针恒空：按钮不渲染，hook 保持惰性。
+  const getAbsentPolishDraftSnapshot = useCallback(() => null, []);
+  const promptPolish = usePromptPolish({
+    workspacePath,
+    ...(workspaceIdentity ? { workspaceIdentity } : {}),
+    ...(remoteSessionId ? { remoteSessionId } : {}),
+    ...(sessionId ? { scopeKey: sessionId } : {}),
+    catalog: modelSelectionView,
+    sessionSelection: promptPolishSessionSelection,
+    getDraftSnapshot: promptPolishDraftApi?.getDraftSnapshot ?? getAbsentPolishDraftSnapshot,
+    ...(promptPolishDraftApi
+      ? { restoreDraftSnapshot: promptPolishDraftApi.restoreDraftSnapshot }
+      : {}),
+    ...(setPromptPolishModel ? { persistModelSelection: setPromptPolishModel } : {}),
+  });
   // 工具条热键已转正为命令表命令：tooltip 快捷键文案读生效表，
   // 改绑后按钮提示即时跟随（不能用硬编码文案）。
   const modelShortcutLabel = useShortcutCommandLabel("openModelMenu");
@@ -1060,6 +1116,9 @@ function V4ComposerModelControlsImpl({
       {thoughtOption ? (
         <ThoughtLevelCycleControl
           composerCollapsePriority={3}
+          // 滑条面板是 composer 的默认交互（specs/composer-thought-slider.md 产品规则 1）；
+          // Ctrl+T 循环与 data-thought/data-thought-levels 锚点保持在工具条层不动。
+          interactionMode="slider"
           labelVisibilityClassName="inline-flex"
           indicatorClassName="block"
           option={thoughtOption}
@@ -1072,6 +1131,13 @@ function V4ComposerModelControlsImpl({
           open={activeConfigPicker === "thought"}
           onOpenChange={handleThoughtPickerOpenChange}
           restoreFocusSelector={V4_COMPOSER_INPUT_SELECTOR}
+        />
+      ) : null}
+      {promptPolishDraftApi ? (
+        <PromptPolishButton
+          polish={promptPolish}
+          modelGroups={modelSelectGroups}
+          disabled={disabled}
         />
       ) : null}
     </>

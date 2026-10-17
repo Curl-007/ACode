@@ -91,6 +91,18 @@ interface PermissionPolicyLogger {
   info: (...args: unknown[]) => void;
 }
 
+/**
+ * pointer-lock 准入台账的结构端口（实现见 browserView/browserGuestManager.ts 的
+ * canAdmitGuestPointerLock/markGuestPointerLockAdmitted，specs/embedded-browser-pane-governance.md
+ * 件 5）。用结构类型而非值导入：避免权限策略模块与 guest 管理器形成模块环。
+ */
+export interface GuestPointerLockAdmissionGate {
+  /** 准入判定：pane 可见 + 无近期合成派发 + 合成激活窗不活跃；未知 guest 一律 false（fail-closed）。 */
+  canAdmitGuestPointerLock(webContentsId: number): boolean;
+  /** 放行后标记准入；退出链在后续合成输入派发前据此强制退出持锁。 */
+  markGuestPointerLockAdmitted(webContentsId: number): void;
+}
+
 export function resolveDesktopPermissionPolicyTargets(
   sessionProvider: DesktopSessionProvider,
 ): DesktopPermissionPolicyTarget[] {
@@ -133,6 +145,7 @@ export function installDesktopSessionPermissionPolicies(
   sessionProvider: DesktopSessionProvider,
   logger: PermissionPolicyLogger,
   sitePermissionController?: EmbeddedBrowserSitePermissionControllerLike,
+  guestPointerLockGate?: GuestPointerLockAdmissionGate,
 ): void {
   if (permissionPolicyInstalled) {
     return;
@@ -146,6 +159,27 @@ export function installDesktopSessionPermissionPolicies(
         ? sitePermissionController
         : undefined;
     target.session.setPermissionRequestHandler((webContents, permission, callback, details) => {
+      // pointer-lock 准入（specs/embedded-browser-pane-governance.md 件 5 接线）：
+      // embedded-browser guest 面的 pointerLock 从「静态矩阵放行」升级为 consult main 侧
+      // 准入台账——pane 不可见、agent 近期有合成派发或合成激活窗未关闭时拒绝页面拿锁，
+      // 掐断「借合成输入自触发权限升级」；放行即标记 admitted，退出链在后续合成派发前
+      // 据此强制退锁。coding-plan-webview 是第一方官网面（非受管 guest tab，consult
+      // 必然 fail-closed 拒绝），保持静态矩阵不变；未注入 gate 时（测试/降级）行为同现状。
+      if (guestPointerLockGate && permission === "pointerLock" && target.name === "embedded-browser") {
+        const admitted = guestPointerLockGate.canAdmitGuestPointerLock(webContents.id);
+        if (admitted) {
+          guestPointerLockGate.markGuestPointerLockAdmitted(webContents.id);
+        } else {
+          logger.info("[desktop-permissions] denied pointer-lock by admission gate", {
+            session: target.name,
+            permission,
+            requestingUrl: details.requestingUrl,
+            isMainFrame: details.isMainFrame,
+          });
+        }
+        callback(admitted);
+        return;
+      }
       if (sitePermissions) {
         // 站点权限链自身保持 fail-closed：闭集外同步拒绝、store 读取失败收敛为拒绝。
         sitePermissions.handlePermissionRequest(webContents, permission, callback, details);

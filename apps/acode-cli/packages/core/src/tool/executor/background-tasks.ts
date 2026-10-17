@@ -29,6 +29,7 @@ import {
   updateRuntimeBackgroundTask,
 } from "./background-task-registry.js";
 import { backgroundTaskOutputMetadata } from "./background-task-output.js";
+import { runTaskCompletedHooks, runTaskCreatedHooks } from "./hook-flow.js";
 import {
   buildWorkflowReportsManifestSection,
   buildWorkflowReportsNotificationSection,
@@ -381,6 +382,53 @@ export class BackgroundTaskTracker {
       traceId: traceContext.traceId,
       sequenceNumber: 0,
       payload,
+    });
+    this.runTaskLifecycleHookSideChannel(type, payload, traceContext);
+  }
+
+  /**
+   * TaskCreated/TaskCompleted（specs/hook-event-surface.md）：与 BackgroundTaskStarted/
+   * BackgroundTaskCompleted 会话事件同点位触发。通知类、**异步旁路**——
+   * trackBackgroundTask 在工具结算路径上被 await，hook（含其超时预算）不允许拖慢
+   * 工具结果；失败只 warn。payload 事实（taskId/status/toolName…）与会话事件同源，
+   * 不引入第二条事实生产路径。
+   */
+  private runTaskLifecycleHookSideChannel(
+    type: SessionEvent["type"],
+    payload: Record<string, unknown>,
+    traceContext: TraceContext,
+  ): void {
+    if (!this.deps.hookRunner) return;
+    const isCreated = type === SessionEventType.BackgroundTaskStarted;
+    const isCompleted = type === SessionEventType.BackgroundTaskCompleted;
+    if (!isCreated && !isCompleted) return;
+    const taskId = typeof payload.taskId === "string" ? payload.taskId : undefined;
+    if (!taskId) return;
+    const info = {
+      taskId,
+      ...(typeof payload.description === "string" ? { description: payload.description } : {}),
+      ...(typeof payload.taskKind === "string" ? { taskKind: payload.taskKind } : {}),
+      ...(typeof payload.toolCallId === "string" ? { toolCallId: payload.toolCallId } : {}),
+      ...(typeof payload.toolName === "string" ? { toolName: payload.toolName } : {}),
+    };
+    const run = isCreated
+      ? runTaskCreatedHooks(this.deps, info, traceContext)
+      : runTaskCompletedHooks(
+          this.deps,
+          {
+            ...info,
+            taskStatus: typeof payload.status === "string" ? payload.status : "unknown",
+          },
+          traceContext,
+        );
+    void run.catch((error: unknown) => {
+      this.deps.logger?.warn("Task lifecycle hook failed", {
+        ...traceContextToLogContext(traceContext),
+        error: error instanceof Error ? error.message : String(error),
+        event: isCreated ? "hook.task_created.run_failed" : "hook.task_completed.run_failed",
+        module: "core.tool.executor",
+        taskId,
+      });
     });
   }
 

@@ -134,6 +134,8 @@ export function createContextBuilderFromSnapshot(
     // R5.3：env-info 段的 scratch 引导事实源（构造期注入，见 internal.ts RuntimeInjectedDeps）。
     scratchDir: this.scratchRoot,
     skills: this.skillLoadOutcome,
+    // paths 触发激活集的会话键（skill-frontmatter-governance R5 消费接线）。
+    sessionId: String(this.sessionId),
     agentProfiles: this.config.subagents?.profiles,
     embeddedSearchEnabled: resolveRuntimeEmbeddedSearchEnabled(this),
     skillMetadataBudget: this.config.skillMetadataBudget,

@@ -30,6 +30,20 @@ export type V4VisibleSlashCommand =
       kind: "unsupportedGoal";
       action: string;
       displayText: string;
+    }
+  | {
+      // /usage 查询命令族（apps/acode-cli/specs/usage-statusbar.md）：零 token 本地查询，
+      // args 原样透传 CLI usage-query 单一实现。
+      kind: "usage";
+      args: string;
+      displayText: string;
+    }
+  | {
+      // /auto-resume 命令面（apps/acode-cli/specs/turn-auto-resume.md）：零 token 本地命令，
+      // args = 子命令原文（status/on/off [时长]/msg …），解析与回执单一实现在 core。
+      kind: "autoResume";
+      args: string;
+      displayText: string;
     };
 
 interface V4VisibleSlashCommandParseOptions {
@@ -78,6 +92,12 @@ export function parseV4VisibleSlashCommand(
 
   if (commandName === "compact" || commandName === "compress") {
     return { kind: "compact", displayText };
+  }
+  if (commandName === "usage") {
+    return { kind: "usage", args, displayText };
+  }
+  if (commandName === "auto-resume") {
+    return { kind: "autoResume", args, displayText };
   }
   if (commandName !== "goal" && commandName !== "target") {
     return null;

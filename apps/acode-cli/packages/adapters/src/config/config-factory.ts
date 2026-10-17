@@ -26,6 +26,8 @@ import { loadFileConfig, getDefaultConfigPath, type LoadedConfig } from "./file-
 import { parseEnvConfig } from "./env-config.adapter.js";
 import { mergeConfigs, createPrioritizedConfig } from "./config-merger.js";
 import { loadManagedPolicyFloor } from "./managed-policy.js";
+// per-server env 声明面拒绝门（subprocess-env-credential-allowlist R4 接线②收口）。
+import { evaluateMcpServerEnvGate, type McpServerEnvRejection } from "./mcp-env-gate.js";
 import type { ConfigDiagnostic } from "./schema.js";
 import { createNodeLoggerFactory } from "../logging/index.js";
 import {
@@ -279,6 +281,26 @@ export function createConfig(options: ConfigFactoryOptions = {}): ConfigResult {
     projectConfig: projectConfigResult.config,
     userConfig: userConfigResult.config,
   });
+  // 拒绝门可见性（mcp-env-gate.ts 头注裁决）：每个被拒 server 一条 warn，携带
+  // 层来源与命中键名（只列键名不列值——值可能含秘密）。与 logConfigDiagnostics
+  // 同一日志面，配置作者导出日志即可定位。
+  if (mcpServerResolution.rejected.length > 0) {
+    const gateLogger = (options.loggerFactory ?? createNodeLoggerFactory({ env: options.env }))
+      .createLogger("acode")
+      .child({ module: "adapters.config" });
+    for (const rejection of mcpServerResolution.rejected) {
+      gateLogger.warn(
+        `MCP server "${rejection.serverName}" was rejected: its declared env contains reserved execution-hijack keys (${rejection.hijackKeys.join(", ")}); remove them from the ${rejection.source}-level configuration`,
+        {
+          configScope: rejection.source,
+          envKeys: rejection.hijackKeys,
+          event: "config.mcp_server_env_rejected",
+          mcpServerName: rejection.serverName,
+          severity: "warning",
+        },
+      );
+    }
+  }
   merged.mcp = {
     ...merged.mcp,
     servers: mcpServerResolution.servers,
@@ -414,11 +436,22 @@ function resolveEffectiveMcpServers(input: {
 }): {
   servers: Record<string, McpServerConfig>;
   sources: Record<string, McpServerConfigSource>;
+  rejected: McpServerEnvRejection[];
 } {
   const servers: Record<string, McpServerConfig> = {};
   const sources: Record<string, McpServerConfigSource> = {};
+  const rejected: McpServerEnvRejection[] = [];
   const apply = (source: McpServerConfigSource, patch: RuntimeConfigPatch | undefined) => {
     for (const [name, server] of Object.entries(patch?.mcp?.servers ?? {})) {
+      // per-server env 声明面拒绝门（specs/subprocess-env-credential-allowlist.md R4
+      // 接线需求②收口）：user/project 层命中执行劫持闭集键 → 整 server 拒绝
+      //（skip + 上层 warn 日志）；宿主注入层（system/env/cli）豁免，裁决见
+      // mcp-env-gate.ts 头注。被拒 server 不落 sources——下游看不见它存在过。
+      const verdict = evaluateMcpServerEnvGate(server, source);
+      if (!verdict.accepted) {
+        rejected.push({ serverName: name, source, hijackKeys: verdict.hijackKeys });
+        continue;
+      }
       servers[name] = server;
       sources[name] = source;
     }
@@ -431,7 +464,7 @@ function resolveEffectiveMcpServers(input: {
   apply("user", input.userConfig);
   apply("env", input.envConfig);
   apply("cli", input.cliOverrides);
-  return { servers, sources };
+  return { servers, sources, rejected };
 }
 
 function logConfigDiagnostics(input: {

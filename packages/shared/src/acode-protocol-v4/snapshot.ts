@@ -177,6 +177,16 @@ export const sessionMetaStateSchema = z.object({
 export type SessionMetaState = z.infer<typeof sessionMetaStateSchema>;
 
 // ── usage。conflation：值未变不下发──
+// 最近一次模型请求的 timing 事实（specs/usage-statusbar.md 数据口径 3/4 的 wire 形态）。
+// generationMs 口径由 core producer 单点计算，投影只透传；消费端据此算 tok/s。
+export const sessionUsageLastRequestSchema = z.object({
+  outputTokens: z.number().nonnegative(),
+  generationMs: z.number().nonnegative(),
+  timeToFirstTokenMs: z.number().nonnegative().optional(),
+  completedAtMs: z.number(),
+});
+export type SessionUsageLastRequest = z.infer<typeof sessionUsageLastRequestSchema>;
+
 export const sessionUsageStateSchema = z.object({
   contextWindow: z
     .object({
@@ -192,7 +202,11 @@ export const sessionUsageStateSchema = z.object({
     outputTokens: z.number(),
     cacheReadTokens: z.number(),
     cacheWriteTokens: z.number(),
+    // additive：思考 token 累计；旧投影不携带，缺席 ≠ 0（消费端不得当零值渲染明细）。
+    reasoningTokens: z.number().nonnegative().optional(),
   }),
+  // additive：conflated 状态，值未变不重复下发；null = 会话尚无已完成的模型请求。
+  lastRequest: sessionUsageLastRequestSchema.nullable().optional(),
 });
 export type SessionUsageState = z.infer<typeof sessionUsageStateSchema>;
 
@@ -298,10 +312,21 @@ export const interactionAutoResolutionSchema = z.discriminatedUnion("state", [
 ]);
 export type InteractionAutoResolution = z.infer<typeof interactionAutoResolutionSchema>;
 
+/**
+ * 交互 kind 闭集的单一事实源：attach-answers.ts 的代答申报与 pending-permission-hints.ts
+ * 的提示清单都从这里派生，不得各自手写副本（值域与原内联枚举逐字相同，schema 形状不变）。
+ */
+export const pendingInteractionKindSchema = z.enum([
+  "permission",
+  "userInput",
+  "workspaceHookReview",
+]);
+export type PendingInteractionKind = z.infer<typeof pendingInteractionKindSchema>;
+
 export const pendingInteractionSchema = z
   .object({
     interactionId: z.string(),
-    kind: z.enum(["permission", "userInput", "workspaceHookReview"]),
+    kind: pendingInteractionKindSchema,
     // null = 会话级（如 provider 交互和 workspace Hook review）。
     anchorRowId: z.number().nullable(),
     createdAt: timestampSchema,
@@ -381,6 +406,8 @@ export const runningSubagentSummarySchema = z.object({
   summary: z.string().optional(),
   status: z.enum(["running", "waiting", "blocked"]),
   startedAt: timestampSchema.optional(),
+  // additive：子代理累计 token 用量；旧投影不携带，缺席时 UI 隐藏该列而非按 0 呈现。
+  cumulativeTokens: z.number().nonnegative().optional(),
 });
 export type RunningSubagentSummary = z.infer<typeof runningSubagentSummarySchema>;
 

@@ -47,6 +47,21 @@ import type {
   BrowserTabRecoveryStore,
   BrowserTabShellRecord,
 } from "./browserTabRecoveryStore.js";
+// pane 治理件（specs/embedded-browser-pane-governance.md）：一次性准入凭据 /
+// 导航 epoch 分轨 / 合成输入抑制窗口 / pointer-lock 强制退出链。
+import {
+  BrowserPaneAdmissionTicketLedger,
+  type BrowserPaneAdmissionTier,
+} from "./browserPaneAdmissionTicket.js";
+import {
+  BrowserTabNavigationEpochTracker,
+  type BrowserTabNavigationEpochSnapshot,
+} from "./browserTabNavigationEpochs.js";
+import { BrowserSyntheticInputWindow } from "./browserSyntheticInputWindow.js";
+import {
+  BrowserPointerLockGovernor,
+  type BrowserPointerLockFrameHandle,
+} from "./browserPointerLockGovernor.js";
 
 interface GuestWebContents {
   readonly id: number;
@@ -287,6 +302,24 @@ interface BrowserGuestManagerResidencyOptions {
     now?: () => number;
   };
 }
+
+/**
+ * pane 治理件选项（specs/embedded-browser-pane-governance.md）。全部缺省值保持
+ * 现状行为：enforcement 默认关（consent 面未接线）、时钟缺省共享 residency now。
+ */
+interface BrowserPaneGovernanceOptions {
+  /** 开启后 claimTab 需要先 mint 的一次性准入凭据；缺省关闭（零行为变化）。 */
+  enforceClaimAdmissionTicket?: boolean;
+  /** 准入凭据 TTL；缺省 120s。 */
+  admissionTicketTtlMs?: number;
+  /** pointer-lock 退出链确认轮询参数（测试注入用）；缺省 15×10ms。 */
+  pointerLockPollIntervalMs?: number;
+  pointerLockMaxPolls?: number;
+  /** 未准入 guest 的持锁探测节流窗；缺省 2s。 */
+  pointerLockProbeThrottleMs?: number;
+  now?: () => number;
+  warn?: (message: string) => void;
+}
 function normalizeDesktopZoomMetricsScale(desktopZoomFactor: number | undefined): number {
   return Number.isFinite(desktopZoomFactor) && (desktopZoomFactor ?? 1) > 1
     ? (desktopZoomFactor ?? 1)
@@ -476,6 +509,11 @@ export class BrowserGuestManager {
   /** 同一 tab 的 attach/rebind 只允许一个 flight，避免并发命令各自重建 webview。 */
   private readonly guestAttachFlights = new Map<string, Promise<GuestWebContents | null>>();
   private readonly restoredTabClaims = new Map<string, number>();
+  /** pane 治理件（specs/embedded-browser-pane-governance.md）：全部 main 内部账目，不持久化。 */
+  private readonly admissionTickets: BrowserPaneAdmissionTicketLedger;
+  private readonly navigationEpochs: BrowserTabNavigationEpochTracker;
+  private readonly syntheticInput: BrowserSyntheticInputWindow;
+  private readonly pointerLockGovernor: BrowserPointerLockGovernor;
 
   constructor(
     private readonly log?: (msg: string) => void,
@@ -511,11 +549,46 @@ export class BrowserGuestManager {
     // Chromium 杀且 render-process-gone 未送达 main 时，destroyed 直达 + CDP attached 即
     // 主进程 UAF；turn 内命令间隙（0.4~9s）是实测崩溃窗口，命令级 idle 释放将其收窄。
     private readonly cdpIdleReleaseMs: number = DEFAULT_GUEST_CDP_IDLE_RELEASE_MS,
+    // pane 治理件选项只能追加（与上方参数位的纪律一致）；缺省值保持既有行为。
+    private readonly governanceOptions: BrowserPaneGovernanceOptions = {},
   ) {
     this.residencyCoordinator = new BrowserTabResidencyCoordinator({
       tabLimit: residencyOptions.tabLimit,
       now: residencyOptions.now,
       onEvict: (record) => this.closeTabForLimit(record),
+    });
+    const governanceNow = governanceOptions.now ?? residencyOptions.now ?? Date.now;
+    this.admissionTickets = new BrowserPaneAdmissionTicketLedger({
+      ...(governanceOptions.admissionTicketTtlMs !== undefined
+        ? { ttlMs: governanceOptions.admissionTicketTtlMs }
+        : {}),
+      now: governanceNow,
+      log: (message) => this.log?.(message),
+    });
+    this.navigationEpochs = new BrowserTabNavigationEpochTracker({
+      onForeignSubframeNavigation: (tabId, snapshot) => {
+        // 外来 subframe = 外链劫持可见性信号；debug 级、不落 URL 全文（日志卫生）。
+        this.log?.(
+          `[browser-use] foreign subframe navigation tabId=${tabId} foreignSubframes=${snapshot.foreignSubframes} frameTree=${snapshot.frameTree}`,
+        );
+      },
+    });
+    this.syntheticInput = new BrowserSyntheticInputWindow({ now: governanceNow });
+    this.pointerLockGovernor = new BrowserPointerLockGovernor({
+      now: governanceNow,
+      ...(governanceOptions.pointerLockPollIntervalMs !== undefined
+        ? { pollIntervalMs: governanceOptions.pointerLockPollIntervalMs }
+        : {}),
+      ...(governanceOptions.pointerLockMaxPolls !== undefined
+        ? { maxPolls: governanceOptions.pointerLockMaxPolls }
+        : {}),
+      ...(governanceOptions.pointerLockProbeThrottleMs !== undefined
+        ? { probeThrottleMs: governanceOptions.pointerLockProbeThrottleMs }
+        : {}),
+      warn: (message) => {
+        governanceOptions.warn?.(message);
+        this.log?.(message);
+      },
     });
   }
 
@@ -810,6 +883,56 @@ export class BrowserGuestManager {
     for (const tab of this.tabs.values()) {
       if (tab.guest?.id === webContentsId && tab.lifecycle !== "closed") {
         return { ...tab.owner, tabId: tab.tabId };
+      }
+    }
+    return null;
+  }
+
+  /**
+   * consent 面接线点（specs/embedded-browser-pane-governance.md 件 1 接线状态）：
+   * 为 claimTab mint 一次性准入凭据。enforcement 开启后无票/复用/过期一律拒绝。
+   */
+  mintTabClaimTicket(
+    context: BrowserGuestExecutionContext,
+    tabId: string,
+    tier: BrowserPaneAdmissionTier = "site",
+  ): string {
+    return this.admissionTickets.mint({ scopeKey: scopeKey(context), targetKey: tabId, tier });
+  }
+
+  /** 工具层接线点（spec 件 2 接线状态）：导航 epoch 快照；null = 未知 tab。 */
+  getTabNavigationEpochs(tabId: string): BrowserTabNavigationEpochSnapshot | null {
+    return this.navigationEpochs.snapshot(tabId);
+  }
+
+  /**
+   * 权限侧接线点（spec 件 5 接线状态）：pointerLock 请求的准入判定——pane 可见 +
+   * 无近期合成派发 + 合成激活窗不活跃三者同时成立才允许页面拿锁；agent 操作期间
+   * 页面借合成输入自触发锁请求应被拒。未知 guest 一律 false（fail-closed）。
+   */
+  canAdmitGuestPointerLock(webContentsId: number): boolean {
+    const tab = this.findLiveTabByWebContentsId(webContentsId);
+    if (!tab) return false;
+    return this.pointerLockGovernor.canAdmitPointerLock({
+      paneVisible: tab.active && this.visibilityByScope.get(scopeKey(tab.owner)) === true,
+      syntheticActivationLive: this.syntheticInput.syntheticActivationLive(tab.tabId),
+      recentSyntheticDispatch: this.syntheticInput.hasRecentSyntheticDispatch(tab.tabId),
+    });
+  }
+
+  /** 权限侧接线点：pointerLock 放行后标记准入；后续合成输入派发前强制退出持锁。 */
+  markGuestPointerLockAdmitted(webContentsId: number): void {
+    const tab = this.findLiveTabByWebContentsId(webContentsId);
+    if (!tab) return;
+    const guestId = safeNumber(() => tab.guest?.id);
+    if (guestId === undefined) return;
+    this.pointerLockGovernor.markAdmitted(tab.tabId, guestId);
+  }
+
+  private findLiveTabByWebContentsId(webContentsId: number): ManagedTab | null {
+    for (const tab of this.tabs.values()) {
+      if (tab.lifecycle !== "closed" && safeNumber(() => tab.guest?.id) === webContentsId) {
+        return tab;
       }
     }
     return null;
@@ -1184,6 +1307,32 @@ export class BrowserGuestManager {
           },
           context,
         );
+      }
+      if (this.governanceOptions.enforceClaimAdmissionTicket === true) {
+        // 一次性准入凭据（spec 件 1）：consent 面接线并开启 enforcement 后，接管
+        // human tab 需要新鲜凭据且单次消费；缺失/复用/过期按闭集 reason 拒绝。
+        const admission = this.admissionTickets.consume({
+          scopeKey: scopeKey(context),
+          targetKey: candidate.tabId,
+          tier: "site",
+        });
+        if (!admission.ok) {
+          this.log?.(
+            `[browser-use] claimTab rejected tabId=${candidate.tabId} admission=${admission.reason}`,
+          );
+          return this.withMeta(
+            {
+              ok: false,
+              error: {
+                code: "backend_unavailable",
+                message: `user browser tab '${command.tabId}' claim rejected: admission ticket ${admission.reason}`,
+                sideEffect: "none",
+              },
+              elapsedMs: Date.now() - startedAt,
+            },
+            context,
+          );
+        }
       }
       const tab = this.claimTab(candidate, context);
       return this.withMeta(
@@ -3060,6 +3209,8 @@ export class BrowserGuestManager {
     this.defaultTabByScope.delete(scopeKey(context));
     this.sessionNames.delete(scopeKey(context));
     this.visibilityByScope.delete(scopeKey(context));
+    // consent 面凭据随 scope 终结清理：一次会话的同意不跨会话残留（TTL 只是兜底）。
+    this.admissionTickets.dropScope(scopeKey(context));
   }
 
   closeWindow(windowId: number): void {
@@ -3079,6 +3230,8 @@ export class BrowserGuestManager {
       // 已删除的 key 是 no-op，前提是条目先在这里删干净。
       this.inFlightScreenshots.delete(tab.tabId);
       this.abandonedScreenshotCaptures.delete(tab.tabId);
+      this.dropPaneGovernanceState(tab.tabId);
+      this.admissionTickets.dropScope(scopeKey(tab.owner));
       this.tabs.delete(tab.tabId);
     }
     this.naturalViewportByWindow.delete(windowId);
@@ -3121,7 +3274,15 @@ export class BrowserGuestManager {
     if (notifyRenderer) this.onCloseTabRequested?.(tab.tabId, tab.owner);
     this.residencyCoordinator.remove(tab.tabId);
     this.restoredTabClaims.delete(tab.tabId);
+    this.dropPaneGovernanceState(tab.tabId);
     this.tabs.delete(tab.tabId);
+  }
+
+  /** pane 治理件状态随 tab 关闭清理（epoch/抑制窗口/pointer-lock 台账都是 per-tab）。 */
+  private dropPaneGovernanceState(tabId: string): void {
+    this.navigationEpochs.dropTab(tabId);
+    this.syntheticInput.dropTab(tabId);
+    this.pointerLockGovernor.dropTab(tabId);
   }
 
   /**
@@ -3576,7 +3737,72 @@ export class BrowserGuestManager {
       }
       params = event;
     }
-    return this.sendGuestCdpCommandRaw(tab, guest, method, params, sessionId);
+    return this.dispatchGovernedCdpCommand(tab, guest, method, params, sessionId);
+  }
+
+  /**
+   * 治理包装（specs/embedded-browser-pane-governance.md 件 4/5）：Input.* 下发前
+   * 先走 pointer-lock 强制退出链并开输入抑制窗口；铸造页面侧 user activation 的
+   * 下发（Input.* / userGesture:true 的 evaluate）另记激活 token。包装不改变命令
+   * 结果、不新增 rejection——治理件故障一律静默收敛，防御纵深不反噬输入主链路。
+   */
+  private async dispatchGovernedCdpCommand(
+    tab: ManagedTab,
+    guest: GuestWebContents,
+    method: string,
+    params?: unknown,
+    sessionId?: string,
+  ): Promise<unknown> {
+    // 准入判定的「近期合成派发」覆盖全部 CDP 命令（含只读），对齐参考机制语义。
+    this.syntheticInput.noteDispatch(tab.tabId);
+    const isSyntheticInput = method.startsWith("Input.");
+    const userGestureParams = params as { userGesture?: unknown } | undefined;
+    const mintsActivation =
+      isSyntheticInput ||
+      ((method === "Runtime.evaluate" || method === "Runtime.callFunctionOn") &&
+        userGestureParams?.userGesture === true);
+    if (!isSyntheticInput && !mintsActivation) {
+      return this.sendGuestCdpCommandRaw(tab, guest, method, params, sessionId);
+    }
+    const inputToken = isSyntheticInput
+      ? this.syntheticInput.beginInputDispatch(tab.tabId)
+      : undefined;
+    const activationToken = mintsActivation
+      ? this.syntheticInput.beginActivation(tab.tabId)
+      : undefined;
+    try {
+      if (isSyntheticInput) {
+        const guestId = safeNumber(() => guest.id) ?? -1;
+        await this.pointerLockGovernor
+          .ensureUnlockedBeforeSyntheticInput(tab.tabId, guestId, () =>
+            this.readPointerLockFrames(guest),
+          )
+          .catch(() => undefined);
+      }
+      return await this.sendGuestCdpCommandRaw(tab, guest, method, params, sessionId);
+    } finally {
+      // settle（含 rejection）必结算 token：窗口台账不悬挂，无需 detach sentinel。
+      if (inputToken) this.syntheticInput.endInputDispatch(tab.tabId, inputToken);
+      if (activationToken) this.syntheticInput.endActivation(tab.tabId, activationToken);
+    }
+  }
+
+  /**
+   * framesInSubtree 含主 frame（ACode 适配：整页皆不可信内容，主 frame 同样可持
+   * pointer lock）。frame 树不可读时抛错，由 governor 收敛为 guest-unavailable。
+   */
+  private readPointerLockFrames(guest: GuestWebContents): BrowserPointerLockFrameHandle[] {
+    const frames = guest.mainFrame.framesInSubtree;
+    return frames.map((frame) => ({
+      isUnavailable: () => {
+        try {
+          return frame.isDestroyed() || frame.detached;
+        } catch {
+          return true;
+        }
+      },
+      run: (script: string) => frame.executeJavaScript(script),
+    }));
   }
 
   private toControlledView(
@@ -3998,17 +4224,53 @@ export class BrowserGuestManager {
       tab.mediaActive = false;
       this.refreshRuntimeProtection(tab.tabId);
     };
+    // 治理件挂点（specs/embedded-browser-pane-governance.md 件 2/4/5）：导航 epoch
+    // 分轨、真实输入激活戳、主 frame 导航清 pointer-lock 准入。全部以
+    // tab.guest === guest 防旧 guest 迟到事件（与上方既有监听同一纪律）。
+    // did-frame-navigate 参数序：(event, url, httpResponseCode, httpStatusText, isMainFrame, ...)。
+    const onFrameNavigated = (...args: unknown[]) => {
+      if (tab.guest !== guest) return;
+      const url = typeof args[1] === "string" ? args[1] : null;
+      const isMainFrame = args[4] === true;
+      const mainFrameUrl = safeStr(() => guest.mainFrame.url, "");
+      this.navigationEpochs.noteFrameNavigation(tab.tabId, {
+        isMainFrame,
+        frameUrl: url,
+        mainFrameUrl: mainFrameUrl === "" ? null : mainFrameUrl,
+      });
+    };
+    const onMainFrameNavigated = () => {
+      if (tab.guest !== guest) return;
+      this.pointerLockGovernor.noteMainFrameNavigation(tab.tabId);
+    };
+    // input-event 参数序：(event, input)。CDP 合成输入同样触发该事件——窗口内一律
+    // 按合成来源处理（防页面借 agent 合成输入自触发权限升级/弹窗循环），窗口外
+    // 闭集类型才落真实手势激活账目。
+    const onGuestInputEvent = (...args: unknown[]) => {
+      if (tab.guest !== guest) return;
+      const input = args[1] as { type?: unknown } | undefined;
+      this.syntheticInput.stampActivationFromInputEvent(
+        tab.tabId,
+        typeof input?.type === "string" ? input.type : "",
+      );
+    };
     guest.on("did-start-loading", onLoadingStarted);
     guest.on("did-stop-loading", onLoadingStopped);
     guest.on("audio-state-changed", onAudioChanged);
     guest.on("media-started-playing", onMediaStarted);
     guest.on("media-paused", onMediaPaused);
+    guest.on("did-frame-navigate", onFrameNavigated);
+    guest.on("did-navigate", onMainFrameNavigated);
+    guest.on("input-event", onGuestInputEvent);
     tab.activityCleanup = () => {
       guest.removeListener?.("did-start-loading", onLoadingStarted);
       guest.removeListener?.("did-stop-loading", onLoadingStopped);
       guest.removeListener?.("audio-state-changed", onAudioChanged);
       guest.removeListener?.("media-started-playing", onMediaStarted);
       guest.removeListener?.("media-paused", onMediaPaused);
+      guest.removeListener?.("did-frame-navigate", onFrameNavigated);
+      guest.removeListener?.("did-navigate", onMainFrameNavigated);
+      guest.removeListener?.("input-event", onGuestInputEvent);
     };
   }
 

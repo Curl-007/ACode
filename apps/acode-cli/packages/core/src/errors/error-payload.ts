@@ -3,6 +3,7 @@ import type {
   ModelApiErrorPhase,
   ModelFailureExceptionKind,
 } from "@acode/contracts";
+import { narrowErrorReasonToClosedToken } from "@acode/contracts";
 
 interface ExecutionErrorPayloadProjection {
   attribution?: ErrorAttribution;
@@ -79,7 +80,11 @@ function projectErrorAttribution(
   frames: readonly ErrorPayloadFrame[],
 ): ErrorAttribution | undefined {
   const contexts = frames.flatMap((frame) => (frame.context ? [frame.context] : []));
-  const reason = selectContextText(contexts, ["reason"]);
+  // attribution.reason 闭集化（specs/error-taxonomy-injection-defense.md R2.2）：
+  // UI/遥测可见的 reason 只收闭集 token——原始值依次过「精确成员 → 拒绝文案分类器 →
+  // 会话错误分类器」，全不过则 reason 缺席。自由文本不丢：formatContextDetail 照旧
+  // 把原始 reason=… 拼进 detail（debug/hover 通道）。
+  const reason = narrowErrorReasonToClosedToken(selectContextText(contexts, ["reason"]));
   const errorPhase = selectErrorPhase(contexts);
   const exceptionKind = selectExceptionKind(contexts);
   const providerId = selectContextText(contexts, ["providerId", "provider"]);

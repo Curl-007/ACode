@@ -14,6 +14,7 @@ import type {
 } from "./mcp.js";
 import type { OAuthStateRegistration } from "./oauth.js";
 import type { AppSettings, Locale } from "./protocol.js";
+import type { ContentBreadcrumbWirePayload } from "./contentBreadcrumbWire.js";
 import type {
   CuaAccessibilitySettingsResult,
   OpenCuaPermissionOnboardingOptions,
@@ -104,6 +105,18 @@ export function buildLocalMediaPreviewUrl(path: string): string {
   url.searchParams.set("path", path);
   return url.toString();
 }
+
+/**
+ * 桌面生产态（file: 页面）为可视化沙箱卡片服务 vendored 钉版渲染库
+ * （mermaid/chart.js）的自定义 scheme。单一事实源：ui 侧片段引用重写
+ * （packages/ui/src/lib/visualizationVendor.ts）与 main 侧协议处理器
+ * （packages/desktop/src/main/visualizationVendorProtocol.ts）都引用本常量，
+ * 避免两处各持字面量漂移后 renderer 重写与 main 协议互相打空。
+ */
+export const VISUALIZATION_VENDOR_SCHEME = "acode-viz-vendor";
+
+/** VISUALIZATION_VENDOR_SCHEME URL 的固定 host 段：`acode-viz-vendor://vendor/<fileName>`。 */
+export const VISUALIZATION_VENDOR_SCHEME_HOST = "vendor";
 
 /**
  * main→renderer 的关闭通知。
@@ -350,6 +363,27 @@ export interface DockerContainerInfo {
   status: string;
 }
 
+/**
+ * 别名依赖 ACode 尚不支持的 ssh 指令时的拒绝原因闭集。
+ * 消费方按枚举分支渲染/拦截，禁止对 message 做自由文本匹配。
+ * 语义见 packages/services/specs/ssh-config-alias-proxy-rejection.md。
+ */
+export type SSHConfigAliasUnsupportedReason =
+  | "proxy_jump_unsupported"
+  | "proxy_command_unsupported"
+  | "local_command_unsupported"
+  | "match_unsupported";
+
+export interface SSHConfigAliasUnsupportedInfo {
+  reason: SSHConfigAliasUnsupportedReason;
+  /** 触发拒绝的指令名（ProxyJump/ProxyCommand/LocalCommand/Match）。 */
+  directive: string;
+  /** 自撰中文解释，可直接展示；含「直连目标主机或说明跳板拓扑」指引。 */
+  message: string;
+  /** 检测来源：ssh -G 权威输出或静态回退解析；排障用。 */
+  detectedBy: "ssh-g" | "static-fallback";
+}
+
 export interface SSHConfigAliasOption {
   alias: string;
   host?: string;
@@ -357,6 +391,12 @@ export interface SSHConfigAliasOption {
   username?: string;
   privateKeyPath?: string;
   source?: string;
+  /**
+   * 存在时表示该别名的生效配置依赖 ACode 内置 SSH 引擎不支持的指令
+   * （跳板/代理/条件块），直连会表现为超时挂起。选项保留在列表中供
+   * UI 置灰与解释，不被静默移除。
+   */
+  unsupported?: SSHConfigAliasUnsupportedInfo;
 }
 
 export interface ACodeStdioTapDevState {
@@ -794,6 +834,20 @@ export interface IPlatformService {
   /** 快捷键设置页录制态开关；桌面端 main 据此暂时摘除可配置菜单 accelerator，Web 可忽略 */
   setShortcutRecordingActive?(active: boolean): void;
 
+  /**
+   * 嵌入第三方内容面（可视化卡片 iframe / 内嵌浏览器 pane）可编辑焦点上报；
+   * 桌面端 main 台账据此动态摘挂菜单 accelerator（specs/embedded-content-focus-yield.md），
+   * Web/静态回放无桥即 no-op。
+   */
+  syncEmbeddedEditableFocus?(focused: boolean): void;
+
+  /**
+   * renderer 内容状态面包屑上报（send-only，桶化 payload；
+   * specs/main-stall-diagnostics.md R11）：桌面端 main 缓存最新一条供
+   * unresponsive/stall 归因带出。Web/静态回放无桥即 no-op（上报器整体不启动）。
+   */
+  sendContentBreadcrumb?(payload: ContentBreadcrumbWirePayload): void;
+
   /** 注册 main 进程要求聚焦某个 workspace tab 的回调，返回 disposer */
   onFocusTab(handler: (path: string) => void): () => void;
 
@@ -902,6 +956,12 @@ export interface IPlatformService {
 
   /** 导出日志：打包 ~/.acode/v2 及外部 agent 日志为 zip 并在系统文件浏览器中显示 */
   exportLogs(): Promise<{ success: boolean; path?: string; error?: string }>;
+
+  /**
+   * 导出分节支持包（specs/log-privacy-redaction.md）：返回保存路径或 null
+   * （失败/取消，详情走 main 日志）。桌面专属；Web fallback 缺席即隐藏入口。
+   */
+  exportSupportBundle?(): Promise<string | null>;
 
   /** 截取当前窗口，用于错误反馈携带现场画面；Web fallback 可返回 null */
   captureWindowScreenshot?(): Promise<WindowScreenshotResult | null>;

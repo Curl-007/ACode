@@ -25,6 +25,7 @@ import type {
   SessionModePort,
   SessionStorePort,
   SkillPort,
+  SkillLoadOutcome,
   SubagentRunOptions,
   SubagentPort,
   ToolArtifactStorePort,
@@ -43,6 +44,7 @@ import type { ToolRegistry } from "../registry.js";
 import type { ToolSchedule } from "../scheduler.js";
 import type {
   ExecutableToolCall,
+  LiveBuildSnapshotPort,
   ReadFileStateMap,
   ToolBatchEvent,
   BackgroundTaskControlPort,
@@ -105,6 +107,13 @@ export interface ToolExecutorOptions {
   embeddedSearchBackend?: EmbeddedSearchBackend;
   nativeSearchEnhancementsEnabled?: boolean;
   skillPort?: SkillPort;
+  /** GUIDE 宿主接线（guide-live-build-section「宿主接线登记」）：运行中构建事实投影。 */
+  liveBuildSnapshotPort?: LiveBuildSnapshotPort;
+  /**
+   * 会话技能目录只读投影（skill-frontmatter-governance R5 消费接线）：paths 触发
+   * 判定的候选事实源（runtime skillLoadOutcome）；缺席 = 触发面不生效（零回归）。
+   */
+  getSkillCatalog?: () => SkillLoadOutcome | undefined;
   subagentPort?: SubagentPort;
   peerMessagingPort?: import("../../subagent/peer-messaging.js").PeerMessagingPort;
   coordinatorResponsePort?: CoordinatorResponsePort;
@@ -218,6 +227,13 @@ export interface ToolExecutorDeps {
   embeddedSearchBackend?: EmbeddedSearchBackend;
   nativeSearchEnhancementsEnabled?: boolean;
   skillPort?: SkillPort;
+  /** GUIDE 宿主接线（guide-live-build-section「宿主接线登记」）：运行中构建事实投影。 */
+  liveBuildSnapshotPort?: LiveBuildSnapshotPort;
+  /**
+   * 会话技能目录只读投影（skill-frontmatter-governance R5 消费接线）：paths 触发
+   * 判定的候选事实源（runtime skillLoadOutcome）；缺席 = 触发面不生效（零回归）。
+   */
+  getSkillCatalog?: () => SkillLoadOutcome | undefined;
   subagentPort?: SubagentPort;
   peerMessagingPort?: import("../../subagent/peer-messaging.js").PeerMessagingPort;
   coordinatorResponsePort?: CoordinatorResponsePort;

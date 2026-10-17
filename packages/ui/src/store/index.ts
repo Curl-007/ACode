@@ -1,3 +1,4 @@
+/* oxlint-disable eslint(max-lines) -- 全局 store 组合根：三轴外观/用量状态栏/润色偏好与额度重置的实现均已收在姊妹切片模块，本文件只剩字段声明、单行接线与 create→subscribe→onMessage 的组合时序；再外移会打散广播防回环（applyingBroadcast）的闭包边界。 */
 /**
  * Zustand Store —— 全局状态管理
  *
@@ -30,6 +31,11 @@ import {
   normalizeUiFontSizePx,
   UI_FONT_SIZE_STORAGE_KEY,
 } from "@/lib/uiFontSize.js";
+// 三轴外观偏好切片收在姊妹模块（本文件逼近 max-lines 闸），调用点经 namespace 前缀。
+import * as appearanceState from "@/store/appearancePreferencesState.js";
+// 用量状态栏/润色模型偏好切片同款落法（specs/usage-statusbar.md、specs/prompt-polish.md）。
+import * as usageStatusbarState from "@/store/usageStatusbarPreferencesState.js";
+import * as promptPolishState from "@/store/promptPolishPreferencesState.js";
 import {
   isTaskNotificationEnabled,
   isTaskNotificationSoundPreferenceEnabled,
@@ -99,7 +105,13 @@ function loadPerformanceMode(): boolean {
 // State 定义
 // ============================================================================
 
-export interface ACodeState {
+// 三轴外观偏好字段经切片接口 extends 进入（specs/appearance-preference-axes.md，
+// 所有权与实现见 store/appearancePreferencesState.ts 模块头）。
+export interface ACodeState
+  extends
+    appearanceState.AppearancePreferencesSlice,
+    usageStatusbarState.UsageStatusbarPreferencesSlice,
+    promptPolishState.PromptPolishPreferencesSlice {
   /** 展示详情偏好，不改变 Agent 权限或执行能力。 */
   interfaceMode: InterfaceMode;
   setInterfaceMode: (mode: InterfaceMode) => void;
@@ -211,9 +223,20 @@ export interface ACodeState {
 // 需要广播的字段 —— 只有这些字段的变更会发送给其他窗口
 // ============================================================================
 
-const BROADCAST_FIELDS = new Set(["theme", "locale", "uiFontSizePx", "interfaceMode"]);
+// 名单用 const 元组单源：Set（运行时分发/收件）与联合类型（state[field] 索引）都从
+// 它派生，增删广播字段只改一处，两侧不再可能漂移。
+const BROADCAST_FIELD_NAMES = [
+  "theme",
+  "locale",
+  "uiFontSizePx",
+  "interfaceMode",
+  "appearancePreferences",
+  "usageStatusbarPreferences",
+  "promptPolishModel",
+] as const;
+const BROADCAST_FIELDS = new Set<BroadcastField>(BROADCAST_FIELD_NAMES);
 
-type BroadcastField = "theme" | "locale" | "uiFontSizePx" | "interfaceMode";
+type BroadcastField = (typeof BROADCAST_FIELD_NAMES)[number];
 
 /** 广播频道名前缀 */
 const STATE_CHANNEL_PREFIX = "state:";
@@ -292,6 +315,12 @@ export function createACodeStore(
       applyUiFontSizePx(normalizedFontSizePx);
       set({ uiFontSizePx: normalizedFontSizePx });
     },
+
+    // 三轴外观偏好切片（实现与状态所有权见 store/appearancePreferencesState.ts）。
+    ...appearanceState.createSlice({ readState: get, writeState: (patch) => set(patch) }),
+    // 用量状态栏/润色模型偏好切片（同款姊妹模块落法；事实源均在 lib，切片只做回显与广播载体）。
+    ...usageStatusbarState.createSlice({ readState: get, writeState: (patch) => set(patch) }),
+    ...promptPolishState.createSlice({ readState: get, writeState: (patch) => set(patch) }),
 
     performanceMode: loadPerformanceMode(),
     setPerformanceMode: (enabled: boolean) => {
@@ -482,6 +511,12 @@ export function createACodeStore(
         state.setInterfaceMode(normalizeInterfaceMode(msg.payload));
       } else if (field === "uiFontSizePx" && typeof msg.payload === "number") {
         state.setUiFontSizePx(msg.payload);
+      } else if (field === "appearancePreferences") {
+        appearanceState.applyBroadcast(state.setAppearancePreferences, msg.payload);
+      } else if (field === "usageStatusbarPreferences") {
+        usageStatusbarState.applyBroadcast(state.setUsageStatusbarPreferences, msg.payload);
+      } else if (field === "promptPolishModel") {
+        promptPolishState.applyBroadcast(state.setPromptPolishModel, msg.payload);
       }
     } finally {
       applyingBroadcast = false;

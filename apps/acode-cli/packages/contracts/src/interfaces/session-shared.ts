@@ -14,7 +14,10 @@
 
 import type { ModelSelection } from "@acode/shared/model-selection";
 
-export type CollaborationMode = "plan" | "build" | "edit" | "yolo" | "auto";
+// dontAsk（specs/permission-adjudication-batch2.md R1，接线项 1 落地）：无人可问的
+// 裁决姿态——allow 白名单照常放行、deny 照常拒，唯一变化是一切 ask 收敛为不弹卡
+// deny。cron/off-peak/-p 无头场景的安全默认位候选；桌面/远端审批面语义不变。
+export type CollaborationMode = "plan" | "build" | "edit" | "yolo" | "auto" | "dontAsk";
 export type RiskLevel = "low" | "medium" | "high" | "critical";
 export type TurnSteerRejectReason =
   | "no_active_turn"
@@ -45,8 +48,11 @@ export interface TurnInputIntentMetadata {
   text?: string;
   /** Admission 时固定；Queue/Guide 后续不得重新读取 Composer 或 Session 最新选择。 */
   modelSelection?: ModelSelection;
-  /** 与本次用户 Submission 一起固定的协作模式。 */
-  mode?: "build" | "edit" | "plan" | "yolo";
+  /** 与本次用户 Submission 一起固定的协作模式。与 shared submissionModeSchema /
+   * CollaborationMode 用户可提交子集保持一致（dontAsk 随权限批 2 扩入——
+   * execution-state 规范化边界曾因缺档把 --mode dontAsk 静默降级回 build，
+   * E2E 决策日志实证，见 shared/test/executionStateDontAsk.test.ts）。 */
+  mode?: "build" | "edit" | "plan" | "yolo" | "dontAsk";
   admissionSeq: number;
   admittedAt: number;
   requestedDelivery: "auto" | "startNow" | "queue" | "guide";

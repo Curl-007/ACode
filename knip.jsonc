@@ -137,6 +137,11 @@
         "@xyflow/react",
         "ansi-to-react",
         "use-stick-to-bottom",
+        // 可视化卡片 vendored 钉版渲染库（specs/gen-ui-visualize-card.md）：资产型依赖——
+        // vite/visualizationVendorPlugin.ts 构建期从 node_modules 读 dist 物化进
+        // visualization-vendor/ 资产目录（sha256 钉死），源码无 ESM import。
+        "chart.js",
+        "mermaid",
       ],
     },
     "packages/acode-server-cli": {
@@ -192,6 +197,13 @@
     },
     "apps/acode-cli/packages/browser-use-plugin": {
       "entry": ["src/browser-client.ts"],
+    },
+    "apps/acode-cli/packages/agent-teams-plugin": {
+      // MCP server 源码入口经 esbuild bundle 成 dist/mcp/server.js（.mcp.json 以子进程
+      // 启动，不在 JS import 图）；package.json main 指向 dist，knip 静态图追不进去，
+      // 声明 src 入口保留包内部 import/export 分析。build/smoke 脚本经 package.json
+      // scripts 覆盖，无需另行登记。
+      "entry": ["src/server.ts"],
     },
     // 以下 4 个移植官方插件的 .mjs 是运行时资产：MCP server 由 .mcp.json 以子进程启动、
     // skill 脚本由 skill 系统按 SKILL.md 调用，都不在 JS import 图里，knip 静态图语义下

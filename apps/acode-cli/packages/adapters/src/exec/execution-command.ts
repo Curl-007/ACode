@@ -6,6 +6,7 @@ import {
   resolveEffectiveBashShellSelection,
   type BashShellProvider,
 } from "./bash-shell-provider.js";
+import { applyExecHijackEnvGuard } from "./exec-hijack-env-guard.js";
 import { applyExecutionTextEnv } from "./outputEncoding.js";
 import { windowsExecutableCandidates } from "./windows-executable.js";
 import type {
@@ -13,6 +14,7 @@ import type {
   ExecutionEnvOverlay,
   ExecutionShellDialect,
 } from "@acode/contracts";
+import { SESSION_WORKTREE_ENV_KEYS } from "@acode/contracts";
 
 const WINDOWS_COMMAND_SHIM_EXTENSIONS = new Set([".cmd", ".bat"]);
 
@@ -31,6 +33,14 @@ export function buildExecutionEnv(
     network?: NetworkEgressEnvPolicy;
     platform?: NodeJS.Platform;
     processEnv?: NodeJS.ProcessEnv;
+    /**
+     * 会话 worktree 写围栏 env（specs/session-worktree-lifecycle.md R4-2/R7-5）。
+     * undefined = provider 未接线（零行为变化）；在场（含空对象）= 已接线：
+     * 名单键（SESSION_WORKTREE_ENV_KEYS）按结果 set/delete——缺席键从继承 env 里
+     * 删除，防父进程环境中的陈旧边界值漏给未绑定会话。overlay.set/unset 的显式
+     * 意图仍在后应用、保持优先。
+     */
+    sessionWorktree?: Record<string, string>;
   } = {},
 ): NodeJS.ProcessEnv {
   const platform = options.platform ?? process.platform;
@@ -50,6 +60,14 @@ export function buildExecutionEnv(
     // 用户可经 ACODE_TOOL_ENV_INHERIT_ALLOWLIST 显式放行，overlay.set 的显式注入在下方
     // 后置、不受剥离影响。
     sanitizeACodeRuntimeEnvInPlace(env, { stripSensitiveCredentials: true });
+    // 安全加固 P2 扩展（specs/subprocess-env-credential-allowlist.md R4，W2-SEC5）：
+    // 同一剥离点挂第二类封闭键集——执行劫持向量（代码注入/网络重定向/shell 行为）。
+    // 威胁不是泄密而是让子进程执行攻击者代码/降级 TLS；固定黑名单键（NODE_OPTIONS/
+    // ELECTRON_RUN_AS_NODE/代理/证书）在上一步已无条件剥离，本键集覆盖其余劫持面，
+    // allowlist 语义与凭据类共用 ACODE_TOOL_ENV_INHERIT_ALLOWLIST 通道。必须在
+    // applyNetworkEgressEnv 之前执行：代理/CA 的受控重建（ACODE_* 显式来源）后置生效。
+    // win32 的 COMSPEC 规范重建（SystemRoot 推导）在 guard 内完成。
+    applyExecHijackEnvGuard(env, { platform });
   }
 
   applyExecutionTextEnv(env, platform);
@@ -60,6 +78,18 @@ export function buildExecutionEnv(
     sourceEnv,
     toolEnvPassthrough: overlay?.base !== "empty",
   });
+
+  if (options.sessionWorktree !== undefined) {
+    const injected = options.sessionWorktree;
+    for (const key of SESSION_WORKTREE_ENV_KEYS) {
+      const value = injected[key];
+      if (value === undefined) {
+        deleteEnvKey(env, key, platform);
+      } else {
+        setEnvKey(env, key, value, platform);
+      }
+    }
+  }
 
   for (const key of overlay?.unset ?? []) {
     deleteEnvKey(env, key, platform);

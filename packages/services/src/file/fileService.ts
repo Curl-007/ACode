@@ -29,6 +29,14 @@ import {
 } from "./workspaceFileIgnore.js";
 import { createServiceLogger } from "../logger/serviceLogger.js";
 import { getConversationWorkspaceDir } from "../paths.js";
+import {
+  createWorkspaceGitFileListingSource,
+  type WorkspaceGitFileListingSource,
+} from "./workspaceGitFileListing.js";
+import {
+  buildWorkspaceFileEntriesFromGitListing,
+  computeWorkspaceFileIndexReuseMs,
+} from "./workspaceGitListingEntries.js";
 const DEFAULT_TEXT_READ_BYTES = 128 * 1024;
 const MAX_TEXT_READ_BYTES = 256 * 1024;
 const DEFAULT_MEDIA_PREVIEW_BYTES = 4 * 1024 * 1024;
@@ -196,23 +204,31 @@ async function resolveReaddirEntryType(
 
 export interface CreateFileServiceOptions {
   workspaceFileSearchFilter?: WorkspaceFileSearchFilter;
+  /** 文件清单 git 主源（降级栈第 1 级）；缺省创建真实实现，测试注入 fake。 */
+  gitFileListing?: WorkspaceGitFileListingSource;
 }
 
 /**
- * listWorkspaceFiles 的 Host 侧短 TTL 缓存：
+ * listWorkspaceFiles 的 Host 侧索引缓存（单一写入路径）：
  * 37 万文件 workspace 的全仓扫描即使并发化也要数秒，同一 workspace 的
  * 反复打开（@ 面板关闭即清理的 renderer 语义、Command Center、文件树）
  * 不应每次都重扫。服务内按 workspaceIdentity（缺省为 rootPath）隔离，
  * 校验 rootPath + .acodeignore 的 mtime/size 指纹；规则编辑后缓存失效，
  * 保持"编辑规则后下次使用生效"的契约。
+ *
+ * TTL 为成本比例制（specs/file-index-degradation.md R4，替换旧 60s 固定值）：
+ * 仅当完整清单构建耗时 ≥250ms 且 ≥5 万条才缓存，TTL=耗时×20 clamp 30s-120s；
+ * 便宜构建不进缓存（重建成本低于陈旧收益）。git 主源与全量扫描两条构建路径
+ * 融合进同一 singleflight + 指纹 + 4 条 LRU 缓存，禁止另设第二份清单缓存。
  */
-const WORKSPACE_FILE_LIST_CACHE_TTL_MS = 60_000;
 const WORKSPACE_FILE_LIST_SCAN_CONCURRENCY = 8;
 const WORKSPACE_FILE_LIST_CACHE_MAX_ENTRIES = 4;
 interface WorkspaceFileIndex {
   at: number;
   signature: string;
   packed: string;
+  /** 成本比例 TTL；>0 才会写入缓存，过期判定 now-at ≥ reuseMs。 */
+  reuseMs: number;
   candidates?: ReturnType<typeof buildHostFileSearchCandidates>;
 }
 
@@ -229,6 +245,8 @@ export function createFileService(options: CreateFileServiceOptions = {}): IFile
   const workspaceFileSearchFilter =
     options.workspaceFileSearchFilter ?? defaultWorkspaceFileSearchFilter;
   const workspaceIgnoreLogger = createServiceLogger("workspace-file-ignore");
+  // git 主源归服务实例：冷却表/警告去重不跨 Host 共享（见 workspaceGitFileListing）。
+  const gitFileListing = options.gitFileListing ?? createWorkspaceGitFileListingSource();
   const fileExistenceCache = new FileExistenceCache();
   // 索引归服务实例；不同 Host/注入过滤器不能通过模块全局缓存复用同路径结果。
   const workspaceFileListCache = new Map<string, WorkspaceFileIndex>();
@@ -261,7 +279,8 @@ export function createFileService(options: CreateFileServiceOptions = {}): IFile
     return check;
   };
 
-  // 全量扫描 + 打包（带 60s TTL / .acodeignore 指纹缓存）。分块 RPC 共享同一份 packed。
+  // 全量构建 + 打包（git 主源 → 扫描降级，成本比例 TTL / .acodeignore 指纹缓存）。
+  // 分块 RPC 共享同一份 packed。
   const workspaceFileListScanning = new Map<
     string,
     { signature: string; promise: Promise<WorkspaceFileIndex> }
@@ -275,8 +294,8 @@ export function createFileService(options: CreateFileServiceOptions = {}): IFile
     const ignoreRules = await loadWorkspaceFileSearchIgnoreRules(rootPath, workspaceIgnoreLogger);
     const cacheSignature = `${rootPath}\n${await statWorkspaceFileSearchIgnoreFingerprint(rootPath)}`;
     for (const [key, value] of workspaceFileListCache) {
-      if (Date.now() - value.at >= WORKSPACE_FILE_LIST_CACHE_TTL_MS)
-        workspaceFileListCache.delete(key);
+      // 成本比例 TTL：每条缓存自带 reuseMs（构建时按耗时×20 计算），过期即逐出。
+      if (Date.now() - value.at >= value.reuseMs) workspaceFileListCache.delete(key);
     }
     const inFlight = workspaceFileListScanning.get(workspaceKey);
     // 刷新中的同作用域查询等待新索引，不能先命中旧缓存而遗漏刚创建的文件。
@@ -288,56 +307,70 @@ export function createFileService(options: CreateFileServiceOptions = {}): IFile
       return cached;
     }
     const scanning = (async () => {
-      const entries: WorkspaceFileEntry[] = [];
-      const pendingDirectories: string[] = [rootPath];
-      // 单线程串行 DFS 一次只 await 一个 readdir，
-      // 37 万文件的 Windows workspace 实测 21.8s；改为共享目录队列的受限并发遍历，
-      // 结果仍按既有规则排序，遍历顺序不影响语义。
-      const traverseWorker = async (): Promise<void> => {
-        for (;;) {
-          const currentPath = pendingDirectories.pop();
-          if (!currentPath) {
-            return;
+      const buildStartedAt = Date.now();
+      // 降级栈（specs/file-index-degradation.md R1）：git ls-files 主源；
+      // 超限（已进冷却表并警告）/冷却期/失败/非 git/git 不可用 → 既有全量扫描兜底。
+      let entries: WorkspaceFileEntry[] | null = null;
+      const gitOutcome = await gitFileListing.collect(rootPath);
+      if (gitOutcome.kind === "listing") {
+        entries = buildWorkspaceFileEntriesFromGitListing(gitOutcome.paths, {
+          rootPath,
+          ignoreRules,
+          filter: workspaceFileSearchFilter,
+        });
+      }
+      if (!entries) {
+        entries = [];
+        const pendingDirectories: string[] = [rootPath];
+        // 单线程串行 DFS 一次只 await 一个 readdir，
+        // 37 万文件的 Windows workspace 实测 21.8s；改为共享目录队列的受限并发遍历，
+        // 结果仍按既有规则排序，遍历顺序不影响语义。
+        const traverseWorker = async (): Promise<void> => {
+          for (;;) {
+            const currentPath = pendingDirectories.pop();
+            if (!currentPath) {
+              return;
+            }
+            let children: Dirent[];
+            try {
+              children = await readdir(currentPath, { withFileTypes: true });
+            } catch (error) {
+              if (isSkippableWorkspaceFileListError(error)) {
+                continue;
+              }
+              throw error;
+            }
+            for (const entry of children) {
+              const entryPath = join(currentPath, entry.name);
+              const relativePath = normalizeRelativePath(rootPath, entryPath);
+              if (relativePath === WORKSPACE_FILE_SEARCH_IGNORE_FILE_NAME) {
+                continue;
+              }
+              const type = await resolveReaddirEntryType(
+                entryPath,
+                entry.isDirectory(),
+                entry.isSymbolicLink(),
+              );
+              if (isWorkspaceFileSearchPathIgnored(ignoreRules, relativePath, type)) {
+                continue;
+              }
+              const decision = workspaceFileSearchFilter.evaluate(
+                { name: entry.name, path: entryPath, relativePath, type },
+                { ignoreRulesActive: true },
+              );
+              if (decision.include) {
+                entries!.push({ name: entry.name, path: entryPath, relativePath, type });
+              }
+              if (type === "directory" && !entry.isSymbolicLink() && decision.traverse) {
+                pendingDirectories.push(entryPath);
+              }
+            }
           }
-          let children: Dirent[];
-          try {
-            children = await readdir(currentPath, { withFileTypes: true });
-          } catch (error) {
-            if (isSkippableWorkspaceFileListError(error)) {
-              continue;
-            }
-            throw error;
-          }
-          for (const entry of children) {
-            const entryPath = join(currentPath, entry.name);
-            const relativePath = normalizeRelativePath(rootPath, entryPath);
-            if (relativePath === WORKSPACE_FILE_SEARCH_IGNORE_FILE_NAME) {
-              continue;
-            }
-            const type = await resolveReaddirEntryType(
-              entryPath,
-              entry.isDirectory(),
-              entry.isSymbolicLink(),
-            );
-            if (isWorkspaceFileSearchPathIgnored(ignoreRules, relativePath, type)) {
-              continue;
-            }
-            const decision = workspaceFileSearchFilter.evaluate(
-              { name: entry.name, path: entryPath, relativePath, type },
-              { ignoreRulesActive: true },
-            );
-            if (decision.include) {
-              entries.push({ name: entry.name, path: entryPath, relativePath, type });
-            }
-            if (type === "directory" && !entry.isSymbolicLink() && decision.traverse) {
-              pendingDirectories.push(entryPath);
-            }
-          }
-        }
-      };
-      await Promise.all(
-        Array.from({ length: WORKSPACE_FILE_LIST_SCAN_CONCURRENCY }, () => traverseWorker()),
-      );
+        };
+        await Promise.all(
+          Array.from({ length: WORKSPACE_FILE_LIST_SCAN_CONCURRENCY }, () => traverseWorker()),
+        );
+      }
       const sorted = entries.sort((left, right) => {
         if (left.type !== right.type) {
           return left.type === "directory" ? -1 : 1;
@@ -345,7 +378,9 @@ export function createFileService(options: CreateFileServiceOptions = {}): IFile
         return left.relativePath.localeCompare(right.relativePath);
       });
       const packed = packWorkspaceFileEntries(sorted);
-      return { at: Date.now(), signature: cacheSignature, packed };
+      // 成本比例 TTL：只有"重建够贵"的清单才值得缓存（门槛与倍数见 R4）。
+      const reuseMs = computeWorkspaceFileIndexReuseMs(Date.now() - buildStartedAt, sorted.length);
+      return { at: Date.now(), signature: cacheSignature, packed, reuseMs };
     })();
     workspaceFileListScanning.set(workspaceKey, { signature: cacheSignature, promise: scanning });
     try {
@@ -353,11 +388,14 @@ export function createFileService(options: CreateFileServiceOptions = {}): IFile
       // 显式刷新/规则变化可替换在途扫描，旧扫描完成时只服务旧请求，不覆盖新索引。
       if (workspaceFileListScanning.get(workspaceKey)?.promise === scanning) {
         workspaceFileListCache.delete(workspaceKey);
-        workspaceFileListCache.set(workspaceKey, index);
-        while (workspaceFileListCache.size > WORKSPACE_FILE_LIST_CACHE_MAX_ENTRIES) {
-          const oldest = workspaceFileListCache.keys().next().value;
-          if (oldest === undefined) break;
-          workspaceFileListCache.delete(oldest);
+        // 便宜构建（reuseMs=0）不进缓存：单一写入路径，禁止 git 采集层另设清单缓存。
+        if (index.reuseMs > 0) {
+          workspaceFileListCache.set(workspaceKey, index);
+          while (workspaceFileListCache.size > WORKSPACE_FILE_LIST_CACHE_MAX_ENTRIES) {
+            const oldest = workspaceFileListCache.keys().next().value;
+            if (oldest === undefined) break;
+            workspaceFileListCache.delete(oldest);
+          }
         }
       }
       return index;

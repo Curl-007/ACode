@@ -51,6 +51,11 @@ import { detectRemoteAssetTools } from "@acode/server/remote/remoteAssetPrefligh
 import { assertSupportedRemoteEnvironment } from "@acode/server/remote/remotePlatformSupport.js";
 import { acquireRemoteDeployLock } from "@acode/server/remote/remoteDeployLock.js";
 import type { RemoteAssetNetworkPort } from "@acode/server/remote/remoteAssetNetwork.js";
+import { preflightRemoteDeployDiskSpace } from "@acode/server/remote/remoteDeployDiskSpace.js";
+import {
+  createRemoteAssetManifestGuard,
+  type RemoteAssetManifestSignatureVerifier,
+} from "@acode/server/remote/remoteAssetManifestSignature.js";
 
 const log = (...args: unknown[]) => console.log(formatLogPrefix("deploy", process.pid), ...args);
 const logWarn = (...args: unknown[]) =>
@@ -84,6 +89,12 @@ export interface DeployOptions {
   assetInstallMode?: RemoteAssetInstallMode;
   /** 只在选中资源包范围内做远端部署检查、下载和上传。 */
   resourcePackages?: RemoteResourcePackageSelection;
+  /**
+   * manifest 验签接口（预留；钉扎公钥管理属发布管线，见
+   * specs/remote-deploy-hardening.md R3）。缺省 not-configured：记录一次并放行；
+   * 注入的 verifier 返回 invalid 或自身抛错时拒绝部署。
+   */
+  manifestSignatureVerifier?: RemoteAssetManifestSignatureVerifier;
 }
 
 /**
@@ -123,6 +134,13 @@ export async function deployServer(
     env,
     { log, logWarn },
   );
+  // manifest 门禁（验签状态 + server-cli↔desktop 兼容窗）：deploy 可见的三条
+  // manifest 获取路径共用同一 memoized 裁决；invalid/窗外在任何远端写入前拒绝。
+  const manifestGuard = createRemoteAssetManifestGuard({
+    currentVersion: ACODE_VERSION,
+    signatureVerifier: options?.manifestSignatureVerifier,
+    loggers: { log, logWarn },
+  });
   let remoteManifestPromise: Promise<RemoteManifestRef> | null = null;
   const getRemoteManifestRef = (): Promise<RemoteManifestRef> => {
     remoteManifestPromise ??= fetchRemoteDownloadManifest(
@@ -135,7 +153,10 @@ export async function deployServer(
         remoteAssetNetwork: options?.remoteAssetNetwork,
       },
       { log, logWarn },
-    );
+    ).then(async (manifestRef) => {
+      await manifestGuard.inspect(manifestRef.manifest, { source: "cdn" });
+      return manifestRef;
+    });
     return remoteManifestPromise;
   };
   let localManifestRefPromise: Promise<RemoteAssetManifestRef | null> | null = null;
@@ -143,7 +164,12 @@ export async function deployServer(
     // deploy lock 可能等待较久；在获锁前就启动 fresh manifest
     // 会让等待者用旧 SHA 覆盖新 owner 的部署。改为锁内首次需要时才固定，
     // 后续 GLM 身份判断与 release materialize 仍复用同一份快照。
-    localManifestRefPromise ??= resolveFreshAssetManifestRef();
+    localManifestRefPromise ??= resolveFreshAssetManifestRef().then(async (manifestRef) => {
+      if (manifestRef) {
+        await manifestGuard.inspect(manifestRef.manifest, { source: "local-cache" });
+      }
+      return manifestRef;
+    });
     return localManifestRefPromise;
   };
   const getManifestRefForComponents = async (
@@ -164,7 +190,11 @@ export async function deployServer(
     if (missingMockPaths.length > 0 && hasRemoteAssetCdnFallback(options)) {
       // mock manifest 存在不等于该 component 的文件完整。
       // 回退 CDN 时，SHA 跳过判断与 release materialize 必须共用同一份 CDN 快照。
-      return resolveFreshCdnManifestRef();
+      const cdnManifestRef = await resolveFreshCdnManifestRef();
+      if (cdnManifestRef) {
+        await manifestGuard.inspect(cdnManifestRef.manifest, { source: "cdn" });
+      }
+      return cdnManifestRef;
     }
     return getLocalManifestRef();
   };
@@ -248,10 +278,35 @@ export async function deployServer(
   log("remote env:", platformArch);
   log("selected remote resource packages:", selectedResourcePackageIds.join(","));
 
+  const resolveManifestComponentsForEstimate = async (): Promise<readonly unknown[] | null> => {
+    // 磁盘估算的 sizeBytes 回退只读 manifest 组件声明（发布管线登记字段）；
+    // 获取失败不得成为预检的新失败源，退化为 null 走 release dir stat 路径。
+    try {
+      const manifestRef = await getManifestRefForComponents([...selectedResourcePackageIds]);
+      return manifestRef?.manifest.components ?? null;
+    } catch {
+      return null;
+    }
+  };
+
   const deployWithDecision = async (
     serverDeployDecision: ServerDeployDecision,
     expectedServerBundleSha256: string | null,
   ): Promise<boolean> => {
+    if (serverDeployDecision.shouldDeploy) {
+      // 修复原因：远端磁盘不足的失败形态是中途 ENOSPC 并留下半成品部署目录。
+      // 在任何远端写入（含强刷 pending marker）之前做 df 等价探测：余量必须
+      // ≥ 7× 资产估算，不足即拒绝并解释（specs/remote-deploy-hardening.md R1）。
+      await preflightRemoteDeployDiskSpace(backend, {
+        requiredRelativePaths: resolveRequiredMockReleasePaths(
+          platformArch,
+          selectedResourcePackageIds,
+        ),
+        resolveReleaseDir: () => getReleaseDir([...selectedResourcePackageIds]),
+        manifestComponents: await resolveManifestComponentsForEstimate(),
+        loggers: { log, logWarn },
+      });
+    }
     const hasPendingAppVersionRefresh = await hasRemoteAssetComponentRefreshPending(backend, {
       componentId: "glm",
       platformArch,

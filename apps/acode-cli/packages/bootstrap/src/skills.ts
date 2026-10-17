@@ -37,9 +37,18 @@ export async function listACodeSkills(
     };
   }
 
-  return await discovery.skillPort.discoverSkills({
+  const outcome = await discovery.skillPort.discoverSkills({
     workingDirectory: discovery.workingDirectory,
   });
+  // user-invocable:false 用户面隐藏（specs/skill-frontmatter-governance.md R6 消费
+  // 接线）：三个用户可见面（/skill 列表、acode skills list、TUI slash 完成）都以本
+  // 函数为清单单一来源，过滤在此一处收口（不在三处各抄一份判定）。模型面清单不受
+  // 影响（runtime 走自己的 discoverSkills——「仅模型可调」技能对模型照常可见）；
+  // inspect 保留但标注 hidden（见 cli skills-command 的呈现面）。
+  return {
+    ...outcome,
+    skills: outcome.skills.filter((skill) => skill.governance?.userInvocable !== false),
+  };
 }
 
 export async function inspectACodeSkill(

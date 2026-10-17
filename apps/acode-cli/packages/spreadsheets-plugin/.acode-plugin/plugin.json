@@ -1,6 +1,7 @@
 {
   "name": "spreadsheets",
   "version": "0.1.7",
+  "tier": "always",
   "description": "Spreadsheet production skills for XLSX, published as an official ZCode plugin.",
   "description_i18n": {
     "en": "Spreadsheet production skills for XLSX: formulas, formatting, recalculation and verification.",

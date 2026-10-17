@@ -3,9 +3,20 @@ import { GENERAL_PURPOSE_AGENT_TYPE, buildGeneralPurposeSystemPrompt } from "./g
 import { EXPLORE_AGENT_TYPE } from "./explore.js";
 import { formatExploreAllowedToolsForAgentDescription } from "./explore-tools.js";
 import { parseAgentFrontmatter, splitMarkdownFrontmatter } from "./profile-frontmatter.js";
+import { parseDeclarativeAgentKeys } from "./profile-declarative.js";
 import { filterSubagentChildToolNames } from "./tool-policy.js";
 import type { BuiltInSubagentName, ModelSelection } from "@acode/shared";
 import { resolveProfileModelSelection } from "./profile-model-selection.js";
+
+// 第二批声明键类型（specs/subagent-declarative-keys.md R1）：定义在 profile-declarative.ts
+// （解析单点），经本文件再导出保持消费方 import 面不变。
+import type {
+  AgentHooksDeclaration,
+  AgentIsolationMode,
+  SubagentObserverDeclaration,
+} from "./profile-declarative.js";
+
+export type { AgentHooksDeclaration, AgentIsolationMode, SubagentObserverDeclaration };
 
 export const DEFAULT_SUBAGENT_TYPE = GENERAL_PURPOSE_AGENT_TYPE;
 
@@ -26,13 +37,29 @@ export interface AgentProfile {
   color?: "red" | "blue" | "green" | "yellow" | "purple" | "orange" | "pink" | "cyan";
   description: string;
   disallowedTools?: readonly string[];
+  /** 代理级 hooks 原始声明（declarative-keys spec R5）：project 源剥离、畸形丢弃（R1）；注册面归 hooks 所有权。 */
+  hooks?: AgentHooksDeclaration;
+  /** 作主会话时自动首发的消息（declarative-keys spec R4）：子代理派发链路零消费，入口经 resolveMainSessionInitialPrompt 读取。 */
+  initialPrompt?: string;
   injectAgentsMd?: boolean;
+  /** 声明式文件系统隔离（declarative-keys spec R2）：worktree = 每次运行在临时 git worktree 内。 */
+  isolation?: AgentIsolationMode;
   mcpServers?: readonly string[];
   memory?: AgentMemoryScope;
   modelSelection?: ModelSelection;
   name: string;
+  /** 声明式背景观察者（declarative-keys spec R3）：随本体自动孵化、收活动 digest。 */
+  observer?: SubagentObserverDeclaration;
   path?: string;
   permissionMode?: AgentPermissionMode;
+  /**
+   * AgentTeams 成员在 `!inheritCaptainModel` 时的 fail-closed 标记
+   * （specs/agent-teams-derived-config.md R4）：无插件专属覆盖且无可借用的
+   * general-purpose 选择时，resolveSubagentSelection 拒绝派生而不是隐式继承父模型。
+   * 写入方是 bootstrap 的 applyPluginAgentModelOverrides（插件覆盖烘焙单点），
+   * 读取方是 resolveSubagentSelection；用户/项目 Markdown 不产生该标记。
+   */
+  requireExplicitModelSelection?: boolean;
   skills?: readonly string[];
   source: AgentProfileSource;
   systemPrompt: string;
@@ -219,8 +246,19 @@ export function parseAgentProfileFromMarkdown(input: {
     };
   }
 
+  // 第二批声明键（specs/subagent-declarative-keys.md R1）：isolation 非法是致命拒绝
+  // （声明了隔离绝不静默跑共享 cwd）；非致命诊断单槽按 memory > hooks > observer 优先级。
+  const declarative = parseDeclarativeAgentKeys(frontmatter, {
+    source: input.source,
+    ...(input.path ? { path: input.path } : {}),
+  });
+  if (declarative.denial) {
+    return { diagnostic: declarative.denial };
+  }
+  const parseDiagnostic = memoryDiagnostic ?? declarative.warning;
+
   return {
-    ...(memoryDiagnostic ? { diagnostic: memoryDiagnostic } : {}),
+    ...(parseDiagnostic ? { diagnostic: parseDiagnostic } : {}),
     profile: {
       name,
       description,
@@ -236,6 +274,7 @@ export function parseAgentProfileFromMarkdown(input: {
       ...optionalList("skills", frontmatter.skills),
       ...optionalBoolean("background", frontmatter.background),
       ...optionalBoolean("injectAgentsMd", frontmatter.injectAgentsMd),
+      ...declarative.keys,
       ...(mcpServers === undefined ? {} : { mcpServers }),
     },
   };

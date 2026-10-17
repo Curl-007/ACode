@@ -9,6 +9,21 @@ export interface SubagentEnvironmentContextOptions {
   scratchDir?: string;
 }
 
+// filesystem 语义段（specs/subagent-declarative-keys.md R6，子代理变体）：把环境
+// 事实行的「真实路径语义」讲透——工作目录是用户电脑上的真实文件夹（读写直达磁盘、
+// 无备份、删除不可撤销）；报告即最终回复（harness 负责落进任务输出文件，代理不自建
+// 报告文件，与 common notes 禁令同向）；产品配置（用户 ACode 目录与 workspace
+// .acode 下的 agents/skills/memory/settings）是真实文件，改写即改写未来会话行为
+// ——self-modification 谨慎条款。文本自撰英文（prompt-language-policy.md R7）；
+// 恒真静态语义（不依赖新事实入参，registry 调用点零改动）；uploads/connected
+// folders 在 ACode CLI 无对应物，不虚构（spec R6 登记）。主会话变体归
+// context/sections/env-info.ts 所有权（接线项）。
+const FILESYSTEM_SEMANTICS_NOTE = [
+  "Filesystem semantics: the working directory above is a real folder on the user's computer - your reads and writes hit their disk directly, there is no backup copy, and deletions cannot be undone.",
+  "Your final response is your report: the harness records it into the task's output files for the parent, so never write report files of your own.",
+  "Product configuration is made of real files too (agents, skills, memory and settings under the user's ACode directory and the workspace .acode folder): editing them rewrites how future sessions behave, so treat such edits as consequential self-modification and make them only when the task explicitly asks.",
+].join(" ");
+
 export function buildSubagentCommonNotes(): string {
   return [
     "Notes:",
@@ -53,6 +68,10 @@ export function buildSubagentEnvironmentContext(
     `OS Version: ${envInfo.osVersion}`,
     ...scratchLines,
     "</env>",
+    // filesystem 语义段（spec R6）：紧跟事实块，把「真实路径语义」讲透；
+    // 持久记忆根路径的具体事实归 persistent-memory-prompt（memory 声明在场时），
+    // 此处不重复渲染路径。
+    FILESYSTEM_SEMANTICS_NOTE,
     ...modelLine,
   ].join("\n");
 }

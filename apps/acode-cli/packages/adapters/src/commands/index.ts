@@ -3,7 +3,7 @@
 // ============================================================
 
 import { open, readdir, readFile, stat } from "node:fs/promises";
-import { basename, relative, resolve } from "node:path";
+import { relative, resolve } from "node:path";
 import type {
   CustomCommandContent,
   CustomCommandDiagnostic,
@@ -13,6 +13,18 @@ import type {
   CustomCommandPort,
   CustomCommandRoot,
 } from "@acode/contracts";
+// frontmatter 解析 helper 按架构 ratchet 行数门禁抽到 frontmatter.ts（逻辑逐字保留）；
+// shell 键闭集解析（skill-frontmatter-governance R7 接线）也住那里。
+import {
+  emptyFrontmatter,
+  extractFrontmatter,
+  parseBoolean,
+  parseCommandShellPreference,
+  parseFlatYaml,
+  parseList,
+  parseScalar,
+  stripFrontmatter,
+} from "./frontmatter.js";
 import {
   resolveDefaultCustomCommandRoots,
   type CustomCommandRootResolutionOptions,
@@ -29,6 +41,7 @@ const SAFE_FRONTMATTER_KEYS = new Set([
   "description",
   "disable-noninteractive",
   "model",
+  "shell",
   "skills",
 ]);
 
@@ -90,7 +103,12 @@ export class NodeCustomCommandAdapter implements CustomCommandPort {
   }
 
   async loadCommand(
-    request: { maxBytes?: number; name: string; roots?: CustomCommandRoot[]; workingDirectory: string },
+    request: {
+      maxBytes?: number;
+      name: string;
+      roots?: CustomCommandRoot[];
+      workingDirectory: string;
+    },
     options?: CustomCommandOperationOptions,
   ): Promise<CustomCommandContent> {
     throwIfAborted(options);
@@ -202,6 +220,19 @@ export class NodeCustomCommandAdapter implements CustomCommandPort {
       });
     }
 
+    // shell 键（skill-frontmatter-governance R7 × powershell-tool 交叉登记）：
+    // 非法值 warning 后回落 bash（缺省跨平台一致，与技能面同款裁决）。
+    const shellPreference = parseCommandShellPreference(parsed.values.shell);
+    if (shellPreference.invalid !== undefined) {
+      diagnostics.push({
+        code: "custom_command_invalid_frontmatter",
+        commandName: name,
+        message: `Custom command ${name}: shell "${shellPreference.invalid}" is not recognized; expected "bash" or "powershell"`,
+        path,
+        severity: "warning",
+      });
+    }
+
     return {
       allowedTools: parseList(parsed.values["allowed-tools"]),
       argumentHint: parseScalar(parsed.values["argument-hint"]),
@@ -214,6 +245,7 @@ export class NodeCustomCommandAdapter implements CustomCommandPort {
       plugin: root.plugin,
       rootPath: root.path,
       scope: root.scope,
+      ...(shellPreference.shell ? { shell: shellPreference.shell } : {}),
       skills: parseList(parsed.values.skills),
       source: root.source,
     };
@@ -259,7 +291,8 @@ async function scanMarkdownFiles(
   } catch (error) {
     diagnostics.push({
       code: "custom_command_scan_failed",
-      message: error instanceof Error ? error.message : `Failed to scan command directory: ${directory}`,
+      message:
+        error instanceof Error ? error.message : `Failed to scan command directory: ${directory}`,
       path: directory,
       severity: "warning",
     });
@@ -277,92 +310,15 @@ function normalizeCommandName(name: string): string {
   return name.trim().replace(/^\/+/, "").toLowerCase();
 }
 
-function extractFrontmatter(content: string): string | null {
-  const normalized = content.replace(/^\uFEFF/, "");
-  if (!normalized.startsWith("---")) return null;
-  const lines = normalized.split(/\r?\n/);
-  if (lines[0]?.trim() !== "---") return null;
-  const endIndex = lines.findIndex((line, index) => index > 0 && line.trim() === "---");
-  if (endIndex <= 0) return null;
-  return lines.slice(1, endIndex).join("\n");
-}
-
-function stripFrontmatter(content: string): string {
-  const normalized = content.replace(/^\uFEFF/, "");
-  if (!normalized.startsWith("---")) return content;
-  const lines = normalized.split(/\r?\n/);
-  const endIndex = lines.findIndex((line, index) => index > 0 && line.trim() === "---");
-  if (endIndex <= 0) return content;
-  return lines.slice(endIndex + 1).join("\n");
-}
-
-function emptyFrontmatter(): { keys: string[]; values: Record<string, string> } {
-  return { keys: [], values: {} };
-}
-
-function parseFlatYaml(
-  frontmatter: string,
-  path: string,
-  diagnostics: CustomCommandDiagnostic[],
-): { keys: string[]; values: Record<string, string> } {
-  const values: Record<string, string> = {};
-  const keys: string[] = [];
-
-  for (const [index, line] of frontmatter.split(/\r?\n/).entries()) {
-    if (line.trim().length === 0 || line.trim().startsWith("#")) continue;
-    if (/^\s/.test(line)) continue;
-
-    const separator = line.indexOf(":");
-    if (separator <= 0) {
-      diagnostics.push({
-        code: "custom_command_invalid_frontmatter",
-        message: `Invalid frontmatter line ${index + 1} in ${basename(path)}`,
-        path,
-        severity: "warning",
-      });
-      continue;
-    }
-
-    const key = line.slice(0, separator).trim();
-    keys.push(key);
-    values[key] = line.slice(separator + 1).trim();
-  }
-
-  return { keys, values };
-}
-
-function parseScalar(value: string | undefined): string | undefined {
-  if (value === undefined) return undefined;
-  const trimmed = value.trim();
-  if (trimmed.length === 0) return undefined;
-  if (
-    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
-    (trimmed.startsWith("'") && trimmed.endsWith("'"))
-  ) {
-    return trimmed.slice(1, -1).trim();
-  }
-  return trimmed;
-}
-
-function parseBoolean(value: string | undefined): boolean {
-  const scalar = parseScalar(value)?.toLowerCase();
-  return scalar === "true" || scalar === "yes";
-}
-
-function parseList(value: string | undefined): string[] {
-  const scalar = parseScalar(value);
-  if (!scalar) return [];
-  const withoutBrackets = scalar.replace(/^\[/, "").replace(/\]$/, "");
-  return withoutBrackets
-    .split(",")
-    .map((item) => item.trim())
-    .filter(Boolean);
-}
-
 function extractDescription(body: string): string | undefined {
   const line = body
     .split(/\r?\n/)
-    .map((candidate) => candidate.replace(/^#+\s*/, "").replace(/^[-*]\s*/, "").trim())
+    .map((candidate) =>
+      candidate
+        .replace(/^#+\s*/, "")
+        .replace(/^[-*]\s*/, "")
+        .trim(),
+    )
     .find(Boolean);
   return line ? truncate(line, MAX_DESCRIPTION_LENGTH) : undefined;
 }

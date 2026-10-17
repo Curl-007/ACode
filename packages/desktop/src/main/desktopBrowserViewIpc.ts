@@ -12,6 +12,7 @@ import {
   type BrowserViewScreenshotSurfaceReadyPayload,
 } from "@acode/shared";
 import { registerBrowserDataIpcHandlers } from "./desktopBrowserDataIpc.js";
+import { deriveIpcSyncLabel, wrapIpcHandle } from "./ipcSyncTiming.js";
 
 export type AttachBrowserGuest = (
   key: string,
@@ -74,94 +75,111 @@ function registerBrowserViewIpcHandlers(
   // 否则相同 key 在多个窗口之间可能错误复用 BrowserGuestManager 状态。
   ipcMain.handle(
     PlatformChannels.BrowserViewAttachGuest,
-    async (
-      event,
-      payload: {
-        key: string;
-        webContentsId: number;
-        active?: boolean;
-        workspaceKey?: string;
-        remoteSessionId?: string;
-        sessionId?: string;
-        residencyGeneration?: number;
+    wrapIpcHandle(
+      deriveIpcSyncLabel(PlatformChannels.BrowserViewAttachGuest),
+      async (
+        event,
+        payload: {
+          key: string;
+          webContentsId: number;
+          active?: boolean;
+          workspaceKey?: string;
+          remoteSessionId?: string;
+          sessionId?: string;
+          residencyGeneration?: number;
+        },
+      ) => {
+        const win = BrowserWindow.fromWebContents(event.sender);
+        if (!win || win.isDestroyed()) {
+          return { ok: false, reason: "window-mismatch", recoveryRequested: false };
+        }
+        const key = nonEmptyStringSchema.parse(payload.key);
+        if (!Number.isSafeInteger(payload.webContentsId) || payload.webContentsId <= 0) {
+          throw new TypeError("webContentsId must be a positive safe integer");
+        }
+        if (payload.active !== undefined && typeof payload.active !== "boolean") {
+          throw new TypeError("active must be a boolean");
+        }
+        if (
+          payload.residencyGeneration !== undefined &&
+          (!Number.isSafeInteger(payload.residencyGeneration) || payload.residencyGeneration < 0)
+        ) {
+          throw new TypeError("residencyGeneration must be a non-negative safe integer");
+        }
+        const workspaceKey =
+          payload.workspaceKey === undefined
+            ? undefined
+            : nonEmptyStringSchema.parse(payload.workspaceKey);
+        const remoteSessionId =
+          payload.remoteSessionId === undefined
+            ? undefined
+            : nonEmptyStringSchema.parse(payload.remoteSessionId);
+        const sessionId =
+          payload.sessionId === undefined
+            ? undefined
+            : nonEmptyStringSchema.parse(payload.sessionId);
+        return ((await attachBrowserGuest?.(key, payload.webContentsId, {
+          ...(payload.active === undefined ? {} : { active: payload.active }),
+          ...(workspaceKey === undefined ? {} : { workspaceKey }),
+          ...(remoteSessionId === undefined ? {} : { remoteSessionId }),
+          ...(sessionId === undefined ? {} : { sessionId }),
+          ...(payload.residencyGeneration === undefined
+            ? {}
+            : { residencyGeneration: payload.residencyGeneration }),
+          windowId: win.id,
+        })) ?? {
+          ok: false,
+          reason: "not-found",
+          recoveryRequested: false,
+        }) satisfies BrowserGuestAttachResult;
       },
-    ) => {
-      const win = BrowserWindow.fromWebContents(event.sender);
-      if (!win || win.isDestroyed()) {
-        return { ok: false, reason: "window-mismatch", recoveryRequested: false };
-      }
-      const key = nonEmptyStringSchema.parse(payload.key);
-      if (!Number.isSafeInteger(payload.webContentsId) || payload.webContentsId <= 0) {
-        throw new TypeError("webContentsId must be a positive safe integer");
-      }
-      if (payload.active !== undefined && typeof payload.active !== "boolean") {
-        throw new TypeError("active must be a boolean");
-      }
-      if (
-        payload.residencyGeneration !== undefined &&
-        (!Number.isSafeInteger(payload.residencyGeneration) || payload.residencyGeneration < 0)
-      ) {
-        throw new TypeError("residencyGeneration must be a non-negative safe integer");
-      }
-      const workspaceKey =
-        payload.workspaceKey === undefined
-          ? undefined
-          : nonEmptyStringSchema.parse(payload.workspaceKey);
-      const remoteSessionId =
-        payload.remoteSessionId === undefined
-          ? undefined
-          : nonEmptyStringSchema.parse(payload.remoteSessionId);
-      const sessionId =
-        payload.sessionId === undefined ? undefined : nonEmptyStringSchema.parse(payload.sessionId);
-      return ((await attachBrowserGuest?.(key, payload.webContentsId, {
-        ...(payload.active === undefined ? {} : { active: payload.active }),
-        ...(workspaceKey === undefined ? {} : { workspaceKey }),
-        ...(remoteSessionId === undefined ? {} : { remoteSessionId }),
-        ...(sessionId === undefined ? {} : { sessionId }),
-        ...(payload.residencyGeneration === undefined
-          ? {}
-          : { residencyGeneration: payload.residencyGeneration }),
-        windowId: win.id,
-      })) ?? {
-        ok: false,
-        reason: "not-found",
-        recoveryRequested: false,
-      }) satisfies BrowserGuestAttachResult;
-    },
+    ),
   );
 
   ipcMain.handle(
     PlatformChannels.BrowserViewDetachGuest,
-    async (event, payload: { key: string; webContentsId: number }): Promise<boolean> => {
-      const win = BrowserWindow.fromWebContents(event.sender);
-      if (!win || win.isDestroyed()) return false;
-      const key = nonEmptyStringSchema.parse(payload.key);
-      if (!Number.isSafeInteger(payload.webContentsId) || payload.webContentsId <= 0) {
-        throw new TypeError("webContentsId must be a positive safe integer");
-      }
-      return (
-        (await residencyHandlers.detachBrowserGuest?.(key, payload.webContentsId, win.id)) ?? false
-      );
-    },
+    wrapIpcHandle(
+      deriveIpcSyncLabel(PlatformChannels.BrowserViewDetachGuest),
+      async (event, payload: { key: string; webContentsId: number }): Promise<boolean> => {
+        const win = BrowserWindow.fromWebContents(event.sender);
+        if (!win || win.isDestroyed()) return false;
+        const key = nonEmptyStringSchema.parse(payload.key);
+        if (!Number.isSafeInteger(payload.webContentsId) || payload.webContentsId <= 0) {
+          throw new TypeError("webContentsId must be a positive safe integer");
+        }
+        return (
+          (await residencyHandlers.detachBrowserGuest?.(key, payload.webContentsId, win.id)) ??
+          false
+        );
+      },
+    ),
   );
 
   ipcMain.handle(
     PlatformChannels.BrowserViewUpdateViewport,
-    async (
-      event,
-      payload: {
-        tabId: string;
-        viewport: BrowserViewportSize | null;
+    wrapIpcHandle(
+      deriveIpcSyncLabel(PlatformChannels.BrowserViewUpdateViewport),
+      async (
+        event,
+        payload: {
+          tabId: string;
+          viewport: BrowserViewportSize | null;
+        },
+      ) => {
+        const win = BrowserWindow.fromWebContents(event.sender);
+        if (!win || win.isDestroyed()) return;
+        const tabId = nonEmptyStringSchema.parse(payload.tabId);
+        const viewport =
+          payload.viewport === null ? null : browserViewportInputSchema.parse(payload.viewport);
+        // zoom factor 只能从 IPC 绑定的 BrowserWindow 读取，不能信任 renderer payload。
+        await updateBrowserGuestViewport?.(
+          tabId,
+          viewport,
+          win.id,
+          win.webContents.getZoomFactor(),
+        );
       },
-    ) => {
-      const win = BrowserWindow.fromWebContents(event.sender);
-      if (!win || win.isDestroyed()) return;
-      const tabId = nonEmptyStringSchema.parse(payload.tabId);
-      const viewport =
-        payload.viewport === null ? null : browserViewportInputSchema.parse(payload.viewport);
-      // zoom factor 只能从 IPC 绑定的 BrowserWindow 读取，不能信任 renderer payload。
-      await updateBrowserGuestViewport?.(tabId, viewport, win.id, win.webContents.getZoomFactor());
-    },
+    ),
   );
 
   ipcMain.on(
@@ -175,78 +193,93 @@ function registerBrowserViewIpcHandlers(
 
   ipcMain.handle(
     PlatformChannels.BrowserViewCloseTabFromRenderer,
-    async (event, payload: BrowserViewCloseTabRequest) => {
-      const win = BrowserWindow.fromWebContents(event.sender);
-      if (!win || win.isDestroyed()) return;
-      await residencyHandlers.closeBrowserTab?.({
-        ...parseBrowserTabScope(payload),
-        windowId: win.id,
-      });
-    },
+    wrapIpcHandle(
+      deriveIpcSyncLabel(PlatformChannels.BrowserViewCloseTabFromRenderer),
+      async (event, payload: BrowserViewCloseTabRequest) => {
+        const win = BrowserWindow.fromWebContents(event.sender);
+        if (!win || win.isDestroyed()) return;
+        await residencyHandlers.closeBrowserTab?.({
+          ...parseBrowserTabScope(payload),
+          windowId: win.id,
+        });
+      },
+    ),
   );
 
   ipcMain.handle(
     PlatformChannels.BrowserViewReportResidency,
-    async (event, payload: BrowserViewResidencyReportPayload) => {
-      const win = BrowserWindow.fromWebContents(event.sender);
-      if (!win || win.isDestroyed()) return;
-      await residencyHandlers.reportBrowserTabResidency?.({
-        ...payload,
-        ...parseBrowserTabScope(payload),
-        selected: Boolean(payload.selected),
-        visible: Boolean(payload.visible),
-        currentTask: Boolean(payload.currentTask),
-        loading: Boolean(payload.loading),
-        windowId: win.id,
-      });
-    },
+    wrapIpcHandle(
+      deriveIpcSyncLabel(PlatformChannels.BrowserViewReportResidency),
+      async (event, payload: BrowserViewResidencyReportPayload) => {
+        const win = BrowserWindow.fromWebContents(event.sender);
+        if (!win || win.isDestroyed()) return;
+        await residencyHandlers.reportBrowserTabResidency?.({
+          ...payload,
+          ...parseBrowserTabScope(payload),
+          selected: Boolean(payload.selected),
+          visible: Boolean(payload.visible),
+          currentTask: Boolean(payload.currentTask),
+          loading: Boolean(payload.loading),
+          windowId: win.id,
+        });
+      },
+    ),
   );
 
   ipcMain.handle(
     PlatformChannels.BrowserViewSuspendReady,
-    async (event, payload: { tabId: string; generation: number }) => {
-      const win = BrowserWindow.fromWebContents(event.sender);
-      if (!win || win.isDestroyed()) return;
-      await residencyHandlers.acknowledgeBrowserTabSuspend?.({
-        tabId: nonEmptyStringSchema.parse(payload.tabId),
-        generation: Number(payload.generation),
-        windowId: win.id,
-      });
-    },
+    wrapIpcHandle(
+      deriveIpcSyncLabel(PlatformChannels.BrowserViewSuspendReady),
+      async (event, payload: { tabId: string; generation: number }) => {
+        const win = BrowserWindow.fromWebContents(event.sender);
+        if (!win || win.isDestroyed()) return;
+        await residencyHandlers.acknowledgeBrowserTabSuspend?.({
+          tabId: nonEmptyStringSchema.parse(payload.tabId),
+          generation: Number(payload.generation),
+          windowId: win.id,
+        });
+      },
+    ),
   );
 
   ipcMain.handle(
     PlatformChannels.BrowserViewEnsureResident,
-    async (event, payload: BrowserViewCloseTabRequest) => {
-      const win = BrowserWindow.fromWebContents(event.sender);
-      if (!win || win.isDestroyed()) return;
-      await residencyHandlers.ensureBrowserTabResident?.({
-        ...parseBrowserTabScope(payload),
-        windowId: win.id,
-      });
-    },
+    wrapIpcHandle(
+      deriveIpcSyncLabel(PlatformChannels.BrowserViewEnsureResident),
+      async (event, payload: BrowserViewCloseTabRequest) => {
+        const win = BrowserWindow.fromWebContents(event.sender);
+        if (!win || win.isDestroyed()) return;
+        await residencyHandlers.ensureBrowserTabResident?.({
+          ...parseBrowserTabScope(payload),
+          windowId: win.id,
+        });
+      },
+    ),
   );
 
   ipcMain.handle(
     PlatformChannels.BrowserViewRestoreTabs,
-    async (event, payload: BrowserViewRestoreTabsRequest) => {
-      const win = BrowserWindow.fromWebContents(event.sender);
-      if (!win || win.isDestroyed()) return [];
-      return (
-        (await residencyHandlers.restoreBrowserTabs?.({
-          workspaceKey: nonEmptyStringSchema.parse(payload.workspaceKey),
-          ...(payload.remoteSessionId
-            ? {
-                remoteSessionId: nonEmptyStringSchema.parse(payload.remoteSessionId),
-              }
-            : {}),
-          ...(payload.sessionId
-            ? { sessionId: nonEmptyStringSchema.parse(payload.sessionId) }
-            : {}),
-          windowId: win.id,
-        })) ?? []
-      );
-    },
+    wrapIpcHandle(
+      deriveIpcSyncLabel(PlatformChannels.BrowserViewRestoreTabs),
+      async (event, payload: BrowserViewRestoreTabsRequest) => {
+        const win = BrowserWindow.fromWebContents(event.sender);
+        if (!win || win.isDestroyed()) return [];
+        return (
+          (await residencyHandlers.restoreBrowserTabs?.({
+            workspaceKey: nonEmptyStringSchema.parse(payload.workspaceKey),
+            ...(payload.remoteSessionId
+              ? {
+                  remoteSessionId: nonEmptyStringSchema.parse(payload.remoteSessionId),
+                }
+              : {}),
+            ...(payload.sessionId
+              ? { sessionId: nonEmptyStringSchema.parse(payload.sessionId) }
+              : {}),
+            windowId: win.id,
+          })) ?? []
+        );
+      },
+    ),
   );
 }
 

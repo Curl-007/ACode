@@ -137,6 +137,7 @@ export type {
   ModelSelectionOrigin,
   ModelNetworkStatusEvent,
   ModelAnomalyGuardConfig,
+  AutoResumeConfig,
   Model,
   ModelEvent,
   ModelInvocationContext,

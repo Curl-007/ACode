@@ -147,6 +147,15 @@ export interface ACodeAgentAutomationIdParams extends ACodeAgentWorkspaceTarget 
   automationId: string;
 }
 
+/**
+ * runAutomationNow 入参：id/scope 同 ACodeAgentAutomationIdParams，另带可选的用户
+ * 动作凭据（specs/scheduled-manual-trigger-activation.md R1）。wire 形状未知（unknown），
+ * 校验归 shared 守卫；v1 由 UI 按钮点击铸造，发行面接线属后续批次——缺席走兼容窗。
+ */
+export interface ACodeAgentRunAutomationNowParams extends ACodeAgentAutomationIdParams {
+  userActivation?: unknown;
+}
+
 export interface ACodeAgentSetAutomationEnabledParams extends ACodeAgentWorkspaceTarget {
   automationId: string;
   enabled: boolean;

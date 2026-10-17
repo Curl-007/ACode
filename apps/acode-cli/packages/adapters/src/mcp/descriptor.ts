@@ -58,6 +58,20 @@ function sanitizeMcpName(name: string): string {
   return sanitized.length > 0 ? sanitized : "unknown";
 }
 
+/**
+ * 模型面工具名长度上限（specs/mcp-protocol-negotiation-increments.md R3）。
+ * 128 = MCP SDK 对 server 侧工具名的校验上限（`/^[A-Za-z0-9._-]{1,128}$/`）与
+ * provider API 工具名限制的同级量级；ACode 的模型面名字带 `mcp__server__tool`
+ * 前缀，更容易越界，因此在注册边界按**完整模型面名**判定。
+ */
+export const MCP_TOOL_NAME_MAX_LENGTH = 128;
+
+/** 完整模型面名（含 mcp__ 前缀）是否超过 128 字符上限。 */
+export function exceedsMcpToolNameLimit(descriptor: McpToolDescriptor): boolean {
+  const modelName = descriptor.name ?? descriptor.toolName;
+  return modelName.length > MCP_TOOL_NAME_MAX_LENGTH;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }

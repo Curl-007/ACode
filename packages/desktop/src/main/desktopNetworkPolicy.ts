@@ -2,6 +2,12 @@ import { X509Certificate } from "node:crypto";
 import { readFileSync } from "node:fs";
 import type { ProxyConfig, Session } from "electron";
 import { EMBEDDED_BROWSER_PARTITION } from "./browserDataManager.js";
+import {
+  getNetworkEndpointRegistry,
+  lookupNetworkEndpointRegistration,
+  type NetworkEndpointLookupResult,
+  type NetworkEndpointOrigin,
+} from "./networkEndpointRegistry.js";
 
 interface DesktopNetworkPolicySettings {
   httpProxy?: string;
@@ -53,6 +59,7 @@ export async function applyDesktopChromiumNetworkPolicies(
   settings: DesktopNetworkPolicySettings,
   logger: DesktopNetworkPolicyLogger,
 ): Promise<void> {
+  logNetworkEndpointRegistryInventoryOnce(logger);
   const targets = [
     {
       name: "default-session",
@@ -270,4 +277,118 @@ function readCertificateFingerprint(certificate: CertificateLike): string | unde
 
 function normalizeFingerprint(value: string): string {
   return value.replace(/[^a-f0-9]/gi, "").toLowerCase();
+}
+
+// —— 网络端点注册表一期消费点（spec: update-gates-endpoint-registry.md）——
+// 一期只做「按表查询登记用途」与未登记出站面 warn 诊断，不阻断；阻断策略、
+// 三档隐私开关与合成 503 均登记为企业面后续（触发条件见 spec）。
+
+let endpointRegistryInventoryLogged = false;
+
+function logNetworkEndpointRegistryInventoryOnce(logger: DesktopNetworkPolicyLogger): void {
+  if (endpointRegistryInventoryLogged) return;
+  endpointRegistryInventoryLogged = true;
+  // getNetworkEndpointRegistry 的 fail-closed 语义在注册表模块内：构建失败=空表+warn，
+  // 这里只报盘点结果，未登记出站面由 diagnoseUnregisteredEgress 逐条 warn。
+  const registry = getNetworkEndpointRegistryForInventory(logger);
+  logger.info(
+    `[desktop-network] endpoint registry: ${registry.usageCount} usages registered (diagnostics=warn-only)`,
+  );
+}
+
+function getNetworkEndpointRegistryForInventory(logger: DesktopNetworkPolicyLogger): {
+  usageCount: number;
+} {
+  // 注册表模块自身 fail-closed（构建失败=空表+warn）；这里再兜一层，
+  // 保证盘点日志失败不影响代理/证书策略主路径。
+  try {
+    return { usageCount: getNetworkEndpointRegistry(logger).length };
+  } catch {
+    return { usageCount: 0 };
+  }
+}
+
+/** 按表查询某 URL 的登记用途；URL 不可解析或未登记返回 null。 */
+export function lookupRegisteredNetworkEndpoint(
+  url: string | URL,
+  logger?: DesktopNetworkPolicyLogger,
+): NetworkEndpointLookupResult | null {
+  let parsed: URL;
+  try {
+    parsed = typeof url === "string" ? new URL(url) : url;
+  } catch {
+    return null;
+  }
+  return lookupNetworkEndpointRegistration(parsed.hostname, parsed.pathname, logger);
+}
+
+/**
+ * 出站 URL 的日志安全描述：只落 host+path，不落 query/凭据
+ * （query 可能携带 token，redaction 对齐 feedbackPrivacy 既有承诺）。
+ */
+export function describeEgressUrlForLog(url: string): string {
+  try {
+    const parsed = new URL(url);
+    return `${parsed.host}${parsed.pathname}`;
+  } catch {
+    return "<invalid-url>";
+  }
+}
+
+const warnedUnregisteredEgressKeys = new Set<string>();
+const MAX_WARNED_UNREGISTERED_EGRESS_KEYS = 500;
+
+/**
+ * 未登记出站面诊断日志（warn 级，不阻断）。按 host+origin 去重；去重集有界，
+ * 满员后清空重计（旧 host 会重复 warn 一轮，诊断可接受，防无界增长）。
+ */
+export function diagnoseUnregisteredEgress(
+  url: string,
+  context: { origin: NetworkEndpointOrigin; logger: DesktopNetworkPolicyLogger },
+): void {
+  const registration = lookupRegisteredNetworkEndpoint(url, context.logger);
+  if (registration) return;
+  let host = "<invalid-url>";
+  try {
+    host = new URL(url).host;
+  } catch {
+    // 不可解析 URL 也按未登记诊断（保守方向），host 用占位符。
+  }
+  const dedupeKey = `${context.origin}\u0000${host}`;
+  if (warnedUnregisteredEgressKeys.has(dedupeKey)) return;
+  if (warnedUnregisteredEgressKeys.size >= MAX_WARNED_UNREGISTERED_EGRESS_KEYS) {
+    warnedUnregisteredEgressKeys.clear();
+  }
+  warnedUnregisteredEgressKeys.add(dedupeKey);
+  context.logger.warn(
+    `[desktop-network] unregistered egress (warn-only, not blocked): origin=${context.origin} url=${describeEgressUrlForLog(url)}`,
+  );
+}
+
+/**
+ * 返回可组合进 webRequest.onBeforeRequest 的诊断回调。
+ *
+ * 本模块**不得**自行注册 onBeforeRequest：Electron 每 session 每事件只允许一个监听器，
+ * 重复注册会顶掉 desktopOfficialPlatformPolicy 的官方平台阻断。组合点（唯一监听器
+ * 所有者）接线见 spec 的接线需求；embedded-browser partition 是用户自有浏览面，
+ * 不组合、不诊断。
+ */
+export function createEgressDiagnosticsObserver(
+  logger: DesktopNetworkPolicyLogger,
+  origin: NetworkEndpointOrigin = "renderer",
+): (details: { url: string }) => void {
+  return (details) => {
+    try {
+      diagnoseUnregisteredEgress(details.url, { origin, logger });
+    } catch (error) {
+      // 诊断是旁路观察者：自身异常不得影响请求主路径。
+      logger.warn("[desktop-network] egress diagnostics observer failed:", error);
+    }
+  };
+}
+
+/** 测试专用：清空未登记诊断去重集与盘点日志标记。 */
+export function resetNetworkEgressDiagnosticsForTest(): void {
+  warnedUnregisteredEgressKeys.clear();
+  endpointRegistryInventoryLogged = false;
 }

@@ -1,6 +1,7 @@
 {
   "name": "acode-guide",
-  "version": "0.2.0",
+  "version": "0.3.0",
+  "tier": "always",
   "description": "ZCode usage and self-diagnosis guide: teaches agents and users how to configure MCP servers, commands, skills, hooks, and plugins, how to locate and fix configuration problems for each, and how to author dynamic workflows.",
   "author": {
     "name": "ZCodium"

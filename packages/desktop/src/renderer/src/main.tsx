@@ -12,6 +12,8 @@ import {
   createRemoteWorkspaceDisconnectedError,
   playTaskNotificationSound,
   setStreamClientId,
+  applyPersistedAppearancePreferences,
+  subscribeToAppearanceStorageChanges,
 } from "@acode/ui";
 import "@acode/ui/styles.css";
 import { connectViaMessagePort, createMessagePortServiceConnection } from "@acode/client";
@@ -93,6 +95,12 @@ function registerE2EStoreBridgesIfEnabled() {
   document.documentElement.classList.toggle("theme-zai-light", appliedTheme === "zai-light");
   document.documentElement.classList.toggle("theme-zai-dark", appliedTheme === "zai-dark");
 }
+
+// 三轴外观偏好根属性（ui specs/appearance-preference-axes.md R5/R6）：全部窗口在
+// 首帧前应用（主窗口随后在 store 的 applyTheme 收口点幂等重写，避免启动页阶段
+// 属性缺席）；update-status 独立窗口无 store，这里是它唯一的应用点，其跨窗
+// storage 订阅在下方 windowKind 分支内挂载。
+applyPersistedAppearancePreferences();
 
 const isMacDesktop = navigator.userAgent.includes("Mac");
 const isWindowsDesktop = navigator.userAgent.includes("Windows");
@@ -334,6 +342,9 @@ if (windowKind !== "update-status") {
 }
 
 if (windowKind === "update-status") {
+  // 独立窗口无 store/广播通道：外观偏好跨窗同步走 storage 事件订阅
+  //（resource-manager 同款；storage 事件只在同源其他窗口触发，天然防回环）。
+  subscribeToAppearanceStorageChanges();
   createRoot(document.getElementById("root")!).render(
     <AppErrorBoundary isDesktop isMacDesktop={isMacDesktop} isWindowsDesktop={isWindowsDesktop}>
       <StartupReadyNotifier />

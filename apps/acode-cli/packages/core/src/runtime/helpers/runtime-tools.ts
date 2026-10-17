@@ -228,6 +228,32 @@ function createRuntimeToolExecutor(
     embeddedSearchBackend: runtime.config.embeddedSearchBackend,
     nativeSearchEnhancementsEnabled: runtime.config.nativeSearchEnhancementsEnabled,
     skillPort: deps.skillPort,
+    // paths 触发判定的候选事实源（skill-frontmatter-governance R5 消费接线）：
+    // runtime 的技能发现快照（context 初始化门之后恒有值；之前为 undefined = 不触发）。
+    getSkillCatalog: () => runtime.skillLoadOutcome,
+    // GUIDE 宿主接线（specs/guide-live-build-section.md「宿主接线登记」①②③）：
+    // ① version = deps.appVersion（cli __CLI_VERSION__ → createACodeApp options.version）；
+    // ② 内置 slash 命令表 = deps.builtInSlashCommandNames 只读投影（command-center 注册表）；
+    // ③ MCP 连接态 = runtime.mcpStartupPromise 的 name→state 只读投影（「已配置」升级
+    //   「已连」）。best-effort：查询失败回空数组，快照回落磁盘面，绝不抛进 Skill 链。
+    liveBuildSnapshotPort: {
+      ...(deps.appVersion ? { version: deps.appVersion } : {}),
+      ...(deps.builtInSlashCommandNames
+        ? { builtInCommandNames: deps.builtInSlashCommandNames }
+        : {}),
+      ...(deps.hostAgentNames ? { hostAgentNames: deps.hostAgentNames } : {}),
+      getMcpConnectionStates: async () => {
+        try {
+          const snapshot = await runtime.mcpStartupPromise;
+          return Object.entries(snapshot?.statuses ?? {}).map(([name, status]) => ({
+            name,
+            state: status.status,
+          }));
+        } catch {
+          return [];
+        }
+      },
+    },
     subagentPort: runtime.subagentPort,
     coordinatorResponsePort: deps.coordinatorResponsePort,
     workflowSubmitPort: deps.workflowSubmitPort,

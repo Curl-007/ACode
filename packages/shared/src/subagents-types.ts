@@ -67,6 +67,16 @@ export type AgentColor =
 
 export type SubagentsListMode = "allRuntimeScopes" | "settingsUserOnly";
 
+/**
+ * 代理声明键批②（apps/acode-cli/specs/subagent-declarative-keys.md R1-R5）的 GUI
+ * 往返键集。解析语义单点在 CLI core/subagent/profile-declarative.ts（isolation 非法
+ * 拒整 profile / hooks 仅内联 JSON 对象 / observer 三键归并防孤儿）；本面只做**往返
+ * 保真**（GUI 保存不得丢这些键），isolation/observer 的 GUI 表单呈现另议（spec 接线
+ * 需求 3）。键面保持与 frontmatter 1:1 的平铺形状（observer 三键不在此归并——归并是
+ * runtime 消费语义，往返层保真原键面）。
+ */
+export type AgentIsolationMode = "worktree";
+
 export interface AgentSummary {
   id: string;
   name: string;
@@ -83,6 +93,13 @@ export interface AgentSummary {
   permissionMode?: AgentPermissionMode;
   background?: boolean;
   mcpServers?: unknown[];
+  /** 声明键批②往返面（语义单点 core/subagent/profile-declarative.ts，见文件头注）。 */
+  isolation?: AgentIsolationMode;
+  observer?: string;
+  observerMessage?: string;
+  observeSubagents?: boolean;
+  initialPrompt?: string;
+  hooks?: Record<string, unknown>;
   path: string;
   scope: AgentScope;
   source: AgentSource;
@@ -127,6 +144,13 @@ export interface SubAgentConfig {
   permissionMode?: AgentPermissionMode;
   background?: boolean;
   mcpServers?: unknown[];
+  /** 声明键批②往返面（与 AgentSummary 同形；序列化规则见 services subagentMarkdown）。 */
+  isolation?: AgentIsolationMode;
+  observer?: string;
+  observerMessage?: string;
+  observeSubagents?: boolean;
+  initialPrompt?: string;
+  hooks?: Record<string, unknown>;
 }
 
 /** Agent 创建参数 */

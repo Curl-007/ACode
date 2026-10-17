@@ -505,7 +505,16 @@ runtime/methods/subagent.ts        permissionMode plan 地板 + 工具白名单�
     （`topLevelPaths`/`requiredPaths` 已含 agents，未端到端实跑完整远端打包）；
     desktop staged bundle 待下次 `prepare:agent-bundle` 自然刷新，刷新前 GUI
     按候选链回退仓库源目录（第 4 条已记）。
-11. **真实派发 E2E 实测（2026-10-06 集成批次，dev 形态 + 真实模型）**：
+11. **live-refresh 派生边界与 bundled 成员的交互**（2026-10-15，AgentTeams 合入批次，
+    所有权 spec 见 `agent-teams-derived-config.md` R6/R7）：派生边界新增实时重读通道
+    （每次新派生前重读用户/项目 Markdown 与 agents-state）。bundled 成员**必须**进
+    live 快照：`loadCurrentACodeAgentProfiles` 接受启动时解析的原始 bundled profiles，
+    用最新 disabledAgentIds 过滤、用最新 builtInModelSelectionOverrides 经
+    `resolveBundledProfileModelSelection` 烘焙——与本 spec R5 / 回写第 5 条的启动装配
+    同一判据单点，不复制规则。场景 5（禁用）与场景 6（模型覆盖）的生效时点因此提前：
+    已打开会话的下一次新派生即生效，不再等 CLI 重启。合并序不变
+    （核心播种 < bundled < user < project < plugin）；恢复既有 child 仍用启动快照。
+12. **真实派发 E2E 实测（2026-10-06 集成批次，dev 形态 + 真实模型）**：
     - 前置事实：dev 形态下 workspace 依赖解析到各包 **dist**（tsx 只转译 cli
       src），本批之前的 dist 为陈旧构建，首次 Plan 派发报 UNKNOWN_AGENT_TYPE
       （意外成为旧目录二成员的负对照）；`tsc -b packages/core packages/bootstrap`
@@ -560,3 +569,7 @@ runtime/methods/subagent.ts        permissionMode plan 地板 + 工具白名单�
    禁止第三方原文进测试代码）。zoode 对照记录「血缘确认」bullet 收口指向 R9，
    「不在本项范围」的存量处置 bullet 移除（已进范围），R6 补文本替换例外，
    接口节与验收场景（新增第 10 项、验证命令重编号为 11）同步。
+4. **2026-10-15，AgentTeams 合入批次**：回写节新增第 11 条（派生边界 live-refresh
+   与 bundled 成员的交互：bundled 必须进 live 快照、判据单点复用、禁用/覆盖生效
+   时点提前到下一次新派生），原第 11 条 E2E 实测顺延为第 12 条。所有权 spec 见
+   `agent-teams-derived-config.md`（R6/R7），本 spec 的目录内容与合并序规则不变。

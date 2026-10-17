@@ -265,6 +265,10 @@ export {
   OffPeakPermanentDispatchError,
 } from "./session/offPeakRuntimeModel.js";
 export { createServiceLogger } from "./logger/serviceLogger.js";
+// 运行期收名（specs/log-privacy-redaction.md services R3）：SSH/远程连接建立点
+// 把对端主机名登记进服务层脱敏注册表；桌面 main 侧收名走 logPrivacyIdentity 的
+// registerLogHostName（desktopMainIpcRemote 接线归 IPC 包装批次）。
+export { registerServiceLogHostName } from "./logger/logPrivacy.js";
 export {
   buildOfficialMcpAuthHeaders,
   createOfficialMcpAuthHeadersResolver,
@@ -327,7 +331,11 @@ import { createObservableSettingService } from "./setting/observableSettingServi
 import { createCredentialService } from "./credential/credentialService.js";
 import { createBroadcastService } from "./broadcast/broadcastService.js";
 import { createACodeAgentService } from "./acode-agent/acodeAgentService.js";
-import type { ACodeAgentCommandResolver } from "./acode-agent/acodeAgentProcessManager.js";
+import type {
+  ACodeAgentCommandResolver,
+  ACodeAgentSparePrewarmOptions,
+} from "./acode-agent/acodeAgentProcessManager.js";
+import { resolveAgentSparePrewarmConfig } from "./acode-agent/acodeAgentSparePrewarm.js";
 import { resolveACodeAgentPresentationSurface } from "./acode-agent/acodeAgentPresentationSurface.js";
 import { createACodeTaskServiceAdapter } from "./acode-agent/acodeTaskServiceAdapter.js";
 import { createACodeSessionService } from "./acode-session/acodeSessionService.js";
@@ -2099,6 +2107,30 @@ export function createLocalServices(options: {
           resolveOffPeakClientConfig: () => codingPlanSubscriptionService.getOffPeakClientConfig(),
           resolveOffPeakTaskService: () => offPeakTaskServiceForAgent,
         };
+  // 备用进程预热(spec: packages/services/specs/agent-process-prewarm.md):
+  // 缺省只在 desktop-local host 装配;远程 SSH/WSL server host 内存敏感,不默认常驻备件,
+  // ACODE_AGENT_SPARE_PREWARM=1 强制开、=0 为 kill switch(R6)。desktop-local 即使被
+  // kill switch 关闭也传入选项:timing 日志需要 spare_miss_disabled 归因(R3)。
+  const isDesktopLocalAuthority = options?.serviceAuthorityMode === "desktop-local";
+  const sparePrewarmConfig = resolveAgentSparePrewarmConfig(process.env, {
+    isDesktopLocalAuthority,
+  });
+  const sparePrewarmWiring: { sparePrewarm?: ACodeAgentSparePrewarmOptions } =
+    sparePrewarmConfig.enabled || isDesktopLocalAuthority
+      ? {
+          sparePrewarm: {
+            config: sparePrewarmConfig,
+            // CUA 认领门禁留在装配层(R5):备件 spawn context 无 workspace 身份,
+            // broker env 姿态在 spawn 时记录;目标 workspace CUA 启用而备件未带 CUA
+            // 姿态时拒绝认领(冷启动路径会完整执行 helper admission),反向无害。
+            collectSpawnContextFacts: (context) => ({
+              cuaEnabled: isCuaEnabledForContext(context),
+            }),
+            resolveClaimEligibility: (context, spare) =>
+              !isCuaEnabledForContext(context) || spare.facts.cuaEnabled === true,
+          },
+        }
+      : {};
   const acodeAgentService = createACodeAgentService({
     ...(agentAccountProviderConfigSource
       ? { accountProviderConfigSource: agentAccountProviderConfigSource }
@@ -2107,6 +2139,7 @@ export function createLocalServices(options: {
     ...(modelSelectionReadinessSource ? { modelSelectionReadinessSource } : {}),
     authorizeLocalMediaPreviewPath: options?.authorizeLocalMediaPreviewPath,
     ...offPeakToolWiring,
+    ...sparePrewarmWiring,
     // 动态工作流灰度：与 Off-Peak 不同，
     // 这里不按 serviceAuthorityMode 裁剪——SSH/WSL/Docker 的 desktop-attached-remote Host
     // 是它自己那些 workspace 的唯一裁决者，灰度开启时远程 workspace 同样提供工作流。

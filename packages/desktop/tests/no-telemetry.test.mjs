@@ -108,6 +108,7 @@ test("OAuth delivery and remote connection retain business behavior without tele
   const handlers = new Map();
   const channels = new Proxy({}, { get: (_target, key) => key });
   let delivered = 0;
+  const registeredLogHostNames = [];
   const win = {};
   const { registerRemoteIpcHandlers } = await loadModule("src/main/desktopMainIpcRemote.ts", {
     electron: {
@@ -127,8 +128,15 @@ test("OAuth delivery and remote connection retain business behavior without tele
     "./desktopNotifications.js": {},
     "./desktopOAuthDeepLink.js": { deliverPendingDeepLink: () => delivered++ },
     "./desktopMainIpcHelpers.js": {},
+    // 运行期日志脱敏收名（specs/log-privacy-redaction.md desktop R4-R6）：真实模块依赖
+    // node:* 与 @acode/shared，本测试只验证连接建立点确实收名，用记录型替身。
+    "./logPrivacyIdentity.js": {
+      registerLogHostName: (name) => registeredLogHostNames.push(name),
+    },
     // 窗口 ID 品牌类型模块（纯函数、零 IO）：加载真实实现，不做替身。
     "./desktopWindowIds.js": await loadModule("src/main/desktopWindowIds.ts", {}),
+    // ipcMain.handle 同步段计时包装（W1-6 接线）：纯 Node 模块，加载真实实现。
+    "./ipcSyncTiming.js": await loadModule("src/main/ipcSyncTiming.ts", {}),
   });
   let args;
   registerRemoteIpcHandlers({
@@ -155,4 +163,6 @@ test("OAuth delivery and remote connection retain business behavior without tele
     { workspacePath: "/project", workspaceIdentity: "identity" },
   ]);
   for (const name of handlers.keys()) assert.doesNotMatch(name, /Telemetry|Arms|Trace|Ttft/);
+  // SSH 连接建立点把对端主机名交给脱敏注册表（收名本身不影响连接结果，上面已断言 success）。
+  assert.deepEqual(registeredLogHostNames, ["example.invalid"]);
 });

@@ -1,5 +1,5 @@
 import type { TuiSubmitPrompt } from "@acode/tui";
-import { parseOvernightDuration } from "@acode/core";
+import { markUserInvokedSkillForTurn, parseOvernightDuration } from "@acode/core";
 import {
   formatAvailableCommandNames,
   listCustomCommandsForHelp,
@@ -10,6 +10,8 @@ import { handleDwfCommand } from "./handlers/dwf.js";
 import { handleEffortCommand } from "./handlers/effort.js";
 import { handleExpertCommand } from "./handlers/expert.js";
 import { handleLocaleCommand } from "./handlers/locale.js";
+import { handleUsageCommand } from "./handlers/usage.js";
+import { handleAutoResumeCommand } from "../auto-resume-command/index.js";
 import { handleMcpCommand } from "./handlers/mcp.js";
 import { handleModeCommand } from "./handlers/mode.js";
 import { handleModelCommand } from "./handlers/model.js";
@@ -322,6 +324,14 @@ export function createCommandCenter(deps: CommandCenterDeps): TuiSubmitPrompt {
         return handleLocaleCommand(command.args, deps);
       }
 
+      if (command.name === "usage") {
+        return handleUsageCommand(command.args, deps);
+      }
+
+      if (command.name === "auto-resume") {
+        return handleAutoResumeCommand(command.args, deps);
+      }
+
       if (command.name === "mcp") {
         return handleMcpCommand(command.args, deps);
       }
@@ -371,6 +381,10 @@ export function createCommandCenter(deps: CommandCenterDeps): TuiSubmitPrompt {
           return handleSkillListCommand(deps);
         }
         const app = await deps.getApp();
+        // disable-model-invocation 硬门标记（specs/skill-frontmatter-governance.md R6
+        // 接线）：手动 /skill 指名提交前落「用户指名」事实（单一写者），Skill
+        // handler 对受门技能按名一次性消费；TUI 与 headless 都经本路径。
+        markUserInvokedSkillForTurn(app.sessionId, command.skillName);
         return attachCurrentSessionMetadata(
           await app.submitPrompt(buildManualSkillPrompt(command.skillName, command.task), options),
           deps,

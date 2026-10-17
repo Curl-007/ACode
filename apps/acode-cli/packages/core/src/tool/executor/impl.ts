@@ -45,6 +45,8 @@ export class ToolExecutorImpl implements ToolExecutor {
       embeddedSearchBackend: options.embeddedSearchBackend,
       nativeSearchEnhancementsEnabled: options.nativeSearchEnhancementsEnabled,
       skillPort: options.skillPort,
+      liveBuildSnapshotPort: options.liveBuildSnapshotPort,
+      getSkillCatalog: options.getSkillCatalog,
       subagentPort: options.subagentPort,
       peerMessagingPort: options.peerMessagingPort,
       coordinatorResponsePort: options.coordinatorResponsePort,

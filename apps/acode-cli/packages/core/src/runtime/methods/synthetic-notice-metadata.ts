@@ -59,6 +59,10 @@ export function buildSyntheticUserNoticeSemantics(
 
 function syntheticUserNoticeKind(source: SyntheticUserMessageSource): MessageSemantics["kind"] {
   switch (source) {
+    // 跨回合 auto-resume 注入（specs/turn-auto-resume.md）：runtime 注入的 system
+    // reminder 语义，与 goal-continuation 同档（model-only、非用户 transcript）。
+    case "auto_resume":
+      return "system_reminder";
     case "background_task":
       return "background_notification";
     case "fork":

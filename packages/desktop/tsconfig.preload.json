@@ -5,6 +5,8 @@
     "rootDir": "src",
     "lib": ["es2025", "dom"]
   },
-  "include": ["src/preload"],
+  // bootPlaceholder.ts 零 electron 运行时导入，preload 复用其 argv 解析/校验器
+  // （specs/boot-placeholder.md §9.4），需列入本工程文件面（TS6307）。
+  "include": ["src/preload", "src/main/bootPlaceholder.ts"],
   "references": [{ "path": "../shared" }]
 }

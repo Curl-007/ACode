@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "inputHashEncoding": "UTF-8 with CRLF normalized to LF; notice and source snapshot hashes remain byte-exact",
   "scope": "Production dependency union across current workspace projects, copied source/assets and native tools; not a per-installer SBOM or a certification of all licensing obligations.",
-  "noticesSha256": "462fee3f3b26c6861fc2f779afe6d2c057a2d93d50b04b706a2fcefc999fb51a",
+  "noticesSha256": "0fb3fbe38c955ebdb7e27a9fc135f71d01d9649061f0d56b2034660285874e39",
   "inputs": {
     ".agents/skills/agent-browser/references/authentication.md": "b7531e028594768e2447547e67559ca1a88fdefba8d5507c07d04bc802c05d09",
     ".agents/skills/agent-browser/references/commands.md": "6eb0e44a3c939c90116092b1a11ae03a2884fb5716d42f2468677870304d11a8",
@@ -225,7 +225,7 @@
     ".agents/skills/react-best-practices/rules/server-serialization.md": "4d025c42043c56e6355196a2e885d168cdb15248d0797146c9db838a57b34946",
     ".agents/skills/react-best-practices/SKILL.md": "b7d246acb440bee224ab33614979a5b8debe5fdb13d0304967aa19358eb69d9f",
     "apps/acode-cli/package.json": "5e48e9dbf6d054a7826e30554763e188c7ef2f6ed9d9247e7f261b29c37e5096",
-    "apps/acode-cli/packages/acode-cua-plugin/.acode-plugin/plugin.json": "596692091429ea4a1e384adf630f42ab5ea990f451038ae52fa05794bf89454e",
+    "apps/acode-cli/packages/acode-cua-plugin/.acode-plugin/plugin.json": "d257a324def43998a946df66ea8b722d428d150da5cfcf311b1155196a6fb760",
     "apps/acode-cli/packages/acode-cua-plugin/docs/computer-use.md": "5c8de93091578ee9b148b13990f2e68ec424539ba4e46c455eeec700b9e8b2d4",
     "apps/acode-cli/packages/acode-cua-plugin/LICENSE": "c062d6b1760da9c2dbea8610c1ac5913c034220ddcf2f9066f7fcecba3142e0d",
     "apps/acode-cli/packages/acode-cua-plugin/NOTICE.md": "978e2f44190aca7e933f87a007b9b52fc9f217997a906aaf54d58723970ba1a9",
@@ -237,8 +237,9 @@
     "apps/acode-cli/packages/acode-cua-plugin/scripts/computer-use-keys.mjs": "b7d284dc403247bf17a9a82a423629e7957083c9eeda74422d168ef1fe766282",
     "apps/acode-cli/packages/acode-cua-plugin/scripts/computer-use-target.mjs": "d7bd956219f784f5b56d88dc6227ff4a302fd315696cabd40dad7b8a59436084",
     "apps/acode-cli/packages/acode-cua-plugin/skills/computer-use/SKILL.md": "277b8fc2150769cfd6efd69dcad6feb81d0d6da0c0620d7725a596b813e70f03",
-    "apps/acode-cli/packages/acode-guide-plugin/package.json": "efcbbeb368b59437d5e270b211df5a371d6c7a5689d5ab1bb7c9cf3b8fee0b96",
+    "apps/acode-cli/packages/acode-guide-plugin/package.json": "0bad6c4ddd4e6cc2e3368ef143f6fd3502238d634b6be8f1025436b891a88ab8",
     "apps/acode-cli/packages/adapters/package.json": "cf388f3c5ce199daf35cbc984e04c01a00c789aa243c68d1bdfab4ce2dd331d1",
+    "apps/acode-cli/packages/agent-teams-plugin/package.json": "641178b0f8070423f935bc44f09447472ceade8570e91db81b294c06e424a0db",
     "apps/acode-cli/packages/android-emulator-plugin/package.json": "459dcb3c90efa8237278abc84767591fa079337cb485eca53c756a2a7a1531fc",
     "apps/acode-cli/packages/bootstrap/package.json": "139c4bf188c58bb1f63dd4e05e073a94e74bc5fda69a36febcc5006b7046498f",
     "apps/acode-cli/packages/browser-use-plugin/package.json": "dad5da2e437ff3cd0d475654b0ddec4d63c3f2eb7cb0b752058a6e0badc9612c",
@@ -269,11 +270,11 @@
     "apps/acode-cli/packages/workflow-run-read/package.json": "d4659d598d8320400e86695cef751c86bc8cc7cca3508858c6e42957a86d5b6c",
     "apps/acode-cli/tools/prompt-trajectory/package.json": "c0b79b8c11694062afce19807a3e527541b3d262b77aae07b40479d5ee73346c",
     "apps/acode-cli/tools/typescript/package.json": "916bb98a7a42a80a690c6460038da943c80e2c005fc528d8bfddc930ff67a13c",
-    "package.json": "0927dd68e1b17f6c9c3be986cf71e421b83fc148515013c69d699dbad1d9db81",
+    "package.json": "dbd03dad1d050103f90190177fca0c90cafd20d1f785408bc005f91d4c739404",
     "packages/acode-cua/package.json": "faa859923517a6a948141b87bea3fa6ac885ef737ebde7be9ae9f9abd3d9a752",
     "packages/acode-server-cli/package.json": "5e9445eb2bce9eb54e320723dcd327354ee6798e93dafb01b3532d14d0287bc3",
     "packages/client/package.json": "34842bccbb96748d785cd56230ca0e36d230b913cc57ef455680d87c999b939c",
-    "packages/desktop/package.json": "d47fb43e26b1f84ff248f0b911cf743e648c74b1bfa21ae75289a19ed4827581",
+    "packages/desktop/package.json": "04404c95efd799b5457445e8301e495d06684d5af6bed88cc05baa37d885435a",
     "packages/desktop/src/renderer/public/material-icons/3d.svg": "9527b849f0fba57ca7640e2717b3a19cb5f5e046712cbbd8b75d73af338c68fb",
     "packages/desktop/src/renderer/public/material-icons/abap.svg": "1335bd7eb9a0ed49deb622330d680c2e97731726a7a5eee8e4f46dc1e5db4de4",
     "packages/desktop/src/renderer/public/material-icons/abc.svg": "d1a68020e8f020ef29dca5f94dc8613b7ae8fb5b212d8b1cc23b0f975ac7acda",
@@ -1452,11 +1453,11 @@
     "packages/rpc/src/remote.ts": "a11e072d5df7e1c1ce64814a68f72afc081246b364f0da409b5c9d22bc815957",
     "packages/rpc/src/serialization.ts": "d33aa4ae9c29b678b88b45359d39c0a74b2282bb93a4f4dfdfc28019bbbe6ec2",
     "packages/rpc/src/transport-frame-limits.ts": "ea32f6436e885edd1948642819544bc4d809e206442f98a86caebd4f7e47f1f4",
-    "packages/server/package.json": "5b243c076715ded76df49266c4de4b911ce9b751a262ea316b85da95a601413c",
+    "packages/server/package.json": "e94a9066d5d43940dc5617e4d115835f5972348c7e7e13f937e5dd59283afccd",
     "packages/services/package.json": "8c7a55dfe325a60f19b18cec4123a2f7ca99daaf5441298b8bb17c977f3b75cf",
     "packages/shared/package.json": "07cadc84f12b3150d75b7de4cc643dd799453211b9dc9b66e1a77fbc2c6e558c",
     "packages/shared/src/acode-protocol-v4/wire-codec.ts": "5704d415e11fd79aee64d198a9ea6bd2e75c774c39832f8452dd65b69589c0ec",
-    "packages/ui/package.json": "ea16d01439ecd9f166cf8431236dd81b7540901745edcafab003a82397a511dd",
+    "packages/ui/package.json": "c3453aef5e37ac44289dcc50c87c0a78d2b26564ed2f89f28bfb5c8d7a26f2b5",
     "packages/ui/src/components/ai-elements/agent.tsx": "459e6e55671e169d7cd948a6d154a9728144fdb0311012bbe5eb31f43ce491c2",
     "packages/ui/src/components/ai-elements/artifact.tsx": "64c73fe21fd12c85a975ab3aa0145790d6499fe92437953627cf47f42a00e5fe",
     "packages/ui/src/components/ai-elements/attachments.tsx": "2bac3ff99c6c25da62f7e28dc5a39b4ff49a62e1345c73008d25652661d5a44a",
@@ -1541,6 +1542,7 @@
     "packages/ui/src/components/ui/scroll-fade-viewport.tsx": "50e5984232b6a7d59e872aab4ebb36ae837e2865e3a770adbc234b61c2531da1",
     "packages/ui/src/components/ui/select.tsx": "e6d73ae0bf6916256fd86005d8a94e3dfb004c8107f51882cfd2d52e7751ca09",
     "packages/ui/src/components/ui/separator.tsx": "31ade0b9a0eca6689226c94d479352416ef076859980a976422a8af17879dee2",
+    "packages/ui/src/components/ui/slider.tsx": "a2016dfbabe02979fc2850107f522d504ab0ff878afd4b4b74938b92b429755e",
     "packages/ui/src/components/ui/spinner.tsx": "62addde743978a73322a86be769e5f02e9d11f390b31299511d324fa20481063",
     "packages/ui/src/components/ui/switch.tsx": "1a6490eb3c47b3a86b76c8469e5702608ea57da7853df5de00fffa9a4a472adf",
     "packages/ui/src/components/ui/tabs.tsx": "adc59a0469c80118e9d60c08bf0222d55664ef95e6c522496b5c201011b347f0",
@@ -1549,7 +1551,7 @@
     "packages/ui/src/components/ui/tooltip.tsx": "301dbf3a6f8b1bc496f9bdc6fbc5fe6202ed373182897f39cd1ecd19b00fdfbe",
     "packages/ui/src/components/ui/usePdfZoomOverlay.ts": "c8c91b003ce2fded32c7a2369dc6eac43aa4b9dc9c830a0f5ceccb21d366b610",
     "packages/ui/src/lib/builtinSkillI18n.ts": "3d4870ce39e38d5a8726b482fb08774ff6ed877957e359a4c82230baaf720819",
-    "packages/ui/src/styles.css": "7789ff30ee17d64c87e23fec4dabfa0cfe7a356ca093eca241e1c9832e07400c",
+    "packages/ui/src/styles.css": "03258677fffe01216f63a53c8787c9f3a1d50b57a3efe6d06bdd7a9b541cc1db",
     "packages/web/package.json": "39a3eb197637d92e64ad52afd4a6ad43e032920b6360f9c7413b896dc1eb2703",
     "packages/web/public/material-icons/3d.svg": "9527b849f0fba57ca7640e2717b3a19cb5f5e046712cbbd8b75d73af338c68fb",
     "packages/web/public/material-icons/abap.svg": "1335bd7eb9a0ed49deb622330d680c2e97731726a7a5eee8e4f46dc1e5db4de4",
@@ -2699,7 +2701,7 @@
     "packages/web/public/material-icons/zip.svg": "dad79a45f756542d37abd422502ecfbea15720b92ea1c9d80ef0439ab6b9448a",
     "patches/@ai-sdk__anthropic@3.0.81.patch": "d3a7c381eba7f5157f765a0528003af17cf84544911dfb7412c7800168e01c18",
     "patches/@ai-sdk__openai-compatible@2.0.60.patch": "9632fe9d821b3dc20939ae509cc35b968d90d018bbd1d812390718898182a38b",
-    "pnpm-lock.yaml": "c27898695a68c37e4f240bc04d0fc147121b5194634f435a4777e1f91e43c1df",
+    "pnpm-lock.yaml": "5e1a51610a4896eb9b2677901def55f6d085348cc6c0e7030e33b2c0d2beb2d5",
     "pnpm-workspace.yaml": "a9c2ba737409e152c3904e65fec268247194ea5a33050b630f00e14eb644e2cb",
     "scripts/license-texts/Apache-2.0.txt": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
     "scripts/native-search-tools-config.mjs": "54cee5ce2aa05e1c47f15758a700567ce4c822213c3f68392c18309142aa77ab",
@@ -3731,6 +3733,22 @@
         {
           "member": "LICENSE",
           "sha256": "942eab097945c835cf41abcbf1b9a6659c5d0c3493e60c56796d2e045c219278"
+        }
+      ]
+    },
+    {
+      "name": "@kurkle/color",
+      "version": "0.3.4",
+      "license": "MIT",
+      "repository": "git+https://github.com/kurkle/color.git",
+      "notices": [
+        {
+          "member": "LICENSE.md",
+          "sha256": "89ba0032731489153d552db918b727feb05128cf9eca20092875a9ad14147671"
+        },
+        {
+          "member": "README.md (license section)",
+          "sha256": "bcb7ca9ca99522b2cc6a2913987a46114a1926896b9ebbe0fca67423aad0c5d5"
         }
       ]
     },
@@ -6984,6 +7002,22 @@
         {
           "member": "readme.md (license section)",
           "sha256": "acbc749a901d088cade5d4f004537905074c2ace908cb7e1435624cd4a5a41d8"
+        }
+      ]
+    },
+    {
+      "name": "chart.js",
+      "version": "4.5.0",
+      "license": "MIT",
+      "repository": "https://github.com/chartjs/Chart.js.git",
+      "notices": [
+        {
+          "member": "LICENSE.md",
+          "sha256": "41a84aa2caba645f966a18d9c2056b73e6d3a81d80bc0046bc0011a2634d4cce"
+        },
+        {
+          "member": "README.md (license section)",
+          "sha256": "c8849bac944d8177fa253a79fe27c849f99b176196c60e158004e2f71ed48da9"
         }
       ]
     },
@@ -14255,6 +14289,10 @@
           "sha256": "31ade0b9a0eca6689226c94d479352416ef076859980a976422a8af17879dee2"
         },
         {
+          "file": "packages/ui/src/components/ui/slider.tsx",
+          "sha256": "a2016dfbabe02979fc2850107f522d504ab0ff878afd4b4b74938b92b429755e"
+        },
+        {
           "file": "packages/ui/src/components/ui/spinner.tsx",
           "sha256": "62addde743978a73322a86be769e5f02e9d11f390b31299511d324fa20481063"
         },
@@ -14284,7 +14322,7 @@
         },
         {
           "file": "packages/ui/src/styles.css",
-          "sha256": "7789ff30ee17d64c87e23fec4dabfa0cfe7a356ca093eca241e1c9832e07400c"
+          "sha256": "03258677fffe01216f63a53c8787c9f3a1d50b57a3efe6d06bdd7a9b541cc1db"
         }
       ]
     },
@@ -24921,7 +24959,7 @@
       "files": [
         {
           "file": "apps/acode-cli/packages/acode-cua-plugin/.acode-plugin/plugin.json",
-          "sha256": "596692091429ea4a1e384adf630f42ab5ea990f451038ae52fa05794bf89454e"
+          "sha256": "d257a324def43998a946df66ea8b722d428d150da5cfcf311b1155196a6fb760"
         },
         {
           "file": "apps/acode-cli/packages/acode-cua-plugin/LICENSE",

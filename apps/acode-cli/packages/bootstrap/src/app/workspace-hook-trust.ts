@@ -30,6 +30,7 @@ import {
   type WorkspaceHookReviewLifecycleEvent,
 } from "./workspace-hook-review-controller.js";
 import { createWorkspaceHookReviewMutationPort } from "./workspace-hook-review-mutation.js";
+import { createWorkspaceHookReviewPinsPort } from "./workspace-hook-review-pins.js";
 import type { WorkspaceHookReviewHostContext } from "./types.js";
 
 interface WorkspaceHookRuntimeSecurity {
@@ -161,10 +162,35 @@ export function createWorkspaceHookRuntimeSecurity(input: {
         projectConfigPath: input.projectConfigPath,
         runtimeRoot: input.runtimeRoot,
       }),
+      // hook-pins 三态钉扎（specs/plugin-hook-middleware.md 三 / 接线 W3）：授予时
+      // 写 pin 经 controller；dispatch 前复核经下方 activate 包装。pins 目录与
+      // trust store 同一安全存储根（storage.dir 重定向一致生效）。
+      pins: createWorkspaceHookReviewPinsPort({
+        logger: input.logger,
+        userConfigPath: input.userConfigPath,
+        ...(input.homeDir ? { homeDir: input.homeDir } : {}),
+      }),
       sessionId: input.sessionId,
       store: store as NonNullable<typeof store>,
     });
   }
+
+  // dispatch 前复核的包装面（W3）：runtime 每次执行事件面 hooks 前必经 activate，
+  // 在其评估之前先做 pins 等价复核——漂移的授予被撤销回待信任，本轮评估即看到
+  // 撤销后的事实。controller 缺席（无 review host）时不包装，保持原对象。
+  const admissionPort: WorkspaceHookRuntimeAdmissionPort = controller
+    ? {
+        activate: async (source, signal) => {
+          const reviewing = controller;
+          if (reviewing) await reviewing.recheckPinsBeforeDispatch();
+          await admission.activate(source, signal);
+        },
+        evaluateDispatch: (dispatchInput) => admission.evaluateDispatch(dispatchInput),
+        getCurrentSnapshot: () => admission.getCurrentSnapshot(),
+        replaceSnapshot: (snapshot) => admission.replaceSnapshot(snapshot),
+        invalidate: (reasonCode) => admission.invalidate(reasonCode),
+      }
+    : admission;
 
   const unavailable = (): WorkspaceHookReviewCommandResult => ({
     accepted: false,
@@ -173,15 +199,17 @@ export function createWorkspaceHookRuntimeSecurity(input: {
       : "workspace_hooks_feature_disabled",
   });
   return {
-    admission,
+    admission: admissionPort,
     snapshot: input.snapshot,
     reloadTrust: async () => {
       if (!trustEnabled || !store) return;
       await loadWorkspaceHookTrustStore({ coordinator, logger: input.logger, store });
       // replacePersistentTrustRecords 已 bump revision 并清空 evaluation 缓存；
       // activate 幂等（跳过 ready 等待），重新 evaluate 并重发 admission 状态
-      // （pendingCount === 0 也会发，用于清空 banner）。
-      await admission.activate("resume");
+      // （pendingCount === 0 也会发，用于清空 banner）。经包装面走：外部写入的
+      // Trust（Settings pretrust）没有经过本 controller 的授予钉扎，激活前同样
+      // 需要 pins 复核兜底（缺 pin 的声明按无从比对跳过，不会误撤）。
+      await admissionPort.activate("resume");
     },
     requestReview: (target) =>
       controller ? controller.requestReview(target) : Promise.resolve(unavailable()),

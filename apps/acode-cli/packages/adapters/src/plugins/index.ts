@@ -7,7 +7,6 @@ import type {
   HookEventName,
   HookMatcherConfig,
   HookPluginContext,
-  PluginConfig,
   PluginDiagnostic,
   PluginDiscoverRequest,
   PluginHookDetail,
@@ -26,6 +25,8 @@ import {
 } from "@acode/contracts";
 import {
   directoryExists,
+  emptyPluginComponents,
+  emptyPluginLoadOutcome,
   fileExists,
   isMissingPath,
   isNotFoundError,
@@ -45,6 +46,7 @@ import {
   resolveInstalledPluginRoot,
 } from "./marketplace.js";
 import { loadBundledOfficialPluginRootsSync } from "./official-marketplace.js";
+import { resolveEnabled, resolvePluginDefaultEnabled } from "./manifest-tier.js";
 import type {
   LoadedPlugin,
   PluginAbortOptions,
@@ -115,12 +117,7 @@ const DEFAULT_VERSION = "0.0.0";
 const FIRST_PLUGIN_PRIORITY = 1_000;
 const PRIORITY_STEP = 10;
 const PLUGIN_NAME_PATTERN = /^[a-z0-9][a-z0-9._-]{0,127}$/;
-const UNSUPPORTED_COMPONENT_KEYS = [
-  "channels",
-  "lspServers",
-  "outputStyles",
-  "settings",
-] as const;
+const UNSUPPORTED_COMPONENT_KEYS = ["channels", "lspServers", "outputStyles", "settings"] as const;
 const SUPPORTED_HOOK_EVENTS = new Set<string>(Object.values(HookEventNameValue));
 
 interface PluginHookInspection {
@@ -146,7 +143,7 @@ export class NodePluginAdapter implements PluginPort {
     request: PluginDiscoverRequest,
     options?: PluginAbortOptions,
   ): PluginLoadOutcome {
-    if (!request.config.enabled) return emptyOutcome();
+    if (!request.config.enabled) return emptyPluginLoadOutcome();
 
     const diagnostics: PluginDiagnostic[] = [];
     const dataRoot = join(request.storageRoot || this.options.storageRoot, "data");
@@ -183,12 +180,18 @@ export class NodePluginAdapter implements PluginPort {
       seen.add(loaded.id);
       warnUnsupportedComponents(loaded, diagnostics);
 
-      // candidate.defaultEnabled 在 candidate 构造时无法访问 plugin id,
-      // 这里再叠加 bootstrap 提供的 "默认开" 名单 (按 `<name>@<marketplace>` 匹配)。
-      const candidateDefaultEnabled =
-        candidate.defaultEnabled ||
-        (request.officialPluginsEnabledByDefault?.has(loaded.id) ?? false);
-      const enabled = resolveEnabled(request.config, loaded.id, candidateDefaultEnabled);
+      // 默认启停单一来源派生（包 manifest tier 优先，官方市场限定）+ 用户显式配置最高。
+      // 规则与 tier 闭集见 specs/skill-seeding-registration.md R1。
+      const { defaultEnabled, diagnostic } = resolvePluginDefaultEnabled({
+        candidateDefaultEnabled: candidate.defaultEnabled,
+        manifest: loaded.manifest,
+        manifestPath: loaded.manifestPath,
+        marketplace: loaded.marketplace,
+        officialPluginsEnabledByDefault: request.officialPluginsEnabledByDefault,
+        pluginId: loaded.id,
+      });
+      if (diagnostic) diagnostics.push(diagnostic);
+      const enabled = resolveEnabled(request.config, loaded.id, defaultEnabled);
       const dataPath = join(dataRoot, sanitizePluginId(loaded.id));
       // 只从启用后解析出的 component.mcpServers 生成 mcpServerNames，
       // 未启用插件的内置 MCP 就会在管理页完全不可见。这里先读取声明名给 UI 只读展示，
@@ -214,7 +217,7 @@ export class NodePluginAdapter implements PluginPort {
             priority,
             workingDirectory: request.workingDirectory,
           })
-        : emptyComponents(hookInspection.details);
+        : emptyPluginComponents(hookInspection.details);
       priority += PRIORITY_STEP;
 
       Object.assign(mcpServers, component.mcpServers);
@@ -319,7 +322,7 @@ function createPluginMetadata(
     ...(homepage ? { homepage } : {}),
     commandRootCount: component.commandRoots.length,
     // 详情 UI 过去靠 plugin.skillCount（权威计数）+ 一条 UI 侧 join（按 pluginName 过滤
-    // skillsService 结果）拿名称，二者数据源分离。停用插件走 emptyComponents() 使 skillCount=0、
+    // skillsService 结果）拿名称，二者数据源分离。停用插件走 emptyPluginComponents() 使 skillCount=0、
     // 且 UI join 对停用插件不产出名称（skillsService 里 `if (!enabled) continue`），导致：停用时
     // 整个技能分组消失、启用时只有数量没有名称。这里改为对插件根目录做权威枚举（与启用态无关），
     // 直接把名称+描述随 list 下发，UI 不再需要脆弱的 join。
@@ -978,30 +981,4 @@ function readManifest(path: string, diagnostics: PluginDiagnostic[]): PluginMani
     });
     return null;
   }
-}
-
-function emptyOutcome(): PluginLoadOutcome {
-  return {
-    commandRoots: [],
-    diagnostics: [],
-    hooks: {},
-    mcpServers: {},
-    plugins: [],
-    skillRoots: [],
-  };
-}
-
-function emptyComponents(hookDetails: PluginHookDetail[] = []): PluginComponents {
-  return {
-    commandRoots: [],
-    hooks: {},
-    hookDetails,
-    mcpServers: {},
-    skillCount: 0,
-    skillRoots: [],
-  };
-}
-
-function resolveEnabled(config: PluginConfig, id: string, defaultEnabled: boolean): boolean {
-  return config.enabledPlugins[id] ?? defaultEnabled;
 }

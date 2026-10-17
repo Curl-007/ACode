@@ -1,6 +1,6 @@
 /* eslint-disable max-lines -- 存量基线豁免:该文件先于 CLI lint 门禁建立即超限(根 lint 的 ignorePatterns 排除 apps/acode-cli,turbo lint 因此从未变绿)。头注豁免以恢复门禁信号;拆分重构超出本批范围。 */
 import { extname } from "node:path";
-import { formatJson, type PresentationSurface } from "@acode/core";
+import { formatJson, markUserInvokedSkillForTurn, type PresentationSurface } from "@acode/core";
 import type { RunContext, GlobalOptions } from "@acode/shared-types";
 import { loadBootstrapModule } from "./bootstrap-loader.js";
 import {
@@ -9,6 +9,7 @@ import {
   formatSlashCommandHelp,
   parseSlashCommand,
 } from "./command-center.js";
+import { AVAILABLE_COMMANDS } from "./command-center/slash-commands.js";
 import { loadCliDotenv } from "./env.js";
 import { createCliHeadlessBrowserRuntime } from "./headless-browser.js";
 import {
@@ -232,6 +233,8 @@ export const runPrompt = async (
       uiDetectedLocale: options.detectedLocale,
       uiLocale: options.locale,
       version,
+      // GUIDE 宿主接线②（specs/guide-live-build-section.md）：内置 slash 命令表只读投影。
+      builtInSlashCommandNames: AVAILABLE_COMMANDS,
     });
     // 异步身份导入期间可能已收到退出信号；既有的 cleanup 尚拿不到这个 App。
     // 单独释放迟到实例，禁止继续提交，也不重启已结束的进程级清理。
@@ -259,6 +262,30 @@ export const runPrompt = async (
     // 判据与 facade 的 gate 共用一个来源，见 isResolvableCustomCommand。
     // `/expert`、`/goal` 走不到 submitPrompt，路由逐字不变。
     if (slashCommand && (await routesToPromptCommandCenter(slashCommand, deps))) {
+      // headless 快速本地回执路径的 MCP 收尾竞态遏制（存量缺陷，非新命令引入——
+      // /expert status 同样复现）：零 token 命令不开模型轮，closeApp 在 MCP 握手仍在
+      // 飞时执行，产生两类无 awaiter 的收尾拒绝——SDK 以 ConnectionClosed 拒绝在飞
+      // 请求（CONNECTION_CLOSED），版本协商探测被 transport close 中止
+      // （ERA_NEGOTIATION_FAILED，经 adapter failConnection 链冒泡且在外层 handler
+      // 挂上前被拒）。任一都会 unhandledRejection 升级 fatal（exit 1），盖掉已交付的
+      // 回执。根因修复属 MCP adapter 关闭链/启动 connect 的 handler 时序（登记跟进）；
+      // 这里只在收尾窗口吞这两个收尾竞态专属 code，其余 rejection 异步重抛保持默认
+      // fatal 语义（不扩大遮蔽面）。
+      process.on("unhandledRejection", (reason) => {
+        const code =
+          typeof reason === "object" && reason !== null
+            ? (reason as { code?: unknown }).code
+            : undefined;
+        if (code === "CONNECTION_CLOSED" || code === "ERA_NEGOTIATION_FAILED") {
+          ctx.stderr.write(
+            `[headless] suppressed MCP teardown race during shutdown (${String(code)})\n`,
+          );
+          return;
+        }
+        setTimeout(() => {
+          throw reason;
+        }, 0);
+      });
       return await runPromptCommandCenterCommand(
         ctx,
         options,
@@ -284,6 +311,12 @@ export const runPrompt = async (
     const subscribeEvents = readRuntimeEventSubscriber(app.runtime);
     detachEvents = subscribeEvents?.({ onSessionEvent: observer.observe });
     const runtimeFacts = readHeadlessRuntimeFacts(app.runtime);
+    // disable-model-invocation 硬门标记（specs/skill-frontmatter-governance.md R6 接线）：
+    // 手动 /skill 指名提交在 submitPrompt 之前落「用户指名」事实（单一写者），
+    // Skill handler 对受门技能按名一次性消费；headless 与 TUI 两条路径同款。
+    if (slashCommand?.type === "known" && slashCommand.name === "skill" && slashCommand.skillName) {
+      markUserInvokedSkillForTurn(app.sessionId, slashCommand.skillName);
+    }
     const result = await app.submitPrompt(
       attachmentPaths.length > 0
         ? {
@@ -457,7 +490,16 @@ async function routesToPromptCommandCenter(
   deps: RunDependencies,
 ): Promise<boolean> {
   if (slashCommand.type === "known") {
-    return slashCommand.name === "expert" || slashCommand.name === "goal";
+    // /usage 与 /auto-resume 是零 token 本地命令（specs/usage-statusbar.md、
+    // specs/turn-auto-resume.md）：必须进 command-center 拦截执行。落进 submitPrompt
+    // 会把命令原文当任务提交给模型（E2E D1 实测：单次泄漏烧数十万 tokens，且命令
+    // 文本获得工具权限被模型当指令探索执行）。
+    return (
+      slashCommand.name === "expert" ||
+      slashCommand.name === "goal" ||
+      slashCommand.name === "usage" ||
+      slashCommand.name === "auto-resume"
+    );
   }
   return !(await isResolvableCustomCommand(deps, slashCommand.rawName));
 }

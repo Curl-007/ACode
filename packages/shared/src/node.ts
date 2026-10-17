@@ -94,3 +94,54 @@ export {
   type ManagedPolicyInvalidKind,
   type ManagedPolicyRule,
 } from "./node/managedPolicy.js";
+export {
+  assertContainedDirectoryChain,
+  captureFileIdentitySnapshot,
+  openContainedFile,
+  readContainedFileBytes,
+  revalidateFileIdentityForExtraction,
+  safeOpenFileByPath,
+  type FileIdentitySnapshot,
+  type SafeOpenFileOptions,
+} from "./node/fileContainment.js";
+export {
+  FILE_CONTAINMENT_ERROR_CODES,
+  FileContainmentError,
+  findRelativePathEscapeReason,
+  isUnsafeWindowsPathSegment,
+  resolveContainedPath,
+  usesWindowsLexicalRules,
+  type ContainedPathResolution,
+  type FileContainmentErrorCode,
+  type RelativePathLexicalOptions,
+} from "./node/fileContainmentLexical.js";
+export {
+  describeStatChannelSkew,
+  getStatChannelSkew,
+  resetStatSkewProbeCache,
+  type StatChannelSkewKind,
+  type StatChannelSkewResult,
+} from "./node/statSkewProbe.js";
+export {
+  ARCHIVE_GLOBAL_LIMITS,
+  ARCHIVE_OWNER_EXECUTABLE_FILE_MODE,
+  ARCHIVE_POLICY_VIOLATION_REASONS,
+  ARCHIVE_TRUST_POLICIES,
+  ARCHIVE_TRUST_TIERS,
+  ArchivePolicyViolationError,
+  isOsMetadataArchiveEntry,
+  normalizeArchiveEntryNameForCollision,
+  type ArchivePolicyViolationReason,
+  type ArchiveTrustPolicy,
+  type ArchiveTrustTier,
+} from "./node/archiveTrustTiers.js";
+export {
+  ArchiveExtractionSession,
+  type ArchiveDirectoryEntryPlan,
+  type ArchiveEntryDescriptor,
+  type ArchiveEntryPlan,
+  type ArchiveExtractionSessionLimits,
+  type ArchiveExtractionSessionOptions,
+  type ArchiveFileEntryPlan,
+  type ArchiveSkipEntryPlan,
+} from "./node/archiveExtractionSession.js";

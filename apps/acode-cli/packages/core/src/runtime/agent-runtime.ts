@@ -71,6 +71,9 @@ import type {
   TurnId,
 } from "./deps.js";
 import { installAgentRuntimeMethods } from "./methods/index.js";
+// SessionEnd 公开桥接的本体（specs/hook-event-surface.md F1）：触发函数住在
+// methods/hooks-extended.ts，经 hooks.ts 再导出——导入路径与既有消费者一致。
+import { runSessionEndHooks as runSessionEndHooksTrigger } from "./methods/hooks.js";
 import type { StartSavedWorkflowRunResult } from "./methods/dynamic-workflow-run-start.js";
 import type { ConcurrencyDiagnosticsSnapshot } from "./methods/concurrency-diagnostics.js";
 import type {
@@ -125,6 +128,9 @@ import type {
   WorkspaceForkResult,
 } from "./types.js";
 import type { AgentRuntimeInternal } from "./internal.js";
+// 跨回合 auto-resume（specs/turn-auto-resume.md）：shutdown 收口 + /auto-resume 命令面。
+import { disposeAutoResumeCoordinator } from "./auto-resume/runtime-api.js";
+import type { AutoResumeRuntimeCommand, AutoResumeStatusSnapshot } from "./auto-resume/types.js";
 import { InMemoryRuntimeTaskRegistry, type RuntimeTaskRegistry } from "../runtime-task/contract.js";
 import type { SwarmPlanPort } from "../swarm/port.js";
 import type { ChildClientPortsContext, ClientFacingPorts } from "./helpers/child-client-ports.js";
@@ -133,6 +139,10 @@ import { projectPersistentAgentMemoryTools } from "../subagent/persistent-memory
 import { RuntimeTelemetryFacade } from "../telemetry/runtime-telemetry.js";
 import type { WorkspaceHookRuntimeAdmissionPort } from "../hooks/workspace-hook-runtime-admission.js";
 import { disposeNodeReplSession } from "../tool/handlers/node-repl.js";
+// 会话终结的技能缓存清理（skill-frontmatter-governance R4/R5/R6 消费接线）。
+import { clearSessionSkillActivationScope } from "../agent/skill-activation-scope.js";
+import { clearSkillPathActivations } from "../agent/skill-path-activation.js";
+import { clearUserInvokedSkillMarker } from "../agent/skill-user-invocation.js";
 import { initializeRuntimeTurnCoordination } from "./turn-coordination.js";
 import { getRuntimeLifecyclePort, initializeRuntimeLifecycle } from "./runtime-lifecycle.js";
 import { initializeRuntimeNotificationSeal } from "./runtime-notification-seal.js";
@@ -377,9 +387,38 @@ export class AgentRuntime {
     // shuttingDown 归 RuntimeLifecycleOwner（CLI-05 I4）：只能经 commitShutdown
     // 单调提交一次，重复 beginShutdown 不会回退，也没有布尔 setter 可绕过。
     getRuntimeLifecyclePort(this).commitShutdown();
+    // 跨回合 auto-resume 的定时器纪律（specs/turn-auto-resume.md）：进程退出/会话
+    // 关闭必须取消 pending 自动继续定时器——进程亡即重试链亡，不留幽灵续跑。
+    disposeAutoResumeCoordinator(this as unknown as AgentRuntimeInternal);
     // 关闭单个 session 后进程仍存活，
     // 因此必须先终止该 runtime 的 Extraction，不能只在超时后放弃等待。
     this.memoryExtractionScheduler?.shutdown();
+    // 会话终结即清（skill-frontmatter-governance R4/R5/R6 消费接线）：技能激活期
+    // 作用域缓存、paths 触发激活集与用户指名标记都是会话键控——进程存活的
+    // 多会话轮转不留陈旧状态。
+    clearSessionSkillActivationScope(this.sessionId);
+    clearSkillPathActivations(this.sessionId);
+    clearUserInvokedSkillMarker(this.sessionId);
+  }
+
+  /**
+   * SessionEnd hook（specs/hook-event-surface.md F1）：shutdown 漏斗的公开桥接——
+   * bootstrap session-facade.close 在 beginShutdown 之后调用。本体是
+   * methods/hooks-extended.ts 的「runtime 显式首参」普通函数（spec D6 形态），
+   * 这里只做公开面绑定与缺省 trace context 解析。通知类且内含 containment
+   * （hook 故障只 warn）；调用方另加超时闸门（abort 收掉在飞 hook 进程）。
+   */
+  runSessionEndHooks(
+    input: { reason: string },
+    traceContext?: TraceContext,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    return runSessionEndHooksTrigger(
+      this as unknown as AgentRuntimeInternal,
+      input,
+      traceContext,
+      signal,
+    );
   }
 }
 
@@ -388,6 +427,12 @@ export interface AgentRuntime {
   readonly lastPermissionGrantId?: string;
   beginShutdown(): void;
   closeBrowserSession(): Promise<void>;
+  /** SessionEnd hook（specs/hook-event-surface.md F1）：通知类、内含 containment；调用方加超时闸门。 */
+  runSessionEndHooks(
+    input: { reason: string },
+    traceContext?: TraceContext,
+    signal?: AbortSignal,
+  ): Promise<void>;
   updateConfig(patch: RuntimeConfigUpdatePatch): void;
   initializeSessionShellEnvironmentIfNeeded(
     selection: ExecutionShellSelection | (() => ExecutionShellSelection),
@@ -722,6 +767,18 @@ export interface AgentRuntime {
   isProjectMemoryEnabled(): boolean;
   /** 缺省等待最多 60 秒；null 等待全部已调度提取结束，不设置 drain deadline。 */
   drainMemoryExtractions(timeoutMs?: number | null): Promise<void>;
+  /**
+   * /auto-resume 命令面（specs/turn-auto-resume.md）：进程内状态只读投影
+   * （开关/暂停到期/自定义消息/当前会话计数与重复签名次数）。
+   * optional 成员先例（concurrencyBuckets?/tryAcquire?）：缺席 = 宿主未装配，
+   * 命令模块回执「不可用」，不得猜测。
+   */
+  getAutoResumeStatus?(): AutoResumeStatusSnapshot;
+  /**
+   * /auto-resume 命令面的进程内写入点（enable/pause/continue message overlay）；
+   * config 持久化在 bootstrap app 层另行叠加（照 /locale 写 config 先例）。
+   */
+  applyAutoResumeCommand?(input: AutoResumeRuntimeCommand): void;
 }
 
 installAgentRuntimeMethods(AgentRuntime);

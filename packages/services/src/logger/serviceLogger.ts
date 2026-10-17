@@ -1,5 +1,6 @@
 import { formatLogPrefix, type TraceId } from "@acode/shared";
 import { isEffectiveDevelopmentNodeEnv } from "#src/runtime-tools/nodeEnv.js";
+import { redactServiceLogArg } from "#src/logger/logPrivacy.js";
 
 interface ServiceLogSink {
   log: (...args: unknown[]) => void;
@@ -53,7 +54,11 @@ export function createServiceLogger(
           : level === "debug"
             ? (sink.debug ?? sink.log)
             : sink.log;
-    consoleFn(formatLogPrefix(source, pid), ...args);
+    // 服务层日志的单一脱敏漏斗（specs/log-privacy-redaction.md services R1-R2）：
+    // 字符串与 Error 在源头脱敏（覆盖 CLI/server 等非桌面 sink），对象原样透传
+    // 由终局字符串化漏斗（桌面 main write / host reportHostLog）再脱敏；
+    // 双层串联依赖脱敏幂等不变量。任何管线异常 → 该参数 <withheld>（fail-closed）。
+    consoleFn(formatLogPrefix(source, pid), ...args.map(redactServiceLogArg));
   }
 
   return {

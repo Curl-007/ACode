@@ -45,7 +45,7 @@ import {
   acodeApiRetryFromStreamRecoveryPayload,
   acodeTaskNetworkDebugStatusFromPayload,
   shouldMaterializeACodeStreamingToolInputPreview,
-  type ACodeApiRetryStatus,
+  type ACodeApiRetrySlotValue,
   type ACodeAssistantMessageFeedback,
   type ACodeBackgroundTaskNotificationInfo,
   type ACodeBackgroundTaskControlItem,
@@ -264,7 +264,7 @@ export function createACodeTaskServiceAdapter(
   const taskTargets = new Map<string, TaskTarget>();
   const runtimeCommands = new Map<string, ACodeTaskRuntimeCommand[]>();
   const runtimeCommandDrains = new Map<string, Promise<void>>();
-  const apiRetryByTaskKey = new Map<string, ACodeApiRetryStatus | null>();
+  const apiRetryByTaskKey = new Map<string, ACodeApiRetrySlotValue | null>();
   const backgroundTaskControlsByTaskKey = new Map<string, ACodeBackgroundTaskControlItem[]>();
   const streamedTurnKeys = new Set<string>();
   const activePromptInputIds = new Map<string, InputId>();
@@ -3324,6 +3324,10 @@ function toACodeMode(mode: ACodeTaskMode | undefined): ACodeSessionMode | undefi
       return "edit";
     case "yolo":
       return "yolo";
+    case "dontAsk":
+      // P1 dontAsk 档位必须显式映射：漏掉会走 default → 调用方 ?? build，把
+      // 「拒绝代替询问」静默降级成「变更前确认」（与上面 autoEdit 的历史坑同款）。
+      return "dontAsk";
     case "auto":
       return "auto";
     case "build":
@@ -5452,7 +5456,7 @@ function isModelCompleteUsagePayload(payload: Record<string, unknown>): boolean 
 
 function apiRetryFromSessionInfoPayload(
   payload: Record<string, unknown>,
-): ACodeApiRetryStatus | null | undefined {
+): ACodeApiRetrySlotValue | null | undefined {
   if ("apiRetry" in payload) {
     return normalizeACodeApiRetryStatus(payload.apiRetry);
   }

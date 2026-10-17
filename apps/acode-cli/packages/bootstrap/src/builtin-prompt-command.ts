@@ -12,6 +12,8 @@ import {
 const BUILTIN_PROMPT_COMMAND_PATTERN = /^\/([^\s]+)(?:\s+([\s\S]*))?$/;
 const INIT_COMMAND_NAME = "init";
 export const OVERNIGHT_COMMAND_NAME = "overnight";
+const USAGE_COMMAND_NAME = "usage";
+const AUTO_RESUME_COMMAND_NAME = "auto-resume";
 
 /**
  * 内置「宿主动作命令」：解析结果不是 prompt 文本，而是触发宿主侧结构化动作的指令
@@ -27,16 +29,37 @@ export const OVERNIGHT_COMMAND_NAME = "overnight";
 export type ACodeBuiltinHostCommand =
   | { kind: "overnight-start"; durationMs: number }
   | { kind: "overnight-cancel" }
-  | { kind: "overnight-invalid"; error: string };
+  | { kind: "overnight-invalid"; error: string }
+  // 零 token 本地命令的文本落盘面（desktop sendText 汇入 sendInput、TUI busy 态）：
+  // 与 typed v4 command（usage / autoResumeCommand）同一结论——宿主直接执行，不进模型
+  //（apps/acode-cli/specs/usage-statusbar.md、specs/turn-auto-resume.md）。
+  | { kind: "usage-query"; args: string }
+  | { kind: "auto-resume-command"; args: string };
+
+/** overnight 族子集（overnight-controller.handleHostCommand 的消费面；零 token
+ * 命令变体由 create-app 拦截器直接消费，不进 controller）。 */
+export type ACodeOvernightHostCommand = Extract<
+  ACodeBuiltinHostCommand,
+  { kind: "overnight-start" | "overnight-cancel" | "overnight-invalid" }
+>;
 
 /**
- * 解析宿主动作命令。只识别 `/overnight` 族；其余输入返回 undefined（调用方按普通
- * 输入继续）。时长解析复用第一段 parseOvernightDuration（含 1 分钟–12 小时硬限与
- * 可读错误）；`cancel` 走取消面。
+ * 解析宿主动作命令。识别 `/overnight` 族与零 token 本地命令（/usage、/auto-resume）；
+ * 其余输入返回 undefined（调用方按普通输入继续）。时长解析复用第一段
+ * parseOvernightDuration（含 1 分钟–12 小时硬限与可读错误）；`cancel` 走取消面。
  */
 export function resolveACodeBuiltinHostCommand(input: string): ACodeBuiltinHostCommand | undefined {
   const invocation = parseBuiltinPromptCommandInvocation(input);
-  if (!invocation || invocation.name !== OVERNIGHT_COMMAND_NAME) {
+  if (!invocation) {
+    return undefined;
+  }
+  if (invocation.name === USAGE_COMMAND_NAME) {
+    return { kind: "usage-query", args: invocation.args };
+  }
+  if (invocation.name === AUTO_RESUME_COMMAND_NAME) {
+    return { kind: "auto-resume-command", args: invocation.args };
+  }
+  if (invocation.name !== OVERNIGHT_COMMAND_NAME) {
     return undefined;
   }
   if (invocation.args.toLowerCase() === "cancel") {

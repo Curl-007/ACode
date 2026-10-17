@@ -10,6 +10,7 @@ import {
   type PermissionRuleset,
   type TraceContext,
   type ToolExecutionSpanWriter,
+  type TtlPermissionGrantOrigin,
 } from "@acode/contracts";
 import type { HookRunResult } from "../../hooks/index.js";
 import { isBashReflexGateRuleId } from "../../permission/bash-confirm-reflex-gate.js";
@@ -36,6 +37,8 @@ import {
   resolveRuntimePermissionContext,
 } from "./permission-capability.js";
 import { buildDefaultPermissionUpdates } from "./permission-suggestions.js";
+// 技能激活期作用域（skill-frontmatter-governance R4）：权限裁决前取会话快照。
+import { snapshotSessionSkillActivationScope } from "../../agent/skill-activation-scope.js";
 import { recheckPermissionHookModifiedInput } from "./permission-input-recheck.js";
 import type { ToolExecutorDeps } from "./types.js";
 import { summarizeInput } from "./utils.js";
@@ -45,6 +48,17 @@ import { applyMemoryFilePermission } from "./memory-file-permission.js";
 type ToolPermissionFlowResult =
   | { allowed: true; executionInput: unknown; permissionWaitMs?: number }
   | { allowed: false; result: ToolExecutionResult };
+
+/**
+ * 本轮派生事实（specs/mcp-lifecycle-ttl-approval.md R4「无人值守默认带期限」）：
+ * automationTurn（cron/automation 派发）与 offPeakTurn（闲时派发）是
+ * ToolExecuteOptions 已有的轮级事实，批准链路据此把持久授权的 origin 标记为
+ * "unattended"——TTL 存储对 unattended 一律限期（缺省 7 天、上限 30 天）。
+ */
+export interface ToolPermissionTurnFacts {
+  automationTurn?: boolean;
+  offPeakTurn?: boolean;
+}
 
 export async function resolveToolPermission(
   deps: ToolExecutorDeps,
@@ -56,6 +70,7 @@ export async function resolveToolPermission(
   traceContext: TraceContext,
   signal?: AbortSignal,
   telemetry?: ToolExecutionSpanWriter,
+  turnFacts?: ToolPermissionTurnFacts,
 ): Promise<ToolPermissionFlowResult> {
   const baseRuntimePermissionContext = resolveRuntimePermissionContext(deps);
   // R6 边界⑥收口（spec npm-script-body-scan.md R1/R5）：权限链路的异步前置。仅声明
@@ -89,6 +104,10 @@ export async function resolveToolPermission(
     // PermissionService 实例，挑战键不含身份时会话 A 的反射挑战会被会话 B 的首调
     // 「继承」，B 携带预填 justification 即可绕过反射轮。
     sessionId: deps.sessionId,
+    // 技能激活期作用域快照（skill-frontmatter-governance R4 消费接线）：store 是
+    // 缓存、事实源 = provider 可见历史（回合边界 + Skill 成功后重算，见 runtime
+    // methods）；未登记会话返回共享空 scope = 零行为变化。
+    skillActivationRules: snapshotSessionSkillActivationScope(deps.sessionId),
     // R6 边界⑥收口（spec npm-script-body-scan.md R1/R4）：npm/pnpm/yarn/bun run 的
     // script 体预解析 map。bypass-immune-breakers 的 deny 级命中与反射门从这里拿到
     // 注入——yolo 下 body catastrophic 的 deny 通道就在这里接通（breaker 是纯函数，
@@ -406,7 +425,7 @@ export async function resolveToolPermission(
         // hook 改写 input 后的复核也可能落到反射门 deny（新命令无挑战 → 门 deny），
         // 与首次判定同一投递语义：结构化指引不被截断。
         resolvedPermission.preserveReasonFormatting ||
-        isBashReflexGateRuleId(permissionDecision.ruleId)
+          isBashReflexGateRuleId(permissionDecision.ruleId)
           ? { preserveReasonFormatting: true }
           : undefined,
       ),
@@ -471,11 +490,21 @@ export async function resolveToolPermission(
   if (resolvedPermission.sessionPermissionUpdates?.length) {
     // 会话免确认：只进内存里的会话 ruleset，
     // 与上面的项目级持久化互不可见。
-    deps.permissionService.grantSessionPermission(resolvedPermission.sessionPermissionUpdates);
+    // origin 标记（specs/mcp-lifecycle-ttl-approval.md R4）：cron/off-peak/automation
+    // 派发轮的批准按无人值守处理——带 expiresAt 的 allow 更新在 PermissionService 内
+    // 分流进 TTL 存储时一律限期（缺省 7 天、夹紧 30 天），绝不永久。
+    const sessionGrantOrigin: TtlPermissionGrantOrigin =
+      turnFacts?.automationTurn === true || turnFacts?.offPeakTurn === true
+        ? "unattended"
+        : "interactive";
+    deps.permissionService.grantSessionPermission(resolvedPermission.sessionPermissionUpdates, {
+      origin: sessionGrantOrigin,
+    });
     deps.logger?.info("Session permission granted", {
       ...traceContextToLogContext(traceContext),
       event: "tool.permission.session_grant.applied",
       module: "core.tool.executor",
+      origin: sessionGrantOrigin,
       requestId,
       status: "completed",
       toolCallId: toolCall.id,

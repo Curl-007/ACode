@@ -1,5 +1,7 @@
 import { statSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
+import type { PluginHookDetail, PluginLoadOutcome } from "@acode/contracts";
+import type { PluginComponents } from "./types.js";
 
 const PLUGIN_SOURCE_CLEANUP_RETRY_DELAYS_MS = [0, 25, 100] as const;
 
@@ -102,4 +104,27 @@ export function appendPluginSourceCleanupError(
 
 export function throwIfAborted(options: { signal?: AbortSignal } | undefined): void {
   if (options?.signal?.aborted) throw new Error("Plugin operation cancelled");
+}
+
+/** 发现链的两个空值工厂（自 index.ts 下沉，控制超限文件只减不增）。 */
+export function emptyPluginLoadOutcome(): PluginLoadOutcome {
+  return {
+    commandRoots: [],
+    diagnostics: [],
+    hooks: {},
+    mcpServers: {},
+    plugins: [],
+    skillRoots: [],
+  };
+}
+
+export function emptyPluginComponents(hookDetails: PluginHookDetail[] = []): PluginComponents {
+  return {
+    commandRoots: [],
+    hooks: {},
+    hookDetails,
+    mcpServers: {},
+    skillCount: 0,
+    skillRoots: [],
+  };
 }

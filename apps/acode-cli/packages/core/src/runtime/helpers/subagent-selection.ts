@@ -16,9 +16,24 @@ export function resolveSubagentSelection(input: {
   profileSelection?: ModelSelection | null;
   parentSelection?: ModelSelection | null;
   overrideSelection?: ModelSelection;
+  requireExplicitModelSelection?: boolean;
   resolveSelection?: (selection: ModelSelection) => EffectiveModelSelectionResult;
 }): { hasConcreteModel: boolean; selection: ModelSelection } {
   const explicit = input.profileSelection;
+  // fail-closed 门（specs/agent-teams-derived-config.md R4）：打了显式选择标记的
+  // profile（AgentTeams 成员且未开启 inheritCaptainModel）既没有自己的模型选择、
+  // 也没有可借用的覆盖时，拒绝派生——不能悄悄回退父模型（队长模型），否则
+  // 成员会在用户不知情的情况下烧队长的档位。错误消息带设置页修复引导。
+  if (input.requireExplicitModelSelection && !explicit && !input.overrideSelection) {
+    throw createCoreError(
+      CoreErrorType.ConfigurationError,
+      "Cannot start AgentTeams member: configure a model for agent-teams:member or general-purpose under Subagents, or enable inheritCaptainModel in the AgentTeams plugin settings.",
+      {
+        recoverable: true,
+        context: { selectionIssue: "selection-missing", reason: "selection-missing" },
+      },
+    );
+  }
   const result: EffectiveModelSelectionResult = input.overrideSelection
     ? { effectiveSelection: input.overrideSelection }
     : explicit

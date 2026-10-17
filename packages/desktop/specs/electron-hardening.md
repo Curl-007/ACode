@@ -89,7 +89,7 @@ deny 决策统一落 info 日志（permission + requestingUrl），便于事后�
 
 ```
 default-src 'none';
-script-src 'self' file: 'unsafe-inline' 'wasm-unsafe-eval';
+script-src 'self' file: acode-viz-vendor: 'unsafe-inline' 'wasm-unsafe-eval';
 style-src 'self' file: 'unsafe-inline';
 img-src 'self' file: data: blob: acode-media: https: http:;
 media-src 'self' file: data: blob: acode-media: https: http:;
@@ -105,6 +105,7 @@ form-action 'none';
 理由（与辅助窗 CSP 的差异均有对应事实）：
 
 - `script-src 'unsafe-inline'`：index.html 内联启动动画 module script + dev 态 Vite/React-refresh 注入的内联脚本（辅助窗同款处理）。`'self'` 覆盖 dev vite 模块与打包产物 chunk；追加 `file:` 是因为打包态 `loadFile` 页面 origin 为 opaque，`'self'` 不匹配 file: 子资源。
+- `script-src acode-viz-vendor:`（2026-10-15 可视化卡片 vendored 钉版渲染库补加）：对话内可视化卡片是 `sandbox="allow-scripts"` 的 srcdoc iframe，srcdoc 文档**继承本 CSP**，脚本装载须同时通过「父策略 ∩ iframe 自身 meta 策略」。桌面生产（file: 页面）opaque-origin iframe 加载 file: 子资源被 Chromium 拒绝（Electron 41 实验实测），vendored mermaid/chart.js 因此经 main 注册的 `VISUALIZATION_VENDOR_SCHEME`（`src/main/visualizationVendorProtocol.ts`）装载：只认单 host + 钉版文件名形状、按资产旁 manifest sha256 fail-closed 复核。父策略缺该 scheme 时实验实测装载被拦。该 scheme 只进 `script-src`，`connect-src` 等面不得携带。机制全文见 `packages/ui/specs/gen-ui-visualize-card.md`「vendored 钉版渲染库与 CSP 本地源」。
 - `script-src 'wasm-unsafe-eval'`（运行时冒烟补加）：主 renderer 的 Shiki 代码高亮（`shikiHighlighter.ts` `createHighlighter` → Oniguruma WASM）经 `WebAssembly.instantiate` 编译，CSP 下需要 `'wasm-unsafe-eval'`，否则代码高亮 / diff / office 预览全部被拦（dev desktop 启动冒烟实测到该违规）。`'wasm-unsafe-eval'` 只放行 WASM 编译、**不放行任意 `eval()`**，对脚本注入面（主威胁）几乎无削弱，是比 `'unsafe-eval'` 收窄的标准做法。WASM 二进制来自打包产物（`'self'`/`file:`），非远端。
 - `connect-src ws:` 覆盖 dev HMR websocket；`http:/https:` 保留 renderer 已存在的远程取数面（UI 层 `fetch` 图片预览、发布说明等）；`blob:` 覆盖本地附件预览的 fetch。该指令从宽是刻意 tradeoff：脚本执行面（主威胁）已被 `script-src` 收紧，connect 面后续可用运行证据再收敛，先不因过严打断功能。
 - `frame-src http: https:`：内嵌浏览器与 Coding Plan 都是 `<webview>` guest（frame-src 对 webview 生效）；guest 自身导航白名单仍由 main 侧 `will-attach-webview` / guest 守卫负责，本指令只约束宿主页。

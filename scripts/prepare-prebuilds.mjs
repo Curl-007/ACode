@@ -117,6 +117,16 @@ const remoteOfficialPluginPackages = [
     runtimeBuildScript: "scripts/build.mjs",
     stagedPath: "packages/node-repl-host",
   },
+  {
+    // AgentTeams 默认启用（specs/agent-teams-derived-config.md R1/R2）：远端 shared-host
+    // 同样要部署它的 dist runtime，否则远端会话的插件市场可见但 MCP 起不来。
+    packageName: "@acode/agent-teams-plugin",
+    relativePath: "apps/acode-cli/packages/agent-teams-plugin",
+    requiresRuntime: true,
+    requiredRuntimePaths: ["dist/mcp/server.js"],
+    runtimeBuildScript: "scripts/build.mjs",
+    stagedPath: "packages/agent-teams-plugin",
+  },
 ];
 // 随 CLI 内置的技能包（不是插件）：远端 agent 的 bootstrap 沿官方插件同款候选目录在 acode.cjs 旁
 // 找 packages/bundled-skills 并原地读取；与 packages/desktop/scripts/prepare-agent-node-bundle.mjs 同一份清单。
@@ -170,6 +180,7 @@ function shouldCopyOfficialPluginAsset(sourcePath) {
 const remoteOfficialPluginRequiredPaths = [
   "packages/browser-use-plugin/.acode-plugin/plugin.json",
   "packages/node-repl-host/.acode-plugin/plugin.json",
+  "packages/agent-teams-plugin/.acode-plugin/plugin.json",
 ];
 
 function readACodeAgentRuntimeVersion() {

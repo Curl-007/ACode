@@ -8,6 +8,8 @@ import {
   applyUiFontSizePx,
   loadUiFontSizePx,
   subscribeToUiFontSizeStorageChanges,
+  applyPersistedAppearancePreferences,
+  subscribeToAppearanceStorageChanges,
 } from "@acode/ui";
 
 /**
@@ -67,6 +69,10 @@ applyResourceManagerTheme();
 // 首屏前显式应用，运行中再由 storage 事件同步，且不改变 html font-size 或接入业务 Host。
 applyUiFontSizePx(loadUiFontSizePx());
 subscribeToUiFontSizeStorageChanges();
+// 三轴外观偏好同款（ui specs/appearance-preference-axes.md R5/R6）：无 store 即无
+// applyTheme 收口点，首屏前显式应用根属性，运行中经 storage 事件跨窗同步。
+applyPersistedAppearancePreferences();
+subscribeToAppearanceStorageChanges();
 
 const root = document.getElementById("root");
 if (root) {

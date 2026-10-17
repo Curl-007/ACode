@@ -67,6 +67,12 @@ const requiredDevPluginRuntimeBuilds = [
     packageName: "@acode/browser-use-plugin",
     artifactPath: "browser-use-plugin/scripts/browser-client.mjs",
   },
+  {
+    // AgentTeams 默认启用（specs/agent-teams-derived-config.md R1/R2）：dev 形态同样
+    // 必须先产出 dist/mcp/server.js，否则 filesystem seed 拒绝写缓存、插件市场可见不可用。
+    packageName: "@acode/agent-teams-plugin",
+    artifactPath: "agent-teams-plugin/dist/mcp/server.js",
+  },
 ];
 const defaultBuildFilters = [
   ...cliWorkspaceBuilds.map(({ packageName }) => packageName),

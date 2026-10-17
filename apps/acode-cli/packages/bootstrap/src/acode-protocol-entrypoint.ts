@@ -239,6 +239,25 @@ export async function runACodeProtocolAgent(
               caCertFile: configResult.config.network.caCertFile,
             },
             officialMcpAuth,
+            // R2 连接状态变更事件（specs/mcp-lifecycle-ttl-approval.md）：pool 把本
+            // options 原样展开给每个 lease 的 adapter，监听器随连接实例派发；
+            // connectionId 关联 pool lease。与 create-app.ts 的装配位同一形态。
+            onStatusChange: (change) => {
+              logger.info("MCP server status changed", {
+                ...(change.connectionId ? { connectionId: change.connectionId } : {}),
+                event: "mcp.server.status_changed",
+                ...(change.previousStatus ? { previousStatus: change.previousStatus } : {}),
+                ...(change.status.reconnectSuspension
+                  ? { reconnectSuspension: change.status.reconnectSuspension }
+                  : {}),
+                serverName: change.serverName,
+                // 同 create-app.ts：日志上下文的 status 是保留闭集字段
+                // （contracts/logging/logger.ts），服务器状态枚举不在集内——用非保留键。
+                serverStatus: change.status.status,
+                timestamp: change.at,
+                trigger: change.trigger,
+              });
+            },
             telemetry: mcpTelemetryTracker,
             workingDirectory: options.cwd,
           });

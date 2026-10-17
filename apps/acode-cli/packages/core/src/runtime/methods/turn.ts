@@ -1,6 +1,8 @@
 /* eslint-disable max-lines -- 存量基线豁免:该文件先于 CLI lint 门禁建立即超限(根 lint 的 ignorePatterns 排除 apps/acode-cli,turbo lint 因此从未变绿)。头注豁免以恢复门禁信号;拆分重构超出本批范围。 */
 import { beginLocalTurnPreparation, type LocalTtftDetail } from "@acode/contracts";
 import { runtimeInputMetadata } from "../../agent/runtime-input-presentation.js";
+// 技能激活期作用域（skill-frontmatter-governance R4）：回合边界重算触发点。
+import { refreshSessionSkillActivationScope } from "../../agent/skill-activation-scope.js";
 import {
   CoreErrorType,
   HookEventName,
@@ -68,8 +70,14 @@ import { scheduleProjectMemoryExtraction } from "../helpers/project-memory-extra
 import { appendBrowserTurnScreenshot } from "./browser-turn-screenshot.js";
 import { clearBrowserTurnState } from "../../repl/browser-turn-state.js";
 import { applySubmissionExecutionState, createTurnModel } from "./turn-model.js";
+import { runStopFailureHooks } from "./hooks.js";
+import { logTurnWrapUpObligationOutcome } from "./turn-wrap-up.js";
 import { rebuildContextPrefix } from "./context-refresh.js";
 import { assertRuntimeModelBranchCurrent } from "./runtime-command-generation.js";
+import {
+  notifyAutoResumeTurnFailure,
+  notifyAutoResumeTurnSettled,
+} from "../auto-resume/runtime-api.js";
 
 const TARGET_RUN_HEARTBEAT_MS = 15_000;
 
@@ -134,6 +142,15 @@ export async function executeTurnCommand(
   // D5 并发只读诊断投影（specs/concurrency-diagnostics-projection.md R5）：每 turn 至多一条。
   // 并发治理事实的变化粒度是 turn 级，每模型请求/每工具批只会重复噪声；debug 级只走本地日志。
   logConcurrencyDiagnostics(this, turnTraceContext);
+  // 技能激活期作用域重算（skill-frontmatter-governance R4 消费接线）：回合边界
+  // 单点重算——compaction 把 Skill 调用挤出历史、resume/rewind 重建历史，作用域
+  // 在这里随之自然收敛（store 是缓存不是事实源；另一触发点在 tools.ts 的
+  // Skill 调用成功后，两处走同一个重算函数 = 唯一写路径）。
+  refreshSessionSkillActivationScope({
+    sessionId: this.sessionId,
+    entries: this.messageHistory.borrowReadOnlyRuntimeEntries(),
+    catalog: this.skillLoadOutcome?.skills ?? [],
+  });
 
   const turnAbortScope = createTurnAbortScope(options?.abortSignal);
   const turnAbortSignal = turnAbortScope.signal;
@@ -220,6 +237,17 @@ export async function executeTurnCommand(
           logEvent: "turn.failed",
           logLabel: "Turn",
         });
+        // StopFailure（specs/hook-event-surface.md）：通知类；runStopFailureHooks
+        // 自带 containment，hook 故障绝不掩盖原始 turn error。
+        await runStopFailureHooks(
+          this,
+          {
+            cancelled: coreError.type === CoreErrorType.TurnCancelled,
+            errorMessage: coreError.message,
+            errorType: coreError.type,
+          },
+          turnTraceContext,
+        );
         throw coreError;
       }
       let phaseStartedAt = startTurnPhase("context_initialization");
@@ -412,6 +440,8 @@ export async function executeTurnCommand(
           );
           await this.appendEvent(completeEvent, turnTraceContext);
           events.push(completeEvent);
+          // 成功结局（hook 拦截的 success 收口同样计入）：auto-resume 链清零。
+          notifyAutoResumeTurnSettled(this, "success");
           await recordTurnUsageFact(this, {
             completedAt: Date.now(),
             events,
@@ -659,6 +689,8 @@ export async function executeTurnCommand(
         );
         await this.appendEvent(completeEvent, turnTraceContext);
         events.push(completeEvent);
+        // 成功 turn = auto-resume 链重置条件（specs/turn-auto-resume.md）。
+        notifyAutoResumeTurnSettled(this, "success");
         await recordTurnUsageFact(this, {
           completedAt: Date.now(),
           events,
@@ -689,6 +721,9 @@ export async function executeTurnCommand(
           status: "completed",
           toolCallCount: loopState.toolCallCount,
         });
+        // 收尾义务评估（specs/turn-wrap-up.md R3）：成功收口路径唯一评估点；
+        // 只落日志（recorded/missing/stale），不阻塞收口、不发新事件。
+        logTurnWrapUpObligationOutcome(this, loopState);
         // 单轮执行策略只抑制本次成功 Turn 的后台提取，不修改 Session Memory 配置。
         if (options?.modelExecution?.memoryExtraction !== "skip") {
           scheduleProjectMemoryExtraction(this, {
@@ -789,6 +824,30 @@ export async function executeTurnCommand(
           traceContext: turnTraceContext,
           turnId,
           userMessageId,
+        });
+        // StopFailure（specs/hook-event-surface.md）：通知类，在 TurnError outcome 与
+        // usage 结算之后、throw 之前触发；自带 containment，不掩盖原始 turn error。
+        await runStopFailureHooks(
+          this,
+          {
+            cancelled: coreError.type === CoreErrorType.TurnCancelled,
+            errorMessage: coreError.message,
+            errorType: coreError.type,
+            ...(loopState?.toolCallCount !== undefined
+              ? { toolCallCount: loopState.toolCallCount }
+              : {}),
+          },
+          turnTraceContext,
+        );
+        // 跨回合 auto-resume 观察挂点（specs/turn-auto-resume.md）：throw 前把结构化
+        // 失败归因交给 coordinator（取消走重置档；transient 分类排定退避注入）。
+        // containment 在挂点内部——不改既有事件语义、不吞原始 turn error。
+        // 安全红线事实（automationId/offPeakTaskId/工具面/execution 模型选择）随
+        // options 透传，注入 turn 继承同款无人值守限制。
+        await notifyAutoResumeTurnFailure(this, {
+          coreError,
+          traceContext: turnTraceContext,
+          ...(options ? { turnOptions: options } : {}),
         });
         throw coreError;
       }

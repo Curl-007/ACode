@@ -132,10 +132,13 @@ function processHookExecutionResult(
     result.error?.message ??
     trimForPreview(result.stderr.text) ??
     `Hook process exited with status ${result.status}`;
+  // refusalKind：失败可见性协议的闭集判别标（hook-refusal-visibility.ts 解析为
+  // hook_process_failed）——不靠 message 嗅探区分失败种类。
   throw createCoreError(CoreErrorType.ToolExecutionFailed, "Hook process failed", {
     context: {
       exitCode: result.exitCode,
       hookEventName: event,
+      refusalKind: "process_failed",
       status: result.status,
       stderrPreview: trimForPreview(result.stderr.text),
       stdoutPreview: trimForPreview(result.stdout.text),
@@ -176,6 +179,7 @@ function parseHookStdout(stdout: string, event: HookEventName): HookJSONOutput |
 
   const validation = HookJSONOutputSchema.safeParse(parsed);
   if (!validation.success) {
+    // refusalKind：失败可见性协议的闭集判别标（解析为 hook_output_invalid）。
     throw createCoreError(
       CoreErrorType.ToolExecutionFailed,
       "Hook stdout failed HookJSONOutput schema validation",
@@ -183,6 +187,7 @@ function parseHookStdout(stdout: string, event: HookEventName): HookJSONOutput |
         context: {
           errors: validation.error.errors.slice(0, 20),
           hookEventName: event,
+          refusalKind: "output_invalid",
         },
         recoverable: true,
       },

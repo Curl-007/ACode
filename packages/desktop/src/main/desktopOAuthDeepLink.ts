@@ -1,10 +1,11 @@
 /* oxlint-disable eslint(max-lines) -- Deep Link 路由必须在同一模块内保持协议校验和投递原子性。 */
 import { statSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
-import { app, BrowserWindow, dialog } from "electron";
+import { app, BrowserWindow, dialog, Notification } from "electron";
 import type { WebContents } from "electron";
 import { asWebContentsId, type WebContentsId } from "./desktopWindowIds.js";
 import {
+  DEFAULT_LOCALE,
   type Locale,
   type OAuthProviderId,
   type OAuthStateRegistration,
@@ -17,6 +18,13 @@ import {
   isPaymentCallbackUrl,
   isWorkspaceOpenUrl,
 } from "./desktopDeepLinkUrl.js";
+import {
+  classifyDeepLinkFailureCategory,
+  createDeepLinkFailureToastGate,
+  isNetworkWorkspacePath,
+  renderSafeUrlForLog,
+  resolveDeepLinkFailureToastCopy,
+} from "./deepLinkHardening.js";
 import { registerLinuxDeepLinkProtocol } from "./desktopLinuxDeepLinkRegistration.js";
 
 interface DeepLinkWorkspaceGateOptions {
@@ -25,6 +33,8 @@ interface DeepLinkWorkspaceGateOptions {
   onWorkspaceOpenBlocked?: (workspacePath: string) => void;
   /** 业务窗口解析器；必须排除 CUA indicator 等 Main 辅助窗口。 */
   resolveApplicationWindow?: () => BrowserWindow | null;
+  /** 失败 toast 文案语言（接线方传当前应用 locale；缺省 DEFAULT_LOCALE）。 */
+  resolveLocale?: () => Locale;
 }
 
 export interface ExternalWorkspaceOpenDialogCopy {
@@ -48,6 +58,42 @@ let pendingOpenWorkspaceRequest: {
   path: string;
   targetWebContentsId?: WebContentsId;
 } | null = null;
+
+// 深链失败 toast（specs/desktop-startup-hardening.md §4e）：(键,类别) 5 分钟限频
+// 双账本 + 闭集分类 + 自撰本地化文案。此前深链失败只有 warn 日志，用户点了链接
+// 却毫无反馈；展示经 Electron Notification（main 无窗口/渲染依赖，冷启动也可用）。
+const deepLinkFailureToastGate = createDeepLinkFailureToastGate();
+
+/**
+ * 记录一次深链失败并按限频裁决展示 toast。
+ * - key = 失败深链的稳定标识（调用方给：路径/URL 派生键），同键同类别 5 分钟内只弹一次；
+ * - classifyMessage 与日志文案分离：分类按子串表归闭集，日志措辞不约束分类结果。
+ */
+function notifyDeepLinkFailure(input: {
+  key: string;
+  classifyMessage: string;
+  resolveLocale?: () => Locale;
+}): void {
+  const category = classifyDeepLinkFailureCategory(input.classifyMessage);
+  const decision = deepLinkFailureToastGate.recordFailure(input.key, category);
+  if (!decision.showToast) {
+    return;
+  }
+  // app ready 前（macOS 冷启动 open-url 极早投递）Notification 可能不可用；
+  // 展示是尽力面，失败不影响深链主路径（日志与限频账本已记录）。
+  if (!app.isReady() || !Notification.isSupported()) {
+    return;
+  }
+  const copy = resolveDeepLinkFailureToastCopy(
+    category,
+    input.resolveLocale?.() ?? DEFAULT_LOCALE,
+  );
+  try {
+    new Notification({ title: copy.title, body: copy.body }).show();
+  } catch {
+    // 忽略展示异常：部分 Linux 桌面通知守护缺席时构造器会抛错。
+  }
+}
 
 export function parseOAuthStateRegistration(payload: unknown): OAuthStateRegistration | null {
   if (!payload || typeof payload !== "object") {
@@ -108,12 +154,10 @@ export function isValidLocalWorkspaceDirectory(path: string): boolean {
   }
 }
 
-export function isNetworkWorkspacePath(path: string): boolean {
-  // 仅当原路径以 // 或 \\ 开头时规范化后才会以 \\ 开头；
-  // 单 / 的 Unix 绝对路径不会被误判为 UNC 网络路径。
-  const normalized = path.replace(/\//gu, "\\");
-  return normalized.startsWith("\\\\") || /^\\\\\?\\UNC\\/iu.test(normalized);
-}
+// UNC 谓词单一事实源收敛在 deepLinkHardening.ts（§4d hop 断言与本模块路由判定
+// 共用；反向 import 会形成模块环）。re-export 保持既有 import 面不变——
+// 历史消费方与测试仍经本模块取值。
+export { isNetworkWorkspacePath };
 
 export function resolveExternalWorkspaceOpenDialogCopy(
   locale: Locale,
@@ -170,10 +214,18 @@ export function handleOpenWorkspacePath(
   options: {
     allowWithoutReadyWindow?: boolean;
     resolveApplicationWindow?: () => BrowserWindow | null;
+    /** 失败 toast 文案语言（接线方传当前应用 locale）。 */
+    resolveLocale?: () => Locale;
   } = {},
 ): boolean {
   if (!isValidLocalWorkspaceDirectory(path)) {
     logger.warn("[deep-link] 打开工作区路径无效，已忽略", { path });
+    // 路径无效绝大多数是「目录已被移动/删除」：分类走 missing（目标不存在）。
+    notifyDeepLinkFailure({
+      key: `workspace-invalid-path:${path}`,
+      classifyMessage: "workspace path not found",
+      resolveLocale: options.resolveLocale,
+    });
     return false;
   }
 
@@ -226,7 +278,13 @@ export function handleDeepLink(
   try {
     parsedUrl = new URL(url);
   } catch {
-    logger.warn("[deep-link] 无法解析 URL:", url);
+    // 深链 query 可能携带 OAuth code/state，日志一律走安全渲染（spec §4f）。
+    logger.warn("[deep-link] 无法解析 URL:", renderSafeUrlForLog(url));
+    notifyDeepLinkFailure({
+      key: "unparseable-url",
+      classifyMessage: "unparseable deep link url",
+      resolveLocale: options.resolveLocale,
+    });
     return false;
   }
 
@@ -237,6 +295,11 @@ export function handleDeepLink(
         host: parsedUrl.hostname,
         path: parsedUrl.pathname,
       });
+      notifyDeepLinkFailure({
+        key: `workspace-missing-path:${parsedUrl.hostname}${parsedUrl.pathname}`,
+        classifyMessage: "workspace path missing from link",
+        resolveLocale: options.resolveLocale,
+      });
       return false;
     }
 
@@ -244,6 +307,13 @@ export function handleDeepLink(
       // Windows UNC 路径在 statSync 校验阶段就会触发 SMB 认证。
       // deep link 是外部输入，必须在任何文件系统探测前拒绝网络路径。
       logger.warn("[deep-link] 网络工作区路径已拒绝", { path: workspacePath });
+      // 分类消息刻意避开「网络」子串：这是安全策略拒绝，不是网络故障，
+      // 归 other（无法打开链接）而非 network（请检查网络连接）。
+      notifyDeepLinkFailure({
+        key: `workspace-unsafe-path:${workspacePath}`,
+        classifyMessage: "rejected unsafe workspace path",
+        resolveLocale: options.resolveLocale,
+      });
       return false;
     }
 
@@ -268,6 +338,7 @@ export function handleDeepLink(
     return handleOpenWorkspacePath(workspacePath, logger, {
       allowWithoutReadyWindow: true,
       resolveApplicationWindow: options.resolveApplicationWindow,
+      resolveLocale: options.resolveLocale,
     });
   }
 
@@ -295,6 +366,16 @@ export function handleDeepLink(
   }
 
   if (!isOAuthCallbackUrl(parsedUrl)) {
+    // 未知路由的 acode:// URL：此前静默 return false，用户点链接零反馈。
+    logger.warn("[deep-link] 未识别的深链路由，已忽略", {
+      host: parsedUrl.hostname,
+      path: parsedUrl.pathname,
+    });
+    notifyDeepLinkFailure({
+      key: `unhandled-url:${parsedUrl.hostname}${parsedUrl.pathname}`,
+      classifyMessage: "unhandled deep link route",
+      resolveLocale: options.resolveLocale,
+    });
     return false;
   }
 
@@ -304,6 +385,12 @@ export function handleDeepLink(
       protocol: parsedUrl.protocol,
       host: parsedUrl.hostname,
       path: parsedUrl.pathname,
+    });
+    // 缺 state 的 OAuth 回调绝大多数是登录态过期后的迟到回跳：归 auth_expired。
+    notifyDeepLinkFailure({
+      key: "oauth-missing-state",
+      classifyMessage: "oauth state expired",
+      resolveLocale: options.resolveLocale,
     });
     return false;
   }

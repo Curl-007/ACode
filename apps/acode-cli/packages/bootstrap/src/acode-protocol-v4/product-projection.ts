@@ -13,6 +13,17 @@ import {
   projectToolActivity,
   clearSettledOutputPreviews,
 } from "./product-projection-bash-progress.js";
+import {
+  accumulateTurnUsage,
+  addCumulativeReasoningTokens,
+  buildTurnHeaderStats,
+  buildUsageLastRequest,
+  carryAutoCompactThresholdTokens,
+  computeAutoCompactThresholdTokens,
+  modelCompleteCarriesUsageFacts,
+  subagentStoppedCumulativeTokens,
+  type TurnUsageAccumulator,
+} from "./product-projection-usage.js";
 import type {
   CompactLifecyclePayload,
   AssistantFeedbackUpdatedPayload,
@@ -106,6 +117,7 @@ import type {
   RunningSubagentSummary,
   SubagentProjectionState,
   TurnHeaderRow,
+  TurnHeaderStats,
   TurnWorkSegment,
   UserInputRow,
   UserInputQuestionPayload,
@@ -487,6 +499,13 @@ export class ProductProjection {
     touchedByEvent: false,
     usedTokens: 0,
   };
+  // 每轮模型事实累计器（specs/usage-statusbar.md turnHeader.stats）：main_turn
+  // ModelComplete 累加，轮收口（upsertTurnHeader / queue-drain 切轮）flush 进 header 行。
+  // 值替换是 immutable 的（accumulateTurnUsage 返回新对象），clone 只需浅拷 Map。
+  private turnUsageByTurnId = new Map<string, TurnUsageAccumulator>();
+  // SubagentStopped.totalTokens 按 childSessionId 记账：running summary（含 SendMessage
+  // resume 复活的 child）随 materialize 附带；停止后 summary 按既有生命周期离场，不扩语义。
+  private subagentCumulativeTokensByChildSessionId = new Map<string, number>();
   // modelChange marker 在「下一个 turn 开始时」生成。
   // silentInitial 保持普通 Main 首轮静默；sourceLess 表示显式 ∅→X；known 保存上一轮
   // 实际使用的 provider/model。thought 只随基线记录，不触发模型身份变化。
@@ -642,12 +661,18 @@ export class ProductProjection {
     if (!Number.isFinite(seededContextWindow.usedTokens) || seededContextWindow.usedTokens <= 0) {
       return;
     }
+    const seededReasoningTokens =
+      seed.cumulative?.reasoningTokens ?? current.cumulative.reasoningTokens;
     const cumulative = {
       inputTokens: seed.cumulative?.inputTokens ?? current.cumulative.inputTokens,
       outputTokens: seed.cumulative?.outputTokens ?? current.cumulative.outputTokens,
       cacheReadTokens: seed.cumulative?.cacheReadTokens ?? current.cumulative.cacheReadTokens,
       cacheWriteTokens: seed.cumulative?.cacheWriteTokens ?? current.cumulative.cacheWriteTokens,
+      ...(seededReasoningTokens !== undefined ? { reasoningTokens: seededReasoningTokens } : {}),
     };
+    // usage 是整键替换的形状：种子写入必须带回 conflated 的 lastRequest，否则被抹掉。
+    const carriedLastRequest =
+      current.lastRequest !== undefined ? { lastRequest: current.lastRequest } : {};
     if (this.contextWindowState.touchedByEvent) {
       // 同类守卫：显式 ModelSelected.contextWindow（含 null）是日志权威容量，
       // hydration seed 只能补回更准确的 token 事实，不得覆盖 maxTokens 或重新显示 null。
@@ -659,9 +684,13 @@ export class ProductProjection {
             ? {
                 ...currentContextWindow,
                 usedTokens: seededContextWindow.usedTokens,
+                autoCompactThresholdTokens:
+                  currentContextWindow.autoCompactThresholdTokens ??
+                  computeAutoCompactThresholdTokens(currentContextWindow.maxTokens),
               }
             : null,
           cumulative,
+          ...carriedLastRequest,
         },
       };
       return;
@@ -682,8 +711,16 @@ export class ProductProjection {
         contextWindow:
           seededContextWindow.maxTokens === null
             ? null
-            : { ...seededContextWindow, maxTokens: seededContextWindow.maxTokens },
+            : {
+                ...seededContextWindow,
+                maxTokens: seededContextWindow.maxTokens,
+                // 阈值真值：种子（查询面）未携带时按 core compact policy 纯函数补齐。
+                autoCompactThresholdTokens:
+                  seededContextWindow.autoCompactThresholdTokens ??
+                  computeAutoCompactThresholdTokens(seededContextWindow.maxTokens),
+              },
         cumulative,
+        ...carriedLastRequest,
       },
     };
   }
@@ -1116,6 +1153,10 @@ export class ProductProjection {
     clone.currentTurnId = this.currentTurnId;
     clone.currentTurnStartedModelOnly = this.currentTurnStartedModelOnly;
     clone.contextWindowState = { ...this.contextWindowState };
+    clone.turnUsageByTurnId = new Map(this.turnUsageByTurnId);
+    clone.subagentCumulativeTokensByChildSessionId = new Map(
+      this.subagentCumulativeTokensByChildSessionId,
+    );
     clone.lastTurnModel = { ...this.lastTurnModel };
     clone.configModelTouchedByEvent = this.configModelTouchedByEvent;
     clone.configThoughtLevelsTouchedByEvent = this.configThoughtLevelsTouchedByEvent;
@@ -1159,6 +1200,9 @@ export class ProductProjection {
     this.currentTurnId = candidate.currentTurnId;
     this.currentTurnStartedModelOnly = candidate.currentTurnStartedModelOnly;
     this.contextWindowState = candidate.contextWindowState;
+    this.turnUsageByTurnId = candidate.turnUsageByTurnId;
+    this.subagentCumulativeTokensByChildSessionId =
+      candidate.subagentCumulativeTokensByChildSessionId;
     this.lastTurnModel = candidate.lastTurnModel;
     this.configModelTouchedByEvent = candidate.configModelTouchedByEvent;
     this.configThoughtLevelsTouchedByEvent = candidate.configThoughtLevelsTouchedByEvent;
@@ -1536,6 +1580,13 @@ export class ProductProjection {
     const sourceKind = previousExecution?.sourceKind ?? descriptor?.sourceKind;
     if (sourceKind === undefined || sourceKind === "internal") return [];
     const blockReason = payload.blockReason ?? previousExecution?.blockReason;
+    // hook 被拒注记行（specs/plugin-hook-middleware.md 二 / 接线 W2）：refusalAnnotation
+    // 是 runner 结算点生成的 payload 运行时增补字段（MODS 裁决不改 contracts 类型），
+    // 这里经局部断言读取并原样透传（文案单源在 runner，投影不拼文案）；与 blockReason
+    // 同款单调保持——环节一旦出现过注记，后续同 runId 事件不把它抹掉。
+    const refusalAnnotation =
+      (payload as { refusalAnnotation?: unknown }).refusalAnnotation ??
+      previousExecution?.refusalAnnotation;
     const execution: HookExecutionProjection = {
       hookRunId: String(payload.hookRunId),
       hookIndex: payload.hookIndex,
@@ -1543,6 +1594,11 @@ export class ProductProjection {
       state,
       ...(outcome ? { outcome } : {}),
       ...(blockReason ? { blockReason } : {}),
+      // wire schema（hookExecutionProjectionSchema）要求 trim 后非空；空白值不进 row，
+      // 否则整帧 row 校验失败。非字符串（畸形增补）同样按缺席处理。
+      ...(typeof refusalAnnotation === "string" && refusalAnnotation.trim().length > 0
+        ? { refusalAnnotation }
+        : {}),
       startedAt,
       ...(endedAt !== undefined ? { endedAt } : {}),
       ...(durationMs !== undefined ? { durationMs } : {}),
@@ -1742,7 +1798,16 @@ export class ProductProjection {
     eventName: HookRunLifecyclePayload["hookEventName"],
   ): HookInvocationRow["lane"] {
     if (eventName === "PreToolUse" || eventName === "PermissionRequest") return "toolBefore";
-    if (eventName === "PostToolUse" || eventName === "PostToolUseFailure") return "toolAfter";
+    // PostToolBatch 归 toolAfter（specs/hook-event-surface.md F8 裁决）：它是并行组
+    // 结算事件，锚定在工具批次之后；其余新事件（StopFailure/Pre|PostCompact/
+    // Pre|PostModelSwitch/SessionEnd/Task*/CwdChanged）走缺省 assistantWork。
+    if (
+      eventName === "PostToolUse" ||
+      eventName === "PostToolUseFailure" ||
+      eventName === "PostToolBatch"
+    ) {
+      return "toolAfter";
+    }
     return "assistantWork";
   }
 
@@ -1819,6 +1884,10 @@ export class ProductProjection {
         this.rewoundHookInvocationIds.add(hookInvocationId);
         this.hookRowIdByInvocationId.delete(hookInvocationId);
       }
+    }
+    // 被截断轮次的用量累计器随 header 一起作废：重跑轮的 stats 只反映重跑后的事实。
+    for (const [turnId, headerRowId] of this.turnHeaderRowIdByTurnId) {
+      if (headerRowId >= fromRowId) this.turnUsageByTurnId.delete(turnId);
     }
     return [{ op: "row.removed", fromRowId }];
   }
@@ -1916,6 +1985,8 @@ export class ProductProjection {
     if (turnId !== runtimeTurnId) this.productTurnIdByRuntimeTurnId.set(runtimeTurnId, turnId);
     this.runtimeTurnIdByProductTurnId.set(turnId, runtimeTurnId);
     this.productTurnSplitOrdinalByRuntimeTurnId.delete(runtimeTurnId);
+    // 同 id 重开（retry/rewind 后重跑）不得继承上一段模型事实。
+    this.turnUsageByTurnId.delete(turnId);
     this.currentProductTurnStartedAtMs = this.ms(event);
     this.streamingTextRowId = null;
     this.streamingReasoningRowId = null;
@@ -2139,6 +2210,7 @@ export class ProductProjection {
       // 除了 draft 的离场（见 leaveDraftAfterControlOnlyTurn）。
       const deltas = [
         ...this.upsertTurnHeader(event, headerState, undefined, payload.historyRoundCount),
+        ...(payload.resultType === "success" ? this.closeShortCircuitedHookRows(event) : []),
         ...this.leaveDraftAfterControlOnlyTurn(
           payload.resultType === "success" ? "completedSuccess" : "completedInterrupted",
         ),
@@ -2184,6 +2256,8 @@ export class ProductProjection {
       // turn 终态一并收口在飞的 foreground tool row（收口不变量：被 profile
       // 过滤的 inputText 流必须被不可过滤的 row.upserted 蕴含，见 profiles.ts）。
       ...this.closeOpenToolRows(event, payload.resultType === "cancelled" ? "cancelled" : "error"),
+      // middleware 短路收口只在成功轮做（见 closeShortCircuitedHookRows 的理由）。
+      ...(payload.resultType === "success" ? this.closeShortCircuitedHookRows(event) : []),
       ...this.upsertTurnHeader(
         event,
         headerState,
@@ -2356,6 +2430,11 @@ export class ProductProjection {
       // 不映射成重试/等待标签。
       case "model_request_queued":
       case "model_request_admitted":
+      // 跨回合 auto-resume（specs/turn-auto-resume.md）：v4 投影侧不映射 apiRetry 槽
+      // （reasonCode 闭集在 shared/snapshot.ts，属编排者接线面）；状态投影走 legacy
+      // session-mapper 的 _meta.acode.apiRetry（kind:"auto_resume"）。此处显式忽略，
+      // 保持 exhaustive switch 编译。
+      case "auto_resume_scheduled":
         return [];
     }
   }
@@ -2772,6 +2851,55 @@ export class ProductProjection {
         row.status === "pendingApproval" ||
         row.status === "running")
     );
+  }
+
+  /**
+   * middleware 短路的 hook invocation row 收口 + hookCount 精确化
+   * （specs/plugin-hook-middleware.md 一.6 / 接线 W1）。
+   *
+   * hookCount 是链入口的**预扫描值**（client-visible 参与环节数）；middleware 不调
+   * next 自答短路时，下游环节从未启动、不发任何事件，executions.length < hookCount
+   * 永久成立——row 停在 running 只能等 SessionResumed 的强制 failed 收口，把合法的
+   * 链收口误报成失败。成功收口的轮其前台链必然已走完（前台环节在轮内被 await），
+   * 因此「本轮 row 的全部已记录 execution 都到终态、但数量不足预扫描值」只可能是
+   * 短路：把 hookCount 精确化为实际发事件环节数，按既有终态裁决（failed 存在 →
+   * failed，否则 completed）收口。
+   *
+   * 边界纪律：
+   * - 只在 resultType === "success" 的轮末调用——cancelled/error 轮里「中断」与
+   *   「短路」在事件面不可区分，维持 SessionResumed 强制 failed 的既有 fail-closed
+   *   语义（把中断误标 completed 比多等一次 resume 更糟）；
+   * - 只收口本轮（turnIdOf(event) 的 product turn）的 row，不越轮清算历史 running row；
+   * - 后台（async）环节不受影响：其在飞 execution 是 running 态，谓词不满足；
+   *   晚到的 async 终态事件走既有 onHookRunLifecycle 重算（executions 已齐时照常收口）。
+   */
+  private closeShortCircuitedHookRows(event: SessionEvent): ConversationDelta[] {
+    // row 挂的是 product turnId（turnIdOf 映射），currentTurnId 是 runtime turnId——
+    // 归属比较必须走同一映射，否则 queue-drain 切轮后两者不同名。
+    const productTurnId = this.turnIdOf(event);
+    const deltas: ConversationDelta[] = [];
+    for (const row of this.snapshot.rows.window) {
+      if (row.kind !== "hookInvocation" || row.state !== "running") continue;
+      if (row.turnId !== productTurnId) continue;
+      if (row.executions.length === 0 || row.executions.length >= row.hookCount) continue;
+      if (row.executions.some((execution) => execution.state === "running")) continue;
+      const endedAt = Math.max(
+        ...row.executions.map((execution) => execution.endedAt ?? execution.startedAt),
+      );
+      deltas.push({
+        op: "row.upserted",
+        row: {
+          ...row,
+          hookCount: row.executions.length,
+          state: row.executions.some((execution) => execution.state === "failed")
+            ? "failed"
+            : "completed",
+          endedAt,
+          durationMs: Math.max(0, endedAt - row.startedAt),
+        },
+      });
+    }
+    return deltas;
   }
 
   private updateToolIndexesAfterDeltas(deltas: readonly ConversationDelta[]): void {
@@ -3679,6 +3807,7 @@ export class ProductProjection {
     const headerRow = headerRowId !== undefined ? this.findRow(headerRowId) : undefined;
     if (headerRow?.kind === "turnHeader") {
       const endedAt = this.ms(event);
+      const stats = this.flushTurnHeaderStats(headerRow);
       deltas.push({
         op: "row.upserted",
         row: {
@@ -3689,6 +3818,7 @@ export class ProductProjection {
             0,
             endedAt - (this.currentProductTurnStartedAtMs ?? headerRow.startedAt),
           ),
+          ...(stats !== undefined ? { stats } : {}),
           ...(headerRow.workSegments
             ? {
                 workSegments: this.completeWorkSegments(headerRow.workSegments, endedAt),
@@ -4010,6 +4140,7 @@ export class ProductProjection {
       if (row.status !== "running") continue;
       const previousItem = previousRunningById.get(childSessionId);
       const title = previousItem?.title || row.summaryText.trim() || row.subagentType;
+      const cumulativeTokens = this.subagentCumulativeTokensByChildSessionId.get(childSessionId);
       running.push({
         childSessionId,
         agentId: row.entityId,
@@ -4022,6 +4153,8 @@ export class ProductProjection {
             ? "blocked"
             : "running",
         ...(row.startedAt !== undefined ? { startedAt: row.startedAt } : {}),
+        // 缺席 = 尚无权威 token 事实（UI 隐藏该列，不按 0 呈现）。
+        ...(cumulativeTokens !== undefined ? { cumulativeTokens } : {}),
       });
     }
     running.sort(
@@ -4267,6 +4400,14 @@ export class ProductProjection {
           endedAt: this.ms(event),
         };
     this.subagentRowIdByAgentId.set(agentId, row.rowId);
+    // child 累计 tokens 的唯一权威事实（core runner 终态发射点）；缺 childSessionId
+    // 或 totalTokens 时不记账（宁无名不错名），resume 复活的 summary 随 materialize 附带。
+    const cumulativeTokens = subagentStoppedCumulativeTokens(payload);
+    const tokensChildSessionId =
+      this.stringPayload(payload, "childSessionId") ?? existing?.childSessionId;
+    if (cumulativeTokens !== undefined && tokensChildSessionId) {
+      this.subagentCumulativeTokensByChildSessionId.set(tokensChildSessionId, cumulativeTokens);
+    }
     return [{ op: existing ? "row.upserted" : "row.appended", row }];
   }
 
@@ -4526,11 +4667,19 @@ export class ProductProjection {
                     contextWindow === null
                       ? null
                       : previousContextWindow
-                        ? { ...previousContextWindow, maxTokens: contextWindow }
+                        ? {
+                            ...previousContextWindow,
+                            maxTokens: contextWindow,
+                            // 阈值是窗口的纯函数（core compact policy 同源）：换模型
+                            // 改窗后必须重算，不得沿用旧窗口的值。
+                            autoCompactThresholdTokens:
+                              computeAutoCompactThresholdTokens(contextWindow),
+                          }
                         : {
                             usedTokens: this.contextWindowState.usedTokens,
                             maxTokens: contextWindow,
-                            autoCompactThresholdTokens: null,
+                            autoCompactThresholdTokens:
+                              computeAutoCompactThresholdTokens(contextWindow),
                           },
                 },
               }
@@ -4588,10 +4737,29 @@ export class ProductProjection {
     }
     if (!isMainTurn) return [...deltas, ...retryClearDeltas];
     const usage = payload.usage as ModelUsage;
+    // turnHeader.stats 的每轮事实累计：hydration 合成的零用量占位事件不算模型请求。
+    if (modelCompleteCarriesUsageFacts(payload)) {
+      const factTurnId = this.turnIdOf(event);
+      this.turnUsageByTurnId.set(
+        factTurnId,
+        accumulateTurnUsage(this.turnUsageByTurnId.get(factTurnId), payload),
+      );
+    }
     const usedTokens = getModelUsageContextTokens(usage) ?? 0;
     this.contextWindowState.usedTokens = usedTokens;
     const maxTokens = payload.contextWindow ?? this.contextWindowState.maxTokens;
     const cumulative = this.snapshot.usage.cumulative;
+    const reasoningTokens = addCumulativeReasoningTokens(
+      cumulative.reasoningTokens,
+      usage.reasoningTokens,
+    );
+    // lastRequest 是 conflated 状态，而本 patch 整键替换 usage：缺 generationMs 的旁路
+    // 发射（sidecar/compact/title/旧事件）必须显式带回上一值，否则被整键替换抹掉。
+    const lastRequest = buildUsageLastRequest(
+      payload,
+      this.ms(event),
+      this.snapshot.usage.lastRequest,
+    );
     deltas.push({
       op: "state.updated",
       patch: {
@@ -4604,8 +4772,10 @@ export class ProductProjection {
               : {
                   usedTokens,
                   maxTokens,
-                  autoCompactThresholdTokens:
-                    this.snapshot.usage.contextWindow?.autoCompactThresholdTokens ?? null,
+                  autoCompactThresholdTokens: carryAutoCompactThresholdTokens(
+                    this.snapshot.usage.contextWindow,
+                    maxTokens,
+                  ),
                   ...(payload.cacheHit ? { cache: payload.cacheHit } : {}),
                   ...(payload.contextUsageBreakdown && payload.contextUsageBreakdown.length > 0
                     ? { breakdown: payload.contextUsageBreakdown }
@@ -4616,7 +4786,10 @@ export class ProductProjection {
             outputTokens: cumulative.outputTokens + (usage.outputTokens ?? 0),
             cacheReadTokens: cumulative.cacheReadTokens + (usage.cacheReadTokens ?? 0),
             cacheWriteTokens: cumulative.cacheWriteTokens + (usage.cacheWriteTokens ?? 0),
+            // 缺席 ≠ 0：双方都无事实时保持字段缺席（旧快照兼容口径）。
+            ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
           },
+          ...(lastRequest !== undefined ? { lastRequest } : {}),
         },
       },
     });
@@ -4751,8 +4924,10 @@ export class ProductProjection {
                 : {
                     usedTokens: tokensAfter,
                     maxTokens,
-                    autoCompactThresholdTokens:
-                      this.snapshot.usage.contextWindow?.autoCompactThresholdTokens ?? null,
+                    autoCompactThresholdTokens: carryAutoCompactThresholdTokens(
+                      this.snapshot.usage.contextWindow,
+                      maxTokens,
+                    ),
                   },
           },
         },
@@ -5178,6 +5353,7 @@ export class ProductProjection {
     const row = this.turnHeaderForEvent(event);
     if (!row) return [];
     const endedAt = this.ms(event);
+    const stats = this.flushTurnHeaderStats(row);
     return [
       {
         op: "row.upserted",
@@ -5187,6 +5363,7 @@ export class ProductProjection {
           endedAt,
           ...(activeMs !== undefined ? { activeMs } : {}),
           ...(historyRoundCount !== undefined ? { historyRoundCount } : {}),
+          ...(stats !== undefined ? { stats } : {}),
           ...(row.workSegments
             ? {
                 workSegments: this.completeWorkSegments(row.workSegments, endedAt),
@@ -5195,6 +5372,20 @@ export class ProductProjection {
         },
       },
     ];
+  }
+
+  /**
+   * 轮收口的 stats flush（specs/usage-statusbar.md 协议面 2）：有累计事实 → 写 stats
+   * 并清账；轮内无任何模型事实 → 显式 null（纯问答轮）；行上已有 stats（终态兜底
+   * 重入）→ undefined = 保留原值，不用 null 顶掉已入账的事实。
+   */
+  private flushTurnHeaderStats(row: TurnHeaderRow): TurnHeaderStats | null | undefined {
+    const accumulator = this.turnUsageByTurnId.get(row.turnId);
+    if (accumulator) {
+      this.turnUsageByTurnId.delete(row.turnId);
+      return buildTurnHeaderStats(accumulator);
+    }
+    return row.stats === undefined ? null : undefined;
   }
 
   private openGuidedWorkSegment(event: SessionEvent, triggerEntityId: string): ConversationDelta[] {

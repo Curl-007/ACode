@@ -60,6 +60,7 @@ import {
   SubagentReasoningField,
   type SubagentReasoningFieldState,
 } from "@/settings/SubagentReasoningField.js";
+import { buildSubagentSaveConfig } from "@/settings/subagentFormSaveConfig.js";
 import { refreshLoadedSubagentsStoreForWorkspace } from "@/store/subagentsStore.js";
 import {
   PluginScopeMenu,
@@ -1027,22 +1028,22 @@ function SubagentForm({
       if (!chosen) return;
       selection = chosen;
     }
-    await onSave({
-      name: name.trim(),
-      description: description.trim(),
-      systemPrompt: systemPrompt.trim(),
-      color,
-      injectAgentsMd,
-      ...(selection ? { modelSelection: selection } : {}),
-      tools: inheritAllTools
-        ? undefined
-        : mergeTools(selectedTools, initialFormState.preservedTools),
-      disallowedTools: initial?.disallowedTools,
-      skills: initial?.skills,
-      permissionMode: initial?.permissionMode,
-      ...(initial?.background !== undefined ? { background: initial.background } : {}),
-      mcpServers: initial?.mcpServers,
-    });
+    // 保存载荷构造抽到 subagentFormSaveConfig.ts 纯函数（含声明键批②六键从
+    // initial 快照的透传，断言测试钉住 GUI 往返不丢键）；此处只传表单值与归一结果。
+    await onSave(
+      buildSubagentSaveConfig({
+        initial,
+        name: name.trim(),
+        description: description.trim(),
+        systemPrompt: systemPrompt.trim(),
+        color,
+        injectAgentsMd,
+        modelSelection: selection,
+        tools: inheritAllTools
+          ? undefined
+          : mergeTools(selectedTools, initialFormState.preservedTools),
+      }),
+    );
   };
 
   return (

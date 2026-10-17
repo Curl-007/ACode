@@ -46,6 +46,23 @@ const desktopWindowSizeSchema = z.object({
   height: z.number().int().min(640),
   maximized: z.boolean(),
 });
+// 启动骨架占位持久化数据（specs/boot-placeholder.md §9.1）：shapes 是视口归一化
+// 比值矩形（每值 0..1e4、≤160 个，上限与 main 侧 bootPlaceholder.ts 校验器同值），
+// 坏值走 sanitizeDesktopBootPlaceholder 单键丢弃，不拖垮整份 setting.json。
+const bootPlaceholderShapeSchema = z.object({
+  top: z.number().min(0).max(10_000),
+  left: z.number().min(0).max(10_000),
+  width: z.number().min(0).max(10_000),
+  height: z.number().min(0).max(10_000),
+  radius: z.number().min(0).max(10_000),
+});
+const desktopBootPlaceholderSchema = z.object({
+  shapes: z.array(bootPlaceholderShapeSchema).max(160),
+  sidebarWidth: z.number().min(0).max(10_000),
+  collapsed: z.boolean(),
+  zoomFactor: z.number().min(0).max(10_000),
+  sampledAt: z.number(),
+});
 export const integratedTerminalShellSelectionSchema = z.discriminatedUnion("mode", [
   z.object({
     mode: z.literal("auto"),
@@ -179,6 +196,24 @@ function sanitizeDesktopWindowSize(value: unknown): unknown {
   const { desktopWindowSize: _desktopWindowSize, ...next } = raw;
   // 窗口尺寸是非关键偏好，坏值若参与整份 schema 校验，会让其他合法设置全部回退默认。
   // 读取历史设置时只丢弃损坏字段；写入 patch 仍保持严格校验，避免继续产生坏数据。
+  return next;
+}
+
+function sanitizeDesktopBootPlaceholder(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return value;
+  }
+  const raw = value as Record<string, unknown>;
+  if (!("desktopBootPlaceholder" in raw)) {
+    return value;
+  }
+  const parsed = desktopBootPlaceholderSchema.safeParse(raw.desktopBootPlaceholder);
+  if (parsed.success) {
+    return value;
+  }
+  const { desktopBootPlaceholder: _desktopBootPlaceholder, ...next } = raw;
+  // 启动骨架是非关键的首帧加速数据（specs/boot-placeholder.md）：坏值单键丢弃，
+  // 丢弃后 main 侧回退手工合成默认骨架，不拖垮整份设置读取。
   return next;
 }
 
@@ -467,6 +502,10 @@ const appSettingsObjectSchema = z.object({
   desktopZoomLevel: desktopZoomLevelSchema.optional(),
   desktopWindowSize: desktopWindowSizeSchema.optional(),
   desktopChromiumHardwareAccelerationEnabled: z.boolean().default(true),
+  // 启动骨架占位（specs/boot-placeholder.md）：开关缺省 = 启用，不写 default(true)
+  // 把缺省语义冻结进用户配置（同 dynamicWorkflowMode 教训）；坏值单键丢弃见 sanitize。
+  desktopBootPlaceholder: desktopBootPlaceholderSchema.optional(),
+  bootPlaceholderEnabled: z.boolean().optional(),
   messageStreamShowReasoning: z.boolean().default(true),
   messageStreamShowReasoningMigrationInitialized: z.boolean().default(true),
   messageStreamShowTodos: z.boolean().default(false),
@@ -507,12 +546,14 @@ const appSettingsObjectSchema = z.object({
 
 export const appSettingsSchema = z.preprocess(
   (value) =>
-    sanitizeEmbeddedBrowserViewportPreference(
-      sanitizeDesktopWindowSize(
-        migrateMessageStreamShowReasoningDefault(
-          migrateCloseToTrayOnWindowsDefault(
-            migrateLegacyLocalePreference(
-              sanitizeACodeEndpointOrigin(migrateLegacyWorkspaceSession(value)),
+    sanitizeDesktopBootPlaceholder(
+      sanitizeEmbeddedBrowserViewportPreference(
+        sanitizeDesktopWindowSize(
+          migrateMessageStreamShowReasoningDefault(
+            migrateCloseToTrayOnWindowsDefault(
+              migrateLegacyLocalePreference(
+                sanitizeACodeEndpointOrigin(migrateLegacyWorkspaceSession(value)),
+              ),
             ),
           ),
         ),
@@ -544,6 +585,9 @@ export const appSettingsPatchSchema = z.object({
   desktopZoomLevel: desktopZoomLevelSchema.optional(),
   desktopWindowSize: desktopWindowSizeSchema.optional(),
   desktopChromiumHardwareAccelerationEnabled: z.boolean().optional(),
+  // 启动骨架占位（specs/boot-placeholder.md）：patch 写入保持严格校验，坏值拒绝。
+  desktopBootPlaceholder: desktopBootPlaceholderSchema.optional(),
+  bootPlaceholderEnabled: z.boolean().optional(),
   messageStreamShowReasoning: z.boolean().optional(),
   messageStreamShowReasoningMigrationInitialized: z.boolean().optional(),
   messageStreamShowTodos: z.boolean().optional(),

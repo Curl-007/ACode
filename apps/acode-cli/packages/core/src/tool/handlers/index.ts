@@ -2,11 +2,7 @@
 // Built-in Tool Handlers
 // ============================================================
 
-import {
-  RUN_WORKFLOW_TOOL_NAME,
-  SUBMIT_RESULT_TOOL_NAME,
-  type JsonSchema,
-} from "@acode/contracts";
+import { RUN_WORKFLOW_TOOL_NAME, SUBMIT_RESULT_TOOL_NAME, type JsonSchema } from "@acode/contracts";
 import type { ToolEntry } from "../types.js";
 import type { AgentProfile } from "../../subagent/profile.js";
 import { readToolEntry } from "./read.js";
@@ -14,6 +10,11 @@ import { writeToolEntry } from "./write.js";
 import { editToolEntry } from "./edit.js";
 import { applyPatchToolEntry } from "./apply-patch.js";
 import { bashToolEntry, createBashToolEntry } from "./bash.js";
+// PowerShell 工具（specs/powershell-tool.md R8①）：win32 且可解析时注册，timeout 与 Bash 同源。
+import {
+  powerShellToolEntries,
+  resolvePowerShellEntryForBranch,
+} from "./powershell-registration.js";
 import type { BashTimeoutPolicy } from "../bash-timeout-policy.js";
 import { createJsToolEntry, jsToolEntry } from "./node-repl.js";
 import { globToolEntry } from "./glob.js";
@@ -29,6 +30,8 @@ import {
 import { isSubagentDispatchToolName } from "../compat.js";
 import { skillToolEntry } from "./skill.js";
 import { todoReadToolEntry, todoWriteToolEntry } from "./todo.js";
+// 回合收尾协议（specs/turn-wrap-up.md）：无端口门；义务评估只在主对话成功收口路径。
+import { turnWrapUpToolEntry } from "./turn-wrap-up.js";
 import {
   cronCreateToolEntry,
   cronDeleteToolEntry,
@@ -46,24 +49,25 @@ import { sendMessageToolEntry } from "./send-message.js";
 import { respondToCoordinatorToolEntry } from "./respond-to-coordinator.js";
 import { createSubmitResultToolEntry, submitResultToolEntry } from "./submit-result.js";
 import { escalateToolEntry } from "./escalate.js";
-import { resolveWorkflowQuestionToolEntry } from "./resolve-workflow-question.js";
-import { fillWorkflowHoleToolEntry } from "./fill-workflow-hole.js";
 import { taskOutputToolEntry } from "./task-output.js";
 import { taskStopToolEntry } from "./task-stop.js";
 import { readSessionContextToolEntry } from "./read-session-context.js";
-import { amendWorkflowToolEntry } from "./amend-workflow.js";
-import { createWorkflowToolEntry } from "./create-workflow.js";
-import { saveWorkflowToolEntry } from "./save-workflow.js";
-import { listSavedWorkflowsToolEntry } from "./list-saved-workflows.js";
-import { listModelsToolEntry } from "./list-models.js";
-import { evalWorkflowSnippetToolEntry } from "./eval-workflow-snippet.js";
-import { listWorkflowRunsToolEntry } from "./list-workflow-runs.js";
-import { getWorkflowRunToolEntry } from "./get-workflow-run.js";
-import { resumeWorkflowRunToolEntry } from "./resume-workflow-run.js";
+// dwf 工具族（11 个 entry）按架构 ratchet 行数门禁抽到 dwf-workflow-tool-entries.ts，
+// 此处原位展开——注册顺序与过滤链语义不变。
+import { dwfWorkflowToolEntries } from "./dwf-workflow-tool-entries.js";
 // 脚本工作流（纯 JS DSL）的入口，与上面 dwf 那十个是两套独立系统；
 // 灰度门控名单抽到 workflow-tool-names.ts，理由见那个文件的头注释。
 import { runWorkflowToolEntry } from "./run-workflow.js";
 import { GATED_WORKFLOW_TOOL_NAMES } from "./workflow-tool-names.js";
+// 会话级 git worktree 生命周期三工具（specs/session-worktree-lifecycle.md）。
+import { enterSessionWorktreeToolEntry } from "./enter-session-worktree.js";
+import { mergeBaseBranchToolEntry } from "./merge-base-branch.js";
+import { reapSessionWorktreesToolEntry } from "./reap-session-worktrees.js";
+// 会话舰队七工具（specs/session-fleet.md）按 ratchet 行数门禁抽到
+// fleet-tool-entries.ts，下方原位展开；周期摘要条目随领域模块住 core/src/digest/
+//（specs/periodic-digest.md，handlers/ 目录外的领域模块先例同 dwf 族）。
+import { fleetToolEntries } from "./fleet-tool-entries.js";
+import { generateDigestToolEntry } from "../../digest/generate-digest-tool.js";
 import { sessionSearchToolEntry } from "./session-search.js";
 // 对话内可视化写入工具：技能门 visualize，落点会话存储（specs/gen-ui-visualize.md）。
 import { writeVisualizationFragmentToolEntry } from "./write-visualization-fragment.js";
@@ -89,18 +93,25 @@ export const builtInTools: ToolEntry[] = [
   // 规格与两段式执行语义见 specs/apply-patch-tool.md。
   applyPatchToolEntry,
   bashToolEntry,
+  ...powerShellToolEntries,
   globToolEntry,
   grepToolEntry,
   webFetchToolEntry,
   webSearchToolEntry,
   todoReadToolEntry,
   todoWriteToolEntry,
+  // 收尾载荷与任务列表同属「UI 耦合的会话事实」族，排在一起便于对照。
+  turnWrapUpToolEntry,
   cronCreateToolEntry,
   cronListToolEntry,
   cronUpdateToolEntry,
   cronDeleteToolEntry,
   offPeakCreateToolEntry,
   offPeakListToolEntry,
+  // 周期摘要（specs/periodic-digest.md）：只读聚合既有查询面 + session markdown
+  // 产物；周期触发复用既有 cron 面（automation prompt 里点名调用 GenerateDigest），
+  // 不建第二调度器——调度单一所有者是 host cron，digest 是能力不是策略。
+  generateDigestToolEntry,
   enterPlanModeToolEntry,
   exitPlanModeToolEntry,
   askUserQuestionToolEntry,
@@ -124,38 +135,24 @@ export const builtInTools: ToolEntry[] = [
   taskToolEntry,
   skillToolEntry,
   jsToolEntry,
-  createWorkflowToolEntry,
-  amendWorkflowToolEntry,
-  // 保存的定义：写侧 gate 与 CreateWorkflow 同档（alwaysAsk），读侧无 gate。
-  saveWorkflowToolEntry,
-  // workflow 创作的实验通道：同步、只读（v1）、完全瞬态。
-  evalWorkflowSnippetToolEntry,
-  // run 内省的两个只读工具：always-on、无 gate。它们不进 WORKFLOW_CHILD_DISALLOWED_TOOLS——
-  // 那条禁令的理由是 CreateWorkflow 的 alwaysAsk 在子 runtime 里无窗可弹，只读查询不适用。
-  listWorkflowRunsToolEntry,
-  getWorkflowRunToolEntry,
-  // run 的恢复入口：与上面两个只读内省工具同族（run_id 键、端口探测失败同款），但它是
-  // 执行语义——alwaysAsk 非 yolo 不可（cancelled 是用户的显式停止决定，复活必须先问），
-  // 因此须进 WORKFLOW_CHILD_DISALLOWED_TOOLS（child yolo 无窗可弹）。插在 GetWorkflowRun 之后：run 工具簇 list/get/resume 相邻。
-  resumeWorkflowRunToolEntry,
-  // 升级问答的主代理侧：与上面三个 run 工具同族——
-  // 同一个 dwf run 端口、同款 typeof 探测失败。与它们的不同点在下游：它进 actor 会话的
-  // 禁用名单（bootstrap 的 workflowActorToolPolicy），子代理不许替主代理作答。
-  resolveWorkflowQuestionToolEntry,
-  // 挖洞-填充的主代理侧（specs/workflow-holes.md）：与 ResolveWorkflowQuestion 同族，
-  // 同样进 actor 禁用名单（洞欠的是主代理的代码；splice 后要过确认窗，child 无窗可弹）。
-  fillWorkflowHoleToolEntry,
-  // 定义清单（与上面两个 run 工具是两件事：那是历史，这是可跑的东西）。同为只读、无 gate。
-  listSavedWorkflowsToolEntry,
-  // 模型目录：同为只读、无 gate 的发现面，服务于 CreateWorkflow / AmendWorkflow 的
-  // `subagent_model`。不进 WORKFLOW_CHILD_DISALLOWED_TOOLS
-  // ——那条禁令的理由是 alwaysAsk 在 child 里无窗可弹，只读查询不适用。
-  listModelsToolEntry,
+  // dwf 工具族（创作/修订/保存、run 内省与恢复、升级问答、洞填充、定义清单、模型
+  // 目录）：清单抽至 dwf-workflow-tool-entries.ts，逐条注释与顺序在该文件逐字保留。
+  ...dwfWorkflowToolEntries,
   // 脚本工作流（RunWorkflow）排在 dwf 那十个之后：两套系统相邻便于对照，但它是**另一套**——
   // 纯 JS、以 `export const meta` 开头、无类型检查、runId 前缀 wf_ 而非 dwfrun_、
   // 落 workflow_activity 表而非 dwf_* 表。注册门也不同：它要 `includeWorkflow`（端口在场）
   // 与 `includeDynamicWorkflow`（灰度）两道门同时放行，见下面过滤链的两支。
   runWorkflowToolEntry,
+  // 会话级 git worktree 生命周期（specs/session-worktree-lifecycle.md）：进入隔离
+  // worktree / 宿主合并基分支 / 收割不活跃。无注册门——对任何 git 仓会话自洽，
+  // 非 git 仓由工具闭集拒绝面（not_git_repo）兜住；workflow actor 侧经
+  // ACTOR_DISALLOWED_TOOLS 分域禁用（actor 已在 workflow 域 worktree 内）。
+  enterSessionWorktreeToolEntry,
+  mergeBaseBranchToolEntry,
+  reapSessionWorktreesToolEntry,
+  // 会话舰队（specs/session-fleet.md R1）：清单见 fleet-tool-entries.ts（注释逐字
+  // 保留在该文件）；无注册门，无人值守双层收敛与所有权封闭见彼处说明。
+  ...fleetToolEntries,
 ];
 
 interface RegisterBuiltInToolsOptions {
@@ -360,6 +357,9 @@ function resolveBuiltInToolEntryForBranch(
   entry: ToolEntry,
   options: RegisterBuiltInToolsOptions,
 ): ToolEntry {
+  // PowerShell：与 Bash 同款分支重铸（timeout 策略同源透传，spec powershell-tool.md R8①）。
+  const powerShellBranch = resolvePowerShellEntryForBranch(entry, options.bashTimeoutPolicy);
+  if (powerShellBranch) return powerShellBranch;
   if (entry.metadata.name === "Bash") {
     return createBashToolEntry({
       bashTimeoutPolicy: options.bashTimeoutPolicy,

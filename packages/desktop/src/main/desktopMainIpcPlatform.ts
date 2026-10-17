@@ -34,6 +34,7 @@ type WindowControlsOverlayReadyPayload =
 import { getInstalledEditors } from "./editors.js";
 import { getApplicationIcon } from "./applicationIcons.js";
 import { exportLogs } from "./exportLogs.js";
+import { exportSupportBundle } from "./supportBundle.js";
 import { resolveCommunityUrl } from "./desktopCommandHandlers.js";
 import { openInEditor } from "./openInEditor.js";
 import {
@@ -71,6 +72,7 @@ import {
 } from "./desktopSitePermissionIpc.js";
 import { registerDesktopWorkflowArtifactIpcHandlers } from "./desktopWorkflowArtifactIpc.js";
 import { registerNetworkCaptureIpc } from "./desktopNetworkCaptureIpc.js";
+import { deriveIpcSyncLabel, wrapIpcHandle } from "./ipcSyncTiming.js";
 
 export function registerPlatformIpcHandlers(options: {
   fetchHelpConfig?: () => Promise<unknown>;
@@ -128,35 +130,44 @@ export function registerPlatformIpcHandlers(options: {
    */
   sitePermissionController?: EmbeddedBrowserSitePermissionController;
 }) {
-  ipcMain.handle(PlatformChannels.SelectDirectory, async () => {
-    const result = await dialog.showOpenDialog({
-      properties: ["openDirectory", "createDirectory"],
-    });
-    if (result.canceled || result.filePaths.length === 0) {
-      return null;
-    }
-    return result.filePaths[0];
-  });
+  ipcMain.handle(
+    PlatformChannels.SelectDirectory,
+    wrapIpcHandle(deriveIpcSyncLabel(PlatformChannels.SelectDirectory), async () => {
+      const result = await dialog.showOpenDialog({
+        properties: ["openDirectory", "createDirectory"],
+      });
+      if (result.canceled || result.filePaths.length === 0) {
+        return null;
+      }
+      return result.filePaths[0];
+    }),
+  );
 
-  ipcMain.handle(PlatformChannels.SelectFile, async () => {
-    const result = await dialog.showOpenDialog({
-      properties: ["openFile"],
-    });
-    if (result.canceled || result.filePaths.length === 0) {
-      return null;
-    }
-    return result.filePaths[0];
-  });
+  ipcMain.handle(
+    PlatformChannels.SelectFile,
+    wrapIpcHandle(deriveIpcSyncLabel(PlatformChannels.SelectFile), async () => {
+      const result = await dialog.showOpenDialog({
+        properties: ["openFile"],
+      });
+      if (result.canceled || result.filePaths.length === 0) {
+        return null;
+      }
+      return result.filePaths[0];
+    }),
+  );
 
-  ipcMain.handle(PlatformChannels.SelectFiles, async () => {
-    const result = await dialog.showOpenDialog({
-      properties: ["openFile", "multiSelections"],
-    });
-    if (result.canceled || result.filePaths.length === 0) {
-      return [];
-    }
-    return result.filePaths;
-  });
+  ipcMain.handle(
+    PlatformChannels.SelectFiles,
+    wrapIpcHandle(deriveIpcSyncLabel(PlatformChannels.SelectFiles), async () => {
+      const result = await dialog.showOpenDialog({
+        properties: ["openFile", "multiSelections"],
+      });
+      if (result.canceled || result.filePaths.length === 0) {
+        return [];
+      }
+      return result.filePaths;
+    }),
+  );
 
   registerDesktopSaveFileIpcHandler(options.logger);
   registerDesktopPrintToPdfIpcHandler(options.logger);
@@ -173,9 +184,12 @@ export function registerPlatformIpcHandlers(options: {
 
   ipcMain.handle(
     PlatformChannels.CreateTempTextAttachment,
-    async (_event, payload: CreateTempTextAttachmentRequest) => {
-      return createTempTextAttachment(payload);
-    },
+    wrapIpcHandle(
+      deriveIpcSyncLabel(PlatformChannels.CreateTempTextAttachment),
+      async (_event, payload: CreateTempTextAttachmentRequest) => {
+        return createTempTextAttachment(payload);
+      },
+    ),
   );
 
   registerDesktopBrowserIpcHandlers(
@@ -186,96 +200,133 @@ export function registerPlatformIpcHandlers(options: {
     options.browserViewResidencyHandlers,
   );
 
-  ipcMain.handle(PlatformChannels.ActivateOrSetWorkspace, (event, path: string) => {
-    const validatedPath = nonEmptyStringSchema.parse(path);
-    const senderWin = BrowserWindow.fromWebContents(event.sender);
-    const activated = options.focusWorkspaceInExistingWindow(validatedPath, {
-      skipWindowId: senderWin ? asWindowId(senderWin.id) : undefined,
-    });
-    if (activated.activated) {
-      return { activated: true };
-    }
+  ipcMain.handle(
+    PlatformChannels.ActivateOrSetWorkspace,
+    wrapIpcHandle(
+      deriveIpcSyncLabel(PlatformChannels.ActivateOrSetWorkspace),
+      (event, path: string) => {
+        const validatedPath = nonEmptyStringSchema.parse(path);
+        const senderWin = BrowserWindow.fromWebContents(event.sender);
+        const activated = options.focusWorkspaceInExistingWindow(validatedPath, {
+          skipWindowId: senderWin ? asWindowId(senderWin.id) : undefined,
+        });
+        if (activated.activated) {
+          return { activated: true };
+        }
 
-    if (senderWin) {
-      const senderWindowId = asWindowId(senderWin.id);
-      let pathSet = options.windowWorkspaceMap.get(senderWindowId);
-      if (!pathSet) {
-        pathSet = new Set();
-        options.windowWorkspaceMap.set(senderWindowId, pathSet);
-        senderWin.on("closed", () => options.windowWorkspaceMap.delete(senderWindowId));
-      }
-      pathSet.add(validatedPath);
-      options.syncTaskRealtimeWorkspaceKeys(senderWindowId, pathSet);
-    }
-    return { activated: false };
-  });
+        if (senderWin) {
+          const senderWindowId = asWindowId(senderWin.id);
+          let pathSet = options.windowWorkspaceMap.get(senderWindowId);
+          if (!pathSet) {
+            pathSet = new Set();
+            options.windowWorkspaceMap.set(senderWindowId, pathSet);
+            senderWin.on("closed", () => options.windowWorkspaceMap.delete(senderWindowId));
+          }
+          pathSet.add(validatedPath);
+          options.syncTaskRealtimeWorkspaceKeys(senderWindowId, pathSet);
+        }
+        return { activated: false };
+      },
+    ),
+  );
 
-  ipcMain.handle(PlatformChannels.GetResourceUsageSnapshot, (event) =>
-    getResourceUsageSnapshot(event.sender.id),
+  ipcMain.handle(
+    PlatformChannels.GetResourceUsageSnapshot,
+    wrapIpcHandle(deriveIpcSyncLabel(PlatformChannels.GetResourceUsageSnapshot), (event) =>
+      getResourceUsageSnapshot(event.sender.id),
+    ),
   );
   ipcMain.on(PlatformChannels.SetResourceUsageSamplingActive, (event, active: unknown) => {
     if (typeof active === "boolean") setResourceUsageSamplingActive(event.sender.id, active);
   });
   registerResourceManagerStorageIpc();
-  ipcMain.handle(PlatformChannels.GetACodeStdioTapDevState, () => readACodeStdioTapDevState());
+  ipcMain.handle(
+    PlatformChannels.GetACodeStdioTapDevState,
+    wrapIpcHandle(deriveIpcSyncLabel(PlatformChannels.GetACodeStdioTapDevState), () =>
+      readACodeStdioTapDevState(),
+    ),
+  );
   ipcMain.on(PlatformChannels.OpenResourceManager, () => {
     openResourceManager();
   });
 
   ipcMain.handle(
     PlatformChannels.LoadMcpFromUserDirectory,
-    async (_event, payload?: LoadCliMcpFromUserDirectoryRequest) => {
-      return loadCliMcpFromUserDirectory(payload);
-    },
+    wrapIpcHandle(
+      deriveIpcSyncLabel(PlatformChannels.LoadMcpFromUserDirectory),
+      async (_event, payload?: LoadCliMcpFromUserDirectoryRequest) => {
+        return loadCliMcpFromUserDirectory(payload);
+      },
+    ),
   );
 
   ipcMain.handle(
     PlatformChannels.SaveMcpToUserDirectory,
-    async (_event, payload: SaveCliMcpToUserDirectoryRequest) => {
-      try {
-        await saveCliMcpToUserDirectory(payload);
-        return { success: true };
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        options.logger.warn("[mcp-user-directory] save failed", message);
-        return { success: false, error: message };
-      }
-    },
+    wrapIpcHandle(
+      deriveIpcSyncLabel(PlatformChannels.SaveMcpToUserDirectory),
+      async (_event, payload: SaveCliMcpToUserDirectoryRequest) => {
+        try {
+          await saveCliMcpToUserDirectory(payload);
+          return { success: true };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          options.logger.warn("[mcp-user-directory] save failed", message);
+          return { success: false, error: message };
+        }
+      },
+    ),
   );
 
   ipcMain.handle(
     PlatformChannels.MigrateLegacyCommonMcp,
-    async (_event, payload?: MigrateLegacyCommonMcpRequest) => {
-      return migrateLegacyCommonMcp(payload);
-    },
+    wrapIpcHandle(
+      deriveIpcSyncLabel(PlatformChannels.MigrateLegacyCommonMcp),
+      async (_event, payload?: MigrateLegacyCommonMcpRequest) => {
+        return migrateLegacyCommonMcp(payload);
+      },
+    ),
   );
 
-  ipcMain.handle(PlatformChannels.SetTitleBarTheme, (event, theme: string) => {
-    const senderWindow = BrowserWindow.fromWebContents(event.sender);
-    if (!senderWindow) {
-      return;
-    }
+  ipcMain.handle(
+    PlatformChannels.SetTitleBarTheme,
+    wrapIpcHandle(deriveIpcSyncLabel(PlatformChannels.SetTitleBarTheme), (event, theme: string) => {
+      const senderWindow = BrowserWindow.fromWebContents(event.sender);
+      if (!senderWindow) {
+        return;
+      }
 
-    if (theme !== "light" && theme !== "dark" && theme !== "system") {
-      options.logger.warn("[title-bar-theme] invalid theme:", theme);
-      return;
-    }
+      if (theme !== "light" && theme !== "dark" && theme !== "system") {
+        options.logger.warn("[title-bar-theme] invalid theme:", theme);
+        return;
+      }
 
-    nativeTheme.themeSource = theme;
-    applyWindowsTitleBarTheme(senderWindow, theme === "system" ? getWindowOverlayTheme() : theme);
-  });
+      nativeTheme.themeSource = theme;
+      applyWindowsTitleBarTheme(senderWindow, theme === "system" ? getWindowOverlayTheme() : theme);
+    }),
+  );
 
-  ipcMain.handle(PlatformChannels.SetApplicationLocale, (_event, locale: unknown) => {
-    const result = localeSchema.safeParse(locale);
-    if (!result.success) {
-      options.logger.warn("[application-locale] invalid locale:", formatZodError(result.error));
-      return;
-    }
+  ipcMain.handle(
+    PlatformChannels.SetApplicationLocale,
+    wrapIpcHandle(
+      deriveIpcSyncLabel(PlatformChannels.SetApplicationLocale),
+      (_event, locale: unknown) => {
+        const result = localeSchema.safeParse(locale);
+        if (!result.success) {
+          options.logger.warn("[application-locale] invalid locale:", formatZodError(result.error));
+          return;
+        }
 
-    return options.applyApplicationLocale(result.data);
-  });
+        return options.applyApplicationLocale(result.data);
+      },
+    ),
+  );
 
-  ipcMain.handle(PlatformChannels.GetSystemLocale, () => options.resolveSystemLocale());
+  ipcMain.handle(
+    PlatformChannels.GetSystemLocale,
+    wrapIpcHandle(deriveIpcSyncLabel(PlatformChannels.GetSystemLocale), () =>
+      options.resolveSystemLocale(),
+    ),
+  );
 
   ipcMain.on(PlatformChannels.SyncWindowTabs, (event, paths: string[]) => {
     const result = stringArraySchema.safeParse(paths);
@@ -356,8 +407,12 @@ export function registerPlatformIpcHandlers(options: {
     ).fromRenderer?.(result.data.level, result.data.args);
   });
 
-  ipcMain.handle(PlatformChannels.OpenInFileManager, async (_event, rawPath: string) =>
-    openPathInFileManager(rawPath, options.logger),
+  ipcMain.handle(
+    PlatformChannels.OpenInFileManager,
+    wrapIpcHandle(
+      deriveIpcSyncLabel(PlatformChannels.OpenInFileManager),
+      async (_event, rawPath: string) => openPathInFileManager(rawPath, options.logger),
+    ),
   );
 
   registerCuaPermissionIpcHandlers({
@@ -365,89 +420,165 @@ export function registerPlatformIpcHandlers(options: {
     currentApplicationLocale: options.currentApplicationLocale,
   });
 
-  ipcMain.handle(PlatformChannels.CanOpenCommunity, async (_event, locale: unknown) => {
-    const result = localeSchema.safeParse(locale);
-    if (!result.success) {
-      options.logger.warn("[community] invalid locale:", formatZodError(result.error));
-      return false;
-    }
+  ipcMain.handle(
+    PlatformChannels.CanOpenCommunity,
+    wrapIpcHandle(
+      deriveIpcSyncLabel(PlatformChannels.CanOpenCommunity),
+      async (_event, locale: unknown) => {
+        const result = localeSchema.safeParse(locale);
+        if (!result.success) {
+          options.logger.warn("[community] invalid locale:", formatZodError(result.error));
+          return false;
+        }
 
-    const communityUrl = await resolveCommunityUrl({
-      locale: result.data,
-      fetchRemoteConfig: options.fetchHelpConfig,
-      logger: options.logger,
-    });
+        const communityUrl = await resolveCommunityUrl({
+          locale: result.data,
+          fetchRemoteConfig: options.fetchHelpConfig,
+          logger: options.logger,
+        });
 
-    return typeof communityUrl === "string" && communityUrl.length > 0;
-  });
+        return typeof communityUrl === "string" && communityUrl.length > 0;
+      },
+    ),
+  );
 
   ipcMain.handle(
     PlatformChannels.AcknowledgePostUpdateReleaseNotes,
-    async (_event, version: string) => {
-      const validatedVersion = nonEmptyStringSchema.parse(version);
-      await options.acknowledgePostUpdateReleaseNotes(validatedVersion);
-    },
+    wrapIpcHandle(
+      deriveIpcSyncLabel(PlatformChannels.AcknowledgePostUpdateReleaseNotes),
+      async (_event, version: string) => {
+        const validatedVersion = nonEmptyStringSchema.parse(version);
+        await options.acknowledgePostUpdateReleaseNotes(validatedVersion);
+      },
+    ),
   );
 
-  ipcMain.handle(PlatformChannels.GetUpdateState, () => options.getUpdateState());
-  ipcMain.handle(PlatformChannels.OpenUpdateStatusWindow, () => {
-    options.openUpdateStatusWindow();
-  });
-  ipcMain.handle(PlatformChannels.GetAutoUpdatePreferences, () =>
-    options.getAutoUpdatePreferences(),
+  ipcMain.handle(
+    PlatformChannels.GetUpdateState,
+    wrapIpcHandle(deriveIpcSyncLabel(PlatformChannels.GetUpdateState), () =>
+      options.getUpdateState(),
+    ),
+  );
+  ipcMain.handle(
+    PlatformChannels.OpenUpdateStatusWindow,
+    wrapIpcHandle(deriveIpcSyncLabel(PlatformChannels.OpenUpdateStatusWindow), () => {
+      options.openUpdateStatusWindow();
+    }),
+  );
+  ipcMain.handle(
+    PlatformChannels.GetAutoUpdatePreferences,
+    wrapIpcHandle(deriveIpcSyncLabel(PlatformChannels.GetAutoUpdatePreferences), () =>
+      options.getAutoUpdatePreferences(),
+    ),
   );
   ipcMain.handle(
     PlatformChannels.SetAutoDownloadAndInstallUpdates,
-    async (_event, enabled: unknown) => {
-      if (typeof enabled !== "boolean") {
-        return;
+    wrapIpcHandle(
+      deriveIpcSyncLabel(PlatformChannels.SetAutoDownloadAndInstallUpdates),
+      async (_event, enabled: unknown) => {
+        if (typeof enabled !== "boolean") {
+          return;
+        }
+        await options.setAutoDownloadAndInstallUpdates(enabled);
+      },
+    ),
+  );
+  ipcMain.handle(
+    PlatformChannels.GetDesktopSessionActivity,
+    wrapIpcHandle(deriveIpcSyncLabel(PlatformChannels.GetDesktopSessionActivity), () =>
+      options.getDesktopSessionActivity(),
+    ),
+  );
+  ipcMain.handle(
+    PlatformChannels.GetDesktopZoomLevel,
+    wrapIpcHandle(deriveIpcSyncLabel(PlatformChannels.GetDesktopZoomLevel), (event) => {
+      const senderWindow = BrowserWindow.fromWebContents(event.sender);
+      if (!senderWindow || senderWindow.isDestroyed()) {
+        return { zoomLevel: 0 };
       }
-      await options.setAutoDownloadAndInstallUpdates(enabled);
-    },
-  );
-  ipcMain.handle(PlatformChannels.GetDesktopSessionActivity, () =>
-    options.getDesktopSessionActivity(),
-  );
-  ipcMain.handle(PlatformChannels.GetDesktopZoomLevel, (event) => {
-    const senderWindow = BrowserWindow.fromWebContents(event.sender);
-    if (!senderWindow || senderWindow.isDestroyed()) {
-      return { zoomLevel: 0 };
-    }
 
-    return {
-      zoomLevel: resolveDesktopZoomLevelFromFactor(senderWindow.webContents.getZoomFactor()),
-    };
-  });
-  ipcMain.handle(PlatformChannels.GetDesktopWindowChromeState, (event) => {
-    const senderWindow = BrowserWindow.fromWebContents(event.sender);
-    return resolveDesktopWindowChromeState(senderWindow?.isMaximized() ?? false);
-  });
-  ipcMain.handle(PlatformChannels.GetInstalledEditors, () => getInstalledEditors());
+      return {
+        zoomLevel: resolveDesktopZoomLevelFromFactor(senderWindow.webContents.getZoomFactor()),
+      };
+    }),
+  );
+  ipcMain.handle(
+    PlatformChannels.GetDesktopWindowChromeState,
+    wrapIpcHandle(deriveIpcSyncLabel(PlatformChannels.GetDesktopWindowChromeState), (event) => {
+      const senderWindow = BrowserWindow.fromWebContents(event.sender);
+      return resolveDesktopWindowChromeState(senderWindow?.isMaximized() ?? false);
+    }),
+  );
+  ipcMain.handle(
+    PlatformChannels.GetInstalledEditors,
+    wrapIpcHandle(deriveIpcSyncLabel(PlatformChannels.GetInstalledEditors), () =>
+      getInstalledEditors(),
+    ),
+  );
   ipcMain.handle(
     PlatformChannels.GetApplicationIcon,
-    (_event, request: string | ApplicationIconRequest) => getApplicationIcon(request),
+    wrapIpcHandle(
+      deriveIpcSyncLabel(PlatformChannels.GetApplicationIcon),
+      (_event, request: string | ApplicationIconRequest) => getApplicationIcon(request),
+    ),
   );
-  ipcMain.handle(PlatformChannels.GetDeviceId, () => options.deviceMid);
-  ipcMain.handle(PlatformChannels.ExportLogs, () => exportLogs());
-  ipcMain.handle(PlatformChannels.CaptureWindowScreenshot, async (event) => {
-    const senderWindow = BrowserWindow.fromWebContents(event.sender);
-    return captureWindowScreenshot(senderWindow);
-  });
+  ipcMain.handle(
+    PlatformChannels.GetDeviceId,
+    wrapIpcHandle(deriveIpcSyncLabel(PlatformChannels.GetDeviceId), () => options.deviceMid),
+  );
+  ipcMain.handle(
+    PlatformChannels.ExportLogs,
+    wrapIpcHandle(deriveIpcSyncLabel(PlatformChannels.ExportLogs), () => exportLogs()),
+  );
+  // 支持包导出（specs/log-privacy-redaction.md desktop R8-R14，一期最简：全节默认勾选）。
+  // 通道名消费 shared 常量 PlatformChannels.ExportSupportBundle（接线契约钉死值
+  // "acode:export-support-bundle"；preload/IPlatformService 映射已由接线波落地）。
+  // invoke 形态按契约返回 string | null：成功给保存路径，失败给 null（详情走 main 日志）。
+  ipcMain.handle(
+    PlatformChannels.ExportSupportBundle,
+    wrapIpcHandle(
+      deriveIpcSyncLabel(PlatformChannels.ExportSupportBundle),
+      async (): Promise<string | null> => {
+        const result = await exportSupportBundle();
+        if (!result.success) {
+          options.logger.warn("[support-bundle] export failed:", result.error);
+          return null;
+        }
+        return result.path ?? null;
+      },
+    ),
+  );
+  ipcMain.handle(
+    PlatformChannels.CaptureWindowScreenshot,
+    wrapIpcHandle(deriveIpcSyncLabel(PlatformChannels.CaptureWindowScreenshot), async (event) => {
+      const senderWindow = BrowserWindow.fromWebContents(event.sender);
+      return captureWindowScreenshot(senderWindow);
+    }),
+  );
   ipcMain.handle(
     PlatformChannels.OpenInEditor,
-    (_event, payload: { editorId: string; path: string; options?: OpenInEditorOptions }) =>
-      openInEditor(payload.editorId, payload.path, payload.options),
+    wrapIpcHandle(
+      deriveIpcSyncLabel(PlatformChannels.OpenInEditor),
+      (_event, payload: { editorId: string; path: string; options?: OpenInEditorOptions }) =>
+        openInEditor(payload.editorId, payload.path, payload.options),
+    ),
   );
 
-  ipcMain.handle(PlatformChannels.ExecuteDesktopCommand, async (event, command: string) => {
-    const senderWindow = BrowserWindow.fromWebContents(event.sender);
-    const isKnownCommand = (Object.values(DesktopCommandIds) as string[]).includes(command);
-    if (!isKnownCommand) {
-      options.logger.warn("[desktop-command] invalid command:", command);
-      return;
-    }
+  ipcMain.handle(
+    PlatformChannels.ExecuteDesktopCommand,
+    wrapIpcHandle(
+      deriveIpcSyncLabel(PlatformChannels.ExecuteDesktopCommand),
+      async (event, command: string) => {
+        const senderWindow = BrowserWindow.fromWebContents(event.sender);
+        const isKnownCommand = (Object.values(DesktopCommandIds) as string[]).includes(command);
+        if (!isKnownCommand) {
+          options.logger.warn("[desktop-command] invalid command:", command);
+          return;
+        }
 
-    // 返回值直通 renderer 的 executeDesktopCommand promise（GetCuaOsSupport 依赖此行为）。
-    return await options.executeDesktopCommand(command as DesktopCommandId, senderWindow);
-  });
+        // 返回值直通 renderer 的 executeDesktopCommand promise（GetCuaOsSupport 依赖此行为）。
+        return await options.executeDesktopCommand(command as DesktopCommandId, senderWindow);
+      },
+    ),
+  );
 }

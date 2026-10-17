@@ -38,6 +38,7 @@ import {
   recordCompletedToolBatch,
 } from "./turn-loop-state.js";
 import { recordToolUsageFromResult } from "./turn-tool-usage.js";
+import { recordTurnWrapUpToolResults } from "./turn-wrap-up.js";
 import { recordBrowserTurnToolResult } from "../../repl/browser-turn-state.js";
 import { createRuntimeToolResultEntry } from "../../agent/message-history.js";
 import { commitTurnRequestEntries } from "./turn-output-token-continuation.js";
@@ -251,6 +252,8 @@ export async function executeToolCallsForModelStep(
       turnId: state.turnId,
     });
   }
+  // 收尾义务事实（specs/turn-wrap-up.md R3）：唯一写入点；评估点在 turn.ts 成功收口路径。
+  recordTurnWrapUpToolResults(state, results, (toolName) => this.registry.getMetadata(toolName));
   await emitNestedModelUsageEvents(this, {
     events: state.events,
     results,

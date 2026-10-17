@@ -107,10 +107,12 @@ import type {
   ProjectContext,
   UserInstructionsOptions,
   AutoCompactPolicyConfig,
+  AutoResumeConfig,
   ModelAnomalyGuardConfig,
   OutputStylePromptConfig,
 } from "./deps.js";
 import type { AgentProfile } from "../subagent/profile.js";
+import type { LoadCurrentSubagentProfiles } from "../subagent/runner.js";
 import type { RuntimeTaskRegistry } from "../runtime-task/contract.js";
 import type { AmbientScheduleQueue, ScheduledItem } from "../ambient/queue.js";
 import type { BashTimeoutPolicy } from "../tool/bash-timeout-policy.js";
@@ -153,6 +155,13 @@ export interface AgentRuntimeConfig {
     // 原内联二名 Record 与契约漂移：bootstrap 实际穿透的是五键对象（含 bundled 预置三名），
     // 类型面却只声明二键，收敛到 shared 类型避免第二份硬编码键集。
     builtInModelSelectionOverrides?: BuiltInSubagentModelSelectionOverrides;
+    /**
+     * 每次新派生子 Agent 前读取最新已提交配置（Markdown + agents-state.json）。
+     * 由 bootstrap 注入；core 只消费结果，不缓存跨派生的可变 profile 快照。
+     * 缺席时沿用启动快照（旧宿主）；恢复既有 child 始终使用启动快照
+     * （specs/agent-teams-derived-config.md R7）。
+     */
+    loadCurrentProfiles?: LoadCurrentSubagentProfiles;
     // 一次性会话（-p）装配期声明 "foreground"：port 层单点把全部派发重写为前台
     // （runInBackground→false）并压制 autoBackgroundMs——一次性进程在最终消息后退出，
     // 任何后台化都等于丢结果（subagent-background-tristate.md R3）。
@@ -194,6 +203,12 @@ export interface AgentRuntimeConfig {
     browserDocumentationRoot?: string;
   };
   modelAnomalyGuard?: Partial<ModelAnomalyGuardConfig>;
+  /**
+   * 跨回合 auto-resume 参数与长期开关（specs/turn-auto-resume.md「配置面」，
+   * modelAnomalyGuard 同构）：bootstrap 从 config 链物化；运行态计数/定时器/暂停
+   * overlay 只住 core runtime/auto-resume coordinator 的进程内内存。
+   */
+  autoResume?: Partial<AutoResumeConfig>;
   mcp?: {
     enabled?: boolean;
     servers?: Record<string, McpServerConfig>;
@@ -375,6 +390,17 @@ export interface AgentRuntimeDeps {
   agentTelemetryCausation?: AgentTelemetryCausation;
   agentTelemetryCausationMode?: "child" | "linked_root";
   appVersion?: string;
+  /**
+   * GUIDE 宿主接线②（specs/guide-live-build-section.md「宿主接线登记」）：内置 slash
+   * 命令表只读投影（cli command-center 注册表 → createACodeApp options → 本 deps →
+   * executor liveBuildSnapshotPort）。缺席 = 快照命令子节保持磁盘 best-effort 面。
+   */
+  builtInSlashCommandNames?: readonly string[];
+  /**
+   * GUIDE 宿主接线④：plugin/bundled agents 名单只读投影（"名 (来源类别)" 行，
+   * bootstrap create-app 计算）。缺席 = 快照 agents 子节保持「not visible」注记。
+   */
+  hostAgentNames?: readonly string[];
   eventStore: SessionEventStorePort;
   sessionStore?: SessionStorePort;
   sessionMailboxPort?: SessionMailboxPort;

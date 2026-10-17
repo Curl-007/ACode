@@ -10,6 +10,15 @@ import {
   type AgentSummary,
   type SubAgentConfig,
 } from "@acode/shared";
+import {
+  appendDeclarativeRoundtripKeys,
+  escapeYamlString,
+  isObjectRecord,
+  normalizeEnum,
+  parseDeclarativeRoundtripKeys,
+  parseOptionalBoolean,
+  scalarString,
+} from "./subagentMarkdownDeclarativeKeys.js";
 
 const VALID_COLORS = new Set<AgentColor>([
   "red",
@@ -73,6 +82,16 @@ export function parseSubagentMarkdown(
   const injectAgentsMd = parseOptionalBoolean(frontmatter.injectAgentsMd);
   const mcpServers = Array.isArray(frontmatter.mcpServers) ? frontmatter.mcpServers : undefined;
 
+  // 声明键批②（specs/subagent-declarative-keys.md / 接线需求 3）：四组新键的往返
+  // 解析在姊妹模块 subagentMarkdownDeclarativeKeys.ts（语义对齐 runtime 单点
+  // core/subagent/profile-declarative.ts；isolation 非空非法值 = 拒整个 profile）。
+  const declarative = parseDeclarativeRoundtripKeys(frontmatter, input.path);
+  if ("denial" in declarative) {
+    return { diagnostic: { ...declarative.denial, path: input.path } };
+  }
+  const { hooks, initialPrompt, isolation, observer, observerMessage, observeSubagents } =
+    declarative.keys;
+
   return {
     agent: {
       id: createAgentStateId({ name, scope: input.scope, source }),
@@ -88,6 +107,12 @@ export function parseSubagentMarkdown(
       ...(background !== undefined ? { background } : {}),
       ...(injectAgentsMd !== undefined ? { injectAgentsMd } : {}),
       ...(mcpServers ? { mcpServers } : {}),
+      ...(isolation ? { isolation } : {}),
+      ...(observer ? { observer } : {}),
+      ...(observerMessage ? { observerMessage } : {}),
+      ...(observeSubagents !== undefined ? { observeSubagents } : {}),
+      ...(initialPrompt ? { initialPrompt } : {}),
+      ...(hooks ? { hooks } : {}),
       path: input.path,
       scope: input.scope,
       source,
@@ -121,6 +146,8 @@ export function serializeSubagentMarkdown(config: SubAgentConfig): string {
     frontmatterLines.push(`injectAgentsMd: ${config.injectAgentsMd ? "true" : "false"}`);
   }
   appendUnknownList(frontmatterLines, "mcpServers", config.mcpServers);
+  // 声明键批②：四组新键的序列化在姊妹模块（含 hooks 单行内联 JSON 纪律）。
+  appendDeclarativeRoundtripKeys(frontmatterLines, config);
 
   return `---\n${frontmatterLines.join("\n")}\n---\n${formatBody(config.systemPrompt)}`;
 }
@@ -282,24 +309,6 @@ function missingRequiredDiagnostic(field: string, path: string): { diagnostic: A
   };
 }
 
-function scalarString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
-}
-
-function normalizeEnum<T extends string>(value: unknown, valid: Set<T>): T | undefined {
-  const raw = scalarString(value);
-  return raw && valid.has(raw as T) ? (raw as T) : undefined;
-}
-
-function parseOptionalBoolean(value: unknown): boolean | undefined {
-  if (typeof value === "boolean") return value;
-  if (typeof value === "string") {
-    if (value.toLowerCase() === "true") return true;
-    if (value.toLowerCase() === "false") return false;
-  }
-  return undefined;
-}
-
 function parseStringList(value: unknown): string[] | undefined {
   if (Array.isArray(value)) {
     return nonEmptyList(
@@ -396,19 +405,7 @@ function isSafePlainYamlScalar(value: string): boolean {
   return /^[A-Za-z0-9_./@*][A-Za-z0-9_./@*\s()-]*$/u.test(value);
 }
 
-function escapeYamlString(value: string): string {
-  return value
-    .replace(/\\/g, "\\\\")
-    .replace(/"/g, '\\"')
-    .replace(/\n/g, "\\n")
-    .replace(/\r/g, "\\r");
-}
-
 function formatBody(systemPrompt: string): string {
   const body = systemPrompt.trim();
   return body.length > 0 ? `\n${body}\n` : "\n";
-}
-
-function isObjectRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

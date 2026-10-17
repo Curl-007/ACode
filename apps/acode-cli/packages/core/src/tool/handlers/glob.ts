@@ -19,8 +19,11 @@ import type { ToolEntry, ToolHandler } from "../types.js";
 
 const MAX_GLOB_RESULTS = 100;
 const MAX_GLOB_MODEL_BYTES = 100_000;
-const GLOB_TOOL_DESCRIPTION =
-  'Fast file pattern matching. Supports glob patterns like "**/*.js" or "src/**/*.ts". Returns matching file paths sorted by modification time.';
+// 认知诚实契约（specs/error-message-style.md R2 义务 1/2/4）：cap 引常量防漂移；
+// truncated=部分页非全集，措辞义务「至少 N」写进描述。
+const GLOB_TOOL_DESCRIPTION = `Fast file pattern matching. Supports glob patterns like "**/*.js" or "src/**/*.ts". Returns matching file paths sorted by modification time.
+
+Results are capped at ${MAX_GLOB_RESULTS} paths per call. When the response marks results as truncated, the list is a partial page, not the full match set: report "at least ${MAX_GLOB_RESULTS} files" and never present a truncated page as every match — narrow the pattern or path and search again when completeness matters.`;
 
 const globHandler: ToolHandler = async (input, context) => {
   const { pattern, path } = GlobInputSchema.parse(input) as GlobInput;

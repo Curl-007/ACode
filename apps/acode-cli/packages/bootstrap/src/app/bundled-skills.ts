@@ -50,6 +50,8 @@ const BUNDLED_SKILL_PACK_ROOT_CANDIDATES = [
 export const SEA_BUNDLED_SKILL_ASSET_PREFIX = "acode-bundled-skills/";
 const SEA_BUNDLED_SKILL_MANIFEST_ASSET_KEY = `${SEA_BUNDLED_SKILL_ASSET_PREFIX}manifest.json`;
 const SEED_MARKER_FILE = ".acode-bundled-skills-seed.json";
+/** SEA 物化清单的条目上限（specs/skill-seeding-registration.md R2）：防失控膨胀。 */
+export const MAX_BUNDLED_SKILL_PACK_ENTRIES = 2000;
 
 /**
  * 排在所有插件根之后（adapters 的插件根从 FIRST_PLUGIN_PRIORITY 起步进）：同名技能按发现顺序取先者，
@@ -147,6 +149,16 @@ async function materializeSeaBundledSkillPack(
   if (!sea?.isSea()) return undefined;
   const manifest = readSeaManifest(sea);
   if (!manifest) return undefined;
+  if (manifest.files.length > MAX_BUNDLED_SKILL_PACK_ENTRIES) {
+    // 超预算拒绝物化（不写残缺/失控缓存），按「pack 不可用」既有路径降级：
+    // filesystem 候选兜底，全部缺席时技能门 fail-closed。
+    options.logger?.warn("Bundled skill pack seed manifest oversize", {
+      entries: manifest.files.length,
+      maxEntries: MAX_BUNDLED_SKILL_PACK_ENTRIES,
+      module: "bootstrap.bundled_skills",
+    });
+    return undefined;
+  }
 
   const packsRoot = join(options.cliStorageRoot, BUNDLED_SKILL_PACK_DIRECTORY_NAME);
   const targetRoot = join(packsRoot, manifest.hash);
@@ -168,7 +180,12 @@ async function materializeSeaBundledSkillPack(
     }
     await writeFile(
       join(temporaryRoot, SEED_MARKER_FILE),
-      JSON.stringify({ hash: manifest.hash, version: 1 }, null, 2),
+      // source/entries 是归因字段（spec R5）；读取端只依赖 hash，向后兼容旧 marker。
+      JSON.stringify(
+        { entries: manifest.files.length, hash: manifest.hash, source: "sea", version: 1 },
+        null,
+        2,
+      ),
     );
     await mkdir(packsRoot, { recursive: true });
     await rename(temporaryRoot, targetRoot);

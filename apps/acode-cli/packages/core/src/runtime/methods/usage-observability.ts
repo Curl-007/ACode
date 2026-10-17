@@ -130,6 +130,55 @@ export async function recordModelUsageFact(
   }
 }
 
+/**
+ * 生成耗时口径（specs/usage-statusbar.md 数据口径 3，producer 单点）。
+ * 含思考的请求里思考 token 在正文首字之前流出，从首字起算会丢思考时长，因此
+ * reasoningTokens > 0 或 firstTokenAt 缺失时回退 completedAt − startedAt——与既有
+ * durationMs 事实（recordModelUsageFact 的 completedAt − startedAt）同义，不重复采集；
+ * 否则 = completedAt − firstTokenAt。段间工具等待天然不计：本口径每模型步只算一次
+ * （每模型步一条事实）。负值夹 0：消费端 v4 wire schema 约束 generationMs ≥ 0，
+ * 时钟回拨不得让整帧 state patch 被拒。
+ */
+export function computeGenerationMs(input: {
+  completedAt: number;
+  firstTokenAt: number | undefined;
+  reasoningTokens: number | undefined;
+  startedAt: number;
+}): number {
+  if ((input.reasoningTokens ?? 0) > 0 || input.firstTokenAt === undefined) {
+    return Math.max(0, input.completedAt - input.startedAt);
+  }
+  return Math.max(0, input.completedAt - input.firstTokenAt);
+}
+
+/**
+ * 模型步的 timing 事实（ModelComplete 发射点顺带写入用）：firstTokenAt 由本步
+ * streaming 事件派生——与 recordModelUsageFact 落库的是同一私有派生（同一
+ * events/networkEventStartIndex 入参），不另立采集路径。无首字时间戳时
+ * timeToFirstTokenMs 缺席，不造假值；两字段均进 v4 wire（≥0 约束），负值夹 0。
+ */
+export function computeModelStepTiming(input: {
+  completedAt: number;
+  events: readonly SessionEvent[];
+  networkEventStartIndex: number;
+  reasoningTokens: number | undefined;
+  startedAt: number;
+}): { generationMs: number; timeToFirstTokenMs?: number } {
+  const firstTokenAt = firstModelTokenAt(input.events, input.networkEventStartIndex);
+  const timing: { generationMs: number; timeToFirstTokenMs?: number } = {
+    generationMs: computeGenerationMs({
+      completedAt: input.completedAt,
+      firstTokenAt,
+      reasoningTokens: input.reasoningTokens,
+      startedAt: input.startedAt,
+    }),
+  };
+  if (firstTokenAt !== undefined) {
+    timing.timeToFirstTokenMs = Math.max(0, firstTokenAt - input.startedAt);
+  }
+  return timing;
+}
+
 export async function recordTurnUsageFact(
   runtime: AgentRuntimeInternal,
   input: RecordTurnUsageInput,

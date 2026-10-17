@@ -1,4 +1,18 @@
 import type { ConnectConfig } from "ssh2";
+import {
+  SSHKeyboardInteractiveRefusalError,
+  createKeyboardInteractiveResponder,
+  type SSHKeyboardInteractiveRefusal,
+} from "@acode/server/remote/sshKeyboardInteractive.js";
+
+// 迁移原因：本文件逼近 400 行治理上限；keyboard-interactive 安全应答实现与
+// 拒绝闭集类型在 sshKeyboardInteractive.ts（规格 specs/ssh-prompt-mediation.md）。
+// 这里 re-export 保持 ssh-backend.ts 的既有 import 面不变。
+export {
+  SSHKeyboardInteractiveRefusalError,
+  createKeyboardInteractiveResponder,
+  type SSHKeyboardInteractiveRefusal,
+};
 
 export const SSH_READY_TIMEOUT_MS = 60_000;
 export const SSH_KEEPALIVE_INTERVAL_MS = 15_000;
@@ -325,25 +339,16 @@ function resolveCandidateFromTrust(
   }
 }
 
-export function createKeyboardInteractiveResponder(password?: string) {
-  return (
-    _name: string,
-    _instructions: string,
-    _lang: string,
-    prompts: Array<{ prompt: string; echo: boolean }>,
-    finish: (responses: string[]) => void,
-  ) => {
-    if (!password || prompts.length === 0) {
-      finish([]);
-      return;
-    }
-
-    finish(prompts.map(() => password));
-  };
+export interface SSHConnectErrorContext {
+  /** 本轮连接的 keyboard-interactive 拒绝记录；存在时认证失败文案升级为闭集拒绝解释。 */
+  keyboardInteractiveRefusal?: SSHKeyboardInteractiveRefusal;
 }
 
-export function normalizeSSHConnectError(error: unknown): Error {
+export function normalizeSSHConnectError(error: unknown, context?: SSHConnectErrorContext): Error {
   if (error instanceof SSHHostKeyVerificationError) {
+    return error;
+  }
+  if (error instanceof SSHKeyboardInteractiveRefusalError) {
     return error;
   }
   if (
@@ -352,6 +357,13 @@ export function normalizeSSHConnectError(error: unknown): Error {
     "level" in error &&
     (error as { level?: string }).level === "client-authentication"
   ) {
+    // 修复原因：认证失败那一轮如果拒绝过交互提示，真实原因是「服务器要求
+    // ACode 无法代答的提示形态」而不是密码错误；带拒绝记录时必须升级为
+    // 解释性文案，否则用户只会反复重试错误的密码。context 由连接层注入，
+    // 未注入时（现行 SSHBackend 调用形态）行为不变。
+    if (context?.keyboardInteractiveRefusal) {
+      return new SSHKeyboardInteractiveRefusalError(context.keyboardInteractiveRefusal);
+    }
     return new Error("SSH 认证失败：请检查用户名、密码或私钥配置");
   }
 

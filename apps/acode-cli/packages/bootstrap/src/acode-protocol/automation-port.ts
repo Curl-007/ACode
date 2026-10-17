@@ -232,6 +232,10 @@ function normalizeCronAutomationMode(
     case "edit":
     case "yolo":
     case "build":
+    case "dontAsk":
+      // dontAsk 透传（2026-10-15 接线波）：contracts CronAutomationSchema.mode 闭集
+      // 已含 dontAsk（permission-adjudication-batch2 R1），过渡期的 build 投影退役——
+      // 无人值守调度拿到的是「拒绝代替询问」本尊，不再被投影成会弹卡挂起的 build。
       return mode;
     case "auto":
     case "autoEdit":

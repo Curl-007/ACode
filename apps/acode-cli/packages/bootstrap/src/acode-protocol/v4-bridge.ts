@@ -736,6 +736,9 @@ export function createConversationV4Gateway(
       info: (message, fields) => context.logger?.info(message, fields),
       warn: (message, fields) => context.logger?.warn(message, fields),
     },
+    // v4 原生能力（非过渡钩子）：数据查询类命令（/usage）经进程级 store 取数，
+    // 与 usageStats / v4/conversation/usage 通道同源。
+    getSessionStore: () => context.deps.sessionStore,
     // v4 原生能力（非过渡钩子）：sendQueuedNow 必须读取 v4 投影里的完整 intent。
     // 命令执行时 context.v4Gateway 已由 server 注入（createConversationV4Gateway
     // 返回值回填），这里惰性取用避免构造期自引用。
@@ -1527,6 +1530,16 @@ export function createConversationV4Gateway(
       // 投影越过 16MiB 后继续生成只会让所有后续 snapshot 都无法编码。
       // gateway 先原子拒绝越界事件并登记 protocol fault，再单次调用这里中止模型 turn；
       // abort 的正常终态负责释放 active lock，不能在 gateway 里越层伪造 TurnError。
+      controller.abort(createExternalTurnFaultError(reasonCode));
+    },
+    abortRunningTurn: (sessionId, reasonCode) => {
+      const record = context.sessions.get(sessionId);
+      const controller = record?.activeAbortController;
+      if (!controller || controller.signal.aborted) return;
+      // 重投递取代（specs/protocol-attachment-typed-errors.md R2/W1）：中止旧投递的在飞
+      // turn。与 terminateTurnForProjectionFault 同款机制、不同语义——旧投递的业务响应
+      // 已被 CommandInbox suppressed 位压制（close-out 不入 settled LRU/持久事实），
+      // abort 终态只负责释放 active lock，让取代后的新 admission 能真正接管执行。
       controller.abort(createExternalTurnFaultError(reasonCode));
     },
     // commands/query 持久化 fallback：同 session 首次查询惰性建索引，后续四个来源

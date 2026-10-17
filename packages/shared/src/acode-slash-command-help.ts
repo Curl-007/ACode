@@ -220,4 +220,25 @@ export const BUILTIN_ACODE_SLASH_COMMAND_HELP_ENTRIES: readonly BuiltinACodeSlas
       summary: "Design and launch a script workflow (multi-agent fan-out) for a task.",
       usage: "/ultracode [what the workflow should accomplish]",
     },
+    {
+      details: [
+        "Queries the local usage ledger without creating a turn or sending a model prompt.",
+        "Scopes: today (default), week, days:N, sessions[:N], models[:N], workspace:<keyword>, session:<id-prefix>, current.",
+        "current means sessions with requests in the last 30 minutes; the usage status bar instead follows this window's focused session and never falls back to another one.",
+      ],
+      name: "usage",
+      summary: "Query local token usage reports.",
+      usage: "/usage [today|week|days:N|sessions[:N]|models[:N]|workspace:<keyword>|session:<prefix>|current]",
+    },
+    {
+      details: [
+        "Manages turn-level auto-resume: after a transient failure, the runtime waits with adaptive backoff and injects a continuation so the turn keeps going.",
+        "status shows the switch, pause expiry, custom message, and per-session retry counters.",
+        "off accepts an optional duration (45s / 30m / 2h / 1d, bare number = minutes) and auto-restores on expiry; a bare off persists until on.",
+        "msg <text> sets a custom continuation message ({count}/{max}/{remaining} placeholders); msg clear restores the default.",
+      ],
+      name: "auto-resume",
+      summary: "Show or control turn-level auto-resume after transient failures.",
+      usage: "/auto-resume [status|on|off [<duration>]|msg <text>|msg clear]",
+    },
   ] as const;

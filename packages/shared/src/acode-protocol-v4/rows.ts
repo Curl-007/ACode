@@ -53,6 +53,21 @@ export const turnWorkSegmentSchema = z.object({
 });
 export type TurnWorkSegment = z.infer<typeof turnWorkSegmentSchema>;
 
+// turnHeader 的每轮模型用量统计（TurnComplete 时由投影写入；specs/usage-statusbar.md）。
+// null = 纯问答轮（无模型事实）；字段缺席 = 旧快照，UI 不渲染本轮用量项。
+// generationMs/timeToFirstTokenMs 口径由 core producer 单点计算，投影只透传。
+export const turnHeaderStatsSchema = z.object({
+  inputTokens: z.number().nonnegative(),
+  outputTokens: z.number().nonnegative(),
+  reasoningTokens: z.number().nonnegative(),
+  cacheReadTokens: z.number().nonnegative(),
+  cacheWriteTokens: z.number().nonnegative(),
+  timeToFirstTokenMs: z.number().nonnegative().optional(),
+  generationMs: z.number().nonnegative().optional(),
+  modelRequestCount: z.number().int().nonnegative(),
+});
+export type TurnHeaderStats = z.infer<typeof turnHeaderStatsSchema>;
+
 // turnHeader：product turn 边界 + 权威工时 + 每轮文件摘要。
 // guide 产生的内部折叠边界由 workSegments 表达；行归属仍由 CLI 决定，客户端零归属逻辑。
 export const turnHeaderRowSchema = z.object({
@@ -93,6 +108,8 @@ export const turnHeaderRowSchema = z.object({
       state: z.enum(["active", "reverted"]).optional(),
     })
     .optional(),
+  // additive：本轮模型统计（状态栏「本轮用量」与回答末尾速率行的数据源）。
+  stats: turnHeaderStatsSchema.nullable().optional(),
 });
 export type TurnHeaderRow = z.infer<typeof turnHeaderRowSchema>;
 
@@ -309,6 +326,12 @@ export const hookExecutionProjectionSchema = z
     state: z.enum(["running", "completed", "failed"]),
     outcome: z.enum(["success", "blocked", "failed", "cancelled", "timed_out"]).optional(),
     blockReason: z.string().trim().min(1).optional(),
+    // hook 被拒的可观测注记行（apps/acode-cli/specs/plugin-hook-middleware.md 二 /
+    // 接线 W2）：`<hook 名>: <事件> 被拒: <闭集原因>; 已用引擎默认行为`。additive
+    // 运行时增补——只在 admission 拒绝/执行失败的环节出现；hook 显式 block 不携带
+    // （那是 hook 成功表达决策，走 blockReason）。旧投影/旧客户端忽略之，零破坏。
+    // 文案单源：注记只在 CLI runner 的拒绝/失败结算点生成，投影与 UI 只透传/渲染。
+    refusalAnnotation: z.string().trim().min(1).optional(),
     startedAt: timestampSchema,
     endedAt: timestampSchema.optional(),
     durationMs: z.number().nonnegative().optional(),
@@ -324,6 +347,10 @@ export const hookInvocationRowSchema = z.object({
   ...rowBaseFields,
   kind: z.literal("hookInvocation"),
   hookInvocationId: z.string().min(1),
+  // Hook 事件面全集 17 成员（apps/acode-cli/specs/hook-event-surface.md F8）：与 CLI
+  // contracts 的 HookEventName 词汇叶子同步。枚举增补是向后扩展——既有 7 值逐字不变，
+  // 旧 row 校验照常通过；未升级的旧客户端遇到新事件名的 row 会按各自校验面拒绝该行
+  // （桌面与 CLI 同版本发布，新事件只由新 runtime 产出）。
   hookEventName: z.enum([
     "SessionStart",
     "UserPromptSubmit",
@@ -331,7 +358,17 @@ export const hookInvocationRowSchema = z.object({
     "PermissionRequest",
     "PostToolUse",
     "PostToolUseFailure",
+    "PostToolBatch",
     "Stop",
+    "StopFailure",
+    "PreCompact",
+    "PostCompact",
+    "PreModelSwitch",
+    "PostModelSwitch",
+    "SessionEnd",
+    "TaskCreated",
+    "TaskCompleted",
+    "CwdChanged",
   ]),
   hookCount: z.number().int().positive(),
   state: z.enum(["running", "completed", "failed"]),

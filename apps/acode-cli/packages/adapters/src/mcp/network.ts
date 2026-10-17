@@ -1,6 +1,7 @@
 import { accessSync, constants } from "node:fs";
 import { delimiter, posix, win32 } from "node:path";
 import { sanitizeACodeRuntimeEnv } from "@acode/shared";
+import { applyExecHijackEnvGuard } from "../exec/exec-hijack-env-guard.js";
 import { createNetworkProxyFetch } from "../network/proxy-fetch.js";
 import { applyNetworkEgressEnv, type NetworkEgressEnvPolicy } from "../network/subprocess-env.js";
 
@@ -14,14 +15,21 @@ export function buildMcpStdioEnv(options: {
   // 安全加固 P2：MCP stdio server 是第三方供应链执行面，在既有黑名单之上追加剥离
   // 敏感凭据键；per-server env 配置在本函数之后 spread（见 adapters/mcp 的
   // StdioClientTransport 组装），用户显式给单个 server 注入的值不受影响。
+  const sanitized = sanitizeACodeRuntimeEnv(filterStringEnv(sourceEnv), {
+    stripSensitiveCredentials: true,
+  });
+  // R4 剥离点②（specs/subprocess-env-credential-allowlist.md 接线需求①）：与 Bash 的
+  // execution-command 同一漏斗、同一顺序——先剥离继承面里的执行劫持闭集键
+  // （NODE_OPTIONS / LD_PRELOAD 族 / 代理族等），再让 applyNetworkEgressEnv 做代理/CA
+  // 的第一方受控重建（后置注入保持优先）。per-server env 在本函数之后 spread：官方
+  // 插件宿主经 bootstrap 写入的 ELECTRON_RUN_AS_NODE=1 属第一方 spawn 点重建，不受
+  // 本剥离影响（R4「自有受控 spawn 在各自 spawn 点显式重建」边界）。
+  applyExecHijackEnvGuard(sanitized);
   return prependRunningNodeDirectory(
-    applyNetworkEgressEnv(
-      sanitizeACodeRuntimeEnv(filterStringEnv(sourceEnv), { stripSensitiveCredentials: true }),
-      {
-        network: options.network,
-        sourceEnv,
-      },
-    ),
+    applyNetworkEgressEnv(sanitized, {
+      network: options.network,
+      sourceEnv,
+    }),
   );
 }
 

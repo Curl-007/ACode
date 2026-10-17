@@ -1,6 +1,6 @@
 # `plugin.json` and marketplace catalog reference
 
-Every field below is read by code in this repository: the plugin loader (`packages/adapters/src/plugins/index.ts`, `marketplace.ts`, `mcp.ts`, `hook-sources.ts`, `helpers.ts`) or the bundled scripts (`scripts/validate-plugin.mjs`, `scripts/scaffold-files.mjs`, `scripts/upsert-dev-marketplace.mjs`). Nothing here is aspirational.
+Every field below is read by code in this repository: the plugin loader (`packages/adapters/src/plugins/index.ts`, `marketplace.ts`, `mcp.ts`, `hook-sources.ts`, `helpers.ts`, `manifest-tier.ts`) or the bundled scripts (`scripts/validate-plugin.mjs`, `scripts/scaffold-files.mjs`, `scripts/upsert-dev-marketplace.mjs`). Nothing here is aspirational.
 
 ## Where the manifest lives
 
@@ -21,6 +21,14 @@ Every field below is read by code in this repository: the plugin loader (`packag
 - Missing → the loader treats the plugin as `0.0.0`. The scaffold writes `0.1.0`.
 - `upsert-dev-marketplace.mjs` requires a non-empty string (`A plugin version is required for dev updates`) and copies it into the catalog entry.
 - Bump it for every source change; the installed copy updates against this value.
+
+### `tier` — optional string, official-marketplace plugins only
+
+- Closed set: `"always"` or `"default_false"`. Read by `resolvePluginDefaultEnabled` (`manifest-tier.ts`) to derive whether the plugin is enabled when the user has no explicit choice.
+- `"always"` → default-enabled; `"default_false"` → default-disabled (overrides the host's built-in default list). A user's explicit enable/disable in Settings always wins over `tier`.
+- **Only honored for the official marketplace** (`acode-plugins-official`). Dev/local and third-party marketplace plugins that declare `tier` are ignored — a non-official plugin cannot self-declare default-enablement. For those, enablement follows the existing default (inline roots default on; installed marketplace plugins default off until enabled).
+- Absent → current behavior (the host's default-enabled list decides). An invalid value (anything outside the closed set) is treated as absent and emits a `plugin_manifest_invalid` warning; it does not block load.
+- This is a content field, not a version field: adding or changing `tier` re-seeds the built-in copy by content hash and needs no version bump on its own (still bump `version` for the release cadence). The scaffold does not write it; it is set by the official-plugin owners.
 
 ### `description` — optional string
 

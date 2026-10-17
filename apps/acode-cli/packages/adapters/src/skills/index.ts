@@ -1,4 +1,3 @@
-/* eslint-disable max-lines -- 存量基线豁免:初始导入即超限(根 lint 的 ignorePatterns 排除 apps/acode-cli,CLI turbo lint 门禁因此从未变绿)。先恢复门禁信号,拆分重构另行立项。 */
 // ============================================================
 // Node Skill Adapter
 // ============================================================
@@ -15,17 +14,20 @@ import type {
   SkillPort,
   SkillRoot,
 } from "@acode/contracts";
+import {
+  SAFE_FRONTMATTER_KEYS,
+  parseSkillFrontmatterGovernance,
+} from "./frontmatter-governance.js";
+import {
+  extractFrontmatter,
+  parseFlatYaml,
+  parseScalar,
+  stripFrontmatter,
+} from "./frontmatter-text.js";
 import { resolveDefaultSkillRoots, type SkillRootResolutionOptions } from "./roots.js";
 import { scanSkillFilesUnderRoot } from "./scan.js";
 
 const MAX_DESCRIPTION_LENGTH = 1024;
-const SAFE_FRONTMATTER_KEYS = new Set([
-  "name",
-  "description",
-  "when_to_use",
-  "license",
-  "metadata",
-]);
 const DEFAULT_MAX_SKILL_BYTES = 100_000;
 const MAX_PLUGIN_MANIFEST_SEARCH_DEPTH = 5;
 const PLUGIN_MANIFEST_RELATIVE_PATHS = [
@@ -218,6 +220,17 @@ export class NodeSkillAdapter implements SkillPort {
     // 第三方/旧版 skill 常带 version、homepage 等扩展字段。
     // 这些字段不影响加载，不再作为 warning 暴露，只保留 safeToAutoLoad 的保守判断。
     const pluginAlias = await this.resolvePluginSkillAlias(name, root);
+    const directory = dirname(path);
+    // 治理键解析（specs/skill-frontmatter-governance.md R1-R3）：解析失败 fail-closed，
+    // warning 痕迹进 diagnostics，产物只留生效规则。
+    const governance = parseSkillFrontmatterGovernance({
+      frontmatter,
+      values: parsed.values,
+      skillDirectory: directory,
+      skillName: name,
+      path,
+      diagnostics,
+    });
 
     return {
       name,
@@ -225,12 +238,13 @@ export class NodeSkillAdapter implements SkillPort {
       whenToUse: parseScalar(parsed.values.when_to_use),
       ...pluginAlias,
       path,
-      directory: dirname(path),
+      directory,
       rootPath: root.path,
       scope: root.scope,
       source: root.source,
       safeToAutoLoad: parsed.keys.every((key) => SAFE_FRONTMATTER_KEYS.has(key)),
       frontmatterKeys: parsed.keys,
+      ...(governance ? { governance } : {}),
       policy: {
         allowImplicitInvocation: true,
       },
@@ -278,144 +292,8 @@ export function createNodeSkillAdapter(options: NodeSkillAdapterOptions = {}): N
   return new NodeSkillAdapter(options);
 }
 
-function extractFrontmatter(content: string): string | null {
-  const normalized = content.replace(/^\uFEFF/, "");
-  if (!normalized.startsWith("---")) return null;
-  const lines = normalized.split(/\r?\n/);
-  if (lines[0]?.trim() !== "---") return null;
-  const endIndex = lines.findIndex((line, index) => index > 0 && line.trim() === "---");
-  if (endIndex <= 0) return null;
-  return lines.slice(1, endIndex).join("\n");
-}
-
-function stripFrontmatter(content: string): string {
-  const normalized = content.replace(/^\uFEFF/, "");
-  if (!normalized.startsWith("---")) return content;
-  const lines = normalized.split(/\r?\n/);
-  const endIndex = lines.findIndex((line, index) => index > 0 && line.trim() === "---");
-  if (endIndex <= 0) return content;
-  return lines.slice(endIndex + 1).join("\n");
-}
-
-function parseFlatYaml(
-  frontmatter: string,
-  path: string,
-  diagnostics: SkillDiagnostic[],
-): { values: Record<string, string>; keys: string[] } {
-  const values: Record<string, string> = {};
-  const keys: string[] = [];
-  const lines = frontmatter.split(/\r?\n/);
-
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index] ?? "";
-    if (line.trim().length === 0 || line.trim().startsWith("#")) continue;
-    if (/^\s/.test(line)) continue;
-
-    const separator = line.indexOf(":");
-    if (separator <= 0) {
-      diagnostics.push({
-        code: "skill_invalid_frontmatter",
-        severity: "warning",
-        message: `Invalid frontmatter line ${index + 1} in ${basename(path)}`,
-        path,
-      });
-      continue;
-    }
-
-    const key = line.slice(0, separator).trim();
-    const value = line.slice(separator + 1).trim();
-    keys.push(key);
-    const blockStyle = parseBlockScalarStyle(value);
-    if (blockStyle) {
-      // Agent 侧只读顶层 `description: >` 会把后续缩进行跳过，
-      // 导致 `.agents/skills` 的合法多行触发说明注入给模型时只剩 `>`。
-      const block = readBlockScalar(lines, index + 1, blockStyle);
-      values[key] = block.value;
-      index = block.nextIndex - 1;
-    } else {
-      values[key] = value;
-    }
-  }
-
-  return { values, keys };
-}
-
-function parseBlockScalarStyle(value: string): "folded" | "literal" | null {
-  if (/^>[+-]?$/.test(value)) return "folded";
-  if (/^\|[+-]?$/.test(value)) return "literal";
-  return null;
-}
-
-function readBlockScalar(
-  lines: string[],
-  startIndex: number,
-  style: "folded" | "literal",
-): { value: string; nextIndex: number } {
-  const rawLines: string[] = [];
-  let index = startIndex;
-  while (index < lines.length) {
-    const line = lines[index] ?? "";
-    if (line.trim().length > 0 && !/^\s/.test(line)) {
-      break;
-    }
-    rawLines.push(line);
-    index += 1;
-  }
-
-  const indent = rawLines.reduce<number | null>((current, line) => {
-    if (line.trim().length === 0) return current;
-    const lineIndent = leadingWhitespaceLength(line);
-    return current === null ? lineIndent : Math.min(current, lineIndent);
-  }, null);
-  const contentLines = rawLines.map((line) =>
-    line.trim().length === 0 ? "" : line.slice(indent ?? 0),
-  );
-  return {
-    value:
-      style === "folded"
-        ? foldBlockScalarLines(contentLines)
-        : contentLines.join("\n").trim(),
-    nextIndex: index,
-  };
-}
-
-function leadingWhitespaceLength(value: string): number {
-  const match = /^(\s*)/.exec(value);
-  return match?.[1]?.length ?? 0;
-}
-
-function foldBlockScalarLines(lines: string[]): string {
-  const paragraphs: string[] = [];
-  let current: string[] = [];
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (trimmed.length === 0) {
-      if (current.length > 0) {
-        paragraphs.push(current.join(" "));
-        current = [];
-      }
-      continue;
-    }
-    current.push(trimmed);
-  }
-  if (current.length > 0) {
-    paragraphs.push(current.join(" "));
-  }
-  return paragraphs.join("\n").trim();
-}
-
-function parseScalar(value: string | undefined): string | undefined {
-  if (value === undefined) return undefined;
-  const trimmed = value.trim();
-  if (trimmed.length === 0) return undefined;
-  if (
-    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
-    (trimmed.startsWith("'") && trimmed.endsWith("'"))
-  ) {
-    return trimmed.slice(1, -1).trim();
-  }
-  return trimmed;
-}
+// frontmatter 文本助手（extractFrontmatter/stripFrontmatter/parseFlatYaml/parseScalar
+// 及块标量解析）已迁至 ./frontmatter-text.ts（legacy 行数 ratchet，行为零变化）。
 
 function matchesSkillRequest(skill: SkillMetadata, requestName: string): boolean {
   return skill.name === requestName || skill.qualifiedName === requestName;

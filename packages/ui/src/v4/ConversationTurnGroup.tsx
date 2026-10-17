@@ -66,6 +66,8 @@ import { ConversationWorkflowDigests } from "@/v4/ConversationWorkflowDigests.js
 import { ConversationWorkflowCompletion } from "@/v4/ConversationWorkflowCompletion.js";
 import { resolveWorkflowTurnDigests } from "@/v4/workflowTurnDigests.js";
 import { resolveWorkflowTurnCompletion } from "@/v4/workflowTurnCompletion.js";
+import { ConversationTurnWrapUpCard } from "@/v4/ConversationTurnWrapUpCard.js";
+import { resolveTurnWrapUpCard } from "@/v4/turnWrapUpCards.js";
 import { ConversationAssistantTextActions } from "@/v4/ConversationRowView.js";
 import { readAssistantFeedback } from "@/v4/ConversationRowView.js";
 import type {
@@ -85,12 +87,19 @@ import type {
 import { formatConversationWorkDuration } from "@/v4/conversationWorkDuration.js";
 import { ConversationTurnRow, resolveAssistantCopyText } from "@/v4/ConversationTurnRow.js";
 import { ConversationHookDetailsAction } from "@/v4/ConversationHookDetailsAction.js";
+import { hasVisibleHookExecutions } from "@/v4/hookRefusalAnnotation.js";
 import { toolCallRowToLegacyNode } from "@/v4/toolCallRowAdapter.js";
+import { TurnRateLine } from "@/v4/usage-statusbar/TurnRateLine.js";
 
 interface ConversationTurnGroupProps {
   unit: ConversationTurnRenderUnit;
   /** 仅由 Timeline 注入给当前 live turn；历史 turn 永远不携带运行时 retry。 */
   apiRetry?: ApiRetryState | null;
+  /**
+   * 回答末尾速率行（specs/usage-statusbar.md）：仅当前问题最后一个已完成 turn 为 true，
+   * 由 Timeline 裁决；stats 缺席（纯问答轮）与开关关闭由 TurnRateLine 自行不渲染。
+   */
+  rateLineVisible?: boolean;
   context: ConversationRowRenderContext;
   onFork?: (target: ConversationRowTarget) => void;
   onRetry?: (target: ConversationRowTarget) => void;
@@ -1075,6 +1084,7 @@ function ConversationBackgroundResultWork({
 function ConversationTurnGroupImpl({
   unit,
   apiRetry = null,
+  rateLineVisible = false,
   context,
   onFork,
   onRetry,
@@ -1169,6 +1179,12 @@ function ConversationTurnGroupImpl({
     () => (unit.isRunning ? [] : resolveOffPeakTurnCards(unit.assistantWorkRows)),
     [unit.assistantWorkRows, unit.isRunning],
   );
+  // 收尾卡（packages/ui/specs/turn-wrap-up-card.md）：与 cron/off-peak 同一道缝——
+  // 轮收口后才解析；多次成功调用 last-wins，载荷解析失败安全回落（无卡，行照旧）。
+  const turnWrapUpCard = useMemo(
+    () => (unit.isRunning ? undefined : resolveTurnWrapUpCard(unit.assistantWorkRows)),
+    [unit.assistantWorkRows, unit.isRunning],
+  );
   const canRenderAssistantActions =
     !unit.timelineOnly &&
     latestAssistantTextRow?.state === "complete" &&
@@ -1178,9 +1194,9 @@ function ConversationTurnGroupImpl({
     // timelineOnly 维护 turn（compact/modelChange marker 轮）即使带历史遗留的
     // didExecute=true Hook row 也不得露出图标，否则 /compact 轮会凭 SessionStart
     // Hook 误挂出一个不可解释的操作栏。
-    !unit.timelineOnly &&
-    !unit.isRunning &&
-    unit.hookInvocations.some((row) => row.executions.some((execution) => execution.didExecute));
+    // 可达性判定含拒绝注记环节（admission-only 被拒也要可观测，W2-ui）；
+    // 旧投影下与既往 didExecute 判定逐点等价，见 v4/hookRefusalAnnotation.ts。
+    !unit.timelineOnly && !unit.isRunning && hasVisibleHookExecutions(unit.hookInvocations);
   const canRetryLatestAssistant = latestAssistantTextRow?.actions?.canRetry === true;
   const canForkLatestAssistant = latestAssistantTextRow?.actions?.canFork === true;
   const backgroundResultTitle = resolveBackgroundResultTitle(unit);
@@ -1278,6 +1294,11 @@ function ConversationTurnGroupImpl({
               }
             />
           )}
+          {/* 收尾卡：本轮自己的 recap/下一步/建议任务，排轮尾卡序列最前（先于 workflow/cron/
+              off-peak 等副作用卡），紧贴最终正文。 */}
+          {turnWrapUpCard === undefined ? null : (
+            <ConversationTurnWrapUpCard card={turnWrapUpCard} context={context} />
+          )}
           {/* 完成卡：这一轮消化的那条 run 做了什么、花了多少，紧跟最后一段正文。 */}
           {workflowTurnCompletion === undefined ? null : (
             <ConversationWorkflowCompletion
@@ -1340,6 +1361,9 @@ function ConversationTurnGroupImpl({
               assistantCodeCommentProjectionEnabled={assistantCodeCommentProjectionEnabled}
             />
           ) : null}
+          {/* 速率行是轮尾最后一行内容：只消费本轮 turnHeader.stats，宿主按「当前问题
+              最后一个已完成 turn」裁决挂载位，绝不显示上一问的统计。 */}
+          {rateLineVisible ? <TurnRateLine stats={unit.header?.stats ?? null} /> : null}
         </div>
       ) : (
         <ConversationTurnFlow

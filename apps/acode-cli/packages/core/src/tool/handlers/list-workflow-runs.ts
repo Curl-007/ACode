@@ -35,6 +35,9 @@ const LIST_WORKFLOW_RUNS_DESCRIPTION = [
   WORKFLOW_RUN_INTROSPECTION_STEERING,
   "",
   "- Each row gives the run ID, its label, lifecycle status, whether this session started it, tokens spent, and timestamps.",
+  // 认知诚实契约（specs/error-message-style.md R2 义务 1/4）：count=本页行数非日志
+  // 总数；truncated 措辞义务「至少 N」；limit 指引与 contracts 钳制语义一致。
+  "- `count` on the container is the number of rows on this page, not the journal's total: when `truncated` is present, more runs exist than listed — say \"at least N runs\", never present the page as the full history, and raise `limit` (default 20, max 50) or narrow `statuses` when the survey must be complete.",
   '- `possibly_interrupted="true"` means this session cannot confirm the run is still alive: it may be a leftover from a process that exited, or a sibling session\'s run still in flight. It is an annotation, not a verdict — do not report it as a failure.',
   "- Pass a run ID to GetWorkflowRun for progress detail, the log tail, the final result, or the failure.",
   "- Three terminal states: `completed`; `errored` (the script itself failed); `stopped` with `stop_reason` — `user` (cancelled on purpose: resume only when the user asks), `model` (your own TaskStop), `provider` (a provider-side error stopped it: read GetWorkflowRun for the cause, resolve it with the user, then resume), `interrupted` (the owning process exited: continuing it is usually what the user wants), `superseded` (an AmendWorkflow replaced it; `superseded_by` names the live successor — never resume a superseded run).",

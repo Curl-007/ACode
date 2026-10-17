@@ -48,11 +48,14 @@ const controllerModule = await loadMain("browserView/embeddedBrowserSitePermissi
   "./embeddedBrowserSitePermissionStore.js": storeModule,
   "../desktopSessionPermissionPolicy.js": policyModule,
 });
+// ipcMain.handle 同步段计时包装（W1-6 接线）：注入真实 ipcSyncTiming（纯 Node，无 electron 依赖）。
+const ipcSyncTimingModule = await loadMain("ipcSyncTiming", {});
 const sitePermissionModule = await loadMain("desktopSitePermissionIpc", {
   electron: electronStub,
   "@acode/shared": sharedModule,
   zod: zodModule,
   "./browserView/embeddedBrowserSitePermissionController.js": controllerModule,
+  "./ipcSyncTiming.js": ipcSyncTimingModule,
 });
 
 class MemoryFs {

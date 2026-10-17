@@ -38,6 +38,17 @@ const { SessionEventType } = await import("../packages/contracts/src/index.ts");
 const SESSION_ID = "sess-cron-idle-trigger";
 const AUTOMATION_ID = "auto-cron-demo";
 const CRON_WRITE_TOOLS = ["CronCreate", "CronUpdate", "CronDelete"];
+// automation 派发轮的完整隐藏名单 = cron 写工具 + 会话舰队变更面（specs/session-fleet.md
+// R1 纵深防御；唯一所有者 core 的 turn-loop-state FLEET_MUTATION_TOOL_NAMES，此处字面量
+// 钉住防漂移）。ListSessions / CronList 只读保留，不在名单。
+const AUTOMATION_TURN_HIDDEN_TOOLS = [
+  ...CRON_WRITE_TOOLS,
+  "StartSession",
+  "SendToSession",
+  "HandOffToSession",
+  "ArchiveSession",
+  "DeleteSessions",
+];
 
 /**
  * 最小 AgentRuntimeInternal 替身：状态字段 + 队列/事件账本，
@@ -232,8 +243,12 @@ test("(1) idle 到期：startNow 直启，命令以 next 档入队并携带 auto
   assert.equal(command.priority, "next", "到期命令与常规用户 prompt 同档（next），不得插队");
   assert.equal(command.mode, "prompt");
   assert.equal(command.options.automationId, AUTOMATION_ID);
-  // automation 轮守卫：Cron 写工具在本 turn 工具面被移除（prompt-turn.ts buildTurnToolDisallowlist）。
-  assert.deepEqual([...command.options.toolDisallowlist].sort(), [...CRON_WRITE_TOOLS].sort());
+  // automation 轮守卫：Cron 写工具 + 舰队变更工具在本 turn 工具面被移除
+  //（prompt-turn.ts buildTurnToolDisallowlist；舰队面见 session-fleet.md R1）。
+  assert.deepEqual(
+    [...command.options.toolDisallowlist].sort(),
+    [...AUTOMATION_TURN_HIDDEN_TOOLS].sort(),
+  );
   assert.equal(record.activeAutomationId, AUTOMATION_ID, "turn 期间记录 automation 归属");
   assert.equal(runtime.activeTurn, undefined, "admission 不等待 turn 启动");
 });
@@ -278,7 +293,10 @@ test("(2) 到期落在 in-flight turn：延迟入队而非中断，也不 steer 
   assert.equal(queued[0].payload.delivery, "queue");
   assert.equal(queued[0].payload.input, "第二轮 cron prompt");
   assert.equal(queued[0].payload.targetTurnId, first.activeTurn.turnId);
-  assert.deepEqual([...queued[0].payload.toolDisallowlist].sort(), [...CRON_WRITE_TOOLS].sort());
+  assert.deepEqual(
+    [...queued[0].payload.toolDisallowlist].sort(),
+    [...AUTOMATION_TURN_HIDDEN_TOOLS].sort(),
+  );
   assert.equal(queued[0].payload.intent.requestedDelivery, "queue");
   assert.equal(queued[0].payload.intent.admittedDelivery, "queue");
 

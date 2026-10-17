@@ -30,6 +30,12 @@ export interface CustomCommandRoot {
   priority: number;
 }
 
+/**
+ * `!` 块执行的 shell 选择（specs/skill-frontmatter-governance.md R7 ×
+ * specs/powershell-tool.md 交叉登记）：闭集，缺席 = bash（跨平台一致缺省）。
+ */
+export type CustomCommandShellPreference = "bash" | "powershell";
+
 export interface CustomCommandMetadata {
   allowedTools: string[];
   argumentHint?: string;
@@ -42,6 +48,7 @@ export interface CustomCommandMetadata {
   plugin?: HookPluginContext;
   rootPath: string;
   scope: CustomCommandScope;
+  shell?: CustomCommandShellPreference;
   skills: string[];
   source: CustomCommandSource;
 }

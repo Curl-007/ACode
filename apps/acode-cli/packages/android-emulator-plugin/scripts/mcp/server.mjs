@@ -27,6 +27,14 @@ import { spawn, spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import {
+  DEVICE_BULK_OUTPUT_MAX_VISIBLE_CHARS,
+  DEVICE_OUTPUT_MAX_VISIBLE_CHARS,
+  HARDWARE_KEY_NAMES,
+  resolveHardwareKeyName,
+  sanitizeDeviceText,
+  sanitizeDeviceTextDeep,
+} from "./sanitize.mjs";
 
 const ADB = process.env.ANDROID_PLUGIN_ADB ?? "adb";
 const EMULATOR = process.env.ANDROID_PLUGIN_EMULATOR ?? "emulator";
@@ -242,19 +250,45 @@ const tools = {
   },
 
   key_event: {
-    description: "Send a key event by Android keycode (e.g. 4 = BACK, 3 = HOME).",
+    description:
+      "Send a hardware key event: either an Android keycode (e.g. 4 = BACK, 3 = HOME) or a canonical key_name from the closed hardware-key vocabulary (home, back, recents, lock, volumeup, volumedown).",
     inputSchema: {
       type: "object",
-      properties: { keycode: { type: "integer" }, serial: { type: "string" } },
-      required: ["keycode"],
+      properties: {
+        keycode: { type: "integer" },
+        key_name: { type: "string", description: "Canonical hardware key name (closed set)." },
+        serial: { type: "string" },
+      },
       additionalProperties: false,
     },
-    handler({ keycode, serial }) {
-      const result = adb(["shell", "input", "keyevent", String(keycode)], {
+    handler({ keycode, key_name, serial }) {
+      // 硬件键名闭集词表（specs/device-ui-text-sanitize.md）：key_name 只接受
+      // canonical 词表（变体大小写/分隔符归一后查表），词表外 fail-closed 报错
+      // 并点名允许的名字——不做自由文本到按键的映射。keycode 整数路径保持既有
+      // 行为（String(integer) 进 argv，无注入面）。
+      let effectiveKeycode = keycode;
+      let sentLabel = keycode;
+      if (key_name !== undefined) {
+        if (keycode !== undefined) {
+          return toolError("key_event accepts keycode or key_name, not both");
+        }
+        const resolvedKey = resolveHardwareKeyName(key_name);
+        if (!resolvedKey || resolvedKey.androidKeycode === undefined) {
+          return toolError(
+            `unknown hardware key name "${sanitizeDeviceText(String(key_name), 64)}" — the closed vocabulary is: ${HARDWARE_KEY_NAMES.join(", ")}`,
+          );
+        }
+        effectiveKeycode = resolvedKey.androidKeycode;
+        sentLabel = `${key_name} (${effectiveKeycode})`;
+      }
+      if (effectiveKeycode === undefined || !Number.isInteger(effectiveKeycode)) {
+        return toolError("key_event requires keycode (integer) or key_name (closed vocabulary)");
+      }
+      const result = adb(["shell", "input", "keyevent", String(effectiveKeycode)], {
         serial: resolveSerial(serial),
       });
       if (!result.ok) return toolError(`keyevent failed: ${result.stderr}`);
-      return jsonResult({ sent: keycode });
+      return jsonResult({ sent: sentLabel });
     },
   },
 
@@ -314,7 +348,11 @@ const tools = {
       if (filter) args.push(filter);
       const result = adb(args, { serial: resolveSerial(serial), timeoutMs: 20000 });
       if (!result.ok) return toolError(`logcat failed: ${result.stderr}`);
-      return jsonResult({ lines: result.stdout.split("\n").filter(Boolean) });
+      // 日志行是设备侧大块不可信文本（app 可以往 logcat 写任意内容）：大块档。
+      return jsonResult(
+        { lines: result.stdout.split("\n").filter(Boolean) },
+        DEVICE_BULK_OUTPUT_MAX_VISIBLE_CHARS,
+      );
     },
   },
 
@@ -410,11 +448,15 @@ const tools = {
         serial: resolveSerial(serial),
         timeoutMs: 60000,
       });
-      return jsonResult({
-        ok: result.ok,
-        stdout: result.stdout,
-        stderr: result.stderr,
-      });
+      // shell 输出是设备侧大块不可信文本：净化按大块档截断。
+      return jsonResult(
+        {
+          ok: result.ok,
+          stdout: result.stdout,
+          stderr: result.stderr,
+        },
+        DEVICE_BULK_OUTPUT_MAX_VISIBLE_CHARS,
+      );
     },
   },
 
@@ -448,15 +490,29 @@ function waitForDevice(timeoutMs, serial) {
 
 // ------------------------------------------------------------------ MCP plumbing
 
-function jsonResult(payload) {
+/**
+ * 设备文本净化收口（specs/device-ui-text-sanitize.md）：所有进模型的结果 payload
+ * 都经这里递归 sanitize——设备名、窗口标题、日志与命令输出都是不可信输入，
+ * 不可见码点在序列化前全部滤除，字符串按档位上限截断（缺省 256 短字段档；
+ * 命令 stdout/日志行用大块档）。text 与 structuredContent 共用同一份净化后
+ * payload，两个通道不会分叉。sanitize.mjs 与 ios-simulator-plugin 的同名文件
+ * 是同源 vendored 副本，修改必须双份同步。
+ */
+function jsonResult(payload, maxVisibleChars) {
+  const sanitized = sanitizeDeviceTextDeep(
+    payload,
+    maxVisibleChars === undefined ? {} : { maxVisibleChars },
+  );
   return {
-    content: [{ type: "text", text: JSON.stringify(payload, null, 2) }],
-    structuredContent: payload,
+    content: [{ type: "text", text: JSON.stringify(sanitized, null, 2) }],
+    structuredContent: sanitized,
   };
 }
 
 function toolError(message) {
-  return { content: [{ type: "text", text: message }], isError: true };
+  // 错误消息内嵌 adb stderr（设备侧文本）：按输出档净化后再进模型。
+  const sanitized = sanitizeDeviceText(message, DEVICE_OUTPUT_MAX_VISIBLE_CHARS);
+  return { content: [{ type: "text", text: sanitized }], isError: true };
 }
 
 const TOOL_LIST = Object.entries(tools).map(([name, tool]) => ({

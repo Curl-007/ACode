@@ -119,7 +119,7 @@ Plugin MCP config can use these variable names:
 - `${user_config.key}`
 - `${ACODE_SOME_ENV}`
 
-Only environment variables with the `ACODE_` prefix are expanded. Missing variables disable the affected MCP server and produce a plugin diagnostic.
+Only environment variables with the `ACODE_` prefix are expanded. The expansion surface is closed on purpose: a plugin manifest must not be able to pull arbitrary user environment variables (cloud credentials, SCM tokens) into fields that get logged, displayed, or forwarded to the plugin process. Missing variables disable the affected MCP server and produce a `plugin_variable_missing` diagnostic instead of expanding to an empty string — an empty expansion would launch the server with broken paths or arguments and resurface as a runtime failure far from its cause, while the diagnostic names the exact variable and plugin. Per-plugin user settings belong in `${user_config.key}` (declared in the manifest's `userConfig` block, filled in by the user) rather than in environment variables; `userConfig` entries marked `sensitive` expand only into sensitive fields, never into visible ones like `args` or URLs.
 
 ### Recommended Layout
 

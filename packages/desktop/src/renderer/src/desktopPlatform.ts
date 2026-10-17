@@ -1,5 +1,9 @@
 import { DesktopCommandIds, PlatformChannels, buildLocalMediaPreviewUrl } from "@acode/shared";
-import type { IPlatformService, PlatformChannelMap } from "@acode/shared";
+import type {
+  ContentBreadcrumbWirePayload,
+  IPlatformService,
+  PlatformChannelMap,
+} from "@acode/shared";
 
 import { desktopBrowserPlatformBridge } from "./desktopBrowserPlatformBridge.js";
 
@@ -27,6 +31,12 @@ type DesktopAcodeBridgeWithRecentSurface = typeof window.acode & {
     permission: string;
   }) => Promise<{ success: boolean; error?: string }>;
   clearEmbeddedBrowserSitePermissions?: () => Promise<{ success: boolean; error?: string }>;
+  /** W1-8 嵌入内容可编辑焦点上报（specs/embedded-content-focus-yield.md）；旧 preload 缺席即 no-op。 */
+  syncEmbeddedEditableFocus?: (focused: boolean) => void;
+  /** W1-6 内容状态面包屑上报（specs/main-stall-diagnostics.md R11）；旧 preload 缺席即上报器不启动。 */
+  sendContentBreadcrumb?: (payload: ContentBreadcrumbWirePayload) => void;
+  /** SEC-2 支持包导出（specs/log-privacy-redaction.md）；旧 preload 缺席即回退 null。 */
+  exportSupportBundle?: () => Promise<string | null>;
 };
 
 export function createDesktopPlatform(options: {
@@ -38,6 +48,9 @@ export function createDesktopPlatform(options: {
   const getEmbeddedBrowserSitePermissions = acodeBridge.getEmbeddedBrowserSitePermissions;
   const resetEmbeddedBrowserSitePermission = acodeBridge.resetEmbeddedBrowserSitePermission;
   const clearEmbeddedBrowserSitePermissions = acodeBridge.clearEmbeddedBrowserSitePermissions;
+  const syncEmbeddedEditableFocus = acodeBridge.syncEmbeddedEditableFocus;
+  const sendContentBreadcrumb = acodeBridge.sendContentBreadcrumb;
+  const exportSupportBundle = acodeBridge.exportSupportBundle;
   return {
     canSelectFilePath: true,
     createLocalMediaPreviewUrl: buildLocalMediaPreviewUrl,
@@ -111,6 +124,17 @@ export function createDesktopPlatform(options: {
     syncActiveTaskSession: (sessionId) => window.acode.syncActiveTaskSession(sessionId),
     syncAppSettings: (patch) => window.acode.syncAppSettings?.(patch),
     setShortcutRecordingActive: (active) => window.acode.setShortcutRecordingActive?.(active),
+    // W1-8：嵌入内容可编辑焦点上报；旧 preload 无桥时保持 undefined，
+    // UI 侧 tracker 按可选方法缺席即 no-op（Web/静态回放同语义）。
+    syncEmbeddedEditableFocus: syncEmbeddedEditableFocus
+      ? (focused) => syncEmbeddedEditableFocus(focused)
+      : undefined,
+    // W1-6：内容面包屑上报；桥缺席即 undefined，ui 上报器按 enabled 判定整体不启动。
+    sendContentBreadcrumb: sendContentBreadcrumb
+      ? (payload) => sendContentBreadcrumb(payload)
+      : undefined,
+    // SEC-2：支持包导出；旧 preload 无桥时保持 undefined，UI 按缺席隐藏入口。
+    exportSupportBundle: exportSupportBundle ? () => exportSupportBundle() : undefined,
     onFocusTab: (handler) => window.acode.onFocusTab(handler),
     onNewTab: (handler) => window.acode.onNewTab(handler),
     onCloseActiveContextRequest: (handler) =>

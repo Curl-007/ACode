@@ -362,6 +362,10 @@ test("围栏心跳：活动推进后 flushTouch 落台账 touch（节流结算�
     "../packages/core/src/worktree/session-worktree-fence.ts"
   );
   // 触发一次活动（lookup 即活动），再结算心跳：
+  // bind 与 lookup 同毫秒时活动时刻未推进（lastActivityAt <= lastFlushedAt），
+  // 节流语义会正确地不落 touch——Linux CI 够快曾同毫秒假红。实等 2ms 保证
+  // Date.now 推进后再触发活动，消除同毫秒竞态。
+  await new Promise((resolve) => setTimeout(resolve, 2));
   lookupSessionWorktreeFenceBinding(first.handle.path);
   await flushSessionWorktreeFenceTouchesForTest();
   const text = readFileSync(harness.ledgerFile, "utf-8");

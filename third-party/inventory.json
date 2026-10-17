@@ -270,7 +270,7 @@
     "apps/acode-cli/packages/workflow-run-read/package.json": "d4659d598d8320400e86695cef751c86bc8cc7cca3508858c6e42957a86d5b6c",
     "apps/acode-cli/tools/prompt-trajectory/package.json": "c0b79b8c11694062afce19807a3e527541b3d262b77aae07b40479d5ee73346c",
     "apps/acode-cli/tools/typescript/package.json": "916bb98a7a42a80a690c6460038da943c80e2c005fc528d8bfddc930ff67a13c",
-    "package.json": "6e4c58e8fdf9b4bc11cefd2b053fdd47935d5a17e0a5d6d25bcea2c80494b7f0",
+    "package.json": "dbd03dad1d050103f90190177fca0c90cafd20d1f785408bc005f91d4c739404",
     "packages/acode-cua/package.json": "faa859923517a6a948141b87bea3fa6ac885ef737ebde7be9ae9f9abd3d9a752",
     "packages/acode-server-cli/package.json": "5e9445eb2bce9eb54e320723dcd327354ee6798e93dafb01b3532d14d0287bc3",
     "packages/client/package.json": "34842bccbb96748d785cd56230ca0e36d230b913cc57ef455680d87c999b939c",
@@ -1453,7 +1453,7 @@
     "packages/rpc/src/remote.ts": "a11e072d5df7e1c1ce64814a68f72afc081246b364f0da409b5c9d22bc815957",
     "packages/rpc/src/serialization.ts": "d33aa4ae9c29b678b88b45359d39c0a74b2282bb93a4f4dfdfc28019bbbe6ec2",
     "packages/rpc/src/transport-frame-limits.ts": "ea32f6436e885edd1948642819544bc4d809e206442f98a86caebd4f7e47f1f4",
-    "packages/server/package.json": "5b243c076715ded76df49266c4de4b911ce9b751a262ea316b85da95a601413c",
+    "packages/server/package.json": "e94a9066d5d43940dc5617e4d115835f5972348c7e7e13f937e5dd59283afccd",
     "packages/services/package.json": "8c7a55dfe325a60f19b18cec4123a2f7ca99daaf5441298b8bb17c977f3b75cf",
     "packages/shared/package.json": "07cadc84f12b3150d75b7de4cc643dd799453211b9dc9b66e1a77fbc2c6e558c",
     "packages/shared/src/acode-protocol-v4/wire-codec.ts": "5704d415e11fd79aee64d198a9ea6bd2e75c774c39832f8452dd65b69589c0ec",
@@ -1542,6 +1542,7 @@
     "packages/ui/src/components/ui/scroll-fade-viewport.tsx": "50e5984232b6a7d59e872aab4ebb36ae837e2865e3a770adbc234b61c2531da1",
     "packages/ui/src/components/ui/select.tsx": "e6d73ae0bf6916256fd86005d8a94e3dfb004c8107f51882cfd2d52e7751ca09",
     "packages/ui/src/components/ui/separator.tsx": "31ade0b9a0eca6689226c94d479352416ef076859980a976422a8af17879dee2",
+    "packages/ui/src/components/ui/slider.tsx": "a2016dfbabe02979fc2850107f522d504ab0ff878afd4b4b74938b92b429755e",
     "packages/ui/src/components/ui/spinner.tsx": "62addde743978a73322a86be769e5f02e9d11f390b31299511d324fa20481063",
     "packages/ui/src/components/ui/switch.tsx": "1a6490eb3c47b3a86b76c8469e5702608ea57da7853df5de00fffa9a4a472adf",
     "packages/ui/src/components/ui/tabs.tsx": "adc59a0469c80118e9d60c08bf0222d55664ef95e6c522496b5c201011b347f0",
@@ -1550,7 +1551,7 @@
     "packages/ui/src/components/ui/tooltip.tsx": "301dbf3a6f8b1bc496f9bdc6fbc5fe6202ed373182897f39cd1ecd19b00fdfbe",
     "packages/ui/src/components/ui/usePdfZoomOverlay.ts": "c8c91b003ce2fded32c7a2369dc6eac43aa4b9dc9c830a0f5ceccb21d366b610",
     "packages/ui/src/lib/builtinSkillI18n.ts": "3d4870ce39e38d5a8726b482fb08774ff6ed877957e359a4c82230baaf720819",
-    "packages/ui/src/styles.css": "7789ff30ee17d64c87e23fec4dabfa0cfe7a356ca093eca241e1c9832e07400c",
+    "packages/ui/src/styles.css": "03258677fffe01216f63a53c8787c9f3a1d50b57a3efe6d06bdd7a9b541cc1db",
     "packages/web/package.json": "39a3eb197637d92e64ad52afd4a6ad43e032920b6360f9c7413b896dc1eb2703",
     "packages/web/public/material-icons/3d.svg": "9527b849f0fba57ca7640e2717b3a19cb5f5e046712cbbd8b75d73af338c68fb",
     "packages/web/public/material-icons/abap.svg": "1335bd7eb9a0ed49deb622330d680c2e97731726a7a5eee8e4f46dc1e5db4de4",
@@ -14288,6 +14289,10 @@
           "sha256": "31ade0b9a0eca6689226c94d479352416ef076859980a976422a8af17879dee2"
         },
         {
+          "file": "packages/ui/src/components/ui/slider.tsx",
+          "sha256": "a2016dfbabe02979fc2850107f522d504ab0ff878afd4b4b74938b92b429755e"
+        },
+        {
           "file": "packages/ui/src/components/ui/spinner.tsx",
           "sha256": "62addde743978a73322a86be769e5f02e9d11f390b31299511d324fa20481063"
         },
@@ -14317,7 +14322,7 @@
         },
         {
           "file": "packages/ui/src/styles.css",
-          "sha256": "7789ff30ee17d64c87e23fec4dabfa0cfe7a356ca093eca241e1c9832e07400c"
+          "sha256": "03258677fffe01216f63a53c8787c9f3a1d50b57a3efe6d06bdd7a9b541cc1db"
         }
       ]
     },

@@ -24,7 +24,8 @@ export function advanceComposerDraftRevision(
   revisionByWorkspaceKey.set(workspaceKey, nextRevision);
   const listeners = listenersByWorkspaceKey.get(workspaceKey);
   if (listeners) {
-    for (const listener of [...listeners]) listener();
+    // 快照迭代：监听器可能在通知中退订自己/他人，不边迭代边变更原 Set。
+    for (const listener of Array.from(listeners)) listener();
   }
   return nextRevision;
 }

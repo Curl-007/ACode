@@ -5132,11 +5132,15 @@ export function createACodeAgentService(
       // attach 面。禁止用 wire 版本反推本字段存在性（R5 规则 3）。
       const pendingHintsReading = readPendingInteractionHints(result.ack);
       if (pendingHintsReading.generation === "legacy") {
-        logger.debug(undefined, "V4 subscribe ack 缺少 pendingInteractionHints 字段（老世代 CLI）", {
-          event: "v4.conversation.subscribe.pending_hints_legacy",
-          sessionId: params.sessionId,
-          workspaceKey: resolveWorkspaceKey(params),
-        });
+        logger.debug(
+          undefined,
+          "V4 subscribe ack 缺少 pendingInteractionHints 字段（老世代 CLI）",
+          {
+            event: "v4.conversation.subscribe.pending_hints_legacy",
+            sessionId: params.sessionId,
+            workspaceKey: resolveWorkspaceKey(params),
+          },
+        );
       }
       const cliRequestMs = Math.max(0, Math.round(performance.now() - cliRequestStartedAt));
       const hostPrepareMs = Math.max(0, Math.round(cliRequestStartedAt - subscribeStartedAt));

@@ -106,8 +106,9 @@ export function usePromptPolish(options: UsePromptPolishOptions): UsePromptPolis
 
   const [status, setStatus] = useState<PromptPolishStatus>("idle");
   const [error, setError] = useState<PromptPolishError | null>(null);
-  const [explicitSelection, setExplicitSelection] =
-    useState<PromptPolishModelSelection | null>(null);
+  const [explicitSelection, setExplicitSelection] = useState<PromptPolishModelSelection | null>(
+    null,
+  );
 
   const statusRef = useRef(status);
   statusRef.current = status;
@@ -271,8 +272,7 @@ export function usePromptPolish(options: UsePromptPolishOptions): UsePromptPolis
           setError({ kind: "cancelled" });
           return;
         }
-        const message =
-          requestError instanceof Error ? requestError.message : String(requestError);
+        const message = requestError instanceof Error ? requestError.message : String(requestError);
         logger.warn("[prompt-polish] 润色请求失败", {
           workspacePath,
           providerId: prepared.selection.providerId,

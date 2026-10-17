@@ -53,6 +53,26 @@ export function parseSlashCommand(input: string): SlashCommand | null {
     };
   }
 
+  if (rawName === "usage") {
+    // 零 token 本地查询：known → create.ts 拦截执行（不进模型）。
+    return {
+      args,
+      name: "usage",
+      rawName,
+      type: "known",
+    };
+  }
+
+  if (rawName === "auto-resume") {
+    // 零 token 本地命令：known → create.ts 拦截执行（不进模型）。
+    return {
+      args,
+      name: "auto-resume",
+      rawName,
+      type: "known",
+    };
+  }
+
   if (rawName === "effort" || rawName === "variant") {
     return {
       args,

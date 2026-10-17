@@ -736,6 +736,9 @@ export function createConversationV4Gateway(
       info: (message, fields) => context.logger?.info(message, fields),
       warn: (message, fields) => context.logger?.warn(message, fields),
     },
+    // v4 原生能力（非过渡钩子）：数据查询类命令（/usage）经进程级 store 取数，
+    // 与 usageStats / v4/conversation/usage 通道同源。
+    getSessionStore: () => context.deps.sessionStore,
     // v4 原生能力（非过渡钩子）：sendQueuedNow 必须读取 v4 投影里的完整 intent。
     // 命令执行时 context.v4Gateway 已由 server 注入（createConversationV4Gateway
     // 返回值回填），这里惰性取用避免构造期自引用。

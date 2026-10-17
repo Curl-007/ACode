@@ -121,6 +121,8 @@ export function WorkflowRunSettingsModelField({
             intl={intl}
             option={thoughtOption}
             provider={ACODE_AGENT_PROVIDER}
+            // 组件默认交互已切为 composer 滑条面板；工作流设置保持既有下拉选择。
+            interactionMode="select"
             onCurrentValueCommit={onLevelChange}
             showInvalidCurrentValue
             disabled={disabled}

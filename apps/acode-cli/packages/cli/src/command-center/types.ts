@@ -9,6 +9,11 @@ import type {
 import type { SupportedLocale, UiLocale } from "@acode/i18n";
 import type { ModelSelection, ACodeModelOption } from "@acode/shared";
 import type {
+  AutoResumeCommandIntent,
+  AutoResumeCommandOutcome,
+  AutoResumeStatusSnapshot,
+} from "@acode/core";
+import type {
   BackgroundTaskCancelResult,
   DynamicWorkflowRunResumeResult,
   DynamicWorkflowRunProgressPayload,
@@ -229,6 +234,22 @@ export type CommandCenterApp = {
     response: string;
   }>;
   cancelOvernightRun?(): { ok: boolean; runId?: string; response: string };
+  /**
+   * /auto-resume 命令面（specs/turn-auto-resume.md）：进程内状态只读投影 + 命令应用。
+   * 可选能力：runtime 未装配命令面（旧 runtime/子会话）时缺席——命令据此回「不可用」。
+   * 结构对齐 bootstrap ACodeApp 的同名成员（app 以 `as unknown as CommandCenterApp` 赋值）。
+   */
+  getAutoResumeStatus?(): AutoResumeStatusSnapshot | undefined;
+  applyAutoResumeCommand?(
+    intent: AutoResumeCommandIntent,
+  ): Promise<AutoResumeCommandOutcome> | AutoResumeCommandOutcome;
+  /**
+   * /usage 命令面（specs/usage-statusbar.md）：零 token 本地用量查询。ok=false 时
+   * text 是可读回执（非法参数/数据源缺席/取数失败）。可选能力：缺席回「不可用」。
+   */
+  queryUsage?(input: {
+    args: string;
+  }): Promise<{ ok: boolean; scope: string | null; text: string }>;
   /**
    * workflow run 的枚举面，服务 `/dwf list`。可选能力：dwf journal 不可用时整个 run service
    * 不构造，此成员随之缺席——命令据此回「不可用」而不是空表。

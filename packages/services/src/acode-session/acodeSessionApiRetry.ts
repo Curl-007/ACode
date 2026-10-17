@@ -2,7 +2,7 @@ import {
   normalizeACodeApiRetryStatus,
   isACodeModelRetryRecoveryProgressPayload,
   resolveWorkspaceKey,
-  type ACodeSessionApiRetryStatus,
+  type ACodeApiRetrySlotValue,
   type ACodeSessionStateSnapshot,
   acodeApiRetryFromModelNetworkStatusPayload,
   acodeApiRetryFromStreamRecoveryPayload,
@@ -16,7 +16,7 @@ export function createACodeSessionApiRetryRuntimeTracker(): {
   ) => ACodeSessionServiceEvent;
   withApiRetryRuntime: (snapshot: ACodeSessionStateSnapshot) => ACodeSessionStateSnapshot;
 } {
-  const apiRetryBySessionKey = new Map<string, ACodeSessionApiRetryStatus | null>();
+  const apiRetryBySessionKey = new Map<string, ACodeApiRetrySlotValue | null>();
 
   function trackApiRetryFromSessionEvent(
     params: ACodeTaskTarget,
@@ -106,7 +106,7 @@ export function createACodeSessionApiRetryRuntimeTracker(): {
 
 function apiRetryFromSessionPayload(
   payload: Record<string, unknown>,
-): ACodeSessionApiRetryStatus | null | undefined {
+): ACodeApiRetrySlotValue | null | undefined {
   if ("apiRetry" in payload) {
     return normalizeACodeApiRetryStatus(payload.apiRetry);
   }

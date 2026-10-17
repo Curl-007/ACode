@@ -6,7 +6,7 @@ import {
   type ACodeConfigOption,
   type ACodeProvider,
 } from "@acode/shared";
-import { BrainIcon, ChevronDownIcon } from "lucide-react";
+import { ChevronDownIcon } from "lucide-react";
 import { ControlHintTooltip } from "@/ControlHintTooltip.js";
 import { cn } from "@/components/lib/utils.js";
 import { Button } from "@/components/ui/button.js";
@@ -16,19 +16,17 @@ import {
   isCoarseTouchDevice,
   shouldRestoreChatInputFocusAfterPickerClose,
 } from "@/lib/pickerFocus.js";
-import {
-  getThoughtLevelLabel,
-  isNoThoughtLevel,
-} from "@/chat-input-toolbar/thoughtLevelOptions.js";
-import { RollingToolbarLabel } from "@/chat-input-toolbar/RollingToolbarLabel.js";
+import { getThoughtLevelLabel } from "@/chat-input-toolbar/thoughtLevelOptions.js";
+import { ThoughtLevelTriggerVisual } from "@/chat-input-toolbar/ThoughtLevelTriggerVisual.js";
+import { ThoughtSliderPopover } from "@/chat-input-toolbar/ThoughtSliderPopover.js";
 
-type ThoughtLevelInteractionMode = "select" | "cycle";
+type ThoughtLevelInteractionMode = "select" | "cycle" | "slider";
 
 export function ThoughtLevelCycleControl({
   disabled,
   disabledReason,
   composerCollapsePriority,
-  interactionMode = "select",
+  interactionMode = "slider",
   indicatorClassName,
   intl,
   labelVisibilityClassName = "hidden @xl/composer:inline-flex",
@@ -144,16 +142,8 @@ export function ThoughtLevelCycleControl({
     };
   }, [currentLabel, labelVisibilityClassName]);
 
-  // 配置顺序不再经过名称排序，关闭项可能位于任意位置；只计算当前项之前的非关闭项。
-  // 未选／失效及关闭值始终为零进度，不能把缺失选择投影成首档。
-  const thinkingEntries = entries.filter((entry) => !isNoThoughtLevel(entry));
-  const activeDotCount =
-    !currentValueIsValid || !currentEntry || isNoThoughtLevel(currentEntry)
-      ? 0
-      : thinkingEntries.indexOf(currentEntry) + 1;
-  const dotCount = Math.max(1, thinkingEntries.length);
-  const progressPercent = (activeDotCount / dotCount) * 100;
-
+  // 配置顺序不再经过名称排序，关闭项可能位于任意位置；进度投影收在
+  // ThoughtLevelTriggerVisual leaf（三种交互模式共享同一份触发器视觉）。
   if (option.type !== "select" || entries.length === 0 || !currentEntry) {
     return null;
   }
@@ -194,42 +184,18 @@ export function ThoughtLevelCycleControl({
     onOpenChange?.(nextOpen);
   };
 
+  // 共享触发器视觉（脑图标 + 档位进度条 + 滚动档名）收在 ThoughtLevelTriggerVisual
+  // leaf；labelRef 仍由本组件持有（上方 ResizeObserver 可见性监测要读它）。
   const triggerContent = (
-    <>
-      <BrainIcon
-        className={cn(
-          "pointer-events-none size-4 text-current",
-          // "inline-flex @lg/composer:hidden",
-        )}
-      />
-      <span
-        className={cn(
-          "relative w-1 self-stretch overflow-hidden rounded-full bg-current/10",
-          composerCollapsePriority !== undefined
-            ? "hidden group-data-[composer-compact=true]/thought:inline-flex"
-            : "hidden @sm/composer:inline-flex @xl/composer:hidden",
-        )}
-        aria-hidden="true"
-      >
-        <span
-          className={cn(
-            "absolute bottom-0 left-0 w-full rounded-full bg-success transition-[height] duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)]",
-            progressPercent > 0 ? "min-h-1" : undefined,
-          )}
-          style={{ height: `${progressPercent}%` }}
-        />
-      </span>
-      <span
-        ref={labelRef}
-        className={cn(
-          "min-w-0 whitespace-nowrap",
-          labelVisibilityClassName,
-          composerCollapsePriority !== undefined && "group-data-[composer-compact]/thought:hidden",
-        )}
-      >
-        <RollingToolbarLabel label={currentLabel} />
-      </span>
-    </>
+    <ThoughtLevelTriggerVisual
+      composerCollapsePriority={composerCollapsePriority}
+      currentEntry={currentEntry}
+      currentLabel={currentLabel}
+      currentValueIsValid={currentValueIsValid}
+      entries={entries}
+      labelRef={labelRef}
+      labelVisibilityClassName={labelVisibilityClassName}
+    />
   );
 
   if (isFixedThoughtLevel) {
@@ -251,6 +217,32 @@ export function ThoughtLevelCycleControl({
           {triggerContent}
         </span>
       </ControlHintTooltip>
+    );
+  }
+
+  if (interactionMode === "slider") {
+    // 滑条弹出（specs/composer-thought-slider.md）：弹层壳/面板/焦点恢复收在
+    // ThoughtSliderPopover leaf；开合与档位提交仍走本组件既有受控 props
+    // （open/onOpenChange/onValueChange 链），Ctrl+T 循环与 data 锚点不受影响。
+    return (
+      <ThoughtSliderPopover
+        composerCollapsePriority={composerCollapsePriority}
+        composerTriggerClassName={composerTriggerClassName}
+        currentLabel={currentLabel}
+        disabled={disabled}
+        intl={intl}
+        onOpenChange={onOpenChange}
+        onValueChange={onValueChange}
+        open={open}
+        option={option}
+        provider={provider}
+        restoreFocusSelector={restoreFocusSelector}
+        shortcutLabel={shortcutLabel}
+        tooltipTitle={effectiveTooltipTitle}
+        triggerClassName={triggerClassName}
+        triggerContent={triggerContent}
+        triggerRef={triggerRef}
+      />
     );
   }
 

@@ -343,11 +343,22 @@ export interface ACodeAgentGenerateWorkspaceTextParams extends ACodeAgentWorkspa
   maxOutputTokens?: number;
   signal?: AbortSignal;
   /**
+   * 跨边界取消标识（specs/prompt-polish.md）：renderer 等经 RPC 代理到达本服务的
+   * 调用方不得传 AbortSignal——序列化产物缺 addEventListener，host 侧接线即抛
+   * TypeError（E2E D1 回归）。跨界调用方自生成 operationId 传入（与协议
+   * workspace/generateText 同名字段贯通），取消走 cancelWorkspaceGenerateText。
+   */
+  operationId?: string;
+  /**
    * 协议层 RPC 超时。thinking 模型的长请求会超过协议 client 默认的
    * 3 分钟；调用方必须把自身 deadline 透传到这里，否则默认超时先触发、
    * 还会被 onRequestTimeout 误判 stale 杀进程。
    */
   requestTimeoutMs?: number;
+}
+
+export interface ACodeAgentCancelWorkspaceGenerateTextParams extends ACodeAgentWorkspaceTarget {
+  operationId: string;
 }
 
 export interface ACodeAgentTestModelConnectivityParams extends ACodeAgentWorkspaceTarget {
@@ -726,6 +737,13 @@ export interface IACodeAgentService {
   generateWorkspaceText(
     params: ACodeAgentGenerateWorkspaceTextParams,
   ): Promise<ACodeWorkspaceGenerateTextResult>;
+  /**
+   * best-effort 取消在飞的 workspace 单发生成（跨 RPC 边界的 signal 替代面）；
+   * 通知失败不抛，返回 cancelled:false——调用方语义=丢弃回包，由代际守卫兜底。
+   */
+  cancelWorkspaceGenerateText(
+    params: ACodeAgentCancelWorkspaceGenerateTextParams,
+  ): Promise<{ cancelled: boolean; operationId: string }>;
   testModelConnectivity(
     params: ACodeAgentTestModelConnectivityParams,
   ): Promise<ACodeProviderTestModelConnectivityResult>;
@@ -973,6 +991,7 @@ export const IACodeAgentService = createServiceDescriptor<IACodeAgentService>(
       "listAutomationRuns",
       "deleteAutomationRun",
       "generateWorkspaceText",
+      "cancelWorkspaceGenerateText",
       "testModelConnectivity",
       "sendPrompt",
       "compactSession",
@@ -1106,6 +1125,7 @@ export const IACodeAgentService = createServiceDescriptor<IACodeAgentService>(
       listAutomationRuns: requireSingleParamsObject,
       deleteAutomationRun: requireSingleParamsObject,
       generateWorkspaceText: requireSingleParamsObject,
+      cancelWorkspaceGenerateText: requireSingleParamsObject,
       testModelConnectivity: requireSingleParamsObject,
       sendPrompt: requireSingleParamsObject,
       compactSession: requireSingleParamsObject,

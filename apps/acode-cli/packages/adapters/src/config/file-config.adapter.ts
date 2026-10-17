@@ -221,6 +221,36 @@ export async function updateUiLocaleInFileConfig(
 }
 
 /**
+ * /auto-resume 裸 on/off 与 msg 的持久化面（specs/turn-auto-resume.md「命令面」，
+ * 照 updateUiLocaleInFileConfig 先例）：只 patch autoResume 节，不触碰其余配置。
+ * continueMessage: null = 删除该键（msg clear，回落默认模板）。
+ */
+export async function updateAutoResumeInFileConfig(
+  filePath: string,
+  patch: { enabled?: boolean; continueMessage?: string | null },
+): Promise<{ path: string }> {
+  const resolvedPath = resolvePath(filePath);
+  return mutateConfigFile(resolvedPath, (parsed) => ({
+    next: patchAutoResume(parsed, patch),
+    result: { path: resolvedPath },
+  }));
+}
+
+function patchAutoResume(
+  parsed: Record<string, unknown>,
+  patch: { enabled?: boolean; continueMessage?: string | null },
+): Record<string, unknown> {
+  const current = isRecord(parsed.autoResume) ? parsed.autoResume : {};
+  const next: Record<string, unknown> = { ...current };
+  if (patch.enabled !== undefined) next.enabled = patch.enabled;
+  if (patch.continueMessage !== undefined) {
+    if (patch.continueMessage === null) delete next.continueMessage;
+    else next.continueMessage = patch.continueMessage;
+  }
+  return { ...parsed, autoResume: next };
+}
+
+/**
  * Patch the user plugin enabled map without touching plugin installation state.
  */
 export async function updatePluginEnabledInFileConfig(

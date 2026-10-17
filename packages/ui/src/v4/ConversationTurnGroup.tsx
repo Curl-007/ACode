@@ -89,11 +89,17 @@ import { ConversationTurnRow, resolveAssistantCopyText } from "@/v4/Conversation
 import { ConversationHookDetailsAction } from "@/v4/ConversationHookDetailsAction.js";
 import { hasVisibleHookExecutions } from "@/v4/hookRefusalAnnotation.js";
 import { toolCallRowToLegacyNode } from "@/v4/toolCallRowAdapter.js";
+import { TurnRateLine } from "@/v4/usage-statusbar/TurnRateLine.js";
 
 interface ConversationTurnGroupProps {
   unit: ConversationTurnRenderUnit;
   /** 仅由 Timeline 注入给当前 live turn；历史 turn 永远不携带运行时 retry。 */
   apiRetry?: ApiRetryState | null;
+  /**
+   * 回答末尾速率行（specs/usage-statusbar.md）：仅当前问题最后一个已完成 turn 为 true，
+   * 由 Timeline 裁决；stats 缺席（纯问答轮）与开关关闭由 TurnRateLine 自行不渲染。
+   */
+  rateLineVisible?: boolean;
   context: ConversationRowRenderContext;
   onFork?: (target: ConversationRowTarget) => void;
   onRetry?: (target: ConversationRowTarget) => void;
@@ -1078,6 +1084,7 @@ function ConversationBackgroundResultWork({
 function ConversationTurnGroupImpl({
   unit,
   apiRetry = null,
+  rateLineVisible = false,
   context,
   onFork,
   onRetry,
@@ -1354,6 +1361,9 @@ function ConversationTurnGroupImpl({
               assistantCodeCommentProjectionEnabled={assistantCodeCommentProjectionEnabled}
             />
           ) : null}
+          {/* 速率行是轮尾最后一行内容：只消费本轮 turnHeader.stats，宿主按「当前问题
+              最后一个已完成 turn」裁决挂载位，绝不显示上一问的统计。 */}
+          {rateLineVisible ? <TurnRateLine stats={unit.header?.stats ?? null} /> : null}
         </div>
       ) : (
         <ConversationTurnFlow

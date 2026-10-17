@@ -42,6 +42,10 @@ export function mergeConfigs(...configs: PrioritizedConfig[]): RuntimeConfigPatc
         : inputConfig;
     const previousHooks = result.hooks;
     const previousPlugins = result.plugins;
+    // autoResume 必须在 Object.assign 之前快照（同 mcp 的 B1 收口纪律）：assign 会把
+    // result.autoResume 整体替换成当前层对象，事后再展开 result.autoResume 读到的是
+    // 本层自己——跨层逐字段继承形同虚设（后一层的部分覆盖会丢掉前一层的其余字段）。
+    const previousAutoResume = result.autoResume;
     // B1 收口（specs/project-mcp-trust-gate.md R11）：mcp 与 hooks/plugins 同理必须在
     // Object.assign 之前快照——assign 会把 result.mcp 整体替换成当前层的对象，下面
     // servers 展开里读到的 result.mcp?.servers 其实是**本层自己**的 servers，跨文件/
@@ -189,6 +193,14 @@ export function mergeConfigs(...configs: PrioritizedConfig[]): RuntimeConfigPatc
       result.modelAnomalyGuard = {
         ...result.modelAnomalyGuard,
         ...config.modelAnomalyGuard,
+      };
+    }
+    if (config.autoResume) {
+      // 从 assign 前的快照展开（previousAutoResume）：当前层只覆盖它声明的字段，
+      // 其余字段继承低层（System 层 = DefaultRuntimeConfig.autoResume 全量默认值）。
+      result.autoResume = {
+        ...previousAutoResume,
+        ...config.autoResume,
       };
     }
     if (config.hooks) {

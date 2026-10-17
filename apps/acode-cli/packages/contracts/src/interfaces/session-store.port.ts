@@ -53,6 +53,9 @@ export const MESSAGE_VISIBILITIES = ["user-visible", "model-only"] as const;
 export type MessageVisibility = (typeof MESSAGE_VISIBILITIES)[number];
 
 export const SYNTHETIC_USER_MESSAGE_SOURCES = [
+  // 跨回合 auto-resume（specs/turn-auto-resume.md）：临时性故障退避后由 runtime 注入的
+  // model-only 继续指令；与 goal-continuation 同档（runtime 注入提醒，非用户真实动作）。
+  "auto_resume",
   "background_task",
   "fork",
   "goal_state_change",

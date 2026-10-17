@@ -824,8 +824,17 @@ export interface ModelCompletePayload {
   contextUsageBreakdown?: ContextUsageBreakdownItem[];
   contextWindow?: number;
   fileChanges?: TurnFileChangeSummary;
+  /**
+   * 生成耗时口径（specs/usage-statusbar.md 数据口径 3，producer = core
+   * usage-observability computeGenerationMs）：含思考（reasoningTokens > 0）或无首字
+   * 时间戳 = completedAt − startedAt；否则 = completedAt − firstTokenAt。
+   * 仅主链路模型步发射点写入；sidecar/compact 等发射点与旧事件缺失。
+   */
+  generationMs?: number;
   querySource?: string;
   stopReason: string;
+  /** 首字延迟 ms（firstTokenAt − startedAt）；无首字时间戳的发射点缺失，不造假值。 */
+  timeToFirstTokenMs?: number;
   /** 当前模型请求组装出的完整 tool call 数量；旧事件可能缺失。 */
   toolCallCount?: number;
   usage: TokenUsage | ModelUsage;

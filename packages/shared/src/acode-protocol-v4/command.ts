@@ -240,6 +240,13 @@ export const commandPayloadSchemas = {
   amendWorkflowRunSettings: amendWorkflowRunSettingsPayloadSchema,
   renameSession: z.object({ title: z.string() }),
   deleteSession: z.object({}),
+  // /usage 查询命令族（apps/acode-cli/specs/usage-statusbar.md）：零 token 本地查询，
+  // 不进模型轮。timeZone 由客户端携带（IANA），与 v4/usage/stats 通道同惯例；
+  // 缺席按 UTC 归桶。
+  usage: z.object({ args: z.string().optional(), timeZone: z.string().optional() }),
+  // /auto-resume 命令面（apps/acode-cli/specs/turn-auto-resume.md）：零 token 本地命令，
+  // args = 子命令原文（status/on/off [时长]/msg …），解析与回执单一实现在 core。
+  autoResumeCommand: z.object({ args: z.string().optional() }),
 } as const;
 
 export type CommandType = keyof typeof commandPayloadSchemas;
@@ -419,6 +426,20 @@ export const commandResultSchema = z.discriminatedUnion("type", [
     // 持久事实，不能由客户端按当前 UI phase 猜测。
     type: z.literal("inputDisposition"),
     delivery: z.enum(["startNow", "queue", "guide"]),
+  }),
+  z.object({
+    // /usage 回执：ok=false 时 text 是可读回执文本（非法参数/数据源缺席/取数失败），
+    // 不是异常；scope = 命中的查询 scope kind（非法参数为 null）。
+    type: z.literal("usage"),
+    ok: z.boolean(),
+    text: z.string(),
+    scope: z.string().nullable(),
+  }),
+  z.object({
+    // /auto-resume 回执：response 是随 locale 渲染的用户可读文本。解析失败不走本
+    // variant（failed ACK：reasonCode=guard.autoResume.invalidArgs，message=用法文本）。
+    type: z.literal("autoResume"),
+    response: z.string(),
   }),
 ]);
 export type CommandResult = z.infer<typeof commandResultSchema>;

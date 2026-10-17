@@ -200,6 +200,18 @@ class ConfigStore {
         scope,
       );
     }
+    if (config.autoResume) {
+      // autoResume 与 modelAnomalyGuard 同构：与既有值逐字段浅合并后整体写回本 scope。
+      const previous = this.get(ConfigKey.AutoResume) ?? DefaultConfig.autoResume;
+      this.set(
+        ConfigKey.AutoResume,
+        {
+          ...previous,
+          ...config.autoResume,
+        },
+        scope,
+      );
+    }
     if (config.hooks) {
       const previous = this.get(ConfigKey.Hooks) ?? DefaultConfig.hooks;
       this.set(
@@ -339,6 +351,7 @@ export class ConfigPortImpl implements ConfigPort {
       },
       modelAnomalyGuard:
         this.store.get(ConfigKey.ModelAnomalyGuard) ?? DefaultConfig.modelAnomalyGuard,
+      autoResume: this.store.get(ConfigKey.AutoResume) ?? DefaultConfig.autoResume,
       hooks: this.store.get(ConfigKey.Hooks) ?? DefaultConfig.hooks,
       ui: {
         locale: this.store.get(ConfigKey.UiLocale) ?? DefaultConfig.ui.locale,
@@ -448,6 +461,8 @@ function getDefaultValue(key: ConfigKey): unknown {
       return defaults.toolConcurrency.maxConcurrency;
     case ConfigKey.ModelAnomalyGuard:
       return defaults.modelAnomalyGuard;
+    case ConfigKey.AutoResume:
+      return defaults.autoResume;
     case ConfigKey.Hooks:
       return defaults.hooks;
     case ConfigKey.UiLocale:
@@ -485,6 +500,7 @@ export {
   addSuppressedBuiltinInFileConfig,
   removeSuppressedBuiltinInFileConfig,
   updateUiLocaleInFileConfig,
+  updateAutoResumeInFileConfig,
   type PluginEnabledPatchResult,
   type PluginOptionsPatchResult,
   type PluginRemovePatchResult,

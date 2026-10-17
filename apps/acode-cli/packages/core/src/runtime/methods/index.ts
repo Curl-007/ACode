@@ -196,6 +196,7 @@ import {
   drainMemoryExtractions,
   isProjectMemoryEnabled,
 } from "../helpers/project-memory-extraction.js";
+import { installAutoResumeRuntimeMethods } from "../auto-resume/runtime-api.js";
 
 type AgentRuntimeConstructor = { prototype: object };
 
@@ -393,4 +394,5 @@ export function installAgentRuntimeMethods(ctor: AgentRuntimeConstructor): void 
   proto.generateWorkspaceText = generateWorkspaceText;
   proto.drainMemoryExtractions = drainMemoryExtractions;
   proto.isProjectMemoryEnabled = isProjectMemoryEnabled;
+  installAutoResumeRuntimeMethods(proto);
 }

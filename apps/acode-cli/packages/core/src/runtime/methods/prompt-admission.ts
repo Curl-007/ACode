@@ -4,6 +4,7 @@ import type { PromptRuntimeCommand } from "../command-queue.js";
 import { createRuntimeCommandId } from "../command-queue.js";
 import type { AgentRuntimeInternal } from "../internal.js";
 import { enqueueCancellableRuntimeCommand } from "./runtime-command-submit.js";
+import { notifyAutoResumeUserInputAdmitted } from "../auto-resume/runtime-api.js";
 import type {
   ActiveTurnStartReservation,
   ExecuteTurnOptions,
@@ -23,6 +24,12 @@ export async function admitPrompt(
   attachments?: Parameters<AgentRuntimeInternal["executeTurn"]>[1],
   options?: PromptAdmissionOptions,
 ): Promise<PromptAdmissionReceipt> {
+  if (options?.inputSource === undefined) {
+    // 用户来源输入被 admission（specs/turn-auto-resume.md 重置条件）：用户已接管，
+    // 取消 pending 自动继续定时器并清零链计数。synthetic 注入（goal-continuation /
+    // auto_resume 等自带 inputSource）不触发重置。
+    notifyAutoResumeUserInputAdmitted(this);
+  }
   const promotionLeaseOnly =
     options?.requireIdle === true &&
     this.foregroundPromotionLease !== undefined &&

@@ -4195,6 +4195,9 @@ const enUS: Record<string, string> = {
     "The selected model does not currently expose a direct enhancement configuration.",
   "chat.promptEnhance.error": "Prompt enhancement failed. Please try again.",
   "chat.promptEnhance.errorWithDetail": "Prompt enhancement failed: {error}",
+  "chat.promptPolish.restore": "Restore draft",
+  "chat.promptPolish.selectModel": "Choose polish model",
+  "chat.promptPolish.staleDraft": "Draft changed while polishing; the result was discarded",
   "chat.queue.enqueue": "Queue message",
   "chat.queue.title": "Queued messages ({count})",
   "chat.queue.drag": "Drag to reorder",
@@ -4243,6 +4246,59 @@ const enUS: Record<string, string> = {
   "chat.contextUsage.breakdown.mcpTools": "MCP tools",
   "chat.contextUsage.compress": "Compress",
   "chat.contextUsage.compressDescription": "Send {command} to compress the current context",
+  "chat.contextUsage.autoCompactNear":
+    "Approaching the auto-compact threshold ({threshold}): consider /compact or a new session.",
+  "chat.contextUsage.autoCompactReached":
+    "Auto-compact threshold reached ({threshold}): the next request may auto-compact; consider /compact or a new session first.",
+  "chat.usageStatusbar.speed.label": "Generation speed",
+  "chat.usageStatusbar.speed.tooltip":
+    "tok/s of the most recent model request: output tokens (incl. reasoning) ÷ generation time; reasoning requests time from request start, others from first token. Updated per completed request, not a live value.",
+  "chat.usageStatusbar.turnUsage.label": "Last turn",
+  "chat.usageStatusbar.turnUsage.tooltip":
+    "Tokens of the most recently completed turn; total = input + output (cache reads are part of input, not added twice).",
+  "chat.usageStatusbar.turnUsage.empty": "No model facts for this turn (plain Q&A)",
+  "chat.usageStatusbar.session.label": "Session total",
+  "chat.usageStatusbar.session.tooltip":
+    "Cumulative usage of this window's bound session (zeros when none; never falls back). Turns/requests/code delta from turn stats.",
+  "chat.usageStatusbar.tools.label": "Tool calls",
+  "chat.usageStatusbar.tools.tooltip":
+    "Local aggregation of this session's tool calls with per-tool duration and errors.",
+  "chat.usageStatusbar.tools.errors": "{count} errors",
+  "chat.usageStatusbar.tools.errorCount": "Errors",
+  "chat.usageStatusbar.today.label": "Today",
+  "chat.usageStatusbar.today.tooltip":
+    "Today's cross-session total for this workspace (never mixed across workspaces); refreshed on mount, turn completion and window focus.",
+  "chat.usageStatusbar.today.turnCount": "Turns",
+  "chat.usageStatusbar.today.toolCallCount": "Tool calls",
+  "chat.usageStatusbar.subagents.label": "Subagents",
+  "chat.usageStatusbar.subagents.tooltip":
+    "Main vs child usage split; click to expand dispatched tasks (title + cumulative tokens + authoritative status).",
+  "chat.usageStatusbar.subagents.main": "Main agent",
+  "chat.usageStatusbar.subagents.children": "Subagents",
+  "chat.usageStatusbar.subagents.running": "Running",
+  "chat.usageStatusbar.subagents.waiting": "Waiting",
+  "chat.usageStatusbar.subagents.blocked": "Blocked",
+  "chat.usageStatusbar.subagents.ended": "{count} ended",
+  "chat.usageStatusbar.subagents.empty": "No subagent tasks",
+  "chat.usageStatusbar.settings.label": "Usage status bar settings",
+  "chat.usageStatusbar.settings.title": "Usage status bar",
+  "chat.usageStatusbar.settings.rateLine": "End-of-answer rate line",
+  "chat.usageStatusbar.detail.inputTokens": "Input tokens",
+  "chat.usageStatusbar.detail.outputTokens": "Output tokens",
+  "chat.usageStatusbar.detail.reasoningTokens": "Reasoning tokens",
+  "chat.usageStatusbar.detail.cacheReadTokens": "Cache read",
+  "chat.usageStatusbar.detail.cacheWriteTokens": "Cache write",
+  "chat.usageStatusbar.detail.cacheHitRate": "Cache hit rate",
+  "chat.usageStatusbar.detail.ttft": "Time to first token",
+  "chat.usageStatusbar.detail.generationMs": "Generation time",
+  "chat.usageStatusbar.detail.requestCount": "Model requests",
+  "chat.usageStatusbar.detail.turnCount": "Turns",
+  "chat.usageStatusbar.detail.codeDelta": "Code +/−",
+  "chat.usageStatusbar.rateLine.label": "This answer's rate",
+  "chat.usageStatusbar.rateLine.ttft": "TTFT {duration}",
+  "chat.usageStatusbar.rateLine.output": "Output {count}",
+  "chat.usageStatusbar.rateLine.tooltip":
+    "Weighted rate = Σoutput (incl. reasoning) ÷ Σgeneration time across this question's recorded requests; the wrap-up text is not sampled. The status bar instead shows only the most recent single request.",
   "tokenDebug.open": "Open token debug",
   "tokenDebug.column.tps": "TPS (tokens/s)",
   "tokenDebug.tpsDescription":
@@ -4305,6 +4361,10 @@ const enUS: Record<string, string> = {
   "chat.goalVerification.openSummary": "Expand summary",
   "chat.goalBanner.label": "Goal",
   "chat.apiRetryStatus": "Reconnecting... {attempt}/{maxRetries}",
+  "chat.autoResumeStatus":
+    "Auto-resuming after transient failure {attempt}/{maxResumes} (in {delay}) · {error}",
+  "chat.autoResumeStatus.immediate":
+    "Auto-resuming after transient failure {attempt}/{maxResumes} (continuing) · {error}",
   "chat.target.title": "Goal",
   "chat.target.status.active": "Active",
   "chat.target.status.paused": "Paused",
@@ -4412,6 +4472,7 @@ const enUS: Record<string, string> = {
   "chat.toolbar.thoughtLevel.label": "Reasoning effort",
   "chat.toolbar.thoughtLevel.tooltip": "Thought level",
   "chat.toolbar.thoughtLevel.placeholder": "Select reasoning level",
+  "chat.toolbar.thoughtLevel.sliderTitle": "Thinking effort",
   "chat.toolbar.thoughtLevel.description":
     "Adjust how much the agent thinks before answering. Higher effort is usually steadier but slower.",
   "chat.toolbar.thoughtLevel.value.off": "Off",

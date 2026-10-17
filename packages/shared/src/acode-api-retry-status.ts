@@ -1,14 +1,34 @@
-import type { ACodeApiRetryStatus } from "./acode-task-types-core.js";
+import type {
+  ACodeApiRetrySlotValue,
+  ACodeApiRetryStatus,
+  ACodeAutoResumeStatus,
+} from "./acode-task-types-core.js";
 
 export function normalizeACodeApiRetryStatus(
   value: unknown,
-): ACodeApiRetryStatus | null | undefined {
+): ACodeApiRetrySlotValue | null | undefined {
   if (value === null) {
     return null;
   }
   const record = asRecord(value);
   if (Object.keys(record).length === 0) {
     return undefined;
+  }
+  // auto_resume 变体保 kind（specs/turn-auto-resume.md「状态上报」）：压扁成 api_retry
+  // 会丢 resumeDelayMs/maxResumes 语义，UI 呈现分支按 kind 区分文案。
+  if (stringValue(record.kind) === "auto_resume") {
+    const resumeAttempt = positiveIntegerValue(record.attempt) ?? 1;
+    return {
+      kind: "auto_resume",
+      attempt: resumeAttempt,
+      maxResumes: Math.max(
+        positiveIntegerValue(record.maxResumes) ?? resumeAttempt,
+        resumeAttempt,
+      ),
+      resumeDelayMs: nonNegativeIntegerValue(record.resumeDelayMs) ?? 0,
+      errorStatus: nonNegativeIntegerValue(record.errorStatus) ?? null,
+      error: stringValue(record.error) ?? "Auto-resume scheduled",
+    };
   }
   const attempt =
     positiveIntegerValue(record.attempt) ??
@@ -38,7 +58,7 @@ export function normalizeACodeApiRetryStatus(
 
 export function acodeApiRetryFromModelNetworkStatusPayload(
   payload: Record<string, unknown>,
-): ACodeApiRetryStatus | null | undefined {
+): ACodeApiRetrySlotValue | null | undefined {
   const type = stringValue(payload.type);
   if (type === "model_retry_scheduled") {
     return normalizeACodeApiRetryStatus(payload);
@@ -61,6 +81,28 @@ export function acodeApiRetryFromModelNetworkStatusPayload(
     return null;
   }
   return undefined;
+}
+
+/**
+ * 跨回合 auto-resume 状态投影（specs/turn-auto-resume.md「状态上报」）：类型本体
+ * 住 acode-task-types-core.ts（apiRetry 槽取值面与 ACodeApiRetryStatus 同址）；
+ * 这里只做 payload → 变体的增量投影函数。
+ */
+export function acodeAutoResumeFromModelNetworkStatusPayload(
+  payload: Record<string, unknown>,
+): ACodeAutoResumeStatus | undefined {
+  if (stringValue(payload.type) !== "auto_resume_scheduled") {
+    return undefined;
+  }
+  const attempt = positiveIntegerValue(payload.attempt) ?? 1;
+  return {
+    kind: "auto_resume",
+    attempt,
+    maxResumes: Math.max(positiveIntegerValue(payload.maxAttempts) ?? attempt, attempt),
+    resumeDelayMs: nonNegativeIntegerValue(payload.delayMs) ?? 0,
+    errorStatus: nonNegativeIntegerValue(payload.statusCode) ?? null,
+    error: stringValue(payload.errorSummary) ?? "Auto-resume scheduled",
+  };
 }
 
 export function isACodeModelRetryRecoveryProgressPayload(

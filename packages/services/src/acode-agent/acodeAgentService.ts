@@ -145,6 +145,7 @@ import type {
   ACodeAgentResetPluginConfigParams,
   ACodeAgentCreateSessionParams,
   ACodeAgentInstallPluginParams,
+  ACodeAgentCancelWorkspaceGenerateTextParams,
   ACodeAgentGenerateWorkspaceTextParams,
   ACodeAgentTestModelConnectivityParams,
   ACodeAgentGoalParams,
@@ -4453,7 +4454,11 @@ export function createACodeAgentService(
         reason: "workspace_generate_text",
         workspace: params,
       });
-      const operationId = params.signal ? randomUUID() : undefined;
+      // 跨 RPC 调用方（renderer 代理）的 signal 序列化后是缺 addEventListener 的普通
+      // 对象：只有真实 signal 才接本地取消通知；跨界调用方自传 operationId 并走
+      // cancelWorkspaceGenerateText（specs/prompt-polish.md，E2E D1 回归）。
+      const hasLocalSignal = typeof params.signal?.addEventListener === "function";
+      const operationId = params.operationId ?? (hasLocalSignal ? randomUUID() : undefined);
       const cancel = () => {
         if (!operationId) return;
         void client
@@ -4473,7 +4478,7 @@ export function createACodeAgentService(
             });
           });
       };
-      params.signal?.addEventListener("abort", cancel, { once: true });
+      if (hasLocalSignal) params.signal?.addEventListener("abort", cancel, { once: true });
       try {
         return await client.request(
           acodeProtocolMethods.workspaceGenerateText,
@@ -4492,12 +4497,33 @@ export function createACodeAgentService(
           // 先于调用方自身 deadline 触发，并被 onRequestTimeout 误判 stale 杀进程。
           // 调用方显式传入 requestTimeoutMs（自身 deadline + 取消缓冲）时以其为准。
           {
-            signal: params.signal,
+            ...(hasLocalSignal && params.signal ? { signal: params.signal } : {}),
             ...(params.requestTimeoutMs ? { timeoutMs: params.requestTimeoutMs } : {}),
           },
         );
       } finally {
-        params.signal?.removeEventListener("abort", cancel);
+        if (hasLocalSignal) params.signal?.removeEventListener("abort", cancel);
+      }
+    },
+
+    async cancelWorkspaceGenerateText(params: ACodeAgentCancelWorkspaceGenerateTextParams) {
+      const client = await getClient(params);
+      try {
+        return await client.request(
+          acodeProtocolMethods.workspaceCancelGenerateText,
+          { operationId: params.operationId },
+          acodeWorkspaceCancelGenerateTextResultSchema,
+          { timeoutMs: 5_000 },
+        );
+      } catch (error: unknown) {
+        // 取消是 best-effort 控制面：失败不抛回调用方（调用方语义=丢弃回包，由
+        // 代际守卫兜底）；保留 debug 轨迹区分「本地已停等」与「CLI 已收到取消」。
+        logger.debug(undefined, "workspace 模型请求取消通知失败", {
+          operationId: params.operationId,
+          workspaceKey: resolveWorkspaceKey(params),
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return { cancelled: false, operationId: params.operationId };
       }
     },
 
@@ -5106,11 +5132,15 @@ export function createACodeAgentService(
       // attach 面。禁止用 wire 版本反推本字段存在性（R5 规则 3）。
       const pendingHintsReading = readPendingInteractionHints(result.ack);
       if (pendingHintsReading.generation === "legacy") {
-        logger.debug(undefined, "V4 subscribe ack 缺少 pendingInteractionHints 字段（老世代 CLI）", {
-          event: "v4.conversation.subscribe.pending_hints_legacy",
-          sessionId: params.sessionId,
-          workspaceKey: resolveWorkspaceKey(params),
-        });
+        logger.debug(
+          undefined,
+          "V4 subscribe ack 缺少 pendingInteractionHints 字段（老世代 CLI）",
+          {
+            event: "v4.conversation.subscribe.pending_hints_legacy",
+            sessionId: params.sessionId,
+            workspaceKey: resolveWorkspaceKey(params),
+          },
+        );
       }
       const cliRequestMs = Math.max(0, Math.round(performance.now() - cliRequestStartedAt));
       const hostPrepareMs = Math.max(0, Math.round(cliRequestStartedAt - subscribeStartedAt));

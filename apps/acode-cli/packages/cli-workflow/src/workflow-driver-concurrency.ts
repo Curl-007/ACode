@@ -283,7 +283,9 @@ function chainKey(status: ModelNetworkStatusEvent): string {
   const parts = [status.querySource, status.queryId, status.toolCallId].map((part) =>
     part === undefined ? "" : String(part),
   );
-  return parts.some((part) => part.length > 0) ? parts.join("|") : status.requestId;
+  // auto_resume_scheduled 子类型不携带 requestId（调度事件无在飞请求）；它不进 workflow
+  // driver 的链跟踪，这里的 ?? "" 只为联合类型收口，对真实请求事件行为不变。
+  return parts.some((part) => part.length > 0) ? parts.join("|") : (status.requestId ?? "");
 }
 
 // ————————————————————————————— run 级 stall 时钟—————————————————————————————

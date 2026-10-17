@@ -21,11 +21,15 @@ import { createNodeSkillAdapter } from "@acode/adapters/skills";
 import { createMcpAdapter } from "@acode/adapters/mcp";
 import {
   AgentRuntime,
+  createAutoResumeCommandHost,
+  executeUsageQuery,
+  handleAutoResumeCommand,
   InMemoryRuntimeTaskRegistry,
   PermissionService,
   detectNoShellToolWarning,
   registerAutoClassifierAuditSink,
   registerBashReflexAuditSink,
+  renderUsageQueryUnavailable,
   setMcpCallAuditSink,
   setProcessManagedPolicyFloor,
   setSessionWorktreeFenceWarnSink,
@@ -42,6 +46,7 @@ import {
   createSessionEvent,
   type ExecutionShellSelection,
   type MessageId,
+  type UsageStorePort,
   type VisualizationFragmentStorePort,
 } from "@acode/contracts";
 import {
@@ -51,12 +56,14 @@ import {
   resolveACodeRuntimeEnv,
   setOfficialServiceSwitches,
 } from "@acode/shared";
+import { resolveLocale } from "@acode/i18n";
 import {
   ACODE_ATTACHMENT_FAULT_CODES,
   ACodeAttachmentFaultError,
 } from "@acode/shared/acode-protocol-v4";
 
 import { createModelAdapter } from "../model-factory.js";
+import { resolveTzOffsetMs } from "../acode-protocol/usage-stats-builder.js";
 import { StartupTimer, startupNow } from "../startup-logging.js";
 import { scheduleStartupLogRetentionCleanup } from "../log-retention.js";
 import type {
@@ -1057,6 +1064,42 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
       workingDirectory,
     });
     scheduleStartupLogRetentionCleanup(loggerFactory, logger);
+    // /usage 与 /auto-resume 的零 token 宿主执行面（文本落盘路径；typed v4 命令走
+    // handlers/usage-query 与 handlers/auto-resume leaf——两路共享 core 单一实现）。
+    const executeHostUsageQuery = async (args: string): Promise<string> => {
+      const locale = resolveLocale(configResult.config.ui.locale);
+      const store = sessionStore as Partial<UsageStorePort>;
+      if (!store.queryAppUsage || !store.queryTaskUsage) {
+        return renderUsageQueryUnavailable(locale);
+      }
+      const now = Date.now();
+      const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+      const result = await executeUsageQuery({
+        args,
+        locale,
+        deps: {
+          usageStore: store as Pick<UsageStorePort, "queryAppUsage" | "queryTaskUsage">,
+          listSessions: (input) => sessionStore.listSessions(input),
+          tzOffsetMs: resolveTzOffsetMs(timeZone, now),
+          now,
+        },
+      });
+      return result.text;
+    };
+    const executeHostAutoResumeCommand = async (args: string): Promise<string> => {
+      // 走 session facade 的 app 级命令面（persist 档写 config 并回执 configPath）；
+      // runtime 同名成员是低层 fire-and-forget 面，缺持久化语义，不得直连。
+      // sessionFacade 声明在后（同一作用域 const）：闭包仅在拦截触发时求值，无 TDZ 风险。
+      const result = await handleAutoResumeCommand(
+        args,
+        createAutoResumeCommandHost({
+          getAutoResumeStatus: () => sessionFacade.getAutoResumeStatus?.(),
+          applyAutoResumeCommand: sessionFacade.applyAutoResumeCommand?.bind(sessionFacade),
+          getLocale: () => sessionFacade.getLocale(),
+        }),
+      );
+      return result.response;
+    };
     const inputFacade = createInputFacade({
       artifactStore,
       // K3 /overnight 族的宿主动作拦截：sendInput 顶解析（薄层，结构化动作判定），
@@ -1066,6 +1109,27 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
         const command = resolveACodeBuiltinHostCommand(text);
         if (!command) return undefined;
         const hostTraceContext = interceptorOptions?.traceContext ?? traceContext;
+        // 零 token 本地命令（specs/usage-statusbar.md、specs/turn-auto-resume.md）：
+        // desktop sendText 汇入 sendInput、TUI busy 态的文本落盘路径与 typed v4 命令
+        // 共用本拦截面——宿主直接执行不进模型，堵住「命令原文漏进模型」的破口。
+        // transcript 记录与 overnight 同款（controlOnly 可见、无模型输出）。
+        if (command.kind === "usage-query" || command.kind === "auto-resume-command") {
+          const response =
+            command.kind === "usage-query"
+              ? await executeHostUsageQuery(command.args)
+              : await executeHostAutoResumeCommand(command.args);
+          try {
+            await getRuntime().recordExternalUserPrompt(text, { traceContext: hostTraceContext });
+          } catch (error) {
+            // transcript 可观测面失败不吞命令回执（查询/开关本身已生效）。
+            logger.warn("Local host command transcript record failed", {
+              error: error instanceof Error ? error.message : String(error),
+              event: "host_command.transcript_failed",
+              module: "bootstrap",
+            });
+          }
+          return { response };
+        }
         const result = await overnightController.handleHostCommand(command, hostTraceContext);
         try {
           await getRuntime().recordExternalUserPrompt(text, { traceContext: hostTraceContext });

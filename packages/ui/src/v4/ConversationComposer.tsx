@@ -81,7 +81,10 @@ import { ChatPromptEditor } from "@/prompt-editor/ChatPromptEditor.js";
 import { usePromptEditorDragState } from "@/prompt-editor/usePromptEditorDragState.js";
 import { useACodeIntl } from "@/i18n/IntlProvider.js";
 import { publishComposerContentGauge } from "@/v4/composer/composerContentGauge.js";
-import { advanceComposerDraftRevision } from "@/v4/composer/composerDraftRevision.js";
+import {
+  advanceComposerDraftRevision,
+  getComposerDraftRevision,
+} from "@/v4/composer/composerDraftRevision.js";
 import type { AppSlashCommand } from "@/slashCommandHelpers.js";
 import { useOptionalServices } from "@/hooks/useServices.js";
 import { logger } from "@/logger.js";
@@ -146,7 +149,10 @@ import {
   V4ComposerModeSwitch,
   V4ComposerModelControls,
   type ModelSelectionSource,
+  type V4ComposerPromptPolishDraftApi,
 } from "@/v4/composer/V4ComposerToolbar.js";
+import type { PromptPolishDraftSnapshot } from "@/v4/composer/usePromptPolish.js";
+import { UsageStatusbar } from "@/v4/usage-statusbar/UsageStatusbar.js";
 import {
   resolveV4ComposerConfigPickerState,
   type V4ComposerConfigPicker,
@@ -758,6 +764,56 @@ function ConversationComposerImpl({
       persistDraftNow(draftScopeRef.current);
     }, 350);
   }, [persistDraftNow]);
+
+  // ── 提示词润色草稿通道（specs/prompt-polish.md 产品规则 4；注入给工具条的
+  // usePromptPolish，本组件不持有润色状态）──
+  // 草稿事实 = textRef + inputApiRef editorState + composerDraftRevision（revision
+  // guard 防迟到回包覆盖用户新编辑）；还原与 restoreSubmittedDraft 同款语义：
+  // editorStateJson 优先回灌，失败退纯文本，随后同步组件态并调度草稿落盘。
+  const getPromptPolishDraftSnapshot = useCallback((): PromptPolishDraftSnapshot | null => {
+    const api = inputApiRef.current;
+    if (!api) return null;
+    let editorStateJson: string | null = null;
+    try {
+      const editorState = api.getEditorState();
+      editorStateJson = editorState ? JSON.stringify(editorState.toJSON()) : null;
+    } catch (error) {
+      logger.warn(`[v4-composer] 润色快照 editorState 序列化失败: ${String(error)}`);
+    }
+    return {
+      text: textRef.current,
+      ...(editorStateJson ? { editorStateJson } : {}),
+      revision: getComposerDraftRevision(workspacePath, workspaceIdentity),
+    };
+  }, [workspaceIdentity, workspacePath]);
+  const restorePromptPolishDraftSnapshot = useCallback(
+    (snapshot: PromptPolishDraftSnapshot): boolean => {
+      const api = inputApiRef.current;
+      if (!api) return false;
+      if (snapshot.editorStateJson) {
+        try {
+          api.setEditorStateJson(snapshot.editorStateJson);
+        } catch (error) {
+          // 与草稿恢复同款降级：editorState 回灌失败退纯文本，不静默丢失还原。
+          logger.warn(`[v4-composer] 润色还原 editorState 失败，退纯文本: ${String(error)}`);
+          api.setText(snapshot.text);
+        }
+      } else {
+        api.setText(snapshot.text);
+      }
+      updateText(snapshot.text);
+      scheduleDraftPersist();
+      return true;
+    },
+    [scheduleDraftPersist, updateText],
+  );
+  const promptPolishDraftApi = useMemo<V4ComposerPromptPolishDraftApi>(
+    () => ({
+      getDraftSnapshot: getPromptPolishDraftSnapshot,
+      restoreDraftSnapshot: restorePromptPolishDraftSnapshot,
+    }),
+    [getPromptPolishDraftSnapshot, restorePromptPolishDraftSnapshot],
+  );
 
   // ── 自动聚焦（新建任务 / 切会话 / 挂载后把光标交还输入框）──
   // 触发源：startDraft 递增的 draftFocusVersion（覆盖 Cmd/Ctrl+N 与所有「新建任务」入口）、
@@ -1821,6 +1877,7 @@ function ConversationComposerImpl({
           <V4ComposerModelControls
             workspacePath={workspacePath}
             workspaceIdentity={workspaceIdentity}
+            remoteSessionId={remoteSessionId}
             modelSelectionView={modelSelectionView}
             modelSelectionState={modelSelectionState}
             modelSelectionReload={modelSelectionReload}
@@ -1838,6 +1895,7 @@ function ConversationComposerImpl({
             onSwitchMode={onSwitchMode}
             onRecoverCustomModelSelection={onRecoverCustomModelSelection}
             onSendCompressionCommand={onSendCompressionCommand}
+            promptPolishDraftApi={promptPolishDraftApi}
           />
         </span>
         {showStopControl ? (
@@ -1900,6 +1958,8 @@ function ConversationComposerImpl({
       pending,
       provider,
       modifierTooltip,
+      promptPolishDraftApi,
+      remoteSessionId,
       resolvedSendTooltipShortcut,
       resolvedSendTooltipTitle,
       sendTooltipOpen,
@@ -2068,6 +2128,11 @@ function ConversationComposerImpl({
           onWhiteboardMentionSelected={attachmentsApi.handleWhiteboardMentionSelected}
           onPaste={attachmentsApi.handlePaste}
         />
+        {/* 用量状态栏（specs/usage-statusbar.md）：挂在 composer 工具条下方、输入卡内；
+            必须处于 pane 的 ServiceProvider 子树（今日合计据此拿 workspace-scoped
+            usageStatsService）。snapshot=null（草稿/无活动会话）按组件语义显示零值，
+            不回退其他会话。 */}
+        <UsageStatusbar snapshot={snapshot} className="border-t border-border/50" />
         {attachmentsApi.attachmentError ? (
           <p className="flex items-start gap-2 p-3 text-ui-base text-warning">
             <InfoIcon className="mt-0.5 size-4 shrink-0" />

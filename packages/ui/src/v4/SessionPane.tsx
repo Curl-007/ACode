@@ -1893,6 +1893,22 @@ export function SessionPane({
           type = "resumeGoal";
           withBaseRevision = true;
           break;
+        case "usage": {
+          // /usage 查询命令族：零 token 本地查询，不进模型轮、不排队、不走 CAS。
+          // timeZone 由客户端携带（IANA，与 v4/usage/stats 通道同惯例）；缺席按 UTC 归桶。
+          type = "usage";
+          const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+          payload = {
+            ...(command.args ? { args: command.args } : {}),
+            ...(timeZone ? { timeZone } : {}),
+          };
+          break;
+        }
+        case "autoResume":
+          // /auto-resume 命令面：零 token 本地命令；args = 子命令原文，解析/回执单一实现在 core。
+          type = "autoResumeCommand";
+          payload = command.args ? { args: command.args } : {};
+          break;
         case "emptyGoal":
           logger.warn("[v4-pane] /goal 需要目标文本");
           return true;
@@ -1924,6 +1940,33 @@ export function SessionPane({
         } else if (command.kind === "compact" && ack.reasonCode === "activeTurn") {
           // 兼容尚未升级的 CLI：旧端仍会返回 activeTurn，不能再次无声清空命令。
           toast(intl.formatMessage({ id: "chat.compact.runningBlocked" }));
+        } else if ((command.kind === "usage" || command.kind === "autoResume") && ack.message) {
+          // failed ACK 的 message 即用户可读用法/错误文本（bootstrap handler 约定，
+          // 如 guard.autoResume.invalidArgs），照既有本地回执形态呈现，不吞文案。
+          toast(ack.message, {
+            variant: "warning",
+            durationMs: 0,
+            dismissible: true,
+            dedupeKey: `slash-${command.kind}-receipt`,
+          });
+        }
+      } else if (command.kind === "usage" || command.kind === "autoResume") {
+        // 零 token 命令回执：result 文本按既有多行 toast 呈现（首行 title、余下正文），
+        // 报表较长故不自动消失，手动关闭；同命令去重，新回执替换旧回执。
+        const result = ack.result;
+        const receiptText =
+          result?.type === "usage"
+            ? result.text
+            : result?.type === "autoResume"
+              ? result.response
+              : null;
+        if (receiptText) {
+          toast(receiptText, {
+            variant: result?.type === "usage" && !result.ok ? "warning" : "info",
+            durationMs: 0,
+            dismissible: true,
+            dedupeKey: `slash-${command.kind}-receipt`,
+          });
         }
       } else if (command.kind === "compact" && compactExpectedToQueue) {
         toast(intl.formatMessage({ id: "chat.compact.queued" }));
@@ -3336,7 +3379,12 @@ export function SessionPane({
       centered={isDraft}
       blockingRequestId={blockingInteractionId}
       listenAddToChatEvents={focused}
-      externalTextInsertRequest={focused && sessionId === null ? composerTextInsertRequest : null}
+      // 解除依据（specs/prompt-polish.md 产品规则 4）：润色成功后的草稿替换走
+      // requestComposerTextInsert(mode:"replace")，必须覆盖已有会话 pane，故去掉
+      // sessionId===null 限制、保留 focused 门。requestId 去重与 applied 即清语义不动；
+      // 残余风险 = 草稿 pane 失焦后滞留的未消费插入请求可能落到随后聚焦的会话 pane
+      // （E2E 有专项泄漏核查用例）。
+      externalTextInsertRequest={focused ? composerTextInsertRequest : null}
       onExternalTextInsertApplied={handleExternalTextInsertApplied}
       autoFocusEnabled={focused}
       disabled={

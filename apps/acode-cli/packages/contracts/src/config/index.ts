@@ -90,6 +90,10 @@ export const ConfigKey = {
   // Model anomaly guards
   ModelAnomalyGuard: "modelAnomalyGuard",
 
+  // 跨回合 auto-resume（specs/turn-auto-resume.md）：参数与长期开关走 config，
+  // 运行态计数/定时器只住进程内 coordinator。
+  AutoResume: "autoResume",
+
   // Hooks
   Hooks: "hooks",
 
@@ -163,13 +167,15 @@ export type ConfigValue<K extends ConfigKey> = K extends "modelStream.idleTimeou
                                           ? number
                                           : K extends "modelAnomalyGuard"
                                             ? ModelAnomalyGuardConfig
-                                            : K extends "hooks"
-                                              ? HooksRuntimeConfig
-                                              : K extends "ui.locale"
-                                                ? UiLocale
-                                                : K extends "ui.theme"
-                                                  ? UiThemePreference
-                                                  : unknown;
+                                            : K extends "autoResume"
+                                              ? AutoResumeConfig
+                                              : K extends "hooks"
+                                                ? HooksRuntimeConfig
+                                                : K extends "ui.locale"
+                                                  ? UiLocale
+                                                  : K extends "ui.theme"
+                                                    ? UiThemePreference
+                                                    : unknown;
 
 // ============================================================
 // Config Scope
@@ -277,6 +283,8 @@ export interface RuntimeConfig {
   };
   toolConcurrency: ToolConcurrencyConfig;
   modelAnomalyGuard: ModelAnomalyGuardConfig;
+  /** 跨回合 auto-resume（specs/turn-auto-resume.md）；默认值见 DefaultRuntimeConfig.autoResume。 */
+  autoResume: AutoResumeConfig;
   hooks: HooksRuntimeConfig;
   ui: {
     locale: UiLocale;
@@ -299,6 +307,7 @@ export interface RuntimeConfigPatch {
   logging?: Partial<RuntimeConfig["logging"]>;
   toolConcurrency?: Partial<RuntimeConfig["toolConcurrency"]>;
   modelAnomalyGuard?: Partial<RuntimeConfig["modelAnomalyGuard"]>;
+  autoResume?: Partial<RuntimeConfig["autoResume"]>;
   hooks?: HooksRuntimeConfigPatch;
   ui?: Partial<RuntimeConfig["ui"]>;
 }
@@ -373,6 +382,17 @@ export const DefaultRuntimeConfig: RuntimeConfig = {
     maxBudgetWarningsPerTurn: 3,
     repeatedToolCallWarningThreshold: 3,
   },
+  // 默认值分档裁决（specs/turn-auto-resume.md「配置面」）：attended/unattended 统一
+  // enabled=true——adapter 已重试 10 次后仍失败的跨回合故障是稀有事件，两类场景都受益；
+  // 惊讶成本由 maxResumes/退避上限/命令 off 覆盖。
+  autoResume: {
+    enabled: true,
+    maxResumes: 8,
+    cooldownBaseSec: 10,
+    cooldownFactor: 2,
+    cooldownMaxSec: 60,
+    loopGuardRepeats: 3,
+  },
   hooks: {
     enabled: false,
     events: {},
@@ -397,6 +417,28 @@ export interface ModelAnomalyGuardConfig {
   toolCallWarningThreshold?: number;
   repeatedToolCallWarningThreshold: number;
   maxBudgetWarningsPerTurn: number;
+}
+
+/**
+ * 跨回合 auto-resume 配置（specs/turn-auto-resume.md「配置面」，modelAnomalyGuard 全链路
+ * 同构）。运行态计数/定时器/暂停 overlay 不在这里——它们只住 core coordinator 的进程内
+ * per-session 内存，不跨进程持久化。
+ */
+export interface AutoResumeConfig {
+  /** 长期开关；/auto-resume on|off（裸）持久化写这里。 */
+  enabled: boolean;
+  /** 同会话连续自动继续上限；任一重置条件命中后清零。 */
+  maxResumes: number;
+  /** 退避基数（秒）：第 n 次等待 = min(base × factor^(n−1), max)。 */
+  cooldownBaseSec: number;
+  /** 退避倍率。 */
+  cooldownFactor: number;
+  /** 退避上限（秒）。 */
+  cooldownMaxSec: number;
+  /** 循环守卫：相同错误签名（reason+statusCode+providerCode）连续出现超过该次数即停止。 */
+  loopGuardRepeats: number;
+  /** 自定义继续指令（仅作用 transient 档）；支持 {count}/{max}/{remaining} 占位符。 */
+  continueMessage?: string;
 }
 
 // ============================================================

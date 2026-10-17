@@ -262,6 +262,30 @@ export const runPrompt = async (
     // 判据与 facade 的 gate 共用一个来源，见 isResolvableCustomCommand。
     // `/expert`、`/goal` 走不到 submitPrompt，路由逐字不变。
     if (slashCommand && (await routesToPromptCommandCenter(slashCommand, deps))) {
+      // headless 快速本地回执路径的 MCP 收尾竞态遏制（存量缺陷，非新命令引入——
+      // /expert status 同样复现）：零 token 命令不开模型轮，closeApp 在 MCP 握手仍在
+      // 飞时执行，产生两类无 awaiter 的收尾拒绝——SDK 以 ConnectionClosed 拒绝在飞
+      // 请求（CONNECTION_CLOSED），版本协商探测被 transport close 中止
+      // （ERA_NEGOTIATION_FAILED，经 adapter failConnection 链冒泡且在外层 handler
+      // 挂上前被拒）。任一都会 unhandledRejection 升级 fatal（exit 1），盖掉已交付的
+      // 回执。根因修复属 MCP adapter 关闭链/启动 connect 的 handler 时序（登记跟进）；
+      // 这里只在收尾窗口吞这两个收尾竞态专属 code，其余 rejection 异步重抛保持默认
+      // fatal 语义（不扩大遮蔽面）。
+      process.on("unhandledRejection", (reason) => {
+        const code =
+          typeof reason === "object" && reason !== null
+            ? (reason as { code?: unknown }).code
+            : undefined;
+        if (code === "CONNECTION_CLOSED" || code === "ERA_NEGOTIATION_FAILED") {
+          ctx.stderr.write(
+            `[headless] suppressed MCP teardown race during shutdown (${String(code)})\n`,
+          );
+          return;
+        }
+        setTimeout(() => {
+          throw reason;
+        }, 0);
+      });
       return await runPromptCommandCenterCommand(
         ctx,
         options,
@@ -466,7 +490,16 @@ async function routesToPromptCommandCenter(
   deps: RunDependencies,
 ): Promise<boolean> {
   if (slashCommand.type === "known") {
-    return slashCommand.name === "expert" || slashCommand.name === "goal";
+    // /usage 与 /auto-resume 是零 token 本地命令（specs/usage-statusbar.md、
+    // specs/turn-auto-resume.md）：必须进 command-center 拦截执行。落进 submitPrompt
+    // 会把命令原文当任务提交给模型（E2E D1 实测：单次泄漏烧数十万 tokens，且命令
+    // 文本获得工具权限被模型当指令探索执行）。
+    return (
+      slashCommand.name === "expert" ||
+      slashCommand.name === "goal" ||
+      slashCommand.name === "usage" ||
+      slashCommand.name === "auto-resume"
+    );
   }
   return !(await isResolvableCustomCommand(deps, slashCommand.rawName));
 }

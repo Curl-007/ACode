@@ -1,6 +1,10 @@
 /* eslint-disable max-lines -- 存量基线豁免:该文件先于 CLI lint 门禁建立即超限(根 lint 的 ignorePatterns 排除 apps/acode-cli,turbo lint 因此从未变绿)。头注豁免以恢复门禁信号;拆分重构超出本批范围。 */
-import { updateUiLocaleInFileConfig, type ConfigResult } from "@acode/adapters/config";
-import type { AgentRuntime } from "@acode/core";
+import {
+  updateAutoResumeInFileConfig,
+  updateUiLocaleInFileConfig,
+  type ConfigResult,
+} from "@acode/adapters/config";
+import { executeUsageQuery, renderUsageQueryUnavailable, type AgentRuntime } from "@acode/core";
 import { resolveLocale } from "@acode/i18n";
 import { normalizeModelSelection, type ModelSelection } from "@acode/provider";
 import {
@@ -23,8 +27,10 @@ import {
   type TurnInputIntentMetadata,
   type UiLocale,
   type UiThemePreference,
+  type UsageStorePort,
 } from "@acode/contracts";
 import { listMcpServerStatuses } from "../mcp-config.js";
+import { resolveTzOffsetMs } from "../acode-protocol/usage-stats-builder.js";
 import { loadSessionTranscriptFromStore } from "../session-transcript.js";
 import { createSubagentObservation } from "./subagent-observation.js";
 import { getLocaleConfigPath } from "./locale-selection.js";
@@ -71,6 +77,9 @@ type SessionFacade = Pick<
   | "getDefaultThoughtLevel"
   | "getThoughtLevel"
   | "getTheme"
+  | "getAutoResumeStatus"
+  | "applyAutoResumeCommand"
+  | "queryUsage"
   | "listCheckpoints"
   | "listMcpServers"
   | "listModels"
@@ -430,10 +439,17 @@ export function createSessionFacade(deps: CreateSessionFacadeDeps): SessionFacad
       });
     },
     generateWorkspaceText: async (input, options) => {
-      // 辅助文本入口只规范化模型身份；具体的最低档位由 Core 的辅助请求调用点显式决定。
-      const selection =
+      // 辅助文本入口规范化模型身份；registry 严格 Factory 只接受完整执行选择——
+      // 缺 reasoningLevel 的 selection（润色类调用方只传身份）会在创建 Model 前被拒
+      // （E2E D4 回归）。显式档位尊重调用方；缺席时补最低公开档位（与下方
+      // testModelConnectivity 同一兜底语义）。Core 的 GIT_COMMIT_MESSAGE 分支仍
+      // 在调用点显式决定辅助请求档位，本补齐不改变其行为（bind 覆盖同值）。
+      const normalized =
         normalizeModelSelection(deps.providerRegistry.getView(), input.selection) ??
         input.selection;
+      const selection = normalized.options?.reasoningLevel
+        ? normalized
+        : completeAuxiliaryRegistryModelSelection(deps.providerRegistry, normalized);
       return await deps.runtime.generateWorkspaceText(
         { ...input, selection },
         {
@@ -602,6 +618,93 @@ export function createSessionFacade(deps: CreateSessionFacadeDeps): SessionFacad
         requestedLocale: locale,
         traceId: deps.traceContext.traceId,
       };
+    },
+    // /auto-resume 命令面（specs/turn-auto-resume.md）：进程内状态（override/pause/
+    // 计数）唯一所有者是 runtime coordinator；长期开关与自定义消息在 persist 档另落
+    // user config 文件（照 setLocale 写 config 先例，回执 configPath）。持久化先行、
+    // 进程内生效随后——写盘失败时进程内状态不被半改。
+    getAutoResumeStatus: () => deps.runtime.getAutoResumeStatus?.(),
+    applyAutoResumeCommand: async (intent) => {
+      const runtime = deps.runtime;
+      if (!runtime.applyAutoResumeCommand) {
+        return { ok: false, error: "auto-resume is not available in this runtime." };
+      }
+      if (intent.kind === "status") {
+        // status 不经写面（命令模块直接读 getAutoResumeStatus）。
+        return { ok: true };
+      }
+      if (intent.kind === "pause") {
+        // off <时长> = 进程内 pause overlay，到期自动恢复，不写盘。
+        runtime.applyAutoResumeCommand({ kind: "pause", durationMs: intent.durationMs });
+        return { ok: true };
+      }
+      const configPath = deps.configResult.sources.user.path;
+      if (intent.kind === "setEnabled") {
+        let persistedPath: string | undefined;
+        if (intent.persist) {
+          const persisted = await updateAutoResumeInFileConfig(configPath, {
+            enabled: intent.enabled,
+          });
+          persistedPath = persisted.path;
+          deps.configResult.config.autoResume = {
+            ...deps.configResult.config.autoResume,
+            enabled: intent.enabled,
+          };
+        }
+        runtime.applyAutoResumeCommand({ kind: "setEnabled", enabled: intent.enabled });
+        deps.logger.info("Session auto-resume toggle updated", {
+          ...traceContextToLogContext(deps.traceContext),
+          enabled: intent.enabled,
+          event: "session.auto_resume.updated",
+          module: "bootstrap",
+          status: "completed",
+        });
+        return { ok: true, ...(persistedPath ? { configPath: persistedPath } : {}) };
+      }
+      let persistedPath: string | undefined;
+      if (intent.persist) {
+        const persisted = await updateAutoResumeInFileConfig(configPath, {
+          continueMessage: intent.message,
+        });
+        persistedPath = persisted.path;
+        const nextAutoResume = { ...deps.configResult.config.autoResume };
+        if (intent.message === null) delete nextAutoResume.continueMessage;
+        else nextAutoResume.continueMessage = intent.message;
+        deps.configResult.config.autoResume = nextAutoResume;
+      }
+      runtime.applyAutoResumeCommand({ kind: "setContinueMessage", message: intent.message });
+      deps.logger.info("Session auto-resume continue message updated", {
+        ...traceContextToLogContext(deps.traceContext),
+        cleared: intent.message === null,
+        event: "session.auto_resume.message_updated",
+        module: "bootstrap",
+        status: "completed",
+      });
+      return { ok: true, ...(persistedPath ? { configPath: persistedPath } : {}) };
+    },
+    // /usage 命令面（specs/usage-statusbar.md）：零 token 本地查询。数据源 = 进程级
+    // session store（SqliteSessionStore 同时实现 UsageStorePort），收窄与 desktop
+    // v4/command 的 handlers/usage-query leaf 同款；TUI 走本成员，两路共享 core
+    // executeUsageQuery 单一实现。时区 = 宿主本机（TUI 无客户端携带通道，与 desktop
+    // leaf 的 payload.timeZone 来源不同、口径同 resolveTzOffsetMs）。
+    queryUsage: async ({ args }) => {
+      const store = deps.sessionStore as Partial<UsageStorePort>;
+      if (!store.queryAppUsage || !store.queryTaskUsage) {
+        return { ok: false, scope: null, text: renderUsageQueryUnavailable(currentLocale) };
+      }
+      const now = Date.now();
+      const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+      const result = await executeUsageQuery({
+        args,
+        locale: currentLocale,
+        deps: {
+          usageStore: store as Pick<UsageStorePort, "queryAppUsage" | "queryTaskUsage">,
+          listSessions: (input) => deps.sessionStore.listSessions(input),
+          tzOffsetMs: resolveTzOffsetMs(timeZone, now),
+          now,
+        },
+      });
+      return { ok: result.ok, scope: result.scope?.kind ?? null, text: result.text };
     },
   };
 }

@@ -148,6 +148,11 @@ export function runtimeMetadataForSyntheticUserMessageSource(
   if (source === "goal-continuation") {
     return systemReminderRuntimeMetadata("target_continuation");
   }
+  if (source === "auto_resume") {
+    // 跨回合 auto-resume 注入（specs/turn-auto-resume.md）：与 goal-continuation 同档，
+    // wrapped 文本本体即 user 消息，冷恢复经 runtimeMessage.source 原样重建。
+    return systemReminderRuntimeMetadata("auto_resume");
+  }
   return systemReminderRuntimeMetadata("rewind_notice");
 }
 

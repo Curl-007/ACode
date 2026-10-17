@@ -46,6 +46,7 @@ import {
   type CodingPlanQuotaResetAutoConfettiArms,
 } from "@/chat-input-toolbar/CodingPlanContextUsage.js";
 import { resolveChatCodingPlanResetOpportunityBadge } from "@/chat-input-toolbar/codingPlanResetOpportunityBadge.js";
+import { resolveContextAutoCompactState } from "@/chat-input-toolbar/contextUsageAutoCompact.js";
 import {
   ChatStartPlanBalancePanel,
   hasChatStartPlanBalance,
@@ -247,6 +248,8 @@ export function ChatContextUsage({
     size: number;
     cache?: { hitRate: number | null };
     breakdown?: ACodeContextUsageBreakdownItem[];
+    // additive：auto-compact 阈值（snapshot.usage.contextWindow 透传）；缺席 = 不分档。
+    autoCompactThresholdTokens?: number | null;
   } | null;
   selectedProvider: ACodeProvider;
   intl: ReturnType<typeof useACodeIntl>["intl"];
@@ -299,6 +302,11 @@ export function ChatContextUsage({
     }
   }, []);
   const renderableTaskUsage = getRenderableTaskUsage(taskUsage);
+  // auto-compact 阈值分档（变色 + 处置建议）在 leaf 模块计算，本文件只消费结果。
+  const autoCompact = resolveContextAutoCompactState({
+    usedTokens: renderableTaskUsage?.used ?? 0,
+    autoCompactThresholdTokens: renderableTaskUsage?.autoCompactThresholdTokens ?? null,
+  });
   const codingPlanUsageRemainingWithClose = useMemo<
     ChatCodingPlanUsageRemainingConfig | undefined
   >(() => {
@@ -884,6 +892,7 @@ export function ChatContextUsage({
             aria-label={triggerLabel}
             className={cn(
               "text-foreground-subtle",
+              autoCompact.triggerClassName,
               opportunityTriggerTone === "available" && "text-success",
               opportunityTriggerTone === "urgent" && "bg-warning/10 text-warning",
             )}
@@ -983,6 +992,27 @@ export function ChatContextUsage({
                 </div>
               ) : null}
             </>
+          ) : null}
+          {renderableTaskUsage &&
+          autoCompact.adviceMessageId &&
+          autoCompact.thresholdTokens !== null ? (
+            <div
+              className={cn(
+                "rounded-md px-2 py-1.5 text-ui-xs leading-snug",
+                autoCompact.tone === "critical"
+                  ? "bg-destructive/10 text-destructive"
+                  : "bg-warning/10 text-warning",
+              )}
+            >
+              {intl.formatMessage(
+                { id: autoCompact.adviceMessageId },
+                {
+                  threshold: formatContextUsageTokenCount(autoCompact.thresholdTokens, locale, {
+                    maximumFractionDigits: 0,
+                  }),
+                },
+              )}
+            </div>
           ) : null}
           {codingPlanUsageRemainingWithClose && hasCodingPlanUsageRemaining ? (
             <ChatCodingPlanUsageRemainingPanel

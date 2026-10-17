@@ -280,6 +280,34 @@ export interface ModelStreamStalledStatusEvent extends ModelNetworkStatusBase {
 }
 
 /**
+ * 跨回合 auto-resume 调度（specs/turn-auto-resume.md）：turn 已失败、coordinator 决定
+ * 退避后注入继续指令时发射（调度决定时 delayMs=退避时长；注入前再发一条 delayMs=0）。
+ * 它不是一次模型请求尝试的观测——调度时没有在飞请求，故 base 的**请求身份字段**
+ * （requestId/providerId/modelId/transport）降级为 optional（additive 子类型，不改既有
+ * 事件形状）；attempt/maxAttempts 保持 required（coordinator 恒知第几次续跑与上限，
+ * 且既有 union 消费方按 number 读取，不得因本子类型被弱化）。凡枚举状态类型的消费方
+ * 显式忽略本子类型（与 queued/admitted 同一纪律）。
+ */
+export interface ModelAutoResumeScheduledStatusEvent extends Omit<
+  ModelNetworkStatusBase,
+  "modelId" | "providerId" | "requestId" | "transport"
+> {
+  type: "auto_resume_scheduled";
+  /** 第几次跨回合自动继续（1-based）。 */
+  attempt: number;
+  /** maxResumes 上限（同会话连续；命令面/配置可改）。0 语义沿用 base（无上限），本面不产 0。 */
+  maxAttempts: number;
+  /** 本次退避等待毫秒（注入前发射时为 0）。 */
+  delayMs: number;
+  /** 被恢复失败的摘要：闭集 reason 与 statusCode 拼接，不含自由文本（外部文本过闭集纪律）。 */
+  errorSummary?: string;
+  modelId?: ModelId;
+  providerId?: ModelProviderId;
+  requestId?: string;
+  transport?: ModelTransportKind;
+}
+
+/**
  * 仅供实时观测 Sink 消费的 Provider 里程碑。它们不进入 SessionEvent/回放协议，
  * 避免为了 Trace 事件扩大产品状态面。
  */
@@ -296,6 +324,7 @@ export type ModelNetworkStatusEvent =
   | ModelRequestFailedStatusEvent
   | ModelRetryScheduledStatusEvent
   | ModelStreamStalledStatusEvent
+  | ModelAutoResumeScheduledStatusEvent
   | ModelTelemetryMilestoneStatusEvent;
 
 export interface ModelStatusSink {

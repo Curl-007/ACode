@@ -58,6 +58,16 @@
    实测值，展示层以刷新后的 manifest 为准。
 8. **商店分段不变**：`PUBLIC_STORE_MARKETPLACE_IDS`（商店「公开」分段=ACode 官方
    身份）不收录第三方市场；第三方条目只在插件管理「市场」列表呈现。
+9. **description 语言与刷新现实**：种子条目 description 一律**自撰中文**（产品
+   主语言，2026-10-17 用户指令「要做中文翻译」；无 LICENSE / AGPL 仓库连短语也
+   不摘录）。已知边界（同日实测 adapters 行为）：刷新（`updateMarketplace` →
+   `addMarketplace`）用上游 manifest 的 description **重建**注册记录——zh 镜像
+   三条目上游即中文，刷新后不漂移；zcode-plugins / wasp-nest 上游是英文，首刷后
+   回落英文。市场级 `description_i18n` 目前不被 ACode 消费（插件级已消费；官方
+   CDN manifest 市场级自带 zh-CN 同样被丢弃），「市场级描述按 locale 解析」登记
+   为后续项，不在本 spec 范围内实现。官方条目 description 不动：官方市场走独立
+   合并层（manifest 必须 name=acode-plugins-official），展示语言由官方 CDN
+   manifest 事实所有。
 
 ## 状态所有者
 
@@ -78,3 +88,5 @@
 3. 种子路径隔离验证（temp storageRoot 走 ensureDefaultPluginMarketplaces 全链）：
    六条目全部落库、github 简写解析为 `{source:"github",repo}`、raw URL 解析为
    `{source:"url",url}`。
+4. shared 单测钉住：五个第三方条目 description 均为自撰中文（含 CJK；防回退英文
+   或误摘上游文案）。

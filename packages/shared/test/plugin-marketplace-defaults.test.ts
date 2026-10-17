@@ -61,6 +61,22 @@ describe("plugin-marketplace-defaults（预置市场种子集）", () => {
     }
   });
 
+  it("第三方五条目 description 均为自撰中文（spec 验收场景 4）", () => {
+    const thirdPartyIds = [
+      WASP_NEST_MARKETPLACE_ID,
+      ZCODE_PRO_MARKETPLACE_ID,
+      ZH_MIRROR_CLAUDE_OFFICIAL_MARKETPLACE_ID,
+      ZH_MIRROR_CLAUDE_CODE_MARKETPLACE_ID,
+      ZH_MIRROR_CODEX_MARKETPLACE_ID,
+    ];
+    for (const id of thirdPartyIds) {
+      const entry = DEFAULT_PLUGIN_MARKETPLACES.find((m) => m.id === id);
+      assert.ok(entry, `种子表必须含 ${id}`);
+      // 产品主语言为中文；同时防误摘上游文案（无 LICENSE/AGPL 仓库连短语也不摘录）。
+      assert.match(entry.description, /[\u4e00-\u9fff]/u, `${id} description 必须是中文`);
+    }
+  });
+
   it("marketplace 开关关闭时不 seed 任何远程市场（审计版默认断连）", () => {
     setOfficialServiceSwitches({ marketplace: false });
     assert.deepEqual(resolveDefaultPluginMarketplaces(), []);

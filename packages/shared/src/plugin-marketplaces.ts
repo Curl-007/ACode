@@ -71,7 +71,8 @@ export const DEFAULT_PLUGIN_MARKETPLACES: DefaultPluginMarketplace[] = [
     id: WASP_NEST_MARKETPLACE_ID,
     source: "legioncodeinc/vibe-coding-tools",
     name: WASP_NEST_MARKETPLACE_ID,
-    description: "The Wasp Nest: core plus add-on packs.",
+    // description 一律自撰中文（产品主语言，specs 规则 9）；AGPL 仓库连短语也不摘录。
+    description: "The Wasp Nest 社区市场：核心包与扩展包合集。",
     pluginCount: 21,
   },
   {
@@ -84,7 +85,7 @@ export const DEFAULT_PLUGIN_MARKETPLACES: DefaultPluginMarketplace[] = [
     id: ZCODE_PRO_MARKETPLACE_ID,
     source: "luxi233/ZcodePro",
     name: ZCODE_PRO_MARKETPLACE_ID,
-    description: "ZCodePro community marketplace: plugin packages for the open-source ZCode build.",
+    description: "ZCodePro 社区市场：开源 ZCode 构建的插件包（MIT 许可）。",
     pluginCount: 13,
   },
   // zcode-marketplace-zh（chen-da-pang/zcode-marketplace-zh）：中文镜像项目，把上游
@@ -101,7 +102,7 @@ export const DEFAULT_PLUGIN_MARKETPLACES: DefaultPluginMarketplace[] = [
     source:
       "https://raw.githubusercontent.com/chen-da-pang/zcode-marketplace-zh/main/dist/claude-plugins-official.json",
     name: ZH_MIRROR_CLAUDE_OFFICIAL_MARKETPLACE_ID,
-    description: "Chinese-localized mirror of the Claude official plugin catalog (daily sync).",
+    description: "Claude 官方插件目录的中文本地化镜像，每日自动同步上游。",
     pluginCount: 315,
   },
   {
@@ -109,7 +110,7 @@ export const DEFAULT_PLUGIN_MARKETPLACES: DefaultPluginMarketplace[] = [
     source:
       "https://raw.githubusercontent.com/chen-da-pang/zcode-marketplace-zh/main/dist/claude-code-plugins.json",
     name: ZH_MIRROR_CLAUDE_CODE_MARKETPLACE_ID,
-    description: "Chinese-localized mirror of Claude Code built-in plugins (daily sync).",
+    description: "Claude Code 内置插件集的中文本地化镜像，每日自动同步上游。",
     pluginCount: 13,
   },
   {
@@ -117,7 +118,7 @@ export const DEFAULT_PLUGIN_MARKETPLACES: DefaultPluginMarketplace[] = [
     source:
       "https://raw.githubusercontent.com/chen-da-pang/zcode-marketplace-zh/main/dist/codex-official.json",
     name: ZH_MIRROR_CODEX_MARKETPLACE_ID,
-    description: "Chinese-localized mirror of the OpenAI Codex plugin marketplace (daily sync).",
+    description: "OpenAI Codex 官方插件市场的中文本地化镜像，每日自动同步上游。",
     pluginCount: 65,
   },
 ];

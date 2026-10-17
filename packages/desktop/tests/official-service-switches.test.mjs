@@ -107,10 +107,12 @@ test("official switches project into agent env and gate the official marketplace
   assert.deepEqual(projection.closedEnvValues, ["0"], "关闭时全部输出 0");
 
   // 默认市场集合按开关过滤：关闭不含官方来源，打开包含官方 CDN 来源。
+  // 断言对象是官方条目成员资格而非全集计数——第三方预置条目会随产品决定增长，
+  // 全集与顺序由 shared 的 plugin-marketplace-defaults 单测钉住。
   assert.equal(projection.closedDefaults, 0, "关闭时默认集合不含官方市场");
-  assert.equal(projection.openedDefaults, 1, "打开后默认集合包含官方市场");
+  assert.equal(projection.openedOfficialDefaults, 1, "打开后默认集合包含官方市场");
   assert.equal(
-    projection.openedDefaultSource,
+    projection.openedOfficialSource,
     "https://cdn-zcode.z.ai/zcode/official-plugin/marketplace.json",
     "官方市场来源必须是受开关控制的 CDN manifest",
   );

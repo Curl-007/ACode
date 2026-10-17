@@ -269,8 +269,11 @@ if (mode === "baseline") {
   result.openedMarketplaceEnv = openedPatch.ACODE_ENABLE_OFFICIAL_MARKETPLACE;
   result.openedAccountEnv = openedPatch.ACODE_ENABLE_OFFICIAL_ACCOUNT;
   const defaults = resolveDefaultPluginMarketplaces();
-  result.openedDefaults = defaults.length;
-  result.openedDefaultSource = defaults[0]?.source ?? null;
+  // 种子集会随第三方预置条目增长（packages/shared/specs/plugin-marketplace-defaults.md），
+  // 本探针只关心「官方市场是否受开关门控」：按 id 取官方条目，不做全集计数或首位假设。
+  const official = defaults.find((m) => m.id === "acode-plugins-official");
+  result.openedOfficialDefaults = official ? 1 : 0;
+  result.openedOfficialSource = official?.source ?? null;
 } else if (mode === "overview-filter") {
   // Host 的公开市场投影：关闭时官方市场/候选插件从 overview 过滤且注入标记，已安装列表保留。
   const { createPluginManagementService } = await import(

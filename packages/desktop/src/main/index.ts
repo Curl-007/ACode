@@ -104,6 +104,8 @@ import { initializeShutdownEvidence, SHUTDOWN_EVIDENCE_FILE_NAME } from "./shutd
 import { createShutdownTaskRegistry, type ShutdownTaskRegistry } from "./shutdownTasks.js";
 import { installProcessContainment } from "./processContainment.js";
 import { markMainLaunchAppReady } from "./desktopLaunchMarks.js";
+// WI-14（apps/acode-cli/specs/otel-telemetry.md）：main 进程级 OTel Resource 初始化。
+import { initDesktopTelemetry } from "./desktopTelemetry.js";
 import { createCuaPipFocusRouter, resolveCuaPipWindowKey } from "./cuaPipFocusRouter.js";
 import {
   asWebContentsId,
@@ -2011,6 +2013,19 @@ installOfficialPlatformNetworkPolicy({
 
 app.whenReady().then(async () => {
   markMainLaunchAppReady();
+  // WI-14（apps/acode-cli/specs/otel-telemetry.md）：desktop main 最小遥测面——
+  // 无 OTEL_EXPORTER_OTLP_* 端点即完全 no-op（OTel 模块图不加载，默认启动路径
+  // 零开销）；启用时只注册进程级 Resource 身份（app 版本/平台/进程会话 UUID），
+  // 本波不产 desktop 业务 span。fire-and-forget，失败自降级，不阻塞 ready 链。
+  void initDesktopTelemetry({
+    appVersion: ACODE_VERSION,
+    logger,
+    registerQuitHandler: (handler) => {
+      app.on("will-quit", () => {
+        handler();
+      });
+    },
+  });
   // W1-6：presence 六事件总线接线（powerMonitor suspend/lock/unlock/resume/session
   // + app browser-window-focus）；应用生命周期内常驻，不摘除。
   presenceTracker.attach({ powerMonitor, app });

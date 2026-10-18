@@ -8,6 +8,15 @@ import {
 } from "@acode/contracts";
 import type { HookRunResult } from "./types.js";
 
+// 防滥用上限（specs/hook-additional-context-hardening.md）：hook 输出是不可信外部文本，
+// 注入面直达模型上下文——单条 8KB 截断、单次事件派发最多保留 8 条。来源 hook 名标注
+// 走平行 sources 数组 + formatter 层渲染，additionalContexts 内容本体不因标注改变
+// （plugin-hook-middleware spec 的「合并结果逐一不变」守护约束）。
+export const HOOK_ADDITIONAL_CONTEXT_MAX_CHARS = 8_192;
+export const HOOK_ADDITIONAL_CONTEXTS_MAX_PER_RUN = 8;
+const ADDITIONAL_CONTEXT_TRUNCATED_SUFFIX = "...[truncated]";
+const ADDITIONAL_CONTEXT_SOURCE_NAME_MAX_CHARS = 80;
+
 export function processHookOutput(
   expectedEvent: HookEventName,
   output: HookJSONOutput | void,
@@ -65,7 +74,7 @@ export function processHookOutput(
 }
 
 export function mergeHookRunResult(target: HookRunResult, next: HookRunResult): void {
-  target.additionalContexts.push(...next.additionalContexts);
+  mergeHookAdditionalContexts(target, next);
   if (next.blockRequested) {
     target.blockRequested = true;
     target.stopReason = next.stopReason ?? target.stopReason;
@@ -172,4 +181,66 @@ function shouldPreventContinuation(event: HookEventName): boolean {
     event === HookEventName.PreCompact ||
     event === HookEventName.PreModelSwitch
   );
+}
+
+/**
+ * 防滥用硬化（specs/hook-additional-context-hardening.md）：runner 环节结算点
+ * （runner-link.ts dispatchHookLink）是 hook 输出 → additionalContexts 的唯一收集
+ * 写入路径，在 merge 前对每条 context 做 8KB 头部截断，并写入来源 hook 名
+ * （单行折叠 + 80 字符截断，防 hook 名携带换行伪造多行标签）。
+ * 条数上限在 mergeHookRunResult 实施（全部产出都经合并点）。
+ */
+export function hardenHookAdditionalContexts(result: HookRunResult, hookName: string): void {
+  if (result.additionalContexts.length === 0) return;
+  const source = formatHookContextSourceName(hookName);
+  result.additionalContexts = result.additionalContexts.map(truncateHookAdditionalContext);
+  result.additionalContextSources = result.additionalContexts.map(() => source);
+}
+
+/**
+ * 注入格式化层的条目头（两个 formatter 单源共用）：无来源 → `#N`（与存量输出逐字节
+ * 一致）；有来源 → `#N (hook: <名>)`。
+ */
+export function formatHookContextEntryHeader(
+  index: number,
+  sources?: readonly (string | undefined)[],
+): string {
+  const source = sources?.[index];
+  return source === undefined ? `#${index + 1}` : `#${index + 1} (hook: ${source})`;
+}
+
+// 次数上限 + 来源对齐（单一合并写入路径）：单次事件派发最多保留
+// HOOK_ADDITIONAL_CONTEXTS_MAX_PER_RUN 条，超出部分静默丢弃（合并点保持纯函数，
+// 无 logger）；任一侧携带 sources 时另一侧以 undefined 占位补齐，维持
+// 「sources 存在时与 contexts 索引对齐」不变式。
+function mergeHookAdditionalContexts(target: HookRunResult, next: HookRunResult): void {
+  if (next.additionalContexts.length === 0) return;
+  const room = HOOK_ADDITIONAL_CONTEXTS_MAX_PER_RUN - target.additionalContexts.length;
+  if (room <= 0) return;
+  const acceptedCount = Math.min(room, next.additionalContexts.length);
+  if (target.additionalContextSources !== undefined || next.additionalContextSources !== undefined) {
+    const targetSources = (target.additionalContextSources ??= target.additionalContexts.map(
+      () => undefined,
+    ));
+    for (let index = 0; index < acceptedCount; index += 1) {
+      targetSources.push(next.additionalContextSources?.[index]);
+    }
+  }
+  for (let index = 0; index < acceptedCount; index += 1) {
+    target.additionalContexts.push(next.additionalContexts[index]);
+  }
+}
+
+function truncateHookAdditionalContext(context: string): string {
+  if (context.length <= HOOK_ADDITIONAL_CONTEXT_MAX_CHARS) return context;
+  const keepChars = HOOK_ADDITIONAL_CONTEXT_MAX_CHARS - ADDITIONAL_CONTEXT_TRUNCATED_SUFFIX.length;
+  return `${context.slice(0, keepChars)}${ADDITIONAL_CONTEXT_TRUNCATED_SUFFIX}`;
+}
+
+function formatHookContextSourceName(hookName: string): string {
+  const singleLine = hookName.replace(/\s+/gu, " ").trim();
+  if (singleLine.length === 0) return "hook";
+  return singleLine.length > ADDITIONAL_CONTEXT_SOURCE_NAME_MAX_CHARS
+    ? `${singleLine.slice(0, ADDITIONAL_CONTEXT_SOURCE_NAME_MAX_CHARS)}…`
+    : singleLine;
 }

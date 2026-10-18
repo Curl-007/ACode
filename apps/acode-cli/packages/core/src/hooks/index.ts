@@ -1,5 +1,6 @@
 export { createConfiguredHookRunner } from "./configured-runner.js";
 export { createHookExecutionDescriptor, sanitizeHookDisplayText } from "./display-metadata.js";
+export { formatHookContextEntryHeader } from "./output.js";
 export {
   HOOK_FAILURE_REFUSAL_REASONS,
   formatHookRefusalAnnotation,

@@ -1,6 +1,7 @@
 import { HookEventName } from "../deps.js";
 import type { HookRunResult, Model, TraceContext, TurnState } from "../deps.js";
 import type { HookEventName as HookEventNameType } from "@acode/contracts";
+import { formatHookContextEntryHeader } from "../../hooks/index.js";
 import type { AgentRuntimeInternal } from "../internal.js";
 import { getRuntimeLifecyclePort } from "../runtime-lifecycle.js";
 import {
@@ -125,11 +126,16 @@ export function injectHookAdditionalContextIntoMessageHistory(
   this: AgentRuntimeInternal,
   eventName: HookEventNameType,
   additionalContexts: readonly string[],
+  additionalContextSources?: readonly (string | undefined)[],
 ): RuntimeMessageEntry | undefined {
   if (additionalContexts.length === 0) return undefined;
   const entry = systemReminderAttachmentEntry(
     "hook_context",
-    formatLifecycleHookAdditionalContextBody(eventName, additionalContexts),
+    formatLifecycleHookAdditionalContextBody(
+      eventName,
+      additionalContexts,
+      additionalContextSources,
+    ),
   );
   this.messageHistory.addEntries([entry]);
   return entry;
@@ -149,8 +155,13 @@ export function shouldContinueAfterStopHooks(
 function formatLifecycleHookAdditionalContextBody(
   eventName: HookEventNameType,
   additionalContexts: readonly string[],
+  sources?: readonly (string | undefined)[],
 ): string {
-  const body = additionalContexts.map((context, index) => `#${index + 1}\n${context}`).join("\n\n");
+  // 条目头带来源 hook 名标注（specs/hook-additional-context-hardening.md）；无来源时
+  // 与旧版 `#N` 逐字节一致。
+  const body = additionalContexts
+    .map((context, index) => `${formatHookContextEntryHeader(index, sources)}\n${context}`)
+    .join("\n\n");
   return truncateForHook(
     [`${eventName} hook additional context: `, body].join("\n"),
     HOOK_CONTEXT_MAX_CHARS,

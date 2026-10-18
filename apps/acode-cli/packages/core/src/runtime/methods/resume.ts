@@ -299,6 +299,7 @@ export async function resumeFromStore(
       this.injectHookAdditionalContextIntoMessageHistory(
         HookEventName.SessionStart,
         sessionStartHookResult.additionalContexts,
+        sessionStartHookResult.additionalContextSources,
       );
 
       if (messages.length > 0 && activeMessages.length === 0) {

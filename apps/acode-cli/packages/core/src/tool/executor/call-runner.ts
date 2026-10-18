@@ -32,6 +32,7 @@ import {
 } from "./errors.js";
 import { emitToolCallError, emitToolCallResult, emitToolCallStarted } from "./events.js";
 import {
+  concatHookContextSources,
   formatHookAdditionalContexts,
   runPostToolUseFailureHooks,
   runPostToolUseHooks,
@@ -288,6 +289,7 @@ async function executeToolCallImpl(
         },
       ),
       preToolHookResult.additionalContexts,
+      preToolHookResult.additionalContextSources,
     );
     telemetry?.setPermissionDecision("denied");
     telemetry?.finishDenied("policy_denied");
@@ -308,6 +310,7 @@ async function executeToolCallImpl(
       const result = appendPreToolAdditionalContextsToErrorResult(
         createErrorResult(canonicalToolCall, hookInputValidation),
         preToolHookResult.additionalContexts,
+        preToolHookResult.additionalContextSources,
       );
       telemetry?.finishFailed("validation", "parse", result.error);
       return result;
@@ -342,6 +345,7 @@ async function executeToolCallImpl(
         { toolName: canonicalToolCall.name },
       ),
       preToolHookResult.additionalContexts,
+      preToolHookResult.additionalContextSources,
     );
     if (result.error?.type === CoreErrorType.PermissionDenied) {
       telemetry?.finishDenied("user_denied");
@@ -548,6 +552,19 @@ async function executeToolCallImpl(
         ...skillPathActivationContexts,
       ],
       modelOutputEntry,
+      // 来源标注与 contexts 索引对齐（specs/hook-additional-context-hardening.md）；
+      // skill-path 提醒非 hook 产出，无来源（渲染为无标注条目头）。
+      concatHookContextSources([
+        {
+          contexts: preToolHookResult.additionalContexts,
+          sources: preToolHookResult.additionalContextSources,
+        },
+        {
+          contexts: postToolHookResult.additionalContexts,
+          sources: postToolHookResult.additionalContextSources,
+        },
+        { contexts: skillPathActivationContexts },
+      ]),
     );
     const display = createToolResultDisplay(canonicalToolCall.name, output, {
       mcp: entry.metadata.mcpPresentation,
@@ -646,15 +663,27 @@ async function executeToolCallImpl(
     if (failureHookResult.additionalContexts.length > 0 && baseModelContent) {
       result.modelContent = [
         baseModelContent,
-        formatHookAdditionalContexts([
-          ...preToolHookResult.additionalContexts,
-          ...failureHookResult.additionalContexts,
-        ]),
+        formatHookAdditionalContexts(
+          [...preToolHookResult.additionalContexts, ...failureHookResult.additionalContexts],
+          concatHookContextSources([
+            {
+              contexts: preToolHookResult.additionalContexts,
+              sources: preToolHookResult.additionalContextSources,
+            },
+            {
+              contexts: failureHookResult.additionalContexts,
+              sources: failureHookResult.additionalContextSources,
+            },
+          ]),
+        ),
       ].join("\n\n");
     } else if (preToolHookResult.additionalContexts.length > 0 && baseModelContent) {
       result.modelContent = [
         baseModelContent,
-        formatHookAdditionalContexts(preToolHookResult.additionalContexts),
+        formatHookAdditionalContexts(
+          preToolHookResult.additionalContexts,
+          preToolHookResult.additionalContextSources,
+        ),
       ].join("\n\n");
     }
     result = withAutomationCreateLimitTurnStop(result, {
@@ -755,6 +784,7 @@ function errorCategoryForToolError(type: string | undefined): AgentTelemetryErro
 function appendPreToolAdditionalContextsToErrorResult(
   result: ToolExecutionResult,
   additionalContexts: string[],
+  additionalContextSources?: readonly (string | undefined)[],
 ): ToolExecutionResult {
   if (result.success || !result.error || additionalContexts.length === 0) return result;
 
@@ -764,6 +794,9 @@ function appendPreToolAdditionalContextsToErrorResult(
     typeof result.modelContent === "string" ? result.modelContent : result.error.message;
   return {
     ...result,
-    modelContent: [baseModelContent, formatHookAdditionalContexts(additionalContexts)].join("\n\n"),
+    modelContent: [
+      baseModelContent,
+      formatHookAdditionalContexts(additionalContexts, additionalContextSources),
+    ].join("\n\n"),
   };
 }

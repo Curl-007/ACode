@@ -274,6 +274,7 @@ export async function executeTurnCommand(
       this.injectHookAdditionalContextIntoMessageHistory(
         HookEventName.SessionStart,
         sessionStartHookResult.additionalContexts,
+        sessionStartHookResult.additionalContextSources,
       );
 
       if (compactInstructions !== null) {
@@ -474,6 +475,7 @@ export async function executeTurnCommand(
         this.injectHookAdditionalContextIntoMessageHistory(
           HookEventName.UserPromptSubmit,
           userPromptHookResult.additionalContexts,
+          userPromptHookResult.additionalContextSources,
         );
         injectReferencedSessionContextReminderIntoMessageHistory.call(this, input, options);
         injectDateChangeReminderIntoMessageHistory.call(this);

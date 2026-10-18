@@ -38,3 +38,4 @@ export const useSidebarTaskRevealStore = create<SidebarTaskRevealState>((set) =>
     );
   },
 }));
+

@@ -38,9 +38,11 @@ import {
 } from "@acode/shared";
 import {
   conversationInputIntentSchema,
+  customCommandInvocationMetaSchema,
   errorAttributionSchema,
   workflowLaunchMetaSchema,
   workflowNotificationMetaSchema,
+  type CustomCommandInvocationMeta,
   type ErrorAttribution,
   type WorkflowLaunchMeta,
 } from "@acode/shared/acode-protocol-v4";
@@ -449,6 +451,21 @@ function executionKindOfMessage(message: MessageWithParts): "agent" | "controlOn
 function epilogueStartOfMessage(message: MessageWithParts): number | undefined {
   const value = message.info.metadata?.epilogueStart;
   return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : undefined;
+}
+
+/**
+ * 斜杠命令回显元数据（specs/slash-command-echo.md）：热路径在 TurnStarted payload 上，
+ * 冷路径从用户消息 metadata 读回同一字段。宽松 schema 校验失败 = 畸形元数据按缺席处理，
+ * 不丢整条 user row（与 workflowLaunchOfMessage 同一防 posture）。
+ */
+function customCommandOfMessage(message: MessageWithParts): CustomCommandInvocationMeta | undefined {
+  if (message.info.role !== "user") return undefined;
+  const metadata = message.info.metadata;
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return undefined;
+  const parsed = customCommandInvocationMetaSchema.safeParse(
+    (metadata as Record<string, unknown>).customCommand,
+  );
+  return parsed.success ? parsed.data : undefined;
 }
 
 function contentBlocksToText(value: unknown): string | undefined {
@@ -1892,6 +1909,7 @@ export function synthesizeEventsFromMessages(
     const intent = inputIntentOfMessage(message);
     const executionKind = executionKindOfMessage(message);
     const epilogueStart = epilogueStartOfMessage(message);
+    const customCommand = customCommandOfMessage(message);
     const turnStartedAtMs = messageCreatedAtMs(message) ?? baseMs + seq;
     // timeline part 与下一个 accepted turn 之间可以夹着 legacy synthetic
     // context，不能靠「紧邻前一条」猜测；持有显式边界直到真正开轮。
@@ -1902,6 +1920,9 @@ export function synthesizeEventsFromMessages(
         turnNumber,
         input: userText,
         ...(epilogueStart === undefined ? {} : { epilogueStart }),
+        // 斜杠命令回显（specs/slash-command-echo.md）：冷恢复与 live TurnStarted 同形，
+        // 归一化后走同一条 userInput row.customCommand 投影。
+        ...(customCommand ? { customCommand } : {}),
         // 根因：cold hydration 过去只重建可见 user row，遗漏持久 messageId，导致
         // 同一条历史消息在 UI 中可见却无法被 edit/rewind 命令寻址。真实 user
         // transcript message 就是该 row 的权威 target，必须与 live TurnStarted

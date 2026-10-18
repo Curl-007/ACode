@@ -1,4 +1,6 @@
-import { computeLineChangeStat, type LineChangeStat } from ""@acode/shared";
+// 复活自 231118f（dev/from-acode-2026-10）。原提交的导入写成 `""@acode/shared"`（双引号笔误，
+// 属于其过不了门禁的原因之一），这里修正为合法的裸包名导入。
+import { computeLineChangeStat, type LineChangeStat } from "@acode/shared";
 
 export type WritePhase = "generating" | "waiting" | "writing" | "written" | "failed" | "stopped";
 

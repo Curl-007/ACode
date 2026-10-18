@@ -2,7 +2,9 @@ import {
   expandCustomCommandPrompt,
   expandCustomCommandTemplate,
   formatCustomCommandPrompt,
+  toCustomCommandInvocationMeta,
   type ExecutionPort,
+  type ResolvedCustomCommandPrompt,
   type SessionId,
   type TraceContext,
 } from "@acode/contracts";
@@ -20,10 +22,16 @@ interface ResolveACodeCustomCommandPromptOptions extends ListACodeCustomCommands
   traceContext?: TraceContext;
 }
 
+/**
+ * 解析自定义 slash 命令（specs/slash-command-echo.md）。返回值自 f3ab0e6 起从裸 prompt
+ * 字符串改为 { command, prompt }：prompt 照旧进模型输入，command 是「已触发命令」的展示
+ * 元数据，随 ExecuteTurnOptions.customCommand 进 TurnStarted/用户消息 metadata。命令不存在
+ * 或保留名命中时返回 undefined（与普通输入同形）。
+ */
 export async function resolveACodeCustomCommandPrompt(
   input: string,
   options: ResolveACodeCustomCommandPromptOptions = {},
-): Promise<string | undefined> {
+): Promise<ResolvedCustomCommandPrompt | undefined> {
   const invocation = parsePromptCustomCommandInvocation(input);
   // 保留名（含内置 `workflow`）在这里直接返回 undefined，与「命令不存在」同形：内置命令由
   // builtin-prompt-command.ts 先行展开，这里拒绝的是借同名自定义命令绕过内置语义（或功能开关）的路径。
@@ -36,6 +44,8 @@ export async function resolveACodeCustomCommandPrompt(
       ...options,
       name: invocation.name,
     });
+    // 展示元数据在展开前构造：展开只改 prompt 文本，不改命令身份。
+    const meta = toCustomCommandInvocationMeta(command.metadata);
     if (options.executionPort) {
       // 调用 slash command 时先执行并替换输出，避免 unsupported error
       // 在 turn 创建前抛出后让 UI 长时间停在“正在思考”。
@@ -57,17 +67,23 @@ export async function resolveACodeCustomCommandPrompt(
         traceContext: options.traceContext,
         workingDirectory: options.workingDirectory ?? process.cwd(),
       });
-      return formatCustomCommandPrompt({
-        argumentCount: expanded.argumentCount,
-        body,
-        command,
-        usedArgumentsPlaceholder: expanded.usedArgumentsPlaceholder,
-      }).prompt;
+      return {
+        command: meta,
+        prompt: formatCustomCommandPrompt({
+          argumentCount: expanded.argumentCount,
+          body,
+          command,
+          usedArgumentsPlaceholder: expanded.usedArgumentsPlaceholder,
+        }).prompt,
+      };
     }
-    return expandCustomCommandPrompt({
-      args: invocation.args,
-      command,
-    }).prompt;
+    return {
+      command: meta,
+      prompt: expandCustomCommandPrompt({
+        args: invocation.args,
+        command,
+      }).prompt,
+    };
   } catch (error) {
     if (error instanceof Error && CUSTOM_COMMAND_NOT_FOUND_PATTERN.test(error.message)) {
       return undefined;

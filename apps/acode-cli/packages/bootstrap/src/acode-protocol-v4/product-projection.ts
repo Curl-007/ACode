@@ -2091,6 +2091,9 @@ export class ProductProjection {
         ...(fact.clientId ? { clientId: fact.clientId } : {}),
         ...(fact.workflowLaunch ? { workflowLaunch: fact.workflowLaunch } : {}),
         ...(fact.epilogueStart === undefined ? {} : { epilogueStart: fact.epilogueStart }),
+        // 斜杠命令回显（specs/slash-command-echo.md）：normalizer 已把 live/cold 两路
+        // 归一到同一 fact 字段，这里只透传。
+        ...(fact.customCommand ? { customCommand: fact.customCommand } : {}),
         ...(attachments && attachments.length > 0 ? { attachments } : {}),
       };
       // workspace checkpoint 以 user messageId 为 targetMessageId。

@@ -8,7 +8,7 @@ type CustomCommandInvocation = NonNullable<UserInputRow["customCommand"]>;
 const KNOWN_SCOPES = new Set(["user", "project", "system", "admin", "builtin"]);
 
 /**
- * 用户气泡下方的「已触发命令」回显（spec: docs/specs/custom-command-invocation-echo.md）。
+ * 用户气泡下方的「已触发命令」回显（spec: apps/acode-cli/specs/slash-command-echo.md）。
  * 只认 CLI 在展开成功时写入的 row.customCommand；气泡里的命令 chip 来自 Composer 文本，
  * 命令不存在时也会画出来，不能作为「是否触发」的依据。
  */

@@ -43,6 +43,8 @@ import type {
   MicrocompactBoundaryPayload,
 } from "../compact/index.js";
 import type { HookRunLifecyclePayload } from "../hooks/index.js";
+// commands/index 只依赖 hooks/tracing 叶子，与 events 无环（本文件已引 hooks）。
+import type { CustomCommandInvocationMeta } from "../commands/index.js";
 import type { CheckpointCreatedPayload, RewindTriggeredPayload } from "../rewind/index.js";
 import type { GoalCompletionVerificationOutput, SessionGoal } from "../tools/target.js";
 import type { ToolSideEffectScope } from "../tools/contract.js";
@@ -495,6 +497,12 @@ export interface TurnStartedPayloadBase {
   attachments?: TurnAttachmentMeta[];
   /** CLI admission metadata；inputId 继续作为 sourceCommandId 兼容锚点。 */
   intent?: TurnInputIntentMetadata;
+  /**
+   * 斜杠命令触发回显（specs/slash-command-echo.md）：本轮输入已被 CLI 展开为自定义/内置
+   * slash 命令时在场。与消息 metadata 里的同一份对齐（冷热同形）；v4 投影把它落到
+   * userInput row.customCommand，UI 据此画「已触发命令」回显。
+   */
+  customCommand?: CustomCommandInvocationMeta;
 }
 
 export type TurnStartedPayload = TurnStartedPayloadBase & TurnBackgroundAttribution;

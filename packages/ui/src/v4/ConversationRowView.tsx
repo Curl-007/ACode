@@ -123,6 +123,7 @@ import {
   ConversationUserInputEpilogue,
   splitUserInputEpilogue,
 } from "@/v4/ConversationUserInputEpilogue.js";
+import { ConversationUserInputFooter } from "@/v4/ConversationUserInputCommandEcho.js";
 import { ConversationHookDetailsAction } from "@/v4/ConversationHookDetailsAction.js";
 import { isVisualizationArtifactRow } from "@/lib/visualizationSandbox.js";
 import { VisualizationArtifactRow } from "@/v4/VisualizationArtifactRow.js";
@@ -1256,15 +1257,9 @@ const UserInputRowView = memo(function UserInputRowView({
           {epilogue === undefined ? null : <ConversationUserInputEpilogue text={epilogue} />}
         </div>
       ) : null}
-      {status ? (
-        <div
-          data-v4-user-input-status="true"
-          className="mt-1 text-right text-ui-sm text-foreground-subtlest"
-          aria-live="polite"
-        >
-          {status}
-        </div>
-      ) : null}
+      {/* 斜杠命令回显 + 发送状态同位渲染（specs/slash-command-echo.md）：
+          Footer 只在 row.customCommand 在场时多画一行回显，status DOM 与旧实现逐字节一致。 */}
+      <ConversationUserInputFooter command={row.customCommand} status={status} />
       {/* 手机远控没有 hover，v4 迁移时漏掉了旧 UserMessage 的常显分支，
           导致复制和编辑入口不可发现；远控直接显示，桌面端继续通过 hover/focus 降噪。 */}
       <MessageActions

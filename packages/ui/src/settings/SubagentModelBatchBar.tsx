@@ -19,14 +19,12 @@ import {
   SubagentReasoningField,
   type SubagentReasoningFieldState,
 } from "@/settings/SubagentReasoningField.js";
-import { SubagentSpeedField, type SubagentSpeedFieldState } from "@/settings/SubagentSpeedField.js";
 import { parseModelPickerValue } from "@/lib/acodeSessionProjection.js";
 import { resolveModelThoughtOption } from "@/lib/modelThoughtOption.js";
 import { resolveModelDisplayName } from "@/lib/modelSelectionGroups.js";
 import {
   describeBatchResult,
   isBatchValueInherit,
-  resolveSubagentSpeedOptionState,
   type SubagentModelBatchResult,
   type SubagentModelBatchValue,
 } from "@/settings/SubagentModelBatchApply.js";
@@ -80,28 +78,12 @@ export function SubagentModelBatchBar({
   const selectModelLabel = intl.formatMessage({ id: "settings.subagents.model.select" });
   const [model, setModel] = useState<string | undefined>(undefined);
   const [thoughtLevel, setThoughtLevel] = useState<string | undefined>(undefined);
-  const [speed, setSpeed] = useState<string | undefined>(undefined);
   const [selection, setSelection] = useState<SubagentModelBatchValue["modelSelection"]>(undefined);
 
   const value = model ?? INHERIT_MODEL_VALUE;
   const modelAvailable = isBatchModelAvailable(modelGroups, model, modelSelectionLoading);
-  const speedState: SubagentSpeedFieldState = useMemo(
-    () =>
-      resolveSubagentSpeedOptionState({
-        modelSelectionView,
-        modelSelection: selection,
-        modelSelectionLoading,
-      }),
-    [modelSelectionLoading, modelSelectionView, selection],
-  );
-  // 目标模型带 speed spec 时 speed 必选，否则运行时派发报 speed-missing。
-  const speedRequired = speedState.kind === "supported" && !speed;
   const applyDisabled =
-    disabled ||
-    applying ||
-    selectedCount === 0 ||
-    (!modelAvailable && Boolean(model?.trim())) ||
-    speedRequired;
+    disabled || applying || selectedCount === 0 || (!modelAvailable && Boolean(model?.trim()));
 
   const thoughtState: SubagentReasoningFieldState = useMemo(() => {
     const trimmed = model?.trim();
@@ -135,10 +117,8 @@ export function SubagentModelBatchBar({
       setModel(nextModel);
       // 目标值在组件内直接解析成 ModelSelection 结构体，调用方不再做字符串往返，
       // 避免 custom: 编码串被手写切分后双重编码落盘。
-      // completeNewModelSelection 会按 Registry 补默认档位与默认 speed，
-      // 带 speed spec 的模型缺 speed 会在派发时被拒绝。
+      // completeNewModelSelection 会按 Registry 补默认推理档位。
       let nextThoughtLevel: string | undefined;
-      let nextSpeed: string | undefined;
       let nextSelection: SubagentModelBatchValue["modelSelection"];
       if (nextModel && modelSelectionView) {
         const completed = completeNewModelSelection(
@@ -147,15 +127,12 @@ export function SubagentModelBatchBar({
         );
         nextSelection = completed ?? undefined;
         nextThoughtLevel = completed?.options?.reasoningLevel;
-        nextSpeed = completed?.options?.speed;
       }
       setSelection(nextSelection);
       setThoughtLevel(nextThoughtLevel);
-      setSpeed(nextSpeed);
       onValueChange({
         modelSelection: nextSelection,
         thoughtLevel: nextThoughtLevel,
-        speed: nextSpeed,
       });
     },
     [model, modelSelectionView, onValueChange],
@@ -222,27 +199,9 @@ export function SubagentModelBatchBar({
           labelVisibilityClassName="hidden sm:inline-flex"
           onValueCommit={(nextLevel) => {
             setThoughtLevel(nextLevel);
-            onValueChange({ modelSelection: selection, thoughtLevel: nextLevel, speed });
+            onValueChange({ modelSelection: selection, thoughtLevel: nextLevel });
           }}
         />
-      ) : null}
-      {speedState.kind === "supported" || speedState.kind === "unknown" ? (
-        <SubagentSpeedField
-          intl={intl}
-          state={speedState}
-          value={speed}
-          disabled={disabled || applying}
-          labelVisibilityClassName="hidden sm:inline-flex"
-          onValueCommit={(nextSpeed) => {
-            setSpeed(nextSpeed);
-            onValueChange({ modelSelection: selection, thoughtLevel, speed: nextSpeed });
-          }}
-        />
-      ) : null}
-      {speedRequired ? (
-        <span className="text-ui-sm text-warning">
-          {intl.formatMessage({ id: "settings.subagents.batch.speedRequired" })}
-        </span>
       ) : null}
       {progress ? (
         <span className="flex items-center gap-2 text-ui-sm text-foreground-subtle">
@@ -296,13 +255,12 @@ export function SubagentModelBatchBar({
             disabled ||
             applying ||
             selectedCount === 0 ||
-            isBatchValueInherit({ modelSelection: selection, thoughtLevel, speed })
+            isBatchValueInherit({ modelSelection: selection, thoughtLevel })
           }
           onClick={() => {
             setModel(undefined);
             setSelection(undefined);
             setThoughtLevel(undefined);
-            setSpeed(undefined);
             onValueChange({});
             onApply({});
           }}
@@ -315,7 +273,7 @@ export function SubagentModelBatchBar({
           size="sm"
           data-testid={TID_SUBAGENT_BATCH_APPLY}
           disabled={applyDisabled}
-          onClick={() => onApply({ modelSelection: selection, thoughtLevel, speed })}
+          onClick={() => onApply({ modelSelection: selection, thoughtLevel })}
         >
           {applying ? (
             <Loader2 className="animate-spin" data-icon="inline-start" aria-hidden="true" />

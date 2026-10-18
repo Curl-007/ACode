@@ -90,6 +90,8 @@ import {
 } from "@/lib/sidebarPurposeSectionPreferences.js";
 import { useShortcutCommandLabel } from "@/shortcuts/useShortcutBindings.js";
 import { buildTaskWorkspaceKey } from "@/lib/taskQueryCache.js";
+import { useSidebarTaskRevealScroll } from "@/hooks/useSidebarTaskRevealScroll.js";
+import { useSidebarTaskRevealStore } from "@/store/sidebarTaskRevealStore.js";
 import {
   increaseWorkspaceTaskVisibleLimit,
   resolveVisibleWorkspaceTaskKeys,
@@ -245,7 +247,7 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
   isDesktop = false,
   isMacDesktop: _isMacDesktop = false,
   isWindowsDesktop = false,
-  isSidebarVisible: _isSidebarVisible = true,
+  isSidebarVisible = true,
   onToggleSidebar: _onToggleSidebar,
   toggleSidebarShortcutLabel: _toggleSidebarShortcutLabel,
   canGoBack: _canGoBack = false,
@@ -613,6 +615,11 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
     taskViewMode === "archived" ||
     taskViewMode === "grouped";
   const workspaceScrollRef = useRef<HTMLDivElement | null>(null);
+  // 任务菜单侧栏定位：setActiveTaskId 写入的定位请求在这里消费——
+  // 行不完整可见时滚动本容器并短暂高亮（specs/sidebar-task-reveal.md R2/R3）。
+  // 侧栏面板隐藏（isSidebarVisible=false）期间请求保持 pending，恢复可见后再定位。
+  const sidebarTaskRevealRequest = useSidebarTaskRevealStore((state) => state.pendingRequest);
+  useSidebarTaskRevealScroll(workspaceScrollRef, sidebarTaskRevealRequest, isSidebarVisible);
   const [showWorkspaceTopMask, setShowWorkspaceTopMask] = useState(false);
   const [showWorkspaceBottomMask, setShowWorkspaceBottomMask] = useState(false);
   const workspaceSensors = useSensors(

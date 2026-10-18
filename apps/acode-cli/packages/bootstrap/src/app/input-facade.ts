@@ -6,6 +6,7 @@ import {
   type InputHistoryKind,
   type InputHistoryStorePort,
   type Logger,
+  type ResolvedCustomCommandPrompt,
   type SessionId,
   type ToolArtifactStorePort,
   type TraceContext,
@@ -41,10 +42,15 @@ type InputFacade = Pick<
 
 interface CreateInputFacadeDeps {
   artifactStore?: ToolArtifactStorePort;
+  /**
+   * 斜杠命令展开器（specs/slash-command-echo.md）：返回 { command, prompt }——prompt 进
+   * 模型输入，command 展示元数据随 ExecuteTurnOptions.customCommand 进 TurnStarted 与
+   * 用户消息 metadata。undefined = 非斜杠命令或命令不存在。
+   */
   customCommandPromptResolver?: (
     text: string,
     options?: Pick<SubmitPromptOptions, "abortSignal" | "traceContext">,
-  ) => Promise<string | undefined>;
+  ) => Promise<ResolvedCustomCommandPrompt | undefined>;
   /**
    * 内置宿主动作命令拦截（K3 /overnight 族，specs/overnight-execution.md R1）：命中时
    * 输入不进 runtime admission、不展开为模型 prompt——与 customCommandPromptResolver
@@ -121,11 +127,11 @@ export function createInputFacade(deps: CreateInputFacadeDeps): InputFacade {
       options?.traceContext ?? deps.traceContext,
       storedAttachments,
     );
-    const resolvedCommandPrompt = await deps.customCommandPromptResolver?.(promptInput.text, {
+    const resolved = await deps.customCommandPromptResolver?.(promptInput.text, {
       abortSignal: options?.abortSignal,
       traceContext: options?.traceContext ?? deps.traceContext,
     });
-    const runtimePromptText = resolvedCommandPrompt ?? promptInput.text;
+    const runtimePromptText = resolved?.prompt ?? promptInput.text;
     const turnAttribution = options?.automationId
       ? { automationId: options.automationId }
       : options?.offPeakTaskId
@@ -138,7 +144,10 @@ export function createInputFacade(deps: CreateInputFacadeDeps): InputFacade {
       abortSignal: options?.abortSignal,
       browserAmbientContext: options?.browserAmbientContext,
       continueActiveTargetAfterTurn: true,
-      ...(resolvedCommandPrompt !== undefined ? { displayInput: promptInput.text } : {}),
+      ...(resolved !== undefined ? { displayInput: promptInput.text } : {}),
+      // 命令触发事实与 displayInput 同生（specs/slash-command-echo.md）：
+      // resolver 展开成功才在场，core 透传进 TurnStarted 与用户消息 metadata。
+      ...(resolved?.command ? { customCommand: resolved.command } : {}),
       inputId: options?.inputId,
       ...turnAttribution,
       intent: options?.intent,
@@ -152,19 +161,24 @@ export function createInputFacade(deps: CreateInputFacadeDeps): InputFacade {
   const prepareRuntimePrompt = async (
     promptInput: ReturnType<typeof normalizePromptInput>,
     options?: SubmitPromptOptions,
-  ): Promise<{ input: string; storedAttachments?: TurnAttachment[] }> => {
+  ): Promise<{
+    input: string;
+    storedAttachments?: TurnAttachment[];
+    customCommand?: ResolvedCustomCommandPrompt["command"];
+  }> => {
     const storedAttachments = await externalizePromptAttachments(promptInput.attachments, {
       artifactStore: deps.artifactStore,
       sessionId: deps.sessionId,
       traceContext: options?.traceContext ?? deps.traceContext,
     });
-    const resolvedCommandPrompt = await deps.customCommandPromptResolver?.(promptInput.text, {
+    const resolved = await deps.customCommandPromptResolver?.(promptInput.text, {
       abortSignal: options?.abortSignal,
       traceContext: options?.traceContext ?? deps.traceContext,
     });
     return {
-      input: resolvedCommandPrompt ?? promptInput.text,
+      input: resolved?.prompt ?? promptInput.text,
       ...(storedAttachments ? { storedAttachments } : {}),
+      ...(resolved?.command ? { customCommand: resolved.command } : {}),
     };
   };
 
@@ -242,6 +256,9 @@ export function createInputFacade(deps: CreateInputFacadeDeps): InputFacade {
           delivery,
           traceContext: options?.traceContext ?? deps.traceContext,
           ...(prepared.input !== promptInput.text ? { displayInput: promptInput.text } : {}),
+          // 命令触发事实随 admission options 流入 executeTurn（PromptAdmissionOptions 是
+          // ExecuteTurnOptions 的超集；specs/slash-command-echo.md）。
+          ...(prepared.customCommand ? { customCommand: prepared.customCommand } : {}),
         });
         if (result.kind === "started") {
           await recordAcceptedInputHistory(

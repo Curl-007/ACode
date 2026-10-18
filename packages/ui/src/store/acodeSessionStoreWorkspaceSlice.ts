@@ -15,6 +15,7 @@ import { areConfigOptionsEquivalent } from "@/lib/configOptionsEquality.js";
 import type { ACodeUiError } from "@/lib/acodeUiError.js";
 import { pushNavEntry } from "@/lib/taskNavigationHistory.js";
 import { resolveTaskRestorePreloadConfigOptions } from "@/lib/taskModelRecovery.js";
+import { useSidebarTaskRevealStore } from "@/store/sidebarTaskRevealStore.js";
 import type {
   ACodeSessionStoreState,
   ConfigOptionsStatus,
@@ -234,6 +235,15 @@ function resolveActiveTaskConfigOptionsOnSwitch(
 export function createWorkspaceSlice(set: SetFn) {
   return {
     setActiveTaskId: (workspacePath: string, id: string | null, workspaceIdentity?: string) => {
+      if (id) {
+        // 打开会话是「任务菜单侧栏定位」的唯一触发点（specs/sidebar-task-reveal.md R1）：
+        // 应用内导航、通知点击、深链冷启动、运行历史都收敛到本动作，这里统一登记
+        // 定位请求，由 WorkspaceSidebar 的 reveal hook 消费；写在 set() 之外避免
+        // 在 updater 里产生跨 store 副作用。关闭任务（id 为 null）不触发定位。
+        useSidebarTaskRevealStore
+          .getState()
+          .requestReveal({ workspacePath, workspaceIdentity, taskId: id });
+      }
       set((state) => {
         const workspaceUpdate = updateWorkspaceState(
           state,

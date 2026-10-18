@@ -1,5 +1,6 @@
 import type {
   BackgroundResultOriginMeta,
+  CustomCommandInvocationMeta,
   ModelStreamingPayload,
   SessionEvent,
   SyntheticUserMessageSource,
@@ -74,6 +75,11 @@ export interface CanonicalUserIntentFact extends CanonicalConversationFactBase {
   workflowLaunch?: WorkflowLaunchMeta;
   /** `input` 从此下标起是引擎附加文本。 */
   epilogueStart?: number;
+  /**
+   * 斜杠命令触发回显（specs/slash-command-echo.md）：live TurnStarted payload 与冷恢复
+   * 消息 metadata 的同一份展示事实，投影落到 userInput row.customCommand。
+   */
+  customCommand?: CustomCommandInvocationMeta;
   sourceCommandId?: string;
   foregroundExecutionId?: string;
   clientId?: string;
@@ -255,6 +261,7 @@ function normalizeTurnStarted(
     ...(payload.originMeta ? { originMeta: payload.originMeta } : {}),
     ...(payload.workflowLaunch ? { workflowLaunch: payload.workflowLaunch } : {}),
     ...(payload.epilogueStart === undefined ? {} : { epilogueStart: payload.epilogueStart }),
+    ...(payload.customCommand ? { customCommand: payload.customCommand } : {}),
     ...((payload.intent?.sourceCommandId ?? payload.inputId)
       ? { sourceCommandId: payload.intent?.sourceCommandId ?? payload.inputId }
       : {}),

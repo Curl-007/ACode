@@ -5,9 +5,16 @@ import { ToolCallBody } from "@/ToolCallBlocks/ToolCallBody.js";
 import { ToolSnapshotFieldNotice } from "@/ToolCallBlocks/ToolSnapshotFieldNotice.js";
 import { getFileDisplayPath } from "@/lib/fileDisplay.js";
 import type { ToolInlinePreview } from "@/lib/toolDisplay.js";
+// Write 流式阶段与行数派生器（spec: apps/acode-cli/specs/write-tool-streaming-stat.md）。
+import { isFileContentWriteToolCall } from "@/lib/toolIdentity.js";
 import { ToolLayout } from "../ToolLayout.js";
 import type { ToolCallBlockRenderContext } from "../shared.js";
 import { EditInlineDiffContent } from "@/ToolCallBlocks/renderers/EditInlineDiffContent.js";
+import {
+  WRITE_PHASE_MESSAGE_IDS,
+  readWritePhase,
+  readWriteStreamingChangeStat,
+} from "./writeStreamingStat.js";
 import {
   getEditKindLabelMessageId,
   renderDiffCount,
@@ -90,6 +97,24 @@ export function EditToolCallBlock(context: ToolCallBlockRenderContext) {
   const hasMultipleFiles = rawFileSummaries.length > 1;
   const isFailed =
     toolCall.status === "failed" || isRawToolCallFailed(toolCall.raw) || Boolean(errorText);
+  const isContentWrite = useMemo(() => isFileContentWriteToolCall(toolCall), [toolCall]);
+  // Write 专属阶段词：Edit/MultiEdit 保持原 kindLabel 与 diffCount 行为不变。
+  const writePhase = useMemo(
+    () => (isContentWrite ? readWritePhase(toolCall.raw, toolCall.status, isFailed) : undefined),
+    [isContentWrite, isFailed, toolCall.raw, toolCall.status],
+  );
+  // 流式期间（摘要层尚未给出权威 changeStat）用派生器从半截 input 推导实时行数；
+  // 摘要层一就绪立即退出，两条计数路径不叠加。
+  const streamingChangeStat = useMemo(() => {
+    if (!isContentWrite || rawFileSummaries.length > 0) {
+      return undefined;
+    }
+    // failed/stopped 意味着没有内容落盘，草稿行数不展示。
+    if (writePhase === "failed" || writePhase === "stopped") {
+      return undefined;
+    }
+    return readWriteStreamingChangeStat(toolCall.input);
+  }, [isContentWrite, rawFileSummaries.length, toolCall.input, writePhase]);
   const effectiveStatusLabel = isFailed
     ? intl.formatMessage({ id: "chat.toolCall.status.failed" })
     : statusLabel;
@@ -141,10 +166,19 @@ export function EditToolCallBlock(context: ToolCallBlockRenderContext) {
   );
   const diffCount = useMemo(
     () =>
-      renderDiffCount(totalChangeStat, {
-        animateInitial: context.animateDiffCountOnMount,
-      }),
-    [context.animateDiffCountOnMount, totalChangeStat],
+      renderDiffCount(
+        // 摘要层（rawFileSummaries）给出权威统计后以它为准；流式期间没有摘要，用流式行数兜底。
+        rawFileSummaries.length > 0 ? totalChangeStat : streamingChangeStat,
+        {
+          animateInitial: context.animateDiffCountOnMount,
+        },
+      ),
+    [
+      context.animateDiffCountOnMount,
+      rawFileSummaries.length,
+      streamingChangeStat,
+      totalChangeStat,
+    ],
   );
   const kindLabel = intl.formatMessage({
     id: getEditKindLabelMessageId(
@@ -160,6 +194,11 @@ export function EditToolCallBlock(context: ToolCallBlockRenderContext) {
       } satisfies EditKindSource,
     ),
   });
+  // Write 全生命周期用专属阶段词（generating/waiting/writing/written/failed/stopped），
+  // 派生器返回 undefined（非 Write）时回落到既有 Edit kindLabel。
+  const effectiveKindLabel = writePhase
+    ? intl.formatMessage({ id: WRITE_PHASE_MESSAGE_IDS[writePhase] })
+    : kindLabel;
   const layoutConfig = hasMultipleFiles
     ? {
         canToggle: true,
@@ -318,7 +357,7 @@ export function EditToolCallBlock(context: ToolCallBlockRenderContext) {
         {...layoutConfig}
         canToggle={!context.isOfficeMode && layoutConfig.canToggle}
         forceOpen={!context.isOfficeMode && layoutConfig.forceOpen}
-        kindLabel={context.kindLabelOverride ?? kindLabel}
+        kindLabel={context.kindLabelOverride ?? effectiveKindLabel}
         sourceLabel={context.sourceLabel}
         primaryText={primaryText}
         prioritizePrimaryText

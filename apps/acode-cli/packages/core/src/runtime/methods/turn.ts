@@ -376,6 +376,9 @@ export async function executeTurnCommand(
           targetId: options?.targetId,
           ...(options?.intent ? { intent: options.intent } : {}),
           ...(attachmentMetas ? { attachments: attachmentMetas } : {}),
+          // 斜杠命令回显（specs/slash-command-echo.md）：与消息 metadata 同一份，v4 投影
+          // 据此在 userInput row 上落 customCommand；缺席 = 非命令输入。
+          ...(options?.customCommand ? { customCommand: options.customCommand } : {}),
         },
         turnTraceContext,
       );
@@ -537,6 +540,8 @@ export async function executeTurnCommand(
               ...(options?.epilogueStart === undefined
                 ? {}
                 : { epilogueStart: options.epilogueStart }),
+              // 冷恢复所需的展示事实：与 TurnStarted payload 同一份（specs/slash-command-echo.md）。
+              ...(options?.customCommand ? { customCommand: options.customCommand } : {}),
             },
           );
           // 标题生成以前等主 turn 成功后才启动，用户 stop/cancel 首轮请求时

@@ -1,8 +1,16 @@
 /* eslint-disable max-lines -- 子智能体管理页集中维护作用域列表、表单和启用状态，避免状态分散 */
 import { useStartPlanRecommendation } from "@/hooks/useStartPlanRecommendation.js";
 import { hasExplicitModelChanged } from "@/lib/startPlanRecommendation.js";
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { Bot, Check, Plus, Trash2 } from "lucide-react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+  type ReactNode,
+} from "react";
+import { Bot, Check, ListChecks, Minus, Plus, Trash2 } from "lucide-react";
 import { completeNewModelSelection } from "@acode/provider";
 import {
   TID_SUBAGENT_BUILT_IN_MODEL_TRIGGER,
@@ -61,6 +69,20 @@ import {
   type SubagentReasoningFieldState,
 } from "@/settings/SubagentReasoningField.js";
 import { buildSubagentSaveConfig } from "@/settings/subagentFormSaveConfig.js";
+// 子智能体批量编辑（specs/subagent-batch-edit.md）：操作条 + 分组统一设置弹层 + 纯逻辑。
+// 应用写路径只走既有 service 方法（覆盖路径 / updateAgent），不新建平行写入通道。
+import { SubagentModelBatchBar } from "@/settings/SubagentModelBatchBar.js";
+import { SubagentModelBatchDialog } from "@/settings/SubagentModelBatchDialog.js";
+import {
+  buildUserAgentBatchConfig,
+  createEmptyBatchResult,
+  isBatchApplicableAgent,
+  resolveBatchApplyTargets,
+  resolveBatchWritePath,
+  resolveGroupBatchCheckState,
+  type SubagentModelBatchResult,
+  type SubagentModelBatchValue,
+} from "@/settings/SubagentModelBatchApply.js";
 import { refreshLoadedSubagentsStoreForWorkspace } from "@/store/subagentsStore.js";
 import {
   PluginScopeMenu,
@@ -99,6 +121,9 @@ const TOOL_OPTIONS = [
 ] as const;
 const TOOL_OPTION_SET = new Set<string>(TOOL_OPTIONS);
 const RISKY_TOOLS = new Set<string>(["Bash", "Edit", "Write"]);
+
+// 批量操作条的目标值由其内部暂存并在 onApply 带回完整结构体，父层无需中转每次变更。
+const noopBatchValueChange = () => {};
 
 interface AgentGroups {
   builtIn: AgentSummary[];
@@ -463,6 +488,83 @@ function ToolCheckbox({
   );
 }
 
+/** 批量模式行复选框：仅可批量行渲染（specs/subagent-batch-edit.md R2）。 */
+function BatchRowCheckbox({
+  checked,
+  label,
+  onToggle,
+}: {
+  checked: boolean;
+  label: string;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="checkbox"
+      aria-checked={checked}
+      aria-label={label}
+      onClick={onToggle}
+      className="flex size-6 shrink-0 items-center justify-center rounded-md transition-colors hover:bg-hover"
+    >
+      <span
+        className={cn(
+          "flex size-4 items-center justify-center rounded-sm border transition-colors",
+          checked
+            ? "border-primary bg-primary text-primary-foreground"
+            : "border-input-border bg-input text-transparent",
+        )}
+      >
+        {checked ? <Check className="size-3" /> : null}
+      </span>
+    </button>
+  );
+}
+
+/** 批量模式分组头三态复选框：全选/清空该分组内全部可批量行。 */
+function BatchGroupCheckbox({
+  label,
+  state,
+  disabled,
+  onToggle,
+}: {
+  label: string;
+  state: "unchecked" | "checked" | "indeterminate";
+  disabled: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="checkbox"
+      aria-checked={state === "checked" ? true : state === "indeterminate" ? "mixed" : false}
+      aria-label={label}
+      data-batch-check-state={state}
+      disabled={disabled}
+      onClick={onToggle}
+      className={cn(
+        "flex size-6 shrink-0 items-center justify-center self-center rounded-md transition-colors",
+        disabled ? "cursor-not-allowed opacity-60" : "hover:bg-hover",
+      )}
+    >
+      <span
+        className={cn(
+          "flex size-4 items-center justify-center rounded-sm border transition-colors",
+          state === "unchecked"
+            ? "border-input-border bg-input text-transparent"
+            : "border-primary bg-primary text-primary-foreground",
+        )}
+      >
+        {state === "checked" ? (
+          <Check className="size-3" />
+        ) : state === "indeterminate" ? (
+          <Minus className="size-3" />
+        ) : null}
+      </span>
+    </button>
+  );
+}
+
 function AgentListRow({
   agent,
   pluginIconItem,
@@ -471,6 +573,9 @@ function AgentListRow({
   modelSelectionView,
   modelSelectionLoading,
   modelSelectGroups,
+  batchMode,
+  batchChecked,
+  onBatchCheckChange,
   onModelOverrideChange,
   onDelete,
   onEdit,
@@ -483,6 +588,9 @@ function AgentListRow({
   modelSelectionView?: ModelSelectionView | null;
   modelSelectionLoading: boolean;
   modelSelectGroups: readonly ModelSelectGroup[];
+  batchMode: boolean;
+  batchChecked: boolean;
+  onBatchCheckChange: (agent: AgentSummary, checked: boolean) => void;
   onModelOverrideChange: (
     agent: AgentSummary,
     config: { model?: string; thoughtLevel?: string },
@@ -494,7 +602,10 @@ function AgentListRow({
   const { intl } = useACodeIntl();
   const editable = isEditableUserAgent(agent);
   const showEnabledToggle = supportsEnabledToggle(agent);
-  const rowEditable = editable && !isOperating;
+  // 批量模式下行进入选择语义：不再进编辑表单，行内写控件一并禁用，避免边选边写。
+  const checkboxVisible = batchMode && isBatchApplicableAgent(agent);
+  const controlsDisabled = isOperating || batchMode;
+  const rowEditable = editable && !isOperating && !batchMode;
   const hasModelOverrideControl = supportsModelOverride(agent);
   // 有覆盖控件的行由控件本身表达模型，不再重复显示模型徽标。
   const showModelBadge = !hasModelOverrideControl;
@@ -521,12 +632,32 @@ function AgentListRow({
       className={cn(
         "grid cursor-default items-center gap-3 px-4 py-3 transition-colors",
         rowEditable && "hover:bg-hover",
-        hasModelOverrideControl
-          ? "grid-cols-[auto_minmax(0,1fr)] sm:grid-cols-[auto_minmax(0,1fr)_auto]"
-          : "grid-cols-[auto_minmax(0,1fr)_auto]",
+        checkboxVisible
+          ? hasModelOverrideControl
+            ? "grid-cols-[auto_auto_minmax(0,1fr)] sm:grid-cols-[auto_auto_minmax(0,1fr)_auto]"
+            : "grid-cols-[auto_auto_minmax(0,1fr)_auto]"
+          : hasModelOverrideControl
+            ? "grid-cols-[auto_minmax(0,1fr)] sm:grid-cols-[auto_minmax(0,1fr)_auto]"
+            : "grid-cols-[auto_minmax(0,1fr)_auto]",
       )}
-      {...settingsResourceRowInteraction(rowEditable ? () => onEdit(agent) : undefined)}
+      {...settingsResourceRowInteraction(
+        checkboxVisible
+          ? () => onBatchCheckChange(agent, !batchChecked)
+          : rowEditable
+            ? () => onEdit(agent)
+            : undefined,
+      )}
     >
+      {checkboxVisible ? (
+        <BatchRowCheckbox
+          checked={batchChecked}
+          label={intl.formatMessage(
+            { id: "settings.subagents.batch.rowToggleAria" },
+            { name: agent.name },
+          )}
+          onToggle={() => onBatchCheckChange(agent, !batchChecked)}
+        />
+      ) : null}
       <div className="relative shrink-0" aria-hidden="true">
         {pluginIconItem ? (
           <PluginStoreAvatar
@@ -569,7 +700,7 @@ function AgentListRow({
         {hasModelOverrideControl ? (
           <SubagentModelOverrideControl
             agent={agent}
-            disabled={isOperating}
+            disabled={controlsDisabled}
             modelGroups={modelGroups}
             modelSelectionView={modelSelectionView}
             modelSelectionLoading={modelSelectionLoading}
@@ -580,7 +711,7 @@ function AgentListRow({
           <Switch
             checked={agent.enabled}
             onCheckedChange={(enabled) => onToggle(agent, enabled)}
-            disabled={isOperating}
+            disabled={controlsDisabled}
             aria-label={intl.formatMessage(
               { id: "settings.subagents.toggleAria" },
               { name: agent.name },
@@ -594,7 +725,7 @@ function AgentListRow({
               variant="ghost"
               size="icon-md"
               onClick={() => void onDelete(agent)}
-              disabled={isOperating}
+              disabled={controlsDisabled}
               title={intl.formatMessage({ id: "common.delete" })}
             >
               <Trash2 className="size-3.5" aria-hidden="true" />
@@ -1322,6 +1453,18 @@ export function SubagentsSection({ onManageModels }: SubagentsSectionProps) {
   const [editingAgent, setEditingAgent] = useState<AgentSummary | null>(null);
   const [saving, setSaving] = useState(false);
   const [operatingAgentId, setOperatingAgentId] = useState<string | null>(null);
+  // 批量编辑会话状态（唯一所有者，specs/subagent-batch-edit.md）：模式开关、选中集、
+  // 串行应用进度与结果。操作条/弹层不持有已确认状态，只暂存未确认目标值。
+  const [batchMode, setBatchMode] = useState(false);
+  const [selectedBatchIds, setSelectedBatchIds] = useState<ReadonlySet<string>>(new Set());
+  const [batchApplying, setBatchApplying] = useState(false);
+  const [batchProgress, setBatchProgress] = useState<{ done: number; total: number } | null>(null);
+  const [batchResult, setBatchResult] = useState<SubagentModelBatchResult | null>(null);
+  // 分组统一设置弹层的目标分组 key（user/builtIn/插件 id）；应用时按当前列表重算目标集，
+  // 保证 buildUserAgentBatchConfig 的透传基线是最新行投影而非打开瞬间的快照。
+  const [batchDialogGroupKey, setBatchDialogGroupKey] = useState<
+    { kind: "user" } | { kind: "builtIn" } | { kind: "plugin"; pluginId: string } | null
+  >(null);
   const [selectedScopeKey, setSelectedScopeKey] = useState("user");
   const selectedWorkspace = workspaceTabs.find(
     (tab) => getPluginWorkspaceKey(tab) === selectedScopeKey,
@@ -1557,6 +1700,128 @@ export function SubagentsSection({ onManageModels }: SubagentsSectionProps) {
     [refresh, refreshMentionStore, subagentsService],
   );
 
+  const enterBatchMode = useCallback(() => {
+    setBatchResult(null);
+    setBatchProgress(null);
+    setBatchMode(true);
+  }, []);
+
+  const exitBatchMode = useCallback(() => {
+    setBatchMode(false);
+    setSelectedBatchIds(new Set());
+    setBatchResult(null);
+    setBatchProgress(null);
+  }, []);
+
+  const handleBatchCheckChange = useCallback((agent: AgentSummary, checked: boolean) => {
+    setSelectedBatchIds((current) => {
+      const next = new Set(current);
+      if (checked) {
+        next.add(agent.id);
+      } else {
+        next.delete(agent.id);
+      }
+      return next;
+    });
+  }, []);
+
+  // 分组三态勾选：全选补齐可批量行，已全选则清空该分组选中。
+  const handleBatchGroupCheck = useCallback(
+    (groupAgents: readonly AgentSummary[], state: "unchecked" | "checked" | "indeterminate") => {
+      const selectable = resolveBatchApplyTargets(groupAgents);
+      setSelectedBatchIds((current) => {
+        const next = new Set(current);
+        for (const target of selectable) {
+          if (state === "checked") {
+            next.delete(target.id);
+          } else {
+            next.add(target.id);
+          }
+        }
+        return next;
+      });
+    },
+    [],
+  );
+
+  /**
+   * 批量应用唯一执行点（specs/subagent-batch-edit.md R1/R4）：逐行串行，按
+   * resolveBatchWritePath 分流到既有 service 写路径——覆盖行走
+   * setBuiltInModelOverride / setPluginAgentModelOverride，自建行走 updateAgent
+   * （载荷 buildUserAgentBatchConfig，以当前行投影为基线仅替换模型维度）。
+   * 单行失败不中断批次、失败行保留原值；结束后一次性刷新列表与 mention store。
+   * 与单项编辑的刻意差异：不触发 start-plan 推荐弹窗——那是逐行交互式增值推荐，
+   * 批量目标值已是显式选择，逐行弹窗会打断串行应用。
+   */
+  const applyBatchValue = useCallback(
+    async (targets: readonly AgentSummary[], value: SubagentModelBatchValue) => {
+      if (targets.length === 0 || batchApplying) {
+        return;
+      }
+      setBatchApplying(true);
+      setBatchResult(null);
+      setBatchProgress({ done: 0, total: targets.length });
+      const result = createEmptyBatchResult();
+      for (let index = 0; index < targets.length; index += 1) {
+        const target = targets[index];
+        if (!target) {
+          continue;
+        }
+        setBatchProgress({ done: index, total: targets.length });
+        try {
+          if (resolveBatchWritePath(target) === "override") {
+            const agentName = getBuiltInSubagentName(target);
+            if (agentName) {
+              await subagentsService.setBuiltInModelOverride({
+                agentName,
+                modelSelection: value.modelSelection,
+              });
+            } else {
+              // 稳定 ID 不含插件版本；与单项覆盖路径同一写通道。
+              await subagentsService.setPluginAgentModelOverride({
+                agentId: target.id,
+                modelSelection: value.modelSelection,
+              });
+            }
+          } else {
+            await subagentsService.updateAgent({
+              agentId: target.id,
+              config: buildUserAgentBatchConfig(target, value),
+              oldFilePath: target.path,
+              provider: ACODE_AGENT_PROVIDER,
+              scope: target.scope === "workspace" ? "workspace" : "user",
+              workspacePath: target.projectPath ?? targetWorkspacePath ?? undefined,
+              workspaceIdentity: targetWorkspaceIdentity,
+            });
+          }
+          result.succeeded.push(target.name);
+        } catch (applyError) {
+          result.failed.push({
+            name: target.name,
+            message: applyError instanceof Error ? applyError.message : String(applyError),
+          });
+        }
+      }
+      setBatchProgress(null);
+      setBatchResult(result);
+      setBatchApplying(false);
+      try {
+        await Promise.all([refresh(), refreshMentionStore()]);
+      } catch (refreshError) {
+        // 逐行持久化成功即为提交点；投影刷新失败只提示，不回滚磁盘状态（与单项覆盖同口径）。
+        toast(refreshError instanceof Error ? refreshError.message : String(refreshError));
+      }
+    },
+    [
+      batchApplying,
+      refresh,
+      refreshMentionStore,
+      subagentsService,
+      targetWorkspaceIdentity,
+      targetWorkspacePath,
+    ],
+  );
+
   const handleEdit = useCallback((agent: AgentSummary) => {
     if (!isEditableUserAgent(agent)) {
       return;
@@ -1648,6 +1913,86 @@ export function SubagentsSection({ onManageModels }: SubagentsSectionProps) {
   }, [agents, editingAgent]);
   const isFormView = canManageUserAgents && (showForm || currentEditingAgent !== null);
 
+  // 批量目标集 = 当前过滤可见 ∩ 可批量行 ∩ 选中集（specs/subagent-batch-edit.md R6）。
+  const batchTargets = useMemo(
+    () =>
+      resolveBatchApplyTargets(filteredAgents).filter((agent) => selectedBatchIds.has(agent.id)),
+    [filteredAgents, selectedBatchIds],
+  );
+  const batchApplicableCount = useMemo(
+    () => resolveBatchApplyTargets(filteredAgents).length,
+    [filteredAgents],
+  );
+
+  // 过滤/作用域变化后裁剪选中集：选中 id 不在当前可见可批量集内即剔除。
+  useEffect(() => {
+    if (!batchMode) {
+      return;
+    }
+    const visible = new Set(resolveBatchApplyTargets(filteredAgents).map((agent) => agent.id));
+    setSelectedBatchIds((current) => {
+      let changed = false;
+      const next = new Set<string>();
+      for (const id of current) {
+        if (visible.has(id)) {
+          next.add(id);
+        } else {
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
+  }, [batchMode, filteredAgents]);
+
+  // 分组统一设置弹层的目标集：按 key 从当前分组投影重算（保持透传基线新鲜）。
+  const batchDialogGroup = useMemo(() => {
+    if (!batchDialogGroupKey) {
+      return null;
+    }
+    const resolveGroupName = (key: NonNullable<typeof batchDialogGroupKey>): string => {
+      if (key.kind === "user") {
+        return intl.formatMessage({ id: "settings.subagents.group.user" });
+      }
+      if (key.kind === "builtIn") {
+        return intl.formatMessage({ id: "settings.subagents.group.builtIn" });
+      }
+      const items = pluginGroups.find(([pluginId]) => pluginId === key.pluginId)?.[1] ?? [];
+      const head = items[0];
+      return resolvePluginDisplayName(
+        {
+          name: head?.pluginName ?? key.pluginId,
+          listing:
+            (head?.pluginId ? pluginListingById.get(head.pluginId) : undefined) ??
+            resolveUniquePluginListingByName(availablePlugins, head?.pluginName ?? key.pluginId),
+        },
+        locale,
+      );
+    };
+    const resolveGroupItems = (
+      key: NonNullable<typeof batchDialogGroupKey>,
+    ): readonly AgentSummary[] => {
+      if (key.kind === "user") {
+        return groupedAgents.user;
+      }
+      if (key.kind === "builtIn") {
+        return groupedAgents.builtIn;
+      }
+      return pluginGroups.find(([pluginId]) => pluginId === key.pluginId)?.[1] ?? [];
+    };
+    return {
+      groupName: resolveGroupName(batchDialogGroupKey),
+      targets: resolveBatchApplyTargets(resolveGroupItems(batchDialogGroupKey)),
+    };
+  }, [
+    availablePlugins,
+    batchDialogGroupKey,
+    groupedAgents,
+    intl,
+    locale,
+    pluginGroups,
+    pluginListingById,
+  ]);
+
   if (isFormView) {
     return (
       <div className="space-y-6">
@@ -1720,6 +2065,9 @@ export function SubagentsSection({ onManageModels }: SubagentsSectionProps) {
             modelSelectionView={modelSelectionView}
             modelSelectionLoading={modelSelectionLoading}
             modelSelectGroups={subagentModelSelectGroups}
+            batchMode={batchMode}
+            batchChecked={batchMode && selectedBatchIds.has(agent.id)}
+            onBatchCheckChange={handleBatchCheckChange}
             onModelOverrideChange={handleModelOverrideChange}
             onDelete={handleDelete}
             onEdit={handleEdit}
@@ -1729,6 +2077,49 @@ export function SubagentsSection({ onManageModels }: SubagentsSectionProps) {
       ))}
     </div>
   );
+
+  /**
+   * 分组头行：批量模式渲染三态全选复选框；普通模式对含可批量行的分组提供
+   * 「统一设置模型」入口（打开批量对话框，specs/subagent-batch-edit.md R1）。
+   */
+  const renderGroupHead = (
+    groupAgents: readonly AgentSummary[],
+    dialogKey: { kind: "user" } | { kind: "builtIn" } | { kind: "plugin"; pluginId: string },
+    header: ReactNode,
+    actions?: ReactNode,
+  ) => {
+    const check = batchMode ? resolveGroupBatchCheckState(groupAgents, selectedBatchIds) : null;
+    const dialogAvailable =
+      !batchMode && !batchApplying && resolveBatchApplyTargets(groupAgents).length > 0;
+    return (
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          {check ? (
+            <BatchGroupCheckbox
+              label={intl.formatMessage({ id: "settings.subagents.batch.groupToggle" })}
+              state={check.state}
+              disabled={check.selectable.length === 0 || batchApplying}
+              onToggle={() => handleBatchGroupCheck(groupAgents, check.state)}
+            />
+          ) : null}
+          {header}
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {dialogAvailable ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => setBatchDialogGroupKey(dialogKey)}
+            >
+              {intl.formatMessage({ id: "settings.subagents.batch.groupAction" })}
+            </Button>
+          ) : null}
+          {actions}
+        </div>
+      </div>
+    );
+  };
 
   const hasSearchResultEmpty = Boolean(query.trim()) && filteredAgentCount === 0;
   return (
@@ -1757,6 +2148,18 @@ export function SubagentsSection({ onManageModels }: SubagentsSectionProps) {
             id: "settings.subagents.searchPlaceholder",
           })}
         />
+        {!batchMode ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={enterBatchMode}
+            disabled={loading || batchApplicableCount === 0}
+          >
+            <ListChecks data-icon="inline-start" aria-hidden="true" />
+            {intl.formatMessage({ id: "settings.subagents.batch.enter" })}
+          </Button>
+        ) : null}
       </div>
 
       {error ? (
@@ -1791,19 +2194,21 @@ export function SubagentsSection({ onManageModels }: SubagentsSectionProps) {
           <section
             className={query.trim() && groupedAgents.user.length === 0 ? "hidden" : "space-y-4"}
           >
-            <div className="flex flex-wrap items-center justify-between gap-3">
+            {renderGroupHead(
+              groupedAgents.user,
+              { kind: "user" },
               <SettingsResourceGroupHeader
                 count={groupedAgents.user.length}
                 title={intl.formatMessage({
                   id: "settings.subagents.group.user",
                 })}
-              />
+              />,
               <SettingsResourceHeaderActions
                 onRefresh={() => void Promise.all([refresh(), refreshMentionStore()])}
-                onNew={canManageUserAgents ? handleAddNew : undefined}
+                onNew={batchMode ? undefined : canManageUserAgents ? handleAddNew : undefined}
                 refreshing={refreshing}
-              />
-            </div>
+              />,
+            )}
             {groupedAgents.user.length > 0 ? (
               renderAgentList(groupedAgents.user)
             ) : (
@@ -1825,37 +2230,85 @@ export function SubagentsSection({ onManageModels }: SubagentsSectionProps) {
           </section>
           {pluginGroups.map(([pluginId, items]) => (
             <section key={pluginId} className="space-y-4">
-              <SettingsResourceGroupHeader
-                count={items.length}
-                title={resolvePluginDisplayName(
-                  {
-                    name: items[0]?.pluginName ?? pluginId,
-                    listing:
-                      (items[0]?.pluginId ? pluginListingById.get(items[0].pluginId) : undefined) ??
-                      resolveUniquePluginListingByName(
-                        availablePlugins,
-                        items[0]?.pluginName ?? pluginId,
-                      ),
-                  },
-                  locale,
-                )}
-              />
+              {renderGroupHead(
+                items,
+                { kind: "plugin", pluginId },
+                <SettingsResourceGroupHeader
+                  count={items.length}
+                  title={resolvePluginDisplayName(
+                    {
+                      name: items[0]?.pluginName ?? pluginId,
+                      listing:
+                        (items[0]?.pluginId
+                          ? pluginListingById.get(items[0].pluginId)
+                          : undefined) ??
+                        resolveUniquePluginListingByName(
+                          availablePlugins,
+                          items[0]?.pluginName ?? pluginId,
+                        ),
+                    },
+                    locale,
+                  )}
+                />,
+              )}
               {renderAgentList(items)}
             </section>
           ))}
           {groupedAgents.builtIn.length > 0 ? (
             <section className="space-y-4">
-              <SettingsResourceGroupHeader
-                count={groupedAgents.builtIn.length}
-                title={intl.formatMessage({
-                  id: "settings.subagents.group.builtIn",
-                })}
-              />
+              {renderGroupHead(
+                groupedAgents.builtIn,
+                { kind: "builtIn" },
+                <SettingsResourceGroupHeader
+                  count={groupedAgents.builtIn.length}
+                  title={intl.formatMessage({
+                    id: "settings.subagents.group.builtIn",
+                  })}
+                />,
+              )}
               {renderAgentList(groupedAgents.builtIn)}
             </section>
           ) : null}
         </div>
       )}
+
+      {batchMode ? (
+        <SubagentModelBatchBar
+          selectedCount={selectedBatchIds.size}
+          applying={batchApplying}
+          progress={batchProgress}
+          result={batchResult}
+          disabled={loading || refreshing}
+          modelGroups={chatModelSelectGroups}
+          modelSelectionView={modelSelectionView}
+          modelSelectionLoading={modelSelectionLoading}
+          onValueChange={noopBatchValueChange}
+          onApply={(value) => void applyBatchValue(batchTargets, value)}
+          onExit={exitBatchMode}
+        />
+      ) : null}
+
+      {batchDialogGroup && batchDialogGroup.targets.length > 0 ? (
+        <SubagentModelBatchDialog
+          open
+          groupName={batchDialogGroup.groupName}
+          targetCount={batchDialogGroup.targets.length}
+          disabled={batchApplying}
+          modelGroups={chatModelSelectGroups}
+          modelSelectionView={modelSelectionView}
+          modelSelectionLoading={modelSelectionLoading}
+          onOpenChange={(open) => {
+            if (!open) {
+              setBatchDialogGroupKey(null);
+            }
+          }}
+          onApply={(value) => {
+            const targets = batchDialogGroup.targets;
+            setBatchDialogGroupKey(null);
+            void applyBatchValue(targets, value);
+          }}
+        />
+      ) : null}
     </div>
   );
 }

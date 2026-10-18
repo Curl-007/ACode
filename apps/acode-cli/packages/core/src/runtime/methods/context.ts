@@ -15,6 +15,7 @@ import type {
   ContextBuilderConfig,
 } from "../deps.js";
 import type { AgentRuntimeInternal } from "../internal.js";
+import { loadPromptFileRouting } from "../../context/prompt-files.js";
 import { ensureMemoryDirectoryExists } from "../../memory/directory.js";
 import { formatProjectMemoryIndexContent } from "../../memory/index-content.js";
 import {
@@ -65,6 +66,13 @@ export async function ensureContextInitialized(
   this.skillLoadOutcome = await this.discoverSkillsForContext(traceContext);
   this.memoryRoot = await this.loadProjectMemoryRoot(traceContext);
   this.memoryIndexContent = await loadProjectMemoryIndexContent(this, this.memoryRoot);
+  // 提示词文件路由（specs/stable-prefix-pause-gate.md R5 生产接线）：APPEND_SYSTEM/
+  // SYSTEM/TITLE_SYSTEM 发现+读取必须在 async 面（builder 的 build() 是同步通道）。
+  // 无文件=空对象=零行为变化；单文件读取失败由 loader 跳过候选，绝不 fail 会话。
+  this.promptFileRouting = await loadPromptFileRouting({
+    workingDirectory: this.workingDirectory,
+    logger: this.logger,
+  });
   this.contextBuilder = this.createContextBuilderFromSnapshot(snapshot, this.memoryRoot, {
     memoryIndexContent: this.memoryIndexContent,
     model,
@@ -139,7 +147,10 @@ export function createContextBuilderFromSnapshot(
     agentProfiles: this.config.subagents?.profiles,
     embeddedSearchEnabled: resolveRuntimeEmbeddedSearchEnabled(this),
     skillMetadataBudget: this.config.skillMetadataBudget,
-    customSystemPrompt: this.config.systemPrompt,
+    customSystemPrompt:
+      // 显式 CLI systemPrompt 优先；SYSTEM.md 路由文件是缺省替换通道（spec R5）。
+      this.config.systemPrompt ?? this.promptFileRouting?.systemOverride?.content,
+    appendSystemPrompt: this.promptFileRouting?.appendSystem?.content,
     workflowActor: this.config.workflowActor,
     language: this.config.language,
     outputStyle: this.config.outputStyle,

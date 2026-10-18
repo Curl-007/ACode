@@ -58,9 +58,6 @@ export async function recordModelUsageFact(
   runtime: AgentRuntimeInternal,
   input: RecordModelUsageInput,
 ): Promise<void> {
-  const usageStore = usageStoreFor(runtime);
-  if (!usageStore) return;
-
   const completedAt = Date.now();
   const usage = input.result?.usage;
   const networkEvents = modelNetworkEvents(input.events.slice(input.networkEventStartIndex));
@@ -73,6 +70,37 @@ export async function recordModelUsageFact(
   const errorInfo = errorInfoFor(input.error, failedNetworkEvent);
   const contextExceeded =
     isModelContextExceededError(input.error) || failedNetworkEvent?.reason === "context_exceeded";
+
+  // WI-14（specs/otel-telemetry.md）：模型请求 span 事实在单一 producer 收口，位于
+  // usageStore 早退之前——遥测面不依赖 SQLite 观测面存在。事实只含元数据（token 数/
+  // 时长/分类代码级）；errorMessage 刻意不进 span（provider 错误消息可能回显提示词
+  // 片段或路径）。NOOP port 无 recordModelRequest 方法即静默跳过，默认路径零开销。
+  runtime.agentTelemetry.recordModelRequest({
+    cacheReadTokens: usage?.cacheReadTokens,
+    cacheWriteTokens: usage?.cacheWriteTokens,
+    completedAt,
+    contextExceeded,
+    durationMs,
+    errorCode: errorInfo.code,
+    errorType: errorInfo.type,
+    finishReason: input.result?.finishReason,
+    firstTokenAt,
+    inputTokens: usage?.inputTokens,
+    modelId: String(input.model.modelId),
+    outputTokens: usage?.outputTokens,
+    providerId: String(input.model.providerId),
+    querySource: input.querySource,
+    reasoningLevel: input.model.options.reasoningLevel,
+    reasoningTokens: usage?.reasoningTokens,
+    retryCount,
+    startedAt: input.startedAt,
+    status: input.status,
+    toolCallCount: input.toolCallCount,
+    totalTokens: usage?.totalTokens,
+  });
+
+  const usageStore = usageStoreFor(runtime);
+  if (!usageStore) return;
 
   try {
     await usageStore.recordModelUsage({

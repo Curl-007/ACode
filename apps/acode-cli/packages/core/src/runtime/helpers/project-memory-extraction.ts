@@ -252,6 +252,14 @@ async function executeProjectMemoryExtraction(
           }),
         isScopeStillCurrent: scopeGuard.isScopeStillCurrent,
         maxTurns: EXTRACTION_MAX_TURNS,
+        // 写侧生命周期通道（specs/memory-semantic-recall.md R11/R13，oh-my-pi 移植）：
+        // Extraction 产出的记忆文件落盘后机械补写 veracity 缺省档（extracted）并做归一化
+        // 哈希去重合并。enforcement 失败只记 warn，不影响抽取循环。
+        memoryWriteLifecycle: {
+          defaultVeracity: "extracted",
+          fileSystem,
+          logger: runtime.logger,
+        },
         messages: providerMessages,
         model: input.snapshot.model,
         rootDir: input.snapshot.memoryRoot,

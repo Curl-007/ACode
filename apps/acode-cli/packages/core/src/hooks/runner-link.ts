@@ -13,7 +13,11 @@ import {
   type HookExecutionDescriptor,
   type HookInput,
 } from "@acode/contracts";
-import { mergeHookRunResult, processHookOutput } from "./output.js";
+import {
+  hardenHookAdditionalContexts,
+  mergeHookRunResult,
+  processHookOutput,
+} from "./output.js";
 import { sanitizeHookDisplayText } from "./display-metadata.js";
 import {
   createHookMiddlewareMisuseError,
@@ -135,6 +139,13 @@ export async function dispatchHookLink(
     const { output, diagnostics } = unwrapHookCallbackResult(callbackResult);
     const durationMs = Date.now() - startedAt;
     const processed = processHookOutput(currentInput.hookEventName, output);
+    // 防滥用硬化（specs/hook-additional-context-hardening.md）：环节结算点是 hook 输出
+    // → additionalContexts 的唯一收集写入路径——每条 8KB 截断 + 来源 hook 名标注
+    // （与失败可见性共用同一名字解析器）；条数上限在 mergeHookRunResult 实施。
+    hardenHookAdditionalContexts(
+      processed,
+      resolveHookRefusalName({ descriptor, source: hook.source }),
+    );
     mergeHookRunResult(result, processed);
     const blocked =
       processed.permissionBehavior === "deny" ||

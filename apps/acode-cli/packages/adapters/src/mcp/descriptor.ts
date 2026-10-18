@@ -3,6 +3,7 @@ import type {
   McpToolAnnotations,
   McpToolDescriptor,
 } from "@acode/contracts";
+import { normalizeSchemaForMCP } from "../model/schema-normalize/index.js";
 
 export function normalizeMcpToolDescriptor(
   serverName: string,
@@ -36,10 +37,20 @@ function normalizeInputSchema(schema: unknown): JsonSchema {
     };
   }
 
+  // MCP ingest 统一归一（specs/tool-schema-normalize.md R2.1）：draft-07→2020-12
+  // 升级、本地 $defs 引用内联、剥 $schema/nullable；校验关键字与 additionalProperties
+  // 保留，description 不改写。归一器意外抛出向上传播进 connect 的既有 catch
+  //（fail-closed，spec R4）：宁可该 server 本轮工具面注册失败，不发坏 schema。
+  const normalized = normalizeSchemaForMCP(schema);
+  if (!isRecord(normalized)) {
+    // 对象输入在 walker 下恒产出对象；到这里说明归一契约被破坏，fail-closed。
+    throw new TypeError("MCP inputSchema normalization produced a non-object schema");
+  }
+
   return {
-    ...schema,
+    ...normalized,
     type: "object",
-    properties: isRecord(schema.properties) ? schema.properties : {},
+    properties: isRecord(normalized.properties) ? normalized.properties : {},
   };
 }
 
@@ -70,6 +81,70 @@ export const MCP_TOOL_NAME_MAX_LENGTH = 128;
 export function exceedsMcpToolNameLimit(descriptor: McpToolDescriptor): boolean {
   const modelName = descriptor.name ?? descriptor.toolName;
   return modelName.length > MCP_TOOL_NAME_MAX_LENGTH;
+}
+
+/**
+ * 单个工具的原始注册身份：`(serverName, toolName)` 未经过 sanitizer 的原值。
+ * sanitizer 是有损的（`a.b`/`a-b`、`c-d`/`c.d` 折叠到同一形态），模型面名撞名时
+ * 只有原始身份能区分两个来源。
+ */
+export interface McpToolNameCollision {
+  name: string;
+  kept: { serverName: string; toolName: string };
+  dropped: { serverName: string; toolName: string };
+}
+
+/**
+ * 模型面名撞名时的确定性赢家（specs/mcp-startup-gate-breaker.md R4）。
+ *
+ * 为什么需要：`normalizeMcpToolDescriptor` 的 sanitizer 是有损映射，两个不同来源
+ * （例如 server `a.b` + tool `c-d` 与 server `a-b` + tool `c.d`）会 mint 出同一个
+ * 模型面名。注册面如果按数组顺序先到先得，重连后 append 顺序可能翻转，工具归属
+ * 随之漂移——模型拿到的同一工具名背后换了一个 server。赢家规则 = 原始身份键
+ * `serverName\0toolName` 字典序较小者，与数组顺序、重连先后无关。
+ *
+ * 同源重复（同一 server/tool 出现两次，例如 server 端清单重复项）静默去重，不算
+ * 碰撞。**必须**在长度上限剔除之后、写入注册投影之前调用（与
+ * `exceedsMcpToolNameLimit` 组成注册边界的完整检查序列）。
+ */
+export function deduplicateMcpToolDescriptors(
+  tools: readonly McpToolDescriptor[],
+): { tools: McpToolDescriptor[]; collisions: McpToolNameCollision[] } {
+  const deduplicated: McpToolDescriptor[] = [];
+  const collisions: McpToolNameCollision[] = [];
+  const registered = new Map<
+    string,
+    { tool: McpToolDescriptor; originKey: string; index: number }
+  >();
+
+  for (const tool of tools) {
+    const originKey = `${tool.serverName}\u0000${tool.toolName}`;
+    const existing = registered.get(tool.name ?? tool.toolName);
+    if (!existing) {
+      registered.set(tool.name ?? tool.toolName, { tool, originKey, index: deduplicated.length });
+      deduplicated.push(tool);
+      continue;
+    }
+
+    if (existing.originKey === originKey) continue;
+
+    // 确定性赢家与遭遇顺序无关：重连/后台替换不得翻转归属。
+    const keepExisting = existing.originKey < originKey;
+    const winner = keepExisting ? existing.tool : tool;
+    const loser = keepExisting ? tool : existing.tool;
+    if (!keepExisting) {
+      deduplicated[existing.index] = tool;
+      existing.tool = tool;
+      existing.originKey = originKey;
+    }
+    collisions.push({
+      name: tool.name ?? tool.toolName,
+      kept: { serverName: winner.serverName, toolName: winner.toolName },
+      dropped: { serverName: loser.serverName, toolName: loser.toolName },
+    });
+  }
+
+  return { tools: deduplicated, collisions };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

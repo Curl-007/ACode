@@ -38,8 +38,11 @@ const createBundleOptions = ({ entryPoint, outfile }) => ({
 export const buildBrowserUsePluginBundles = async ({
   packageRoot = defaultPackageRoot,
   browserClientOutfile = resolve(packageRoot, "scripts", "browser-client.mjs"),
+  relayServerOutfile = resolve(packageRoot, "scripts", "relay-server.mjs"),
 } = {}) => {
-  // node_repl 宿主的产物由 @acode/node-repl-host 自己构建与携带；这个包只出 browser-client。
+  // node_repl 宿主的产物由 @acode/node-repl-host 自己构建与携带；这个包出 browser-client
+  // 与 relay-server（browser-relay 独立启动器，specs/browser-relay-inplace-capture.md
+  // 「集成与共享桶申请」节：启动面在插件包内，cli 不反向依赖插件）。
   await mkdir(dirname(browserClientOutfile), { recursive: true });
   await build(
     createBundleOptions({
@@ -48,7 +51,15 @@ export const buildBrowserUsePluginBundles = async ({
     }),
   );
   await chmod(browserClientOutfile, executableFileMode);
-  return { browserClientOutfile };
+  await mkdir(dirname(relayServerOutfile), { recursive: true });
+  await build(
+    createBundleOptions({
+      entryPoint: resolve(packageRoot, "src", "relay", "main.ts"),
+      outfile: relayServerOutfile,
+    }),
+  );
+  await chmod(relayServerOutfile, executableFileMode);
+  return { browserClientOutfile, relayServerOutfile };
 };
 
 const entryPath = process.argv[1];

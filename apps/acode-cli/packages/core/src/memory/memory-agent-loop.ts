@@ -1,6 +1,8 @@
 import { isAbsolute } from "node:path";
 
 import type {
+  FileSystemPort,
+  Logger,
   ModelInputMessage,
   ModelMessageContent,
   Model,
@@ -18,8 +20,20 @@ import {
 } from "../tool/handlers/bash-command-parser.js";
 import { isRuntimeReadOnlyBashCommand } from "../tool/handlers/bash-semantics.js";
 import type { ExecutableToolCall, ToolExecutionResult } from "../tool/types.js";
+import { enforceMemoryAgentLoopLifecycle } from "./dedupe.js";
 import { resolveContainedMemoryFilePath, resolveSafeMemoryFilePath } from "./memory-file-path.js";
+import type { MemoryVeracity } from "./veracity.js";
 import { auxiliaryModelOptions } from "../model/auxiliary-model-options.js";
+
+/**
+ * 写侧生命周期通道（specs/memory-semantic-recall.md R11/R13，oh-my-pi 移植）。
+ * 缺省 undefined = 不启用（既有行为零变化）；Extraction 循环传 `extracted` 缺省档。
+ */
+export interface MemoryWriteLifecycleConfig {
+  defaultVeracity: MemoryVeracity;
+  fileSystem: FileSystemPort;
+  logger?: Logger;
+}
 
 interface MemoryAgentLoopResult {
   /**
@@ -67,6 +81,12 @@ export async function runMemoryAgentLoop(input: {
    */
   isScopeStillCurrent?: () => boolean;
   maxTurns: number;
+  /**
+   * 写侧生命周期通道（R11/R13）：提供即启用——本循环内每个成功落盘的记忆文件在下一批
+   * 模型请求前依序走「veracity 缺省补写 + 归一化哈希去重合并」。enforcement 失败只记
+   * warn 不中断循环；缺省 undefined = 不启用（既有行为零变化）。
+   */
+  memoryWriteLifecycle?: MemoryWriteLifecycleConfig;
   messages: readonly ModelInputMessage[];
   model: Model;
   rootDir: string;
@@ -110,6 +130,9 @@ export async function runMemoryAgentLoop(input: {
       break;
     }
 
+    // Write/Edit 的落盘结果与路径留档：生命周期通道只处理「策略放行且执行成功」的
+    // 记忆文件写入（被拒/失败的工具调用没有盘上事实，无事可做）。
+    const lifecycleWrites: Array<{ ok: boolean; path?: string }> = [];
     const toolMessages = await Promise.all(
       toolCalls.map(async (toolCall): Promise<ModelInputMessage> => {
         const decision = evaluateMemoryAgentToolPolicy({
@@ -120,6 +143,7 @@ export async function runMemoryAgentLoop(input: {
           workspaceRoot: input.workspaceRoot,
         });
         if (!decision.allowed) {
+          if (isMemoryMutationToolName(toolCall.name)) lifecycleWrites.push({ ok: false });
           return {
             content: decision.reason,
             isError: true,
@@ -133,6 +157,12 @@ export async function runMemoryAgentLoop(input: {
           { id: toolCall.id, input: toolCall.input, name: toolCall.name },
           { abortSignal: input.abortSignal },
         );
+        if (isMemoryMutationToolName(toolCall.name)) {
+          lifecycleWrites.push({
+            ok: !isErrorForToolResult(result),
+            path: stringProperty(toolCall.input, "file_path"),
+          });
+        }
         return {
           content: modelContentForToolResult(result),
           isError: isErrorForToolResult(result),
@@ -143,9 +173,27 @@ export async function runMemoryAgentLoop(input: {
       }),
     );
     messages.push(...toolMessages);
+
+    // 写侧生命周期通道（R11/R13）：本批成功落盘的记忆文件在下一批模型请求前依序走
+    // 「veracity 缺省补写 + 归一化哈希去重合并」（批量入口在 dedupe.ts，失败自吞不
+    // 中断循环）。未配置通道时零行为变化。
+    if (input.memoryWriteLifecycle) {
+      await enforceMemoryAgentLoopLifecycle({
+        config: input.memoryWriteLifecycle,
+        rootDir: input.rootDir,
+        signal: input.abortSignal,
+        workingDirectory: input.workingDirectory,
+        workspaceRoot: input.workspaceRoot,
+        writes: lifecycleWrites,
+      });
+    }
   }
 
   return { capped: !finishedNaturally, messages, turns };
+}
+
+function isMemoryMutationToolName(toolName: string): boolean {
+  return toolName === "Write" || toolName === "Edit";
 }
 
 function evaluateMemoryAgentToolPolicy(

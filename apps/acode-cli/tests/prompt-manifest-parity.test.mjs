@@ -64,6 +64,8 @@ const PERSISTABLE_IDS = [
 const NON_PERSISTABLE_IDS = [
   "identity.custom",
   "identity.workflow_actor",
+  // WI-10：APPEND_SYSTEM.md 用户数据段，不得进 manifest（R6）。
+  "identity.append",
   "guidance.session",
   "guidance.delegating_work",
   "memory.persistent",

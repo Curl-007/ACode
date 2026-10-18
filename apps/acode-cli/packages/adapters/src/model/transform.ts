@@ -23,7 +23,6 @@ import {
   toolResultHasVideoMedia,
 } from "./tool-result-media-projection.js";
 import { dataUrlToDataContent, unsupportedInputMediaText } from "./media-transform-policy.js";
-import { normalizeOpenAiCompatibleSystemMessages } from "./system-message-compat.js";
 
 export interface AiSdkMessageTransformOptions {
   apiFormat?: string;
@@ -48,10 +47,9 @@ export function toAiSdkMessages(
   messages: ModelInputMessage[],
   options: AiSdkMessageTransformOptions = {},
 ): AiSdkModelMessage[] {
-  const normalizedMessages =
-    options.providerKind === "openai-compatible"
-      ? normalizeOpenAiCompatibleSystemMessages(messages)
-      : messages;
+  // 多段开头 system 的合并已迁移到 compat 转换管道（model-compat-transforms.ts ·
+  // singleLeadingSystem，spec: apps/acode-cli/specs/model-compat-flags.md R6，wire 级
+  // 等价）：openai-chat-completions 规则赋值面与旧 providerKind gate 全等。
   const shouldStripOpenAiResponsesStoredReasoning =
     shouldStripStoredReasoningForOpenAiResponsesStatelessReplay(options);
 
@@ -64,7 +62,7 @@ export function toAiSdkMessages(
     pendingToolMediaParts = [];
   };
 
-  for (const message of normalizedMessages) {
+  for (const message of messages) {
     if (message.role !== "tool") {
       flushPendingToolMedia();
     }

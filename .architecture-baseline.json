@@ -1902,6 +1902,15 @@
     },
     {
       "rule": "max-file-lines",
+      "file": "apps/acode-cli/packages/browser-use-plugin/src/relay/bridge.ts",
+      "module": "acode-cli",
+      "detail": "legacy-over-limit",
+      "message": "文件 1657 行，超过上限 400 行（legacy ratchet：超限文件只减不增）",
+      "fingerprint": "818d46334b12c30a",
+      "global": false
+    },
+    {
+      "rule": "max-file-lines",
       "file": "apps/acode-cli/packages/core/src/swarm/graph/ops.ts",
       "module": "acode-cli",
       "detail": "legacy-over-limit",

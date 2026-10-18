@@ -30,7 +30,7 @@ export interface McpReconnectSuspension {
   /** 挂起时刻（ISO 8601）。 */
   suspendedAt: string;
   /** 挂起来源维度；仅挂起时附加，缺失按 connect_failures 理解（历史形态）；wire fail-safe。 */
-  suspendedBy?: "connect_failures" | "in_call_crashes";
+  suspendedBy?: "connect_failures" | "in_call_crashes" | "crash_storm";
 }
 
 export interface McpServerStatus {

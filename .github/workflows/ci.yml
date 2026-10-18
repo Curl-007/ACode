@@ -34,7 +34,19 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-          cache: pnpm
+
+      # CI 缓存纪律（omp 教训：每 PR 保存一份大缓存曾吃掉 9.4GB/10GB 配额）：
+      # 本 workflow 所有触发（PR/push/dispatch）一律只 restore 不 save——
+      # setup-node 的 cache: pnpm 无法关掉保存半边，故改用显式 actions/cache/restore；
+      # 缓存条目由 .github/workflows/warm-cache.yml 在 main/dev 推送时专职生产，
+      # 键与路径逐字符一致：pnpm-store-Linux-<pnpm-lock.yaml 哈希> / ~/.local/share/pnpm/store。
+      - name: Restore pnpm store cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.local/share/pnpm/store
+          key: pnpm-store-Linux-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-store-Linux-
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -92,7 +104,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-          cache: pnpm
+      # 与 verify 同一缓存纪律：只 restore 不 save，条目由 warm-cache.yml 生产。
+      - name: Restore pnpm store cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.local/share/pnpm/store
+          key: pnpm-store-Linux-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-store-Linux-
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: Stage Linux server release

@@ -87,16 +87,19 @@ test("plugins/index.ts：findManifest 候选含 .cursor-plugin 且优先级顺�
   }
 });
 
-test("plugins/marketplace.ts：findPluginManifestPath 候选含 .cursor-plugin 且优先级顺序正确", () => {
-  const source = read("../packages/adapters/src/plugins/marketplace.ts");
+test("plugins/plugin-manifest-inspect.ts：findPluginManifestPath 候选含 .cursor-plugin 且优先级顺序正确", () => {
+  // findPluginManifestPath 自 marketplace.ts 迁至 plugin-manifest-inspect.ts
+  // （specs/plugin-install-transactions.md：manifest 校验助手群独立成文件），
+  // 候选集与优先级语义不变，本测试跟随发现点的现居文件。
+  const source = read("../packages/adapters/src/plugins/plugin-manifest-inspect.ts");
   const fn = extractBlock(
     source,
-    "function findPluginManifestPath(",
+    "export function findPluginManifestPath(",
     "\n}\n",
-    "plugins/marketplace.ts",
+    "plugins/plugin-manifest-inspect.ts",
     "findPluginManifestPath",
   );
-  // marketplace.ts 以常量数组表达候选：按常量名断言顺序，并核对常量定义映射到正确目录。
+  // 以常量数组表达候选：按常量名断言顺序，并核对常量定义映射到正确目录。
   const order = [
     "ACODE_MANIFEST_PATH",
     "CLAUDE_MANIFEST_PATH",
@@ -106,8 +109,8 @@ test("plugins/marketplace.ts：findPluginManifestPath 候选含 .cursor-plugin �
   let previous = -1;
   for (const name of order) {
     const index = fn.indexOf(name);
-    assert.ok(index >= 0, `plugins/marketplace.ts 的 findPluginManifestPath 缺少 ${name}`);
-    assert.ok(index > previous, `plugins/marketplace.ts 的候选优先级被改：${name} 顺序错误`);
+    assert.ok(index >= 0, `plugins/plugin-manifest-inspect.ts 的 findPluginManifestPath 缺少 ${name}`);
+    assert.ok(index > previous, `plugins/plugin-manifest-inspect.ts 的候选优先级被改：${name} 顺序错误`);
     previous = index;
   }
   for (const [name, convention] of [
@@ -118,7 +121,7 @@ test("plugins/marketplace.ts：findPluginManifestPath 候选含 .cursor-plugin �
   ]) {
     assert.ok(
       source.includes(`const ${name} = join("${convention}", "plugin.json")`),
-      `plugins/marketplace.ts 的 ${name} 必须指向 ${convention}/plugin.json`,
+      `plugins/plugin-manifest-inspect.ts 的 ${name} 必须指向 ${convention}/plugin.json`,
     );
   }
 });

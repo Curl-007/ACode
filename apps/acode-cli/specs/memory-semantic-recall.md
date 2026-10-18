@@ -204,6 +204,10 @@ ACode 用户记忆中文占比高，BM25 与 query 解析共用一个分词器�
 | `SIDECAR_BACKFILL_LIMIT_PER_RETRIEVAL` | `20` | R4 |
 | `RERANK_MIN_CANDIDATES` / `RERANK_SCORE_SPREAD` / `RERANK_TIMEOUT_MS` | `8` / `0.5` / `10_000` | R5 |
 | `FILENAME_MIN_INTERVAL_MS` | `10 * 60_000` | R7 层 4 |
+| `DECAY_SCORE_FLOOR` | `0.7` | R10（omp `0.7 + 0.3 * decay` 同款） |
+| `WEIBULL_PARAMS` | 见 R10 表 | R10（omp 21 档 → ACode 四类映射） |
+| `VERACITY_WEIGHTS` | `user_stated 1.1 / tool_observed 1.05 / extracted 1.0 / unknown 1.0` | R11 |
+| `MEMORY_IMPORTANCE_DEFAULT` | `0.5` | R13（omp remember 缺省同值） |
 | （沿用 J3-2）`PENDING_FRESHNESS_MS` 等 | 不变 | J3-2 常量表 |
 
 ## 接口
@@ -279,11 +283,144 @@ export function createMemoryRetrievalPipeline(deps: {
 
 **度量（R8）**：16. 各事件分类计数落 JSONL；`content`/`description` 全文不出现（源码断言）。
 
+## 写侧生命周期三件套（Phase D 首批落地，R10-R13）
+
+> 机制移植自 oh-my-pi (MIT) packages/mnemopi —— `core/weibull.ts`（按类型 Weibull
+> 衰减）、`core/beam/recall.ts:459`（superseded/valid_until 可见性过滤）、
+> `core/beam/recall.ts:746-753`（veracity 乘权）、`core/beam/store.ts:449-495`
+> （重复内容合并 UPDATE），Copyright (c) 2025 Mario Zechner & Stencil Labs。
+> 自撰 TypeScript 实现，移植文件头逐条注明。Phase D 相应登记项（未做 §1）就此清偿。
+
+### R10 Weibull 时间衰减
+
+- **公式**（与 omp weibull.ts 同式）：`decay = exp(-((ageHours / eta) ** k))`，
+  `ageHours <= 0`（未来 mtime / 时钟偏差）→ `decay = 1.0`；`eta <= 0` → `0`。
+- **按类型参数表**（omp 21 档映射到 ACode 四类，参数是**可调常量**，改 `memory/decay.ts`
+  即改协议）。选型理由：取 omp 参数表中语义最近的档位——
+  user 画像/偏好长期稳定（preference 档），feedback 是工作方式指引、半衰约 3 周
+  （instruction 档），project 约束中等寿命（project 档），reference 外部资源中等偏长
+  （artifact 档）；type 缺失/未知走 omp `general` 档兜底。
+
+| ACode type | k（shape） | eta（scale，小时） | omp 来源档 |
+| --- | --- | --- | --- |
+| `user` | 0.4 | 4380 | preference |
+| `feedback` | 0.9 | 480 | instruction |
+| `project` | 0.85 | 1080 | project |
+| `reference` | 0.75 | 2160 | artifact |
+| （缺失/未知） | 1.0 | 168 | general（omp `DEFAULT_HALFLIFE_HOURS` 同值） |
+
+- **时间戳源 = 文件 mtime**（**spec 决策：不新增 created/updated frontmatter 字段**）。
+  理由：mtime 由文件系统单一所有者维护，写入/合并即刷新，语义是「最后确认时间」，
+  与 omp `remember()` 合并时 `timestamp = now` 同构；frontmatter 日期由模型手写，与
+  mtime 是两条必然漂移的时间线（多一份可漂移状态违反单一所有者原则）。存量文件无需
+  迁移——无日期字段天然回退 mtime。
+- **应用位置**：RRF 融合**之后**、rerank/top-K 之前，`score *= (0.7 + 0.3 * decay)`
+  （omp recall.ts 同款下限混合）。0.7 下限保证完全陈旧的条目不会被清零（长尾相关仍可
+  经强 BM25 命中上浮，与 R4「无硬阈值」同一立场），只压排序位次。
+- 防陈旧记忆长期霸榜：衰减只作用于排序权重，不删除、不改写任何文件（检索层只读，R9）。
+
+### R11 veracity 分级加权
+
+- **四档**（可调常量 `VERACITY_WEIGHTS`，`memory/veracity.ts`）：
+
+| 档位 | 语义 | 权重 |
+| --- | --- | --- |
+| `user_stated` | 用户显式要求记住的内容 | 1.1 |
+| `tool_observed` | 工具实跑输出直接印证的事实 | 1.05 |
+| `extracted` | 子代理从对话归纳/推断（Extraction 产出缺省） | 1.0 |
+| `unknown` | 字段缺失/无法解析（**中性**，存量兼容） | 1.0 |
+
+- 与 omp `VERACITY_WEIGHT_DEFAULTS`（stated 1.0 / inferred 0.7 / tool 0.5 /
+  imported 0.6 / unknown 0.8）的偏差及理由：任务口径钉住「存量无该字段按 unknown
+  **中性**权重」→ unknown = 1.0 为基线；extracted 同为 1.0（新产出不因打标降权，
+  否则所有新记忆都排在存量之后）。omp 把 tool 排最低反映其 working_memory 语境
+  （工具输出噪声大）；ACode 的 `tool_observed` 语义是「实跑输出印证的事实」，比推断硬，
+  排在 extracted 之上。非未知档只上浮不下压，回归风险单侧化。
+- **写侧打标**：Extraction prompt（`memory/extraction.ts`）指引模型在 frontmatter 写
+  `veracity`——用户显式要求记住 → `user_stated`；引用工具实跑输出 → `tool_observed`；
+  归纳/推断 → `extracted`。机械兜底：Extraction 循环内 Write/Edit 落盘后，frontmatter
+  缺 `veracity` 字段时由 `enforceMemoryWriteLifecycle` 补写缺省 `extracted`（R13 通道）；
+  模型已写的值（含显式 `unknown`）不被覆盖。主对话显式记忆写入不在该循环内（prompt 面，
+  本波不改 context section），缺字段 → unknown 中性，向后兼容。
+- **应用位置**：与 R10 同一处，`score *= veracityWeight`（omp recall.ts:746-753 语义：
+  `row.veracity || "unknown"` 回退 + 查表乘权）。解析失败的档位字符串按 `unknown`。
+
+### R12 机械失效（superseded-by / valid-until）
+
+- frontmatter 新增两个可选字段（kebab-case，顶层或 `metadata:` 嵌套均认）：
+  - `superseded-by: <name|filename>`——该记忆已被指定更新者取代，检索层**不再可见**；
+  - `valid-until: <ISO-8601>`——有效期，`validUntil <= now` 视为过期，检索层不再可见
+    （omp recall.ts:459 的 WHERE 语义：`valid_until IS NULL OR valid_until > now AND
+    superseded_by IS NULL`）。
+- **过滤位置**：`readRetrievalDocuments` 装配文档时剔除（进 BM25 之前）——失效条目连
+  候选池都不进，不是降权。全部条目失效 → 返回零候选（不是 rejected：存储可读，只是
+  没有可见记忆）。
+- **写边的人**：Extraction prompt 指引模型「新事实取代旧记忆时，给旧文件加
+  `superseded-by: <new-name>` 而不是留两条都活跃」（Phase D §1 的「谁写边」决策：
+  Extraction 子代理写，主对话仍可手工维护）。`valid-until` 由模型按事实寿命自行声明。
+- **解析失败 fail-open**：`valid-until` 无法解析成时间 → 视为字段不存在（不过滤）。
+  过滤是「隐藏内容」的负向动作，坏数据不隐藏内容；`superseded-by` 空串同理不算失效。
+- **向后兼容**：存量文件无这两个字段 → 永不过滤，行为不变。
+- **边界**：本波只过滤**检索管线**；J3-2 注入协议与 Extraction 通道的全量清单注入不
+  改（Extraction 子代理仍能看到失效条目，恰好便于它清理）。检索选中到注入之间的瞬间
+  失效窗口（先检索后 supersede）不设防，注入层重验证只比对内容签名，属已知小窗口。
+
+### R13 写入侧机械去重合并
+
+- **触发点**：`runMemoryAgentLoop`（`memory/memory-agent-loop.ts`）在每批模型工具调用
+  结束后、下一次模型请求前，对本批**成功落盘**且路径含于 memoryRoot 的 Write/Edit 依序
+  执行 `enforceMemoryWriteLifecycle`（`memory/dedupe.ts`）。这是「extraction 子代理产出
+  新记忆走机械通道」的唯一写点；去重不再只靠 prompt 提示「先扫 MEMORY.md」。
+- **归一化**：正文（frontmatter 剥离后）→ NFC → 小写 → 连续空白折叠为单空格 → trim →
+  sha256。比 omp `findDuplicate` 的全等匹配（`WHERE content = ?`）更强，全等是其子集；
+  frontmatter 差异不参与（两个只有 frontmatter 不同的文件是重复）。
+- **命中合并**（omp store.ts:449-495 的 UPDATE 语义移植到文件形态）：命中时**既有文件
+  是幸存者**（保住入链 `[[name]]` 与文件身份，等价于 omp 返回既有 row id），新写文件
+  删除。合并规则（幸存者 frontmatter ← 新写 frontmatter）：
+  - `importance` = MAX(既有 ?? 0.5, 新写 ?? 0.5)（omp `MAX(importance, ?)`；ACode 新增
+    可选 `importance` frontmatter 字段，0..1，缺省 0.5，本波只参与合并、不参与检索打分）；
+  - `veracity`：新写非 `unknown` 且存在 → 覆盖，否则保留既有（omp
+    `CASE WHEN ? != 'unknown' THEN ? ELSE veracity END`）；
+  - `valid-until` / `type` / `description`：新写存在 → 覆盖（omp `COALESCE(?, col)` =
+    新非空则新）；
+  - `superseded-by` / `name` / 其余键：保留既有（合并不得复活已失效记忆；name 是
+    `[[name]]` 互链身份，omp 无对应概念，此处刻意偏离 COALESCE 语义）；
+  - 正文保留幸存者原文（归一化相等，正文等价；omp 同样不改 content 只改元数据）。
+  与多个既有文件同时命中时只合并进相对名最小者，其余命中者不动（先存量后清理，不扩散
+  本次写入的影响面）。
+- **veracity 缺省补写**：去重扫描前先做 R11 的机械兜底（缺字段补 `extracted`），使补写
+  值参与同一轮合并。
+- **并发边界**：单批内依序串行（for-await），批间由 agent loop 天然串行；同批两文件互为
+  重复时，第二个文件执行时第一个已并入/删除，结果收敛且幂等（重复执行无剩余重复）。
+- **失败语义**：enforcement 任何 IO 失败 → 记 warn、不抛进 agent loop（Extraction 不因
+  生命周期故障中断；去重是增强，不是写路径的正确性前提）。
+- `MEMORY.md` 不是条目（J3-2 R10），扫描天然排除；单次扫描文件数以
+  `MANIFEST_FILE_LIMIT` 为上限（与检索同源）。
+
+### R10-R13 验收场景（追加，接验收 16）
+
+17. **衰减函数（R10）**：各 type 的参数表单测（k/eta 与 R10 表逐格相等）；eta 点位
+    `decay = exp(-1 ** k)` 与公式直算对照（同式重算而非魔法数）；未来 mtime → 1.0；
+    type 缺失 → general 兜底参数；`eta<=0` → 0。
+18. **veracity 权重（R11）**：四档查表值正确；字段缺失/无法解析 → unknown（1.0，中性）；
+    检索排序中「新近 + user_stated」上浮「陈旧 + extracted」（集成）。
+19. **失效过滤（R12）**：`superseded-by` 非空 → 检索零命中；`valid-until` 未来 → 可见、
+    过去 → 不可见、不可解析 → 不过滤；全部条目失效 → 零候选且 status=ok。
+20. **机械去重（R13）**：归一化哈希命中 → 幸存者保留既有文件名与正文、importance 取高、
+    veracity 非空覆盖、新写文件被删除；未命中 → 文件原样不动；`MEMORY.md` 不参与。
+21. **veracity 机械兜底（R11/R13）**：Extraction 循环 Write 落盘无 `veracity` → 文件被
+    补写 `veracity: extracted`；模型已写的值不被覆盖。
+22. **recall 排序集成（R10/R11）**：同正文两条，新近 + user_stated 排位高于陈旧 + 无
+    veracity；陈旧条目仍在候选中（下限混合不清零）。
+23. **存量兼容（R10-R13）**：无任何新字段的记忆文件照常检索、不过滤、veracity=unknown
+    中性、仅按 mtime 衰减——单文件场景排序与未引入三件套时一致。
+
 ## 未做与取舍
 
-1. **Phase D 记忆图演化**（supersede/contradiction 边 + 按类别半衰期时间衰减）：frontmatter
-   加 `superseded-by` 字段即可表达边，但「谁写边」（Extraction 子代理？主对话？）与
-   冲突消解语义需独立产品决策——登记不落实现，Phase A-C 数据（R8 账本）先行。
+1. **Phase D 记忆图演化**（contradiction 边）：supersede 边已随 R12 落地（frontmatter
+   `superseded-by` + 检索过滤 + Extraction 写边指引），按类别半衰期时间衰减随 R10 落地；
+   contradiction 边与冲突消解语义仍需独立产品决策——登记不落实现，Phase A-C 数据（R8
+   账本）先行。失效条目的过滤计数暂不落 R8 账本（账本消费方在 runtime 接线层），列后续项。
 2. **不落盘 BM25 索引**：200 文档内存现算 <5ms，落盘是第二份可漂移状态（AGENTS.md
    单一所有者原则）；FTS5 落库属 K4 的会话存储域，不混入记忆域。
 3. **OpenAI 兼容 embedding 后端**：接口位保留（`EmbeddingBackend`），不实现——默认路径
@@ -300,3 +437,10 @@ export function createMemoryRetrievalPipeline(deps: {
 向量空间隔离不变量（embedding_backend.rs）、listwise 重排（memory_rerank.rs）」。
 Phase B 依赖 transformers.js（Apache-2.0）与模型权重（MiniLM，Apache-2.0），
 依赖引入时在 `THIRD-PARTY-NOTICES.md` 登记。
+
+写侧生命周期三件套（R10-R13）移植自 oh-my-pi (MIT) packages/mnemopi：`memory/decay.ts`
+（core/weibull.ts）、`memory/veracity.ts` 与 `memory/lifecycle-frontmatter.ts`
+（core/beam/recall.ts 可见性与乘权、config.ts 权重缺省）、`memory/dedupe.ts`
+（core/beam/store.ts 重复合并），文件头注明
+`// Mechanism ported from oh-my-pi (MIT) packages/mnemopi — <文件>, Copyright (c) 2025 Mario Zechner & Stencil Labs`。
+零新依赖（`yaml` 为 core 既有依赖）。

@@ -27,6 +27,8 @@ import { createRefillQuota, type RefillQuota, type RefillQuotaConfig } from "../
 import { auxiliaryModelOptions } from "../../model/auxiliary-model-options.js";
 import { buildWebSearchOutput, formatWebSearchModelContent } from "./websearch-results.js";
 import { webSearchTraceFromContext } from "./websearch-support.js";
+import { resolveEngineChain } from "../../websearch/engine-config.js";
+import { runMultiEnginePath } from "./websearch-multiengine.js";
 
 const WEBSEARCH_TOOL_NAME = "WebSearch";
 const PROVIDER_WEBSEARCH_TOOL_NAME = "web_search";
@@ -160,6 +162,10 @@ function buildWebSearchProviderDescription(now: Date = new Date()): string {
   ].join("\n");
 }
 
+// ------------------------------------------------------------ 多引擎层（specs/websearch-multi-engine.md）
+// ACODE_WEBSEARCH_ENGINES 未设置 → 现状不变（provider-native 路径，下方原逻辑）。
+// 设置后走 core/src/websearch 的引擎回退链，输出映射在 websearch-multiengine.ts。
+
 const webSearchHandler: ToolHandler<WebSearchInput, WebSearchOutput> = async (input, context) => {
   const startedAt = Date.now();
   const model = context.model;
@@ -173,6 +179,12 @@ const webSearchHandler: ToolHandler<WebSearchInput, WebSearchOutput> = async (in
       startedAt,
       budgetVerdict.retryAfterMs ?? Number.POSITIVE_INFINITY,
     );
+  }
+
+  // 多引擎层是增量配置面：env 未设置时行为与现状逐字节一致（spec §3.1 验收红线）。
+  const engineChain = resolveEngineChain();
+  if (engineChain.mode !== "off" && engineChain.ids.length > 0) {
+    return runMultiEnginePath(input, startedAt, context.abortSignal, DEFAULT_TIMEOUT_MS);
   }
 
   if (!model) {

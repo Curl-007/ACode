@@ -5,7 +5,17 @@
 
 import { createHash, randomBytes } from "node:crypto";
 import { constants } from "node:fs";
-import { lstat, mkdir, open, readdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
+import {
+  lstat,
+  mkdir,
+  open,
+  readdir,
+  readFile,
+  rename,
+  stat,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, normalize, relative, sep } from "node:path";
 import { Worker } from "node:worker_threads";
 import type { RgArg, RipgrepBufferedResult } from "ripgrep";
@@ -47,12 +57,25 @@ import {
   shouldNormalizeLineEndings,
 } from "./text-metadata.js";
 import { readTextFileRangeFromNode } from "./text-range-reader.js";
+import {
+  getSharedFsScanCache,
+  invalidateFsScanCache,
+  shouldRecheckEmptyResult,
+} from "./scan-cache.js";
+import { GitignoreWalker } from "./gitignore-matcher.js";
 import { maybeThrowStorageFsFault } from "../storage/fs-fault-injection.js";
 
 const DEFAULT_GLOB_MAX_RESULTS = 100;
 const DEFAULT_GREP_HEAD_LIMIT = 250;
 const DEFAULT_RIPGREP_TIMEOUT_MS = 30_000;
 const VCS_DIRECTORIES_TO_EXCLUDE = new Set([".git", ".svn", ".hg", ".bzr", ".jj", ".sl"]);
+// specs/fs-hotpath-mechanisms.md R5：单文件命中预算——防单个热文件吃光整体预算。
+// 取值与 DEFAULT_GREP_HEAD_LIMIT 对齐：content 模式被 headLimit 切片后结果不变，
+// count 模式的每文件计数变为封顶值（预算语义，spec 已声明）。
+const GREP_MAX_COUNT_PER_FILE = 250;
+// specs/fs-hotpath-mechanisms.md R5：超 4MiB 文件在 JS 兜底引擎只读前缀参与匹配
+// （omp NATIVE_GREP_MAX_FILE_BYTES 语义）。rg 引擎保持全流式读取（见 spec 已知限制）。
+const GREP_MAX_FILE_BYTES = 4 * 1024 * 1024;
 
 type RipgrepWorker = Pick<Worker, "once" | "terminate">;
 
@@ -111,6 +134,12 @@ function serializeError(error) {
 
 export interface NodeFileSystemAdapterOptions {
   textSearchEngine?: "ripgrep" | "javascript";
+  /**
+   * specs/fs-hotpath-mechanisms.md R2：默认尊重 .gitignore/.ignore（含 node_modules
+   * 兜底排除）。false 或环境变量 ACODE_FS_NO_IGNORE=1/true 时旁路全部 ignore
+   * 语义，恢复旧包含行为（no-ignore 逃生口，装配与测试用）。
+   */
+  respectGitignore?: boolean;
 }
 
 export class NodeFileSystemAdapter implements FileSystemPort {
@@ -123,6 +152,8 @@ export class NodeFileSystemAdapter implements FileSystemPort {
     try {
       maybeThrowStorageFsFault({ operation: "mkdir", path });
       await mkdir(path, { recursive: true });
+      // 新目录改变目录项布局，按 specs/fs-hotpath-mechanisms.md R1 显式失效扫描缓存。
+      invalidateFsScanCache(path);
       return { path };
     } catch (error) {
       throw toFileSystemError(error, path);
@@ -313,6 +344,9 @@ export class NodeFileSystemAdapter implements FileSystemPort {
       }
 
       const info = await stat(path);
+      // 写/删成功后立即前缀失效扫描缓存（specs/fs-hotpath-mechanisms.md R1），
+      // 不等 TTL：agent 自身的写必须立刻反映到下一次 glob/grep。
+      invalidateFsScanCache(path);
       return {
         path,
         bytesWritten: content.byteLength,
@@ -338,6 +372,7 @@ export class NodeFileSystemAdapter implements FileSystemPort {
       throwIfAborted(options?.signal);
       maybeThrowStorageFsFault({ operation: "rm", path });
       await unlink(path);
+      invalidateFsScanCache(path);
       return { path, removed: true };
     } catch (error) {
       const normalized = toFileSystemError(error, path);
@@ -419,13 +454,11 @@ export class NodeFileSystemAdapter implements FileSystemPort {
       }
 
       const matcher = createGlobMatcher(pattern);
-      const matches: Array<{ path: string; mtimeMs: number }> = [];
-
-      await walkFiles(path, options?.signal, async (filePath, info) => {
-        const relativePath = toPosixRelative(path, filePath);
-        if (matcher(relativePath, basename(filePath))) {
-          matches.push({ path: filePath, mtimeMs: Number(info.mtimeMs) });
-        }
+      // specs/fs-hotpath-mechanisms.md R1：遍历走目录项扫描缓存；只对通过 glob
+      // 过滤的文件 stat 取 mtime（旧实现逐文件 stat）。
+      const { items: matches } = await collectMatchingFiles(path, options?.signal, {
+        respectGitignore: this.resolveRespectGitignore(),
+        filter: (relativePath, fileName) => matcher(relativePath, fileName),
       });
 
       matches.sort((left, right) => {
@@ -458,14 +491,20 @@ export class NodeFileSystemAdapter implements FileSystemPort {
     const normalizedRequest = request.path === path ? request : { ...request, path };
 
     if (this.adapterOptions.textSearchEngine === "javascript") {
-      return searchTextWithJavaScript(normalizedRequest, options?.signal);
+      return searchTextWithJavaScript(normalizedRequest, options?.signal, {
+        respectGitignore: this.resolveRespectGitignore(),
+      });
     }
 
     try {
-      return await searchTextWithRipgrep(normalizedRequest, options?.signal);
+      return await searchTextWithRipgrep(normalizedRequest, options?.signal, {
+        respectGitignore: this.resolveRespectGitignore(),
+      });
     } catch (error) {
       if (error instanceof RipgrepRuntimeFailure) {
-        return searchTextWithJavaScript(normalizedRequest, options?.signal);
+        return searchTextWithJavaScript(normalizedRequest, options?.signal, {
+          respectGitignore: this.resolveRespectGitignore(),
+        });
       }
       throw toFileSystemError(error, path);
     }
@@ -481,6 +520,17 @@ export class NodeFileSystemAdapter implements FileSystemPort {
         message: `File changed since it was read: ${path}`,
       });
     }
+  }
+
+  /**
+   * specs/fs-hotpath-mechanisms.md R2 的 no-ignore 逃生口：构造参数 false 或
+   * 环境变量 ACODE_FS_NO_IGNORE=1/true 时旁路 gitignore 与 node_modules 兜底。
+   * 环境变量按请求读取，测试可在不重建适配器的情况下切换。
+   */
+  private resolveRespectGitignore(): boolean {
+    if (this.adapterOptions.respectGitignore === false) return false;
+    const override = process.env.ACODE_FS_NO_IGNORE?.trim().toLowerCase();
+    return !(override === "1" || override === "true");
   }
 }
 
@@ -508,9 +558,14 @@ export function setRipgrepTimeoutMsForTests(timeoutMs: number | undefined): () =
   };
 }
 
+interface TextSearchEngineOptions {
+  respectGitignore: boolean;
+}
+
 async function searchTextWithRipgrep(
   request: FileSystemSearchTextRequest,
   signal?: AbortSignal,
+  engineOptions: TextSearchEngineOptions = { respectGitignore: true },
 ): Promise<FileSystemSearchTextResult> {
   const path = resolveAbsoluteRequestPath(request.path);
   const pattern = request.pattern.trim();
@@ -541,9 +596,30 @@ async function searchTextWithRipgrep(
   }
 
   const mode = request.outputMode ?? "files_with_matches";
-  const plan = createRipgrepSearchPlan(path, rootInfo, request, mode);
-  const result = await runBundledRipgrep(plan.args, plan.preopens, { signal });
+  // specs/fs-hotpath-mechanisms.md R5 坏 brace 容错：ripgrep 对未配对花括号的
+  // 正则报 regex parse error（exit 2）。pattern 含 { 时做一次 brace 转义重试，
+  // 把 `a{2` 类笔误降级为字面量匹配，而不是让整次搜索失败。
+  const attempt = async (effectivePattern: string): Promise<RipgrepBufferedResult> => {
+    const plan = createRipgrepSearchPlan(
+      path,
+      rootInfo,
+      request,
+      mode,
+      effectivePattern,
+      engineOptions,
+    );
+    return runBundledRipgrep(plan.args, plan.preopens, { signal });
+  };
+  let result = await attempt(pattern);
   throwIfAborted(signal);
+
+  if (result.code === 2 && pattern.includes("{")) {
+    const retry = await attempt(escapeRegexBraces(pattern));
+    throwIfAborted(signal);
+    if (retry.code !== 2) {
+      result = retry;
+    }
+  }
 
   if (result.code === 2) {
     throw toRipgrepFileSystemError(result.stderr, path, pattern);
@@ -558,8 +634,8 @@ async function searchTextWithRipgrep(
 
   const parsed =
     mode === "content"
-      ? parseRipgrepJsonOutput(result.stdout, plan.outputRoot, request)
-      : parseRipgrepCountOutput(result.stdout, plan.outputRoot, request);
+      ? parseRipgrepJsonOutput(result.stdout, planOutputRootFor(path, rootInfo), request)
+      : parseRipgrepCountOutput(result.stdout, planOutputRootFor(path, rootInfo), request);
   const files = await sortPathsByMtime(parsed.files);
 
   return finishTextSearchResult({
@@ -574,9 +650,14 @@ async function searchTextWithRipgrep(
   });
 }
 
+function planOutputRootFor(path: string, rootInfo: Awaited<ReturnType<typeof stat>>): string {
+  return rootInfo.isDirectory() ? path : dirname(path);
+}
+
 async function searchTextWithJavaScript(
   request: FileSystemSearchTextRequest,
   signal?: AbortSignal,
+  engineOptions: TextSearchEngineOptions = { respectGitignore: true },
 ): Promise<FileSystemSearchTextResult> {
   const path = resolveAbsoluteRequestPath(request.path);
   const pattern = request.pattern.trim();
@@ -592,13 +673,26 @@ async function searchTextWithJavaScript(
 
   try {
     throwIfAborted(signal);
-    const regex = compileSearchRegex(pattern, request);
+    // specs/fs-hotpath-mechanisms.md R5 坏 brace 容错：`a{2` 类 pattern 在 JS 侧
+    // 也先做一次 brace 转义重试，再按原始错误上报。
+    let regex: RegExp;
+    try {
+      regex = compileSearchRegex(pattern, request);
+    } catch (error) {
+      if (!pattern.includes("{")) throw error;
+      regex = compileSearchRegex(escapeRegexBraces(pattern), request);
+    }
     const rootInfo = await stat(path);
     const mode = request.outputMode ?? "files_with_matches";
-    const candidates = await collectTextSearchCandidates(path, rootInfo, request, signal);
+    const candidates = await collectTextSearchCandidates(
+      path,
+      rootInfo,
+      request,
+      signal,
+      engineOptions,
+    );
 
-    const searchRequest =
-      mode === "content" ? request : { ...request, onlyMatching: false };
+    const searchRequest = mode === "content" ? request : { ...request, onlyMatching: false };
     const contentEntries: FileSystemSearchTextEntry[] = [];
     const countEntries: FileSystemSearchTextEntry[] = [];
     const matchingFiles: Array<{ path: string; mtimeMs: number }> = [];
@@ -606,7 +700,12 @@ async function searchTextWithJavaScript(
 
     for (const candidate of candidates) {
       throwIfAborted(signal);
-      const content = await readFile(candidate.path, "utf8");
+      // specs/fs-hotpath-mechanisms.md R5：超 4MiB 文件只读前缀参与匹配，防止单个
+      // 巨型文件占满读取与搜索预算（omp NATIVE_GREP_MAX_FILE_BYTES 语义）。
+      const content =
+        candidate.sizeBytes > GREP_MAX_FILE_BYTES
+          ? (await readFirstBytes(candidate.path, GREP_MAX_FILE_BYTES)).toString("utf8")
+          : await readFile(candidate.path, "utf8");
       if (looksBinary(content)) continue;
 
       const search = request.multiline
@@ -741,7 +840,9 @@ async function atomicWrite(path: string, content: Buffer): Promise<void> {
       constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW,
     ).catch((error: unknown) => {
       if (getNodeErrorCode(error) === "ELOOP") {
-        throw new SymlinkWriteRefusedError(`Refusing to write through symlink: ${path} (O_NOFOLLOW)`);
+        throw new SymlinkWriteRefusedError(
+          `Refusing to write through symlink: ${path} (O_NOFOLLOW)`,
+        );
       }
       throw error;
     });
@@ -862,6 +963,8 @@ function toFileSystemError(error: unknown, path: string): Error {
 interface FileSearchCandidate {
   path: string;
   mtimeMs: number;
+  /** 供 4MiB 前缀预算判断（specs/fs-hotpath-mechanisms.md R5）。 */
+  sizeBytes: number;
 }
 
 interface TextSearchResult {
@@ -927,6 +1030,8 @@ function createRipgrepSearchPlan(
   rootInfo: Awaited<ReturnType<typeof stat>>,
   request: FileSystemSearchTextRequest,
   mode: FileSystemTextSearchOutputMode,
+  effectivePattern: string,
+  engineOptions: TextSearchEngineOptions,
 ): RipgrepSearchPlan {
   const outputRoot = rootInfo.isDirectory() ? path : dirname(path);
   const target = rootInfo.isDirectory() ? "." : basename(path);
@@ -943,6 +1048,19 @@ function createRipgrepSearchPlan(
 
   for (const dir of VCS_DIRECTORIES_TO_EXCLUDE) {
     args.push("--glob", `!${dir}`, "--glob", `!**/${dir}/**`);
+  }
+
+  // specs/fs-hotpath-mechanisms.md R2：默认尊重 gitignore 是 rg 的内建行为；
+  // 这里补 node_modules 兜底 glob 与 JS 兜底引擎对齐（无 .gitignore 的目录也
+  // 排除）。no-ignore 逃生口时显式 --no-ignore 且不加 ignore 类 glob。
+  if (engineOptions.respectGitignore) {
+    args.push("--glob", "!node_modules", "--glob", "!**/node_modules/**");
+    // R5 单文件命中预算：只约束目录扫描；显式指名的单文件给完整预算。
+    if (rootInfo.isDirectory()) {
+      args.push("--max-count", String(GREP_MAX_COUNT_PER_FILE));
+    }
+  } else {
+    args.push("--no-ignore");
   }
 
   if (request.multiline) {
@@ -970,7 +1088,7 @@ function createRipgrepSearchPlan(
     addRipgrepTypeArgs(args, request.type);
   }
 
-  args.push("-e", request.pattern.trim(), "--", target);
+  args.push("-e", effectivePattern, "--", target);
 
   return {
     args,
@@ -994,8 +1112,59 @@ function addRipgrepContextArgs(args: RgArg[], request: FileSystemSearchTextReque
 
 function addRipgrepGlobArgs(args: RgArg[], glob: string): void {
   for (const pattern of splitRipgrepGlobPatterns(glob)) {
-    args.push("--glob", pattern);
+    args.push("--glob", sanitizeRipgrepGlobPattern(pattern));
   }
+}
+
+/**
+ * specs/fs-hotpath-mechanisms.md R5：ripgrep glob 的花括号必须配对（`*.{ts,js}`），
+ * 未配对的 `{`/`}` 会让 rg exit 2 报 invalid glob，整次搜索失败。检测到不配对时
+ * 全部转义为字面量，把 `*.{ts,js` 降级为字面匹配（宁无结果不炸搜索）。
+ * 导出面仅测试消费（同 setRipgrepWorkerFactoryForTests 模式）。
+ */
+export function sanitizeRipgrepGlobPattern(pattern: string): string {
+  if (!hasUnbalancedBraces(pattern)) return pattern;
+  return pattern.replaceAll("{", "\\{").replaceAll("}", "\\}");
+}
+
+export function hasUnbalancedBraces(value: string): boolean {
+  let depth = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index];
+    if (char === "\\") {
+      index += 1;
+      continue;
+    }
+    if (char === "{") depth += 1;
+    else if (char === "}") {
+      depth -= 1;
+      if (depth < 0) return true;
+    }
+  }
+  return depth !== 0;
+}
+
+/**
+ * specs/fs-hotpath-mechanisms.md R5：搜索正则的坏 brace 容错。仅在调用方确认
+ * 原始 pattern 解析失败后使用——把全部未转义花括号转为字面量重试一次。
+ * 导出面仅测试消费。
+ */
+export function escapeRegexBraces(pattern: string): string {
+  let escaped = "";
+  for (let index = 0; index < pattern.length; index += 1) {
+    const char = pattern[index];
+    if (char === "\\") {
+      escaped += pattern.slice(index, index + 2);
+      index += 1;
+      continue;
+    }
+    if (char === "{" || char === "}") {
+      escaped += `\\${char}`;
+      continue;
+    }
+    escaped += char;
+  }
+  return escaped;
 }
 
 function splitRipgrepGlobPatterns(glob: string): string[] {
@@ -1188,11 +1357,13 @@ function parseRipgrepJsonOutput(
         const lineNumber =
           typeof event.data?.line_number === "number" ? event.data.line_number : undefined;
         for (const submatch of submatches) {
-          entries.push(...createOnlyMatchingEntries({
-            path,
-            text: submatch.match?.text ?? "",
-            lineNumber,
-          }));
+          entries.push(
+            ...createOnlyMatchingEntries({
+              path,
+              text: submatch.match?.text ?? "",
+              lineNumber,
+            }),
+          );
         }
         continue;
       }
@@ -1401,22 +1572,23 @@ async function collectTextSearchCandidates(
   rootInfo: Awaited<ReturnType<typeof stat>>,
   request: FileSystemSearchTextRequest,
   signal?: AbortSignal,
+  engineOptions: TextSearchEngineOptions = { respectGitignore: true },
 ): Promise<FileSearchCandidate[]> {
-  const candidates: FileSearchCandidate[] = [];
   const globMatcher = request.glob ? createGlobMatcher(request.glob) : undefined;
   const root = rootInfo.isDirectory() ? path : dirname(path);
 
-  const addIfCandidate = async (filePath: string, info: Awaited<ReturnType<typeof stat>>) => {
-    if (!info.isFile()) return;
-    const relativePath = toPosixRelative(root, filePath);
-    if (globMatcher && !globMatcher(relativePath, basename(filePath))) return;
-    if (request.type && !matchesFileType(filePath, request.type)) return;
-    candidates.push({ path: filePath, mtimeMs: Number(info.mtimeMs) });
+  const filter = (relativePath: string, fileName: string): boolean => {
+    if (globMatcher && !globMatcher(relativePath, fileName)) return false;
+    if (request.type && !matchesFileType(relativePath, request.type)) return false;
+    return true;
   };
 
   if (rootInfo.isFile()) {
-    await addIfCandidate(path, rootInfo);
-    return candidates;
+    const info = rootInfo;
+    if (!info.isFile()) return [];
+    const relativePath = toPosixRelative(root, path);
+    if (!filter(relativePath, basename(path))) return [];
+    return [{ path, mtimeMs: Number(info.mtimeMs), sizeBytes: Number(info.size) }];
   }
 
   if (!rootInfo.isDirectory()) {
@@ -1427,9 +1599,13 @@ async function collectTextSearchCandidates(
     });
   }
 
-  await walkFiles(root, signal, addIfCandidate);
-  candidates.sort((left, right) => left.path.localeCompare(right.path));
-  return candidates;
+  // specs/fs-hotpath-mechanisms.md R1：候选收集走目录项扫描缓存；缓存命中后
+  // 过滤为空且快照年龄 ≥200ms 时由 collectMatchingFiles 内部重扫一次。
+  const { items } = await collectMatchingFiles(path, signal, {
+    respectGitignore: engineOptions.respectGitignore,
+    filter,
+  });
+  return items;
 }
 
 function searchLineContent(
@@ -1452,6 +1628,8 @@ function searchLineContent(
   const matchingIndexes: number[] = [];
 
   for (let index = 0; index < lines.length; index += 1) {
+    // specs/fs-hotpath-mechanisms.md R5：单文件命中达上限即停，防单热文件吃光预算。
+    if (matchingIndexes.length >= GREP_MAX_COUNT_PER_FILE) break;
     regex.lastIndex = 0;
     if (regex.test(lines[index] ?? "")) {
       matchingIndexes.push(index);
@@ -1604,8 +1782,8 @@ function createOnlyMatchingContentEntries(input: {
 }): FileSystemSearchTextEntry[] {
   const matchedLineIndexes = createMatchedLineIndexes(input.matches.ranges);
 
-  return createContextLineIndexes(input.lines.length, input.matches.ranges, input.request)
-    .flatMap((lineIndex) => {
+  return createContextLineIndexes(input.lines.length, input.matches.ranges, input.request).flatMap(
+    (lineIndex) => {
       const matchedEntries = input.matches.entriesByLine.get(lineIndex);
       if (matchedEntries) return matchedEntries;
       if (matchedLineIndexes.has(lineIndex)) return [];
@@ -1617,7 +1795,8 @@ function createOnlyMatchingContentEntries(input: {
           matched: false,
         },
       ];
-    });
+    },
+  );
 }
 
 function createContextLineIndexes(
@@ -1669,21 +1848,18 @@ function createOnlyMatchingEntries(input: {
 
   // ripgrep 只把 LF/CRLF 当作输出行边界；单独的 CR 是普通匹配文本。
   // 同时，跨行 match 内部的空行不生成 entry，但整段零长度 match 需要保留空 entry。
-  return input.text
-    .split(/\r?\n/)
-    .flatMap((line, index) =>
-      line.length === 0
-        ? []
-        : [
-            {
-              path: input.path,
-              lineNumber:
-                input.lineNumber === undefined ? undefined : input.lineNumber + index,
-              text: line,
-              matched: true,
-            },
-          ],
-    );
+  return input.text.split(/\r?\n/).flatMap((line, index) =>
+    line.length === 0
+      ? []
+      : [
+          {
+            path: input.path,
+            lineNumber: input.lineNumber === undefined ? undefined : input.lineNumber + index,
+            text: line,
+            matched: true,
+          },
+        ],
+  );
 }
 
 function splitRipgrepSearchLines(content: string): string[] {
@@ -1706,29 +1882,100 @@ function lineNumberForIndex(content: string, index: number): number {
   return lineNumber;
 }
 
-async function walkFiles(
-  current: string,
-  signal: AbortSignal | undefined,
-  visitor: (path: string, info: Awaited<ReturnType<typeof stat>>) => Promise<void> | void,
-): Promise<void> {
-  throwIfAborted(signal);
-  const entries = await readdir(current, { withFileTypes: true });
+// ============================================================
+// 目录项扫描（specs/fs-hotpath-mechanisms.md R1/R2）
+// 扫描层只产出「目录项列表」（文件绝对路径数组），交由 scan-cache 缓存；
+// glob/type 过滤、stat 取 mtime、排序与限额都留在调用方（存列表不存结果）。
+// ============================================================
 
-  for (const entry of entries) {
+interface CollectMatchingFilesOptions {
+  respectGitignore: boolean;
+  filter?: (relativePath: string, fileName: string) => boolean;
+}
+
+async function scanDirectoryEntriesUncached(
+  root: string,
+  respectGitignore: boolean,
+  signal?: AbortSignal,
+): Promise<string[]> {
+  // no-ignore 逃生口：不构造 walker，同时不注入 node_modules 兜底规则。
+  const walker = respectGitignore ? new GitignoreWalker(root, true) : undefined;
+  const files: string[] = [];
+
+  const walk = async (dir: string, relDir: string): Promise<void> => {
     throwIfAborted(signal);
-    const childPath = join(current, entry.name);
+    const entries = await readdir(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      throwIfAborted(signal);
+      const childRelPath = relDir === "" ? entry.name : `${relDir}/${entry.name}`;
 
-    if (entry.isDirectory()) {
-      if (VCS_DIRECTORIES_TO_EXCLUDE.has(entry.name)) continue;
-      await walkFiles(childPath, signal, visitor);
+      if (entry.isDirectory()) {
+        if (VCS_DIRECTORIES_TO_EXCLUDE.has(entry.name)) continue;
+        if (walker && (await walker.isIgnored(childRelPath, true))) continue;
+        await walk(join(dir, entry.name), childRelPath);
+        continue;
+      }
+
+      if (!entry.isFile()) continue;
+      if (walker && (await walker.isIgnored(childRelPath, false))) continue;
+      files.push(join(dir, entry.name));
+    }
+  };
+
+  await walk(root, "");
+  return files;
+}
+
+/**
+ * 缓存化文件收集：先取（或扫描并缓存）root 下全部目录项，再对通过 filter 的
+ * 文件 stat 取 mtime。缓存命中但过滤结果为空且快照年龄 ≥200ms 时重扫一次
+ * （不回填不驱逐）——外部进程新建文件不走本进程失效钩子，由重检兜底。
+ */
+async function collectMatchingFiles(
+  root: string,
+  signal: AbortSignal | undefined,
+  options: CollectMatchingFilesOptions,
+): Promise<{ items: FileSearchCandidate[]; cacheAgeMs: number }> {
+  const sharedCache = getSharedFsScanCache();
+  const first = await sharedCache.getOrScan(
+    { root, respectGitignore: options.respectGitignore },
+    () => scanDirectoryEntriesUncached(root, options.respectGitignore, signal),
+  );
+  const firstItems = await filterCachedFiles(first.files, root, signal, options);
+  if (
+    firstItems.length === 0 &&
+    first.cacheAgeMs > 0 &&
+    shouldRecheckEmptyResult(first.cacheAgeMs)
+  ) {
+    // 重检走旁路扫描：结果不回填、不驱逐既有缓存项（同 omp EmptyRecheck 语义）。
+    const freshFiles = await scanDirectoryEntriesUncached(root, options.respectGitignore, signal);
+    return { items: await filterCachedFiles(freshFiles, root, signal, options), cacheAgeMs: 0 };
+  }
+  return { items: firstItems, cacheAgeMs: first.cacheAgeMs };
+}
+
+async function filterCachedFiles(
+  files: string[],
+  filterRoot: string,
+  signal: AbortSignal | undefined,
+  options: CollectMatchingFilesOptions,
+): Promise<FileSearchCandidate[]> {
+  const items: FileSearchCandidate[] = [];
+  for (const filePath of files) {
+    throwIfAborted(signal);
+    let info: Awaited<ReturnType<typeof stat>>;
+    try {
+      info = await stat(filePath);
+    } catch {
+      // 扫描与 stat 之间文件可能被外部删除；缓存语义下跳过消失项。
       continue;
     }
-
-    if (!entry.isFile()) continue;
-
-    const info = await stat(childPath);
-    await visitor(childPath, info);
+    if (!info.isFile()) continue;
+    const relativePath = toPosixRelative(filterRoot, filePath);
+    if (options.filter && !options.filter(relativePath, basename(filePath))) continue;
+    items.push({ path: filePath, mtimeMs: Number(info.mtimeMs), sizeBytes: info.size });
   }
+  return items;
 }
 
 function createGlobMatcher(pattern: string): (relativePath: string, fileName: string) => boolean {

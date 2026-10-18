@@ -12,6 +12,7 @@ import {
   resolveSnapshotElement,
   resolveSnapshotRef,
 } from "./snapshot.js";
+import { whileDrawing } from "./while-drawing.js";
 
 type PartialResult = Omit<BrowserCommandResult, "elapsedMs">;
 
@@ -161,13 +162,18 @@ export async function executeManagedPageCommand(
         snapshot: await captureManagedCdpSnapshot(page, command.maxElements, command.includeHidden),
       };
     case "screenshot": {
-      const image = command.ref
-        ? await (await elementForRef(page, command.ref)).screenshot({ type: "png" })
-        : await page.screenshot({
-            type: "png",
-            fullPage: command.fullPage,
-            clip: command.clip,
-          });
+      // whileDrawing：后台/隐藏页停止绘制会让 CDP captureScreenshot 等帧直到超时；
+      // 捕获期间临时开一路 1×1 jpeg screencast 迫使 Chromium 绘制，拒绝时降级直截
+      // （specs/browser-relay-inplace-capture.md R1）。
+      const image = await whileDrawing(page, undefined, async () =>
+        command.ref
+          ? await (await elementForRef(page, command.ref)).screenshot({ type: "png" })
+          : await page.screenshot({
+              type: "png",
+              fullPage: command.fullPage,
+              clip: command.clip,
+            }),
+      );
       return { ok: true, image: { base64: image.toString("base64"), mimeType: "image/png" } };
     }
     case "click": {

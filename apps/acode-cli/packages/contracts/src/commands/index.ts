@@ -117,8 +117,13 @@ export interface CustomCommandTemplateExpansion {
   usedArgumentsPlaceholder: boolean;
 }
 
-const POSITIONAL_ARGUMENT_PATTERN = /\$(\d+)/g;
-const ALL_ARGUMENTS_TOKEN = "$ARGUMENTS";
+// 单遍模板占位符（机制参照 oh-my-pi MIT，packages/coding-agent/src/utils/command-args.ts
+// 的 substituteArgs；裁决见 apps/acode-cli/specs/slash-positional-args.md 与其 W1 登记）：
+// $@[start:length] 切片 / $ARGUMENTS 整体 / $@ 聚合 / $N 位置参数。与 cli 侧
+// custom-command-expand.ts 同一语义（本文件是 bootstrap resolver → desktop-agent/ACP
+// 直提路径的第二展开面，W1 同步消除两遍渲染注入面）。
+// 备选序：切片必须先于裸 $@，否则 $@[2] 会被 $@ 抢配。
+const ARGUMENT_PLACEHOLDER_PATTERN = /\$@\[(\d+)(?::(\d*))?\]|\$ARGUMENTS|\$@|\$(\d+)/g;
 const INLINE_SHELL_PATTERN = /!`[^`]*`/;
 const FENCED_SHELL_PATTERN = /```!\s*[\s\S]*?```/;
 
@@ -148,23 +153,57 @@ export function expandCustomCommandTemplate(input: {
 }): CustomCommandTemplateExpansion {
   const args = input.args.trim();
   const positional = splitCustomCommandArguments(args);
-  let usedArgumentsPlaceholder = input.command.content.includes(ALL_ARGUMENTS_TOKEN);
-  let body = input.command.content.replaceAll(ALL_ARGUMENTS_TOKEN, args);
-  body = body.replace(POSITIONAL_ARGUMENT_PATTERN, (_match, index: string) => {
-    usedArgumentsPlaceholder = true;
-    const offset = Number(index) - 1;
-    return positional[offset] ?? "";
-  });
+  let usedArgumentsPlaceholder = false;
+  // 单遍渲染：一次扫描完成全部占位符替换，替换结果不再进入扫描——参数值里出现的
+  // $1/$@/$ARGUMENTS 按字面文本保留，不做二次展开（防注入）。旧实现是两遍（先
+  // $ARGUMENTS 后 $N），参数值内的 $N 会被第二遍展开并误置 usedArgumentsPlaceholder。
+  const body = input.command.content.replace(
+    ARGUMENT_PLACEHOLDER_PATTERN,
+    (_match, sliceStart?: string, sliceLength?: string, positionalIndex?: string) => {
+      usedArgumentsPlaceholder = true;
+      if (positionalIndex !== undefined) {
+        // 缺位参数渲染为空串（"$3 但只给了 2 个参数" → 空串，不报错）。
+        return positional[Number(positionalIndex) - 1] ?? "";
+      }
+      if (sliceStart !== undefined) return expandCustomCommandArgumentSlice(positional, sliceStart, sliceLength);
+      // $ARGUMENTS 与 $@ 等价：整体替换为原始 trim 参数串（ACode 既有语义，
+      // 与 cli 侧同一裁决，见 spec「$ARGUMENTS/$@ 取值裁决」）。
+      return args;
+    },
+  );
 
-  if (args.length > 0 && !usedArgumentsPlaceholder) {
-    body = `${body.trimEnd()}\n\nUser arguments:\n${args}`;
-  }
+  const finalBody =
+    args.length > 0 && !usedArgumentsPlaceholder
+      ? `${body.trimEnd()}\n\nUser arguments:\n${args}`
+      : body;
 
   return {
     argumentCount: positional.length,
-    body,
+    body: finalBody,
     usedArgumentsPlaceholder,
   };
+}
+
+/**
+ * $@[start:length] 切片语义（1-based，对齐 omp substituteArgs；spec 语法表）：
+ * start < 1 或起点越界 → 空串；length 省略/为空 → 取到末尾；length ≤ 0 → 空串；
+ * 非数字形态不匹配占位符正则，整个片段保持字面量。
+ */
+function expandCustomCommandArgumentSlice(
+  positional: readonly string[],
+  startRaw: string,
+  lengthRaw?: string,
+): string {
+  const start = Number.parseInt(startRaw, 10);
+  if (!Number.isFinite(start) || start < 1) return "";
+  const startIndex = start - 1;
+  if (startIndex >= positional.length) return "";
+  if (lengthRaw === undefined || lengthRaw === "") {
+    return positional.slice(startIndex).join(" ");
+  }
+  const length = Number.parseInt(lengthRaw, 10);
+  if (!Number.isFinite(length) || length <= 0) return "";
+  return positional.slice(startIndex, startIndex + length).join(" ");
 }
 
 export function formatCustomCommandPrompt(input: {

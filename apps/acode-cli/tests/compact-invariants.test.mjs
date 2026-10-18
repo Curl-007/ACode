@@ -529,7 +529,11 @@ test("(I4-3) 前提登记：replaceMessages 是无条件覆盖，stale 防护只
     replaceStart,
     historySource.indexOf("  getMessageCount()", replaceStart),
   );
-  assert.match(replaceBody, /this\.entries = messages\.map\(cloneEntryInput\);/);
+  // WI-10（specs/stable-prefix-pause-gate.md R2）：覆盖策略从「全量 cloneEntryInput」
+  // 改为「按位身份复用」——引用相等的入参项保留原对象，其余仍走 cloneEntryInput。
+  // 语义仍是无守卫覆盖：无版本/stale 判定、无拒绝路径，I4 前提登记不变。
+  assert.match(replaceBody, /item === previous\[index\]/);
+  assert.match(replaceBody, /cloneEntryInput\(item\)/);
   assert.doesNotMatch(
     replaceBody,
     /revision|version|stale|expectedCount|generation/i,

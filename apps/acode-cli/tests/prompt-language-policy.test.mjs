@@ -164,6 +164,10 @@ test("(场景2) 透传链命中文件集合被冻结：core/bootstrap 里只有�
     "packages/core/src/runtime/methods/context.ts",
     // 装配：bootstrap 把 StartSessionOptions.runtimeConfig.language 搬进 RuntimeConfig
     "packages/bootstrap/src/app/runtime-config.ts",
+    // 非链路例外：searxng 搜索引擎 API 的 language 请求参数（来自查询串 lang: 指令，
+    // 与 UI locale/提示词语言透传链无关）——同 tui/app-shiki-highlighter 的语法高亮
+    // 语言标识例外（见下方注释），omp 价值提取波 WI-7 引入。
+    "packages/core/src/websearch/providers/searxng.ts",
   ].sort();
   const hits = [];
   for (const dir of ["packages/core/src/", "packages/bootstrap/src/"]) {

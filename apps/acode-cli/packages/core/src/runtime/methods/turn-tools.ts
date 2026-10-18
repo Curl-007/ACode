@@ -41,6 +41,7 @@ import { recordToolUsageFromResult } from "./turn-tool-usage.js";
 import { recordTurnWrapUpToolResults } from "./turn-wrap-up.js";
 import { recordBrowserTurnToolResult } from "../../repl/browser-turn-state.js";
 import { createRuntimeToolResultEntry } from "../../agent/message-history.js";
+import { parkAtPauseSafePoint } from "../../agent/pause-gate.js";
 import { commitTurnRequestEntries } from "./turn-output-token-continuation.js";
 export async function executeToolCallsForModelStep(
   this: AgentRuntimeInternal,
@@ -179,6 +180,10 @@ export async function executeToolCallsForModelStep(
       toolCallCount: pendingToolCalls.length,
       tools: pendingToolCalls.map((tc) => tc.name),
     });
+    // 进程级暂停闸门安全点②（工具调用前，specs/stable-prefix-pause-gate.md R4）：
+    // 批进 handler 之前 park；已排程的 streamed 工具属在飞流语义、不在此 park。
+    // abort 释放 park 后由 executeTools 既有取消路径生成 cancelled results。
+    await parkAtPauseSafePoint(state.turnAbortSignal);
     const execution = await this.executeTools(pendingToolCalls, pendingSchedule, {
       automationTurn: isAutomationMutationRestrictedTurn(state),
       offPeakTurn: isOffPeakCreateRestrictedTurn(state),

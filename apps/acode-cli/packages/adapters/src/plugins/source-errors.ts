@@ -45,6 +45,36 @@ export function createPluginSourcePolicyError(source: string, reason: string): E
 }
 
 /**
+ * 市场 git URL 规格拒绝（specs/plugin-install-transactions.md R5：host 白名单 +
+ * 元字符黑名单）。与插件源策略门同一诊断码与 redact 口径，消息面向市场添加者。
+ */
+export function createMarketplaceSourcePolicyError(source: string, reason: string): Error {
+  const safeSource = redactPluginSource(source);
+  return new PluginSourceMaterializationError(
+    "plugin_marketplace_invalid",
+    `Plugin marketplace source rejected by install policy: ${reason} Source: ${safeSource}`,
+  );
+}
+
+/**
+ * 装前 validate 门拒绝（specs/plugin-install-transactions.md R1）：聚合全部阻断
+ * 诊断，沿用 plugin_marketplace_invalid 诊断码——bootstrap 既有
+ * `getPluginSourceDiagnosticCode` 映射直接可用，失败时零持久化副作用。
+ */
+export function createPluginInstallValidationError(
+  pluginId: string,
+  diagnostics: ReadonlyArray<{ code: string; message: string }>,
+): Error {
+  const summary = diagnostics
+    .map((diagnostic) => `[${diagnostic.code}] ${diagnostic.message}`)
+    .join("; ");
+  return new PluginSourceMaterializationError(
+    "plugin_manifest_invalid",
+    `Plugin install validation failed for ${pluginId}: ${summary}`,
+  );
+}
+
+/**
  * source materialization 错误现在会被持久化并投影到桌面/Web UI，不能把 URL
  * userinfo 带入状态文件、日志或截图。凭据只在诊断生成边界清理，所有消费者共享同一规则。
  */

@@ -66,7 +66,11 @@ const ReadProviderInputBaseSchema = z.object({
   /**
    * The absolute path to the file to read.
    */
-  file_path: z.string().describe("The absolute path to the file to read"),
+  file_path: z
+    .string()
+    .describe(
+      "The absolute path to the file to read, or a skill:// URI (skill://<name> reads that skill's SKILL.md; skill://<name>/<relative-path> reads an asset inside the skill directory)",
+    ),
   /**
    * The line number to start reading from. Only provide if the file is too large to read at once
    */

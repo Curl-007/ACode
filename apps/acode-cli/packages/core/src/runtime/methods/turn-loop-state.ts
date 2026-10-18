@@ -72,7 +72,12 @@ export interface RapidRefillDecision {
 
 export type CompactAttemptOutcome = "skipped" | "compacted" | "failed";
 
-export type AutoCompactOutcome = CompactAttemptOutcome | "rapid_refill_blocked";
+/**
+ * "promoted"：阈值命中但上下文晋升先行接管（specs/failure-recovery-tracks.md 轨道 1），
+ * 本轮不压缩；state.model 已由晋升执行体换绑，下一 loop 迭代按晋升后窗口重算阈值。
+ * 晋升不产生 compact boundary，因此不参与 rapid-refill / 连续失败计数。
+ */
+export type AutoCompactOutcome = CompactAttemptOutcome | "rapid_refill_blocked" | "promoted";
 
 export interface AutoCompactLoopContext {
   compactReason: CompactReason;
@@ -80,6 +85,8 @@ export interface AutoCompactLoopContext {
   phase: CompactPhase;
   rapidRefill: RapidRefillDecision;
   model: Model;
+  /** 晋升执行体需要完整 turn 状态（换绑 model / 置位每轮一次的晋升标志 / 钉住轮判定）。 */
+  state: RegularTurnLoopState;
   turnRequestState: TurnRequestState;
 }
 
@@ -130,6 +137,11 @@ export interface RegularTurnLoopState {
   modelResponse: string;
   /** 本轮固定使用的可调用模型；配置变化只影响以后创建的 Loop。 */
   model: Model;
+  /**
+   * 本轮是否已执行过上下文晋升（specs/failure-recovery-tracks.md 轨道 1：晋升重试每轮
+   * 至多 1 次）。turn-scoped，轮终即弃；auto-resume 注入的新 turn 是新 state，不继承。
+   */
+  contextPromotionAttempted?: boolean;
   /** execution 表示当前 Active Model 不能被同 loop 的 guide 改写。 */
   modelSelectionScope?: "execution";
   /** Core Server 的前台 child Selection override；优先于 profile 与父模型继承。 */

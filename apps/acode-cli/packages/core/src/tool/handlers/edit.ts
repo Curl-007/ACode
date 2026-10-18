@@ -29,6 +29,14 @@ import {
 } from "@acode/contracts";
 import { createStructuredPatch } from "../diff.js";
 import { stampMemoryOriginSessionId } from "../../memory/origin-session.js";
+// LSP 诊断回流（specs/lsp-diagnostics-loop.md）：落盘 .ts/.tsx 或 LSP 适用文件后，
+// 新增诊断经 ledger 去重挂进模型内容；迟到诊断转 deferred 队列由下一次注入。
+import {
+  consumeDeferredDiagnostics,
+  consumePendingModelContent,
+  runPostWriteDiagnostics,
+  stashPendingModelContent,
+} from "../../lsp/edit-diagnostics-hook.js";
 import {
   findEditMatch,
   normalizeLineEndings,
@@ -74,11 +82,17 @@ function formatEditModelContent(output: unknown): string {
     : "";
   const freshnessSuffix = userModified ? "" : EDIT_FRESHNESS_SUFFIX;
 
+  let base: string;
   if (replaceAll) {
-    return `The file ${filePath} has been updated${modifiedNote}. All occurrences were successfully replaced.${freshnessSuffix}`;
+    base = `The file ${filePath} has been updated${modifiedNote}. All occurrences were successfully replaced.${freshnessSuffix}`;
+  } else {
+    base = `The file ${filePath} has been updated successfully${modifiedNote}.${freshnessSuffix}`;
   }
 
-  return `The file ${filePath} has been updated successfully${modifiedNote}.${freshnessSuffix}`;
+  // LSP 诊断回流（specs/lsp-diagnostics-loop.md）：落盘后钩子挂起的新增诊断
+  // 块附在模型内容尾部；键未命中（无诊断/非 TS 文件）时内容保持原样。
+  const pendingDiagnostics = consumePendingModelContent(filePath);
+  return pendingDiagnostics ? `${base}\n\n${pendingDiagnostics}` : base;
 }
 
 const editHandler: ToolHandler = async (input, context) => {
@@ -530,6 +544,33 @@ async function writeEditResult(input: {
     writeResult.revision,
   );
   recordReadFileStateMetadata(input.context, readFileStateEntry);
+
+  // LSP 诊断回环（specs/lsp-diagnostics-loop.md）：落盘成功后跑进程内 TS 诊断或
+  // LSP writethrough，新增诊断经 ledger 去重挂进模型内容。诊断失败只降级为
+  // debug 日志，绝不影响编辑主流程的成败与现有输出形状。
+  const diagnosticsOutcome = await runPostWriteDiagnostics({
+    resolvedPath: input.filePath,
+    inputPath: input.inputFilePath,
+    content: contentToWrite,
+    workspaceIdentity: input.context.workspaceIdentity,
+    workingDirectory: input.context.workingDirectory,
+    abortSignal: input.context.abortSignal,
+  }).catch(() => undefined);
+  // 上一次变更的迟到诊断（deferred 通道）随本次结果一并注入（运行时轮次级
+  // drain 接线为共享桶申请，见 spec §6）。
+  const deferredText = consumeDeferredDiagnostics({
+    workspaceIdentity: input.context.workspaceIdentity,
+    workingDirectory: input.context.workingDirectory,
+  });
+  const pendingDiagnostics =
+    diagnosticsOutcome?.modelContent === undefined
+      ? deferredText
+      : deferredText
+        ? `${diagnosticsOutcome.modelContent}\n\n${deferredText}`
+        : diagnosticsOutcome.modelContent;
+  if (pendingDiagnostics) {
+    stashPendingModelContent(input.inputFilePath, pendingDiagnostics);
+  }
 
   const structuredPatch = createStructuredPatch({
     filePath: input.inputFilePath,

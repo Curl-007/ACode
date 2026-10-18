@@ -5,7 +5,12 @@ import {
   ACODE_PLUGIN_ID_ENV_KEY,
 } from "@acode/shared";
 import { registerMcpResourceTools, registerMcpTools, traceContextToLogContext } from "../deps.js";
-import type { McpConnectionSnapshot, McpServerConfig, TraceContext } from "../deps.js";
+import type {
+  McpConnectionSnapshot,
+  McpPort,
+  McpServerConfig,
+  TraceContext,
+} from "../deps.js";
 import type { AgentRuntimeInternal } from "../internal.js";
 
 const MCP_SESSION_OAUTH_AUTHORIZATION_TIMEOUT_MS = 15_000;
@@ -175,6 +180,9 @@ async function initializeMcpOnce(
     if (registered.length > 0 || resourceTools.length > 0) {
       this.invalidateToolCache();
     }
+    // R1 快启门收尾接线（specs/mcp-startup-gate-breaker.md，WI-5 共享桶申请②）：
+    // 后台连接完成、Deferred/空工具记录被真实工具原子替换后刷新注册表。
+    subscribeMcpToolsRebind.call(this, mcpPort, traceContext, snapshot.tools);
     this.logger?.info("MCP tools registered", {
       ...traceContextToLogContext(traceContext),
       event: "mcp.tools.registered",
@@ -194,4 +202,100 @@ async function initializeMcpOnce(
     });
   }
   this.mcpToolsRegistered = true;
+}
+
+const MCP_TOOLS_REBIND_DEBOUNCE_MS = 100;
+
+type McpToolsFingerprintTool = McpConnectionSnapshot["tools"][number];
+
+function mcpToolsFingerprint(tools: readonly McpToolsFingerprintTool[]): string {
+  return tools
+    .map((tool) => `${tool.serverName}\u0000${tool.toolName}`)
+    .sort()
+    .join("\u0001");
+}
+
+/**
+ * 工具面变更订阅 → 去抖 rebind 注册表（specs/mcp-startup-gate-breaker.md R1
+ * 收尾接线，WI-5 共享桶申请②）。callTool 按 server/tool 身份路由并等待活连接，
+ * 不依赖本订阅——没有它调用正确性也在，它只把注册表 schema 与真实握手结果对齐
+ * （消除 Deferred 缓存陈旧窗）。生命周期：port 与 runtime 同生命周期（session
+ * 结束 adapter 即销毁），不做显式退订；close 后的迟到 rebind 写进的是已无消费者
+ * 的注册表，无害且不抛。
+ */
+function subscribeMcpToolsRebind(
+  this: AgentRuntimeInternal,
+  mcpPort: McpPort,
+  traceContext: TraceContext,
+  initialTools: readonly McpToolsFingerprintTool[],
+): void {
+  if (!mcpPort.onToolsChanged) return;
+  let lastFingerprint = mcpToolsFingerprint(initialTools);
+  let debounce: ReturnType<typeof setTimeout> | undefined;
+  let rebinding = false;
+  let rerunAfterInFlight = false;
+
+  const rebind = async (): Promise<void> => {
+    if (rebinding) {
+      // 在飞期间又来事件：收尾后补跑一次，不丢更新。
+      rerunAfterInFlight = true;
+      return;
+    }
+    rebinding = true;
+    try {
+      const tools = await mcpPort.listTools();
+      const fingerprint = mcpToolsFingerprint(tools);
+      if (fingerprint === lastFingerprint) return;
+      lastFingerprint = fingerprint;
+      const registered = registerMcpTools(this.registry, mcpPort, tools, {
+        allowedTools: this.config.toolAllowlist,
+        disallowedTools: this.config.toolDisallowlist,
+        officialCuaServerNames: computeOfficialCuaServerNames(
+          this.config.mcp?.servers ?? {},
+          new Set(this.config.mcp?.trustedOfficialCuaServerNames ?? []),
+        ),
+      });
+      // 资源拉取面与工具同一失效面（initializeMcpOnce 同款）：新连上的
+      // resources:true server 也要在 rebind 时补注册（幂等）。
+      const resourceTools = registerMcpResourceTools(
+        this.registry,
+        mcpPort,
+        this.config.mcp?.servers ?? {},
+      );
+      if (registered.length > 0 || resourceTools.length > 0) {
+        this.invalidateToolCache();
+      }
+      this.logger?.info("MCP tools rebound after background connect", {
+        ...traceContextToLogContext(traceContext),
+        event: "mcp.tools.rebound",
+        module: "core.runtime",
+        registeredToolCount: registered.length,
+        status: "completed",
+      });
+    } catch (error) {
+      // rebind 是旁路：失败不影响连接与调用面，下一次工具面事件再试。
+      this.logger?.warn("MCP tools rebind failed", {
+        ...traceContextToLogContext(traceContext),
+        error: error instanceof Error ? error.message : String(error),
+        event: "mcp.tools.rebind_failed",
+        module: "core.runtime",
+        status: "failed",
+      });
+    } finally {
+      rebinding = false;
+      if (rerunAfterInFlight) {
+        rerunAfterInFlight = false;
+        void rebind();
+      }
+    }
+  };
+
+  mcpPort.onToolsChanged(() => {
+    if (debounce) clearTimeout(debounce);
+    debounce = setTimeout(() => {
+      void rebind();
+    }, MCP_TOOLS_REBIND_DEBOUNCE_MS);
+    // CLI 短进程不因悬挂定时器阻止退出。
+    debounce.unref?.();
+  });
 }

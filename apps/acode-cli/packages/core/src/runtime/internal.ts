@@ -37,6 +37,7 @@ import type {
   ContextBuilder,
   ContextBuildResult,
 } from "./deps.js";
+import type { PromptFileRouting } from "../context/prompt-files.js";
 import type {
   ActiveTurnSteeringState,
   ActiveForegroundExecutionState,
@@ -159,6 +160,8 @@ interface RuntimeContextMemoryState {
   latestContextBuildResult?: ContextBuildResult;
   memoryRoot?: string;
   memoryIndexContent?: string;
+  /** 提示词文件路由（specs/stable-prefix-pause-gate.md R5）：ensureContextInitialized 的 async 面加载；无文件=空对象=零行为变化。 */
+  promptFileRouting?: PromptFileRouting;
   memoryExtractionScheduler?: ProjectMemoryExtractionScheduler;
   /**
    * K1 会话级语义召回通道（specs/memory-semantic-recall.md R6/R9）：injector（含四层

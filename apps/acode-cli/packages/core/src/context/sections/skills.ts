@@ -58,7 +58,13 @@ export function buildSkillsSection(options: SkillsSectionOptions): ContextSectio
 }
 
 function buildSkillsContent(skills: SkillMetadata[], budget: number): string {
-  const lines = ["The following skills are available for use with the Skill tool:", ""];
+  const lines = [
+    "The following skills are available for use with the Skill tool:",
+    // skill:// 资产直读提示（specs/skill-uri-read.md，WI-13 共享桶申请②）：
+    // 让模型知道技能目录内脚本/模板可以按相对路径沙箱化读取。
+    "Assets of a listed skill can be read directly via skill://<name>/<relative-path> (bare skill://<name> reads its SKILL.md).",
+    "",
+  ];
 
   const sortedSkills = [...skills].sort((a, b) =>
     skillDisplayName(a).localeCompare(skillDisplayName(b)),

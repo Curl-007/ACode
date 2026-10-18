@@ -1,3 +1,4 @@
+import { CoreErrorType, createCoreError } from "../deps.js";
 import type { RuntimeModelTextResult } from "../types.js";
 import type { AgentRuntimeInternal } from "../internal.js";
 import { toTokenUsageInfo } from "../helpers/index.js";
@@ -14,6 +15,25 @@ const OUTPUT_TOKEN_CONTINUE_PROMPT =
 
 export const OUTPUT_TOKEN_LIMIT_ERROR_MESSAGE =
   "The model's response exceeded the output token maximum.";
+
+/**
+ * 输出上限耗尽的终态错误（fail-loud，specs/failure-recovery-tracks.md 轨道 2）。
+ *
+ * 单一构造点（原来内联在 turn-model-step.ts 的 exhausted 分支）。刻意不传 retryable：
+ * createCoreError 默认 retryable:false，经 projectExecutionErrorPayload 投影出
+ * attribution.retryable=false → auto-resume 分类 permanent，跨回合链不接管——
+ * 连续 length 截断封顶后的终止必须是响亮的，不能被 auto-resume 静默续跑。
+ */
+export function createOutputTokenLimitExhaustedError() {
+  return createCoreError(CoreErrorType.ModelError, OUTPUT_TOKEN_LIMIT_ERROR_MESSAGE, {
+    context: {
+      providerCode: "model_output_limit_exceeded",
+      reason: "model_output_limit_exceeded",
+      source: "provider",
+    },
+    recoverable: true,
+  });
+}
 
 const MAX_OUTPUT_TOKEN_CONTINUATIONS = 3;
 const OUTPUT_LIMIT_RAW_REASONS = new Set([

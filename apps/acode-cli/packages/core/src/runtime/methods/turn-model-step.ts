@@ -2,17 +2,21 @@
 import { beginLocalTurnPreparation } from "@acode/contracts";
 import {
   CompactTrigger,
-  CoreErrorType,
   SessionEventType,
   createChildTraceContext,
-  createCoreError,
   createMessageId,
   createPartId,
   getModelUsageTotalTokens,
   traceContextToLogContext,
   TurnMachineImpl,
 } from "../deps.js";
-import type { MessageId, ModelNetworkStatusEvent, ModelToolContract } from "../deps.js";
+import type {
+  AutoCompactPolicyConfig,
+  MessageId,
+  ModelNetworkStatusEvent,
+  ModelToolContract,
+  TraceContext,
+} from "../deps.js";
 import {
   createRuntimeAssistantEntry,
   type RuntimeMessageEntry,
@@ -81,9 +85,12 @@ import {
   commitAssistantToTurnRequest,
   commitTurnRequestEntries,
   completeOutputTokenRecovery,
+  createOutputTokenLimitExhaustedError,
   hasAssistantReasoningContent,
   OUTPUT_TOKEN_LIMIT_ERROR_MESSAGE,
 } from "./turn-output-token-continuation.js";
+import { tryPromoteContextModelForRecovery } from "./context-promotion.js";
+import { classifyTruncationRecovery } from "../../compact/truncation-recovery.js";
 
 type ModelStepResult = "continue" | "output_continuation" | "break";
 
@@ -482,6 +489,20 @@ async function runModelBackedTurnStepImpl(
         rawFinishReason,
         toolCallCount: providerToolCallCount,
       });
+  // 截断恢复轨道（specs/failure-recovery-tracks.md 轨道 2）：length 截断、窗口未耗尽且
+  // 已有可见产出 → 保留产出 + 告警收口，不自动续写——续写只会重复撞同一输出上限再截断，
+  // 留截断但可用的产出让用户掌舵（omp checkCompaction case3 同语义）。无产出（移除该轮
+  // 重试 + 封顶）与窗口耗尽（loop 边界交接 threshold 压缩）沿用既有续写机制，分类器
+  // 只是前置分流，不新造第二套执行体。
+  const truncationKeptWithWarning =
+    outputTokenContinuation === "continue" &&
+    shouldKeepTruncatedOutputWithWarning.call(this, state, {
+      modelTraceContext,
+      outputTokens: result.usage?.outputTokens ?? 0,
+      promptTokens: estimateCurrentModelInputTokens(options.messages, options.sourceEntries),
+      executionContextWindow,
+      executionMaxOutputTokens,
+    });
   this.logger?.info("Model response diagnostics", {
     ...traceContextToLogContext(modelTraceContext),
     event: "model.response.diagnostics",
@@ -662,7 +683,9 @@ async function runModelBackedTurnStepImpl(
 
   const executableToolCalls = toolCalls.filter((toolCall) => !toolCall.providerExecuted);
   const streamedToolResults = await streamingToolCoordinator.drain(executableToolCalls);
-  if (outputTokenContinuation !== "none") {
+  // keep_with_warning 改道：截断产出按正常 text-only 轮收口（下方 finishModelStepWithoutToolCalls），
+  // 不进续写块；outputTokenContinuationCount 由 completeOutputTokenRecovery 清零（交付即重置）。
+  if (outputTokenContinuation !== "none" && !truncationKeptWithWarning) {
     // 首次命中 output-limit 时，当前 request 可能带有一次性的 project-memory attachment；
     // query-local 状态必须从实际请求数组推进，不能退回请求前的数组。
     state.turnRequestState.entries = options.requestEntries;
@@ -682,18 +705,7 @@ async function runModelBackedTurnStepImpl(
       return "output_continuation";
     }
 
-    const exhaustedError = createCoreError(
-      CoreErrorType.ModelError,
-      OUTPUT_TOKEN_LIMIT_ERROR_MESSAGE,
-      {
-        context: {
-          providerCode: "model_output_limit_exceeded",
-          reason: "model_output_limit_exceeded",
-          source: "provider",
-        },
-        recoverable: true,
-      },
-    );
+    const exhaustedError = createOutputTokenLimitExhaustedError();
     const exhaustedErrorProjection = projectExecutionErrorPayload(
       exhaustedError,
       OUTPUT_TOKEN_LIMIT_ERROR_MESSAGE,
@@ -764,6 +776,16 @@ async function recoverModelStepAfterContextExceeded(
   modelStepIndex: number,
   activeEntries: readonly RuntimeMessageEntry[],
 ): Promise<boolean> {
+  // 晋升前置（specs/failure-recovery-tracks.md 轨道 1）：溢出先试「换同 provider 更大
+  // 窗口模型重试同一请求」，不压缩、每轮至多 1 次；无候选/已晋升/钉住轮时执行体返回
+  // undefined，无缝落入下方既有 reactive compaction 链（fail-safe）。晋升成功后调用方
+  // 返回 "continue"，下一 loop 迭代按换绑后的 state.model 原样重发请求。
+  const promotedModel = await tryPromoteContextModelForRecovery.call(this, state, {
+    trigger: "overflow",
+  });
+  if (promotedModel) {
+    return true;
+  }
   if (state.reactiveCompactAttemptedInCurrentModelStep) {
     return false;
   }
@@ -817,5 +839,53 @@ async function recoverModelStepAfterContextExceeded(
       state.turnId,
     ).start(),
   );
+  return true;
+}
+
+/**
+ * 截断恢复轨道的 keep_with_warning 判定 + 告警（specs/failure-recovery-tracks.md 轨道 2）。
+ *
+ * 策略配置与 autoCompactIfNeeded 同构（阈值/有效窗口从 compact/policy.ts 单一来源计算），
+ * 分类纯函数在 compact/truncation-recovery.ts；本函数只做事实采集、日志与改道信号。
+ * 返回 true = 保留截断产出并按正常 text-only 轮收口（不续写）。
+ */
+function shouldKeepTruncatedOutputWithWarning(
+  this: AgentRuntimeInternal,
+  state: RegularTurnLoopState,
+  input: {
+    modelTraceContext: TraceContext;
+    outputTokens: number;
+    promptTokens: number;
+    executionContextWindow: number | undefined;
+    executionMaxOutputTokens: number;
+  },
+): boolean {
+  const config: AutoCompactPolicyConfig = {
+    contextWindow: input.executionContextWindow,
+    ...this.config.compact,
+    maxOutputTokens: resolveNormalRequestMaxOutputTokens({
+      modelMaxOutputTokens: input.executionMaxOutputTokens,
+    }),
+    modelContextBudgetStrategy: this.config.modelContextBudgetStrategy,
+  };
+  const decision = classifyTruncationRecovery({
+    config,
+    consecutiveLengthRetries: state.turnRequestState.outputTokenContinuationCount,
+    hasDeliveredOutput: state.modelResponse.trim().length > 0,
+    outputTokens: input.outputTokens,
+    promptTokens: input.promptTokens,
+  });
+  if (decision.action !== "keep_with_warning") return false;
+  // 用户可见告警面：warn 日志 + 本轮 ModelComplete.stopReason=length（既有事件，
+  // UI 依此渲染截断事实）+ 持久化 step-finish reason=length。不新造事件（contracts 闭集）。
+  this.logger?.warn("Model response truncated by output limit; keeping truncated output", {
+    ...traceContextToLogContext(input.modelTraceContext),
+    event: "model.response.truncated_kept",
+    model: `${String(state.model.providerId)}/${String(state.model.modelId)}`,
+    module: "core.runtime",
+    outputTokens: input.outputTokens,
+    promptTokens: input.promptTokens,
+    status: "completed",
+  });
   return true;
 }

@@ -41,6 +41,7 @@ import { readVideoFile } from "./read-video.js";
 import { formatReadTextOutput, readTextFileForModel } from "./read-text.js";
 import { isSkillUri, resolveSkillUriToPhysicalPath } from "./read-skill.js";
 import { buildConflictReadOutput, isConflictUri } from "./read-conflict.js";
+import { applyPathSelector } from "./read-selector-branch.js";
 import {
   formatReadPdfOutput,
   formatReadPdfPagesOutput,
@@ -142,7 +143,15 @@ function stringifyReadOutputFallback(output: unknown): string {
 }
 
 const readHandler: ToolHandler = async (input, context) => {
-  const { file_path, offset, limit, pages } = parseReadInput(input);
+  const parsedInput = parseReadInput(input);
+  const pages = parsedInput.pages;
+  // 路径选择器（specs/read-structural-summary.md R3 阶段 1：单区间/raw）：命中时
+  // 覆盖 offset/limit 并剥离路径；scheme 形态（skill://、conflict://）与 Windows
+  // 盘符不匹配选择器文法，零误拆。
+  const selector = applyPathSelector(parsedInput.file_path, context);
+  const file_path = selector.path;
+  const offset = selector.offset ?? parsedInput.offset;
+  const limit = selector.limit ?? parsedInput.limit;
   const fileSystemPort = context.fileSystemPort;
 
   if (!fileSystemPort) {
@@ -221,6 +230,7 @@ const readHandler: ToolHandler = async (input, context) => {
       },
       offset,
       sessionId: context.sessionId,
+      suppressSummary: selector.suppressSummary,
       trace,
     });
     updateReadFileState(readFileState, cacheKey, {

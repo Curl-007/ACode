@@ -12,6 +12,7 @@ import {
 
 import { estimateTokens } from "../../context/utils.js";
 import { annotateReadConflicts } from "../conflict/index.js";
+import { summarizeWholeFileRead } from "../read-summary/index.js";
 
 const EMPTY_FILE_REMINDER = formatReadToolResultWarning(
   "Warning: the file exists but the contents are empty.",
@@ -28,6 +29,8 @@ interface ReadTextFileForModelOptions {
   offset?: number;
   /** 会话身份：conflict:// 检出注册用（specs/conflict-uri-resolution.md R2）；缺席=零行为变化。 */
   sessionId?: string;
+  /** :raw 选择器语义（specs/read-structural-summary.md R3）：抑制结构化摘要。 */
+  suppressSummary?: boolean;
   trace?: TraceContext;
 }
 
@@ -40,6 +43,7 @@ export async function readTextFileForModel({
   onRead,
   offset,
   sessionId,
+  suppressSummary,
   trace,
 }: ReadTextFileForModelOptions): Promise<ReadTextOutput> {
   const limitProvided = limit !== undefined;
@@ -64,6 +68,7 @@ export async function readTextFileForModel({
   // conflict:// 检出（specs/conflict-uri-resolution.md R1-R3）：扫描已收集的窗口行，
   // 零额外 IO。物理行号从工具 offset（1-based 契约）推导，不依赖 startLine 显示口径
   // ——注册行号必须与 splice 时整文件 LF 行坐标一致，否则重验证会错位。
+  let conflictFooter: string | undefined;
   if (sessionId && output.content) {
     const annotation = annotateReadConflicts({
       sessionId,
@@ -72,11 +77,35 @@ export async function readTextFileForModel({
       lines: output.content.split("\n"),
       firstLineNumber: offset !== undefined && offset >= 1 ? offset : 1,
     });
-    if (annotation.footer) {
-      return { ...output, conflictFooter: annotation.footer };
+    if (annotation.footer) conflictFooter = annotation.footer;
+  }
+  // 结构化摘要（specs/read-structural-summary.md R1）：仅整读、未截断、无冲突
+  // （冲突文件 marker 破坏语法且模型需要原文，R6）、非 :raw 时尝试；不合格
+  // 零行为变化。
+  if (
+    output.content &&
+    !conflictFooter &&
+    !suppressSummary &&
+    isInitialWholeFileRead(offset, limit) &&
+    !output.truncated &&
+    !output.truncatedByTokenCap &&
+    !output.partialViewNotice
+  ) {
+    const summary = summarizeWholeFileRead({
+      absolutePath: filePath,
+      displayPath: filePath,
+      text: output.content,
+    });
+    if (summary.summarized && summary.numberedText && summary.footer) {
+      return {
+        ...output,
+        content: summary.numberedText,
+        preNumbered: true,
+        summaryFooter: summary.footer,
+      };
     }
   }
-  return output;
+  return conflictFooter ? { ...output, conflictFooter } : output;
 }
 
 export function formatReadTextOutput(output: ReadTextOutput): string {
@@ -97,11 +126,16 @@ export function formatReadTextOutput(output: ReadTextOutput): string {
   // 成功文本结果的模型可见契约只包含条件提醒与带行号正文；
   // 历史安全提醒不属于当前 tool result 路径。conflict:// 尾注（若有）渲染在
   // 带行号正文之后（specs/conflict-uri-resolution.md R3，正文 verbatim 不变）。
-  const body = `${partialViewPrefix}${addReadLineNumbers({
-    content: output.content,
-    startLine: output.startLine,
-  })}`;
-  return output.conflictFooter ? `${body}\n\n${output.conflictFooter}` : body;
+  // preNumbered = 结构化摘要正文（原行号锚定，read-structural-summary.md R2），
+  // 跳过二次编号；摘要尾注在正文后、冲突尾注前（R6 顺序）。
+  const body = output.preNumbered
+    ? `${partialViewPrefix}${output.content}`
+    : `${partialViewPrefix}${addReadLineNumbers({
+        content: output.content,
+        startLine: output.startLine,
+      })}`;
+  const withSummary = output.summaryFooter ? `${body}\n\n${output.summaryFooter}` : body;
+  return output.conflictFooter ? `${withSummary}\n\n${output.conflictFooter}` : withSummary;
 }
 
 export function addReadLineNumbers({

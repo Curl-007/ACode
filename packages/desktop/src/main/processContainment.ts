@@ -56,6 +56,12 @@ export interface ProcessContainmentController {
   sweepOrphanedChildProcesses(reason: string): ProcessContainmentSweepResult;
   /** 崩溃路径：process exit 同步钩子，SIGKILL 直接子进程（无树语义，见 spec R17）。 */
   installExitHook(): void;
+  /**
+   * 更新交接豁免：声明本次退出由外部安装器接管，exit 钩子不再 SIGKILL 台账活子进程。
+   * 必须在 quitAndInstall 拉起安装器之前调用（安装器 spawn 后会进台账，钩子若按崩溃
+   * 语义直杀会把安装器打死，表现成「点更新重启没反应」，spec R19）。
+   */
+  disableExitSweep(reason: string): void;
   dispose(): void;
 }
 
@@ -77,6 +83,8 @@ export function installProcessContainment(
 
   let outcome: ProcessContainmentOutcome = "failed";
   let subscribed = false;
+  // 更新交接豁免标记：非 null 时 exit 钩子让位给外部安装器（spec R19）。
+  let exitSweepDisabledReason: string | null = null;
 
   const ledger = createSpawnLedger({
     logger: deps.logger,
@@ -148,6 +156,17 @@ export function installProcessContainment(
       },
       installExitHook() {
         const listener = (): void => {
+          // 更新交接豁免：退出是为了把控制权交给外部安装器，安装器 spawn 后就在台账里，
+          // 此时按崩溃语义 SIGKILL 会打死安装器（2026-10-18 v1.0.0 实机实证）。孤儿收敛
+          // 已由交接前的 sweepOrphanedChildProcesses("update-install") 完成，钩子让位。
+          if (exitSweepDisabledReason !== null) {
+            deps.logger.info("[process-containment] exit sweep skipped for update handoff", {
+              event: "process_containment_exit_sweep_skipped",
+              outcome: "skipped",
+              reason: exitSweepDisabledReason,
+            });
+            return;
+          }
           // 崩溃/退出路径的同步兜底：SIGKILL 直接子进程（无树语义，树级连坐属于
           // native Job Object 条件触发项）。logger 为同步落盘实现，exit 钩子内可用。
           const pids: number[] = [];
@@ -172,6 +191,14 @@ export function installProcessContainment(
         };
         const register = deps.registerExitListener ?? ((fn: () => void) => process.on("exit", fn));
         register(listener);
+      },
+      disableExitSweep(reason) {
+        exitSweepDisabledReason = reason;
+        deps.logger.info("[process-containment] exit sweep disabled for update handoff", {
+          event: "process_containment_exit_sweep_disabled",
+          outcome: "disabled",
+          reason,
+        });
       },
       dispose() {
         if (subscribed) {

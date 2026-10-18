@@ -100,10 +100,7 @@ import { inspectDeepLinkWorkspacePath } from "./deepLinkHardening.js";
 import { installKeepAwakeClaims } from "./keepAwakeClaims.js";
 // W2-CLAIM 认领数据源（同 spec B2 节 R19-R24）：turn/loop/background_task 三类 claim。
 import { installKeepAwakeClaimSources } from "./keepAwakeClaimSources.js";
-import {
-  initializeShutdownEvidence,
-  SHUTDOWN_EVIDENCE_FILE_NAME,
-} from "./shutdownEvidence.js";
+import { initializeShutdownEvidence, SHUTDOWN_EVIDENCE_FILE_NAME } from "./shutdownEvidence.js";
 import { createShutdownTaskRegistry, type ShutdownTaskRegistry } from "./shutdownTasks.js";
 import { installProcessContainment } from "./processContainment.js";
 import { markMainLaunchAppReady } from "./desktopLaunchMarks.js";
@@ -2174,6 +2171,12 @@ app.whenReady().then(async () => {
       // W1-4：资源锁扫描收口后再按 spawn 台账树杀仍存活的 main 亲手子进程
       // （update-install 收敛面；与实时资源锁扫描互补，那边按句柄扫这边按台账杀）。
       processContainment.sweepOrphanedChildProcesses("update-install");
+      // 安装器接管豁免（specs/shutdown-keepawake-containment.md R19）：quitAndInstall 随后
+      // spawn 的 NSIS 安装器会进入 spawn 台账；exit 钩子若按崩溃语义 SIGKILL 台账活子进程，
+      // 安装器会在拉起后百余毫秒被自己人打死，表现成「点更新重启没反应、版本不变」
+      // （2026-10-18 v1.0.0 实机日志实证：Executing pending 安装器 → exit hook killed
+      // live children）。孤儿收敛已由上一行 sweep 完成，退出钩子在此让位给安装器。
+      processContainment.disableExitSweep("update-install-handoff");
     },
     // W1-4/W1-11：关停注册表 update-install 段（beforeInstall∪stopsChildProcesses
     // 名单，best-effort——失败 warn 不阻断安装，与 onBeforeQuitAndInstall 的文件锁

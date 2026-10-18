@@ -203,7 +203,7 @@ function send(message) {
 function waitForFlag() {
   for (let i = 0; i < 2000; i++) {
     if (fs.existsSync(flagFile)) return;
-    const dead = new Date.now() + 10;
+    const dead = Date.now() + 10;
     while (Date.now() < dead) {}
   }
 }
@@ -345,6 +345,12 @@ test("gate: 超预算 Deferred 用缓存注册，后台完成后原子替换为�
       onStatusChange: (change) => changes.push(change),
     });
     t.after(() => second.close());
+    // 工具面变更订阅（McpPort.onToolsChanged，R1 收尾接线）：后台原子替换必须触发。
+    let toolsChangedHits = 0;
+    const unsubscribeToolsChanged = second.onToolsChanged(() => {
+      toolsChangedHits += 1;
+    });
+    t.after(unsubscribeToolsChanged);
 
     const snapshotPromise = second.connectConfiguredServers({ gated: config() }, {});
     await new Promise((resolve) => setTimeout(resolve, 50));
@@ -370,6 +376,7 @@ test("gate: 超预算 Deferred 用缓存注册，后台完成后原子替换为�
     assert.equal(tools.length, 1);
     assert.equal(tools[0].description, "live-echo", "真实工具替换缓存 descriptor");
     assert.ok(changes.some((change) => change.trigger === "connected"), "派发 connected 事件");
+    assert.ok(toolsChangedHits >= 1, "后台原子替换必须触发 onToolsChanged（rebind 信号）");
   });
 });
 

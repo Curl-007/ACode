@@ -183,7 +183,15 @@
 
 ## 范围外（报告另行建议）
 
-- 后台完成后的**工具注册面 rebind**（core initializeMcp 只在启动快照时注册一次；
-  late tools 的 rebind 需动 core/共享面——见共享桶申请）。
-- `suspendedBy: "crash_storm"` 的契约字面扩展（见共享桶申请）。
+- ~~后台完成后的**工具注册面 rebind**~~ **已由编排器接线落地（2026-10-18）**：
+  McpPort 增可选 `onToolsChanged(listener)` 订阅面（adapter 在后台连接完成的
+  records.set 原子替换点派发，监听器故障 try/catch 旁路）；core
+  runtime/methods/mcp.ts 的 `subscribeMcpToolsRebind` 在首次注册后订阅——
+  100ms 去抖、server\0tool 指纹判变、in-flight 补跑不丢更新、重注册含资源
+  拉取面（幂等）、失败只 warn 不影响调用面（callTool 按身份路由等待活连接
+  本就独立于注册表）。不做显式退订：port 与 runtime 同生命周期。
+- ~~`suspendedBy: "crash_storm"` 的契约字面扩展~~ **已落地**：contracts
+  mcp-status.port.ts 联合扩 `crash_storm`（wire fail-safe 语义不变，缺失仍按
+  connect_failures 理解）；adapter 风暴挂起点附带该标签，windowCount 语义
+  （30s 窗口无产出断连数）入注释。
 - SSE Last-Event-ID 续传、`!cmd` 密钥命令展开：不同机制面，另行立项。

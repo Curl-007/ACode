@@ -340,6 +340,8 @@ class NodeMcpAdapter implements McpPort {
   private readonly officialMcpAuth?: CreateMcpAdapterOptions["officialMcpAuth"];
   private readonly telemetry?: McpTelemetryTracker;
   private readonly onStatusChange?: McpServerStatusChangeListener;
+  /** 工具面变更订阅者（onToolsChanged，McpPort 可选面）；派发点 try/catch 旁路。 */
+  private readonly toolsChangedListeners = new Set<() => void>();
   /** 自动重连预算（R1）：连续失败熔断 + 最小重试间隔；显式连接复位。 */
   private readonly reconnectBudget: McpReconnectBudget;
   /**
@@ -1323,6 +1325,9 @@ class NodeMcpAdapter implements McpPort {
     });
     record.status.reconnectSuspension = {
       consecutiveFailures: trip.windowCount,
+      // crash_storm 维度标签（contracts suspendedBy 联合已扩）：windowCount 是
+      // 30s 窗口内无产出断连数，不是 connect_failures 的连续失败计数。
+      suspendedBy: "crash_storm",
       suspendedAt: new Date().toISOString(),
     };
     this.emitStatusChange(name, previousStatusKind, record.status, "reconnect-suspended");
@@ -1378,6 +1383,29 @@ class NodeMcpAdapter implements McpPort {
       this.onStatusChange(change);
     } catch {
       // 旁路故障静默：状态事件消费方（UI）异常不能拆连接。
+    }
+  }
+
+  /**
+   * 工具面变更订阅（specs/mcp-startup-gate-breaker.md R1 收尾接线，McpPort.
+   * onToolsChanged）：后台连接完成、Deferred/空工具记录被真实工具原子替换后
+   * 触发（无载荷——消费方重查 listTools()）。与 emitStatusChange 同一哲学：
+   * 监听器故障不得反向影响连接生命周期。
+   */
+  onToolsChanged(listener: () => void): () => void {
+    this.toolsChangedListeners.add(listener);
+    return () => {
+      this.toolsChangedListeners.delete(listener);
+    };
+  }
+
+  private emitToolsChanged(): void {
+    for (const listener of this.toolsChangedListeners) {
+      try {
+        listener();
+      } catch {
+        // 旁路故障静默：rebind 消费方异常不能拆连接。
+      }
     }
   }
 
@@ -1799,6 +1827,9 @@ class NodeMcpAdapter implements McpPort {
       this.reconnectBudget.recordSuccess(name);
       this.probeLadder.stop(name);
       this.emitStatusChange(name, "connecting", status, "connected");
+      // 工具面已原子替换（含 Deferred→真实与空→真实）：通知 core 注册表 rebind
+      // （specs/mcp-startup-gate-breaker.md R1 收尾接线）。
+      this.emitToolsChanged();
       const mcpTransportPid = getStdioTransportPid(transport);
       const mcpProcessIdentity =
         mcpTransportPid != null && this.connectionContext

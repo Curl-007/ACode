@@ -169,6 +169,9 @@ importers:
       iconv-lite:
         specifier: 0.7.2
         version: 0.7.2
+      ignore:
+        specifier: ^7.0.12
+        version: 7.0.12
       jimp:
         specifier: ^1.6.1
         version: 1.6.1
@@ -430,6 +433,9 @@ importers:
       meriyah:
         specifier: ^7.1.1
         version: 7.1.2
+      typescript:
+        specifier: ^6.0.2
+        version: 6.0.2
       unbash:
         specifier: 4.0.1
         version: 4.0.1
@@ -6629,6 +6635,10 @@ packages:
 
   ignore@5.3.2:
     resolution: {integrity: sha512-hsBTNUqQTDwkWtcdYI2i06Y/nUBEsNEDJKjWdigLvegy8kDuJAS8uRlpkkcQpyEXL0Z/pjDy5HBmMjRCJ2gq+g==}
+    engines: {node: '>= 4'}
+
+  ignore@7.0.12:
+    resolution: {integrity: sha512-/8UvqAPU9DGTI9k4mxtf49U37Isfwr8Uts96+SBHIkFxPJnHS0Ew4f00sM4Scd8V8EjM0jUNtVDdv1kPdt35lg==}
     engines: {node: '>= 4'}
 
   image-q@4.0.0:
@@ -15064,6 +15074,8 @@ snapshots:
   ieee754@1.2.1: {}
 
   ignore@5.3.2: {}
+
+  ignore@7.0.12: {}
 
   image-q@4.0.0:
     dependencies:

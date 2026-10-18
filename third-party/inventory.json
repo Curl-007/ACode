@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "inputHashEncoding": "UTF-8 with CRLF normalized to LF; notice and source snapshot hashes remain byte-exact",
   "scope": "Production dependency union across current workspace projects, copied source/assets and native tools; not a per-installer SBOM or a certification of all licensing obligations.",
-  "noticesSha256": "0fb3fbe38c955ebdb7e27a9fc135f71d01d9649061f0d56b2034660285874e39",
+  "noticesSha256": "80f2c0bc77fb3d56c6736223026dad0130760fe25d01511c8fe641be5c2a0956",
   "inputs": {
     ".agents/skills/agent-browser/references/authentication.md": "b7531e028594768e2447547e67559ca1a88fdefba8d5507c07d04bc802c05d09",
     ".agents/skills/agent-browser/references/commands.md": "6eb0e44a3c939c90116092b1a11ae03a2884fb5716d42f2468677870304d11a8",
@@ -11,7 +11,7 @@
     ".agents/skills/agent-browser/references/session-management.md": "519209c25413b5c2240423e231dbe2a239eecda8714b52101996b7888869a70f",
     ".agents/skills/agent-browser/references/snapshot-refs.md": "d19fd1bf6233a662cadaf22ec857e20807934d4239e1cf7477251ba1a53fdf70",
     ".agents/skills/agent-browser/references/video-recording.md": "c2c12bd8c44e5d36fbb94cfc376180d47507d3c26a7ee8876b892fc700dcf332",
-    ".agents/skills/agent-browser/SKILL.md": "1648ff9d9aabaf59ddb8eb284b4ca203f66a69a77daa969632c3da90ac30b747",
+    ".agents/skills/agent-browser/SKILL.md": "1f6ad779adb02fbf336c635dc9be4fc2e929a18fcc7b900c8c076db3946b9134",
     ".agents/skills/agent-browser/templates/authenticated-session.sh": "1fa9926c36dbe71191120ce067e5e3babe732cd1cc605020f3bd04dc430aa58c",
     ".agents/skills/agent-browser/templates/capture-workflow.sh": "bf3f3a2f8413773891d9fa400d2a2fddf6d73ffc7a9b2fa00f797f944171c3d5",
     ".agents/skills/agent-browser/templates/form-automation.sh": "b86836986d339f736b15ca78cf3d566e845a6293ae25a5b00aa520b837572650",
@@ -238,7 +238,7 @@
     "apps/acode-cli/packages/acode-cua-plugin/scripts/computer-use-target.mjs": "d7bd956219f784f5b56d88dc6227ff4a302fd315696cabd40dad7b8a59436084",
     "apps/acode-cli/packages/acode-cua-plugin/skills/computer-use/SKILL.md": "277b8fc2150769cfd6efd69dcad6feb81d0d6da0c0620d7725a596b813e70f03",
     "apps/acode-cli/packages/acode-guide-plugin/package.json": "0bad6c4ddd4e6cc2e3368ef143f6fd3502238d634b6be8f1025436b891a88ab8",
-    "apps/acode-cli/packages/adapters/package.json": "cf388f3c5ce199daf35cbc984e04c01a00c789aa243c68d1bdfab4ce2dd331d1",
+    "apps/acode-cli/packages/adapters/package.json": "4beb982df24c96bc72c999bf87a6dcb6b39cd45fb3a19dad9609f1f702dce8ee",
     "apps/acode-cli/packages/agent-teams-plugin/package.json": "641178b0f8070423f935bc44f09447472ceade8570e91db81b294c06e424a0db",
     "apps/acode-cli/packages/android-emulator-plugin/package.json": "459dcb3c90efa8237278abc84767591fa079337cb485eca53c756a2a7a1531fc",
     "apps/acode-cli/packages/bigmodel-skills-content-plugin/package.json": "dedb66b51ed9f302e1edb85515d17c8dd60c02b56d4de72934ff2629b21f24ea",
@@ -254,7 +254,7 @@
     "apps/acode-cli/packages/cli-workflow/package.json": "5c447b6653769c01f58a0638ddb850f68e046f47a146ea48c6fbe6547b14e12f",
     "apps/acode-cli/packages/cli/package.json": "cef2722ebcf0b336b0094d6725352edcbb90ba70a12056940657f8b0ca67057c",
     "apps/acode-cli/packages/contracts/package.json": "741929b9f0ae9518785175bb59768c3a0c44fb2356a9261c9564f66baf59f131",
-    "apps/acode-cli/packages/core/package.json": "20cb98de2a565bf9f2da6ae866dcf48134a9c88a37bfd4c4198cbf2366020d4e",
+    "apps/acode-cli/packages/core/package.json": "c16397fbb26e85a5116ca096a9be594a1cc2b5bd030431e49c032bccf7b7860e",
     "apps/acode-cli/packages/core/src/tool/handlers/generated/bash-command-registry.ts": "ee85665f0ce0e2f87753198412db342ed4528651637069956ecece49fe4a7e55",
     "apps/acode-cli/packages/debug/package.json": "a75751f22319ac039783809117a4b6364b4978472a51f364cad4d4271665ce2b",
     "apps/acode-cli/packages/documents-plugin/package.json": "515f784aa00837c700cb8c2270ce2e2b445b8acc5c9676f2763dd054049d9659",
@@ -282,7 +282,7 @@
     "packages/acode-cua/package.json": "faa859923517a6a948141b87bea3fa6ac885ef737ebde7be9ae9f9abd3d9a752",
     "packages/acode-server-cli/package.json": "5e9445eb2bce9eb54e320723dcd327354ee6798e93dafb01b3532d14d0287bc3",
     "packages/client/package.json": "34842bccbb96748d785cd56230ca0e36d230b913cc57ef455680d87c999b939c",
-    "packages/desktop/package.json": "04404c95efd799b5457445e8301e495d06684d5af6bed88cc05baa37d885435a",
+    "packages/desktop/package.json": "54c2227fb344811868edbb95d6207a1861eaa12ffba13ca61b7ba4be54e68167",
     "packages/desktop/src/renderer/public/material-icons/3d.svg": "9527b849f0fba57ca7640e2717b3a19cb5f5e046712cbbd8b75d73af338c68fb",
     "packages/desktop/src/renderer/public/material-icons/abap.svg": "1335bd7eb9a0ed49deb622330d680c2e97731726a7a5eee8e4f46dc1e5db4de4",
     "packages/desktop/src/renderer/public/material-icons/abc.svg": "d1a68020e8f020ef29dca5f94dc8613b7ae8fb5b212d8b1cc23b0f975ac7acda",
@@ -2709,7 +2709,7 @@
     "packages/web/public/material-icons/zip.svg": "dad79a45f756542d37abd422502ecfbea15720b92ea1c9d80ef0439ab6b9448a",
     "patches/@ai-sdk__anthropic@3.0.81.patch": "d3a7c381eba7f5157f765a0528003af17cf84544911dfb7412c7800168e01c18",
     "patches/@ai-sdk__openai-compatible@2.0.60.patch": "9632fe9d821b3dc20939ae509cc35b968d90d018bbd1d812390718898182a38b",
-    "pnpm-lock.yaml": "39e20bcc6903a8fe3173f0bbf0b3d1ae20b2ef0f3012e3c5e841a28d6cca9647",
+    "pnpm-lock.yaml": "c1513759f74a3cd34aab1fe1edb33130ef9f7f6c3ffc69b9089eb8f39794f957",
     "pnpm-workspace.yaml": "a9c2ba737409e152c3904e65fec268247194ea5a33050b630f00e14eb644e2cb",
     "scripts/license-texts/Apache-2.0.txt": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
     "scripts/native-search-tools-config.mjs": "54cee5ce2aa05e1c47f15758a700567ce4c822213c3f68392c18309142aa77ab",
@@ -4367,6 +4367,22 @@
       ]
     },
     {
+      "name": "@opentelemetry/api-logs",
+      "version": "0.220.0",
+      "license": "Apache-2.0",
+      "repository": "open-telemetry/opentelemetry-js",
+      "notices": [
+        {
+          "member": "LICENSE",
+          "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+        },
+        {
+          "member": "README.md (license section)",
+          "sha256": "bd58f2a90815dfc0589075fab5af424dedc7415266765f48ae59b3de98d5e1be"
+        }
+      ]
+    },
+    {
       "name": "@opentelemetry/api",
       "version": "1.9.0",
       "license": "Apache-2.0",
@@ -4379,6 +4395,246 @@
         {
           "member": "README.md (license section)",
           "sha256": "9cfa86899ccd67b76331431bbff57cbe15ceabb2e393aeb5a56c7a958dabd595"
+        }
+      ]
+    },
+    {
+      "name": "@opentelemetry/api",
+      "version": "1.9.1",
+      "license": "Apache-2.0",
+      "repository": "open-telemetry/opentelemetry-js",
+      "notices": [
+        {
+          "member": "LICENSE",
+          "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+        },
+        {
+          "member": "README.md (license section)",
+          "sha256": "9cfa86899ccd67b76331431bbff57cbe15ceabb2e393aeb5a56c7a958dabd595"
+        }
+      ]
+    },
+    {
+      "name": "@opentelemetry/context-async-hooks",
+      "version": "2.12.0",
+      "license": "Apache-2.0",
+      "repository": "open-telemetry/opentelemetry-js",
+      "notices": [
+        {
+          "member": "LICENSE",
+          "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+        },
+        {
+          "member": "README.md (license section)",
+          "sha256": "fc58ccbf60cdd4a212be673e7f1278dd1a3e49f1b1ddc21a7d70724bc8b3044a"
+        }
+      ]
+    },
+    {
+      "name": "@opentelemetry/core",
+      "version": "2.12.0",
+      "license": "Apache-2.0",
+      "repository": "open-telemetry/opentelemetry-js",
+      "notices": [
+        {
+          "member": "LICENSE",
+          "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+        },
+        {
+          "member": "README.md (license section)",
+          "sha256": "998b885208a7e72f854bca1a9fcb439c7665671dcbc77a9b6ca5fae5a15982dc"
+        }
+      ]
+    },
+    {
+      "name": "@opentelemetry/core",
+      "version": "2.9.0",
+      "license": "Apache-2.0",
+      "repository": "open-telemetry/opentelemetry-js",
+      "notices": [
+        {
+          "member": "LICENSE",
+          "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+        },
+        {
+          "member": "README.md (license section)",
+          "sha256": "998b885208a7e72f854bca1a9fcb439c7665671dcbc77a9b6ca5fae5a15982dc"
+        }
+      ]
+    },
+    {
+      "name": "@opentelemetry/exporter-trace-otlp-proto",
+      "version": "0.220.0",
+      "license": "Apache-2.0",
+      "repository": "open-telemetry/opentelemetry-js",
+      "notices": [
+        {
+          "member": "LICENSE",
+          "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+        },
+        {
+          "member": "README.md (license section)",
+          "sha256": "e1acb133327575513e723320b5c42d7705bfe95dfdf0da1879239824ec5f8496"
+        }
+      ]
+    },
+    {
+      "name": "@opentelemetry/otlp-exporter-base",
+      "version": "0.220.0",
+      "license": "Apache-2.0",
+      "repository": "open-telemetry/opentelemetry-js",
+      "notices": [
+        {
+          "member": "LICENSE",
+          "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+        },
+        {
+          "member": "README.md (license section)",
+          "sha256": "0b8732770b293090db6e4ec732b98a2b3b199c927dfafcbc23e51c5b724306b7"
+        }
+      ]
+    },
+    {
+      "name": "@opentelemetry/otlp-transformer",
+      "version": "0.220.0",
+      "license": "Apache-2.0",
+      "repository": "open-telemetry/opentelemetry-js",
+      "notices": [
+        {
+          "member": "LICENSE",
+          "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+        },
+        {
+          "member": "README.md (license section)",
+          "sha256": "cc5ef64e058432c6141ecfceaac3dc2d4c8b08e17fa5e1e9e6f6a829dbca7203"
+        }
+      ]
+    },
+    {
+      "name": "@opentelemetry/resources",
+      "version": "2.12.0",
+      "license": "Apache-2.0",
+      "repository": "open-telemetry/opentelemetry-js",
+      "notices": [
+        {
+          "member": "LICENSE",
+          "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+        },
+        {
+          "member": "README.md (license section)",
+          "sha256": "9cb96eeeccf177dd2579c21e2376f52ce4fa90861cc2dda9f14842542da7a3f9"
+        }
+      ]
+    },
+    {
+      "name": "@opentelemetry/resources",
+      "version": "2.9.0",
+      "license": "Apache-2.0",
+      "repository": "open-telemetry/opentelemetry-js",
+      "notices": [
+        {
+          "member": "LICENSE",
+          "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+        },
+        {
+          "member": "README.md (license section)",
+          "sha256": "9cb96eeeccf177dd2579c21e2376f52ce4fa90861cc2dda9f14842542da7a3f9"
+        }
+      ]
+    },
+    {
+      "name": "@opentelemetry/sdk-logs",
+      "version": "0.220.0",
+      "license": "Apache-2.0",
+      "repository": "git+https://github.com/open-telemetry/opentelemetry-js.git",
+      "notices": [
+        {
+          "member": "LICENSE",
+          "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+        },
+        {
+          "member": "README.md (license section)",
+          "sha256": "a194d66e0c5bd6dc8927f5806bd9c5fd1df7c582eb8518d980a612cee902d632"
+        }
+      ]
+    },
+    {
+      "name": "@opentelemetry/sdk-metrics",
+      "version": "2.9.0",
+      "license": "Apache-2.0",
+      "repository": "open-telemetry/opentelemetry-js",
+      "notices": [
+        {
+          "member": "LICENSE",
+          "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+        },
+        {
+          "member": "README.md (license section)",
+          "sha256": "1c6a18bba0437d60bb18fa58bf055eb32c51c791837ac0ad375b529bcf245f94"
+        }
+      ]
+    },
+    {
+      "name": "@opentelemetry/sdk-trace-base",
+      "version": "2.12.0",
+      "license": "Apache-2.0",
+      "repository": "open-telemetry/opentelemetry-js",
+      "notices": [
+        {
+          "member": "LICENSE",
+          "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+        },
+        {
+          "member": "README.md (license section)",
+          "sha256": "8375f12da0f472679e1eeee52bf58ea289c9806b8a7605f80a1f8865b01908f1"
+        }
+      ]
+    },
+    {
+      "name": "@opentelemetry/sdk-trace",
+      "version": "2.12.0",
+      "license": "Apache-2.0",
+      "repository": "open-telemetry/opentelemetry-js",
+      "notices": [
+        {
+          "member": "LICENSE",
+          "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+        },
+        {
+          "member": "README.md (license section)",
+          "sha256": "09c92e12b7957b0fc228910282e6b4ac052166c59a8a060c2b53e38025cffe62"
+        }
+      ]
+    },
+    {
+      "name": "@opentelemetry/sdk-trace",
+      "version": "2.9.0",
+      "license": "Apache-2.0",
+      "repository": "open-telemetry/opentelemetry-js",
+      "notices": [
+        {
+          "member": "LICENSE",
+          "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+        },
+        {
+          "member": "README.md (license section)",
+          "sha256": "09c92e12b7957b0fc228910282e6b4ac052166c59a8a060c2b53e38025cffe62"
+        }
+      ]
+    },
+    {
+      "name": "@opentelemetry/semantic-conventions",
+      "version": "1.43.0",
+      "license": "Apache-2.0",
+      "repository": "open-telemetry/opentelemetry-js",
+      "notices": [
+        {
+          "member": "LICENSE",
+          "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+        },
+        {
+          "member": "README.md (license section)",
+          "sha256": "ac32ccc44843f58e28c56d475e1e8687a3eeae4aa003c9225b40e9603b5f9c73"
         }
       ]
     },
@@ -9118,6 +9374,18 @@
       "version": "5.3.2",
       "license": "MIT",
       "repository": "git@github.com:kaelzhang/node-ignore.git",
+      "notices": [
+        {
+          "member": "LICENSE-MIT",
+          "sha256": "9c94db23dc4b1e9aaee5d195668b916afc71efed54af226b66cf0ccc4389c1c0"
+        }
+      ]
+    },
+    {
+      "name": "ignore",
+      "version": "7.0.12",
+      "license": "MIT",
+      "repository": "https://github.com/kaelzhang/node-ignore.git",
       "notices": [
         {
           "member": "LICENSE-MIT",
@@ -24422,7 +24690,7 @@
       "files": [
         {
           "file": ".agents/skills/agent-browser/SKILL.md",
-          "sha256": "1648ff9d9aabaf59ddb8eb284b4ca203f66a69a77daa969632c3da90ac30b747"
+          "sha256": "1f6ad779adb02fbf336c635dc9be4fc2e929a18fcc7b900c8c076db3946b9134"
         },
         {
           "file": ".agents/skills/agent-browser/references/authentication.md",

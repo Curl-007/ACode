@@ -13,7 +13,6 @@ import {
   resolveOfficialMarketplaceAliasCanonicalId,
   sanitizeACodeRuntimeEnv,
 } from "@acode/shared";
-import { loadPluginMcpServerDefinitions, resolvePluginMcpServers } from "./mcp.js";
 import {
   appendPluginSourceCleanupError,
   cleanupPluginSourceBestEffort,
@@ -29,7 +28,6 @@ import { createNodeWebFetchHttpClientAdapter } from "../http/index.js";
 import { writeCdnOfficialMarketplacePartitionSync } from "./official-marketplace.js";
 import {
   isZipPluginUrlSource,
-  readZipPluginSourceSha256,
   resolveZipPluginSource,
 } from "./zip-source.js";
 import {
@@ -46,10 +44,33 @@ import { describePluginRepositorySourcePolicyViolation } from "./git-source-pinn
 import {
   createArchiveFetchError,
   createGitUnavailableError,
+  createMarketplaceSourcePolicyError,
+  createPluginInstallValidationError,
   createPluginSourcePolicyError,
   getPluginSourceDiagnosticCode,
   isCommandUnavailableError,
 } from "./source-errors.js";
+import {
+  describeMarketplaceGitSourceSpecViolation,
+  describeShellMetacharViolation,
+  stripPluginSourceCredentials,
+  stripUserInfoFromString,
+} from "./source-spec-hardening.js";
+import {
+  findPluginManifestPath,
+  pushManifestCompatibilityDiagnostics,
+  readPluginManifestFromRoot,
+  validatePluginRoot,
+} from "./plugin-manifest-inspect.js";
+import {
+  readPluginSourceIdentityPin,
+  validatePluginForInstall,
+  type PluginInstallVersionProvenance,
+} from "./install-validation.js";
+import {
+  beginMarketplaceInstallTransaction,
+  type MarketplaceInstallTransaction,
+} from "./install-transaction.js";
 
 const execFileAsync = promisify(execFile);
 const KNOWN_MARKETPLACES_FILE = "known_marketplaces.json";
@@ -59,18 +80,12 @@ const MARKETPLACE_JSON_MAX_BYTES = 10 * 1024 * 1024;
 const MARKETPLACE_JSON_MAX_REDIRECTS = 5;
 const MARKETPLACE_JSON_TIMEOUT_MS = 180_000;
 const CLAUDE_MARKETPLACE_FILE = join(".claude-plugin", "marketplace.json");
-const ACODE_MANIFEST_PATH = join(".acode-plugin", "plugin.json");
-const CLAUDE_MANIFEST_PATH = join(".claude-plugin", "plugin.json");
-const CODEX_MANIFEST_PATH = join(".codex-plugin", "plugin.json");
-const CURSOR_MANIFEST_PATH = join(".cursor-plugin", "plugin.json");
 const DEFAULT_VERSION = "0.0.0";
 const GIT_CLONE_MAX_ATTEMPTS = 3;
 const GIT_COMMAND_TIMEOUT_MS = 90_000;
 const GIT_CLONE_RETRY_DELAY_MS = 1_000;
 const MARKETPLACE_NAME_PATTERN = /^[a-z0-9][a-z0-9._-]{0,127}$/;
-const PLUGIN_NAME_PATTERN = /^[a-z0-9][a-z0-9._-]{0,127}$/;
 const SOURCE_SHA256_PATTERN = /^[a-f0-9]{64}$/u;
-const UNSUPPORTED_MANIFEST_FIELDS = ["channels", "lspServers", "outputStyles", "settings"] as const;
 
 export type MarketplaceSource =
   | { source: "url"; headers?: Record<string, string>; url: string }
@@ -109,6 +124,8 @@ export interface PluginMarketplaceManifest {
   pluginRoot?: string;
   // 商店「公开」分段 Featured 区的策展名单（插件 name，按序）；由目录 JSON 顶层 featured 字段远程控制。
   featured?: string[];
+  /** normalize 阶段从来源里剥离凭据的 host 清单（剥离已发生，此处只留告警事实）。 */
+  credentialRedactions?: string[];
   raw: Record<string, unknown>;
 }
 
@@ -121,6 +138,8 @@ export interface KnownMarketplaceRecord {
   lastUpdated?: string;
   lastRefreshFailure?: MarketplaceRefreshFailure;
   pluginCount: number;
+  /** 来源 URL 内嵌凭据被剥离的告警记录（specs/plugin-install-transactions.md R5-2）。 */
+  credentialRedaction?: { at: string; hosts: string[] };
   /** 内部崩溃恢复代际；协议/UI 投影不暴露。 */
   cacheTransactionId?: string;
 }
@@ -151,9 +170,32 @@ interface InstalledPluginsState {
   plugins: InstalledPluginRecord[];
 }
 
-interface MarketplaceInstallResult {
+export interface MarketplaceInstallPlanEntry {
+  pluginId: string;
+  /** install = 新增；replace = 已有安装的升级/重装。 */
+  action: "install" | "replace";
+  previousVersion?: string;
+  plannedVersion: string;
+  versionProvenance: PluginInstallVersionProvenance;
+  plannedCacheDir: string;
+  /** 非阻断校验诊断（阻断诊断存在时安装/计划直接失败，不会出现在 plan 里）。 */
+  validation: PluginValidationDiagnostic[];
+}
+
+export interface MarketplaceInstallPlan {
+  marketplace: string;
+  dryRun: true;
+  closure: string[];
+  entries: MarketplaceInstallPlanEntry[];
+}
+
+export interface MarketplaceInstallResult {
   closure: string[];
   installed: InstalledPluginRecord[];
+  /** 非阻断校验诊断与凭据剥离告警（severity warning，不构成失败）。 */
+  warnings?: PluginValidationDiagnostic[];
+  /** dryRun 专用：将发生的变更清单；真实安装不携带。 */
+  plan?: MarketplaceInstallPlan;
 }
 
 export interface PluginValidationDiagnostic {
@@ -225,6 +267,12 @@ interface ResolvedPluginSourceRoot {
 interface CachedMarketplacePluginResult {
   activation?: AtomicDirectoryActivation;
   record: InstalledPluginRecord;
+  /** R1 门容忍诊断（warning/变量缺失）；dry-run 时进入 plan.validation。 */
+  warnings: PluginValidationDiagnostic[];
+  versionProvenance: PluginInstallVersionProvenance;
+  /** dry-run 专用：install=新增 / replace=升级既有安装。真实安装不消费。 */
+  planAction: "install" | "replace";
+  previousVersion?: string;
 }
 
 export async function parseMarketplaceSourceInput(input: string): Promise<MarketplaceSource> {
@@ -236,22 +284,24 @@ export async function parseMarketplaceSourceInput(input: string): Promise<Market
   if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
     const { url, ref } = splitRef(trimmed);
     if (url.endsWith(".git") || url.includes("/_git/")) {
-      return ref ? { source: "git", url, ref } : { source: "git", url };
+      return finalizeMarketplaceGitSource(url, ref);
     }
     const parsed = tryParseUrl(url);
     if (parsed && (parsed.hostname === "github.com" || parsed.hostname === "www.github.com")) {
       const match = parsed.pathname.match(/^\/([^/]+\/[^/]+?)(?:\/|\.git|$)/);
       if (match?.[1]) {
         const gitUrl = url.endsWith(".git") ? url : `${url}.git`;
-        return ref ? { source: "git", url: gitUrl, ref } : { source: "git", url: gitUrl };
+        return finalizeMarketplaceGitSource(gitUrl, ref);
       }
     }
-    return { source: "url", url };
+    // 直指 JSON 的 url 源不进 spawn，不做元字符/host 门；凭据剥离仍然生效
+    // （source 会随 known_marketplaces.json 持久化，spec R5-2）。
+    return { source: "url", url: stripUserInfoFromString(url).redacted };
   }
 
   if (isGitSshUrl(trimmed)) {
     const { url, ref } = splitRef(trimmed);
-    return ref ? { source: "git", url, ref } : { source: "git", url };
+    return finalizeMarketplaceGitSource(url, ref);
   }
 
   const resolved = resolvePathInput(trimmed);
@@ -274,6 +324,18 @@ export async function parseMarketplaceSourceInput(input: string): Promise<Market
   }
 
   throw new Error(`Unsupported marketplace source: ${input}`);
+}
+
+/**
+ * 市场 git URL 规格的统一出口（spec R5）：host 白名单 + 元字符黑名单门，
+ * 通过后剥离 URL 内嵌凭据再返回——source 随 known_marketplaces.json 持久化，
+ * token 不得落盘；私有仓库认证走 git credential helper / SSH（omp 同语义）。
+ */
+function finalizeMarketplaceGitSource(url: string, ref?: string): MarketplaceSource {
+  const violation = describeMarketplaceGitSourceSpecViolation({ url, ref });
+  if (violation) throw createMarketplaceSourcePolicyError(url, violation);
+  const stripped = stripUserInfoFromString(url);
+  return ref ? { source: "git", url: stripped.redacted, ref } : { source: "git", url: stripped.redacted };
 }
 
 export function loadKnownMarketplacesSync(storageRoot: string): KnownMarketplaceRecord[] {
@@ -353,11 +415,15 @@ export async function addMarketplace(input: {
   // 官方 manifest 已被污染；守卫通过后才持久化。
   throwIfPluginOperationAborted(input.signal);
   const operationSignal = input.signal;
+  // 来源持久化前的凭据剥离（spec R5-2）：known record.source、git clone 入参与
+  // manifest 副本都只接触剥离后的来源；剥离事实随 record.credentialRedaction 告警。
+  const sourceStrip = stripPluginSourceCredentials(input.source);
+  const source = sourceStrip.value as MarketplaceSource;
   let loaded: LoadMarketplaceResult | undefined;
   let knownMarketplaceActivation: KnownMarketplaceActivation | undefined;
   let marketplaceActivation: AtomicDirectoryActivation | undefined;
   try {
-    loaded = await loadMarketplaceFromSource(input.source, input.storageRoot, {
+    loaded = await loadMarketplaceFromSource(source, input.storageRoot, {
       persist: false,
       signal: operationSignal,
     });
@@ -429,12 +495,15 @@ export async function addMarketplace(input: {
     const now = new Date().toISOString();
     const record: KnownMarketplaceRecord = {
       id: loaded.manifest.name,
-      source: input.source,
+      source,
       name: loaded.manifest.name,
       ...(loaded.manifest.description ? { description: loaded.manifest.description } : {}),
       addedAt: now,
       lastUpdated: now,
       pluginCount: persistedManifest.plugins.length,
+      ...(sourceStrip.redactedHosts.length > 0
+        ? { credentialRedaction: { at: now, hosts: sourceStrip.redactedHosts } }
+        : {}),
       ...(marketplaceActivation ? { cacheTransactionId: marketplaceActivation.transactionId } : {}),
     };
     knownMarketplaceActivation = await upsertKnownMarketplace(input.storageRoot, record);
@@ -639,58 +708,192 @@ export async function installMarketplacePlugin(input: {
   storageRoot: string;
   scope?: "user" | "workspace";
   allowCrossMarketplaces?: ReadonlySet<string>;
+  /** spec R4：全部校验 + 计划生成，零持久化写盘（源物化仅进 OS 临时目录并清理）。 */
+  dryRun?: boolean;
 }): Promise<MarketplaceInstallResult> {
-  await ensureMarketplaceManifestAvailable({
-    marketplace: input.marketplace,
-    signal: input.signal,
-    storageRoot: input.storageRoot,
-  });
-  throwIfPluginOperationAborted(input.signal);
-  const rootManifest = loadMarketplaceManifestSync(input.storageRoot, input.marketplace);
-  const closure = resolveDependencyClosure({
-    allowCrossMarketplaces:
-      input.allowCrossMarketplaces ??
-      new Set(rootManifest?.allowCrossMarketplaceDependenciesOn ?? []),
-    marketplace: input.marketplace,
-    name: input.name,
-    storageRoot: input.storageRoot,
-  });
-  const state = loadInstalledPluginsSync(input.storageRoot);
-  const installed: InstalledPluginRecord[] = [];
-  const activations: AtomicDirectoryActivation[] = [];
+  const dryRun = input.dryRun === true;
+  // dry-run 用只读目录获取：磁盘已有 catalog 直接读，缺失时按 known record source
+  // persist:false 拉取（含官方别名 canonical 归一），绝不触发种子/落盘分支。
+  const dryRunCatalog: { cleanup?: () => Promise<void>; manifest: PluginMarketplaceManifest } | null =
+    dryRun ? await ensureMarketplaceManifestForDryRun(input) : null;
   try {
-    for (const pluginId of closure) {
-      const { marketplace, name } = parsePluginId(pluginId);
-      const manifest = loadMarketplaceManifestSync(input.storageRoot, marketplace);
-      if (!manifest) throw new Error(`Marketplace not found: ${marketplace}`);
-      const entry = manifest.plugins.find((plugin) => plugin.name === name);
-      if (!entry) throw new Error(`Plugin not found: ${pluginId}`);
-      const cached = await cacheMarketplacePlugin({
-        entry,
-        marketplace,
+    if (!dryRun) {
+      await ensureMarketplaceManifestAvailable({
+        marketplace: input.marketplace,
         signal: input.signal,
-        scope: input.scope ?? "user",
-        state,
         storageRoot: input.storageRoot,
       });
-      installed.push(cached.record);
-      if (cached.activation) activations.push(cached.activation);
     }
     throwIfPluginOperationAborted(input.signal);
-    await saveInstalledPlugins(input.storageRoot, state);
-  } catch (error) {
-    let rollbackError: unknown;
-    for (const activation of activations.reverse()) {
-      try {
-        await activation.rollback();
-      } catch (currentRollbackError) {
-        rollbackError ??= currentRollbackError;
-      }
+    const rootManifest = dryRun
+      ? dryRunCatalog?.manifest
+      : loadMarketplaceManifestSync(input.storageRoot, input.marketplace);
+    if (!rootManifest) {
+      throw new Error(`Marketplace not found: ${input.marketplace}`);
     }
-    throw appendPluginSourceCleanupError(error, rollbackError);
+    const closure = resolveDependencyClosure({
+      allowCrossMarketplaces:
+        input.allowCrossMarketplaces ??
+        new Set(rootManifest.allowCrossMarketplaceDependenciesOn ?? []),
+      marketplace: input.marketplace,
+      name: input.name,
+      storageRoot: input.storageRoot,
+      // dry-run：根 catalog 可能只存在于只读拉取结果里，依赖闭包同样走内存回退。
+      ...(dryRun && dryRunCatalog
+        ? {
+            manifestProvider: (marketplace: string) =>
+              marketplace === input.marketplace
+                ? dryRunCatalog.manifest
+                : loadMarketplaceManifestSync(input.storageRoot, marketplace),
+          }
+        : {}),
+    });
+    const credentialWarnings = collectManifestCredentialWarnings(rootManifest);
+
+    if (dryRun) {
+      // R4：计划阶段与真实安装共用 cacheMarketplacePlugin 的校验/版本链代码路径。
+      const dryRunState = loadInstalledPluginsSync(input.storageRoot);
+      const entries: MarketplaceInstallPlanEntry[] = [];
+      for (const pluginId of closure) {
+        const { marketplace, name } = parsePluginId(pluginId);
+        const manifest =
+          marketplace === input.marketplace
+            ? rootManifest
+            : loadMarketplaceManifestSync(input.storageRoot, marketplace);
+        if (!manifest) throw new Error(`Marketplace not found: ${marketplace}`);
+        const entry = manifest.plugins.find((plugin) => plugin.name === name);
+        if (!entry) throw new Error(`Plugin not found: ${pluginId}`);
+        const planned = await cacheMarketplacePlugin({
+          dryRun: true,
+          entry,
+          marketplace,
+          signal: input.signal,
+          scope: input.scope ?? "user",
+          state: dryRunState,
+          storageRoot: input.storageRoot,
+        });
+        entries.push({
+          action: planned.planAction,
+          pluginId,
+          plannedVersion: planned.record.version,
+          versionProvenance: planned.versionProvenance,
+          plannedCacheDir: planned.record.installPath,
+          validation: planned.warnings,
+          ...(planned.planAction === "replace" && planned.previousVersion
+            ? { previousVersion: planned.previousVersion }
+            : {}),
+        });
+      }
+      return { closure, installed: [], plan: { closure, dryRun: true, entries, marketplace: input.marketplace } };
+    }
+
+    const transaction = await beginMarketplaceInstallTransaction({ storageRoot: input.storageRoot });
+    const state = loadInstalledPluginsSync(input.storageRoot);
+    const installed: InstalledPluginRecord[] = [];
+    const activations: AtomicDirectoryActivation[] = [];
+    const warnings: PluginValidationDiagnostic[] = [...credentialWarnings];
+    let failingPluginId: string | undefined;
+    try {
+      for (const pluginId of closure) {
+        failingPluginId = pluginId;
+        const { marketplace, name } = parsePluginId(pluginId);
+        const manifest = loadMarketplaceManifestSync(input.storageRoot, marketplace);
+        if (!manifest) throw new Error(`Marketplace not found: ${marketplace}`);
+        const entry = manifest.plugins.find((plugin) => plugin.name === name);
+        if (!entry) throw new Error(`Plugin not found: ${pluginId}`);
+        warnings.push(...collectManifestCredentialWarnings(manifest));
+        const cached = await cacheMarketplacePlugin({
+          entry,
+          marketplace,
+          signal: input.signal,
+          scope: input.scope ?? "user",
+          state,
+          storageRoot: input.storageRoot,
+          transaction,
+        });
+        installed.push(cached.record);
+        warnings.push(...cached.warnings);
+        if (cached.activation) activations.push(cached.activation);
+      }
+      throwIfPluginOperationAborted(input.signal);
+      await saveInstalledPlugins(input.storageRoot, state);
+    } catch (error) {
+      // 第一层：既有目录级 activation 回滚（backup rename 语义不变）。
+      let rollbackError: unknown;
+      for (const activation of activations.reverse()) {
+        try {
+          await activation.rollback();
+        } catch (currentRollbackError) {
+          rollbackError ??= currentRollbackError;
+        }
+      }
+      // 第二层：事务恢复注册表原文、核对目标快照；回滚失败 fail-loud（spec R3）。
+      await transaction.rollback({
+        error: appendPluginSourceCleanupError(error, rollbackError),
+        ...(failingPluginId ? { pluginId: failingPluginId } : {}),
+        stage: "install",
+      });
+    }
+    transaction.finalize();
+    for (const activation of activations) await activation.finalize();
+    return {
+      closure,
+      installed,
+      ...(warnings.length > 0 ? { warnings } : {}),
+    };
+  } finally {
+    if (dryRunCatalog) {
+      await cleanupPluginSourceBestEffort(dryRunCatalog.cleanup);
+    }
   }
-  for (const activation of activations) await activation.finalize();
-  return { closure, installed };
+}
+
+/**
+ * dry-run 的只读目录获取（spec R4）：绝不写盘。磁盘没有 catalog 且 known record
+ * 存在时按其 source persist:false 拉取；官方 id 的别名归一与受信任刷新链同语义。
+ */
+async function ensureMarketplaceManifestForDryRun(input: {
+  marketplace: string;
+  signal?: AbortSignal;
+  storageRoot: string;
+}): Promise<{ cleanup?: () => Promise<void>; manifest: PluginMarketplaceManifest }> {
+  const existing = loadMarketplaceManifestSync(input.storageRoot, input.marketplace);
+  if (existing) return { manifest: existing };
+  const record = loadKnownMarketplacesSync(input.storageRoot).find(
+    (item) => item.id === input.marketplace,
+  );
+  if (!record) throw new Error(`Marketplace not found: ${input.marketplace}`);
+  const loaded = await loadMarketplaceFromSource(record.source, input.storageRoot, {
+    persist: false,
+    signal: input.signal,
+  });
+  if (record.id === ACODE_OFFICIAL_PLUGIN_MARKETPLACE) {
+    const canonicalId = resolveOfficialMarketplaceAliasCanonicalId(loaded.manifest.name);
+    if (canonicalId !== undefined && canonicalId !== loaded.manifest.name) {
+      loaded.manifest = {
+        ...loaded.manifest,
+        name: canonicalId,
+        raw: { ...loaded.manifest.raw, name: canonicalId },
+      };
+    }
+  }
+  return {
+    manifest: loaded.manifest,
+    ...(loaded.cleanup ? { cleanup: loaded.cleanup } : {}),
+  };
+}
+
+/** manifest normalize 层收集的凭据剥离事实 → 安装/校验的 warning 诊断。 */
+function collectManifestCredentialWarnings(
+  manifest: PluginMarketplaceManifest,
+): PluginValidationDiagnostic[] {
+  return (manifest.credentialRedactions ?? []).map((host) => ({
+    code: "plugin_marketplace_invalid",
+    message:
+      `URL credentials for "${host}" were stripped before persistence; ` +
+      "authenticate via a git credential helper or SSH instead.",
+    severity: "warning",
+  }));
 }
 
 export async function uninstallMarketplacePlugin(input: {
@@ -752,6 +955,7 @@ export async function validateMarketplacePlugin(input: {
     });
     return diagnostics;
   }
+  diagnostics.push(...collectManifestCredentialWarnings(manifest));
 
   pushDependencyDiagnostics({
     diagnostics,
@@ -889,6 +1093,8 @@ function readComponentsAtRoot(input: {
     loadedManifest = readPluginManifestFromRoot(
       input.rootPath,
       input.entry ?? { name: "__describe__", raw: {} },
+      // strict:false 条目维持迁出前的合成 manifest 语义（缺失 manifest 不降级枚举）。
+      createManifestFromMarketplaceEntry,
     );
   } catch {
     // manifest 解析失败不致命：仍可按默认目录约定扫描组件。
@@ -962,6 +1168,8 @@ export async function validateMarketplaceSource(input: {
         severity: "warning",
       });
     }
+    // normalize 层剥离凭据的告警（spec R5-2）：校验面先行披露，安装面同源再报。
+    diagnostics.push(...collectManifestCredentialWarnings(loaded.manifest));
     const entries = input.pluginName
       ? loaded.manifest.plugins.filter((entry) => entry.name === input.pluginName)
       : loaded.manifest.plugins;
@@ -1117,7 +1325,12 @@ function resolveDependencyClosure(input: {
   marketplace: string;
   name: string;
   storageRoot: string;
+  /** dry-run 注入：catalog 未落盘时回退到只读拉取的 manifest（spec R4 零写盘）。 */
+  manifestProvider?: (marketplace: string) => PluginMarketplaceManifest | null;
 }): string[] {
+  const loadManifest =
+    input.manifestProvider ??
+    ((marketplace: string) => loadMarketplaceManifestSync(input.storageRoot, marketplace));
   const rootId = `${input.name}@${input.marketplace}`;
   const closure: string[] = [];
   const visiting: string[] = [];
@@ -1134,7 +1347,7 @@ function resolveDependencyClosure(input: {
       throw new Error(`Plugin dependency cycle: ${[...visiting, pluginId].join(" -> ")}`);
     }
     if (visited.has(pluginId)) return;
-    const manifest = loadMarketplaceManifestSync(input.storageRoot, marketplace);
+    const manifest = loadManifest(marketplace);
     if (!manifest) throw new Error(`Marketplace not found for dependency: ${marketplace}`);
     const entry = manifest.plugins.find((plugin) => plugin.name === name);
     if (!entry) throw new Error(`Dependency not found: ${pluginId} required by ${requiredBy}`);
@@ -1158,8 +1371,13 @@ async function cacheMarketplacePlugin(input: {
   scope: "user" | "workspace";
   state: InstalledPluginsState;
   storageRoot: string;
+  /** 真实安装传入：目标目录激活前先做事务快照（spec R3）。 */
+  transaction?: MarketplaceInstallTransaction;
+  /** spec R4：只校验+出计划，不激活目录、不改 state。 */
+  dryRun?: boolean;
 }): Promise<CachedMarketplacePluginResult> {
   throwIfPluginOperationAborted(input.signal);
+  const pluginId = `${input.entry.name}@${input.marketplace}`;
   const sourceRoot = await resolvePluginSourceRoot({
     entry: input.entry,
     marketplace: input.marketplace,
@@ -1167,6 +1385,8 @@ async function cacheMarketplacePlugin(input: {
     storageRoot: input.storageRoot,
   });
   let version: string;
+  let versionProvenance: PluginInstallVersionProvenance;
+  let gateWarnings: PluginValidationDiagnostic[];
   let target: string;
   let activation: AtomicDirectoryActivation | undefined;
   try {
@@ -1176,13 +1396,51 @@ async function cacheMarketplacePlugin(input: {
     if (isZipPluginUrlSource(input.entry.source)) {
       assertZipPluginInstallRoot(sourceRoot.path, input.entry, input.marketplace);
     }
-    // 缓存目录的版本段与安装记录的 version 不能取自 marketplace 条目的
-    // version 字段：git/url 源插件的条目通常不带 version，取了也只会兜底成
-    // "0.0.0"，导致 Root path 落到 .../<name>/0.0.0；而 UI 展示读的是插件自带 plugin.json 里的
-    // 真实版本，两者割裂。因此在 clone/拷贝后的源根目录上按加载器同样的规则解析真实
-    // 版本（详见 resolveInstalledPluginVersion），让缓存路径段与安装记录、UI 展示版本一致。
-    version = resolveInstalledPluginVersion(sourceRoot.path, input.entry);
+    // R1 装前 validate 门：阻断诊断（manifest/声明路径/MCP schema/可执行/版本安全）
+    // → 拒装，此时尚未触碰任何持久化状态（spec R1 零副作用）。
+    const gate = validatePluginForInstall({
+      entry: input.entry,
+      marketplace: input.marketplace,
+      rootPath: sourceRoot.path,
+      storageRoot: input.storageRoot,
+      syntheticManifestFactory: createManifestFromMarketplaceEntry,
+    });
+    if (gate.blocking.length > 0) {
+      throw createPluginInstallValidationError(pluginId, gate.blocking);
+    }
+    version = gate.version.version;
+    versionProvenance = gate.version.provenance;
+    gateWarnings = gate.tolerated.map(toValidationShape);
+    // 缓存目录的版本段与安装记录的 version 来自 R2 版本解析链（详见
+    // resolvePluginInstallVersionChain），让缓存路径段与安装记录、UI 展示版本一致。
     target = getPluginCacheDir(input.storageRoot, input.marketplace, input.entry.name, version);
+    if (input.dryRun) {
+      const existingIndex = input.state.plugins.findIndex((plugin) => plugin.id === pluginId);
+      return {
+        record: {
+          id: pluginId,
+          name: input.entry.name,
+          marketplace: input.marketplace,
+          version,
+          installPath: target,
+          installedAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          scope: input.scope,
+          ...(input.entry.dependencies ? { dependencies: input.entry.dependencies } : {}),
+          ...(input.entry.source !== undefined ? { source: input.entry.source } : {}),
+        },
+        warnings: gateWarnings,
+        versionProvenance,
+        planAction: existingIndex >= 0 ? "replace" : "install",
+        ...(existingIndex >= 0
+          ? { previousVersion: input.state.plugins[existingIndex]?.version }
+          : {}),
+      };
+    }
+    // R3 事务快照：目标目录首次触碰（激活）前记录存在性与内容清单。
+    if (input.transaction) {
+      await input.transaction.snapshotTarget(target);
+    }
     // 内置 filesystem/sea 插件的 cachePath 即缓存目录本身，源根目录可能与 target 相同；
     // 此时无需（也不能）先 rm 再自我拷贝，否则会把源删掉。
     if (resolve(sourceRoot.path) !== resolve(target)) {
@@ -1220,6 +1478,8 @@ async function cacheMarketplacePlugin(input: {
     ...(activation ? { cacheTransactionId: activation.transactionId } : {}),
   };
   const existingIndex = input.state.plugins.findIndex((plugin) => plugin.id === record.id);
+  // 升级语义（dry-run 计划与真实安装共用）：先记旧版本，再覆写 state。
+  const previousVersion = existingIndex >= 0 ? input.state.plugins[existingIndex]?.version : undefined;
   if (existingIndex >= 0) {
     const { cacheTransactionId: _previousCacheTransactionId, ...previousRecord } =
       input.state.plugins[existingIndex] ?? record;
@@ -1231,7 +1491,14 @@ async function cacheMarketplacePlugin(input: {
   } else {
     input.state.plugins.push(record);
   }
-  return { ...(activation ? { activation } : {}), record };
+  return {
+    ...(activation ? { activation } : {}),
+    record,
+    warnings: gateWarnings,
+    versionProvenance,
+    planAction: existingIndex >= 0 ? "replace" : "install",
+    ...(previousVersion !== undefined ? { previousVersion } : {}),
+  };
 }
 
 async function resolvePluginSourceRoot(input: {
@@ -1356,16 +1623,9 @@ export function readPluginSourceSha(source: unknown): string | undefined {
   return readPluginSourceIdentityPin(source);
 }
 
-export function readPluginSourceIdentityPin(source: unknown): string | undefined {
-  if (!isRecord(source)) return undefined;
-  const zipSha256 = readZipPluginSourceSha256(source);
-  if (zipSha256) return zipSha256;
-  if (typeof source.sha === "string") return source.sha;
-
-  // 兼容旧版及第三方 marketplace 的 source identity 写法。
-  if (typeof source.commit === "string") return source.commit;
-  return undefined;
-}
+// 源身份锚点解析已迁至 install-validation.ts（装前 validate 门/版本链同文件），
+// 公共导出保持不变。
+export { readPluginSourceIdentityPin } from "./install-validation.js";
 
 function readRequiredZipPluginSourceSha256(source: Record<string, unknown>): string {
   if (typeof source.sha256 === "string") return source.sha256;
@@ -1449,6 +1709,14 @@ function throwIfRepositoryPluginSourcePolicyViolated(input: {
   source: unknown;
   url: string;
 }): void {
+  // 元字符黑名单（specs/plugin-install-transactions.md R5-3）：url/ref 都会进入
+  // execFile 的 git 参数数组；纵深防御先于 host/pin 判定。
+  const metacharViolation =
+    describeShellMetacharViolation(input.url, "git source url") ??
+    (input.ref !== undefined ? describeShellMetacharViolation(input.ref, "git source ref") : null);
+  if (metacharViolation) {
+    throw createPluginSourcePolicyError(input.url, metacharViolation);
+  }
   const violation = describePluginRepositorySourcePolicyViolation({
     ...(input.ref !== undefined ? { ref: input.ref } : {}),
     ...(input.sha !== undefined ? { sha: input.sha } : {}),
@@ -1545,7 +1813,7 @@ function assertZipPluginInstallRoot(
   entry: PluginMarketplaceEntry,
   marketplace: string,
 ): void {
-  const loaded = readPluginManifestFromRoot(rootPath, entry);
+  const loaded = readPluginManifestFromRoot(rootPath, entry, createManifestFromMarketplaceEntry);
   const pluginId = `${entry.name}@${marketplace}`;
   if (!loaded) {
     throw new Error(`Plugin manifest not found: ${pluginId}`);
@@ -1694,6 +1962,12 @@ async function resolveRepositoryMarketplaceSource(
   sparsePaths: string[] | undefined,
   signal?: AbortSignal,
 ): Promise<ResolvedPluginSourceRoot> {
+  // 市场 git 源规格门（specs/plugin-install-transactions.md R5-1/R5-3）：host 白名单
+  // （github/gitlab/bitbucket/codeberg/sourcehut）+ 元字符黑名单。这是 github/git 两类
+  // 市场源的统一物化上游，trusted 内部刷新链复用 record.source 时同样过门——历史遗留
+  // 的非白名单市场刷新转为显式失败（fail-closed，与插件源门同取向）。
+  const violation = describeMarketplaceGitSourceSpecViolation({ url, ref });
+  if (violation) throw createMarketplaceSourcePolicyError(url, violation);
   // sparsePaths 是既有 MarketplaceSource 契约。Archive 需要先下载整仓，
   // 会让原本能 sparse clone 的大仓库因下载上限失败；在 Archive 尚未实现等价投影前，
   // 显式保留系统 Git 的 sparse checkout 路由。
@@ -1853,6 +2127,13 @@ async function stageMarketplaceDirectoryPlugins(
   return activateDirectoryAtomically({
     authorityPath: join(storageRoot, KNOWN_MARKETPLACES_FILE),
     prepare: async (stagedPath) => {
+      // 目录副本可能同时携带 .claude-plugin/marketplace.json 与根 marketplace.json；
+      // 两处都用规范化（含凭据剥离）后的 manifest 覆写，避免 cp 进来的原始清单把
+      // URL 凭据带进持久化副本（spec R5-2）。
+      const claudeManifestPath = join(stagedPath, CLAUDE_MARKETPLACE_FILE);
+      if (fileExists(claudeManifestPath)) {
+        await writeJsonFile(claudeManifestPath, manifest);
+      }
       await writeJsonFile(join(stagedPath, MARKETPLACE_FILE), manifest);
     },
     signal,
@@ -2067,33 +2348,48 @@ function normalizeMarketplaceManifest(
 ): PluginMarketplaceManifest {
   if (isPluginMarketplaceManifest(value)) return value;
   const metadata = isRecord(value.metadata) ? value.metadata : {};
+  const redactedCredentialHosts = new Set<string>();
   const plugins = Array.isArray(value.plugins)
     ? value.plugins
         .filter(isRecord)
         .map((entry): PluginMarketplaceEntry | null => {
           const name = typeof entry.name === "string" ? entry.name.trim() : "";
           if (name.length === 0) return null;
-          const dependencies = Array.isArray(entry.dependencies)
-            ? entry.dependencies
+          // 凭据剥离在 normalize 单点收口（spec R5-2）：entry.source 与 raw 都换成
+          // 剥离后的副本，保证 marketplaces/<id>/marketplace.json 副本、安装记录
+          // source 与 git clone 入参全部无凭据；剥离幂等，刷新重放安全。
+          const sanitized = stripPluginSourceCredentials(entry);
+          for (const host of sanitized.redactedHosts) redactedCredentialHosts.add(host);
+          const sanitizedEntry = sanitized.value as Record<string, unknown>;
+          const dependencies = Array.isArray(sanitizedEntry.dependencies)
+            ? sanitizedEntry.dependencies
                 .map(normalizeDependencyRef)
                 .filter((item): item is string => item !== null)
             : undefined;
-          const tags = Array.isArray(entry.tags)
-            ? entry.tags.filter((item): item is string => typeof item === "string")
+          const tags = Array.isArray(sanitizedEntry.tags)
+            ? sanitizedEntry.tags.filter((item): item is string => typeof item === "string")
             : undefined;
-          const listing = parseEntryStoreListing(entry);
+          const listing = parseEntryStoreListing(sanitizedEntry);
           return {
             name,
-            ...(typeof entry.category === "string" ? { category: entry.category } : {}),
-            ...(typeof entry.description === "string" ? { description: entry.description } : {}),
-            ...(typeof entry.version === "string" ? { version: entry.version } : {}),
-            ...(entry.source !== undefined ? { source: entry.source } : {}),
-            ...(typeof entry.cachePath === "string" ? { cachePath: entry.cachePath } : {}),
+            ...(typeof sanitizedEntry.category === "string"
+              ? { category: sanitizedEntry.category }
+              : {}),
+            ...(typeof sanitizedEntry.description === "string"
+              ? { description: sanitizedEntry.description }
+              : {}),
+            ...(typeof sanitizedEntry.version === "string"
+              ? { version: sanitizedEntry.version }
+              : {}),
+            ...(sanitizedEntry.source !== undefined ? { source: sanitizedEntry.source } : {}),
+            ...(typeof sanitizedEntry.cachePath === "string"
+              ? { cachePath: sanitizedEntry.cachePath }
+              : {}),
             ...(dependencies ? { dependencies } : {}),
-            ...(typeof entry.strict === "boolean" ? { strict: entry.strict } : {}),
+            ...(typeof sanitizedEntry.strict === "boolean" ? { strict: sanitizedEntry.strict } : {}),
             ...(tags ? { tags } : {}),
             ...(listing ? { listing } : {}),
-            raw: entry,
+            raw: sanitizedEntry,
           };
         })
         .filter((entry): entry is PluginMarketplaceEntry => entry !== null)
@@ -2122,7 +2418,10 @@ function normalizeMarketplaceManifest(
     ...(allowCrossMarketplaceDependenciesOn ? { allowCrossMarketplaceDependenciesOn } : {}),
     ...(typeof metadata.pluginRoot === "string" ? { pluginRoot: metadata.pluginRoot } : {}),
     ...(featured && featured.length > 0 ? { featured } : {}),
-    raw: value,
+    ...(redactedCredentialHosts.size > 0 ? { credentialRedactions: [...redactedCredentialHosts] } : {}),
+    // manifest 级 raw 同样剥离（stageMarketplace* 持久化的 marketplaces/<id>/marketplace.json
+    // 副本写的就是它；stripPluginSourceCredentials 幂等，entries 已剥离的部分原样返回）。
+    raw: stripPluginSourceCredentials(value).value as Record<string, unknown>,
   };
 }
 
@@ -2231,207 +2530,10 @@ function findMarketplaceManifestPath(rootPath: string, explicitPath?: string): s
   return null;
 }
 
-function findPluginManifestPath(rootPath: string): string | null {
-  // 候选集与优先级见 specs/plugin-foreign-manifest-compat.md（所有发现点必须一致）。
-  for (const candidate of [
-    ACODE_MANIFEST_PATH,
-    CLAUDE_MANIFEST_PATH,
-    CODEX_MANIFEST_PATH,
-    CURSOR_MANIFEST_PATH,
-  ]) {
-    const path = join(rootPath, candidate);
-    if (fileExists(path)) return path;
-  }
-  return null;
-}
-
-// 缓存路径段与安装记录的版本来源。优先取插件落盘 plugin.json 里的真实
-// version（与加载器 readPluginManifestFromRoot/index.ts 展示版本同源），缺失时才回退到 marketplace
-// 条目的 version，最后兜底 DEFAULT_VERSION。读取失败保持宽松回退，校验交给 validateMarketplacePlugin。
-function resolveInstalledPluginVersion(rootPath: string, entry: PluginMarketplaceEntry): string {
-  const manifestPath = findPluginManifestPath(rootPath);
-  if (manifestPath) {
-    try {
-      const parsed = JSON.parse(readFileSync(manifestPath, "utf8")) as unknown;
-      if (
-        isRecord(parsed) &&
-        typeof parsed.version === "string" &&
-        parsed.version.trim().length > 0
-      ) {
-        return parsed.version;
-      }
-    } catch {
-      // 落到下方回退：manifest 不可读/非法时不应中断安装，版本以条目或默认值兜底。
-    }
-  }
-  return entry.version ?? DEFAULT_VERSION;
-}
-
-function readPluginManifestFromRoot(
-  rootPath: string,
-  entry: PluginMarketplaceEntry,
-): { manifest: PluginManifest; manifestPath?: string } | null {
-  const manifestPath = findPluginManifestPath(rootPath);
-  if (manifestPath) {
-    const parsed = JSON.parse(readFileSync(manifestPath, "utf8")) as unknown;
-    if (!isRecord(parsed)) throw new Error("Plugin manifest must be a JSON object");
-    const name = typeof parsed.name === "string" ? parsed.name.trim() : "";
-    if (!PLUGIN_NAME_PATTERN.test(name)) throw new Error(`Invalid plugin name: ${name}`);
-    return {
-      manifest: {
-        ...parsed,
-        name,
-        version: typeof parsed.version === "string" ? parsed.version : DEFAULT_VERSION,
-      } as PluginManifest,
-      manifestPath,
-    };
-  }
-  if (entry.strict === false) {
-    const rawManifest = createManifestFromMarketplaceEntry(entry);
-    return {
-      manifest: rawManifest as unknown as PluginManifest,
-    };
-  }
-  return null;
-}
-
-function validatePluginRoot(input: {
-  entry: PluginMarketplaceEntry;
-  marketplace: string;
-  rootPath: string;
-  storageRoot: string;
-}): PluginValidationDiagnostic[] {
-  const diagnostics: PluginValidationDiagnostic[] = [];
-  const pluginId = `${input.entry.name}@${input.marketplace}`;
-  let loadedManifest: { manifest: PluginManifest; manifestPath?: string } | null = null;
-  try {
-    loadedManifest = readPluginManifestFromRoot(input.rootPath, input.entry);
-  } catch (error) {
-    diagnostics.push({
-      code: "plugin_manifest_invalid",
-      message: error instanceof Error ? error.message : String(error),
-      path: input.rootPath,
-      pluginId,
-      severity: "error",
-    });
-    return diagnostics;
-  }
-
-  if (!loadedManifest) {
-    diagnostics.push({
-      code: "plugin_manifest_not_found",
-      message: `Plugin manifest not found: ${pluginId}`,
-      path: input.rootPath,
-      pluginId,
-      severity: "error",
-    });
-    return diagnostics;
-  }
-
-  const manifestPath = loadedManifest.manifestPath ?? input.rootPath;
-  if (loadedManifest.manifest.name !== input.entry.name) {
-    diagnostics.push({
-      code: "plugin_manifest_invalid",
-      message: `Plugin manifest name '${loadedManifest.manifest.name}' does not match marketplace entry '${input.entry.name}'`,
-      path: manifestPath,
-      pluginId,
-      severity: "error",
-    });
-  }
-  pushManifestCompatibilityDiagnostics({
-    diagnostics,
-    manifest: loadedManifest.manifest,
-    manifestPath,
-    pluginId,
-    source: "cache",
-  });
-  pushMcpValidationDiagnostics({
-    diagnostics,
-    manifest: loadedManifest.manifest,
-    manifestPath,
-    marketplace: input.marketplace,
-    pluginId,
-    rootPath: input.rootPath,
-    storageRoot: input.storageRoot,
-  });
-  return diagnostics;
-}
-
-function pushManifestCompatibilityDiagnostics(input: {
-  diagnostics: PluginValidationDiagnostic[];
-  manifest: PluginManifest;
-  manifestPath: string;
-  pluginId: string;
-  source: "cache" | "inline" | "official";
-}): void {
-  for (const key of UNSUPPORTED_MANIFEST_FIELDS) {
-    if (key in input.manifest) {
-      input.diagnostics.push({
-        code: "plugin_unsupported_component",
-        message: `Plugin component is diagnostic-only in this ACode runtime: ${key}`,
-        path: input.manifestPath,
-        pluginId: input.pluginId,
-        severity: "warning",
-      });
-    }
-  }
-  for (const [key, option] of Object.entries(input.manifest.userConfig ?? {})) {
-    if (option.required === true && option.default === undefined) {
-      input.diagnostics.push({
-        code: "plugin_variable_missing",
-        message: `Required plugin userConfig has no default and must be configured: ${key}`,
-        path: input.manifestPath,
-        pluginId: input.pluginId,
-        severity: "warning",
-      });
-    }
-  }
-  if (containsMcpBundleSource(input.manifest.mcpServers)) {
-    input.diagnostics.push({
-      code: "plugin_marketplace_source_unsupported",
-      message: "MCPB/DXT plugin bundles are recognized but not supported in this runtime",
-      path: input.manifestPath,
-      pluginId: input.pluginId,
-      severity: "warning",
-    });
-  }
-}
-
-function pushMcpValidationDiagnostics(input: {
-  diagnostics: PluginValidationDiagnostic[];
-  manifest: PluginManifest;
-  manifestPath: string;
-  marketplace: string;
-  pluginId: string;
-  rootPath: string;
-  storageRoot: string;
-}): void {
-  const diagnostics = input.diagnostics as PluginDiagnostic[];
-  const loaded = {
-    id: input.pluginId,
-    manifest: input.manifest,
-    manifestPath: input.manifestPath,
-    marketplace: input.marketplace,
-    rootPath: input.rootPath,
-    source: "cache" as const,
-  };
-  const definitions = loadPluginMcpServerDefinitions({ diagnostics, loaded });
-  resolvePluginMcpServers({
-    dataPath: join(input.storageRoot, "data", sanitizePluginId(input.pluginId)),
-    definitions,
-    diagnostics,
-    env: {},
-    loaded,
-    options: {},
-    workingDirectory: process.cwd(),
-  });
-}
-
-function containsMcpBundleSource(value: unknown): boolean {
-  if (typeof value === "string") return value.endsWith(".mcpb") || value.endsWith(".dxt");
-  if (Array.isArray(value)) return value.some(containsMcpBundleSource);
-  return false;
-}
+// manifest 读取/校验助手群（findPluginManifestPath / readPluginManifestFromRoot /
+// validatePluginRoot / pushManifestCompatibilityDiagnostics / pushMcpValidationDiagnostics /
+// containsMcpBundleSource）已迁至 install-validation.ts；R2 版本解析链取代了原
+// resolveInstalledPluginVersion（plugin.json → package.json → catalog → sha[:7] → 0.0.0）。
 
 function validateMarketplaceEntryShape(
   entry: PluginMarketplaceEntry,
@@ -2672,6 +2774,17 @@ function pushDependencyDiagnostics(input: {
   } catch (error) {
     input.diagnostics.push(toValidationDiagnostic(error, `${input.name}@${input.marketplace}`));
   }
+}
+
+/** PluginDiagnostic 与 PluginValidationDiagnostic 字段同形；安装门的容忍诊断直接换型。 */
+function toValidationShape(diagnostic: PluginDiagnostic): PluginValidationDiagnostic {
+  return {
+    code: diagnostic.code,
+    message: diagnostic.message,
+    ...(diagnostic.path !== undefined ? { path: diagnostic.path } : {}),
+    ...(diagnostic.pluginId !== undefined ? { pluginId: diagnostic.pluginId } : {}),
+    severity: diagnostic.severity,
+  };
 }
 
 function toValidationDiagnostic(error: unknown, pluginId?: string): PluginValidationDiagnostic {

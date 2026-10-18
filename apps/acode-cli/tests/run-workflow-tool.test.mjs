@@ -359,6 +359,11 @@ test("P1 SWF-08: resume 在读取脚本前拒绝 foreign owner，且不触碰 ru
   const sessionStore = {
     createScriptWorkflowActivity: () => undefined,
     createScriptWorkflowRun: () => undefined,
+    // isScriptWorkflowStore 探测覆盖完整 port 读面（P2 修复）：本测试只关心 owner gate
+    // 次序，读面成员补空实现让能力探测放行。
+    listScriptWorkflowRuns: async () => [],
+    listScriptWorkflowDefinitions: async () => [],
+    hasScriptWorkflowUsageIncomplete: async () => false,
     getScriptWorkflowRun: async () => ({
       cwd: "/workspace/other",
       id: "wf_foreign1",
@@ -414,6 +419,10 @@ test("P1 SWF-08: resume 与 scriptPath 的组合先过 owner gate，且不会走
   const sessionStore = {
     createScriptWorkflowActivity: () => undefined,
     createScriptWorkflowRun: () => undefined,
+    // 同上：补齐完整 port 读面探测成员，本测试只关心 owner gate 次序。
+    listScriptWorkflowRuns: async () => [],
+    listScriptWorkflowDefinitions: async () => [],
+    hasScriptWorkflowUsageIncomplete: async () => false,
     getScriptWorkflowRun: async () => ({
       cwd: "/workspace/other",
       id: "wf_foreign_combo",

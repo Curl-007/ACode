@@ -140,6 +140,17 @@ export interface ACodeProtocolAgentServerContext {
      * 工作流工具面、`/workflow` 与 dynamic-workflows 技能一律不露出。
      */
     dynamicWorkflowEnabled: boolean;
+    /**
+     * host 同步的脚本工作流产品开关（spec script-workflow-management-surface.md §4.5）。
+     * 与 dynamicWorkflowEnabled 两点刻意不同：**缺省 undefined（缺席 = 显示 /ultracode，
+     * fail-open 到本机缺省档 onDemand）**——本 flag 只下架 RunWorkflow 一个工具，缺席
+     * 译成「关」会把 TUI/无 v4 通路的宿主的默认目录砍掉；同步时机是 **v4 createSession**
+     * （Host 信封显式带 true/false），不是 legacy 的 updateDynamicWorkflowPolicy 推送——
+     * script 没有会话中途改档通道（spec §4.5 末行），档位本来就在下次会话创建时生效，
+     * 进程缓存在同一时机刷新即可。只影响目录/快照的**展示**；会话的工具面与命令展开
+     * 由该会话 runtimeConfig 里的显式布尔裁决，不回读这里。
+     */
+    scriptWorkflowEnabled?: boolean;
   };
   // 竖切：v4 conversation 通道（订阅/帧/命令），与旧 session/* 方法并存。
   // 构造顺序问题（gateway 闭包持有 context）用可选字段收口，server 构造完立即赋值。

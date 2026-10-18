@@ -1,4 +1,11 @@
-export type SkillScope = "workspace" | "user" | "plugin";
+/**
+ * shared 的 scope 承担 UI 展示分组语义。`bundled` 是随 CLI 内容包分发的只读技能
+ * （设置页「内置技能」分组），与 CLI contracts 的映射：
+ * shared `scope: "bundled"` ≡ contracts `scope: "system"` + `source: "bundled"`
+ * （apps/acode-cli/packages/contracts/src/skills/index.ts）。shared 侧不引入 `"system"`，
+ * 两套枚举收敛时按此登记对齐。specs/skills-bundled-visibility-and-official-cache-authority.md I2。
+ */
+export type SkillScope = "workspace" | "user" | "plugin" | "bundled";
 
 export interface SkillMetadata {
   slug?: string;

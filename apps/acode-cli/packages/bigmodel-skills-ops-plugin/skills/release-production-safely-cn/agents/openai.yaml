@@ -1,0 +1,6 @@
+interface:
+  display_name: "生产发布与回滚方案"
+  short_description: "设计分批发布、闸门、回滚和变更后验证，控制生产风险"
+  default_prompt: "使用 $release-production-safely-cn 完成这项任务。"
+policy:
+  allow_implicit_invocation: true

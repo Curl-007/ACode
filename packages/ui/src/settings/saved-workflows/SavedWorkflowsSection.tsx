@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Plus } from "lucide-react";
 import {
   TID_WORKFLOWS_CREATE_VIA_CHAT,
@@ -17,7 +17,6 @@ import {
   type AutomationWorkspaceOption,
 } from "@/settings/automationWorkspaceOptions.js";
 import { AutomationRefreshIcon } from "@/settings/AutomationDesignPrimitives.js";
-import { SETTINGS_FRAME_CONTENT_CLASSNAME } from "@/settings/SettingsPageParts.js";
 import { buildSavedWorkflowCreatePrompt } from "@/settings/saved-workflows/savedWorkflowLaunchPrompt.js";
 import { SavedWorkflowProjectGroup } from "@/settings/saved-workflows/SavedWorkflowProjectGroup.js";
 import { SavedWorkflowGlobalGroup } from "@/settings/saved-workflows/SavedWorkflowGlobalGroup.js";
@@ -42,8 +41,6 @@ export type SavedWorkflowsOpenTarget =
   | { scope: "global"; name: string };
 
 interface SavedWorkflowsSectionProps {
-  /** 页头（标题切换 + 副标题）；只在列表态渲染，详情页与定时任务编辑页一样独占整页。 */
-  header?: ReactNode;
   /** 活动 workspace：只用来打「当前」标记和作全局空态的创建目标。 */
   workspacePath?: string | null;
   workspaceIdentity?: string;
@@ -78,9 +75,12 @@ function resolveOptionKey(option: AutomationWorkspaceOption): string {
 /**
  * 已保存工作流中枢：顶部固定「全局」组，
  * 其下按已打开项目分组。页只持有刷新计数器、每组的加载态、详情态；「项目」= `buildAutomationWorkspaceOptions`。
+ *
+ * 根节点**不带** SETTINGS_FRAME_CONTENT_CLASSNAME / data-automations-content：唯一的
+ * frame 容器由 AutomationsSection 的 workflow tab 提供，这里再包一层会双重居中/内缩，
+ * 与自动化 tab 不对齐（评审 P2）；页头也由该层渲染，本组件只画自己的小节标题行。
  */
 export function SavedWorkflowsSection({
-  header,
   workspacePath,
   workspaceIdentity,
   onNavigateToLaunchedRun,
@@ -253,10 +253,8 @@ export function SavedWorkflowsSection({
   );
 
   return (
-    <div data-automations-content className={cn(SETTINGS_FRAME_CONTENT_CLASSNAME, "flex flex-col")}>
-      {header}
-
-      <div className="mt-8 flex items-center justify-between">
+    <div className="flex flex-col">
+      <div className="flex items-center justify-between">
         <h2 className="text-ui-base font-medium leading-5 text-foreground-subtle">
           {intl.formatMessage({ id: "workflows.hub.sectionTitle" })}
           {totalCount > 0 ? (

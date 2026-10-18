@@ -1,0 +1,6 @@
+interface:
+  display_name: "业务预测与方案测算"
+  short_description: "搭建业务驱动模型，完成预测、情景、敏感性分析和目标反推"
+  default_prompt: "使用 $model-business-scenarios-cn 测算不同假设下的结果和决策阈值。"
+policy:
+  allow_implicit_invocation: true

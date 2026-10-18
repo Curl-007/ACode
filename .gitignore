@@ -74,5 +74,9 @@ packages/desktop/.e2e-network-capture/
 # 仓库树内的 ACode 运行时数据目录（工作流 run 脚本、会话产物等）。knip 已按
 # **/.acode/** 忽略；根 .acode/ 此前未被 git 忽略，存在把本地用户数据误提交的风险。
 .acode/
+# AgentTeams 多智能体协作的本地产物（团队 charter、成员邮箱、内部评审报告），
+# 属会话元数据而非产品代码；此前未被忽略，「提交全部改动」会把 34+ 个内部文件带入库
+#（2026-10-18 深度 review 发现）。报告如需留档由人工显式挑选入库。
+.agent-teams/
 # scripts/dependency-graph.mjs 的生成产物，可再生，不入库。
 dependency-graph.mmd

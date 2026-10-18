@@ -28,11 +28,7 @@ export type {
 } from "./protocol.js";
 export type { WorkspacePurpose } from "./workspacePurpose.js";
 // 桌面端 AppSettings 持久化形状与 onboarding 职业闭集（protocol.ts 400 行闸拆分产物）。
-export type {
-  DesktopBootPlaceholderSettings,
-  DesktopBootPlaceholderShape,
-  DesktopWindowSizeSettings,
-} from "./desktopAppSettings.js";
+export type { DesktopWindowSizeSettings } from "./desktopAppSettings.js";
 export type { AppSettingsOccupation } from "./appSettingsOccupation.js";
 export { DEFAULT_LOCALE } from "./protocol.js";
 export { ACODE_VERSION, ACODE_COMMIT, ACODE_BUILD_TIME } from "./version.js";
@@ -121,6 +117,9 @@ export * from "./runtimeEnv.js";
 export * from "./git-invocation-env.js";
 export * from "./sensitive-env-guard.js";
 export * from "./dynamic-workflow-feature.js";
+// 脚本工作流三档本机产品开关（apps/acode-cli/specs/script-workflow-management-surface.md §3）：
+// 刻意独立文件，不与 dynamic-workflow-feature 共用词表文件。
+export * from "./script-workflow-feature.js";
 export * from "./markdown-artifact-images.js";
 export * from "./serviceAuthority.js";
 export * from "./server-remote.js";
@@ -247,6 +246,7 @@ export * from "./model-selection.js";
 export * from "./legacy-model-provider-identity.js";
 export * from "./official-glm-model-id.js";
 export * from "./skills-types.js";
+export * from "./plugin-official-marketplace-partition.js";
 export * from "./skill-sync.js";
 export * from "./mcp-sync.js";
 export * from "./plugin-sync.js";
@@ -258,6 +258,8 @@ export * from "./settings-errors.js";
 export * from "./app-runtime-preferences.js";
 export * from "./command-types.js";
 export * from "./plugin-marketplaces.js";
+// 官方插件 cache 版本目录判据单点（M1 规则 V2/V3 择优与 D2 清理「更旧」判定共享）。
+export * from "./plugin-official-cache-version.js";
 export * from "./lineChangeStat.js";
 export * from "./process-names.js";
 export * from "./mcp.js";

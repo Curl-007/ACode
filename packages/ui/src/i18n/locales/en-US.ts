@@ -188,6 +188,7 @@ const enUS: Record<string, string> = {
   "common.refresh": "Refresh",
   "common.open": "Open",
   "common.save": "Save",
+  "common.apply": "Apply",
   "common.saving": "Saving...",
   "common.delete": "Delete",
   "settings.resourceGroup.item.one": "{count} item",
@@ -2113,9 +2114,6 @@ const enUS: Record<string, string> = {
   "settings.keepAwakeWhileRunning": "Keep computer running",
   "settings.keepAwakeWhileRunningDescription":
     "Prevent the system from sleeping due to idle. You can still sleep manually or by closing the lid. Desktop only.",
-  "settings.bootPlaceholder": "Startup skeleton placeholder",
-  "settings.bootPlaceholderDescription":
-    "While the window starts, draw a lightweight placeholder from the last sampled shell skeleton so the first frame is closer to the real layout. Desktop only; applies on next launch.",
   "settings.supportBundle.title": "Support bundle",
   "settings.supportBundle.description":
     "Export a bundle of logs and diagnostics for troubleshooting. Host names, account names, URLs and credentials are withheld before anything is written.",
@@ -2712,6 +2710,10 @@ const enUS: Record<string, string> = {
   "settings.modelProvider.apiKeyConfiguredPlaceholder":
     "Configured (••••••••). Type a new value to replace it.",
   "settings.modelProvider.apiKeyDisabledHint": "Set an API key to enable this provider.",
+  "settings.modelProvider.showApiKey": "Show stored API key",
+  "settings.modelProvider.hideApiKey": "Hide API key",
+  "settings.modelProvider.apiKeyRevealFailure": "Failed to load the stored API key: {error}",
+  "settings.modelProvider.apiKeyRevealMissing": "credential entry is missing",
   "settings.modelProvider.getApiKey": "Get API key",
   "settings.modelProvider.viewUsage": "View usage",
   "settings.modelProvider.useSubscription": "Use subscription",
@@ -3391,6 +3393,7 @@ const enUS: Record<string, string> = {
   "settings.skills.detail.disabled": "Disabled",
   "settings.skills.scope.personal": "Personal",
   "settings.skills.scope.plugin": "Plugin",
+  "settings.skills.scope.bundled": "Built-in",
   "settings.skills.scope.workspaceFallback": "Project",
   "settings.skills.diagnostics.summary":
     "Skill diagnostics: {errorCount} error(s), {warningCount} warning(s)",
@@ -3489,6 +3492,21 @@ const enUS: Record<string, string> = {
   "settings.subagents.model.inherit": "Inherit",
   "settings.subagents.model.defaultMain": "Inherit default",
   "settings.subagents.model.select": "Select model",
+  "settings.subagents.batch.enter": "Batch edit",
+  "settings.subagents.batch.groupAction": "Set model for group",
+  "settings.subagents.batch.groupToggle": "Select all batchable subagents in this group",
+  "settings.subagents.batch.rowToggleAria": "Select {name} for batch edit",
+  "settings.subagents.batch.bar.selected": "{count} selected",
+  "settings.subagents.batch.bar.progress": "Applying {done}/{total}...",
+  "settings.subagents.batch.bar.setInherit": "Reset to inherit",
+  "settings.subagents.batch.bar.apply": "Apply",
+  "settings.subagents.batch.bar.exit": "Exit batch edit",
+  "settings.subagents.batch.result.success": "Updated {count} subagents",
+  "settings.subagents.batch.result.partial": "{succeeded} succeeded, {failed} failed",
+  "settings.subagents.batch.result.failedNames": "Failed: {names}",
+  "settings.subagents.batch.dialog.title": "Set model for multiple subagents",
+  "settings.subagents.batch.dialog.scope": 'Applies this model to {count} subagents in "{group}"',
+  "settings.subagents.batch.dialog.thoughtLevel": "Reasoning effort",
   "settings.subagents.model.main": "Main",
   "settings.subagents.model.lite": "Lite",
   "settings.subagents.permissionMode.auto": "Auto",
@@ -3530,6 +3548,7 @@ const enUS: Record<string, string> = {
   "settings.plugin.mcp.searchEmpty": "No MCP servers match your search",
   "settings.plugin.skills.emptyInstalledTitle": "No skills installed",
   "settings.plugin.skills.installed": "Installed",
+  "settings.plugin.skills.bundled": "Built-in skills",
   "settings.plugin.skills.emptyInstalledDescription":
     "Create a skill or import one from an external agent.",
   "settings.plugin.skills.newSkill": "New skill",
@@ -4158,6 +4177,14 @@ const enUS: Record<string, string> = {
   "chat.message.expand": "Expand",
   "chat.message.collapse": "Collapse",
   "chat.userInput.epilogue.label": "Workflow engine instructions",
+  // Slash command trigger echo (specs/slash-command-echo.md); zh-CN keeps the pair in sync.
+  "chat.userInput.command.triggered": "Triggered /{name}",
+  "chat.userInput.command.scope.user": "User command",
+  "chat.userInput.command.scope.project": "Project command",
+  "chat.userInput.command.scope.system": "System command",
+  "chat.userInput.command.scope.admin": "Admin command",
+  "chat.userInput.command.scope.builtin": "Built-in command",
+  "chat.userInput.command.scope.plugin": "Plugin command",
   "chat.message.bodyPreview.notice":
     "This reply is large. Showing a preview only ({previewBytes} / {fullBytes}).",
   "chat.message.bodyPreview.loadFull": "View full message",
@@ -4259,20 +4286,25 @@ const enUS: Record<string, string> = {
   "chat.usageStatusbar.turnUsage.empty": "No model facts for this turn (plain Q&A)",
   "chat.usageStatusbar.session.label": "Session total",
   "chat.usageStatusbar.session.tooltip":
-    "Cumulative usage of this window's bound session (zeros when none; never falls back). Turns/requests/code delta from turn stats.",
+    "Cumulative usage of this window's bound session (capsule hides when absent; never falls back). Turns/requests/code delta from turn stats.",
   "chat.usageStatusbar.tools.label": "Tool calls",
   "chat.usageStatusbar.tools.tooltip":
     "Local aggregation of this session's tool calls with per-tool duration and errors.",
   "chat.usageStatusbar.tools.errors": "{count} errors",
   "chat.usageStatusbar.tools.errorCount": "Errors",
+  "chat.usageStatusbar.tools.running": "{count} running",
+  "chat.usageStatusbar.tools.more": "+{count} more",
+  "chat.usageStatusbar.tools.lastError": "Last error",
+  "chat.usageStatusbar.unit.tokensPerSecond": "tok/s",
   "chat.usageStatusbar.today.label": "Today",
   "chat.usageStatusbar.today.tooltip":
     "Today's cross-session total for this workspace (never mixed across workspaces); refreshed on mount, turn completion and window focus.",
   "chat.usageStatusbar.today.turnCount": "Turns",
   "chat.usageStatusbar.today.toolCallCount": "Tool calls",
+  "chat.usageStatusbar.today.favoriteModel": "Top model",
   "chat.usageStatusbar.subagents.label": "Subagents",
   "chat.usageStatusbar.subagents.tooltip":
-    "Main vs child usage split; click to expand dispatched tasks (title + cumulative tokens + authoritative status).",
+    "Value = child subagents' cumulative tokens (main total lives in Session total); click to expand dispatched tasks (title + cumulative tokens + authoritative status).",
   "chat.usageStatusbar.subagents.main": "Main agent",
   "chat.usageStatusbar.subagents.children": "Subagents",
   "chat.usageStatusbar.subagents.running": "Running",
@@ -4283,6 +4315,8 @@ const enUS: Record<string, string> = {
   "chat.usageStatusbar.settings.label": "Usage status bar settings",
   "chat.usageStatusbar.settings.title": "Usage status bar",
   "chat.usageStatusbar.settings.rateLine": "End-of-answer rate line",
+  "chat.usageStatusbar.settings.autoHideNote":
+    "Capsules without data hide automatically; zero values are always shown.",
   "chat.usageStatusbar.detail.inputTokens": "Input tokens",
   "chat.usageStatusbar.detail.outputTokens": "Output tokens",
   "chat.usageStatusbar.detail.reasoningTokens": "Reasoning tokens",
@@ -4524,6 +4558,12 @@ const enUS: Record<string, string> = {
   "chat.toolCall.goal.label": "Goal",
   "chat.toolCall.edit.writing": "Writing",
   "chat.toolCall.edit.wrote": "Wrote",
+  // Write 流式阶段词（spec: apps/acode-cli/specs/write-tool-streaming-stat.md）。
+  "chat.toolCall.write.generating": "Generating",
+  "chat.toolCall.write.waiting": "Waiting",
+  "chat.toolCall.write.writingFile": "Writing",
+  "chat.toolCall.write.failed": "Write failed",
+  "chat.toolCall.write.stopped": "Write stopped",
   "chat.toolCall.edit.updating": "Updating",
   "chat.toolCall.edit.updated": "Updated",
   "chat.toolCall.edit.deleting": "Deleting",
@@ -4889,6 +4929,39 @@ const enUS: Record<string, string> = {
   "workflows.hub.history.note":
     'Run records come from this project\'s workflow journal and survive restarts. "Open run" returns to the chat that started it and opens the run details.',
   "workflows.hub.history.tokens": "{tokens} tokens",
+  // ---- Script workflow group (second content family of the workflow hub page; NOT
+  // interchangeable with the dwf hub above — see
+  // apps/acode-cli/specs/script-workflow-management-surface.md §7.1/§7.5) ----
+  "workflows.scriptHub.title": "Script workflows",
+  "workflows.scriptHub.description":
+    "The other workflow system: plain JavaScript scripts run by the RunWorkflow tool (/ultracode). These are NOT interchangeable with the dynamic workflows above — a script for one system will not run in the other.",
+  "workflows.scriptHub.scripts": "Persisted scripts",
+  "workflows.scriptHub.scriptsEmpty": "No persisted scripts yet.",
+  "workflows.scriptHub.runs": "Run history",
+  "workflows.scriptHub.empty":
+    'No script workflow runs in this project yet. Ask for "ultracode" in a chat to launch one.',
+  "workflows.scriptHub.truncated": "Showing the most recent {limit} entries.",
+  "workflows.scriptHub.loadError": "Couldn't load script workflow data.",
+  "workflows.scriptHub.retry": "Retry",
+  "workflows.scriptHub.noSession": "Open a chat session to view this project's run history.",
+  "workflows.scriptHub.gatedBadge": "Tool disabled",
+  "workflows.scriptHub.gated":
+    "RunWorkflow is currently disabled in settings — history stays viewable; re-enable it in settings.",
+  "workflows.scriptHub.stopReason.user": "Stopped manually",
+  "workflows.scriptHub.stopReason.processExited":
+    "Interrupted: the owning process exited before the run settled",
+  "workflows.scriptHub.usageIncomplete": "tokens: ≥{known} (ledger incomplete)",
+  "workflows.scriptHub.stats": "{agentCalls} agents · {toolCalls} tools · {tokens}",
+  "workflows.scriptHub.openOriginSession": "View originating session",
+  "workflows.scriptHub.status.pending": "Pending",
+  "workflows.scriptHub.status.running": "Running",
+  "workflows.scriptHub.status.paused": "Paused",
+  "workflows.scriptHub.status.cancelled": "Cancelled",
+  "workflows.scriptHub.status.interrupted": "Interrupted",
+  "workflows.scriptHub.scope.builtin": "Predefined",
+  "workflows.scriptHub.scope.explicit": "Explicit",
+  "workflows.scriptHub.scope.project": "Project",
+  "workflows.scriptHub.scope.user": "User",
   "workflows.hub.artifacts.latest": "Latest artifacts",
   "workflows.hub.reason.invalid_name": "Invalid name",
   "workflows.hub.reason.not_found": "File not found",
@@ -6074,7 +6147,7 @@ const enUS: Record<string, string> = {
   // ---- Dynamic workflow trigger policy (aligns dynamicWorkflowAvailabilityStore) ----
   "settings.dynamicWorkflow.title": "Dynamic workflows",
   "settings.dynamicWorkflow.description":
-    "When the dynamic workflow authoring tools (CreateWorkflow and friends) are offered to the agent.",
+    "When the dynamic workflow authoring tools (CreateWorkflow and friends) are offered to the agent. The separate card below controls the other system: script workflows (RunWorkflow, the /ultracode orchestration system).",
   "settings.dynamicWorkflow.option.disabled": "Off",
   "settings.dynamicWorkflow.option.disabled.description":
     "Never offer dynamic workflow tools; running workflows are unaffected.",
@@ -6086,6 +6159,23 @@ const enUS: Record<string, string> = {
     "Offer the tools in every session without loading the skill.",
   "settings.dynamicWorkflow.defaultTag": "Default",
   "settings.dynamicWorkflow.saveError": "Could not save the dynamic workflow setting.",
+  // ---- Script workflow modes (RunWorkflow / /ultracode, local product switch;
+  // an independent gate from dynamicWorkflow — see
+  // apps/acode-cli/specs/script-workflow-management-surface.md) ----
+  "settings.scriptWorkflow.title": "Script workflows",
+  "settings.scriptWorkflow.description":
+    "Controls the RunWorkflow tool (the /ultracode orchestration system). Runs are recorded per project; records stay viewable while disabled.",
+  "settings.scriptWorkflow.option.disabled": "Disabled",
+  "settings.scriptWorkflow.option.disabled.description":
+    "The RunWorkflow tool is not registered; /ultracode is unavailable. Existing runs finish on their own.",
+  "settings.scriptWorkflow.option.onDemand": "On explicit request",
+  "settings.scriptWorkflow.option.onDemand.description":
+    'Default. The tool is available when the request explicitly calls for it (saying "ultracode", or /ultracode).',
+  "settings.scriptWorkflow.option.alwaysOn": "Always available",
+  "settings.scriptWorkflow.option.alwaysOn.description":
+    "Same tool surface as on-demand; reserved for a future always-on reminder.",
+  "settings.scriptWorkflow.defaultTag": "Default",
+  "settings.scriptWorkflow.saveError": "Couldn't save the setting. Please try again.",
   // ---- MCP sampling / resources ----
   "settings.mcp.sampling.label": "Allow model sampling",
   "settings.mcp.sampling.description":

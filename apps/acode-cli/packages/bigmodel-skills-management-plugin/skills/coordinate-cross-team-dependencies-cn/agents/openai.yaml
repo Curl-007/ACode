@@ -1,0 +1,6 @@
+interface:
+  display_name: "跨团队依赖协调"
+  short_description: "把接口承诺、前后置条件和升级路径定清楚，解除跨团队阻塞"
+  default_prompt: "使用 $coordinate-cross-team-dependencies-cn 完成这项任务。"
+policy:
+  allow_implicit_invocation: true

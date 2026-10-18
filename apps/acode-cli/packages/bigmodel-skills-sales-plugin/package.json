@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json.schemastore.org/package.json",
+  "name": "@acode/bigmodel-skills-sales-plugin",
+  "version": "0.1.0",
+  "private": true,
+  "description": "智谱 BigModel 技能市场·销售客服类合集（14 个技能）：商机判断与赢单策略、客户背景调查、线索研究、销售管道分析、客服工单分流、投诉处理、知识库沉淀等。各技能保留上游许可与署名。",
+  "license": "Apache-2.0 OR MIT"
+}

@@ -1,0 +1,6 @@
+interface:
+  display_name: "行业动态追踪"
+  short_description: "建立监测基线，识别真正发生的变化，并评估其对业务决策的影响"
+  default_prompt: "使用 $monitor-industry-change-cn 完成这项任务。"
+policy:
+  allow_implicit_invocation: true

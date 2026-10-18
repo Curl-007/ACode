@@ -1,0 +1,6 @@
+interface:
+  display_name: "销售管道健康检查"
+  short_description: "识别商机停滞、阶段证据、下一步行动与预测数据风险，并给出管理建议"
+  default_prompt: "使用 $pipeline-health-review-cn 基于已有材料生成可复核的中文结果，并标出数据与权限边界。"
+policy:
+  allow_implicit_invocation: true

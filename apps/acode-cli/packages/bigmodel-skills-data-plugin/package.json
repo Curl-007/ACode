@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json.schemastore.org/package.json",
+  "name": "@acode/bigmodel-skills-data-plugin",
+  "version": "0.1.0",
+  "private": true,
+  "description": "智谱 BigModel 技能市场·数据分析类合集（21 个技能）：金融新闻分析、Excel 分析、BI 看板、数据清洗与血缘、统计检验、财务报表与对账、经营差异分析、用户行为分析等。各技能保留上游许可与署名。",
+  "license": "Apache-2.0 OR MIT"
+}

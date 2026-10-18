@@ -215,6 +215,7 @@ export { createPluginsService } from "./plugins/pluginsService.js";
 export { createPluginManagementService } from "./plugins/pluginManagementService.js";
 export { createSubagentsService } from "./subagents/subagentsService.js";
 export { resolveBundledAgentsRoot } from "./subagents/subagentStorage.js";
+export { resolveBundledSkillsRoot } from "./skills/bundledSkillsRoot.js";
 export { createCommandsService } from "./commands/commandsService.js";
 export { createHooksService } from "./hooks/hooksService.js";
 export { createMemoryService } from "./memory/memoryService.js";
@@ -449,7 +450,10 @@ import {
   OFFICIAL_MCP_DEV_TRUSTED_ORIGINS_ENV,
   createDynamicWorkflowClientConfig,
   normalizeDynamicWorkflowMode,
+  DEFAULT_SCRIPT_WORKFLOW_MODE,
+  normalizeScriptWorkflowMode,
 } from "@acode/shared";
+import type { ScriptWorkflowMode } from "@acode/shared";
 import {
   BROKER_SOCKET_ENV,
   BROKER_UNAVAILABLE_ENV,
@@ -1359,6 +1363,12 @@ export function createLocalServices(options: {
    * subagents list 不显示 bundled 成员。
    */
   bundledAgentsRoot?: string;
+  /**
+   * 随 CLI 内容包分发的内置技能目录（specs/skills-bundled-visibility-and-official-cache-authority.md I1）。
+   * desktop host 用 resolveBundledSkillsRoot() 注入；缺省（Web/server 环境）时
+   * 设置页不显示「内置技能」分组，按缺省姿态降级。
+   */
+  bundledSkillsRoot?: string;
 }): ServiceCollection {
   const isDesktopAttachedRemote = options?.serviceAuthorityMode === "desktop-attached-remote";
   // host / remote server 以前直接沿用当前进程环境启动后续服务。
@@ -1663,7 +1673,10 @@ export function createLocalServices(options: {
       }),
   };
   // mcpSync/hooks 里引用 acodeAgentService 的闭包是惰性调用，声明顺序不影响初始化。
-  const skillsService = createSkillsService({ isDesktopRuntime: true });
+  const skillsService = createSkillsService({
+    isDesktopRuntime: true,
+    bundledSkillsRoot: options?.bundledSkillsRoot,
+  });
   const mcpSyncService = createMcpSyncService({
     // mcp/list 的 host 消费点收拢到 mcpSync 服务；真实状态检查仍在 agent 进程。
     listMcpServerStatuses: (params) => acodeAgentService.listMcpServerStatuses(params),
@@ -2096,6 +2109,23 @@ export function createLocalServices(options: {
     }
     return codingPlanSubscriptionService.getDynamicWorkflowClientConfig();
   };
+  // 脚本工作流三档（RunWorkflow / /ultracode）的唯一折叠出口（spec
+  // script-workflow-management-surface.md §5 行 7）：本机产品开关，只读 AppSettings——
+  // 刻意**没有**远端下发与环境变量覆盖（与 dwf 灰度链的差异论证见 spec §3.2）。
+  // 缺省/非法/读取失败一律落 DEFAULT_SCRIPT_WORKFLOW_MODE（onDemand，保住今天的可用性），
+  // 不阻断装配。会话门（acodeAgentService.resolveScriptWorkflowGate）与未来任何消费方
+  // 都必须走这里，防两条决策路分叉（同上 2026-10-11 实机教训）。
+  const resolveScriptWorkflowModeWithLocalOverride = async (): Promise<ScriptWorkflowMode> => {
+    try {
+      return (
+        normalizeScriptWorkflowMode((await settingService.get()).scriptWorkflowMode) ??
+        DEFAULT_SCRIPT_WORKFLOW_MODE
+      );
+    } catch {
+      // 设置读取失败不阻断：fail 到缺省档（开），与 dwf 折叠出口的容错方向同理。
+      return DEFAULT_SCRIPT_WORKFLOW_MODE;
+    }
+  };
   // OffPeakTaskService 单例在下方 DI register IIFE 中创建（晚于 agent service）；
   // 用前向引用 holder 惰性绑定——offPeak/create 协议请求只会发生在服务集合装配完成后。
   let offPeakTaskServiceForAgent: OffPeakTaskService | undefined;
@@ -2144,6 +2174,8 @@ export function createLocalServices(options: {
     // 这里不按 serviceAuthorityMode 裁剪——SSH/WSL/Docker 的 desktop-attached-remote Host
     // 是它自己那些 workspace 的唯一裁决者，灰度开启时远程 workspace 同样提供工作流。
     resolveDynamicWorkflowClientConfig: () => resolveDynamicWorkflowClientConfigWithLocalOverride(),
+    // 脚本工作流档位：会话门（v4 createSession 信封注入）唯一消费口，折叠出口单点（见上）。
+    resolveScriptWorkflowMode: () => resolveScriptWorkflowModeWithLocalOverride(),
     commandResolver: options?.acodeAgentCommandResolver,
     presentationSurface: resolveACodeAgentPresentationSurface({
       runtimeSurface: options?.agentRuntimeContext?.runtimeSurface,

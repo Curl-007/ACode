@@ -1,0 +1,6 @@
+interface:
+  display_name: "竞品对比与应对策略"
+  short_description: "基于可追溯证据完成竞品对比、差异判断，并输出可执行的销售应对建议"
+  default_prompt: "使用 $competitive-battlecard-cn 基于已有材料生成可复核的中文结果，并标出数据与权限边界。"
+policy:
+  allow_implicit_invocation: true

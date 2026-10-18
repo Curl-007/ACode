@@ -1,0 +1,4 @@
+interface:
+  display_name: "目标客户筛选与触达"
+  short_description: "用理想客户画像和购买信号筛选目标客户并生成个性化触达方案"
+  default_prompt: "使用 $develop-target-accounts-cn 开发这批目标客户。"

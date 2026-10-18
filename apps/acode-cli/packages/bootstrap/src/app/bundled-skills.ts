@@ -10,7 +10,8 @@ import { candidateBaseDirs } from "./bundled-plugins.js";
 /**
  * 随 CLI 内置的技能包（apps/acode-cli/packages/bundled-skills）。
  *
- * 它不是插件：不进官方市场目录、没有启停开关、不能卸载，也不出现在设置页与 `$` 引用面板。
+ * 它不是插件：不进官方市场目录、没有启停开关、不能卸载，也不进 `$` 引用面板；
+ * 设置页以「内置技能」分组只读展示（specs/skills-bundled-visibility-and-official-cache-authority.md R1）。
  * 产品功能的工具由 runtime 注册，配套技能随 CLI 分发，避免卸载插件后缺少工具使用说明。
  *
  * 三种运行形态解析到同一个 skills 目录：

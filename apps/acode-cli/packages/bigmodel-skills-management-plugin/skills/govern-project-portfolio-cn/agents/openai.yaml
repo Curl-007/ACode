@@ -1,0 +1,6 @@
+interface:
+  display_name: "多项目优先级与资源分配"
+  short_description: "按战略价值、容量和风险，决定项目的启动、暂停和资源调整"
+  default_prompt: "使用 $govern-project-portfolio-cn 完成这项任务。"
+policy:
+  allow_implicit_invocation: true

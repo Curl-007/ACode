@@ -1,0 +1,6 @@
+interface:
+  display_name: "经营差异分析"
+  short_description: "拆开收入、利润、成本和预算的偏差，算清各驱动贡献了多少"
+  default_prompt: "使用 $diagnose-business-performance-cn 诊断这次经营结果偏差的主要驱动。"
+policy:
+  allow_implicit_invocation: true

@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json.schemastore.org/package.json",
+  "name": "@acode/bigmodel-skills-ops-plugin",
+  "version": "0.1.0",
+  "private": true,
+  "description": "智谱 BigModel 技能市场·运维类合集（7 个技能）：服务稳定性与容量规划、线上故障应急与止损、发布与回滚方案、监控告警设计、告警分级处置、无责复盘等。各技能保留上游许可与署名。",
+  "license": "Apache-2.0 OR MIT"
+}

@@ -1,0 +1,4 @@
+display_name: "客户问题排查"
+summary: "先复现客户的问题，一步步缩小范围，给出安全的解决路径"
+author: "z.ai"
+license: "Apache-2.0"

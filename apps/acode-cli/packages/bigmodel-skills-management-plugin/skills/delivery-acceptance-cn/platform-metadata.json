@@ -1,0 +1,28 @@
+{
+  "schemaVersion": "2.0",
+  "id": "delivery-acceptance-cn",
+  "supplyType": "official_self_developed",
+  "displayNameZh": "项目交付验收",
+  "summaryZh": "建立项目交付验收清单并核对需求、测试、文档、培训、运行与签署证据。用户要求做里程碑验收、上线验收、供应商交付检查、项目结项、完成度核验或形成验收报告时使用。",
+  "categories": [
+    "项目管理"
+  ],
+  "aliasesZh": [
+    "项目交付验收",
+    "delivery-acceptance-cn"
+  ],
+  "intentsZh": [
+    "需要项目交付验收",
+    "请用项目交付验收处理当前材料",
+    "检查现有结果是否符合项目交付验收要求"
+  ],
+  "examplePromptsZh": [
+    "请帮我完成项目交付验收。",
+    "请用项目交付验收检查这份材料，列出证据、问题和下一步。",
+    "请按项目交付验收的流程处理，无法验证的内容单独标明。"
+  ],
+  "source": {
+    "developer": "z.ai",
+    "licenseSpdx": "Apache-2.0"
+  }
+}

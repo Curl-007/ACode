@@ -1022,6 +1022,7 @@ export function createConversationV4Gateway(
       mcpServers,
       offPeakToolEnabled,
       dynamicWorkflowEnabled,
+      scriptWorkflowEnabled,
     }) => {
       // workspaceId 双形态（Workspace Identity 约束）：
       // - 本地工作区 = workspacePath（identity 缺省时的 fallback）；
@@ -1037,7 +1038,7 @@ export function createConversationV4Gateway(
         // 一律 deferred（draft 不进 sqlite）；提升时机归原生 prompt-turn。
         persistence: "deferred",
         // MCP 是 runtime 创建期配置；v4 createSession 必须与 legacy
-        // session/create 等价透传，否则创建的 session 永远不会启动这些工具。
+        // session/create 等价透传，否则创建的会话永远不会启动这些工具。
         mcpServers,
         // Off-Peak 工具面 flag 同为 runtime 创建期配置，必须随 create 进入 record。
         ...(offPeakToolEnabled === true ? { offPeakToolEnabled: true } : {}),
@@ -1045,7 +1046,17 @@ export function createConversationV4Gateway(
         // v4 createSession 必须与 legacy session/create 等价透传，否则无界面创建的会话
         // 会绕过 Host 的灰度判定，只剩进程级缺省。
         ...(dynamicWorkflowEnabled === true ? { dynamicWorkflowEnabled: true } : {}),
-      });
+        // 脚本工作流开关走**侧通道**（第三个参数）而不是 params：legacy
+        // acodeSessionCreateParamsSchema 是 strict 的（legacy 面只删不增纪律，spec §4.3），
+        // 把本 flag 塞进 params 会被 strict parse 当未知键拒绝。true/false 都透传——
+        // CLI 侧缺席即开启，Host 必须显式写 false 才能关（spec §4.4）。
+      }, { scriptWorkflowEnabled });
+      // 顺路刷新进程级目录缓存（server-types.ts 的 scriptWorkflowEnabled 注释）：档位在
+      // 下次会话创建时生效，缓存在同一时机刷新即可，无需 legacy 推送命令。只影响
+      // workspace presentation / 快照 `/` 目录的展示；本会话的工具面已由上面的侧通道裁决。
+      if (scriptWorkflowEnabled !== undefined) {
+        context.appRuntimePreferences.scriptWorkflowEnabled = scriptWorkflowEnabled;
+      }
       return { sessionId: created.sessionId };
     },
     createSelectionSideSession: async (sessionId, options) => {

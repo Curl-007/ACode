@@ -382,6 +382,12 @@ export function createHttpServer(
   if (authToken) {
     app.use("*", async (c, next) => {
       const pathname = new URL(c.req.url).pathname;
+      // 已知限制（specs/server-auth.md「Bot 回调入口 × server token」节，本次不改行为）：
+      // /api/bots/:provider 是外部 provider webhook 回调入口，自有鉴权是 webhook secret/验签
+      // （botsService），provider 无法携带本 server 的 Bearer token——配置
+      // ACODE_SERVER_AUTH_TOKEN 的部署里外部回调在下面一律 401。按 spec 裁决不在这里开
+      // 路径豁免（会破坏「/api/** 全量受保护」单一不变量）；需要公网 bot 回调的部署暂不设
+      // server token，靠 webhook secret + loopback 绑定 + 反向代理把关，详见该登记。
       // 裁决本体在共享 resolveServerTokenAuth（两套 server 单一实现），这里只做一次性告警。
       const auth = resolveServerTokenAuth(serverTokenRequestView(c), authToken);
       if (auth.viaDeprecatedQuery) {

@@ -1,0 +1,4 @@
+interface:
+  display_name: "深度专题研究"
+  short_description: "围绕复杂议题制定证据计划，给出可追溯、可复核的专题研究结论"
+  default_prompt: "使用 $conduct-topic-research-cn 开展这项专题研究。"

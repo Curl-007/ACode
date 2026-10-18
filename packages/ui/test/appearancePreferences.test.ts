@@ -25,7 +25,7 @@ import {
 /**
  * 多轴外观偏好契约验收（packages/ui/specs/appearance-preference-axes.md 场景 1–6）。
  * ui 测试无 jsdom 先例：根节点/localStorage/window 全部手搓结构化替身
- * （bootSkeletonSampler.test.ts 同款纪律），被测模块经注入点吃替身。
+ * （ui 测试同款纪律），被测模块经注入点吃替身。
  */
 
 function createFakeRoot(): AppearanceAttributeTarget & { attributes: Map<string, string> } {

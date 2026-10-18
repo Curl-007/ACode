@@ -1,4 +1,8 @@
-import type { ScriptWorkflowRunStatus } from "@acode/contracts";
+// 落库契约常量唯一定义在 contracts（存储读面的 SQL 判据要用它展开 interrupted 的物理
+// 表达，不能让存储层反向 import 本包）；这里 re-export 保持本模块的导出面不变。
+import { SCRIPT_WORKFLOW_INTERRUPTED_CODE, type ScriptWorkflowRunStatus } from "@acode/contracts";
+
+export { SCRIPT_WORKFLOW_INTERRUPTED_CODE };
 
 /**
  * 脚本工作流 run 状态的**物理 ↔ 逻辑**映射，全仓只有这一份。
@@ -25,9 +29,6 @@ import type { ScriptWorkflowRunStatus } from "@acode/contracts";
  * 单测全绿，直到对着**真实库**跑一遍才炸：`CHECK constraint failed: status in (...)`。
  * 存储层的约束是单测桩替不了的那一类事实——这也是本仓「真实面验证」不可替代的一个具体例子。
  */
-
-/** 孤儿收敛写进 `failure_json` 的结构化 code。改它等于改一份落库契约，要连解码一起改。 */
-export const SCRIPT_WORKFLOW_INTERRUPTED_CODE = "ScriptWorkflowInterrupted";
 
 /** 逻辑词汇 = 物理词汇 + `interrupted`（宿主进程在 run 结算前退出）。 */
 export type ScriptWorkflowLogicalStatus = ScriptWorkflowRunStatus | "interrupted";

@@ -1,0 +1,6 @@
+interface:
+  display_name: "监控、日志与告警设计"
+  short_description: "围绕真实诊断问题设计指标、日志、追踪与告警，并持续控制告警噪声"
+  default_prompt: "使用 $design-observability-cn 完成这项任务。"
+policy:
+  allow_implicit_invocation: true

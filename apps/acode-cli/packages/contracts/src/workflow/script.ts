@@ -8,7 +8,10 @@ import type {
   ScriptWorkflowRunStats,
 } from "./script-usage.js";
 
-export type { RecordScriptWorkflowActivityUsageInput, ScriptWorkflowRunStats } from "./script-usage.js";
+export type {
+  RecordScriptWorkflowActivityUsageInput,
+  ScriptWorkflowRunStats,
+} from "./script-usage.js";
 export { ScriptWorkflowRunStatsSchema } from "./script-usage.js";
 
 const MAX_WORKFLOW_AGENT_TOOLS = 128;
@@ -78,28 +81,13 @@ export const WorkflowAgentCallInputSchema = z
   .strict();
 export type WorkflowAgentCallInput = z.infer<typeof WorkflowAgentCallInputSchema>;
 
-/**
- * `workflow_run.status` 的**物理**词汇——受建表 CHECK 约束，不迁移。
- *
- * ⚠ 这不是逻辑词汇。「宿主进程在 run 结算前退出」这件事**没有**自己的物理词，它落成
- * `cancelled` + `failure_json` 里的结构化 code（见 bootstrap 的 script-workflow-run-status.ts）。
- * 这与 dwf 逐字同构：`dwf_run.status` 的 CHECK 集同样不含 `stopped`，dwf 把逻辑态
- * `stopped{reason}` 编码成物理 `cancelled` + `{"stopReason": …}` 信封，映射只活在
- * `dwf-journal-codecs.ts` 一个文件里。
- *
- * 曾经试图往这里加一个 `interrupted`：CHECK 约束当场拒写（`CHECK constraint failed: status in`），
- * 而假 store 的单测撞不到它——只有对着真实库跑一遍才暴露。放宽约束要重建整张表
- * （三张表外键引用它），代价与风险都远大于按既有模式编码。
- */
-export const SCRIPT_WORKFLOW_RUN_STATUSES = [
-  "pending",
-  "running",
-  "paused",
-  "completed",
-  "failed",
-  "cancelled",
-] as const;
-export type ScriptWorkflowRunStatus = (typeof SCRIPT_WORKFLOW_RUN_STATUSES)[number];
+// 状态词汇组（物理词表 / interrupted code / 管理面逻辑态）内聚拆到 ./script-status.js：
+// 2026-10-18 script.ts 顶过 managed 模块 400 行硬上限，整块**纯移动**过去；同
+// ./script-usage.js 先例，原样再导出，导出面与消费方导入路径（@acode/contracts）逐名不变。
+import type { ScriptWorkflowLogicalRunStatus, ScriptWorkflowRunStatus } from "./script-status.js";
+
+export type { ScriptWorkflowLogicalRunStatus, ScriptWorkflowRunStatus } from "./script-status.js";
+export { SCRIPT_WORKFLOW_INTERRUPTED_CODE, SCRIPT_WORKFLOW_RUN_STATUSES } from "./script-status.js";
 
 export const SCRIPT_WORKFLOW_ACTIVITY_STATUSES = [
   "queued",
@@ -343,6 +331,15 @@ export interface ScriptWorkflowStorePort {
     runId: string;
   }): Promise<ScriptWorkflowActivityRecord | null>;
   getScriptWorkflowRun(runId: string): Promise<ScriptWorkflowRunRecord | null>;
+  /**
+   * 管理面 usageIncomplete 的存在性读面（spec script-workflow-management-surface.md §4.1）：
+   * `runId` 名下任一 activity 的 result 带账本不完整标记（`usageAccounting.status ===
+   * "incomplete"`）即为 true。判据唯一所有者是 cli-workflow script-workflow-format.ts 的
+   * `scriptWorkflowActivityUsageIncomplete`；SQL 只是把同一判据下推成 `exists` 索引探测，
+   * 一致性由 store 测试互钉——管理面列表页对每行 run 都要这个布尔，不能为它全行拉取
+   * activity（payload/result 大字段）。
+   */
+  hasScriptWorkflowUsageIncomplete(input: { runId: string }): Promise<boolean>;
   listScriptWorkflowActivities(input: { runId: string }): Promise<ScriptWorkflowActivityRecord[]>;
   listScriptWorkflowEvents(input: {
     limit?: number;
@@ -357,7 +354,25 @@ export interface ScriptWorkflowStorePort {
      */
     parentSessionId?: string;
     statuses?: readonly ScriptWorkflowRunStatus[];
+    /**
+     * 管理面的**逻辑态**过滤（物理六词 + `interrupted`，spec §4.1）。在 SQL 层展开：
+     * 物理词直接进 `status in (...)`；`cancelled`/`interrupted` 同一物理词，按
+     * `failure_json.code` 是否命中 SCRIPT_WORKFLOW_INTERRUPTED_CODE（见 ./script-status.js）
+     * 分流
+     * （两词同时请求 = 不分流，整段 `status = 'cancelled'`）。与 `statuses` 同时给时
+     * 两个过滤按 SQL 语义取交集；展开与唯一映射（logicalScriptWorkflowStatus）的一致性
+     * 由 store 测试逐行互钉。
+     */
+    logicalStatuses?: readonly ScriptWorkflowLogicalRunStatus[];
   }): Promise<ScriptWorkflowRunRecord[]>;
+  /**
+   * 管理面「已持久化脚本清单」的唯一读面（spec script-workflow-management-surface.md §4.2）：
+   * 全量回、`time_updated desc` 排序（行数量级 = 用户迭代过的脚本数，全量回可行）。
+   * 过滤（scope / script_path 非空）是投影层的事，store 只回事实行。
+   */
+  listScriptWorkflowDefinitions(input?: {
+    limit?: number;
+  }): Promise<ScriptWorkflowDefinitionRecord[]>;
   /** 同一事务提交累计值及 activity 用量事件；重复 activityId 不再次累计。 */
   recordScriptWorkflowActivityUsage(
     input: RecordScriptWorkflowActivityUsageInput,

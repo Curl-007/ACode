@@ -1,0 +1,6 @@
+interface:
+  display_name: "销售管道分析与预测"
+  short_description: "校准阶段、风险与预测，识别覆盖缺口和最有价值的管理动作"
+  default_prompt: "使用 $manage-sales-pipeline-cn 完成这项任务。"
+policy:
+  allow_implicit_invocation: true

@@ -127,6 +127,7 @@ import {
   type SavedWorkflowsOpenRunParams,
   type SavedWorkflowsOpenTarget,
 } from "@/settings/saved-workflows/SavedWorkflowsSection.js";
+import { ScriptWorkflowsGroup } from "@/settings/ScriptWorkflowsGroup.js";
 import { AutomationTemplateSkeletonGrid } from "@/settings/AutomationTemplateSkeletonGrid.js";
 
 interface AutomationsSectionProps {
@@ -1406,17 +1407,33 @@ export function AutomationsSection({
 
   if (pageTab === "workflow") {
     return (
-      <SavedWorkflowsSection
-        header={pageHeader}
-        workspacePath={workspacePath}
-        workspaceIdentity={workspaceIdentity}
-        onNavigateToLaunchedRun={onNavigateToLaunchedRun}
-        onCreateViaChat={onCreateViaChat}
-        onOpenWorkflowRun={onOpenWorkflowRun}
-        onOpenWorkflowArtifact={onOpenWorkflowArtifact}
-        openWorkflow={openWorkflow}
-        onOpenWorkflowConsumed={onOpenWorkflowConsumed}
-      />
+      <div
+        className={cn(SETTINGS_FRAME_CONTENT_CLASSNAME, "flex flex-col gap-10")}
+        data-automations-content
+      >
+        {/* dwf 中枢（SavedWorkflowsSection）与脚本工作流分组共用本层唯一的 frame 容器：
+            SavedWorkflowsSection 根节点不带 SETTINGS_FRAME_CONTENT_CLASSNAME——
+            双层 frame 会双重居中/内缩，与自动化 tab（下方单层）不对齐（评审 P2）。
+            页头由本层渲染；其下纵向堆叠两块（spec §7.1：脚本工作流是「工作流」这一页的
+            第二族内容，不是第三页级 tab）。移动 Web 宽度下两块本就纵向堆叠（flex-col），
+            分组内小节同栈不溢出（验收 E2）。 */}
+        {pageHeader}
+        <SavedWorkflowsSection
+          workspacePath={workspacePath}
+          workspaceIdentity={workspaceIdentity}
+          onNavigateToLaunchedRun={onNavigateToLaunchedRun}
+          onCreateViaChat={onCreateViaChat}
+          onOpenWorkflowRun={onOpenWorkflowRun}
+          onOpenWorkflowArtifact={onOpenWorkflowArtifact}
+          openWorkflow={openWorkflow}
+          onOpenWorkflowConsumed={onOpenWorkflowConsumed}
+        />
+        <ScriptWorkflowsGroup
+          workspacePath={workspacePath}
+          workspaceIdentity={workspaceIdentity}
+          onOpenSession={onOpenSession}
+        />
+      </div>
     );
   }
 

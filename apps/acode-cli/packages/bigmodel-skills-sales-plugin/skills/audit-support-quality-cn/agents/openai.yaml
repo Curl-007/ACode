@@ -1,0 +1,6 @@
+interface:
+  display_name: "客服会话质检"
+  short_description: "从真实会话里找失分原因，校准质检标准，补上知识缺口"
+  default_prompt: "使用 $audit-support-quality-cn 完成这项任务。"
+policy:
+  allow_implicit_invocation: true

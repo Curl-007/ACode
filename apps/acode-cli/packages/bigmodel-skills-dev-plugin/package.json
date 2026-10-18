@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json.schemastore.org/package.json",
+  "name": "@acode/bigmodel-skills-dev-plugin",
+  "version": "0.1.0",
+  "private": true,
+  "description": "智谱 BigModel 技能市场·研发类合集（28 个技能）：网页性能优化、界面与交互开发、系统架构设计、安全代码审查、CI 失败定位、数据库迁移安全、老旧系统改造、测试驱动开发等。各技能保留上游许可与署名。",
+  "license": "Apache-2.0 OR MIT"
+}

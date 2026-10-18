@@ -45,6 +45,7 @@ import {
   createHostApiNetworkTransport,
   createSettingServiceWithMigrations,
   resolveBundledAgentsRoot,
+  resolveBundledSkillsRoot,
   OffPeakPermanentDispatchError,
   type HostApiNetworkTransport,
 } from "@acode/services/node";
@@ -2236,6 +2237,10 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
               // 官方预置子智能体目录（spec: builtin-subagent-catalog.md R7）：desktop host
               // 用与 CLI 同款的资源定位链注入；解析不到时保持 undefined，GUI 按缺省姿态降级。
               bundledAgentsRoot: resolveBundledAgentsRoot(),
+              // 内置技能目录（specs/skills-bundled-visibility-and-official-cache-authority.md I1）：
+              // 与 bundledAgentsRoot 同一资源定位链的平行扩展；解析不到时 undefined，
+              // 设置页不显示「内置技能」分组、不报错、不伪造条目。
+              bundledSkillsRoot: resolveBundledSkillsRoot(),
               agentRuntimeContext: {
                 getDeviceMid: () => msg.deviceMid,
                 runtimeSurface: "desktop_local_host",

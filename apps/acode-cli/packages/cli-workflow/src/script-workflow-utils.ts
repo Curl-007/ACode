@@ -158,8 +158,10 @@ function inspectWorkflowSchema(
   ) {
     errors.push(`${path}.type must name a supported JSON type`);
   }
-  if (value.$ref !== undefined && typeof value.$ref !== "string") errors.push(`${path}.$ref must be a string`);
-  if (value.format !== undefined && typeof value.format !== "string") errors.push(`${path}.format must be a string`);
+  if (value.$ref !== undefined && typeof value.$ref !== "string")
+    errors.push(`${path}.$ref must be a string`);
+  if (value.format !== undefined && typeof value.format !== "string")
+    errors.push(`${path}.format must be a string`);
   if (value.description !== undefined && typeof value.description !== "string")
     errors.push(`${path}.description must be a string`);
   if (value.pattern !== undefined) {
@@ -191,8 +193,10 @@ function inspectWorkflowSchema(
   }
   if (value.enum !== undefined && (!Array.isArray(value.enum) || !value.enum.every(isJsonValue)))
     errors.push(`${path}.enum must be an array of JSON values`);
-  if (value.const !== undefined && !isJsonValue(value.const)) errors.push(`${path}.const must be a JSON value`);
-  if (value.default !== undefined && !isJsonValue(value.default)) errors.push(`${path}.default must be a JSON value`);
+  if (value.const !== undefined && !isJsonValue(value.const))
+    errors.push(`${path}.const must be a JSON value`);
+  if (value.default !== undefined && !isJsonValue(value.default))
+    errors.push(`${path}.default must be a JSON value`);
   inspectSchemaChildren(value, path, errors, visiting);
   visiting.delete(value);
 }
@@ -206,22 +210,33 @@ function inspectSchemaChildren(
   const properties = schema.properties;
   if (properties !== undefined) {
     if (!isRecord(properties)) errors.push(`${path}.properties must be an object`);
-    else for (const [key, child] of Object.entries(properties)) inspectWorkflowSchema(child, `${path}.properties.${key}`, errors, visiting);
+    else
+      for (const [key, child] of Object.entries(properties))
+        inspectWorkflowSchema(child, `${path}.properties.${key}`, errors, visiting);
   }
   const defs = schema.$defs;
   if (defs !== undefined) {
     if (!isRecord(defs)) errors.push(`${path}.$defs must be an object`);
-    else for (const [key, child] of Object.entries(defs)) inspectWorkflowSchema(child, `${path}.$defs.${key}`, errors, visiting);
+    else
+      for (const [key, child] of Object.entries(defs))
+        inspectWorkflowSchema(child, `${path}.$defs.${key}`, errors, visiting);
   }
   const anyOf = schema.anyOf;
   if (anyOf !== undefined) {
-    if (!Array.isArray(anyOf) || anyOf.length === 0) errors.push(`${path}.anyOf must contain at least one schema`);
-    else anyOf.forEach((child, index) => inspectWorkflowSchema(child, `${path}.anyOf[${index}]`, errors, visiting));
+    if (!Array.isArray(anyOf) || anyOf.length === 0)
+      errors.push(`${path}.anyOf must contain at least one schema`);
+    else
+      anyOf.forEach((child, index) =>
+        inspectWorkflowSchema(child, `${path}.anyOf[${index}]`, errors, visiting),
+      );
   }
   const prefixItems = schema.prefixItems;
   if (prefixItems !== undefined) {
     if (!Array.isArray(prefixItems)) errors.push(`${path}.prefixItems must be an array`);
-    else prefixItems.forEach((child, index) => inspectWorkflowSchema(child, `${path}.prefixItems[${index}]`, errors, visiting));
+    else
+      prefixItems.forEach((child, index) =>
+        inspectWorkflowSchema(child, `${path}.prefixItems[${index}]`, errors, visiting),
+      );
   }
   for (const key of ["items", "additionalProperties"] as const) {
     const child = schema[key];
@@ -300,7 +315,21 @@ export function mergedSignal(
 export function isScriptWorkflowStore(
   store: SessionStorePort,
 ): store is SessionStorePort & ScriptWorkflowStorePort {
-  return "createScriptWorkflowRun" in store && "createScriptWorkflowActivity" in store;
+  // 能力探测必须覆盖消费方实际调用的方法面（P2 修复）：管理面（spec
+  // script-workflow-management-surface.md §4.1/§4.2）落地后，facade 据本谓词注册并直接
+  // 调用 listScriptWorkflowRuns / listScriptWorkflowDefinitions / hasScriptWorkflowUsageIncomplete。
+  // 只探测旧的写子集（create 两方法）会让「仅实现写面的存量 store」通过守卫、然后在 list
+  // 调用处抛 TypeError，而 v4 handler（handlers/script-workflow-management.ts）为能力缺席
+  // 设计的 V4CapabilityUnsupportedError 永远没机会触发——错误形态从「结构化的能力不支持」
+  // 退化成「未捕获的调用栈」。ScriptWorkflowStorePort 是一个完整 port：生产实现（SQLite
+  // session store）方法同生共死，部分实现只存在于测试桩。
+  return (
+    "createScriptWorkflowRun" in store &&
+    "createScriptWorkflowActivity" in store &&
+    "listScriptWorkflowRuns" in store &&
+    "listScriptWorkflowDefinitions" in store &&
+    "hasScriptWorkflowUsageIncomplete" in store
+  );
 }
 
 export function isRecord(value: unknown): value is Record<string, unknown> {

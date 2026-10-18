@@ -1,0 +1,28 @@
+{
+  "schemaVersion": "2.0",
+  "id": "llm-tool-security-review-cn",
+  "supplyType": "official_self_developed",
+  "displayNameZh": "大模型工具安全审查",
+  "summaryZh": "审查大模型应用的提示、检索内容、工具参数、数据流和高影响动作，识别提示注入、越权工具调用、数据外泄、混淆授权、记忆污染与不可信输出执行风险，并设计最小权限和确认",
+  "categories": [
+    "开发者能力"
+  ],
+  "aliasesZh": [
+    "大模型工具安全审查",
+    "llm-tool-security-review-cn"
+  ],
+  "intentsZh": [
+    "需要大模型工具安全审查",
+    "请用大模型工具安全审查处理当前材料",
+    "检查现有结果是否符合大模型工具安全审查要求"
+  ],
+  "examplePromptsZh": [
+    "请帮我完成大模型工具安全审查。",
+    "请用大模型工具安全审查检查这份材料，列出证据、问题和下一步。",
+    "请按大模型工具安全审查的流程处理，无法验证的内容单独标明。"
+  ],
+  "source": {
+    "developer": "z.ai",
+    "licenseSpdx": "Apache-2.0"
+  }
+}

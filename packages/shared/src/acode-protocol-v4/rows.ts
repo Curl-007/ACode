@@ -4,6 +4,7 @@
 import { z } from "zod";
 import { executionOutputPreviewSchema } from "../execution-output-preview.js";
 import { timestampSchema } from "./core.js";
+import { customCommandInvocationMetaSchema } from "./custom-command-row-meta.js";
 import { backgroundResultOriginMetaSchema, workflowLaunchMetaSchema } from "./workflow-row-meta.js";
 
 // RowBase。rowId：session 内单调、永不复用、事件日志的确定性纯函数。
@@ -43,6 +44,11 @@ export {
   type WorkflowNotificationMeta,
   type WorkflowSettingsAmendMeta,
 } from "./workflow-row-meta.js";
+// 斜杠命令回显元数据（specs/slash-command-echo.md）同模式拆文件、在此再导出。
+export {
+  customCommandInvocationMetaSchema,
+  type CustomCommandInvocationMeta,
+} from "./custom-command-row-meta.js";
 
 export const turnWorkSegmentSchema = z.object({
   segmentId: z.string().min(1),
@@ -143,6 +149,9 @@ export const userInputRowSchema = z.object({
     .optional(),
   // origin === "workflowLaunch" 的行上在场；与 originMeta 并列，与 turnHeader 上同一份。
   workflowLaunch: workflowLaunchMetaSchema.optional(),
+  // 斜杠命令触发回显（specs/slash-command-echo.md）：本条输入已被 CLI 展开为 slash 命令
+  // 时在场；宽松 schema（custom-command-row-meta.ts），未知来源只显示原值不拒整行。
+  customCommand: customCommandInvocationMetaSchema.optional(),
   // 经 turn-steer 注入（guideModeTurnSteer）。
   guided: z.literal(true).optional(),
   // realUser/guided 必带；系统来源缺省。overlay 收口锚点。

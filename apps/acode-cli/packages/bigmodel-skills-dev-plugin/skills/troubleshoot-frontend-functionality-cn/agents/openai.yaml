@@ -1,0 +1,4 @@
+interface:
+  display_name: "前端问题排查与修复"
+  short_description: "沿数据和事件链复现并修复字段、状态与前后端契约问题"
+  default_prompt: "使用 $troubleshoot-frontend-functionality-cn 修复这个前端功能问题。"

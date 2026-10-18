@@ -1,16 +1,6 @@
 /* eslint-disable max-lines -- skill 发现 + 校验 + 状态 + 通用目录管理在同一服务里聚合，分层后跳转成本更高 */
-import {
-  access,
-  appendFile,
-  cp,
-  mkdir,
-  realpath,
-  rm,
-  readFile,
-  readdir,
-  writeFile,
-} from "node:fs/promises";
-import { existsSync, type Dirent } from "node:fs";
+import { access, appendFile, cp, mkdir, realpath, rm, readFile, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -29,6 +19,11 @@ import { DEFAULT_ENABLED_OFFICIAL_PLUGIN_IDS } from "@acode/shared";
 import type { ISkillsService } from "./skills.js";
 import { SKILL_FILE_NAME, walkSkillMarkdownPaths } from "./skillDiscoveryWalk.js";
 import { readInstalledPluginRoots } from "#src/plugins/installedPluginRoots.js";
+// 官方 cache 候选根扫描（分片权威优先 + 回退组内择优）已收敛到 services 侧单点
+// #src/plugins/officialPluginCacheRoots.ts——commands 管线（commandsService）与 skills 管线
+// （本文件）共同消费同一实现，消除第三份拷贝（specs/skills-bundled-visibility-and-official-cache-authority.md
+// §四 R3/M1-3，判据单点在 @acode/shared）。下方既有导出路径保留，供测试与既有消费方继续 import。
+import { scanOfficialPluginCacheRoots } from "#src/plugins/officialPluginCacheRoots.js";
 
 interface DiscoverResult {
   skills: SkillSummary[];
@@ -68,6 +63,11 @@ function resolveUserHomeDir() {
 
 interface SkillsServiceOptions {
   isDesktopRuntime?: boolean;
+  /**
+   * 随 CLI 内容包分发的内置技能根（host 经 resolveBundledSkillsRoot() 注入，spec I1）。
+   * 缺省或目录缺席时不产出 bundled 条目、不报错（R1 降级姿态）。
+   */
+  bundledSkillsRoot?: string;
 }
 
 /** ACode Agent 工作区级技能目录。 */
@@ -685,35 +685,9 @@ function resolveInside(rootPath: string, rawPath: string): string | null {
   return null;
 }
 
-async function scanOfficialPluginCacheRoots(pluginStorageRoot: string): Promise<string[]> {
-  const cacheRoot = join(pluginStorageRoot, "cache", ACODE_OFFICIAL_PLUGIN_MARKETPLACE);
-  let pluginEntries: Dirent[] = [];
-  try {
-    pluginEntries = await readdir(cacheRoot, { withFileTypes: true });
-  } catch {
-    return [];
-  }
-
-  const roots: string[] = [];
-  for (const pluginEntry of pluginEntries) {
-    if (!pluginEntry.isDirectory()) {
-      continue;
-    }
-    const pluginDir = join(cacheRoot, pluginEntry.name);
-    let versionEntries: Dirent[] = [];
-    try {
-      versionEntries = await readdir(pluginDir, { withFileTypes: true });
-    } catch {
-      continue;
-    }
-    for (const versionEntry of versionEntries) {
-      if (versionEntry.isDirectory()) {
-        roots.push(join(pluginDir, versionEntry.name));
-      }
-    }
-  }
-  return roots.sort((left, right) => left.localeCompare(right));
-}
+// 官方 cache 候选根扫描的单点消费与既有导出（import 注释见文件头部）；此处再导出保留
+// skillsService 的既有导出路径，供测试与既有消费方继续 import。
+export { scanOfficialPluginCacheRoots };
 
 async function readPluginManifest(rootPath: string): Promise<PluginManifestSummary | null> {
   const manifestPath = await findPluginManifestPath(rootPath);
@@ -846,6 +820,7 @@ async function discoverSkills(params: {
   workspacePath: string;
   workspaceIdentity?: string;
   includeUserSkills: boolean;
+  bundledSkillsRoot?: string;
   provider: ACodeProvider;
 }): Promise<DiscoverResult> {
   const workspaceRoots = dedupeRoots(await resolveAncestorWorkspaceRoots(params.workspacePath));
@@ -863,6 +838,14 @@ async function discoverSkills(params: {
     roots.push({
       scope: "user" as const,
       rootPath: getUserAgentsSkillRoot(),
+    });
+  }
+  // bundled 技能是随 CLI 内容包分发的只读全局资源（spec R1/I3.1）：不属于任一 scope，
+  // 跨 user/workspace 两 tab 展示；根未注入或目录缺席时不 push、无 diagnostic（降级姿态）。
+  if (params.bundledSkillsRoot && (await exists(params.bundledSkillsRoot))) {
+    roots.push({
+      scope: "bundled" as const,
+      rootPath: params.bundledSkillsRoot,
     });
   }
   roots.push(...(await resolvePluginSkillRootDescriptors()));
@@ -1042,6 +1025,7 @@ export function createSkillsService(options?: SkillsServiceOptions): ISkillsServ
         workspacePath: params.workspacePath,
         workspaceIdentity: params.workspaceIdentity,
         includeUserSkills: capability.userScopeAvailable,
+        bundledSkillsRoot: options?.bundledSkillsRoot,
         provider,
       });
       const enabledByPath = await readSkillEnabledMap();
@@ -1067,11 +1051,18 @@ export function createSkillsService(options?: SkillsServiceOptions): ISkillsServ
           workspacePath: params.workspacePath,
           workspaceIdentity: params.workspaceIdentity,
           includeUserSkills: capability.userScopeAvailable,
+          bundledSkillsRoot: options?.bundledSkillsRoot,
           provider,
         });
         const skill = skills.find((item) => item.id === params.skillId);
         if (!skill) {
           throw new Error(`Skill not found: ${params.skillId}`);
+        }
+        // bundled 技能是内容包只读资源，设计上不存在启停状态（spec R2）：
+        // `~/.acode/cli/config.json` 的 skills.<path>.enable 启用表不适用，
+        // 服务层 fail-closed 与 UI 隐藏开关（I5.5）双保险。
+        if (skill.scope === "bundled") {
+          throw new Error("内置技能不可启停");
         }
         const enabledByPath = await readSkillEnabledMap();
         enabledByPath[normalizeSkillConfigPath(skill.path)] = params.enabled;
@@ -1099,8 +1090,13 @@ export function createSkillsService(options?: SkillsServiceOptions): ISkillsServ
         workspaceIdentity: params.workspaceIdentity,
         provider: params.provider,
       });
+      // bundled 技能的上下文注入由 runtime 内置命令/系统提示独占管理（R2 非目标）；
+      // 本函数按 `$name` 文本匹配 list() 全量结果，若不过滤 bundled，用户 prompt 中
+      // 手打 `$code-review` 等字样会把 bundled 正文重复注入会话上下文，且绕过
+      // `/workflow`、`/ultracode` 的技能门语义（spec I3.4，bug 预防）。
       const activatedSkills = skills.filter(
-        (skill) => skill.enabled && mentionedSkillNames.has(skill.name),
+        (skill) =>
+          skill.enabled && skill.scope !== "bundled" && mentionedSkillNames.has(skill.name),
       );
       if (activatedSkills.length === 0) {
         return { prompt: params.prompt, activatedSkillNames: [] };
@@ -1192,6 +1188,10 @@ export function createSkillsService(options?: SkillsServiceOptions): ISkillsServ
       // plugin 作用域的技能由其所属插件管理，应通过卸载插件移除，这里拒绝单独删除。
       if (skill.scope === "plugin") {
         throw new Error("插件提供的技能不可单独删除，请卸载对应插件");
+      }
+      // bundled 技能是内容包只读资源，设计上不存在删除状态（spec R1/I3.3），fail-closed。
+      if (skill.scope === "bundled") {
+        throw new Error("内置技能不可删除");
       }
 
       // 用发现阶段命中的原始路径（sourcePath，未 realpath）定位技能目录项。

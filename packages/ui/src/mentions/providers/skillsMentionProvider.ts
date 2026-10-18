@@ -24,6 +24,9 @@ export function mapSkillsToMentionItemsForTest(
     workspace: 0,
     plugin: 1,
     user: 2,
+    // 上游 filterSkillsForProvider 默认已排除 bundled（用户裁决 2：bundled 不进 $ 面板），
+    // 此键仅为 Record<SkillScope, number> 完整性；运行时不可达。
+    bundled: 3,
   };
   for (const skill of skills) {
     const key = skill.name.trim().toLowerCase();
@@ -50,7 +53,9 @@ export function mapSkillsToMentionItemsForTest(
       keywords: [...new Set([skill.name, skill.description, description, skill.scope])],
       data: {
         path: skill.path,
-        scope: skill.scope,
+        // 上游已默认排除 bundled（裁决 2）；MentionItemData 的 scope 词表无 bundled，
+        // bundled 条目若未来要进面板需先扩词表，这里不透传该值。
+        ...(skill.scope === "bundled" ? {} : { scope: skill.scope }),
       },
     };
   });

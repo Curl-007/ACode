@@ -127,6 +127,142 @@ const remoteOfficialPluginPackages = [
     runtimeBuildScript: "scripts/build.mjs",
     stagedPath: "packages/agent-teams-plugin",
   },
+  // 以下 8 个为 default-enabled 内容型插件（specs/desktop-official-plugin-packaging.md
+  // R2/R3）：全部纯资产、无 dist 钉子，requiresRuntime 一律 false；与桌面 seed 清单
+  // （packages/desktop/scripts/prepare-agent-node-bundle.mjs）平行维护，requiredSeedPaths
+  // 逐一镜像 bootstrap/official-plugin-definitions.ts（漂移防护见
+  // apps/acode-cli/tests/official-plugin-packaging-parity.test.mjs 断言 A/B/D）。
+  {
+    packageName: "@acode/documents-plugin",
+    relativePath: "apps/acode-cli/packages/documents-plugin",
+    requiresRuntime: false,
+    requiredSeedPaths: ["agents/visual-judge.md", "skills/docx/SKILL.md"],
+    stagedPath: "packages/documents-plugin",
+  },
+  {
+    packageName: "@acode/pdf-plugin",
+    relativePath: "apps/acode-cli/packages/pdf-plugin",
+    requiresRuntime: false,
+    requiredSeedPaths: ["agents/visual-judge.md", "skills/pdf/SKILL.md"],
+    stagedPath: "packages/pdf-plugin",
+  },
+  {
+    packageName: "@acode/presentations-plugin",
+    relativePath: "apps/acode-cli/packages/presentations-plugin",
+    requiresRuntime: false,
+    requiredSeedPaths: ["agents/visual-judge.md", "skills/pptx/SKILL.md"],
+    stagedPath: "packages/presentations-plugin",
+  },
+  {
+    packageName: "@acode/spreadsheets-plugin",
+    relativePath: "apps/acode-cli/packages/spreadsheets-plugin",
+    requiresRuntime: false,
+    requiredSeedPaths: ["agents/visual-judge.md", "skills/xlsx/SKILL.md"],
+    stagedPath: "packages/spreadsheets-plugin",
+  },
+  {
+    // acode-guide：纯 commands+skills（dynamic-workflows 副本已删，specs/skill-seeding-registration.md R4）。
+    packageName: "@acode/acode-guide-plugin",
+    relativePath: "apps/acode-cli/packages/acode-guide-plugin",
+    requiresRuntime: false,
+    requiredSeedPaths: ["commands/workflow.md"],
+    stagedPath: "packages/acode-guide-plugin",
+  },
+  {
+    // skill-creator：纯 skill 资产，definition 未钉 requiredSeedPaths（空集）。
+    packageName: "@acode/skill-creator-plugin",
+    relativePath: "apps/acode-cli/packages/skill-creator-plugin",
+    requiresRuntime: false,
+    requiredSeedPaths: [],
+    stagedPath: "packages/skill-creator-plugin",
+  },
+  {
+    // plugin-creator：8 条 requiredSeedPaths 全部是源跟踪 .md/.mjs，scripts 是 skill
+    // 源文件而非构建产物，不需要 runtime 构建。
+    packageName: "@acode/plugin-creator-plugin",
+    relativePath: "apps/acode-cli/packages/plugin-creator-plugin",
+    requiresRuntime: false,
+    requiredSeedPaths: [
+      "skills/plugin-creator/SKILL.md",
+      "skills/plugin-creator/scripts/create-basic-plugin.mjs",
+      "skills/plugin-creator/scripts/marketplace-files.mjs",
+      "skills/plugin-creator/scripts/upsert-dev-marketplace.mjs",
+      "skills/plugin-creator/scripts/scaffold-files.mjs",
+      "skills/plugin-creator/scripts/validate-plugin.mjs",
+      "skills/plugin-creator/references/plugin-json-spec.md",
+      "skills/plugin-creator/references/installing-and-updating.md",
+    ],
+    stagedPath: "packages/plugin-creator-plugin",
+  },
+  {
+    // image-search：.mcp.json 声明远端 http MCP（无本地 dist）；无 skills 目录仍需
+    // 打包（default-enabled 且市场可见）。
+    packageName: "@acode/image-search-plugin",
+    relativePath: "apps/acode-cli/packages/image-search-plugin",
+    requiresRuntime: false,
+    requiredSeedPaths: [".mcp.json"],
+    stagedPath: "packages/image-search-plugin",
+  },
+  // 智谱 BigModel 技能集 8 个分类内容包（specs/bigmodel-skills-marketplace-plugins.md R4）：
+  // 纯 skills 资产（requiresRuntime=false），默认关闭（plugin.json tier=default_false），
+  // 远端 shared-host 与桌面同款按需启用。requiredSeedPaths 锚点与 bootstrap
+  // official-plugin-bigmodel-skills.ts 的 definition 逐字一致（packaging-parity 断言 D）。
+  {
+    packageName: "@acode/bigmodel-skills-dev-plugin",
+    relativePath: "apps/acode-cli/packages/bigmodel-skills-dev-plugin",
+    requiresRuntime: false,
+    requiredSeedPaths: ["skills/optimize-web-performance-cn/SKILL.md"],
+    stagedPath: "packages/bigmodel-skills-dev-plugin",
+  },
+  {
+    packageName: "@acode/bigmodel-skills-data-plugin",
+    relativePath: "apps/acode-cli/packages/bigmodel-skills-data-plugin",
+    requiresRuntime: false,
+    requiredSeedPaths: ["skills/finance-news-analysis/SKILL.md"],
+    stagedPath: "packages/bigmodel-skills-data-plugin",
+  },
+  {
+    packageName: "@acode/bigmodel-skills-office-plugin",
+    relativePath: "apps/acode-cli/packages/bigmodel-skills-office-plugin",
+    requiresRuntime: false,
+    requiredSeedPaths: ["skills/verify-public-claims-cn/SKILL.md"],
+    stagedPath: "packages/bigmodel-skills-office-plugin",
+  },
+  {
+    packageName: "@acode/bigmodel-skills-management-plugin",
+    relativePath: "apps/acode-cli/packages/bigmodel-skills-management-plugin",
+    requiresRuntime: false,
+    requiredSeedPaths: ["skills/plan-project-delivery-cn/SKILL.md"],
+    stagedPath: "packages/bigmodel-skills-management-plugin",
+  },
+  {
+    packageName: "@acode/bigmodel-skills-sales-plugin",
+    relativePath: "apps/acode-cli/packages/bigmodel-skills-sales-plugin",
+    requiresRuntime: false,
+    requiredSeedPaths: ["skills/discover-customer-opportunities-cn/SKILL.md"],
+    stagedPath: "packages/bigmodel-skills-sales-plugin",
+  },
+  {
+    packageName: "@acode/bigmodel-skills-content-plugin",
+    relativePath: "apps/acode-cli/packages/bigmodel-skills-content-plugin",
+    requiresRuntime: false,
+    requiredSeedPaths: ["skills/video-clipper/SKILL.md"],
+    stagedPath: "packages/bigmodel-skills-content-plugin",
+  },
+  {
+    packageName: "@acode/bigmodel-skills-product-plugin",
+    relativePath: "apps/acode-cli/packages/bigmodel-skills-product-plugin",
+    requiresRuntime: false,
+    requiredSeedPaths: ["skills/marketing-psychology/SKILL.md"],
+    stagedPath: "packages/bigmodel-skills-product-plugin",
+  },
+  {
+    packageName: "@acode/bigmodel-skills-ops-plugin",
+    relativePath: "apps/acode-cli/packages/bigmodel-skills-ops-plugin",
+    requiresRuntime: false,
+    requiredSeedPaths: ["skills/engineer-service-reliability-cn/SKILL.md"],
+    stagedPath: "packages/bigmodel-skills-ops-plugin",
+  },
 ];
 // 随 CLI 内置的技能包（不是插件）：远端 agent 的 bootstrap 沿官方插件同款候选目录在 acode.cjs 旁
 // 找 packages/bundled-skills 并原地读取；与 packages/desktop/scripts/prepare-agent-node-bundle.mjs 同一份清单。
@@ -181,6 +317,16 @@ const remoteOfficialPluginRequiredPaths = [
   "packages/browser-use-plugin/.acode-plugin/plugin.json",
   "packages/node-repl-host/.acode-plugin/plugin.json",
   "packages/agent-teams-plugin/.acode-plugin/plugin.json",
+  // default-enabled 内容型插件的 manifest 存在性钉（specs/desktop-official-plugin-packaging.md
+  // R2/断言 B）：缺目录时远端预构建在 staging manifest 处即失败，而不是发出缺插件的资产。
+  "packages/documents-plugin/.acode-plugin/plugin.json",
+  "packages/pdf-plugin/.acode-plugin/plugin.json",
+  "packages/presentations-plugin/.acode-plugin/plugin.json",
+  "packages/spreadsheets-plugin/.acode-plugin/plugin.json",
+  "packages/acode-guide-plugin/.acode-plugin/plugin.json",
+  "packages/skill-creator-plugin/.acode-plugin/plugin.json",
+  "packages/plugin-creator-plugin/.acode-plugin/plugin.json",
+  "packages/image-search-plugin/.acode-plugin/plugin.json",
 ];
 
 function readACodeAgentRuntimeVersion() {

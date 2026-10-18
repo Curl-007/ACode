@@ -1,0 +1,6 @@
+interface:
+  display_name: "公开信息事实核查"
+  short_description: "追溯原始来源，判断冲突说法，并写清核验结论、适用范围与证据边界"
+  default_prompt: "使用 $verify-public-claims-cn 完成这项任务。"
+policy:
+  allow_implicit_invocation: true

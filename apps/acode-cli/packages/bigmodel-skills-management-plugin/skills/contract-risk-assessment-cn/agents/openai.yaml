@@ -1,0 +1,4 @@
+interface:
+  display_name: "合同风险审查"
+  short_description: "结合交易背景分级合同风险，并给出可谈判、可审批、可复核的处理建议"
+  default_prompt: "使用 $contract-risk-assessment-cn 把每项风险绑定到具体原文、业务影响和适用依据，并提供可谈判、可审批、可复核的处理选项。"

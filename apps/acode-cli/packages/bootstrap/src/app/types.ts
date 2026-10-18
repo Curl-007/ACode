@@ -26,6 +26,8 @@ import type {
   WorkspaceHookPolicyProvider,
 } from "@acode/core";
 import type {
+  ListScriptWorkflowDefinitionsResult,
+  ListScriptWorkflowRunsResult,
   WorkspaceHookReviewDecision,
   WorkspaceHookTrustRevokeTarget,
 } from "@acode/shared/acode-protocol-v4";
@@ -482,6 +484,25 @@ export interface ACodeApp {
    * 内存 journal 的 run 本就不会活过进程）。`resumable` 按 resume 门的同一个谓词算好。
    */
   listDynamicWorkflowRuns?(input: { limit?: number }): Promise<DynamicWorkflowRunSessionSummary[]>;
+  /**
+   * 脚本工作流管理面的运行历史读数（spec script-workflow-management-surface.md §4.1）。
+   * 与 dwf 的 {@link listDynamicWorkflowRuns} 刻意平行、不共用查询：物理表（workflow_run vs
+   * dwf_run）、状态词表、owner 语义都不同。按 cwd 精确过滤（workspace 级事实，锚会话只是
+   * 路由键）。可选能力：sessionStore 无 ScriptWorkflowStorePort（stub 宿主）时缺席，
+   * v4 handler 据此回能力不支持——错误上行，绝不静默回空列表。
+   */
+  listScriptWorkflowRuns?(input: {
+    cwd: string;
+    limit?: number;
+    statuses?: readonly import("@acode/shared/acode-protocol-v4").ScriptWorkflowLogicalStatus[];
+  }): Promise<ListScriptWorkflowRunsResult>;
+  /**
+   * 脚本工作流管理面的已持久化脚本清单（spec §4.2）。缺席条件同
+   * {@link listScriptWorkflowRuns}；全量回（行数量级 = 用户迭代过的脚本数），可见性过滤
+   * （builtin 恒可见、其余 scope 需实体脚本路径）由投影给出。清单是全库事实（scope 列
+   * 表达到的是「哪一级落盘」，不是「哪个项目」），不按 cwd 过滤。
+   */
+  listScriptWorkflowDefinitions?(): Promise<ListScriptWorkflowDefinitionsResult>;
   /**
    * workflow run 的冷回放：本会话名下、`excludeRunIds`
    * 之外的 run 从 journal 回放成进度事件载荷，冷物化把它们当内存事件喂给同一个 reducer——

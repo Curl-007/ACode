@@ -1,4 +1,4 @@
-import type { ACodeProvider, SkillsPromptContext, SkillsListResult } from "@acode/shared";
+import type { ACodeProvider, SkillScope, SkillsPromptContext, SkillsListResult } from "@acode/shared";
 import { ServiceChannels } from "@acode/shared";
 import { createServiceDescriptor } from "../descriptors.js";
 
@@ -12,7 +12,7 @@ export interface ISkillsService {
     workspacePath: string;
     workspaceIdentity?: string;
     provider?: ACodeProvider;
-    scope?: "workspace" | "user" | "plugin";
+    scope?: SkillScope;
     skillId: string;
     enabled: boolean;
   }): Promise<void>;

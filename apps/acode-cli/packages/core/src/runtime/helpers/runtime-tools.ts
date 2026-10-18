@@ -18,6 +18,7 @@ import {
   resolveBuiltInToolAllowlist,
   resolveRuntimeDisallowedTools,
   resolveRuntimeDynamicWorkflowToolsIncluded,
+  resolveRuntimeScriptWorkflowToolsIncluded,
 } from "./tool-allowlist.js";
 import { isStaleBranchRuntimeTaskEvent } from "../methods/runtime-command-generation.js";
 import { createAutoRiskClassifier } from "../methods/auto-risk-classifier-sidecar.js";
@@ -111,6 +112,9 @@ function registerRuntimeBuiltInTools(runtime: AgentRuntimeInternal, deps: AgentR
     // 这里不能用端口在场做判据——十个工具的端口在任何 CLI 里都装配齐全，灰度是 Host 的决定。
     // 取值收在 tool-allowlist.ts，与分支刷新那个入口共用同一个推导。
     includeDynamicWorkflow: resolveRuntimeDynamicWorkflowToolsIncluded(runtime.config),
+    // 脚本工作流门（合取的第二道，spec §4.5）：同款理由——不能用端口在场做判据，
+    // 这是 Host 折叠出口的决定；两个注册入口必须共用 tool-allowlist.ts 的同一推导。
+    includeScriptWorkflow: resolveRuntimeScriptWorkflowToolsIncluded(runtime.config),
     // browserControlPort 只是宿主能力，不应隐式暴露高权限 node_repl。
     // node_repl/browser-use 由 ACode 官方 browser-use 插件启停推导出的 runtimeFeatures 控制。
     includeNodeRepl: nodeReplEnabled,

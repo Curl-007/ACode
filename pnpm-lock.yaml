@@ -231,6 +231,22 @@ importers:
 
   apps/acode-cli/packages/android-emulator-plugin: {}
 
+  apps/acode-cli/packages/bigmodel-skills-content-plugin: {}
+
+  apps/acode-cli/packages/bigmodel-skills-data-plugin: {}
+
+  apps/acode-cli/packages/bigmodel-skills-dev-plugin: {}
+
+  apps/acode-cli/packages/bigmodel-skills-management-plugin: {}
+
+  apps/acode-cli/packages/bigmodel-skills-office-plugin: {}
+
+  apps/acode-cli/packages/bigmodel-skills-ops-plugin: {}
+
+  apps/acode-cli/packages/bigmodel-skills-product-plugin: {}
+
+  apps/acode-cli/packages/bigmodel-skills-sales-plugin: {}
+
   apps/acode-cli/packages/bootstrap:
     dependencies:
       '@acode/adapters':

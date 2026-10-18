@@ -19,17 +19,6 @@ function parseDeviceIdFromArgs(): string {
 // 在 contextBridge 建立之前就暴露同步值，让 renderer 在 React 渲染前就能读到
 contextBridge.exposeInMainWorld("__ACODE_DEVICE_ID__", parseDeviceIdFromArgs());
 
-// W1-7 启动骨架占位（specs/boot-placeholder.md §9.4）：仿 --device-id 模式解析
-// `--acode-boot-placeholder=<JSON>` 并连同当前 shell zoom 暴露；index.html 的
-// head/body 内联脚本在任何页面脚本前同步读取。bootPlaceholder.ts 零 electron
-// 运行时导入，可安全被 preload bundle 复用（解析/校验器与 main 侧同一份）。
-// flag 缺席/JSON 非法/校验失败 → parsed 为 undefined，展开后 enabled 缺省，
-// head 相位 no-op（fail-safe，启动表现与现状一致）。
-contextBridge.exposeInMainWorld("__ACODE_BOOT_PLACEHOLDER__", {
-  ...parseBootPlaceholderArgv(process.argv),
-  shellZoomFactor: webFrame.getZoomFactor(),
-});
-
 import type {
   AppSettings,
   ApplicationIconRequest,
@@ -82,9 +71,6 @@ import type { PlatformChannelMap } from "@acode/shared";
 import { InternalChannels, PlatformChannels, formatACodeRendererProcessName } from "@acode/shared";
 import { createOAuthCallbackHandler } from "./oauthCallbackBridge.js";
 import { findInPageBridge } from "./findInPageBridge.js";
-// W1-7：boot placeholder argv 解析器与 main 侧同一份（bootPlaceholder.ts 零 electron
-// 运行时导入，preload bundle 可安全复用；specs/boot-placeholder.md §9.4）。
-import { parseBootPlaceholderArgv } from "../main/bootPlaceholder.js";
 const updateReadyCallbacks = new Set<(version: string) => void>();
 const updateStateCallbacks = new Set<(payload: UpdateStatePayload) => void>();
 const postUpdateReleaseNotesCallbacks = new Set<(payload: PostUpdateReleaseNotesPayload) => void>();

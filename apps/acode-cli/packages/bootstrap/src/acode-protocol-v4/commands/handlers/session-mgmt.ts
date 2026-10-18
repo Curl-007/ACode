@@ -52,6 +52,9 @@ async function createSession(
     mcpServers: payload.mcpServers,
     offPeakToolEnabled: payload.offPeakToolEnabled,
     dynamicWorkflowEnabled: payload.dynamicWorkflowEnabled,
+    // 脚本工作流产品开关：true/false 都透传（Host 按折叠出口显式写 false 才能关；
+    // 缺席 = 调用方不参与门控，CLI 按本机缺省档 onDemand 放行，见 ../types.ts 注释）。
+    scriptWorkflowEnabled: payload.scriptWorkflowEnabled,
   });
   // createSession.config 消费——草稿态 UI 的先行选择（模型/思考深度/
   // 模式）在首发之前应用并补发事件，首条 turn 即用所选配置。必须在 firstInput 之前。

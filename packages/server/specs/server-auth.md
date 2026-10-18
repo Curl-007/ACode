@@ -132,6 +132,32 @@ P0-2（鉴权 fail-closed + token 走 Header 不走 query）。
   新请求 → 503。**风险登记**：本次不引入 TTL 定时驱逐（避免新增定时器所有权问题）；陈旧未认领
   条目存活至进程重启，Origin 裁决已封死浏览器攻击者，loopback 姿态下原生本地进程属既有信任边界。
 
+### Bot 回调入口 × server token（已知限制登记，本次不改行为）
+
+- **事实**：`POST /api/bots/:provider`、`POST /api/bots/:provider/:botId` 与
+  `GET /api/bots/:provider/:botId`（`packages/server/src/http.ts`）是外部 IM provider
+  （企业微信/飞书/webhook 等）的 webhook 回调与 URL 验证入口，自有鉴权是 bot 配置的
+  webhook secret 校验/验签（`packages/services/src/bots/botsService.ts` 的
+  `webhookSecretInvalid` 分支），凭据面与 `ACODE_SERVER_AUTH_TOKEN` 无关。而全局 token
+  中间件对受保护路径 `/api/**`（`isTokenProtectedPathname`，shared serverAuth 单一裁决）
+  一律要求合法 server token——因此**配置了 `ACODE_SERVER_AUTH_TOKEN` 的部署里，外部
+  provider 的回调请求必然 401**：provider 侧无法携带本 server 的 Bearer token（也不应该——
+  server token 是控制面凭据，下发给第三方 IM 服务商等于凭据外泄）。
+- **为什么不按路径豁免（本次裁决）**：为单个 `/api/**` 路径开 token 豁免会在 token 裁决里
+  引入「路径级例外表」，破坏「受保护路径 = `/ws*` ∪ `/api/**`」的单一不变量（P0-2 与 M1
+  的收敛结论：`isTokenProtectedPathname` 是单一定义，两套 server 共用）；且 bot 回调 body
+  在 server token 鉴权之前触达 botsService 解析链的攻击面需要单独评估。在「bot 回调需要
+  公网可达」与「token 是全量 `/api/**` 门」之间没有既安全又零新机制的解法前，选择
+  **如实登记，不改行为**。
+- **部署建议**：需要接收公网 bot 回调的部署，暂时**不要配置** `ACODE_SERVER_AUTH_TOKEN`，
+  回调入口的安全边界回到 bot 自有的 webhook secret/验签 + loopback/内网绑定 + 反向代理层
+  （Origin/限速/黑白名单）把关；fail-closed 启动不变量仍然禁止「非 loopback 绑定 + 无
+  token」的组合，所以该部署形态必须经反向代理转发到 loopback，而不是把 server 直接暴露
+  公网。不需要 bot 回调的部署照常配置 token，`/api/**`（含 bot 回调路径）全量受保护。
+- **解锁条件（后续线）**：若产品需要「token 部署 + 公网 bot 回调」同时成立，须回到本 spec
+  重新裁决——候选方向是给 bot 回调一条独立的、不经过 server token 裁决的专用入口（自带
+  per-bot secret 门控与独立的 Origin/重放防护），而不是在现有中间件上加路径例外。
+
 ### Credential RPC 通道按客户端角色收窄（M4 修复）
 
 - **威胁**：`ICredentialService` 是全仓明文凭据面（OAuth access token、JWT、BYO API Key、

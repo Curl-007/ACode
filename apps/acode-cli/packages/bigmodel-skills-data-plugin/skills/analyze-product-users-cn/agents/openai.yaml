@@ -1,0 +1,6 @@
+interface:
+  display_name: "用户行为与产品分析"
+  short_description: "看漏斗、留存、分群、行为路径和实验，判断问题出在哪批用户、哪一步"
+  default_prompt: "使用 $analyze-product-users-cn 分析这组用户行为和产品表现。"
+policy:
+  allow_implicit_invocation: true

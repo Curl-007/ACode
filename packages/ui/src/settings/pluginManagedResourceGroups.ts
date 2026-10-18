@@ -15,6 +15,8 @@ import type { PluginComponentDisplayGroup } from "@/settings/PluginComponentGrou
 
 interface ResourceGroups<TLocal, TPlugin> {
   local: TLocal[];
+  /** bundled（内置技能）桶：与 local 同型（完整条目）；commands 场景恒为空数组。 */
+  bundled: TLocal[];
   plugin: TPlugin[];
 }
 
@@ -154,6 +156,7 @@ export function groupSkillsByPlugin(
 ): ResourceGroups<SkillSummary, SkillSummary> {
   const seenPaths = new Set<string>();
   const local: SkillSummary[] = [];
+  const bundled: SkillSummary[] = [];
   const plugin: SkillSummary[] = [];
   for (const skill of skills) {
     const normalizedPath = skill.path.replaceAll("\\", "/").toLowerCase();
@@ -166,11 +169,14 @@ export function groupSkillsByPlugin(
     }
     if (skill.scope === "plugin") {
       plugin.push(skill);
+    } else if (skill.scope === "bundled") {
+      // bundled 不进 local 桶：否则会在「已安装」组重复出现（spec I5.1）。
+      bundled.push(skill);
     } else {
       local.push(skill);
     }
   }
-  return { local, plugin };
+  return { local, bundled, plugin };
 }
 
 export function groupCommandsByPlugin(
@@ -179,6 +185,8 @@ export function groupCommandsByPlugin(
 ): ResourceGroups<UserCommand, PluginCommand> {
   const local: UserCommand[] = [];
   const plugin: PluginCommand[] = [];
+  // commands 无 bundled 形态；bundled 桶为类型完整性恒空（spec I5.1 ResourceGroups 扩展）。
+  const bundled: UserCommand[] = [];
   for (const command of commands) {
     if (
       isUserCommand(command) &&
@@ -200,7 +208,7 @@ export function groupCommandsByPlugin(
       plugin.push(command);
     }
   }
-  return { local, plugin };
+  return { local, bundled, plugin };
 }
 
 export function filterLocalMcpServers(servers: ACodeMcpServer[], query: string): ACodeMcpServer[] {

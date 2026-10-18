@@ -1,0 +1,6 @@
+interface:
+  display_name: "项目计划与排期"
+  short_description: "从交付成果和现实约束倒推里程碑、关键路径与可验收的项目基线"
+  default_prompt: "使用 $plan-project-delivery-cn 完成这项任务。"
+policy:
+  allow_implicit_invocation: true

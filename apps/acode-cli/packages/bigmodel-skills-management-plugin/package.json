@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json.schemastore.org/package.json",
+  "name": "@acode/bigmodel-skills-management-plugin",
+  "version": "0.1.0",
+  "private": true,
+  "description": "智谱 BigModel 技能市场·企业管理类合集（15 个技能）：项目计划与排期、合同风险审查、招聘与薪酬对标、组织规划、多项目治理、个人数据合规、跨团队依赖协调等。各技能保留上游许可与署名。",
+  "license": "Apache-2.0 OR MIT"
+}

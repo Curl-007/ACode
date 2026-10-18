@@ -1,0 +1,15 @@
+{
+  "name": "bigmodel-skills-office",
+  "version": "0.1.0",
+  "tier": "default_false",
+  "description": "Office and documentation skills (16) from the Zhipu BigModel skill market: public-claim verification, deep topic research, meeting notes, weekly reports, academic paper review, task management, email management, local OCR and more. Each skill keeps its upstream license and attribution.",
+  "description_i18n": {
+    "zh-CN": "智谱 BigModel 技能市场·文档办公类合集（16 个技能）：公开信息事实核查、深度专题研究、会议纪要、周报撰写、学术论文评审、任务管理、邮件管理、本地 OCR 等。各技能保留上游许可与署名。"
+  },
+  "author": {
+    "name": "Zhipu BigModel Skill Market",
+    "url": "https://open.bigmodel.cn/managed-agents/skills"
+  },
+  "license": "Apache-2.0 OR MIT",
+  "skills": "skills"
+}

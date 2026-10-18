@@ -1,0 +1,4 @@
+interface:
+  display_name: "数据清洗与变更追踪"
+  short_description: "清洗异常数据，记录每条处理规则、影响行数、前后差异和可追溯变更"
+  default_prompt: "请用 $data-cleaning-lineage-cn 清洗这份数据，保留原文件，并交付逐规则变更表、前后对账和复跑方法。"

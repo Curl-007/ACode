@@ -93,12 +93,6 @@ import {
   createEditableFocusLedger,
   registerEmbeddedEditableFocusIpc,
 } from "./editableFocusTracker.js";
-// W1-7 启动骨架占位（specs/boot-placeholder.md）。
-import {
-  attachBootPlaceholderWindow,
-  buildBootPlaceholderArgument,
-  resolveBootPlaceholderPayload,
-} from "./bootPlaceholder.js";
 // W1-3 启动硬化（specs/desktop-startup-hardening.md §4a/§4d）。
 import { maybeRelaunchWithCappedDeepLinkArgv } from "./argvBudget.js";
 import { inspectDeepLinkWorkspacePath } from "./deepLinkHardening.js";
@@ -602,11 +596,6 @@ async function runBrowserCommandOnView(params: {
 }
 let currentDesktopZoomLevel = 0;
 let currentDesktopWindowSize: DesktopWindowSize | undefined;
-// W1-7 boot placeholder（specs/boot-placeholder.md §9.3）：bootstrap 读设置一次
-// 缓存到模块态，createWindowInstance 逐窗口生成 additionalArguments 注入体；
-// SyncAppSettings 即时通道到达时刷新（与 closeToTrayOnWindows 同款）。
-let bootPlaceholderPersistedFrame: unknown;
-let bootPlaceholderEnabledSetting: boolean | undefined;
 const preloadPath = join(import.meta.dirname, "../preload/index.cjs");
 // 启动工作区解析必须读**有效数据根**下的设置：硬编码 homedir() 会穿透
 // ACODE_DATA_BASE_DIR / dataBaseDir 的隔离——隔离冒烟/E2E profile 会读到真实的
@@ -1017,15 +1006,6 @@ function syncImmediateAppSettings(patch: Partial<AppSettings>) {
     keepAwakeWhileRunning = patch.keepAwakeWhileRunning;
     // W1-4：总开关是台账策略门之一，变化后经唯一 reconcile 写路径重估 blocker。
     keepAwakeClaims.reconcile("settings-sync");
-  }
-
-  // W1-7：boot placeholder 两设置键即时刷新（下一次 createWindowInstance 生效；
-  // 已开窗口的骨架由 attach 的 resolvePayload 闭包在 did-finish-load 重放时读到新值）。
-  if (patch.desktopBootPlaceholder !== undefined) {
-    bootPlaceholderPersistedFrame = patch.desktopBootPlaceholder;
-  }
-  if (patch.bootPlaceholderEnabled !== undefined) {
-    bootPlaceholderEnabledSetting = patch.bootPlaceholderEnabled;
   }
 
   if (patch.officialServices !== undefined) {
@@ -1921,14 +1901,6 @@ function createWindowInstance(startupBootstrap: StartupWindowBootstrap = {}) {
     // 已恢复 workspace 建立后台索引。始终注入 canonical fallback，才能覆盖非 active 历史目录已删除的情况。
     agentSpawnFallbackCwd: getConversationWorkspaceDir(),
     deviceMid,
-    // W1-7：逐窗口生成 boot placeholder 注入参数（specs/boot-placeholder.md §9.2/§9.3）；
-    // 设置显式关闭 → {enabled:false}（head 相位 no-op），无持久数据 → 合成默认骨架。
-    bootPlaceholderArgument: buildBootPlaceholderArgument(
-      resolveBootPlaceholderPayload({
-        persistedFrame: bootPlaceholderPersistedFrame,
-        settingEnabled: bootPlaceholderEnabledSetting,
-      }),
-    ),
     runtimeProcessEnvPatchPromise: runtimeProcessEnvPreparation.patchPromise,
     runtimeProcessEnvFallbackPatch: runtimeProcessEnvPreparation.fallbackPatch,
     initialDesktopZoomLevel: currentDesktopZoomLevel,
@@ -1942,19 +1914,6 @@ function createWindowInstance(startupBootstrap: StartupWindowBootstrap = {}) {
       currentDesktopWindowSize = state;
       await mainSettingService.update({ desktopWindowSize: state });
     },
-  });
-  // W1-7：did-finish-load 的 sync 相位重放必须注册在 createWindow 内部既有 zoom
-  // 重放之后（同事件按注册序执行，createWindow 返回后挂即满足，spec §5）——
-  // 生产包 loadFile 导航后 Chromium 会重放 origin 级 zoom，sync 相位以 settle 后的
-  // 最新视口重绘骨架，保证物理尺寸钉住上次会话。
-  attachBootPlaceholderWindow({
-    webContents: win.webContents,
-    resolvePayload: () =>
-      resolveBootPlaceholderPayload({
-        persistedFrame: bootPlaceholderPersistedFrame,
-        settingEnabled: bootPlaceholderEnabledSetting,
-      }),
-    logger,
   });
   return win;
 }
@@ -2137,10 +2096,6 @@ app.whenReady().then(async () => {
     keepAwakeWhileRunning = bootstrapSettings.keepAwakeWhileRunning ?? false;
     currentDesktopZoomLevel = clampDesktopZoomLevel(bootstrapSettings.desktopZoomLevel ?? 0);
     currentDesktopWindowSize = bootstrapSettings.desktopWindowSize;
-    // W1-7：boot placeholder 两设置键缓存（specs/boot-placeholder.md §9.3）；
-    // createWindowInstance 逐窗口读取生成注入参数。
-    bootPlaceholderPersistedFrame = bootstrapSettings.desktopBootPlaceholder;
-    bootPlaceholderEnabledSetting = bootstrapSettings.bootPlaceholderEnabled;
     // 全局 keep-awake：启动时若设置已开，立刻经台账 reconcile 重估（唯一 blocker
     // 写路径），不必等设置变更事件。
     keepAwakeClaims.reconcile("bootstrap");

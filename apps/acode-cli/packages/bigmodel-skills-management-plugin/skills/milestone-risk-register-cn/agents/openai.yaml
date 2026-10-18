@@ -1,0 +1,6 @@
+interface:
+  display_name: "项目里程碑与风险跟踪"
+  short_description: "面向中国企业场景的项目里程碑与风险跟踪与证据化交付"
+  default_prompt: "使用 $milestone-risk-register-cn 基于已有材料生成可复核的中文结果，并标出数据与权限边界。"
+policy:
+  allow_implicit_invocation: true

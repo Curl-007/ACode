@@ -1,0 +1,4 @@
+interface:
+  display_name: "项目延期诊断与恢复"
+  short_description: "诊断范围、进度、质量和资源上的偏差，重建可执行的恢复基线"
+  default_prompt: "使用 $control-project-health-recovery-cn 诊断并恢复这个项目。"

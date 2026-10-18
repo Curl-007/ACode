@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json.schemastore.org/package.json",
+  "name": "@acode/bigmodel-skills-content-plugin",
+  "version": "0.1.0",
+  "private": true,
+  "description": "智谱 BigModel 技能市场·内容创作类合集（12 个技能）：视频创作与剪辑、Manim 动画分镜、图片处理与分析、创意写作、内容选题、UI 设计、翻译、Markdown 转换等。各技能保留上游许可与署名。",
+  "license": "Apache-2.0 OR MIT"
+}

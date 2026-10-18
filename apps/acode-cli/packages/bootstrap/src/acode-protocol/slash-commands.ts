@@ -13,19 +13,32 @@ import {
 
 export interface ListProtocolSlashCommandsOptions extends ListACodeCustomCommandsOptions {
   /**
-   * 动态工作流开关。只有显式 false 才从目录中剔除内置 `workflow` 与 `ultracode`。
+   * 动态工作流开关（dwf 总闸）。只有显式 false 才从目录中剔除内置 `workflow`。
    * 未传入该字段的调用方保留默认目录；协议服务端从 appRuntimePreferences 传入显式布尔。
    */
   dynamicWorkflowEnabled?: boolean;
+  /**
+   * 脚本工作流开关（spec script-workflow-management-surface.md §4.5）。只有显式 false 才
+   * 剔除内置 `ultracode`；与 dynamicWorkflowEnabled **合取**（任一 false 即剔除）——
+   * 工具不注册时命令还把模型引向 RunWorkflow 是同款说谎。
+   */
+  scriptWorkflowEnabled?: boolean;
 }
 
 /**
- * 受动态工作流开关约束的内置命令：两套工作流系统各自的入口。
- * 必须与 core 的 GATED_WORKFLOW_TOOL_NAMES（工具面）和 builtin-prompt-command 的展开门
- * 三处同结论——少剔一处就会出现「目录里有入口 / 展开不出正文 / 工具不存在」这类分裂。
+ * 受动态工作流总闸约束的内置命令：`/workflow`（dwf 入口）与 `/ultracode`（脚本工作流入口，
+ * 该系统同时受总闸与 scriptWorkflowEnabled 合取约束）。
+ * 必须与 core 的工具面门（GATED_WORKFLOW_TOOL_NAMES + RunWorkflow 的 includeScriptWorkflow
+ * 独立支，见 workflow-tool-names.ts 的合取语义）和 builtin-prompt-command 的展开门三处
+ * 同结论——少剔一处就会出现「目录里有入口 / 展开不出正文 / 工具不存在」这类分裂。
  */
 const DYNAMIC_WORKFLOW_GATED_COMMAND_NAMES: ReadonlySet<string> = new Set([
   BUILTIN_WORKFLOW_COMMAND_NAME,
+  BUILTIN_ULTRACODE_COMMAND_NAME,
+]);
+
+/** 只受脚本工作流门约束的内置命令（dwf 总闸关时它随总闸一起消失——合取的另一半）。 */
+const SCRIPT_WORKFLOW_GATED_COMMAND_NAMES: ReadonlySet<string> = new Set([
   BUILTIN_ULTRACODE_COMMAND_NAME,
 ]);
 
@@ -35,11 +48,21 @@ export async function listProtocolSlashCommands(
   // 动态工作流关闭时：composer 的加号菜单与 `/` 面板都只读这份目录，剔除即两个入口一起消失。
   // 两个命令名都是内置且都是保留名，用户/插件的同名自定义命令在下面的 reserved 过滤里一并消失，
   // 不会在门关着时借自定义命令的身份漏回目录。
-  const builtins = listAppProtocolBuiltinSlashCommands().filter(
-    (command) =>
-      options.dynamicWorkflowEnabled !== false ||
-      !DYNAMIC_WORKFLOW_GATED_COMMAND_NAMES.has(command.name),
-  );
+  const builtins = listAppProtocolBuiltinSlashCommands().filter((command) => {
+    if (
+      options.dynamicWorkflowEnabled === false &&
+      DYNAMIC_WORKFLOW_GATED_COMMAND_NAMES.has(command.name)
+    ) {
+      return false;
+    }
+    if (
+      options.scriptWorkflowEnabled === false &&
+      SCRIPT_WORKFLOW_GATED_COMMAND_NAMES.has(command.name)
+    ) {
+      return false;
+    }
+    return true;
+  });
   let customCommands: Awaited<ReturnType<typeof listACodeCustomCommands>>["commands"] = [];
   try {
     const outcome = await listACodeCustomCommands(options);

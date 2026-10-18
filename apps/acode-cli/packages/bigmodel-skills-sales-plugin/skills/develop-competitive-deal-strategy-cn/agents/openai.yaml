@@ -1,0 +1,6 @@
+interface:
+  display_name: "重点商机赢单策略"
+  short_description: "识别决策标准、竞争位置与赢单路径，管理让步和退出边界"
+  default_prompt: "使用 $develop-competitive-deal-strategy-cn 完成这项任务。"
+policy:
+  allow_implicit_invocation: true

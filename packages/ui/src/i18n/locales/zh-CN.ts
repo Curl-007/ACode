@@ -178,6 +178,7 @@ const zhCN: Record<string, string> = {
   "common.refresh": "刷新",
   "common.open": "打开",
   "common.save": "保存",
+  "common.apply": "应用",
   "common.saving": "保存中...",
   "common.delete": "删除",
   "settings.resourceGroup.item.one": "{count} 项",
@@ -2008,9 +2009,6 @@ const zhCN: Record<string, string> = {
   "settings.keepAwakeWhileRunning": "保持电脑运行",
   "settings.keepAwakeWhileRunningDescription":
     "打开后阻止系统因空闲进入休眠（仍可手动睡眠/合盖休眠）。桌面端全局生效。",
-  "settings.bootPlaceholder": "启动骨架占位",
-  "settings.bootPlaceholderDescription":
-    "窗口启动时先按上次采样的界面骨架绘制轻量占位，让首帧更接近真实布局。仅桌面端生效，下次启动时应用。",
   "settings.supportBundle.title": "支持包",
   "settings.supportBundle.description":
     "导出用于排查问题的日志与诊断信息压缩包；主机名、账户名、网址与凭据在写入前已统一隐去。",
@@ -2558,6 +2556,10 @@ const zhCN: Record<string, string> = {
   "settings.modelProvider.apiKeyPlaceholder": "输入 API Key",
   "settings.modelProvider.apiKeyConfiguredPlaceholder": "已配置（••••••••），输入新值可更换",
   "settings.modelProvider.apiKeyDisabledHint": "设置 API Key 后即可启用。",
+  "settings.modelProvider.showApiKey": "显示已存储的 API Key",
+  "settings.modelProvider.hideApiKey": "隐藏 API Key",
+  "settings.modelProvider.apiKeyRevealFailure": "读取已存储的 API Key 失败：{error}",
+  "settings.modelProvider.apiKeyRevealMissing": "凭据条目缺失",
   "settings.modelProvider.getApiKey": "获取 API Key",
   "settings.modelProvider.viewUsage": "查看用量",
   "settings.modelProvider.useSubscription": "使用订阅",
@@ -3205,6 +3207,7 @@ const zhCN: Record<string, string> = {
   "settings.skills.detail.disabled": "已停用",
   "settings.skills.scope.personal": "个人",
   "settings.skills.scope.plugin": "插件",
+  "settings.skills.scope.bundled": "内置",
   "settings.skills.scope.workspaceFallback": "项目",
   "settings.skills.diagnostics.summary": "技能加载诊断：{errorCount} 个错误，{warningCount} 个警告",
   "settings.skills.diagnostics.expand": "展开诊断",
@@ -3292,6 +3295,21 @@ const zhCN: Record<string, string> = {
   "settings.subagents.model.inherit": "继承默认",
   "settings.subagents.model.defaultMain": "继承默认",
   "settings.subagents.model.select": "选择模型",
+  "settings.subagents.batch.enter": "批量编辑",
+  "settings.subagents.batch.groupAction": "统一设置模型",
+  "settings.subagents.batch.groupToggle": "全选本分组内可批量的子智能体",
+  "settings.subagents.batch.rowToggleAria": "批量选择 {name}",
+  "settings.subagents.batch.bar.selected": "已选择 {count} 个",
+  "settings.subagents.batch.bar.progress": "正在应用 {done}/{total}…",
+  "settings.subagents.batch.bar.setInherit": "恢复继承默认",
+  "settings.subagents.batch.bar.apply": "应用",
+  "settings.subagents.batch.bar.exit": "退出批量编辑",
+  "settings.subagents.batch.result.success": "已更新 {count} 个子智能体",
+  "settings.subagents.batch.result.partial": "成功 {succeeded} 个，失败 {failed} 个",
+  "settings.subagents.batch.result.failedNames": "失败：{names}",
+  "settings.subagents.batch.dialog.title": "统一设置子智能体模型",
+  "settings.subagents.batch.dialog.scope": "将对「{group}」分组的 {count} 个子智能体应用此模型",
+  "settings.subagents.batch.dialog.thoughtLevel": "推理档位",
   "settings.subagents.model.main": "主模型",
   "settings.subagents.model.lite": "轻量模型",
   "settings.subagents.permissionMode.auto": "自动",
@@ -3332,6 +3350,7 @@ const zhCN: Record<string, string> = {
   "settings.plugin.mcp.searchEmpty": "没有匹配的 MCP 服务器",
   "settings.plugin.skills.emptyInstalledTitle": "尚未安装技能",
   "settings.plugin.skills.installed": "已安装",
+  "settings.plugin.skills.bundled": "内置技能",
   "settings.plugin.skills.emptyInstalledDescription": "新建技能，或从外部 Agent 导入已有技能。",
   "settings.plugin.skills.newSkill": "新建技能",
   "settings.plugin.skills.searchEmpty": "没有匹配的技能",
@@ -3920,6 +3939,14 @@ const zhCN: Record<string, string> = {
   "chat.message.collapse": "收起",
   // 子代理 transcript 里折起来的引擎尾注。
   "chat.userInput.epilogue.label": "工作流引擎附加说明",
+  // 斜杠命令触发回显（specs/slash-command-echo.md）；与 en-US 成对维护。
+  "chat.userInput.command.triggered": "已触发命令 /{name}",
+  "chat.userInput.command.scope.user": "用户命令",
+  "chat.userInput.command.scope.project": "项目命令",
+  "chat.userInput.command.scope.system": "系统命令",
+  "chat.userInput.command.scope.admin": "管理命令",
+  "chat.userInput.command.scope.builtin": "内置命令",
+  "chat.userInput.command.scope.plugin": "插件命令",
   "chat.message.bodyPreview.notice":
     "这条回复较大，当前只显示预览（{previewBytes} / {fullBytes}）。",
   "chat.message.bodyPreview.loadFull": "查看完整消息",
@@ -4016,19 +4043,24 @@ const zhCN: Record<string, string> = {
   "chat.usageStatusbar.turnUsage.empty": "本轮暂无模型事实（纯问答轮）",
   "chat.usageStatusbar.session.label": "会话累计",
   "chat.usageStatusbar.session.tooltip":
-    "本窗口绑定焦点会话的累计用量（无活动会话显示零值，不回退其他会话）；轮数/请求数/代码增删来自轮统计。",
+    "本窗口绑定焦点会话的累计用量（数据缺席时胶囊自动隐藏，不回退其他会话）；轮数/请求数/代码增删来自轮统计。",
   "chat.usageStatusbar.tools.label": "工具调用",
   "chat.usageStatusbar.tools.tooltip": "本会话投影的工具调用本地聚合，含各工具耗时与错误。",
   "chat.usageStatusbar.tools.errors": "{count} 错误",
   "chat.usageStatusbar.tools.errorCount": "错误次数",
+  "chat.usageStatusbar.tools.running": "{count} 运行中",
+  "chat.usageStatusbar.tools.more": "+{count} 更多",
+  "chat.usageStatusbar.tools.lastError": "最近错误",
+  "chat.usageStatusbar.unit.tokensPerSecond": "tok/s",
   "chat.usageStatusbar.today.label": "今日合计",
   "chat.usageStatusbar.today.tooltip":
     "当前 workspace 当天跨会话累计（本地/远端同源取数，不与其他 workspace 混算）；挂载、轮完成与窗口聚焦时刷新。",
   "chat.usageStatusbar.today.turnCount": "轮数",
   "chat.usageStatusbar.today.toolCallCount": "工具调用",
+  "chat.usageStatusbar.today.favoriteModel": "主要模型",
   "chat.usageStatusbar.subagents.label": "子智能体",
   "chat.usageStatusbar.subagents.tooltip":
-    "主代理 / 子代理分列（主 = 会话累计输入+输出）；点击展开每派发任务（标题 + 累计 tokens + 权威运行状态）。",
+    "值 = 子代理累计 tokens（主代理量见「会话累计」）；点击展开每派发任务（标题 + 累计 tokens + 权威运行状态）。",
   "chat.usageStatusbar.subagents.main": "主代理",
   "chat.usageStatusbar.subagents.children": "子代理",
   "chat.usageStatusbar.subagents.running": "运行中",
@@ -4039,6 +4071,7 @@ const zhCN: Record<string, string> = {
   "chat.usageStatusbar.settings.label": "用量状态栏设置",
   "chat.usageStatusbar.settings.title": "用量状态栏",
   "chat.usageStatusbar.settings.rateLine": "回答末尾速率行",
+  "chat.usageStatusbar.settings.autoHideNote": "无数据的胶囊自动隐藏；零值照常显示。",
   "chat.usageStatusbar.detail.inputTokens": "输入 tokens",
   "chat.usageStatusbar.detail.outputTokens": "输出 tokens",
   "chat.usageStatusbar.detail.reasoningTokens": "思考 tokens",
@@ -4276,6 +4309,12 @@ const zhCN: Record<string, string> = {
   "chat.toolCall.goal.label": "Goal",
   "chat.toolCall.edit.writing": "正在写入",
   "chat.toolCall.edit.wrote": "已写入",
+  // Write 流式阶段词（spec: apps/acode-cli/specs/write-tool-streaming-stat.md）。
+  "chat.toolCall.write.generating": "正在生成",
+  "chat.toolCall.write.waiting": "等待写入",
+  "chat.toolCall.write.writingFile": "正在写入",
+  "chat.toolCall.write.failed": "写入失败",
+  "chat.toolCall.write.stopped": "已停止写入",
   "chat.toolCall.edit.updating": "更新中",
   "chat.toolCall.edit.updated": "已更新",
   "chat.toolCall.edit.deleting": "正在删除",
@@ -4636,6 +4675,35 @@ const zhCN: Record<string, string> = {
   "workflows.hub.history.note":
     "运行记录来自本项目的工作流日志，重启后仍然保留；「查看实例」会回到发起它的对话并打开实例详情。",
   "workflows.hub.history.tokens": "{tokens} tokens",
+  // ---- 脚本工作流分组（工作流中枢页第二族内容；与上方 dwf 中枢不可互换，
+  // apps/acode-cli/specs/script-workflow-management-surface.md §7.1/§7.5）----
+  "workflows.scriptHub.title": "脚本工作流",
+  "workflows.scriptHub.description":
+    "另一套工作流系统：由 RunWorkflow 工具运行的纯 JavaScript 脚本（/ultracode）。与上方动态工作流不可互换——一方的脚本无法在另一方运行。",
+  "workflows.scriptHub.scripts": "已持久化脚本",
+  "workflows.scriptHub.scriptsEmpty": "还没有已持久化的脚本。",
+  "workflows.scriptHub.runs": "运行历史",
+  "workflows.scriptHub.empty": "本项目还没有脚本工作流运行记录。在对话中提及 ultracode 即可发起。",
+  "workflows.scriptHub.truncated": "仅显示最近 {limit} 条。",
+  "workflows.scriptHub.loadError": "脚本工作流数据加载失败。",
+  "workflows.scriptHub.retry": "重试",
+  "workflows.scriptHub.noSession": "打开一个会话后即可查看本项目的历史记录。",
+  "workflows.scriptHub.gatedBadge": "工具已停用",
+  "workflows.scriptHub.gated": "RunWorkflow 已在设置中停用——历史记录仍可查看；到设置中重新开启。",
+  "workflows.scriptHub.stopReason.user": "已手动停止",
+  "workflows.scriptHub.stopReason.processExited": "已中断：所属进程在结算前退出",
+  "workflows.scriptHub.usageIncomplete": "tokens：≥{known}（账本不完整）",
+  "workflows.scriptHub.stats": "{agentCalls} 个 agent · {toolCalls} 次工具 · {tokens}",
+  "workflows.scriptHub.openOriginSession": "查看发起会话",
+  "workflows.scriptHub.status.pending": "等待开始",
+  "workflows.scriptHub.status.running": "进行中",
+  "workflows.scriptHub.status.paused": "已暂停",
+  "workflows.scriptHub.status.cancelled": "已取消",
+  "workflows.scriptHub.status.interrupted": "已中断",
+  "workflows.scriptHub.scope.builtin": "预定义",
+  "workflows.scriptHub.scope.explicit": "显式",
+  "workflows.scriptHub.scope.project": "项目",
+  "workflows.scriptHub.scope.user": "用户",
   // 中枢的产物条：详情页头部那条「最近产物」。
   // 取的是**最近一次 completed run** 的产物，所以措辞不能读成"这个工作流的产物"。
   "workflows.hub.artifacts.latest": "最近产物",
@@ -5839,7 +5907,7 @@ const zhCN: Record<string, string> = {
   // ---- 动态工作流触发策略（对齐 dynamicWorkflowAvailabilityStore）----
   "settings.dynamicWorkflow.title": "动态工作流",
   "settings.dynamicWorkflow.description":
-    "何时向 agent 提供动态工作流创作工具（CreateWorkflow 一族）。",
+    "何时向 agent 提供动态工作流创作工具（CreateWorkflow 一族）。下方独立卡片控制另一套系统：脚本工作流（RunWorkflow，/ultracode 编排）。",
   "settings.dynamicWorkflow.option.disabled": "关闭",
   "settings.dynamicWorkflow.option.disabled.description":
     "不提供动态工作流工具；已在运行的工作流不受影响。",
@@ -5850,6 +5918,21 @@ const zhCN: Record<string, string> = {
   "settings.dynamicWorkflow.option.alwaysOn.description": "无需加载技能，每个会话都提供该工具。",
   "settings.dynamicWorkflow.defaultTag": "默认",
   "settings.dynamicWorkflow.saveError": "动态工作流设置保存失败。",
+  // ---- 脚本工作流三档（RunWorkflow / /ultracode，本机产品开关；
+  // 与 dynamicWorkflow 是两道独立的门，apps/acode-cli/specs/script-workflow-management-surface.md）----
+  "settings.scriptWorkflow.title": "脚本工作流",
+  "settings.scriptWorkflow.description":
+    "控制 RunWorkflow 工具（/ultracode 编排系统）的可用性。运行记录按项目留存，停用后仍可查看。",
+  "settings.scriptWorkflow.option.disabled": "停用",
+  "settings.scriptWorkflow.option.disabled.description":
+    "不注册 RunWorkflow 工具，/ultracode 不可用；进行中的运行会自行跑完。",
+  "settings.scriptWorkflow.option.onDemand": "按需触发",
+  "settings.scriptWorkflow.option.onDemand.description":
+    "默认档。用户显式要求（说出 ultracode 或使用 /ultracode）时工具可用。",
+  "settings.scriptWorkflow.option.alwaysOn": "始终可用",
+  "settings.scriptWorkflow.option.alwaysOn.description": "与按需档工具面相同；为后续常驻提示预留。",
+  "settings.scriptWorkflow.defaultTag": "默认",
+  "settings.scriptWorkflow.saveError": "设置保存失败，请重试。",
   // ---- MCP sampling / resources ----
   "settings.mcp.sampling.label": "允许模型采样",
   "settings.mcp.sampling.description":

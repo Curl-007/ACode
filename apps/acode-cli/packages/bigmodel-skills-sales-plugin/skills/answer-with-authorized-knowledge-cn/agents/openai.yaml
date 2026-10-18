@@ -1,0 +1,6 @@
+interface:
+  display_name: "客服知识问答"
+  short_description: "按当前有效的知识和政策答复客户，答案能落地、不越权承诺"
+  default_prompt: "使用 $answer-with-authorized-knowledge-cn 完成这项任务。"
+policy:
+  allow_implicit_invocation: true

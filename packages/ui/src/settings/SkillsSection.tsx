@@ -280,6 +280,8 @@ export function SkillsSection({
                 locale,
               )
             : intl.formatMessage({ id: "settings.skills.scope.plugin" });
+        case "bundled":
+          return intl.formatMessage({ id: "settings.skills.scope.bundled" });
         case "user":
         default:
           return intl.formatMessage({ id: "settings.skills.scope.personal" });
@@ -403,11 +405,12 @@ export function SkillsSection({
     ],
   );
 
-  // 删除本地技能：plugin 作用域技能不可单独删除（由卸载插件管理），调用方已在 UI 层屏蔽其入口。
+  // 删除本地技能：plugin 作用域技能不可单独删除（由卸载插件管理），bundled 是内容包
+  // 只读资源（设计上无删除状态）；两者入口已在 UI 层屏蔽，这里再守卫一次（spec I5.5）。
   // 复用应用根部已挂载的确认弹窗 store（useConfirmDialog），与子智能体删除流程保持一致。
   const handleDeleteSkill = useCallback(
     async (skill: SkillSummary) => {
-      if (!activeWorkspacePath || skill.scope === "plugin") {
+      if (!activeWorkspacePath || skill.scope === "plugin" || skill.scope === "bundled") {
         return;
       }
       const confirmed = await confirmDialog({
@@ -454,7 +457,10 @@ export function SkillsSection({
   );
 
   const scopedProviderSkills = useMemo(() => {
-    const allProviderSkills = filterSkillsForProvider(skills, ACODE_AGENT_PROVIDER);
+    // 设置页放行 bundled（内置技能）分组；Composer 两个调用点保持默认 false（spec I4）。
+    const allProviderSkills = filterSkillsForProvider(skills, ACODE_AGENT_PROVIDER, {
+      includeBundled: true,
+    });
     const pluginStoreMatchesTarget =
       (pluginWorkspaceIdentity?.trim() || pluginWorkspacePath || "") ===
         (activeWorkspaceIdentity?.trim() || activeWorkspacePath || "") &&
@@ -481,18 +487,32 @@ export function SkillsSection({
   );
   const skillSourceGroups = useMemo(() => {
     return groupScopedSkillsBySource(
-      [...groupedSkills.local, ...groupedSkills.plugin],
+      [...groupedSkills.local, ...groupedSkills.bundled, ...groupedSkills.plugin],
       scopeFilter === "user"
         ? intl.formatMessage({ id: "settings.scope.user" })
         : workspaceLabel || intl.formatMessage({ id: "settings.scope.workspace" }),
+      intl.formatMessage({ id: "settings.plugin.skills.bundled" }),
     );
-  }, [groupedSkills.local, groupedSkills.plugin, intl, scopeFilter, workspaceLabel]);
-  const filteredSkillCount = groupedSkills.local.length + groupedSkills.plugin.length;
+  }, [
+    groupedSkills.bundled,
+    groupedSkills.local,
+    groupedSkills.plugin,
+    intl,
+    scopeFilter,
+    workspaceLabel,
+  ]);
+  // 搜索空态判定必须计入 bundled 命中：否则「只有内置技能命中搜索」时会误报无结果，
+  // 同时分组列表被空态分支整体替换，bundled 搜索结果丢失。
+  const filteredSkillCount =
+    groupedSkills.local.length + groupedSkills.bundled.length + groupedSkills.plugin.length;
   const hasEmptySearchResult = Boolean(query.trim()) && filteredSkillCount === 0;
+  // 「已安装」空态计数排除 plugin 与 bundled（spec I5.7）：bundled 是内容包只读资源，
+  // 若计入会让空态（含「新建技能/导入」按钮）在有内置技能时永远不出现，掩盖空态。
   const directInstalledSkillCount = scopedProviderSkills.filter(
-    (skill) => skill.scope !== "plugin",
+    (skill) => skill.scope !== "plugin" && skill.scope !== "bundled",
   ).length;
   const hideInstalledGroup = Boolean(query.trim()) && groupedSkills.local.length === 0;
+  const hideBundledGroup = Boolean(query.trim()) && groupedSkills.bundled.length === 0;
   const pluginIconItemById = useMemo(
     () =>
       new Map(
@@ -533,7 +553,9 @@ export function SkillsSection({
           ? {
               data: {
                 path: skillCreator.path,
-                scope: skillCreator.scope,
+                // bundled 不进 Composer mention 数据面（用户裁决 2 / spec R1，MentionItemData
+                // 词表无 bundled）；bundled 包无 skill-creator，scope 只会是 plugin/user/workspace。
+                ...(skillCreator.scope === "bundled" ? {} : { scope: skillCreator.scope }),
               },
             }
           : {}),
@@ -618,7 +640,7 @@ export function SkillsSection({
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          {skill.scope === "plugin" ? null : (
+          {skill.scope === "plugin" || skill.scope === "bundled" ? null : (
             <>
               <Switch
                 checked={skill.enabled}
@@ -845,6 +867,15 @@ export function SkillsSection({
               />
             ) : null}
           </section>
+          {/* 内置技能（bundled）分组：只读展示（无启停、无删除），位于「已安装」与插件分区之间（spec I5.4）。 */}
+          {skillSourceGroups
+            .filter((group) => group.id === "bundled")
+            .map((group) => (
+              <section key={group.id} className={hideBundledGroup ? "hidden" : "space-y-4"}>
+                <SettingsResourceGroupHeader count={group.skills.length} title={group.label} />
+                {renderSkillList(group.skills)}
+              </section>
+            ))}
           {skillSourceGroups
             .filter((group) => group.id.startsWith("plugin:"))
             .map((group) => (

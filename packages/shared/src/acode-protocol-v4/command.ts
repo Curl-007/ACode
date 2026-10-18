@@ -15,6 +15,12 @@ import {
   amendWorkflowRunSettingsResultSchema,
 } from "./workflow-run-settings-command.js";
 import {
+  listScriptWorkflowDefinitionsPayloadSchema,
+  listScriptWorkflowRunsPayloadSchema,
+  listScriptWorkflowDefinitionsResultSchema,
+  listScriptWorkflowRunsResultSchema,
+} from "./script-workflow-management.js";
+import {
   workspaceHookReviewCommandTargetSchema,
   workspaceHookReviewDecisionSchema,
   workspaceHookTrustRevokeTargetSchema,
@@ -61,6 +67,13 @@ export const commandPayloadSchemas = {
     offPeakToolEnabled: z.boolean().optional(),
     // 动态工作流灰度 flag，与 offPeakToolEnabled 同一模式。
     dynamicWorkflowEnabled: z.boolean().optional(),
+    // 脚本工作流（RunWorkflow / /ultracode）产品开关 flag（spec
+    // script-workflow-management-surface.md §4.3/§4.4）。与 dynamicWorkflowEnabled 的
+    // 极性刻意相反：CLI 侧缺席 = fail-open 开（缺席代表调用方不参与门控），所以 Host
+    // 必须**显式写 false** 才能关掉它；dwf flag 缺席 = fail-closed 关（false 不写）。
+    // legacy session/create params 不加本字段（legacy 面只删不增；legacy 会话缺席 =
+    // 按本机缺省档 onDemand，与今天行为逐字一致）。
+    scriptWorkflowEnabled: z.boolean().optional(),
   }),
   // 父会话由 envelope.sessionId 指定；服务端从父 record 派生完整运行配置。
   // firstInput 存在时，child 创建完成后立即启动首条普通输入；缺省则保持空副屏。
@@ -247,6 +260,11 @@ export const commandPayloadSchemas = {
   // /auto-resume 命令面（apps/acode-cli/specs/turn-auto-resume.md）：零 token 本地命令，
   // args = 子命令原文（status/on/off [时长]/msg …），解析与回执单一实现在 core。
   autoResumeCommand: z.object({ args: z.string().optional() }),
+  // 脚本工作流管理面（spec script-workflow-management-surface.md §4）：两个纯只读查询，
+  // 锚定当前 workspace 的活动会话仅作路由键（数据按 cwd 过滤，workspace 级），与
+  // startSavedWorkflow 同拓扑。
+  listScriptWorkflowRuns: listScriptWorkflowRunsPayloadSchema,
+  listScriptWorkflowDefinitions: listScriptWorkflowDefinitionsPayloadSchema,
 } as const;
 
 export type CommandType = keyof typeof commandPayloadSchemas;
@@ -441,6 +459,10 @@ export const commandResultSchema = z.discriminatedUnion("type", [
     type: z.literal("autoResume"),
     response: z.string(),
   }),
+  // 脚本工作流管理面查询回执（spec script-workflow-management-surface.md §4）：纯只读，
+  // 幂等；错误不走 result variant（failed ACK reasonCode/message 上行，不伪造空列表）。
+  listScriptWorkflowRunsResultSchema,
+  listScriptWorkflowDefinitionsResultSchema,
 ]);
 export type CommandResult = z.infer<typeof commandResultSchema>;
 

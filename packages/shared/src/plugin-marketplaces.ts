@@ -12,6 +12,22 @@ export interface DefaultPluginMarketplace {
 export const ACODE_OFFICIAL_PLUGIN_MARKETPLACE_ID = "acode-plugins-official";
 
 /**
+ * 官方 CDN 目录返回的历史顶层 name（闭集，specs/plugin-official-marketplace-alias.md R1）。
+ * 仅官方市场的受信任内部刷新链（trustedId===official）接受别名并映射回 canonical id；
+ * 用户侧新增、配置声明同步、非官方市场一律不放宽（同 spec R2 负向边界）。
+ */
+export const ACODE_OFFICIAL_PLUGIN_MARKETPLACE_MANIFEST_ALIASES: readonly string[] = [
+  "zcode-plugins-official",
+];
+
+/** 别名 → canonical id 的闭集解析；非别名 name 返回 undefined（无模糊匹配）。 */
+export function resolveOfficialMarketplaceAliasCanonicalId(name: string): string | undefined {
+  return (ACODE_OFFICIAL_PLUGIN_MARKETPLACE_MANIFEST_ALIASES as readonly string[]).includes(name)
+    ? ACODE_OFFICIAL_PLUGIN_MARKETPLACE_ID
+    : undefined;
+}
+
+/**
  * 第三方预置市场的 canonical id：必须与目标 manifest（.claude-plugin/marketplace.json、
  * 仓库根 marketplace.json 或 dist 清单 JSON）的 name 一致，否则注册表会出现同来源
  * 双条目（specs/plugin-marketplace-defaults.md 规则 2）。

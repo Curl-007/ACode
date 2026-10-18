@@ -1,0 +1,6 @@
+interface:
+  display_name: "网页功能与兼容性测试"
+  short_description: "在真实浏览器中验证关键旅程、响应式布局、兼容性和无障碍体验"
+  default_prompt: "使用 $test-browser-experience-cn 完成这项任务。"
+policy:
+  allow_implicit_invocation: true

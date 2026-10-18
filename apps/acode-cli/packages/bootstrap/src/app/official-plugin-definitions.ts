@@ -1,4 +1,5 @@
 import { ACODE_OFFICIAL_PLUGIN_MARKETPLACE } from "@acode/contracts";
+import { BIGMODEL_SKILLS_OFFICIAL_PLUGIN_DEFINITIONS } from "./official-plugin-bigmodel-skills.js";
 import {
   DOCUMENT_STYLE_OFFICIAL_PLUGIN_DEFINITIONS,
   OFFICIAL_ACODE_GUIDE_REQUIRED_SEED_PATHS,
@@ -327,6 +328,9 @@ export const OFFICIAL_PLUGIN_DEFINITIONS: readonly OfficialPluginDefinition[] = 
     ],
     version: "0.1.0",
   },
+  // 智谱 BigModel 技能集 8 个分类内容包（specs/bigmodel-skills-marketplace-plugins.md）：
+  // 表驱动生成，默认关闭，用户在市场按需启用。
+  ...BIGMODEL_SKILLS_OFFICIAL_PLUGIN_DEFINITIONS,
 ];
 
 // 在 official plugin 定义里标了 defaultEnabled: true 的, 拼成 `<name>@<marketplace>` 形式,

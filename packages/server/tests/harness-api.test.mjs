@@ -716,6 +716,10 @@ test("红线：server harness 只允许已登记的 protocol capability/schema �
     "M  packages/shared/src/acode-protocol/index.ts",
     " M packages/shared/src/acode-protocol/index.ts",
     "?? packages/shared/src/acode-protocol-v4/capabilities.ts",
+    // script-workflow 管理面的 v4 命令 schema（spec: apps/acode-cli/specs/script-workflow-management-surface.md）。
+    // 按红线流程登记：新 v4 协议文件只进 acode-protocol-v4，提供严格类型与运行时校验，
+    // legacy 协议面不增（AGENTS.md 进程、协议与远程控制一节的收敛方向）。
+    "?? packages/shared/src/acode-protocol-v4/script-workflow-management.ts",
   ]);
   const unexpected = stdout
     .split(/\r?\n/)

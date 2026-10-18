@@ -1,0 +1,6 @@
+interface:
+  display_name: "CI 失败原因定位"
+  short_description: "围绕一次可定位到提交与运行编号的流水线失败提供可复核、可交接的企业研发专业能力"
+  default_prompt: "Use $ci-failure-triage-cn to 这条流水线红了，找第一个因果失败，不要只列最后的报错。"
+policy:
+  allow_implicit_invocation: true

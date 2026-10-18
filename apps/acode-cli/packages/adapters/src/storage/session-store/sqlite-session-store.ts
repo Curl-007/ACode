@@ -36,6 +36,7 @@ import type {
   ScriptWorkflowActivityRecord,
   ScriptWorkflowDefinitionRecord,
   ScriptWorkflowEventRecord,
+  ScriptWorkflowLogicalRunStatus,
   ScriptWorkflowRunRecord,
   ScriptWorkflowRunStatus,
   ScriptWorkflowStorePort,
@@ -887,6 +888,12 @@ export class SqliteSessionStore
     return scriptWorkflowRunRepository.upsertScriptWorkflowDefinition(this.db, input);
   }
 
+  async listScriptWorkflowDefinitions(input?: {
+    limit?: number;
+  }): Promise<ScriptWorkflowDefinitionRecord[]> {
+    return scriptWorkflowRunRepository.listScriptWorkflowDefinitions(this.db, input);
+  }
+
   async claimWorkflowSessionOwner(input: {
     leaseMs?: number;
     now?: number;
@@ -927,8 +934,13 @@ export class SqliteSessionStore
     limit?: number;
     parentSessionId?: string;
     statuses?: readonly ScriptWorkflowRunStatus[];
+    logicalStatuses?: readonly ScriptWorkflowLogicalRunStatus[];
   }): Promise<ScriptWorkflowRunRecord[]> {
     return scriptWorkflowRunRepository.listScriptWorkflowRuns(this.db, input);
+  }
+
+  async hasScriptWorkflowUsageIncomplete(input: { runId: string }): Promise<boolean> {
+    return scriptWorkflowActivityRepository.hasScriptWorkflowUsageIncomplete(this.db, input.runId);
   }
 
   async createScriptWorkflowActivity(

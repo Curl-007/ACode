@@ -54,7 +54,6 @@ export function GeneralSectionContent({
   notificationSoundEnabled,
   closeToTrayOnWindows,
   keepAwakeWhileRunning = false,
-  bootPlaceholderEnabled = true,
   supportBundleExporting = false,
   desktopChromiumHardwareAccelerationEnabled = true,
   receivePreviewUpdates,
@@ -99,7 +98,6 @@ export function GeneralSectionContent({
   onTaskAutoArchiveOlderThanDaysChange,
   onCloseToTrayOnWindowsChange,
   onKeepAwakeWhileRunningChange = async () => {},
-  onBootPlaceholderEnabledChange = async () => {},
   onExportSupportBundle = async () => {},
   onDesktopChromiumHardwareAccelerationChange = async () => {},
   onReceivePreviewUpdatesChange,
@@ -122,8 +120,6 @@ export function GeneralSectionContent({
   notificationSoundEnabled: boolean;
   closeToTrayOnWindows: boolean;
   keepAwakeWhileRunning?: boolean;
-  /** 桌面启动骨架占位开关（AppSettings.bootPlaceholderEnabled，缺省开）。 */
-  bootPlaceholderEnabled?: boolean;
   /** 支持包导出进行中（按钮 disabled + 文案切换）。 */
   supportBundleExporting?: boolean;
   desktopChromiumHardwareAccelerationEnabled?: boolean;
@@ -170,7 +166,6 @@ export function GeneralSectionContent({
   onTaskAutoArchiveOlderThanDaysChange: (days: number) => Promise<void>;
   onCloseToTrayOnWindowsChange: (enabled: boolean) => Promise<void>;
   onKeepAwakeWhileRunningChange?: (enabled: boolean) => Promise<void>;
-  onBootPlaceholderEnabledChange?: (enabled: boolean) => Promise<void>;
   onExportSupportBundle?: () => Promise<void>;
   onDesktopChromiumHardwareAccelerationChange?: (enabled: boolean) => Promise<void>;
   onReceivePreviewUpdatesChange: (enabled: boolean) => Promise<void>;
@@ -677,23 +672,6 @@ export function GeneralSectionContent({
                 checked={keepAwakeWhileRunning}
                 onCheckedChange={(checked) => {
                   void onKeepAwakeWhileRunningChange(checked);
-                }}
-              />
-            }
-          />
-        ) : null}
-        {isDesktop ? (
-          <SettingsRow
-            label={intl.formatMessage({ id: "settings.bootPlaceholder" })}
-            description={intl.formatMessage({
-              id: "settings.bootPlaceholderDescription",
-            })}
-            control={
-              <Switch
-                aria-label={intl.formatMessage({ id: "settings.bootPlaceholder" })}
-                checked={bootPlaceholderEnabled}
-                onCheckedChange={(checked) => {
-                  void onBootPlaceholderEnabledChange(checked);
                 }}
               />
             }

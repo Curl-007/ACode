@@ -78,7 +78,10 @@ export async function beginMarketplaceInstallTransaction(input: {
   const startedAt = new Date().toISOString();
   const registryPath = join(input.storageRoot, INSTALLED_PLUGINS_FILE);
   const registryRaw = await readFileOrNull(registryPath);
-  const targetSnapshots = new Map<string, TargetSnapshot>();
+  // 键 = resolveKey 归一（仅用于同一目录去重）；值必须携带**原始路径**——
+  // Linux 大小写敏感 FS 上归一化小写路径不是真实路径（mkdtemp 随机后缀含大写时
+  // existsSync/rmdir 全 ENOENT，回滚静默漏掉真实目录，CI run 39140960371 复盘根因）。
+  const targetSnapshots = new Map<string, { rawPath: string; snapshot: TargetSnapshot }>();
   let settled = false;
 
   return {
@@ -87,7 +90,10 @@ export async function beginMarketplaceInstallTransaction(input: {
       if (settled) return;
       const key = resolveKey(targetPath);
       if (targetSnapshots.has(key)) return;
-      targetSnapshots.set(key, await snapshotDirectory(targetPath));
+      targetSnapshots.set(key, {
+        rawPath: targetPath,
+        snapshot: await snapshotDirectory(targetPath),
+      });
     },
     async rollback({ error, pluginId, stage }) {
       if (settled) return rethrowAugmented(error, "install rolled back to the pre-install snapshot");
@@ -113,10 +119,13 @@ export async function beginMarketplaceInstallTransaction(input: {
         }
       }
 
-      // 2. 逐目标核对与可修复修复（倒序，后触碰的先核对）。
-      const touched = [...targetSnapshots.entries()].reverse();
-      for (const [key, snapshot] of touched) {
-        targetOutcomes.push(await restoreTarget(key, snapshot, rollbackErrors, input.storageRoot));
+      // 2. 逐目标核对与可修复修复（倒序，后触碰的先核对）。fs 面一律用原始路径，
+      // 归一化键只做去重（见 targetSnapshots 声明处注释）。
+      const touched = [...targetSnapshots.values()].reverse();
+      for (const entry of touched) {
+        targetOutcomes.push(
+          await restoreTarget(entry.rawPath, entry.snapshot, rollbackErrors, input.storageRoot),
+        );
       }
 
       const augmentedNote = "install rolled back to the pre-install snapshot";

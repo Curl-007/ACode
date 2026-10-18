@@ -16,6 +16,47 @@ import {
   toolCallResumeWorkflowRunDisplaySchema,
 } from "./workflow-observation-display.js";
 
+// read/search 结构化 display（apps/acode-cli/specs/tool-display-read-search.md R3）：
+// 字段表与 contracts tools/read-search-display.ts 完全镜像，两侧 strict——缺成员会把
+// agent 下发的 display 整块剥掉（同本文件顶部教训）。UI 侧查表解析直接引用这两个
+// schema（toolResultDisplay.ts 的纪律：不手写第二套结构校验）。
+export const readToolResultDisplaySchema = z
+  .object({
+    kind: z.literal("read"),
+    filePath: z.string().min(1).max(4096),
+    startLine: z.number().int().min(1),
+    numLines: z.number().int().nonnegative(),
+    totalLines: z.number().int().nonnegative(),
+    truncated: z.literal(true).optional(),
+    conflicts: z.literal(true).optional(),
+    summarized: z.literal(true).optional(),
+    url: z
+      .object({
+        finalUrl: z.string().min(1).max(4096),
+        status: z.number().int().min(100).max(599),
+        contentType: z.string().max(256),
+        cacheHit: z.literal(true).optional(),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict();
+export const searchToolResultDisplaySchema = z
+  .object({
+    kind: z.literal("search"),
+    tool: z.enum(["grep", "glob"]),
+    mode: z.enum(["content", "files_with_matches", "count"]).optional(),
+    numFiles: z.number().int().nonnegative(),
+    numMatches: z.number().int().nonnegative().optional(),
+    numLines: z.number().int().nonnegative().optional(),
+    filenames: z.array(z.string().min(1).max(512)).max(20),
+    filenamesTruncated: z.literal(true).optional(),
+    truncated: z.literal(true).optional(),
+  })
+  .strict();
+export type ReadToolResultDisplay = z.infer<typeof readToolResultDisplaySchema>;
+export type SearchToolResultDisplay = z.infer<typeof searchToolResultDisplaySchema>;
+
 // toolCall 终态 output 的结构化展示模型（port 自 feat；CUA 工具靠 kind:"cua" 分支把
 // errorCode/suggestedAction/media(screenshot) 等结构化内容带到 renderer）。consume-main 之前
 // 缺这个 union + toolOutputSchema.display 字段——协议层 zod 校验会把 agent 下发的 display 整个
@@ -147,6 +188,10 @@ const toolResultDisplaySchema = z.discriminatedUnion("kind", [
   toolCallSavedWorkflowListDisplaySchema,
   toolCallListModelsDisplaySchema,
   toolCallResumeWorkflowRunDisplaySchema,
+  // read/search 结果侧 display（同上：与 contracts 侧同步，缺成员 = 整块被剥）。
+  // 只进结果 union——read/search 事实全部是结果侧，call 侧 toolCallDisplaySchema 不动。
+  readToolResultDisplaySchema,
+  searchToolResultDisplaySchema,
 ]);
 export type ToolResultDisplay = z.infer<typeof toolResultDisplaySchema>;
 

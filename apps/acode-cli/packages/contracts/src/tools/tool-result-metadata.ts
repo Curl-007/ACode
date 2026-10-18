@@ -14,6 +14,10 @@ import {
   resumeWorkflowRunToolResultDisplayPayloadSchema,
   savedWorkflowListToolResultDisplayPayloadSchema,
 } from "./workflow-observation-display.js";
+import {
+  readToolResultDisplayPayloadSchema,
+  searchToolResultDisplayPayloadSchema,
+} from "./read-search-display.js";
 
 export const COMPLETED_TOOL_PART_METADATA_SCHEMA_VERSION = 1;
 export const TASK_OUTPUT_DISPLAY_MAX_STATUS_CHARS = 64;
@@ -251,6 +255,8 @@ export const toolResultDisplayPayloadSchema = z.discriminatedUnion("kind", [
   savedWorkflowListToolResultDisplayPayloadSchema,
   listModelsToolResultDisplayPayloadSchema,
   resumeWorkflowRunToolResultDisplayPayloadSchema,
+  readToolResultDisplayPayloadSchema,
+  searchToolResultDisplayPayloadSchema,
 ]);
 
 export type FileDiffToolResultDisplayPayload = z.infer<

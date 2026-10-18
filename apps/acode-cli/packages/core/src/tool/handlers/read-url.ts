@@ -49,6 +49,24 @@ export function isReadUrlDirectEnabled(env: NodeJS.ProcessEnv = process.env): bo
   return env[READ_URL_DISABLE_ENV]?.trim() !== "0";
 }
 
+/**
+ * URL 直读元数据侧信道（specs/tool-display-read-search.md R1）：ReadTextOutput 契约
+ * 不加字段，display 装配器按输出对象身份取回结构化 url 元数据——不解析 summaryFooter
+ * 文本（文本解析是明令禁止的反模式）。WeakMap 键身份保证只有本模块产出的输出可命中。
+ */
+export interface ReadUrlDisplayMeta {
+  finalUrl: string;
+  status: number;
+  contentType: string;
+  cacheHit: boolean;
+}
+
+const readUrlDisplayMetas = new WeakMap<ReadTextOutput, ReadUrlDisplayMeta>();
+
+export function readUrlDisplayMeta(output: ReadTextOutput): ReadUrlDisplayMeta | undefined {
+  return readUrlDisplayMetas.get(output);
+}
+
 export async function buildUrlReadOutput(
   rawUrl: string,
   options: {
@@ -127,6 +145,19 @@ function isTerminalFetched(
   return "type" in value;
 }
 
+/**
+ * redactUrlCredentials 收 URL 对象；管道产出的 finalUrl/redirectUrl 恒为合法 URL，
+ * 解析失败的防御分支 fail-closed 用正则抹掉 userinfo（宁可对合法串多做一次无害
+ * 替换，也不让凭据形态漏进 display/footer）。
+ */
+function redactDisplayUrl(value: string): string {
+  try {
+    return redactUrlCredentials(new URL(value));
+  } catch {
+    return value.replace(/^(https?:\/\/)[^/@?#]*@/i, "$1");
+  }
+}
+
 function buildSuccessOutput(options: {
   url: string;
   fetched: CachedFetchContent;
@@ -157,7 +188,7 @@ function buildSuccessOutput(options: {
     contentBytes += lineBytes;
   }
 
-  return {
+  const output: ReadTextOutput = {
     type: "text",
     filePath: url,
     // 不带行号入库：formatReadTextOutput 按 startLine 统一编号（与文件读同一 cat -n 心智）。
@@ -170,6 +201,13 @@ function buildSuccessOutput(options: {
     truncated: budgetTruncated || undefined,
     summaryFooter: buildUrlReadFooter({ url, fetched, cacheHit, budgetTruncated }),
   };
+  readUrlDisplayMetas.set(output, {
+    finalUrl: redactDisplayUrl(fetched.finalUrl),
+    status: fetched.status,
+    contentType: fetched.contentType,
+    cacheHit,
+  });
+  return output;
 }
 
 function buildUrlReadFooter(options: {
@@ -179,7 +217,7 @@ function buildUrlReadFooter(options: {
   budgetTruncated: boolean;
 }): string {
   const { fetched, cacheHit, budgetTruncated } = options;
-  const finalUrl = redactUrlCredentials(fetched.finalUrl);
+  const finalUrl = redactDisplayUrl(fetched.finalUrl);
   const meta = [
     `[url-read] finalUrl=${finalUrl}`,
     `status=${fetched.status}`,
@@ -215,7 +253,7 @@ function buildTerminalOutput(
           "The response body was not retrieved. If this URL requires authentication, use an authenticated tool (e.g. `gh` for GitHub, or an MCP-provided fetch tool) instead of Read.",
         ].join("\n");
   const numLines = text.split("\n").length;
-  return {
+  const output: ReadTextOutput = {
     type: "text",
     filePath: url,
     content: text,
@@ -223,4 +261,11 @@ function buildTerminalOutput(
     startLine: 1,
     totalLines: numLines,
   };
+  readUrlDisplayMetas.set(output, {
+    finalUrl: redactDisplayUrl(fetched.type === "redirect" ? fetched.redirectUrl : fetched.finalUrl),
+    status: fetched.status,
+    contentType: "text/plain",
+    cacheHit: false,
+  });
+  return output;
 }

@@ -2,7 +2,9 @@ import { basename, relative, sep } from "node:path";
 import type { FileSystemPort } from "@acode/contracts";
 import { parse as parseYaml } from "yaml";
 
+import { readMemoryLifecycleFields } from "../lifecycle-frontmatter.js";
 import { MEMORY_RECALL_TYPES, type MemoryRecallType } from "./types.js";
+import type { MemoryVeracity } from "../veracity.js";
 
 /** 单次召回最多收录的记忆文件数（specs/memory-injection-fail-closed.md R10 常量表）。 */
 export const MANIFEST_FILE_LIMIT = 200;
@@ -57,6 +59,7 @@ function isMemoryCandidate(filePath: string): boolean {
 
 export function parseMemoryFrontmatter(content: string): {
   description?: string;
+  importance?: number;
   name?: string;
   /**
    * frontmatter `tags`（若存在）：只进 K1 检索层的文档表示
@@ -65,6 +68,14 @@ export function parseMemoryFrontmatter(content: string): {
    */
   tags?: string[];
   type?: MemoryRecallType;
+  /**
+   * 写侧生命周期字段（specs/memory-semantic-recall.md R11/R12，oh-my-pi 移植）：
+   * 只进检索层的可见性过滤与排序加权，**不进** J3-2 的注入签名与渲染。
+   * `validUntil` 是原始字符串（有效性判定经 parseMemoryTimestampMs，解析失败视为字段不存在）。
+   */
+  supersededBy?: string;
+  validUntil?: string;
+  veracity?: MemoryVeracity;
 } {
   const normalized = content.replace(/^\uFEFF/u, "").replace(/\r\n/gu, "\n");
   const lines = normalized.split("\n");
@@ -86,11 +97,16 @@ export function parseMemoryFrontmatter(content: string): {
   const metadata = isRecord(parsed.metadata) ? parsed.metadata : undefined;
   const typeCandidate = metadata?.type ?? parsed.type;
   const type = isMemoryRecallType(typeCandidate) ? typeCandidate : undefined;
+  const lifecycle = readMemoryLifecycleFields(parsed);
   return {
     ...(description ? { description } : {}),
     ...(name ? { name } : {}),
     ...(tags.length > 0 ? { tags } : {}),
     ...(type ? { type } : {}),
+    ...(lifecycle.importance !== undefined ? { importance: lifecycle.importance } : {}),
+    ...(lifecycle.supersededBy !== undefined ? { supersededBy: lifecycle.supersededBy } : {}),
+    ...(lifecycle.validUntil !== undefined ? { validUntil: lifecycle.validUntil } : {}),
+    ...(lifecycle.hasVeracityField ? { veracity: lifecycle.veracity } : {}),
   };
 }
 

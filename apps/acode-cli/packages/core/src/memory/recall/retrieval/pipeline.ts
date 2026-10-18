@@ -25,6 +25,10 @@ import type {
   MemoryRecallScope,
 } from "../pending.js";
 import type { MemoryRecallType } from "../types.js";
+// 写侧生命周期三件套（oh-my-pi 移植）：失效过滤（R12）+ 衰减/veracity 排序加权（R10/R11）。
+import { blendDecayIntoScore, memoryAgeHours, weibullDecayFactor } from "../../decay.js";
+import { isMemoryEntryLifecycleFiltered } from "../../lifecycle-frontmatter.js";
+import { veracityWeightFor, type MemoryVeracity } from "../../veracity.js";
 import { buildBm25Index, rankByBm25 } from "./bm25.js";
 import { RETRIEVAL_CONSTANTS } from "./constants.js";
 import type { EmbeddingBackend } from "./embedding.js";
@@ -118,6 +122,7 @@ export function createMemoryRetrievalPipeline(
         deps.fileSystem,
         input.scope.memoryRoot,
         input.signal,
+        deps.now?.() ?? Date.now(),
       );
       if (documents.status === "rejected") return documents;
       if (documents.documents.length === 0) {
@@ -167,20 +172,43 @@ export function createMemoryRetrievalPipeline(
 
       const fused = fuseWithRrf(rankings, poolSize);
 
+      // 写侧生命周期排序加权（R10/R11，oh-my-pi 移植）：RRF 融合之后、rerank/top-K 之前，
+      // `score *= (0.7 + 0.3 * decay) * veracityWeight`（omp recall.ts 同款下限混合 + 查表
+      // 乘权）。时间源是文件 mtime（R10 决策：不新增 created/updated 字段，mtime 由文件系统
+      // 单一所有者维护、写入即刷新，语义 = 最后确认时间）；防陈旧记忆长期霸榜，同时 floor
+      // 下限保证完全陈旧的条目不被清零（长尾相关仍可上浮，与 R4 无硬阈值同一立场）。
+      const nowMs = deps.now?.() ?? Date.now();
+      const byId = new Map(documents.documents.map((document) => [document.id, document]));
+      const weighted = fused
+        .map((fusedEntry) => {
+          const document = byId.get(fusedEntry.id);
+          if (!document) return fusedEntry;
+          const decay = weibullDecayFactor(
+            memoryAgeHours(document.mtimeMs, nowMs),
+            document.type,
+          );
+          const adjusted =
+            blendDecayIntoScore(fusedEntry.fusedScore, decay) *
+            veracityWeightFor(document.veracity);
+          return { fusedScore: adjusted, id: fusedEntry.id };
+        })
+        .sort((left, right) => right.fusedScore - left.fusedScore || left.id.localeCompare(right.id));
+
       // Phase C：LLM listwise 重排（接口位，默认关——deps.reranker 缺省 undefined）。
       // 触发门槛（候选 ≥8 且 top1/top8 分差 <0.5）的分数语义在 Phase B/C 接线时按
       // 融合分归一口径校准；本轮钉住「不传 reranker = 零调用」这一档（R5 度量先行）。
-      let ordered = fused;
+      // 重排消费生命周期加权后的排序（R10/R11 生效序），降级回退也回到加权序。
+      let ordered = weighted;
       let rerankApplied = false;
-      if (deps.reranker && fused.length >= RETRIEVAL_CONSTANTS.RERANK_MIN_CANDIDATES) {
+      if (deps.reranker && weighted.length >= RETRIEVAL_CONSTANTS.RERANK_MIN_CANDIDATES) {
         const spread =
-          fused[0]!.fusedScore -
-          fused[RETRIEVAL_CONSTANTS.RERANK_MIN_CANDIDATES - 1]!.fusedScore;
+          weighted[0]!.fusedScore -
+          weighted[RETRIEVAL_CONSTANTS.RERANK_MIN_CANDIDATES - 1]!.fusedScore;
         if (spread < RETRIEVAL_CONSTANTS.RERANK_SCORE_SPREAD) {
           const reranked = await applyListwiseRerank(
             deps.reranker,
             documents.documents,
-            fused,
+            weighted,
             input,
           );
           if (reranked) {
@@ -190,7 +218,6 @@ export function createMemoryRetrievalPipeline(
         }
       }
 
-      const byId = new Map(documents.documents.map((document) => [document.id, document]));
       const candidates: MemoryRetrievalCandidate[] = [];
       for (const fusedEntry of ordered.slice(0, topK)) {
         const document = byId.get(fusedEntry.id);
@@ -230,6 +257,13 @@ interface RetrievalDocument {
   name?: string;
   description?: string;
   type?: MemoryRecallType;
+  /** R11 veracity 档位（字段缺失 → undefined，检索乘权按 unknown 中性处理）。 */
+  veracity?: MemoryVeracity;
+  /** R12 失效过滤的原始字段投影（superseded-by / valid-until）。 */
+  lifecycle: {
+    supersededBy?: string;
+    validUntil?: string;
+  };
 }
 
 type RetrievalDocumentsRead =
@@ -243,11 +277,17 @@ type RetrievalDocumentsRead =
  * 整体拒绝（fail-closed 口径），不做「部分文档也打分」：半份语料的 IDF 是错的。
  * 检索层不再重复 pending.ts 的 invalid-name 采集期剔除——注入层 capture 是权威，
  * 检索层多选一个坏名条目最多浪费一个候选名额，无害。
+ *
+ * R12 失效过滤（oh-my-pi recall.ts:459 可见性语义移植）：frontmatter 带非空
+ * `superseded-by` 或已到期 `valid-until`（<= nowMs）的条目在装配时剔除——进 BM25
+ * 之前消失，连候选池都不进。全部条目失效 → 零文档（不是 rejected：存储可读，只是
+ * 没有可见记忆）。解析失败 fail-open（坏数据不隐藏内容，R12）。
  */
 async function readRetrievalDocuments(
   fileSystem: FileSystemPort,
   memoryRoot: string,
   signal: AbortSignal | undefined,
+  nowMs: number,
 ): Promise<RetrievalDocumentsRead> {
   let paths: string[];
   try {
@@ -269,6 +309,13 @@ async function readRetrievalDocuments(
         body: stripMemoryFrontmatter(read.content),
         contentHash: createHash("sha256").update(read.content, "utf8").digest("hex"),
         description: frontmatter.description,
+        // R12 失效过滤只消费这两个字段；veracity 单列供 R11 排序加权。
+        lifecycle: {
+          ...(frontmatter.supersededBy !== undefined
+            ? { supersededBy: frontmatter.supersededBy }
+            : {}),
+          ...(frontmatter.validUntil !== undefined ? { validUntil: frontmatter.validUntil } : {}),
+        },
         filePath,
         id: memoryFileRelativeName(memoryRoot, filePath),
         mtimeMs: stat.mtimeMs ?? 0,
@@ -282,6 +329,7 @@ async function readRetrievalDocuments(
           type: frontmatter.type,
         }),
         type: frontmatter.type,
+        veracity: frontmatter.veracity,
       };
     }),
   );
@@ -290,7 +338,10 @@ async function readRetrievalDocuments(
   const documents: RetrievalDocument[] = [];
   for (const result of settled) {
     if (result.status === "fulfilled") {
-      documents.push(result.value);
+      const document = result.value;
+      // R12 失效过滤：被取代/已过期的条目对检索不可见（进候选池之前剔除）。
+      if (isMemoryEntryLifecycleFiltered(document.lifecycle, nowMs)) continue;
+      documents.push(document);
       continue;
     }
     if (result.reason instanceof MissingEntryError) {

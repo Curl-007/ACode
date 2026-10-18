@@ -41,6 +41,7 @@ import { readVideoFile } from "./read-video.js";
 import { formatReadTextOutput, readTextFileForModel } from "./read-text.js";
 import { isSkillUri, resolveSkillUriToPhysicalPath } from "./read-skill.js";
 import { buildConflictReadOutput, isConflictUri } from "./read-conflict.js";
+import { buildUrlReadOutput, isReadUrlTarget } from "./read-url.js";
 import { applyPathSelector } from "./read-selector-branch.js";
 import {
   formatReadPdfOutput,
@@ -62,6 +63,7 @@ const READ_PROVIDER_DESCRIPTION = [
   "Reads a file from the local filesystem.",
   "",
   "- `file_path` must be an absolute path, or a `skill://<name>` / `skill://<name>/<relative-path>` URI to read a discovered skill's SKILL.md or an asset inside that skill's directory (sandboxed to the skill folder).",
+  "- `file_path` also accepts an `http(s)://` URL: the page is fetched through the WebFetch pipeline (provenance gate, egress guard, shared 15-minute cache) and returned as line-numbered markdown. Only URLs that have appeared in a user message, a WebSearch result, or a previous fetch result can be read (pre-approved documentation hosts are always allowed); a URL blocked by the provenance gate will not be fetched on retry.",
   `- Reads up to ${READ_DEFAULT_MAX_LINES} lines by default.`,
   "- You can optionally specify a line offset and limit (especially handy for long files), but it's recommended to read the whole file by not providing these parameters",
   "- Results are returned using cat -n format, with line numbers starting at 1",
@@ -145,6 +147,15 @@ function stringifyReadOutputFallback(output: unknown): string {
 const readHandler: ToolHandler = async (input, context) => {
   const parsedInput = parseReadInput(input);
   const pages = parsedInput.pages;
+  // URL 直读（specs/read-url-direct.md R1）：分支先于路径选择器——选择器文法按最后
+  // 冒号切分，会把 URL 端口段（:8080）误拆成行号选择器；URL 目标本批不支持选择器。
+  if (isReadUrlTarget(parsedInput.file_path)) {
+    return await buildUrlReadOutput(parsedInput.file_path, {
+      context,
+      offset: parsedInput.offset,
+      limit: parsedInput.limit,
+    });
+  }
   // 路径选择器（specs/read-structural-summary.md R3 阶段 1：单区间/raw）：命中时
   // 覆盖 offset/limit 并剥离路径；scheme 形态（skill://、conflict://）与 Windows
   // 盘符不匹配选择器文法，零误拆。

@@ -1,6 +1,14 @@
 import { CoreErrorType, createCoreError } from "@acode/contracts";
 import { WEBFETCH_TOOL_NAME } from "./webfetch-constants.js";
 
+/**
+ * 撞闸文案：明确告知模型下一步（写进结论 / 请用户贴内容），并钉死「重试必失败」。
+ * WebFetch 与 Read URL 直读（specs/read-url-direct.md R2）共用——同一闸门同一语义，
+ * 两个入口的指引不得漂移。
+ */
+export const UNPROVENANCED_URL_BLOCKED_MESSAGE =
+  "Blocked by the URL provenance gate: this URL has not appeared in any user message, WebSearch result, or previous WebFetch result in this session. Retrying it will keep failing. Record the URL in your conclusion as not fetched (or ask the user to paste the content) and continue with the rest of your task.";
+
 type WebFetchErrorCode = keyof typeof WEBFETCH_ERROR_CODE_MAP;
 
 export function webFetchError(

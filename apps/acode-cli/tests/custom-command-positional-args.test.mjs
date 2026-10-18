@@ -136,3 +136,49 @@ test("skills 指令行与返回骨架不受位置参数影响", () => {
     ].join("\n"),
   );
 });
+
+// ---------------------------------------------------------------
+// W1：contracts 第二展开面（bootstrap resolver → desktop-agent/ACP 直提路径）
+// 与 cli 面同一单遍语义（specs/slash-positional-args.md W1 同步登记）。
+// ---------------------------------------------------------------
+
+const { expandCustomCommandTemplate } = await import(
+  "../packages/contracts/src/commands/index.ts"
+);
+
+function expandTemplate(content, args) {
+  return expandCustomCommandTemplate({ args, command: command(content) });
+}
+
+test("contracts 面：$N/$@/$@[start:length]/$ARGUMENTS 与 cli 面同语义", () => {
+  assert.equal(expandTemplate("a=$1 b=$2", "one two").body, "a=one b=two");
+  assert.equal(expandTemplate("all=$@", "one two three").body, "all=one two three");
+  assert.equal(expandTemplate("s=$@[2:2]", "a b c d").body, "s=b c");
+  assert.equal(expandTemplate("t=$@[3]", "a b c d").body, "t=c d");
+  assert.equal(expandTemplate("w=$ARGUMENTS", " x  y ").body, "w=x  y");
+  // 缺位/零长度/越界切片 → 空串（与 cli 面同一裁决）。
+  assert.equal(expandTemplate("m=$3", "one two").body, "m=");
+  assert.equal(expandTemplate("z=$@[2:0]", "a b").body, "z=");
+  assert.equal(expandTemplate("o=$@[9]", "a b").body, "o=");
+});
+
+test("contracts 面：单遍渲染——参数值内的占位符按字面保留（注入面已移除）", () => {
+  // 旧两遍实现：pass1 把 $ARGUMENTS 换成参数串后，pass2 会把插入值里的 $1 再展开
+  // 成 positional[0]（body 变成 cmd=a "a"）；单遍渲染下插入内容不再进扫描，字面保留。
+  const injected = expandTemplate("cmd=$ARGUMENTS", 'a "$1"');
+  assert.equal(injected.body, 'cmd=a "$1"');
+  assert.equal(injected.usedArgumentsPlaceholder, true);
+  // 模板自身的占位符照常替换，与参数值内的字面 $1 互不干扰。
+  const mixed = expandTemplate("first=$1 rest=$ARGUMENTS", 'a "$2"');
+  assert.equal(mixed.body, 'first=a rest=a "$2"');
+});
+
+test("contracts 面：无占位符时 User arguments 追加与 argumentCount 行为不变", () => {
+  const plain = expandTemplate("Plain body", "some args");
+  assert.equal(plain.body, "Plain body\n\nUser arguments:\nsome args");
+  assert.equal(plain.usedArgumentsPlaceholder, false);
+  assert.equal(plain.argumentCount, 2);
+  const withPlaceholder = expandTemplate("x=$ARGUMENTS", "a b");
+  assert.equal(withPlaceholder.body, "x=a b");
+  assert.equal(withPlaceholder.usedArgumentsPlaceholder, true);
+});

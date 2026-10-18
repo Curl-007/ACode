@@ -18,6 +18,8 @@ import {
 } from "@acode/contracts";
 import { createStructuredPatch } from "../diff.js";
 import { stampMemoryOriginSessionId } from "../../memory/origin-session.js";
+// LSP 诊断回流（specs/lsp-diagnostics-loop.md §5-6），与 edit.ts 同一钩子面。
+import { consumeDeferredDiagnostics, consumePendingModelContent, runPostWriteDiagnostics, stashPendingModelContent } from "../../lsp/edit-diagnostics-hook.js";
 import { resolveWorkspacePath } from "../path-policy.js";
 import {
   createReadFileStateKey,
@@ -56,11 +58,13 @@ function formatWriteModelContent(output: unknown): string {
   const userModifiedNote = userModified ? WRITE_USER_MODIFIED_NOTE : "";
   const storageSuffixNote = userModified ? "" : WRITE_STORAGE_SUFFIX;
 
-  if (output.type === "create") {
-    return `File created successfully at: ${filePath}${userModifiedNote}${storageSuffixNote}`;
-  }
-
-  return `The file ${filePath} has been updated successfully.${userModifiedNote}${storageSuffixNote}`;
+  const base =
+    output.type === "create"
+      ? `File created successfully at: ${filePath}${userModifiedNote}${storageSuffixNote}`
+      : `The file ${filePath} has been updated successfully.${userModifiedNote}${storageSuffixNote}`;
+  // LSP 诊断回流（specs/lsp-diagnostics-loop.md）：钩子挂起的新增诊断块附在尾部。
+  const pendingDiagnostics = consumePendingModelContent(filePath);
+  return pendingDiagnostics ? `${base}\n\n${pendingDiagnostics}` : base;
 }
 
 const writeHandler: ToolHandler = async (input, context) => {
@@ -144,6 +148,24 @@ const writeHandler: ToolHandler = async (input, context) => {
     writeResult.revision,
   );
   recordReadFileStateMetadata(context, readFileStateEntry);
+
+  // LSP 诊断回环（specs/lsp-diagnostics-loop.md）：诊断失败只降级不碍主流程；
+  // 新增诊断与上一次的迟到诊断合并后经 stash/consume 单发通道附到模型内容尾部。
+  const diagnosticsOutcome = await runPostWriteDiagnostics({
+    resolvedPath: filePath,
+    inputPath: file_path,
+    content: contentToWrite,
+    workspaceIdentity: context.workspaceIdentity,
+    workingDirectory: context.workingDirectory,
+    abortSignal: context.abortSignal,
+  }).catch(() => undefined);
+  const pendingDiagnostics = [
+    diagnosticsOutcome?.modelContent,
+    consumeDeferredDiagnostics({ workspaceIdentity: context.workspaceIdentity, workingDirectory: context.workingDirectory }),
+  ]
+    .filter((text): text is string => text !== undefined)
+    .join("\n\n");
+  if (pendingDiagnostics) stashPendingModelContent(file_path, pendingDiagnostics);
 
   if (originalFile) {
     return attachToolExecutionTelemetry(

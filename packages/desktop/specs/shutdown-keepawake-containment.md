@@ -225,6 +225,15 @@ covered"|"check_failed"}`）；检查异常累计 3 次 → 放弃并退订（wa
   （utilityProcess）内的 agent 进程树仍由 Host 3.5s 屏障与更新期资源锁扫描负责，
   两层不互相替代。非 Windows 平台返回 inert 控制器（outcome=not_windows），
   POSIX 依赖既有 SIGTERM/SIGKILL 屏障与进程组语义。
+- **R19 更新交接豁免**：`onBeforeQuitAndInstall` 完成 `sweepOrphanedChildProcesses
+("update-install")` 后必须调用 `disableExitSweep("update-install-handoff")`，使
+  R17 崩溃路径的 exit 钩子在本次退出中不再 SIGKILL 台账活子进程。原因：electron-updater
+  的 `quitAndInstall()` 随后 spawn 的 NSIS 安装器经 diagnostics_channel 进入台账，
+  若 exit 钩子按崩溃语义直杀，安装器在拉起后百余毫秒即被杀死，表现为「点击更新/重启
+  后版本不变、按钮像没反应」，且 pending 就绪态在下次启动被恢复形成死循环
+  （2026-10-18 v1.0.0 实机日志实证：`Executing ...pending\ACode-1.0.0-win-x64.exe`
+  后 120ms `exit hook killed live children`）。孤儿收敛语义不削弱：交接前的 sweep
+  已覆盖台账活子进程，豁免只作用于「sweep 之后、安装器接管」窗口内新 spawn 的进程。
 
 ## 登记项（条件触发）
 

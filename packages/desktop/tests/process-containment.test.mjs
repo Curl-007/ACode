@@ -311,6 +311,36 @@ test("exit hook SIGKILLs live children synchronously without tree semantics", ()
   assert.deepEqual(harness.treeKills, [], "exit 钩子不 spawn taskkill（同步 SIGKILL 直杀）");
 });
 
+test("R19: disableExitSweep makes exit hook yield to the update installer", () => {
+  const harness = createHarness();
+  harness.spawnChild({ pid: 40, spawnfile: "C:\\app\\agent.exe", spawnargs: [] });
+  harness.controller.installExitHook();
+  // 交接豁免后：模拟 quitAndInstall 拉起的安装器进入台账，exit 钩子不得杀它
+  // （2026-10-18 v1.0.0 实机缺陷：安装器被 exit 钩子 SIGKILL，更新静默失败）。
+  harness.controller.disableExitSweep("update-install-handoff");
+  harness.spawnChild({
+    pid: 41,
+    spawnfile:
+      "C:\\Users\\u\\AppData\\Local\\@acodedesktop-updater\\pending\\ACode-1.0.0-win-x64.exe",
+    spawnargs: ["--updated", "--force-run"],
+  });
+  harness.exitListeners[0]();
+  assert.deepEqual(harness.kills, [], "豁免后 exit 钩子不杀任何子进程（含安装器）");
+  const skip = findStructured(
+    harness.logger.entries,
+    "process_containment_exit_sweep_skipped",
+    "info",
+  );
+  assert.equal(skip.length, 1);
+  assert.equal(skip[0].reason, "update-install-handoff");
+  // sweep 不受豁免影响：交接前的显式收敛仍按台账树杀（豁免只作用于 exit 钩子）。
+  const swept = harness.controller.sweepOrphanedChildProcesses("update-install");
+  assert.deepEqual(
+    swept.pids.sort((a, b) => a - b),
+    [40, 41],
+  );
+});
+
 test("ledger evicts exited entries first and warns on live eviction", () => {
   const harness = createHarness({ maxLedgerEntries: 2 });
   const a = harness.spawnChild({ pid: 31 });

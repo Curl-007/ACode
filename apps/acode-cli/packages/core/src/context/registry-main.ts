@@ -6,7 +6,8 @@
 // descriptor 的 channel + enabled；builder.ts 的 build() 不再出现「某段是否 push」
 // 的散落 if。声明序 = 注入顺序（orderSectionsForInjection 做分组稳定排序，
 // 同组内按注册序），与注册表化前 build() 的 push 顺序逐位对应：
-// cli_prefix → 身份体三选一 → desktop → dynamic_behavior → guidance 两组 →
+// cli_prefix → 身份体三选一 → desktop → append（APPEND_SYSTEM.md，WI-10 新增）→
+// dynamic_behavior → guidance 两组 →
 // memory → env_info → output_style → context_management → git 快照 →
 // skills → request_user_context → current_date。
 //
@@ -102,6 +103,33 @@ const DESKTOP_SURFACE_SECTION: SectionDescriptor = {
   owner: `${OWNER_PREFIX}/sections/desktop.ts`,
   enabled: (ctx) => ctx.config.presentationSurface === "acode_desktop",
   build: () => buildDesktopContextSection(),
+};
+
+/**
+ * APPEND_SYSTEM.md 追加指令（specs/stable-prefix-pause-gate.md R5）：保留默认
+ * 提示词只追加，落 stable body 末尾（system-stable 组内声明序最后）。
+ * default+custom 双通道叠加（custom 身份体替换的是身份段，不豁免用户追加指令）；
+ * workflow_actor 通道排除——actor 身份自足，追加会话级指令是错的语义。
+ * 换行前缀沿 IDENTITY_CUSTOM_SECTION 的内联段先例（文本即用户数据，无独立 owner 文件）。
+ */
+const IDENTITY_APPEND_SECTION: SectionDescriptor = {
+  id: "identity.append",
+  source: "append_system_prompt",
+  group: "system-stable",
+  channel: ["default", "custom"],
+  // 用户文件全文：含用户数据，不得进 manifest（R6）。
+  persistable: false,
+  owner: `${OWNER_PREFIX}/registry-main.ts`,
+  enabled: (ctx) => Boolean(ctx.config.appendSystemPrompt?.trim()),
+  build: (ctx) => {
+    const appendSystemPrompt = ctx.config.appendSystemPrompt?.trim();
+    return createRegistrySection({
+      name: "Append System Prompt",
+      source: "append_system_prompt",
+      group: "system-stable",
+      content: appendSystemPrompt ? `\n${appendSystemPrompt}` : "",
+    });
+  },
 };
 
 /** 动态行为边界（沟通/确认/如实汇报纪律）：面向与用户对话的会话，default 通道专属。 */
@@ -227,6 +255,7 @@ export const MAIN_SECTION_REGISTRY: readonly SectionDescriptor[] = Object.freeze
   IDENTITY_WORKFLOW_ACTOR_SECTION,
   IDENTITY_DEFAULT_SECTION,
   DESKTOP_SURFACE_SECTION,
+  IDENTITY_APPEND_SECTION,
   DYNAMIC_BEHAVIOR_SECTION,
   GUIDANCE_SESSION_SECTION,
   GUIDANCE_DELEGATING_WORK_SECTION,

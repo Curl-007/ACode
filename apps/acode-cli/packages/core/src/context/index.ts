@@ -10,6 +10,11 @@ export * from "./utils.js";
 export * from "./registry.js";
 // P3 提示词版本清单（R6）：manifest 数据核心（目录计算 / hash / 硬校验）。
 export * from "./manifest.js";
+// WI-10（specs/stable-prefix-pause-gate.md）：R1 字节稳定前缀冻结缓存 +
+// R5 提示词文件路由（APPEND_SYSTEM/SYSTEM/TITLE_SYSTEM 发现与读取；生产接线
+// 归 runtime 所有者，见 spec R5「接线边界」）。
+export * from "./stable-prefix.js";
+export * from "./prompt-files.js";
 
 // Section builders (for testing)
 export { buildCliPrefixSection } from "./sections/cli-prefix.js";

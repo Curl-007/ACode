@@ -31,6 +31,11 @@ import type {
 import type { ToolRegistry } from "../tool/registry.js";
 import { estimateTokens } from "./utils.js";
 import {
+  getStablePrefixCache,
+  serializeContextBuildResult,
+  StablePrefixCache,
+} from "./stable-prefix.js";
+import {
   createMainSectionContext,
   emitSectionManifestTrace,
   MAIN_SECTION_REGISTRY,
@@ -49,6 +54,11 @@ const EPHEMERAL_CACHE_CONTROL = { type: "ephemeral" as const };
 export class ContextBuilder {
   private config: ContextBuilderConfig;
   private customSections: ContextSection[] = [];
+  /**
+   * sessionId 缺席时的实例私有冻结缓存（specs/stable-prefix-pause-gate.md R1）：
+   * 子代理 builder / 测试 / preview 路径绝不与其他会话共享冻结字节。
+   */
+  private readonly localStablePrefixCache = new StablePrefixCache();
 
   constructor(config: ContextBuilderConfig) {
     this.config = config;
@@ -126,13 +136,44 @@ export class ContextBuilder {
     const systemMessages = this.assembleSystemMessages(orderedSections);
     const metaUserAttachments = this.assembleMetaUserAttachments(orderedSections);
 
-    return {
+    return this.freezeStablePrefix({
       sections: orderedSections,
       totalChars,
       totalTokens,
       systemMessages,
       metaUserAttachments,
-    };
+    });
+  }
+
+  /**
+   * StablePrefix 冻结层（specs/stable-prefix-pause-gate.md R1）：组装结果先做
+   * 显式序列化投影，与冻结快照逐字节比较——相等则返回**同一冻结对象**
+   * （同引用 ⇒ 同字节 ⇒ provider prompt-cache 断点稳定），不等则重拍快照并
+   * version++。段管线仍是文本唯一所有者；本层不改任何字节，只保证
+   * 「同输入 ⇒ 同对象」，且旧 result 持有者的字节永不被原地改写。
+   */
+  private freezeStablePrefix(result: ContextBuildResult): ContextBuildResult {
+    const cache = this.stablePrefixCache();
+    const serialized = serializeContextBuildResult(result);
+    const frozen = cache.reuse(serialized);
+    if (frozen) return frozen;
+    cache.store(serialized, result);
+    return result;
+  }
+
+  /** 冻结缓存路由：sessionId 在场走模块注册表（跨 builder 实例冻结），缺席走实例私有。 */
+  private stablePrefixCache(): StablePrefixCache {
+    const key = this.config.sessionId?.trim();
+    return key ? getStablePrefixCache(key) : this.localStablePrefixCache;
+  }
+
+  /**
+   * 显式失效本 builder 路由到的冻结快照（omp StablePrefix.invalidate 语义）：
+   * MCP 重连 / 工具集或技能集变更等外部事件后，强制下一次 build 重拍前缀。
+   * 输入变化已反映在段输出上时指纹自然变化，无需显式调用。
+   */
+  invalidateStablePrefix(): void {
+    this.stablePrefixCache().invalidate();
   }
 
   private assembleSystemMessages(sections: ContextSection[]): ModelInputMessage[] {

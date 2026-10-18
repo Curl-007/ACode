@@ -227,7 +227,18 @@ export class MessageHistoryImpl implements MessageHistory {
   }
 
   replaceMessages(messages: readonly (ModelInputMessage | RuntimeMessageEntry)[]): void {
-    this.entries = messages.map(cloneEntryInput);
+    // 身份复用（specs/stable-prefix-pause-gate.md R2）：入参中与当前 entries[i]
+    // 引用相等的项保留原对象——旧 turn 永不重序列化/重克隆。每 turn 的
+    // context-refresh 传入 [...新前缀, ...borrowReadOnlyRuntimeEntries().slice(n)]，
+    // 会话尾部引用相等 ⇒ 零重拷贝；前缀计数变化导致引用不对位时自动退化为
+    // 全量克隆，正确性不依赖对位假设。复用不引入新别名：被复用对象本来就是
+    // history 自己的 entries。
+    const previous = this.entries;
+    this.entries = messages.map((item, index) =>
+      index < previous.length && item === previous[index]
+        ? previous[index]
+        : cloneEntryInput(item),
+    );
     this.cacheStats = {
       totalMessages: this.entries.length,
       cachedMessages: countContextPrefixMessages(this.entries),

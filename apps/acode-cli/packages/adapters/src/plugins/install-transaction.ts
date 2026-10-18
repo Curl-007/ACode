@@ -306,26 +306,43 @@ function require_basename(path: string): string {
 }
 
 /**
+ * 回滚 prune 的作用域判定（纯函数）：child 在 stop 之内且更深一层以上。
+ * 归一化（分隔符/大小写）只用于比较，绝不把归一化结果当文件系统路径使用——
+ * Linux 大小写敏感 FS 上小写化路径会 ENOENT（CI 复盘根因）。
+ * 前缀比较要求分隔符边界：/a/bc 不是 /a/b 的内部路径，兄弟目录不得越界 prune。
+ */
+export function isRollbackPruneScope(childPath: string, stopPath: string): boolean {
+  const child = resolveBoundary(childPath);
+  const stop = resolveBoundary(stopPath);
+  if (child.length <= stop.length) return false;
+  if (!child.startsWith(stop)) return false;
+  return child.charAt(stop.length) === "/";
+}
+
+/**
  * 从 target 的父目录向上逐级删除空目录，到 stopAt（storageRoot）为止。
- * 只删「当前为空」的目录：rmdir 对非空目录抛错即天然终止，不会误删快照外有内容的目录。
+ * 平台无关语义（显式自底向上，不依赖 rm recursive 的平台副作用）：
+ *  - fs 调用永远用原始路径（分隔符/大小写保持调用方原样）；
+ *  - 归一化字符串只参与作用域比较（isRollbackPruneScope）；
+ *  - 只删「当前为空」的目录：rmdir 对非空目录抛错即天然终止，不会误删快照外
+ *    有内容的目录；目标已不存在（ENOENT）同样终止。
  */
 async function pruneEmptyParentChain(startDir: string, stopAt: string): Promise<void> {
-  const stop = resolveBoundary(stopAt);
-  let current = resolveBoundary(startDir);
-  while (current.length > stop.length && current.startsWith(stop)) {
+  let current = startDir;
+  while (isRollbackPruneScope(current, stopAt)) {
     try {
       await rmdir(current);
     } catch {
       return;
     }
-    const parent = resolveBoundary(dirname(current));
-    if (parent === current) return;
+    const parent = dirname(current);
+    if (resolveBoundary(parent) === resolveBoundary(current)) return;
     current = parent;
   }
 }
 
 function resolveBoundary(path: string): string {
-  // Windows 大小写与分隔符差异归一，保证前缀比较与循环终止可靠。
+  // Windows 大小写与分隔符差异归一，仅用于路径比较（见 isRollbackPruneScope）。
   return path.replace(/[\\/]+/gu, "/").replace(/\/$/u, "").toLowerCase();
 }
 

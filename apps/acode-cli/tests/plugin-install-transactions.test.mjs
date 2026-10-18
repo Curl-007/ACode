@@ -690,3 +690,31 @@ test("addMarketplace records credentialRedaction when the marketplace source its
   assert.equal(JSON.stringify(stripped.value).includes(secret), false);
   await rm(marketDir, { force: true, recursive: true });
 });
+
+// ── 回滚 prune 作用域纯函数（CI run 39139112813 Linux 复盘：归一化路径曾被直接
+// 用于 rmdir，大小写敏感 FS 上 ENOENT 静默终止 → 空目录链残留。修复后归一化只
+// 参与比较，fs 调用走原始路径；本组用例锚定比较语义的两平台对称性。） ──
+
+test("isRollbackPruneScope：posix 形态的作用域/边界/越界矩阵", () => {
+  const { isRollbackPruneScope } = transactionModule;
+  // 作用域内（更深一层以上）。
+  assert.equal(isRollbackPruneScope("/tmp/XAb/storage/cache/market", "/tmp/XAb/storage"), true);
+  // 相等与更浅：不在作用域。
+  assert.equal(isRollbackPruneScope("/tmp/XAb/storage", "/tmp/XAb/storage"), false);
+  assert.equal(isRollbackPruneScope("/tmp/XAb", "/tmp/XAb/storage"), false);
+  // 分隔符边界：/a/bc 不是 /a/b 的内部路径（兄弟目录不得越界 prune）。
+  assert.equal(isRollbackPruneScope("/a/bc/d", "/a/b"), false);
+  assert.equal(isRollbackPruneScope("/a/b/c", "/a/b"), true);
+  // 完全外部路径。
+  assert.equal(isRollbackPruneScope("/etc/passwd", "/tmp/XAb/storage"), false);
+});
+
+test("isRollbackPruneScope：win32 形态——分隔符归一与大小写不敏感比较", () => {
+  const { isRollbackPruneScope } = transactionModule;
+  assert.equal(isRollbackPruneScope("C:\\Users\\Dev\\storage\\cache\\m", "C:/Users/Dev/storage"), true);
+  // Windows 大小写不敏感：比较层归一后命中（fs 调用仍用原始路径，见实现注释）。
+  assert.equal(isRollbackPruneScope("c:/users/dev/storage/cache", "C:\\Users\\Dev\\storage"), true);
+  assert.equal(isRollbackPruneScope("C:\\Users\\Dev\\storageX\\cache", "C:\\Users\\Dev\\storage"), false);
+  // 尾部分隔符归一（stop 带尾斜杠不破坏前缀判定）。
+  assert.equal(isRollbackPruneScope("C:\\s\\cache", "C:\\s\\"), true);
+});

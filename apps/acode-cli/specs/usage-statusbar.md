@@ -43,10 +43,10 @@ desktop/ui 状态栏消费 v4 投影既有事实，CLI/TUI/desktop 共用零 tok
 | 生成速度 | 最近一次模型请求 tok/s；颜色表快慢档；悬停展示口径 | `snapshot.usage.lastRequest`（新增，见协议面） |
 | 上下文容量 | **不重复建**——由既有 composer 上下文环（ChatContextUsage）承载并增强：接近 auto-compact 阈值分档变色 + 上下文被拒时悬停给处置建议（compact/新会话）；状态栏不设独立上下文项 | `snapshot.usage.contextWindow`（autoCompactThresholdTokens 补真值，见协议面） |
 | 本轮用量 | 最近完成 turn 的 tokens + 缓存命中率 + TTFT；悬停输入/输出/缓存读/缓存写/思考明细 | `turnHeader.stats`（新增） |
-| 会话累计 | 用量 + 轮数 + 请求数 + 代码增删；**每窗口绑定焦点会话，绝不回退**（无活动 v4 会话快照 → 显示零值；组件只读本窗口 conversationProjectionStore 的活动会话 snapshot，禁止跨会话/跨窗口兜底启发式） | `snapshot.usage.cumulative`（+reasoningTokens）+ turnHeader 行求和（轮数/请求数/additions+deletions，字段已在 rows.ts） |
+| 会话累计 | 用量 + 轮数 + 请求数 + 代码增删；**每窗口绑定焦点会话，绝不回退**（无活动 v4 会话快照 → 胶囊隐藏，只留齿轮，见「hide-on-absent 空态规则」节；组件只读本窗口 conversationProjectionStore 的活动会话 snapshot，禁止跨会话/跨窗口兜底启发式） | `snapshot.usage.cumulative`（+reasoningTokens）+ turnHeader 行求和（轮数/请求数/additions+deletions，字段已在 rows.ts） |
 | 工具调用 | 次数 + 出错标记；悬停各工具耗时与错误 | 投影 toolCall 行本地聚合（rows 已有 durationMs/状态，零协议改动） |
 | 今日合计 | 当天跨会话累计；挂载拉取 + turn 完成刷新 + 窗口聚焦刷新（无高频轮询）；remote workspace 会话走 remoteWorkspaceServiceCollection 的同名 usageStats 服务，绝不把另一 workspace/服务器的今日量混入 | `IUsageStatsService.getAppUsageSnapshot`（AppUsageRange 实际闭集 all\|7d\|30d——取 7d 档按请求 timeZone 的当天日期键从 heatmap 提取，单点在 `useTodayUsageTotals`；若日后增补 today 档只改该处；远端同源） |
-| 子智能体 | 主/子分列；点击展开每派发任务（标题 + 累计 tokens + 状态）；运行指示用权威 running 状态（不做 30s 心跳启发式）；归因走原生 registry 的 agentId 硬关联（天然满足「宁无名不错名」，禁止时间/前缀启发式） | `RunningSubagentSummary`（+cumulativeTokens，新增）；深钻按 childSessionId 走 `queryTaskUsage` |
+| 子智能体 | 值 = 仅子代理累计（见「子代理胶囊值语义」节；主/子对比在展开面板）；点击展开每派发任务（标题 + 累计 tokens + 状态）；运行指示用权威 running 状态（不做 30s 心跳启发式）；归因走原生 registry 的 agentId 硬关联（天然满足「宁无名不错名」，禁止时间/前缀启发式） | `RunningSubagentSummary`（+cumulativeTokens，新增）；深钻按 childSessionId 走 `queryTaskUsage` |
 | 设置齿轮 | 逐项显隐 + 速率行开关；localStorage slice（照 `store/appearancePreferencesState.ts` 波 2 落法：姊妹模块收 slice、store/index.ts 单行接线、BROADCAST_FIELDS 跨窗广播 + applyBroadcast 防回环）；窗口大小手动覆盖**不做**（模型配置权威）；语言随 app i18n **不设独立项** | ui store 新 slice `usageStatusbarPreferencesState.ts` |
 
 ### 回答末尾速率行（可关，默认开）
@@ -55,6 +55,90 @@ desktop/ui 状态栏消费 v4 投影既有事实，CLI/TUI/desktop 共用零 tok
 加权速度（Σoutput ÷ ΣgenerationMs）+ TTFT + 输出量 + 耗时；悬停解释与状态栏口径差异
 （状态栏看最近一段请求，速率行看本问已入库多段；收尾正文不在采样内）。
 纯问答/无 stats/开关关闭 → 不渲染，绝不显示上一问的统计。
+
+### Tooltip 稳定性（流式悬停不闪断）
+
+状态栏胶囊 tooltip 在对话流式输出/思考进行中必须稳定常驻：指针持续悬停任一胶囊，
+tooltip 打开后不得在思考/流式未结束前闪断消失。根因：全局 `TooltipProvider`
+（`packages/ui/src/Root.tsx`）`delayDuration=0` + 默认 `skipDelayDuration=300`，
+在流式高频 snapshot re-render 下触发 Radix Tooltip 的 hoverable content 机制
+（`@radix-ui/react-tooltip` `TooltipContentHoverable`：grace area pointer 追踪 +
+trigger/content pointerleave 建立凸包）误判指针离开 → `onClose()` 关闭；关闭后
+`TooltipTrigger` 的 `hasPointerMoveOpenedRef` 仍为 true（仅 pointerleave 重置），
+指针静止不再触发 `onTriggerEnter` 重开——与「闪一下即消失、等思考结束才常驻」吻合。
+
+修复针对根因所有者（状态栏胶囊 tooltip 行为配置）：`UsageStatusbar` 外包局部
+`TooltipProvider` 设 `delayDuration={0} disableHoverableContent`，禁用导致抖动的
+grace area 追踪逻辑，改用 `TooltipContentImpl`（非 hoverable）。状态栏 tooltip 是
+只读明细，用户无需将指针移入 tooltip content 内部，禁用 hoverable content 不损失
+核心交互；子代理胶囊的 Popover 点击展开走独立 Radix Popover 机制，不受影响。
+
+不接受的对症方案：流式期间禁用 tooltip、pointer 事件防抖、setTimeout 重开等
+掩盖性补丁——这些不消除 grace area 误判根因，只压制症状。
+
+### 排版一致性（2026-10-18 增补）
+
+- **tooltip 标题字号 = `text-ui-sm`**（DESIGN.md「Tooltip：titles … use text-ui-sm」）：
+  `UsageStatusbarCapsule` 的 tooltip 标题与 `TurnRateLine` 的 tooltip 标题统一
+  `text-ui-base` → `text-ui-sm`。
+- **tok/s 单位后缀进文案表**：`formatTokensPerSecond` 不硬编码英文单位，后缀走
+  i18n key `chat.usageStatusbar.unit.tokensPerSecond`（双语同值 `tok/s`；键在表，
+  文案可改，代码零硬编码单位）。`USAGE_NO_DATA_PLACEHOLDER` 早返回语义不变
+  （tooltipStability 契约）。
+- **zh compact 数字单点**：`packages/ui/src/lib/tokenNumberFormat.ts` 是 token 数值
+  compact 格式化的**唯一所有者**，zh 系 locale 统一输出 万/亿 量级并在数字与量级字符间
+  补一个空格（`1.2 万`、`1.2 亿`；低于万原样 `1200`）；en 系维持 K/M/B 不变。
+  `formatModelContextWindowLabel` 是技术规格徽标，**保持**强制 en-US，不在统一范围。
+- **代码增删符号**：`+N −N` 的减号固定 U+2212（MINUS SIGN）与 `+` 对齐排版，测试钉住。
+
+### hide-on-absent 空态规则（2026-10-18 增补）
+
+状态栏胶囊按「数据源在场与否」显隐，**缺席 ≠ 零值**：
+
+- 判定收进 `usageStatusbarModel.ts` 纯函数 `resolveUsageStatusbarPresence`（单一所有者，
+  组件不做内联启发式）：生成速度 = `lastRequest` 在场；本轮用量 = 最近完成轮 `stats`
+  在场；会话累计 = `snapshot.usage` 在场；工具调用 = 投影行存在 toolCall 行；
+  今日合计 = 当天 heatmap 单元格命中；子智能体 = 子代理投影在场且（有 running 或
+  endedTotal > 0）。
+- **零值 ≠ 缺席**：数据源在场而数值为 0（如会话累计 0 tokens、今日 0 轮）照常显示；
+  数据源 null/缺席 → 胶囊整体不渲染。`snapshot=null`（无活动会话）→ 只剩设置齿轮，
+  绝不回退其他会话/窗口（绑定纪律不变）。
+- 设置 Popover 底部注明「无数据的胶囊自动隐藏」，用户显式开关仍优先生效
+  （显式关 = 永不显示；显式开 = 有数据即显示，无数据隐藏）。
+
+### 子代理胶囊值语义（2026-10-18 增补）
+
+胶囊值 = **仅子代理累计**（Σ 在场子代理 cumulativeTokens，缺席整体 "—"），
+不再显示「主/子」分列——主代理值与会话累计胶囊数字重复（同一事实两处呈现）。
+主/子对比下沉到点击展开的 Popover 面板（面板本就分列主/子）。aria-label 与
+tooltip 口径说明随值语义同步更新。
+
+### 窄屏分级隐藏优先级（2026-10-18 增补）
+
+composer 工具栏在窄容器下按**信息优先级**逐级隐藏（CSS 容器查询，组件不卸载、
+数据照常挂载）：先藏今日合计 → 子智能体 → 生成速度 → 工具调用 → 会话累计；
+**本轮用量与设置齿轮保留到最后**。初定两级：`@max-[520px]`（composer 命名容器）藏
+今日合计、子智能体；`@max-[420px]` 再藏生成速度、工具调用、会话累计。
+容器查询挂既有 `@container/composer`（ConversationComposer 根），Tailwind v4
+任意值命名容器语法 `@max-[520px]/composer:hidden`；与 hide-on-absent 正交
+（数据缺席 = 不渲染，容器窄 = 渲染但 CSS 隐藏）。
+
+### Tooltip 增强与实时动态显示口径（2026-10-18 增补）
+
+- 会话累计 tooltip 补缓存读/缓存写明细行（`cumulative.cacheReadTokens/cacheWriteTokens`
+  已在权威面，此前未消费）。
+- 今日合计 tooltip 补「主要模型」行（`AppUsageSnapshot.summary.favoriteModel.modelId`，
+  null → 占位；`useTodayUsageTotals` 顺带暴露，不新增取数）。
+- 工具调用 tooltip：各工具行超 8 个补「+N 更多」行（不在 tooltip 内无限铺开）；
+  聚合面新增全会话 `lastErrorMessage`（行序最后一条错误消息，destructive 弱化行）。
+- **值变更过渡**：胶囊值包 keyed span（key = 值字符串），真实事实变更触发重挂载
+  → 160ms 淡入（styles.css 新动画，双闸齐全：`prefers-reduced-motion` 基线 +
+  `[data-acode-reduce-motion="reduce"]` 应用内覆盖；值未变不重挂载、不重放动画）。
+- **相位指示**：`snapshot.control.phase === "running"` 时生成速度胶囊值前显示脉冲
+  状态点（`animate-pulse` 先例同子代理面板，`motion-reduce:animate-none`）。
+  **口径红线不变**：状态点只表达「有请求在跑」这一请求边界事实，不伪造实时速率；
+  速度值与 tooltip 仍是「每完成一次模型请求更新」的事件驱动事实——**严禁**流式
+  中途自算 tok/s，**严禁**高频轮询（无 per-chunk token 事实，spec 口径 4）。
 
 ## 协议与事件面（全部 additive optional，遵守 snapshot.ts 冻结规则）
 
@@ -124,8 +208,9 @@ TUI 不建状态栏（无对应 UI 面）；/usage 命令天然可用；既有
    TurnComplete 写 turnHeader.stats（纯问答轮 = null）；threshold 真值；subagent tokens。
 4. cli：usage-query 参数解析全 scope 单测 + 报表渲染快照 + 命令零 token 拦截
    （不进模型提交路径）。
-5. ui：状态栏组件测试——逐项显隐持久化、无会话快照显示零值（不回退）、速率行
-   开关与「不显示上一问统计」、今日合计不跨 workspace 混算。
+5. ui：状态栏组件测试——逐项显隐持久化、hide-on-absent（无会话快照胶囊隐藏只留
+   齿轮、零值照常显示、绝不回退）、速率行开关与「不显示上一问统计」、今日合计
+   不跨 workspace 混算、窄屏容器查询分级隐藏优先级、值过渡动画双闸。
 6. E2E（真实模型 dev 会话）：状态栏数字与 SQLite 账本一致（today/会话累计/tok/s
    手工核算）；/usage today 与设置页 App Usage 同日数字一致；子代理派发后展开面板
    显示 agentId 关联用量。

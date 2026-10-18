@@ -1,0 +1,6 @@
+interface:
+  display_name: "业务指标体系设计"
+  short_description: "定义核心指标、搭建指标树、统一统计口径，并治理指标变更与责任归属"
+  default_prompt: "使用 $build-metric-system-cn 为这项业务搭建可实施的指标体系。"
+policy:
+  allow_implicit_invocation: true

@@ -10,6 +10,7 @@ import { isOfficialMarketplaceId, ACODE_OFFICIAL_PLUGIN_MARKETPLACE } from "@aco
 import {
   getCliGitInvocationEnv,
   resolveDefaultPluginMarketplaces,
+  resolveOfficialMarketplaceAliasCanonicalId,
   sanitizeACodeRuntimeEnv,
 } from "@acode/shared";
 import { loadPluginMcpServerDefinitions, resolvePluginMcpServers } from "./mcp.js";
@@ -361,6 +362,24 @@ export async function addMarketplace(input: {
       signal: operationSignal,
     });
     throwIfPluginOperationAborted(operationSignal);
+    // 官方 CDN 目录的顶层 name 是历史别名（zcode-plugins-official），直接刷新会撞上
+    // 下方 trustedId 守卫报「must provide acode-plugins-official」，官方市场远程刷新
+    // 持续失败（specs/plugin-official-marketplace-alias.md 背景）。受信任内部刷新链
+    // （trustedId===official 的全部调用方：懒加载 ensureMarketplaceManifestAvailable 与
+    // updateMarketplace，均传 known record 自身 id）在此单一收口把别名归一回 canonical，
+    // 使三道守卫、CDN 分片 assertOfficialManifest（读 raw.name）与 known record 全部按
+    // canonical 语义执行。raw 浅拷贝换新对象，不污染 fetch 结果；别名表是 shared 侧闭集，
+    // 用户侧新增 / 声明同步（expectedId）/ 非官方市场不放宽（spec R2 负向边界）。
+    if (input.trustedId === ACODE_OFFICIAL_PLUGIN_MARKETPLACE) {
+      const canonicalId = resolveOfficialMarketplaceAliasCanonicalId(loaded.manifest.name);
+      if (canonicalId !== undefined && canonicalId !== loaded.manifest.name) {
+        loaded.manifest = {
+          ...loaded.manifest,
+          name: canonicalId,
+          raw: { ...loaded.manifest.raw, name: canonicalId },
+        };
+      }
+    }
     if (isOfficialMarketplaceId(loaded.manifest.name) && loaded.manifest.name !== input.trustedId) {
       throw new Error(
         `Cannot add a marketplace named "${loaded.manifest.name}": that id is reserved for the official marketplace.`,
@@ -580,6 +599,27 @@ async function saveInstalledPlugins(
 
 export function listInstalledPluginRecords(storageRoot: string): InstalledPluginRecord[] {
   return loadInstalledPluginsSync(storageRoot).plugins;
+}
+
+/**
+ * 只读消费 installed_plugins.json，供官方 cache 清理判定引用集
+ * （specs/official-plugin-cache-cleanup.md R2 必改项 5）。
+ * 返回 undefined：文件缺失、不可读或解析失败（非法 JSON / 顶层非对象）——该文件是
+ * R3「installed 记录永不动」保护的唯一事实源，失效即调用方必须整体跳过本次清理；
+ * 正常解析 → 记录列表（可为空数组）。安装流的写入路径不经过本函数。
+ */
+export function tryReadInstalledPluginRecordsForCleanupSync(
+  storageRoot: string,
+): InstalledPluginRecord[] | undefined {
+  try {
+    const readablePath = recoverAtomicTargetSync(join(storageRoot, INSTALLED_PLUGINS_FILE));
+    const parsed = JSON.parse(readFileSync(readablePath, "utf8")) as unknown;
+    if (!isRecord(parsed)) return undefined;
+    return normalizeInstalledPluginsState(parsed).plugins;
+  } catch {
+    // 缺失/损坏/暂时不可读（Windows 占用）一律按「事实源失效」处理：调用方跳过清理。
+    return undefined;
+  }
 }
 
 export function resolveInstalledPluginRoot(

@@ -1,4 +1,4 @@
-import type { RuntimeInputPresentation } from "@acode/contracts";
+import type { RuntimeInputPresentation, CustomCommandInvocationMeta } from "@acode/contracts";
 import { createModelId, createModelProviderId } from "@acode/contracts";
 import { SessionEventType, createPartId, traceContextToLogContext } from "../deps.js";
 import type {
@@ -53,6 +53,11 @@ export async function persistUserPrompt(
     executionKind?: TurnExecutionKind;
     /** 引擎附加文本的起点；同样为冷恢复而存。 */
     epilogueStart?: number;
+    /**
+     * 斜杠命令回显（specs/slash-command-echo.md）：与 TurnStarted payload 同一份展示
+     * 事实，落 metadata.customCommand 供 transcript 冷恢复读回（冷热同形）。
+     */
+    customCommand?: CustomCommandInvocationMeta;
   },
 ): Promise<void> {
   this.latestConversationMessageId = messageID;
@@ -108,6 +113,7 @@ export async function persistUserPrompt(
             ...(options?.epilogueStart === undefined
               ? {}
               : { epilogueStart: options.epilogueStart }),
+            ...(options?.customCommand ? { customCommand: options.customCommand } : {}),
           },
         }
       : {}),

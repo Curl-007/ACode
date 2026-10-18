@@ -1,0 +1,6 @@
+interface:
+  display_name: "线上故障止损与协同"
+  short_description: "以恢复服务为先，设计并记录可撤回的故障缓解动作、验证信号与停止条件"
+  default_prompt: "使用 $incident-mitigation-cn 基于已有材料生成可复核的中文结果，并标出数据与权限边界。"
+policy:
+  allow_implicit_invocation: true

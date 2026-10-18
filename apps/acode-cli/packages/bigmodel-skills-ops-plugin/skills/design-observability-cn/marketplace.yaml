@@ -1,0 +1,4 @@
+display_name: "监控、日志与告警设计"
+summary: "围绕诊断问题设计指标、日志、追踪与告警并控制噪声"
+author: "z.ai"
+license: "Apache-2.0"

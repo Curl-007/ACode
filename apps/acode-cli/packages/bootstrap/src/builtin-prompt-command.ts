@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { parseOvernightDuration } from "@acode/core";
+import type { CustomCommandInvocationMeta } from "@acode/contracts";
 import {
   BUILTIN_ULTRACODE_COMMAND_NAME,
   expandBuiltinUltracodeCommandPrompt,
@@ -77,12 +78,18 @@ export function resolveACodeBuiltinHostCommand(input: string): ACodeBuiltinHostC
 
 interface ResolveACodeBuiltinPromptCommandOptions {
   /**
-   * 动态工作流开关：只有显式 false 才禁止展开 `/workflow` 与 `/ultracode`。
+   * 动态工作流开关（dwf 总闸）：只有显式 false 才禁止展开 `/workflow` 与 `/ultracode`。
    * TUI 使用默认开启策略；headless 按本次 `--enable-workflow` 显式传入 true/false，默认 false。
    * 关闭时返回 undefined；两个命令名都是保留名，自定义命令解析也不会展开它们，原文作为普通
    * prompt 交给模型。这与命令目录隐藏这两个入口的规则一致。
    */
   dynamicWorkflowEnabled?: boolean;
+  /**
+   * 脚本工作流开关（spec script-workflow-management-surface.md §4.5）：只有显式 false 才
+   * 禁止展开 `/ultracode`（与 dynamicWorkflowEnabled **合取**）。工具面不注册 RunWorkflow
+   * 时命令还能展开正文，等于把模型引向不存在的工具。
+   */
+  scriptWorkflowEnabled?: boolean;
   workingDirectory?: string;
 }
 
@@ -104,14 +111,23 @@ export function resolveACodeBuiltinPromptCommand(
     });
   }
 
-  // `/workflow` 与 `/ultracode` 是两套工作流系统各自的入口，但受**同一道**可用性开关约束
-  // （理由见 core/src/tool/handlers/workflow-tool-names.ts：工具面也是一起下架的，
-  // 命令面与工具面必须同结论，否则会出现"命令能展开、工具不存在"）。
+  // `/workflow` 与 `/ultracode` 是两套工作流系统各自的入口。可用性门是**合取的两道**
+  // （spec script-workflow-management-surface.md §4.5，评审必改项 2 后的表述）：
+  // dwf 总闸（dynamicWorkflowEnabled）管两套——它关时工具面 GATED_WORKFLOW_TOOL_NAMES
+  // 全下架，命令面必须同结论；脚本工作流开关（scriptWorkflowEnabled）只补
+  // `/ultracode` 的另一半。理由见 core/src/tool/handlers/workflow-tool-names.ts：
+  // 工具面与命令面必须同结论，否则会出现「命令能展开、工具不存在」。
   if (
     invocation.name === BUILTIN_WORKFLOW_COMMAND_NAME ||
     invocation.name === BUILTIN_ULTRACODE_COMMAND_NAME
   ) {
     if (options.dynamicWorkflowEnabled === false) {
+      return undefined;
+    }
+    if (
+      invocation.name === BUILTIN_ULTRACODE_COMMAND_NAME &&
+      options.scriptWorkflowEnabled === false
+    ) {
       return undefined;
     }
     return invocation.name === BUILTIN_WORKFLOW_COMMAND_NAME
@@ -131,6 +147,21 @@ function parseBuiltinPromptCommandInvocation(input: string): { args: string; nam
     args: match[2]?.trim() ?? "",
     name: match[1].toLowerCase(),
   };
+}
+
+/**
+ * 内置 prompt 命令的回显元数据（specs/slash-command-echo.md）：与展开共用同一个解析器，
+ * 杜绝两处解析漂移。scope 固定 "builtin"（contracts 允许 CustomCommandScope | "builtin"）；
+ * 内置命令没有 frontmatter 描述，description/source 缺席。调用方只在展开成功时使用它。
+ */
+export function builtinPromptCommandEchoMeta(
+  input: string,
+): CustomCommandInvocationMeta | undefined {
+  const invocation = parseBuiltinPromptCommandInvocation(input);
+  if (!invocation) {
+    return undefined;
+  }
+  return { name: invocation.name, scope: "builtin" };
 }
 
 function buildInitAgentsPrompt(params: {

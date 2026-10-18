@@ -64,6 +64,7 @@ import {
   resolveBundledAgentsRoot,
   OAuthCredentialRepo,
 } from "@acode/services/node";
+import { decorateSkillsServiceWithLocalBundled } from "./remoteWorkspaceBundledSkills.js";
 import {
   BIGMODEL_PROVIDER_ID,
   DEFAULT_ACODE_MODEL_CONTEXT_BUDGET_STRATEGY,
@@ -188,6 +189,15 @@ export function createRemoteWorkspaceServiceCollection(params: {
   );
   const remoteProviderProvisioningService =
     createRemoteProviderProvisioningExecutorFromWorkspace(params);
+
+  // 内置技能分组（specs/skills-bundled-visibility-and-official-cache-authority.md I1）：
+  // remote workspace 的 ISkillsService 是远端 stub（项目级/用户级/插件技能在远端文件系统），
+  // bundled 分组由 desktop 本机内容包并入，与下方 ISubagentsService 的 bundledAgentsRoot
+  // 同一先例。组装语义（降级姿态、scope 双向过滤、其余方法转发远端）见
+  // remoteWorkspaceBundledSkills.ts 的文件注释，此处不复制。
+  const skillsServiceWithBundled = decorateSkillsServiceWithLocalBundled(
+    params.connectionServices.skillsService,
+  );
 
   // desktop-attached remote 的 Agent 运行在远端，但 app-global 设置权威仍在
   // desktop shared Host。通过窄化的 runtime-preferences 请求原路返回，避免远端读取自己的 setting。
@@ -348,7 +358,8 @@ export function createRemoteWorkspaceServiceCollection(params: {
     .register(IClientScenesService, createClientScenesService({ apiClient: localApiClient }))
     // 远端 workspace 的项目级 skills/plugins/commands 位于 SSH/Docker 文件系统。
     // 这里必须透出远端服务，避免本机服务拿远端 workspacePath 去本机目录扫描。
-    .register(ISkillsService, params.connectionServices.skillsService)
+    // bundled 分组例外：见上方 skillsServiceWithBundled（spec I1），由本机内容包并入。
+    .register(ISkillsService, skillsServiceWithBundled)
     .register(ISkillSyncService, params.connectionServices.skillSyncService)
     .register(IMcpSyncService, params.connectionServices.mcpSyncService)
     .register(IPluginSyncService, params.connectionServices.pluginSyncService)

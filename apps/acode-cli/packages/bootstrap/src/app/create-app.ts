@@ -99,7 +99,7 @@ import { loadProjectMcpTrustSnapshot } from "./project-mcp-trust.js";
 import { resolveBundledSkillRoots } from "./bundled-skills.js";
 import { createReservedAgentNames, resolveBundledAgentProfiles } from "./bundled-agents.js";
 import {
-  collectDynamicWorkflowDisabledSkillPaths,
+  collectWorkflowDisabledSkillPaths,
   createDynamicWorkflowSnippetService,
   getWorkflowConcurrencyGovernor,
 } from "@acode/cli-workflow/contract";
@@ -116,6 +116,7 @@ import {
 import { resolveBuiltInNodeReplMcpServers } from "./built-in-node-repl.js";
 import { resolveACodeCustomCommandPrompt } from "../custom-command-prompt.js";
 import {
+  builtinPromptCommandEchoMeta,
   resolveACodeBuiltinHostCommand,
   resolveACodeBuiltinPromptCommand,
 } from "../builtin-prompt-command.js";
@@ -981,11 +982,18 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
               extraResolvedRoots: [...pluginOutcome.skillRoots, ...bundledSkillRoots],
               disabledPaths: [
                 ...collectDisabledPaths(configResult.config.skillOverrides),
-                // 动态工作流关闭时不提供 dynamic-workflows 技能：
-                // 十个工具都不在场，再让模型读到「怎么写工作流脚本」只会诱导它去调不存在的工具。
-                ...(runtimeConfig.dynamicWorkflowEnabled === false
-                  ? collectDynamicWorkflowDisabledSkillPaths(bundledSkillRoots)
-                  : []),
+                // 两道工作流开关的技能面减法（判定矩阵收在 dynamic-workflow-gate.ts，
+                // 与门推导同址；ultracode-keyword.ts「技能面必须同结论」）：
+                // dwf 总闸关 → dynamic-workflows 与 script-workflows 两份都剔（十个创作
+                // 工具与 RunWorkflow 一起下架）；scriptWorkflowEnabled=false（dwf 总闸
+                // 开着）→ 单独剔 script-workflows 一份——工具/命令/reminder 三面此时都已
+                // 下架，技能面若还能加载就是教模型对着不存在的 RunWorkflow 反复重试。
+                // 极性与注册门一致：只有显式 false 才剔。
+                ...collectWorkflowDisabledSkillPaths({
+                  bundledSkillRoots,
+                  dynamicWorkflowEnabled: runtimeConfig.dynamicWorkflowEnabled,
+                  scriptWorkflowEnabled: runtimeConfig.scriptWorkflowEnabled,
+                }),
               ],
             }))
           : undefined,
@@ -1152,10 +1160,22 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
           // 剔除，但用户仍可手打命令名，两条路径必须给出同一个结论。TUI 缺席时不设门禁；
           // headless 按 --enable-workflow 显式取值，见 runtimeConfig 字段注释。
           dynamicWorkflowEnabled: runtimeConfig.dynamicWorkflowEnabled,
+          // 脚本工作流开关同理管 `/ultracode` 的展开（合取，spec §4.5）；协议会话经
+          // runtimeFlags 侧通道带上显式布尔，TUI/legacy 缺席不设门禁。
+          scriptWorkflowEnabled: runtimeConfig.scriptWorkflowEnabled,
           workingDirectory,
         });
         if (builtinPrompt !== undefined) {
-          return builtinPrompt;
+          // 内置命令（/init、/workflow、/ultracode）同样产「已触发命令」回显
+          // （specs/slash-command-echo.md）：元数据与展开共用 builtin 侧解析器，展开成功
+          // 必然解析出名字；双保险分支不可达，一旦命中说明两处解析漂移，fail loud。
+          const command = builtinPromptCommandEchoMeta(text);
+          if (command === undefined) {
+            throw new Error(
+              `builtin prompt command expanded but invocation name unresolvable: ${text.trim().split(/\s+/)[0]}`,
+            );
+          }
+          return { command, prompt: builtinPrompt };
         }
         return await resolveACodeCustomCommandPrompt(text, {
           env: options.env,

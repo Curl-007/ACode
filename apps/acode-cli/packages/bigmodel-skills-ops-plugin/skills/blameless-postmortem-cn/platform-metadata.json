@@ -1,0 +1,28 @@
+{
+  "schemaVersion": "2.0",
+  "id": "blameless-postmortem-cn",
+  "supplyType": "official_self_developed",
+  "displayNameZh": "线上故障复盘与改进",
+  "summaryZh": "基于故障时间线、用户影响、处置记录和系统证据生成无责复盘与改进计划。用户要求写故障复盘、事故报告、五问分析、行动项、经验沉淀或管理层复盘摘要时使用。",
+  "categories": [
+    "运维与可靠性"
+  ],
+  "aliasesZh": [
+    "线上故障复盘与改进",
+    "blameless-postmortem-cn"
+  ],
+  "intentsZh": [
+    "需要线上故障复盘与改进",
+    "请用线上故障复盘与改进处理当前材料",
+    "检查现有结果是否符合线上故障复盘与改进要求"
+  ],
+  "examplePromptsZh": [
+    "请帮我完成线上故障复盘与改进。",
+    "请用线上故障复盘与改进检查这份材料，列出证据、问题和下一步。",
+    "请按线上故障复盘与改进的流程处理，无法验证的内容单独标明。"
+  ],
+  "source": {
+    "developer": "z.ai",
+    "licenseSpdx": "Apache-2.0"
+  }
+}

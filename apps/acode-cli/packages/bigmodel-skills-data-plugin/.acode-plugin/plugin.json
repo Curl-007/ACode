@@ -1,0 +1,15 @@
+{
+  "name": "bigmodel-skills-data",
+  "version": "0.1.0",
+  "tier": "default_false",
+  "description": "Data analysis skills (21) from the Zhipu BigModel skill market: financial news analysis, Excel analysis, BI dashboards, data cleaning and lineage, statistical testing, financial statements and reconciliation, business variance analysis, product analytics and more. Each skill keeps its upstream license and attribution.",
+  "description_i18n": {
+    "zh-CN": "智谱 BigModel 技能市场·数据分析类合集（21 个技能）：金融新闻分析、Excel 分析、BI 看板、数据清洗与血缘、统计检验、财务报表与对账、经营差异分析、用户行为分析等。各技能保留上游许可与署名。"
+  },
+  "author": {
+    "name": "Zhipu BigModel Skill Market",
+    "url": "https://open.bigmodel.cn/managed-agents/skills"
+  },
+  "license": "Apache-2.0 OR MIT",
+  "skills": "skills"
+}

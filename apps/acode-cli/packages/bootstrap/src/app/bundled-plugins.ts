@@ -36,6 +36,7 @@ import {
   isOfficialPluginSeedLockTimeoutError,
   withOfficialPluginSeedLock,
 } from "./official-plugin-seed-lock.js";
+import { cleanupStaleOfficialPluginCacheVersions } from "./official-plugin-cache-cleanup.js";
 
 const OFFICIAL_PLUGIN_MARKETPLACE = ACODE_OFFICIAL_PLUGIN_MARKETPLACE;
 const SEA_PLUGIN_ASSET_PREFIX = "acode-official-plugins/";
@@ -235,6 +236,14 @@ function seedBundledOfficialPlugins(input: {
     operation: "seed_summary",
     outcomes: seedOutcomes,
     source: source.kind,
+  });
+  // 官方 cache 旧版本残留清理（specs/official-plugin-cache-cleanup.md R5）：锚在
+  // writeOfficialMarketplace 已执行且 seed 锁循环完成后，此时权威分片刚落盘、引用集
+  // 最新；进程内至多一次。resolveSeedSource() 返回 undefined 时本函数在入口已提前
+  // 返回，清理自然跳过——无 seed 源即分片未被本次刷新，保守不动。
+  cleanupStaleOfficialPluginCacheVersions({
+    logger: input.logger,
+    storageRoot: input.storageRoot,
   });
   return failedSeeds;
 }

@@ -1,0 +1,6 @@
+interface:
+  display_name: "网页无障碍检查与修复"
+  short_description: "围绕关键用户任务的可感知、可操作与可理解程度提供可复核、可交接的企业研发专业能力"
+  default_prompt: "Use $accessibility-experience-review-cn to 只用键盘验收登录弹窗，检查焦点进入、关闭和返回位置。"
+policy:
+  allow_implicit_invocation: true

@@ -1,6 +1,6 @@
 /* eslint-disable max-lines -- 存量基线豁免:该文件先于 CLI lint 门禁建立即超限(根 lint 的 ignorePatterns 排除 apps/acode-cli,turbo lint 因此从未变绿)。头注豁免以恢复门禁信号;拆分重构超出本批范围。 */
 import type { BackgroundBashOutputResult } from "@acode/shared";
-import type { RuntimeInputPresentation } from "@acode/contracts";
+import type { RuntimeInputPresentation, CustomCommandInvocationMeta } from "@acode/contracts";
 import type {
   CompactPhase,
   CompactReason,
@@ -380,6 +380,8 @@ export interface AgentRuntimeTurnMethods {
       intent?: TurnInputIntentMetadata;
       executionKind?: TurnExecutionKind;
       epilogueStart?: number;
+      /** 斜杠命令回显（specs/slash-command-echo.md）：与 TurnStarted 同源，冷恢复读回。 */
+      customCommand?: CustomCommandInvocationMeta;
     },
   ): Promise<void>;
   recordPendingModelChange(input: {

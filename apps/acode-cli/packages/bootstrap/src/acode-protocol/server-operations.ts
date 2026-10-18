@@ -1148,13 +1148,21 @@ export async function createSession(
 }
 
 /** V4 创建只需要 record；不要为了丢弃的 legacy snapshot 强制解析空模型。 */
+/** V4 createSession 的 runtimeFlags 侧通道：见 createSessionWithProjection 的注释。 */
 export async function createSessionRecordForV4(
   context: ACodeProtocolAgentServerContext,
   rawParams: unknown,
+  runtimeFlags?: { scriptWorkflowEnabled?: boolean },
 ) {
-  return createSessionWithProjection(context, rawParams, undefined, async (record) => ({
-    value: { sessionId: record.app.sessionId },
-  }));
+  return createSessionWithProjection(
+    context,
+    rawParams,
+    undefined,
+    async (record) => ({
+      value: { sessionId: record.app.sessionId },
+    }),
+    runtimeFlags,
+  );
 }
 
 async function createSessionWithProjection<T>(
@@ -1164,6 +1172,11 @@ async function createSessionWithProjection<T>(
   project: (
     record: ACodeProtocolSessionRecord,
   ) => Promise<{ value: T; phaseDurationsMs?: SnapshotPhaseDurationsMs; messageCount?: number }>,
+  // 脚本工作流开关的侧通道（spec script-workflow-management-surface.md §4.3/§4.4）：
+  // acodeSessionCreateParamsSchema 是 strict 的 legacy 面（只删不增），本 flag 不能进
+  // rawParams（会被 strict parse 拒为未知键），只能绕协议参数单独下传。仅 v4 路径注入；
+  // legacy/TUI 路径缺席 = CLI 按本机缺省档（onDemand）放行，与今天行为逐字一致。
+  runtimeFlags?: { scriptWorkflowEnabled?: boolean },
 ): Promise<T> {
   const params = parseParams(acodeSessionCreateParamsSchema, rawParams);
   const startedAt = Date.now();
@@ -1197,6 +1210,7 @@ async function createSessionWithProjection<T>(
     false,
     { kind: "host" },
     trace,
+    runtimeFlags,
   );
   const recordCreateDurationMs = Date.now() - recordStartedAt;
   context.assertServing?.();
@@ -3240,6 +3254,7 @@ async function materializeSessionRecord(
   resume: boolean,
   source: SessionStartupPreferencesSource,
   trace?: ACodeProtocolTrace,
+  runtimeFlags?: { scriptWorkflowEnabled?: boolean },
 ): Promise<ACodeProtocolSessionRecord> {
   const startupPreferences = await resolveSessionStartupPreferences(
     context,
@@ -3247,7 +3262,7 @@ async function materializeSessionRecord(
     source,
     trace,
   );
-  return createRecord(context, params, sessionId, resume, startupPreferences, trace);
+  return createRecord(context, params, sessionId, resume, startupPreferences, trace, runtimeFlags);
 }
 
 async function createRecord(
@@ -3257,6 +3272,7 @@ async function createRecord(
   resume: boolean,
   startupPreferences: SessionStartupPreferences,
   trace?: ACodeProtocolTrace,
+  runtimeFlags?: { scriptWorkflowEnabled?: boolean },
 ): Promise<ACodeProtocolSessionRecord> {
   const workspace =
     "workspace" in params && params.workspace
@@ -3302,6 +3318,13 @@ async function createRecord(
       dynamicWorkflowEnabled:
         ("dynamicWorkflowEnabled" in params && params.dynamicWorkflowEnabled === true) ||
         context.appRuntimePreferences.dynamicWorkflowEnabled === true,
+      // 脚本工作流开关（spec §4.4）：极性与 dwf 相反——缺席即开启（不参与门控），所以
+      // 只有 v4 侧通道显式带来 false/true 时才写。缺席（legacy/TUI/automation 会话）不写字段
+      // = CLI 按本机缺省档（onDemand）放行，与今天行为逐字一致；**不能**学 dwf 把缺席
+      // 折叠成显式布尔，那会把「没参与门控」错译成「门控后开启」之外还有别的语义。
+      ...(runtimeFlags?.scriptWorkflowEnabled === undefined
+        ? {}
+        : { scriptWorkflowEnabled: runtimeFlags.scriptWorkflowEnabled }),
       // 协议侧的工具允许/拒绝列表是 session 级安全边界，必须进入 runtimeConfig，
       // 不能只依赖 prompt 文本约束，否则内置工具和动态 MCP 工具仍可能越过调用面。
       toolAllowlist: "toolAllowlist" in params ? params.toolAllowlist : undefined,
@@ -3540,6 +3563,9 @@ async function snapshotWithDiagnostics(
       // session snapshot 的 `/` 目录与 workspace presentation 必须给出同一份灰度结论，
       // 否则关闭态下侧栏面板还能看到 `workflow`。
       dynamicWorkflowEnabled: context.appRuntimePreferences.dynamicWorkflowEnabled,
+      // 脚本工作流门同读进程缓存（v4 createSession 时机刷新，server-types.ts 注释）；
+      // 展示层缺席 = 显示（fail-open 到本机缺省档），会话内展开另有 runtimeConfig 裁决。
+      scriptWorkflowEnabled: context.appRuntimePreferences.scriptWorkflowEnabled,
       env: context.deps.env,
       logger: context.logger,
     },

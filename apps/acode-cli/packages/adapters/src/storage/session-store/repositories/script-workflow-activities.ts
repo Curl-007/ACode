@@ -32,33 +32,31 @@ export async function createScriptWorkflowActivity(
     )
     .get(input.runId, input.callPath) as { next_attempt: number } | undefined;
   const attempt = attemptRow?.next_attempt ?? 1;
-  db
-    .prepare(
-      `
+  db.prepare(
+    `
       insert into workflow_activity (
         id, run_id, parent_activity_id, call_index, call_path, attempt, type, phase,
         label, input_hash, prompt, opts_json, status, child_session_id, result_json,
         error_json, time_created, time_started, time_updated, time_completed
       ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, null, null, null, ?, null, ?, null)
       `,
-    )
-    .run(
-      input.id,
-      input.runId,
-      input.parentActivityId ?? null,
-      input.callIndex,
-      input.callPath,
-      attempt,
-      input.type,
-      input.phase ?? null,
-      input.label ?? null,
-      input.inputHash,
-      input.prompt ?? null,
-      encodeJson(input.opts),
-      input.status ?? "queued",
-      now,
-      now,
-    );
+  ).run(
+    input.id,
+    input.runId,
+    input.parentActivityId ?? null,
+    input.callIndex,
+    input.callPath,
+    attempt,
+    input.type,
+    input.phase ?? null,
+    input.label ?? null,
+    input.inputHash,
+    input.prompt ?? null,
+    encodeJson(input.opts),
+    input.status ?? "queued",
+    now,
+    now,
+  );
   return mustGetActivity(db, input.id);
 }
 
@@ -69,9 +67,8 @@ export async function updateScriptWorkflowActivity(
   const current = await getActivity(db, input.id);
   if (!current) throw new Error(`Workflow activity not found: ${input.id}`);
   const now = Date.now();
-  db
-    .prepare(
-      `
+  db.prepare(
+    `
       update workflow_activity set
         status = ?,
         child_session_id = ?,
@@ -82,17 +79,16 @@ export async function updateScriptWorkflowActivity(
         time_completed = ?
       where id = ?
       `,
-    )
-    .run(
-      input.status ?? current.status,
-      input.childSessionId === undefined ? (current.childSessionId ?? null) : input.childSessionId,
-      input.result === undefined ? encodeJson(current.result) : encodeJson(input.result),
-      input.error === undefined ? encodeJson(current.error) : encodeJson(input.error),
-      input.startedAt === undefined ? (current.startedAt ?? null) : input.startedAt,
-      now,
-      input.completedAt === undefined ? (current.completedAt ?? null) : input.completedAt,
-      input.id,
-    );
+  ).run(
+    input.status ?? current.status,
+    input.childSessionId === undefined ? (current.childSessionId ?? null) : input.childSessionId,
+    input.result === undefined ? encodeJson(current.result) : encodeJson(input.result),
+    input.error === undefined ? encodeJson(current.error) : encodeJson(input.error),
+    input.startedAt === undefined ? (current.startedAt ?? null) : input.startedAt,
+    now,
+    input.completedAt === undefined ? (current.completedAt ?? null) : input.completedAt,
+    input.id,
+  );
   return mustGetActivity(db, input.id);
 }
 
@@ -123,6 +119,31 @@ export async function listScriptWorkflowActivities(
   return rows.map(decodeActivity);
 }
 
+/**
+ * 管理面 usageIncomplete 的存在性读面（spec script-workflow-management-surface.md §4.1）。
+ * 判据唯一所有者是 cli-workflow script-workflow-format.ts 的
+ * `scriptWorkflowActivityUsageIncomplete`（result.usageAccounting.status === "incomplete"），
+ * 这里只把同一判据下推成 `exists` 索引探测：管理面列表页对每行 run 都要这个布尔，
+ * 全行拉取（payload/result 大字段）只为算一个布尔是真实的浪费——一致性由
+ * script-workflow-management-store 测试对同一批行互钉。json_extract 对 NULL/非对象
+ * result 都回 SQL NULL，等值比较不命中，与 TS 判据（读不到标记 = 不完整不成立）同向。
+ */
+export async function hasScriptWorkflowUsageIncomplete(
+  db: DatabaseSync,
+  runId: string,
+): Promise<boolean> {
+  const row = db
+    .prepare(
+      `select exists(
+         select 1 from workflow_activity
+         where run_id = ?
+           and json_extract(result_json, '$.usageAccounting.status') = 'incomplete'
+       ) as marker`,
+    )
+    .get(runId) as { marker: number } | undefined;
+  return row?.marker === 1;
+}
+
 export async function appendScriptWorkflowEvent(
   db: DatabaseSync,
   input: {
@@ -144,24 +165,22 @@ export async function appendScriptWorkflowEvent(
     )
     .get(input.runId) as { next_sequence: number } | undefined;
   const sequence = sequenceRow?.next_sequence ?? 1;
-  db
-    .prepare(
-      `
+  db.prepare(
+    `
       insert into workflow_event (
         id, run_id, sequence, type, phase, activity_id, payload_json, time_created
       ) values (?, ?, ?, ?, ?, ?, ?, ?)
       `,
-    )
-    .run(
-      input.id,
-      input.runId,
-      sequence,
-      input.type,
-      input.phase ?? null,
-      input.activityId ?? null,
-      encodeJson(input.payload),
-      now,
-    );
+  ).run(
+    input.id,
+    input.runId,
+    sequence,
+    input.type,
+    input.phase ?? null,
+    input.activityId ?? null,
+    encodeJson(input.payload),
+    now,
+  );
   return mustGetEvent(db, input.runId, sequence);
 }
 
@@ -191,9 +210,8 @@ export async function createSessionTaskLink(
   input: CreateSessionTaskLinkInput,
 ): Promise<SessionTaskLinkRecord> {
   const now = Date.now();
-  db
-    .prepare(
-      `
+  db.prepare(
+    `
       insert into session_task_link (
         id, root_workflow_run_id, parent_link_id, activity_id, parent_session_id,
         child_session_id, role, depth, path, phase, label, agent_type, model, status,
@@ -203,25 +221,24 @@ export async function createSessionTaskLink(
         status = excluded.status,
         time_updated = excluded.time_updated
       `,
-    )
-    .run(
-      input.id,
-      input.rootWorkflowRunId ?? null,
-      input.parentLinkId ?? null,
-      input.activityId ?? null,
-      input.parentSessionId ?? null,
-      input.childSessionId,
-      input.role,
-      input.depth ?? 0,
-      input.path,
-      input.phase ?? null,
-      input.label ?? null,
-      input.agentType ?? null,
-      input.model ?? null,
-      input.status,
-      now,
-      now,
-    );
+  ).run(
+    input.id,
+    input.rootWorkflowRunId ?? null,
+    input.parentLinkId ?? null,
+    input.activityId ?? null,
+    input.parentSessionId ?? null,
+    input.childSessionId,
+    input.role,
+    input.depth ?? 0,
+    input.path,
+    input.phase ?? null,
+    input.label ?? null,
+    input.agentType ?? null,
+    input.model ?? null,
+    input.status,
+    now,
+    now,
+  );
   return mustGetTaskLink(db, input.childSessionId);
 }
 

@@ -1,0 +1,15 @@
+{
+  "name": "bigmodel-skills-product",
+  "version": "0.1.0",
+  "tier": "default_false",
+  "description": "Product operations skills (12) from the Zhipu BigModel skill market: product brainstorming, roadmap prioritization, A/B test design, metrics and OKR review, competitive analysis and monitoring, pricing strategy, copywriting and growth ideas. Each skill keeps its upstream license and attribution.",
+  "description_i18n": {
+    "zh-CN": "智谱 BigModel 技能市场·产品运营类合集（12 个技能）：产品需求共创、路线图与优先级、A/B 测试设计、指标与 OKR 复盘、竞品分析与追踪、定价策略、营销文案与增长创意等。各技能保留上游许可与署名。"
+  },
+  "author": {
+    "name": "Zhipu BigModel Skill Market",
+    "url": "https://open.bigmodel.cn/managed-agents/skills"
+  },
+  "license": "Apache-2.0 OR MIT",
+  "skills": "skills"
+}

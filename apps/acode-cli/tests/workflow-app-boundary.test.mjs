@@ -28,7 +28,17 @@ function scriptStore(runs = []) {
       getScriptWorkflowRun: async () => undefined,
       async listScriptWorkflowRuns(input) {
         calls.push(input);
-        return input.statuses ? [] : runs;
+        // 本桩只服务发现/回放读面（cwd+parentSessionId 过滤）；管理面的逻辑态过滤
+        // 由下面的真实 SQLite facade 测试覆盖，这里不做 statuses 仿真。
+        return runs;
+      },
+      // isScriptWorkflowStore 探测覆盖完整 port 读面（P2 修复）：管理面据此注册，
+      // 缺成员 = 整份能力缺席，这里补齐让既有发现/回放场景继续过探测。
+      async listScriptWorkflowDefinitions() {
+        return [];
+      },
+      async hasScriptWorkflowUsageIncomplete() {
+        return false;
       },
       async listScriptWorkflowEvents({ runId }) {
         return [{ id: `${runId}_started`, runId, type: "workflow_started", payload: {} }];
@@ -133,6 +143,123 @@ test("script-only app 仍能发现并冷回放脚本，按父会话隔离并保�
   assert.equal(facade.resumeWorkflowRun, undefined);
   assert.equal(facade.startSavedWorkflow, undefined);
   assert.equal(facade.listDynamicWorkflowRunEvents, undefined);
+});
+
+test("管理面能力探测覆盖读面：旧写子集 store → 管理能力整体缺席（能力不支持，而非 TypeError）", () => {
+  // P2 修复前的行为：isScriptWorkflowStore 只探测写子集，旧 store 通过守卫后在
+  // listScriptWorkflowRuns 调用处抛 TypeError。修复后探测覆盖 facade 实际调用的读面，
+  // 能力缺席走 V4CapabilityUnsupportedError（handlers/script-workflow-management.ts）。
+  const legacySubset = {
+    createScriptWorkflowRun: unexpected,
+    createScriptWorkflowActivity: unexpected,
+    getScriptWorkflowRun: async () => undefined,
+    listScriptWorkflowEvents: async () => [],
+  };
+  const facade = createWorkflowAppFacade(facadeDeps({ sessionStore: legacySubset }));
+  assert.equal(facade.listScriptWorkflowRuns, undefined, "管理读数缺席");
+  assert.equal(facade.listScriptWorkflowDefinitions, undefined, "脚本清单缺席");
+  assert.equal(facade.listDynamicWorkflowRuns, undefined, "发现面同样调用 listScriptWorkflowRuns");
+  assert.equal(facade.replayDynamicWorkflowRuns, undefined, "回放面同口径缺席");
+});
+
+test("管理面 statuses×limit×truncated：过滤下推，truncated 语义是「还有更多匹配」", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "acode-facade-statuses-"));
+  const store = createSqliteSessionStore({ dbPath: join(directory, "sessions.db") });
+  t.after(async () => {
+    store.close();
+    await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 60 });
+  });
+  await store.createSession({
+    directory,
+    id: SESSION,
+    projectID: "proj_facade_status",
+    slug: SESSION,
+    title: "facade statuses",
+    version: "v4",
+  });
+  const { SCRIPT_WORKFLOW_INTERRUPTED_CODE } =
+    await import("../packages/cli-workflow/src/script-workflow-run-status.ts");
+  const create = async (id, status) => {
+    // time_updated 严格递增：截断断言（哪些行进页）才有确定性。
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await store.createScriptWorkflowRun({
+      id,
+      name: id,
+      cwd: directory,
+      scriptHash: "h",
+      parentSessionId: SESSION,
+      status,
+      toolCallId: `tc_${id}`,
+    });
+  };
+  for (let index = 1; index <= 5; index += 1) await create(`wf_c${index}`, "completed");
+  await create("wf_user_cancelled", "cancelled");
+  await create("wf_interrupted", "cancelled");
+  await store.updateScriptWorkflowRun({
+    id: "wf_interrupted",
+    failure: {
+      code: SCRIPT_WORKFLOW_INTERRUPTED_CODE,
+      message: "owning process exited before the run settled",
+    },
+  });
+  const facade = createWorkflowAppFacade(facadeDeps({ sessionStore: store }));
+
+  // 5 条 completed、limit 4：第 5 个**匹配行**存在 → truncated=true（修复前：
+  // 取 limit+1=5 行物理行再过滤，页外匹配行被静默隐藏、truncated 系统性 false）。
+  const capped = await facade.listScriptWorkflowRuns({
+    cwd: directory,
+    statuses: ["completed"],
+    limit: 4,
+  });
+  assert.equal(capped.runs.length, 4);
+  assert.equal(capped.truncated, true);
+  assert.ok(capped.runs.every((entry) => entry.logicalStatus === "completed"));
+  assert.deepEqual(
+    capped.runs.map(({ runId }) => runId),
+    ["wf_c5", "wf_c4", "wf_c3", "wf_c2"],
+    "按 time_updated desc 取匹配行，cancelled/interrupted 不占页",
+  );
+
+  const exact = await facade.listScriptWorkflowRuns({
+    cwd: directory,
+    statuses: ["completed"],
+    limit: 5,
+  });
+  assert.equal(exact.runs.length, 5);
+  assert.equal(exact.truncated, false, "匹配行恰好 limit 条不算截断");
+
+  const userCancelled = await facade.listScriptWorkflowRuns({
+    cwd: directory,
+    statuses: ["cancelled"],
+  });
+  assert.deepEqual(
+    userCancelled.runs.map(({ runId }) => runId),
+    ["wf_user_cancelled"],
+    "cancelled 过滤按 failure code 分流，interrupted 行不得混入",
+  );
+  const interrupted = await facade.listScriptWorkflowRuns({
+    cwd: directory,
+    statuses: ["interrupted"],
+  });
+  assert.deepEqual(
+    interrupted.runs.map(({ runId }) => runId),
+    ["wf_interrupted"],
+  );
+
+  const combo = await facade.listScriptWorkflowRuns({
+    cwd: directory,
+    statuses: ["completed", "cancelled"],
+    limit: 2,
+  });
+  assert.deepEqual(
+    combo.runs.map(({ runId }) => runId),
+    ["wf_user_cancelled", "wf_c5"],
+    "组合闭集按 time_updated desc 取匹配行（user_cancelled 晚于 c5）",
+  );
+  assert.equal(combo.truncated, true, "组合闭集的余量也按匹配行计（6 个匹配 > 2）");
+
+  // usageIncomplete 走 store 的存在性读面（本批行无标记，如实回 false）。
+  assert.ok(capped.runs.every((entry) => entry.stats.usageIncomplete === false));
 });
 
 test("两源发现按 updatedAt 归并再 limit；冷回放保留 DWF 在前并传递 exclude", async () => {

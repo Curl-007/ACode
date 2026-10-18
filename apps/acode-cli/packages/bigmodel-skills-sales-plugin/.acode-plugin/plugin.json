@@ -1,0 +1,15 @@
+{
+  "name": "bigmodel-skills-sales",
+  "version": "0.1.0",
+  "tier": "default_false",
+  "description": "Sales and customer-service skills (14) from the Zhipu BigModel skill market: opportunity discovery, competitive deal strategy, account intelligence, lead research, pipeline review and forecasting, ticket triage, complaint resolution, knowledge management and more. Each skill keeps its upstream license and attribution.",
+  "description_i18n": {
+    "zh-CN": "智谱 BigModel 技能市场·销售客服类合集（14 个技能）：商机判断与赢单策略、客户背景调查、线索研究、销售管道分析、客服工单分流、投诉处理、知识库沉淀等。各技能保留上游许可与署名。"
+  },
+  "author": {
+    "name": "Zhipu BigModel Skill Market",
+    "url": "https://open.bigmodel.cn/managed-agents/skills"
+  },
+  "license": "Apache-2.0 OR MIT",
+  "skills": "skills"
+}

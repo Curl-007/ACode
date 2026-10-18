@@ -1,0 +1,4 @@
+display_name: "跨团队依赖协调"
+summary: "把接口承诺、前后置条件和升级路径定清楚，解除跨团队阻塞"
+author: "z.ai"
+license: "Apache-2.0"

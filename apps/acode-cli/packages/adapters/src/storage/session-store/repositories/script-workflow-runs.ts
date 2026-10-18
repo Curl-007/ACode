@@ -3,6 +3,7 @@ import type {
   CreateScriptWorkflowRunInput,
   RecordScriptWorkflowActivityUsageInput,
   ScriptWorkflowDefinitionRecord,
+  ScriptWorkflowLogicalRunStatus,
   ScriptWorkflowRunRecord,
   ScriptWorkflowRunStats,
   ScriptWorkflowRunStatus,
@@ -16,6 +17,9 @@ import {
   type WorkflowDefinitionRow,
   type WorkflowRunRow,
 } from "./script-workflow-codecs.js";
+// 逻辑态闭集的 SQL 展开（interrupted = cancelled + failure code 判据）在此文件：
+// 2026-10-18 纯移动（本文件顶过 managed 模块 400 行硬上限），判据依据见彼处注释。
+import { logicalStatusesClause } from "./script-workflow-run-status-filter.js";
 import { isWorkflowSessionOwner } from "./workflow-run-owner.js";
 
 export async function upsertScriptWorkflowDefinition(
@@ -115,8 +119,9 @@ export async function updateScriptWorkflowRun(
   if (input.startedAt !== undefined) setColumn("time_started", input.startedAt);
   if (input.completedAt !== undefined) setColumn("time_completed", input.completedAt);
   const ownerWhere =
-    input.ownerToken !== undefined && input.ownerGeneration !== undefined
-      && input.ownerTakeover !== true
+    input.ownerToken !== undefined &&
+    input.ownerGeneration !== undefined &&
+    input.ownerTakeover !== true
       ? " and owner_token = ? and owner_generation = ?"
       : "";
   if (
@@ -144,18 +149,16 @@ export async function updateScriptWorkflowRun(
     input.ownerGeneration !== undefined
       ? [input.ownerToken, input.ownerGeneration]
       : [];
-  const takeoverColumns = takeoverValues.length > 0 ? ", owner_token = ?, owner_generation = ?" : "";
+  const takeoverColumns =
+    takeoverValues.length > 0 ? ", owner_token = ?, owner_generation = ?" : "";
   const ownerWhereValues: SQLInputValue[] = ownerWhere
     ? [input.ownerToken!, input.ownerGeneration!]
     : [];
   const result = db
-    .prepare(`update workflow_run set ${columns.join(", ")}${takeoverColumns} where id = ?${ownerWhere}`)
-    .run(
-      ...values,
-      ...takeoverValues,
-      input.id,
-      ...ownerWhereValues,
-    );
+    .prepare(
+      `update workflow_run set ${columns.join(", ")}${takeoverColumns} where id = ?${ownerWhere}`,
+    )
+    .run(...values, ...takeoverValues, input.id, ...ownerWhereValues);
   if (ownerWhere && result.changes === 0) {
     throw new Error(`Stale workflow owner write rejected: ${input.id}`);
   }
@@ -208,10 +211,11 @@ export async function recordScriptWorkflowActivityUsage(
         : []),
     );
     if (input.ownerToken !== undefined && input.ownerGeneration !== undefined) {
-      const ownerRow = db
-        .prepare("select changes() as changes")
-        .get() as { changes: number } | undefined;
-      if (!ownerRow || ownerRow.changes === 0) throw new Error(`Stale workflow owner write rejected: ${input.runId}`);
+      const ownerRow = db.prepare("select changes() as changes").get() as
+        | { changes: number }
+        | undefined;
+      if (!ownerRow || ownerRow.changes === 0)
+        throw new Error(`Stale workflow owner write rejected: ${input.runId}`);
     }
     const sequenceRow = db
       .prepare(
@@ -254,6 +258,7 @@ export async function listScriptWorkflowRuns(
      */
     parentSessionId?: string;
     statuses?: readonly ScriptWorkflowRunStatus[];
+    logicalStatuses?: readonly ScriptWorkflowLogicalRunStatus[];
   } = {},
 ): Promise<ScriptWorkflowRunRecord[]> {
   const clauses: string[] = [];
@@ -270,6 +275,14 @@ export async function listScriptWorkflowRuns(
     clauses.push(`status in (${input.statuses.map(() => "?").join(", ")})`);
     values.push(...input.statuses);
   }
+  const logical = logicalStatusesClause(input.logicalStatuses);
+  if (logical) {
+    // 逻辑态过滤下推（管理面 statuses 参数，spec script-workflow-management-surface.md §4.1）：
+    // 过滤必须在取数时生效，facade 的「多取一行探截断」探到的才是**匹配行**——此前在
+    // 投影后过滤，页外匹配行被静默隐藏、truncated 系统性 false。
+    clauses.push(logical.sql);
+    values.push(...logical.values);
+  }
   const limit = input.limit && input.limit > 0 ? input.limit : undefined;
   if (limit !== undefined) values.push(limit);
   const where = clauses.length > 0 ? `where ${clauses.join(" and ")}` : "";
@@ -278,6 +291,23 @@ export async function listScriptWorkflowRuns(
     .prepare(`select * from workflow_run ${where} order by time_updated desc, id desc${limitSql}`)
     .all(...values) as unknown as WorkflowRunRow[];
   return rows.map(decodeRun);
+}
+
+export async function listScriptWorkflowDefinitions(
+  db: DatabaseSync,
+  input: { limit?: number } = {},
+): Promise<ScriptWorkflowDefinitionRecord[]> {
+  // 管理面「已持久化脚本清单」读面（spec script-workflow-management-surface.md §4.2）：
+  // 全量回、time_updated desc。行数量级 = 用户迭代过的脚本数（同一路径+哈希铸造 id，
+  // 每次脚本迭代产生新行），全量回可行；排序补主键 tiebreaker，与 listScriptWorkflowRuns
+  // 同一确定性规则（time_updated 并列时输出稳定）。
+  const limit = input.limit && input.limit > 0 ? input.limit : undefined;
+  const rows = db
+    .prepare(
+      `select * from workflow_definition order by time_updated desc, id desc${limit !== undefined ? " limit ?" : ""}`,
+    )
+    .all(...(limit !== undefined ? [limit] : [])) as unknown as WorkflowDefinitionRow[];
+  return rows.map(decodeDefinition);
 }
 
 async function mustGetDefinition(

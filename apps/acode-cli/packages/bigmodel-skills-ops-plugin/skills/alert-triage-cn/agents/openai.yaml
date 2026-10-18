@@ -1,0 +1,6 @@
+interface:
+  display_name: "系统告警分级与处置"
+  short_description: "从告警噪声中判断真实影响、影响范围与响应优先级，并给出处置依据"
+  default_prompt: "使用 $alert-triage-cn 基于已有材料生成可复核的中文结果，并标出数据与权限边界。"
+policy:
+  allow_implicit_invocation: true

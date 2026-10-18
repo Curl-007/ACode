@@ -7,10 +7,8 @@ import type { ACodeProvider } from "./acode-task-types-core.js";
 import type { WorkspacePurpose } from "./workspacePurpose.js";
 import type { EmbeddedBrowserViewportPreference } from "./browser-use/command-metadata.js";
 import type { DynamicWorkflowMode } from "./dynamic-workflow-feature.js";
-import type {
-  DesktopBootPlaceholderSettings,
-  DesktopWindowSizeSettings,
-} from "./desktopAppSettings.js";
+import type { ScriptWorkflowMode } from "./script-workflow-feature.js";
+import type { DesktopWindowSizeSettings } from "./desktopAppSettings.js";
 import type { AppSettingsOccupation } from "./appSettingsOccupation.js";
 
 // ── Domain types ──
@@ -310,6 +308,15 @@ export interface AppSettings {
    * resolveDynamicWorkflowClientConfig——用户显式选择压过环境变量与远端。
    */
   dynamicWorkflowMode?: DynamicWorkflowMode;
+  /**
+   * 脚本工作流（RunWorkflow / /ultracode）三档本机产品开关（disabled/onDemand/alwaysOn）。
+   * 与 dynamicWorkflowMode 是两道独立的门（apps/acode-cli/specs/
+   * script-workflow-management-surface.md §3.2）：本机产品开关而非发布灰度——无远端下发、
+   * 无环境变量覆盖，只读 AppSettings；折叠出口是 services 侧
+   * resolveScriptWorkflowModeWithLocalOverride（唯一消费口）。缺省 = 未设置，落
+   * DEFAULT_SCRIPT_WORKFLOW_MODE（onDemand，与既有可用性逐字一致）。
+   */
+  scriptWorkflowMode?: ScriptWorkflowMode;
   /** Windows 桌面端关闭窗口时隐藏到托盘；其它平台忽略 */
   closeToTrayOnWindows?: boolean;
   /** 存在执行中的闲时任务时阻止系统闲置休眠（手动开关，防不了合盖）。 */
@@ -322,13 +329,6 @@ export interface AppSettings {
   desktopWindowSize?: DesktopWindowSizeSettings;
   /** 桌面端 Chromium 硬件加速开关；只在下次启动 main 进程早期生效，Web/手机端忽略。 */
   desktopChromiumHardwareAccelerationEnabled?: boolean;
-  /**
-   * 桌面启动骨架占位（契约见 desktopAppSettings.ts，specs/boot-placeholder.md §9）：
-   * desktopBootPlaceholder 是最近一次采样；bootPlaceholderEnabled undefined = 启用
-   * （缺省开，不写 default 冻结缺省语义）。Web/手机端忽略。
-   */
-  desktopBootPlaceholder?: DesktopBootPlaceholderSettings;
-  bootPlaceholderEnabled?: boolean;
   /** 是否在消息流中展示模型思考过程 */
   messageStreamShowReasoning?: boolean;
   // TODO(settings-schema-version): 能证明所有受支持升级路径都已执行本次迁移后，改用统一 settings schema version，并一起删除此 marker、迁移函数和持久化判断。

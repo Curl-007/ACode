@@ -245,6 +245,13 @@ export interface V4CommandCoreHost {
      * 缺省回落到进程级 workspace 结论，仍是 fail-closed。
      */
     dynamicWorkflowEnabled?: boolean;
+    /**
+     * host 判定的脚本工作流产品开关（spec script-workflow-management-surface.md §4.3/§4.4）。
+     * 与 dynamicWorkflowEnabled 的极性刻意相反：CLI 侧缺席 = fail-open 开（不参与门控），
+     * Host 必须**显式写 false** 才能关掉 RunWorkflow；受信 Host（acodeAgentService）按
+     * 「true/false 都写」注入，缺席只出现在 legacy/TUI 路径（按本机缺省档 onDemand 开）。
+     */
+    scriptWorkflowEnabled?: boolean;
   }): Promise<{ sessionId: string }>;
   /** 从父会话稳定落盘边界创建隐藏 selection_side_chat child。 */
   createSelectionSideSession?(

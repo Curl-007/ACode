@@ -1,0 +1,28 @@
+{
+  "schemaVersion": "2.0",
+  "id": "test-strategy-gap-analysis-cn",
+  "supplyType": "official_self_developed",
+  "displayNameZh": "测试覆盖与风险分析",
+  "summaryZh": "把需求、架构、变更差异、故障历史与现有测试映射到可观察风险，识别单元、组件、契约、集成、端到端、性能与韧性测试的真实缺口并给出优先级。用户要求制定测试策略、评估",
+  "categories": [
+    "开发者能力"
+  ],
+  "aliasesZh": [
+    "测试覆盖与风险分析",
+    "test-strategy-gap-analysis-cn"
+  ],
+  "intentsZh": [
+    "需要测试覆盖与风险分析",
+    "请用测试覆盖与风险分析处理当前材料",
+    "检查现有结果是否符合测试覆盖与风险分析要求"
+  ],
+  "examplePromptsZh": [
+    "请帮我完成测试覆盖与风险分析。",
+    "请用测试覆盖与风险分析检查这份材料，列出证据、问题和下一步。",
+    "请按测试覆盖与风险分析的流程处理，无法验证的内容单独标明。"
+  ],
+  "source": {
+    "developer": "z.ai",
+    "licenseSpdx": "Apache-2.0"
+  }
+}

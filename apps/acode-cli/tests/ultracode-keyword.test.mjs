@@ -149,13 +149,20 @@ test("turn-loop 的注入点与语义召回同款：只在 turn 的首个模型�
   assert.ok(index > 0, "turn-loop 必须真的接上关键词判定，否则整条链路是死的");
   const preceding = source.slice(Math.max(0, index - 400), index);
   assert.match(preceding, /modelStepCount === 0/, "必须只在首个模型请求前注入");
+  // 窗口 600：scriptWorkflowMode 门（script-workflow-management-surface.md §4.5）在调用点
+  // 多传一行 scriptWorkflowEnabled，attachment 断言的窗口随之放宽（测试与实现一致）。
   assert.match(
-    source.slice(index, index + 400),
+    source.slice(index, index + 600),
     /systemReminderAttachmentEntry\("ultracode_keyword"/,
     "必须以 ultracode_keyword 这个 source 落 attachment",
   );
-  // 灰度判定必须在调用点传入，而不是在 helper 里读全局：helper 拿不到 runtime。
+  // 两道门都必须在调用点传入，而不是在 helper 里读全局：helper 拿不到 runtime。
   assert.match(source.slice(index, index + 300), /dynamicWorkflowEnabled: this\.config\./);
+  assert.match(
+    source.slice(index, index + 300),
+    /scriptWorkflowEnabled: this\.config\./,
+    "脚本工作流门与 dwf 门合取（任一 false 不注入）",
+  );
 });
 
 test("/ultracode 命令路径不会重复触发关键词 reminder", async () => {

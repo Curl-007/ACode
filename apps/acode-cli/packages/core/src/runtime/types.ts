@@ -1,4 +1,4 @@
-import type { RuntimeInputPresentation } from "@acode/contracts";
+import type { RuntimeInputPresentation, CustomCommandInvocationMeta } from "@acode/contracts";
 /* eslint-disable max-lines -- Runtime 类型集中承载 core/runtime 对外结构，拆分需要单独迁移。 */
 import { PermissionService, ToolScheduler } from "./deps.js";
 import type {
@@ -268,6 +268,15 @@ export interface AgentRuntimeConfig {
    * false 会关闭十个工作流工具，不改变其他工具的注册策略。
    */
   dynamicWorkflowEnabled?: boolean;
+  /**
+   * 脚本工作流（RunWorkflow / /ultracode）产品开关：Host 折叠出口
+   * （resolveScriptWorkflowModeWithLocalOverride）判定后经 v4 createSession 下发，runtime
+   * 只消费。**缺席即开启**（与 dynamicWorkflowEnabled 同极性）：缺席代表调用方不参与本机
+   * 门控（TUI、headless、workflow_child、legacy 会话），必须保留工具面；显式 false 才下架
+   * RunWorkflow。这是与 dwf 总闸合取的第二道门（任一 false 即不注册），见
+   * tool-allowlist.ts 与 workflow-tool-names.ts。不改变其他工具的注册策略。
+   */
+  scriptWorkflowEnabled?: boolean;
 
   // Context Builder config
   systemPrompt?: string;
@@ -561,6 +570,12 @@ export interface ExecuteTurnOptionsBase {
   };
   continueActiveTargetAfterTurn?: boolean;
   displayInput?: string;
+  /**
+   * 斜杠命令触发回显（specs/slash-command-echo.md）：bootstrap resolver 展开成功时携带。
+   * core 只透传——进 TurnStarted payload 与用户消息 metadata（冷热同形），不参与模型输入。
+   * 语义与 displayInput 同生：resolver 展开成功才在场。
+   */
+  customCommand?: CustomCommandInvocationMeta;
   /**
    * `input` 从此下标起是调用方追加的引擎文本（dwf ask 尾注 / nudge）。只进 TurnStarted 与用户
    * 消息 metadata 供 GUI 折叠；模型历史、持久 text part 仍是全文（amend-resume 的转录复制要全文）。

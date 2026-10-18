@@ -95,6 +95,11 @@ export function selectSkillsForScope(
   }
   return skills.filter((skill) => {
     if (skill.scope !== "plugin") {
+      // bundled 是全局只读资源，不属于任一 scope：跨 user/workspace 两 tab 展示，
+      // 不受 scopeFilter 过滤（与 plugin 分支同型的全局资源待遇，spec I5.3）。
+      if (skill.scope === "bundled") {
+        return true;
+      }
       return skill.scope === scope;
     }
     if (skill.pluginId) return scopedPluginIds.has(skill.pluginId);
@@ -136,18 +141,26 @@ interface SkillSourceGroup {
   label: string;
   pluginId?: string;
   skills: SkillSummary[];
-  source: "direct" | "plugin";
+  source: "direct" | "plugin" | "bundled";
 }
 
 export function groupScopedSkillsBySource(
   skills: readonly SkillSummary[],
   directLabel: string,
+  bundledLabel: string,
 ): SkillSourceGroup[] {
   const direct: SkillSummary[] = [];
+  const bundled: SkillSummary[] = [];
   const pluginGroups = new Map<string, SkillSourceGroup>();
   for (const skill of skills) {
     if (skill.scope !== "plugin") {
-      direct.push(skill);
+      // bundled 独立成组（「内置技能」），不进 direct：否则会与用户自建技能混在
+      // 「已安装」组，既混淆只读语义，也会让 bundled 掩盖「没有技能」空态（spec I5.2）。
+      if (skill.scope === "bundled") {
+        bundled.push(skill);
+      } else {
+        direct.push(skill);
+      }
       continue;
     }
     const pluginName = skill.pluginName?.trim();
@@ -172,6 +185,18 @@ export function groupScopedSkillsBySource(
             label: directLabel,
             skills: direct,
             source: "direct" as const,
+          },
+        ]
+      : []),
+    // bundled 组固定排在 direct 之后、插件分区之前（spec I5.4 分组顺序）；
+    // 组内保持传入顺序（调用方的 skills 已按 name 排序，与 direct 组同约定）。
+    ...(bundled.length > 0
+      ? [
+          {
+            id: "bundled",
+            label: bundledLabel,
+            skills: bundled,
+            source: "bundled" as const,
           },
         ]
       : []),

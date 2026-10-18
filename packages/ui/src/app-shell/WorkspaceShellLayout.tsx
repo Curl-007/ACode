@@ -57,7 +57,6 @@ import {
 import { AnimatedTerminalPanel } from "@/app-shell/AnimatedTerminalPanel.js";
 import { SIDE_PANE_DEFAULT_EXPANDED_SIZE } from "@/app-shell/sidePaneLayout.js";
 import { useAnimatedResizablePanel } from "@/app-shell/useAnimatedResizablePanel.js";
-import { useBootSkeletonReporting } from "@/app-shell/useBootSkeletonReporting.js";
 import { ensureTaskNavigationWorkspace } from "@/app-shell/taskNavigationWorkspace.js";
 
 import {
@@ -340,9 +339,6 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
   const baseServices = useBaseWorkspaceServices();
   const tabStoreApi = useTabStoreApi();
   const isLinuxDesktop = Boolean(isDesktop && !isMacDesktop && !isWindowsDesktop);
-  // 启动骨架采样（specs/boot-placeholder.md §9.5）：本组件渲染 data-workspace-shell/#sidebar
-  // 两个采样标记，effect 在 DOM commit 后启动，标记此时已存在；非桌面分支不启动。
-  useBootSkeletonReporting({ enabled: isDesktop === true });
   // Windows/Linux 也需要外层留白，避免独立面板贴住窗口边缘；桌面统一使用 4px 间距。
   const hasDesktopPanelInset = isMacDesktop || isWindowsDesktop || isLinuxDesktop;
   const usesInlineWindowControls = Boolean(isWindowsDesktop || isLinuxDesktop);

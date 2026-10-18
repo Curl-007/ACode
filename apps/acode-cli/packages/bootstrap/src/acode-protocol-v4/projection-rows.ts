@@ -98,6 +98,9 @@ export function buildUserInputRow(base: RowBaseInput, payload: TurnStartedPayloa
     ...(rootSourceCommandId ? { rootSourceCommandId } : {}),
     ...(payload.intent?.clientId ? { clientId: payload.intent.clientId } : {}),
     ...(payload.epilogueStart === undefined ? {} : { epilogueStart: payload.epilogueStart }),
+    // 斜杠命令回显（specs/slash-command-echo.md）：contracts 侧的闭集 scope/source 可
+    // 结构化赋给 shared 宽松 schema（string），未知来源不丢行。
+    ...(payload.customCommand ? { customCommand: payload.customCommand } : {}),
     ...(attachments && attachments.length > 0 ? { attachments } : {}),
   };
 }

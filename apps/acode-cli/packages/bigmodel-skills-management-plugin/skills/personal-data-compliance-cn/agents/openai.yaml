@@ -1,0 +1,4 @@
+interface:
+  display_name: "个人信息合规审查"
+  short_description: "审查个人信息处理、委托共享、跨境、留存和权利保障，并提出整改建议"
+  default_prompt: "使用 $personal-data-compliance-cn 把数据从收集到删除的真实处理活动映射到文档、系统、接收方和控制措施，识别需要业务确认、整改和律师复核的缺口。"

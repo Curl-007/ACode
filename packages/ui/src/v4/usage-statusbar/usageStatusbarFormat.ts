@@ -5,7 +5,13 @@ import { formatCompactTokenNumber } from "@/lib/tokenNumberFormat.js";
 
 export const USAGE_NO_DATA_PLACEHOLDER = "—";
 
-export function formatTokensPerSecond(locale: string, tokensPerSecond: number | null): string {
+export function formatTokensPerSecond(
+  locale: string,
+  tokensPerSecond: number | null,
+  // 单位后缀走 i18n（specs/usage-statusbar.md「排版一致性」）：代码不硬编码英文单位；
+  // 缺省保底 "tok/s" 供非 UI 调用与测试。键 = chat.usageStatusbar.unit.tokensPerSecond（双语同值）。
+  unitSuffix = "tok/s",
+): string {
   if (tokensPerSecond === null || !Number.isFinite(tokensPerSecond)) {
     return USAGE_NO_DATA_PLACEHOLDER;
   }
@@ -13,7 +19,7 @@ export function formatTokensPerSecond(locale: string, tokensPerSecond: number | 
     maximumFractionDigits: 1,
     minimumFractionDigits: 0,
   }).format(tokensPerSecond);
-  return `${value} tok/s`;
+  return `${value} ${unitSuffix}`;
 }
 
 export function formatUsageDurationMs(locale: string, durationMs: number | null): string {

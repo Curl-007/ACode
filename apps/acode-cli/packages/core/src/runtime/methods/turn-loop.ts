@@ -222,6 +222,7 @@ export async function runRegularTurnLoop(
     if (!outputTokenRecoveryActive && state.modelStepCount === 0) {
       const ultracodeReminderBody = shouldEmitUltracodeKeywordReminder({
         dynamicWorkflowEnabled: this.config.dynamicWorkflowEnabled,
+        scriptWorkflowEnabled: this.config.scriptWorkflowEnabled,
         entries: state.turnRequestState.entries,
       })
         ? buildUltracodeKeywordReminderBody()

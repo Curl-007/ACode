@@ -76,7 +76,9 @@ import { OfficialServicesSettingsSection } from "@/settings/OfficialServicesSect
 import { BrowserSettingsSection } from "@/settings/BrowserSettingsSection.js";
 import { ComputerUseSection } from "@/settings/ComputerUseSection.js";
 import { DynamicWorkflowSection } from "@/settings/DynamicWorkflowSection.js";
-import type { DynamicWorkflowMode } from "@acode/shared";
+import { ScriptWorkflowSection } from "@/settings/ScriptWorkflowSection.js";
+import type { DynamicWorkflowMode, ScriptWorkflowMode } from "@acode/shared";
+import { normalizeScriptWorkflowMode } from "@acode/shared";
 import { ShortcutSettingsSection } from "@/settings/ShortcutSettingsSection.js";
 import { MigrationSection } from "@/settings/MigrationSection.js";
 import { SETTINGS_FRAME_CONTENT_CLASSNAME } from "@/settings/SettingsPageParts.js";
@@ -680,8 +682,6 @@ export function SettingsPage({
     desktopChromiumHardwareAccelerationEnabled,
     setDesktopChromiumHardwareAccelerationEnabled,
   ] = useState(true);
-  // 桌面启动骨架占位（specs/boot-placeholder.md §9）：缺省开，undefined 视为启用。
-  const [bootPlaceholderEnabled, setBootPlaceholderEnabled] = useState(true);
   const [supportBundleExporting, setSupportBundleExporting] = useState(false);
   const [receivePreviewUpdates, setReceivePreviewUpdates] = useState(false);
   const [autoDownloadAndInstallUpdates, setAutoDownloadAndInstallUpdates] = useState(false);
@@ -767,7 +767,6 @@ export function SettingsPage({
         setDesktopChromiumHardwareAccelerationEnabled(
           settings.desktopChromiumHardwareAccelerationEnabled ?? true,
         );
-        setBootPlaceholderEnabled(settings.bootPlaceholderEnabled ?? true);
         setReceivePreviewUpdates(settings.receivePreviewUpdates ?? false);
         setAutoDownloadAndInstallUpdates(settings.autoDownloadAndInstallUpdates ?? false);
         setMessageStreamShowReasoning(settings.messageStreamShowReasoning ?? true);
@@ -831,6 +830,18 @@ export function SettingsPage({
         .catch(() => undefined);
     },
     [services.settingService],
+  );
+  const handleScriptWorkflowModeSelect = useCallback(
+    async (mode: ScriptWorkflowMode) => {
+      // 落盘即真相（本机设置，无 Host 快照）：选中态由 update 后的 settings 回读呈现。
+      // 生效时机是下一次会话创建（services 折叠出口 → v4 createSession 信封，spec §8.1）；
+      // 无会话中途改档通道，正在跑的会话不受影响——这里不做任何推送。
+      // 必须走 updateSharedSettings（settingService.update + syncAppSettings + refresh 三合一路径）：
+      // 直调 settingService.update 不触发回读刷新，单选会停在旧档、跨窗口不同步——
+      // 与相邻 dwf handler 同款实机教训（2026-10-11，见 handleDynamicWorkflowModeSelect 注释）。
+      await updateSharedSettings({ scriptWorkflowMode: mode });
+    },
+    [updateSharedSettings],
   );
   const handleTerminalFontFamilyChange = useCallback(
     async (fontFamily: string) => {
@@ -983,16 +994,6 @@ export function SettingsPage({
       );
     },
     [services.settingService, intl],
-  );
-  const handleBootPlaceholderEnabledChange = useCallback(
-    async (enabled: boolean) => {
-      await services.settingService.update({ bootPlaceholderEnabled: enabled });
-      // 骨架占位由 main bootstrap 读设置键（specs/boot-placeholder.md §9）；同时经
-      // syncAppSettings 广播同一 patch，避免多窗口/下次启动前设置面出现分叉事实。
-      platform.syncAppSettings?.({ bootPlaceholderEnabled: enabled });
-      setBootPlaceholderEnabled(enabled);
-    },
-    [services.settingService, platform],
   );
   // 支持包导出一期最简形态：单按钮、全节默认勾选（节勾选 UI 登记不做）。
   // 桥缺席（Web/未接线）时直接提示失败，不静默无响应。
@@ -1420,7 +1421,6 @@ export function SettingsPage({
                             notificationSoundEnabled={notificationSoundEnabled}
                             closeToTrayOnWindows={closeToTrayOnWindows}
                             keepAwakeWhileRunning={sharedSettings?.keepAwakeWhileRunning ?? false}
-                            bootPlaceholderEnabled={bootPlaceholderEnabled}
                             supportBundleExporting={supportBundleExporting}
                             desktopChromiumHardwareAccelerationEnabled={
                               desktopChromiumHardwareAccelerationEnabled
@@ -1478,7 +1478,6 @@ export function SettingsPage({
                             }
                             onCloseToTrayOnWindowsChange={handleCloseToTrayOnWindowsChange}
                             onKeepAwakeWhileRunningChange={handleKeepAwakeWhileRunningChange}
-                            onBootPlaceholderEnabledChange={handleBootPlaceholderEnabledChange}
                             onExportSupportBundle={handleExportSupportBundle}
                             onDesktopChromiumHardwareAccelerationChange={
                               handleDesktopChromiumHardwareAccelerationChange
@@ -1600,7 +1599,15 @@ export function SettingsPage({
                           // renderer 快照）；写入经 AppSettings.dynamicWorkflowMode 落盘，
                           // Host 在 resolveDynamicWorkflowClientConfig 折叠为最高优先的本地
                           // 覆盖（随 Host 判定刷新生效）。
-                          <DynamicWorkflowSection onSelect={handleDynamicWorkflowModeSelect} />
+                          <div className="space-y-6">
+                            <DynamicWorkflowSection onSelect={handleDynamicWorkflowModeSelect} />
+                            {/* 脚本工作流卡片（spec §7.3 方案 C）：同页第二卡，不新增侧栏分区。
+                                选中态唯一来源是落盘值（本机设置即真相，无 Host 快照）。 */}
+                            <ScriptWorkflowSection
+                              mode={normalizeScriptWorkflowMode(sharedSettings?.scriptWorkflowMode)}
+                              onSelect={handleScriptWorkflowModeSelect}
+                            />
+                          </div>
                         ) : activeSection === "migration" ? (
                           <MigrationSection
                             workspacePath={activeWorkspacePath}

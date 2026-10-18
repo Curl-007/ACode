@@ -1,0 +1,6 @@
+interface:
+  display_name: "安全代码审查"
+  short_description: "围绕具体代码版本中的可触发攻击路径提供可复核、可交接的企业研发专业能力"
+  default_prompt: "Use $secure-code-review-cn to 安全审查这个文件下载接口，重点看路径穿越和跨租户。"
+policy:
+  allow_implicit_invocation: true

@@ -9,6 +9,7 @@ import { goalCompactHandlers } from "./goal-compact.js";
 import { interactionBackgroundHandlers } from "./interaction-background.js";
 import { modelConfigHandlers } from "./model-config.js";
 import { queueHandlers } from "./queue.js";
+import { scriptWorkflowManagementHandlers } from "./script-workflow-management.js";
 import { sessionFlowHandlers } from "./session-flow.js";
 import { sessionMgmtHandlers } from "./session-mgmt.js";
 import { selectionSideSessionHandlers } from "./selection-side-session.js";
@@ -25,6 +26,7 @@ export const NATIVE_HANDLERS = {
   ...interactionBackgroundHandlers,
   ...forkEditRetryHandlers,
   ...fileRewindHandlers,
+  ...scriptWorkflowManagementHandlers,
   ...assistantFeedbackHandlers,
   ...usageQueryHandlers,
   ...autoResumeHandlers,

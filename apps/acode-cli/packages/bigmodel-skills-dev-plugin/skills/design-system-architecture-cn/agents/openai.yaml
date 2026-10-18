@@ -1,0 +1,6 @@
+interface:
+  display_name: "软件系统架构设计"
+  short_description: "把业务约束转成可验证的系统边界、关键机制和演进路径"
+  default_prompt: "使用 $design-system-architecture-cn 完成这项任务。"
+policy:
+  allow_implicit_invocation: true

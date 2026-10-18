@@ -1,0 +1,4 @@
+display_name: "网页性能优化"
+summary: "用真实指标定位瓶颈并验证性能改动没有伤害体验"
+author: "z.ai"
+license: "Apache-2.0"

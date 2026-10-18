@@ -1,0 +1,6 @@
+interface:
+  display_name: "客户需求与商机判断"
+  short_description: "从业务变化和访谈证据中澄清客户问题、影响、决策链与可确认的下一步"
+  default_prompt: "使用 $discover-customer-opportunities-cn 完成这项任务。"
+policy:
+  allow_implicit_invocation: true

@@ -26,6 +26,17 @@ test("SWF-02: completed getTask 从 durable workflow_completed 事件返回完�
     async listScriptWorkflowActivities() {
       return [];
     },
+    // isScriptWorkflowStore 探测覆盖完整 port 读面（P2 修复）：能力探测缺一个成员就把
+    // 整份能力判成缺席，本测试补齐与其焦点无关的读面成员。
+    async listScriptWorkflowDefinitions() {
+      return [];
+    },
+    async hasScriptWorkflowUsageIncomplete() {
+      return false;
+    },
+    async listScriptWorkflowRuns() {
+      return [];
+    },
     async listScriptWorkflowEvents() {
       return [{ payload: { result: { ok: true, count: 2 } }, type: "workflow_completed" }];
     },

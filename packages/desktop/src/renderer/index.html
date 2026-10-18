@@ -25,100 +25,6 @@
       content="default-src 'none'; script-src 'self' file: acode-viz-vendor: 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' file: 'unsafe-inline'; img-src 'self' file: data: blob: acode-media: https: http:; media-src 'self' file: data: blob: acode-media: https: http:; font-src 'self' file: data:; connect-src 'self' file: data: blob: ws: wss: http: https: acode-media:; worker-src 'self' file: blob:; frame-src http: https: 'self' file:; object-src 'none'; base-uri 'none'; form-action 'none'"
     />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <script>
-      // specs/boot-placeholder.md §7 head 相位：现有 CSP script-src 已含 'unsafe-inline'，
-      // 零 CSP 改动；payload 由 preload 解析 --acode-boot-placeholder= argv 暴露，缺失/未启用
-      // no-op。标记间函数源与 src/main/bootPlaceholder.ts BOOT_PLACEHOLDER_PAINT_SOURCE
-      // 逐字一致（tests/boot-placeholder.test.mjs 守护），禁止只改一边。
-      // acode-boot-placeholder-paint:start
-      var paintACodeBootPlaceholder = function (placeholder, phase) {
-        try {
-          var root = document.documentElement;
-          var body = document.body;
-          if (body && body.classList && body.classList.contains("acode-startup-ready")) {
-            root.removeAttribute("data-acode-boot-placeholder");
-            root.removeAttribute("data-acode-boot-placeholder-frame");
-            root.removeAttribute("data-acode-boot-theme");
-            root.style.removeProperty("--acode-boot-placeholder-sidebar-width");
-            return;
-          }
-          var frame = placeholder && placeholder.frame;
-          var host = document.getElementById("acode-boot-placeholder-shapes");
-          var paintShapes = function (shapes) {
-            if (!host) {
-              return;
-            }
-            host.textContent = "";
-            var vw = window.innerWidth;
-            var vh = window.innerHeight;
-            if (!(vw > 0) || !(vh > 0)) {
-              return;
-            }
-            var radiusBase = Math.min(vw, vh);
-            for (var i = 0; shapes && i < shapes.length; i++) {
-              var s = shapes[i];
-              var el = document.createElement("div");
-              el.style.top = s.top * vh + "px";
-              el.style.left = s.left * vw + "px";
-              el.style.width = s.width * vw + "px";
-              el.style.height = s.height * vh + "px";
-              el.style.borderRadius = s.radius * radiusBase + "px";
-              host.appendChild(el);
-            }
-          };
-          var create = phase === "head";
-          if (create) {
-            if (!placeholder || placeholder.enabled !== true || !frame) {
-              return;
-            }
-            var theme = "dark";
-            try {
-              var stored = window.localStorage.getItem("acode-theme");
-              if (stored === "light" || stored === "zai-light") {
-                theme = "light";
-              } else if (stored === "system") {
-                theme = window.matchMedia("(prefers-color-scheme: dark)").matches
-                  ? "dark"
-                  : "light";
-              }
-            } catch (_themeError) {}
-            root.setAttribute("data-acode-boot-placeholder", "");
-            root.setAttribute("data-acode-boot-theme", theme);
-          } else if (!root.hasAttribute("data-acode-boot-placeholder")) {
-            return;
-          }
-          if (phase === "body") {
-            if (frame && root.hasAttribute("data-acode-boot-placeholder-frame")) {
-              paintShapes(frame.shapes);
-            }
-            return;
-          }
-          var shown = root.getAttribute("data-acode-boot-placeholder-frame");
-          root.removeAttribute("data-acode-boot-placeholder-frame");
-          root.style.removeProperty("--acode-boot-placeholder-sidebar-width");
-          paintShapes(null);
-          if (!frame || (!create && !shown)) {
-            return;
-          }
-          var collapsed = frame.collapsed === true;
-          if (!collapsed) {
-            root.style.setProperty(
-              "--acode-boot-placeholder-sidebar-width",
-              frame.sidebarWidth * window.innerWidth + "px",
-            );
-          }
-          root.setAttribute(
-            "data-acode-boot-placeholder-frame",
-            collapsed ? "collapsed" : "sidebar",
-          );
-          if (host) {
-            paintShapes(frame.shapes);
-          }
-        } catch (_paintError) {}
-      };
-      // acode-boot-placeholder-paint:end
-      paintACodeBootPlaceholder(globalThis.__ACODE_BOOT_PLACEHOLDER__, "head");
-    </script>
     <title>ACode</title>
     <style>
       html,
@@ -219,84 +125,9 @@
           animation: none;
         }
       }
-
-      /* specs/boot-placeholder.md §7：上次会话布局骨架。首帧时 React/样式表尚未加载，
-         颜色一律 var(--color-*, <硬编码回退>)：回退值取 zai-light(#f8f8f8/#f0f0f0) 与
-         zai-dark(#161616) token；样式表加载后同名变量在计算值阶段自动升级，无需重绘。 */
-      #acode-boot-placeholder {
-        --acode-boot-placeholder-ground: var(--color-background, #f8f8f8);
-        --acode-boot-placeholder-sidebar-bg: var(--color-sidebar, #f0f0f0);
-        --acode-boot-placeholder-seam: var(--color-border, rgba(13, 13, 13, 0.1));
-        --acode-boot-placeholder-row: var(--color-surface, rgba(13, 13, 13, 0.06));
-
-        position: fixed;
-        inset: 0;
-        /* 低于 #loading(2147483647) 一级：品牌动画与全屏 [app-region:drag] 拖拽面仍盖在
-           骨架上，骨架自身 pointer-events:none，无需原版 drag strip（无双拖拽区冲突）。 */
-        z-index: 2147483646;
-        display: none;
-        pointer-events: none;
-        background-color: var(--acode-boot-placeholder-ground);
-      }
-
-      html[data-acode-boot-theme="dark"] #acode-boot-placeholder {
-        --acode-boot-placeholder-ground: var(--color-background, #161616);
-        --acode-boot-placeholder-sidebar-bg: var(--color-sidebar, #161616);
-        --acode-boot-placeholder-seam: var(--color-border, rgba(255, 255, 255, 0.1));
-        --acode-boot-placeholder-row: var(--color-surface, rgba(255, 255, 255, 0.08));
-      }
-
-      html[data-acode-boot-placeholder] #acode-boot-placeholder {
-        display: block;
-      }
-
-      /* startup-ready 时骨架立即隐藏，随 #loading 一起在既有 500ms 清理定时器中移除
-         （spec §1：不做第二套移除时序，不打双遮罩淡出竞争）。 */
-      body.acode-startup-ready #acode-boot-placeholder {
-        display: none;
-      }
-
-      #acode-boot-placeholder-sidebar {
-        position: absolute;
-        top: 0;
-        bottom: 0;
-        left: 0;
-        box-sizing: border-box;
-        display: none;
-        width: var(--acode-boot-placeholder-sidebar-width, 0px);
-        border-right: 1px solid var(--acode-boot-placeholder-seam);
-        background-color: var(--acode-boot-placeholder-sidebar-bg);
-      }
-
-      html[data-acode-boot-placeholder-frame="sidebar"] #acode-boot-placeholder-sidebar {
-        display: block;
-      }
-
-      #acode-boot-placeholder-shapes {
-        position: absolute;
-        inset: 0;
-        overflow: hidden;
-      }
-
-      #acode-boot-placeholder-shapes > div {
-        position: absolute;
-        background-color: var(--acode-boot-placeholder-row);
-      }
     </style>
   </head>
   <body>
-    <!-- specs/boot-placeholder.md：上次会话布局骨架容器（默认隐藏，head 相位脚本置
-         html[data-acode-boot-placeholder] 后显示）；#loading 仍在最上层负责动画与拖拽。 -->
-    <div id="acode-boot-placeholder" aria-hidden="true">
-      <div id="acode-boot-placeholder-sidebar"></div>
-      <div id="acode-boot-placeholder-shapes"></div>
-    </div>
-    <script>
-      // body 相位：宿主节点已就绪，按 head 相位 stamped 状态绘制骨架；head 脚本未执行时静默跳过。
-      if (typeof paintACodeBootPlaceholder === "function") {
-        paintACodeBootPlaceholder(globalThis.__ACODE_BOOT_PLACEHOLDER__, "body");
-      }
-    </script>
     <div id="root"></div>
     <div
       id="loading"
@@ -359,8 +190,6 @@
         document.body.classList.add("acode-startup-ready");
         window.setTimeout(() => {
           startupLoading?.remove();
-          // boot 骨架与 #loading 一同退场（specs/boot-placeholder.md §1）：CSS 已在 startup-ready 时立即隐藏，这里清掉残留节点。
-          document.getElementById("acode-boot-placeholder")?.remove();
         }, 500);
       };
 

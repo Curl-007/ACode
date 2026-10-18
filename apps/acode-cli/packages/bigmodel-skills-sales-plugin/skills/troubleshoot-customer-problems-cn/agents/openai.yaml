@@ -1,0 +1,6 @@
+interface:
+  display_name: "客户问题排查"
+  short_description: "先复现客户的问题，一步步缩小范围，给出安全的解决路径"
+  default_prompt: "使用 $troubleshoot-customer-problems-cn 完成这项任务。"
+policy:
+  allow_implicit_invocation: true

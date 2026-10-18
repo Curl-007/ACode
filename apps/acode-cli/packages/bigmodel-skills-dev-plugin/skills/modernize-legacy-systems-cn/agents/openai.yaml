@@ -1,0 +1,6 @@
+interface:
+  display_name: "老旧系统升级改造"
+  short_description: "识别系统改造接缝，分阶段替换高风险模块，并确保迁移期间业务不中断"
+  default_prompt: "使用 $modernize-legacy-systems-cn 完成这项任务。"
+policy:
+  allow_implicit_invocation: true

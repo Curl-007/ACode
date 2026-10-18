@@ -244,3 +244,37 @@ export function detectUnsupportedDynamicSyntax(content: string): "shell" | undef
   }
   return undefined;
 }
+
+/**
+ * 斜杠命令已被 CLI 展开的展示元数据（spec: apps/acode-cli/specs/slash-command-echo.md）。
+ * 只在展开成功时产生；GUI 以它的有无判断「命令是否触发」，不得从输入文本反推。
+ * 自 anker-code@6e698ada 经 f3ab0e6 移植（0cc983f 因零消费者剔除，本次随全链接线复活）。
+ */
+export interface CustomCommandInvocationMeta {
+  name: string;
+  scope: CustomCommandScope | "builtin";
+  source?: CustomCommandSource;
+  description?: string;
+}
+
+export function toCustomCommandInvocationMeta(
+  metadata: Pick<CustomCommandMetadata, "description" | "name" | "scope" | "source">,
+): CustomCommandInvocationMeta {
+  const description = metadata.description.trim();
+  return {
+    name: metadata.name,
+    scope: metadata.scope,
+    source: metadata.source,
+    ...(description ? { description } : {}),
+  };
+}
+
+/**
+ * customCommandPromptResolver 的返回值（f3ab0e6 提交信息记载的结构改造）：prompt 进模型、
+ * command 元数据随 TurnStarted/用户消息 metadata 走展示链路。undefined = 非斜杠命令或命令
+ * 不存在，按普通输入处理。
+ */
+export interface ResolvedCustomCommandPrompt {
+  command: CustomCommandInvocationMeta;
+  prompt: string;
+}

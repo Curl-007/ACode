@@ -1,0 +1,4 @@
+display_name: "客服会话质检"
+summary: "从真实会话里找失分原因，校准质检标准，补上知识缺口"
+author: "z.ai"
+license: "Apache-2.0"

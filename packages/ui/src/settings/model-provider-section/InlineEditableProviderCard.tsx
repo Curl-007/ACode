@@ -10,11 +10,13 @@ import {
 import type { ModelConnectivityResult } from "@acode/shared";
 import {
   isApiKeyAccess,
+  providerApiKeyCredentialKey,
   type ProviderApiType,
   type SavePersonalModelDraftInput,
 } from "@acode/provider";
 import { logger } from "@/logger.js";
 import { useACodeIntl } from "@/i18n/IntlProvider.js";
+import { useServices } from "@/hooks/useServices.js";
 import { Switch } from "@/components/ui/switch.js";
 import { ControlHintTooltip } from "@/ControlHintTooltip.js";
 import { isImeComposingKeyEvent } from "@/lib/imeComposition.js";
@@ -191,6 +193,7 @@ export function InlineEditableProviderCard({
   settingsRevision?: number;
 }) {
   const { intl } = useACodeIntl();
+  const { credentialService } = useServices();
   const { dismissFeedback, showFeedback } = useProviderDetailFeedback();
   const [editingName, setEditingName] = useState(false);
   const [nameValue, setNameValue] = useState(getProviderFormLabel(provider));
@@ -200,6 +203,10 @@ export function InlineEditableProviderCard({
   const [baseUrlValue, setBaseUrlValue] = useState(provider.config.api?.baseUrl ?? "");
   const [apiKeyValue, setApiKeyValue] = useState(getProviderFormApiKey(provider));
   const [apiKeyVisible, setApiKeyVisible] = useState(false);
+  // 已 reveal 的 vault 明文（安全加固 handoff §5.5）：只进展示值，绝不进草稿/保存链/日志。
+  const [revealedApiKey, setRevealedApiKey] = useState<string | null>(null);
+  // reveal load 竞态守卫：隐藏/provider 切换/卸载都递增时序号，在途 load 返回即失配丢弃。
+  const apiKeyRevealRequestRef = useRef(0);
   const [savingEnabled, setSavingEnabled] = useState(false);
   const authoritativeModels = useMemo(
     () => resolveVisibleProviderModelsForEdit(provider),
@@ -256,6 +263,10 @@ export function InlineEditableProviderCard({
       draftRevisionRef.current += 1;
       dirtyProviderFieldsRef.current.clear();
       lastSubmittedDraftSignatureRef.current = null;
+      // provider 切换即清明文 reveal（handoff §5.5）：明文绝不跨 provider 残留/串显；
+      // 递增时序号让在途 load 返回即失配丢弃。
+      apiKeyRevealRequestRef.current += 1;
+      setRevealedApiKey(null);
     }
     const syncField = <TKey extends keyof ProviderDraftValues>(
       key: TKey,
@@ -272,6 +283,14 @@ export function InlineEditableProviderCard({
     syncField("baseUrlValue", resolvedBaseUrl, setBaseUrlValue);
     syncField("apiKeyValue", resolvedApiKey, setApiKeyValue);
   }, [provider]);
+
+  // 卸载即作废在途 reveal load（handoff §5.5）：不让已卸载卡片的明文回写 state。
+  useEffect(() => {
+    const requestRef = apiKeyRevealRequestRef;
+    return () => {
+      requestRef.current += 1;
+    };
+  }, []);
 
   const markDraftDirty = useCallback((field: keyof ProviderDraftValues) => {
     dirtyProviderFieldsRef.current.add(field);
@@ -597,6 +616,53 @@ export function InlineEditableProviderCard({
     void commitPendingDraft("api-key-blur").catch(() => undefined);
   }, [commitPendingDraft]);
 
+  // 小眼睛（安全加固 handoff §5.5「已存储 Key 的用户可见性」）：已存 vault 且无草稿值时，
+  // 点开现查明文供展示。展示值与草稿值分离：明文只进展示（输入框此时 readOnly），
+  // 不进 onChange/草稿——blur 不会把明文当新 Key 误存回 vault。隐藏即清明文；
+  // load 失败给可见反馈（不静默），错误信息只含 message 原文，绝不输出明文。
+  const handleToggleApiKeyVisibility = useCallback(() => {
+    const nextVisible = !apiKeyVisible;
+    setApiKeyVisible(nextVisible);
+    // 隐藏/重开都先清明文并作废在途 load（时序号失配即丢弃，防串显）。
+    apiKeyRevealRequestRef.current += 1;
+    setRevealedApiKey(null);
+    if (!nextVisible) return;
+    // 未 vault 化（明文本就在表单里）或已有草稿值：输入框自身有值，无需查 vault。
+    if (!hasProviderFormStoredApiKey(provider) || draftRef.current.apiKeyValue) return;
+    const requestSeq = apiKeyRevealRequestRef.current;
+    const providerId = provider.providerId;
+    const showRevealFailure = (errorText: string) => {
+      showFeedback({
+        key: `provider-apikey-reveal:${providerId}`,
+        message: intl.formatMessage(
+          { id: "settings.modelProvider.apiKeyRevealFailure" },
+          { error: errorText },
+        ),
+        state: "failure",
+        durationMs: 8_000,
+        dismissible: true,
+        dismissLabel: intl.formatMessage({ id: "common.close" }),
+      });
+    };
+    void credentialService
+      .load(providerApiKeyCredentialKey(providerId))
+      .then((plaintext) => {
+        if (requestSeq !== apiKeyRevealRequestRef.current) return;
+        if (!plaintext) {
+          // ref 在而凭据读不出：可见失败，不静默、不伪造空值。
+          showRevealFailure(
+            intl.formatMessage({ id: "settings.modelProvider.apiKeyRevealMissing" }),
+          );
+          return;
+        }
+        setRevealedApiKey(plaintext);
+      })
+      .catch((error: unknown) => {
+        if (requestSeq !== apiKeyRevealRequestRef.current) return;
+        showRevealFailure(error instanceof Error ? error.message : String(error));
+      });
+  }, [apiKeyVisible, credentialService, intl, provider, showFeedback]);
+
   const handleTextCommitKeyDown = useCallback((event: React.KeyboardEvent<HTMLInputElement>) => {
     if (event.key !== "Enter") {
       return;
@@ -757,6 +823,15 @@ export function InlineEditableProviderCard({
   const headerProviderName = providerDisplayName;
   const isAccountProvider = provider.config.access?.type === "zhipu-account";
   const isApiKeyProvider = isApiKeyAccess(provider.config.access);
+  // 展示值与草稿值分离（安全加固 handoff §5.5）：已 reveal 的 vault 明文只在
+  // 「展开 ∧ 无草稿值」时进展示；此时输入框 readOnly——onChange/blur 断开，
+  // 明文进不了草稿与保存链（blur 不会把明文误存回 vault）。只读卡片同样放开查看。
+  const storedApiKeyInVault = hasProviderFormStoredApiKey(provider);
+  const revealStoredApiKey =
+    apiKeyVisible && !apiKeyValue && revealedApiKey !== null && storedApiKeyInVault;
+  const apiKeyDisplayValue =
+    apiKeyValue || (revealStoredApiKey && revealedApiKey !== null ? revealedApiKey : "");
+  const apiKeySectionReadOnly = readOnlyEndpoints === true || revealStoredApiKey;
   // 修复说明：之前只看 statusSection 是否存在，导致自定义 Provider 传余额卡后头部
   // （名称/开关/重命名/删除）被整体隐藏。这里把“是否替代头部”变成显式开关，调用方决定。
   const effectiveHeaderVisible =
@@ -838,9 +913,11 @@ export function InlineEditableProviderCard({
 
         {isApiKeyProvider ? (
           <ProviderApiKeySection
-            apiKeyValue={apiKeyValue}
+            apiKeyValue={apiKeyDisplayValue}
             apiKeyVisible={apiKeyVisible}
-            apiKeyStoredInVault={hasProviderFormStoredApiKey(provider)}
+            readOnly={apiKeySectionReadOnly}
+            disabled={readOnlyEndpoints}
+            apiKeyStoredInVault={storedApiKeyInVault}
             presetApiKeyUrl={presetApiKeyUrl}
             onOpenPresetApiKey={onOpenPresetApiKey}
             onApiKeyChange={handleApiKeyValueChange}
@@ -848,7 +925,7 @@ export function InlineEditableProviderCard({
             onApiKeyKeyDown={handleTextCommitKeyDown}
             onApiKeyCompositionStart={handleTechnicalInputCompositionStart}
             onApiKeyCompositionEnd={handleTechnicalInputCompositionEnd}
-            onToggleApiKeyVisibility={() => setApiKeyVisible((value) => !value)}
+            onToggleApiKeyVisibility={handleToggleApiKeyVisibility}
           />
         ) : null}
 

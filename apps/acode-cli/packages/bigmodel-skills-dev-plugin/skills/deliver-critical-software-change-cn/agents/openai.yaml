@@ -1,0 +1,4 @@
+interface:
+  display_name: "关键功能开发与交付"
+  short_description: "用验收标准、测试证据、迁移和回滚方案交付关键代码变更"
+  default_prompt: "使用 $deliver-critical-software-change-cn 交付这项关键软件变更。"

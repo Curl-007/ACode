@@ -1,0 +1,15 @@
+{
+  "name": "bigmodel-skills-management",
+  "version": "0.1.0",
+  "tier": "default_false",
+  "description": "Management skills (15) from the Zhipu BigModel skill market: project delivery planning, contract risk review, recruiting and compensation benchmarking, org planning, portfolio governance, personal-data compliance, cross-team dependency coordination and more. Each skill keeps its upstream license and attribution.",
+  "description_i18n": {
+    "zh-CN": "智谱 BigModel 技能市场·企业管理类合集（15 个技能）：项目计划与排期、合同风险审查、招聘与薪酬对标、组织规划、多项目治理、个人数据合规、跨团队依赖协调等。各技能保留上游许可与署名。"
+  },
+  "author": {
+    "name": "Zhipu BigModel Skill Market",
+    "url": "https://open.bigmodel.cn/managed-agents/skills"
+  },
+  "license": "Apache-2.0 OR MIT",
+  "skills": "skills"
+}

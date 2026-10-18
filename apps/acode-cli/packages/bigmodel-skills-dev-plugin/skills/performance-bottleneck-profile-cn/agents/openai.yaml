@@ -1,0 +1,6 @@
+interface:
+  display_name: "系统性能瓶颈定位"
+  short_description: "围绕特定版本、负载和环境下的性能退化提供可复核、可交接的企业研发专业能力"
+  default_prompt: "Use $performance-bottleneck-profile-cn to 定位订单接口 P99 从 300 毫秒升到 2 秒的主导瓶颈。"
+policy:
+  allow_implicit_invocation: true

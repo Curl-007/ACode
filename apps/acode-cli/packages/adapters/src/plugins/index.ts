@@ -23,6 +23,7 @@ import {
   ACODE_INLINE_PLUGIN_MARKETPLACE,
   ACODE_OFFICIAL_PLUGIN_MARKETPLACE,
 } from "@acode/contracts";
+import { selectBestOfficialPluginVersionDirName } from "@acode/shared";
 import {
   directoryExists,
   emptyPluginComponents,
@@ -70,6 +71,7 @@ export {
   readPluginSourceIdentityPin,
   readPluginSourceSha,
   removeMarketplace,
+  tryReadInstalledPluginRecordsForCleanupSync,
   uninstallMarketplacePlugin,
   updateMarketplace,
   validateMarketplacePlugin,
@@ -88,8 +90,10 @@ export {
 } from "./marketplace.js";
 
 export {
+  loadOfficialMarketplaceCacheReferencesSync,
   writeBundledOfficialMarketplacePartitionSync,
   writeCdnOfficialMarketplacePartitionSync,
+  type OfficialMarketplaceCacheReference,
 } from "./official-marketplace.js";
 
 export { getPluginSourceDiagnosticCode } from "./source-errors.js";
@@ -868,10 +872,9 @@ function scanOfficialCache(
   diagnostics: PluginDiagnostic[],
   options?: PluginAbortOptions,
 ): string[] {
-  // 官方插件升级会保留旧版本缓存目录；若遍历全部目录再按插件 id
-  // “先到先得”，旧版本会抢在 bundled marketplace 指向的当前版本前被加载。
-  // bundled 分片是当前随应用发布资产的权威清单；存在时只加载其 cachePath。
-  // 不能简单选择最高 semver，否则官方回滚版本时仍会错误加载旧缓存。
+  // 官方插件升级会保留旧版本缓存目录；bundled 分片是当前随应用发布资产的权威清单，
+  // 存在时只加载其 cachePath（分片分支不做择优——V1：权威清单已单点选定版本，残留
+  // 目录由 cache 清理兜底删除）。分片回滚版本时权威结果随分片回滚，不受磁盘残留影响。
   const bundledRoots = loadBundledOfficialPluginRootsSync(storageRoot);
   if (bundledRoots !== undefined) {
     for (const rootPath of bundledRoots) {
@@ -882,14 +885,31 @@ function scanOfficialCache(
 
   const cacheRoot = join(storageRoot, "cache", ACODE_OFFICIAL_PLUGIN_MARKETPLACE);
   try {
-    const roots: string[] = [];
+    // 规则 V2（specs/plugin-official-cache-authority-m1.md，回退分支的显式行为变更）：
+    // 全扫后按插件名分组做组内 semver 择优——此前按目录名字典序先到先得，降级态会把
+    // acode-guide/0.2.0 这类旧版本抢在 0.3.0 前加载。判据用 shared 单点（V3：与 D2
+    // 清理「更旧」判定、services 侧回退分支共享同一函数）；同版本并列取目录名字典序
+    // 较大者；不可解析目录名（含 .backup*/.tmp-*/.seed-lock* 事务形状）不产出候选根。
+    // 下游 discoverPluginsSync 的 seen 去重退化为纯防御。
+    const versionDirNamesByPlugin = new Map<string, string[]>();
     for (const pluginEntry of readdirSync(cacheRoot, { withFileTypes: true })) {
       throwIfAborted(options);
       if (!pluginEntry.isDirectory()) continue;
       const pluginDir = join(cacheRoot, pluginEntry.name);
       for (const versionEntry of readdirSync(pluginDir, { withFileTypes: true })) {
-        if (versionEntry.isDirectory()) roots.push(join(pluginDir, versionEntry.name));
+        if (!versionEntry.isDirectory()) continue;
+        const names = versionDirNamesByPlugin.get(pluginEntry.name);
+        if (names) names.push(versionEntry.name);
+        else versionDirNamesByPlugin.set(pluginEntry.name, [versionEntry.name]);
       }
+    }
+    // 按插件名排序保证输出顺序确定（readdir 顺序不稳定，两管线一致性判定依赖确定性）。
+    const roots: string[] = [];
+    for (const pluginName of [...versionDirNamesByPlugin.keys()].sort()) {
+      const bestVersion = selectBestOfficialPluginVersionDirName(
+        versionDirNamesByPlugin.get(pluginName) ?? [],
+      );
+      if (bestVersion !== undefined) roots.push(join(cacheRoot, pluginName, bestVersion));
     }
     return roots;
   } catch (error) {

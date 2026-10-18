@@ -1,0 +1,6 @@
+interface:
+  display_name: "页面交互与状态开发"
+  short_description: "围绕前端状态转换与真实接口结果提供可复核、可交接的企业研发专业能力"
+  default_prompt: "Use $interaction-state-implementation-cn to 修复切换客户后旧请求覆盖新页面的问题，并补回归测试。"
+policy:
+  allow_implicit_invocation: true

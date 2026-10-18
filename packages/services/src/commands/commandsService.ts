@@ -23,6 +23,14 @@ import { DEFAULT_ENABLED_OFFICIAL_PLUGIN_IDS } from "@acode/shared";
 import type { ICommandsService } from "./commands.js";
 import { CommandFileParser, type CommandFileFormat } from "./commandFileParser.js";
 import { readInstalledPluginRoots } from "#src/plugins/installedPluginRoots.js";
+// 官方插件 cache 候选根扫描消费 services 侧单点（#src/plugins/officialPluginCacheRoots.ts）：
+// 修复原因——本文件过去残留第三份私有实现（readdir 全版本目录 + 下游字典序先到先得），会加载
+// 被 bundled-marketplace.json 权威分片屏蔽的旧版插件贡献的命令，与 adapters/skills 两条已收敛
+// 管线分叉。修复依据：specs/skills-bundled-visibility-and-official-cache-authority.md §四
+// R3/M1-3（「两条管线不再分叉」实为三条，本次收敛后 spec 同步更正为三条管线）；
+// 判据单点在 @acode/shared（resolveBundledOfficialPluginCachePaths /
+// selectBestOfficialPluginVersionDirName），分片读取与回退择优语义见该模块注释。
+import { scanOfficialPluginCacheRoots } from "#src/plugins/officialPluginCacheRoots.js";
 import { confinePath } from "#src/fs/pathConfinement.js";
 
 function resolveUserHomeDir() {
@@ -255,38 +263,6 @@ function resolveInside(rootPath: string, rawPath: string): string | null {
     return resolved;
   }
   return null;
-}
-
-async function scanOfficialPluginCacheRoots(pluginStorageRoot: string): Promise<string[]> {
-  const cacheRoot = join(pluginStorageRoot, "cache", ACODE_OFFICIAL_PLUGIN_MARKETPLACE);
-  let pluginEntries: string[] = [];
-  try {
-    pluginEntries = await readdir(cacheRoot);
-  } catch {
-    return [];
-  }
-
-  const roots: string[] = [];
-  for (const pluginEntry of pluginEntries) {
-    const pluginDir = join(cacheRoot, pluginEntry);
-    let versionEntries: string[] = [];
-    try {
-      versionEntries = await readdir(pluginDir);
-    } catch {
-      continue;
-    }
-    for (const versionEntry of versionEntries) {
-      const rootPath = join(pluginDir, versionEntry);
-      try {
-        if ((await lstat(rootPath)).isDirectory()) {
-          roots.push(rootPath);
-        }
-      } catch {
-        // ignore inaccessible plugin cache entries
-      }
-    }
-  }
-  return roots.sort((left, right) => left.localeCompare(right));
 }
 
 async function readPluginManifest(rootPath: string): Promise<PluginManifestSummary | null> {

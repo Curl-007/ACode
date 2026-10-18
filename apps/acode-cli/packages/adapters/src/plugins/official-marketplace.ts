@@ -1,6 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { ACODE_OFFICIAL_PLUGIN_MARKETPLACE } from "@acode/contracts";
+import { resolveBundledOfficialPluginCachePaths } from "@acode/shared";
 
 const BUNDLED_PARTITION_FILE = "bundled-marketplace.json";
 const CDN_PARTITION_FILE = "cdn-marketplace.json";
@@ -38,26 +39,54 @@ export function loadBundledOfficialPluginRootsSync(
   const bundledPartition = readBundledPartition(storageRoot);
   if (!bundledPartition) return undefined;
 
-  const officialCacheRoot = resolve(
-    storageRoot,
-    "cache",
-    ACODE_OFFICIAL_PLUGIN_MARKETPLACE,
-  );
-  return readPluginEntries(bundledPartition.manifest).flatMap((plugin) => {
-    const name = readPluginName(plugin);
-    const cachePath = typeof plugin.cachePath === "string" ? plugin.cachePath : undefined;
-    if (!name || !cachePath) return [];
-
-    const pluginCacheRoot = resolve(officialCacheRoot, name);
-    const resolvedCachePath = resolve(cachePath);
-    if (
-      !isStrictDescendant(officialCacheRoot, pluginCacheRoot) ||
-      !isStrictDescendant(pluginCacheRoot, resolvedCachePath)
-    ) {
-      return [];
-    }
-    return [resolvedCachePath];
+  // M1 契约（specs/plugin-official-cache-authority-m1.md M1-3）：分片解析单点化到 shared
+  // 纯函数，services 侧 scanOfficialPluginCacheRoots 消费同一函数，两条管线对同一磁盘
+  // 状态不再可能分叉。行为等价重构：undefined（回退全扫）vs []（权威空集）、逐条丢弃、
+  // 双重严格后代校验、分片内条目顺序全部由 helper 承接，path 注入 node:path 保持纯度。
+  return resolveBundledOfficialPluginCachePaths({
+    partition: bundledPartition,
+    officialCacheRoot: resolve(storageRoot, "cache", ACODE_OFFICIAL_PLUGIN_MARKETPLACE),
+    path: { isAbsolute, relative, resolve, sep },
   });
+}
+
+/** 官方市场分片定位到的插件引用对（name@version），cache 清理的权威引用集来源。 */
+export interface OfficialMarketplaceCacheReference {
+  name: string;
+  version: string;
+}
+
+/**
+ * 只读读取 bundled/cdn 两个官方市场分片的插件引用对，供 bootstrap 的 cache 旧版本
+ * 清理判定权威引用集（specs/official-plugin-cache-cleanup.md R2/R5：分片读取归
+ * adapters 所有，bootstrap 只组装）。分片解析与 bundled 根解析走同一文件同一组
+ * helper（M1 同一解析单点）。任一分片缺失/损坏 → 该来源贡献空数组，绝不抛错
+ * （spec R2 fail-safe：单来源权威不明时该来源不产生引用，绝不删除）。
+ */
+export function loadOfficialMarketplaceCacheReferencesSync(input: {
+  storageRoot: string;
+}): {
+  bundled: OfficialMarketplaceCacheReference[];
+  cdn: OfficialMarketplaceCacheReference[];
+} {
+  const bundledPartition = readBundledPartition(input.storageRoot);
+  const bundled = bundledPartition
+    ? readPluginEntries(bundledPartition.manifest).flatMap(readReferencePair)
+    : [];
+  const cdnManifest = readJsonRecord(partitionPath(input.storageRoot, CDN_PARTITION_FILE));
+  const cdn = readPluginEntries(cdnManifest).flatMap(readReferencePair);
+  return { bundled, cdn };
+}
+
+function readReferencePair(
+  plugin: Record<string, unknown>,
+): OfficialMarketplaceCacheReference[] {
+  const name = readPluginName(plugin);
+  const version =
+    typeof plugin.version === "string" && plugin.version.length > 0 ? plugin.version : undefined;
+  // 刻意不要求 cachePath 有效性：引用对多收一条只会让清理更保守（少删），
+  // 符合「宁可漏删不可误删」；cachePath 语义校验仍归 bundled 根解析（M1）单点负责。
+  return name && version ? [{ name, version }] : [];
 }
 
 function rebuildOfficialMarketplaceSync(storageRoot: string): Record<string, unknown> {
@@ -106,16 +135,6 @@ function readPluginName(plugin: Record<string, unknown>): string | undefined {
 
 function isDefined<T>(value: T | undefined): value is T {
   return value !== undefined;
-}
-
-function isStrictDescendant(parentPath: string, childPath: string): boolean {
-  const relativePath = relative(parentPath, childPath);
-  return (
-    relativePath.length > 0 &&
-    !isAbsolute(relativePath) &&
-    relativePath !== ".." &&
-    !relativePath.startsWith(`..${sep}`)
-  );
 }
 
 function assertOfficialManifest(manifest: Record<string, unknown>): void {

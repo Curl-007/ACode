@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json.schemastore.org/package.json",
+  "name": "@acode/bigmodel-skills-office-plugin",
+  "version": "0.1.0",
+  "private": true,
+  "description": "智谱 BigModel 技能市场·文档办公类合集（16 个技能）：公开信息事实核查、深度专题研究、会议纪要、周报撰写、学术论文评审、任务管理、邮件管理、本地 OCR 等。各技能保留上游许可与署名。",
+  "license": "Apache-2.0 OR MIT"
+}

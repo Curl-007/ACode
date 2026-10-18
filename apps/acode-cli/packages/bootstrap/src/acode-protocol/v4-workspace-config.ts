@@ -51,6 +51,8 @@ export async function buildLiveWorkspaceConfigStateV4(
   const slashCommands = await listProtocolSlashCommands({
     // 灰度门是 Host 判定的 workspace 级事实，目录装配读进程缓存。
     dynamicWorkflowEnabled: context.appRuntimePreferences.dynamicWorkflowEnabled,
+    // 脚本工作流门同读进程缓存（v4 createSession 时机刷新，server-types.ts 注释）。
+    scriptWorkflowEnabled: context.appRuntimePreferences.scriptWorkflowEnabled,
     env: context.deps.env,
     logger: context.logger,
     workingDirectory: record.workspace.workspacePath,

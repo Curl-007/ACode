@@ -49,13 +49,17 @@ export const DYNAMIC_WORKFLOW_TOOL_NAMES: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * 受 `includeDynamicWorkflow` 门控的全部工具名：dwf 十一个 + 脚本工作流一个。
+ * 受 `includeDynamicWorkflow`（dwf 总闸）门控的工具名集合：dwf 十一个 + 脚本工作流一个。
  *
- * 为什么两套共用同一道开关而不是各设一道：该选项的语义是「这个客户端有没有动态工作流能力」，
- * 不是「有没有 dwf 那十个工具」。桌面端的 UI 入口（Automations 的「工作流」tab）、命令目录
- * 与工具面都由同一次 Host 判定驱动；两套系统一开一关会让「界面有入口 / 模型没工具」
- * 或反过来的裂口重新出现，而那正是 acodeAgentService 的 resolveDynamicWorkflowGate
- * 用「一次判定同源分发」刻意消掉的东西。
+ * 语义分工（spec script-workflow-management-surface.md §3.2，评审必改项 2 后的表述）：
+ * **dwf 工具面仍由 includeDynamicWorkflow 单门管**；`RunWorkflow` 额外与
+ * `scriptWorkflowEnabled` **合取**（`core/src/tool/handlers/index.ts` 的独立支：
+ * 任一门显式 false 即不注册）。保留合取而不是把 RunWorkflow 拆出本集合的理由：
+ * 用户在 dwf 总闸上关掉「动态工作流」时，对「脚本工作流也没了」的预期成立——
+ * 桌面端的 UI 入口（Automations 的「工作流」tab）、命令目录与工具面由同一次 Host 判定
+ * 驱动，dwf 总闸关闭时工作流 tab 整体不挂载，RunWorkflow 若还注册就是「模型有工具 /
+ * 界面无入口」的裂口。反方向（dwf 开、script 关）由 includeScriptWorkflow 独立支覆盖，
+ * 两道门一开一关的每个组合都有明确结论。
  *
  * 极性由调用方保证（**只有显式 false 才下架**，缺席即保留），不在这里判定：
  * 缺席代表调用方不参与灰度（TUI、headless、workflow_child），它们必须保留全部工具面。
@@ -65,3 +69,25 @@ export const GATED_WORKFLOW_TOOL_NAMES: ReadonlySet<string> = new Set([
   ...DYNAMIC_WORKFLOW_TOOL_NAMES,
   RUN_WORKFLOW_TOOL_NAME,
 ]);
+
+/**
+ * registerBuiltInTools 过滤链里两道工作流门的合取谓词（spec
+ * script-workflow-management-surface.md §4.5）：dwf 总闸（includeDynamicWorkflow）显式
+ * false 时下架 GATED_WORKFLOW_TOOL_NAMES（dwf 十一个 + RunWorkflow，现状语义不变）；
+ * 脚本工作流门（includeScriptWorkflow）显式 false 时**只**下架 RunWorkflow——补
+ * 「dwf 开、script 关」的另一半。两门独立、合取生效：任一显式 false 即不注册 RunWorkflow。
+ *
+ * 谓词收在本文件而不是 handlers/index.ts：那个文件顶在 maxFileLines: 400 的「只减不增」
+ * ratchet 上，每加一行都是逆行；且两个注册入口（runtime-tools.ts 首次装配、
+ * embedded-search-branch.ts 分支刷新）共用这一个谓词，与 tool-allowlist.ts 的推导同一份
+ * 语义，不会漂移。
+ */
+export function shouldSkipWorkflowToolEntry(
+  toolName: string,
+  gates: { includeDynamicWorkflow?: boolean; includeScriptWorkflow?: boolean },
+): boolean {
+  if (gates.includeDynamicWorkflow === false && GATED_WORKFLOW_TOOL_NAMES.has(toolName)) {
+    return true;
+  }
+  return toolName === RUN_WORKFLOW_TOOL_NAME && gates.includeScriptWorkflow === false;
+}

@@ -1,0 +1,28 @@
+{
+  "schemaVersion": "2.0",
+  "id": "interaction-state-implementation-cn",
+  "supplyType": "official_self_developed",
+  "displayNameZh": "页面交互与状态开发",
+  "summaryZh": "在现有前端工程中实现或修复请求、空态、错误、权限、表单、异步竞态和字段映射，让界面如实反映后端数据与操作结果。用户要求开发页面行为、修复默认值掩盖错误、处理重复",
+  "categories": [
+    "开发者能力"
+  ],
+  "aliasesZh": [
+    "页面交互与状态开发",
+    "interaction-state-implementation-cn"
+  ],
+  "intentsZh": [
+    "需要页面交互与状态开发",
+    "请用页面交互与状态开发处理当前材料",
+    "检查现有结果是否符合页面交互与状态开发要求"
+  ],
+  "examplePromptsZh": [
+    "请帮我完成页面交互与状态开发。",
+    "请用页面交互与状态开发检查这份材料，列出证据、问题和下一步。",
+    "请按页面交互与状态开发的流程处理，无法验证的内容单独标明。"
+  ],
+  "source": {
+    "developer": "z.ai",
+    "licenseSpdx": "Apache-2.0"
+  }
+}

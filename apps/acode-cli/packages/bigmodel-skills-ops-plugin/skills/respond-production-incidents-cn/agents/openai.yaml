@@ -1,0 +1,6 @@
+interface:
+  display_name: "线上故障应急处理"
+  short_description: "判断线上影响、阻止故障扩大、协调服务恢复，并保留完整事故证据"
+  default_prompt: "使用 $respond-production-incidents-cn 完成这项任务。"
+policy:
+  allow_implicit_invocation: true

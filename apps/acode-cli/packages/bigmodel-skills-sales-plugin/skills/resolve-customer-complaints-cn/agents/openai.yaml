@@ -1,0 +1,6 @@
+interface:
+  display_name: "客户投诉处理"
+  short_description: "查清客户损害和诉求，设计可执行恢复方案，并在升级时完整交接"
+  default_prompt: "使用 $resolve-customer-complaints-cn 完成这项任务。"
+policy:
+  allow_implicit_invocation: true

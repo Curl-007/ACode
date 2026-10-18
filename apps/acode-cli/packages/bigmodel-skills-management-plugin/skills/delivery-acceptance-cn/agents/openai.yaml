@@ -1,0 +1,6 @@
+interface:
+  display_name: "项目交付验收"
+  short_description: "按照约定标准核对交付证据、记录关键缺口，并给出可复核的验收建议"
+  default_prompt: "使用 $delivery-acceptance-cn 基于已有材料生成可复核的中文结果，并标出数据与权限边界。"
+policy:
+  allow_implicit_invocation: true

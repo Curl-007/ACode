@@ -101,6 +101,8 @@ import {
   acodeWorkspaceUpdateOffPeakToolPolicyResultSchema,
   acodeWorkspaceUpdateDynamicWorkflowPolicyResultSchema,
   type DynamicWorkflowClientConfig,
+  type ScriptWorkflowMode,
+  isScriptWorkflowModeEnabled,
   type AgentLaneResourceSample,
   type ProcessResourceCliLane,
   type ACodeMcpTelemetryEvent,
@@ -916,6 +918,11 @@ interface CreateACodeAgentServiceOptions extends Omit<
    * dynamicWorkflowEnabled。缺省不传（纯 CLI 装配）= 永远关闭，与 CLI 缺省一致。
    */
   resolveDynamicWorkflowClientConfig?: () => Promise<DynamicWorkflowClientConfig | undefined>;
+  /**
+   * 脚本工作流三档的唯一折叠出口（node.ts resolveScriptWorkflowModeWithLocalOverride）。
+   * 缺省不传（纯 CLI 装配）= 会话门按 enabled=true 处理（缺席=本机缺省档 onDemand，开）。
+   */
+  resolveScriptWorkflowMode?: () => Promise<ScriptWorkflowMode>;
   resolveOffPeakTaskService?: () =>
     | Pick<IOffPeakTaskService, "createTask" | "list" | "getCodingPlanSupport">
     | undefined;
@@ -3346,6 +3353,31 @@ export function createACodeAgentService(
     return dynamicWorkflowGate;
   }
 
+  /**
+   * 脚本工作流产品开关的会话门（spec script-workflow-management-surface.md §4.4/§5 行 8）。
+   * 与 resolveDynamicWorkflowGate 的两点**刻意差异**：
+   * 1. **不 memoize**：每次 v4 createSession 现读折叠出口（无跨会话缓存）。dwf 可 memoize
+   *    是因为有 workspace/updateDynamicWorkflowPolicy 推送通道兜底（缓存失效有中途改档
+   *    补偿）；script 无中途改档通道（§4.5 末行），进程内缓存会使「下次会话生效」承诺
+   *    失效——与 §8.1 时序不变式「每次判定现读，无缓存」对齐。
+   * 2. **异常按 enabled=true**：本机缺省档是 onDemand（开），读取异常时 fail 到缺省档
+   *    保住今天的行为，与 dwf 的「异常按不可用（false）」方向相反（两边缺席语义相反
+   *    所致，§4.4）。
+   * 与 Off-Peak / dwf 同：不看 workspaceIdentity / remoteSessionId——本机设置全局生效。
+   */
+  async function resolveScriptWorkflowGate(): Promise<boolean> {
+    const resolve = options?.resolveScriptWorkflowMode;
+    if (!resolve) return true;
+    try {
+      return isScriptWorkflowModeEnabled(await resolve());
+    } catch (error) {
+      logger.warn(undefined, "脚本工作流档位读取异常，按缺省档（onDemand）处理", {
+        errorMessage: error instanceof Error ? error.message : String(error),
+      });
+      return true;
+    }
+  }
+
   async function buildConversationCommandEnvelope(
     params: ACodeAgentConversationCommandParams,
   ): Promise<CommandEnvelope> {
@@ -3354,8 +3386,12 @@ export function createACodeAgentService(
       // V4 createSession 绕过 legacy session/create 的参数构造，工具面 flag 必须在
       // 信封处同源注入；门禁 false 时不写字段（缺省即 fail-closed，与 legacy 一致）。
       const dynamicWorkflowEnabled = await resolveDynamicWorkflowGate();
+      // 脚本工作流开关：true/false **都写**（极性与 dwf 相反）——CLI 侧缺席=开启的
+      // fail-open 极性意味着 Host 必须显式写 false 才能关掉 RunWorkflow（§4.4）。
+      const scriptWorkflowEnabled = await resolveScriptWorkflowGate();
       const offPeakToolEnabled = isOffPeakToolSupported(params);
-      if (!offPeakToolEnabled && !dynamicWorkflowEnabled) return envelope;
+      // scriptWorkflowEnabled 恒写，所以 createSession 没有可省略的 early return；
+      // payload 解析对空 flag 组合也无害（同一条 zod schema）。
       const payload = commandPayloadSchemas.createSession.parse(envelope.payload);
       return {
         ...envelope,
@@ -3366,6 +3402,7 @@ export function createACodeAgentService(
           // 工作流工具（core 的 GATED_WORKFLOW_TOOL_NAMES）永不注册。数量刻意不写进注释，
           // 理由同 buildSessionCreateParams 里的同款说明。
           ...(dynamicWorkflowEnabled ? { dynamicWorkflowEnabled: true } : {}),
+          scriptWorkflowEnabled,
         },
       };
     }

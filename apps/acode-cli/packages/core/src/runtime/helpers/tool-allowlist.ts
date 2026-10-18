@@ -86,6 +86,21 @@ export function resolveRuntimeDynamicWorkflowToolsIncluded(config: AgentRuntimeC
   return config.dynamicWorkflowEnabled !== false;
 }
 
+/**
+ * 脚本工作流开关在 registerBuiltInTools 上的取值（spec
+ * script-workflow-management-surface.md §4.4/§4.5）。
+ * **缺席即开启**，与 resolveRuntimeDynamicWorkflowToolsIncluded 逐字同构：缺席代表调用方
+ * 不参与本机门控（TUI、headless、workflow_child、legacy 会话），必须保留工具面；显式
+ * `false` 才下架 RunWorkflow。fail-closed 的缺省值不在这一层——Host 侧 services 折叠出口
+ * 负责把「disabled 档」翻译成显式 false，CLI 不猜。
+ *
+ * 与 dwf 门是**合取**关系（两道独立的门，任一 false 即不注册 RunWorkflow）；收在同一个
+ * 文件的理由同上：注册面两个入口必须使用同一规则。
+ */
+export function resolveRuntimeScriptWorkflowToolsIncluded(config: AgentRuntimeConfig): boolean {
+  return config.scriptWorkflowEnabled !== false;
+}
+
 export function resolveBuiltInToolAllowlist(
   config: AgentRuntimeConfig,
 ): readonly string[] | undefined {

@@ -1,0 +1,4 @@
+display_name: "生产发布与回滚方案"
+summary: "设计分批发布、闸门、回滚和变更后验证，控制生产风险"
+author: "z.ai"
+license: "Apache-2.0"

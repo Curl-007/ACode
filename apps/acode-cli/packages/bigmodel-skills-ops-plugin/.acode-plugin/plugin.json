@@ -1,0 +1,15 @@
+{
+  "name": "bigmodel-skills-ops",
+  "version": "0.1.0",
+  "tier": "default_false",
+  "description": "SRE and operations skills (7) from the Zhipu BigModel skill market: service reliability and capacity planning, production incident response and mitigation, release and rollback planning, observability design, alert triage, blameless postmortems. Each skill keeps its upstream license and attribution.",
+  "description_i18n": {
+    "zh-CN": "智谱 BigModel 技能市场·运维类合集（7 个技能）：服务稳定性与容量规划、线上故障应急与止损、发布与回滚方案、监控告警设计、告警分级处置、无责复盘等。各技能保留上游许可与署名。"
+  },
+  "author": {
+    "name": "Zhipu BigModel Skill Market",
+    "url": "https://open.bigmodel.cn/managed-agents/skills"
+  },
+  "license": "Apache-2.0 OR MIT",
+  "skills": "skills"
+}

@@ -22,6 +22,18 @@ export function emptyScriptWorkflowStats(): ScriptWorkflowRunStats {
   };
 }
 
+/**
+ * 单条 activity 的用量账本是否不完整（runtime markUsageIncomplete 写入的结构化标记）。
+ * 「≥known subtotal」判据的唯一所有者：工具响应格式化与管理面列表投影共用这一份，
+ * 两处对同一 run 的账本必须给出同一个答案。
+ */
+export function scriptWorkflowActivityUsageIncomplete(
+  activity: Pick<ScriptWorkflowActivityRecord, "result">,
+): boolean {
+  const result = activity.result as { usageAccounting?: { status?: string } } | undefined;
+  return result?.usageAccounting?.status === "incomplete";
+}
+
 export function mergeScriptWorkflowStats(
   left: ScriptWorkflowRunStats,
   right: ScriptWorkflowRunStats,
@@ -71,10 +83,7 @@ export function formatScriptWorkflowRun(input: {
   result?: unknown;
 }): string {
   const { run } = input;
-  const usageIncomplete = input.activities.some((activity) => {
-    const result = activity.result as { usageAccounting?: { status?: string } } | undefined;
-    return result?.usageAccounting?.status === "incomplete";
-  });
+  const usageIncomplete = input.activities.some(scriptWorkflowActivityUsageIncomplete);
   const lines = [
     `workflow ${run.status} · ${run.name}`,
     `runId: ${run.id}`,

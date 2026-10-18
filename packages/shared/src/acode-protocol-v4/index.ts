@@ -48,6 +48,9 @@ export * from "./sessions-index-workflow-activity.js";
 export * from "./workspace-config.js";
 export * from "./command.js";
 export * from "./workflow-run-settings-command.js";
+// 脚本工作流管理面（apps/acode-cli/specs/script-workflow-management-surface.md §4）：
+// listScriptWorkflowRuns / listScriptWorkflowDefinitions 两个只读查询的 payload/result。
+export * from "./script-workflow-management.js";
 export * from "./input-intent.js";
 export * from "./submission.js";
 export * from "./fork.js";

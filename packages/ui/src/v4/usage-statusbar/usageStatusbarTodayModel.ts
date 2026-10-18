@@ -9,6 +9,11 @@ export interface TodayUsageTotals {
   totalTokens: number;
   turnCount: number;
   toolCallCount: number;
+  /**
+   * 当天主要模型（AppUsageSnapshot.summary.favoriteModel.modelId，specs/usage-statusbar.md
+   * 「Tooltip 增强与实时动态显示口径」节）：tooltip 明细行消费；null = 无模型事实。
+   */
+  favoriteModel: string | null;
 }
 
 /**
@@ -44,6 +49,7 @@ export function deriveTodayUsageTotals(
   todayDateKey: string,
 ): TodayUsageTotals | null {
   if (!snapshot || !todayDateKey) return null;
+  const favoriteModel = snapshot.summary.favoriteModel?.modelId ?? null;
   for (const week of snapshot.heatmap?.weeks ?? []) {
     for (const cell of week.days) {
       if (cell && cell.date === todayDateKey) {
@@ -51,6 +57,7 @@ export function deriveTodayUsageTotals(
           totalTokens: Number.isFinite(cell.totalTokens) ? cell.totalTokens : 0,
           turnCount: Number.isFinite(cell.turnCount) ? cell.turnCount : 0,
           toolCallCount: Number.isFinite(cell.toolCallCount) ? cell.toolCallCount : 0,
+          favoriteModel,
         };
       }
     }

@@ -1,0 +1,6 @@
+interface:
+  display_name: "线上故障复盘与改进"
+  short_description: "聚焦系统条件和防线缺口，形成能够减少复发的可验收改进行动项"
+  default_prompt: "使用 $blameless-postmortem-cn 基于已有材料生成可复核的中文结果，并标出数据与权限边界。"
+policy:
+  allow_implicit_invocation: true

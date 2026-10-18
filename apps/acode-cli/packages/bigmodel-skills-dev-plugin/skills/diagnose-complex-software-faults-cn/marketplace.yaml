@@ -1,0 +1,4 @@
+display_name: "复杂系统故障排查"
+summary: "用证据链和区分实验定位跨服务、并发与数据一致性故障"
+author: "z.ai"
+license: "Apache-2.0"

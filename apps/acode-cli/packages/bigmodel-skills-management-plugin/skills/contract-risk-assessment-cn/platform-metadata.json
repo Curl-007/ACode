@@ -1,0 +1,28 @@
+{
+  "schemaVersion": "2.0",
+  "id": "contract-risk-assessment-cn",
+  "supplyType": "official_self_developed",
+  "displayNameZh": "合同风险审查",
+  "summaryZh": "结合交易背景分级合同风险并提出可执行处理意见",
+  "categories": [
+    "法务与合规"
+  ],
+  "aliasesZh": [
+    "合同风险审查",
+    "contract-risk-assessment-cn"
+  ],
+  "intentsZh": [
+    "需要合同风险审查",
+    "请用合同风险审查处理当前材料",
+    "检查现有结果是否符合合同风险审查要求"
+  ],
+  "examplePromptsZh": [
+    "请帮我完成合同风险审查。",
+    "请用合同风险审查检查这份材料，列出证据、问题和下一步。",
+    "请按合同风险审查的流程处理，无法验证的内容单独标明。"
+  ],
+  "source": {
+    "developer": "z.ai",
+    "licenseSpdx": "Apache-2.0"
+  }
+}

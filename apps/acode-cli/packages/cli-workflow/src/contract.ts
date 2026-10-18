@@ -40,7 +40,10 @@ export { createDynamicWorkflowRunProgressSink } from "./dynamic-workflow-run-pro
 // ── 并发治理 / 能力门控 / 瞬态 snippet ──────────────────────────────────
 export { getWorkflowConcurrencyGovernor } from "./workflow-concurrency-governor.js";
 export type { WorkflowConcurrencyPort } from "./workflow-concurrency-governor.js";
-export { collectDynamicWorkflowDisabledSkillPaths } from "./dynamic-workflow-gate.js";
+export {
+  collectDynamicWorkflowDisabledSkillPaths,
+  collectWorkflowDisabledSkillPaths,
+} from "./dynamic-workflow-gate.js";
 export { createDynamicWorkflowSnippetService } from "./dynamic-workflow-snippet-service.js";
 
 // ── Owner lease 生命周期（specs/workflow-owner-lease.md：心跳续租 + 惰性 reclaim） ──
@@ -63,6 +66,15 @@ export { replayScriptWorkflowRuns } from "./script-workflow-replay.js";
 export { toScriptWorkflowRunSummary } from "./script-workflow-run-summary.js";
 export { isScriptWorkflowStore } from "./script-workflow-utils.js";
 export { createScriptWorkflowProgressAdapter } from "./script-workflow-progress-adapter.js";
+// 管理面投影（spec script-workflow-management-surface.md §4）：store 行 → v4 协议条目的纯函数。
+// 消费方是 bootstrap 的 workflow-app-facade；usageIncomplete 不在本层——它是 store
+// `hasScriptWorkflowUsageIncomplete` 存在性读面的事实，facade 查出后作为布尔传入投影。
+export {
+  isVisibleScriptWorkflowDefinition,
+  scriptWorkflowStopReasonOf,
+  toScriptWorkflowManagementDefinitionEntry,
+  toScriptWorkflowManagementRunEntry,
+} from "./script-workflow-management-projection.js";
 
 // ── dwf actor 策略（模型 pin / 工具面减法） ─────────────────────────────
 export { workflowActorModelPolicy } from "./workflow-actor-model.js";

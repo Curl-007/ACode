@@ -7,12 +7,23 @@ import type {
 } from "@acode/contracts";
 import type { AgentRuntime, AmendWorkflowRunSettingsInput } from "@acode/core";
 import { createWorkflowRunCommandContext } from "@acode/workflow-run-command/contract";
+import type {
+  ListScriptWorkflowDefinitionsResult,
+  ListScriptWorkflowRunsResult,
+  ScriptWorkflowLogicalStatus,
+} from "@acode/shared/acode-protocol-v4";
 import type { ACodeApp, PrepareUserExecutionBoundary } from "./types.js";
 import {
   isScriptWorkflowStore,
+  isVisibleScriptWorkflowDefinition,
   replayScriptWorkflowRuns,
+  toScriptWorkflowManagementDefinitionEntry,
+  toScriptWorkflowManagementRunEntry,
   toScriptWorkflowRunSummary,
 } from "@acode/cli-workflow/contract";
+
+/** 管理面运行历史的缺省页大小（spec §4.1：缺省 50，协议 schema 上限 200）。 */
+const SCRIPT_WORKFLOW_RUNS_DEFAULT_LIMIT = 50;
 
 interface WorkflowAppFacadeDeps {
   getRuntime: () => Pick<
@@ -36,6 +47,8 @@ type WorkflowAppFacade = Pick<
   | "listDynamicWorkflowRunWorkspaceNodes"
   | "readDynamicWorkflowRunNodeResult"
   | "listDynamicWorkflowRuns"
+  | "listScriptWorkflowRuns"
+  | "listScriptWorkflowDefinitions"
   | "replayDynamicWorkflowRuns"
   | "resumeWorkflowRun"
   | "startSavedWorkflow"
@@ -164,6 +177,69 @@ export function createWorkflowAppFacade(deps: WorkflowAppFacadeDeps): WorkflowAp
             (left, right) => (right.updatedAt ?? 0) - (left.updatedAt ?? 0),
           );
           return input.limit === undefined ? merged : merged.slice(0, input.limit);
+        },
+      };
+    })(),
+    // 脚本工作流管理面读数（spec script-workflow-management-surface.md §4.1/§4.2）。
+    // 与上面的 dwf 枚举面**平行、不共用查询**：物理表（workflow_run vs dwf_run）、状态
+    // 词表、owner 语义都不同，两套 journal 不混在同一列表里。能力探测用
+    // isScriptWorkflowStore（sessionStore 无 ScriptWorkflowStorePort 的宿主 = stub/单测），
+    // 缺席即两个方法**一起**缺席——v4 handler 据此回能力不支持，错误上行，绝不静默回空
+    // （与 journal.ts:8-9 的纪律同一条：空列表和「读不到」是两个事实）。
+    ...(() => {
+      const scriptStore = isScriptWorkflowStore(sessionStore) ? sessionStore : undefined;
+      if (scriptStore === undefined) return {};
+      return {
+        listScriptWorkflowRuns: async (input: {
+          cwd: string;
+          limit?: number;
+          statuses?: readonly ScriptWorkflowLogicalStatus[];
+        }): Promise<ListScriptWorkflowRunsResult> => {
+          const limit = input.limit ?? SCRIPT_WORKFLOW_RUNS_DEFAULT_LIMIT;
+          // statuses 过滤下推到 store 读面（P2 修复）：逻辑态闭集在物理层展开
+          // （interrupted = cancelled + failure_json.code 命中；SQL 展开与
+          // script-workflow-run-status.ts 唯一映射的一致性由 store 测试逐行互钉）。
+          // 此前先取 limit+1 行、投影后才过滤：带 statuses 时物理页外的匹配行被静默
+          // 隐藏、truncated 系统性 false——过滤必须在取数时生效，「多取一行」探到的
+          // 才是第 limit+1 个匹配行。
+          const rows = await scriptStore.listScriptWorkflowRuns({
+            cwd: input.cwd,
+            limit: limit + 1,
+            ...(input.statuses !== undefined && input.statuses.length > 0
+              ? { logicalStatuses: input.statuses }
+              : {}),
+          });
+          // truncated 语义 = 「还有更多匹配」：匹配行数超过 limit（与 statuses 组合时
+          // 也是匹配行的余量，不是物理行的余量），UI 据此显示「仅显示最近 N 条」。
+          const truncated = rows.length > limit;
+          // usageIncomplete 是 activity 级事实（markUsageIncomplete 写在 activity.result），
+          // run 行不带；store 的存在性读面一次索引探测给一个布尔（P2 修复：此前逐 run
+          // 全行拉取 activity，含 payload/result 大字段，默认 51、最大 201 次，只为算一个布尔）。
+          const runs = await Promise.all(
+            rows
+              .slice(0, limit)
+              .map(async (row) =>
+                toScriptWorkflowManagementRunEntry(
+                  row,
+                  await scriptStore.hasScriptWorkflowUsageIncomplete({ runId: row.id }),
+                ),
+              ),
+          );
+          return {
+            type: "listScriptWorkflowRuns",
+            runs,
+            truncated,
+          };
+        },
+        listScriptWorkflowDefinitions: async (): Promise<ListScriptWorkflowDefinitionsResult> => {
+          const records = await scriptStore.listScriptWorkflowDefinitions();
+          return {
+            type: "listScriptWorkflowDefinitions",
+            // 可见性：builtin（预定义）恒可见；其余 scope 必须有实体脚本路径（§4.2）。
+            definitions: records
+              .filter(isVisibleScriptWorkflowDefinition)
+              .map(toScriptWorkflowManagementDefinitionEntry),
+          };
         },
       };
     })(),

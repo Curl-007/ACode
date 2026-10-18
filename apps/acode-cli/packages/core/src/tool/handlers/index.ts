@@ -58,7 +58,7 @@ import { dwfWorkflowToolEntries } from "./dwf-workflow-tool-entries.js";
 // 脚本工作流（纯 JS DSL）的入口，与上面 dwf 那十个是两套独立系统；
 // 灰度门控名单抽到 workflow-tool-names.ts，理由见那个文件的头注释。
 import { runWorkflowToolEntry } from "./run-workflow.js";
-import { GATED_WORKFLOW_TOOL_NAMES } from "./workflow-tool-names.js";
+import { shouldSkipWorkflowToolEntry } from "./workflow-tool-names.js";
 // 会话级 git worktree 生命周期三工具（specs/session-worktree-lifecycle.md）。
 import { enterSessionWorktreeToolEntry } from "./enter-session-worktree.js";
 import { mergeBaseBranchToolEntry } from "./merge-base-branch.js";
@@ -212,13 +212,13 @@ interface RegisterBuiltInToolsOptions {
     onScheduleCreated?(item: ScheduledItem): void;
   };
   /**
-   * 动态工作流可用性门。**只有显式 false 才下架** GATED_WORKFLOW_TOOL_NAMES（dwf 十个 +
-   * RunWorkflow）：缺席代表调用方不参与灰度（TUI、headless、workflow_child），必须保留全部
-   * 工具面。这一层**不持有**缺省档位——协议服务端 appRuntimePreferences 里的 `false` 只是
-   * 「Host 判定还没到」的占位，档位的唯一所有者是 shared 的 dynamic-workflow-feature.ts。
-   * 两套工作流共用这一道门而不是各设一道，理由见 workflow-tool-names.ts。
+   * 动态工作流可用性门（dwf 总闸）。**只有显式 false 才下架** GATED_WORKFLOW_TOOL_NAMES：
+   * 缺席代表调用方不参与灰度（TUI、headless、workflow_child），必须保留全部工具面；档位的
+   * 唯一所有者是 shared 的 dynamic-workflow-feature.ts。两道门的合取语义见 workflow-tool-names.ts。
    */
   includeDynamicWorkflow?: boolean;
+  /** 脚本工作流门（只管 RunWorkflow，与上门合取）：只有显式 false 才下架；推导在 tool-allowlist.ts。 */
+  includeScriptWorkflow?: boolean;
   /** node_repl（js）默认关闭，由官方 browser-use 插件启用。 */
   includeNodeRepl?: boolean;
   /** browser-use 说明和 agent.browsers 注入由官方 browser-use 插件 + 宿主 browser bridge 共同启用。 */
@@ -294,10 +294,8 @@ export function registerBuiltInTools(
     ) {
       continue;
     }
-    if (
-      options.includeDynamicWorkflow === false &&
-      GATED_WORKFLOW_TOOL_NAMES.has(entry.metadata.name)
-    ) {
+    // 两道工作流门的合取（dwf 总闸 × 脚本工作流门）：谓词单点收在 workflow-tool-names.ts。
+    if (shouldSkipWorkflowToolEntry(entry.metadata.name, options)) {
       continue;
     }
     if (entry.metadata.name === "js" && options.includeNodeRepl !== true) {

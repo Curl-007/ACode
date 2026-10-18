@@ -47,17 +47,21 @@ export function containsUltracodeKeyword(text: string | null | undefined): boole
 /**
  * 本轮是否应当注入 ultracode reminder。
  *
- * `dynamicWorkflowEnabled === false` 时返回 false——灰度关着的时候十个 dwf 工具与
- * RunWorkflow 都不注册，此时告诉模型「用户已选择多代理编排、去用 RunWorkflow」等于
- * 把它指向一个不存在的工具。技能面（dynamic-workflow-gate.ts）与命令面
- * （builtin-prompt-command.ts）做的是同一件事，这里必须同结论。
- * 极性与工具注册层一致：只有显式 false 才算关（缺席 = 不参与灰度 = 保留）。
+ * 两道门**合取**（spec script-workflow-management-surface.md §4.5）：`dynamicWorkflowEnabled
+ * === false`（dwf 总闸，连 dwf 十工具一起下架）或 `scriptWorkflowEnabled === false`（脚本
+ * 工作流自己的产品开关，只下架 RunWorkflow）任一关着，都返回 false——工具不注册时告诉
+ * 模型「用户已选择多代理编排、去用 RunWorkflow」等于把它指向一个不存在的工具，是说谎。
+ * 技能面（dynamic-workflow-gate.ts）与命令面（builtin-prompt-command.ts、slash-commands.ts）
+ * 做的是同一件事，这里必须同结论。
+ * 极性与工具注册层一致：只有显式 false 才算关（缺席 = 不参与门控 = 保留）。
  */
 export function shouldEmitUltracodeKeywordReminder(input: {
   dynamicWorkflowEnabled?: boolean;
+  scriptWorkflowEnabled?: boolean;
   entries: readonly RuntimeMessageEntry[];
 }): boolean {
   if (input.dynamicWorkflowEnabled === false) return false;
+  if (input.scriptWorkflowEnabled === false) return false;
   return containsUltracodeKeyword(latestRealUserPlainTextQuery(input.entries));
 }
 

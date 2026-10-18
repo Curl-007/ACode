@@ -15,7 +15,10 @@ function buildPluginCreatorPrefill(skills: readonly SkillSummary[]): CreateTaskO
       entry.enabled &&
       entry.path.trim(),
   );
-  if (!skill) throw new Error("plugin_creator_unavailable");
+  // scope 再窄化一次：SkillScope 已含 "bundled"，而 Composer mention 数据面不接收 bundled
+  // （用户裁决 2：bundled 不进 $ 面板）；上方 find 谓词已保证 scope === "plugin"，此处
+  // 同时完成类型收窄（spec I2 穷举消费点同步）。
+  if (!skill || skill.scope !== "plugin") throw new Error("plugin_creator_unavailable");
   const markdown = buildSkillMentionMarkdown(skill.name, skill.path);
   return {
     initialPrompt: `${markdown} `,

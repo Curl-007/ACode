@@ -1,0 +1,6 @@
+interface:
+  display_name: "网页性能优化"
+  short_description: "使用真实性能指标定位瓶颈，并验证优化改动没有损害核心用户体验"
+  default_prompt: "使用 $optimize-web-performance-cn 完成这项任务。"
+policy:
+  allow_implicit_invocation: true

@@ -315,6 +315,7 @@ export function ProviderApiKeySection({
   apiKeyValue,
   apiKeyVisible,
   readOnly,
+  disabled,
   apiKeyStoredInVault,
   presetApiKeyUrl,
   onOpenPresetApiKey,
@@ -328,6 +329,8 @@ export function ProviderApiKeySection({
   apiKeyValue: string;
   apiKeyVisible: boolean;
   readOnly?: boolean;
+  /** 置灰禁用（readOnlyEndpoints 卡片）；与 readOnly 分开传，reveal 展示态只读不置灰。 */
+  disabled?: boolean;
   apiKeyStoredInVault?: boolean;
   presetApiKeyUrl?: string;
   onOpenPresetApiKey?: () => void;
@@ -354,6 +357,7 @@ export function ProviderApiKeySection({
         value={apiKeyValue}
         visible={apiKeyVisible}
         readOnly={readOnly}
+        disabled={disabled}
         storedInVault={apiKeyStoredInVault}
         onChange={onApiKeyChange}
         onBlur={onApiKeyBlur}

@@ -40,6 +40,7 @@ import { inferVideoMimeFromPath } from "../../runtime/helpers/attachment-video.j
 import { readVideoFile } from "./read-video.js";
 import { formatReadTextOutput, readTextFileForModel } from "./read-text.js";
 import { isSkillUri, resolveSkillUriToPhysicalPath } from "./read-skill.js";
+import { buildConflictReadOutput, isConflictUri } from "./read-conflict.js";
 import {
   formatReadPdfOutput,
   formatReadPdfPagesOutput,
@@ -158,6 +159,12 @@ const readHandler: ToolHandler = async (input, context) => {
     );
   }
 
+  // conflict:// 读形态（specs/conflict-uri-resolution.md R4）：会话冲突注册表
+  // 虚拟资源，行号锚定真实文件坐标，不落文件管线。
+  if (isConflictUri(file_path)) {
+    return buildConflictReadOutput(file_path, context);
+  }
+
   const filePath = isSkillUri(file_path)
     ? // skill:// scheme 分支（specs/skill-uri-read.md）：先把 URI 沙箱解析为技能
       // 目录内物理路径，再落入下方既有管线；本地路径输入行为与改动前一致。
@@ -213,6 +220,7 @@ const readHandler: ToolHandler = async (input, context) => {
         rangeReadRevision = read.revision;
       },
       offset,
+      sessionId: context.sessionId,
       trace,
     });
     updateReadFileState(readFileState, cacheKey, {

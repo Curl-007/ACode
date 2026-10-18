@@ -11,6 +11,7 @@ import {
 } from "@acode/contracts";
 
 import { estimateTokens } from "../../context/utils.js";
+import { annotateReadConflicts } from "../conflict/index.js";
 
 const EMPTY_FILE_REMINDER = formatReadToolResultWarning(
   "Warning: the file exists but the contents are empty.",
@@ -25,6 +26,8 @@ interface ReadTextFileForModelOptions {
   limit?: number;
   onRead?: (read: FileSystemReadTextRangeResult) => void;
   offset?: number;
+  /** 会话身份：conflict:// 检出注册用（specs/conflict-uri-resolution.md R2）；缺席=零行为变化。 */
+  sessionId?: string;
   trace?: TraceContext;
 }
 
@@ -36,6 +39,7 @@ export async function readTextFileForModel({
   limit,
   onRead,
   offset,
+  sessionId,
   trace,
 }: ReadTextFileForModelOptions): Promise<ReadTextOutput> {
   const limitProvided = limit !== undefined;
@@ -51,12 +55,28 @@ export async function readTextFileForModel({
   );
   onRead?.(read);
 
-  return readTextRangeResultToOutput({
+  const output = readTextRangeResultToOutput({
     allowPartialFallback: allowPartialFallback ?? isInitialWholeFileRead(offset, limit),
     filePath,
     offset,
     read,
   });
+  // conflict:// 检出（specs/conflict-uri-resolution.md R1-R3）：扫描已收集的窗口行，
+  // 零额外 IO。物理行号从工具 offset（1-based 契约）推导，不依赖 startLine 显示口径
+  // ——注册行号必须与 splice 时整文件 LF 行坐标一致，否则重验证会错位。
+  if (sessionId && output.content) {
+    const annotation = annotateReadConflicts({
+      sessionId,
+      absolutePath: filePath,
+      displayPath: filePath,
+      lines: output.content.split("\n"),
+      firstLineNumber: offset !== undefined && offset >= 1 ? offset : 1,
+    });
+    if (annotation.footer) {
+      return { ...output, conflictFooter: annotation.footer };
+    }
+  }
+  return output;
 }
 
 export function formatReadTextOutput(output: ReadTextOutput): string {
@@ -75,11 +95,13 @@ export function formatReadTextOutput(output: ReadTextOutput): string {
   }
 
   // 成功文本结果的模型可见契约只包含条件提醒与带行号正文；
-  // 历史安全提醒不属于当前 tool result 路径。
-  return `${partialViewPrefix}${addReadLineNumbers({
+  // 历史安全提醒不属于当前 tool result 路径。conflict:// 尾注（若有）渲染在
+  // 带行号正文之后（specs/conflict-uri-resolution.md R3，正文 verbatim 不变）。
+  const body = `${partialViewPrefix}${addReadLineNumbers({
     content: output.content,
     startLine: output.startLine,
   })}`;
+  return output.conflictFooter ? `${body}\n\n${output.conflictFooter}` : body;
 }
 
 export function addReadLineNumbers({

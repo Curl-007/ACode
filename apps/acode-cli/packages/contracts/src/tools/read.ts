@@ -66,11 +66,7 @@ const ReadProviderInputBaseSchema = z.object({
   /**
    * The absolute path to the file to read.
    */
-  file_path: z
-    .string()
-    .describe(
-      "The absolute path to the file to read, or a skill:// URI (skill://<name> reads that skill's SKILL.md; skill://<name>/<relative-path> reads an asset inside the skill directory)",
-    ),
+  file_path: z.string().describe("The absolute path to the file to read, or a skill:// URI (skill://<name> reads that skill's SKILL.md; skill://<name>/<relative-path> reads an asset inside the skill directory)"),
   /**
    * The line number to start reading from. Only provide if the file is too large to read at once
    */
@@ -180,6 +176,8 @@ export interface ReadTextOutput {
   truncated?: boolean;
   truncatedByTokenCap?: boolean;
   partialViewNotice?: string;
+  /** conflict:// 检出尾注（specs/conflict-uri-resolution.md R3）。 */
+  conflictFooter?: string;
 }
 
 export interface ReadImageOutput {
@@ -274,6 +272,8 @@ export const ReadTextOutputSchema = z
     truncated: z.boolean().optional(),
     truncatedByTokenCap: z.boolean().optional(),
     partialViewNotice: z.string().optional(),
+    // conflict:// 检出尾注（specs/conflict-uri-resolution.md R3）。
+    conflictFooter: z.string().optional(),
   })
   .strict();
 

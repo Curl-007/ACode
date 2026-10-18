@@ -6,7 +6,8 @@ type EditMatchStrategy =
   | "unicode_escape_normalized"
   | "line_trimmed"
   | "indentation_flexible"
-  | "block_anchor";
+  | "block_anchor"
+  | "fuzzy_block";
 
 type EditMatchResult =
   | {
@@ -26,8 +27,15 @@ const BROAD_MATCHERS = new Set<EditMatchStrategy>([
   "line_trimmed",
   "indentation_flexible",
   "block_anchor",
+  // 整块 Levenshtein 模糊属宽匹配：replaceAll 场景一律跳过（模糊替换全部出现
+  // 的风险不可控），与既有宽策略同列。
+  "fuzzy_block",
 ]);
 const BLOCK_ANCHOR_MIN_SIMILARITY = 0.8;
+// Mechanism ported from oh-my-pi (MIT) crates/pi-edit/src/fuzzy.rs — 语义参照，
+// Copyright (c) 2025 Mario Zechner & Stencil Labs。
+// 整块模糊分级阈值：先严后宽，第一档出现候选即裁决（唯一→替换，多个→拒绝）。
+const FUZZY_BLOCK_TIERS = [0.95, 0.92, 0.8] as const;
 const LEFT_SINGLE_CURLY_QUOTE = "‘";
 const RIGHT_SINGLE_CURLY_QUOTE = "’";
 const LEFT_DOUBLE_CURLY_QUOTE = "“";
@@ -56,6 +64,7 @@ export function findEditMatch(input: {
     "line_trimmed",
     "indentation_flexible",
     "block_anchor",
+    "fuzzy_block",
   ];
 
   for (const strategy of strategies) {
@@ -126,6 +135,8 @@ function collectCandidates(
       return collectIndentationFlexibleCandidates(content, search);
     case "block_anchor":
       return collectBlockAnchorCandidates(content, search);
+    case "fuzzy_block":
+      return collectFuzzyBlockCandidates(content, search);
   }
 }
 
@@ -217,6 +228,44 @@ function collectBlockAnchorCandidates(content: string, search: string): Candidat
     candidates.push(blockCandidate(contentLines, index, searchLines.length));
   }
   return candidates;
+}
+
+// 整块 Levenshtein 模糊（specs/fs-hotpath-mechanisms.md R3；omp fuzzy.rs find_match 语义，
+// Copyright (c) 2025 Mario Zechner & Stencil Labs）：行对齐窗口、分级阈值先严后宽、
+// 唯一候选才替换，多候选拒绝并由调用方回报计数。有意收窄：不做 dominant-fuzzy 例外。
+function collectFuzzyBlockCandidates(content: string, search: string): Candidate[] {
+  const contentLines = content.split("\n");
+  const searchLines = trimTrailingEmptyLine(search.split("\n"));
+  if (searchLines.length === 0 || searchLines.length > contentLines.length) return [];
+
+  for (const tier of FUZZY_BLOCK_TIERS) {
+    const candidates: Candidate[] = [];
+    for (let index = 0; index <= contentLines.length - searchLines.length; index += 1) {
+      const block = contentLines.slice(index, index + searchLines.length);
+      if (blockFuzzyScore(block, searchLines, tier) >= tier) {
+        candidates.push(blockCandidate(contentLines, index, searchLines.length));
+      }
+    }
+    // 第一档出现候选即裁决：更宽的档只会引入更多候选，不会救回唯一性。
+    if (candidates.length > 0) return candidates;
+  }
+  return [];
+}
+
+/** 行对齐整块相似度：逐行 Levenshtein 取平均，带 omp fuzzy_score_at 同款上界剪枝。 */
+function blockFuzzyScore(actual: string[], expected: string[], minScore: number): number {
+  let total = 0;
+  for (let index = 0; index < expected.length; index += 1) {
+    const line = (actual[index] ?? "").trim();
+    const pattern = (expected[index] ?? "").trim();
+    const maxLength = Math.max(line.length, pattern.length);
+    const upperBound = maxLength === 0 ? 1 : 1 - Math.abs(line.length - pattern.length) / maxLength;
+    if ((total + upperBound + (expected.length - index - 1)) / expected.length < minScore) break;
+    // 行相等时 lineSimilarity 恒返回 1（其内部有同判快路径）。
+    total += lineSimilarity(line, pattern);
+    if ((total + (expected.length - index - 1)) / expected.length < minScore) break;
+  }
+  return total / expected.length;
 }
 
 function collectSubstringCandidates(content: string, search: string): Candidate[] {

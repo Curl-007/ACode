@@ -2,7 +2,6 @@ import { spawn, type ChildProcess } from "node:child_process";
 
 const GENERIC_SIGTERM_TO_SIGKILL_MS = 750;
 const POSIX_PROCESS_LOOKUP_TIMEOUT_MS = 500;
-export const BASH_SIGTERM_TO_SIGKILL_MS = 1_500;
 
 export async function signalPosixProcessTree(
   rootPid: number,

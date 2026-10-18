@@ -4345,6 +4345,9 @@ const enUS: Record<string, string> = {
   "chat.usageStatusbar.rateLine.output": "Output {count}",
   "chat.usageStatusbar.rateLine.tooltip":
     "Weighted rate = Σoutput (incl. reasoning) ÷ Σgeneration time across this question's recorded requests; the wrap-up text is not sampled. The status bar instead shows only the most recent single request.",
+  "chat.usageStatusbar.rateLine.multiModel": "multi-model turn",
+  "chat.usageStatusbar.rateLine.servedModels": "Served by: {models}",
+  "chat.usageStatusbar.rateLine.cacheMisses": "Prompt cache misses ×{count}",
   "tokenDebug.open": "Open token debug",
   "tokenDebug.column.tps": "TPS (tokens/s)",
   "tokenDebug.tpsDescription":

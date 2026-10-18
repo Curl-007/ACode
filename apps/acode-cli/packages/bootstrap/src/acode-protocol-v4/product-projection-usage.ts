@@ -17,6 +17,45 @@ export interface TurnUsageAccumulator {
   generationMs: number | undefined;
   timeToFirstTokenMs: number | undefined;
   modelRequestCount: number;
+  /** 本轮服务过的模型身份（去重、请求序、上限 4）；≥2 = 轮中模型晋升（多模型轮标记）。 */
+  servedModels: string[];
+  /** 本轮提示缓存未命中归因计数之和（cacheHit.missCauses 各值累加）；0 = 缺席不投影。 */
+  cacheMisses: number;
+}
+
+/** servedModels 有界纪律：display 面字段，去重后仍限 4 项（异常轮不撑爆 row）。 */
+const MAX_TURN_SERVED_MODELS = 4;
+
+function formatServedModel(
+  servedModel: ModelCompletePayload["servedModel"],
+): string | undefined {
+  if (!servedModel || typeof servedModel.modelId !== "string") return undefined;
+  const modelId = servedModel.modelId.trim();
+  if (!modelId) return undefined;
+  const providerId =
+    typeof servedModel.providerId === "string" ? servedModel.providerId.trim() : "";
+  return providerId ? `${providerId}/${modelId}` : modelId;
+}
+
+function appendServedModel(
+  previous: readonly string[],
+  servedModel: ModelCompletePayload["servedModel"],
+): string[] {
+  const formatted = formatServedModel(servedModel);
+  if (!formatted || previous.includes(formatted) || previous.length >= MAX_TURN_SERVED_MODELS) {
+    return [...previous];
+  }
+  return [...previous, formatted];
+}
+
+function sumCacheMissCauses(missCauses: unknown): number {
+  if (!missCauses || typeof missCauses !== "object") return 0;
+  let total = 0;
+  for (const value of Object.values(missCauses as Record<string, unknown>)) {
+    const count = nonNegativeNumber(value);
+    if (count !== undefined) total += Math.floor(count);
+  }
+  return total;
 }
 
 function nonNegativeNumber(value: unknown): number | undefined {
@@ -61,6 +100,8 @@ export function accumulateTurnUsage(
     generationMs: undefined,
     timeToFirstTokenMs: undefined,
     modelRequestCount: 0,
+    servedModels: [],
+    cacheMisses: 0,
   };
   const generationMs = nonNegativeNumber(payload.generationMs);
   const timeToFirstTokenMs = nonNegativeNumber(payload.timeToFirstTokenMs);
@@ -76,6 +117,8 @@ export function accumulateTurnUsage(
     // 用户感知首字 = 本轮首个携带 TTFT 的请求，后续请求不覆盖。
     timeToFirstTokenMs: base.timeToFirstTokenMs ?? timeToFirstTokenMs,
     modelRequestCount: base.modelRequestCount + 1,
+    servedModels: appendServedModel(base.servedModels, payload.servedModel),
+    cacheMisses: base.cacheMisses + sumCacheMissCauses(payload.cacheHit?.missCauses),
   };
 }
 
@@ -91,6 +134,8 @@ export function buildTurnHeaderStats(accumulator: TurnUsageAccumulator): TurnHea
       : {}),
     ...(accumulator.generationMs !== undefined ? { generationMs: accumulator.generationMs } : {}),
     modelRequestCount: accumulator.modelRequestCount,
+    ...(accumulator.servedModels.length > 0 ? { servedModels: accumulator.servedModels } : {}),
+    ...(accumulator.cacheMisses > 0 ? { promptCacheMisses: accumulator.cacheMisses } : {}),
   };
 }
 

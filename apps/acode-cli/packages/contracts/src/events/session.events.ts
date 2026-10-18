@@ -840,6 +840,13 @@ export interface ModelCompletePayload {
    */
   generationMs?: number;
   querySource?: string;
+  /**
+   * 主链路实际服务本次请求的模型身份（turn-model-step 的 main_turn 发射点写入；
+   * sidecar/compact/旧事件缺席——不造假值）。v4 投影按轮累计去重进
+   * turnHeader.stats.servedModels；≥2 个不同模型 = 轮中模型晋升的用户可见面
+   * （specs/usage-statusbar.md「多模型轮标记」，omp served-model marker 对应物）。
+   */
+  servedModel?: { providerId: string; modelId: string };
   stopReason: string;
   /** 首字延迟 ms（firstTokenAt − startedAt）；无首字时间戳的发射点缺失，不造假值。 */
   timeToFirstTokenMs?: number;

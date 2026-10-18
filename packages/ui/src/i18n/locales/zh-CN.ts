@@ -4100,6 +4100,9 @@ const zhCN: Record<string, string> = {
   "chat.usageStatusbar.rateLine.output": "输出 {count}",
   "chat.usageStatusbar.rateLine.tooltip":
     "加权速度 = Σ输出 tokens（含思考）÷ Σ生成耗时，覆盖本问已入库的多段模型请求；收尾正文不在采样内。与状态栏「生成速度」的差异：状态栏只看最近一段请求。",
+  "chat.usageStatusbar.rateLine.multiModel": "多模型轮",
+  "chat.usageStatusbar.rateLine.servedModels": "服务模型：{models}",
+  "chat.usageStatusbar.rateLine.cacheMisses": "提示缓存未命中 ×{count}",
   "tokenDebug.open": "打开 Token 调试",
   "tokenDebug.column.tps": "TPS (tokens/s)",
   "tokenDebug.tpsDescription": "Output tokens ÷ 首个输出 token 到请求结束的秒数",

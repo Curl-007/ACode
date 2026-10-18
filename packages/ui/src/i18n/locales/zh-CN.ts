@@ -740,6 +740,7 @@ const zhCN: Record<string, string> = {
   "sidePane.orchestration": "编排总览",
   "subagentDirectory.title": "子智能体目录",
   "subagentDirectory.running": "正在运行",
+  "subagentDirectory.elapsed": "已运行 {duration}",
   "subagentDirectory.runningEmpty": "没有正在运行的子智能体",
   "subagentDirectory.ended": "已结束",
   "subagentDirectory.showMore": "再显示 20 个",

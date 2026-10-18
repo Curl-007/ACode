@@ -790,6 +790,7 @@ const enUS: Record<string, string> = {
   "sidePane.orchestration": "Orchestration",
   "subagentDirectory.title": "Subagents",
   "subagentDirectory.running": "Running",
+  "subagentDirectory.elapsed": "running {duration}",
   "subagentDirectory.runningEmpty": "No running subagents",
   "subagentDirectory.ended": "Ended",
   "subagentDirectory.showMore": "Show 20 more",

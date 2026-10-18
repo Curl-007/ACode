@@ -1523,7 +1523,12 @@ function getMainApplicationWindows(): BrowserWindow[] {
 }
 
 function isUpdateStatusWindowCloseLocked(state: UpdateStatePayload) {
-  return state.kind === "download-progress" || state.kind === "update-downloaded";
+  return (
+    state.kind === "download-progress" ||
+    state.kind === "update-downloaded" ||
+    // install-recovery+retryAvailable 是同级的行动召唤（specs/update-recovery-notice.md R3）。
+    (state.kind === "install-recovery" && state.retryAvailable)
+  );
 }
 
 function syncUpdateStatusWindowClosePolicy(win: BrowserWindow) {
@@ -1549,7 +1554,8 @@ function resolveUpdateStatusWindowHeight(state: UpdateStatePayload) {
   if (state.kind === "download-progress") {
     return UPDATE_STATUS_WINDOW_PROGRESS_HEIGHT;
   }
-  if (state.kind === "update-downloaded") {
+  if (state.kind === "update-downloaded" || state.kind === "install-recovery") {
+    // install-recovery 用 READY 高度（解释横幅+按钮，update-recovery-notice.md R3）。
     return UPDATE_STATUS_WINDOW_READY_HEIGHT;
   }
   return UPDATE_STATUS_WINDOW_COMPACT_HEIGHT;

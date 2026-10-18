@@ -40,6 +40,7 @@ export function UpdateStatusDialog({
   progressLabel,
   progressValue,
   releaseDateLabel,
+  recoveryNoticeText,
   showOverlay = true,
   skippableVersion,
 }: {
@@ -61,6 +62,8 @@ export function UpdateStatusDialog({
   progressLabel: string | null;
   progressValue: number;
   releaseDateLabel: string | null;
+  /** 更新恢复诊断横幅文案（specs/update-recovery-notice.md R4）；null 不渲染。 */
+  recoveryNoticeText?: string | null;
   showOverlay?: boolean;
   skippableVersion: string | null;
 }) {
@@ -129,6 +132,16 @@ export function UpdateStatusDialog({
           </div>
         </div>
       </DialogHeader>
+
+      {recoveryNoticeText ? (
+        // 恢复诊断横幅：解释上次更新发生了什么（warning 语义色，可含重试指引）。
+        <div
+          className="rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-ui-caption leading-5 text-foreground [app-region:no-drag]"
+          role="status"
+        >
+          {recoveryNoticeText}
+        </div>
+      ) : null}
 
       {isDownloading ? (
         <div className="min-h-0 overflow-y-auto [app-region:no-drag]">

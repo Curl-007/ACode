@@ -46,15 +46,30 @@ import type {
 import { ACODE_MCP_SERVER_REQUEST_ID_META_KEY } from "@acode/contracts";
 import {
   exceedsMcpToolNameLimit,
+  deduplicateMcpToolDescriptors,
   MCP_TOOL_NAME_MAX_LENGTH,
   normalizeMcpToolDescriptor,
 } from "./descriptor.js";
 import {
   buildMcpAccessDeniedError,
+  buildMcpCrashStormRefusalError,
   buildMcpNotConnectedMessage,
   buildMcpOutcomeUnknownError,
   buildMcpReconnectRefusalError,
 } from "./model-guidance.js";
+import {
+  McpCrashStormBreaker,
+  type McpCrashStormTrip,
+} from "./crash-storm-breaker.js";
+import {
+  McpProbeLadder,
+  type McpProbeLadderOptions,
+} from "./probe-ladder.js";
+import {
+  createMcpToolCache,
+  type McpToolCache,
+} from "./mcp-tool-cache.js";
+import { expandMcpEnvDeep } from "./expand-env.js";
 import {
   createMcpNegotiationMemory,
   type McpNegotiationMemory,
@@ -122,6 +137,13 @@ const MCP_PING_TIMEOUT_MS = 5_000;
 const MAX_MCP_VERSION_PROBE_TIMEOUT_MS = 5_000;
 const MCP_STDIO_STDERR_LOG_MAX_CHARS = 4_000;
 /**
+ * 快启门预算（specs/mcp-startup-gate-breaker.md R1）：connectConfiguredServers 等
+ * 全部连接任务收敛至多等这么久；到期后已就绪的照常注册，仍 pending 的 server 用
+ * 磁盘缓存的上次工具清单先注册 Deferred 工具（无缓存则不注册），后台完成握手后
+ * 原子替换为真实工具。0 = 关门等全部收敛（退化为既有语义）。
+ */
+export const DEFAULT_MCP_STARTUP_GATE_BUDGET_MS = 250;
+/**
  * span → request id 的暂存条数上限。正常情况下每条都会在同一次 tool call 结束时被取走，
  * 留下的只有无人认领的（如连接期请求），几十条足够，纯为防止长会话下无界增长。
  */
@@ -157,6 +179,27 @@ export interface CreateMcpAdapterOptions {
    * fail-open）；测试可注入内存实现或临时文件路径。
    */
   negotiationMemory?: McpNegotiationMemory;
+  /**
+   * 快启门（specs/mcp-startup-gate-breaker.md R1）：connectConfiguredServers 的
+   * 整批连接预算门。budgetMs 缺省 250、0 = 等全部收敛；sleep 是门等待注入点
+   * （测试用假时钟获得确定性时序，缺省真定时器且 unref）。
+   */
+  startupGate?: {
+    budgetMs?: number;
+    sleep?: (ms: number) => Promise<void>;
+  };
+  /**
+   * 静默探测阶梯（specs/mcp-startup-gate-breaker.md R3）：曾连接成功的 http/sse
+   * server 失联后的后台静默探测节奏（15s 起步指数退避至 5min）。缺省创建；测试
+   * 注入 baseDelayMs/arm 获得确定性时序。stdio 不适用（按需拉起）。
+   */
+  probeLadder?: McpProbeLadderOptions;
+  /**
+   * 工具磁盘缓存（specs/mcp-startup-gate-breaker.md R1）：Deferred 注册的数据源。
+   * 缺省创建文件存储（`<数据基目录>/.acode/cli/mcp/tool-cache.json`，fail-open）；
+   * 测试注入临时文件路径实例。
+   */
+  toolCache?: McpToolCache;
   /**
    * 官方 Server MCP 鉴权依赖。trustedOrigins 缺失时仍 fail closed；authHeadersPort
    * 可缺省，此时各请求匿名降级并交给服务端做权威判定。
@@ -199,6 +242,18 @@ interface McpServerRecord {
   status: McpServerStatus;
   tools: McpToolDescriptor[];
   transport?: McpTransport;
+  /**
+   * 该 server 是否曾以 connected 状态完成过连接（specs/mcp-startup-gate-breaker.md
+   * R3 静默探测阶梯的适用判据：只对「曾经连上又失联」的 http/sse server 武装探测）。
+   * 重连时随新 record 传递，显式断开与 adapter close 一并终结。
+   */
+  sawConnected?: boolean;
+  /**
+   * 当前连接建立以来是否发生过一次完整成功的工具调用（specs/mcp-startup-gate-breaker.md
+   * R2 风暴熔断的判据：风暴 = 「连上就死、毫无产出」的 fork 循环；断连之间夹着
+   * 完整成功调用的 server 是 R1 认定的半可用形态，必须继续服务、不得熔断）。
+   */
+  workedSinceConnect?: boolean;
 }
 
 export function createMcpAdapter(options: CreateMcpAdapterOptions = {}): McpPort {
@@ -242,6 +297,36 @@ export {
   type McpReconnectGateVerdict,
   type McpReconnectSuspensionState,
 } from "./reconnect-budget.js";
+// 崩溃风暴熔断（specs/mcp-startup-gate-breaker.md R2）、静默探测阶梯（R3）、工具
+// 磁盘缓存与配置展开（R1/R4）：类与常量对外导出供装配层调参与测试直连；门禁与
+// 状态所有者都在 adapter 内部。
+export {
+  MCP_CRASH_STORM_LIMIT,
+  MCP_CRASH_STORM_WINDOW_MS,
+  McpCrashStormBreaker,
+  type McpCrashStormBreakerOptions,
+  type McpCrashStormTrip,
+} from "./crash-storm-breaker.js";
+export {
+  MCP_PROBE_BASE_DELAY_MS,
+  MCP_PROBE_MAX_DELAY_MS,
+  McpProbeLadder,
+  type McpProbeLadderOptions,
+} from "./probe-ladder.js";
+export {
+  createMcpToolCache,
+  defaultToolCachePath,
+  mcpToolCacheConfigFingerprint,
+  MCP_TOOL_CACHE_MAX_FILE_BYTES,
+  MCP_TOOL_CACHE_TTL_MS,
+  type CreateMcpToolCacheOptions,
+  type McpToolCache,
+} from "./mcp-tool-cache.js";
+export { expandMcpEnvDeep, type ExpandMcpEnvOptions } from "./expand-env.js";
+export {
+  deduplicateMcpToolDescriptors,
+  type McpToolNameCollision,
+} from "./descriptor.js";
 
 class NodeMcpAdapter implements McpPort {
   private readonly adapterInstanceId = randomUUID();
@@ -263,6 +348,23 @@ class NodeMcpAdapter implements McpPort {
    * 都退化为「没有记忆、照常探测」。
    */
   private readonly negotiationMemory: McpNegotiationMemory;
+  /**
+   * 崩溃风暴熔断（specs/mcp-startup-gate-breaker.md R2）：30s 滑动窗口内 >5 次意外
+   * 断开即停掉该 server 的一切自动恢复，等显式操作复位。与 R1 预算边界见 spec 表格。
+   */
+  private readonly crashStorm: McpCrashStormBreaker;
+  /**
+   * 静默探测阶梯（specs/mcp-startup-gate-breaker.md R3）：曾连接成功的 http/sse
+   * server 失联后的后台自愈节奏。所有者为本实例；stdio 永不武装。
+   */
+  private readonly probeLadder: McpProbeLadder;
+  /**
+   * 工具磁盘缓存（specs/mcp-startup-gate-breaker.md R1）：快启门 Deferred 注册的
+   * 数据源；tools/list 成功即 best-effort 覆写（schema 变更以新握手为准）。
+   */
+  private readonly toolCache: McpToolCache;
+  private readonly startupGateBudgetMs: number;
+  private readonly startupGateSleep: (ms: number) => Promise<void>;
   /**
    * HTTP 403 快速失败标记（negotiation-increments spec R2）：403 = 身份被认出但
    * 访问被拒，重连不可能改变结果。标记的 server 不再进懒重连循环（不 spawn、
@@ -315,6 +417,14 @@ class NodeMcpAdapter implements McpPort {
     this.negotiationMemory =
       options.negotiationMemory ??
       createMcpNegotiationMemory({ env: options.env, logger: this.logger });
+    this.crashStorm = new McpCrashStormBreaker();
+    this.probeLadder = new McpProbeLadder(options.probeLadder);
+    this.toolCache = options.toolCache ?? createMcpToolCache({ env: options.env, logger: this.logger });
+    this.startupGateBudgetMs = Math.max(
+      0,
+      Math.floor(options.startupGate?.budgetMs ?? DEFAULT_MCP_STARTUP_GATE_BUDGET_MS),
+    );
+    this.startupGateSleep = options.startupGate?.sleep ?? defaultStartupGateSleep;
     this.workingDirectory = options.workingDirectory;
   }
 
@@ -337,23 +447,38 @@ class NodeMcpAdapter implements McpPort {
         .map((name) => this.disconnectServer(name)),
     );
 
-    await Promise.all(
-      Object.entries(servers).map(([name, config]) => {
-        const record = this.records.get(name);
-        if (
-          record?.connecting &&
-          record.status.status === "connecting" &&
-          record.status.authorization &&
-          isDeepStrictEqual(record.config, config)
-        ) {
-          // 相同配置的全量收敛可能与 OAuth callback 等待重叠；重新 connect
-          // 会关闭原 session，使浏览器中已打开的授权 URL、PKCE/state 和 callback 一并失效。
-          // 连接生命周期可以共享，但 Session 的 15 秒等待预算和 AbortSignal 不能继承设置页的 5 分钟预算。
-          return this.waitForSharedConnection(name, record, options);
-        }
-        return this.connectServer(name, config, options);
-      }),
-    );
+    // 环境展开在本入口先做一次（specs/mcp-startup-gate-breaker.md R4）：共享连接
+    // 去重比较与连接共用展开后配置，双方基准一致才不会误判「配置变更」。展开幂等，
+    // connectServer 内部的再次展开是恒等操作。
+    const connectTasks = Object.entries(servers).map(([name, rawConfig]) => {
+      const config = expandMcpEnvDeep(rawConfig, { env: this.env ?? process.env });
+      const record = this.records.get(name);
+      if (
+        record?.connecting &&
+        record.status.status === "connecting" &&
+        record.status.authorization &&
+        isDeepStrictEqual(record.config, config)
+      ) {
+        // 相同配置的全量收敛可能与 OAuth callback 等待重叠；重新 connect
+        // 会关闭原 session，使浏览器中已打开的授权 URL、PKCE/state 和 callback 一并失效。
+        // 连接生命周期可以共享，但 Session 的 15 秒等待预算和 AbortSignal 不能继承设置页的 5 分钟预算。
+        return trackConnectTask(name, config, this.waitForSharedConnection(name, record, options));
+      }
+      return trackConnectTask(name, config, this.connectServer(name, config, options));
+    });
+
+    // 快启门（specs/mcp-startup-gate-breaker.md R1）：整批连接只等 budgetMs；
+    // 到期后已 settle 的走既有语义，仍 pending 的连接任务**留在后台**（绝不取消），
+    // 由 materializeDeferredTools 决定是否用磁盘缓存先注册 Deferred 工具。
+    if (this.startupGateBudgetMs > 0) {
+      await Promise.race([
+        Promise.allSettled(connectTasks.map((task) => task.promise)),
+        this.startupGateSleep(this.startupGateBudgetMs),
+      ]);
+    } else {
+      await Promise.allSettled(connectTasks.map((task) => task.promise));
+    }
+    await this.materializeDeferredTools(connectTasks);
 
     const statuses = await this.status();
     const tools = await this.listTools();
@@ -390,15 +515,22 @@ class NodeMcpAdapter implements McpPort {
 
   private async connectServerInternal(
     name: string,
-    config: McpServerConfig,
+    rawConfig: McpServerConfig,
     options: McpConnectOptions = {},
     invocation: { auto: boolean },
   ): Promise<McpServerStatus> {
+    // 环境展开在本边界做一次（specs/mcp-startup-gate-breaker.md R4）：transport、
+    // 缓存指纹与状态投影全部看到展开后配置。展开幂等，重连路径传入的已展开配置
+    // 原样通过；未设置的 `${VAR}` 保持字面（不吞占位符，配置错误可见）。
+    const config = expandMcpEnvDeep(rawConfig, { env: this.env ?? process.env });
     const startedAt = Date.now();
     const timeoutMs = config.timeoutMs ?? DEFAULT_MCP_TIMEOUT_MS;
     const generation = this.nextConnectionGeneration(name);
     if (!invocation.auto) {
       this.reconnectBudget.reset(name);
+      // 风暴熔断只由显式操作复位（specs/mcp-startup-gate-breaker.md R2）：用户
+      // 修好 server 后从设置页重连，必须能重新获得自动恢复。
+      this.crashStorm.reset(name);
       // 403 快速失败标记只由显式操作清除（negotiation-increments spec R2）：用户
       // 修好凭据/权限后从设置页重连，必须能重新尝试。
       this.permanentAccessDenied.delete(name);
@@ -447,6 +579,9 @@ class NodeMcpAdapter implements McpPort {
       config,
       status: connectingStatus,
       tools: [],
+      // sawConnected 随重连传递（specs/mcp-startup-gate-breaker.md R3）：重连失败
+      // 的 http/sse server 仍要武装静默探测——它曾经连上过。
+      sawConnected: this.records.get(name)?.sawConnected === true,
     };
     this.records.set(name, record);
     this.emitStatusChange(name, previousStatusKind, connectingStatus, "connect-started");
@@ -484,6 +619,10 @@ class NodeMcpAdapter implements McpPort {
     });
     // 显式断开也清预算：下次显式/自动连接从干净计数开始（挂起状态不跨显式操作存活）。
     this.reconnectBudget.reset(name);
+    // 显式断开终结一切自动恢复面（specs/mcp-startup-gate-breaker.md R2/R3）：
+    // 风暴窗口复位、静默探测阶梯拆除——用户主动下线的 server 不该被后台拉活。
+    this.crashStorm.reset(name);
+    this.probeLadder.stop(name);
     this.emitStatusChange(name, previousStatusKind, status, "disconnected");
     return status;
   }
@@ -523,6 +662,9 @@ class NodeMcpAdapter implements McpPort {
           failureKind: "unexpected_disconnect",
         });
         this.emitStatusChange(name, "connected", current.status, "disconnected");
+        // ping 判死 = 已建立连接的丢失（specs/mcp-startup-gate-breaker.md R3）：
+        // 曾连接成功的远程 server 武装静默探测，等待期自愈。
+        this.noteRemoteServerLost(name);
       }
       this.logger?.warn("MCP server ping failed", {
         ...this.connectionContext,
@@ -921,6 +1063,14 @@ class NodeMcpAdapter implements McpPort {
         // 中途崩溃计数的复位点（spec R1）：一次工具调用完整成功。连接成功不复位该
         // 计数；in-band isError 也不复位——「崩溃 / 业务报错」交替同样构成 spawn 风暴。
         this.reconnectBudget.recordToolCallSuccess(request.serverName);
+        // 风暴窗口的复位点（specs/mcp-startup-gate-breaker.md R2）：完整成功调用 =
+        // server 在干活的证据，清空断连窗口（与 R1 半可用契约同点同理）。仅在结果
+        // 归属当前连接时记账，防迟到结果污染新连接的窗口。
+        const workedRecord = this.records.get(request.serverName);
+        if (workedRecord && workedRecord.client === client) {
+          workedRecord.workedSinceConnect = true;
+          this.crashStorm.reset(request.serverName);
+        }
       }
       // 官方 MCP 的 in-band 失败（配额耗尽、无套餐）是 HTTP 200 + isError，wrapper 那条
       // 非 2xx warn 覆盖不到；request id 也只有 wrapper 能看到，所以在这里按 span 取回。
@@ -1023,13 +1173,159 @@ class NodeMcpAdapter implements McpPort {
   }
 
   /**
-   * 自动重连门禁：挂起（预算耗尽）或冷却期（< 最小重试间隔）内拒绝发起，
-   * 抛出带模型指引的错误（spec R1/R2.1）。显式连接不经过本门禁。
+   * 自动重连门禁：风暴熔断（specs/mcp-startup-gate-breaker.md R2）先于 R1 预算
+   * （specs/mcp-lifecycle-ttl-approval.md R1）判定——broken 即全停，恢复只能显式；
+   * 挂起（预算耗尽）或冷却期（< 最小重试间隔）内拒绝发起，抛出带模型指引的错误。
+   * 显式连接不经过本门禁。
    */
   private assertAutoReconnectAllowed(serverName: string): void {
+    if (this.crashStorm.isTripped(serverName)) {
+      throw buildMcpCrashStormRefusalError(serverName, {
+        windowCount: this.crashStorm.windowCount(serverName),
+        windowMs: this.crashStorm.windowSizeMs,
+      });
+    }
     const verdict = this.reconnectBudget.check(serverName);
     if (verdict.allowed) return;
     throw buildMcpReconnectRefusalError(serverName, verdict);
+  }
+
+  /**
+   * 快启门的 Deferred 物化（specs/mcp-startup-gate-breaker.md R1）：门到期仍
+   * pending 的 server，缓存命中（指纹一致）就把缓存 descriptor 注册进 in-flight
+   * record——模型面立即可见 schema，状态保持 connecting；缓存未命中则不注册，
+   * 连接任务留后台完成后经 records.set 原子替换为真实工具。
+   */
+  private async materializeDeferredTools(
+    tasks: readonly TrackedConnectTask[],
+  ): Promise<void> {
+    const pending = tasks.filter((task) => task.status === "pending");
+    if (pending.length === 0) return;
+    const materialized: Array<{ serverName: string; toolCount: number }> = [];
+    await Promise.all(
+      pending.map(async (task) => {
+        let cached: McpToolDescriptor[] | null = null;
+        try {
+          cached = await this.toolCache.get(task.name, task.config);
+        } catch {
+          cached = null;
+        }
+        if (!cached || cached.length === 0) return;
+        // 双重检查：缓存读取期间连接可能已收敛（成功/失败都会整体替换 record），
+        // 只有仍在 connecting 的 record 才注入。
+        const record = this.records.get(task.name);
+        if (!record || record.status.status !== "connecting") return;
+        // 缓存内容重新过注册边界（长度剔除 + 确定性碰撞去重），不信任缓存绕过检查。
+        const withinLimit = cached.filter((tool) => !exceedsMcpToolNameLimit(tool));
+        const { tools } = deduplicateMcpToolDescriptors(withinLimit);
+        if (tools.length === 0) return;
+        record.tools = tools;
+        materialized.push({ serverName: task.name, toolCount: tools.length });
+      }),
+    );
+    if (materialized.length > 0) {
+      this.logger?.info("MCP deferred tools registered from disk cache", {
+        ...this.connectionContext,
+        deferredServers: materialized,
+        event: "mcp.startup.deferred_tools",
+        status: "completed",
+      });
+    }
+  }
+
+  /**
+   * 曾连接成功的远程 server 失联后的静默探测武装（specs/mcp-startup-gate-breaker.md
+   * R3）。stdio 不武装（进程死了等不来，定时重拉正是风暴熔断要停掉的风暴）；已
+   * 武装时幂等 no-op（单一定时器所有者）。
+   */
+  private noteRemoteServerLost(name: string): void {
+    const record = this.records.get(name);
+    if (!record?.sawConnected) return;
+    if (record.config.type !== "http" && record.config.type !== "sse") return;
+    this.probeLadder.arm(name, (probeName) => {
+      void this.runQuietProbe(probeName);
+    });
+  }
+
+  /**
+   * 一次静默探测 = 一次完整连接尝试（specs/mcp-startup-gate-breaker.md R3）。
+   * 风暴熔断即停（拆除阶梯，恢复交显式操作）；有在飞连接时让位（由其结果决定
+   * re-arm / stop，绝不并发重连）。探测失败由 failConnection 统一记账（预算计数
+   * + 事件）并按已倍增的延迟重新武装；本方法吞掉异常，探测循环绝无 unhandled
+   * rejection。
+   */
+  private async runQuietProbe(name: string): Promise<void> {
+    if (this.crashStorm.isTripped(name)) {
+      this.probeLadder.stop(name);
+      return;
+    }
+    const record = this.records.get(name);
+    if (!record) {
+      this.probeLadder.stop(name);
+      return;
+    }
+    if (record.connecting) return;
+    if (
+      !record.sawConnected ||
+      (record.config.type !== "http" && record.config.type !== "sse")
+    ) {
+      this.probeLadder.stop(name);
+      return;
+    }
+    if (record.status.status === "connected" || record.status.status === "disabled") {
+      this.probeLadder.stop(name);
+      return;
+    }
+    const config = record.config;
+    this.logger?.debug("MCP quiet probe starting", {
+      ...this.connectionContext,
+      event: "mcp.server.probe.started",
+      mcpServerName: name,
+      status: "started",
+      transport: config.type,
+    });
+    try {
+      await this.connectServerInternal(name, config, {}, { auto: true });
+      // 成功路径：openServerConnection 已拆除阶梯、预算 recordSuccess。
+    } catch {
+      // failConnection 已处理失败面（状态 + re-arm）；探测循环自身不再上抛。
+    }
+  }
+
+  /**
+   * 风暴熔断的状态面（specs/mcp-startup-gate-breaker.md R2）：状态附加挂起事实
+   * + warn 日志 + reconnect-suspended 事件；陈旧工具保留在注册面（omp 同形态：
+   * 「leaves tools registered」），调用报错并给显式恢复指引。
+   *
+   * wire fail-safe 说明：contracts 的 `McpReconnectSuspension.suspendedBy` 闭集
+   * 尚无 `crash_storm` 字面（共享桶申请中），这里先不带维度标签——消费者按契约
+   * 注释「缺失按 connect_failures 理解」处理；精确的风暴事实由本 warn 事件、
+   * error 文本与模型指引文案承载。
+   */
+  private applyCrashStormSuspension(name: string, trip: McpCrashStormTrip): void {
+    const record = this.records.get(name);
+    this.probeLadder.stop(name);
+    this.logger?.warn("MCP server crash-storm breaker tripped; automatic recovery suspended", {
+      ...this.connectionContext,
+      event: "mcp.server.crash_storm.suspended",
+      mcpServerName: name,
+      status: "failed",
+      ...(record ? { transport: record.config.type } : {}),
+      windowCount: trip.windowCount,
+      windowMs: trip.windowMs,
+    });
+    if (!record) return;
+    const previousStatusKind = record.status.status;
+    record.status = this.createStatus(record.config, "disconnected", {
+      error: `MCP server disconnected ${trip.windowCount} times within ${Math.round(trip.windowMs / 1000)}s; automatic reconnection suspended (crash-storm breaker). Fix the server and reconnect explicitly to resume automatic recovery.`,
+      failureKind: "unexpected_disconnect",
+      toolCount: record.tools.length,
+    });
+    record.status.reconnectSuspension = {
+      consecutiveFailures: trip.windowCount,
+      suspendedAt: new Date().toISOString(),
+    };
+    this.emitStatusChange(name, previousStatusKind, record.status, "reconnect-suspended");
   }
 
   /**
@@ -1256,6 +1552,8 @@ class NodeMcpAdapter implements McpPort {
     await Promise.all(Array.from(this.records.keys()).map((name) => this.closeRecord(name)));
     this.records.clear();
     this.connectionDiagnosticByServer.clear();
+    // adapter 关闭 = 探测阶梯整体拆除（specs/mcp-startup-gate-breaker.md R3）。
+    this.probeLadder.stopAll();
     this.logger?.info("MCP adapter closed", {
       durationMs: Date.now() - startedAt,
       event: "mcp.adapter.closed",
@@ -1444,8 +1742,26 @@ class NodeMcpAdapter implements McpPort {
           mcpServerName: name,
         });
       }
+      // 模型面名撞名的确定性赢家（specs/mcp-startup-gate-breaker.md R4）：sanitizer
+      // 有损，两个不同来源可 mint 同一模型面名；赢家按原始身份键字典序取，与数组
+      // 顺序、重连先后无关。同源重复静默去重。
+      const deduplicated = deduplicateMcpToolDescriptors(tools);
+      if (deduplicated.collisions.length > 0) {
+        this.logger?.warn("MCP tool name collision; keeping deterministic winner", {
+          ...this.connectionContext,
+          collisions: deduplicated.collisions,
+          event: "mcp.tools.name_collision",
+          mcpServerName: name,
+        });
+      }
+      const registeredTools = deduplicated.tools;
       const negotiatedProtocolEra = client.getProtocolEra();
       const negotiatedProtocolVersion = client.getNegotiatedProtocolVersion();
+      // 工具缓存覆写（specs/mcp-startup-gate-breaker.md R1）：schema 变更以新握手
+      // 结果为准——每次 tools/list 成功都 best-effort 覆写，写失败只记日志。
+      if (registeredTools.length > 0) {
+        void this.toolCache.set(name, config, registeredTools).catch(() => {});
+      }
       // 协商记忆记账（negotiation-increments spec R1）：只有真正跑过 probe 的 auto
       // 协商才产生观察事实。probe 后落在 legacy 纪元 → 记住（7 天窗内跳过 probe）；
       // modern 纪元 → 清除旧记忆（自愈证据优先）。记忆短路、显式 pin/legacy、sse
@@ -1461,7 +1777,7 @@ class NodeMcpAdapter implements McpPort {
       this.permanentAccessDenied.delete(name);
       const status = this.createStatus(config, "connected", {
         protocolEra: negotiatedProtocolEra,
-        toolCount: tools.length,
+        toolCount: registeredTools.length,
       });
       if (!this.isCurrentConnection(name, generation)) {
         await this.closeClientAndTransport(name, client, transport);
@@ -1472,11 +1788,16 @@ class NodeMcpAdapter implements McpPort {
         client,
         config,
         status,
-        tools,
+        tools: registeredTools,
         transport,
+        sawConnected: true,
+        // 新连接从零开始计量「毫无产出」：风暴只数没干过活的连接（spec R2）。
+        workedSinceConnect: false,
       });
-      // 连接成功 = 最强的恢复证据：清零连续失败计数并解除挂起（spec R1）。
+      // 连接成功 = 最强的恢复证据：清零连续失败计数并解除挂起（spec R1）；
+      // 静默探测阶梯拆除（specs/mcp-startup-gate-breaker.md R3，自愈完成）。
       this.reconnectBudget.recordSuccess(name);
+      this.probeLadder.stop(name);
       this.emitStatusChange(name, "connecting", status, "connected");
       const mcpTransportPid = getStdioTransportPid(transport);
       const mcpProcessIdentity =
@@ -1532,6 +1853,21 @@ class NodeMcpAdapter implements McpPort {
             signal: processExit?.signal ?? null,
           });
         }
+        // 崩溃风暴记账（specs/mcp-startup-gate-breaker.md R2）：已建立连接的意外
+        // 断开是唯一计数点——但只数「毫无产出」的连接（本连接从未完整成功过一次
+        // 工具调用）。断连之间夹着成功调用的 server 是 R1 认定的半可用形态，成功
+        // 调用已在 callTool 成功点清空窗口，这里不得重复计入。30s 窗口内 >5 次
+        // 「连上就死」即熔断：状态附加挂起事实、派发 reconnect-suspended、拆除
+        // 探测阶梯，一切自动恢复停止直至显式操作。
+        if (!current.workedSinceConnect) {
+          const storm = this.crashStorm.recordDisconnect(name);
+          if (storm.tripped && storm.trip) {
+            this.applyCrashStormSuspension(name, storm.trip);
+          }
+        }
+        // 静默探测武装（specs/mcp-startup-gate-breaker.md R3）：曾连接成功的
+        // http/sse server 武装后台自愈；stdio 不武装（按需拉起，防 fork 风暴）。
+        this.noteRemoteServerLost(name);
       };
       // 此前连接日志只记录 transport，auto 协商后无法判断实际走 modern 还是 legacy。
       // 同时记录配置策略和 SDK 握手结果，避免把 `auto` 误当成最终协议版本。
@@ -1552,7 +1888,7 @@ class NodeMcpAdapter implements McpPort {
         ...(mcpTransportPid != null ? { mcpTransportPid } : {}),
         mcpVersionNegotiationMode: formatVersionNegotiationMode(config),
         status: "completed",
-        toolCount: tools.length,
+        toolCount: registeredTools.length,
         transport: config.type,
       });
       return status;
@@ -1789,7 +2125,13 @@ class NodeMcpAdapter implements McpPort {
     if (!this.isCurrentConnection(name, generation)) {
       return this.records.get(name)?.status ?? status;
     }
-    this.records.set(name, { config, status, tools: [] });
+    // sawConnected 随失败 record 传递（specs/mcp-startup-gate-breaker.md R3）：
+    // 曾连接成功的 http/sse server 连接失败后仍要武装静默探测。
+    const sawConnectedBefore = this.records.get(name)?.sawConnected === true;
+    this.records.set(name, { config, status, tools: [], sawConnected: sawConnectedBefore });
+    if (sawConnectedBefore) {
+      this.noteRemoteServerLost(name);
+    }
     if (suspension) {
       this.logger?.warn("MCP server automatic reconnection suspended", {
         ...this.connectionContext,
@@ -2434,4 +2776,43 @@ function isAutoReconnectableStatus(status: McpServerStatus): boolean {
     status.failureKind !== "official_origin_untrusted" &&
     status.authorization === undefined
   );
+}
+
+/**
+ * 快启门的任务追踪（specs/mcp-startup-gate-breaker.md R1）：包一层 settle 状态
+ * 投影，门到期后据此区分「已收敛」与「仍 pending」。附加回调同时消除原 promise
+ * 的 unhandled rejection 面（连接任务留在后台继续跑，不能再炸出未处理拒绝）。
+ */
+interface TrackedConnectTask {
+  config: McpServerConfig;
+  name: string;
+  promise: Promise<McpServerStatus>;
+  status: "pending" | "fulfilled" | "rejected";
+}
+
+function trackConnectTask(
+  name: string,
+  config: McpServerConfig,
+  promise: Promise<McpServerStatus>,
+): TrackedConnectTask {
+  const task: TrackedConnectTask = { config, name, promise, status: "pending" };
+  promise.then(
+    (value) => {
+      task.status = "fulfilled";
+      void value;
+    },
+    (error) => {
+      task.status = "rejected";
+      void error;
+    },
+  );
+  return task;
+}
+
+/** 快启门的缺省等待：真定时器且 unref（门是启动优化，绝不把进程吊在退出边缘）。 */
+function defaultStartupGateSleep(ms: number): Promise<void> {
+  return new Promise((resolvePromise) => {
+    const timer = setTimeout(resolvePromise, ms);
+    timer.unref?.();
+  });
 }

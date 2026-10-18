@@ -3,6 +3,7 @@ import type {
   McpToolAnnotations,
   McpToolDescriptor,
 } from "@acode/contracts";
+import { normalizeSchemaForMCP } from "../model/schema-normalize/index.js";
 
 export function normalizeMcpToolDescriptor(
   serverName: string,
@@ -36,10 +37,20 @@ function normalizeInputSchema(schema: unknown): JsonSchema {
     };
   }
 
+  // MCP ingest 统一归一（specs/tool-schema-normalize.md R2.1）：draft-07→2020-12
+  // 升级、本地 $defs 引用内联、剥 $schema/nullable；校验关键字与 additionalProperties
+  // 保留，description 不改写。归一器意外抛出向上传播进 connect 的既有 catch
+  //（fail-closed，spec R4）：宁可该 server 本轮工具面注册失败，不发坏 schema。
+  const normalized = normalizeSchemaForMCP(schema);
+  if (!isRecord(normalized)) {
+    // 对象输入在 walker 下恒产出对象；到这里说明归一契约被破坏，fail-closed。
+    throw new TypeError("MCP inputSchema normalization produced a non-object schema");
+  }
+
   return {
-    ...schema,
+    ...normalized,
     type: "object",
-    properties: isRecord(schema.properties) ? schema.properties : {},
+    properties: isRecord(normalized.properties) ? normalized.properties : {},
   };
 }
 

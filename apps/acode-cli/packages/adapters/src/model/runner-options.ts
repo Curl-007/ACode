@@ -65,6 +65,9 @@ export function createGenerateTextOptions(input: {
     }),
     tools: toAiSdkTools(input.request.tools, {
       providerKind: input.resolved.providerKind,
+      // 方言分发计划的结构化身份输入（specs/tool-schema-normalize.md R2.2）：
+      // classifyModel 消费点，禁止 id 字符串分支。
+      providerId: input.resolved.providerId,
       modelId: input.resolved.modelId,
       requiresMfjsToolSchema: input.resolved.properties.requiresMfjsToolSchema,
       supportsNativeWebSearch: input.resolved.properties.supportsNativeWebSearch,
@@ -126,6 +129,9 @@ export function createStreamTextOptions(input: {
     }),
     tools: toAiSdkTools(input.request.tools, {
       providerKind: input.resolved.providerKind,
+      // 方言分发计划的结构化身份输入（specs/tool-schema-normalize.md R2.2）：
+      // classifyModel 消费点，禁止 id 字符串分支。
+      providerId: input.resolved.providerId,
       modelId: input.resolved.modelId,
       requiresMfjsToolSchema: input.resolved.properties.requiresMfjsToolSchema,
       supportsNativeWebSearch: input.resolved.properties.supportsNativeWebSearch,

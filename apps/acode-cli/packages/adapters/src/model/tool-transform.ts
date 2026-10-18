@@ -6,6 +6,12 @@ import { anthropic } from "@ai-sdk/anthropic";
 import { jsonSchema, tool, type ToolSet } from "ai";
 import { ModelErrorCode, type JsonSchema, type ModelToolContract } from "@acode/contracts";
 import { AiSdkModelAdapterError } from "./errors.js";
+import {
+  adaptSchemaForStrict,
+  applyModelToolSchemaDialect,
+  resolveModelToolSchemaPlan,
+  type ModelToolSchemaPlan,
+} from "./schema-normalize/index.js";
 import { isAnthropicFirstPartyModelId, toStrictToolSchema } from "./strict-tool-schema.js";
 
 export interface AiSdkToolTransformOptions {
@@ -13,8 +19,11 @@ export interface AiSdkToolTransformOptions {
   supportsNativeWebSearch?: boolean;
   providerKind?: "openai" | "anthropic" | "openai-compatible" | "gateway" | "custom";
 
-  /** 本次请求的模型 id，仅用于首方 strict 资格判定；缺席即不启用 strict。 */
+  /** 本次请求的模型 id，用于首方 strict 资格判定与方言计划的结构化身份分类；缺席即两者都不启用。 */
   modelId?: string;
+
+  /** Provider id，仅用于方言计划的结构化身份分类（classifyModel）；缺席即身份 unknown。 */
+  providerId?: string;
 }
 
 export function toAiSdkTools(
@@ -25,23 +34,27 @@ export function toAiSdkTools(
     return undefined;
   }
 
+  // 方言分发计划每请求计算一次（specs/tool-schema-normalize.md R2.2）：
+  // 路由信号 = requiresMfjsToolSchema 标志 + providerKind→wire 一一映射 +
+  // classifyModel 结构化身份，禁止模型 id 字符串分支。
+  const plan = resolveModelToolSchemaPlan({
+    providerKind: options.providerKind,
+    providerId: options.providerId,
+    modelId: options.modelId,
+    requiresMfjsToolSchema: options.requiresMfjsToolSchema,
+  });
+
   const entries = tools.flatMap((contract): [string, ToolSet[string]][] => {
     if (contract.providerNative) {
       const providerTool = toAiSdkProviderNativeTool(contract, options);
       return providerTool ? [[contract.name, providerTool]] : [];
     }
 
-    const strictSchema = resolveStrictToolSchema(contract, options);
+    const projected = projectToolSchemaForWire(contract, options, plan);
     const baseTool = {
       description: contract.description,
-      inputSchema: jsonSchema<unknown>(
-        normalizeToolInputSchema(
-          contract.name,
-          strictSchema ?? (contract.inputSchema as JsonSchema),
-          options,
-        ),
-      ),
-      ...(strictSchema === undefined ? {} : { strict: true }),
+      inputSchema: jsonSchema<unknown>(projected.schema),
+      ...(projected.strict ? { strict: true } : {}),
       needsApproval: contract.needsApproval,
       ...providerOptionsForClientTool(options),
     };
@@ -90,6 +103,46 @@ function resolveStrictToolSchema(
   if (options.providerKind !== "anthropic") return undefined;
   if (!isAnthropicFirstPartyModelId(options.modelId)) return undefined;
   return toStrictToolSchema(contract.inputSchema as JsonSchema);
+}
+
+/**
+ * 工具 schema 的发送面投影（specs/tool-schema-normalize.md R2.2/R3/R4）：
+ *   anthropic strict 折叠（存量路径，不变） → MFJS $ref hoist → 方言归一
+ *   （Responses sanitize → MFJS，顺序照抄 omp openai-responses.ts 论证）
+ *   → Responses strict 管线（contract.strict 且 enforce 成功才发 strict:true）。
+ * fail-closed：归一器意外抛出包装为 InvalidModelRequest 拒绝发送本次请求——
+ * 宁可失败也不发坏 schema（对照 model-option-map-fetch.ts 的既有先例）；
+ * strict 资格失败不是错误，降级为非 strict 的合法 schema（omp CONSTRAINTS #1.5）。
+ */
+function projectToolSchemaForWire(
+  contract: ModelToolContract,
+  options: AiSdkToolTransformOptions,
+  plan: ModelToolSchemaPlan,
+): { schema: JsonSchema; strict: boolean } {
+  try {
+    const strictSchema = resolveStrictToolSchema(contract, options);
+    const base = strictSchema ?? (contract.inputSchema as JsonSchema);
+    const hoisted = normalizeToolInputSchema(contract.name, base, options);
+    const dialect = applyModelToolSchemaDialect(plan, hoisted);
+    if (strictSchema !== undefined) {
+      // anthropic 首方 strict：存量折叠路径，strict 资格已由 toStrictToolSchema 判定。
+      return { schema: dialect, strict: true };
+    }
+    if (plan.responsesStrictEligible && contract.strict === true) {
+      const adapted = adaptSchemaForStrict(dialect, true);
+      return { schema: adapted.schema, strict: adapted.strict };
+    }
+    return { schema: dialect, strict: false };
+  } catch (error) {
+    if (error instanceof AiSdkModelAdapterError) throw error;
+    throw new AiSdkModelAdapterError(
+      ModelErrorCode.InvalidModelRequest,
+      `Tool ${contract.name} schema normalization failed: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+      { cause: error, context: { toolName: contract.name, wire: plan.wire } },
+    );
+  }
 }
 
 function normalizeToolInputSchema(

@@ -241,6 +241,14 @@
     "apps/acode-cli/packages/adapters/package.json": "cf388f3c5ce199daf35cbc984e04c01a00c789aa243c68d1bdfab4ce2dd331d1",
     "apps/acode-cli/packages/agent-teams-plugin/package.json": "641178b0f8070423f935bc44f09447472ceade8570e91db81b294c06e424a0db",
     "apps/acode-cli/packages/android-emulator-plugin/package.json": "459dcb3c90efa8237278abc84767591fa079337cb485eca53c756a2a7a1531fc",
+    "apps/acode-cli/packages/bigmodel-skills-content-plugin/package.json": "dedb66b51ed9f302e1edb85515d17c8dd60c02b56d4de72934ff2629b21f24ea",
+    "apps/acode-cli/packages/bigmodel-skills-data-plugin/package.json": "5e5b8c0510ccc06f6d0e2eac14be2aea0700e8696d1e75a5a9c06a09f5b6e567",
+    "apps/acode-cli/packages/bigmodel-skills-dev-plugin/package.json": "ee11d82cfae33071afcde1e44c0b13ded546dcdbba205dde7f4db3189dcfeea1",
+    "apps/acode-cli/packages/bigmodel-skills-management-plugin/package.json": "5b9c423544ba0668a782ae3fbe9fe0ef90d64585697e79a484579534378a752c",
+    "apps/acode-cli/packages/bigmodel-skills-office-plugin/package.json": "fd11664cc3286af53b12ae2e1ec189325dae845668ef9a8edb439e854aa111f7",
+    "apps/acode-cli/packages/bigmodel-skills-ops-plugin/package.json": "2111f2493b26dfdd57bc2f0630ea9f3d7aaddde2f339a17423e086502fcb8f32",
+    "apps/acode-cli/packages/bigmodel-skills-product-plugin/package.json": "f0a5ab8b323fc1fac31b683dda7766d54050d230aa50387ed3ae86e4b4e63348",
+    "apps/acode-cli/packages/bigmodel-skills-sales-plugin/package.json": "3996409c52e1460d27aa2ce92464adb77815e1c4aad2b15223e87c76a8cad5b4",
     "apps/acode-cli/packages/bootstrap/package.json": "139c4bf188c58bb1f63dd4e05e073a94e74bc5fda69a36febcc5006b7046498f",
     "apps/acode-cli/packages/browser-use-plugin/package.json": "dad5da2e437ff3cd0d475654b0ddec4d63c3f2eb7cb0b752058a6e0badc9612c",
     "apps/acode-cli/packages/cli-workflow/package.json": "5c447b6653769c01f58a0638ddb850f68e046f47a146ea48c6fbe6547b14e12f",
@@ -270,7 +278,7 @@
     "apps/acode-cli/packages/workflow-run-read/package.json": "d4659d598d8320400e86695cef751c86bc8cc7cca3508858c6e42957a86d5b6c",
     "apps/acode-cli/tools/prompt-trajectory/package.json": "c0b79b8c11694062afce19807a3e527541b3d262b77aae07b40479d5ee73346c",
     "apps/acode-cli/tools/typescript/package.json": "916bb98a7a42a80a690c6460038da943c80e2c005fc528d8bfddc930ff67a13c",
-    "package.json": "dbd03dad1d050103f90190177fca0c90cafd20d1f785408bc005f91d4c739404",
+    "package.json": "8cfffcb6b2113cd48cdff55a965579a5e74ac3632ac40d126ad5e71a4b477557",
     "packages/acode-cua/package.json": "faa859923517a6a948141b87bea3fa6ac885ef737ebde7be9ae9f9abd3d9a752",
     "packages/acode-server-cli/package.json": "5e9445eb2bce9eb54e320723dcd327354ee6798e93dafb01b3532d14d0287bc3",
     "packages/client/package.json": "34842bccbb96748d785cd56230ca0e36d230b913cc57ef455680d87c999b939c",
@@ -1551,7 +1559,7 @@
     "packages/ui/src/components/ui/tooltip.tsx": "301dbf3a6f8b1bc496f9bdc6fbc5fe6202ed373182897f39cd1ecd19b00fdfbe",
     "packages/ui/src/components/ui/usePdfZoomOverlay.ts": "c8c91b003ce2fded32c7a2369dc6eac43aa4b9dc9c830a0f5ceccb21d366b610",
     "packages/ui/src/lib/builtinSkillI18n.ts": "3d4870ce39e38d5a8726b482fb08774ff6ed877957e359a4c82230baaf720819",
-    "packages/ui/src/styles.css": "03258677fffe01216f63a53c8787c9f3a1d50b57a3efe6d06bdd7a9b541cc1db",
+    "packages/ui/src/styles.css": "d45758c6d5b2b2fcb28926787904fb6481a83fe569aa8abf3177eec9a8346626",
     "packages/web/package.json": "39a3eb197637d92e64ad52afd4a6ad43e032920b6360f9c7413b896dc1eb2703",
     "packages/web/public/material-icons/3d.svg": "9527b849f0fba57ca7640e2717b3a19cb5f5e046712cbbd8b75d73af338c68fb",
     "packages/web/public/material-icons/abap.svg": "1335bd7eb9a0ed49deb622330d680c2e97731726a7a5eee8e4f46dc1e5db4de4",
@@ -2701,7 +2709,7 @@
     "packages/web/public/material-icons/zip.svg": "dad79a45f756542d37abd422502ecfbea15720b92ea1c9d80ef0439ab6b9448a",
     "patches/@ai-sdk__anthropic@3.0.81.patch": "d3a7c381eba7f5157f765a0528003af17cf84544911dfb7412c7800168e01c18",
     "patches/@ai-sdk__openai-compatible@2.0.60.patch": "9632fe9d821b3dc20939ae509cc35b968d90d018bbd1d812390718898182a38b",
-    "pnpm-lock.yaml": "5e1a51610a4896eb9b2677901def55f6d085348cc6c0e7030e33b2c0d2beb2d5",
+    "pnpm-lock.yaml": "39e20bcc6903a8fe3173f0bbf0b3d1ae20b2ef0f3012e3c5e841a28d6cca9647",
     "pnpm-workspace.yaml": "a9c2ba737409e152c3904e65fec268247194ea5a33050b630f00e14eb644e2cb",
     "scripts/license-texts/Apache-2.0.txt": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
     "scripts/native-search-tools-config.mjs": "54cee5ce2aa05e1c47f15758a700567ce4c822213c3f68392c18309142aa77ab",
@@ -14322,7 +14330,7 @@
         },
         {
           "file": "packages/ui/src/styles.css",
-          "sha256": "03258677fffe01216f63a53c8787c9f3a1d50b57a3efe6d06bdd7a9b541cc1db"
+          "sha256": "d45758c6d5b2b2fcb28926787904fb6481a83fe569aa8abf3177eec9a8346626"
         }
       ]
     },

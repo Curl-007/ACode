@@ -16,7 +16,22 @@ import {
 import { app, BrowserWindow, ipcMain, Menu, powerMonitor } from "electron";
 import pkg, { CancellationToken } from "electron-updater";
 import semver from "semver";
+import { stat } from "node:fs/promises";
+import { basename, join } from "node:path";
 import { logger } from "./logger.js";
+import {
+  createUpdateJournalStore,
+  deriveStartupRecoveryPlan,
+  UPDATE_JOURNAL_FILE_NAME,
+  type UpdateJournalEntry,
+  type UpdateJournalStore,
+} from "./updaterJournal.js";
+import {
+  computeFileSha512,
+  resolveUpdaterPendingDir,
+  sweepStaleUpdatePendingArtifacts,
+  validatePendingInstallerFile,
+} from "./updaterSweep.js";
 import {
   classifyUpdateFailureGateReason,
   createUpdateBusyDeferralTracker,
@@ -40,9 +55,20 @@ const DEV_AUTO_UPDATE_ENV = "ACODE_AUTO_UPDATE_DEV";
 const DEV_AUTO_UPDATE_SWITCH = "--acode-auto-update-dev";
 const DEV_AUTO_UPDATE_VERSION_ENV = "ACODE_AUTO_UPDATE_DEV_VERSION";
 const DEV_AUTO_UPDATE_VERSION_SWITCH = "--acode-auto-update-dev-version";
+// WI-9 更新交接账本常量（specs/updater-journal-recovery.md R2/R5）。
+const UPDATE_PENDING_SWEEP_DELAY_MS = 5 * 60 * 1000;
+const UPDATE_PENDING_SWEEP_MIN_KEEP_AGE_MS = 60 * 60 * 1000;
+const UPDATE_PENDING_SWEEP_STALE_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 let readyUpdateVersion: string | null = null;
 let readyUpdateReleaseNotes: PostUpdateReleaseNotesPayload | null = null;
 let readyUpdateRestoredFromPendingReleaseNotes = false;
+// 交接素材：update-downloaded 事件捕获，quitAndInstall 落账时消费（spec R1/R2）。
+let readyUpdateInstallerPath: string | null = null;
+let readyUpdateInstallerFileName: string | null = null;
+let readyUpdateInstallerSha512: string | null = null;
+let updateJournal: UpdateJournalStore | null = null;
+let updaterPendingDirPromise: Promise<string | null> | null = null;
+let updatePendingSweepTimer: NodeJS.Timeout | null = null;
 let menuLocale: Locale = DEFAULT_LOCALE;
 let manualCheckWebContentsId: number | null = null;
 let pendingPostUpdateReleaseNotes: PostUpdateReleaseNotesPayload | null = null;
@@ -88,6 +114,10 @@ type ReleaseNoteInfoLike = {
 type UpdateDownloadedInfoLike = {
   version: string;
   path?: string | null;
+  /** electron-updater 透传的 release asset sha512（交接账本完整性校验素材）。 */
+  sha512?: string | null;
+  /** 已 stage 进 pending 目录的安装器绝对路径（downloadedFile，交接账本素材）。 */
+  downloadedFile?: string | null;
   files?: Array<{ url?: string | null } | null> | null;
   packages?: Record<string, { path?: string | null } | null> | null;
   acodeReleaseChannel?: ElectronReleaseChannel | null;
@@ -544,6 +574,16 @@ async function quitAndInstallUpdate(rejectUnavailable = false) {
   }
   quitAndInstallInFlight = true;
   logger.info("[auto-update] user requested quit and install");
+  // WI-9 交接落账（specs/updater-journal-recovery.md R2）：写入点位于既有流程内、
+  // onBeforeQuitAndInstall 之前（其内部末步才是 R19 的 disableExitSweep），不改变
+  // 「sweep → disableExitSweep → quitAndInstall」豁免时序。dev relaunch 路径没有
+  // 真实安装器接管，落账会伪造「交接了但版本没变」的事故指纹，必须跳过。
+  const devRelaunchInstall = shouldRelaunchForDevAutoUpdateInstall();
+  const handoffToVersion = readyUpdateVersion;
+  let handoffGeneration: number | null = null;
+  if (updateJournal && !devRelaunchInstall && handoffToVersion) {
+    handoffGeneration = await appendUpdateJournalHandoff(handoffToVersion);
+  }
   // update-install 关停段（T2-s7②，即注册表 beforeInstall∪stopsChildProcesses 名单）：
   // flush 窗口状态/持久化 hints 类任务在安装器接管前执行。
   // best-effort：失败只 warn 不阻断——状态丢失可恢复，与下面释放文件锁的硬前置不同级。
@@ -570,6 +610,7 @@ async function quitAndInstallUpdate(rejectUnavailable = false) {
     // 安装前退出准备是释放 host/agent 与 resources/glm 文件锁的硬前置条件。
     // 如果这里失败后仍启动安装器，Windows 可能在资源仍被占用时覆盖安装目录，形成半更新。
     quitAndInstallInFlight = false;
+    await markHandoffAborted(handoffGeneration);
     handleAutoUpdateFailure(error, "prepare quit and install failed");
     if (rejectUnavailable) {
       throw error;
@@ -578,7 +619,7 @@ async function quitAndInstallUpdate(rejectUnavailable = false) {
   }
 
   try {
-    if (shouldRelaunchForDevAutoUpdateInstall()) {
+    if (devRelaunchInstall) {
       // 开发态只用于验证服务端 manifest、下载进度和安装入口 UI 闭环，
       // 未打包应用没有可被安装器接管的真实发布包上下文。这里改为重启当前 dev app，
       // 避免点击“重启以更新”执行退出准备后停在无响应状态。
@@ -588,6 +629,20 @@ async function quitAndInstallUpdate(rejectUnavailable = false) {
       return;
     }
 
+    if (handoffGeneration !== null) {
+      // R19 豁免链完成度入账（spec R2）：autoUpdater 读不到 containment 控制器
+      // 内部状态，以「onBeforeQuitAndInstall 是否成功 resolve」表达——index.ts
+      // 接线中该钩子成功路径的末步就是 sweep + disableExitSweep("update-install-handoff")。
+      // 第二次落账同样 await 完成后才调 quitAndInstall，时序终点不变。
+      try {
+        await updateJournal?.setExitSweepHandoff(
+          handoffGeneration,
+          onBeforeQuitAndInstall ? "completed" : "absent",
+        );
+      } catch (error) {
+        logger.warn("[auto-update] update journal exit-sweep marking failed (continuing):", error);
+      }
+    }
     // 3.3.0 的 Windows 自定义 PowerShell delayed launcher 在 detached/hidden
     // 模式下可能只创建 powershell.exe，却没有稳定执行到安装器启动，用户看到应用关闭但版本不变。
     // 这里恢复 electron-updater 原生安装入口，避免把“launcher 进程创建成功”误当成更新已接管。
@@ -1055,6 +1110,9 @@ function clearReadyUpdateState() {
   readyUpdateReleaseNotes = null;
   readyUpdateChannel = null;
   readyUpdateRestoredFromPendingReleaseNotes = false;
+  readyUpdateInstallerPath = null;
+  readyUpdateInstallerFileName = null;
+  readyUpdateInstallerSha512 = null;
 }
 
 function clearPersistedPostUpdateReleaseNotesForVersion(version: string, reason: string) {
@@ -1081,6 +1139,318 @@ function clearPersistedPostUpdateReleaseNotesForVersion(version: string, reason:
       logger.warn(`[auto-update] clear post-update release notes (${reason}) failed:`, error);
     }
   })();
+}
+
+// ———————— WI-9 更新交接账本（specs/updater-journal-recovery.md R2-R6）————————
+// 机制思想参照 oh-my-pi (MIT) packages/coding-agent/src/cli/update-cli.ts 的
+// replaceBinaryForUpdate（交接前状态快照 + 启动验证代替主进程侧回滚——NSIS 接管后
+// 主进程已退出，真实回滚在安装器层，这里不伪造）。
+
+function readInstallerFileNameFromDownloadedInfo(info: UpdateDownloadedInfoLike): string | null {
+  const downloaded =
+    typeof info.downloadedFile === "string" ? basename(info.downloadedFile.trim()) : "";
+  if (downloaded.length > 0) {
+    return downloaded;
+  }
+  const declared = typeof info.path === "string" ? basename(info.path.trim()) : "";
+  return declared.length > 0 ? declared : null;
+}
+
+function captureReadyUpdateInstallerMeta(info: UpdateDownloadedInfoLike): void {
+  // update-downloaded 时暂存交接素材；大小在落账点用 stat 实测（release 元数据
+  // 不一定携带 size，实测值同时服务启动恢复校验与残留清扫的「完整/部分」判定）。
+  readyUpdateInstallerPath =
+    typeof info.downloadedFile === "string" && info.downloadedFile.trim().length > 0
+      ? info.downloadedFile.trim()
+      : null;
+  readyUpdateInstallerFileName = readInstallerFileNameFromDownloadedInfo(info);
+  readyUpdateInstallerSha512 =
+    typeof info.sha512 === "string" && info.sha512.trim().length > 0
+      ? info.sha512.trim()
+      : null;
+}
+
+async function appendUpdateJournalHandoff(toVersion: string): Promise<number | null> {
+  if (!updateJournal) {
+    return null;
+  }
+  try {
+    let installerSize: number | null = null;
+    if (readyUpdateInstallerPath) {
+      try {
+        installerSize = (await stat(readyUpdateInstallerPath)).size;
+      } catch {
+        // 实测失败不阻断落账：size 记 null 时校验退化为 sha512/无校验路径。
+      }
+    }
+    return await updateJournal.appendHandoff({
+      fromVersion: getCurrentAppVersionForUpdate(),
+      toVersion,
+      installerPath: readyUpdateInstallerPath,
+      installerFileName: readyUpdateInstallerFileName,
+      sha512: readyUpdateInstallerSha512,
+      size: installerSize,
+      pendingReleaseName: readyUpdateReleaseNotes?.title ?? null,
+      channel: readyUpdateChannel ?? null,
+      platform: process.platform,
+    });
+  } catch (error) {
+    // 账本写失败绝不阻断安装交接（spec R1：尽力落盘，warn 留痕）。
+    logger.warn("[auto-update] update journal handoff write failed (continuing):", error);
+    return null;
+  }
+}
+
+async function markHandoffAborted(generation: number | null): Promise<void> {
+  if (generation === null || !updateJournal) {
+    return;
+  }
+  try {
+    // 交接准备失败 = 安装不会发生。不改判的话，下次启动会把这条记录误判成
+    // 「安装器被杀/失败」的事故指纹（spec R2）。
+    await updateJournal.setExitSweepHandoff(generation, "failed");
+    await updateJournal.markOutcome(generation, "handoff-aborted");
+  } catch (error) {
+    logger.warn("[auto-update] update journal abort marking failed:", error);
+  }
+}
+
+async function resolvePendingDirCached(): Promise<string | null> {
+  if (!updaterPendingDirPromise) {
+    updaterPendingDirPromise = (async () => {
+      try {
+        return await resolveUpdaterPendingDir({
+          platform: process.platform,
+          env: process.env,
+          homeDir: app.getPath("home"),
+          isPackaged: app.isPackaged,
+          resourcesPath: app.isPackaged ? process.resourcesPath : null,
+          devAppUpdateConfigPath: app.isPackaged
+            ? null
+            : join(app.getAppPath(), "dev-app-update.yml"),
+          appName: app.getName(),
+        });
+      } catch (error) {
+        logger.warn("[auto-update] resolve updater pending dir failed (sweep degraded):", error);
+        return null;
+      }
+    })();
+  }
+  return updaterPendingDirPromise;
+}
+
+async function validatePendingInstallerForRecovery(
+  entry: UpdateJournalEntry,
+): Promise<{ ok: boolean; reason?: string }> {
+  if (!entry.installerFileName) {
+    return { ok: false, reason: "journal entry has no installer file name" };
+  }
+  const pendingDir = await resolvePendingDirCached();
+  if (!pendingDir) {
+    return { ok: false, reason: "pending dir unavailable" };
+  }
+  return validatePendingInstallerFile({
+    filePath: join(pendingDir, entry.installerFileName),
+    expectedSha512: entry.sha512,
+    expectedSize: entry.size,
+    fs: { computeFileSha512 },
+  });
+}
+
+function restoreRestageReadyFromJournal(entry: UpdateJournalEntry): void {
+  // 与 hydratePendingPostUpdateReleaseNotes 的恢复同语义：ready 只是「可重试」
+  // 入口，readyUpdateRestoredFromPendingReleaseNotes=true 保证点击后走 restage
+  // （重新下载安装），不会拿一个已被证明没生效的安装上下文直接 quitAndInstall。
+  readyUpdateVersion = entry.toVersion;
+  readyUpdateReleaseNotes = pendingPostUpdateReleaseNotes;
+  readyUpdateChannel =
+    entry.channel === "preview" || entry.channel === "stable" ? entry.channel : null;
+  readyUpdateRestoredFromPendingReleaseNotes = true;
+  setAutoUpdaterMenuState(buildUpdateDownloadedState(entry.toVersion));
+}
+
+let postUpdateResourceProbe: () => Promise<{ ok: boolean; detail: string }> =
+  defaultPostUpdateResourceProbe;
+
+async function defaultPostUpdateResourceProbe(): Promise<{ ok: boolean; detail: string }> {
+  // 关键资源下限探针（spec R4）：主程序镜像存在 + 打包构建 resources 树整体
+  // 替换完成（app-update.yml 在位）。bundled agent 深度完整性由 index.ts 既有
+  // 启动诊断覆盖，不在这里重复建设。
+  try {
+    await stat(process.execPath);
+  } catch (error) {
+    return {
+      ok: false,
+      detail: `execPath missing: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+  if (app.isPackaged) {
+    try {
+      await stat(join(process.resourcesPath, "app-update.yml"));
+    } catch {
+      return { ok: false, detail: "resources app-update.yml missing (resources tree incomplete?)" };
+    }
+  }
+  return { ok: true, detail: "execPath and resources probes passed" };
+}
+
+/** 仅供测试：替换启动验证资源探针。 */
+export function setPostUpdateResourceProbeForTest(
+  probe: () => Promise<{ ok: boolean; detail: string }>,
+): void {
+  postUpdateResourceProbe = probe;
+}
+
+async function runStartupUpdateJournalRecovery(): Promise<void> {
+  const journal = updateJournal;
+  if (!journal) {
+    return;
+  }
+  const loaded = await journal.load();
+  const lastEntry =
+    loaded !== null && loaded.length > 0 ? (loaded[loaded.length - 1] ?? null) : null;
+  const plan = deriveStartupRecoveryPlan(lastEntry, getCurrentAppVersionForUpdate());
+  if (plan.kind === "none") {
+    if (lastEntry !== null && lastEntry.outcome === "unknown") {
+      // 前向兼容（spec R6）：未来版本的新 outcome 枚举值保守不解读、不行动，
+      // 残留交给低峰清扫按年龄窗兜底。
+      logger.warn("[update-journal] unknown outcome from a newer schema, taking no action", {
+        event: "update_journal_unknown_outcome",
+        outcome: "ignored",
+        generation: lastEntry.generation,
+      });
+    }
+    return;
+  }
+
+  if (plan.kind === "first-launch-after-update") {
+    const health = await postUpdateResourceProbe();
+    if (health.ok) {
+      await journal.markOutcome(plan.entry.generation, "verified");
+      logger.info("[auto-update] post-update verification passed", {
+        event: "update_journal_verified",
+        outcome: "verified",
+        from_version: plan.entry.fromVersion,
+        to_version: plan.entry.toVersion,
+        generation: plan.entry.generation,
+      });
+    } else {
+      await journal.markOutcome(plan.entry.generation, "failed");
+      logger.error("[auto-update] post-update verification failed (reporting honestly)", {
+        event: "update_journal_failed",
+        outcome: "verification_failed",
+        from_version: plan.entry.fromVersion,
+        to_version: plan.entry.toVersion,
+        generation: plan.entry.generation,
+        detail: health.detail,
+      });
+    }
+    return;
+  }
+
+  const entry = plan.entry;
+  logger.warn("[auto-update] update handoff did not take effect (installer killed or failed?)", {
+    event: "update_journal_install_not_effective",
+    outcome: "incident",
+    fingerprint: plan.fingerprint,
+    from_version: entry.fromVersion,
+    to_version: entry.toVersion,
+    exit_sweep_handoff: entry.exitSweepHandoff,
+    handed_off_at: entry.handedOffAt,
+    generation: entry.generation,
+  });
+  if (plan.fingerprint === "version-unchanged") {
+    // 本月事故指纹（R19 实证）：交接了但版本没变。先校验 pending 安装器再决定
+    // 恢复策略——完整包保留可重试入口，损坏包清理伪 ready（不展示指向损坏包的
+    // 「重启以更新」）。
+    const validation = await validatePendingInstallerForRecovery(entry);
+    if (validation.ok) {
+      logger.info("[auto-update] pending installer intact; retry is available", {
+        event: "update_journal_recovery",
+        outcome: "retry_available",
+        installer_file_name: entry.installerFileName,
+      });
+      if (!readyUpdateVersion) {
+        restoreRestageReadyFromJournal(entry);
+      }
+    } else {
+      logger.warn("[auto-update] pending installer invalid; clearing stale ready state", {
+        event: "update_journal_recovery",
+        outcome: "invalid_pending_cleared",
+        reason: validation.reason,
+        installer_file_name: entry.installerFileName,
+      });
+      const staleReadyVersion = readyUpdateVersion;
+      clearReadyUpdateState();
+      if (staleReadyVersion) {
+        clearPersistedPostUpdateReleaseNotesForVersion(
+          staleReadyVersion,
+          "journal-recovery-invalid-pending",
+        );
+      }
+      setAutoUpdaterMenuState({ kind: "idle", enabled: true });
+    }
+  }
+  await journal.markOutcome(entry.generation, "install-not-effective");
+}
+
+function scheduleUpdatePendingSweep(): void {
+  if (updatePendingSweepTimer) {
+    clearTimeout(updatePendingSweepTimer);
+  }
+  // 启动低峰期（5 分钟后）清扫：避开启动 IO 高峰；unref 不阻碍退出。
+  updatePendingSweepTimer = setTimeout(() => {
+    updatePendingSweepTimer = null;
+    void runUpdatePendingSweep();
+  }, UPDATE_PENDING_SWEEP_DELAY_MS);
+  updatePendingSweepTimer.unref?.();
+}
+
+async function runUpdatePendingSweep(): Promise<void> {
+  try {
+    const pendingDir = await resolvePendingDirCached();
+    if (!pendingDir) {
+      return;
+    }
+    // 清扫决策读 store 最新状态（本进程是账本唯一写入方；启动恢复在定时器触发前
+    // 已把 handed-off 全部收口，这里看到的是收口后的终态，spec R1「谁读」边界）。
+    const entries = updateJournal ? await updateJournal.load() : null;
+    const last =
+      entries !== null && entries.length > 0 ? (entries[entries.length - 1] ?? null) : null;
+    const preserveGeneration =
+      last === null
+        ? false
+        : last.outcome === "handed-off" ||
+          last.outcome === "install-not-effective" ||
+          last.outcome === "handoff-aborted" ||
+          // 前向兼容：未知 outcome 保守保留有效包（年龄窗兜底）。
+          last.outcome === "unknown";
+    const summary = await sweepStaleUpdatePendingArtifacts({
+      pendingDir,
+      now: Date.now,
+      minKeepAgeMs: UPDATE_PENDING_SWEEP_MIN_KEEP_AGE_MS,
+      staleRetentionMs: UPDATE_PENDING_SWEEP_STALE_RETENTION_MS,
+      currentGeneration:
+        last === null
+          ? null
+          : {
+              installerFileName: last.installerFileName,
+              sha512: last.sha512,
+              size: last.size,
+              preserve: preserveGeneration,
+            },
+      fs: { computeFileSha512 },
+    });
+    logger.info("[auto-update] pending sweep finished", {
+      event: "update_pending_sweep",
+      outcome: summary.removed.length > 0 ? "cleaned" : "noop",
+      removed: summary.removed,
+      kept: summary.kept,
+      skipped: summary.skipped,
+    });
+  } catch (error) {
+    logger.warn("[auto-update] pending sweep failed (will retry next launch):", error);
+  }
 }
 
 function isCancelledDownload(cancellationToken: CancellationToken, error: unknown): boolean {
@@ -1619,12 +1989,25 @@ export async function initAutoUpdater(options: InitAutoUpdaterOptions = {}): Pro
       clearInterval(autoUpdatePollTimer);
       autoUpdatePollTimer = null;
     }
+    // 账本与清扫定时器随更新器停用一起释放（重复 init 不残留旧 store）。
+    updateJournal = null;
+    if (updatePendingSweepTimer) {
+      clearTimeout(updatePendingSweepTimer);
+      updatePendingSweepTimer = null;
+    }
     logUpdateGate(logger, "disabled_by_policy", { detail: "product-flavor" });
     logger.info("[auto-update] disabled for this desktop product flavor");
     return;
   }
   autoUpdaterDisabledForProductFlavor = false;
-  if (!canUseAutoUpdaterInCurrentRuntime()) return;
+  if (!canUseAutoUpdaterInCurrentRuntime()) {
+    updateJournal = null;
+    if (updatePendingSweepTimer) {
+      clearTimeout(updatePendingSweepTimer);
+      updatePendingSweepTimer = null;
+    }
+    return;
+  }
 
   onBeforeQuitAndInstall = options.onBeforeQuitAndInstall;
   updateShutdownRunner = options.shutdownRunner;
@@ -1711,6 +2094,30 @@ export async function initAutoUpdater(options: InitAutoUpdaterOptions = {}): Pro
     });
     return;
   }
+
+  // WI-9 更新交接账本启动恢复（specs/updater-journal-recovery.md R3）：先于后台
+  // 更新检查处理「交接了但版本没变」的事故指纹（清理失效 pending / 恢复可重试
+  // 入口）；任何异常降级为无账本继续启动，绝不阻断更新检查（spec R3/R6）。
+  if (updatePendingSweepTimer) {
+    clearTimeout(updatePendingSweepTimer);
+    updatePendingSweepTimer = null;
+  }
+  updaterPendingDirPromise = null;
+  updateJournal = null;
+  try {
+    updateJournal = createUpdateJournalStore({
+      filePath: join(app.getPath("userData"), UPDATE_JOURNAL_FILE_NAME),
+      logger,
+    });
+    await runStartupUpdateJournalRecovery();
+  } catch (error) {
+    updateJournal = null;
+    logger.warn(
+      "[auto-update] update journal recovery degraded (continuing without journal):",
+      error,
+    );
+  }
+  scheduleUpdatePendingSweep();
 
   const triggerCheckForUpdates = (reason: string) => {
     const isBackgroundCheck = reason === "startup" || reason === "poll";
@@ -1961,6 +2368,7 @@ export async function initAutoUpdater(options: InitAutoUpdaterOptions = {}): Pro
   autoUpdater.on("update-downloaded", (info: UpdateDownloadedInfoLike) => {
     readyUpdateVersion = info.version;
     readyUpdateRestoredFromPendingReleaseNotes = false;
+    captureReadyUpdateInstallerMeta(info);
     readyUpdateChannel = downloadingUpdateChannel ?? availableUpdateChannel;
     readyUpdateReleaseNotes =
       toPostUpdateReleaseNotesPayload(info) ?? downloadingUpdateReleaseNotes;

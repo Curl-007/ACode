@@ -345,6 +345,23 @@ agent-browser --cdp 9222 snapshot
 
 Auto-connect discovers Chrome via `DevToolsActivePort`, common debugging ports (9222, 9229), and falls back to a direct WebSocket connection if HTTP-based CDP discovery fails.
 
+### Drive the User's Own Chrome via ACode browser-relay (Chrome 136+)
+
+Chrome 136+ refuses `--remote-debugging-port` on the default profile, so `--auto-connect` cannot reach the user's daily, logged-in Chrome. ACode ships a browser-relay: a Chrome extension (holding the single `chrome.debugger` attachment per tab) plus a local server that impersonates Chrome's CDP discovery endpoint and multiplexes any number of CDP clients onto it. `agent-browser --cdp 9224` connects to the relay like a normal CDP endpoint.
+
+Setup (explicit opt-in; the relay never starts by itself):
+
+1. Load the unpacked extension from `apps/acode-cli/packages/browser-use-plugin/relay-extension/` via `chrome://extensions` → Developer mode → Load unpacked. If the relay runs with a non-default port or token, set the same values in the extension's options page (extension badge shows `on` when connected).
+2. Start the relay server (in-process lease manager; see `apps/acode-cli/specs/browser-relay-inplace-capture.md`). Prefer a token when untrusted local processes are a concern.
+3. Drive it:
+
+```bash
+agent-browser --cdp 9224 snapshot            # discover the user's tabs
+agent-browser --cdp 9224 open <url>          # drive / create tabs
+```
+
+Safety boundaries (treat as hard): the relay binds loopback only and can drive the user's logged-in browser — never point it at untrusted workloads; tabs being actively driven are collected into a visible cyan "ACode" tab group (released on disconnect), and the user can always revoke a tab via Chrome's debugging infobar. `chrome://` pages are hidden and unattachable; `Browser.close` is refused. Full rules: `apps/acode-cli/specs/browser-relay-inplace-capture.md` (security section).
+
 ### Color Scheme (Dark Mode)
 
 ```bash

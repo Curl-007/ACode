@@ -1,0 +1,15 @@
+{
+	"manifest_version": 3,
+	"name": "ACode Browser Relay",
+	"version": "0.1.0",
+	"description": "Lets the ACode coding agent drive your existing tabs through a local CDP relay.",
+	"permissions": ["debugger", "tabs", "tabGroups", "storage", "alarms"],
+	"background": {
+		"service_worker": "background.js",
+		"type": "module"
+	},
+	"options_page": "options.html",
+	"action": {
+		"default_title": "ACode Browser Relay (click for settings)"
+	}
+}

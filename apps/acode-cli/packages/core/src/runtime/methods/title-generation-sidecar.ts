@@ -109,7 +109,7 @@ async function generateTitleCandidateImpl(
     },
   });
   const events: SessionEvent[] = [];
-  const messages = buildTitleMessages(input);
+  const messages = buildTitleMessages(input, this.promptFileRouting?.titleSystem?.content);
   const modelRequestEvent = this.createEvent(
     SessionEventType.ModelRequest,
     {
@@ -221,9 +221,10 @@ export function normalizeTitleInput(input: string): string {
     : normalized;
 }
 
-function buildTitleMessages(input: string): ModelInputMessage[] {
+function buildTitleMessages(input: string, titleSystemOverride?: string): ModelInputMessage[] {
   return [
-    { role: "system", content: SESSION_TITLE_SYSTEM_PROMPT },
+    // TITLE_SYSTEM.md 路由覆盖（specs/stable-prefix-pause-gate.md R5）；无文件走内置常量。
+    { role: "system", content: titleSystemOverride ?? SESSION_TITLE_SYSTEM_PROMPT },
     { role: "user", content: normalizeTitleInput(input) },
   ];
 }

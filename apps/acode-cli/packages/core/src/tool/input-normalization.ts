@@ -1,5 +1,10 @@
 import type { Logger } from "@acode/contracts";
 import type { ToolEntry } from "./types.js";
+import {
+  isToolIntentFieldEnabled,
+  stripToolIntentField,
+  toolSchemaOwnsIntentField,
+} from "./intent-field.js";
 
 interface NormalizeToolExecutionInputOptions {
   entry: ToolEntry;
@@ -41,18 +46,25 @@ function prepareToolExecutionInput(
   options: NormalizeToolExecutionInputOptions,
 ): PreparedInitialToolExecutionInput {
   const jsonNormalized = normalizeTopLevelJsonString(options.input, options);
+  // intent 字段（specs/tool-intent-field.md R3）：开启态在 strict runtime schema
+  // 校验前剥离顶层 `i`——意图不是执行输入，大量 `.strict()` schema 会因它拒掉整个
+  // 调用。schema 自有 `i` 的工具（注入让位形态）不剥。关闭态零行为变化。
+  const validationInput =
+    isToolIntentFieldEnabled() && !toolSchemaOwnsIntentField(options.entry.inputSchema)
+      ? stripToolIntentField(jsonNormalized).input
+      : jsonNormalized;
   const runtimeSchema = asSafeParseSchema(options.entry.runtimeInputSchema);
   if (!runtimeSchema) {
-    return { input: jsonNormalized };
+    return { input: validationInput };
   }
 
-  const parsed = runtimeSchema.safeParse(jsonNormalized);
+  const parsed = runtimeSchema.safeParse(validationInput);
   if (!parsed.success) {
     // runtime schema 已经完成默认值、preprocess 和约束判断；失败时若只
     // 返回 raw input，后续 JSON Schema 会重新推导一份不完整且顺序不同的错误。
     const runtimeValidationIssues = readRuntimeValidationIssues(parsed.error);
     return {
-      input: jsonNormalized,
+      input: validationInput,
       ...(runtimeValidationIssues.length === 0 ? {} : { runtimeValidationIssues }),
     };
   }

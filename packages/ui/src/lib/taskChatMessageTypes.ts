@@ -35,6 +35,11 @@ export interface TaskChatToolCall {
   snapshotRefs?: ACodeTaskSnapshotToolFieldRef[];
   /** tool call 首次进入当前消息流的本地时间，仅用于识别长时间运行中的工具调用。 */
   startedAt?: number;
+  /**
+   * todo 原地置换计数（specs/todo-displacement.md R2）：本卡作为当前板锚点置换掉的
+   * 先前成功板数量；仅 v4 投影链路桥接（legacy 快照缺席 → 无徽章，行为不变）。
+   */
+  todoSupersededCount?: number;
 }
 
 export type TaskChatMessagePart = ACodeAssistantMessagePart;

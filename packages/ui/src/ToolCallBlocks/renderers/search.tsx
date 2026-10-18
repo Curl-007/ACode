@@ -2,6 +2,7 @@ import { SearchIcon } from "lucide-react";
 import { useMemo } from "react";
 import { useACodeIntl } from "@/i18n/IntlProvider.js";
 import { ToolSnapshotFieldNotice } from "@/ToolCallBlocks/ToolSnapshotFieldNotice.js";
+import { readToolResultDisplay } from "@/ToolCallBlocks/toolResultDisplay.js";
 import { ToolLayout } from "../ToolLayout.js";
 import type { ToolCallBlockRenderContext } from "../shared.js";
 
@@ -95,6 +96,30 @@ export function SearchToolCallBlock(context: ToolCallBlockRenderContext) {
     () => <span className="truncate">{searchPrimaryText}</span>,
     [searchPrimaryText],
   );
+  // 结果事实行（specs/tool-display-read-search.md R4）：display 命中才渲染；
+  // pattern 摘要仍来自 input 透传（input 本就结构化，display 不重复携带）。
+  const secondaryText = useMemo(() => {
+    if (isRunning) return undefined;
+    const parsed = readToolResultDisplay(toolCall.raw);
+    if (parsed?.kind !== "search") return undefined;
+    const base =
+      parsed.numMatches !== undefined
+        ? intl.formatMessage(
+            { id: "chat.toolCall.search.resultMeta" },
+            { matches: String(parsed.numMatches), files: String(parsed.numFiles) },
+          )
+        : intl.formatMessage(
+            { id: "chat.toolCall.search.filesMeta" },
+            { files: String(parsed.numFiles) },
+          );
+    const suffix = parsed.truncated || parsed.filenamesTruncated ? "…" : "";
+    return (
+      <span className="truncate text-foreground-subtlest tabular-nums">
+        {base}
+        {suffix}
+      </span>
+    );
+  }, [intl, isRunning, toolCall.raw]);
 
   return (
     <>
@@ -112,7 +137,9 @@ export function SearchToolCallBlock(context: ToolCallBlockRenderContext) {
         sourceLabel={context.sourceLabel}
         // search 的主文本直接拼成一句完整摘要，不再拆 secondaryText；
         // 这样能避免 title 干扰，也更适合列表/目录查询这类操作。
+        // display 命中的结果事实（N 处匹配 · M 个文件）是例外：它只在终态出现。
         primaryText={primaryText}
+        secondaryText={secondaryText}
         statusLabel={statusLabel}
         statusTooltip={toolCall.status === "failed" ? errorText : undefined}
         showFailureStatus={toolCall.status === "failed"}

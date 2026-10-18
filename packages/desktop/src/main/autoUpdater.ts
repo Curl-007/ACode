@@ -557,7 +557,13 @@ async function quitAndInstallUpdate(rejectUnavailable = false) {
     return;
   }
 
-  if (menuState.kind !== "update-downloaded" || !readyUpdateVersion) {
+  const retryReady =
+    menuState.kind === "update-downloaded" ||
+    // install-recovery+retryAvailable 与 update-downloaded 同级放行（specs/
+    // update-recovery-notice.md R3）：readyUpdateVersion 已由 journal 恢复保住，
+    // restage 语义由 readyUpdateRestoredFromPendingReleaseNotes 承担。
+    (menuState.kind === "install-recovery" && menuState.retryAvailable);
+  if (!retryReady || !readyUpdateVersion) {
     // renderer 可能因为旧 UpdateReady 缓存残留而展示“重启以更新”，
     // 但 main 在 staging error 后已经清掉 ready。此时不能再执行退出准备或调用
     // quitAndInstall，否则会杀掉 host 进程却没有安装器接管，表现成按钮没反应。
@@ -1344,6 +1350,16 @@ async function runStartupUpdateJournalRecovery(): Promise<void> {
         generation: plan.entry.generation,
         detail: health.detail,
       });
+      // 诚实上报（specs/update-recovery-notice.md R2）：验证失败不再只进日志。
+      setAutoUpdaterMenuState({
+        kind: "install-recovery",
+        enabled: true,
+        outcome: "verification-failed",
+        fromVersion: plan.entry.fromVersion,
+        toVersion: plan.entry.toVersion,
+        retryAvailable: false,
+        exitSweepHandoff: plan.entry.exitSweepHandoff,
+      });
     }
     return;
   }
@@ -1373,6 +1389,20 @@ async function runStartupUpdateJournalRecovery(): Promise<void> {
       if (!readyUpdateVersion) {
         restoreRestageReadyFromJournal(entry);
       }
+      // 解释性接替（specs/update-recovery-notice.md R2）：retryAvailable 形态取代
+      // re-stage 的 update-downloaded 菜单态——重启链路由守卫按 retryAvailable
+      // 放行，readyUpdateVersion/restage 语义不变，UI 增加「上次更新未完成」解释。
+      setAutoUpdaterMenuState({
+        kind: "install-recovery",
+        enabled: true,
+        outcome: "install-not-effective",
+        fingerprint: "version-unchanged",
+        fromVersion: entry.fromVersion,
+        toVersion: entry.toVersion,
+        retryAvailable: true,
+        ...(readyUpdateReleaseNotes ? { releaseNotes: readyUpdateReleaseNotes } : {}),
+        exitSweepHandoff: entry.exitSweepHandoff,
+      });
     } else {
       logger.warn("[auto-update] pending installer invalid; clearing stale ready state", {
         event: "update_journal_recovery",
@@ -1388,8 +1418,30 @@ async function runStartupUpdateJournalRecovery(): Promise<void> {
           "journal-recovery-invalid-pending",
         );
       }
-      setAutoUpdaterMenuState({ kind: "idle", enabled: true });
+      // 陈旧包清理不再静默回 idle：告知用户发生了什么（R2）。
+      setAutoUpdaterMenuState({
+        kind: "install-recovery",
+        enabled: true,
+        outcome: "stale-pending-cleared",
+        fingerprint: "version-unchanged",
+        fromVersion: entry.fromVersion,
+        toVersion: entry.toVersion,
+        retryAvailable: false,
+        exitSweepHandoff: entry.exitSweepHandoff,
+      });
     }
+  } else {
+    // version-diverged：更新到了非预期版本（手动安装/降级等），纯通知不行动。
+    setAutoUpdaterMenuState({
+      kind: "install-recovery",
+      enabled: true,
+      outcome: "install-not-effective",
+      fingerprint: "version-diverged",
+      fromVersion: entry.fromVersion,
+      toVersion: entry.toVersion,
+      retryAvailable: false,
+      exitSweepHandoff: entry.exitSweepHandoff,
+    });
   }
   await journal.markOutcome(entry.generation, "install-not-effective");
 }

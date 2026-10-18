@@ -639,6 +639,9 @@ async function runModelBackedTurnStepImpl(
         : {}),
       generationMs: modelCompleteTiming.generationMs,
       querySource,
+      // 主链路服务模型身份（specs/usage-statusbar.md「多模型轮标记」）：只 main_turn
+      // 写入；旁路发射点（sidecar/compact/title）不造假值。
+      ...(querySource === "main_turn" ? { servedModel: executionModelSelection } : {}),
       stopReason: result.finishReason,
       usage: result.usage,
       ...(cacheHit ? { cacheHit } : {}),

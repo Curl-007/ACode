@@ -363,15 +363,19 @@ describe("skill:// read protocol", () => {
   // S16 · 零回归（普通路径/URL 纪律/readFileState 缓存）
   // ------------------------------------------------------------
 
-  test("S16 plain absolute path reads and URL discipline are unchanged", async () => {
+  test("S16 plain absolute path reads unchanged; URL reads route to the WebFetch pipeline", async () => {
     const normal = join(ws, "normal.txt");
     write(normal, "NORMAL\n");
     const output = await callRead({ file_path: normal });
     assert.equal(output.type, "text");
     assert.ok(output.content.includes("NORMAL"));
 
+    // URL 纪律已按 specs/read-url-direct.md（UX 波 A2）刻意变更：https:// 不再落
+    // 文件管线（旧断言 "File does not exist"）。裸测试上下文无 sessionStore（溯源
+    // 闸门 fail-open 既有语义）且无 HttpClientPort——配置错误即「已过闸门、进入
+    // WebFetch 管道」的证据（read-url-direct.test.mjs 同款判定）。
     await expectError({ file_path: "https://example.com/page.html" }, (error) => {
-      assert.ok(error.message.includes("File does not exist"), error.message);
+      assert.ok(error.message.includes("HttpClientPort is not configured"), error.message);
     });
   });
 

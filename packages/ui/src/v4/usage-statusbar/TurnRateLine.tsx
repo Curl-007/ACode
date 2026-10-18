@@ -67,6 +67,19 @@ export function TurnRateLine({ stats, enabled, className }: TurnRateLineProps) {
           </span>
           <span aria-hidden="true">·</span>
           <span>{formatUsageDurationMs(locale, model.generationMs)}</span>
+          {/* 多模型轮标记（specs/usage-statusbar.md，omp served-model marker 对应物）：
+              轮中模型晋升产生 ≥2 个服务模型时才出现；单模型轮不加噪音。 */}
+          {model.servedModels.length >= 2 ? (
+            <>
+              <span aria-hidden="true">·</span>
+              <span
+                className="inline-flex items-center rounded-md bg-surface px-1.5 py-0.5 text-ui-sm leading-none whitespace-nowrap text-foreground-subtle ring-1 ring-border"
+                title={model.servedModels.join(" → ")}
+              >
+                {intl.formatMessage({ id: "chat.usageStatusbar.rateLine.multiModel" })}
+              </span>
+            </>
+          ) : null}
         </div>
       </TooltipTrigger>
       <TooltipContent
@@ -82,6 +95,22 @@ export function TurnRateLine({ stats, enabled, className }: TurnRateLineProps) {
         <span className="text-ui-xs leading-snug text-tooltip-foreground/70">
           {intl.formatMessage({ id: "chat.usageStatusbar.rateLine.tooltip" })}
         </span>
+        {model.servedModels.length > 0 ? (
+          <span className="font-mono text-ui-xs leading-snug text-tooltip-foreground/70">
+            {intl.formatMessage(
+              { id: "chat.usageStatusbar.rateLine.servedModels" },
+              { models: model.servedModels.join(" → ") },
+            )}
+          </span>
+        ) : null}
+        {model.promptCacheMisses !== null && model.promptCacheMisses > 0 ? (
+          <span className="text-ui-xs leading-snug text-tooltip-foreground/70">
+            {intl.formatMessage(
+              { id: "chat.usageStatusbar.rateLine.cacheMisses" },
+              { count: String(model.promptCacheMisses) },
+            )}
+          </span>
+        ) : null}
       </TooltipContent>
     </Tooltip>
   );

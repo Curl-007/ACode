@@ -1,4 +1,4 @@
-import { SearchIcon } from "lucide-react";
+import { GlobeIcon, SearchIcon } from "lucide-react";
 import { useCallback, useMemo } from "react";
 import {
   FileDisplayIcon,
@@ -8,6 +8,8 @@ import {
 import { useACodeIntl } from "@/i18n/IntlProvider.js";
 import { ToolLayout } from "../ToolLayout.js";
 import { ToolSnapshotFieldNotice } from "@/ToolCallBlocks/ToolSnapshotFieldNotice.js";
+import { readToolResultDisplay } from "@/ToolCallBlocks/toolResultDisplay.js";
+import { buildReadFacts } from "@/ToolCallBlocks/renderers/read-facts.js";
 import type { ToolCallBlockRenderContext } from "../shared.js";
 import { renderFilePath } from "../shared.js";
 
@@ -19,6 +21,8 @@ export type ReadSummary = {
   filePath: string | null;
   fileIconSrc: string;
   entryType: "file" | "directory";
+  /** URL 直读目标（specs/tool-display-read-search.md R4）：Globe 图标、不可开本地预览。 */
+  urlRead?: boolean;
 };
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
@@ -135,6 +139,7 @@ function createReadSummary(
   options: {
     fileName?: string;
     entryType?: "file" | "directory";
+    urlRead?: boolean;
   } = {},
 ): ReadSummary {
   const entryType = options.entryType ?? "file";
@@ -146,6 +151,7 @@ function createReadSummary(
     filePath: descriptor.filePath,
     fileIconSrc: entryType === "directory" ? FOLDER_FILE_ICON_SRC : descriptor.fileIconSrc,
     entryType,
+    urlRead: options.urlRead,
   };
 }
 
@@ -219,6 +225,11 @@ export function ReadFileChip({
   clickable: boolean;
   onClick?: () => void;
 }) {
+  const icon = summary.urlRead ? (
+    <GlobeIcon className="size-4 shrink-0 text-foreground-subtle" aria-hidden="true" />
+  ) : (
+    <FileDisplayIcon src={summary.fileIconSrc} size={16} className="size-4 shrink-0" />
+  );
   if (clickable) {
     return (
       <button
@@ -234,7 +245,7 @@ export function ReadFileChip({
           onClick?.();
         }}
       >
-        <FileDisplayIcon src={summary.fileIconSrc} size={16} className="size-4 shrink-0" />
+        {icon}
         <span className="min-w-0 truncate">{summary.fileName}</span>
       </button>
     );
@@ -245,7 +256,7 @@ export function ReadFileChip({
       className="inline-flex min-w-0 text-foreground-subtle max-w-full items-center gap-1.5"
       title={summary.path}
     >
-      <FileDisplayIcon src={summary.fileIconSrc} size={16} className="size-4 shrink-0" />
+      {icon}
       <span className="min-w-0 truncate">{summary.fileName}</span>
     </span>
   );
@@ -255,10 +266,27 @@ export function ReadToolCallBlock(context: ToolCallBlockRenderContext) {
   const { intl } = useACodeIntl();
   const { toolCallNode, isRunning, statusLabel, errorText, onOpenCodeViewer } = context;
   const { toolCall } = toolCallNode;
-  const summary = buildReadSummary(toolCall);
-  const canOpenPreview = summary?.entryType === "file" && Boolean(onOpenCodeViewer);
+  // display 命中时 filePath 是唯一权威（不再走 <path> 标签启发式抽取）；
+  // 缺席（旧 row/旧 agent）时 fallback 链原样保留（spec R4/R5）。
+  const display = useMemo(() => {
+    const parsed = readToolResultDisplay(toolCall.raw);
+    return parsed?.kind === "read" ? parsed : undefined;
+  }, [toolCall.raw]);
+  const summary = useMemo(
+    () =>
+      display
+        ? createReadSummary(display.filePath, { urlRead: Boolean(display.url) })
+        : buildReadSummary(toolCall),
+    [display, toolCall],
+  );
+  const readFacts = useMemo(
+    () => (display && !isRunning ? buildReadFacts(intl, display) : null),
+    [display, intl, isRunning],
+  );
+  const canOpenPreview =
+    summary?.entryType === "file" && !summary.urlRead && Boolean(onOpenCodeViewer);
   const openFilePreview = useCallback(() => {
-    if (!summary || summary.entryType !== "file" || !onOpenCodeViewer) {
+    if (!summary || summary.entryType !== "file" || summary.urlRead || !onOpenCodeViewer) {
       return;
     }
 
@@ -291,7 +319,18 @@ export function ReadToolCallBlock(context: ToolCallBlockRenderContext) {
         sourceLabel={context.sourceLabel}
         primaryText={primaryText}
         prioritizePrimaryText
-        secondaryText={summary ? renderFilePath(summary.filePath) : undefined}
+        secondaryText={
+          summary ? (
+            readFacts ? (
+              <span className="inline-flex min-w-0 items-center gap-2">
+                {renderFilePath(summary.filePath)}
+                {readFacts}
+              </span>
+            ) : (
+              renderFilePath(summary.filePath)
+            )
+          ) : undefined
+        }
         statusLabel={statusLabel}
         statusTooltip={toolCall.status === "failed" ? errorText : undefined}
         showFailureStatus={toolCall.status === "failed"}

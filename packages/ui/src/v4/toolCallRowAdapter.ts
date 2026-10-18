@@ -5,6 +5,9 @@ import { buildACodeStreamingToolInputPreview } from "@acode/shared";
 import type { ToolCallRow } from "@acode/shared/acode-protocol-v4";
 import type { TaskChatToolCallTreeNode } from "@/lib/toolCallTree.js";
 import { normalizeWrappedErrorText } from "@/lib/toolError.js";
+// 本文件唯一的非纯输入：todo 置换计数经 WeakMap 侧信道由投影层登记（specs/
+// todo-displacement.md R2）——v4 row 是协议数据不可变异，计数又不能进 wire。
+import { getTodoSupersededCount } from "@/v4/todoDisplacement.js";
 
 // v4 status → 旧 ChatToolCall.status（mapToolStatus 的输入词表：
 // pending/in_progress/completed/failed/stopped）。
@@ -83,6 +86,10 @@ export function toolCallRowToLegacyNode(row: ToolCallRow): TaskChatToolCallTreeN
   const legacyStatus = STATUS_MAP[row.status];
   const errorText = resolveV4ToolErrorText(row);
   const inputPreview = resolveToolInputPreview(row);
+  // intent 字段（apps/acode-cli/specs/tool-intent-field.md R4）：展示面无条件剥离
+  // 顶层 `i` 并桥接为 title（ToolLayout 的悬浮提示，全渲染器零改动）。UI 不门控
+  // ——远端 agent 的 env 不可见；现工具面无任何工具自有 `i` 参数（contracts 实证）。
+  const intentStripped = stripToolIntentForDisplay(inputPreview.input);
   // CUA 等结构化展示事实位于 output.display；顶层 display 仅是旧 Node REPL 图片通道。
   // 优先读取 canonical output，同时保留旧快照和 Browser 轮尾截图的兼容路径。
   const display = row.output?.display ?? row.display;
@@ -95,7 +102,8 @@ export function toolCallRowToLegacyNode(row: ToolCallRow): TaskChatToolCallTreeN
       toolName: row.toolName,
       // kind 兼容旧聚合分类：v4 下没有旧 ACode Agent 快照形态，直接用固定工具名。
       kind: row.toolName,
-      input: inputPreview.input,
+      input: intentStripped.input,
+      ...(intentStripped.intent !== undefined ? { title: intentStripped.intent } : {}),
       status: legacyStatus,
       output: row.output?.text,
       // V4 ToolCallRow 没有 legacy taskNotification raw；background Agent
@@ -122,9 +130,38 @@ export function toolCallRowToLegacyNode(row: ToolCallRow): TaskChatToolCallTreeN
         streamingRawInputLength: inputPreview.streamingRawInputLength,
       },
       startedAt: typeof row.startedAt === "number" ? row.startedAt : undefined,
+      // todo 原地置换计数（specs/todo-displacement.md R2）：投影层经 WeakMap 侧信道
+      // 登记，桥接层读取；缺席（legacy 快照/非锚点行）时字段不出现。
+      ...(getTodoSupersededCount(row) !== undefined
+        ? { todoSupersededCount: getTodoSupersededCount(row) }
+        : {}),
     },
     // subagent 不内嵌 child rows；v4 工具行没有子树，嵌套工具在旧形态里也
     // 由独立 row（subagent/toolCall）表达。
     childToolCalls: [],
+  };
+}
+
+/**
+ * 剥离展示 input 顶层的 intent 字段 `i`（specs/tool-intent-field.md R4）。
+ * 非 record / 无 `i` → 原样透传；raw 通道（rawInput/inputText）不改写，
+ * 调试面（ModelTrajectory）保留模型原始 args。
+ */
+function stripToolIntentForDisplay(input: unknown): { input: unknown; intent?: string } {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) {
+    return { input };
+  }
+  const record = input as Record<string, unknown>;
+  if (!("i" in record)) {
+    return { input };
+  }
+  const intent = record["i"];
+  const rest: Record<string, unknown> = {};
+  for (const key of Object.keys(record)) {
+    if (key !== "i") rest[key] = record[key];
+  }
+  return {
+    input: rest,
+    ...(typeof intent === "string" && intent.trim().length > 0 ? { intent: intent.trim() } : {}),
   };
 }

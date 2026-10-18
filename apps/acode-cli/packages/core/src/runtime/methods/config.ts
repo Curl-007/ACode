@@ -30,6 +30,7 @@ import { resolveOutputStyleSelection } from "../../context/output-styles.js";
 
 import { orderProviderVisibleToolContracts } from "../../tool/provider-visible-order.js";
 import { projectToolModelContract } from "../../tool/model-contract.js";
+import { injectToolIntentParameter, isToolIntentFieldEnabled } from "../../tool/intent-field.js";
 import { logToolsSchemaTokenMetric } from "./tools-schema-token-metric.js";
 import { rebuildContextPrefix } from "./context-refresh.js";
 import { filterEmbeddedSearchRuntimeVisibleTools } from "./embedded-search-branch.js";
@@ -158,13 +159,19 @@ export function getTools(this: AgentRuntimeInternal, model?: Model): ModelToolCo
     // 不外发、不进遥测通道；度量纯读契约数组，不影响这里的返回值与后续过滤。
     logToolsSchemaTokenMetric(this, this.cachedTools);
   }
+  // intent 字段注入（specs/tool-intent-field.md R2）：provider 可见契约的唯一出口，
+  // 注册表/执行器/度量面看到的都是未注入的原始 entry。缺省关闭（R1 灰度）。
+  const intentFieldEnabled = isToolIntentFieldEnabled();
   return this.cachedTools
     .filter((tool) => tool.name !== "WebSearch" || shouldExposeWebSearch.call(this, model))
-    .map((tool) =>
-      projectToolModelContract(tool, this.registry.get(tool.name), {
+    .map((tool) => {
+      const projected = projectToolModelContract(tool, this.registry.get(tool.name), {
         model,
-      }),
-    );
+      });
+      return intentFieldEnabled
+        ? { ...projected, inputSchema: injectToolIntentParameter(projected.inputSchema) }
+        : projected;
+    });
 }
 
 export function invalidateToolCache(this: AgentRuntimeInternal): void {

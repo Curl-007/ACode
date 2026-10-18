@@ -32,7 +32,7 @@ import type {
 } from "./webfetch-types.js";
 import { isWebFetchPreapprovedUrl } from "../webfetch-preapproved.js";
 import { normalizeWebFetchUrl } from "./webfetch-url.js";
-import { webFetchError } from "./webfetch-errors.js";
+import { UNPROVENANCED_URL_BLOCKED_MESSAGE, webFetchError } from "./webfetch-errors.js";
 import {
   extractHttpUrls,
   noteWebFetchProvenanceUrls,
@@ -57,10 +57,6 @@ const WEBFETCH_DESCRIPTION = [
   // 第一次就带对 URL 来；撞闸的结果文案另有「写进结论、不要循环重试」指引。
   "- Only URLs that have appeared in a user message, a WebSearch result, or a previous WebFetch result can be fetched (pre-approved documentation hosts are always allowed). A URL blocked by this provenance gate will not be fetched on retry — record it in your conclusion as not fetched, or ask the user to paste the content.",
 ].join("\n");
-
-/** 撞闸文案：明确告知模型下一步（写进结论 / 请用户贴内容），并钉死「重试必失败」。 */
-const UNPROVENANCED_URL_BLOCKED_MESSAGE =
-  "Blocked by the URL provenance gate: this URL has not appeared in any user message, WebSearch result, or previous WebFetch result in this session. Retrying it will keep failing. Record the URL in your conclusion as not fetched (or ask the user to paste the content) and continue with the rest of your task.";
 
 interface FreshWebFetchContent {
   fetched: FetchAndExtractContentResult;

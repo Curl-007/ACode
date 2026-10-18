@@ -8,12 +8,26 @@ export type UpdateStatusDialogPhase = "before-download" | "downloading" | "downl
 
 export type UpdateActionInFlight = "download" | "cancel" | "skip" | "restart" | null;
 
+/**
+ * 更新恢复诊断通知（desktop/specs/update-recovery-notice.md）：journal 启动核对
+ * 发现上次交接未生效/验证失败/陈旧包清理时的用户可见解释面。
+ */
+export type UpdateRecoveryNotice = {
+  outcome: "verification-failed" | "install-not-effective" | "stale-pending-cleared";
+  fingerprint?: "version-unchanged" | "version-diverged";
+  fromVersion: string;
+  toVersion: string;
+  retryAvailable: boolean;
+  exitSweepHandoff?: "pending" | "completed" | "failed" | "absent" | "unknown";
+};
+
 export type UpdateStatusViewModel = {
   dialogPhase: UpdateStatusDialogPhase;
   displayVersion: string | null;
   progressLabel: string | null;
   progressValue: number;
   releaseNotesPayload: PostUpdateReleaseNotesPayload | undefined;
+  recoveryNotice: UpdateRecoveryNotice | null;
   skippableVersion: string | null;
   updateChannel: ElectronReleaseChannel | undefined;
 };
@@ -26,6 +40,7 @@ export function deriveUpdateStatusViewModel({
   updateState: UpdateStatePayload | null;
 }): UpdateStatusViewModel {
   const isDownloadingUpdate = updateState?.kind === "download-progress";
+  const recovery = updateState?.kind === "install-recovery" ? updateState : null;
   const readyVersion = resolveReadyVersion({ legacyReadyVersion, updateState });
   const progressVersion = isDownloadingUpdate ? updateState.version : null;
   const availableVersion = updateState?.kind === "update-available" ? updateState.version : null;
@@ -33,6 +48,9 @@ export function deriveUpdateStatusViewModel({
     readyVersion ??
     progressVersion ??
     availableVersion ??
+    // 恢复通知（不可重试形态）也要可见：以 toVersion 撑起入口与弹窗
+    // （update-recovery-notice.md R4），phase 落 before-download=重新下载语义。
+    (recovery ? recovery.toVersion : null) ??
     // download-progress.version 是协议可选字段。下载态必须按 kind 保持 UI，
     // 否则某一帧缺少版本号会让入口卸载并关闭已打开弹窗。
     (isDownloadingUpdate ? "…" : null);
@@ -47,6 +65,16 @@ export function deriveUpdateStatusViewModel({
     progressLabel: getUpdateDownloadProgressLabel(updateState),
     progressValue: getUpdateDownloadProgressValue(updateState),
     releaseNotesPayload: getUpdateReleaseNotesPayload(updateState),
+    recoveryNotice: recovery
+      ? {
+          outcome: recovery.outcome,
+          ...(recovery.fingerprint ? { fingerprint: recovery.fingerprint } : {}),
+          fromVersion: recovery.fromVersion,
+          toVersion: recovery.toVersion,
+          retryAvailable: recovery.retryAvailable,
+          ...(recovery.exitSweepHandoff ? { exitSweepHandoff: recovery.exitSweepHandoff } : {}),
+        }
+      : null,
     skippableVersion:
       updateState?.kind === "update-available" || updateState?.kind === "download-progress"
         ? (updateState.version ?? null)
@@ -108,6 +136,12 @@ function resolveReadyVersion({
 }) {
   if (updateState?.kind === "update-downloaded") {
     return updateState.version;
+  }
+
+  // install-recovery+retryAvailable 与 update-downloaded 同级（update-recovery-
+  // notice.md R2/R4）：ready 语义由 journal 恢复保住，重启链路同源。
+  if (updateState?.kind === "install-recovery" && updateState.retryAvailable) {
+    return updateState.toVersion;
   }
 
   // legacy UpdateReady 只是一份“曾经 ready”的缓存。

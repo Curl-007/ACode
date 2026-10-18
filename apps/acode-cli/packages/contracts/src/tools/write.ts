@@ -116,6 +116,15 @@ export const WriteOutputSchema = z
     originalFile: z.string().nullable(),
     gitDiff: WriteGitDiffSchema.optional(),
     userModified: z.boolean().optional(),
+    // conflict:// 解决结果摘要（specs/conflict-uri-resolution.md R5）：批量/多块
+    // 时模型可见的已解决 id 与其余文件清单；普通写缺席。
+    conflictResolution: z
+      .object({
+        resolvedIds: z.array(z.number().int()),
+        extraFiles: z.array(z.string()),
+        sessionRemaining: z.number().int().nonnegative(),
+      })
+      .optional(),
     perf: ToolExecutionTelemetrySchema.optional(),
   })
   .strict();

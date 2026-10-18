@@ -155,6 +155,33 @@ composer 工具栏在窄容器下按**信息优先级**逐级隐藏（CSS 容器
    从 `core/src/compact/policy.ts` 的阈值事实填入。**单一所有者 = bootstrap 投影**；
    core 只暴露纯函数阈值计算，不写协议。
 
+### 多模型轮标记与每轮缓存未命中（2026-10-18 增补，UX 波 D5）
+
+omp served-model marker / cache-invalidation marker 的对应物，全部 additive
+optional，链路 = 发射点 → 累加器 → turnHeader.stats → 速率行：
+
+6. `contracts/src/events/session.events.ts`：`ModelCompletePayload` +=
+   `servedModel?: { providerId, modelId }`——**只 main_turn 发射点写入**
+   （turn-model-step.ts 的 `executionModelSelection`），sidecar/compact/title
+   旁路与旧事件缺席不造假值（与 generationMs 同纪律）。
+7. `bootstrap/src/acode-protocol-v4/product-projection-usage.ts`：
+   `TurnUsageAccumulator` += `servedModels`（"provider/model" 去重、请求序、
+   上限 4）与缓存未命中快照对（`cacheMissBaseline`/`cacheMissLast`）——
+   **missCauses 是进程内累计快照，求和会跨请求重复计数**（评分自审抓出），
+   每轮值 = 轮末快照 − 轮起基线（投影会话级 `lastTurnCacheMissTotal` 种子，
+   flush 时前推；无快照轮基线不动）；`buildTurnHeaderStats` flush 为
+   `servedModels?` / `promptCacheMisses?`（0/空 = 缺席不投影）。
+8. `packages/shared/src/acode-protocol-v4/rows.ts`：`turnHeaderStatsSchema` +=
+   `servedModels: string[](≤4×256)` 与 `promptCacheMisses: int≥0`（optional）。
+9. UI（packages/ui）：`deriveTurnRateLine` 透出两事实；速率行在
+   `servedModels.length ≥ 2` 时追加「多模型轮」chip（title=模型链），tooltip
+   恒列服务模型链（≥1 时）与缓存未命中行（>0 时）。单模型轮不加 chip——
+   正常轮零噪音，晋升轮（overflow→model promotion track 的用户可见面）才标记。
+   i18n：`chat.usageStatusbar.rateLine.{multiModel,servedModels,cacheMisses}`。
+
+补注（D5）：cacheMiss 归因明细（missCauses 分维度）继续留在 DeveloperToolsPane
+调试面；聊天阅读面只投影每轮总数。
+
 不改动：`usage.delta` 遥测事实（保持最小面）、legacy task 流（旧 UI 广播兼容不动）、
 `v4/usage/stats` 与 `v4/conversation/usage`（现成，直接消费）。
 

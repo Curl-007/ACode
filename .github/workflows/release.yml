@@ -156,6 +156,9 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git tag "$TAG"
           git push origin "$TAG"
+          # 说明模板中「installers are not signed by ACode」对应未签名现状（三态 none）；
+          # 一旦仓库配置齐全签名 secrets（三态 full），必须在同一次变更中改写这些表述与
+          # Gatekeeper/SmartScreen 放行指引（specs/release-signing-smoke.md §5 验收项）。
           cat > /tmp/release-notes.md <<'NOTES'
           # ACode <VERSION>
 
@@ -235,8 +238,21 @@ jobs:
           - Linux x64: `ACode-<VERSION>-linux-x86_64.AppImage`
           - Linux arm64: `ACode-<VERSION>-linux-arm64.AppImage`
           - CLI: `acode-<VERSION>.tar.gz`
-          - Checksums: `sha256.txt`（下载后可用它校验 / verify downloads with it）
+          - Checksums: `ACode-<VERSION>-checksums.txt`（全部安装包 / all installers）、`sha256.txt`（CLI tarball）
           - Update metadata: `latest*.yml`, `latest.json`
+
+          ### Verify your download / 校验下载
+
+          Put the checksums file in the same directory as the installers, then run / 把校验文件与安装包放同一目录后执行：
+
+          ```bash
+          sha256sum -c ACode-<VERSION>-checksums.txt        # Linux / Windows (Git Bash)
+          shasum -a 256 -c ACode-<VERSION>-checksums.txt    # macOS
+          # CLI tarball only / 仅 CLI 压缩包：
+          sha256sum -c sha256.txt
+          ```
+
+          Every line must print `OK`. A mismatch means the download is corrupted or tampered with - do not install it. / 每一行都应输出 `OK`；不一致说明下载损坏或被篡改，请勿安装。
           NOTES
           sed -i "s/<VERSION>/${TAG#v}/g" /tmp/release-notes.md
           # 自动生成版本差异 Changelog：对比最近的 tag（排除 ci 类提交），插入到标题之后
@@ -373,12 +389,37 @@ jobs:
       - name: Typecheck all entries (builds project references)
         run: pnpm typecheck
 
+      # 发布签名三态判定（specs/release-signing-smoke.md §1；语义移植自 oh-my-pi v18.12.1，MIT）：
+      # 全有 → full（macOS：签名+公证；Windows：signtool），脚本经 GITHUB_ENV 写
+      # ACODE_ENABLE_MAC_SIGN=1 与 CSC_IDENTITY_AUTO_DISCOVERY=true；
+      # 全无 → none（保持未签名现状并明示，恒写 CSC_IDENTITY_AUTO_DISCOVERY=false）；
+      # 部分存在 → 本步骤直接失败并列出缺失 secrets 键名，禁止静默降级（omp 核心教训）。
+      # secrets 仅以 env 注入本步骤，脚本只输出键名与数量，绝不回显值。
+      - name: Resolve release signing state
+        id: signing-state
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: node packages/desktop/scripts/release-signing-state.mjs --platform ${{ matrix.target }}
+
       - name: Bundle desktop app
         env:
           ACODE_ENV: production
           # 文件名与应用版本带上完整审计版本（如 0.0.1-audit.20260922.6），不再只写 0.0.1。
           ACODE_APP_VERSION: ${{ needs.release.outputs.version }}
-          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          # CSC_IDENTITY_AUTO_DISCOVERY 不在此静态声明：三态判定脚本已按结果经 GITHUB_ENV
+          # 写入（full=true 允许钥匙串自动发现 CSC_LINK 导入的身份；其余=false 保持未签名
+          # 行为）。step env 若静态声明会覆盖 GITHUB_ENV，故删除。签名凭据整组透传给
+          # electron-builder；未配置的 secrets 是空串，由 electron-builder.config.js 在载入
+          # 时归一为「未设置」，mac 链路不会误入 createKeychain（spec §1 注入约定）。
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: pnpm bundle:desktop -- --os ${{ matrix.target }} --arch ${{ matrix.arch }}
 
       - name: Upload desktop asset to release
@@ -413,14 +454,279 @@ jobs:
           echo "::error::gh release upload failed after 3 attempts"
           exit 1
 
-  # 只有 CLI 与全部桌面平台产物都上传成功才公开 release；任一构建失败则保持 draft，
-  # 由人工排查后重跑或删除，避免不完整的版本出现在 Releases 与官网下载页。
-  # keep_draft=true（上游审计自动构建的测试版）：即使全部成功也保持 draft，不公开、不进入自动更新。
-  publish:
+  # 发布前产物验证（draft-until-success 的一环；语义移植自 oh-my-pi release_smoke，MIT）：
+  # 从 draft release 下载将被打出的同一批字节再验证，任一腿失败 → publish 不执行 → 保持 draft。
+  # - macOS：签名期 codesign --verify --strict + 非 adhoc 断言 + entitlements 必含
+  #   disable-library-validation（原生模块 node-pty/koffi 依赖，缺失即「签名公证全过、
+  #   首次真实使用即崩」）+ 启动 smoke（--remote-debugging-port 轮询 /json/version，
+  #   无 --smoke-test 旗标的诚实替代，spec §3）；未签名期明示跳过验签，降级为 sha256 +
+  #   结构检查（Info.plist 版本比对、关键文件存在、asar 可解析）。启动 smoke 两种态都跑。
+  # - Windows：sha256 + 大小下限（<50MiB 视为损坏）；签名期附加 Get-AuthenticodeSignature=Valid。
+  # - Linux：sha256 -c 校验 CLI sha256.txt 与 tarball 一致 + AppImage 哈希/大小 + x64 抽查结构。
+  # 各腿产出 sha256 清单 artifact，由 publish 聚合成 ACode-<VERSION>-checksums.txt 上传。
+  # 未验证声明：runner 上的启动探测与签名断言无法本地验证，以首次真实 run 为准（spec §3）。
+  verify_assets:
+    name: "Verify release assets: ${{ matrix.leg }}"
     needs: [release, build, desktop]
-    if: ${{ always() && inputs.keep_draft != true && needs.release.result == 'success' && (needs.build.result == 'success' || needs.build.result == 'skipped') && (needs.desktop.result == 'success' || needs.desktop.result == 'skipped') }}
+    if: ${{ !cancelled() && inputs.build_artifacts && needs.release.result == 'success' && needs.build.result == 'success' && needs.desktop.result == 'success' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - leg: macos-arm64
+            runner: macos-14
+            os: mac
+            arch: arm64
+          - leg: macos-x64
+            runner: macos-15-intel
+            os: mac
+            arch: x64
+          - leg: windows-x64
+            runner: windows-latest
+            os: win
+            arch: x64
+          - leg: linux
+            runner: ubuntu-latest
+            os: linux
+            arch: x64
+    runs-on: ${{ matrix.runner }}
+    env:
+      VERSION: ${{ needs.release.outputs.version }}
+      TAG: ${{ needs.release.outputs.tag }}
+      # 与 desktop 三态脚本同一组 secrets 的存在性判定：签名期断言只在凭据齐全时要求。
+      # 诚实边界：这里只用于「签名期必须验签、未签名期必须明示跳过」的分支，不改变
+      # desktop 侧的三态门禁（partial 在打包前已失败，不会走到本作业）。
+      MACOS_SIGNING: ${{ secrets.CSC_LINK != '' && secrets.CSC_KEY_PASSWORD != '' && secrets.APPLE_ID != '' && secrets.APPLE_APP_SPECIFIC_PASSWORD != '' && secrets.APPLE_TEAM_ID != '' }}
+      WIN_SIGNING: ${{ secrets.CSC_LINK != '' && secrets.CSC_KEY_PASSWORD != '' }}
+    steps:
+      - name: Download assets and hash (macOS)
+        if: matrix.os == 'mac'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/assets" "$RUNNER_TEMP/checksums"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern "ACode-${VERSION}-mac-${{ matrix.arch }}.dmg" \
+            --pattern "ACode-${VERSION}-mac-${{ matrix.arch }}.zip" \
+            --dir "$RUNNER_TEMP/assets"
+          (cd "$RUNNER_TEMP/assets" && sha256sum * > "$RUNNER_TEMP/checksums/sha256-${{ matrix.leg }}.txt")
+          cat "$RUNNER_TEMP/checksums/sha256-${{ matrix.leg }}.txt"
+          unzip -q "$RUNNER_TEMP/assets/ACode-${VERSION}-mac-${{ matrix.arch }}.zip" -d "$RUNNER_TEMP/assets/extracted"
+
+      - name: Inspect app bundle version (macOS)
+        if: matrix.os == 'mac'
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP_PATH="$(find "$RUNNER_TEMP/assets/extracted" -maxdepth 1 -name '*.app' -type d | head -n1)"
+          if [ -z "$APP_PATH" ]; then echo "::error::.app bundle not found in mac zip"; exit 1; fi
+          echo "APP_PATH=$APP_PATH" >> "$GITHUB_ENV"
+          BUNDLE_VERSION="$(plutil -extract CFBundleShortVersionString raw "$APP_PATH/Contents/Info.plist")"
+          if [ "$BUNDLE_VERSION" != "$VERSION" ]; then
+            echo "::error::Info.plist version $BUNDLE_VERSION != release version $VERSION"
+            exit 1
+          fi
+          echo "bundle version: $BUNDLE_VERSION"
+
+      - name: Verify codesign signature (macOS, signing enabled)
+        if: matrix.os == 'mac' && env.MACOS_SIGNING == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "签名期：执行 codesign 验证"
+          codesign --verify --strict --verbose=2 "$APP_PATH"
+          info="$(codesign -dvvv "$APP_PATH" 2>&1)"
+          echo "$info"
+          if grep -qE "flags=.*adhoc|Signature=adhoc" <<< "$info"; then
+            echo "::error::$APP_PATH is ad-hoc signed while signing secrets are configured (Developer ID signing did not run)"
+            exit 1
+          fi
+          # omp 教训回归检查：原生模块（node-pty/koffi 等 dlopen 加载、无独立签名）要求
+          # 库校验豁免；缺失时签名公证全过但首次真实使用即崩（spec §2 entitlements 表）。
+          codesign -d --entitlements :- "$APP_PATH" | grep -q "disable-library-validation" || {
+            echo "::error::entitlements missing com.apple.security.cs.disable-library-validation (native modules would crash at first real use)"
+            exit 1
+          }
+          # 参考信息不设门禁：spctl 依赖 Apple 线上票据查询，可能临时不可用（omp 同策略）。
+          spctl -a -vv -t exec "$APP_PATH" || echo "spctl non-zero (informational only)"
+
+      - name: Structure check (macOS, unsigned)
+        if: matrix.os == 'mac' && env.MACOS_SIGNING != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "未签名，跳过验签（当前仓库未配置 macOS 签名 secrets，三态 none；发布说明已明示 Gatekeeper 放行方式）"
+          for rel in "Contents/Info.plist" "Contents/Resources/app.asar" "Contents/Resources/config/default.json"; do
+            [ -e "$APP_PATH/$rel" ] || { echo "::error::missing $rel"; exit 1; }
+          done
+          ls "$APP_PATH/Contents/MacOS"
+          # asar 完整性：用与打包一致的 @electron/asar 解析归档，损坏会在此报错。
+          npx --yes @electron/asar@3.4.1 list "$APP_PATH/Contents/Resources/app.asar" > "$RUNNER_TEMP/asar-list.txt"
+          lines="$(wc -l < "$RUNNER_TEMP/asar-list.txt")"
+          echo "asar entries: $lines"
+          if [ "$lines" -lt 100 ]; then echo "::error::asar listing suspiciously small ($lines entries)"; exit 1; fi
+
+      - name: Launch smoke (macOS)
+        if: matrix.os == 'mac'
+        shell: bash
+        run: |
+          set -euo pipefail
+          BIN="$(find "$APP_PATH/Contents/MacOS" -maxdepth 1 -type f -perm -111 | head -n1)"
+          LOG="$RUNNER_TEMP/acode-smoke.log"
+          echo "launch smoke: $BIN（CDP /json/version 探测，失败转储 stdio）"
+          "$BIN" --remote-debugging-port=9222 >"$LOG" 2>&1 &
+          APP_PID=$!
+          ok=""
+          for i in $(seq 1 60); do
+            if ! kill -0 "$APP_PID" 2>/dev/null; then
+              echo "::error::app exited before CDP endpoint answered"; tail -80 "$LOG"; exit 1
+            fi
+            if curl -fsS --max-time 2 http://127.0.0.1:9222/json/version > "$RUNNER_TEMP/cdp.json" 2>/dev/null; then
+              ok=1; break
+            fi
+            sleep 2
+          done
+          if [ -z "$ok" ]; then
+            echo "::error::CDP /json/version did not answer within ~120s"; tail -80 "$LOG"; exit 1
+          fi
+          echo "CDP answered:"; cat "$RUNNER_TEMP/cdp.json"; echo
+          pkill -f "$APP_PATH" 2>/dev/null || true
+          sleep 3
+          pkill -9 -f "$APP_PATH" 2>/dev/null || true
+          echo "launch smoke OK"
+
+      - name: Upload checksum list (macOS)
+        if: matrix.os == 'mac'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-checksums-${{ matrix.leg }}
+          path: ${{ runner.temp }}/checksums/sha256-${{ matrix.leg }}.txt
+          if-no-files-found: error
+
+      - name: Download, hash and size-check installer (Windows)
+        if: matrix.os == 'win'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/assets" "$RUNNER_TEMP/checksums"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern "ACode-${VERSION}-win-${{ matrix.arch }}.exe" \
+            --dir "$RUNNER_TEMP/assets"
+          cd "$RUNNER_TEMP/assets"
+          ls -la
+          size="$(stat -c %s "ACode-${VERSION}-win-${{ matrix.arch }}.exe")"
+          # 大小下限：全量 Electron 安装包不可能小于 50MiB，防止截断/空文件被发布。
+          if [ "$size" -lt 52428800 ]; then echo "::error::installer too small: $size bytes"; exit 1; fi
+          echo "installer size: $size bytes"
+          sha256sum "ACode-${VERSION}-win-${{ matrix.arch }}.exe" > "$RUNNER_TEMP/checksums/sha256-${{ matrix.leg }}.txt"
+          cat "$RUNNER_TEMP/checksums/sha256-${{ matrix.leg }}.txt"
+
+      - name: Verify Authenticode signature (Windows, signing enabled)
+        if: matrix.os == 'win' && env.WIN_SIGNING == 'true'
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem "$env:RUNNER_TEMP\assets\*.exe" | Select-Object -First 1
+          $sig = Get-AuthenticodeSignature -FilePath $exe.FullName
+          Write-Host "Authenticode status: $($sig.Status); signer: $($sig.SignerCertificate.Subject)"
+          if ($sig.Status -ne 'Valid') {
+            Write-Host "::error::installer signature is $($sig.Status), expected Valid"
+            exit 1
+          }
+
+      - name: Signature note (Windows, unsigned)
+        if: matrix.os == 'win' && env.WIN_SIGNING != 'true'
+        shell: bash
+        run: echo "未签名，跳过验签（当前仓库未配置 Windows 签名 secrets，三态 none；发布说明已明示 SmartScreen 放行方式）"
+
+      - name: Upload checksum list (Windows)
+        if: matrix.os == 'win'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-checksums-${{ matrix.leg }}
+          path: ${{ runner.temp }}/checksums/sha256-${{ matrix.leg }}.txt
+          if-no-files-found: error
+
+      - name: Verify CLI checksums and AppImages (Linux)
+        if: matrix.os == 'linux'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/assets" "$RUNNER_TEMP/checksums"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern "ACode-${VERSION}-linux-*.AppImage" \
+            --pattern "acode-${VERSION}.tar.gz" \
+            --pattern "sha256.txt" \
+            --pattern "latest.json" \
+            --dir "$RUNNER_TEMP/assets"
+          cd "$RUNNER_TEMP/assets"
+          ls -la
+          # CLI sha256.txt 与 tarball 的一致性：发布前对该文件本身的权威校验（spec §5）。
+          sha256sum -c sha256.txt
+          for f in ACode-${VERSION}-linux-*.AppImage; do
+            size="$(stat -c %s "$f")"
+            if [ "$size" -lt 52428800 ]; then echo "::error::$f too small: $size bytes"; exit 1; fi
+          done
+          sha256sum ACode-${VERSION}-linux-*.AppImage acode-${VERSION}.tar.gz > "$RUNNER_TEMP/checksums/sha256-${{ matrix.leg }}.txt"
+          # x64 AppImage 无需 FUSE 的结构抽查；arm64 runtime 无法在 x64 runner 执行，仅哈希校验。
+          chmod +x ACode-${VERSION}-linux-x86_64.AppImage
+          ./ACode-${VERSION}-linux-x86_64.AppImage --appimage-extract > /dev/null
+          [ -f squashfs-root/resources/app.asar ] || { echo "::error::AppImage missing resources/app.asar"; exit 1; }
+          jq -e --arg v "${VERSION}" '.version == $v' latest.json > /dev/null || { echo "::error::latest.json version mismatch"; exit 1; }
+          cat "$RUNNER_TEMP/checksums/sha256-${{ matrix.leg }}.txt"
+
+      - name: Upload checksum list (Linux)
+        if: matrix.os == 'linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-checksums-${{ matrix.leg }}
+          path: ${{ runner.temp }}/checksums/sha256-${{ matrix.leg }}.txt
+          if-no-files-found: error
+
+  # 只有 CLI 与全部桌面平台产物上传成功、且发布前产物验证全部通过，才公开 release；
+  # 任一构建或验证失败则保持 draft，由人工排查后重跑或删除，避免不完整或损坏的版本
+  # 出现在 Releases 与官网下载页。keep_draft=true（上游审计自动构建的测试版）：
+  # 即使全部成功也保持 draft，不公开、不进入自动更新。
+  publish:
+    needs: [release, build, desktop, verify_assets]
+    if: ${{ always() && inputs.keep_draft != true && needs.release.result == 'success' && (needs.build.result == 'success' || needs.build.result == 'skipped') && (needs.desktop.result == 'success' || needs.desktop.result == 'skipped') && (needs.verify_assets.result == 'success' || needs.verify_assets.result == 'skipped') }}
     runs-on: ubuntu-latest
     steps:
+      - name: Download per-leg checksum lists
+        if: ${{ inputs.build_artifacts }}
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-checksums-*
+          path: checksums
+          merge-multiple: true
+
+      - name: Upload aggregated checksums to release
+        if: ${{ inputs.build_artifacts }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.release.outputs.tag }}
+          VERSION: ${{ needs.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          # <hash>␣␣<文件名> 格式，sha256sum -c / shasum -a 256 -c 直接可用。
+          cat checksums/*.txt | sort -k2,2 -u > "ACode-${VERSION}-checksums.txt"
+          cat "ACode-${VERSION}-checksums.txt"
+          # 校验和上传失败同样阻断公开（保持 draft），fail-closed 与既有上传一致。
+          for attempt in 1 2 3; do
+            if gh release upload "$TAG" "ACode-${VERSION}-checksums.txt" --clobber; then
+              exit 0
+            fi
+            echo "::warning::checksums upload failed (attempt $attempt/3), retrying in 10s"
+            sleep 10
+          done
+          echo "::error::checksums upload failed after 3 attempts"
+          exit 1
+
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}

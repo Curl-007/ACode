@@ -1,0 +1,92 @@
+# pnpm store 缓存唯一生产者（CI 缓存纪律；机制移植自 oh-my-pi v18.12.1
+# .github/workflows/bun-cache-warm.yml 与 ci.yml 的 probe→save→prune 三步，MIT）。
+#
+# 背景（omp 事故教训）：曾出现每个 PR 各存一份 ~500MB 包管理器 store、合计吃掉
+# 9.4GB/10GB 仓库缓存配额的情况。此后纪律改为：PR 作业只 restore 不 save
+# （ci.yml 已改为显式 actions/cache/restore，任何触发都不产生写入），
+# 缓存条目由本 workflow 在可改变条目内容的推送上专职生产。
+#
+# 消费方（ci.yml verify / remote-ssh）与生产方的键、路径逐字符一致：
+#   key  = pnpm-store-Linux-<hashFiles('pnpm-lock.yaml')>
+#   path = ~/.local/share/pnpm/store
+# GitHub 缓存按 ref 隔离：PR 查找顺序 = PR 分支 → 基分支 → 默认分支，
+# 因此 main 上 warm 出的条目对全部 PR 可见；dev/** 条目只服务 dev 自身的 CI。
+name: Warm pnpm store cache
+
+on:
+  push:
+    branches: ["main", "dev/**"]
+    paths:
+      - "pnpm-lock.yaml"
+      - ".github/workflows/warm-cache.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# 不设 cancel-in-progress：被取消的 warm 什么都保存不了；被顶替的排队 run
+# 会自然收敛到最新一次（omp 同语义）。
+concurrency:
+  group: warm-cache
+  cancel-in-progress: false
+
+jobs:
+  warm:
+    name: Seed pnpm store cache
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Resolve cache key
+        id: key
+        shell: bash
+        run: |
+          echo "key=pnpm-store-Linux-${{ hashFiles('pnpm-lock.yaml') }}" >> "$GITHUB_OUTPUT"
+          echo "prefix=pnpm-store-Linux-" >> "$GITHUB_OUTPUT"
+
+      # probe：条目已存在就不再重复上传（重复 save 同 key 会失败且浪费配额）。
+      # probe/save/prune 全部 continue-on-error：缓存写入是纯优化，失败绝不阻断。
+      - name: Probe existing cache entry
+        id: probe
+        continue-on-error: true
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.local/share/pnpm/store
+          key: ${{ steps.key.outputs.key }}
+          lookup-only: true
+
+      # fetch 只按锁文件把包拉进 store（不落 node_modules、不跑脚本），是最小生产动作；
+      # 消费方 ci.yml 的 pnpm install --frozen-lockfile 会从 store 硬链接落盘。
+      - name: Fill pnpm store
+        if: steps.probe.outputs.cache-hit != 'true'
+        run: pnpm fetch
+
+      - name: Save pnpm store cache
+        if: steps.probe.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.local/share/pnpm/store
+          key: ${{ steps.key.outputs.key }}
+
+      # 只保留同前缀最新 2 份条目：锁文件频繁变更不会把 10GB 配额吃满
+      # （GitHub 缓存按 ref 记账，这里清理的是当前推送分支名下的条目）。
+      - name: Prune superseded cache entries
+        if: steps.probe.outputs.cache-hit != 'true'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREFIX: ${{ steps.key.outputs.prefix }}
+        run: |
+          gh cache list --repo "$GITHUB_REPOSITORY" --ref "refs/heads/${GITHUB_REF_NAME}" \
+              --key "$PREFIX" --sort created_at --order desc --limit 100 --json id \
+              --jq '.[2:][].id' \
+            | while read -r id; do
+                gh cache delete "$id" --repo "$GITHUB_REPOSITORY" || true
+              done || true

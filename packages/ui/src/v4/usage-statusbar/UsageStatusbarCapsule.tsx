@@ -27,6 +27,12 @@ export interface UsageStatusbarCapsuleProps {
   tooltip?: ReactNode;
   /** 点击展开的面板内容；在场时胶囊渲染为 button + Popover 触发器。 */
   popoverContent?: ReactNode;
+  /**
+   * 相位状态点（specs/usage-statusbar.md「Tooltip 增强与实时动态显示口径」节）：
+   * control.phase === "running" 时值前的脉冲点，只表达「有请求在跑」这一请求边界
+   * 事实，不伪造实时速率；装饰件 aria-hidden。
+   */
+  pulse?: boolean;
   testId?: string;
   className?: string;
 }
@@ -38,6 +44,7 @@ export function UsageStatusbarCapsule({
   tone = "default",
   tooltip,
   popoverContent,
+  pulse = false,
   testId,
   className,
 }: UsageStatusbarCapsuleProps) {
@@ -54,7 +61,22 @@ export function UsageStatusbarCapsule({
           {icon}
         </span>
       ) : null}
-      <span className="min-w-0 truncate">{value}</span>
+      {pulse ? (
+        // 先例同 UsageSubagentPanel 的权威 running 状态点；motion-reduce 关动画。
+        <span
+          aria-hidden="true"
+          className="size-1.5 shrink-0 rounded-full bg-success animate-pulse motion-reduce:animate-none"
+        />
+      ) : null}
+      {/* keyed span（specs/usage-statusbar.md「Tooltip 增强与实时动态显示口径」节）：
+          key = 值字符串，真实事实变更 → 重挂载 → styles.css 的 160ms 淡入（双闸）；
+          值未变 → 同 key 不重挂载、动画不重放（流式高频 re-render 下零动画开销）。 */}
+      <span
+        key={typeof value === "string" ? value : undefined}
+        className="usage-statusbar-value-swap min-w-0 truncate"
+      >
+        {value}
+      </span>
     </>
   );
   const tooltipContent = tooltip ? (
@@ -62,7 +84,8 @@ export function UsageStatusbarCapsule({
       side="top"
       className="max-w-72 flex-col items-start gap-1.5 px-3 py-2 text-left"
     >
-      <span className="text-ui-base font-medium">{label}</span>
+      {/* tooltip 标题 = text-ui-sm（DESIGN.md「Tooltip：titles … use text-ui-sm」）。 */}
+      <span className="text-ui-sm font-medium">{label}</span>
       {tooltip}
     </TooltipContent>
   ) : null;

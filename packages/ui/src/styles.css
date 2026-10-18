@@ -1317,6 +1317,42 @@ body {
   animation: task-search-result-highlight 1.2s ease-out both;
 }
 
+/* 任务菜单侧栏定位的短暂高亮（specs/sidebar-task-reveal.md R3）：
+   hook 在定位成功后注入 .sidebar-task-reveal-highlight，动画结束或兜底超时后移除。
+   视觉语言沿用既有 reveal 高亮（brand 色 color-mix 渐隐 + inset 描边）。 */
+@keyframes sidebar-task-reveal-highlight {
+  0% {
+    background-color: color-mix(in oklab, var(--color-brand) 20%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--color-brand) 28%, transparent);
+  }
+
+  45% {
+    background-color: color-mix(in oklab, var(--color-brand) 14%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--color-brand) 20%, transparent);
+  }
+
+  100% {
+    background-color: transparent;
+    box-shadow: inset 0 0 0 1px transparent;
+  }
+}
+
+.sidebar-task-reveal-highlight {
+  animation: sidebar-task-reveal-highlight 1.2s ease-out both;
+}
+
+/* 双闸：系统偏好与应用内「减少动效」（data-acode-reduce-motion，写入者唯一为
+   lib/appearancePreferences.ts）任一生效时都跳过脉冲；滚动定位本身保留。 */
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-task-reveal-highlight {
+    animation: none;
+  }
+}
+
+[data-acode-reduce-motion="reduce"] .sidebar-task-reveal-highlight {
+  animation: none;
+}
+
 @keyframes fork-highlight-pulse {
   0% {
     background-color: transparent;
@@ -2151,4 +2187,32 @@ body {
 
 .prompt-mention[data-mention-category="plugins"]::before {
   border-radius: var(--radius-sm);
+}
+
+/* 用量状态栏胶囊值淡入过渡（specs/usage-statusbar.md「Tooltip 增强与实时动态显示口径」节）：
+ * 值包 keyed span（key = 值字符串），真实事实变更 → 重挂载 → 本动画；值未变不重挂载。
+ * 事件驱动事实的呈现过渡，不是流式估算的伪装。时长取 160ms（150-200ms 区间中值）。 */
+@keyframes usage-statusbar-value-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.usage-statusbar-value-swap {
+  animation: usage-statusbar-value-fade-in 160ms ease-out;
+}
+
+/* 双闸之一：prefers-reduced-motion 媒体查询基线（DESIGN.md 外观偏好轴 Rules）。 */
+@media (prefers-reduced-motion: reduce) {
+  .usage-statusbar-value-swap {
+    animation: none;
+  }
+}
+
+/* 双闸之二：应用内 reduce 覆盖，强制关动画（与媒体查询语义一致）。 */
+[data-acode-reduce-motion="reduce"] .usage-statusbar-value-swap {
+  animation: none;
 }

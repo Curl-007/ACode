@@ -6,6 +6,14 @@ import type {
   TurnHeaderRow,
   TurnHeaderStats,
 } from "@acode/shared/acode-protocol-v4";
+// hide-on-absent 判定拆至 usageStatusbarPresence（400 行 ratchet，纯移动）；此处
+// re-export 保持既有导入面（UsageStatusbar 与测试的 deep-import 不得破）。
+export {
+  hasToolCallRows,
+  resolveUsageStatusbarPresence,
+  type UsageStatusbarPresence,
+} from "@/v4/usage-statusbar/usageStatusbarPresence.js";
+import { hasToolCallRows } from "@/v4/usage-statusbar/usageStatusbarPresence.js";
 
 // 用量状态栏派生逻辑（specs/usage-statusbar.md「数据口径」节的 ui 消费端实现）。
 // 纯函数纪律：
@@ -191,6 +199,8 @@ export interface ToolCallAggregation {
   errorCount: number;
   /** 仍在飞（inputStreaming/pendingApproval/running）的调用数。 */
   activeCount: number;
+  /** 全会话最近一次工具错误消息（行序最后一条）；无错误 = null（specs/usage-statusbar.md「Tooltip 增强与实时动态显示口径」节）。 */
+  lastErrorMessage: string | null;
   byTool: ToolCallAggregationEntry[];
 }
 
@@ -204,6 +214,7 @@ const ZERO_TOOL_AGGREGATION: ToolCallAggregation = {
   totalCount: 0,
   errorCount: 0,
   activeCount: 0,
+  lastErrorMessage: null,
   byTool: [],
 };
 
@@ -211,19 +222,23 @@ export function aggregateToolCallRows(
   rows: readonly ConversationRow[] | null | undefined,
 ): ToolCallAggregation {
   const rowsList = rows ?? [];
-  const hasToolRows = rowsList.some((row) => row.kind === "toolCall");
-  if (!hasToolRows) return { ...ZERO_TOOL_AGGREGATION };
+  if (!hasToolCallRows(rowsList)) return { ...ZERO_TOOL_AGGREGATION };
   const byTool = new Map<string, ToolCallAggregationEntry & { durationSampled: boolean }>();
   const aggregation: ToolCallAggregation = {
     totalCount: 0,
     errorCount: 0,
     activeCount: 0,
+    lastErrorMessage: null,
     byTool: [],
   };
   for (const row of rowsList) {
     if (row.kind !== "toolCall") continue;
     aggregation.totalCount += 1;
-    if (row.status === "error") aggregation.errorCount += 1;
+    if (row.status === "error") {
+      aggregation.errorCount += 1;
+      // 行序最后一条错误即「最近错误」（行按时间追加），供 tooltip 单行展示。
+      aggregation.lastErrorMessage = row.error?.message ?? null;
+    }
     if (ACTIVE_TOOL_STATUSES.has(row.status)) aggregation.activeCount += 1;
     let entry = byTool.get(row.toolName);
     if (!entry) {

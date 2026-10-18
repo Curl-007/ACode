@@ -17,6 +17,8 @@ import {
   deriveLastCompletedTurnStats,
   deriveLastRequestTokensPerSecond,
   deriveTurnRateLine,
+  hasToolCallRows,
+  resolveUsageStatusbarPresence,
   summarizeSessionCumulative,
   USAGE_SPEED_TIER_FAST_TPS,
   USAGE_SPEED_TIER_SLOW_TPS,
@@ -265,6 +267,8 @@ test("aggregateToolCallRows：计数/错误标记/各工具耗时", () => {
   assert.equal(aggregation.totalCount, 3);
   assert.equal(aggregation.errorCount, 1);
   assert.equal(aggregation.activeCount, 1);
+  // 全会话最近错误（行序最后一条）供 tooltip 单行展示。
+  assert.equal(aggregation.lastErrorMessage, "boom");
   assert.equal(aggregation.byTool.length, 2);
   // 排序：count desc → 名称。
   assert.equal(aggregation.byTool[0]?.toolName, "Bash");
@@ -277,14 +281,38 @@ test("aggregateToolCallRows：计数/错误标记/各工具耗时", () => {
   assert.equal(aggregation.byTool[1]?.totalDurationMs, null);
 });
 
+test("aggregateToolCallRows：lastErrorMessage 取行序最后一条错误；无错误 = null", () => {
+  const rows: ConversationRow[] = [
+    makeToolCall({
+      toolName: "Bash",
+      status: "error",
+      error: { code: "E", message: "first failure" },
+    }),
+    makeToolCall({
+      toolName: "Grep",
+      status: "error",
+      error: { code: "E2", message: "latest failure" },
+    }),
+    makeToolCall({ toolName: "Read" }),
+  ];
+  const aggregation = aggregateToolCallRows(rows);
+  assert.equal(aggregation.errorCount, 2);
+  assert.equal(aggregation.lastErrorMessage, "latest failure");
+  assert.equal(aggregateToolCallRows([makeToolCall()]).lastErrorMessage, null);
+});
+
 test("aggregateToolCallRows：null/无 toolCall 行 → 零值", () => {
   assert.deepEqual(aggregateToolCallRows(null), {
     totalCount: 0,
     errorCount: 0,
     activeCount: 0,
+    lastErrorMessage: null,
     byTool: [],
   });
   assert.equal(aggregateToolCallRows([makeTurnHeader()]).totalCount, 0);
+  assert.equal(hasToolCallRows(null), false);
+  assert.equal(hasToolCallRows([makeTurnHeader()]), false);
+  assert.equal(hasToolCallRows([makeToolCall()]), true);
 });
 
 // ── 子智能体 ──
@@ -402,9 +430,99 @@ test("deriveTodayUsageTotals：命中当天单元格；无单元格/无快照 �
     totalTokens: 4200,
     turnCount: 9,
     toolCallCount: 21,
+    favoriteModel: null,
   });
   assert.equal(deriveTodayUsageTotals(snapshot, "2026-10-01"), null);
   assert.equal(deriveTodayUsageTotals(null, "2026-10-15"), null);
   assert.equal(deriveTodayUsageTotals(APP_USAGE_SNAPSHOT_STUB, "2026-10-15"), null);
   assert.equal(deriveTodayUsageTotals(snapshot, ""), null);
+});
+
+test("deriveTodayUsageTotals：主要模型来自 summary.favoriteModel.modelId；缺席 → null", () => {
+  const withFavorite: AppUsageSnapshot = {
+    ...APP_USAGE_SNAPSHOT_STUB,
+    summary: {
+      ...APP_USAGE_SNAPSHOT_STUB.summary,
+      favoriteModel: { modelId: "glm-5.3", totalTokens: 9000, share: 0.9 },
+    },
+    heatmap: {
+      startDate: "2026-10-15",
+      endDate: "2026-10-15",
+      maxTokens: 5000,
+      weeks: [
+        {
+          weekIndex: 0,
+          days: [
+            { date: "2026-10-15", level: 3, totalTokens: 4200, turnCount: 9, toolCallCount: 21 },
+          ],
+        },
+      ],
+    },
+  };
+  assert.equal(deriveTodayUsageTotals(withFavorite, "2026-10-15")?.favoriteModel, "glm-5.3");
+  // modelId 为 null（有占比统计但无模型名）→ null，不当空串渲染。
+  const nullModelId: AppUsageSnapshot = {
+    ...withFavorite,
+    summary: {
+      ...withFavorite.summary,
+      favoriteModel: { modelId: null, totalTokens: 1, share: 1 },
+    },
+  };
+  assert.equal(deriveTodayUsageTotals(nullModelId, "2026-10-15")?.favoriteModel, null);
+});
+
+// ── hide-on-absent（specs/usage-statusbar.md「hide-on-absent 空态规则」节）──
+
+test("resolveUsageStatusbarPresence：数据源缺席 → 对应胶囊隐藏；snapshot=null 只剩齿轮", () => {
+  assert.deepEqual(
+    resolveUsageStatusbarPresence({
+      usage: null,
+      lastRequest: null,
+      lastTurnStats: null,
+      hasToolCallRows: false,
+      todayTotals: null,
+      subagents: null,
+    }),
+    {
+      generationSpeed: false,
+      turnUsage: false,
+      sessionCumulative: false,
+      toolCalls: false,
+      todayTotal: false,
+      subagents: false,
+    },
+  );
+});
+
+test("resolveUsageStatusbarPresence：零值 ≠ 缺席——数据源在场、数值全 0 照常显示", () => {
+  assert.deepEqual(
+    resolveUsageStatusbarPresence({
+      usage: makeUsage({ inputTokens: 0, outputTokens: 0 }),
+      lastRequest: { outputTokens: 0, generationMs: 1000, completedAtMs: 1 },
+      lastTurnStats: makeStats({ inputTokens: 0, outputTokens: 0 }),
+      hasToolCallRows: true,
+      todayTotals: { totalTokens: 0, turnCount: 0, toolCallCount: 0, favoriteModel: null },
+      subagents: makeSubagents([]),
+    }),
+    {
+      generationSpeed: true,
+      turnUsage: true,
+      sessionCumulative: true,
+      toolCalls: true,
+      todayTotal: true,
+      subagents: false, // 空投影（无 running、endedTotal=0）不携带事实 → 隐藏
+    },
+  );
+  // 有已结束子代理（endedTotal>0）= 有事实 → 显示。
+  assert.equal(
+    resolveUsageStatusbarPresence({
+      usage: null,
+      lastRequest: null,
+      lastTurnStats: null,
+      hasToolCallRows: false,
+      todayTotals: null,
+      subagents: makeSubagents([], 3),
+    }).subagents,
+    true,
+  );
 });

@@ -43,7 +43,14 @@ export function TurnRateLine({ stats, enabled, className }: TurnRateLineProps) {
           data-testid="turn-rate-line"
         >
           <Zap aria-hidden="true" className="size-3.5 shrink-0" />
-          <span className="font-mono">{formatTokensPerSecond(locale, model.tokensPerSecond)}</span>
+          {/* tok/s 后缀走 i18n（specs/usage-statusbar.md「排版一致性」节）。 */}
+          <span className="font-mono">
+            {formatTokensPerSecond(
+              locale,
+              model.tokensPerSecond,
+              intl.formatMessage({ id: "chat.usageStatusbar.unit.tokensPerSecond" }),
+            )}
+          </span>
           <span aria-hidden="true">·</span>
           <span>
             {intl.formatMessage(
@@ -66,7 +73,8 @@ export function TurnRateLine({ stats, enabled, className }: TurnRateLineProps) {
         className="max-w-80 flex-col items-start gap-1 px-3 py-2 text-left"
         side="top"
       >
-        <span className="text-ui-base font-medium">
+        {/* tooltip 标题 = text-ui-sm（DESIGN.md「Tooltip：titles … use text-ui-sm」）。 */}
+        <span className="text-ui-sm font-medium">
           {intl.formatMessage({ id: "chat.usageStatusbar.rateLine.label" })}
         </span>
         {/* 口径差异必须随速率行解释：状态栏 = 最近一段请求；速率行 = 本问已入库多段

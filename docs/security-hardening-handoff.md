@@ -229,6 +229,28 @@ done
 - **诚实边界**：字段留空保存不会删除已存 Key（与 P1-5 前行为不同）——移除 Key 的正式入口是删除
   provider 或换 Key；如需「清空即删除」语义属后续产品决策。
 
+### 5.5 已存储 Key 的用户可见性（小眼睛按需 reveal，2026-10-18 增补）
+
+5.4 的占位符方案解决了「空框困惑」，但用户要求**能看到已存储 Key 的明文**（不强制隐私模式）。
+产品规则（对 5.4「不回显」的显式放宽，安全边界不变）：
+
+- **眼睛按钮在已存储态可点**：`storedInVault`（`hasProviderFormStoredApiKey`，真值在 vault、
+  表单只有 `credentialRef`）时眼睛不再 disabled；只读卡片（readOnlyEndpoints）同样放开——
+  **只读 = 不可改，不等于不可看**。
+- **按需 load 明文、仅展示层**：点眼睛展开且当前无草稿值时，UI 经
+  `credentialService.load(providerApiKeyCredentialKey(providerId))`（键拼法与
+  `packages/provider/src/provider-api-key-vault.ts` 的 `provider:apikey:<providerId>` 逐字对齐）
+  现查明文，只进输入框展示值，**不进 onChange / 草稿 / 保存链**——展示已存明文时输入框
+  readOnly，blur 不会把明文当新 Key 误存回 vault（幂等重写也是无谓的写放大）。
+- **隐藏即清**：收起眼睛立即清空已 reveal 的明文 state；provider 切换/组件卸载同样清空，
+  并使在途 load 失效（竞态守卫：返回时序号已过期则丢弃结果，不跨 provider 串显文）。
+- **绝不落日志**：明文与展示值不出现在任何 `logger.*` / console 输出；load 失败（凭据缺失、
+  解密失败）给用户可见的失败反馈（复用 ProviderDetailFeedback），只含 error 消息原文，
+  不含明文。vault 仍是唯一真值所有者，本特性不新增任何持久化路径。
+- **落点**：`ApiKeyInput.tsx`（眼睛不 disabled、visible 即 text、aria-label 双语）、
+  `ProviderCardSections.tsx`（透传）、`InlineEditableProviderCard.tsx`
+  （reveal state + load 竞态守卫 + 展示值与草稿值分离）。
+
 ### 历史决策记录（保留供回溯）
 当初的选项是「修」或 `git revert 8d80218 8514adf` 回滚 P1-5。选择了修：P1-5 的设计（credentialRef +
 异步 hydrate + revision 保 ref 形态）经得起推敲，漏的只是注入完整性，且每条修复都有回归测试钉住。

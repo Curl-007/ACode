@@ -80,6 +80,11 @@ export function UsageStatusbarSettingsPopover() {
             setUsageStatusbarPreferences({ rateLineEnabled: checked });
           }}
         />
+        {/* hide-on-absent 说明（specs/usage-statusbar.md「hide-on-absent 空态规则」节）：
+            开关只决定「要不要这一项」，数据源缺席仍自动隐藏（零值 ≠ 缺席）。 */}
+        <span className="border-t border-border px-2 pb-1 pt-1.5 text-ui-xs leading-snug text-foreground-subtle">
+          {intl.formatMessage({ id: "chat.usageStatusbar.settings.autoHideNote" })}
+        </span>
       </PopoverContent>
     </Popover>
   );

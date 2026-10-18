@@ -15,7 +15,7 @@ import {
   listSessionConflicts,
   resolveConflictWrite,
 } from "../conflict/index.js";
-import type { ReadFileStateEntry, ToolExecutionContext } from "../types.js";
+import type { ToolExecutionContext } from "../types.js";
 
 export { isConflictUri } from "../conflict/index.js";
 
@@ -29,7 +29,7 @@ export interface ConflictWriteToolCallInput {
     filePath: string,
     contentLf: string,
     revision: FileSystemReadTextResult["revision"],
-  ) => ReadFileStateEntry | undefined;
+  ) => void;
 }
 
 export async function resolveConflictWriteToolCall(input: ConflictWriteToolCallInput) {

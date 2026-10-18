@@ -184,14 +184,18 @@
   加载已解压）。任何 puppeteer 系客户端用 `browserURL http://127.0.0.1:9224` 或
   `agent-browser --cdp 9224` 直连 relay，即可驱动用户日常 Chrome 标签。技能文档
   （`.agents/skills/agent-browser/SKILL.md`）补充该路径与安全须知。
-- **共享桶申请（未实施）**：
-  1. `apps/acode-cli/package.json`（CLI 入口/命令注册表）：申请注册显式启动入口
-     （如 `acode browser relay` 子命令或 dev 脚本），替代「调用方手写几行启动代码」，
-     并承载 `--token`/`--no-group`/`--port` 旗标。
-  2. `packages/browser-use-plugin/package.json`（插件依赖/入口清单）：若 relay 服务端
-     需要成为插件可执行产物（`scripts/relay-server.mjs` 由 build.mjs 二次 esbuild
-     打包），申请在该 package.json 登记（当前实现放 `src/relay/`，类型检查经插件自身
-     tsc，运行入口可由消费方直接 import 源内模块，暂不需要新依赖登记）。
+- **共享桶申请裁决（编排器，2026-10-18）**：
+  1. ~~`acode browser relay` CLI 子命令~~ **不落 CLI 子命令**：@acode/cli 依赖
+     @acode/browser-use-plugin 会反转「插件是叶子包」的依赖方向（现状无任何包依赖
+     插件包）。启动面改落插件包内：`src/relay/main.ts` 独立启动器（纯函数
+     parseRelayArgs 承载 `--port`/`--token`/`--no-group`/`--help`，token 值永不进
+     任何输出行；EADDRINUSE 显式报「端口被占」退出码 1，不静默抢占）。CLI 子命令
+     留作产品决策（涉及命令注册表与 help 面），需要时另行立项。
+  2. `scripts/build.mjs` 已增第二产物 `scripts/relay-server.mjs`（同一套 esbuild
+     选项+chmod 755，smoke test 复用同入口）；打包态启动 =
+     `node <plugin>/scripts/relay-server.mjs`，开发树 =
+     `node --import tsx <plugin>/src/relay/main.ts`。SKILL.md 第 2 步已给具体命令。
+     启动器测试：`apps/acode-cli/tests/browser-relay-launcher.test.mjs`。
   3. core `daemon broker`（未来）：omp 用全局守护 broker 按租约跨进程保活 relay；
      ACode wave 1 的租约是**进程内**的——relay 活在首个消费者所在进程里，该进程退出
      relay 即停（扩展自动重连下一个启动 relay 的进程）。跨进程 broker 属架构级新面，

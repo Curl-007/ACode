@@ -352,7 +352,7 @@ Chrome 136+ refuses `--remote-debugging-port` on the default profile, so `--auto
 Setup (explicit opt-in; the relay never starts by itself):
 
 1. Load the unpacked extension from `apps/acode-cli/packages/browser-use-plugin/relay-extension/` via `chrome://extensions` → Developer mode → Load unpacked. If the relay runs with a non-default port or token, set the same values in the extension's options page (extension badge shows `on` when connected).
-2. Start the relay server (in-process lease manager; see `apps/acode-cli/specs/browser-relay-inplace-capture.md`). Prefer a token when untrusted local processes are a concern.
+2. Start the relay server (explicit opt-in; loopback only). Packaged build: `node apps/acode-cli/packages/browser-use-plugin/scripts/relay-server.mjs --port 9224 [--token <secret>] [--no-group]`; dev tree: same flags via `node --import tsx apps/acode-cli/packages/browser-use-plugin/src/relay/main.ts`. Prefer a token when untrusted local processes are a concern; the token value is never echoed. `EADDRINUSE` means another relay (or process) already holds the port — the launcher exits 1 instead of silently taking over. Details: `apps/acode-cli/specs/browser-relay-inplace-capture.md`.
 3. Drive it:
 
 ```bash

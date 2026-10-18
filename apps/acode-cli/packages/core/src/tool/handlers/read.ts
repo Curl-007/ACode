@@ -39,6 +39,7 @@ import { inferImageMimeFromPath, readImageFile } from "./read-image.js";
 import { inferVideoMimeFromPath } from "../../runtime/helpers/attachment-video.js";
 import { readVideoFile } from "./read-video.js";
 import { formatReadTextOutput, readTextFileForModel } from "./read-text.js";
+import { isSkillUri, resolveSkillUriToPhysicalPath } from "./read-skill.js";
 import {
   formatReadPdfOutput,
   formatReadPdfPagesOutput,
@@ -58,7 +59,7 @@ const FILE_UNCHANGED_STUB =
 const READ_PROVIDER_DESCRIPTION = [
   "Reads a file from the local filesystem.",
   "",
-  "- `file_path` must be an absolute path.",
+  "- `file_path` must be an absolute path, or a `skill://<name>` / `skill://<name>/<relative-path>` URI to read a discovered skill's SKILL.md or an asset inside that skill's directory (sandboxed to the skill folder).",
   `- Reads up to ${READ_DEFAULT_MAX_LINES} lines by default.`,
   "- You can optionally specify a line offset and limit (especially handy for long files), but it's recommended to read the whole file by not providing these parameters",
   "- Results are returned using cat -n format, with line numbers starting at 1",
@@ -157,12 +158,16 @@ const readHandler: ToolHandler = async (input, context) => {
     );
   }
 
-  const filePath = resolveWorkspacePath({
-    inputPath: file_path,
-    operation: "read",
-    workingDirectory: context.workingDirectory,
-    workspaceRoot: context.workspaceRoot,
-  });
+  const filePath = isSkillUri(file_path)
+    ? // skill:// scheme 分支（specs/skill-uri-read.md）：先把 URI 沙箱解析为技能
+      // 目录内物理路径，再落入下方既有管线；本地路径输入行为与改动前一致。
+      await resolveSkillUriToPhysicalPath(file_path, context)
+    : resolveWorkspacePath({
+        inputPath: file_path,
+        operation: "read",
+        workingDirectory: context.workingDirectory,
+        workspaceRoot: context.workspaceRoot,
+      });
 
   try {
     const imageMime = inferImageMimeFromPath(filePath);

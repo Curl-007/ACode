@@ -19,7 +19,6 @@ import type { BashTimeoutPolicy } from "../bash-timeout-policy.js";
 import { createJsToolEntry, jsToolEntry } from "./node-repl.js";
 import { globToolEntry } from "./glob.js";
 import { grepToolEntry } from "./grep.js";
-// LSP 诊断回流闭环（specs/lsp-diagnostics-loop.md）：13 action；只读 action 按输入免审批。
 import { lspToolEntry } from "./lsp.js";
 import { webFetchToolEntry } from "./webfetch.js";
 import { webSearchToolEntry } from "./websearch.js";

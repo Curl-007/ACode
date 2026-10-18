@@ -5,6 +5,9 @@ import { buildACodeStreamingToolInputPreview } from "@acode/shared";
 import type { ToolCallRow } from "@acode/shared/acode-protocol-v4";
 import type { TaskChatToolCallTreeNode } from "@/lib/toolCallTree.js";
 import { normalizeWrappedErrorText } from "@/lib/toolError.js";
+// 本文件唯一的非纯输入：todo 置换计数经 WeakMap 侧信道由投影层登记（specs/
+// todo-displacement.md R2）——v4 row 是协议数据不可变异，计数又不能进 wire。
+import { getTodoSupersededCount } from "@/v4/todoDisplacement.js";
 
 // v4 status → 旧 ChatToolCall.status（mapToolStatus 的输入词表：
 // pending/in_progress/completed/failed/stopped）。
@@ -122,6 +125,11 @@ export function toolCallRowToLegacyNode(row: ToolCallRow): TaskChatToolCallTreeN
         streamingRawInputLength: inputPreview.streamingRawInputLength,
       },
       startedAt: typeof row.startedAt === "number" ? row.startedAt : undefined,
+      // todo 原地置换计数（specs/todo-displacement.md R2）：投影层经 WeakMap 侧信道
+      // 登记，桥接层读取；缺席（legacy 快照/非锚点行）时字段不出现。
+      ...(getTodoSupersededCount(row) !== undefined
+        ? { todoSupersededCount: getTodoSupersededCount(row) }
+        : {}),
     },
     // subagent 不内嵌 child rows；v4 工具行没有子树，嵌套工具在旧形态里也
     // 由独立 row（subagent/toolCall）表达。

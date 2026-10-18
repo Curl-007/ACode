@@ -5144,6 +5144,7 @@ const zhCN: Record<string, string> = {
   "chat.toolCall.workflow.subagentModel.tooltip": "子代理运行在 {model}。主代理仍使用会话模型。",
   "chat.toolCall.todo.updating": "正在更新待办",
   "chat.toolCall.todo.updated": "已更新待办",
+  "chat.toolCall.todo.superseded": "已置换 {count} 次先前更新",
   "chat.toolCall.search.find": "查找",
   "chat.toolCall.search.findWithQuery": "查找 {query}",
   "chat.toolCall.search.list": "列出",

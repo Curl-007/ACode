@@ -5365,6 +5365,7 @@ const enUS: Record<string, string> = {
     "Subagents run on {model}. The main agent stays on the session model.",
   "chat.toolCall.todo.updating": "Updating todos",
   "chat.toolCall.todo.updated": "Updated todo",
+  "chat.toolCall.todo.superseded": "supersedes {count} earlier updates",
   "chat.toolCall.search.find": "Find",
   "chat.toolCall.search.findWithQuery": "Find {query}",
   "chat.toolCall.search.list": "List",

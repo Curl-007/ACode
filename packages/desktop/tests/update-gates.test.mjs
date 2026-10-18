@@ -376,6 +376,8 @@ async function loadAutoUpdaterModule({ appVersion = "1.0.0", logger } = {}) {
   // app mock 未提供 getPath，journal 初始化按契约降级为无账本（不影响门控行为断言）。
   const updaterJournalModule = await load("updaterJournal", {
     "node:fs/promises": require("node:fs/promises"),
+    // updaterJournal.ts 拆分出的 schema/解析面（400 行 ratchet），纯模块无自身依赖。
+    "./updaterJournalFormat.js": await load("updaterJournalFormat", {}),
   });
   const updaterSweepModule = await load("updaterSweep", {
     "node:fs/promises": require("node:fs/promises"),

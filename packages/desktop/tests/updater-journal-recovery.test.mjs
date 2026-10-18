@@ -28,6 +28,9 @@ async function load(relative, imports = {}) {
   return exports;
 }
 const logger = { info() {}, warn() {}, error() {}, debug() {} };
+// updaterJournal.ts 的 schema/解析面拆分件（400 行 ratchet）；替身加载器白名单
+// 需要显式登记该运行时 import。纯模块，无自身依赖。
+const journalFormatModule = await load("updaterJournalFormat", {});
 const nodeFsPromises = require("node:fs/promises");
 const nodeFs = require("node:fs");
 const nodePath = require("node:path");
@@ -85,6 +88,7 @@ function memoryFs() {
 test("journal append persists via temp+rename atomically and reads back", async () => {
   const { createUpdateJournalStore } = await load("updaterJournal", {
     "node:fs/promises": nodeFsPromises,
+    "./updaterJournalFormat.js": journalFormatModule,
   });
   const mem = memoryFs();
   const store = createUpdateJournalStore({
@@ -121,6 +125,7 @@ test("journal append persists via temp+rename atomically and reads back", async 
 test("journal rename failure degrades to direct write (best-effort persistence)", async () => {
   const { createUpdateJournalStore } = await load("updaterJournal", {
     "node:fs/promises": nodeFsPromises,
+    "./updaterJournalFormat.js": journalFormatModule,
   });
   const mem = memoryFs();
   mem.setFailRename(true);
@@ -146,6 +151,7 @@ test("journal rename failure degrades to direct write (best-effort persistence)"
 test("journal truncates to generation cap and keeps original generations", async () => {
   const { createUpdateJournalStore, UPDATE_JOURNAL_MAX_ENTRIES } = await load("updaterJournal", {
     "node:fs/promises": nodeFsPromises,
+    "./updaterJournalFormat.js": journalFormatModule,
   });
   const mem = memoryFs();
   const store = createUpdateJournalStore({ filePath: "/x/update-journal.json", logger, fs: mem.impl });
@@ -174,6 +180,7 @@ test("journal truncates to generation cap and keeps original generations", async
 test("journal markOutcome is idempotent (only handed-off entries transition)", async () => {
   const { createUpdateJournalStore } = await load("updaterJournal", {
     "node:fs/promises": nodeFsPromises,
+    "./updaterJournalFormat.js": journalFormatModule,
   });
   const mem = memoryFs();
   const store = createUpdateJournalStore({ filePath: "/x/update-journal.json", logger, fs: mem.impl });
@@ -200,6 +207,7 @@ test("journal markOutcome is idempotent (only handed-off entries transition)", a
 test("journal append supersedes a lingering handed-off entry (no double open cases)", async () => {
   const { createUpdateJournalStore } = await load("updaterJournal", {
     "node:fs/promises": nodeFsPromises,
+    "./updaterJournalFormat.js": journalFormatModule,
   });
   const mem = memoryFs();
   const store = createUpdateJournalStore({ filePath: "/x/update-journal.json", logger, fs: mem.impl });
@@ -234,6 +242,7 @@ test("journal append supersedes a lingering handed-off entry (no double open cas
 test("journal forward compatibility: unknown fields/enums tolerated, malformed entries dropped", async () => {
   const { createUpdateJournalStore, deriveStartupRecoveryPlan } = await load("updaterJournal", {
     "node:fs/promises": nodeFsPromises,
+    "./updaterJournalFormat.js": journalFormatModule,
   });
   const filePath = "/x/update-journal.json";
   const mem = memoryFs();
@@ -277,6 +286,7 @@ test("journal forward compatibility: unknown fields/enums tolerated, malformed e
 test("journal malformed json degrades to null (no-journal path)", async () => {
   const { createUpdateJournalStore } = await load("updaterJournal", {
     "node:fs/promises": nodeFsPromises,
+    "./updaterJournalFormat.js": journalFormatModule,
   });
   const mem = memoryFs();
   const filePath = "/x/update-journal.json";
@@ -288,6 +298,7 @@ test("journal malformed json degrades to null (no-journal path)", async () => {
 test("recovery plan matrix: verify / incident-unchanged / diverged / closed", async () => {
   const { deriveStartupRecoveryPlan } = await load("updaterJournal", {
     "node:fs/promises": nodeFsPromises,
+    "./updaterJournalFormat.js": journalFormatModule,
   });
   const entry = (outcome) => ({
     generation: 1,
@@ -342,6 +353,7 @@ test("sweep resolves pending dir per platform with yml name and appName fallback
   const { resolveUpdaterPendingDir, resolveUpdaterCacheBasePath, parseUpdaterCacheDirName } =
     await load("updaterSweep", {
       "node:fs/promises": nodeFsPromises,
+    "./updaterJournalFormat.js": journalFormatModule,
       "node:fs": nodeFs,
       "node:path": nodePath,
       "node:crypto": nodeCrypto,
@@ -387,6 +399,7 @@ test("sweep resolves pending dir per platform with yml name and appName fallback
 function sweepLoader() {
   return load("updaterSweep", {
     "node:fs/promises": nodeFsPromises,
+    "./updaterJournalFormat.js": journalFormatModule,
     "node:fs": nodeFs,
     "node:path": nodePath,
     "node:crypto": nodeCrypto,
@@ -537,6 +550,7 @@ async function loadAutoUpdaterWithStubs({ userDataDir, homeDir, updaterStubs }) 
   });
   const updaterJournalModule = await load("updaterJournal", {
     "node:fs/promises": nodeFsPromises,
+    "./updaterJournalFormat.js": journalFormatModule,
   });
   const updaterSweepModule = await sweepLoader();
   const handlers = new Map();
@@ -590,6 +604,7 @@ async function loadAutoUpdaterWithStubs({ userDataDir, homeDir, updaterStubs }) 
     "./updaterJournal.js": updaterJournalModule,
     "./updaterSweep.js": updaterSweepModule,
     "node:fs/promises": nodeFsPromises,
+    "./updaterJournalFormat.js": journalFormatModule,
     "node:path": nodePath,
   });
   return { module, handlers };

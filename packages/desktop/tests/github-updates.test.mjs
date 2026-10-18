@@ -84,6 +84,8 @@ test("github feed, overrides, manual check and native download/install remain wi
   // 两个模块纯 Node（无 electron 依赖），这里补载真实实现 + 其 node builtin 依赖。
   const updaterJournalModule = await load("updaterJournal", {
     "node:fs/promises": require("node:fs/promises"),
+    // updaterJournal.ts 拆分出的 schema/解析面（400 行 ratchet），纯模块无自身依赖。
+    "./updaterJournalFormat.js": await load("updaterJournalFormat", {}),
   });
   const updaterSweepModule = await load("updaterSweep", {
     "node:fs/promises": require("node:fs/promises"),

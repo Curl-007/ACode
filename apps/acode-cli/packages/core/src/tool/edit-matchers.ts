@@ -241,8 +241,7 @@ function collectFuzzyBlockCandidates(content: string, search: string): Candidate
   for (const tier of FUZZY_BLOCK_TIERS) {
     const candidates: Candidate[] = [];
     for (let index = 0; index <= contentLines.length - searchLines.length; index += 1) {
-      const block = contentLines.slice(index, index + searchLines.length);
-      if (blockFuzzyScore(block, searchLines, tier) >= tier) {
+      if (blockFuzzyScore(contentLines.slice(index, index + searchLines.length), searchLines, tier) >= tier) {
         candidates.push(blockCandidate(contentLines, index, searchLines.length));
       }
     }

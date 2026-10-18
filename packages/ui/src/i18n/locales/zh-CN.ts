@@ -2408,6 +2408,12 @@ const zhCN: Record<string, string> = {
   "settings.mcp.status.errorReason": "MCP 服务器连接失败。",
   "settings.mcp.status.disconnectedReason": "MCP 服务器当前未连接。",
   "settings.mcp.status.unknownReason": "暂时无法获取 MCP 服务器状态。",
+  "settings.mcp.suspension.connectFailures":
+    "连续 {count} 次连接失败，自动恢复已暂停；需手动重连（关闭开关后重新打开）",
+  "settings.mcp.suspension.inCallCrashes":
+    "连续 {count} 次调用中途崩溃，自动恢复已暂停；需手动重连（关闭开关后重新打开）",
+  "settings.mcp.suspension.crashStorm":
+    "短时间内频繁无输出断连（crash storm），自动恢复已暂停；需手动重连（关闭开关后重新打开）",
   "settings.mcp.failure.config_invalid": "MCP 配置无效，请检查服务器配置。",
   "settings.mcp.failure.runtime_unavailable": "MCP 运行环境不可用，请检查插件和本地依赖。",
   "settings.mcp.failure.process_start_failed": "MCP 进程启动失败。",

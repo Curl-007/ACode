@@ -130,6 +130,39 @@ R2.1 的文案面在 `adapters/src/mcp/model-guidance.ts`（自 index.ts 迁出�
 - 文案纪律不变：不粘贴堆栈、不含 env/凭据、保留「Do not retry this tool in a
   loop」既有短语（验收测试钉住）。
 
+### R2.3 熔断挂起状态可视化（2026-10-18 增量，UX 波 A1）
+
+R2 预告的 desktop 消费面接线（「范围外接线」第 1 条的状态投影部分）。事件推送
+（McpServerStatusChange 实时接线）仍不在本批：设置页沿用 mcp/list 拉取投影。
+
+- **wire schema 扩展（correctness fix）**：`acodeMcpServerStatusSnapshotSchema`
+  （packages/shared legacy 面）增加**可选** `reconnectSuspension` 对象字段
+  （consecutiveFailures ≥0 整数、consecutiveInCallCrashes 可选 ≥0 整数、
+  suspendedAt 非空串、suspendedBy 可选三维枚举，`.strict()`）。此前 live status
+  携带该字段时 `acodeMcpListResultSchema.parse` 的 strict 校验直接抛错——**熔断
+  发生的那一刻 mcp/list 整条命令失败**，设置页拿不到任何 server 状态。附加可选
+  字段是 R2「不新增枚举值、fail-safe」设计的既定后续，不属于 legacy 面新增
+  命令/事件。
+- **UI 映射**（mcpStoreStatusList）：failed/disconnected 两态透传
+  reconnectSuspension；快照缺失该字段时必须清除 store 内旧值（恢复后不得残留
+  挂起横幅）。connected/connecting 恒不携带（R1：显式复位先于连接）。
+- **展示**：server 行在 description 下渲染琥珀色挂起提示，文案按 suspendedBy
+  三维分叉（缺失按 connect_failures 理解，对齐 contracts 注释）：
+  connect_failures=连续连接失败 N 次；in_call_crashes=连续中途崩溃 N 次；
+  crash_storm=短窗口频繁无输出断连（无计数字段，不带 N）。状态点在挂起时进入
+  attention（琥珀）语义；tooltip reason 优先显示挂起文案。
+- **手动重连指引**：提示文案包含「需手动重连」；恢复手段即 R1 既有显式操作
+  （设置页刷新=mode:connect 全量收敛、server 开关切换、session 启动），不新增
+  按钮。i18n：zh-CN/en-US 各 3 键（settings.mcp.suspension.{connectFailures,
+  inCallCrashes,crashStorm}）。
+- **验收场景**：
+  1. live status 携带 reconnectSuspension 时 `acodeMcpListResultSchema.parse`
+     通过且字段完整保留（回归：此前抛 ZodError）。
+  2. 非法形态（consecutiveFailures 为负 / suspendedBy 出集 / 多余键）仍被拒。
+  3. mergeMcpServerStatusSnapshots：failed 快照带挂起 → server.reconnectSuspension
+     保留；下一轮快照无挂起 → 字段清除。
+  4. suspendedBy 缺失的挂起（历史形态）按 connect_failures 文案渲染。
+
 ### R3 readOnlyHint → is_write 写审计（第一方 server）
 
 - **is_write 推导**（`deriveMcpToolIsWrite`）：`annotations.readOnlyHint === true`

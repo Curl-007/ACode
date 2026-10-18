@@ -2539,6 +2539,12 @@ const enUS: Record<string, string> = {
   "settings.mcp.status.errorReason": "The MCP server failed to connect.",
   "settings.mcp.status.disconnectedReason": "The MCP server is not connected.",
   "settings.mcp.status.unknownReason": "The MCP server status is unavailable.",
+  "settings.mcp.suspension.connectFailures":
+    "Auto-reconnect suspended after {count} consecutive connection failures — toggle the server off and on to reconnect",
+  "settings.mcp.suspension.inCallCrashes":
+    "Auto-reconnect suspended after {count} consecutive in-call crashes — toggle the server off and on to reconnect",
+  "settings.mcp.suspension.crashStorm":
+    "Auto-reconnect suspended after a crash storm of output-less disconnects — toggle the server off and on to reconnect",
   "settings.mcp.failure.config_invalid":
     "The MCP configuration is invalid. Check the server settings.",
   "settings.mcp.failure.runtime_unavailable":

@@ -1,13 +1,59 @@
-import { InfoIcon } from "lucide-react";
-import type { McpServerFailureKind } from "@acode/shared";
+import { InfoIcon, TriangleAlertIcon } from "lucide-react";
+import type { ACodeMcpReconnectSuspension, McpServerFailureKind } from "@acode/shared";
 import { Button } from "@/components/ui/button.js";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover.js";
-import { useACodeIntl } from "@/i18n/IntlProvider.js";
+import { useACodeIntl, type IntlInstance } from "@/i18n/IntlProvider.js";
 
 export function resolveMcpFailureMessageId(
   failureKind: McpServerFailureKind | undefined,
 ): `settings.mcp.failure.${McpServerFailureKind}` {
   return `settings.mcp.failure.${failureKind ?? "connection_failed"}`;
+}
+
+// 熔断挂起文案（specs/mcp-lifecycle-ttl-approval.md R2.3）：按 suspendedBy 三维分叉；
+// 缺失按 connect_failures 理解（contracts mcp-status.port.ts 的历史形态约定）。
+export function resolveMcpSuspensionMessageId(
+  suspendedBy: ACodeMcpReconnectSuspension["suspendedBy"],
+):
+  | "settings.mcp.suspension.connectFailures"
+  | "settings.mcp.suspension.inCallCrashes"
+  | "settings.mcp.suspension.crashStorm" {
+  switch (suspendedBy) {
+    case "in_call_crashes":
+      return "settings.mcp.suspension.inCallCrashes";
+    case "crash_storm":
+      return "settings.mcp.suspension.crashStorm";
+    case "connect_failures":
+    case undefined:
+      return "settings.mcp.suspension.connectFailures";
+  }
+}
+
+/** 挂起提示的格式化文案；tooltip reason 与横幅共用同一实现，避免两处措辞漂移。 */
+export function formatMcpSuspensionMessage(
+  intl: IntlInstance,
+  suspension: ACodeMcpReconnectSuspension,
+): string {
+  const messageId = resolveMcpSuspensionMessageId(suspension.suspendedBy);
+  if (messageId === "settings.mcp.suspension.crashStorm") {
+    // crash_storm 维度没有随行的窗口计数字段（contracts 只有双计数器），文案不带 N。
+    return intl.formatMessage({ id: messageId });
+  }
+  const count =
+    suspension.suspendedBy === "in_call_crashes"
+      ? (suspension.consecutiveInCallCrashes ?? suspension.consecutiveFailures)
+      : suspension.consecutiveFailures;
+  return intl.formatMessage({ id: messageId }, { count: String(count) });
+}
+
+export function McpSuspensionNotice({ suspension }: { suspension: ACodeMcpReconnectSuspension }) {
+  const { intl } = useACodeIntl();
+  return (
+    <div className="mt-1 flex min-w-0 items-start gap-1 text-ui-base text-warning">
+      <TriangleAlertIcon className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+      <span className="min-w-0">{formatMcpSuspensionMessage(intl, suspension)}</span>
+    </div>
+  );
 }
 
 export function McpFailurePresentation({

@@ -166,9 +166,11 @@ optional，链路 = 发射点 → 累加器 → turnHeader.stats → 速率行�
    旁路与旧事件缺席不造假值（与 generationMs 同纪律）。
 7. `bootstrap/src/acode-protocol-v4/product-projection-usage.ts`：
    `TurnUsageAccumulator` += `servedModels`（"provider/model" 去重、请求序、
-   上限 4）与 `cacheMisses`（`cacheHit.missCauses` 各值求和）；
-   `buildTurnHeaderStats` flush 为 `servedModels?` / `promptCacheMisses?`
-   （0/空 = 缺席不投影）。
+   上限 4）与缓存未命中快照对（`cacheMissBaseline`/`cacheMissLast`）——
+   **missCauses 是进程内累计快照，求和会跨请求重复计数**（评分自审抓出），
+   每轮值 = 轮末快照 − 轮起基线（投影会话级 `lastTurnCacheMissTotal` 种子，
+   flush 时前推；无快照轮基线不动）；`buildTurnHeaderStats` flush 为
+   `servedModels?` / `promptCacheMisses?`（0/空 = 缺席不投影）。
 8. `packages/shared/src/acode-protocol-v4/rows.ts`：`turnHeaderStatsSchema` +=
    `servedModels: string[](≤4×256)` 与 `promptCacheMisses: int≥0`（optional）。
 9. UI（packages/ui）：`deriveTurnRateLine` 透出两事实；速率行在

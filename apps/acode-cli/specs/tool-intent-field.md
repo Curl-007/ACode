@@ -49,7 +49,10 @@ omp 给每个工具 schema 注入一个 `i` 字符串参数：模型每次调用
   title 属性即悬浮提示，**全部渲染器零改动**获得卡头意图提示（omp ToolView
   head title=intent 同形态）。raw 通道（ModelTrajectory 调试面）保留原始
   args 含 `i`（调试如实）。
-- 权限对话框消费同一 legacy 桥接 → 审批者见干净参数 + title 意图。
+- 权限对话框消费的是 pendingInteractions 的**原始 input**（不经本桥接）：开启
+  态下审批者会看到 `i` 键——意图对审批者有正面价值（omp 同款哲学：批准者看到
+  动机），但键形态未加工；如需剥离/美化在 pendingInteractionAdapter 另批处理
+  （评分自审勘误：初稿误称权限面走 legacy 桥接）。缺省关闭下无任何影响。
 - CLI TUI 显示面本批不动（登记：开启态 TUI args JSON 可能含 `i`，缺省关闭
   下无影响）。
 

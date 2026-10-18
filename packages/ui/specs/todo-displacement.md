@@ -46,8 +46,9 @@ omp 的语义：todo/wait 是 displaceable 工具——最新结果**原地置�
 
 todo 族不参与 explore/execute/changes 分组（identity family = "todo"，
 isExploreToolCall 不命中）；置换预扫描在分组循环之前完成，被置换行直接从
-items 缺席，不影响其他行的分组连续性判定（todo 行本就不属于任何分组族，
-其缺席不会切断只读/写入序列——与现状渲染顺序一致）。
+items 缺席。todo 行本就不属于任何分组族，其缺席不会**切断**既有分组；被置换
+行两侧的只读行会因此新增相邻关系、可能升级为 exploreGroup（噪音只减不增，
+评分自审勘误：初稿「与现状渲染顺序一致」措辞不准）。
 
 ## 状态所有者
 

@@ -19,8 +19,14 @@ export interface TurnUsageAccumulator {
   modelRequestCount: number;
   /** 本轮服务过的模型身份（去重、请求序、上限 4）；≥2 = 轮中模型晋升（多模型轮标记）。 */
   servedModels: string[];
-  /** 本轮提示缓存未命中归因计数之和（cacheHit.missCauses 各值累加）；0 = 缺席不投影。 */
-  cacheMisses: number;
+  /**
+   * 提示缓存未命中：**进程内累计快照**语义（contracts missCauses 注释）——
+   * cacheMissLast = 本轮最后一次快照总量，cacheMissBaseline = 轮起点基线
+   * （投影会话级 lastTurnCacheMissTotal 种子）。每轮值 = max(0, last − baseline)；
+   * 对快照求和会跨请求重复计数（评分自审抓出的真 bug，2026-10-18 修正）。
+   */
+  cacheMissBaseline: number;
+  cacheMissLast: number | undefined;
 }
 
 /** servedModels 有界纪律：display 面字段，去重后仍限 4 项（异常轮不撑爆 row）。 */
@@ -48,8 +54,9 @@ function appendServedModel(
   return [...previous, formatted];
 }
 
-function sumCacheMissCauses(missCauses: unknown): number {
-  if (!missCauses || typeof missCauses !== "object") return 0;
+function readCacheMissSnapshot(missCauses: unknown): number | undefined {
+  // missCauses 缺席（旁路/旧事件）≠ 0：返回 undefined 让 cacheMissLast 保持前值。
+  if (!missCauses || typeof missCauses !== "object") return undefined;
   let total = 0;
   for (const value of Object.values(missCauses as Record<string, unknown>)) {
     const count = nonNegativeNumber(value);
@@ -89,6 +96,7 @@ export function modelCompleteCarriesUsageFacts(payload: ModelCompletePayload): b
 export function accumulateTurnUsage(
   previous: TurnUsageAccumulator | undefined,
   payload: ModelCompletePayload,
+  options?: { cacheMissBaseline?: number },
 ): TurnUsageAccumulator {
   const usage = (payload.usage ?? {}) as ModelUsage;
   const base: TurnUsageAccumulator = previous ?? {
@@ -101,7 +109,9 @@ export function accumulateTurnUsage(
     timeToFirstTokenMs: undefined,
     modelRequestCount: 0,
     servedModels: [],
-    cacheMisses: 0,
+    // 基线只在累加器创建时种子一次（投影传入上一轮末快照总量）。
+    cacheMissBaseline: Math.max(0, Math.floor(options?.cacheMissBaseline ?? 0)),
+    cacheMissLast: undefined,
   };
   const generationMs = nonNegativeNumber(payload.generationMs);
   const timeToFirstTokenMs = nonNegativeNumber(payload.timeToFirstTokenMs);
@@ -118,7 +128,10 @@ export function accumulateTurnUsage(
     timeToFirstTokenMs: base.timeToFirstTokenMs ?? timeToFirstTokenMs,
     modelRequestCount: base.modelRequestCount + 1,
     servedModels: appendServedModel(base.servedModels, payload.servedModel),
-    cacheMisses: base.cacheMisses + sumCacheMissCauses(payload.cacheHit?.missCauses),
+    // 基线随累加器对象透传（返回对象漏字段 = 差值 NaN，探针实证 2026-10-18）。
+    cacheMissBaseline: base.cacheMissBaseline,
+    // 快照语义：携带 missCauses 的事件覆盖 last（进程内累计，后到者更大更权威）。
+    cacheMissLast: readCacheMissSnapshot(payload.cacheHit?.missCauses) ?? base.cacheMissLast,
   };
 }
 
@@ -135,8 +148,14 @@ export function buildTurnHeaderStats(accumulator: TurnUsageAccumulator): TurnHea
     ...(accumulator.generationMs !== undefined ? { generationMs: accumulator.generationMs } : {}),
     modelRequestCount: accumulator.modelRequestCount,
     ...(accumulator.servedModels.length > 0 ? { servedModels: accumulator.servedModels } : {}),
-    ...(accumulator.cacheMisses > 0 ? { promptCacheMisses: accumulator.cacheMisses } : {}),
+    ...(turnCacheMissDelta(accumulator) > 0 ? { promptCacheMisses: turnCacheMissDelta(accumulator) } : {}),
   };
+}
+
+/** 每轮缓存未命中 = 轮末快照 − 轮起基线（钳 0）；无快照 → 0（缺席不投影由调用处判 >0）。 */
+export function turnCacheMissDelta(accumulator: TurnUsageAccumulator): number {
+  if (accumulator.cacheMissLast === undefined) return 0;
+  return Math.max(0, accumulator.cacheMissLast - accumulator.cacheMissBaseline);
 }
 
 /**

@@ -43,17 +43,32 @@ test("servedModel 缺席/畸形：不产生字段（旁路发射点与旧事件�
   assert.equal(stats.servedModels, undefined);
 });
 
-test("cacheMisses：missCauses 各值求和；0/缺席不投影 promptCacheMisses", () => {
+test("cacheMiss 快照差值语义：轮值 = 轮末累计快照 − 基线（求和会重复计数——评分自审修正面）", () => {
+  // missCauses 是进程内累计快照（contracts 注释）：第一事件累计 3，第二事件累计 5。
   let acc = accumulateTurnUsage(
     undefined,
     payload({ cacheHit: { missCauses: { system_prompt_edit: 1, tool_change: 2 } } }),
+    { cacheMissBaseline: 2 },
   );
-  acc = accumulateTurnUsage(acc, payload({ cacheHit: { missCauses: { message_append: 1 } } }));
-  assert.equal(acc.cacheMisses, 4);
-  assert.equal(buildTurnHeaderStats(acc).promptCacheMisses, 4);
+  acc = accumulateTurnUsage(
+    acc,
+    payload({ cacheHit: { missCauses: { system_prompt_edit: 2, tool_change: 2, message_append: 1 } } }),
+  );
+  assert.equal(acc.cacheMissLast, 5);
+  assert.equal(buildTurnHeaderStats(acc).promptCacheMisses, 3); // 5 − 基线 2
 
+  // 无快照（旁路/旧事件）→ 缺席不投影（缺席 ≠ 0，不造假值）。
   const clean = accumulateTurnUsage(undefined, payload());
+  assert.equal(clean.cacheMissLast, undefined);
   assert.equal(buildTurnHeaderStats(clean).promptCacheMisses, undefined);
+
+  // 零差值（本轮无新未命中）→ 不投影。
+  const zero = accumulateTurnUsage(
+    undefined,
+    payload({ cacheHit: { missCauses: { tool_change: 2 } } }),
+    { cacheMissBaseline: 2 },
+  );
+  assert.equal(buildTurnHeaderStats(zero).promptCacheMisses, undefined);
 });
 
 test("既有口径零回归：tokens/generationMs/ttft/modelRequestCount 不受新字段影响", () => {

@@ -54,10 +54,6 @@ import {
   retryBudgetMaxAttempts,
 } from "./retry-budget.js";
 import { toModelStreamEvent } from "./runner-normalization.js";
-import {
-  createUsageProgressThrottle,
-  type UsageProgressThrottle,
-} from "./runner-stream-usage-progress.js";
 import type { EnvRecord } from "./model-execution.js";
 import { detectProviderBusinessFinishError } from "./provider-finish-business-error.js";
 import {
@@ -166,9 +162,6 @@ export async function* runStreamText(input: {
       attempt,
     );
     const toolCallAssembler = new StreamingToolCallAssembler({ logger: input.logger });
-    // In-flight usage 事实节流器 per-attempt（= per 物理请求）：requestStartedAtMs
-    // 用本次尝试起点，与 observedAtMs 同进程时钟（specs/usage-statusbar.md 口径 4 分母）。
-    const usageProgressThrottle = createUsageProgressThrottle(startedAt);
     let streamIterator: AsyncIterator<TextStreamPart<ToolSet>> | undefined;
     let streamReachedNaturalEnd = false;
     let attemptFailed = false;
@@ -377,7 +370,6 @@ export async function* runStreamText(input: {
             startedAt,
             statusContext,
             toolCallAssembler,
-            usageProgressThrottle,
           });
         } catch (error) {
           const directToolCommit = compactDirectToolCallCommitEvent(input.request, next.value);
@@ -1018,7 +1010,6 @@ async function handleStreamChunk(input: {
   startedAt: number;
   statusContext: ReturnType<typeof createStatusContext>;
   toolCallAssembler: StreamingToolCallAssembler;
-  usageProgressThrottle: UsageProgressThrottle;
 }): Promise<{
   emittedError: boolean;
   emittedEvent: boolean;
@@ -1053,22 +1044,6 @@ async function handleStreamChunk(input: {
     return handleStreamErrorEvent({ ...input, emittedRetryBoundaryEvent }, event.error);
   }
   if (!event) {
-    // In-flight 真实用量事实（specs/usage-statusbar.md「In-flight 真实用量事实面」）：
-    // raw 通道的 Anthropic message_start/message_delta 今天就携带 usage 真值，过去被
-    // 看见即丢弃；这里做纯增量提取（≥500ms 节流在 throttle 内）。纪律：
-    // - compact 请求（preserveProviderStreamBoundaries）不提取——下方 compact 重试
-    //   边界路径语义保持逐字节不变，且 core 本就不中转 compact 的 usageProgress；
-    // - usage_progress 不进 applyStreamEventsToRetryBoundary：它不是 provider 正文，
-    //   不得推进 emittedRetryBoundaryEvent（message_start 早于一切可见输出，若据此
-    //   关闭 SSE retry 资格会放宽不了也收紧不了重试语义——保持原样），也不参与
-    //   retry-safe 前奏缓冲（首事实立即发，上下文环请求开始即跳实际输入量）。
-    const usageProgressEvent =
-      input.chunk.type === "raw" && input.input.request.preserveProviderStreamBoundaries !== true
-        ? input.usageProgressThrottle.observe(input.chunk.rawValue, Date.now())
-        : undefined;
-    if (usageProgressEvent) {
-      return streamChunkResult({ emittedEvent: true, visibleEvents: [usageProgressEvent] });
-    }
     if (providerEventObserved) {
       // raw provider event 只用于结束 compact SSE retry；它本身不属于
       // 可见正文；只投影 response/block/stop 的语义边界，并立即刷出已暂存的 synthetic start。

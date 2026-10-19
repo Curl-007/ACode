@@ -4319,21 +4319,16 @@ const enUS: Record<string, string> = {
   "chat.contextUsage.autoCompactReached":
     "Auto-compact threshold reached ({threshold}): the next request may auto-compact; consider /compact or a new session first.",
   "chat.usageStatusbar.speed.label": "Generation speed",
-  "chat.usageStatusbar.speed.shortLabel": "Speed",
   "chat.usageStatusbar.speed.tooltip":
     "tok/s of the most recent model request: output tokens (incl. reasoning) ÷ generation time; reasoning requests time from request start, others from first token. Updated per completed request, not a live value.",
-  "chat.usageStatusbar.speed.generating": "Generating · {seconds}",
   "chat.usageStatusbar.turnUsage.label": "Last turn",
-  "chat.usageStatusbar.turnUsage.shortLabel": "Turn",
   "chat.usageStatusbar.turnUsage.tooltip":
     "Tokens of the most recently completed turn; total = input + output (cache reads are part of input, not added twice).",
   "chat.usageStatusbar.turnUsage.empty": "No model facts for this turn (plain Q&A)",
   "chat.usageStatusbar.session.label": "Session total",
-  "chat.usageStatusbar.session.shortLabel": "Session",
   "chat.usageStatusbar.session.tooltip":
     "Cumulative usage of this window's bound session (capsule hides when absent; never falls back). Turns/requests/code delta from turn stats.",
   "chat.usageStatusbar.tools.label": "Tool calls",
-  "chat.usageStatusbar.tools.shortLabel": "Tools",
   "chat.usageStatusbar.tools.tooltip":
     "Local aggregation of this session's tool calls with per-tool duration and errors.",
   "chat.usageStatusbar.tools.errors": "{count} errors",
@@ -4343,14 +4338,12 @@ const enUS: Record<string, string> = {
   "chat.usageStatusbar.tools.lastError": "Last error",
   "chat.usageStatusbar.unit.tokensPerSecond": "tok/s",
   "chat.usageStatusbar.today.label": "Today",
-  "chat.usageStatusbar.today.shortLabel": "Today",
   "chat.usageStatusbar.today.tooltip":
     "Today's cross-session total for this workspace (never mixed across workspaces); refreshed on mount, turn completion and window focus.",
   "chat.usageStatusbar.today.turnCount": "Turns",
   "chat.usageStatusbar.today.toolCallCount": "Tool calls",
   "chat.usageStatusbar.today.favoriteModel": "Top model",
   "chat.usageStatusbar.subagents.label": "Subagents",
-  "chat.usageStatusbar.subagents.shortLabel": "Agents",
   "chat.usageStatusbar.subagents.tooltip":
     "Value = child subagents' cumulative tokens (main total lives in Session total); click to expand dispatched tasks (title + cumulative tokens + authoritative status).",
   "chat.usageStatusbar.subagents.main": "Main agent",
@@ -4376,15 +4369,6 @@ const enUS: Record<string, string> = {
   "chat.usageStatusbar.detail.requestCount": "Model requests",
   "chat.usageStatusbar.detail.turnCount": "Turns",
   "chat.usageStatusbar.detail.codeDelta": "Code +/−",
-  "chat.usageStatusbar.detail.elapsed": "Elapsed",
-  "chat.usageStatusbar.detail.liveOutput": "Live output",
-  "chat.usageStatusbar.detail.liveSpeed": "Live speed",
-  "chat.usageStatusbar.detail.announcedInput": "Announced input",
-  "chat.usageStatusbar.panel.title": "Usage details",
-  "chat.usageStatusbar.panel.inFlight": "Current request",
-  "chat.usageStatusbar.panel.inProgress": "In progress",
-  "chat.usageStatusbar.panel.inFlightNote":
-    "Live values are replaced by authoritative facts when the request completes; the live rate counts from request start.",
   "chat.usageStatusbar.rateLine.label": "This answer's rate",
   "chat.usageStatusbar.rateLine.ttft": "TTFT {duration}",
   "chat.usageStatusbar.rateLine.output": "Output {count}",

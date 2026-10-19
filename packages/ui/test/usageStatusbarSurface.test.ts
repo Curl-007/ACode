@@ -20,13 +20,6 @@ import {
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const STATUSBAR_PATH = resolve(__dirname, "../src/v4/usage-statusbar/UsageStatusbar.tsx");
 const CAPSULE_PATH = resolve(__dirname, "../src/v4/usage-statusbar/UsageStatusbarCapsule.tsx");
-const PANEL_PATH = resolve(__dirname, "../src/v4/usage-statusbar/UsageStatusbarDetailPanel.tsx");
-// 面板内容契约源面 = 装配文件 + 请求作用域分组姊妹文件（400 行 ratchet 拆分，行内容
-// 零改写；断言对两者联合源码判定，分组再搬家只要契约在联合源面成立即满足）。
-const PANEL_GROUPS_PATH = resolve(
-  __dirname,
-  "../src/v4/usage-statusbar/UsageStatusbarDetailRequestGroups.tsx",
-);
 const RATE_LINE_PATH = resolve(__dirname, "../src/v4/usage-statusbar/TurnRateLine.tsx");
 const STYLES_PATH = resolve(__dirname, "../src/styles.css");
 const ZH = resolve(__dirname, "../src/i18n/locales/zh-CN.ts");
@@ -36,23 +29,21 @@ function readSource(filePath: string): string {
   return readFileSync(filePath, "utf8");
 }
 
-/** 统一面板联合源面：装配文件（分组门控/序）+ 请求作用域分组姊妹文件。 */
-function readPanelSurface(): string {
-  return `${readSource(PANEL_PATH)}\n${readSource(PANEL_GROUPS_PATH)}`;
-}
-
 // ── 排版一致性 ──
 
-test("排版：面板标题/速率行 tooltip 标题统一 text-ui-sm（DESIGN.md Tooltip 行），不再用 text-ui-base", () => {
+test("排版：tooltip 标题统一 text-ui-sm（DESIGN.md Tooltip 行），不再用 text-ui-base", () => {
   for (const [name, source] of [
-    // 2026-10-19：胶囊级 tooltip 退役，明细标题面在统一面板（UsageStatusbarDetailPanel）。
-    ["UsageStatusbarDetailPanel", readSource(PANEL_PATH)],
+    ["UsageStatusbarCapsule", readSource(CAPSULE_PATH)],
     ["TurnRateLine", readSource(RATE_LINE_PATH)],
   ] as const) {
-    assert.match(source, /text-ui-sm font-medium/, `${name} 的明细标题应为 text-ui-sm font-medium`);
+    assert.match(
+      source,
+      /text-ui-sm font-medium/,
+      `${name} 的 tooltip 标题应为 text-ui-sm font-medium`,
+    );
     assert.ok(
       !source.includes("text-ui-base font-medium"),
-      `${name} 不得再用 text-ui-base 做明细标题`,
+      `${name} 不得再用 text-ui-base 做 tooltip 标题`,
     );
   }
 });
@@ -120,22 +111,6 @@ test("i18n：用量状态栏新增键 zh-CN 与 en-US 成对存在", () => {
     "chat.usageStatusbar.tools.lastError",
     "chat.usageStatusbar.today.favoriteModel",
     "chat.usageStatusbar.settings.autoHideNote",
-    // 2026-10-19 重设计：微标签 ×6、统一面板、秒表降级文案、live 口径脚注与行标签。
-    "chat.usageStatusbar.speed.shortLabel",
-    "chat.usageStatusbar.turnUsage.shortLabel",
-    "chat.usageStatusbar.session.shortLabel",
-    "chat.usageStatusbar.tools.shortLabel",
-    "chat.usageStatusbar.today.shortLabel",
-    "chat.usageStatusbar.subagents.shortLabel",
-    "chat.usageStatusbar.speed.generating",
-    "chat.usageStatusbar.panel.title",
-    "chat.usageStatusbar.panel.inFlight",
-    "chat.usageStatusbar.panel.inProgress",
-    "chat.usageStatusbar.panel.inFlightNote",
-    "chat.usageStatusbar.detail.elapsed",
-    "chat.usageStatusbar.detail.liveOutput",
-    "chat.usageStatusbar.detail.liveSpeed",
-    "chat.usageStatusbar.detail.announcedInput",
   ];
   for (const key of keys) {
     assert.ok(zh.includes(`"${key}"`), `${key} 缺 zh-CN`);
@@ -144,88 +119,6 @@ test("i18n：用量状态栏新增键 zh-CN 与 en-US 成对存在", () => {
   // 单位双语同值（specs/usage-statusbar.md「排版一致性」节）。
   assert.ok(zh.includes('"chat.usageStatusbar.unit.tokensPerSecond": "tok/s"'));
   assert.ok(en.includes('"chat.usageStatusbar.unit.tokensPerSecond": "tok/s"'));
-});
-
-// ── 微标签形态与统一面板分组（2026-10-19 重设计）──
-
-test("微标签：胶囊 = icon + 微标签 + 值；shortLabel 走 *.shortLabel i18n 键、text-ui-xs 弱化色", () => {
-  const capsule = readSource(CAPSULE_PATH);
-  assert.match(capsule, /shortLabel: string;/, "shortLabel 是必填 prop");
-  assert.match(
-    capsule,
-    /text-ui-xs font-normal text-foreground-subtlest">\{shortLabel\}/,
-    "微标签必须 text-ui-xs + foreground-subtlest 级弱化色（DESIGN.md 弱元数据）",
-  );
-  // aria-label 仍用全名 label（微标签只是视觉短形式）。
-  assert.match(capsule, /aria-label=\{label\}/);
-  const statusbar = readSource(STATUSBAR_PATH);
-  for (const item of ["speed", "turnUsage", "session", "tools", "today", "subagents"]) {
-    assert.match(
-      statusbar,
-      new RegExp(`chat\\.usageStatusbar\\.${item}\\.shortLabel`),
-      `${item} 胶囊必须接 shortLabel i18n 键`,
-    );
-  }
-});
-
-test("统一面板：分组存在且 hide-on-absent——无数据分组不渲染；分组不受胶囊显隐偏好影响", () => {
-  const panel = readPanelSurface();
-  // 分组序（spec「Tooltip 稳定性与统一明细面板」节）：本次请求（进行中）→ 速度权威 →
-  // 本轮 → 会话 → 今日 → 工具 → 子代理。
-  for (const groupId of ["in-flight", "speed", "turn", "session", "today", "tools", "subagents"]) {
-    assert.ok(
-      panel.includes(`usage-statusbar-panel-group-${groupId}`),
-      `面板必须有 ${groupId} 分组`,
-    );
-  }
-  // hide-on-absent：分组渲染全部由数据在场门控（缺席 ≠ 零值）。
-  assert.match(panel, /\{inFlightActive \? <InFlightGroup/);
-  assert.match(panel, /\{lastRequest \? <SpeedGroup/);
-  assert.match(panel, /\{cumulative \? <SessionGroup/);
-  assert.match(panel, /\{todayTotals \? <TodayGroup/);
-  assert.match(panel, /\{tools \? <ToolsGroup/);
-  assert.match(panel, /\{subagents \? <SubagentsGroup/);
-  // 偏好只治 bar：面板组件不得引用显隐偏好（分组恒全量）。
-  assert.ok(!panel.includes("useUsageStatusbarPreferences"), "面板分组不得受胶囊显隐偏好影响");
-  assert.ok(!panel.includes("visibleItems"), "面板分组不得引用 visibleItems");
-  // 既有 tooltip 行内容全量保留的抽样：工具 8 行封顶 + 「+N 更多」+ lastError 弱化行、
-  // 今日主要模型、会话缓存读/写。
-  assert.match(panel, /slice\(0, 8\)/);
-  assert.match(panel, /chat\.usageStatusbar\.tools\.more/);
-  assert.match(panel, /chat\.usageStatusbar\.tools\.lastError/);
-  assert.match(panel, /chat\.usageStatusbar\.today\.favoriteModel/);
-  assert.match(panel, /chat\.usageStatusbar\.detail\.cacheReadTokens/);
-  assert.match(panel, /chat\.usageStatusbar\.detail\.cacheWriteTokens/);
-});
-
-test("统一面板：本次请求分组行 = 秒表已耗时 + live 输出/速度 + 通告输入 + 首字（在场时）+ 口径脚注", () => {
-  const panel = readPanelSurface();
-  assert.match(panel, /chat\.usageStatusbar\.detail\.elapsed/);
-  assert.match(panel, /chat\.usageStatusbar\.detail\.liveOutput/);
-  assert.match(panel, /chat\.usageStatusbar\.detail\.liveSpeed/);
-  assert.match(panel, /chat\.usageStatusbar\.detail\.announcedInput/);
-  assert.match(panel, /live\.timeToFirstTokenMs !== null \?/, "首字行仅在事实在场时渲染");
-  assert.match(panel, /chat\.usageStatusbar\.panel\.inFlightNote/, "进行中口径脚注必须在场");
-  // 秒表 hook 只在分组内消费（定时器随面板开合挂载/清理）。
-  assert.match(
-    panel,
-    /useStopwatchElapsedMs\(\{ startedAtMs: live\.startedAtMs, active: true \}\)/,
-  );
-});
-
-test("live 消费：速度胶囊三态接线（live tok/s / 生成中秒表降级 / 空闲权威值），本轮 live 合计 + 脉冲", () => {
-  const statusbar = readSource(STATUSBAR_PATH);
-  // 速度三态由纯函数 resolveUsageSpeedDisplayMode 单点判定。
-  assert.match(statusbar, /resolveUsageSpeedDisplayMode\(\{/);
-  assert.match(statusbar, /speed\.generating/, "秒表降级必须走「生成中 · {seconds}」i18n 文案");
-  // 秒表定时器仅在降级档挂载（live/空闲档不挂）。
-  assert.match(statusbar, /active: speedMode === "stopwatch"/);
-  // live 派生事件驱动：useMemo 依赖 inFlight，严禁定时器重算速率。
-  assert.match(statusbar, /deriveUsageInFlightLiveView\(\{ phaseRunning, inFlight \}\)/);
-  assert.match(statusbar, /\[phaseRunning, inFlight\]/);
-  // 本轮胶囊：live 合计在场才加进行中标记（复用常驻脉冲槽）。
-  assert.match(statusbar, /const turnLiveActive = live\.turnToDateTotalTokens !== null;/);
-  assert.match(statusbar, /pulse=\{turnLiveActive\}/);
 });
 
 // ── hide-on-absent 与子代理值语义（组件接线契约）──
@@ -270,17 +163,15 @@ test("子代理胶囊值 = 仅子累计（不再重复主代理值）", () => {
 test("容器查询：两级分级隐藏与优先级——先藏今日/子代理，再藏速度/工具/会话，本轮用量保留", () => {
   const source = readSource(STATUSBAR_PATH);
   // 常量 → 字面量映射先钉住（组件 JSX 引用常量，字面量集中在常量定义处）。
-  // 2026-10-19 微标签形态后阈值按 min-w 槽位预算重调（520/420 → 660/470），
-  // 优先级次序不变（spec「窄屏分级隐藏优先级」节末尾 2026-10-19 注）。
   assert.match(
     source,
-    /const CAPSULE_HIDE_TIER_1 = "@max-\[660px\]\/composer:hidden";/,
-    "第一级断点 660px（六胶囊 min-w 全量预算 ≈658）",
+    /const CAPSULE_HIDE_TIER_1 = "@max-\[520px\]\/composer:hidden";/,
+    "第一级断点 520px",
   );
   assert.match(
     source,
-    /const CAPSULE_HIDE_TIER_2 = "@max-\[470px\]\/composer:hidden";/,
-    "第二级断点 470px（藏今日/子代理后预算 ≈470；Tailwind v4 命名容器任意值语法）",
+    /const CAPSULE_HIDE_TIER_2 = "@max-\[420px\]\/composer:hidden";/,
+    "第二级断点 420px（Tailwind v4 命名容器任意值语法）",
   );
   // 每胶囊的 className 提取（capsule JSX 块内）。
   const capsuleOfClass = (testId: string): string => {

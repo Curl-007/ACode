@@ -21,16 +21,18 @@
    baseUrl → 按钮禁用 + tooltip 说明（复用既有 tooltip 组件纪律）。preset/托管
    family（zai-family/bigmodel-family 等不可编辑供应商）不渲染该按钮（与删除
    保护同口径，`modelProviderActions.confirmAndDeleteModelProvider` 先例）。
-3. **端点映射（单一所有者 = bootstrap 新模块 `provider-model-discovery.ts`）**：
+3. **端点映射（单一所有者 = packages/services `model-provider/providerModelDiscovery.ts`，
+   宿主服务层单点；立项初稿误写 bootstrap，实施勘正）**：
    | api format | 发现端点 | 鉴权头 |
    | --- | --- | --- |
    | `openai-chat-completions` / `openai-responses` | `GET {baseUrl}/models` | `Authorization: Bearer <apiKey>`（apiKey 在场时） |
    | `anthropic-messages` | `GET {baseUrl}/v1/models` | `x-api-key: <apiKey>` + `anthropic-version: 2023-06-01` |
    - baseUrl 归一：trim 尾斜杠；anthropic 若 baseUrl 已以 `/v1` 结尾则不重复拼
      （`{baseUrl}/models`）；openai 若 baseUrl 已以 `/models` 结尾则直接用。
-   - 超时 10s；响应体上限 2 MiB；模型列表上限 500 条（超出截断并在结果注明）。
-   - **出口纪律**：只请求配置 baseUrl 同源；跨 origin 重定向一律拒绝（防配置被
-     借道外发凭据）；http 仅允许 loopback host（本地推理服务先例），其余要求 https。
+   - 超时 10s；响应体上限 2 MiB（超限 kind=`too-large`）；模型列表上限 500 条（超出截断并在结果注明）。
+   - **出口纪律**：只请求配置 baseUrl 同源；跨 origin 重定向一律拒绝（kind=
+     `redirect-cross-origin`，防配置被借道外发凭据）；http 仅允许 loopback host
+     （本地推理服务先例，其余 kind=`insecure-url`），https 直通。
 4. **响应形状容忍**：OpenAI 形 `{data:[{id}]}` / `{object:"list",data:[...]}` /
    裸数组 `[{id}]` 均接受；Anthropic 形 `{data:[{id}]}`；id 取字符串字段 `id`
    （缺席 `name` 兜底），空/非字符串 id 跳过并计数。形状全不匹配 → 结构化错误
@@ -63,11 +65,12 @@
 
 | 事实 | 所有者 |
 | --- | --- |
-| 端点映射/请求/形状归一/出口纪律 | bootstrap `provider-model-discovery.ts`（host 单点） |
+| 端点映射/请求/形状归一/出口纪律 | packages/services `model-provider/providerModelDiscovery.ts`（宿主服务层单点；实施勘正：初稿误写 bootstrap） |
+| 发现输入读取（baseUrl/api 类型/水合 apiKey） | packages/provider `ProviderSettingsFacade.readProviderDiscoveryInput`（宿主本地只读面，不登记 RPC） |
 | 凭据水合 | 既有 registry/vault（`provider-api-key-vault.ts`），本面只读 |
-| 批量写入个人模型配置 | packages/provider facade `addPersonalModels`（唯一写入方） |
-| RPC 面与参数校验 | packages/services `IProviderSettingsService` descriptor + validators 伴生文件 |
-| 按钮/对话框/勾选态/i18n | packages/ui `model-provider-section/`（对话框态局部，不进 store） |
+| 批量写入个人模型配置 | packages/provider `config-service.addPersonalModels`（单事务单 revision；facade 透传） |
+| RPC 面与参数校验 | packages/services `IProviderSettingsService` descriptor（`discoverProviderModels`/`addPersonalModels`）+ validators 伴生文件 |
+| 按钮/对话框/勾选态/i18n | packages/ui `settings/model-provider-section/`（对话框态局部，不进 store） |
 
 ## 接口（全部 additive）
 
@@ -76,8 +79,8 @@
    `ProviderModelDiscoveryResult = { ok: true, models: string[], truncated: boolean,
    fetchedCount: number, durationMs: number } | { ok: false, error: { kind:
    "network"|"timeout"|"unauthorized"|"forbidden"|"not-found"|"unsupported-shape"|
-   "no-base-url"|"redirect-cross-origin", httpStatus?: number } }`；descriptor
-   `allowedMethods` 与 validators 伴生文件同步登记。
+   "too-large"|"insecure-url"|"redirect-cross-origin"|"no-base-url"|"http",
+   httpStatus?: number } }`；descriptor `allowedMethods` 与 validators 伴生文件同步登记。
 2. `IProviderSettingsService.addPersonalModels(providerId, modelIds: readonly
    ModelId[], useRecommendedConfig?) → Promise<ProviderSettingsView>`（批量版
    `addPersonalModel`，revision 守卫同口径）。

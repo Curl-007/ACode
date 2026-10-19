@@ -166,6 +166,7 @@ function createSettingsMutationTarget(
       configService.reorderPersonalModels(providerId, modelIds, membership),
     // 手工四参数转发曾丢掉新增的配置模式；直接绑定完整签名，避免装配层截断写入意图。
     addPersonalModel: configService.addPersonalModel.bind(configService),
+    addPersonalModels: configService.addPersonalModels.bind(configService),
     renamePersonalModel: (providerId, currentModelId, nextModelId, membership) =>
       configService.renamePersonalModel(providerId, currentModelId, nextModelId, membership),
     deletePersonalModel: (providerId, modelId, membership) =>

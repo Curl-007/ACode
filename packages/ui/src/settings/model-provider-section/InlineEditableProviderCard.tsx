@@ -8,6 +8,7 @@ import {
   type ProviderSettingsFormModel,
 } from "@/lib/providerSettingsFormTypes.js";
 import type { ModelConnectivityResult } from "@acode/shared";
+import type { ProviderModelDiscoveryResult } from "@acode/services";
 import {
   isApiKeyAccess,
   providerApiKeyCredentialKey,
@@ -142,6 +143,8 @@ export function InlineEditableProviderCard({
   provider,
   onSave,
   onAddPersonalModel,
+  onAddPersonalModels,
+  onDiscoverModels,
   onSavePersonalModelDraft,
   onSetPersonalModelEnabled,
   onDeletePersonalModel,
@@ -166,6 +169,8 @@ export function InlineEditableProviderCard({
     config: ProviderSettingsFormModel["personalConfig"],
     useRecommendedConfig?: boolean,
   ) => Promise<unknown>;
+  onAddPersonalModels?: (providerId: string, modelIds: readonly string[]) => Promise<unknown>;
+  onDiscoverModels?: (providerId: string) => Promise<ProviderModelDiscoveryResult>;
   onSavePersonalModelDraft?: (input: SavePersonalModelDraftInput) => Promise<unknown>;
   onSetPersonalModelEnabled?: (
     providerId: string,
@@ -942,6 +947,13 @@ export function InlineEditableProviderCard({
           onModelEnabledChange={handleModelEnabledChange}
           onDeleteModel={handleDeleteModel}
           onAddModel={handleAddModel}
+          onDiscoverModels={
+            onDiscoverModels ? () => onDiscoverModels(provider.providerId) : undefined
+          }
+          onAddDiscoveredModels={
+            onAddPersonalModels ? (ids) => onAddPersonalModels(provider.providerId, ids) : undefined
+          }
+          canDiscoverModels={Boolean(provider.config.api?.baseUrl?.trim())}
           onReorderModelIds={onReorderModelIds ? handleReorderModelIds : undefined}
           settingsRevision={settingsRevision ?? 0}
         />

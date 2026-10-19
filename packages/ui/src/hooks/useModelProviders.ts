@@ -110,6 +110,27 @@ export function useModelProviders(target: {
     [commitProviderSettingsView, providerSettingsService],
   );
 
+  /** 批量添加发现模型（推荐档配置）：单事务单 revision 守卫，语义同 addPersonalModel。 */
+  const addPersonalModels = useCallback(
+    (providerId: string, modelIds: readonly string[]) =>
+      providerSettingsService.addPersonalModels(providerId, modelIds, true).then((view) => {
+        commitProviderSettingsView(view);
+        return view;
+      }),
+    [commitProviderSettingsView, providerSettingsService],
+  );
+
+  /** 模型发现（specs/provider-model-discovery.md）：host 侧出口，UI 只收 id 列表/结构化错误。 */
+  const discoverModels = useCallback(
+    (providerId: string) =>
+      providerSettingsService.discoverProviderModels({
+        workspacePath: target.workspacePath,
+        ...(target.workspaceIdentity?.trim() ? { workspaceIdentity: target.workspaceIdentity } : {}),
+        providerId,
+      }),
+    [providerSettingsService, target.workspacePath, target.workspaceIdentity],
+  );
+
   const savePersonalModelDraft = useCallback(
     async (input: Parameters<typeof providerSettingsService.savePersonalModelDraft>[0]) => {
       const view = await providerSettingsService.savePersonalModelDraft(input);
@@ -225,6 +246,8 @@ export function useModelProviders(target: {
     saveProvider,
     createPersonalProvider,
     addPersonalModel,
+    addPersonalModels,
+    discoverModels,
     savePersonalModelDraft,
     setPersonalModelEnabled,
     deletePersonalModel,

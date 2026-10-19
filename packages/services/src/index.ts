@@ -9,6 +9,11 @@ export {
   type ProviderSettingsProviderView,
   type ProviderSettingsView,
 } from "./model-provider/providerFacadeServices.js";
+// 模型发现结果类型（纯类型导出，浏览器安全；运行时实现只在 host 侧装配）。
+export type {
+  ProviderModelDiscoveryErrorKind,
+  ProviderModelDiscoveryResult,
+} from "./model-provider/providerModelDiscovery.js";
 export {
   createAccountRequestAuthService,
   type IAccountRequestAuthService,

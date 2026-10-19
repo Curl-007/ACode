@@ -56,7 +56,7 @@ import { useEnterpriseCodingPlanProducts } from "./useEnterpriseCodingPlanProduc
 import { useUsageEntitlement } from "@/hooks/useUsageEntitlement.js";
 import { useCodingPlanUpgradeDialog } from "@/settings/CodingPlanUpgradeDialogProvider.js";
 import { useProviderSettingsView } from "@/hooks/useProviderSettingsView.js";
-import type { ProviderSettingsView } from "@acode/services";
+import type { ProviderModelDiscoveryResult, ProviderSettingsView } from "@acode/services";
 import type { SavePersonalModelDraftInput } from "@acode/provider";
 import { ProviderBalanceCard } from "./ProviderBalanceCard.js";
 import { resolveAccountProviderInspectionAccess } from "@/lib/accountProviderAccess.js";
@@ -246,6 +246,8 @@ export function ModelProviderSectionDetail({
   codingPlanDisconnectProviderId,
   onSave,
   onAddPersonalModel,
+  onAddPersonalModels,
+  onDiscoverModels,
   onSavePersonalModelDraft,
   onSetPersonalModelEnabled,
   onDeletePersonalModel,
@@ -281,6 +283,10 @@ export function ModelProviderSectionDetail({
     config: ProviderSettingsFormProvider["models"][number]["personalConfig"],
     useRecommendedConfig?: boolean,
   ) => Promise<unknown>;
+  /** 批量添加发现模型（specs/provider-model-discovery.md）；仅个人 provider 卡片接线。 */
+  onAddPersonalModels?: (providerId: string, modelIds: readonly string[]) => Promise<unknown>;
+  /** 模型发现（specs/provider-model-discovery.md）；托管 family 不传 → 卡片不渲染入口。 */
+  onDiscoverModels?: (providerId: string) => Promise<ProviderModelDiscoveryResult>;
   onSavePersonalModelDraft?: (input: SavePersonalModelDraftInput) => Promise<unknown>;
   onSetPersonalModelEnabled?: (
     providerId: string,
@@ -842,6 +848,10 @@ export function ModelProviderSectionDetail({
       onSave={onSave}
       {...modelEditingProps}
       onDelete={() => onDelete(customProvider)}
+      // 获取模型入口与删除保护同口径（spec 产品规则 2）：只给个人 provider 卡片接线，
+      // 托管 family（readOnlyEndpoints / coding-plan dedicated）不传 → 卡片不渲染按钮。
+      onAddPersonalModels={onAddPersonalModels}
+      onDiscoverModels={onDiscoverModels}
       onReorderModelIds={
         onReorderProviderModels
           ? (modelIds) => onReorderProviderModels(customProvider.providerId, modelIds)

@@ -23,6 +23,7 @@ export type ProviderModelDiscoveryErrorKind =
   | "too-large"
   | "insecure-url"
   | "redirect-cross-origin"
+  | "no-base-url"
   | "http";
 
 export type ProviderModelDiscoveryResult =
@@ -59,7 +60,7 @@ export function resolveDiscoveryEndpoint(baseUrl: string, apiType: ProviderApiTy
   return base.endsWith("/models") ? base : `${base}/models`;
 }
 
-function discoveryHeaders(apiType: ProviderApiType, apiKey: string | undefined): HeadersInit {
+function discoveryHeaders(apiType: ProviderApiType, apiKey: string | undefined): Record<string, string> {
   const headers: Record<string, string> = { accept: "application/json" };
   if (apiKey) {
     if (apiType === "anthropic-messages") {
@@ -74,7 +75,7 @@ function discoveryHeaders(apiType: ProviderApiType, apiKey: string | undefined):
 
 /** 响应形状容忍（spec 产品规则 4）：OpenAI {data:[{id}]} / {object:"list",data} / 裸数组 / Anthropic {data:[{id}]}。 */
 export function extractDiscoveredModelIds(payload: unknown): string[] | null {
-  const items: unknown[] = Array.isArray(payload)
+  const items: unknown[] | null = Array.isArray(payload)
     ? payload
     : payload !== null && typeof payload === "object" && Array.isArray((payload as { data?: unknown }).data)
       ? ((payload as { data: unknown[] }).data)

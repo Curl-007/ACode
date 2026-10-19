@@ -288,6 +288,26 @@ export type ModelStreamEvent =
       toolCall: ModelToolCall;
     }
   | {
+      /**
+       * In-flight 真实用量事实（specs/usage-statusbar.md「In-flight 真实用量事实面」/
+       * 协议面 11）：adapters 从 provider raw SSE（Anthropic message_start/message_delta）
+       * 提取，单点节流 ≥500ms（首事实立即发，请求结束不补尾包——权威值走 finish）。
+       * 不是正文事件：不参与 compact/SSE retry 边界语义，core 仅 main_turn 中转，
+       * 且严禁进 SQLite usage 账本（30 天权威账本仍以 finish chunk 为准）。
+       * 无中途 usage 事实的 provider（OpenAI 系 include_usage 仅末包）自然缺席本事件，
+       * 如实降级；严禁按字符数估算 token。
+       */
+      type: "usage_progress";
+      /** message_start 通告的输入 token 真值（Anthropic raw usage 的 cache read/write 是独立字段，发射前已求和对齐 AI SDK v6 total-input 口径，见 getModelUsageInputWindowTokens 注释）。 */
+      announcedInputTokens?: number;
+      /** message_delta 的累计输出 token 真值（含思考；provider 原值，非估算）。 */
+      partialOutputTokens?: number;
+      /** 本次模型请求起点（adapters attempt startedAt；进行中 tok/s 分母 = observedAtMs − requestStartedAtMs，口径 4）。 */
+      requestStartedAtMs: number;
+      /** 本条事实的观测时刻（epoch ms）。 */
+      observedAtMs: number;
+    }
+  | {
       type: "finish";
       finishReason: string;
       providerMetadata?: Record<string, unknown>;

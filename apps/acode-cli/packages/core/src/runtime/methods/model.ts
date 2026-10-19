@@ -26,6 +26,7 @@ import { createRefreshRuntimeHeadersBeforeModelAttempt } from "./model-runtime-h
 import { resolveModelRequestSessionTypeFromTaskType } from "./model-request-session-type.js";
 import { isOutputTokenLimitFinishReason } from "./turn-output-token-continuation.js";
 import { assertRuntimeModelBranchCurrent } from "./runtime-command-generation.js";
+import { querySourceForTask } from "./turn-model-step-usage.js";
 
 const TOOL_INPUT_STREAM_DELTA_FALLBACK_FLUSH_CHARS = 4096;
 
@@ -169,6 +170,10 @@ export async function runModelTextRequest(
   const toolCallIds = new Set<string>();
   const toolInputDeltaBuffers = new Map<ToolCallId, string>();
   const publishStreamSnapshot = () => options.onStreamSnapshot?.({ reasoning, text });
+  // In-flight 真实用量事实中转纪律（specs/usage-statusbar.md「In-flight 真实用量事实面」）：
+  // 仅 main_turn 转 ModelStreamingPayload.usageProgress——与 servedModel 同口径，
+  // subagent/workflow_child 等旁路的用量归各自会话投影，不得混入主会话 inFlight。
+  const relayUsageProgress = querySourceForTask(this.config.taskType) === "main_turn";
   const streamingEventQueue = createModelStreamingEventQueue({
     events: options.events,
     runtime: this,
@@ -421,6 +426,34 @@ export async function runModelTextRequest(
             toolName: toolCall.name,
           });
           options.onStreamToolCall?.(toolCall);
+          break;
+        }
+
+        case "usage_progress": {
+          // In-flight 真实用量事实（specs/usage-statusbar.md「In-flight 真实用量事实面」）：
+          // 只做中转，不做任何计算/估算；经既有 streaming 事件队列持久化/下发，
+          // 零新增事件通道。事实不进 SQLite usage 账本（usage-observability 的
+          // recordModelUsageFact 只消费 finish chunk 的 result.usage；TTFT 扫描只认
+          // 非空 text/reasoning delta，usage_progress 的 delta 恒空，天然不入账）。
+          if (!relayUsageProgress) {
+            break;
+          }
+          await enqueueStreamingEvent({
+            assistantMessageId: options.assistantMessageId,
+            delta: "",
+            done: false,
+            kind: "usage_progress",
+            usageProgress: {
+              requestStartedAtMs: event.requestStartedAtMs,
+              observedAtMs: event.observedAtMs,
+              ...(event.announcedInputTokens !== undefined
+                ? { announcedInputTokens: event.announcedInputTokens }
+                : {}),
+              ...(event.partialOutputTokens !== undefined
+                ? { partialOutputTokens: event.partialOutputTokens }
+                : {}),
+            },
+          });
           break;
         }
 

@@ -14,6 +14,16 @@ export {
   type UsageStatusbarPresence,
 } from "@/v4/usage-statusbar/usageStatusbarPresence.js";
 import { hasToolCallRows } from "@/v4/usage-statusbar/usageStatusbarPresence.js";
+// in-flight live 派生拆至 usageStatusbarInFlight（400 行 ratchet，纯新增关注点）；
+// 此处 re-export 保持单一导入面（组件与测试从 model 同一入口拿 live 派生）。
+export {
+  deriveElapsedMs,
+  deriveRunningTurnStartedAtMs,
+  deriveUsageInFlightLiveView,
+  resolveUsageSpeedDisplayMode,
+  type UsageInFlightLiveView,
+  type UsageSpeedDisplayMode,
+} from "@/v4/usage-statusbar/usageStatusbarInFlight.js";
 
 // 用量状态栏派生逻辑（specs/usage-statusbar.md「数据口径」节的 ui 消费端实现）。
 // 纯函数纪律：

@@ -736,8 +736,26 @@ export type ModelStreamingKind =
   | "tool_input_delta"
   | "tool_input_end"
   | "tool_call"
+  | "usage_progress"
   | "finish"
   | "error";
+
+/**
+ * In-flight 真实用量事实（specs/usage-statusbar.md「In-flight 真实用量事实面」/协议面 11）：
+ * adapters raw 通道提取（≥500ms 节流）→ core 仅 main_turn 中转（与 servedModel 同纪律，
+ * sidecar/compact/title 旁路不带）→ bootstrap 投影是 usage.inFlight 唯一写入方。
+ * conflated 语义：值未变不重复下发；in-flight 事实不进 SQLite usage 账本。
+ */
+export interface ModelStreamingUsageProgress {
+  /** message_start 通告的输入 token 真值（Anthropic 口径含缓存读/写的 total input）。 */
+  announcedInputTokens?: number;
+  /** message_delta 的累计输出 token 真值（含思考；provider 原值，非估算）。 */
+  partialOutputTokens?: number;
+  /** 本次模型请求起点（进行中 tok/s 分母 = observedAtMs − requestStartedAtMs）。 */
+  requestStartedAtMs: number;
+  /** 本条事实的观测时刻（epoch ms）。 */
+  observedAtMs: number;
+}
 
 export interface ModelStreamingPayload {
   delta: string;
@@ -749,6 +767,8 @@ export interface ModelStreamingPayload {
   toolName?: string;
   input?: unknown;
   providerExecuted?: boolean;
+  /** 仅 kind="usage_progress" 携带；additive optional，旧事件/旁路发射点缺席不造假值。 */
+  usageProgress?: ModelStreamingUsageProgress;
 }
 
 export type ModelNetworkStatusPayload = ModelNetworkStatusEvent;

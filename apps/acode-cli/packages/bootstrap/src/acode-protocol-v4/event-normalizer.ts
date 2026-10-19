@@ -118,6 +118,8 @@ export interface CanonicalModelStream {
   toolName?: string;
   input?: unknown;
   providerExecuted?: boolean;
+  /** in-flight 真实用量事实（specs/usage-statusbar.md 协议面 11）；仅 kind="usage_progress" 携带。 */
+  usageProgress?: ModelStreamingPayload["usageProgress"];
 }
 
 export interface CanonicalAssistantSegmentFact extends CanonicalConversationFactBase {
@@ -354,6 +356,7 @@ function normalizeModelStreaming(
       ...(payload.providerExecuted !== undefined
         ? { providerExecuted: payload.providerExecuted }
         : {}),
+      ...(payload.usageProgress ? { usageProgress: { ...payload.usageProgress } } : {}),
     },
   };
 }

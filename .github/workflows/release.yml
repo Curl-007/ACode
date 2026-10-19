@@ -259,7 +259,7 @@ jobs:
           BASE_TAG=$(git describe --tags --abbrev=0 "${TAG}^" 2>/dev/null || true)
           if [ -n "$BASE_TAG" ]; then
             {
-              echo "## Changelog (vs $BASE_TAG) / 更新日志（相对 $BASE_TAG）"
+              echo "## Changelog (vs ${BASE_TAG}) / 更新日志（相对 ${BASE_TAG}）"
               echo ""
               CHANGES=$(git log --no-merges --pretty='- %s (%h)' "$BASE_TAG..${TAG}" | grep -v '^- ci' || true)
               if [ -n "$CHANGES" ]; then
@@ -511,7 +511,9 @@ jobs:
             --pattern "ACode-${VERSION}-mac-${{ matrix.arch }}.dmg" \
             --pattern "ACode-${VERSION}-mac-${{ matrix.arch }}.zip" \
             --dir "$RUNNER_TEMP/assets"
-          (cd "$RUNNER_TEMP/assets" && sha256sum * > "$RUNNER_TEMP/checksums/sha256-${{ matrix.leg }}.txt")
+          # macOS runner 无 GNU coreutils：sha256sum 不存在（exit 127，v1.0.1 首跑
+          # 实证）；shasum -a 256 输出同「hash␣␣name」格式，下游 -c 校验两平台通用。
+          (cd "$RUNNER_TEMP/assets" && shasum -a 256 * > "$RUNNER_TEMP/checksums/sha256-${{ matrix.leg }}.txt")
           cat "$RUNNER_TEMP/checksums/sha256-${{ matrix.leg }}.txt"
           unzip -q "$RUNNER_TEMP/assets/ACode-${VERSION}-mac-${{ matrix.arch }}.zip" -d "$RUNNER_TEMP/assets/extracted"
 
@@ -575,27 +577,32 @@ jobs:
           set -euo pipefail
           BIN="$(find "$APP_PATH/Contents/MacOS" -maxdepth 1 -type f -perm -111 | head -n1)"
           LOG="$RUNNER_TEMP/acode-smoke.log"
-          echo "launch smoke: $BIN（CDP /json/version 探测，失败转储 stdio）"
-          "$BIN" --remote-debugging-port=9222 >"$LOG" 2>&1 &
+          # 无开关启动探测（v1.0.1 第三轮修正）：打包态启动守卫会拒绝
+          # --remote-debugging-port 等调试开关（specs/desktop-startup-hardening.md §1；
+          # 未签名产物无签名调试令牌），原 CDP 探针对打包产物必然被拒——守卫行为
+          # 正确、错的是探测方式。改为无开关启动 + 存活探针：进程持续存活且出现
+          # Electron helper 子进程（越过早期初始化的证据）；日志出现拒绝标记立即失败。
+          echo "launch smoke: ${BIN}（无开关启动，存活+helper 子进程探针，失败转储 stdio）"
+          "$BIN" >"$LOG" 2>&1 &
           APP_PID=$!
           ok=""
-          for i in $(seq 1 60); do
+          for i in $(seq 1 15); do
             if ! kill -0 "$APP_PID" 2>/dev/null; then
-              echo "::error::app exited before CDP endpoint answered"; tail -80 "$LOG"; exit 1
+              echo "::error::app exited during launch smoke"; tail -80 "$LOG"; exit 1
             fi
-            if curl -fsS --max-time 2 http://127.0.0.1:9222/json/version > "$RUNNER_TEMP/cdp.json" 2>/dev/null; then
-              ok=1; break
+            if grep -q "refusing to start" "$LOG" 2>/dev/null; then
+              echo "::error::boot guard refused launch"; tail -80 "$LOG"; exit 1
             fi
+            if [ "$i" -ge 8 ] && pgrep -P "$APP_PID" >/dev/null 2>&1; then ok=1; break; fi
             sleep 2
           done
           if [ -z "$ok" ]; then
-            echo "::error::CDP /json/version did not answer within ~120s"; tail -80 "$LOG"; exit 1
+            echo "::error::app alive but no Electron helper children within ~30s"; tail -80 "$LOG"; exit 1
           fi
-          echo "CDP answered:"; cat "$RUNNER_TEMP/cdp.json"; echo
+          echo "launch smoke OK (alive + helper children; log lines: $(wc -l < "$LOG"))"
           pkill -f "$APP_PATH" 2>/dev/null || true
           sleep 3
           pkill -9 -f "$APP_PATH" 2>/dev/null || true
-          echo "launch smoke OK"
 
       - name: Upload checksum list (macOS)
         if: matrix.os == 'mac'
@@ -717,8 +724,11 @@ jobs:
           cat checksums/*.txt | sort -k2,2 -u > "ACode-${VERSION}-checksums.txt"
           cat "ACode-${VERSION}-checksums.txt"
           # 校验和上传失败同样阻断公开（保持 draft），fail-closed 与既有上传一致。
+          # --repo 必带：publish job 无 checkout，gh 无 git 上下文推不出仓库
+          # （v1.0.1 正式轮实证「failed to run git: not a git repository」）；
+          # 与下方 Publish release 步的 --repo "$GITHUB_REPOSITORY" 同式。
           for attempt in 1 2 3; do
-            if gh release upload "$TAG" "ACode-${VERSION}-checksums.txt" --clobber; then
+            if gh release upload "$TAG" "ACode-${VERSION}-checksums.txt" --clobber --repo "$GITHUB_REPOSITORY"; then
               exit 0
             fi
             echo "::warning::checksums upload failed (attempt $attempt/3), retrying in 10s"

@@ -5,8 +5,16 @@ import { createServiceLogger } from "../logger/serviceLogger.js";
 // baseUrl + api 类型向模型列表端点发一次请求并归一模型 id 列表。
 // 宿主侧单点：UI 只拿 id 列表与结构化错误，apiKey 只进请求头、绝不进日志/返回值/RPC 视图。
 // 出口纪律：只请求配置 baseUrl 同源；跨 origin 重定向一律拒绝；http 仅 loopback。
-
-const log = createServiceLogger("provider-model-discovery");
+//
+// logger 必须懒创建：本模块经 services 包根进入 renderer 模块图（descriptor 伴生导入），
+// 顶层调用 createServiceLogger 会在浏览器 import 期执行并触 process is not defined
+// 炸掉整个渲染模块图（D-C1 同款缺陷，2026-10-19 灰屏实证）。发现请求只在 host 执行，
+// 懒创建保证浏览器侧 import 零副作用。
+let discoveryLog: ReturnType<typeof createServiceLogger> | null = null;
+function log(): ReturnType<typeof createServiceLogger> {
+  discoveryLog ??= createServiceLogger("provider-model-discovery");
+  return discoveryLog;
+}
 
 export const DISCOVERY_TIMEOUT_MS = 10_000;
 export const DISCOVERY_MAX_BODY_BYTES = 2 * 1024 * 1024;
@@ -112,7 +120,7 @@ export async function discoverProviderModelsFromEndpoint(
     return { ok: false, error: { kind: "no-base-url" } };
   }
   if (endpointUrl.protocol === "http:" && !isLoopbackUrl(endpointUrl)) {
-    log.warn("发现请求拒绝非 loopback 明文 http", { baseUrl: redactBaseUrl(endpoint) });
+    log().warn("发现请求拒绝非 loopback 明文 http", { baseUrl: redactBaseUrl(endpoint) });
     return { ok: false, error: { kind: "insecure-url" } };
   }
   if (endpointUrl.protocol !== "https:" && endpointUrl.protocol !== "http:") {
@@ -138,7 +146,7 @@ export async function discoverProviderModelsFromEndpoint(
         }
         const next = new URL(location, target);
         if (next.origin !== target.origin) {
-          log.warn("发现请求拒绝跨 origin 重定向", {
+          log().warn("发现请求拒绝跨 origin 重定向", {
             from: redactBaseUrl(target.href),
             to: redactBaseUrl(next.href),
           });
@@ -166,11 +174,11 @@ export async function discoverProviderModelsFromEndpoint(
       }
       const ids = extractDiscoveredModelIds(payload);
       if (!ids) {
-        log.warn("发现响应形状不匹配", { baseUrl: redactBaseUrl(target.href) });
+        log().warn("发现响应形状不匹配", { baseUrl: redactBaseUrl(target.href) });
         return { ok: false, error: { kind: "unsupported-shape" } };
       }
       const truncated = ids.length > DISCOVERY_MAX_MODELS;
-      log.info("模型发现完成", {
+      log().info("模型发现完成", {
         baseUrl: redactBaseUrl(target.href),
         status: response.status,
         fetchedCount: ids.length,
@@ -186,7 +194,7 @@ export async function discoverProviderModelsFromEndpoint(
     }
   } catch (error) {
     const timedOut = controller.signal.aborted;
-    log.warn("模型发现请求失败", {
+    log().warn("模型发现请求失败", {
       baseUrl: redactBaseUrl(target.href),
       kind: timedOut ? "timeout" : "network",
     });

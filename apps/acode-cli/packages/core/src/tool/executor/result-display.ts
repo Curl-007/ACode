@@ -20,6 +20,10 @@ import {
   type ToolResultDisplayPayload,
 } from "@acode/contracts";
 import { createBashResultDisplay } from "./bash-result-display.js";
+import {
+  createReadResultDisplay,
+  createSearchResultDisplay,
+} from "./read-search-result-display.js";
 import { countPatchLines } from "../diff.js";
 import { boundDisplayText } from "./display-text.js";
 import { createCreateWorkflowDisplay } from "./create-workflow-display.js";
@@ -105,6 +109,14 @@ export function createToolResultDisplay(
   },
 ): ToolResultDisplayPayload | undefined {
   if (toolName === "Bash") return createBashResultDisplay(output);
+
+  // read/search 结构化 display（specs/tool-display-read-search.md R2）：显式分支先于
+  // 通用 file_diff fallback（Read 输出有 filePath 但无 structuredPatch，语义不冲突，
+  // 顺序只为明确）。
+  if (toolName === "Read") return createReadResultDisplay(output);
+  if (toolName === "Grep" || toolName === "Glob") {
+    return createSearchResultDisplay(toolName, output);
+  }
 
   const cuaToolName = readCuaToolName(toolName);
   if (cuaToolName) {

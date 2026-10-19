@@ -66,31 +66,21 @@ const ReadProviderInputBaseSchema = z.object({
   /**
    * The absolute path to the file to read.
    */
-  file_path: z.string().describe("The absolute path to the file to read"),
-  /**
-   * The line number to start reading from. Only provide if the file is too large to read at once
-   */
+  file_path: z.string().describe("The absolute path to the file to read, or a skill:// URI (skill://<name> reads that skill's SKILL.md; skill://<name>/<relative-path> reads an asset inside the skill directory)"),
   offset: z
     .number()
     .int()
     .nonnegative()
     .max(Number.MAX_SAFE_INTEGER)
     .optional()
-    .describe(
-      "The line number to start reading from. Only provide if the file is too large to read at once",
-    ),
-  /**
-   * The number of lines to read. Only provide if the file is too large to read at once.
-   */
+    .describe("The line number to start reading from. Only provide if the file is too large to read at once"),
   limit: z
     .number()
     .int()
     .positive()
     .max(Number.MAX_SAFE_INTEGER)
     .optional()
-    .describe(
-      "The number of lines to read. Only provide if the file is too large to read at once.",
-    ),
+    .describe("The number of lines to read. Only provide if the file is too large to read at once."),
 });
 
 const ReadProviderPdfInputSchema = ReadProviderInputBaseSchema.extend({
@@ -176,6 +166,12 @@ export interface ReadTextOutput {
   truncated?: boolean;
   truncatedByTokenCap?: boolean;
   partialViewNotice?: string;
+  /** conflict:// 检出尾注（specs/conflict-uri-resolution.md R3）。 */
+  conflictFooter?: string;
+  /** 正文已带原行号锚定（结构化摘要），渲染层跳过二次编号（read-structural-summary.md）。 */
+  preNumbered?: boolean;
+  /** 结构化摘要尾注（折叠统计+展开指引）。 */
+  summaryFooter?: string;
 }
 
 export interface ReadImageOutput {
@@ -270,6 +266,12 @@ export const ReadTextOutputSchema = z
     truncated: z.boolean().optional(),
     truncatedByTokenCap: z.boolean().optional(),
     partialViewNotice: z.string().optional(),
+    // conflict:// 检出尾注（specs/conflict-uri-resolution.md R3）。
+    conflictFooter: z.string().optional(),
+    // 结构化摘要（specs/read-structural-summary.md）：正文已按原行号锚定
+    // 预编号（渲染层跳过 addReadLineNumbers），尾注给折叠统计与展开指引。
+    preNumbered: z.boolean().optional(),
+    summaryFooter: z.string().optional(),
   })
   .strict();
 

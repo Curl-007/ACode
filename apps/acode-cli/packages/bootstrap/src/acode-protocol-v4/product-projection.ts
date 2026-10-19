@@ -503,6 +503,10 @@ export class ProductProjection {
   // ModelComplete 累加，轮收口（upsertTurnHeader / queue-drain 切轮）flush 进 header 行。
   // 值替换是 immutable 的（accumulateTurnUsage 返回新对象），clone 只需浅拷 Map。
   private turnUsageByTurnId = new Map<string, TurnUsageAccumulator>();
+  // 提示缓存未命中的轮间基线（specs/usage-statusbar.md D5 增补 7）：missCauses 是
+  // 进程内累计快照，每轮值 = 轮末快照 − 上一轮末快照。resume/rewind 重建后事件侧
+  // 计数从空开始（contracts 注释），本投影态同批重建，基线自然归零对齐。
+  private lastTurnCacheMissTotal = 0;
   // SubagentStopped.totalTokens 按 childSessionId 记账：running summary（含 SendMessage
   // resume 复活的 child）随 materialize 附带；停止后 summary 按既有生命周期离场，不扩语义。
   private subagentCumulativeTokensByChildSessionId = new Map<string, number>();
@@ -1154,6 +1158,7 @@ export class ProductProjection {
     clone.currentTurnStartedModelOnly = this.currentTurnStartedModelOnly;
     clone.contextWindowState = { ...this.contextWindowState };
     clone.turnUsageByTurnId = new Map(this.turnUsageByTurnId);
+    clone.lastTurnCacheMissTotal = this.lastTurnCacheMissTotal;
     clone.subagentCumulativeTokensByChildSessionId = new Map(
       this.subagentCumulativeTokensByChildSessionId,
     );
@@ -1201,6 +1206,7 @@ export class ProductProjection {
     this.currentTurnStartedModelOnly = candidate.currentTurnStartedModelOnly;
     this.contextWindowState = candidate.contextWindowState;
     this.turnUsageByTurnId = candidate.turnUsageByTurnId;
+    this.lastTurnCacheMissTotal = candidate.lastTurnCacheMissTotal;
     this.subagentCumulativeTokensByChildSessionId =
       candidate.subagentCumulativeTokensByChildSessionId;
     this.lastTurnModel = candidate.lastTurnModel;
@@ -4745,7 +4751,10 @@ export class ProductProjection {
       const factTurnId = this.turnIdOf(event);
       this.turnUsageByTurnId.set(
         factTurnId,
-        accumulateTurnUsage(this.turnUsageByTurnId.get(factTurnId), payload),
+        // cacheMissBaseline 只在该轮累加器创建时消费（首个事实事件），后续调用忽略。
+        accumulateTurnUsage(this.turnUsageByTurnId.get(factTurnId), payload, {
+          cacheMissBaseline: this.lastTurnCacheMissTotal,
+        }),
       );
     }
     const usedTokens = getModelUsageContextTokens(usage) ?? 0;
@@ -5386,6 +5395,10 @@ export class ProductProjection {
     const accumulator = this.turnUsageByTurnId.get(row.turnId);
     if (accumulator) {
       this.turnUsageByTurnId.delete(row.turnId);
+      // 轮末快照成为下一轮的基线（无快照轮保持基线不动，缺席 ≠ 0）。
+      if (accumulator.cacheMissLast !== undefined) {
+        this.lastTurnCacheMissTotal = accumulator.cacheMissLast;
+      }
       return buildTurnHeaderStats(accumulator);
     }
     return row.stats === undefined ? null : undefined;

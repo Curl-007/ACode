@@ -1,10 +1,14 @@
 import {
+  readToolResultDisplaySchema,
+  searchToolResultDisplaySchema,
   toolCallEvalWorkflowSnippetDisplaySchema,
   toolCallGetWorkflowRunDisplaySchema,
   toolCallListModelsDisplaySchema,
   toolCallListWorkflowRunsDisplaySchema,
   toolCallResumeWorkflowRunDisplaySchema,
   toolCallSavedWorkflowListDisplaySchema,
+  type ReadToolResultDisplay,
+  type SearchToolResultDisplay,
   type ToolCallEvalWorkflowSnippetDisplay,
   type ToolCallGetWorkflowRunDisplay,
   type ToolCallListModelsDisplay,
@@ -64,12 +68,18 @@ interface CuaToolResultDisplay {
   };
 }
 
+// renderer 消费 read display 时从本模块取类型（保持 UI 分层：不直连 shared v4）。
+// SearchToolResultDisplay 不外发——search.tsx 经 union 收窄即用，避免 knip 未消费导出。
+export type { ReadToolResultDisplay };
+
 export type ToolResultDisplay =
   | LocalAgentMessageToolResultDisplay
   | TaskStopToolResultDisplay
   | TaskOutputToolResultDisplay
   | RespondToCoordinatorToolResultDisplay
   | CuaToolResultDisplay
+  | ReadToolResultDisplay
+  | SearchToolResultDisplay
   | ToolCallGetWorkflowRunDisplay
   | ToolCallListWorkflowRunsDisplay
   | ToolCallEvalWorkflowSnippetDisplay
@@ -82,11 +92,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * 工作流 display kind → 解析函数的查表（新增 kind 只改这一处）。每个条目用 shared 侧的
+ * 结构化 display kind → 解析函数的查表（新增 kind 只改这一处）。每个条目用 shared 侧的
  * strict schema safeParse，输出类型即各自 schema 的推断类型——成员输出不是 ToolResultDisplay
  * 的 union 成员时这里直接编译失败，而不是靠运行时兜住。
  */
-const WORKFLOW_DISPLAY_PARSERS_BY_KIND: Record<
+const TOOL_DISPLAY_PARSERS_BY_KIND: Record<
   string,
   (value: Record<string, unknown>) => ToolResultDisplay | undefined
 > = {
@@ -99,6 +109,9 @@ const WORKFLOW_DISPLAY_PARSERS_BY_KIND: Record<
   list_models: (value) => parseWorkflowDisplay(toolCallListModelsDisplaySchema, value),
   resume_workflow_run: (value) =>
     parseWorkflowDisplay(toolCallResumeWorkflowRunDisplaySchema, value),
+  // read/search（specs/tool-display-read-search.md R4）：同一查表纪律。
+  read: (value) => parseWorkflowDisplay(readToolResultDisplaySchema, value),
+  search: (value) => parseWorkflowDisplay(searchToolResultDisplaySchema, value),
 };
 
 function parseWorkflowDisplay<T extends ToolResultDisplay>(
@@ -253,13 +266,13 @@ function parseDisplay(value: unknown): ToolResultDisplay | undefined {
     };
   }
 
-  // 工作流工具的 display kind（观察五件套 + ResumeWorkflowRun 恢复卡）：按 kind 查表后用
-  // shared 的 strict schema 解析，保证 UI 消费侧与协议侧字段表永远同步——手写第二套结构
-  // 校验是漂移温床。
+  // 结构化 display kind（工作流观察五件套 + ResumeWorkflowRun 恢复卡 + read/search）：
+  // 按 kind 查表后用 shared 的 strict schema 解析，保证 UI 消费侧与协议侧字段表永远同步
+  // ——手写第二套结构校验是漂移温床。
   if (typeof value.kind === "string") {
-    const parseWorkflowDisplayByKind = WORKFLOW_DISPLAY_PARSERS_BY_KIND[value.kind];
-    if (parseWorkflowDisplayByKind !== undefined) {
-      return parseWorkflowDisplayByKind(value);
+    const parseSchemaDisplayByKind = TOOL_DISPLAY_PARSERS_BY_KIND[value.kind];
+    if (parseSchemaDisplayByKind !== undefined) {
+      return parseSchemaDisplayByKind(value);
     }
   }
 

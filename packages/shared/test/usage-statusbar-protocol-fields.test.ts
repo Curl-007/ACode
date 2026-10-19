@@ -86,6 +86,23 @@ test("新字段合法值解析通过", () => {
     }).success,
   );
 
+  // D5 增补：servedModels（≤4×256）与 promptCacheMisses 合法形态 + 越界拒绝。
+  assert.ok(
+    turnHeaderStatsSchema.safeParse({
+      ...stats,
+      servedModels: ["provider/model-a", "provider/model-b"],
+      promptCacheMisses: 3,
+    }).success,
+  );
+  assert.ok(
+    !turnHeaderStatsSchema.safeParse({
+      ...stats,
+      servedModels: ["a", "b", "c", "d", "e"],
+    }).success,
+  );
+  assert.ok(!turnHeaderStatsSchema.safeParse({ ...stats, promptCacheMisses: -1 }).success);
+  assert.ok(!turnHeaderStatsSchema.safeParse({ ...stats, servedModels: [""] }).success);
+
   assert.ok(
     runningSubagentSummarySchema.safeParse({ ...legacySubagentSummary, cumulativeTokens: 0 })
       .success,

@@ -41,6 +41,7 @@ export type ContextSource =
   | "memory" // 长期 memory read path
   | "current_date" // 当前日期
   | "custom_system_prompt" // 自定义 stable system body
+  | "append_system_prompt" // APPEND_SYSTEM.md 追加指令（保留默认提示词只追加）
   | "workflow_actor_identity" // 动态工作流子代理身份：契约 + persona 叠加
   | "subagent_agent_prompt" // 子 agent 专属身份/任务 prompt
   | "subagent_notes" // 子 agent 通用操作提醒
@@ -124,6 +125,13 @@ export interface ContextBuilderConfig {
   embeddedSearchEnabled?: boolean;
   skillMetadataBudget?: number;
   customSystemPrompt?: string;
+  /**
+   * APPEND_SYSTEM.md 追加指令（specs/stable-prefix-pause-gate.md R5）：在场时
+   * 渲染为 identity.append 段，落 stable body 末尾——保留默认提示词只追加。
+   * 与 customSystemPrompt 可叠加（custom 通道身份体 + 追加段）。生产来源是
+   * host 经 context/prompt-files.ts 异步发现读取后注入；同步 build 通道不读盘。
+   */
+  appendSystemPrompt?: string;
   /**
    * 动态工作流子代理（workflow child）的身份输入。在场即走 builder 的第三条路径：
    * 基座段（CLI prefix、安全行、Harness、memory）+ 工作流子代理契约 + persona 叠加，

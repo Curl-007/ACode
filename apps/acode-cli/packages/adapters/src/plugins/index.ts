@@ -80,6 +80,9 @@ export {
   type DescribeMarketplacePluginResult,
   type InstalledPluginRecord,
   type KnownMarketplaceRecord,
+  type MarketplaceInstallPlan,
+  type MarketplaceInstallPlanEntry,
+  type MarketplaceInstallResult,
   type MarketplaceSource,
   type PluginComponentGroup,
   type PluginComponentItem,
@@ -97,6 +100,33 @@ export {
 } from "./official-marketplace.js";
 
 export { getPluginSourceDiagnosticCode } from "./source-errors.js";
+
+// 安装事务与装前 validate 门（specs/plugin-install-transactions.md）的公共面。
+export {
+  beginMarketplaceInstallTransaction,
+  type MarketplaceInstallTransaction,
+  type MarketplaceInstallTransactionFailureReport,
+  type TargetRollbackOutcome,
+} from "./install-transaction.js";
+
+export {
+  isBlockingDiagnostic,
+  resolveCommandOnPathSync,
+  resolvePluginInstallVersionChain,
+  validatePluginForInstall,
+  PLUGIN_INSTALL_VERSION_SAFE_PATTERN,
+  type PluginInstallGateResult,
+  type PluginInstallVersionProvenance,
+  type PluginInstallVersionResolution,
+} from "./install-validation.js";
+
+export {
+  describeMarketplaceGitSourceSpecViolation,
+  describeShellMetacharViolation,
+  stripPluginSourceCredentials,
+  stripUserInfoFromString,
+  MARKETPLACE_GIT_SPEC_ALLOWED_HOSTS,
+} from "./source-spec-hardening.js";
 
 export {
   describePluginRepositorySourcePolicyViolation,

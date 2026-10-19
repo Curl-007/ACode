@@ -68,6 +68,10 @@ export * from "./open.js";
 // 拿不到 SCHEDULE_TOOL_NAME 契约（照 session-search 的同款注释）。
 export * from "./schedule.js";
 export * from "./workflow-observation-display.js";
+// read/search 结构化 display payload（specs/tool-display-read-search.md R1）：
+// core 的 result-display 装配器与 result 校验读走；漏掉这行 union 成员缺席，
+// agent 下发的 read/search display 会被整块剥掉（同 toolDisplay.ts 的教训）。
+export * from "./read-search-display.js";
 export * from "./tool-result-metadata.js";
 export * from "./performance.js";
 // 会话级 git worktree 生命周期三工具（specs/session-worktree-lifecycle.md）：

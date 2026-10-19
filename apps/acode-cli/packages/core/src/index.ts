@@ -127,6 +127,20 @@ export * from "./subagent/index.js";
 // Runtime task components
 export * from "./runtime-task/contract.js";
 
+// 懒加载 OTel 遥测（WI-14，specs/otel-telemetry.md）：只导出 init 门面（静态图，
+// 纯 env 门禁）；impl/spans/attributes 的 @opentelemetry/* 模块图只在门禁通过后
+// 被动态 import，包入口不引入任何 OTel 运行时依赖。
+export {
+  initOtelTelemetry,
+  inspectOtelTraceGate,
+  isOtelImplLoaded,
+} from "./telemetry/otel/init.js";
+export type {
+  OtelTelemetryHandle,
+  OtelTelemetryInitOptions,
+  OtelTraceGateDecision,
+} from "./telemetry/otel/init.js";
+
 // Overnight 挂机执行（K3，specs/overnight-execution.md）：接缝层（fork 端口/runner）与
 // 纯模块层一起从包入口导出——bootstrap 装配处与宿主经 @acode/core 公开入口消费，
 // 不开深路径（package.json exports 只有 "."）。

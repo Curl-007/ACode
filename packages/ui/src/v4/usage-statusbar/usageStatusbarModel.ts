@@ -349,6 +349,10 @@ export interface TurnRateLineModel {
   timeToFirstTokenMs: number | null;
   outputTokens: number;
   generationMs: number | null;
+  /** 本轮服务过的模型身份（请求序，≤4）；≥2 = 多模型轮（轮中晋升标记，spec「多模型轮标记」）。 */
+  servedModels: string[];
+  /** 本轮提示缓存未命中计数；null = 事实缺席（旧投影），不渲染缓存行。 */
+  promptCacheMisses: number | null;
 }
 
 export function deriveTurnRateLine(
@@ -369,5 +373,12 @@ export function deriveTurnRateLine(
         : null,
     outputTokens,
     generationMs,
+    servedModels: Array.isArray(stats.servedModels)
+      ? stats.servedModels.filter((model): model is string => typeof model === "string")
+      : [],
+    promptCacheMisses:
+      typeof stats.promptCacheMisses === "number" && Number.isFinite(stats.promptCacheMisses)
+        ? stats.promptCacheMisses
+        : null,
   };
 }

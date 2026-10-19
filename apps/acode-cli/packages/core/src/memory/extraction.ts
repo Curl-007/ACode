@@ -65,6 +65,13 @@ export function buildMemoryExtractionPrompt(input: {
     "",
     "If the user explicitly asks you to remember something, save it immediately as whichever type fits best. If they ask you to forget something, find and remove the relevant entry.",
     "",
+    // 写侧打标与失效边指引（specs/memory-semantic-recall.md R11/R12）：veracity 由模型
+    // 按来源自评，机械缺省（字段缺失时补 extracted）由 memory-agent-loop 的生命周期通道兜底；
+    // superseded-by 是 Phase D 登记的「谁写边」决策——Extraction 子代理写边。
+    "Set a `veracity` frontmatter field on every file you create or update: `user_stated` when the user explicitly asked you to remember it, `tool_observed` when it records what a tool run actually printed, `extracted` when you summarized or inferred it from the conversation (use this when unsure).",
+    "",
+    "When a new memory replaces an older one, add `superseded-by: <new-name>` to the older file's frontmatter instead of leaving both active. Do not write the same fact into two files \u2014 exact duplicates are merged mechanically.",
+    "",
     "Apply the memory types, what-not-to-save criteria, and frontmatter format from the Memory section of your system prompt \u2014 it is already in your context above.",
   ].join("\n");
 }

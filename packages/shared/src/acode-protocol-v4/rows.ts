@@ -71,6 +71,11 @@ export const turnHeaderStatsSchema = z.object({
   timeToFirstTokenMs: z.number().nonnegative().optional(),
   generationMs: z.number().nonnegative().optional(),
   modelRequestCount: z.number().int().nonnegative(),
+  // additive（specs/usage-statusbar.md「多模型轮标记」）：本轮服务过的模型身份
+  // （"provider/model"，去重、请求序、≤4）。≥2 = 轮中模型晋升；缺席 = 旧投影/旁路轮。
+  servedModels: z.array(z.string().min(1).max(256)).max(4).optional(),
+  // additive：本轮提示缓存未命中归因计数之和（cacheHit.missCauses 累加）；缺席 = 0 事实未知。
+  promptCacheMisses: z.number().int().nonnegative().optional(),
 });
 export type TurnHeaderStats = z.infer<typeof turnHeaderStatsSchema>;
 

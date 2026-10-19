@@ -4,6 +4,10 @@
 
 export * from "./turn-state.js";
 export * from "./turn-machine.js";
+// WI-10（specs/stable-prefix-pause-gate.md R4）：进程级冻结闸门。host 驱动单例
+// agentPauseGate（/pause 类控制面接线归命令面所有者）；turn loop 双安全点经
+// parkAtPauseSafePoint 轮询（runtime/methods/turn-loop.ts / turn-tools.ts）。
+export * from "./pause-gate.js";
 export { MessageHistoryImpl, createMessageHistory } from "./message-history.js";
 export {
   activeSessionMessages,

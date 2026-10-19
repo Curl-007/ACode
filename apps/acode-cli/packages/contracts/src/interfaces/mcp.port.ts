@@ -57,6 +57,15 @@ export interface McpPort {
   ): Promise<McpReadResourceResult | undefined>;
   status(): Promise<Record<string, McpServerStatus>>;
   listTools(): Promise<McpToolDescriptor[]>;
+  /**
+   * 工具面变更订阅（specs/mcp-startup-gate-breaker.md R1 收尾接线）：后台连接
+   * 完成、Deferred/空工具记录被真实工具原子替换后触发（无载荷——消费方重查
+   * listTools()）。实现可选：缺席时 core 注册表保持启动快照（callTool 按
+   * server/tool 身份路由不受影响，仅注册表 schema 存在陈旧窗）。返回退订
+   * 函数；监听器故障不得反向影响连接生命周期（派发点 try/catch，与状态
+   * 事件监听同一哲学）。
+   */
+  onToolsChanged?(listener: () => void): () => void;
   callTool(request: McpCallToolRequest, options?: McpCallToolOptions): Promise<McpToolCallResult>;
   close(): Promise<void>;
 }

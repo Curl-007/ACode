@@ -238,7 +238,39 @@ Original copyright, license and NOTICE text is retained below. Identical text is
 
 - @napi-rs/canvas@0.1.100 — MIT
 
+- @opentelemetry/api-logs@0.220.0 — Apache-2.0
+
 - @opentelemetry/api@1.9.0 — Apache-2.0
+
+- @opentelemetry/api@1.9.1 — Apache-2.0
+
+- @opentelemetry/context-async-hooks@2.12.0 — Apache-2.0
+
+- @opentelemetry/core@2.12.0 — Apache-2.0
+
+- @opentelemetry/core@2.9.0 — Apache-2.0
+
+- @opentelemetry/exporter-trace-otlp-proto@0.220.0 — Apache-2.0
+
+- @opentelemetry/otlp-exporter-base@0.220.0 — Apache-2.0
+
+- @opentelemetry/otlp-transformer@0.220.0 — Apache-2.0
+
+- @opentelemetry/resources@2.12.0 — Apache-2.0
+
+- @opentelemetry/resources@2.9.0 — Apache-2.0
+
+- @opentelemetry/sdk-logs@0.220.0 — Apache-2.0
+
+- @opentelemetry/sdk-metrics@2.9.0 — Apache-2.0
+
+- @opentelemetry/sdk-trace-base@2.12.0 — Apache-2.0
+
+- @opentelemetry/sdk-trace@2.12.0 — Apache-2.0
+
+- @opentelemetry/sdk-trace@2.9.0 — Apache-2.0
+
+- @opentelemetry/semantic-conventions@1.43.0 — Apache-2.0
 
 - @pierre/diffs@1.1.22 — apache-2.0
 
@@ -957,6 +989,8 @@ Original copyright, license and NOTICE text is retained below. Identical text is
 - ieee754@1.2.1 — BSD-3-Clause
 
 - ignore@5.3.2 — MIT
+
+- ignore@7.0.12 — MIT
 
 - image-q@4.0.0 — MIT
 
@@ -1791,7 +1825,39 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 - @aiden0z/pptx-renderer@1.2.4: LICENSE
 
+- @opentelemetry/api-logs@0.220.0: LICENSE
+
 - @opentelemetry/api@1.9.0: LICENSE
+
+- @opentelemetry/api@1.9.1: LICENSE
+
+- @opentelemetry/context-async-hooks@2.12.0: LICENSE
+
+- @opentelemetry/core@2.12.0: LICENSE
+
+- @opentelemetry/core@2.9.0: LICENSE
+
+- @opentelemetry/exporter-trace-otlp-proto@0.220.0: LICENSE
+
+- @opentelemetry/otlp-exporter-base@0.220.0: LICENSE
+
+- @opentelemetry/otlp-transformer@0.220.0: LICENSE
+
+- @opentelemetry/resources@2.12.0: LICENSE
+
+- @opentelemetry/resources@2.9.0: LICENSE
+
+- @opentelemetry/sdk-logs@0.220.0: LICENSE
+
+- @opentelemetry/sdk-metrics@2.9.0: LICENSE
+
+- @opentelemetry/sdk-trace-base@2.12.0: LICENSE
+
+- @opentelemetry/sdk-trace@2.12.0: LICENSE
+
+- @opentelemetry/sdk-trace@2.9.0: LICENSE
+
+- @opentelemetry/semantic-conventions@1.43.0: LICENSE
 
 
 
@@ -3654,9 +3720,31 @@ SOFTWARE.
 
 ````
 
+### Notice bd58f2a90815dfc0589075fab5af424dedc7415266765f48ae59b3de98d5e1be
+
+- @opentelemetry/api-logs@0.220.0: README.md (license section)
+
+
+
+````text
+## License
+
+Apache 2.0 - See [LICENSE][license-url] for more information.
+
+[discussions-url]: https://github.com/open-telemetry/opentelemetry-js/discussions
+[license-url]: https://github.com/open-telemetry/opentelemetry-js/blob/main/LICENSE
+[license-image]: https://img.shields.io/badge/license-Apache_2.0-green.svg?style=flat
+[npm-url]: https://www.npmjs.com/package/@opentelemetry/api-logs
+[npm-img]: https://badge.fury.io/js/%40opentelemetry%2Fapi-logs.svg
+[logs-api-docs]: https://open-telemetry.github.io/opentelemetry-js/modules/_opentelemetry_api_logs.html
+
+````
+
 ### Notice 9cfa86899ccd67b76331431bbff57cbe15ceabb2e393aeb5a56c7a958dabd595
 
 - @opentelemetry/api@1.9.0: README.md (license section)
+
+- @opentelemetry/api@1.9.1: README.md (license section)
 
 
 
@@ -3671,6 +3759,237 @@ Apache 2.0 - See [LICENSE][license-url] for more information.
 [license-url]: https://github.com/open-telemetry/opentelemetry-js/blob/main/api/LICENSE
 [docs-tracing]: https://github.com/open-telemetry/opentelemetry-js/blob/main/doc/tracing.md
 [docs-sdk-registration]: https://github.com/open-telemetry/opentelemetry-js/blob/main/doc/sdk-registration.md
+
+````
+
+### Notice fc58ccbf60cdd4a212be673e7f1278dd1a3e49f1b1ddc21a7d70724bc8b3044a
+
+- @opentelemetry/context-async-hooks@2.12.0: README.md (license section)
+
+
+
+````text
+## License
+
+Apache 2.0 - See [LICENSE][license-url] for more information.
+
+[discussions-url]: https://github.com/open-telemetry/opentelemetry-js/discussions
+[license-url]: https://github.com/open-telemetry/opentelemetry-js/blob/main/LICENSE
+[license-image]: https://img.shields.io/badge/license-Apache_2.0-green.svg?style=flat
+[def-context-manager]: https://opentelemetry.io/docs/instrumentation/js/api/context/#context-manager
+[dd-js-tracer-scope]: https://github.com/DataDog/dd-trace-js/blob/master/packages/dd-trace/src/scope.js
+[opentracing-scope]: https://github.com/opentracing/opentracing-javascript/pull/113
+[diag-team-scope-discussion]: https://github.com/nodejs/diagnostics/issues/300
+[npm-url]: https://www.npmjs.com/package/@opentelemetry/context-async-hooks
+[npm-img]: https://badge.fury.io/js/%40opentelemetry%2Fcontext-async-hooks.svg
+
+````
+
+### Notice 998b885208a7e72f854bca1a9fcb439c7665671dcbc77a9b6ca5fae5a15982dc
+
+- @opentelemetry/core@2.12.0: README.md (license section)
+
+- @opentelemetry/core@2.9.0: README.md (license section)
+
+
+
+````text
+## License
+
+Apache 2.0 - See [LICENSE][license-url] for more information.
+
+[discussions-url]: https://github.com/open-telemetry/opentelemetry-js/discussions
+[license-url]: https://github.com/open-telemetry/opentelemetry-js/blob/main/LICENSE
+[license-image]: https://img.shields.io/badge/license-Apache_2.0-green.svg?style=flat
+[npm-url]: https://www.npmjs.com/package/@opentelemetry/core
+[npm-img]: https://badge.fury.io/js/%40opentelemetry%2Fcore.svg
+
+````
+
+### Notice e1acb133327575513e723320b5c42d7705bfe95dfdf0da1879239824ec5f8496
+
+- @opentelemetry/exporter-trace-otlp-proto@0.220.0: README.md (license section)
+
+
+
+````text
+## License
+
+Apache 2.0 - See [LICENSE][license-url] for more information.
+
+[discussions-url]: https://github.com/open-telemetry/opentelemetry-js/discussions
+[license-url]: https://github.com/open-telemetry/opentelemetry-js/blob/main/LICENSE
+[license-image]: https://img.shields.io/badge/license-Apache_2.0-green.svg?style=flat
+[npm-url]: https://www.npmjs.com/package/@opentelemetry/exporter-trace-otlp-proto
+[npm-img]: https://badge.fury.io/js/%40opentelemetry%2Fexporter-trace-otlp-proto.svg
+[semconv-resource-service-name]: https://github.com/open-telemetry/opentelemetry-specification/blob/main/specification/resource/semantic_conventions/README.md#service
+[metrics-exporter-url]: https://github.com/open-telemetry/opentelemetry-js/tree/main/experimental/packages/opentelemetry-exporter-metrics-otlp-proto
+
+````
+
+### Notice 0b8732770b293090db6e4ec732b98a2b3b199c927dfafcbc23e51c5b724306b7
+
+- @opentelemetry/otlp-exporter-base@0.220.0: README.md (license section)
+
+
+
+````text
+## License
+
+Apache 2.0 - See [LICENSE][license-url] for more information.
+
+[discussions-url]: https://github.com/open-telemetry/opentelemetry-js/discussions
+[license-url]: https://github.com/open-telemetry/opentelemetry-js/blob/main/LICENSE
+[license-image]: https://img.shields.io/badge/license-Apache_2.0-green.svg?style=flat
+[npm-url]: https://www.npmjs.com/package/@opentelemetry/otlp-exporter-base
+[npm-url-grpc]: https://www.npmjs.com/package/@opentelemetry/otlp-grpc-exporter-base
+[npm-img]: https://badge.fury.io/js/%40opentelemetry%2Fotlp-exporter-base.svg
+
+````
+
+### Notice cc5ef64e058432c6141ecfceaac3dc2d4c8b08e17fa5e1e9e6f6a829dbca7203
+
+- @opentelemetry/otlp-transformer@0.220.0: README.md (license section)
+
+
+
+````text
+## License
+
+Apache 2.0 - See [LICENSE][license-url] for more information.
+
+[discussions-url]: https://github.com/open-telemetry/opentelemetry-js/discussions
+[license-url]: https://github.com/open-telemetry/opentelemetry-js/blob/main/LICENSE
+[license-image]: https://img.shields.io/badge/license-Apache_2.0-green.svg?style=flat
+[npm-url]: https://www.npmjs.com/package/@opentelemetry/otlp-transformer
+[npm-img]: https://badge.fury.io/js/%40opentelemetry%2Fotlp-transformer.svg
+
+[sdk]: https://github.com/open-telemetry/opentelemetry-js
+[otlp]: https://github.com/open-telemetry/opentelemetry-proto
+
+````
+
+### Notice 9cb96eeeccf177dd2579c21e2376f52ce4fa90861cc2dda9f14842542da7a3f9
+
+- @opentelemetry/resources@2.12.0: README.md (license section)
+
+- @opentelemetry/resources@2.9.0: README.md (license section)
+
+
+
+````text
+## License
+
+Apache 2.0 - See [LICENSE][license-url] for more information.
+
+[discussions-url]: https://github.com/open-telemetry/opentelemetry-js/discussions
+[license-url]: https://github.com/open-telemetry/opentelemetry-js/blob/main/LICENSE
+[license-image]: https://img.shields.io/badge/license-Apache_2.0-green.svg?style=flat
+[npm-url]: https://www.npmjs.com/package/@opentelemetry/resources
+[npm-img]: https://badge.fury.io/js/%40opentelemetry%2Fresources.svg
+
+[resource-semantic_conventions]: https://github.com/open-telemetry/opentelemetry-specification/tree/master/specification/resource/semantic_conventions
+
+````
+
+### Notice a194d66e0c5bd6dc8927f5806bd9c5fd1df7c582eb8518d980a612cee902d632
+
+- @opentelemetry/sdk-logs@0.220.0: README.md (license section)
+
+
+
+````text
+## License
+
+Apache 2.0 - See [LICENSE][license-url] for more information.
+
+[discussions-url]: https://github.com/open-telemetry/opentelemetry-js/discussions
+[license-url]: https://github.com/open-telemetry/opentelemetry-js/blob/main/LICENSE
+[license-image]: https://img.shields.io/badge/license-Apache_2.0-green.svg?style=flat
+[npm-url]: https://www.npmjs.com/package/@opentelemetry/sdk-logs
+[npm-img]: https://badge.fury.io/js/%40opentelemetry%2Fsdk%2Dlogs.svg
+
+````
+
+### Notice 1c6a18bba0437d60bb18fa58bf055eb32c51c791837ac0ad375b529bcf245f94
+
+- @opentelemetry/sdk-metrics@2.9.0: README.md (license section)
+
+
+
+````text
+## License
+
+Apache 2.0 - See [LICENSE][license-url] for more information.
+
+[discussions-url]: https://github.com/open-telemetry/opentelemetry-js/discussions
+[license-url]: https://github.com/open-telemetry/opentelemetry-js/blob/main/LICENSE
+[license-image]: https://img.shields.io/badge/license-Apache_2.0-green.svg?style=flat
+[npm-url]: https://www.npmjs.com/package/@opentelemetry/sdk-metrics
+[npm-img]: https://badge.fury.io/js/%40opentelemetry%2Fsdk%2Dmetrics.svg
+
+````
+
+### Notice 8375f12da0f472679e1eeee52bf58ea289c9806b8a7605f80a1f8865b01908f1
+
+- @opentelemetry/sdk-trace-base@2.12.0: README.md (license section)
+
+
+
+````text
+## License
+
+Apache 2.0 - See [LICENSE][license-url] for more information.
+
+[discussions-url]: https://github.com/open-telemetry/opentelemetry-js/discussions
+[license-url]: https://github.com/open-telemetry/opentelemetry-js/blob/main/LICENSE
+[license-image]: https://img.shields.io/badge/license-Apache_2.0-green.svg?style=flat
+[npm-url]: https://www.npmjs.com/package/@opentelemetry/sdk-trace-base
+[npm-img]: https://badge.fury.io/js/%40opentelemetry%2Fsdk-trace-base.svg
+
+````
+
+### Notice 09c92e12b7957b0fc228910282e6b4ac052166c59a8a060c2b53e38025cffe62
+
+- @opentelemetry/sdk-trace@2.12.0: README.md (license section)
+
+- @opentelemetry/sdk-trace@2.9.0: README.md (license section)
+
+
+
+````text
+## License
+
+Apache 2.0 - See [LICENSE][license-url] for more information.
+
+[discussions-url]: https://github.com/open-telemetry/opentelemetry-js/discussions
+[license-url]: https://github.com/open-telemetry/opentelemetry-js/blob/main/LICENSE
+[license-image]: https://img.shields.io/badge/license-Apache_2.0-green.svg?style=flat
+[npm-url]: https://www.npmjs.com/package/@opentelemetry/sdk-trace
+[npm-img]: https://badge.fury.io/js/%40opentelemetry%2Fsdk-trace.svg
+
+````
+
+### Notice ac32ccc44843f58e28c56d475e1e8687a3eeae4aa003c9225b40e9603b5f9c73
+
+- @opentelemetry/semantic-conventions@1.43.0: README.md (license section)
+
+
+
+````text
+## License
+
+Apache 2.0 - See [LICENSE][license-url] for more information.
+
+[discussions-url]: https://github.com/open-telemetry/opentelemetry-js/discussions
+[license-url]: https://github.com/open-telemetry/opentelemetry-js/blob/main/LICENSE
+[license-image]: https://img.shields.io/badge/license-Apache_2.0-green.svg?style=flat
+[npm-url]: https://www.npmjs.com/package/@opentelemetry/semantic-conventions
+[npm-img]: https://badge.fury.io/js/%40opentelemetry%2Fsemantic-conventions.svg
+[semconv-docs]: https://github.com/open-telemetry/semantic-conventions/blob/main/docs/README.md
+[semconv-stability]: https://opentelemetry.io/docs/specs/otel/versioning-and-stability/#semantic-conventions-stability
+[semconv-http-stabilization]: https://opentelemetry.io/blog/2023/http-conventions-declared-stable/
+[trace-semantic_conventions]: https://github.com/open-telemetry/semantic-conventions/tree/main/specification/trace/semantic_conventions
 
 ````
 
@@ -13438,6 +13757,8 @@ BSD 3 Clause. Copyright (c) 2008, Fair Oaks Labs, Inc.
 ### Notice 9c94db23dc4b1e9aaee5d195668b916afc71efed54af226b66cf0ccc4389c1c0
 
 - ignore@5.3.2: LICENSE-MIT
+
+- ignore@7.0.12: LICENSE-MIT
 
 
 

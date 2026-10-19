@@ -28,6 +28,7 @@ import {
 } from "../../agent/message-history.js";
 import type { AgentRuntimeInternal } from "../internal.js";
 import { getRuntimeLifecyclePort } from "../runtime-lifecycle.js";
+import { parkAtPauseSafePoint } from "../../agent/pause-gate.js";
 import { runModelBackedTurnStep } from "./turn-model-step.js";
 import {
   AUTOMATION_MUTATION_TOOL_NAMES,
@@ -53,6 +54,12 @@ export async function runRegularTurnLoop(
   state: RegularTurnLoopState,
 ): Promise<void> {
   while (true) {
+    throwIfTurnAborted(state.turnAbortSignal);
+    // 进程级暂停闸门安全点①（模型调用前，specs/stable-prefix-pause-gate.md R4）：
+    // pause 生效时 park 在 turn 边界——冻结期间不压缩、不发 provider 请求；
+    // 在飞流/工具跑完后各 loop 停在这里。本 run 的 abortSignal 只解本 park
+    // （闸门保持关闭），解 park 后立即走既有 abort 检查解绕。
+    await parkAtPauseSafePoint(state.turnAbortSignal);
     throwIfTurnAborted(state.turnAbortSignal);
     const outputTokenRecoveryActive = state.turnRequestState.outputTokenContinuationCount > 0;
     // guide 只允许由完整 tool result batch 设置这个一次性诊断；普通 queue 不在
@@ -93,6 +100,7 @@ export async function runRegularTurnLoop(
         phase: compactPhase,
         rapidRefill,
         model: state.model,
+        state,
         turnRequestState: state.turnRequestState,
       },
     );
@@ -104,6 +112,8 @@ export async function runRegularTurnLoop(
         toolTurnsSinceCompact: rapidRefill.toolTurnsSinceCompact,
       });
     }
+    // "promoted"（specs/failure-recovery-tracks.md 轨道 1）：晋升执行体已换绑 state.model
+    // 并发出 ModelSelected；本轮不压缩、不记账，下一迭代按晋升后窗口重算阈值。
     if (autoCompactOutcome === "compacted") {
       recordCompactSuccess(state, rapidRefill);
       recordCompactHistoryRound(state);

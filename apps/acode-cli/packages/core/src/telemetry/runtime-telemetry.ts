@@ -19,6 +19,12 @@ import type {
   ToolExecutionSpanWriter,
   TraceContext,
 } from "@acode/contracts";
+// WI-14（specs/otel-telemetry.md）：模型请求事实的类型与结构化能力探测接口。
+// type-only import：默认启动路径不引入任何 OTel 运行时依赖。
+import type {
+  ModelRequestTelemetryFact,
+  ModelRequestTelemetryRecorder,
+} from "./otel/model-request-fact.js";
 
 interface RuntimeTelemetryFacadeOptions {
   agentName?: string;
@@ -96,6 +102,16 @@ export class RuntimeTelemetryFacade {
       causation: input.causation ?? this.captureCausation(),
       context: this.executionContext(input.traceContext),
     });
+  }
+
+  /**
+   * 模型请求事实收口（WI-14，specs/otel-telemetry.md）：由 recordModelUsageFact
+   * 单一 producer 调用。结构化能力探测转发——OTel port 实现附带 recordModelRequest，
+   * NOOP port 没有该方法即静默跳过；contracts 面不改，默认路径零开销。
+   */
+  recordModelRequest(fact: ModelRequestTelemetryFact): void {
+    const recorder = this.port as Partial<ModelRequestTelemetryRecorder>;
+    recorder.recordModelRequest?.(fact);
   }
 
   private executionContext(traceContext: TraceContext) {

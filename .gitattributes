@@ -10,6 +10,11 @@
 *.cts text eol=lf
 *.mts text eol=lf
 
+# design-tokens 生成产物被 generate-visualize-design-tokens.test.mjs 与再生成内容
+# 逐字节比较：生成器输出 LF，Windows 检出成 CRLF 会让对照测试误红（F8 教训同型，
+# omp 价值提取波终局门禁排查确认）。
+apps/acode-cli/packages/bundled-skills/skills/visualize/references/design-tokens.md text eol=lf
+
 # 上游许可原文与生成的声明按字节保存，不能自动转换换行或裁剪空白。
 # 原文中的 License / ======= 是 Markdown 标题，不是合并冲突。
 THIRD-PARTY-NOTICES.md -text -whitespace conflict-marker-size=32 linguist-generated=true

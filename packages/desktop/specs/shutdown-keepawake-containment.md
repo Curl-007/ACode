@@ -234,6 +234,11 @@ covered"|"check_failed"}`）；检查异常累计 3 次 → 放弃并退订（wa
   （2026-10-18 v1.0.0 实机日志实证：`Executing ...pending\ACode-1.0.0-win-x64.exe`
   后 120ms `exit hook killed live children`）。孤儿收敛语义不削弱：交接前的 sweep
   已覆盖台账活子进程，豁免只作用于「sweep 之后、安装器接管」窗口内新 spawn 的进程。
+  R19 相邻增补（WI-9）：更新交接账本（specs/updater-journal-recovery.md）把本次
+  交接落账（`exitSweepHandoff` 标记）持久化到 `userData/update-journal.json`，
+  落账点位于既有流程内 `disableExitSweep` 之前、两次写均在 `quitAndInstall` 前
+  await 完成，不改本条豁免时序；「交接了但版本没变」事故指纹在下次启动由账本
+  恢复路径诊断（本条事故的 2026-10-18 形态即该指纹）。
 
 ## 登记项（条件触发）
 

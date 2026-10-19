@@ -19,9 +19,12 @@ import {
   type ModelRequestAuth,
 } from "@acode/contracts";
 import type { RegistryProviderConfig } from "@acode/provider";
+import type { ResolvedModelCompatData } from "@acode/shared/model-config";
 import { withOpenRouterAttributionHeaders } from "@acode/shared";
 import { createAnthropicCompatFetch } from "./anthropic-stream-compat.js";
 import { createOpenAIResponsesJsonCompatFetch } from "./openai-responses-json-compat.js";
+import { createCompatTransformFetch } from "./model-compat-fetch.js";
+import { resolveModelCompat } from "./model-compat-rules.js";
 import { createModelOptionMapFetch, type RawRequestBodyCapture } from "./model-option-map-fetch.js";
 import { createNetworkProxyFetch } from "../network/proxy-fetch.js";
 import { createOfficialCodingPlanGatewayFetch } from "./official-coding-plan-gateway.js";
@@ -207,6 +210,14 @@ export class AiSdkModelExecution {
       configuredProvider.headers,
     );
     const apiKey = this.resolveApiKey(configuredProvider);
+    // compat 标志烘焙点（spec: apps/acode-cli/specs/model-compat-flags.md R5）：
+    // 每模型绑定解析一次并冻结进 snapshot，请求期零字符串匹配；等秩规则冲突在此
+    // fail-closed 抛出（bindModel 传播到 createModel，响亮失败而非静默降级）。
+    const compat = resolveModelCompat({
+      providerId: input.providerId,
+      modelId: input.modelId,
+      apiType: input.providerConfig.api.type,
+    });
     return {
       providerConfig: {
         ...configuredProvider,
@@ -219,6 +230,7 @@ export class AiSdkModelExecution {
       providerId: input.providerId as ModelProviderId,
       modelId: input.modelId as ModelId,
       supportsJsonSchemaOutput: input.supportsJsonSchemaOutput,
+      compat,
     };
   }
 
@@ -239,6 +251,7 @@ export class AiSdkModelExecution {
       optionValues,
       rawRequestBodyCapture,
       snapshot.supportsJsonSchemaOutput,
+      snapshot.compat,
     );
     return {
       baseURL: providerConfig.baseURL,
@@ -259,6 +272,7 @@ export class AiSdkModelExecution {
     optionValues: ModelOptionValues | undefined,
     rawRequestBodyCapture: RawRequestBodyCapture,
     supportsJsonSchemaOutput: boolean,
+    compat: ResolvedModelCompatData,
   ): LanguageModelFactory {
     const apiKey = this.resolveApiKey(providerConfig);
     const headers = providerConfig.headers;
@@ -277,13 +291,16 @@ export class AiSdkModelExecution {
             values: optionValues,
           })
         : fetch;
+    // compat 结构修补先于 option-map 字段 patch（spec R4 链路顺序）；sdk-compat fetch
+    // 包在管道之外，保持存量 request-compat 先于 option-map 的相对顺序不变。
+    const pipelineFetch = createCompatTransformFetch({ fetch: optionFetch, flags: compat });
 
     switch (providerConfig.kind) {
       case "openai": {
         const provider = createOpenAI({
           apiKey,
           baseURL: providerConfig.baseURL,
-          fetch: createOpenAIResponsesJsonCompatFetch(optionFetch),
+          fetch: createOpenAIResponsesJsonCompatFetch(pipelineFetch),
           headers,
         });
         return provider.responses as LanguageModelFactory;
@@ -293,7 +310,7 @@ export class AiSdkModelExecution {
         const provider = createAnthropic({
           apiKey,
           baseURL: normalizeAnthropicBaseURL(providerConfig.baseURL),
-          fetch: createAnthropicCompatFetch(optionFetch),
+          fetch: createAnthropicCompatFetch(pipelineFetch),
           headers: withAnthropicAuthorizationHeader(apiKey, headers),
         });
         return provider as LanguageModelFactory;
@@ -304,7 +321,7 @@ export class AiSdkModelExecution {
           name: providerConfig.name ?? providerId,
           baseURL: providerConfig.baseURL,
           apiKey,
-          fetch: optionFetch,
+          fetch: pipelineFetch,
           headers,
           // OpenAI Compatible 流式 usage 需要显式请求，Usage 是执行结果的一部分。
           includeUsage: true,
@@ -345,6 +362,8 @@ interface AiSdkModelSnapshot {
   readonly providerConfig: AiSdkProviderConfig;
   readonly providerId: ModelProviderId;
   readonly modelId: ModelId;
+  /** 烘焙后的 compat 档案（稀疏；空对象 = 通用行为 = 管道直通）。 */
+  readonly compat: ResolvedModelCompatData;
 }
 
 function toAiSdkProviderConfig(

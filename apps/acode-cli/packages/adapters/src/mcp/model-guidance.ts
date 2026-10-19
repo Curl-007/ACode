@@ -13,6 +13,7 @@
 // 无状态，单独成文件便于测试直接断言。
 
 import type { McpServerStatus } from "@acode/contracts";
+import type { McpCrashStormTrip } from "./crash-storm-breaker.js";
 import type { McpReconnectGateVerdict } from "./reconnect-budget.js";
 
 /**
@@ -41,6 +42,23 @@ export function buildMcpReconnectRefusalError(
   const retryAfterSeconds = Math.max(1, Math.ceil(verdict.retryAfterMs / 1000));
   return new Error(
     `MCP server "${serverName}" is unavailable: its last automatic reconnection failed and the next attempt is throttled for about ${retryAfterSeconds}s. Do not retry this tool in a loop; continue with other work or report the failure to the user.`,
+  );
+}
+
+/**
+ * 崩溃风暴熔断（specs/mcp-startup-gate-breaker.md R2）触发后的懒重连拒绝文案。
+ * 与 R1 挂起文案的关键差别：风暴的证据是「连上了又立刻死」——server 进程/端点
+ * 大概率在每次启动后立即退出，spawn 循环只会加重它，必须显式止损；恢复途径只有
+ * 显式重连（修复后）。
+ */
+export function buildMcpCrashStormRefusalError(
+  serverName: string,
+  trip: McpCrashStormTrip,
+  cause?: unknown,
+): Error {
+  return new Error(
+    `MCP server "${serverName}" is unavailable: it disconnected ${trip.windowCount} times within ${Math.round(trip.windowMs / 1000)}s, so automatic recovery is suspended by the crash-storm breaker. The server most likely crashes or exits immediately after every start - retrying cannot fix it and only keeps restarting it. Do not retry this tool in a loop. Tell the user this MCP server keeps crashing and needs attention (check its command, logs and dependencies); after it is fixed, an explicit reconnect from the MCP settings resumes automatic recovery.`,
+    cause !== undefined ? { cause } : {},
   );
 }
 

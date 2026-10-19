@@ -32,6 +32,7 @@ import {
 } from "./errors.js";
 import { emitToolCallError, emitToolCallResult, emitToolCallStarted } from "./events.js";
 import {
+  concatHookContextSources,
   formatHookAdditionalContexts,
   runPostToolUseFailureHooks,
   runPostToolUseHooks,
@@ -75,6 +76,11 @@ import { validateInitialModelToolInput, validateInput, validateOutput } from "./
 import type { ExecutableToolCall } from "../types.js";
 import { resolveEmbeddedSearchBranchCapability } from "../../embedded-search/capability.js";
 import { resolveToolEntryModelContract } from "../model-contract.js";
+// WI-17（specs/transcript-secret-obfuscation.md R3）：工具参数占位符还原的唯一收口。
+import {
+  formatUnresolvedSecretPlaceholderHint,
+  getSecretRedactionService,
+} from "../../security/secret-redaction/index.js";
 
 export async function executeToolCall(
   deps: ToolExecutorDeps,
@@ -288,6 +294,7 @@ async function executeToolCallImpl(
         },
       ),
       preToolHookResult.additionalContexts,
+      preToolHookResult.additionalContextSources,
     );
     telemetry?.setPermissionDecision("denied");
     telemetry?.finishDenied("policy_denied");
@@ -308,6 +315,7 @@ async function executeToolCallImpl(
       const result = appendPreToolAdditionalContextsToErrorResult(
         createErrorResult(canonicalToolCall, hookInputValidation),
         preToolHookResult.additionalContexts,
+        preToolHookResult.additionalContextSources,
       );
       telemetry?.finishFailed("validation", "parse", result.error);
       return result;
@@ -342,6 +350,7 @@ async function executeToolCallImpl(
         { toolName: canonicalToolCall.name },
       ),
       preToolHookResult.additionalContexts,
+      preToolHookResult.additionalContextSources,
     );
     if (result.error?.type === CoreErrorType.PermissionDenied) {
       telemetry?.finishDenied("user_denied");
@@ -356,6 +365,15 @@ async function executeToolCallImpl(
   }
   executionInput = permissionResult.executionInput;
   const permissionWaitMs = permissionResult.permissionWaitMs;
+
+  // WI-17 占位符还原点（specs/transcript-secret-obfuscation.md R3）：刻意后置到权限
+  // 判定之后——确认窗（PermissionRequested）、PreToolUse hook、PermissionDenied
+  // inputSummary 看到的都是脱敏投影（UI 转录保持混淆态，R4）；capability 判定、
+  // timeout 解析与 handler 从这行起拿到秘密原文。差值恰是本进程注册的占位符→原文
+  // 映射（模型从未见过原文，无从注入新值），「确认与执行同字节」收窄为「同秘密投影
+  // 字节」。未知 $$…$$ 形态原样放行；严格铸造形态的未解析候选计数，失败时 fail-loud。
+  const secretRestoration = getSecretRedactionService().restoreToolInput(executionInput);
+  executionInput = secretRestoration.value;
 
   const startTime = Date.now();
   // 按**执行入参**解析一次副作用旗标（Bash 的只读命令判定就在这里落定），随 ToolCallStarted 发出：
@@ -548,6 +566,19 @@ async function executeToolCallImpl(
         ...skillPathActivationContexts,
       ],
       modelOutputEntry,
+      // 来源标注与 contexts 索引对齐（specs/hook-additional-context-hardening.md）；
+      // skill-path 提醒非 hook 产出，无来源（渲染为无标注条目头）。
+      concatHookContextSources([
+        {
+          contexts: preToolHookResult.additionalContexts,
+          sources: preToolHookResult.additionalContextSources,
+        },
+        {
+          contexts: postToolHookResult.additionalContexts,
+          sources: postToolHookResult.additionalContextSources,
+        },
+        { contexts: skillPathActivationContexts },
+      ]),
     );
     const display = createToolResultDisplay(canonicalToolCall.name, output, {
       mcp: entry.metadata.mcpPresentation,
@@ -646,16 +677,41 @@ async function executeToolCallImpl(
     if (failureHookResult.additionalContexts.length > 0 && baseModelContent) {
       result.modelContent = [
         baseModelContent,
-        formatHookAdditionalContexts([
-          ...preToolHookResult.additionalContexts,
-          ...failureHookResult.additionalContexts,
-        ]),
+        formatHookAdditionalContexts(
+          [...preToolHookResult.additionalContexts, ...failureHookResult.additionalContexts],
+          concatHookContextSources([
+            {
+              contexts: preToolHookResult.additionalContexts,
+              sources: preToolHookResult.additionalContextSources,
+            },
+            {
+              contexts: failureHookResult.additionalContexts,
+              sources: failureHookResult.additionalContextSources,
+            },
+          ]),
+        ),
       ].join("\n\n");
     } else if (preToolHookResult.additionalContexts.length > 0 && baseModelContent) {
       result.modelContent = [
         baseModelContent,
-        formatHookAdditionalContexts(preToolHookResult.additionalContexts),
+        formatHookAdditionalContexts(
+          preToolHookResult.additionalContexts,
+          preToolHookResult.additionalContextSources,
+        ),
       ].join("\n\n");
+    }
+    // WI-17 fail-loud（spec R3）：调用失败且入参里存在严格铸造形态、但还原表查不到的
+    // 占位符（秘密已轮换/移除/跨进程陈旧）时，把可纠错诊断追加进回给模型的载体。
+    // 成功调用不追加（占位符字面量可能正是用户意图，避免噪音）。
+    // 载体选择：modelContent 缺席（通用错误）时以 baseModelContent（error.message 的
+    // 下游投影源）为底拼接——只附 hint 会顶掉下游对错误消息的既有投影，丢根因。
+    if (secretRestoration.unresolvedPlaceholders > 0) {
+      const placeholderHint = formatUnresolvedSecretPlaceholderHint(canonicalToolCall.name);
+      const carrier =
+        typeof result.modelContent === "string" && result.modelContent.length > 0
+          ? result.modelContent
+          : baseModelContent;
+      result.modelContent = carrier ? `${carrier}\n\n${placeholderHint}` : placeholderHint;
     }
     result = withAutomationCreateLimitTurnStop(result, {
       error,
@@ -755,6 +811,7 @@ function errorCategoryForToolError(type: string | undefined): AgentTelemetryErro
 function appendPreToolAdditionalContextsToErrorResult(
   result: ToolExecutionResult,
   additionalContexts: string[],
+  additionalContextSources?: readonly (string | undefined)[],
 ): ToolExecutionResult {
   if (result.success || !result.error || additionalContexts.length === 0) return result;
 
@@ -764,6 +821,9 @@ function appendPreToolAdditionalContextsToErrorResult(
     typeof result.modelContent === "string" ? result.modelContent : result.error.message;
   return {
     ...result,
-    modelContent: [baseModelContent, formatHookAdditionalContexts(additionalContexts)].join("\n\n"),
+    modelContent: [
+      baseModelContent,
+      formatHookAdditionalContexts(additionalContexts, additionalContextSources),
+    ].join("\n\n"),
   };
 }

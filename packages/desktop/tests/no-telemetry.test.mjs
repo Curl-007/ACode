@@ -13,12 +13,27 @@ async function sources(dir) {
     )
   ).flat();
 }
+// WI-14（apps/acode-cli/specs/otel-telemetry.md）修订审计边界：desktop main 允许
+// **唯一一个** env 门禁、懒加载的 OTel Resource 初始化模块（desktopTelemetry.ts），
+// 其余常开 exporter/身份注入/IPC 转发桥面维持删除态。守卫方式：
+// 1. @opentelemetry/ 只允许出现在 desktopTelemetry.ts，且必须是函数内动态 import
+//   （无顶层静态 import——保证无端点默认态零加载）；
+// 2. 该文件必须保留端点门禁（无 OTEL_EXPORTER_OTLP_* 端点 = no_endpoint no-op）；
+// 3. package.json 的 @opentelemetry 依赖钉死为最小四件套；@arms 全面禁止不变。
+const GATED_TELEMETRY_FILE = "src/main/desktopTelemetry.ts";
+const ALLOWED_OTEL_DEPENDENCIES = [
+  "@opentelemetry/api",
+  "@opentelemetry/exporter-trace-otlp-proto",
+  "@opentelemetry/resources",
+  "@opentelemetry/sdk-trace-base",
+];
+
 test("desktop cannot initialize telemetry exporters or forwarding bridges", async () => {
   for (const file of await sources(new URL("src/", root))) {
     const content = await readFile(file, "utf8");
     assert.doesNotMatch(
       content,
-      /@arms\/rum-electron|@opentelemetry\/|createTelemetryCore|createDesktopTelemetryFetch|installArmsRumBridgeIpcForward|new NetworkTelemetryChannelServer|registerHostNetworkTelemetry/,
+      /@arms\/rum-electron|createTelemetryCore|createDesktopTelemetryFetch|installArmsRumBridgeIpcForward|new NetworkTelemetryChannelServer|registerHostNetworkTelemetry/,
       file.pathname,
     );
     assert.doesNotMatch(
@@ -26,12 +41,35 @@ test("desktop cannot initialize telemetry exporters or forwarding bridges", asyn
       /ipcRenderer\.(?:invoke|send)\(PlatformChannels\.(?:ReportTelemetryEvent|ReportArmsCustomEvent|ReportLocalTtftBatch|ReportRendererActionTraceBatch|SyncTelemetryContext)/,
       file.pathname,
     );
+    if (file.pathname.replaceAll("\\", "/").endsWith(GATED_TELEMETRY_FILE)) {
+      // 门禁模块本体：@opentelemetry 只允许 await import(...) 动态形态，
+      // 禁止任何顶层静态 import（默认启动路径零 OTel 模块图）。
+      // 正则说明：静态形态是 `import <空白或引号>`，动态形态是 `import(`——
+      // `[^(]` 在 import 关键字后拒绝左括号，即只命中静态 import 行。
+      assert.doesNotMatch(
+        content,
+        /^\s*import\s*[^(][^\n]*@opentelemetry\//m,
+        "desktopTelemetry.ts 不得静态 import @opentelemetry/*",
+      );
+      // 端点门禁必须在场：无端点 = no_endpoint no-op（spec 开关矩阵第 5 行）。
+      assert.match(content, /no_endpoint/, "desktopTelemetry.ts 必须保留端点门禁");
+      assert.match(content, /ACODE_TELEMETRY/, "desktopTelemetry.ts 必须保留用户 opt-out 总开关");
+      assert.match(content, /OTEL_SDK_DISABLED/, "desktopTelemetry.ts 必须保留 kill-switch");
+      continue;
+    }
+    assert.doesNotMatch(content, /@opentelemetry\//, file.pathname);
   }
   const manifest = JSON.parse(await readFile(new URL("package.json", root), "utf8"));
+  const dependencyNames = Object.keys(manifest.dependencies);
   assert.equal(
-    Object.keys(manifest.dependencies).some((name) => /^@(?:arms|opentelemetry)\//.test(name)),
+    dependencyNames.some((name) => name.startsWith("@arms/")),
     false,
   );
+  // @opentelemetry 依赖钉死为最小四件套（新增必须过 spec 评审）。
+  const otelDependencies = dependencyNames
+    .filter((name) => name.startsWith("@opentelemetry/"))
+    .sort();
+  assert.deepEqual(otelDependencies, ALLOWED_OTEL_DEPENDENCIES);
 });
 
 // 以 Electron 边界替身执行真实模块，检查删除旁路后业务事件仍能流转。

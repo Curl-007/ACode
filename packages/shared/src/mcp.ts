@@ -4,7 +4,7 @@
  */
 
 import type { SettingsDirectoryLocation } from "./settings-source.js";
-import type { McpServerFailureKind } from "./acode-protocol/index.js";
+import type { ACodeMcpReconnectSuspension, McpServerFailureKind } from "./acode-protocol/index.js";
 
 // CUA official plugin 身份常量（port 自 feat；UI 设置面板 + bootstrap 复用以避免字面量漂移）。
 export const ACODE_CUA_OFFICIAL_PLUGIN_ID = "computer-use@acode-plugins-official";
@@ -121,6 +121,8 @@ export interface ACodeMcpServer {
   error?: string;
   failureKind?: McpServerFailureKind;
   serverRequestId?: string;
+  /** 重连熔断挂起附加事实（specs/mcp-lifecycle-ttl-approval.md R2.3）；恢复后由 store 清除。 */
+  reconnectSuspension?: ACodeMcpReconnectSuspension;
   toolCount?: number;
   authorization?: {
     type: "oauth_authorization_code";

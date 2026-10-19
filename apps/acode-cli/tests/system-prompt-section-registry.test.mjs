@@ -670,13 +670,15 @@ test("(场景7) build 与 buildAsync 产物一致（当前注册表全同步）"
 // Phase 1 保全 + 注册表清单
 // ============================================================
 
-test("(Phase1 保全) 注册表段 id 清单：19 个 id 全量、含 P1/P6 落地段", () => {
+test("(Phase1 保全) 注册表段 id 清单：20 个 id 全量、含 P1/P6/WI-10 落地段", () => {
   assert.deepEqual([...ALL_SECTION_IDS], [
     "prefix.cli",
     "identity.custom",
     "identity.workflow_actor",
     "identity.default",
     "surface.desktop",
+    // WI-10（specs/stable-prefix-pause-gate.md R5）：APPEND_SYSTEM.md 追加段。
+    "identity.append",
     "behavior.dynamic",
     "guidance.session",
     "guidance.delegating_work",

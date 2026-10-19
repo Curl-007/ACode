@@ -115,6 +115,7 @@
     "@acode/acode-cua": "workspace:*",
     "ai": "6.0.193",
     "iconv-lite": "0.7.2",
+    "ignore": "^7.0.12",
     "jimp": "^1.6.1",
     "koffi": "2.15.6",
     "playwright-core": "1.59.1",

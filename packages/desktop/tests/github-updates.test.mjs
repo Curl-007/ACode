@@ -80,6 +80,19 @@ test("github feed, overrides, manual check and native download/install remain wi
   const gatesModule = await load("updateGates", {
     semver: { __esModule: true, default: require("semver") },
   });
+  // WI-9：autoUpdater 新增更新交接账本/清扫模块导入（specs/updater-journal-recovery.md），
+  // 两个模块纯 Node（无 electron 依赖），这里补载真实实现 + 其 node builtin 依赖。
+  const updaterJournalModule = await load("updaterJournal", {
+    "node:fs/promises": require("node:fs/promises"),
+    // updaterJournal.ts 拆分出的 schema/解析面（400 行 ratchet），纯模块无自身依赖。
+    "./updaterJournalFormat.js": await load("updaterJournalFormat", {}),
+  });
+  const updaterSweepModule = await load("updaterSweep", {
+    "node:fs/promises": require("node:fs/promises"),
+    "node:fs": require("node:fs"),
+    "node:path": require("node:path"),
+    "node:crypto": require("node:crypto"),
+  });
   const module = await load("autoUpdater", {
     electron: {
       app: { isPackaged: true, getVersion: () => "1.0.0" },
@@ -106,6 +119,10 @@ test("github feed, overrides, manual check and native download/install remain wi
     "./logger.js": { logger },
     "./updateGates.js": gatesModule,
     "./ipcSyncTiming.js": ipcSyncTimingModule,
+    "./updaterJournal.js": updaterJournalModule,
+    "./updaterSweep.js": updaterSweepModule,
+    "node:fs/promises": require("node:fs/promises"),
+    "node:path": require("node:path"),
   });
   assert.deepEqual(
     module.resolveUpdateFeedSourceFromStartupConfig({

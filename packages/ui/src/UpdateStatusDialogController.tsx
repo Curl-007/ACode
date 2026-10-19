@@ -1,5 +1,5 @@
 import type { IPlatformService, UpdateStatePayload } from "@acode/shared";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useACodeIntl } from "@/i18n/IntlProvider.js";
 import { useConfirmDialog } from "@/hooks/useConfirmDialog.js";
 import { UpdateStatusDialog } from "@/UpdateStatusDialog.js";
@@ -61,8 +61,31 @@ export function UpdateStatusDialogController({
     progressLabel,
     progressValue,
     releaseNotesPayload: updateReleaseNotesPayload,
+    recoveryNotice,
     skippableVersion,
   } = renderedUpdateStatusViewModel;
+  // 更新恢复诊断横幅文案（desktop/specs/update-recovery-notice.md R4）：
+  // 按 outcome/fingerprint 三分+i18n；exitSweepHandoff=pending 追加事故窗口诊断提示。
+  const recoveryNoticeText = useMemo(() => {
+    if (!recoveryNotice) return null;
+    const versions = { from: recoveryNotice.fromVersion, to: recoveryNotice.toVersion };
+    let text: string;
+    if (recoveryNotice.outcome === "verification-failed") {
+      text = intl.formatMessage({ id: "update.recovery.verificationFailed" }, versions);
+    } else if (recoveryNotice.outcome === "stale-pending-cleared") {
+      text = intl.formatMessage({ id: "update.recovery.stalePendingCleared" }, versions);
+    } else if (recoveryNotice.fingerprint === "version-diverged") {
+      text = intl.formatMessage({ id: "update.recovery.versionDiverged" }, versions);
+    } else if (recoveryNotice.retryAvailable) {
+      text = intl.formatMessage({ id: "update.recovery.installNotEffectiveRetry" }, versions);
+    } else {
+      text = intl.formatMessage({ id: "update.recovery.installNotEffective" }, versions);
+    }
+    if (recoveryNotice.exitSweepHandoff === "pending") {
+      text = `${text} ${intl.formatMessage({ id: "update.recovery.exitSweepPending" })}`;
+    }
+    return text;
+  }, [intl, recoveryNotice]);
   const localizedUpdateReleaseNotes = getLocalizedUpdateReleaseNotes(
     updateReleaseNotesPayload,
     locale,
@@ -255,7 +278,13 @@ export function UpdateStatusDialogController({
     // 应用真正退出前恢复“重启以更新”，让用户误判失败并重复点击。restart 成功路径保持
     // pending 直到应用退出，只有 IPC 明确失败时才由调用处 catch 恢复按钮。
     if (updateActionInFlight === "restart") {
-      if (updateState !== null && updateState.kind !== "update-downloaded") {
+      const stillReady =
+        updateState !== null &&
+        (updateState.kind === "update-downloaded" ||
+          // install-recovery+retryAvailable 与 ready 同级（update-recovery-notice.md
+          // R3/R4）：重启准备期间状态不被误判为「已离开 ready」而提前释放按钮。
+          (updateState.kind === "install-recovery" && updateState.retryAvailable));
+      if (!stillReady && updateState !== null) {
         // main 会在退出准备失败时广播 error/idle。即使 IPC reject 因窗口
         // 生命周期丢失，状态已经离开 ready 也必须释放按钮，不能保留上一帧永久 pending。
         setUpdateActionInFlight(null);
@@ -299,6 +328,7 @@ export function UpdateStatusDialogController({
       phase={dialogPhase}
       progressLabel={progressLabel}
       progressValue={progressValue}
+      recoveryNoticeText={recoveryNoticeText}
       releaseDateLabel={releaseDateLabel}
       showOverlay={showOverlay}
       skippableVersion={skippableVersion}

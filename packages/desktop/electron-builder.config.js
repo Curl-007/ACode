@@ -87,8 +87,34 @@ const nativeSearchReleasePlan = resolveNativeSearchReleasePlan({
 const rawMacSigningIdentity = process.env.APPLE_SIGNING_IDENTITY || process.env.CSC_NAME;
 const macSigningIdentity =
   rawMacSigningIdentity?.replace(/^Developer ID Application:\s*/, "") ?? null;
+// 发布签名三态（specs/release-signing-smoke.md §1；判定入口 scripts/release-signing-state.mjs）：
+// 签名开启条件从「必须有身份名」放宽为「有身份名或提供 CSC_LINK 证书」。CI 发布走
+// CSC_LINK（base64 P12）时 electron-builder 会把证书导入临时钥匙串，此时 identity 需为
+// undefined（而非 null——null 会让 MacPackager.sign 直接跳过签名），由 auto-discovery
+// 在钥匙串中按 Developer ID Application 匹配，前提 CSC_IDENTITY_AUTO_DISCOVERY != "false"
+// （由三态脚本在 full 态写 true 保证）。本地预签名仍走身份名路径；未开启时 identity: null
+// 显式跳过签名，行为与既有未签名链路一致。
 const shouldEnableMacSigning =
-  process.env.ACODE_ENABLE_MAC_SIGN === "1" && Boolean(macSigningIdentity);
+  process.env.ACODE_ENABLE_MAC_SIGN === "1" && Boolean(macSigningIdentity || process.env.CSC_LINK);
+// workflow 会把 secrets 以 env 形式整组映射进打包步骤：未配置的 secrets 落成空串，
+// 而 electron-builder 的 mac 链路只判 `cscLink == null`，空串 CSC_LINK 会误入
+// createKeychain 的证书导入并失败。这里把「空串/纯空白」归一成未设置，使三态 none
+// 与「环境里根本没有该键」对 electron-builder 完全等价（windowsSignToolManager 自带
+// `cscLink === ""` 守卫，归一后各平台语义统一）。
+for (const signingEnvKey of [
+  "CSC_LINK",
+  "WIN_CSC_LINK",
+  "CSC_KEY_PASSWORD",
+  "CSC_INSTALLER_LINK",
+  "CSC_INSTALLER_KEY_PASSWORD",
+  "APPLE_ID",
+  "APPLE_APP_SPECIFIC_PASSWORD",
+  "APPLE_TEAM_ID",
+]) {
+  if (typeof process.env[signingEnvKey] === "string" && process.env[signingEnvKey].trim() === "") {
+    delete process.env[signingEnvKey];
+  }
+}
 // 安全加固 P2 #3（specs/electron-hardening.md §5）：electron-builder 26 原生 electronFuses
 // 接线，flip 固定发生在全部 afterPack hook 之后、签名之前（app-builder-lib platformPackager），
 // 不会影响 dev 运行。RunAsNode 与 EnableNodeOptionsEnvironmentVariable 与计划的偏离及理由
@@ -213,15 +239,17 @@ const commandStdoutMaxBuffer = 64 * 1024 * 1024;
 // 产物后缀只标记后端环境（_TEST）；身份靠 productName 区分，生产后端的 Preview 包没有后缀。
 const desktopArtifactEnvSuffix = resolveDesktopArtifactSuffix(process.env);
 
-// Preview 是内部签名测试包。CI 明确打开 macOS 签名时若没有身份，必须在生成未签名包前失败，
-// 避免“产物存在”被误认为已经走完和生产版相同的签名链路。
+// Preview 是内部签名测试包。CI 明确打开 macOS 签名时若没有身份或证书，必须在生成
+// 未签名包前失败，避免“产物存在”被误认为已经走完和生产版相同的签名链路。
+// （三态判定详见 specs/release-signing-smoke.md §1：身份名与 CSC_LINK 任一即可满足
+// 签名前提；notarization 凭据的「全有/全无/部分存在」由 release-signing-state.mjs 把关。）
 if (
   desktopProductIdentity.flavor === "preview" &&
   process.env.ACODE_ENABLE_MAC_SIGN === "1" &&
-  !macSigningIdentity
+  !(macSigningIdentity || process.env.CSC_LINK)
 ) {
   throw new Error(
-    "ACode Preview macOS packaging requires APPLE_SIGNING_IDENTITY or CSC_NAME when ACODE_ENABLE_MAC_SIGN=1",
+    "ACode Preview macOS packaging requires APPLE_SIGNING_IDENTITY, CSC_NAME or CSC_LINK when ACODE_ENABLE_MAC_SIGN=1",
   );
 }
 
@@ -709,11 +737,17 @@ export default {
     // z-code 之前只有本地未签名打包配置，CI 即使注入了证书变量，
     // electron-builder 也不会自动切到 hardened runtime / entitlement 这套发布参数。
     // 这里显式收拢到环境开关，保证本地开发不被签名配置绑死，CI 发布时再按需打开。
-    identity: shouldEnableMacSigning ? macSigningIdentity : null,
+    // CI 走 CSC_LINK（无身份名）时必须是 undefined 而非 null：MacPackager.sign 对
+    // identity === null 直接跳过签名；undefined 则交由 auto-discovery 在
+    // CSC_LINK 导入的临时钥匙串中匹配 Developer ID Application（26.15.3 实现核对）。
+    identity: shouldEnableMacSigning ? (macSigningIdentity ?? undefined) : null,
     // macOS 产物采用“build 阶段签名 + 独立公证阶段”的两段式流水线。
-    // 如果这里不显式关闭 electron-builder 内置 notarize，它会在 build 阶段读取 Apple 凭据后直接尝试公证，
-    // 并强制要求 APPLE_APP_SPECIFIC_PASSWORD，导致 build 还没产出 DMG 就提前失败。
-    notarize: false,
+    // 未开启签名时必须显式 false：electron-builder 内置公证会在 build 阶段读取 Apple
+    // 凭据直接尝试公证，凭据残缺时 build 还没产出 DMG 就提前失败（既有教训注释保留）。
+    // 开启签名（三态 full）后置 true：notarytool 消费 APPLE_ID +
+    // APPLE_APP_SPECIFIC_PASSWORD + APPLE_TEAM_ID（三态脚本保证齐全；本地 Preview
+    // 签名不带公证凭据时 electron-builder 仅告警跳过公证，不会失败）。
+    notarize: shouldEnableMacSigning ? true : false,
     hardenedRuntime: shouldEnableMacSigning,
     gatekeeperAssess: false,
     entitlements: "build/entitlements.mac.plist",

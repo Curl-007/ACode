@@ -17,7 +17,11 @@ import {
   type TraceContext,
 } from "@acode/contracts";
 import { createStructuredPatch } from "../diff.js";
+import { formatWriteModelContent } from "./write-output.js";
+import { isConflictUri, resolveConflictWriteToolCall } from "./write-conflict.js";
 import { stampMemoryOriginSessionId } from "../../memory/origin-session.js";
+// LSP 诊断回流（specs/lsp-diagnostics-loop.md §5-6），与 edit.ts 同一钩子面。
+import { consumeDeferredDiagnostics, consumePendingModelContent, runPostWriteDiagnostics, stashPendingModelContent } from "../../lsp/edit-diagnostics-hook.js";
 import { resolveWorkspacePath } from "../path-policy.js";
 import {
   createReadFileStateKey,
@@ -39,29 +43,9 @@ const WRITE_PROVIDER_DESCRIPTION = [
   "When to use: creating a new file, or fully replacing one you've already Read. Overwriting an existing file you haven't Read will fail. For partial changes, use Edit instead.",
 ].join("\n");
 
-const WRITE_STORAGE_SUFFIX =
-  " (file state is current in your context \u2014 no need to Read it back)";
-const WRITE_USER_MODIFIED_NOTE = " The user modified your proposed content before accepting it.";
 const WRITE_NOT_READ_MESSAGE = "File has not been read yet. Read it first before writing to it.";
 const WRITE_STALE_MESSAGE =
-  "File has been modified since read, either by the user or by a linter. Read it again before attempting to write it.";
-
-function formatWriteModelContent(output: unknown): string {
-  if (!isRecord(output)) {
-    return "The file has been written successfully.";
-  }
-
-  const filePath = typeof output.filePath === "string" ? output.filePath : "the file";
-  const userModified = output.userModified === true;
-  const userModifiedNote = userModified ? WRITE_USER_MODIFIED_NOTE : "";
-  const storageSuffixNote = userModified ? "" : WRITE_STORAGE_SUFFIX;
-
-  if (output.type === "create") {
-    return `File created successfully at: ${filePath}${userModifiedNote}${storageSuffixNote}`;
-  }
-
-  return `The file ${filePath} has been updated successfully.${userModifiedNote}${storageSuffixNote}`;
-}
+  "File has been modified since read, either by the user or by a linter. Read it again before attempting to write to it.";
 
 const writeHandler: ToolHandler = async (input, context) => {
   const { file_path, content } = WriteInputSchema.parse(input) as WriteInput;
@@ -79,6 +63,27 @@ const writeHandler: ToolHandler = async (input, context) => {
         recoverable: false,
       },
     );
+  }
+
+  // conflict:// 解决分支（specs/conflict-uri-resolution.md R5）：会话冲突注册表
+  // → 真实路径重验证 + all-or-nothing 拼接；审批/裁决仍走既有 write 面（R6）。
+  if (isConflictUri(file_path)) {
+    return resolveConflictWriteToolCall({
+      rawUri: file_path,
+      content,
+      context,
+      fileSystemPort,
+      createTrace: () => createWriteTrace(context),
+      afterWrite: (writtenPath, contentLf, revision) => {
+        const entry = updateReadFileStateAfterWrite(
+          context.readFileState,
+          writtenPath,
+          contentLf,
+          revision,
+        );
+        recordReadFileStateMetadata(context, entry);
+      },
+    });
   }
 
   const filePath = resolveWorkspacePath({
@@ -144,6 +149,24 @@ const writeHandler: ToolHandler = async (input, context) => {
     writeResult.revision,
   );
   recordReadFileStateMetadata(context, readFileStateEntry);
+
+  // LSP 诊断回环（specs/lsp-diagnostics-loop.md）：诊断失败只降级不碍主流程；
+  // 新增诊断与上一次的迟到诊断合并后经 stash/consume 单发通道附到模型内容尾部。
+  const diagnosticsOutcome = await runPostWriteDiagnostics({
+    resolvedPath: filePath,
+    inputPath: file_path,
+    content: contentToWrite,
+    workspaceIdentity: context.workspaceIdentity,
+    workingDirectory: context.workingDirectory,
+    abortSignal: context.abortSignal,
+  }).catch(() => undefined);
+  const pendingDiagnostics = [
+    diagnosticsOutcome?.modelContent,
+    consumeDeferredDiagnostics({ workspaceIdentity: context.workspaceIdentity, workingDirectory: context.workingDirectory }),
+  ]
+    .filter((text): text is string => text !== undefined)
+    .join("\n\n");
+  if (pendingDiagnostics) stashPendingModelContent(file_path, pendingDiagnostics);
 
   if (originalFile) {
     return attachToolExecutionTelemetry(
@@ -223,7 +246,7 @@ export const writeToolEntry: ToolEntry = {
     needsApproval: true,
   },
   handler: writeHandler,
-  formatModelContent: formatWriteModelContent,
+  formatModelContent: (output) => formatWriteModelContent(output, consumePendingModelContent),
   inputSchema: WriteInputJsonSchema,
   outputSchema: WriteOutputJsonSchema,
   runtimeInputSchema: WriteInputSchema,
@@ -370,8 +393,4 @@ function recordReadFileStateMetadata(
     toolName: "Write",
   });
   if (metadata) context.recordReadFileStateMetadata(metadata);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

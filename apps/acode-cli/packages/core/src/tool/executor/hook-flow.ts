@@ -7,6 +7,7 @@ import {
   type ToolCallId,
   type TraceContext,
 } from "@acode/contracts";
+import { formatHookContextEntryHeader } from "../../hooks/index.js";
 import type { HookRunResult } from "../../hooks/index.js";
 import type { PermissionDecisionResult } from "../../permission/service.js";
 import { hookMatcherToolNamesForTool } from "../compat.js";
@@ -299,9 +300,28 @@ export function applyPreToolPermissionDecision(
   return permissionDecision;
 }
 
-export function formatHookAdditionalContexts(additionalContexts: string[]): string {
+export function formatHookAdditionalContexts(
+  additionalContexts: string[],
+  sources?: readonly (string | undefined)[],
+): string {
   return [
     "[Hook additional context]",
-    ...additionalContexts.map((context, index) => `#${index + 1}\n${context}`),
+    ...additionalContexts.map(
+      (context, index) => `${formatHookContextEntryHeader(index, sources)}\n${context}`,
+    ),
   ].join("\n");
+}
+
+/**
+ * 组合多个 HookRunResult 的 contexts 与 sources（specs/hook-additional-context-hardening.md）：
+ * 无源侧以 undefined 占位补齐索引对齐；全部无源时返回 undefined，formatter 输出与
+ * 无 sources 参数的旧版逐字节一致（零回归保证）。
+ */
+export function concatHookContextSources(
+  parts: readonly { contexts: readonly string[]; sources?: readonly (string | undefined)[] }[],
+): (string | undefined)[] | undefined {
+  if (parts.every((part) => part.sources === undefined)) return undefined;
+  return parts.flatMap((part) =>
+    part.sources !== undefined ? [...part.sources] : part.contexts.map(() => undefined),
+  );
 }

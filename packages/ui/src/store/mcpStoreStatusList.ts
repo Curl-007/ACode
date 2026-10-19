@@ -5,6 +5,9 @@ type MappedMcpServerStatus = {
   error?: string;
   failureKind?: ACodeMcpServerStatusSnapshot["failureKind"];
   serverRequestId?: string;
+  // 熔断挂起只在 failed/disconnected 两态出现（R1：显式复位先于连接，connected 恒不携带）；
+  // 快照缺失时映射结果同样缺失，merge 输出据此清除 store 内旧值——恢复后不得残留挂起横幅。
+  reconnectSuspension?: ACodeMcpServerStatusSnapshot["reconnectSuspension"];
   status: McpServerStatus;
 };
 
@@ -23,6 +26,7 @@ function mapRuntimeStatusToUi(snapshot: ACodeMcpServerStatusSnapshot): MappedMcp
         error: snapshot.error,
         failureKind: snapshot.failureKind,
         serverRequestId: snapshot.serverRequestId,
+        reconnectSuspension: snapshot.reconnectSuspension,
       };
     case "failed":
       return {
@@ -30,6 +34,7 @@ function mapRuntimeStatusToUi(snapshot: ACodeMcpServerStatusSnapshot): MappedMcp
         error: snapshot.error,
         failureKind: snapshot.failureKind ?? "connection_failed",
         serverRequestId: snapshot.serverRequestId,
+        reconnectSuspension: snapshot.reconnectSuspension,
       };
     case "disabled":
       return { status: "unknown", error: snapshot.error };
@@ -74,6 +79,7 @@ export function mergeMcpServerStatusSnapshots(
       error: mapped.error,
       failureKind: mapped.failureKind,
       serverRequestId: mapped.serverRequestId,
+      reconnectSuspension: mapped.reconnectSuspension,
       toolCount: snapshot.toolCount,
       changed: false,
       lastConnected:

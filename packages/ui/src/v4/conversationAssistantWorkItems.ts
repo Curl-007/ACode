@@ -17,6 +17,7 @@ import {
   prepareCuaGroups,
   type ConversationCuaGroupRenderItem,
 } from "@/v4/conversationCuaGroups.js";
+import { computeTodoDisplacement, setTodoSupersededCount } from "@/v4/todoDisplacement.js";
 
 export type ConversationAssistantWorkRenderItem =
   | {
@@ -293,6 +294,12 @@ export function buildAssistantWorkRenderItems(
     return !shouldDeferUnclassifiedShellToolCall(row);
   });
   const { subagentByAgentToolRowId, claimedSubagentRowIds } = pairSubagentRows(visibleRows);
+  // todo 原地置换（specs/todo-displacement.md R1）：锚点计数经 WeakMap 侧信道登记，
+  // 被置换行在下方主循环直接缺席（不产生 items）。
+  const todoDisplacement = computeTodoDisplacement(visibleRows);
+  if (todoDisplacement.anchor) {
+    setTodoSupersededCount(todoDisplacement.anchor.row, todoDisplacement.anchor.count);
+  }
   const preparedRows = prepareCuaGroups(
     visibleRows,
     enableCuaGrouping,
@@ -309,6 +316,12 @@ export function buildAssistantWorkRenderItems(
 
     if (row.kind === "cuaGroup") {
       items.push(row);
+      index += 1;
+      continue;
+    }
+
+    // 被置换的旧 todo 板：不渲染（当前板锚点携 todoSupersededCount 徽章陈述折叠事实）。
+    if (row.kind === "toolCall" && todoDisplacement.displacedRowIds.has(row.rowId)) {
       index += 1;
       continue;
     }

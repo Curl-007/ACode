@@ -371,6 +371,20 @@ async function loadAutoUpdaterModule({ appVersion = "1.0.0", logger } = {}) {
   };
   // ipcMain.handle 同步段计时包装（W1-6 接线）：注入真实 ipcSyncTiming（纯 Node，无 electron 依赖）。
   const ipcSyncTimingModule = await load("ipcSyncTiming", {});
+  // WI-9：autoUpdater 新增更新交接账本/清扫模块导入（specs/updater-journal-recovery.md），
+  // 边界替身加载器对未知 import 直接断言失败，这里补载真实实现 + 其 node builtin 依赖。
+  // app mock 未提供 getPath，journal 初始化按契约降级为无账本（不影响门控行为断言）。
+  const updaterJournalModule = await load("updaterJournal", {
+    "node:fs/promises": require("node:fs/promises"),
+    // updaterJournal.ts 拆分出的 schema/解析面（400 行 ratchet），纯模块无自身依赖。
+    "./updaterJournalFormat.js": await load("updaterJournalFormat", {}),
+  });
+  const updaterSweepModule = await load("updaterSweep", {
+    "node:fs/promises": require("node:fs/promises"),
+    "node:fs": require("node:fs"),
+    "node:path": require("node:path"),
+    "node:crypto": require("node:crypto"),
+  });
   const module = await load("autoUpdater", {
     electron: {
       app: { isPackaged: true, getVersion: () => appVersion },
@@ -398,6 +412,10 @@ async function loadAutoUpdaterModule({ appVersion = "1.0.0", logger } = {}) {
     "./ipcSyncTiming.js": ipcSyncTimingModule,
     "./logger.js": { logger },
     "./updateGates.js": gates,
+    "./updaterJournal.js": updaterJournalModule,
+    "./updaterSweep.js": updaterSweepModule,
+    "node:fs/promises": require("node:fs/promises"),
+    "node:path": require("node:path"),
   });
   return { module, updater, state, handlers, sent, win };
 }

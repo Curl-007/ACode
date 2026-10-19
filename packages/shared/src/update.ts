@@ -55,4 +55,23 @@ export type UpdateStatePayload =
       version: string;
       channel?: ElectronReleaseChannel;
       releaseNotes?: PostUpdateReleaseNotesPayload;
+    }
+  | {
+      /**
+       * 更新恢复诊断通知（desktop/specs/update-recovery-notice.md）：启动核对
+       * （updater-journal-recovery.md R3）发现上次交接未生效/验证失败/陈旧包
+       * 清理时的用户可见解释面。retryAvailable=true 时接替 update-downloaded
+       * 的菜单态语义（重启按钮同源），其余形态为纯通知。
+       */
+      kind: "install-recovery";
+      enabled: boolean;
+      outcome: "verification-failed" | "install-not-effective" | "stale-pending-cleared";
+      fingerprint?: "version-unchanged" | "version-diverged";
+      fromVersion: string;
+      toVersion: string;
+      retryAvailable: boolean;
+      /** retryAvailable 时接替 update-downloaded 的发布说明展示（re-stage 同源）。 */
+      releaseNotes?: PostUpdateReleaseNotesPayload;
+      /** R19 豁免链标记（pending=死在豁免链之前的事故窗口，诊断用）。 */
+      exitSweepHandoff?: "pending" | "completed" | "failed" | "absent" | "unknown";
     };

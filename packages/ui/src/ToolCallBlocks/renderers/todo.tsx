@@ -58,17 +58,28 @@ export function TodoToolCallBlock(context: ToolCallBlockRenderContext) {
   const primaryText =
     activeStep?.title ?? toolCall.title ?? intl.formatMessage({ id: "todo.panel.currentTask" });
   const secondaryText = plan ? `${completedCount}/${plan.length}` : context.statusLabel;
+  // 原地置换徽章（specs/todo-displacement.md R3）：本卡是当前板锚点，陈述折叠掉的
+  // 先前成功板数量；legacy 快照无此字段 → 徽章缺席。
+  const supersededCount = toolCall.todoSupersededCount ?? 0;
   const primaryTextNode = useMemo(
     () => <span className="min-w-0 truncate text-foreground-subtlest">{primaryText}</span>,
     [primaryText],
   );
   const secondaryTextNode = useMemo(
     () => (
-      <span className="shrink-0 font-mono text-ui-base text-foreground-subtlest">
-        {secondaryText}
+      <span className="flex shrink-0 items-center gap-1.5">
+        <span className="font-mono text-ui-base text-foreground-subtlest">{secondaryText}</span>
+        {supersededCount > 0 ? (
+          <span className="inline-flex items-center rounded-md bg-surface px-1.5 py-0.5 text-ui-sm leading-none whitespace-nowrap text-foreground-subtlest ring-1 ring-border">
+            {intl.formatMessage(
+              { id: "chat.toolCall.todo.superseded" },
+              { count: String(supersededCount) },
+            )}
+          </span>
+        ) : null}
       </span>
     ),
-    [secondaryText],
+    [intl, secondaryText, supersededCount],
   );
   const handleLoadFullToolCallFields = context.onLoadFullToolCallFields;
   const renderContent = useCallback(

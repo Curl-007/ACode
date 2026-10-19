@@ -4,55 +4,12 @@ const SSE_FRAME_SEPARATOR_PATTERN = /\r\n\r\n|\n\n|\r\r/;
 
 export function createAnthropicCompatFetch(baseFetch: ProviderFetch): ProviderFetch {
   return async (input, init) => {
-    const response = await baseFetch(input, applyAnthropicRequestBodyCompatibility(init));
+    // Request 侧的 system content 形状修补已迁移到 compat 转换管道
+    // （model-compat-transforms.ts · requiresStringSystemContent，spec:
+    // apps/acode-cli/specs/model-compat-flags.md R6，wire 级等价）；本模块只保留 response 侧。
+    const response = await baseFetch(input, init);
     return rewriteAnthropicJsonThinkingResponse(filterAnthropicStream(response));
   };
-}
-
-function applyAnthropicRequestBodyCompatibility(
-  init: RequestInit | undefined,
-): RequestInit | undefined {
-  if (typeof init?.body !== "string") return init;
-
-  const body = safeParseRecord(init.body);
-  if (!body) return init;
-  const restoredSystemBody = restoreMidConversationSystemStringContent(body);
-  if (restoredSystemBody === body) return init;
-
-  return {
-    ...init,
-    body: JSON.stringify(restoredSystemBody),
-  };
-}
-
-function restoreMidConversationSystemStringContent(
-  body: Record<string, unknown>,
-): Record<string, unknown> {
-  if (!Array.isArray(body.messages)) return body;
-
-  let changed = false;
-  const messages = body.messages.map((value) => {
-    const message = safeRecord(value);
-    if (message?.role !== "system") return value;
-    const text = singlePlainTextBlock(message.content);
-    if (text === undefined) return value;
-
-    changed = true;
-    return { ...message, content: text };
-  });
-
-  // 在最终 messages[] 中保留 string content；
-  // AI SDK 会将同一纯文本扩成单元素 block array。这里只恢复该 wire shape，顶层
-  // system[]、带 cache_control 的 block 和其他 message role 均保持原样。
-  return changed ? { ...body, messages } : body;
-}
-
-function singlePlainTextBlock(value: unknown): string | undefined {
-  if (!Array.isArray(value) || value.length !== 1) return undefined;
-  const block = safeRecord(value[0]);
-  if (block?.type !== "text" || typeof block.text !== "string") return undefined;
-  if (Object.keys(block).some((key) => key !== "type" && key !== "text")) return undefined;
-  return block.text;
 }
 
 function shouldFilterAnthropicStream(response: Response): boolean {

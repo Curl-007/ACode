@@ -3,6 +3,12 @@ import { applyBashSourcesToExecutionRequest } from "./bash-startup-script.js";
 import { createBashResourceTelemetry } from "./bash-resource-telemetry.js";
 import { createCwdCapturePlan } from "./cwd-capture.js";
 import {
+  cancellationGraceMs,
+  startCancellationWave,
+  type CancellationCause,
+} from "./cancellation-wave.js";
+import { createBoundedOutputPump } from "./output-pump.js";
+import {
   applyResolvedShellCommand,
   buildExecutionEnv,
   resolveExecutionCommand,
@@ -11,11 +17,7 @@ import {
 import { NodeExecutionAdapterResults } from "./node-execution-adapter-results.js";
 import { createExecutionOutputStreamDecoder } from "./outputEncoding.js";
 import type { OutputCollector } from "./output-collector.js";
-import {
-  BASH_SIGTERM_TO_SIGKILL_MS,
-  signalPosixProcessTree,
-  terminateGenericPosixProcessGroup,
-} from "./process-tree.js";
+import { signalPosixProcessTree, terminateGenericPosixProcessGroup } from "./process-tree.js";
 import {
   revalidateShellInitSnapshotForExecution,
   supportsShellInitSnapshot,
@@ -150,27 +152,36 @@ export class NodeExecutionAdapterProcess extends NodeExecutionAdapterResults {
     };
   }
 
-  protected terminateProcessTree(child: ChildProcess, useBashProcessTreeStop: boolean): void {
+  protected terminateProcessTree(
+    child: ChildProcess,
+    useBashProcessTreeStop: boolean,
+    cause: CancellationCause = "user",
+  ): void {
     if (!child.pid) {
       child.kill("SIGTERM");
       return;
     }
 
     if (this.platform === "win32") {
-      const killer = spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], {
-        stdio: "ignore",
-        windowsHide: true,
-      });
-      const completion = new Promise<void>((resolve) => {
-        killer.once("error", () => {
-          child.kill("SIGKILL");
-          resolve();
-        });
-        killer.once("close", () => resolve());
-      });
+      // specs/fs-hotpath-mechanisms.md R4：TERM→KILL 波次替代一次性 taskkill /T /F。
+      // wave1 = taskkill /T（无 /F）优雅尝试 → Windows 5s 宽限 → wave2 = taskkill /T /F。
+      const rootPid = child.pid;
+      let forceKiller: ChildProcess | undefined;
+      const wave = startCancellationWave(
+        {
+          gracefulStop: async () => {
+            await runWindowsTaskKill(rootPid, false);
+          },
+          forceStop: async () => {
+            forceKiller = await runWindowsTaskKill(rootPid, true);
+          },
+        },
+        { cause, graceMs: cancellationGraceMs(this.platform) },
+      );
       if (useBashProcessTreeStop) {
-        // 直写后不再等待 pipe EOF，shutdown 必须显式等待 taskkill 收尾，避免提前释放资源。
-        this.pendingBashProcessTreeKills.set(completion, killer);
+        // 直写后不再等待 pipe EOF，shutdown 必须显式等待 wave2 收尾，避免提前释放资源。
+        const completion = wave.completion;
+        this.pendingBashProcessTreeKills.set(completion, { ref: () => forceKiller?.ref() });
         void completion.finally(() => this.pendingBashProcessTreeKills.delete(completion));
       }
       return;
@@ -183,27 +194,35 @@ export class NodeExecutionAdapterProcess extends NodeExecutionAdapterResults {
       return;
     }
 
+    // specs/fs-hotpath-mechanisms.md R4：POSIX bash 取消 = SIGTERM 组+树 → 2s 宽限
+    // → SIGKILL 组+树（宽限从 1.5s 对齐 omp 到 2s）。两波各自快照当时的 PPID 后代，
+    // 不跨阶段记忆进程身份。
     const rootPid = child.pid;
-    // Bash job control、pipeline、xargs 和 PTY 可以把 worker 放入不同 PGID。
-    // 两阶段清理各自快照当时的 PPID 后代，不跨阶段记忆进程身份。
-    void signalPosixProcessTree(rootPid, "SIGTERM");
-    let timer!: NodeJS.Timeout;
-    const escalation = new Promise<void>((resolve) => {
-      timer = setTimeout(() => {
-        try {
-          process.kill(-rootPid, "SIGKILL");
-        } catch {
-          // 直接的 force group kill 只做 best effort，随后仍会执行完整杀树。
-        }
-        // shutdown 等待实际查表与信号发送，不能在异步杀树刚启动时就释放清理所有权。
-        void signalPosixProcessTree(rootPid, "SIGKILL").then(resolve);
-      }, BASH_SIGTERM_TO_SIGKILL_MS);
-      timer.unref?.();
-    });
-    this.pendingBashProcessTreeKills.set(escalation, timer);
-    void escalation.finally(() => {
-      this.pendingBashProcessTreeKills.delete(escalation);
-    });
+    let graceTimer: NodeJS.Timeout | undefined;
+    const wave = startCancellationWave(
+      {
+        gracefulStop: () => signalPosixProcessTree(rootPid, "SIGTERM"),
+        forceStop: async () => {
+          try {
+            process.kill(-rootPid, "SIGKILL");
+          } catch {
+            // 直接的 force group kill 只做 best effort，随后仍会执行完整杀树。
+          }
+          await signalPosixProcessTree(rootPid, "SIGKILL");
+        },
+        scheduleTimer: (callback, ms) => {
+          const timer = setTimeout(callback, ms);
+          timer.unref?.();
+          graceTimer = timer;
+          return { cancel: () => clearTimeout(timer) };
+        },
+      },
+      { cause, graceMs: cancellationGraceMs(this.platform) },
+    );
+    // shutdown 等待实际查表与信号发送，不能在异步杀树刚启动时就释放清理所有权。
+    const completion = wave.completion;
+    this.pendingBashProcessTreeKills.set(completion, { ref: () => graceTimer?.ref?.() });
+    void completion.finally(() => this.pendingBashProcessTreeKills.delete(completion));
   }
 
   protected destroyChildOutputStreams(child: ChildProcess): void {
@@ -218,22 +237,34 @@ export class NodeExecutionAdapterProcess extends NodeExecutionAdapterResults {
     encoding: string | null,
     options: ExecutionRunOptions,
   ): void {
+    const decoder = createExecutionOutputStreamDecoder(encoding);
+    // specs/fs-hotpath-mechanisms.md R4：64-chunk 有界队列背压 + coalesce，微任务
+    // 批量派发（事件形状不变）。core 侧只消费 progress 事件，原始 chunk 事件合并安全。
+    const pump = createBoundedOutputPump({
+      decode: (buffer) => decoder.write(buffer),
+      flush: (items) => {
+        for (const item of items) {
+          this.emit(options, {
+            type: item.stream,
+            chunk: item.buffer,
+            text: item.text,
+            timestamp: new Date(),
+          });
+        }
+      },
+    });
     for (const [name, collector] of [
       ["stdout", stdout],
       ["stderr", stderr],
     ] as const) {
       const stream = child[name];
-      const decoder = createExecutionOutputStreamDecoder(encoding);
       stream?.on("data", (chunk: Buffer | string) => {
         const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
         collector.append(buffer, stream);
-        this.emit(options, {
-          type: name,
-          chunk: buffer,
-          text: decoder.write(buffer),
-          timestamp: new Date(),
-        });
+        pump.append(name, buffer);
       });
+      // drain/destroy 后同步冲刷队列，避免结果结算后还有迟到事件。
+      stream?.once("close", () => pump.flushSync());
     }
   }
 
@@ -272,4 +303,18 @@ export class NodeExecutionAdapterProcess extends NodeExecutionAdapterResults {
     if (!terminationRequested) this.terminateProcessTree(child, false);
     if (!(await waitForPromise(closed, IO_DRAIN_TIMEOUT_MS))) this.destroyChildOutputStreams(child);
   }
+}
+
+/** Windows taskkill 波次执行：force=false 优雅（无 /F），force=true 强制（/T /F）。 */
+function runWindowsTaskKill(pid: number, force: boolean): Promise<ChildProcess> {
+  const args = force ? ["/pid", String(pid), "/T", "/F"] : ["/pid", String(pid), "/T"];
+  const killer = spawn("taskkill", args, {
+    stdio: "ignore",
+    windowsHide: true,
+  });
+  return new Promise<ChildProcess>((resolve) => {
+    // wave1 对已退出/无窗口进程失败属常态；失败不升级（wave2 才强制）。
+    killer.once("error", () => resolve(killer));
+    killer.once("close", () => resolve(killer));
+  });
 }

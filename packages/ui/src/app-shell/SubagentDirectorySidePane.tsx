@@ -17,6 +17,11 @@ import type {
   SubagentDirectorySidePaneTab,
 } from "@/lib/workspaceSidePane.js";
 import { formatTaskRelativeTime } from "@/lib/taskListItemPresentation.js";
+import { resolveSubagentRowFacts } from "@/app-shell/subagentDirectoryFacts.js";
+import {
+  formatUsageDurationMs,
+  formatUsageTokenCount,
+} from "@/v4/usage-statusbar/usageStatusbarFormat.js";
 import type { PaneWorkspaceScope } from "@/v4/paneLayoutStore.js";
 import type { SessionLease } from "@/v4/sessionDataLayer.js";
 import { V4PaneConversationProvider, useV4Conversation } from "@/v4/V4ConversationContext.js";
@@ -25,6 +30,20 @@ import { useConversationProjection } from "@/v4/useConversationProjection.js";
 type DirectoryItem = RunningSubagentSummary | ACodeSessionEndedSubagent;
 
 const EMPTY_RUNNING: readonly RunningSubagentSummary[] = [];
+
+/**
+ * 舰队面板 1s tick（specs/subagent-fleet-panel.md R1，omp AgentsPanel useNow 同款）：
+ * 只在存在运行中项时挂载 interval；`now` 只传给运行中行，memo 化的 ended 行不重渲。
+ */
+function useNowTick(active: boolean, intervalMs = 1000): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!active) return;
+    const timer = setInterval(() => setNow(Date.now()), intervalMs);
+    return () => clearInterval(timer);
+  }, [active, intervalMs]);
+  return now;
+}
 
 function buildSubagentDirectoryOpenRequest(
   tab: SubagentDirectorySidePaneTab,
@@ -64,12 +83,24 @@ function StatusIcon({ status }: { status: DirectoryItem["status"] }) {
 const DirectoryRow = memo(function DirectoryRow({
   item,
   onOpen,
+  now,
 }: {
   item: DirectoryItem;
   onOpen: (item: DirectoryItem) => void;
+  /** 仅运行中行传入（tick 重渲面收敛）；ended 行恒 undefined。 */
+  now?: number;
 }) {
-  const { intl } = useACodeIntl();
+  const { intl, locale } = useACodeIntl();
   const timestamp = "endedAt" in item ? item.endedAt : item.startedAt;
+  // 事实解析单一裁决点（subagentDirectoryFacts.ts）：tokens 缺席不假零、elapsed 门控。
+  const facts = resolveSubagentRowFacts(item, now);
+  const elapsedLabel =
+    facts.elapsedMs !== undefined
+      ? intl.formatMessage(
+          { id: "subagentDirectory.elapsed" },
+          { duration: formatUsageDurationMs(locale, facts.elapsedMs) },
+        )
+      : null;
   return (
     <button
       type="button"
@@ -82,6 +113,9 @@ const DirectoryRow = memo(function DirectoryRow({
       <span className="min-w-0 flex-1">
         <span className="flex min-w-0 items-center gap-2">
           <span className="truncate font-medium text-foreground">{item.title}</span>
+          <span className="shrink-0 rounded-md bg-surface px-1.5 py-0.5 text-ui-sm leading-none text-foreground-subtle ring-1 ring-border">
+            {item.subagentType}
+          </span>
           <span className="shrink-0 text-ui-sm text-foreground-subtlest">
             {intl.formatMessage({ id: `subagentDirectory.status.${item.status}` })}
           </span>
@@ -92,11 +126,20 @@ const DirectoryRow = memo(function DirectoryRow({
           </span>
         ) : null}
       </span>
-      {timestamp ? (
-        <span className="shrink-0 text-ui-sm text-foreground-subtlest">
-          {formatTaskRelativeTime(timestamp, intl)}
-        </span>
-      ) : null}
+      <span className="flex shrink-0 flex-col items-end gap-0.5">
+        {facts.cumulativeTokens !== undefined ? (
+          <span className="font-mono text-ui-sm tabular-nums text-foreground-subtle">
+            {formatUsageTokenCount(locale, facts.cumulativeTokens)} tok
+          </span>
+        ) : null}
+        {elapsedLabel ? (
+          <span className="text-ui-sm tabular-nums text-foreground-subtlest">{elapsedLabel}</span>
+        ) : timestamp ? (
+          <span className="text-ui-sm text-foreground-subtlest">
+            {formatTaskRelativeTime(timestamp, intl)}
+          </span>
+        ) : null}
+      </span>
     </button>
   );
 });
@@ -150,6 +193,8 @@ const SubagentDirectoryContents = memo(function SubagentDirectoryContents({
   });
   const running = subagents?.running ?? EMPTY_RUNNING;
   const endedTotal = subagents?.endedTotal ?? 0;
+  // tick 只在有运行中项时挂载；now 只下发给 running 行（R1）。
+  const now = useNowTick(running.length > 0);
   const handleOpen = (item: DirectoryItem) => {
     onOpenSubagentSession(buildSubagentDirectoryOpenRequest(tab, item));
   };
@@ -168,7 +213,7 @@ const SubagentDirectoryContents = memo(function SubagentDirectoryContents({
           </h3>
           {running.length > 0 ? (
             running.map((item) => (
-              <DirectoryRow key={item.childSessionId} item={item} onOpen={handleOpen} />
+              <DirectoryRow key={item.childSessionId} item={item} onOpen={handleOpen} now={now} />
             ))
           ) : (
             <p className="px-3 py-3 text-ui-base text-foreground-subtlest">

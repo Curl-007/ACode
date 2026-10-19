@@ -181,7 +181,14 @@
     },
     "apps/acode-cli/packages/core": {
       // 架构 context 消费模块清单，TypeScript 编译契约示例；生产 API 仍经 src/index.ts。
-      "entry": ["src/runtime-task/module.ts", "src/runtime-task/contract.example.ts"],
+      // src/lsp/index.ts：LSP 面公开 barrel（specs/lsp-diagnostics-loop.md），为 runtime
+      // 迟到诊断投影（system-reminder diagnostics source）预留的接线面；当前消费方
+      // 走 handlers 直连叶子模块。
+      "entry": [
+        "src/runtime-task/module.ts",
+        "src/runtime-task/contract.example.ts",
+        "src/lsp/index.ts",
+      ],
     },
     "apps/acode-cli/packages/workflow-run-read": {
       // 架构 context 消费模块清单，契约示例只用于编译与文档验证；生产 API 经 contract.ts。
@@ -196,7 +203,17 @@
       "entry": ["src/module.ts", "src/contract.example.ts"],
     },
     "apps/acode-cli/packages/browser-use-plugin": {
-      "entry": ["src/browser-client.ts"],
+      // src/relay/index.ts：browser-relay 公开 barrel（specs/browser-relay-inplace-capture.md），
+      // 启动器 main.ts 直连 server.js，barrel 供外部消费方 import。
+      // relay-extension/*：Chrome MV3 扩展源码，manifest 驱动由浏览器加载（不在 Node
+      // import 图）；background.js/options.js 为入口，debugger-ownership.js 经
+      // background.js 的 import 覆盖。
+      "entry": [
+        "src/browser-client.ts",
+        "src/relay/index.ts",
+        "relay-extension/background.js",
+        "relay-extension/options.js",
+      ],
     },
     "apps/acode-cli/packages/agent-teams-plugin": {
       // MCP server 源码入口经 esbuild bundle 成 dist/mcp/server.js（.mcp.json 以子进程

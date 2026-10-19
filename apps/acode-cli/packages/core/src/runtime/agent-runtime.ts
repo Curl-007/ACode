@@ -142,6 +142,7 @@ import { disposeNodeReplSession } from "../tool/handlers/node-repl.js";
 // 会话终结的技能缓存清理（skill-frontmatter-governance R4/R5/R6 消费接线）。
 import { clearSessionSkillActivationScope } from "../agent/skill-activation-scope.js";
 import { clearSkillPathActivations } from "../agent/skill-path-activation.js";
+import { clearConflictHistories } from "../tool/conflict/index.js";
 import { clearUserInvokedSkillMarker } from "../agent/skill-user-invocation.js";
 import { initializeRuntimeTurnCoordination } from "./turn-coordination.js";
 import { getRuntimeLifecyclePort, initializeRuntimeLifecycle } from "./runtime-lifecycle.js";
@@ -399,6 +400,8 @@ export class AgentRuntime {
     clearSessionSkillActivationScope(this.sessionId);
     clearSkillPathActivations(this.sessionId);
     clearUserInvokedSkillMarker(this.sessionId);
+    // 冲突注册表同为会话键控进程态（specs/conflict-uri-resolution.md R2）。
+    clearConflictHistories(this.sessionId);
   }
 
   /**

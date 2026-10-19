@@ -92,6 +92,14 @@ export interface HookRunOptions {
 
 export interface HookRunResult {
   additionalContexts: string[];
+  /**
+   * 与 additionalContexts 索引对齐的来源 hook 名（防滥用标注，
+   * specs/hook-additional-context-hardening.md）。仅在至少一条 context 有已知来源时
+   * 存在；无来源条目以 undefined 占位。存在时长度恒与 additionalContexts 一致——
+   * 写入点只有 output.ts 的 hardenHookAdditionalContexts（收集）与
+   * mergeHookRunResult（合并对齐）两处，格式化层只读。
+   */
+  additionalContextSources?: (string | undefined)[];
   blockRequested?: boolean;
   hookPermissionDecisionReason?: string;
   permissionBehavior?: HookPermissionDecision;

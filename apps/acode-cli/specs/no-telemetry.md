@@ -1,5 +1,13 @@
 # Open Audit CLI 遥测删除边界
 
+> **WI-14 修订（2026-10-18，波 2）**：本 spec 的 tracing 删除边界已被
+> `specs/otel-telemetry.md` 取代——CLI/desktop 恢复 **env 门禁 opt-in、默认完全
+> no-op** 的懒加载 OTel traces（无 OTEL_EXPORTER_OTLP_* 端点不加载模块、不上报）。
+> 本 spec 的隐私删除面全部保留：工具子进程 env 剔除（shared/runtimeEnv.ts）、
+> desktop Host env 剔除（desktopTelemetryPolicy.ts）、OAuth 身份不读取、遥测身份
+> 不注入、@acode/telemetry 独立包与 TTFT recorder 不复活。守卫测试同步修订：
+> desktop `tests/no-telemetry.test.mjs` 只放行唯一门禁模块并钉死最小依赖四件套。
+
 CLI 不初始化遥测 SDK、OTLP exporter、模型 API recorder，不产生遥测网络请求，关闭时不等待遥测 flush。删除 @acode/telemetry 包、bootstrap 初始化 API、services telemetryCore。conversation telemetry 包装仍被 UI 使用，保留纯本地订阅公开 API。
 
 Host 不再读取 OAuth 身份用于遥测，不向 Agent 注入 OTLP 配置或遥测身份。设备身份模块仍由原业务所有者管理；不删除磁盘用户数据。logger、用户主动反馈、Provider 请求、MCP 进程资源查询保留。

@@ -221,17 +221,22 @@ export function appendHookAdditionalContexts(
   serialization: ToolResultSerialization,
   additionalContexts: string[],
   entry: ToolEntry,
+  additionalContextSources?: readonly (string | undefined)[],
 ): ToolResultSerialization {
   if (additionalContexts.length === 0) return serialization;
-  const filteredAdditionalContexts =
-    entry.modelContentProtection === OFFICIAL_CUA_FRAME_MODEL_CONTENT_PROTECTION
-      ? additionalContexts.filter((context) => !containsOfficialCuaImageRefCredentialText(context))
-      : additionalContexts;
+  // CUA 凭据过滤与来源标注按同一索引掩码剔除（对齐不变式，specs/hook-additional-context-hardening.md）。
+  const keepsCredentialText =
+    entry.modelContentProtection !== OFFICIAL_CUA_FRAME_MODEL_CONTENT_PROTECTION;
+  const keepMask = additionalContexts.map(
+    (context) => keepsCredentialText || !containsOfficialCuaImageRefCredentialText(context),
+  );
+  const filteredAdditionalContexts = additionalContexts.filter((_, index) => keepMask[index]);
+  const filteredSources = additionalContextSources?.filter((_, index) => keepMask[index]);
   const omittedFrameCredential = filteredAdditionalContexts.length !== additionalContexts.length;
   if (filteredAdditionalContexts.length === 0) {
     return omittedFrameCredential ? { ...serialization, truncated: true } : serialization;
   }
-  const hookContext = formatHookAdditionalContexts(filteredAdditionalContexts);
+  const hookContext = formatHookAdditionalContexts(filteredAdditionalContexts, filteredSources);
   const suffix = `\n\n${hookContext}`;
   const maxModelBytes = resolveMaxModelBytes(entry);
   if (

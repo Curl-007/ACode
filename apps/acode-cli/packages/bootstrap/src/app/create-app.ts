@@ -24,6 +24,7 @@ import {
   createAutoResumeCommandHost,
   executeUsageQuery,
   handleAutoResumeCommand,
+  initOtelTelemetry,
   InMemoryRuntimeTaskRegistry,
   PermissionService,
   detectNoShellToolWarning,
@@ -36,6 +37,7 @@ import {
   TtlApprovalStore,
   buildPluginReferenceCatalog,
   buildSessionWorktreeFenceEnv,
+  type OtelTelemetryHandle,
   type ResumeSessionResult,
 } from "@acode/core";
 import {
@@ -216,6 +218,26 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
     ...traceContextToLogContext(traceContext),
     module: "bootstrap",
   });
+  // WI-14（specs/otel-telemetry.md）：懒加载 OTel trace 门禁。无 OTEL_EXPORTER_OTLP_*
+  // 端点（默认态）或 ACODE_TELEMETRY=0 时完全 no-op——impl 模块与 OTel SDK 模块图
+  // 不加载；装配异常降级 no-op，绝不阻断 app 启动。句柄在 AgentRuntime deps 注入，
+  // close() 时 shutdown（flush + provider 收口）。
+  let otelTelemetry: OtelTelemetryHandle | undefined;
+  try {
+    otelTelemetry = await initOtelTelemetry({
+      env: options.env ?? process.env,
+      logger,
+      serviceInstanceId: sessionId,
+      serviceVersion: appVersion,
+    });
+  } catch (error) {
+    logger.warn("OTel telemetry init threw; continuing without trace export", {
+      errorMessage: error instanceof Error ? error.message : String(error),
+      event: "telemetry.otel.init.failed",
+      module: "bootstrap",
+      status: "failed",
+    });
+  }
   // J1-2（specs/bash-confirm-reflexive-gate.md R6）：反射门 auditedAllow 的审计必须落盘。
   // gate 模块的缺省 sink 只写一行 stderr——宿主不重定向就没有任何持久记录，而 allow lane
   // 的入口包含项目 allow 规则/allowedTools/会话规则（不只是 yolo），confirm 级破坏命令
@@ -956,6 +978,8 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
       runtimeTaskRegistry,
       swarmPlanPort: swarmPlanWiring.port,
       ambientSchedulePort: ambientWiring.port,
+      // WI-14：OTel port 注入（门禁未过 = undefined，facade 回落 NOOP，零开销）。
+      ...(otelTelemetry ? { agentTelemetry: otelTelemetry.port } : {}),
       // 主代理的模型请求过治理器的 observer：立即放行，但让治理器看见它的 429 / 成功。
       modelRequestAdmission: workflowConcurrencyGovernor.observer(),
       eventStore: options.eventStore ?? createInMemorySessionEventStore(),
@@ -1513,6 +1537,9 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
           // 只注销**本 app 自己的**绑定（实例身份校验在 registry 里）：同会话新 app
           // 已接管时，这里的迟到 dispose 不得把它的注册清掉。
           unregisterVisualizationFragmentStore(sessionId, visualizationFragmentStore);
+          // WI-14：遥测收口放最后——会话关闭产生的终态 span 也要进 flush；
+          // shutdown 内部自带 catch（超时上限 5s），不会让 close 抛错。
+          await otelTelemetry?.shutdown();
         }
       },
       ...workflowFacade,
@@ -1549,6 +1576,8 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
     };
   } catch (error) {
     providerModelRuntime?.dispose();
+    // 启动失败也要收口遥测（best-effort，不 await：不延迟错误上抛）。
+    void otelTelemetry?.shutdown();
     unregisterVisualizationFragmentStore(sessionId, registeredVisualizationFragmentStore);
     void ownedNodeReplBrowserBroker?.close();
     startupTimer.fail("ACode app startup failed", error, {

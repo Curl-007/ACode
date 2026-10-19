@@ -42,6 +42,7 @@ import type {
 } from "./turn-loop-state.js";
 import { recordTurnUsageFact } from "./usage-observability.js";
 import { findLatestCommittedAssistantUsage } from "./turn-model-step-usage.js";
+import { tryPromoteContextModelForRecovery } from "./context-promotion.js";
 
 export async function executeManualCompact(
   this: AgentRuntimeInternal,
@@ -226,6 +227,27 @@ export async function autoCompactIfNeeded(
       ...autoCompactDecisionLogContext(decision),
     });
     return "skipped";
+  }
+
+  // 晋升前置（specs/failure-recovery-tracks.md 轨道 1）：阈值命中先咨询同 provider 更大
+  // 窗口模型——无损扩窗优先于有损压缩。无候选/已晋升/钉住轮时执行体返回 undefined，
+  // 静默落入下方既有压缩链（fail-safe）；rapid-refill 熔断是压缩轨道的保险丝，晋升
+  // 不是压缩，不受其约束（每轮 1 次上限防晋升被病理循环消耗）。
+  const promotedModel = await tryPromoteContextModelForRecovery.call(this, context.state, {
+    trigger: "threshold",
+  });
+  if (promotedModel) {
+    this.logger?.info("Auto compact deferred to context promotion", {
+      ...traceContextToLogContext(turnTraceContext),
+      compactReason: context.compactReason,
+      event: "compact.auto.deferred_to_promotion",
+      modelStepIndex: context.modelStepIndex,
+      module: "core.runtime",
+      phase: context.phase,
+      promotedModel: `${String(promotedModel.providerId)}/${String(promotedModel.modelId)}`,
+      ...autoCompactDecisionLogContext(decision),
+    });
+    return "promoted";
   }
 
   if (context.rapidRefill.shouldBlock) {

@@ -13,6 +13,8 @@ import { settingsResourceRowInteraction } from "@/settings/settingsResourceRowIn
 import { SettingsScopeBadge } from "@/settings/SettingsScopeBadge.js";
 import {
   McpFailurePresentation,
+  McpSuspensionNotice,
+  formatMcpSuspensionMessage,
   resolveMcpFailureMessageId,
 } from "@/settings/McpFailurePresentation.js";
 import { SettingsResourceList } from "@/settings/SettingsResourceGroup.js";
@@ -82,18 +84,22 @@ function McpServerItem({
   const openAuthorizationLabel = intl.formatMessage({
     id: "settings.mcp.oauth.openAuthorization",
   });
-  const statusReason = intl.formatMessage({
-    id:
-      server.status === "error"
-        ? resolveMcpFailureMessageId(server.failureKind)
-        : server.status === "connected"
-          ? "settings.mcp.status.connectedReason"
-          : server.status === "connecting"
-            ? "settings.mcp.status.connectingReason"
-            : server.status === "disconnected"
-              ? "settings.mcp.status.disconnectedReason"
-              : "settings.mcp.status.unknownReason",
-  });
+  // 挂起时 tooltip 优先显示熔断文案（比 status 泛化文案更可操作）；状态点进 attention 琥珀语义。
+  const suspension = server.reconnectSuspension;
+  const statusReason = suspension
+    ? formatMcpSuspensionMessage(intl, suspension)
+    : intl.formatMessage({
+        id:
+          server.status === "error"
+            ? resolveMcpFailureMessageId(server.failureKind)
+            : server.status === "connected"
+              ? "settings.mcp.status.connectedReason"
+              : server.status === "connecting"
+                ? "settings.mcp.status.connectingReason"
+                : server.status === "disconnected"
+                  ? "settings.mcp.status.disconnectedReason"
+                  : "settings.mcp.status.unknownReason",
+      });
 
   const description = server.config.url
     ? `${typeLabel} · ${server.config.url}`
@@ -115,7 +121,7 @@ function McpServerItem({
       >
         <Cable className="size-4" aria-hidden="true" />
         <span className="absolute -right-1 -bottom-1 flex size-4 items-center justify-center rounded-full bg-background">
-          <McpStatusDot status={server.status} reason={statusReason} />
+          <McpStatusDot status={server.status} attention={Boolean(suspension)} reason={statusReason} />
         </span>
       </div>
       <div className="min-w-0">
@@ -135,6 +141,7 @@ function McpServerItem({
         {server.status === "error" ? (
           <McpFailurePresentation error={server.error} failureKind={server.failureKind} />
         ) : null}
+        {suspension ? <McpSuspensionNotice suspension={suspension} /> : null}
       </div>
       <div className="flex shrink-0 items-center gap-2">
         {canOpenAuthorization && (

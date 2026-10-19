@@ -384,6 +384,8 @@ test("deriveTurnRateLine：加权速度 = outputTokens ÷ generationMs；stats=n
     timeToFirstTokenMs: 450,
     outputTokens: 900,
     generationMs: 3000,
+    servedModels: [],
+    promptCacheMisses: null,
   });
 });
 
@@ -395,6 +397,17 @@ test("deriveTurnRateLine：generationMs/TTFT 缺席 → null（无数据缺省�
   assert.equal(model?.outputTokens, 900);
   const zero = deriveTurnRateLine(makeStats({ generationMs: 0 }));
   assert.equal(zero?.tokensPerSecond, null);
+});
+
+test("deriveTurnRateLine：servedModels/promptCacheMisses 透出；缺席 → 空数组/null（D5）", () => {
+  const model = deriveTurnRateLine(
+    makeStats({ servedModels: ["p/model-a", "p/model-b"], promptCacheMisses: 3 }),
+  );
+  assert.deepEqual(model?.servedModels, ["p/model-a", "p/model-b"]);
+  assert.equal(model?.promptCacheMisses, 3);
+  const bare = deriveTurnRateLine(makeStats());
+  assert.deepEqual(bare?.servedModels, []);
+  assert.equal(bare?.promptCacheMisses, null);
 });
 
 // ── 今日合计 ──

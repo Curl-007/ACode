@@ -70,18 +70,19 @@ export function UsageStatusbarCapsule({
   const body = (
     <>
       {icon ? (
-        <span aria-hidden="true" className="inline-flex shrink-0 [&>svg]:size-3.5">
+        <span aria-hidden="true" className="relative inline-flex shrink-0 [&>svg]:size-3.5">
           {icon}
+          {/* 脉冲点常驻槽（修复 2.3 + 2026-10-19 二轮调紧）：图标右上角标绝对定位——
+              零布局占用（不再撑开 icon 与值之间的间隙），恒渲染不插拔，opacity 切换显隐。 */}
+          <span
+            aria-hidden="true"
+            className={cn(
+              "absolute -right-1 -top-0.5 size-1.5 rounded-full bg-success animate-pulse motion-reduce:animate-none",
+              pulse ? "opacity-100" : "opacity-0",
+            )}
+          />
         </span>
       ) : null}
-      {/* 脉冲点常驻槽（修复 2.3）：恒渲染占位，opacity 切换显隐。 */}
-      <span
-        aria-hidden="true"
-        className={cn(
-          "size-1.5 shrink-0 rounded-full bg-success animate-pulse motion-reduce:animate-none",
-          pulse ? "opacity-100" : "opacity-0",
-        )}
-      />
       {/* keyed span（specs/usage-statusbar.md「Tooltip 增强」节）：key = 值字符串，
           真实事实变更 → 重挂载 → styles.css 的 160ms 淡入（双闸）；值未变不重挂载、
           动画不重放。重挂载发生在父组件给的固定 min-w 槽位内，不改变条几何。 */}

@@ -14,11 +14,15 @@ import {
   buildSubagentSummaryView,
   classifyUsageSpeedTier,
   deriveCacheHitRate,
+  deriveElapsedMs,
   deriveLastCompletedTurnStats,
   deriveLastRequestTokensPerSecond,
+  deriveRunningTurnStartedAtMs,
   deriveTurnRateLine,
+  deriveUsageInFlightLiveView,
   hasToolCallRows,
   resolveUsageStatusbarPresence,
+  resolveUsageSpeedDisplayMode,
   summarizeSessionCumulative,
   USAGE_SPEED_TIER_FAST_TPS,
   USAGE_SPEED_TIER_SLOW_TPS,
@@ -538,4 +542,172 @@ test("resolveUsageStatusbarPresence：零值 ≠ 缺席——数据源在场、�
     }).subagents,
     true,
   );
+});
+
+// ── in-flight live 派生（specs/usage-statusbar.md「In-flight 真实用量事实面」+
+//    「面板明细与实时动态显示口径」节，2026-10-19；验收场景 9 的纯函数层）──
+
+const IDLE_LIVE_VIEW = {
+  liveTokensPerSecond: null,
+  partialOutputTokens: null,
+  announcedInputTokens: null,
+  timeToFirstTokenMs: null,
+  startedAtMs: null,
+  observedElapsedMs: null,
+  turnToDateInputTokens: null,
+  turnToDateOutputTokens: null,
+  turnToDateTotalTokens: null,
+};
+
+test("deriveUsageInFlightLiveView：live tok/s = partialOutputTokens ÷ ((observedAtMs − startedAtMs)/1000)", () => {
+  const view = deriveUsageInFlightLiveView({
+    phaseRunning: true,
+    inFlight: { startedAtMs: 1000, observedAtMs: 3000, partialOutputTokens: 1000 },
+  });
+  assert.equal(view.liveTokensPerSecond, 500);
+  assert.equal(view.observedElapsedMs, 2000);
+  assert.equal(view.partialOutputTokens, 1000);
+});
+
+test("deriveUsageInFlightLiveView：无 partialOutputTokens/分母非法 → null（降级秒表，绝不造速率）", () => {
+  // provider 无中途输出事实（OpenAI 系 include_usage 仅末包）→ live 速率缺席。
+  assert.equal(
+    deriveUsageInFlightLiveView({
+      phaseRunning: true,
+      inFlight: { startedAtMs: 1000, observedAtMs: 3000, announcedInputTokens: 500 },
+    }).liveTokensPerSecond,
+    null,
+  );
+  // 分母 = 0 / 负值（脏数据）→ null，不产生 Infinity/负速率。
+  assert.equal(
+    deriveUsageInFlightLiveView({
+      phaseRunning: true,
+      inFlight: { startedAtMs: 3000, observedAtMs: 3000, partialOutputTokens: 100 },
+    }).liveTokensPerSecond,
+    null,
+  );
+  assert.equal(
+    deriveUsageInFlightLiveView({
+      phaseRunning: true,
+      inFlight: { startedAtMs: 4000, observedAtMs: 3000, partialOutputTokens: 100 },
+    }).liveTokensPerSecond,
+    null,
+  );
+});
+
+test("deriveUsageInFlightLiveView：空闲态忽略 inFlight（全 null 视图）；inFlight 缺席 → 全 null", () => {
+  // 相位门单点收口：phase 非 running 时即便 inFlight 有值也一律不消费（投影保证清除，
+  // 消费端双保险——重连/重放不出现幽灵「进行中」）。
+  const idle = deriveUsageInFlightLiveView({
+    phaseRunning: false,
+    inFlight: {
+      startedAtMs: 0,
+      observedAtMs: 5000,
+      partialOutputTokens: 999,
+      announcedInputTokens: 100,
+      turnToDateInputTokens: 10,
+      turnToDateOutputTokens: 20,
+    },
+  });
+  assert.deepEqual(idle, IDLE_LIVE_VIEW);
+  assert.deepEqual(
+    deriveUsageInFlightLiveView({ phaseRunning: true, inFlight: null }),
+    IDLE_LIVE_VIEW,
+  );
+  assert.deepEqual(
+    deriveUsageInFlightLiveView({ phaseRunning: true, inFlight: undefined }),
+    IDLE_LIVE_VIEW,
+  );
+});
+
+test("deriveUsageInFlightLiveView：turnToDate 两者在场 → live 合计；任一缺席 → null（回退权威，缺席 ≠ 0）", () => {
+  const both = deriveUsageInFlightLiveView({
+    phaseRunning: true,
+    inFlight: {
+      startedAtMs: 0,
+      observedAtMs: 1000,
+      turnToDateInputTokens: 1200,
+      turnToDateOutputTokens: 300,
+    },
+  });
+  assert.equal(both.turnToDateTotalTokens, 1500);
+  assert.equal(both.turnToDateInputTokens, 1200);
+  const outputOnly = deriveUsageInFlightLiveView({
+    phaseRunning: true,
+    inFlight: { startedAtMs: 0, observedAtMs: 1000, turnToDateOutputTokens: 300 },
+  });
+  assert.equal(outputOnly.turnToDateTotalTokens, null);
+  const absent = deriveUsageInFlightLiveView({
+    phaseRunning: true,
+    inFlight: { startedAtMs: 0, observedAtMs: 1000 },
+  });
+  assert.equal(absent.turnToDateTotalTokens, null);
+});
+
+test("deriveUsageInFlightLiveView：TTFT 进行中形态 = firstTokenAtMs − startedAtMs；缺席/非法 → null", () => {
+  assert.equal(
+    deriveUsageInFlightLiveView({
+      phaseRunning: true,
+      inFlight: { startedAtMs: 1000, observedAtMs: 2000, firstTokenAtMs: 1450 },
+    }).timeToFirstTokenMs,
+    450,
+  );
+  assert.equal(
+    deriveUsageInFlightLiveView({
+      phaseRunning: true,
+      inFlight: { startedAtMs: 1000, observedAtMs: 2000 },
+    }).timeToFirstTokenMs,
+    null,
+  );
+  // firstTokenAtMs 早于 startedAtMs（脏数据）→ null，不产生负耗时。
+  assert.equal(
+    deriveUsageInFlightLiveView({
+      phaseRunning: true,
+      inFlight: { startedAtMs: 1000, observedAtMs: 2000, firstTokenAtMs: 900 },
+    }).timeToFirstTokenMs,
+    null,
+  );
+  assert.equal(
+    deriveUsageInFlightLiveView({
+      phaseRunning: true,
+      inFlight: { startedAtMs: 1000, observedAtMs: 2000, announcedInputTokens: 800 },
+    }).announcedInputTokens,
+    800,
+  );
+});
+
+test("resolveUsageSpeedDisplayMode：空闲 = authoritative；running 有 live 事实 = live；running 无事实 = stopwatch", () => {
+  // 空闲态忽略 inFlight 事实（速度位维持权威显示）。
+  assert.equal(
+    resolveUsageSpeedDisplayMode({ phaseRunning: false, liveTokensPerSecond: 500 }),
+    "authoritative",
+  );
+  assert.equal(
+    resolveUsageSpeedDisplayMode({ phaseRunning: true, liveTokensPerSecond: 500 }),
+    "live",
+  );
+  // running 且无中途事实 → 秒表降级（绝不显示假速率）。
+  assert.equal(
+    resolveUsageSpeedDisplayMode({ phaseRunning: true, liveTokensPerSecond: null }),
+    "stopwatch",
+  );
+});
+
+test("deriveRunningTurnStartedAtMs：最近 running turnHeader 的 startedAt（秒表兜底起点）；无 → null", () => {
+  const rows: ConversationRow[] = [
+    makeTurnHeader({ startedAt: 111 }),
+    makeTurnHeader({ state: "running", startedAt: 222 }),
+  ];
+  assert.equal(deriveRunningTurnStartedAtMs(rows), 222);
+  // 无 running 轮（已完成轮的时间戳不是进行中请求的起点）→ null。
+  assert.equal(deriveRunningTurnStartedAtMs([makeTurnHeader({ startedAt: 111 })]), null);
+  assert.equal(deriveRunningTurnStartedAtMs([makeToolCall()]), null);
+  assert.equal(deriveRunningTurnStartedAtMs(null), null);
+});
+
+test("deriveElapsedMs：now − startedAt（UI 本地真实时间）；时钟偏移负值 → 0；无起点 → null", () => {
+  assert.equal(deriveElapsedMs(1000, 3500), 2500);
+  assert.equal(deriveElapsedMs(5000, 3000), 0);
+  assert.equal(deriveElapsedMs(null, 3000), null);
+  assert.equal(deriveElapsedMs(Number.NaN, 3000), null);
 });

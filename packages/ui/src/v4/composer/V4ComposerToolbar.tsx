@@ -385,6 +385,7 @@ function V4ComposerModelControlsImpl({
   modelSelectionState = MODEL_SELECTION_LOADING_STATE,
   modelSelectionReload,
   sessionId,
+  phase,
   provider,
   isMobileViewport = false,
   draftMode = false,
@@ -958,8 +959,20 @@ function V4ComposerModelControlsImpl({
   const taskUsage = useMemo(() => {
     const contextWindow = usage?.contextWindow;
     if (!contextWindow) return null;
+    // running 态上下文环 overlay（specs/usage-statusbar.md「面板明细与实时动态显示
+    // 口径」节 2026-10-19）：message_start 通告输入真值（inFlight.announcedInputTokens）
+    // 在场时覆盖 usedTokens 的**展示值**——请求开始就跳到实际输入水位，不再等
+    // ModelComplete 写权威 contextWindow.usedTokens（两者同口径事实）。覆盖逻辑单点
+    // 在本映射处，contextUsage.tsx 纯展示件不改；空闲态忽略 inFlight（投影保证已清，
+    // 相位门双保险）。
+    const announcedInputTokens =
+      phase === "running" ? usage?.inFlight?.announcedInputTokens : undefined;
+    const used =
+      typeof announcedInputTokens === "number" && Number.isFinite(announcedInputTokens)
+        ? announcedInputTokens
+        : contextWindow.usedTokens;
     return {
-      used: contextWindow.usedTokens,
+      used,
       size: contextWindow.maxTokens,
       ...(contextWindow.cache ? { cache: contextWindow.cache } : {}),
       ...(contextWindow.breakdown ? { breakdown: contextWindow.breakdown } : {}),
@@ -967,7 +980,7 @@ function V4ComposerModelControlsImpl({
       // 投影未填真值时为 null = 不分档。
       autoCompactThresholdTokens: contextWindow.autoCompactThresholdTokens ?? null,
     };
-  }, [usage?.contextWindow]);
+  }, [usage?.contextWindow, usage?.inFlight?.announcedInputTokens, phase]);
 
   // ── 提示词一键润色（specs/prompt-polish.md 产品规则 1–6）──
   // 解析阶梯 explicit → persisted → session 在 hook 内每次现算；这里只供给宿主事实：

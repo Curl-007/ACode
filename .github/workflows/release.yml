@@ -511,7 +511,9 @@ jobs:
             --pattern "ACode-${VERSION}-mac-${{ matrix.arch }}.dmg" \
             --pattern "ACode-${VERSION}-mac-${{ matrix.arch }}.zip" \
             --dir "$RUNNER_TEMP/assets"
-          (cd "$RUNNER_TEMP/assets" && sha256sum * > "$RUNNER_TEMP/checksums/sha256-${{ matrix.leg }}.txt")
+          # macOS runner 无 GNU coreutils：sha256sum 不存在（exit 127，v1.0.1 首跑
+          # 实证）；shasum -a 256 输出同「hash␣␣name」格式，下游 -c 校验两平台通用。
+          (cd "$RUNNER_TEMP/assets" && shasum -a 256 * > "$RUNNER_TEMP/checksums/sha256-${{ matrix.leg }}.txt")
           cat "$RUNNER_TEMP/checksums/sha256-${{ matrix.leg }}.txt"
           unzip -q "$RUNNER_TEMP/assets/ACode-${VERSION}-mac-${{ matrix.arch }}.zip" -d "$RUNNER_TEMP/assets/extracted"
 

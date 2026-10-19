@@ -17,7 +17,6 @@ import {
   accumulateTurnUsage,
   addCumulativeReasoningTokens,
   buildTurnHeaderStats,
-  buildUsageInFlight,
   buildUsageLastRequest,
   carryAutoCompactThresholdTokens,
   computeAutoCompactThresholdTokens,
@@ -508,10 +507,6 @@ export class ProductProjection {
   // 进程内累计快照，每轮值 = 轮末快照 − 上一轮末快照。resume/rewind 重建后事件侧
   // 计数从空开始（contracts 注释），本投影态同批重建，基线自然归零对齐。
   private lastTurnCacheMissTotal = 0;
-  // 本请求首个非空 text/reasoning delta 的投影观测时刻（specs/usage-statusbar.md
-  // 「In-flight 真实用量事实面」firstTokenAtMs 进行中形态；权威 TTFT 仍归 core
-  // usage-observability）。请求边界（ModelComplete/轮收口/重试与恢复）复位。
-  private currentRequestFirstDeltaAtMs: number | null = null;
   // SubagentStopped.totalTokens 按 childSessionId 记账：running summary（含 SendMessage
   // resume 复活的 child）随 materialize 附带；停止后 summary 按既有生命周期离场，不扩语义。
   private subagentCumulativeTokensByChildSessionId = new Map<string, number>();
@@ -1164,7 +1159,6 @@ export class ProductProjection {
     clone.contextWindowState = { ...this.contextWindowState };
     clone.turnUsageByTurnId = new Map(this.turnUsageByTurnId);
     clone.lastTurnCacheMissTotal = this.lastTurnCacheMissTotal;
-    clone.currentRequestFirstDeltaAtMs = this.currentRequestFirstDeltaAtMs;
     clone.subagentCumulativeTokensByChildSessionId = new Map(
       this.subagentCumulativeTokensByChildSessionId,
     );
@@ -1213,7 +1207,6 @@ export class ProductProjection {
     this.contextWindowState = candidate.contextWindowState;
     this.turnUsageByTurnId = candidate.turnUsageByTurnId;
     this.lastTurnCacheMissTotal = candidate.lastTurnCacheMissTotal;
-    this.currentRequestFirstDeltaAtMs = candidate.currentRequestFirstDeltaAtMs;
     this.subagentCumulativeTokensByChildSessionId =
       candidate.subagentCumulativeTokensByChildSessionId;
     this.lastTurnModel = candidate.lastTurnModel;
@@ -2281,9 +2274,6 @@ export class ProductProjection {
         payload.historyRoundCount,
       ),
       ...(payload.resultType === "success" ? this.markStableForkAssistant(event) : []),
-      // in-flight 清除点：轮收口 = 权威 turnHeader.stats 定格，进行中值同时清空
-      //（specs/usage-statusbar.md「In-flight 真实用量事实面」清除点）。
-      ...this.clearUsageInFlight(),
       {
         op: "state.updated",
         patch: this.controlPatch(
@@ -2366,8 +2356,6 @@ export class ProductProjection {
       ...this.closeStreamingRows("interrupted"),
       ...this.closeOpenToolRows(event, "error"),
       ...this.upsertTurnHeader(event, "failed"),
-      // in-flight 清除点：TurnError 离开 running，进行中事实作废（清除点纪律）。
-      ...this.clearUsageInFlight(),
       {
         op: "state.updated",
         patch: this.controlPatch(
@@ -2518,14 +2506,6 @@ export class ProductProjection {
   }
 
   private setApiRetry(apiRetry: ApiRetryState | null): ConversationDelta[] {
-    // Bug 原因：spec「In-flight 真实用量事实面」清除点明确包含 apiRetry/相位复位路径
-    // （observeFirstStreamDelta 注释同款口径「重试与恢复清除点复位」），但此前只有
-    // ModelComplete/TurnComplete/TurnError 三处清除——重试调度意味着旧物理请求已死，
-    // 其 in-flight 事实与首字观测必须同时作废，否则 UI 残留死请求的幽灵「进行中」
-    // 直到新 attempt 的 message_start 到达。setApiRetry(null) 是恢复方向：彼时新
-    // 请求正在流式产生事实，不得清。clearUsageInFlight 自带 conflated 去重
-    // （已无 inFlight 不发 patch），重复重试事件不会刷多余补丁。
-    const inFlightClearDeltas = apiRetry !== null ? this.clearUsageInFlight() : [];
     const current = this.snapshot.control.apiRetry;
     if (
       current === apiRetry ||
@@ -2536,10 +2516,9 @@ export class ProductProjection {
         current.nextRetryAt === apiRetry.nextRetryAt &&
         current.reasonCode === apiRetry.reasonCode)
     ) {
-      return inFlightClearDeltas;
+      return [];
     }
     return [
-      ...inFlightClearDeltas,
       {
         op: "state.updated",
         patch: this.controlPatch({ apiRetry }),
@@ -2582,7 +2561,6 @@ export class ProductProjection {
       case "text_start":
         return this.openTextRow(event, fact);
       case "text_delta": {
-        this.observeFirstStreamDelta(event, payload.delta);
         const open = this.streamingTextRowId === null ? this.openTextRow(event, fact) : [];
         return [
           ...open,
@@ -2603,7 +2581,6 @@ export class ProductProjection {
       case "reasoning_start":
         return this.openReasoningRow(event, fact);
       case "reasoning_delta": {
-        this.observeFirstStreamDelta(event, payload.delta);
         const open =
           this.streamingReasoningRowId === null ? this.openReasoningRow(event, fact) : [];
         return [
@@ -2627,80 +2604,9 @@ export class ProductProjection {
         return this.flushStreamingToolInput(String(payload.toolCallId ?? ""));
       case "tool_call":
         return this.finalizeStreamingToolInput(event, payload);
-      case "usage_progress":
-        // In-flight 真实用量事实（specs/usage-statusbar.md「In-flight 真实用量事实面」）：
-        // 不是正文流，不开 row；usage.inFlight 的唯一写入面。
-        return this.onUsageProgress(event, payload.usageProgress);
       default:
         return [];
     }
-  }
-
-  /**
-   * 本请求首字观测（specs/usage-statusbar.md「In-flight 真实用量事实面」firstTokenAtMs）：
-   * 只认非空 text/reasoning delta（空 delta 是 retry-safe 前奏暂存语义，不是用户感知
-   * 输出；core 权威 TTFT 的 firstModelTokenAt 同口径）。每请求只记第一次，
-   * 请求边界（ModelComplete/轮收口/重试与恢复清除点）复位。
-   */
-  private observeFirstStreamDelta(event: SessionEvent, delta: string): void {
-    if (delta.length === 0 || this.currentRequestFirstDeltaAtMs !== null) return;
-    this.currentRequestFirstDeltaAtMs = this.ms(event);
-  }
-
-  /**
-   * usage.inFlight 唯一写入点（specs/usage-statusbar.md「In-flight 真实用量事实面」/
-   * 协议面 10-11，裁决见「2026-10-19 重设计裁决」2）：
-   * - producer 已在 adapters 节流（≥500ms）并中转（仅 main_turn），投影只组装不计算；
-   * - turnToDate* = 既有 TurnUsageAccumulator 当前值 + 本请求 partial/announced
-   *   （口径推导见 buildUsageInFlight 注释）；
-   * - usage 补丁是整键替换语义：spread 显式带回 contextWindow/cumulative/lastRequest
-   *   既有值（onModelComplete lastRequest 旁路带回同款纪律）；
-   * - 裁决：投影不 mid-request 写 contextWindow.usedTokens——上下文环 live 水位由
-   *   UI 端读 inFlight.announcedInputTokens 做展示层 overlay，投影写入面保持保守；
-   * - conflated：值未变（buildUsageInFlight 判等）不重复下发 patch。
-   */
-  private onUsageProgress(
-    event: SessionEvent,
-    usageProgress: CanonicalModelStream["usageProgress"],
-  ): ConversationDelta[] {
-    if (!usageProgress) return [];
-    // 迟到/旧轮 in-flight 事实不得复活幽灵「进行中」（与 apiRetry 同款 turnId 隔离；
-    // 重连/重放语义：phase 非 running 时 inFlight 已在清除点归 null）。
-    if (!this.acceptsActiveModelEvent(event)) return [];
-    const previous = this.snapshot.usage.inFlight;
-    // 新请求边界（多模型步/流恢复后 startedAtMs 变化）：首字观测随新请求重新计。
-    if (previous && previous.startedAtMs !== usageProgress.requestStartedAtMs) {
-      this.currentRequestFirstDeltaAtMs = null;
-    }
-    const inFlight = buildUsageInFlight({
-      firstTokenAtMs: this.currentRequestFirstDeltaAtMs ?? undefined,
-      previous,
-      turnAccumulator: this.turnUsageByTurnId.get(this.turnIdOf(event)),
-      usageProgress,
-    });
-    if (!inFlight) return [];
-    return [
-      {
-        op: "state.updated",
-        patch: { usage: { ...this.snapshot.usage, inFlight } },
-      },
-    ];
-  }
-
-  /**
-   * inFlight 清除点（specs/usage-statusbar.md「In-flight 真实用量事实面」清除点）：
-   * inFlight 是瞬时 conflated 状态，绝不过夜——凡请求终态/离开 running 的路径统一
-   * 清 null 并复位首字观测。已无 inFlight（undefined/null）不发 patch（值未变不刷）。
-   */
-  private clearUsageInFlight(): ConversationDelta[] {
-    this.currentRequestFirstDeltaAtMs = null;
-    if (!this.snapshot.usage.inFlight) return [];
-    return [
-      {
-        op: "state.updated",
-        patch: { usage: { ...this.snapshot.usage, inFlight: null } },
-      },
-    ];
   }
 
   private openTextRow(
@@ -4839,9 +4745,6 @@ export class ProductProjection {
       }
     }
     if (!isMainTurn) return [...deltas, ...retryClearDeltas];
-    // 请求终态 = in-flight 清除点（specs/usage-statusbar.md）：权威 lastRequest/
-    // cumulative 与 inFlight: null 同一补丁原子替换，UI 的进行中值被权威值定格。
-    this.currentRequestFirstDeltaAtMs = null;
     const usage = payload.usage as ModelUsage;
     // turnHeader.stats 的每轮事实累计：hydration 合成的零用量占位事件不算模型请求。
     if (modelCompleteCarriesUsageFacts(payload)) {
@@ -4899,8 +4802,6 @@ export class ProductProjection {
             ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
           },
           ...(lastRequest !== undefined ? { lastRequest } : {}),
-          // 整键替换下必须显式清除：in-flight 事实随权威值定格（清除点纪律）。
-          inFlight: null,
         },
       },
     });

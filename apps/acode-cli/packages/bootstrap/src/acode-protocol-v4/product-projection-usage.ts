@@ -3,16 +3,8 @@
 // 口径纪律：generationMs/timeToFirstTokenMs 由 core producer 单点计算，这里只透传；
 // 事件缺失字段时保留缺席（undefined），绝不造假值。
 import { getAutoCompactThreshold } from "@acode/core";
-import type {
-  ModelCompletePayload,
-  ModelStreamingUsageProgress,
-  ModelUsage,
-} from "@acode/contracts";
-import type {
-  SessionUsageInFlight,
-  SessionUsageLastRequest,
-  TurnHeaderStats,
-} from "@acode/shared/acode-protocol-v4";
+import type { ModelCompletePayload, ModelUsage } from "@acode/contracts";
+import type { SessionUsageLastRequest, TurnHeaderStats } from "@acode/shared/acode-protocol-v4";
 
 /** 每个 product turn 一份；ModelComplete（main_turn）累加，轮收口 flush 进 turnHeader.stats。 */
 export interface TurnUsageAccumulator {
@@ -238,86 +230,4 @@ export function subagentStoppedCumulativeTokens(payload: {
 }): number | undefined {
   const value = nonNegativeNumber(payload.totalTokens);
   return value === undefined ? undefined : Math.floor(value);
-}
-
-/**
- * In-flight 真实用量事实组装（specs/usage-statusbar.md「In-flight 真实用量事实面」/
- * 协议面 10-11，验收场景 8）。纯函数：投影侧唯一写入方 product-projection 只接线。
- *
- * 合并语义：inFlight 是 conflated 状态，而 adapters 每条 usage_progress 只携带自己
- * 那次 raw 事实（message_start 带 announced、message_delta 带 partial）。同一请求
- * （startedAtMs 相同）内新事实必须与上一条 inFlight 合并，否则首条 announced 会被
- * 后到的 partial 事实整键冲掉；startedAtMs 变化 = 新请求（多模型步/流恢复重试），
- * 整条替换。返回 undefined = 值未变（conflated 不重复下发）或事实非法（不造假值）。
- *
- * turnToDate 口径：累加器只在 ModelComplete 时入账已完成请求的权威 usage，进行中
- * 请求的输入尚未入账，因此 announcedInputTokens（message_start 真值，Anthropic 口径
- * 含缓存读/写）直接相加不会与累加器重复计数；ModelComplete 到达即清 inFlight，
- * 不存在「累加器已含本请求 + announced 再加一次」的窗口。输出同理：message_delta
- * 的 partialOutputTokens 是本请求累计值，加在累加器（已完成请求）之上。
- */
-export function buildUsageInFlight(input: {
-  /** 投影观测到的本请求首个非空 text/reasoning delta 时刻（缺席 = 尚未观测到）。 */
-  firstTokenAtMs: number | undefined;
-  previous: SessionUsageInFlight | null | undefined;
-  turnAccumulator: TurnUsageAccumulator | undefined;
-  usageProgress: ModelStreamingUsageProgress;
-}): SessionUsageInFlight | undefined {
-  const startedAtMs = nonNegativeNumber(input.usageProgress.requestStartedAtMs);
-  const observedAtMs = nonNegativeNumber(input.usageProgress.observedAtMs);
-  if (startedAtMs === undefined || observedAtMs === undefined) return undefined;
-  const previous = input.previous ?? undefined;
-  const sameRequest = previous !== undefined && previous.startedAtMs === startedAtMs;
-  const announcedInputTokens =
-    nonNegativeNumber(input.usageProgress.announcedInputTokens) ??
-    (sameRequest ? previous?.announcedInputTokens : undefined);
-  const partialOutputTokens =
-    nonNegativeNumber(input.usageProgress.partialOutputTokens) ??
-    (sameRequest ? previous?.partialOutputTokens : undefined);
-  const firstTokenAtMs =
-    nonNegativeNumber(input.firstTokenAtMs) ?? (sameRequest ? previous?.firstTokenAtMs : undefined);
-  const accumulator = input.turnAccumulator;
-  const turnToDateInputTokens =
-    accumulator === undefined && announcedInputTokens === undefined
-      ? undefined
-      : (accumulator?.inputTokens ?? 0) + (announcedInputTokens ?? 0);
-  const turnToDateOutputTokens =
-    accumulator === undefined && partialOutputTokens === undefined
-      ? undefined
-      : (accumulator?.outputTokens ?? 0) + (partialOutputTokens ?? 0);
-  const next: SessionUsageInFlight = {
-    startedAtMs: Math.floor(startedAtMs),
-    observedAtMs: Math.floor(observedAtMs),
-    ...(announcedInputTokens !== undefined
-      ? { announcedInputTokens: Math.floor(announcedInputTokens) }
-      : {}),
-    ...(partialOutputTokens !== undefined
-      ? { partialOutputTokens: Math.floor(partialOutputTokens) }
-      : {}),
-    ...(firstTokenAtMs !== undefined ? { firstTokenAtMs: Math.floor(firstTokenAtMs) } : {}),
-    ...(turnToDateInputTokens !== undefined
-      ? { turnToDateInputTokens: Math.floor(turnToDateInputTokens) }
-      : {}),
-    ...(turnToDateOutputTokens !== undefined
-      ? { turnToDateOutputTokens: Math.floor(turnToDateOutputTokens) }
-      : {}),
-  };
-  if (previous !== undefined && sameUsageInFlight(previous, next)) return undefined;
-  return next;
-}
-
-/** conflated 判等：全部字段一致 = 值未变，不重复下发 patch。 */
-export function sameUsageInFlight(
-  left: SessionUsageInFlight,
-  right: SessionUsageInFlight,
-): boolean {
-  return (
-    left.startedAtMs === right.startedAtMs &&
-    left.observedAtMs === right.observedAtMs &&
-    left.announcedInputTokens === right.announcedInputTokens &&
-    left.partialOutputTokens === right.partialOutputTokens &&
-    left.firstTokenAtMs === right.firstTokenAtMs &&
-    left.turnToDateInputTokens === right.turnToDateInputTokens &&
-    left.turnToDateOutputTokens === right.turnToDateOutputTokens
-  );
 }

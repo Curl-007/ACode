@@ -1,8 +1,7 @@
-import { useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Bot, CalendarDays, Gauge, Layers, Sigma, Wrench } from "lucide-react";
 import type { ConversationSnapshot } from "@acode/shared/acode-protocol-v4";
 import { cn } from "@/components/lib/utils.js";
-import { TooltipProvider } from "@/components/ui/tooltip.js";
 import { useACodeIntl } from "@/i18n/IntlProvider.js";
 import {
   formatUsageCount,
@@ -23,7 +22,6 @@ import { useTodayUsageTotals } from "@/v4/usage-statusbar/useTodayUsageTotals.js
 import { useUsageStatusbarPreferences } from "@/v4/usage-statusbar/useUsageStatusbarPreferences.js";
 import {
   UsageStatusbarCapsule,
-  UsageStatusbarTooltipNote,
   type UsageStatusbarTone,
 } from "@/v4/usage-statusbar/UsageStatusbarCapsule.js";
 import { UsageStatusbarSettingsPopover } from "@/v4/usage-statusbar/UsageStatusbarSettingsPopover.js";
@@ -45,14 +43,33 @@ import {
 // 本组件不做内联启发式。
 // 窄屏分级隐藏（同 spec「窄屏分级隐藏优先级」节）：容器查询挂 composer 命名容器，
 // 先藏今日合计→子智能体→生成速度→工具调用→会话累计，本轮用量与齿轮保留到最后。
-// tooltip 明细内容组装在同目录 UsageStatusbarTooltips.tsx（400 行 ratchet 拆分，纯移动）。
+// tooltip 明细内容组装在同目录 UsageStatusbarTooltips.tsx。
 // 上下文容量项不在此条上——由既有 composer 上下文环承载（chat-input-toolbar/contextUsage.tsx）。
+//
+// 悬停生命周期自管（spec「Tooltip 稳定性」2026-10-19 最小修复，核心不变量）：
+// **指针静止 = 无 mousemove/pointermove = 明细常驻**。流式几何位移（值 tick/脉冲/
+// presence 插入/整条 bar 纵向推移）会把胶囊从静止指针下推走，浏览器补发边界事件；
+// 开 = 胶囊 pointerenter（位移后落到新胶囊也自然接续），关仅三条路径：
+// ① pointerleave 且 relatedTarget 在整条 bar 外；② bar 自身 pointermove（指针停进
+// 胶囊间隙）；③ Popover 主动关闭（Escape/外部点击）。Radix Tooltip 的 pointermove
+// 重开门与其关闭路径全部不再参与。
 
 const EMPTY_ROWS: never[] = [];
 
 /** 容器查询分级隐藏（Tailwind v4 命名容器任意值语法，@container/composer 在 Composer 根）。 */
 const CAPSULE_HIDE_TIER_1 = "@max-[520px]/composer:hidden";
 const CAPSULE_HIDE_TIER_2 = "@max-[420px]/composer:hidden";
+
+/** 布局稳定规则 2（spec「Tooltip 稳定性」修复 2）：每胶囊固定 min-w 槽位，典型值
+ * tick 在槽内变化不推挤邻居（tabular-nums 既有）；工具槽按「计数 · N 运行中」后缀档预留。 */
+const CAPSULE_MIN_WIDTH = {
+  generationSpeed: "min-w-[6.5rem]",
+  turnUsage: "min-w-[4.5rem]",
+  sessionCumulative: "min-w-[5rem]",
+  toolCalls: "min-w-[7rem]",
+  todayTotal: "min-w-[5rem]",
+  subagents: "min-w-[4.5rem]",
+} as const;
 
 export interface UsageStatusbarProps {
   /** 本窗口活动会话的 v4 快照；null = 无活动会话（hide-on-absent，只留齿轮）。 */
@@ -105,127 +122,158 @@ export function UsageStatusbar({ snapshot, className }: UsageStatusbarProps) {
   });
 
   const visible = preferences.visibleItems;
-  // 根因修复（bug：对话流式输出/思考进行中悬停胶囊 tooltip 只闪一下即消失）：
-  // 全局 TooltipProvider（Root.tsx）delayDuration=0 + 默认 skipDelayDuration=300，
-  // 在流式高频 snapshot re-render 下，Radix Tooltip 的 hoverable content 机制
-  // （@radix-ui/react-tooltip TooltipContentHoverable：grace area pointer 追踪 +
-  // trigger/content pointerleave 建立凸包，见 dist/index.mjs:231-291）会出现
-  // 指针静止却被判定离开 grace area → onClose() → setOpen(false) 的抖动；close 后
-  // TooltipTrigger 的 hasPointerMoveOpenedRef 仍为 true（仅 pointerleave 才重置），
-  // 指针未移动不再触发 onTriggerEnter 重开——与「闪一下即消失、等思考结束才常驻」
-  // 症状完全吻合。
-  // 修复针对根因所有者（状态栏胶囊的 tooltip 行为配置）：用局部 TooltipProvider
-  // 覆盖，disableHoverableContent=true 禁用导致抖动的 grace area 追踪逻辑，改用
-  // TooltipContentImpl（非 hoverable）。状态栏 tooltip 是只读明细，用户无需将指针
-  // 移入 tooltip content 内部，禁用 hoverable content 不损失核心交互；保留
-  // delayDuration=0 不改变首次悬停的零延迟体验。子代理胶囊的 Popover 点击展开
-  // 走独立 Radix Popover 机制，不受 Tooltip 的 hoverable content 禁用影响。
-  // 运行时根因复现受限于 DOM+流式环境无法自动化（ui 包无 jsdom/happy-dom/testing-library），
-  // 证据链见 specs/usage-statusbar.md「Tooltip 稳定性」节与 verify 字段。
+
+  // ── 自管 hover 生命周期（spec「Tooltip 稳定性」2026-10-19 最小修复）──
+  const barRef = useRef<HTMLDivElement | null>(null);
+  const [hoveredCapsuleId, setHoveredCapsuleId] = useState<string | null>(null);
+  const dismissHover = useCallback(() => setHoveredCapsuleId(null), []);
+  const enterCapsule = useCallback((id: string) => setHoveredCapsuleId(id), []);
+  // 核心不变量：指针静止 = 明细常驻。布局位移（值 tick/脉冲/presence 插入/整条 bar
+  // 纵向推移）补发的 pointerleave/pointerenter 边界事件一律不作关闭依据——开/切换只认
+  // pointerenter（位移后落到新胶囊自然接续），关闭只认两条真实指针路径：
+  // ① 打开期间 window mousemove 命中测试落在整条 bar 当前 rect 之外（真移走）；
+  // ② Popover 主动关闭（Escape/外部点击，经 onTooltipDismiss）。
+  // 静止指针不产生 mousemove → 任何几何突变都不关闭（2026-10-19 二轮录证修正：
+  // 首版用 pointerleave+relatedTarget 判定，composer 高度变化把 bar 纵向推离静止
+  // 指针时仍误关一次，post-hoverfix-run1.jsonl +5.9s 实证）。
+  const hoverOpen = hoveredCapsuleId !== null;
+  useEffect(() => {
+    if (!hoverOpen) return;
+    const handleMove = (event: MouseEvent) => {
+      const rect = barRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      if (
+        event.clientX < rect.left ||
+        event.clientX > rect.right ||
+        event.clientY < rect.top ||
+        event.clientY > rect.bottom
+      ) {
+        setHoveredCapsuleId(null);
+      }
+    };
+    window.addEventListener("mousemove", handleMove);
+    return () => window.removeEventListener("mousemove", handleMove);
+  }, [hoverOpen]);
+
   return (
-    <TooltipProvider delayDuration={0} disableHoverableContent>
-      <div
-        className={cn(
-          "flex h-7 min-w-0 items-center gap-0.5 overflow-hidden px-1 text-ui-sm",
-          className,
-        )}
-        data-testid="usage-statusbar"
-      >
-        {visible.generationSpeed && presence.generationSpeed ? (
-          <UsageStatusbarCapsule
-            className={CAPSULE_HIDE_TIER_2}
-            icon={<Gauge />}
-            label={intl.formatMessage({ id: "chat.usageStatusbar.speed.label" })}
-            pulse={phaseRunning}
-            testId="usage-statusbar-speed"
-            tone={speedTone}
-            tooltip={<SpeedTooltipContent lastRequest={lastRequest} />}
-            value={formatTokensPerSecond(locale, speed, tokensPerSecondUnit)}
-          />
-        ) : null}
-        {visible.turnUsage && presence.turnUsage ? (
-          <UsageStatusbarCapsule
-            icon={<Sigma />}
-            label={intl.formatMessage({ id: "chat.usageStatusbar.turnUsage.label" })}
-            testId="usage-statusbar-turn-usage"
-            tooltip={<TurnUsageTooltipContent stats={lastTurnStats} />}
-            value={formatUsageTokenCount(
-              locale,
-              lastTurnStats ? lastTurnStats.inputTokens + lastTurnStats.outputTokens : null,
-            )}
-          />
-        ) : null}
-        {visible.sessionCumulative && presence.sessionCumulative ? (
-          <UsageStatusbarCapsule
-            className={CAPSULE_HIDE_TIER_2}
-            icon={<Layers />}
-            label={intl.formatMessage({ id: "chat.usageStatusbar.session.label" })}
-            testId="usage-statusbar-session"
-            tooltip={<SessionTooltipContent cumulative={cumulative} />}
-            value={formatUsageTokenCount(locale, cumulative.totalTokens)}
-          />
-        ) : null}
-        {visible.toolCalls && presence.toolCalls ? (
-          <UsageStatusbarCapsule
-            className={CAPSULE_HIDE_TIER_2}
-            icon={<Wrench />}
-            label={intl.formatMessage({ id: "chat.usageStatusbar.tools.label" })}
-            pulse={tools.activeCount > 0}
-            testId="usage-statusbar-tools"
-            tone={tools.errorCount > 0 ? "destructive" : "default"}
-            tooltip={<ToolsTooltipContent tools={tools} />}
-            value={
-              tools.errorCount > 0
+    <div
+      ref={barRef}
+      className={cn(
+        "flex h-7 min-w-0 items-center gap-0.5 overflow-hidden px-1 text-ui-sm",
+        className,
+      )}
+      data-testid="usage-statusbar"
+    >
+      {/* 布局稳定规则 1：稳定 key = 项 id，条件渲染不依赖数组位置。 */}
+      {visible.generationSpeed && presence.generationSpeed ? (
+        <UsageStatusbarCapsule
+          key="generationSpeed"
+          className={cn(CAPSULE_HIDE_TIER_2, CAPSULE_MIN_WIDTH.generationSpeed)}
+          icon={<Gauge />}
+          label={intl.formatMessage({ id: "chat.usageStatusbar.speed.label" })}
+          onCapsuleEnter={() => enterCapsule("generationSpeed")}
+          onTooltipDismiss={dismissHover}
+          pulse={phaseRunning}
+          testId="usage-statusbar-speed"
+          tone={speedTone}
+          tooltip={<SpeedTooltipContent lastRequest={lastRequest} />}
+          tooltipOpen={hoveredCapsuleId === "generationSpeed"}
+          value={formatTokensPerSecond(locale, speed, tokensPerSecondUnit)}
+        />
+      ) : null}
+      {visible.turnUsage && presence.turnUsage ? (
+        <UsageStatusbarCapsule
+          key="turnUsage"
+          className={CAPSULE_MIN_WIDTH.turnUsage}
+          icon={<Sigma />}
+          label={intl.formatMessage({ id: "chat.usageStatusbar.turnUsage.label" })}
+          onCapsuleEnter={() => enterCapsule("turnUsage")}
+          onTooltipDismiss={dismissHover}
+          testId="usage-statusbar-turn-usage"
+          tooltip={<TurnUsageTooltipContent stats={lastTurnStats} />}
+          tooltipOpen={hoveredCapsuleId === "turnUsage"}
+          value={formatUsageTokenCount(
+            locale,
+            lastTurnStats ? lastTurnStats.inputTokens + lastTurnStats.outputTokens : null,
+          )}
+        />
+      ) : null}
+      {visible.sessionCumulative && presence.sessionCumulative ? (
+        <UsageStatusbarCapsule
+          key="sessionCumulative"
+          className={cn(CAPSULE_HIDE_TIER_2, CAPSULE_MIN_WIDTH.sessionCumulative)}
+          icon={<Layers />}
+          label={intl.formatMessage({ id: "chat.usageStatusbar.session.label" })}
+          onCapsuleEnter={() => enterCapsule("sessionCumulative")}
+          onTooltipDismiss={dismissHover}
+          testId="usage-statusbar-session"
+          tooltip={<SessionTooltipContent cumulative={cumulative} />}
+          tooltipOpen={hoveredCapsuleId === "sessionCumulative"}
+          value={formatUsageTokenCount(locale, cumulative.totalTokens)}
+        />
+      ) : null}
+      {visible.toolCalls && presence.toolCalls ? (
+        <UsageStatusbarCapsule
+          key="toolCalls"
+          className={cn(CAPSULE_HIDE_TIER_2, CAPSULE_MIN_WIDTH.toolCalls)}
+          icon={<Wrench />}
+          label={intl.formatMessage({ id: "chat.usageStatusbar.tools.label" })}
+          onCapsuleEnter={() => enterCapsule("toolCalls")}
+          onTooltipDismiss={dismissHover}
+          pulse={tools.activeCount > 0}
+          testId="usage-statusbar-tools"
+          tone={tools.errorCount > 0 ? "destructive" : "default"}
+          tooltip={<ToolsTooltipContent tools={tools} />}
+          tooltipOpen={hoveredCapsuleId === "toolCalls"}
+          value={
+            tools.errorCount > 0
+              ? `${formatUsageCount(locale, tools.totalCount)} · ${intl.formatMessage(
+                  { id: "chat.usageStatusbar.tools.errors" },
+                  { count: tools.errorCount },
+                )}`
+              : tools.activeCount > 0
                 ? `${formatUsageCount(locale, tools.totalCount)} · ${intl.formatMessage(
-                    { id: "chat.usageStatusbar.tools.errors" },
-                    { count: tools.errorCount },
+                    { id: "chat.usageStatusbar.tools.running" },
+                    { count: tools.activeCount },
                   )}`
-                : tools.activeCount > 0
-                  ? `${formatUsageCount(locale, tools.totalCount)} · ${intl.formatMessage(
-                      { id: "chat.usageStatusbar.tools.running" },
-                      { count: tools.activeCount },
-                    )}`
-                  : formatUsageCount(locale, tools.totalCount)
-            }
-          />
-        ) : null}
-        {visible.todayTotal && presence.todayTotal ? (
-          <UsageStatusbarCapsule
-            className={CAPSULE_HIDE_TIER_1}
-            icon={<CalendarDays />}
-            label={intl.formatMessage({ id: "chat.usageStatusbar.today.label" })}
-            testId="usage-statusbar-today"
-            tooltip={<TodayTooltipContent totals={today.totals} />}
-            value={formatUsageTokenCount(locale, today.totals?.totalTokens ?? null)}
-          />
-        ) : null}
-        {visible.subagents && presence.subagents ? (
-          <UsageStatusbarCapsule
-            className={CAPSULE_HIDE_TIER_1}
-            icon={<Bot />}
-            label={intl.formatMessage({ id: "chat.usageStatusbar.subagents.label" })}
-            popoverContent={
-              <UsageSubagentPanel
-                locale={locale}
-                mainTotalTokens={cumulative.totalTokens}
-                view={subagents}
-              />
-            }
-            testId="usage-statusbar-subagents"
-            tooltip={
-              // 值 = 仅子代理累计（specs/usage-statusbar.md「子代理胶囊值语义」节）：
-              // 不再重复展示主代理值（与会话累计胶囊同一事实两处呈现）；主/子对比在面板。
-              <UsageStatusbarTooltipNote>
-                {intl.formatMessage({ id: "chat.usageStatusbar.subagents.tooltip" })}
-              </UsageStatusbarTooltipNote>
-            }
-            value={formatUsageTokenCount(locale, subagents.childTotalTokens)}
-          />
-        ) : null}
-        <span className="ml-auto inline-flex shrink-0">
-          <UsageStatusbarSettingsPopover />
-        </span>
-      </div>
-    </TooltipProvider>
+                : formatUsageCount(locale, tools.totalCount)
+          }
+        />
+      ) : null}
+      {visible.todayTotal && presence.todayTotal ? (
+        <UsageStatusbarCapsule
+          key="todayTotal"
+          className={cn(CAPSULE_HIDE_TIER_1, CAPSULE_MIN_WIDTH.todayTotal)}
+          icon={<CalendarDays />}
+          label={intl.formatMessage({ id: "chat.usageStatusbar.today.label" })}
+          onCapsuleEnter={() => enterCapsule("todayTotal")}
+          onTooltipDismiss={dismissHover}
+          testId="usage-statusbar-today"
+          tooltip={<TodayTooltipContent totals={today.totals} />}
+          tooltipOpen={hoveredCapsuleId === "todayTotal"}
+          value={formatUsageTokenCount(locale, today.totals?.totalTokens ?? null)}
+        />
+      ) : null}
+      {visible.subagents && presence.subagents ? (
+        <UsageStatusbarCapsule
+          key="subagents"
+          className={cn(CAPSULE_HIDE_TIER_1, CAPSULE_MIN_WIDTH.subagents)}
+          icon={<Bot />}
+          label={intl.formatMessage({ id: "chat.usageStatusbar.subagents.label" })}
+          popoverContent={
+            <UsageSubagentPanel
+              locale={locale}
+              mainTotalTokens={cumulative.totalTokens}
+              view={subagents}
+            />
+          }
+          testId="usage-statusbar-subagents"
+          value={formatUsageTokenCount(locale, subagents.childTotalTokens)}
+        />
+      ) : null}
+      <span className="ml-auto inline-flex shrink-0">
+        <UsageStatusbarSettingsPopover />
+      </span>
+    </div>
   );
 }

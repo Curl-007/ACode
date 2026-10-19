@@ -365,6 +365,60 @@ export class ProviderConfigService implements ProviderSource<ProviderConfigSnaps
     });
   }
 
+  /**
+   * 批量添加个人 Model（packages/services/specs/provider-model-discovery.md）：
+   * 单次 #updatePersonal 事务 = 单次 revision 守卫（与 addPersonalModel 同口径）；
+   * 任一批内 id 与 builtin/既有 personal 重复 → 整批拒绝（UI 预筛之外的服务端双闸）；
+   * 序尾追加不重排既有顺序；配置走推荐档解析（overlay 仅 enabled，不猜窗口/上限）。
+   */
+  async addPersonalModels(
+    providerId: ProviderId,
+    modelIds: readonly ModelId[],
+    membership?: ProviderModelMembership,
+    useRecommendedConfig?: boolean,
+  ): Promise<ProviderConfigLayerSnapshot> {
+    const normalizedProviderId = normalizeId("providerId", providerId);
+    const normalizedModelIds = Array.from(
+      new Set(modelIds.map((modelId) => normalizeId("modelId", modelId))),
+    );
+    if (normalizedModelIds.length === 0) return this.#personalRepository.read();
+    const acodeBuiltin = await this.#acodeBuiltinSource.read();
+    return this.#updatePersonal((current) => {
+      assertMembershipCurrent(membership, normalizedProviderId, current);
+      const provider = writableProviderOverlay(acodeBuiltin, current, normalizedProviderId);
+      const builtinModelIds =
+        membership?.inheritedModelIds ??
+        resolveProviderBuiltinModelIds(acodeBuiltin, current.providers, normalizedProviderId);
+      const currentModelIds = provider.personalModelIds ?? [];
+      for (const modelId of normalizedModelIds) {
+        if (builtinModelIds.includes(modelId) || currentModelIds.includes(modelId)) {
+          throw new Error(`Model 已存在: ${normalizedProviderId}/${modelId}`);
+        }
+      }
+      const nextModelIds = [...currentModelIds, ...normalizedModelIds];
+      let nextModels = current.models;
+      for (const modelId of normalizedModelIds) {
+        nextModels = nextModels.setExact(
+          normalizedProviderId,
+          modelId,
+          new ModelConfig({ enabled: true }),
+          useRecommendedConfig,
+        );
+      }
+      return {
+        providers: current.providers.set(
+          normalizedProviderId,
+          provider.withPersonalModelIds(nextModelIds).withModelOrder(
+            // 添加不能重新按成员名单排序，否则会丢掉用户已经保存的顺序。
+            normalizeModelOrder(builtinModelIds, nextModelIds, provider.modelOrder ?? []),
+          ),
+        ),
+        models: nextModels,
+        providerOrder: current.providerOrder,
+      };
+    });
+  }
+
   async renamePersonalModel(
     providerId: ProviderId,
     currentModelId: ModelId,

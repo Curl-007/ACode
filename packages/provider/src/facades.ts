@@ -20,6 +20,19 @@ import {
   parseProviderConfig,
 } from "./config/index.js";
 import type { ProviderRegistryView } from "./registry.js";
+import type { ProviderApiType } from "./config/provider-config.js";
+
+/**
+ * 模型发现（packages/services/specs/provider-model-discovery.md）的宿主本地输入：
+ * baseUrl + api 类型 + 水合 apiKey。apiKey 只供宿主侧发现请求的鉴权头使用——不进
+ * RPC 视图、不进日志、不作为任何 RPC 方法的返回值（readProviderDiscoveryInput
+ * 不登记进 RPC allowedMethods）。
+ */
+export interface ProviderDiscoveryInput {
+  readonly baseUrl: string;
+  readonly apiType: ProviderApiType;
+  readonly apiKey?: string;
+}
 import {
   serializeRegistryModelConfig,
   serializeRegistryProviderConfig,
@@ -69,6 +82,12 @@ export interface ProviderSettingsMutationTarget {
     providerId: ProviderId,
     modelId: ModelId,
     config: ModelConfig,
+    membership?: ProviderModelMembership,
+    useRecommendedConfig?: boolean,
+  ): Promise<unknown>;
+  addPersonalModels(
+    providerId: ProviderId,
+    modelIds: readonly ModelId[],
     membership?: ProviderModelMembership,
     useRecommendedConfig?: boolean,
   ): Promise<unknown>;
@@ -370,6 +389,46 @@ export class ProviderSettingsFacade {
         useRecommendedConfig,
       ),
     );
+  }
+
+  /** 批量添加个人 Model（发现对话框确认路径）：单事务单 revision 守卫，语义见 config-service。 */
+  addPersonalModels(
+    providerId: ProviderId,
+    modelIds: readonly ModelId[],
+    useRecommendedConfig?: boolean,
+  ): Promise<ProviderSettingsView> {
+    return this.#mutateProvider(providerId, "add-models", (target) =>
+      target.addPersonalModels(
+        providerId,
+        modelIds,
+        this.#modelMembership(providerId),
+        useRecommendedConfig,
+      ),
+    );
+  }
+
+  /**
+   * 发现输入的宿主本地只读面（spec 同节）：从 Registry 内存视图取 baseUrl/api 类型/
+   * 水合 apiKey（registry 下游 access.apiKey 读取先例同款）。baseUrl 缺席 → null
+   * （UI 禁用按钮 / 服务层 no-base-url 错误）。api.type 缺席回落 openai-chat-completions
+   * （与 BYO 表单默认同口径）。
+   */
+  readProviderDiscoveryInput(providerId: ProviderId): ProviderDiscoveryInput | null {
+    const snapshot = requireSnapshot(this.#source);
+    const provider = snapshot.registry.providers.find((item) => item.providerId === providerId);
+    const baseUrl = provider?.config.api?.baseUrl?.trim();
+    if (!provider || !baseUrl) return null;
+    // access 是水合后的联合类型；仅 api-key 形态携带 apiKey，zhipu-account 等形态缺席即无 key。
+    const access = provider.config.access as { apiKey?: unknown } | undefined;
+    const apiKey =
+      typeof access?.apiKey === "string" && access.apiKey.trim().length > 0
+        ? access.apiKey
+        : undefined;
+    return {
+      baseUrl,
+      apiType: provider.config.api?.type ?? "openai-chat-completions",
+      ...(apiKey ? { apiKey } : {}),
+    };
   }
 
   renamePersonalModel(

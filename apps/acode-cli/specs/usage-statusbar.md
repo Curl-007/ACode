@@ -117,10 +117,15 @@ tooltip；而 `@radix-ui/react-tooltip@1.2.8` 的重开门槛是 trigger `pointe
   底边 anchored）作为唯一 hover 触发器，打开一个「用量明细」统一面板。
   内部胶囊再怎么跳动，指针都不会离开 bar 容器 → 不存在 pointerleave 误杀。
 - 面板用**受控 Popover**（`bg-popover rounded-xl shadow-md`，锚定整条 bar，
-  `side="top"`）：open 状态由 bar 容器自管 `mouseenter`/`mouseleave`（关闭宽限
-  ~150ms）+ 点击钉住（pinned 切换）驱动，不走 Radix Tooltip 的任何隐性关闭路径
-  （scroll capture、TOOLTIP_OPEN 广播、grace area 均不适用）。Esc 与点击外部
-  解除钉住/关闭为常规 Popover 语义。
+  `side="top"`）：open 状态自管，**基于位置而非元素边界事件**（2026-10-19 运行时
+  复现修正：流式期间 composer 高度变化会把整条 bar 在静止指针下纵向推移，元素级
+  mouseleave 同样会误杀——复现证据 repro-streaming-run2.jsonl +18.5s 关闭早于
+  横向位移记录）：bar `mouseenter` 打开；打开期间以 window 级 `mousemove` 对
+  bar ∪ 面板的**当前 rect** 做命中测试，指针在两者之外才启动 ~150ms 关闭宽限；
+  指针静止不产生 mousemove → 面板保持打开（几何怎么变都不误杀）。点击钉住
+  （pinned 切换，钉住后忽略位置关闭）；Esc 与点击外部关闭为常规 Popover 语义。
+  不走 Radix Tooltip 的任何隐性关闭路径（scroll capture、TOOLTIP_OPEN 广播、
+  grace area 均不适用）。
 - 面板内容 = 带标签的分组行式清单（复用 `UsageStatusbarDetailRow`）：**本次请求
   （进行中 ●，running 时；live 值 + 口径脚注）/ 本轮 / 会话 / 今日 / 工具 / 子代理**，
   每组一行口径脚注（缓存读已计入输入、进行中值分母口径、今日刷新时机等，文案
@@ -141,9 +146,15 @@ tooltip；而 `@radix-ui/react-tooltip@1.2.8` 的重开门槛是 trigger `pointe
 5. hide-on-absent 的整胶囊插入/移除保留（缺席 ≠ 零值语义不变）；一次性位移在
    统一面板方案下不再致命，可接受。
 
-**验收（教训制度化）**：实施前先以真实流式 + CDP 浏览器自动化复现修复前消失
+**验收（教训制度化）**：实施前先以真实流式 + CDP 自动化复现修复前消失
 （录证），修复后同场景验证：指针悬停 bar 不动 + 模型持续流式（含工具 tick、
 presence 翻转）→ 面板全程常驻不闪断。推断级根因不得作为交付依据。
+**修复前录证已完成（2026-10-19）**：`~/.acode/cli/scratch/e2e-usage-statusbar-
+redesign/`——hover-shift-proof.mjs 机制级证明（proof-run2.jsonl：静止指针下
+左邻加宽 +60px → tooltip 关闭、1px 微动重开）；hover-repro.mjs 真实流式时序
+（repro-streaming-run2.jsonl：+0ms 打开 → +18.6s 静止指针关闭 → 脉冲点 +10px /
+工具插入 +67px / 值 tick 多次位移全程不重开）；截图 pre-02/03/04。修复后同脚本
+同场景复跑应得「全程常驻」结论。
 
 **不接受的对症方案**（沿用原节纪律）：流式期间禁用浮层、pointer 事件防抖、
 setTimeout 重开等掩盖性补丁。

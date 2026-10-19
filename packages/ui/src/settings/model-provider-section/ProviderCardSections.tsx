@@ -12,10 +12,12 @@ import type {
   ProviderSettingsFormModel,
 } from "@/lib/providerSettingsFormTypes.js";
 import type { ModelConnectivityResult } from "@acode/shared";
+import type { ProviderModelDiscoveryResult } from "@acode/services";
 import { isPlaintextHttpBaseUrl, type ProviderApiType } from "@acode/provider";
 import {
   TID_MODEL_PROVIDER_ADD_MODEL_BUTTON,
   TID_MODEL_PROVIDER_BASE_URL_INPUT,
+  TID_MODEL_PROVIDER_DISCOVER_MODELS_BUTTON,
   TID_MODEL_PROVIDER_MODEL_DELETE_BUTTON,
   TID_MODEL_PROVIDER_MODEL_INPUT,
   TID_MODEL_PROVIDER_NAME_EDIT_BUTTON,
@@ -27,6 +29,7 @@ import {
   InfoIcon,
   LockKeyholeIcon,
   Plus,
+  Download,
   Pencil,
   Trash2,
   MoreHorizontal,
@@ -48,6 +51,7 @@ import {
 } from "@/lib/providerIssueWarnings.js";
 import { TECHNICAL_INPUT_ATTRIBUTES } from "@/lib/technicalInputAttributes.js";
 import { ApiKeyInput } from "./ApiKeyInput.js";
+import { DiscoverModelsDialog } from "./DiscoverModelsDialog.js";
 import { ModelRowInput } from "./ProviderFormControls.js";
 import { PresetProviderApiKeyBanner } from "./PresetProviderApiKeyBanner.js";
 import { type ProviderModelDraftValues } from "@/settings/model-provider-section/ProviderModelMetadata.js";
@@ -397,6 +401,9 @@ export function ProviderModelsSection({
   onModelEnabledChange,
   onDeleteModel,
   onAddModel,
+  onDiscoverModels,
+  onAddDiscoveredModels,
+  canDiscoverModels,
   onReorderModelIds,
   settingsRevision = 0,
 }: {
@@ -414,6 +421,12 @@ export function ProviderModelsSection({
   onDeleteModel: (modelId: string) => void;
   onModelEnabledChange?: (modelId: string, enabled: boolean) => void | Promise<void>;
   onAddModel: (model: ProviderSettingsFormModel) => void | Promise<void>;
+  /** 获取模型（specs/provider-model-discovery.md）；与 onAddDiscoveredModels 同时在场才渲染入口。 */
+  onDiscoverModels?: () => Promise<ProviderModelDiscoveryResult>;
+  /** 批量添加勾选的发现模型（推荐档）；reject 时对话框内 inline 报错、不关闭。 */
+  onAddDiscoveredModels?: (modelIds: string[]) => Promise<unknown>;
+  /** provider 是否已配置 baseUrl；false → 获取模型按钮禁用 + tooltip。 */
+  canDiscoverModels?: boolean;
   onReorderModelIds?: (modelIds: string[]) => void;
   settingsRevision?: number;
 }) {
@@ -422,6 +435,7 @@ export function ProviderModelsSection({
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [addSaving, setAddSaving] = useState(false);
   const addSavingRef = useRef(false);
+  const [discoverOpen, setDiscoverOpen] = useState(false);
   const [addCommitError, setAddCommitError] = useState<string | null>(null);
   const [addModel] = useState(createEmptyModel);
   const [addDraftErrorField, setAddDraftErrorField] = useState<
@@ -507,23 +521,56 @@ export function ProviderModelsSection({
       })
     : null;
 
+  // 获取模型确认：成功（resolve）后关闭；reject 抛回对话框由其 inline 报错、不关闭。
+  const handleAddDiscoveredModels = useCallback(
+    async (modelIds: string[]) => {
+      if (!onAddDiscoveredModels) return;
+      await onAddDiscoveredModels(modelIds);
+      setDiscoverOpen(false);
+    },
+    [onAddDiscoveredModels],
+  );
+
   return (
     <div>
       <div className="mb-1 flex flex-wrap items-center justify-between gap-3">
         <span className="text-ui-base text-foreground-subtle">
           {intl.formatMessage({ id: "settings.modelProvider.models" })}
         </span>
-        <Button
-          type="button"
-          variant="secondary"
-          size="default"
-          className="rounded-lg"
-          data-testid={TID_MODEL_PROVIDER_ADD_MODEL_BUTTON}
-          onClick={openAddDialog}
-        >
-          <Plus data-icon="inline-start" aria-hidden="true" />
-          {intl.formatMessage({ id: "settings.modelProvider.addModel" })}
-        </Button>
+        <div className="flex items-center gap-2">
+          {/* 获取模型（specs/provider-model-discovery.md 产品规则 1/2）：仅发现与批量添加
+              回调都在场（个人/BYO provider）才渲染；缺 baseUrl → 禁用 + tooltip。 */}
+          {onDiscoverModels && onAddDiscoveredModels ? (
+            <Button
+              type="button"
+              variant="secondary"
+              size="default"
+              className="rounded-lg"
+              data-testid={TID_MODEL_PROVIDER_DISCOVER_MODELS_BUTTON}
+              disabled={canDiscoverModels === false}
+              title={
+                canDiscoverModels === false
+                  ? intl.formatMessage({ id: "settings.modelProvider.discover.disabledTooltip" })
+                  : undefined
+              }
+              onClick={() => setDiscoverOpen(true)}
+            >
+              <Download data-icon="inline-start" aria-hidden="true" />
+              {intl.formatMessage({ id: "settings.modelProvider.discoverModels" })}
+            </Button>
+          ) : null}
+          <Button
+            type="button"
+            variant="secondary"
+            size="default"
+            className="rounded-lg"
+            data-testid={TID_MODEL_PROVIDER_ADD_MODEL_BUTTON}
+            onClick={openAddDialog}
+          >
+            <Plus data-icon="inline-start" aria-hidden="true" />
+            {intl.formatMessage({ id: "settings.modelProvider.addModel" })}
+          </Button>
+        </div>
       </div>
       {models.length > 0 ? (
         <div className="overflow-hidden rounded-lg border border-input-border bg-input">
@@ -629,6 +676,15 @@ export function ProviderModelsSection({
             void editor.flush().catch(() => undefined);
           }}
         />
+        {onDiscoverModels && onAddDiscoveredModels ? (
+          <DiscoverModelsDialog
+            open={discoverOpen}
+            onOpenChange={setDiscoverOpen}
+            configuredModelIds={models.map((model) => model.modelId)}
+            onDiscover={onDiscoverModels}
+            onConfirm={handleAddDiscoveredModels}
+          />
+        ) : null}
       </>
     </div>
   );

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   runningSubagentSummarySchema,
+  sessionUsageInFlightSchema,
   sessionUsageLastRequestSchema,
   sessionUsageStateSchema,
 } from "../src/acode-protocol-v4/snapshot.js";
@@ -110,6 +111,51 @@ test("新字段合法值解析通过", () => {
   assert.ok(
     runningSubagentSummarySchema.safeParse({ ...legacySubagentSummary, cumulativeTokens: 1_234 })
       .success,
+  );
+});
+
+test("inFlight（2026-10-19 实时事实面）：合法形态、null 与缺席、非法拒绝", () => {
+  // 缺席（旧快照/旧 CLI 发送端）与显式 null（无进行中请求）都合法。
+  assert.ok(sessionUsageStateSchema.safeParse(legacyUsageState).success);
+  assert.ok(sessionUsageStateSchema.safeParse({ ...legacyUsageState, inFlight: null }).success);
+
+  // 最小合法形态：startedAtMs/observedAtMs 必带，其余事实按 provider 能力可缺席
+  //（OpenAI 系无中途 usage → 只有 startedAtMs，UI 降级秒表）。
+  const minimal = { startedAtMs: 1_000, observedAtMs: 1_500 };
+  assert.ok(sessionUsageInFlightSchema.safeParse(minimal).success);
+  assert.ok(sessionUsageStateSchema.safeParse({ ...legacyUsageState, inFlight: minimal }).success);
+
+  // 全字段合法形态（Anthropic：message_start 输入真值 + message_delta 累计输出 +
+  // 投影派生 firstToken/turnToDate）。
+  const full = {
+    ...minimal,
+    announcedInputTokens: 12_000,
+    partialOutputTokens: 840,
+    firstTokenAtMs: 1_300,
+    turnToDateInputTokens: 30_000,
+    turnToDateOutputTokens: 1_840,
+  };
+  assert.ok(sessionUsageInFlightSchema.safeParse(full).success);
+
+  // 负数拒绝。
+  assert.ok(!sessionUsageInFlightSchema.safeParse({ ...minimal, partialOutputTokens: -1 }).success);
+  assert.ok(!sessionUsageInFlightSchema.safeParse({ ...minimal, announcedInputTokens: -1 }).success);
+  assert.ok(
+    !sessionUsageInFlightSchema.safeParse({ ...minimal, turnToDateOutputTokens: -1 }).success,
+  );
+  // 缺必带键拒绝。
+  assert.ok(!sessionUsageInFlightSchema.safeParse({ observedAtMs: 1 }).success);
+  assert.ok(!sessionUsageInFlightSchema.safeParse({ startedAtMs: 1 }).success);
+  // 错型拒绝。
+  assert.ok(
+    !sessionUsageInFlightSchema.safeParse({ ...minimal, partialOutputTokens: "840" }).success,
+  );
+  // 挂在 usage 状态上时同样拒绝非法载荷。
+  assert.ok(
+    !sessionUsageStateSchema.safeParse({
+      ...legacyUsageState,
+      inFlight: { startedAtMs: -1, observedAtMs: 1 },
+    }).success,
   );
 });
 

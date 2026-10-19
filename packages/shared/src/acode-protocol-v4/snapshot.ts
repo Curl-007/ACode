@@ -187,6 +187,30 @@ export const sessionUsageLastRequestSchema = z.object({
 });
 export type SessionUsageLastRequest = z.infer<typeof sessionUsageLastRequestSchema>;
 
+// 进行中请求的真实 in-flight usage 事实（specs/usage-statusbar.md「In-flight 真实
+//用量事实面」节，2026-10-19）：producer = adapters raw SSE 提取（Anthropic
+// message_start 输入真值 / message_delta 累计输出），≥500ms 单点节流；投影是唯一
+// 写入方，ModelComplete/TurnComplete/TurnError 清除（null）。瞬时 conflated 状态，
+// 不进 SQLite usage 账本；UI 只消费不估算——缺席 = provider 无中途事实，如实降级
+// 秒表，绝不按字符数折算 token。
+export const sessionUsageInFlightSchema = z.object({
+  // 本请求起点（adapters requestStartedAtMs，秒表降级也用此起点）。
+  startedAtMs: z.number().nonnegative(),
+  // 本条事实的观测时刻（live tok/s 分母 = observedAtMs − startedAtMs，口径 4）。
+  observedAtMs: z.number().nonnegative(),
+  // message_start 通告的输入 token 真值（上下文环请求开始即跳实际水位）。
+  announcedInputTokens: z.number().nonnegative().optional(),
+  // message_delta 累计输出 token 真值（含思考；provider 只在流末尾发时也如实只有末值）。
+  partialOutputTokens: z.number().nonnegative().optional(),
+  // 投影观测到的本请求首个流式 delta 时刻（TTFT 进行中形态）。
+  firstTokenAtMs: z.number().nonnegative().optional(),
+  // 本轮 live 累计 = 投影 TurnUsageAccumulator 当前值 + partial（本轮胶囊进行中值，
+  // TurnComplete 被权威 turnHeader.stats 定格替换）。
+  turnToDateInputTokens: z.number().nonnegative().optional(),
+  turnToDateOutputTokens: z.number().nonnegative().optional(),
+});
+export type SessionUsageInFlight = z.infer<typeof sessionUsageInFlightSchema>;
+
 export const sessionUsageStateSchema = z.object({
   contextWindow: z
     .object({
@@ -207,6 +231,9 @@ export const sessionUsageStateSchema = z.object({
   }),
   // additive：conflated 状态，值未变不重复下发；null = 会话尚无已完成的模型请求。
   lastRequest: sessionUsageLastRequestSchema.nullable().optional(),
+  // additive（2026-10-19）：进行中请求的 in-flight 事实；null/缺席 = 无进行中请求
+  // 或 provider 无中途 usage 事实（UI 降级秒表）。清除点见 sessionUsageInFlightSchema 注释。
+  inFlight: sessionUsageInFlightSchema.nullable().optional(),
 });
 export type SessionUsageState = z.infer<typeof sessionUsageStateSchema>;
 

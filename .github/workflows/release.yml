@@ -724,8 +724,11 @@ jobs:
           cat checksums/*.txt | sort -k2,2 -u > "ACode-${VERSION}-checksums.txt"
           cat "ACode-${VERSION}-checksums.txt"
           # 校验和上传失败同样阻断公开（保持 draft），fail-closed 与既有上传一致。
+          # --repo 必带：publish job 无 checkout，gh 无 git 上下文推不出仓库
+          # （v1.0.1 正式轮实证「failed to run git: not a git repository」）；
+          # 与下方 Publish release 步的 --repo "$GITHUB_REPOSITORY" 同式。
           for attempt in 1 2 3; do
-            if gh release upload "$TAG" "ACode-${VERSION}-checksums.txt" --clobber; then
+            if gh release upload "$TAG" "ACode-${VERSION}-checksums.txt" --clobber --repo "$GITHUB_REPOSITORY"; then
               exit 0
             fi
             echo "::warning::checksums upload failed (attempt $attempt/3), retrying in 10s"

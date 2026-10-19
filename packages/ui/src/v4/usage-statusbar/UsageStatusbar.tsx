@@ -49,10 +49,10 @@ import {
 // 悬停生命周期自管（spec「Tooltip 稳定性」2026-10-19 最小修复，核心不变量）：
 // **指针静止 = 无 mousemove/pointermove = 明细常驻**。流式几何位移（值 tick/脉冲/
 // presence 插入/整条 bar 纵向推移）会把胶囊从静止指针下推走，浏览器补发边界事件；
-// 开 = 胶囊 pointerenter（位移后落到新胶囊也自然接续），关仅三条路径：
-// ① pointerleave 且 relatedTarget 在整条 bar 外；② bar 自身 pointermove（指针停进
-// 胶囊间隙）；③ Popover 主动关闭（Escape/外部点击）。Radix Tooltip 的 pointermove
-// 重开门与其关闭路径全部不再参与。
+// 开 = 胶囊 pointerenter（位移后落到新胶囊也自然接续）；关仅两条真实指针路径：
+// ① 打开期间 window mousemove 命中测试落在整条 bar 当前 rect 之外；② Popover 主动
+// 关闭（Escape/外部点击）。布局位移补发的边界事件一律不作关闭依据。Radix Tooltip
+// 的 pointermove 重开门与其关闭路径全部不再参与。
 
 const EMPTY_ROWS: never[] = [];
 
@@ -60,15 +60,20 @@ const EMPTY_ROWS: never[] = [];
 const CAPSULE_HIDE_TIER_1 = "@max-[520px]/composer:hidden";
 const CAPSULE_HIDE_TIER_2 = "@max-[420px]/composer:hidden";
 
-/** 布局稳定规则 2（spec「Tooltip 稳定性」修复 2）：每胶囊固定 min-w 槽位，典型值
- * tick 在槽内变化不推挤邻居（tabular-nums 既有）；工具槽按「计数 · N 运行中」后缀档预留。 */
+/** 布局稳定规则 2（spec「Tooltip 稳定性」修复 2）：每胶囊固定 min-w 槽位按**典型值**
+ * 紧档预留（2026-10-19 二轮调紧：首档过宽造成条内大片留白），tabular-nums 下常见
+ * tick 在槽内不推挤邻居；瞬态超槽变宽（工具「N · M 运行中」后缀、秒表档）允许
+ * 一次性变宽——hover 生命周期已位置化，位移不再杀悬停，只余轻微视觉抖动。 */
 const CAPSULE_MIN_WIDTH = {
-  generationSpeed: "min-w-[6.5rem]",
-  turnUsage: "min-w-[4.5rem]",
-  sessionCumulative: "min-w-[5rem]",
-  toolCalls: "min-w-[7rem]",
-  todayTotal: "min-w-[5rem]",
-  subagents: "min-w-[4.5rem]",
+  /** "120.5 tok/s" 档（秒表档「生成中 · 12.5s」超槽时允许一次性变宽）。 */
+  generationSpeed: "min-w-[5.75rem]",
+  /** compact 值 "42.6 万"/"1.2 亿" 档。 */
+  turnUsage: "min-w-[4.75rem]",
+  sessionCumulative: "min-w-[4.75rem]",
+  /** 计数 "1"-"999" 档；运行中/错误后缀为瞬态超槽。 */
+  toolCalls: "min-w-[3.5rem]",
+  todayTotal: "min-w-[4.75rem]",
+  subagents: "min-w-[4.75rem]",
 } as const;
 
 export interface UsageStatusbarProps {

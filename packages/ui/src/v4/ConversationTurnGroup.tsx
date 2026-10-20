@@ -1339,15 +1339,16 @@ function ConversationTurnGroupImpl({
               createdAt={latestAssistantTextRow.createdAt}
               feedback={readAssistantFeedback(latestAssistantTextRow)}
               sessionId={context.sessionId}
+              stats={unit.header?.stats ?? null}
               onFork={canForkLatestAssistant ? onFork : undefined}
               onRetry={canRetryLatestAssistant ? onRetry : undefined}
               onFeedbackChange={onFeedbackChange}
               hookInvocations={unit.hookInvocations}
               turnId={unit.turnId}
-              className="opacity-0 transition-opacity group-hover/assistant-turn:opacity-100 focus-within:opacity-100"
             />
           ) : hasHookActions ? (
-            <MessageActions className="opacity-0 transition-opacity group-hover/assistant-turn:opacity-100 focus-within:opacity-100">
+            // 动作行常驻（specs/chat-row-facts.md 第 1 节）：只删透明度门控类，占位几何不变。
+            <MessageActions>
               <ConversationHookDetailsAction rows={unit.hookInvocations} turnId={unit.turnId} />
             </MessageActions>
           ) : null}

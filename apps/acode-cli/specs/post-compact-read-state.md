@@ -63,6 +63,20 @@ hasPatchTargetChanged），压缩期间文件真被外部改过 → `STALE_FILE`
   （Edit/ApplyPatch：用 offset/limit 重读覆盖目标编辑区间的范围；Write：重读完整
   文件）。遵循 `error-message-style.md` R1 纪律：只写模型能执行的动作，不写死路。
 
+### R5 resume/rewind 水合镜像 live 修剪口径
+
+- 水合扫描**包含 compact preserved segment**（hydrator 的
+  `includeCompactPreservedSegment` 由 false 改 true）：preserved tail 里的
+  Read/Write/Edit 在 resume 后仍对模型可见，状态必须与 live（R1）同步恢复；排除它们
+  与 live 整表清空是同类判定缺陷（上下文看得见读取却报 FILE_NOT_READ）。
+- Read part 按 metadata 描述的窗口与 `isPartialView` **原样恢复**（range/partial
+  视图同口径）；前提是 metadata 齐全（mtimeMs/sizeBytes/revisionId，由
+  `createReadFileStateMetadataFromEntry` 写入时强制），恢复后 stale 守卫与 live 等价。
+- 无结构化 metadata 的历史读取仍不恢复（freshness 无依据，保守 fail-safe）；range
+  窗口入参单独计入 `skippedRangeReadCount`，resume 日志口径不变。
+- **仅内容投影的文件不恢复**：reminder attachment 有内容无 freshness metadata，恢复
+  会削弱 stale 守卫（R2）；保守要求重新 Read（已知边界登记）。
+
 ### R4 所有权与唯一实现点
 
 「模型可见」判定与修剪策略唯一实现在 `runtime/helpers/compact-post-reminders.ts`
@@ -94,13 +108,11 @@ selectCompactEntries → summary 请求 → selectPostCompactReadStateReminders
 
 ## 已知边界（登记，不在本项范围）
 
-- **resume 冷恢复**：`hydrateReadFileStateFromSession` 以
-  `includeCompactPreservedSegment: false` 扫描，preserved tail 内的历史 Read 跨
-  resume 不恢复——同样的「看得见却报未读」在 resume 后仍存在。属恢复链路语义，
-  改动面与风险独立，登记为后续项。
+- **仅内容投影的文件跨 resume 不恢复**（R5 末条）：reminder attachment 无 freshness
+  metadata，恢复会削弱 stale 守卫；保守要求重新 Read。live 侧这些文件的状态由 R1
+  保留，resume 侧有意不镜像这一子集。
 - **子代理读取不计入主会话状态**：跨 runtime 隔离是设计使然，不改。
-- range Read（offset/limit）跨 resume 不恢复、无结构化 metadata 的旧会话历史不恢复：
-  hydrator 既有保守语义，不改。
+- **无结构化 metadata 的历史读取不恢复**：freshness 无依据，保守 fail-safe（R5）。
 
 ## 验收场景
 
@@ -121,6 +133,12 @@ selectCompactEntries → summary 请求 → selectPostCompactReadStateReminders
      未读 → 原文案不变。
 4. **零回归**：`apply-patch-tool.test.mjs` 全套（既有 FILE_NOT_READ/STALE_FILE 断言
    钉住错误码不变）、`compact-invariants.test.mjs` 全套（压缩不变量 I1–I5 不受影响）。
+6. **水合镜像**（`packages/core/tests/read-file-state-hydration.test.ts`，R5）：
+   - preserved segment 内的 Read（带 metadata）跨 resume 恢复，mtime/size/revision 透传；
+   - range Read 的 metadata 按 offset/limit 原样恢复；partial-view metadata 恢复后
+     `isPartialView` 保持 true；
+   - 无 metadata 的读取不恢复，range 入参计入 `skippedRangeReadCount`；
+   - Write part 的 metadata 恢复路径零回归（sourceTool=Write）。
 5. **真实链路 E2E**（`apps/acode-cli/tests/post-compact-edit-e2e.test.mjs`）：真
    AgentRuntime + 真 sqlite store + 真 `compactActiveConversation` 管线 + 真
    Read/Edit handler（真 Node fs adapter），唯一桩件为摘要文本的 generateText——

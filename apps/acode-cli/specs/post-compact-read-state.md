@@ -206,3 +206,12 @@ pnpm architecture:check --changed
 上表首轮「未执行/说明」中的两条已由本表覆盖更正：根 `pnpm typecheck`（typecheck-gate
 含 cli 阶段，实际覆盖 apps/acode-cli，exit 0）与 live 压缩端到端（以真实 runtime 集成
 测试替代真实 provider：唯一桩件是摘要文本，压缩选择/持久化/修剪/门禁全部走真实代码）。
+
+## R5 水合镜像门禁实跑（2026-10-20 工具判定侧修复轮，提交 daf32bee）
+
+| 检查 | 命令 | 结果 |
+| --- | --- | --- |
+| 新增水合镜像单测（场景 6） | `node --import tsx --test apps/acode-cli/packages/core/tests/read-file-state-hydration.test.ts` | **5 / 5 通过** |
+| resume 路径回归 | `runtime-state-ownership` + `runtime-branch-continuation-races` + `runtime-branch-notification-races` + `agent-peer-messaging` 四套件 | **58 / 58 通过** |
+| core 包全套 | `packages/core` 下 `node --import tsx --test "tests/*.test.ts"` | **121 / 121 通过**（116 + 新增 5） |
+| core 类型检查 / lint / 格式 / 架构 | tsc `-p core --noEmit`；`oxlint --no-ignore`；`oxfmt --check`；`pnpm architecture:check --changed` | **exit 0 / 0 warning 0 error / 合规 / OK（violations 52 基线内）** |

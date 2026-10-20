@@ -28,6 +28,7 @@ import {
   type ACodeSessionMode,
   type ACodeSessionPersistence,
   type ACodeWorkspaceRef,
+  type ToolSearchAppMode,
 } from "@acode/shared";
 import type { ACodeApp, ACodeAppOptions } from "../app/types.js";
 import type { V4InteractionRegistry } from "../acode-protocol-v4/interaction-registry.js";
@@ -151,6 +152,15 @@ export interface ACodeProtocolAgentServerContext {
      * 由该会话 runtimeConfig 里的显式布尔裁决，不回读这里。
      */
     scriptWorkflowEnabled?: boolean;
+    /**
+     * host 同步的工具按需检索档位（specs/tool-search.md R3/R11）。缺省 undefined
+     * （= off，fail-safe 到零行为变化红线，与 scriptWorkflowEnabled 的 fail-open 方向
+     * 刻意相反）；同步时机同 script——**v4 createSession**（Host 折叠出口每次现读
+     * AppSettings，三档含 off 都写，缓存因此总能刷掉旧档位）。消费口是 createRecord
+     * 的冷恢复/fork 兜底：无 Host 侧通道参数的 record 物化路径回读这里；会话的工具面
+     * 在创建期物化进 AgentRuntimeConfig.toolSearchMode 后固定，存活 runtime 不回读。
+     */
+    toolSearchMode?: ToolSearchAppMode;
   };
   // 竖切：v4 conversation 通道（订阅/帧/命令），与旧 session/* 方法并存。
   // 构造顺序问题（gateway 闭包持有 context）用可选字段收口，server 构造完立即赋值。

@@ -287,6 +287,7 @@ export const amendWorkflowToolEntry: ToolEntry = {
   capability:
     "Revise an existing dynamic-workflow run with a new script: stop it if it is still running, import its finished work, and start the revision in the background",
   metadata: {
+    shouldDefer: true, // tool-search wave1a: 非常驻内置工具默认 defer(specs/tool-search.md R4)
     name: AMEND_WORKFLOW_TOOL_NAME,
     description: AMEND_WORKFLOW_TOOL_DESCRIPTION,
     readOnly: false,

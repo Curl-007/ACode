@@ -103,6 +103,7 @@ import {
   type DynamicWorkflowClientConfig,
   type ScriptWorkflowMode,
   isScriptWorkflowModeEnabled,
+  type ToolSearchAppMode,
   type AgentLaneResourceSample,
   type ProcessResourceCliLane,
   type ACodeMcpTelemetryEvent,
@@ -923,6 +924,13 @@ interface CreateACodeAgentServiceOptions extends Omit<
    * 缺省不传（纯 CLI 装配）= 会话门按 enabled=true 处理（缺席=本机缺省档 onDemand，开）。
    */
   resolveScriptWorkflowMode?: () => Promise<ScriptWorkflowMode>;
+  /**
+   * 工具按需检索三档的唯一折叠出口（node.ts resolveToolSearchModeFromSettings，
+   * specs/tool-search.md R11）。缺省不传（纯 CLI 装配）= 会话门不写字段
+   * （缺席 = off，零行为变化红线）；传入时每次 v4 createSession 现读（不 memoize，
+   * 无会话中途改档通道），读取异常按 off + warn（与 node.ts 折叠出口双层兜底）。
+   */
+  resolveToolSearchMode?: () => Promise<ToolSearchAppMode>;
   resolveOffPeakTaskService?: () =>
     | Pick<IOffPeakTaskService, "createTask" | "list" | "getCodingPlanSupport">
     | undefined;
@@ -3378,6 +3386,31 @@ export function createACodeAgentService(
     }
   }
 
+  /**
+   * 工具按需检索档位的会话门（specs/tool-search.md R3/R11）。与 resolveScriptWorkflowGate
+   * 同构的三点裁决：
+   * 1. **不 memoize**：每次 v4 createSession 现读折叠出口（node.ts
+   *    resolveToolSearchModeFromSettings 自身已现读 AppSettings）——无会话中途改档
+   *    通道，进程内缓存会使「下次会话生效」失效。
+   * 2. **异常按 off**：缺省语义是 off（零行为变化红线），与 script 的 fail-open 方向
+   *    相反；node.ts 折叠出口已 warn 一次，这里再兜一层防未来消费方直连抛错。
+   * 3. **返回值三态**：undefined = 装配层没给折叠出口（纯 CLI/远控不读本设置，R1），
+   *    信封**不写字段**（缺席 = off）；有值时 auto/local/off **都写**——CLI 侧
+   *    appRuntimePreferences 冷恢复兜底缓存依赖显式 off 才能刷新掉旧档位。
+   */
+  async function resolveToolSearchGate(): Promise<ToolSearchAppMode | undefined> {
+    const resolve = options?.resolveToolSearchMode;
+    if (!resolve) return undefined;
+    try {
+      return await resolve();
+    } catch (error) {
+      logger.warn(undefined, "工具检索档位读取异常，按缺省档（off）处理", {
+        errorMessage: error instanceof Error ? error.message : String(error),
+      });
+      return "off";
+    }
+  }
+
   async function buildConversationCommandEnvelope(
     params: ACodeAgentConversationCommandParams,
   ): Promise<CommandEnvelope> {
@@ -3389,6 +3422,9 @@ export function createACodeAgentService(
       // 脚本工作流开关：true/false **都写**（极性与 dwf 相反）——CLI 侧缺席=开启的
       // fail-open 极性意味着 Host 必须显式写 false 才能关掉 RunWorkflow（§4.4）。
       const scriptWorkflowEnabled = await resolveScriptWorkflowGate();
+      // 工具按需检索档位（specs/tool-search.md R11）：undefined = 装配层没给折叠出口，
+      // 不写字段（缺席 = off）；有值时三档都写（含 off，理由见 resolveToolSearchGate）。
+      const toolSearchMode = await resolveToolSearchGate();
       const offPeakToolEnabled = isOffPeakToolSupported(params);
       // scriptWorkflowEnabled 恒写，所以 createSession 没有可省略的 early return；
       // payload 解析对空 flag 组合也无害（同一条 zod schema）。
@@ -3403,6 +3439,9 @@ export function createACodeAgentService(
           // 理由同 buildSessionCreateParams 里的同款说明。
           ...(dynamicWorkflowEnabled ? { dynamicWorkflowEnabled: true } : {}),
           scriptWorkflowEnabled,
+          // 工具按需检索档位：缺席 = off（CLI 侧 zod optional 静默兼容旧面），
+          // 显式三档（含 off）都写，供 CLI appRuntimePreferences 冷恢复兜底刷新。
+          ...(toolSearchMode === undefined ? {} : { toolSearchMode }),
         },
       };
     }

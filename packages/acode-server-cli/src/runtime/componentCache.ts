@@ -4,7 +4,7 @@ import { createWriteStream } from "node:fs";
 import { cp, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve, sep, win32 } from "node:path";
 import { pipeline } from "node:stream/promises";
-import { open as openZip, type Entry, type ZipFile } from "yauzl";
+import { fromBuffer as zipFromBuffer, type Entry, type ZipFile } from "yauzl";
 import type { ServerRuntimeManifest } from "./manifest.js";
 import { promoteImmutableReleaseDirectory } from "./immutableRelease.js";
 import type { ServerLayout } from "./paths.js";
@@ -102,12 +102,23 @@ function validateArchiveEntries(listing: string): void {
   }
 }
 
-function openZipFile(archivePath: string): Promise<ZipFile> {
-  return new Promise((resolvePromise, rejectPromise) => {
-    openZip(
-      archivePath,
-      { autoClose: false, lazyEntries: true, strictFileNames: true, validateEntrySizes: true },
-      (error, zip) => (error ? rejectPromise(error) : resolvePromise(zip)),
+// yauzl 的 fd 流式路径（open + openReadStream）解压部分 deflate 条目时会永久挂起：
+// openReadStream 回调已触发，data/end/error 事件均不再出现（上游 ZCodium #29 在
+// 3.3.0/3.4.0 均实证，最小复现=不可压缩随机数据的 deflate 条目；本机 Windows +
+// lock 3.3.0 以单条目 512KB fixture 未复现，本改动属风险模式一致的加固——挂起
+// 一旦发生即远端组件安装静默卡死，无法自愈）。改用 fromBuffer 内存解压：本模块
+// findArchive/putArchive 本就整档读入内存做 sha256 校验，解包对象是刚校验过的
+// 组件归档，不引入新的内存上限。
+async function openZipFile(archivePath: string): Promise<ZipFile> {
+  const bytes = await readFile(archivePath);
+  return await new Promise<ZipFile>((resolvePromise, rejectPromise) => {
+    zipFromBuffer(
+      bytes,
+      { lazyEntries: true, strictFileNames: true, validateEntrySizes: true },
+      (error, zip) =>
+        error || !zip
+          ? rejectPromise(error ?? new Error(`yauzl fromBuffer failed: ${archivePath}`))
+          : resolvePromise(zip),
     );
   });
 }

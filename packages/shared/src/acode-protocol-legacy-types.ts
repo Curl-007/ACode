@@ -32,6 +32,9 @@ export const acodeSyntheticUserMessageSourceSchema = z.enum([
   // app/agent 共用的承重消息 schema 必须与 CLI contracts 使用同一来源词表。
   "subagent_message",
   "todo_reminder",
+  // 工具按需检索公告（apps/acode-cli/specs/tool-search.md R9/R10）：model-only
+  // synthetic notice；词表与 contracts SYNTHETIC_USER_MESSAGE_SOURCES 同步。
+  "tool_search_announcement",
   // 中枢直接启动工作流的启动轮 source；与 contracts 的
   // SYNTHETIC_USER_MESSAGE_SOURCES 保持同一词表，否则 v3 mapper 收窄该 source 会 tsc 失败。
   "workflow_launch",

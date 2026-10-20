@@ -179,6 +179,7 @@ function buildEntry(deps: FleetToolDeps): ToolEntry {
     // 顶层 requiresUserInteraction 同步镜像 metadata（toContracts 读顶层优先）。
     requiresUserInteraction: true,
     metadata: {
+      shouldDefer: true, // tool-search wave1a: 非常驻内置工具默认 defer(specs/tool-search.md R4)
       name: DELETE_SESSIONS_TOOL_NAME,
       description: DELETE_SESSIONS_DESCRIPTION,
       readOnly: false,

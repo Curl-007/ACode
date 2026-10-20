@@ -4,7 +4,12 @@ import { runtimeInputMetadata } from "./runtime-input-presentation.js";
 // Session History Hydration - rebuild provider-visible context
 // ============================================================
 
-import { modelMessageContentToText, selectActiveConversationBranch } from "@acode/contracts";
+import {
+  modelMessageContentToText,
+  ModelCallWrapperSchema,
+  selectActiveConversationBranch,
+  type Logger,
+} from "@acode/contracts";
 import type {
   FilePart,
   MessagePart,
@@ -42,6 +47,13 @@ import {
 import { compactActiveSessionMessages, isActiveCompactionBoundaryPart } from "./compact-session.js";
 import { filePartToContentBlock, projectPersistedToolMediaContent } from "./file-part-hydration.js";
 import { selectToolPartsForHistory } from "./tool-part-order.js";
+// 工具按需检索冷恢复水合（specs/tool-search.md R10）：ToolSearch 结果内容、
+// compact 边界发现元数据、公告增量三个恢复点共用同一组纯函数。
+import {
+  hydrateCompactDiscovery,
+  hydrateToolSearchAnnouncement,
+  hydrateToolSearchContent,
+} from "./tool-search-hydration.js";
 
 const INTERRUPTED_TOOL_RESULT = "[Tool execution was interrupted before resume]";
 
@@ -56,6 +68,8 @@ export async function hydrateMessageHistoryFromSession(input: {
   artifactStore?: ToolArtifactStorePort;
   branchCutAfterMessageId?: MessageId;
   history: MessageHistory;
+  /** 水合失败回退 legacy 时的 warn 通道（R10：只 warn 一次，不 fail 恢复）。 */
+  logger?: Logger;
   messages: MessageWithParts[];
   rewindCreatedMessageId?: MessageId;
   rewindKeptMessageIds?: readonly MessageId[];
@@ -99,7 +113,9 @@ export async function hydrateMessageHistoryFromSession(input: {
       // user <system-reminder>，后续 mid-conversation system projection 会失去 attachment source。
       const syntheticAttachment = syntheticSystemReminderAttachmentFromParts(parts);
       if (syntheticAttachment) {
-        input.history.addAttachment(syntheticAttachment.source, syntheticAttachment.content);
+        // 公告等带增量事实的 attachment 必须整 entry 恢复（metadata 含
+        // toolSearchAnnouncement）；addAttachment 只带 source 会丢失事实。
+        input.history.addEntries([syntheticAttachment]);
         appliedMessageCount++;
         continue;
       }
@@ -109,6 +125,27 @@ export async function hydrateMessageHistoryFromSession(input: {
       const presentation = runtimeInputMetadata(
         (message.info.metadata as Record<string, unknown> | undefined)?.inputPresentation,
       );
+      // compact 边界发现元数据回填（specs/tool-search.md R8/R10）：提升名单的
+      // 读侧事实源是 entry.metadata.compactBoundary；水合失败按缺席处理。
+      const boundaryPart = parts.find(isActiveCompactionBoundaryPart);
+      const compactBoundary =
+        boundaryPart?.type === "compaction"
+          ? hydrateCompactDiscovery(boundaryPart.compactBoundary)
+          : undefined;
+      const firstEntry = compactBoundary ? entries[0] : undefined;
+      if (compactBoundary && firstEntry) {
+        entries[0] =
+          firstEntry.kind === "attachment"
+            ? { ...firstEntry, metadata: { ...firstEntry.metadata, compactBoundary } }
+            : {
+                ...firstEntry,
+                metadata: {
+                  ...legacySyntheticRuntimeMetadata(),
+                  ...firstEntry.metadata,
+                  compactBoundary,
+                },
+              };
+      }
       input.history.addEntries(
         presentation
           ? entries.map((entry) =>
@@ -140,6 +177,11 @@ export async function hydrateMessageHistoryFromSession(input: {
         (part): ToolCallInput => ({
           id: part.callID,
           input: part.state.input,
+          // 包装标记（specs/tool-search.md R6/R10）：part metadata 的严格字面量
+          // 恢复进历史调用；provider render 遍历据此重建包装形态并剥离标记。
+          ...(modelCallWrapperFromPart(part)
+            ? { modelCallWrapper: modelCallWrapperFromPart(part) }
+            : {}),
           name: providerToolNameFromPart(part),
         }),
       ),
@@ -153,6 +195,7 @@ export async function hydrateMessageHistoryFromSession(input: {
 
     for (const part of toolParts) {
       const providerToolName = providerToolNameFromPart(part);
+      const modelCallWrapper = modelCallWrapperFromPart(part);
       if (part.state.status === "completed") {
         // live tool result 使用结构化媒体，但旧恢复只读取 output 摘要，
         // 导致模型切换或冷恢复后丢失 Read/MCP 产生的真实媒体。
@@ -172,8 +215,20 @@ export async function hydrateMessageHistoryFromSession(input: {
                 attachmentBlocks,
               )
             : undefined;
-        const content = projectedMediaContent ?? part.state.output;
-        input.history.addToolResult(part.callID, providerToolName, content, true);
+        // ToolSearch 结果内容水合（specs/tool-search.md R10）：持久化的真实
+        // tool_reference 引用优先恢复；非法/缺席回退 legacy 工具结果并只 warn 一次。
+        const content =
+          hydrateToolSearchContent(part.state.metadata?.modelContent, input.logger) ??
+          projectedMediaContent ??
+          part.state.output;
+        input.history.addToolResult(
+          part.callID,
+          providerToolName,
+          content,
+          true,
+          false,
+          modelCallWrapper,
+        );
         continue;
       }
 
@@ -186,12 +241,21 @@ export async function hydrateMessageHistoryFromSession(input: {
           providerToolName,
           typeof persistedModelContent === "string" ? persistedModelContent : part.state.error,
           false,
+          true,
+          modelCallWrapper,
         );
         continue;
       }
 
       interruptedToolCount++;
-      input.history.addToolResult(part.callID, providerToolName, INTERRUPTED_TOOL_RESULT, false);
+      input.history.addToolResult(
+        part.callID,
+        providerToolName,
+        INTERRUPTED_TOOL_RESULT,
+        false,
+        true,
+        modelCallWrapper,
+      );
     }
   }
 
@@ -283,9 +347,9 @@ async function userEntriesFromParts(
     if (part.type === "text" && !part.ignored) {
       const syntheticAttachment = syntheticSystemReminderAttachmentFromTextPart(part);
       if (syntheticAttachment) {
-        syntheticAttachmentEntries.push(
-          systemReminderAttachmentEntry(syntheticAttachment.source, syntheticAttachment.content),
-        );
+        // 整 entry 恢复：公告等 attachment 的 metadata（toolSearchAnnouncement
+        // 增量事实）必须随行，重建 entry 只带 source 会丢失事实。
+        syntheticAttachmentEntries.push(syntheticAttachment);
         continue;
       }
       promptBlocks.push({ type: "text", text: textPartToProviderText(part) });
@@ -423,10 +487,7 @@ function textPartToProviderText(part: Extract<MessagePart, { type: "text" }>): s
   return part.text;
 }
 
-interface SyntheticSystemReminderAttachment {
-  source: SystemReminderSource;
-  content: string;
-}
+type SyntheticSystemReminderAttachment = ReturnType<typeof systemReminderAttachmentEntry>;
 
 function syntheticSystemReminderAttachmentFromParts(
   parts: MessagePart[],
@@ -444,13 +505,25 @@ function syntheticSystemReminderAttachmentFromTextPart(
 ): SyntheticSystemReminderAttachment | undefined {
   if (!part.synthetic) return undefined;
   if (part.text.trim().length === 0) return undefined;
-  if (isProviderWrappedSystemReminderText(part.text)) return undefined;
   const metadata = metadataFromSyntheticTextPart(part);
+  // 只凭已校验的公告身份（specs/tool-search.md R9/R10）适配旧包装文本，
+  // 不从普通用户正文推断提醒来源。
+  const announcement = metadata.toolSearchAnnouncement;
+  const wrapped = isProviderWrappedSystemReminderText(part.text);
+  if (wrapped && !announcement) return undefined;
   if (!isRestorableSystemReminderAttachmentSource(metadata.source)) return undefined;
 
   return {
-    source: metadata.source,
-    content: part.text,
+    ...systemReminderAttachmentEntry(
+      metadata.source,
+      wrapped && announcement
+        ? part.text
+            .trim()
+            .replace(/^<system-reminder>\s*/, "")
+            .replace(/\s*<\/system-reminder>$/, "")
+        : part.text,
+    ),
+    metadata,
   };
 }
 
@@ -535,8 +608,16 @@ function runtimeMessageMetadataFromPartMetadata(
   if (source === "real_user") {
     return realUserRuntimeMetadata();
   }
-  if (source === "legacy_synthetic") {
-    return legacySyntheticRuntimeMetadata();
+  if (source === "legacy_synthetic" || source === "tool_search_announcement") {
+    // 公告水合（specs/tool-search.md R9/R10）：增量事实非法/缺席时按 legacy
+    // synthetic 处理——公告可由下一轮收集重建，不 fail 恢复。
+    const announcement = hydrateToolSearchAnnouncement(runtimeMessage.toolSearchAnnouncement);
+    return {
+      ...legacySyntheticRuntimeMetadata(),
+      ...(announcement
+        ? { source: "tool_search_announcement" as const, toolSearchAnnouncement: announcement }
+        : {}),
+    };
   }
   if (source === "todo_reminder") {
     return todoReminderRuntimeMetadata();
@@ -591,4 +672,13 @@ function providerToolNameFromPart(part: ToolPart): string {
   return providerToolName !== undefined && typeof providerToolName === "string"
     ? providerToolName
     : part.tool;
+}
+
+/**
+ * 包装标记水合（specs/tool-search.md R6/R10）：part metadata 的严格字面量
+ * "DeferredToolCall"；非法/缺席按未包装处理，不猜。
+ */
+function modelCallWrapperFromPart(part: ToolPart) {
+  const parsed = ModelCallWrapperSchema.safeParse(part.metadata?.modelCallWrapper);
+  return parsed.success ? parsed.data : undefined;
 }

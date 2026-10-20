@@ -66,6 +66,7 @@ function makeHandler(deps: ReapSessionWorktreesDeps): ToolHandler {
 const baseEntry = {
   capability: "Reap inactive session worktrees by age threshold, keeping sessions and branches",
   metadata: {
+    shouldDefer: true, // tool-search wave1a: 非常驻内置工具默认 defer(specs/tool-search.md R4)
     name: REAP_SESSION_WORKTREES_TOOL_NAME,
     description: REAP_DESCRIPTION,
     readOnly: false,

@@ -240,6 +240,7 @@ export function createPlanCompleteGateToolEntry(deps: { store: SwarmPlanStore })
     handler,
     inputSchema: PLAN_COMPLETE_GATE_INPUT_JSON_SCHEMA,
     metadata: {
+      shouldDefer: true, // tool-search wave1a: 非常驻内置工具默认 defer(specs/tool-search.md R4)
       name: SWARM_PLAN_TOOL_NAMES.completeGate,
       description: PLAN_COMPLETE_GATE_DESCRIPTION,
       concurrentSafe: false,

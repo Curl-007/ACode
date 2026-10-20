@@ -93,6 +93,7 @@ export const runWorkflowToolEntry: ToolEntry = {
   capability:
     "Launch a JavaScript workflow script that fans out subagents deterministically, as a background run",
   metadata: {
+    shouldDefer: true, // tool-search wave1a: 非常驻内置工具默认 defer(specs/tool-search.md R4)
     name: RUN_WORKFLOW_TOOL_NAME,
     description: RUN_WORKFLOW_DESCRIPTION,
     // 这个调用会启动一个执行子进程与多个子代理会话；只读声明随执行语义翻面。

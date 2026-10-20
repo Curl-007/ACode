@@ -220,6 +220,10 @@ export const runPrompt = async (
         ...(forceMcs ? { midConversationSystem: { mode: "force" as const } } : {}),
         // headless 按本次调用显式开关；不改 core 缺省值，保持 TUI 与 stdio 的既有策略。
         dynamicWorkflowEnabled: options.enableWorkflow === true,
+        // 工具按需检索启动覆盖（specs/tool-search.md R1/R3）：CLI 独立运行不读 App 设置，
+        // 未传 = 缺席 = off（零行为变化）；显式值在创建/冷恢复（--resume/--continue 同走
+        // 本 runtimeConfig）时固定。native 波 1 未实装：取值域放行、执行期由 core 显式报错。
+        ...(options.toolSearchMode ? { toolSearchMode: options.toolSearchMode } : {}),
         memory: { extractionEnabled: options.memoryBench === true },
         modelStreaming: "on",
         presentationSurface,

@@ -183,6 +183,7 @@ const offPeakTimeout = {
 export const offPeakCreateToolEntry: ToolEntry = {
   capability: "Create an idle-time task queued for free off-peak execution",
   metadata: {
+    shouldDefer: true, // tool-search wave1a: 非常驻内置工具默认 defer(specs/tool-search.md R4)
     name: "OffPeakCreate",
     description:
       "Create a one-off idle-time task in the current workspace: it takes a queue ticket immediately and later runs unattended in THIS session (with the full conversation history) when the server grants off-peak compute, at no plan-quota cost. There is no guaranteed start time. Unlike CronCreate (recurring or clock-scheduled work), use this for deferrable work the user wants done cheaply 'when compute is idle'. The prompt must describe the final work directly and must never ask the run to create, schedule, or configure another idle-time task or automation.",
@@ -234,6 +235,7 @@ export const offPeakCreateToolEntry: ToolEntry = {
 export const offPeakListToolEntry: ToolEntry = {
   capability: "List idle-time tasks for the current workspace",
   metadata: {
+    shouldDefer: true, // tool-search wave1a: 非常驻内置工具默认 defer(specs/tool-search.md R4)
     name: "OffPeakList",
     description:
       "List idle-time tasks in the current workspace with status and queue position. Read-only.",

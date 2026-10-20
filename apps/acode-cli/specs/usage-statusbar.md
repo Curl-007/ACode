@@ -14,6 +14,16 @@ desktop/ui 状态栏消费 v4 投影既有事实，CLI/TUI/desktop 共用零 tok
 （设置页 App Usage、composer 上下文环、TUI 徽标）均已存在；本 spec 只补
 「消费与呈现」层和最小 additive 协议字段，不新建数据面。
 
+## 2026-10-19 重设计波还原记录（用户裁决）
+
+重设计波（统一明细面板 + 微标签 + inFlight 实时事实面，曾合 dev @a28a0cbb）经用户
+实机查看否决并**整波还原**（`revert -m 1` → 3eba326d，合 dev @ca2c6778）：统一面板
+过长遮满聊天区、恢复会话上大片零值/缺请求数分组并列，观感不合格。inFlight 数据链
+与统一面板形态**不得再推**；如复活须先过小屏实机观感门。状态栏形态回到 v1.0.1
+发布版（六胶囊 + 独立 tooltip + 事件驱动值）；流式 hover 闪断缺陷按「Tooltip
+稳定性」节最小修复。分析、裁决记录与根因录证留存记忆与
+`~/.acode/cli/scratch/e2e-usage-statusbar-redesign/`。
+
 ## 数据口径（唯一事实定义，producer 单点计算）
 
 1. **总用量** = input + output。cache_read 已含于 input（AI SDK v6 Anthropic 口径，
@@ -56,25 +66,59 @@ desktop/ui 状态栏消费 v4 投影既有事实，CLI/TUI/desktop 共用零 tok
 （状态栏看最近一段请求，速率行看本问已入库多段；收尾正文不在采样内）。
 纯问答/无 stats/开关关闭 → 不渲染，绝不显示上一问的统计。
 
-### Tooltip 稳定性（流式悬停不闪断）
+### Tooltip 稳定性（2026-10-19 最小修复重写：自管 hover 生命周期 + 布局稳定）
 
-状态栏胶囊 tooltip 在对话流式输出/思考进行中必须稳定常驻：指针持续悬停任一胶囊，
-tooltip 打开后不得在思考/流式未结束前闪断消失。根因：全局 `TooltipProvider`
-（`packages/ui/src/Root.tsx`）`delayDuration=0` + 默认 `skipDelayDuration=300`，
-在流式高频 snapshot re-render 下触发 Radix Tooltip 的 hoverable content 机制
-（`@radix-ui/react-tooltip` `TooltipContentHoverable`：grace area pointer 追踪 +
-trigger/content pointerleave 建立凸包）误判指针离开 → `onClose()` 关闭；关闭后
-`TooltipTrigger` 的 `hasPointerMoveOpenedRef` 仍为 true（仅 pointerleave 重置），
-指针静止不再触发 `onTriggerEnter` 重开——与「闪一下即消失、等思考结束才常驻」吻合。
+**症状**：对话流式输出/思考进行中，悬停胶囊的明细 tooltip 只闪一下即消失，指针
+不动不再回来，流式结束才恢复常驻。
 
-修复针对根因所有者（状态栏胶囊 tooltip 行为配置）：`UsageStatusbar` 外包局部
-`TooltipProvider` 设 `delayDuration={0} disableHoverableContent`，禁用导致抖动的
-grace area 追踪逻辑，改用 `TooltipContentImpl`（非 hoverable）。状态栏 tooltip 是
-只读明细，用户无需将指针移入 tooltip content 内部，禁用 hoverable content 不损失
-核心交互；子代理胶囊的 Popover 点击展开走独立 Radix Popover 机制，不受影响。
+**真根因（运行时录证确证，取代原 grace area 推断）**：流式期间胶囊几何突变——
+值 tick 变宽、脉冲点插拔、hide-on-absent presence 翻转整胶囊插入（首个请求完成
+时一次推移约 70px）、composer 高度变化把整条 bar 纵向推移——把 trigger 从
+**静止指针**底下推走，浏览器布局后重算命中补发 `pointerleave` → Radix 关闭；而
+`@radix-ui/react-tooltip@1.2.8` 重开只认 trigger `pointermove`
+（`hasPointerMoveOpenedRef` 门），静止指针永不重开。原 `disableHoverableContent`
+局部 Provider 消除的是 grace area 路径，与本机制无关，故无效。证据：
+scratch/e2e-usage-statusbar-redesign/ proof-run2.jsonl（左邻加宽 +60px → 关闭、
+1px 微动重开）与 repro-streaming-run2.jsonl（真实流式 +18.6s 静止关闭、多次位移
+34s 不重开）。
 
-不接受的对症方案：流式期间禁用 tooltip、pointer 事件防抖、setTimeout 重开等
-掩盖性补丁——这些不消除 grace area 误判根因，只压制症状。
+**修复 1：自管 hover 生命周期（胶囊明细改受控 Popover，弃 Radix Tooltip）**：
+
+- 明细浮层 = `Popover`（PopoverAnchor = 胶囊 body，PopoverContent 镜像
+  TooltipContent 样式并加 `pointer-events-none`，`side="top"`），open 由
+  `UsageStatusbar` 父组件单一状态 `hoveredCapsuleId` 驱动（单开天然）。
+- **开** = 胶囊 `pointerenter`——布局位移把新胶囊推到静止指针下时浏览器边界事件
+  同样触发 pointerenter，位移后自然接续。
+- **关** 仅两条路径：① 打开期间 window 级 `mousemove` 对整条 bar **当前 rect** 命中
+  测试落在外面（真实指针移走；rect 每次现取，几何推移天然免疫）；② Popover
+  `onOpenChange(false)`（Escape/外部点击）。**布局位移补发的 pointerleave/
+  pointerenter 边界事件一律不作关闭依据**（胶囊不挂 onPointerLeave）——二轮录证
+  （post-hoverfix-run1.jsonl +5.9s）实证首版「pointerleave + relatedTarget 在 bar
+  外」判定仍会被 composer 高度变化把整条 bar 纵向推离静止指针误杀一次。**指针
+  静止 = 无 mousemove = 不触发任何关闭路径 = 明细常驻**（核心不变量；浮层随胶囊
+  新位置同帧重定位）。
+- 位移落到邻居胶囊：邻居 pointerenter 切换 `hoveredCapsuleId`，旧明细同帧关闭。
+- 子代理胶囊的 hover Tooltip 退役：其口径说明移入点击面板头部（i18n key
+  `chat.usageStatusbar.subagents.tooltip` 不变）；点击 Popover 面板不变。
+- 原局部 `TooltipProvider disableHoverableContent` 随 Radix Tooltip 一并移除。
+
+**修复 2：布局稳定三规则（降低位移频率，独立收益）**：
+
+1. 每胶囊稳定 `key` = 项 id（条件渲染不依赖数组位置）。
+2. 每胶囊固定 `min-w` 槽位按**典型值紧档**预留（2026-10-19 二轮调紧：首档过宽
+   造成条内大片留白；`tabular-nums` 既有，常见 tick 槽内不推挤邻居）。瞬态超槽
+   变宽（工具「N · M 运行中」后缀、秒表档）允许一次性变宽——hover 生命周期已
+   位置化，位移不再杀悬停，只余轻微视觉抖动。
+3. 脉冲点改**图标右上角标绝对定位**（固定尺寸 span 恒渲染、`opacity` 切换显隐、
+   零布局占用、不插拔；二轮调紧自「流内常驻槽」改为角标，消除 icon 与值之间的
+   隐形间隙）。「Tooltip 增强」节相位指示语义不变，仅载体改角标。
+
+**不接受的对症方案**（沿用原节纪律）：流式期间禁用浮层、pointer 事件防抖、
+setTimeout 重开等掩盖性补丁。
+
+**验收**：修复前证据 = 上述录证（代码同态）；修复后同脚本同场景复跑
+（`hover-repro.mjs --panel-selector '[data-testid="usage-statusbar-tooltip"]'`）
+全程 0 关闭；契约测试钉住两条关闭路径与静止不变量。
 
 ### 排版一致性（2026-10-18 增补）
 
@@ -136,6 +180,9 @@ composer 工具栏在窄容器下按**信息优先级**逐级隐藏（CSS 容器
   `[data-acode-reduce-motion="reduce"]` 应用内覆盖；值未变不重挂载、不重放动画）。
 - **相位指示**：`snapshot.control.phase === "running"` 时生成速度胶囊值前显示脉冲
   状态点（`animate-pulse` 先例同子代理面板，`motion-reduce:animate-none`）。
+  **2026-10-19 最小修复**：脉冲点载体改**图标右上角标**（固定尺寸 span 绝对定位
+  恒渲染、opacity 切换、零布局占用），消除插拔与流内占位造成的宽度突变/隐形间隙
+  （「Tooltip 稳定性」节修复 2.3）。
   **口径红线不变**：状态点只表达「有请求在跑」这一请求边界事实，不伪造实时速率；
   速度值与 tooltip 仍是「每完成一次模型请求更新」的事件驱动事实——**严禁**流式
   中途自算 tok/s，**严禁**高频轮询（无 per-chunk token 事实，spec 口径 4）。

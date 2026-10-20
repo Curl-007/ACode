@@ -89,13 +89,25 @@ export interface ModelResourceLinkContentBlock {
   title?: string;
 }
 
+/**
+ * 工具引用内容块（specs/tool-search.md R7/R10）：ToolSearch 结果在历史里的真实
+ * 形态——只存目标工具名，schema 正文由请求投影按当前定义即时展开为 functions
+ * 容器；持久化与 modelContent 都不保存快照。provider 渲染层（波 2 native）之前
+ * 由 local 投影在请求准备时消费，未启用搜索的 off 路径按移除规则降级为占位文本。
+ */
+export interface ModelToolReferenceContentBlock {
+  type: "tool_reference";
+  toolName: string;
+}
+
 export type ModelMessageContentBlock =
   | ModelTextContentBlock
   | ModelReasoningContentBlock
   | ModelImageContentBlock
   | ModelVideoContentBlock
   | ModelFileContentBlock
-  | ModelResourceLinkContentBlock;
+  | ModelResourceLinkContentBlock
+  | ModelToolReferenceContentBlock;
 
 export type ModelMessageContent = string | ModelMessageContentBlock[];
 

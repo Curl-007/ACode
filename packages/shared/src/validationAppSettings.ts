@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { AppSettings } from "./protocol.js";
 import { DYNAMIC_WORKFLOW_MODES } from "./dynamic-workflow-feature.js";
 import { SCRIPT_WORKFLOW_MODES } from "./script-workflow-feature.js";
+import { TOOL_SEARCH_APP_MODES } from "./tool-search-feature.js";
 import { REMOTE_ASSET_INSTALL_MODES } from "./remoteAssetInstallMode.js";
 import { isKnownRemoteResourcePackageId } from "./remoteResourcePackages.js";
 import { wslUserSchema } from "./wslUserValidation.js";
@@ -43,6 +44,9 @@ const dynamicWorkflowModeSchema = z.enum(DYNAMIC_WORKFLOW_MODES);
 // 脚本工作流三档（同上教训适用）：缺席即「本机缺省档 onDemand」，不给 default——
 // 写默认值会把某档冻结进用户配置，之后翻转缺省语义救不回来。
 const scriptWorkflowModeSchema = z.enum(SCRIPT_WORKFLOW_MODES);
+// 工具按需检索三档（specs/tool-search.md R11，同上教训适用）：缺席即 off（零行为
+// 变化红线），不给 default——写默认值会把 off 冻结进用户配置，将来翻转缺省救不回来。
+const toolSearchModeSchema = z.enum(TOOL_SEARCH_APP_MODES);
 const electronReleaseChannelSchema = z.enum(["stable", "preview"]);
 const desktopZoomLevelSchema = z.number().int().min(-3).max(5);
 const desktopWindowSizeSchema = z.object({
@@ -509,6 +513,8 @@ const appSettingsObjectSchema = z.object({
   dynamicWorkflowMode: dynamicWorkflowModeSchema.optional(),
   // 脚本工作流三档同理：漏登记则写盘被 strip（同上实机教训）。
   scriptWorkflowMode: scriptWorkflowModeSchema.optional(),
+  // 工具按需检索三档同理：漏登记则写盘被 strip（同上实机教训）。
+  toolSearchMode: toolSearchModeSchema.optional(),
 });
 
 export const appSettingsSchema = z.preprocess(
@@ -559,6 +565,7 @@ export const appSettingsPatchSchema = z.object({
   acodeInteractionBehavior: acodeInteractionBehaviorSchema.optional(),
   dynamicWorkflowMode: dynamicWorkflowModeSchema.optional(),
   scriptWorkflowMode: scriptWorkflowModeSchema.optional(),
+  toolSearchMode: toolSearchModeSchema.optional(),
   askUserQuestionAutoResolutionEnabled: z.boolean().optional(),
   botPermissionLocalApprovalEnabled: z.boolean().optional(),
   modelIoFullRetentionEnabled: z.boolean().optional(),

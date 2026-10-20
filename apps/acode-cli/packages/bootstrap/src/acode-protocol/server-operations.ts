@@ -87,6 +87,7 @@ import {
   type ACodeSessionResumeParams,
   type ACodeSessionPersistence,
   type ACodeStateUpdatedNotification,
+  type ToolSearchAppMode,
 } from "@acode/shared";
 import {
   buildSessionSnapshot,
@@ -1152,7 +1153,7 @@ export async function createSession(
 export async function createSessionRecordForV4(
   context: ACodeProtocolAgentServerContext,
   rawParams: unknown,
-  runtimeFlags?: { scriptWorkflowEnabled?: boolean },
+  runtimeFlags?: { scriptWorkflowEnabled?: boolean; toolSearchMode?: ToolSearchAppMode },
 ) {
   return createSessionWithProjection(
     context,
@@ -1176,7 +1177,7 @@ async function createSessionWithProjection<T>(
   // acodeSessionCreateParamsSchema 是 strict 的 legacy 面（只删不增），本 flag 不能进
   // rawParams（会被 strict parse 拒为未知键），只能绕协议参数单独下传。仅 v4 路径注入；
   // legacy/TUI 路径缺席 = CLI 按本机缺省档（onDemand）放行，与今天行为逐字一致。
-  runtimeFlags?: { scriptWorkflowEnabled?: boolean },
+  runtimeFlags?: { scriptWorkflowEnabled?: boolean; toolSearchMode?: ToolSearchAppMode },
 ): Promise<T> {
   const params = parseParams(acodeSessionCreateParamsSchema, rawParams);
   const startedAt = Date.now();
@@ -3254,7 +3255,7 @@ async function materializeSessionRecord(
   resume: boolean,
   source: SessionStartupPreferencesSource,
   trace?: ACodeProtocolTrace,
-  runtimeFlags?: { scriptWorkflowEnabled?: boolean },
+  runtimeFlags?: { scriptWorkflowEnabled?: boolean; toolSearchMode?: ToolSearchAppMode },
 ): Promise<ACodeProtocolSessionRecord> {
   const startupPreferences = await resolveSessionStartupPreferences(
     context,
@@ -3272,7 +3273,7 @@ async function createRecord(
   resume: boolean,
   startupPreferences: SessionStartupPreferences,
   trace?: ACodeProtocolTrace,
-  runtimeFlags?: { scriptWorkflowEnabled?: boolean },
+  runtimeFlags?: { scriptWorkflowEnabled?: boolean; toolSearchMode?: ToolSearchAppMode },
 ): Promise<ACodeProtocolSessionRecord> {
   const workspace =
     "workspace" in params && params.workspace
@@ -3301,6 +3302,12 @@ async function createRecord(
   // automation-port 需要读取「本会话」的实时 model/mode/thought；record 在 app 之后才建。
   // 用可变持有者做惰性绑定：CronCreate 在 turn 中调用 create() 时 record 早已就绪。
   let ownSessionRecord: ACodeProtocolSessionRecord | undefined;
+  // 工具按需检索档位（specs/tool-search.md R3/R11）：v4 侧通道优先（Host 每次
+  // createSession 现读 AppSettings，三档含 off 都写），缺席读进程级兜底缓存（刷新
+  // 时机同 createSession）——覆盖冷恢复（resumeSession）/fork 等无 Host 参数的 record
+  // 物化路径。两者都无 = 不写字段 = core 按缺席即 off（零行为变化红线）。
+  const resolvedToolSearchMode =
+    runtimeFlags?.toolSearchMode ?? context.appRuntimePreferences.toolSearchMode;
   const app = await createWorkspaceACodeApp(context, workspace, {
     env: context.deps.env,
     eventStore,
@@ -3325,6 +3332,10 @@ async function createRecord(
       ...(runtimeFlags?.scriptWorkflowEnabled === undefined
         ? {}
         : { scriptWorkflowEnabled: runtimeFlags.scriptWorkflowEnabled }),
+      // 工具按需检索档位：只有侧通道/进程缓存带来显式值才写（缺席不写字段，core 按
+      // off 处理）；写入后在 runtime 创建期物化进 AgentRuntimeConfig.toolSearchMode，
+      // 存活 runtime 不变（无会话中途改档通道，settings 修改下次创建/冷恢复生效）。
+      ...(resolvedToolSearchMode === undefined ? {} : { toolSearchMode: resolvedToolSearchMode }),
       // 协议侧的工具允许/拒绝列表是 session 级安全边界，必须进入 runtimeConfig，
       // 不能只依赖 prompt 文本约束，否则内置工具和动态 MCP 工具仍可能越过调用面。
       toolAllowlist: "toolAllowlist" in params ? params.toolAllowlist : undefined,

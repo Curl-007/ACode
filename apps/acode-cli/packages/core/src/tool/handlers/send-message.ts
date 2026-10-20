@@ -98,6 +98,7 @@ const sendMessageHandler: ToolHandler = async (input, context) => {
 export const sendMessageToolEntry: ToolEntry = {
   capability: "Send a short message to a local agent",
   metadata: {
+    shouldDefer: true, // tool-search wave1a: 非常驻内置工具默认 defer(specs/tool-search.md R4)
     name: SEND_MESSAGE_TOOL_NAME,
     description: SEND_MESSAGE_PROVIDER_DESCRIPTION,
     readOnly: false,

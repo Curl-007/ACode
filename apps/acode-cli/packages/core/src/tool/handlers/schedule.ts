@@ -167,6 +167,7 @@ export function createScheduleToolEntry(deps: ScheduleToolDeps): ToolEntry {
   return {
     capability: "Propose a future wake-up handled by the ambient budget-aware scheduler",
     metadata: {
+      shouldDefer: true, // tool-search wave1a: 非常驻内置工具默认 defer(specs/tool-search.md R4)
       name: SCHEDULE_TOOL_NAME,
       description:
         "Propose a one-shot future wake-up created from the conversation. target=ambient wakes the budget-aware background agent cycle (system decides actual timing); target=session posts a visible reminder back into this conversation at wake time; target=spawn forks a new background task to do the work. For recurring schedules or user-written cron expressions use the dedicated cron scheduling tool instead.",

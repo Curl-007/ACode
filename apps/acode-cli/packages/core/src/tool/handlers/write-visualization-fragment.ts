@@ -138,6 +138,7 @@ export const writeVisualizationFragmentToolEntry: ToolEntry = {
   capability:
     "Write an interactive HTML fragment into the conversation as a visualization card (gated on the visualize skill)",
   metadata: {
+    shouldDefer: true, // tool-search wave1a: 非常驻内置工具默认 defer(specs/tool-search.md R4)
     name: WRITE_VISUALIZATION_FRAGMENT_TOOL_NAME,
     description: WRITE_VISUALIZATION_DESCRIPTION,
     // 读模型内容、写会话存储；不碰工作区（spec：不进 Write 工具权限链）。

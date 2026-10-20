@@ -278,7 +278,7 @@
     "apps/acode-cli/packages/workflow-run-read/package.json": "d4659d598d8320400e86695cef751c86bc8cc7cca3508858c6e42957a86d5b6c",
     "apps/acode-cli/tools/prompt-trajectory/package.json": "c0b79b8c11694062afce19807a3e527541b3d262b77aae07b40479d5ee73346c",
     "apps/acode-cli/tools/typescript/package.json": "916bb98a7a42a80a690c6460038da943c80e2c005fc528d8bfddc930ff67a13c",
-    "package.json": "3f67f8b6b46a251661cccabfb040baf70192b20801e541e277218d8a63a9b380",
+    "package.json": "1f732dc84e92f7d5fcb045c52846e490efe022458875a0c1d595b11efcc11339",
     "packages/acode-cua/package.json": "faa859923517a6a948141b87bea3fa6ac885ef737ebde7be9ae9f9abd3d9a752",
     "packages/acode-server-cli/package.json": "5e9445eb2bce9eb54e320723dcd327354ee6798e93dafb01b3532d14d0287bc3",
     "packages/client/package.json": "34842bccbb96748d785cd56230ca0e36d230b913cc57ef455680d87c999b939c",

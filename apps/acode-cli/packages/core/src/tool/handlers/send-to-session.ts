@@ -107,6 +107,7 @@ function makeHandler(deps: FleetToolDeps): ToolHandler {
 const baseEntry = {
   capability: "Route a follow-up message to an owned fleet session",
   metadata: {
+    shouldDefer: true, // tool-search wave1a: 非常驻内置工具默认 defer(specs/tool-search.md R4)
     name: SEND_TO_SESSION_TOOL_NAME,
     description: SEND_TO_SESSION_DESCRIPTION,
     readOnly: false,

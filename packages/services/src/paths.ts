@@ -1,10 +1,11 @@
 /* path 规则集中维护：旧 task 快照与 provider 配置路径仍在这里收口。 */
 import { lstatSync } from "node:fs";
-import { cp } from "node:fs/promises";
+import { chmod, cp, lstat, readdir } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { basename, join, win32 } from "node:path";
 import { homedir } from "node:os";
 import { DATA_BASE_DIR_FORBIDDEN_WINDOWS_INSTALL_DIR_ERROR_CODE } from "@acode/shared";
+import { ACODE_DATA_ROOT_DIR_NAME } from "./data-root/types.js";
 
 let _dataBaseDir: string | null = null;
 export const ACODE_WINDOWS_APP_INSTALL_DIR_ENV = "ACODE_WINDOWS_APP_INSTALL_DIR";
@@ -39,9 +40,9 @@ export function getDataBaseDir(): string {
   return defaultDataBaseDir;
 }
 
-/** {dataBaseDir}/.acode */
+/** {dataBaseDir}/.acode（目录名与 data-root 归属模块共用单一常量） */
 export function getACodeDataRootDir(): string {
-  return join(getDataBaseDir(), ".acode");
+  return join(getDataBaseDir(), ACODE_DATA_ROOT_DIR_NAME);
 }
 
 /** 非项目对话共享的真实工作目录；默认 ~/.acode/workspace/default。 */
@@ -223,20 +224,77 @@ export function getLegacyDeletedTaskSessionSnapshotPath(
   return join(getTaskSessionDir(workspacePath, workspaceIdentity), `${taskId}.deleted.json`);
 }
 
+/** 与 copyDataDirectory 的 cp filter 一致：setting.json 及其原子写临时兄弟不迁移。 */
+function isExcludedFromDataCopy(sourceName: string): boolean {
+  return sourceName === "setting.json" || sourceName.startsWith("setting.json.");
+}
+
+/**
+ * POSIX 权限补强：复制后遍历源树，目标条目 mode 与源不一致时 chmod 回源值，
+ * 保证凭据类文件 0600 不被迁移放宽（fs.cp 通常已保留 mode，此处为不依赖
+ * Node 版本内部行为的保障性兜底；mode 一致时零额外 syscall）。
+ * Windows 无 POSIX 权限位（stat mode 为合成值、chmod 只影响只读属性），不适用，直接跳过。
+ */
+async function preserveCopiedTreePermissions(oldDir: string, newDir: string): Promise<void> {
+  if (process.platform === "win32") {
+    return;
+  }
+  const walk = async (relative: string): Promise<void> => {
+    const sourcePath = relative ? join(oldDir, relative) : oldDir;
+    const targetPath = relative ? join(newDir, relative) : newDir;
+    let sourceStat;
+    try {
+      sourceStat = await lstat(sourcePath);
+    } catch {
+      // 源条目在复制期间被删除（tmp/lock 类瞬时文件），跳过。
+      return;
+    }
+    if (sourceStat.isSymbolicLink()) {
+      // 与 cp filter 一致：符号链接未被复制，无需补强。
+      return;
+    }
+    try {
+      const targetStat = await lstat(targetPath);
+      const sourceMode = sourceStat.mode & 0o7777;
+      if ((targetStat.mode & 0o7777) !== sourceMode) {
+        await chmod(targetPath, sourceMode);
+      }
+    } catch {
+      // 目标缺失或文件系统不支持 chmod：不阻断迁移主流程。
+    }
+    if (!sourceStat.isDirectory()) {
+      return;
+    }
+    let entries: string[];
+    try {
+      entries = await readdir(sourcePath);
+    } catch {
+      return;
+    }
+    for (const name of entries) {
+      if (isExcludedFromDataCopy(name)) {
+        continue;
+      }
+      await walk(relative ? join(relative, name) : name);
+    }
+  };
+  await walk("");
+}
+
 /**
  * Copy the .acode/v2 data directory from one base dir to another.
  * Excludes setting.json and its transient atomic-write siblings — bootstrap
  * state must only live at the default homedir location.
  */
 export async function copyDataDirectory(oldBaseDir: string, newBaseDir: string): Promise<void> {
-  const oldDir = join(oldBaseDir, ".acode", "v2");
-  const newDir = join(newBaseDir, ".acode", "v2");
+  const oldDir = join(oldBaseDir, ACODE_DATA_ROOT_DIR_NAME, "v2");
+  const newDir = join(newBaseDir, ACODE_DATA_ROOT_DIR_NAME, "v2");
   await cp(oldDir, newDir, {
     recursive: true,
     force: false,
     filter: (source) => {
       const sourceName = basename(source);
-      if (sourceName === "setting.json" || sourceName.startsWith("setting.json.")) {
+      if (isExcludedFromDataCopy(sourceName)) {
         // setting.json.lock 和 setting.json.*.tmp 由原子写入短暂创建/删除，
         // 复制过程中扫描到已消失的 lock 会触发 ENOENT，并让数据目录迁移失败。
         // 这些文件都属于 bootstrap 写入中间态，不能迁移到新数据根。
@@ -252,4 +310,6 @@ export async function copyDataDirectory(oldBaseDir: string, newBaseDir: string):
       return true;
     },
   });
+  // spec: packages/services/specs/data-root-ownership.md「迁移权限补强」。
+  await preserveCopiedTreePermissions(oldDir, newDir);
 }

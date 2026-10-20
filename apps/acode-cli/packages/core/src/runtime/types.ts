@@ -277,6 +277,12 @@ export interface AgentRuntimeConfig {
    * tool-allowlist.ts 与 workflow-tool-names.ts。不改变其他工具的注册策略。
    */
   scriptWorkflowEnabled?: boolean;
+  /**
+   * 工具按需检索模式（specs/tool-search.md R1/R3）：Runtime 创建/冷恢复时固定的
+   * 单一所有者；热恢复不变，fork/子 Agent 沿现有 config 继承链透传。缺席 = off
+   *（旧 Host/旧配置缺省），off 时请求投影与注册面零行为变化。
+   */
+  toolSearchMode?: import("@acode/contracts").ToolSearchMode;
 
   // Context Builder config
   systemPrompt?: string;

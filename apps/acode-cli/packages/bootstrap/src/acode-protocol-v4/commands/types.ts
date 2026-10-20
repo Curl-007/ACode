@@ -252,6 +252,15 @@ export interface V4CommandCoreHost {
      * 「true/false 都写」注入，缺席只出现在 legacy/TUI 路径（按本机缺省档 onDemand 开）。
      */
     scriptWorkflowEnabled?: boolean;
+    /**
+     * host 判定的工具按需检索档位（specs/tool-search.md R3/R11）。类型直接引用 v4
+     * createSession payload 的三值域（auto/local/off），与 @acode/shared 单源同步。
+     * 与 scriptWorkflowEnabled 的极性差异：tool-search 缺席 = off（fail-safe 到零行为
+     * 变化），受信 Host「三档都写」（含显式 off，冷恢复兜底缓存靠它刷新旧档位）；
+     * 缺席只出现在旧 Host/legacy 面。写入后在 runtime 创建期物化进
+     * AgentRuntimeConfig.toolSearchMode，存活 runtime 不变（无中途改档通道）。
+     */
+    toolSearchMode?: CommandPayloadMap["createSession"]["toolSearchMode"];
   }): Promise<{ sessionId: string }>;
   /** 从父会话稳定落盘边界创建隐藏 selection_side_chat child。 */
   createSelectionSideSession?(

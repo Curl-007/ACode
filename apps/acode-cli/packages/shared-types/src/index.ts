@@ -38,6 +38,14 @@ export type GlobalOptions = {
   memoryBench?: boolean;
   noColor: boolean;
   outputFormat?: GlobalOutputFormat;
+  /**
+   * 工具按需检索启动覆盖（--toolsearch-mode，apps/acode-cli/specs/tool-search.md R1）：
+   * CLI 四值域（native 仅 CLI 显式传入，波 1 未实装、执行期报错）。未传 = undefined =
+   * 不覆盖（runtime 缺席即 off）；显式值写入 AgentRuntimeConfig.toolSearchMode，优先于
+   * Host 物化的 App 设置。字面量与 @acode/contracts ToolSearchModeSchema 逐字一致
+   * （shared-types 无依赖，不跨包引类型）。
+   */
+  toolSearchMode?: "auto" | "native" | "local" | "off";
   verbose: boolean;
 };
 

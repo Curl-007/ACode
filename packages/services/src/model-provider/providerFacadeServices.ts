@@ -21,6 +21,10 @@ import { createServiceDescriptor } from "../descriptors.js";
 import type { ModelConnectivityResult } from "@acode/shared";
 import { createServiceLogger } from "../logger/serviceLogger.js";
 import {
+  discoverProviderModelsFromEndpoint,
+  type ProviderModelDiscoveryResult,
+} from "./providerModelDiscovery.js";
+import {
   modelSelectionArgumentValidators,
   providerSettingsArgumentValidators,
 } from "./providerFacadeServices.validators.js";
@@ -73,6 +77,25 @@ export interface IProviderSettingsService {
   testModelConnectivity(
     input: ProviderSettingsConnectivityRequest,
   ): Promise<ModelConnectivityResult>;
+  /** 批量添加个人 Model（发现对话框确认路径）：单事务单 revision 守卫。 */
+  addPersonalModels(
+    providerId: ProviderId,
+    modelIds: readonly ModelId[],
+    useRecommendedConfig?: boolean,
+  ): Promise<ProviderSettingsView>;
+  /**
+   * 模型发现（specs/provider-model-discovery.md）：host 侧向 provider 配置 baseUrl 的
+   * models 端点发一次请求；只回 id 列表与结构化错误，apiKey 不出 host。
+   */
+  discoverProviderModels(
+    input: ProviderSettingsDiscoveryRequest,
+  ): Promise<ProviderModelDiscoveryResult>;
+}
+
+export interface ProviderSettingsDiscoveryRequest {
+  readonly workspacePath: string;
+  readonly workspaceIdentity?: string;
+  readonly providerId: ProviderId;
 }
 
 export const IProviderSettingsService = createServiceDescriptor<IProviderSettingsService>(
@@ -94,6 +117,8 @@ export const IProviderSettingsService = createServiceDescriptor<IProviderSetting
       "savePersonalModelDraft",
       "setPersonalModelEnabled",
       "testModelConnectivity",
+      "addPersonalModels",
+      "discoverProviderModels",
     ],
     // 校验表拆到同目录伴生文件，避免本文件超过 400 行门禁；键仍受 interface keyof 约束。
     argumentValidators: providerSettingsArgumentValidators,
@@ -237,6 +262,17 @@ export function createProviderSettingsService(
         providerId: input.providerId,
         modelId: input.modelId,
       });
+    },
+    addPersonalModels: async (providerId, modelIds, useRecommendedConfig) => {
+      await ensureReady();
+      return facade.addPersonalModels(providerId, modelIds, useRecommendedConfig);
+    },
+    discoverProviderModels: async (input) => {
+      await ensureReady();
+      // baseUrl 缺席（未配置/托管 family 无 api 面）→ 结构化 no-base-url，UI 映射禁用态文案。
+      const discoveryInput = facade.readProviderDiscoveryInput(input.providerId);
+      if (!discoveryInput) return { ok: false, error: { kind: "no-base-url" as const } };
+      return discoverProviderModelsFromEndpoint(discoveryInput);
     },
   };
 }

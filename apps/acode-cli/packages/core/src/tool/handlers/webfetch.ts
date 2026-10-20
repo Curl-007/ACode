@@ -239,6 +239,7 @@ export const webFetchToolEntry: ToolEntry = {
   capability:
     "Fetch a public URL, convert readable content to markdown, and answer a prompt from it",
   metadata: {
+    shouldDefer: true, // tool-search wave1a: 非常驻内置工具默认 defer(specs/tool-search.md R4)
     name: WEBFETCH_TOOL_NAME,
     description: WEBFETCH_DESCRIPTION,
     readOnly: true,

@@ -168,6 +168,7 @@ export const sessionSearchToolEntry: ToolEntry = {
   capability:
     "Search the full text of persisted historical sessions (assistant/user messages, thinking blocks, tool command lines) without modifying state",
   metadata: {
+    shouldDefer: true, // tool-search wave1a: 非常驻内置工具默认 defer(specs/tool-search.md R4)
     name: SESSION_SEARCH_TOOL_NAME,
     description: SESSION_SEARCH_PROVIDER_DESCRIPTION,
     modelInstructions: [

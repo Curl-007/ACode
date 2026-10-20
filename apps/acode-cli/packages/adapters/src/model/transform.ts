@@ -186,6 +186,10 @@ function contentBlockToAiSdkToolResultParts(
   options: AiSdkMessageTransformOptions,
 ): Extract<AiSdkToolResultOutput, { type: "content" }>["value"] {
   switch (block.type) {
+    // 工具引用块（specs/tool-search.md R7）由 core 请求投影展开或移除后才进 provider；
+    // 残余按无内容处理，不合成文本。
+    case "tool_reference":
+      return [];
     case "text":
       return block.text.length > 0 ? [{ type: "text", text: block.text }] : [];
 
@@ -293,6 +297,10 @@ function contentBlockToAiSdkAssistantParts(
   options: AiSdkAssistantTransformOptions,
 ): AiSdkAssistantContentPart[] {
   switch (block.type) {
+    // 工具引用块（specs/tool-search.md R7）由 core 请求投影展开或移除后才进 provider；
+    // 残余按无内容处理，不合成文本。
+    case "tool_reference":
+      return [];
     case "text":
       return block.text.length > 0 ? [{ type: "text", text: block.text }] : [];
 
@@ -402,6 +410,10 @@ function contentBlockToAiSdkUserParts(
   options: AiSdkMessageTransformOptions,
 ): Extract<AiSdkUserContent, unknown[]> {
   switch (block.type) {
+    // 工具引用块（specs/tool-search.md R7）由 core 请求投影展开或移除后才进 provider；
+    // 残余按无内容处理，不合成文本。
+    case "tool_reference":
+      return [];
     case "text":
       return block.text.length > 0 ? [{ type: "text", text: block.text }] : [];
 

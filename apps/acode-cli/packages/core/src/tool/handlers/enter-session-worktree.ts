@@ -103,6 +103,7 @@ function makeHandler(deps: EnterSessionWorktreeDeps): ToolHandler {
 const baseEntry = {
   capability: "Enter an isolated per-session git worktree cut from the current HEAD",
   metadata: {
+    shouldDefer: true, // tool-search wave1a: 非常驻内置工具默认 defer(specs/tool-search.md R4)
     name: ENTER_SESSION_WORKTREE_TOOL_NAME,
     description: ENTER_DESCRIPTION,
     readOnly: false,

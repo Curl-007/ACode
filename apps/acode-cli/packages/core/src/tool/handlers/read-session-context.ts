@@ -148,6 +148,7 @@ export const readSessionContextToolEntry: ToolEntry = {
   capability:
     "Read bounded context from another persisted ACode session by session id without modifying state",
   metadata: {
+    shouldDefer: true, // tool-search wave1a: 非常驻内置工具默认 defer(specs/tool-search.md R4)
     name: READ_SESSION_CONTEXT_TOOL_NAME,
     description:
       "Read relevant or handoff context from another persisted ACode session. Use when the user references #sess_* or asks to continue from a specific prior session.",

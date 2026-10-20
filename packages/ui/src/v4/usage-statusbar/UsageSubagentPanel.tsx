@@ -1,6 +1,7 @@
 import { useACodeIntl } from "@/i18n/IntlProvider.js";
 import { cn } from "@/components/lib/utils.js";
 import { formatUsageTokenCount } from "@/v4/usage-statusbar/usageStatusbarFormat.js";
+import { UsageStatusbarTooltipNote } from "@/v4/usage-statusbar/UsageStatusbarCapsule.js";
 import type {
   SubagentPanelItem,
   SubagentSummaryView,
@@ -83,6 +84,11 @@ export function UsageSubagentPanel({
           ))}
         </ul>
       )}
+      {/* 胶囊 hover Tooltip 退役（specs/usage-statusbar.md「Tooltip 稳定性」2026-10-19
+          最小修复）：值语义口径说明移入点击面板尾部，i18n key 不变。 */}
+      <UsageStatusbarTooltipNote>
+        {intl.formatMessage({ id: "chat.usageStatusbar.subagents.tooltip" })}
+      </UsageStatusbarTooltipNote>
     </div>
   );
 }

@@ -30,6 +30,11 @@ import type { AgentRuntimeInternal } from "../internal.js";
 import { getRuntimeLifecyclePort } from "../runtime-lifecycle.js";
 import { parkAtPauseSafePoint } from "../../agent/pause-gate.js";
 import { runModelBackedTurnStep } from "./turn-model-step.js";
+// 工具按需检索请求准备（specs/tool-search.md R8/R9）：公告 + 投影的单一入口。
+import {
+  buildTurnToolSearchAnnouncement,
+  projectToolSearchRequest,
+} from "./tool-search-request.js";
 import {
   AUTOMATION_MUTATION_TOOL_NAMES,
   evaluateRapidRefill,
@@ -254,8 +259,40 @@ export async function runRegularTurnLoop(
         systemReminderAttachmentEntry("output_style", outputStyleReminderBody),
       ]);
     }
+    // ===== 工具按需检索请求准备单点（specs/tool-search.md R8/R9）=====
+    // 公告先 commit（持久化轨迹的一部分），再快照 entries 做投影；off 路径两个函数
+    // 都原样返回输入引用，默认零行为变化。
+    const turnToolSearchAnnouncement = buildTurnToolSearchAnnouncement(this, state.model, tools);
+    if (turnToolSearchAnnouncement) {
+      commitTurnRequestEntries(this, state.turnRequestState, [turnToolSearchAnnouncement]);
+      // 公告落库（R9/R10）：增量事实随 model-only synthetic notice 持久化，
+      // 冷恢复经 hydrateToolSearchAnnouncement 重建 attachment metadata——
+      // 不落库会让重启后同一批名称被重复公告，破坏稳定前缀。
+      const announcementDelta = turnToolSearchAnnouncement.metadata?.toolSearchAnnouncement;
+      if (turnToolSearchAnnouncement.kind === "attachment" && announcementDelta) {
+        await this.persistSyntheticUserNoticeForSession({
+          messageID: createMessageId(),
+          metadata: {
+            runtimeMessage: {
+              source: "tool_search_announcement",
+              toolSearchAnnouncement: announcementDelta,
+            },
+          },
+          sessionId: this.sessionId,
+          source: "tool_search_announcement",
+          text: turnToolSearchAnnouncement.content,
+          traceContext: state.turnTraceContext,
+        });
+      }
+    }
     const providerEntries = [...state.turnRequestState.entries];
-    const requestEntries = providerEntries;
+    const toolSearchProjection = projectToolSearchRequest(
+      this,
+      state.model,
+      tools,
+      providerEntries,
+    );
+    const requestEntries = toolSearchProjection.entries;
     // provider-visible user ordering projection 会改变最终 latest user 落点，
     // cache-control 必须在 projection 后统一设置，避免 raw synthetic entry 抢占缓存锚点。
     const providerProjection = buildRuntimeProviderRequestMessages(this, {
@@ -298,7 +335,7 @@ export async function runRegularTurnLoop(
       sourceEntries: providerProjection.sourceEntries,
       requestEntries,
       recordedMessages: recordableProjection.messages,
-      tools,
+      tools: toolSearchProjection.tools,
     });
 
     if (result === "break") {

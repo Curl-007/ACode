@@ -402,6 +402,13 @@ export function createDefaultSubagentPort(
           // 父 registry 可见的工具名）本来就够，但**自定义 agent profile 显式写
           // `allowedTools: ["CreateWorkflow"]` 时会跳过那次交集**，只剩这一道能挡住。
           dynamicWorkflowEnabled: this.config.dynamicWorkflowEnabled,
+          // 工具按需检索档位结构性继承（specs/tool-search.md R3「fork/子 Agent 继承父
+          // Runtime 策略，沿现有继承链」）：父开检索而子缺席 = 子代理退回全量常驻工具面，
+          // 同一棵树内投影语义分裂。缺省 off 时不写字段（缺席即 off，零行为变化红线），
+          // 显式档位（含 off）原样下传——不新增 RPC、不逐轮读取。
+          ...(this.config.toolSearchMode === undefined
+            ? {}
+            : { toolSearchMode: this.config.toolSearchMode }),
           // 默认 subagent 已从 Explore 调整为 general-purpose。
           // toolset 不能再依赖 DEFAULT_SUBAGENT_TYPE，否则默认通用 agent 会被误降级为只读搜索工具面。
           toolset: builtInExplore ? "explore" : "main",

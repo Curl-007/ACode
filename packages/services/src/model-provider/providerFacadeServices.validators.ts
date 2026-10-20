@@ -155,6 +155,17 @@ export const providerSettingsArgumentValidators: Partial<
   },
   testModelConnectivity: (args) =>
     requireObjectArg(args, ["workspacePath", "providerId", "modelId"]),
+  addPersonalModels: (args) => {
+    requireOverlayArgs(args, 2, 3);
+    if (typeof args[0] !== "string" || args[0].length === 0) {
+      throw new Error("invalid providerId");
+    }
+    requireStringArrayAt(args[1], "modelIds");
+    if (args.length === 3 && args[2] !== undefined && typeof args[2] !== "boolean") {
+      throw new Error("invalid useRecommendedConfig");
+    }
+  },
+  discoverProviderModels: (args) => requireObjectArg(args, ["workspacePath", "providerId"]),
 };
 
 export const modelSelectionArgumentValidators: Partial<

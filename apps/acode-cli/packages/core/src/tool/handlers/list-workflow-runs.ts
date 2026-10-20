@@ -137,6 +137,7 @@ function formatListWorkflowRunsModelContent(output: unknown): ModelMessageConten
 export const listWorkflowRunsToolEntry: ToolEntry = {
   capability: "List this project's dynamic-workflow runs, including runs from other sessions",
   metadata: {
+    shouldDefer: true, // tool-search wave1a: 非常驻内置工具默认 defer(specs/tool-search.md R4)
     name: LIST_WORKFLOW_RUNS_TOOL_NAME,
     description: LIST_WORKFLOW_RUNS_DESCRIPTION,
     readOnly: true,

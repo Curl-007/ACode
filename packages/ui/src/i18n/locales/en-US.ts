@@ -2945,6 +2945,34 @@ const enUS: Record<string, string> = {
   "settings.modelProvider.models": "Model list",
   "settings.modelProvider.modelsEmpty": "No models are configured. Add a model to use it in chat.",
   "settings.modelProvider.addModel": "Add model",
+  "settings.modelProvider.discoverModels": "Fetch Models",
+  "settings.modelProvider.discover.title": "Fetch Models",
+  "settings.modelProvider.discover.loading": "Fetching model list from provider URL…",
+  "settings.modelProvider.discover.summary":
+    "Fetched {fetched} · new {addable} · configured {configured}",
+  "settings.modelProvider.discover.truncated": "List exceeds {max} entries; showing first {max}",
+  "settings.modelProvider.discover.configured": "Configured",
+  "settings.modelProvider.discover.empty": "No new models discovered",
+  "settings.modelProvider.discover.confirm": "Add Selected",
+  "settings.modelProvider.discover.retry": "Retry",
+  "settings.modelProvider.discover.selectAll": "Select All",
+  "settings.modelProvider.discover.selectNone": "Select None",
+  "settings.modelProvider.discover.hostNote":
+    "The request is sent from the current host; for remote workspaces, from the remote host.",
+  "settings.modelProvider.discover.disabledTooltip": "This provider has no Base URL configured",
+  "settings.modelProvider.discover.addFailed": "Add failed, please retry",
+  "settings.modelProvider.discover.error.network": "Network error: cannot reach provider URL",
+  "settings.modelProvider.discover.error.timeout": "Request timed out (10s)",
+  "settings.modelProvider.discover.error.unauthorized": "Unauthorized (401): check API key",
+  "settings.modelProvider.discover.error.forbidden": "Forbidden (403)",
+  "settings.modelProvider.discover.error.notFound":
+    "Not found (404): check Base URL and API format",
+  "settings.modelProvider.discover.error.unsupportedShape": "Response is not a model list",
+  "settings.modelProvider.discover.error.tooLarge": "Response exceeds 2MiB limit",
+  "settings.modelProvider.discover.error.insecureUrl": "Only https or loopback http allowed",
+  "settings.modelProvider.discover.error.redirectCrossOrigin": "Cross-origin redirect refused",
+  "settings.modelProvider.discover.error.http": "Request failed (HTTP {status})",
+  "settings.modelProvider.discover.error.noBaseUrl": "This provider has no Base URL configured",
   "settings.modelProvider.modelId": "Model ID",
   "settings.modelProvider.modelDisplayName": "Display name",
   "settings.modelProvider.modelApiFormat.anthropic": "Anthropic messages",
@@ -6199,6 +6227,24 @@ const enUS: Record<string, string> = {
     "Same tool surface as on-demand; reserved for a future always-on reminder.",
   "settings.scriptWorkflow.defaultTag": "Default",
   "settings.scriptWorkflow.saveError": "Couldn't save the setting. Please try again.",
+  // ---- On-demand tool search (ToolSearch/DeferredToolCall three-mode local product
+  // switch, apps/acode-cli/specs/tool-search.md R1/R11) ----
+  "settings.toolSearch.title": "On-demand tool search",
+  "settings.toolSearch.description":
+    "Controls whether sessions replace the always-loaded tool catalog with on-demand search: when enabled, model requests carry only resident tools; the rest are discovered via ToolSearch and promoted on demand. Changes take effect on the next new session or cold restore; running sessions are unaffected.",
+  "settings.toolSearch.option.auto": "Auto",
+  "settings.toolSearch.option.auto.description":
+    "The runtime decides based on model and provider capability; native provider search support is still incomplete, so this currently runs local search.",
+  "settings.toolSearch.option.local": "Local search",
+  "settings.toolSearch.option.local.description":
+    "Uses ACode's local search algorithm to discover tools on demand; the tool projection differs from the full resident catalog.",
+  "settings.toolSearch.option.off": "Off",
+  "settings.toolSearch.option.off.description":
+    "All tools stay resident in every request, exactly as before.",
+  "settings.toolSearch.defaultTag": "Default",
+  "settings.toolSearch.saveError": "Couldn't save the setting. Please try again.",
+  "settings.toolSearch.experimentalNote":
+    "Experimental: model providers do not fully support native ToolSearch yet, and native mode is not implemented (it is only accepted via the CLI flag --toolsearch-mode and fails before send). Local search changes the tool projection sent to the model. The default (Off) keeps behavior exactly as it is today.",
   // ---- MCP sampling / resources ----
   "settings.mcp.sampling.label": "Allow model sampling",
   "settings.mcp.sampling.description":

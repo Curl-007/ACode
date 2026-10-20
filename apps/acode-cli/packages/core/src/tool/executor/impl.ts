@@ -43,6 +43,8 @@ export class ToolExecutorImpl implements ToolExecutor {
       pdfDocumentPort: options.pdfDocumentPort,
       model: options.model,
       embeddedSearchBackend: options.embeddedSearchBackend,
+      // 工具搜索 context 读取缝（specs/tool-search.md R8）。
+      getToolSearchContext: options.getToolSearchContext,
       nativeSearchEnhancementsEnabled: options.nativeSearchEnhancementsEnabled,
       skillPort: options.skillPort,
       liveBuildSnapshotPort: options.liveBuildSnapshotPort,

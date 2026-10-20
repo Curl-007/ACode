@@ -128,7 +128,8 @@ async function execGitNoThrow(
     const result = await execFile(GIT_COMMAND, args, {
       cwd: workingDirectory,
       // git 调用硬化漏斗（specs/git-invocation-hardening.md 消费点 #1）：
-      // 防弹窗挂死/hooks 停用/协议白名单/防串仓，参数组装语义不动。
+      // 防弹窗挂死/hooks 停用/防串仓，参数组装语义不动。只读本地命令面走
+      // 协议默认全拒（spec R3 修订：无远端命令，不声明 allowedProtocols）。
       env: getCliGitInvocationEnv(),
       encoding: "utf8",
       maxBuffer: DEFAULT_COMMAND_MAX_BUFFER_BYTES,

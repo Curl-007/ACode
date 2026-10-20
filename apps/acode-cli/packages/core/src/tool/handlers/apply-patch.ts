@@ -78,6 +78,9 @@ const APPLY_PATCH_PROVIDER_DESCRIPTION = [
 // 与 Edit 同值（MAX_EDIT_FILE_SIZE_BYTES）：同为经 readTextFile 全量读入的编辑面。
 const MAX_PATCH_FILE_SIZE_BYTES = 1024 * 1024 * 1024;
 const PATCH_NOT_READ_MESSAGE = "File has not been read yet. Read it first before patching it.";
+// partial view（token 上限截断的 Read）与「从未读过」区分文案（specs/post-compact-read-state.md R3）。
+const PATCH_PARTIAL_VIEW_MESSAGE =
+  "File was read with a truncated view, so its full contents are not in your context. Read the range covering your patch (offset/limit) before patching it.";
 const PATCH_STALE_MESSAGE =
   "File has been modified since read, either by the user or by a linter. Read it again before attempting to patch it.";
 const PATCH_FRESHNESS_SUFFIX = " (file state is current in your context — no need to Read it back)";
@@ -148,8 +151,12 @@ function getPatchableReadStateFailure(
   if (!readFileState) return undefined;
 
   const lastRead = findEditableReadFileState(readFileState, filePath);
-  if (!lastRead || lastRead.isPartialView) {
+  if (!lastRead) {
     return patchFailure(ApplyPatchErrorCode.FILE_NOT_READ, PATCH_NOT_READ_MESSAGE);
+  }
+  // partial view 与「从未读过」区分文案（specs/post-compact-read-state.md R3），错误码不变。
+  if (lastRead.isPartialView) {
+    return patchFailure(ApplyPatchErrorCode.FILE_NOT_READ, PATCH_PARTIAL_VIEW_MESSAGE);
   }
   if (!hasPatchTargetChanged(lastRead, currentRead)) return undefined;
   if (isStrictFullRead(lastRead) && lastRead.content === currentRead.content) return undefined;

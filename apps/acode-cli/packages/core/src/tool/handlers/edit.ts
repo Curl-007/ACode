@@ -68,6 +68,10 @@ const NON_UNIQUE_OLD_STRING_MESSAGE =
   "old_string is not unique in the file. Provide more surrounding context or set replace_all to true.";
 const MAX_EDIT_FILE_SIZE_BYTES = 1024 * 1024 * 1024;
 const EDIT_NOT_READ_MESSAGE = "File has not been read yet. Read it first before writing to it.";
+// partial view（token 上限截断的 Read）与「从未读过」必须区分文案
+// （specs/post-compact-read-state.md R3）：合并报"未读"会让模型重读整文件仍被截断、原地打转。
+const EDIT_PARTIAL_VIEW_MESSAGE =
+  "File was read with a truncated view, so its full contents are not in your context. Read the range covering your edit (offset/limit) before writing to it.";
 const EDIT_STALE_MESSAGE =
   "File has been modified since read, either by the user or by a linter. Read it again before attempting to write it.";
 const EDIT_FRESHNESS_SUFFIX = " (file state is current in your context — no need to Read it back)";
@@ -443,8 +447,11 @@ function getEditableReadStateFailure(
   if (!readFileState) return undefined;
 
   const lastRead = findEditableReadFileState(readFileState, filePath);
-  if (!lastRead || lastRead.isPartialView) {
+  if (!lastRead) {
     return editFailure(EditErrorCode.FILE_NOT_READ, EDIT_NOT_READ_MESSAGE);
+  }
+  if (lastRead.isPartialView) {
+    return editFailure(EditErrorCode.FILE_NOT_READ, EDIT_PARTIAL_VIEW_MESSAGE);
   }
 
   if (!hasReadStateChanged(lastRead, currentRead)) return undefined;

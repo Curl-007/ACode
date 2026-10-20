@@ -22,7 +22,8 @@ import { resolveModelRequestSessionTypeFromTaskType } from "./model-request-sess
 import {
   defaultCompactPhaseForTrigger,
   defaultCompactReasonForTrigger,
-  buildPostCompactReadStateReminderEntries,
+  pruneReadFileStateAfterCompact,
+  selectPostCompactReadStateReminders,
   countCompactPreservedRuntimeMessages,
   buildPostCompactRuntimeEntries,
   compactFailureReasonFromError,
@@ -627,12 +628,14 @@ async function compactActiveConversationImpl(
             workspaceRoot: this.workspaceRoot,
           })
         : undefined;
+      const readStateReminders = selectPostCompactReadStateReminders({
+        preservedEntries,
+        readFileState: this.readFileState,
+        workingDirectory: this.workingDirectory,
+      });
       const postCompactReminderEntries = [
         ...(planFileReferenceEntry ? [planFileReferenceEntry] : []),
-        ...buildPostCompactReadStateReminderEntries({
-          preservedEntries,
-          readFileState: this.readFileState,
-        }),
+        ...readStateReminders.entries,
       ];
 
       const modelCompleteEvent = this.createEvent(
@@ -766,7 +769,21 @@ async function compactActiveConversationImpl(
       );
       // 压缩重写消息前缀，下个请求缓存必 miss（prompt-cache-diagnostics.md R1）。
       this.pendingCacheMissCause = "compaction";
-      this.readFileState.clear();
+      // 压缩后已读状态按「模型可见」口径修剪，不再整表清空
+      // （specs/post-compact-read-state.md R1）：preserved tail 的 Read/Write/Edit 目标与
+      // 内容投影提醒的文件保留，其余清除、要求重新 Read。保留条目写前仍走 stale 守卫
+      // （R2，mtime/size 对照磁盘），不会放行脏写。整表清空会让模型对上下文里仍看得见
+      // 的读取事实报 FILE_NOT_READ，是长对话高频误报的根因。
+      const readStatePrune = pruneReadFileStateAfterCompact({
+        contentProjectedPaths: readStateReminders.contentProjectedPaths,
+        preservedEntries,
+        readFileState: this.readFileState,
+        workingDirectory: this.workingDirectory,
+      });
+      this.logger?.debug("compact: pruned read file state", {
+        removedCount: readStatePrune.removedCount,
+        retainedCount: readStatePrune.retainedCount,
+      });
       return {
         displayText: "Compacted",
         entries: postCompactEntries,

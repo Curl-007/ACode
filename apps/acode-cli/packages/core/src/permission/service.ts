@@ -47,6 +47,9 @@ import {
 } from "./dont-ask-mode.js";
 // 批 2 R2 决策日志 + R9 来源台账喂入（checkPermission 终局单漏斗，见下）。
 import { appendPermissionDecisionLogEntry } from "./decision-log.js";
+// auto-deny 闭集逐条归因（specs/permission-auto-deny-reasons.md R1/R2）：deny 终局
+// 经结构性分类落 denyReason token 进决策日志；词表本体与 forged 路径共用同一模块。
+import { classifyAutoDenyRuleId } from "./auto-deny-reasons.js";
 import { recordTranscriptFileProvenanceFromAllowedCall } from "./file-provenance-ledger.js";
 // 技能激活期作用域消费（skill-frontmatter-governance R4 接线）：匹配语义裁决在叶子头注。
 import {
@@ -282,6 +285,10 @@ export class PermissionService {
     // 决策日志每个终局决策恰一条（env 门控，关闭态零 IO，写入失败静默）；中间被
     // 丢弃的候选决策（如 policy ask 托底时被覆盖的模式层判定）不落。allow 决策把
     // 写族工具喂进 transcript 文件来源台账（近似性语义见台账模块头注）。
+    // auto-deny 闭集逐条归因（specs/permission-auto-deny-reasons.md R2）：deny 决策
+    // 经结构性分类（ruleId 精确 + 前缀）落 denyReason token；映射不了省略字段不猜。
+    const denyReason =
+      decision.decision === "deny" ? classifyAutoDenyRuleId(decision.ruleId) : undefined;
     appendPermissionDecisionLogEntry(
       {
         ts: Date.now(),
@@ -293,6 +300,7 @@ export class PermissionService {
         ...(decision.sideEffectScope ? { sideEffectScope: decision.sideEffectScope } : {}),
         ...(context.sessionId ? { sessionId: context.sessionId } : {}),
         ...(decision.reason ? { reason: decision.reason } : {}),
+        ...(denyReason ? { denyReason } : {}),
       },
       context.workingDirectory ? { workingDirectory: context.workingDirectory } : {},
     );

@@ -20,6 +20,10 @@ import type { ToolMetadata } from "../types.js";
 import type { RuntimeMessageEntry } from "../../agent/message-history.js";
 import { LOCAL_TOOL_SEARCH_DESCRIPTION } from "./description.js";
 import { collectToolSearchHistory, projectToolReferences } from "./history.js";
+import {
+  ToolSearchCapabilityError,
+  type ToolSearchExposureReason,
+} from "./capability.js";
 
 const LOCAL_ADDED_TOOLS_NOTICE = `The following deferred tools are available via ${TOOL_SEARCH_NAME}. Use query "select:<name>[,<name>...]" to load their complete schemas, then call them through ${DEFERRED_TOOL_CALL_NAME} with {name, input}. Call resident tools directly:`;
 const MAX_REMOVED_NAME_LINES = 30;
@@ -41,6 +45,8 @@ export interface ToolSearchModelFacts {
  * 模式解析（R1）：off 直通；显式 native 在波 1 发送前显式报错（不静默降级）；
  * auto 按 native 能力（波 1 恒 false）→ local → off 逐级回落；显式 local 要求
  * 模型支持普通工具调用，否则同样发送前报错。
+ * R13：报错路径统一携带闭集信号（ToolSearchCapabilityError.signal，fail 档），
+ * message 保持波 1 文案；消费方按 signal 字段区分原因档位，不解析 message。
  */
 export function resolveToolSearchMode(
   mode: ToolSearchMode,
@@ -49,19 +55,25 @@ export function resolveToolSearchMode(
   if (mode === "off") return "off";
   if (mode === "native") {
     // 波 1 未实装 native（spec R1/非目标）：显式请求必须报错，不能静默降级。
-    throw new Error(
+    throw new ToolSearchCapabilityError(
+      "native_not_implemented",
       "native tool search is not implemented in this build; use --toolsearch-mode local or auto",
     );
   }
   if (mode === "auto" && facts.capability?.protocolSupported && facts.capability.defaultEnabled) {
     // 波 2 native 实装后此分支才可达；defaultEnabled 恒 false 时继续向下解析。
-    throw new Error(
+    throw new ToolSearchCapabilityError(
+      "native_not_implemented",
       "native tool search is not implemented in this build; use --toolsearch-mode local or auto",
     );
   }
   if (facts.supportsToolCall) return "local";
   if (mode === "local")
-    throw new Error("tool search mode local requires a provider that supports tool calls");
+    // 显式 local + 模型无普通工具调用能力：R1 发送前报错（fail 档，换模型前重试无意义）。
+    throw new ToolSearchCapabilityError(
+      "tool_call_unsupported",
+      "tool search mode local requires a provider that supports tool calls",
+    );
   return "off";
 }
 
@@ -133,20 +145,20 @@ function resolveToolSearchCatalog(
   // 全部提升后仍需要控制入口处理后续目录变化，不能用剩余 deferred 数量关闭 local。
   const enabled = requestedMode !== "off" && hasConfiguredDeferred && controlsAvailable;
   const mode: ResolvedToolSearchMode = enabled ? requestedMode : "off";
-  return {
-    catalog,
-    deferred,
-    enabled,
-    mode,
-    // 降级原因闭集（R12）：一次性 debug 日志由调用方记录。
-    reason: enabled
-      ? mode
-      : requestedMode === "off"
+  // 降级原因闭集（R12/R13）：一次性 debug 日志由调用方记录。R13 分档——auto 因
+  // 模型不支持普通工具调用而降级 off 时落 tool_call_unsupported（能力事实），与
+  // 用户配置 off 的 provider_disabled（意图事实）可辨识；对照上游 tool_deferred vs
+  // tool_deferred_unavailable 的回合原因分档思想。
+  const reason: ToolSearchExposureReason = enabled
+    ? mode
+    : requestedMode === "off"
+      ? (input.mode ?? "off") === "off"
         ? "provider_disabled"
-        : !hasConfiguredDeferred
-          ? "no_deferred_tools"
-          : "tool_unavailable",
-  };
+        : "tool_call_unsupported"
+      : !hasConfiguredDeferred
+        ? "no_deferred_tools"
+        : "tool_unavailable";
+  return { catalog, deferred, enabled, mode, reason };
 }
 
 /**

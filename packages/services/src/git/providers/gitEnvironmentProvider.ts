@@ -3,11 +3,16 @@ import {
   DEFAULT_GIT_DISCOVERY_TIMEOUT_MS,
   getGitBinaryCandidates,
   getGitCommandEnv,
+  type GitCommandEnvOptions,
 } from "../config.js";
 
 export interface GitEnvironmentProvider {
   resolveGitBinary(): Promise<string | null>;
-  createCommandEnv(): NodeJS.ProcessEnv;
+  /**
+   * options 透传给 getGitCommandEnv（按调用点协议放行，specs/git-hardening-presets.md
+   * P1/P6）：缺省 = 协议全拒。无参 fake 实现仍类型兼容（可选参数）。
+   */
+  createCommandEnv(options?: GitCommandEnvOptions): NodeJS.ProcessEnv;
 }
 
 async function canExecuteGitCandidate(candidate: string, env: NodeJS.ProcessEnv): Promise<boolean> {
@@ -58,8 +63,8 @@ export function createGitEnvironmentProvider(): GitEnvironmentProvider {
       return await cachedGitBinaryPromise;
     },
 
-    createCommandEnv(): NodeJS.ProcessEnv {
-      return getGitCommandEnv();
+    createCommandEnv(options?: GitCommandEnvOptions): NodeJS.ProcessEnv {
+      return getGitCommandEnv(options);
     },
   };
 }

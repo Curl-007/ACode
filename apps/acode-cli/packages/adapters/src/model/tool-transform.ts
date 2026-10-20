@@ -6,6 +6,7 @@ import { anthropic } from "@ai-sdk/anthropic";
 import { jsonSchema, tool, type ToolSet } from "ai";
 import { ModelErrorCode, type JsonSchema, type ModelToolContract } from "@acode/contracts";
 import { AiSdkModelAdapterError } from "./errors.js";
+import { ToolCapabilityStripError } from "./tool-capability-strip.js";
 import {
   adaptSchemaForStrict,
   applyModelToolSchemaDialect,
@@ -46,8 +47,10 @@ export function toAiSdkTools(
 
   const entries = tools.flatMap((contract): [string, ToolSet[string]][] => {
     if (contract.providerNative) {
-      const providerTool = toAiSdkProviderNativeTool(contract, options);
-      return providerTool ? [[contract.name, providerTool]] : [];
+      // R13 闭集信号：provider-native 编码要么成功、要么 ToolCapabilityStripError
+      // （fail 档）；旧实现 `providerTool ? [[…]] : []` 的静默空数组路径已删除——
+      // 未注册编码器/能力缺失都不允许静默丢弃工具（specs/tool-search.md R13）。
+      return [[contract.name, toAiSdkProviderNativeTool(contract, options)]];
     }
 
     const projected = projectToolSchemaForWire(contract, options, plan);
@@ -295,12 +298,25 @@ function providerOptionsForClientTool(options: AiSdkToolTransformOptions): {
   };
 }
 
+/**
+ * provider-native 工具的 wire 编码（R13 闭集信号）：返回类型不含 undefined——
+ * 编码成功或抛 ToolCapabilityStripError（fail 档，code 仍 InvalidModelRequest，
+ * failure-classifier 归档不变），不存在静默丢弃路径。message 保持既有文案。
+ */
 function toAiSdkProviderNativeTool(
   contract: ModelToolContract,
   options: AiSdkToolTransformOptions,
-): ToolSet[string] | undefined {
+): ToolSet[string] {
   if (contract.providerNative?.logicalName !== "WebSearch") {
-    return undefined;
+    // 注册表/构建事实：未登记的 logicalName 无编码器。旧实现返回 undefined 由
+    // 调用方折叠成空数组（静默丢弃）；R13 禁止静默丢弃，显式闭集报错。
+    throw new ToolCapabilityStripError(
+      "provider_native_tool_unregistered",
+      contract.name,
+      `Provider-native tool ${contract.name} (${
+        contract.providerNative?.logicalName ?? "unknown"
+      }) has no registered wire encoder`,
+    );
   }
 
   const args = contract.providerNative.args ?? {};
@@ -311,8 +327,11 @@ function toAiSdkProviderNativeTool(
   switch (options.providerKind) {
     case "anthropic":
       if (!options.supportsNativeWebSearch) {
-        throw new AiSdkModelAdapterError(
-          ModelErrorCode.InvalidModelRequest,
+        // 目的工具能力缺失（对照上游 fail:foundry-purpose-request）：模型属性面
+        // 声明不支持 native WebSearch，handler 门禁后的第二道防线。
+        throw new ToolCapabilityStripError(
+          "native_web_search_model_unsupported",
+          contract.name,
           "Effective Model Config does not support provider-native WebSearch",
         );
       }
@@ -323,8 +342,10 @@ function toAiSdkProviderNativeTool(
       }) as ToolSet[string];
 
     default:
-      throw new AiSdkModelAdapterError(
-        ModelErrorCode.InvalidModelRequest,
+      // 后端 API 面不编码 provider-native web search（openai 兼容后端必然缺）。
+      throw new ToolCapabilityStripError(
+        "native_web_search_provider_unencodable",
+        contract.name,
         `Provider API kind ${options.providerKind ?? "unknown"} does not encode provider-native WebSearch`,
       );
   }

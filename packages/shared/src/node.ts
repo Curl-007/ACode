@@ -85,13 +85,20 @@ export {
 } from "./node/credentialKeychain.js";
 export {
   ACODE_MANAGED_POLICY_FILE_ENV,
+  MANAGED_POLICY_KEY_METADATA,
+  getManagedPolicyKeyMetadata,
   loadManagedPolicyFile,
   resolveManagedPolicyFilePath,
+  type ManagedPolicyConsumerScope,
   type ManagedPolicyFileData,
   type ManagedPolicyFileLoadResult,
   type ManagedPolicyFileOptions,
   type ManagedPolicyFileStatus,
   type ManagedPolicyInvalidKind,
+  type ManagedPolicyKey,
+  type ManagedPolicyKeyMetadata,
+  type ManagedPolicyKeyMetadataRegistry,
+  type ManagedPolicyRedactMode,
   type ManagedPolicyRule,
 } from "./node/managedPolicy.js";
 export {

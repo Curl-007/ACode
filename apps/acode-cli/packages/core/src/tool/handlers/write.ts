@@ -19,13 +19,15 @@ import {
 import { createStructuredPatch } from "../diff.js";
 import { formatWriteModelContent } from "./write-output.js";
 import { isConflictUri, resolveConflictWriteToolCall } from "./write-conflict.js";
+// 写前新鲜度守卫（未读/partial/stale 三态拒绝）整体迁出至同级模块：
+// legacy ratchet 对 write.ts 有 max-file-lines 400 上限（specs/post-compact-read-state.md）。
+import { assertWritableExistingFileIsFresh } from "./write-freshness.js";
 import { stampMemoryOriginSessionId } from "../../memory/origin-session.js";
 // LSP 诊断回流（specs/lsp-diagnostics-loop.md §5-6），与 edit.ts 同一钩子面。
 import { consumeDeferredDiagnostics, consumePendingModelContent, runPostWriteDiagnostics, stashPendingModelContent } from "../../lsp/edit-diagnostics-hook.js";
 import { resolveWorkspacePath } from "../path-policy.js";
 import {
   createReadFileStateKey,
-  findLatestReadFileState,
   normalizeReadFileStateMtimeMs,
 } from "../read-file-state.js";
 import { createReadFileStateMetadataFromEntry } from "../read-file-state-metadata.js";
@@ -42,10 +44,6 @@ const WRITE_PROVIDER_DESCRIPTION = [
   "",
   "When to use: creating a new file, or fully replacing one you've already Read. Overwriting an existing file you haven't Read will fail. For partial changes, use Edit instead.",
 ].join("\n");
-
-const WRITE_NOT_READ_MESSAGE = "File has not been read yet. Read it first before writing to it.";
-const WRITE_STALE_MESSAGE =
-  "File has been modified since read, either by the user or by a linter. Read it again before attempting to write to it.";
 
 const writeHandler: ToolHandler = async (input, context) => {
   const { file_path, content } = WriteInputSchema.parse(input) as WriteInput;
@@ -296,67 +294,6 @@ function createWriteTrace(context: ToolExecutionContext): TraceContext {
     sessionId: context.sessionId,
     turnId: context.turnId,
   } as unknown as TraceContext;
-}
-
-function assertWritableExistingFileIsFresh(
-  filePath: string,
-  currentRead: FileSystemReadTextResult,
-  readFileState: ReadFileStateMap | undefined,
-): void {
-  const lastRead = findLatestReadFileState(readFileState, filePath);
-  if (!lastRead || lastRead.isPartialView) {
-    throw createCoreError(CoreErrorType.ToolExecutionFailed, WRITE_NOT_READ_MESSAGE, {
-      context: {
-        code: "write_file_not_read",
-        filePath,
-      },
-      recoverable: true,
-    });
-  }
-
-  if (!hasReadStateChanged(lastRead, currentRead)) return;
-  if (isStrictFullRead(lastRead) && lastRead.content === currentRead.content) return;
-
-  throw createCoreError(CoreErrorType.ToolExecutionFailed, WRITE_STALE_MESSAGE, {
-    context: {
-      code: "write_file_stale",
-      filePath,
-    },
-    recoverable: true,
-  });
-}
-
-function hasReadStateChanged(
-  lastRead: ReadFileStateEntry,
-  currentRead: FileSystemReadTextResult,
-): boolean {
-  const currentRevisionId = currentRead.revision?.id;
-  if (lastRead.revisionId && currentRevisionId && lastRead.revisionId !== currentRevisionId) {
-    return true;
-  }
-
-  const currentMtimeMs = currentRead.revision?.mtimeMs;
-  if (lastRead.mtimeMs !== undefined && currentMtimeMs !== undefined) {
-    // 让已确认内容未变的 Write 被误判为 stale。
-    const normalizedCurrentMtimeMs = normalizeReadFileStateMtimeMs(currentMtimeMs);
-    const normalizedLastReadMtimeMs = normalizeReadFileStateMtimeMs(lastRead.mtimeMs);
-    const mtimeAdvanced =
-      normalizedCurrentMtimeMs !== undefined &&
-      normalizedLastReadMtimeMs !== undefined &&
-      normalizedCurrentMtimeMs > normalizedLastReadMtimeMs;
-    return mtimeAdvanced || lastRead.sizeBytes !== currentRead.sizeBytes;
-  }
-
-  if (lastRead.sizeBytes !== undefined && lastRead.sizeBytes !== currentRead.sizeBytes) {
-    return true;
-  }
-
-  return isStrictFullRead(lastRead) && lastRead.content !== currentRead.content;
-}
-
-function isStrictFullRead(entry: ReadFileStateEntry): boolean {
-  if (entry.isPartialView) return false;
-  return (entry.offset ?? 1) <= 1 && entry.limit === undefined;
 }
 
 function updateReadFileStateAfterWrite(

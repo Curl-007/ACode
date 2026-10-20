@@ -93,6 +93,132 @@ export interface ManagedPolicyFileLoadResult {
   readonly invalidReason?: string;
 }
 
+// ---------------------------------------------------------------------------
+// 每键元数据三字段试点（T2-s5② 先行件；spec 见
+// packages/shared/specs/managed-policy-key-metadata.md）。
+//
+// 出处：价值提取第二轮台账 R2:1211-1213——企业配置「每键元数据 schema」中的
+// redact / support.scopes / predicates.warn 三字段先在现有权限地板 5 键上试点。
+// 试点边界（spec R5）：只挂元数据——不新增策略键、不做 GPO 三源分层、不改消费方
+// 行为；元数据是构建期静态注册表，不混入 policy wire 数据，loadManagedPolicyFile
+// 全程不读它（加载行为与试点前逐字节一致）。
+// ---------------------------------------------------------------------------
+
+/**
+ * 值脱敏声明（台账 redact 字段，试点取 "hash"|"keep" 两值口径）。
+ * - `"hash"`：值可能含内部工具名/命令片段，日志与支持包只允许 sha256 指纹形态。
+ * - `"keep"`：值本身可原样出现（布尔开关无敏感内容）。
+ *
+ * 声明而非执行：脱敏机制单源于 specs/log-privacy-redaction.md，本模块不做脱敏。
+ */
+export type ManagedPolicyRedactMode = "hash" | "keep";
+
+/**
+ * 消费面闭集（台账 support.scopes 字段的 ACode 适配）：声明键在哪些消费面生效。
+ * - `"cli-permission-floor"`：CLI 权限地板（apps/acode-cli adapters managed-policy.ts）。
+ * - `"host-bot-permission"`：host bot 本机确认门槛（services botPermissionLocalApproval.ts）。
+ *
+ * 新增消费面须先扩此闭集再改注册表（spec R2），防止 scopes 与实际读取方漂移。
+ */
+export type ManagedPolicyConsumerScope = "cli-permission-floor" | "host-bot-permission";
+
+/**
+ * 键名闭集 = wire 数据键。注册表用它做全覆盖映射（spec R1）：新增策略键必须
+ * 同时补齐该键元数据，否则 typecheck 不过——完整性由类型门禁保证，不靠人肉记忆。
+ */
+export type ManagedPolicyKey = keyof ManagedPolicyFileData;
+
+/** 单键元数据（三字段）。K 参数给 predicates.warn 提供该键的强类型入参。 */
+export interface ManagedPolicyKeyMetadata<K extends ManagedPolicyKey = ManagedPolicyKey> {
+  readonly redact: ManagedPolicyRedactMode;
+  readonly support: { readonly scopes: readonly ManagedPolicyConsumerScope[] };
+  readonly predicates: {
+    /**
+     * 值警告纯函数（台账 predicates.warn）：解析值落入「部署了但无任何收紧效果」
+     * 时返回管理员面向警告文案，否则 undefined。警告只复述既有 hasContent 语义
+     * （空数组/显式 false 等同未部署；managed 层只能收紧），不参与任何
+     * 权限/floor/同意判定——是否展示由未来消费方决定（spec R2/R4）。
+     */
+    readonly warn?: (
+      value: ManagedPolicyFileData[K],
+      policy: ManagedPolicyFileData,
+    ) => string | undefined;
+  };
+}
+
+/** 全覆盖映射 = 每键元数据完整性的类型门禁（spec R1）。 */
+export type ManagedPolicyKeyMetadataRegistry = {
+  readonly [K in ManagedPolicyKey]: ManagedPolicyKeyMetadata<K>;
+};
+
+// 警告文案只复述 loadManagedPolicyFile 既有的 hasContent 判定（`length > 0` 与
+// `=== true` 归一，spec R2.predicates.warn）：空数组/显式 false 等同未部署，
+// managed 层只能收紧、不能放宽。英文与 CLI ConfigDiagnostic 管理员诊断语言一致
+// （spec R6）；文案含键路径但不回显任何规则内容（与 R3 hash 声明同纪律）。
+function warnEmptyTighteningList(keyPath: string) {
+  return (value: { readonly length: number }): string | undefined =>
+    value.length === 0
+      ? `${keyPath} is an empty list: it contributes no tightening rules and is equivalent to the key being absent. The managed layer can only tighten; it never loosens rules configured elsewhere.`
+      : undefined;
+}
+
+function warnExplicitFalse(keyPath: string) {
+  return (value: boolean): string | undefined =>
+    value === false
+      ? `${keyPath} is explicitly false: the managed layer can only tighten, so false has no effect and is equivalent to the key being absent. Remove the key instead of setting it to false.`
+      : undefined;
+}
+
+/** 每键元数据注册表（构建期冻结事实，spec R3/R4）。 */
+export const MANAGED_POLICY_KEY_METADATA: ManagedPolicyKeyMetadataRegistry = Object.freeze({
+  deny: Object.freeze({
+    // 规则含 toolName/ruleContent，可能携带内部工具名 → hash（spec R3 注）。
+    redact: "hash",
+    support: Object.freeze({ scopes: Object.freeze(["cli-permission-floor"] as const) }),
+    predicates: Object.freeze({ warn: warnEmptyTighteningList("permissions.deny") }),
+  }),
+  ask: Object.freeze({
+    redact: "hash",
+    support: Object.freeze({ scopes: Object.freeze(["cli-permission-floor"] as const) }),
+    predicates: Object.freeze({ warn: warnEmptyTighteningList("permissions.ask") }),
+  }),
+  disallowedTools: Object.freeze({
+    redact: "hash",
+    support: Object.freeze({ scopes: Object.freeze(["cli-permission-floor"] as const) }),
+    predicates: Object.freeze({ warn: warnEmptyTighteningList("permissions.disallowedTools") }),
+  }),
+  disableBypassPermissionsMode: Object.freeze({
+    // 布尔无敏感内容 → keep；host 只读文件级 status，不消费该键值（spec R3）。
+    redact: "keep",
+    support: Object.freeze({ scopes: Object.freeze(["cli-permission-floor"] as const) }),
+    predicates: Object.freeze({
+      warn: warnExplicitFalse("permissions.disableBypassPermissionsMode"),
+    }),
+  }),
+  requireLocalPermissionApproval: Object.freeze({
+    redact: "keep",
+    // CLI 接受该键但忽略（不进 floor），语义仅由 host botsService 消费——单 scope
+    // 正是把这条文档化事实变成机器可读（spec R2）。
+    support: Object.freeze({ scopes: Object.freeze(["host-bot-permission"] as const) }),
+    predicates: Object.freeze({
+      warn: warnExplicitFalse("permissions.requireLocalPermissionApproval"),
+    }),
+  }),
+});
+
+/**
+ * 类型化访问器：防止消费方散落手写字面量键名。闭集外键返回 undefined（不抛、
+ * 不回落默认值），与 missing 态同一克制形态（spec R4）；hasOwn 判定使
+ * `__proto__`/`constructor` 等原型链键也落在 undefined 分支。
+ */
+export function getManagedPolicyKeyMetadata<K extends ManagedPolicyKey>(
+  key: K,
+): ManagedPolicyKeyMetadata<K> | undefined {
+  return Object.hasOwn(MANAGED_POLICY_KEY_METADATA, key)
+    ? MANAGED_POLICY_KEY_METADATA[key]
+    : undefined;
+}
+
 export function resolveManagedPolicyFilePath(
   options: ManagedPolicyFileOptions = {},
 ): string {

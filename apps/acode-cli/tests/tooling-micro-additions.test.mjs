@@ -7,15 +7,20 @@ import { after, test } from "node:test";
 /**
  * K9（工具微增补）验收测试：invalid 反馈护栏 + open 工具。
  *
- * 规格 apps/acode-cli/specs/tooling-micro-additions.md 验收场景 1–9：
- * - invalid：unknown 就近建议 / 无近似列全集 / schema 逐字段截断 / 零副作用 /
- *   主动调 invalid 的处理 / 错误分类零变化（判定逻辑只有载体变化）；
+ * 规格 apps/acode-cli/specs/tooling-micro-additions.md 验收场景 1–9 +
+ * specs/permission-auto-deny-reasons.md R3（取代 R1 的 unknown-name 回执部分）：
+ * - invalid：unknown name 统一防伪回应（不回显/不建议/不列清单）/ schema 逐字段截断 /
+ *   零副作用 / 主动调 invalid 的处理 / 错误分类零变化（判定逻辑只有载体变化）；
  * - open：URL 白名单 / file:// 拒绝 / 权限档断言 / 平台缺失不注册 / reveal 降级 /
  *   日志不含 URL/路径本体。
  */
 
-const { formatInvalidSchemaViolationReceipt, formatInvalidUnknownToolReceipt, invalidToolEntry, suggestToolNames } =
+const { formatInvalidSchemaViolationReceipt, invalidToolEntry } =
   await import("../packages/core/src/tool/handlers/invalid.ts");
+// 工具名防伪统一回应常量（specs/permission-auto-deny-reasons.md R3）。
+const { NO_SUCH_TOOL_MODEL_RESPONSE } = await import(
+  "../packages/core/src/permission/auto-deny-reasons.ts"
+);
 const { createOpenToolEntry } = await import("../packages/core/src/tool/handlers/open.ts");
 const { createToolRegistry } = await import("../packages/core/src/tool/registry.ts");
 const { executeToolCall } = await import("../packages/core/src/tool/executor/call-runner.ts");
@@ -147,9 +152,9 @@ function makeLogger() {
   };
 }
 
-// ── 场景 1：unknown name 就近建议 / 无近似列注册表全集 ─────────────────
+// ── 场景 1：unknown name 统一防伪回应（permission-auto-deny-reasons.md R3） ──
 
-test("invalid: unknown tool name suggests the closest registered name (edit distance 1)", async () => {
+test("invalid: near-miss unknown tool name gets the uniform anti-forgery receipt", async () => {
   const registry = createToolRegistry();
   registry.register(makeEntry("Write"));
   registry.register(makeEntry("Read"));
@@ -159,12 +164,14 @@ test("invalid: unknown tool name suggests the closest registered name (edit dist
 
   assert.equal(result.success, false, "unknown-name 调用仍是失败回执（判定语义照旧）");
   assert.equal(result.error.type, CoreErrorType.ToolNotFound, "错误分类不变：tool_not_found");
-  assert.match(result.modelContent, /No such tool available: `Writee`/, "回执保留原始工具名");
-  assert.match(result.modelContent, /Did you mean: `Write`\?/, "就近建议给出编辑距离 1 的 Write");
-  assert.doesNotMatch(result.modelContent, /Did you mean[^`]*`Read`/, "不把距离过远的名字混进建议");
+  // 统一回应逐字节等于常量：不回显请求名（不存在性细节）、不给就近建议（命名猜测
+  // 确认 = 探测 oracle）、不列注册表清单（服务面重建信道）。
+  assert.equal(result.modelContent, NO_SUCH_TOOL_MODEL_RESPONSE);
+  assert.ok(!result.modelContent.includes("Writee"), "不回显请求名");
+  assert.ok(!result.modelContent.includes("Write`"), "不确认近似真实名的存在");
 });
 
-test("invalid: unknown tool name without near match lists the full registry snapshot", async () => {
+test("invalid: no-near-match unknown name is indistinguishable from a near miss", async () => {
   const registry = createToolRegistry();
   registry.register(makeEntry("Write"));
   registry.register(makeEntry("Read"));
@@ -173,28 +180,22 @@ test("invalid: unknown tool name without near match lists the full registry snap
   const result = await runToolCall(registry, { id: "call-k9-2", name: "zzz", input: {} });
 
   assert.equal(result.success, false);
-  assert.match(result.modelContent, /No similar tool name found/);
+  // 「拼错 vs 伪造」不可区分：两种形态逐字节同一回应。
+  assert.equal(result.modelContent, NO_SUCH_TOOL_MODEL_RESPONSE);
   for (const name of ["Write", "Read", "Grep"]) {
-    assert.ok(
-      result.modelContent.includes(`\`${name}\``),
-      `全集包含注册表工具名 ${name}`,
-    );
+    assert.ok(!result.modelContent.includes(name), `注册表工具名 ${name} 不进回应`);
   }
-  // 全集来自注册表快照：新注册的工具自动进入回执，不是硬编码清单。
-  registry.register(makeEntry("BrandNewTool"));
-  const refreshed = formatInvalidUnknownToolReceipt("zzz", registry);
-  assert.match(refreshed, /`BrandNewTool`/, "后注册的工具名进入全集（快照而非硬编码）");
 });
 
-test("invalid: suggestToolNames honors distance bound and cap", () => {
-  assert.deepEqual(suggestToolNames("Writee", ["Write", "Read", "Grep"]), ["Write"]);
-  assert.deepEqual(suggestToolNames("read", ["Read"]), ["Read"], "大小写差异编辑距离 ≤2 仍可建议");
-  assert.deepEqual(suggestToolNames("zzz", ["Write", "Read"]), []);
-  assert.deepEqual(
-    suggestToolNames("Rea", ["Read", "Reap", "Reat", "Real", "Road"]),
-    ["Read", "Real", "Reap"],
-    "按（距离, 字典序）排序后最多 3 个建议",
-  );
+test("invalid: empty/whitespace tool name gets the same uniform receipt", async () => {
+  const registry = createToolRegistry();
+  registry.register(makeEntry("Write"));
+
+  const result = await runToolCall(registry, { id: "call-k9-2b", name: "  ", input: {} });
+
+  assert.equal(result.success, false);
+  assert.equal(result.error.type, CoreErrorType.ToolNotFound);
+  assert.equal(result.modelContent, NO_SUCH_TOOL_MODEL_RESPONSE, "空名同档统一回应");
 });
 
 // ── 场景 2：schema 违例逐字段（路径 + 期望 + 截断实际值） ────────────────
@@ -280,26 +281,22 @@ test("invalid: malformed call executes zero tools (execution counter stays 0)", 
   assert.equal(executions, 0, "schema 违例分支不执行任何 handler");
 });
 
-// ── 场景 4：模型主动调 invalid → 按 unknown-name 口径处理 ────────────────
+// ── 场景 4：模型主动调 invalid → 同一防伪口径（R3） ──────────────────────
 
-test("invalid: proactive call to `invalid` is answered as a non-callable surface", async () => {
+test("invalid: proactive call to `invalid` gets the same uniform anti-forgery receipt", async () => {
   const registry = createToolRegistry();
   registry.register(makeEntry("Write"));
   // invalid 不在模型可主动调用的注册表里（providerVisible=false 的引擎载体），
-  // 因此模型主动调它落在引擎 unknown-name 分支——与真实运行时形态一致。
+  // 因此模型主动调它落在引擎 registry-miss 分支——与真实运行时形态一致。
   const result = await runToolCall(registry, { id: "call-k9-5", name: "invalid", input: {} });
 
   assert.equal(result.success, false);
   assert.equal(result.error.type, CoreErrorType.ToolNotFound);
-  assert.match(
-    result.modelContent,
-    /not a tool you can call/,
-    "回执说明 invalid 非主动调用面",
-  );
-  assert.match(result.modelContent, /`Write`/, "仍列出可用工具面帮助模型回到正轨");
+  // 不解释内部载体细节（那是不存在性细节的确认面），也不借回应回显工具清单。
+  assert.equal(result.modelContent, NO_SUCH_TOOL_MODEL_RESPONSE);
 
   // 若整合方把 entry 注册进注册表（providerVisible=false），handler 侧同样按
-  // unknown-name 口径回执——两条路径呈现一致。
+  // 统一防伪口径回执——两条路径逐字节一致。
   const proactiveOutput = await invalidToolEntry.handler(
     {},
     {
@@ -311,8 +308,8 @@ test("invalid: proactive call to `invalid` is answered as a non-callable surface
       providerVisibleToolNames: ["Write", "Read"],
     },
   );
-  assert.match(proactiveOutput, /not a tool you can call/);
-  assert.match(proactiveOutput, /`Write`/);
+  assert.equal(proactiveOutput, NO_SUCH_TOOL_MODEL_RESPONSE);
+  assert.ok(!proactiveOutput.includes("Write"), "handler 路径不回显工具清单");
   assert.equal(invalidToolEntry.metadata.providerVisible, false, "entry 不进模型可见注册面");
 });
 

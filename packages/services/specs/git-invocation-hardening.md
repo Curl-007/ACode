@@ -88,15 +88,21 @@ fetchexclude 只会让 switch 静默落下指针文本）。偏差已登记。
 
 ### R4 网络传输面收口
 
+> **2026-10 修订（增量见 `git-hardening-presets.md` P1）**：协议面从"全局白名单
+> `GIT_ALLOW_PROTOCOL=file:https:ssh`"收紧为**默认全拒（空串）+ 按调用点显式放行**——
+> 唯一放行点是 `gitCliRepo.push`（`envOptions.allowedProtocols = GIT_PUSH_PROTOCOL_ALLOWLIST`，
+> 仍为 file/https/ssh 等值语义）；config 层同步注入 `protocol.allow=never` + 七协议
+> 逐个 never 作为 env 丢失时的第二层。全局常量 `GIT_ALLOW_PROTOCOL_WHITELIST` 废除，
+> 由 `GIT_PUSH_PROTOCOL_ALLOWLIST`（调用点白名单）取代。
+
 - `GIT_NO_LAZY_FETCH=1`：partial clone（promisor）仓库的只读命令缺对象时不得
   懒取打网络，直接报错。
-- `GIT_ALLOW_PROTOCOL=file:https:ssh`：**协议面调查结论**——services 漏斗唯一的
-  网络命令是用户显式 push（远端可为 https 或 ssh）；checkpoint/临时仓库走本地
-  file 语义。故白名单取 `file:https:ssh`，封死 `ext`（remote-helper 任意命令执行，
-  RCE 主向量）、`git`（无认证守护协议）、`fd`、`http`（明文凭据）。
+- 协议白名单判定（push 调用点）：远端可为 https 或 ssh，本地 bare 远端走 file；
+  封死 `ext`（remote-helper 任意命令执行，RCE 主向量）、`git`（无认证守护协议）、
+  `fd`、`http`（明文凭据）。
   证据用 `denied_by_claude_desktop` 哨兵封全协议，因其面纯只读；ACode 全封会
-  封死自身 push，按任务授权改为白名单形态。`http` 被有意封死（远端为 http 的
-  用户 push 会快速失败并报协议错误，登记为接受的偏差）。
+  封死自身 push，按任务授权改为白名单形态（现为按调用点 opt-in）。`http` 被有意
+  封死（远端为 http 的用户 push 会快速失败并报协议错误，登记为接受的偏差）。
 
 ### R5 既有防串仓语义不变
 
@@ -122,21 +128,28 @@ hooks**。既有 push 超时注释（"pre-push hook 可能跑测试"）描述的
 
 ## 接口
 
+> 2026-10 增量修订：`getGitCommandEnv(options?: GitCommandEnvOptions)` 与
+> `getGitHardenedConfigEntries(platform?, allowedProtocols?)` 签名扩展（默认协议
+> 全拒）、`GIT_PUSH_PROTOCOL_ALLOWLIST`/`getGitGraftNullFilePath()` 新增、
+> `GIT_ALLOW_PROTOCOL_WHITELIST` 废除——详见 `git-hardening-presets.md` 接口节。
+
 - `packages/services/src/git/config.ts`
-  - `getGitCommandEnv(): NodeJS.ProcessEnv`（签名不变，输出叠加硬化矩阵）；
-  - 新增 `getGitHardenedConfigEntries(platform?: NodeJS.Platform): ReadonlyArray<readonly [string, string]>`
+  - `getGitCommandEnv(options?): NodeJS.ProcessEnv`（输出叠加硬化矩阵）；
+  - `getGitHardenedConfigEntries(platform?, allowedProtocols?): ReadonlyArray<readonly [string, string]>`
     ——config 层矩阵数据（纯函数，platform 可注入供测试断言双平台分支）；
-  - 新增 `getGitHooksNullDevicePath(platform?: NodeJS.Platform): string`
+  - `getGitHooksNullDevicePath(platform?: NodeJS.Platform): string`
     ——win32 `\\.\NUL`，POSIX `/dev/null`（与既有 `getGitNullDevicePath()`（diff
     --no-index 用的 `NUL` 形态）分设，不改动后者语义）；
-  - 新增导出常量：`GIT_ALLOW_PROTOCOL_WHITELIST`、`GIT_HARDENING_ENV`（env 层矩阵）。
+  - 导出常量：`GIT_HARDENING_ENV`（env 层矩阵）、`GIT_PUSH_PROTOCOL_ALLOWLIST`。
 
 ## 验收场景
 
-见 `packages/services/test/gitInvocationHardening.test.ts`：
+见 `packages/services/test/gitInvocationHardening.test.ts` 与
+`gitHardeningPresets.test.ts`（增量预设）：
 
 1. env 层：`getGitCommandEnv()` 含 `GIT_TERMINAL_PROMPT=0`、`GIT_ASKPASS=""`、
-   `GIT_NO_LAZY_FETCH=1`、`GIT_ALLOW_PROTOCOL=file:https:ssh`、`GIT_OPTIONAL_LOCKS=0`（既有）。
+   `GIT_NO_LAZY_FETCH=1`、`GIT_OPTIONAL_LOCKS=0`（既有）；`GIT_ALLOW_PROTOCOL`
+   默认空串（全拒），push opt-in 时为 `file:https:ssh`（R4 修订）。
 2. config 层：`GIT_CONFIG_COUNT` 与矩阵长度一致，`GIT_CONFIG_KEY_<n>/VALUE_<n>`
    逐项对应；win32/POSIX 的 `core.hooksPath` 分支值正确（platform 注入双分支断言，
    无需 skip）。
@@ -151,8 +164,9 @@ hooks**。既有 push 超时注释（"pre-push hook 可能跑测试"）描述的
 ## 不在本项范围
 
 - acode-cli 自有 git spawn 点的同等硬化（接线需求，见消费面盘点）；
-- `safe.directory=*`、`core.useReplaceRefs=false`、`help.autocorrect=0`、
-  `fetch.bundleURI=`、`alias.remote-<sentinel>.command=`（证据中存在，但前者放宽
-  信任面、后四者服务于哨兵形态/ACode 无对应命令面，登记为可选后续）；
+- `safe.directory=*`（放宽信任面，登记为可选后续）、`fetch.bundleURI=`、
+  `credential.helper=` 清空（ACode 无 fetch 命令面/会废掉 push 认证，维持 R3 判定）；
+  ~~`core.useReplaceRefs=false`、`help.autocorrect=0`、`alias.remote-<sentinel>.command=`~~
+  ——2026-10 已随 `git-hardening-presets.md` P3/P4 落地；
 - git < 2.31 的 config 层兜底（改用 `-c` 旗标需触碰 providers/repo 层 args 组装，
   超出本项所有权；env 层仍生效）。

@@ -8,6 +8,7 @@ import { promisify } from "node:util";
 import type { PluginDiagnostic, PluginManifest, PluginStoreListing } from "@acode/contracts";
 import { isOfficialMarketplaceId, ACODE_OFFICIAL_PLUGIN_MARKETPLACE } from "@acode/contracts";
 import {
+  CLI_MARKETPLACE_GIT_PROTOCOL_ALLOWLIST,
   getCliGitInvocationEnv,
   resolveDefaultPluginMarketplaces,
   resolveOfficialMarketplaceAliasCanonicalId,
@@ -2050,9 +2051,12 @@ async function execGitCommand(args: string[], signal?: AbortSignal): Promise<voi
       // git 调用硬化漏斗（specs/git-invocation-hardening.md 消费点 #2）：叠在
       // buildMarketplaceGitEnv() 的 sanitize + 网络出口 proxy/CA 恢复之上，
       // 只加硬化 env 层，clone/sparse-checkout/checkout 参数组装语义不动。
-      // 协议白名单 file:http:https:ssh 封 ext::（marketplace 级 URL 可来自
-      // 配置/协议输入且不再复验 scheme，spawn 层是唯一收口，spec R3）。
-      env: getCliGitInvocationEnv(buildMarketplaceGitEnv()),
+      // 协议面（spec R3 修订）：漏斗默认全拒，本调用点是 CLI 面唯一网络面，
+      // 显式 opt-in file/http/https/ssh；ext:: 仍封死（marketplace 级 URL 可来自
+      // 配置/协议输入且不再复验 scheme，spawn 层协议门是唯一收口）。
+      env: getCliGitInvocationEnv(buildMarketplaceGitEnv(), process.platform, {
+        allowedProtocols: CLI_MARKETPLACE_GIT_PROTOCOL_ALLOWLIST,
+      }),
       killSignal: "SIGTERM",
       maxBuffer: 1024 * 1024 * 10,
       signal,

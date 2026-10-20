@@ -50,12 +50,22 @@ const controllerModule = await loadMain("browserView/embeddedBrowserSitePermissi
 });
 // ipcMain.handle 同步段计时包装（W1-6 接线）：注入真实 ipcSyncTiming（纯 Node，无 electron 依赖）。
 const ipcSyncTimingModule = await loadMain("ipcSyncTiming", {});
-const sitePermissionModule = await loadMain("desktopSitePermissionIpc", {
+// 注册工厂（specs/ipc-registration-factory.md）：registrar 已迁移为过工厂注册，
+// 注入真实 platformIpcRegistry（帧受信判定复用真实 rendererFrameTrust 纯函数；
+// per-window dispatcher 姊妹模块为 type-only electron 依赖，纯 Node）。
+const rendererFrameTrustModule = await loadMain("rendererFrameTrust", {});
+const perWindowDispatcherModule = await loadMain("platformIpcPerWindowDispatcher", {});
+const platformIpcRegistryModule = await loadMain("platformIpcRegistry", {
   electron: electronStub,
+  "./rendererFrameTrust.js": rendererFrameTrustModule,
+  "./ipcSyncTiming.js": ipcSyncTimingModule,
+  "./platformIpcPerWindowDispatcher.js": perWindowDispatcherModule,
+});
+const sitePermissionModule = await loadMain("desktopSitePermissionIpc", {
   "@acode/shared": sharedModule,
   zod: zodModule,
   "./browserView/embeddedBrowserSitePermissionController.js": controllerModule,
-  "./ipcSyncTiming.js": ipcSyncTimingModule,
+  "./platformIpcRegistry.js": platformIpcRegistryModule,
 });
 
 class MemoryFs {

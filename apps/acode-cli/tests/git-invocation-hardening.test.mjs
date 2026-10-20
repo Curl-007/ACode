@@ -6,14 +6,17 @@ import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
 
 /**
- * CLI git 调用硬化验收（apps/acode-cli/specs/git-invocation-hardening.md）：
+ * CLI git 调用硬化验收（apps/acode-cli/specs/git-invocation-hardening.md，含 R3
+ * 修订/R4 预设增量）：
  * 漏斗模块（packages/shared/src/git-invocation-env.ts）的矩阵/防串仓/overlay 纯断言
  * + 真实 git 临时仓功能实证（hooks 对照组、ext:: 拒绝、worktree 生命周期冒烟）。
- * 语义对齐守护参照 packages/services/test/gitInvocationHardening.test.ts。
+ * 语义对齐守护参照 packages/services/test/gitInvocationHardening.test.ts；预设
+ * 增量全闭集/replace-ref/bare repo 功能段在 packages/shared/test/
+ * gitHardeningPresets.test.ts（本文件键闭集为前缀守护，防两处重复维护全表）。
  */
 
 const {
-  CLI_GIT_ALLOW_PROTOCOL_WHITELIST,
+  CLI_MARKETPLACE_GIT_PROTOCOL_ALLOWLIST,
   CLI_GIT_HARDENING_ENV,
   getCliGitHardenedConfigEntries,
   getCliGitHooksNullDevicePath,
@@ -51,6 +54,10 @@ function polluteEnv() {
     GIT_CONFIG_VALUE_0: "*",
     GIT_CONFIG_KEY_99: "alias.x",
     GIT_CONFIG_VALUE_99: "!sh -c evil",
+    GIT_CONFIG_GLOBAL: "/evil/global-config",
+    GIT_CONFIG_SYSTEM: "/evil/system-config",
+    GIT_GRAFT_FILE: "/evil/grafts",
+    GIT_NO_REPLACE_OBJECTS: "0",
     GIT_TERMINAL_PROMPT: "1",
     GIT_ASKPASS: "/evil/askpass.sh",
     GIT_NO_LAZY_FETCH: "0",
@@ -70,7 +77,9 @@ function restoreEnv() {
   savedEnv.clear();
 }
 
-/** R2 键闭集（与 services spec R2 表一致）：矩阵键漂移会改变全部 git 命令有效配置。 */
+/** R2 基础键闭集（与 services spec R2 表一致）：矩阵键漂移会改变全部 git 命令
+ * 有效配置。R4 预设增量后的全闭集守护在 shared 侧 gitHardeningPresets.test.ts；
+ * 本文件按前缀守护（与 services gitInvocationHardening.test.ts 修订同款手法）。 */
 const EXPECTED_CONFIG_KEYS = [
   "core.hooksPath",
   "core.fsmonitor",
@@ -96,16 +105,27 @@ describe("cli git invocation hardening matrix", () => {
       assert.equal(env.GIT_ASKPASS, "");
       assert.equal(env.GIT_NO_LAZY_FETCH, "1");
       assert.equal(env.GIT_OPTIONAL_LOCKS, "0");
-      assert.equal(env.GIT_ALLOW_PROTOCOL, CLI_GIT_ALLOW_PROTOCOL_WHITELIST);
-      // CLI 面差异（spec R3）：比 services 多一项 http（marketplace 级源存量面）。
-      assert.equal(CLI_GIT_ALLOW_PROTOCOL_WHITELIST, "file:http:https:ssh");
+      // R3 修订：默认调用点协议全拒（空串），继承的放行名单不透传。
+      assert.equal(env.GIT_ALLOW_PROTOCOL, "");
+      // marketplace 调用点 opt-in 白名单：内容与旧全局白名单等值（CLI 面差异：
+      // 比 services push 白名单多 http，marketplace 级源存量面，spec R5 差异集）。
+      assert.deepEqual([...CLI_MARKETPLACE_GIT_PROTOCOL_ALLOWLIST], [
+        "file",
+        "http",
+        "https",
+        "ssh",
+      ]);
       // ext（remote-helper RCE 主向量）/git/fd 必须不在名单内。
       for (const blocked of ["ext", "git", "fd"]) {
         assert.ok(
-          !CLI_GIT_ALLOW_PROTOCOL_WHITELIST.split(":").includes(blocked),
-          `GIT_ALLOW_PROTOCOL 不应放行 ${blocked}`,
+          !CLI_MARKETPLACE_GIT_PROTOCOL_ALLOWLIST.includes(blocked),
+          `marketplace 协议放行不应含 ${blocked}`,
         );
       }
+      // R4/P3 完整性三件套 env 两件套：继承污染值不得弱化。
+      assert.equal(env.GIT_NO_REPLACE_OBJECTS, "1");
+      assert.ok(String(env.GIT_GRAFT_FILE).endsWith("no-grafts"));
+      assert.notEqual(env.GIT_GRAFT_FILE, "/evil/grafts");
       assert.equal(CLI_GIT_HARDENING_ENV.GIT_TERMINAL_PROMPT, "0");
       // pager/TERM/LC 固定（与 services 漏斗尾部同款）。
       assert.equal(env.GIT_PAGER, "cat");
@@ -127,6 +147,9 @@ describe("cli git invocation hardening matrix", () => {
       assert.equal(env.GIT_INDEX_FILE, undefined);
       assert.equal(env.GIT_CONFIG, undefined);
       assert.equal(env.GIT_CONFIG_PARAMETERS, undefined);
+      // R4/P2 入站消毒增量：全局/系统配置重定向通道被剥离。
+      assert.equal(env.GIT_CONFIG_GLOBAL, undefined);
+      assert.equal(env.GIT_CONFIG_SYSTEM, undefined);
       const entries = getCliGitHardenedConfigEntries();
       assert.equal(env.GIT_CONFIG_COUNT, String(entries.length));
       entries.forEach(([key, value], index) => {
@@ -146,10 +169,13 @@ describe("cli git invocation hardening matrix", () => {
 
   test("矩阵键闭集与关键值（services R2 表一致性，防漂移）", () => {
     const entries = getCliGitHardenedConfigEntries("linux");
+    // 前缀守护：基础 13 键顺序与 services R2 表一致；R4 增量键跟随其后
+    // （全闭集断言在 shared 侧 gitHardeningPresets.test.ts，防两处维护全表）。
     assert.deepEqual(
-      entries.map(([key]) => key),
+      entries.slice(0, EXPECTED_CONFIG_KEYS.length).map(([key]) => key),
       EXPECTED_CONFIG_KEYS,
     );
+    assert.ok(entries.length > EXPECTED_CONFIG_KEYS.length, "R4 预设增量键应已落地");
     const asMap = new Map(entries);
     assert.equal(asMap.get("core.hooksPath"), "/dev/null");
     assert.equal(asMap.get("gc.auto"), "0");
@@ -188,14 +214,25 @@ describe("cli git invocation hardening matrix", () => {
       assert.equal(overlay.set.GIT_CONFIG_KEY_0, entries[0][0]);
       assert.equal(overlay.set.GIT_TERMINAL_PROMPT, "0");
       assert.equal(overlay.set.GIT_ASKPASS, "");
-      assert.equal(overlay.set.GIT_ALLOW_PROTOCOL, CLI_GIT_ALLOW_PROTOCOL_WHITELIST);
+      // R3 修订：overlay 默认同样全拒；协议键进 unset（继承值先删，per-call 后写）。
+      assert.equal(overlay.set.GIT_ALLOW_PROTOCOL, "");
+      assert.ok(overlay.unset.includes("GIT_ALLOW_PROTOCOL"));
       assert.equal(overlay.set.GIT_OPTIONAL_LOCKS, "0");
       for (const key of ["GIT_DIR", "GIT_WORK_TREE", "GIT_CONFIG", "GIT_CONFIG_PARAMETERS"]) {
+        assert.ok(overlay.unset.includes(key), `unset 应含 ${key}`);
+      }
+      for (const key of ["GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM"]) {
         assert.ok(overlay.unset.includes(key), `unset 应含 ${key}`);
       }
       // 超出矩阵长度的继承编号键进 unset（set 只覆盖 0..N-1）。
       assert.ok(overlay.unset.includes("GIT_CONFIG_KEY_99"));
       assert.ok(overlay.unset.includes("GIT_CONFIG_VALUE_99"));
+
+      // opt-in 形态（API 对称性；当前 overlay 消费点全为本地命令，无生产放行点）。
+      const opted = getCliGitInvocationEnvOverlay(process.env, process.platform, {
+        allowedProtocols: CLI_MARKETPLACE_GIT_PROTOCOL_ALLOWLIST,
+      });
+      assert.equal(opted.set.GIT_ALLOW_PROTOCOL, "file:http:https:ssh");
     } finally {
       restoreEnv();
     }

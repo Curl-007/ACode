@@ -43,6 +43,14 @@ confirm 分级面，见 R2）。
 
 ### R1 invalid 工具（`core/src/tool/handlers/invalid.ts`）
 
+> **部分取代（specs/permission-auto-deny-reasons.md R3）**：unknown-name 回执的
+> 「回显原始名 + 就近建议 + 无近似列注册表全集」已被工具名防伪统一回应取代——
+> 名字不在实际服务清单一律回统一常量「No such tool.」（不回显请求名、不列清单、
+> 不建议、不区分拼错与伪造），原回执构成注入内容伪造工具名的探测 oracle（确认
+> 命名猜测 / 重建服务面）。schema 违例回执**保留**（目标工具真实存在，逐字段违例
+> 不构成清单泄漏）；下方 unknown name 相关条目与常量（INVALID_SUGGEST_MAX /
+> INVALID_SUGGEST_EDIT_DISTANCE）已按取代后语义删除，验收场景 1/4 已同步改写。
+
 - 注册名为 `invalid` 的工具（描述：「引擎把畸形工具调用的回执经此工具返回——检查
   建议 corrected name 与字段违例清单，下一步用正确调用重试，不要重复原样调用」）；
 - **接线点**：引擎工具分发处，对「unknown tool name」「schema 违例」两类失败的回执
@@ -101,8 +109,6 @@ Open({ target: string            // URL 或 workspace 相对/绝对路径
 
 | 常量 | 值 | 出处 |
 | --- | --- | --- |
-| `INVALID_SUGGEST_MAX` | `3` | R1 |
-| `INVALID_SUGGEST_EDIT_DISTANCE` | `≤ 2` | R1 |
 | `INVALID_VALUE_PREVIEW_CHARS` | `200` | R1 |
 | `OPEN_URL_PROTOCOLS` | `["http:", "https:"]` | R2 |
 

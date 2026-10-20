@@ -55,6 +55,10 @@ async function createSession(
     // 脚本工作流产品开关：true/false 都透传（Host 按折叠出口显式写 false 才能关；
     // 缺席 = 调用方不参与门控，CLI 按本机缺省档 onDemand 放行，见 ../types.ts 注释）。
     scriptWorkflowEnabled: payload.scriptWorkflowEnabled,
+    // 工具按需检索档位（specs/tool-search.md R3/R11）：auto/local/off 都透传（Host
+    // 折叠出口现读 AppSettings，显式 off 也要传——冷恢复兜底缓存靠它刷新旧档位）；
+    // 缺席 = 调用方不参与（旧 Host/legacy 面），CLI 按缺席即 off 处理。
+    toolSearchMode: payload.toolSearchMode,
   });
   // createSession.config 消费——草稿态 UI 的先行选择（模型/思考深度/
   // 模式）在首发之前应用并补发事件，首条 turn 即用所选配置。必须在 firstInput 之前。

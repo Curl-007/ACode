@@ -30,6 +30,7 @@ export const zhCN: ACodeCopy = {
   -v, --version    显示版本
   -p, --prompt <text>  单次运行 prompt，不打开 TUI
   --enable-workflow  为 --prompt 或 --target 开启动态工作流（默认关闭）
+  --toolsearch-mode <mode> 为 --prompt/--target/tui 设置工具按需检索模式：auto、native、local 或 off（默认 off；本构建未实装 native，发送前显式报错）
   --memory-bench   配合 --prompt 开启自动 Memory 提取并等待后退出（需已开启 Memory）
   --browser-use <mode> 启用 Browser Use backend（当前支持：headless）
   --surface <surface>  设置无头 prompt/app-server 的呈现面：terminal 或 desktop

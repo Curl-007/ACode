@@ -37,6 +37,11 @@ export const parseGlobalArgs = (argv: string[]) =>
       "enable-workflow": {
         type: "boolean",
       },
+      // 工具按需检索模式（specs/tool-search.md R1）：四值 auto|native|local|off，
+      // 取值域校验在 run.ts 的 normalizeToolSearchMode（非法值启动即报错退出）。
+      "toolsearch-mode": {
+        type: "string",
+      },
       attach: {
         multiple: true,
         type: "string",

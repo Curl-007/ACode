@@ -452,8 +452,10 @@ import {
   normalizeDynamicWorkflowMode,
   DEFAULT_SCRIPT_WORKFLOW_MODE,
   normalizeScriptWorkflowMode,
+  DEFAULT_TOOL_SEARCH_APP_MODE,
+  normalizeToolSearchAppMode,
 } from "@acode/shared";
-import type { ScriptWorkflowMode } from "@acode/shared";
+import type { ScriptWorkflowMode, ToolSearchAppMode } from "@acode/shared";
 import {
   BROKER_SOCKET_ENV,
   BROKER_UNAVAILABLE_ENV,
@@ -2125,6 +2127,31 @@ export function createLocalServices(options: {
       return DEFAULT_SCRIPT_WORKFLOW_MODE;
     }
   };
+  // 工具按需检索三档（auto/local/off）的唯一折叠出口（specs/tool-search.md R11）：
+  // 与 scriptWorkflowMode 同款**本机产品开关**——只读 AppSettings，刻意没有远端下发与
+  // 环境变量覆盖（dwf 的 env 改写链存在的理由是发布灰度的远端否决权，tool-search 没有
+  // 这个需求，取最短同构路径）。缺省/非法落 off（零行为变化红线）；读取失败按 off 并
+  // warn 一次，不阻断 runtime 创建。会话门（acodeAgentService.resolveToolSearchGate）
+  // 与未来任何消费方都必须走这里，防两条决策路分叉（同 2026-10-11 实机教训）。
+  let toolSearchSettingsWarned = false;
+  const toolSearchSettingsLogger = createServiceLogger("tool-search-settings");
+  const resolveToolSearchModeFromSettings = async (): Promise<ToolSearchAppMode> => {
+    try {
+      return (
+        normalizeToolSearchAppMode((await settingService.get()).toolSearchMode) ??
+        DEFAULT_TOOL_SEARCH_APP_MODE
+      );
+    } catch (error) {
+      // 设置读取失败不阻断装配：fail 到 off（缺席语义 = 零行为变化），只 warn 一次。
+      if (!toolSearchSettingsWarned) {
+        toolSearchSettingsWarned = true;
+        toolSearchSettingsLogger.warn(undefined, "工具检索档位设置读取失败，按缺省档（off）处理", {
+          errorMessage: error instanceof Error ? error.message : String(error),
+        });
+      }
+      return DEFAULT_TOOL_SEARCH_APP_MODE;
+    }
+  };
   // OffPeakTaskService 单例在下方 DI register IIFE 中创建（晚于 agent service）；
   // 用前向引用 holder 惰性绑定——offPeak/create 协议请求只会发生在服务集合装配完成后。
   let offPeakTaskServiceForAgent: OffPeakTaskService | undefined;
@@ -2175,6 +2202,8 @@ export function createLocalServices(options: {
     resolveDynamicWorkflowClientConfig: () => resolveDynamicWorkflowClientConfigWithLocalOverride(),
     // 脚本工作流档位：会话门（v4 createSession 信封注入）唯一消费口，折叠出口单点（见上）。
     resolveScriptWorkflowMode: () => resolveScriptWorkflowModeWithLocalOverride(),
+    // 工具按需检索档位：同为会话门唯一消费口（v4 createSession 信封注入），折叠出口单点（见上）。
+    resolveToolSearchMode: () => resolveToolSearchModeFromSettings(),
     commandResolver: options?.acodeAgentCommandResolver,
     presentationSurface: resolveACodeAgentPresentationSurface({
       runtimeSurface: options?.agentRuntimeContext?.runtimeSurface,

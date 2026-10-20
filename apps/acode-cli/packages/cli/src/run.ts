@@ -105,6 +105,7 @@ const globalOptions = (
   browserUse: GlobalOptions["browserUse"],
   browserExecutable: GlobalOptions["browserExecutable"],
   outputFormat: GlobalOptions["outputFormat"],
+  toolSearchMode: GlobalOptions["toolSearchMode"],
 ): GlobalOptions => {
   return {
     browserExecutable,
@@ -117,6 +118,9 @@ const globalOptions = (
     ...(values["memory-bench"] === true ? { memoryBench: true } : {}),
     noColor: values["no-color"] === true,
     ...(outputFormat ? { outputFormat } : {}),
+    // 未传 = undefined = 不覆盖（缺席即 off）；显式值在 prompt/target/TUI（含
+    // resume/continue）入口写进 AgentRuntimeConfig.toolSearchMode（启动覆盖语义）。
+    ...(toolSearchMode ? { toolSearchMode } : {}),
     verbose: values.verbose === true,
   };
 };
@@ -162,6 +166,21 @@ const normalizeBrowserUse = (value: string | undefined): GlobalOptions["browserU
   if (value === undefined) return undefined;
   if (value.toLowerCase() === "headless") return "headless";
   throw new Error(`Unsupported --browser-use value: ${value}. Supported value: headless.`);
+};
+
+// CLI 四值域（specs/tool-search.md R1）：native 仅 CLI 显式传入——波 1 未实装，
+// 取值域校验放行、执行期由 core exposure 显式报错（不静默降级），参数层只挡非法拼写。
+const TOOL_SEARCH_CLI_MODES = ["auto", "native", "local", "off"] as const;
+
+const normalizeToolSearchMode = (value: string | undefined): GlobalOptions["toolSearchMode"] => {
+  if (value === undefined) return undefined;
+  const normalized = value.trim().toLowerCase();
+  if ((TOOL_SEARCH_CLI_MODES as readonly string[]).includes(normalized)) {
+    return normalized as NonNullable<GlobalOptions["toolSearchMode"]>;
+  }
+  throw new Error(
+    `Unsupported --toolsearch-mode value: ${value}. Supported modes: ${TOOL_SEARCH_CLI_MODES.join(", ")}.`,
+  );
 };
 
 const normalizePresentationSurface = (value: string | undefined): PresentationSurface => {
@@ -381,6 +400,15 @@ export const run = async (ctx: RunContext, deps: RunDependencies = {}): Promise<
     ctx.stderr.write(`${message}\n`);
     return 1;
   }
+  // --toolsearch-mode 非法值启动即报错退出（specs/tool-search.md R1），与 --browser-use 同款。
+  let toolSearchMode: GlobalOptions["toolSearchMode"];
+  try {
+    toolSearchMode = normalizeToolSearchMode(parsed.values["toolsearch-mode"] as string | undefined);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    ctx.stderr.write(`${message}\n`);
+    return 1;
+  }
   try {
     presentationSurface = normalizePresentationSurface(parsed.values.surface as string | undefined);
   } catch (error) {
@@ -420,6 +448,7 @@ export const run = async (ctx: RunContext, deps: RunDependencies = {}): Promise<
     browserUse,
     browserExecutable,
     outputFormat,
+    toolSearchMode,
   );
   const forceMcs = parsed.values["force-mcs"] === true;
   let targetRequest: CliTargetRequest | undefined;

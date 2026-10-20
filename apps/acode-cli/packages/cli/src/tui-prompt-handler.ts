@@ -60,6 +60,7 @@ export function createTuiSubmitPrompt(
   forceMcs = false,
   browserUse?: GlobalOptions["browserUse"],
   browserExecutable?: GlobalOptions["browserExecutable"],
+  toolSearchMode?: GlobalOptions["toolSearchMode"],
 ): TuiPromptHandler {
   let app: Awaited<ReturnType<NonNullable<RunDependencies["createACodeApp"]>>> | undefined;
   let activeUiLocale = uiLocale;
@@ -161,6 +162,10 @@ export function createTuiSubmitPrompt(
           ...(modeState.override ? { mode: modeState.override } : {}),
           ...(toolDisallowlist ? { toolDisallowlist } : {}),
           ...(forceMcs ? { midConversationSystem: { mode: "force" as const } } : {}),
+          // 工具按需检索启动覆盖（specs/tool-search.md R1/R3）：与 prompt-command 同款
+          // 语义——未传 = 缺席 = off；显式值在创建/冷恢复（/resume、--continue 同走本
+          // createApp）时固定，TUI 存活期内换 App 也沿用同一 CLI 启动值。
+          ...(toolSearchMode ? { toolSearchMode } : {}),
           modelStreaming: "on",
           titleGeneration: TUI_TITLE_GENERATION_CONFIG,
           workingDirectory,

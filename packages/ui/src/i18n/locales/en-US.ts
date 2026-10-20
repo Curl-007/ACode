@@ -6227,6 +6227,24 @@ const enUS: Record<string, string> = {
     "Same tool surface as on-demand; reserved for a future always-on reminder.",
   "settings.scriptWorkflow.defaultTag": "Default",
   "settings.scriptWorkflow.saveError": "Couldn't save the setting. Please try again.",
+  // ---- On-demand tool search (ToolSearch/DeferredToolCall three-mode local product
+  // switch, apps/acode-cli/specs/tool-search.md R1/R11) ----
+  "settings.toolSearch.title": "On-demand tool search",
+  "settings.toolSearch.description":
+    "Controls whether sessions replace the always-loaded tool catalog with on-demand search: when enabled, model requests carry only resident tools; the rest are discovered via ToolSearch and promoted on demand. Changes take effect on the next new session or cold restore; running sessions are unaffected.",
+  "settings.toolSearch.option.auto": "Auto",
+  "settings.toolSearch.option.auto.description":
+    "The runtime decides based on model and provider capability; native provider search support is still incomplete, so this currently runs local search.",
+  "settings.toolSearch.option.local": "Local search",
+  "settings.toolSearch.option.local.description":
+    "Uses ACode's local search algorithm to discover tools on demand; the tool projection differs from the full resident catalog.",
+  "settings.toolSearch.option.off": "Off",
+  "settings.toolSearch.option.off.description":
+    "All tools stay resident in every request, exactly as before.",
+  "settings.toolSearch.defaultTag": "Default",
+  "settings.toolSearch.saveError": "Couldn't save the setting. Please try again.",
+  "settings.toolSearch.experimentalNote":
+    "Experimental: model providers do not fully support native ToolSearch yet, and native mode is not implemented (it is only accepted via the CLI flag --toolsearch-mode and fails before send). Local search changes the tool projection sent to the model. The default (Off) keeps behavior exactly as it is today.",
   // ---- MCP sampling / resources ----
   "settings.mcp.sampling.label": "Allow model sampling",
   "settings.mcp.sampling.description":

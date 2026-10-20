@@ -77,8 +77,9 @@ import { BrowserSettingsSection } from "@/settings/BrowserSettingsSection.js";
 import { ComputerUseSection } from "@/settings/ComputerUseSection.js";
 import { DynamicWorkflowSection } from "@/settings/DynamicWorkflowSection.js";
 import { ScriptWorkflowSection } from "@/settings/ScriptWorkflowSection.js";
-import type { DynamicWorkflowMode, ScriptWorkflowMode } from "@acode/shared";
-import { normalizeScriptWorkflowMode } from "@acode/shared";
+import { ToolSearchSection } from "@/settings/ToolSearchSection.js";
+import type { DynamicWorkflowMode, ScriptWorkflowMode, ToolSearchAppMode } from "@acode/shared";
+import { normalizeScriptWorkflowMode, normalizeToolSearchAppMode } from "@acode/shared";
 import { ShortcutSettingsSection } from "@/settings/ShortcutSettingsSection.js";
 import { MigrationSection } from "@/settings/MigrationSection.js";
 import { SETTINGS_FRAME_CONTENT_CLASSNAME } from "@/settings/SettingsPageParts.js";
@@ -840,6 +841,17 @@ export function SettingsPage({
       // 直调 settingService.update 不触发回读刷新，单选会停在旧档、跨窗口不同步——
       // 与相邻 dwf handler 同款实机教训（2026-10-11，见 handleDynamicWorkflowModeSelect 注释）。
       await updateSharedSettings({ scriptWorkflowMode: mode });
+    },
+    [updateSharedSettings],
+  );
+  const handleToolSearchModeSelect = useCallback(
+    async (mode: ToolSearchAppMode) => {
+      // 落盘即真相（本机设置，无 Host 快照，specs/tool-search.md R11）：选中态由
+      // update 后的 settings 回读呈现。生效时机是下一次会话创建/冷恢复（services
+      // 折叠出口 → v4 createSession 信封 → AgentRuntimeConfig.toolSearchMode）；
+      // 无会话中途改档通道，存活 runtime 不受影响——这里不做任何推送。
+      // 必须走 updateSharedSettings（三合一路径），同款实机教训见上方 script handler。
+      await updateSharedSettings({ toolSearchMode: mode });
     },
     [updateSharedSettings],
   );
@@ -1608,6 +1620,14 @@ export function SettingsPage({
                               onSelect={handleScriptWorkflowModeSelect}
                             />
                           </div>
+                        ) : activeSection === "toolSearch" ? (
+                          // 工具按需检索三档（specs/tool-search.md R11）：独立分区，
+                          // 注册位置紧邻 dynamicWorkflow（settingsPageConfig.ts）。
+                          // 选中态唯一来源是落盘值（本机设置即真相，无 Host 快照）。
+                          <ToolSearchSection
+                            mode={normalizeToolSearchAppMode(sharedSettings?.toolSearchMode)}
+                            onSelect={handleToolSearchModeSelect}
+                          />
                         ) : activeSection === "migration" ? (
                           <MigrationSection
                             workspacePath={activeWorkspacePath}

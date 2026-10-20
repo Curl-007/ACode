@@ -19,6 +19,7 @@ import {
   Workflow,
   Keyboard,
   FileSearch,
+  Search,
   ShieldCheck,
 } from "lucide-react";
 import { isSettingsSectionEnabled, type SettingsSectionId } from "@/lib/settingsNavigation.js";
@@ -111,6 +112,14 @@ const BASE_SETTINGS_SECTIONS: SettingsSectionDefinition[] = [
     id: "dynamicWorkflow",
     icon: Workflow,
     titleId: "settings.dynamicWorkflow.title",
+    groupId: "agentCapabilities",
+  },
+  // 工具按需检索紧跟「动态工作流」：同属工具面产品开关（specs/tool-search.md R11），
+  // 相邻注册让「工具怎么给到模型」的两条实验性开关检索路径唯一。
+  {
+    id: "toolSearch",
+    icon: Search,
+    titleId: "settings.toolSearch.title",
     groupId: "agentCapabilities",
   },
   {

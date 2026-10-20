@@ -73,6 +73,13 @@ export {
   validateDataBaseDirTarget,
   ACODE_WINDOWS_APP_INSTALL_DIR_ENV,
 } from "./paths.js";
+// 数据根归属四态判定（spec: packages/services/specs/data-root-ownership.md）：
+// desktop 启动早期在 setDataBaseDir 之前消费 initializeDataRoot。
+export {
+  initializeDataRoot,
+  type DataRootInitResult,
+  type InitializeDataRootInput,
+} from "./data-root/initializer.js";
 export { createGitService } from "./git/gitService.js";
 export { GitCommitMessageGenerator } from "./git/gitCommitMessageGenerator.js";
 export { createGitCheckpointService } from "./git/gitCheckpointService.js";

@@ -17,6 +17,7 @@ import type { ISettingService } from "./setting.js";
 import { normalizeSettingsPatch } from "#src/setting/normalizeSettingsPatch.js";
 import { buildExplicitKeyPersistedSettings } from "#src/setting/explicitSettingsPersist.js";
 import { copyDataDirectory, getDataBaseDir, validateDataBaseDirTarget } from "../paths.js";
+import { recordUserMigrationInDataRoot } from "../data-root/initializer.js";
 import { isEffectiveDevelopmentNodeEnv } from "../runtime-tools/nodeEnv.js";
 import { maybeThrowInjectedFsFault } from "../fs/fsFaultInjection.js";
 import { atomicWriteText } from "../fs/atomicFileUtils.js";
@@ -376,6 +377,9 @@ export function createSettingServiceWithMigrations(): {
       if (currentBaseDir !== targetBaseDir) {
         log("copying data directory from", currentBaseDir, "to", targetBaseDir);
         await copyDataDirectory(currentBaseDir, targetBaseDir);
+        // 成功迁移后在目标根归属文件追加 user-migration 记录（best-effort，内部只告警不抛）。
+        // spec: packages/services/specs/data-root-ownership.md「消费点」。
+        await recordUserMigrationInDataRoot({ targetBaseDir, fromBaseDir: currentBaseDir });
         log("data directory copy done");
       }
 

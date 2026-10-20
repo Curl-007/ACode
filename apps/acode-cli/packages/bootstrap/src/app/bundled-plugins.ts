@@ -10,6 +10,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 import { writeBundledOfficialMarketplacePartitionSync } from "@acode/adapters";
 import { ACODE_OFFICIAL_PLUGIN_MARKETPLACE, type Logger } from "@acode/contracts";
 import { isACodeCuaInternalFeatureEnabled, ACODE_CUA_OFFICIAL_PLUGIN_ID } from "@acode/shared";
@@ -666,7 +667,11 @@ export function candidateBaseDirs(): string[] {
 }
 
 function runtimeDir(): string | undefined {
-  return typeof __dirname === "string" ? __dirname : undefined;
+  if (typeof __dirname === "string") return __dirname;
+  // bootstrap 是 type:module：ESM 形态（tsx dev 形态 / ESM dist）没有 __dirname，
+  // 必须回退当前模块目录，否则 bundled 内容包的 filesystem 形态在 dev 形态永远不命中
+  // （builtin-subagent-catalog R6 断言与 dev 运行内置技能/agent 解析的断裂根因）。
+  return dirname(fileURLToPath(import.meta.url));
 }
 
 function entrypointDir(): string | undefined {

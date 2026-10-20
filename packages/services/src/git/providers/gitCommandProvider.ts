@@ -1,5 +1,9 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { DEFAULT_GIT_COMMAND_TIMEOUT_MS, DEFAULT_GIT_OUTPUT_BYTES } from "../config.js";
+import {
+  DEFAULT_GIT_COMMAND_TIMEOUT_MS,
+  DEFAULT_GIT_OUTPUT_BYTES,
+  type GitCommandEnvOptions,
+} from "../config.js";
 import {
   createGitEnvironmentProvider,
   type GitEnvironmentProvider,
@@ -10,7 +14,17 @@ export interface GitCommandExecutionOptions {
   args: string[];
   timeoutMs?: number;
   maxOutputBytes?: number;
+  /**
+   * 与矩阵不相交的单键 env 覆盖（checkpoint 的 GIT_INDEX_FILE/author 身份等既有语义）。
+   * 禁止用它覆盖 GIT_CONFIG_* 编号键或 GIT_ALLOW_PROTOCOL——会破坏矩阵编号一致性/
+   * 协议同源构建（specs/git-hardening-presets.md P6），协议需求走 envOptions。
+   */
   env?: NodeJS.ProcessEnv;
+  /**
+   * 按调用点协议放行（specs/git-hardening-presets.md P1）：缺省 = 拒绝一切传输；
+   * 远端命令（当前唯一：gitCliRepo.push）显式声明最小协议集。
+   */
+  envOptions?: GitCommandEnvOptions;
 }
 
 export interface GitCommandExecutionResult {
@@ -93,7 +107,7 @@ export function createGitCommandProvider(options?: {
       const timeoutMs = command.timeoutMs ?? DEFAULT_GIT_COMMAND_TIMEOUT_MS;
       const maxOutputBytes = command.maxOutputBytes ?? DEFAULT_GIT_OUTPUT_BYTES;
       const env = {
-        ...environmentProvider.createCommandEnv(),
+        ...environmentProvider.createCommandEnv(command.envOptions),
         ...command.env,
       };
       const startedAt = Date.now();

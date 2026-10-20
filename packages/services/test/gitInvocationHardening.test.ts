@@ -6,8 +6,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
 import {
-  GIT_ALLOW_PROTOCOL_WHITELIST,
   GIT_HARDENING_ENV,
+  GIT_PUSH_PROTOCOL_ALLOWLIST,
   getGitCommandEnv,
   getGitHardenedConfigEntries,
   getGitHooksNullDevicePath,
@@ -56,7 +56,10 @@ function restoreEnv(): void {
   savedEnv.clear();
 }
 
-/** R2 键闭集：矩阵键集合漂移会直接改变全部 git 命令的有效配置，必须显式守护。 */
+/**
+ * R2 键集（本 spec 守护的既有矩阵键；新增预设键与全矩阵闭集守护见
+ * specs/git-hardening-presets.md 与 gitHardeningPresets.test.ts）。
+ */
 const EXPECTED_CONFIG_KEYS = [
   "core.hooksPath",
   "core.fsmonitor",
@@ -74,20 +77,25 @@ const EXPECTED_CONFIG_KEYS = [
 ];
 
 describe("git invocation hardening matrix", () => {
-  test("env 层矩阵：防弹窗三保险 + 懒取/协议收口（R3/R4）", () => {
+  test("env 层矩阵：防弹窗三保险 + 懒取/协议收口（R3/R4 + presets P1）", () => {
     polluteEnv();
     try {
       const env = getGitCommandEnv();
       assert.equal(env.GIT_TERMINAL_PROMPT, "0");
       assert.equal(env.GIT_ASKPASS, "");
       assert.equal(env.GIT_NO_LAZY_FETCH, "1");
-      assert.equal(env.GIT_ALLOW_PROTOCOL, GIT_ALLOW_PROTOCOL_WHITELIST);
-      assert.equal(GIT_ALLOW_PROTOCOL_WHITELIST, "file:https:ssh");
-      // 白名单形态：ext（remote-helper RCE 主向量）/git/fd/http 必须不在名单内。
+      // R4 修订（presets P1）：协议面从全局白名单收紧为默认全拒——
+      // 空串在 git 2.46 实测拒绝一切传输；唯一放行点是 push 调用点的 envOptions。
+      assert.equal(env.GIT_ALLOW_PROTOCOL, "");
+      // push 调用点白名单保持既有 file:https:ssh 等值语义；
+      // ext（remote-helper RCE 主向量）/git/fd/http 在任何调用点都不放行。
+      assert.deepEqual([...GIT_PUSH_PROTOCOL_ALLOWLIST], ["file", "https", "ssh"]);
+      const optInEnv = getGitCommandEnv({ allowedProtocols: GIT_PUSH_PROTOCOL_ALLOWLIST });
+      assert.equal(optInEnv.GIT_ALLOW_PROTOCOL, "file:https:ssh");
       for (const blocked of ["ext", "git", "fd", "http"]) {
         assert.ok(
-          !GIT_ALLOW_PROTOCOL_WHITELIST.split(":").includes(blocked),
-          `GIT_ALLOW_PROTOCOL 不应放行 ${blocked}`,
+          !GIT_PUSH_PROTOCOL_ALLOWLIST.includes(blocked as (typeof GIT_PUSH_PROTOCOL_ALLOWLIST)[number]),
+          `push 白名单不应放行 ${blocked}`,
         );
       }
       assert.equal(GIT_HARDENING_ENV.GIT_TERMINAL_PROMPT, "0");
@@ -139,12 +147,11 @@ describe("git invocation hardening matrix", () => {
     }
   });
 
-  test("矩阵键闭集与关键值（R2 表一致性，防漂移）", () => {
+  test("矩阵既有键值保持（R2 表一致性；全闭集守护移至 gitHardeningPresets.test.ts）", () => {
     const entries = getGitHardenedConfigEntries("linux");
-    assert.deepEqual(
-      entries.map(([key]) => key),
-      EXPECTED_CONFIG_KEYS,
-    );
+    const keys = entries.map(([key]) => key);
+    // R2 既有 13 键必须全部在场且保持原相对顺序（前缀守护，新增预设键在尾部追加）。
+    assert.deepEqual(keys.slice(0, EXPECTED_CONFIG_KEYS.length), EXPECTED_CONFIG_KEYS);
     const asMap = new Map(entries);
     assert.equal(asMap.get("core.hooksPath"), "/dev/null");
     assert.equal(asMap.get("core.fsmonitor"), "");

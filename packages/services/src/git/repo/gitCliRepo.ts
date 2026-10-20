@@ -24,6 +24,7 @@ import {
   DEFAULT_GIT_OUTPUT_BYTES,
   DEFAULT_GIT_PUSH_OUTPUT_BYTES,
   DEFAULT_GIT_PUSH_TIMEOUT_MS,
+  GIT_PUSH_PROTOCOL_ALLOWLIST,
   getGitNullDevicePath,
   normalizeGitPath,
   normalizeWorkspaceInRepoPath,
@@ -1658,6 +1659,10 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
         // 关键业务逻辑：pre-push hook 可能输出完整测试日志。
         // 这里单独放宽输出上限，避免在 push 真正完成前因为 hook 输出过多被截断。
         maxOutputBytes: DEFAULT_GIT_PUSH_OUTPUT_BYTES,
+        // 安全依据：push 是 services 漏斗唯一远端命令，按调用点显式放行
+        // file/https/ssh（specs/git-hardening-presets.md P1）；漏斗内其余全部命令
+        // 维持协议默认全拒。ext（remote-helper RCE 主向量）/git/fd/http 不放行。
+        envOptions: { allowedProtocols: GIT_PUSH_PROTOCOL_ALLOWLIST },
       });
       ensureGitCommandSucceeded("git push", pushResult);
       invalidate(workspacePath);

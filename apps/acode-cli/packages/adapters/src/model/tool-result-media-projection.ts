@@ -154,6 +154,10 @@ function contentBlockToUserMediaParts(
   options: ToolResultMediaProjectionOptions,
 ): AiSdkUserContentParts {
   switch (block.type) {
+    // 工具引用块（specs/tool-search.md R7）由 core 请求投影展开或移除后才进 provider；
+    // 残余按无内容处理，不合成文本。
+    case "tool_reference":
+      return [];
     case "image": {
       if (options.inputFormat && getUnsupportedModelInputMediaKind(block, options.inputFormat)) {
         return [];

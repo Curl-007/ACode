@@ -119,6 +119,7 @@ export function createPlanExpandToolEntry(deps: { store: SwarmPlanStore }): Tool
     handler,
     inputSchema: PLAN_EXPAND_INPUT_JSON_SCHEMA,
     metadata: {
+      shouldDefer: true, // tool-search wave1a: 非常驻内置工具默认 defer(specs/tool-search.md R4)
       name: SWARM_PLAN_TOOL_NAMES.expand,
       description: PLAN_EXPAND_DESCRIPTION,
       concurrentSafe: false,

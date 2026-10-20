@@ -106,6 +106,8 @@ export interface ToolExecutorOptions {
   model?: Model;
   embeddedSearchBackend?: EmbeddedSearchBackend;
   nativeSearchEnhancementsEnabled?: boolean;
+  /** 工具搜索 context 读取缝（specs/tool-search.md R8）；映射进 ToolExecutorDeps 同名字段。 */
+  getToolSearchContext?: () => import("@acode/contracts").ToolSearchExecutionContext | undefined;
   skillPort?: SkillPort;
   /** GUIDE 宿主接线（guide-live-build-section「宿主接线登记」）：运行中构建事实投影。 */
   liveBuildSnapshotPort?: LiveBuildSnapshotPort;
@@ -226,6 +228,12 @@ export interface ToolExecutorDeps {
   model?: Model;
   embeddedSearchBackend?: EmbeddedSearchBackend;
   nativeSearchEnhancementsEnabled?: boolean;
+  /**
+   * 工具按需检索的 executor 侧事实（specs/tool-search.md R8）：请求准备单点写入
+   * runtime 状态后经此读取，注入 ToolExecutionContext.toolSearch。缺席 = 本请求
+   * 未启用搜索：ToolSearch/DeferredToolCall 准入按未启用拒绝，不猜。
+   */
+  getToolSearchContext?: () => import("@acode/contracts").ToolSearchExecutionContext | undefined;
   skillPort?: SkillPort;
   /** GUIDE 宿主接线（guide-live-build-section「宿主接线登记」）：运行中构建事实投影。 */
   liveBuildSnapshotPort?: LiveBuildSnapshotPort;

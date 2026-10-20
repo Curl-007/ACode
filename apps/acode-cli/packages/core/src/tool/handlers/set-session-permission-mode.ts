@@ -156,6 +156,7 @@ function buildEntry(deps: FleetToolDeps): ToolEntry {
   return {
     capability: "Change a fleet session's recorded permission mode (upgrades always ask the user)",
     metadata: {
+      shouldDefer: true, // tool-search wave1a: 非常驻内置工具默认 defer(specs/tool-search.md R4)
       name: SET_SESSION_PERMISSION_MODE_TOOL_NAME,
       description: SET_MODE_DESCRIPTION,
       readOnly: false,

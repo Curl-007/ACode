@@ -191,6 +191,7 @@ export const getWorkflowRunToolEntry: ToolEntry = {
   capability: "Read one dynamic-workflow run's progress, final result, or failure",
   maxModelChars: GET_WORKFLOW_RUN_PERSIST_THRESHOLD_CHARS,
   metadata: {
+    shouldDefer: true, // tool-search wave1a: 非常驻内置工具默认 defer(specs/tool-search.md R4)
     name: GET_WORKFLOW_RUN_TOOL_NAME,
     description: GET_WORKFLOW_RUN_DESCRIPTION,
     readOnly: true,

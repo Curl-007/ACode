@@ -30,6 +30,7 @@ Options:
   -v, --version    Show version
   -p, --prompt <text>  Run a single prompt without opening the TUI
   --enable-workflow  Enable dynamic workflows for --prompt or --target (default: off)
+  --toolsearch-mode <mode>  On-demand tool search for --prompt/--target/tui: auto, native, local, or off (default: off; native is not implemented in this build and fails at send time)
   --memory-bench   With --prompt, enable automatic Memory extraction and wait before exiting (requires Memory enabled)
   --browser-use <mode> Enable Browser Use backend (supported: headless)
   --surface <surface>  Presentation surface for headless prompts/app-server: terminal or desktop

@@ -1,4 +1,5 @@
 /* eslint-disable max-lines -- 存量基线豁免:该文件先于 CLI lint 门禁建立即超限(根 lint 的 ignorePatterns 排除 apps/acode-cli,turbo lint 因此从未变绿)。头注豁免以恢复门禁信号;拆分重构超出本批范围。 */
+import { DeferredToolCallInputSchema } from "@acode/contracts";
 import { createPartId, traceContextToLogContext, TurnMachineImpl } from "../deps.js";
 import type {
   MessageId,
@@ -317,11 +318,17 @@ export async function executeToolCallsForModelStep(
           callID: result.toolCallId,
           declarationIndex: persisted.declarationIndex,
           tool: projectedResultToolName.toolName,
-          metadata: projectedResultToolName.metadata,
+          // 包装标记（specs/tool-search.md R6/R10）：内部持久化统一用目标工具名，
+          // part metadata 保存严格字面量 "DeferredToolCall"；重存（completed 覆盖
+          // pending/running）必须保留，冷恢复水合据此重建包装形态。
+          metadata: {
+            ...projectedResultToolName.metadata,
+            ...(result.modelCallWrapper ? { modelCallWrapper: result.modelCallWrapper } : {}),
+          },
           state: result.success
             ? {
                 status: "completed",
-                input: persisted.input,
+                input: unwrapPersistedDeferredToolCallInput(result, persisted.input),
                 output: content,
                 title: projectedResultToolName.toolName,
                 metadata: {
@@ -338,7 +345,7 @@ export async function executeToolCallsForModelStep(
               }
             : {
                 status: "error",
-                input: persisted.input,
+                input: unwrapPersistedDeferredToolCallInput(result, persisted.input),
                 error: result.error?.message ?? content,
                 // state.error 面向 UI / 日志，可能比模型实际收到的
                 // modelContent 更笼统；仅附加保存 string 内容供冷恢复精确重放。
@@ -371,6 +378,9 @@ export async function executeToolCallsForModelStep(
         result.toolName,
         modelContentForToolResult(result),
         isError,
+        // 包装标记（R6）：live 历史与冷恢复水合同形——结果 entry 用目标名，
+        // provider render 遍历恢复外层名后剥离标记。
+        result.modelCallWrapper,
       ),
     ]);
     try {
@@ -533,4 +543,19 @@ async function enqueueFollowUpUserInputFromToolResult(
     toolCallId: result.toolCallId,
     toolName: result.toolName,
   });
+}
+
+/**
+ * 包装调用落库时恢复内层参数（specs/tool-search.md R6）：state.input 保存目标
+ * 工具的内层参数，不重复存储包装 input。外层 {name, input} 形状由准入契约
+ * （DeferredToolCallInputSchema）保证，这里用同一 schema 解析；解析失败保持
+ * 原值——防御性回退，不能因标记在场就损坏已落库数据。
+ */
+function unwrapPersistedDeferredToolCallInput(
+  result: ToolExecutionResult,
+  persistedInput: Record<string, unknown>,
+): Record<string, unknown> {
+  if (!result.modelCallWrapper) return persistedInput;
+  const parsed = DeferredToolCallInputSchema.safeParse(persistedInput);
+  return parsed.success ? parsed.data.input : persistedInput;
 }

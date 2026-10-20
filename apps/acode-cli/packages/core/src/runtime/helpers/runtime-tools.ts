@@ -71,6 +71,10 @@ function registerRuntimeBuiltInTools(runtime: AgentRuntimeInternal, deps: AgentR
     // escalate 与 submit_result 同门同理由：端口在场即注册（不做 opt-in：最可能撞墙的 actor 恰是作者没标记的那个）。
     includeEscalate: Boolean(deps.workflowEscalatePort),
     includeWorkflow: Boolean(deps.workflowPort),
+    // 工具按需检索注册门（specs/tool-search.md R3/R4）：runtime 启动选项非 off 才注册
+    // 两个控制工具；off 时注册面不变（零行为变化红线的结构性保证）。
+    includeToolSearch:
+      runtime.config.toolSearchMode !== undefined && runtime.config.toolSearchMode !== "off",
     includeAutomation: Boolean(deps.automationPort) && runtime.config.taskType !== "subagent_child",
     // K2 swarm plan 工具族（specs/swarm-task-graph.md R5 注册门）：端口在场即注册；
     // 只读面推导与 includeAutomation 的 taskType 排除同款先例——workflow 子会话
@@ -231,6 +235,8 @@ function createRuntimeToolExecutor(
     pdfDocumentPort: deps.pdfDocumentPort,
     embeddedSearchBackend: runtime.config.embeddedSearchBackend,
     nativeSearchEnhancementsEnabled: runtime.config.nativeSearchEnhancementsEnabled,
+    // 工具搜索 context 读取缝（specs/tool-search.md R8）：请求准备单点写入 runtime 状态。
+    getToolSearchContext: () => runtime.toolSearchContext,
     skillPort: deps.skillPort,
     // paths 触发判定的候选事实源（skill-frontmatter-governance R5 消费接线）：
     // runtime 的技能发现快照（context 初始化门之后恒有值；之前为 undefined = 不触发）。

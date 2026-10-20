@@ -172,6 +172,7 @@ export function createPlanControlToolEntry(deps: { store: SwarmPlanStore }): Too
     handler,
     inputSchema: PLAN_CONTROL_INPUT_JSON_SCHEMA,
     metadata: {
+      shouldDefer: true, // tool-search wave1a: 非常驻内置工具默认 defer(specs/tool-search.md R4)
       name: SWARM_PLAN_TOOL_NAMES.control,
       description: PLAN_CONTROL_DESCRIPTION,
       concurrentSafe: false,

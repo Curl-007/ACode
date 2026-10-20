@@ -578,6 +578,7 @@ const applyPatchHandler: ToolHandler = async (input, context) => {
 export const applyPatchToolEntry: ToolEntry = {
   capability: "Apply a structured multi-file patch through the file-system adapter",
   metadata: {
+    shouldDefer: true, // tool-search wave1a: 非常驻内置工具默认 defer(specs/tool-search.md R4)
     name: "ApplyPatch",
     description: APPLY_PATCH_PROVIDER_DESCRIPTION,
     readOnly: false,

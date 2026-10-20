@@ -51,6 +51,7 @@ export const runTuiCommand = async (
       forceMcs,
       options.browserUse,
       options.browserExecutable,
+      options.toolSearchMode,
     );
     const unregisterShutdownHandlers = registerCliShutdownHandlers({
       cleanup: async () => {

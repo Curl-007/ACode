@@ -120,6 +120,10 @@ export * from "./dynamic-workflow-feature.js";
 // 脚本工作流三档本机产品开关（apps/acode-cli/specs/script-workflow-management-surface.md §3）：
 // 刻意独立文件，不与 dynamic-workflow-feature 共用词表文件。
 export * from "./script-workflow-feature.js";
+// 工具按需检索 App 设置档位（apps/acode-cli/specs/tool-search.md R1/R11）：同为独立
+// 文件——App 三值域是 CLI 四值域（@acode/contracts ToolSearchModeSchema）的子集，
+// shared 不得深导入 CLI 包，词表在此独立定义。
+export * from "./tool-search-feature.js";
 export * from "./markdown-artifact-images.js";
 export * from "./serviceAuthority.js";
 export * from "./server-remote.js";

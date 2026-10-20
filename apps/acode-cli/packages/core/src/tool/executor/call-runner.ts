@@ -7,9 +7,11 @@ import {
   createRootTraceContext,
   getCurrentTraceContext,
   traceContextToLogContext,
+  DEFERRED_TOOL_CALL_NAME,
   type ToolExecutionSpanWriter,
   type SessionEvent,
 } from "@acode/contracts";
+import { resolveDeferredToolCallTarget } from "../handlers/deferred-tool-call.js";
 import {
   OFFICIAL_CUA_FRAME_MODEL_CONTENT_PROTECTION,
   attestOfficialCuaFrameContent,
@@ -89,17 +91,47 @@ export async function executeToolCall(
   options?: ToolExecuteOptions,
 ): Promise<ToolExecutionResult> {
   const totalStartedAt = Date.now();
-  const entry = isEmptyToolName(toolCall.name) ? undefined : deps.registry.get(toolCall.name);
-  const canonicalToolCall =
-    entry && toolCall.name !== entry.metadata.name
-      ? { ...toolCall, name: entry.metadata.name }
+  // DeferredToolCall 解包（specs/tool-search.md R6）：准入通过后换绑目标工具名与
+  // 内层参数，共用外层 callID，此后校验/权限/Hook/超时/取消/结果格式全部复用普通
+  // 调度链——不递归运行第二套 executor。准入失败把原因传给 impl，在 registry-miss
+  // 同档位置按普通工具错误返回（含事件发布，V4 行不停在 inputStreaming）。
+  const deferredAdmission =
+    toolCall.name === DEFERRED_TOOL_CALL_NAME
+      ? resolveDeferredToolCallTarget(toolCall.input, {
+          toolSearch: deps.getToolSearchContext?.(),
+        })
+      : undefined;
+  const effectiveToolCall =
+    deferredAdmission?.ok === true
+      ? { ...toolCall, name: deferredAdmission.name, input: deferredAdmission.input }
       : toolCall;
+  const deferredRejectionReason =
+    deferredAdmission && !deferredAdmission.ok ? deferredAdmission.reason : undefined;
+  const entry = isEmptyToolName(effectiveToolCall.name)
+    ? undefined
+    : deps.registry.get(effectiveToolCall.name);
+  const canonicalToolCall =
+    entry && effectiveToolCall.name !== entry.metadata.name
+      ? { ...effectiveToolCall, name: entry.metadata.name }
+      : effectiveToolCall;
   // 隐私与基数边界：未注册工具名来自模型输出，不能假定是受控枚举。
   // 业务错误仍保留真实名称供模型自修复，远端 Trace 统一落入固定 unknown 桶。
-  const telemetryToolCall = entry ? canonicalToolCall : { ...toolCall, name: "unknown" };
-  return runToolCallWithTelemetry(deps, telemetryToolCall, options, (telemetry) =>
-    executeToolCallImpl(deps, backgroundTasks, toolCall, totalStartedAt, options, telemetry),
-  );
+  const telemetryToolCall = entry ? canonicalToolCall : { ...effectiveToolCall, name: "unknown" };
+  return runToolCallWithTelemetry(deps, telemetryToolCall, options, async (telemetry) => {
+    const result = await executeToolCallImpl(
+      deps,
+      backgroundTasks,
+      effectiveToolCall,
+      totalStartedAt,
+      options,
+      telemetry,
+      deferredRejectionReason,
+    );
+    // 包装标记（R6）：内部历史/持久化统一用目标工具名，标记只供 part metadata
+    // 与请求渲染恢复包装形态；严格字面量 "DeferredToolCall"。
+    if (deferredAdmission?.ok === true) result.modelCallWrapper = DEFERRED_TOOL_CALL_NAME;
+    return result;
+  });
 }
 
 async function executeToolCallImpl(
@@ -109,6 +141,7 @@ async function executeToolCallImpl(
   totalStartedAt: number,
   options?: ToolExecuteOptions,
   telemetry?: ToolExecutionSpanWriter,
+  deferredRejectionReason?: string,
 ): Promise<ToolExecutionResult> {
   const parentTraceContext =
     options?.traceContext ??
@@ -137,6 +170,23 @@ async function executeToolCallImpl(
   });
   const traceId = traceContext.traceId;
   const turnId = traceContext.turnId ?? deps.turnId;
+
+  if (deferredRejectionReason) {
+    // DeferredToolCall 准入失败（specs/tool-search.md R6）：只保存包装失败记录，
+    // 不执行目标 Hook/审批/handler；与 registry-miss 同档发布 ToolCallError，
+    // 保证 V4 tool row 不停在 inputStreaming。错误链复用普通工具错误语义。
+    const result = createErrorResult(
+      toolCall,
+      createCoreError(CoreErrorType.ToolNotFound, deferredRejectionReason, {
+        context: { toolCallId: toolCall.id, toolName: toolCall.name },
+        recoverable: false,
+      }),
+    );
+    result.modelContent = `<tool_use_error>Error: ${deferredRejectionReason}</tool_use_error>`;
+    await emitToolCallError(deps, toolCall.id, traceContext, turnId, result.error);
+    telemetry?.finishFailed("lookup", "configuration", result.error);
+    return result;
+  }
 
   if (!entry) {
     const result = createErrorResult(
@@ -452,6 +502,11 @@ async function executeToolCallImpl(
         enabled: embeddedSearchDecision?.useEmbeddedSearchBranch ?? false,
         ...(deps.nativeSearchEnhancementsEnabled === false ? { findAndGrepEnabled: false } : {}),
       },
+      // 工具按需检索事实透传（specs/tool-search.md R8）：ToolSearch 启用准入与
+      // DeferredToolCall 目标准入的共同事实源；缺席即两个控制工具都拒绝执行。
+      ...(deps.getToolSearchContext
+        ? { toolSearch: deps.getToolSearchContext() }
+        : {}),
       skillPort: deps.skillPort,
       // GUIDE 宿主接线（guide-live-build-section「宿主接线登记」①②③）：事实投影透传。
       liveBuildSnapshotPort: deps.liveBuildSnapshotPort,

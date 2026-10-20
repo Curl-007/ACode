@@ -141,6 +141,7 @@ function makeHandler(deps: FleetToolDeps): ToolHandler {
 const baseEntry = {
   capability: "Archive an owned fleet session with cascade; refuses running sessions",
   metadata: {
+    shouldDefer: true, // tool-search wave1a: 非常驻内置工具默认 defer(specs/tool-search.md R4)
     name: ARCHIVE_SESSION_TOOL_NAME,
     description: ARCHIVE_SESSION_DESCRIPTION,
     readOnly: false,

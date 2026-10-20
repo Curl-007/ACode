@@ -5983,6 +5983,23 @@ const zhCN: Record<string, string> = {
   "settings.scriptWorkflow.option.alwaysOn.description": "与按需档工具面相同；为后续常驻提示预留。",
   "settings.scriptWorkflow.defaultTag": "默认",
   "settings.scriptWorkflow.saveError": "设置保存失败，请重试。",
+  // ---- 工具按需检索（ToolSearch/DeferredToolCall 三档本机产品开关，
+  // apps/acode-cli/specs/tool-search.md R1/R11）----
+  "settings.toolSearch.title": "工具按需检索",
+  "settings.toolSearch.description":
+    "控制会话是否把非常驻工具改为按需检索：开启后模型请求只携带常驻工具，其余工具经 ToolSearch 检索、按需提升后调用。改动在下一次新建会话或冷恢复时生效，进行中的会话不受影响。",
+  "settings.toolSearch.option.auto": "自动",
+  "settings.toolSearch.option.auto.description":
+    "由运行时按模型与供应商能力自动判定；当前供应商原生检索支持不完整，实际按本地检索执行。",
+  "settings.toolSearch.option.local": "本地检索",
+  "settings.toolSearch.option.local.description":
+    "使用 ACode 本地检索算法按需发现工具；工具面投影与全量常驻不同。",
+  "settings.toolSearch.option.off": "关",
+  "settings.toolSearch.option.off.description": "全部工具常驻发送，与既有行为完全一致。",
+  "settings.toolSearch.defaultTag": "默认",
+  "settings.toolSearch.saveError": "设置保存失败，请重试。",
+  "settings.toolSearch.experimentalNote":
+    "实验性功能：模型供应商尚未完整支持原生 ToolSearch，native 模式未实装（仅 CLI --toolsearch-mode 可显式传入，且发送前会报错）；本地检索会改变发给模型的工具投影。默认「关」＝行为与现状完全一致。",
   // ---- MCP sampling / resources ----
   "settings.mcp.sampling.label": "允许模型采样",
   "settings.mcp.sampling.description":

@@ -115,6 +115,7 @@ export function createPlanStatusToolEntry(deps: { store: SwarmPlanStore }): Tool
     handler,
     inputSchema: PLAN_STATUS_INPUT_JSON_SCHEMA,
     metadata: {
+      shouldDefer: true, // tool-search wave1a: 非常驻内置工具默认 defer(specs/tool-search.md R4)
       name: SWARM_PLAN_TOOL_NAMES.status,
       description: PLAN_STATUS_DESCRIPTION,
       // 只读面（todo.read 同档）：并发安全、零副作用、免审批——worker 子会话可见性

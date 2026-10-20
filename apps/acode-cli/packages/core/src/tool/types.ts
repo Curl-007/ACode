@@ -96,6 +96,17 @@ export interface ToolMetadata {
     /** 来自声明 acode_official 鉴权的 MCP server；仅用于信任其结果里的结构化标识。 */
     official?: boolean;
   };
+  /**
+   * 工具按需检索（specs/tool-search.md R4）：声明该内置工具的 schema 默认不常驻
+   * 请求，模型需经 ToolSearch 检索后用 DeferredToolCall 调用。常驻名单
+   *（Agent/AskUserQuestion/Bash/Edit/Glob/Grep/Read/Skill/Write 与两个控制工具）
+   * 不声明本字段；MCP 工具经 mcpPresentation 默认 defer，不逐个声明。
+   */
+  shouldDefer?: boolean;
+  /** defer 豁免：true 时即使 shouldDefer/MCP 默认命中也永不 defer（波 1 不预置豁免）。 */
+  alwaysLoad?: boolean;
+  /** 搜索辅助文案：只进搜索索引（searchHint 权重低于名称/别名），不进工具 schema。 */
+  searchHint?: string;
 }
 
 // -----------------------------------------------
@@ -192,6 +203,12 @@ export interface ToolExecutionContext {
   recordSkillTelemetryMetadata?: (metadata: SkillTelemetryMetadata) => void;
   bashShellSelection?: ExecutionShellSelection;
   embeddedSearch?: ToolEmbeddedSearchContext;
+  /**
+   * 工具按需检索的 executor 侧事实（specs/tool-search.md R8）：请求准备单点生成、
+   * 随执行注入；ToolSearch 用它做启用准入，DeferredToolCall 用它做目标准入。
+   * 缺席 = 本请求未启用搜索（handler 必须拒绝，不猜）。
+   */
+  toolSearch?: import("@acode/contracts").ToolSearchExecutionContext;
   setWorkingDirectory?: (cwd: string) => Promise<void> | void;
   workingDirectory: string;
   workspaceRoot: string;
@@ -476,6 +493,12 @@ export interface ToolExecutionResult {
   toolName: string;
   success: boolean;
   output: unknown;
+  /**
+   * 包装标记（specs/tool-search.md R6）：本次执行由 DeferredToolCall 解包换绑而来
+   * 时携带严格字面量 "DeferredToolCall"。toolName/state.input 已是目标工具的事实，
+   * 标记只供 part metadata 与请求渲染恢复包装形态；重存/历史复制/分支恢复必须保留。
+   */
+  modelCallWrapper?: import("@acode/contracts").ModelCallWrapper;
   turnControl?: ToolExecutionTurnControl;
   followUpUserInput?: ToolExecutionFollowUpUserInput;
   display?: ToolResultDisplayPayload;

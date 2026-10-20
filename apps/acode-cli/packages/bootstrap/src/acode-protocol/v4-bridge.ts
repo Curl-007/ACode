@@ -1023,6 +1023,7 @@ export function createConversationV4Gateway(
       offPeakToolEnabled,
       dynamicWorkflowEnabled,
       scriptWorkflowEnabled,
+      toolSearchMode,
     }) => {
       // workspaceId 双形态（Workspace Identity 约束）：
       // - 本地工作区 = workspacePath（identity 缺省时的 fallback）；
@@ -1050,12 +1051,20 @@ export function createConversationV4Gateway(
         // acodeSessionCreateParamsSchema 是 strict 的（legacy 面只删不增纪律，spec §4.3），
         // 把本 flag 塞进 params 会被 strict parse 当未知键拒绝。true/false 都透传——
         // CLI 侧缺席即开启，Host 必须显式写 false 才能关（spec §4.4）。
-      }, { scriptWorkflowEnabled });
+        // 工具按需检索档位同走侧通道（同款 legacy strict 面纪律，specs/tool-search.md
+        // R11）：auto/local/off 都透传，缺席 = off（core 侧缺省语义，零行为变化）。
+      }, { scriptWorkflowEnabled, toolSearchMode });
       // 顺路刷新进程级目录缓存（server-types.ts 的 scriptWorkflowEnabled 注释）：档位在
       // 下次会话创建时生效，缓存在同一时机刷新即可，无需 legacy 推送命令。只影响
       // workspace presentation / 快照 `/` 目录的展示；本会话的工具面已由上面的侧通道裁决。
       if (scriptWorkflowEnabled !== undefined) {
         context.appRuntimePreferences.scriptWorkflowEnabled = scriptWorkflowEnabled;
+      }
+      // 工具检索档位同刷进程级兜底缓存（server-types.ts 注释）：Host 每次 createSession
+      // 现读 AppSettings，缓存在同一时机刷新即为「最新」；冷恢复/fork 等无 Host 参数的
+      // record 物化路径回读这里（缺席 = off，fail-safe）。
+      if (toolSearchMode !== undefined) {
+        context.appRuntimePreferences.toolSearchMode = toolSearchMode;
       }
       return { sessionId: created.sessionId };
     },

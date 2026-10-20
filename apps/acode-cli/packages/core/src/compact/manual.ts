@@ -64,6 +64,11 @@ export interface BuildManualCompactBoundaryInput {
   phase?: CompactPhase;
   postCompactTokenCount?: number;
   preservedSegment?: CompactPreservedSegment;
+  /**
+   * compact 检查点提升的发现名称（specs/tool-search.md R8/R10）：只保存名称事实，
+   * 冷恢复经 hydrateCompactDiscovery 重建；缺席（含默认 off）时 payload 不带该字段。
+   */
+  preCompactDiscoveredTools?: readonly string[];
   preCompactTokenCount: number;
   summarizedMessageCount: number;
   summaryMessageId: MessageId;
@@ -114,6 +119,9 @@ export function buildManualCompactBoundary(
     lastSummarizedMessageId: input.lastSummarizedMessageId,
     preservedSegment: input.preservedSegment,
     summaryMessageIds: [input.summaryMessageId],
+    ...(input.preCompactDiscoveredTools && input.preCompactDiscoveredTools.length > 0
+      ? { preCompactDiscoveredTools: [...input.preCompactDiscoveredTools] }
+      : {}),
     customInstructions: input.customInstructions !== undefined,
     traceId: input.traceContext.traceId,
     turnId: input.traceContext.turnId,

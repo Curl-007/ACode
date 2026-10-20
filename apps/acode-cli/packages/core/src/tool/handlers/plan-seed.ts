@@ -141,6 +141,7 @@ export function createPlanSeedToolEntry(deps: { store: SwarmPlanStore }): ToolEn
     handler,
     inputSchema: PLAN_SEED_INPUT_JSON_SCHEMA,
     metadata: {
+      shouldDefer: true, // tool-search wave1a: 非常驻内置工具默认 defer(specs/tool-search.md R4)
       name: SWARM_PLAN_TOOL_NAMES.seed,
       description: PLAN_SEED_DESCRIPTION,
       // 状态写面（session 域协调状态），参照 todo.write 的低风险档：不触工作区/网络，

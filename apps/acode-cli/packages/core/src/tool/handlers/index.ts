@@ -2,9 +2,15 @@
 // Built-in Tool Handlers
 // ============================================================
 
-import { RUN_WORKFLOW_TOOL_NAME, SUBMIT_RESULT_TOOL_NAME, type JsonSchema } from "@acode/contracts";
+import {
+  DEFERRED_TOOL_CALL_NAME,
+  RUN_WORKFLOW_TOOL_NAME,
+  SUBMIT_RESULT_TOOL_NAME,
+  TOOL_SEARCH_NAME,
+} from "@acode/contracts";
 import type { ToolEntry } from "../types.js";
-import type { AgentProfile } from "../../subagent/profile.js";
+// 注册选项拆到独立声明文件：index.ts 受 legacy max-file-lines ratchet 约束（只减不增）。
+import type { RegisterBuiltInToolsOptions } from "./register-built-in-tools-options.js";
 import { readToolEntry } from "./read.js";
 import { writeToolEntry } from "./write.js";
 import { editToolEntry } from "./edit.js";
@@ -15,7 +21,6 @@ import {
   powerShellToolEntries,
   resolvePowerShellEntryForBranch,
 } from "./powershell-registration.js";
-import type { BashTimeoutPolicy } from "../bash-timeout-policy.js";
 import { createJsToolEntry, jsToolEntry } from "./node-repl.js";
 import { globToolEntry } from "./glob.js";
 import { grepToolEntry } from "./grep.js";
@@ -70,16 +75,19 @@ import { reapSessionWorktreesToolEntry } from "./reap-session-worktrees.js";
 import { fleetToolEntries } from "./fleet-tool-entries.js";
 import { generateDigestToolEntry } from "../../digest/generate-digest-tool.js";
 import { sessionSearchToolEntry } from "./session-search.js";
+// 工具按需检索的两个控制工具（specs/tool-search.md wave 1a）：includeToolSearch 门
+// （runtime 启动选项 toolSearchMode 非 off）才注册；off 时连注册表都不进，
+// 默认零行为变化由注册面结构性保证，不依赖请求投影兜底。
+import { toolSearchToolEntry } from "./tool-search.js";
+import { deferredToolCallToolEntry } from "./deferred-tool-call.js";
 // 对话内可视化写入工具：技能门 visualize，落点会话存储（specs/gen-ui-visualize.md）。
 import { writeVisualizationFragmentToolEntry } from "./write-visualization-fragment.js";
-import { createOpenToolEntry, type OpenPlatformPort } from "./open.js";
+import { createOpenToolEntry } from "./open.js";
 import { createPlanCompleteGateToolEntry } from "./plan-complete-gate.js";
 import { createPlanControlToolEntry } from "./plan-control.js";
 import { createPlanExpandToolEntry } from "./plan-expand.js";
 import { createPlanSeedToolEntry } from "./plan-seed.js";
 import { createPlanStatusToolEntry } from "./plan-status.js";
-import type { SwarmPlanPort } from "../../swarm/port.js";
-import type { AmbientScheduleQueue, ScheduledItem } from "../../ambient/queue.js";
 import { createScheduleToolEntry } from "./schedule.js";
 import { createToolRuleNameSet } from "../tool-visibility.js";
 
@@ -131,6 +139,10 @@ export const builtInTools: ToolEntry[] = [
   // 跨会话全文搜索（K4）：本地只读、无 gate，与 ReadSessionContext 同级——
   // 都消费 sessionStore 面且不产生副作用，handler 运行时经 context 取存储能力。
   sessionSearchToolEntry,
+  // 工具按需检索控制工具（specs/tool-search.md R4 常驻名单）：永不 defer；
+  // 注册门 includeToolSearch 见 registerBuiltInTools 过滤链。
+  toolSearchToolEntry,
+  deferredToolCallToolEntry,
   // 对话内可视化片段写入（specs/gen-ui-visualize.md）：技能门 visualize；只写会话存储。
   writeVisualizationFragmentToolEntry,
   agentToolEntry,
@@ -156,81 +168,6 @@ export const builtInTools: ToolEntry[] = [
   // 保留在该文件）；无注册门，无人值守双层收敛与所有权封闭见彼处说明。
   ...fleetToolEntries,
 ];
-
-interface RegisterBuiltInToolsOptions {
-  bashTimeoutPolicy?: BashTimeoutPolicy;
-  includeSkill?: boolean;
-  includeAgent?: boolean;
-  includeSendMessage?: boolean;
-  includeRespondToCoordinator?: boolean;
-  includeSubmitResult?: boolean;
-  /**
-   * 在场时 submit_result 以 typed 声明注册（`{ result: <schema> }`，strict 资格），供 dwf mono
-   * 子代理；缺席即通用声明。只在 includeSubmitResult 为真时有意义。
-   */
-  submitResultSchema?: JsonSchema;
-  /** actor 的升级通道；门与 includeSubmitResult 同款（注入了 WorkflowEscalatePort 才注册）。 */
-  includeEscalate?: boolean;
-  /**
-   * 脚本工作流（RunWorkflow）的**端口门**：注入了 `WorkflowPort` 才注册。极性是「只有显式
-   * true 才注册」，与 includeOffPeak / includeAutomation 同族，所以 embedded-search-branch.ts
-   * 那个精简入口省略它是安全的（省略 = 不注册，与首次装配同结论）。
-   * 这个选项曾长期是死代码（它匹配的 `"Workflow"` 条目早已移出 builtInTools）；RunWorkflow
-   * 落地后重新生效，判据仍是 `Boolean(deps.workflowPort)`。与 includeDynamicWorkflow 是
-   * **两道独立的门**（能力 vs 可用性），都放行才注册。
-   */
-  includeWorkflow?: boolean;
-  includeAutomation?: boolean;
-  /** Off-Peak 会话内创建工具面；由 host 的 offPeakToolEnabled flag（灰度/远程门）驱动。 */
-  includeOffPeak?: boolean;
-  /** 开箱（Open 工具）平台端口；在场即注册，缺席不注册（K9 R2 的 port 门控）。 */
-  platformOpenPort?: OpenPlatformPort;
-  /**
-   * K2 swarm plan 工具族的注册门（specs/swarm-task-graph.md R5）：端口在场即注册
-   * PlanSeed/PlanExpand/PlanCompleteGate/PlanStatus/PlanControl（工具工厂闭包 store，
-   * plan-shared.ts 头注释的 2b 接线位）。只读推导在调用方（runtime-tools.ts 按
-   * taskType，includeAutomation 同款先例），本层不做 runtime 配置推断。
-   */
-  swarmPlanPort?: SwarmPlanPort;
-  /** 在场为 true 时只注册 PlanStatus（workflow 子会话的只读面，R5「防 worker 自改图」）。 */
-  swarmPlanReadOnly?: boolean;
-  /**
-   * K6 ambient Schedule 工具的注册门（specs/ambient-budget-scheduler.md R2/场景 10）：
-   * flag 推导在调用方（runtime-tools.ts 按 config.ambient.enabled && 非封闭子会话
-   * ——subagent_child/workflow_child/nested_workflow_child，F10 批次C 收紧），
-   * includeAutomation 同款先例，本层不做 runtime 配置推断——与 swarmPlanPort 的
-   * 门分工一致。
-   */
-  includeAmbientSchedule?: boolean;
-  /**
-   * K6：Schedule 工具的依赖闭包。queue 是 ambient 域装配面注入的磁盘队列实例（不能进
-   * 静态数组的原因与 Open/swarm 相同：handler 闭包依赖装配态）；sessionId 标记创建
-   * 来源会话（target=session 提醒的投递目标）；onScheduleCreated 是创建成功后的
-   * runner nudge/重启缝。
-   */
-  ambientSchedule?: {
-    queue: AmbientScheduleQueue;
-    sessionId?: string;
-    onScheduleCreated?(item: ScheduledItem): void;
-  };
-  /**
-   * 动态工作流可用性门（dwf 总闸）。**只有显式 false 才下架** GATED_WORKFLOW_TOOL_NAMES：
-   * 缺席代表调用方不参与灰度（TUI、headless、workflow_child），必须保留全部工具面；档位的
-   * 唯一所有者是 shared 的 dynamic-workflow-feature.ts。两道门的合取语义见 workflow-tool-names.ts。
-   */
-  includeDynamicWorkflow?: boolean;
-  /** 脚本工作流门（只管 RunWorkflow，与上门合取）：只有显式 false 才下架；推导在 tool-allowlist.ts。 */
-  includeScriptWorkflow?: boolean;
-  /** node_repl（js）默认关闭，由官方 browser-use 插件启用。 */
-  includeNodeRepl?: boolean;
-  /** browser-use 说明和 agent.browsers 注入由官方 browser-use 插件 + 宿主 browser bridge 共同启用。 */
-  includeBrowserUse?: boolean;
-  embeddedSearchEnabled?: boolean;
-  agentProfiles?: readonly AgentProfile[];
-  allowedTools?: readonly string[];
-  disallowedTools?: readonly string[];
-  silentDuplicateWarnings?: boolean;
-}
 
 export function registerBuiltInTools(
   registry: {
@@ -258,6 +195,14 @@ export function registerBuiltInTools(
       continue;
     }
     if (entry.metadata.name === "Skill" && options.includeSkill === false) {
+      continue;
+    }
+    // 工具按需检索控制工具的注册门：只有显式 true 才注册（与 includeOffPeak 同极性）。
+    if (
+      (entry.metadata.name === TOOL_SEARCH_NAME ||
+        entry.metadata.name === DEFERRED_TOOL_CALL_NAME) &&
+      options.includeToolSearch !== true
+    ) {
       continue;
     }
     if (entry.metadata.name === "SendMessage" && options.includeSendMessage !== true) {

@@ -154,6 +154,13 @@ interface RuntimeContextMemoryState {
   messageHistory: MessageHistory;
   readFileState: ReadFileStateMap;
   cachedTools: ModelToolContract[] | null;
+  /**
+   * 当前请求的工具搜索 context（specs/tool-search.md R8）：请求准备单点写入，
+   * executor deps 经 getToolSearchContext 读取注入 handler；undefined = 未启用。
+   * 发现集合唯一所有者是请求决策（每次准备重建），这里只是 executor 的读取缝，
+   * 不建第二缓存。
+   */
+  toolSearchContext?: import("@acode/contracts").ToolSearchExecutionContext;
   contextBuilder: ContextBuilder | null;
   contextInitialized: boolean;
   contextSourceSnapshot?: ContextSourceSnapshot;

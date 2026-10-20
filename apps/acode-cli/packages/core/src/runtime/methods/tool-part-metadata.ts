@@ -1,3 +1,4 @@
+import { PersistedToolSearchContentSchema } from "@acode/contracts";
 import {
   COMPLETED_TOOL_PART_METADATA_SCHEMA_VERSION,
   type CompletedToolPartMetadata,
@@ -19,6 +20,11 @@ export function mcpToolPartMetadata(
 export function completedToolPartMetadata(
   result: ToolExecutionResult,
 ): CompletedToolPartMetadata {
+  // ToolSearch 结果的持久化形态（specs/tool-search.md R7/R10）：历史与 part metadata
+  // 只保存真实 tool_reference 引用（PersistedToolSearchContentSchema），schema 正文
+  // 不落库；冷恢复经 hydrateToolSearchContent 重建。非引用形态的 modelContent 不通过
+  // schema，自然缺席（不改变既有工具的持久化字节）。
+  const modelContent = PersistedToolSearchContentSchema.safeParse(result.modelContent);
   const serialization = result.serialization
     ? {
         truncated: result.serialization.truncated,
@@ -32,6 +38,7 @@ export function completedToolPartMetadata(
     : undefined;
   return {
     schemaVersion: COMPLETED_TOOL_PART_METADATA_SCHEMA_VERSION,
+    ...(modelContent.success ? { modelContent: modelContent.data } : {}),
     ...(result.display ? { display: result.display } : {}),
     ...(serialization ? { serialization } : {}),
     // resume 需要恢复模型当时真实读到的文件快照；只依赖 tool_result 文本

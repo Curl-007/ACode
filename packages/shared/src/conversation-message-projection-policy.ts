@@ -68,6 +68,10 @@ const PROVIDER_CONTEXT_SYNTHETIC_SOURCES = new Set([
   "task_notification",
   "task_status",
   "todo_reminder",
+  // 工具按需检索公告（apps/acode-cli/specs/tool-search.md R9）：model-only 持久化
+  // 轨迹，进 provider 上下文（冷恢复语义等价）；刻意不进 MODEL_ONLY_TURN_TRIGGER_SOURCES
+  // ——公告是请求准备产物，不得触发父会话起轮（todo_reminder 同款处理）。
+  "tool_search_announcement",
 ]);
 
 const MODEL_ONLY_TURN_TRIGGER_SOURCES = new Set([

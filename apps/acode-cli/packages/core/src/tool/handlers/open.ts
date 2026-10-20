@@ -312,6 +312,7 @@ const openToolEntryBase: Omit<ToolEntry, "handler"> = {
   capability:
     "Open a file, directory, or URL in the user's environment through the platform service so the user can see it",
   metadata: {
+    shouldDefer: true, // tool-search wave1a: 非常驻内置工具默认 defer(specs/tool-search.md R4)
     name: OPEN_TOOL_NAME,
     description: OPEN_PROVIDER_DESCRIPTION,
     // 用户可见的副作用面（默认应用/浏览器/文件管理器），但不改写任何数据。

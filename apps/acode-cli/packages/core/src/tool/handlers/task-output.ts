@@ -84,6 +84,7 @@ export const taskOutputToolEntry: ToolEntry = {
   capability: "read output/logs from a background task",
   maxModelChars: TASK_OUTPUT_PERSIST_THRESHOLD_CHARS,
   metadata: {
+    shouldDefer: true, // tool-search wave1a: 非常驻内置工具默认 defer(specs/tool-search.md R4)
     name: TASK_OUTPUT_TOOL_NAME,
     description: TASK_OUTPUT_PROVIDER_DESCRIPTION,
     readOnly: true,

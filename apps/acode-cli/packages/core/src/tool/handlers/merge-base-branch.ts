@@ -116,6 +116,7 @@ function makeHandler(deps: MergeBaseBranchToolDeps): ToolHandler {
 const baseEntry = {
   capability: "Merge the base branch into the session branch on the host execution layer",
   metadata: {
+    shouldDefer: true, // tool-search wave1a: 非常驻内置工具默认 defer(specs/tool-search.md R4)
     name: MERGE_BASE_BRANCH_TOOL_NAME,
     description: MERGE_DESCRIPTION,
     readOnly: false,

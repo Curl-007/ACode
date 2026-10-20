@@ -9,6 +9,7 @@ import { v4ConversationFileRewindPreviewResultSchema } from "./transport.js";
 import { modelSelectionSchema } from "../model-selection.js";
 import { modelExecutionSchema } from "../model-execution.js";
 import { submissionModeSchema } from "./submission.js";
+import { TOOL_SEARCH_APP_MODES } from "../tool-search-feature.js";
 import { acodeAutomationBotDeliveryTargetSchema } from "../bots.js";
 import {
   amendWorkflowRunSettingsPayloadSchema,
@@ -74,6 +75,13 @@ export const commandPayloadSchemas = {
     // legacy session/create params 不加本字段（legacy 面只删不增；legacy 会话缺席 =
     // 按本机缺省档 onDemand，与今天行为逐字一致）。
     scriptWorkflowEnabled: z.boolean().optional(),
+    // 工具按需检索档位（specs/tool-search.md R3/R11）：Host 折叠出口读 AppSettings 后
+    // 随 createSession 下发，CLI 侧物化进 AgentRuntimeConfig.toolSearchMode（创建时固定，
+    // 无会话中途改档通道）。取值域是 App 三值（auto/local/off）——CLI 独有的 native 是
+    // 启动参数面的显式覆盖，不经 Host 设置链。additive：旧 CLI 的 z.object 静默丢弃该键
+    // → 缺席 = off（fail-safe 到零行为变化）。legacy session/create params 不加本字段
+    // （legacy 面只删不增，同 scriptWorkflowEnabled 的裁决）。
+    toolSearchMode: z.enum(TOOL_SEARCH_APP_MODES).optional(),
   }),
   // 父会话由 envelope.sessionId 指定；服务端从父 record 派生完整运行配置。
   // firstInput 存在时，child 创建完成后立即启动首条普通输入；缺省则保持空副屏。

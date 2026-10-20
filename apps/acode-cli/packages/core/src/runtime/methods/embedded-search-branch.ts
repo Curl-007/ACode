@@ -26,11 +26,16 @@ export function refreshBranchAwareBuiltInTools(runtime: AgentRuntimeInternal): v
     runtime.registry.unregister("Grep");
   }
 
+  // 工具按需检索注册门透传（specs/tool-search.md R4/R12）：本函数是第二个注册
+  // 入口，分支刷新不得摘掉两个控制工具——判据与 runtime-tools.ts 首次装配一致
+  //（runtime 启动选项非 off 才注册），否则 exposure 按 tool_unavailable 误降级。
   registerBuiltInTools(runtime.registry, {
     bashTimeoutPolicy: runtime.config.bashTimeoutPolicy,
     includeSkill: Boolean(runtime.skillPort),
     includeAgent: Boolean(runtime.subagentPort),
     embeddedSearchEnabled,
+    includeToolSearch:
+      runtime.config.toolSearchMode !== undefined && runtime.config.toolSearchMode !== "off",
     // 本函数是**第二个**
     // 注册入口，且刻意只传一个精简选项集。对「只有 true 才注册」的门（OffPeak / Cron / Workflow…）
     // 省略是安全的；但动态工作流灰度门的极性相反——「缺席即开启」，省略等于把首次装配剃掉的

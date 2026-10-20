@@ -288,6 +288,7 @@ export function createPowerShellToolEntry(
   return {
     capability: "Execute Windows-native shell commands through PowerShell",
     metadata: {
+      shouldDefer: true, // tool-search wave1a: PowerShell 非常驻名单，默认 defer(specs/tool-search.md R4)
       name: POWER_SHELL_TOOL_NAME,
       description: createPowerShellProviderDescription({
         defaultTimeoutMs: timeoutPolicy.defaultTimeoutMs,

@@ -8,6 +8,7 @@ import type { WorkspacePurpose } from "./workspacePurpose.js";
 import type { EmbeddedBrowserViewportPreference } from "./browser-use/command-metadata.js";
 import type { DynamicWorkflowMode } from "./dynamic-workflow-feature.js";
 import type { ScriptWorkflowMode } from "./script-workflow-feature.js";
+import type { ToolSearchAppMode } from "./tool-search-feature.js";
 import type { DesktopWindowSizeSettings } from "./desktopAppSettings.js";
 import type { AppSettingsOccupation } from "./appSettingsOccupation.js";
 
@@ -317,6 +318,12 @@ export interface AppSettings {
    * DEFAULT_SCRIPT_WORKFLOW_MODE（onDemand，与既有可用性逐字一致）。
    */
   scriptWorkflowMode?: ScriptWorkflowMode;
+  /**
+   * 工具按需检索三档本机产品开关（auto/local/off），与 scriptWorkflowMode 同形态：只读 AppSettings，
+   * v4 createSession 物化进 AgentRuntimeConfig 后固定；缺省 = off（零行为变化红线），CLI 独立运行不读
+   * 本设置。取值域/折叠出口/裁决详见 tool-search-feature.ts 与 specs/tool-search.md R1/R3/R11。
+   */
+  toolSearchMode?: ToolSearchAppMode;
   /** Windows 桌面端关闭窗口时隐藏到托盘；其它平台忽略 */
   closeToTrayOnWindows?: boolean;
   /** 存在执行中的闲时任务时阻止系统闲置休眠（手动开关，防不了合盖）。 */

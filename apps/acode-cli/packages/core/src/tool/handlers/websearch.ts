@@ -256,6 +256,7 @@ export const webSearchToolEntry: ToolEntry = {
   ...WEBSEARCH_TOOL_CONTRACT,
   providerNative: undefined,
   metadata: {
+    shouldDefer: true, // tool-search wave1a: 非常驻内置工具默认 defer(specs/tool-search.md R4)
     name: WEBSEARCH_TOOL_NAME,
     // 写死月份会导致模型可见的 WebSearch 描述过期。
     // 每次读取时重新生成，避免长驻进程跨月后继续投递旧月份。

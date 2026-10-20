@@ -38,6 +38,11 @@ export const SYSTEM_REMINDER_PERSISTED_SOURCES = [
   "selection_side_chat",
   "queued_system_notification",
   "shell_environment_change",
+  // 工具按需检索公告（specs/tool-search.md R9）：公告是持久化轨迹的一部分——
+  // 增量事实（addedNames/removedNames/readdedNames）随 synthetic notice 落库，
+  // 冷恢复按 resume_history 档原文重建，不能按 per-request 重算（会把已公告
+  // 名称重新公告一遍，破坏稳定前缀）。
+  "tool_search_announcement",
 ] as const;
 
 export const SYSTEM_REMINDER_PER_REQUEST_SOURCES = [
@@ -209,6 +214,13 @@ const SYSTEM_REMINDER_DESCRIPTORS: Record<SystemReminderSource, DescriptorShape>
     "sr.shell_environment_change",
   ),
   diagnostics: descriptor("mid_turn_event", "mid_turn_event", true, "sr.diagnostics"),
+  // 公告逐字存活（resume_history）：名称清单增量是历史事实，冷恢复原样重建。
+  tool_search_announcement: descriptor(
+    "current_turn",
+    "resume_history",
+    true,
+    "sr.tool_search_announcement",
+  ),
 };
 
 export const SYSTEM_REMINDER_SOURCES = Object.freeze([

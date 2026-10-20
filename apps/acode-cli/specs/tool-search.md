@@ -40,6 +40,13 @@ OpenAI 原生引用、auto:N、异步 MCP 就绪等待、搜索等待、历史�
 protocolSupported = 模型 apiType 为 anthropic-messages；**defaultEnabled 恒 false**
 （ACode 无 coding-plan 商业面；上游 defaultEnabled=coding-plan 条款不移植）。
 native 实装（波 2）前 `protocolSupported` 仅作登记，不参与 auto 解析。
+**波 1 落点说明**：wire 层实现（capability 解析 + `anthropic-beta` 头合并，beta 值
+以 contracts `TOOL_SEARCH_BETA` 为准）刻意不提前落
+adapters——波 1 无真实消费方，空壳文件被 knip:gate 判死（本仓纪律：不留死桶）；
+波 2 随 native 接线在 adapters 请求编码边界落地（apiType 判别在 adapters
+`model-execution.ts` 的 `config.api.type`），语义以本节为准，上游参照
+`packages/adapters/src/model/tool-search.ts`@c891036。core 侧
+`ToolSearchModelFacts.capability` 缝已预留（缺席=不支持 native）。
 
 ### R3 策略固定与继承
 
@@ -59,7 +66,7 @@ native 实装（波 2）前 `protocolSupported` 仅作登记，不参与 auto �
   `searchHint?: string`。
 - **常驻名单**（永不 defer）：`Agent、AskUserQuestion、Bash、Edit、Glob、Grep、Read、
   Skill、Write、ToolSearch、DeferredToolCall`（对照上游名单；上游 ReportFindings 本仓
-  无实现，不因名单而新增）。
+  无实现，不因名单而新增）。Task 与 Agent 同工厂同语义，一并常驻。
 - 其余内置工具在各自 metadata 声明 `shouldDefer: true`（workflow/plan/fleet/cron/
   off-peak/lsp/session 族等）；**全部 MCP 工具默认 defer**（`mcp__server__tool`
   解析已有 `parseMcpToolName`）。`alwaysLoad: true` 的工具永不 defer（供后续个别

@@ -90,6 +90,7 @@ function formatListModelContent(output: unknown): string {
 const baseEntry = {
   capability: "List the fleet sessions owned by the current transcript",
   metadata: {
+    shouldDefer: true, // tool-search wave1a: 非常驻内置工具默认 defer(specs/tool-search.md R4)
     name: LIST_SESSIONS_TOOL_NAME,
     description: LIST_SESSIONS_DESCRIPTION,
     readOnly: true,

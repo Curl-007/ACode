@@ -69,6 +69,9 @@ export const SYNTHETIC_USER_MESSAGE_SOURCES = [
   "subagent",
   "subagent_message",
   "todo_reminder",
+  // 工具按需检索公告（specs/tool-search.md R9）：公告是持久化轨迹的一部分，
+  // 作为 model-only synthetic notice 落库，冷恢复按 runtimeMessage metadata 重建。
+  "tool_search_announcement",
   // 中枢直接启动已保存工作流时落的那条 user 消息的来源。
   // 它虽是 synthetic（GUI 用元数据画启动卡而非显示文本），语义上却是用户真实动作：
   // origin=real_user、kind=user_prompt，与其余「运行时注入的提醒」类来源不同档。

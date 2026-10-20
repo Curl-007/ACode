@@ -284,6 +284,7 @@ function resolveStartSessionCapability(input: unknown): ToolRuntimePermissionCap
 const baseEntry = {
   capability: "Start a user-visible background fleet session and take ownership of it",
   metadata: {
+    shouldDefer: true, // tool-search wave1a: 非常驻内置工具默认 defer(specs/tool-search.md R4)
     name: START_SESSION_TOOL_NAME,
     description: START_SESSION_DESCRIPTION,
     readOnly: false,

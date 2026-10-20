@@ -53,6 +53,7 @@ const turnWrapUpHandler: ToolHandler = async (input) => {
 export const turnWrapUpToolEntry: ToolEntry = {
   capability: "Record the structured end-of-turn wrap-up payload rendered by conversation clients",
   metadata: {
+    shouldDefer: true, // tool-search wave1a: 非常驻内置工具默认 defer(specs/tool-search.md R4)
     name: TURN_WRAP_UP_TOOL_NAME,
     description: TURN_WRAP_UP_DESCRIPTION,
     readOnly: true,

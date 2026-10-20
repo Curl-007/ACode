@@ -153,6 +153,12 @@ export function runtimeMetadataForSyntheticUserMessageSource(
     // wrapped 文本本体即 user 消息，冷恢复经 runtimeMessage.source 原样重建。
     return systemReminderRuntimeMetadata("auto_resume");
   }
+  if (source === "tool_search_announcement") {
+    // 公告的增量事实由调用方显式携带（metadata.runtimeMessage.toolSearchAnnouncement，
+    // specs/tool-search.md R9/R10）；本回退只登记来源，缺 delta 时冷恢复按 legacy
+    // synthetic 处理，下一轮公告收集会重建。
+    return systemReminderRuntimeMetadata("tool_search_announcement");
+  }
   return systemReminderRuntimeMetadata("rewind_notice");
 }
 

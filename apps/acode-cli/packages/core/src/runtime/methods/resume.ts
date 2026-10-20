@@ -161,6 +161,8 @@ export async function resumeFromStore(
         artifactStore: this.artifactStore,
         branchCutAfterMessageId,
         history: this.messageHistory,
+        // 水合回退 warn 通道（specs/tool-search.md R10）。
+        logger: this.logger,
         messages,
         rewindCreatedMessageId,
         rewindKeptMessageIds,

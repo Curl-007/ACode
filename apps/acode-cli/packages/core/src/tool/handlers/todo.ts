@@ -154,6 +154,7 @@ function toTodoViews(todos: readonly TodoItem[]): TodoItemView[] {
 export const todoReadToolEntry: ToolEntry = {
   capability: "Read the current session todo list without modifying external state",
   metadata: {
+    shouldDefer: true, // tool-search wave1a: 非常驻内置工具默认 defer(specs/tool-search.md R4)
     name: "TodoRead",
     description: "Read the current session todo list",
     readOnly: true,
@@ -211,6 +212,7 @@ export const todoWriteToolEntry: ToolEntry = {
   capability:
     "Replace the current session todo list to track multi-step task progress and resume state",
   metadata: {
+    shouldDefer: true, // tool-search wave1a: 非常驻内置工具默认 defer(specs/tool-search.md R4)
     name: "TodoWrite",
     description: `Create and update a task list for the current session. The list is rendered to the user as your working plan.
 

@@ -267,6 +267,8 @@ function cloneContentBlock(block: ModelMessageContentBlock): ModelMessageContent
     case "text":
     case "reasoning":
     case "resource_link":
+    // 工具引用块无媒体载荷，浅拷贝即可（specs/tool-search.md R7）。
+    case "tool_reference":
       return { ...block };
   }
 }

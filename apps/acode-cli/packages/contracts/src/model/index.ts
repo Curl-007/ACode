@@ -92,6 +92,11 @@ export function modelMessageContentBlockToText(block: ModelMessageContentBlock):
       );
     case "resource_link":
       return `[Resource: ${block.title ?? block.name ?? block.uri}]`;
+    case "tool_reference":
+      // 工具引用块没有独立文本语义（specs/tool-search.md R7）：local 投影在请求
+      // 准备时把它展开为定义容器，off 路径按移除规则降级为占位文本；纯文本投影
+      //（token 估算/日志）按空处理，不合成名称文本。
+      return "";
   }
 }
 

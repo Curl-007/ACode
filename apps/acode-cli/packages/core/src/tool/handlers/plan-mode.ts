@@ -107,6 +107,7 @@ export const enterPlanModeToolEntry: ToolEntry = {
   capability: "Enter read-only planning mode before implementation",
   requiresUserInteraction: false,
   metadata: {
+    shouldDefer: true, // tool-search wave1a: 非常驻内置工具默认 defer(specs/tool-search.md R4)
     name: ENTER_PLAN_MODE_TOOL_NAME,
     description: ENTER_PLAN_MODE_PROVIDER_DESCRIPTION,
     readOnly: false,
@@ -144,6 +145,7 @@ export function createEnterPlanModeToolEntry(
   return {
     ...enterPlanModeToolEntry,
     metadata: {
+      shouldDefer: true, // tool-search wave1a: 非常驻内置工具默认 defer(specs/tool-search.md R4)
       ...enterPlanModeToolEntry.metadata,
       description: createEnterPlanModeProviderDescription(options),
     },
@@ -154,6 +156,7 @@ export const exitPlanModeToolEntry: ToolEntry = {
   capability: "Request user approval for the plan and exit planning mode before coding",
   requiresUserInteraction: true,
   metadata: {
+    shouldDefer: true, // tool-search wave1a: 非常驻内置工具默认 defer(specs/tool-search.md R4)
     name: EXIT_PLAN_MODE_TOOL_NAME,
     description: EXIT_PLAN_MODE_DESCRIPTION,
     readOnly: false,

@@ -291,6 +291,7 @@ const lspCancellation: ToolCancellationPolicy = {
 export const lspToolEntry: ToolEntry = {
   capability: "Query language servers for diagnostics, definitions, references, hover, symbols, and refactors",
   metadata: {
+    shouldDefer: true, // tool-search wave1a: 非常驻内置工具默认 defer(specs/tool-search.md R4)
     name: LSP_TOOL_NAME,
     description: LSP_PROVIDER_DESCRIPTION,
     // 静态面按写入分级（保守默认）；只读 action 由 resolveLspPermissionCapability

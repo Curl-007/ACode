@@ -194,6 +194,7 @@ export const fillWorkflowHoleToolEntry: ToolEntry = {
   capability:
     "Fill one hole in a running dynamic-workflow run with the statements of that gap's body, continuing the run along the revision chain",
   metadata: {
+    shouldDefer: true, // tool-search wave1a: 非常驻内置工具默认 defer(specs/tool-search.md R4)
     name: FILL_WORKFLOW_HOLE_TOOL_NAME,
     description: FILL_WORKFLOW_HOLE_DESCRIPTION,
     // splice 后是新可执行代码（新 world.run 命令集）——不是只读。

@@ -132,6 +132,7 @@ function formatResolveWorkflowQuestionModelContent(output: unknown): ModelMessag
 export const resolveWorkflowQuestionToolEntry: ToolEntry = {
   capability: "Answer a blocking question escalated by a subagent inside a running workflow run",
   metadata: {
+    shouldDefer: true, // tool-search wave1a: 非常驻内置工具默认 defer(specs/tool-search.md R4)
     name: RESOLVE_WORKFLOW_QUESTION_TOOL_NAME,
     description: RESOLVE_WORKFLOW_QUESTION_DESCRIPTION,
     // 作答会让一个停驻的 actor 带着这段文字继续干活——不是只读。

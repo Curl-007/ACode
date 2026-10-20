@@ -175,6 +175,7 @@ function formatResumeWorkflowRunModelContent(output: unknown): ModelMessageConte
 export const resumeWorkflowRunToolEntry: ToolEntry = {
   capability: "Resume a stopped dynamic-workflow run under the same run ID",
   metadata: {
+    shouldDefer: true, // tool-search wave1a: 非常驻内置工具默认 defer(specs/tool-search.md R4)
     name: RESUME_WORKFLOW_RUN_TOOL_NAME,
     description: RESUME_WORKFLOW_RUN_DESCRIPTION,
     // 恢复 = 重新启动执行子进程与 actor 会话（完结节点 replay、未完结重派发），与

@@ -7,19 +7,38 @@ import {
   type RuntimeInputPresentation,
   modelMessageContentToText,
   type ModelCacheControl,
+  type ModelCallWrapper,
   type ModelMessageContent,
   type ModelMessageContentBlock,
   type Model,
   type ModelReasoningContentBlock,
+  type ModelToolCall,
   type TokenUsageInfo,
+  type ToolSearchAnnouncement,
 } from "@acode/contracts";
 import { SYSTEM_REMINDER_SOURCES, type SystemReminderSource } from "../system-reminder/source.js";
 
 // Tool call from model (simple type, no brand)
 export interface ToolCallInput {
+  /**
+   * 包装标记（specs/tool-search.md R6）：内部历史统一用目标工具名与内层参数，
+   * 标记仅为严格字面量 "DeferredToolCall"；provider 渲染经 toModelToolCall 恢复
+   * 包装形态并剥离标记，内部消费者始终读取目标 name/input。
+   */
+  modelCallWrapper?: ModelCallWrapper;
   id: string;
   name: string;
   input: unknown;
+}
+
+/** 仅模型协议出口使用：带标记的调用恢复为 DeferredToolCall + {name, input} 包装形态。 */
+export function toModelToolCall(call: ToolCallInput): ModelToolCall {
+  if (!call.modelCallWrapper) return call;
+  return {
+    id: call.id,
+    name: call.modelCallWrapper,
+    input: { name: call.name, input: call.input },
+  };
 }
 
 export type ReasoningContentInput = ModelReasoningContentBlock;
@@ -31,6 +50,8 @@ export interface ModelInputMessage {
   toolCalls?: ToolCallInput[];
   toolCallId?: string;
   toolName?: string;
+  /** tool 结果消息的包装标记（R6）：渲染时 toolName 恢复为外层名并剥离标记。 */
+  modelCallWrapper?: ModelCallWrapper;
   isError?: boolean;
   providerId?: Model["providerId"];
   modelId?: Model["modelId"];
@@ -45,6 +66,17 @@ export type RuntimeMessageSource =
 export interface RuntimeMessageMetadata {
   source: RuntimeMessageSource;
   inputPresentation?: RuntimeInputPresentation;
+  /**
+   * compact 边界携带的发现元数据（specs/tool-search.md R8/R10）：检查点提升名单的
+   * 读侧事实源；写侧在 compact 边界 payload（preCompactDiscoveredTools），冷恢复
+   * 水合（agent/tool-search-hydration.ts）时回填到这里。
+   */
+  compactBoundary?: {
+    boundaryId?: string;
+    preCompactDiscoveredTools?: readonly string[];
+  };
+  /** 工具搜索公告的增量事实（readded ⊆ added 由契约 schema 保证）。 */
+  toolSearchAnnouncement?: ToolSearchAnnouncement;
 }
 
 export interface RuntimeMessageMessageEntry {
@@ -106,6 +138,7 @@ export interface MessageHistory {
     content: ModelMessageContent,
     success: boolean,
     isError?: boolean,
+    modelCallWrapper?: ModelCallWrapper,
   ): void;
 
   // 借用当前权威 entries，只允许同步只读；跨异步边界时由调用方做数组浅快照。
@@ -199,6 +232,7 @@ export class MessageHistoryImpl implements MessageHistory {
           id: tc.id,
           name: tc.name,
           input: tc.input,
+          ...(tc.modelCallWrapper ? { modelCallWrapper: tc.modelCallWrapper } : {}),
         })),
         ...(model ? { providerId: model.providerId, modelId: model.modelId } : {}),
       },
@@ -213,8 +247,11 @@ export class MessageHistoryImpl implements MessageHistory {
     content: ModelMessageContent,
     success: boolean,
     isError = !success,
+    modelCallWrapper?: ModelCallWrapper,
   ): void {
-    this.entries.push(createRuntimeToolResultEntry(toolCallId, toolName, content, isError));
+    this.entries.push(
+      createRuntimeToolResultEntry(toolCallId, toolName, content, isError, modelCallWrapper),
+    );
     this.cacheStats.totalMessages = this.entries.length;
   }
 
@@ -381,6 +418,7 @@ export function createRuntimeAssistantEntry(
         id: toolCall.id,
         name: toolCall.name,
         input: toolCall.input,
+        ...(toolCall.modelCallWrapper ? { modelCallWrapper: toolCall.modelCallWrapper } : {}),
       })),
       ...(model ? { providerId: model.providerId, modelId: model.modelId } : {}),
     },
@@ -393,6 +431,7 @@ export function createRuntimeToolResultEntry(
   toolName: string,
   content: ModelMessageContent,
   isError: boolean,
+  modelCallWrapper?: ModelCallWrapper,
 ): RuntimeMessageMessageEntry {
   return {
     message: {
@@ -401,6 +440,8 @@ export function createRuntimeToolResultEntry(
       toolCallId,
       toolName,
       isError,
+      // 包装标记（R6）：内部历史用目标名，provider 渲染恢复外层名后剥离。
+      ...(modelCallWrapper ? { modelCallWrapper } : {}),
     },
   };
 }
@@ -501,6 +542,8 @@ export function cloneModelInputMessage(message: ModelInputMessage): ModelInputMe
   if (message.toolCallId) next.toolCallId = message.toolCallId;
   // 空字符串是可恢复调用的 provider 原始名称，不能在 request-local clone 时按 falsy 丢失。
   if (message.toolName !== undefined) next.toolName = message.toolName;
+  // 包装标记随历史复制/分支恢复保留（R6）；渲染层剥离只发生在 request-local clone 上。
+  if (message.modelCallWrapper) next.modelCallWrapper = message.modelCallWrapper;
   if (message.isError !== undefined) next.isError = message.isError;
   if (message.providerId) next.providerId = message.providerId;
   if (message.modelId) next.modelId = message.modelId;

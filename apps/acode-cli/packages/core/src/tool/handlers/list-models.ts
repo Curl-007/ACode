@@ -130,6 +130,7 @@ function formatListModelsModelContent(output: unknown): ModelMessageContent {
 export const listModelsToolEntry: ToolEntry = {
   capability: "List the models this host has configured, for choosing a workflow's subagent model",
   metadata: {
+    shouldDefer: true, // tool-search wave1a: 非常驻内置工具默认 defer(specs/tool-search.md R4)
     name: LIST_MODELS_TOOL_NAME,
     description: LIST_MODELS_DESCRIPTION,
     readOnly: true,

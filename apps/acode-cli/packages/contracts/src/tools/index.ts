@@ -96,3 +96,7 @@ export * from "./digest.js";
 
 // Shared types (only once to avoid duplicates)
 export type { DiffHunk, GitDiff } from "./write.js";
+// 工具按需检索（apps/acode-cli/specs/tool-search.md wave 1a）：两个控制工具与
+// 请求投影共享的契约面。core 的 search/handlers、adapters 的 capability 解析与
+// runtime 请求准备都读走这里的常量与 schema；漏掉这行会报 TS2305。
+export * from "./tool-search.js";

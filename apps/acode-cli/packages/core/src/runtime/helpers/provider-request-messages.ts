@@ -16,6 +16,7 @@ import {
   cloneModelMessageContent,
   isKnownSystemReminderSource,
   isRuntimeAttachmentEntry,
+  toModelToolCall,
 } from "../../agent/message-history.js";
 import {
   getSystemReminderDescriptor,
@@ -199,7 +200,18 @@ function renderProjectedEntryToModelMessage(
     }
     return message;
   }
-  return cloneModelInputMessage(entry.message);
+  const message = cloneModelInputMessage(entry.message);
+  // 包装调用恢复（specs/tool-search.md R6）：内部历史使用目标身份；只在这条既有
+  // provider render 遍历里把带标记的目标调用/结果恢复为 DeferredToolCall 包装形态
+  //（外层名 + {name, input}），并剥离内部标记——不新增历史扫描或 callID 缓存。
+  for (let index = 0; index < (message.toolCalls?.length ?? 0); index++) {
+    message.toolCalls![index] = toModelToolCall(message.toolCalls![index]!);
+  }
+  if (message.modelCallWrapper) {
+    message.toolName = message.modelCallWrapper;
+    delete message.modelCallWrapper;
+  }
+  return message;
 }
 
 interface MessageMergeResult {

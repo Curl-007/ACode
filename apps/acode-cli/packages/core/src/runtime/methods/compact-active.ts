@@ -55,6 +55,8 @@ import {
   legacySyntheticRuntimeMetadata,
   type RuntimeMessageEntry,
 } from "../../agent/message-history.js";
+// compact 检查点提升的写侧纯函数（specs/tool-search.md R8）。
+import { collectDiscoveredTools, compactDiscoveryMetadata } from "../../tool/search/history.js";
 import { nextCompactPayloadRecoveryMediaBudget } from "../../compact/payload-recovery.js";
 import { selectPersistedCompactTail } from "../helpers/compact-preservation.js";
 import {
@@ -601,6 +603,21 @@ async function compactActiveConversationImpl(
 
       const summary = formatCompactSummaryOrThrow(this, result);
       const persistedSummary = summary;
+      throwIfTurnAborted(options.abortSignal);
+      // compact 检查提升的写侧（specs/tool-search.md R8/R10）：发现名称随边界 payload
+      // 与 summary entry metadata 持久化，冷恢复经 hydrateCompactDiscovery 重建；
+      // 不合成搜索结果。无发现（含默认 off）时字段缺席——off 路径边界 payload
+      // 字节零变化。提升判定（∩ 当前允许目录 ∩ configured-deferred）在读侧的
+      // resolveToolSearchCatalog 生效，这里只保存名称事实。
+      const preCompactDiscoveredTools = [...collectDiscoveredTools(activeEntries)].sort();
+      const compactBoundaryId = createCompactBoundaryId();
+      const compactDiscovery =
+        preCompactDiscoveredTools.length > 0
+          ? compactDiscoveryMetadata({
+              boundaryId: compactBoundaryId,
+              preCompactDiscoveredTools,
+            })
+          : undefined;
       const planFileReferenceEntry = this.fileSystemPort
         ? await readApprovedPlanFileReferenceEntry({
             abortSignal: options.abortSignal,
@@ -653,7 +670,11 @@ async function compactActiveConversationImpl(
             role: "user",
             content: summaryMessageContent,
           },
-          metadata: legacySyntheticRuntimeMetadata(),
+          // live 历史的发现元数据读侧事实源（R8）：与持久化 payload 同源同值。
+          metadata: {
+            ...legacySyntheticRuntimeMetadata(),
+            ...(compactDiscovery ? { compactBoundary: compactDiscovery } : {}),
+          },
         },
         {
           postCompactReminderEntries,
@@ -665,7 +686,7 @@ async function compactActiveConversationImpl(
       });
       const providerPostCompactTokenCount = getUsageTotalTokens(result.usage);
       const compactBoundary = buildManualCompactBoundary({
-        boundaryId: createCompactBoundaryId(),
+        boundaryId: compactBoundaryId,
         autoCompactThreshold: options.autoCompactThreshold,
         compactReason,
         customInstructions,
@@ -673,6 +694,9 @@ async function compactActiveConversationImpl(
         phase,
         postCompactTokenCount: providerPostCompactTokenCount,
         preCompactTokenCount,
+        ...(compactDiscovery
+          ? { preCompactDiscoveredTools: compactDiscovery.preCompactDiscoveredTools }
+          : {}),
         summarizedMessageCount: entriesToSummarize.length,
         summaryMessageId,
         traceContext: turnTraceContext,

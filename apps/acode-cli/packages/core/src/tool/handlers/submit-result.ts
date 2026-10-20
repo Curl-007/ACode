@@ -78,6 +78,7 @@ export function createSubmitResultToolEntry(resultSchema?: JsonSchema): ToolEntr
   return {
     capability: "Submit the structured terminal result for a workflow subagent's ask",
     metadata: {
+      shouldDefer: true, // tool-search wave1a: 非常驻内置工具默认 defer(specs/tool-search.md R4)
       name: SUBMIT_RESULT_TOOL_NAME,
       description: typed
         ? "Submit the structured result for the current ask. The `result` argument must match this tool's schema."

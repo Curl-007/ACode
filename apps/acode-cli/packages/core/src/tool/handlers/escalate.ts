@@ -95,6 +95,7 @@ const escalateHandler: ToolHandler = async (input, context) => {
 export const escalateToolEntry: ToolEntry = {
   capability: "Escalate a blocking question from a workflow subagent to the main agent and wait",
   metadata: {
+    shouldDefer: true, // tool-search wave1a: 非常驻内置工具默认 defer(specs/tool-search.md R4)
     name: ESCALATE_TOOL_NAME,
     description: ESCALATE_DESCRIPTION,
     readOnly: false,

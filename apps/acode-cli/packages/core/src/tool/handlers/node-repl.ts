@@ -355,6 +355,7 @@ export function createJsToolEntry(options: NodeReplToolOptions = {}): ToolEntry 
   return {
     ...jsToolEntry,
     metadata: {
+      shouldDefer: true, // tool-search wave1a: 非常驻内置工具默认 defer(specs/tool-search.md R4)
       ...jsToolEntry.metadata,
       description: buildJsToolDescription(options),
     },
@@ -365,6 +366,7 @@ export const jsToolEntry: ToolEntry = {
   capability:
     "Execute JavaScript in a persistent Node REPL (Code-Act); state persists on globalThis across calls",
   metadata: {
+    shouldDefer: true, // tool-search wave1a: 非常驻内置工具默认 defer(specs/tool-search.md R4)
     name: "js",
     description: buildJsToolDescription(),
     readOnly: false,

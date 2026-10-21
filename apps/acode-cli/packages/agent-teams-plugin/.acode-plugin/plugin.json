@@ -1,17 +1,22 @@
 {
   "name": "agent-teams",
-  "version": "0.1.0",
+  "version": "0.4.0",
   "tier": "always",
-  "description": "AgentTeams 多智能体协作：当前会话成为队长，组建可续跑的成员团队，把目标拆成依赖任务 DAG，经成员邮箱直连协作，由指令式调度推进，并提供只读团队面板。",
+  "description": "AgentTeams 多智能体协作：当前会话成为队长，组建可续跑的成员团队，把目标拆成依赖任务 DAG，经成员邮箱直连协作，由指令式调度推进，并提供只读团队面板。同一工作区可并行多个团队（上限可配），支持孤儿团队接管与成员工作树隔离。",
   "description_i18n": {
-    "en": "AgentTeams multi-agent collaboration: the current session becomes a captain, assembles continuable members, splits a goal into a dependency task DAG, coordinates via member mailboxes with directive scheduling, and exposes a read-only team panel.",
-    "zh-CN": "AgentTeams 多智能体协作：当前会话成为队长，组建可续跑的成员团队，把目标拆成依赖任务 DAG，经成员邮箱直连协作，由指令式调度推进，并提供只读团队面板。"
+    "en": "AgentTeams multi-agent collaboration: the current session becomes a captain, assembles continuable members, splits a goal into a dependency task DAG, coordinates via member mailboxes with directive scheduling, and exposes a read-only team panel. Multiple teams may run in parallel per workspace (configurable cap); orphaned teams can be adopted, and members can work in isolated git worktrees.",
+    "zh-CN": "AgentTeams 多智能体协作：当前会话成为队长，组建可续跑的成员团队，把目标拆成依赖任务 DAG，经成员邮箱直连协作，由指令式调度推进，并提供只读团队面板。同一工作区可并行多个团队（上限可配），支持孤儿团队接管与成员工作树隔离。"
   },
   "author": {
     "name": "Z.ai",
     "url": "https://z.ai"
   },
-  "keywords": ["agent-teams", "multi-agent", "orchestration", "task-dag"],
+  "keywords": [
+    "agent-teams",
+    "multi-agent",
+    "orchestration",
+    "task-dag"
+  ],
   "userConfig": {
     "stateDir": {
       "title": "State directory override",
@@ -32,6 +37,13 @@
       "description": "Upper bound of how many times a single task can be reassigned before the captain must stop and report. Reassigning beyond this is refused.",
       "type": "number",
       "default": 3,
+      "required": false
+    },
+    "maxActiveTeams": {
+      "title": "Maximum active teams per workspace",
+      "description": "Upper bound of simultaneously active teams (draft/active/paused). Clamped to 1..8; set 1 to replicate the legacy single-team behavior.",
+      "type": "number",
+      "default": 4,
       "required": false
     },
     "panelEnabled": {

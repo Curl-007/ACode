@@ -59,6 +59,15 @@ export const turnWorkSegmentSchema = z.object({
 });
 export type TurnWorkSegment = z.infer<typeof turnWorkSegmentSchema>;
 
+// 本轮生成指标 / Composer 状态栏事实（usage-statusbar-port §3.1）：定义拆到叶子文件，
+// 仍从 rows.js 导出，消费方 import 路径不变（rows.ts 的 max-lines 预算）。
+export {
+  composerTurnMetricsSchema,
+  turnMetricsSchema,
+  type ComposerTurnMetrics,
+  type TurnMetrics,
+} from "./turn-metrics.js";
+
 // turnHeader 的每轮模型用量统计（TurnComplete 时由投影写入；specs/usage-statusbar.md）。
 // null = 纯问答轮（无模型事实）；字段缺席 = 旧快照，UI 不渲染本轮用量项。
 // generationMs/timeToFirstTokenMs 口径由 core producer 单点计算，投影只透传。
@@ -71,6 +80,10 @@ export const turnHeaderStatsSchema = z.object({
   timeToFirstTokenMs: z.number().nonnegative().optional(),
   generationMs: z.number().nonnegative().optional(),
   modelRequestCount: z.number().int().nonnegative(),
+  // additive（specs/usage-statusbar-port.md §3.3）：本轮加权实测速度与单请求峰值，
+  // 与 composerTurnMetrics.metrics 同值；回答末尾速率行读取。缺席 = 旧投影。
+  tokensPerSecond: z.number().nonnegative().optional(),
+  peakTokensPerSecond: z.number().nonnegative().optional(),
   // additive（specs/usage-statusbar.md「多模型轮标记」）：本轮服务过的模型身份
   // （"provider/model"，去重、请求序、≤4）。≥2 = 轮中模型晋升；缺席 = 旧投影/旁路轮。
   servedModels: z.array(z.string().min(1).max(256)).max(4).optional(),

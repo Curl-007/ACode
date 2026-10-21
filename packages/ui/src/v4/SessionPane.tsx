@@ -101,6 +101,8 @@ import { WorkspaceHookPendingBanner } from "@/v4/WorkspaceHookPendingBanner.js";
 import { ConversationStatusPanel } from "@/v4/ConversationStatusPanel.js";
 import { SessionSubscriptionErrorPanel } from "@/v4/SessionSubscriptionErrorPanel.js";
 import { ConversationTimeline } from "@/v4/ConversationTimeline.js";
+import { conversationTeamCardsSlot } from "@/v4/ConversationTeamCards.js";
+import { useTeamPanelOpener } from "@/hooks/useTeamPanelOpener.js";
 import { ConversationBottomDockTransition } from "@/v4/ConversationBottomDockTransition.js";
 import { SessionPluginReferenceIconBoundary } from "@/v4/SessionPluginReferenceIconProvider.js";
 import {
@@ -195,6 +197,7 @@ import type {
   OpenScopedSubagentSideTabRequest,
   OpenBackgroundBashSideTabRequest,
   OpenScopedSubagentDirectorySideTabRequest,
+  OpenScopedTeamSideTabRequest,
   OpenSelectionSideChatRequest,
   SyncSubagentSessionTabsRequest,
   OpenSubagentSideTabRequest,
@@ -288,6 +291,7 @@ export interface SessionPaneProps {
   onOpenBackgroundBash?: (request: OpenBackgroundBashSideTabRequest) => void;
   onOpenSubagentSession?: (request: OpenScopedSubagentSideTabRequest) => void;
   onOpenSubagentDirectory?: (request: OpenScopedSubagentDirectorySideTabRequest) => void;
+  onOpenTeamPanel?: (request: OpenScopedTeamSideTabRequest) => void;
   onSyncSubagentSessionTabs?: (request: SyncSubagentSessionTabsRequest) => void;
   onOpenSelectionSideChat?: (request: OpenSelectionSideChatRequest) => void;
   onOpenPlanDetail?: (request: OpenScopedPlanDetailSideTabRequest) => void;
@@ -475,6 +479,7 @@ export function SessionPane({
   onOpenSubagentSession,
   onOpenBackgroundBash,
   onOpenSubagentDirectory,
+  onOpenTeamPanel,
   onSyncSubagentSessionTabs,
   onOpenSelectionSideChat,
   onOpenPlanDetail,
@@ -747,6 +752,7 @@ export function SessionPane({
     resolveInitialDraftConfig,
     handleDraftSelectModel,
     handleDraftSelectThought,
+    handleDraftSelectSpeed,
     handleDraftSwitchMode,
     promoteComposerDraft,
     captureAcceptedModelSelection,
@@ -1119,6 +1125,13 @@ export function SessionPane({
     },
     [onOpenSubagentDirectory, remoteSessionId, rootSessionId, workspaceIdentity, workspacePath],
   );
+  const handleOpenTeamPanel = useTeamPanelOpener({
+    onOpenTeamPanel,
+    workspacePath,
+    workspaceIdentity,
+    remoteSessionId,
+    rootSessionId,
+  });
   const handleOpenPlanDetail = useCallback(
     (request: OpenPlanDetailSideTabRequest) => {
       onOpenPlanDetail?.({
@@ -3150,6 +3163,8 @@ export function SessionPane({
         backgroundWorks: snapshot?.backgroundWorks ?? [],
         runningSubagents: subagents.running,
         workflowRuns: snapshot?.workflowRuns?.runs ?? [],
+        pluginStates: snapshot?.pluginStates,
+        sessionId: sessionId ?? null,
       }),
     [
       isOfficeMode,
@@ -3158,8 +3173,10 @@ export function SessionPane({
       gitWorktreeChangeSummary,
       snapshot?.backgroundWorks,
       snapshot?.goal,
+      snapshot?.pluginStates,
       snapshot?.plan,
       snapshot?.workflowRuns,
+      sessionId,
       state.sessionPlans,
       selectionSideChat,
       subagents.running,
@@ -3411,6 +3428,7 @@ export function SessionPane({
       onStop={handleStopFromButton}
       onSelectModel={handleSelectModel}
       onSelectThought={handleSelectThought}
+      onSelectSpeed={handleDraftSelectSpeed}
       onSwitchMode={handleSwitchMode}
       onOpenRunningBackgroundWorks={
         sessionId && runningBackgroundWorkCount > 0 ? handleOpenRunningBackgroundWorks : undefined
@@ -3622,6 +3640,8 @@ export function SessionPane({
             onOpenSubagentDirectory={
               onOpenSubagentDirectory ? handleOpenSubagentDirectory : undefined
             }
+            onOpenTeamPanel={onOpenTeamPanel ? handleOpenTeamPanel : undefined}
+            pluginStates={snapshot?.pluginStates}
             onOpenWorkflowRun={
               onOpenWorkflowRun && sessionId ? handleOpenWorkflowRunFromPanel : undefined
             }
@@ -3680,6 +3700,29 @@ export function SessionPane({
               onLoadAllOlder={handleLoadAllOlder}
               turnNavigatorDirectoryRevision={state.turnNavigatorDirectoryRevision}
               bottomDock={conversationBottomDock}
+              tailSlot={conversationTeamCardsSlot(
+                statusPanelModel.teams,
+                {
+                  parentSessionId: sessionId,
+                  // 残留成员的停止入口（SPEC-012 R13）：复用智能体分区同一条
+                  // backgroundWorks 通道，团队卡不新增停止路径。
+                  resolveMemberStop: readOnly
+                    ? undefined
+                    : (childSessionId: string) => {
+                        const work = statusPanelModel.runningSubagentWorks.find(
+                          (candidate) =>
+                            candidate.childSessionId === childSessionId && candidate.controlWorkId,
+                        );
+                        const workId = work?.controlWorkId;
+                        return workId === undefined
+                          ? undefined
+                          : () => handleCancelBackgroundWork(workId);
+                      },
+                },
+                onOpenTeamPanel ? handleOpenTeamPanel : undefined,
+                onOpenSubagentSession ? handleOpenSubagentSession : undefined,
+                isDraft || Boolean(selectionSideChat),
+              )}
               emptyState={
                 isDraft ? (
                   <div data-testid={TID_CHAT_EMPTY} className="w-full">

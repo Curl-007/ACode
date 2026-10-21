@@ -11,6 +11,7 @@ import type { ScriptWorkflowMode } from "./script-workflow-feature.js";
 import type { ToolSearchAppMode } from "./tool-search-feature.js";
 import type { DesktopWindowSizeSettings } from "./desktopAppSettings.js";
 import type { AppSettingsOccupation } from "./appSettingsOccupation.js";
+import type { DefaultReasoningLevelPick, NewTaskDefaults } from "./new-task-defaults.js";
 
 // ── Domain types ──
 
@@ -397,4 +398,8 @@ export interface AppSettings {
   settingsSyncFirstRunPromptHandled?: boolean;
   /** 设置页里的临时 endpoint override；正式/测试默认 base url 由 ACODE_BASE_URL env 管理。 */
   acodeEndpointOrigin?: string;
+  /** 新建任务默认值：固定权限模式 / 模型 / 推理强度；缺席或 enabled=false 时按原有规则取值。 */
+  newTaskDefaults?: NewTaskDefaults;
+  /** 新建/切模型时推理强度默认取法：first（缺省）、highest 或具体档位。 */
+  defaultReasoningLevelPick?: DefaultReasoningLevelPick;
 }

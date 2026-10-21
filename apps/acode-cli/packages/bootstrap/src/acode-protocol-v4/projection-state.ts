@@ -86,10 +86,27 @@ export function createInitialConversationSnapshot(
     pendingCommands: [],
     backgroundWorks: [],
     subagents: { revision: 0, childSessionIds: [], running: [], endedTotal: 0 },
+    // 插件状态快照：初始无插件状态；PluginStateUpdated 归约写入（键级整体替换）。
+    pluginStates: null,
     goal: null,
     plan: null,
     // 软门禁：初始无待审核状态;activate() 上报后由投影写入。
     workspaceHookAdmission: null,
+    // 本轮生成指标状态栏：初始无指标（usage-statusbar-port.md §3.1）。
+    composerTurnMetrics: null,
+    // 本会话工具调用计数（usage-statusbar-port.md §3.2）。
+    // Bug 原因：初始为 null 时 UI 无法区分「新 CLI 尚无工具调用」与「旧 CLI 不支持」，
+    // 首个工具收口前「工具调用」整段隐藏；新 CLI 一律从 0 起，null 只留给旧 CLI。
+    // 必须与 ProductProjection 的 EMPTY_SESSION_TOOL_STATS 一致，否则首条 patch 会被等值判定吞掉或多发。
+    sessionToolStats: {
+      calls: 0,
+      errors: 0,
+      turnCount: 0,
+      requestCount: 0,
+      reasoningTokens: 0,
+      linesAdded: 0,
+      linesDeleted: 0,
+    },
     rows: { window: [], totalCount: 0, firstRowId: null },
   };
 }

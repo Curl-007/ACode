@@ -166,6 +166,22 @@ export interface SubagentDirectorySidePaneTab {
   parentSessionId: string;
 }
 
+/**
+ * 同一会话的多个团队共用一个 tab；teamId 与阶段仅为查看落点，不改变身份隔离。
+ */
+export interface TeamSidePaneTab extends TeamPanelLanding {
+  id: string;
+  type: "team";
+  ownerTaskId?: string | null;
+  openedAt?: number;
+  workspaceKey: string;
+  workspacePath: string;
+  workspaceIdentity?: string;
+  remoteSessionId?: string;
+  rootSessionId: string;
+  parentSessionId: string;
+}
+
 export interface SelectionSideChatPaneTab {
   id: string;
   type: "selection-side-chat";
@@ -533,6 +549,23 @@ export interface OpenScopedSubagentDirectorySideTabRequest extends OpenSubagentD
   remoteSessionId?: string;
 }
 
+export interface TeamPanelLanding {
+  teamId?: string | undefined;
+  focusPhaseId?: string | undefined;
+  focusTaskId?: string | undefined;
+}
+
+export interface OpenTeamSideTabRequest extends TeamPanelLanding {
+  rootSessionId?: string;
+  parentSessionId: string;
+}
+
+export interface OpenScopedTeamSideTabRequest extends OpenTeamSideTabRequest {
+  workspacePath: string;
+  workspaceIdentity?: string;
+  remoteSessionId?: string;
+}
+
 export interface SyncSubagentSessionTabsRequest {
   rootSessionId: string;
   parentSessionId: string;
@@ -558,6 +591,7 @@ export type WorkspaceSidePaneTab =
   | BrowserUseSidePaneTab
   | SubagentSessionSidePaneTab
   | SubagentDirectorySidePaneTab
+  | TeamSidePaneTab
   | SelectionSideChatPaneTab
   | PlanDetailSidePaneTab
   | WorkflowRunSidePaneTab
@@ -774,6 +808,31 @@ function createSubagentDirectorySidePaneTab(options: {
       encodeSidePaneTabIdPart(options.parentSessionId),
     ].join(":"),
     type: "subagent-directory",
+    openedAt: Date.now(),
+    workspaceKey: options.workspaceKey,
+    workspacePath: options.workspacePath,
+    ...(options.workspaceIdentity ? { workspaceIdentity: options.workspaceIdentity } : {}),
+    ...(options.remoteSessionId ? { remoteSessionId: options.remoteSessionId } : {}),
+    rootSessionId,
+    parentSessionId: options.parentSessionId,
+  };
+}
+
+function createTeamSidePaneTab(
+  options: OpenScopedTeamSideTabRequest & { workspaceKey: string },
+): TeamSidePaneTab {
+  const rootSessionId = options.rootSessionId ?? options.parentSessionId;
+  return {
+    id: [
+      "team",
+      encodeSidePaneTabIdPart(options.workspaceKey),
+      encodeSidePaneTabIdPart(rootSessionId),
+      encodeSidePaneTabIdPart(options.parentSessionId),
+    ].join(":"),
+    type: "team",
+    teamId: options.teamId,
+    focusPhaseId: options.focusPhaseId,
+    focusTaskId: options.focusTaskId,
     openedAt: Date.now(),
     workspaceKey: options.workspaceKey,
     workspacePath: options.workspacePath,
@@ -1178,6 +1237,7 @@ function getVisibleSidePaneTabsByScope(
     if (
       tab.type === "selection-side-chat" ||
       tab.type === "plan-detail" ||
+      tab.type === "team" ||
       tab.type === "workflow-run" ||
       tab.type === "workflow-actor-session" ||
       tab.type === "workflow-workspace" ||
@@ -1708,6 +1768,17 @@ export function openSubagentDirectorySidePane(
   return activateSidePaneTab(current, existing ? { ...existing, ...nextTab } : nextTab);
 }
 
+export function openTeamSidePane(
+  current: WorkspaceSidePaneState | null,
+  options: OpenScopedTeamSideTabRequest & { workspaceKey: string },
+): WorkspaceSidePaneState {
+  const nextTab = createTeamSidePaneTab(options);
+  const existing = current?.tabs.find(
+    (tab): tab is TeamSidePaneTab => tab.type === "team" && tab.id === nextTab.id,
+  );
+  return activateSidePaneTab(current, existing ? { ...existing, ...nextTab } : nextTab);
+}
+
 export function syncSubagentSessionSidePaneTabs(
   current: WorkspaceSidePaneState | null,
   options: SyncSubagentSessionTabsRequest,
@@ -1981,6 +2052,7 @@ export function isSidePaneTabVisibleForParent(
   if (
     tab.type === "selection-side-chat" ||
     tab.type === "plan-detail" ||
+    tab.type === "team" ||
     tab.type === "workflow-run" ||
     tab.type === "workflow-directory" ||
     tab.type === "workflow-actor-session" ||

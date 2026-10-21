@@ -1,5 +1,11 @@
+import { subagentSessionIdForAgent } from "./identity.js";
 import type { TeamState, TeamTask } from "./state/types.js";
-import { computeReadyTaskIds, criticalPathDepth, tasksBlockedByFailedQuality } from "./state/dag.js";
+import { STALE_TEAM_AFTER_MS } from "./state/types.js";
+import {
+  computeReadyTaskIds,
+  criticalPathDepth,
+  tasksBlockedByFailedQuality,
+} from "./state/dag.js";
 
 /**
  * 面板状态快照（TeamPanelState）：宿主状态面板（pluginStates 状态键）与浏览器面板
@@ -39,6 +45,11 @@ export interface TeamPanelState {
   goal: string;
   status: TeamState["status"];
   seq: number;
+  /**
+   * 队长会话 id（additive）：快照按工作区推送给同项目所有会话，宿主据此只在队长会话里
+   * 画团队卡；缺席（旧插件）时宿主退回「不过滤」。
+   */
+  captainSessionId?: string;
   panelUrl?: string;
   counts: {
     done: number;
@@ -52,6 +63,8 @@ export interface TeamPanelState {
     role: string;
     status: string;
     currentTaskId?: string;
+    /** 已绑定成员的子会话 id（按 identity.ts 既有构造规则派生）；UI 据此打开成员会话。 */
+    childSessionId?: string;
   }>;
   /** 名册上限（team.json 的 maxMembers），面板据此显示「成员 5/8」。 */
   maxMembers: number;
@@ -76,7 +89,26 @@ export interface TeamPanelState {
   mailboxes: TeamPanelMailbox[];
   /** 未读消息样本（最多 MAX_PANEL_UNREAD_MESSAGES 条，正文已截断）。 */
   unreadMessages: TeamPanelMessage[];
+  /**
+   * 多团队 additive 扩展（0.2，v 仍为 1）：所有活跃团队各自的快照，primary 之上的
+   * 平铺数组。旧宿主按 v1 收窄读不到它 → 仍渲染 primary 单卡；新宿主读 teams[] 渲染
+   * 多卡。与 readyTaskIds 等同一 additive 手法：缺席即退回单卡，不构成形状不符。
+   */
+  teams?: TeamPanelState[];
+  /** primary 卡的来源团队最近无更新（>48h）；提示 adopt 或归档，不自动处理。 */
+  stale?: boolean;
+  /** team.json 的 updatedAt：UI 据此显示「最近更新 X 前」；缺席则不显示时间。 */
+  updatedAt?: string;
+  /**
+   * 最近结束的团队（additive）：按结束时间倒序，最多 MAX_RECENT_ENDED_TEAMS 条，
+   * 元素与 teams[] 同形（不带 mailboxes/unreadMessages），另带 endedAt。归档帧之后宿主
+   * 不再收到这些团队，UI 的「已结束」桶只能从这里取。
+   */
+  recentEnded?: Array<TeamPanelState & { endedAt: string }>;
 }
+
+/** recentEnded 保留条数上限。 */
+export const MAX_RECENT_ENDED_TEAMS = 5;
 
 function truncateMessage(text: string): string {
   if (text.length <= MAX_PANEL_MESSAGE_CHARS) return text;
@@ -91,6 +123,8 @@ export function buildTeamPanelState(params: {
   unreadMessages?: readonly TeamPanelMessage[];
 }): TeamPanelState {
   const { team, tasks } = params;
+  const updatedAtMs = Date.parse(team.updatedAt);
+  const stale = Number.isFinite(updatedAtMs) && Date.now() - updatedAtMs > STALE_TEAM_AFTER_MS;
   const counts = { done: 0, inProgress: 0, todo: 0, failed: 0, blocked: 0 };
   for (const task of tasks) {
     if (task.status === "done") counts.done += 1;
@@ -131,7 +165,10 @@ export function buildTeamPanelState(params: {
     goal: team.goal,
     status: team.status,
     seq: team.seq,
+    ...(team.captainSessionId ? { captainSessionId: team.captainSessionId } : {}),
     ...(params.panelUrl ? { panelUrl: params.panelUrl } : {}),
+    ...(stale ? { stale: true } : {}),
+    ...(team.updatedAt ? { updatedAt: team.updatedAt } : {}),
     counts,
     members: team.members
       .filter((member) => member.status !== "removed")
@@ -142,6 +179,7 @@ export function buildTeamPanelState(params: {
         ...(currentTaskByMember.has(member.name)
           ? { currentTaskId: currentTaskByMember.get(member.name) }
           : {}),
+        ...(member.agentId ? { childSessionId: subagentSessionIdForAgent(member.agentId) } : {}),
       })),
     tasks: tasks.map((task) => ({
       taskId: task.taskId,

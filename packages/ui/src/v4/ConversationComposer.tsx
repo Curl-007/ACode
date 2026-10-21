@@ -152,7 +152,7 @@ import {
   type V4ComposerPromptPolishDraftApi,
 } from "@/v4/composer/V4ComposerToolbar.js";
 import type { PromptPolishDraftSnapshot } from "@/v4/composer/usePromptPolish.js";
-import { UsageStatusbar } from "@/v4/usage-statusbar/UsageStatusbar.js";
+import { UsageStatusBar } from "@/v4/composer/usage-bar/UsageStatusBar.js";
 import {
   resolveV4ComposerConfigPickerState,
   type V4ComposerConfigPicker,
@@ -192,7 +192,7 @@ interface ExternalTextInsertRequest {
   requestId: number;
   text: string;
   mention?: ComposerMentionPrefill;
-  mode?: "replace" | "prepend-if-missing";
+  mode?: "replace" | "prepend-if-missing" | "append";
 }
 
 function restorePersistedComposerDraftIntoInput({
@@ -260,6 +260,23 @@ function applyExternalTextInsertRequestToComposer({
     // Bug 原因：安装完成后若回放点击时保存的旧 prompt，会覆盖用户安装期间的编辑。
     // 节点级前置保留编辑器当前的 mention 与段落结构，再从编辑器读取 canonical 草稿。
     updateText(inputApi.getMarkdown());
+    scheduleDraftPersist();
+    requestFocus();
+    return request.requestId;
+  }
+  if (request.mode === "append") {
+    // 团队卡「填入批准语」：追加到用户已有草稿之后，不覆盖、不自动提交。
+    // 仍走同一条插入通道（没有第二条写输入框的路径）；拼接后的文本走 replace 分支，
+    // 因此已有的 mention 结构会被重新解析并保留。
+    const existing = inputApi.getMarkdown();
+    const appended =
+      existing.trimEnd().length > 0 ? `${existing.trimEnd()} ${request.text}` : request.text;
+    if (appended.includes("](plugin://")) {
+      inputApi.setTextWithPluginMentions(appended);
+    } else {
+      inputApi.setText(appended);
+    }
+    updateText(appended);
     scheduleDraftPersist();
     requestFocus();
     return request.requestId;
@@ -411,6 +428,8 @@ interface ConversationComposerProps {
   ) => void;
   /** 选中思考深度；同时带上用户操作时看到的模型，避免异步回流后把 thought 归到另一模型。 */
   onSelectThought: (thought: string, modelContext: { provider: string; model: string }) => void;
+  /** 选中模型速度；同时带上用户操作时看到的模型。 */
+  onSelectSpeed: (speed: string, modelContext: { provider: string; model: string }) => void;
   onSwitchMode: (mode: string) => void;
   /** 打开当前 session 的 Status panel，并直达 Running 明细。 */
   onOpenRunningBackgroundWorks?: () => void;
@@ -497,6 +516,7 @@ function ConversationComposerImpl({
   onStop,
   onSelectModel,
   onSelectThought,
+  onSelectSpeed,
   onSwitchMode,
   onOpenRunningBackgroundWorks,
   backgroundWorkOpenTarget = "panel",
@@ -1892,6 +1912,7 @@ function ConversationComposerImpl({
             onConfigPickerOpenChange={handleConfigPickerOpenChange}
             onSelectModel={handleSelectModelTrace}
             onSelectThought={onSelectThought}
+            onSelectSpeed={onSelectSpeed}
             onSwitchMode={onSwitchMode}
             onRecoverCustomModelSelection={onRecoverCustomModelSelection}
             onSendCompressionCommand={onSendCompressionCommand}
@@ -1952,6 +1973,7 @@ function ConversationComposerImpl({
       modelSelectionState,
       modelSelectionView,
       onSelectThought,
+      onSelectSpeed,
       onRecoverCustomModelSelection,
       onSendCompressionCommand,
       onSwitchMode,
@@ -2128,11 +2150,15 @@ function ConversationComposerImpl({
           onWhiteboardMentionSelected={attachmentsApi.handleWhiteboardMentionSelected}
           onPaste={attachmentsApi.handlePaste}
         />
-        {/* 用量状态栏（specs/usage-statusbar.md）：挂在 composer 工具条下方、输入卡内；
-            必须处于 pane 的 ServiceProvider 子树（今日合计据此拿 workspace-scoped
-            usageStatsService）。snapshot=null（草稿/无活动会话）按组件语义显示零值，
-            不回退其他会话。 */}
-        <UsageStatusbar snapshot={snapshot} className="border-t border-border/50" />
+        {/* 用量状态栏（specs/usage-statusbar-port.md）：挂在 composer 工具条下方、输入卡内。
+            数据全部来自 snapshot 与 workspace-scoped 聚合；snapshot=null（草稿）时整条隐藏。 */}
+        <UsageStatusBar
+          snapshot={snapshot}
+          costModelId={snapshot?.config.model ?? null}
+          workspacePath={workspacePath}
+          {...(workspaceIdentity ? { workspaceIdentity } : {})}
+          {...(remoteSessionId ? { remoteSessionId } : {})}
+        />
         {attachmentsApi.attachmentError ? (
           <p className="flex items-start gap-2 p-3 text-ui-base text-warning">
             <InfoIcon className="mt-0.5 size-4 shrink-0" />

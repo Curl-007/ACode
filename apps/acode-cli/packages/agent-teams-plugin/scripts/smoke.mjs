@@ -3,11 +3,12 @@
  * AgentTeams 插件 server 的端到端冒烟：用 @modelcontextprotocol/client 的
  * Client + StdioClientTransport 驱动（与宿主 adapter 同一条协商链路，含
  * server/discover 版本协商）。无 _meta 的 tools/call 用 caller 降级身份。
- * 验证：tools/list（14 个）→ create → add/bind → create_task（依赖）→
+ * 验证：tools/list（17 个）→ create → add/bind → create_task（依赖）→
  * approve → status（next_actions）→ claim → update（verify 门）→ send_message →
- * status → 面板 API → delete → 工具关闭。
+ * status → 面板 API → delete → 工具关闭；0.2 增补：多团队并行、teamId 寻址、
+ * team_ambiguous、status 总览、adopt_team、teams[] 通知、/api/teams。
  */
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/client";
@@ -72,8 +73,10 @@ const check = (label, condition) => {
 try {
   const listed = await client.listTools();
   const names = listed.tools.map((tool) => tool.name).sort();
-  check("14 tools listed", names.length === 14);
+  check("17 tools listed", names.length === 17);
   check("create present", names.includes("agent_teams_create"));
+  check("adopt_team present", names.includes("agent_teams_adopt_team"));
+  check("merge_member_worktree present", names.includes("agent_teams_merge_member_worktree"));
   check(
     "schemas carry type object",
     listed.tools.every((tool) => tool.inputSchema?.type === "object"),
@@ -256,7 +259,9 @@ try {
   check("archive notification retains terminal team", archivedState.data.status === "archived");
   check(
     "archive notification retains mailbox counts",
-    archivedState.data.mailboxes?.some((mailbox) => mailbox.address === "captain" && mailbox.read === 1),
+    archivedState.data.mailboxes?.some(
+      (mailbox) => mailbox.address === "captain" && mailbox.read === 1,
+    ),
   );
   const historyResponse = await fetch(`${panelUrl}history/${created.teamId}/api`);
   const history = await historyResponse.json();
@@ -268,6 +273,112 @@ try {
   check(
     "tools closed after archive",
     JSON.parse(closed.content[0].text).error.code === "no_active_team",
+  );
+
+  // ---- 0.2 多团队 ----
+  const teamA = text(
+    await toolCall("agent_teams_create", { goal: "scan goal" }, { role: "captain" }),
+  );
+  const teamB = text(
+    await toolCall("agent_teams_create", { goal: "fix goal" }, { role: "captain" }),
+  );
+  check("second team created (multi-team)", teamA.teamId !== teamB.teamId);
+
+  // 不带 teamId 的非 status 工具在名下 ≥2 团队时报 team_ambiguous 且带 candidates。
+  const ambiguous = await toolCall(
+    "agent_teams_add_member",
+    { name: "dev-1", role: "dev", charter: "c" },
+    { role: "captain" },
+  );
+  const ambiguousError = JSON.parse(ambiguous.content[0].text).error;
+  check(
+    "team_ambiguous with candidates",
+    ambiguousError.code === "team_ambiguous" && ambiguousError.data.candidates.length === 2,
+  );
+
+  // status 不带 teamId 返回多团队总览。
+  const overview = text(await toolCall("agent_teams_status", {}, { role: "captain" }));
+  check(
+    "status overview lists both teams",
+    Array.isArray(overview.teams) &&
+      overview.teams.length === 2 &&
+      overview.teams.some((team) => team.teamId === teamA.teamId) &&
+      overview.teams.some((team) => team.teamId === teamB.teamId),
+  );
+
+  // teamId 寻址：A 组团，B 保持空团队（隐式寻址会歧义，全部显式）。
+  const memberAdded = text(
+    await toolCall(
+      "agent_teams_add_member",
+      { teamId: teamA.teamId, name: "dev-1", role: "dev", charter: "impl" },
+      { role: "captain" },
+    ),
+  );
+  check("teamId addressing works", memberAdded.teamId === teamA.teamId);
+  const taskA = text(
+    await toolCall(
+      "agent_teams_create_task",
+      { teamId: teamA.teamId, title: "scan", objective: "scan it", acceptance: ["scanned"] },
+      { role: "captain" },
+    ),
+  );
+  const taskB = text(
+    await toolCall(
+      "agent_teams_create_task",
+      { teamId: teamB.teamId, title: "scan", objective: "scan it too", acceptance: ["scanned"] },
+      { role: "captain" },
+    ),
+  );
+  check("task ids are per-team namespaces", taskA.taskId === "t-1" && taskB.taskId === "t-1");
+
+  // 面板多团队端点。
+  const teamsListing = await (await fetch(`${panelUrl}api/teams`)).json();
+  check(
+    "panel /api/teams lists both",
+    teamsListing.teams?.length === 2 && teamsListing.teams.some((t) => t.teamId === teamA.teamId),
+  );
+  const teamPage = await (await fetch(`${panelUrl}team/${teamA.teamId}/api/state`)).json();
+  check("panel /team/<id>/api/state scopes to team", teamPage.team?.goal === "scan goal");
+  const missingTeam = await fetch(`${panelUrl}team/team-nonexist0/api/state`);
+  check("panel 404s unknown team", missingTeam.status === 404);
+
+  // 宿主通知 teams[]：add_member（A）后应看到 teams 数组含两团。
+  const multiState = await waitForPluginState(
+    (n) => Array.isArray(n.data?.teams) && n.data.teams.length === 2,
+  );
+  check(
+    "plugin state carries additive teams[]",
+    multiState.data.teams.some((t) => t.teamId === teamA.teamId) &&
+      multiState.data.teams.some((t) => t.teamId === teamB.teamId),
+  );
+
+  // 孤儿团队接管：手工把 team.json 的队长改成已消失的会话（模拟真实孤儿：磁盘事实）。
+  const orphan = text(
+    await toolCall("agent_teams_create", { goal: "orphan goal" }, { role: "captain" }),
+  );
+  const orphanPath = join(workspace, ".agent-teams", "teams", orphan.teamId, "team.json");
+  const orphanState = JSON.parse(readFileSync(orphanPath, "utf8"));
+  orphanState.captainSessionId = "session-gone";
+  // lastCaptainSeenAt 拨回 11 分钟前：冷静期外，无需 force 即可接管。
+  orphanState.lastCaptainSeenAt = new Date(Date.now() - 11 * 60 * 1000).toISOString();
+  writeFileSync(orphanPath, JSON.stringify(orphanState));
+  const adopted = text(
+    await toolCall(
+      "agent_teams_adopt_team",
+      { teamId: orphan.teamId, reason: "take over" },
+      { role: "captain" },
+    ),
+  );
+  check("orphan adopted without force outside cooldown", adopted.adopted === true);
+
+  // 清场：按 teamId 逐个归档（隐式寻址在 3 团队下会歧义）。
+  for (const teamId of [teamA.teamId, teamB.teamId, orphan.teamId]) {
+    text(await toolCall("agent_teams_delete", { teamId, archive: false }, { role: "captain" }));
+  }
+  const finalStatus = await toolCall("agent_teams_status", {}, { role: "captain" });
+  check(
+    "all teams archived",
+    JSON.parse(finalStatus.content[0].text).error.code === "no_active_team",
   );
 } catch (error) {
   failures += 1;

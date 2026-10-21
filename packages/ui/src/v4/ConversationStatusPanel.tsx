@@ -81,12 +81,15 @@ import { formatBackgroundTaskElapsedLabel } from "@/BackgroundTaskElapsedLabel.j
 import { GitActionMenu } from "@/GitActionMenu.js";
 import { GitBranchSwitcher } from "@/GitBranchSwitcher.js";
 import { useACodeIntl } from "@/i18n/IntlProvider.js";
+import { TeamStatusSummary } from "@/components/TeamStatusSummary.js";
+import { TeamEndedSection } from "@/v4/TeamEndedSection.js";
 import type {
   OpenPlanDetailSideTabRequest,
   OpenSubagentDirectorySideTabRequest,
   OpenSubagentSideTabRequest,
   OpenWorkflowRunDirectorySideTabRequest,
   OpenOrchestrationSideTabRequest,
+  OpenTeamSideTabRequest,
 } from "@/lib/workspaceSidePane.js";
 import type { ChatViewSummaryPanelVariant } from "@/v4/legacyChatViewTypes.js";
 import { resolveConversationStatusPanelVariant } from "@/v4/conversationLayout.js";
@@ -98,6 +101,7 @@ import {
   type ConversationStatusPanelWorkflowRun,
 } from "@/v4/conversationStatusPanelModel.js";
 import type { ConversationStatusPanelWorkflowRunTarget } from "@/v4/conversationStatusPanelModel.js";
+import type { ConversationStatusPanelTeam } from "@/v4/teamPanelModel.js";
 import { workflowRunOpenTarget } from "@/v4/conversationStatusPanelModel.js";
 import {
   buildConversationGoalIterationSummaries,
@@ -119,6 +123,8 @@ interface ConversationStatusPanelProps {
   runningSubagents?: readonly ACodeSessionRunningSubagent[];
   /** 本会话 `snapshot.workflowRuns.runs`；与 backgroundWorks 在模型层按 workId ≡ runId 联接。 */
   workflowRuns?: readonly WorkflowRunState[];
+  /** 插件状态快照（conversationSnapshot.pluginStates）；AgentTeams 团队卡从中收窄。 */
+  pluginStates?: Record<string, unknown> | null;
   /**
    * 已结束的 workflow run 条数（journal 口径，`countEndedWorkflowRuns`）。
    * 面板不自己算：它手上的投影是 memory-only 的活状态，重启后为空，而这条计数恰恰要在重启后
@@ -153,6 +159,7 @@ interface ConversationStatusPanelProps {
   onOpenWorkflowRunDirectory?: (request: OpenWorkflowRunDirectorySideTabRequest) => void;
   /** 面板菜单的「编排总览」项 → 统一编排 side pane（orchestration-side-pane spec R3 入口）。 */
   onOpenOrchestration?: (request: OpenOrchestrationSideTabRequest) => void;
+  onOpenTeamPanel?: (request: OpenTeamSideTabRequest) => void;
   className?: string;
 }
 
@@ -235,6 +242,7 @@ type StatusSectionKind =
   | "goal"
   | "sessionPlans"
   | "plan"
+  | "agent-teams"
   | "terminal"
   | "workflow"
   | "agent";
@@ -245,6 +253,8 @@ const STATUS_SECTION_SCROLL_POLICY = {
   sessionPlans: "max-h-48",
   // 六个双行 Todo（6 × 52px）需要约 20rem；超过后只滚动进程区块。
   plan: "max-h-80",
+  // agent-teams：任务列表自管折叠（默认收起），分区本体给一档宽松限高兜底。
+  "agent-teams": "max-h-96",
   terminal: "max-h-48",
   // workflow 行与 terminal / agent 行同高（两行 + 控制），限高沿用同一档。
   workflow: "max-h-48",
@@ -1318,6 +1328,39 @@ function WorkflowStatusSection({
   );
 }
 
+function TeamStatusSection({
+  separated,
+  team,
+  title,
+  parentSessionId,
+  onOpenTeamPanel,
+}: {
+  separated: boolean;
+  team: ConversationStatusPanelTeam;
+  title: string;
+  parentSessionId?: string;
+  onOpenTeamPanel?: (request: OpenTeamSideTabRequest) => void;
+}) {
+  return (
+    <StatusSection
+      section="agent-teams"
+      separated={separated}
+      title={title}
+      trailing={() => (
+        <span className="shrink-0 tabular-nums text-foreground-subtle">
+          {team.counts.done}/{team.tasks.length}
+        </span>
+      )}
+    >
+      <TeamStatusSummary
+        team={team}
+        parentSessionId={parentSessionId}
+        onOpenTeamPanel={onOpenTeamPanel}
+      />
+    </StatusSection>
+  );
+}
+
 function SubagentStatusSection({
   endedSubagentCount,
   onCancelBackgroundWork,
@@ -1615,7 +1658,19 @@ function StatusSummaryRow({
         : hasRunningBash
           ? SquareTerminalIcon
           : BotIcon;
-  const summaryMetric = currentPlanItem ? (
+  // 团队卡是自足分区：团队在跑而 Goal/Todo/Git 都缺席时，胶囊必须有团队摘要，
+  // 否则 mini 壳只剩 2px 空线，用户失去唯一展开入口（与「只剩已结束 run」同失效形状）。
+  const team = model.team;
+  const summaryMetric = team ? (
+    <StatusSummaryMetric icon={<BotIcon className="size-4 text-[var(--color-foreground)]" />}>
+      <span className="min-w-0 truncate">
+        {intl.formatMessage({ id: "chat.statusPanel.agentTeams" })}
+      </span>
+      <span className="shrink-0 text-[var(--color-foreground-subtle)]">
+        {team.counts.done}/{team.totalCount}
+      </span>
+    </StatusSummaryMetric>
+  ) : currentPlanItem ? (
     <StatusSummaryMetric
       icon={<ArrowRightIcon className="size-4 text-[var(--color-foreground)]" />}
     >
@@ -1722,6 +1777,7 @@ function ConversationStatusPanelImpl({
   backgroundWorks = EMPTY_BACKGROUND_WORKS,
   runningSubagents = EMPTY_RUNNING_SUBAGENTS,
   workflowRuns = EMPTY_WORKFLOW_RUNS,
+  pluginStates,
   endedWorkflowRunCount = 0,
   endedSubagentCount = 0,
   rootSessionId,
@@ -1745,6 +1801,7 @@ function ConversationStatusPanelImpl({
   onCancelBackgroundWork,
   onOpenSubagentSession,
   onOpenSubagentDirectory,
+  onOpenTeamPanel,
   onOpenWorkflowRun,
   onOpenWorkflowRunDirectory,
   onOpenOrchestration,
@@ -1753,6 +1810,10 @@ function ConversationStatusPanelImpl({
   const isOfficeMode = useIsOfficeMode();
   const miniMeasureRef = useRef<HTMLDivElement | null>(null);
   const [miniWidth, setMiniWidth] = useState(320);
+  // 多团队卡折叠（UI-19）：>4 张卡时先只渲染 4 张，提供「显示全部/收起」切换，
+  // 避免状态面板展开态被 8 张团队卡连续撑爆。
+  const [showAllTeams, setShowAllTeams] = useState(false);
+  const TEAM_CARDS_COLLAPSED_LIMIT = 4;
   const model = useMemo(
     () =>
       buildConversationStatusPanelModel({
@@ -1767,6 +1828,8 @@ function ConversationStatusPanelImpl({
         backgroundWorks,
         runningSubagents,
         workflowRuns,
+        pluginStates,
+        sessionId: parentSessionId ?? null,
       }),
     [
       isOfficeMode,
@@ -1776,12 +1839,25 @@ function ConversationStatusPanelImpl({
       gitWorktreeChangeSummary,
       goal,
       sessionPlans,
+      parentSessionId,
       plan,
+      pluginStates,
       runningSubagents,
       workflowRuns,
       workspacePath,
     ],
   );
+  // 残留成员停止入口（SPEC-012 R13）：子会话 id → backgroundWorks 的 workId，
+  // 与智能体分区同一份事实、同一个停止回调；团队分区不新造停止通道。
+  const runningSubagentWorkIds = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const work of model.runningSubagentWorks) {
+      if (work.controlWorkId !== undefined && work.cancellable !== false) {
+        map.set(work.childSessionId, work.controlWorkId);
+      }
+    }
+    return map;
+  }, [model.runningSubagentWorks]);
   const variant = resolveConversationStatusPanelVariant({
     variantOverride: summaryPanelVariantOverride ?? null,
   });
@@ -1803,6 +1879,7 @@ function ConversationStatusPanelImpl({
   const canRenderGoal = Boolean(model.goal);
   const canRenderSessionPlans = Boolean(model.sessionPlans);
   const canRenderPlan = Boolean(model.plan);
+  const canRenderTeam = model.team !== null;
   const canRenderTerminals = model.runningBashWorks.length > 0;
   // 已结束的 run 也开门（与 canRenderAgents 同判断）：重启后活动数为零，若只按它开门，
   // 通往 run 目录的唯一入口会连带消失。
@@ -2014,6 +2091,69 @@ function ConversationStatusPanelImpl({
                 separated={canRenderGit || canRenderGoal || canRenderSessionPlans}
               />
             ) : null}
+            {canRenderTeam && model.teams.length > 0
+              ? (() => {
+                  // 多于 4 张团队卡时折叠：默认渲染前 4 张 + 展开按钮（UI-19）。
+                  const teamCardsCollapsed =
+                    !showAllTeams && model.teams.length > TEAM_CARDS_COLLAPSED_LIMIT;
+                  const visibleTeams = teamCardsCollapsed
+                    ? model.teams.slice(0, TEAM_CARDS_COLLAPSED_LIMIT)
+                    : model.teams;
+                  return (
+                    <>
+                      {visibleTeams.map((team, index) => (
+                        <TeamStatusSection
+                          key={team.teamId}
+                          separated={
+                            index > 0 ||
+                            canRenderGit ||
+                            canRenderGoal ||
+                            canRenderSessionPlans ||
+                            canRenderPlan
+                          }
+                          team={team}
+                          parentSessionId={parentSessionId}
+                          onOpenTeamPanel={onOpenTeamPanel}
+                          title={intl.formatMessage({ id: "chat.statusPanel.agentTeams" })}
+                        />
+                      ))}
+                      {teamCardsCollapsed ? (
+                        <button
+                          type="button"
+                          className="shrink-0 px-2 text-left text-ui-sm text-foreground-subtle hover:text-foreground"
+                          onClick={() => {
+                            setShowAllTeams(true);
+                          }}
+                        >
+                          {intl.formatMessage(
+                            { id: "chat.statusPanel.agentTeams.showAll" },
+                            { count: String(model.teams.length) },
+                          )}
+                        </button>
+                      ) : showAllTeams && model.teams.length > TEAM_CARDS_COLLAPSED_LIMIT ? (
+                        <button
+                          type="button"
+                          className="shrink-0 px-2 text-left text-ui-sm text-foreground-subtle hover:text-foreground"
+                          onClick={() => {
+                            setShowAllTeams(false);
+                          }}
+                        >
+                          {intl.formatMessage({ id: "chat.statusPanel.agentTeams.showLess" })}
+                        </button>
+                      ) : null}
+                    </>
+                  );
+                })()
+              : null}
+            {canRenderTeam || model.endedTeams.length > 0 ? (
+              <TeamEndedSection
+                teams={model.endedTeams}
+                parentSessionId={parentSessionId}
+                runningChildSessionIds={runningSubagentWorkIds}
+                {...(onOpenTeamPanel ? { onOpenTeamPanel } : {})}
+                {...(onCancelBackgroundWork ? { onStopChildSession: onCancelBackgroundWork } : {})}
+              />
+            ) : null}
             {canRenderTerminals ? (
               <BackgroundWorkStatusSection
                 onOpenBackgroundBash={onOpenBackgroundBash}
@@ -2022,7 +2162,13 @@ function ConversationStatusPanelImpl({
                 works={model.runningBashWorks}
                 open={terminalSectionOpen}
                 onOpenChange={onTerminalSectionOpenChange}
-                separated={canRenderGit || canRenderGoal || canRenderSessionPlans || canRenderPlan}
+                separated={
+                  canRenderGit ||
+                  canRenderGoal ||
+                  canRenderSessionPlans ||
+                  canRenderPlan ||
+                  canRenderTeam
+                }
                 onCancelBackgroundWork={onCancelBackgroundWork}
               />
             ) : null}
@@ -2059,6 +2205,7 @@ function ConversationStatusPanelImpl({
                   canRenderGoal ||
                   canRenderSessionPlans ||
                   canRenderPlan ||
+                  canRenderTeam ||
                   canRenderTerminals ||
                   canRenderWorkflows
                 }

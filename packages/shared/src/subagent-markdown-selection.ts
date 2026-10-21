@@ -7,7 +7,7 @@ import { parseModelPickerValue, type ModelSelection } from "./model-selection.js
 
 const INHERIT_NAMES = new Set(["inherit", "main", "sonnet", "opus", "haiku"]);
 
-/** Markdown 的正式字段始终为字符串 model + thoughtLevel；不解释中间态字段。 */
+/** Markdown 的正式字段为字符串 model + thoughtLevel + speed；不解释中间态字段。 */
 export function parseSubagentMarkdownSelection(
   frontmatter: Record<string, unknown>,
 ): ModelSelection | undefined {
@@ -28,7 +28,13 @@ export function parseSubagentMarkdownSelection(
   }
   const reasoningLevel =
     typeof frontmatter.thoughtLevel === "string" ? frontmatter.thoughtLevel.trim() : "";
-  return reasoningLevel ? { ...selection, options: { reasoningLevel } } : selection;
+  // 带 speed spec 的模型在运行时要求 speed 必选（registry speed-missing）。
+  const speed = typeof frontmatter.speed === "string" ? frontmatter.speed.trim() : "";
+  const options = {
+    ...(reasoningLevel ? { reasoningLevel } : {}),
+    ...(speed ? { speed } : {}),
+  };
+  return Object.keys(options).length > 0 ? { ...selection, options } : selection;
 }
 
 /** 普通 ID 保持可读；分隔符或 custom: 前缀会与解析格式冲突，须用既有编码无损保存。 */

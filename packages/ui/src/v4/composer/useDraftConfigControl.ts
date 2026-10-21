@@ -25,8 +25,12 @@ import { submissionModeSchema } from "@acode/shared/acode-protocol-v4";
 import { prepareWorkspaceWithACodeSessionService } from "@/hooks/useWorkspacePrepare.js";
 import { useACodeSessionService } from "@/hooks/useACodeSessionService.js";
 import { useSettings } from "@/hooks/useSettingService.js";
+import { useServices } from "@/hooks/useServices.js";
 import { parseModelPickerValue } from "@/lib/acodeSessionProjection.js";
-import { initializeNewTaskDraft } from "@/v4/composer/newTaskDraft.js";
+import {
+  initializeNewTaskDraft,
+  refreshUneditedNewTaskDefaults,
+} from "@/v4/composer/newTaskDraft.js";
 import {
   clearV4ComposerDraft,
   persistV4ComposerDraft,
@@ -96,6 +100,10 @@ interface DraftConfigControl {
   ) => () => void;
   handleDraftSelectModel: (modelProvider: string, model: string) => void;
   handleDraftSelectThought: (thought: string) => void;
+  handleDraftSelectSpeed: (
+    speed: string,
+    modelContext: { provider: string; model: string },
+  ) => void;
   handleDraftSwitchMode: (mode: string) => void;
 }
 
@@ -123,7 +131,9 @@ export function useDraftConfigControl(params: {
   const workspaceKey = workspaceIdentity?.trim() || workspacePath;
   const displayProvider = provider ?? ACODE_AGENT_PROVIDER;
   const acodeSessionService = useACodeSessionService(workspacePath, null, workspaceIdentity);
-  const { settings: sharedSettings } = useSettings();
+  const { settings: sharedSettings, loading: sharedSettingsLoading } = useSettings();
+  // 无设置服务时 useSettings 恒为 loading，不能据此阻塞新任务初始化。
+  const hasSettingService = Boolean(useServices().settingService);
   const appFollowupMode = resolveAppFollowupMode(sharedSettings);
   const scopeId = sessionId ?? V4_DRAFT_SCOPE_ROOT;
   const scopeKey = JSON.stringify([workspaceKey, scopeId]);
@@ -140,6 +150,10 @@ export function useDraftConfigControl(params: {
   const [storedState, setStoredState] = useState(loadedScope);
   let currentState = storedState.scopeKey === scopeKey ? storedState : loadedScope;
   let draft = currentState.draft;
+  // 无选择输入的目录只用于初始化与模型切换；提交仍须等待带当前草稿输入的 View 校验完成。
+  const modelCatalogRead = useModelSelectionServiceView(modelSelectionService);
+  const modelCatalogView =
+    modelCatalogRead.state.status === "ready" ? modelCatalogRead.state.view : null;
   const modelSelectionRead = useModelSelectionServiceView(
     modelSelectionService,
     true,
@@ -151,20 +165,47 @@ export function useDraftConfigControl(params: {
   const modelSelectionView =
     modelSelectionRead.state.status === "ready" ? modelSelectionRead.state.view : null;
   const initializeAsNewTask = sessionId === null || draft.initializeFromNewTask === true;
-  if (!draft.mode && (initializeAsNewTask ? modelSelectionView !== null : sessionConfig != null)) {
+  // 修复原因：新任务初始化只消费一次 newTaskDefaults（mode 即已初始化标记），而原门禁只等模型
+  // 目录；设置快照晚到时按「未固定」初始化，已固定的 mode/model 被永久错过，且结果写入
+  // localStorage 跨重启粘住。修复依据：初始化必须等设置快照就绪；读取失败（loading 结束且无快照）
+  // 时按未固定处理，避免设置服务故障把新任务草稿永久卡在未初始化。
+  const newTaskSettingsSettled =
+    sharedSettings !== null || !sharedSettingsLoading || !hasSettingService;
+  if (
+    !draft.mode &&
+    (initializeAsNewTask
+      ? modelCatalogView !== null && newTaskSettingsSettled
+      : sessionConfig != null)
+  ) {
     const mode = submissionModeSchema.safeParse(sessionConfig?.mode);
     // Recent 是初始化原意图，不先按旧 Provider 是否仍在候选中删掉；下一次输入读取
     // 由同一解析入口对应当前账号，或暂时留空。否则冷启动会绕过统一账号对应规则。
     // mode 是已初始化标记：历史恢复给出的空选择也是确定结果，后续 Snapshot 不得填满。
     draft =
-      initializeAsNewTask && modelSelectionView
-        ? initializeNewTaskDraft(draft, workspacePath, workspaceIdentity, modelSelectionView)
+      initializeAsNewTask && modelCatalogView
+        ? initializeNewTaskDraft(
+            draft,
+            workspacePath,
+            workspaceIdentity,
+            modelCatalogView,
+            sharedSettings?.newTaskDefaults,
+            sharedSettings?.defaultReasoningLevelPick,
+          )
         : {
             ...draft,
             mode: mode.success && mode.data !== "plan" ? mode.data : "build",
             planEnabled: resolveExecutionState(sessionConfig ?? {}).planEnabled,
             modelSelection: sessionConfig?.modelSelection,
           };
+  }
+  if (sessionId === null && draft.mode && modelCatalogView) {
+    // 目录刷新必须带上同一份默认值，否则会把已固定档位重新推回模型默认档。
+    draft = refreshUneditedNewTaskDefaults(
+      draft,
+      modelCatalogView,
+      sharedSettings?.newTaskDefaults,
+      sharedSettings?.defaultReasoningLevelPick,
+    );
   }
   if (sessionConfig) {
     draft = applyComposerPlanTransition(draft, sessionConfig.planTransition);
@@ -238,6 +279,7 @@ export function useDraftConfigControl(params: {
         ...current,
         mode: mode.success ? mode.data : current.mode,
         modelSelection: next.modelSelection,
+        modelSelectionEdited: true,
         // 用户已经显式改选，不能再由导入时等待的默认初始化覆盖。
         ...(current.initializeFromNewTask
           ? { mode: mode.success ? mode.data : "build", initializeFromNewTask: undefined }
@@ -411,9 +453,11 @@ export function useDraftConfigControl(params: {
     (modelProvider: string, model: string) => {
       const modelId = modelProvider ? `${modelProvider}/${model}` : model;
       const parsedSelection = parseModelPickerValue(modelId);
-      // 用户点击模型只确定模型身份；Reasoning 没有默认值，保持为空并等待用户选择。
-      const modelSelection = modelSelectionView
-        ? (completeNewModelSelection(modelSelectionView, parsedSelection) ?? parsedSelection)
+      // 用户主动切模型时按 defaultReasoningLevelPick 自动选择档位；固定项仍由初始化/刷新叠加。
+      const modelSelection = modelCatalogView
+        ? (completeNewModelSelection(modelCatalogView, parsedSelection, {
+            reasoningLevel: sharedSettings?.defaultReasoningLevelPick,
+          }) ?? parsedSelection)
         : parsedSelection;
       logger.debug("[v4-draft-config] select model", {
         modelProvider,
@@ -426,7 +470,13 @@ export function useDraftConfigControl(params: {
       });
       updateDraftConfig((current) => applyDraftModelSelection(current, modelSelection));
     },
-    [modelSelectionView, updateDraftConfig, workspaceIdentity, workspacePath],
+    [
+      modelCatalogView,
+      sharedSettings?.defaultReasoningLevelPick,
+      updateDraftConfig,
+      workspaceIdentity,
+      workspacePath,
+    ],
   );
 
   const handleDraftSelectThought = useCallback(
@@ -451,6 +501,29 @@ export function useDraftConfigControl(params: {
               : {}),
           },
           thought,
+        };
+      });
+    },
+    [updateDraftConfig],
+  );
+
+  const handleDraftSelectSpeed = useCallback(
+    (speed: string, modelContext: { provider: string; model: string }) => {
+      updateDraftConfig((current) => {
+        const selection = current.modelSelection;
+        if (
+          !selection ||
+          selection.providerId !== modelContext.provider ||
+          selection.modelId !== modelContext.model
+        ) {
+          return current;
+        }
+        return {
+          ...current,
+          modelSelection: {
+            ...selection,
+            options: { ...selection.options, speed },
+          },
         };
       });
     },
@@ -492,6 +565,7 @@ export function useDraftConfigControl(params: {
     captureAcceptedModelSelection,
     handleDraftSelectModel,
     handleDraftSelectThought,
+    handleDraftSelectSpeed,
     handleDraftSwitchMode,
   };
 }

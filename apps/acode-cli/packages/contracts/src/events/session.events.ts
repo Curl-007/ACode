@@ -158,6 +158,9 @@ export const SessionEventType = {
   // 命名刻意带 swarm_plan_ 前缀（specs/swarm-observability-projection.md R2，
   // dynamic_workflow_run_progress 同款防混淆纪律）。
   SwarmPlanProgress: "swarm_plan_progress",
+  // 插件 MCP server 经标准 logging notification（logger 前缀 acode-plugin-state）投递的
+  // 自定义状态快照；v4 归约进 pluginStates 状态键（键级整体替换），v3 侧剥离。
+  PluginStateUpdated: "plugin_state_updated",
   PermissionRequested: "permission_requested",
   PermissionResolved: "permission_resolved",
   PermissionDenied: "permission_denied",
@@ -1024,6 +1027,21 @@ export interface DynamicWorkflowRunProgressPayload {
 }
 
 /**
+ * 插件 MCP server 投递的自定义状态快照（通用通道，非 AgentTeams 专有）。
+ * server 侧用标准 `notifications/message` logging 通知、logger 取
+ * `acode-plugin-state:<plugin>`；宿主 adapter 只透传不解释，`state` 归插件命名空间。
+ * v4 投影按 `pluginStates[pluginId + ":" + key]` 键级整体替换。
+ */
+export interface PluginStateUpdatedPayload {
+  /** 插件身份（adapter 注入，来自本地 plugin registry，server 不可伪造 official 身份）。 */
+  pluginId: string;
+  /** 插件侧状态主题（如 "agent-teams"）；快照键 = pluginId + ":" + key。 */
+  key: string;
+  /** 快照内容（插件所有；UI 端按 pluginId+key 选择解释器）。 */
+  state: unknown;
+}
+
+/**
  * 一条 swarm plan 提交投影事件（父会话；specs/swarm-observability-projection.md R2/R7）。
  * 字段与 shared 的 swarmPlanStateSchema 同形——**一次序列化、两个消费者**（listEvents 的
  * 事件页与 v4 swarmPlan 状态键用同一个有界载荷）。编译期闸在 bootstrap 的载荷 mapper
@@ -1338,6 +1356,7 @@ export type SessionEventPayload =
   | BackgroundTaskCompletedPayload
   | DynamicWorkflowRunProgressPayload
   | SwarmPlanProgressPayload
+  | PluginStateUpdatedPayload
   | PermissionRequestedPayload
   | PermissionResolvedPayload
   | PermissionDeniedPayload

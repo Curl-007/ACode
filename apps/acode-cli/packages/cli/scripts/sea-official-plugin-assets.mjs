@@ -62,7 +62,7 @@ export const officialSeaPlugins = [
       "skills/agent-teams/SKILL.md",
     ],
     rootPath: join("packages", "agent-teams-plugin"),
-    version: "0.1.0",
+    version: "0.4.0",
   },
 ];
 

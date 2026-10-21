@@ -8,7 +8,7 @@
 // header 键整键替换、条目整条替换，没有任何字段级深合并。规则在 workflow-runs-delta.ts。
 import { z } from "zod";
 import { streamablePathSchema } from "./core.js";
-import { conversationRowSchema } from "./rows.js";
+import { composerTurnMetricsSchema, conversationRowSchema } from "./rows.js";
 import {
   backgroundWorkSummarySchema,
   commandStateSummarySchema,
@@ -22,6 +22,7 @@ import {
   sessionControlSchema,
   sessionMetaStateSchema,
   sessionModelTransitionSchema,
+  sessionToolStatsSchema,
   sessionUsageStateSchema,
   subagentProjectionStateSchema,
   workspaceHookAdmissionStateSchema,
@@ -56,10 +57,19 @@ export const statePatchSchema = z.object({
   // swarm plan 投影（specs/swarm-observability-projection.md R4）：键级整体替换，
   // null = 清除。偏斜语义与 workflowRuns 逐字相同（旧桌面剥离一个键，其余保住）。
   swarmPlan: swarmPlanStateSchema.nullable().optional(),
+  // 插件自定义状态快照（PluginStateUpdated 归约产物）。与 workflowRuns 同理：容器不
+  // strict，旧客户端剥离该键无副作用；键 = `${pluginId}:${key}`，值归插件命名空间。
+  pluginStates: z.record(z.string(), z.unknown()).nullable().optional(),
   goal: goalStateSchema.nullable().optional(),
   plan: planStateSchema.nullable().optional(),
   // 软门禁：null = pending 清零(提示条消失);对象 = 待审核状态更新。
   workspaceHookAdmission: workspaceHookAdmissionStateSchema.nullable().optional(),
+  // 本轮生成指标状态栏事实（usage-statusbar-port §3.1）。键级整体替换；
+  // null = 新一轮开始/queue 切段清空。容器不 strict，旧桌面收到新键只是剥离该键。
+  composerTurnMetrics: composerTurnMetricsSchema.nullable().optional(),
+  // 本会话工具调用计数（usage-statusbar-port §3.2）。键级整体替换；
+  // null = 无数据（旧 CLI / 冷恢复未统计）。容器不 strict，旧桌面剥离该键无副作用。
+  sessionToolStats: sessionToolStatsSchema.nullable().optional(),
 });
 export type StatePatch = z.infer<typeof statePatchSchema>;
 

@@ -85,13 +85,57 @@ describe("prompt contract: member brief", () => {
     assert.ok(member.includes("blockedReason"), "member.md must say how to report a batch stop");
   });
 
-  it("keeps the scope boundary and the stop-after-report rule", () => {
+  it("keeps the scope boundary and the wait-after-report rule", () => {
     assert.ok(member.includes("只做指定那一步"), "member.md must keep the scope boundary");
-    assert.ok(member.includes("答完停下回报"), "member.md must keep stop-after-report");
+    assert.ok(member.includes("答完回报再等活"), "member.md must keep wait-after-report");
+    assert.ok(
+      member.includes("agent_teams_wait_for_work"),
+      "member.md must route idle members into the wait tool instead of ending",
+    );
+    assert.ok(
+      member.includes("只有队长能让你停"),
+      "member.md must state that only the captain ends members",
+    );
   });
 
-  it("does not change the frontmatter knobs the PRD froze", () => {
-    assert.ok(member.includes("maxTurns: 40"), "maxTurns must stay 40");
+  it("scope control suggests follow-ups instead of fixing unrelated issues", () => {
+    assert.ok(member.includes("范围控制"), "member.md must carry the scope-control section");
+    assert.ok(
+      member.includes("只建议不修"),
+      "member.md must say unrelated issues are suggested, not fixed",
+    );
+    assert.ok(
+      member.includes("验证面跟验收走"),
+      "member.md must tie the verification surface to acceptance",
+    );
+  });
+
+  it("resumed tasks check existing progress before continuing", () => {
+    assert.ok(member.includes("续跑任务"), "member.md must carry the resumed-tasks section");
+    assert.ok(
+      member.includes("先核对盘上已有进度"),
+      "member.md must say to check on-disk progress first",
+    );
+    assert.ok(member.includes("不从头重做"), "member.md must say not to redo from scratch");
+    assert.ok(
+      member.includes("记忆可信，盘面为准"),
+      "member.md must prefer the current disk state over memory",
+    );
+  });
+
+  it("on permission denial members report instead of working around", () => {
+    assert.ok(member.includes("出错时"), "member.md must carry the when-things-go-wrong section");
+    assert.ok(member.includes("权限被拒绝"), "member.md must name the permission-denied case");
+    assert.ok(
+      member.includes("需要用户审批"),
+      "member.md must say approval needs are reported back",
+    );
+    assert.ok(member.includes("不换路径绕过"), "member.md must forbid working around a denial");
+  });
+
+  it("gives resident members enough turns to idle-wait", () => {
+    // 常驻成员每轮等待（≤8 分钟）消耗一轮；40 轮只够约 5 小时空等，放宽到 200。
+    assert.ok(member.includes("maxTurns: 200"), "maxTurns must be 200 for resident members");
   });
 });
 

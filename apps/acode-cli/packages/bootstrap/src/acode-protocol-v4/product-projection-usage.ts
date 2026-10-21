@@ -4,7 +4,11 @@
 // 事件缺失字段时保留缺席（undefined），绝不造假值。
 import { getAutoCompactThreshold } from "@acode/core";
 import type { ModelCompletePayload, ModelUsage } from "@acode/contracts";
-import type { SessionUsageLastRequest, TurnHeaderStats } from "@acode/shared/acode-protocol-v4";
+import type {
+  SessionUsageLastRequest,
+  TurnHeaderStats,
+  TurnMetrics,
+} from "@acode/shared/acode-protocol-v4";
 
 /** 每个 product turn 一份；ModelComplete（main_turn）累加，轮收口 flush 进 turnHeader.stats。 */
 export interface TurnUsageAccumulator {
@@ -32,9 +36,7 @@ export interface TurnUsageAccumulator {
 /** servedModels 有界纪律：display 面字段，去重后仍限 4 项（异常轮不撑爆 row）。 */
 const MAX_TURN_SERVED_MODELS = 4;
 
-function formatServedModel(
-  servedModel: ModelCompletePayload["servedModel"],
-): string | undefined {
+function formatServedModel(servedModel: ModelCompletePayload["servedModel"]): string | undefined {
   if (!servedModel || typeof servedModel.modelId !== "string") return undefined;
   const modelId = servedModel.modelId.trim();
   if (!modelId) return undefined;
@@ -135,7 +137,10 @@ export function accumulateTurnUsage(
   };
 }
 
-export function buildTurnHeaderStats(accumulator: TurnUsageAccumulator): TurnHeaderStats {
+export function buildTurnHeaderStats(
+  accumulator: TurnUsageAccumulator,
+  turnMetrics?: TurnMetrics,
+): TurnHeaderStats {
   return {
     inputTokens: accumulator.inputTokens,
     outputTokens: accumulator.outputTokens,
@@ -147,8 +152,18 @@ export function buildTurnHeaderStats(accumulator: TurnUsageAccumulator): TurnHea
       : {}),
     ...(accumulator.generationMs !== undefined ? { generationMs: accumulator.generationMs } : {}),
     modelRequestCount: accumulator.modelRequestCount,
+    // 回答末尾速率行（usage-statusbar-port §3.3）：与 composerTurnMetrics 同累加器同值；
+    // 计时不完整（null）时缺席，旧客户端不渲染该行。
+    ...(turnMetrics?.tokensPerSecond !== null && turnMetrics?.tokensPerSecond !== undefined
+      ? { tokensPerSecond: turnMetrics.tokensPerSecond }
+      : {}),
+    ...(turnMetrics?.peakTokensPerSecond !== undefined
+      ? { peakTokensPerSecond: turnMetrics.peakTokensPerSecond }
+      : {}),
     ...(accumulator.servedModels.length > 0 ? { servedModels: accumulator.servedModels } : {}),
-    ...(turnCacheMissDelta(accumulator) > 0 ? { promptCacheMisses: turnCacheMissDelta(accumulator) } : {}),
+    ...(turnCacheMissDelta(accumulator) > 0
+      ? { promptCacheMisses: turnCacheMissDelta(accumulator) }
+      : {}),
   };
 }
 

@@ -202,6 +202,12 @@ export const appUsageHeatmapCellSchema = z.object({
   totalTokens: z.number(),
   turnCount: z.number(),
   toolCallCount: z.number(),
+  // 按日分项（状态栏「今日合计」明细）。additive：旧 CLI 不带这些字段时
+  // 对应明细行隐藏（不显示 0）。cacheHitRate 与 summary 同口径（分母为输入 tokens）。
+  inputTokens: z.number().optional(),
+  outputTokens: z.number().optional(),
+  cacheHitRate: z.number().optional(),
+  requestCount: z.number().optional(),
 });
 
 export const appUsageHeatmapWeekSchema = z.object({

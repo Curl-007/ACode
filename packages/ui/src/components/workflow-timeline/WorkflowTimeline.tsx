@@ -104,6 +104,16 @@ export interface WorkflowTimelineProps {
   onOpenMore?: (station: TimelineStation) => void;
   /** 点一枚药丸（有会话开 transcript，没有开占位）；缺席即不可点。 */
   onOpenPill?: (pill: TimelinePill) => void;
+  pillOpenLabel?: (pill: TimelinePill, name: string) => string;
+  /**
+   * 药丸的两行内容与 tooltip（团队卡：第二行 = 成员当前任务标题、tooltip = 角色）。
+   * 返回 undefined 即该药丸保持单行版式；缺席即全部单行（Workflow 既有观感）。
+   */
+  pillDetail?: (
+    pill: TimelinePill,
+    name: string,
+  ) => { subtitle?: string; title?: string } | undefined;
+  moreOpenLabel?: (station: TimelineStation) => string;
   /**
    * 点脚本药丸：开整个 run 的脚本 transcript，
    * 落到这一站；缺席即脚本药丸不可点。与 `onOpenPill` 各自门控各自的车道。
@@ -118,6 +128,9 @@ export const WorkflowTimeline = memo(function WorkflowTimeline({
   onOpenPill,
   onOpenWorkspace,
   onSelectStation,
+  pillOpenLabel,
+  pillDetail,
+  moreOpenLabel,
 }: WorkflowTimelineProps) {
   const { intl } = useACodeIntl();
   const format = intl.formatMessage.bind(intl);
@@ -247,7 +260,9 @@ export const WorkflowTimeline = memo(function WorkflowTimeline({
     const open =
       onOpenPill !== undefined && pill.slot !== undefined
         ? {
-            label: format({ id: "chat.toolCall.workflow.timeline.openAgent" }, { name: label }),
+            label:
+              pillOpenLabel?.(pill, label) ??
+              format({ id: "chat.toolCall.workflow.timeline.openAgent" }, { name: label }),
             onOpen: () => onOpenPill(pill),
             testId: "workflow-timeline-pill-open",
           }
@@ -261,6 +276,7 @@ export const WorkflowTimeline = memo(function WorkflowTimeline({
               testId: "workflow-timeline-workspace-open",
             }
           : undefined;
+    const detail = pillDetail?.(pill, label);
     return (
       <WorkflowAgentPill
         enterDelayMs={enterDelayMs}
@@ -269,6 +285,8 @@ export const WorkflowTimeline = memo(function WorkflowTimeline({
         laneClass={pill.laneClass}
         name={label}
         status={pill.status}
+        {...(detail?.subtitle === undefined ? {} : { subtitle: detail.subtitle })}
+        {...(detail?.title === undefined ? {} : { title: detail.title })}
         {...(open === undefined ? {} : { open })}
       />
     );
@@ -385,6 +403,7 @@ export const WorkflowTimeline = memo(function WorkflowTimeline({
                       <WorkflowMoreRow
                         enterDelayMs={nextDelay()}
                         more={rosterMore(roster)}
+                        {...(moreOpenLabel ? { title: moreOpenLabel(station) } : {})}
                         {...(onOpenMore === undefined ? {} : { onOpen: () => onOpenMore(station) })}
                       />
                     </>

@@ -95,26 +95,68 @@ export function describeBatchResult(result: SubagentModelBatchResult): {
 }
 
 /**
- * 批量目标值（模型 + 可选推理档位）。modelSelection 为空时表示「恢复继承默认」：
- * 覆盖路径写 state 文件；定义文件路径移除 model/thoughtLevel 字段。
+ * 批量目标值（模型 + 可选推理档位 + 可选速度）。modelSelection 为空时表示「恢复继承默认」：
+ * 覆盖路径写 state 文件；定义文件路径移除 model/thoughtLevel/speed 字段。
  * modelSelection 必须是调用方已用 completeNewModelSelection 解析好的结构体——
  * 不能传 picker 的编码字符串再手写切分（custom: 形态无字面 /，切分会把整串
  * 同时当成 providerId 和 modelId 双重编码写盘，重载后徽标显示内部串）。
- *
- * 迁移适配：上游模块还有速度档位维度（目标值 speed 字段 + 速度控件 + Registry
- * 速度投影函数），本仓当前检出没有该能力面——modelSelectionSchema 的
- * options 是 strict { reasoningLevel } （packages/shared/src/model-selection.ts）、
- * Registry optionSpecs 只有 reasoningLevel（packages/provider/src/registry.ts）、
- * 全仓无 speed-missing 运行时校验。速度维度随上游特性整体剥离，待本仓落地
- * speed spec 后再恢复。
+ * 带 speed spec 的模型必须带 speed（运行时 speed-missing 会拒绝派发）。
  */
 export interface SubagentModelBatchValue {
   modelSelection?: ModelSelection;
   thoughtLevel?: string;
+  speed?: string;
 }
 
 export function isBatchValueInherit(value: SubagentModelBatchValue): boolean {
   return !value.modelSelection?.modelId?.trim();
+}
+
+/**
+ * 解析 speed 维度：模型无 speed spec 时 not-applicable；spec 存在但 Registry
+ * 未就绪时 unknown；否则 supported（候选值列表）。判断依据与运行时校验
+ * （validateModelSelectionOptions 的 speed-missing）同源，避免 UI 与运行时口径漂移。
+ */
+export function resolveSubagentSpeedOptionState(params: {
+  modelSelectionView?: ModelSelectionViewLike | null;
+  modelSelection?: ModelSelection | undefined;
+  modelSelectionLoading: boolean;
+}):
+  | { kind: "not-applicable" }
+  | { kind: "unknown"; status: "loading" | "unavailable" }
+  | { kind: "supported"; values: readonly string[] } {
+  const selection = params.modelSelection;
+  if (!selection) {
+    return { kind: "not-applicable" };
+  }
+  const model = params.modelSelectionView?.providers
+    .find((provider) => provider.providerId === selection.providerId)
+    ?.models.find((candidate) => candidate.modelId === selection.modelId);
+  if (!params.modelSelectionView) {
+    return { kind: "unknown", status: params.modelSelectionLoading ? "loading" : "unavailable" };
+  }
+  const speedSpec = model?.config.optionSpecs.speed;
+  if (!speedSpec || speedSpec.values.length === 0) {
+    return { kind: "not-applicable" };
+  }
+  return { kind: "supported", values: speedSpec.values };
+}
+
+export function isSubagentSpeedInvalid(
+  state: ReturnType<typeof resolveSubagentSpeedOptionState>,
+  speed: string | undefined,
+): boolean {
+  return state.kind === "supported" && !state.values.includes(speed?.trim() ?? "");
+}
+
+interface ModelSelectionViewLike {
+  providers: ReadonlyArray<{
+    providerId: string;
+    models: ReadonlyArray<{
+      modelId: string;
+      config: { optionSpecs: { speed?: { values: readonly string[] } } };
+    }>;
+  }>;
 }
 
 /**
@@ -135,6 +177,7 @@ export function buildUserAgentBatchConfig(
 ): SubAgentConfig {
   const inherit = isBatchValueInherit(value);
   const thoughtLevel = inherit ? undefined : value.thoughtLevel?.trim();
+  const speed = inherit ? undefined : value.speed?.trim();
   const baseSelection = inherit ? undefined : value.modelSelection;
   const modelSelection = baseSelection
     ? {
@@ -142,6 +185,7 @@ export function buildUserAgentBatchConfig(
         options: {
           ...baseSelection.options,
           ...(thoughtLevel ? { reasoningLevel: thoughtLevel } : {}),
+          ...(speed ? { speed } : {}),
         },
       }
     : undefined;

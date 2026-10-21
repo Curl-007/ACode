@@ -43,6 +43,7 @@ import { SidePaneTabOverview } from "@/app-shell/SidePaneTabOverview.js";
 import { SubagentSessionSidePane } from "@/app-shell/SubagentSessionSidePane.js";
 import { SubagentDirectorySidePane } from "@/app-shell/SubagentDirectorySidePane.js";
 import { OrchestrationSidePane } from "@/app-shell/OrchestrationSidePane.js";
+import { TeamSidePane } from "@/app-shell/TeamSidePane.js";
 import { SelectionSideChatPane } from "@/app-shell/SelectionSideChatPane.js";
 import { BackgroundBashOutputSidePane } from "@/app-shell/BackgroundBashOutputSidePane.js";
 import { PlanDetailSidePane } from "@/app-shell/PlanDetailSidePane.js";
@@ -909,6 +910,7 @@ export function AnimatedSidePanePanel({
         workflowScriptTitle: intl.formatMessage({ id: "sidePane.workflowScript" }),
         workflowArtifactTitle: intl.formatMessage({ id: "sidePane.workflowArtifact" }),
         orchestrationTitle: intl.formatMessage({ id: "sidePane.orchestration" }),
+        teamTitle: intl.formatMessage({ id: "sidePane.team" }),
       }}
       onActivateTab={onActivateTab}
       onCloseTab={onCloseTab}
@@ -1284,6 +1286,25 @@ export function AnimatedSidePanePanel({
                             isVisible={isVisible && tab.id === visibleActiveTabId}
                             isWindowsDesktop={isWindowsDesktop}
                             onOpenBrowserUrl={onOpenBrowserUrl}
+                          />
+                        ) : tab.type === "team" ? (
+                          <TeamSidePane
+                            tab={tab}
+                            onOpenMemberSession={({ childSessionId, title }) =>
+                              onOpenSubagentSession({
+                                parentSessionId: tab.parentSessionId,
+                                childSessionId,
+                                subagentType: "agent-teams:member",
+                                title,
+                                workspacePath: tab.workspacePath,
+                                ...(tab.workspaceIdentity
+                                  ? { workspaceIdentity: tab.workspaceIdentity }
+                                  : {}),
+                                ...(tab.remoteSessionId
+                                  ? { remoteSessionId: tab.remoteSessionId }
+                                  : {}),
+                              })
+                            }
                           />
                         ) : (
                           <HumanBrowserView

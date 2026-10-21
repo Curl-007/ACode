@@ -126,11 +126,12 @@ test("user agent batch config replaces modelSelection and preserves other fields
   const withModel = buildUserAgentBatchConfig(source, {
     modelSelection: { providerId: "zai", modelId: "GLM-5.3-Flash" },
     thoughtLevel: "high",
+    speed: "fast",
   });
   assert.deepEqual(withModel.modelSelection, {
     providerId: "zai",
     modelId: "GLM-5.3-Flash",
-    options: { reasoningLevel: "high" },
+    options: { reasoningLevel: "high", speed: "fast" },
   });
   assert.equal(withModel.name, "my-agent");
   assert.deepEqual(withModel.tools, ["Read", "Grep"]);
@@ -201,11 +202,32 @@ test("model selection round-trips through the markdown model formatter", () => {
   assert.equal(simpleParsed?.modelId, "GLM-5.3-Flash");
 });
 
-// 上游模块还带有 4 个 speed 维度测试（markdown frontmatter speed 往返、批量值携带
-// speed、Registry speed spec 投影、speed 校验）。本仓当前检出没有 speed 能力面
-// （modelSelectionSchema options 为 strict { reasoningLevel }，Registry optionSpecs
-// 只有 reasoningLevel，全仓无 speed-missing 校验），speed 维度已随模块整体剥离，
-// 相应测试一并移除；待本仓落地 speed spec 后随功能恢复。
+// speed 维度已随本仓落地：批量值可携带 speed，且必须写进 ModelSelection.options；
+// 运行时 speed-missing 会拒绝派发，所以这是功能契约而非可选展示。
+test("批量值携带 speed 时写入 ModelSelection，继承默认时不写", () => {
+  const source = agent({ id: "9", name: "speed-agent" });
+  const withSpeed = buildUserAgentBatchConfig(source, {
+    modelSelection: { providerId: "zai", modelId: "GLM-5.3-Flash" },
+    speed: "standard",
+  });
+  assert.deepEqual(withSpeed.modelSelection?.options, { speed: "standard" });
+
+  const inherit = buildUserAgentBatchConfig(source, { speed: "fast" });
+  assert.equal(inherit.modelSelection, undefined);
+});
+
+test("markdown frontmatter 同时回读 thoughtLevel 与 speed", () => {
+  const parsed = parseSubagentMarkdownSelection({
+    model: "zai/GLM-5.3-Flash",
+    thoughtLevel: "high",
+    speed: "fast",
+  });
+  assert.deepEqual(parsed, {
+    providerId: "zai",
+    modelId: "GLM-5.3-Flash",
+    options: { reasoningLevel: "high", speed: "fast" },
+  });
+});
 
 test("isBatchApplicableAgent is exposed for row-level checkbox gating", () => {
   assert.equal(isBatchApplicableAgent(agent({ id: "1", name: "x" })), true);

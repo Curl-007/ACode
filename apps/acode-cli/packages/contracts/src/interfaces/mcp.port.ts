@@ -27,6 +27,18 @@ export * from "./mcp-tools.port.js";
 export * from "./mcp-official-auth.port.js";
 export * from "./mcp-resources.port.js";
 
+/**
+ * 插件 MCP server 的自定义状态通知（标准 `notifications/message` logging 通知，
+ * logger 取 `acode-plugin-state:<plugin>`）。宿主只透传不解释——pluginId 由 adapter
+ * 从本地 plugin registry 权威注入，server 不能自报身份。
+ */
+export interface McpPluginStateNotification {
+  pluginId: string;
+  /** 插件侧状态主题（logging 通知 logger 名去掉 acode-plugin-state: 前缀后的部分）。 */
+  key: string;
+  state: unknown;
+}
+
 export interface McpPort {
   connectConfiguredServers(
     servers: Record<string, McpServerConfig>,
@@ -66,6 +78,10 @@ export interface McpPort {
    * 事件监听同一哲学）。
    */
   onToolsChanged?(listener: () => void): () => void;
+  /** 会话 lease 的插件状态订阅；端口关闭时自动取消，无会话的设置端口不订阅。 */
+  subscribePluginStateNotifications?(
+    listener: (notification: McpPluginStateNotification) => void,
+  ): () => void;
   callTool(request: McpCallToolRequest, options?: McpCallToolOptions): Promise<McpToolCallResult>;
   close(): Promise<void>;
 }

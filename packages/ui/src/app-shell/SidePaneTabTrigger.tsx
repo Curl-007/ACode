@@ -17,6 +17,7 @@ import {
   PaletteIcon,
   SquareTerminalIcon,
   TerminalIcon,
+  UsersIcon,
   WaypointsIcon,
   Workflow as WorkflowIcon,
   XIcon,
@@ -311,6 +312,12 @@ export function SidePaneTabIcon({ tab }: { tab: WorkspaceSidePaneTab }) {
     return <NetworkIcon className="size-3.5" />;
   }
 
+  // 团队面板与子智能体目录必须一眼分开：前者是「活干到哪了」（任务视角），后者是
+  // 「谁在跑」（进程视角）。复用 ListTreeIcon 会让两个 tab 同形。
+  if (tab.type === "team") {
+    return <UsersIcon className="size-3.5" />;
+  }
+
   if (tab.type === "browser") {
     return <BrowserTabFavicon faviconUrl={tab.faviconUrl} />;
   }
@@ -520,6 +527,10 @@ export function getSidePaneTabTitle(
 
   if (tab.type === "orchestration") {
     return formatMessage({ id: "sidePane.orchestration" });
+  }
+
+  if (tab.type === "team") {
+    return formatMessage({ id: "sidePane.team" });
   }
 
   if (tab.type === "browser") {

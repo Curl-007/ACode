@@ -23,9 +23,7 @@ const createBundleOptions = ({ entryPoint, outfile }) => ({
   target: "node24",
 });
 
-export const buildAgentTeamsPluginBundles = async ({
-  packageRoot = defaultPackageRoot,
-} = {}) => {
+export const buildAgentTeamsPluginBundles = async ({ packageRoot = defaultPackageRoot } = {}) => {
   const outfile = resolve(packageRoot, "dist", "mcp", "server.js");
   await mkdir(resolve(packageRoot, "dist", "mcp"), { recursive: true });
   await build(

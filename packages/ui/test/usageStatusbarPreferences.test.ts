@@ -58,7 +58,7 @@ test("normalizeUsageStatusbarPreferences：垃圾值归一收敛默认（全开�
   assert.equal(normalized.visibleItems.turnUsage, true);
   assert.equal(normalized.visibleItems.toolCalls, true);
   assert.equal("unknownItem" in normalized.visibleItems, false);
-  assert.equal(normalized.rateLineEnabled, true);
+  assert.equal("rateLineEnabled" in normalized, false);
 });
 
 test("loadUsageStatusbarPreferences：空/坏 JSON → 默认；有效值逐键归一", () => {
@@ -80,7 +80,9 @@ test("loadUsageStatusbarPreferences：空/坏 JSON → 默认；有效值逐键�
       assert.equal(loaded.visibleItems.todayTotal, false);
       // 缺席键保持默认（全开）。
       assert.equal(loaded.visibleItems.subagents, true);
-      assert.equal(loaded.rateLineEnabled, false);
+      // 旧键只作迁移输入，归一化后不再写回镜像字段。
+      assert.equal(loaded.answerFooter, false);
+      assert.equal("rateLineEnabled" in loaded, false);
     },
   );
 });
@@ -108,19 +110,19 @@ test("setUsageStatusbarPreferences：唯一写入口——合并补丁、持久�
       assert.equal(notifications, 1);
 
       // 部分补丁不覆盖其他键。
-      setUsageStatusbarPreferences({ rateLineEnabled: false });
+      setUsageStatusbarPreferences({ answerFooter: false });
       assert.equal(notifications, 2);
       const persisted = JSON.parse(
         storage.values.get(USAGE_STATUSBAR_PREFERENCES_STORAGE_KEY) ?? "null",
       ) as ReturnType<typeof loadUsageStatusbarPreferences>;
-      assert.equal(persisted.rateLineEnabled, false);
+      assert.equal(persisted.answerFooter, false);
       assert.equal(persisted.visibleItems.subagents, false);
 
       // 垃圾补丁值经写入口归一。
       const normalized = setUsageStatusbarPreferences({
-        rateLineEnabled: "nope" as unknown as boolean,
+        answerFooter: "nope" as unknown as boolean,
       });
-      assert.equal(normalized.rateLineEnabled, true);
+      assert.equal(normalized.answerFooter, true);
     } finally {
       unsubscribe();
     }
@@ -133,13 +135,41 @@ test("isSameUsageStatusbarPreferences：值级比较，忽略对象引用", () =
   assert.notEqual(left, right);
   assert.equal(isSameUsageStatusbarPreferences(left, right), true);
   assert.equal(
-    isSameUsageStatusbarPreferences(left, { ...right, rateLineEnabled: !right.rateLineEnabled }),
+    isSameUsageStatusbarPreferences(left, { ...right, answerFooter: !right.answerFooter }),
     false,
   );
+  assert.equal(isSameUsageStatusbarPreferences(left, { ...right, enabled: !right.enabled }), false);
 
   function loadUsageStatusbarPreferencesLike() {
     return normalizeUsageStatusbarPreferences(null);
   }
+});
+
+test("迁移与总开关：rateLineEnabled→answerFooter、contextCapacity 缺省开、显式关闭不改写子开关", () => {
+  const migrated = normalizeUsageStatusbarPreferences({
+    rateLineEnabled: false,
+    visibleItems: { generationSpeed: false },
+  });
+  assert.equal(migrated.answerFooter, false);
+  assert.equal("rateLineEnabled" in migrated, false);
+  assert.equal(migrated.enabled, true);
+  assert.equal(migrated.visibleItems.contextCapacity, true);
+  assert.equal(migrated.visibleItems.generationSpeed, false);
+
+  const answered = normalizeUsageStatusbarPreferences({
+    answerFooter: false,
+    rateLineEnabled: true,
+  });
+  // 新字段优先于旧别名。
+  assert.equal(answered.answerFooter, false);
+
+  const disabled = setUsageStatusbarPreferences({ enabled: false });
+  assert.equal(disabled.enabled, false);
+  assert.equal(disabled.visibleItems.contextCapacity, true);
+  assert.equal(disabled.answerFooter, true);
+  const reenabled = setUsageStatusbarPreferences({ enabled: true });
+  assert.equal(reenabled.enabled, true);
+  assert.equal(reenabled.visibleItems.contextCapacity, true);
 });
 
 test("store 切片：createSlice 初始值来自事实源；setter 经 lib 收口；applyBroadcast 只认对象", () => {
@@ -160,7 +190,7 @@ test("store 切片：createSlice 初始值来自事实源；setter 经 lib 收�
       },
     });
     assert.equal(state.usageStatusbarPreferences.visibleItems.toolCalls, false);
-    assert.equal(state.usageStatusbarPreferences.rateLineEnabled, false);
+    assert.equal(state.usageStatusbarPreferences.answerFooter, false);
 
     state.setUsageStatusbarPreferences({ visibleItems: { toolCalls: true } });
     assert.equal(writes.length, 1);

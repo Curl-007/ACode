@@ -18,6 +18,7 @@ import type {
   OpenScopedOrchestrationSideTabRequest,
   OpenScopedWorkflowWorkspaceSideTabRequest,
   OpenScopedSubagentDirectorySideTabRequest,
+  OpenScopedTeamSideTabRequest,
   OpenScopedSubagentSideTabRequest,
   OpenBackgroundBashSideTabRequest,
   SyncSubagentSessionTabsRequest,
@@ -60,6 +61,7 @@ interface V4ChatPaneProps {
   onOpenBackgroundBash?: (request: OpenBackgroundBashSideTabRequest) => void;
   onOpenSubagentSession?: (request: OpenScopedSubagentSideTabRequest) => void;
   onOpenSubagentDirectory?: (request: OpenScopedSubagentDirectorySideTabRequest) => void;
+  onOpenTeamPanel?: (request: OpenScopedTeamSideTabRequest) => void;
   onSyncSubagentSessionTabs?: (request: SyncSubagentSessionTabsRequest) => void;
   onOpenPlanDetail?: (request: OpenScopedPlanDetailSideTabRequest) => void;
   onOpenWorkflowRun?: (request: OpenScopedWorkflowRunSideTabRequest) => void;
@@ -107,6 +109,7 @@ export function V4ChatPane({
   onOpenSubagentSession,
   onOpenBackgroundBash,
   onOpenSubagentDirectory,
+  onOpenTeamPanel,
   onSyncSubagentSessionTabs,
   onOpenPlanDetail,
   onOpenWorkflowRun,
@@ -152,6 +155,7 @@ export function V4ChatPane({
         onOpenSubagentSession={onOpenSubagentSession}
         onOpenBackgroundBash={onOpenBackgroundBash}
         onOpenSubagentDirectory={onOpenSubagentDirectory}
+        onOpenTeamPanel={onOpenTeamPanel}
         onSyncSubagentSessionTabs={onSyncSubagentSessionTabs}
         onOpenPlanDetail={onOpenPlanDetail}
         onOpenWorkflowRun={onOpenWorkflowRun}

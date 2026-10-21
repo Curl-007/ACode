@@ -1,4 +1,4 @@
-import { copyFile, lstat, mkdir, mkdtemp, rm } from "node:fs/promises";
+import { lstat } from "node:fs/promises";
 import { resolve } from "node:path";
 import type {
   GitCheckpointConflict,
@@ -6,6 +6,7 @@ import type {
   GitCheckpointMeta,
   GitCheckpointRestoreResult,
 } from "@acode/shared";
+import { createServiceLogger } from "#src/logger/serviceLogger.js";
 import { getGitCheckpointIndexRootDir } from "../../paths.js";
 import { toWorkspaceRelativeGitPath } from "../config.js";
 import {
@@ -13,6 +14,7 @@ import {
   type GitCommandProvider,
 } from "../providers/gitCommandProvider.js";
 import { createGitCliRepo, type GitCliRepo } from "./gitCliRepo.js";
+import { createShadowIndex } from "./gitShadowIndex.js";
 import {
   buildAffectedRepoPaths,
   buildCheckpointEnv,
@@ -27,6 +29,19 @@ import {
   toAbsolutePath,
 } from "./gitCheckpointHelpers.js";
 import { ensureGitCommandSucceeded } from "./gitCliHelpers.js";
+
+/** checkpoint 链路服务日志（AGENTS.md 日志规约：agent/session/runtime 服务用 createServiceLogger）。 */
+const log = createServiceLogger("git-checkpoint");
+
+/**
+ * checkpoint 私有管线的意图档位（specs/git-posture-gateway.md R3/R4-3，其接线表
+ * 移交 WI-E3b 声明）：infra = ACode 私有 plumbing，argv 原样透传、仅拒
+ * -C/--git-dir 等位置劫持，不做任何重写——保证 checkpoint 的 diff/parse 语义
+ * 与网关引入前逐字节一致。纯读调用也统一 infra（read 档会给 diff 注入
+ * --ignore-submodules/--submodule=short 重写，对 commit 区间 diff 的解析口径
+ * 有风险，裁决登记见 specs/shadow-git-index.md R8）。
+ */
+const CHECKPOINT_GIT_POSTURE = "infra" as const;
 
 interface GitCheckpointRepo {
   createCheckpoint(params: {
@@ -89,6 +104,7 @@ export function createGitCheckpointRepo(options?: {
     const pathspec = getWorkspacePathspec(resolution.workspaceInRepoPath);
     const [nameStatusResult, numstatResult] = await Promise.all([
       commandProvider.run({
+        posture: CHECKPOINT_GIT_POSTURE,
         cwd: resolution.repoRoot,
         args: [
           "diff",
@@ -102,6 +118,7 @@ export function createGitCheckpointRepo(options?: {
         ],
       }),
       commandProvider.run({
+        posture: CHECKPOINT_GIT_POSTURE,
         cwd: resolution.repoRoot,
         args: [
           "diff",
@@ -144,6 +161,7 @@ export function createGitCheckpointRepo(options?: {
     // 当前磁盘状态是否仍然等于调用方声明的 fromCheckpoint。
     // 只有这样，底层能力才能在存在无关改动时依然安全工作，不会把整个仓库一刀切地判成不可恢复。
     const treeResult = await commandProvider.run({
+      posture: CHECKPOINT_GIT_POSTURE,
       cwd: params.repoRoot,
       args: ["ls-tree", "-r", "-z", params.from.commitOid, "--", ...params.affectedRepoPaths],
     });
@@ -208,6 +226,7 @@ export function createGitCheckpointRepo(options?: {
       }
 
       const hashResult = await commandProvider.run({
+        posture: CHECKPOINT_GIT_POSTURE,
         cwd: params.repoRoot,
         args: ["hash-object", "--no-filters", absolutePath],
       });
@@ -255,53 +274,68 @@ export function createGitCheckpointRepo(options?: {
     async createCheckpoint(params) {
       const resolution = await ensureRepository(params.workspacePath);
       const refName = getCheckpointRefName(params.workspacePath, params.checkpointId);
-      const tempIndexRootDir = getGitCheckpointIndexRootDir();
-      await mkdir(tempIndexRootDir, { recursive: true });
-      const tempIndexDir = await mkdtemp(resolve(tempIndexRootDir, "index-"));
-      const tempIndexPath = resolve(tempIndexDir, "index");
-      const env = buildCheckpointEnv(tempIndexPath);
       const pathspec = getWorkspacePathspec(resolution.workspaceInRepoPath);
 
+      // 用 rev-parse --git-path index 解析真实 index 路径，兼容 worktree / submodule 场景。
+      // 解析失败或为空时按“无源可复制”处理，走 read-tree HEAD / 空 index 降级（语义同旧实现）。
+      const indexPathResult = await commandProvider.run({
+        posture: CHECKPOINT_GIT_POSTURE,
+        cwd: resolution.repoRoot,
+        args: ["rev-parse", "--git-path", "index"],
+      });
+      let sourceIndexPath: string | null = null;
+      if (indexPathResult.exitCode === 0) {
+        const indexRelPath = indexPathResult.stdout.trim();
+        if (indexRelPath.length > 0) {
+          sourceIndexPath = resolve(resolution.repoRoot, indexRelPath);
+        }
+      }
+
+      // 预热复制改走 shadow index 加固管线（specs/shadow-git-index.md）：
+      // shadow-root 目录、per-path singleflight、全局并发预算、symlink/size/DIRC 魔数校验、
+      // wx 独占复制、mtime 整秒保留都在管线内完成；用户真实 index 保持零写入。
+      // writable: true——checkpoint 的临时 index 随后要被 git add/read-tree 写入，
+      // 只读 lock 预占形态（管线默认）不适用。
+      const shadowIndex = await createShadowIndex({
+        sourceIndexPath,
+        rootDir: getGitCheckpointIndexRootDir(),
+        writable: true,
+      });
+      const env = buildCheckpointEnv(shadowIndex.indexFile);
+
       try {
-        // 预热临时 index：优先复制用户真实 index，降级到 read-tree HEAD，最差回到空 index。
+        // 预热临时 index：优先使用管线复制的用户真实 index，降级到 read-tree HEAD，最差回到空 index。
         // 背景：空 index 下 git add -A 会对 workspace 全量文件做 open/read/hash 并写入 object store，
         // 在 Windows + Defender 环境下单文件开销被放大到 5-15ms，大仓库轻易撞破 15s 超时。
         // 复用用户 index 的 stat cache 后，未改动文件走 stat-match 快速路径，直接跳过读取与写对象，
         // Mac/Linux 同样受益（大仓库 add 从数秒降到亚秒），且最终 tree 由 worktree 决定，语义完全等价。
-        // 用 rev-parse --git-path index 解析真实 index 路径，兼容 worktree / submodule 场景。
-        const indexPathResult = await commandProvider.run({
-          cwd: resolution.repoRoot,
-          args: ["rev-parse", "--git-path", "index"],
-        });
-        let primed = false;
-        if (indexPathResult.exitCode === 0) {
-          const indexRelPath = indexPathResult.stdout.trim();
-          if (indexRelPath.length > 0) {
-            const userIndexPath = resolve(resolution.repoRoot, indexRelPath);
-            try {
-              await copyFile(userIndexPath, tempIndexPath);
-              primed = true;
-            } catch {
-              // 用户 index 不存在（刚 init 的空仓）或无权限，降级处理。
-            }
+        if (shadowIndex.prime.kind !== "copied") {
+          if (shadowIndex.prime.kind === "rejected") {
+            // 校验拒绝（symlink/size/DIRC 魔数）、排队超时或复制失败都走同一降级路径。
+            // priming 是纯优化，不失败 checkpoint；但拒绝原因必须留痕（code+stage+message）。
+            const { error } = shadowIndex.prime;
+            log.warn(
+              undefined,
+              "[checkpoint] shadow index prime rejected, falling back to read-tree HEAD:",
+              error.code,
+              error.stage ?? "-",
+              error.message,
+            );
           }
-        }
-        if (!primed) {
           // 没有可复制的 index 时，用 HEAD tree 填充临时 index，至少让已追踪文件走 hash-match 路径。
           // HEAD 不存在（全新仓库）时 read-tree 会失败，允许静默回落到空 index。
-          const readTreeResult = await commandProvider.run({
+          await commandProvider.run({
+            posture: CHECKPOINT_GIT_POSTURE,
             cwd: resolution.repoRoot,
             args: ["read-tree", "HEAD"],
             env,
           });
-          if (readTreeResult.exitCode === 0) {
-            primed = true;
-          }
         }
 
         // 核心实现：用临时 GIT_INDEX_FILE 把当前 workspace 的 live 状态固化成隐藏 commit，
         // 这样既能复用 Git 的对象存储能力，又不会污染用户真实 index / staged 状态。
         const addResult = await commandProvider.run({
+          posture: CHECKPOINT_GIT_POSTURE,
           cwd: resolution.repoRoot,
           args: ["add", "-A", "--", pathspec],
           env,
@@ -310,6 +344,7 @@ export function createGitCheckpointRepo(options?: {
 
         // 临时 index 已经收集了当前 workspace scope 的完整状态，下一步把它冻结成 tree object。
         const treeResult = await commandProvider.run({
+          posture: CHECKPOINT_GIT_POSTURE,
           cwd: resolution.repoRoot,
           args: ["write-tree"],
           env,
@@ -319,6 +354,7 @@ export function createGitCheckpointRepo(options?: {
         // checkpoint 不需要进入用户 branch 历史，但 Git object 必须有一个稳定锚点。
         // 因此这里创建内部 commit，再由后续 hidden ref 指向它。
         const commitResult = await commandProvider.run({
+          posture: CHECKPOINT_GIT_POSTURE,
           cwd: resolution.repoRoot,
           args: [
             "commit-tree",
@@ -335,6 +371,7 @@ export function createGitCheckpointRepo(options?: {
         // 1. Git 不会把这份对象当成垃圾直接回收
         // 2. 后续 diff / restore / delete 都能稳定按 refName 找回对应 commit
         const updateRefResult = await commandProvider.run({
+          posture: CHECKPOINT_GIT_POSTURE,
           cwd: resolution.repoRoot,
           args: ["update-ref", refName, commitOid],
         });
@@ -352,7 +389,8 @@ export function createGitCheckpointRepo(options?: {
         };
       } finally {
         // 临时 index 只服务于本次 checkpoint 构建，结束后必须清掉，避免泄露到宿主环境。
-        await rm(tempIndexDir, { recursive: true, force: true });
+        // dispose 是 best-effort（specs/shadow-git-index.md R1），不会掩盖主链路错误。
+        await shadowIndex.dispose();
       }
     },
 
@@ -426,6 +464,7 @@ export function createGitCheckpointRepo(options?: {
         // restore 阶段只改 worktree，不改真实 index。这样回滚能力才是“文件状态恢复”，
         // 而不是偷偷改用户暂存区的破坏性操作。
         const restoreResult = await commandProvider.run({
+          posture: CHECKPOINT_GIT_POSTURE,
           cwd: resolution.repoRoot,
           args: [
             "restore",
@@ -482,6 +521,7 @@ export function createGitCheckpointRepo(options?: {
     async deleteCheckpoint(params) {
       const resolution = await ensureRepository(params.workspacePath);
       const deleteRefResult = await commandProvider.run({
+        posture: CHECKPOINT_GIT_POSTURE,
         cwd: resolution.repoRoot,
         args: ["update-ref", "-d", params.checkpoint.refName],
       });

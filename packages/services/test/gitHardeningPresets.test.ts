@@ -220,9 +220,15 @@ describe(
       assert.equal(plain(["init", "-q", "-b", "main", replaceRepo], root).status, 0);
       plain(["config", "user.email", "presets@test.local"], replaceRepo);
       plain(["config", "user.name", "presets-test"], replaceRepo);
-      assert.equal(plain(["commit", "-q", "--allow-empty", "-m", "SPOOFED_SUBJECT"], replaceRepo).status, 0);
+      assert.equal(
+        plain(["commit", "-q", "--allow-empty", "-m", "SPOOFED_SUBJECT"], replaceRepo).status,
+        0,
+      );
       const spoofedSha = plain(["rev-parse", "HEAD"], replaceRepo).stdout.trim();
-      assert.equal(plain(["commit", "-q", "--allow-empty", "-m", "REAL_SUBJECT"], replaceRepo).status, 0);
+      assert.equal(
+        plain(["commit", "-q", "--allow-empty", "-m", "REAL_SUBJECT"], replaceRepo).status,
+        0,
+      );
       assert.equal(plain(["replace", "HEAD", spoofedSha], replaceRepo).status, 0);
     });
 
@@ -233,11 +239,22 @@ describe(
     });
 
     test("P1 协议默认全拒：ls-remote/push 对本地 file 远端也被拒绝", async () => {
-      const lsRemote = await provider.run({ cwd: workRepo, args: ["ls-remote", "origin"] });
+      // posture 网关接线（specs/git-posture-gateway.md）：ls-remote 属 fetch 档、
+      // push 档强制具体 refspec（R4-1，`push origin main` 无冒号形会被网关拒）——
+      // 协议层断言需以合法档位+形状通过 argv 门，再验证 env 协议层拒绝。
+      const lsRemote = await provider.run({
+        cwd: workRepo,
+        args: ["ls-remote", "origin"],
+        posture: "fetch",
+      });
       assert.notEqual(lsRemote.exitCode, 0, "默认 env 下 file 传输必须被拒");
       assert.match(lsRemote.stderr, /not allowed/i);
 
-      const push = await provider.run({ cwd: workRepo, args: ["push", "origin", "main"] });
+      const push = await provider.run({
+        cwd: workRepo,
+        args: ["push", "origin", "refs/heads/main:refs/heads/main"],
+        posture: "push",
+      });
       assert.notEqual(push.exitCode, 0, "默认 env 下 push（file 远端）必须被拒");
       assert.match(push.stderr, /not allowed/i);
     });
@@ -246,13 +263,15 @@ describe(
       const lsRemote = await provider.run({
         cwd: workRepo,
         args: ["ls-remote", "origin"],
+        posture: "fetch",
         envOptions: { allowedProtocols: ["file"] },
       });
       assert.equal(lsRemote.exitCode, 0, lsRemote.stderr);
 
       const push = await provider.run({
         cwd: workRepo,
-        args: ["push", "origin", "main"],
+        args: ["push", "origin", "refs/heads/main:refs/heads/main"],
+        posture: "push",
         envOptions: { allowedProtocols: GIT_PUSH_PROTOCOL_ALLOWLIST },
       });
       assert.equal(push.exitCode, 0, push.stderr);
@@ -264,6 +283,7 @@ describe(
       const ext = await provider.run({
         cwd: workRepo,
         args: ["ls-remote", "ext::sh -c echo%20HACKED"],
+        posture: "fetch",
         envOptions: { allowedProtocols: ["file"] },
         timeoutMs: 20_000,
       });

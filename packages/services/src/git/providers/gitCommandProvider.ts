@@ -8,12 +8,24 @@ import {
   createGitEnvironmentProvider,
   type GitEnvironmentProvider,
 } from "./gitEnvironmentProvider.js";
+import {
+  applyGitPostureGateway,
+  DEFAULT_GIT_POSTURE,
+  type GitPosture,
+} from "./gitPostureGateway.js";
 
 export interface GitCommandExecutionOptions {
   cwd: string;
   args: string[];
   timeoutMs?: number;
   maxOutputBytes?: number;
+  /**
+   * 意图档位（specs/git-posture-gateway.md R1/R2）：调用点显式声明；
+   * 缺省 = read 档，写形状 fail-closed 拒绝（EGITPOSTURE 异常）。
+   * 网关在 spawn 前执行并可能重写 argv（注入防御旗标/重建 fetch），
+   * spawn 与 result.args 一律使用重写后形态。
+   */
+  posture?: GitPosture;
   /**
    * 与矩阵不相交的单键 env 覆盖（checkpoint 的 GIT_INDEX_FILE/author 身份等既有语义）。
    * 禁止用它覆盖 GIT_CONFIG_* 编号键或 GIT_ALLOW_PROTOCOL——会破坏矩阵编号一致性/
@@ -98,6 +110,13 @@ export function createGitCommandProvider(options?: {
     },
 
     async run(command: GitCommandExecutionOptions): Promise<GitCommandExecutionResult> {
+      // posture 意图网关（specs/git-posture-gateway.md R2）：binary 解析之前执行，
+      // 零副作用；拒绝 = 调用点编程错误，以 EGITPOSTURE 异常冒泡（与下方 spawn
+      // 环境瞬态降级为失败结果的语义区分：档位拒绝必须修代码，不允许静默放行）。
+      // 通过时 argv 可能被重写（注入防御旗标/重建 fetch），spawn 与 result.args
+      // 一律使用网关输出，结果如实反映实际执行的命令。
+      const args = applyGitPostureGateway(command.posture ?? DEFAULT_GIT_POSTURE, command.args);
+
       const gitBinary = await environmentProvider.resolveGitBinary();
       if (!gitBinary) {
         throw new Error("Git binary is not available");
@@ -124,7 +143,7 @@ export function createGitCommandProvider(options?: {
         let outputTruncated = false;
         let settled = false;
 
-        const child = spawn(binaryPath, command.args, {
+        const child = spawn(binaryPath, args, {
           cwd: command.cwd,
           env,
           stdio: ["ignore", "pipe", "pipe"],
@@ -139,7 +158,7 @@ export function createGitCommandProvider(options?: {
           return {
             binaryPath,
             cwd: command.cwd,
-            args: command.args,
+            args,
             stdout,
             stderr,
             exitCode,

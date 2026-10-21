@@ -155,6 +155,26 @@ GIT_NO_LAZY_FETCH=1、GIT_OPTIONAL_LOCKS=0、GIT_ALLOW_PROTOCOL（见 R3）。
   意味着"单一实现"仍需一层适配包装，去重收益有限。防再分叉改由上节纪律 +
   双侧闭集测试保障。
 
+## R6 argv posture 网关孪生侧接线跟进（2026-10-21 登记，转达自 services git-posture-gateway.md）
+
+services 侧 E3a 已落地 9 档 posture 网关（`packages/services/src/git/providers/
+gitPostureGateway.ts`，纯函数判定器）；孪生漏斗现状只有 env 层对齐（R1/R5），
+**argv 形状层未接线**。CLI 消费点盘点与建议档位（接线时裁决，逐文件）：
+
+| 文件                                                     | git 面                                                           | 建议档位                                        |
+| -------------------------------------------------------- | ---------------------------------------------------------------- | ----------------------------------------------- |
+| `packages/core/src/worktree/session-worktree-git.ts`     | worktree add/list、branch、status、diff、rev-parse、symbolic-ref | infra（worktree add 需 `--no-checkout`）+ read  |
+| `packages/core/src/worktree/base-branch-merge.ts`        | merge、diff、status、rev-parse、symbolic-ref                     | merge + read                                    |
+| `packages/cli-workflow/src/workflow-worktree-manager.ts` | worktree、add、branch、status、rev-parse                         | infra + read                                    |
+| `packages/cli-workflow/src/workflow-world-read.ts`       | log/diff（world.run overlay）                                    | read                                            |
+| `packages/adapters/src/plugins/marketplace.ts`           | clone、sparse-checkout、checkout                                 | infra/populate（**clone 无对应档：网络+写复合面，接线时裁决扩档或 infra+协议 opt-in**） |
+| `packages/adapters/src/context/git-snapshot.ts`          | status、log、rev-parse、config、clean、symbolic-ref              | read（clean 需 scrub 或 infra）                 |
+| `packages/bootstrap/src/app/overnight-controller.ts`     | status                                                           | read                                            |
+| `packages/cli/src/tui-workspace-git.ts`                  | symbolic-ref                                                     | read                                            |
+
+接线纪律（沿用 R5 防再分叉）：判定器纯函数可平移 shared 供两漏斗共用；接线前孪生侧
+新增 git 调用点须先在本表登记档位；marketplace clone 的档位裁决是接线的前置条件。
+
 ## 消费点清单（盘点结论，2026-10；协议列 = R3 修订后）
 
 | # | 消费点 | 形态 | 命令面 | 协议（R3 修订后） |

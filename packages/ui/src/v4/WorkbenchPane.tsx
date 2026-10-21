@@ -19,6 +19,7 @@ import type {
   ACodeTaskChangeSummary,
 } from "@acode/shared";
 import { cn } from "@/components/lib/utils.js";
+import { ScopedErrorBoundary } from "@/ErrorBoundary.js";
 import { useServices } from "@/hooks/useServices.js";
 import type { CodeViewerSource } from "@/lib/codeViewer.js";
 import type { AssistantPreviewCardsAutoOpenRequest } from "@/lib/assistantPreviewCards.js";
@@ -536,89 +537,103 @@ export function WorkbenchLeafPane({
       onDrop={handleDrop}
       restoredUnvalidated={Boolean((isPrimary ? primaryBinding : binding)?.restoredUnvalidated)}
     >
-      <V4PaneConversationProvider scope={scope}>
-        {(isPrimary ? primaryBinding : binding)?.restoredUnvalidated && sessionId ? (
-          <PaneRestoredGuard
+      {/* per-pane 错误隔离（specs/split-pane-error-isolation.md R1-R4）：全窗口原先只有
+          workspace-chat 一个边界包住所有 pane，任一分屏 pane render 抛错会把主面板一起替换成
+          全屏错误卡。在每个叶子 pane 的 ChatPaneShell（绝对定位矩形）内部包一层局部边界，
+          让抛错只影响出错的 pane；放 ChatPaneShell 内使 panel fallback 落在本 pane 的 rect 里，
+          不破坏分屏布局。resetKeys 让 pane 改绑会话或换 scope 时清空残留错误。 */}
+      <ScopedErrorBoundary
+        scope={`v4-pane:${paneId}`}
+        resetKeys={[sessionId, paneWorkspaceKey(scope)]}
+        variant="panel"
+        className="h-full"
+      >
+        <V4PaneConversationProvider scope={scope}>
+          {(isPrimary ? primaryBinding : binding)?.restoredUnvalidated && sessionId ? (
+            <PaneRestoredGuard
+              paneId={paneId}
+              scope={scope}
+              sessionId={sessionId}
+              onConfirmed={onConfirmRestoredSession}
+              onMissing={onClosePane}
+            />
+          ) : null}
+          <SessionPane
             paneId={paneId}
-            scope={scope}
+            readOnly={readOnly}
             sessionId={sessionId}
-            onConfirmed={onConfirmRestoredSession}
-            onMissing={onClosePane}
+            activeSelectionSideChatSessionId={resolvePaneActiveSelectionSideChatSessionId(
+              sessionId,
+              shell.activeSessionId ?? shell.sessionId,
+              shell.activeSelectionSideChatSessionId,
+            )}
+            workspacePath={scope.workspacePath}
+            workspaceIdentity={scope.workspaceIdentity}
+            remoteSessionId={scope.remoteSessionId}
+            isDesktop={shell.isDesktop}
+            provider={isPrimary && isShellWorkspace ? shell.provider : undefined}
+            onSessionCreated={handleSessionCreated}
+            onSessionDeleted={handleSessionDeleted}
+            focused={focused}
+            onSplitRight={canSplit && onSplit ? handleSplitRight : undefined}
+            onSplitDown={canSplit && onSplit ? handleSplitDown : undefined}
+            onClosePane={isPrimary ? undefined : handleClosePane}
+            workspaceBadge={!isPrimary && !isShellWorkspace ? workspaceBadgeFor(scope) : undefined}
+            draftComposerHeader={
+              isPrimary && !primaryBinding ? shell.draftComposerHeader : undefined
+            }
+            onDropTargetControllerChange={
+              isPrimary && !primaryBinding
+                ? shell.onPrimaryDraftDropTargetControllerChange
+                : undefined
+            }
+            gitSummary={shouldUseShellStatusPanel ? shell.gitSummary : undefined}
+            gitDirtyFileCount={shouldUseShellStatusPanel ? shell.gitDirtyFileCount : undefined}
+            gitWorktreeReviewSourceId={
+              shouldUseShellStatusPanel ? shell.gitWorktreeReviewSourceId : undefined
+            }
+            gitWorktreeChangeSummary={
+              shouldUseShellStatusPanel ? shell.gitWorktreeChangeSummary : undefined
+            }
+            activeTaskChangeSummary={isPrimary ? shell.activeTaskChangeSummary : undefined}
+            summaryPanelVariantOverride={
+              shouldUseShellStatusPanel ? shell.summaryPanelVariantOverride : undefined
+            }
+            onSummaryPanelVariantOverrideChange={
+              shouldUseShellStatusPanel ? shell.onSummaryPanelVariantOverrideChange : undefined
+            }
+            onRefreshGit={shouldUseShellStatusPanel ? shell.onRefreshGit : undefined}
+            onOpenGitReview={shouldUseShellStatusPanel ? shell.onOpenGitReview : undefined}
+            onOpenBrowserUrl={shell.onOpenBrowserUrl}
+            onOpenAutomationsMain={shell.onOpenAutomationsMain}
+            onOpenCodeViewer={shell.onOpenCodeViewer}
+            onAutoOpenAssistantPptx={shell.onAutoOpenAssistantPptx}
+            onOpenFileLink={shell.onOpenFileLink}
+            onOpenSubagentSession={shell.onOpenSubagentSession}
+            onOpenBackgroundBash={shell.onOpenBackgroundBash}
+            onOpenSubagentDirectory={shell.onOpenSubagentDirectory}
+            onOpenTeamPanel={shell.onOpenTeamPanel}
+            onSyncSubagentSessionTabs={shell.onSyncSubagentSessionTabs}
+            onOpenSelectionSideChat={shell.onOpenSelectionSideChat}
+            onOpenPlanDetail={shell.onOpenPlanDetail}
+            onOpenWorkflowRun={shell.onOpenWorkflowRun}
+            onOpenWorkflowArtifact={shell.onOpenWorkflowArtifact}
+            onOpenWorkflowRunDirectory={shell.onOpenWorkflowRunDirectory}
+            onOpenWorkflowActorSession={shell.onOpenWorkflowActorSession}
+            onOpenWorkflowWorkspace={shell.onOpenWorkflowWorkspace}
+            conversationFindQuery={focused ? shell.conversationFindQuery : ""}
+            conversationFindActiveIndex={focused ? (shell.conversationFindActiveIndex ?? -1) : -1}
+            conversationFindNavigationRequestId={
+              focused ? (shell.conversationFindNavigationRequestId ?? 0) : 0
+            }
+            onConversationFindMatchStateChange={
+              focused ? shell.onConversationFindMatchStateChange : undefined
+            }
+            searchResultHighlightRequest={paneSearchResultHighlightRequest}
+            onSearchResultHighlightDone={shell.onSearchResultHighlightDone}
           />
-        ) : null}
-        <SessionPane
-          paneId={paneId}
-          readOnly={readOnly}
-          sessionId={sessionId}
-          activeSelectionSideChatSessionId={resolvePaneActiveSelectionSideChatSessionId(
-            sessionId,
-            shell.activeSessionId ?? shell.sessionId,
-            shell.activeSelectionSideChatSessionId,
-          )}
-          workspacePath={scope.workspacePath}
-          workspaceIdentity={scope.workspaceIdentity}
-          remoteSessionId={scope.remoteSessionId}
-          isDesktop={shell.isDesktop}
-          provider={isPrimary && isShellWorkspace ? shell.provider : undefined}
-          onSessionCreated={handleSessionCreated}
-          onSessionDeleted={handleSessionDeleted}
-          focused={focused}
-          onSplitRight={canSplit && onSplit ? handleSplitRight : undefined}
-          onSplitDown={canSplit && onSplit ? handleSplitDown : undefined}
-          onClosePane={isPrimary ? undefined : handleClosePane}
-          workspaceBadge={!isPrimary && !isShellWorkspace ? workspaceBadgeFor(scope) : undefined}
-          draftComposerHeader={isPrimary && !primaryBinding ? shell.draftComposerHeader : undefined}
-          onDropTargetControllerChange={
-            isPrimary && !primaryBinding
-              ? shell.onPrimaryDraftDropTargetControllerChange
-              : undefined
-          }
-          gitSummary={shouldUseShellStatusPanel ? shell.gitSummary : undefined}
-          gitDirtyFileCount={shouldUseShellStatusPanel ? shell.gitDirtyFileCount : undefined}
-          gitWorktreeReviewSourceId={
-            shouldUseShellStatusPanel ? shell.gitWorktreeReviewSourceId : undefined
-          }
-          gitWorktreeChangeSummary={
-            shouldUseShellStatusPanel ? shell.gitWorktreeChangeSummary : undefined
-          }
-          activeTaskChangeSummary={isPrimary ? shell.activeTaskChangeSummary : undefined}
-          summaryPanelVariantOverride={
-            shouldUseShellStatusPanel ? shell.summaryPanelVariantOverride : undefined
-          }
-          onSummaryPanelVariantOverrideChange={
-            shouldUseShellStatusPanel ? shell.onSummaryPanelVariantOverrideChange : undefined
-          }
-          onRefreshGit={shouldUseShellStatusPanel ? shell.onRefreshGit : undefined}
-          onOpenGitReview={shouldUseShellStatusPanel ? shell.onOpenGitReview : undefined}
-          onOpenBrowserUrl={shell.onOpenBrowserUrl}
-          onOpenAutomationsMain={shell.onOpenAutomationsMain}
-          onOpenCodeViewer={shell.onOpenCodeViewer}
-          onAutoOpenAssistantPptx={shell.onAutoOpenAssistantPptx}
-          onOpenFileLink={shell.onOpenFileLink}
-          onOpenSubagentSession={shell.onOpenSubagentSession}
-          onOpenBackgroundBash={shell.onOpenBackgroundBash}
-          onOpenSubagentDirectory={shell.onOpenSubagentDirectory}
-          onOpenTeamPanel={shell.onOpenTeamPanel}
-          onSyncSubagentSessionTabs={shell.onSyncSubagentSessionTabs}
-          onOpenSelectionSideChat={shell.onOpenSelectionSideChat}
-          onOpenPlanDetail={shell.onOpenPlanDetail}
-          onOpenWorkflowRun={shell.onOpenWorkflowRun}
-          onOpenWorkflowArtifact={shell.onOpenWorkflowArtifact}
-          onOpenWorkflowRunDirectory={shell.onOpenWorkflowRunDirectory}
-          onOpenWorkflowActorSession={shell.onOpenWorkflowActorSession}
-          onOpenWorkflowWorkspace={shell.onOpenWorkflowWorkspace}
-          conversationFindQuery={focused ? shell.conversationFindQuery : ""}
-          conversationFindActiveIndex={focused ? (shell.conversationFindActiveIndex ?? -1) : -1}
-          conversationFindNavigationRequestId={
-            focused ? (shell.conversationFindNavigationRequestId ?? 0) : 0
-          }
-          onConversationFindMatchStateChange={
-            focused ? shell.onConversationFindMatchStateChange : undefined
-          }
-          searchResultHighlightRequest={paneSearchResultHighlightRequest}
-          onSearchResultHighlightDone={shell.onSearchResultHighlightDone}
-        />
-      </V4PaneConversationProvider>
+        </V4PaneConversationProvider>
+      </ScopedErrorBoundary>
     </ChatPaneShell>
   );
 }

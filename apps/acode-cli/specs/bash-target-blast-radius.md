@@ -524,6 +524,18 @@ the command themselves.
   legacy 上下文**；注入后的分级以新 spec 为准）。`node -e "<删文件的 JS>"/
   `pnpm exec node clean.js` 的破坏发生在 JS 源里，本层看不见（不解析 JS）——
   由既有 high+needsApproval 与 J1-2 反射门兜底。
+  - **内联 eval 旗标按不透明 JS 源处理**（用户报告「门禁不认 node -e 内联脚本」根因）：
+    node/bun 是 wrapper（真实动词在参数里，见上），但其 `-e/--eval/-p/--print`
+    （含 `--eval=` 粘连与 `-pe` 簇形态）的**值是 JS 源不是 shell 命令**。解包循环遇到
+    这些旗标即停止、不追加「payload 不可见」confirm，也不把 JS 源首 token 当程序名分级
+    （词汇表与谓词在 `js-runtime-eval.ts`）。修复前良性 `node -e "console.log(1)"` 的
+    `(` 命中动态命令名启发式、`node --eval="…"` 命中 wrapperPayloadUnknown，两类误报把
+    capability 升 critical 并被反射门首轮 deny。豁免只作用于 **JS 源本身**：命令替换
+    `$(...)`/反引号在双引号内仍由 bash 先行展开、经 assessInvocation 的 substitutionScanTexts
+    独立覆盖，重定向与链式命令各自独立分级——故 `node -e "x=$(rm -rf ~)"`、
+    `node -e "…" && rm -rf ~`、`node -e "…" > /etc/passwd` 仍 catastrophic；无 eval 旗标的
+    `node rimraf ~` 仍按破坏性动词解包 → catastrophic。deno 的内联形态是子命令
+    `deno eval "<src>"`，其 `eval` 词本就落「非破坏性 program → safe」，无需在此登记。
 - 不改变既有三红基线测试、不放宽任何既有防线。
 
 ## 验收场景（测试矩阵）
@@ -573,6 +585,7 @@ the command themselves.
 | `HOME=` 赋值位：`HOME=/tmp rm -rf ~` / `env HOME=/tmp rm -rf ~/.ssh` / `sudo env HOME=/tmp rm -rf ~` / `(HOME=/tmp rm -rf ~)` / `bash -c 'HOME=/tmp rm -rf ~'` | catastrophic；`export HOME=/tmp` | confirm |
 | JS 生态：`npx rimraf ~` / `bunx rimraf ~/.ssh` / `pnpm dlx rimraf ~` / `yarn rimraf /etc` / `npx rm -rf ~` / `pnpm exec rimraf /usr` / `rimraf ~` | catastrophic；`rimraf dist` / `pnpm exec rimraf dist` | low |
 | JS 生态不回归：`npm run clean` / `node script.js` / `deno run x.ts` / `bun test` / `pnpm install` / `npm rm -g typescript` / `npx tsc --noEmit` | safe/low（不打断；`npm run` 族 map 未注入的 legacy 口径，注入后见 npm-script-body-scan.md） |
+| node/bun 内联 eval（JS 源盲区）：`node -e "console.log(1)"` / `node --eval="…"` / `node -p "foo()"` / `node -pe "1+1"` / `bun -e "…"` / `sudo node -e "…"` | safe（不解析 JS，不升级 critical）；`node -e "x=$(rm -rf ~)"` / `node -e "…" && rm -rf ~` / `node -e "…" > /etc/passwd` / `node rimraf ~` | catastrophic（豁免只作用于 JS 源本身） |
 | F2 取值旗标：`npx --package x npm run clean`（clean body=`rimraf ~`） / `npx -c "npm run clean"` / `npx --call "npm run clean"` / `npm exec --package x -- rimraf ~` / `npm exec -c "npm run clean"` | catastrophic（yolo 不得静默 allow） |
 | F2 不回归：`npx tsc --noEmit` / `npx rimraf dist` / `npx npm run clean`（既有 catastrophic） / `npx pnpm lint`（完整再解包不受保底网误伤） | 档位零变化 |
 | cwd 跟踪：`cd ~ && rm -rf .ssh` / `cd / && rm -rf etc` / `cd /etc && rm -rf passwd` / `(cd ~; rm -rf .ssh)` / `sh -c 'cd ~ && rm -rf .ssh'` / `env -C ~ rm -rf .ssh` / `sudo --chdir /home/u rm -rf .ssh` / `cd ~/.ssh && rm -rf *` / `pushd ~; rm -rf .gnupg` | catastrophic |

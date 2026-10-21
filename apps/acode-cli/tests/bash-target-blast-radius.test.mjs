@@ -911,3 +911,39 @@ test("(review F8) JS package runners and rimraf are unpacked like any other dele
     assert.equal(immediate(command), true, `${command} -> ${level(command)}`);
   }
 });
+
+// 用户报告「门禁不认 node -e 内联脚本」的回归（bash-target-blast-radius R6 +
+// npm-script-body-scan R7）：node/bun 的内联 eval 旗标值是 JS 源不是 shell 命令，
+// 本层按设计不解析 JS，故良性内联脚本不得升级。修复前 `node -e "console.log(1)"`
+// 的 `(` 命中动态命令名启发式、`node --eval="…"` 命中 wrapperPayloadUnknown，
+// 两类误报把 capability 升 critical 并被 J1-2 反射门首轮 deny。
+test("node/bun inline eval flags are a JS-source blind spot, not a confirm escalation", () => {
+  for (const command of [
+    'node -e "console.log(1)"',
+    'node --eval "console.log(1)"',
+    'node --eval="console.log(1)"',
+    'node -p "1+1"',
+    'node -p "foo()"',
+    'node -pe "1+1"',
+    'node -e "process.exit(0)"',
+    'node --input-type=module -e "import fs from \'node:fs\'; console.log(1)"',
+    'bun -e "console.log(1)"',
+    'sudo node -e "console.log(1)"',
+    'npx node -e "console.log(1)"',
+  ]) {
+    assert.equal(immediate(command), true, `${command} -> ${level(command)}`);
+  }
+  // 不解析 JS ≠ 放过 shell 层的真实破坏面：命令替换在双引号内仍由 bash 先行展开，
+  // 重定向/链式命令各自独立分级——内联 eval 豁免只作用于「JS 源本身」。
+  for (const command of [
+    'node -e "console.log($(rm -rf ~))"',
+    'node -e "console.log(`rm -rf ~`)"',
+    'node --eval "$(rm -rf /)"',
+    'node -e "console.log(1)" && rm -rf ~',
+    'node -e "console.log(1)" > /etc/passwd',
+  ]) {
+    assert.equal(level(command), "catastrophic", command);
+  }
+  // 无 eval 旗标时 node 仍按破坏性动词解包（wrapper 语义不受本次收窄影响）。
+  assert.equal(level("node rimraf ~"), "catastrophic");
+});

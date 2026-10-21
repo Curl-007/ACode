@@ -1,6 +1,6 @@
 import { ESTIMATED_TOKEN_CHAR_DIVISOR } from "@acode/shared";
 import { isAbsolute, resolve } from "node:path";
-import { normalizeToolPathForComparison } from "../../tool/path-normalization.js";
+import { normalizeReadStatePathKey } from "../../tool/path-normalization.js";
 import type { ReadFileStateEntry, ReadFileStateMap } from "../deps.js";
 import {
   systemReminderAttachmentEntry,
@@ -188,11 +188,12 @@ function shouldSkipPostCompactReadStatePath(filePath: string): boolean {
   return normalizePostCompactReadStatePath(filePath).replace(/\\/g, "/").includes("/.git/");
 }
 
-/** 与 readFileState 键同一归一化所有者（tool/path-normalization.ts），相对路径按工作目录解析。 */
+/** 与 readFileState 键同一归一化所有者（tool/path-normalization.ts 的 normalizeReadStatePathKey，
+ * win32 折叠大小写与键空间对齐），相对路径按工作目录解析。 */
 function normalizePostCompactReadStatePath(filePath: string, workingDirectory?: string): string {
   const absolute =
     workingDirectory !== undefined && !isAbsolute(filePath)
       ? resolve(workingDirectory, filePath)
       : filePath;
-  return normalizeToolPathForComparison(absolute);
+  return normalizeReadStatePathKey(absolute);
 }

@@ -41,8 +41,8 @@ runtime 内存表 `readFileState`：查不到条目 → `FILE_NOT_READ` 拒绝�
 - **清除**：只活在摘要里的读取（模型已看不见内容，重新 Read 是正确代价）；以及
   「too large」引用型提醒（`formatCompactFileReference`）指向的文件——该提醒自身
   指引 "Use Read tool if you need to access it"，清状态与文案自洽。
-- 路径匹配统一走 `normalizeToolPathForComparison`（与 readFileState 键同一归一化
-  所有者），不做裸字符串比较。
+- 路径匹配统一走 `normalizeReadStatePathKey`（与 readFileState 键同一归一化所有者，
+  win32 折叠大小写），不做裸字符串比较。
 - ApplyPatch 的 preserved 调用不参与收集：其入参是 `patch_text`（多文件、无
   `file_path`），解析入补丁格式超出本项范围；对应条目按「摘要侧」清除（保守 fail-safe，
   与 hydrator 对 ApplyPatch 单槽位的既有保守语义同向）。
@@ -94,7 +94,7 @@ partial 分支即超限；守卫语义逐行未变，仅换文件（write.ts 落
 | 压缩后哪些已读状态保留 | `runtime/helpers/compact-post-reminders.ts`（`pruneReadFileStateAfterCompact`） |
 | 内容投影提醒的选择与投影路径 | 同上（`selectPostCompactReadStateReminders`） |
 | 写前未读/partial/stale 门禁 | edit.ts / apply-patch.ts 各自本地实现；write 在 `tool/handlers/write-freshness.ts`。语义与 `specs/apply-patch-tool.md` 一致 |
-| 路径归一化 | `tool/path-normalization.ts`（`normalizeToolPathForComparison`） |
+| 路径归一化 | `tool/path-normalization.ts`（`normalizeReadStatePathKey`；read-state 键/比较专用，win32 折叠大小写） |
 
 事件顺序（压缩成功路径）：
 
@@ -137,7 +137,8 @@ selectCompactEntries → summary 请求 → selectPostCompactReadStateReminders
    - preserved tail 含 Read/Write/Edit 调用 → 对应路径条目保留；
    - 内容投影文件 → 保留；「too large」引用提醒文件 → 清除；
    - 只活在摘要侧的读取 → 清除；
-   - 路径归一化匹配（平台条件分支：win32 盘符大小写/分隔符变体视为同一路径）；
+   - 路径归一化匹配（平台条件分支：win32 全路径大小写/盘符别名/分隔符变体视为同一路径，
+     posix 大小写敏感；`packages/core/tests/read-file-state-path-key.test.ts` 钉键空间）；
    - 返回值如实报告 retained/removed 计数。
 2. **提醒选择**：`selectPostCompactReadStateReminders` 的 `contentProjectedPaths`
    只含内容投影文件；`buildPostCompactReadStateReminderEntries` 包装行为与既有一致

@@ -107,6 +107,97 @@ export function createOpenWorkspaceStartupBootstrap(workspacePath: string): Star
   };
 }
 
+// ── WI-E4：内存压力下的预热让路（apps/acode-cli/specs/cli-governor.md R8） ──
+// desktop 与 CLI governor 跨进程，不转发压力信号（spec 非目标 #1）；本钩子按
+// 同阈值（5%/2%）本地裁决：压力时只保留 primary target（活动窗口 workspace，
+// 对齐「user spawn 永不阻塞」哲学），其余预热让路——用户切到对应项目时走
+// 既有冷启动路径。
+
+/** free-ratio warning 阈值：5%（与 cli-governor spec R5 缺省一致）。 */
+export const WARMUP_PRESSURE_WARNING_RATIO = 0.05;
+/** free-ratio critical 阈值：2%（与 cli-governor spec R5 缺省一致）。 */
+export const WARMUP_PRESSURE_CRITICAL_RATIO = 0.02;
+/** per-level 日志抑制窗：60s（防多窗口反复 spawn 刷屏，spec R8）。 */
+export const WARMUP_PRESSURE_LOG_SUPPRESSION_MS = 60_000;
+
+export type WarmupPressureLevel = "warning" | "critical";
+
+interface SystemMemoryInfoLike {
+  total: number;
+  free: number;
+  swapTotal?: number;
+  swapFree?: number;
+}
+
+/**
+ * desktop 侧 free-ratio 读取（spec R5 平台裁决）：Electron main
+ * `process.getSystemMemoryInfo()`，ratio = min(free/total, swapFree/swapTotal)
+ * ——swap 参与防「内存够但 swap 枯竭」误判（蓝本等价实现同款）。非 Electron
+ * 环境（单测）返回 1（无压力）。读取抛错视为无压力（fail-open：预热是优化，
+ * 不是正确性面）。
+ */
+export function getDesktopFreeMemoryRatio(): number {
+  try {
+    const reader = (process as { getSystemMemoryInfo?: () => SystemMemoryInfoLike | undefined })
+      .getSystemMemoryInfo;
+    const info = typeof reader === "function" ? reader.call(process) : undefined;
+    if (!info || !(info.total > 0)) return 1;
+    const ratio = info.free / info.total;
+    if (info.swapTotal && info.swapFree !== undefined) {
+      return Math.min(ratio, info.swapFree / info.swapTotal);
+    }
+    return ratio;
+  } catch {
+    return 1;
+  }
+}
+
+/** free-ratio → level 纯判定（阈值与 cli-governor spec R5 缺省一致）。 */
+export function evaluateWarmupPressureLevel(freeMemoryRatio: number): WarmupPressureLevel | null {
+  if (!Number.isFinite(freeMemoryRatio)) return null;
+  if (freeMemoryRatio < WARMUP_PRESSURE_CRITICAL_RATIO) return "critical";
+  if (freeMemoryRatio < WARMUP_PRESSURE_WARNING_RATIO) return "warning";
+  return null;
+}
+
+const lastWarmupPressureLogAt: Record<WarmupPressureLevel, number> = { warning: 0, critical: 0 };
+
+/** 测试隔离：清 per-level 日志抑制计时。 */
+export function resetWarmupPressureLogSuppressionForTest(): void {
+  lastWarmupPressureLogAt.warning = 0;
+  lastWarmupPressureLogAt.critical = 0;
+}
+
+/**
+ * 预热让路过滤（spec R8）：无压力/空/单 target → 原样；warning/critical →
+ * 只留第 0 个（primary），其余 yield。per-level 60s 日志抑制。
+ */
+export function applyMemoryPressureToWarmupTargets(
+  targets: readonly StartupWorkspaceWarmupTarget[] | undefined,
+  deps: {
+    getFreeMemoryRatio?: () => number;
+    logger?: StartupWorkspaceLogger;
+    now?: () => number;
+  } = {},
+): readonly StartupWorkspaceWarmupTarget[] | undefined {
+  if (targets === undefined) return undefined;
+  if (targets.length <= 1) return targets;
+  const ratio = (deps.getFreeMemoryRatio ?? getDesktopFreeMemoryRatio)();
+  const level = evaluateWarmupPressureLevel(ratio);
+  if (level === null) return targets;
+  const now = (deps.now ?? Date.now)();
+  if (now - lastWarmupPressureLogAt[level] >= WARMUP_PRESSURE_LOG_SUPPRESSION_MS) {
+    lastWarmupPressureLogAt[level] = now;
+    deps.logger?.warn?.(
+      `[startup-workspace] memory pressure (${level}, free ratio ${ratio.toFixed(3)}): yielding ${targets.length - 1} warmup target(s), keeping primary`,
+    );
+  }
+  // noUncheckedIndexedAccess：length 守卫不能收窄下标类型，解构后显式判空。
+  const [primary] = targets;
+  if (primary === undefined) return targets;
+  return [primary];
+}
+
 export async function resolveStartupWindowBootstrap({
   settingsFile,
   conversationWorkspaceDir,

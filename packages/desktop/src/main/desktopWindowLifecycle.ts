@@ -11,7 +11,10 @@ import type { UtilityProcess as ElectronUtilityProcess } from "electron";
 import { HostMessageTypes, InternalChannels, PlatformChannels, type Locale } from "@acode/shared";
 import { createBrowserWindow } from "./desktopWindowChrome.js";
 import type { HostInitMessage, WindowBootstrapOptions } from "./desktopHostProcess.js";
-import type { StartupWorkspaceWarmupTarget } from "./startupWorkspace.js";
+import {
+  applyMemoryPressureToWarmupTargets,
+  type StartupWorkspaceWarmupTarget,
+} from "./startupWorkspace.js";
 import { handleDarwinWindowCloseRequest } from "./desktopDarwinCloseBehavior.js";
 import {
   parseWindowUnreadCount,
@@ -49,10 +52,7 @@ export function createWindow(options: {
   syncAutoUpdaterStateToWindow: (win: BrowserWindow) => void;
   syncReadyUpdateToWindow: (win: BrowserWindow) => void;
   syncPostUpdateReleaseNotesToWindow: (win: BrowserWindow) => void;
-  disposeRemoteWorkspaceSessionsForWindow: (
-    webContentsId: WebContentsId,
-    reason: string,
-  ) => void;
+  disposeRemoteWorkspaceSessionsForWindow: (webContentsId: WebContentsId, reason: string) => void;
   reattachRemoteWorkspaceSessionsForWindow: (win: BrowserWindow, reason: string) => void;
   bootstrap?: WindowBootstrapOptions;
   agentWarmupTargets?: readonly StartupWorkspaceWarmupTarget[];
@@ -199,13 +199,18 @@ export function createWindow(options: {
         return;
       }
       const primaryWarmupTarget = options.agentWarmupTargets?.[0];
+      // WI-E4 预热让路（apps/acode-cli/specs/cli-governor.md R8）：内存压力下只保留
+      // primary（活动窗口 workspace 永不 yield），其余预热目标让路走既有冷启动。
+      const warmupTargets = applyMemoryPressureToWarmupTargets(options.agentWarmupTargets, {
+        logger: options.logger,
+      });
       const child = options.spawnHostProcess(win, label, {
         type: HostMessageTypes.InitLocal,
         deviceMid: options.deviceMid,
         workspacePath: primaryWarmupTarget?.workspacePath,
         workspaceIdentity: primaryWarmupTarget?.workspaceIdentity,
-        ...(options.agentWarmupTargets && options.agentWarmupTargets.length > 0
-          ? { agentWarmupTargets: [...options.agentWarmupTargets] }
+        ...(warmupTargets && warmupTargets.length > 0
+          ? { agentWarmupTargets: [...warmupTargets] }
           : {}),
         runtimeProcessEnvPatch,
         // 同一窗口会后台索引所有已恢复 workspace，不只索引启动时的 active workspace。

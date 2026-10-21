@@ -27,6 +27,7 @@ import {
   initOtelTelemetry,
   InMemoryRuntimeTaskRegistry,
   PermissionService,
+  configureCliGovernor,
   detectNoShellToolWarning,
   registerAutoClassifierAuditSink,
   registerBashReflexAuditSink,
@@ -910,6 +911,18 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
     // overnight controller 需要同一份引用来注册 run 投影（type: "overnight"），
     // 不注入则 runtime 自建私有实例，run 的可见面挂不上去。
     const runtimeTaskRegistry = new InMemoryRuntimeTaskRegistry();
+    // CliGovernor host 装配（specs/cli-governor.md）：预置 registry 与 logger，受害者判定
+    // 在 60s idle guard 之外精确排除在跑会话；governor 懒建，此处纯 deps 预置、无副作用序依赖。
+    // 单参适配：bootstrap logger 第二槽是 Error 语义，与 governor 的 meta dict 不兼容，弃 meta 保消息。
+    configureCliGovernor({
+      runtimeTaskRegistry,
+      logger: {
+        debug: (message) => logger.debug(message),
+        info: (message) => logger.info(message),
+        warn: (message) => logger.warn(message),
+        error: (message) => logger.error(message),
+      },
+    });
     // K2 swarm plan 装配（specs/swarm-task-graph.md 2b）：port 在主 runtime 构造前成型
     //（deps 注册门要它在场），executeNode 的 runtime 引用在构造后 bind（overnight
     // controller 的同款先后序）。持久化 seam 绑 sessionStore 的 swarm plan 行。

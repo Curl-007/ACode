@@ -134,6 +134,14 @@ export class FleetRegistry {
     this.disposeWatcher(sessionId);
   }
 
+  /**
+   * 全部非归档记录（specs/cli-governor.md R1/R3：governor 计数与 LRU 受害者
+   * 口径）。只读投影，不暴露内部 Map。
+   */
+  listActive(): FleetSessionRecord[] {
+    return [...this.records.values()].filter((record) => !record.archived);
+  }
+
   listByLauncher(
     launcherSessionId: string,
     options: { includeArchived?: boolean } = {},

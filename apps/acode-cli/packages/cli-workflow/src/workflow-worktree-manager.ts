@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, readdirSync, realpathSync, rmSync, statSync } fr
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
-import { getCliGitInvocationEnv } from "@acode/shared";
+import { applyGitPostureGateway, getCliGitInvocationEnv, type GitPosture } from "@acode/shared";
 
 /**
  * Workflow agent 的 git worktree 隔离（S1，specs/workflow-worktree-isolation.md）。
@@ -30,6 +30,16 @@ export interface GitCommandResult {
 
 /** git 执行面注入点（测试替身）；缺省 execFile("git")。 */
 export type GitRunner = (args: readonly string[], cwd: string) => Promise<GitCommandResult>;
+
+/**
+ * argv posture 网关接线（apps/acode-cli/specs/git-invocation-hardening.md R6）：
+ * 包装 runner，spawn 前把 argv 过 shared 判定器；拒绝 = 调用点编程错误
+ * （EGITPOSTURE fail-closed 冒泡，不降级为命令失败）。
+ */
+function withGitPosture(posture: GitPosture, git: GitRunner): GitRunner {
+  // async 包装：判定器的同步拒绝必须成为 runner 契约的 promise 拒绝，而非同步抛出。
+  return async (args, cwd) => git(applyGitPostureGateway(posture, args), cwd);
+}
 
 const defaultGitRunner: GitRunner = async (args, cwd) => {
   try {
@@ -189,6 +199,7 @@ export class WorkflowWorktreeManager {
       // 未登记的残骸（failed-add 遗留）：清掉重建，否则 git worktree add 报目录已存在。
       rmSync(path, { recursive: true, force: true });
       await this.#addWithRetry(repoRoot, path, branch, baseRef);
+      await this.#populateCheckout(path, branch);
       return { path, branch, baseRef, repoRoot };
     });
   }
@@ -208,9 +219,10 @@ export class WorkflowWorktreeManager {
       }
       try {
         // 不带 --force：clean 判定后仍移除失败（句柄占用/并发写入）→ 保留上报。
-        await this.#git(["worktree", "remove", handle.path], handle.repoRoot);
+        const infra = withGitPosture("infra", this.#git);
+        await infra(["worktree", "remove", handle.path], handle.repoRoot);
         try {
-          await this.#git(["branch", "-D", handle.branch], handle.repoRoot);
+          await infra(["branch", "-D", handle.branch], handle.repoRoot);
         } catch {
           // 分支删除失败不影响回收结论（worktree 已移除；分支零信息量，留着无害）。
         }
@@ -241,7 +253,7 @@ export class WorkflowWorktreeManager {
 
   async #prune(repoRoot: string): Promise<void> {
     try {
-      await this.#git(["worktree", "prune"], repoRoot);
+      await withGitPosture("infra", this.#git)(["worktree", "prune"], repoRoot);
     } catch {
       // prune 失败不阻断（下次再试）。
     }
@@ -262,8 +274,9 @@ export class WorkflowWorktreeManager {
   }
 
   async #repoRoot(repoDir: string): Promise<string> {
+    const read = withGitPosture("read", this.#git);
     try {
-      const { stdout } = await this.#git(["rev-parse", "--show-toplevel"], repoDir);
+      const { stdout } = await read(["rev-parse", "--show-toplevel"], repoDir);
       const root = stdout.trim();
       if (root === "") throw new Error("empty toplevel");
       return resolve(root);
@@ -275,8 +288,9 @@ export class WorkflowWorktreeManager {
   }
 
   async #head(repoRoot: string): Promise<string> {
+    const read = withGitPosture("read", this.#git);
     try {
-      const { stdout } = await this.#git(["rev-parse", "HEAD"], repoRoot);
+      const { stdout } = await read(["rev-parse", "HEAD"], repoRoot);
       const ref = stdout.trim();
       if (ref === "") throw new Error("empty HEAD");
       return ref;
@@ -299,7 +313,8 @@ export class WorkflowWorktreeManager {
   }
 
   async #registeredPaths(repoRoot: string): Promise<Set<string>> {
-    const { stdout } = await this.#git(["worktree", "list", "--porcelain"], repoRoot);
+    const read = withGitPosture("read", this.#git);
+    const { stdout } = await read(["worktree", "list", "--porcelain"], repoRoot);
     const paths = new Set<string>();
     for (const line of stdout.split(/\r?\n/)) {
       if (line.startsWith("worktree ")) {
@@ -310,8 +325,9 @@ export class WorkflowWorktreeManager {
   }
 
   async #branchAtPath(path: string): Promise<string | undefined> {
+    const read = withGitPosture("read", this.#git);
     try {
-      const { stdout } = await this.#git(["branch", "--show-current"], path);
+      const { stdout } = await read(["branch", "--show-current"], path);
       const branch = stdout.trim();
       return branch === "" ? undefined : branch;
     } catch {
@@ -320,9 +336,10 @@ export class WorkflowWorktreeManager {
   }
 
   async #isDirty(handle: WorkflowWorktreeHandle): Promise<boolean> {
-    const status = await this.#git(["status", "--porcelain"], handle.path);
+    const read = withGitPosture("read", this.#git);
+    const status = await read(["status", "--porcelain"], handle.path);
     if (status.stdout.trim() !== "") return true;
-    const ahead = await this.#git(["rev-list", "--count", `${handle.baseRef}..HEAD`], handle.path);
+    const ahead = await read(["rev-list", "--count", `${handle.baseRef}..HEAD`], handle.path);
     return Number.parseInt(ahead.stdout.trim(), 10) > 0;
   }
 
@@ -334,9 +351,11 @@ export class WorkflowWorktreeManager {
   ): Promise<void> {
     // git worktree add 的参数形态（usage：[(-b|-B) <new-branch>] <path> [<commit-ish>]）：
     // -b 必须在 path 之前，且 add 不支持 --porcelain（那是 list 的旗标）——真机探针
-    // 2026-10-04 实证的 git 拒绝面。
+    // 2026-10-04 实证的 git 拒绝面。posture 网关 infra 档形状（git-invocation-hardening.md
+    // R6）：worktree add 必须 --no-checkout，物化随后由 #populateCheckout 完成。
+    const infra = withGitPosture("infra", this.#git);
     const add = async (args: readonly string[]) => {
-      await this.#git(["worktree", "add", ...args], repoRoot);
+      await infra(["worktree", "add", "--no-checkout", ...args], repoRoot);
     };
     for (let attempt = 0; ; attempt += 1) {
       try {
@@ -361,6 +380,21 @@ export class WorkflowWorktreeManager {
         }
         await new Promise((sleep) => setTimeout(sleep, LOCK_RETRY_DELAY_MS));
       }
+    }
+  }
+
+  /**
+   * --no-checkout worktree 的内容物化（populate 档）：`checkout <branch>` 把 HEAD 指向的
+   * 分支内容写进索引与工作区（空索引的 checkout 幂等）。失败 = 建 worktree 失败，fail-loud。
+   */
+  async #populateCheckout(path: string, branch: string): Promise<void> {
+    const populate = withGitPosture("populate", this.#git);
+    try {
+      await populate(["checkout", branch], path);
+    } catch (error) {
+      throw new Error(
+        `failed to populate workflow worktree at ${path} (branch ${branch}): ${(error as Error).message}`,
+      );
     }
   }
 }

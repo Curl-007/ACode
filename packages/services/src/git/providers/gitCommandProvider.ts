@@ -8,11 +8,9 @@ import {
   createGitEnvironmentProvider,
   type GitEnvironmentProvider,
 } from "./gitEnvironmentProvider.js";
-import {
-  applyGitPostureGateway,
-  DEFAULT_GIT_POSTURE,
-  type GitPosture,
-} from "./gitPostureGateway.js";
+// posture 判定器单一所有者在 shared（specs/git-posture-gateway.md R5/R6 平移登记）：
+// services 漏斗与 acode-cli 孪生漏斗共用同一份纯函数，防两漏斗形状漂移。
+import { applyGitPostureGateway, DEFAULT_GIT_POSTURE, type GitPosture } from "@acode/shared";
 
 export interface GitCommandExecutionOptions {
   cwd: string;

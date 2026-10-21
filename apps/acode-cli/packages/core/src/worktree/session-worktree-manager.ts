@@ -5,6 +5,7 @@ import {
   gitHeadSha,
   gitRepoRoot,
   gitWorktreeList,
+  withSessionGitPosture,
   type GitWorktreeListEntry,
   type SessionGitRunner,
 } from "./session-worktree-git.js";
@@ -128,6 +129,7 @@ export class SessionWorktreeManager {
       await this.ensureNamespaceDir(input.repoRoot);
       await this.#removeUnregisteredLeftover(input.repoRoot, input.path);
       await this.#addWithRetry(["-b", input.branch, input.path, input.startRef], input.repoRoot);
+      await this.#populateCheckout(input.path, input.branch);
     });
   }
 
@@ -137,13 +139,15 @@ export class SessionWorktreeManager {
       await this.ensureNamespaceDir(input.repoRoot);
       await this.#removeUnregisteredLeftover(input.repoRoot, input.path);
       await this.#addWithRetry([input.path, input.branch], input.repoRoot);
+      await this.#populateCheckout(input.path, input.branch);
     });
   }
 
   /** 收割用：不带 --force（clean 判定在调用方；移除失败如实上报，绝不强删材料）。 */
   async removeWorktree(input: { repoRoot: string; path: string }): Promise<void> {
     await serializeSessionWorktreeGit(async () => {
-      await this.#git(["worktree", "remove", input.path], input.repoRoot);
+      const infra = withSessionGitPosture("infra", this.#git);
+      await infra(["worktree", "remove", input.path], input.repoRoot);
     });
   }
 
@@ -151,7 +155,8 @@ export class SessionWorktreeManager {
   async prune(repoRoot: string): Promise<void> {
     try {
       await serializeSessionWorktreeGit(async () => {
-        await this.#git(["worktree", "prune"], repoRoot);
+        const infra = withSessionGitPosture("infra", this.#git);
+        await infra(["worktree", "prune"], repoRoot);
       });
     } catch {
       // prune 失败不阻断（下次再试，与 workflow 域同款 janitor 语义）。
@@ -175,9 +180,13 @@ export class SessionWorktreeManager {
   }
 
   async #addWithRetry(args: readonly string[], repoRoot: string): Promise<void> {
+    const infra = withSessionGitPosture("infra", this.#git);
     for (let attempt = 0; ; attempt += 1) {
       try {
-        await this.#git(["worktree", "add", ...args], repoRoot);
+        // posture 网关 infra 档形状（apps/acode-cli/specs/git-invocation-hardening.md R6）：
+        // worktree add 必须 --no-checkout（网络+hooks 复合面收口，内容与检出解耦），
+        // 文件物化随后由 #populateCheckout 的 populate 档 checkout 完成。
+        await infra(["worktree", "add", "--no-checkout", ...args], repoRoot);
         return;
       } catch (error) {
         const message = (error as Error).message;
@@ -187,6 +196,23 @@ export class SessionWorktreeManager {
         }
         await new Promise((sleep) => setTimeout(sleep, LOCK_RETRY_DELAY_MS));
       }
+    }
+  }
+
+  /**
+   * --no-checkout worktree 的内容物化（populate 档）：`checkout <branch>` 把 HEAD 指向的
+   * 分支内容写进索引与工作区。物化失败 = 建 worktree 失败，fail-loud 冒泡（残骸由
+   * 下次进入的 #removeUnregisteredLeftover 或收割路径结算，绝不静默复用空目录——
+   * 空索引的 checkout 是幂等操作，重试安全）。
+   */
+  async #populateCheckout(path: string, branch: string): Promise<void> {
+    const populate = withSessionGitPosture("populate", this.#git);
+    try {
+      await populate(["checkout", branch], path);
+    } catch (error) {
+      throw new Error(
+        `failed to populate session worktree at ${path} (branch ${branch}): ${(error as Error).message}`,
+      );
     }
   }
 }

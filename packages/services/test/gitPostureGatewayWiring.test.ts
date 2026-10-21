@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
 import { createGitCommandProvider } from "../src/git/providers/gitCommandProvider.js";
 import type { GitEnvironmentProvider } from "../src/git/providers/gitEnvironmentProvider.js";
-import { GitPostureError } from "../src/git/providers/gitPostureGateway.js";
+import { GitPostureError } from "@acode/shared";
 
 /**
  * posture 网关接线集成测（specs/git-posture-gateway.md R2/R5，验收 1/8）：

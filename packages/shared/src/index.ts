@@ -115,6 +115,9 @@ export * from "./acode-agent-idle-exit.js";
 export * from "./process-v8-heap-guard.js";
 export * from "./runtimeEnv.js";
 export * from "./git-invocation-env.js";
+// git posture 意图网关判定器（packages/services/specs/git-posture-gateway.md）：
+// 纯函数 argv 形状白名单，services 漏斗与 acode-cli 孪生漏斗共用的单一所有者。
+export * from "./git-posture/index.js";
 export * from "./sensitive-env-guard.js";
 export * from "./dynamic-workflow-feature.js";
 // 脚本工作流三档本机产品开关（apps/acode-cli/specs/script-workflow-management-surface.md §3）：

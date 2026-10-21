@@ -9,11 +9,22 @@
 
 与既有 spec 的分层关系（三层叠加，互不替代）：
 
-| 层                           | 所有权                                                                         | 作用面                                                                                                 | spec                                                                                           |
-| ---------------------------- | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------- |
-| env/config 硬化矩阵          | `config.ts` `getGitCommandEnv()`                                               | 进程环境：协议默认全拒、hooks 废、replace/graft 防御、GIT*CONFIG*\* 消毒                               | `git-invocation-hardening.md` R1–R7、`git-hardening-presets.md` P1–P6（E1 已落地，本项不重复） |
-| **posture 意图网关（本项）** | `providers/gitPostureGateway.ts`（纯函数）+ `gitCommandProvider.run()`（接线） | **argv 形状**：每次 spawn 前按声明档位做精确形状白名单，可拒绝、可重写（注入防御旗标/重建 fetch argv） | 本文件                                                                                         |
-| 调用点档位声明               | `repo/gitCliRepo.ts` 全部 `commandProvider.run` 调用点                         | 意图表达：显式 `posture`；未声明 = `read`（写形状 fail-closed 拒绝）                                   | 本文件 R2/覆盖矩阵                                                                             |
+| 层                           | 所有权                                                                                    | 作用面                                                                                                 | spec                                                                                           |
+| ---------------------------- | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------- |
+| env/config 硬化矩阵          | `config.ts` `getGitCommandEnv()`                                                          | 进程环境：协议默认全拒、hooks 废、replace/graft 防御、GIT*CONFIG*\* 消毒                               | `git-invocation-hardening.md` R1–R7、`git-hardening-presets.md` P1–P6（E1 已落地，本项不重复） |
+| **posture 意图网关（本项）** | **`packages/shared/src/git-posture/`（纯函数判定器单一所有者，2026-10-21 平移）** + `gitCommandProvider.run()`（services 接线） | **argv 形状**：每次 spawn 前按声明档位做精确形状白名单，可拒绝、可重写（注入防御旗标/重建 fetch argv） | 本文件                                                                                         |
+| 调用点档位声明               | `repo/gitCliRepo.ts` 全部 `commandProvider.run` 调用点                                    | 意图表达：显式 `posture`；未声明 = `read`（写形状 fail-closed 拒绝）                                   | 本文件 R2/覆盖矩阵                                                                             |
+
+**判定器平移登记（2026-10-21，WI-T）**：判定器四文件自
+`packages/services/src/git/providers/gitPostureGateway*.ts` 平移至
+`packages/shared/src/git-posture/`（`index.ts`/`shapes.ts`/`applyWrite.ts`/`applyRead.ts`），
+经 shared 根 barrel（`packages/shared/src/index.ts`）导出；services
+`gitCommandProvider.ts` 与 acode-cli 孪生漏斗 8 消费点同从此面导入（R5/R6 授权的
+「判定器纯函数平移 shared 供两漏斗共用」落地）。env 层矩阵**不**平移——两漏斗各自
+实现的裁决不变（`git-invocation-hardening.md` R5「两份实现、一份语义」仅限 env 层；
+argv 判定器是单一实现）。判定器纯函数测试同批迁至 `packages/shared/test/
+gitPostureGateway.test.ts`；services 侧保留 `gitPostureGatewayWiring.test.ts`
+（provider 漏斗接线集成）。
 
 ## 威胁模型增量（相对 E1 矩阵）
 
@@ -54,10 +65,11 @@ type GitPosture =
   | "populate"
   | "hydrate"
   | "merge"
-  | "infra";
+  | "infra"
+  | "clone";
 ```
 
-9 值闭集（`GIT_POSTURES` 常量数组 + 字面量联合，判定器对闭集外值拒绝执行）。
+10 值闭集（`GIT_POSTURES` 常量数组 + 字面量联合，判定器对闭集外值拒绝执行）。
 与台账"8 档"（read/push/fetch/scrub/populate/hydrate/merge/infra）及证据原文的
 差异裁决：
 
@@ -68,6 +80,10 @@ type GitPosture =
   完全同形（:365 同分支），差异只在证据的 hooksPath 预设常量（允许真 hooks 路径）。
   ACode E1 矩阵无条件废 hooks（`git-invocation-hardening.md` R7：服务进程永不执行
   仓库 hooks），"允许 hooks 的 infra 变体"与既有硬化直接冲突，且无消费点——裁剪。
+- **`clone` 第 10 档（2026-10-21，ACode 新增）**：证据无对应档（Claude 面无 clone
+  消费点）。孪生侧 marketplace clone 是**网络+写复合面**，既非纯 plumbing（infra
+  透传过宽）、也非工作区物化（populate 形状不符），按 R6 前置裁决单独立档——
+  形状表见 R3 clone 行，设计与两层关系见 R4-9。
 
 各档位意图语义（声明纪律，spec 审查执行）：
 
@@ -81,6 +97,7 @@ type GitPosture =
 | hydrate          | LFS 水合 + 索引刷新（update-index -q --refresh、lfs checkout/ls-files）                            | 否                                                | 工作区文件内容       |
 | merge            | 合并流程（merge 三形、checkout <sha> -- paths、rm、commit -m --quiet --no-verify）                 | 否                                                | 仓库                 |
 | infra            | app 自有 plumbing：argv 透传 + 位置劫持守卫 + `worktree add` 强制 `--no-checkout`                  | 否（协议面缺省全拒兜底）                          | app 控制的仓库面     |
+| clone            | 克隆新仓库（网络+写复合面；位置参 url[+dest]、旗标精确闭集、执行/配置注入与子模块扇出收口）        | 是（协议面仍由 E1 env opt-in 逐调用点放行，两层独立） | 新仓库               |
 
 ### R2 网关接线与缺省档（fail-closed）
 
@@ -119,7 +136,8 @@ token；`--` 前后分段分别判定。旗标缩写匹配（:292 `Z()`）：`--
 | populate                  | `checkout`：旗标 ⊆ {`--quiet`,`-q`,`--no-track`,`-B`,`--no-recurse-submodules`} 且 ≥1 位置参；`read-tree`：恰 1 个 token（位置参）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | checkout 追加 `--quiet --no-recurse-submodules`                                                                                                                                                                                                                                    | :290、:496-509           |
 | scrub                     | `clean`：透传；`read-tree`：`--reset -u <非零sha>` 或 `-m -u <非零sha> <非零sha>`（无 `--`）；`maintenance`：`run` + 旗标 ⊆ {`--auto`,`--quiet`,`--task=loose-objects`,`--task=incremental-repack`} 且至少一个 `--task=`；`update-ref`：stash 形（`--create-reflog -m <msg> refs/stash <非零sha>`，msg 无控制字符，强制 `--no-deref`）/ `-d` 删除形（refs/bisect/_ 或 refs/heads/_+旧值sha）/ 更新形（refs/heads/_、HEAD（旧=新）、refs/remotes/_ 的 sha 旧新值组合，可选 `-m <msg>`）；`symbolic-ref`：`HEAD refs/heads/<合法分支>` 或 `refs/remotes/<r>/HEAD` 指向 `refs/remotes/<r>/…`（拒非法 ref 字符/`..`/`.lock` 等）；`update-index`：恰 `-q --ignore-submodules --refresh` 或 skip-worktree 旗标 + `-z --stdin`                                                                                                        | update-ref 强制注入 `--no-deref`；read-tree -m 形追加 `--no-recurse-submodules`                                                                                                                                                                                                    | :257、:510-633           |
 | hydrate                   | `update-index -q --refresh`；`lfs checkout [-- <paths>…]`（`--` 前必须为空）；`lfs ls-files` 旗标 ⊆ {`--json`,`-n`,`--name-only`}                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | 无                                                                                                                                                                                                                                                                                 | :166、:634-641           |
-| read                      | 子命令 ⊆ W 集（branch/cat-file/check-attr/check-ignore/diff/for-each-ref/hash-object/log/ls-files/ls-tree/merge-base/remote/rev-list/rev-parse/show/status/symbolic-ref）**∪ ACode 登记增补 {config, check-ref-format}**；`diff/log/show` 旗标拒 ignore-submodules 非 dirty/all 值与 submodule 非 short 值；`remote` 仅 `get-url` 或**无参列表（ACode 增补）**；`branch` 仅列表形（旗标 ⊆ X 集或 `--format=` 前缀，且至少一个列表旗标）；`symbolic-ref` 恰 1 位置参 + 旗标 ⊆ {`--short`,`--no-short`,`--quiet`,`-q`,`--no-recurse`}；`hash-object` 拒 `-w`；`cat-file` 仅 `--batch-check` 或 `commit\|tree <sha40/64>`；`config`（ACode 增补）仅读形：旗标 ⊆ {`--get`,`--show-scope`,`--show-origin`} 且必含 `--get`、恰 1 个键位置参、无 `--`；`check-ref-format`（ACode 增补）旗标 ⊆ {`--branch`}、恰 1 位置参；其余 W 集透传 | diff/log/show 注入 `--ignore-submodules=dirty --submodule=short`；status 注入 `--ignore-submodules=dirty`                                                                                                                                                                          | :175-193、:291、:642-687 |
+| read                      | 子命令 ⊆ W 集（branch/cat-file/check-attr/check-ignore/diff/for-each-ref/hash-object/log/ls-files/ls-tree/merge-base/remote/rev-list/rev-parse/show/status/symbolic-ref）**∪ ACode 登记增补 {config, check-ref-format, show-ref, worktree}**；`diff/log/show` 旗标拒 ignore-submodules 非 dirty/all 值与 submodule 非 short 值；`remote` 仅 `get-url` 或**无参列表（ACode 增补）**；`branch` 仅列表形（旗标 ⊆ X 集或 `--format=` 前缀，且至少一个列表旗标）；`symbolic-ref` 恰 1 位置参 + 旗标 ⊆ {`--short`,`--no-short`,`--quiet`,`-q`,`--no-recurse`}；`hash-object` 拒 `-w`；`cat-file` 仅 `--batch-check` 或 `commit\|tree <sha40/64>`；`config`（ACode 增补）仅读形：旗标 ⊆ {`--get`,`--show-scope`,`--show-origin`} 且必含 `--get`、恰 1 个键位置参、无 `--`；`check-ref-format`（ACode 增补）旗标 ⊆ {`--branch`}、恰 1 位置参；`show-ref`（ACode 增补 R4-8）仅 verify 存在性检查形：必含 `--verify`、旗标 ⊆ {`--verify`,`--quiet`,`-q`}、位置参 ≥1、无 `--`；`worktree`（ACode 增补 R4-8）仅 `worktree list [--porcelain]` 读形（add/remove/prune 等写形归 infra）；其余 W 集透传 | diff/log/show 注入 `--ignore-submodules=dirty --submodule=short`；status 注入 `--ignore-submodules=dirty`                                                                                                                                                                          | :175-193、:291、:642-687 |
+| clone                     | 子命令必须 `clone`；位置参 = url[+dest]（1–2 个）；旗标 ⊆ 精确闭集 {`--quiet`,`-q`,`--no-checkout`,`--sparse`,`--single-branch`,`--no-tags`} ∪ 名值旗标 {`--origin`/`--branch`/`--depth`（空格或 `=` 形态；`--depth` 值必须正整数、名值非空非旗标）} ∪ `--filter=` 前缀闭集 {`blob:none`,`blob:limit=`,`tree:0`}；禁 `-c`/`--config`（含子命令位之前的 `-c` 对——对完整 argv 显式扫描）、禁 `--`、闭集外一律拒（`--upload-pack`/`--exec`/`--mirror`（含缩写）/`--recurse-submodules`/`--shallow-since`/`--shallow-exclude` 等自然落集外）（ACode 第 10 档，R4-9） | 无（子模块扇出由 E1 config 层 `submodule.recurse=false` 钉死，R4-9 两层关系） | —（证据无对应档） |
 | 全档位（infra 除外）      | 子命令 ∈ {checkout,fetch,grep,ls-files,pull,push,read-tree,reset,restore,switch} 时，`--` 前旗标拒 `recurse-submodules` 前缀缩写（放行 `--no-recurse-submodules`/`--recurse-submodules=no`）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | —                                                                                                                                                                                                                                                                                  | :278-289、:379-390       |
 
 ### R4 ACode 面裁决与对蓝本偏差（登记）
@@ -163,6 +181,39 @@ token；`--` 前后分段分别判定。旗标缩写匹配（:292 `Z()`）：`--
    属"钉死恶意 `.git/config` 武器化面"范围，ACode 将其加入 fetch 禁用名单
    （`FETCH_BANNED_FLAG_NAMES` 含 mirror，缩写 `--mir` 同捕获）；ACode fetch 面
    零消费点，无合法 mirror 需求。
+8. **read 档再增补两个只读形状（2026-10-21，孪生侧接线驱动）**：`show-ref` 仅
+   verify 存在性检查形（必含 `--verify`、旗标 ⊆ {`--verify`,`--quiet`,`-q`}、
+   位置参 ≥1、无 `--`；列表/删除形不纳入）与 `worktree` 仅 `list [--porcelain]`
+   读形。驱动面：acode-cli 会话/workflow worktree 域的登记读取
+   （`show-ref --verify --quiet <ref>` 与 `worktree list --porcelain` 是其既有
+   argv），全部只读、无网络、精确形状，与 R4-2 同判据。services 面无这两个
+   子命令的消费点（gitCliRepo 零命中），形状扩容不改 services 侧任何行为。
+9. **`clone` 第 10 档设计（2026-10-21，R6 前置裁决落地）**：证据无对应档
+   （Claude 面无 clone 消费点）。裁决要点：
+   a) **单独立档而非 infra 透传**：clone 是网络+写复合面，`--upload-pack`/
+   `--exec`（任意命令执行）、`-c`/`--config`（配置注入，可载 hooksPath/filter
+   驱动）、`--mirror`（全 ref 抓取）、`--recurse-submodules`（子模块网络扇出）、
+   `--shallow-since`/`--shallow-exclude`（历史截断）都必须显式收口；infra 的
+   透传语义无法表达该闭集。
+   b) **旗标白名单即禁用面**：不设单独禁用名单——精确闭集 ∪ 名值旗标 ∪
+   `--filter=` 前缀闭集之外一律拒，上述禁用族自然落集外（缩写形态同样被拒：
+   白名单只收精确旗标，git 的旗标缩写解析面被整体关闭）。
+   c) **`-c` 对完整 argv 显式扫描**：通用解析会跳过子命令位之前的 `-c <k> <v>`
+   对（全局透传语义），clone 档在判定前对整条 argv 扫描 `-c`/`--config`，
+   前置配置注入也在拒绝面内。
+   d) **与 E1 协议层的两层关系（独立正交）**：argv 档（本层）只管命令形状；
+   传输协议由 env 层 per-call opt-in 放行（services `envOptions` / CLI
+   `getCliGitInvocationEnv` 的 `allowedProtocols`，CLI 侧唯一放行点 =
+   marketplace 调用点 `CLI_MARKETPLACE_GIT_PROTOCOL_ALLOWLIST`）。一次网络
+   clone 必须两层同时声明：只有 argv 形状声明而协议缺省全拒时传输被拒；
+   只有协议放行而 argv 越形时 spawn 前被拒。
+   e) **通过时不重写 argv**：`--recurse-submodules` 已在形状层禁绝，"默认不
+   递归"另由 E1 config 层 `submodule.recurse=false` 钉死（防仓库/全局配置把
+   默认翻成递归）——再注入 `--no-recurse-submodules` 与之重复，不注入以保持
+   argv 忠实于调用点声明。
+   f) **`--filter=` 前缀闭集**：{`blob:none`,`blob:limit=`,`tree:0`}——部分 clone
+   的存量消费形状（marketplace sparse 安装面）；`combine:` 复合过滤器与
+   `object:type`/`sparse:oid` 无消费点，不纳入。
 
 ### R5 失败语义
 
@@ -186,11 +237,13 @@ token；`--` 前后分段分别判定。旗标缩写匹配（:292 `Z()`）：`--
 | checkpoint 私有管线（read-tree/add/write-tree/commit-tree/update-ref/restore/ls-tree/hash-object/diff） | `repo/gitCheckpointRepo.ts`           | 全部 12 个 `run` 调用点声明 `infra`（`CHECKPOINT_GIT_POSTURE` 常量） | ✅ **WI-E3b 同批在飞接线**（2026-10-21 实读核对：12/12 调用点已声明，argv 无 `-C/--git-dir`，与 infra 守卫兼容）。E3b 裁决：纯读调用（diff/ls-tree/hash-object/rev-parse）也统一 `infra` 而非 `read`——避免 read 档对 diff 注入 `--ignore-submodules=dirty --submodule=short` 重写改变 commit 区间 diff 的解析口径（登记于 specs/shadow-git-index.md R8） |
 | commit-message 生成链/gitService                                                                        | 经 `GitCliRepo`                       | 随 gitCliRepo 档位                                                   | ✅ 本项                                                                                                                                                                                                                                                                                                                                                  |
 
-### acode-cli 孪生漏斗（登记为跟进项，不在本项所有权内）
+### acode-cli 孪生漏斗（✅ 2026-10-21 WI-T 已接线）
 
-孪生漏斗现状只有 **env 层**对齐（`packages/shared/src/git-invocation-env.ts`，
-E1 18d919a8）；**argv 形状层（posture 网关）未接线**。CLI 消费点盘点
-（`getCliGitInvocationEnv`/`Overlay` 消费者，2026-10-21 实读）：
+判定器已平移 `packages/shared/src/git-posture/`（单一所有者，见文首分层表
+「判定器平移登记」），8 消费点逐点接线形态、clone 档位裁决（R4-9 落地）、
+merge 两步裁决与 `-C` 消除清单全部闭合于 **apps/acode-cli/specs/
+git-invocation-hardening.md R6**（该节是本节原「接线需求跟进项」的销账）。
+原盘点表保留如下备查（档位以 CLI spec R6 闭合表为最终裁决）：
 
 | 文件                                                     | git 面                                                           | 建议档位（接线时裁决）                                              |
 | -------------------------------------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------- |
@@ -203,37 +256,45 @@ E1 18d919a8）；**argv 形状层（posture 网关）未接线**。CLI 消费点
 | `packages/bootstrap/src/app/overnight-controller.ts`     | status                                                           | read                                                                |
 | `packages/cli/src/tui-workspace-git.ts`                  | symbolic-ref                                                     | read                                                                |
 
-按 `git-invocation-hardening.md`（apps/acode-cli/specs 同名 spec R5）防再分叉
-纪律：本项为 services 侧增量，孪生侧登记为**接线需求跟进项**（判定器是纯函数，
-未来可平移到 shared 供两漏斗共用；本项不做反向抽取，services/\* 冻结面纪律同
-E1）。编排者需将本登记转达 CLI 侧 spec 所有权人。
-
 ## 接口
 
-`packages/services/src/git/providers/gitPostureGateway.ts`（新增）：
+`packages/shared/src/git-posture/`（2026-10-21 平移后单一所有者；经
+`packages/shared/src/index.ts` 根 barrel 导出）：
 
-- `GIT_POSTURES: readonly GitPosture[]`、`type GitPosture`（R1 闭集）；
-- `DEFAULT_GIT_POSTURE = "read"`、`GIT_POSTURE_ERROR_CODE = "EGITPOSTURE"`；
-- `class GitPostureError extends Error`（`code`/`posture`/`detail` 只读字段）；
-- `applyGitPostureGateway(posture: GitPosture, args: readonly string[]): string[]`
-  ——纯函数判定器：通过返回（可能重写的）argv 新数组；拒绝抛 `GitPostureError`。
+- `index.ts`：`applyGitPostureGateway(posture: GitPosture, args: readonly
+string[]): string[]`——纯函数判定器：通过返回（可能重写的）argv 新数组；拒绝抛
+  `GitPostureError`；公共面再导出下行全部符号。
+- `shapes.ts`：`GIT_POSTURES: readonly GitPosture[]`、`type GitPosture`
+  （R1 十值闭集）、`DEFAULT_GIT_POSTURE = "read"`、`GIT_POSTURE_ERROR_CODE =
+"EGITPOSTURE"`、`class GitPostureError extends Error`（`code`/`posture`/`detail`
+  只读字段）、形状常量与 argv 解析助手。
+- `applyWrite.ts`：infra/push/fetch/merge/populate/clone 按档应用器。
+- `applyRead.ts`：scrub/hydrate/read 按档应用器。
+- （400 行 max-lines 棘轮拆分先例 platformIpcRegistry；barrel 只导出
+  `applyGitPostureGateway`/`GIT_POSTURES`/`GitPosture`/`DEFAULT_GIT_POSTURE`/
+  `GIT_POSTURE_ERROR_CODE`/`GitPostureError` 六符号，内部形状常量不进公共面。）
 
-`providers/gitCommandProvider.ts`：`GitCommandExecutionOptions.posture?:
+`providers/gitCommandProvider.ts`（services）：`GitCommandExecutionOptions.posture?:
 GitPosture`；`run()` 入口执行网关（binary 解析之前），spawn 与 `result.args`
 使用网关输出。
 
 `repo/gitCliRepo.ts`：全部 `commandProvider.run` 调用点显式 `posture`；`push()`
 重写为显式 refspec（R4-1）。
 
-## 验收场景
+acode-cli 孪生侧 8 消费点接线接口：见 apps/acode-cli/specs/
+git-invocation-hardening.md R6 闭合表。
 
-见 `packages/services/test/gitPostureGateway.test.ts`（判定器全档正反例）与
-`gitPostureGatewayWiring.test.ts`（接线集成，stub binary + 真实 git 双段）：
+见 `packages/shared/test/gitPostureGateway.test.ts`（判定器全档正反例 + clone 档
+正反例 + read 增补 show-ref/worktree 形；2026-10-21 随判定器平移迁入）与
+`packages/services/test/gitPostureGatewayWiring.test.ts`（接线集成，stub binary +
+真实 git 双段）：
 
-1. **闭集与缺省**：`GIT_POSTURES` 恰为 R1 九值；provider 未声明档位时写形状
+1. **闭集与缺省**：`GIT_POSTURES` 恰为 R1 十值（含 clone）；provider 未声明档位时写形状
    （`add`/`commit`/`update-ref`）抛 `EGITPOSTURE`，读形状放行。
 2. **read 正反例**：W 集 + ACode 增补通过（含重写注入断言：diff/log/show 双旗标、
-   status 单旗标）；`add`/`push`/`fetch`/`config --get` 之外的 config 写形/
+   status 单旗标；R4-8 增补 `show-ref --verify --quiet <ref>` 与
+   `worktree list [--porcelain]` 放行、`show-ref` 列表/删除形与 `worktree add/
+remove/prune` 拒绝）；`add`/`push`/`fetch`/`config --get` 之外的 config 写形/
    `symbolic-ref HEAD refs/heads/x`（双位置参写形）/`hash-object -w`/
    `remote add` 拒绝。
 3. **push 正反例**：裸 `push`、`push origin main`（无冒号 refspec）、
@@ -254,18 +315,26 @@ GitPosture`；`run()` 入口执行网关（binary 解析之前），spawn 与 `r
    lfs 非白名单子命令、commit 缺 `--no-verify`、merge 无 sha 等）。
 7. **全档 recurse-submodules 守卫**：read `ls-files --recurse-submodules` 拒、
    `ls-files --no-recurse-submodules` 放行。
-8. **接线级（真实 git，不可用则 skip）**：临时 repo 上 `status` 未声明档位成功
+8. **clone 正反例（R4-9）**：marketplace 存量形状放行（`clone --depth 1 [--branch
+<r>] <url> <dir>`、`clone --depth 1 --filter=blob:none --sparse <url> <dir>`、
+   无旗标 `clone <url>`、名值旗标 `=` 形态、`--filter` 前缀闭集其余两形）；
+   `--upload-pack`/`--exec`（含缩写与 `=` 形态）/`-c`（含子命令位之前）/`--config`/
+   `--mirror`（含缩写）/`--recurse-submodules`/`--shallow-since`/`--shallow-exclude`/
+   `--depth` 非正整数或缺值/未知旗标/`--` 分隔/位置参超两个/非 clone 子命令拒绝；
+   通过时 argv 不重写。
+9. **接线级（真实 git，不可用则 skip）**：临时 repo 上 `status` 未声明档位成功
    且 `result.args` 含注入旗标；`add` 未声明档位抛 `EGITPOSTURE` 且工作区无副作用；
    `add` 声明 infra 成功；file 远端 `push origin refs/heads/main:refs/heads/main`
    声明 push + E1 envOptions 成功（与 `gitHardeningPresets.test.ts` 协议层断言共存）。
-9. **既有 E1 验收不回归**：`gitHardeningPresets.test.ts`/`gitInvocationHardening
+10. **既有 E1 验收不回归**：`gitHardeningPresets.test.ts`/`gitInvocationHardening
 .test.ts` 全绿（前者 push/ls-remote 链路用例按本 spec 补档位声明与 refspec 形状）。
+11. **孪生侧 8 消费点接线**：`apps/acode-cli/tests/
+git-posture-gateway-wiring.test.mjs` 逐点断言（接线形态见 CLI spec R6 闭合表）。
 
 ## 不在本项范围
 
 - `gitCheckpointRepo.ts`/`gitCheckpointHelpers.ts` 档位声明——WI-E3b（覆盖矩阵
   已登记精确调用面与建议档位）；
-- acode-cli 孪生漏斗 argv 网关接线——登记跟进（覆盖矩阵含逐文件建议档位）；
 - shadow git 私有 index 管线（A2）本体加固；
 - fetch 档的实际网络消费点（ACode services 面无 fetch；未来新增远端能力时按
   `git-hardening-presets.md` P1 纪律同时声明 envOptions 协议放行与 fetch 档位）。

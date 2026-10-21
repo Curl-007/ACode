@@ -1,9 +1,10 @@
 // ============================================================
-// Git Posture 网关入口（specs/git-posture-gateway.md）
-// 判定表与解析助手在 gitPostureGatewayShapes.ts；按档应用器拆分于
-// gitPostureGatewayApplyWrite.ts（infra/push/fetch/merge/populate）与
-// gitPostureGatewayApplyRead.ts（scrub/hydrate/read）。本文件只保留入口与公共再导出
+// Git Posture 网关入口（packages/services/specs/git-posture-gateway.md）
+// 判定表与解析助手在 shapes.ts；按档应用器拆分于
+// applyWrite.ts（infra/push/fetch/merge/populate/clone）与
+// applyRead.ts（scrub/hydrate/read）。本文件只保留入口与公共再导出
 // （400 行 max-lines 棘轮，先例 platformIpcRegistry 拆分）。
+// 单一所有者：services 漏斗与 acode-cli 孪生漏斗共用本模块（spec R5/R6）。
 // ============================================================
 
 import {
@@ -11,20 +12,17 @@ import {
   SUBMODULE_RECURSE_GUARDED_SUBCOMMANDS,
   isFlagAbbrevOf,
   parseGitArgs,
-} from "./gitPostureGatewayShapes.js";
-import type { GitPosture } from "./gitPostureGatewayShapes.js";
+} from "./shapes.js";
+import type { GitPosture } from "./shapes.js";
 import {
+  applyClonePosture,
   applyFetchPosture,
   applyInfraPosture,
   applyMergePosture,
   applyPopulatePosture,
   applyPushPosture,
-} from "./gitPostureGatewayApplyWrite.js";
-import {
-  applyHydratePosture,
-  applyReadPosture,
-  applyScrubPosture,
-} from "./gitPostureGatewayApplyRead.js";
+} from "./applyWrite.js";
+import { applyHydratePosture, applyReadPosture, applyScrubPosture } from "./applyRead.js";
 
 export function applyGitPostureGateway(posture: GitPosture, args: readonly string[]): string[] {
   if (posture === "infra") {
@@ -65,6 +63,8 @@ export function applyGitPostureGateway(posture: GitPosture, args: readonly strin
       return applyHydratePosture(parsed);
     case "read":
       return applyReadPosture(parsed);
+    case "clone":
+      return applyClonePosture(parsed);
     default:
       return [...args];
   }
@@ -75,5 +75,5 @@ export {
   GIT_POSTURES,
   GIT_POSTURE_ERROR_CODE,
   GitPostureError,
-} from "./gitPostureGatewayShapes.js";
-export type { GitPosture } from "./gitPostureGatewayShapes.js";
+} from "./shapes.js";
+export type { GitPosture } from "./shapes.js";

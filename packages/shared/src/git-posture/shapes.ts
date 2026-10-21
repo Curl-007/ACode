@@ -2,17 +2,16 @@
  * git posture 意图网关：档位闭集 + argv 精确形状白名单（纯函数判定器）。
  *
  * 机制来源：Claude Desktop 2.37337 `src/beautified/main/index.chunk-CHbrg8it.js`
- * :76-77（档位集）、:166-195（形状常量）、:196-205（子命令位扫描）、:254-256
- * （EGITPOSTURE 错误）、:292-322（旗标缩写/merge 形状匹配）、:323-363（merge 档）、
- * :364-687（网关主体）；接线形态见 index.chunk-B4Dgt0a4.js:881-893（漏斗缺省
- * posture ?? "read"）。规则表、ACode 面裁决与偏差登记见
- * specs/git-posture-gateway.md（R1-R5）——修改任何形状前先改 spec。
+ * :76-687（档位集/形状常量/子命令扫描/EGITPOSTURE/网关主体）；接线形态见
+ * index.chunk-B4Dgt0a4.js:881-893（漏斗缺省 posture ?? "read"）。规则表、ACode 面
+ * 裁决与偏差登记见 packages/services/specs/git-posture-gateway.md（R1-R5）——
+ * 修改任何形状前先改 spec。2026-10-21 平移：判定器单一所有者 = 本目录
+ * （packages/shared/src/git-posture/），services 与 acode-cli 两漏斗共用。
  *
  * 判定器是纯函数：通过时返回可能被重写的 argv 新数组（注入防御旗标/重建 fetch），
  * 拒绝时抛 GitPostureError（code=EGITPOSTURE），零副作用。
  */
-
-/** 档位闭集（spec R1）：9 值，类型层封闭；pushProbe 与 push 同形（证据 :391）。 */
+/** 档位闭集（spec R1）：10 值，类型层封闭；pushProbe 与 push 同形（证据 :391）。 */
 export const GIT_POSTURES = [
   "read",
   "push",
@@ -23,6 +22,7 @@ export const GIT_POSTURES = [
   "hydrate",
   "merge",
   "infra",
+  "clone",
 ] as const;
 
 export type GitPosture = (typeof GIT_POSTURES)[number];
@@ -56,6 +56,7 @@ export const ENFORCED_POSTURES: ReadonlySet<string> = new Set<GitPosture>([
   "populate",
   "hydrate",
   "merge",
+  "clone",
 ]);
 
 /** 40/64 位 hex sha（证据 :302 `Q`）。 */
@@ -69,8 +70,12 @@ export const PUSH_REFSPEC_PATTERN = /^\+?(?:refs\/[^:*\s]+|[^:*\s/+][^:*\s]*):re
 /** fetch refspec：dst 必须落 refs/remotes/ 命名空间（证据 :461）。 */
 export const FETCH_REFSPEC_PATTERN = /^\+?refs\/[^:*\s]+:refs\/remotes\/[^:*\s]+$/;
 /** 远端 HEAD ref 非法字符集（证据 scrub symbolic-ref 段 :616-625）。 */
-// eslint-disable-next-line no-control-regex -- 有意匹配控制字符：ref 名含 C0 控制符即拒绝（证据同款防御）。
-export const BAD_REMOTE_REF_PATTERN = /[\u0000-\u0020\u007f~^:?*[\\]|\.\.|@\{|\/\/|\/$|\.$|\.lock$/;
+// 控制字符类经字符串构造：ref 名含 C0 控制符即拒绝（证据同款防御）；字符串形态使
+// no-control-regex 静态误报不适用，避免在新文件引入 lint disable（arch disable-count）。
+const BAD_REMOTE_REF_CONTROL_CLASS = "\\u0000-\\u0020\\u007f";
+export const BAD_REMOTE_REF_PATTERN = new RegExp(
+  `[${BAD_REMOTE_REF_CONTROL_CLASS}~^:?*[\\\\]|\\.\\.|@\\{|//|/$|\\.$|\\.lock$`,
+);
 /** update-ref 消息禁控制字符（证据 :553/:566）。 */
 const CONTROL_CHAR_PATTERN = /\p{Cc}/u;
 /** 远端 HEAD 指向解析（证据 :610）。 */
@@ -116,13 +121,24 @@ export const EVIDENCE_READ_SUBCOMMANDS = new Set([
 ]);
 
 /**
- * ACode read 档登记增补（spec R4-2）：config 只读形、check-ref-format 语法校验、
- * remote 无参列表。全部只读、无网络、精确形状；证据 W 集按 Claude 面裁剪没有它们。
+ * ACode read 档登记增补（spec R4-2/R4-8）：config 只读形、check-ref-format 语法校验、
+ * show-ref verify 存在性检查、worktree list 列表形。全部只读、无网络、精确形状。
  */
-export const ACODE_READ_SUBCOMMAND_ADDITIONS = new Set(["config", "check-ref-format"]);
+export const ACODE_READ_SUBCOMMAND_ADDITIONS = new Set([
+  "config",
+  "check-ref-format",
+  "show-ref",
+  "worktree",
+]);
 
 /** config 只读形旗标闭集（spec R4-2）：写形（set/unset/-f/--add…）一律拒。 */
 export const CONFIG_READ_FLAGS = new Set(["--get", "--show-scope", "--show-origin"]);
+
+/** show-ref verify 形旗标闭集（spec R4-8）：仅存在性检查，列表/删除形不纳入。 */
+export const SHOW_REF_VERIFY_FLAGS = new Set(["--verify", "--quiet", "-q"]);
+
+/** worktree list 形旗标闭集（spec R4-8）：仅 `worktree list [--porcelain]`。 */
+export const WORKTREE_LIST_FLAGS = new Set(["--porcelain"]);
 
 /** recurse-submodules 守卫覆盖的子命令（证据 :278-289 `be`，spec 威胁 5）。 */
 export const SUBMODULE_RECURSE_GUARDED_SUBCOMMANDS = new Set([
@@ -219,11 +235,8 @@ export const FETCH_BANNED_FLAG_NAMES = [
   "all",
   "upload-pack",
   "exec",
-  // ACode 增补（对蓝本的收紧偏差，spec R4-7）：CLI `--mirror` 隐含全量 refmap
-  // (+refs/*:refs/*) 与 prune，会压过重建注入的 `-c remote.<r>.mirror=false`/
-  // `--refmap=` 钉死项——台账 A1 点名 mirror 属必须钉死的武器化面，证据禁用名单
-  // 未含它是蓝本缺口（其 fetch 调用点全为 app 构造）。ACode fetch 面零消费点，
-  // 无合法 mirror 需求，直接拒绝。
+  // ACode 增补（对蓝本的收紧偏差，spec R4-7）：CLI `--mirror` 隐含全量 refmap 与
+  // prune，会压过重建注入的钉死项；ACode fetch 面零消费点，无合法 mirror 需求。
   "mirror",
 ];
 
@@ -237,6 +250,29 @@ export const FETCH_ALLOWED_EXACT_FLAGS = new Set([
 
 /** ls-remote 禁用旗标名（证据 :485-487）。 */
 export const LS_REMOTE_BANNED_FLAG_NAMES = ["upload-pack", "exec"];
+
+/**
+ * clone 档旗标白名单（spec R3 clone 行 / R4-9，ACode 第 10 档）：精确旗标闭集 +
+ * 名值旗标（空格或 `=` 形态）+ `--filter=` 前缀闭集；闭集之外一律拒
+ * （upload-pack/exec/-c/--config/mirror/recurse-submodules/shallow-* 自然落集外）。
+ */
+export const CLONE_EXACT_FLAGS = new Set([
+  "--quiet",
+  "-q",
+  "--no-checkout",
+  "--sparse",
+  "--single-branch",
+  "--no-tags",
+]);
+
+/** clone 名值旗标：`--origin <名>`/`--branch <名>`/`--depth <正整数>`，空格与 `=` 形态均可。 */
+export const CLONE_VALUE_FLAGS = new Set(["--origin", "--branch", "--depth"]);
+
+/** clone `--depth` 值形状：正整数。 */
+export const CLONE_DEPTH_PATTERN = /^[1-9][0-9]*$/;
+
+/** clone `--filter=` 值前缀闭集（部分 clone 形状；`combine:` 复合过滤器不纳入）。 */
+export const CLONE_FILTER_PREFIXES = ["blob:none", "blob:limit=", "tree:0"] as const;
 
 /**
  * 子命令位扫描（证据 :196-205 `G`）：跳过 `-c <key> <value>` 成对参数与全局透传

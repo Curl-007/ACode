@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { resolve } from "node:path";
-import { getCliGitInvocationEnv } from "@acode/shared";
+import { applyGitPostureGateway, getCliGitInvocationEnv, type GitPosture } from "@acode/shared";
 import { normalizeForCompare } from "./session-worktree-paths.js";
 
 /**
@@ -25,6 +25,20 @@ export type SessionGitRunner = (
   args: readonly string[],
   cwd: string,
 ) => Promise<SessionGitCommandResult>;
+
+/**
+ * argv posture 网关接线（apps/acode-cli/specs/git-invocation-hardening.md R6）：
+ * 包装 runner，spawn 前把 argv 过 shared 判定器——通过时按网关输出执行（read 档
+ * 可能注入 `--ignore-submodules=dirty` 等确定性旗标），拒绝时抛 GitPostureError
+ * （EGITPOSTURE，调用点编程错误 fail-closed 冒泡，不降级为命令失败）。
+ */
+export function withSessionGitPosture(
+  posture: GitPosture,
+  git: SessionGitRunner,
+): SessionGitRunner {
+  // async 包装：判定器的同步拒绝必须成为 runner 契约的 promise 拒绝，而非同步抛出。
+  return async (args, cwd) => git(applyGitPostureGateway(posture, args), cwd);
+}
 
 export const defaultSessionGitRunner: SessionGitRunner = async (args, cwd) => {
   try {
@@ -60,8 +74,9 @@ export class SessionGitError extends Error {
 }
 
 export async function gitRepoRoot(git: SessionGitRunner, repoDir: string): Promise<string> {
+  const read = withSessionGitPosture("read", git);
   try {
-    const { stdout } = await git(["rev-parse", "--show-toplevel"], repoDir);
+    const { stdout } = await read(["rev-parse", "--show-toplevel"], repoDir);
     const root = stdout.trim();
     if (root === "") throw new Error("empty toplevel");
     return resolve(root);
@@ -74,8 +89,9 @@ export async function gitRepoRoot(git: SessionGitRunner, repoDir: string): Promi
 }
 
 export async function gitHeadSha(git: SessionGitRunner, repoRoot: string): Promise<string> {
+  const read = withSessionGitPosture("read", git);
   try {
-    const { stdout } = await git(["rev-parse", "HEAD"], repoRoot);
+    const { stdout } = await read(["rev-parse", "HEAD"], repoRoot);
     const ref = stdout.trim();
     if (ref === "") throw new Error("empty HEAD");
     return ref;
@@ -99,7 +115,8 @@ export async function gitWorktreeList(
   git: SessionGitRunner,
   repoRoot: string,
 ): Promise<GitWorktreeListEntry[]> {
-  const { stdout } = await git(["worktree", "list", "--porcelain"], repoRoot);
+  const read = withSessionGitPosture("read", git);
+  const { stdout } = await read(["worktree", "list", "--porcelain"], repoRoot);
   const entries: GitWorktreeListEntry[] = [];
   let current: Partial<GitWorktreeListEntry> | undefined;
   const flush = () => {
@@ -159,8 +176,9 @@ export async function gitCurrentBranch(
   git: SessionGitRunner,
   dir: string,
 ): Promise<string | undefined> {
+  const read = withSessionGitPosture("read", git);
   try {
-    const { stdout } = await git(["branch", "--show-current"], dir);
+    const { stdout } = await read(["branch", "--show-current"], dir);
     const branch = stdout.trim();
     return branch === "" ? undefined : branch;
   } catch {
@@ -174,8 +192,9 @@ export async function gitLocalBranchExists(
   repoRoot: string,
   branch: string,
 ): Promise<boolean> {
+  const read = withSessionGitPosture("read", git);
   try {
-    await git(["show-ref", "--verify", "--quiet", `refs/heads/${branch}`], repoRoot);
+    await read(["show-ref", "--verify", "--quiet", `refs/heads/${branch}`], repoRoot);
     return true;
   } catch {
     return false;
@@ -187,14 +206,16 @@ export async function gitHasUncommittedChanges(
   git: SessionGitRunner,
   dir: string,
 ): Promise<boolean> {
-  const { stdout } = await git(["status", "--porcelain"], dir);
+  const read = withSessionGitPosture("read", git);
+  const { stdout } = await read(["status", "--porcelain"], dir);
   return stdout.trim() !== "";
 }
 
 /** 合并是否正在进行（MERGE_HEAD 在场）。 */
 export async function gitMergeInProgress(git: SessionGitRunner, dir: string): Promise<boolean> {
+  const read = withSessionGitPosture("read", git);
   try {
-    const { stdout } = await git(["rev-parse", "-q", "--verify", "MERGE_HEAD"], dir);
+    const { stdout } = await read(["rev-parse", "-q", "--verify", "MERGE_HEAD"], dir);
     return stdout.trim() !== "";
   } catch {
     return false;
@@ -203,7 +224,8 @@ export async function gitMergeInProgress(git: SessionGitRunner, dir: string): Pr
 
 /** 冲突（未合并）文件清单。 */
 export async function gitConflictedFiles(git: SessionGitRunner, dir: string): Promise<string[]> {
-  const { stdout } = await git(["diff", "--name-only", "--diff-filter=U"], dir);
+  const read = withSessionGitPosture("read", git);
+  const { stdout } = await read(["diff", "--name-only", "--diff-filter=U"], dir);
   return stdout
     .split(/\r?\n/)
     .map((line) => line.trim())
@@ -221,9 +243,13 @@ export async function gitResolveDefaultBranch(
   git: SessionGitRunner,
   repoRoot: string,
 ): Promise<string | undefined> {
+  const read = withSessionGitPosture("read", git);
   let originHeadBranch: string | undefined;
   try {
-    const { stdout } = await git(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], repoRoot);
+    const { stdout } = await read(
+      ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+      repoRoot,
+    );
     originHeadBranch = stdout.trim().replace(/^origin\//, "") || undefined;
   } catch {
     originHeadBranch = undefined;
@@ -233,7 +259,7 @@ export async function gitResolveDefaultBranch(
     : [...DEFAULT_MAIN_BRANCH_CANDIDATES];
   const refExists = async (ref: string): Promise<boolean> => {
     try {
-      await git(["show-ref", "--verify", "--quiet", ref], repoRoot);
+      await read(["show-ref", "--verify", "--quiet", ref], repoRoot);
       return true;
     } catch {
       return false;

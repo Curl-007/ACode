@@ -1,7 +1,7 @@
 import { execFile as execFileCallback } from "node:child_process";
 import { promisify } from "node:util";
 import type { EnvInfo } from "@acode/contracts";
-import { getCliGitInvocationEnv } from "@acode/shared";
+import { applyGitPostureGateway, getCliGitInvocationEnv } from "@acode/shared";
 
 const DEFAULT_GIT_COMMAND_TIMEOUT_MS = 3000;
 const DEFAULT_COMMAND_MAX_BUFFER_BYTES = 1024 * 1024;
@@ -95,7 +95,9 @@ async function resolveMainBranch(workingDirectory: string): Promise<string | und
 }
 
 async function resolveGitUser(workingDirectory: string): Promise<string | undefined> {
-  return readTrimmedGitOutput(["config", "user.name"], workingDirectory);
+  // config 读形必须是 --get 单键精确形状（posture 网关 read 档 R6 增补；
+  // `config user.name` 裸形与 `config --get user.name` 语义等价）。
+  return readTrimmedGitOutput(["config", "--get", "user.name"], workingDirectory);
 }
 
 async function gitCommandSucceeds(args: string[], workingDirectory: string): Promise<boolean> {
@@ -124,8 +126,12 @@ async function execGitNoThrow(
   args: string[],
   workingDirectory: string,
 ): Promise<GitCommandResult> {
+  // argv posture 网关 read 档（apps/acode-cli/specs/git-invocation-hardening.md R6
+  // 消费点 #1）：本消费点全部是只读形状。判定在 try 之外——EGITPOSTURE 是调用点
+  // 编程错误，绝不进下方的失败降级（那会把 bug 静默成 "not a git repo" 上下文）。
+  const guardedArgs = applyGitPostureGateway("read", args);
   try {
-    const result = await execFile(GIT_COMMAND, args, {
+    const result = await execFile(GIT_COMMAND, guardedArgs, {
       cwd: workingDirectory,
       // git 调用硬化漏斗（specs/git-invocation-hardening.md 消费点 #1）：
       // 防弹窗挂死/hooks 停用/防串仓，参数组装语义不动。只读本地命令面走

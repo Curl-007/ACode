@@ -11,11 +11,13 @@ import {
   REMOTE_HEAD_PATTERN,
   REMOTE_REF_PREFIX_PATTERN,
   SHA_PATTERN,
+  SHOW_REF_VERIFY_FLAGS,
   SKIP_WORKTREE_FLAGS,
+  WORKTREE_LIST_FLAGS,
   hasControlChar,
   isFlagAbbrevOf,
-} from "./gitPostureGatewayShapes.js";
-import type { ParsedGitArgs } from "./gitPostureGatewayShapes.js";
+} from "./shapes.js";
+import type { ParsedGitArgs } from "./shapes.js";
 
 export function applyScrubPosture(parsed: ParsedGitArgs): string[] {
   const { argv, subcommand, rest, positionals, dashIndex, preDash, splice, fail } = parsed;
@@ -302,6 +304,34 @@ export function applyReadPosture(parsed: ParsedGitArgs): string[] {
       const names = rest.filter((token) => !token.startsWith("-"));
       if (flags.some((token) => token !== "--branch") || names.length !== 1) {
         return fail(`check-ref-format ${rest.join(" ")}`);
+      }
+      return [...argv];
+    }
+    case "show-ref": {
+      // ACode 增补（spec R4-8）：仅 verify 存在性检查形——必含 --verify、旗标闭集、
+      // 位置参 ≥1（ref 全名）、无 `--`；列表形（模式匹配）与删除形不纳入。
+      const flags = rest.filter((token) => token.startsWith("-"));
+      const refs = rest.filter((token) => !token.startsWith("-"));
+      if (
+        dashIndex !== -1 ||
+        !flags.includes("--verify") ||
+        flags.some((token) => !SHOW_REF_VERIFY_FLAGS.has(token)) ||
+        refs.length === 0
+      ) {
+        return fail(`show-ref ${rest.join(" ")}`);
+      }
+      return [...argv];
+    }
+    case "worktree": {
+      // ACode 增补（spec R4-8）：仅 `worktree list [--porcelain]` 读形；
+      // add/remove/prune/repair 等写形归 infra 档。
+      const [noun, ...flags] = rest;
+      if (
+        noun !== "list" ||
+        flags.some((token) => !WORKTREE_LIST_FLAGS.has(token)) ||
+        dashIndex !== -1
+      ) {
+        return fail(`worktree ${rest.join(" ")}`);
       }
       return [...argv];
     }

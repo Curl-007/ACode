@@ -1,4 +1,8 @@
 import {
+  CLONE_DEPTH_PATTERN,
+  CLONE_EXACT_FLAGS,
+  CLONE_FILTER_PREFIXES,
+  CLONE_VALUE_FLAGS,
   FETCH_ALLOWED_EXACT_FLAGS,
   FETCH_BANNED_FLAG_NAMES,
   FETCH_REFSPEC_PATTERN,
@@ -13,8 +17,8 @@ import {
   findSubcommandIndex,
   isFlagAbbrevOf,
   matchesMergeShaShape,
-} from "./gitPostureGatewayShapes.js";
-import type { GitPosture, ParsedGitArgs } from "./gitPostureGatewayShapes.js";
+} from "./shapes.js";
+import type { GitPosture, ParsedGitArgs } from "./shapes.js";
 
 export function applyInfraPosture(posture: GitPosture, args: readonly string[]): string[] {
   const argv = [...args];
@@ -254,3 +258,71 @@ export function applyPopulatePosture(parsed: ParsedGitArgs): string[] {
 }
 
 /** scrub 档（证据 :510-633）。 */
+
+/**
+ * clone 档（spec R3 clone 行 / R4-9，ACode 第 10 档——证据无对应档，网络+写复合面裁决）：
+ * 位置参 = url[+dest]；旗标 ⊆ CLONE_EXACT_FLAGS ∪ 名值旗标（--origin/--branch/--depth，
+ * 空格或 `=` 形态）∪ `--filter=` 前缀闭集；闭集外一律拒（upload-pack/exec/-c/--config/
+ * mirror/recurse-submodules/shallow-since/shallow-exclude 自然落集外）。通过时不重写
+ * argv——子模块扇出由 E1 config 层 `submodule.recurse=false` 钉死（spec R4-9 两层关系）。
+ */
+export function applyClonePosture(parsed: ParsedGitArgs): string[] {
+  const { argv, subcommand, rest, fail } = parsed;
+  // 全局/命令级配置注入：`-c` 对（子命令位之前，parseGitArgs 会跳过，故对完整 argv
+  // 显式扫描）与 `--config`/`--config=` 一律拒。
+  if (
+    argv.some((token) => token === "-c" || token === "--config" || token.startsWith("--config="))
+  ) {
+    return fail("clone -c/--config");
+  }
+  if (subcommand !== "clone") {
+    return fail(subcommand ?? "(no subcommand)");
+  }
+  if (rest.includes("--")) {
+    return fail("clone --");
+  }
+  const positionals: string[] = [];
+  for (let index = 0; index < rest.length; index += 1) {
+    const token = rest[index]!;
+    if (!token.startsWith("-")) {
+      positionals.push(token);
+      continue;
+    }
+    if (CLONE_EXACT_FLAGS.has(token)) {
+      continue;
+    }
+    if (token.startsWith("--filter=")) {
+      const value = token.slice("--filter=".length);
+      if (CLONE_FILTER_PREFIXES.some((prefix) => value.startsWith(prefix))) {
+        continue;
+      }
+      return fail(`clone ${token}`);
+    }
+    const eqIndex = token.indexOf("=");
+    const flagName = eqIndex === -1 ? token : token.slice(0, eqIndex);
+    if (CLONE_VALUE_FLAGS.has(flagName)) {
+      if (eqIndex === -1) {
+        const value = rest[index + 1];
+        if (
+          value === undefined ||
+          value.startsWith("-") ||
+          (flagName === "--depth" && !CLONE_DEPTH_PATTERN.test(value))
+        ) {
+          return fail(`clone ${token} (bad value)`);
+        }
+        index += 1;
+        continue;
+      }
+      const value = token.slice(eqIndex + 1);
+      if (value === "" || (flagName === "--depth" && !CLONE_DEPTH_PATTERN.test(value))) {
+        return fail(`clone ${token} (bad value)`);
+      }
+      continue;
+    }
+    return fail(`clone ${token}`);
+  }
+  if (positionals.length < 1 || positionals.length > 2) {
+    return fail(`clone ${rest.join(" ")} (url [dest] expected)`);
+  }
+  return [...argv];
+}

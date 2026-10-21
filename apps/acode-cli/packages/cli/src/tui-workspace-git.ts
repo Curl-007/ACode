@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { getCliGitInvocationEnv } from "@acode/shared";
+import { applyGitPostureGateway, getCliGitInvocationEnv } from "@acode/shared";
 
 const GIT_COMMAND = "git";
 const GIT_BRANCH_ARGS = ["symbolic-ref", "--quiet", "--short", "HEAD"];
@@ -16,6 +16,7 @@ type GitCommandRunner = (
   file: string,
   args: string[],
   options: {
+    cwd: string;
     maxOutputBytes: number;
     timeoutMs: number;
   },
@@ -30,14 +31,13 @@ export async function resolveWorkspaceGitBranch(options: {
   const maxOutputBytes = options.maxOutputBytes ?? DEFAULT_GIT_OUTPUT_LIMIT_BYTES;
   const timeoutMs = options.timeoutMs ?? DEFAULT_GIT_TIMEOUT_MS;
   const runCommand = options.runCommand ?? runGitCommand;
-  const result = await runCommand(
-    GIT_COMMAND,
-    ["-C", options.workspaceDirectory, ...GIT_BRANCH_ARGS],
-    {
-      maxOutputBytes,
-      timeoutMs,
-    },
-  ).catch(() => ({ exitCode: -1, stdout: "" }));
+  // argv posture 网关 read 档（git-invocation-hardening.md R6 消费点 #5）：
+  // `-C <dir>` 前缀是网关位置劫持拒绝面，目录定位改由 spawn cwd 承载（非劫持等价物）。
+  const result = await runCommand(GIT_COMMAND, applyGitPostureGateway("read", GIT_BRANCH_ARGS), {
+    cwd: options.workspaceDirectory,
+    maxOutputBytes,
+    timeoutMs,
+  }).catch(() => ({ exitCode: -1, stdout: "" }));
 
   if (result.exitCode !== 0) return undefined;
 
@@ -50,6 +50,7 @@ async function runGitCommand(
   file: string,
   args: string[],
   options: {
+    cwd: string;
     maxOutputBytes: number;
     timeoutMs: number;
   },
@@ -58,6 +59,7 @@ async function runGitCommand(
     let child: ReturnType<typeof spawn>;
     try {
       child = spawn(file, args, {
+        cwd: options.cwd,
         // git 调用硬化漏斗（specs/git-invocation-hardening.md 消费点 #5）：
         // TUI 分支徽标是自动触发的只读面，防弹窗挂死/hooks 停用/防串仓。
         env: getCliGitInvocationEnv(),

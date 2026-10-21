@@ -7,7 +7,7 @@ import {
   GIT_POSTURES,
   GitPostureError,
   type GitPosture,
-} from "../src/git/providers/gitPostureGateway.js";
+} from "../src/git-posture/index.js";
 
 /**
  * posture 意图网关判定器全档正反例（specs/git-posture-gateway.md R1-R5，
@@ -38,10 +38,21 @@ function allowed(posture: GitPosture, args: string[]): string[] {
 }
 
 describe("git posture gateway: closed set and defaults (R1/R2)", () => {
-  test("档位闭集恰为 spec R1 九值", () => {
+  test("档位闭集恰为 spec R1 十值（clone 为 ACode 第 10 档）", () => {
     assert.deepEqual(
       [...GIT_POSTURES],
-      ["read", "push", "pushProbe", "fetch", "scrub", "populate", "hydrate", "merge", "infra"],
+      [
+        "read",
+        "push",
+        "pushProbe",
+        "fetch",
+        "scrub",
+        "populate",
+        "hydrate",
+        "merge",
+        "infra",
+        "clone",
+      ],
     );
   });
 
@@ -605,5 +616,129 @@ describe("git posture gateway: merge posture", () => {
     denied("merge", ["commit", "-m", "msg"]);
     denied("merge", ["commit", "-m", "msg", "--quiet", "--no-verify", "--", "a.txt"]);
     denied("merge", ["commit", "-m", "-x", "--quiet", "--no-verify"]);
+  });
+});
+
+describe("git posture gateway: read posture ACode additions (R4-8: show-ref / worktree list)", () => {
+  test("show-ref 仅 verify 存在性检查形", () => {
+    assert.deepEqual(allowed("read", ["show-ref", "--verify", "--quiet", "refs/heads/main"]), [
+      "show-ref",
+      "--verify",
+      "--quiet",
+      "refs/heads/main",
+    ]);
+    assert.deepEqual(allowed("read", ["show-ref", "--verify", "-q", "refs/remotes/origin/main"]), [
+      "show-ref",
+      "--verify",
+      "-q",
+      "refs/remotes/origin/main",
+    ]);
+    denied("read", ["show-ref", "--heads"]);
+    denied("read", ["show-ref", "--quiet", "refs/heads/main"]);
+    denied("read", ["show-ref", "-d", "refs/heads/main"]);
+    denied("read", ["show-ref", "--verify", "--", "refs/heads/main"]);
+  });
+
+  test("worktree 仅 list [--porcelain] 读形；写形不归 read", () => {
+    assert.deepEqual(allowed("read", ["worktree", "list", "--porcelain"]), [
+      "worktree",
+      "list",
+      "--porcelain",
+    ]);
+    assert.deepEqual(allowed("read", ["worktree", "list"]), ["worktree", "list"]);
+    denied("read", ["worktree", "add", "--no-checkout", "/tmp/x", "b"]);
+    denied("read", ["worktree", "remove", "/tmp/x"]);
+    denied("read", ["worktree", "prune"]);
+    denied("read", ["worktree", "list", "-z"]);
+  });
+});
+
+describe("git posture gateway: clone posture (R3 clone 行/R4-9, 第 10 档)", () => {
+  test("marketplace clone 形状：--depth/--branch 空格形、--filter=blob:none --sparse、url+dest", () => {
+    assert.deepEqual(allowed("clone", ["clone", "--depth", "1", "https://x/y.git", "/tmp/d"]), [
+      "clone",
+      "--depth",
+      "1",
+      "https://x/y.git",
+      "/tmp/d",
+    ]);
+    assert.deepEqual(
+      allowed("clone", [
+        "clone",
+        "--depth",
+        "1",
+        "--branch",
+        "main",
+        "--filter=blob:none",
+        "--sparse",
+        "git@h:o/r.git",
+        "/tmp/d",
+      ]),
+      [
+        "clone",
+        "--depth",
+        "1",
+        "--branch",
+        "main",
+        "--filter=blob:none",
+        "--sparse",
+        "git@h:o/r.git",
+        "/tmp/d",
+      ],
+    );
+  });
+
+  test("放行形状：无旗标 url[+dest]、名值旗标 = 形、--filter 前缀闭集其余两形、--no-checkout 等精确旗标", () => {
+    assert.deepEqual(allowed("clone", ["clone", "https://x/y.git"]), ["clone", "https://x/y.git"]);
+    allowed("clone", [
+      "clone",
+      "--quiet",
+      "-q",
+      "--no-checkout",
+      "--single-branch",
+      "--no-tags",
+      "u",
+      "d",
+    ]);
+    allowed("clone", ["clone", "--origin=upstream", "--branch=dev", "--depth=2", "u"]);
+    allowed("clone", ["clone", "--filter=blob:limit=1m", "u"]);
+    allowed("clone", ["clone", "--filter=tree:0", "u"]);
+  });
+
+  test("执行/配置注入拒绝：--upload-pack、--exec（含缩写与 = 形）、-c、--config", () => {
+    denied("clone", ["clone", "--upload-pack=x", "u"]);
+    denied("clone", ["clone", "--upload-pack", "x", "u"]);
+    denied("clone", ["clone", "--exec=sh", "u"]);
+    denied("clone", ["clone", "--upl=x", "u"]);
+    denied("clone", ["clone", "-c", "user.email=a@b", "u"]);
+    denied("clone", ["-c", "user.email=a@b", "clone", "u"]);
+    denied("clone", ["clone", "--config", "user.email=a@b", "u"]);
+    denied("clone", ["clone", "--config=user.email=a@b", "u"]);
+  });
+
+  test("镜像/子模块扇出/shallow 复合面拒绝：--mirror（含缩写）、--recurse-submodules、--shallow-since/--shallow-exclude", () => {
+    denied("clone", ["clone", "--mirror", "u"]);
+    denied("clone", ["clone", "--mir", "u"]);
+    denied("clone", ["clone", "--recurse-submodules", "u"]);
+    denied("clone", ["clone", "--shallow-since=2026-01-01", "u"]);
+    denied("clone", ["clone", "--shallow-exclude=refs/heads/x", "u"]);
+  });
+
+  test("值形状拒绝：--depth 非正整数/缺值、--branch 旗标值、未知旗标、-- 分隔、位置参超两个", () => {
+    denied("clone", ["clone", "--depth", "0", "u"]);
+    denied("clone", ["clone", "--depth", "-1", "u"]);
+    denied("clone", ["clone", "--depth=abc", "u"]);
+    denied("clone", ["clone", "--depth", "u"]);
+    denied("clone", ["clone", "--branch", "--depth", "u"]);
+    denied("clone", ["clone", "--verbose", "u"]);
+    denied("clone", ["clone", "--", "u"]);
+    denied("clone", ["clone", "u", "d", "extra"]);
+  });
+
+  test("非 clone 子命令在 clone 档拒绝；判定器通过时不重写 argv", () => {
+    denied("clone", ["fetch", "origin"]);
+    denied("clone", ["checkout", "u"]);
+    const argv = ["clone", "--depth", "1", "u", "d"];
+    assert.deepEqual(allowed("clone", argv), argv);
   });
 });

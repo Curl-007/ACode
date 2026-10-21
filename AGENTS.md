@@ -42,6 +42,7 @@
 - `CONTEXT.md`：插件商店领域词汇；修改相关 UI 前阅读。
 - `DESIGN.md`：UI 设计规范；修改 UI 前阅读。
 - `docs/git-collaboration.md`：Git 协作规则（main 为发布分支、分支模型、提交与发布流程）；开分支、提交、合并、发布前阅读。
+- `docs/specs/engineering-invariants.md`：跨切面工程不变量（开发规则）；设计与实现前按需查阅，只承载现有治理未覆盖的增量。
 
 ## 实现与验证
 
@@ -53,6 +54,7 @@
 - 必须执行 `pnpm typecheck` 和 `pnpm lint`，报告真实结果，不将已有失败写成通过。
 - 使用异步文件和网络 IO；跨包导入使用公开入口，遵守现有路径别名。
 - 禁止 UI 直接调用 Repo、Service 引用 Runtime 具体实现、跨域导入实现细节及循环依赖。
+- 跨切面工程不变量（失败降级、生命周期、并发、持久化、性能、UI 交互行为、协作派工、API 设计）见 `docs/specs/engineering-invariants.md`；该文件只承载现有治理未覆盖的增量，重叠处以指针指向单一真源，冲突时以 `AGENTS.md`、`architecture-policy.yaml`、`DESIGN.md` 为准。
 
 ## UI 与平台边界
 

@@ -9,6 +9,10 @@ const SUBAGENT_SELECTION_MESSAGES = {
   "model-not-found": "Model unavailable / 模型不存在或不可用",
   "reasoning-level-missing": "No reasoning level selected / 未选择思考档位",
   "reasoning-level-not-supported": "Reasoning level unsupported / 不支持所选思考档位",
+  // 1.0.3 给 shared selectionIssue 联合扩了 speed 两成员（model-selection.ts），本消费方 satisfies
+  // Record 要求全覆盖却漏改，typecheck 红。按 reasoning-level 两条对称补齐（术语取 UI「模型速度」）。
+  "speed-missing": "No model speed selected / 未选择模型速度",
+  "speed-not-supported": "Model speed unsupported / 不支持所选模型速度",
 } satisfies Record<NonNullable<EffectiveModelSelectionResult["selectionIssue"]>, string>;
 
 /** 显式 profile 是待解析意图；继承与内部 override 已有执行归属，不重新对应账号。 */

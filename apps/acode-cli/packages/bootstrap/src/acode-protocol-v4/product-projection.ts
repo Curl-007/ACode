@@ -80,6 +80,7 @@ import {
   CoreErrorType,
   AMEND_WORKFLOW_TOOL_NAME,
   CREATE_WORKFLOW_TOOL_NAME,
+  DEFERRED_TOOL_CALL_NAME,
   SessionEventType,
   getModelUsageContextTokens,
   getModelUsageInputWindowTokens,
@@ -3213,7 +3214,32 @@ export class ProductProjection {
     const payload = event.payload as ToolCallStartedPayload;
     const row = this.findToolRow(String(payload.toolCallId));
     if (!row) return [];
-    return projectToolActivity(event, row);
+    // DeferredToolCall 包装定稿（specs/tool-search.md R6「V4/UI 以目标事件定稿工具行」）：
+    // tool_call_scheduled 与流式 tool_input_start/tool_call 携带的是**包装名**
+    // DeferredToolCall 与 {name, input} 包装入参（executor 尚未解包）；ToolCallStarted
+    // 是首个携带**目标工具名**的事件——它由准入通过后的 canonicalToolCall 发出，准入失败
+    // 路径直接走 ToolCallError 不发本事件，包装失败记录因而原样保留（R6「准入失败只保存
+    // 包装失败记录」）。此前投影从不把行收敛到目标身份：TodoWrite 等 deferred 工具的任务
+    // 清单卡因此停在 raw fallback（identity=DeferredToolCall，family≠todo），plan 面板
+    // 也拿不到 steps（isTodoPlanToolName("DeferredToolCall")=false），即用户报告的
+    // 「直连调用序列化错了 + 任务清单失败」两条同链路症状。
+    const finalized =
+      event.type === SessionEventType.ToolCallStarted
+        ? finalizeDeferredToolCallRow(row, payload.toolName)
+        : row;
+    const deltas = projectToolActivity(event, finalized);
+    if (finalized === row) return deltas;
+    // 行身份刚被定稿到目标工具：补算一次 live plan/goal 投影（scheduled 阶段因包装名
+    // 返回空）。与 onToolCallScheduled/onToolCallResult 共用同一 todoPlanDeltas 单一实现。
+    const planDeltas = this.todoPlanDeltas(
+      event,
+      extractPlanStepsFromToolInput({
+        title: finalized.toolName,
+        kind: finalized.toolName,
+        input: finalized.input,
+      }),
+    );
+    return [...deltas, ...planDeltas];
   }
 
   private onToolCallResult(event: SessionEvent): ConversationDelta[] {
@@ -5930,6 +5956,39 @@ function stringifyToolInput(input: unknown): string {
   } catch {
     return "{}";
   }
+}
+
+/**
+ * DeferredToolCall 包装定稿（specs/tool-search.md R6「V4/UI 以目标事件定稿工具行」）。
+ * scheduled / 流式阶段留下的是包装身份：toolName=DeferredToolCall、input={name, input}。
+ * startedName 取自 ToolCallStarted（准入通过后由 canonicalToolCall 发出的**目标工具名**，
+ * 唯一权威）；缺席或仍是包装名时不动行——准入失败不发 Started，包装失败记录原样保留。
+ * 返回新对象=已定稿、返回原引用=无需改动，调用方据引用相等决定是否补算 plan 投影。
+ */
+function finalizeDeferredToolCallRow(
+  row: ToolCallRow,
+  startedName: string | undefined,
+): ToolCallRow {
+  if (row.toolName !== DEFERRED_TOOL_CALL_NAME) return row;
+  const targetName =
+    typeof startedName === "string" && startedName.trim().length > 0
+      ? startedName
+      : undefined;
+  if (targetName === undefined || targetName === DEFERRED_TOOL_CALL_NAME) return row;
+  // 包装入参 {name, input} 的内层 input 才是目标工具真实参数（DeferredToolCallInputSchema
+  // 保证形状）；非记录或缺 input 键时保留原值（防御性回退，不损坏已投影数据）。
+  const wrapped = isPlainRecord(row.input) ? row.input : undefined;
+  const unwrappedInput =
+    wrapped !== undefined && "input" in wrapped ? wrapped.input : row.input;
+  return {
+    ...row,
+    toolName: targetName,
+    input: unwrappedInput,
+    // inputText 必须与 input 同源刷新：continuous 档与调试面直接读 inputText，
+    // 只改结构化 input 会让两面对不上（replayable 档过滤 row.delta(inputText)，定稿
+    // upsert 携带完整 inputText 与既有 scheduled/result 分支一致）。
+    inputText: stringifyToolInput(unwrappedInput),
+  };
 }
 
 function isExitPlanModeToolName(value: string | undefined): boolean {

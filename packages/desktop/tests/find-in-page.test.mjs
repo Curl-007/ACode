@@ -34,6 +34,10 @@ async function loadMain(relative, imports = {}) {
 
 // ipcMain.handle 同步段计时包装（W1-6 接线）：注入真实 ipcSyncTiming（纯 Node，无 electron 依赖）。
 const ipcSyncTimingModule = await loadMain("ipcSyncTiming", {});
+// 二期 provider 双路协调器（findInPageMain 的姊妹模块）：注入真实实现，原生路测试不申报即不激活。
+const providerModule = await loadMain("findInPageProviderMain", {
+  "@acode/shared": sharedModule,
+});
 
 /** 测试替身：只实现 findInPageMain 消费的 WebContents 表面。 */
 class FakeWebContents extends EventEmitter {
@@ -84,6 +88,7 @@ function createHarness(options = {}) {
     },
     "@acode/shared": sharedModule,
     "./ipcSyncTiming.js": ipcSyncTimingModule,
+    "./findInPageProviderMain.js": providerModule,
   }).then((mod) => {
     mod.registerFindInPageIpc({
       logger: { info() {}, warn() {} },

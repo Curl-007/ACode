@@ -85,6 +85,8 @@ import {
   type TimelineUserScrollIntent,
 } from "@/v4/timelineScrollAnchor.js";
 import { useConversationTimelineFind } from "@/v4/useConversationTimelineFind.js";
+import { useConversationFindInPageProvider } from "@/v4/useConversationFindInPageProvider.js";
+import { FIND_SCOPE_EXCLUDE_ATTRIBUTE } from "@/find-in-page/findInPageDomSearch.js";
 import { ConversationSelectionTooltip } from "@/v4/ConversationSelectionTooltip.js";
 import type { ConversationSelectionReference } from "@/lib/conversationSelectionReference.js";
 
@@ -669,11 +671,20 @@ function ConversationTimelineImpl({
     return height;
   }, []);
 
+  // 页内查找 provider（WI-E2b）：已挂载行数经 ref 暴露给 loadRest 批增长判定；
+  // 返回值非空时抬高 overscan，让虚拟器把窗口 ±target 的 unit 全部物化进 DOM。
+  const virtualRowsCountRef = useRef(0);
+  const findInPageExpandedOverscan = useConversationFindInPageProvider({
+    scopeRef: messageLayerRef,
+    getRenderedUnitCount: () => virtualRowsCountRef.current,
+    getTotalUnitCount: () => virtualizedUnitsRef.current.length,
+  });
+
   const virtualizer = useVirtualizer({
     count: virtualizedUnits.length,
     getScrollElement,
     estimateSize,
-    overscan: ROW_OVERSCAN,
+    overscan: findInPageExpandedOverscan ?? ROW_OVERSCAN,
     getItemKey,
     measureElement,
     // headerSlot（分享导入的只读块）与虚拟列表同处一个滚动容器，
@@ -691,6 +702,9 @@ function ConversationTimelineImpl({
     });
   };
   const virtualRows = virtualizer.getVirtualItems();
+  // 渲染期间同步已挂载行数（与 rowsRef/unitsRef 同一先例）：provider 的
+  // hasUnrenderedContent / loadRest 批增长在事件回调里读最新值，不进依赖数组。
+  virtualRowsCountRef.current = virtualRows.length;
   const totalSize = virtualizer.getTotalSize();
   const turnNavigatorVirtualItems: ConversationTurnNavigatorVirtualItem[] = useMemo(() => {
     const historyItems = virtualRows.map((row) => ({
@@ -1729,6 +1743,9 @@ function ConversationTimelineImpl({
             <div
               ref={messageLayerRef}
               data-v4-timeline-message-layer="true"
+              // 页内查找 provider scope 标记（FIND_SCOPE_EXCLUDE_ATTRIBUTE）：
+              // 协调器内置 DOM 腿按属性排除本子树，命中只由本列表的 provider 腿申报。
+              {...{ [FIND_SCOPE_EXCLUDE_ATTRIBUTE]: "true" }}
               className="relative w-full flex-1 [mask-repeat:no-repeat] [-webkit-mask-repeat:no-repeat]"
             >
               {/*

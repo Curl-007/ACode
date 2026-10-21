@@ -24,6 +24,7 @@ import {
   meetsFindInPageThreshold,
   shouldSelectOnProgrammaticFocus,
 } from "./findInPageModel.js";
+import { initFindInPageProviderBridge } from "./findInPageProviderBridge.js";
 
 /**
  * 平台桥局部结构类型（EmbeddedBrowserPermissionPromptHost 先例）：window.acode 的完整
@@ -284,6 +285,14 @@ export function useFindInPageOverlay(): FindInPageOverlayController {
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [supported]);
+
+  // 二期：一期桥在场时初始化 provider 双路桥（幂等；二期桥成员缺席静默跳过，
+  // 原生路不受影响——specs/find-in-page.md R8）。
+  useEffect(() => {
+    if (supported) {
+      initFindInPageProviderBridge();
+    }
   }, [supported]);
 
   // 主菜单「页内查找」推送打开（main → renderer 单向 send）。

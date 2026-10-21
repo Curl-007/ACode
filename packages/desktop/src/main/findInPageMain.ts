@@ -1,19 +1,29 @@
 /**
- * 桌面页内查找 main 侧封装（specs/find-in-page.md 一期）。
+ * 桌面页内查找 main 侧封装（specs/find-in-page.md 一期 + 二期 provider 双路）。
  *
  * 机制：webContents.findInPage 返回 requestId → found-in-page 事件按 requestId 匹配，
  * 与 destroyed / render-process-gone / 5s 超时三路竞速，任何非正常路径 fail-soft 收口
  * {activeIndex:0,total:0}（原生 Promise 实现，不引入 RxJS）。会话带失效链：目标跨文档
  * 导航或渲染进程崩溃即清高亮、摘监听、结束会话；WeakSet 防重复 stopFindInPage。
  *
- * 一期只做 webContents DOM 搜索单路；renderer provider 双路（应用级 DOM 搜索）为登记项，
- * 二期在 handleFindInPage 前插 provider 判定分支即可（接口已按可插入形态收口）。
+ * 二期双路仲裁（spec R8）：handleFindInPage 在原生路之前判定 provider 路——renderer
+ * 申报 provider 注册表非空时改走 dispatch/report 协调（findInPageProviderMain.ts，
+ * epoch 守卫 + 同一 fail-soft 收口）；两路互斥，provider 路激活期间不调用 Chromium
+ * findInPage（renderer 内置 DOM 腿等价覆盖已渲染文本，并行会双重高亮、索引分裂）。
  */
 import { ipcMain } from "electron";
 import type { IpcMainInvokeEvent, WebContents } from "electron";
 import { PlatformChannels } from "@acode/shared";
 import type { FindInPageRequest, FindInPageResult } from "@acode/shared";
 import { deriveIpcSyncLabel, wrapIpcHandle } from "./ipcSyncTiming.js";
+import {
+  clearProviderFind,
+  dispatchProviderFind,
+  handleProviderActiveDeclaration,
+  handleProviderReport,
+  isProviderPathActive,
+  resetProviderFind,
+} from "./findInPageProviderMain.js";
 
 /** fail-soft 统一空结果：超时/销毁/崩溃/未匹配都收口到这里，不向 renderer 抛错。 */
 const EMPTY_FIND_RESULT: FindInPageResult = { activeIndex: 0, total: 0 };
@@ -151,6 +161,9 @@ function ensureFindSession(target: WebContents, logger: FindInPageIpcLogger): vo
     return;
   }
   const invalidate = (): void => {
+    // 二期：失效链额外复位 provider 路（active=false + 结算 pending + 下发 clear）——
+    // 跨文档导航/崩溃后 renderer 上下文已换，注册表由重载后的 renderer 重新申报（spec R10）。
+    resetProviderFind(target);
     endFindInPageSession(target);
   };
   const onDidStartNavigation = (details: NavigationDetails): void => {
@@ -182,6 +195,9 @@ function ensureFindSession(target: WebContents, logger: FindInPageIpcLogger): vo
 /** 结束会话：清高亮（WeakSet 防重复）+ 拆失效链。幂等，可在任何状态安全调用。 */
 export function endFindInPageSession(target: WebContents): void {
   clearFindHighlight(target);
+  // 二期：provider 路 pending 结算 {0,0} + 下发 FindInPageClear；active 保留
+  // （能力申报由 renderer 注册表驱动，与会话生命周期解耦，spec R10/R14）。
+  clearProviderFind(target);
   findSessions.get(target)?.();
 }
 
@@ -200,6 +216,11 @@ async function handleFindInPage(
     return null;
   }
   ensureFindSession(target, installLogger);
+  // 二期双路仲裁（spec R8）：provider 路激活时不调用 Chromium findInPage——renderer
+  // 协调器的内置 DOM 腿等价覆盖已渲染文本，并行会双重高亮、索引分裂。
+  if (isProviderPathActive(target)) {
+    return await dispatchProviderFind(target, request, timeoutMs);
+  }
   // 首查（WeakSet 未命中 = 目标尚无活动高亮）强制 findNext:true——Chromium 从当前
   // 视口续搜，用户先看到视口附近的匹配（浏览器查找习惯）；已有高亮时透传调用方语义。
   const options = {
@@ -236,6 +257,8 @@ export function registerFindInPageIpc(options: {
     PlatformChannels.StopFindInPage,
     wrapIpcHandle(deriveIpcSyncLabel(PlatformChannels.StopFindInPage), (event) => {
       clearFindHighlight(event.sender);
+      // 二期：provider 路高亮同步清理（pending 结算 {0,0} + FindInPageClear）。
+      clearProviderFind(event.sender);
     }),
   );
   ipcMain.handle(
@@ -243,6 +266,24 @@ export function registerFindInPageIpc(options: {
     wrapIpcHandle(deriveIpcSyncLabel(PlatformChannels.EndFindInPageSession), (event) => {
       endFindInPageSession(event.sender);
     }),
+  );
+  ipcMain.handle(
+    PlatformChannels.FindInPageProviderActive,
+    wrapIpcHandle(
+      deriveIpcSyncLabel(PlatformChannels.FindInPageProviderActive),
+      (event, payload: unknown) => {
+        handleProviderActiveDeclaration(event.sender, payload);
+      },
+    ),
+  );
+  ipcMain.handle(
+    PlatformChannels.FindInPageReport,
+    wrapIpcHandle(
+      deriveIpcSyncLabel(PlatformChannels.FindInPageReport),
+      (event, payload: unknown) => {
+        handleProviderReport(event.sender, payload);
+      },
+    ),
   );
 }
 

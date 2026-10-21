@@ -343,3 +343,9 @@ max-lines 硬闸，按 conflicts.ts / label.ts 同一拆分先例以同目录姊
   全等）否则序号 clamp。DOM 高频变动下 active 可能跳位，属体验近似项，不造假命中。
 - ~~登记：高亮颜色主题化~~ → 二期闭合（provider 路走 `--color-find-highlight*` token；
   原生路仍是 Chromium 固定色，属 Chromium 能力边界）。
+- **登记：loadRest 窗外命中后的初次落位**——实机手验（2026-10-21，300 轮夹具，
+  dev:desktop + CDP 五断言全 PASS）：窗外词命中后 provider 的
+  `scrollIntoView({block:"nearest"})` 被时间线吸底逻辑压回，视口停留底部，Enter
+  步进后落位正确；R11/R13 口径达标（active 保持、层内高亮已画、计数正确）。
+  跟进候选=搜索会话期内与吸底所有者协调初次落位（暂停吸底或物化 settle 后补滚），
+  不实现登记。

@@ -353,7 +353,13 @@ test("gate: 超预算 Deferred 用缓存注册，后台完成后原子替换为�
     t.after(unsubscribeToolsChanged);
 
     const snapshotPromise = second.connectConfiguredServers({ gated: config() }, {});
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    // 连接尝试登记是异步的：固定 50ms 在并行负载下可能先于登记取快照（存量 flake 根因），
+    // 改有界轮询 connecting 状态；缓存 descriptor 的可见时点是 release 后的收敛检查
+    // （未收敛 → defer 注册缓存面），不在此处等待。
+    assert.ok(
+      await waitUntil(async () => (await second.status()).gated?.status === "connecting"),
+      "release 前 gated 连接必须已登记为 connecting",
+    );
     releaseGate();
     const snapshot = await snapshotPromise;
 
@@ -394,7 +400,12 @@ test("gate: 超预算且无缓存 → 启动不注册工具，后台完成后补
     t.after(() => adapter.close());
 
     const snapshotPromise = adapter.connectConfiguredServers({ gated: config() }, {});
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    // 连接尝试登记是异步的：固定 50ms 在负载下可能先于登记取快照（status 缺位 flake），
+    // 改有界轮询 connecting 状态，语义不变。
+    assert.ok(
+      await waitUntil(async () => (await adapter.status()).gated?.status === "connecting"),
+      "release 前 gated 连接必须已登记为 connecting",
+    );
     releaseGate();
     const snapshot = await snapshotPromise;
     assert.equal(snapshot.statuses.gated.status, "connecting");

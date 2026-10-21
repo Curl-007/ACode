@@ -115,3 +115,32 @@ export function findBoundMemberBySession(
     return member.agentId !== undefined && subagentSessionIdForAgent(member.agentId) === sessionId;
   });
 }
+
+/**
+ * 调用方**参与**的活跃团队列表（0.2 多团队寻址的判据）：
+ * - main 会话：captainSessionId 匹配的团队（含接管后的）；
+ * - subagent 会话：名册中存在按 sess_subagent_<agentId> 派生会话绑定的成员的团队
+ *   （降级冒烟身份按 memberNameHint 匹配，与 requireMember 的降级路径同语义）。
+ * 返回的顺序即 listTeams 的 createdAt 序；0/1/≥2 三种形态由调用方分别处理。
+ */
+export function teamsCallerParticipatesIn(
+  teams: readonly TeamState[],
+  identity: CallerIdentity,
+  degradedMemberNameHint?: string,
+): TeamState[] {
+  if (identity.runtimeScope !== "main" && identity.runtimeScope !== "subagent") return [];
+  return teams.filter((team) => {
+    if (identity.runtimeScope === "main") {
+      return team.captainSessionId === identity.sessionId;
+    }
+    if (findBoundMemberBySession(team, identity.sessionId)) return true;
+    // 降级冒烟身份：与 requireMember 的 memberNameHint 路径同语义。
+    if (identity.degraded && degradedMemberNameHint) {
+      const member = team.members.find(
+        (item) => item.name === degradedMemberNameHint && item.status !== "removed",
+      );
+      return Boolean(member);
+    }
+    return false;
+  });
+}

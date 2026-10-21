@@ -12,6 +12,7 @@ import {
   embeddedBrowserViewportPreferenceSchema,
 } from "./browser-use/command-metadata.js";
 import { providerFamilyConnectionSelectionSettingsSchema } from "./provider-family-connection-selection.js";
+import { newTaskDefaultsSchema, DEFAULT_NEW_TASK_DEFAULTS } from "./new-task-defaults.js";
 
 /** 引导职业枚举；单独导出供 onboarding 记录回填 settings 时做窄化校验。 */
 const appSettingsOccupationSchema = z.enum([
@@ -44,6 +45,18 @@ const dynamicWorkflowModeSchema = z.enum(DYNAMIC_WORKFLOW_MODES);
 // 写默认值会把某档冻结进用户配置，之后翻转缺省语义救不回来。
 const scriptWorkflowModeSchema = z.enum(SCRIPT_WORKFLOW_MODES);
 const electronReleaseChannelSchema = z.enum(["stable", "preview"]);
+/** 新建任务「跟随默认」时的推理强度取法；不作为持久化默认值冻结进用户配置。 */
+const defaultReasoningLevelPickSchema = z.enum([
+  "first",
+  "highest",
+  "off",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+]);
 const desktopZoomLevelSchema = z.number().int().min(-3).max(5);
 const desktopWindowSizeSchema = z.object({
   width: z.number().int().min(480),
@@ -509,6 +522,11 @@ const appSettingsObjectSchema = z.object({
   dynamicWorkflowMode: dynamicWorkflowModeSchema.optional(),
   // 脚本工作流三档同理：漏登记则写盘被 strip（同上实机教训）。
   scriptWorkflowMode: scriptWorkflowModeSchema.optional(),
+  // 旧 setting.json 缺该字段时补齐为「关闭」：外层 default 才会在 key 缺席时生效，
+  // 内层字段默认值只在该对象存在时补全，两者都要。用工厂函数避免共享可变默认值。
+  newTaskDefaults: newTaskDefaultsSchema.default(() => ({ ...DEFAULT_NEW_TASK_DEFAULTS })),
+  // 默认档位取法不给 default：缺席即 first，避免把某一档冻结进用户配置。
+  defaultReasoningLevelPick: defaultReasoningLevelPickSchema.optional(),
 });
 
 export const appSettingsSchema = z.preprocess(
@@ -600,4 +618,7 @@ export const appSettingsPatchSchema = z.object({
     .optional(),
   settingsSyncFirstRunPromptHandled: z.boolean().optional(),
   acodeEndpointOrigin: acodeEndpointOriginSchema.optional(),
+  // patch 按整份对象替换：设置页每次提交完整项，避免半份 patch 把未提及的项静默清空。
+  newTaskDefaults: newTaskDefaultsSchema.optional(),
+  defaultReasoningLevelPick: defaultReasoningLevelPickSchema.optional(),
 });

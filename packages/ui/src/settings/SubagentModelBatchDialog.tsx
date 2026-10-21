@@ -21,10 +21,13 @@ import {
   SubagentReasoningField,
   type SubagentReasoningFieldState,
 } from "@/settings/SubagentReasoningField.js";
+import { SubagentSpeedField, type SubagentSpeedFieldState } from "@/settings/SubagentSpeedField.js";
 import { parseModelPickerValue } from "@/lib/acodeSessionProjection.js";
 import { resolveModelThoughtOption } from "@/lib/modelThoughtOption.js";
 import {
   isBatchValueInherit,
+  isSubagentSpeedInvalid,
+  resolveSubagentSpeedOptionState,
   type SubagentModelBatchValue,
 } from "@/settings/SubagentModelBatchApply.js";
 
@@ -73,10 +76,21 @@ export function SubagentModelBatchDialog({
   const selectModelLabel = intl.formatMessage({ id: "settings.subagents.model.select" });
   const [model, setModel] = useState<string | undefined>(undefined);
   const [thoughtLevel, setThoughtLevel] = useState<string | undefined>(undefined);
+  const [speed, setSpeed] = useState<string | undefined>(undefined);
   const [selection, setSelection] = useState<SubagentModelBatchValue["modelSelection"]>(undefined);
 
   const value = model ?? INHERIT_MODEL_VALUE;
   const modelAvailable = isBatchModelAvailable(modelGroups, model, modelSelectionLoading);
+  const speedState: SubagentSpeedFieldState = useMemo(
+    () =>
+      resolveSubagentSpeedOptionState({
+        modelSelectionView,
+        modelSelection: selection,
+        modelSelectionLoading,
+      }),
+    [modelSelectionLoading, modelSelectionView, selection],
+  );
+  const speedRequired = isSubagentSpeedInvalid(speedState, speed);
 
   // 弹层内的档位判定与行内控件共享同一套 Registry 投影逻辑：模型未指定或不可用时
   // 不出现档位控件，避免把继承默认当成可配置档位的模型。
@@ -115,6 +129,7 @@ export function SubagentModelBatchDialog({
       // 目标值在弹层内解析成 ModelSelection 结构体，调用方不再做字符串往返，
       // 避免 custom: 编码串被手写切分后双重编码落盘。
       let nextThoughtLevel: string | undefined;
+      let nextSpeed: string | undefined;
       let nextSelection: SubagentModelBatchValue["modelSelection"];
       if (nextModel && modelSelectionView) {
         const completed = completeNewModelSelection(
@@ -123,23 +138,25 @@ export function SubagentModelBatchDialog({
         );
         nextSelection = completed ?? undefined;
         nextThoughtLevel = completed?.options?.reasoningLevel;
+        nextSpeed = completed?.options?.speed;
       }
       setSelection(nextSelection);
       setThoughtLevel(nextThoughtLevel);
+      setSpeed(nextSpeed);
     },
     [model, modelSelectionView],
   );
 
   const handleApply = useCallback(() => {
-    if (isBatchValueInherit({ modelSelection: selection, thoughtLevel })) {
+    if (isBatchValueInherit({ modelSelection: selection, thoughtLevel, speed })) {
       onApply({});
       return;
     }
     if (!modelAvailable) {
       return;
     }
-    onApply({ modelSelection: selection, thoughtLevel });
-  }, [selection, modelAvailable, onApply, thoughtLevel]);
+    onApply({ modelSelection: selection, thoughtLevel, speed });
+  }, [selection, modelAvailable, onApply, thoughtLevel, speed]);
 
   const footerActions = useMemo<ModelSelectFooterAction[]>(
     () => [
@@ -153,7 +170,7 @@ export function SubagentModelBatchDialog({
     [handleModelValueChange, inheritLabel, value],
   );
 
-  const confirmDisabled = disabled || (!modelAvailable && Boolean(model?.trim()));
+  const confirmDisabled = disabled || speedRequired || (!modelAvailable && Boolean(model?.trim()));
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -215,6 +232,26 @@ export function SubagentModelBatchDialog({
               />
             </div>
           )}
+          {speedState.kind === "not-applicable" ? null : (
+            <div className="flex flex-col gap-1.5">
+              <label className="text-ui-base font-medium text-foreground-subtle">
+                {intl.formatMessage({ id: "settings.subagents.batch.dialog.speed" })}
+              </label>
+              <SubagentSpeedField
+                intl={intl}
+                state={speedState}
+                value={speed}
+                disabled={disabled}
+                labelVisibilityClassName="inline-flex"
+                onValueCommit={(nextSpeed) => setSpeed(nextSpeed)}
+              />
+            </div>
+          )}
+          {speedRequired ? (
+            <p className="text-ui-sm text-warning">
+              {intl.formatMessage({ id: "settings.subagents.batch.speedRequired" })}
+            </p>
+          ) : null}
           {thoughtState.kind === "unsupported" && model ? (
             <p className="text-ui-sm text-foreground-subtlest">
               {intl.formatMessage({ id: "settings.subagents.reasoningUnavailable" })}

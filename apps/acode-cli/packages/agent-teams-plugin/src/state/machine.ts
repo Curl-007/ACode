@@ -34,7 +34,13 @@ const TRANSITIONS: Record<TaskStatus, Partial<Record<TaskAction, TaskStatus>>> =
   cancelled: {},
 };
 
-export type TaskAction = "claim" | "update_done" | "update_failed" | "update_blocked" | "reassign" | "cancel";
+export type TaskAction =
+  | "claim"
+  | "update_done"
+  | "update_failed"
+  | "update_blocked"
+  | "reassign"
+  | "cancel";
 
 export function assertTransition(from: TaskStatus, action: TaskAction): void {
   const next = TRANSITIONS[from][action];

@@ -1454,6 +1454,16 @@ body {
 .wf-pill-name {
   transition: color var(--wf-t-base) var(--wf-ease);
 }
+/* 两行药丸（团队卡：人名 + 当前任务标题，SPEC-012 R2/R4）：高度走 h-9，第二行单独
+ * 压一档字号；只有传了 subtitle 的药丸才会命中，Workflow 药丸的既有观感不受影响。 */
+.wf-pill-tall {
+  padding-top: 0.125rem;
+  padding-bottom: 0.125rem;
+}
+.wf-pill-sub {
+  font-size: 0.6875rem;
+  line-height: 0.875rem;
+}
 .wf-pill-go {
   opacity: 0;
   transform: scale(0.6);
@@ -1508,6 +1518,12 @@ body {
 .wf-pill-open:focus-visible .wf-mark {
   opacity: 0;
   transform: scale(0.6);
+}
+/* 两行药丸的标记与常驻 ↗ 并排两格（不再同格），悬停时标记不必让位。 */
+.wf-pill-open.wf-pill-tall:hover .wf-mark,
+.wf-pill-open.wf-pill-tall:focus-visible .wf-mark {
+  opacity: 1;
+  transform: none;
 }
 .wf-pill-open:active {
   transform: scale(0.985);

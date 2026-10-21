@@ -10,6 +10,7 @@
         "AGENT_TEAMS_STATE_DIR": "${user_config.stateDir}",
         "AGENT_TEAMS_MAX_MEMBERS": "${user_config.maxMembers}",
         "AGENT_TEAMS_MAX_REASSIGN_ROUNDS": "${user_config.maxReassignRounds}",
+        "AGENT_TEAMS_MAX_ACTIVE_TEAMS": "${user_config.maxActiveTeams}",
         "AGENT_TEAMS_PANEL_ENABLED": "${user_config.panelEnabled}"
       },
       "enabled": true,

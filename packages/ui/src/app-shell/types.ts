@@ -19,6 +19,7 @@ import type { AssistantPreviewCardsAutoOpenRequest } from "@/lib/assistantPrevie
 import type {
   BrowserSidePaneMetadata,
   OpenScopedSubagentSideTabRequest,
+  OpenScopedTeamSideTabRequest,
   OpenBackgroundBashSideTabRequest,
   OpenSelectionSideChatRequest,
   OpenScopedPlanDetailSideTabRequest,
@@ -249,6 +250,7 @@ export interface WorkspaceShellLayoutProps extends Omit<AppProps, "baseFeedbackS
   handleOpenSubagentDirectory: (
     request: import("@/lib/workspaceSidePane.js").OpenScopedSubagentDirectorySideTabRequest,
   ) => void;
+  handleOpenTeamPanel: (request: OpenScopedTeamSideTabRequest) => void;
   handleSyncSubagentSessionTabs: (
     request: import("@/lib/workspaceSidePane.js").SyncSubagentSessionTabsRequest,
   ) => void;

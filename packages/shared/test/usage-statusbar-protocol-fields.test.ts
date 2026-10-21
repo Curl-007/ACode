@@ -1,11 +1,18 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  conversationSnapshotSchema,
   runningSubagentSummarySchema,
+  sessionToolStatsSchema,
   sessionUsageLastRequestSchema,
   sessionUsageStateSchema,
 } from "../src/acode-protocol-v4/snapshot.js";
-import { turnHeaderRowSchema, turnHeaderStatsSchema } from "../src/acode-protocol-v4/rows.js";
+import {
+  composerTurnMetricsSchema,
+  turnHeaderRowSchema,
+  turnHeaderStatsSchema,
+} from "../src/acode-protocol-v4/rows.js";
+import { statePatchSchema } from "../src/acode-protocol-v4/delta.js";
 
 /**
  * usage-statusbar 协议面 additive 字段验收（apps/acode-cli/specs/usage-statusbar.md
@@ -200,4 +207,116 @@ test("非法值拒绝：错型与缺键", () => {
     !runningSubagentSummarySchema.safeParse({ ...legacySubagentSummary, cumulativeTokens: "12" })
       .success,
   );
+});
+
+// ── usage-statusbar-port R2：composerTurnMetrics / sessionToolStats ──
+
+test("snapshot: composerTurnMetrics/sessionToolStats 缺席 → default null（旧快照）", () => {
+  assert.equal(conversationSnapshotSchema.shape.composerTurnMetrics.parse(undefined), null);
+  assert.equal(conversationSnapshotSchema.shape.composerTurnMetrics.parse(null), null);
+  assert.equal(conversationSnapshotSchema.shape.sessionToolStats.parse(undefined), null);
+  assert.equal(conversationSnapshotSchema.shape.sessionToolStats.parse(null), null);
+});
+
+test("composerTurnMetrics 合法形状解析；负值拒绝", () => {
+  const metrics = {
+    firstTokenMs: 850,
+    outputTokens: 465,
+    tokensPerSecond: 50.8,
+    inputTokens: 100,
+    requestCount: 1,
+    reasoningTokens: 12,
+    cacheReadTokens: 20,
+    cacheWriteTokens: 5,
+    peakTokensPerSecond: 60,
+  };
+  assert.ok(composerTurnMetricsSchema.safeParse({ metrics, streaming: true }).success);
+  assert.ok(
+    composerTurnMetricsSchema.safeParse({
+      metrics: { ...metrics, firstTokenMs: null, tokensPerSecond: null },
+      streaming: false,
+    }).success,
+  );
+  assert.ok(!composerTurnMetricsSchema.safeParse({ metrics, streaming: "yes" }).success);
+  assert.ok(
+    !composerTurnMetricsSchema.safeParse({
+      metrics: { ...metrics, outputTokens: -1 },
+      streaming: true,
+    }).success,
+  );
+});
+
+test("sessionToolStats 全零初值/工具聚合合法；负值与空工具名拒绝", () => {
+  assert.ok(
+    sessionToolStatsSchema.safeParse({
+      calls: 0,
+      errors: 0,
+      turnCount: 0,
+      requestCount: 0,
+      reasoningTokens: 0,
+      linesAdded: 0,
+      linesDeleted: 0,
+    }).success,
+  );
+  assert.ok(
+    sessionToolStatsSchema.safeParse({
+      calls: 3,
+      errors: 1,
+      turnCount: 2,
+      retryCount: 1,
+      fileCount: 4,
+      tools: [{ name: "Read", calls: 2, errors: 1, durationMs: 3_500 }],
+    }).success,
+  );
+  assert.ok(!sessionToolStatsSchema.safeParse({ calls: -1, errors: 0 }).success);
+  assert.ok(
+    !sessionToolStatsSchema.safeParse({
+      calls: 1,
+      errors: 0,
+      tools: [{ name: "", calls: 1, errors: 0 }],
+    }).success,
+  );
+});
+
+test("state patch: 新键可整体替换、可 null 清除、可缺席（旧发送端/旧客户端）", () => {
+  const metrics = {
+    firstTokenMs: null,
+    outputTokens: 0,
+    tokensPerSecond: null,
+  };
+  const patch = statePatchSchema.parse({
+    composerTurnMetrics: { metrics, streaming: true },
+    sessionToolStats: { calls: 1, errors: 0 },
+  });
+  assert.deepEqual(patch.composerTurnMetrics, { metrics, streaming: true });
+  assert.deepEqual(patch.sessionToolStats, { calls: 1, errors: 0 });
+  assert.equal(statePatchSchema.parse({ composerTurnMetrics: null }).composerTurnMetrics, null);
+  assert.equal(statePatchSchema.parse({ sessionToolStats: null }).sessionToolStats, null);
+  assert.equal(statePatchSchema.parse({}).composerTurnMetrics, undefined);
+  assert.equal(statePatchSchema.parse({}).sessionToolStats, undefined);
+});
+
+test("turnHeader.stats 速度字段 additive：缺席兼容、非负校验、与既有字段共存", () => {
+  const base = {
+    inputTokens: 100,
+    outputTokens: 40,
+    reasoningTokens: 12,
+    cacheReadTokens: 20,
+    cacheWriteTokens: 5,
+    modelRequestCount: 2,
+  };
+  assert.ok(turnHeaderStatsSchema.safeParse(base).success);
+  const withRates = turnHeaderStatsSchema.parse({
+    ...base,
+    tokensPerSecond: 38.9,
+    peakTokensPerSecond: 168,
+    servedModels: ["provider/model-a"],
+    promptCacheMisses: 3,
+  });
+  assert.equal(withRates.tokensPerSecond, 38.9);
+  assert.equal(withRates.peakTokensPerSecond, 168);
+  assert.deepEqual(withRates.servedModels, ["provider/model-a"]);
+  assert.equal(withRates.promptCacheMisses, 3);
+  assert.ok(!turnHeaderStatsSchema.safeParse({ ...base, tokensPerSecond: -1 }).success);
+  assert.ok(!turnHeaderStatsSchema.safeParse({ ...base, peakTokensPerSecond: -1 }).success);
 });

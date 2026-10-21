@@ -284,7 +284,7 @@ export const OFFICIAL_PLUGIN_DEFINITIONS: readonly OfficialPluginDefinition[] = 
   },
   {
     // 默认启用是 2026-10-15 产品拍板（specs/agent-teams-derived-config.md R1），
-    // 与源分支的 opt-in 形态不同：开箱即得 14 个 agent_teams_* 工具、/team 命令与
+    // 与源分支的 opt-in 形态不同：开箱即得 17 个 agent_teams_* 工具、/team 命令与
     // agent-teams:member subagent。这是对「defaultEnabled 仅限内容型插件」旧约定的
     // 显式例外（本插件携带 stdio MCP server，会话按需拉起子进程）；例外理由与
     // 四份发布暂存清单的硬验收登记在 spec R1/R2。改默认值需同步
@@ -302,7 +302,7 @@ export const OFFICIAL_PLUGIN_DEFINITIONS: readonly OfficialPluginDefinition[] = 
       icon: OFFICIAL_PLUGIN_ICON,
       description_i18n: {
         "zh-CN":
-          "AgentTeams 多智能体协作：当前会话成为队长，组建可续跑的成员团队，把目标拆成依赖任务 DAG，经成员邮箱直连协作，由指令式调度推进，并提供只读团队面板。",
+          "AgentTeams 多智能体协作：当前会话成为队长，组建可续跑的成员团队，把目标拆成依赖任务 DAG，经成员邮箱直连协作，由指令式调度推进，并提供只读团队面板。同一工作区可并行多个团队（上限可配），支持孤儿团队接管与成员工作树隔离。",
       },
       examplePrompts: [
         "Use AgentTeams to review the last two commits and fix findings",
@@ -326,7 +326,7 @@ export const OFFICIAL_PLUGIN_DEFINITIONS: readonly OfficialPluginDefinition[] = 
       "dist/mcp/server.js",
       "skills/agent-teams/SKILL.md",
     ],
-    version: "0.1.0",
+    version: "0.4.0",
   },
   // 智谱 BigModel 技能集 8 个分类内容包（specs/bigmodel-skills-marketplace-plugins.md）：
   // 表驱动生成，默认关闭，用户在市场按需启用。

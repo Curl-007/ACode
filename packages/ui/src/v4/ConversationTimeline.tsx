@@ -303,6 +303,8 @@ interface ConversationTimelineProps {
   turnNavigatorDirectoryRevision?: number;
   /** 与旧 ChatView 对齐：composer dock 属于同一个滚动视口，sticky 到滚动容器底部。 */
   bottomDock?: ReactNode;
+  /** 消息列表尾部内容（团队卡等）：与消息列同宽，随对话一起滚动。 */
+  tailSlot?: ReactNode;
   /** rows 为空时的可选内容；正式空 session 传空，草稿态传问候语。 */
   emptyState?: ReactNode;
   /**
@@ -365,6 +367,7 @@ function ConversationTimelineImpl({
   onLoadAllOlder,
   turnNavigatorDirectoryRevision = 0,
   bottomDock,
+  tailSlot,
   emptyState,
   headerSlot,
   centerEmptyStateWithDock = false,
@@ -1714,7 +1717,7 @@ function ConversationTimelineImpl({
           // V4 已自管 prepend、吸底和记忆锚点；和其它虚拟列表一致，应从内容子树禁用锚点候选。
           style={{ overflowAnchor: "none" }}
         >
-          {renderUnits.length === 0 && !headerSlot ? (
+          {renderUnits.length === 0 && !headerSlot && !tailSlot ? (
             <div
               className={cn(
                 centeredEmptyLayout
@@ -1839,6 +1842,18 @@ function ConversationTimelineImpl({
                       "pending-guide"
                     }
                   />
+                </div>
+              ) : null}
+              {tailSlot ? (
+                <div
+                  data-v4-timeline-content-column="true"
+                  className={cn(
+                    "relative mx-auto w-full shrink-0",
+                    contentWidthClassName,
+                    summaryPanelInlineOffsetClassName,
+                  )}
+                >
+                  {tailSlot}
                 </div>
               ) : null}
             </div>

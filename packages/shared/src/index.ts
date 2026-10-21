@@ -132,6 +132,7 @@ export interface ICredentialStore {
 
 export * from "./test-ids.js";
 export * from "./test-ids-workflow.js";
+export * from "./test-ids-composer-usage-bar.js";
 export * from "./channels.js";
 export * from "./storage.js";
 export * from "./oauth.js";
@@ -240,6 +241,7 @@ export * from "./model-provider-family.js";
 export * from "./provider-family-connection-selection.js";
 export * from "./provider-provisioning.js";
 export * from "./custom-model-value.js";
+export * from "./new-task-defaults.js";
 export * from "./model-selection-types.js";
 export * from "./model-selection-key.js";
 export * from "./model-selection.js";

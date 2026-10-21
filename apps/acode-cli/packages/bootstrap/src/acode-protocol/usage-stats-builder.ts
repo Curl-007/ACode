@@ -111,6 +111,26 @@ export function buildAppUsageSnapshot(
     });
   }
 
+  // 按日分项（状态栏「今日合计」明细，usage-statusbar-port §3.4）。命中率与 summary
+  // 同一分母口径：输入 tokens 已是 total input，cache 字段只是 breakdown，
+  // 分母不能再叠加 cache 读/写；input 为 0 时退回 cacheRead 作分母。
+  const dayBreakdownMap = new Map<
+    number,
+    { inputTokens: number; outputTokens: number; cacheHitRate: number; requestCount: number }
+  >();
+  for (const d of result.days) {
+    if (d.inputTokens === undefined && d.modelRequestCount === undefined) continue;
+    const inputTokens = d.inputTokens ?? 0;
+    const cacheReadTokens = d.cacheReadTokens ?? 0;
+    const denom = inputTokens > 0 ? inputTokens : cacheReadTokens;
+    dayBreakdownMap.set(d.dayIndex, {
+      inputTokens,
+      outputTokens: d.outputTokens ?? 0,
+      cacheHitRate: denom > 0 ? cacheReadTokens / denom : 0,
+      requestCount: d.modelRequestCount ?? 0,
+    });
+  }
+
   const endDayIndex = Math.floor((opts.until + opts.tzOffsetMs) / DAY_MS);
   const startDayIndex = resolveUsageStartDayIndex(result, opts, endDayIndex);
 
@@ -141,12 +161,22 @@ export function buildAppUsageSnapshot(
   let week: Array<AppUsageHeatmapCell | null> = [];
   for (let di = startDayIndex; di <= endDayIndex; di++) {
     const day = dayTokenMap.get(di);
+    const breakdown = dayBreakdownMap.get(di);
     week.push({
       date: dayIndexToDate(di),
       level: levelFor(day?.totalTokens ?? 0, maxTokens),
       totalTokens: day?.totalTokens ?? 0,
       turnCount: day?.turnCount ?? 0,
       toolCallCount: day?.toolCallCount ?? 0,
+      // 旧 CLI/旧库没有分项 → 整组缺席（UI 隐藏对应行，不显示 0）。
+      ...(breakdown === undefined
+        ? {}
+        : {
+            inputTokens: breakdown.inputTokens,
+            outputTokens: breakdown.outputTokens,
+            cacheHitRate: breakdown.cacheHitRate,
+            requestCount: breakdown.requestCount,
+          }),
     });
     if (week.length === 7) {
       weeks.push({ weekIndex: weeks.length, days: week });

@@ -57,6 +57,7 @@ import {
 } from "@/lib/accountProviderAccess.js";
 import { buildUsageEntitlementCacheKey } from "@/lib/usageEntitlementCache.js";
 import { ModelProviderSection } from "@/settings/ModelProviderSection.js";
+import { TaskDefaultsSection } from "@/settings/TaskDefaultsSection.js";
 import { useCodingPlanUpgradeDialog } from "@/settings/CodingPlanUpgradeDialogProvider.js";
 import { useEnterpriseCodingPlanProducts } from "@/settings/model-provider-section/useEnterpriseCodingPlanProducts.js";
 import { UsageStatsSection, type UsageStatsSectionTab } from "@/settings/UsageStatsSection.js";
@@ -1532,6 +1533,14 @@ export function SettingsPage({
                               onConsumePendingModelProviderTarget={() =>
                                 setPendingModelProviderTarget(undefined)
                               }
+                            />
+                          </ServiceProvider>
+                        ) : activeSection === "taskDefaults" ? (
+                          <ServiceProvider services={localHostServices}>
+                            {/* 默认模型目录与「跟随默认」的最近提交都按本地 Host + 当前 workspace 读取。 */}
+                            <TaskDefaultsSection
+                              workspacePath={activeWorkspacePath ?? captionWorkspacePath ?? ""}
+                              workspaceIdentity={activeWorkspaceIdentity}
                             />
                           </ServiceProvider>
                         ) : activeSection === "memory" ? (

@@ -117,7 +117,7 @@ export function SettingsRow({
   description?: ReactNode;
   control: ReactNode;
   detail?: ReactNode;
-  controlLayout?: "default" | "wide";
+  controlLayout?: "default" | "wide" | "model";
 }) {
   return (
     <div className="border-t border-border px-4 py-3 first:border-t-0">
@@ -126,7 +126,9 @@ export function SettingsRow({
           "grid items-center gap-4",
           controlLayout === "wide"
             ? "grid-cols-1 sm:grid-cols-[minmax(0,1fr)_280px]"
-            : "grid-cols-[minmax(0,1fr)_192px]",
+            : controlLayout === "model"
+              ? "grid-cols-1 sm:grid-cols-[minmax(0,1fr)_minmax(192px,26rem)]"
+              : "grid-cols-[minmax(0,1fr)_192px]",
         )}
       >
         <div className="min-w-0">

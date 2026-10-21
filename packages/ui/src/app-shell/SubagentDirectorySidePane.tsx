@@ -18,10 +18,7 @@ import type {
 } from "@/lib/workspaceSidePane.js";
 import { formatTaskRelativeTime } from "@/lib/taskListItemPresentation.js";
 import { resolveSubagentRowFacts } from "@/app-shell/subagentDirectoryFacts.js";
-import {
-  formatUsageDurationMs,
-  formatUsageTokenCount,
-} from "@/v4/usage-statusbar/usageStatusbarFormat.js";
+import { formatCompact, formatDurationMs } from "@/v4/composer/usage-bar/usageBarFormat.js";
 import type { PaneWorkspaceScope } from "@/v4/paneLayoutStore.js";
 import type { SessionLease } from "@/v4/sessionDataLayer.js";
 import { V4PaneConversationProvider, useV4Conversation } from "@/v4/V4ConversationContext.js";
@@ -98,7 +95,7 @@ const DirectoryRow = memo(function DirectoryRow({
     facts.elapsedMs !== undefined
       ? intl.formatMessage(
           { id: "subagentDirectory.elapsed" },
-          { duration: formatUsageDurationMs(locale, facts.elapsedMs) },
+          { duration: formatDurationMs(facts.elapsedMs) },
         )
       : null;
   return (
@@ -129,7 +126,7 @@ const DirectoryRow = memo(function DirectoryRow({
       <span className="flex shrink-0 flex-col items-end gap-0.5">
         {facts.cumulativeTokens !== undefined ? (
           <span className="font-mono text-ui-sm tabular-nums text-foreground-subtle">
-            {formatUsageTokenCount(locale, facts.cumulativeTokens)} tok
+            {formatCompact(locale, facts.cumulativeTokens)} tok
           </span>
         ) : null}
         {elapsedLabel ? (

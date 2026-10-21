@@ -474,12 +474,23 @@ export async function queryAppUsage(
     .prepare(
       `select
          cast((started_at + ?) / ? as integer) as dayIndex,
-         coalesce(sum(computed_total_tokens), 0) as totalTokens
+         coalesce(sum(computed_total_tokens), 0) as totalTokens,
+         coalesce(sum(input_tokens), 0) as inputTokens,
+         coalesce(sum(output_tokens), 0) as outputTokens,
+         coalesce(sum(cache_read_input_tokens), 0) as cacheReadTokens,
+         count(*) as modelRequestCount
        from model_usage
        where started_at >= ? and started_at <= ?
        group by dayIndex`,
     )
-    .all(tzOffsetMs, DAY_MS, since, until) as Array<{ dayIndex: number; totalTokens: number }>;
+    .all(tzOffsetMs, DAY_MS, since, until) as Array<{
+    dayIndex: number;
+    totalTokens: number;
+    inputTokens: number;
+    outputTokens: number;
+    cacheReadTokens: number;
+    modelRequestCount: number;
+  }>;
 
   const turnDays = db
     .prepare(
@@ -507,6 +518,11 @@ export async function queryAppUsage(
       totalTokens: Number(row.totalTokens),
       turnCount: 0,
       toolCallCount: 0,
+      // 状态栏「今日合计」按日分项（usage-statusbar-port §3.4）。
+      inputTokens: Number(row.inputTokens),
+      outputTokens: Number(row.outputTokens),
+      cacheReadTokens: Number(row.cacheReadTokens),
+      modelRequestCount: Number(row.modelRequestCount),
     });
   }
   for (const row of turnDays) {

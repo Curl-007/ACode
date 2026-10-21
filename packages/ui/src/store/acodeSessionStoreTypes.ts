@@ -138,7 +138,7 @@ export interface ComposerTextInsertRequest {
   requestId: number;
   text: string;
   mention?: ComposerMentionPrefill;
-  mode?: "replace" | "prepend-if-missing";
+  mode?: "replace" | "prepend-if-missing" | "append";
 }
 
 export interface WorkspaceACodeUIState {
@@ -237,7 +237,7 @@ export interface ACodeSessionStoreState {
     text: string,
     workspaceIdentity?: string,
     mention?: ComposerMentionPrefill,
-    mode?: "replace" | "prepend-if-missing",
+    mode?: "replace" | "prepend-if-missing" | "append",
   ) => number;
   clearComposerTextInsertRequest: (
     workspacePath: string,

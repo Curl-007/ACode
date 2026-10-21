@@ -1,17 +1,18 @@
 import { readSafeLocalStorage, writeSafeLocalStorage } from "@/lib/browserEnvironment.js";
 
-// 用量状态栏偏好（specs/usage-statusbar.md「设置齿轮」行）：逐项显隐 + 速率行开关。
-// 两件套模式照 lib/appearancePreferences.ts：
+// 用量状态栏偏好（apps/acode-cli/specs/usage-statusbar-port.md §7.1）：总开关 + 逐项显隐 +
+// 回答末尾速率行开关。两件套模式照 lib/appearancePreferences.ts：
 // - 唯一事实源 = localStorage（单键 JSON）；本模块 setUsageStatusbarPreferences 是唯一写入口。
 // - 垃圾值归一：闭集键之外的字段丢弃，非 boolean 值收敛默认（全开），不抛错。
-// - 跨窗同步：storage 事件只在同源**其他**窗口触发，天然防回环（AGENTS.md 广播字段纪律）；
-//   BroadcastService 广播载体在 store/usageStatusbarPreferencesState.ts。
-// - 模块级外部 store（subscribe/getSnapshot）供组件经 useSyncExternalStore 只读消费，
-//   先例见 chat-input-toolbar/contextQuotaResetOpportunityReminder.tsx 的 dismissalStore。
+// - 迁移：旧 `rateLineEnabled` → `answerFooter`（只读回退）；写回新 schema，不再写旧键。
+// - 跨窗同步：storage 事件只在同源**其他**窗口触发，天然防回环；BroadcastService 广播载体
+//   在 store/usageStatusbarPreferencesState.ts。
+// - 模块级外部 store（subscribe/getSnapshot）供组件经 useSyncExternalStore 只读消费。
 
 export const USAGE_STATUSBAR_ITEM_IDS = [
   "generationSpeed",
   "turnUsage",
+  "contextCapacity",
   "sessionCumulative",
   "toolCalls",
   "todayTotal",
@@ -20,30 +21,38 @@ export const USAGE_STATUSBAR_ITEM_IDS = [
 
 export type UsageStatusbarItemId = (typeof USAGE_STATUSBAR_ITEM_IDS)[number];
 
+/** 逐项显隐：七项固定闭集（含本次新增的 contextCapacity），与状态栏段一一对应。 */
+export type UsageStatusbarVisibleItems = Record<UsageStatusbarItemId, boolean>;
+
 export interface UsageStatusbarPreferences {
-  visibleItems: Record<UsageStatusbarItemId, boolean>;
+  /** 总开关：关闭后整条状态栏与回答末尾速率行都不渲染；子开关保持原样。 */
+  enabled: boolean;
+  visibleItems: UsageStatusbarVisibleItems;
   /** 回答末尾速率行开关（默认开）。 */
-  rateLineEnabled: boolean;
+  answerFooter: boolean;
 }
 
-/** 补丁面：visibleItems 支持逐键部分覆盖。 */
+/** 补丁面：visibleItems 支持逐键部分覆盖（含新增的 contextCapacity）。 */
 export interface UsageStatusbarPreferencesPatch {
-  visibleItems?: Partial<Record<UsageStatusbarItemId, boolean>>;
-  rateLineEnabled?: boolean;
+  enabled?: boolean;
+  visibleItems?: Partial<UsageStatusbarVisibleItems>;
+  answerFooter?: boolean;
 }
 
 export const USAGE_STATUSBAR_PREFERENCES_STORAGE_KEY = "acode-usage-statusbar-preferences";
 
 export const DEFAULT_USAGE_STATUSBAR_PREFERENCES: UsageStatusbarPreferences = {
+  enabled: true,
   visibleItems: {
     generationSpeed: true,
     turnUsage: true,
+    contextCapacity: true,
     sessionCumulative: true,
     toolCalls: true,
     todayTotal: true,
     subagents: true,
   },
-  rateLineEnabled: true,
+  answerFooter: true,
 };
 
 function normalizeItemVisibility(value: unknown, itemId: UsageStatusbarItemId): boolean {
@@ -55,23 +64,32 @@ function normalizeItemVisibility(value: unknown, itemId: UsageStatusbarItemId): 
     ? candidate
     : DEFAULT_USAGE_STATUSBAR_PREFERENCES.visibleItems[itemId];
 }
-
 /** 垃圾值归一：非对象/坏 JSON 解析产物收敛默认；缺席键保持默认（全开）。 */
 export function normalizeUsageStatusbarPreferences(value: unknown): UsageStatusbarPreferences {
   const source = (typeof value === "object" && value !== null ? value : {}) as {
+    enabled?: unknown;
     visibleItems?: unknown;
+    answerFooter?: unknown;
     rateLineEnabled?: unknown;
   };
-  const visibleItems = {} as Record<UsageStatusbarItemId, boolean>;
+  const visibleItems = {} as UsageStatusbarVisibleItems;
   for (const itemId of USAGE_STATUSBAR_ITEM_IDS) {
     visibleItems[itemId] = normalizeItemVisibility(source.visibleItems, itemId);
   }
-  return {
-    visibleItems,
-    rateLineEnabled:
-      typeof source.rateLineEnabled === "boolean"
+  // 迁移：answerFooter 优先，旧 rateLineEnabled 作为只读回退；两者都缺 = 默认开。
+  const answerFooter =
+    typeof source.answerFooter === "boolean"
+      ? source.answerFooter
+      : typeof source.rateLineEnabled === "boolean"
         ? source.rateLineEnabled
-        : DEFAULT_USAGE_STATUSBAR_PREFERENCES.rateLineEnabled,
+        : DEFAULT_USAGE_STATUSBAR_PREFERENCES.answerFooter;
+  return {
+    enabled:
+      typeof source.enabled === "boolean"
+        ? source.enabled
+        : DEFAULT_USAGE_STATUSBAR_PREFERENCES.enabled,
+    visibleItems,
+    answerFooter,
   };
 }
 
@@ -80,7 +98,8 @@ export function isSameUsageStatusbarPreferences(
   right: UsageStatusbarPreferences,
 ): boolean {
   return (
-    left.rateLineEnabled === right.rateLineEnabled &&
+    left.enabled === right.enabled &&
+    left.answerFooter === right.answerFooter &&
     USAGE_STATUSBAR_ITEM_IDS.every(
       (itemId) => left.visibleItems[itemId] === right.visibleItems[itemId],
     )
@@ -91,8 +110,8 @@ export function loadUsageStatusbarPreferences(): UsageStatusbarPreferences {
   const raw = readSafeLocalStorage(USAGE_STATUSBAR_PREFERENCES_STORAGE_KEY);
   if (!raw) {
     return {
+      ...DEFAULT_USAGE_STATUSBAR_PREFERENCES,
       visibleItems: { ...DEFAULT_USAGE_STATUSBAR_PREFERENCES.visibleItems },
-      rateLineEnabled: DEFAULT_USAGE_STATUSBAR_PREFERENCES.rateLineEnabled,
     };
   }
   try {
@@ -100,8 +119,8 @@ export function loadUsageStatusbarPreferences(): UsageStatusbarPreferences {
   } catch {
     // 坏 JSON 不抛错：收敛默认，下次写入会覆盖垃圾值。
     return {
+      ...DEFAULT_USAGE_STATUSBAR_PREFERENCES,
       visibleItems: { ...DEFAULT_USAGE_STATUSBAR_PREFERENCES.visibleItems },
-      rateLineEnabled: DEFAULT_USAGE_STATUSBAR_PREFERENCES.rateLineEnabled,
     };
   }
 }
@@ -172,9 +191,9 @@ export function setUsageStatusbarPreferences(
 ): UsageStatusbarPreferences {
   const current = loadUsageStatusbarPreferences();
   const next = normalizeUsageStatusbarPreferences({
+    enabled: patch.enabled === undefined ? current.enabled : patch.enabled,
     visibleItems: { ...current.visibleItems, ...patch.visibleItems },
-    rateLineEnabled:
-      patch.rateLineEnabled === undefined ? current.rateLineEnabled : patch.rateLineEnabled,
+    answerFooter: patch.answerFooter ?? current.answerFooter,
   });
   writeSafeLocalStorage(USAGE_STATUSBAR_PREFERENCES_STORAGE_KEY, JSON.stringify(next));
   if (!isSameUsageStatusbarPreferences(readCachedPreferences(), next)) {

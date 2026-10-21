@@ -25,12 +25,15 @@ export function WorkflowMoreRow({
   enterDelayMs,
   more,
   onOpen,
+  title: titleOverride,
 }: {
   more: RosterMore;
   /** 入场延迟（跟在钉住的药丸之后落地）；缺席即立刻。 */
   enterDelayMs?: number;
   /** 在场即整行是按钮（回调的存在即门控）。 */
   onOpen?: () => void;
+  /** 覆盖自动生成的标题（团队卡给「打开团队侧栏并展开阶段成员」）；缺席即按门形态生成。 */
+  title?: string;
   /** 门的形态（侧板）：开合状态与其余人的计数。缺席即卡上那一行（↗ 常驻）。 */
   door?: { open: boolean; tally: RosterCounts };
 }) {
@@ -41,17 +44,19 @@ export function WorkflowMoreRow({
     { id: "chat.toolCall.workflow.timeline.roster.more" },
     { count: more.count },
   );
-  const title = format(
-    {
-      id:
-        door === undefined
-          ? "chat.toolCall.workflow.timeline.roster.moreTitle"
-          : door.open
-            ? "chat.toolCall.workflow.timeline.roster.door.fold"
-            : "chat.toolCall.workflow.timeline.roster.door.list",
-    },
-    { count: more.count },
-  );
+  const title =
+    titleOverride ??
+    format(
+      {
+        id:
+          door === undefined
+            ? "chat.toolCall.workflow.timeline.roster.moreTitle"
+            : door.open
+              ? "chat.toolCall.workflow.timeline.roster.door.fold"
+              : "chat.toolCall.workflow.timeline.roster.door.list",
+      },
+      { count: more.count },
+    );
   // 与药丸同一条入场纪律：有延迟时 backwards 填充。
   const style =
     enterDelayMs === undefined || enterDelayMs <= 0

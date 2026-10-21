@@ -11,6 +11,21 @@ interface V4ModelTriggerDisplay {
   providerPrefix?: string;
 }
 
+/** 把 provider/model 形态的标签拆成可分别弱化的前缀与模型名。 */
+export function splitModelTriggerLabelParts(label: string): {
+  prefix?: string;
+  value?: string;
+} {
+  const separator = label.indexOf("/");
+  if (separator <= 0) {
+    return {};
+  }
+  return {
+    prefix: label.slice(0, separator + 1),
+    value: label.slice(separator + 1),
+  };
+}
+
 export function formatModelChangeLabel(
   providerId: string | undefined,
   providerName: string | undefined,

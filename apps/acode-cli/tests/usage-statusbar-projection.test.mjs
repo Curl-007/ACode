@@ -325,3 +325,295 @@ test("subagent stop without totalTokens does not fabricate a token column", () =
   assert.equal(running.length, 1);
   assert.ok(!("cumulativeTokens" in running[0]));
 });
+
+// ── 本轮生成指标（composerTurnMetrics）与会话工具统计（sessionToolStats）──
+// 口径见 apps/acode-cli/specs/usage-statusbar-port.md §3.1/§3.2。
+
+let requestSequence = 0;
+
+function requestCompleted(projection, turnId, options = {}) {
+  requestSequence += 1;
+  const inputTokens = options.inputTokens ?? 100;
+  const outputTokens = options.outputTokens ?? 40;
+  const durationMs = options.durationMs ?? 4_000;
+  // 「显式传 undefined」与「没传」语义不同：前者必须继续缺席（旁路/旧事件）。
+  const timeToFirstContentMs = Object.hasOwn(options, "timeToFirstContentMs")
+    ? options.timeToFirstContentMs
+    : 300;
+  const querySource = Object.hasOwn(options, "querySource") ? options.querySource : "main_turn";
+  const { reasoningTokens } = options;
+  return projection.applyEvent(
+    ev(
+      "model_network_status",
+      {
+        type: "model_request_completed",
+        requestId: `req-${requestSequence}`,
+        ...(querySource === undefined ? {} : { querySource }),
+        durationMs,
+        ...(timeToFirstContentMs === undefined ? {} : { timeToFirstContentMs }),
+        usage: {
+          inputTokens,
+          outputTokens,
+          ...(reasoningTokens === undefined ? {} : { reasoningTokens }),
+        },
+        providerId: "provider",
+        modelId: "model",
+        transport: "http",
+        attempt: 1,
+        maxAttempts: 1,
+      },
+      { turnId },
+    ),
+  );
+}
+
+function retryScheduled(projection, turnId, querySource = "main_turn") {
+  requestSequence += 1;
+  return projection.applyEvent(
+    ev(
+      "model_network_status",
+      {
+        type: "model_retry_scheduled",
+        requestId: `req-retry-${requestSequence}`,
+        querySource,
+        attempt: 1,
+        maxAttempts: 3,
+        delayMs: 1_000,
+        reason: "rate_limit",
+        message: "429",
+        providerId: "provider",
+        modelId: "model",
+        transport: "http",
+      },
+      { turnId },
+    ),
+  );
+}
+
+function toolScheduled(projection, turnId, toolCallId, toolName = "Read") {
+  return projection.applyEvent(
+    ev("tool_call_scheduled", { toolCallId, toolName, input: { path: "README.md" } }, { turnId }),
+  );
+}
+
+function toolResult(projection, turnId, toolCallId, toolName = "Read", success = true, duration = 120) {
+  return projection.applyEvent(
+    ev(
+      "tool_call_result",
+      {
+        toolCallId,
+        toolName,
+        duration,
+        result: success
+          ? { success: true, content: "ok" }
+          : { success: false, content: "boom", error: { type: "tool_failed", message: "boom" } },
+      },
+      { turnId },
+    ),
+  );
+}
+
+function toolCancelled(projection, turnId, toolCallId, toolName = "Read") {
+  return projection.applyEvent(
+    ev(
+      "tool_call_error",
+      { toolCallId, toolName, error: { type: "tool_cancelled", message: "cancelled" } },
+      { turnId },
+    ),
+  );
+}
+
+function modelCompletedWithFileChanges(projection, turnId, files, additions, deletions, atMs) {
+  requestSequence += 1;
+  return projection.applyEvent(
+    ev(
+      "model_complete",
+      {
+        content: "ok",
+        querySource: "main_turn",
+        stopReason: "end_turn",
+        toolCallCount: 0,
+        usage: { inputTokens: 10, outputTokens: 10 },
+        fileChanges: { additions, deletions, files },
+      },
+      { turnId, atMs },
+    ),
+  );
+}
+
+test("composerTurnMetrics: main_turn request accumulates and streaming follows turn lifecycle", () => {
+  const projection = new ProductProjection(SID, "epoch-turn-metrics");
+  const deltas = [];
+  deltas.push(...startTurn(projection, "turn-m", "msg-m"));
+  deltas.push(
+    ...requestCompleted(projection, "turn-m", {
+      inputTokens: 100,
+      outputTokens: 465,
+      durationMs: 10_000,
+      timeToFirstContentMs: 850,
+    }),
+  );
+  let metrics = projection.getSnapshot().composerTurnMetrics;
+  assert.equal(metrics?.streaming, true);
+  assert.equal(metrics?.metrics.firstTokenMs, 850);
+  assert.equal(metrics?.metrics.outputTokens, 465);
+  assert.equal(metrics?.metrics.inputTokens, 100);
+  assert.equal(metrics?.metrics.requestCount, 1);
+  // tok/s = 465 / (10000-850)ms * 1000 ≈ 50.82
+  assert.ok(Math.abs((metrics?.metrics.tokensPerSecond ?? 0) - 50.82) < 0.1);
+  assert.ok(
+    deltas.some(
+      (delta) =>
+        delta.op === "state.updated" && delta.patch.composerTurnMetrics?.streaming === true,
+    ),
+  );
+
+  // 旁路请求（标题/压缩/subagent/缺 querySource）不进入累加器。
+  for (const querySource of ["session_title", "compact", "subagent", undefined]) {
+    requestCompleted(projection, "turn-m", { querySource, outputTokens: 999 });
+  }
+  assert.equal(projection.getSnapshot().composerTurnMetrics?.metrics.outputTokens, 465);
+
+  const completion = turnComplete(projection, "turn-m", "success");
+  deltas.push(...completion);
+  metrics = projection.getSnapshot().composerTurnMetrics;
+  assert.equal(metrics?.streaming, false);
+  assert.equal(metrics?.metrics.outputTokens, 465);
+
+  // 新 TurnStarted 清空 composerTurnMetrics，不残留上一轮数字。
+  deltas.push(...startTurn(projection, "turn-n", "msg-n"));
+  assert.equal(projection.getSnapshot().composerTurnMetrics, null);
+  assertWireSafe(projection, deltas);
+});
+
+test("composerTurnMetrics: peak is per-request max, weighted tps uses完整 decode windows", () => {
+  const projection = new ProductProjection(SID, "epoch-turn-metrics-peak");
+  startTurn(projection, "turn-p", "msg-p");
+  // 段 1 慢：200 tokens / (10000-0)ms ≈ 20 tok/s；段 2 快：800 / 2000ms = 400 tok/s。
+  requestCompleted(projection, "turn-p", {
+    outputTokens: 200,
+    durationMs: 10_000,
+    timeToFirstContentMs: 0,
+  });
+  requestCompleted(projection, "turn-p", {
+    outputTokens: 800,
+    durationMs: 2_000,
+    timeToFirstContentMs: 0,
+  });
+  const metrics = projection.getSnapshot().composerTurnMetrics?.metrics;
+  assert.ok(Math.abs((metrics?.tokensPerSecond ?? 0) - 83.33) < 0.2);
+  assert.ok(Math.abs((metrics?.peakTokensPerSecond ?? 0) - 400) < 0.2);
+  assert.equal(metrics?.requestCount, 2);
+
+  // 缺 timeToFirstContentMs 的请求只加输出 token，不进 tok/s / 峰值分母。
+  requestCompleted(projection, "turn-p", {
+    outputTokens: 9_999,
+    durationMs: 1_000,
+    timeToFirstContentMs: undefined,
+  });
+  const after = projection.getSnapshot().composerTurnMetrics?.metrics;
+  assert.equal(after?.outputTokens, 10_999);
+  assert.ok(Math.abs((after?.peakTokensPerSecond ?? 0) - 400) < 0.2);
+  assert.ok(Math.abs((after?.tokensPerSecond ?? 0) - 83.33) < 0.2);
+});
+
+test("turnHeader.stats carries the same tokensPerSecond/peak as composerTurnMetrics", () => {
+  const projection = new ProductProjection(SID, "epoch-turn-metrics-stats");
+  const deltas = [];
+  deltas.push(...startTurn(projection, "turn-s", "msg-s"));
+  deltas.push(
+    ...requestCompleted(projection, "turn-s", {
+      outputTokens: 800,
+      durationMs: 2_000,
+      timeToFirstContentMs: 0,
+    }),
+  );
+  deltas.push(
+    ...modelComplete(
+      projection,
+      "turn-s",
+      { inputTokens: 100, outputTokens: 800 },
+      { generationMs: 2_000, timeToFirstTokenMs: 100 },
+      T0 + 9_000,
+    ),
+  );
+  deltas.push(...turnComplete(projection, "turn-s", "success"));
+  const composer = projection.getSnapshot().composerTurnMetrics?.metrics;
+  const header = turnHeaderOf(projection, "msg-s");
+  assert.equal(header.stats.tokensPerSecond, composer.tokensPerSecond);
+  assert.equal(header.stats.peakTokensPerSecond, composer.peakTokensPerSecond);
+  assertWireSafe(projection, deltas);
+});
+
+test("sessionToolStats: terminal transitions only, cancelled counts calls but not errors", () => {
+  const projection = new ProductProjection(SID, "epoch-tool-stats");
+  const deltas = [];
+  deltas.push(...startTurn(projection, "turn-t", "msg-t"));
+  assert.equal(projection.getSnapshot().sessionToolStats?.turnCount, 1);
+  // 仅排期不算调用。
+  deltas.push(...toolScheduled(projection, "turn-t", "tool-a"));
+  assert.equal(projection.getSnapshot().sessionToolStats?.calls, 0);
+  // 成功 → calls+1。
+  deltas.push(...toolResult(projection, "turn-t", "tool-a", "Read", true, 1_000));
+  assert.equal(projection.getSnapshot().sessionToolStats?.calls, 1);
+  assert.equal(projection.getSnapshot().sessionToolStats?.errors, 0);
+  // 迟到重复结果不重复计数。
+  deltas.push(...toolResult(projection, "turn-t", "tool-a", "Read", true, 1_000));
+  assert.equal(projection.getSnapshot().sessionToolStats?.calls, 1);
+  // 失败 → calls+1 / errors+1。
+  deltas.push(...toolScheduled(projection, "turn-t", "tool-b", "Read"));
+  deltas.push(...toolResult(projection, "turn-t", "tool-b", "Read", false, 2_500));
+  let stats = projection.getSnapshot().sessionToolStats;
+  assert.equal(stats?.calls, 2);
+  assert.equal(stats?.errors, 1);
+  assert.deepEqual(stats?.tools, [{ name: "Read", calls: 2, errors: 1, durationMs: 3_500 }]);
+  // 取消 → calls+1 / errors 不变；耗时未知不写 0。
+  deltas.push(...toolScheduled(projection, "turn-t", "tool-c", "Bash"));
+  deltas.push(...toolCancelled(projection, "turn-t", "tool-c", "Bash"));
+  stats = projection.getSnapshot().sessionToolStats;
+  assert.equal(stats?.calls, 3);
+  assert.equal(stats?.errors, 1);
+  assert.deepEqual(stats?.tools, [
+    { name: "Read", calls: 2, errors: 1, durationMs: 3_500 },
+    { name: "Bash", calls: 1, errors: 0 },
+  ]);
+  assertWireSafe(projection, deltas);
+});
+
+test("sessionToolStats: retry/request/reasoning/rounds are main_turn scoped", () => {
+  const projection = new ProductProjection(SID, "epoch-tool-stats-session");
+  startTurn(projection, "turn-r", "msg-r");
+  retryScheduled(projection, "turn-r");
+  retryScheduled(projection, "turn-r");
+  retryScheduled(projection, "turn-r", "session_title");
+  assert.equal(projection.getSnapshot().sessionToolStats?.retryCount, 2);
+  requestCompleted(projection, "turn-r", { reasoningTokens: 12 });
+  assert.equal(projection.getSnapshot().sessionToolStats?.requestCount, 1);
+  assert.equal(projection.getSnapshot().sessionToolStats?.reasoningTokens, 12);
+  requestCompleted(projection, "turn-r", { querySource: "subagent", reasoningTokens: 999 });
+  assert.equal(projection.getSnapshot().sessionToolStats?.requestCount, 1);
+  // 会话累计不随轮归零；轮数随新轮 +1。
+  startTurn(projection, "turn-r2", "msg-r2");
+  const stats = projection.getSnapshot().sessionToolStats;
+  assert.equal(stats?.turnCount, 2);
+  assert.equal(stats?.retryCount, 2);
+  assert.equal(stats?.requestCount, 1);
+});
+
+test("sessionToolStats: file changes take each turn's latest value and sum across turns", () => {
+  const projection = new ProductProjection(SID, "epoch-tool-stats-files");
+  startTurn(projection, "turn-f", "msg-f");
+  modelCompletedWithFileChanges(projection, "turn-f", 5, 100, 20, T0 + 5_000);
+  modelCompletedWithFileChanges(projection, "turn-f", 7, 120, 30, T0 + 6_000);
+  let stats = projection.getSnapshot().sessionToolStats;
+  assert.equal(stats?.linesAdded, 120);
+  assert.equal(stats?.linesDeleted, 30);
+  assert.equal(stats?.fileCount, 7);
+
+  startTurn(projection, "turn-f2", "msg-f2");
+  modelCompletedWithFileChanges(projection, "turn-f2", 3, 10, 1, T0 + 9_000);
+  stats = projection.getSnapshot().sessionToolStats;
+  assert.equal(stats?.linesAdded, 130);
+  assert.equal(stats?.linesDeleted, 31);
+  assert.equal(stats?.fileCount, 10);
+});

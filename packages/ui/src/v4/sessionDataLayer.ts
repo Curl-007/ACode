@@ -7,6 +7,10 @@ import { ConversationProjectionStore } from "@/v4/conversationProjectionStore.js
 import { shouldExposeE2EStoreBridge } from "@/lib/e2eStoreBridge.js";
 import { conversationTopic, type ConversationTransport } from "@/v4/transport.js";
 import { logger } from "@/logger.js";
+import {
+  LiveOutputRateRegistry,
+  observeLiveOutputRateStore,
+} from "@/v4/composer/liveOutputRateRegistry.js";
 import type { CommandsQueryParams, CommandsQueryResult } from "@acode/shared/acode-protocol-v4";
 
 /** 本地订阅诊断使用的投影缓存状态。 */
@@ -42,6 +46,8 @@ interface SessionEntry {
   store: ConversationProjectionStore;
   refCount: number;
   keepWarmTimer: ReturnType<typeof setTimeout> | null;
+  /** 该会话投影 → 实时输出速率采样器的订阅；随 entry 一起释放。 */
+  offLiveOutputRate: (() => void) | null;
 }
 
 export class SessionDataLayer {
@@ -50,6 +56,11 @@ export class SessionDataLayer {
   private readonly entries = new Map<string, SessionEntry>();
   private readonly offFrame: () => void;
   private disposed = false;
+  /**
+   * 近期可见输出速率（apps/acode-cli/specs/usage-statusbar-port.md §5.2）：
+   * 连接级单实例，随每个会话投影的订阅采样；不写回投影、不持久化。
+   */
+  readonly liveOutputRates = new LiveOutputRateRegistry();
 
   constructor(options: SessionDataLayerOptions) {
     this.transport = options.transport;
@@ -81,9 +92,16 @@ export class SessionDataLayer {
       }
     } else {
       const store = new ConversationProjectionStore(topic, this.transport);
-      entry = { store, refCount: 1, keepWarmTimer: null };
+      entry = {
+        store,
+        refCount: 1,
+        keepWarmTimer: null,
+        offLiveOutputRate: null,
+      };
       this.entries.set(topic, entry);
       openKind = "cold";
+      // 投影帧 → 实时输出速率采样（切 pane 后仍按连接保留有界状态）。
+      entry.offLiveOutputRate = observeLiveOutputRateStore(store, this.liveOutputRates, sessionId);
       // 订阅失败落在 store.state（status=error + retry()），不在这里抛。
       void store.connect();
     }
@@ -138,6 +156,8 @@ export class SessionDataLayer {
     // 关 pane ≠ 停 session：这里只是退订视图，session 在 CLI 里照跑。
     entry.keepWarmTimer = setTimeout(() => {
       this.entries.delete(topic);
+      entry.offLiveOutputRate?.();
+      entry.offLiveOutputRate = null;
       logger.lifecycle.info("v4 session data keep-warm expired", {
         event: "v4.session_data.keep_warm_expired",
         module: "ui.v4.session_data_layer",
@@ -172,8 +192,11 @@ export class SessionDataLayer {
       if (entry.keepWarmTimer !== null) {
         clearTimeout(entry.keepWarmTimer);
       }
+      entry.offLiveOutputRate?.();
+      entry.offLiveOutputRate = null;
       void entry.store.close();
     }
+    this.liveOutputRates.clear();
     this.entries.clear();
     logger.lifecycle.info("v4 session data layer dispose completed", {
       event: "v4.session_data.dispose.completed",

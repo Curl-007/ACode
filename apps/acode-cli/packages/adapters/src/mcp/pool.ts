@@ -6,6 +6,7 @@ import type {
   McpCallToolRequest,
   McpConnectOptions,
   McpConnectionSnapshot,
+  McpPluginStateNotification,
   McpPort,
   McpServerConfig,
   McpServerStatus,
@@ -21,6 +22,7 @@ interface CreateMcpAdapterForPoolInput {
   config: McpServerConfig;
   serverName: string;
   workingDirectory?: string;
+  onPluginStateNotification?: (notification: McpPluginStateNotification) => void;
 }
 
 export interface McpConnectionContext {
@@ -57,10 +59,38 @@ interface PoolEntry {
 
 export function createMcpConnectionPool(options: McpConnectionPoolOptions): McpConnectionPool {
   const entries = new Map<string, PoolEntry>();
+  const pluginStateSubscribers = new Map<
+    string,
+    Set<(notification: McpPluginStateNotification) => void>
+  >();
   const idleGraceMs = options.idleGraceMs ?? DEFAULT_IDLE_GRACE_MS;
   const logger = options.logger?.child({ module: "adapters.mcp.pool" });
   let closed = false;
   let leaseSequence = 0;
+
+  const notifyPluginState = (
+    notification: McpPluginStateNotification,
+    connectionContext: McpConnectionContext,
+  ): void => {
+    const entry = [...entries.values()].find(
+      (candidate) =>
+        candidate.connectionContext.mcpConnectionId === connectionContext.mcpConnectionId,
+    );
+    if (!entry) return;
+    for (const leaseId of entry.refs) {
+      for (const subscriber of pluginStateSubscribers.get(leaseId) ?? []) {
+        try {
+          subscriber(notification);
+        } catch (error) {
+          logger?.warn("MCP plugin state subscriber failed", {
+            error: error instanceof Error ? error.message : String(error),
+            event: "mcp.pool.plugin_state_notification.failed",
+            mcpServerName: entry.serverName,
+          });
+        }
+      }
+    }
+  };
 
   const closeEntry = async (entry: PoolEntry): Promise<void> => {
     const startedAt = Date.now();
@@ -240,6 +270,8 @@ export function createMcpConnectionPool(options: McpConnectionPoolOptions): McpC
           config,
           serverName,
           workingDirectory: connectOptions.workingDirectory,
+          onPluginStateNotification: (notification) =>
+            notifyPluginState(notification, connectionContext),
         });
         entry = {
           adapter,
@@ -343,7 +375,18 @@ export function createMcpConnectionPool(options: McpConnectionPoolOptions): McpC
       async close(): Promise<void> {
         if (leaseClosed) return;
         leaseClosed = true;
+        pluginStateSubscribers.delete(leaseId);
         for (const serverName of [...leased.keys()]) release(serverName);
+      },
+      subscribePluginStateNotifications(listener) {
+        if (leaseClosed || !sessionId) return () => undefined;
+        const subscribers = pluginStateSubscribers.get(leaseId) ?? new Set();
+        subscribers.add(listener);
+        pluginStateSubscribers.set(leaseId, subscribers);
+        return () => {
+          subscribers.delete(listener);
+          if (subscribers.size === 0) pluginStateSubscribers.delete(leaseId);
+        };
       },
       async connectConfiguredServers(
         servers: Record<string, McpServerConfig>,
@@ -418,6 +461,7 @@ export function createMcpConnectionPool(options: McpConnectionPoolOptions): McpC
     acquireLease,
     async close(): Promise<void> {
       closed = true;
+      pluginStateSubscribers.clear();
       const pending = [...entries.values()];
       entries.clear();
       await Promise.all(pending.map(closeEntry));

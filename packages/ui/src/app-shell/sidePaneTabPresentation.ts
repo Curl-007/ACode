@@ -20,6 +20,7 @@ export interface SidePaneTabPresentationLabels {
   workflowScriptTitle: string;
   workflowArtifactTitle: string;
   orchestrationTitle: string;
+  teamTitle: string;
 }
 
 export function getSidePaneTabSearchHint(tab: WorkspaceSidePaneTab): string {
@@ -54,6 +55,9 @@ export function getSidePaneTabSearchHint(tab: WorkspaceSidePaneTab): string {
   }
   if (tab.type === "orchestration") {
     return `${tab.rootSessionId} ${tab.parentSessionId} orchestration overview agents workflows swarm plan`;
+  }
+  if (tab.type === "team") {
+    return `${tab.rootSessionId} ${tab.parentSessionId} team agent teams task board dependencies`;
   }
   if (tab.type === "browser") return tab.initialUrl ?? "";
   if (tab.type === "browser-use") {
@@ -96,6 +100,7 @@ export function getLocalizedSidePaneTabTitle(
       "sidePane.workflowScript": labels.workflowScriptTitle,
       "sidePane.workflowArtifact": labels.workflowArtifactTitle,
       "sidePane.orchestration": labels.orchestrationTitle,
+      "sidePane.team": labels.teamTitle,
     };
     return titleByMessageId[descriptor.id] ?? descriptor.id;
   });
@@ -117,6 +122,7 @@ export function getSidePaneTabTypeLabel(
   }
   if (tab.type === "subagent-directory") return labels.subagentDirectoryTitle;
   if (tab.type === "orchestration") return labels.orchestrationTitle;
+  if (tab.type === "team") return labels.teamTitle;
   if (tab.type === "browser" || tab.type === "browser-use") return labels.browserTitle;
   if (tab.type === "git") return labels.reviewTitle;
   if (tab.type === "treemapping") return labels.treemappingTitle;

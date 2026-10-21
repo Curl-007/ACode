@@ -187,6 +187,9 @@ function resolveMcpServerConfig(
   // source 为 `cache`，因此必须按 marketplace 身份归类，不能只看 loader source。
   const source: McpServerRuntimeSource = {
     kind: context.loaded.marketplace === ACODE_OFFICIAL_PLUGIN_MARKETPLACE ? "builtin" : "plugin",
+    // 插件状态通知的身份来源：adapter 只透传 loader 注入的权威 pluginId，
+    // 不能按 server 名或 server 自报字段推断。
+    pluginId: context.loaded.id,
   };
 
   // acode_official 允许 http 与 stdio，sse 出现即禁用该 MCP，不静默忽略——静默会让配置作者以为鉴权已生效。

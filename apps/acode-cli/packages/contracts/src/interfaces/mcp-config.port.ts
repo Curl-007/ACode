@@ -8,6 +8,8 @@ export type McpServerIsolation = "session" | "workspace";
 /** 公共 MCP 配置校验完成后由宿主附加的运行时来源。 */
 export interface McpServerRuntimeSource {
   kind: "builtin" | "plugin";
+  /** 插件加载器权威身份；普通内置 MCP server 不填写。 */
+  pluginId?: string;
 }
 
 export interface McpServerConfigBase {

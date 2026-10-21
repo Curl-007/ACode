@@ -64,6 +64,7 @@ import type {
   InputHistoryKind,
   InputHistoryStorePort,
   LoggerFactory,
+  McpPluginStateNotification,
   McpPort,
   McpServerStatus,
   ModelSelection,
@@ -183,6 +184,11 @@ export interface ACodeAppOptions {
   mcpPort?: McpPort;
   /** 由宿主提供 per-app lease；产出的端口归 app 所有。 */
   mcpPortFactory?: (input: { workingDirectory?: string }) => McpPort;
+  /**
+   * 插件状态通知的上层接管（宿主注入时替代默认的「落成 PluginStateUpdated 会话事件」
+   * 桥接）；测试与协议宿主可用它截获 acode-plugin-state: 通知。
+   */
+  onPluginStateNotification?: (notification: McpPluginStateNotification) => void;
   permissionBroker?: PermissionBrokerPort;
   eventSink?: SessionEventSink;
   env?: NodeJS.ProcessEnv;

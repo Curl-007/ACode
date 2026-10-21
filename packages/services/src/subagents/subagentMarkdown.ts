@@ -134,6 +134,8 @@ export function serializeSubagentMarkdown(config: SubAgentConfig): string {
   if (config.modelSelection) {
     appendScalar(frontmatterLines, "model", formatSubagentMarkdownModel(config.modelSelection));
     appendScalar(frontmatterLines, "thoughtLevel", config.modelSelection.options?.reasoningLevel);
+    // 带 speed spec 的模型在运行时必选 speed；不写会得到 speed-missing 派发失败。
+    appendScalar(frontmatterLines, "speed", config.modelSelection.options?.speed);
   }
   appendList(frontmatterLines, "tools", config.tools);
   appendList(frontmatterLines, "disallowedTools", config.disallowedTools);

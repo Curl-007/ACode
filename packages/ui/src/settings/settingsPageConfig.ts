@@ -20,6 +20,7 @@ import {
   Keyboard,
   FileSearch,
   ShieldCheck,
+  SlidersHorizontal,
 } from "lucide-react";
 import { isSettingsSectionEnabled, type SettingsSectionId } from "@/lib/settingsNavigation.js";
 import type { Theme } from "@/useTheme.js";
@@ -73,6 +74,14 @@ const BASE_SETTINGS_SECTIONS: SettingsSectionDefinition[] = [
     id: "modelProvider",
     icon: Package,
     titleId: "settings.modelProviderTitle",
+    groupId: "basics",
+  },
+  // 新建任务默认值紧跟「模型服务」：固定的是同一批模型/权限/档位选择，
+  // 放在一起让用户在同一处理解「配置模型」与「新任务用哪个」的关系。
+  {
+    id: "taskDefaults",
+    icon: SlidersHorizontal,
+    titleId: "settings.taskDefaults.title",
     groupId: "basics",
   },
   {

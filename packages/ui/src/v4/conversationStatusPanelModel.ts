@@ -10,6 +10,13 @@ import type {
 import { workflowRunStepCounts } from "@acode/shared/acode-protocol-v4";
 import { extractPlanToolCallContent, getPlanDirectoryTitle } from "@/lib/planToolCall.js";
 
+// 团队分区的类型与投影住在 teamPanelModel（见其文件头注释），此处只转发调用。
+import {
+  buildConversationStatusPanelTeamSections,
+  type ConversationStatusPanelTeamSections,
+  type ConversationStatusPanelTeamSectionsInput,
+} from "./teamPanelModel.js";
+
 export interface ConversationStatusPanelGitModel {
   branchName: string | null;
   headRefType: GitRepositorySummary["headRefType"];
@@ -106,7 +113,7 @@ export function workflowRunOpenTarget(
   };
 }
 
-export interface ConversationStatusPanelModel {
+export interface ConversationStatusPanelModel extends ConversationStatusPanelTeamSections {
   hasContent: boolean;
   git: ConversationStatusPanelGitModel | null;
   goal: GoalState | null;
@@ -117,7 +124,7 @@ export interface ConversationStatusPanelModel {
   runningWorkflowRuns: ConversationStatusPanelWorkflowRun[];
 }
 
-interface BuildConversationStatusPanelModelInput {
+interface BuildConversationStatusPanelModelInput extends ConversationStatusPanelTeamSectionsInput {
   isOfficeMode?: boolean;
   gitSummary?: GitRepositorySummary | null;
   gitDirtyFileCount?: number;
@@ -363,8 +370,13 @@ export function buildConversationStatusPanelModel(
   }
 
   const runningWorkflowRuns = buildRunningWorkflowRuns(input.workflowRuns, workflowWorkByWorkId);
+  const teamSections = buildConversationStatusPanelTeamSections(
+    input.pluginStates,
+    input.sessionId,
+  );
 
   return {
+    ...teamSections,
     git,
     goal,
     sessionPlans,
@@ -377,6 +389,8 @@ export function buildConversationStatusPanelModel(
       goal ||
       sessionPlans ||
       plan ||
+      teamSections.team ||
+      teamSections.endedTeams.length > 0 ||
       runningBashWorks.length > 0 ||
       runningSubagentWorks.length > 0 ||
       runningWorkflowRuns.length > 0,

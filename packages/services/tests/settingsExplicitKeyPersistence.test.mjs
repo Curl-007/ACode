@@ -164,3 +164,54 @@ test("一次性迁移提交保持全量写盘且幂等收敛", async (t) => {
   const textAfterSecondGet = await readFile(settingsFilePath(home), "utf8");
   assert.equal(textAfterSecondGet, textAfterFirstGet, "迁移收敛后 get() 不得反复重写");
 });
+
+test("newTaskDefaults：旧设置缺席读取为默认，显式 patch 整份落盘且不被 strip", async (t) => {
+  const home = await createTempHome();
+  t.after(async () => {
+    await rm(home, { recursive: true, force: true });
+  });
+  useHome(home);
+  // 迁移标记已收敛，get() 不应重写旧文件；旧文件只有 unrelated 键。
+  await seedRawSettings(home, {
+    locale: "en-US",
+    closeToTrayOnWindowsMigrationInitialized: true,
+    messageStreamShowReasoningMigrationInitialized: true,
+  });
+  const service = createSettingService();
+
+  const legacy = await service.get();
+  assert.deepEqual(legacy.newTaskDefaults, {
+    enabled: false,
+    mode: null,
+    model: null,
+    reasoningLevel: null,
+    speed: null,
+  });
+  // 读取补齐默认值不等于物化写盘：旧 setting.json 必须保持原样。
+  assert.equal("newTaskDefaults" in (await readRawSettings(home)), false);
+
+  // 显式 patch 是整份对象写入（含 additive speed），schema 不得 strip。
+  await service.update({
+    newTaskDefaults: {
+      enabled: true,
+      mode: "dontAsk",
+      model: { providerId: "custom", modelId: "demo" },
+      reasoningLevel: "low",
+      speed: "fast",
+    },
+  });
+  const raw = await readRawSettings(home);
+  assert.deepEqual(raw.newTaskDefaults, {
+    enabled: true,
+    mode: "dontAsk",
+    model: { providerId: "custom", modelId: "demo" },
+    reasoningLevel: "low",
+    speed: "fast",
+  });
+
+  const settings = await service.get();
+  assert.equal(settings.newTaskDefaults.enabled, true);
+  assert.equal(settings.newTaskDefaults.mode, "dontAsk");
+  assert.equal(settings.newTaskDefaults.reasoningLevel, "low");
+  assert.equal(settings.newTaskDefaults.speed, "fast");
+});

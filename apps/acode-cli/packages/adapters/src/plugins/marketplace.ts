@@ -8,14 +8,13 @@ import { promisify } from "node:util";
 import type { PluginDiagnostic, PluginManifest, PluginStoreListing } from "@acode/contracts";
 import { isOfficialMarketplaceId, ACODE_OFFICIAL_PLUGIN_MARKETPLACE } from "@acode/contracts";
 import {
-  CLI_MARKETPLACE_GIT_PROTOCOL_ALLOWLIST,
   applyGitPostureGateway,
-  getCliGitInvocationEnv,
   resolveDefaultPluginMarketplaces,
   resolveOfficialMarketplaceAliasCanonicalId,
   sanitizeACodeRuntimeEnv,
   type GitPosture,
 } from "@acode/shared";
+import { CLI_MARKETPLACE_GIT_PROTOCOL_ALLOWLIST, getCliGitInvocationEnv } from "@acode/shared/node";
 import {
   appendPluginSourceCleanupError,
   cleanupPluginSourceBestEffort,

@@ -4,7 +4,8 @@ import { existsSync, mkdirSync, readdirSync, realpathSync, rmSync, statSync } fr
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
-import { applyGitPostureGateway, getCliGitInvocationEnv, type GitPosture } from "@acode/shared";
+import { applyGitPostureGateway, type GitPosture } from "@acode/shared";
+import { getCliGitInvocationEnv } from "@acode/shared/node";
 
 /**
  * Workflow agent 的 git worktree 隔离（S1，specs/workflow-worktree-isolation.md）。

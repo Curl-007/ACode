@@ -95,7 +95,16 @@ async function generateTitleCandidateImpl(
 ): Promise<{ modelSelection: ModelSelection; title: string; traceContext: TraceContext } | null> {
   const requestedModelSelection =
     this.config.titleGeneration?.modelSelection ?? this.getSessionModelSelection();
-  if (!requestedModelSelection) return null;
+  if (!requestedModelSelection) {
+    // 2026-10-21：静默早退曾零留痕（与 shouldAttempt 静默跳过同类问题，
+    // specs/session-title-generation.md R2）；debug 留痕供诊断。
+    this.logger?.debug("Session title generation skipped", {
+      event: "session_title_generation.skipped",
+      module: "core.runtime",
+      reason: "no_model_selection",
+    });
+    return null;
+  }
   const baseModel = createRuntimeModel(this, {
     selection: requestedModelSelection,
   });

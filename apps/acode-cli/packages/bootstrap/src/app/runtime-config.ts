@@ -97,7 +97,11 @@ export function resolveAppRuntimeConfig(input: {
   const requestedTitleModelSelection = requestedTitleGeneration?.modelSelection;
   const titleGeneration =
     requestedTitleGeneration === undefined
-      ? undefined
+      ? // 桌面本地 host 等不注入 titleGeneration 的路径曾在此静默跳过标题生成
+        // （config undefined → shouldAttempt 静默 false、零日志，标题永久停留
+        // first_input 截断原文，2026-10-21 实机取证 title_source=first_input）。
+        // 缺省改为启用；显式 {enabled:false}（automation/闲时）走下方 spread 分支原样尊重。
+        { timeoutMs: 60_000 }
       : {
           ...requestedTitleGeneration,
           // 标题生成 sidecar 默认 15s 在慢模型/代理链路下容易超时，

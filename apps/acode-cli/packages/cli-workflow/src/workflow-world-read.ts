@@ -21,7 +21,8 @@ import {
   sep,
 } from "node:path";
 import type { ExecutionPort, FileSystemPort } from "@acode/contracts";
-import { applyGitPostureGateway, getCliGitInvocationEnvOverlay } from "@acode/shared";
+import { applyGitPostureGateway } from "@acode/shared";
+import { getCliGitInvocationEnvOverlay } from "@acode/shared/node";
 import { WORLD_READ_CAPS, WorkflowError, type WorldReadOp } from "@acode/dynamic-workflow";
 import {
   GIT_SHOW_PREFIX_ARGV,

@@ -1,6 +1,8 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { applyGitPostureGateway, getCliGitInvocationEnv, type GitPosture } from "@acode/shared";
+import { applyGitPostureGateway, type GitPosture } from "@acode/shared";
+// env/overlay 面是 node-only，根 barrel 不承载（specs/git-invocation-hardening.md R7）。
+import { getCliGitInvocationEnv } from "@acode/shared/node";
 
 /** git 执行结果面（stdout/stderr 文本）。 */
 export interface GitCommandResult {

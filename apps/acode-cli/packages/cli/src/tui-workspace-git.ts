@@ -1,6 +1,5 @@
 import { spawn } from "node:child_process";
-import { applyGitPostureGateway } from "@acode/shared";
-import { getCliGitInvocationEnv } from "@acode/shared/node";
+import { applyGitPostureGateway, getCliGitInvocationEnv } from "@acode/shared";
 
 const GIT_COMMAND = "git";
 const GIT_BRANCH_ARGS = ["symbolic-ref", "--quiet", "--short", "HEAD"];

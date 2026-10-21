@@ -101,10 +101,6 @@ export {
   type ManagedPolicyRedactMode,
   type ManagedPolicyRule,
 } from "./node/managedPolicy.js";
-// git 调用硬化漏斗的 env/overlay 面是 node-only（顶层 node:path/node:os），
-// 不得进根 barrel（renderer/preload 构建面会崩，2026-10-21 手验实证）；与
-// managedPolicy 同纪律挂 ./node 桶（specs/git-invocation-hardening.md R7）。
-export * from "./git-invocation-env.js";
 export {
   assertContainedDirectoryChain,
   captureFileIdentitySnapshot,

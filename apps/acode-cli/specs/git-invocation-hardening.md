@@ -215,17 +215,6 @@ EGITPOSTURE 冒泡为编程错误，不强制重构执行面）。runner 注入�
 新增 CLI git 调用点须先在本表登记档位；marketplace 之外新增远端 git 能力须
 同时声明 clone/fetch/push 档与 env 层 `allowedProtocols`（两层关系见上）。
 
-## R7 node-only 模块禁入 shared 根 barrel（2026-10-21，dev:desktop 手验实证）
-
-`git-invocation-env.ts` 顶层 import node:path/node:os，经根 barrel（index.ts
-`export *`）泄进 renderer（vite browser-external 抛错 → React 永不挂载）与
-sandboxed preload（tsup 打入 require("path") → 桥不安装）两个无 node 环境构建面；
-CI 静态门禁不跑 renderer/preload bundle，故全绿仍漏。**规则**：node-only 模块一律
-挂 `@acode/shared` 的 `./node` 桶（managedPolicy 先例），根 barrel 只承载浏览器安全面；
-守卫测试 `packages/shared/test/root-barrel-browser-safety.test.ts` 静态扫描根 barrel
-传递导入图禁 node: 协议与裸内置模块，并钉住 git-invocation-env/managedPolicy 的
-./node 桶落点。消费方（8 个 CLI 侧 node 上下文文件）改从 `@acode/shared/node` 导入。
-
 ## 消费点清单（盘点结论，2026-10；协议列 = R3 修订后）
 
 | # | 消费点 | 形态 | 命令面 | 协议（R3 修订后） |

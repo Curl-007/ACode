@@ -1,8 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { resolve } from "node:path";
-import { applyGitPostureGateway, type GitPosture } from "@acode/shared";
-import { getCliGitInvocationEnv } from "@acode/shared/node";
+import { applyGitPostureGateway, getCliGitInvocationEnv, type GitPosture } from "@acode/shared";
 import { normalizeForCompare } from "./session-worktree-paths.js";
 
 /**

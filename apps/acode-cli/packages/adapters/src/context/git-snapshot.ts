@@ -1,8 +1,7 @@
 import { execFile as execFileCallback } from "node:child_process";
 import { promisify } from "node:util";
 import type { EnvInfo } from "@acode/contracts";
-import { applyGitPostureGateway } from "@acode/shared";
-import { getCliGitInvocationEnv } from "@acode/shared/node";
+import { applyGitPostureGateway, getCliGitInvocationEnv } from "@acode/shared";
 
 const DEFAULT_GIT_COMMAND_TIMEOUT_MS = 3000;
 const DEFAULT_COMMAND_MAX_BUFFER_BYTES = 1024 * 1024;

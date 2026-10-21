@@ -143,37 +143,20 @@ function shouldAttemptSessionTitleGeneration(
   input: string,
   options: { bypassShortInputGuard?: boolean } = {},
 ): boolean {
+  if (runtime.config.titleGeneration?.enabled === false) return false;
+  if (!runtime.config.titleGeneration) return false;
+  if (!runtime.sessionStore) return false;
+  if (runtime.config.parentSessionId) return false;
+  if (runtime.config.taskType && runtime.config.taskType !== "interactive") return false;
+  if (runtime.turnNumber !== 0) return false;
   const normalizedInput = normalizeTitleInput(input);
-  const skipReason =
-    runtime.config.titleGeneration?.enabled === false
-      ? "disabled"
-      : !runtime.config.titleGeneration
-        ? "config_absent"
-        : !runtime.sessionStore
-          ? "no_session_store"
-          : runtime.config.parentSessionId
-            ? "child_session"
-            : runtime.config.taskType && runtime.config.taskType !== "interactive"
-              ? "non_interactive_task"
-              : runtime.turnNumber !== 0
-                ? "not_first_turn"
-                : normalizedInput.length === 0
-                  ? "empty_input"
-                  : !options.bypassShortInputGuard &&
-                      Array.from(normalizedInput).length < MIN_GENERATED_TITLE_INPUT_CHARS
-                    ? "short_input"
-                    : undefined;
-  if (skipReason !== undefined) {
-    // 2026-10-21：静默跳过路径曾零留痕，桌面链路 config 缺省缺失导致标题永久停留
-    // first_input 截断原文而长期未发现（specs/session-title-generation.md R2）。
-    runtime.logger?.debug("Session title generation skipped", {
-      event: "session_title_generation.skipped",
-      module: "core.runtime",
-      reason: skipReason,
-    });
-    return false;
-  }
-  return true;
+  if (normalizedInput.length === 0) return false;
+  // 短首发输入本身已经是可读标题，继续走 generated title sidecar
+  // 会把 "hi" 这类标题稳定覆盖成泛化的 "New Coding Session"。
+  return (
+    options.bypassShortInputGuard ||
+    Array.from(normalizedInput).length >= MIN_GENERATED_TITLE_INPUT_CHARS
+  );
 }
 
 function shouldDeferSessionTitleForRuntimeHeaders(runtime: AgentRuntimeInternal): boolean {

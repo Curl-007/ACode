@@ -38,8 +38,7 @@ import {
   createScriptWorkflowAgentRuntime,
   type ScriptWorkflowAgentRuntimeDeps,
 } from "@acode/cli-workflow/contract";
-import { applyGitPostureGateway } from "@acode/shared";
-import { getCliGitInvocationEnvOverlay } from "@acode/shared/node";
+import { applyGitPostureGateway, getCliGitInvocationEnvOverlay } from "@acode/shared";
 import type { ACodeOvernightHostCommand } from "../builtin-prompt-command.js";
 
 export interface CreateOvernightControllerDeps extends ScriptWorkflowAgentRuntimeDeps {

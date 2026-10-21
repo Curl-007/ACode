@@ -1,7 +1,10 @@
 import type { ExecutionPort, TraceContext } from "@acode/contracts";
 import { type MergeBaseBranchOutput, type MergeBaseSelection } from "@acode/contracts";
-import { applyGitPostureGateway, type GitPosture } from "@acode/shared";
-import { getCliGitInvocationEnvOverlay } from "@acode/shared/node";
+import {
+  applyGitPostureGateway,
+  getCliGitInvocationEnvOverlay,
+  type GitPosture,
+} from "@acode/shared";
 
 /**
  * base 分支合并（specs/session-worktree-lifecycle.md R5）：把基分支合并进会话分支。

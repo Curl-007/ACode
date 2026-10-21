@@ -106,6 +106,23 @@ selectCompactEntries → summary 请求 → selectPostCompactReadStateReminders
 → 下个 turn：Edit/ApplyPatch/Write 门禁照常查表 + stale 守卫兜底
 ```
 
+## 设计取舍裁决（2026-10-21，用户授权「按推荐来」）
+
+三项扫描登记项裁决为**有意边界，非缺陷**，记录防未来误「修」：
+
+- **D1 仅内容投影文件跨 resume 不恢复**：维持。reminder attachment 有内容无
+  freshness metadata，恢复会让 stale 守卫退化为仅 size 对照（同字节数内容改动漏检 →
+  脏写风险）；保守重 Read 代价一次调用。重议触发：attachment 或 boundary metadata
+  承载 mtime/revision 之日。
+- **D2 子代理 read-state 不继承主会话**：维持。门禁不变量是「编辑主体亲眼见过内容」；
+  子代理的报告是摘要非字节，继承会让主会话编辑从未见过的内容、破坏不变量。摩擦成本
+  =主会话一次额外 Read，恰为门禁文案指引的动作。重议触发：子代理产出字节保真工件通道
+  （带 freshness）之日。
+- **D3 2000 行行上限截断不标 isPartialView**：维持宽。门禁无法知晓编辑目标区域；标
+  partial 会挡住大文件整读后的一切编辑（含已见区域），纯增摩擦；未见区域的编辑由
+  old_string 对盘匹配失败天然拦截（虚构文本不匹配），残余巧合匹配风险远小于阻挡代价。
+  重议触发：门禁能做编辑区域 vs 视图窗口比对之日。
+
 ## 已知边界（登记，不在本项范围）
 
 - **仅内容投影的文件跨 resume 不恢复**（R5 末条）：reminder attachment 无 freshness

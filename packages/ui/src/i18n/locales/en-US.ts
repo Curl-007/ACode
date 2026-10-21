@@ -4316,6 +4316,15 @@ const enUS: Record<string, string> = {
   "chat.queue.editRestoreFailed": "Couldn't return the queued message to the composer. Try again.",
   "chat.queue.remove": "Remove queued message",
   "chat.queue.turnSteer.steering": "Steering conversation",
+  // Visible notice when an inline guide falls back to the queue (steer.state="fellBack");
+  // see specs/queue-guide-fellback-notice.md.
+  "chat.queue.turnSteer.fellBack": "Guidance did not apply; moved to the queue",
+  "chat.queue.turnSteer.fellBack.noToolBoundary":
+    "The current run had no point to insert guidance; moved to the queue",
+  "chat.queue.turnSteer.fellBack.turnInterrupted":
+    "The current run was interrupted; guidance moved to the queue",
+  "chat.queue.turnSteer.fellBack.attachmentsUnsupported":
+    "Inline guidance with attachments is not supported; moved to the queue",
   "chat.queue.paused.stopped": "The queue was paused because you stopped the current response",
   "chat.queue.paused.error": "The queue was paused because the response failed",
   "chat.queue.paused.generic": "The queue is paused",

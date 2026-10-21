@@ -4071,6 +4071,11 @@ const zhCN: Record<string, string> = {
   "chat.queue.editRestoreFailed": "未能把队列消息退回输入框，请重试。",
   "chat.queue.remove": "移除待发送消息",
   "chat.queue.turnSteer.steering": "正在引导对话",
+  // 引导内联失败回退队列（steer.state="fellBack"）的可见标注，见 specs/queue-guide-fellback-notice.md。
+  "chat.queue.turnSteer.fellBack": "引导未生效，已转入队列",
+  "chat.queue.turnSteer.fellBack.noToolBoundary": "当前任务没有可插入引导的时机，已转入队列",
+  "chat.queue.turnSteer.fellBack.turnInterrupted": "当前任务已中断，引导已转入队列待续",
+  "chat.queue.turnSteer.fellBack.attachmentsUnsupported": "引导带附件不支持内联，已转入队列",
   "chat.queue.paused.stopped": "由于你中断了当前响应，队列已暂停",
   "chat.queue.paused.error": "由于当前响应出错，队列已暂停（内容未丢失）",
   "chat.queue.paused.generic": "队列已暂停",

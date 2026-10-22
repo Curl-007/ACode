@@ -148,17 +148,48 @@ test("win32: blob present but powershell missing/failing → error (never unavai
   });
 });
 
+test("win32: read rejects a non-base64 blob before spawn (PowerShell -Command injection guard)", () => {
+  // 回归（2026-10-22 review 安全 §2 第二条）：blob 直接插值进 POWERSHELL_UNPROTECT 的单引号
+  // 串。修复前只校验 typeof === "string"，含 `'); <payload>//` 的 blob 可闭合单引号执行任意
+  // PowerShell。修复后 read() 在 spawn 前用 /^[A-Za-z0-9+/]+={0,2}$/ 校验，非法即 error 且
+  // 绝不 spawn（廉价路径 + 注入片段永不到达 powershell.exe argv）。
+  withTempDir((dir) => {
+    const keyFilePath = join(dir, "credential-key.json");
+    const payload = "AAAA'); Start-Process calc.exe #";
+    writeFileSync(
+      windowsDpapiBlobPath(keyFilePath),
+      JSON.stringify({ version: 1, blob: payload }),
+      "utf-8",
+    );
+
+    const { spawn, calls } = mockSpawn(() => ok(sampleKeyB64Url));
+    const keychain = createCredentialKeychain({ platform: "win32", spawn });
+    const result = keychain.read(keyFilePath);
+
+    assert.equal(result.status, "error", "non-base64 blob must fail-loud, never found");
+    assert.match(result.reason, /not valid base64/);
+    assert.equal(calls.length, 0, "must not spawn powershell at all when the blob is not base64");
+    // 纵深断言：即使将来有人误改校验顺序，spawn 的命令串也绝不含注入片段。
+    for (const call of calls) {
+      assert.ok(!JSON.stringify(call.args).includes("calc.exe"));
+      assert.ok(!JSON.stringify(call.args).includes("Start-Process"));
+    }
+  });
+});
+
 test("win32: write protects via powershell, wx-exclusive blob; EEXIST adopts winner; PS failure → unavailable", () => {
   withTempDir((dir) => {
     const keyFilePath = join(dir, "credential-key.json");
     const blobPath = windowsDpapiBlobPath(keyFilePath);
 
-    // 正常写入：protect → wx 写 blob。
+    // 正常写入：protect → wx 写 blob。blob fixture 用合法 base64（真实 .NET ToBase64String
+    // 输出恒为标准 base64，字母表 [A-Za-z0-9+/]）——EEXIST 回读路径会经 read() 的 base64
+    // 校验，连字符 fixture 会被误判为注入而拒收。
     const keychain = createCredentialKeychain({
       platform: "win32",
       spawn: mockSpawn((command, args) => {
         const cmd = args[args.length - 1];
-        return cmd.includes("::Protect(") ? ok("PROTECTED-B64") : ok(sampleKeyB64Url);
+        return cmd.includes("::Protect(") ? ok("PROTECTEDB64") : ok(sampleKeyB64Url);
       }).spawn,
     });
     const written = keychain.write(keyFilePath, sampleKeyB64Url);
@@ -166,7 +197,7 @@ test("win32: write protects via powershell, wx-exclusive blob; EEXIST adopts win
     assert.ok(existsSync(blobPath));
     const blob = JSON.parse(readFileSync(blobPath, "utf-8"));
     assert.equal(blob.version, 1);
-    assert.equal(blob.blob, "PROTECTED-B64");
+    assert.equal(blob.blob, "PROTECTEDB64");
 
     // EEXIST → 回读赢家（unprotect 返回赢家材料）。
     const winnerSecret = randomBytes(32).toString("base64url");

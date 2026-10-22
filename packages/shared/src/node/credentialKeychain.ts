@@ -247,6 +247,19 @@ function createWin32Keychain(spawn: SpawnLike): CredentialKeychainAccess {
         // blob 存在但损坏：error 而非 absent——静默降级会生成新密钥孤立既有凭据。
         return { status: "error", reason: `DPAPI blob malformed: ${blobPath}` };
       }
+      // 命令注入封堵（2026-10-22 review 安全 §2 第二条）：protectedB64 直接插值进
+      // POWERSHELL_UNPROTECT 的单引号串（见 spawnPowershell → -Command）。此前只校验
+      // typeof === "string"，从不校验 base64 格式——blob 含 `'); ...//` 即可闭合单引号
+      // 执行任意 PowerShell。能写 <凭据目录>/credential-key.dpapi.json 者已具同用户
+      // .acode 写权限（不跨权限边界），但从「可写文件」升级为「进程内代码执行」仍须封堵。
+      // 合法 blob 恒为标准 base64（本模块 write 侧经 .NET ToBase64String 产出，字母表
+      // [A-Za-z0-9+/] + 至多两位 = 填充）；不符即按损坏处理 → error，fail-loud（与
+      // 「blob 存在但损坏 → error」既有纪律一致，绝不 absent/unavailable）。
+      // 写入路径 POWERSHELL_PROTECT 无需此校验：其入参是 Buffer base64 重编码产物，
+      // 恒为合法 base64，不含引号/元字符。
+      if (!/^[A-Za-z0-9+/]+={0,2}$/.test(protectedB64)) {
+        return { status: "error", reason: `DPAPI blob is not valid base64: ${blobPath}` };
+      }
       const result = spawnPowershell(spawn, POWERSHELL_UNPROTECT(protectedB64));
       if (isSpawnENOENT(result)) {
         // 材料可见但工具缺席 = error（同上纪律：绝不让调用方误判为「无材料」）。

@@ -1,5 +1,28 @@
 # acode-cua contract
 
+## fail-closed 边界（订正 R2-09：本包不是「所有表面惰性」的占位包）
+
+历史上 `package.json` / `README.md` 宣称「every runtime surface reports unavailable and
+fails closed」，与实现不符，会诱导「设 dev env 也安全」的误判。按面精确表述如下：
+
+- **服务端 / Helper 面：真惰性 fail-closed。** `dispatchRequest` / `handleRequestLine` throw、
+  `createProductCuaHelperHost` 全方法 unavailable、`loadRealNativeAddon` throw、权限请求恒
+  `{ok:false, reason:UNAVAILABLE}`、`isOfficialCuaPluginEnabledForWorkspace` /
+  `isCuaLocalDevelopmentRuntime` / `isScreenCaptureProbeSuccess` 恒 `false`。这些面确实全部关闭。
+- **客户端 wire 面：完整实现，由门控关闭而非自身惰性。** `broker.js` 的 `callBrokerMethod` /
+  `sendBrokerRequest` / `probeHelperHealth` 是功能完整的 socket 客户端；`index.js` 的
+  `createComputerUseRuntime` **仅在未传 `brokerSocketPath` 时**返回 unavailable，拿到
+  socketPath 即真下发 click/type/key。生产 fail-closed 靠两道外部门控：① 缺省无
+  `brokerSocketPath`；② 上游 `packages/services/src/node.ts:2273` 的 `cuaPluginEnabled`
+  （`isCuaEnabledForContext`）决定是否注入 broker socket env——且 `isACodeCuaInternalFeatureEnabled`
+  现已默认 ON，端到端 fail-closed 实际落在 `shouldCreateDefaultCuaProductHelper` 的 admission
+  （仅 `desktop-local` 建 Helper）+ 本包 Helper host 是无法启动的 stub。
+- **激活条件（dev 旋钮，非安全边界）：** 设 `ACODE_CUA_DEV_MODE=1` 或
+  `ACODE_CUA_PRODUCT_HELPER=1` 并配 `ACODE_CUA_DEV_ROOT` 指向 `cua-producer/`，即可在本地
+  激活客户端活路径；生产链仍不可用（阶段 5 打包/签名未落地）。
+
+## 角色范围
+
 Computer Use 的 API 兼容包。本包承担两个角色（U14 §7.8「角色范围洞裁决」）：
 **角色 B（host 侧 broker RPC 客户端 + host 编排，纯 JS，补实在本包内）**与
 **角色 A（Helper 侧原生 producer，走仓内 `cua-producer/` 路径加载，不进本包）**。

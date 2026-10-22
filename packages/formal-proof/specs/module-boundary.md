@@ -47,8 +47,14 @@ ARCH-04 batch 2）：公开契约、状态所有权、依赖方向与验收场�
    必须拆分收回 400 行上限并移除例外，`.architecture-baseline.json` 不动。
 2. `node scripts/architecture/architecture-check.mjs context formal-proof` 展示
    owner `formal-proof-model`、module.ts 与 contract.ts。
-3. 包导出面（./model）与纳管前逐名一致；本包无 test 脚本，模型回归由
-   apps/acode-cli bootstrap 的对齐注释与可视化应用人工验证承担。
+3. 包导出面（./model）与纳管前逐名一致；本包 `test` 脚本
+   （`node --import tsx --test "test/**/*.test.ts"`，与仓内其他包同形态）覆盖
+   `model.ts` 的核心运行时不变量——`test/model.test.ts` 固化 evaluate 纯函数性、
+   held queue → choice、各阶段 reject/enqueue 裁决、drainQueueAfterRun 阶段推进、
+   buildTraceTree 确定性 + resetIds、enumerateCandidates 适用性过滤、collectStats/flatten
+   一致性。apps/acode-cli bootstrap 的裁决投影与本模型 evaluate 的**跨包一致性**仍为
+   单向人工核对（投影侧无机械对照测试，见 model.ts:483-487 注释），不在本包测试范围。
+   修复依据：R2-10——managed 模块此前零测试、920 行裁决模型不进 `pnpm test`/CI。
 4. `pnpm --filter @acode/formal-proof typecheck`（`tsc -p tsconfig.json --noEmit`，
    不在根 `pnpm typecheck` 工程名单内）通过；`contract.example.ts` 随包工程一起
    编译（纯计算，仅编译与文档验证）。

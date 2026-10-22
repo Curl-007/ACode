@@ -592,6 +592,15 @@ export function createBrowserWindow(options: {
       preload: options.preloadPath,
       contextIsolation: true,
       nodeIntegration: false,
+      // 安全加固 review finding #3（P3）：显式声明 sandbox，不依赖 Electron 隐式默认值。
+      // 依据（specs/electron-hardening.md §1）：
+      // 1) Electron 41（本仓 electron 41.10.7）renderer sandbox 默认即 true（since Electron 20），
+      //    且全 desktop 无任何调用点为主窗设 sandbox:false——主窗本就运行在 sandbox 下，此处显式化
+      //    不改变运行时行为，只把安全属性从「靠默认」变为「靠声明」，与 webview guest（:670）对齐。
+      // 2) preload 兼容性已核实：sandboxed preload 可 require 出 webFrame（:121 getZoomFactor）与
+      //    webUtils（:281 getPathForFile）；process.argv（:11）/process.platform（:124,128）也在
+      //    sandboxed process 属性白名单内，均可用。
+      sandbox: true,
       // CDP-on-guest pivot：内置浏览器改回 `<webview>` 渲染，宿主需开 webviewTag。
       webviewTag: true,
       // 永久 backgroundThrottling=false 会唤醒整窗 renderer、所有 webview guest

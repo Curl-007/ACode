@@ -1,4 +1,20 @@
 /* oxlint-disable eslint(max-lines) -- task realtime bus owns lease, stream batching, replay and command routing state in one main-process coordinator. */
+/**
+ * Main 侧 task realtime 协调器：lease、stream 批处理、replay 镜像、command 路由。
+ *
+ * 非权威语义（详见 specs/task-realtime-bus-mirror.md）：
+ * - replay 镜像只用于加速新 observer/Host 补齐，权威快照永远在 Host/CLI；
+ * - 镜像有界（STREAM_MIRROR_MAX_REPLAY_BATCHES/BYTES 双阈值），超限即 shift 丢弃最旧批，
+ *   由 replayVisibleRunsToHost 检测 fromSeq!==1 或 replayUnavailable 降级为 stream_mirror_gap
+ *   → snapshot invalidation，让 observer 回到权威快照；
+ * - terminal event / lease 释放 / host 退出必须清理 streamBatches 与去重桶（见 flushBatch、
+ *     releaseLease、releaseLeasesForHost、discardStreamBatch、discardSeenEventBucket*）。
+ * 不变量：Main 侧不得新增 task/session 快照落盘；本协调器只持有内存转发态。
+ *
+ * deliveryKind：Main 侧只登记 desktop_window，且仅作日志/诊断，无分支消费。
+ * relay_bridge 的权威在 acode-server-cli（手机 web-remote-replayable 恢复链路刻意不经 Main），
+ * 见 specs/task-realtime-bus-mirror.md「两条交付链路」。
+ */
 import type { UtilityProcess as ElectronUtilityProcess } from "electron";
 import {
   type TaskOwnerCommandDelivery,
@@ -29,9 +45,19 @@ const STREAM_MIRROR_MAX_BATCH_BYTES = 512 * 1024;
 const STREAM_MIRROR_TEXT_OP_MAX_CHARS = 128 * 1024;
 const OWNER_COMMAND_TIMEOUT_MS = 30_000;
 const SESSION_MESSAGE_DELIVERY_TIMEOUT_MS = 30_000;
+// 主审 review finding #4（P3）：跨 Host 事件去重桶数量上限，防泄漏兜底。正常路径由 lease
+// 释放/host 退出精确清理桶，此处只兜底生命周期钩子未覆盖的历史 run，确保桶数不无界增长。
+const MAX_SEEN_EVENT_BUCKETS = 256;
 
 type HostMessageListener = (message: unknown) => void;
 type HostExitListener = () => void;
+
+// finding #4：每个 task（有 taskId）或 workspace（无 taskId）持有独立的有界 eventId 去重窗口，
+// 取代原全局单队列 LRU，避免高并发多 run 下互相挤占滑窗导致 observer 重复投递。
+interface SeenEventBucket {
+  ids: Set<string>;
+  order: string[];
+}
 
 interface RegisteredRealtimeHost {
   hostId: string;
@@ -125,8 +151,10 @@ export class TaskRealtimeBus {
   private readonly logger: TaskRealtimeBusLogger;
   private readonly seenEventLimit: number;
   private readonly hosts = new Map<string, RegisteredRealtimeHost>();
-  private readonly seenEventIds = new Set<string>();
-  private readonly seenEventOrder: string[] = [];
+  // finding #4：按 task/workspace 分桶的去重窗口，key 见 getSeenEventBucketKey；桶在 lease
+  // 释放/host 退出时精确清理（discardSeenEventBucketForTask/discardSeenEventBucketsForHost），
+  // 并有 MAX_SEEN_EVENT_BUCKETS 兜底防泄漏。
+  private readonly seenEventBuckets = new Map<string, SeenEventBucket>();
   private readonly leases = new Map<string, TaskRunLease>();
   private readonly streamBatches = new Map<string, PendingStreamBatch>();
   private readonly pendingOwnerCommands = new Map<string, PendingOwnerCommandRoute>();
@@ -164,6 +192,13 @@ export class TaskRealtimeBus {
     params.child.once("exit", onExit);
 
     const workspaceKeys = new Set(params.workspaceKeys);
+    // 主审 review finding #1（P2）：Main 侧 deliveryKind 只登记为诊断/日志字段，全 desktop 无
+    // `deliveryKind === "relay_bridge"` 的分支消费点（rg 复核命中 0）。desktop 全仓 registerHost
+    // 恒为 desktop_window；手机 web-remote-replayable 恢复链路的真源在 acode-server-cli
+    // （server-core/http.ts，与 desktop-continuous 在 server-cli/host 侧分流），刻意不经 Main
+    // 实时总线。故 relay_bridge 在 Main 侧是有意预留的枚举值而非未接线的缺陷；权威见
+    // specs/task-realtime-bus-mirror.md「两条交付链路」。shared 的类型定义
+    // （TaskRealtimeHostDeliveryKind）不在本包所有权内，不改。
     const deliveryKind = params.deliveryKind ?? "desktop_window";
     this.hosts.set(params.hostId, {
       hostId: params.hostId,
@@ -300,7 +335,7 @@ export class TaskRealtimeBus {
   }
 
   private handleRealtimePublish(origin: RegisteredRealtimeHost, event: TaskRealtimeEvent): void {
-    if (!this.rememberEventId(event.eventId)) {
+    if (!this.rememberEventId(event)) {
       return;
     }
     this.flushMatchingStreamBatchBeforeInvalidation(event);
@@ -367,6 +402,8 @@ export class TaskRealtimeBus {
       streamBatches: this.streamBatches.size,
       leases: this.leases.size,
       sessionRoutes: this.sessionRoutes.size,
+      // finding #4：去重桶数量，供测试断言 run 终止/host 退出后桶被回收（防泄漏）。
+      seenEventBuckets: this.seenEventBuckets.size,
     };
   }
 
@@ -376,7 +413,12 @@ export class TaskRealtimeBus {
     if (!existing || existing.ownerHostId !== hostId || existing.runId !== target.runId) {
       return;
     }
-    this.flushBatch(this.getBatchKey(target.workspaceKey, target.taskId, target.runId), true);
+    const batchKey = this.getBatchKey(target.workspaceKey, target.taskId, target.runId);
+    this.flushBatch(batchKey, true);
+    // finding #2：lease 释放代表 run 结束，其 replay 镜像非权威且不再需要；无条件回收 streamBatch
+    // 与去重桶，防止非 terminal 释放时镜像残留占用 Main 内存（详见 specs/task-realtime-bus-mirror.md）。
+    this.discardStreamBatch(batchKey);
+    this.discardSeenEventBucketForTask(target.workspaceKey, target.taskId);
     this.leases.delete(key);
     this.logger.info("[task-realtime] task run lease released", {
       hostId,
@@ -392,11 +434,31 @@ export class TaskRealtimeBus {
       if (lease.ownerHostId !== hostId) {
         continue;
       }
-      this.flushBatch(this.getBatchKey(lease.workspaceKey, lease.taskId, lease.runId), true);
+      const batchKey = this.getBatchKey(lease.workspaceKey, lease.taskId, lease.runId);
+      this.flushBatch(batchKey, true);
+      // finding #2：host 退出必须清理 streamBatches（review 验收项，:200 路径）。此前只依赖
+      // flushBatch 在 terminal 时删批；host 异常退出（非 terminal、或已无 pendingOps 早退）会
+      // 让 replay 镜像残留泄漏。这里无条件回收该 run 的镜像与去重桶。
+      this.discardStreamBatch(batchKey);
       this.leases.delete(key);
       released.push(lease);
     }
+    // finding #4：host 退出后回收其名下所有 run 的去重桶，防泄漏。
+    this.discardSeenEventBucketsForHost(released);
     return released;
+  }
+
+  // finding #2：无条件回收单个 streamBatch（清定时器 + 删 Map 条目），供 lease 释放/host 退出调用。
+  private discardStreamBatch(batchKey: string): void {
+    const batch = this.streamBatches.get(batchKey);
+    if (!batch) {
+      return;
+    }
+    if (batch.timer) {
+      clearTimeout(batch.timer);
+      batch.timer = null;
+    }
+    this.streamBatches.delete(batchKey);
   }
 
   private handleStreamOpPublish(
@@ -417,6 +479,9 @@ export class TaskRealtimeBus {
       this.flushBatch(batchKey, true);
       if (op.kind === "stream_event" && this.isTerminalEventType(op.event.type)) {
         this.leases.delete(this.getLeaseKey(target.workspaceKey, target.taskId));
+        // finding #2/#4：terminal event 代表 run 结束，回收去重桶防泄漏；streamBatch 已由
+        // flushBatch 在 terminal 时删除（见 flushBatch 内 event.terminal 分支）。
+        this.discardSeenEventBucketForTask(target.workspaceKey, target.taskId);
       }
       return;
     }
@@ -1063,21 +1128,76 @@ export class TaskRealtimeBus {
     }
   }
 
-  private rememberEventId(eventId: string): boolean {
-    if (this.seenEventIds.has(eventId)) {
+  // finding #4：按 task/workspace 分桶去重。事件所属桶独立有界（seenEventLimit 个 eventId），
+  // 一个高频 run 不再挤占另一个 run 的滑窗，因此高并发多 run 下 observer 不会重复投递。
+  // 有 taskId 的事件按 taskId 分桶；无 taskId 的（如 workspace_task_list_invalidated）按
+  // workspaceKey 分桶。桶在 lease 释放/host 退出时精确清理（见 discardSeenEventBucket），
+  // 并有 MAX_SEEN_EVENT_BUCKETS 兜底防泄漏。
+  private getSeenEventBucketKey(event: TaskRealtimeEvent): string {
+    const taskId = "taskId" in event && event.taskId ? event.taskId : "";
+    // 用 "seen::" 前缀 + taskId/workspaceKey，前缀避免与其它 Map 的 key 空间冲突。
+    const scope = taskId || event.workspaceKey;
+    return "seen::" + scope;
+  }
+
+  private rememberEventId(event: TaskRealtimeEvent): boolean {
+    const bucketKey = this.getSeenEventBucketKey(event);
+    let bucket = this.seenEventBuckets.get(bucketKey);
+    if (!bucket) {
+      bucket = { ids: new Set<string>(), order: [] };
+      this.seenEventBuckets.set(bucketKey, bucket);
+      this.evictSeenEventBucketsIfNeeded();
+    }
+
+    if (bucket.ids.has(event.eventId)) {
       return false;
     }
 
-    this.seenEventIds.add(eventId);
-    this.seenEventOrder.push(eventId);
-
-    while (this.seenEventOrder.length > this.seenEventLimit) {
-      const removed = this.seenEventOrder.shift();
+    bucket.ids.add(event.eventId);
+    bucket.order.push(event.eventId);
+    while (bucket.order.length > this.seenEventLimit) {
+      const removed = bucket.order.shift();
       if (removed) {
-        this.seenEventIds.delete(removed);
+        bucket.ids.delete(removed);
       }
     }
-
     return true;
+  }
+
+  // finding #4：桶数兜底。正常路径 lease 释放/host 退出会精确删桶；此处防止生命周期钩子未
+  // 覆盖的历史 run 让桶数无界增长。超限时按插入顺序（Map 迭代序）淘汰最旧的桶。
+  private evictSeenEventBucketsIfNeeded(): void {
+    while (this.seenEventBuckets.size > MAX_SEEN_EVENT_BUCKETS) {
+      const oldest = this.seenEventBuckets.keys().next();
+      if (oldest.done) {
+        break;
+      }
+      this.seenEventBuckets.delete(oldest.value);
+    }
+  }
+
+  // finding #4：run 终止时回收其去重桶，防泄漏。terminal/lease 释放/host 退出路径调用。
+  private discardSeenEventBucketForTask(workspaceKey: string, taskId: string): void {
+    this.seenEventBuckets.delete("seen::" + taskId);
+    // 无 taskId 事件的桶按 workspaceKey 命名；只有当该 workspace 再无 lease 时才回收，
+    // 避免误删同 workspace 其它 run 仍需要的桶。
+    const wsBucketKey = "seen::" + workspaceKey;
+    let stillUsed = false;
+    for (const lease of this.leases.values()) {
+      if (lease.workspaceKey === workspaceKey) {
+        stillUsed = true;
+        break;
+      }
+    }
+    if (!stillUsed) {
+      this.seenEventBuckets.delete(wsBucketKey);
+    }
+  }
+
+  // finding #4：host 退出时回收该 host 名下所有 lease 对应的去重桶，防泄漏。
+  private discardSeenEventBucketsForHost(releasedLeases: TaskRunLease[]): void {
+    for (const lease of releasedLeases) {
+      this.discardSeenEventBucketForTask(lease.workspaceKey, lease.taskId);
+    }
   }
 }

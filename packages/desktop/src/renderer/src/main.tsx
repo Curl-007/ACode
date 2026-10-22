@@ -70,7 +70,9 @@ function registerE2EStoreBridgesIfEnabled() {
   });
 }
 
-// 初始化主题：默认 Zai dark，后续由 useTheme hook 接管
+// 初始化主题：默认 Zai dark，避免首帧闪烁；运行时主题的读写与切换由 UI store 接管
+// （packages/ui/src/store/index.ts 读 acode-theme 持久化，见 specs 说明）。此处只在 React
+// 挂载前做一次性同步首帧着色，不拥有主题状态。
 {
   const saved = localStorage.getItem("acode-theme") || "zai-dark";
   const resolved =

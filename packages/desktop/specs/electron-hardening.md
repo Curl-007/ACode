@@ -40,6 +40,40 @@
 
 ---
 
+## 1b. 主特权窗显式 sandbox（review 2026-10-22 finding #3，P3）
+
+### 现状与规则
+
+`desktopWindowChrome.ts:591` 的主窗 webPreferences 此前显式设了 `contextIsolation:true` /
+`nodeIntegration:false`，但**没有** `sandbox`，安全属性靠 Electron 隐式默认值。webview guest
+（`:670`）早已显式 `sandbox:true`，主窗与 guest 不一致。
+
+现主窗 webPreferences **显式声明 `sandbox: true`**。这是零运行时行为变更的加固，依据三条已核实事实：
+
+1. **默认即 true。** Electron 20 起 renderer sandbox 默认 `true`；本仓 electron 41.10.7 亦然。且全 desktop
+   无任何调用点为主窗设 `sandbox:false`——主窗**本就运行在 sandbox 下**。显式化只把安全属性从「靠默认」
+   变为「靠声明」，与 guest 对齐。
+2. **preload 兼容 sandbox。** sandboxed preload 可 `require` 出 `webFrame`（`preload/index.ts:121`
+   `getZoomFactor`）与 `webUtils`（`:281` `getPathForFile`）；`process.argv`（`:11`）、`process.platform`
+   （`:124,128`）也在 Electron 文档列出的 sandboxed `process` 属性白名单内，均可用。
+3. **`process.title` 写入已是既有 no-op。** `preload/index.ts:182` 写 `process.title`；该属性**不在**
+   sandboxed renderer 的 `process` 白名单内，因此在既有默认 sandbox 下这行写入早已不生效。Main 侧进程名
+   由 `resourceManagerWindow.ts:347` / `resourceManagerProcessNames.ts` 用 `win.getTitle()` 派生，不依赖
+   renderer 的 `process.title`。故显式化不改变任何现有行为。
+
+### 例外登记
+
+无。主窗**不需要**关闭 sandbox，因此不登记例外；`preload/index.ts:182` 的 `process.title` 写入是历史
+遗留 no-op，保留不影响 sandbox，另行清理不在本项范围。
+
+### 验收
+
+1. 主窗 webPreferences 显式含 `sandbox: true`（`desktopWindowChrome.ts`）。
+2. preload 的 `webFrame.getZoomFactor` / `webUtils.getPathForFile` / `process.argv` / `process.platform`
+   在 sandbox 下仍可用（文档白名单 + 既有默认已验证）。
+
+---
+
 ## 2. 全局权限请求策略（P2 #2b）
 
 ### 现状

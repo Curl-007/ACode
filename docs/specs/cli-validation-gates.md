@@ -10,6 +10,7 @@
 6. 任一阶段失败，门禁退出非零并指名阶段 id 与可复现命令；失败不得静默降级，也不得用关闭严格检查、扩大 `skipLibCheck` 或忽略诊断的方式制造通过。
 7. Turbo lint 缓存必须把 CLI 和仓库根 lint 配置纳入输入；变更规则或作用域后不能复用旧的“通过”日志。
 8. Knip 必须保留 files/dependencies/binaries 门禁。由 Renderer tsconfig 编译的 ambient/CSS 声明、架构 context 读取的 module 清单和 contract 示例按实际消费方式登记为入口；不扩大 ignore，也不保留失去消费者的内部 barrel。
+9. 跨平台矩阵与 Desktop smoke leg 的范围、runner 选择与缓存纪律见 [ci-platform-matrix.md](ci-platform-matrix.md)。其中新增的 `windows-verify`（ci.yml）与 `desktop-smoke`（release.yml）job 若含 `typecheck` 的 `run`，同样受本文件规则 5 约束：逐字 `pnpm typecheck`，不得内联单入口形成旁路。
 
 ## 验收
 

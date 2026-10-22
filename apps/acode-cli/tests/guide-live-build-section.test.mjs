@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -41,9 +41,17 @@ function fakeSkillPort(skills, { failWith } = {}) {
   };
 }
 
-async function makeTree() {
+async function makeTree(t) {
   const home = await mkdtemp(join(tmpdir(), "live-build-home-"));
   const workspace = await mkdtemp(join(tmpdir(), "live-build-ws-"));
+  // 修复依据（review 测试专项 P3「测试临时目录泄漏」）：本文件多处 mkdtemp 全程无 rm，
+  // CI 反复跑会在 %TEMP%/tmp 累积占盘。用 t.after 注册清理，无论断言成败都回收两棵目录树。
+  if (t && typeof t.after === "function") {
+    t.after(async () => {
+      await rm(home, { recursive: true, force: true });
+      await rm(workspace, { recursive: true, force: true });
+    });
+  }
   await mkdir(join(home, ".acode", "cli"), { recursive: true });
   await writeFile(
     join(home, ".acode", "cli", "config.json"),
@@ -80,9 +88,9 @@ function baseInput(tree, extra = {}) {
   };
 }
 
-test("场景 1：无占位符零成本透传，skillPort 不被调用（R1）", async () => {
+test("场景 1：无占位符零成本透传，skillPort 不被调用（R1）", async (t) => {
   clearLiveBuildSectionCache();
-  const tree = await makeTree();
+  const tree = await makeTree(t);
   const port = fakeSkillPort([{ name: "x", scope: "user", source: "acode" }]);
   const content = "# plain skill\nno placeholder here\n";
   const out = await injectLiveBuildSection(content, baseInput(tree, { skillPort: port }));
@@ -90,9 +98,9 @@ test("场景 1：无占位符零成本透传，skillPort 不被调用（R1）", 
   assert.equal(port.calls, 0);
 });
 
-test("场景 2：全量渲染——工具/技能/命令/agents/MCP/设置键在场，秘密值绝不出现（R2/R3）", async () => {
+test("场景 2：全量渲染——工具/技能/命令/agents/MCP/设置键在场，秘密值绝不出现（R2/R3）", async (t) => {
   clearLiveBuildSectionCache();
-  const tree = await makeTree();
+  const tree = await makeTree(t);
   const port = fakeSkillPort([
     { name: "zcode-configuration-guide", qualifiedName: "acode-guide:zcode-configuration-guide", scope: "user", source: "plugin" },
   ]);
@@ -124,9 +132,9 @@ test("场景 2：全量渲染——工具/技能/命令/agents/MCP/设置键在�
   assert.ok(!out.includes("npx"));
 });
 
-test("场景 3：子节降级互不连坐——discoverSkills 抛错只降级技能子节（R3）", async () => {
+test("场景 3：子节降级互不连坐——discoverSkills 抛错只降级技能子节（R3）", async (t) => {
   clearLiveBuildSectionCache();
-  const tree = await makeTree();
+  const tree = await makeTree(t);
   const port = fakeSkillPort([], { failWith: new Error("scan exploded") });
   const snapshot = await collectLiveBuildSnapshot(baseInput(tree, { skillPort: port }));
   assert.equal(snapshot.skills.available, false);
@@ -163,9 +171,9 @@ test("场景 4：采集整体抛错 → 节级降级，占位符仍被替换，�
   assert.ok(renderDegradedSection("boom").includes("boom"));
 });
 
-test("场景 5：会话缓存——一次性生成、version 变化失效、降级不缓存（R4）", async () => {
+test("场景 5：会话缓存——一次性生成、version 变化失效、降级不缓存（R4）", async (t) => {
   clearLiveBuildSectionCache();
-  const tree = await makeTree();
+  const tree = await makeTree(t);
   const content = `# guide\n${LIVE_BUILD_PLACEHOLDER}`;
   const first = await injectLiveBuildSection(
     content,

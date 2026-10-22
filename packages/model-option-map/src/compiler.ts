@@ -1,6 +1,7 @@
 import { evaluateRestrictedCel } from "./evaluator.js";
 import { parseRestrictedCel, type RestrictedCelExpression } from "./parser.js";
 import { tokenizeRestrictedCel } from "./tokenizer.js";
+import { createBoundedCache } from "./bounded-cache.js";
 import {
   RestrictedCelError,
   type JsonObject,
@@ -10,9 +11,21 @@ import {
   type RestrictedCelValue,
 } from "./types.js";
 
-const programCache = new Map<string, RestrictedCelProgram>();
-const optionMapCache = new Map<string, ModelOptionMapProgram>();
-const expressionCache = new Map<string, RestrictedCelExpression>();
+/**
+ * 编译缓存的条目上限。
+ *
+ * 根因（review 测试专项 P3）：原来三个缓存是裸 `new Map()`，按「源码字符串 + 变量名」为键，
+ * 且模块级永不淘汰。虽然生产中模型选项映射数量有限，但键空间由**外部可控的源码字符串**
+ * 组成（每个 Provider/Model 的 map 源、任意历史版本、错误配置），进程长生命周期下只增不减，
+ * 构成无界内存增长。上限取 512：远高于任何现实配置规模（数十个 Provider），又能把最坏
+ * 驻留量钉死在常量级；超限按 LRU 淘汰最久未用条目。淘汰不影响语义——未命中只是重新
+ * parse/compile，结果与缓存命中逐字节一致（compileRestrictedCel 等对同一输入是纯函数）。
+ */
+const CACHE_MAX_ENTRIES = 512;
+
+const programCache = createBoundedCache<RestrictedCelProgram>(CACHE_MAX_ENTRIES);
+const optionMapCache = createBoundedCache<ModelOptionMapProgram>(CACHE_MAX_ENTRIES);
+const expressionCache = createBoundedCache<RestrictedCelExpression>(CACHE_MAX_ENTRIES);
 
 export function compileRestrictedCel(
   source: string,

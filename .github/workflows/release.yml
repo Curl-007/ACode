@@ -83,6 +83,50 @@ jobs:
       - name: Tests (all packages)
         run: pnpm test
 
+  # Desktop 启动链路 smoke（docs/specs/ci-platform-matrix.md R2；根因 review 测试专项 R1-04）：
+  # e2e-smoke.mjs（CP1 进程存活 / CP2 CDP / CP3 首窗 / CP4 Host fork + 进程树/临时目录清理）此前
+  # 仅手工/Windows 本地跑，不进任何 workflow。这里作为**发布门禁**跑一次：构建 dev 态桌面 out/
+  # 后启动隔离 Electron，任一检查点失败 → 非零退出 → publish 不执行 → release 保持 draft。
+  #
+  # 选 windows-latest 而非 Linux：smoke 进程树清理用 taskkill /T /F（Windows 原生路径），历史验收
+  # 亦以 Windows isolated-profile 为准；Linux 需 xvfb-run 提供虚拟显示，可靠性未知，不采用。
+  # 不放 ci.yml：需 GUI + 完整桌面构建（agent bundle + tsup + vite，分钟级），进主门禁成本过高
+  # （spec R2 规则 10 的分工结论）。不设 continue-on-error：smoke 失败必须阻断发布。
+  # Node 钉 24.14.0（对齐 mise.toml）；不加 actions/cache（warm-cache 只生产 Linux 条目）。
+  desktop-smoke:
+    name: Desktop e2e smoke (Electron launch chain)
+    needs: verify
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.14.0
+
+      - name: Install dependencies
+        shell: bash
+        run: pnpm install --frozen-lockfile
+
+      # 完整类型门禁：packages 阶段的 tsc -b 产出工程引用声明，桌面 build 与 agent bundle 都消费它
+      # （与 build/desktop job 同因）。typecheck run 逐字 pnpm typecheck（cli-validation-gates 规则 5）。
+      - name: Typecheck all entries (builds project references)
+        shell: bash
+        run: pnpm typecheck
+
+      # 构建 dev 态桌面 out/：build = prepare:runtime-assets（含 prepare:agent-bundle，自建 acode.cjs）
+      # + tsup + vite。smoke 启动的 main 入口是 out/main/index.js，CP4 fork 的 Host 也来自 out/。
+      - name: Build desktop app
+        shell: bash
+        run: pnpm --filter @acode/desktop build
+
+      # smoke 失败经 process.exit(code) 传非零 → 本 step 红 → desktop-smoke 红 → publish 阻断。
+      - name: Electron e2e smoke
+        shell: bash
+        run: pnpm --filter @acode/desktop e2e:smoke
+
   release:
     needs: verify
     runs-on: ubuntu-latest
@@ -700,8 +744,11 @@ jobs:
   # 出现在 Releases 与官网下载页。keep_draft=true（上游审计自动构建的测试版）：
   # 即使全部成功也保持 draft，不公开、不进入自动更新。
   publish:
-    needs: [release, build, desktop, verify_assets]
-    if: ${{ always() && inputs.keep_draft != true && needs.release.result == 'success' && (needs.build.result == 'success' || needs.build.result == 'skipped') && (needs.desktop.result == 'success' || needs.desktop.result == 'skipped') && (needs.verify_assets.result == 'success' || needs.verify_assets.result == 'skipped') }}
+    needs: [release, build, desktop, verify_assets, desktop-smoke]
+    # desktop-smoke 是追加的发布级闸门（spec ci-platform-matrix R2 规则 9）：Electron 启动链路
+    # smoke 必须 success 才公开 release，否则保持 draft。fail-closed：不给 skipped 兜底，
+    # smoke 未成功（失败/取消）一律不发布。
+    if: ${{ always() && inputs.keep_draft != true && needs.release.result == 'success' && needs.desktop-smoke.result == 'success' && (needs.build.result == 'success' || needs.build.result == 'skipped') && (needs.desktop.result == 'success' || needs.desktop.result == 'skipped') && (needs.verify_assets.result == 'success' || needs.verify_assets.result == 'skipped') }}
     runs-on: ubuntu-latest
     steps:
       - name: Download per-leg checksum lists

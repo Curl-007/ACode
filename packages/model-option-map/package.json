@@ -9,7 +9,8 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "lint": "oxlint"
+    "lint": "oxlint",
+    "test": "node --import tsx --test \"tests/**/*.test.mjs\""
   },
   "devDependencies": {
     "typescript": "^6.0.2"

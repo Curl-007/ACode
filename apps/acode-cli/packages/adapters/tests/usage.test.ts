@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
-import { queryAppUsage } from "./usage.js";
+import { queryAppUsage } from "../src/storage/session-store/repositories/usage.js";
 
 const DAY_MS = 86_400_000;
 const NOW = 1_700_000_000_000;

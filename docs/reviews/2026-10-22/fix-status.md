@@ -278,7 +278,15 @@ review 明确以下 4 类为里程碑级债务，本轮只做有界切片或 spe
 
 ### 全量 test 计数（codegen 产物就位后）
 
-`pnpm test` 首跑（codegen 前）：apps/acode-cli 2970 tests / 2925 pass / **8 fail**——全部 `workflow-*` 测试报 `ERR_MODULE_NOT_FOUND: libs.generated.js`（dynamic-workflow codegen 产物缺失，`.gitignore` 忽略、build 首步 `generate-libs.mjs` 生成；turbo build 缓存命中时跳过实际执行）。**非代码回归**：review cli-runtime.md §6 已记录此现象（当时 2 个 DWF 测试同因失败）。主审强制 `node scripts/generate-libs.mjs` 生成后，相关 5 文件串行 **87/87 全绿**（其中 1 个 `workflow-script-determinism` C1 沙箱时钟测试在默认并发下偶发 flake，串行复跑通过——属 testing.md §5 记录的墙钟依赖类，非本轮引入）。完整重跑计数见下（后台任务 bjs7lwirl）。
+`pnpm test`（全 workspace）：**3052 tests / 3012 pass / 3 fail / 37 skipped**。3 个 fail 全部环境/连带类，**零代码回归**：
+- **PS-13/PS-14**（`powershell-tool.test.mjs`）：本机 Windows 8.3 短名规范化差异（`actual: administrator` vs `expected: ADMINI~1`），`git diff` 证实本轮**无任何 powershell 相关改动**，属 testing.md §5 记录的环境依赖类。
+- **L01**（`third-party-reproducibility.test.mjs`）：即上述 ledger 9 个 inputs 哈希不符（本轮 package.json/button.tsx/lockfile 合法改动连带），留发布流程回补。
+
+（首跑 codegen 前的 8 fail 全是缺 `libs.generated.ts`；`node scripts/generate-libs.mjs` 生成后，相关 workflow 测试串行 87/87 全绿，其中 1 个 C1 沙箱时钟测试默认并发下偶发 flake、串行复跑通过。CI 上 build 在 test 前，codegen 产物必然就位，无此问题。）
+
+### pre-push 门禁
+
+`pnpm verify:pre-push`（lint + architecture:check --changed）→ **exit 0**（changed new 0 / regrown 0）。
 
 ### third-party ledger 哈希（CI 门禁 ci.yml:77，留给发布流程）
 
@@ -287,7 +295,7 @@ review 明确以下 4 类为里程碑级债务，本轮只做有界切片或 spe
 - **定性**：非 review finding，是本轮合法改动的**预期连带副作用**（改了被台账追踪的源文件）。
 - **哈希口径平台无关**（已核实 `third-party-reproducibility.mjs:52-54`）：UTF-8 读出 → CRLF 归一 LF → sha256，注释 :19 明说为 `core.autocrlf=true` 设计；主审本地重算 button.tsx = `bc651d3c...` 与工具报的实际值逐字节一致。
 - **不在本轮手工回补**，理由：① 工具处置说明 + git 惯例（`92c73c02`/`b6dce5e2` 均为独立 release chore）要求台账回补走**发布流程的 CI Linux 规范重生成**；② button.tsx 是 vendored 组件，在 `inventory.json` 有**两处**哈希（inputs 映射 :1522 + 组件清单 :14452），手工改 1.3MB 机器生成文件易漏、且 `licenses.mjs notices` 全量重生成会重写含平台变体的 NOTICE 全文（工具明确警告勿在 Windows 跑）。
-- **交发布流程**：release 分支上按既有台账回补流程（`licenses.mjs notices` + 采用 CI Linux 重生成产物）一次性刷新这 9 个哈希。主审已在提交信息标注此项待发布回补。
+- **交发布流程**：release 分支上按既有台账回补流程（`licenses.mjs notices` + 采用 CI Linux 重生成产物）一次性刷新这 9 个哈希。已在 lockfile 提交信息标注此项待发布回补。
 
 ### review 文档订正（本轮发现 review 自身两处过期表述）
 
@@ -296,6 +304,26 @@ review 明确以下 4 类为里程碑级债务，本轮只做有界切片或 spe
 
 ### 提交
 
-见下节 SHA。提交按逻辑分组（安全修复 / 各包 P2 / CI 门禁 / 结构重构 / 测试补齐 / review 文档），遵循 `docs/git-collaboration.md` Conventional Commits + Co-Authored-By 署名。
+工作树干净，本轮共 **17 个提交**（`ebe9033b..3a13b38c`），186 文件 / +11676 / −1675。按主题分组（Conventional Commits + Co-Authored-By 署名，遵循 `docs/git-collaboration.md`）：
 
-_（test 完整计数与提交 SHA 待后台任务 bjs7lwirl 完成后补。）_
+| SHA | 主题 |
+|---|---|
+| `8b733ebc` | docs(review): 11 层面深度 review（上一轮，非本修复批次） |
+| `aecd01e2` | docs(review): 修复台账 + review 两处过期表述订正 |
+| `095ec8cf` | fix(security): Windows OAuth 命令注入 + DPAPI PowerShell 插值（A/D） |
+| `5888cbb5` | fix(shared): legacy 冻结面违规新增 schema 迁中立叶子 + 守护门禁（D） |
+| `725f1244` | fix(services): OAuth 日志脱敏 + identity key 收敛单一实现（B） |
+| `8dfc68aa` | fix(ui): task meta 写入收口单一事务 + 删 useTheme 双写旁路（E） |
+| `72e750c8` | fix(ui): settings 按钮簇回归设计系统 + Button 基座补焦点态（F） |
+| `b88c373f` | refactor(ui): SessionPane 命令组接缝抽出 + 错误边界测试升级（K） |
+| `471fe69c` | fix(desktop): replay mirror 泄漏修复 + 去重分桶 + 主窗显式 sandbox（G） |
+| `b0ff6395` | fix(server,web): connect-remote 错误脱敏 + TTL + Web 断线重连（C） |
+| `01e033a2` | refactor(cli): turn 时序 7 字段迁 owner + 两进程级 sink 会话化（I） |
+| `70ec32d3` | refactor(cli): product-projection 抽 5 纯叶子模块批次 1（M） |
+| `39109a85` | feat(architecture): resolver 三缺口 + session 内部边白名单机制（L） |
+| `460cfacb` | ci: windows-verify 矩阵 + desktop-smoke 发布阻断 + 测试基建（J） |
+| `939f5863` | fix(governance): acode-cua 表述订正 + formal-proof 补真测试（H） |
+| `7d7c5456` | test(cli): 5 个高风险盲区守护测试（N） |
+| `3a13b38c` | chore(deps): lockfile 同步本轮新增依赖声明 |
+
+**未 push**（本轮按用户要求只做到分支提交；push 触发 CI windows-verify/desktop-smoke 首跑由用户决定，见代理 J 的 CI 风险清单）。third-party ledger 9 哈希回补留发布流程（见上节）。

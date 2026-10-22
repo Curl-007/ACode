@@ -111,6 +111,11 @@ P0-2（鉴权 fail-closed + token 走 Header 不走 query）。
   `!relative.startsWith("..")` 因此把 `GET /C:/Windows/win.ini`（staticRoot 在 D: 时）误判为
   「目录内」→ 任意文件读取。新判定：`rel === "" || (!rel.startsWith("..") && !isAbsolute(rel))`，
   跨盘符与 `..` 逃逸一律拒绝（返回 404，不进入 fs）。
+- **畸形百分号编码不得抛 URIError（R2 review finding 2 修复）**：`resolveStaticFile` 对 pathname
+  `decodeURIComponent`，畸形编码（`/%`、`/%zz`、`/%e0%a4`、`/index%`）会抛 `URIError`。此前
+  try/catch 只包住 `stat`，decode 异常冒泡成 500。修法：decode 包 try/catch，失败按「不可能命中
+  任何真实文件」返回 `null`（→ 上层 404），且**不进入 SPA fallback**（与 `..` 逃逸同语义：
+  非法 pathname 不应回落到 index.html）。`GET /%` 必须 404 而非 500。
 - **静态路由保持匿名（决定与理由，不纳入 token 保护面）**：静态资源与 SPA fallback **不**加入
   `isTokenProtectedPath`。理由：(1) 浏览器无法为 `<script>`/`<img>` 等子资源请求附加
   `Authorization` 头，cookie 也只在登录流程完成后才存在——把静态面纳入 token 保护会让配了
@@ -127,10 +132,23 @@ P0-2（鉴权 fail-closed + token 走 Header 不走 query）。
   执行 `createRemoteBackend`（触发真实 SSH 外联 / WSL / Docker spawn）；配 token 的非 loopback
   部署下 `/api/**` 虽被中间件保护，但默认 loopback 无 token 姿态下 Origin 裁决是唯一浏览器侧
   屏障。原生客户端（无 Origin）不受影响。
-- **未认领连接累积上限**：`remoteConnections` 条目只在 `/ws/remote/:id` 认领时删除，盲刷可累积
-  真实后端连接（DoS）。新增 `MAX_PENDING_REMOTE_CONNECTIONS`（有界常量）：待认领条目达上限时
-  新请求 → 503。**风险登记**：本次不引入 TTL 定时驱逐（避免新增定时器所有权问题）；陈旧未认领
-  条目存活至进程重启，Origin 裁决已封死浏览器攻击者，loopback 姿态下原生本地进程属既有信任边界。
+- **未认领连接累积上限 + 惰性 TTL**：`remoteConnections` 条目只在 `/ws/remote/:id` 认领时删除，盲刷可累积
+  真实后端连接（DoS）。`MAX_PENDING_REMOTE_CONNECTIONS`（有界常量）：待认领条目达上限时
+  新请求 → 503。**TTL（R2 review finding 3 修复）**：条目携带 `spawnedAt`，存活上限
+  `PENDING_REMOTE_CONNECTION_TTL_MS`（默认 60s）。用**惰性过期**而非常驻定时器——认领本身是同步
+  请求/响应链，不需要定时器兜底（AGENTS.md：不用超时掩盖同步问题）；这里是**有界资源回收**，
+  在两个既有请求触点顺带清理超期条目：(a) `POST /api/connect-remote` 容量检查前 `pruneExpiredPendingConnections`
+  （驱逐后再判上限，避免陈旧条目把合法新连接挤成 503）；(b) `/ws/remote/:id` 认领时先整体 prune、
+  再校验本条 `spawnedAt`，超期条目按失效处理（dispose 句柄 + 移除 + close 4004，不复活陈旧连接）。
+  时钟源 `pendingConnectionClock`（默认 `Date.now`）与 TTL `pendingConnectionTtlMs` 可注入
+  （测试用虚拟时间，与 `createHostCapabilityStore({ now })` 同范式），不新增常驻定时器所有权。
+- **连接失败错误脱敏（R2-04 修复）**：`createRemoteBackend`/`connectRemote` 抛错时，`catch` 曾把
+  `err.message` 原样 `c.json({ error: message }, 500)`。SSH/WSL/Docker spawn 失败的 message 常含
+  主机名、绝对路径、可执行命令（如 `spawn ssh ENOENT`、`connect EHOSTUNREACH <ip>:22`、WSL 发行版
+  路径），对外返回等于把内部拓扑/命令泄漏给调用方（含浏览器）。修法：对外只回稳定归类码
+  `remote-connect-failed`（500），原始 message 降级进 `warn` 日志（`packages/server` 既有 logger 路径，
+  非裸 console，不打敏感数据）——保留生产可诊断性，但原始 detail 不出网。与上方 Origin/预算拒绝
+  一致的对外错误面。
 
 ### Bot 回调入口 × server token（已知限制登记，本次不改行为）
 
@@ -199,8 +217,10 @@ P0-2（鉴权 fail-closed + token 走 Header 不走 query）。
   `ACODE_SERVER_HOST`、`ACODE_SERVER_ALLOWED_ORIGINS`；Server Core：`options.authToken` 优先、
   fallback `ACODE_SERVER_AUTH_TOKEN`，host 缺省 loopback）。运行期不变更；`createServerInfo` /
   Core `info` 据实际挂载中间件的 token 派生 `authRequired`，不读其它变量。
-- **待认领远程连接唯一所有者**：`packages/server` 进程内 `remoteConnections` Map；写入仅
-  `/api/connect-remote`（Origin 裁决 + 上限之后），删除仅 `/ws/remote/:id` 认领时；不落盘。
+- **待认领远程连接唯一所有者**：`packages/server` 进程内 `remoteConnections` Map
+  （`Map<id, { connection, spawnedAt }>`）；写入仅 `/api/connect-remote`（Origin 裁决 + 惰性驱逐 +
+  上限之后），删除在 `/ws/remote/:id` 认领时**或**惰性过期 prune 时（两个既有请求触点，
+  无常驻定时器）；不落盘。
 - **terminal-client 凭据 allowlist 唯一所有者**：`@acode/shared/node` 的
   `TERMINAL_CLIENT_CREDENTIAL_ALLOWED_KEYS`；两套 server 的传输注册层引用同一常量。
 - **主体指纹**：由 token 派生（`sha256(token)` 前 16 hex），仅在 store 内部与日志中出现，不存原始 token。
@@ -267,12 +287,17 @@ P0-2（鉴权 fail-closed + token 走 Header 不走 query）。
     `resolveServerTokenAuth`，http.ts 只保留 hono Context → 请求视图的适配层与一次性告警。
   - `isInsideDirectory(root, candidate)`：`relative()` 结果既不以 `..` 开头也**非绝对路径**才算
     目录内（Windows 跨盘符时 `relative` 原样返回绝对路径，旧判定会误放行 → M10 修复）；
-    `resolveStaticFile` 的两处包含判定都经它。
+    `resolveStaticFile` 的两处包含判定都经它。`resolveStaticFile` 对 `decodeURIComponent` 包
+    try/catch，畸形百分号编码（`/%`）返回 `null`（→404），不冒泡 URIError 成 500（R2 finding 2）。
   - `createServerInfo(options, resolvedAuthToken)`：`authRequired = options.authRequired ??
     Boolean(resolvedAuthToken)`，不读环境变量（M2 修复；`ACODE_SERVER_TOKEN` fallback 已删除）。
   - `POST /api/connect-remote`：先 `resolveRequestOriginTrust` 裁决（拒绝 403，先于 body 解析与
-    backend spawn），再 schema 校验；`remoteConnections` 待认领条目达
-    `MAX_PENDING_REMOTE_CONNECTIONS` → 503（M11 修复）。
+    backend spawn），再 `pruneExpiredPendingConnections` 惰性驱逐，再 schema 校验；`remoteConnections`
+    待认领条目达 `MAX_PENDING_REMOTE_CONNECTIONS` → 503（M11）。连接失败 `catch` 对外只回
+    `remote-connect-failed`（500），原始 message 进 `warn`（R2-04）。
+  - `isPendingConnectionExpired(spawnedAt, now, ttlMs)` / `pruneExpiredPendingConnections(now, ttlMs)`：
+    待认领连接惰性过期的纯判定与驱逐（dispose + 移除），由请求触点同步调用，无常驻定时器
+    （R2 finding 3）。`/ws/remote/:id` 认领时先整体 prune 再校验本条，超期 close 4004。
   - `setupChannelServer`：`clientMode !== "desktop-continuous"` 时对 Credential 通道挂
     `createTerminalClientCredentialGuard` 收窄（overrides，与 Provisioning 先例同模式）（M4 修复）。
   - `readPresentedLiteToken` 委派共享 `readPresentedServerToken`，确保鉴权与主体绑定对
@@ -347,7 +372,23 @@ P0-2（鉴权 fail-closed + token 走 Header 不走 query）。
 20. **token 裁决单一实现（M1 配套）**：两套 server 源码都调用共享 `resolveServerTokenAuth` /
     `readPresentedServerToken` / `isTokenProtectedPathname`（静态断言），不允许任一侧内联第二份
     接受顺序或 cookie 解码。
+21. **connect-remote 错误脱敏（R2-04）**：注入一条 message 含主机名/路径/命令的失败连接，
+    `POST /api/connect-remote` → 500 且响应体 `error === "remote-connect-failed"`，**不得**含任一
+    敏感子串（主机/路径/命令/`ENOENT`/`spawn `）；原始 detail 必须出现在 `warn` 日志（未被丢弃）。
+22. **畸形百分号编码 404（R2 finding 2）**：`GET /%`、`/%zz`、`/%e0%a4`、`/index%` → 404
+    （非 500 URIError、非 200 SPA fallback）；同 staticRoot 下合法 `/index.html` 仍 200。
+    测试 OS 无关（`path.posix` + 内存 fs stub）。
+23. **待认领连接惰性过期（R2 finding 3）**：注入虚拟时钟 + 小 TTL——(a) 容量检查触点 prune：
+    未超期条目不被误清（`disposed===0`），推进使条目超期后下一次 connect 的 prune 恰好 dispose 一次，
+    全部超期后一并清；(b) 认领触点：超期 id 被 `/ws/remote/:id` 认领 → close 4004（不复活陈旧连接）。
+    用有界轮询（`waitFor`）等 close 帧，不加固定 sleep。
+24. **token 中间件先于 connect-remote 副作用（R2 finding 8 补测）**：配 token 时未鉴权
+    `POST /api/connect-remote` → 401 且 `spawned===0`（中间件先于处理器 spawn）；带 Bearer + loopback
+    Origin → 200 且到达 backend（`spawned===1`）。配 token 时未鉴权 bot webhook → 401（钉住
+    「Bot 回调入口 × server token」已登记限制），带 token → 越过鉴权门进入 handler（stub 无 bots → 503）。
 
 测试遵循仓库既有「不变量守护」风格（`packages/desktop/tests/no-telemetry.test.mjs`、
 `apps/acode-cli/tests/no-telemetry.test.mjs`）：仅用临时端口 / loopback / 内存 fixture，
 **绝不**读写、迁移或删除真实 `~/.acode` 或任何真实用户凭据，测试内不绑定公网网卡。
+R2 新增测试用**有界轮询**（`startHttpReady`/`waitFor`）等 server bind 与 WS close 帧，
+不复用固定 `sleep(120)`，避免墙钟时序 flake。

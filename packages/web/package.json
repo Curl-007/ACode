@@ -6,7 +6,8 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "oxlint",
-    "lint:fix": "oxlint --fix"
+    "lint:fix": "oxlint --fix",
+    "test": "node --import tsx --test \"tests/**/*.test.ts\" \"tests/**/*.test.tsx\""
   },
   "dependencies": {
     "@acode/client": "workspace:*",

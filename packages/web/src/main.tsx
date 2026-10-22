@@ -1,11 +1,12 @@
-/* eslint-disable max-lines -- Web 入口集中编排启动、路由与 workspace shell wiring，与 Root.tsx 同样先保持入口收口，避免跨层状态拆散。 */
+/* Web 入口：只做启动/连接编排（bootstrap、OAuth callback 路由、WS 重连、Root 挂载）。
+   平台适配器工厂已抽出到 webPlatform.ts、重连控制器/overlay/i18n 在 reconnect/，
+   本文件回落到 400 行闸以下，故不再需要 max-lines 豁免（2026-10-22 review 修复批次）。 */
 import { createRoot } from "react-dom/client";
 import {
   AppErrorBoundary,
   Root,
   ACodeIntlProvider,
   generateMobileDeviceFingerprint,
-  playTaskNotificationSound,
   setStreamClientId,
   type Theme,
 } from "@acode/ui";
@@ -13,18 +14,27 @@ import "@acode/ui/styles.css";
 import { connectViaWebSocket } from "@acode/client";
 import { WebCallbackPage } from "./auth/WebCallbackPage.js";
 import { createWebAuthService } from "./auth/webAuthService.js";
-import { WEB_ZAI_OAUTH_CONFIG, resolveWebAuthDevReturnTo } from "./auth/webZaiOAuthConfig.js";
 import { parseOAuthState, resolveSafeAppReturnTo } from "./auth/oauthStateCodec.js";
-import { resolveWebCommunityUrl, resolveWebHelpConfig } from "./communityUrl.js";
-import type { IPlatformService, RemoteTarget, ServerRemoteInfo } from "@acode/shared";
+import type { ServerRemoteInfo } from "@acode/shared";
 import { WEB_DEFAULT_THEME, resolveWebInitialTheme } from "./webThemeSeed.js";
+import { createWebPlatform } from "./webPlatform.js";
+import {
+  createWebReconnectController,
+  WebDisconnectOverlay,
+  type WebReconnectController,
+  type WebReconnectState,
+} from "./reconnect/index.js";
+
+/** connectViaWebSocket 成功返回的 services 门面类型（web 包不直接依赖 @acode/services）。 */
+type WebServices = Awaited<ReturnType<typeof connectViaWebSocket>>;
 
 function resolveWebThemePreference(defaultTheme: Theme = WEB_DEFAULT_THEME): Theme {
   const saved = localStorage.getItem("acode-theme");
   return resolveWebInitialTheme({ storedTheme: saved, defaultTheme });
 }
 
-// 初始化主题：默认 Zai dark，后续由 useTheme hook 接管
+// 初始化主题：默认 Zai dark，后续由 store（packages/ui/src/store/index.ts 的 setTheme，
+// acode-theme 的唯一写入口，走广播防回环）接管；不再由 useTheme hook 接管。
 // system 模式下需要查询系统偏好；非 system 模式直接用存储值
 {
   const saved = resolveWebThemePreference();
@@ -49,10 +59,6 @@ function resolveWebThemePreference(defaultTheme: Theme = WEB_DEFAULT_THEME): The
   document.documentElement.classList.toggle("dark", resolved === "dark");
   document.documentElement.classList.toggle("theme-zai-light", appliedTheme === "zai-light");
   document.documentElement.classList.toggle("theme-zai-dark", appliedTheme === "zai-dark");
-}
-
-async function resolveFeedbackUrl(): Promise<string | undefined> {
-  return (await resolveWebHelpConfig()).feedback_url;
 }
 
 const root = createRoot(document.getElementById("root")!);
@@ -97,168 +103,6 @@ function renderWebAuthCallbackPage(): void {
       }}
     />,
   );
-}
-
-function createWebPlatform(): IPlatformService {
-  return {
-    canSelectFilePath: false,
-    // Web 端无法打开系统目录选择框
-    selectDirectory: () => Promise.resolve(null),
-    // Web 端无法打开系统文件选择框
-    selectFile: () => Promise.resolve(null),
-    selectFiles: () => Promise.resolve([]),
-    getPathForFile: () => null,
-    createTempTextAttachment: () =>
-      Promise.reject(new Error("Temporary text attachments require a desktop host")),
-    onRemoteConnectionLog: () => () => {},
-    onRemoteSessionClosed: () => () => {},
-    onBotRemoteWorkspaceReconnected: () => () => {},
-    // Web 端无多窗口管理
-    activateOrSetWorkspace: () => Promise.resolve({ activated: false }),
-    // TODO(web-remote-workspace): 普通 Web 模式先只保证 server 本地工作区可用。
-    // 远程 WebSocket 只暴露部分 service，与 Root/RemoteServiceAccess 需要的完整
-    // accessor 不匹配，直接打开 ?remote=<id> 会在项目向导或首屏卡住。
-    connectRemote(options: RemoteTarget) {
-      return Promise.resolve({
-        success: false,
-        error: `Remote connect is not supported in Web mode yet: ${options.kind}`,
-      });
-    },
-    cancelPendingRemoteConnection: (_requestId?: string) => Promise.resolve(),
-    disposeRemoteSession: () => Promise.resolve(),
-    isDockerAvailable: () => Promise.resolve(false),
-    listWSLDistros: () => Promise.resolve([]),
-    listDockerContainers: () => Promise.resolve([]),
-    listSSHConfigAliases: () => Promise.resolve([]),
-    loadMcpFromUserDirectory: () => Promise.resolve({ servers: [] }),
-    saveMcpToUserDirectory: () =>
-      Promise.resolve({
-        success: false,
-        error: "MCP native directory management requires a desktop attachment",
-      }),
-    migrateLegacyCommonMcp: () =>
-      Promise.resolve({
-        servers: {},
-        totalCount: 0,
-        importedCount: 0,
-        skippedCount: 0,
-      }),
-    openExternal: (url) => {
-      window.open(url, "_blank", "noopener,noreferrer");
-    },
-    openFeedback: async () => {
-      const feedbackUrl = await resolveFeedbackUrl();
-      if (!feedbackUrl) {
-        return;
-      }
-      window.open(feedbackUrl, "_blank", "noopener,noreferrer");
-    },
-    openCommunity: async () => {
-      const locale = document.documentElement.lang === "en-US" ? "en-US" : "zh-CN";
-      const communityUrl = await resolveWebCommunityUrl(locale);
-      if (!communityUrl) {
-        return;
-      }
-      window.open(communityUrl, "_blank", "noopener,noreferrer");
-    },
-    canOpenCommunity: async (locale) => {
-      const communityUrl = await resolveWebCommunityUrl(locale);
-      return typeof communityUrl === "string" && communityUrl.length > 0;
-    },
-    openInFileManager: () =>
-      Promise.resolve({ success: false, error: "Not supported in web mode" }),
-    openExternalFile: () => Promise.resolve({ success: false, error: "Not supported in web mode" }),
-    registerOAuthState: (_payload) => {},
-    onOAuthCallback: () => () => {},
-    onPaymentCallback: () => () => {},
-    notifyRendererReady: () => {},
-    showTaskNotification: (payload) => {
-      if (document.hasFocus()) {
-        return;
-      }
-
-      if (
-        typeof window.Notification === "undefined" ||
-        window.Notification.permission !== "granted"
-      ) {
-        return;
-      }
-
-      try {
-        new window.Notification(payload.title, {
-          body: payload.body,
-          silent: true,
-        });
-        void playTaskNotificationSound();
-      } catch {
-        // 浏览器通知不可用时静默忽略，避免打断主流程
-      }
-    },
-    // Web 端不需要跨窗口 tab 管理
-    syncWindowTabs: () => {},
-    // Web 端没有宿主层 Dock / 任务栏徽标，保持空实现以兼容统一平台接口
-    syncWindowUnreadCount: () => {},
-    syncActiveTaskSession: () => {},
-    onFocusTab: () => () => {},
-    onNewTab: () => () => {},
-    onCloseActiveContextRequest: () => () => {},
-    onOpenBrowserUrl: () => () => {},
-    onNewTask: () => () => {},
-    onOpenWorkspace: () => () => {},
-    onWindowFullscreenChanged: () => () => {},
-    onTaskNotificationClick: () => () => {},
-    exportLogs: () => Promise.resolve({ success: false, error: "Not supported in web mode" }),
-    captureWindowScreenshot: () => Promise.resolve(null),
-    importChromeBrowserData: () =>
-      Promise.resolve({
-        success: false,
-        cookies: { imported: 0, skipped: 0, failed: 0 },
-        localStorage: {
-          originsImported: 0,
-          entriesImported: 0,
-          originsSkipped: 0,
-          originsFailed: 0,
-        },
-        error: "chrome_import_not_supported" as const,
-      }),
-    clearEmbeddedBrowserData: () =>
-      Promise.resolve({ success: false, error: "Not supported in web mode" }),
-    // IPlatformService 新增更新提示能力后，Web fallback 没有同步补齐空实现，
-    // 根级 typecheck 会直接失败，连与桌面端无关的改动都没法完成校验。
-    // Web 端当前没有桌面更新器，先显式 no-op，保持接口完整且不改变现有行为。
-    onUpdateReady: () => () => {},
-    onUpdateCheckResult: () => () => {},
-    onUpdateStateChanged: () => () => {},
-    getUpdateState: () => Promise.resolve({ kind: "idle", enabled: true }),
-    downloadUpdate: () => Promise.resolve(),
-    cancelUpdateDownload: () => Promise.resolve(),
-    getDesktopSessionActivity: () => Promise.resolve({ runningAgentSessionCount: 0 }),
-    getDesktopZoomLevel: () => Promise.resolve({ zoomLevel: 0 }),
-    onDesktopZoomLevelChanged: () => () => {},
-    onPostUpdateReleaseNotes: () => () => {},
-    acknowledgePostUpdateReleaseNotes: () => Promise.resolve(),
-    skipUpdateVersion: () => Promise.resolve(),
-    quitAndInstallUpdate: () => Promise.resolve(),
-    getInstalledEditors: () => Promise.resolve([]),
-    openInEditor: () => Promise.resolve({ success: false, error: "Not supported in web mode" }),
-    executeDesktopCommand: () => Promise.resolve(),
-    setApplicationLocale: (_locale) => Promise.resolve(),
-    setTitleBarTheme: () => Promise.resolve(),
-    getDeviceId: () => {
-      const nav = globalThis.navigator as Navigator & { platform?: string };
-      const platform = nav?.platform ?? "";
-      const screenWidth = globalThis.screen?.width;
-      const screenHeight = globalThis.screen?.height;
-      const colorDepth = globalThis.screen?.colorDepth;
-      const parts = [
-        platform,
-        screenWidth !== undefined ? String(screenWidth) : "",
-        screenHeight !== undefined ? String(screenHeight) : "",
-        colorDepth !== undefined ? String(colorDepth) : "",
-      ];
-      return parts.filter(Boolean).join("|");
-    },
-  };
 }
 
 function resolveDefaultWsOrigin(): string {
@@ -331,6 +175,33 @@ function renderWebBootstrapError(error: unknown): void {
   );
 }
 
+/** 渲染正常 app（连接可用）：复用 web-remote-replayable 恢复路径，重挂 Root 即从 server 快照重建。 */
+function renderWebApp(services: WebServices, bootstrap: WebBootstrapResult): void {
+  const platform = createWebPlatform();
+  document.title = "ACode - Web + Server";
+  root.render(
+    <AppErrorBoundary>
+      <ACodeIntlProvider
+        settingService={services.settingService}
+        broadcastService={services.broadcastService}
+      >
+        <Root
+          services={services}
+          platform={platform}
+          initialWorkspaceAbsPath={bootstrap.initialWorkspaceAbsPath}
+          initialWorkspaceIdentity={bootstrap.initialWorkspaceIdentity}
+          initialTaskId={bootstrap.initialTaskId}
+          restoreSession={bootstrap.restoreSession}
+          allowOpenWorkspace={bootstrap.allowOpenWorkspace}
+          preferDirectoryBrowser
+          supportsEmbeddedBrowser={false}
+          allowRemoteWorkspace={false}
+        />
+      </ACodeIntlProvider>
+    </AppErrorBoundary>,
+  );
+}
+
 async function bootstrapWebApp() {
   const params = new URLSearchParams(window.location.search);
   if (isWebOAuthCallback(params)) {
@@ -346,37 +217,50 @@ async function bootstrapWebApp() {
     return;
   }
 
-  try {
-    const services = await connectViaWebSocket(bootstrap.wsUrl, {
-      onClose: () => {},
-    });
-    const platform = createWebPlatform();
-    document.title = "ACode - Web + Server";
+  // R2-05 修复：此前 `onClose: () => {}` 空实现——WS 断开后 Web 入口不重连、不提示，用户停在
+  // 死界面。现在 onClose 触发有上限的指数退避重连 + 断线态 overlay；重连成功用新 services 重挂
+  // Root，经既有 web-remote-replayable 快照/resume 路径恢复会话（services 侧语义已齐备，不改）。
+  let controller: WebReconnectController | null = null;
 
-    root.render(
-      <AppErrorBoundary>
-        <ACodeIntlProvider
-          settingService={services.settingService}
-          broadcastService={services.broadcastService}
-        >
-          <Root
-            services={services}
-            platform={platform}
-            initialWorkspaceAbsPath={bootstrap.initialWorkspaceAbsPath}
-            initialWorkspaceIdentity={bootstrap.initialWorkspaceIdentity}
-            initialTaskId={bootstrap.initialTaskId}
-            restoreSession={bootstrap.restoreSession}
-            allowOpenWorkspace={bootstrap.allowOpenWorkspace}
-            preferDirectoryBrowser
-            supportsEmbeddedBrowser={false}
-            allowRemoteWorkspace={false}
-          />
-        </ACodeIntlProvider>
-      </AppErrorBoundary>,
-    );
+  /** 建立一次 WS 连接；onClose 在「首次连接就绪后」才驱动重连（此时 controller 已存在）。 */
+  const establish = (): Promise<WebServices> =>
+    connectViaWebSocket(bootstrap.wsUrl, { onClose: () => controller?.start() });
+
+  // 首次连接：controller 尚未创建，onClose 是 no-op；就绪前失败 → reject → bootstrap 错误屏
+  // （保持既有首连失败语义，不进入重连循环）。
+  let services: WebServices;
+  try {
+    services = await establish();
   } catch (error) {
     renderWebBootstrapError(error);
+    return;
   }
+
+  /** 建立一个重连控制器（首次连接后、以及手动重试时各建一个；旧控制器先 cancel 再替换）。 */
+  const makeController = (): WebReconnectController =>
+    createWebReconnectController<WebServices>({
+      connect: establish,
+      onReconnected: (next) => renderWebApp(next, bootstrap),
+      onStateChange: (state: WebReconnectState) => {
+        if (state.phase === "reconnected") {
+          return; // 由 onReconnected 重挂 app，避免与 overlay 抢同一帧。
+        }
+        root.render(<WebDisconnectOverlay state={state} onRetry={retryNow} />);
+      },
+    });
+
+  /** 手动重试：取消当前循环、重置退避计数、立即重新发起（exhausted / 用户主动触发用）。 */
+  function retryNow(): void {
+    controller?.cancel();
+    controller = makeController();
+    controller.start();
+  }
+
+  controller = makeController();
+  renderWebApp(services, bootstrap);
+
+  // 页面卸载时取消重连循环、清理挂起 timer，防定时器泄漏（AGENTS.md 生命周期约束）。
+  window.addEventListener("pagehide", () => controller?.cancel(), { once: true });
 }
 
 void bootstrapWebApp();

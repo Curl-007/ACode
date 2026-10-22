@@ -83,6 +83,50 @@ jobs:
       - name: Tests (all packages)
         run: pnpm test
 
+  # Desktop 启动链路 smoke（docs/specs/ci-platform-matrix.md R2；根因 review 测试专项 R1-04）：
+  # e2e-smoke.mjs（CP1 进程存活 / CP2 CDP / CP3 首窗 / CP4 Host fork + 进程树/临时目录清理）此前
+  # 仅手工/Windows 本地跑，不进任何 workflow。这里作为**发布门禁**跑一次：构建 dev 态桌面 out/
+  # 后启动隔离 Electron，任一检查点失败 → 非零退出 → publish 不执行 → release 保持 draft。
+  #
+  # 选 windows-latest 而非 Linux：smoke 进程树清理用 taskkill /T /F（Windows 原生路径），历史验收
+  # 亦以 Windows isolated-profile 为准；Linux 需 xvfb-run 提供虚拟显示，可靠性未知，不采用。
+  # 不放 ci.yml：需 GUI + 完整桌面构建（agent bundle + tsup + vite，分钟级），进主门禁成本过高
+  # （spec R2 规则 10 的分工结论）。不设 continue-on-error：smoke 失败必须阻断发布。
+  # Node 钉 24.14.0（对齐 mise.toml）；不加 actions/cache（warm-cache 只生产 Linux 条目）。
+  desktop-smoke:
+    name: Desktop e2e smoke (Electron launch chain)
+    needs: verify
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.14.0
+
+      - name: Install dependencies
+        shell: bash
+        run: pnpm install --frozen-lockfile
+
+      # 完整类型门禁：packages 阶段的 tsc -b 产出工程引用声明，桌面 build 与 agent bundle 都消费它
+      # （与 build/desktop job 同因）。typecheck run 逐字 pnpm typecheck（cli-validation-gates 规则 5）。
+      - name: Typecheck all entries (builds project references)
+        shell: bash
+        run: pnpm typecheck
+
+      # 构建 dev 态桌面 out/：build = prepare:runtime-assets（含 prepare:agent-bundle，自建 acode.cjs）
+      # + tsup + vite。smoke 启动的 main 入口是 out/main/index.js，CP4 fork 的 Host 也来自 out/。
+      - name: Build desktop app
+        shell: bash
+        run: pnpm --filter @acode/desktop build
+
+      # smoke 失败经 process.exit(code) 传非零 → 本 step 红 → desktop-smoke 红 → publish 阻断。
+      - name: Electron e2e smoke
+        shell: bash
+        run: pnpm --filter @acode/desktop e2e:smoke
+
   release:
     needs: verify
     runs-on: ubuntu-latest
@@ -185,6 +229,7 @@ jobs:
 
             The absolute `/usr/bin/xattr` path avoids shadowing by other tools with the same name. You can also right-click (Control-click) the app in Finder -> Open -> Open.
           - **Windows (.exe)**: run `ACode-<VERSION>-win-x64.exe`. The installer is not signed by ACode, so SmartScreen shows a warning - a warning, not a system block; click **More info** -> **Run anyway**. This is expected, not a corrupted file.
+          - **Windows portable (.zip)**: extract `ACode-<VERSION>-win-x64.zip` and run `ACode.exe` inside - no installer, no registry/Start-Menu writes. Same unsigned SmartScreen note applies. Note: it is "install-free" (no installer run), not fully self-contained - user data still lives in `%APPDATA%\ACode` (shared with the installed build); override with `ACODE_DESKTOP_USER_DATA_DIR` if you want data to travel with the folder.
           - **Linux x64 (.AppImage)**: `chmod +x ACode-<VERSION>-linux-x86_64.AppImage && ./ACode-<VERSION>-linux-x86_64.AppImage`.
           - **Linux arm64 (.AppImage)**: `chmod +x ACode-<VERSION>-linux-arm64.AppImage && ./ACode-<VERSION>-linux-arm64.AppImage`.
           - **CLI (.tar.gz)**: requires Node.js 24. Extract and run:
@@ -219,6 +264,7 @@ jobs:
 
             使用 `/usr/bin/xattr` 绝对路径，避免 PATH 中同名工具干扰。也可以在“访达”里右键（Control-点击）应用 -> 打开 -> 弹窗里再点“打开”。
           - **Windows（.exe）**：运行 `ACode-<VERSION>-win-x64.exe`。没有 ACode 官方签名，SmartScreen 会显示警告——只是警告，不是系统拦截；点“**更多信息**” -> “**仍要运行**”。这是预期提示，不是文件损坏。
+          - **Windows 免安装版（.zip）**：解压 `ACode-<VERSION>-win-x64.zip`，运行里面的 `ACode.exe` 即可——不跑安装器、不写注册表/开始菜单。同样未签名，SmartScreen 提示同上。注意：这是“免安装”（不跑安装器），不是完全自带数据的绿色版——用户数据仍落在 `%APPDATA%\ACode`（与安装版共享）；如需数据随文件夹携带，用环境变量 `ACODE_DESKTOP_USER_DATA_DIR` 指定目录。
           - **Linux x64（.AppImage）**：`chmod +x ACode-<VERSION>-linux-x86_64.AppImage && ./ACode-<VERSION>-linux-x86_64.AppImage`。
           - **Linux arm64（.AppImage）**：`chmod +x ACode-<VERSION>-linux-arm64.AppImage && ./ACode-<VERSION>-linux-arm64.AppImage`。
           - **CLI（.tar.gz）**：需要 Node.js 24。解压后运行：
@@ -234,7 +280,7 @@ jobs:
 
           - macOS Apple Silicon: `ACode-<VERSION>-mac-arm64.dmg` / `.zip`
           - macOS Intel: `ACode-<VERSION>-mac-x64.dmg` / `.zip`
-          - Windows x64: `ACode-<VERSION>-win-x64.exe`
+          - Windows x64: `ACode-<VERSION>-win-x64.exe` (installer / 安装版) / `ACode-<VERSION>-win-x64.zip` (portable / 免安装版)
           - Linux x64: `ACode-<VERSION>-linux-x86_64.AppImage`
           - Linux arm64: `ACode-<VERSION>-linux-arm64.AppImage`
           - CLI: `acode-<VERSION>.tar.gz`
@@ -612,7 +658,7 @@ jobs:
           path: ${{ runner.temp }}/checksums/sha256-${{ matrix.leg }}.txt
           if-no-files-found: error
 
-      - name: Download, hash and size-check installer (Windows)
+      - name: Download, hash and size-check installer + portable zip (Windows)
         if: matrix.os == 'win'
         shell: bash
         env:
@@ -620,17 +666,39 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/assets" "$RUNNER_TEMP/checksums"
+          # 安装版（nsis .exe）+ 免安装版（.zip）两个产物都下载校验。
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
             --pattern "ACode-${VERSION}-win-${{ matrix.arch }}.exe" \
+            --pattern "ACode-${VERSION}-win-${{ matrix.arch }}.zip" \
             --dir "$RUNNER_TEMP/assets"
           cd "$RUNNER_TEMP/assets"
           ls -la
-          size="$(stat -c %s "ACode-${VERSION}-win-${{ matrix.arch }}.exe")"
-          # 大小下限：全量 Electron 安装包不可能小于 50MiB，防止截断/空文件被发布。
-          if [ "$size" -lt 52428800 ]; then echo "::error::installer too small: $size bytes"; exit 1; fi
-          echo "installer size: $size bytes"
-          sha256sum "ACode-${VERSION}-win-${{ matrix.arch }}.exe" > "$RUNNER_TEMP/checksums/sha256-${{ matrix.leg }}.txt"
+          # 大小下限：全量 Electron 产物不可能小于 50MiB，防止截断/空文件被发布。
+          for f in "ACode-${VERSION}-win-${{ matrix.arch }}.exe" "ACode-${VERSION}-win-${{ matrix.arch }}.zip"; do
+            size="$(stat -c %s "$f")"
+            if [ "$size" -lt 52428800 ]; then echo "::error::$f too small: $size bytes"; exit 1; fi
+            echo "$f size: $size bytes"
+          done
+          # 校验和清单含两个产物（publish 聚合成 ACode-<VERSION>-checksums.txt）。
+          sha256sum "ACode-${VERSION}-win-${{ matrix.arch }}.exe" "ACode-${VERSION}-win-${{ matrix.arch }}.zip" \
+            > "$RUNNER_TEMP/checksums/sha256-${{ matrix.leg }}.txt"
           cat "$RUNNER_TEMP/checksums/sha256-${{ matrix.leg }}.txt"
+
+      - name: Structure check portable zip (Windows)
+        if: matrix.os == 'win'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # 免安装版解压后应含主可执行文件与 resources/app.asar（证明 zip 非损坏、结构完整）。
+          # 解压到子目录，避免污染上层 assets 的 *.exe（签名校验只针对 nsis 安装包）。
+          $zip = "$env:RUNNER_TEMP\assets\ACode-${env:VERSION}-win-${{ matrix.arch }}.zip"
+          $dest = "$env:RUNNER_TEMP\assets\zip-extracted"
+          Expand-Archive -LiteralPath $zip -DestinationPath $dest -Force
+          $exe = Get-ChildItem -LiteralPath $dest -Filter '*.exe' -File | Select-Object -First 1
+          if (-not $exe) { Write-Host "::error::no .exe found in portable zip"; exit 1 }
+          $asar = Join-Path $dest 'resources\app.asar'
+          if (-not (Test-Path -LiteralPath $asar)) { Write-Host "::error::resources/app.asar missing in portable zip"; exit 1 }
+          Write-Host "portable zip OK: $($exe.Name) + resources/app.asar present"
 
       - name: Verify Authenticode signature (Windows, signing enabled)
         if: matrix.os == 'win' && env.WIN_SIGNING == 'true'
@@ -700,8 +768,11 @@ jobs:
   # 出现在 Releases 与官网下载页。keep_draft=true（上游审计自动构建的测试版）：
   # 即使全部成功也保持 draft，不公开、不进入自动更新。
   publish:
-    needs: [release, build, desktop, verify_assets]
-    if: ${{ always() && inputs.keep_draft != true && needs.release.result == 'success' && (needs.build.result == 'success' || needs.build.result == 'skipped') && (needs.desktop.result == 'success' || needs.desktop.result == 'skipped') && (needs.verify_assets.result == 'success' || needs.verify_assets.result == 'skipped') }}
+    needs: [release, build, desktop, verify_assets, desktop-smoke]
+    # desktop-smoke 是追加的发布级闸门（spec ci-platform-matrix R2 规则 9）：Electron 启动链路
+    # smoke 必须 success 才公开 release，否则保持 draft。fail-closed：不给 skipped 兜底，
+    # smoke 未成功（失败/取消）一律不发布。
+    if: ${{ always() && inputs.keep_draft != true && needs.release.result == 'success' && needs.desktop-smoke.result == 'success' && (needs.build.result == 'success' || needs.build.result == 'skipped') && (needs.desktop.result == 'success' || needs.desktop.result == 'skipped') && (needs.verify_assets.result == 'success' || needs.verify_assets.result == 'skipped') }}
     runs-on: ubuntu-latest
     steps:
       - name: Download per-leg checksum lists

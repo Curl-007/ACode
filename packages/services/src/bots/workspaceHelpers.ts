@@ -1,11 +1,17 @@
 import {
   ALL_BOT_WORKSPACES,
+  resolveWorkspaceKey,
   type BotConfig,
   type BotWorkspaceRef,
 } from "@acode/shared";
 
+/**
+ * workspace 级身份键：薄封装复用 shared 的 resolveWorkspaceKey（唯一权威实现）。
+ * 修复原因（review R3 EI-2）：此前内联「trim identity，空则回退 path」，
+ * 与 shared 实现语义重复，任一处漏 trim/改判空即静默分叉。
+ */
 export function getWorkspaceKey(workspacePath: string, workspaceIdentity?: string): string {
-  return workspaceIdentity?.trim() || workspacePath;
+  return resolveWorkspaceKey({ workspacePath, workspaceIdentity });
 }
 
 export function getWorkspaceLabel(workspacePath: string): string {

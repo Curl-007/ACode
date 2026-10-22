@@ -34,9 +34,9 @@ import { useBaseWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
 import { selectWorkspaceACodeState, useACodeSessionStore } from "@/store/acodeSessionStore.js";
 import { useRemoteWorkspaceSessionStore } from "@/store/remoteWorkspaceSessionStore.js";
 import { buildWorkspaceServiceLookup } from "@/lib/workspaceServiceResolver.js";
-import { applyTaskQueryCacheMutation } from "@/store/taskQueryCacheStore.js";
-import { useRemotePinnedTaskStore } from "@/store/remotePinnedTaskStore.js";
-import { useRemoteTimelineTaskStore } from "@/store/remoteTimelineTaskStore.js";
+// R2-06: task meta 四副本写入收进 writeTaskMetaToCaches 单一事务，组件不再直调
+// applyTaskQueryCacheMutation 或自己拼 optimistic/remote 多 store 写入。
+import { writeTaskMetaToCaches } from "@/lib/taskListMetaSync.js";
 import { bumpTaskListMembershipVersion } from "@/v4/taskListMembershipVersion.js";
 import { GroupItem, GroupedTaskItem } from "@/workspace-grouped-tasks/items.js";
 import { GroupDragOverlay } from "@/workspace-grouped-tasks/group-drag-overlay.js";
@@ -576,10 +576,8 @@ export function WorkspaceGroupedTasksSection({
     () => buildWorkspaceServiceLookup(workspaceTabs, baseServices, serviceResolverState),
     [baseServices, serviceResolverState, workspaceTabs],
   );
-  const removeTaskState = useACodeSessionStore((state) => state.removeTaskState);
-  const upsertOptimisticTaskListItem = useACodeSessionStore(
-    (state) => state.upsertOptimisticTaskListItem,
-  );
+  // R2-06: removeTaskState / upsertOptimisticTaskListItem 的副本写入已收进
+  // writeTaskMetaToCaches 事务，组件不再单独取这些 selector。
   const setTaskUnreadIndicator = useACodeSessionStore((state) => state.setTaskUnreadIndicator);
   const groupedDraftTask = useACodeSessionStore(
     (state) =>
@@ -1014,12 +1012,16 @@ export function WorkspaceGroupedTasksSection({
       }
 
       setView((currentView) => replaceTaskInGroupedView(currentView, meta));
-      upsertOptimisticTaskListItem(task.workspacePath, meta, task.workspaceIdentity);
-      applyTaskQueryCacheMutation({
+      // R2-06: grouped 是本地聚合视图，rename 只写 optimistic 池 + query cache（无远端副本变更）。
+      writeTaskMetaToCaches({
+        workspacePath: task.workspacePath,
+        workspaceIdentity: task.workspaceIdentity,
+        taskId: task.taskId,
         previousTask: task,
         nextTask: meta,
         previousState: { pinned: false, archived: false },
         nextState: { pinned: false, archived: false },
+        optimistic: "upsert",
       });
       handleCancelRenameTask();
     } catch {
@@ -1031,7 +1033,6 @@ export function WorkspaceGroupedTasksSection({
     renameDraft,
     renamingTaskKey,
     setView,
-    upsertOptimisticTaskListItem,
     view,
     workspaceServiceLookup,
   ]);
@@ -1053,21 +1054,26 @@ export function WorkspaceGroupedTasksSection({
           ...(task.workspaceIdentity ? { workspaceIdentity: task.workspaceIdentity } : {}),
         })
         .then((meta) => {
+          // unread 覆盖态是独立 overlay，不属于 task meta 四副本，仍直调 setTaskUnreadIndicator。
           setTaskUnreadIndicator(task.workspacePath, task.taskId, true, task.workspaceIdentity);
           setView((currentView) => replaceTaskInGroupedView(currentView, meta));
-          upsertOptimisticTaskListItem(task.workspacePath, meta, task.workspaceIdentity);
-          applyTaskQueryCacheMutation({
+          // R2-06: grouped 本地视图，unread 只写 optimistic 池 + query cache（无远端副本变更）。
+          writeTaskMetaToCaches({
+            workspacePath: task.workspacePath,
+            workspaceIdentity: task.workspaceIdentity,
+            taskId: task.taskId,
             previousTask: task,
             nextTask: meta,
             previousState: { pinned: false, archived: false },
             nextState: { pinned: false, archived: false },
+            optimistic: "upsert",
           });
         })
         .catch(() => {
           toast(intl.formatMessage({ id: "taskList.markAsUnreadFailed" }));
         });
     },
-    [intl, setTaskUnreadIndicator, setView, upsertOptimisticTaskListItem, workspaceServiceLookup],
+    [intl, setTaskUnreadIndicator, setView, workspaceServiceLookup],
   );
 
   const handleCloseTask = useCallback(
@@ -1097,20 +1103,18 @@ export function WorkspaceGroupedTasksSection({
           // grouped 的后台 refresh 可能携带归档前的 membership，直接覆盖乐观删除。
           // 归档成功后主动换代 membership；渲染层在权威列表确认消失前继续屏蔽该 task。
           bumpTaskListMembershipVersion();
-          removeTaskState(task.workspacePath, task.taskId, task.workspaceIdentity);
-          if (task.workspaceIdentity) {
-            useRemoteTimelineTaskStore
-              .getState()
-              .removeTask(task.workspacePath, task.taskId, task.workspaceIdentity);
-            useRemotePinnedTaskStore
-              .getState()
-              .removeTask(task.workspacePath, task.taskId, task.workspaceIdentity);
-          }
-          applyTaskQueryCacheMutation({
+          // R2-06: 归档终态——清 task 运行态 + 远端 timeline/pinned 双副本移除 + query cache archived:true。
+          writeTaskMetaToCaches({
+            workspacePath: task.workspacePath,
+            workspaceIdentity: task.workspaceIdentity,
+            taskId: task.taskId,
             previousTask: task,
             nextTask: meta,
             previousState: { pinned: false, archived: false },
             nextState: { pinned: false, archived: true },
+            clearTaskState: true,
+            remoteTimeline: "remove",
+            remotePinned: "remove",
           });
         })
         .catch(() => {
@@ -1125,7 +1129,7 @@ export function WorkspaceGroupedTasksSection({
           toast(intl.formatMessage({ id: "taskList.archiveFailed" }));
         });
     },
-    [intl, removeTaskState, workspaceServiceLookup],
+    [intl, workspaceServiceLookup],
   );
 
   const handleRenameGroup = useCallback(

@@ -4,7 +4,10 @@ import { chmod, cp, lstat, readdir } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { basename, join, win32 } from "node:path";
 import { homedir } from "node:os";
-import { DATA_BASE_DIR_FORBIDDEN_WINDOWS_INSTALL_DIR_ERROR_CODE } from "@acode/shared";
+import {
+  DATA_BASE_DIR_FORBIDDEN_WINDOWS_INSTALL_DIR_ERROR_CODE,
+  resolveWorkspaceKey,
+} from "@acode/shared";
 import { ACODE_DATA_ROOT_DIR_NAME } from "./data-root/types.js";
 
 let _dataBaseDir: string | null = null;
@@ -188,9 +191,13 @@ export function getTasksIndexDatabasePath(): string {
   return join(getAppConfigDir(), "tasks-index.sqlite");
 }
 
-/** workspace 级身份键：远程优先使用 workspaceIdentity，本地回退 workspacePath。 */
+/**
+ * workspace 级身份键：远程优先使用 workspaceIdentity，本地回退 workspacePath。
+ * 修复原因（review R3 EI-2 身份 key 重复实现）：此前内联手写「trim identity，空则回退 path」，
+ * 与 shared 的 resolveWorkspaceKey（唯一权威实现）语义重复。改为薄封装复用，避免漏 trim/改判空静默分叉。
+ */
 function getWorkspaceKey(workspacePath: string, workspaceIdentity?: string): string {
-  return workspaceIdentity?.trim() || workspacePath;
+  return resolveWorkspaceKey({ workspacePath, workspaceIdentity });
 }
 
 /** 与 ACode session 持久化一致：使用 workspaceKey 的 SHA-256 前 12 位 */

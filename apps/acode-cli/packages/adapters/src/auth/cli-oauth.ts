@@ -191,7 +191,13 @@ function parseInitData(value: unknown): CliOAuthInitData {
     throw new CliOAuthError("Invalid OAuth init response data");
   }
   try {
-    if (new URL(readString(data.authorize_url)!).protocol !== "https:") throw new Error();
+    const authorizeUrl = readString(data.authorize_url)!;
+    if (new URL(authorizeUrl).protocol !== "https:") throw new Error();
+    // 纵深防御（R2-01，配合 browser.ts 的 explorer.exe 主修）：cmd.exe 按 `"` 切换引号态，
+    // 含裸双引号的 authorize_url 是命令注入的唯一逃逸入口。合法 https URL 的双引号应已
+    // percent-encode 为 %22；出现裸 `"` 视为畸形/攻击形态，fail-closed 拒绝。即使下游 opener
+    // 形态将来被误改回 shell，此断言也能在校验层挡下注入。
+    if (authorizeUrl.includes('"')) throw new Error();
   } catch {
     throw new CliOAuthError("Invalid OAuth authorization URL");
   }

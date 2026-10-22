@@ -9,6 +9,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu.js";
+import { Button } from "@/components/ui/button.js";
 import {
   AutomationContinueIcon,
   AutomationMoreHorizontalIcon,
@@ -32,14 +33,16 @@ export function OffPeakEditActionsMenu({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <button
+        <Button
           type="button"
+          variant="outline"
+          size="icon-lg"
           data-testid={TID_OFFPEAK_CARD_MENU}
           aria-label={intl.formatMessage({ id: "automations.moreActions" })}
-          className="flex size-8 items-center justify-center rounded-lg border-0 bg-white/[0.06] text-foreground-subtle shadow-none outline-none transition-colors hover:bg-white/10 hover:text-foreground data-[state=open]:bg-white/10 data-[state=open]:text-foreground focus-visible:ring-0"
+          className="text-foreground-subtle hover:text-foreground data-[state=open]:bg-hover data-[state=open]:text-foreground"
         >
           <AutomationMoreHorizontalIcon className="size-4" aria-hidden="true" />
-        </button>
+        </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent
         align="start"

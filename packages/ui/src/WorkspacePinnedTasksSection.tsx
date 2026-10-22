@@ -15,10 +15,11 @@ import { MemoTaskItem, TaskListItemContextMenuContent } from "@/TaskListItem.js"
 import { TaskRenameDialog } from "@/TaskRenameDialog.js";
 import { useACodeSessionStore } from "@/store/acodeSessionStore.js";
 import type { WorkspaceTabState } from "@/store/tabStore.js";
-import { applyTaskQueryCacheMutation } from "@/store/taskQueryCacheStore.js";
 import { TaskListRemoteSyncHint } from "@/TaskListRemoteSyncHint.js";
 import { useRemotePinnedTaskStore } from "@/store/remotePinnedTaskStore.js";
-import { useRemoteTimelineTaskStore } from "@/store/remoteTimelineTaskStore.js";
+// R2-06: task meta 四副本写入收进 writeTaskMetaToCaches 单一事务，组件不再直调
+// applyTaskQueryCacheMutation 或自己拼 optimistic/remote 多 store 写入。
+import { writeTaskMetaToCaches } from "@/lib/taskListMetaSync.js";
 import {
   getRemoteWorkspaceServicesForIdentity,
   useRemoteWorkspaceSessionStore,
@@ -78,13 +79,8 @@ export function WorkspacePinnedTasksSection({
   const remoteSessionIdByWorkspaceIdentity = useRemoteWorkspaceSessionStore(
     (state) => state.sessionIdByWorkspaceIdentity,
   );
-  const removeTaskState = useACodeSessionStore((state) => state.removeTaskState);
-  const upsertOptimisticTaskListItem = useACodeSessionStore(
-    (state) => state.upsertOptimisticTaskListItem,
-  );
-  const removeOptimisticTaskListItem = useACodeSessionStore(
-    (state) => state.removeOptimisticTaskListItem,
-  );
+  // R2-06: removeTaskState / upsertOptimisticTaskListItem / removeOptimisticTaskListItem
+  // 的副本写入已收进 writeTaskMetaToCaches 事务，组件不再单独取这些 selector。
   const setTaskUnreadIndicator = useACodeSessionStore((state) => state.setTaskUnreadIndicator);
   const [pendingArchiveItemKey, setPendingArchiveItemKey] = useState<string | null>(null);
   const [renamingItemKey, setRenamingItemKey] = useState<string | null>(null);
@@ -97,18 +93,12 @@ export function WorkspacePinnedTasksSection({
   const taskSortByRef = useRef(taskSortBy);
   const intlRef = useRef(intl);
   const onSelectTaskRef = useRef(onSelectTask);
-  const removeTaskStateRef = useRef(removeTaskState);
-  const upsertOptimisticTaskListItemRef = useRef(upsertOptimisticTaskListItem);
-  const removeOptimisticTaskListItemRef = useRef(removeOptimisticTaskListItem);
   const setTaskUnreadIndicatorRef = useRef(setTaskUnreadIndicator);
   const taskItemHandlersByKeyRef = useRef(new Map<string, PinnedTaskItemHandlers>());
   pendingArchiveItemKeyRef.current = pendingArchiveItemKey;
   taskSortByRef.current = taskSortBy;
   intlRef.current = intl;
   onSelectTaskRef.current = onSelectTask;
-  removeTaskStateRef.current = removeTaskState;
-  upsertOptimisticTaskListItemRef.current = upsertOptimisticTaskListItem;
-  removeOptimisticTaskListItemRef.current = removeOptimisticTaskListItem;
   setTaskUnreadIndicatorRef.current = setTaskUnreadIndicator;
   const { items: localItems } = useGlobalTaskList({
     kind: "pinned",
@@ -223,20 +213,18 @@ export function WorkspacePinnedTasksSection({
           ...(item.workspaceIdentity ? { workspaceIdentity: item.workspaceIdentity } : {}),
         })
         .then((meta) => {
-          removeTaskStateRef.current(item.workspacePath, item.taskId, item.workspaceIdentity);
-          if (item.workspaceIdentity) {
-            useRemotePinnedTaskStore
-              .getState()
-              .removeTask(item.workspacePath, item.taskId, item.workspaceIdentity);
-            useRemoteTimelineTaskStore
-              .getState()
-              .removeTask(item.workspacePath, item.taskId, item.workspaceIdentity);
-          }
-          applyTaskQueryCacheMutation({
+          // R2-06: 归档终态——清 task 运行态 + 远端 pinned/timeline 双副本移除 + query cache pinned:false/archived:true。
+          writeTaskMetaToCaches({
+            workspacePath: item.workspacePath,
+            workspaceIdentity: item.workspaceIdentity,
+            taskId: item.taskId,
             previousTask: item,
             nextTask: meta,
             previousState: { pinned: true, archived: false },
             nextState: { pinned: false, archived: true },
+            clearTaskState: true,
+            remotePinned: "remove",
+            remoteTimeline: "remove",
           });
         });
     },
@@ -270,19 +258,18 @@ export function WorkspacePinnedTasksSection({
       const { item, services } = current;
       // unpin 以前等 RPC 返回后才把任务移出 pinned 区，重查期间会出现列表闪烁。
       // 这里先乐观移动，RPC 失败再把任务恢复为 pinned。
-      if (item.workspaceIdentity) {
-        useRemotePinnedTaskStore
-          .getState()
-          .removeTask(item.workspacePath, item.taskId, item.workspaceIdentity);
-        if (!pinned) {
-          useRemoteTimelineTaskStore.getState().upsertTask(item, taskSortByRef.current);
-        }
-      }
-      applyTaskQueryCacheMutation({
+      // R2-06: 乐观阶段——pinned 项本在 pinned 区，先移出 pinned；unpin 时补入 timeline。
+      writeTaskMetaToCaches({
+        workspacePath: item.workspacePath,
+        workspaceIdentity: item.workspaceIdentity,
+        taskId: item.taskId,
         previousTask: item,
         nextTask: item,
         previousState: { pinned: true, archived: false },
         nextState: { pinned, archived: false },
+        remotePinned: "remove",
+        remoteTimeline: pinned ? "none" : "upsert",
+        remoteTimelineSortBy: taskSortByRef.current,
       });
       void services.acodeTaskService
         .setTaskPinned({
@@ -292,39 +279,33 @@ export function WorkspacePinnedTasksSection({
           pinned,
         })
         .then((meta) => {
-          removeOptimisticTaskListItemRef.current(
-            item.workspacePath,
-            item.taskId,
-            item.workspaceIdentity,
-          );
-          if (item.workspaceIdentity && pinned) {
-            useRemotePinnedTaskStore.getState().upsertTask(meta);
-            useRemoteTimelineTaskStore
-              .getState()
-              .removeTask(item.workspacePath, item.taskId, item.workspaceIdentity);
-          }
-          if (item.workspaceIdentity && !pinned) {
-            useRemoteTimelineTaskStore.getState().upsertTask(meta, taskSortByRef.current);
-          }
-          applyTaskQueryCacheMutation({
+          // R2-06: 提交阶段——清 optimistic 池；pinned 时回 pinned 区并移出 timeline，unpin 时补入 timeline。
+          writeTaskMetaToCaches({
+            workspacePath: item.workspacePath,
+            workspaceIdentity: item.workspaceIdentity,
+            taskId: item.taskId,
             previousTask: item,
             nextTask: meta,
             previousState: { pinned, archived: false },
             nextState: { pinned, archived: false },
+            optimistic: "remove",
+            remotePinned: pinned ? "upsert" : "none",
+            remoteTimeline: pinned ? "remove" : "upsert",
+            remoteTimelineSortBy: taskSortByRef.current,
           });
         })
         .catch(() => {
-          if (item.workspaceIdentity) {
-            useRemotePinnedTaskStore.getState().upsertTask(item);
-            useRemoteTimelineTaskStore
-              .getState()
-              .removeTask(item.workspacePath, item.taskId, item.workspaceIdentity);
-          }
-          applyTaskQueryCacheMutation({
+          // R2-06: 回滚阶段——恢复到 pinned 区，从 timeline 移除，query cache 回到 pinned:true。
+          writeTaskMetaToCaches({
+            workspacePath: item.workspacePath,
+            workspaceIdentity: item.workspaceIdentity,
+            taskId: item.taskId,
             previousTask: item,
             nextTask: item,
             previousState: { pinned, archived: false },
             nextState: { pinned: true, archived: false },
+            remotePinned: "upsert",
+            remoteTimeline: "remove",
           });
           toast(intlRef.current.formatMessage({ id: "taskList.pinFailed" }));
         });
@@ -351,21 +332,24 @@ export function WorkspacePinnedTasksSection({
           unread: true,
         })
         .then((meta) => {
+          // unread 覆盖态是独立 overlay，不属于 task meta 四副本，仍直调 setTaskUnreadIndicator。
           setTaskUnreadIndicatorRef.current(
             item.workspacePath,
             item.taskId,
             true,
             item.workspaceIdentity,
           );
-          upsertOptimisticTaskListItemRef.current(item.workspacePath, meta, item.workspaceIdentity);
-          if (item.workspaceIdentity) {
-            useRemotePinnedTaskStore.getState().upsertTask(meta);
-          }
-          applyTaskQueryCacheMutation({
+          // R2-06: unread 一次写 optimistic 池 + 远端 pinned（远端时）+ query cache。
+          writeTaskMetaToCaches({
+            workspacePath: item.workspacePath,
+            workspaceIdentity: item.workspaceIdentity,
+            taskId: item.taskId,
             previousTask: item,
             nextTask: meta,
             previousState: { pinned: true, archived: false },
             nextState: { pinned: true, archived: false },
+            optimistic: "upsert",
+            remotePinned: "upsert",
           });
         });
     },
@@ -505,15 +489,17 @@ export function WorkspacePinnedTasksSection({
                 title: renameDraft.trim(),
               })
               .then((meta) => {
-                upsertOptimisticTaskListItem(item.workspacePath, meta, item.workspaceIdentity);
-                if (item.workspaceIdentity) {
-                  useRemotePinnedTaskStore.getState().upsertTask(meta);
-                }
-                applyTaskQueryCacheMutation({
+                // R2-06: rename 一次写 optimistic 池 + 远端 pinned（远端时）+ query cache。
+                writeTaskMetaToCaches({
+                  workspacePath: item.workspacePath,
+                  workspaceIdentity: item.workspaceIdentity,
+                  taskId: item.taskId,
                   previousTask: item,
                   nextTask: meta,
                   previousState: { pinned: true, archived: false },
                   nextState: { pinned: true, archived: false },
+                  optimistic: "upsert",
+                  remotePinned: "upsert",
                 });
                 handleCancelRenameTask();
               })
@@ -588,23 +574,18 @@ export function WorkspacePinnedTasksSection({
             isPinned
             intl={intl}
             onTogglePinTask={(_taskId, pinned) => {
-              if (contextMenuItem.workspaceIdentity) {
-                useRemotePinnedTaskStore
-                  .getState()
-                  .removeTask(
-                    contextMenuItem.workspacePath,
-                    contextMenuItem.taskId,
-                    contextMenuItem.workspaceIdentity,
-                  );
-                if (!pinned) {
-                  useRemoteTimelineTaskStore.getState().upsertTask(contextMenuItem, taskSortBy);
-                }
-              }
-              applyTaskQueryCacheMutation({
+              // R2-06: 乐观阶段——pinned 项先移出 pinned；unpin 时补入 timeline。
+              writeTaskMetaToCaches({
+                workspacePath: contextMenuItem.workspacePath,
+                workspaceIdentity: contextMenuItem.workspaceIdentity,
+                taskId: contextMenuItem.taskId,
                 previousTask: contextMenuItem,
                 nextTask: contextMenuItem,
                 previousState: { pinned: true, archived: false },
                 nextState: { pinned, archived: false },
+                remotePinned: "remove",
+                remoteTimeline: pinned ? "none" : "upsert",
+                remoteTimelineSortBy: taskSortBy,
               });
               void contextMenuServices.acodeTaskService
                 .setTaskPinned({
@@ -616,47 +597,33 @@ export function WorkspacePinnedTasksSection({
                   pinned,
                 })
                 .then((meta) => {
-                  removeOptimisticTaskListItem(
-                    contextMenuItem.workspacePath,
-                    contextMenuItem.taskId,
-                    contextMenuItem.workspaceIdentity,
-                  );
-                  if (contextMenuItem.workspaceIdentity && pinned) {
-                    useRemotePinnedTaskStore.getState().upsertTask(meta);
-                    useRemoteTimelineTaskStore
-                      .getState()
-                      .removeTask(
-                        contextMenuItem.workspacePath,
-                        contextMenuItem.taskId,
-                        contextMenuItem.workspaceIdentity,
-                      );
-                  }
-                  if (contextMenuItem.workspaceIdentity && !pinned) {
-                    useRemoteTimelineTaskStore.getState().upsertTask(meta, taskSortBy);
-                  }
-                  applyTaskQueryCacheMutation({
+                  // R2-06: 提交阶段——清 optimistic 池；pinned 时回 pinned 区并移出 timeline，unpin 时补入 timeline。
+                  writeTaskMetaToCaches({
+                    workspacePath: contextMenuItem.workspacePath,
+                    workspaceIdentity: contextMenuItem.workspaceIdentity,
+                    taskId: contextMenuItem.taskId,
                     previousTask: contextMenuItem,
                     nextTask: meta,
                     previousState: { pinned, archived: false },
                     nextState: { pinned, archived: false },
+                    optimistic: "remove",
+                    remotePinned: pinned ? "upsert" : "none",
+                    remoteTimeline: pinned ? "remove" : "upsert",
+                    remoteTimelineSortBy: taskSortBy,
                   });
                 })
                 .catch(() => {
-                  if (contextMenuItem.workspaceIdentity) {
-                    useRemotePinnedTaskStore.getState().upsertTask(contextMenuItem);
-                    useRemoteTimelineTaskStore
-                      .getState()
-                      .removeTask(
-                        contextMenuItem.workspacePath,
-                        contextMenuItem.taskId,
-                        contextMenuItem.workspaceIdentity,
-                      );
-                  }
-                  applyTaskQueryCacheMutation({
+                  // R2-06: 回滚阶段——恢复到 pinned 区，从 timeline 移除，query cache 回到 pinned:true。
+                  writeTaskMetaToCaches({
+                    workspacePath: contextMenuItem.workspacePath,
+                    workspaceIdentity: contextMenuItem.workspaceIdentity,
+                    taskId: contextMenuItem.taskId,
                     previousTask: contextMenuItem,
                     nextTask: contextMenuItem,
                     previousState: { pinned, archived: false },
                     nextState: { pinned: true, archived: false },
+                    remotePinned: "upsert",
+                    remoteTimeline: "remove",
                   });
                   toast(intl.formatMessage({ id: "taskList.pinFailed" }));
                 });
@@ -676,32 +643,18 @@ export function WorkspacePinnedTasksSection({
                     : {}),
                 })
                 .then((meta) => {
-                  removeTaskState(
-                    contextMenuItem.workspacePath,
-                    contextMenuItem.taskId,
-                    contextMenuItem.workspaceIdentity,
-                  );
-                  if (contextMenuItem.workspaceIdentity) {
-                    useRemotePinnedTaskStore
-                      .getState()
-                      .removeTask(
-                        contextMenuItem.workspacePath,
-                        contextMenuItem.taskId,
-                        contextMenuItem.workspaceIdentity,
-                      );
-                    useRemoteTimelineTaskStore
-                      .getState()
-                      .removeTask(
-                        contextMenuItem.workspacePath,
-                        contextMenuItem.taskId,
-                        contextMenuItem.workspaceIdentity,
-                      );
-                  }
-                  applyTaskQueryCacheMutation({
+                  // R2-06: 归档终态——清 task 运行态 + 远端 pinned/timeline 双副本移除 + query cache pinned:false/archived:true。
+                  writeTaskMetaToCaches({
+                    workspacePath: contextMenuItem.workspacePath,
+                    workspaceIdentity: contextMenuItem.workspaceIdentity,
+                    taskId: contextMenuItem.taskId,
                     previousTask: contextMenuItem,
                     nextTask: meta,
                     previousState: { pinned: true, archived: false },
                     nextState: { pinned: false, archived: true },
+                    clearTaskState: true,
+                    remotePinned: "remove",
+                    remoteTimeline: "remove",
                   });
                 });
             }}
@@ -716,25 +669,24 @@ export function WorkspacePinnedTasksSection({
                   unread: true,
                 })
                 .then((meta) => {
+                  // unread 覆盖态是独立 overlay，不属于 task meta 四副本，仍直调 setTaskUnreadIndicator。
                   setTaskUnreadIndicator(
                     contextMenuItem.workspacePath,
                     contextMenuItem.taskId,
                     true,
                     contextMenuItem.workspaceIdentity,
                   );
-                  upsertOptimisticTaskListItem(
-                    contextMenuItem.workspacePath,
-                    meta,
-                    contextMenuItem.workspaceIdentity,
-                  );
-                  if (contextMenuItem.workspaceIdentity) {
-                    useRemotePinnedTaskStore.getState().upsertTask(meta);
-                  }
-                  applyTaskQueryCacheMutation({
+                  // R2-06: unread 一次写 optimistic 池 + 远端 pinned（远端时）+ query cache。
+                  writeTaskMetaToCaches({
+                    workspacePath: contextMenuItem.workspacePath,
+                    workspaceIdentity: contextMenuItem.workspaceIdentity,
+                    taskId: contextMenuItem.taskId,
                     previousTask: contextMenuItem,
                     nextTask: meta,
                     previousState: { pinned: true, archived: false },
                     nextState: { pinned: true, archived: false },
+                    optimistic: "upsert",
+                    remotePinned: "upsert",
                   });
                 });
             }}

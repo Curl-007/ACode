@@ -4,7 +4,7 @@
 // 由 readCliConfigFile()（真实 HOME）推导，list() 全链无法注入，数据源层语义以此覆盖
 // （诚实登记：未走 list() 端到端；接线由 S1-S4 + typecheck 覆盖）。
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
@@ -60,7 +60,12 @@ describe("skillsService bundled scope（S1-S4）", () => {
   });
 
   async function setupFixture(): Promise<void> {
-    tmpRoot = await mkdtemp(join(tmpdir(), "acode-skills-bundled-"));
+    // Windows 8.3 短名归一（windows-verify 首跑暴露的既有脆弱性，非行为改动）：
+    // CI runner 的 %TEMP% 含短名段（C:\Users\RUNNER~1\...），而 skillsService 返回的
+    // skill.path 是 realpath 归一后的长名（skillsService.ts:882 canonicalSkillPath），
+    // 未归一的 fixture 根会让 S1 的 startsWith(bundledRoot) 短名≠长名失配。
+    // 与 subagent-worktree-isolation.test.mjs:46 同款防御（realpath 展开短名再 mkdtemp）。
+    tmpRoot = await mkdtemp(join(await realpath(tmpdir()), "acode-skills-bundled-"));
     cleanup.push(async () => rm(tmpRoot, { recursive: true, force: true }));
     bundledRoot = join(tmpRoot, "bundled-skills");
     workspacePath = join(tmpRoot, "workspace");

@@ -182,6 +182,16 @@ export const resumeWorkflowRunToolEntry: ToolEntry = {
     // CreateWorkflow 同档，只读声明不成立。
     readOnly: false,
     destructive: false,
+    // concurrentSafe:true 表示 **executor 可并发派发**本工具；并发单飞的裁决不在工具面，
+    // 而在 service 级 `resumeAdmissions`（cli-workflow/dynamic-workflow-run-submit.ts:408-411）：
+    // reservation 在任何 await 前同步 has/add，同一 service 实例内两次并发 resume 同 runId
+    // 只有一个通过、第二个回 already_running（DWF-03）。
+    // 核实结论（2026-10-22 review CLI P3）：本 handler 是纯 passthrough——只做
+    // 「取 dynamicWorkflowRunPort → await port.resume(run_id) → 投影结果」，无本地注册表/
+    // 无第二裁决路径；`port.resume` 的唯一实现是 resumeDynamicWorkflowRun
+    // （dynamic-workflow-run-service.ts:292），resumeAdmissions 是 service 级单例 Set
+    // （:164，非 per-call）。service reservation 因此是**唯一权威**，无绕过路径，
+    // 故保留 true 且不需要改 false 做纵深——防线单点但该点是同步且权威的。
     concurrentSafe: true,
     timeoutMs: RESUME_WORKFLOW_RUN_TIMEOUT_MS,
     maxOutputBytes: RESUME_WORKFLOW_RUN_MODEL_BYTES,

@@ -1394,3 +1394,313 @@ test("static: both servers share token adjudication and credential guard (20)", 
   assert.match(coreHttp, /configuredToken:\s*authToken/);
   assert.match(coreHttp, /presentedToken:\s*readPresentedServerToken\(/);
 });
+
+// ── R2 review 修复（server-web-provider.md）：错误脱敏 / decode 兜底 / 待认领 TTL / 鉴权补测 ──
+
+/**
+ * http.ts 的标准 stub 依赖表（与 loadServerHttp 同源），允许按测试覆盖单个模块。
+ * 默认 schema 恒 fail、remote 恒 throw；需要「过 body 校验」的测试自行覆盖这两项。
+ */
+function httpImports(overrides = {}) {
+  return {
+    "node:crypto": nodeCrypto,
+    "node:fs/promises": nodeFsPromises,
+    "node:path": nodePath,
+    "node:os": nodeOs,
+    hono,
+    "@hono/node-server": nodeServer,
+    "@hono/node-ws": nodeWs,
+    "@acode/rpc": rpcStub,
+    "@acode/services": servicesStub,
+    "@acode/shared": sharedStub,
+    "@acode/shared/node": { ...serverAuth, ...hostCapability, ...credentialAccess },
+    "./remote/index.js": remoteStub,
+    ...overrides,
+  };
+}
+
+/** 让 remoteTargetSchema 放行、connectRemote 成功的 stub（待认领/错误脱敏测试共用）。 */
+const schemaPassShared = {
+  ...sharedStub,
+  remoteTargetSchema: { safeParse: (data) => ({ success: true, data }) },
+};
+
+/**
+ * 启动 http server 并**有界轮询**等待真正 bind（address().port > 0）。
+ * 刻意不复用 startHttp 的固定 sleep(120)：新测试按 review 要求不引入墙钟时序依赖。
+ */
+async function startHttpReady(createHttpServer, options) {
+  const services = new ServiceCollection();
+  const server = createHttpServer(services, 0, { host: "127.0.0.1", ...options });
+  await waitFor(() => {
+    const address = server.address();
+    return typeof address === "object" && address !== null && address.port > 0;
+  }, 3000);
+  const port = server.address().port;
+  return {
+    server,
+    port,
+    close: () => closeWithTimeout(() => new Promise((resolve) => server.close(() => resolve()))),
+  };
+}
+
+test("server: /api/connect-remote 500 returns classified code, never leaks internal detail (R2-04)", async () => {
+  // 修复前 catch 把 err.message 原样进响应体；SSH/WSL/Docker spawn 失败的 message 含
+  // 主机名/绝对路径/命令。构造一条这样的失败，断言响应体只回归类码、原文只进 warn。
+  const SECRET_HOST = "prod-db.internal.corp";
+  const SECRET_PATH = "/home/deploy/.ssh/id_rsa";
+  const SECRET_CMD = "ssh deploy@prod-db.internal.corp";
+  const leakMessage = `spawn ${SECRET_CMD} ENOENT: failed to read ${SECRET_PATH} on ${SECRET_HOST}`;
+  const remoteFailStub = {
+    createRemoteBackend: async () => ({ kind: "ssh" }),
+    connectRemote: async () => {
+      throw new Error(leakMessage);
+    },
+  };
+  const { createHttpServer } = await load(
+    "packages/server/src/http.ts",
+    httpImports({
+      "@acode/shared": schemaPassShared,
+      "./remote/index.js": remoteFailStub,
+    }),
+  );
+  const ctx = await startHttpReady(createHttpServer, {});
+  // 捕获 warn：原始 detail 应降级进日志（保留可诊断性），而非出网。
+  const warnLines = [];
+  const originalWarn = console.warn;
+  console.warn = (...args) => warnLines.push(args.map(String).join(" "));
+  try {
+    const res = await fetch(`http://127.0.0.1:${ctx.port}/api/connect-remote`, {
+      method: "POST",
+      body: "{}",
+    });
+    assert.equal(res.status, 500);
+    const bodyText = await res.text();
+    assert.equal(JSON.parse(bodyText).error, "remote-connect-failed");
+    for (const secret of [SECRET_HOST, SECRET_PATH, SECRET_CMD, "ENOENT", "spawn "]) {
+      assert.ok(!bodyText.includes(secret), `response body must not leak "${secret}"`);
+    }
+    const logged = warnLines.join("\n");
+    assert.ok(
+      logged.includes(SECRET_HOST) && logged.includes("connect-remote failed"),
+      "original detail must be routed to the warn log, not dropped",
+    );
+  } finally {
+    console.warn = originalWarn;
+    await ctx.close();
+  }
+});
+
+test("static: malformed percent-encoding is 404, not 500 URIError (R2 finding 2)", async () => {
+  // decodeURIComponent 对畸形百分号编码抛 URIError；此前 try/catch 只包 stat，异常冒泡成 500。
+  // 用内存 fs + posix path 注入，OS 无关；spaFallback 开着以证明 404 不是 fallback 到 index。
+  const files = new Map([["/web/index.html", "<html>root-index</html>"]]);
+  const fsStub = {
+    stat: async (p) => {
+      if (!files.has(p)) throw Object.assign(new Error(`ENOENT ${p}`), { code: "ENOENT" });
+      return { isDirectory: () => false, isFile: () => true };
+    },
+    readFile: async (p) => {
+      if (!files.has(p)) throw Object.assign(new Error(`ENOENT ${p}`), { code: "ENOENT" });
+      return files.get(p);
+    },
+  };
+  const { createHttpServer } = await load(
+    "packages/server/src/http.ts",
+    httpImports({ "node:fs/promises": fsStub, "node:path": nodePath.posix }),
+  );
+  const server = createHttpServer(new ServiceCollection(), 0, {
+    host: "127.0.0.1",
+    staticRoot: "/web",
+    spaFallback: true,
+  });
+  await waitFor(() => {
+    const address = server.address();
+    return typeof address === "object" && address !== null && address.port > 0;
+  }, 3000);
+  const port = server.address().port;
+  try {
+    for (const malformed of ["/%", "/%zz", "/%e0%a4", "/index%"]) {
+      const res = await fetch(`http://127.0.0.1:${port}${malformed}`);
+      assert.equal(
+        res.status,
+        404,
+        `${malformed} must be 404 (not 500 URIError, not 200 SPA fallback)`,
+      );
+    }
+    // 正控：合法路径仍正常服务，证明 staticRoot/fallback 装配无误。
+    const ok = await fetch(`http://127.0.0.1:${port}/index.html`);
+    assert.equal(ok.status, 200);
+    assert.equal(await ok.text(), "<html>root-index</html>");
+  } finally {
+    await closeWithTimeout(() => new Promise((resolve) => server.close(() => resolve())));
+  }
+});
+
+test("server: pending remote connections lazily expire and are disposed on prune (R2 finding 3)", async () => {
+  // 惰性过期：注入虚拟时钟 + 小 TTL，验证容量检查触点 prune 掉超期条目并 dispose 其句柄，
+  // 且新鲜条目不被误清（无常驻定时器）。
+  let clock = 1_000_000;
+  let disposed = 0;
+  const remoteOkStub = {
+    createRemoteBackend: async () => ({ kind: "wsl" }),
+    connectRemote: async () => ({
+      services: {},
+      dispose: () => {
+        disposed += 1;
+      },
+      disposeAndWait: async () => undefined,
+    }),
+  };
+  const { createHttpServer } = await load(
+    "packages/server/src/http.ts",
+    httpImports({ "@acode/shared": schemaPassShared, "./remote/index.js": remoteOkStub }),
+  );
+  const ctx = await startHttpReady(createHttpServer, {
+    pendingConnectionClock: () => clock,
+    pendingConnectionTtlMs: 1000,
+  });
+  const post = () =>
+    fetch(`http://127.0.0.1:${ctx.port}/api/connect-remote`, { method: "POST", body: "{}" });
+  try {
+    const first = await post();
+    assert.equal(first.status, 200);
+    assert.equal(typeof (await first.json()).id, "string");
+    // 未超期（age 500 < ttl 1000）：prune 不得 dispose 新鲜条目。
+    clock += 500;
+    assert.equal((await post()).status, 200);
+    assert.equal(disposed, 0, "unexpired pending entries must not be pruned");
+    // 推进使第一条超期（age 1100 >= 1000）：下一次 connect 的 prune 清掉它一次。
+    clock += 600;
+    assert.equal((await post()).status, 200);
+    assert.equal(disposed, 1, "the expired pending entry must be disposed exactly once");
+    // 再推进使剩余两条都超期：下一次 connect 的 prune 一并清掉。
+    clock += 2000;
+    assert.equal((await post()).status, 200);
+    assert.equal(disposed, 3, "all expired pending entries must be pruned");
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("server: /ws/remote/:id claim of an expired pending connection is rejected 4004 (R2 finding 3)", async () => {
+  // 认领是第二个惰性过期触点：超期 id 即便被迟到客户端认领，也按失效处理（close 4004），
+  // 不复活陈旧连接。
+  let clock = 2_000_000;
+  const remoteOkStub = {
+    createRemoteBackend: async () => ({ kind: "wsl" }),
+    connectRemote: async () => ({
+      services: {},
+      dispose: () => undefined,
+      disposeAndWait: async () => undefined,
+    }),
+  };
+  const { createHttpServer } = await load(
+    "packages/server/src/http.ts",
+    httpImports({ "@acode/shared": schemaPassShared, "./remote/index.js": remoteOkStub }),
+  );
+  const ctx = await startHttpReady(createHttpServer, {
+    pendingConnectionClock: () => clock,
+    pendingConnectionTtlMs: 1000,
+  });
+  let socket;
+  try {
+    const res = await fetch(`http://127.0.0.1:${ctx.port}/api/connect-remote`, {
+      method: "POST",
+      body: "{}",
+    });
+    const id = (await res.json()).id;
+    // 超期后再认领。
+    clock += 5000;
+    const claim = await new Promise((resolve, reject) => {
+      socket = new RawWebSocket(`ws://127.0.0.1:${ctx.port}/ws/remote/${id}`, {
+        handshakeTimeout: 5000,
+      });
+      const out = { closeCode: null };
+      socket.on("close", (code) => {
+        out.closeCode = code;
+      });
+      socket.on("error", reject);
+      socket.on("open", () => resolve(out));
+    });
+    // 有界轮询等待 close 帧（服务端升级后随即 close 4004），不加固定 sleep。
+    await waitFor(() => claim.closeCode !== null, 2000);
+    assert.equal(claim.closeCode, 4004, "expired pending connection must be rejected on claim");
+  } finally {
+    socket?.terminate?.();
+    await ctx.close();
+  }
+});
+
+test("server: token middleware gates /api/connect-remote before Origin and spawn (R2 finding 8)", async () => {
+  // 关键路径补测：配 token 时，未鉴权 connect-remote 必须在 token 中间件层 401，
+  // 且绝不 spawn 后端（中间件先于 connect-remote 处理器的 Origin/副作用）。
+  let spawned = 0;
+  const remoteSpyStub = {
+    createRemoteBackend: async () => {
+      spawned += 1;
+      return { kind: "wsl" };
+    },
+    connectRemote: async () => ({
+      services: {},
+      dispose: () => undefined,
+      disposeAndWait: async () => undefined,
+    }),
+  };
+  const { createHttpServer } = await load(
+    "packages/server/src/http.ts",
+    httpImports({ "@acode/shared": schemaPassShared, "./remote/index.js": remoteSpyStub }),
+  );
+  const ctx = await startHttpReady(createHttpServer, {
+    authToken: "secret-token",
+    authRequired: true,
+  });
+  try {
+    const anon = await fetch(`http://127.0.0.1:${ctx.port}/api/connect-remote`, {
+      method: "POST",
+      body: "{}",
+    });
+    assert.equal(anon.status, 401);
+    assert.equal(spawned, 0, "unauthenticated connect-remote must not spawn a backend");
+    // 带 Bearer + loopback Origin → 过 token 门与 Origin 门，进入 connect（stub 成功 → 200）。
+    const authed = await fetch(`http://127.0.0.1:${ctx.port}/api/connect-remote`, {
+      method: "POST",
+      headers: {
+        authorization: "Bearer secret-token",
+        origin: `http://127.0.0.1:${ctx.port}`,
+      },
+      body: "{}",
+    });
+    assert.equal(authed.status, 200);
+    assert.equal(spawned, 1, "authenticated loopback connect-remote must reach the backend");
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("server: token middleware gates bot webhook callback (documented limitation) (R2 finding 8)", async () => {
+  // specs/server-auth.md「Bot 回调入口 × server token」：配 token 部署里外部回调必然 401
+  //（provider 无法携带 server token）。钉住该已登记行为，防止中间件被误改出路径豁免。
+  const { createHttpServer } = await loadServerHttp();
+  const ctx = await startHttpReady(createHttpServer, {
+    authToken: "secret-token",
+    authRequired: true,
+  });
+  try {
+    const anon = await fetch(`http://127.0.0.1:${ctx.port}/api/bots/webhook`, {
+      method: "POST",
+      body: "{}",
+    });
+    assert.equal(anon.status, 401);
+    // 带 token → 过中间件进入 handler；stub 无 bots service → 503（证明已越过鉴权门）。
+    const authed = await fetch(`http://127.0.0.1:${ctx.port}/api/bots/webhook`, {
+      method: "POST",
+      headers: { authorization: "Bearer secret-token" },
+      body: "{}",
+    });
+    assert.equal(authed.status, 503);
+    assert.match((await authed.json()).error, /Bots service is not available/i);
+  } finally {
+    await ctx.close();
+  }
+});

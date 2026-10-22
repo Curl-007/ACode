@@ -31,10 +31,10 @@ import {
   detectNoShellToolWarning,
   registerAutoClassifierAuditSink,
   registerBashReflexAuditSink,
+  registerMcpCallAuditSink,
   renderUsageQueryUnavailable,
-  setMcpCallAuditSink,
+  registerSessionWorktreeFenceWarnSink,
   setProcessManagedPolicyFloor,
-  setSessionWorktreeFenceWarnSink,
   TtlApprovalStore,
   buildPluginReferenceCatalog,
   buildSessionWorktreeFenceEnv,
@@ -283,15 +283,17 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
     });
   });
   // R3 第一方 MCP 写审计（specs/mcp-lifecycle-ttl-approval.md）：call-audit 模块的缺省
-  // sink 只写一行 stderr，装配期换成 info 级 Logger 落 JSONL——与 setBashReflexAuditSink
+  // sink 只写一行 stderr，装配期换成 info 级 Logger 落 JSONL——与 registerBashReflexAuditSink
   // 同一接线位。审计是旁路：sink 内部的派发点自带 try/catch，这里的回调不抛。
-  // 注意 sink 是进程级 set（无 sessionId 注册表）：同进程多 app（桌面 app-server）时
-  // 后装配者覆盖、任一 app close 复位为缺省 stderr 兜底——审计不丢，只是回落兜底通道。
+  // 根因修复（2026-10-22 review CLI-04 同类残余）：改为按 sessionId 注册表路由
+  // （registerMcpCallAuditSink），不再用进程级 set——同进程多 app（桌面 app-server）时
+  // 各 app 的 MCP 审计落各自 trace，一个 app close 只删自己的注册项，不把在跑 app 的
+  // 审计打回缺省 stderr 兜底。entry 已带 sessionId（call-audit emit 按其路由）。
   const mcpAuditLogger = loggerFactory.createLogger("acode").child({
     ...traceContextToLogContext(traceContext),
     module: "core.mcp",
   });
-  setMcpCallAuditSink((entry) => {
+  const unregisterMcpCallAuditSink = registerMcpCallAuditSink(sessionId, (entry) => {
     if (entry.kind === "uncovered-write-tools") {
       // 注册期告警（spec R3「未覆盖写工具」）：写工具被 allowedTools 放行 = 默认审批门
       // 被持久规则关掉，warn 一次提醒用户面核对。
@@ -318,14 +320,18 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
   });
   // 会话 worktree 围栏 warn 档遥测（specs/session-worktree-lifecycle.md R4）：warn 档
   // 缺省 no-op，装配层接 service logger——这份遥测正是 enforce 缺省化迁移判据的
-  // 证据通道。进程级 set 语义与 MCP 审计 sink 相同，close 时一并复位。
+  // 证据通道。同款改为按 sessionId 注册表路由（registerSessionWorktreeFenceWarnSink）：
+  // 一个 app close 只删自己的注册项，不影响在跑 app 的 warn 遥测证据通道。
   const worktreeFenceLogger = loggerFactory.createLogger("acode").child({
     ...traceContextToLogContext(traceContext),
     module: "core.worktree",
   });
-  setSessionWorktreeFenceWarnSink((message, details) => {
-    worktreeFenceLogger.warn(message, details);
-  });
+  const unregisterSessionWorktreeFenceWarnSink = registerSessionWorktreeFenceWarnSink(
+    sessionId,
+    (message, details) => {
+      worktreeFenceLogger.warn(message, details);
+    },
+  );
   const startupTimer = new StartupTimer(
     logger,
     {
@@ -1578,11 +1584,11 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
         try {
           unregisterBashReflexAuditSink();
           unregisterAutoClassifierAuditSink();
-          // MCP 写审计 sink 复位为缺省 stderr 兜底（call-audit 模块的进程级 set 语义；
-          // 同进程还有其他 app 时其审计回落兜底通道，不丢记录）。
-          setMcpCallAuditSink(undefined);
-          // 围栏 warn sink 同款复位（进程级 set 语义，见装配处注释）。
-          setSessionWorktreeFenceWarnSink(undefined);
+          // MCP 写审计 sink：按 sessionId 幂等释放（只删本 app 的注册项）。同进程还有
+          // 其他 app 时其审计不受影响，缺省 stderr 兜底仍在（未注册 sessionId 的 emit 回落）。
+          unregisterMcpCallAuditSink();
+          // 围栏 warn sink 同款按 sessionId 幂等释放（见装配处注释）。
+          unregisterSessionWorktreeFenceWarnSink();
           // TTL 授权落盘收口（specs/mcp-lifecycle-ttl-approval.md R4）：内存是唯一读源、
           // 落盘异步 best-effort——进程收口前等待挂起写入完成，避免最后一笔批准丢失
           // （丢失方向是回落 ask，安全但打扰用户）。flush 内部串行链自带 catch，不抛。

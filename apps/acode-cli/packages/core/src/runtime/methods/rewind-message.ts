@@ -40,6 +40,7 @@ import type {
 } from "../types.js";
 import type { AgentRuntimeInternal } from "../internal.js";
 import { getRuntimeBranchRestorePort, type RuntimeBranchTransition } from "../turn-coordination.js";
+import { getRuntimeTurnTimingPort } from "../runtime-turn-timing.js";
 import { rebuildContextPrefix } from "./context-refresh.js";
 import { mainTurnCacheHitAggregateFromMessages } from "./turn-model-step-usage.js";
 
@@ -744,9 +745,10 @@ async function rebuildConversationDerivedState(
     activeMessages,
     persistedMessages: options.persistedMessages,
   });
-  this.turnNumber = activeMessages.filter(
-    (message) => message.info.role === "user" && !message.info.summary,
-  ).length;
+  getRuntimeTurnTimingPort(this).setTurnNumber(
+    activeMessages.filter((message) => message.info.role === "user" && !message.info.summary)
+      .length,
+  );
   this.currentTurnFileChanges = new Map();
   this.autoCompactConsecutiveFailures = 0;
 }

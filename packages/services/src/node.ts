@@ -509,7 +509,6 @@ import {
   DEFAULT_ACODE_MODEL_CONTEXT_BUDGET_STRATEGY,
   resolveSafeEndpointHostname,
   ACODE_JWT_INVALID_BROADCAST_CHANNEL,
-  formatLogPrefix,
   isStartPlanModelProviderId,
   OFF_PEAK_PROVIDER_IDS,
   BIGMODEL_PROVIDER_ID,
@@ -1400,7 +1399,11 @@ export function createLocalServices(options: {
   try {
     ensureAppCaCert();
   } catch (error) {
-    console.error(formatLogPrefix("appCaCert", process.pid), "ensure app CA cert failed:", error);
+    // 修复原因（review R3-console 残留）：此前用裸 console.error + formatLogPrefix 手工拼前缀，
+    // 不进统一服务日志文件、不脱敏。此处在服务集合工厂内，createServiceLogger 已是无状态工厂
+    // （同文件 10+ 处装配期即用），不存在「早于 logger 装配」的豁免——改走统一漏斗，
+    // pid 前缀由漏斗内 formatLogPrefix 等价产出，error 直接传入由漏斗展平脱敏。
+    createServiceLogger("appCaCert").error(undefined, "ensure app CA cert failed:", error);
   }
 
   const localSettings = options?.settingService ? null : createSettingServiceWithMigrations();

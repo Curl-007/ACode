@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { before, test } from "node:test";
+import { after, before, test } from "node:test";
 import {
   ARCHIVE_GLOBAL_LIMITS,
   ARCHIVE_OWNER_EXECUTABLE_FILE_MODE,
@@ -23,6 +23,14 @@ let root = "";
 
 before(async () => {
   root = await mkdtemp(join(tmpdir(), "acode-archive-trust-"));
+});
+
+// 临时目录泄漏修复（2026-10-22 review 测试专项 finding 7）：mkdtemp 的 root
+// 此前无清理，CI 累积占盘；测试全部结束后递归删除。
+after(async () => {
+  if (root) {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 function violationReason(error: unknown): string | undefined {

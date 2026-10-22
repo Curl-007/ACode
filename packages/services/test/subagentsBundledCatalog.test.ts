@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 import type { AgentDiagnostic, ModelSelection } from "@acode/shared";
 import {
   createSubagentsService,
@@ -52,6 +52,14 @@ async function writeBundledRoot(root: string): Promise<void> {
   );
 }
 
+// 临时目录清理：此前 createFixture 每处 mkdtemp（home/workspace）后全程无清理，
+// CI 累积占盘（协调项，来自 CI/测试基建代理）。用模块级登记表 + 顶层 after 钩子
+// 在全部测试结束后统一删除，避免逐个 createFixture 调用点串 t.after。
+const tempDirs: string[] = [];
+after(async () => {
+  await Promise.all(tempDirs.map((dir) => rm(dir, { recursive: true, force: true })));
+});
+
 async function createFixture(): Promise<{
   home: string;
   workspace: string;
@@ -60,6 +68,7 @@ async function createFixture(): Promise<{
 }> {
   const home = await mkdtemp(join(tmpdir(), "acode-bundled-agents-home-"));
   const workspace = await mkdtemp(join(tmpdir(), "acode-bundled-agents-ws-"));
+  tempDirs.push(home, workspace);
   const bundledRoot = join(home, "pack", "agents");
   await writeBundledRoot(bundledRoot);
 

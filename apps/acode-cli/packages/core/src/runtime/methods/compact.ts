@@ -29,6 +29,7 @@ import {
   buildRuntimeProviderRequestMessages,
 } from "../helpers/index.js";
 import type { TurnResult, RunModelTextRequestOptions } from "../types.js";
+import { getRuntimeTurnTimingPort } from "../runtime-turn-timing.js";
 import type { Model } from "../deps.js";
 import type { ProviderContextUsageSnapshot } from "../types.js";
 import type { AgentRuntimeInternal } from "../internal.js";
@@ -126,7 +127,7 @@ export async function executeManualCompact(
         turnId,
       });
 
-      this.turnNumber++;
+      getRuntimeTurnTimingPort(this).advanceTurn();
       const projection = await this.rebuildProjection();
       this.logger?.info("Compact completed", {
         ...traceContextToLogContext(turnTraceContext),
@@ -151,8 +152,7 @@ export async function executeManualCompact(
         this.activeForegroundExecution?.preserveQueueAutoDrainOnCancel === true;
       if (coreError.type === CoreErrorType.TurnCancelled && !preserveQueueAutoDrainOnCancel) {
         // Stop compact 与普通 Stop 语义一致：队列重新暂停，外层 FIFO 恢复窗口同时关闭。
-        this.queueAutoDrain = false;
-        this.queueExternalDrainActive = false;
+        getRuntimeTurnTimingPort(this).pauseQueueAutoDrain();
       }
       await appendTurnOutcomeEvent(this, {
         coreError,

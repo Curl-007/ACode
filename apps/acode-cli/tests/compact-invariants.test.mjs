@@ -46,6 +46,9 @@ const { beginActiveTurn, finishActiveTurn } =
   await import("../packages/core/src/runtime/methods/steering.ts");
 const { initializeRuntimeTurnCoordination } =
   await import("../packages/core/src/runtime/turn-coordination.ts");
+const { initializeRuntimeTurnTiming } = await import(
+  "../packages/core/src/runtime/runtime-turn-timing.ts"
+);
 const { modelMessageContentBlockToText } = await import("../packages/contracts/src/model/index.ts");
 const { CompactTrigger } = await import("../packages/contracts/src/compact/index.ts");
 
@@ -500,6 +503,9 @@ test("(I4-2) 单活跃 turn 互斥：compact turn 不能与在途 turn 并存", 
 
   const idleRuntime = {};
   initializeRuntimeTurnCoordination(idleRuntime);
+  // activeTurn 已收敛到 RuntimeTurnTimingOwner（CLI-05 P1）：beginActiveTurn 经端口写、
+  // 读面经 getter，fake runtime 需与真实构造期一样初始化 timing owner。
+  initializeRuntimeTurnTiming(idleRuntime);
   const activeTurn = beginActiveTurn.call(
     idleRuntime,
     "turn_compact",

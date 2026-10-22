@@ -1,7 +1,7 @@
 import { resolveSelectionSideInheritedModel } from "@/lib/selectionSideInheritedModel.js";
 import { useStartPlanRecommendation } from "@/hooks/useStartPlanRecommendation.js";
 import type { SessionCreateSource } from "@acode/shared";
-/* oxlint-disable eslint(max-lines) -- SessionPane 是单 pane 竖切的命令编排收口（订阅/发送/停止/fork/edit/retry/queue/slash 全集），与旧 ChatView 同粒度；HEAD 已超限（693 行计数），拆散命令组会打散 dispatchCommand/snapshotRef 的闭包纪律。 */
+/* oxlint-disable eslint(max-lines) -- SessionPane 是单 pane 竖切的命令编排收口（订阅/发送/停止/fork/edit/retry/queue/slash 全集），与旧 ChatView 同粒度；命令组闭包族（dispatchCommand/snapshotRef/lease + 20 多 handler）拆散会打散闭包纪律、需引入 context 对象或 state 副本（违反 AGENTS.md「避免重复状态」），故整体保留、豁免仍在。可纯化的决策逻辑（slash/edit/queue restore/submission 提取）已抽至 v4/session-pane/commandOrchestration.ts（纯函数 + 接缝内单测），行数单调下降（3762→3672）；闭包族整体外迁待单独批次（见 god-component-split-plan.md）。 */
 import { useIsOfficeMode } from "@/hooks/useInterfaceMode.js";
 import {
   useCallback,
@@ -160,9 +160,15 @@ import { V4InteractionDialogs } from "@/v4/V4InteractionDialogs.js";
 import {
   parseV4VisibleSlashCommand,
   parseSelectionSideSlashCommand,
-  v4QueuedCommandText,
   type V4VisibleSlashCommand,
 } from "@/v4/slashCommands.js";
+import {
+  resolveEditUserQueryPayload,
+  resolveQueuedComposerRestore,
+  resolveSlashCommandDispatch,
+  shouldRestoreQueuedComposerFromAck,
+  submissionConfigFromCommand,
+} from "@/v4/session-pane/commandOrchestration.js";
 import { useSlashCommands } from "@/hooks/useSlashCommands.js";
 import { useV4Conversation } from "@/v4/V4ConversationContext.js";
 import { useConversationProjection } from "@/v4/useConversationProjection.js";
@@ -364,27 +370,8 @@ function toComposerUiError(
   };
 }
 
-function submissionConfigFromCommand(
-  type: CommandType,
-  payload: Record<string, unknown>,
-): ComposerSubmissionConfig | null {
-  const candidate =
-    type === "createSession"
-      ? (payload.firstInput as Record<string, unknown> | undefined)
-      : type === "sendText" || type === "sendGoalCommand"
-        ? payload
-        : undefined;
-  if (!candidate?.modelSelection || !candidate.mode) return null;
-  return {
-    modelSelection: candidate.modelSelection as ComposerSubmissionConfig["modelSelection"],
-    mode: candidate.mode as ComposerSubmissionConfig["mode"],
-    planEnabled:
-      typeof candidate.planEnabled === "boolean"
-        ? candidate.planEnabled
-        : candidate.mode === "plan",
-  };
-}
-
+// submissionConfigFromCommand / resolveQueuedComposerRestore / shouldRestoreQueuedComposerFromAck
+// 已迁至 v4/session-pane/commandOrchestration.ts（纯决策接缝，含单测），此处 import 复用。
 function isConversationFileDrag(dataTransfer: DataTransfer): boolean {
   const types = Array.from(dataTransfer.types);
   return (
@@ -392,42 +379,6 @@ function isConversationFileDrag(dataTransfer: DataTransfer): boolean {
     types.includes(WORKSPACE_FILE_DRAG_MIME) ||
     Array.from(dataTransfer.items ?? []).some((item) => item.kind === "file")
   );
-}
-
-interface QueuedComposerRestoreTarget {
-  baseRevision: number;
-  queueItemId: string;
-  sourceCommandId: string;
-  inputKind: "sendText" | "sendGoalCommand";
-  text: string;
-  attachments: readonly AttachmentRef[];
-  config?: ComposerRestoreRequest["config"];
-}
-
-function resolveQueuedComposerRestore(
-  snapshot: ConversationSnapshot,
-  queueItemId: string,
-): QueuedComposerRestoreTarget | null {
-  const item = snapshot.queue.items.find((candidate) => candidate.queueItemId === queueItemId);
-  if (!item || item.kind === "compact") return null;
-  const config = {
-    ...(item.mode ? { mode: item.mode } : {}),
-    ...(typeof item.planEnabled === "boolean" ? { planEnabled: item.planEnabled } : {}),
-    ...(item.modelSelection ? { modelSelection: item.modelSelection } : {}),
-  };
-  return {
-    baseRevision: snapshot.revision,
-    queueItemId,
-    sourceCommandId: item.sourceCommandId,
-    inputKind: item.kind,
-    text: v4QueuedCommandText(item.kind, item.text),
-    attachments: item.attachments.map((attachment) => ({ ...attachment })),
-    ...(Object.keys(config).length > 0 ? { config } : {}),
-  };
-}
-
-function shouldRestoreQueuedComposerFromAck(status: CommandAck["status"]): boolean {
-  return status === "accepted" || status === "duplicate";
 }
 
 /**
@@ -1876,71 +1827,30 @@ export function SessionPane({
       expectedHeldQueueItemIds?: readonly string[],
       submission?: ComposerSubmissionConfig,
     ): Promise<boolean | "confirmationRequired"> => {
-      let type: CommandType | null = null;
-      let payload: Record<string, unknown> = {};
-      // compact 是可排队 input command，不走 CAS；resumeGoal 仍是 CAS。
-      let withBaseRevision = false;
       const currentRoutingMode = snapshotRef.current?.inputRouting.mode;
       const compactExpectedToQueue =
         command.kind === "compact" &&
         currentRoutingMode !== undefined &&
         currentRoutingMode !== "startNow";
-      switch (command.kind) {
-        case "compact":
-          type = "compact";
-          break;
-        case "sendGoalCommand":
-          type = "sendGoalCommand";
-          // 人工合并曾让 /goal 在准备完成后重新读取 Composer，覆盖点击时已冻结的档位。
-          // 与 sendText 一样沿用本次 Submission；后续菜单修改只影响下一次发送。
-          if (!submission) return false;
-          payload = {
-            text: command.objective,
-            displayText: command.displayText,
-            ...submission,
-            ...(heldQueueDisposition ? { heldQueueDisposition } : {}),
-            ...(expectedHeldQueueItemIds ? { expectedHeldQueueItemIds } : {}),
-          };
-          break;
-        case "resumeGoal":
-          type = "resumeGoal";
-          withBaseRevision = true;
-          break;
-        case "usage": {
-          // /usage 查询命令族：零 token 本地查询，不进模型轮、不排队、不走 CAS。
-          // timeZone 由客户端携带（IANA，与 v4/usage/stats 通道同惯例）；缺席按 UTC 归桶。
-          type = "usage";
-          const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-          payload = {
-            ...(command.args ? { args: command.args } : {}),
-            ...(timeZone ? { timeZone } : {}),
-          };
-          break;
-        }
-        case "autoResume":
-          // /auto-resume 命令面：零 token 本地命令；args = 子命令原文，解析/回执单一实现在 core。
-          type = "autoResumeCommand";
-          payload = command.args ? { args: command.args } : {};
-          break;
-        case "emptyGoal":
-          logger.warn("[v4-pane] /goal 需要目标文本");
-          return true;
-        case "unsupportedGoal":
-          logger.warn(`[v4-pane] 暂不支持 /goal ${command.action}`);
-          return true;
-        default:
-          return false;
+      // slash 的 command.kind→type/payload/baseRevision 决策已抽为纯函数
+      // （v4/session-pane/commandOrchestration.ts，含单测）；这里只做闭包侧副作用：
+      // warn 落地、usage 的本地 timeZone 注入、以及 dispatchCommand（闭包族，保留）。
+      const plan = resolveSlashCommandDispatch({
+        command,
+        submission,
+        heldQueueDisposition,
+        expectedHeldQueueItemIds,
+        baseRevision,
+        usageTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      });
+      if (plan.outcome === "notConsumed") {
+        return false;
       }
-      if (withBaseRevision && baseRevision === undefined) {
-        logger.warn(`[v4-pane] slash ${command.kind} 缺少 baseRevision`);
+      if (plan.outcome === "consumedWithoutDispatch") {
+        logger.warn(plan.warn);
         return true;
       }
-      const ack = await dispatchCommand(
-        type,
-        payload,
-        targetSessionId,
-        withBaseRevision ? baseRevision : undefined,
-      );
+      const ack = await dispatchCommand(plan.type, plan.payload, targetSessionId, plan.baseRevision);
       if (ack.reasonCode === "guard.heldQueueConfirmationStale") {
         return "confirmationRequired";
       }
@@ -2497,20 +2407,20 @@ export function SessionPane({
     ) => {
       const current = snapshotRef.current;
       if (!sessionId || current === null) return false;
-      if (!newText.trim() && (!attachments || attachments.length === 0)) {
+      // 空守卫 + payload 构造已抽为纯函数（含单测）；这里只做闭包侧的 warn 与 dispatchCommand。
+      const editPlan = resolveEditUserQueryPayload({
+        target,
+        newText,
+        attachments,
+        workspaceMode,
+      });
+      if (editPlan.skip) {
         logger.warn("[v4-pane] edit 跳过：行内编辑内容为空且无附件");
         return false;
       }
       const ack = await dispatchCommand(
         "editUserQuery",
-        {
-          target,
-          newText,
-          workspaceMode,
-          // editUserQuery 的 attachments 缺省表示保留 canonical 原附件；
-          // 只有显式透传 []，CLI 才能区分“用户删除全部”与“调用方未修改附件”。
-          ...(attachments ? { attachments: [...attachments] } : {}),
-        },
+        editPlan.payload,
         sessionId,
         current.revision,
         current.logEpoch,

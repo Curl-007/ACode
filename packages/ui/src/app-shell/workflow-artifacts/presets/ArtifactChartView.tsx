@@ -223,6 +223,9 @@ const ArtifactChartPlot = memo(function ArtifactChartPlot({ model, compact }: Pl
           <ReferenceLine
             label={{
               fill: "var(--color-foreground-subtle)",
+              // 豁免 text-ui-* 标尺：Recharts ReferenceLine 的基线数值标签属图表内部标注家具
+              // （与坐标轴刻度同类），随图表绘图坐标系缩放，非业务 UI 文案。见 DESIGN.md
+              // 「UI font tokens」的图表轴豁免。
               fontSize: 10,
               position: "insideTopRight",
               value: model.baseline.label,

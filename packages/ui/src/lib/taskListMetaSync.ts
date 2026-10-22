@@ -1,7 +1,10 @@
 import type { ACodeTaskMeta } from "@acode/shared";
+import type { ACodeTaskListSortBy } from "@acode/services";
 import { mergeTaskMetaCandidates } from "@/lib/acodeTaskMetaMerge.js";
 import { buildTaskEntityKey } from "@/lib/taskQueryCache.js";
 import { getTaskMeta, useACodeSessionStore } from "@/store/acodeSessionStore.js";
+import { useRemotePinnedTaskStore } from "@/store/remotePinnedTaskStore.js";
+import { useRemoteTimelineTaskStore } from "@/store/remoteTimelineTaskStore.js";
 import {
   applyTaskQueryCacheMutation,
   removeTaskFromTaskQueryCaches,
@@ -10,6 +13,109 @@ import {
   useTaskQueryCacheStore,
   type TaskListMembershipState,
 } from "@/store/taskQueryCacheStore.js";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// task meta 单一事务写入路径（specs/task-meta-cache-ownership.md）
+//
+// Bugfix(R2-06): 同一 task meta 存于四个 store 副本——acodeSessionStore 的
+// optimistic 池 / taskListCache、taskQueryCacheStore.taskMetaByEntityKey、
+// remoteTimelineTaskStore、remotePinnedTaskStore。此前组件在单个 handler 内
+// 手写 3-4 条独立 store 写入 + 直调 applyTaskQueryCacheMutation（全仓 40 处），
+// 乐观失败回滚路径极易漏写某一副本造成 drift。这里把「一次成员关系迁移」的
+// 全部副本写入收进单一事务函数：组件只声明各副本的放置意图，写入顺序、
+// workspaceIdentity gating、query cache mutation 收尾全部在此固定。
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** 单个 task meta 副本的放置意图；`none`（默认）表示本次迁移不触碰该副本。 */
+export type TaskMetaPlacement = "upsert" | "remove" | "none";
+
+export interface TaskMetaCacheWrite {
+  workspacePath: string;
+  /** 远端 workspace 身份；缺失时 remoteTimeline/remotePinned 副本写入被跳过（本地无远端缓存）。 */
+  workspaceIdentity?: string;
+  taskId: string;
+  /** 迁移前的 task meta，用于 query cache 成员关系差分。 */
+  previousTask: ACodeTaskMeta;
+  /** 迁移后的 task meta；所有 upsert 副本（optimistic/remote）统一写入此值。 */
+  nextTask: ACodeTaskMeta;
+  previousState: TaskListMembershipState;
+  nextState: TaskListMembershipState;
+  /**
+   * acodeSessionStore optimistic 池：`upsert` 写入 nextTask，`remove` 清除该 task。
+   * 本地 session store，不受 workspaceIdentity gating。默认 `none`。
+   */
+  optimistic?: TaskMetaPlacement;
+  /**
+   * 清空 task 运行态（removeTaskState，含持久化草稿）；归档/删除终态使用。
+   * 与 optimistic 互斥，本地 session store，不受 workspaceIdentity gating。默认 false。
+   */
+  clearTaskState?: boolean;
+  /** remoteTimelineTaskStore 放置意图；仅 workspaceIdentity 存在时生效。默认 `none`。 */
+  remoteTimeline?: TaskMetaPlacement;
+  /** remoteTimeline upsert 时的排序键（透传 store 的 sortBy，默认 `updated`）。 */
+  remoteTimelineSortBy?: ACodeTaskListSortBy;
+  /** remotePinnedTaskStore 放置意图；仅 workspaceIdentity 存在时生效。默认 `none`。 */
+  remotePinned?: TaskMetaPlacement;
+}
+
+/**
+ * task meta 四副本的单一事务写入路径。
+ *
+ * 固定写入顺序（与各组件历史内联顺序一致，保证零行为漂移）：
+ * 1. optimistic 池（本地）→ 2. clearTaskState（本地）→ 3. remoteTimeline（远端）
+ * → 4. remotePinned（远端）→ 5. applyTaskQueryCacheMutation（query cache，收尾）。
+ *
+ * remote 副本写入统一按 `workspaceIdentity` gating：本地 workspace 没有远端缓存副本，
+ * 身份缺失时跳过，避免把本地 task 误写进以 identity 为键的远端 store。
+ */
+export function writeTaskMetaToCaches(write: TaskMetaCacheWrite): void {
+  const sessionStore = useACodeSessionStore.getState();
+
+  // 1. optimistic 池（本地 session store）：rename/unread upsert、pin 提交 remove。
+  if (write.optimistic === "upsert") {
+    sessionStore.upsertOptimisticTaskListItem(
+      write.workspacePath,
+      write.nextTask,
+      write.workspaceIdentity,
+    );
+  } else if (write.optimistic === "remove") {
+    sessionStore.removeOptimisticTaskListItem(
+      write.workspacePath,
+      write.taskId,
+      write.workspaceIdentity,
+    );
+  }
+
+  // 2. 清空 task 运行态（归档/删除终态）。
+  if (write.clearTaskState) {
+    sessionStore.removeTaskState(write.workspacePath, write.taskId, write.workspaceIdentity);
+  }
+
+  // 3./4. 远端 timeline / pinned 副本，仅远端 workspace（有 identity）写入。
+  if (write.workspaceIdentity) {
+    const timeline = useRemoteTimelineTaskStore.getState();
+    if (write.remoteTimeline === "upsert") {
+      timeline.upsertTask(write.nextTask, write.remoteTimelineSortBy);
+    } else if (write.remoteTimeline === "remove") {
+      timeline.removeTask(write.workspacePath, write.taskId, write.workspaceIdentity);
+    }
+
+    const pinned = useRemotePinnedTaskStore.getState();
+    if (write.remotePinned === "upsert") {
+      pinned.upsertTask(write.nextTask);
+    } else if (write.remotePinned === "remove") {
+      pinned.removeTask(write.workspacePath, write.taskId, write.workspaceIdentity);
+    }
+  }
+
+  // 5. query cache 成员关系迁移，事务收尾（唯一权威 total/membership 写入点）。
+  applyTaskQueryCacheMutation({
+    previousTask: write.previousTask,
+    nextTask: write.nextTask,
+    previousState: write.previousState,
+    nextState: write.nextState,
+  });
+}
 
 export function removeTaskFromTaskCaches(params: {
   workspacePath: string;

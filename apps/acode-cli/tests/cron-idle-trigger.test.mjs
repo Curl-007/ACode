@@ -33,6 +33,9 @@ const steering = await import("../packages/core/src/runtime/methods/steering.ts"
 const commandQueue = await import("../packages/core/src/runtime/methods/runtime-command-queue.ts");
 const { initializeRuntimeTurnCoordination } =
   await import("../packages/core/src/runtime/turn-coordination.ts");
+const { initializeRuntimeTurnTiming } = await import(
+  "../packages/core/src/runtime/runtime-turn-timing.ts"
+);
 const { SessionEventType } = await import("../packages/contracts/src/index.ts");
 
 const SESSION_ID = "sess-cron-idle-trigger";
@@ -142,6 +145,10 @@ function createRuntimeHarness() {
   };
 
   initializeRuntimeTurnCoordination(runtime);
+  // turn 时序字段（activeTurn/pendingInputSequence/queue*Drain*）已收敛到
+  // RuntimeTurnTimingOwner（CLI-05 P1）：fake runtime 与真实构造期一样装只读 getter，
+  // beginActiveTurn/createPendingInputId/setQueueAutoDrain 经端口读写。
+  initializeRuntimeTurnTiming(runtime);
   return { runtime, events, pendingCommands, heldQueue };
 }
 

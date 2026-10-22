@@ -45,6 +45,7 @@ export {
 // 再导出，装配层（bootstrap）从 core 公开入口接线，不深入实现路径。
 export {
   deriveMcpToolIsWrite,
+  registerMcpCallAuditSink,
   setMcpCallAuditSink,
   type McpCallAuditEvent,
   type McpCallAuditSink,
@@ -67,6 +68,12 @@ const ACODE_CUA_PROVIDER_SPELLING_ALIAS_PREFIX = "mcp__computer_use__";
 export interface RegisterMcpToolsOptions {
   allowedTools?: readonly string[];
   disallowedTools?: readonly string[];
+  /**
+   * 注册上下文的会话身份：透传进「未覆盖写工具」告警条目，使其与 tool-call 审计
+   * 一样能按 sessionId 路由到对应 App 的落盘 sink（call-audit 的 sessionAuditSinks）。
+   * 缺席时告警回落进程级缺省 sink（stderr 兜底），不丢记录。
+   */
+  sessionId?: string;
   /**
    * 由 runtime 使用不可伪造的 product authority 凭据验明的官方 CUA server。
    * 名称本身不构成信任；省略时 fail-closed，所有 MCP 都按普通工具处理，
@@ -120,6 +127,7 @@ export function registerMcpTools(
       kind: "uncovered-write-tools",
       serverName,
       toolNames: [...new Set(toolNames)],
+      ...(options.sessionId ? { sessionId: options.sessionId } : {}),
     });
   }
 

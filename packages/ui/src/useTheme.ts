@@ -1,10 +1,8 @@
-import { useEffect, useState, useCallback } from "react";
 import { applyPersistedAppearancePreferences } from "@/lib/appearancePreferences.js";
 
 export type Theme = "light" | "dark" | "zai-light" | "zai-dark" | "system";
 export type ResolvedTheme = "light" | "dark";
 
-const STORAGE_KEY = "acode-theme";
 const BROWSER_THEME_SURFACE_ATTRIBUTE = "data-acode-browser-theme-surface";
 
 function getSystemTheme(): ResolvedTheme {
@@ -69,49 +67,15 @@ export function applyTheme(theme: Theme) {
   document.documentElement.classList.toggle("theme-zai-dark", appliedTheme === "zai-dark");
   syncBrowserThemeSurface(resolved);
   // 多轴外观偏好属性在主题应用点收口（specs/appearance-preference-axes.md R6）：
-  // applyTheme 是主窗口 store 创建、setTheme（含广播）、system 主题变化与 useTheme
-  // hook 的公共路径，对齐 syncBrowserThemeSurface 的「根属性随主题应用一并写」模式，
-  // 各窗口零新增接线即获得 data-acode-density/-text-size/-reduce-motion 属性面。
-  // setAttribute 幂等，主题反复切换不产生重算成本；偏好自身的写入口在
+  // applyTheme 是主窗口 store 创建、setTheme（含广播）与 system 主题变化的公共路径
+  // （R2-07 后 useTheme hook 已删除，不再作为调用方），对齐 syncBrowserThemeSurface 的
+  // 「根属性随主题应用一并写」模式，各窗口零新增接线即获得 data-acode-density/-text-size/
+  // -reduce-motion 属性面。setAttribute 幂等，主题反复切换不产生重算成本；偏好自身的写入口在
   // lib/appearancePreferences.ts（设置页接线后直接调它，不经主题绕路）。
   applyPersistedAppearancePreferences();
 }
 
-function isTheme(value: string | null): value is Theme {
-  return (
-    value === "light" ||
-    value === "dark" ||
-    value === "zai-light" ||
-    value === "zai-dark" ||
-    value === "system"
-  );
-}
-
-export function useTheme() {
-  const [theme, setThemeState] = useState<Theme>(() => {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    // 默认主题统一收敛到 Zai dark，避免旧 hook 兜底值和 Zustand store 默认值分叉。
-    return isTheme(saved) ? normalizeThemePreference(saved) : "zai-dark";
-  });
-
-  const setTheme = useCallback((t: Theme) => {
-    const normalizedTheme = normalizeThemePreference(t);
-    localStorage.setItem(STORAGE_KEY, normalizedTheme);
-    setThemeState(normalizedTheme);
-    applyTheme(normalizedTheme);
-  }, []);
-
-  // 初始化 + system 模式下监听系统偏好变化
-  useEffect(() => {
-    applyTheme(theme);
-
-    if (theme !== "system") return;
-
-    const mq = window.matchMedia("(prefers-color-scheme: dark)");
-    const handler = () => applyTheme("system");
-    mq.addEventListener("change", handler);
-    return () => mq.removeEventListener("change", handler);
-  }, [theme]);
-
-  return { theme, setTheme } as const;
-}
+// R2-07: useTheme() hook 本体已删除。它自带 useState + 直接写 localStorage 的 acode-theme 键，
+// 绕过 store/index.ts 的 setTheme（唯一走广播防回环、system 监听与 applyPersistedAppearancePreferences
+// 收口的写入口），全仓无实际调用点（仅 index.ts 曾导出）。原私有 isTheme 校验函数随之删除：
+// store/index.ts 读取该键时用 normalizeThemePreference + 默认 zai-dark 兜底，不依赖该守卫。

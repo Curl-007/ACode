@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -77,8 +77,10 @@ test("自定义 unsafePathLabel 保留", () => {
   );
 });
 
-test("resolvePluginSyncPathWithin：合法路径落根内，越界与 Windows 危险名拒绝", async () => {
+test("resolvePluginSyncPathWithin：合法路径落根内，越界与 Windows 危险名拒绝", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "acode-plugin-sync-path-"));
+  // 临时目录清理：此前 mkdtemp 后全程无清理，CI 累积占盘（协调项，来自 CI/测试基建代理）。
+  t.after(() => rm(root, { recursive: true, force: true }));
   const resolved = resolvePluginSyncPathWithin(root, "plugin/dir.md");
   assert.equal(resolved, join(root, "plugin", "dir.md"));
 

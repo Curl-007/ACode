@@ -2,7 +2,8 @@
 
 状态：类型级分簇已实施；CLI-05 本批进一步封装 reservation、command drain 与 branch generation 的实际写权限（2026-10-09）。其余状态仍为分簇登记，不宣称整体 runtime 已隔离。
 同日增补（2026-10-09 批次）：`RuntimeSessionLifecycleState` 最后四个扁平可变字段（`shuttingDown` / `permissionFullAccessPending` / `lastPermissionGrantId` / `pendingModelChangeTimeline`）收敛到 owner 只读 getter + 有限写端口，该簇不再保留任何扁平可写字段。
-代码：`packages/core/src/runtime/internal.ts`（分簇子接口 + 组合）；`packages/core/src/runtime/agent-runtime.ts`（构造与原型安装）；`packages/core/src/runtime/turn-coordination.ts`（关键状态 owner）。
+2026-10-22 增补（CLI-05 P1 第一切片，review R1-01）：`RuntimeTurnState` 的 7 个高频时序字段（`turnNumber` / `activeTurn` / `pendingInputSequence` / `pendingInputReservations` / `pendingInputDrains` / `queueAutoDrain` / `queueExternalDrainActive`）收敛到新的 `RuntimeTurnTimingOwner`（`runtime-turn-timing.ts`）——只读 getter + 有限写端口，形态与 turn-coordination/permission-grant 完全一致。这是「原型注入 `this` 面绕过 owner 只读约束」这条 P1 的有界第一切片，剩余字段与后续批次见 §RuntimeTurnState 剩余字段与后续批次。
+代码：`packages/core/src/runtime/internal.ts`（分簇子接口 + 组合）；`packages/core/src/runtime/agent-runtime.ts`（构造与原型安装）；`packages/core/src/runtime/turn-coordination.ts`（关键状态 owner）；`packages/core/src/runtime/runtime-turn-timing.ts`（turn 时序字段 owner，2026-10-22 新增）。
 
 ## 背景
 
@@ -176,6 +177,100 @@ sequenceDiagram
 ```
 
 边界：本批保护通知初始化/持久化、resume/rewind 重建和普通 turn 的 provider 调用；没有把整个普通 turn、任意工具内部/compact 模型调用或 adapter 鉴权/重试后的 HTTP 发送纳入全程事务。已经发出的 provider 请求、旧任务终态与已有持久历史仍遵循原有取消和恢复语义，不宣称所有 runtime 状态均已封装。
+
+## CLI-05 P1 第一切片：RuntimeTurnState 高频时序字段收敛（2026-10-22，review R1-01）
+
+### 根因
+
+`methods/` 下约 180 个函数经 `installAgentRuntimeMethods`（`methods/index.ts:203-398`）以
+`proto.X = X` 动态挂到 `AgentRuntime.prototype`，签名一律 `this: AgentRuntimeInternal`。
+该类型（`internal.ts:240-251`）组合全部 7 簇，含 `RuntimeTurnState` 的扁平可写字段。即便
+reservation/drain/generation 已收敛到 turn-coordination owner，`this` 面仍让任意 method 能
+读写 `turnNumber`/`activeTurn`/`pendingInput*`/`queue*Drain*` 等时序字段——owner 只读约束对其余
+字段无效。这是本轮唯一 P1。
+
+### 本切片范围（有界，不做全量重构）
+
+把 `RuntimeTurnState` 的 7 个高频时序字段迁到新的 `RuntimeTurnTimingOwner`
+（`runtime-turn-timing.ts`），形态与既有 owner 完全一致：WeakMap 持有真值、构造期用
+`Object.defineProperty` 装只读 getter（无 setter、`configurable:false`）、写面只经
+`getRuntimeTurnTimingPort(this)` 的有限端口。读面（`this.turnNumber`、
+`this.pendingInputReservations.has(...)` 等）保持不变，只把**赋值/增删点**改为端口调用，行为逐点等价。
+
+| 字段 | 有限写端口 | 唯一调用方与规则 |
+| --- | --- | --- |
+| `turnNumber` | `advanceTurn()` / `setTurnNumber(n)` | turn/compact/rewind/control-only-turn 完成推进用 `advanceTurn`；resume/rewind-message 从持久消息数重建用 `setTurnNumber`（整体替换，非自增） |
+| `activeTurn` | `setActiveTurn(t)` / `clearActiveTurn()` | `steering.beginActiveTurn` 建立、`finishActiveTurn` 清除；owner 保存引用**不冻结**（pendingInputs 数组仍由 steering 原地 splice/push，本切片只收窄整体赋值/清除）；读面 identity 比较（`this.activeTurn === options.activeTurn`）不变 |
+| `pendingInputSequence` | `nextPendingInputSequence()` | `steering.createPendingInputId` 自增铸造 pending id（原 `+=1` 后读取的原子化） |
+| `pendingInputReservations` | `reservePendingInput(id,resId)` / `releasePendingInputReservation(id)` | steering 的 sendQueuedNow 预约/释放/撤销；读面 `size/has/get` 不变（返回 ReadonlyMap）；缺键 release 是 no-op |
+| `pendingInputDrains` | `beginPendingInputDrain()` / `endPendingInputDrain()` | `steering.drainPendingInput` 的 try/finally 配对；owner 用 0 表示无 in-flight，读面映射回 `undefined`（迁移前 `number \| undefined` 语义不变） |
+| `queueAutoDrain` + `queueExternalDrainActive` | `applyQueueAutoDrainChange(autoDrain)` / `pauseQueueAutoDrain()` / `completeExternalQueueDrain()` | `applyQueueAutoDrainChange` = v4 `setQueueAutoDrain`（原三写点等价：false→true 打开外层 FIFO 窗口、→false 关闭、autoDrain 赋值）；`pauseQueueAutoDrain` = turn 失败/取消同步（compact.ts / turn.ts 的成对 `queueAutoDrain=false; queueExternalDrainActive=false`）；`completeExternalQueueDrain` = CLI 投影确认队列已空 |
+
+### 事件顺序（turn 时序字段所有者）
+
+```text
+构造期  AgentRuntime ctor → initializeRuntimeTurnTiming(runtime)
+                          → 装只读 getter（turnNumber/activeTurn/pendingInput*/queue*Drain*）
+                          → owner 缺省：turnNumber=0, activeTurn=undefined,
+                                        pendingInputSequence=0, reservations=∅, drains=0(undefined),
+                                        queueAutoDrain=true, queueExternalDrainActive=false
+
+turn 编排（唯一写入方）
+  steering.beginActiveTurn → reservationPort.release(turnId) → timingPort.setActiveTurn(turn)
+  steering.finishActiveTurn → (identity 命中) timingPort.clearActiveTurn()
+  steering.createPendingInputId → timingPort.nextPendingInputSequence()
+  steering.drainPendingInput → timingPort.beginPendingInputDrain() … finally endPendingInputDrain()
+  steering.reserve/releasePendingInput → timingPort.reserve/releasePendingInputReservation()
+  turn/compact/rewind/control-only-turn 完成 → timingPort.advanceTurn()
+  resume/rewind-message 重建 → timingPort.setTurnNumber(持久消息数)
+  steering.setQueueAutoDrain → timingPort.applyQueueAutoDrainChange(autoDrain)
+  turn 失败/取消同步 → timingPort.pauseQueueAutoDrain()
+  CLI completeExternalQueueDrain → timingPort.completeExternalQueueDrain()
+
+读面（不变）  methods/* 经 this.<field> 只读；任何 this.<field> = … 运行时抛 TypeError、tsc 报 readonly
+```
+
+### 验收（本切片）
+
+- 非 owner 的 `AgentRuntimeInternal` writer 在 TypeScript 编译中不能赋值这 7 个字段；负例并入
+  `tests/runtime-state-ownership.test.mjs` 的「TypeScript rejects direct state writers」用例
+  （真实 tsc checker，diagnostics 计数从 11→18、readonly 违例 2540 从 10→17）。
+- 真实 `AgentRuntime` 的 7 个 getter 不可赋值/不可重定义（并入「non-writable, non-replaceable
+  state getters」清单）；owner 端口行为由新增用例「turn timing fields are owned by a finite write
+  port」钉住（advanceTurn/setTurnNumber、set/clear activeTurn、序号自增、reserve/release、
+  drain 计数、queueAutoDrain 三转换）。
+- **机械门禁**（review §2 P1 验收项，钉住「原型注入面失控」）：新增用例「R1-01 gate: every
+  proto-injected method is declared on the AgentRuntime type surface」——用 tsc 取
+  `AgentRuntime`（class + declaration-merged interface）与 `AgentRuntimeInternal` 的实例成员并集，
+  断言 `AgentRuntime.prototype` 的自有键（`installAgentRuntimeMethods` + `installAutoResumeRuntimeMethods`
+  注入面）全部落在该并集内；出现 proto 上未声明的方法即红。
+- 行为不变：迁移点的既有回归全绿——core 包 130/130、runtime-state-ownership 31/31、
+  cron-idle-trigger / compact-invariants / queue-guide-fellback / steering 相关 36/36。
+  用 fake-runtime 桩直接调真实 `beginActiveTurn`/`setQueueAutoDrain` 的既有测试
+  （compact-invariants、cron-idle-trigger）在桩上补 `initializeRuntimeTurnTiming`（与真实构造期一致）。
+
+## RuntimeTurnState 剩余字段与后续批次
+
+本切片**未**迁移 `RuntimeTurnState` 的其余扁平可写字段，它们仍经 `this` 面共享读写，登记为后续批次：
+
+| 剩余字段 | 语义 | 建议后续批次顺序 |
+| --- | --- | --- |
+| `activeForegroundExecution` | 前台执行状态（stop barrier、preserveQueueAutoDrainOnCancel） | 批次 2（与 foregroundPromotionLease 同族） |
+| `foregroundPromotionLease` | sendQueuedNow 的 Core 调度权 | 批次 2 |
+| `runtimeCommandQueue` | 命令队列实例（容器本身不变，内容经 queue 端口） | 批次 3（评估：可能只需 readonly 化引用） |
+| `currentTurnFileChanges` | turn 内文件改动图 | 批次 3 |
+| `lastAssistantCompletedAtMs` | 最近 assistant 完成时间戳 | 批次 3（单值游标，最简单） |
+
+其余 4 簇（`RuntimeContextMemoryState` / `RuntimeMessageProjectionState` / `RuntimeCacheDiagnosticsState`
+以及 `RuntimeTurnState` 上述剩余）约 46 个扁平字段，按「时序不变量密度」优先级分批：TurnState 剩余 →
+ContextMemory（并发初始化最密）→ MessageProjection/CacheDiagnostics（派生游标，最低优先）。
+
+**长期方案（review R1-01 建议，本切片未做，需单独立项）**：把「原型注入 + `this: AgentRuntimeInternal`」
+换为**显式组合**——构造期把方法绑到实例或委托对象，使 `this` 面不再等于全字段并集。这是根治 P1 的
+唯一路径（owner getter 只能收窄写权限，无法阻止 `this` 面读越权），但会触及约 180 个方法的签名与
+declaration-merging 结构，属不可一次验证的大重构，必须独立立项、分批推进、每批配负例与门禁。
+在此之前，owner + 只读 getter + 有限写端口 + R1-01 机械门禁共同把「写权限失控」和「注入面失控」
+两条风险钉住。
 
 ## 簇 → 唯一写入方
 

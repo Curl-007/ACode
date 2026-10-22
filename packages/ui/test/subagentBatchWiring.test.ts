@@ -4,6 +4,9 @@ import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
+// 结构守护测试，非行为验证：本文件的接线断言落在源码字符串上，不驱动 React 树
+// （登记见 god-component-split-plan.md 测试债清单）；纯逻辑（应用集/写路径/载荷构造）
+// 已由 subagentModelBatchApply.test.ts 做真实行为单测，此处只钉「主接线未被回归改动」。
 // 子智能体批量编辑主接线（packages/ui/specs/subagent-batch-edit.md）的源码契约守护。
 // ui 测试无 jsdom（appearancePreferences.test.ts 头注）：接线事实按源码文本断言，
 // 纯逻辑（应用集/写路径/载荷构造）由 subagentModelBatchApply.test.ts 直接单测。

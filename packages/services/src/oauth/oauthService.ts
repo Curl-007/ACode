@@ -4,7 +4,6 @@ import { assertOfficialServiceAvailable } from "@acode/shared";
 import { randomBytes } from "node:crypto";
 import {
   ApiError,
-  formatLogPrefix,
   type ApiClient,
   BIGMODEL_PROVIDER_ID,
   ZAI_PROVIDER_ID,
@@ -41,9 +40,13 @@ import {
 const OAUTH_TIMEOUT_MS = 5 * 60 * 1000;
 const COMPLETED_POLLING_STATE_GRACE_MS = 30 * 1000;
 const ACODE_JWT_TOKEN_KEY = "acodejwttoken";
-const log = (...args: unknown[]) =>
-  console.log(formatLogPrefix("oauthService", process.pid), ...args);
 const serviceLog = createServiceLogger("oauthService");
+// 修复原因（review R2-03）：此前 log helper 用裸 `console.log(formatLogPrefix(...))`
+// 定义，绕过 createServiceLogger 的 redactServiceLogArg 唯一脱敏漏斗，OAuth
+// code/token/redirect 等凭据面字段可直落 stdout。改为薄封装 serviceLog.info——
+// pid 前缀由漏斗内 formatLogPrefix(source, pid) 等价产出（默认 pid=process.pid），
+// 不再手工拼接；脱敏与非桌面 sink 落盘一并由漏斗负责。
+const log = (...args: unknown[]) => serviceLog.info(undefined, ...args);
 
 interface PendingState {
   state: string;

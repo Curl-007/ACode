@@ -49,8 +49,6 @@
         "playwright-core",
         // tsup.config.ts desktopNodeRuntimeExternals 外置；src/host/index.ts 延迟加载的 remote backend（内联的 ../server/src/remote/*）导入 ssh2，CJS 依赖链在 asar 内需保持外置
         "ssh2",
-        // tsup.config.ts desktopNodeRuntimeExternals 外置（ZIP 解包器内部 CJS require("fs") 不能内联）+ scripts/bundle.mjs requiredRuntimeModules 机械校验项
-        "yauzl",
         // electron-builder.config.js 与 scripts/bundle.mjs、app-asar-repack.mjs 用 createRequire.resolve("@electron/asar/package.json") 定位 asar CLI 直接以 Node 执行（注释明确：不依赖 .bin shim），knip 不可见
         "@electron/asar",
         // scripts/node-pty-rebuild.mjs（postinstall）经平台条件变量 spawn "electron-rebuild"/"electron-rebuild.cmd" 二进制，knip binaries 检测识别不了变量形式
@@ -89,6 +87,12 @@
         // 同上外置策略；导入方是被内联的 ../services/src/feedback/feedbackLogArchive.ts
         "yazl",
       ],
+    },
+    "packages/web": {
+      // src/main.tsx 是 vite 入口（index.html script src）、src/reconnect/* 由其 import，均为默认 entry。
+      // knip 默认把 *.test.ts/.mjs 当测试 entry，但不认 .tsx（JSX）测试文件；且 WebDisconnectOverlay.test.tsx
+      // 经 node:test registerHooks 动态 import __stubs__/acodeUi.ts（静态分析不可见），故两者显式声明。
+      "entry": ["tests/**/*.test.tsx", "tests/__stubs__/*.ts"],
     },
     "packages/services": {
       // src/index.ts 是 knip 默认 entry，无需重复声明；storage 与 session 两组治理工件
@@ -248,6 +252,11 @@
   // `**/.acode/**` 是运行时产物（工作流 run 脚本等会落进仓库树内的嵌套 .acode 目录，
   // 运行时自带 .gitignore 挡住 git 但挡不住 knip）：谁在树里跑过一次工作流，
   // knip:gate 就红一片 Unused files。2026-10-07 release/0.0.4 验证时实测复现。
+  // 保留理由（对应 knip 的「Remove from ignore」configuration hint——**该 hint 是误报**）：
+  // hint 只在**当前树内无 .acode 目录**时触发（干净检出/CI 全新 clone 都没有它）；一旦有人在
+  // 树里跑过一次工作流，.acode/ 就带着一堆 runtime 文件出现，缺了这条 ignore，knip:gate 立即
+  // 因 Unused files 变红。故这是**防御性 ignore**：hint 归零不代表可删，删除会让「跑过工作流的
+  // 开发机 / 复用缓存的 CI」门禁假失败。保留，勿因 hint 移除（R2 knip hints 复核，2026-10-22）。
   // `cua-producer/**` 是 U14 角色 A producer 的 workspace 外自足树（pnpm-workspace.yaml
   // 的任何 glob 都不匹配它），治理姿态与 scripts/architecture/discovery.mjs:7 的
   // SKIP_DIRECTORIES 排除一致（cua-producer/specs/windows-helper-producer.md §1.1 治理栏）：

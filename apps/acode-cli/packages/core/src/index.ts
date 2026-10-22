@@ -274,6 +274,7 @@ export type { AutoResumeStatusSnapshot } from "./runtime/auto-resume/types.js";
 // 接 service logger（不 console 刷屏）。
 export {
   buildSessionWorktreeFenceEnv,
+  registerSessionWorktreeFenceWarnSink,
   setSessionWorktreeFenceWarnSink,
 } from "./worktree/session-worktree-fence.js";
 // 会话舰队（specs/session-fleet.md）：舰队记录/所有权封闭的单一所有者与机制件

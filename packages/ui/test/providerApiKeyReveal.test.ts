@@ -1,3 +1,7 @@
+// 结构守护测试，非行为验证：安全语义（reveal 走 credentialService.load、切换/卸载清明文、
+// 明文不进日志）钉在源码字符串上，不驱动 React 树或 credentialService（登记见
+// god-component-split-plan.md 测试债清单）。此文件涉安全，改为真实行为测试需 jsdom + 可注入的
+// credentialService mock，当前套件不具备；保留结构守护并在头注标明局限。
 // 已存储模型 API Key 的用户可见性（安全加固 handoff §5.5「小眼睛按需 reveal」）的
 // 源码契约钉桩：眼睛在 storedInVault 下不再 disabled、reveal 走 credentialService.load、
 // 隐藏/provider 切换/卸载即清明文、展示值与草稿值分离、明文绝不进日志。

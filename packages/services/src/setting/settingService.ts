@@ -9,16 +9,15 @@ import type {
 import {
   appSettingsPatchSchema,
   appSettingsSchema,
-  formatLogPrefix,
   formatZodError,
   setOfficialServiceSwitches,
 } from "@acode/shared";
 import type { ISettingService } from "./setting.js";
+import { createServiceLogger } from "#src/logger/serviceLogger.js";
 import { normalizeSettingsPatch } from "#src/setting/normalizeSettingsPatch.js";
 import { buildExplicitKeyPersistedSettings } from "#src/setting/explicitSettingsPersist.js";
 import { copyDataDirectory, getDataBaseDir, validateDataBaseDirTarget } from "../paths.js";
 import { recordUserMigrationInDataRoot } from "../data-root/initializer.js";
-import { isEffectiveDevelopmentNodeEnv } from "../runtime-tools/nodeEnv.js";
 import { maybeThrowInjectedFsFault } from "../fs/fsFaultInjection.js";
 import { atomicWriteText } from "../fs/atomicFileUtils.js";
 import { withSettingsWriteQueueTimeout } from "./settingsWriteQueue.js";
@@ -35,15 +34,14 @@ const DEFAULT_PROJECT_NAME = "ACodeProject";
 const SETTINGS_PARSE_RETRY_DELAY_MS = 300;
 const SETTINGS_PARSE_RETRY_COUNT = 3;
 
-const log = (...args: unknown[]) =>
-  console.log(formatLogPrefix("settingService", process.pid), ...args);
-const debugLog = (...args: unknown[]) => {
-  // NODE_ENV 来自用户 shell 时会误导服务层 debug 开关；统一使用 ACODE_RUNTIME_ENV。
-  if (!isEffectiveDevelopmentNodeEnv()) {
-    return;
-  }
-  console.debug(formatLogPrefix("settingService", process.pid), ...args);
-};
+// 修复原因（review R3-console 残留）：此前 log/debugLog 用裸 console.log/console.debug
+// + formatLogPrefix 手工拼前缀，不进统一服务日志文件、不脱敏。改走 createServiceLogger：
+// pid 前缀由漏斗内 formatLogPrefix(source,pid) 等价产出；debug 门控默认即
+// isEffectiveDevelopmentNodeEnv（统一 ACODE_RUNTIME_ENV，避免用户 shell 的 NODE_ENV 误导），
+// 与原 debugLog 的显式判断等价，故 debug 行为不变。
+const serviceLog = createServiceLogger("settingService");
+const log = (...args: unknown[]) => serviceLog.info(undefined, ...args);
+const debugLog = (...args: unknown[]) => serviceLog.debug(undefined, ...args);
 
 function resolveUserHomeDir() {
   // 独立桌面 Dev 实例已设置自己的 home，设置服务却仍写真实 HOME，

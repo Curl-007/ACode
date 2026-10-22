@@ -20,6 +20,7 @@ const {
   bindSessionWorktreeFence,
   buildSessionWorktreeFenceEnv,
   evaluateSessionWorktreeWriteFence,
+  registerSessionWorktreeFenceWarnSink,
   resetSessionWorktreeFenceForTest,
   resolveSessionWorktreeFenceMode,
   setSessionWorktreeFenceWarnSink,
@@ -242,6 +243,68 @@ test("(场景5) warn sink：装配层可接 logger（缺省不 console 刷屏）
   assert.equal(seen.length, 1);
   assert.equal(seen[0].details.module, "core.worktree");
   assert.ok(!("status" in seen[0].details), "sink 细节键避开保留闭集键");
+});
+
+test("(CLI-04 残余) 双 App fence warn 按 sessionId 路由，一个 close 不影响另一个", () => {
+  setEnv(SESSION_WORKTREE_FENCE_OFF_ENV_KEY, undefined);
+  setEnv(SESSION_WORKTREE_FENCE_ENV_KEY, undefined); // warn 档
+  // 两个 App 各绑定自己的 worktree/repoRoot（注册表按 worktree 路径键控）。
+  const repoA = tempDir("acode-swtf-repoA-");
+  const worktreeA = tempDir("acode-swtf-wtA-");
+  const repoB = tempDir("acode-swtf-repoB-");
+  const worktreeB = tempDir("acode-swtf-wtB-");
+  bindSessionWorktreeFence({
+    sessionId: "sess_app_a",
+    repoFingerprint: "fp-a",
+    repoRoot: repoA,
+    worktreePath: worktreeA,
+    branch: "acode/session/sess_app_a",
+  });
+  bindSessionWorktreeFence({
+    sessionId: "sess_app_b",
+    repoFingerprint: "fp-b",
+    repoRoot: repoB,
+    worktreePath: worktreeB,
+    branch: "acode/session/sess_app_b",
+  });
+  const seenA = [];
+  const seenB = [];
+  const unregisterA = registerSessionWorktreeFenceWarnSink("sess_app_a", (message, details) =>
+    seenA.push({ message, details }),
+  );
+  registerSessionWorktreeFenceWarnSink("sess_app_b", (message, details) =>
+    seenB.push({ message, details }),
+  );
+
+  // App A 的 worktree 越界写主 checkout → 只落 App A 的 sink。
+  evaluateSessionWorktreeWriteFence({
+    workingDirectory: worktreeA,
+    targetPath: join(repoA, "leak.ts"),
+  });
+  assert.equal(seenA.length, 1, "App A 违规落 App A sink");
+  assert.equal(seenB.length, 0, "App A 违规不得串到 App B");
+  // App B 的违规只落 App B。
+  evaluateSessionWorktreeWriteFence({
+    workingDirectory: worktreeB,
+    targetPath: join(repoB, "leak.ts"),
+  });
+  assert.equal(seenA.length, 1);
+  assert.equal(seenB.length, 1, "App B 违规落 App B sink");
+
+  // App A close（幂等释放自己的注册项）：App B 的 warn 通道不受影响。
+  unregisterA();
+  seenA.length = 0;
+  seenB.length = 0;
+  evaluateSessionWorktreeWriteFence({
+    workingDirectory: worktreeA,
+    targetPath: join(repoA, "leak2.ts"),
+  });
+  evaluateSessionWorktreeWriteFence({
+    workingDirectory: worktreeB,
+    targetPath: join(repoB, "leak2.ts"),
+  });
+  assert.equal(seenA.length, 0, "App A 释放后不再落其 sink（回落进程级缺省）");
+  assert.equal(seenB.length, 1, "App A close 不得影响在跑 App B 的 warn 遥测");
 });
 
 // ── 场景 8：执行层 env 缝 ──────────────────────────────────────────

@@ -24,9 +24,9 @@ export function AutomationsPageTitle({
 }) {
   const { intl } = useACodeIntl();
   if (!workflowTabEnabled) {
-    // 字号与切换态同源：30/34 页面标题层级，切换在不在场不该改变标题的视觉层级。
+    // 字号与切换态同源：页面标题层级用标尺 token，切换在不在场都不改变标题的视觉层级。
     return (
-      <h1 className="text-[30px] font-medium leading-[34px] tracking-[0.114px] text-foreground">
+      <h1 className="text-ui-xl font-medium text-foreground">
         {intl.formatMessage({ id: "settings.automations.title" })}
       </h1>
     );
@@ -35,9 +35,9 @@ export function AutomationsPageTitle({
 }
 
 /**
- * 页标题本身就是切换：「自动化 / 工作流」两个 30px 标题词并排，未选中的用次级色。
+ * 页标题本身就是切换：「自动化 / 工作流」两个标题词并排，未选中的用次级色。
  * 不在标题下再长一排标签——定时任务 / 闲时任务的胶囊行留在「自动化」内部，两级各用一种视觉。
- * 字号沿用 AutomationsSection 原 h1 的标题层级。
+ * 字号沿用标尺里的页面标题层级 token（text-ui-xl），与其他 settings 页 h1 同源。
  */
 export function AutomationsPageTitleSwitch({
   value,
@@ -81,7 +81,10 @@ export function AutomationsPageTitleSwitch({
             data-testid={testId(TID_AUTOMATIONS_PAGE_TAB, tab)}
             onClick={() => onValueChange(tab)}
             className={cn(
-              "rounded-md text-[30px] font-medium leading-[34px] tracking-[0.114px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-input-border-focused",
+              // 焦点态：全局 `*:focus-visible { box-shadow: none !important }`（styles.css:139）
+              // 会压掉 ring-*，故改用 bg-input-focused + border 提供可见焦点（同 AutomationEditView
+              // 顶部 tab 的 focus-visible:bg-input-focused），而非失效的 focus-visible:ring-*。
+              "rounded-md border border-transparent text-ui-xl font-medium transition-colors focus-visible:border-input-border-focused focus-visible:bg-input-focused",
               active ? "text-foreground" : "text-foreground-subtle hover:text-foreground",
             )}
           >

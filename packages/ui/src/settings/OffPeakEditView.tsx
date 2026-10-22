@@ -437,15 +437,16 @@ export function OffPeakEditView({
           )
         ) : tab !== "history" && !readOnly ? (
           <div className="flex items-center gap-1.5">
-            <button
+            <Button
               type="button"
+              variant="default"
+              size="lg"
               data-testid={TID_OFFPEAK_EDIT_SUBMIT}
               disabled={!canSubmit}
               onClick={() => void handleSubmit()}
-              className="inline-flex h-8 items-center rounded-lg border-0 bg-white px-3 text-ui-base font-medium text-black shadow-none outline-none transition-colors hover:bg-white/90 focus-visible:ring-0 disabled:pointer-events-none disabled:opacity-40"
             >
               {intl.formatMessage({ id: "offPeak.edit.save" })}
-            </button>
+            </Button>
             {editing ? (
               <OffPeakEditActionsMenu
                 task={editing}
@@ -501,7 +502,7 @@ export function OffPeakEditView({
                 {onOpenSession ? (
                   <button
                     type="button"
-                    className="shrink-0 text-foreground-subtle underline-offset-2 hover:underline"
+                    className="shrink-0 text-foreground-subtle underline-offset-2 hover:underline focus-visible:underline"
                     onClick={() =>
                       onOpenSession({
                         sessionId: editing.sessionId!,

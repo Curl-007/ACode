@@ -156,8 +156,18 @@ function setupChannelServer(
   });
 }
 
+/**
+ * 待认领条目 = 已建立的远程连接 + 其 spawn 完成时刻（惰性过期依据，见下方 TTL 注释）。
+ * 唯一所有者仍是本 Map（specs/server-auth.md「待认领远程连接唯一所有者」）；包装 spawnedAt
+ * 不新增第二条写入路径，写入仍只在 `/api/connect-remote`，删除在认领或惰性过期时。
+ */
+interface PendingRemoteConnection {
+  connection: RemoteConnection;
+  spawnedAt: number;
+}
+
 /** 存储 web 模式下的远程连接，key 为随机 ID */
-const remoteConnections = new Map<string, RemoteConnection>();
+const remoteConnections = new Map<string, PendingRemoteConnection>();
 
 /**
  * 待认领（已 spawn 但尚未被 `/ws/remote/:id` WS 客户端认领）远程连接的硬上限（M11）。
@@ -165,9 +175,51 @@ const remoteConnections = new Map<string, RemoteConnection>();
  * 根因：条目只在 WS 认领时删除，`POST /api/connect-remote` 又可被盲刷——每次成功都会
  * spawn 真实后端（SSH 外联 / WSL / Docker），未认领条目无限累积即内存与进程句柄 DoS。
  * Origin 裁决封死浏览器攻击者后，本上限是有界性兜底：达上限即 503 拒绝新连接。
- * 风险登记（server-auth.md）：本次不引入 TTL 定时驱逐，陈旧未认领条目存活至进程重启。
  */
 const MAX_PENDING_REMOTE_CONNECTIONS = 32;
+
+/**
+ * 待认领连接的存活上限（惰性过期，R2 review 第三条 finding）。
+ *
+ * 根因：`POST /api/connect-remote` 成功后 id 已下发给客户端，客户端应立即连
+ * `/ws/remote/:id` 认领；若客户端崩溃/放弃，条目连同其持有的真实后端句柄（SSH 进程、
+ * stdio socket）永久滞留到进程重启——`MAX_PENDING_REMOTE_CONNECTIONS` 只兜住数量上限，
+ * 慢泄漏（句柄/内存）仍在。
+ *
+ * 为什么用**惰性过期**而非常驻定时器：AGENTS.md 明确「不能用超时掩盖同步问题」——认领本身
+ * 是同步的请求/响应链，不需要定时器兜底。这里做的是**有界资源回收**：在两个既有请求触点
+ * （新连接的容量检查、认领时的存活校验）顺带清理已超期条目，不引入新的常驻定时器所有权，
+ * 也不改变认领的同步语义。TTL 取 60s：远大于正常「拿到 id → WS 认领」的往返（秒级），
+ * 又足够短以在客户端放弃后及时回收句柄。
+ */
+const PENDING_REMOTE_CONNECTION_TTL_MS = 60_000;
+
+/**
+ * 判定一条待认领连接是否已超期（纯函数，便于边界单测）。
+ * `>=` 而非 `>`：到达 TTL 当刻即视为失效，避免「恰好等于」的边界歧义。
+ */
+function isPendingConnectionExpired(spawnedAt: number, now: number, ttlMs: number): boolean {
+  return now - spawnedAt >= ttlMs;
+}
+
+/**
+ * 惰性驱逐：遍历待认领表，dispose 并移除已超期条目。
+ * 由请求触点同步调用（容量检查 / 认领校验），无常驻定时器。dispose 失败只吞掉，
+ * 不阻断本次请求——回收是尽力而为，句柄泄漏的兜底仍是进程退出。
+ */
+function pruneExpiredPendingConnections(now: number, ttlMs: number): void {
+  for (const [id, entry] of remoteConnections) {
+    if (!isPendingConnectionExpired(entry.spawnedAt, now, ttlMs)) {
+      continue;
+    }
+    remoteConnections.delete(id);
+    try {
+      entry.connection.dispose();
+    } catch {
+      // 过期条目 dispose 失败不阻断：条目已从表移除，句柄随进程退出回收。
+    }
+  }
+}
 
 function generateId(): string {
   return Math.random().toString(36).slice(2) + Date.now().toString(36);
@@ -184,6 +236,13 @@ interface HttpServerOptions {
   workspaces?: ServerRemoteWorkspaceInfo[];
   /** `/ws/host` 升级允许的非 loopback Origin 白名单（DNS-rebinding / 恶意网页防护）。 */
   allowedOrigins?: string[];
+  /**
+   * 待认领连接惰性过期的时钟源（注入点，供测试用虚拟时间；默认 `Date.now`）。
+   * 与 `createHostCapabilityStore({ now })` 同一注入范式，不新增常驻定时器。
+   */
+  pendingConnectionClock?: () => number;
+  /** 待认领连接存活上限（ms），默认 `PENDING_REMOTE_CONNECTION_TTL_MS`；测试可注入更小值。 */
+  pendingConnectionTtlMs?: number;
 }
 
 function readTrimmedEnv(name: string): string | undefined {
@@ -304,7 +363,15 @@ async function resolveStaticFile(
 ): Promise<string | null> {
   const root = resolve(staticRoot);
   const normalizedPathname = pathname === "/" ? "/index.html" : pathname;
-  const relativePath = decodeURIComponent(normalizedPathname).replace(/^\/+/, "");
+  // R2 finding 2：畸形百分号编码（`/%`、`/%zz`、`/%e0%a4`）会让 decodeURIComponent 抛
+  // URIError。此前 try/catch 只包住 stat，decode 异常冒泡成 500。decode 失败等价于
+  //「该 pathname 不可能命中任何真实文件」，按未命中返回 null（→ 上层 404），不进 SPA fallback。
+  let relativePath: string;
+  try {
+    relativePath = decodeURIComponent(normalizedPathname).replace(/^\/+/, "");
+  } catch {
+    return null;
+  }
   let candidate = resolve(root, relativePath);
   if (!isInsideDirectory(root, candidate)) {
     return null;
@@ -377,6 +444,9 @@ export function createHttpServer(
   const app = new Hono();
   const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
   const hostCapabilities = createHostCapabilityStore();
+  // 待认领连接惰性过期的时钟与 TTL：默认真实时钟 + 有界常量，测试可注入虚拟时间/更小 TTL。
+  const pendingClock = options.pendingConnectionClock ?? (() => Date.now());
+  const pendingTtlMs = options.pendingConnectionTtlMs ?? PENDING_REMOTE_CONNECTION_TTL_MS;
 
   const authToken = options.authToken?.trim();
   if (authToken) {
@@ -526,6 +596,9 @@ export function createHttpServer(
     }
     // M11：待认领连接硬上限——条目只在 WS 认领时删除，盲刷可累积真实后端连接（见
     // MAX_PENDING_REMOTE_CONNECTIONS 注释与 server-auth.md 风险登记）。
+    // R2 finding 3：容量检查前先惰性驱逐超期条目，回收放弃认领客户端留下的句柄/内存；
+    // 驱逐后仍达上限才拒绝，避免陈旧条目把合法新连接挤成 503。
+    pruneExpiredPendingConnections(pendingClock(), pendingTtlMs);
     if (remoteConnections.size >= MAX_PENDING_REMOTE_CONNECTIONS) {
       return c.json({ error: "Pending remote connection budget exhausted; retry later" }, 503);
     }
@@ -540,12 +613,19 @@ export function createHttpServer(
       const backend = await createRemoteBackend(body);
       const connection = await connectRemote(backend);
       const id = generateId();
-      remoteConnections.set(id, connection);
+      // 记录 spawn 完成时刻作为惰性过期依据（R2 finding 3）。
+      remoteConnections.set(id, { connection, spawnedAt: pendingClock() });
 
       return c.json({ id });
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      return c.json({ error: message }, 500);
+      // R2-04 修复：此前把 `err.message` 原样进响应体。SSH/WSL/Docker spawn 失败的 message
+      // 常含主机名、绝对路径、可执行命令（如 `spawn ssh ENOENT`、`connect EHOSTUNREACH
+      // 10.x.x.x:22`、WSL 发行版路径），对外返回等于把内部拓扑/命令泄漏给调用方（含浏览器）。
+      // 修法：对外只回稳定归类码 `remote-connect-failed`，原始 message 降级进 warn 日志
+      //（生产可诊断，但不出网）。与上方 Origin/预算拒绝一致的对外错误面。
+      const detail = err instanceof Error ? err.message : String(err);
+      warn("POST /api/connect-remote failed:", detail);
+      return c.json({ error: "remote-connect-failed" }, 500);
     }
   });
 
@@ -626,11 +706,27 @@ export function createHttpServer(
             ws.close(4000, "Missing remote connection id");
             return;
           }
-          const connection = remoteConnections.get(id);
-          if (!connection) {
+          // R2 finding 3：认领是第二个惰性过期触点。先整体驱逐超期条目（有界资源回收，
+          // 非常驻定时器），再取本条；被本次驱逐命中的条目等同「不存在」。
+          pruneExpiredPendingConnections(pendingClock(), pendingTtlMs);
+          const entry = remoteConnections.get(id);
+          if (!entry) {
             ws.close(4004, "Remote connection not found");
             return;
           }
+          // 认领时校验 spawn 时间：超期条目按失效处理——dispose 句柄、从表移除、拒绝认领。
+          // 与 prune 同一判定（isPendingConnectionExpired），避免陈旧连接被迟到客户端复活。
+          if (isPendingConnectionExpired(entry.spawnedAt, pendingClock(), pendingTtlMs)) {
+            remoteConnections.delete(id);
+            try {
+              entry.connection.dispose();
+            } catch {
+              // 同 prune：dispose 失败不阻断拒绝路径。
+            }
+            ws.close(4004, "Remote connection not found");
+            return;
+          }
+          const connection = entry.connection;
           // 一个连接只给一个 WS 客户端使用，取出后从 Map 移除
           remoteConnections.delete(id);
 

@@ -15,6 +15,7 @@ import type {
 import { buildUserContentFromTurn } from "../helpers/index.js";
 import { realUserRuntimeMetadata } from "../../agent/message-history.js";
 import type { AgentRuntimeInternal } from "../internal.js";
+import { getRuntimeTurnTimingPort } from "../runtime-turn-timing.js";
 import type { ControlOnlyTurnRuntimeCommand } from "../command-queue.js";
 import { buildProjectionAnchor } from "./projection-anchor.js";
 import { maybeStartGoalSummaryTitleGeneration } from "./goal-summary-title.js";
@@ -109,7 +110,7 @@ export async function emitControlOnlyUserTurn(
     turnTraceContext,
   );
   options.afterTurnBoundary?.();
-  this.turnNumber += 1;
+  getRuntimeTurnTimingPort(this).advanceTurn();
   this.messageHistory.setCacheMiss();
   // 无模型输出的边界 turn 后首个请求前缀必变（prompt-cache-diagnostics.md R1）。
   this.pendingCacheMissCause = "control_only_turn";

@@ -47,7 +47,16 @@ function browserOpenCommand(
   }
 
   if (platform === "win32") {
-    return { executable: "cmd.exe", args: ["/c", "start", "", url] };
+    // 修复依据（R2-01，命令注入；同 bootstrap/src/app/platform-open-port.ts 的 H1 模式，
+    // 2026-10-04 已修一处，本文件是漏修的第二副本）：
+    // 原写法 `cmd.exe /c start "" <url>` 中，cmd.exe 按 `"` 切换引号态——网络返回的
+    // authorize_url 只要内嵌裸双引号即可逃逸引号态，其后 `&calc&` 作为新命令在 CLI 用户
+    // 上下文执行。spawn 的参数数组只保证 argv 边界；当 executable 本身是 shell（cmd.exe）时，
+    // 数组形态不构成防线（元字符由 shell 二次解释）。
+    // 改用 explorer.exe 直传：非 shell，argv 经 CreateProcess 传递，无元字符解释层，内嵌
+    // `"`/`&`/`^`/`%` 不被解释。`explorer.exe <url>` 用系统默认浏览器打开 URL。
+    // 纵深防御另见 cli-oauth.ts parseInitData（校验层拒绝含裸双引号的 authorize_url）。
+    return { executable: "explorer.exe", args: [url] };
   }
 
   return { executable: "xdg-open", args: [url] };

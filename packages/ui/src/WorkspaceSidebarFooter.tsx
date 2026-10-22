@@ -152,7 +152,7 @@ export const WorkspaceSidebarFooter = memo(function WorkspaceSidebarFooterCompon
             {profileBadge}
           </span>
           {/* 审计版没有账户体系与关于页入口，应用名旁边直接露出版本号，省得用户去找。 */}
-          <span className="shrink-0 text-[11px] leading-none text-muted-foreground">
+          <span className="shrink-0 text-ui-xs leading-none text-muted-foreground">
             v{ACODE_VERSION}
           </span>
           {user ? <WorkspaceSidebarFooterPlanBadge state={usageSummaryState} /> : null}

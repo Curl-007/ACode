@@ -1,6 +1,7 @@
 /* eslint-disable max-lines -- 存量基线豁免:该文件先于 CLI lint 门禁建立即超限(根 lint 的 ignorePatterns 排除 apps/acode-cli,turbo lint 因此从未变绿)。头注豁免以恢复门禁信号;拆分重构超出本批范围。 */
 import { parseRuntimeInputPresentation } from "@acode/contracts";
 import { getRuntimeTurnReservationPort } from "../turn-coordination.js";
+import { getRuntimeTurnTimingPort } from "../runtime-turn-timing.js";
 import {
   unpublishedPermissionGrants,
   recoverPendingPermissionGrant,
@@ -321,7 +322,7 @@ export function beginActiveTurn(
     ...(options?.inputId === undefined ? {} : { inputId: options.inputId }),
   };
   getRuntimeTurnReservationPort(this).release(turnId);
-  this.activeTurn = activeTurn;
+  getRuntimeTurnTimingPort(this).setActiveTurn(activeTurn);
   return activeTurn;
 }
 
@@ -347,13 +348,13 @@ export function finishActiveTurn(
   activeTurn: ActiveTurnSteeringState | undefined,
 ): void {
   if (activeTurn !== undefined && this.activeTurn === activeTurn) {
-    this.activeTurn = undefined;
+    getRuntimeTurnTimingPort(this).clearActiveTurn();
   }
 }
 
 export function createPendingInputId(this: AgentRuntimeInternal, turnId: TurnId): string {
-  this.pendingInputSequence += 1;
-  return `pending_${turnId}_${this.pendingInputSequence}`;
+  const sequence = getRuntimeTurnTimingPort(this).nextPendingInputSequence();
+  return `pending_${turnId}_${sequence}`;
 }
 
 function createTurnInProgressError(
@@ -600,7 +601,10 @@ export async function reservePendingInputById(
     this.pendingInputReservations.has(options.pendingInputId)
   )
     return false;
-  this.pendingInputReservations.set(options.pendingInputId, options.reservationId);
+  getRuntimeTurnTimingPort(this).reservePendingInput(
+    options.pendingInputId,
+    options.reservationId,
+  );
   try {
     await appendPendingInputDispatch(this, {
       ...options,
@@ -609,7 +613,7 @@ export async function reservePendingInputById(
     });
     return true;
   } catch (error) {
-    this.pendingInputReservations.delete(options.pendingInputId);
+    getRuntimeTurnTimingPort(this).releasePendingInputReservation(options.pendingInputId);
     throw error;
   }
 }
@@ -647,7 +651,7 @@ export async function releasePendingInputReservation(
     return false;
   }
   const targetTurnId = await pendingInputTargetTurnId(this, options.pendingInputId);
-  this.pendingInputReservations.delete(options.pendingInputId);
+  getRuntimeTurnTimingPort(this).releasePendingInputReservation(options.pendingInputId);
   if (!targetTurnId) return true;
   try {
     await appendPendingInputDispatch(this, {
@@ -658,7 +662,10 @@ export async function releasePendingInputReservation(
     });
   } catch (error) {
     // 事件写失败时 reservation 仍必须保持，不能让第二端重复执行。
-    this.pendingInputReservations.set(options.pendingInputId, options.reservationId);
+    getRuntimeTurnTimingPort(this).reservePendingInput(
+      options.pendingInputId,
+      options.reservationId,
+    );
     throw error;
   }
   return true;
@@ -712,7 +719,7 @@ export async function removePendingInputById(
     },
   );
   await this.appendEvent(event, options.traceContext);
-  this.pendingInputReservations.delete(options.pendingInputId);
+  getRuntimeTurnTimingPort(this).releasePendingInputReservation(options.pendingInputId);
   this.logger?.debug("Turn steer item removed", {
     ...traceContextToLogContext(options.traceContext),
     event: "turn.steer.removed",
@@ -756,7 +763,7 @@ export async function discardHeldPendingInputById(
     },
   );
   await this.appendEvent(event, traceContext);
-  this.pendingInputReservations.delete(pendingInputId);
+  getRuntimeTurnTimingPort(this).releasePendingInputReservation(pendingInputId);
   this.logger?.debug("Turn steer item removed", {
     ...traceContextToLogContext(traceContext),
     event: "turn.steer.removed",
@@ -1015,13 +1022,10 @@ export async function setQueueAutoDrain(
 ): Promise<void> {
   // false -> true 表示用户从暂停队列恢复。旧暂停项只存在于事件投影，不在新
   // activeTurn.pendingInputs 中；恢复期间改由 CLI 外层按完整投影 FIFO 逐项提升。
-  if (options.autoDrain && !this.queueAutoDrain) {
-    this.queueExternalDrainActive = true;
-  } else if (!options.autoDrain) {
-    this.queueExternalDrainActive = false;
-  }
-  // 授权位同时进 runtime（drain 门）与事件日志（投影派生暂停队列）。
-  this.queueAutoDrain = options.autoDrain;
+  // 授权位同时进 owner（drain 门）与事件日志（投影派生暂停队列）——原三写点
+  // （queueExternalDrainActive 打开/关闭 + queueAutoDrain 赋值）收进 applyQueueAutoDrainChange，
+  // 逐行等价。
+  getRuntimeTurnTimingPort(this).applyQueueAutoDrainChange(options.autoDrain);
   const event = createSessionEvent(
     SessionEventType.QueueAutoDrainChanged,
     this.sessionId,
@@ -1033,7 +1037,7 @@ export async function setQueueAutoDrain(
 
 /** CLI 投影确认恢复队列已空后，重新允许 core 在后续 tool batch 边界消费 guide。 */
 export function completeExternalQueueDrain(this: AgentRuntimeInternal): void {
-  this.queueExternalDrainActive = false;
+  getRuntimeTurnTimingPort(this).completeExternalQueueDrain();
 }
 
 /**
@@ -1143,11 +1147,12 @@ export async function drainPendingInput(
   if (unpublishedPermissionGrants.has(this)) await recoverPendingPermissionGrant(this);
   if (this.permissionFullAccessPending || this.activeTurn !== options.activeTurn) return undefined;
   // Guide 出队先移除内存、后落事件；完整消费期间不能从旧投影捕获授权目标。
-  this.pendingInputDrains = (this.pendingInputDrains ?? 0) + 1;
+  const timingPort = getRuntimeTurnTimingPort(this);
+  timingPort.beginPendingInputDrain();
   try {
     return await drainPendingInputUnlocked.call(this, options);
   } finally {
-    this.pendingInputDrains -= 1;
+    timingPort.endPendingInputDrain();
   }
 }
 

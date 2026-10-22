@@ -4,6 +4,7 @@ import {
   hostBotRemoteWorkspaceConnectionStatusResultMessageSchema,
   hostBotRemoteWorkspaceRuntimePortMessageSchema,
   hostBotRemoteWorkspaceReconnectResultMessageSchema,
+  resolveWorkspaceKey,
   type RemoteTarget,
 } from "@acode/shared";
 import { type IACodeTaskService as IACodeTaskServiceShape } from "../session/acodeTaskService.js";
@@ -177,7 +178,9 @@ export function createBotRemoteWorkspaceService(params: {
       workspacePath: string;
       workspaceIdentity: string;
     }): Promise<boolean> {
-      const workspaceKey = target.workspaceIdentity.trim() || target.workspacePath;
+      // 修复原因（review R3 EI-2）：此前内联「trim identity，空则回退 workspacePath」，
+      // 改用 shared 的 resolveWorkspaceKey 统一权威实现，语义一致。
+      const workspaceKey = resolveWorkspaceKey(target);
       const remoteTarget = await buildRemoteTargetForWorkspace(target);
       if (!remoteTarget) {
         connectedWorkspaceKeys.delete(workspaceKey);
@@ -233,7 +236,8 @@ export function createBotRemoteWorkspaceService(params: {
         }, 60_000);
       });
       if (result.ok) {
-        connectedWorkspaceKeys.add(target.workspaceIdentity.trim() || target.workspacePath);
+        // 修复原因（review R3 EI-2）：内联身份 key 副本改用 shared 的 resolveWorkspaceKey，语义一致。
+        connectedWorkspaceKeys.add(resolveWorkspaceKey(target));
         return { ok: true };
       }
       return { ok: false, message: result.error ?? "unknown" };
@@ -273,7 +277,8 @@ export function createBotRemoteWorkspaceService(params: {
     workspacePath: string;
     workspaceIdentity: string;
   }): Promise<RemoteBotWorkspaceRuntimeServices | null> {
-    const workspaceKey = target.workspaceIdentity.trim() || target.workspacePath;
+    // 修复原因（review R3 EI-2）：内联身份 key 副本改用 shared 的 resolveWorkspaceKey，语义一致。
+    const workspaceKey = resolveWorkspaceKey(target);
     const cached = runtimeServicesByWorkspaceKey.get(workspaceKey);
     if (cached) {
       return cached;

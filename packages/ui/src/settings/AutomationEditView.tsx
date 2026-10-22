@@ -293,7 +293,7 @@ function TimeOfDayPicker({
         <button
           type="button"
           aria-label={ariaLabel}
-          className="inline-flex h-auto items-center gap-1 rounded-full bg-hover py-px pl-2 pr-1.5 text-ui-base leading-5 tabular-nums text-foreground transition-colors hover:bg-selected focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-input-border-focused"
+          className="inline-flex h-auto items-center gap-1 rounded-full bg-hover py-px pl-2 pr-1.5 text-ui-base leading-5 tabular-nums text-foreground transition-colors hover:bg-selected focus-visible:bg-input-focused focus-visible:outline-none"
         >
           {pad2(hour)}:{pad2(minute)}
           <span className="shrink-0 text-foreground-subtle">
@@ -389,7 +389,7 @@ function MonthDayPicker({
           aria-label={intl.formatMessage({
             id: "automations.form.schedule.yearDateLabel",
           })}
-          className="inline-flex h-auto items-center gap-1 rounded-full bg-hover py-px pl-2 pr-1.5 text-ui-base leading-5 tabular-nums text-foreground transition-colors hover:bg-selected focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-input-border-focused"
+          className="inline-flex h-auto items-center gap-1 rounded-full bg-hover py-px pl-2 pr-1.5 text-ui-base leading-5 tabular-nums text-foreground transition-colors hover:bg-selected focus-visible:bg-input-focused focus-visible:outline-none"
         >
           {intl.formatMessage(
             { id: "automations.form.schedule.monthDayValue" },
@@ -448,7 +448,7 @@ function WeekdayPicker({
             id: "automations.form.schedule.weekdaysLabel",
           })}
           // 星期多选 trigger 与同层频率、时间 tag 使用相同高亮，避免亮度不一致。
-          className="inline-flex h-auto max-w-full items-center gap-0.5 rounded-full bg-hover py-px pl-2 pr-0.5 text-ui-base leading-5 text-foreground transition-colors hover:bg-selected data-[state=open]:bg-selected focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-input-border-focused"
+          className="inline-flex h-auto max-w-full items-center gap-0.5 rounded-full bg-hover py-px pl-2 pr-0.5 text-ui-base leading-5 text-foreground transition-colors hover:bg-selected data-[state=open]:bg-selected focus-visible:bg-input-focused focus-visible:outline-none"
         >
           <span className="truncate">{label}</span>
           <AutomationChevronDownIcon />
@@ -1972,41 +1972,47 @@ export function AutomationEditView({
             {editing ? (
               <>
                 {showEditingSettingsActions ? (
-                  <button
+                  <Button
                     type="submit"
                     form="automation-edit-form"
+                    variant="default"
+                    size="lg"
                     data-testid={TID_AUTOMATION_FORM_SUBMIT}
-                    className="inline-flex h-8 items-center rounded-lg border-0 bg-white px-3 text-ui-base font-medium text-black shadow-none outline-none transition-colors hover:bg-white/90 focus-visible:ring-0 disabled:pointer-events-none disabled:opacity-40"
+                    className="px-3 font-medium"
                     disabled={!submissionContextReady || saving}
                   >
                     {intl.formatMessage({
                       id: saving ? "automations.form.saving" : "automations.form.save",
                     })}
-                  </button>
+                  </Button>
                 ) : null}
                 {showEditingSettingsActions && onRunNow ? (
-                  <button
+                  <Button
                     type="button"
+                    variant="outline"
+                    size="lg"
                     data-testid={TID_AUTOMATION_RUN_NOW}
-                    className="inline-flex h-8 items-center gap-1.5 rounded-lg border-0 bg-white/[0.06] px-3 text-ui-base font-medium text-foreground shadow-none outline-none transition-colors hover:bg-white/10 focus-visible:ring-0 disabled:pointer-events-none disabled:cursor-not-allowed disabled:text-foreground-subtlest disabled:opacity-40"
+                    className="gap-1.5 px-3 font-medium"
                     disabled={!submissionContextReady || saving || saveAndRunPending}
                     onClick={() => void handleSaveAndRun()}
                   >
                     <AutomationRunNowIcon className="size-4" aria-hidden="true" />
                     {intl.formatMessage({ id: "automations.runNow" })}
-                  </button>
+                  </Button>
                 ) : null}
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <button
+                    <Button
                       type="button"
+                      variant="outline"
+                      size="icon-lg"
                       aria-label={intl.formatMessage({
                         id: "automations.moreActions",
                       })}
-                      className="flex size-8 items-center justify-center rounded-lg border-0 bg-white/[0.06] text-foreground-subtle shadow-none outline-none transition-colors hover:bg-white/10 hover:text-foreground data-[state=open]:bg-white/10 data-[state=open]:text-foreground focus-visible:ring-0"
+                      className="text-foreground-subtle hover:text-foreground data-[state=open]:bg-hover data-[state=open]:text-foreground"
                     >
                       <AutomationMoreHorizontalIcon className="size-4" aria-hidden="true" />
-                    </button>
+                    </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end" sideOffset={4} className="min-w-[180px]">
                     {/* 终态任务(completed/failed)不展示 pause/resume：Resume 对终态无意义，改存即复活。 */}
@@ -2827,18 +2833,20 @@ export function AutomationEditView({
                               {hasActions ? (
                                 <DropdownMenu>
                                   <DropdownMenuTrigger asChild>
-                                    <button
+                                    <Button
                                       type="button"
+                                      variant="ghost"
+                                      size="icon-sm"
                                       aria-label={intl.formatMessage({
                                         id: "automations.moreActions",
                                       })}
-                                      className="flex size-6 items-center justify-center rounded-[6px] text-foreground-subtle transition-colors hover:bg-white/10 hover:text-foreground data-[state=open]:bg-white/10 data-[state=open]:text-foreground"
+                                      className="rounded-[6px] text-foreground-subtle hover:text-foreground data-[state=open]:bg-hover data-[state=open]:text-foreground"
                                     >
                                       <AutomationMoreHorizontalIcon
                                         className="size-4"
                                         aria-hidden="true"
                                       />
-                                    </button>
+                                    </Button>
                                   </DropdownMenuTrigger>
                                   <DropdownMenuContent
                                     align="end"

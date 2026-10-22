@@ -1941,7 +1941,9 @@ export function createACodeTaskServiceAdapter(
                 type: "createSession",
                 sessionId: null,
                 payload: {
-                  workspaceId: target.workspaceIdentity?.trim() || target.workspacePath,
+                  // 修复原因（review R3 EI-2）：此处内联 `target.workspaceIdentity?.trim() || target.workspacePath`
+                  // 是本文件唯一残留副本（其余 20+ 处已用 resolveWorkspaceKey）；统一为权威实现，语义一致。
+                  workspaceId: resolveWorkspaceKey(target),
                   config: {
                     ...(model ? { provider: model.providerId, model: model.modelId } : {}),
                     ...(model?.options?.reasoningLevel

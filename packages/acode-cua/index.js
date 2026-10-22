@@ -58,6 +58,18 @@ function errorResult(message, code, possiblySent) {
   return textResult(JSON.stringify(payload), true);
 }
 
+// fail-closed 边界（订正 R2-09，见 CONTRACT.md「fail-closed 边界」）：本函数是**客户端 wire 面**，
+// 不是惰性占位——它是功能完整的 broker 客户端。它的 fail-closed 仅来自「未传 brokerSocketPath 时
+// 返回 unavailable」这一条；一旦 options.brokerSocketPath 存在，execute() 就会经 callBrokerMethod
+// 真下发 click/type/key 等变更类动作到 Helper。
+// 因此生产端的 fail-closed **不由本函数自身惰性保证**，而由上游门控决定：
+//   packages/services/src/node.ts:2273 的 cuaPluginEnabled（isCuaEnabledForContext）决定是否把
+//   broker socket env（BROKER_SOCKET_ENV）注入 agent spawn env；未注入 → SDK 侧无 socketPath →
+//   本函数走 unavailable() 分支。注意 isACodeCuaInternalFeatureEnabled 现已默认 ON，端到端 fail-closed
+//   实际落在 shouldCreateDefaultCuaProductHelper 的 admission（仅 desktop-local 建 Helper）+
+//   broker-server.js 的 Helper host 是无法启动的 stub（拿不到 live broker）。
+// dev 旋钮（ACODE_CUA_DEV_MODE=1 / ACODE_CUA_PRODUCT_HELPER=1 + ACODE_CUA_DEV_ROOT）可激活活路径，
+// 那是有意的本地开发开关，不是安全边界。
 export function createComputerUseRuntime(options = {}) {
   const brokerSocketPath = typeof options.brokerSocketPath === "string" ? options.brokerSocketPath : undefined;
   const refreshMarkerPath =

@@ -113,6 +113,9 @@ export function layoutTeamTaskGraph(team: ConversationStatusPanelTeam): TeamTask
   return { placed, edges, columnCount: columns.size, rowCount };
 }
 
+// 豁免 text-ui-* 标尺：依赖图节点的字号随 SVG 绘图坐标系缩放（COMPACT 9px / FULL 11px），
+// 属图表节点/轴家具而非业务 UI 文案，与 text-ui-2xs 的 graph-axis 例外同源。见 DESIGN.md
+// 「UI font tokens」。节点几何（宽/高/间距）同理是绘图坐标，不进 4px 间距标尺。
 const COMPACT = { nodeWidth: 56, nodeHeight: 20, gapX: 34, gapY: 8, fontSize: 9, pad: 6 };
 const FULL = { nodeWidth: 176, nodeHeight: 36, gapX: 56, gapY: 12, fontSize: 11, pad: 8 };
 

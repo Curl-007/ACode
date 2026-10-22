@@ -13,6 +13,10 @@ const {
   setMcpCallAuditSink,
 } = await import("../packages/core/src/mcp/index.ts");
 
+const { auditMcpToolCall, registerMcpCallAuditSink } = await import(
+  "../packages/core/src/mcp/call-audit.ts"
+);
+
 function makeDescriptor(overrides) {
   return {
     serverName: "srv",
@@ -275,3 +279,87 @@ test("审计 sink 抛异常不影响工具调用结果", async () => {
     setMcpCallAuditSink(undefined);
   }
 });
+
+// -----------------------------------------------
+// CLI-04 同类残余：按 sessionId 注册表路由（双 App 不串线）
+// -----------------------------------------------
+
+function toolCallEntry(sessionId) {
+  return {
+    kind: "tool-call",
+    serverName: "node_repl",
+    toolName: "run_task",
+    registeredName: "mcp__node_repl__run_task",
+    isWrite: true,
+    durationMs: 1,
+    status: "completed",
+    firstPartyBasis: "builtin-node-repl",
+    sessionId,
+  };
+}
+
+test("CLI-04 残余：双 App 交错写 MCP 审计，各自归属正确 trace，一个 close 不影响另一个", () => {
+  const seenA = [];
+  const seenB = [];
+  const seenDefault = [];
+  // 进程级缺省 sink：未注册 sessionId 的 emit 回落这里（stderr 兜底的替身）。
+  setMcpCallAuditSink((event) => seenDefault.push(event));
+  const unregisterA = registerMcpCallAuditSink("sess_app_a", (event) => seenA.push(event));
+  registerMcpCallAuditSink("sess_app_b", (event) => seenB.push(event));
+  try {
+    // App A、B 交错写：各按 entry.sessionId 落到自己的 sink，不串线。
+    auditMcpToolCall(toolCallEntry("sess_app_a"));
+    auditMcpToolCall(toolCallEntry("sess_app_b"));
+    auditMcpToolCall(toolCallEntry("sess_app_a"));
+    assert.equal(seenA.length, 2, "App A 的两条落 App A sink");
+    assert.equal(seenB.length, 1, "App B 的一条落 App B sink");
+    assert.equal(seenDefault.length, 0, "已注册 sessionId 不回落进程级缺省");
+    assert.ok(seenA.every((event) => event.sessionId === "sess_app_a"));
+    assert.ok(seenB.every((event) => event.sessionId === "sess_app_b"));
+
+    // 未注册 sessionId 的 emit 回落进程级缺省（不丢记录）。
+    auditMcpToolCall(toolCallEntry("sess_unknown"));
+    assert.equal(seenDefault.length, 1, "未注册 sessionId 回落缺省 sink");
+
+    // App A close（幂等释放自己的注册项）：App B 的审计通道不受影响。
+    unregisterA();
+    seenA.length = 0;
+    seenB.length = 0;
+    seenDefault.length = 0;
+    auditMcpToolCall(toolCallEntry("sess_app_a"));
+    auditMcpToolCall(toolCallEntry("sess_app_b"));
+    assert.equal(seenA.length, 0, "App A 释放后其 emit 回落缺省，不再落 A sink");
+    assert.equal(seenDefault.length, 1, "释放后 sess_app_a 回落进程级缺省");
+    assert.equal(seenB.length, 1, "App A close 不得影响在跑 App B 的审计");
+  } finally {
+    setMcpCallAuditSink(undefined);
+    unregisterA();
+  }
+});
+
+test("CLI-04 残余：registerMcpTools 透传 sessionId，未覆盖写工具告警按会话路由", () => {
+  const seenA = [];
+  const unregisterA = registerMcpCallAuditSink("sess_reg_a", (event) => seenA.push(event));
+  const seenDefault = [];
+  setMcpCallAuditSink((event) => seenDefault.push(event));
+  try {
+    registerMcpTools(
+      makeRegistry(),
+      makePort(),
+      [makeDescriptor({ serverName: "node_repl", toolName: "run_task", annotations: {} })],
+      { allowedTools: ["mcp__node_repl__run_task"], sessionId: "sess_reg_a" },
+    );
+    const warnings = seenA.filter((event) => event.kind === "uncovered-write-tools");
+    assert.equal(warnings.length, 1, "注册期告警按注册上下文 sessionId 路由到 App sink");
+    assert.equal(warnings[0].sessionId, "sess_reg_a");
+    assert.equal(
+      seenDefault.filter((event) => event.kind === "uncovered-write-tools").length,
+      0,
+      "带 sessionId 的告警不回落进程级缺省",
+    );
+  } finally {
+    setMcpCallAuditSink(undefined);
+    unregisterA();
+  }
+});
+

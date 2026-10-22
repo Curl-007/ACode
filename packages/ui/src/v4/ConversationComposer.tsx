@@ -1707,7 +1707,7 @@ function ConversationComposerImpl({
                         data-testid={testId(TID_V4_ATTACHMENT_UPLOAD_PROGRESS, attachment.id)}
                         role={attachment.uploadStatus === "failed" ? "alert" : "status"}
                         aria-label={uploadStatusLabel}
-                        className="absolute inset-0 grid place-items-center rounded-lg bg-background/85 text-[7px] font-semibold text-foreground"
+                        className="absolute inset-0 grid place-items-center rounded-lg bg-background/85 text-ui-xs font-semibold text-foreground"
                       >
                         <svg
                           aria-hidden="true"

@@ -10,7 +10,7 @@ import type {
   FileTextSlice,
   WorkspaceFileEntry,
 } from "@acode/shared";
-import { getMediaPreviewFormat } from "@acode/shared";
+import { getMediaPreviewFormat, resolveWorkspaceKey } from "@acode/shared";
 import { packWorkspaceFileEntries } from "@acode/shared/workspaceFileEntriesCodec";
 import type { IFileService, WorkspaceFileSearchParams } from "./file.js";
 import { WORKSPACE_FILE_SEARCH_DISPLAY_CAP } from "@acode/shared/workspaceFileSearch";
@@ -290,7 +290,9 @@ export function createFileService(options: CreateFileServiceOptions = {}): IFile
     workspaceIdentity?: string,
     refresh = false,
   ): Promise<WorkspaceFileIndex> => {
-    const workspaceKey = workspaceIdentity?.trim() || rootPath;
+    // 修复原因（review R3 EI-2）：此前内联「trim identity，空则回退 rootPath」，
+    // 改用 shared 的 resolveWorkspaceKey 统一权威实现；缓存 scope 的回退基准是 rootPath，语义一致。
+    const workspaceKey = resolveWorkspaceKey({ workspacePath: rootPath, workspaceIdentity });
     const ignoreRules = await loadWorkspaceFileSearchIgnoreRules(rootPath, workspaceIgnoreLogger);
     const cacheSignature = `${rootPath}\n${await statWorkspaceFileSearchIgnoreFingerprint(rootPath)}`;
     for (const [key, value] of workspaceFileListCache) {

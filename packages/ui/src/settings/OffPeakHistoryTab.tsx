@@ -9,6 +9,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu.js";
+import { Button } from "@/components/ui/button.js";
 import { cn } from "@/components/lib/utils.js";
 import { useACodeIntl } from "@/i18n/IntlProvider.js";
 import { formatDateTime } from "@/settings/automationFormat.js";
@@ -113,15 +114,17 @@ export function OffPeakHistoryTab({
               <div className="flex items-center justify-end">
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <button
+                    <Button
                       type="button"
+                      variant="ghost"
+                      size="icon-sm"
                       aria-label={intl.formatMessage({
                         id: "automations.moreActions",
                       })}
-                      className="flex size-6 items-center justify-center rounded-[6px] text-foreground-subtle transition-colors hover:bg-white/10 hover:text-foreground data-[state=open]:bg-white/10 data-[state=open]:text-foreground"
+                      className="rounded-[6px] text-foreground-subtle hover:text-foreground data-[state=open]:bg-hover data-[state=open]:text-foreground"
                     >
                       <AutomationMoreHorizontalIcon className="size-4" aria-hidden="true" />
-                    </button>
+                    </Button>
                   </DropdownMenuTrigger>
                   {/* 旧版按触发器右缘对齐且沿用紧凑菜单内距，导致浮层向表格内侧偏移并少 17.5px。 */}
                   <DropdownMenuContent

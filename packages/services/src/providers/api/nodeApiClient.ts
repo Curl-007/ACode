@@ -142,7 +142,11 @@ export class NodeApiClient implements ApiClient {
             this.onAcodeJwtInvalid?.(requestInput, new Headers(requestHeaders));
           }
         } catch (error) {
-          log.warn("acode jwt invalid response observation failed", { error });
+          // 修复原因（review R2-05 / security §2 附带）：ServiceLogger 首参是 traceId，
+          // 此前把消息串误传进 traceId 槽位（形态与同文件 :128 的 debug 调用不一致），
+          // 会被 formatLogPrefix 拼进 `[trace:...]` 前缀而非日志正文。改为 traceId=undefined，
+          // 消息串作为首个正文参数，与本文件其它调用形态对齐。
+          log.warn(undefined, "acode jwt invalid response observation failed", { error });
         }
       }
       return response;

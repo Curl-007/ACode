@@ -764,7 +764,16 @@ export default {
     ],
   },
   win: {
-    target: ["nsis"],
+    // nsis = 安装版（写注册表/开始菜单，自动更新走 latest.yml）；
+    // zip = 免安装版（解压即用，绿色 portable）。两个 target 共用下方 artifactName 模板，
+    // ${ext} 分别展开为 .exe / .zip，产物名天然不撞车：
+    //   ACode-<版本>-win-x64.exe（安装版） / ACode-<版本>-win-x64.zip（免安装版）。
+    // 关键：zip target 经 app-builder-lib 的 createCommonTarget→ArchiveTarget(isWriteUpdateInfo=false)
+    // 创建（winPackager.js:95、targetFactory.js:76-79），**不写 latest.yml**——Windows 自动更新
+    // 元数据仍只由 nsis 产出，electron-updater 的 NsisUpdater 下载 .exe 安装包，加 zip 零影响。
+    // 注意：免安装版的用户数据仍落 %APPDATA%/ACode（见 src/main/desktopRuntimeEnv.ts:85
+    // runtimeUserDataPath），与安装版共享；「免安装」指不跑安装器/不写注册表，非数据随文件夹便携。
+    target: ["nsis", "zip"],
     artifactName: buildDesktopArtifactName("win"),
   },
   linux: {

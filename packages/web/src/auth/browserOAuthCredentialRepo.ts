@@ -106,7 +106,12 @@ export class BrowserOAuthCredentialRepo {
   }
 
   getActiveProvider(): OAuthProviderId | null {
-    return this.localStorage.getItem(ACTIVE_PROVIDER_KEY);
+    // R2-05 finding 5：此前直接 `getItem(...) as OAuthProviderId`，任意 localStorage 字符串
+    //（旧版本残留 / 手工写入 / 其它站点污染）会强转成合法 provider 流入 useAuthToken 的
+    // `oauth:${activeProvider}:access_token` 键模板。改为过 isWebOAuthProviderId（与
+    // loadPendingProvider、loadCachedSessionState 同一校验范式），非法值归一为 null。
+    const stored = this.localStorage.getItem(ACTIVE_PROVIDER_KEY);
+    return isWebOAuthProviderId(stored) ? stored : null;
   }
 
   loadCachedSession(): UserInfo | null {

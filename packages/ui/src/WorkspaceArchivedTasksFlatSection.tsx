@@ -14,8 +14,8 @@ import { logger } from "@/logger.js";
 import { useRemoteWorkspaceSessionStore } from "@/store/remoteWorkspaceSessionStore.js";
 import type { WorkspaceTabState } from "@/store/tabStore.js";
 import { buildTaskWorkspaceKey } from "@/lib/taskQueryCache.js";
-import { applyTaskQueryCacheMutation } from "@/store/taskQueryCacheStore.js";
-import { removeTaskFromTaskCaches } from "@/lib/taskListMetaSync.js";
+// R2-06: task meta 副本写入统一经 taskListMetaSync 收口，组件不再直调 applyTaskQueryCacheMutation。
+import { removeTaskFromTaskCaches, writeTaskMetaToCaches } from "@/lib/taskListMetaSync.js";
 import { TaskListRemoteSyncHint } from "@/TaskListRemoteSyncHint.js";
 import { TaskListLoadingHint } from "@/TaskListLoadingHint.js";
 import { buildWorkspaceServiceLookup } from "@/lib/workspaceServiceResolver.js";
@@ -237,7 +237,12 @@ export function WorkspaceArchivedTasksFlatSection({
                             : {}),
                         })
                         .then((meta) => {
-                          applyTaskQueryCacheMutation({
+                          // R2-06: 取消归档只改成员关系（archived:true->false），
+                          // 无 optimistic/remote 副本写入，全部 placement 默认 none，仅 query cache 迁移。
+                          writeTaskMetaToCaches({
+                            workspacePath: task.workspacePath,
+                            workspaceIdentity: task.workspaceIdentity,
+                            taskId: task.taskId,
                             previousTask: task,
                             nextTask: meta,
                             previousState: { pinned: false, archived: true },

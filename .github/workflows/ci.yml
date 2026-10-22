@@ -118,3 +118,57 @@ jobs:
         run: pnpm --filter @acode/server-cli stage --target linux-x64
       - name: Verify remote SSH lifecycle
         run: pnpm --filter @acode/server-cli verify:remote-ssh
+
+  # Windows 平台 leg（docs/specs/ci-platform-matrix.md R1；根因 review 测试专项 R1-03）：
+  # verify 只在 ubuntu 跑，近期 win32 文件系统语义 bug（read-state 大小写 66a11532、
+  # prompt-routing walk-up 01d457f8、8.3 短名）在 Linux 上恒走 posix 分支、门禁恒绿。
+  # 这里独立成 job（不把 verify 改 matrix）：Windows 首跑若暴露既有 win32 失败，失败面与
+  # 主门禁隔离，不连带弄红 ubuntu leg。必需 job：失败即 CI 整体红，不为过 CI 放宽测试。
+  #
+  # 缓存纪律：warm-cache.yml 只生产 Linux 条目，Windows 无生产者，故本 job 不加任何
+  # actions/cache、不用 setup-node 的 cache:pnpm（会 save，违反 omp「只 restore 不 save」教训）。
+  # Node 钉 24.14.0（对齐 mise.toml）消除 runner 次版本漂移；run 统一 shell:bash（windows-latest
+  # 自带 Git Bash），避免 pwsh/bash 在 --filter、glob、退出码上的语义差异。
+  windows-verify:
+    name: Windows verify (typecheck + lint + core/services/shared)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.14.0
+
+      - name: Install dependencies
+        shell: bash
+        run: pnpm install --frozen-lockfile
+
+      # 单一类型门禁入口，与 verify 逐字一致（cli-validation-gates.md 规则 5，不得内联单入口）。
+      - name: Typecheck
+        shell: bash
+        run: pnpm typecheck
+
+      - name: Lint
+        shell: bash
+        run: pnpm lint
+
+      # core 测试经 tsx 引 apps/acode-cli 源码，源码按包名解析 @acode/contracts 的 dist/
+      # （main: ./dist/index.js）；干净检出无 dist 会 ERR_MODULE_NOT_FOUND（与 verify 同因）。
+      - name: Build CLI workspace packages
+        shell: bash
+        run: npx turbo --skip-infer --cwd apps/acode-cli run build --filter='!@acode/cli'
+
+      # 三包分开跑，任一失败即红；services/shared 的依赖经 src/*.ts 直接解析，与 core 同批构建。
+      - name: Tests (core)
+        shell: bash
+        run: pnpm --filter @acode/core test
+
+      - name: Tests (services)
+        shell: bash
+        run: pnpm --filter @acode/services test
+
+      - name: Tests (shared)
+        shell: bash
+        run: pnpm --filter @acode/shared test

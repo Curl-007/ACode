@@ -3,13 +3,13 @@ import { Buffer } from "node:buffer";
 import {
   ApiError,
   type ApiClient,
-  formatLogPrefix,
   ZAI_PROVIDER_ID,
   type OAuthCallbackParams,
   type OAuthProviderMeta,
   type OAuthTokenSet,
   type OAuthUserProfile,
 } from "@acode/shared";
+import { createServiceLogger } from "../../logger/serviceLogger.js";
 import { readApiJson } from "../../providers/api/apiJson.js";
 import { ZaiBusinessTokenResolver } from "../../providers/zaiBusinessTokenResolver.js";
 import { parseOAuthLoginAttribution } from "../callbackAttribution.js";
@@ -58,7 +58,13 @@ interface ZaiUserInfoPayload {
 /** OAuth 启动恢复允许的最长等待时间（1 分钟） */
 const OAUTH_USERINFO_TIMEOUT_MS = 60_000;
 const ZAI_BUSINESS_TOKEN_TIMEOUT_MS = 10_000;
-const log = (...args: unknown[]) => console.log(formatLogPrefix("zaiOAuth", process.pid), ...args);
+const serviceLog = createServiceLogger("zaiOAuth");
+// 修复原因（review R2-03）：此前用裸 `console.log(formatLogPrefix("zaiOAuth", pid), ...)`
+// 定义 log helper，绕过 createServiceLogger 的 redactServiceLogArg 唯一脱敏漏斗。
+// OAuth token 交换路径的记录即便已 maskOAuthCode/sanitizeTokenPayloadForLog 预处理，
+// 其余字段（url/redirect/state）仍需在源头过脱敏。改为薄封装 serviceLog.info——
+// pid 前缀由漏斗内 formatLogPrefix 等价产出，不再手工拼接。
+const log = (...args: unknown[]) => serviceLog.info(undefined, ...args);
 
 function normalizeExpiresIn(raw: number | undefined, now: () => number): number | undefined {
   if (!raw || !Number.isFinite(raw)) {

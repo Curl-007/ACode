@@ -19,9 +19,14 @@ import type {
   SettingsDirectorySource,
 } from "@acode/shared";
 import type { IMcpSyncService } from "./mcpSync.js";
+import { createServiceLogger } from "#src/logger/serviceLogger.js";
 import { checkRemoteSyncDirectoryWriteAccess } from "../remote-sync/remoteSyncWriteAccess.js";
 
 type McpConfigKeyName = "mcp.servers" | "mcpServers";
+
+// 修复原因（review R3-console 残留）：mcp-sync 此前用裸 console.warn，不进统一服务
+// 日志文件、不脱敏。改走 createServiceLogger 漏斗，与其它 services 子模块对齐。
+const log = createServiceLogger("mcp-sync");
 
 interface DirectoryMcpDescriptor {
   source: McpSyncSource;
@@ -512,7 +517,9 @@ async function readServerMapWithLegacyMigration(
     const next = writeServerMapToJson(parsed, configKeyName, migration.servers);
     await writeTextAtomic(filePath, `${JSON.stringify(next, null, 2)}\n`);
   } catch (error) {
-    console.warn("[mcp-sync] legacy enable migration failed:", filePath, formatErrorMessage(error));
+    // 修复原因：裸 console.warn 改为统一 logger.warn，落盘且经脱敏漏斗。
+    // error 直接传入（漏斗对 Error 展平为 name+message+stack 后脱敏），保留原 filePath 上下文。
+    log.warn(undefined, "[mcp-sync] legacy enable migration failed:", filePath, error);
   }
   return migration.servers;
 }

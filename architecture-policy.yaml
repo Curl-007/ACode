@@ -79,13 +79,43 @@ modules:
     managed: true
     owner: conversation
     requires: [provider, rpc, services, shared]
-    # contract.ts（迁移目标入口）已落地为 src/session/contract.ts，但
-    # publicEntrypoints 有意留空：checker 只在列表非空时校验 deep-import
-    #（scripts/architecture/index.mjs），空列表让 services→session 的 31 条
-    # 内部边保持惰性——这是登记的迁移状态，不是幻影声明（2026-10-05 移除的
-    # 是「声明了不存在的文件」；本文件真实存在，收敛时先注册它再逐条迁移
-    # 内部边，详见 packages/services/specs/session-module-boundary.md）。
+    # contract.ts（迁移目标入口，55 行 / 25 named re-export）已落地，但 publicEntrypoints
+    # 有意留空：checker 只在「目标模块声明了任一边界（精确入口 / 通配入口 / 内部边白名单）」
+    # 时校验 deep-import（scripts/architecture/index.mjs 的 hasBoundary）。留空 + 下方
+    # internalEdgeAllowlist 逐条冻结 24 条存量 services→session 内部边（checker 口径：
+    # distinct 非 test 跨模块 from→to 对；review §5 说的约 39-40 是含 test/specifier 重复的
+    # 另一口径），使这些边保持合法；**任何未登记的新边立即报 deep-import**——把「惰性保持
+    # 合法」变成「新增需显式登记」，止住内部边增长（ARCH-04 resolver 缺口④）。
+    # 收敛路径见 packages/services/specs/session-module-boundary.md：新代码从 contract.ts
+    # 导入，存量边逐条迁移到契约面后从白名单删除；白名单清空即把 contract.ts 注册为
+    # publicEntrypoints。到期（2026-12-31）前白名单必须见底。
     publicEntrypoints: []
+    # 存量内部边白名单（只精确匹配 (from,to) 对，不做前缀/通配，范围最窄且可审计）。
+    internalEdgeAllowlist:
+      - { from: "packages/services/src/index.ts", to: "packages/services/src/session/acodeTaskListTypes.ts" }
+      - { from: "packages/services/src/window-controller/windowController.ts", to: "packages/services/src/session/acodeTaskListTypes.ts" }
+      - { from: "packages/services/src/accessor.ts", to: "packages/services/src/session/acodeTaskService.ts" }
+      - { from: "packages/services/src/acode-agent/acodeTaskServiceAdapter.ts", to: "packages/services/src/session/acodeTaskService.ts" }
+      - { from: "packages/services/src/bots/botRemoteWorkspaceBridge.ts", to: "packages/services/src/session/acodeTaskService.ts" }
+      - { from: "packages/services/src/bots/botsService.ts", to: "packages/services/src/session/acodeTaskService.ts" }
+      - { from: "packages/services/src/index.ts", to: "packages/services/src/session/acodeTaskService.ts" }
+      - { from: "packages/services/src/node.ts", to: "packages/services/src/session/acodeTaskService.ts" }
+      - { from: "packages/services/src/node.ts", to: "packages/services/src/session/automationCron.ts" }
+      - { from: "packages/services/src/index.ts", to: "packages/services/src/session/automationCronValidation.ts" }
+      - { from: "packages/services/src/node.ts", to: "packages/services/src/session/automationRepo.ts" }
+      - { from: "packages/services/src/node.ts", to: "packages/services/src/session/automationService.ts" }
+      - { from: "packages/services/src/node.ts", to: "packages/services/src/session/offPeakMockGateway.ts" }
+      - { from: "packages/services/src/node.ts", to: "packages/services/src/session/offPeakRuntimeModel.ts" }
+      - { from: "packages/services/src/node.ts", to: "packages/services/src/session/offPeakServerClient.ts" }
+      - { from: "packages/services/src/accessor.ts", to: "packages/services/src/session/offPeakTask.ts" }
+      - { from: "packages/services/src/index.ts", to: "packages/services/src/session/offPeakTask.ts" }
+      - { from: "packages/services/src/node.ts", to: "packages/services/src/session/offPeakTask.ts" }
+      - { from: "packages/services/src/node.ts", to: "packages/services/src/session/offPeakTaskRepo.ts" }
+      - { from: "packages/services/src/node.ts", to: "packages/services/src/session/offPeakTaskService.ts" }
+      - { from: "packages/services/src/index.ts", to: "packages/services/src/session/sessionRealtimePort.ts" }
+      - { from: "packages/services/src/bots/statusFormatting.ts", to: "packages/services/src/session/taskChangeSummary.ts" }
+      - { from: "packages/services/src/node.ts", to: "packages/services/src/session/taskChangeSummary.ts" }
+      - { from: "packages/services/src/node.ts", to: "packages/services/src/session/taskIndexRepo.ts" }
     # 单层 app：55 处 node: 导入（含 node:sqlite 直连），声明 domain 层会触发 domain-io。
     layers: { app: "." }
     layerOrder: [app]
@@ -307,6 +337,13 @@ global:
   forbidCycles: true
   forbidDeepImports: true
   managedOnly: true
+  # asset 导入豁免（ARCH-04 resolver 缺口③）：这些扩展名的 import 是构建期静态资源，
+  # 不是模块依赖边，不计入 deep-import / module-dependency / unresolved-workspace-import
+  # / domain-io 违规。集合按仓库实测登记的静态资源导入面（ui 的 @/assets/*.svg|png、
+  # 各包 styles.css、ui 的 notification-sounds/*.mp3）刻意收窄——豁免范围越窄越可审计，
+  # 伪装成 asset 的 TS deep-import（./foo.ts）扩展名不在集合内故不豁免。新增 asset 类型
+  # （如字体 .woff2）时在此登记，不要硬编码进 checker。是 ui/web/desktop 纳管的前置之一。
+  assetExtensions: [.css, .svg, .png, .mp3]
   # @acode/acode-cua 是扁平 JS 占位包（无 src/ 目录），workspace 解析回退
   # <pkgRoot>/src/<subpath> 解析不到任何导出。这里按 package.json exports 表
   # 把 12 个子路径逐一显式映射到实际文件（精确 pattern；单个 * 通配无法表达

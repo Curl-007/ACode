@@ -14,6 +14,9 @@ const { createInMemorySessionEventStore } =
   await import("../packages/contracts/src/events/in-memory-session-event-store.ts");
 const { getRuntimeBranchRestorePort, getRuntimeCommandDrainPort } =
   await import("../packages/core/src/runtime/turn-coordination.ts");
+const { getRuntimeTurnTimingPort } = await import(
+  "../packages/core/src/runtime/runtime-turn-timing.ts"
+);
 const { getRuntimeLifecyclePort, initializeRuntimeLifecycle } =
   await import("../packages/core/src/runtime/runtime-lifecycle.ts");
 const { getRuntimeNotificationSealPort, initializeRuntimeNotificationSeal } =
@@ -633,6 +636,14 @@ test("CLI-05: real runtime exposes non-writable, non-replaceable state getters",
     ["permissionFullAccessPending", true],
     ["lastPermissionGrantId", "grant_bad"],
     ["pendingModelChangeTimeline", { requestId: "req_bad" }],
+    // CLI-05 P1 第一切片：turn 时序字段收敛到 RuntimeTurnTimingOwner，同样只读不可替换。
+    ["turnNumber", 999],
+    ["activeTurn", { turnId: "turn_bad", kind: "regular", pendingInputs: [], steerable: true }],
+    ["pendingInputSequence", 999],
+    ["pendingInputReservations", new Map()],
+    ["pendingInputDrains", 5],
+    ["queueAutoDrain", false],
+    ["queueExternalDrainActive", true],
   ]) {
     assert.throws(() => {
       runtime[field] = value;
@@ -650,6 +661,77 @@ test("CLI-05: real runtime exposes non-writable, non-replaceable state getters",
   assert.equal(runtime.activeTurnStartReservation.turnId, "turn_owned");
   runtime.releaseTurnStart("turn_owned");
   assert.equal(runtime.activeTurnStartReservation, undefined);
+});
+
+test("CLI-05 P1: turn timing fields are owned by a finite write port, not the flat `this` surface", async (t) => {
+  const { runtime } = await fixture(t);
+  const port = getRuntimeTurnTimingPort(runtime);
+
+  // turnNumber：只经端口推进/重建；读面 getter 反映 owner 真值。
+  assert.equal(runtime.turnNumber, 0);
+  port.advanceTurn();
+  assert.equal(runtime.turnNumber, 1);
+  port.setTurnNumber(7);
+  assert.equal(runtime.turnNumber, 7);
+
+  // activeTurn：set/clear，clear 是安全 no-op。
+  assert.equal(runtime.activeTurn, undefined);
+  const activeTurn = { turnId: "turn_timing", kind: "regular", pendingInputs: [], steerable: true };
+  port.setActiveTurn(activeTurn);
+  assert.equal(runtime.activeTurn, activeTurn);
+  port.clearActiveTurn();
+  assert.equal(runtime.activeTurn, undefined);
+  port.clearActiveTurn();
+
+  // pendingInputSequence：自增铸造。
+  assert.equal(port.nextPendingInputSequence(), 1);
+  assert.equal(runtime.pendingInputSequence, 1);
+  assert.equal(port.nextPendingInputSequence(), 2);
+
+  // pendingInputReservations：reserve/release，读面（size/has/get）不变。
+  assert.equal(runtime.pendingInputReservations.size, 0);
+  port.reservePendingInput("pending_a", "res_a");
+  assert.equal(runtime.pendingInputReservations.get("pending_a"), "res_a");
+  assert.equal(runtime.pendingInputReservations.has("pending_a"), true);
+  port.releasePendingInputReservation("pending_a");
+  assert.equal(runtime.pendingInputReservations.size, 0);
+  // 缺键 release 是 no-op。
+  port.releasePendingInputReservation("pending_missing");
+
+  // pendingInputDrains：begin/end 配对；无 in-flight 时读面为 undefined（迁移前语义）。
+  assert.equal(runtime.pendingInputDrains, undefined);
+  port.beginPendingInputDrain();
+  assert.equal(runtime.pendingInputDrains, 1);
+  port.beginPendingInputDrain();
+  assert.equal(runtime.pendingInputDrains, 2);
+  port.endPendingInputDrain();
+  port.endPendingInputDrain();
+  assert.equal(runtime.pendingInputDrains, undefined);
+
+  // queueAutoDrain：默认 true；暂停关闭 autoDrain + 外层窗口；恢复重开外层窗口。
+  assert.equal(runtime.queueAutoDrain, true);
+  assert.equal(runtime.queueExternalDrainActive, false);
+  port.pauseQueueAutoDrain();
+  assert.equal(runtime.queueAutoDrain, false);
+  assert.equal(runtime.queueExternalDrainActive, false);
+  // false → true：用户从暂停队列恢复，打开外层 FIFO 提升窗口（原 setQueueAutoDrain 语义）。
+  port.applyQueueAutoDrainChange(true);
+  assert.equal(runtime.queueAutoDrain, true);
+  assert.equal(runtime.queueExternalDrainActive, true);
+  port.completeExternalQueueDrain();
+  assert.equal(runtime.queueExternalDrainActive, false);
+  // true → true：不重新打开外层窗口（原 `if (autoDrain && !queueAutoDrain)` 分支不命中）。
+  port.applyQueueAutoDrainChange(true);
+  assert.equal(runtime.queueExternalDrainActive, false);
+  // → false：关闭窗口。
+  port.applyQueueAutoDrainChange(false);
+  assert.equal(runtime.queueAutoDrain, false);
+  assert.equal(runtime.queueExternalDrainActive, false);
+
+  // 端口冻结：不能替换写方法。
+  assert.throws(() => {
+    port.advanceTurn = () => {};
+  }, TypeError);
 });
 
 test("CLI-05: admission reserves synchronously and cancellation releases only its accepted turn", async (t) => {
@@ -894,6 +976,13 @@ runtime.shuttingDown = false;
 runtime.permissionFullAccessPending = true;
 runtime.lastPermissionGrantId = "grant_bad";
 runtime.pendingModelChangeTimeline = undefined;
+runtime.turnNumber = 999;
+runtime.activeTurn = undefined;
+runtime.pendingInputSequence = 999;
+runtime.pendingInputReservations = new Map();
+runtime.pendingInputDrains = 5;
+runtime.queueAutoDrain = false;
+runtime.queueExternalDrainActive = true;
 if (reservation) reservation.turnId = reservation.turnId;
 runtime.setBranchGeneration(4);
 `;
@@ -923,8 +1012,8 @@ runtime.setBranchGeneration(4);
   const detail = diagnostics
     .map((diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n"))
     .join("\n");
-  assert.equal(diagnostics.length, 11, detail);
-  assert.equal(diagnostics.filter((diagnostic) => diagnostic.code === 2540).length, 10, detail);
+  assert.equal(diagnostics.length, 18, detail);
+  assert.equal(diagnostics.filter((diagnostic) => diagnostic.code === 2540).length, 17, detail);
   // TS 有拼写建议时用 2551、没有时用 2339；两者都必须真正拒绝不存在的任意 setter。
   assert.equal(
     diagnostics.filter((diagnostic) => diagnostic.code === 2339 || diagnostic.code === 2551).length,
@@ -933,3 +1022,54 @@ runtime.setBranchGeneration(4);
   );
   assert.match(detail, /Property 'setBranchGeneration' does not exist/);
 });
+
+test("R1-01 gate: every proto-injected method is declared on the AgentRuntime type surface", () => {
+  // 验收项（review §2 P1 验收）：把「原型注入面失控」钉住——installAgentRuntimeMethods
+  // 经 proto.X = X 挂到 AgentRuntime.prototype 的每个方法名，必须在类型面
+  // （公开的 declaration-merged AgentRuntime 类+接口，或 AgentRuntimeInternal 的方法簇）
+  // 有对应声明。出现 proto 上未在任一接口声明的方法即红：那是绕过类型约束的裸注入。
+  const coreDir = fileURLToPath(new URL("../packages/core/", import.meta.url));
+  const agentRuntimePath = join(coreDir, "src/runtime/agent-runtime.ts");
+  const internalPath = join(coreDir, "src/runtime/internal.ts");
+  const configPath = join(coreDir, "tsconfig.json");
+  const config = ts.readConfigFile(configPath, ts.sys.readFile);
+  const parsed = ts.parseJsonConfigFileContent(config.config, ts.sys, dirname(configPath));
+  const options = { ...parsed.options, noEmit: true };
+  const program = ts.createProgram([agentRuntimePath, internalPath], options);
+  const checker = program.getTypeChecker();
+
+  // 取一个导出符号（class 或 interface）的实例类型全部成员名（含继承的方法簇）。
+  const memberNames = (sourcePath, exportName) => {
+    const sourceFile = program.getSourceFile(sourcePath);
+    assert.ok(sourceFile, `TypeScript 必须真正读取 ${sourcePath}`);
+    const nameNode = ts.forEachChild(sourceFile, (node) =>
+      (ts.isClassDeclaration(node) || ts.isInterfaceDeclaration(node)) &&
+      node.name?.text === exportName
+        ? node.name
+        : undefined,
+    );
+    assert.ok(nameNode, `${sourcePath} 必须声明 ${exportName}`);
+    const symbol = checker.getSymbolAtLocation(nameNode);
+    // getDeclaredTypeOfSymbol：class 取实例类型（含 declaration-merged interface 成员），
+    // interface 取接口类型（含继承的方法簇成员）。
+    const type = checker.getDeclaredTypeOfSymbol(symbol);
+    return new Set(type.getProperties().map((property) => property.getName()));
+  };
+
+  const declared = memberNames(agentRuntimePath, "AgentRuntime");
+  for (const name of memberNames(internalPath, "AgentRuntimeInternal")) declared.add(name);
+
+  // proto 注入面：AgentRuntime.prototype 的自有键（module 加载时已跑完 install）。
+  const protoKeys = Object.getOwnPropertyNames(AgentRuntime.prototype).filter(
+    (key) => key !== "constructor",
+  );
+  assert.ok(protoKeys.length > 100, `注入面应含大量方法，实测 ${protoKeys.length}`);
+
+  const undeclared = protoKeys.filter((key) => !declared.has(key));
+  assert.deepEqual(
+    undeclared,
+    [],
+    `proto 上存在未在 AgentRuntime / AgentRuntimeInternal 声明的注入方法：${undeclared.join(", ")}`,
+  );
+});
+

@@ -65,6 +65,24 @@ const entries: FenceRegistryEntry[] = [];
 const violations: SessionWorktreeFenceViolation[] = [];
 let violationCount = 0;
 let warnSink: SessionWorktreeFenceWarnSink | undefined;
+// 根因（2026-10-22 review CLI-04 同类残余）：fence warn sink 曾是进程级 set，无
+// sessionId 注册表——同进程多 App（桌面 app-server）下后装配者覆盖、任一 App close
+// 复位缺省 no-op，把在跑 App 的 warn 遥测（enforce 缺省化迁移判据的证据通道）打回
+// 静默。改为按 sessionId 注册表路由（照 bash-confirm-reflex-gate.ts 的 sessionAuditSinks
+// + 幂等释放范式）：注册表 entry 已带 sessionId，emit 时按 entry.sessionId 命中各自
+// App 的 sink，未命中回落进程级缺省；一个 App 的 close 只删自己的注册项。
+const sessionWarnSinks = new Map<string, SessionWorktreeFenceWarnSink>();
+
+/** 按 sessionId 路由 warn：命中该会话的注册 sink，未命中回落进程级缺省（可为 undefined=no-op）。 */
+function emitFenceWarn(
+  sessionId: string | undefined,
+  message: string,
+  details: Record<string, unknown>,
+): void {
+  const sink =
+    sessionId === undefined ? warnSink : (sessionWarnSinks.get(sessionId) ?? warnSink);
+  sink?.(message, details);
+}
 
 function lexicalNormalize(path: string): string {
   const normalized = normalize(path);
@@ -128,7 +146,7 @@ export function bindSessionWorktreeFence(
       if (entry.lastActivityAt <= entry.lastFlushedAt) return;
       entry.lastFlushedAt = entry.lastActivityAt;
       void flushTouch().catch((error: unknown) => {
-        warnSink?.("session worktree touch flush failed", {
+        emitFenceWarn(entry.sessionId, "session worktree touch flush failed", {
           error: error instanceof Error ? error.message : String(error),
           module: "core.worktree",
         });
@@ -239,7 +257,7 @@ export function evaluateSessionWorktreeWriteFence(input: {
   violationCount += 1;
   violations.push(violation);
   if (violations.length > MAX_VIOLATION_RECORDS) violations.shift();
-  warnSink?.("session worktree write fence violation", {
+  emitFenceWarn(entry.sessionId, "session worktree write fence violation", {
     fenceMode: mode,
     targetPath: violation.targetPath,
     worktreePath: violation.worktreePath,
@@ -307,11 +325,26 @@ export function snapshotSessionWorktreeFenceViolations(): {
   return { total: violationCount, recent: [...violations] };
 }
 
-/** 装配层可把 warn sink 接到 service logger（缺省 no-op，不 console 刷屏，spec R8）。 */
+/** 装配层可把进程级缺省 warn sink 接到 service logger（缺省 no-op，不 console 刷屏，spec R8）。 */
 export function setSessionWorktreeFenceWarnSink(
   sink: SessionWorktreeFenceWarnSink | undefined,
 ): void {
   warnSink = sink;
+}
+
+/**
+ * 注册一个 app/session 的 fence warn sink，返回幂等释放函数（照 registerBashReflexAuditSink）。
+ * 同进程多 App 各按 sessionId 路由，一个 close 只删自己的注册项，不影响在跑 App。
+ * 释放只删自己登记的 sink，后来者覆盖后旧释放不误删。
+ */
+export function registerSessionWorktreeFenceWarnSink(
+  sessionId: string,
+  sink: SessionWorktreeFenceWarnSink,
+): () => void {
+  sessionWarnSinks.set(sessionId, sink);
+  return () => {
+    if (sessionWarnSinks.get(sessionId) === sink) sessionWarnSinks.delete(sessionId);
+  };
 }
 
 /** 测试缝：立即结算所有到期心跳（不等 interval）。 */
@@ -332,4 +365,6 @@ export function resetSessionWorktreeFenceForTest(): void {
   violations.length = 0;
   violationCount = 0;
   warnSink = undefined;
+  // sessionId 注册表也清空：测试隔离（多 App 交错注册后 reset 回到干净缺省）。
+  sessionWarnSinks.clear();
 }

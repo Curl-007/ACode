@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -25,8 +25,10 @@ function runProbe(home, mode) {
   return JSON.parse(resultLine.slice("PROBE_RESULT ".length));
 }
 
-test("official service switches persist, project across processes and gate official URLs", () => {
+test("official service switches persist, project across processes and gate official URLs", (t) => {
   const home = mkdtempSync(join(tmpdir(), "acode-official-switches-"));
+  // 临时目录泄漏修复（CI/测试基建代理 J）：mkdtemp 后注册 t.after 递归删除，避免 CI 累积占盘。
+  t.after(() => rm(home, { recursive: true, force: true }));
 
   // 1. 默认全关：没有设置文件时不读取也不放行。
   const baseline = runProbe(home, "baseline");
@@ -67,8 +69,9 @@ test("official service switches persist, project across processes and gate offic
   assert.equal(closed.blockedMarketplaceUrl, true, "关闭 marketplace 后 CDN 请求恢复拦截");
 });
 
-test("official service switches gate real feature entry points", () => {
+test("official service switches gate real feature entry points", (t) => {
   const home = mkdtempSync(join(tmpdir(), "acode-official-effects-"));
+  t.after(() => rm(home, { recursive: true, force: true }));
   const { functional } = runProbe(home, "effects");
   const { closed, opened } = functional;
 
@@ -98,8 +101,9 @@ test("official service switches gate real feature entry points", () => {
   assert.equal(opened.feedbackNetworkReached, true, "打开后请求应到达网络层");
 });
 
-test("official switches project into agent env and gate the official marketplace source", () => {
+test("official switches project into agent env and gate the official marketplace source", (t) => {
   const home = mkdtempSync(join(tmpdir(), "acode-official-projection-"));
+  t.after(() => rm(home, { recursive: true, force: true }));
   const projection = runProbe(home, "projection");
 
   // 完整 7 键，关闭时全部写 "0"（覆盖 shell 残留的 =1），不能依赖缺键关闭。
@@ -120,8 +124,9 @@ test("official switches project into agent env and gate the official marketplace
   assert.equal(projection.openedAccountEnv, "0", "未开启项 env 写入 0");
 });
 
-test("agent default marketplaces only seed the official source when the switch is on", () => {
+test("agent default marketplaces only seed the official source when the switch is on", (t) => {
   const home = mkdtempSync(join(tmpdir(), "acode-official-seed-"));
+  t.after(() => rm(home, { recursive: true, force: true }));
   const seed = runProbe(home, "marketplace-seed");
 
   assert.equal(seed.closedRecords, 0, "关闭时不得 seed 官方市场记录");
@@ -161,8 +166,9 @@ test("agent spawn env and protocol entrypoint carry the official switches", asyn
   );
 });
 
-test("host filters the official marketplace from the public projection when the switch is off", () => {
+test("host filters the official marketplace from the public projection when the switch is off", (t) => {
   const home = mkdtempSync(join(tmpdir(), "acode-official-overview-"));
+  t.after(() => rm(home, { recursive: true, force: true }));
   const filter = runProbe(home, "overview-filter");
 
   // 关闭：官方市场与官方候选插件不可见，已安装列表保留；标记为 false（UI 展示引导）。

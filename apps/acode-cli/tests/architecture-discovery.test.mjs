@@ -61,8 +61,11 @@ test("architecture discovery searches package ancestors and sibling workspace pa
   const cwd = await fixture(t);
   const policy = await loadPolicy(cwd);
   const packages = await discoverWorkspacePackages(policy);
-  assert.equal(packages["@acme/foo"], join(cwd, "packages", "foo"));
-  assert.equal(packages["@acme/bar"], join(cwd, "packages", "bar"));
+  // discoverWorkspacePackages 现产出 { root, exports } 条目（exports map 解析能力，
+  // 见 docs/specs/architecture-coverage.md「Resolver 能力」）；断言取 .root，意图仍是
+  //「哪些包被发现、解析到哪个根目录」。
+  assert.equal(packages["@acme/foo"].root, join(cwd, "packages", "foo"));
+  assert.equal(packages["@acme/bar"].root, join(cwd, "packages", "bar"));
   assert.equal(packages.ignored, undefined);
   assert.equal(packages["private-state"], undefined);
 });
@@ -82,9 +85,9 @@ test("architecture discovery skips cua-producer so it cannot hijack a colliding 
   // 撞名面：cua-producer/package.json 也声明 @acme/foo。它被排除后，@acme/foo 唯一解析到真包。
   // 注意此断言本身在 readdir 侥幸让真包后写时也会通过，真正的回归锁是上面的唯一名锚点；
   // 这里一并断言是为表达「撞名不劫持」的完整意图（U14 §7.8：建目录与改 SKIP 必须原子同批）。
-  assert.equal(packages["@acme/foo"], join(cwd, "packages", "foo"));
+  assert.equal(packages["@acme/foo"].root, join(cwd, "packages", "foo"));
   assert.ok(
-    !Object.values(packages).some((root) => String(root).includes("cua-producer")),
+    !Object.values(packages).some((entry) => String(entry.root).includes("cua-producer")),
     "no workspace package may resolve into the skipped cua-producer directory",
   );
 });

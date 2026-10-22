@@ -66,8 +66,9 @@ verify ──▶ release(建 tag+draft) ──▶ build(CLI+sha256.txt) ─┐
                                                      │   --remote-debugging-port 轮询 /json/version
                                                      │   + 进程存活 + 杀树收尾，失败转储 stdio
                                                      └ 各腿产出 sha256 清单 artifact
-                                               win: sha256 + 文件大小下限
-                                                    （签名期: Get-AuthenticodeSignature=Valid）
+                                               win: 安装版(.exe)+免安装版(.zip) 各 sha256 + 大小下限
+                                                    + zip 解压抽查(含 ACode.exe + resources/app.asar)
+                                                    （签名期: 仅对 .exe 安装包 Get-AuthenticodeSignature=Valid）
                                                linux: sha256 -c sha256.txt 校验 CLI 包
                                                       + AppImage sha256/大小 + --appimage-extract
                                                             ▼
@@ -77,7 +78,7 @@ publish（needs 增加 verify_assets；keep_draft / build_artifacts 语义不变
 ```
 
 - **无 `--smoke-test` 旗标的诚实边界**：ACode Electron 主进程没有 omp 的 `--smoke-test`；启动探测按现实能力定义为「Info.plist `CFBundleShortVersionString` 等于本次发布版本 + Chromium 远程调试端点 `/json/version` 应答（证明主进程与渲染层活着）+ 进程未提前退出」。不伪造退出码语义；探测失败即失败并输出应用 stdio 尾部。若首次真实发布 run 中发现打包态不接受 `--remote-debugging-port`，必须先修订本 spec 再调整判定（不许静默降级成「活着就算过」）。
-- Windows 不做启动 smoke（NSIS 安装器不可直接启动）；任务边界内为 sha256 + 大小下限（< 50 MiB 视为损坏），签名期附加 Authenticode 校验。Linux 腿覆盖 `sha256.txt` 与 tarball 的一致性（发布前权威校验该文件本身），并 `--appimage-extract` 抽查 x64 AppImage 结构；arm64 AppImage 仅哈希/大小（x64 runner 无法执行 arm64 runtime）。
+- Windows 产出两个产物：安装版 `ACode-<VERSION>-win-<arch>.exe`（nsis）与免安装版 `ACode-<VERSION>-win-<arch>.zip`（zip，解压即用）。免安装版经 electron-builder 的 `createCommonTarget`→`ArchiveTarget(isWriteUpdateInfo=false)` 创建，**不写 `latest.yml`**——Windows 自动更新元数据仍只由 nsis 产出，加 zip target 不影响 NsisUpdater（依据见 electron-builder.config.js `win.target` 注释）。verify_assets 的 Windows 腿对两个产物各做 sha256 + 大小下限（< 50 MiB 视为损坏），并解压 zip 抽查结构（含 `ACode.exe` + `resources/app.asar`，解压到子目录避免污染顶层 `*.exe`）；签名期 Authenticode 校验**只针对顶层 `.exe` 安装包**（`Get-ChildItem assets\*.exe` 非递归，不误验 zip 内解出的 portable exe）。Windows 仍不做启动 smoke（NSIS 安装器不可直接启动；zip 内 exe 可启动但非本腿职责，留给 desktop-smoke 作业的 dev 态产物覆盖）。免安装版是「免安装」（不跑安装器/不写注册表），用户数据仍落 `%APPDATA%\ACode`（`runtimeUserDataPath`，见 desktopRuntimeEnv.ts），非数据随文件夹便携；发布说明如实标注。Linux 腿覆盖 `sha256.txt` 与 tarball 的一致性（发布前权威校验该文件本身），并 `--appimage-extract` 抽查 x64 AppImage 结构；arm64 AppImage 仅哈希/大小（x64 runner 无法执行 arm64 runtime）。
 - 校验和聚合：各腿 `sha256` 清单（`<hash>␣␣<文件名>`，`sha256sum -c` 兼容格式）经 artifact 汇入 publish，合成 `ACode-<VERSION>-checksums.txt` 上传到 release；该步骤失败则 release 保持 draft。
 
 ## 4. CI 缓存纪律（omp 教训：每 PR 一份大缓存曾吃掉 9.4GB/10GB 配额）

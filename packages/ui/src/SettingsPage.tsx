@@ -29,6 +29,7 @@ import {
 } from "@acode/shared";
 import { Button } from "@/components/ui/button.js";
 import { toast } from "@/components/ui/toast.js";
+import { logger } from "@/logger.js";
 import { DesktopWindowFrame } from "@/DesktopWindowFrame.js";
 import { useACodeIntl } from "@/i18n/IntlProvider.js";
 import { usePlatform } from "@/hooks/usePlatform.js";
@@ -903,7 +904,8 @@ export function SettingsPage({
         await onboardingRecordService
           ?.updateRecordPreferences({ memoryEnabled: enabled })
           .catch((cause: unknown) => {
-            console.warn("[settings] 回写引导记录失败", String(cause));
+            // R3: 用 logger.warn 替代 console.warn，遵守日志纪律（可恢复异常走 warn）。
+            logger.warn("[settings] 回写引导记录失败", String(cause));
           });
       })();
     },

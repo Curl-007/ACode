@@ -59,7 +59,8 @@ font、reveal、platform）不移植，登记为备选。
   （校验/读写/应用/订阅）。`useTheme.ts` 的 `applyTheme` 在主题同步后调用
   `applyPersistedAppearancePreferences()`——对齐 `syncBrowserThemeSurface` 的
   「根属性在主题应用点收口」模式；`applyTheme` 是主窗口 store 创建、setTheme、
-  system 主题变化与 `useTheme` hook 的公共路径，各窗口零新增接线即获得属性面。
+  system 主题变化的公共路径（R2-07 后 `useTheme` hook 已删除，theme 写入唯一收口
+  `store.setTheme`），各窗口零新增接线即获得属性面。
   未来设置页 setter 直接调 `setAppearancePreferences`（写 localStorage + 应用），
   不经主题绕路。
 - **R7 与 `--ui-font-size` 的关系**：现有 Appearance 字号滑杆（12–20px）仍是

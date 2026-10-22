@@ -25,7 +25,8 @@ export type {
 // SSHDialog/RemoteConnectionDialog 已不再从公共入口 re-export：全仓无消费者经 @acode/ui
 // 引用它们，而该静态 re-export 会把 SSHDialog 子树拉回主入口 chunk，使 Root.tsx 的
 // React.lazy 分包失效（spec: renderer-memory-budget 规则 7）。
-export { useTheme } from "./useTheme.js";
+// R2-07: useTheme() hook 已删除（theme 写入唯一收口 store.setTheme，含广播防回环）；
+// 主题纯函数 applyTheme/resolveTheme/normalizeThemePreference 仍经 @acode/ui/useTheme 子路径导出。
 export type { Theme } from "./useTheme.js";
 export { useTestActions } from "./test-actions.js";
 export type { TestActions } from "./test-actions.js";

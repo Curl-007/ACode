@@ -11,11 +11,14 @@ import {
   countPublicMethods,
   discoverFiles,
   importsOf,
+  isAssetSpecifier,
   isException,
+  internalEdgeAllowed,
   layerForFile,
   loadPolicy,
   manifestRequires,
   moduleForFile,
+  moduleHasBoundary,
   posix,
   publicEntrypointMatches,
   resolveImport,
@@ -218,6 +221,11 @@ export async function checkArchitecture({ cwd = process.cwd(), changedFiles = nu
     const importerLayer = legacyRatchet ? null : layerForFile(file, module);
     const layerOrder = module.layerOrder ?? [];
     for (const specifier of importsOf(file, source)) {
+      // asset 导入（CSS/图片/字体，扩展名在 policy.global.assetExtensions 显式声明）是构建
+      // 期静态资源，不是模块依赖边：不解析、不入图、不参与 deep-import / module-dependency /
+      // unresolved-workspace-import / domain-io 判定（ARCH-04 resolver 缺口③）。伪装成 asset
+      // 的 TS deep-import（`./foo.ts`）扩展名不在集合内，不豁免，照常按源码边处理。
+      if (isAssetSpecifier(specifier, policy)) continue;
       if (
         importerLayer === "domain" &&
         /^(node:|fs$|path$|http$|https$|net$|child_process$|timers$)/.test(specifier)
@@ -321,13 +329,20 @@ export async function checkArchitecture({ cwd = process.cwd(), changedFiles = nu
           }),
         );
       }
+      // deep-import 门禁：目标模块只要声明了任一边界（精确入口 / 通配入口 / 内部边白名单）
+      // 就受校验（moduleHasBoundary）。放行 = 命中公开入口（含通配）或命中内部边白名单。
+      // session 这类 publicEntrypoints 留空、仅靠 internalEdgeAllowlist 承载的模块：既有
+      // 24 条 services→session 边在白名单内保持合法，未登记的新边立即报 deep-import
+      //（ARCH-04 resolver 缺口④：把「惰性保持合法」变成「新增需显式登记」）。
       if (
         policy.global.forbidDeepImports &&
-        targetModule.publicEntrypoints.length > 0 &&
+        moduleHasBoundary(targetModule) &&
         (!legacyRatchet || (targetModule.managed && !RATCHET_EXEMPT_PATTERN.test(posix(file))))
       ) {
         const targetRelative = posix(path.relative(cwd, target));
-        const allowed = publicEntrypointMatches(target, targetModule, cwd);
+        const allowed =
+          publicEntrypointMatches(target, targetModule, cwd) ||
+          internalEdgeAllowed(file, target, targetModule, cwd);
         if (!allowed) {
           violations.push(
             violation({

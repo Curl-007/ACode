@@ -40,8 +40,11 @@ export async function discoverWorkspacePackages(policy) {
     if (packageFile) {
       try {
         const manifest = JSON.parse(await fs.readFile(path.join(root, packageFile.name), "utf8"));
+        // 同时保留 exports map：remap 型子路径（如 @acode/shared/runtime-env →
+        // src/runtimeEnv.ts、node-repl-browser-broker → src/browser-use/nodeReplBroker.ts）
+        // 无法用 <pkgRoot>/src/<subpath> 约定推出，resolveImport 必须查 exports 才能解析。
         if (typeof manifest.name === "string" && manifest.name.trim())
-          packages[manifest.name] = root;
+          packages[manifest.name] = { root, exports: manifest.exports ?? null };
       } catch {}
     }
     for (const entry of entries) {

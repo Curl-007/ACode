@@ -77,3 +77,26 @@ export const acodeBrowserAmbientContextSchema = z
   })
   .strict();
 export type ACodeBrowserAmbientContext = z.infer<typeof acodeBrowserAmbientContextSchema>;
+
+/**
+ * 重连熔断挂起附加事实（apps/acode-cli/specs/mcp-lifecycle-ttl-approval.md R1/R2.3）。
+ * CLI live status 原样透传本字段，此前 strict schema 直接拒收——熔断发生的那一刻
+ * mcp/list 整条命令抛 ZodError，设置页拿不到任何状态。形态与 contracts 的
+ * McpReconnectSuspension 对齐；suspendedBy 缺失按 connect_failures 理解（历史形态）。
+ *
+ * 定义落点（2026-10-22 review R2-02 修复）：本 schema 由提交 43afaba1（冻结日 2026-10-05
+ * 之后）新增，最初误置于 legacy barrel，违反「新 schema 只进 v4；
+ * legacy 面只删不增」冻结规则。按 M2-B 既定模式迁到本中立叶子——legacy barrel 改为纯
+ * re-export（不再出现 `export const ...Schema` 定义），v4 若将来消费同一 wire 字段可直接
+ * 从这里取，M4 删 barrel 时不形成反向依赖或被迫回迁。当前该字段只在 legacy mcp/list wire
+ * 上流转（v4 无 mcp/list 契约），故不新增 v4 面；登记见 specs/legacy-protocol-freeze.md。
+ */
+export const acodeMcpReconnectSuspensionSchema = z
+  .object({
+    consecutiveFailures: z.number().int().nonnegative(),
+    consecutiveInCallCrashes: z.number().int().nonnegative().optional(),
+    suspendedAt: nonEmptyString,
+    suspendedBy: z.enum(["connect_failures", "in_call_crashes", "crash_storm"]).optional(),
+  })
+  .strict();
+export type ACodeMcpReconnectSuspension = z.infer<typeof acodeMcpReconnectSuspensionSchema>;

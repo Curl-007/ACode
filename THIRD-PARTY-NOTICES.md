@@ -936,8 +936,6 @@ Original copyright, license and NOTICE text is retained below. Identical text is
 
 - has-tostringtag@1.0.2 — MIT
 
-- hasown@2.0.2 — MIT
-
 - hasown@2.0.4 — MIT
 
 - hast-util-from-dom@5.0.1 — ISC
@@ -12062,8 +12060,6 @@ SOFTWARE.
 ````
 
 ### Notice bf9b0d665be2a689851eea667ca9f42066ea1d903b38349c51e6a44b2577680a
-
-- hasown@2.0.2: LICENSE
 
 - hasown@2.0.4: LICENSE
 

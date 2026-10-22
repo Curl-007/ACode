@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "inputHashEncoding": "UTF-8 with CRLF normalized to LF; notice and source snapshot hashes remain byte-exact",
   "scope": "Production dependency union across current workspace projects, copied source/assets and native tools; not a per-installer SBOM or a certification of all licensing obligations.",
-  "noticesSha256": "80f2c0bc77fb3d56c6736223026dad0130760fe25d01511c8fe641be5c2a0956",
+  "noticesSha256": "99af6726bc1c8aa0014bd108f253cb541f83b215a8552b77f767164f1ff13d14",
   "inputs": {
     ".agents/skills/agent-browser/references/authentication.md": "b7531e028594768e2447547e67559ca1a88fdefba8d5507c07d04bc802c05d09",
     ".agents/skills/agent-browser/references/commands.md": "6eb0e44a3c939c90116092b1a11ae03a2884fb5716d42f2468677870304d11a8",
@@ -254,7 +254,7 @@
     "apps/acode-cli/packages/cli-workflow/package.json": "5c447b6653769c01f58a0638ddb850f68e046f47a146ea48c6fbe6547b14e12f",
     "apps/acode-cli/packages/cli/package.json": "cef2722ebcf0b336b0094d6725352edcbb90ba70a12056940657f8b0ca67057c",
     "apps/acode-cli/packages/contracts/package.json": "741929b9f0ae9518785175bb59768c3a0c44fb2356a9261c9564f66baf59f131",
-    "apps/acode-cli/packages/core/package.json": "c16397fbb26e85a5116ca096a9be594a1cc2b5bd030431e49c032bccf7b7860e",
+    "apps/acode-cli/packages/core/package.json": "b27b1d7ea7feef2bcf8c565b856d87237a9ef44ecd99581746af0655e3d80d53",
     "apps/acode-cli/packages/core/src/tool/handlers/generated/bash-command-registry.ts": "ee85665f0ce0e2f87753198412db342ed4528651637069956ecece49fe4a7e55",
     "apps/acode-cli/packages/debug/package.json": "a75751f22319ac039783809117a4b6364b4978472a51f364cad4d4271665ce2b",
     "apps/acode-cli/packages/documents-plugin/package.json": "515f784aa00837c700cb8c2270ce2e2b445b8acc5c9676f2763dd054049d9659",
@@ -263,7 +263,7 @@
     "apps/acode-cli/packages/i18n/package.json": "6a4e21c41b675eed44f4c7efb39a9c1b9cfde09a1239d57760e5bd842b995a80",
     "apps/acode-cli/packages/image-search-plugin/package.json": "1d581deaa65ca94cb3355b1edc3f521ba28a95f9499347954f9635f5c456346e",
     "apps/acode-cli/packages/ios-simulator-plugin/package.json": "a8a7f85a515b83924085bc8ce46a8cc800f84709dc4da93fb982b0a5ad1e05c1",
-    "apps/acode-cli/packages/node-repl-host/package.json": "d51809dd3e05830f48d665b53011398b571fe3da0de6171145067fe5a082d3ea",
+    "apps/acode-cli/packages/node-repl-host/package.json": "8cae7db4fe54373f43007e9b99db198188f00afb39f40c89f7d347702e5e67bf",
     "apps/acode-cli/packages/pdf-plugin/package.json": "677d39d005471a0de8758ae8829e980e184106303c0b8def109febd5d4cbe366",
     "apps/acode-cli/packages/plugin-creator-plugin/package.json": "89e6b99c3295eb11bcb74b2c69879484cffb80660a8d3bf0066948ee0194fa86",
     "apps/acode-cli/packages/presentations-plugin/package.json": "bd32d50f11428fd0d6b5f821f3e00c29576ca78744050d6a19698329d9dc7c5c",
@@ -278,8 +278,8 @@
     "apps/acode-cli/packages/workflow-run-read/package.json": "d4659d598d8320400e86695cef751c86bc8cc7cca3508858c6e42957a86d5b6c",
     "apps/acode-cli/tools/prompt-trajectory/package.json": "c0b79b8c11694062afce19807a3e527541b3d262b77aae07b40479d5ee73346c",
     "apps/acode-cli/tools/typescript/package.json": "916bb98a7a42a80a690c6460038da943c80e2c005fc528d8bfddc930ff67a13c",
-    "package.json": "307c2ab2935e39dce63bd1e4c7b32eb262868b6dd9897362e6a07f1be0ea5211",
-    "packages/acode-cua/package.json": "faa859923517a6a948141b87bea3fa6ac885ef737ebde7be9ae9f9abd3d9a752",
+    "package.json": "fde6bcfe53dac7b8135085e1590b47cf65613818a2b43d0020ef3e00e597223c",
+    "packages/acode-cua/package.json": "4faf8c134d3bc30c885257d83178983d8ba30d8da0c05be1eca7eff4d8d4bef2",
     "packages/acode-server-cli/package.json": "5e9445eb2bce9eb54e320723dcd327354ee6798e93dafb01b3532d14d0287bc3",
     "packages/client/package.json": "34842bccbb96748d785cd56230ca0e36d230b913cc57ef455680d87c999b939c",
     "packages/desktop/package.json": "54c2227fb344811868edbb95d6207a1861eaa12ffba13ca61b7ba4be54e68167",
@@ -1429,9 +1429,9 @@
     "packages/desktop/src/renderer/public/material-icons/zeabur.svg": "8bb7c84934202e9b24842ddb1ca69d316b9d69f1a4f5ebc9bbcce78eb2cea1a7",
     "packages/desktop/src/renderer/public/material-icons/zig.svg": "37be0ce02cf471b18d86150b3c38e80caa7c16c49a15078e7db6f1f41788d101",
     "packages/desktop/src/renderer/public/material-icons/zip.svg": "dad79a45f756542d37abd422502ecfbea15720b92ea1c9d80ef0439ab6b9448a",
-    "packages/formal-proof/package.json": "7b075bca8de7a9f369ef51c5324f044e001e51f31afeb6e61a0bb38227e8afab",
+    "packages/formal-proof/package.json": "7cfabe74c2be3af694fdd61d4600336b558ed2e42e726082cda44eb1f864c72f",
     "packages/harness-sdk/package.json": "d7041913b344cf7c0841de08596f066e27d0cf685c8337bfc3321e8eafce87b5",
-    "packages/model-option-map/package.json": "008c5fbc09f78b1b61a4f51e5821fa9d4be555c86af3c08aa9e4ff2375d494b6",
+    "packages/model-option-map/package.json": "2d556ed2d90466af692cdc6cb02c29fe3704e403f976c7e2f5e7662722ff2833",
     "packages/provider-node/package.json": "0b9438bd14790b95aef9326272b80519fb486eb6360f50974e391ad7232f2ed8",
     "packages/provider/package.json": "b3f4d147a65fb3f39bf3e44df775ed3208e6dcca152b725de3d6d574e9af8918",
     "packages/rpc/examples/01-basic-ipc.ts": "bb4423c1642918846010f9307262c379536ca9541d79df6ebba120b5cf792f3e",
@@ -1461,7 +1461,7 @@
     "packages/rpc/src/remote.ts": "a11e072d5df7e1c1ce64814a68f72afc081246b364f0da409b5c9d22bc815957",
     "packages/rpc/src/serialization.ts": "d33aa4ae9c29b678b88b45359d39c0a74b2282bb93a4f4dfdfc28019bbbe6ec2",
     "packages/rpc/src/transport-frame-limits.ts": "ea32f6436e885edd1948642819544bc4d809e206442f98a86caebd4f7e47f1f4",
-    "packages/server/package.json": "e94a9066d5d43940dc5617e4d115835f5972348c7e7e13f937e5dd59283afccd",
+    "packages/server/package.json": "2312fc6a36d58d39a044dbe4273ed057ff6b6744f72d3e038e3d04d59cf2abeb",
     "packages/services/package.json": "8c7a55dfe325a60f19b18cec4123a2f7ca99daaf5441298b8bb17c977f3b75cf",
     "packages/shared/package.json": "07cadc84f12b3150d75b7de4cc643dd799453211b9dc9b66e1a77fbc2c6e558c",
     "packages/shared/src/acode-protocol-v4/wire-codec.ts": "5704d415e11fd79aee64d198a9ea6bd2e75c774c39832f8452dd65b69589c0ec",
@@ -1519,7 +1519,7 @@
     "packages/ui/src/components/ui/avatar.tsx": "5d87a3860936de1795099bc995ca64b2d5a9179caa74385b4e5de5fd3ee59725",
     "packages/ui/src/components/ui/badge.tsx": "d4966b2604bc7acf38bd3aecc899b08a6aec8b62552f680d4e1fd4616d2198b9",
     "packages/ui/src/components/ui/button-group.tsx": "3c455ad047c87097070c4e107bc0e58dd087531e85b1c60f28f1f526dd9a0061",
-    "packages/ui/src/components/ui/button.tsx": "3bf0b1573c940999f875a1dd5e67a32e7d9bcb3e320774fa8277f5c00748b32b",
+    "packages/ui/src/components/ui/button.tsx": "bc651d3c107aa1ce859d2947f73af4a3eb01a3a067ef4bee697ba60545d08548",
     "packages/ui/src/components/ui/card.tsx": "cdfb5121c2647a4b496a377609acb05d14513f7975858482b911a3873c3695b3",
     "packages/ui/src/components/ui/chart.tsx": "272efec5aa60d34665104b45341d9f2b8cad4480070bca91e9d5409713b6fecd",
     "packages/ui/src/components/ui/checkbox.tsx": "5b3cb5612ed7654218e1cdd86fc41c7b490475721948d50a603996133245bace",
@@ -1560,7 +1560,7 @@
     "packages/ui/src/components/ui/usePdfZoomOverlay.ts": "c8c91b003ce2fded32c7a2369dc6eac43aa4b9dc9c830a0f5ceccb21d366b610",
     "packages/ui/src/lib/builtinSkillI18n.ts": "3d4870ce39e38d5a8726b482fb08774ff6ed877957e359a4c82230baaf720819",
     "packages/ui/src/styles.css": "4d0a3f21b5640bb3beede3cd01e1d2299eff3aa6e46568f2d40bb269ca422385",
-    "packages/web/package.json": "39a3eb197637d92e64ad52afd4a6ad43e032920b6360f9c7413b896dc1eb2703",
+    "packages/web/package.json": "7be564ed1d0ef76e7b66e29883b7c423fdb3f83ed1db40a09d2e3f07716ba48b",
     "packages/web/public/material-icons/3d.svg": "9527b849f0fba57ca7640e2717b3a19cb5f5e046712cbbd8b75d73af338c68fb",
     "packages/web/public/material-icons/abap.svg": "1335bd7eb9a0ed49deb622330d680c2e97731726a7a5eee8e4f46dc1e5db4de4",
     "packages/web/public/material-icons/abc.svg": "d1a68020e8f020ef29dca5f94dc8613b7ae8fb5b212d8b1cc23b0f975ac7acda",
@@ -2709,7 +2709,7 @@
     "packages/web/public/material-icons/zip.svg": "dad79a45f756542d37abd422502ecfbea15720b92ea1c9d80ef0439ab6b9448a",
     "patches/@ai-sdk__anthropic@3.0.81.patch": "d3a7c381eba7f5157f765a0528003af17cf84544911dfb7412c7800168e01c18",
     "patches/@ai-sdk__openai-compatible@2.0.60.patch": "9632fe9d821b3dc20939ae509cc35b968d90d018bbd1d812390718898182a38b",
-    "pnpm-lock.yaml": "c1513759f74a3cd34aab1fe1edb33130ef9f7f6c3ffc69b9089eb8f39794f957",
+    "pnpm-lock.yaml": "5c7534f24d30847eca0874d43f18e027a7cc8b3d488e2639b7f4426562491877",
     "pnpm-workspace.yaml": "a9c2ba737409e152c3904e65fec268247194ea5a33050b630f00e14eb644e2cb",
     "scripts/license-texts/Apache-2.0.txt": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
     "scripts/native-search-tools-config.mjs": "54cee5ce2aa05e1c47f15758a700567ce4c822213c3f68392c18309142aa77ab",
@@ -8979,18 +8979,6 @@
     },
     {
       "name": "hasown",
-      "version": "2.0.2",
-      "license": "MIT",
-      "repository": "git+https://github.com/inspect-js/hasOwn.git",
-      "notices": [
-        {
-          "member": "LICENSE",
-          "sha256": "bf9b0d665be2a689851eea667ca9f42066ea1d903b38349c51e6a44b2577680a"
-        }
-      ]
-    },
-    {
-      "name": "hasown",
       "version": "2.0.4",
       "license": "MIT",
       "repository": "git+https://github.com/inspect-js/hasOwn.git",
@@ -14450,7 +14438,7 @@
         },
         {
           "file": "packages/ui/src/components/ui/button.tsx",
-          "sha256": "3bf0b1573c940999f875a1dd5e67a32e7d9bcb3e320774fa8277f5c00748b32b"
+          "sha256": "bc651d3c107aa1ce859d2947f73af4a3eb01a3a067ef4bee697ba60545d08548"
         },
         {
           "file": "packages/ui/src/components/ui/card.tsx",

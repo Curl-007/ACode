@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- 存量基线豁免:该文件先于 CLI lint 门禁建立即超限(根 lint 的 ignorePatterns 排除 apps/acode-cli,turbo lint 因此从未变绿)。头注豁免以恢复门禁信号;拆分重构超出本批范围。 */
+/* eslint-disable max-lines -- 拆分批次 1 已抽出全部 module-level 纯叶子（types/primitives/hooks/model/tool-display 五个姊妹模块，specs/product-projection-structure.md §4）。剩余 bulk 是有状态 ProductProjection class（约 60 共享可变字段 + cloneProjection/adoptProjection 逐字段原子提交），其事件域拆分被前置条件阻塞：需先建 replay-equivalence 黄金 harness（spec §4 批次 2）机械保证 delta 流不变，否则字段/clone 遗漏会静默改行为。harness 就位前保留头注豁免。 */
 import { isDeepStrictEqual } from "node:util";
 import { PERMISSION_FULL_ACCESS_OPTION_ID } from "@acode/shared/acode-protocol-v4";
 // ProductProjection —— CLI 权威投影第二 reducer。
@@ -61,7 +61,6 @@ import type {
   ToolCallResultPayload,
   ToolCallScheduledPayload,
   ToolCallStartedPayload,
-  ToolResultDisplayPayload,
   TurnCompletePayload,
   TurnErrorPayload,
   TurnInputIntentMetadata,
@@ -80,7 +79,6 @@ import {
   CoreErrorType,
   AMEND_WORKFLOW_TOOL_NAME,
   CREATE_WORKFLOW_TOOL_NAME,
-  DEFERRED_TOOL_CALL_NAME,
   SessionEventType,
   getModelUsageContextTokens,
   getModelUsageInputWindowTokens,
@@ -124,9 +122,7 @@ import type {
   SubagentRow,
   TimelineMarkerPayload,
   TimelineMarkerRow,
-  ToolCallDisplay,
   ToolCallRow,
-  SessionUsageState,
   RunningSubagentSummary,
   SubagentProjectionState,
   TurnHeaderRow,
@@ -134,7 +130,6 @@ import type {
   TurnMetrics,
   TurnWorkSegment,
   UserInputRow,
-  UserInputQuestionPayload,
   QueueItem,
   MutableConversationSnapshotAccumulator,
   SwarmPlanProgressEnvelope,
@@ -184,286 +179,56 @@ import {
   SESSION_ALLOW_PERMISSION_OPTION_KIND,
 } from "../permission-options.js";
 import { shouldHideInvalidToolCallFromProduct } from "../tool-call-product-visibility.js";
-
-type HookInvocationRowContent = Omit<
-  HookInvocationRow,
-  | "actions"
-  | "createdAt"
-  | "createdAtSeq"
-  | "entityId"
-  | "productTurnId"
-  | "rowId"
-  | "turnId"
-  | "visibility"
->;
-
-interface PendingSessionHookInvocation {
-  firstEvent: SessionEvent;
-  content: HookInvocationRowContent;
-}
-
-const HOOK_SCRIPT_RUNNERS = new Set([
-  "bash",
-  "bun",
-  "deno",
-  "node",
-  "node.exe",
-  "powershell",
-  "pwsh",
-  "python",
-  "python3",
-  "ruby",
-  "sh",
-  "zsh",
-]);
-const USER_PROMPT_HOOK_BLOCK_ERROR_TYPE = "hooks_prompt_block";
-
-function unquoteHookDisplayToken(token: string): string {
-  if (token.startsWith('"') && token.endsWith('"')) {
-    try {
-      return JSON.parse(token) as string;
-    } catch {
-      return token.slice(1, -1);
-    }
-  }
-  if (token.startsWith("'") && token.endsWith("'")) return token.slice(1, -1);
-  return token;
-}
-
-function hookCommandLabel(commandDisplay: string): string | undefined {
-  const tokens = commandDisplay.match(/"(?:\\.|[^"])*"|'[^']*'|\S+/gu) ?? [];
-  const executableToken = tokens[0];
-  if (!executableToken) return undefined;
-  const executable = unquoteHookDisplayToken(executableToken).split(/[\\/]/u).at(-1);
-  if (!executable) return undefined;
-  const scriptToken = tokens[1];
-  if (!HOOK_SCRIPT_RUNNERS.has(executable.toLowerCase()) || !scriptToken) return executable;
-  const script = unquoteHookDisplayToken(scriptToken);
-  if (!script || script.startsWith("-")) return executable;
-  const scriptName = script.split(/[\\/]/u).at(-1);
-  return scriptName ? `${executable} · ${scriptName}` : executable;
-}
-
-function hookExecutionDisplayName(
-  descriptor: NonNullable<HookRunLifecyclePayload["descriptor"]>,
-  hookIndex: number,
-): string {
-  const executable = hookCommandLabel(descriptor.commandDisplay);
-  return (
-    descriptor.statusMessage?.trim() ||
-    (descriptor.pluginName && executable
-      ? `${descriptor.pluginName} · ${executable}`
-      : descriptor.pluginName || executable) ||
-    `Hook #${hookIndex + 1}`
-  );
-}
-
-/**
- * config 种子：投影初始化/冷恢复后从 runtime 真值注入的初值。
- * 与事件写入路径（ModelSelected / SessionModeChanged）的关系：种子只填「事件尚未
- * 触碰」的字段——日志重放值永远优先（"最终值以日志为准"）。
- */
-export interface SessionConfigSeed {
-  permissionGrant?: { interactionId: string };
-  planEnabled?: boolean;
-  modelSelection?: ModelSelectedPayload["modelSelection"];
-  provider?: string;
-  model?: string;
-  thought?: string;
-  thoughtLevels?: readonly string[];
-  mode?: string;
-}
-
-export interface SessionUsageSeed {
-  contextWindow: Omit<NonNullable<SessionUsageState["contextWindow"]>, "maxTokens"> & {
-    maxTokens: number | null;
-  };
-  cumulative?: Partial<SessionUsageState["cumulative"]>;
-}
-
-interface ContextWindowProjectionState {
-  maxTokens: number | null;
-  touchedByEvent: boolean;
-  usedTokens: number;
-}
-
-export interface SessionSubagentsSeed {
-  revision: number;
-  childSessionIds: string[];
-  running: RunningSubagentSummary[];
-}
-
-export interface StableForkCandidate {
-  productTurnId: string;
-  transcriptTurnId: string;
-  startMessageId: string | null;
-  boundaryMessageId: string;
-}
-
-function cloneSparseModelSelection(
-  selection: ModelSelectedPayload["modelSelection"],
-): ModelSelectedPayload["modelSelection"] {
-  return {
-    providerId: selection.providerId,
-    modelId: selection.modelId,
-    ...(selection.options ? { options: { ...selection.options } } : {}),
-  };
-}
-
-function sameSparseModelSelection(
-  left: ModelSelectedPayload["modelSelection"] | undefined,
-  right: ModelSelectedPayload["modelSelection"] | undefined,
-): boolean {
-  if (!left || !right) return left === right;
-  return (
-    left.providerId === right.providerId &&
-    left.modelId === right.modelId &&
-    left.options?.reasoningLevel === right.options?.reasoningLevel
-  );
-}
-
-export type StableForkCandidateResolution =
-  | { ok: true; candidate: StableForkCandidate }
-  | {
-      ok: false;
-      reasonCode:
-        | "guard.forkAssistantOnly"
-        | "guard.forkTargetNotStable"
-        | "guard.forkTargetAmbiguous"
-        | "guard.compactOperationLock";
-    };
-
-export interface ConversationEditTarget {
-  entityId: string;
-  productTurnId: string;
-  transcriptMessageId: string;
-  coveredByStableCompact: boolean;
-  intent: {
-    kind: "sendText" | "sendGoalCommand";
-    text: string;
-    sourceCommandId?: string;
-    clientId?: string;
-    attachments?: CanonicalUserIntentFact["attachments"];
-    queueItemId?: string;
-    admissionSeq?: number;
-    admittedAt?: number;
-    requestedDelivery?: "auto" | "startNow" | "queue" | "guide";
-    admittedDelivery?: "startNow" | "queue" | "guide";
-    fallbackReasonCode?: string;
-    modelSelection?: TurnInputIntentMetadata["modelSelection"];
-    mode?: TurnInputIntentMetadata["mode"];
-    planEnabled?: boolean;
-    provenance?: CanonicalUserIntentFact["provenance"];
-  };
-}
-
-export type ConversationRowTargetAction =
-  | "forkAssistant"
-  | "editUserQuery"
-  | "retryTurn"
-  | "applyFileRewind"
-  | "fileChanges"
-  | "fileRewindPreview"
-  | "setAssistantFeedback";
-
-export type ConversationRowTargetResolution =
-  | {
-      ok: true;
-      action: ConversationRowTargetAction;
-      row: ConversationRow;
-      editTarget?: ConversationEditTarget;
-      messageId?: string;
-      messageIds?: string[];
-    }
-  | {
-      ok: false;
-      status: "stale" | "rejected";
-      reasonCode: "proto.staleTarget" | "guard.actionUnavailable";
-    };
-
-// 旧事件没有 retryable 字段；保持历史 UI 的可重试语义，但新事件必须尊重显式 false。
-const LEGACY_TURN_ERROR_RECOVERABLE_FALLBACK = true;
-
-function modelRetryReasonCode(
-  reason: Extract<ModelNetworkStatusPayload, { type: "model_retry_scheduled" }>["reason"],
-): string {
-  switch (reason) {
-    case "rate_limited":
-      return "fault.provider.rateLimited";
-    // off-peak 排队（429/3105）语义上就是"上游让我们等"，UI 归入限流可恢复形态。
-    case "offpeak_queued":
-      return "fault.provider.rateLimited";
-    case "provider_overloaded":
-    case "server_error":
-      return "fault.provider.serverError";
-    case "timeout":
-      return "fault.network.timeout";
-    case "stream_idle_timeout":
-      return "fault.network.sseStalled";
-    case "stale_connection":
-      return "fault.network.sseDisconnected";
-    case "network_error":
-      return "fault.network.unreachable";
-    case "auth_refresh":
-    case "reasoning_signature_repair":
-      return "fault.provider.requestFailed";
-  }
-}
-
-function streamRecoveryReasonCode(
-  failureKind: StreamRecoveryStartedPayload["failureKind"],
-): string {
-  switch (failureKind) {
-    case "provider_timeout":
-      return "fault.network.timeout";
-    case "provider_network_error":
-      return "fault.network.unreachable";
-    case "provider_stream_error":
-      return "fault.network.sseDisconnected";
-    case "provider_turn_failed":
-    case "unknown":
-      return "fault.provider.requestFailed";
-  }
-}
-
-function positiveInteger(value: number, fallback: number): number {
-  return Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
-}
-
-function nonNegativeInteger(value: number, fallback: number): number {
-  return Number.isFinite(value) && value >= 0 ? Math.floor(value) : fallback;
-}
-
-interface FileToolInputPreviewState {
-  lastPublishedAt: number | null;
-  pendingAppend: string;
-}
-
-type TurnModelBaseline =
-  | { kind: "silentInitial" }
-  | { kind: "sourceLess" }
-  | { kind: "known"; provider: string; model: string; thought: string };
-
-// toolCall 行的终态集合（状态栏工具计数用）。中间态
-// （inputStreaming / pendingApproval / running）不是收口，不计数。
-const TOOL_TERMINAL_STATUSES: ReadonlySet<ToolCallRow["status"]> = new Set([
-  "success",
-  "error",
-  "cancelled",
-]);
-
-/**
- * 工具终态事件上的执行耗时（ms）。取消/被拒的终态事件不带 duration，
- * 此时返回 null：让状态栏省略该列，而不是报一个假的「0ms」。
- */
-function readToolCallDurationMs(event: SessionEvent | undefined): number | null {
-  if (!event || event.type !== SessionEventType.ToolCallResult) return null;
-  const payload = event.payload as ToolCallResultPayload;
-  const duration = payload.duration;
-  return typeof duration === "number" && Number.isFinite(duration) && duration >= 0
-    ? duration
-    : null;
-}
+// 拆分批次 1（specs/product-projection-structure.md §4）：class 外的纯类型/常量/helper
+// 已按事件域移到姊妹叶子模块，这里 import 回接线，公开契约类型 re-export 保持导入面不变。
+import type {
+  ContextWindowProjectionState,
+  ConversationEditTarget,
+  ConversationRowTargetAction,
+  ConversationRowTargetResolution,
+  FileToolInputPreviewState,
+  HookInvocationRowContent,
+  PendingSessionHookInvocation,
+  SessionConfigSeed,
+  SessionSubagentsSeed,
+  SessionUsageSeed,
+  StableForkCandidate,
+  StableForkCandidateResolution,
+  TurnModelBaseline,
+} from "./product-projection-types.js";
+export type {
+  ConversationEditTarget,
+  ConversationRowTargetAction,
+  ConversationRowTargetResolution,
+  SessionConfigSeed,
+  SessionSubagentsSeed,
+  SessionUsageSeed,
+  StableForkCandidate,
+  StableForkCandidateResolution,
+};
+import { nonNegativeInteger, positiveInteger } from "./product-projection-primitives.js";
+import {
+  USER_PROMPT_HOOK_BLOCK_ERROR_TYPE,
+  hookExecutionDisplayName,
+} from "./product-projection-hooks.js";
+import {
+  LEGACY_TURN_ERROR_RECOVERABLE_FALLBACK,
+  cloneSparseModelSelection,
+  modelRetryReasonCode,
+  sameSparseModelSelection,
+  streamRecoveryReasonCode,
+} from "./product-projection-model.js";
+import {
+  TOOL_TERMINAL_STATUSES,
+  createExitPlanModeApprovalQuestion,
+  finalizeDeferredToolCallRow,
+  isAskUserQuestionToolName,
+  isExitPlanModeToolName,
+  readAskUserQuestionPayloadQuestions,
+  readToolCallDurationMs,
+  stringifyToolInput,
+  toProtocolToolCallDisplay,
+} from "./product-projection-tool-display.js";
 
 export class ProductProjection {
   private snapshot: ConversationSnapshot;
@@ -5912,164 +5677,4 @@ export class ProductProjection {
         return "failed";
     }
   }
-}
-
-function isAskUserQuestionToolName(value: string | undefined): boolean {
-  return value === "AskUserQuestion";
-}
-
-/**
- * 把 core 的 tool display 收窄成 v4 协议能承载的那几种 kind。
- *
- * 这份白名单原先在每个投影点各写一份内联判断，引入
- * create_workflow display 时漏改了其中一份，实时投影把图整个丢掉、而 hydration 路径没过滤，
- * 于是桌面端只有重载之后才看得到。收成一个谓词后，所有投影点共用同一份名单。
- */
-function toProtocolToolCallDisplay(
-  display: ToolResultDisplayPayload | undefined,
-): ToolCallDisplay | undefined {
-  if (!display) return undefined;
-  switch (display.kind) {
-    case "node_repl_images":
-    case "task_output":
-    case "respond_to_coordinator":
-    case "mcp_tool":
-    case "create_workflow":
-    // 观察类工作流工具的五个 display kind——shared 侧 toolCallDisplaySchema 已同步加
-    // 成员，这里放行后 UI 才能在 row.display 上拿到结构化载荷。
-    case "get_workflow_run":
-    case "list_workflow_runs":
-    case "eval_workflow_snippet":
-    case "saved_workflow_list":
-    case "list_models":
-    // ResumeWorkflowRun 的恢复卡。
-    case "resume_workflow_run":
-      return display;
-    default:
-      return undefined;
-  }
-}
-
-function stringifyToolInput(input: unknown): string {
-  try {
-    return JSON.stringify(input ?? {}) ?? "{}";
-  } catch {
-    return "{}";
-  }
-}
-
-/**
- * DeferredToolCall 包装定稿（specs/tool-search.md R6「V4/UI 以目标事件定稿工具行」）。
- * scheduled / 流式阶段留下的是包装身份：toolName=DeferredToolCall、input={name, input}。
- * startedName 取自 ToolCallStarted（准入通过后由 canonicalToolCall 发出的**目标工具名**，
- * 唯一权威）；缺席或仍是包装名时不动行——准入失败不发 Started，包装失败记录原样保留。
- * 返回新对象=已定稿、返回原引用=无需改动，调用方据引用相等决定是否补算 plan 投影。
- */
-function finalizeDeferredToolCallRow(
-  row: ToolCallRow,
-  startedName: string | undefined,
-): ToolCallRow {
-  if (row.toolName !== DEFERRED_TOOL_CALL_NAME) return row;
-  const targetName =
-    typeof startedName === "string" && startedName.trim().length > 0
-      ? startedName
-      : undefined;
-  if (targetName === undefined || targetName === DEFERRED_TOOL_CALL_NAME) return row;
-  // 包装入参 {name, input} 的内层 input 才是目标工具真实参数（DeferredToolCallInputSchema
-  // 保证形状）；非记录或缺 input 键时保留原值（防御性回退，不损坏已投影数据）。
-  const wrapped = isPlainRecord(row.input) ? row.input : undefined;
-  const unwrappedInput =
-    wrapped !== undefined && "input" in wrapped ? wrapped.input : row.input;
-  return {
-    ...row,
-    toolName: targetName,
-    input: unwrappedInput,
-    // inputText 必须与 input 同源刷新：continuous 档与调试面直接读 inputText，
-    // 只改结构化 input 会让两面对不上（replayable 档过滤 row.delta(inputText)，定稿
-    // upsert 携带完整 inputText 与既有 scheduled/result 分支一致）。
-    inputText: stringifyToolInput(unwrappedInput),
-  };
-}
-
-function isExitPlanModeToolName(value: string | undefined): boolean {
-  return value === "ExitPlanMode";
-}
-
-function createExitPlanModeApprovalQuestion(reason: string): UserInputQuestionPayload {
-  return {
-    question: reason,
-    header: "Plan",
-    options: [
-      {
-        value: "approve",
-        label: "Approve",
-        description: "Exit plan mode and start implementation.",
-      },
-    ],
-  };
-}
-
-function readAskUserQuestionPayloadQuestions(input: unknown): UserInputQuestionPayload[] {
-  const rawQuestions = readRawAskUserQuestions(input);
-  return rawQuestions
-    .map(normalizeAskUserQuestionPayloadQuestion)
-    .filter((question): question is UserInputQuestionPayload => question !== null);
-}
-
-function readRawAskUserQuestions(input: unknown): unknown[] {
-  if (!isPlainRecord(input)) {
-    return [];
-  }
-  if (Array.isArray(input.questions)) {
-    return input.questions;
-  }
-  return typeof input.question === "string" && Array.isArray(input.options) ? [input] : [];
-}
-
-function normalizeAskUserQuestionPayloadQuestion(value: unknown): UserInputQuestionPayload | null {
-  if (!isPlainRecord(value)) {
-    return null;
-  }
-  const question = nonEmptyString(value.question);
-  const header = nonEmptyString(value.header) ?? question;
-  const rawOptions = Array.isArray(value.options) ? value.options : [];
-  const options = rawOptions
-    .map(normalizeAskUserQuestionPayloadOption)
-    .filter((option): option is UserInputQuestionPayload["options"][number] => option !== null);
-  if (!question || !header || options.length === 0) {
-    return null;
-  }
-  return {
-    question,
-    header,
-    options,
-    ...(value.multiSelect === true ? { multiSelect: true } : {}),
-  };
-}
-
-function normalizeAskUserQuestionPayloadOption(
-  value: unknown,
-): UserInputQuestionPayload["options"][number] | null {
-  if (!isPlainRecord(value)) {
-    return null;
-  }
-  const label = nonEmptyString(value.label) ?? nonEmptyString(value.value);
-  const optionValue = nonEmptyString(value.value) ?? label;
-  if (!label || !optionValue) {
-    return null;
-  }
-  return {
-    value: optionValue,
-    label,
-    ...(typeof value.description === "string" ? { description: value.description } : {}),
-    ...(typeof value.preview === "string" ? { preview: value.preview } : {}),
-  };
-}
-
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function nonEmptyString(value: unknown): string | undefined {
-  return typeof value === "string" && value.length > 0 ? value : undefined;
 }

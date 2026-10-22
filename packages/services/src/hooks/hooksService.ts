@@ -8,6 +8,7 @@ import type {
   SettingsDirectoryLocation,
   SettingsDirectorySource,
 } from "@acode/shared";
+import { resolveWorkspaceKey } from "@acode/shared";
 import {
   buildWorkspaceHookBundleSnapshot,
   createWorkspaceHookSourceInput,
@@ -261,7 +262,12 @@ async function loadHooksImpl(
   workspaceHookSnapshot?: WorkspaceHookBundleSnapshotData;
 }> {
   const workspacePath = resolve(params.workspacePath);
-  const workspaceIdentity = params.workspaceIdentity?.trim() || workspacePath;
+  // 修复原因（review R3 EI-2）：此前内联「trim identity，空则回退 path」，
+  // 改用 shared 的 resolveWorkspaceKey 统一权威实现，语义完全一致（trim identity，空/undefined 回退 path）。
+  const workspaceIdentity = resolveWorkspaceKey({
+    workspacePath,
+    workspaceIdentity: params.workspaceIdentity,
+  });
   const [{ sources: projectSources }, userSource] = await Promise.all([
     readWorkspaceHookProjectSources({ workingDirectory: workspacePath }),
     readUserACodeSource(),

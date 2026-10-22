@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import { chmod, mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { test } from "node:test";
+import { after, test } from "node:test";
 import { ArchivePolicyViolationError } from "@acode/shared/node";
 import { SKILL_SYNC_SIZE_LIMIT_ERROR_CODE } from "@acode/shared";
 import {
@@ -15,8 +15,22 @@ import {
  * 规格：packages/services/specs/file-containment-trust-tiers.md R4/R6.3。
  */
 
+// 临时目录清理：此前多处 mkdtemp（源树/目标根）后全程无清理，CI 累积占盘
+// （协调项，来自 CI/测试基建代理）。用模块级登记表 + 顶层 after 钩子统一删除，
+// 避免逐个 mkdtemp 调用点串 t.after。
+const tempDirs: string[] = [];
+after(async () => {
+  await Promise.all(tempDirs.map((dir) => rm(dir, { recursive: true, force: true })));
+});
+
+async function trackMkdtemp(prefix: string): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), prefix));
+  tempDirs.push(dir);
+  return dir;
+}
+
 async function createSourceTree(files: Record<string, string>): Promise<string> {
-  const sourceRoot = await mkdtemp(join(tmpdir(), "acode-skill-sync-src-"));
+  const sourceRoot = await trackMkdtemp("acode-skill-sync-src-");
   for (const [relativePath, content] of Object.entries(files)) {
     const fullPath = join(sourceRoot, ...relativePath.split("/"));
     await mkdir(join(fullPath, ".."), { recursive: true });
@@ -50,7 +64,7 @@ test("round-trip：打包→解包内容保真；OS 垃圾条目跳过不落盘"
     ]),
   );
 
-  const targetRoot = await mkdtemp(join(tmpdir(), "acode-skill-sync-dst-"));
+  const targetRoot = await trackMkdtemp("acode-skill-sync-dst-");
   await extractSkillSyncArchive(archive, targetRoot);
 
   assert.equal(
@@ -75,7 +89,7 @@ test("归一化碰撞：A.txt 与 a.txt 同档拒绝（name_collision）", async
   const archive = await createSkillSyncArchive(
     toArchiveEntries(sourceRoot, ["myskill/A.txt", "myskill/a.txt"]),
   );
-  const targetRoot = await mkdtemp(join(tmpdir(), "acode-skill-sync-dst-"));
+  const targetRoot = await trackMkdtemp("acode-skill-sync-dst-");
   await assert.rejects(
     () => extractSkillSyncArchive(archive, targetRoot),
     (error: unknown) => violationReason(error) === "name_collision",
@@ -85,7 +99,7 @@ test("归一化碰撞：A.txt 与 a.txt 同档拒绝（name_collision）", async
 test("wx 独占写兜底：目标目录已存在同名文件时拒绝覆盖", async () => {
   const sourceRoot = await createSourceTree({ "myskill/keep.txt": "new" });
   const archive = await createSkillSyncArchive(toArchiveEntries(sourceRoot, ["myskill/keep.txt"]));
-  const targetRoot = await mkdtemp(join(tmpdir(), "acode-skill-sync-dst-"));
+  const targetRoot = await trackMkdtemp("acode-skill-sync-dst-");
   await mkdir(join(targetRoot, "myskill"), { recursive: true });
   await writeFile(join(targetRoot, "myskill", "keep.txt"), "pre-existing", "utf8");
 
@@ -105,7 +119,7 @@ test("总量上限：SkillSyncSizeLimitError 形状保留（code + extracted-con
   const archive = await createSkillSyncArchive(
     toArchiveEntries(sourceRoot, ["myskill/big.md"]),
   );
-  const targetRoot = await mkdtemp(join(tmpdir(), "acode-skill-sync-dst-"));
+  const targetRoot = await trackMkdtemp("acode-skill-sync-dst-");
   await assert.rejects(
     () => extractSkillSyncArchive(archive, targetRoot, { maxExtractedBytes: 16 }),
     (error: unknown) => {
@@ -120,7 +134,7 @@ test("总量上限：SkillSyncSizeLimitError 形状保留（code + extracted-con
 async function createSourceTreeWithMode(
   files: Record<string, { content: string; mode?: number }>,
 ): Promise<string> {
-  const sourceRoot = await mkdtemp(join(tmpdir(), "acode-skill-sync-src-"));
+  const sourceRoot = await trackMkdtemp("acode-skill-sync-src-");
   for (const [relativePath, descriptor] of Object.entries(files)) {
     const fullPath = join(sourceRoot, ...relativePath.split("/"));
     await mkdir(join(fullPath, ".."), { recursive: true });
@@ -149,7 +163,7 @@ test(
     const archive = await createSkillSyncArchive(
       toArchiveEntries(sourceRoot, ["myskill/bin/run.sh", "myskill/notes.md"]),
     );
-    const targetRoot = await mkdtemp(join(tmpdir(), "acode-skill-sync-dst-"));
+    const targetRoot = await trackMkdtemp("acode-skill-sync-dst-");
     await extractSkillSyncArchive(archive, targetRoot);
 
     const execStats = await stat(join(targetRoot, "myskill", "bin", "run.sh"));

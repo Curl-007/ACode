@@ -15,6 +15,7 @@ import {
   type V4ConnectionFlowState,
   type WorkspaceConfigTopicWireCandidate,
 } from "@acode/shared/acode-protocol-v4";
+import { resolveWorkspaceKey } from "@acode/shared";
 import type {
   IACodeAgentService,
   ACodeAgentConversationResyncParams,
@@ -120,8 +121,10 @@ function withTrustedUnsubscribeRoute<T extends object>(
   return forwarded as T;
 }
 
+// 修复原因（review R3 EI-2）：此前内联 `target.workspaceIdentity?.trim() || target.workspacePath`，
+// 改用 shared 的 resolveWorkspaceKey 统一权威实现，语义一致（target 是 workspacePath/workspaceIdentity 的超集）。
 function workspaceKey(target: ACodeAgentWorkspaceTarget): string {
-  return target.workspaceIdentity?.trim() || target.workspacePath;
+  return resolveWorkspaceKey(target);
 }
 
 function workspaceTarget(target: ACodeAgentWorkspaceTarget): ACodeAgentWorkspaceTarget {

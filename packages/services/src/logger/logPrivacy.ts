@@ -106,6 +106,15 @@ function getServiceLogRedactor(): LogRedactor {
  *   （Error 直接 JSON 化会得到 `{}`，堆栈里的用户路径必须在这里脱掉）；
  * - 其他对象 → 原样透传，不改变日志形状（终局字符串化漏斗负责脱敏，
  *   双层串联依赖脱敏幂等不变量）。
+ *
+ * 关于对象参数（review R2-04 / security §2 第三条）：对象在源头透传、由终局
+ * 字符串化漏斗（桌面 main write() / host reportHostLog）JSON 化后脱敏。曾评估
+ * 在源头对对象 JSON 序列化并脱敏以覆盖非桌面裸 console 进程，但该改动会破坏
+ * 既有调用点——acode-agent 的 session start timing 观测面（spec R3）经 console
+ * 拦截读取对象的结构化字段（workspaceKey/outcome/sparePid 等）做身份归属断言，
+ * 源头字符串化+路径脱敏会让该断言无法成立。finding 明确「当前无实际泄漏」且
+ * 以「不破坏既有调用点」为改动前提，故维持对象透传契约；非桌面进程的对象内容
+ * 脱敏缺口作为跨文件事项登记（见 review fix-status），由主审统一裁决。
  */
 export function redactServiceLogArg(arg: unknown): unknown {
   const redactor = getServiceLogRedactor();

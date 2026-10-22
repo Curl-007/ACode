@@ -16,7 +16,6 @@ import { completeNewModelSelection } from "@acode/provider";
 import type { OffPeakClientConfig } from "#src/coding-plan-subscription/codingPlanSubscription.js";
 import {
   ACODE_SESSION_RUNTIME_PREFERENCES_REQUEST_TIMEOUT_MS,
-  formatLogPrefix,
   resolveWorkspaceKey,
   type TraceId,
   ACODE_AGENT_PROVIDER,
@@ -5048,16 +5047,16 @@ export function createACodeAgentService(
             }
             if (attempt >= SESSION_SUBSCRIBE_MAX_ATTEMPTS - 1) {
               // 彻底失败时打 warn 让问题可观测，而不是无声失效。
-              console.warn(
-                formatLogPrefix("acode-agent", process.pid),
-                "session 订阅建立失败，已达最大重试次数，放弃",
-                {
-                  sessionId: params.sessionId,
-                  workspaceKey: resolveWorkspaceKey(params),
-                  attempts: attempt + 1,
-                  message: error instanceof Error ? error.message : String(error),
-                },
-              );
+              // 修复原因（review R3-console 残留）：此前用裸 console.warn，不进统一服务
+              // 日志文件、不脱敏，生产环境丢失。session 订阅达最大重试属「可恢复异常」，
+              // 应走 logger.warn 落盘（同文件 :334 的 createServiceLogger）。pid 前缀由
+              // 漏斗内 formatLogPrefix 等价产出，不再手工拼接。
+              logger.warn(undefined, "session 订阅建立失败，已达最大重试次数，放弃", {
+                sessionId: params.sessionId,
+                workspaceKey: resolveWorkspaceKey(params),
+                attempts: attempt + 1,
+                message: error instanceof Error ? error.message : String(error),
+              });
               // 订阅失败后不再无限压住 live 事件；此时没有 replay 权威补洞，只能恢复 continuous 流。
               releaseBufferedLiveEvents();
               return;

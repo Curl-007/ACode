@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
   browserCommandResultSchema,
+  resolveWorkspaceKey,
   type BrowserBackendDescriptor,
   type BrowserClientMode,
   type BrowserCommand,
@@ -65,7 +66,9 @@ export async function collectBrowserAmbientContext(
   target: BrowserAmbientContextTarget,
 ): Promise<ACodeBrowserAmbientContext | undefined> {
   if (!executor) return undefined;
-  const workspaceKey = target.workspaceIdentity?.trim() || target.workspacePath;
+  // 修复原因（review R3 EI-2）：此前内联 `target.workspaceIdentity?.trim() || target.workspacePath`，
+  // 改用 shared 的 resolveWorkspaceKey 统一权威实现，语义一致。
+  const workspaceKey = resolveWorkspaceKey(target);
   const clientMode = target.clientMode ?? "desktop-continuous";
   const common = {
     sessionId: target.sessionId,

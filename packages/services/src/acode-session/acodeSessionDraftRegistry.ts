@@ -1,11 +1,13 @@
-import type { ACodeSessionStateSnapshot } from "@acode/shared";
+import { resolveWorkspaceKey, type ACodeSessionStateSnapshot } from "@acode/shared";
 import type {
   ACodeSessionWorkspaceTarget,
   ACodeTaskTarget,
 } from "#src/acode-session/acodeSession.js";
 
+// 修复原因（review R3 EI-2）：此前内联 `target.workspaceIdentity?.trim() || target.workspacePath`，
+// 改用 shared 的 resolveWorkspaceKey 统一权威实现，语义一致。
 function getWorkspaceKey(target: ACodeSessionWorkspaceTarget): string {
-  return target.workspaceIdentity?.trim() || target.workspacePath;
+  return resolveWorkspaceKey(target);
 }
 
 function getSessionScopedKey(target: ACodeTaskTarget): string {

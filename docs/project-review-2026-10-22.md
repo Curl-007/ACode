@@ -2,6 +2,8 @@
 
 审查日期：2026-10-22（Asia/Shanghai）。基线：`dev/1.0.3`，提交 `ebe9033b`（相对 `origin/main` ahead 0 / behind 0，工作树 clean）。方法：11 个只读审查子智能体并发覆盖各层面 + 横切，主审并行采集门禁与结构证据；四项目级门禁（typecheck/lint/architecture:check/knip:gate）实跑 exit 0。**未运行真实模型、真实 SSH 服务、Electron GUI、手机远控或多操作系统矩阵**；区分已确认缺陷、源码确认缺口与需设计确认的风险。11 份专项已全部回收，问题索引与总体结论见下。
 
+**修复状态（同日）**：本轮 review 的问题索引已由 14 个并发修复代理按层面落地，逐项处置、门禁实跑结果与提交 SHA 见 [reviews/2026-10-22/fix-status.md](reviews/2026-10-22/fix-status.md)。4 条 P1（CI win32 矩阵、smoke 进 release、SessionPane 拆分、原型注入 owner 收敛）与 8 条 P2 已修或做有界切片；里程碑债务（legacy M2/M3/M4、115 组件全拆、bootstrap W2）按边界只做切片 + spec 登记，未假装完成。修复后统一验证：typecheck/lint/architecture(--changed)/knip:gate 全 exit 0；third-party ledger 9 个哈希不符是本轮合法改动连带，按惯例留发布流程回补。
+
 上一轮全面 review 见 [../project-review-2026-10-08.md](../project-review-2026-10-08.md)（基线 `dev/0.0.7`，21 项问题 8×P1/13×P2，附 [../reviews/2026-10-08/](../reviews/2026-10-08/) 专项与修复记录）。本轮重点：**核对历史修复在 1.0.3 是否回归、发现新问题、评估当前健康度**。
 
 ## 项目规模

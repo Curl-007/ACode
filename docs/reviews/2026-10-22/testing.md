@@ -59,6 +59,7 @@
 - 建议：改精确计数或按 interface 名集合比对。
 - 验收：删一个 descriptor 门禁变红。
 - 注：协议专项（[protocol.md](protocol.md) §2 P3）独立指出同一处阈值贴边问题，两份结论一致。
+- **修复订正（2026-10-22 修复批次）**：本条描述的「84 个 `createServiceDescriptor` 调用点」口径有误——84 是含 interface 声明的 grep 命中数，真实**运行时注册的 descriptor 频道是 40 个**（见 `rpc-descriptor-surface.test.mjs` 的 `REGISTERED_DESCRIPTOR_CHANNELS` 快照）。代理 J 已把门禁从 `>= 40` 下限改为**频道名集合精确 deepEqual**（任何删除/新增/改名都红，比精确数字更强，能检出「删一加一」漂移），并已负向注入验证。见 [fix-status.md](fix-status.md) 代理 J。
 
 **[P2] provider-node / acode-server-cli / server 覆盖偏薄**
 - 描述：provider-node 21 源仅 1 测（builtin 下载/物化/远程同步/vault 无测）；server 65 源仅 7 测；acode-server-cli 45 源仅 4 测（supervisor 生命周期）。这些是远端/持久化高风险区。

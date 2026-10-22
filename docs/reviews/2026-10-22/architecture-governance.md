@@ -54,6 +54,12 @@
 - **客户端 wire 面是活代码**：`broker.js` 的 `callBrokerMethod`/`sendBrokerRequest`/`probeHelperHealth` 是**功能完整**的 socket 客户端（真连接、真收发、字节级行缓冲、possibly_sent 语义），不是占位。`index.js` 的 `createComputerUseRuntime` **仅在未传 brokerSocketPath 时** fail-closed；一旦有 socketPath，`execute()` 真的下发变更类动作（click/type/key…）。
 - **生产 fail-closed 的真实兜底在上游门控**：`node.ts:2273` `cuaPluginEnabled = isACodeCuaInternalFeatureEnabled(env) || isOfficialCuaPluginEnabledForWorkspace()`。已核实 `acode-cua-plugin` **不是 workspace 成员、不在 cli deps、不在 SEA official plugin assets**，故默认构建 `cuaPluginEnabled=false` → socket env 从不注入 → 活客户端无 socket 可用 → fail-closed 成立。**但**设 `ACODE_CUA_DEV_MODE=1` 或 `ACODE_CUA_PRODUCT_HELPER=1` 即激活活路径（设计上的 dev 旋钮）。结论：占位包**非「所有表面惰性」**，而是「服务端面惰性 + 客户端面活、靠外部门控关闭」。
 
+> **修复订正（2026-10-22 修复批次，主审第一手核实源码）**：上述「默认构建 `cuaPluginEnabled=false`」的门控前提**已过期**。当前源码：
+> - `packages/shared/src/runtimeEnv.ts` 的 `isACodeCuaInternalFeatureEnabled` **默认 `return true`**（注释：「CUA 现已默认打包进正式版，plugin staged + Helper enabled，不再需要显式 env flag」；仅 `ACODE_CUA_PRODUCT_HELPER=0/false/off` 显式关闭）。
+> - `node.ts:2276` 实际是 `cuaPluginEnabled = isCuaEnabledForContext(context)`（内部特性 OR 官方插件 workspace enablement），非 review 引用的 :2273 旧表达式。
+> - 真正的 fail-closed 边界在 **Helper admission**：`shouldCreateDefaultCuaProductHelper`（`node.ts:714-726`）要求 `hasBuiltInCuaPlugin && serviceAuthorityMode==="desktop-local" && !hasRemoteWorkspaceIdentity && !hasInjectedResolver`——只有 desktop-local 且内置插件已 staged 才创建 Helper（提供 broker socket）。非 desktop-local / 远程 workspace / 无 socketPath 时，`execute()` → `unavailable()` 仍 fail-closed。
+> - **结论修正**：CUA 不再是「默认关闭、dev 旋钮才激活」，而是**作为已发布特性在 desktop-local 生产默认激活**；fail-closed 现适用于非 desktop-local 上下文、远程 workspace 与无 socketPath 路径。代理 H 已据此订正 `packages/acode-cua/CONTRACT.md`、`README.md`、`package.json` description（见 [fix-status.md](fix-status.md) 代理 H），并补 `cua-failclosed-gating.test.mjs` 钉住「无 socketPath → isError」「门控关时不建 Helper」。 shipped 产物是否真 stage 了内置插件（`hasBuiltInCuaPlugin` 在 SEA assets 的真值）以 H 的核实为准；若该 staging 状态对交付安全边界关键，建议产品侧再确认一次。
+
 ## 6. 问题清单
 
 **[P2] acode-cua「全表面 fail-closed」表述与实现不符** — `packages/acode-cua/broker.js:175-217`（callBrokerMethod）/ `index.js:61-127`（createComputerUseRuntime）

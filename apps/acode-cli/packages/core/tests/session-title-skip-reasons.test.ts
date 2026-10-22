@@ -8,6 +8,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { AgentRuntime } from "../src/runtime/agent-runtime.js";
 import { maybeStartSessionTitleGeneration } from "../src/runtime/methods/session-title.js";
+import { getRuntimeTurnTimingPort } from "../src/runtime/runtime-turn-timing.js";
 import { createSqliteSessionStore } from "../../adapters/src/storage/session-store/sqlite-session-store.js";
 import { createInMemorySessionEventStore } from "../../contracts/src/events/in-memory-session-event-store.js";
 
@@ -127,7 +128,9 @@ test("title: 短首发输入 → reason short_input（不覆盖可读短标题�
 
 test("title: 非首轮 → reason not_first_turn", async (t) => {
   const { capture, runtime } = await fixture(t, { titleGeneration: {} });
-  (runtime as unknown as { turnNumber: number }).turnNumber = 1;
+  // turnNumber 已收敛到 RuntimeTurnTimingOwner（CLI-05 P1）：非首轮场景经有限写端口
+  // 设置，直接赋值现在被只读 getter 拒绝。
+  getRuntimeTurnTimingPort(runtime).setTurnNumber(1);
   const started = maybeStartSessionTitleGeneration.call(
     runtime,
     "long enough first input for title generation",

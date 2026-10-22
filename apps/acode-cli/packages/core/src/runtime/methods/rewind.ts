@@ -31,6 +31,7 @@ import {
 } from "../helpers/index.js";
 import type { TurnResult, WorkspaceRewindResult, ParsedRewindCommand } from "../types.js";
 import type { AgentRuntimeInternal } from "../internal.js";
+import { getRuntimeTurnTimingPort } from "../runtime-turn-timing.js";
 import { recordTurnUsageFact } from "./usage-observability.js";
 
 export async function executeRewindCommand(
@@ -134,7 +135,7 @@ export async function executeRewindCommand(
         turnId,
       });
 
-      this.turnNumber++;
+      getRuntimeTurnTimingPort(this).advanceTurn();
       const projection = await this.rebuildProjection();
       this.logger?.info("Rewind command completed", {
         ...traceContextToLogContext(turnTraceContext),

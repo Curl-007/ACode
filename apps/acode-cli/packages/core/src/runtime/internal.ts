@@ -39,7 +39,6 @@ import type {
 } from "./deps.js";
 import type { PromptFileRouting } from "../context/prompt-files.js";
 import type {
-  ActiveTurnSteeringState,
   ActiveForegroundExecutionState,
   ForegroundPromotionLeaseState,
   AgentRuntimeConfig,
@@ -59,6 +58,7 @@ import type { MemorySemanticRecallChannel } from "./helpers/memory-semantic-reca
 import type { RuntimeTelemetryFacade } from "../telemetry/runtime-telemetry.js";
 import type { WorkspaceHookRuntimeAdmissionPort } from "../hooks/workspace-hook-runtime-admission.js";
 import type { RuntimeTurnCoordinationView } from "./turn-coordination.js";
+import type { RuntimeTurnTimingView } from "./runtime-turn-timing.js";
 import type { RuntimeLifecycleView } from "./runtime-lifecycle.js";
 import type { RuntimeNotificationSealView } from "./runtime-notification-seal.js";
 import type { RuntimeModelSelectionView } from "./runtime-model-selection.js";
@@ -191,17 +191,17 @@ interface RuntimeContextMemoryState {
  * - activeTurnStartReservation 建立前不得出现第二条 turn（prompt-admission.ts:15-19）；
  * - runtimeCommandDrainActive 期间不得重入 drain；
  * - branchGeneration 单调递增，resume/rewind 重建后旧分支写入必须被拒。
+ *
+ * 高频时序字段（turnNumber、activeTurn、pendingInput 系列、queue drain 系列）已收敛到
+ * RuntimeTurnTimingView 的只读 getter（runtime-turn-timing.ts owner，CLI-05 P1 第一切片）：
+ * `this.X = ...` 在运行时抛 TypeError、tsc 下报 readonly 违例，写面只经
+ * getRuntimeTurnTimingPort(this) 的有限端口。activeForegroundExecution、foregroundPromotionLease、
+ * runtimeCommandQueue、currentTurnFileChanges、lastAssistantCompletedAtMs 仍为扁平可写，
+ * 登记为后续批次（spec 的 RuntimeTurnState 剩余字段）。
  */
-interface RuntimeTurnState extends RuntimeTurnCoordinationView {
-  turnNumber: number;
-  activeTurn?: ActiveTurnSteeringState;
+interface RuntimeTurnState extends RuntimeTurnCoordinationView, RuntimeTurnTimingView {
   activeForegroundExecution?: ActiveForegroundExecutionState;
   foregroundPromotionLease?: ForegroundPromotionLeaseState;
-  pendingInputSequence: number;
-  pendingInputReservations: Map<string, string>;
-  pendingInputDrains?: number;
-  queueAutoDrain: boolean;
-  queueExternalDrainActive: boolean;
   runtimeCommandQueue: RuntimeCommandQueue;
   currentTurnFileChanges: RuntimeTurnFileChangeMap;
   lastAssistantCompletedAtMs?: number;

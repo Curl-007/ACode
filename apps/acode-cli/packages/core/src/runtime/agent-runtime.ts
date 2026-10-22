@@ -145,6 +145,7 @@ import { clearSkillPathActivations } from "../agent/skill-path-activation.js";
 import { clearConflictHistories } from "../tool/conflict/index.js";
 import { clearUserInvokedSkillMarker } from "../agent/skill-user-invocation.js";
 import { initializeRuntimeTurnCoordination } from "./turn-coordination.js";
+import { initializeRuntimeTurnTiming } from "./runtime-turn-timing.js";
 import { getRuntimeLifecyclePort, initializeRuntimeLifecycle } from "./runtime-lifecycle.js";
 import { initializeRuntimeNotificationSeal } from "./runtime-notification-seal.js";
 import { initializeRuntimeModelSelection } from "./runtime-model-selection.js";
@@ -169,7 +170,7 @@ export function resolveRuntimeWorkspaceRoot(
 // oxlint-disable typescript-eslint/no-unsafe-declaration-merging
 export class AgentRuntime {
   private sessionId: SessionId;
-  private turnNumber: number;
+  declare private readonly turnNumber: number;
   private config: AgentRuntimeConfig;
   private appVersion: string;
   private permissionService: PermissionService;
@@ -253,19 +254,20 @@ export class AgentRuntime {
   private activeForegroundExecution?: ActiveForegroundExecutionState;
   /** sendQueuedNow 的 Core 调度权；只活在当前进程，匹配 runtime command 出队即消费。 */
   private foregroundPromotionLease?: ForegroundPromotionLeaseState;
-  private activeTurn?: ActiveTurnSteeringState;
+  declare private readonly activeTurn?: ActiveTurnSteeringState;
   declare private readonly activeTurnStartReservation:
     | Readonly<ActiveTurnStartReservation>
     | undefined;
-  private pendingInputSequence = 0;
+  declare private readonly pendingInputSequence: number;
   /** sendQueuedNow reservation；只活在当前 CLI 进程，防 drain/多端重复提升。 */
-  private pendingInputReservations = new Map<string, string>();
+  declare private readonly pendingInputReservations: ReadonlyMap<string, string>;
   // v4 setAutoDrain：false 时排队输入不自动消费
   // （turn-stop 不续跑、roundtrip 间不 drain），保留成 held 供显式消费。
-  private queueAutoDrain = true;
+  declare private readonly queueAutoDrain: boolean;
   // 暂停队列恢复后由 CLI 按投影 FIFO 逐项提升。这个窗口内禁止 core 只看当前
   // activeTurn.pendingInputs 做行内 drain，否则新入队消息会越过仍留在投影中的旧暂停项。
-  private queueExternalDrainActive = false;
+  declare private readonly queueExternalDrainActive: boolean;
+  declare private readonly pendingInputDrains?: number;
   declare private readonly shuttingDown: boolean;
   declare private readonly pendingModelChangeTimeline?: PendingModelChangeTimeline;
   private agentTelemetry: RuntimeTelemetryFacade;
@@ -273,7 +275,8 @@ export class AgentRuntime {
   constructor(sessionId: SessionId, config: AgentRuntimeConfig, deps: AgentRuntimeDeps) {
     const runtime = this as unknown as AgentRuntimeInternal;
     this.sessionId = sessionId;
-    this.turnNumber = 0;
+    // turnNumber 归 RuntimeTurnTimingOwner（CLI-05 P1）：构造期不再直接赋值，
+    // owner 以 0 起始，写面只经 getRuntimeTurnTimingPort 的 advanceTurn/setTurnNumber。
     // 3.12.2：兼容旧 Host/内部调用传入 legacy，但本版本 Runtime、日志和子 Agent 只使用 preflight。
     this.config = projectPersistentAgentMemoryTools({
       ...config,
@@ -327,6 +330,10 @@ export class AgentRuntime {
     this.mcpPort = deps.mcpPort;
     this.runtimeTaskRegistry = deps.runtimeTaskRegistry ?? new InMemoryRuntimeTaskRegistry();
     initializeRuntimeTurnCoordination(runtime);
+    // turn 时序字段 owner（CLI-05 P1）：必须先于任何 createDefaultSubagentPort /
+    // startMcpStartup / 原型注入 method 的读面安装只读 getter，之后 `this.turnNumber`
+    // 等只读、赋值走 getRuntimeTurnTimingPort。
+    initializeRuntimeTurnTiming(runtime);
     initializeRuntimeLifecycle(runtime);
     initializeRuntimeNotificationSeal(runtime, () => this.config.taskType === "subagent_child");
     initializeRuntimeModelSelection(runtime, config.modelSelection);

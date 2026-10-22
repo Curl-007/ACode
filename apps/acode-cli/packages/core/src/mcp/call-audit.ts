@@ -3,10 +3,11 @@
 // 机制形态参照外部第一方 MCP 宿主的公开行为（annotations.readOnlyHint → is_write
 // 推导 + 每次调用审计事件 + 未覆盖写工具告警），实现自撰。
 //
-// 接线形态对齐 bash-confirm-reflex-gate.ts 的审计 sink：进程级 set + 缺省 stderr
-// 兜底（stdio 协议走 stdout，stderr 是安全通道）。装配期（bootstrap/create-app.ts）
-// 用 setMcpCallAuditSink 换成 createServiceLogger 的 info 级落盘日志——与
-// setBashReflexAuditSink 同一接线位（spec「范围外接线」）。
+// 接线形态对齐 bash-confirm-reflex-gate.ts 的审计 sink：进程级缺省 stderr 兜底
+// （stdio 协议走 stdout，stderr 是安全通道）+ 按 sessionId 注册表路由。装配期
+// （bootstrap/create-app.ts）用 registerMcpCallAuditSink(sessionId, sink) 换成
+// createServiceLogger 的 info 级落盘日志——与 registerBashReflexAuditSink 同一接线位
+// （spec「范围外接线」）。
 //
 // 审计是旁路：sink 故障不得影响工具调用与注册（try/catch 吞掉）。
 
@@ -35,11 +36,16 @@ export interface McpToolCallAuditEntry {
  * 注册期告警：第一方 server 暴露的写工具被 allowedTools 显式放行——默认审批门
  * （MCP 工具 needsApproval 恒真）被持久 allow 规则关掉（spec R3「未覆盖写工具」
  * 的 ACode 化语义）。按 server 聚合，每次注册派发一次。
+ *
+ * sessionId 由 registerMcpTools 从注册上下文透传（this.sessionId），使告警也能按
+ * sessionId 路由到对应 App 的落盘 sink——否则改造后它会回落进程级缺省 stderr，
+ * 相比原进程级 set 是行为回归（原装配把它接到 info/warn Logger）。
  */
 export interface McpUncoveredWriteToolsEntry {
   kind: "uncovered-write-tools";
   serverName: string;
   toolNames: string[];
+  sessionId?: string;
 }
 
 export type McpCallAuditEvent = McpToolCallAuditEntry | McpUncoveredWriteToolsEntry;
@@ -53,18 +59,40 @@ const defaultAuditSink: McpCallAuditSink = (event) => {
 };
 
 let auditSink: McpCallAuditSink = defaultAuditSink;
+// 根因（2026-10-22 review CLI-04 同类残余）：MCP 写审计 sink 曾是进程级 set，
+// 无 sessionId 注册表——同进程多 App（桌面 app-server）下后装配者覆盖、任一 App
+// close 复位缺省 stderr，把在跑 App 的落盘审计打回易失的 stderr。改为按 sessionId
+// 注册表路由（照 bash-confirm-reflex-gate.ts 的 sessionAuditSinks + 幂等释放范式）：
+// entry.sessionId 命中则落各自 App 的 sink，未命中回落进程级缺省兜底，一个 App
+// 的 close 只删自己的注册项，不影响其它 App。
+const sessionAuditSinks = new Map<string, McpCallAuditSink>();
 
 /**
- * 替换审计 sink（进程级注册点，与 setBashReflexAuditSink / setProcessManagedPolicyFloor
- * 同一接线形态）。传 undefined 复位为缺省 stderr sink（测试隔离用）。
+ * 替换进程级缺省审计 sink（与 setBashReflexAuditSink 同一接线形态）。
+ * 传 undefined 复位为缺省 stderr sink（测试隔离用）。
  */
 export function setMcpCallAuditSink(sink: McpCallAuditSink | undefined): void {
   auditSink = sink ?? defaultAuditSink;
 }
 
+/**
+ * 注册一个 app/session 的 MCP 审计 sink，返回幂等释放函数（照
+ * registerBashReflexAuditSink）。释放只删自己登记的 sink，后来者覆盖后旧释放不误删。
+ */
+export function registerMcpCallAuditSink(sessionId: string, sink: McpCallAuditSink): () => void {
+  sessionAuditSinks.set(sessionId, sink);
+  return () => {
+    if (sessionAuditSinks.get(sessionId) === sink) sessionAuditSinks.delete(sessionId);
+  };
+}
+
 function emitAudit(event: McpCallAuditEvent): void {
   try {
-    auditSink(event);
+    // 按 entry.sessionId 路由：命中该会话的注册 sink，未命中回落进程级缺省。
+    // 两类 entry 都带可选 sessionId（tool-call 从调用上下文、uncovered-write-tools 从注册上下文）。
+    (event.sessionId === undefined
+      ? auditSink
+      : (sessionAuditSinks.get(event.sessionId) ?? auditSink))(event);
   } catch {
     // 审计 sink 故障不得反向影响工具调用：失败静默（spec R3）。
   }

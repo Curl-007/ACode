@@ -165,6 +165,7 @@ async function initializeMcpOnce(
     const registered = registerMcpTools(this.registry, mcpPort, snapshot.tools, {
       allowedTools: this.config.toolAllowlist,
       disallowedTools: this.config.toolDisallowlist,
+      sessionId: this.sessionId,
       officialCuaServerNames: computeOfficialCuaServerNames(
         this.config.mcp?.servers ?? {},
         new Set(this.config.mcp?.trustedOfficialCuaServerNames ?? []),
@@ -250,6 +251,7 @@ function subscribeMcpToolsRebind(
       const registered = registerMcpTools(this.registry, mcpPort, tools, {
         allowedTools: this.config.toolAllowlist,
         disallowedTools: this.config.toolDisallowlist,
+        sessionId: this.sessionId,
         officialCuaServerNames: computeOfficialCuaServerNames(
           this.config.mcp?.servers ?? {},
           new Set(this.config.mcp?.trustedOfficialCuaServerNames ?? []),

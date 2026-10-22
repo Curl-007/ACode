@@ -32,6 +32,7 @@ import type { ResumeSessionOptions, ResumeSessionResult } from "../types.js";
 import type { AgentRuntimeInternal } from "../internal.js";
 import { getRuntimeSessionPersistencePort } from "../runtime-session-persistence.js";
 import { getRuntimeBranchRestorePort } from "../turn-coordination.js";
+import { getRuntimeTurnTimingPort } from "../runtime-turn-timing.js";
 import {
   announceSessionShellEnvironmentNoticeAfterResume,
   getSessionShellSelection,
@@ -237,9 +238,10 @@ export async function resumeFromStore(
       //（prompt-cache-diagnostics.md R3 诚实边界，与聚合重建同点）。
       this.cacheMissCauseCounts = {};
       this.pendingCacheMissCause = undefined;
-      this.turnNumber = activeMessages.filter(
-        (message) => message.info.role === "user" && !message.info.summary,
-      ).length;
+      getRuntimeTurnTimingPort(this).setTurnNumber(
+        activeMessages.filter((message) => message.info.role === "user" && !message.info.summary)
+          .length,
+      );
       getRuntimeSessionPersistencePort(this).markPersisted();
       await syncPersistedSessionTitleForResume.call(this, {
         restoredEvents,

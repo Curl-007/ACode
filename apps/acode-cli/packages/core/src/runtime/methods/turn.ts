@@ -1,6 +1,7 @@
 /* eslint-disable max-lines -- 存量基线豁免:该文件先于 CLI lint 门禁建立即超限(根 lint 的 ignorePatterns 排除 apps/acode-cli,turbo lint 因此从未变绿)。头注豁免以恢复门禁信号;拆分重构超出本批范围。 */
 import { beginLocalTurnPreparation, type LocalTtftDetail } from "@acode/contracts";
 import { runtimeInputMetadata } from "../../agent/runtime-input-presentation.js";
+import { getRuntimeTurnTimingPort } from "../runtime-turn-timing.js";
 // 技能激活期作用域（skill-frontmatter-governance R4）：回合边界重算触发点。
 import { refreshSessionSkillActivationScope } from "../../agent/skill-activation-scope.js";
 import {
@@ -454,7 +455,7 @@ export async function executeTurnCommand(
             traceContext: turnTraceContext,
             turnId,
           });
-          this.turnNumber++;
+          getRuntimeTurnTimingPort(this).advanceTurn();
           const projection = await this.rebuildProjection();
           await this.accountTargetTurnCompletion({
             inputID: targetRunInputID,
@@ -717,7 +718,7 @@ export async function executeTurnCommand(
             turnTraceContext,
           );
         }
-        this.turnNumber++;
+        getRuntimeTurnTimingPort(this).advanceTurn();
 
         const projection = await this.rebuildProjection();
         this.logger?.info("Turn completed", {
@@ -785,8 +786,7 @@ export async function executeTurnCommand(
         if (activeTurn && coreError.type !== CoreErrorType.TurnCancelled) {
           const pendingInputs = (await this.rebuildProjection()).pendingSteerInputs;
           if (pendingInputs.length > 0) {
-            this.queueAutoDrain = false;
-            this.queueExternalDrainActive = false;
+            getRuntimeTurnTimingPort(this).pauseQueueAutoDrain();
           }
         } else if (
           activeTurn &&
@@ -797,8 +797,7 @@ export async function executeTurnCommand(
           // runtime 授权位与投影同步：投影在 TurnComplete(cancelled)+queue>0 时把
           // queue.autoDrain 置 false（held），runtime 的 drain 门也必须同步翻转，
           // 否则 held 期间新起的 turn 会把后续入队项 drain 掉，与投影语义分叉。
-          this.queueAutoDrain = false;
-          this.queueExternalDrainActive = false;
+          getRuntimeTurnTimingPort(this).pauseQueueAutoDrain();
         }
 
         // background wake 可能在 loopState 初始化前取消；此时仍要保留已 dequeue 的结果事实。

@@ -238,7 +238,7 @@
     "apps/acode-cli/packages/acode-cua-plugin/scripts/computer-use-target.mjs": "d7bd956219f784f5b56d88dc6227ff4a302fd315696cabd40dad7b8a59436084",
     "apps/acode-cli/packages/acode-cua-plugin/skills/computer-use/SKILL.md": "277b8fc2150769cfd6efd69dcad6feb81d0d6da0c0620d7725a596b813e70f03",
     "apps/acode-cli/packages/acode-guide-plugin/package.json": "0bad6c4ddd4e6cc2e3368ef143f6fd3502238d634b6be8f1025436b891a88ab8",
-    "apps/acode-cli/packages/adapters/package.json": "4beb982df24c96bc72c999bf87a6dcb6b39cd45fb3a19dad9609f1f702dce8ee",
+    "apps/acode-cli/packages/adapters/package.json": "28ec9231d1553d1a04815bc0152a3f9a6359c84a786adfa5320a6a93d2ab0ed8",
     "apps/acode-cli/packages/agent-teams-plugin/package.json": "f27685c87609bbf3c30ed1f43e05b75d6c55af9cd5838c1f95d0532760775e39",
     "apps/acode-cli/packages/android-emulator-plugin/package.json": "459dcb3c90efa8237278abc84767591fa079337cb485eca53c756a2a7a1531fc",
     "apps/acode-cli/packages/bigmodel-skills-content-plugin/package.json": "dedb66b51ed9f302e1edb85515d17c8dd60c02b56d4de72934ff2629b21f24ea",

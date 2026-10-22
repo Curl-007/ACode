@@ -577,7 +577,10 @@ test("C04d 同形 symlink 的码不对称：dev → development-root-not-found�
 });
 
 test("C04e 真实链接层：宿主上真 symlink/junction 的 dev root 被拒（无特权时 skip）", async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), "acode-cua-t1-reallink-"));
+  // Windows 8.3 短名归一（windows-verify 首跑暴露的既有脆弱性，非行为改动）：CI runner 的
+  // %TEMP% 含短名段（C:\Users\RUNNER~1\...），下方 fsRealpath(linkPath) 返回长名，与未归一
+  // 的 target 断言失配。与 subagent-worktree-isolation.test.mjs:46 同款防御。
+  const dir = await mkdtemp(join(await fsRealpath(tmpdir()), "acode-cua-t1-reallink-"));
   try {
     const target = join(dir, "real-dev-root");
     await mkdir(target);

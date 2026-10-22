@@ -66,7 +66,7 @@ export function OccupationOnboardingVisual({
         </h2>
         <p
           className={cn(
-            "mt-6 w-full whitespace-pre-line text-[16px] leading-[26px]",
+            "mt-6 w-full whitespace-pre-line text-ui-lg leading-relaxed",
             palette.description,
             "dark:text-slate-200",
           )}

@@ -265,7 +265,12 @@ function HeroSection({
         data-testid="plugin-store-example-prompt"
         data-plugin-id={item.id}
         // 彩色 Hero 上统一使用参考图的深色半透明胶囊，不随底图有无切换为普通卡片。
-        className="group/prompt flex w-fit max-w-2xl items-center gap-2.5 rounded-3xl bg-black/75 px-3.5 py-2.5 text-left text-ui-base text-white shadow-lg backdrop-blur-md transition-colors hover:bg-black/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
+        // 这是「固定深色照片遮罩」内容级例外（同 attachments.tsx 的 bg-black/55 text-white）：
+        // 遮罩底色恒为深色，不随主题变化，故 text-white / text-white/70 / bg-white/15 是刻意
+        // 的主题无关值，换成 tooltip-foreground 一类会随 Zai Dark 变深的 token 反而丢对比度。
+        // 焦点态：全局 `*:focus-visible { box-shadow/outline: none !important }`（styles.css:139）
+        // 会压掉 ring-*，故这里用 border-color 提供可见焦点，而非失效的 focus-visible:ring-*。
+        className="group/prompt flex w-fit max-w-2xl items-center gap-2.5 rounded-3xl border border-transparent bg-black/75 px-3.5 py-2.5 text-left text-ui-base text-white shadow-lg backdrop-blur-md transition-colors hover:bg-black/85 focus-visible:border-white/70"
         onClick={() => onUsePrompt(item, prompt)}
       >
         <img
@@ -450,7 +455,7 @@ function InfoSection({
                 type="button"
                 title={row.url}
                 aria-label={`${row.label}: ${row.url}`}
-                className="inline-flex items-center gap-1 rounded-md text-ui-base text-foreground transition-colors hover:text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-input-border-focused"
+                className="inline-flex items-center gap-1 rounded-md text-ui-base text-foreground transition-colors hover:text-brand focus-visible:underline focus-visible:text-brand"
                 onClick={() => platform?.openExternal(row.url)}
               >
                 <ExternalLink className="size-3.5" aria-hidden="true" />

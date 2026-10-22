@@ -6,8 +6,12 @@ import { cn } from "../lib/utils.js";
 
 // 大会话窗口 resize trace 显示基础按钮的 transition-all 会批量启动
 // scrollbar-color/尺寸等非合成动画，放大主线程 style/layout 压力；按钮只需要颜色过渡。
+// 全局 `*:focus-visible { box-shadow: none !important }`（styles.css:139）会把 Tailwind 的
+// ring-*（编译为 box-shadow）整体压掉，因此按钮的可见焦点态必须走 border-color 而非 ring，
+// 与 input.tsx 的 `focus-visible:border-input-border-focused` 同源。基座常驻 1px 透明边框，
+// 聚焦时只改边框色，不产生布局位移；destructive/warning 变体各自覆盖为语义边框色。
 const buttonVariants = cva(
-  "group/button inline-flex shrink-0 items-center justify-center rounded-md border border-transparent bg-clip-padding text-ui-base/relaxed whitespace-nowrap transition-colors outline-none select-none disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-2 aria-invalid:ring-destructive/20 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+  "group/button inline-flex shrink-0 items-center justify-center rounded-md border border-transparent bg-clip-padding text-ui-base/relaxed whitespace-nowrap transition-colors outline-none focus-visible:border-input-border-focused select-none disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-2 aria-invalid:ring-destructive/20 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
   {
     variants: {
       variant: {

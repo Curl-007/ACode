@@ -1,3 +1,5 @@
+// 结构守护测试，非行为验证：ui 测试无 jsdom 套件，组件不真渲染，以下断言全部落在源码字符串上，
+// 钉住 JSX/接线不被回归改动，不驱动 React 树或验证运行时行为（登记见 god-component-split-plan.md 测试债清单）。
 // 对话行事实面三件小改的源码级守护（packages/ui/specs/chat-row-facts.md）。
 // 形态对照 toolSearchSurface.test.ts：ui 测试无 jsdom 套件，组件不真渲染，
 // 用「源码契约」钉住：①动作行常驻（hover 透明门控清零、占位几何不动）；

@@ -5,6 +5,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 /**
+ * 结构守护测试，非行为验证：断言落在 usage-bar 的 CSS 结构/class 源码字符串上，不驱动 React 树
+ * 或运行时行为（登记见 god-component-split-plan.md 测试债清单）。
  * R5 布局稳定不变量的源码守卫（apps/acode-cli/specs/usage-statusbar-port.md §6.1）。
  *
  * 这几条无法在纯模型测试里表达（是 CSS 结构与 class），但回归代价很高：

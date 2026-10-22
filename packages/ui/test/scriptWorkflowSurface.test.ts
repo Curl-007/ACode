@@ -1,3 +1,5 @@
+// 结构守护测试，非行为验证（i18n 键成对性除外，那部分是真实文本层断言）：组件挂载点/引用
+// 键存在性等断言落在源码字符串上，不驱动 React 树（登记见 god-component-split-plan.md 测试债清单）。
 // 脚本工作流管理面 UI 落点：i18n 键位成对性（E1）、组件引用键存在性、挂载点与
 // 「disabled 档照常渲染」语义的源码级钉住。
 // 依据：apps/acode-cli/specs/script-workflow-management-surface.md §7.4/§7.5/§9 E1/E3。

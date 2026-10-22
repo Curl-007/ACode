@@ -5,6 +5,10 @@ import type { TeamStore } from "./state/store.js";
  * 团队面板（PRD §15）：localhost 只读 HTTP。绑定 127.0.0.1 随机端口；
  * /api/state 直接读磁盘真相；/api/events 用 seq 差量 + 2s 节流轮询（只读，
  * 不参与调度）。归档团队经 /history/<teamId> 只读。
+ *
+ * 多团队（0.2）：/ 渲染团队列表页；单团队数据走 /team/<teamId>/api/state|events
+ * （seq 差量语义不变，作用域收窄到该团队）；/api/state（旧路径）返回 primary
+ * （最近更新的活跃团队）的既有形状，兼容已打开的旧页面。
  */
 
 export interface PanelHandle {
@@ -84,12 +88,43 @@ function handlePanelRequest(
     response.end(JSON.stringify({ ok: false, error: { code: "method_not_allowed" } }));
     return;
   }
+  // 单团队作用域：/team/<teamId>/api/state|events（seq 差量语义与旧 /api 相同）。
+  // 首页链接是 /team/<id>/（带尾斜杠），允许可选尾斜杠（D-6）。
+  const teamMatch = /^\/team\/([a-z0-9-]+)(\/api\/state|\/api\/events|\/api)?\/?$/u.exec(
+    url.pathname,
+  );
+  if (teamMatch?.[1]) {
+    const teamId = teamMatch[1];
+    const team = store.findTeam(teamId);
+    if (!team || team.status === "archived") {
+      response.writeHead(404, { "content-type": "application/json" });
+      response.end(JSON.stringify({ ok: false, error: { code: "team_not_found" } }));
+      return;
+    }
+    const state = readTeamPanelState(store, teamId);
+    if (teamMatch[2] === "/api/events") {
+      const lastSeq = Number.parseInt(url.searchParams.get("since") ?? "0", 10);
+      const seq = team.seq;
+      respondJson(
+        response,
+        seq > (Number.isFinite(lastSeq) ? lastSeq : 0)
+          ? { changed: true, seq, state }
+          : { changed: false, seq },
+      );
+    } else if (teamMatch[2]) {
+      respondJson(response, state);
+    } else {
+      respondHtml(response, renderPanelHtml());
+    }
+    return;
+  }
   if (url.pathname === "/" || url.pathname === "/index.html") {
     respondHtml(response, renderPanelHtml());
     return;
   }
   if (url.pathname === "/api/state") {
-    respondJson(response, readPanelState(store));
+    const state = readPanelState(store);
+    respondJson(response, state);
     return;
   }
   if (url.pathname === "/api/events") {
@@ -103,7 +138,35 @@ function handlePanelRequest(
     }
     return;
   }
-  const historyMatch = /^\/history\/([a-z0-9-]+)(\/api\/state|\/api\/events|\/api)?$/u.exec(
+  // 团队列表（多团队）：/api/teams 列出各活跃团队摘要。
+  if (url.pathname === "/api/teams") {
+    respondJson(response, {
+      teams: store.listTeams().map((team) => {
+        const tasks = store.readTasks(team.teamId);
+        const counts = { done: 0, inProgress: 0, todo: 0, failed: 0, blocked: 0 };
+        for (const task of tasks) {
+          if (task.status === "done") counts.done += 1;
+          else if (task.status === "in_progress") counts.inProgress += 1;
+          else if (task.status === "todo") counts.todo += 1;
+          else if (task.status === "failed") counts.failed += 1;
+          else if (task.status === "blocked") counts.blocked += 1;
+        }
+        return {
+          teamId: team.teamId,
+          goal: team.goal,
+          status: team.status,
+          seq: team.seq,
+          updatedAt: team.updatedAt,
+          counts,
+          members: team.members.filter((member) => member.status !== "removed").length,
+        };
+      }),
+      archives: store.listArchivedTeams(),
+    });
+    return;
+  }
+  // 归档链接用目录名（teamId-<ISO 时间戳>，含大写 T/Z），正则需大小写不敏感（D-6）。
+  const historyMatch = /^\/history\/([a-z0-9-]+)(\/api\/state|\/api\/events|\/api)?\/?$/iu.exec(
     url.pathname,
   );
   if (historyMatch?.[1]) {
@@ -144,12 +207,45 @@ function readPanelState(store: TeamStore): {
   tasks: unknown;
   mailboxes: unknown;
   archives?: unknown;
+  teams?: unknown;
 } {
-  const team = store.readTeamFile();
-  const tasks = store.readTasks();
-  const mailboxes = store.listAllMailboxes();
-  return { team, tasks, mailboxes, archives: store.listArchivedTeams() };
+  // primary：updatedAt 最新的活跃团队（兼容旧页面的单团队形状）。
+  const teams = store.listTeams();
+  const primary = teams.reduce<TeamPanelTeam | undefined>(
+    (latest, team) =>
+      !latest || team.updatedAt.localeCompare(latest.updatedAt) > 0 ? team : latest,
+    undefined,
+  );
+  if (!primary) {
+    return { team: undefined, tasks: [], mailboxes: [], archives: store.listArchivedTeams() };
+  }
+  return {
+    team: primary,
+    tasks: store.readTasks(primary.teamId),
+    mailboxes: store.listAllMailboxes(primary.teamId),
+    archives: store.listArchivedTeams(),
+    teams: teams.map((team) => ({
+      teamId: team.teamId,
+      goal: team.goal,
+      status: team.status,
+      seq: team.seq,
+    })),
+  };
 }
+
+function readTeamPanelState(
+  store: TeamStore,
+  teamId: string,
+): { team: unknown; tasks: unknown; mailboxes: unknown } {
+  const team = store.findTeam(teamId);
+  return {
+    team,
+    tasks: store.readTasks(teamId),
+    mailboxes: store.listAllMailboxes(teamId),
+  };
+}
+
+type TeamPanelTeam = import("./state/types.js").TeamState;
 
 function readTeamSeq(team: unknown): number {
   if (typeof team === "object" && team !== null) {
@@ -208,21 +304,34 @@ const statusColors = { todo: "st-todo", in_progress: "st-in_progress", done: "st
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 async function tick() {
   try {
-    const res = await fetch(location.pathname.startsWith("/history/")
-      ? location.pathname + "/api/state"
-      : "/api/state");
+    const base = location.pathname.startsWith("/history/") ? location.pathname + "/api/state"
+      : location.pathname.startsWith("/team/") ? location.pathname.replace(/\\/$/, "") + "/api/state"
+      : "/api/state";
+    const res = await fetch(base);
     const data = await res.json();
     render(data);
     document.getElementById("status").textContent = "seq " + (data.team?.seq ?? 0) + " · " + new Date().toLocaleTimeString();
   } catch (e) { document.getElementById("status").textContent = "offline"; }
 }
+async function renderIndex(data) {
+  const root = document.getElementById("root");
+  const teams = await (await fetch("/api/teams")).json();
+  if (!teams.teams?.length && !teams.archives?.length) { root.innerHTML = '<p class="muted">此工作区暂无团队。用 /agent-teams:team &lt;goal&gt; 创建。</p>'; return; }
+  root.innerHTML = section("活跃团队", teams.teams.map((t) =>
+    '<div class="card"><b>' + esc(t.goal) + '</b><br><span class="muted">' + esc(t.teamId) + " · " + esc(t.status) + " · 成员 " + esc(t.members) + " · done " + esc(t.counts.done) + "/" + esc(t.counts.done + t.counts.inProgress + t.counts.todo + t.counts.failed + t.counts.blocked) + '</span><br><a href="/team/' + esc(t.teamId) + '/">查看 →</a></div>').join("") || '<p class="muted">无</p>') +
+    ((teams.archives ?? []).length ? section("历史归档", '<ul>' + teams.archives.map((a) => "<li><a href='/history/" + esc(a) + "'>" + esc(a) + "</a></li>").join("") + "</ul>") : "");
+}
 function render(data) {
   const root = document.getElementById("root");
   if (!data.team) { root.innerHTML = '<p class="muted">此工作区暂无团队。用 /agent-teams:team &lt;goal&gt; 创建。</p>'; return; }
+  if (location.pathname === "/" || location.pathname === "/index.html") { renderIndex(data); return; }
   const counts = {};
   for (const t of data.tasks ?? []) counts[t.status] = (counts[t.status] ?? 0) + 1;
   const team = data.team;
-  root.innerHTML = "" +
+  const teamNav = (data.teams ?? []).length > 1
+    ? '<p class="muted"><a href="/">← 所有团队（' + (data.teams ?? []).length + "）</a></p>"
+    : "";
+  root.innerHTML = teamNav +
     section("团队", '<div class="card"><b>' + esc(team.goal) + '</b><br><span class="muted">' + esc(team.teamId) + " · " + esc(team.status) + " · seq " + esc(team.seq) + "</span></div>") +
     section("进度", '<div class="card">' + Object.entries(counts).map(([k, v]) => '<span class="pill ' + (statusColors[k] ?? "") + '">' + esc(k) + " " + v + "</span>").join(" ") + (data.tasks?.length ? "" : " <span class='muted'>暂无任务</span>") + "</div>") +
     section("成员", '<table><tr><th>成员</th><th>角色</th><th>状态</th><th>当前任务</th></tr>' +

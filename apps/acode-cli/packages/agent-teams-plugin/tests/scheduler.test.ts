@@ -54,8 +54,22 @@ describe("scheduler next_actions", () => {
   it("wakes bound idle members for unassigned ready tasks (id order)", () => {
     const squad = team({
       members: [
-        { name: "dev-1", role: "dev", charter: "c", status: "bound", agentId: "agent-1", addedAt: nowIso() },
-        { name: "dev-2", role: "dev", charter: "c", status: "bound", agentId: "agent-2", addedAt: nowIso() },
+        {
+          name: "dev-1",
+          role: "dev",
+          charter: "c",
+          status: "bound",
+          agentId: "agent-1",
+          addedAt: nowIso(),
+        },
+        {
+          name: "dev-2",
+          role: "dev",
+          charter: "c",
+          status: "bound",
+          agentId: "agent-2",
+          addedAt: nowIso(),
+        },
       ],
     });
     const tasks = [task({ taskId: "t-1" }), task({ taskId: "t-2" })];
@@ -71,8 +85,22 @@ describe("scheduler next_actions", () => {
   it("busy members are not woken; assigned ready tasks wake their assignee", () => {
     const squad = team({
       members: [
-        { name: "dev-1", role: "dev", charter: "c", status: "bound", agentId: "agent-1", addedAt: nowIso() },
-        { name: "dev-2", role: "dev", charter: "c", status: "bound", agentId: "agent-2", addedAt: nowIso() },
+        {
+          name: "dev-1",
+          role: "dev",
+          charter: "c",
+          status: "bound",
+          agentId: "agent-1",
+          addedAt: nowIso(),
+        },
+        {
+          name: "dev-2",
+          role: "dev",
+          charter: "c",
+          status: "bound",
+          agentId: "agent-2",
+          addedAt: nowIso(),
+        },
       ],
     });
     const tasks = [
@@ -92,9 +120,15 @@ describe("scheduler next_actions", () => {
 
   it("unbound members produce a spawn/bind note instead of wake", () => {
     const squad = team({
-      members: [{ name: "dev-1", role: "dev", charter: "c", status: "registered", addedAt: nowIso() }],
+      members: [
+        { name: "dev-1", role: "dev", charter: "c", status: "registered", addedAt: nowIso() },
+      ],
     });
-    const actions = computeNextActions({ team: squad, tasks: [task({ taskId: "t-1" })], perspective: "captain" });
+    const actions = computeNextActions({
+      team: squad,
+      tasks: [task({ taskId: "t-1" })],
+      perspective: "captain",
+    });
     assert.equal(actions.wake.length, 0);
     assert.ok(actions.notes.some((note) => note.includes("not bound yet")));
     assert.ok(actions.notes.some((note) => note.includes("captain may claim")));
@@ -102,7 +136,16 @@ describe("scheduler next_actions", () => {
 
   it("failed quality gate produces repair guidance, no wake for dependents", () => {
     const squad = team({
-      members: [{ name: "dev-1", role: "dev", charter: "c", status: "bound", agentId: "agent-1", addedAt: nowIso() }],
+      members: [
+        {
+          name: "dev-1",
+          role: "dev",
+          charter: "c",
+          status: "bound",
+          agentId: "agent-1",
+          addedAt: nowIso(),
+        },
+      ],
     });
     const tasks = [
       task({ taskId: "t-1", kind: "review", status: "failed" }),

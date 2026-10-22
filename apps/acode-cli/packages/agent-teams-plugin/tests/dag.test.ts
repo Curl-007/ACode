@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { assertNoCycle, computeReadyTaskIds, criticalPathDepth, isFailedQualityGate, tasksBlockedByFailedQuality } from "../src/state/dag.js";
+import {
+  assertNoCycle,
+  computeReadyTaskIds,
+  criticalPathDepth,
+  isFailedQualityGate,
+  tasksBlockedByFailedQuality,
+} from "../src/state/dag.js";
 import type { TeamTask } from "../src/state/types.js";
 import { TeamError } from "../src/state/types.js";
 
@@ -31,10 +37,7 @@ describe("dag", () => {
 
   it("assertNoCycle rejects indirect cycles", () => {
     // t-1 → t-2（t-2 依赖 t-1）：给 t-1 加依赖 t-2 会成环。
-    const tasks = [
-      task({ taskId: "t-1" }),
-      task({ taskId: "t-2", dependencies: ["t-1"] }),
-    ];
+    const tasks = [task({ taskId: "t-1" }), task({ taskId: "t-2", dependencies: ["t-1"] })];
     assert.throws(
       () => assertNoCycle(tasks, "t-1", ["t-2"]),
       (error: unknown) => error instanceof TeamError && error.code === "cycle_detected",
@@ -42,10 +45,7 @@ describe("dag", () => {
   });
 
   it("assertNoCycle accepts valid chains", () => {
-    const tasks = [
-      task({ taskId: "t-1" }),
-      task({ taskId: "t-2", dependencies: ["t-1"] }),
-    ];
+    const tasks = [task({ taskId: "t-1" }), task({ taskId: "t-2", dependencies: ["t-1"] })];
     assertNoCycle(tasks, "t-3", ["t-2", "t-1"]);
   });
 

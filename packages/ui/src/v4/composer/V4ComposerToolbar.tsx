@@ -49,6 +49,7 @@ import {
   type ChatStartPlanBalanceConfig,
 } from "@/chat-input-toolbar/StartPlanContextBalance.js";
 import { ThoughtLevelCycleControl } from "@/chat-input-toolbar/ThoughtLevelCycleControl.js";
+import { ModelSpeedControl } from "@/chat-input-toolbar/ModelSpeedControl.js";
 import { getNextThoughtLevelValue } from "@/chat-input-toolbar/thoughtLevelOptions.js";
 import { PromptPolishButton } from "@/v4/composer/PromptPolishButton.js";
 import { usePromptPolish, type PromptPolishDraftSnapshot } from "@/v4/composer/usePromptPolish.js";
@@ -365,6 +366,8 @@ export interface V4ComposerToolbarProps {
   ) => void;
   /** 选中思考深度；modelContext 固定本次用户操作的目标模型。 */
   onSelectThought: (thought: string, modelContext: { provider: string; model: string }) => void;
+  /** 选中模型速度；modelContext 固定本次用户操作的目标模型。 */
+  onSelectSpeed: (speed: string, modelContext: { provider: string; model: string }) => void;
   onSwitchMode: (mode: string) => void;
   /** prepare/configOptions 失败时，custom provider 选择走 workspace recovery 链。 */
   onRecoverCustomModelSelection?: (
@@ -395,6 +398,7 @@ function V4ComposerModelControlsImpl({
   onConfigPickerOpenChange,
   onSelectModel,
   onSelectThought,
+  onSelectSpeed,
   onSendCompressionCommand,
   onRecoverCustomModelSelection,
   promptPolishDraftApi = null,
@@ -442,6 +446,12 @@ function V4ComposerModelControlsImpl({
   const handleThoughtPickerOpenChange = useCallback(
     (open: boolean) => {
       onConfigPickerOpenChange("thought", open);
+    },
+    [onConfigPickerOpenChange],
+  );
+  const handleSpeedPickerOpenChange = useCallback(
+    (open: boolean) => {
+      onConfigPickerOpenChange("speed", open);
     },
     [onConfigPickerOpenChange],
   );
@@ -955,6 +965,26 @@ function V4ComposerModelControlsImpl({
     });
   }, [effectiveConfig, onSelectThought, thoughtOption]);
 
+  const speedValues = useMemo(() => {
+    if (!effectiveConfig) return [];
+    const provider = modelSelectionView?.providers.find(
+      (candidate) => candidate.providerId === effectiveConfig.provider,
+    );
+    const model = provider?.models.find((candidate) => candidate.modelId === effectiveConfig.model);
+    return model?.config.optionSpecs.speed?.values ?? [];
+  }, [effectiveConfig, modelSelectionView]);
+  const currentSpeed = effectiveConfig?.modelSelection?.options?.speed ?? "";
+  const handleSpeedValueChange = useCallback(
+    (value: string) => {
+      if (!effectiveConfig || !speedValues.includes(value)) return;
+      onSelectSpeed(value, {
+        provider: effectiveConfig.provider,
+        model: effectiveConfig.model,
+      });
+    },
+    [effectiveConfig, onSelectSpeed, speedValues],
+  );
+
   const taskUsage = useMemo(() => {
     const contextWindow = usage?.contextWindow;
     if (!contextWindow) return null;
@@ -1046,6 +1076,8 @@ function V4ComposerModelControlsImpl({
             ? (thoughtOption.options ?? []).map((option) => option.value).join(",")
             : ""
         }
+        data-speed={currentSpeed}
+        data-speed-options={speedValues.join(",")}
         data-mode={draftConfig?.mode ?? ""}
         data-plan-enabled={draftConfig?.planEnabled ?? false}
         data-usage-used={usage?.contextWindow?.usedTokens ?? ""}
@@ -1131,6 +1163,17 @@ function V4ComposerModelControlsImpl({
           open={activeConfigPicker === "thought"}
           onOpenChange={handleThoughtPickerOpenChange}
           restoreFocusSelector={V4_COMPOSER_INPUT_SELECTOR}
+        />
+      ) : null}
+      {speedValues.length > 0 ? (
+        <ModelSpeedControl
+          values={speedValues}
+          value={speedValues.includes(currentSpeed) ? currentSpeed : ""}
+          disabled={disabled || recoveryPending}
+          open={activeConfigPicker === "speed"}
+          onOpenChange={handleSpeedPickerOpenChange}
+          onValueChange={handleSpeedValueChange}
+          intl={intl}
         />
       ) : null}
       {promptPolishDraftApi ? (

@@ -301,6 +301,15 @@ async function waitUntilStatus(adapter, name, expected, timeoutMs = 10_000) {
   return false;
 }
 
+async function waitUntil(predicate, timeoutMs = 2_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return true;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  return false;
+}
+
 // -----------------------------------------------
 // adapter 集成：http server 失联 → 静默探测阶梯 → 自愈
 // -----------------------------------------------
@@ -450,8 +459,12 @@ test("probe(adapter): 曾连接的 http server 失联后武装静默探测，指
     // 探测失败（server 仍死）→ 指数退避 20 → 40 → 80（封顶）。
     for (const expected of [40, 80, 80]) {
       fires.at(-1)();
-      await new Promise((resolve) => setTimeout(resolve, 20));
-      assert.equal(armedDelays.at(-1), expected, `探测失败后退避到 ${expected}ms`);
+      // re-arm 是异步的（对死端口走一轮连接拒绝回调），固定 sleep 20ms 在并行负载下
+      // 不够（20 !== 40 flake）；改有界轮询等待，阶梯语义不变。
+      assert.ok(
+        await waitUntil(() => armedDelays.at(-1) === expected, 2_000),
+        `探测失败后退避到 ${expected}ms`,
+      );
     }
 
     // server 恢复（同端口重启）→ 下一次静默探测自愈：connected、阶梯拆除。

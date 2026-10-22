@@ -1,16 +1,40 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { DEFAULT_GIT_COMMAND_TIMEOUT_MS, DEFAULT_GIT_OUTPUT_BYTES } from "../config.js";
+import {
+  DEFAULT_GIT_COMMAND_TIMEOUT_MS,
+  DEFAULT_GIT_OUTPUT_BYTES,
+  type GitCommandEnvOptions,
+} from "../config.js";
 import {
   createGitEnvironmentProvider,
   type GitEnvironmentProvider,
 } from "./gitEnvironmentProvider.js";
+// posture 判定器单一所有者在 shared（specs/git-posture-gateway.md R5/R6 平移登记）：
+// services 漏斗与 acode-cli 孪生漏斗共用同一份纯函数，防两漏斗形状漂移。
+import { applyGitPostureGateway, DEFAULT_GIT_POSTURE, type GitPosture } from "@acode/shared";
 
 export interface GitCommandExecutionOptions {
   cwd: string;
   args: string[];
   timeoutMs?: number;
   maxOutputBytes?: number;
+  /**
+   * 意图档位（specs/git-posture-gateway.md R1/R2）：调用点显式声明；
+   * 缺省 = read 档，写形状 fail-closed 拒绝（EGITPOSTURE 异常）。
+   * 网关在 spawn 前执行并可能重写 argv（注入防御旗标/重建 fetch），
+   * spawn 与 result.args 一律使用重写后形态。
+   */
+  posture?: GitPosture;
+  /**
+   * 与矩阵不相交的单键 env 覆盖（checkpoint 的 GIT_INDEX_FILE/author 身份等既有语义）。
+   * 禁止用它覆盖 GIT_CONFIG_* 编号键或 GIT_ALLOW_PROTOCOL——会破坏矩阵编号一致性/
+   * 协议同源构建（specs/git-hardening-presets.md P6），协议需求走 envOptions。
+   */
   env?: NodeJS.ProcessEnv;
+  /**
+   * 按调用点协议放行（specs/git-hardening-presets.md P1）：缺省 = 拒绝一切传输；
+   * 远端命令（当前唯一：gitCliRepo.push）显式声明最小协议集。
+   */
+  envOptions?: GitCommandEnvOptions;
 }
 
 export interface GitCommandExecutionResult {
@@ -84,6 +108,13 @@ export function createGitCommandProvider(options?: {
     },
 
     async run(command: GitCommandExecutionOptions): Promise<GitCommandExecutionResult> {
+      // posture 意图网关（specs/git-posture-gateway.md R2）：binary 解析之前执行，
+      // 零副作用；拒绝 = 调用点编程错误，以 EGITPOSTURE 异常冒泡（与下方 spawn
+      // 环境瞬态降级为失败结果的语义区分：档位拒绝必须修代码，不允许静默放行）。
+      // 通过时 argv 可能被重写（注入防御旗标/重建 fetch），spawn 与 result.args
+      // 一律使用网关输出，结果如实反映实际执行的命令。
+      const args = applyGitPostureGateway(command.posture ?? DEFAULT_GIT_POSTURE, command.args);
+
       const gitBinary = await environmentProvider.resolveGitBinary();
       if (!gitBinary) {
         throw new Error("Git binary is not available");
@@ -93,7 +124,7 @@ export function createGitCommandProvider(options?: {
       const timeoutMs = command.timeoutMs ?? DEFAULT_GIT_COMMAND_TIMEOUT_MS;
       const maxOutputBytes = command.maxOutputBytes ?? DEFAULT_GIT_OUTPUT_BYTES;
       const env = {
-        ...environmentProvider.createCommandEnv(),
+        ...environmentProvider.createCommandEnv(command.envOptions),
         ...command.env,
       };
       const startedAt = Date.now();
@@ -110,7 +141,7 @@ export function createGitCommandProvider(options?: {
         let outputTruncated = false;
         let settled = false;
 
-        const child = spawn(binaryPath, command.args, {
+        const child = spawn(binaryPath, args, {
           cwd: command.cwd,
           env,
           stdio: ["ignore", "pipe", "pipe"],
@@ -125,7 +156,7 @@ export function createGitCommandProvider(options?: {
           return {
             binaryPath,
             cwd: command.cwd,
-            args: command.args,
+            args,
             stdout,
             stderr,
             exitCode,

@@ -10,7 +10,7 @@ import {
   acodeSessionContextCacheUsageSchema,
 } from "../acode-protocol-legacy-types.js";
 import { timestampSchema } from "./core.js";
-import { conversationRowSchema } from "./rows.js";
+import { conversationRowSchema, composerTurnMetricsSchema } from "./rows.js";
 import { toolCallDisplaySchema } from "./toolDisplay.js";
 
 import { workspaceHookReviewRequestPayloadSchema } from "./workspace-hook-review.js";
@@ -209,6 +209,42 @@ export const sessionUsageStateSchema = z.object({
   lastRequest: sessionUsageLastRequestSchema.nullable().optional(),
 });
 export type SessionUsageState = z.infer<typeof sessionUsageStateSchema>;
+
+// 本会话主会话自己的工具调用计数（apps/acode-cli/specs/usage-statusbar-port.md §3.2）。
+// 由 CLI ProductProjection 在工具达到终态时累加；calls = 全部终态次数，
+// errors = 终态为 error 的次数（被拒绝/取消不算失败，子代理内部调用不计入）。
+// additive + default(null)：旧快照/旧 CLI 不携带时按「无数据」处理，UI 段整段隐藏。
+export const sessionToolStatsSchema = z.object({
+  calls: z.number().int().nonnegative(),
+  errors: z.number().int().nonnegative(),
+  // 「会话累计」明细的轮统计（additive，旧 CLI 不携带时对应行隐藏）：
+  // 轮数 = 本会话 turnHeader 数；请求数 / 思考 token 只计主回合请求；
+  // 代码增删 = 各轮 turnHeader.fileChanges 最新值之和，fileCount 同口径取各轮 files 之和。
+  turnCount: z.number().int().nonnegative().optional(),
+  requestCount: z.number().int().nonnegative().optional(),
+  reasoningTokens: z.number().nonnegative().optional(),
+  linesAdded: z.number().int().nonnegative().optional(),
+  linesDeleted: z.number().int().nonnegative().optional(),
+  fileCount: z.number().int().nonnegative().optional(),
+  // 模型请求重试次数：一个 model_retry_scheduled 事件 = 一次真实重试，
+  // 只计主回合（querySource = main_turn）——标题/压缩/子代理的旁路重试不计，
+  // 否则用户会把标题生成的限流读成自己这一轮在重试。
+  retryCount: z.number().int().nonnegative().optional(),
+  // 按 toolName 聚合的每工具明细（状态栏工具段悬停）。additive：
+  // 旧 CLI 不携带时只显示「工具调用 / 失败」两行，不建空壳。
+  tools: z
+    .array(
+      z.object({
+        name: z.string().min(1),
+        calls: z.number().int().nonnegative(),
+        errors: z.number().int().nonnegative(),
+        // 工具终态事件上的执行耗时之和；事件未带耗时时省略该字段（不是 0）。
+        durationMs: z.number().nonnegative().optional(),
+      }),
+    )
+    .optional(),
+});
+export type SessionToolStats = z.infer<typeof sessionToolStatsSchema>;
 
 // ── queue（不持久化，裁决：CLI 进程死亡即丢，客户端对账后由用户决定重发）──
 export const queueItemSchema = conversationInputIntentSchema.extend({
@@ -517,12 +553,23 @@ export const conversationSnapshotSchema = z.object({
   // （清除后/从未 seed）。冷快照同样必须携带——漏了这一处，重启后正在跑的图会静默消失。
   // optional 只服务旧快照 wire 兼容；新 CLI 恒携带（有 plan 给状态、无 plan 给 null）。
   swarmPlan: swarmPlanStateSchema.nullable().optional(),
+  // 插件 MCP server 投递的自定义状态快照（PluginStateUpdated 事件归约产物）。
+  // 键 = `${pluginId}:${key}`，值归插件命名空间；optional + default(null) 遵守冻结规则：
+  // 旧快照/旧发送端不带该字段时按「无插件状态」处理。
+  pluginStates: z.record(z.string(), z.unknown()).nullable().default(null),
   goal: goalStateSchema.nullable(),
   plan: planStateSchema.nullable(),
   // 软门禁(Soft Gate)：additive 字段,必须带 default(null)。
   // 旧快照/旧发送端不携带此字段 → 解析得 null,不破坏兼容性(遵守冻结规则)。
   // pendingCount === 0 时投影层置 null(提示条消失)。
   workspaceHookAdmission: workspaceHookAdmissionStateSchema.nullable().default(null),
+  // 本轮生成指标状态栏事实（apps/acode-cli/specs/usage-statusbar-port.md §3.1）。
+  // additive + default(null)：旧快照/旧 CLI 不携带时按「无指标」处理；
+  // CLI 在新一轮开始或 queue 切段时置 null。
+  composerTurnMetrics: composerTurnMetricsSchema.nullable().default(null),
+  // 本会话工具调用计数（同上 spec §3.2）。schema 层 default(null) 只服务旧快照 wire 兼容；
+  // 新 CLI 的 projection-state 初值是全零对象（null 只留给旧 CLI/冷恢复无数据）。
+  sessionToolStats: sessionToolStatsSchema.nullable().default(null),
   // B 区
   rows: rowsWindowSchema,
 });

@@ -79,8 +79,6 @@ export function wrapTeamMessageBody<T extends { message: string }>(entry: T): T 
   return { ...entry, message: wrapUntrustedModelOutput(entry.message, TEAMMATE_MESSAGE_LABEL) };
 }
 
-export function wrapTeamMessageBodies<T extends { message: string }>(
-  entries: readonly T[],
-): T[] {
+export function wrapTeamMessageBodies<T extends { message: string }>(entries: readonly T[]): T[] {
   return entries.map((entry) => wrapTeamMessageBody(entry));
 }

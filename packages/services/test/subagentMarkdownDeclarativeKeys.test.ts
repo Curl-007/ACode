@@ -58,21 +58,30 @@ test("parse：四组新键全部提取，多行 initialPrompt 的 \\n 字面量�
 });
 
 test("parse：isolation 非空非法值拒整个 profile（诊断 code 与 runtime 单点一致）", () => {
-  const parsed = parse(
-    ['name: "reviewer"', 'description: "d"', "isolation: container"].join("\n"),
-  );
+  const parsed = parse(['name: "reviewer"', 'description: "d"', "isolation: container"].join("\n"));
   assert.equal(parsed.agent, undefined);
   assert.equal(parsed.diagnostic?.code, "agent_invalid_isolation");
 });
 
 test("parse：isolation 裸键/空串视同未声明；hooks 非对象丢弃；observer 孤儿键丢弃", () => {
   const bare = parse(
-    ['name: "reviewer"', 'description: "d"', "isolation:", 'observerMessage: "orphan"', "observeSubagents: true", "hooks: not-an-object"].join("\n"),
+    [
+      'name: "reviewer"',
+      'description: "d"',
+      "isolation:",
+      'observerMessage: "orphan"',
+      "observeSubagents: true",
+      "hooks: not-an-object",
+    ].join("\n"),
   );
   assert.ok(bare.agent);
   assert.equal(bare.agent.isolation, undefined);
   assert.equal(bare.agent.observer, undefined);
-  assert.equal(bare.agent.observerMessage, undefined, "无 observer 的 observerMessage 是孤儿键，必须丢弃");
+  assert.equal(
+    bare.agent.observerMessage,
+    undefined,
+    "无 observer 的 observerMessage 是孤儿键，必须丢弃",
+  );
   assert.equal(bare.agent.observeSubagents, undefined);
   assert.equal(bare.agent.hooks, undefined, "非对象 hooks 必须丢弃（runtime 同款 fail-closed）");
   assert.equal(bare.diagnostic, undefined);
@@ -100,7 +109,9 @@ test("serialize：新键全部写回；hooks 是单行内联 JSON；无 observer
   // 逐行 loose 解析会把它们退化成空数组/丢弃）。
   assert.ok(hooksLine!.startsWith("hooks: {") && hooksLine!.endsWith("}"));
   assert.ok(
-    !lines.some((line) => line !== hooksLine && line.trimStart().startsWith("- ") && line.startsWith("  ")),
+    !lines.some(
+      (line) => line !== hooksLine && line.trimStart().startsWith("- ") && line.startsWith("  "),
+    ),
     "hooks 泄漏成了多行 YAML block 形态",
   );
 
@@ -172,4 +183,24 @@ test("存量键零回归：不带新键的旧文件解析/序列化形状不变"
   assert.ok(!serialized.includes("observer"));
   assert.ok(!serialized.includes("initialPrompt"));
   assert.ok(!serialized.includes("hooks"));
+});
+
+test("speed frontmatter 与 thoughtLevel 一起序列化并可回读", () => {
+  const config: SubAgentConfig = {
+    ...BASE_CONFIG,
+    modelSelection: {
+      providerId: "zai",
+      modelId: "GLM-5.3-Flash",
+      options: { reasoningLevel: "high", speed: "fast" },
+    },
+  };
+  const serialized = serializeSubagentMarkdown(config);
+  assert.match(serialized, /thoughtLevel: high/u);
+  assert.match(serialized, /speed: fast/u);
+  const parsed = parseSubagentMarkdown({
+    content: serialized,
+    path: "/repo/.acode/agents/reviewer.md",
+    scope: "workspace",
+  });
+  assert.deepEqual(parsed.agent?.modelSelection, config.modelSelection);
 });

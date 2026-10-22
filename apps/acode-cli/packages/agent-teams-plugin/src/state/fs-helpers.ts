@@ -2,8 +2,9 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { TeamError } from "./types.js";
 
 /**
- * store.ts 的模块级文件系统辅助（架构 ratchet 400 行上限的最小抽取，
- * 行为与拆分前逐字节一致）。锁文件、目录计数与目录名清洗的唯一实现点。
+ * store 系列的模块级文件系统辅助（架构 ratchet 400 行上限的最小抽取，
+ * 行为与拆分前逐字节一致）。锁文件、目录计数、目录名清洗与 JSON 读取的
+ * 唯一实现点。
  */
 
 export const TEAM_LOCK_STALE_MS = 5_000;
@@ -27,6 +28,16 @@ export function countJsonFiles(dir: string): number {
     return readdirSync(dir).filter((name) => name.endsWith(".json")).length;
   } catch {
     return 0;
+  }
+}
+
+/** 读取 JSON；缺失或损坏一律返回 undefined（调用方按「没读到」处理）。 */
+export function readJsonFile<T>(path: string): T | undefined {
+  try {
+    if (!existsSync(path)) return undefined;
+    return JSON.parse(readFileSync(path, "utf8")) as T;
+  } catch {
+    return undefined;
   }
 }
 

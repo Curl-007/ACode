@@ -21,7 +21,8 @@ import {
   sep,
 } from "node:path";
 import type { ExecutionPort, FileSystemPort } from "@acode/contracts";
-import { getCliGitInvocationEnvOverlay } from "@acode/shared";
+import { applyGitPostureGateway } from "@acode/shared";
+import { getCliGitInvocationEnvOverlay } from "@acode/shared/node";
 import { WORLD_READ_CAPS, WorkflowError, type WorldReadOp } from "@acode/dynamic-workflow";
 import {
   GIT_SHOW_PREFIX_ARGV,
@@ -215,7 +216,12 @@ async function runGit(
   maxInlineBytes: number,
 ): Promise<{ text: string; bytes: number; truncated: boolean }> {
   const result = await deps.executionPort.run({
-    command: { mode: "argv", file: "git", args: [...argv] },
+    // argv posture 网关 read 档（apps/acode-cli/specs/git-invocation-hardening.md R6
+    // 消费点 #7）：git.* 全部是只读形状；网关可能注入 --ignore-submodules=dirty
+    // 等确定性旗标（子模块脏内容条目不再出现——输出确定化，与硬化矩阵方向一致）。
+    // 拒绝 = 构造层 bug（workflow-git-world-read.ts 的 argv 越出 read 形状），
+    // EGITPOSTURE fail-closed 冒泡为节点失败。
+    command: { mode: "argv", file: "git", args: [...applyGitPostureGateway("read", argv)] },
     cwd: deps.cwd,
     // git 调用硬化漏斗 overlay 形态（specs/git-invocation-hardening.md 消费点 #7）：
     // 只读 git.* 面防弹窗挂死/hooks 停用/防串仓。world.run 的任意命令面不叠加

@@ -134,6 +134,19 @@ export function createRegistrySelectionProtocolError(
         ModelErrorCode.InvalidModelRequest,
         `Reasoning effort "${validation.reasoningLevel}" is not supported by ${validation.providerId}/${validation.modelId}`,
       );
+    // 与 subagent-selection.ts 同因：1.0.3 给 ModelSelectionValidation 联合扩了 speed 两成员
+    // （provider/registry.ts），本 switch 是唯一映射却漏改，穷举不全导致函数缺 ending return。
+    // 按 reasoning-level 两条对称补齐（字段结构与错误码均一致）。
+    case "speed-missing":
+      return new ModelProtocolError(
+        ModelErrorCode.InvalidModelRequest,
+        `Model speed is required for ${validation.providerId}/${validation.modelId}`,
+      );
+    case "speed-not-supported":
+      return new ModelProtocolError(
+        ModelErrorCode.InvalidModelRequest,
+        `Model speed "${validation.speed}" is not supported by ${validation.providerId}/${validation.modelId}`,
+      );
   }
 }
 

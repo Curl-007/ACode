@@ -67,12 +67,16 @@ import {
   withWorkflowRefineDeniedFollowUp,
 } from "./turn-control.js";
 import { mergeToolExecutionTelemetry, readToolExecutionTelemetry } from "../handlers/tool-perf.js";
-// K9（specs/tooling-micro-additions.md R1）：unknown-name / schema 违例的回执载体切换为
-// invalid 工具的规范化回执。只改呈现载体，判定逻辑（分类、事件、遥测）零变化。
+// K9（specs/tooling-micro-additions.md R1）：schema 违例的回执载体切换为 invalid 工具的
+// 规范化回执。unknown-name 回执已被工具名防伪统一回应取代（specs/permission-auto-deny-reasons.md
+// R3，安全依据：回显请求名/清单/就近建议 = 注入内容伪造工具名的探测 oracle）。
+import { formatInvalidSchemaViolationReceipt } from "../handlers/invalid.js";
+// 工具名防伪（specs/permission-auto-deny-reasons.md R2/R3）：registry-miss 的统一回应
+// 常量 + forged_tool_name 逐条本地度量（词表与条目构造归 permission 域所有）。
 import {
-  formatInvalidSchemaViolationReceipt,
-  formatInvalidUnknownToolReceipt,
-} from "../handlers/invalid.js";
+  NO_SUCH_TOOL_MODEL_RESPONSE,
+  recordForgedToolNameDenial,
+} from "../../permission/auto-deny-reasons.js";
 import type { ToolExecuteOptions, ToolExecutorDeps } from "./types.js";
 import { validateInitialModelToolInput, validateInput, validateOutput } from "./validation.js";
 import type { ExecutableToolCall } from "../types.js";
@@ -202,16 +206,22 @@ async function executeToolCallImpl(
         },
       ),
     );
-    if (emptyToolName) {
-      // 空名在 admission 阶段停止会让模型永远收不到配对结果。复用
-      // registry-miss 生命周期，但 provider 内容严格保留模型返回的原始空白名称。
-      result.modelContent = `<tool_use_error>Error: No such tool available: ${toolCall.name}</tool_use_error>`;
-    } else {
-      // K9（specs/tooling-micro-additions.md R1）：unknown-name 的 provider 回执载体切换为
-      // invalid 工具的规范化回执（原名 + 就近建议，无近似则列注册表快照全集）。
-      // 失败分类（ToolNotFound）、事件与遥测仍走原路径——判定逻辑零变化，畸形调用零工具执行。
-      result.modelContent = formatInvalidUnknownToolReceipt(toolCall.name, deps.registry);
-    }
+    // 工具名防伪统一回应（specs/permission-auto-deny-reasons.md R3）：名字不在实际
+    // 服务清单（含空名/空白名）→ 同一常量回应。刻意不回显请求名、不列注册表、不给
+    // 就近建议、不区分「拼错 vs 伪造」——每一项都是探测信道（确认命名猜测 = 存在性
+    // oracle；清单回显 = 服务面重建）。模型的自修复不依赖本回执：本轮请求已携带全量
+    // 工具 schema。错误分类（ToolNotFound）、事件、遥测、错误 message（本地日志/UI
+    // 诊断通道，非 provider 可见面）全部照旧——判定逻辑零变化，畸形调用零工具执行。
+    result.modelContent = NO_SUCH_TOOL_MODEL_RESPONSE;
+    // forged 类 reason 逐条本地度量（R2）：registry-miss 先于权限裁决发生，不经
+    // PermissionService 漏斗，由 dispatch 处直记决策日志（env 门控、失败静默、
+    // 本地 JSONL——no-telemetry 红线）。
+    recordForgedToolNameDenial({
+      toolName: toolCall.name,
+      sessionId: deps.sessionId,
+      mode: deps.getMode(),
+      workingDirectory: deps.getWorkingDirectory(),
+    });
     // registry miss 发生在 handler/ToolCallStarted 之前；旧代码只把失败
     // 返回给 provider，没有发布 ToolCallError，V4 tool row 因而永久停在 inputStreaming。
     await emitToolCallError(deps, toolCall.id, traceContext, turnId, result.error);

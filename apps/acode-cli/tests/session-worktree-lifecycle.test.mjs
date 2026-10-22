@@ -200,7 +200,9 @@ test("全链：建仓 → enter → 改动 → merge-base → 收割 → 重开�
     "会话材料原样",
   );
   assert.ok(
-    host.calls.some((call) => call.startsWith("merge --no-edit")),
+    host.calls.some(
+      (call) => call.startsWith("merge --ff-only") || call.startsWith("merge --no-ff"),
+    ),
     "合并必须经宿主执行层 git（argv、沙箱外）",
   );
   // 不 push 不删除：远端引用零、分支全在场。

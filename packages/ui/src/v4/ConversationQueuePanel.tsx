@@ -26,6 +26,7 @@ import { ControlHintTooltip } from "@/ControlHintTooltip.js";
 import { Button } from "@/components/ui/button.js";
 import { cn } from "@/components/lib/utils.js";
 import { useACodeIntl } from "@/i18n/IntlProvider.js";
+import { resolveGuideFellBackMessageId } from "@/v4/queueSteerFellback.js";
 
 interface ConversationQueuePanelProps {
   queue: QueueState;
@@ -132,6 +133,14 @@ const QueueRow = memo(function QueueRow({
   const dispatchLocked = item.dispatch.state !== "queued";
   const rowLocked = dispatchLocked || editPending;
   const isCompact = item.kind === "compact";
+  // 引导内联失败回退队列的可见标注（specs/queue-guide-fellback-notice.md）：
+  // 投影层已产出 steer.state="fellBack" + reasonCode，UI 是唯一消费者。
+  // steer 是 QueueItem 必填字段，可选链只为容忍旧快照/畸形投影，不额外造第二套状态判断；
+  // 非 fellBack（notRequested/submitting/steering/guided）一律不渲染该提示。
+  const fellBackNotice =
+    item.steer?.state === "fellBack"
+      ? intl.formatMessage({ id: resolveGuideFellBackMessageId(item.steer.reasonCode) })
+      : null;
   const {
     attributes,
     isDragging,
@@ -196,14 +205,23 @@ const QueueRow = memo(function QueueRow({
           <GripVertical className="size-4" />
         </Button>
       </ControlHintTooltip>
-      <span
-        className={cn(
-          "flex min-w-0 flex-1 items-center gap-2 truncate text-ui-base text-foreground",
-          isCompact ? "font-mono" : null,
-        )}
-        title={item.text}
-      >
-        <span className="truncate">{isCompact ? "/compact" : item.text}</span>
+      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <span
+          className={cn(
+            "flex min-w-0 items-center gap-2 truncate text-ui-base text-foreground",
+            isCompact ? "font-mono" : null,
+          )}
+          title={item.text}
+        >
+          <span className="truncate">{isCompact ? "/compact" : item.text}</span>
+        </span>
+        {/* 引导回退提示：弱元数据排版（text-ui-xs + subtlest，DESIGN.md）；允许换行以完整可读，
+            不 truncate。仅 fellBack 项在场，其余 queue 项渲染零变化。 */}
+        {fellBackNotice ? (
+          <span className="min-w-0 break-words text-ui-xs text-foreground-subtlest">
+            {fellBackNotice}
+          </span>
+        ) : null}
       </span>
       {onSendNow ? (
         <Button

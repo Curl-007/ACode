@@ -86,8 +86,21 @@ test("播种→归因→幂等：marker/分区条目/summary 日志/重跑 reuse
   t.after(() => rm(storageRoot, { force: true, recursive: true }));
 
   const firstLogger = createLogger();
-  const firstFailed = resolveOfficialPluginRoots({ env: {}, logger: firstLogger, storageRoot });
-  const firstFailedNames = new Set(firstFailed.map((definition) => definition.name));
+  resolveOfficialPluginRoots({ env: {}, logger: firstLogger, storageRoot });
+  // 返回值是根路径数组（string[]）；降级集合必须从 seed_summary 的 outcomes 取
+  // （spec R5 闭集）。旧实现把返回值当 failed definitions：string[].name 恒 undefined，
+  // dist 未构建的 checkout 上会对降级插件（node-repl-host 等）误断言 marker 存在。
+  const degradedNames = (logger) =>
+    new Set(
+      (
+        logger.records.find(
+          (record) => record.level === "info" && record.details?.operation === "seed_summary",
+        )?.details?.outcomes ?? []
+      )
+        .filter((item) => item.outcome !== "written" && item.outcome !== "reused")
+        .map((item) => item.pluginId.split("@")[0]),
+    );
+  const firstFailedNames = degradedNames(firstLogger);
 
   // 每个定义要么成功播种（marker 完整），要么在 failedSeeds 里（降级协议），二者必居其一。
   const seededDefinitions = [];
@@ -208,11 +221,11 @@ test("播种→归因→幂等：marker/分区条目/summary 日志/重跑 reuse
     );
   }
   const secondLogger = createLogger();
-  const secondFailed = resolveOfficialPluginRoots({ env: {}, logger: secondLogger, storageRoot });
+  resolveOfficialPluginRoots({ env: {}, logger: secondLogger, storageRoot });
   assert.deepEqual(
-    secondFailed.map((definition) => definition.name).sort(),
+    [...degradedNames(secondLogger)].sort(),
     [...firstFailedNames].sort(),
-    "重跑的 failedSeeds 集合必须稳定",
+    "重跑的降级集合必须稳定",
   );
   for (const definition of seededDefinitions) {
     const markerAfter = await readFile(

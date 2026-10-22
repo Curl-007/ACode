@@ -381,6 +381,12 @@ export function shouldExposeSessionEventToProtocol(event: SessionEvent): boolean
     return false;
   }
 
+  if (event.type === SessionEventType.PluginStateUpdated) {
+    // 与 DynamicWorkflowRunProgress 同一裁决：v4 面已有权威投影（pluginStates 状态键，
+    // 键级整体替换、可冷恢复），v3 mapper 不消费插件自定义状态，剥离只是带宽干净。
+    return false;
+  }
+
   if (event.type !== SessionEventType.ModelStreaming) {
     return true;
   }

@@ -61,6 +61,7 @@ import {
   assessPackageManagerScriptRun,
 } from "./npm-scripts.js";
 import { assessForeignShellPayload, extractCommandSubstitutions } from "./payloads.js";
+import { isJsRuntimeInlineEvalFlag } from "./js-runtime-eval.js";
 import {
   classifyTarget,
   initialTrackedCwd,
@@ -445,6 +446,18 @@ function assessTokens(
           return;
         }
         assessText(script, context, findings, depth + 1, { state: effectiveState() });
+        return;
+      }
+      if (isJsRuntimeInlineEvalFlag(name, wrapperToken)) {
+        // node/bun 的内联 eval 旗标（`-e/--eval/-p/--print`，含 `--eval=` 粘连形态）：
+        // 值是 JS 源不是 shell 命令，本层按设计不解析（spec bash-target-blast-radius.md
+        // R6「node -e 的破坏发生在 JS 源里，本层看不见」+ npm-script-body-scan.md R7）。
+        // 停止解包并豁免 payload 不可见 confirm——否则良性 `node -e "console.log(1)"`
+        // 的 `(` 命中动态命令名启发式、`node --eval="…"` 命中 wrapperPayloadUnknown，
+        // 两类误报把 capability 升 critical 并被 J1-2 反射门首轮 deny（用户报告的
+        // 「门禁不认 node -e 内联脚本」根因）。命令替换 `$(...)` 在双引号内仍由 bash
+        // 先行展开，经 assessInvocation 的 substitutionScanTexts 独立覆盖（不经本分支），
+        // 故 `node -e "x=$(rm -rf ~)"` 仍 catastrophic；重定向/链式命令同理各自独立分级。
         return;
       }
       if (wrapperToken.includes("=")) {

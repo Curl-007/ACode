@@ -38,7 +38,8 @@ import {
   createScriptWorkflowAgentRuntime,
   type ScriptWorkflowAgentRuntimeDeps,
 } from "@acode/cli-workflow/contract";
-import { getCliGitInvocationEnvOverlay } from "@acode/shared";
+import { applyGitPostureGateway } from "@acode/shared";
+import { getCliGitInvocationEnvOverlay } from "@acode/shared/node";
 import type { ACodeOvernightHostCommand } from "../builtin-prompt-command.js";
 
 export interface CreateOvernightControllerDeps extends ScriptWorkflowAgentRuntimeDeps {
@@ -127,7 +128,13 @@ export function createOvernightController(deps: CreateOvernightControllerDeps): 
         const result = await deps.executionPort.run({
           // argv 形态不经 shell（preflight 是引擎采集面，不是模型工具调用，
           // 不需要会话 shell 选择语义），git 在 PATH 缺席时按采集失败处理。
-          command: { mode: "argv", file: "git", args: ["status", "--porcelain=v1", "--branch"] },
+          // argv posture 网关 read 档（git-invocation-hardening.md R6 消费点 #8）：
+          // 网关注入 --ignore-submodules=dirty（子模块脏条目确定化收口）。
+          command: {
+            mode: "argv",
+            file: "git",
+            args: applyGitPostureGateway("read", ["status", "--porcelain=v1", "--branch"]),
+          },
           cwd: deps.workingDirectory,
           // git 调用硬化漏斗 overlay 形态（specs/git-invocation-hardening.md 消费点 #8）：
           // preflight 采集是无人值守只读面，防弹窗挂死/hooks 停用/防串仓。

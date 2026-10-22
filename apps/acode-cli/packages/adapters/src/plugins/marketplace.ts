@@ -8,11 +8,13 @@ import { promisify } from "node:util";
 import type { PluginDiagnostic, PluginManifest, PluginStoreListing } from "@acode/contracts";
 import { isOfficialMarketplaceId, ACODE_OFFICIAL_PLUGIN_MARKETPLACE } from "@acode/contracts";
 import {
-  getCliGitInvocationEnv,
+  applyGitPostureGateway,
   resolveDefaultPluginMarketplaces,
   resolveOfficialMarketplaceAliasCanonicalId,
   sanitizeACodeRuntimeEnv,
+  type GitPosture,
 } from "@acode/shared";
+import { CLI_MARKETPLACE_GIT_PROTOCOL_ALLOWLIST, getCliGitInvocationEnv } from "@acode/shared/node";
 import {
   appendPluginSourceCleanupError,
   cleanupPluginSourceBestEffort,
@@ -1767,7 +1769,11 @@ async function clonePluginSource(
   args.push(url, dir);
   try {
     await execGitCloneWithRetry(args, dir, signal);
-    if (sha) await execGitCommand(["-C", dir, "checkout", sha], signal);
+    if (sha) {
+      // cwd 承载目录定位（R6 -C 消除）：`-C <dir>` 前缀在 infra/populate 档都是
+      // 位置劫持拒绝面，cwd 参数是非劫持等价物。
+      await execGitCommand(["checkout", sha], signal, { posture: "populate", cwd: dir });
+    }
     return dir;
   } catch (error) {
     const cleanupError = await cleanupPluginSourceBestEffort(async () => {
@@ -2003,7 +2009,11 @@ async function cloneMarketplaceSource(
   try {
     await execGitCloneWithRetry(args, dir, signal);
     if (sparsePaths?.length) {
-      await execGitCommand(["-C", dir, "sparse-checkout", "set", ...sparsePaths], signal);
+      // sparse-checkout = infra 档登记形状（R6）；cwd 承载目录定位（-C 消除）。
+      await execGitCommand(["sparse-checkout", "set", ...sparsePaths], signal, {
+        posture: "infra",
+        cwd: dir,
+      });
     }
     return dir;
   } catch (error) {
@@ -2025,7 +2035,7 @@ async function execGitCloneWithRetry(
         await rm(targetDir, { force: true, recursive: true });
         await mkdir(targetDir, { recursive: true });
       }
-      await execGitCommand(args, signal);
+      await execGitCommand(args, signal, { posture: "clone" });
       return;
     } catch (error) {
       lastError = error;
@@ -2040,23 +2050,43 @@ async function execGitCloneWithRetry(
   throw lastError;
 }
 
-async function execGitCommand(args: string[], signal?: AbortSignal): Promise<void> {
+async function execGitCommand(
+  args: string[],
+  signal?: AbortSignal,
+  options?: {
+    /**
+     * argv posture 档位（apps/acode-cli/specs/git-invocation-hardening.md R6 消费点 #2）：
+     * 调用点显式声明（clone/infra/populate）；缺省 read 档 fail-closed。
+     * 拒绝 = 调用点编程错误（EGITPOSTURE 冒泡，不进 isCommandUnavailableError 降级）。
+     */
+    posture?: GitPosture;
+    /** 执行目录（cwd 承载目录定位；`-C <dir>` 前缀是网关位置劫持拒绝面，禁用）。 */
+    cwd?: string;
+  },
+): Promise<void> {
+  // 网关判定在 try 之外：EGITPOSTURE 是调用点编程错误，绝不进下方的
+  // isCommandUnavailableError「git 不可用」降级（spec R5 失败语义分层）。
+  const guardedArgs = applyGitPostureGateway(options?.posture ?? "read", args);
   throwIfPluginOperationAborted(signal);
   try {
     // 显式二进制覆盖既支持非标准 Git 安装位置，也让跨进程 E2E 能把 Git 指向不存在的
     // 绝对路径，真实证明 Archive 主链路不依赖开发机上偶然存在的 Git。
     const gitBinary = process.env.ACODE_GIT_BINARY?.trim() || "git";
-    await execFileAsync(gitBinary, args, {
+    await execFileAsync(gitBinary, guardedArgs, {
       // git 调用硬化漏斗（specs/git-invocation-hardening.md 消费点 #2）：叠在
       // buildMarketplaceGitEnv() 的 sanitize + 网络出口 proxy/CA 恢复之上，
       // 只加硬化 env 层，clone/sparse-checkout/checkout 参数组装语义不动。
-      // 协议白名单 file:http:https:ssh 封 ext::（marketplace 级 URL 可来自
-      // 配置/协议输入且不再复验 scheme，spawn 层是唯一收口，spec R3）。
-      env: getCliGitInvocationEnv(buildMarketplaceGitEnv()),
+      // 协议面（spec R3 修订）：漏斗默认全拒，本调用点是 CLI 面唯一网络面，
+      // 显式 opt-in file/http/https/ssh；ext:: 仍封死（marketplace 级 URL 可来自
+      // 配置/协议输入且不再复验 scheme，spawn 层协议门是唯一收口）。
+      env: getCliGitInvocationEnv(buildMarketplaceGitEnv(), process.platform, {
+        allowedProtocols: CLI_MARKETPLACE_GIT_PROTOCOL_ALLOWLIST,
+      }),
       killSignal: "SIGTERM",
       maxBuffer: 1024 * 1024 * 10,
       signal,
       timeout: GIT_COMMAND_TIMEOUT_MS,
+      ...(options?.cwd === undefined ? {} : { cwd: options.cwd }),
     });
   } catch (error) {
     if (isCommandUnavailableError(error)) {

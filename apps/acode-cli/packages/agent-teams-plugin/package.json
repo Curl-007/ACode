@@ -1,9 +1,9 @@
 {
   "$schema": "https://json.schemastore.org/package.json",
   "name": "@acode/agent-teams-plugin",
-  "version": "0.1.0",
+  "version": "0.4.0",
   "private": true,
-  "description": "AgentTeams 多智能体协作插件：团队协议 + 14 个协调工具 + 持久任务 DAG + 成员邮箱 + 指令式调度 + 只读团队面板。以官方 ACode 插件形态发布，stdio MCP server 由本包提供。",
+  "description": "AgentTeams 多智能体协作插件：团队协议 + 17 个协调工具 + 持久任务 DAG + 成员邮箱 + 指令式调度 + 只读团队面板 + 多团队并行与孤儿团队接管 + 可选成员工作树隔离。以官方 AnkerCode 插件形态发布，stdio MCP server 由本包提供。",
   "license": "MIT",
   "type": "module",
   "main": "./dist/mcp/server.js",

@@ -27,6 +27,7 @@ import {
 import type { FleetPermissionMode, FleetRejectReason } from "@acode/contracts";
 import { GENERAL_PURPOSE_AGENT_TYPE } from "../subagent/general-purpose.js";
 import type { FleetRegistry, FleetSessionRecord } from "./registry.js";
+import { attachCliGovernorEvictionPort, getCliGovernor } from "./governor.js";
 import { resolveFleetLaunchMode, resolveLauncherEffectiveMode } from "./mode-policy.js";
 import {
   adoptFleetWorktreeForChild,
@@ -82,10 +83,7 @@ export function buildFleetChildFirstMessage(input: {
  * 得不同名）。slug 为空（如全 CJK 标题）时回落 "session"。短名是显示键，
  * 寻址仍只认 session_id。
  */
-export function buildFleetSessionName(
-  title: string,
-  isTaken: (name: string) => boolean,
-): string {
+export function buildFleetSessionName(title: string, isTaken: (name: string) => boolean): string {
   const slugBase =
     title
       .toLowerCase()
@@ -109,6 +107,14 @@ export interface FleetLaunchInput {
   branchName?: string;
 }
 
+/**
+ * spawn 槽位闸门最小面（specs/cli-governor.md R2）：launch 编排只依赖
+ * acquireSlot("user")，机制/组合细节归 runtime/cli-governor + fleet/governor。
+ */
+export interface FleetSpawnSlotGate {
+  acquireSlot(reason: "user" | "warm"): Promise<{ yielded: boolean; release: () => void }>;
+}
+
 export interface FleetLaunchContext {
   callerSessionId: SessionId;
   toolCallId: string;
@@ -125,6 +131,11 @@ export interface FleetLaunchContext {
   worktreeDeps?: FleetWorktreeDeps;
   /** 测试注入：覆盖发起者有效模式推导。 */
   launcherEffectiveMode?: CollaborationMode;
+  /**
+   * 测试注入：覆盖 spawn 槽位闸门（缺省 = 进程级 CliGovernor 单例；
+   * specs/cli-governor.md R2——user spawn 永不阻塞，at-cap 放行并记因）。
+   */
+  governor?: FleetSpawnSlotGate;
   now?: () => number;
 }
 
@@ -153,6 +164,16 @@ export async function launchFleetSession(
   const modeLineage: FleetSessionRecord["modeLineage"] =
     decision.kind === "plan_vessel" ? "plan" : "ceiling";
 
+  // specs/cli-governor.md R2/R4：user spawn 永不阻塞——at-cap 照常放行，governor
+  // 记因（governor_soft_cap_exceeded）；防御面 yielded=true 也不回头（分类表语义）。
+  // 驱逐端口懒接：launch ctx 的 subagentPort.stopTask 即进程驱逐面（首到先得，
+  // 缺席期间 evictionOn=false，只发 would_evict 观测——fail-safe）。
+  const stopTask = ctx.governor === undefined ? ctx.subagentPort.stopTask : undefined;
+  if (stopTask) {
+    attachCliGovernorEvictionPort({ stopTask: (taskId) => stopTask(taskId) });
+  }
+  const slot = await (ctx.governor ?? getCliGovernor()).acquireSlot("user");
+
   // worktree 必须在 launch 之前 provision：child runtime 的 workingDirectory 在
   // 构造期定死，launch 之后再进就晚了（spec R2）。
   let provision: FleetWorktreeProvision | undefined;
@@ -167,6 +188,8 @@ export async function launchFleetSession(
       ctx.worktreeDeps ?? {},
     );
     if (!provisioned.ok) {
+      // 被拒的调用不占资源槽位（所有权封闭同款哲学：报错不确立任何事实）。
+      slot.release();
       return {
         outcome: "rejected",
         reason: "worktree_rejected",
@@ -200,6 +223,7 @@ export async function launchFleetSession(
       },
     );
   } catch (error) {
+    slot.release();
     if (provision) {
       await releaseFleetWorktreeProvision({ provision }, ctx.worktreeDeps ?? {});
     }
@@ -230,6 +254,9 @@ export async function launchFleetSession(
     ...(provision ? { worktree: { path: provision.path, branch: provision.branch } } : {}),
   };
   ctx.registry.register(record);
+  // 登记完成 = countActive 已覆盖本会话，释放 inFlight 槽位（无计数空窗，
+  // specs/cli-governor.md R1）。
+  slot.release();
 
   if (provision) {
     try {

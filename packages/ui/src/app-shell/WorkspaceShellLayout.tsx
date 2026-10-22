@@ -312,6 +312,7 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
   handleOpenSubagentSession,
   handleOpenBackgroundBash,
   handleOpenSubagentDirectory,
+  handleOpenTeamPanel,
   handleSyncSubagentSessionTabs,
   handleOpenSelectionSideChat,
   handleOpenPlanDetail,
@@ -1876,6 +1877,7 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
                               onOpenBackgroundBash={handleOpenBackgroundBash}
                               onOpenSubagentSession={handleOpenSubagentSession}
                               onOpenSubagentDirectory={handleOpenSubagentDirectory}
+                              onOpenTeamPanel={handleOpenTeamPanel}
                               onSyncSubagentSessionTabs={handleSyncSubagentSessionTabs}
                               onOpenSelectionSideChat={handleOpenSelectionSideChat}
                               onOpenPlanDetail={handleOpenPlanDetail}

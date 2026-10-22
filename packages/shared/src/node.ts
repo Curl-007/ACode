@@ -85,15 +85,26 @@ export {
 } from "./node/credentialKeychain.js";
 export {
   ACODE_MANAGED_POLICY_FILE_ENV,
+  MANAGED_POLICY_KEY_METADATA,
+  getManagedPolicyKeyMetadata,
   loadManagedPolicyFile,
   resolveManagedPolicyFilePath,
+  type ManagedPolicyConsumerScope,
   type ManagedPolicyFileData,
   type ManagedPolicyFileLoadResult,
   type ManagedPolicyFileOptions,
   type ManagedPolicyFileStatus,
   type ManagedPolicyInvalidKind,
+  type ManagedPolicyKey,
+  type ManagedPolicyKeyMetadata,
+  type ManagedPolicyKeyMetadataRegistry,
+  type ManagedPolicyRedactMode,
   type ManagedPolicyRule,
 } from "./node/managedPolicy.js";
+// git 调用硬化漏斗的 env/overlay 面是 node-only（顶层 node:path/node:os），
+// 不得进根 barrel（renderer/preload 构建面会崩，2026-10-21 手验实证）；与
+// managedPolicy 同纪律挂 ./node 桶（specs/git-invocation-hardening.md R7）。
+export * from "./git-invocation-env.js";
 export {
   assertContainedDirectoryChain,
   captureFileIdentitySnapshot,

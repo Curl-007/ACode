@@ -177,6 +177,100 @@ adapters——波 1 无真实消费方，空壳文件被 knip:gate 判死（本�
 - 显式模式能力不符 → 发送前报错（R1），不静默降级。
 - 搜索/包装执行中的错误走普通工具错误链（结果格式、重试、审批语义不变）。
 
+### R13 后端能力剥离与闭集 retry/fail 信号（R3 先行增量 · 2026-10-20）
+
+> 来源对照：上游 foundry「按后端能力剥离 + 显式信号」机制（能力集缺失 → 请求构造期
+> 逐工具剥离 `defer_loading`/`strict` 旗标或整个移除工具，返回闭集信号
+> `retry:foundry-capability-strip:<caps>`；目的工具 web_search 能力缺失 →
+> `fail:foundry-purpose-request`；缺失能力按 (后端,模型) 缓存；回合原因分档
+> `tool_deferred`（非错误臂）vs `tool_deferred_unavailable`（错误臂））。只搬机制
+> 语义（降级永不静默、信号闭集、retry/fail 两档），不拷专有文案。证据位置见
+> `C:\Users\ZhuanZ\Desktop\zoode\claude-r3-reports\04-tree-rescan-cc-prompts-ion.md` C2。
+
+**原则**：模型后端不具备某工具所需能力时，请求构造期**显式剥离**该工具/旗标并产生
+**闭集信号**；不允许静默降级或静默丢弃。失败语义只有两档（闭集）：
+`retry`（剥离后重建请求可继续，调用方重规划）与 `fail`（请求目的不可达，重试无意义）。
+
+**能力判定面（剥离判据的输入，禁止 provider/model id 字符串分支）**：
+
+| 能力事实 | 所有者 | 判据消费点 |
+|---|---|---|
+| `ModelProperties.supportsToolCall` | shared model-config（zod 闭集） | core：local 投影面能否成立 |
+| `ModelProperties.supportsNativeWebSearch` | shared model-config（zod 闭集） | core handler 门禁 + adapters wire 编码 |
+| `ToolSearchCapability.protocolSupported`（R2 缝） | contracts | core：native 面（波 2）；波 1 只登记 |
+| `providerKind`（openai/anthropic/openai-compatible/gateway/custom） | adapters 解析事实 | adapters：provider-native 工具可编码性 |
+
+**core 请求构造侧词表**（`core/src/tool/search/capability.ts`，唯一登记处）：
+
+- `ToolSearchStripReason` 闭集：
+  - `native_not_implemented`——波 1 构建事实：native 面未实装（显式 native 与 auto
+    升 native 分支发送前报错）。波 2 实装后此档退役，由协议判定档接替。→ `fail`
+  - `native_protocol_unsupported`——后端缺 native tool_search 协议（apiType 非
+    anthropic-messages）。**波 2 档位登记**：波 2 中 auto/native 请求面剥离 defer
+    旗标后重建请求 → `retry`（对照上游 retry:foundry-capability-strip）。波 1 无
+    产生路径（native 面不存在，先落 native_not_implemented）。
+  - `tool_call_unsupported`——模型不支持普通工具调用：显式 local 发送前报错 →
+    `fail`；auto 下不抛错，走 R12 fail-open 降级并以此值入降级原因闭集。
+- `ToolSearchStripSignal = { disposition: "retry" | "fail", reason, toolName? }`；
+  `ToolSearchCapabilityError extends Error` 携带 signal（message 兼容波 1 文案）。
+  disposition 由 reason 的穷举 switch 单源推导（`toolSearchStripDisposition`）。
+- **R12 降级原因闭集扩展**（`ToolSearchDisableReason`）：既有
+  `provider_disabled | no_deferred_tools | tool_unavailable` 之上增
+  `tool_call_unsupported`（auto 能力降级与用户配置 off 分档——上游
+  tool_deferred/tool_deferred_unavailable 分档的同题：「配置关闭」与「能力不可得」
+  在信号层可辨识）与 `native_protocol_unsupported`（波 2 档位登记）。
+
+**adapters wire 侧词表**（`adapters/src/model/tool-capability-strip.ts`，唯一登记处；
+core↔adapters 无依赖边、contracts 桶面本轮不在作用域，故两侧各自闭集、以本节对照，
+波 2 如需协议/持久化面再上提 contracts——越界登记）：
+
+- `WireToolStripReason` 闭集（全部 → `fail`，对照上游目的工具 fail:foundry-purpose-request）：
+  - `native_web_search_model_unsupported`——`supportsNativeWebSearch=false` 仍收到
+    provider-native WebSearch 编码请求（handler 门禁后的第二道防线）；
+  - `native_web_search_provider_unencodable`——后端 API 面（providerKind）不编码
+    provider-native web search（openai 兼容后端必然缺 native 搜索）；
+  - `provider_native_tool_unregistered`——`providerNative.logicalName` 无已注册
+    编码器（注册表/构建事实）。**修复现状静默丢弃洞**：`toAiSdkTools` 的
+    providerNative 分支不再存在「返回空数组」路径，要么编码要么闭集报错。
+- `ToolCapabilityStripError extends AiSdkModelAdapterError`：code 保持
+  `InvalidModelRequest`（failure-classifier 既有归档 `retryable:false` 不变），新增
+  类型化 `strip: WireToolStripSignal`（reason/disposition/toolName）并同步写入
+  error context，消费方按闭集字段区分而非解析 message。
+- `ModelToolContract.capability` 字段（如 web_search）是目的工具判定的登记缝
+  （对照上游 O8r 按 web_search_tool 目的判 fail），波 1 由 logicalName 判定即可。
+
+**失败语义汇总**：
+
+| 路径 | 行为 | 信号 |
+|---|---|---|
+| 显式 native（波 1） | 发送前报错（R1 不变） | `ToolSearchCapabilityError{fail, native_not_implemented}` |
+| 显式 local + 无 tool call | 发送前报错（R1 不变） | `ToolSearchCapabilityError{fail, tool_call_unsupported}` |
+| auto + 无 tool call | fail-open 降级 off（R12 不变） | 降级原因 `tool_call_unsupported`（debug 日志） |
+| provider-native 编码能力缺失 | 请求失败（fail-closed，不发坏请求） | `ToolCapabilityStripError{fail, …}` |
+| strict 资格缺失 | 降级非 strict 合法 schema（既有语义，omp CONSTRAINTS #1.5） | 非剥工具面，不入本节信号 |
+
+**词表边界（对照 permission auto-deny 闭集，禁止同义 token 重复建档）**：
+
+- 本节词表描述**请求构造期/wire 编码期的能力事实**（剥离、降级、fail-closed
+  报错），永不进权限拒绝闭集（`core/src/permission/auto-deny-reasons.ts`，
+  specs/permission-auto-deny-reasons.md）。**deferred/stripped 不算 deny**：剥离
+  发生在模型见到工具面之前，不存在可拒绝的调用；DeferredToolCall 准入拒绝（R6）
+  走普通工具错误链（R12），同样不产生 auto-deny token。
+- 与 `forged_tool_name`（dispatch 期 registry-miss：模型调用不在服务清单的名字 →
+  统一回应「No such tool.」，不回显）的分界：`provider_native_tool_unregistered`
+  是**已注册 contract** 的 providerNative.logicalName 缺 wire 编码器——注册表/构建
+  事实，产生于请求构造期、面向调用方 fail-closed 报错，不回显任何模型输入。两者
+  层级与主体不同，不合并 token。
+- 本节信号不做模型可见文案的来源：R13 信号消费方是调用方重规划（换模式/换模型/
+  换引擎）与本地日志分档；模型可见的拒绝文案纪律（不确认存在性细节、不回显名字）
+  属执行期工具错误面（R6/R12 与 invalid-name 防伪口径），由各自所有者维护。
+
+**波 2 边界（本节不做）**：native wire 实装、`defer_loading` 旗标与其逐工具剥离、
+tool_reference 原生协议、缺失能力 (后端,模型) 缓存（上游 cBn/yEn）、provider 400
+错误消息解析的事后 retry/fail 分档（上游 vI/O8r）、`retry` 档的真实产生路径、
+信号上抛协议 v4 面/UI 展示（越界请求，见 R3 批报告）。词表档位已预留，波 2 扩集时
+按第二轮教训全链同步（zod enum + 手维护联合 + switch 穷举一次扩齐）。
+
 ## 状态所有权与边界
 
 ```text
@@ -200,6 +294,7 @@ Registry(完整目录) ──> Runtime(唯一请求决策：启用判定/发现�
 |---|---|
 | 契约/类型 | `apps/acode-cli/packages/contracts/src/tools/`（新增 tool-search.ts，出口经包 index） |
 | 搜索算法/投影 | `apps/acode-cli/packages/core/src/tool/search/`（新目录：search/description/history/local-projection/exposure，对照上游同名文件族） |
+| 能力剥离词表（R13） | core `tool/search/capability.ts`（请求构造侧闭集）+ adapters `model/tool-capability-strip.ts`（wire 侧闭集）；两侧唯一登记处，禁止第二份 |
 | 工具 handler | `apps/acode-cli/packages/core/src/tool/handlers/`（tool-search.ts、deferred-tool-call.ts；注册进 handlers 索引） |
 | 工具目录 | `packages/core/src/runtime/methods/config.ts:154 getTools`（候选与缓存；metric 挂钩处） |
 | 请求组装 | `packages/core/src/runtime/methods/model.ts`（请求准备单点接入）；compact 侧 `compact-active.ts` / `compact-summary-model-request.ts` 保持自身策略 |
@@ -217,6 +312,13 @@ Registry(完整目录) ──> Runtime(唯一请求决策：启用判定/发现�
 准入（常驻/控制/原生拒绝、目标错误链复用、标记持久化与渲染恢复）、compact 提升
 （检查点后 tools 含已发现、Continue 不刷新公告）、水合（合法/非法/legacy 回退）、
 公告 schema（readded ⊆ added）。
+单测（core，R13）：闭集词表穷举（每个 reason 的 disposition 判定、switch 无 default
+逃逸）、`ToolSearchCapabilityError` 携带 signal 与波 1 文案兼容（/not implemented/、
+/tool calls/ 断言不回归）、auto+无 tool call 降级原因落 `tool_call_unsupported`
+（与配置 off 的 `provider_disabled` 分档）、显式模式报错 instanceof 判定。
+单测（adapters，R13）：wire 侧闭集——adapters 包波 1 无 test 基建（package.json 无
+test 脚本，本轮禁改），以 typecheck+lint 与 core 侧词表对照测试代偿；
+`toAiSdkProviderNativeTool` 三 fail 档经 tsx 临时脚本验证（记录在批报告）。
 单测（contracts/adapters）：schema 双 required、capability 解析（anthropic-messages
 → protocolSupported true / defaultEnabled false）。
 链路（bootstrap/cli）：CLI 四值解析与非法值拒绝、默认 off、全入口传递、设置三值

@@ -24,6 +24,7 @@ import {
   DEFAULT_GIT_OUTPUT_BYTES,
   DEFAULT_GIT_PUSH_OUTPUT_BYTES,
   DEFAULT_GIT_PUSH_TIMEOUT_MS,
+  GIT_PUSH_PROTOCOL_ALLOWLIST,
   getGitNullDevicePath,
   normalizeGitPath,
   normalizeWorkspaceInRepoPath,
@@ -197,6 +198,7 @@ async function readGitBlobPreviewContent({
   const result = await commandProvider.run({
     cwd: repoRoot,
     args: ["show", `${ref}:${repoRelativePath}`],
+    posture: "read",
     timeoutMs: DEFAULT_GIT_DIFF_TIMEOUT_MS,
     maxOutputBytes: DEFAULT_GIT_DIFF_BYTES,
   });
@@ -227,6 +229,7 @@ async function readBranchDiffContents({
   const mergeBaseResult = await commandProvider.run({
     cwd: repoRoot,
     args: ["merge-base", trackingBranchName, "HEAD"],
+    posture: "read",
     timeoutMs: DEFAULT_GIT_COMMAND_TIMEOUT_MS,
     maxOutputBytes: DEFAULT_GIT_OUTPUT_BYTES,
   });
@@ -547,6 +550,7 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
     return commandProvider.run({
       cwd: resolution.repoRoot,
       args: ["status", "--porcelain=v2", "--branch", `--untracked-files=${untrackedMode}`, "-z"],
+      posture: "read",
       timeoutMs: DEFAULT_GIT_COMMAND_TIMEOUT_MS,
       maxOutputBytes: DEFAULT_GIT_OUTPUT_BYTES,
     });
@@ -604,6 +608,7 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
     const result = await commandProvider.run({
       cwd: resolution.repoRoot,
       args: ["check-ref-format", "--branch", branchName],
+      posture: "read",
       timeoutMs: DEFAULT_GIT_COMMAND_TIMEOUT_MS,
     });
     if (result.timedOut || result.outputTruncated) {
@@ -619,6 +624,7 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
     const gitPathResult = await commandProvider.run({
       cwd: resolution.repoRoot,
       args: ["rev-parse", ...GIT_OPERATION_MARKERS.flatMap((marker) => ["--git-path", marker])],
+      posture: "read",
       timeoutMs: DEFAULT_GIT_COMMAND_TIMEOUT_MS,
     });
     ensureGitCommandSucceeded("git rev-parse --git-path", gitPathResult);
@@ -641,6 +647,7 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
     const result = await commandProvider.run({
       cwd: resolution.repoRoot,
       args: ["config", "--get", key],
+      posture: "read",
       timeoutMs: DEFAULT_GIT_COMMAND_TIMEOUT_MS,
     });
     if (result.timedOut || result.outputTruncated) {
@@ -664,6 +671,7 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
     const result = await commandProvider.run({
       cwd: resolution.repoRoot,
       args: ["remote"],
+      posture: "read",
       timeoutMs: DEFAULT_GIT_COMMAND_TIMEOUT_MS,
       maxOutputBytes: DEFAULT_GIT_OUTPUT_BYTES,
     });
@@ -734,6 +742,7 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
             "--absolute-git-dir",
             "--git-common-dir",
           ],
+          posture: "read",
           timeoutMs: DEFAULT_GIT_COMMAND_TIMEOUT_MS,
         });
         if (result.exitCode !== 0) {
@@ -874,12 +883,14 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
           commandProvider.run({
             cwd: resolution.repoRoot,
             args: ["diff", "--cached", "--numstat", "-z", "--find-renames", "--"],
+            posture: "read",
             timeoutMs: DEFAULT_GIT_COMMAND_TIMEOUT_MS,
             maxOutputBytes: DEFAULT_GIT_OUTPUT_BYTES,
           }),
           commandProvider.run({
             cwd: resolution.repoRoot,
             args: ["diff", "--numstat", "-z", "--find-renames", "--"],
+            posture: "read",
             timeoutMs: DEFAULT_GIT_COMMAND_TIMEOUT_MS,
             maxOutputBytes: DEFAULT_GIT_OUTPUT_BYTES,
           }),
@@ -950,6 +961,7 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
       const ignoredResult = await commandProvider.run({
         cwd: resolution.repoRoot,
         args: ["check-ignore", "--", ...validInputPairs.map((pair) => pair.repoRelativePath)],
+        posture: "read",
         timeoutMs: DEFAULT_GIT_COMMAND_TIMEOUT_MS,
         maxOutputBytes: DEFAULT_GIT_OUTPUT_BYTES,
       });
@@ -991,6 +1003,7 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
           "refs/heads",
           "--format=%(refname:short)%00%(upstream:short)%00%(objectname)%00%(committerdate:unix)",
         ],
+        posture: "read",
         timeoutMs: DEFAULT_GIT_COMMAND_TIMEOUT_MS,
         maxOutputBytes: DEFAULT_GIT_OUTPUT_BYTES,
       });
@@ -1038,6 +1051,7 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
           `--max-count=${normalizedMaxCount + 1}`,
           "--format=%H%x00%P%x00%an%x00%at%x00%s%x00%D%x1e",
         ],
+        posture: "read",
         timeoutMs: DEFAULT_GIT_COMMAND_TIMEOUT_MS,
         maxOutputBytes: DEFAULT_GIT_OUTPUT_BYTES,
       });
@@ -1139,6 +1153,10 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
       const result = await commandProvider.run({
         cwd: resolution.repoRoot,
         args: ["switch", "--no-guess", normalizedBranchName],
+        // Git 面板用户写操作宿主档位 = infra（specs/git-posture-gateway.md R4-3 裁决）：
+        // argv 全部由 ACode 构造（分支名经 check-ref-format 预校验、路径经仓库内收敛
+        // + `--` 分隔），infra 守卫拒 -C/--git-dir 位置劫持；新增 infra 调用点须登记 spec。
+        posture: "infra",
         timeoutMs: DEFAULT_GIT_COMMAND_TIMEOUT_MS,
         maxOutputBytes: DEFAULT_GIT_OUTPUT_BYTES,
       });
@@ -1226,6 +1244,7 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
         args: normalizedStartPoint
           ? ["switch", "--no-guess", "-c", normalizedBranchName, "--", normalizedStartPoint]
           : ["switch", "--no-guess", "-c", normalizedBranchName],
+        posture: "infra",
         timeoutMs: DEFAULT_GIT_COMMAND_TIMEOUT_MS,
         maxOutputBytes: DEFAULT_GIT_OUTPUT_BYTES,
       });
@@ -1288,6 +1307,7 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
             "--",
             repoRelativePath,
           ],
+          posture: "read",
           timeoutMs: DEFAULT_GIT_DIFF_TIMEOUT_MS,
           maxOutputBytes: DEFAULT_GIT_DIFF_BYTES,
         });
@@ -1311,6 +1331,7 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
         args: staged
           ? ["diff", "--cached", "--no-ext-diff", "--no-color", "--binary", "--", repoRelativePath]
           : ["diff", "--no-ext-diff", "--no-color", "--binary", "--", repoRelativePath],
+        posture: "read",
         timeoutMs: DEFAULT_GIT_DIFF_TIMEOUT_MS,
         maxOutputBytes: DEFAULT_GIT_DIFF_BYTES,
       });
@@ -1359,6 +1380,7 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
           getGitNullDevicePath(),
           absolutePath,
         ],
+        posture: "read",
         timeoutMs: DEFAULT_GIT_DIFF_TIMEOUT_MS,
         maxOutputBytes: DEFAULT_GIT_DIFF_BYTES,
       });
@@ -1394,6 +1416,7 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
           `${status.summary.trackingBranchName}...HEAD`,
           "--",
         ],
+        posture: "read",
         timeoutMs: DEFAULT_GIT_COMMAND_TIMEOUT_MS,
         maxOutputBytes: DEFAULT_GIT_OUTPUT_BYTES,
       });
@@ -1435,6 +1458,7 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
       const result = await commandProvider.run({
         cwd: resolution.repoRoot,
         args: ["add", "--", ...repoPaths],
+        posture: "infra",
         timeoutMs: DEFAULT_GIT_COMMAND_TIMEOUT_MS,
       });
       ensureGitCommandSucceeded("git add", result);
@@ -1456,6 +1480,7 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
       const result = await commandProvider.run({
         cwd: resolution.repoRoot,
         args: ["restore", "--staged", "--", ...repoPaths],
+        posture: "infra",
         timeoutMs: DEFAULT_GIT_COMMAND_TIMEOUT_MS,
       });
       ensureGitCommandSucceeded("git restore --staged", result);
@@ -1479,6 +1504,7 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
         args: staged
           ? ["restore", "--source=HEAD", "--staged", "--worktree", "--", ...repoPaths]
           : ["restore", "--worktree", "--", ...repoPaths],
+        posture: "infra",
         timeoutMs: DEFAULT_GIT_COMMAND_TIMEOUT_MS,
       });
       ensureGitCommandSucceeded("git restore", result);
@@ -1510,6 +1536,7 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
         const scopedStatusResult = await commandProvider.run({
           cwd: resolution.repoRoot,
           args: ["status", "--porcelain=v2", "-z", "--", ...repoPaths],
+          posture: "read",
           timeoutMs: DEFAULT_GIT_COMMAND_TIMEOUT_MS,
           maxOutputBytes: DEFAULT_GIT_OUTPUT_BYTES,
         });
@@ -1527,6 +1554,7 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
         const stagedEntriesResult = await commandProvider.run({
           cwd: resolution.repoRoot,
           args: ["ls-files", "--stage", "-z", "--", ...repoPaths],
+          posture: "read",
           timeoutMs: DEFAULT_GIT_COMMAND_TIMEOUT_MS,
           maxOutputBytes: DEFAULT_GIT_OUTPUT_BYTES,
         });
@@ -1539,6 +1567,7 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
         const headResult = await commandProvider.run({
           cwd: resolution.repoRoot,
           args: ["rev-parse", "--verify", "HEAD"],
+          posture: "read",
           timeoutMs: DEFAULT_GIT_COMMAND_TIMEOUT_MS,
         });
         const parentHash = headResult.exitCode === 0 ? headResult.stdout.trim() : null;
@@ -1551,6 +1580,7 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
             cwd: resolution.repoRoot,
             args: parentHash ? ["read-tree", parentHash] : ["read-tree", "--empty"],
             env: tempIndexEnv,
+            posture: "infra",
             timeoutMs: DEFAULT_GIT_COMMAND_TIMEOUT_MS,
           });
           ensureGitCommandSucceeded("git read-tree selected commit base", readTreeResult);
@@ -1560,6 +1590,7 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
               cwd: resolution.repoRoot,
               args: ["update-index", "--force-remove", "--", ...cleanupRepoPaths],
               env: tempIndexEnv,
+              posture: "infra",
               timeoutMs: DEFAULT_GIT_COMMAND_TIMEOUT_MS,
             });
             ensureGitCommandSucceeded("git update-index remove selected paths", removeResult);
@@ -1577,6 +1608,7 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
                 entry.path,
               ],
               env: tempIndexEnv,
+              posture: "infra",
               timeoutMs: DEFAULT_GIT_COMMAND_TIMEOUT_MS,
             });
             ensureGitCommandSucceeded("git update-index add selected paths", addResult);
@@ -1586,6 +1618,7 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
             cwd: resolution.repoRoot,
             args: ["commit", "-m", trimmedMessage],
             env: tempIndexEnv,
+            posture: "infra",
             timeoutMs: DEFAULT_GIT_COMMAND_TIMEOUT_MS,
             maxOutputBytes: DEFAULT_GIT_OUTPUT_BYTES,
           });
@@ -1594,6 +1627,7 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
           const hashResult = await commandProvider.run({
             cwd: resolution.repoRoot,
             args: ["rev-parse", "HEAD"],
+            posture: "read",
             timeoutMs: DEFAULT_GIT_COMMAND_TIMEOUT_MS,
           });
           ensureGitCommandSucceeded("git rev-parse selected commit HEAD", hashResult);
@@ -1604,6 +1638,7 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
           const resetSelectedResult = await commandProvider.run({
             cwd: resolution.repoRoot,
             args: ["reset", "--quiet", "HEAD", "--", ...cleanupRepoPaths],
+            posture: "infra",
             timeoutMs: DEFAULT_GIT_COMMAND_TIMEOUT_MS,
           });
           ensureGitCommandSucceeded("git reset selected committed paths", resetSelectedResult);
@@ -1620,6 +1655,7 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
           repoPaths.length > 0
             ? ["commit", "-m", trimmedMessage, "--", ...repoPaths]
             : ["commit", "-m", trimmedMessage],
+        posture: "infra",
         timeoutMs: DEFAULT_GIT_COMMAND_TIMEOUT_MS,
         maxOutputBytes: DEFAULT_GIT_OUTPUT_BYTES,
       });
@@ -1629,6 +1665,7 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
       const hashResult = await commandProvider.run({
         cwd: resolution.repoRoot,
         args: ["rev-parse", "HEAD"],
+        posture: "read",
         timeoutMs: DEFAULT_GIT_COMMAND_TIMEOUT_MS,
       });
       ensureGitCommandSucceeded("git rev-parse HEAD", hashResult);
@@ -1643,21 +1680,40 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
         throw new Error("Cannot push while HEAD is detached.");
       }
 
-      const hasTrackingBranch = Boolean(status.summary.trackingBranchName);
-      const remoteName = hasTrackingBranch
-        ? parseTrackingRemoteName(status.summary.trackingBranchName)
-        : await resolvePushRemote(status);
+      // posture 网关 push 档强制具体 refspec（specs/git-posture-gateway.md R4-1）：
+      // 裸 push / `push <remote> <branch>` 的隐式上游推断可被仓库配置
+      // `push.default=mirror|matching` 武器化成全分支推送；显式
+      // `refs/heads/<local>:refs/heads/<remote>` 使 push 内容与仓库配置解耦。
+      // 有 upstream 时按 upstream 语义推到其分支（行为裁决登记见 spec R4-1）。
+      const trackingBranchName = status.summary.trackingBranchName;
+      const trackingRemoteName = parseTrackingRemoteName(trackingBranchName);
+      const trackingRemoteBranch =
+        trackingBranchName !== null && trackingRemoteName !== null
+          ? trackingBranchName.slice(trackingRemoteName.length + 1)
+          : "";
+      const hasTrackingBranch = trackingRemoteName !== null && trackingRemoteBranch.length > 0;
+      const remoteName =
+        trackingRemoteName !== null && trackingRemoteBranch.length > 0
+          ? trackingRemoteName
+          : await resolvePushRemote(status);
+      const localRef = `refs/heads/${branchName}`;
+      const remoteRef = `refs/heads/${hasTrackingBranch ? trackingRemoteBranch : branchName}`;
       const pushResult = await commandProvider.run({
         cwd: resolution.repoRoot,
         args: hasTrackingBranch
-          ? ["push"]
-          : ["push", "--set-upstream", remoteName ?? "origin", branchName],
+          ? ["push", remoteName, `${localRef}:${remoteRef}`]
+          : ["push", "--set-upstream", remoteName, `${localRef}:${remoteRef}`],
+        posture: "push",
         // 关键业务逻辑：push 是显式用户动作，而且可能被 pre-push hook 拉长。
         // 这里单独使用更长超时，避免测试/校验脚本尚未跑完就被前端误判成 push 失败。
         timeoutMs: DEFAULT_GIT_PUSH_TIMEOUT_MS,
         // 关键业务逻辑：pre-push hook 可能输出完整测试日志。
         // 这里单独放宽输出上限，避免在 push 真正完成前因为 hook 输出过多被截断。
         maxOutputBytes: DEFAULT_GIT_PUSH_OUTPUT_BYTES,
+        // 安全依据：push 是 services 漏斗唯一远端命令，按调用点显式放行
+        // file/https/ssh（specs/git-hardening-presets.md P1）；漏斗内其余全部命令
+        // 维持协议默认全拒。ext（remote-helper RCE 主向量）/git/fd/http 不放行。
+        envOptions: { allowedProtocols: GIT_PUSH_PROTOCOL_ALLOWLIST },
       });
       ensureGitCommandSucceeded("git push", pushResult);
       invalidate(workspacePath);
@@ -1666,7 +1722,7 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
       return {
         branchName,
         trackingBranchName: nextStatus.summary.trackingBranchName,
-        remoteName: remoteName ?? parseTrackingRemoteName(nextStatus.summary.trackingBranchName),
+        remoteName,
         setUpstream: !hasTrackingBranch,
         summary: nextStatus.summary,
       };
@@ -1688,11 +1744,13 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
         commandProvider.run({
           cwd: resolution.repoRoot,
           args: ["config", "--show-scope", "--show-origin", "--get", "user.name"],
+          posture: "read",
           timeoutMs: DEFAULT_GIT_COMMAND_TIMEOUT_MS,
         }),
         commandProvider.run({
           cwd: resolution.repoRoot,
           args: ["config", "--show-scope", "--show-origin", "--get", "user.email"],
+          posture: "read",
           timeoutMs: DEFAULT_GIT_COMMAND_TIMEOUT_MS,
         }),
       ]);

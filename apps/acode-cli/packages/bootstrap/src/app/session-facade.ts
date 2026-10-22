@@ -117,6 +117,7 @@ interface CreateSessionFacadeDeps {
    * run service 的 `close()`。缺席即本装配没有 dwf 端口（journal 窄化失败、测试装配）。
    */
   closeDynamicWorkflowRuns?: () => Promise<void>;
+  unsubscribePluginState?: () => void;
   closeNodeReplBrowserBroker?: () => Promise<void> | undefined;
   configResult: ConfigResult;
   configuredMcpServers: Record<string, McpServerConfig>;
@@ -284,6 +285,7 @@ export function createSessionFacade(deps: CreateSessionFacadeDeps): SessionFacad
       closePromise ??= (async () => {
         // 关闭入口先阻止新调度并取消在飞 Memory Extraction，再等待取消链路收口。
         deps.runtime.beginShutdown();
+        deps.unsubscribePluginState?.();
         // SessionEnd hook（apps/acode-cli/specs/hook-event-surface.md F1）：本 close
         // 是唯一 awaitable 的 shutdown 漏斗（beginShutdown 是同步接口；closePromise
         // 保证至多触发一次）。位置在 beginShutdown 之后——shuttingDown 已提交、不会

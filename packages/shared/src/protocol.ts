@@ -11,6 +11,7 @@ import type { ScriptWorkflowMode } from "./script-workflow-feature.js";
 import type { ToolSearchAppMode } from "./tool-search-feature.js";
 import type { DesktopWindowSizeSettings } from "./desktopAppSettings.js";
 import type { AppSettingsOccupation } from "./appSettingsOccupation.js";
+import type { DefaultReasoningLevelPick, NewTaskDefaults } from "./new-task-defaults.js";
 
 // ── Domain types ──
 
@@ -215,44 +216,15 @@ export type PersistedWorkspaceSessionEntry =
 
 // ── Process Monitor ──
 
-/** 资源管理器分类：基础服务 / 内置插件 / 社区插件 */
-export type ResourceUsageCategory = "base" | "builtin-plugin" | "community-plugin";
-
-/** 基础服务分组键；插件分组键为插件名或 MCP server name */
-export type ResourceUsageBaseGroupKey = "main" | "gpu" | "renderer" | "host" | "cli" | "utility";
-
-/** 资源管理器中的一个进程行（CPU 为整机归一化百分比，内存为字节） */
-export interface ResourceUsageProcess {
-  pid: number;
-  /** 进程显示名，如 acode-main / acode-agent-acode-demo / node_repl */
-  name: string;
-  category: ResourceUsageCategory;
-  groupKey: string;
-  groupLabel: string;
-  cpuPercent: number;
-  memoryBytes: number;
-  /** false 表示只知道拓扑，指标尚未采到（显示为 —） */
-  sampled: boolean;
-}
-
-/** Host 侧采样得到的外部进程行（Agent / MCP / 终端等），由 main 合并进快照 */
-export type HostResourceUsageProcess = Omit<ResourceUsageProcess, "sampled">;
-
-/** 资源管理器一次完整快照，由 main 进程合并 Electron 指标、系统总量与 Host 采样后返回 */
-export interface ResourceUsageSnapshot {
-  sampledAt: number;
-  logicalCpuCount: number;
-  system: {
-    cpuPercent: number;
-    memoryTotalBytes: number;
-    memoryUsedBytes: number;
-  };
-  app: {
-    cpuPercent: number;
-    memoryBytes: number;
-  };
-  processes: ResourceUsageProcess[];
-}
+// 资源管理器形状拆到叶子 resource-usage.ts（400 行闸，同 desktopAppSettings.ts）；
+// re-export 保持既有导入面，channels.ts / contract.ts / index.ts 及外部消费者零改动。
+export type {
+  ResourceUsageCategory,
+  ResourceUsageBaseGroupKey,
+  ResourceUsageProcess,
+  HostResourceUsageProcess,
+  ResourceUsageSnapshot,
+} from "./resource-usage.js";
 
 export interface AppSettings {
   /**
@@ -397,4 +369,8 @@ export interface AppSettings {
   settingsSyncFirstRunPromptHandled?: boolean;
   /** 设置页里的临时 endpoint override；正式/测试默认 base url 由 ACODE_BASE_URL env 管理。 */
   acodeEndpointOrigin?: string;
+  /** 新建任务默认值：固定权限模式 / 模型 / 推理强度；缺席或 enabled=false 时按原有规则取值。 */
+  newTaskDefaults?: NewTaskDefaults;
+  /** 新建/切模型时推理强度默认取法：first（缺省）、highest 或具体档位。 */
+  defaultReasoningLevelPick?: DefaultReasoningLevelPick;
 }

@@ -429,6 +429,14 @@ export const PlatformChannels = {
   EndFindInPageSession: "acode:end-find-in-page-session",
   /** Main → Renderer：请求打开查找栏（主菜单/accelerator 入口的单向推送） */
   OpenFindInPage: "acode:open-find-in-page",
+  /** Renderer → Main：二期 provider 双路能力申报（provider 注册表非空即 true；main 失效链会复位） */
+  FindInPageProviderActive: "acode:find-in-page-provider-active",
+  /** Main → Renderer：provider 路查找请求（单向 send，epoch 守卫；specs/find-in-page.md R8-R10） */
+  FindInPageDispatch: "acode:find-in-page-dispatch",
+  /** Renderer → Main：provider 路查找结果申报（main 运行时校验后按 epoch 结算 pending） */
+  FindInPageReport: "acode:find-in-page-report",
+  /** Main → Renderer：清除 provider 路 CSS Custom Highlight 高亮（单向 send） */
+  FindInPageClear: "acode:find-in-page-clear",
   // ── 卡顿归因深化层（specs/main-stall-diagnostics.md R11/R12）──
   /** Renderer → Main：内容状态面包屑（send-only，桶化 payload，main 侧 fail-closed 校验） */
   ContentBreadcrumb: "acode:content-breadcrumb",
@@ -462,6 +470,32 @@ export interface FindInPageRequest {
 export interface FindInPageResult {
   activeIndex: number;
   total: number;
+  /**
+   * 二期 provider 路：active 命中是否位于已渲染窗口（false = 落在虚拟化列表未渲染区，
+   * 需 loadRest 物化后才可定位）。原生路/缺席 = 不携带（向后兼容）。
+   */
+  activeInRenderedWindow?: boolean;
+  /**
+   * 二期 provider 路：存在无加载能力（未注册 loadRest）且申报有未渲染内容的虚拟化
+   * 作用域——未渲染区不可搜，计数只反映可搜区，不作假命中。缺席 = 全部可搜或原生路。
+   */
+  hasUnsearchableRegions?: boolean;
+}
+
+/** 二期 provider 路：Main → Renderer 查找请求（FindInPageDispatch 载荷）。 */
+export interface FindInPageDispatchPayload {
+  /** 会话 epoch（main per-sender 单调递增）；report 必须原样带回，失配即被丢弃。 */
+  epoch: number;
+  text: string;
+  findNext: boolean;
+  /** 步进方向；dispatch 时已归一（缺省 true 在 main 侧补齐）。 */
+  forward: boolean;
+}
+
+/** 二期 provider 路：Renderer → Main 结果申报（FindInPageReport 载荷）。 */
+export interface FindInPageReportPayload {
+  epoch: number;
+  result: FindInPageResult;
 }
 
 // ============================================================================
@@ -1191,7 +1225,9 @@ export interface PlatformChannelMap {
   };
   [PlatformChannels.GetEmbeddedBrowserSitePermissions]: {
     request: void;
-    response: { permissions: Record<string, Record<string, EmbeddedBrowserSitePermissionDecision>> };
+    response: {
+      permissions: Record<string, Record<string, EmbeddedBrowserSitePermissionDecision>>;
+    };
   };
   [PlatformChannels.ResetEmbeddedBrowserSitePermission]: {
     request: { origin: string; permission: string };
@@ -1234,6 +1270,24 @@ export interface PlatformChannelMap {
     response: void;
   };
   [PlatformChannels.OpenFindInPage]: {
+    request: void;
+    response: void;
+  };
+  // ── 页内查找二期 provider 双路（specs/find-in-page.md R8-R14）──
+  [PlatformChannels.FindInPageProviderActive]: {
+    /** provider 注册表非空申报；载荷非法 main 侧丢弃（不抛错）。 */
+    request: { active: boolean };
+    response: void;
+  };
+  [PlatformChannels.FindInPageDispatch]: {
+    request: FindInPageDispatchPayload;
+    response: void;
+  };
+  [PlatformChannels.FindInPageReport]: {
+    request: FindInPageReportPayload;
+    response: void;
+  };
+  [PlatformChannels.FindInPageClear]: {
     request: void;
     response: void;
   };

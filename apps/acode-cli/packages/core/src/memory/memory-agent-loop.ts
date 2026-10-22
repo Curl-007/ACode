@@ -20,6 +20,7 @@ import {
 } from "../tool/handlers/bash-command-parser.js";
 import { isRuntimeReadOnlyBashCommand } from "../tool/handlers/bash-semantics.js";
 import type { ExecutableToolCall, ToolExecutionResult } from "../tool/types.js";
+import { NO_SUCH_TOOL_MODEL_RESPONSE } from "../permission/auto-deny-reasons.js";
 import { enforceMemoryAgentLoopLifecycle } from "./dedupe.js";
 import { resolveContainedMemoryFilePath, resolveSafeMemoryFilePath } from "./memory-file-path.js";
 import type { MemoryVeracity } from "./veracity.js";
@@ -202,7 +203,7 @@ function evaluateMemoryAgentToolPolicy(
   const contract = input.tools.find((tool) => tool.name === input.toolCall.name);
   // catalog miss 被合并进 Memory 权限拒绝会让未注册工具没有先走
   // No such tool 错误处理。此分支只闭合原 call id，不进入工具执行面。
-  if (!contract) return denyUnavailableMemoryAgentTool(input.toolCall.name);
+  if (!contract) return denyUnavailableMemoryAgentTool();
 
   if (
     input.toolCall.name === "Agent" ||
@@ -362,9 +363,12 @@ function denyMemoryAgentTool(rootDir: string): MemoryAgentToolPolicyDecision {
   };
 }
 
-function denyUnavailableMemoryAgentTool(toolName: string): MemoryAgentToolPolicyDecision {
+function denyUnavailableMemoryAgentTool(): MemoryAgentToolPolicyDecision {
+  // 防伪纪律（specs/permission-auto-deny-reasons.md R3）：拒绝文案不回显请求名——
+  // 回显外部可控字符串进模型可见回执与持久轨迹，构成命名猜测确认信道；
+  // 统一使用 dispatch 面同一常量，不区分「拼错 vs 伪造」。
   return {
     allowed: false,
-    reason: `<tool_use_error>Error: No such tool available: ${toolName}</tool_use_error>`,
+    reason: NO_SUCH_TOOL_MODEL_RESPONSE,
   };
 }

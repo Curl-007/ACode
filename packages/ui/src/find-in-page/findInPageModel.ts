@@ -7,7 +7,8 @@
  */
 
 /** CJK 文字检测：Han/平假名/片假名/谚文任一命中即单字可搜。 */
-const CJK_SCRIPT_PATTERN = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
+const CJK_SCRIPT_PATTERN =
+  /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
 
 /** 增量搜索防抖窗口：连续输入停顿后才发起一轮查找。 */
 export const FIND_IN_PAGE_DEBOUNCE_MS = 250;

@@ -346,6 +346,8 @@ test("DeferredToolCall 准入：未启用/常驻/未知目标/畸形入参拒绝
   const resident = resolveDeferredToolCallTarget({ name: "Read", input: {} }, context);
   assert.equal(resident.ok, false);
   assert.match((resident as { reason: string }).reason, /not a deferred tool/);
+  // 防伪纪律：拒绝文案不回显请求名（外部可控字符串不得原样回流进模型回执/轨迹）。
+  assert.ok(!(resident as { reason: string }).reason.includes("Read"));
   const control = resolveDeferredToolCallTarget({ name: TOOL_SEARCH_NAME, input: {} }, context);
   assert.equal(control.ok, false);
   assert.equal(

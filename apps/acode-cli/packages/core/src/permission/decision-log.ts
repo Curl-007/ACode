@@ -28,6 +28,13 @@ export interface PermissionDecisionLogEntry {
   sideEffectScope?: string;
   sessionId?: string;
   reason?: string;
+  /**
+   * auto-deny 闭集 reason token（specs/permission-auto-deny-reasons.md R2）：deny 决策
+   * 逐条归因（classifyAutoDenyRuleId / forged 路径直记），本地可聚合；映射不了缺席
+   * 不猜。自由文本 reason 保留做诊断，两者并存不互替。no-telemetry 红线：本字段
+   * 只进本地 JSONL，永不进外部遥测。
+   */
+  denyReason?: string;
 }
 
 /** env 判定缓存（进程级；测试经 resetPermissionDecisionLogForTest 清零）。 */

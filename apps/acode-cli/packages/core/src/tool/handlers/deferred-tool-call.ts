@@ -51,9 +51,12 @@ export function resolveDeferredToolCallTarget(
   );
   if (!target || !target.deferred) {
     // 常驻/控制/原生工具不可转发：提示直接调用，不执行目标 Hook/审批/handler。
+    // 防伪纪律（specs/permission-auto-deny-reasons.md R3 同口径）：拒绝文案不回显
+    // payload.name——外部可控字符串原样回流进模型回执与持久轨迹属文案卫生缺口。
     return {
       ok: false,
-      reason: `"${payload.name}" is not a deferred tool in this request. Call it directly using its normal tool call.`,
+      reason:
+        "The requested tool is not a deferred tool in this request. Call resident tools directly using their normal tool calls.",
     };
   }
   return { ok: true, name: target.name, input: payload.input };

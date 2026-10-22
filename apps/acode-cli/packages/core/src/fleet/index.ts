@@ -48,7 +48,19 @@ export {
   type FleetLaunchContext,
   type FleetLaunchInput,
   type FleetLaunchResult,
+  type FleetSpawnSlotGate,
 } from "./session-launch.js";
+// WI-E4（specs/cli-governor.md）：内存压力会话治理——机制在 runtime/cli-governor，
+// 舰队组合面（单例/驱逐端口懒接/LRU peek）在这里。
+export {
+  attachCliGovernorEvictionPort,
+  configureCliGovernor,
+  getCliGovernor,
+  peekFleetLruIdleVictim,
+  resetCliGovernorForTest,
+  type CliGovernorEvictionPort,
+  type FleetGovernorDeps,
+} from "./governor.js";
 // 批 2 R11：own_initiative 提案卡（预算/判重/过期纯规则；存储归 registry）。
 export {
   FLEET_PROPOSAL_MAX_PER_TURN,

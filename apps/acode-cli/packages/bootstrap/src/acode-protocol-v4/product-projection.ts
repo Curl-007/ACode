@@ -1,4 +1,5 @@
 /* eslint-disable max-lines -- 存量基线豁免:该文件先于 CLI lint 门禁建立即超限(根 lint 的 ignorePatterns 排除 apps/acode-cli,turbo lint 因此从未变绿)。头注豁免以恢复门禁信号;拆分重构超出本批范围。 */
+import { isDeepStrictEqual } from "node:util";
 import { PERMISSION_FULL_ACCESS_OPTION_ID } from "@acode/shared/acode-protocol-v4";
 // ProductProjection —— CLI 权威投影第二 reducer。
 // 输入：CLI 事件日志（SessionEvent，权威事实源）；输出：ConversationDelta[]。
@@ -24,10 +25,21 @@ import {
   subagentStoppedCumulativeTokens,
   type TurnUsageAccumulator,
 } from "./product-projection-usage.js";
+import {
+  accumulateToolEntry,
+  accumulateTurnMetrics,
+  areSessionToolStatsEqual,
+  areTurnMetricsEqual,
+  buildTurnMetrics,
+  EMPTY_SESSION_TOOL_STATS,
+  EMPTY_TURN_METRICS_ACCUMULATOR,
+  type TurnMetricsAccumulator,
+} from "./product-projection-turn-metrics.js";
 import type {
   CompactLifecyclePayload,
   AssistantFeedbackUpdatedPayload,
   DynamicWorkflowRunProgressPayload,
+  PluginStateUpdatedPayload,
   SwarmPlanProgressPayload,
   HookRunLifecyclePayload,
   ModelCompletePayload,
@@ -68,8 +80,10 @@ import {
   CoreErrorType,
   AMEND_WORKFLOW_TOOL_NAME,
   CREATE_WORKFLOW_TOOL_NAME,
+  DEFERRED_TOOL_CALL_NAME,
   SessionEventType,
   getModelUsageContextTokens,
+  getModelUsageInputWindowTokens,
 } from "@acode/contracts";
 // review 单调性裁决单一来源；projection 只实现“应用策略”（advance/no_current 接受，
 // 其余忽略；跨 flow 等 onSessionResumed 清空）。
@@ -87,10 +101,7 @@ import {
   ACODE_FILE_STREAMING_TOOL_INPUT_PREVIEW_MIN_INTERVAL_MS,
   acodeBackgroundTaskNotificationToolUpdateStatus,
 } from "@acode/shared";
-import {
-  lookupVisualizationFragment,
-  parseVisualizeReferences,
-} from "./visualization-registry.js";
+import { lookupVisualizationFragment, parseVisualizeReferences } from "./visualization-registry.js";
 import type {
   ArtifactRow,
   AssistantTextRow,
@@ -101,12 +112,14 @@ import type {
   ConversationRow,
   ConversationRowTarget,
   ConversationSnapshot,
+  ComposerTurnMetrics,
   GoalState,
   HookExecutionProjection,
   HookInvocationRow,
   PendingInteraction,
   ReasoningRow,
   SessionControl,
+  SessionToolStats,
   StatePatch,
   SubagentRow,
   TimelineMarkerPayload,
@@ -118,6 +131,7 @@ import type {
   SubagentProjectionState,
   TurnHeaderRow,
   TurnHeaderStats,
+  TurnMetrics,
   TurnWorkSegment,
   UserInputRow,
   UserInputQuestionPayload,
@@ -430,6 +444,27 @@ type TurnModelBaseline =
   | { kind: "sourceLess" }
   | { kind: "known"; provider: string; model: string; thought: string };
 
+// toolCall 行的终态集合（状态栏工具计数用）。中间态
+// （inputStreaming / pendingApproval / running）不是收口，不计数。
+const TOOL_TERMINAL_STATUSES: ReadonlySet<ToolCallRow["status"]> = new Set([
+  "success",
+  "error",
+  "cancelled",
+]);
+
+/**
+ * 工具终态事件上的执行耗时（ms）。取消/被拒的终态事件不带 duration，
+ * 此时返回 null：让状态栏省略该列，而不是报一个假的「0ms」。
+ */
+function readToolCallDurationMs(event: SessionEvent | undefined): number | null {
+  if (!event || event.type !== SessionEventType.ToolCallResult) return null;
+  const payload = event.payload as ToolCallResultPayload;
+  const duration = payload.duration;
+  return typeof duration === "number" && Number.isFinite(duration) && duration >= 0
+    ? duration
+    : null;
+}
+
 export class ProductProjection {
   private snapshot: ConversationSnapshot;
   // reducer 内部的 rowId 查找必须与 rows.window 同步；冷恢复过去每次 find 都扫描全表，
@@ -503,6 +538,21 @@ export class ProductProjection {
   // ModelComplete 累加，轮收口（upsertTurnHeader / queue-drain 切轮）flush 进 header 行。
   // 值替换是 immutable 的（accumulateTurnUsage 返回新对象），clone 只需浅拷 Map。
   private turnUsageByTurnId = new Map<string, TurnUsageAccumulator>();
+  // 本轮生成指标（usage-statusbar-port §3.1）：累加器 + 最近一次下发的状态栏事实。
+  // 值未变不下发（state.updated conflation 与 usage 同口径）。
+  private turnMetricsAccumulator: TurnMetricsAccumulator = { ...EMPTY_TURN_METRICS_ACCUMULATOR };
+  private lastEmittedComposerTurnMetrics: ComposerTurnMetrics | null = null;
+  // 本会话工具调用计数（usage-statusbar-port §3.2）：在 delta 应用处按
+  // 「非终态 → 终态」转换累加，同一条 tool row 只会被计入一次。lastEmitted 用于 conflation。
+  private sessionToolStats: SessionToolStats = { ...EMPTY_SESSION_TOOL_STATS };
+  private toolTerminalCountedIds = new Map<string, 0 | 1>();
+  // 各轮代码增删的最新值（fileChanges 会被同轮后续请求覆盖），按 turnId 去重后求和。
+  private fileChangesByTurnId = new Map<
+    string,
+    { additions: number; deletions: number; files: number }
+  >();
+  // 初始快照已带全零统计，视为已下发，避免空会话再发一条等值 patch。
+  private lastEmittedSessionToolStats: SessionToolStats | null = { ...EMPTY_SESSION_TOOL_STATS };
   // 提示缓存未命中的轮间基线（specs/usage-statusbar.md D5 增补 7）：missCauses 是
   // 进程内累计快照，每轮值 = 轮末快照 − 上一轮末快照。resume/rewind 重建后事件侧
   // 计数从空开始（contracts 注释），本投影态同批重建，基线自然归零对齐。
@@ -1059,6 +1109,10 @@ export class ProductProjection {
       ? [...reducedWithSubagents, ...this.materializeCommandRowActions(reducedWithSubagents)]
       : reducedWithSubagents;
     const finalDeltas = this.attachRevision(clearSettledOutputPreviews(deltas));
+    // 工具调用计数随同一次事件下发（usage-statusbar-port §3.2）：
+    // 计数从已产出的 delta 里读，不额外扫 row 表，也不引入第二次归约。
+    const toolStatsDelta = this.accumulateSessionToolStats(finalDeltas, event);
+    if (toolStatsDelta) finalDeltas.push(toolStatsDelta);
     if (this.hydrationAccumulator) {
       applyConversationDeltasMutable(this.hydrationAccumulator, finalDeltas);
       this.snapshot.seq = event.sequenceNumber;
@@ -1159,6 +1213,20 @@ export class ProductProjection {
     clone.contextWindowState = { ...this.contextWindowState };
     clone.turnUsageByTurnId = new Map(this.turnUsageByTurnId);
     clone.lastTurnCacheMissTotal = this.lastTurnCacheMissTotal;
+    // 指标累加器与已下发副本都要深拷贝：candidate 归约失败回滚时不能污染当前实例。
+    clone.turnMetricsAccumulator = { ...this.turnMetricsAccumulator };
+    clone.lastEmittedComposerTurnMetrics = this.lastEmittedComposerTurnMetrics
+      ? {
+          streaming: this.lastEmittedComposerTurnMetrics.streaming,
+          metrics: { ...this.lastEmittedComposerTurnMetrics.metrics },
+        }
+      : null;
+    clone.sessionToolStats = { ...this.sessionToolStats };
+    clone.toolTerminalCountedIds = new Map(this.toolTerminalCountedIds);
+    clone.fileChangesByTurnId = new Map(this.fileChangesByTurnId);
+    clone.lastEmittedSessionToolStats = this.lastEmittedSessionToolStats
+      ? { ...this.lastEmittedSessionToolStats }
+      : null;
     clone.subagentCumulativeTokensByChildSessionId = new Map(
       this.subagentCumulativeTokensByChildSessionId,
     );
@@ -1207,6 +1275,12 @@ export class ProductProjection {
     this.contextWindowState = candidate.contextWindowState;
     this.turnUsageByTurnId = candidate.turnUsageByTurnId;
     this.lastTurnCacheMissTotal = candidate.lastTurnCacheMissTotal;
+    this.turnMetricsAccumulator = candidate.turnMetricsAccumulator;
+    this.lastEmittedComposerTurnMetrics = candidate.lastEmittedComposerTurnMetrics;
+    this.sessionToolStats = candidate.sessionToolStats;
+    this.toolTerminalCountedIds = candidate.toolTerminalCountedIds;
+    this.fileChangesByTurnId = candidate.fileChangesByTurnId;
+    this.lastEmittedSessionToolStats = candidate.lastEmittedSessionToolStats;
     this.subagentCumulativeTokensByChildSessionId =
       candidate.subagentCumulativeTokensByChildSessionId;
     this.lastTurnModel = candidate.lastTurnModel;
@@ -1477,6 +1551,8 @@ export class ProductProjection {
         return this.onDynamicWorkflowRunProgress(event);
       case SessionEventType.SwarmPlanProgress:
         return this.onSwarmPlanProgress(event);
+      case SessionEventType.PluginStateUpdated:
+        return this.onPluginStateUpdated(event);
       case SessionEventType.SubagentSpawned:
         return this.onSubagentSpawned(event);
       case SessionEventType.SubagentMessage:
@@ -2167,6 +2243,9 @@ export class ProductProjection {
     // /goal 的可见 query 用 controlOnly turn 建立 live 时间线身份，
     // 但真实执行属于紧随其后的 goalContinuation。若控制轮也推进 running，连续链路
     // 会短暂生成第二份 activeWorks，恢复投影也会出现伪造的工作生命周期。
+    // 新 product turn 开始：指标累加器归零、状态栏立刻收起；会话轮数 +1（不随轮归零）。
+    deltas.push(...this.resetTurnMetrics());
+    deltas.push(...this.countSessionTurn());
     return deltas;
   }
 
@@ -2406,12 +2485,16 @@ export class ProductProjection {
           positiveInteger(payload.maxAttempts, attempt + 1),
           attempt + 1,
         );
-        return this.setApiRetry({
-          attempt,
-          maxAttempts,
-          nextRetryAt: this.ms(event) + nonNegativeInteger(payload.delayMs, 0),
-          reasonCode: modelRetryReasonCode(payload.reason),
-        });
+        const retryDelta = this.countSessionRetry(payload);
+        return [
+          ...this.setApiRetry({
+            attempt,
+            maxAttempts,
+            nextRetryAt: this.ms(event) + nonNegativeInteger(payload.delayMs, 0),
+            reasonCode: modelRetryReasonCode(payload.reason),
+          }),
+          ...(retryDelta ? [retryDelta] : []),
+        ];
       }
       case "model_request_started":
         if (payload.streamRecovery) {
@@ -2428,7 +2511,10 @@ export class ProductProjection {
         // 保持当前状态，等首个有效 text/reasoning/tool 进展再清理，避免标签闪退。
         return positiveInteger(payload.attempt, 1) <= 1 ? this.setApiRetry(null) : [];
       case "model_request_completed":
-        return this.setApiRetry(null);
+        // 生成指标只在主回合请求上累加（usage-statusbar-port §3.1）：
+        // 标题生成、压缩摘要、目标校验、subagent 请求挂在同一 runtime turn 上发出，
+        // 只按 turnId 累加会把标题请求的首 token 锁进状态栏、tok/s 偏离 main_turn 口径。
+        return [...this.setApiRetry(null), ...this.accumulateTurnMetricsForEvent(payload)];
       case "model_request_failed":
         return payload.retryable ? [] : this.setApiRetry(null);
       case "model_stream_stalled":
@@ -2712,7 +2798,8 @@ export class ProductProjection {
     // entityId 优先取 rowId 映射：turn 终态收口（closeStreamingRows）没有 segment fact，
     // 而指令按技能契约恰在最终回复里——只挂 text_end 会漏掉整条主路径
     // （2026-10-11 实机：卡片不渲染的根因）。
-    const baseEntityId = this.entityIdByRowId.get(row.rowId) ?? fact?.entityId ?? `row:${row.rowId}`;
+    const baseEntityId =
+      this.entityIdByRowId.get(row.rowId) ?? fact?.entityId ?? `row:${row.rowId}`;
     const deltas: ConversationDelta[] = [];
     for (const reference of references) {
       const meta = lookupVisualizationFragment(this.sessionId, reference.name);
@@ -2729,7 +2816,9 @@ export class ProductProjection {
         sha256: meta.sha256,
         ref: `acode-visualization://${this.sessionId}/${reference.name}`,
         state: "current",
-        ...(reference.mode === undefined ? {} : { meta: { visualization: { mode: reference.mode } } }),
+        ...(reference.mode === undefined
+          ? {}
+          : { meta: { visualization: { mode: reference.mode } } }),
       };
       deltas.push({ op: "row.appended", row: artifact });
     }
@@ -3125,7 +3214,32 @@ export class ProductProjection {
     const payload = event.payload as ToolCallStartedPayload;
     const row = this.findToolRow(String(payload.toolCallId));
     if (!row) return [];
-    return projectToolActivity(event, row);
+    // DeferredToolCall 包装定稿（specs/tool-search.md R6「V4/UI 以目标事件定稿工具行」）：
+    // tool_call_scheduled 与流式 tool_input_start/tool_call 携带的是**包装名**
+    // DeferredToolCall 与 {name, input} 包装入参（executor 尚未解包）；ToolCallStarted
+    // 是首个携带**目标工具名**的事件——它由准入通过后的 canonicalToolCall 发出，准入失败
+    // 路径直接走 ToolCallError 不发本事件，包装失败记录因而原样保留（R6「准入失败只保存
+    // 包装失败记录」）。此前投影从不把行收敛到目标身份：TodoWrite 等 deferred 工具的任务
+    // 清单卡因此停在 raw fallback（identity=DeferredToolCall，family≠todo），plan 面板
+    // 也拿不到 steps（isTodoPlanToolName("DeferredToolCall")=false），即用户报告的
+    // 「直连调用序列化错了 + 任务清单失败」两条同链路症状。
+    const finalized =
+      event.type === SessionEventType.ToolCallStarted
+        ? finalizeDeferredToolCallRow(row, payload.toolName)
+        : row;
+    const deltas = projectToolActivity(event, finalized);
+    if (finalized === row) return deltas;
+    // 行身份刚被定稿到目标工具：补算一次 live plan/goal 投影（scheduled 阶段因包装名
+    // 返回空）。与 onToolCallScheduled/onToolCallResult 共用同一 todoPlanDeltas 单一实现。
+    const planDeltas = this.todoPlanDeltas(
+      event,
+      extractPlanStepsFromToolInput({
+        title: finalized.toolName,
+        kind: finalized.toolName,
+        input: finalized.input,
+      }),
+    );
+    return [...deltas, ...planDeltas];
   }
 
   private onToolCallResult(event: SessionEvent): ConversationDelta[] {
@@ -3852,6 +3966,9 @@ export class ProductProjection {
     });
     this.turnHeaderRowIdByTurnId.set(productTurnId, header.rowId);
     deltas.push({ op: "row.appended", row: header });
+    // 新 product turn 从零累加指标；状态栏立即收起，不残留上一段数字。
+    deltas.push(...this.resetTurnMetrics());
+    deltas.push(...this.countSessionTurn());
     return deltas;
   }
 
@@ -4555,6 +4672,22 @@ export class ProductProjection {
     return [{ op: "state.updated", patch: { swarmPlan: next } }];
   }
 
+  // ── 插件状态快照：PluginStateUpdated → pluginStates 状态键 ──
+  // 键 = `${pluginId}:${key}`，值级整体替换（键级容器不做深合并）。快照内容归插件
+  // 命名空间，宿主不解释；deep-equal 幂等防抖（同一快照重放不抬 revision）。
+  private onPluginStateUpdated(event: SessionEvent): ConversationDelta[] {
+    const payload = event.payload as PluginStateUpdatedPayload;
+    if (typeof payload?.pluginId !== "string" || typeof payload?.key !== "string") return [];
+    if (!payload.pluginId || !payload.key) return [];
+    const stateKey = `${payload.pluginId}:${payload.key}`;
+    const previous = this.snapshot.pluginStates ?? {};
+    const nextState = { ...previous, [stateKey]: payload.state };
+    // 幂等：同键同值不产 delta（插件侧 seq 未变时的重复通知被吞掉，面板不闪）。
+    if (Object.hasOwn(previous, stateKey) && isDeepStrictEqual(previous[stateKey], payload.state))
+      return [];
+    return [{ op: "state.updated", patch: { pluginStates: nextState } }];
+  }
+
   private removeQueueItems(ids: readonly string[]): ConversationDelta[] {
     const idSet = new Set(ids);
     for (const id of ids) this.deliveryByPendingInputId.delete(id);
@@ -4742,6 +4875,10 @@ export class ProductProjection {
             },
           },
         });
+        // 会话累计「代码增删 / 文件数」只计本会话主回合（usage-statusbar-port §3.2）。
+        if (isMainTurn) {
+          deltas.push(...this.recordSessionFileChanges(turnId, payload.fileChanges));
+        }
       }
     }
     if (!isMainTurn) return [...deltas, ...retryClearDeltas];
@@ -5383,6 +5520,8 @@ export class ProductProjection {
             : {}),
         },
       },
+      // 轮收口：状态栏 streaming=false，数字保留到下一轮开始（usage-statusbar-port §3.1）。
+      ...this.publishComposerTurnMetrics(false),
     ];
   }
 
@@ -5399,9 +5538,161 @@ export class ProductProjection {
       if (accumulator.cacheMissLast !== undefined) {
         this.lastTurnCacheMissTotal = accumulator.cacheMissLast;
       }
-      return buildTurnHeaderStats(accumulator);
+      return buildTurnHeaderStats(accumulator, this.currentTurnMetrics());
     }
     return row.stats === undefined ? null : undefined;
+  }
+
+  // ── 本轮生成指标（usage-statusbar-port §3.1）──
+
+  private currentTurnMetrics(): TurnMetrics | undefined {
+    return buildTurnMetrics(this.turnMetricsAccumulator);
+  }
+
+  /**
+   * 模型请求完成事实 → 本轮指标累加。只接受 main_turn；
+   * 旁路请求（标题/压缩/目标校验/subagent）不进入累加器，也不计入会话请求数。
+   */
+  private accumulateTurnMetricsForEvent(
+    payload: Extract<ModelNetworkStatusPayload, { type: "model_request_completed" }>,
+  ): ConversationDelta[] {
+    if (payload.querySource !== "main_turn") return [];
+    this.turnMetricsAccumulator = accumulateTurnMetrics(this.turnMetricsAccumulator, {
+      timeToFirstContentMs: payload.timeToFirstContentMs,
+      durationMs: payload.durationMs,
+      usage: payload.usage,
+      inputWindowTokens: getModelUsageInputWindowTokens(payload.usage) ?? 0,
+    });
+    // 会话级请求数 / 思考 token 与本轮同源累加（同一 main_turn 门禁），不随轮归零。
+    this.sessionToolStats = {
+      ...this.sessionToolStats,
+      requestCount: (this.sessionToolStats.requestCount ?? 0) + 1,
+      reasoningTokens:
+        (this.sessionToolStats.reasoningTokens ?? 0) +
+        nonNegativeInteger(payload.usage?.reasoningTokens ?? 0, 0),
+    };
+    const statsDelta = this.publishSessionToolStats();
+    // streaming=true 由 CLI 写，UI 不从 control.phase 反推。
+    return [...this.publishComposerTurnMetrics(true), ...(statsDelta ? [statsDelta] : [])];
+  }
+
+  /**
+   * 主回合模型请求的一次重试 → 会话累计「重试」+1。
+   * 一个 model_retry_scheduled 事件 = 一次真实重试；只计 main_turn，
+   * 否则用户会把标题生成的限流读成自己这一轮在重试。
+   */
+  private countSessionRetry(payload: { querySource?: string }): ConversationDelta | null {
+    if (payload.querySource !== "main_turn") return null;
+    this.sessionToolStats = {
+      ...this.sessionToolStats,
+      retryCount: (this.sessionToolStats.retryCount ?? 0) + 1,
+    };
+    return this.publishSessionToolStats();
+  }
+
+  /** 新 product turn 开始：会话轮数 +1（轮数不随指标归零）。 */
+  private countSessionTurn(): ConversationDelta[] {
+    this.sessionToolStats = {
+      ...this.sessionToolStats,
+      turnCount: (this.sessionToolStats.turnCount ?? 0) + 1,
+    };
+    const delta = this.publishSessionToolStats();
+    return delta ? [delta] : [];
+  }
+
+  /** 某轮代码增删更新：按 turnId 取最新值，重算会话合计（含代码变更文件数）。 */
+  private recordSessionFileChanges(
+    turnId: string,
+    fileChanges: { additions: number; deletions: number; files?: number },
+  ): ConversationDelta[] {
+    this.fileChangesByTurnId.set(turnId, {
+      additions: fileChanges.additions,
+      deletions: fileChanges.deletions,
+      files: Math.max(0, fileChanges.files ?? 0),
+    });
+    let linesAdded = 0;
+    let linesDeleted = 0;
+    let fileCount = 0;
+    for (const change of this.fileChangesByTurnId.values()) {
+      linesAdded += Math.max(0, change.additions);
+      linesDeleted += Math.max(0, change.deletions);
+      fileCount += change.files;
+    }
+    this.sessionToolStats = { ...this.sessionToolStats, linesAdded, linesDeleted, fileCount };
+    const delta = this.publishSessionToolStats();
+    return delta ? [delta] : [];
+  }
+
+  /**
+   * 状态栏事实。挂在 snapshot A 区，重连/回放不依赖 turnHeader 是否仍在尾窗。
+   * streaming 跟随当前 product turn 是否还在跑；轮收口置 false，数字保留到下一轮开始。
+   */
+  private publishComposerTurnMetrics(streaming: boolean): ConversationDelta[] {
+    const metrics = this.currentTurnMetrics();
+    if (!metrics) return [];
+    const next: ComposerTurnMetrics = { metrics, streaming };
+    const previous = this.lastEmittedComposerTurnMetrics;
+    if (
+      previous &&
+      previous.streaming === streaming &&
+      areTurnMetricsEqual(previous.metrics, metrics)
+    ) {
+      return [];
+    }
+    this.lastEmittedComposerTurnMetrics = next;
+    return [{ op: "state.updated", patch: { composerTurnMetrics: next } }];
+  }
+
+  /** 新 product turn / queue 切段：累加器归零，状态栏立刻收起，不残留上一段数字。 */
+  private resetTurnMetrics(): ConversationDelta[] {
+    this.turnMetricsAccumulator = { ...EMPTY_TURN_METRICS_ACCUMULATOR };
+    if (this.lastEmittedComposerTurnMetrics === null) return [];
+    this.lastEmittedComposerTurnMetrics = null;
+    return [{ op: "state.updated", patch: { composerTurnMetrics: null } }];
+  }
+
+  // ── 会话工具调用计数（usage-statusbar-port §3.2）──
+
+  /**
+   * 按已应用 delta 里的 toolCall 行收口累加。判据是「非终态 → 终态」的转换而不是行写入次数：
+   * 同一条工具会被多次 upsert（输入流式、审批、结果），以转换计数才能做到每条只记一次。
+   * 被拒绝/取消的终态计入 calls 但不计入 errors；子代理的工具行不在本会话快照里，天然不计。
+   */
+  private accumulateSessionToolStats(
+    deltas: readonly ConversationDelta[],
+    event?: SessionEvent,
+  ): ConversationDelta | null {
+    const durationMs = readToolCallDurationMs(event);
+    let changed = false;
+    for (const delta of deltas) {
+      if (delta.op !== "row.upserted" || delta.row.kind !== "toolCall") continue;
+      const terminal = TOOL_TERMINAL_STATUSES.has(delta.row.status);
+      const counted = this.toolTerminalCountedIds.get(delta.row.toolCallId) ?? 0;
+      if (counted === (terminal ? 1 : 0)) continue;
+      this.toolTerminalCountedIds.set(delta.row.toolCallId, terminal ? 1 : 0);
+      if (!terminal) continue;
+      const failed = delta.row.status === "error";
+      this.sessionToolStats = {
+        ...this.sessionToolStats,
+        calls: this.sessionToolStats.calls + 1,
+        errors: this.sessionToolStats.errors + (failed ? 1 : 0),
+        tools: accumulateToolEntry(this.sessionToolStats.tools, delta.row.toolName, {
+          failed,
+          durationMs,
+        }),
+      };
+      changed = true;
+    }
+    return changed ? this.publishSessionToolStats() : null;
+  }
+
+  /** 工具计数事实下发；值未变不下发（与 composerTurnMetrics 同一 conflation 口径）。 */
+  private publishSessionToolStats(): ConversationDelta | null {
+    const next = this.sessionToolStats;
+    const previous = this.lastEmittedSessionToolStats;
+    if (previous && areSessionToolStatsEqual(previous, next)) return null;
+    this.lastEmittedSessionToolStats = { ...next };
+    return { op: "state.updated", patch: { sessionToolStats: { ...next } } };
   }
 
   private openGuidedWorkSegment(event: SessionEvent, triggerEntityId: string): ConversationDelta[] {
@@ -5665,6 +5956,39 @@ function stringifyToolInput(input: unknown): string {
   } catch {
     return "{}";
   }
+}
+
+/**
+ * DeferredToolCall 包装定稿（specs/tool-search.md R6「V4/UI 以目标事件定稿工具行」）。
+ * scheduled / 流式阶段留下的是包装身份：toolName=DeferredToolCall、input={name, input}。
+ * startedName 取自 ToolCallStarted（准入通过后由 canonicalToolCall 发出的**目标工具名**，
+ * 唯一权威）；缺席或仍是包装名时不动行——准入失败不发 Started，包装失败记录原样保留。
+ * 返回新对象=已定稿、返回原引用=无需改动，调用方据引用相等决定是否补算 plan 投影。
+ */
+function finalizeDeferredToolCallRow(
+  row: ToolCallRow,
+  startedName: string | undefined,
+): ToolCallRow {
+  if (row.toolName !== DEFERRED_TOOL_CALL_NAME) return row;
+  const targetName =
+    typeof startedName === "string" && startedName.trim().length > 0
+      ? startedName
+      : undefined;
+  if (targetName === undefined || targetName === DEFERRED_TOOL_CALL_NAME) return row;
+  // 包装入参 {name, input} 的内层 input 才是目标工具真实参数（DeferredToolCallInputSchema
+  // 保证形状）；非记录或缺 input 键时保留原值（防御性回退，不损坏已投影数据）。
+  const wrapped = isPlainRecord(row.input) ? row.input : undefined;
+  const unwrappedInput =
+    wrapped !== undefined && "input" in wrapped ? wrapped.input : row.input;
+  return {
+    ...row,
+    toolName: targetName,
+    input: unwrappedInput,
+    // inputText 必须与 input 同源刷新：continuous 档与调试面直接读 inputText，
+    // 只改结构化 input 会让两面对不上（replayable 档过滤 row.delta(inputText)，定稿
+    // upsert 携带完整 inputText 与既有 scheduled/result 分支一致）。
+    inputText: stringifyToolInput(unwrappedInput),
+  };
 }
 
 function isExitPlanModeToolName(value: string | undefined): boolean {

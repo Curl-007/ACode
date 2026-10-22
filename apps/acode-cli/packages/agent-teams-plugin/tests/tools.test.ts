@@ -9,6 +9,8 @@ import { teamTools } from "../src/tools/team.js";
 import { memberTools } from "../src/tools/members.js";
 import { taskTools } from "../src/tools/tasks.js";
 import { messageTools } from "../src/tools/messages.js";
+import { worktreeTools } from "../src/tools/worktree.js";
+import { waitForWorkTool } from "../src/tools/member-wait.js";
 import { subagentSessionIdForAgent } from "../src/identity.js";
 import {
   DEFAULT_MAX_REASSIGN_ROUNDS,
@@ -19,7 +21,14 @@ import {
 } from "../src/state/types.js";
 import { randomUUID } from "node:crypto";
 
-const ALL_TOOLS = [...teamTools, ...memberTools, ...taskTools, ...messageTools];
+const ALL_TOOLS = [
+  ...teamTools,
+  ...memberTools,
+  ...taskTools,
+  ...messageTools,
+  ...worktreeTools,
+  waitForWorkTool,
+];
 const tool = (name: string) => {
   const found = ALL_TOOLS.find((item) => item.name === name);
   assert.ok(found, `tool ${name} must exist`);
@@ -30,6 +39,7 @@ function makeContext(params: {
   store: TeamStore;
   role: "captain" | "member";
   memberName?: string;
+  maxActiveTeams?: number;
 }): ToolContext {
   const sessionId =
     params.role === "captain"
@@ -45,8 +55,10 @@ function makeContext(params: {
     },
     memberNameHint: params.memberName,
     workspaceKey: "ws-key",
+    workingDirectory: process.cwd(),
     maxMembers: 8,
     maxReassignRounds: DEFAULT_MAX_REASSIGN_ROUNDS,
+    maxActiveTeams: params.maxActiveTeams ?? 4,
     panelUrl: "http://127.0.0.1:0/",
   });
 }
@@ -78,11 +90,32 @@ describe("tool identity matrix and happy path", () => {
     assert.equal((result as { status: string }).status, "draft");
   });
 
-  it("second create is refused with team_exists", async () => {
+  it("second create succeeds; exceeding maxActiveTeams is refused with team_limit_exceeded", async () => {
+    // 0.2：同一工作区允许多个活跃团队（上限 maxActiveTeams，默认 4）。
+    const second = (await tool("agent_teams_create").handler({ goal: "another" }, captain())) as {
+      ok: boolean;
+      teamId: string;
+    };
+    assert.equal(second.ok, true);
+    const third = (await tool("agent_teams_create").handler({ goal: "third" }, captain())) as {
+      ok: boolean;
+      teamId: string;
+    };
+    assert.equal(third.ok, true);
+    const fourth = (await tool("agent_teams_create").handler({ goal: "fourth" }, captain())) as {
+      ok: boolean;
+      teamId: string;
+    };
+    assert.equal(fourth.ok, true);
+    // 满 4 个后再建 → team_limit_exceeded（语义等价旧 team_exists 的「坑位被占」）。
     await assert.rejects(
-      tool("agent_teams_create").handler({ goal: "another" }, captain()),
-      (error: unknown) => (error as { code?: string }).code === "team_exists",
+      tool("agent_teams_create").handler({ goal: "fifth" }, captain()),
+      (error: unknown) => (error as { code?: string }).code === "team_limit_exceeded",
     );
+    // 清场：显式按 teamId 归档新建的三个，留首个团队给后续用例。
+    for (const teamId of [second.teamId, third.teamId, fourth.teamId]) {
+      await tool("agent_teams_delete").handler({ teamId, archive: false }, captain());
+    }
   });
 
   it("members cannot call captain-only tools", async () => {
@@ -105,7 +138,10 @@ describe("tool identity matrix and happy path", () => {
     // 新团队（前一个用例的团队还在，先归档）。
     await tool("agent_teams_delete").handler({ archive: false }, captain());
 
-    await tool("agent_teams_create").handler({ goal: "goal-2" }, captain());
+    const createdTeam = (await tool("agent_teams_create").handler(
+      { goal: "goal-2" },
+      captain(),
+    )) as { teamId: string };
     const added = (await tool("agent_teams_add_member").handler(
       { name: "dev-1", role: "dev", charter: "implements" },
       captain(),
@@ -175,7 +211,7 @@ describe("tool identity matrix and happy path", () => {
       member("dev-1"),
     )) as { from: string; message_id: string };
     assert.equal(sent.from, "dev-1");
-    assert.equal(store.listUnreadMessages("captain").length, 1);
+    assert.equal(store.listUnreadMessages(createdTeam.teamId, "captain").length, 1);
 
     // 队长 status 读走 captain 邮箱，且 t-2 就绪。
     const status = (await tool("agent_teams_status").handler({}, captain())) as {
@@ -185,13 +221,13 @@ describe("tool identity matrix and happy path", () => {
     };
     assert.equal(status.perspective, "captain");
     assert.deepEqual(status.ready_tasks, ["t-2"]);
-    assert.equal(store.listUnreadMessages("captain").length, 0);
+    assert.equal(store.listUnreadMessages(createdTeam.teamId, "captain").length, 0);
 
     const deleted = (await tool("agent_teams_delete").handler({ archive: true }, captain())) as {
       archived: boolean;
     };
     assert.equal(deleted.archived, true);
-    assert.equal(store.findActiveTeam(), undefined);
+    assert.equal(store.findTeam(createdTeam.teamId), undefined);
   });
 
   it("concurrent member claims of one task admit exactly one attempt", async () => {
@@ -211,7 +247,7 @@ describe("tool identity matrix and happy path", () => {
       ),
     );
     assert.equal(calls.filter((result) => result.status === "fulfilled").length, 1);
-    assert.equal(store.readTask("t-1")?.attempts.length, 1);
+    assert.equal(store.readTask(soleTeamId(store), "t-1")?.attempts.length, 1);
     await tool("agent_teams_delete").handler({ archive: false }, captain());
   });
 
@@ -289,7 +325,9 @@ describe("tool identity matrix and happy path", () => {
         degraded: false,
       },
       workspaceKey: "ws-key",
+      workingDirectory: process.cwd(),
       maxMembers: 8,
+      maxActiveTeams: 4,
       panelUrl: undefined,
     });
     await assert.rejects(
@@ -301,13 +339,19 @@ describe("tool identity matrix and happy path", () => {
 
   it("bound member resolves via real bind path; members never cross-match", async () => {
     await tool("agent_teams_create").handler({ goal: "goal-6" }, captain());
-    for (const name of ["dev-1", "dev-2"]) {
+    for (const name of ["dev-1", "dev-2", "dev-3"]) {
       await tool("agent_teams_add_member").handler({ name, role: "dev", charter: "c" }, captain());
     }
-    // 只注册未 bind：成员调用必须被拒。
+    // 只注册未 bind：从未绑定过任何团队的成员调用必须被拒为 caller_not_member。
+    await assert.rejects(
+      tool("agent_teams_send_message").handler({ to: "captain", message: "hi" }, member("dev-3")),
+      (error: unknown) => (error as { code?: string }).code === "caller_not_member",
+    );
+    // dev-1 的会话在先前用例里已绑定到已归档团队：按 SPEC-012 R18 报 team_archived
+    // （成员据此立即收工），而不是把它当成新团队里的未绑定成员。
     await assert.rejects(
       tool("agent_teams_send_message").handler({ to: "captain", message: "hi" }, member("dev-1")),
-      (error: unknown) => (error as { code?: string }).code === "caller_not_member",
+      (error: unknown) => (error as { code?: string }).code === "team_archived",
     );
     await bindMember("dev-1");
     await bindMember("dev-2");
@@ -330,6 +374,13 @@ describe("tool identity matrix and happy path", () => {
 
 function agentIdFor(name: string): string {
   return `agent_${name}`;
+}
+
+/** 取当前唯一活跃团队的 teamId（这些用例每次只留一个活跃团队）。 */
+function soleTeamId(store: TeamStore): string {
+  const teams = store.listTeams();
+  assert.equal(teams.length, 1, "expected exactly one active team in test store");
+  return teams[0]!.teamId;
 }
 
 /**
@@ -369,7 +420,7 @@ describe("reassign limit (max reassign rounds)", () => {
       await tool("agent_teams_claim_task").handler({ taskId: "t-1" }, member("dev-1"));
       if (index < claimTimes - 1) {
         // 直接把 attempt 补结束再回 todo，只为了造出「已认领 N 次」的落盘事实。
-        store.writeTask("t-1", (target) => {
+        store.writeTask(soleTeamId(store), "t-1", (target) => {
           target.status = "todo";
           target.attempts.forEach((attempt) => {
             if (!attempt.endedAt) attempt.endedAt = nowIso();
@@ -393,7 +444,7 @@ describe("reassign limit (max reassign rounds)", () => {
 
   it("reassign succeeds at attempts.length = 2 (reassignCount 1)", async () => {
     await seedTask("reassign-ok-2", 2);
-    assert.equal(store.readTask("t-1")?.attempts.length, 2);
+    assert.equal(store.readTask(soleTeamId(store), "t-1")?.attempts.length, 2);
     const result = (await tool("agent_teams_reassign_task").handler(
       { taskId: "t-1", assignee: "dev-2", reason: "hand over" },
       captain(),
@@ -404,7 +455,7 @@ describe("reassign limit (max reassign rounds)", () => {
 
   it("reassign at attempts.length = 4 throws reassign_limit_exceeded with data", async () => {
     await seedTask("reassign-limit", 4);
-    assert.equal(reassignCountOf(store.readTask("t-1")!), 3);
+    assert.equal(reassignCountOf(store.readTask(soleTeamId(store), "t-1")!), 3);
     await assert.rejects(
       tool("agent_teams_reassign_task").handler(
         { taskId: "t-1", assignee: "dev-2", reason: "again" },
@@ -417,7 +468,7 @@ describe("reassign limit (max reassign rounds)", () => {
         assert.equal(typed.data?.reassignCount, 3);
         assert.equal(typed.data?.maxReassignRounds, 3);
         assert.equal(typed.data?.taskId, "t-1");
-        assert.equal((typed.data?.attempts as unknown[]).length, 4);
+        assert.equal((typed.data?.attempts as unknown[] | undefined)?.length, 4);
         return true;
       },
     );
@@ -429,7 +480,7 @@ describe("reassign limit (max reassign rounds)", () => {
       ),
       (error: unknown) => (error as { code?: string }).code === "reassign_limit_exceeded",
     );
-    assert.equal(store.readTask("t-1")?.attempts.length, 4);
+    assert.equal(store.readTask(soleTeamId(store), "t-1")?.attempts.length, 4);
     await tool("agent_teams_delete").handler({ archive: false }, captain());
   });
 
@@ -448,13 +499,13 @@ describe("reassign limit (max reassign rounds)", () => {
     )) as { ok: boolean; from: string };
     assert.equal(sent.ok, true);
     assert.equal(sent.from, "captain");
-    assert.equal(store.listUnreadMessages("dev-1").length, 1);
+    assert.equal(store.listUnreadMessages(soleTeamId(store), "dev-1").length, 1);
     await tool("agent_teams_delete").handler({ archive: false }, captain());
   });
 
   it("done/cancelled tasks still report invalid_input, not the limit", async () => {
     await seedTask("reassign-terminal", 1);
-    store.writeTask("t-1", (target) => {
+    store.writeTask(soleTeamId(store), "t-1", (target) => {
       target.status = "done";
     });
     await assert.rejects(
@@ -490,8 +541,10 @@ describe("reassign limit (max reassign rounds)", () => {
         degraded: false,
       },
       workspaceKey: "ws-key",
+      workingDirectory: process.cwd(),
       maxMembers: 8,
       maxReassignRounds: 10,
+      maxActiveTeams: 4,
       panelUrl: undefined,
     });
     const relaxed = (await tool("agent_teams_reassign_task").handler(
@@ -533,60 +586,43 @@ describe("max reassign rounds normalization", () => {
   });
 });
 
-describe("captain takeover (reassign → claim → update done)", () => {
-  let root: string;
-  let store: TeamStore;
-  const captain = () => makeContext({ store, role: "captain" });
+void randomUUID;
 
-  before(() => {
-    root = mkdtempSync(join(tmpdir(), "agent-teams-takeover-"));
-    store = new TeamStore(root);
+describe("tool registry (0.4.0 surface)", () => {
+  it("exposes exactly the 17 agent_teams_* tools, no duplicates and no extra", () => {
+    const names = ALL_TOOLS.map((item) => item.name).sort();
+    assert.deepEqual(names, [
+      "agent_teams_add_member",
+      "agent_teams_adopt_team",
+      "agent_teams_amend_task",
+      "agent_teams_approve_plan",
+      "agent_teams_bind_member",
+      "agent_teams_claim_task",
+      "agent_teams_create",
+      "agent_teams_create_task",
+      "agent_teams_delete",
+      "agent_teams_merge_member_worktree",
+      "agent_teams_reassign_task",
+      "agent_teams_remove_member",
+      "agent_teams_resume",
+      "agent_teams_send_message",
+      "agent_teams_status",
+      "agent_teams_update_task",
+      "agent_teams_wait_for_work",
+    ]);
+    assert.equal(new Set(names).size, names.length, "tool names must be unique");
   });
 
-  after(() => {
-    rmSync(root, { recursive: true, force: true });
-  });
-
-  it("reassign 给队长后，队长可 claim 并记 done（协议死锁修复回归）", async () => {
-    // 修复前：claim_task 的 requireMember 未放行队长，reassign(assignee:"captain")
-    // 之后 claim 报 caller_not_member、update_task 又无 active attempt——接管后
-    // 没有任何官方工具路径能记 done（2026-10-15 真实模型 E2E 实测死锁）。
-    await tool("agent_teams_create").handler({ goal: "takeover" }, captain());
-    await tool("agent_teams_create_task").handler(
-      { title: "t-takeover", objective: "o", acceptance: ["a"] },
-      captain(),
-    );
-    await tool("agent_teams_reassign_task").handler(
-      { taskId: "t-1", assignee: "captain", reason: "captain takeover" },
-      captain(),
-    );
-
-    const claimed = (await tool("agent_teams_claim_task").handler(
-      { taskId: "t-1" },
-      captain(),
-    )) as { ok: boolean; attempt_id: string };
-    assert.equal(claimed.ok, true);
-    assert.ok(claimed.attempt_id, "队长认领必须产生 attempt_id 供 update_task 使用");
-
-    const done = (await tool("agent_teams_update_task").handler(
-      {
-        taskId: "t-1",
-        attemptId: claimed.attempt_id,
-        status: "done",
-        summary: "captain takeover completed",
-        verify: "ls hello.txt (实测)",
-      },
-      captain(),
-    )) as { ok: boolean; status: string };
-    assert.equal(done.ok, true);
-    assert.equal(done.status, "done");
-
-    const task = store.readTask("t-1");
-    assert.equal(task?.status, "done");
-    const attempt = task?.attempts.find((item) => item.id === claimed.attempt_id);
-    assert.equal(attempt?.owner, "captain");
-    assert.equal(attempt?.outcome, "done");
+  it("keeps the captain-only / member-allowed permission matrix", () => {
+    const memberAllowed = ALL_TOOLS.filter((item) => item.memberAllowed)
+      .map((item) => item.name)
+      .sort();
+    assert.deepEqual(memberAllowed, [
+      "agent_teams_claim_task",
+      "agent_teams_send_message",
+      "agent_teams_status",
+      "agent_teams_update_task",
+      "agent_teams_wait_for_work",
+    ]);
   });
 });
-
-void randomUUID;

@@ -112,6 +112,7 @@ export function WorkflowAgentPill({
   open,
   size = "md",
   status,
+  subtitle,
   title,
   trailing,
 }: {
@@ -122,6 +123,12 @@ export function WorkflowAgentPill({
   name: string;
   laneClass: LaneClass;
   status: StepRunStatus | undefined;
+  /**
+   * 第二行（团队卡药丸的「当前任务标题」，SPEC-012 R2）：在场即药丸切两行版式，
+   * 高度 32→36px，且尾槽的 ↗ 常驻（R4）——两行药丸的用户永远看得见「可点」。
+   * 缺席时保持原单行版式与悬停出 ↗ 的既有观感，Workflow 药丸不受影响。
+   */
+  subtitle?: string;
   title?: string;
   className?: string;
   /** 在场即整枚药丸是按钮（回调的存在即门控）。 */
@@ -147,6 +154,9 @@ export function WorkflowAgentPill({
   const settled = status !== undefined && status !== "pending";
   const hasMark = settled;
   const hasTail = hasMark || open !== undefined;
+  // 修复：两行药丸的 ↗ 常驻（R4），若仍与状态标记叠在同一格，转圈/对勾会和箭头重合。
+  // 两行版式下标记与 ↗ 改为并排两格；单行版式保持「同格互让」的既有观感。
+  const tailSideBySide = subtitle !== undefined && hasMark && open !== undefined;
   const Root = open === undefined ? "span" : "button";
   const body = (
     <>
@@ -161,25 +171,48 @@ export function WorkflowAgentPill({
           tinted ? "text-[var(--wf-avatar)]" : "text-foreground-subtle",
         )}
       />
-      <span
-        className={cn(
-          "wf-pill-name min-w-0 flex-1 truncate",
-          settled ? "text-foreground" : "text-foreground-subtle",
-        )}
-      >
-        {name}
-      </span>
+      {subtitle === undefined ? (
+        <span
+          className={cn(
+            "wf-pill-name min-w-0 flex-1 truncate",
+            settled ? "text-foreground" : "text-foreground-subtle",
+          )}
+        >
+          {name}
+        </span>
+      ) : (
+        <span className="flex min-w-0 flex-1 flex-col leading-tight">
+          <span
+            className={cn(
+              "wf-pill-name min-w-0 truncate",
+              settled ? "text-foreground" : "text-foreground-subtle",
+            )}
+          >
+            {name}
+          </span>
+          <span className="wf-pill-sub min-w-0 truncate text-foreground-subtlest">{subtitle}</span>
+        </span>
+      )}
       {children}
       {hasTail ? (
         <span
-          className="wf-pill-tail grid size-3.5 shrink-0 place-items-center [&>*]:col-start-1 [&>*]:row-start-1"
+          className={cn(
+            "wf-pill-tail shrink-0",
+            tailSideBySide
+              ? "flex h-3.5 items-center gap-1"
+              : "grid size-3.5 place-items-center [&>*]:col-start-1 [&>*]:row-start-1",
+          )}
           data-testid="workflow-pill-tail"
         >
           <PillStatusMark status={status} />
           {open === undefined ? null : (
             <span
               aria-hidden
-              className="wf-pill-go flex size-3.5 items-center justify-center text-foreground-subtlest"
+              className={cn(
+                "wf-pill-go flex size-3.5 items-center justify-center text-foreground-subtlest",
+                // 两行药丸的 ↗ 常驻（wf-pill-go-rest 已有「不等悬停就在」的规则）。
+                subtitle === undefined ? undefined : "wf-pill-go-rest",
+              )}
               data-testid={open.testId ?? "workflow-pill-open"}
               {...open.data}
             >
@@ -198,7 +231,9 @@ export function WorkflowAgentPill({
         "wf-pill wf-agent-pill wf-arrive flex rounded-full min-w-0 items-center",
         size === "row"
           ? "h-6 gap-1.5 pl-1 pr-1.5 text-ui-sm"
-          : "h-8 gap-2 bg-surface pl-2 pr-2.5 text-ui-sm",
+          : subtitle === undefined
+            ? "h-8 gap-2 bg-surface pl-2 pr-2.5 text-ui-sm"
+            : "wf-pill-tall h-9 gap-2 bg-surface pl-2 pr-2.5 text-ui-sm",
         open !== undefined &&
           "wf-pill-open cursor-pointer text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
         className,

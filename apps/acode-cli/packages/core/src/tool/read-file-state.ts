@@ -3,7 +3,7 @@
 // ============================================================
 
 import { platform as currentPlatform } from "node:process";
-import { normalizeToolPathForComparison } from "./path-normalization.js";
+import { normalizeReadStatePathKey } from "./path-normalization.js";
 import type { ReadFileStateEntry, ReadFileStateMap } from "./types.js";
 
 type ReadFileStatePlatform = NodeJS.Platform;
@@ -12,7 +12,10 @@ function createReadFileStatePathKey(
   filePath: string,
   platform: ReadFileStatePlatform = currentPlatform,
 ): string {
-  return normalizeToolPathForComparison(filePath, platform);
+  // 用 read-state 专用归一化（win32 折叠大小写）：Windows FS 大小写不敏感，
+  // 同一文件的不同拼写必须落到同一条键，否则 Read 记录与 Edit 查找分裂 →
+  // 误报 FILE_NOT_READ（见 path-normalization.ts normalizeReadStatePathKey 注释）。
+  return normalizeReadStatePathKey(filePath, platform);
 }
 
 export function createReadFileStateKey(

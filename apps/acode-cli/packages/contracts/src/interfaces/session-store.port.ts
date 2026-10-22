@@ -1028,6 +1028,12 @@ export interface AppUsageDayRow {
   totalTokens: number;
   turnCount: number;
   toolCallCount: number;
+  // 按日分项（状态栏「今日合计」明细），来源是 model_usage 的当日聚合。
+  // additive：缺省时 UI 隐藏对应明细行，不显示 0。
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheReadTokens?: number;
+  modelRequestCount?: number;
 }
 
 export interface AppUsageDayModelRow {

@@ -127,7 +127,11 @@ description 单一来源、共享校验套件工程法）与 T3 env 归因条目
   `operation: "seed_summary"`、`source ∈ {filesystem, sea}`、`plugins: [{pluginId, version,
   outcome}]`；**outcome 闭集**：`reused | written | degraded | rejected_incomplete |
   rejected_oversize`。不使用 `status` 键（避开日志保留闭集）。degraded/rejected 明细仍走
-  既有 warn（errorCode、missingSeedPaths 字段不变）。
+  既有 warn（errorCode、missingSeedPaths 字段不变）。**降级集合的唯一事实源是
+  seed_summary 的 outcomes**：`resolveOfficialPluginRoots` 的返回值是根路径数组
+  （string[]），不承载 failed 语义；测试与消费方不得从返回值反推降级集合
+  （2026-10-20 修复：旧测试 `string[].name` 恒 undefined，dist 未构建 checkout 上
+  对降级插件误断言 marker 存在）。
 - seed marker（`.acode-plugin-seed.json`）字段维持并钉住：`{hash, marketplace, plugin,
   pluginVersion, source∈{filesystem,sea}, version:1}`；bundled 技能包 marker
   （`.acode-bundled-skills-seed.json`）补 `{source:"sea", entries}` 归因字段（读取端只依赖
@@ -151,6 +155,15 @@ description 单一来源、共享校验套件工程法）与 T3 env 归因条目
   2. 校验器带「基线化」能力（外部 `--original` 范式）：对输入文件先跑一次基线校验，
      只把**新增**错误计为失败，模板自带的存量错误不阻塞交付。
   3. 公式/重算类交付闸门（外部 recalc 范式）：校验脚本报错即不许交付，不静默降级。
+
+### R7 pack root 的 dev 形态可解析性（ESM runtimeDir 回退）
+
+`candidateBaseDirs()` 的 runtimeDir 在 bootstrap `type: module` 下经 tsx/ESM 运行时
+`__dirname` 为 undefined，filesystem 三形态解析在 dev 形态（src 直跑、仓库内测试）
+永远落空——bundled 技能/预置 agent 包明明在 `apps/acode-cli/packages/bundled-skills`
+却解析为缺席（2026-10-20 builtin-subagent-catalog R6 断言失败的根因）。修复：
+`__dirname` 缺席时回退 `dirname(fileURLToPath(import.meta.url))`（src/app 与 dist/app
+同深度，候选相对路径两形态同命中）；SEA 形态与 entrypoint/cwd 候选语义不变。
 
 ## 验收场景
 

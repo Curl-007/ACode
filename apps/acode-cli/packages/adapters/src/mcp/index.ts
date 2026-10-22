@@ -27,6 +27,7 @@ import type {
   McpConnectionSnapshot,
   McpContentBlock,
   McpOAuthConfig,
+  McpPluginStateNotification,
   McpPort,
   McpReadResourceResult,
   McpResourceDescriptor,
@@ -136,6 +137,8 @@ const DEFAULT_MCP_TIMEOUT_MS = 30_000;
 const MCP_PING_TIMEOUT_MS = 5_000;
 const MAX_MCP_VERSION_PROBE_TIMEOUT_MS = 5_000;
 const MCP_STDIO_STDERR_LOG_MAX_CHARS = 4_000;
+/** 插件状态通知的 logger 前缀：notifications/message 的 logger 以此开头才被识别。 */
+const PLUGIN_STATE_LOGGER_PREFIX = "acode-plugin-state:";
 /**
  * 快启门预算（specs/mcp-startup-gate-breaker.md R1）：connectConfiguredServers 等
  * 全部连接任务收敛至多等这么久；到期后已就绪的照常注册，仍 pending 的 server 用
@@ -215,6 +218,8 @@ export interface CreateMcpAdapterOptions {
     resolveACodeApiOrigin?: () => string;
     workspaceIdentity?: string;
   };
+  /** 插件状态通知回调（acode-plugin-state: logging 通知 → 宿主事件桥）。 */
+  onPluginStateNotification?: (notification: McpPluginStateNotification) => void;
   workingDirectory?: string;
 }
 
@@ -266,9 +271,10 @@ export function createMcpAdapterConnectionPool(
   return createMcpConnectionPool({
     logger: options.logger,
     telemetry: options.telemetry,
-    createAdapter: ({ connectionContext, workingDirectory }) =>
+    createAdapter: ({ connectionContext, workingDirectory, onPluginStateNotification }) =>
       createMcpAdapter({
         ...options,
+        onPluginStateNotification,
         connectionContext,
         workingDirectory: workingDirectory ?? options.workingDirectory,
       }),
@@ -338,6 +344,7 @@ class NodeMcpAdapter implements McpPort {
   private readonly mcpOAuth?: McpOAuthRuntimeOptions;
   private readonly network?: NetworkEgressEnvPolicy;
   private readonly officialMcpAuth?: CreateMcpAdapterOptions["officialMcpAuth"];
+  private readonly pluginStateNotificationSink?: (notification: McpPluginStateNotification) => void;
   private readonly telemetry?: McpTelemetryTracker;
   private readonly onStatusChange?: McpServerStatusChangeListener;
   /** 工具面变更订阅者（onToolsChanged，McpPort 可选面）；派发点 try/catch 旁路。 */
@@ -413,6 +420,7 @@ class NodeMcpAdapter implements McpPort {
     this.mcpOAuth = options.mcpOAuth;
     this.network = options.network;
     this.officialMcpAuth = options.officialMcpAuth;
+    this.pluginStateNotificationSink = options.onPluginStateNotification;
     this.telemetry = options.telemetry;
     this.onStatusChange = options.onStatusChange;
     this.reconnectBudget = new McpReconnectBudget({ ...options.reconnect });
@@ -1710,6 +1718,32 @@ class NodeMcpAdapter implements McpPort {
         client,
         transport,
       });
+      // 插件 server 名不含 marketplace；只能用 loader 附在 source 上的权威 pluginId，
+      // 否则个人来源的同名插件会伪装成官方快照。普通 MCP 连接不接收状态通知。
+      const pluginId = config.source?.pluginId;
+      if (pluginId && this.pluginStateNotificationSink) {
+        client.setNotificationHandler("notifications/message", (notification) => {
+          try {
+            const params = notification.params as
+              | { level?: unknown; logger?: unknown; data?: unknown }
+              | undefined;
+            const loggerName = typeof params?.logger === "string" ? params.logger : undefined;
+            if (!loggerName?.startsWith(PLUGIN_STATE_LOGGER_PREFIX)) return;
+            const topic = loggerName.slice(PLUGIN_STATE_LOGGER_PREFIX.length);
+            if (!topic) return;
+            this.pluginStateNotificationSink?.({
+              pluginId,
+              key: topic,
+              state: params?.data,
+            });
+          } catch (error) {
+            this.logger?.warn("mcp.plugin_state_notification_failed", {
+              error: error instanceof Error ? error.message : String(error),
+              serverName: name,
+            });
+          }
+        });
+      }
 
       const connectStartedAt = Date.now();
       await withTimeout(

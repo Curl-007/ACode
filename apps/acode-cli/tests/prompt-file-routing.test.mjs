@@ -214,9 +214,13 @@ test("(R5) 真实盘：project 命中压过 user；project 移除后落 user", a
     await mkdir(userDir, { recursive: true });
     await writeFile(join(userDir, APPEND_SYSTEM_PROMPT_FILE_NAME), "from user dir", "utf8");
 
+    // Windows tmpdir 在用户目录下，8 层 walk-up 会命中真实祖先目录（如 ~/.acode）的
+    // 提示词文件，把 user 级文件误当 project 命中（环境依赖 flake）；walk-up 收进
+    // temp root，深度语义由注入 fake reader 的用例单独覆盖。
     const userOnly = await loadPromptFileRouting({
       workingDirectory: projectDir,
       userConfigDir: userDir,
+      projectWalkUpLimit: 2,
     });
     assert.equal(userOnly.appendSystem.content, "from user dir");
     assert.equal(userOnly.appendSystem.scope, "user");
@@ -225,6 +229,7 @@ test("(R5) 真实盘：project 命中压过 user；project 移除后落 user", a
     const projectWins = await loadPromptFileRouting({
       workingDirectory: projectDir,
       userConfigDir: userDir,
+      projectWalkUpLimit: 2,
     });
     assert.equal(projectWins.appendSystem.content, "from project");
     assert.equal(projectWins.appendSystem.scope, "project");

@@ -27,6 +27,7 @@ import {
   initOtelTelemetry,
   InMemoryRuntimeTaskRegistry,
   PermissionService,
+  configureCliGovernor,
   detectNoShellToolWarning,
   registerAutoClassifierAuditSink,
   registerBashReflexAuditSink,
@@ -46,7 +47,9 @@ import {
   type TraceContext,
   createSessionId,
   createSessionEvent,
+  SessionEventType,
   type ExecutionShellSelection,
+  type McpPluginStateNotification,
   type MessageId,
   type UsageStorePort,
   type VisualizationFragmentStorePort,
@@ -694,8 +697,56 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
               });
             },
             workingDirectory,
+            // 插件状态通道：plugin server 的 acode-plugin-state: logging 通知经 runtime
+            // 落成 PluginStateUpdated 会话事件，投影归约进 pluginStates 状态键。
+            // runtime 晚于 adapter 构造（下方才 new AgentRuntime），闭包引用它的变量。
+            onPluginStateNotification: options.onPluginStateNotification
+              ? (notification: McpPluginStateNotification) =>
+                  options.onPluginStateNotification?.(notification)
+              : (notification: McpPluginStateNotification) => {
+                  void runtime
+                    ?.appendEvent(
+                      createSessionEvent(
+                        SessionEventType.PluginStateUpdated,
+                        sessionId,
+                        {
+                          pluginId: notification.pluginId,
+                          key: notification.key,
+                          state: notification.state,
+                        },
+                        { traceId: traceContext.traceId },
+                      ),
+                      traceContext,
+                    )
+                    .catch((error: unknown) => {
+                      logger?.warn("mcp.plugin_state_event_append_failed", {
+                        error: error instanceof Error ? error.message : String(error),
+                      });
+                    });
+                },
           })));
     const ownsMcpPort = options.mcpPort === undefined && mcpPort !== undefined;
+    // 桌面宿主以进程池 lease 注入 MCP port；该路径不创建上面的 adapter，须在
+    // 会话 lease 上订阅同一通知通道。设置页 lease 无会话，池本身拒绝订阅。
+    const unsubscribePluginState = mcpPort?.subscribePluginStateNotifications?.((notification) => {
+      if (options.onPluginStateNotification) {
+        options.onPluginStateNotification(notification);
+        return;
+      }
+      if (!runtime) return;
+      void runtime
+        .appendEvent(
+          createSessionEvent(SessionEventType.PluginStateUpdated, sessionId, notification, {
+            traceId: traceContext.traceId,
+          }),
+          traceContext,
+        )
+        .catch((error: unknown) => {
+          logger?.warn("mcp.plugin_state_event_append_failed", {
+            error: error instanceof Error ? error.message : String(error),
+          });
+        });
+    });
     const executionPort =
       options.executionPort ??
       createNodeExecutionAdapter({
@@ -910,6 +961,18 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
     // overnight controller 需要同一份引用来注册 run 投影（type: "overnight"），
     // 不注入则 runtime 自建私有实例，run 的可见面挂不上去。
     const runtimeTaskRegistry = new InMemoryRuntimeTaskRegistry();
+    // CliGovernor host 装配（specs/cli-governor.md）：预置 registry 与 logger，受害者判定
+    // 在 60s idle guard 之外精确排除在跑会话；governor 懒建，此处纯 deps 预置、无副作用序依赖。
+    // 单参适配：bootstrap logger 第二槽是 Error 语义，与 governor 的 meta dict 不兼容，弃 meta 保消息。
+    configureCliGovernor({
+      runtimeTaskRegistry,
+      logger: {
+        debug: (message) => logger.debug(message),
+        info: (message) => logger.info(message),
+        warn: (message) => logger.warn(message),
+        error: (message) => logger.error(message),
+      },
+    });
     // K2 swarm plan 装配（specs/swarm-task-graph.md 2b）：port 在主 runtime 构造前成型
     //（deps 注册门要它在场），executeNode 的 runtime 引用在构造后 bind（overnight
     // controller 的同款先后序）。持久化 seam 绑 sessionStore 的 swarm plan 行。
@@ -1249,6 +1312,7 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
       ...(dynamicWorkflowRunPort === undefined
         ? {}
         : { closeDynamicWorkflowRuns: () => dynamicWorkflowRunPort.close() }),
+      unsubscribePluginState,
       configResult,
       configuredMcpServers,
       ...(options.configuredDefaultModelSelection

@@ -32,6 +32,7 @@ import { DataBaseDirControl } from "@/settings/DataBaseDirControl.js";
 import { useACodeIntl } from "@/i18n/IntlProvider.js";
 import { useOptionalServices } from "@/hooks/useServices.js";
 import { ProactiveSuggestionsSetting } from "@/settings/ProactiveSuggestionsSetting.js";
+import { UsageStatusbarSettingsSection } from "@/settings/UsageStatusbarSettingsSection.js";
 import { normalizeInterfaceMode, type InterfaceMode } from "@/lib/interfaceMode.js";
 import {
   createSettingsPageConfig,
@@ -817,6 +818,11 @@ export function GeneralSectionContent({
             />
           }
         />
+      </SettingsGroupCard>
+
+      <UsageStatusbarSettingsSection />
+
+      <SettingsGroupCard>
         <SettingsRow
           label={intl.formatMessage({ id: "settings.toolGroupingExplore" })}
           description={intl.formatMessage({

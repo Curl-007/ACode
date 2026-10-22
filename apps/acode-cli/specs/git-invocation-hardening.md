@@ -1,7 +1,9 @@
 # CLI git 调用硬化（acode-cli 自有 git spawn 面）
 
 交叉引用：`packages/services/specs/git-invocation-hardening.md`（机制来源、威胁模型、
-R1–R7 完整语义、两条有据偏差）。services 侧消费面盘点把本面登记为「接线需求，
+R1–R7 完整语义、两条有据偏差）与 `packages/services/specs/git-hardening-presets.md`
+（2026-10 硬化预设增量：默认拒协议面 + 完整性三件套 + P4 预设——本 spec R4 是其
+CLI 面镜像，落地即销账该 spec P2 节登记的「孪生漏斗接线需求」）。services 侧消费面盘点把本面登记为「接线需求，
 另立项」——本 spec 即该立项：把同一硬化预设矩阵补到 apps/acode-cli 自有 git spawn 点
 （这些不走 services 的 `getGitCommandEnv()` 漏斗）。**矩阵语义与 services 对齐**，
 包括照搬其两条有据偏差：`credential.helper` 不清空（封死会废掉 https 静默取凭据）、
@@ -29,8 +31,9 @@ LFS 只取 `filter.lfs.required=false`（清空 clean/smudge/process 会写坏 L
 
 ## R2 两种消费形态（跟随 CLI 既有执行面，不改参数组装语义）
 
-- **直接 spawn**（execFile/spawn 点）：`getCliGitInvocationEnv(baseEnv?)` 返回完整
-  env——先剥离 GIT local env（GIT_DIR/GIT_WORK_TREE/GIT_INDEX_FILE 等，防串仓，
+- **直接 spawn**（execFile/spawn 点）：`getCliGitInvocationEnv(baseEnv?, platform?,
+  options?)` 返回完整 env（`options.allowedProtocols` 见 R3 修订）——先剥离 GIT
+  local env（GIT_DIR/GIT_WORK_TREE/GIT_INDEX_FILE 等，防串仓，
   清单与 services 同款）与继承的 `GIT_CONFIG_*` 编号键（先删净再写，继承值不能
   覆盖矩阵、不能借残留编号夹带配置），再写入 env 层矩阵 + config 层
   （`GIT_CONFIG_COUNT/KEY_<n>/VALUE_<n>` 注入，git ≥ 2.31 命令行作用域；
@@ -52,10 +55,31 @@ log.showSignature 关、logAllRefUpdates 关、submodule.recurse=false、
 filter.lfs.required=false）；env 层 = GIT_TERMINAL_PROMPT=0、GIT_ASKPASS 空、
 GIT_NO_LAZY_FETCH=1、GIT_OPTIONAL_LOCKS=0、GIT_ALLOW_PROTOCOL（见 R3）。
 
-## R3 协议白名单（CLI 面差异，调查结论）
+## R3 协议面（2026-10 修订：全局白名单废除 → 默认全拒 + 按调用点显式放行）
 
-`CLI_GIT_ALLOW_PROTOCOL_WHITELIST = "file:http:https:ssh"`——比 services 的
-`file:https:ssh` **多一项 `http`**，按 CLI 实际协议面调查定案：
+**修订块（镜像 services git-hardening-presets.md P1，git 2.46.1 实测裁决表见彼处）**：
+`CLI_GIT_ALLOW_PROTOCOL_WHITELIST = "file:http:https:ssh"` 全局白名单**已废除**。
+全局白名单对漏斗内全部 8 个消费点生效——7 个纯本地命令面（worktree/merge/status/
+只读 snapshot）无谓继承 file/http/https/ssh 放行，任何被仓库配置/参数间接触发的
+传输都走白名单。收紧为：
+
+- **默认（无 opt-in）**：per-call `GIT_ALLOW_PROTOCOL=""`（空串 = 拒绝一切传输）+
+  config 层 `protocol.allow=never` 与七协议逐个 `protocol.<p>.allow=never`；两层
+  永远由同一 `allowedProtocols` 参数同源构建（env 是生效通道、config 是「env 单独
+  丢失」第二层防御，实测优先级裁决同 services P1）。
+- **opt-in（当前唯一放行点）**：消费点 #2 marketplace `execGitCommand` 显式声明
+  `CLI_MARKETPLACE_GIT_PROTOCOL_ALLOWLIST = ["file","http","https","ssh"]`——内容与
+  原全局白名单等值（marketplace clone 行为不变），但**范围收窄到该调用点**。
+  声明通道是 `getCliGitInvocationEnv(baseEnv, platform, { allowedProtocols })` /
+  `getCliGitInvocationEnvOverlay(sourceEnv, platform, { allowedProtocols })` 参数，
+  禁止调用点手写 `GIT_ALLOW_PROTOCOL` env 键。
+- 其余 7 个消费点全部是本地命令（盘点见消费点表协议列），不声明、默认全拒，
+  对其零功能影响（本地 transport 不经过 GIT_ALLOW_PROTOCOL 的**命令**不受限；
+  实测 `file` 传输在空串下被拒的只有 ls-remote/push/clone/fetch 一类显式远端命令）。
+- 未来 CLI 面新增远端 git 能力的调用点**必须**显式传最小 `allowedProtocols` 集并
+  在本表登记；禁止放宽默认值、禁止绕过漏斗覆盖协议 env。
+
+原白名单**内容**的调查结论仍有效（放行集为何是这四项），保留如下：
 
 - **marketplace 级 git clone**（`parseMarketplaceSourceInput`，marketplace.ts:231）
   显式接受 `http://` 前缀的 `*.git` 源；且 marketplace 级源**不经**插件级
@@ -72,18 +96,148 @@ GIT_NO_LAZY_FETCH=1、GIT_OPTIONAL_LOCKS=0、GIT_ALLOW_PROTOCOL（见 R3）。
   `fd`。ext:: 在 CLI 有真实攻击面：marketplace 级 source 可来自持久化配置/协议
   输入，`loadMarketplace` case "git" 不再校验 URL scheme，spawn 层白名单是唯一收口。
 
-## 消费点清单（盘点结论，2026-10）
+## R4 硬化预设增量（2026-10，镜像 services git-hardening-presets.md P2–P4）
 
-| # | 消费点 | 形态 | 命令面 |
+威胁模型、git 2.46.1 实测裁决表与逐项依据见 services 侧 presets spec（单一事实源，
+本节只登记 CLI 面落地形态与差异）：
+
+- **P2 入站消毒增量**：`GIT_LOCAL_ENV_VARS` 剥离清单新增 `GIT_CONFIG_GLOBAL`、
+  `GIT_CONFIG_SYSTEM`（防全局/系统配置重定向到攻击者文件——等效任意 config 注入，
+  可覆盖 hooksPath 等矩阵外键）与 `GIT_NO_REPLACE_OBJECTS`（继承值不得弱化完整性
+  三件套）；`GIT_ALLOW_PROTOCOL` 在消毒段**显式 delete**（完整 env 形态）/进
+  `unset`（overlay 形态），随后由 per-call 值统一写入——不依赖对象 spread 顺序兜底。
+  残余照搬：`GIT_SSH`/`GIT_SSH_COMMAND` 不剥离（用户自定义 ssh 是 marketplace 私有
+  仓 clone 的合法工作流；敌意父环境能设它时同样能改 PATH，不构成实质边界）、
+  `GIT_CONFIG_NOSYSTEM` 不剥离（继承只会收紧）。
+- **P3 replace-ref/graft 完整性三件套**：env `GIT_NO_REPLACE_OBJECTS=1` +
+  `GIT_GRAFT_FILE=<execPath>/no-grafts`（稳定不存在路径，`getCliGitGraftNullFilePath()`）
+  + config `core.useReplaceRefs=false`。语义不变量：CLI 从仓库读到的每个对象都是
+  仓库真实存储内容——git-snapshot 上下文、workflow world-read 的 git.log/git.diff、
+  checkpoint 类判断不受 `refs/replace/*` 与 `.git/info/grafts` 伪冒影响（git 2.46
+  实测 grafts 仍被读取，是活的攻击面）。
+- **P4 kill switch 与副作用收口**（config 矩阵新增 9 键，与 services 逐项同款）：
+  `alias.remote-denied_by_acode.command=`（哨兵置空）、`help.autocorrect=0`、
+  `safe.bareRepository=explicit`、`rerere.enabled=false`、
+  `merge.directoryRenames=false`、`merge.renameLimit=7000`、`diff.renameLimit=7000`、
+  `core.splitIndex=false`、`core.useReplaceRefs=false`（P3 第三件）。
+  splitIndex 无条件注入（不按 rev-parse 判别）——CLI 漏斗按 env 注入、不感知 argv，
+  且 CLI 面 rev-parse 用途不读写 index，与 services P4 偏差登记同款。
+- **P5 注入通道**：维持 `GIT_CONFIG_COUNT/KEY_<n>/VALUE_<n>` env 注入，不改 `-c`
+  argv（理由同 services P5：漏斗单点、继承编号键先剥后写、调用点 args 零触碰）。
+  git < 2.31 config 层静默失效、env 层（含协议默认全拒）仍生效——既有残余不变。
+
+## R5 所有权边界与防再分叉（双漏斗核心不变量）
+
+- **CLI 漏斗唯一所有者**：`packages/shared/src/git-invocation-env.ts`。矩阵与协议
+  策略只写在该文件；acode-cli 五包（core/adapters/cli-workflow/cli/bootstrap）的
+  全部 git spawn 点只准经 `getCliGitInvocationEnv` / `getCliGitInvocationEnvOverlay`
+  取 env，禁止手写任何硬化单键（含 `GIT_ALLOW_PROTOCOL`）。
+- **services 漏斗唯一所有者**：`packages/services/src/git/config.ts`（desktop/server
+  面）。两漏斗是**两份实现、一份语义**：矩阵键值集必须保持语义一致（R1 既有裁决，
+  services/* 为波 1 冻结面、不做反向抽取）。
+- **防再分叉纪律**（本轮 WI-2/WI-2b 分叉事故的制度化）：任何一侧的硬化增量
+  **必须同批**落到另一侧，或在另一侧 spec 显式登记「接线需求」（WI-2 即此模式：
+  services presets spec P2 登记 → 本 spec R4 落地销账）。两侧键闭集各由本包测试
+  守护（shared：`packages/shared/test/gitHardeningPresets.test.ts` 全闭集；
+  services：`test/gitHardeningPresets.test.ts` 全闭集），漂移即红。
+- **允许的差异集（闭集，超出即违规）**：
+  1. marketplace 调用点放行 `http`（CLI 存量安装面，services 无对应消费点）；
+  2. CLI 漏斗可注入 `baseEnv`（marketplace sanitize/proxy 基底）与 `platform`
+     （测试双平台分支），services 漏斗固定 `process.env`/`process.platform`；
+  3. overlay 形态（ExecutionPort 契约）仅 CLI 面存在；
+  4. `GIT_OPTIONAL_LOCKS` 在 CLI 位于 env 矩阵内、在 services 位于漏斗尾部——
+     键值相同，仅代码位置不同。
+- **收敛评估（2026-10，登记不收敛理由）**：曾评估把矩阵抽到 shared 单点、services
+  委托复用。不采纳：(a) 违反 R1「services/* 冻结面不做反向抽取」既有裁决；
+  (b) services config.ts 刚在硬化预设批次改动且未提交，重写为委托层会让同批交付
+  的 services 测试面（513 项）全部重新暴露在协调风险下；(c) 两侧 API 形态差异
+  （注入通道/overlay/返回类型 `Record<string,string>` vs `NodeJS.ProcessEnv`）
+  意味着"单一实现"仍需一层适配包装，去重收益有限。防再分叉改由上节纪律 +
+  双侧闭集测试保障。
+
+## R6 argv posture 网关孪生侧接线（2026-10-21 闭合，WI-T）
+
+services 侧 E3a 的 posture 判定器已按「纯函数平移 shared 供两漏斗共用」授权落地：
+单一所有者 = **`packages/shared/src/git-posture/`**（经 shared 根 barrel 导出；
+services `gitCommandProvider.run()` 与本侧 8 消费点同从此面导入）。档位闭集
+9→10（新增 `clone`），形状规则单一事实源 = `packages/services/specs/
+git-posture-gateway.md` R1–R5（含 R4-8 read 增补、R4-9 clone 档设计）。env 层
+矩阵不平移（R5「两份实现、一份语义」仅限 env 层；argv 判定器是单一实现）。
+未声明档位的缺省语义 = read 档 fail-closed（与 services 同款）。
+
+**clone 档位裁决结论（R6 前置项销账）**：clone 单独立第 10 档（不塞 infra——
+infra 透传无法收口 `--upload-pack`/`--exec`/`-c`/`--config`/`--mirror`/
+`--recurse-submodules`/`--shallow-*` 复合面；完整裁决见 services spec R4-9）。
+形状：位置参 url[+dest]、旗标 ⊆ {`--quiet`,`-q`,`--no-checkout`,`--sparse`,
+`--single-branch`,`--no-tags`} ∪ 名值旗标 {`--origin`/`--branch`/`--depth 正整数`
+（空格或 `=` 形态）} ∪ `--filter=` 前缀闭集 {`blob:none`,`blob:limit=`,`tree:0`}。
+**两层关系**：argv 档管形状、env 层 `allowedProtocols`（本侧唯一 opt-in =
+marketplace `CLI_MARKETPLACE_GIT_PROTOCOL_ALLOWLIST`）管传输协议，独立正交，
+一次网络 clone 必须两层同时声明。
+
+**接线形态总则**：各消费点在 git 执行入口前用 shared 判定器校验 argv
+（`applyGitPostureGateway(posture, args)`，通过时执行网关输出、拒绝时
+EGITPOSTURE 冒泡为编程错误，不强制重构执行面）。runner 注入面以
+`withXxxGitPosture(posture, runner)` 包装实现（**async 包装**：判定器的同步
+拒绝必须成为 runner 契约的 promise 拒绝）。
+
+### R6 闭合表（逐消费点接线形态，2026-10-21 实接线）
+
+| # | 消费点文件 | 调用点 → 档位 | 接线形态 |
 | --- | --- | --- | --- |
-| 1 | `packages/adapters/src/context/git-snapshot.ts`（execGitNoThrow） | 完整 env | 只读：rev-parse/status/log/symbolic-ref/show-ref/config |
-| 2 | `packages/adapters/src/plugins/marketplace.ts`（execGitCommand） | 完整 env（叠在 buildMarketplaceGitEnv 上） | clone/sparse-checkout/checkout（唯一网络面） |
-| 3 | `packages/core/src/worktree/session-worktree-git.ts`（defaultSessionGitRunner） | 完整 env | 会话 worktree 生命周期 + merge 前置只读 |
-| 4 | `packages/cli-workflow/src/workflow-worktree-manager.ts`（defaultGitRunner） | 完整 env | workflow worktree ensure/release/prune |
-| 5 | `packages/cli/src/tui-workspace-git.ts`（runGitCommand spawn） | 完整 env | 只读：symbolic-ref（TUI 分支徽标） |
-| 6 | `packages/core/src/worktree/base-branch-merge.ts`（createHostGitRunnerFromExecutionPort） | env overlay | merge/--abort/rev-parse/show-ref/status/diff |
-| 7 | `packages/cli-workflow/src/workflow-world-read.ts`（runGit） | env overlay | 只读：rev-parse/status --porcelain=v2/diff/log |
-| 8 | `packages/bootstrap/src/app/overnight-controller.ts`（collectGitStatus） | env overlay | 只读：status --porcelain=v1 --branch |
+| 1 | `packages/adapters/src/context/git-snapshot.ts` | rev-parse/status/log/symbolic-ref/show-ref/config → read | `execGitNoThrow` 入口统一 `applyGitPostureGateway("read", args)`（判定在 try 之外，拒绝不进失败降级）；`config user.name` 改写为 `config --get user.name`（等价读形，read 增补只收 --get 精确形）；show-ref 走 R4-8 增补形。**盘点修正：本文件无 clean 调用**（原 R6 表 clean→scrub 行不成立，销账）。 |
+| 2 | `packages/adapters/src/plugins/marketplace.ts` | clone → **clone 档**；sparse-checkout → infra（登记形状：`sparse-checkout set <paths>`，infra 透传 + 位置劫持守卫）；checkout → populate | `execGitCommand` 新增 `{posture?, cwd?}` 选项（缺省 read fail-closed；判定在 try 之外，EGITPOSTURE 不进「git 不可用」降级）；**-C 消除**：原 `["-C",dir,"sparse-checkout"/"checkout",…]` 重构为 cwd=dir + 裸子命令（`-C` 是 infra/populate 档位置劫持拒绝面，cwd 是非劫持等价物）；clone 经 `execGitCloneWithRetry` 声明 clone 档，协议层 opt-in 不变（R3）。 |
+| 3 | `packages/core/src/worktree/session-worktree-git.ts` + `session-worktree-manager.ts`（同一 SessionGitRunner 面；**盘点修正：worktree add/remove/prune 实际在 manager 文件**） | worktree add/remove/prune → infra；list/branch/status/diff/rev-parse/symbolic-ref/show-ref → read；物化 checkout → populate | `withSessionGitPosture` 包装 runner（session-worktree-git.ts 导出，两文件共用）；`worktree add` 全部改为 `--no-checkout` 形状 + 紧随 populate 档 `checkout <branch>`（cwd=worktree）物化——`--no-checkout` 是 infra 档强制形状，物化与检出解耦后 hooks 复合面收口；空索引 checkout 幂等，失败 fail-loud。 |
+| 4 | `packages/cli-workflow/src/workflow-worktree-manager.ts` | worktree add/remove/prune、branch -D → infra；rev-parse/worktree list/branch --show-current/status/rev-list → read；物化 checkout → populate | 模块内 `withGitPosture` 包装（不导出）；同 #3 的 `--no-checkout` + populate checkout 两步；`branch -D` 非 read 列表形，归 infra（登记）。 |
+| 5 | `packages/cli/src/tui-workspace-git.ts` | symbolic-ref → read | **-C 消除**：`GitCommandRunner` options 新增 `cwd`（spawn cwd 承载目录定位），argv 去 `-C` 前缀后经 read 档校验。 |
+| 6 | `packages/core/src/worktree/base-branch-merge.ts` | merge/--abort/commit → **merge 档（两步裁决）**；diff/status/rev-parse/symbolic-ref/show-ref → read | `withHostGitPosture` 包装。**merge 两步裁决（接线时裁决落地）**：单步 `merge --no-edit <branch>` 不落 merge 档任何形状（旗标未钉死 ff 模式、分支名位置参），重写为证据两步流——`rev-parse --verify <ref>^{commit}`（read）取 sha → 首选 `merge --ff-only --no-overwrite-ignore <sha>`（保「可 ff 则 ff」语义）→ 非 ff 回退 `merge --no-ff --no-commit --no-overwrite-ignore -m <msg> <sha>` + `commit -m <msg> --quiet --no-verify`（真实 merge commit，msg 按 git 惯例文案构造）。可观察差异 = no-ff 路径 merge message 由本函数构造（原 git 自动文案）；`--no-overwrite-ignore` = git 缺省行为的显式钉死（零行为增量）；冲突/abort/up-to-date 语义不变。 |
+| 7 | `packages/cli-workflow/src/workflow-world-read.ts` | rev-parse/status/ls-files/diff/log → read | `runGit` 单点 `applyGitPostureGateway("read", argv)`（全部 git.* op 共用；argv 构造在 workflow-git-world-read.ts，全部为只读形状；world.run 任意命令面不叠加——非 git 漏斗消费方，R2）。 |
+| 8 | `packages/bootstrap/src/app/overnight-controller.ts` | status → read | `collectGitStatus` 调用点字面量经 read 档校验（网关注入 `--ignore-submodules=dirty`：子模块脏条目确定化收口， porcelain 解析兼容）。 |
+
+### 行为变化（本项增量，用户可见，登记）
+
+- **read 档重写注入**：status/diff/log/show 输出不再含子模块「脏内容」条目
+  （`--ignore-submodules=dirty`/`--submodule=short`，与 services R4-4 同方向；
+  子模块指针变更仍显示）。影响面：#1 git-snapshot 上下文、#3/#4 dirty 判定、
+  #6 merge 前置检查、#7 world-read、#8 preflight 采集——判定逻辑均不消费
+  子模块脏条目，语义不变。
+- **worktree add 两步化**（#3/#4）：`git worktree add` 不再内联检出，改为
+  `--no-checkout` + 独立 `checkout <branch>` 物化；worktree 创建多一次 spawn，
+  失败窗口内残骸由既有「未登记残骸清理/收割」路径结算（checkout 幂等）。
+- **merge 两步化**（#6）：见闭合表 #6；ff 路径行为不变，no-ff 路径 merge
+  message 文案改由 ACode 按 git 惯例构造。
+- **`-C` 前缀消除**（#2/#5）：argv 不再出现 `-C <dir>`，目录定位全部由
+  spawn cwd 承载；对外可观察行为不变。
+- **EGITPOSTURE 冒泡**：调用点 argv 越出声明档位时抛 `GitPostureError`
+  （编程错误，fail-closed），不降级为「git 失败/不可用」——出现即修代码。
+
+接线纪律（沿用 R5 防再分叉）：判定器唯一所有者 = shared git-posture 模块；
+新增 CLI git 调用点须先在本表登记档位；marketplace 之外新增远端 git 能力须
+同时声明 clone/fetch/push 档与 env 层 `allowedProtocols`（两层关系见上）。
+
+## R7 node-only 模块禁入 shared 根 barrel（2026-10-21，dev:desktop 手验实证）
+
+`git-invocation-env.ts` 顶层 import node:path/node:os，经根 barrel（index.ts
+`export *`）泄进 renderer（vite browser-external 抛错 → React 永不挂载）与
+sandboxed preload（tsup 打入 require("path") → 桥不安装）两个无 node 环境构建面；
+CI 静态门禁不跑 renderer/preload bundle，故全绿仍漏。**规则**：node-only 模块一律
+挂 `@acode/shared` 的 `./node` 桶（managedPolicy 先例），根 barrel 只承载浏览器安全面；
+守卫测试 `packages/shared/test/root-barrel-browser-safety.test.ts` 静态扫描根 barrel
+传递导入图禁 node: 协议与裸内置模块，并钉住 git-invocation-env/managedPolicy 的
+./node 桶落点。消费方（8 个 CLI 侧 node 上下文文件）改从 `@acode/shared/node` 导入。
+
+## 消费点清单（盘点结论，2026-10；协议列 = R3 修订后）
+
+| # | 消费点 | 形态 | 命令面 | 协议（R3 修订后） |
+| --- | --- | --- | --- | --- |
+| 1 | `packages/adapters/src/context/git-snapshot.ts`（execGitNoThrow） | 完整 env | 只读：rev-parse/status/log/symbolic-ref/show-ref/config | 默认全拒 |
+| 2 | `packages/adapters/src/plugins/marketplace.ts`（execGitCommand） | 完整 env（叠在 buildMarketplaceGitEnv 上） | clone/sparse-checkout/checkout（唯一网络面） | **opt-in**：`CLI_MARKETPLACE_GIT_PROTOCOL_ALLOWLIST`（file/http/https/ssh） |
+| 3 | `packages/core/src/worktree/session-worktree-git.ts`（defaultSessionGitRunner） | 完整 env | 会话 worktree 生命周期 + merge 前置只读 | 默认全拒 |
+| 4 | `packages/cli-workflow/src/workflow-worktree-manager.ts`（defaultGitRunner） | 完整 env | workflow worktree ensure/release/prune | 默认全拒 |
+| 5 | `packages/cli/src/tui-workspace-git.ts`（runGitCommand spawn） | 完整 env | 只读：symbolic-ref（TUI 分支徽标） | 默认全拒 |
+| 6 | `packages/core/src/worktree/base-branch-merge.ts`（createHostGitRunnerFromExecutionPort） | env overlay | merge/--abort/rev-parse/show-ref/status/diff | 默认全拒 |
+| 7 | `packages/cli-workflow/src/workflow-world-read.ts`（runGit） | env overlay | 只读：rev-parse/status --porcelain=v2/diff/log | 默认全拒 |
+| 8 | `packages/bootstrap/src/app/overnight-controller.ts`（collectGitStatus） | env overlay | 只读：status --porcelain=v1 --branch | 默认全拒 |
 
 注入替身（deps.git / runCommand 注入点）的测试不受影响；走**默认 runner** 的既有
 功能测试（session-worktree-*、workflow-worktree-isolation）即接线后的真实回归面。
@@ -99,19 +253,65 @@ GIT_NO_LAZY_FETCH=1、GIT_OPTIONAL_LOCKS=0、GIT_ALLOW_PROTOCOL（见 R3）。
   失败，不静默打网络。
 - `GIT_TERMINAL_PROMPT=0` + askpass 双清：marketplace clone 私有仓凭据缺失时
   **立即报错**而非挂死等输入（此前 stdio 未接管时表现为卡到 10 分钟超时）。
+- （R3 修订）协议放行面从全部 8 个消费点收窄到 marketplace 一个调用点；其余
+  消费点均为本地命令，功能零影响。
+- （R4/P4）bare workspace：git-snapshot/TUI 分支徽标一类自动只读面在 bare 仓库
+  祖先发现下从既有 fatal（"must be run in a work tree"）变为 explicit 拒绝文案
+  （"cannot use bare repository"）——现状本就按失败降级，UX 等价（同 services P4
+  实测裁决）。
+- （R4/P4）CLI 面写 index 的命令（worktree add/remove、merge）会把用户 split
+  index 合并为单文件——git 双向兼容无损坏，用户侧 git 按其配置自行恢复（同
+  services P4 登记）。
+- （R4/P4）用户全局 gitconfig 的 rerere/directoryRenames/renameLimit/autocorrect/
+  alias 设置对 CLI 发起的 git 命令不再生效（矩阵 command scope 压制）。
 
 ## 验收场景
 
-`tests/git-invocation-hardening.test.mjs`：
+`apps/acode-cli/tests/git-posture-gateway-wiring.test.mjs`（R6 新增，2026-10-21）：
 
-1. env 层矩阵 + 白名单精确值（file:http:https:ssh；ext/git/fd 必须缺席）。
+1. 8 消费点逐点接线断言（R6 闭合表逐行）：stub runner/port 捕获 argv 断言档位
+   声明与网关重写（read 注入旗标、worktree add `--no-checkout` + populate
+   checkout 序列、merge 两步 argv、`-C` 消除为 cwd）；越形 argv 以 EGITPOSTURE
+   fail-closed。
+2. 功能实证（真实 git，不可用则 skip）：git-snapshot 全链路（含 `config --get`
+   增补形）；marketplace clone 负向控制（stub 二进制缺席时错误为
+   `plugin_git_unavailable` 而非 EGITPOSTURE，证明 argv 过网关后抵达执行面；
+   正向 clone 形状用例在 packages/shared/test/gitPostureGateway.test.ts 的
+   「marketplace clone 形状」用例组）。
+3. 既有回归：session-worktree-enter/merge/lifecycle/reap/fence、
+   session-fleet-worktree、subagent/workflow-worktree-isolation、
+   git-invocation-hardening、overnight-execution、plugin-git-source-pinning、
+   plugin-official-marketplace-alias、tui 两suite全绿
+   （session-worktree-lifecycle 的 merge argv 断言同步更新为两步形状）。
+
+`apps/acode-cli/tests/git-invocation-hardening.test.mjs`（既有守护，按 R3/R4 修订）：
+
+1. env 层矩阵 + 协议默认全拒（`GIT_ALLOW_PROTOCOL=""`；marketplace opt-in 白名单
+   内容与旧全局白名单等值，ext/git/fd 必须缺席）。
 2. config 层：GIT_CONFIG_COUNT 与矩阵一致、逐项对应、win32/POSIX hooksPath 双分支、
-   键闭集与 services R2 表一致（防漂移）、LFS 三键与 credential.helper 有意缺席。
-3. 防串仓：污染 process.env → local env 剥离、矩阵不被继承值覆盖、残留编号键删净。
-4. overlay 形态：set 含全部矩阵键；unset 含 local env 清单与继承编号键。
+   基础 13 键前缀守护与 services R2 表一致（防漂移；全闭集守护移至 shared 侧新
+   测试）、LFS 三键与 credential.helper 有意缺席。
+3. 防串仓 + P2 入站消毒：污染 process.env（含 `GIT_CONFIG_GLOBAL/SYSTEM`、
+   `GIT_ALLOW_PROTOCOL`、`GIT_GRAFT_FILE`、`GIT_NO_REPLACE_OBJECTS`）→ local env
+   剥离、矩阵不被继承值覆盖、残留编号键删净、协议值为 per-call 计算值。
+4. overlay 形态：set 含全部矩阵键与 per-call 协议值；unset 含 local env 清单、
+   继承编号键与 `GIT_ALLOW_PROTOCOL`。
 5. 功能实证（真实 git 临时仓，不可用则 skip）：硬化 env 下 commit 成功且仓库
    pre-commit hook 不执行（对照组执行）；`ext::` 传输被拒且 remote-helper 不执行；
    WorkflowWorktreeManager 默认 runner ensure/release 冒烟（worktree add/remove/prune
    在硬化 env 下功能不受损）。
 6. 既有回归：session-worktree-enter/merge/lifecycle、workflow-worktree-isolation、
    plugin-git-source-pinning 测试全绿。
+
+`packages/shared/test/gitHardeningPresets.test.ts`（R4 新增，镜像 services
+test/gitHardeningPresets.test.ts 测试面）：
+
+1. P2 入站消毒纯函数断言（GLOBAL/SYSTEM 剥离、协议不透传、完整性 env 不被弱化、
+   编号键夹带封死）。
+2. P3/P4 预设矩阵键值 + 全闭集守护（32 键：基础 13 + P3/P4 增量 9 + 协议 1+7）。
+3. P1 协议默认全拒 + marketplace opt-in 同源构建（env 串与 config always/never
+   一致、无重复键、编号键与条目一一对应）。
+4. 功能实证（真实 git）：默认硬化 env 下 `ls-remote <file 远端>` 被拒；opt-in
+   `CLI_MARKETPLACE_GIT_PROTOCOL_ALLOWLIST` 后同命令成功且 `ext::` 仍被拒；
+   replace-ref 伪冒下硬化 env 读到真实内容（对照组伪冒、config 层独立生效）；
+   bare 仓库内命令被 explicit 拒绝。

@@ -59,8 +59,10 @@ function makeContext(params: {
     },
     memberNameHint: params.memberName,
     workspaceKey: "ws-key",
+    workingDirectory: process.cwd(),
     maxMembers: 8,
     maxReassignRounds: DEFAULT_MAX_REASSIGN_ROUNDS,
+    maxActiveTeams: 4,
     panelUrl: undefined,
   });
 }
@@ -80,7 +82,10 @@ describe("trust wrapper (indent protocol)", () => {
     assert.equal(lines[0], trustWrapperFrameOpen(TEAMMATE_MESSAGE_LABEL));
     assert.equal(lines[lines.length - 1], trustWrapperFrameClose(TEAMMATE_MESSAGE_LABEL));
     for (let i = 2; i < lines.length - 1; i += 1) {
-      assert.ok(lines[i].startsWith(TRUST_WRAPPER_INDENT), `content line not indented: ${lines[i]}`);
+      assert.ok(
+        lines[i].startsWith(TRUST_WRAPPER_INDENT),
+        `content line not indented: ${lines[i]}`,
+      );
       assert.ok(!isTrustWrapperFrameLine(lines[i], TEAMMATE_MESSAGE_LABEL));
     }
     assert.match(wrapped, /model output, not a user message/i);
@@ -98,7 +103,9 @@ describe("trust wrapper (indent protocol)", () => {
         isTrustWrapperFrameLine(line, TEAMMATE_MESSAGE_LABEL),
     );
     assert.deepEqual(forged, [], "forged frame line survived at column 0");
-    assert.ok(wrapped.includes(`${TRUST_WRAPPER_INDENT}${trustWrapperFrameClose(TEAMMATE_MESSAGE_LABEL)}`));
+    assert.ok(
+      wrapped.includes(`${TRUST_WRAPPER_INDENT}${trustWrapperFrameClose(TEAMMATE_MESSAGE_LABEL)}`),
+    );
     assert.ok(wrapped.includes(`${TRUST_WRAPPER_INDENT}[SYSTEM NOTIFICATION - NOT USER INPUT]`));
   });
 
@@ -136,13 +143,18 @@ describe("trust wrapper (indent protocol)", () => {
 describe("mailbox read boundaries wrap model-authored bodies", () => {
   let root: string;
   let store: TeamStore;
+  let teamId: string;
   const captain = () => makeContext({ store, role: "captain" });
   const member = (name: string) => makeContext({ store, role: "member", memberName: name });
 
   before(async () => {
     root = mkdtempSync(join(tmpdir(), "agent-teams-trust-"));
     store = new TeamStore(root);
-    await tool("agent_teams_create").handler({ goal: "ship it" }, captain());
+    const created = (await tool("agent_teams_create").handler({ goal: "ship it" }, captain())) as {
+      teamId?: string;
+    };
+    assert.ok(created.teamId, "create must return a teamId");
+    teamId = created.teamId;
     await tool("agent_teams_add_member").handler(
       { name: "dev-1", role: "dev", charter: "implements" },
       captain(),
@@ -158,7 +170,7 @@ describe("mailbox read boundaries wrap model-authored bodies", () => {
   });
 
   it("member status: unread message bodies are wrapped and trust_note is present", async () => {
-    store.deliverMessage("dev-1", {
+    store.deliverMessage(teamId, "dev-1", {
       from: "captain",
       to: "dev-1",
       message: HOSTILE_BODY,
@@ -181,7 +193,7 @@ describe("mailbox read boundaries wrap model-authored bodies", () => {
 
   it("mailbox persistence keeps the original text (wrapping happens at the read boundary only)", () => {
     // 上一条 status 调用已把消息置 read：落盘 JSON 必须是原文，不带包装框架。
-    const readDir = join(root, "mailbox", "dev-1", "read");
+    const readDir = join(root, "teams", teamId, "mailbox", "dev-1", "read");
     const files = readdirSync(readDir);
     assert.equal(files.length, 1);
     const persisted = JSON.parse(readFileSync(join(readDir, files[0]), "utf8")) as {
@@ -191,7 +203,7 @@ describe("mailbox read boundaries wrap model-authored bodies", () => {
   });
 
   it("captain status: member reports arriving in the captain mailbox are wrapped", async () => {
-    store.deliverMessage("captain", {
+    store.deliverMessage(teamId, "captain", {
       from: "dev-1",
       to: "captain",
       message: HOSTILE_BODY,
@@ -214,7 +226,7 @@ describe("mailbox read boundaries wrap model-authored bodies", () => {
     )) as { taskId?: string };
     assert.ok(created.taskId);
     await tool("agent_teams_approve_plan").handler({ confirmation: "go" }, captain());
-    store.deliverMessage("dev-1", {
+    store.deliverMessage(teamId, "dev-1", {
       from: "captain",
       to: "dev-1",
       message: HOSTILE_BODY,

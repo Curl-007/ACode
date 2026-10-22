@@ -1,6 +1,7 @@
 import type { MessageId, MessagePart, MessageWithParts, ToolPart } from "@acode/contracts";
 import {
   parseReadFileStateMetadata,
+  type PersistedReadFileStateMetadata,
   type PersistedReadFileStateTool,
 } from "../tool/read-file-state-metadata.js";
 import { createReadFileStateKey, normalizeReadFileStateMtimeMs } from "../tool/read-file-state.js";
@@ -33,7 +34,10 @@ export async function hydrateReadFileStateFromSession(input: {
   input.readFileState.clear();
   const activeMessages = activeSessionMessages(input.messages, {
     branchCutAfterMessageId: input.branchCutAfterMessageId,
-    includeCompactPreservedSegment: false,
+    // 镜像 live 压缩的修剪口径（specs/post-compact-read-state.md R5）：preserved tail
+    // 里的 Read/Write/Edit 在 resume 后仍对模型可见，状态必须同步恢复；排除它们会让
+    // Edit 对上下文里看得见的读取误报 FILE_NOT_READ（与 live 压缩清空同类的判定缺陷）。
+    includeCompactPreservedSegment: true,
     rewindCreatedMessageId: input.rewindCreatedMessageId,
     rewindKeptMessageIds: input.rewindKeptMessageIds,
     rewindTargetMessageId: input.rewindTargetMessageId,
@@ -96,31 +100,25 @@ function restoreReadToolState(
   part: CompletedToolPart,
   result: ReadFileStateHydrationResult,
 ): boolean {
-  const toolInput = asRecord(part.state.input);
-  if (!toolInput) return false;
-  if (!isHistoricalFullReadWindow(toolInput as HistoricalReadWindow)) {
-    // 真正的 range Read 只在同一 runtime 内作为最新水位，跨 resume 不恢复。
-    result.skippedRangeReadCount++;
-    return false;
-  }
-
   const metadata = parseReadFileStateMetadata(part.state.metadata);
-  if (!metadata) return false;
-  if (metadata.tool !== "Read") return false;
-  if (!isHistoricalFullReadWindow(metadata)) {
+  if (!metadata) {
+    // 无结构化 metadata 的历史读取不能恢复（stale 守卫缺 freshness 依据）；
+    // range 窗口入参的读取单独计数，保留 resume 日志口径。
+    if (isRangeReadToolInput(part.state.input)) result.skippedRangeReadCount++;
     return false;
   }
-  setFullReadState(input.readFileState, metadata.path, metadata.content, {
-    // resume 不再从 provider-visible cat-n 文本恢复 Read 状态；只有带
-    // mtimeMs/revisionId/sizeBytes 的结构化 metadata 才能支撑后续 stale guard。
-    isPartialView: metadata.isPartialView,
-    mtimeMs: normalizeReadFileStateMtimeMs(metadata.mtimeMs),
-    readAt: new Date(metadata.readAtMs),
-    revisionId: metadata.revisionId,
-    sizeBytes: metadata.sizeBytes,
-    sourceTool: metadata.tool,
-  });
+  if (metadata.tool !== "Read") return false;
+  // metadata 自带窗口与 isPartialView（read-file-state-metadata.ts），range/partial
+  // 视图原样恢复，与 live 状态表同口径（specs/post-compact-read-state.md R5）。
+  setRestoredReadState(input.readFileState, metadata);
   return true;
+}
+
+function isRangeReadToolInput(toolInput: unknown): boolean {
+  const record = asRecord(toolInput);
+  if (!record) return false;
+  const offset = typeof record.offset === "number" ? record.offset : 1;
+  return offset > 1 || typeof record.limit === "number";
 }
 
 function restoreMetadataToolState(
@@ -130,55 +128,29 @@ function restoreMetadataToolState(
 ): boolean {
   const metadata = parseReadFileStateMetadata(part.state.metadata);
   if (!metadata || metadata.tool !== expectedTool) return false;
-  if (!isHistoricalFullReadWindow(metadata)) return false;
 
   // Write/Edit 的历史 tool part 不能在 resume 时读取当前磁盘来“补全”状态；
   // 外部手动保存会被误认证为 agent 已读。这里只恢复成功时持久化的完整快照。
-  setFullReadState(readFileState, metadata.path, metadata.content, {
-    isPartialView: metadata.isPartialView,
-    mtimeMs: normalizeReadFileStateMtimeMs(metadata.mtimeMs),
-    readAt: new Date(metadata.readAtMs),
-    revisionId: metadata.revisionId,
-    sizeBytes: metadata.sizeBytes,
-    sourceTool: metadata.tool,
-  });
+  setRestoredReadState(readFileState, metadata);
   return true;
 }
 
-function setFullReadState(
+function setRestoredReadState(
   readFileState: ReadFileStateMap,
-  filePath: string,
-  content: string,
-  metadata: {
-    isPartialView?: boolean;
-    mtimeMs?: number;
-    readAt: Date;
-    revisionId?: string;
-    sizeBytes?: number;
-    sourceTool?: PersistedReadFileStateTool;
-  },
+  metadata: PersistedReadFileStateMetadata,
 ): void {
-  readFileState.set(createReadFileStateKey(filePath, 1, undefined), {
-    path: filePath,
-    content,
-    offset: undefined,
-    limit: undefined,
-    isPartialView: metadata.isPartialView ?? false,
-    readAt: metadata.readAt,
-    sourceTool: metadata.sourceTool,
+  readFileState.set(createReadFileStateKey(metadata.path, metadata.offset, metadata.limit), {
+    path: metadata.path,
+    content: metadata.content,
+    offset: metadata.offset,
+    limit: metadata.limit,
+    isPartialView: metadata.isPartialView,
+    readAt: new Date(metadata.readAtMs),
+    sourceTool: metadata.tool,
     revisionId: metadata.revisionId,
-    mtimeMs: metadata.mtimeMs,
-    sizeBytes: metadata.sizeBytes ?? Buffer.byteLength(content, "utf8"),
+    mtimeMs: normalizeReadFileStateMtimeMs(metadata.mtimeMs),
+    sizeBytes: metadata.sizeBytes,
   });
-}
-
-interface HistoricalReadWindow {
-  limit?: number;
-  offset?: number;
-}
-
-function isHistoricalFullReadWindow({ offset, limit }: HistoricalReadWindow): boolean {
-  return (offset ?? 1) <= 1 && limit === undefined;
 }
 
 function dedupeParts(parts: MessagePart[]): MessagePart[] {

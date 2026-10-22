@@ -10,7 +10,17 @@ import {
   type FormEvent,
   type ReactNode,
 } from "react";
-import { Bot, Check, ListChecks, Minus, Plus, Trash2 } from "lucide-react";
+import {
+  Bot,
+  Check,
+  ListChecks,
+  MoreHorizontal,
+  Plus,
+  Sparkles,
+  Trash2,
+  Undo2,
+  X,
+} from "lucide-react";
 import { completeNewModelSelection } from "@acode/provider";
 import {
   TID_SUBAGENT_BUILT_IN_MODEL_TRIGGER,
@@ -37,6 +47,13 @@ import {
   SelectValue,
 } from "@/components/ui/select.js";
 import { Switch } from "@/components/ui/switch.js";
+import { Checkbox } from "@/components/ui/checkbox.js";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu.js";
 import { SettingsSearchInput } from "@/settings/SettingsSearchInput.js";
 import { SettingsFormActions } from "@/settings/SettingsFormActions.js";
 import { toast } from "@/components/ui/toast.js";
@@ -57,6 +74,7 @@ import {
   resolveModelDisplayName,
 } from "@/lib/modelSelectionGroups.js";
 import { resolveModelThoughtOption } from "@/lib/modelThoughtOption.js";
+import { thoughtLevelLabelId } from "@/chat-input-toolbar/thoughtLevelOptions.js";
 import { parseModelPickerValue } from "@/lib/acodeSessionProjection.js";
 import { encodeCustomModelValue } from "@/lib/acodeCustomModelValue.js";
 import { SUBAGENT_COLORS, SUBAGENT_COLOR_CLASS } from "@/lib/subagentColors.js";
@@ -77,12 +95,15 @@ import {
   buildUserAgentBatchConfig,
   createEmptyBatchResult,
   isBatchApplicableAgent,
+  isSubagentSpeedInvalid,
   resolveBatchApplyTargets,
   resolveBatchWritePath,
   resolveGroupBatchCheckState,
+  resolveSubagentSpeedOptionState,
   type SubagentModelBatchResult,
   type SubagentModelBatchValue,
 } from "@/settings/SubagentModelBatchApply.js";
+import { SubagentSpeedField, type SubagentSpeedFieldState } from "@/settings/SubagentSpeedField.js";
 import { refreshLoadedSubagentsStoreForWorkspace } from "@/store/subagentsStore.js";
 import {
   PluginScopeMenu,
@@ -122,8 +143,13 @@ const TOOL_OPTIONS = [
 const TOOL_OPTION_SET = new Set<string>(TOOL_OPTIONS);
 const RISKY_TOOLS = new Set<string>(["Bash", "Edit", "Write"]);
 
-// 批量操作条的目标值由其内部暂存并在 onApply 带回完整结构体，父层无需中转每次变更。
-const noopBatchValueChange = () => {};
+// 源仓新增的批量 test id 定义在 packages/shared/src/test-ids.ts；本任务限定只改
+// packages/ui，这里用局部字面量保持同一 data-testid 契约（E2E 可按字面量选取）。
+const TID_SUBAGENT_BATCH_TRIGGER = "subagent-batch-trigger";
+const TID_SUBAGENT_BATCH_ROW_CHECKBOX = "subagent-batch-row-checkbox";
+const TID_SUBAGENT_GROUP_MENU_TRIGGER = "subagent-group-menu-trigger";
+const TID_SUBAGENT_BATCH_SELECT_ALL = "subagent-batch-select-all";
+const TID_SUBAGENT_BATCH_GROUP_SELECT_ALL = "subagent-batch-group-select-all";
 
 interface AgentGroups {
   builtIn: AgentSummary[];
@@ -143,6 +169,7 @@ interface SubagentFormInitialState {
   color: AgentColor;
   model: string;
   thoughtLevel?: string;
+  speed?: string;
   injectAgentsMd: boolean;
   inheritAllTools: boolean;
   selectedTools: string[];
@@ -247,15 +274,24 @@ function toSubagentModelValue(selection: ModelSelection | undefined): string {
 function toSubagentModelSelection(
   model: string | undefined,
   thoughtLevel?: string,
+  speed?: string,
 ): ModelSelection | undefined {
   const persistedModel = model ? toPersistedModel(model) : undefined;
   if (!persistedModel) return undefined;
   const selection = parseModelPickerValue(persistedModel);
   const reasoningLevel = thoughtLevel?.trim();
+  const normalizedSpeed = speed?.trim();
   return {
     providerId: selection.providerId,
     modelId: selection.modelId,
-    ...(reasoningLevel ? { options: { reasoningLevel } } : {}),
+    ...(reasoningLevel || normalizedSpeed
+      ? {
+          options: {
+            ...(reasoningLevel ? { reasoningLevel } : {}),
+            ...(normalizedSpeed ? { speed: normalizedSpeed } : {}),
+          },
+        }
+      : {}),
   };
 }
 
@@ -356,6 +392,7 @@ function createSubagentFormInitialState(
     color: initial?.color ?? "yellow",
     model: toSubagentModelValue(initial?.modelSelection),
     thoughtLevel: initial?.modelSelection?.options?.reasoningLevel,
+    speed: initial?.modelSelection?.options?.speed,
     injectAgentsMd: initial?.injectAgentsMd ?? true,
     inheritAllTools: initial?.tools === undefined || initial.tools.length === 0,
     selectedTools: getKnownTools(initial?.tools),
@@ -492,10 +529,14 @@ function ToolCheckbox({
 function BatchRowCheckbox({
   checked,
   label,
+  agentName,
+  disabled,
   onToggle,
 }: {
   checked: boolean;
   label: string;
+  agentName: string;
+  disabled: boolean;
   onToggle: () => void;
 }) {
   return (
@@ -504,8 +545,13 @@ function BatchRowCheckbox({
       role="checkbox"
       aria-checked={checked}
       aria-label={label}
+      data-testid={testId(TID_SUBAGENT_BATCH_ROW_CHECKBOX, agentName)}
+      disabled={disabled}
       onClick={onToggle}
-      className="flex size-6 shrink-0 items-center justify-center rounded-md transition-colors hover:bg-hover"
+      className={cn(
+        "flex size-6 shrink-0 items-center justify-center rounded-md transition-colors",
+        disabled ? "cursor-not-allowed opacity-60" : "hover:bg-hover",
+      )}
     >
       <span
         className={cn(
@@ -521,47 +567,105 @@ function BatchRowCheckbox({
   );
 }
 
-/** 批量模式分组头三态复选框：全选/清空该分组内全部可批量行。 */
-function BatchGroupCheckbox({
-  label,
-  state,
+/**
+ * 分组头「…」批量菜单（方案 B）：统一设置模型 / 本组恢复继承默认。
+ * 仅当组内存在可批量行时可用；菜单只发出意图，落盘由调用方逐行串行执行。
+ */
+function SubagentGroupBatchMenu({
+  groupKey,
+  groupName,
+  overridableCount,
+  disabled,
+  onSetModels,
+  onResetInherit,
+}: {
+  groupKey: string;
+  groupName: string;
+  overridableCount: number;
+  disabled: boolean;
+  onSetModels: () => void;
+  onResetInherit: () => void;
+}) {
+  const { intl } = useACodeIntl();
+  const menuDisabled = disabled || overridableCount === 0;
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          type="button"
+          variant="outline"
+          size="icon-md"
+          data-testid={testId(TID_SUBAGENT_GROUP_MENU_TRIGGER, groupKey)}
+          aria-label={intl.formatMessage(
+            { id: "settings.subagents.batch.groupMenu.aria" },
+            { group: groupName },
+          )}
+          disabled={menuDisabled}
+        >
+          <MoreHorizontal aria-hidden="true" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuItem disabled={menuDisabled} onSelect={onSetModels}>
+          <Sparkles aria-hidden="true" />
+          {intl.formatMessage(
+            { id: "settings.subagents.batch.groupMenu.setModels" },
+            { count: String(overridableCount) },
+          )}
+        </DropdownMenuItem>
+        <DropdownMenuItem disabled={menuDisabled} onSelect={onResetInherit}>
+          <Undo2 aria-hidden="true" />
+          {intl.formatMessage(
+            { id: "settings.subagents.batch.groupMenu.resetInherit" },
+            { count: String(overridableCount) },
+          )}
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+/**
+ * 批量模式下的分组头全选/全不选复选框（三态：空选/半选/全选）。
+ * 只勾选组内可批量行；组内没有可批量行时禁用。
+ */
+function SubagentGroupSelectAll({
+  groupKey,
+  groupName,
+  checkState,
   disabled,
   onToggle,
 }: {
-  label: string;
-  state: "unchecked" | "checked" | "indeterminate";
+  groupKey: string;
+  groupName: string;
+  checkState: "unchecked" | "checked" | "indeterminate";
   disabled: boolean;
-  onToggle: () => void;
+  onToggle: (checked: boolean) => void;
 }) {
+  const { intl } = useACodeIntl();
   return (
-    <button
-      type="button"
-      role="checkbox"
-      aria-checked={state === "checked" ? true : state === "indeterminate" ? "mixed" : false}
-      aria-label={label}
-      data-batch-check-state={state}
-      disabled={disabled}
-      onClick={onToggle}
+    <label
+      data-testid={testId(TID_SUBAGENT_BATCH_GROUP_SELECT_ALL, groupKey)}
+      data-batch-check-state={checkState}
       className={cn(
-        "flex size-6 shrink-0 items-center justify-center self-center rounded-md transition-colors",
-        disabled ? "cursor-not-allowed opacity-60" : "hover:bg-hover",
+        "flex min-w-0 select-none items-center gap-2 text-ui-base font-medium text-foreground",
+        disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer",
+        !disabled && checkState === "unchecked" && "text-foreground-subtle",
       )}
     >
-      <span
-        className={cn(
-          "flex size-4 items-center justify-center rounded-sm border transition-colors",
-          state === "unchecked"
-            ? "border-input-border bg-input text-transparent"
-            : "border-primary bg-primary text-primary-foreground",
+      <Checkbox
+        checked={
+          checkState === "checked" ? true : checkState === "indeterminate" ? "indeterminate" : false
+        }
+        disabled={disabled}
+        aria-label={intl.formatMessage(
+          { id: "settings.subagents.batch.groupSelectAll.aria" },
+          { group: groupName },
         )}
-      >
-        {state === "checked" ? (
-          <Check className="size-3" />
-        ) : state === "indeterminate" ? (
-          <Minus className="size-3" />
-        ) : null}
-      </span>
-    </button>
+        onCheckedChange={(checked) => onToggle(checked === true)}
+      />
+      {intl.formatMessage({ id: "settings.subagents.batch.groupSelectAll.label" })}
+    </label>
   );
 }
 
@@ -575,6 +679,7 @@ function AgentListRow({
   modelSelectGroups,
   batchMode,
   batchChecked,
+  batchApplying,
   onBatchCheckChange,
   onModelOverrideChange,
   onDelete,
@@ -590,10 +695,11 @@ function AgentListRow({
   modelSelectGroups: readonly ModelSelectGroup[];
   batchMode: boolean;
   batchChecked: boolean;
+  batchApplying: boolean;
   onBatchCheckChange: (agent: AgentSummary, checked: boolean) => void;
   onModelOverrideChange: (
     agent: AgentSummary,
-    config: { model?: string; thoughtLevel?: string },
+    config: { model?: string; thoughtLevel?: string; speed?: string },
   ) => Promise<void>;
   onDelete: (agent: AgentSummary) => void;
   onEdit: (agent: AgentSummary) => void;
@@ -603,7 +709,10 @@ function AgentListRow({
   const editable = isEditableUserAgent(agent);
   const showEnabledToggle = supportsEnabledToggle(agent);
   // 批量模式下行进入选择语义：不再进编辑表单，行内写控件一并禁用，避免边选边写。
-  const checkboxVisible = batchMode && isBatchApplicableAgent(agent);
+  // 批量应用期间行选择一并禁用：行点击不切换选中，复选框保留在行内但置灰。
+  const checkboxVisible = batchMode && isBatchApplicableAgent(agent) && !batchApplying;
+  const checkboxRendered = batchMode && isBatchApplicableAgent(agent);
+  const batchCheckboxDisabled = batchApplying || !isBatchApplicableAgent(agent);
   const controlsDisabled = isOperating || batchMode;
   const rowEditable = editable && !isOperating && !batchMode;
   const hasModelOverrideControl = supportsModelOverride(agent);
@@ -621,6 +730,21 @@ function AgentListRow({
   const toolsLabel = allowsAllTools(agent.tools)
     ? intl.formatMessage({ id: "settings.subagents.tools.all" })
     : intl.formatMessage({ id: "settings.subagents.toolsCount" }, { count: String(toolCount) });
+  // 自建行的行内没有模型控件，档位只写在定义文件里；徽标同步展示，否则批量设置后
+  // 界面看起来「没生效」。档位词条与工具栏共用 thoughtLevelLabelId，未知值原样显示。
+  const thoughtLevelValue = agent.modelSelection?.options?.reasoningLevel?.trim();
+  const thoughtLevelLabel = thoughtLevelValue ? thoughtLevelLabelId(thoughtLevelValue) : undefined;
+  const thoughtLevelBadge = thoughtLevelLabel
+    ? intl.formatMessage({ id: thoughtLevelLabel })
+    : thoughtLevelValue;
+  // speed 徽标与工具栏共用 chat.toolbar.speed.* 文案；未知值原样展示。
+  const speedValue = agent.modelSelection?.options?.speed?.trim();
+  const speedBadge =
+    speedValue === "fast"
+      ? intl.formatMessage({ id: "chat.toolbar.speed.fast" })
+      : speedValue === "standard"
+        ? intl.formatMessage({ id: "chat.toolbar.speed.standard" })
+        : speedValue;
   const displayName =
     agent.source === "plugin" && agent.name.includes(":")
       ? agent.name.slice(agent.name.indexOf(":") + 1)
@@ -632,7 +756,8 @@ function AgentListRow({
       className={cn(
         "grid cursor-default items-center gap-3 px-4 py-3 transition-colors",
         rowEditable && "hover:bg-hover",
-        checkboxVisible
+        batchChecked && "bg-selected",
+        checkboxRendered
           ? hasModelOverrideControl
             ? "grid-cols-[auto_auto_minmax(0,1fr)] sm:grid-cols-[auto_auto_minmax(0,1fr)_auto]"
             : "grid-cols-[auto_auto_minmax(0,1fr)_auto]"
@@ -648,13 +773,15 @@ function AgentListRow({
             : undefined,
       )}
     >
-      {checkboxVisible ? (
+      {checkboxRendered ? (
         <BatchRowCheckbox
           checked={batchChecked}
           label={intl.formatMessage(
             { id: "settings.subagents.batch.rowToggleAria" },
             { name: agent.name },
           )}
+          agentName={agent.name}
+          disabled={batchCheckboxDisabled}
           onToggle={() => onBatchCheckChange(agent, !batchChecked)}
         />
       ) : null}
@@ -682,6 +809,10 @@ function AgentListRow({
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           <span className="truncate text-ui-base font-medium text-foreground">{displayName}</span>
           {showModelBadge ? <AgentBadge>{modelLabel}</AgentBadge> : null}
+          {showModelBadge && thoughtLevelBadge ? (
+            <AgentBadge>{thoughtLevelBadge}</AgentBadge>
+          ) : null}
+          {showModelBadge && speedBadge ? <AgentBadge>{speedBadge}</AgentBadge> : null}
           <AgentBadge>{toolsLabel}</AgentBadge>
         </div>
         <p className="mt-0.5 line-clamp-2 text-ui-sm text-foreground-subtle">
@@ -753,7 +884,7 @@ function SubagentModelOverrideControl({
   modelSelectionLoading: boolean;
   onModelOverrideChange: (
     agent: AgentSummary,
-    config: { model?: string; thoughtLevel?: string },
+    config: { model?: string; thoughtLevel?: string; speed?: string },
   ) => Promise<void>;
 }) {
   const recommendStartPlan = useStartPlanRecommendation(modelSelectionView, "subagent");
@@ -762,11 +893,13 @@ function SubagentModelOverrideControl({
   const [config, setConfig] = useState<{
     model?: string;
     thoughtLevel?: string;
+    speed?: string;
   }>(() => ({
     model: agent.modelSelectionOverride
       ? toSubagentModelValue(agent.modelSelectionOverride)
       : undefined,
     thoughtLevel: agent.modelSelectionOverride?.options?.reasoningLevel,
+    speed: agent.modelSelectionOverride?.options?.speed,
   }));
   const defaultLabel = intl.formatMessage({
     id: "settings.subagents.model.defaultMain",
@@ -788,6 +921,16 @@ function SubagentModelOverrideControl({
     modelAvailable &&
     !isSubagentThoughtLevelAvailable(thoughtLevelState, config.thoughtLevel),
   );
+  const speedState: SubagentSpeedFieldState = useMemo(
+    () =>
+      resolveSubagentSpeedOptionState({
+        modelSelectionView,
+        modelSelection: config.model ? parseModelPickerValue(config.model) : undefined,
+        modelSelectionLoading,
+      }),
+    [config.model, modelSelectionLoading, modelSelectionView],
+  );
+  const speedInvalid = isSubagentSpeedInvalid(speedState, config.speed);
   // Coding Plan 连接切换后，Builtin 的旧模型可能不再属于当前候选；仅隐藏 reasoning
   // 会让用户误以为模型仍有效，因此触发器改用“选择模型”提示，候选列表仍只展示当前连接。
   const triggerLabel =
@@ -806,11 +949,12 @@ function SubagentModelOverrideControl({
         ? toSubagentModelValue(agent.modelSelectionOverride)
         : undefined,
       thoughtLevel: agent.modelSelectionOverride?.options?.reasoningLevel,
+      speed: agent.modelSelectionOverride?.options?.speed,
     });
   }, [agent.modelSelectionOverride]);
 
   const persistConfig = useCallback(
-    async (nextConfig: { model?: string; thoughtLevel?: string }) => {
+    async (nextConfig: { model?: string; thoughtLevel?: string; speed?: string }) => {
       if (pending) {
         return;
       }
@@ -820,7 +964,11 @@ function SubagentModelOverrideControl({
       try {
         let selectedConfig = nextConfig;
         if (nextConfig.model && nextConfig.model !== config.model) {
-          const selection = toSubagentModelSelection(nextConfig.model, nextConfig.thoughtLevel);
+          const selection = toSubagentModelSelection(
+            nextConfig.model,
+            nextConfig.thoughtLevel,
+            nextConfig.speed,
+          );
           const chosen = selection ? await recommendStartPlan(selection) : null;
           if (!chosen) {
             setConfig(previousConfig);
@@ -829,6 +977,7 @@ function SubagentModelOverrideControl({
           selectedConfig = {
             model: toSubagentModelValue(chosen),
             thoughtLevel: chosen.options?.reasoningLevel,
+            speed: chosen.options?.speed,
           };
         }
         await onModelOverrideChange(agent, selectedConfig);
@@ -852,22 +1001,23 @@ function SubagentModelOverrideControl({
         nextValue,
         modelSelectionLoading,
       );
+      const completed =
+        nextModel && modelSelectionView
+          ? completeNewModelSelection(modelSelectionView, parseModelPickerValue(nextModel))
+          : undefined;
       const nextThoughtState = resolveSubagentThoughtOptionState({
         model: nextValue,
         modelAvailable: nextModelAvailable,
         modelSelectionView,
         modelSelectionLoading,
-        thoughtLevel:
-          nextModel && modelSelectionView
-            ? completeNewModelSelection(modelSelectionView, parseModelPickerValue(nextModel))
-                ?.options?.reasoningLevel
-            : undefined,
+        thoughtLevel: completed?.options?.reasoningLevel,
       });
       // 控件会展示 Registry 的正常默认档位，持久化必须保存同一个值，
-      // 不能让界面有值而执行 Selection 缺少 reasoningLevel。
+      // 不能让界面有值而执行 Selection 缺少 reasoningLevel / speed。
       void persistConfig({
         model: nextModel,
         thoughtLevel: resolvedSubagentThoughtLevel(nextThoughtState),
+        speed: completed?.options?.speed,
       });
     },
     [config.model, modelGroups, modelSelectionLoading, modelSelectionView, persistConfig],
@@ -922,15 +1072,39 @@ function SubagentModelOverrideControl({
             if (thoughtLevel === config.thoughtLevel) {
               return;
             }
-            void persistConfig({ model: config.model, thoughtLevel });
+            void persistConfig({ model: config.model, thoughtLevel, speed: config.speed });
           }}
         />
+        {speedState.kind === "supported" || speedState.kind === "unknown" ? (
+          <SubagentSpeedField
+            intl={intl}
+            state={speedState}
+            value={config.speed}
+            disabled={disabled || pending}
+            labelVisibilityClassName="hidden sm:inline-flex"
+            onValueCommit={(nextSpeed) => {
+              if (nextSpeed === config.speed) {
+                return;
+              }
+              void persistConfig({
+                model: config.model,
+                thoughtLevel: config.thoughtLevel,
+                speed: nextSpeed,
+              });
+            }}
+          />
+        ) : null}
       </div>
       {thoughtLevelInvalid ? (
         <span className="text-ui-sm text-destructive">
           {intl.formatMessage({
             id: "settings.subagents.form.validation.thoughtLevelUnavailable",
           })}
+        </span>
+      ) : null}
+      {speedInvalid ? (
+        <span className="text-ui-sm text-destructive">
+          {intl.formatMessage({ id: "settings.subagents.form.validation.speedUnavailable" })}
         </span>
       ) : null}
     </div>
@@ -977,6 +1151,7 @@ function SubagentForm({
   const [color, setColor] = useState<AgentColor>(initialFormState.color);
   const [model, setModel] = useState(initialFormState.model);
   const [thoughtLevel, setThoughtLevel] = useState(initialFormState.thoughtLevel);
+  const [speed, setSpeed] = useState(initialFormState.speed);
   const [injectAgentsMd, setInjectAgentsMd] = useState(initialFormState.injectAgentsMd);
   const [inheritAllTools, setInheritAllTools] = useState(initialFormState.inheritAllTools);
   const [selectedTools, setSelectedTools] = useState<string[]>(initialFormState.selectedTools);
@@ -1000,6 +1175,7 @@ function SubagentForm({
           ? completeNewModelSelection(modelSelectionView, parseModelPickerValue(identity))
           : undefined;
       setThoughtLevel(selected?.options?.reasoningLevel ?? "");
+      setSpeed(selected?.options?.speed ?? "");
       setModelError(null);
     },
     [model, modelSelectionView],
@@ -1039,6 +1215,16 @@ function SubagentForm({
     modelAvailable &&
     !isSubagentThoughtLevelAvailable(thoughtLevelState, thoughtLevel),
   );
+  const formSpeedState: SubagentSpeedFieldState = useMemo(
+    () =>
+      resolveSubagentSpeedOptionState({
+        modelSelectionView,
+        modelSelection: persistedModel ? parseModelPickerValue(persistedModel) : undefined,
+        modelSelectionLoading,
+      }),
+    [modelSelectionLoading, modelSelectionView, persistedModel],
+  );
+  const speedInvalid = isSubagentSpeedInvalid(formSpeedState, speed);
   const trimmedName = name.trim();
   const canSave = Boolean(
     trimmedName.length >= 3 &&
@@ -1047,7 +1233,8 @@ function SubagentForm({
     description.trim() &&
     systemPrompt.trim() &&
     modelAvailable &&
-    !thoughtLevelInvalid,
+    !thoughtLevelInvalid &&
+    !speedInvalid,
   );
   const selectedColorIndex = Math.max(0, AGENT_COLORS.indexOf(color));
 
@@ -1065,6 +1252,7 @@ function SubagentForm({
     setColor(nextInitialState.color);
     setModel(nextInitialState.model);
     setThoughtLevel(nextInitialState.thoughtLevel);
+    setSpeed(nextInitialState.speed);
     setInjectAgentsMd(nextInitialState.injectAgentsMd);
     setInheritAllTools(nextInitialState.inheritAllTools);
     setSelectedTools(nextInitialState.selectedTools);
@@ -1130,6 +1318,9 @@ function SubagentForm({
     if (thoughtLevelInvalid) {
       valid = false;
     }
+    if (speedInvalid) {
+      valid = false;
+    }
     return valid;
   };
 
@@ -1153,7 +1344,7 @@ function SubagentForm({
     if (!validate()) {
       return;
     }
-    let selection = toSubagentModelSelection(persistedModel, thoughtLevel);
+    let selection = toSubagentModelSelection(persistedModel, thoughtLevel, speed);
     if (hasExplicitModelChanged(initial?.modelSelection, selection)) {
       const chosen = await recommendStartPlan(selection);
       if (!chosen) return;
@@ -1274,12 +1465,29 @@ function SubagentForm({
               labelVisibilityClassName="inline-flex min-w-0"
               onValueCommit={setThoughtLevel}
             />
+            {formSpeedState.kind === "supported" || formSpeedState.kind === "unknown" ? (
+              <SubagentSpeedField
+                intl={intl}
+                state={formSpeedState}
+                value={speed}
+                disabled={saving}
+                labelVisibilityClassName="inline-flex min-w-0"
+                onValueCommit={setSpeed}
+              />
+            ) : null}
           </div>
           {modelError ? <p className="text-ui-base text-destructive">{modelError}</p> : null}
           {thoughtLevelInvalid ? (
             <p className="text-ui-base text-destructive">
               {intl.formatMessage({
                 id: "settings.subagents.form.validation.thoughtLevelUnavailable",
+              })}
+            </p>
+          ) : null}
+          {speedInvalid ? (
+            <p className="text-ui-base text-destructive">
+              {intl.formatMessage({
+                id: "settings.subagents.form.validation.speedUnavailable",
               })}
             </p>
           ) : null}
@@ -1669,14 +1877,21 @@ export function SubagentsSection({ onManageModels }: SubagentsSectionProps) {
   );
 
   const handleModelOverrideChange = useCallback(
-    async (agent: AgentSummary, config: { model?: string; thoughtLevel?: string }) => {
+    async (
+      agent: AgentSummary,
+      config: { model?: string; thoughtLevel?: string; speed?: string },
+    ) => {
       const agentName = getBuiltInSubagentName(agent);
       if (!agentName && agent.source !== "plugin") {
         return;
       }
       setOperatingAgentId(agent.id);
       try {
-        const modelSelection = toSubagentModelSelection(config.model, config.thoughtLevel);
+        const modelSelection = toSubagentModelSelection(
+          config.model,
+          config.thoughtLevel,
+          config.speed,
+        );
         if (agentName) {
           await subagentsService.setBuiltInModelOverride({ agentName, modelSelection });
         } else {
@@ -1700,126 +1915,205 @@ export function SubagentsSection({ onManageModels }: SubagentsSectionProps) {
     [refresh, refreshMentionStore, subagentsService],
   );
 
-  const enterBatchMode = useCallback(() => {
-    setBatchResult(null);
-    setBatchProgress(null);
-    setBatchMode(true);
-  }, []);
+  const recommendBatchStartPlan = useStartPlanRecommendation(modelSelectionView, "subagent");
 
-  const exitBatchMode = useCallback(() => {
-    setBatchMode(false);
+  const enterBatchMode = useCallback(() => {
+    setBatchMode(true);
     setSelectedBatchIds(new Set());
     setBatchResult(null);
     setBatchProgress(null);
   }, []);
 
-  const handleBatchCheckChange = useCallback((agent: AgentSummary, checked: boolean) => {
-    setSelectedBatchIds((current) => {
-      const next = new Set(current);
-      if (checked) {
-        next.add(agent.id);
-      } else {
-        next.delete(agent.id);
-      }
-      return next;
-    });
-  }, []);
+  const exitBatchMode = useCallback(() => {
+    if (batchApplying) {
+      return;
+    }
+    setBatchMode(false);
+    setSelectedBatchIds(new Set());
+    setBatchResult(null);
+    setBatchProgress(null);
+  }, [batchApplying]);
 
-  // 分组三态勾选：全选补齐可批量行，已全选则清空该分组选中。
+  const handleBatchCheckChange = useCallback(
+    (agent: AgentSummary, checked: boolean) => {
+      // 应用进行中禁止改选中：行点击/复选框在 UI 层已禁用，这里再兜底一次。
+      if (batchApplying || !isBatchApplicableAgent(agent)) {
+        return;
+      }
+      setSelectedBatchIds((current) => {
+        const next = new Set(current);
+        if (checked) {
+          next.add(agent.id);
+        } else {
+          next.delete(agent.id);
+        }
+        return next;
+      });
+      setBatchResult(null);
+    },
+    [batchApplying],
+  );
+
+  // 分组全选/全不选：批量模式下勾选/取消该组全部可批量行。
   const handleBatchGroupCheck = useCallback(
-    (groupAgents: readonly AgentSummary[], state: "unchecked" | "checked" | "indeterminate") => {
+    (groupAgents: readonly AgentSummary[], checked: boolean) => {
       const selectable = resolveBatchApplyTargets(groupAgents);
+      if (selectable.length === 0) {
+        return;
+      }
       setSelectedBatchIds((current) => {
         const next = new Set(current);
         for (const target of selectable) {
-          if (state === "checked") {
-            next.delete(target.id);
-          } else {
+          if (checked) {
             next.add(target.id);
+          } else {
+            next.delete(target.id);
           }
         }
         return next;
       });
+      setBatchResult(null);
     },
     [],
   );
 
   /**
-   * 批量应用唯一执行点（specs/subagent-batch-edit.md R1/R4）：逐行串行，按
-   * resolveBatchWritePath 分流到既有 service 写路径——覆盖行走
-   * setBuiltInModelOverride / setPluginAgentModelOverride，自建行走 updateAgent
-   * （载荷 buildUserAgentBatchConfig，以当前行投影为基线仅替换模型维度）。
-   * 单行失败不中断批次、失败行保留原值；结束后一次性刷新列表与 mention store。
-   * 与单项编辑的刻意差异：不触发 start-plan 推荐弹窗——那是逐行交互式增值推荐，
-   * 批量目标值已是显式选择，逐行弹窗会打断串行应用。
+   * 批量场景下的单行落盘：内置/插件行走行内覆盖（handleModelOverrideChange），
+   * 自建/工作区 agent 走 updateAgent 重写定义文件 modelSelection（其余字段原样保留）。
+   * 两条路径最终都落到 refresh 投影，保持唯一已确认状态。
+   * value 的 modelSelection 已是解析好的结构体（不传 picker 编码串再手写切分）；
+   * 顶层的 thoughtLevel 必须显式带上，否则覆盖路径会回落到选模型时的 Registry 默认档位。
    */
-  const applyBatchValue = useCallback(
-    async (targets: readonly AgentSummary[], value: SubagentModelBatchValue) => {
-      if (targets.length === 0 || batchApplying) {
+  const applyBatchTarget = useCallback(
+    async (agent: AgentSummary, value: SubagentModelBatchValue) => {
+      if (resolveBatchWritePath(agent) === "override") {
+        await handleModelOverrideChange(agent, {
+          model: value.modelSelection
+            ? encodeCustomModelValue(value.modelSelection.providerId, value.modelSelection.modelId)
+            : undefined,
+          thoughtLevel: value.thoughtLevel ?? value.modelSelection?.options?.reasoningLevel,
+          speed: value.speed ?? value.modelSelection?.options?.speed,
+        });
         return;
       }
-      setBatchApplying(true);
-      setBatchResult(null);
-      setBatchProgress({ done: 0, total: targets.length });
-      const result = createEmptyBatchResult();
-      for (let index = 0; index < targets.length; index += 1) {
-        const target = targets[index];
-        if (!target) {
-          continue;
-        }
-        setBatchProgress({ done: index, total: targets.length });
-        try {
-          if (resolveBatchWritePath(target) === "override") {
-            const agentName = getBuiltInSubagentName(target);
-            if (agentName) {
-              await subagentsService.setBuiltInModelOverride({
-                agentName,
-                modelSelection: value.modelSelection,
-              });
-            } else {
-              // 稳定 ID 不含插件版本；与单项覆盖路径同一写通道。
-              await subagentsService.setPluginAgentModelOverride({
-                agentId: target.id,
-                modelSelection: value.modelSelection,
-              });
-            }
-          } else {
-            await subagentsService.updateAgent({
-              agentId: target.id,
-              config: buildUserAgentBatchConfig(target, value),
-              oldFilePath: target.path,
-              provider: ACODE_AGENT_PROVIDER,
-              scope: target.scope === "workspace" ? "workspace" : "user",
-              workspacePath: target.projectPath ?? targetWorkspacePath ?? undefined,
-              workspaceIdentity: targetWorkspaceIdentity,
-            });
-          }
-          result.succeeded.push(target.name);
-        } catch (applyError) {
-          result.failed.push({
-            name: target.name,
-            message: applyError instanceof Error ? applyError.message : String(applyError),
-          });
-        }
+      setOperatingAgentId(agent.id);
+      try {
+        await subagentsService.updateAgent({
+          agentId: agent.id,
+          config: buildUserAgentBatchConfig(agent, value),
+          oldFilePath: agent.path,
+          provider: ACODE_AGENT_PROVIDER,
+          scope: agent.scope === "workspace" ? "workspace" : "user",
+          workspacePath: agent.projectPath ?? targetWorkspacePath ?? undefined,
+          workspaceIdentity: targetWorkspaceIdentity,
+        });
+      } catch (changeError) {
+        setOperatingAgentId(null);
+        throw changeError;
       }
-      setBatchProgress(null);
-      setBatchResult(result);
-      setBatchApplying(false);
       try {
         await Promise.all([refresh(), refreshMentionStore()]);
       } catch (refreshError) {
-        // 逐行持久化成功即为提交点；投影刷新失败只提示，不回滚磁盘状态（与单项覆盖同口径）。
         toast(refreshError instanceof Error ? refreshError.message : String(refreshError));
+      } finally {
+        setOperatingAgentId(null);
       }
     },
     [
-      batchApplying,
+      handleModelOverrideChange,
       refresh,
       refreshMentionStore,
       subagentsService,
       targetWorkspaceIdentity,
       targetWorkspacePath,
     ],
+  );
+
+  /**
+   * 批量应用唯一执行点（specs/subagent-batch-edit.md R1/R4）：整批只做一次 Start Plan
+   * 推荐（循环外），随后按列表顺序逐行串行落盘，每行独立成功/失败；失败行保留磁盘
+   * 原值并计入结果汇总，不中断后续行。写路径统一委托 applyBatchTarget。
+   */
+  const applyBatchModelOverride = useCallback(
+    async (targets: readonly AgentSummary[], value: SubagentModelBatchValue) => {
+      if (batchApplying || targets.length === 0) {
+        return;
+      }
+      setBatchApplying(true);
+      setBatchResult(null);
+      setBatchProgress({ done: 0, total: targets.length });
+      const result = createEmptyBatchResult();
+      let targetValue = value;
+      if (value.modelSelection) {
+        // modelSelection 是选模型那一刻按 Registry 补的默认档位；用户随后在操作条改的
+        // thoughtLevel 只在 value 顶层。先合并再推荐/写盘，避免推荐未改写时被冲回默认。
+        const thoughtLevel = value.thoughtLevel?.trim();
+        const userSelection: ModelSelection = {
+          ...value.modelSelection,
+          options: {
+            ...value.modelSelection.options,
+            ...(thoughtLevel ? { reasoningLevel: thoughtLevel } : {}),
+          },
+        };
+        const chosen = await recommendBatchStartPlan(userSelection);
+        if (!chosen) {
+          // 用户拒绝/关闭推荐弹窗：整批保留原值，不进入逐行循环。
+          setBatchProgress(null);
+          setBatchApplying(false);
+          setBatchResult({
+            succeeded: [],
+            failed: targets.map((agent) => ({
+              name: agent.name,
+              message: intl.formatMessage({ id: "settings.subagents.batch.declined" }),
+            })),
+          });
+          return;
+        }
+        targetValue = {
+          modelSelection: chosen,
+          thoughtLevel: chosen.options?.reasoningLevel,
+        };
+      }
+      for (let index = 0; index < targets.length; index += 1) {
+        const agent = targets[index];
+        if (!agent) {
+          continue;
+        }
+        setBatchProgress({ done: index, total: targets.length });
+        try {
+          await applyBatchTarget(agent, targetValue);
+          result.succeeded.push(agent.name);
+        } catch (changeError) {
+          result.failed.push({
+            name: agent.name,
+            message: changeError instanceof Error ? changeError.message : String(changeError),
+          });
+        }
+      }
+      // 结束后必须清空进度：操作条以 progress 非空判定显示「正在应用 n/n」转圈。
+      setBatchProgress(null);
+      setOperatingAgentId(null);
+      setBatchApplying(false);
+      setBatchResult(result);
+      if (result.succeeded.length > 0) {
+        try {
+          await Promise.all([refresh(), refreshMentionStore()]);
+        } catch (refreshError) {
+          // 持久化成功即为提交点；批量后的投影刷新失败只提示，不回滚磁盘状态。
+          toast(refreshError instanceof Error ? refreshError.message : String(refreshError));
+        }
+      }
+    },
+    [applyBatchTarget, batchApplying, intl, recommendBatchStartPlan, refresh, refreshMentionStore],
+  );
+
+  const handleGroupBatchApply = useCallback(
+    (groupAgents: readonly AgentSummary[]) => {
+      const targets = resolveBatchApplyTargets(groupAgents);
+      setBatchDialogGroupKey(null);
+      void applyBatchModelOverride(targets, {});
+    },
+    [applyBatchModelOverride],
   );
 
   const handleEdit = useCallback((agent: AgentSummary) => {
@@ -1919,9 +2213,29 @@ export function SubagentsSection({ onManageModels }: SubagentsSectionProps) {
       resolveBatchApplyTargets(filteredAgents).filter((agent) => selectedBatchIds.has(agent.id)),
     [filteredAgents, selectedBatchIds],
   );
-  const batchApplicableCount = useMemo(
-    () => resolveBatchApplyTargets(filteredAgents).length,
+  const batchSelectableAgents = useMemo(
+    () => resolveBatchApplyTargets(filteredAgents),
     [filteredAgents],
+  );
+  const batchApplicableCount = batchSelectableAgents.length;
+
+  /** 全部全选/全不选：勾选/取消当前筛选结果里所有可批量行（跨分组）。 */
+  const toggleBatchAll = useCallback(
+    (checked: boolean) => {
+      setSelectedBatchIds((current) => {
+        const next = new Set(current);
+        for (const agent of batchSelectableAgents) {
+          if (checked) {
+            next.add(agent.id);
+          } else {
+            next.delete(agent.id);
+          }
+        }
+        return next;
+      });
+      setBatchResult(null);
+    },
+    [batchSelectableAgents],
   );
 
   // 过滤/作用域变化后裁剪选中集：选中 id 不在当前可见可批量集内即剔除。
@@ -2067,6 +2381,7 @@ export function SubagentsSection({ onManageModels }: SubagentsSectionProps) {
             modelSelectGroups={subagentModelSelectGroups}
             batchMode={batchMode}
             batchChecked={batchMode && selectedBatchIds.has(agent.id)}
+            batchApplying={batchApplying}
             onBatchCheckChange={handleBatchCheckChange}
             onModelOverrideChange={handleModelOverrideChange}
             onDelete={handleDelete}
@@ -2079,41 +2394,43 @@ export function SubagentsSection({ onManageModels }: SubagentsSectionProps) {
   );
 
   /**
-   * 分组头行：批量模式渲染三态全选复选框；普通模式对含可批量行的分组提供
-   * 「统一设置模型」入口（打开批量对话框，specs/subagent-batch-edit.md R1）。
+   * 分组头行：批量模式渲染三态「全选本组」；普通模式渲染「…」批量菜单
+   * （统一设置模型 / 本组恢复继承默认，specs/subagent-batch-edit.md R1）。
    */
   const renderGroupHead = (
     groupAgents: readonly AgentSummary[],
+    groupKey: string,
+    groupName: string,
     dialogKey: { kind: "user" } | { kind: "builtIn" } | { kind: "plugin"; pluginId: string },
     header: ReactNode,
     actions?: ReactNode,
   ) => {
     const check = batchMode ? resolveGroupBatchCheckState(groupAgents, selectedBatchIds) : null;
-    const dialogAvailable =
-      !batchMode && !batchApplying && resolveBatchApplyTargets(groupAgents).length > 0;
+    const overridableCount = resolveBatchApplyTargets(groupAgents).length;
     return (
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           {check ? (
-            <BatchGroupCheckbox
-              label={intl.formatMessage({ id: "settings.subagents.batch.groupToggle" })}
-              state={check.state}
-              disabled={check.selectable.length === 0 || batchApplying}
-              onToggle={() => handleBatchGroupCheck(groupAgents, check.state)}
+            <SubagentGroupSelectAll
+              groupKey={groupKey}
+              groupName={groupName}
+              checkState={check.state}
+              disabled={batchApplying || check.selectable.length === 0}
+              onToggle={(checked) => handleBatchGroupCheck(groupAgents, checked)}
             />
           ) : null}
           {header}
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {dialogAvailable ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => setBatchDialogGroupKey(dialogKey)}
-            >
-              {intl.formatMessage({ id: "settings.subagents.batch.groupAction" })}
-            </Button>
+          {!batchMode ? (
+            <SubagentGroupBatchMenu
+              groupKey={groupKey}
+              groupName={groupName}
+              overridableCount={overridableCount}
+              disabled={batchApplying}
+              onSetModels={() => setBatchDialogGroupKey(dialogKey)}
+              onResetInherit={() => handleGroupBatchApply(groupAgents)}
+            />
           ) : null}
           {actions}
         </div>
@@ -2148,16 +2465,52 @@ export function SubagentsSection({ onManageModels }: SubagentsSectionProps) {
             id: "settings.subagents.searchPlaceholder",
           })}
         />
-        {!batchMode ? (
+        {batchMode ? (
+          <label
+            data-testid={TID_SUBAGENT_BATCH_SELECT_ALL}
+            className={cn(
+              "flex select-none items-center gap-2 text-ui-base text-foreground",
+              (batchApplying || batchSelectableAgents.length === 0) &&
+                "cursor-not-allowed opacity-60",
+            )}
+          >
+            <Checkbox
+              checked={
+                batchTargets.length === 0
+                  ? false
+                  : batchTargets.length === batchSelectableAgents.length
+                    ? true
+                    : "indeterminate"
+              }
+              disabled={batchApplying || batchSelectableAgents.length === 0}
+              aria-label={intl.formatMessage({ id: "settings.subagents.batch.selectAll.label" })}
+              onCheckedChange={(checked) => toggleBatchAll(checked === true)}
+            />
+            {intl.formatMessage({ id: "settings.subagents.batch.selectAll.label" })}
+          </label>
+        ) : null}
+        {batchMode ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={exitBatchMode}
+            disabled={batchApplying}
+          >
+            <X data-icon="inline-start" aria-hidden="true" />
+            {intl.formatMessage({ id: "settings.subagents.batch.bar.exit" })}
+          </Button>
+        ) : batchApplicableCount > 0 ? (
           <Button
             type="button"
             variant="outline"
             size="sm"
+            data-testid={TID_SUBAGENT_BATCH_TRIGGER}
             onClick={enterBatchMode}
-            disabled={loading || batchApplicableCount === 0}
+            disabled={loading || batchApplying}
           >
             <ListChecks data-icon="inline-start" aria-hidden="true" />
-            {intl.formatMessage({ id: "settings.subagents.batch.enter" })}
+            {intl.formatMessage({ id: "settings.subagents.batch.entry" })}
           </Button>
         ) : null}
       </div>
@@ -2196,6 +2549,8 @@ export function SubagentsSection({ onManageModels }: SubagentsSectionProps) {
           >
             {renderGroupHead(
               groupedAgents.user,
+              "user",
+              intl.formatMessage({ id: "settings.subagents.group.user" }),
               { kind: "user" },
               <SettingsResourceGroupHeader
                 count={groupedAgents.user.length}
@@ -2228,36 +2583,38 @@ export function SubagentsSection({ onManageModels }: SubagentsSectionProps) {
               />
             )}
           </section>
-          {pluginGroups.map(([pluginId, items]) => (
-            <section key={pluginId} className="space-y-4">
-              {renderGroupHead(
-                items,
-                { kind: "plugin", pluginId },
-                <SettingsResourceGroupHeader
-                  count={items.length}
-                  title={resolvePluginDisplayName(
-                    {
-                      name: items[0]?.pluginName ?? pluginId,
-                      listing:
-                        (items[0]?.pluginId
-                          ? pluginListingById.get(items[0].pluginId)
-                          : undefined) ??
-                        resolveUniquePluginListingByName(
-                          availablePlugins,
-                          items[0]?.pluginName ?? pluginId,
-                        ),
-                    },
-                    locale,
-                  )}
-                />,
-              )}
-              {renderAgentList(items)}
-            </section>
-          ))}
+          {pluginGroups.map(([pluginId, items]) => {
+            const groupName = resolvePluginDisplayName(
+              {
+                name: items[0]?.pluginName ?? pluginId,
+                listing:
+                  (items[0]?.pluginId ? pluginListingById.get(items[0].pluginId) : undefined) ??
+                  resolveUniquePluginListingByName(
+                    availablePlugins,
+                    items[0]?.pluginName ?? pluginId,
+                  ),
+              },
+              locale,
+            );
+            return (
+              <section key={pluginId} className="space-y-4">
+                {renderGroupHead(
+                  items,
+                  `plugin:${pluginId}`,
+                  groupName,
+                  { kind: "plugin", pluginId },
+                  <SettingsResourceGroupHeader count={items.length} title={groupName} />,
+                )}
+                {renderAgentList(items)}
+              </section>
+            );
+          })}
           {groupedAgents.builtIn.length > 0 ? (
             <section className="space-y-4">
               {renderGroupHead(
                 groupedAgents.builtIn,
+                "builtIn",
+                intl.formatMessage({ id: "settings.subagents.group.builtIn" }),
                 { kind: "builtIn" },
                 <SettingsResourceGroupHeader
                   count={groupedAgents.builtIn.length}
@@ -2274,7 +2631,7 @@ export function SubagentsSection({ onManageModels }: SubagentsSectionProps) {
 
       {batchMode ? (
         <SubagentModelBatchBar
-          selectedCount={selectedBatchIds.size}
+          selectedCount={batchTargets.length}
           applying={batchApplying}
           progress={batchProgress}
           result={batchResult}
@@ -2282,8 +2639,8 @@ export function SubagentsSection({ onManageModels }: SubagentsSectionProps) {
           modelGroups={chatModelSelectGroups}
           modelSelectionView={modelSelectionView}
           modelSelectionLoading={modelSelectionLoading}
-          onValueChange={noopBatchValueChange}
-          onApply={(value) => void applyBatchValue(batchTargets, value)}
+          onValueChange={() => setBatchResult(null)}
+          onApply={(value) => void applyBatchModelOverride(batchTargets, value)}
           onExit={exitBatchMode}
         />
       ) : null}
@@ -2305,7 +2662,7 @@ export function SubagentsSection({ onManageModels }: SubagentsSectionProps) {
           onApply={(value) => {
             const targets = batchDialogGroup.targets;
             setBatchDialogGroupKey(null);
-            void applyBatchValue(targets, value);
+            void applyBatchModelOverride(targets, value);
           }}
         />
       ) : null}

@@ -288,6 +288,18 @@ review 明确以下 4 类为里程碑级债务，本轮只做有界切片或 spe
 
 `pnpm verify:pre-push`（lint + architecture:check --changed）→ **exit 0**（changed new 0 / regrown 0）。
 
+### 补充：完整真实测试（用户要求，主审本机实跑）
+
+上表为并发修复期的 scoped 验证；全部提交落地后，主审在本机（Windows 11 / Node v25.9.0）补跑了三项真实测试：
+
+| 测试 | 命令 | 结果 |
+|---|---|---|
+| **desktop Electron 启动 smoke**（本轮最关键未验证项，真启动 Electron 验 G 改的主窗 `sandbox:true`/webPreferences 不破坏启动链路） | `pnpm --filter @acode/desktop build` → `pnpm --filter @acode/desktop e2e:smoke --timeout-ms 280000` | **全 PASS，exit 0**：CP1 进程存活(+5016ms pid=32740)、CP2 CDP(+5100ms port=51937 Chrome/146)、CP3 首窗(+5101ms title="ACode" launchMarks T0-T3 齐全)、CP4 Host fork(+5102ms `[spawnHostProcess] forked host (local-1)`)、进程树清理(无 electron 引用 temp root)、临时目录清理(removed)。首跑 exit 1 是刚 build 完的产物文件锁/残留进程瞬时冲突（无 CP 输出），同参重跑干净通过为准。 |
+| **全量 architecture:check**（CI 口径，非 --changed；临时移开 gitignored 的 relay-server.mjs 还原 CI「build 前跑」语义） | `node scripts/architecture/architecture-check.mjs check` | **OK，exit 0**：violations 414 / baseline 414 / **new 0 / regrown 0**；managed 18 模块 855 文件，legacy 5 模块 4311 文件。（移开后 414；含 relay-server.mjs 构建产物则 415 且 new 1——该产物 gitignored、CI 在 build 前跑 architecture 扫不到，属假红。） |
+| **remote-ssh 出包冒烟** | `pnpm --filter @acode/server-cli verify:remote-ssh` | **本机无法跑**：需 Docker 起带 sshd 的 Linux 容器（`dockerPlatformForTarget`），本机 `docker: command not found`。CI 的 remote-ssh job 在 Linux runner 上跑，非本机能力范围，如实记录环境限制。 |
+
+发版实操经验旁证：全量 test 的 PS-13/14（8.3 短名）与 C1（墙钟 flake）是 1.0.3 发版时就记录的 **Windows 已知失败**（CI ubuntu 不复现，勿误判回归），与本轮 3 个 fail 完全吻合，坐实零代码回归。
+
 ### third-party ledger 哈希（CI 门禁 ci.yml:77，留给发布流程）
 
 `node scripts/licenses.mjs reproducibility --inputs-only` → exit 1，**9 个 inputs 哈希不符**：`core/node-repl-host/acode-cua/formal-proof/model-option-map/server/web` 的 package.json（本轮加 test 脚本/依赖声明）+ `ui/src/components/ui/button.tsx`（F 加焦点边框）+ `pnpm-lock.yaml`（主审 install 后变动）。

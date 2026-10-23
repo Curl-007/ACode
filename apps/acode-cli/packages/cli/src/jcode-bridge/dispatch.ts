@@ -132,9 +132,13 @@ async function dispatchRequest(
       return {};
     case V4_METHODS.conversationRowsRange:
       return await gateway.rowsRange(request.params);
-    // 附件三段事务：网关的 attachment registry 是 host 无关的（spec R2/§5），
-    // commit 后经 host.putSessionAttachment 落地——jcode 后端未实现该可选方法，
-    // 故 commit 会降级（gateway 内部处理），但 begin/chunk/abort 账本仍走通。
+    // 附件三段事务：网关的 attachment registry 是 host 无关的（spec R2/§5），但 commit
+    // 依赖 host.putSessionAttachment 落地——shim 的 host（host.ts）**未实现**该可选方法，
+    // 故 attachmentBegin 即在 v4-gateway.ts 抛 fault.attachment.putUnsupported（wire 上为
+    // -32603，非 -32601），UI 显示永久失败 chip。这是 fail-closed 的明确拒绝，不是静默
+    // 降级；jcode 会话的附件能力待独立立项（需 shim 侧附件存储 + command-translator 把
+    // attachmentRef 转 ACP content block）。2026-10-24 审计修正：原注释误称「commit 会
+    // 降级（gateway 内部处理）」，与实际行为相反。
     case V4_METHODS.attachmentBegin:
       return await gateway.attachmentBegin(request.params);
     case V4_METHODS.attachmentChunk:

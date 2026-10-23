@@ -119,3 +119,70 @@ test("外部引擎对 legacy preference push 回 -32601 时，Host 降级守卫�
     await rm(dataDir, { recursive: true, force: true });
   }
 });
+
+test("外部引擎对 workspace/readPresentation 回 -32601 时，Host 降级为空 presentation（composer 目录不卡 error 态）", async () => {
+  const workspace = await mkdtemp(join(tmpdir(), "acode-presentation-degrade-"));
+  const dataDir = await mkdtemp(join(tmpdir(), "acode-presentation-degrade-data-"));
+  const fakeJcodeBinary = join(workspace, "definitely-not-a-real-jcode-binary");
+
+  const savedEnv = { ...process.env };
+  process.env.ACODE_AGENT_SERVER_COMMAND = process.execPath;
+  process.env.ACODE_AGENT_SERVER_ARGS_JSON = JSON.stringify([
+    "--import",
+    tsxLoader,
+    cliEntry,
+    "jcode-bridge",
+    "--stdio",
+    "--jcode-binary",
+    fakeJcodeBinary,
+  ]);
+  process.env.ACODE_AGENT_SERVER_CWD = workspace;
+  process.env.ACODE_DATA_BASE_DIR = dataDir;
+  delete process.env.ACODE_APP_IS_PACKAGED;
+  process.env.JCODE_NO_TELEMETRY = "1";
+  process.env.DO_NOT_TRACK = "1";
+
+  const modelSelectionReadinessSource = {
+    getView: async () => ({
+      revision: 1,
+      providers: [{ providerId: "fake-provider", models: [{ modelId: "fake-model" }] }],
+    }),
+  };
+  const service = createACodeAgentService({
+    presentationSurface: "desktop",
+    modelSelectionReadinessSource,
+    // 与生产接线同形（node.ts 注入 resolveAgentEngineFromSettings）：env 覆盖只决定 spawn
+    // 通道，降级逻辑的引擎身份必须来自设置 resolver，否则测试验的是「env 通道绕过注册表」
+    // 的错配形态而非生产路径。
+    resolveAgentEngine: async () => "jcode",
+  });
+
+  try {
+    // 先让 workspace client 起来（同上一个测试的降级链）。
+    const init = await service.initialize({ workspacePath: workspace });
+    assert.equal(init.available, true, "init 应先成功（前置降级守卫已验）");
+
+    // 决定性断言：readWorkspacePresentation 不得上抛 -32601，应降级为空 presentation。
+    // jcode 引擎唯一权限档是 yolo → mode 取 yolo（descriptor.defaultPermissionMode）。
+    const presentation = await service.readWorkspacePresentation({ workspacePath: workspace });
+    assert.deepEqual(presentation.slashCommands, [], "降级 presentation 的 slash 目录应为空");
+    assert.equal(
+      presentation.mode,
+      "yolo",
+      `jcode 引擎降级 mode 应取其唯一权限档 yolo，实得 ${presentation.mode}`,
+    );
+    assert.equal(presentation.workspace.workspacePath, workspace);
+  } finally {
+    try {
+      await service.disposeAllAndWait();
+    } catch {
+      // 收尾不上抛。
+    }
+    for (const [key, value] of Object.entries(savedEnv)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    await rm(workspace, { recursive: true, force: true });
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});

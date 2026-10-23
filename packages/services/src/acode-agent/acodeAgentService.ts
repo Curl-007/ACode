@@ -83,6 +83,7 @@ import {
   acodeSessionSendResultSchema,
   acodeSessionRequestRuntimePreferencesParamsSchema,
   acodeSessionRuntimePreferencesResultSchema,
+  acodeSessionModeSchema,
   acodeSessionStateSnapshotSchema,
   acodeSessionSubscribeResultSchema,
   acodeStateUpdatedNotificationSchema,
@@ -105,6 +106,7 @@ import {
   type ToolSearchAppMode,
   type ACodeAgentEngineId,
   DEFAULT_AGENT_ENGINE_SETTING,
+  resolveAgentEngine,
   type AgentLaneResourceSample,
   type ProcessResourceCliLane,
   type ACodeMcpTelemetryEvent,
@@ -4013,6 +4015,29 @@ export function createACodeAgentService(
         });
         return presentation;
       } catch (error) {
+        // 外部引擎（jcode）不实现 workspace/readPresentation（shim dispatch 回 -32601）：
+        // 降级为空 presentation 而非上抛——presentation 是 composer 的 mode/slash 命令
+        // 目录，上抛会让 jcode workspace 每次 prepare 都把目录留在 error 态（2026-10-24
+        // 审计 P1）。空 slashCommands + mode 取该引擎唯一权限档（jcode 仅 yolo），
+        // 与 B 批 renderer 门控（mode 列表按引擎过滤）口径一致；其余错误仍上抛。
+        if (isProtocolMethodNotFoundError(error)) {
+          const engineId = await resolveAgentEngineGate();
+          const descriptor = resolveAgentEngine(engineId);
+          // presentation.mode 是会话模式域（plan/build/edit/yolo/auto/dontAsk），比引擎权限
+          // 模式域窄（后者含 default/acceptEdits 等）：用 schema 运行时收窄，未来引擎的默认档
+          // 若不在会话模式域则回退 build——降级路径不得抛错。
+          const parsedMode = acodeSessionModeSchema.safeParse(descriptor.defaultPermissionMode);
+          logger.warn(undefined, "workspace/readPresentation 引擎不支持，降级空 presentation", {
+            engineId: descriptor.id,
+            workspaceKey: resolveWorkspaceKey(params),
+            workspacePath: params.workspacePath,
+          });
+          return {
+            workspace: buildWorkspaceRef(params),
+            mode: parsedMode.success ? parsedMode.data : "build",
+            slashCommands: [],
+          };
+        }
         logger.warn(undefined, "ACode Protocol workspace/readPresentation 失败", {
           durationMs: Date.now() - startedAt,
           message: error instanceof Error ? error.message : String(error),

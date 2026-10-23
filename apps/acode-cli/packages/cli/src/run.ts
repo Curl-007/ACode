@@ -94,7 +94,12 @@ const isPresentationSurfaceSupportedInvocation = (input: {
     typeof input.prompt === "string" ||
     input.targetRequest !== undefined ||
     command === "app-server" ||
-    command === "agent-server"
+    command === "agent-server" ||
+    // jcode-bridge 也是 stdout 上讲 v4 NDJSON 的协议服务器（specs/jcode-agent-bridge.md
+    // R1）：桌面 Host 的 applyPresentationSurfaceToCommand 会追加 `--surface desktop`，
+    // 不列入白名单会让 shim 直接以 SURFACE_SCOPE_ERROR 退出（真实客户端栈测试实证：
+    // ACodeAgentProcessManager 以 presentationSurface:"desktop" spawn → 进程 code:1）。
+    command === "jcode-bridge"
   );
 };
 

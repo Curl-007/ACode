@@ -30,6 +30,12 @@ import type { JcodeSessionMap } from "./session-map.js";
 export interface JcodeBridgeRuntime {
   readonly client: JcodeAcpClient;
   readonly sessions: JcodeSessionMap;
+  /**
+   * 南向就绪 promise（spawn + ACP 握手）。需要 jcode 的命令先 await 它：
+   * Windows 首次拉起 daemon 可能要 15–60s（jcode issue #503），期间 client 尚未初始化。
+   * 启动失败时该 promise reject，await 处如实 surface 成命令错误（不悬挂，spec R5）。
+   */
+  ready(): Promise<void>;
   /** 取（或按需创建）某 v4 会话的翻译器。 */
   ensureTranslator(v4SessionId: string): JcodeEventTranslator;
   translator(v4SessionId: string): JcodeEventTranslator | undefined;
@@ -93,6 +99,9 @@ async function createSession(
   runtime: JcodeBridgeRuntime,
   envelope: CommandEnvelope,
 ): Promise<CommandResult> {
+  // 首个需要 jcode 的命令：等南向就绪（Windows 首次拉 daemon 可达 60s，仍在客户端
+  // 3 分钟默认 request 超时内）。启动失败则此处 reject，如实 surface 成 ACK failed。
+  await runtime.ready();
   const payload = (envelope.payload ?? {}) as CreateSessionPayload;
   const workspaceId = payload.workspaceId ?? "";
   const cwd = runtime.resolveCwd(workspaceId);

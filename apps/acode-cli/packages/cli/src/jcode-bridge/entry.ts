@@ -120,12 +120,22 @@ export async function runJcodeBridge(
 
   let client: JcodeAcpClient | undefined;
   let killChild: (() => void) | undefined;
+  /**
+   * 南向就绪 promise（spawn + ACP 握手）。声明在此处而非启动点，因为 runtime.ready
+   * 要引用它，而 runtime 必须先于南向启动构造（host 需要 runtime）。
+   * 初值 resolve 是为了在 runtime 构造完成前不被 await 到 undefined。
+   */
+  let southboundReady: Promise<void> = Promise.resolve();
 
   const runtime: JcodeBridgeRuntime = {
     get client() {
       if (!client) throw new Error("jcode bridge: acp client not initialized");
       return client;
     },
+    // 需要 jcode 的命令先 await 南向就绪：spawn + ACP 握手在 Windows 首次拉起
+    // daemon 时可能要 15–60s，同步 getter 会在此期间直接抛错。启动失败时把原因
+    // 如实 surface 成命令错误（而非笼统的 "not initialized"）。
+    ready: () => southboundReady,
     sessions,
     ensureTranslator: (v4SessionId) => {
       const existing = translators.get(v4SessionId);
@@ -193,31 +203,51 @@ export async function runJcodeBridge(
       params: ready,
     } as Parameters<ACodeProtocolNdjsonConnection["send"]>[0]);
 
-    // 南向：spawn jcode acp 子进程（R4-2 遥测硬关 + R4-3 self-dev 防护在 spawn 内）。
-    const child = await spawnJcodeProcess({ binaryPath, cwd: process.cwd(), logger });
-    killChild = child.kill;
-    client = new JcodeAcpClient({
-      transport: child.transport,
-      exited: child.exited,
-      kill: child.kill,
-      logger,
-    });
-    // jcode 的 session/update 事件按 jcodeSessionId 路由回对应会话的 translator。
-    client.onNotification((notification: AcpInboundNotification) => {
-      routeNotification(runtime, notification);
-    });
-    client.startReadLoop();
-
-    // ACP 握手（spike §2 实测：jcode 强制 pin protocolVersion=1）。
-    await withTimeout(
-      client.initialize("acode-jcode-bridge"),
-      JCODE_SPAWN_READY_TIMEOUT_MS,
-      "jcode acp initialize",
-    );
-    logger.info("jcode bridge ready", { binaryPath });
-
-    // 北向：启动读循环，等 stdin 关闭驱动生命周期收尾。
+    // 北向必须先于南向启动：v4 通道一开通就要能服务不依赖 jcode 的请求
+    // （capabilitiesQuery / subscribe / commandsQuery），否则 jcode 启动期间
+    // （Windows 首次拉起 daemon 需 15–60s，jcode issue #503）客户端的请求会一直
+    // 挂在 stdin 缓冲区里，直到 request 超时——真实客户端栈测试实证过这个故障
+    // （v4/capabilities/query 180s 无响应）。
+    //
+    // 就绪状态显式化，不用「加大超时」掩盖同步问题（apps/acode-cli/AGENTS.md）：
+    // 只有真正需要 jcode 的命令（createSession/sendText/stop/deleteSession）才
+    // await southboundReady，其余请求立即应答。
     connection.start();
+
+    southboundReady = (async () => {
+      // 南向：spawn jcode acp 子进程（R4-2 遥测硬关 + R4-3 self-dev 防护在 spawn 内）。
+      const child = await spawnJcodeProcess({ binaryPath, cwd: process.cwd(), logger });
+      killChild = child.kill;
+      const acpClient = new JcodeAcpClient({
+        transport: child.transport,
+        exited: child.exited,
+        kill: child.kill,
+        logger,
+      });
+      client = acpClient;
+      // jcode 的 session/update 事件按 jcodeSessionId 路由回对应会话的 translator。
+      acpClient.onNotification((notification: AcpInboundNotification) => {
+        routeNotification(runtime, notification);
+      });
+      acpClient.startReadLoop();
+
+      // ACP 握手（spike §2 实测：jcode 强制 pin protocolVersion=1）。
+      await withTimeout(
+        acpClient.initialize("acode-jcode-bridge"),
+        JCODE_SPAWN_READY_TIMEOUT_MS,
+        "jcode acp initialize",
+      );
+      logger.info("jcode bridge southbound ready", { binaryPath });
+    })();
+    // 握手失败不能让北向一起死（那会让客户端连诊断都拿不到）：记录为 rejected
+    // 状态，等真正需要 jcode 的命令 await 时才 surface 成 ACK failed。
+    southboundReady.catch((error: unknown) => {
+      logger.error(
+        "jcode bridge southbound startup failed; commands needing jcode will fail",
+        error instanceof Error ? error : new Error(String(error)),
+      );
+    });
+
     await connection.waitForClose();
     return 0;
   } catch (error) {

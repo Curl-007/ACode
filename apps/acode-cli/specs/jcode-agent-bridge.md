@@ -257,9 +257,38 @@ ACODE_JCODE_E2E=1 ACODE_JCODE_E2E_BINARY=<jcode 路径> pnpm --dir apps/acode-cl
 1. **物理 wire frame 是二级帧**：`{wireVersion, kind:"complete", topic, subscriptionId, frame:<逻辑帧>}`，payload 在**内层** `frame.frame.payload`。首轮脚本在顶层找 `payload` 导致 11 帧全被当空跳过、白等 180s 超时——帧其实一直在正确增长。
 2. **Windows spawn 需 file:// URL**：cwd 是 temp workspace（不在仓库下）时 `--import tsx` 无法解析；改绝对路径后又因裸 `C:/` 被当协议 `c:` 报 `ERR_UNSUPPORTED_ESM_URL_SCHEME`，必须 `pathToFileURL(...).href`。
 
-### A.5 剩余未验项
+### A.5 真实客户端栈验证（三层保真度，已完成）
 
-1. **真桌面 UI 端到端**：需先落地「前置决策」（引擎注册表加回外部槽位 + Settings 选择），才能在 dev 态用 `ACODE_AGENT_SERVER_COMMAND` 拉起桌面验证 Electron renderer 消费 shim 帧。
-2. **Unix 侧行为**：Linux/macOS 上 jcode 默认 `setsid` 常驻 daemon，进程生命周期与 Windows 的"kill 即退"（spike §4 修正 1）可能不同，须重跑本 e2e。
-3. **多窗口 / 多会话并发**：e2e 只验单会话单轮。`JCODE_HOME` 隔离部分失效（spike §4.4）意味着多窗口只能靠 sessionId 逻辑隔离。
+A.4 的冒烟用自写脚本客户端说 v4 stdio，只验了 shim 的协议契约。此后又补了两层更真实的验证，全部 Windows + jcode v0.99.0 真机实测、真模型执行：
+
+| 层  | 测试文件                                                      | 驱动方                                             | 覆盖                                                                                                                                                                                                                   | 实测                           |
+| --- | ------------------------------------------------------------- | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
+| L0  | `apps/acode-cli/tests/jcode-bridge-e2e-smoke.test.mjs`        | 自写脚本客户端（v4 stdio）                         | shim 协议契约                                                                                                                                                                                                          | **pass 20.5s**                 |
+| L1  | `packages/services/tests/jcode-bridge-real-client.test.mjs`   | `ACodeAgentProcessManager` + `ACodeProtocolClient` | env 覆盖 spawn、命令解析、storage gate、帧收发、投影                                                                                                                                                                   | **pass 17.0s**（帧 8、rows 4） |
+| L2  | `packages/services/tests/jcode-bridge-service-layer.test.mjs` | **`createACodeAgentService()`** 完整 service 层    | 桌面 Host 真实走的接口：`sendConversationCommandV4`（provider 就绪门禁）、`subscribeConversationV4`（getReadOnlyClient + SQLite task-index）、`onDynamicConversationFrame`（帧 fan-out emitter，packages/ui 的消费面） | **pass 16.1s**（帧 9、rows 4） |
+
+L1/L2 默认 skip（需本机 jcode + 其自身凭据），`ACODE_JCODE_E2E=1` 开启。L2 的假件：`modelSelectionReadinessSource`（过 `getClient` 就绪门禁，`acodeAgentService.ts:3134/3151`）+ `ACODE_DATA_BASE_DIR` 指 temp（SQLite 不落真实 `~/.acode`）；**刻意省略** `accountProviderConfigSource`——注入它会发 legacy `provider/updateAccountConfig`，shim 的 dispatch 只处理 v4 方法而回 -32601，且该错误不被降级（`:1490` 原样 rethrow）会拖垮整个 createSession；省略即整条同步 early-return（`:1450`）。
+
+**真实测试暴露并修复的两个 shim bug**（L0 脚本客户端测不出，只有真客户端栈才踩到）：
+
+1. **`--surface desktop` 被 argv 校验拒绝**：桌面 Host 的 `applyPresentationSurfaceToCommand` 会追加 `--surface desktop`，而 `run.ts` 的 `isPresentationSurfaceSupportedInvocation` 白名单只有 `app-server`/`agent-server` → shim 立即以 `SURFACE_SCOPE_ERROR` 退出（L1 实测：进程 3 秒内 `code:1`、`terminationKind:"unexpected"`）。修复：把 `jcode-bridge` 加入白名单（spec R1 本就要求入口接受 native 形态参数）。
+2. **北向被南向启动阻塞**：原 `entry.ts` 在 `spawn jcode` + ACP `initialize` **之后**才 `connection.start()`。jcode 首次拉起 daemon 需 15–60s（jcode issue #503），期间 v4 通道完全不读 stdin，客户端请求挂在缓冲区直到超时（L1 实测：`v4/capabilities/query` **180s 无响应**）。修复：`connection.start()` 提到南向启动之前，南向就绪改为 `southboundReady` promise——**只有真正需要 jcode 的命令（createSession）才 await 它**，capabilitiesQuery/subscribe 等立即应答。按 AGENTS.md「不能用超时掩盖同步问题」，这里没有把 30s 超时调大，而是消除了阻塞本身。
+
+### A.6 共享 daemon 生命周期（真实测试实证的架构边界）
+
+L2 跑完后本机残留一个 jcode 进程：`jcode.exe --provider auto serve`，**父进程已退出（孤儿）**，且不在 shim 的进程树内。查证为 **jcode 的设计行为，非 shim 缺陷**：
+
+- `src/cli/acp.rs:776-786` 的 `ensure_daemon()` 调 `dispatch::spawn_server` → `spawn_server_with_executable` → **硬编码 `ServerLifetime::Shared`**（`dispatch.rs:1263`）。
+- `ServerLifetime::Shared` 的定义注释（`dispatch.rs:1241-1245`）：_"The long-lived shared daemon: **survives this process** and serves later clients."_ 另有 `OwnedByThisProcess`（owner 退出即自毁，"leaves no daemon behind"），但**只有 `jcode run` headless 路径使用**（`dispatch.rs:1291`），ACP 路径无 flag/env 可切换。
+- 后果：shim 的进程树终止（`spawn-jcode.ts` 的 taskkill /T 波次）**结构上够不到它**——daemon 已 setsid 脱离，不是 shim 子进程的后代。
+- **不是每次泄漏一个**：`ensure_daemon` 先查 `server_is_running()`，已有则复用（实测连跑 L1+L2 后仅 1 个 daemon）。回收靠 jcode 自己的 300s idle 超时（`server.rs:672` `IDLE_TIMEOUT_SECS`，判据 `client_count == 0 && !has_live_headless_worker`，`server.rs:128-130`）。实测该 daemon 在测试结束后约 10 分钟内自行退出。
+- 这正是评估文档 §3.2 与 spike §4.4 记录的「daemon 共享模型反转 ACode 独占子进程假设」那堵墙，在真实客户端栈下被实证坐实。
+
+**已知边界（不修，登记）**：ACode 的「kill agent 即重置会话」在 jcode 后端**不成立**——kill shim 只断客户端连接，daemon 与其会话继续存活，下个 shim 会 attach 到同一个 daemon。要真正独占需 (a) jcode 上游为 ACP 路径开放 `OwnedByThisProcess`，或 (b) shim 用 `JCODE_HOME` + 独立 socket 起私有实例（但 spike §4.4 实测 `JCODE_HOME` 隔离部分失效：session 数据仍落真实 `~/.jcode/sessions/`），或 (c) ACode 侧接受共享语义并在 UI/文档明示。三者的取舍属产品决策，见「前置决策」。
+
+### A.7 剩余未验项
+
+1. **真桌面 UI 端到端**：L2 已覆盖到 service 层（packages/ui 的直接消费面），但 Electron renderer 与 Host 装配仍未跑——需先落地「前置决策」（引擎注册表加回外部槽位 + Settings 选择）。本机 `node_modules/electron/dist/electron.exe` 已就绪，缺的只是治理决策而非环境。
+2. **Unix 侧行为**：三层测试全部在 Windows。Linux/macOS 上 daemon 生命周期与 socket 形态不同（Unix socket vs named pipe），须重跑。
+3. **多窗口 / 多会话并发**：只验单会话单轮。结合 A.6 的共享 daemon 与 spike §4.4 的 `JCODE_HOME` 部分失效，多窗口只能靠 sessionId 逻辑隔离。
 4. **长会话与 compaction**、**MCP 配置下发**、**ACode 凭据桥**：见「未做与取舍」。

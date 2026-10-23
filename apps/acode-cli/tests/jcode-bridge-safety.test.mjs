@@ -28,7 +28,10 @@ test("R4-2: spawn spec 强制注入遥测关闭 env，且调用方 env 无法覆
   assert.equal(spec.env.JCODE_NO_TELEMETRY, "1", "遥测必须被强制关闭，调用方不能覆盖");
   assert.equal(spec.env.DO_NOT_TRACK, "1", "DO_NOT_TRACK 必须被强制置 1");
   // argv 必含 --no-update（关自动更新）。
-  assert.ok(spec.args.includes("--no-update"), `argv 应含 --no-update，实得 ${spec.args.join(" ")}`);
+  assert.ok(
+    spec.args.includes("--no-update"),
+    `argv 应含 --no-update，实得 ${spec.args.join(" ")}`,
+  );
   // 非安全相关的调用方 env 保留。
   assert.equal(spec.env.SOME_OTHER, "x");
 });
@@ -55,7 +58,10 @@ function fakeProbe(files) {
 }
 
 test("R4-3: cwd 是 jcode 源码检出（Cargo.toml + .git + name=jcode）→ 判为 repo", () => {
-  const probe = fakeProbe({ "Cargo.toml": '[package]\nname = "jcode"\nversion = "0.99.1"', ".git": null });
+  const probe = fakeProbe({
+    "Cargo.toml": '[package]\nname = "jcode"\nversion = "0.99.1"',
+    ".git": null,
+  });
   const verdict = detectJcodeRepo("/home/u/jcode", probe);
   assert.equal(verdict.isJcodeRepo, true);
   assert.ok(verdict.matchedMarkers.length >= 3);
@@ -217,7 +223,11 @@ test("R2: 请求/响应按 id 关联；通知分发给 handler", async () => {
   assert.equal(sent.method, "initialize");
   assert.equal(sent.id, 1);
   // 回一个通知 + 一个响应（乱序）。
-  pushLine({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "s1", update: { sessionUpdate: "usage_update" } } });
+  pushLine({
+    jsonrpc: "2.0",
+    method: "session/update",
+    params: { sessionId: "s1", update: { sessionUpdate: "usage_update" } },
+  });
   pushLine({ jsonrpc: "2.0", id: 1, result: { protocolVersion: 1, agentInfo: { name: "jcode" } } });
   const result = await reqPromise;
   assert.equal(result.agentInfo.name, "jcode");

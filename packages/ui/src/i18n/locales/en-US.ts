@@ -6306,14 +6306,14 @@ const enUS: Record<string, string> = {
   // This must be stated plainly so users never assume ACode's permission governance still applies.
   "settings.agentEngine.jcodePermissionWarning":
     "The jcode engine provides none of ACode's permission approval: its external protocol has no permission-request channel, so file writes and command execution never prompt for confirmation (only jcode's own reflexive gate for high-risk bash, and its absolute refusal of catastrophic paths, apply). ACode's reflexive gate, blast-radius classification, managed policy floor, and auto-mode risk classifier are all inactive under this engine. Use it only in trusted workspaces.",
-  "settings.agentEngine.jcodeBinaryLabel": "jcode executable path",
+  "settings.agentEngine.jcodeBinaryLabel": "jcode executable path (optional override)",
   "settings.agentEngine.jcodeBinaryPlaceholder":
     "e.g. C:\\Users\\<you>\\AppData\\Local\\jcode\\bin\\jcode.exe",
   "settings.agentEngine.jcodeBinarySave": "Save",
   "settings.agentEngine.jcodeBinarySaved": "Saved; takes effect on the next session start.",
   "settings.agentEngine.jcodeBinarySaveError": "Failed to save. Please try again.",
   "settings.agentEngine.jcodeBinaryRequired":
-    "Required: a desktop app's inherited PATH does not include login-shell entries, so jcode cannot be discovered automatically. Enter the absolute path to the jcode executable, otherwise sessions on this engine will fail to start (they do not silently fall back to ACode Agent).",
+    "Leave empty for auto-discovery: jcode's official install locations are probed (Windows: %LOCALAPPDATA%\\jcode\\bin; Unix/macOS: ~/.local/bin and /usr/local/bin), then PATH. Fill an absolute path only when jcode lives elsewhere or discovery fails.",
   // Engine name/description: BotEngineCard consumes these via the `engine.${id}.name` key.
   // engine.glm.* was mistakenly deleted when the external slots were removed, leaving that
   // dropdown rendering the literal key id — restored here (R7).

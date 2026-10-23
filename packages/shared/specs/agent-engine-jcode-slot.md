@@ -61,25 +61,40 @@ Settings（新增 agentEngine 字段，持久化）
 
 `ACodeAgentProcessManagerOptions` 已有 `commandResolver` 注入点，engineId 经 `getClient` params 传入即可，**不需要改 process manager 的构造签名**。
 
-### R5 jcode 二进制发现（Settings 必填项，不是可选便利）
+### R5 jcode 二进制发现（自动发现为主，Settings 是可选覆盖项）
 
-**为什么必须显式配置**：桌面是 GUI 应用，继承的 `PATH` **不含 login shell profile 的条目**（如 `~/.local/bin`、Homebrew 路径）；而 `runtimeLoginShellEnvCapture` 采集的 PATH 补丁只注入**工具执行** env（`runtimeCommandEnv.ts:166-184`），**不注入 agent spawn env**（`acodeAgentProcessManager.ts:1503-1534` 只合入 sanitize 后的 process.env + workspace identity + lane 策略 + NODE_OPTIONS 护栏）。故打包态桌面里 shim 靠 PATH 找 `jcode` 不可靠。
+**2026-10-24 修订**：初版把 Settings 路径定为**必填**，理由是桌面 GUI 的 PATH 不可靠。实测暴露其代价：用户选 jcode 后必须手填路径才能用（真实用户反馈「为什么没法用」）。修订为**自动发现为主**——jcode 官方安装脚本的默认落点是确定性的，shim 直接按落点探测即可覆盖绝大多数安装；Settings 路径降级为**可选覆盖项**（非默认安装或发现失败时手填）。
 
-- Settings 的引擎区块在选 jcode 时**要求填 jcode 可执行文件路径**（空则视为未配置，引擎不可选/会话创建时明确报错，不静默回退 glm——静默回退会让用户以为在用 jcode 而实际是 glm）。
-- 该路径经 spawn env 传给 shim（shim 的 `--jcode-binary` 或等价 env），**不经 `ACODE_AGENT_SERVER_COMMAND`**（那个通道打包态被 env-gate R1 禁用，且 R6 已确立 storage 入口不吃它）。
+**为什么 PATH 单独不够**（自动发现的动机）：桌面是 GUI 应用，继承的 `PATH` **不含 login shell profile / rc 的条目**；jcode 安装脚本（`install.sh:440-457`）把安装目录写进 rc 的 `export PATH=...` 行，该行对 GUI 不可见。而 `runtimeLoginShellEnvCapture` 采集的 PATH 补丁只注入**工具执行** env（`runtimeCommandEnv.ts`），**不注入 agent spawn env**（`acodeAgentProcessManager.ts` 只合入 sanitize 后的 process.env + workspace identity + lane 策略 + NODE_OPTIONS 护栏）。故打包态桌面里 shim 靠 PATH 找 `jcode` 不可靠，必须加常见安装位置一层。
+
+**发现优先级（shim 侧 `resolve-binary.ts`）**：
+
+1. `--jcode-binary` CLI 参数（dev/远端通道，最高）。
+2. `ACODE_JCODE_BINARY_PATH` env —— Host 从 Settings.`jcodeBinaryPath` 装配注入的**可选覆盖项**。
+3. **常见安装位置**（`jcodeWellKnownCandidates`，按 jcode 官方安装脚本默认落点，证据：`install.ps1:5`「installs it to %LOCALAPPDATA%\jcode\bin」、`install.sh:146-148`）：
+   - win32：`%LOCALAPPDATA%\jcode\bin\jcode.exe`；
+   - Unix/macOS：`$HOME/.local/bin/jcode`、`/usr/local/bin/jcode`。
+   逐个 `fs access` 探测，命中即返回（短路）。
+4. PATH 查找（`whichOnPath`，terminal/CI 等 PATH 可见场景）。
+
+四层皆无 → shim 以明确错误退出（错误文案列出全部查找位置 + Settings 指引），不发半死 storage 帧，**不静默回退 glm**。
+
+- Settings 的引擎区块在选 jcode 时显示路径输入框为**可选覆盖**：留空即走自动发现（提示文案说明发现范围与何时需手填）；填了即覆盖自动发现。空串经 `normalizeSettingsPatch` 归一为 undefined（支持 Reset 回自动发现）。
+- 该路径经 spawn env 传给 shim，**不经 `ACODE_AGENT_SERVER_COMMAND`**（那个通道打包态被 env-gate R1 禁用，且 R6 已确立 storage 入口不吃它）。
 - 与 `agent-command-env-gate.md` R3 的裁决一致：「接入会话时若需自定义路径，走 Settings 显式配置（用户可见动作），不恢复 env 通道」。`JCODE_BINARY_PATH` 这个 `binaryEnvVar` 只在 dev/远端非打包态生效，打包态被同一门禁忽略。
+- `resolve-binary.ts` 保持**纯函数**（不碰 fs/env）：候选拼装 `jcodeWellKnownCandidates(platform, env)` 与存在性探针 `PathProbe` 都由 entry.ts（I/O 边界，`fs/promises.access`）注入，解析规则可单测、CI 常绿。
 
 **env 契约（apps/acode-cli/AGENTS.md 要求新 env 先在 spec 定义）**：
 
 | env | 定义 | 优先级 | 错误行为 |
 | --- | --- | --- | --- |
-| `ACODE_JCODE_BINARY_PATH` | jcode 可执行文件绝对路径，由 **Host 从 Settings 的 `jcodeBinaryPath` 装配后注入** agent spawn env | shim 侧：`--jcode-binary` CLI 参数 > 本 env > PATH 查找 | 三者皆无 → shim 以明确错误退出（含"install jcode / pass --jcode-binary"提示），不发半死 storage 帧 |
+| `ACODE_JCODE_BINARY_PATH` | jcode 可执行文件绝对路径，由 **Host 从 Settings 的 `jcodeBinaryPath` 装配后注入** agent spawn env（**可选覆盖项**，留空即不注入） | shim 侧：`--jcode-binary` CLI > 本 env > 常见安装位置 > PATH 查找 | 四层皆无 → shim 以明确错误退出（含全部查找位置 + Settings 指引），不发半死 storage 帧 |
 
 **strip-then-inject 纪律（安全）**：`ACODE_JCODE_BINARY_PATH` 加入 `sanitizeACodeRuntimeEnv` 的剔除清单（`packages/shared/src/runtimeEnv.ts`），与 `NODE_OPTIONS`、`OTEL_*` 同款处理——**继承的用户级 env 值一律剔除，只认 Host 从 Settings 装配后注入的权威值**。理由：若 shim 直接吃继承 env，则用户级 env 注入（launchctl setenv / shell profile / Windows 用户环境变量）可把 jcode 指向攻击者二进制，与 `agent-command-env-gate.md` R1 同一威胁模型。剔除后：
 - **打包态**：只有 Settings 值生效（Host 注入），env 注入无效——符合 R3「不恢复 env 通道」。
 - **dev/独立 CLI/远端**：开发者仍可用 `ACODE_AGENT_SERVER_ARGS_JSON` 带 `--jcode-binary <path>`（CLI 参数优先级最高，且该通道本就受 env-gate R1 管辖：dev 生效、打包态忽略）。L1/L2 真实客户端栈测试走的正是这条，故剔除 env 不影响测试。
 
-测试覆盖：`packages/services/tests/storage-entry-env-gate.test.mjs`（R6 不变量）+ 引擎贯通链测试（见验收场景 3/7）。
+测试覆盖：`apps/acode-cli/tests/jcode-bridge-resolve-binary.test.mjs`（R5 四层优先级 + 候选拼装 + probe 短路，假 probe/which 全注入、CI 常绿）+ `packages/services/tests/storage-entry-env-gate.test.mjs`（R6 不变量）+ 引擎贯通链测试（见验收场景 3/7）。
 
 ### R6 持久化与归一
 
@@ -125,7 +140,7 @@ Settings（新增 agentEngine 字段，持久化）
 4. `acodeAgentProviderSchema.parse("jcode") === "jcode"`；`parse("codex") === undefined`；`parse("glm") === "glm"`。
 5. `getBotSelectablePermissionModes("jcode")` 返回**空集**（yolo 被 bot 天花板剔除）→ bot 远程入口无法选 jcode 权限档；`getBotSelectablePermissionModes("glm")` 行为不变。
 6. **task 索引口径自洽**（本轮范围，见 R6「写入侧不改」）：jcode 会话产生的 task 仍以 `provider="glm"` 落库、也按 glm 过滤，故 **task 列表可见、不消失**；`taskIndexRepo.mapRowToTaskMeta` 的归一改用 `isAgentEngineId`（已改），使未来若写入真实引擎也能正确读回。provider 列暂不记录真实引擎，此限制已在 R6 登记（正确解需 per-session engineId + DB schema 改动，另行立项）。
-7. Settings 选 jcode 但未填二进制路径 → 会话创建明确报错（含可操作提示），**不静默回退 glm**。
+7. 自动发现：jcode 装在默认位置（`%LOCALAPPDATA%\jcode\bin` / `~/.local/bin`）且 Settings 路径留空 → 会话正常创建（shim 按落点探测命中，无需手填）。Settings 填了非默认路径 → 覆盖自动发现。四层全落空 → 会话创建明确报错（含全部查找位置与 Settings 指引），**不静默回退 glm**。
 8. 真实 Electron 端到端（**已实测通过**，`packages/desktop/scripts/e2e-jcode-engine.mjs`，2026-10-24 Windows dev 态）：隔离 profile seed 真实 provider 登录态 + `setting.json{agentEngine:"jcode", jcodeBinaryPath}` → 断言 Host spawn preflight args 含 `jcode-bridge`（注册表路径，**不设** `ACODE_AGENT_SERVER_COMMAND` env 覆盖）→ `ACode agent warmup ready`（agent init 越过 legacy -32601 降级链）→ storage 准备不受阻（R6）→ provider 就绪门禁放行。5/5 核心断言 PASS；shim stderr 的 `telemetryOff`/`southbound ready` 在生产日志面结构性不可见（Host 对子进程 stderr 走 debugLog 不落盘），记 SKIP，由 L2 承担。
    - **会话轮次的完整投影**（turnHeader/userInput/toolCall/assistantText + 真模型收口 `completedSuccess`）在 **service 层** L2（`packages/services/tests/jcode-bridge-service-layer.test.mjs`，真 jcode + 真模型，20.6s 实测通过）验证；Electron e2e 未驱动 renderer UI 渲染，该子项如实标注为 service fan-out 层覆盖，非 renderer 层。
    - **本轮真实 Electron e2e 暴露并修复的 Host 侧缺陷**：`enqueueInteractionPreferenceSync` 第一条 push（`workspace/updateInteractionPreferences`）缺 method-not-found 降级守卫（同函数第二条 modelIo push、offPeak、dynamicWorkflow 三处都有），shim 对 legacy 方法回的 -32601 直接 reject 整条 `interactionPreferencesReady` → 杀死 getClient → init 失败。同款缺口在 `syncAccountProviderConfigToClient`（`provider/updateAccountConfig`，createSession 前置）。修复：两处补齐与既有三处同款的 `isProtocolMethodNotFoundError` 降级；shim 侧不改（-32601 是诚实的「不支持」，spec「legacy 不做」）。CI 常绿守卫：`packages/services/tests/agent-engine-legacy-degradation.test.mjs`（spawn 真 shim + 假 jcode 二进制，北向先于南向启动故不依赖真 jcode；mutation 验证过：删守卫即判红）。

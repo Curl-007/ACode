@@ -16,6 +16,7 @@
 
 import { randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
+import { access, constants } from "node:fs/promises";
 import * as nodePath from "node:path";
 import type { Logger } from "@acode/contracts";
 import {
@@ -42,7 +43,7 @@ import {
 import { JcodeEventTranslator } from "./event-translator.js";
 import { createJcodeHost } from "./host.js";
 import { JcodeSessionMap } from "./session-map.js";
-import { resolveJcodeBinary } from "./resolve-binary.js";
+import { jcodeWellKnownCandidates, resolveJcodeBinary } from "./resolve-binary.js";
 import { spawnJcodeProcess } from "./spawn-jcode.js";
 import { installStderrConsoleBoundary } from "../protocol-console.js";
 
@@ -98,17 +99,29 @@ export async function runJcodeBridge(
   const restoreConsole = installStderrConsoleBoundary(ctx.stderr);
   const logger = createStderrLogger(ctx.stderr);
 
-  // R5/R7：解析 jcode 二进制（--jcode-binary CLI > ACODE_JCODE_BINARY_PATH env > PATH）。
-  // 失败即退出，不发半死 storage 帧。env 读取放在这里（I/O 边界），resolve-binary 保持纯函数。
+  // R5/R7：解析 jcode 二进制（--jcode-binary CLI > ACODE_JCODE_BINARY_PATH env >
+  // 常见安装位置 > PATH）。失败即退出，不发半死 storage 帧。env 读取与 fs 探测放在这里
+  // （I/O 边界），resolve-binary 保持纯函数。
   // 注意：该 env 继承的用户级值已被 Host 侧 sanitizeACodeRuntimeEnv 剔除，
   // 只有 Host 从 Settings.jcodeBinaryPath 装配后注入的值能到达此处（strip-then-inject）。
   let binaryPath: string;
   try {
-    binaryPath = resolveJcodeBinary(
+    binaryPath = await resolveJcodeBinary(
       options.jcodeBinary,
       process.env[ACODE_JCODE_BINARY_PATH_ENV_KEY],
       process.platform,
       (name) => whichOnPath(name),
+      // 常见安装位置探测（jcode 官方安装脚本默认落点）：桌面 GUI 的 PATH 不含
+      // 安装脚本写进 rc 的条目，故直接按落点 access。probe 用异步 fs，I/O 收敛在本边界。
+      async (candidate) => {
+        try {
+          await access(candidate, constants.F_OK);
+          return true;
+        } catch {
+          return false;
+        }
+      },
+      jcodeWellKnownCandidates(process.platform, process.env),
     );
   } catch (error) {
     ctx.stderr.write(

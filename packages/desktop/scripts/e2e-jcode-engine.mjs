@@ -44,8 +44,10 @@ const argValue = (name) => {
 };
 const overallTimeoutMs = Number(argValue("timeout-ms") ?? 300_000);
 const keepTemp = argv.includes("--keep");
-const JCODE_BINARY =
-  argValue("jcode-binary") ?? join(process.env.LOCALAPPDATA ?? "", "jcode", "bin", "jcode.exe");
+// jcode 官方安装脚本的默认落点（install.ps1:5）。本 e2e 验证**自动发现**链路
+// （setting.json 不写 jcodeBinaryPath），故前置检查 = 默认落点有没有 jcode：
+// 没有则 shim 四层发现必落空、init 必失败，SKIP 而非假跑。
+const JCODE_DEFAULT_LOCATION = join(process.env.LOCALAPPDATA ?? "", "jcode", "bin", "jcode.exe");
 
 function resolveElectronBinary() {
   // 与 e2e-smoke.mjs / dev.mjs 相同的解析：不依赖 PATH，直接用本仓安装的 Electron。
@@ -59,8 +61,11 @@ function resolveElectronBinary() {
 const logLine = (message) => process.stderr.write(`[e2e-jcode] ${message}\n`);
 
 // ---------- 前置检查 ----------
-if (!existsSync(JCODE_BINARY)) {
-  logLine(`SKIP: jcode 二进制不存在（${JCODE_BINARY}）；传 --jcode-binary <path> 指定`);
+if (!existsSync(JCODE_DEFAULT_LOCATION)) {
+  logLine(
+    `SKIP: jcode 不在默认安装位置（${JCODE_DEFAULT_LOCATION}），自动发现必落空；` +
+      `本 e2e 验自动发现链路，请先按官方脚本安装 jcode`,
+  );
   process.exit(0);
 }
 const realConfigDir = join(homedir(), ".acode", "v2");
@@ -105,18 +110,19 @@ for (const name of availableSeedFiles) {
   copyFileSync(source, join(isolatedDataConfigDir, name));
   copyFileSync(source, join(isolatedHomeConfigDir, name));
 }
-// 引擎选择：本轮注册表改造要验证的输入。jcodeBinaryPath 是 R5 的必填项
-// （桌面 GUI 的 PATH 不含 login shell 条目，必须显式给路径）。
+// 引擎选择：本轮注册表改造要验证的输入。**刻意不写 jcodeBinaryPath**（2026-10-24 自动发现
+// 改造后）：jcode 官方安装脚本默认落点（%LOCALAPPDATA%\jcode\bin）由 shim 自动探测，
+// Settings 路径只是可选覆盖项。不 seed 路径 + spawn 证据 + warmup ready 三者同时成立
+// 即证明自动发现链路走通（发现失败则 init 报错、warmup 不会 ready）。
 const settings = {
   schemaVersion: 1,
   agentEngine: "jcode",
-  jcodeBinaryPath: JCODE_BINARY,
 };
 const settingsJson = JSON.stringify(settings, null, 2);
 writeFileSync(join(isolatedDataConfigDir, "setting.json"), settingsJson, "utf8");
 writeFileSync(join(isolatedHomeConfigDir, "setting.json"), settingsJson, "utf8");
 logLine(`seeded provider files: ${availableSeedFiles.join(", ")} → data+home 两处`);
-logLine(`setting.json (data+home): agentEngine=jcode, jcodeBinaryPath=<set>`);
+logLine(`setting.json (data+home): agentEngine=jcode（无 jcodeBinaryPath，验自动发现）`);
 
 const stdioLogPath = join(tempRoot, "electron-stdio.log");
 const env = {

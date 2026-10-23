@@ -6054,14 +6054,14 @@ const zhCN: Record<string, string> = {
   // 不得让用户误以为选了 jcode 还有 ACode 的权限治理。
   "settings.agentEngine.jcodePermissionWarning":
     "jcode 引擎不提供 ACode 的权限审批：它的对外协议没有权限请求通道，文件写入与命令执行不会弹窗确认（仅 jcode 自身对高危 bash 命令有反射门、对灾难性路径绝对拒绝）。ACode 的反射门、blast-radius 分级、托管策略地板与 auto 模式风险分类器在该引擎下均不生效。请只在可信工作区使用。",
-  "settings.agentEngine.jcodeBinaryLabel": "jcode 可执行文件路径",
+  "settings.agentEngine.jcodeBinaryLabel": "jcode 可执行文件路径（可选覆盖）",
   "settings.agentEngine.jcodeBinaryPlaceholder":
     "例如 C:\\Users\\<你>\\AppData\\Local\\jcode\\bin\\jcode.exe",
   "settings.agentEngine.jcodeBinarySave": "保存",
   "settings.agentEngine.jcodeBinarySaved": "已保存；下一次会话启动时生效。",
   "settings.agentEngine.jcodeBinarySaveError": "保存失败，请重试。",
   "settings.agentEngine.jcodeBinaryRequired":
-    "必填：桌面应用继承的 PATH 不含登录 shell 的路径条目，无法自动发现 jcode。请填写 jcode 可执行文件的绝对路径，否则该引擎的会话会创建失败（不会静默回退到 ACode Agent）。",
+    "留空即自动发现：按 jcode 官方安装脚本的默认位置（Windows：%LOCALAPPDATA%\\jcode\\bin；Unix/macOS：~/.local/bin 与 /usr/local/bin）及 PATH 查找。仅当安装在非默认位置、或自动发现失败时才需手填绝对路径覆盖。",
   // 引擎名与描述：BotEngineCard 经 `engine.${id}.name` 拼 key 消费。
   // engine.glm.* 曾在上一轮删外部槽位时被误删，导致该下拉直出字面 id——本次补回（R7）。
   "engine.glm.name": "ACode Agent",

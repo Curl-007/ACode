@@ -88,8 +88,9 @@ export function AgentEngineSection({
         </p>
       ) : null}
 
-      {/* R5：jcode 二进制路径必填。桌面 GUI 的 PATH 不含 login shell 条目，
-          且 login shell 采集的 PATH 补丁不注入 agent spawn env，故必须显式配置。 */}
+      {/* R5：jcode 二进制路径是**可选覆盖项**。shim 侧自动发现按 jcode 官方安装脚本
+          默认落点（%LOCALAPPDATA%\jcode\bin / ~/.local/bin / /usr/local/bin）+ PATH 探测；
+          桌面 GUI 的 PATH 不含 rc 条目，故默认落点探测是关键一层。仅非默认安装才需手填。 */}
       {currentEngine === JCODE_ENGINE_ID ? (
         <JcodeBinaryPathControl
           jcodeBinaryPath={jcodeBinaryPath}
@@ -207,7 +208,8 @@ function JcodeBinaryPathControl({
 
   const isDirty = draft.trim() !== effectivePath;
   const isSaving = saveState === "saving";
-  // 未填路径即引擎不可用（R5：不静默回退 glm）——用必填提示而非默默放行。
+  // 未填路径 = 走自动发现（shim 按安装脚本默认落点 + PATH 探测）；提示文案说明发现范围
+  // 与何时需要手填，而非旧语义的「必填否则失败」。
   const isMissing = effectivePath.trim().length === 0 && saveState !== "saved";
 
   const handleSave = useCallback(async () => {

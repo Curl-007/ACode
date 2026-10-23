@@ -52,7 +52,7 @@
 
 | 项                                  | 既有记录                                      | 本次                                           | 判定                                     |
 | ----------------------------------- | --------------------------------------------- | ---------------------------------------------- | ---------------------------------------- |
-| `pnpm typecheck`                    | `docs/agent-teams-port-verification.md` §1：0 | 0                                              | 无回归                                   |
+| `pnpm typecheck`                    | `docs/archive/agent-teams-port-verification.md` §1：0 | 0                                              | 无回归                                   |
 | `pnpm lint`                         | 同前：0，166 warnings                         | 0，166 warnings                                | 无回归                                   |
 | `pnpm --filter @acode/ui test`      | 同前：424 pass                                | 449 pass                                       | 通过（新增用例）                         |
 | `pnpm --filter @acode/shared test`  | 同前：267 pass                                | 280 pass                                       | 通过（新增用例）                         |
@@ -93,7 +93,7 @@ tests 2943 / pass 2903 / fail 4 / skipped 36。逐项归因：
 | `tests/generate-visualize-design-tokens.test.mjs:30`「产物与 DESIGN.md 重生成逐字节一致」 | 生成产物为 CRLF、脚本期望 LF；差异只在 `\r`                                                        | 日志 `cli-test.log` tail「actual ... \r」；该产物与 `DESIGN.md` 均不在本批 diff                                |
 | 同文件「--check 对当前树退出码 0」                                                        | 同上                                                                                               | 同上                                                                                                           |
 | 同文件「@generated 头纪律」                                                               | 同上                                                                                               | 同上                                                                                                           |
-| `tests/skill-seeding-integration.test.mjs:84`「播种→归因→幂等」                           | `ENOENT ...browser-use\0.5.1\.acode-plugin-seed.json`；该 marker 是 `.gitignore` 产物/既有测试缺陷 | 错误信息 `ENOENT`（日志 `cli-test.log`）；前次验收 `docs/agent-teams-port-verification.md` §4.2 已记录同一失败 |
+| `tests/skill-seeding-integration.test.mjs:84`「播种→归因→幂等」                           | `ENOENT ...browser-use\0.5.1\.acode-plugin-seed.json`；该 marker 是 `.gitignore` 产物/既有测试缺陷 | 错误信息 `ENOENT`（日志 `cli-test.log`）；前次验收 `docs/archive/agent-teams-port-verification.md` §4.2 已记录同一失败 |
 
 上述四个失败与 `packages/ui`、`packages/shared`、`packages/provider` 的本批改动无调用关系；
 本批未修改 `DESIGN.md`、设计令牌产物或 browser-use 插件。
@@ -192,7 +192,7 @@ t-6/t-7 改动的 5 个文件单独跑 `oxfmt --check` 为 **exit 0**（§2.11 #
 | 3. 任务默认值端到端；旧设置文件兼容                                                   | **PASS**                      | 设置页 → schema → 草稿 → 模型切换/档位叠加/权限模式静态链路与单测通过；旧设置探针 exit 0；t-7 后运行时投影去 speed、services salvage 测试 6/6；#4 已由 captain 裁决为规格修订                       |
 | 4. 门禁真实退出码                                                                     | **PASS（含 1 项既有红）**     | 最终：ui 450/450、shared 280/280、provider 32/32、typecheck/lint/architecture 0；t-6/t-7 改动文件定向 oxfmt 0；全量 27 文件 oxfmt exit 1，失败行为 HEAD 既有                                        |
 | 5. 补跑 CLI/shared、knip 与 803 对比，无新增未使用导出                                | **PASS（含既有红）**          | 最终 CLI 2943 tests / 2902 pass / 5 fail（4 项确定性既有 + 1 项 flake 单跑 9/9 通过）；shared 280/280；knip `Unused exports` 784 < 803，本功能符号 0 命中                                           |
-| 6. 报告写入 `docs/settings-port-verification.md`，含未验证项；不改源码                | **PASS**                      | 本文件；验收人未改源码，仅新增本报告                                                                                                                                                                |
+| 6. 报告写入 `docs/archive/settings-port-verification.md`，含未验证项；不改源码                | **PASS**                      | 本文件；验收人未改源码，仅新增本报告                                                                                                                                                                |
 
 ### 3.1 t-2 / t-3 / t-4 验收摘要对照（captain 消息 `f3b3b7b8`）
 
@@ -384,7 +384,7 @@ t-6 关闭：`batchCheckboxDisabled`、`checkboxVisible` 排除 applying、handl
 
 验收人操作：
 
-- 只新增本报告 `docs/settings-port-verification.md`；
+- 只新增本报告 `docs/archive/settings-port-verification.md`；
 - 临时探针与日志全部在 `C:\Users\admin\AppData\Local\Temp\acode1-settings-verify\`；
 - 未执行 `git add/commit`、未修改任何源码、未关闭/削弱门禁；
 - 唯一可能的工作树副作用是 `tsc -b` 的构建产物（仓库已忽略，不属于源码改动）。

@@ -56,8 +56,8 @@
 | trust-wrapper 读边界（status/claim/captain unread）逐处核对 | PASS | §3.3 |
 | 插件目录与 UI 新增文件无 zcode 命名残留 | PASS | §3.4 |
 | 所有新增文件 ≤400 物理行，既有文件增长有说明 | PASS（有保留） | §3.5：生产/UI 新增文件全部 ≤400；新增测试 `worktree.test.ts` 519 行、`multi-team.test.ts` 457 行超出，但 spec §3.5 与 architecture 策略明确测试文件不参与 ratchet |
-| 报告写入 `docs/agent-teams-port-verification.md`（只写该报告文件） | PASS | 本文件 |
-| 未修改任何源码文件 | PASS | 验收执行前后 121 条工作树条目逐行一致；验收人新增仅本报告 `docs/agent-teams-port-verification.md`（git status 122 条） |
+| 报告写入 `docs/archive/agent-teams-port-verification.md`（只写该报告文件） | PASS | 本文件 |
+| 未修改任何源码文件 | PASS | 验收执行前后 121 条工作树条目逐行一致；验收人新增仅本报告 `docs/archive/agent-teams-port-verification.md`（git status 122 条） |
 
 ## 3. 静态核对
 

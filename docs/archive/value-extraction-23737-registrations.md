@@ -283,7 +283,7 @@ TTL 授权与 vm-sandbox-roadmap §4 阶段三的 kill switch 同属「托管策
   串行准入是更简单的正确解，**不因外部有 CRDT 而追**。登记价值是协议本身：三态 + 内容
   哈希幂等 + 「无基线即拒」是该场景出现时的现成参照。
 - **触发条件**：手机远控/多窗口允许外部 steering 写入桌面 composer 活草稿成为需求
-  （挂 `docs/mobile-device-control-gap-audit.md` 同域裁决）。
+  （挂 `docs/archive/mobile-device-control-gap-audit.md` 同域裁决）。
 
 ### 9.3 会话骨架启动占位
 
@@ -466,7 +466,7 @@ TTL 授权与 vm-sandbox-roadmap §4 阶段三的 kill switch 同属「托管策
   spawn 时原生查询该进程是否真的在作业内，不在则 error 点名归因（「join 发生在首 spawn
   之后」类），N 次失败退订防噪声；结果走 outcome 闭集。
 - **价值/现状**：「下了机制 + 实测机制生效」的双段式是本体价值。ACode 现状 job object
-  只覆盖 MCP stdio 子进程、失败静默回退 taskkill（`docs/vm-sandbox-roadmap.md` §3.1），
+  只覆盖 MCP stdio 子进程、失败静默回退 taskkill（`docs/archive/vm-sandbox-roadmap.md` §3.1），
   无效果验证层；预热/备用进程面的孤儿风险是 ACode 已实证痛点（vm-sandbox-roadmap §4
   阶段一、`packages/services/specs/agent-process-prewarm.md`）。
 - **触发条件**：引入/扩展 FFI 依赖的决策（现有 koffi FFI 面）。本批 W1-4 视调查结果可能

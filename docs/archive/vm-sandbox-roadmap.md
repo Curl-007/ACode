@@ -338,7 +338,7 @@ ACode 自己的真实需求（无人值守危险任务/企业版）摊销。
 **旁证（sidecar 分发纪律）**：捆绑上游 MCP server 为字节级零修改的纯 OSS 产物——
 「随包分发未修改的上游二进制」形态。ACode 若做 sidecar/捆绑 agent 分发，「上游零修改 +
 自有签名面独立」是可直接参照的纪律：上游 diff 与自有 diff 天然分离，更新门链
-（第二轮清册 sidecar 更新条目，见 `docs/value-extraction-23737-registrations.md` §9.7）
+（第二轮清册 sidecar 更新条目，见 `docs/archive/value-extraction-23737-registrations.md` §9.7）
 只需覆盖自有面。
 
 ### 6.2 企业注入层范本清单增量：EDR 集成运行台账

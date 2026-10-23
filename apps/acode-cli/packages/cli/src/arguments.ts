@@ -89,6 +89,12 @@ export const parseGlobalArgs = (argv: string[]) =>
       surface: {
         type: "string",
       },
+      // jcode-bridge 子命令专用（specs/jcode-agent-bridge.md R7）：显式 jcode 二进制路径。
+      // 注册在全局 options 因 parseGlobalArgs 是 strict:true；缺省时走 PATH 解析。
+      // 刻意不做成 ACODE_* 环境变量（apps/acode-cli/AGENTS.md：能用 CLI 参数表达的不做成 env）。
+      "jcode-binary": {
+        type: "string",
+      },
 
       // 在全局注册，run.ts 收集后透传给 plugins-command，不污染其他命令的选项语义。
       all: {
@@ -122,11 +128,17 @@ export function isProtocolServerInvocation(argv: string[]): boolean {
       parsed.values.target === undefined &&
       !parsed.values.help &&
       !parsed.values.version &&
-      (parsed.positionals[0] === "app-server" || parsed.positionals[0] === "agent-server")
+      (parsed.positionals[0] === "app-server" ||
+        parsed.positionals[0] === "agent-server" ||
+        // jcode-bridge 同样在 stdout 上讲 v4 NDJSON（specs/jcode-agent-bridge.md R1），
+        // 必须受同一 stdout 保护，否则诊断输出会污染协议通道。
+        parsed.positionals[0] === "jcode-bridge")
     );
   } catch {
     // 无效参数由 run 格式化；明确的协议命令仍保护 stdout。
-    return argv[0] === "app-server" || argv[0] === "agent-server";
+    return (
+      argv[0] === "app-server" || argv[0] === "agent-server" || argv[0] === "jcode-bridge"
+    );
   }
 }
 

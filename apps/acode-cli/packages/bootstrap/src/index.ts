@@ -66,6 +66,12 @@ export type {
   ACodePluginsOverviewData,
 } from "./plugins.js";
 export { runACodeProtocolAgent } from "./acode-protocol-entrypoint.js";
+// jcode-bridge（specs/jcode-agent-bridge.md R1/接口节）：外部 agent 桥接子命令复用
+// host 无关的 v4 网关与 NDJSON 传输，自写瘦 dispatch 绕过 native server（server 构造
+// 强依赖 createACodeApp，无 host 注入缝）。网关/传输本就不在公开面，此处按需导出。
+export { ConversationV4Gateway } from "./acode-protocol-v4/v4-gateway.js";
+export type { V4GatewayHost } from "./acode-protocol-v4/v4-gateway.js";
+export { ACodeProtocolNdjsonConnection } from "./acode-protocol/transport.js";
 // Exposed for the CLI's --output-format stream-json: it needs the same event
 // shape the protocol server emits, rather than inventing a second one.
 export { mapSessionEvent } from "./acode-protocol/session-mapper.js";

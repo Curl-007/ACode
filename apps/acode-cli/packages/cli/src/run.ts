@@ -610,6 +610,18 @@ export const run = async (ctx: RunContext, deps: RunDependencies = {}): Promise<
       const { runAcpCommand } = await import("./acp-command.js");
       return await runAcpCommand(ctx, commandDeps, version);
     }
+    case "jcode-bridge": {
+      // jcode 外部 agent 桥接（specs/jcode-agent-bridge.md）：北向对 ACode 客户端讲
+      // acode-protocol-v4，南向 spawn jcode 跑 ACP。与 acp 同款懒加载纪律——静态拉起
+      // @acode/bootstrap 网关，不在 TUI/其它子命令的模块求值期付这份代价。
+      // --jcode-binary 显式路径，缺省走 PATH 解析（R7）。
+      const { runJcodeBridge } = await import("./jcode-bridge/entry.js");
+      const jcodeBinary = parsed.values["jcode-binary"];
+      return await runJcodeBridge(
+        ctx,
+        typeof jcodeBinary === "string" ? { jcodeBinary } : {},
+      );
+    }
     case "login":
       return await runLoginCommand(
         ctx,

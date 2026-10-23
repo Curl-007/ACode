@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { realpathSync } from "node:fs";
 import { access, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -30,7 +31,20 @@ const { createBashProviderDescription } = await import(
   "../packages/core/src/tool/handlers/bash-prompt.ts"
 );
 
-const normalizeWin = (value) => value.toLowerCase().replaceAll("/", "\\");
+// 真机 cwd 比较前必须还原 Windows 8.3 短名：`(Get-Location).Path` 输出长名
+// （C:\Users\Administrator\...），而 mkdtemp/os.tmpdir() 在部分机器返回短名
+// （C:\Users\ADMINI~1\...），裸 toLowerCase 比较会失配（PS-13/14 假失败）。
+// 与实现 bash-cwd-policy.ts 的 realpathSync.native 同一策略；路径不存在时回退原值，
+// 让断言按字面比较而非抛错（越界/reset 类断言仍成立）。
+const normalizeWin = (value) => {
+  let real = value;
+  try {
+    real = realpathSync.native(value);
+  } catch {
+    // 路径不存在（合成用例）：保留原值做字面归一。
+  }
+  return real.toLowerCase().replaceAll("/", "\\");
+};
 
 // ── 纯函数面：命令包裹与 cwd 捕获（R3） ────────────────────────────────
 

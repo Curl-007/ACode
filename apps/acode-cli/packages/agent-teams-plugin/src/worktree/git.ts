@@ -4,6 +4,7 @@
 // 这里只返回执行结果，错误分类与编排在 manager.ts。
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
+import { realpath } from "node:fs/promises";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
 import { TeamError } from "../state/types.js";
@@ -111,6 +112,33 @@ export async function isWorktreeDirty(path: string): Promise<boolean> {
   return status.exitCode !== 0 || status.stdout.trim().length > 0;
 }
 
+/**
+ * 路径比较前的规范化：realpath 还原符号链接与 **Windows 8.3 短名**，再 resolve + win32
+ * 折叠大小写。
+ *
+ * 为什么必须 realpath：`git worktree list --porcelain` 输出的是文件系统规范化后的**长名**
+ * （`C:\Users\Administrator\...`），而调用方持有的句柄路径可能来自 `os.tmpdir()` /
+ * `mkdtemp`，在部分 Windows 机器上是 8.3 **短名**（`C:\Users\ADMINI~1\...`）。裸
+ * `resolve()===resolve()` 不还原短名 → 同一目录被判为不同路径 → snapshotPendingChanges
+ * 跳过成员树未提交改动的快照提交 → 随后 cleanup 删树时**改动真实丢失**；cleanup 的
+ * `entry` 匹配也会失配、把已合并树误留。故与 bash-cwd-policy.ts 的 realpathSync.native
+ * 同一策略（那里因是同步判定用 sync，这里是 async 路径故用 fs/promises 的 realpath）。
+ *
+ * realpath 失败（路径不存在/无权限）时回退到 resolve：调用方另有 existsSync 前置判定，
+ * 回退值只用于「找不到即按不同处理」的保守方向，不会误判为相同而删数据。
+ */
+export async function normalizePathForCompare(path: string): Promise<string> {
+  const resolved = resolve(path);
+  let real = resolved;
+  try {
+    real = await realpath(resolved);
+  } catch {
+    // 路径不存在或不可读：保留 resolve 结果，交由调用方 existsSync 判据处理。
+  }
+  const final = resolve(real);
+  return process.platform === "win32" ? final.toLowerCase() : final;
+}
+
 /** 分支相对基线的独有提交数；数不出来按 1 处理（宁可保留）。 */
 export async function countAhead(
   repoRoot: string,
@@ -131,7 +159,14 @@ export async function snapshotPendingChanges(
 ): Promise<boolean> {
   if (!existsSync(handle.path)) return false;
   const registered = await listRegisteredWorktrees(repoRoot);
-  if (!registered.some((entry) => resolve(entry.path) === resolve(handle.path))) return false;
+  // 路径比较必须走 realpath 规范化：git worktree list 输出长名，handle.path 可能是
+  // mkdtemp/tmpdir 的 8.3 短名，裸 resolve 比较会失配 → 跳过快照 → 成员树未提交改动
+  // 在随后 cleanup 删树时真实丢失（见 normalizePathForCompare 注释）。
+  const handleReal = await normalizePathForCompare(handle.path);
+  const registeredReals = await Promise.all(
+    registered.map((entry) => normalizePathForCompare(entry.path)),
+  );
+  if (!registeredReals.includes(handleReal)) return false;
   if (!(await isWorktreeDirty(handle.path))) return false;
   const staged = await runGit(handle.path, ["add", "-A"]);
   if (staged.exitCode !== 0) {

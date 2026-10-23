@@ -4,7 +4,6 @@
 // 的合并与保守清理；仓库解析、建树与 exclude 写入仍在 manager.ts。
 // 判据与顺序以 spec 为准：冲突不自动解决，主工作区脏/不在基线分支时拒绝。
 import { existsSync } from "node:fs";
-import { resolve } from "node:path";
 import type { MemberWorktree } from "../state/types.js";
 import { TeamError } from "../state/types.js";
 import {
@@ -12,6 +11,7 @@ import {
   describeGitFailure,
   isWorktreeDirty,
   listRegisteredWorktrees,
+  normalizePathForCompare,
   parseMergeCommandConflicts,
   parseMergeTreeConflicts,
   runGit,
@@ -228,9 +228,19 @@ export async function cleanupMemberWorktree(params: {
     await runGit(repoRoot, ["worktree", "prune"]);
   }
   const registered = await listRegisteredWorktrees(repoRoot);
-  const entry = registered.find(
-    (item) => resolve(item.path) === resolve(handle.path) || item.branch === handle.branch,
+  // 路径比较走 realpath 规范化（同 snapshotPendingChanges）：git 输出长名、handle.path 可能是
+  // 8.3 短名，裸 resolve 比较失配会把已合并树误判为「未登记」而保留、或漏掉 dirty 判定。
+  // find 回调是同步的，故先并行预算每个登记项的规范化路径，再同步匹配；entry 仍取原始对象。
+  const handleReal = await normalizePathForCompare(handle.path);
+  const registeredWithReal = await Promise.all(
+    registered.map(async (item) => ({
+      item,
+      real: await normalizePathForCompare(item.path),
+    })),
   );
+  const entry = registeredWithReal.find(
+    ({ real, item }) => real === handleReal || item.branch === handle.branch,
+  )?.item;
   if (pathExists && !entry) {
     // 目录在但 git 没登记：不能在它里面跑 git（会回落到上层主仓库的状态），
     // 也不能 worktree remove；如实保留，交给人工或 prune。

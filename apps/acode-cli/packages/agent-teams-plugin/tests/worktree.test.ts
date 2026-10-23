@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
@@ -11,6 +11,7 @@ import {
   createMemberWorktree,
   mergeMemberWorktree,
 } from "../src/worktree/manager.js";
+import { normalizePathForCompare } from "../src/worktree/git.js";
 import {
   WORKTREES_RELATIVE_DIR,
   isManagedWorktreeBranch,
@@ -79,6 +80,53 @@ describe("worktree naming and ownership", () => {
     assert.equal(isManagedWorktreePath(repo, join(repo, WORKTREES_RELATIVE_DIR, "x")), true);
     assert.equal(isManagedWorktreePath(repo, join(repo, "src", "x")), false);
     assert.equal(isManagedWorktreePath(repo, join(tmpdir(), "elsewhere", "x")), false);
+  });
+});
+
+describe("normalizePathForCompare (real fs)", () => {
+  // 钉死 worktree 路径比较的核心不变量：同一物理目录的不同书写形式（Windows 8.3 短名 vs
+  // 长名、大小写、斜杠）规范化后必须相等。这是 snapshotPendingChanges / cleanupMemberWorktree
+  // 正确性的前提——裸 resolve()===resolve() 会把 git 输出的长名与 mkdtemp 的短名判为不同，
+  // 导致成员树未提交改动漏快照、cleanup 漏删（见 src/worktree/git.ts 的 normalizePathForCompare）。
+  let dir: string;
+
+  before(async () => {
+    dir = await mkdtemp(join(tmpdir(), "agent-teams-normalize-"));
+  });
+
+  after(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it("把同一目录的短名/长名/大小写/斜杠书写归一到同一比较值", async () => {
+    const canonical = await realpath(dir);
+    const variants = [dir, canonical, dir.toUpperCase(), dir.replaceAll("\\", "/")];
+    const normalized = await Promise.all(variants.map((v) => normalizePathForCompare(v)));
+    // 所有书写形式必须收敛到同一值（且等于 realpath 后的规范化，即不含 8.3 短名标记 ~N）。
+    for (const value of normalized) {
+      assert.equal(
+        value,
+        normalized[0],
+        `同一目录的不同书写必须归一相等：${JSON.stringify(normalized)}`,
+      );
+    }
+    // Windows 上断言短名被还原（~N 消失）；非 Windows 无 8.3 短名，此断言天然成立。
+    if (process.platform === "win32") {
+      assert.equal(
+        /~\d/.test(normalized[0]),
+        false,
+        `Windows 规范化结果不应含 8.3 短名标记：${normalized[0]}`,
+      );
+    }
+  });
+
+  it("不存在的路径回退 resolve 值、不抛错（保守方向不误判为相同）", async () => {
+    const ghost = join(dir, "definitely-not-here");
+    const normalized = await normalizePathForCompare(ghost);
+    // 回退到 resolve（+ win32 折叠大小写）；关键是不抛错，调用方另有 existsSync 判据。
+    assert.equal(typeof normalized, "string");
+    assert.ok(normalized.length > 0, "回退值应是可比较的非空字符串");
+    assert.equal(normalized, await normalizePathForCompare(ghost), "同路径回退值应稳定");
   });
 });
 

@@ -35,7 +35,8 @@ export function resolveJcodeBinary(
   if (trimmed && trimmed.length > 0) {
     return trimmed;
   }
-  const candidates = platform === "win32" ? [JCODE_BIN_NAME_WINDOWS, JCODE_BIN_NAME] : [JCODE_BIN_NAME];
+  const candidates =
+    platform === "win32" ? [JCODE_BIN_NAME_WINDOWS, JCODE_BIN_NAME] : [JCODE_BIN_NAME];
   for (const name of candidates) {
     const found = which(name);
     if (found) return found;

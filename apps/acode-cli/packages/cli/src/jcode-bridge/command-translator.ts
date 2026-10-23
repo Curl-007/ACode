@@ -130,7 +130,9 @@ async function sendText(
   const text = payload.text ?? "";
   // 空输入：对齐 native hasPromptInput 校验（session-flow.ts:191），拒绝而非发空 prompt。
   if (text.trim().length === 0) {
-    throw Object.assign(new Error("input must not be empty"), { reasonCode: "proto.invalidPayload" });
+    throw Object.assign(new Error("input must not be empty"), {
+      reasonCode: "proto.invalidPayload",
+    });
   }
   startTurn(runtime, v4SessionId, text, envelope.commandId);
   // 立即返回收据（delivery startNow）；turn 结果经事件流推进，不在此 await。

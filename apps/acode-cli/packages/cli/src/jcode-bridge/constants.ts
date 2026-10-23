@@ -64,7 +64,8 @@ export const JCODE_UNKNOWN_ERROR_CODE = -32603 as const;
  * 时，ACK 回 rejected + 此码，不静默 noop 让客户端误以为成功。
  * 命名沿用 v4 fault 语义前缀（对齐 command-inbox 的 reasonCode 习惯）。
  */
-export const JCODE_CAPABILITY_UNSUPPORTED_REASON = "fault.capability.unsupportedByExternalAgent" as const;
+export const JCODE_CAPABILITY_UNSUPPORTED_REASON =
+  "fault.capability.unsupportedByExternalAgent" as const;
 
 /**
  * self-dev 防护拒绝启动时的 reasonCode（spec R4-3）。

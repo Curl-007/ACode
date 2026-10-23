@@ -61,7 +61,10 @@ export function createJcodeHost(options: CreateJcodeHostOptions): V4GatewayHost 
     // 诊断走 logger（entry.ts 接到 stderr）；错误不静默（spec R5 onError 留痕）。
     onDebug: (message: string) => logger?.debug(message),
     onError: (scope: string, error: unknown) => {
-      logger?.error(`jcode bridge v4 host error [${scope}]`, error instanceof Error ? error : new Error(String(error)));
+      logger?.error(
+        `jcode bridge v4 host error [${scope}]`,
+        error instanceof Error ? error : new Error(String(error)),
+      );
     },
   };
 }

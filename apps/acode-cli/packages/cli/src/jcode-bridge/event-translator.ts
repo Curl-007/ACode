@@ -265,7 +265,12 @@ export class JcodeEventTranslator {
    */
   endTurn(
     outcome: { stopReason?: string; errorMessage?: string },
-    usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number; cachedReadTokens?: number },
+    usage?: {
+      inputTokens?: number;
+      outputTokens?: number;
+      totalTokens?: number;
+      cachedReadTokens?: number;
+    },
   ): TranslatedSessionEvent[] {
     const turnId = this.currentTurnId;
     if (!turnId) return [];
@@ -288,13 +293,16 @@ export class JcodeEventTranslator {
       }),
     );
     const cancelled = outcome.stopReason === "cancelled";
-    const failed = Boolean(outcome.errorMessage) || (!cancelled && outcome.stopReason !== "end_turn" && outcome.stopReason !== undefined);
+    const failed =
+      Boolean(outcome.errorMessage) ||
+      (!cancelled && outcome.stopReason !== "end_turn" && outcome.stopReason !== undefined);
     if (failed && !cancelled) {
       out.push(
         this.make(SessionEventType.TurnError, turnId, {
           error: {
             type: "jcode_turn_failed",
-            message: outcome.errorMessage ?? `jcode turn stopped: ${outcome.stopReason ?? "unknown"}`,
+            message:
+              outcome.errorMessage ?? `jcode turn stopped: ${outcome.stopReason ?? "unknown"}`,
           },
           turnPhase: "execution",
         }),
@@ -332,7 +340,11 @@ export class JcodeEventTranslator {
     ];
   }
 
-  private make(type: string, turnId: string, payload: Record<string, unknown>): TranslatedSessionEvent {
+  private make(
+    type: string,
+    turnId: string,
+    payload: Record<string, unknown>,
+  ): TranslatedSessionEvent {
     this.seq += 1;
     return {
       id: this.deps.nextEventId(),

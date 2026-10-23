@@ -54,7 +54,12 @@ function ok(id: ACodeProtocolRequestId, result: unknown): ACodeProtocolResponse 
   return { id, result } as ACodeProtocolResponse;
 }
 
-function fail(id: ACodeProtocolRequestId, code: number, message: string, data?: unknown): ACodeProtocolError {
+function fail(
+  id: ACodeProtocolRequestId,
+  code: number,
+  message: string,
+  data?: unknown,
+): ACodeProtocolError {
   return { error: { code, data, message }, id } as ACodeProtocolError;
 }
 
@@ -96,7 +101,10 @@ function stageInitialWires(
 }
 
 /** v4 method → gateway 路由（server.ts:494-613 的 jcode 后端子集）。 */
-async function dispatchRequest(deps: JcodeDispatchDeps, request: ACodeProtocolRequest): Promise<unknown> {
+async function dispatchRequest(
+  deps: JcodeDispatchDeps,
+  request: ACodeProtocolRequest,
+): Promise<unknown> {
   const { gateway, outbox } = deps;
   switch (request.method) {
     case V4_METHODS.capabilitiesQuery:
@@ -156,7 +164,9 @@ async function dispatchRequest(deps: JcodeDispatchDeps, request: ACodeProtocolRe
  */
 export function createJcodeMessageHandler(
   deps: JcodeDispatchDeps,
-): (message: ACodeProtocolMessage) => Promise<ACodeProtocolResponse | ACodeProtocolError | undefined> {
+): (
+  message: ACodeProtocolMessage,
+) => Promise<ACodeProtocolResponse | ACodeProtocolError | undefined> {
   return async (message) => {
     // 客户端对服务端反向请求的响应：jcode 后端不发起反向请求（无 interaction/*），
     // 收到即忽略（不留悬挂——本就没有在飞的反向请求 id）。

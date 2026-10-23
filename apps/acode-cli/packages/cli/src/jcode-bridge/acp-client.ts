@@ -177,7 +177,9 @@ export class JcodeAcpClient {
     // 子进程死亡时把所有在飞请求 reject —— 否则 executeCommand 不会 settle，
     // CommandInbox 的 per-session FIFO gate 永久卡死（spec R5）。
     void options.exited?.then(({ code, signal }) => {
-      this.failAllPending(`jcode process exited (code=${code ?? "null"}, signal=${signal ?? "null"})`);
+      this.failAllPending(
+        `jcode process exited (code=${code ?? "null"}, signal=${signal ?? "null"})`,
+      );
     });
   }
 
@@ -270,14 +272,21 @@ export class JcodeAcpClient {
   /** 发一个请求并等响应。timeoutMs 到即 reject（R5：必 settle）。 */
   request<T>(method: string, params: unknown, timeoutMs = this.requestTimeoutMs): Promise<T> {
     if (this.closed) {
-      return Promise.reject(new JcodeAcpError(JCODE_UNKNOWN_ERROR_CODE, `jcode acp client closed (method=${method})`));
+      return Promise.reject(
+        new JcodeAcpError(JCODE_UNKNOWN_ERROR_CODE, `jcode acp client closed (method=${method})`),
+      );
     }
     const id = this.nextId++;
     const frame: AcpRequest = { jsonrpc: "2.0", id, method, params };
     return new Promise<T>((resolve, reject) => {
       const timer = setTimeout(() => {
         if (!this.pending.delete(id)) return;
-        reject(new JcodeAcpError(JCODE_UNKNOWN_ERROR_CODE, `jcode acp request timed out: ${method} (${timeoutMs}ms)`));
+        reject(
+          new JcodeAcpError(
+            JCODE_UNKNOWN_ERROR_CODE,
+            `jcode acp request timed out: ${method} (${timeoutMs}ms)`,
+          ),
+        );
       }, timeoutMs);
       // 定时器不阻塞进程退出（shim 是长驻进程，但空闲时不该被 timer 吊住）。
       (timer as ReturnType<typeof setTimeout> & { unref?: () => void }).unref?.();
@@ -356,7 +365,9 @@ export class JcodeAcpClient {
   private failAllPending(reason: string): void {
     for (const [id, entry] of this.pending) {
       clearTimeout(entry.timer);
-      entry.reject(new JcodeAcpError(JCODE_UNKNOWN_ERROR_CODE, `${reason} (pending method=${entry.method})`));
+      entry.reject(
+        new JcodeAcpError(JCODE_UNKNOWN_ERROR_CODE, `${reason} (pending method=${entry.method})`),
+      );
       this.pending.delete(id);
     }
   }

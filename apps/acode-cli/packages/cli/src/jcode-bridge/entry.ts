@@ -18,21 +18,23 @@ import { randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import * as nodePath from "node:path";
 import type { Logger } from "@acode/contracts";
-import {
-  acodeProtocolNotifications,
-  acodeStorageStartupStateSchema,
-} from "@acode/shared";
-import {
-  ACodeProtocolNdjsonConnection,
-  ConversationV4Gateway,
-} from "@acode/bootstrap";
+import { acodeProtocolNotifications, acodeStorageStartupStateSchema } from "@acode/shared";
+import { ACodeProtocolNdjsonConnection, ConversationV4Gateway } from "@acode/bootstrap";
 import type { RunContext } from "@acode/shared-types";
 
 import { JcodeAcpClient } from "./acp-client.js";
-import type { AcpInboundNotification, AcpSessionUpdateParams, TranslatedSessionEvent } from "./acp-types.js";
+import type {
+  AcpInboundNotification,
+  AcpSessionUpdateParams,
+  TranslatedSessionEvent,
+} from "./acp-types.js";
 import { JCODE_SPAWN_READY_TIMEOUT_MS } from "./constants.js";
 import type { JcodeBridgeRuntime } from "./command-translator.js";
-import { createJcodeMessageHandler, type JcodeDispatchDeps, type PostResponseOutbox } from "./dispatch.js";
+import {
+  createJcodeMessageHandler,
+  type JcodeDispatchDeps,
+  type PostResponseOutbox,
+} from "./dispatch.js";
 import { JcodeEventTranslator } from "./event-translator.js";
 import { createJcodeHost } from "./host.js";
 import { JcodeSessionMap } from "./session-map.js";
@@ -99,7 +101,9 @@ export async function runJcodeBridge(
       whichOnPath(name),
     );
   } catch (error) {
-    ctx.stderr.write(`acode jcode-bridge failed: ${error instanceof Error ? error.message : String(error)}\n`);
+    ctx.stderr.write(
+      `acode jcode-bridge failed: ${error instanceof Error ? error.message : String(error)}\n`,
+    );
     return 1;
   }
 
@@ -234,14 +238,19 @@ export async function runJcodeBridge(
  *
  * 未登记的 jcodeSessionId（非本进程创建）→ 忽略并留痕，不伪造会话。
  */
-function routeNotification(runtime: JcodeBridgeRuntime, notification: AcpInboundNotification): void {
+function routeNotification(
+  runtime: JcodeBridgeRuntime,
+  notification: AcpInboundNotification,
+): void {
   if (notification.method !== "session/update") return;
   const params = notification.params as AcpSessionUpdateParams | undefined;
   const jcodeSessionId = params?.sessionId;
   if (!jcodeSessionId) return;
   const v4SessionId = runtime.sessions.toV4(jcodeSessionId);
   if (!v4SessionId) {
-    runtime.logger?.debug("jcode bridge: session/update for unmapped jcode session", { jcodeSessionId });
+    runtime.logger?.debug("jcode bridge: session/update for unmapped jcode session", {
+      jcodeSessionId,
+    });
     return;
   }
   const translator = runtime.translator(v4SessionId);

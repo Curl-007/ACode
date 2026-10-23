@@ -48,13 +48,15 @@
 
 ## 审查（reviews/）
 
-| 文档                                                                                         | 内容                                                                       |
-| -------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| [project-review-2026-10-22.md](project-review-2026-10-22.md)                                 | **当前最新** 全项目 review 枢纽（1.0.3 基线）                              |
-| [reviews/2026-10-22/](reviews/2026-10-22/)                                                   | 本轮 11 个专项 review + fix-status（多个 spec / test 引用，活跃）          |
-| [project-review-2026-10-08.md](project-review-2026-10-08.md)                                 | 上一轮全项目 review（基线 `dev/0.0.7`）                                    |
-| [reviews/2026-10-08/](reviews/2026-10-08/)                                                   | 上一轮专项 + 修复记录（仍被当前 review、活跃文档与源码注释引用，故留原位） |
-| [codex-orchestration-plan-audit-2026-10-10.md](codex-orchestration-plan-audit-2026-10-10.md) | Codex 编排计划审计（审计对象已归档，见下）                                 |
+| 文档                                                                                             | 内容                                                                                                                                                                          |
+| ------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [project-review-2026-10-22.md](project-review-2026-10-22.md)                                     | **当前最新** 全项目 review 枢纽（1.0.3 基线）                                                                                                                                 |
+| [reviews/2026-10-22/](reviews/2026-10-22/)                                                       | 本轮 11 个专项 review + fix-status（多个 spec / test 引用，活跃）                                                                                                             |
+| [project-review-2026-10-08.md](project-review-2026-10-08.md)                                     | 上一轮全项目 review（基线 `dev/0.0.7`）                                                                                                                                       |
+| [reviews/2026-10-08/](reviews/2026-10-08/)                                                       | 上一轮专项 + 修复记录（仍被当前 review、活跃文档与源码注释引用，故留原位）                                                                                                    |
+| [codex-orchestration-plan-audit-2026-10-10.md](codex-orchestration-plan-audit-2026-10-10.md)     | Codex 编排计划审计（审计对象已归档，见下）                                                                                                                                    |
+| [omp-cli-replacement-assessment-2026-10-23.md](omp-cli-replacement-assessment-2026-10-23.md)     | 用 omp（oh-my-pi）替换 ACode Agent CLI 的可行性评估（4 路子代理分析 + 亲验；结论：不建议完整替换，可行形态是 shim 桥接共存）**待决策**                                        |
+| [jcode-cli-replacement-assessment-2026-10-23.md](jcode-cli-replacement-assessment-2026-10-23.md) | 用 jcode（纯 Rust）替换 ACode Agent CLI 的可行性评估（3 路子代理分析 + 亲验；结论：净优于 omp 但 Windows 无稳定驱动通道，推进前需安全硬化层）；§8 含两候选横向对比 **待决策** |
 
 ## 归档（archive/）
 

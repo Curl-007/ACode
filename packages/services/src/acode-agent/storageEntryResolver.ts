@@ -24,7 +24,7 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve as resolvePath } from "node:path";
 
-import { getEngineRuntime } from "@acode/shared";
+import { getACodeAgentRuntime } from "@acode/shared";
 
 import { findUpwardRepoFile } from "./repoUpwardLookup.js";
 
@@ -67,17 +67,24 @@ export interface ACodeStoragePreparationEntry {
  *   3. monorepo dev `apps/acode-cli/packages/cli/dist/acode.cjs`（向上查找）
  *
  * **不读任何 env**：既不接受 env 入参，也不读 process.env 的 ACODE_AGENT_SERVER_* 族。
- * 引擎入参只用于取 bundle 目录名（当前恒为 native glm，见 acode-agent-runtime.ts），
- * 不用于选外部引擎二进制——storage 迁移永远由 ACode CLI 自己跑。
+ * **不接受 engineId 入参**：storage 迁移永远由 ACode CLI 自己的 native bundle 跑，
+ * 与会话选哪个引擎无关（jcode 引擎也复用同一个 acode.cjs，见 agent-engine-jcode-slot.md R3）。
+ * 这是 R6 不变量的结构性保证——不给 engine 留任何影响 storage 入口的入口。
  *
  * @returns 命中候选返回入口描述；全部落空返回 null（调用方保持 fail-loud，
  *          照旧报 unsupported_runtime，不静默跳过存储准备）。
  */
 export function resolveACodeStoragePreparationEntry(context: {
   workspacePath: string;
-  engineId?: string | null;
 }): ACodeStoragePreparationEntry | null {
-  const runtime = getEngineRuntime(context.engineId);
+  // R6 不变量：storage 入口恒为 ACode CLI 的 native bundle，**与选哪个会话引擎无关**。
+  // 故这里刻意用 getACodeAgentRuntime()（恒 native），不接受 engineId 入参——storage
+  // 准备跑的是 `app-server --prepare-storage`（ACode 自己的 SQLite 迁移），jcode 引擎
+  // 也复用同一个 acode.cjs bundle（见 agent-engine-jcode-slot.md R3：jcode 与 glm 共用
+  // bundledResourceDir/nodeBundleEntryFile，只有 spawnArgs 不同）。若按 engineId 取
+  // runtime，一旦 getEngineRuntime 改成引擎作用域（R3），storage 入口会跟着引擎漂移，
+  // 违背 R6——用结构性「无 engine 输入」杜绝这个耦合，而非依赖两者恰好同 bundle。
+  const runtime = getACodeAgentRuntime();
   // resolveNodeBundleSegments() 返回 [nodeBundleEntryFile]（当前 = ["acode.cjs"]）。
   const entrySegments = runtime.resolveNodeBundleSegments();
   const resourceSegments = [runtime.bundledResourceDir, ...entrySegments];

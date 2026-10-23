@@ -126,6 +126,7 @@ export * from "./script-workflow-feature.js";
 // 文件——App 三值域是 CLI 四值域（@acode/contracts ToolSearchModeSchema）的子集，
 // shared 不得深导入 CLI 包，词表在此独立定义。
 export * from "./tool-search-feature.js";
+export * from "./agent-engine-setting.js";
 export * from "./markdown-artifact-images.js";
 export * from "./serviceAuthority.js";
 export * from "./server-remote.js";

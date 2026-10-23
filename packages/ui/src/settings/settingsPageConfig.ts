@@ -22,6 +22,7 @@ import {
   Search,
   ShieldCheck,
   SlidersHorizontal,
+  Cpu,
 } from "lucide-react";
 import { isSettingsSectionEnabled, type SettingsSectionId } from "@/lib/settingsNavigation.js";
 import type { Theme } from "@/useTheme.js";
@@ -129,6 +130,15 @@ const BASE_SETTINGS_SECTIONS: SettingsSectionDefinition[] = [
     id: "toolSearch",
     icon: Search,
     titleId: "settings.toolSearch.title",
+    groupId: "agentCapabilities",
+  },
+  // Agent 引擎选择（agent-engine-jcode-slot.md R7）：决定 Host spawn 哪个 agent
+  // （glm → app-server；jcode → jcode-bridge）。挂 agentCapabilities 组，位置沿用
+  // 被删的旧 EngineSection（memory 之后）。
+  {
+    id: "agentEngine",
+    icon: Cpu,
+    titleId: "settings.agentEngine.title",
     groupId: "agentCapabilities",
   },
   {

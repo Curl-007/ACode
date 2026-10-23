@@ -103,6 +103,8 @@ import {
   type ScriptWorkflowMode,
   isScriptWorkflowModeEnabled,
   type ToolSearchAppMode,
+  type ACodeAgentEngineId,
+  DEFAULT_AGENT_ENGINE_SETTING,
   type AgentLaneResourceSample,
   type ProcessResourceCliLane,
   type ACodeMcpTelemetryEvent,
@@ -930,6 +932,19 @@ interface CreateACodeAgentServiceOptions extends Omit<
    * 无会话中途改档通道），读取异常按 off + warn（与 node.ts 折叠出口双层兜底）。
    */
   resolveToolSearchMode?: () => Promise<ToolSearchAppMode>;
+  /**
+   * 会话 agent 引擎选择的唯一折叠出口（node.ts resolveAgentEngineFromSettings，
+   * spec: packages/shared/specs/agent-engine-jcode-slot.md R4）。
+   *
+   * 与 resolveToolSearchMode 同款「每次现读」语义：引擎是**全局本机设置**（不是
+   * per-workspace），故不污染 ACodeAgentWorkspaceTarget，而是在调 processManager.getClient
+   * 前现读并拼进 params.engineId。缺省不传（纯 CLI 装配 / 旧调用方）= undefined，
+   * startClient 经 resolveAgentEngine 归一回退 native glm，行为逐字不变。
+   *
+   * 读取异常按 native 兜底 + warn（与 toolSearchMode 的双层兜底同构），不让设置读取
+   * 故障阻断会话创建。
+   */
+  resolveAgentEngine?: () => Promise<ACodeAgentEngineId>;
   resolveOffPeakTaskService?: () =>
     | Pick<IOffPeakTaskService, "createTask" | "list" | "getCodingPlanSupport">
     | undefined;
@@ -1458,32 +1473,42 @@ export function createACodeAgentService(
         // 共用现有 Client 串行队列；不新增发送屏障，也不按内容 revision 猜测时间先后。
         const snapshot = await accountProviderConfigSource.read();
         if (accountConfigReceivedRevisionByClient.get(params.client) === snapshot.revision) return;
-        const result = await params.client.request(
-          acodeProtocolMethods.providerUpdateAccountConfig,
-          {
-            revision: snapshot.revision,
-            basedOnACodeBuiltinRevision: snapshot.basedOnACodeBuiltinRevision,
-            // Account 是运行时事实信封，不是磁盘 Provider 规则集合；保持原有协议字典。
-            providers: Object.fromEntries(
-              [...snapshot.providers.entries()].map(([providerId, config]) => [
-                providerId,
-                config.toJSON(),
-              ]),
-            ),
-            states: snapshot.states ?? {},
-          },
-          acodeProviderUpdateAccountConfigResultSchema,
-        );
-        if (result.receivedRevision !== snapshot.revision) {
-          throw new Error("Account Config 接收回执版本与交付版本不一致");
+        try {
+          const result = await params.client.request(
+            acodeProtocolMethods.providerUpdateAccountConfig,
+            {
+              revision: snapshot.revision,
+              basedOnACodeBuiltinRevision: snapshot.basedOnACodeBuiltinRevision,
+              // Account 是运行时事实信封，不是磁盘 Provider 规则集合；保持原有协议字典。
+              providers: Object.fromEntries(
+                [...snapshot.providers.entries()].map(([providerId, config]) => [
+                  providerId,
+                  config.toJSON(),
+                ]),
+              ),
+              states: snapshot.states ?? {},
+            },
+            acodeProviderUpdateAccountConfigResultSchema,
+          );
+          if (result.receivedRevision !== snapshot.revision) {
+            throw new Error("Account Config 接收回执版本与交付版本不一致");
+          }
+          accountConfigReceivedRevisionByClient.set(params.client, result.receivedRevision);
+          logger.info(undefined, "account provider config 已交付到 ACode agent", {
+            providerCount: result.providerCount,
+            reason: params.reason,
+            receivedRevision: result.receivedRevision,
+            status: result.status,
+          });
+        } catch (error) {
+          // 外部引擎（jcode）自带登录态，不消费 ACode 推的 provider account config，故对该
+          // legacy 方法回 -32601；这是引擎级事实，与调用点无关。此处与同文件
+          // interactionPreferences / modelIo / offPeak / dynamicWorkflow 四处 push 保持同一
+          // 「新 Host 兼容尚未实现该方法的 CLI/外部引擎」降级约定：method-not-found 静默跳过
+          // （不阻断 createSession），其它错误（含回执版本不一致、暂时性 IPC）仍上抛。
+          // 未记 receivedRevision → 下次 revision 变化会重试；对不支持的引擎重试仍幂等降级。
+          if (!isProtocolMethodNotFoundError(error)) throw error;
         }
-        accountConfigReceivedRevisionByClient.set(params.client, result.receivedRevision);
-        logger.info(undefined, "account provider config 已交付到 ACode agent", {
-          providerCount: result.providerCount,
-          reason: params.reason,
-          receivedRevision: result.receivedRevision,
-          status: result.status,
-        });
       });
     accountConfigSyncByClient.set(params.client, current);
     try {
@@ -1529,17 +1554,28 @@ export function createACodeAgentService(
         // 前一次失败不能打乱之后开关提交的顺序；当前快照仍需继续尝试。
       })
       .then(async () => {
-        await params.client.request(
-          acodeProtocolMethods.workspaceUpdateInteractionPreferences,
-          {
-            workspace: buildWorkspaceRef(params.workspace),
-            preferences: {
-              askUserQuestionAutoResolutionEnabled:
-                params.preferences.askUserQuestionAutoResolutionEnabled,
+        // 两条 preference push 都是尽力而为：交互偏好（自动应答）与 model-io 偏好（全量留存）
+        // 是 ACode 内部语义，外部引擎（如 jcode）不实现即回 -32601。这里必须与下方 modelIo
+        // push、以及 offPeak / dynamicWorkflow 两处 policy push 保持同一降级约定——四个同级
+        // 调用此前唯独 interactionPreferences 缺守卫，导致 -32601 直接 reject 整条
+        // interactionPreferencesReady（Promise.all），杀死 workspace client 就绪屏障。
+        try {
+          await params.client.request(
+            acodeProtocolMethods.workspaceUpdateInteractionPreferences,
+            {
+              workspace: buildWorkspaceRef(params.workspace),
+              preferences: {
+                askUserQuestionAutoResolutionEnabled:
+                  params.preferences.askUserQuestionAutoResolutionEnabled,
+              },
             },
-          },
-          acodeWorkspaceUpdateInteractionPreferencesResultSchema,
-        );
+            acodeWorkspaceUpdateInteractionPreferencesResultSchema,
+          );
+        } catch (error) {
+          // 新 Host 兼容尚未实现该方法的 CLI/外部引擎：只有 method-not-found 可降级，
+          // 其他同步失败仍需上抛（交由外层串行队列与就绪屏障处理）。
+          if (!isProtocolMethodNotFoundError(error)) throw error;
+        }
         try {
           await params.client.request(
             acodeProtocolMethods.workspaceUpdateModelIoPreferences,
@@ -3008,7 +3044,7 @@ export function createACodeAgentService(
       return active;
     }
 
-    const client = await processManager.getClient(params);
+    const client = await processManager.getClient(await withResolvedEngineId(params));
     wireClient(client, params, "chat");
 
     // processManager 会按 workspaceKey 对并发启动 single-flight。await 期间若另一条
@@ -3410,6 +3446,41 @@ export function createACodeAgentService(
     }
   }
 
+  /**
+   * 会话引擎选择的唯一折叠出口（spec: agent-engine-jcode-slot.md R4）。
+   *
+   * 与 resolveToolSearchGate 同构，但兜底语义不同：读不到/异常时返回 **undefined**
+   * （不落具体档位），由 processManager.startClient 的 resolveAgentEngine 归一回退 native
+   * glm。这样旧调用方（不传 resolveAgentEngine）与设置读取故障都走「回退 native」的同一条
+   * 路，行为逐字不变，也不会因读取故障误选 jcode。
+   */
+  async function resolveAgentEngineGate(): Promise<ACodeAgentEngineId | undefined> {
+    const resolve = options?.resolveAgentEngine;
+    if (!resolve) return undefined;
+    try {
+      return await resolve();
+    } catch (error) {
+      logger.warn(undefined, "会话引擎设置读取异常，回退 native(glm)", {
+        errorMessage: error instanceof Error ? error.message : String(error),
+      });
+      return DEFAULT_AGENT_ENGINE_SETTING;
+    }
+  }
+
+  /**
+   * 给 processManager.getClient 的 params 拼上当前引擎（spec: agent-engine-jcode-slot.md R4）。
+   *
+   * 引擎是全局本机设置而非 per-workspace，故不污染 ACodeAgentWorkspaceTarget 类型，
+   * 在调用点现读拼接。resolveAgentEngineGate 返回 undefined 时不写 engineId 键——
+   * startClient 的 resolveAgentEngine(undefined) 归一回退 native，旧行为逐字不变。
+   */
+  async function withResolvedEngineId<T extends ACodeAgentWorkspaceTarget>(
+    params: T,
+  ): Promise<T & { engineId?: ACodeAgentEngineId }> {
+    const engineId = await resolveAgentEngineGate();
+    return engineId === undefined ? params : { ...params, engineId };
+  }
+
   async function buildConversationCommandEnvelope(
     params: ACodeAgentConversationCommandParams,
   ): Promise<CommandEnvelope> {
@@ -3476,7 +3547,13 @@ export function createACodeAgentService(
 
   return {
     async prepareStorage(params) {
-      const client = await processManager.getClient(params);
+      // 与会话 client 用同一引擎解析：prepareStorage 也经 getClient spawn agent。
+      // 两条路径必须解析到同一引擎，否则同 workspace 下一次起 glm、一次起 jcode。
+      //
+      // 引擎切换由 processManager.getClient 内部处理：workspaceKey 不含引擎维度
+      // （task-realtime-core.ts:76-81），故 getClient 在复用既有进程前比对
+      // managed.engineId，不符即 disposeWorkspace 后冷启动（agent-engine-jcode-slot.md R4）。
+      const client = await processManager.getClient(await withResolvedEngineId(params));
       wireClient(client, params, "chat");
       await client.storageStartup.wait();
     },

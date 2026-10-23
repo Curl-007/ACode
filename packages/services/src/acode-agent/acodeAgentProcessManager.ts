@@ -17,7 +17,6 @@ import {
   ACODE_PROCESS_DIAGNOSTIC_STACK_MAX_CHARS,
 } from "@acode/shared/process-diagnostic";
 import {
-  ACODE_AGENT_RUNTIME,
   ACODE_AGENT_BYTECODE_ENTRY_FILE,
   ACODE_AGENT_IDLE_EXIT_CODE,
   ACODE_AGENT_IDLE_EXIT_ENV_KEY,
@@ -28,6 +27,9 @@ import {
   acodeProtocolNotifications,
   acodeRuntimeIdleExitParamsSchema,
   appendMaxOldSpaceToNodeOptions,
+  getEngineRuntime,
+  resolveAgentEngine,
+  ACODE_NATIVE_AGENT_ENGINE,
   isPackagedACodeDesktopRuntime,
   isSensitiveLogKeyName,
   resolveMaxOldSpaceMb,
@@ -475,6 +477,9 @@ async function buildACodeAgentSpawnPreflight(
 function resolveBundledWorkspaceACodeAgentCommand(
   context: ACodeAgentCommandResolverContext,
 ): ACodeAgentCommand | null {
+  // 引擎作用域 spawnArgs（spec: agent-engine-jcode-slot.md R3）：glm→app-server，
+  // jcode→jcode-bridge，两者跑同一个 acode.cjs bundle，只换子命令。
+  const runtime = getEngineRuntime(context.engineId);
   const distEntrypoint = findUpwardRepoFile("apps/acode-cli/packages/cli/dist/acode.cjs");
   if (distEntrypoint) {
     const useBytecode =
@@ -488,8 +493,11 @@ function resolveBundledWorkspaceACodeAgentCommand(
     }
     return {
       command: process.execPath,
-      args: [entrypoint, "app-server", "--stdio"],
+      args: [entrypoint, ...runtime.spawnArgs],
       // Worker 与 Electron Node 子进程的 V8 snapshot 可不同；临时存储准备继续用 JS。
+      // 注意：storagePreparationEntry 恒指向同一 bundle（storage 迁移与引擎无关，
+      // 桌面侧已由 storageEntryResolver 独立解析，见 host-startup-storage-cwd.md R6）；
+      // 这里保留它是为 ACodeProtocolClient 的 requireStorageStartup 门禁（:1601）。
       storagePreparationEntry: distEntrypoint,
       cwd: context.workspacePath,
       // 桌面端 host 运行在 Electron utility process 中，process.execPath 指向 Electron Helper。
@@ -505,7 +513,7 @@ function resolveBundledWorkspaceACodeAgentCommand(
   }
   return {
     command: tsxEntrypoint,
-    args: [sourceEntrypoint, "app-server", "--stdio"],
+    args: [sourceEntrypoint, ...runtime.spawnArgs],
     cwd: context.workspacePath,
   };
 }
@@ -517,16 +525,18 @@ function resolveDeployedACodeAgentBinaryCommand(
   // SSH 远端把 acode-server.cjs 单文件部署到 ~/.acode/server/，宿主进程的 cwd 不在仓库内、
   // env 也不会被 ssh exec 继承，即使 acode-agent 已经部署到 ~/.acode/server/agents/glm/，
   // resolver 也找不到，第一次 getClient 就抛 "ACode agent server command is not configured"。
-  // 这里复用 findACodeAgentRuntimeBinary 的候选链（含 GLM_BINARY_PATH env、
-  // packagedResourcesPath、~/.acode/server/agents/glm、bundled-agents 等），
+  // 这里复用 findACodeAgentRuntimeBinary 的候选链（含引擎 binaryEnvVar、
+  // packagedResourcesPath、~/.acode/server/agents/<engine>、bundled-agents 等），
   // 把已部署的原生 binary 当成最终兜底，远端/桌面打包形态都能命中。
-  const binaryPath = findACodeAgentRuntimeBinary();
+  // 引擎作用域（spec: agent-engine-jcode-slot.md R3）：binary 候选链与 spawnArgs 都按 engineId 取。
+  const runtime = getEngineRuntime(context.engineId);
+  const binaryPath = findACodeAgentRuntimeBinary(context.engineId);
   if (!binaryPath) {
     return null;
   }
   return {
     command: binaryPath,
-    args: ACODE_AGENT_RUNTIME.spawnArgs,
+    args: runtime.spawnArgs,
     cwd: context.workspacePath,
   };
 }
@@ -554,7 +564,11 @@ function resolveElectronRuntimeACodeAgentCommand(
   if (!process.versions.electron) {
     return null;
   }
-  const bundlePath = findACodeAgentRuntimeNodeBundle();
+  // 引擎作用域（spec: agent-engine-jcode-slot.md R3）：jcode 与 glm 共用同一 bundle
+  // 目录（bundledResourceDir 恒 "glm"），findACodeAgentRuntimeNodeBundle 按 engineId
+  // 取 runtime 描述符解析路径，jcode 命中同一 acode.cjs；只有下方 spawnArgs 分引擎。
+  const runtime = getEngineRuntime(context.engineId);
+  const bundlePath = findACodeAgentRuntimeNodeBundle(context.engineId);
   if (!bundlePath) {
     return null;
   }
@@ -570,7 +584,7 @@ function resolveElectronRuntimeACodeAgentCommand(
   const entrypoint = bytecodeLoaderPath ?? bundlePath;
   return {
     command: process.execPath,
-    args: [entrypoint, ...ACODE_AGENT_RUNTIME.spawnArgs],
+    args: [entrypoint, ...runtime.spawnArgs],
     storagePreparationEntry: bundlePath,
     cwd: context.workspacePath,
     // 关键：必须以纯 Node 模式启动，否则子进程会被当成 Electron/Chromium 子进程卡在 GPU 初始化。
@@ -585,8 +599,12 @@ function resolveElectronRuntimeACodeAgentCommand(
 export function resolveDefaultACodeAgentCommand(
   context: ACodeAgentCommandResolverContext,
 ): ACodeAgentCommand | null {
-  // 引擎联合只剩 native(glm)（外部引擎槽位已下线，spec: agent-engine-external-slots-removal.md）；
-  // context.engineId 仅作形状保留，所有输入都走下方 native 候选链。
+  // 引擎作用域（spec: agent-engine-jcode-slot.md R3）：context.engineId 现在真被消费——
+  // bundled / Electron / deployed 三条候选链都经 getEngineRuntime(engineId).spawnArgs 决定
+  // 启动子命令（glm→app-server，jcode→jcode-bridge），三者共用同一 acode.cjs bundle。
+  // 未知/空值经 getEngineRuntime→resolveAgentEngine 归一回退 native，旧调用方零行为变化。
+  // 注意：env 覆盖分支（下方 ACODE_AGENT_SERVER_COMMAND）在 R6 之后**只影响会话命令、
+  // 不影响 storage 入口**（storage 已由 storageEntryResolver 独立解析，恒 native bundle）。
 
   // 安全加固 P2（agent-command-env-gate R1）：打包态忽略 ACODE_AGENT_SERVER_COMMAND 族。
   // launchctl setenv / shell profile / Windows 用户环境变量可在用户级权限下注入 GUI 应用
@@ -1026,9 +1044,28 @@ export class ACodeAgentProcessManager {
       throw new Error("ACode agent process manager is disposed.");
     }
     const workspaceKey = resolveWorkspaceKey(params);
+    // 引擎归一（agent-engine-jcode-slot.md R4）：必须在**复用检查之前**做——否则用户切换
+    // 引擎后，已存活的旧引擎进程会被原样复用（见下方引擎不符重启）。与 startClient /
+    // tryClaimSpare 同口径，全链只此一处归一后下传，不各算一次。
+    const requestedEngineId: ACodeProvider = resolveAgentEngine(params.engineId).id;
     const existing = this.processesByWorkspaceKey.get(workspaceKey);
     if (existing && !existing.child.killed) {
-      return existing.client;
+      // 进程缓存键 workspaceKey = workspaceIdentity || workspacePath，**不含引擎维度**
+      // （task-realtime-core.ts:76-81）。故必须在此显式比对引擎：不符即 dispose 该 workspace
+      // 的 runtime 后走冷启动，否则「选了 jcode 实际还跑 glm」（R4 陷阱）。
+      // 用 disposeWorkspace 而非 disposeAll：只回收当前 workspace，其它 workspace 与备件池不受影响。
+      if (existing.engineId === requestedEngineId) {
+        return existing.client;
+      }
+      log("ACode agent engine changed; restarting workspace runtime", {
+        workspaceKey,
+        previousEngineId: existing.engineId,
+        requestedEngineId,
+      });
+      await this.disposeWorkspace({
+        workspacePath: params.workspacePath,
+        ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
+      });
     }
 
     const starting = this.startingByWorkspaceKey.get(workspaceKey);
@@ -1048,10 +1085,11 @@ export class ACodeAgentProcessManager {
     // 进程获取决策点(spec: agent-process-prewarm.md R2/R3):复用既有进程与并入在飞
     // 启动都不是获取事件,不打 timing 日志;只有走到认领/冷启动分叉才记 outcome。
     // 认领全同步(无 await),两个 workspace 并发时恰好一个拿到备件(单飞)。
+    // 引擎用上方已归一的 requestedEngineId（全链单一归一点）。
     const acquisitionStartedAt = Date.now();
     let missOutcome: AgentSpareStartOutcome | undefined;
     if (this.sparePrewarmOptions) {
-      const decision = this.tryClaimSpare(params, workspaceKey);
+      const decision = this.tryClaimSpare(params, workspaceKey, requestedEngineId);
       if ("client" in decision) {
         this.logSessionStartTiming({
           outcome: "spare_hit",
@@ -1075,7 +1113,9 @@ export class ACodeAgentProcessManager {
     }
     controllers.add(admissionAbortController);
     const startPromise = this.startClient(
-      params,
+      // 下传已归一的 engineId：与上面 tryClaimSpare 用同一个决策值，避免 startClient
+      // 内再归一一次（两处归一 = 两条决策路，违反「单一事实源」）。params 其余字段透传。
+      { ...params, engineId: requestedEngineId },
       workspaceKey,
       startGeneration,
       admissionAbortController.signal,
@@ -1269,10 +1309,22 @@ export class ACodeAgentProcessManager {
   private tryClaimSpare(
     params: { workspacePath: string; workspaceIdentity?: string },
     workspaceKey: string,
+    /**
+     * 请求方的引擎（已归一）。备件按 native(glm) 预热（spawnSpareProcess 不传 engineId），
+     * 故非 native 引擎一律不认领——否则 jcode 会话会拿到一个 glm app-server 进程，
+     * 且因 workspaceKey 不含引擎维度（agent-engine-jcode-slot.md R4 陷阱），认领后不会
+     * 重解析命令，「选了 jcode 实际跑 glm」。改走冷启动，正确且不损 glm 既有行为。
+     * 用 spare_miss_ineligible（与下方 resolveClaimEligibility 拒绝同语义），不用
+     * spare_miss_disabled——后者会在 timing 日志里误报成「预热全局禁用」。
+     */
+    engineId: ACodeProvider,
   ): SpareClaimDecision {
     const pool = this.sparePool;
     if (!pool) {
       return { outcome: AGENT_SPARE_DISABLED_OUTCOME };
+    }
+    if (engineId !== ACODE_NATIVE_AGENT_ENGINE) {
+      return { outcome: "spare_miss_ineligible" };
     }
     const eligibility = this.sparePrewarmOptions?.resolveClaimEligibility;
     let sawIneligible = false;
@@ -1434,8 +1486,11 @@ export class ACodeAgentProcessManager {
   ): Promise<ACodeProtocolClient> {
     const startStartedAt = Date.now();
     const resolveCommandStartedAt = Date.now();
-    // 引擎联合只剩 native(glm)：engineId 恒为 ACODE_AGENT_PROVIDER，旧 provider 值已在上游归一。
-    const engineId: ACodeProvider = "glm";
+    // 引擎作用域（spec: agent-engine-jcode-slot.md R4）：此前硬编码 "glm"（单引擎时代），
+    // 会让 Settings 选了 jcode 也照样 spawn native app-server。现按 params.engineId 归一——
+    // resolveAgentEngine 对空值/未知值（含已下线空槽位旧值）一律回退 native，故旧调用方
+    // 不传 engineId 时行为逐字不变。
+    const engineId: ACodeProvider = resolveAgentEngine(params.engineId).id;
     const command = await this.commandResolver({
       ...params,
       ...(this.presentationSurface ? { presentationSurface: this.presentationSurface } : {}),

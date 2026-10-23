@@ -119,19 +119,48 @@ test(
         providers: [{ providerId: "fake-provider", models: [{ modelId: "fake-model" }] }],
       }),
     };
-    // 刻意**不**注入 accountProviderConfigSource：注入了会发 legacy
-    // provider/updateAccountConfig，而 shim 的 dispatch 只处理 v4 方法 → 回 -32601 且
-    // 该错误不被降级（acodeAgentService.ts:1490 原样 rethrow）→ 整个 createSession reject。
-    // 省略即整条同步 early-return（:1450），这正是 jcode 后端的诚实配置。
+    // 注入最小 accountProviderConfigSource stub：真实 node.ts 一定注入它
+    // （node.ts createACodeAgentService 的 accountProviderConfigSource），createSession 前会推
+    // legacy provider/updateAccountConfig。shim 的 dispatch 只处理 v4 方法 → 回 -32601；
+    // 该错误必须被 Host 的 method-not-found 降级守卫吞掉（acodeAgentService.ts
+    // syncAccountProviderConfigToClient 内 isProtocolMethodNotFoundError 分支），
+    // createSession 不得被阻断。此前本测试靠「不注入」绕过该路径，掩盖了真实缺口
+    // （2026-10-24 真实 Electron e2e 实证：同款 -32601 杀死 agent init）。
+    const accountProviderConfigSource = {
+      // revision 系 nonEmptyString（acodeProviderUpdateAccountConfigParamsSchema）；
+      // 若给数字会在 Host 侧 zod 校验就被拒，请求根本发不到 shim，测不到降级守卫。
+      read: async () => ({
+        revision: "rev-1",
+        basedOnACodeBuiltinRevision: "builtin-1",
+        providers: new Map([
+          ["fake-provider", { toJSON: () => ({ providerId: "fake-provider" }) }],
+        ]),
+        states: {},
+      }),
+      // service 构造期会挂 onDidChange（:1452）；stub 无变更事件，dispose 给空函数。
+      onDidChange: () => () => {},
+    };
     const service = createACodeAgentService({
       presentationSurface: "desktop",
       modelSelectionReadinessSource,
+      accountProviderConfigSource,
     });
 
     const frames = [];
     let frameSubscription = null;
 
     try {
+      // 0. 先设 app 运行时偏好：真实 Host 在 agent init 前就有偏好快照
+      //    （latestAppRuntimePreferences 非空 → 构造 entry 时 while 循环推
+      //    workspace/updateInteractionPreferences + updateModelIoPreferences）。
+      //    shim 对这两个 legacy 方法回 -32601，Host 侧降级守卫必须吞掉，
+      //    否则 getClient reject、init 失败（2026-10-24 真实 Electron e2e 实证的 bug）。
+      //    不调这一步，本测试的 while 循环体不执行，覆盖不到该守卫。
+      await service.syncAppRuntimePreferences({
+        askUserQuestionAutoResolutionEnabled: false,
+        modelIoFullRetentionEnabled: false,
+      });
+
       // 1. createSession 经 service 层（会过 provider 就绪门禁 + account 同步分支）。
       const createAck = await service.sendConversationCommandV4({
         workspacePath: workspace,

@@ -51,13 +51,50 @@ export const ACODE_AGENT_RUNTIME: ACodeAgentRuntimeDescriptor = {
 };
 
 /**
- * 引擎作用域的运行时描述符。外部引擎槽位已下线（spec: agent-engine-external-slots-removal.md），
- * 当前恒等于 native(glm)；保留引擎入参以维持调用方形状，未知值一律回退 native。
+ * jcode 引擎的运行时描述符（spec: packages/shared/specs/agent-engine-jcode-slot.md R3）。
+ *
+ * 与 native 的**唯一实质差异是 spawnArgs**：jcode-bridge 是同一个 acode.cjs bundle 的子命令
+ * （apps/acode-cli/packages/cli/src/run.ts 的 case "jcode-bridge"，A.9 实测已在 bundle 内），
+ * 所以 bundledResourceDir / nodeBundleEntryFile / nativeConfigDir 全部与 glm 相同——不额外
+ * 分发一份 bundle，只换启动的子命令。shim 内部再 spawn jcode 本体（走 --jcode-binary，
+ * 见 agent-engine-jcode-slot.md R5，由 Settings 显式配置而非 ACode 的 binary 候选链）。
+ *
+ * binaryEnvVar 用 JCODE_BINARY_PATH：与 GLM_BINARY_PATH 平行，仅 dev/远端非打包态生效，
+ * 打包态被 agent-command-env-gate.md R1 统一忽略（不因新增引擎而放宽门禁）。
+ * resolveEntrySegments 指向 acode-agent 形状保留但实际不被 jcode 路径消费（桌面走 node
+ * bundle，远端 SSH 部署 jcode 引擎不在本期范围）。
+ */
+export const ACODE_JCODE_AGENT_RUNTIME: ACodeAgentRuntimeDescriptor = {
+  binaryKind: "native-binary",
+  binaryEnvVar: "JCODE_BINARY_PATH",
+  bundledResourceDir: "glm",
+  version: ACODE_AGENT_RUNTIME.version,
+  spawnArgs: ["jcode-bridge", "--stdio"],
+  nativeConfigDir: ".acode/cli",
+  nativeConfigFileName: "config.json",
+  missingBinaryMessage:
+    "[ACode Agent] jcode 引擎的 ACode CLI bundle 未找到，请先准备运行时资源（jcode 本体路径由 Settings 配置）",
+  resolveEntrySegments: (platform) => [resolvePlatformBinaryName("acode-agent", platform)],
+  nodeBundleEntryFile: "acode.cjs",
+  resolveNodeBundleSegments() {
+    return [this.nodeBundleEntryFile];
+  },
+};
+
+/**
+ * 引擎作用域的运行时描述符（spec: agent-engine-jcode-slot.md R1/R3）。
+ *
+ * 按 engineId dispatch：jcode → ACODE_JCODE_AGENT_RUNTIME（spawnArgs 走 jcode-bridge 子命令），
+ * 其余（含 native glm、空值、未知/旧值如已下线的 codex/opencode/gemini）→ native runtime。
+ * 曾是恒返回 ACODE_AGENT_RUNTIME（单引擎时代的形状保留）——那会让 jcode 拿到 glm 的
+ * spawnArgs（app-server），启动的是 native agent 而非桥接，属静默错误。
+ *
+ * 归一口径与 acode-agent-registry 的 resolveAgentEngine 一致：非 jcode 一律回退 native。
  */
 export function getEngineRuntime(
-  _engineId?: ACodeProvider | string | null,
+  engineId?: ACodeProvider | string | null,
 ): ACodeAgentRuntimeDescriptor {
-  return ACODE_AGENT_RUNTIME;
+  return engineId === "jcode" ? ACODE_JCODE_AGENT_RUNTIME : ACODE_AGENT_RUNTIME;
 }
 
 export function getACodeAgentRuntime(): ACodeAgentRuntimeDescriptor {

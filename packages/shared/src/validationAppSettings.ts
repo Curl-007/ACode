@@ -4,6 +4,7 @@ import type { AppSettings } from "./protocol.js";
 import { DYNAMIC_WORKFLOW_MODES } from "./dynamic-workflow-feature.js";
 import { SCRIPT_WORKFLOW_MODES } from "./script-workflow-feature.js";
 import { TOOL_SEARCH_APP_MODES } from "./tool-search-feature.js";
+import { ACODE_AGENT_ENGINE_IDS } from "./acode-agent-registry.js";
 import { REMOTE_ASSET_INSTALL_MODES } from "./remoteAssetInstallMode.js";
 import { isKnownRemoteResourcePackageId } from "./remoteResourcePackages.js";
 import { wslUserSchema } from "./wslUserValidation.js";
@@ -48,6 +49,13 @@ const scriptWorkflowModeSchema = z.enum(SCRIPT_WORKFLOW_MODES);
 // 工具按需检索三档（specs/tool-search.md R11，同上教训适用）：缺席即 off（零行为
 // 变化红线），不给 default——写默认值会把 off 冻结进用户配置，将来翻转缺省救不回来。
 const toolSearchModeSchema = z.enum(TOOL_SEARCH_APP_MODES);
+// 会话 agent 引擎选择（agent-engine-jcode-slot.md R6）：缺席即回退 native glm，
+// 与 toolSearchMode 同纪律——不给 default，避免把某档冻结进用户配置、将来改默认救不回。
+// 取值域复用 registry 的 ACODE_AGENT_ENGINE_IDS（单一事实源，加引擎不用改这里）。
+const agentEngineSchema = z.enum(ACODE_AGENT_ENGINE_IDS);
+// jcode 可执行文件绝对路径（仅 agentEngine=jcode 时消费，见 AppSettings.jcodeBinaryPath 注释）。
+// 可选字符串；空串由 normalizeSettingsPatch 归一为 undefined 以支持 Reset。
+const jcodeBinaryPathSchema = z.string();
 const electronReleaseChannelSchema = z.enum(["stable", "preview"]);
 /** 新建任务「跟随默认」时的推理强度取法；不作为持久化默认值冻结进用户配置。 */
 const defaultReasoningLevelPickSchema = z.enum([
@@ -528,6 +536,10 @@ const appSettingsObjectSchema = z.object({
   scriptWorkflowMode: scriptWorkflowModeSchema.optional(),
   // 工具按需检索三档同理：漏登记则写盘被 strip（同上实机教训）。
   toolSearchMode: toolSearchModeSchema.optional(),
+  // 会话 agent 引擎选择 + jcode 二进制路径（agent-engine-jcode-slot.md R6）：同理，
+  // 漏登记则写盘被 strip、Settings 点击后回弹。
+  agentEngine: agentEngineSchema.optional(),
+  jcodeBinaryPath: jcodeBinaryPathSchema.optional(),
   // 旧 setting.json 缺该字段时补齐为「关闭」：外层 default 才会在 key 缺席时生效，
   // 内层字段默认值只在该对象存在时补全，两者都要。用工厂函数避免共享可变默认值。
   newTaskDefaults: newTaskDefaultsSchema.default(() => ({ ...DEFAULT_NEW_TASK_DEFAULTS })),
@@ -584,6 +596,8 @@ export const appSettingsPatchSchema = z.object({
   dynamicWorkflowMode: dynamicWorkflowModeSchema.optional(),
   scriptWorkflowMode: scriptWorkflowModeSchema.optional(),
   toolSearchMode: toolSearchModeSchema.optional(),
+  agentEngine: agentEngineSchema.optional(),
+  jcodeBinaryPath: jcodeBinaryPathSchema.optional(),
   askUserQuestionAutoResolutionEnabled: z.boolean().optional(),
   botPermissionLocalApprovalEnabled: z.boolean().optional(),
   modelIoFullRetentionEnabled: z.boolean().optional(),

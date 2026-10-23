@@ -20,7 +20,7 @@ export const ACODE_NATIVE_AGENT_ENGINE = "glm" satisfies ACodeProvider;
  * 引擎 id 列表与 ACodeProvider 联合双向绑定：任一侧漂移即编译失败。
  * native 固定排首位，作为 UI/缺省的稳定锚点。
  */
-export const ACODE_AGENT_ENGINE_IDS = ["glm"] as const satisfies readonly ACodeProvider[];
+export const ACODE_AGENT_ENGINE_IDS = ["glm", "jcode"] as const satisfies readonly ACodeProvider[];
 
 export type ACodeAgentEngineId = (typeof ACODE_AGENT_ENGINE_IDS)[number];
 
@@ -58,25 +58,53 @@ const NATIVE_PERMISSION_MODES: readonly ACodeAgentPermissionMode[] = [
 ] as const;
 
 /**
+ * jcode（外部引擎）的权限模式集：**只有 yolo**。
+ *
+ * 这是诚实收敛而非偷懒——jcode 后端没有任何权限审批回路（ACP 入站 dispatch 表无
+ * permission 方法、harness 桥源码明写 never emits permission_request、实测写文件零审批，
+ * 三方印证见 apps/acode-cli/specs/jcode-agent-bridge.md R4-1 与
+ * docs/jcode-adapter-spike-2026-10-23.md §3.1/§4.1）。yolo 是现有档位中唯一诚实描述
+ * 「无逐动作确认、直通执行」的语义；声明 build/edit/plan 会让 UI 呈现「有权限治理」
+ * 而实际没有，属谎报。
+ *
+ * ⚠ 不要为了让 bot 能选 jcode 而改成 dontAsk 之类不被天花板剔除的档位：
+ * bot-remote-guard 的 BOT_REMOTE_FORBIDDEN_PERMISSION_MODES 会剔除 yolo，
+ * 于是 getBotSelectablePermissionModes("jcode") 得到**空集**，远程 bot 自动无法驱动
+ * jcode——这正是 P0-3 不变量（「远程聊天一条消息 → 主机任意执行」不可接受）要的结果，
+ * 由既有机制自动达成，不需要新增守卫代码。
+ */
+const JCODE_PERMISSION_MODES: readonly ACodeAgentPermissionMode[] = ["yolo"] as const;
+
+/**
  * 引擎注册表。键类型为 ACodeProvider：任何新增 provider 若无注册表条目即编译失败；
  * ACODE_AGENT_ENGINE_IDS 反向 satisfies readonly ACodeProvider[]，两侧穷尽即双向绑定。
  */
-export const ACODE_AGENT_ENGINE_REGISTRY: Readonly<Record<ACodeProvider, ACodeAgentEngineDescriptor>> =
-  {
-    glm: {
-      id: "glm",
-      label: "ACode Agent",
-      native: true,
-      supportedPermissionModes: NATIVE_PERMISSION_MODES,
-      defaultPermissionMode: "build",
-    },
-  };
+export const ACODE_AGENT_ENGINE_REGISTRY: Readonly<
+  Record<ACodeProvider, ACodeAgentEngineDescriptor>
+> = {
+  glm: {
+    id: "glm",
+    label: "ACode Agent",
+    native: true,
+    supportedPermissionModes: NATIVE_PERMISSION_MODES,
+    defaultPermissionMode: "build",
+  },
+  // 外部引擎（spec: packages/shared/specs/agent-engine-jcode-slot.md）。
+  // 与曾被删除的 codex/opencode/gemini 空槽位不同：适配器已实现（apps/acode-cli 的
+  // jcode-bridge 子命令，北向 v4 / 南向 ACP），且经真实客户端栈验证——L1
+  // ACodeAgentProcessManager、L2 createACodeAgentService 均用真 jcode + 真模型跑通
+  // 一轮带工具调用的会话（apps/acode-cli/specs/jcode-agent-bridge.md 附录 A.5）。
+  jcode: {
+    id: "jcode",
+    label: "jcode",
+    native: false,
+    supportedPermissionModes: JCODE_PERMISSION_MODES,
+    defaultPermissionMode: "yolo",
+  },
+};
 
 export function isAgentEngineId(value: unknown): value is ACodeAgentEngineId {
-  return (
-    typeof value === "string" &&
-    (ACODE_AGENT_ENGINE_IDS as readonly string[]).includes(value)
-  );
+  return typeof value === "string" && (ACODE_AGENT_ENGINE_IDS as readonly string[]).includes(value);
 }
 
 export function isNativeAgentEngine(engineId: ACodeAgentEngineId): boolean {

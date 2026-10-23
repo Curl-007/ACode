@@ -80,8 +80,18 @@ import { ComputerUseSection } from "@/settings/ComputerUseSection.js";
 import { DynamicWorkflowSection } from "@/settings/DynamicWorkflowSection.js";
 import { ScriptWorkflowSection } from "@/settings/ScriptWorkflowSection.js";
 import { ToolSearchSection } from "@/settings/ToolSearchSection.js";
-import type { DynamicWorkflowMode, ScriptWorkflowMode, ToolSearchAppMode } from "@acode/shared";
-import { normalizeScriptWorkflowMode, normalizeToolSearchAppMode } from "@acode/shared";
+import { AgentEngineSection } from "@/settings/AgentEngineSection.js";
+import type {
+  ACodeAgentEngineId,
+  DynamicWorkflowMode,
+  ScriptWorkflowMode,
+  ToolSearchAppMode,
+} from "@acode/shared";
+import {
+  normalizeAgentEngineSetting,
+  normalizeScriptWorkflowMode,
+  normalizeToolSearchAppMode,
+} from "@acode/shared";
 import { ShortcutSettingsSection } from "@/settings/ShortcutSettingsSection.js";
 import { MigrationSection } from "@/settings/MigrationSection.js";
 import { SETTINGS_FRAME_CONTENT_CLASSNAME } from "@/settings/SettingsPageParts.js";
@@ -854,6 +864,26 @@ export function SettingsPage({
       // 无会话中途改档通道，存活 runtime 不受影响——这里不做任何推送。
       // 必须走 updateSharedSettings（三合一路径），同款实机教训见上方 script handler。
       await updateSharedSettings({ toolSearchMode: mode });
+    },
+    [updateSharedSettings],
+  );
+  const handleAgentEngineSelect = useCallback(
+    async (engine: ACodeAgentEngineId) => {
+      // 引擎选择（agent-engine-jcode-slot.md R4/R7）：落盘即真相。与 toolSearchMode 的
+      // 关键差异——生效时机不是「下一次会话创建」，而是 **下一次 getClient**：
+      // processManager.getClient 在复用既有进程前比对 managed.engineId，不符即 dispose
+      // 该 workspace 的 runtime 后按新引擎冷启动。故切引擎会重启当前 workspace 的 agent
+      // 进程（在飞轮次按既有 dispose 语义收口），但无需重启 App，也不影响其它 workspace。
+      // 必须走 updateSharedSettings（三合一路径：settingService.update + syncAppSettings
+      // + refresh），同款实机教训见上方 script handler。
+      await updateSharedSettings({ agentEngine: engine });
+    },
+    [updateSharedSettings],
+  );
+  const handleJcodeBinaryPathChange = useCallback(
+    async (path: string) => {
+      // R5：jcode 二进制路径。空串经 normalizeSettingsPatch 归一为 undefined（支持 Reset）。
+      await updateSharedSettings({ jcodeBinaryPath: path.trim() });
     },
     [updateSharedSettings],
   );
@@ -1638,6 +1668,16 @@ export function SettingsPage({
                           <ToolSearchSection
                             mode={normalizeToolSearchAppMode(sharedSettings?.toolSearchMode)}
                             onSelect={handleToolSearchModeSelect}
+                          />
+                        ) : activeSection === "agentEngine" ? (
+                          // Agent 引擎选择（agent-engine-jcode-slot.md R1/R2/R5/R7）：
+                          // 决定 Host spawn 哪个 agent。选中态唯一来源是落盘值；
+                          // 切引擎会在下一次 getClient 重启该 workspace 的 runtime。
+                          <AgentEngineSection
+                            engine={normalizeAgentEngineSetting(sharedSettings?.agentEngine)}
+                            jcodeBinaryPath={sharedSettings?.jcodeBinaryPath}
+                            onChangeJcodeBinaryPath={handleJcodeBinaryPathChange}
+                            onSelectEngine={handleAgentEngineSelect}
                           />
                         ) : activeSection === "migration" ? (
                           <MigrationSection

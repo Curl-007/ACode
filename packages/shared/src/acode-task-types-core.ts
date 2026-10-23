@@ -34,10 +34,18 @@ export type QueryId = string;
 /**
  * ACode 的 agent 引擎（provider）。
  *
- * `glm` = ACode 自带 bundled native agent。外部引擎槽位（codex/opencode/gemini）已下线，
- * 旧持久化 provider 值在解析层归一（见 acode-agent-policy.ts 的 acodeAgentProviderSchema）。
+ * - `glm` = ACode 自带 bundled native agent（`acode.cjs app-server --stdio`）。
+ * - `jcode` = 外部 Rust agent，经 ACode CLI 的 `jcode-bridge` 子命令桥接
+ *   （`acode.cjs jcode-bridge --stdio`，北向 v4 / 南向 ACP）。
+ *   spec: packages/shared/specs/agent-engine-jcode-slot.md、
+ *   apps/acode-cli/specs/jcode-agent-bridge.md。
+ *
+ * 曾被删除的空槽位（codex/opencode/gemini）**不恢复**——它们自引入起 implemented:false，
+ * 恢复即重新引入无人实现的槽位。jcode 不同：适配器已实现并经三层真实客户端栈验证。
+ * 旧持久化 provider 值（含上述三个历史值）在解析层归一为 undefined → 消费方回退 native，
+ * 见 acode-agent-policy.ts 的 acodeAgentProviderSchema。
  */
-export type ACodeProvider = "glm";
+export type ACodeProvider = "glm" | "jcode";
 export type ACodeGlmAgentModelStateUpdateReason =
   | "session_initialized"
   | "model_changed"

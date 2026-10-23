@@ -9,6 +9,7 @@ import type { EmbeddedBrowserViewportPreference } from "./browser-use/command-me
 import type { DynamicWorkflowMode } from "./dynamic-workflow-feature.js";
 import type { ScriptWorkflowMode } from "./script-workflow-feature.js";
 import type { ToolSearchAppMode } from "./tool-search-feature.js";
+import type { AgentEngineSettingMode } from "./agent-engine-setting.js";
 import type { DesktopWindowSizeSettings } from "./desktopAppSettings.js";
 import type { AppSettingsOccupation } from "./appSettingsOccupation.js";
 import type { DefaultReasoningLevelPick, NewTaskDefaults } from "./new-task-defaults.js";
@@ -296,6 +297,22 @@ export interface AppSettings {
    * 本设置。取值域/折叠出口/裁决详见 tool-search-feature.ts 与 specs/tool-search.md R1/R3/R11。
    */
   toolSearchMode?: ToolSearchAppMode;
+  /**
+   * 会话 agent 引擎选择（spec: agent-engine-jcode-slot.md R6/R7）。与 toolSearchMode 同形态的
+   * 本机产品开关：只读 AppSettings、无远端下发、无环境变量覆盖。取值域 = ACODE_AGENT_ENGINE_IDS
+   * （当前 "glm" | "jcode"）；缺省 = 未设置，落 DEFAULT_AGENT_ENGINE_SETTING（glm），旧持久化
+   * 数据无需迁移。切到 jcode 时 jcodeBinaryPath 成为必填：未配置即视为引擎不可用、会话创建明确
+   * 报错而**不静默回退 glm**（静默回退会让用户以为在用 jcode 而实际跑 native）。
+   */
+  agentEngine?: AgentEngineSettingMode;
+  /**
+   * jcode 可执行文件的绝对路径（仅 agentEngine="jcode" 时消费）。必须是 Settings 显式配置而非
+   * PATH 查找：桌面 GUI 继承的 PATH 不含 login shell profile 条目，且该补丁只注入工具执行 env、
+   * 不注入 agent spawn env（完整理由见 spec R5）。经 spawn env 传给 shim，不经
+   * ACODE_AGENT_SERVER_COMMAND（打包态被 agent-command-env-gate.md R1 禁用）。空串归一为
+   * undefined（支持 Reset）。
+   */
+  jcodeBinaryPath?: string;
   /** Windows 桌面端关闭窗口时隐藏到托盘；其它平台忽略 */
   closeToTrayOnWindows?: boolean;
   /** 存在执行中的闲时任务时阻止系统闲置休眠（手动开关，防不了合盖）。 */

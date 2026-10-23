@@ -68,6 +68,14 @@ export function normalizeSettingsPatch(patch: Partial<AppSettings>): Partial<App
       trimmedHttpProxyCaCertPath.length > 0 ? trimmedHttpProxyCaCertPath : undefined;
   }
 
+  if ("jcodeBinaryPath" in normalizedPatch && typeof normalizedPatch.jcodeBinaryPath === "string") {
+    // jcode 可执行文件路径（agent-engine-jcode-slot.md R5）：清空输入时删除旧值以支持 Reset。
+    // RPC 传输会吞掉 undefined，这里把空串归一成 undefined，避免旧路径继续被 jcode 引擎消费。
+    const trimmedJcodeBinaryPath = normalizedPatch.jcodeBinaryPath.trim();
+    normalizedPatch.jcodeBinaryPath =
+      trimmedJcodeBinaryPath.length > 0 ? trimmedJcodeBinaryPath : undefined;
+  }
+
   if (
     "acodeEndpointOrigin" in normalizedPatch &&
     typeof normalizedPatch.acodeEndpointOrigin === "string"

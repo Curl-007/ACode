@@ -1,8 +1,10 @@
 import {
   ACODE_AGENT_CA_CERT_ENV_KEY,
   ACODE_HTTP_PROXY_ENV_KEY,
+  ACODE_JCODE_BINARY_PATH_ENV_KEY,
   ACODE_NO_PROXY_ENV_KEY,
   ACODE_WORKSPACE_IDENTITY_ENV,
+  normalizeAgentEngineSetting,
 } from "@acode/shared";
 
 // 把设置页的 HTTP 代理、No Proxy 和自定义 CA 翻译成 agent 子进程的环境变量补丁。
@@ -118,6 +120,35 @@ export function buildAgentWorkspaceIdentityEnv(
 ): Record<string, string> {
   const trimmed = workspaceIdentity?.trim();
   return trimmed ? { [ACODE_WORKSPACE_IDENTITY_ENV]: trimmed } : {};
+}
+
+/**
+ * jcode 引擎的可执行文件路径 env 补丁（agent-engine-jcode-slot.md R5）。
+ *
+ * 只在「当前引擎 = jcode 且 Settings 填了非空路径」时注入；否则返回空对象——glm 会话不该
+ * 带上无关 env，路径未填时也不注入空串（shim 侧按 `--jcode-binary` CLI > 本 env > PATH 的
+ * 优先级解析，缺则给明确错误，见 apps/acode-cli/packages/cli/src/jcode-bridge/resolve-binary.ts）。
+ *
+ * 为什么必须经 Settings → spawn env 而非靠 PATH：桌面是 GUI 应用，继承的 PATH 不含 login
+ * shell profile 条目（~/.local/bin、Homebrew 路径），而 login shell 采集的 PATH 补丁只注入
+ * 工具执行 env、不注入 agent spawn env。这是打包态桌面唯一符合 agent-command-env-gate.md R3
+ * 「走 Settings 显式配置、不恢复 env 通道」的路径。
+ *
+ * 安全：该 env 在 runtimeEnv.ts 的剔除清单里（strip-then-inject，同 NODE_OPTIONS）——继承的
+ * 用户级值一律被剔除，只有这里从 Settings 装配注入的权威值存活，故用户级 env 注入无法把
+ * jcode 指向攻击者二进制。
+ *
+ * 入参用结构化类型（只取所需两字段），不依赖 AppSettings 全体，避免不必要的耦合。
+ */
+export function buildJcodeBinaryPathEnv(settings: {
+  agentEngine?: string;
+  jcodeBinaryPath?: string;
+}): Record<string, string> {
+  if (normalizeAgentEngineSetting(settings.agentEngine) !== "jcode") {
+    return {};
+  }
+  const trimmed = settings.jcodeBinaryPath?.trim();
+  return trimmed ? { [ACODE_JCODE_BINARY_PATH_ENV_KEY]: trimmed } : {};
 }
 
 function normalizeProxyValue(value: string | undefined): string | undefined {

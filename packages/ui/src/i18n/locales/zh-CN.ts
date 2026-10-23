@@ -6044,6 +6044,30 @@ const zhCN: Record<string, string> = {
   "settings.toolSearch.saveError": "设置保存失败，请重试。",
   "settings.toolSearch.experimentalNote":
     "实验性功能：模型供应商尚未完整支持原生 ToolSearch，native 模式未实装（仅 CLI --toolsearch-mode 可显式传入，且发送前会报错）；本地检索会改变发给模型的工具投影。默认「关」＝行为与现状完全一致。",
+  // ---- Agent 引擎选择（agent-engine-jcode-slot.md R7）----
+  "settings.agentEngine.title": "Agent 引擎",
+  "settings.agentEngine.description":
+    "选择驱动会话的 agent 运行时。ACode Agent 是自带引擎；jcode 是外部 Rust agent，经 ACode CLI 的 jcode-bridge 子命令桥接（北向 acode-protocol-v4 / 南向 ACP）。切换引擎会在下一次会话启动时重启当前工作区的 agent 进程，无需重启应用。",
+  "settings.agentEngine.defaultTag": "默认",
+  "settings.agentEngine.saveError": "设置保存失败，请重试。",
+  // R2 诚实声明：jcode 后端无任何权限审批回路，必须显式告知，
+  // 不得让用户误以为选了 jcode 还有 ACode 的权限治理。
+  "settings.agentEngine.jcodePermissionWarning":
+    "jcode 引擎不提供 ACode 的权限审批：它的对外协议没有权限请求通道，文件写入与命令执行不会弹窗确认（仅 jcode 自身对高危 bash 命令有反射门、对灾难性路径绝对拒绝）。ACode 的反射门、blast-radius 分级、托管策略地板与 auto 模式风险分类器在该引擎下均不生效。请只在可信工作区使用。",
+  "settings.agentEngine.jcodeBinaryLabel": "jcode 可执行文件路径",
+  "settings.agentEngine.jcodeBinaryPlaceholder":
+    "例如 C:\\Users\\<你>\\AppData\\Local\\jcode\\bin\\jcode.exe",
+  "settings.agentEngine.jcodeBinarySave": "保存",
+  "settings.agentEngine.jcodeBinarySaved": "已保存；下一次会话启动时生效。",
+  "settings.agentEngine.jcodeBinarySaveError": "保存失败，请重试。",
+  "settings.agentEngine.jcodeBinaryRequired":
+    "必填：桌面应用继承的 PATH 不含登录 shell 的路径条目，无法自动发现 jcode。请填写 jcode 可执行文件的绝对路径，否则该引擎的会话会创建失败（不会静默回退到 ACode Agent）。",
+  // 引擎名与描述：BotEngineCard 经 `engine.${id}.name` 拼 key 消费。
+  // engine.glm.* 曾在上一轮删外部槽位时被误删，导致该下拉直出字面 id——本次补回（R7）。
+  "engine.glm.name": "ACode Agent",
+  "engine.glm.description": "ACode 自带的 bundled native agent。",
+  "engine.jcode.name": "jcode",
+  "engine.jcode.description": "外部 Rust agent（经 jcode-bridge 桥接）。注意：无 ACode 权限审批。",
   // ---- MCP sampling / resources ----
   "settings.mcp.sampling.label": "允许模型采样",
   "settings.mcp.sampling.description":

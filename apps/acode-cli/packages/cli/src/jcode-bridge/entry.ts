@@ -18,7 +18,11 @@ import { randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import * as nodePath from "node:path";
 import type { Logger } from "@acode/contracts";
-import { acodeProtocolNotifications, acodeStorageStartupStateSchema } from "@acode/shared";
+import {
+  acodeProtocolNotifications,
+  acodeStorageStartupStateSchema,
+  ACODE_JCODE_BINARY_PATH_ENV_KEY,
+} from "@acode/shared";
 import { ACodeProtocolNdjsonConnection, ConversationV4Gateway } from "@acode/bootstrap";
 import type { RunContext } from "@acode/shared-types";
 
@@ -94,11 +98,17 @@ export async function runJcodeBridge(
   const restoreConsole = installStderrConsoleBoundary(ctx.stderr);
   const logger = createStderrLogger(ctx.stderr);
 
-  // R7：解析 jcode 二进制。失败即退出，不发半死 storage 帧。
+  // R5/R7：解析 jcode 二进制（--jcode-binary CLI > ACODE_JCODE_BINARY_PATH env > PATH）。
+  // 失败即退出，不发半死 storage 帧。env 读取放在这里（I/O 边界），resolve-binary 保持纯函数。
+  // 注意：该 env 继承的用户级值已被 Host 侧 sanitizeACodeRuntimeEnv 剔除，
+  // 只有 Host 从 Settings.jcodeBinaryPath 装配后注入的值能到达此处（strip-then-inject）。
   let binaryPath: string;
   try {
-    binaryPath = resolveJcodeBinary(options.jcodeBinary, process.platform, (name) =>
-      whichOnPath(name),
+    binaryPath = resolveJcodeBinary(
+      options.jcodeBinary,
+      process.env[ACODE_JCODE_BINARY_PATH_ENV_KEY],
+      process.platform,
+      (name) => whichOnPath(name),
     );
   } catch (error) {
     ctx.stderr.write(

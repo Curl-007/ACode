@@ -6296,6 +6296,32 @@ const enUS: Record<string, string> = {
   "settings.toolSearch.saveError": "Couldn't save the setting. Please try again.",
   "settings.toolSearch.experimentalNote":
     "Experimental: model providers do not fully support native ToolSearch yet, and native mode is not implemented (it is only accepted via the CLI flag --toolsearch-mode and fails before send). Local search changes the tool projection sent to the model. The default (Off) keeps behavior exactly as it is today.",
+  // ---- Agent engine selection (agent-engine-jcode-slot.md R7) ----
+  "settings.agentEngine.title": "Agent engine",
+  "settings.agentEngine.description":
+    "Choose the agent runtime that drives sessions. ACode Agent is the built-in engine; jcode is an external Rust agent bridged through the ACode CLI jcode-bridge subcommand (acode-protocol-v4 northbound / ACP southbound). Switching engines restarts the current workspace's agent process on the next session start — no app restart needed.",
+  "settings.agentEngine.defaultTag": "Default",
+  "settings.agentEngine.saveError": "Failed to save setting. Please try again.",
+  // R2 honest disclosure: the jcode backend has no permission-approval loop at all.
+  // This must be stated plainly so users never assume ACode's permission governance still applies.
+  "settings.agentEngine.jcodePermissionWarning":
+    "The jcode engine provides none of ACode's permission approval: its external protocol has no permission-request channel, so file writes and command execution never prompt for confirmation (only jcode's own reflexive gate for high-risk bash, and its absolute refusal of catastrophic paths, apply). ACode's reflexive gate, blast-radius classification, managed policy floor, and auto-mode risk classifier are all inactive under this engine. Use it only in trusted workspaces.",
+  "settings.agentEngine.jcodeBinaryLabel": "jcode executable path",
+  "settings.agentEngine.jcodeBinaryPlaceholder":
+    "e.g. C:\\Users\\<you>\\AppData\\Local\\jcode\\bin\\jcode.exe",
+  "settings.agentEngine.jcodeBinarySave": "Save",
+  "settings.agentEngine.jcodeBinarySaved": "Saved; takes effect on the next session start.",
+  "settings.agentEngine.jcodeBinarySaveError": "Failed to save. Please try again.",
+  "settings.agentEngine.jcodeBinaryRequired":
+    "Required: a desktop app's inherited PATH does not include login-shell entries, so jcode cannot be discovered automatically. Enter the absolute path to the jcode executable, otherwise sessions on this engine will fail to start (they do not silently fall back to ACode Agent).",
+  // Engine name/description: BotEngineCard consumes these via the `engine.${id}.name` key.
+  // engine.glm.* was mistakenly deleted when the external slots were removed, leaving that
+  // dropdown rendering the literal key id — restored here (R7).
+  "engine.glm.name": "ACode Agent",
+  "engine.glm.description": "ACode's built-in bundled native agent.",
+  "engine.jcode.name": "jcode",
+  "engine.jcode.description":
+    "External Rust agent (bridged via jcode-bridge). Note: no ACode permission approval.",
   // ---- MCP sampling / resources ----
   "settings.mcp.sampling.label": "Allow model sampling",
   "settings.mcp.sampling.description":

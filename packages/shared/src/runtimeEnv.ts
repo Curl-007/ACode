@@ -19,6 +19,16 @@ export const ACODE_TOOL_ENV_PASSTHROUGH_ENV_KEY = "ACODE_TOOL_ENV_PASSTHROUGH_JS
 export const ACODE_DESKTOP_CONTEXT_PROMPT_ENABLED_ENV = "ACODE_DESKTOP_CONTEXT_PROMPT_ENABLED";
 export const ACODE_CUA_PRODUCT_HELPER_ENV_KEY = "ACODE_CUA_PRODUCT_HELPER";
 export const ACODE_CUA_BROKER_SOCKET_ENV_KEY = "ACODE_CUA_PERMISSION_BROKER_SOCKET";
+/**
+ * jcode 外部引擎的可执行文件路径（spec: packages/shared/specs/agent-engine-jcode-slot.md R5）。
+ *
+ * strip-then-inject 纪律（与 NODE_OPTIONS 同款，见下方 SANITIZED_RUNTIME_ENV_KEYS）：
+ * 继承的用户级值一律剔除，只认 Host 从 Settings.jcodeBinaryPath 装配后经 resolveSpawnEnv
+ * 注入的权威值。理由：若不剔除，用户级 env 注入（launchctl setenv / shell profile /
+ * Windows 用户环境变量）可把 jcode 指向攻击者二进制，与 agent-command-env-gate.md R1
+ * 同一威胁模型。shim 侧解析优先级 = --jcode-binary CLI > 本 env > PATH。
+ */
+export const ACODE_JCODE_BINARY_PATH_ENV_KEY = "ACODE_JCODE_BINARY_PATH";
 /** Shared node_repl host marker; unlike the broker bearer values it is not a secret. */
 export const ACODE_CUA_NODE_REPL_HOST_ENV_KEY = "ACODE_CUA_NODE_REPL_HOST";
 // One-knob local-development bundle. Setting ACODE_CUA_DEV_MODE implies the internal feature
@@ -55,6 +65,12 @@ const SANITIZED_RUNTIME_ENV_KEYS = [
   // 用户级 env 注入面(spec: packages/services/specs/agent-v8-heap-guard.md R3)。
   // Host/agent 的 v8 堆护栏在剔除之后由各自 spawn 点定向注入,不吃继承值。
   "NODE_OPTIONS",
+  // jcode 外部引擎的可执行文件路径。与 NODE_OPTIONS 同款 strip-then-inject：继承的
+  // 用户级值一律剔除，只认 Host 从 Settings.jcodeBinaryPath 装配后经 resolveSpawnEnv
+  // 注入的权威值（spec: packages/shared/specs/agent-engine-jcode-slot.md R5）。
+  // 若不剔除，用户级 env 注入可把 jcode 指向攻击者二进制，与 agent-command-env-gate R1
+  // 同一威胁模型。
+  ACODE_JCODE_BINARY_PATH_ENV_KEY,
   "HTTP_PROXY",
   "HTTPS_PROXY",
   "ALL_PROXY",
@@ -109,6 +125,9 @@ const NON_TOOL_PASSTHROUGH_RUNTIME_ENV_KEYS = [
   "NODE_NO_WARNINGS",
   // 护栏/注入面同理:剔除后不得经 tool-env-passthrough 恢复到 Bash/tool 子进程。
   "NODE_OPTIONS",
+  // jcode 二进制路径是 Host→shim 的装配材料，不得经 tool-env-passthrough 泄漏给
+  // Bash/tool 子进程（否则等于绕过上面的剔除，同 CUA broker 凭据纪律）。
+  ACODE_JCODE_BINARY_PATH_ENV_KEY,
   // CUA broker 凭据不得经 tool-env-passthrough 恢复到 Bash/tool 子进程（否则等于绕过上面的剔除）。
   ACODE_CUA_BROKER_SOCKET_ENV_KEY,
   "ACODE_CUA_PERMISSION_BROKER_REFRESH_MARKER",

@@ -14,6 +14,7 @@ export type SettingsSectionId =
   | "skill"
   | "dynamicWorkflow"
   | "toolSearch"
+  | "agentEngine"
   | "plugins"
   | "usage"
   | "subagents"
@@ -84,7 +85,8 @@ function isSettingsSectionId(value: string): value is SettingsSectionId {
     value === "automations" ||
     value === "shortcuts" ||
     value === "dynamicWorkflow" ||
-    value === "toolSearch"
+    value === "toolSearch" ||
+    value === "agentEngine"
   );
 }
 

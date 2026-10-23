@@ -4,8 +4,13 @@
 // acodeSessionSettingsToACodeConfigOptions）。
 // 消费者：services acodeConfigOptions、UI acodeSessionProjection 等旧栈。
 import { formatModelPickerValue } from "./model-selection.js";
+import { getAgentEnginePermissionModes } from "./acode-agent-registry.js";
 import type { ACodeSessionMode, ACodeSessionSettingsState } from "./acode-protocol/index.js";
-import type { ACodeConfigOption, ACodeTaskModeInfo, ACodeProvider } from "./acode-task-types-core.js";
+import type {
+  ACodeConfigOption,
+  ACodeTaskModeInfo,
+  ACodeProvider,
+} from "./acode-task-types-core.js";
 const MODEL_CONFIG_ID = "model";
 const MODEL_CONFIG_CATEGORY = "model";
 const MODE_CONFIG_ID = "mode";
@@ -57,14 +62,24 @@ export function getACodeAgentModeSelectOptions(): NonNullable<ACodeConfigOption[
 }
 
 /**
- * native(glm) 引擎的可用模式（build/edit/plan/yolo）。
+ * 某引擎的可用模式（引擎作用域）。
  *
- * 外部引擎槽位已下线，引擎联合只剩 native；保留 engineId 入参以维持调用方形状，
- * 非法/旧值经 resolveAgentEngine 归一后仍走 native 分支。
+ * 按引擎的 supportedPermissionModes 过滤 ACODE_AGENT_MODE_OPTIONS（mode option 的 id 与
+ * 权限模式名一一对应）：glm 得全部 5 档（build/edit/plan/yolo/dontAsk），jcode 只得 yolo
+ * （其后端无权限审批回路，见 acode-agent-registry 的 JCODE_PERMISSION_MODES 注释与
+ * agent-engine-jcode-slot.md R2）。非法/旧值经 getAgentEnginePermissionModes→resolveAgentEngine
+ * 归一后回退 native。
+ *
+ * 曾是 `void engineId; return 全部` —— 那会让 jcode 也呈现 build/edit/plan 这些它不支持的档，
+ * 用户选了却无对应权限治理（谎报）。改为引擎作用域过滤（spec: agent-engine-jcode-slot.md R7）。
  */
-export function getACodeAgentAvailableModes(engineId?: ACodeProvider | string | null): ACodeTaskModeInfo[] {
-  void engineId;
-  return ACODE_AGENT_MODE_OPTIONS.map((mode) => ({ ...mode }));
+export function getACodeAgentAvailableModes(
+  engineId?: ACodeProvider | string | null,
+): ACodeTaskModeInfo[] {
+  const supported = getAgentEnginePermissionModes(engineId) as readonly string[];
+  return ACODE_AGENT_MODE_OPTIONS.filter((mode) => supported.includes(mode.id)).map((mode) => ({
+    ...mode,
+  }));
 }
 
 export function acodeSessionSettingsToACodeConfigOptions(

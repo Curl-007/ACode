@@ -9,7 +9,7 @@ import { createRequire } from "node:module";
 import { dirname } from "node:path";
 import {
   isRemoteWorkspaceIdentity,
-  ACODE_AGENT_PROVIDER,
+  isAgentEngineId,
   acodeTaskMetaSchema,
   resolveWorkspaceKey,
   CRON_DEFAULT_GROUP_ID,
@@ -245,7 +245,13 @@ function rowToMeta(row: TaskIndexRow): ACodeTaskMeta {
     updatedAt: row.updated_at,
     mode: row.mode as ACodeTaskMeta["mode"],
     model: row.model ?? undefined,
-    provider: row.provider === ACODE_AGENT_PROVIDER ? ACODE_AGENT_PROVIDER : undefined,
+    // 引擎归一（spec: agent-engine-jcode-slot.md R6）：合法引擎 id（glm/jcode）原样透传，
+    // 其余（含已下线空槽位旧值 codex/opencode/gemini）归一 undefined。
+    // 曾是 `row.provider === ACODE_AGENT_PROVIDER ? ... : undefined`——只放行 glm，
+    // 会把 jcode 会话的索引行读成 undefined，按 provider 过滤时 jcode task 直接消失。
+    // 与 acodeAgentProviderSchema（acode-agent-policy.ts）同一口径，勿把旧空槽位加回 IDS
+    // （packages/ui/test/nonCliAcpRetirement.test.ts:33-39 守护它们仍归一为 undefined）。
+    provider: isAgentEngineId(row.provider) ? row.provider : undefined,
     migrationSource: (row.migration_source as ACodeTaskMeta["migrationSource"]) ?? undefined,
     forkedFromTaskId: row.forked_from_task_id ?? undefined,
     cronAutomationId: row.cron_automation_id ?? undefined,

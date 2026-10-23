@@ -432,6 +432,7 @@ import { initializeRuntimeProcessEnv } from "./runtime-tools/runtimeCommandEnv.j
 import {
   buildAgentEndpointOriginEnv,
   buildAgentRuntimeEnv,
+  buildJcodeBinaryPathEnv,
 } from "./runtime-tools/agentProxyEnv.js";
 import { ensureAppCaCert } from "./runtime-tools/appCaCert.js";
 import { buildHelperOpenArgs, isCuaLocalDevelopmentRuntime } from "@acode/acode-cua/broker/server";
@@ -461,8 +462,10 @@ import {
   normalizeScriptWorkflowMode,
   DEFAULT_TOOL_SEARCH_APP_MODE,
   normalizeToolSearchAppMode,
+  DEFAULT_AGENT_ENGINE_SETTING,
+  normalizeAgentEngineSetting,
 } from "@acode/shared";
-import type { ScriptWorkflowMode, ToolSearchAppMode } from "@acode/shared";
+import type { ScriptWorkflowMode, ToolSearchAppMode, ACodeAgentEngineId } from "@acode/shared";
 import {
   BROKER_SOCKET_ENV,
   BROKER_UNAVAILABLE_ENV,
@@ -2162,6 +2165,28 @@ export function createLocalServices(options: {
       return DEFAULT_TOOL_SEARCH_APP_MODE;
     }
   };
+  // 会话引擎选择折叠出口（agent-engine-jcode-slot.md R4）：与 resolveToolSearchModeFromSettings
+  // 同构——现读 AppSettings、归一化、读取失败 fail 到缺省档（native glm）+ 一次性 warn。
+  // 引擎是全局本机设置，故此处每次现读（不 memoize）；service 侧 getClient 时调它拼 params.engineId。
+  let agentEngineSettingsWarned = false;
+  const agentEngineSettingsLogger = createServiceLogger("agent-engine-settings");
+  const resolveAgentEngineFromSettings = async (): Promise<ACodeAgentEngineId> => {
+    try {
+      return (
+        normalizeAgentEngineSetting((await settingService.get()).agentEngine) ??
+        DEFAULT_AGENT_ENGINE_SETTING
+      );
+    } catch (error) {
+      // 设置读取失败不阻断装配：fail 到 native glm（旧行为逐字一致），只 warn 一次。
+      if (!agentEngineSettingsWarned) {
+        agentEngineSettingsWarned = true;
+        agentEngineSettingsLogger.warn(undefined, "会话引擎设置读取失败，回退 native(glm)", {
+          errorMessage: error instanceof Error ? error.message : String(error),
+        });
+      }
+      return DEFAULT_AGENT_ENGINE_SETTING;
+    }
+  };
   // OffPeakTaskService 单例在下方 DI register IIFE 中创建（晚于 agent service）；
   // 用前向引用 holder 惰性绑定——offPeak/create 协议请求只会发生在服务集合装配完成后。
   let offPeakTaskServiceForAgent: OffPeakTaskService | undefined;
@@ -2214,6 +2239,9 @@ export function createLocalServices(options: {
     resolveScriptWorkflowMode: () => resolveScriptWorkflowModeWithLocalOverride(),
     // 工具按需检索档位：同为会话门唯一消费口（v4 createSession 信封注入），折叠出口单点（见上）。
     resolveToolSearchMode: () => resolveToolSearchModeFromSettings(),
+    // 会话 agent 引擎（agent-engine-jcode-slot.md R4）：唯一折叠出口，service 在 getClient
+    // 前现读并拼进 params.engineId。桌面/远端共用此装配点（desktop host 侧不注入自定义 resolver）。
+    resolveAgentEngine: () => resolveAgentEngineFromSettings(),
     commandResolver: options?.acodeAgentCommandResolver,
     presentationSurface: resolveACodeAgentPresentationSurface({
       runtimeSurface: options?.agentRuntimeContext?.runtimeSurface,
@@ -2327,6 +2355,12 @@ export function createLocalServices(options: {
       // Host 是旧配置迁移的唯一写入者。Agent spawn 前等待初始化完成，避免 Worker
       // 先拿到尚不存在的 provider_config.json 并发布短暂空 Registry。
       await providerConfigRuntime.start();
+      // jcode 引擎的二进制路径注入（agent-engine-jcode-slot.md R5）。
+      // 只在「当前引擎 = jcode 且 Settings 填了路径」时注入：glm 会话不该带上无关 env，
+      // 未填路径时也不注入空值（shim 侧会按 CLI > env > PATH 顺序自行解析并给出明确错误）。
+      // strip-then-inject：继承的用户级同名 env 已被 sanitizeACodeRuntimeEnv 剔除，
+      // 这里注入的是 Host 从 Settings 装配的权威值（见 runtimeEnv.ts 的剔除清单注释）。
+      const jcodeBinaryPathEnv = buildJcodeBinaryPathEnv(settings);
       return {
         ...buildAgentRuntimeEnv({
           httpProxy: agentNetwork.httpProxy,
@@ -2350,6 +2384,8 @@ export function createLocalServices(options: {
           acodeBuiltinFilePath: await providerConfigRuntime.resolveACodeBuiltinActiveFilePath(),
           personalFilePath: join(resolveAppConfigDir(), PERSONAL_PROVIDER_CONFIG_FILE_NAME),
         }),
+        // jcode 引擎二进制路径（仅当前引擎=jcode 且 Settings 填了路径时非空）。
+        ...jcodeBinaryPathEnv,
       };
     },
     ...(isDesktopAttachedRemote

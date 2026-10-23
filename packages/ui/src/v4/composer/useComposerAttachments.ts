@@ -116,6 +116,13 @@ interface UseComposerAttachmentsOptions {
   onRuntimeLifecycle?: (listener: (state: "available" | "unavailable") => void) => () => void;
   disabled?: boolean;
   /**
+   * 当前引擎不支持附件上传（外部引擎 jcode：shim 未实现 host.putSessionAttachment，
+   * attachmentBegin 即被拒）。与 disabled 不同——disabled 门控整个 composer，本项只门控
+   * 附件四个入口（picker/粘贴/OS 文件拖拽/add-to-chat），文本输入不受影响。
+   * workspace 文件拖拽（mention 插入，不上传）不受本项影响。
+   */
+  attachmentsUnsupported?: boolean;
+  /**
    * 是否消费全局 add-to-chat 事件（whiteboard 引用）。
    * 语义与 useWebElementContexts 等一致：由调用方传 `listenAddToChatEvents && !disabled`
    * （SessionPane 以 focused 区分聚焦 composer）。SidePane forceMount 常驻多个同
@@ -198,6 +205,7 @@ export function useComposerAttachments(
     onRuntimeRestart,
     onRuntimeLifecycle,
     disabled = false,
+    attachmentsUnsupported = false,
     listenAddToChatEvents = true,
   } = options;
   const platform = usePlatform();
@@ -704,6 +712,7 @@ export function useComposerAttachments(
   );
 
   const openAttachmentPicker = useCallback(() => {
+    if (attachmentsUnsupported) return;
     if (readComposerAttachmentScope(scopeKey).length >= MAX_CHAT_ATTACHMENTS) {
       showAttachmentLimitWarning();
       return;
@@ -736,7 +745,7 @@ export function useComposerAttachments(
 
   const handlePaste = useCallback(
     (event: ChatComposerPasteEvent) => {
-      if (disabled || !event.clipboardData) return;
+      if (disabled || attachmentsUnsupported || !event.clipboardData) return;
       const files = Array.from(event.clipboardData.files);
       const text = event.clipboardData.getData("text/plain");
       const html = event.clipboardData.getData("text/html");
@@ -845,6 +854,8 @@ export function useComposerAttachments(
         resetComposerDragFeedback();
         return;
       }
+      // 外部引擎不支持附件上传：OS 文件拖入不消费（不 preventDefault、不进队列）。
+      if (attachmentsUnsupported) return;
       const files = Array.from(event.dataTransfer.files);
       if (files.length > 0) {
         event.preventDefault();
@@ -887,7 +898,7 @@ export function useComposerAttachments(
     // 与 useWebElementContexts 等同款早退。SidePane forceMount 使非聚焦
     // 会话的 SessionPane 常驻，只有聚焦 composer（listenAddToChatEvents）才允许消费
     // add-to-chat 事件，否则同 workspace 的多个 composer 会同时注入附件。
-    if (!listenAddToChatEvents || typeof window === "undefined") return;
+    if (!listenAddToChatEvents || attachmentsUnsupported || typeof window === "undefined") return;
     const handle = (event: Event) => {
       if (!isWhiteboardAddToChatEvent(event)) return;
       if (

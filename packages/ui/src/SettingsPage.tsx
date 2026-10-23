@@ -877,8 +877,12 @@ export function SettingsPage({
       // 必须走 updateSharedSettings（三合一路径：settingService.update + syncAppSettings
       // + refresh），同款实机教训见上方 script handler。
       await updateSharedSettings({ agentEngine: engine });
+      // B 批（2026-10-24，审计 P2）：切换会**立即**重启当前 workspace 的 agent 进程
+      // （getClient 比对 engineId 不符即 dispose），在飞轮次被收口——给用户显式提示，
+      // 避免「设置改了但当前对话突然断」的无解释体验。
+      toast(intl.formatMessage({ id: "settings.agentEngine.switchedHint" }));
     },
-    [updateSharedSettings],
+    [updateSharedSettings, intl],
   );
   const handleJcodeBinaryPathChange = useCallback(
     async (path: string) => {

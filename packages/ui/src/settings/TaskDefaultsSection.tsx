@@ -2,8 +2,8 @@ import { useCallback, useMemo, useRef } from "react";
 import {
   ACODE_AGENT_PROVIDER,
   DEFAULT_NEW_TASK_DEFAULTS,
-  NEW_TASK_DEFAULT_MODE_IDS,
   getACodeAgentAvailableModes,
+  getNewTaskDefaultModeIdsForEngine,
   normalizeNewTaskDefaultMode,
   type NewTaskDefaults,
 } from "@acode/shared";
@@ -29,6 +29,7 @@ import { getModeOptionDisplayLabel } from "@/chat-input-toolbar/display.js";
 import { thoughtLevelLabelId } from "@/chat-input-toolbar/thoughtLevelOptions.js";
 import { useModelSelectionServiceView } from "@/hooks/useModelSelectionView.js";
 import { useSettings } from "@/hooks/useSettingService.js";
+import { useAgentEngine } from "@/hooks/useAgentEngine.js";
 import { useBaseWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
 import { useACodeIntl } from "@/i18n/IntlProvider.js";
 import { readComposerRecent } from "@/lib/composerRecent.js";
@@ -39,7 +40,6 @@ import {
 import { splitModelTriggerLabelParts } from "@/v4/composer/modelTriggerDisplay.js";
 import { decodeCustomModelValue, encodeCustomModelValue } from "@/lib/acodeCustomModelValue.js";
 import { SettingsGroupCard, SettingsRow } from "@/settings/SettingsPageParts.js";
-
 /** Radix Select 不接受空字符串值；用哨兵表示「跟随默认」。 */
 const FOLLOW_DEFAULT_VALUE = "new-task-defaults:follow";
 const MODEL_ITEM_NEVER_LOCKED = () => false;
@@ -54,7 +54,6 @@ const MODEL_TRIGGER_CLASSNAME =
  */
 const MODEL_TRIGGER_LABEL_CLASSNAME =
   "inline-flex min-w-0 text-left [&>span]:max-w-full [&>span>span]:block [&>span>span]:truncate";
-
 /**
  * 已固定但当前模型不支持的档位必须留在列表里：设置保留用户原意图（换回支持的模型即重新生效），
  * 而 Radix Select 找不到对应项时触发器会显示为空，看起来像设置丢了。
@@ -66,7 +65,6 @@ function isDefaultReasoningLevelPick(value: string): value is DefaultReasoningLe
     (DEFAULT_REASONING_LEVEL_PICK_LEVELS as readonly string[]).includes(value)
   );
 }
-
 function withStoredValue(values: readonly string[], stored: string | null): string[] {
   if (!stored || values.includes(stored)) return [...values];
   return [stored, ...values];
@@ -90,6 +88,7 @@ export function TaskDefaultsSection({
 }: TaskDefaultsSectionProps) {
   const { intl } = useACodeIntl();
   const { settings, update } = useSettings();
+  const engine = useAgentEngine();
   const localHostServices = useBaseWorkspaceServices();
   const modelSelectionRead = useModelSelectionServiceView(localHostServices.modelSelectionService);
   const view = modelSelectionRead.state.status === "ready" ? modelSelectionRead.state.view : null;
@@ -165,7 +164,7 @@ export function TaskDefaultsSection({
 
   const modeLabel = useCallback(
     (value: string): string => {
-      const mode = getACodeAgentAvailableModes().find((candidate) => candidate.id === value);
+      const mode = getACodeAgentAvailableModes(engine).find((candidate) => candidate.id === value);
       return mode
         ? getModeOptionDisplayLabel(intl, ACODE_AGENT_PROVIDER, {
             value: mode.id,
@@ -173,7 +172,7 @@ export function TaskDefaultsSection({
           })
         : value;
     },
-    [intl],
+    [intl, engine],
   );
 
   const reasoningLabel = useCallback(
@@ -299,7 +298,8 @@ export function TaskDefaultsSection({
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value={FOLLOW_DEFAULT_VALUE}>{followLabel}</SelectItem>
-                {NEW_TASK_DEFAULT_MODE_IDS.map((modeId) => (
+                {/* B 批（2026-10-24）：默认 mode 选项按当前引擎过滤（jcode 仅 yolo）。 */}
+                {getNewTaskDefaultModeIdsForEngine(engine).map((modeId) => (
                   <SelectItem key={modeId} value={modeId}>
                     {modeLabel(modeId)}
                   </SelectItem>

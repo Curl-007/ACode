@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { getAgentEnginePermissionModes } from "./acode-agent-registry.js";
+import type { ACodeProvider } from "./acode-task-types-core.js";
 import { submissionModeSchema } from "./acode-protocol-v4/submission.js";
 
 const nonEmptyString = z.string().trim().min(1);
@@ -69,6 +71,17 @@ export type DefaultReasoningLevelPick =
  */
 export const NEW_TASK_DEFAULT_MODE_IDS = ["build", "edit", "yolo", "dontAsk"] as const;
 export type NewTaskDefaultModeId = (typeof NEW_TASK_DEFAULT_MODE_IDS)[number];
+
+/**
+ * 按引擎过滤可固定的默认模式（2026-10-24 B 批）：外部引擎（jcode）只支持 yolo，
+ * 设置页列 build/edit 会让默认值与引擎能力自相矛盾（审计 P2）。
+ */
+export function getNewTaskDefaultModeIdsForEngine(
+  engineId: ACodeProvider | string,
+): readonly NewTaskDefaultModeId[] {
+  const supported = getAgentEnginePermissionModes(engineId) as readonly string[];
+  return NEW_TASK_DEFAULT_MODE_IDS.filter((modeId) => supported.includes(modeId));
+}
 
 /** 把存储中的模式归一化为可固定的权限模式；不可固定的值按「跟随默认」处理。 */
 export function normalizeNewTaskDefaultMode(

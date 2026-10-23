@@ -5388,6 +5388,10 @@ const zhCN: Record<string, string> = {
   "chat.error.feedbackOpened": "已打开反馈，并自动带上报错现场",
   "chat.error.noAvailableModel": "当前没有可用模型。请配置自定义模型。",
   "chat.error.sendFailed": "发送失败，请稍后重试。",
+  "chat.error.planUnsupportedByEngine":
+    "当前引擎不支持 Plan 模式（无 plan 一等状态），请切换其他模式后发送。",
+  "chat.error.attachmentsUnsupportedByEngine":
+    "当前引擎不支持发送附件（图片/文件），请移除附件后发送。",
   "chat.error.modelSettings": "模型设置",
   "chat.error.setModels": "配置",
 
@@ -6047,8 +6051,10 @@ const zhCN: Record<string, string> = {
   // ---- Agent 引擎选择（agent-engine-jcode-slot.md R7）----
   "settings.agentEngine.title": "Agent 引擎",
   "settings.agentEngine.description":
-    "选择驱动会话的 agent 运行时。ACode Agent 是自带引擎；jcode 是外部 Rust agent，经 ACode CLI 的 jcode-bridge 子命令桥接（北向 acode-protocol-v4 / 南向 ACP）。切换引擎会在下一次会话启动时重启当前工作区的 agent 进程，无需重启应用。",
+    "选择驱动会话的 agent 运行时。ACode Agent 是自带引擎；jcode 是外部 Rust agent，经 ACode CLI 的 jcode-bridge 子命令桥接（北向 acode-protocol-v4 / 南向 ACP）。切换引擎会立即重启当前工作区的 agent 进程（在飞轮次按既有语义收口），无需重启应用。",
   "settings.agentEngine.defaultTag": "默认",
+  "settings.agentEngine.switchedHint":
+    "引擎已切换；当前工作区的 agent 进程会立即按新引擎重启，在飞轮次将按既有语义收口。",
   "settings.agentEngine.saveError": "设置保存失败，请重试。",
   // R2 诚实声明：jcode 后端无任何权限审批回路，必须显式告知，
   // 不得让用户误以为选了 jcode 还有 ACode 的权限治理。

@@ -5626,6 +5626,10 @@ const enUS: Record<string, string> = {
   "chat.error.feedbackOpened": "Feedback opened with the error context attached",
   "chat.error.noAvailableModel": "No model available. Configure a custom model.",
   "chat.error.sendFailed": "Failed to send. Try again later.",
+  "chat.error.planUnsupportedByEngine":
+    "The current engine does not support plan mode (no first-class plan state). Switch to another mode before sending.",
+  "chat.error.attachmentsUnsupportedByEngine":
+    "The current engine does not support attachments (images/files). Remove them before sending.",
   "chat.error.modelSettings": "Model settings",
   "chat.error.setModels": "Set",
 
@@ -6299,8 +6303,10 @@ const enUS: Record<string, string> = {
   // ---- Agent engine selection (agent-engine-jcode-slot.md R7) ----
   "settings.agentEngine.title": "Agent engine",
   "settings.agentEngine.description":
-    "Choose the agent runtime that drives sessions. ACode Agent is the built-in engine; jcode is an external Rust agent bridged through the ACode CLI jcode-bridge subcommand (acode-protocol-v4 northbound / ACP southbound). Switching engines restarts the current workspace's agent process on the next session start — no app restart needed.",
+    "Choose the agent runtime that drives sessions. ACode Agent is the built-in engine; jcode is an external Rust agent bridged through the ACode CLI jcode-bridge subcommand (acode-protocol-v4 northbound / ACP southbound). Switching engines restarts the current workspace's agent process immediately (in-flight turns settle under the existing dispose semantics) — no app restart needed.",
   "settings.agentEngine.defaultTag": "Default",
+  "settings.agentEngine.switchedHint":
+    "Engine switched; the current workspace's agent process restarts on the new engine immediately, and any in-flight turn settles under the existing dispose semantics.",
   "settings.agentEngine.saveError": "Failed to save setting. Please try again.",
   // R2 honest disclosure: the jcode backend has no permission-approval loop at all.
   // This must be stated plainly so users never assume ACode's permission governance still applies.

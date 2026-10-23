@@ -114,3 +114,25 @@ test("引擎设置归一化：jcode/glm 透传，非法值回退 native", () => 
   assert.equal(resolveAgentEngineSetting(undefined), DEFAULT_AGENT_ENGINE_SETTING);
   assert.equal(DEFAULT_AGENT_ENGINE_SETTING, "glm");
 });
+
+test("B 批: BOT_ACODE_PROVIDER_OPTIONS 过滤 bot 不可驱动的引擎（jcode 权限集空 → 不呈现）", async () => {
+  const { BOT_ACODE_PROVIDER_OPTIONS } = await import("../src/bots.js");
+  const ids = BOT_ACODE_PROVIDER_OPTIONS.map((option) => option.id);
+  assert.deepEqual(ids, ["glm"], "jcode 的 bot 可选权限集为空，不应出现在 bot 引擎选项里");
+});
+
+test("B 批: getNewTaskDefaultModeIdsForEngine 按引擎过滤可固定档位", async () => {
+  const { getNewTaskDefaultModeIdsForEngine } = await import("../src/new-task-defaults.js");
+  // jcode 仅 yolo：build/edit/dontAsk 不得出现在默认 mode 选项里。
+  assert.deepEqual([...getNewTaskDefaultModeIdsForEngine("jcode")], ["yolo"]);
+  // glm 保留全部可固定档（plan 本就不在可固定集）。
+  assert.deepEqual(
+    [...getNewTaskDefaultModeIdsForEngine("glm")],
+    ["build", "edit", "yolo", "dontAsk"],
+  );
+  // 未知引擎回退 native 口径。
+  assert.deepEqual(
+    [...getNewTaskDefaultModeIdsForEngine("codex")],
+    ["build", "edit", "yolo", "dontAsk"],
+  );
+});

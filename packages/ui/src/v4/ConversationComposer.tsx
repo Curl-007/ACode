@@ -87,6 +87,7 @@ import {
 } from "@/v4/composer/composerDraftRevision.js";
 import type { AppSlashCommand } from "@/slashCommandHelpers.js";
 import { useOptionalServices } from "@/hooks/useServices.js";
+import { useIsExternalAgentEngine } from "@/hooks/useAgentEngine.js";
 import { logger } from "@/logger.js";
 import { useACodeSessionStore } from "@/store/acodeSessionStore.js";
 import type { ComposerMentionPrefill } from "@/store/acodeSessionStoreTypes.js";
@@ -607,6 +608,9 @@ function ConversationComposerImpl({
   );
 
   // ── 附件全链路（选择/粘贴/拖拽/画板/预传/门禁）──
+  // B 批（2026-10-24）：外部引擎附件上传在 shim 侧必失败（无 putSessionAttachment），
+  // 四个附件入口（picker/粘贴/OS 拖拽/add-to-chat）与附件菜单入口统一门控。
+  const isExternalEngine = useIsExternalAgentEngine();
   const attachmentsApi = useComposerAttachments({
     workspacePath,
     workspaceIdentity,
@@ -617,6 +621,9 @@ function ConversationComposerImpl({
     onRuntimeRestart,
     onRuntimeLifecycle,
     disabled,
+    // B 批（2026-10-24）：外部引擎附件上传在 shim 侧必失败（无 putSessionAttachment），
+    // 四个附件入口（picker/粘贴/OS 拖拽/add-to-chat）统一门控。
+    attachmentsUnsupported: isExternalEngine,
     listenAddToChatEvents: listenAddToChatEvents && !disabled,
   });
   // 对齐旧版 useChatComposer：窗口级 dragover 会在指针进入 ChatView 前预先点亮
@@ -1517,14 +1524,20 @@ function ConversationComposerImpl({
   const stopTooltipTitle = intl.formatMessage({ id: "chat.stop" });
   const visibleError = error && !shouldSuppressChatErrorBanner(error) ? error : null;
 
+  // B 批（2026-10-24）：外部引擎（jcode）的 shim 未实现 host.putSessionAttachment，
+  // 附件在 attachmentBegin 即被拒（fault.attachment.putUnsupported）——按钮可点但必失败。
+  // 门控为隐藏附件入口（prop 可选），比「点了报永久失败 chip」诚实。
   const attachmentAction = useMemo(
-    () => ({
-      label: intl.formatMessage({ id: "chat.composer.attachment" }),
-      menuItemTestId: TID_CHAT_ATTACHMENT_MENU_ITEM,
-      onSelect: () => attachmentsApi.openAttachmentPicker(),
-      testId: TID_CHAT_ATTACHMENT_BUTTON,
-    }),
-    [intl, attachmentsApi.openAttachmentPicker],
+    () =>
+      isExternalEngine
+        ? undefined
+        : {
+            label: intl.formatMessage({ id: "chat.composer.attachment" }),
+            menuItemTestId: TID_CHAT_ATTACHMENT_MENU_ITEM,
+            onSelect: () => attachmentsApi.openAttachmentPicker(),
+            testId: TID_CHAT_ATTACHMENT_BUTTON,
+          },
+    [intl, attachmentsApi.openAttachmentPicker, isExternalEngine],
   );
 
   // ── 附件预览网格 ──

@@ -26,6 +26,7 @@ import {
   resolveModeOptionIcon,
 } from "@/chat-input-toolbar/display.js";
 import { useACodeIntl } from "@/i18n/IntlProvider.js";
+import { useAgentEngine } from "@/hooks/useAgentEngine.js";
 import { isCoarseTouchDevice } from "@/lib/pickerFocus.js";
 import { useShortcutCommandLabel } from "@/shortcuts/useShortcutBindings.js";
 import { ControlHintTooltip } from "@/ControlHintTooltip.js";
@@ -57,17 +58,26 @@ function V4ComposerModeSwitchImpl({
   | "onSwitchMode"
 >) {
   const { intl } = useACodeIntl();
+  // B 批（2026-10-24）：mode 列表按当前引擎过滤——外部引擎（jcode）只暴露其真实支持的
+  // 权限档（仅 yolo），plan 复选框随之消失。此前无参调用恒回 native 四档，jcode 下
+  // 「plan 可勾但发送报 proto.independentPlanUnsupported」，属误导面（审计 P1-3）。
+  const engine = useAgentEngine();
   const displayProvider = provider ?? ACODE_AGENT_PROVIDER;
   const modeShortcutLabel = useShortcutCommandLabel("cycleSessionMode");
-  const modes = getACodeAgentAvailableModes();
+  const modes = getACodeAgentAvailableModes(engine);
   const permissions = modes.filter((mode) => mode.id !== "plan");
-  const selected = permissions.find((mode) => mode.id === draftConfig?.mode);
+  // 引擎切换后草稿 mode 可能不在新引擎的档位里（如 jcode 下草稿为 build）：
+  // 回退到该引擎首个档位，避免 selected 为 undefined 导致渲染崩溃。
+  const selected = permissions.find((mode) => mode.id === draftConfig?.mode) ?? permissions[0];
   const label = (mode: (typeof modes)[number]) =>
     getModeOptionDisplayLabel(intl, displayProvider, { value: mode.id, name: mode.name });
-  const plan = modes.find((mode) => mode.id === "plan")!;
-  const planLabel = label(plan);
+  // plan 档在外部引擎下不存在：find 不再非空断言（jcode 的 modes 无 plan，! 会崩）。
+  const plan = modes.find((mode) => mode.id === "plan");
+  const planLabel = plan ? label(plan) : "";
   // Plan 拆成独立勾选项后仍需保留原菜单说明，复用相同的国际化映射。
-  const planDescriptionId = getModeOptionDescriptionMessageId(displayProvider, { value: plan.id });
+  const planDescriptionId = plan
+    ? getModeOptionDescriptionMessageId(displayProvider, { value: plan.id })
+    : null;
   const modeOption = useMemo<ACodeConfigOption>(
     () => ({
       id: "mode",
@@ -75,7 +85,7 @@ function V4ComposerModeSwitchImpl({
       category: "mode",
       type: "select",
       currentValue: draftConfig?.mode ?? "build",
-      options: getACodeAgentAvailableModes()
+      options: getACodeAgentAvailableModes(engine)
         .filter((mode) => mode.id !== "plan")
         .map((mode) => ({ value: mode.id, name: mode.name })),
     }),
@@ -140,23 +150,29 @@ function V4ComposerModeSwitchImpl({
                 ?.focus();
           }}
         >
-          <DropdownMenuCheckboxItem
-            checked={draftConfig?.planEnabled ?? false}
-            onCheckedChange={(checked) => onSwitchMode(checked ? "plan" : "plan-off")}
-            data-testid={testId(TID_CHAT_MODE_SELECT_ITEM, "plan")}
-            className="min-h-13 items-start gap-3 py-2"
-          >
-            <LightbulbIcon className="mt-0.5 size-4.5 shrink-0" />
-            <span className="flex min-w-0 flex-col gap-0.5">
-              <span>{planLabel}</span>
-              {planDescriptionId && (
-                <span className="text-ui-sm text-foreground-subtle">
-                  {intl.formatMessage({ id: planDescriptionId })}
+          {/* 外部引擎无 plan 一等状态：整块（勾选项+分隔线）不渲染，而非禁用置灰——
+              禁用仍暗示「该引擎有此能力只是当前不可用」，隐藏才是诚实形态。 */}
+          {plan ? (
+            <>
+              <DropdownMenuCheckboxItem
+                checked={draftConfig?.planEnabled ?? false}
+                onCheckedChange={(checked) => onSwitchMode(checked ? "plan" : "plan-off")}
+                data-testid={testId(TID_CHAT_MODE_SELECT_ITEM, "plan")}
+                className="min-h-13 items-start gap-3 py-2"
+              >
+                <LightbulbIcon className="mt-0.5 size-4.5 shrink-0" />
+                <span className="flex min-w-0 flex-col gap-0.5">
+                  <span>{planLabel}</span>
+                  {planDescriptionId && (
+                    <span className="text-ui-sm text-foreground-subtle">
+                      {intl.formatMessage({ id: planDescriptionId })}
+                    </span>
+                  )}
                 </span>
-              )}
-            </span>
-          </DropdownMenuCheckboxItem>
-          <DropdownMenuSeparator />
+              </DropdownMenuCheckboxItem>
+              <DropdownMenuSeparator />
+            </>
+          ) : null}
           <DropdownMenuRadioGroup value={selected.id} onValueChange={onSwitchMode}>
             {permissions.map((mode) => {
               const ModeIcon = resolveModeOptionIcon(mode.id);

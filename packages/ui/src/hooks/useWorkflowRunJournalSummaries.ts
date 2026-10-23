@@ -1,3 +1,4 @@
+import { isEngineUnsupportedMethodError } from "@/lib/engineCapabilityError.js";
 import { useEffect, useRef, useState } from "react";
 import type { V4ConversationWorkflowRunSummary } from "@acode/shared/acode-protocol-v4";
 import { logger } from "@/logger.js";
@@ -29,7 +30,11 @@ import { useV4Conversation } from "@/v4/V4ConversationContext.js";
  */
 function isWorkflowRunsCapabilityMissing(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
-  return message.includes("capabilityUnsupported") || message.includes("listDynamicWorkflowRuns");
+  return (
+    message.includes("capabilityUnsupported") ||
+    message.includes("listDynamicWorkflowRuns") ||
+    isEngineUnsupportedMethodError(error)
+  );
 }
 
 /**

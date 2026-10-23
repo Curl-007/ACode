@@ -1850,7 +1850,12 @@ export function SessionPane({
         logger.warn(plan.warn);
         return true;
       }
-      const ack = await dispatchCommand(plan.type, plan.payload, targetSessionId, plan.baseRevision);
+      const ack = await dispatchCommand(
+        plan.type,
+        plan.payload,
+        targetSessionId,
+        plan.baseRevision,
+      );
       if (ack.reasonCode === "guard.heldQueueConfirmationStale") {
         return "confirmationRequired";
       }
@@ -2341,11 +2346,20 @@ export function SessionPane({
         // 仅写日志，不会生成 snapshot.control.lastError，用户看到的结果就是“点击没反应”。
         // 这里把 admission 前失败收口为 pane-local 错误横幅，不改变 desktop continuous 或
         // Web remote replayable 的发送/恢复语义，草稿仍由 Composer 原路径保留。
+        // 引擎能力缺失误报为通用发送失败且 detail 是未翻译原始串（审计 P1-3）：
+        // 把已知引擎能力故障映射成可读文案，detail 仍保留原始串供诊断。
+        const engineCapabilityMessageId = detail.includes("independentPlanUnsupported")
+          ? "chat.error.planUnsupportedByEngine"
+          : detail.includes("fault.attachment.putUnsupported")
+            ? "chat.error.attachmentsUnsupportedByEngine"
+            : null;
         setSendSubmissionError({
           code: runtimeModelUnavailable ? "ACODE_RUNTIME_MODEL_UNAVAILABLE" : "SEND_FAILED",
-          message: runtimeModelUnavailable
-            ? detail
-            : intl.formatMessage({ id: "chat.error.sendFailed" }),
+          message: engineCapabilityMessageId
+            ? intl.formatMessage({ id: engineCapabilityMessageId })
+            : runtimeModelUnavailable
+              ? detail
+              : intl.formatMessage({ id: "chat.error.sendFailed" }),
           detail,
           ...(sessionId ? { taskId: sessionId } : {}),
         });

@@ -1,3 +1,4 @@
+import { isEngineUnsupportedMethodError } from "@/lib/engineCapabilityError.js";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { WorkflowRunWorkspaceNode } from "@acode/shared/acode-protocol-v4";
 import { logger } from "@/logger.js";
@@ -34,7 +35,11 @@ interface WorkflowRunWorkspaceState {
 /** 能力缺席的判据同产物 hook：跨 JSON-RPC 之后只剩 message 可靠。 */
 function isWorkflowRunWorkspaceCapabilityMissing(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
-  return message.includes("capabilityUnsupported") || message.includes("WorkspaceNodes");
+  return (
+    message.includes("capabilityUnsupported") ||
+    message.includes("WorkspaceNodes") ||
+    isEngineUnsupportedMethodError(error)
+  );
 }
 
 export function useWorkflowRunWorkspace(options: {

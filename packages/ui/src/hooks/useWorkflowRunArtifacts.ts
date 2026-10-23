@@ -1,3 +1,4 @@
+import { isEngineUnsupportedMethodError } from "@/lib/engineCapabilityError.js";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   WorkflowRunArtifact,
@@ -74,7 +75,11 @@ interface WorkflowRunArtifactsViewState {
  */
 function isWorkflowRunArtifactsCapabilityMissing(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
-  return message.includes("capabilityUnsupported") || message.includes("ArtifactRows");
+  return (
+    message.includes("capabilityUnsupported") ||
+    message.includes("ArtifactRows") ||
+    isEngineUnsupportedMethodError(error)
+  );
 }
 
 /**

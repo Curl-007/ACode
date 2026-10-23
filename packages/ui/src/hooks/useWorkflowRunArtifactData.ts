@@ -1,3 +1,4 @@
+import { isEngineUnsupportedMethodError } from "@/lib/engineCapabilityError.js";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { WORKFLOW_ARTIFACT_LIMITS } from "@acode/shared/acode-protocol-v4";
 import type { ArtifactItem } from "@/app-shell/workflow-artifacts/presets/index.js";
@@ -45,7 +46,11 @@ interface WorkflowRunArtifactDataState {
 /** 能力缺席的判据同 `useWorkflowRunArtifacts`：跨 JSON-RPC 之后只剩 message 可靠。 */
 function isWorkflowRunArtifactDataCapabilityMissing(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
-  return message.includes("capabilityUnsupported") || message.includes("ArtifactItems");
+  return (
+    message.includes("capabilityUnsupported") ||
+    message.includes("ArtifactItems") ||
+    isEngineUnsupportedMethodError(error)
+  );
 }
 
 function emptyState(): WorkflowRunArtifactDataState {

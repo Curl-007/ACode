@@ -4,6 +4,7 @@ import { modelSelectionSchema, type ModelSelection } from "./model-selection.js"
 import {
   ACODE_NATIVE_AGENT_ENGINE,
   getAgentEngineDescriptors,
+  getBotSelectablePermissionModes,
   isAgentEngineId,
 } from "./acode-agent-registry.js";
 import type {
@@ -599,12 +600,14 @@ export function normalizeBotReplyGranularity(
 }
 
 /**
- * Bot 可选 ACode 引擎列表，由注册表生成。
- *
- * 引擎联合只剩 native(glm)（外部引擎槽位已下线），列表恒为单项；保留导出以维持
- * bot 配置 UI 的选项形状，未来若新增引擎自动出现。
+ * Bot 可选 ACode 引擎列表，由注册表生成，且**过滤掉 bot 不可驱动的引擎**：
+ * bot 远程天花板剔除 yolo 后，可选权限模式为空集的引擎（如 jcode：仅声明 yolo、
+ * 无权限审批回路）对 bot 无任何可配置档位，列进选项只会让 UI 出现「选中后权限下拉
+ * 静默空白」的误导面（2026-10-24 审计 P2）。过滤后 bot 配置 UI 根本不呈现该引擎。
  */
 export const BOT_ACODE_PROVIDER_OPTIONS: Array<{
   id: ACodeProvider;
   label: string;
-}> = getAgentEngineDescriptors().map((engine) => ({ id: engine.id, label: engine.label }));
+}> = getAgentEngineDescriptors()
+  .filter((engine) => getBotSelectablePermissionModes(engine.id).length > 0)
+  .map((engine) => ({ id: engine.id, label: engine.label }));

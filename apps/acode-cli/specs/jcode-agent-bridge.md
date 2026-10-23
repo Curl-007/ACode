@@ -154,7 +154,7 @@ spike 三方印证（实测 + jcode ACP 源码 + jcode harness 源码）：**jco
 - 恢复 `externalEngineCommandResolver.ts`（已整文件删除）或等价候选链，且受 `agent-command-env-gate.md` R1 约束：**打包态不吃 env 注入**，只能走 Settings 显式配置 + `~/.acode/server/agents/<engine>` 候选；
 - `EngineSection.tsx` 设置页与 locales 键恢复；
 - bot `/engine` 命令与 `getBotSelectablePermissionModes` 天花板重新裁决；
-- **storage 入口与会话命令解耦**（A.8 实证的新增要求）：`resolveDefaultACodeAgentCommand` 当前返回单个 command 同时供 Host storage 准备与会话 spawn 使用。外部引擎槽位必须让 storage 准备仍指向 ACode CLI bundle（`--prepare-storage` 是 ACode 自己的 SQLite 迁移，jcode 不参与），仅会话 spawn 换成 jcode-bridge；否则 Host 在 storage 阶段即 `unsupported_runtime` 失败。
+- **storage 入口与会话命令解耦**：A.8 曾表述为"需要新增解耦"，A.9 修正为更精确的两层区分——**Worker argv 的解耦早已存在**（`prepareSessionStorage` 的 argv 硬编码 `app-server --stdio --prepare-storage`，`storagePreparationProcesses.ts:131`，与 `command.args` 无关），但**入口 bundle 的解析此前仍耦合**在 `resolveDefaultACodeAgentCommand` 的返回值上（读它的 `storagePreparationEntry`），故 env 覆盖分支不带该字段就 `unsupported_runtime` 失败。**已在 `host-startup-storage-cwd.md` R6 落地解耦**：新增 `resolveACodeStoragePreparationEntry`（services，独立候选链、刻意不吃 env 覆盖），桌面 `storagePreparationProcesses.ts` 改用它，storage 入口从此与会话 agent 引擎选择完全无关。A.8 的 `unsupported_runtime` 失败已由 R6 修复（受控对照实测计数 1→0）。
 
 本 spec 的实现只在**非打包态**（dev / 独立 CLI / 远程 server）可接线验证，这是 `agent-command-env-gate.md` R1 明确保留的合法配置通道。
 
@@ -334,3 +334,21 @@ if (!command?.supportsStorageStartup || !command.storagePreparationEntry)
 **与既有治理 spec 的印证**：`packages/services/specs/agent-command-env-gate.md` R3 早已预告——「外部引擎……接入会话时若需自定义路径，走 Settings 显式配置（用户可见动作），**不恢复 env 通道**」。本实验实证了这条约束的技术原因：env 覆盖天生不带 storage 能力声明。
 
 **修正 R1 的接线结论**：spec R1「接线（分两态）」原称非打包态可用 `ACODE_AGENT_SERVER_COMMAND` 接线——该结论对**独立 CLI / 远程 server / L1·L2 测试**（直接 new ProcessManager，不经桌面 Host 的 storage 准备）成立，但对**桌面 Host 不成立**。桌面接线只能走「前置决策」：引擎注册表加回外部槽位 + `resolveDefaultACodeAgentCommand` 为该槽位返回带 `storagePreparationEntry`（指向能跑 `--prepare-storage` 的 ACode CLI bundle，而非 jcode 二进制）的 command + Settings 显式配置。注意 storage 准备本质是 **ACode 自己的 SQLite 迁移**（`--prepare-storage` 入口，jcode 不参与），所以正确设计是让 storage 准备仍用 ACode CLI bundle、仅会话 agent 换成 jcode——这需要 `resolveDefaultACodeAgentCommand` 把「storage 入口」与「会话 spawn 命令」解耦，属注册表改造的一部分。
+
+### A.9 打包态 bundle 形态验证（改变桌面接线设计的发现）
+
+A.8 的结论基于"桌面接线需要解析外部 jcode 二进制"这个假设。**实测推翻了该假设**：`jcode-bridge` 是 ACode CLI 自己的子命令（`apps/acode-cli/packages/cli/src/run.ts` 的 `case "jcode-bridge"`），因此它被 esbuild 打进了 `acode.cjs`，与 `app-server` 同在一个 bundle 里。
+
+**实测证据**（`apps/acode-cli/packages/cli/dist/acode.cjs`，25.9MB bundle）：
+
+1. `grep -c 'jcode-bridge' acode.cjs` → **6 处命中**（子命令已打包进 bundle）。
+2. 直接跑 bundle 形态：`node acode.cjs jcode-bridge --stdio --jcode-binary <不存在的路径>` → 正确输出 storage 首帧、正确尝试 spawn jcode（`telemetryOff:true`、`args:"acp --no-update --no-selfdev"`）、南向失败后**北向不死**（`southbound startup failed; commands needing jcode will fail` + 优雅收口）——证明 A.5 修的"南向启动失败不连带北向"在 bundle 形态下同样生效。
+3. bundle 形态 + 真 jcode 端到端：`capabilitiesQuery` → `{"supported":false}`；`createSession` → `accepted` + `jcode-<uuid>`；`subscribe` → `snapshot` 模式 + subscriptionId；`sendText` → `accepted` + `inputAccepted` + `startNow`；帧统计 `storageState=1 snapshot=1 deltas=4`，真模型正常应答。
+
+**对设计的三点影响**：
+
+1. **不需要独立二进制解析**：桌面态不必在 ACode 侧解析/分发 jcode 可执行文件。`acode.cjs` 自带 `jcode-bridge` 子命令；只有 jcode 本体（`jcode` 可执行文件）需要被发现——仍走 R7 的 PATH / `--jcode-binary`，但那是 shim 进程内部的事，不进 ACode 的命令解析链。
+2. **不需要新增 storage 解耦**（见「前置决策」中该条的修正）：`prepareSessionStorage` 的 Worker argv 硬编码 `app-server --stdio --prepare-storage`，与 `command.args` 无关。jcode 引擎的 resolver 只要复用同一个 `acode.cjs` bundle（`storagePreparationEntry` + `supportsStorageStartup` 照旧），仅把会话 `args` 换成 `["jcode-bridge","--stdio",...]`，两条路各自正确。
+3. **A.8 的根因收窄**：`unsupported_runtime` 失败的**唯一**原因是 env 覆盖分支不声明 storage 能力字段；换成注册表通道（bundled 分支同款）即天然带上。这进一步支持 `agent-command-env-gate.md` R3 的裁决——桌面接线走 Settings/注册表，不恢复 env 通道。
+
+**仍未验证**：Electron renderer 真正消费 shim 帧（需 Settings UI + 引擎选择打通后才能端到端）；打包态（`ACODE_APP_IS_PACKAGED=1`）下 `resources/glm/acode.cjs` 的 jcode-bridge 子命令是否同样在位（本 worktree 只构建了 dev 态 bundle，未跑 electron-builder 打包）。

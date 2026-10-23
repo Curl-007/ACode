@@ -11,7 +11,10 @@ import {
   acodeStoragePreparationFrameSchema,
   type DatabaseStartupState,
 } from "@acode/shared";
-import { resolveDefaultACodeAgentCommand } from "@acode/services/storage-startup";
+import {
+  resolveACodeStoragePreparationEntry,
+  describeStorageEntryResolutionFailure,
+} from "@acode/services/storage-startup";
 
 type Phase = NonNullable<DatabaseStartupState["databasePhase"]>;
 const workerMessageSchema = z.discriminatedUnion("type", [
@@ -118,18 +121,25 @@ export async function prepareSessionStorage(options: {
   preparedPaths?: Set<string>;
   observePath: (path: string) => Promise<void>;
 }): Promise<void> {
-  const command = resolveDefaultACodeAgentCommand({
-    workspacePath: options.cwd,
-    workspaceKey: options.cwd,
-    presentationSurface: "desktop",
-  });
-  if (!command?.supportsStorageStartup || !command.storagePreparationEntry)
-    throw statusError("unsupported_runtime");
-  const entry = command.storagePreparationEntry;
+  // R6（host-startup-storage-cwd.md）：storage 入口独立于会话 agent 命令解析，且不吃
+  // env 覆盖。此前复用 resolveDefaultACodeAgentCommand 的返回值取 storagePreparationEntry，
+  // 于是 ACODE_AGENT_SERVER_COMMAND 一生效（外部 agent 命令不带 storage 字段）就让 host
+  // 存储启动 unsupported_runtime 失败。安全理由见 spec R6：storage worker 持会话库 SQLite
+  // 连接，其入口绝不能被用户级 env 注入决定。
+  const storageEntry = resolveACodeStoragePreparationEntry({ workspacePath: options.cwd });
+  if (!storageEntry) {
+    // 保持 fail-loud（R4）：宁可显式失败暴露 bundle 缺失，也不静默跳过存储准备。
+    // errorCode 仍是 unsupported_runtime（databaseStartupErrorCodeSchema 闭集成员，
+    // canRetryDatabaseStartup 据此判为不可重试），detail 里附具体候选链诊断。
+    throw Object.assign(statusError("unsupported_runtime"), {
+      message: `Storage preparation failed: unsupported_runtime — ${describeStorageEntryResolutionFailure()}`,
+    });
+  }
+  const entry = storageEntry.entry;
   await new Promise<void>((resolve, reject) => {
     const child = new Worker(entry, {
-      argv: ["app-server", "--stdio", "--prepare-storage", "--cwd", command.cwd ?? options.cwd],
-      env: { ...process.env, ...options.env, ...command.env },
+      argv: ["app-server", "--stdio", "--prepare-storage", "--cwd", storageEntry.cwd],
+      env: { ...process.env, ...options.env, ...storageEntry.env },
       stdin: true,
       stdout: true,
       stderr: true,

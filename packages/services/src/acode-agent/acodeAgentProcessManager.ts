@@ -57,6 +57,8 @@ import type { ACodeAgentPresentationSurface } from "./acodeAgentPresentationSurf
 import { shouldSpawnInDetachedProcessGroup } from "../process/processTreeTerminator.js";
 import type { RuntimeProcessLifecycleReporter } from "../process/runtimeProcessLifecycle.js";
 import { buildAgentWorkspaceIdentityEnv } from "../runtime-tools/agentProxyEnv.js";
+// 向上查找仓库内文件的单一实现（storageEntryResolver 同源复用，避免两份逻辑漂移）。
+import { findUpwardRepoFile } from "./repoUpwardLookup.js";
 
 export interface ACodeAgentCommand {
   /** 本地配套 CLI bundle 的存储专用 Worker 入口；远端/自定义命令不推断能力。 */
@@ -440,21 +442,6 @@ function parseArgsJson(raw: string | undefined): string[] | undefined {
   return parsed;
 }
 
-function findUpward(relativePath: string): string | null {
-  let current = process.cwd();
-  while (true) {
-    const candidate = join(current, relativePath);
-    if (existsSync(candidate)) {
-      return candidate;
-    }
-    const parent = dirname(current);
-    if (parent === current) {
-      return null;
-    }
-    current = parent;
-  }
-}
-
 async function buildACodeAgentSpawnPreflight(
   command: ACodeAgentCommand,
   workspacePath: string,
@@ -488,7 +475,7 @@ async function buildACodeAgentSpawnPreflight(
 function resolveBundledWorkspaceACodeAgentCommand(
   context: ACodeAgentCommandResolverContext,
 ): ACodeAgentCommand | null {
-  const distEntrypoint = findUpward("apps/acode-cli/packages/cli/dist/acode.cjs");
+  const distEntrypoint = findUpwardRepoFile("apps/acode-cli/packages/cli/dist/acode.cjs");
   if (distEntrypoint) {
     const useBytecode =
       process.versions.electron && process.env.ACODE_DESKTOP_AGENT_BYTECODE === "1";
@@ -511,8 +498,8 @@ function resolveBundledWorkspaceACodeAgentCommand(
     };
   }
 
-  const sourceEntrypoint = findUpward("apps/acode-cli/packages/cli/src/main.ts");
-  const tsxEntrypoint = findUpward("node_modules/.bin/tsx");
+  const sourceEntrypoint = findUpwardRepoFile("apps/acode-cli/packages/cli/src/main.ts");
+  const tsxEntrypoint = findUpwardRepoFile("node_modules/.bin/tsx");
   if (!sourceEntrypoint || !tsxEntrypoint) {
     return null;
   }
@@ -675,7 +662,7 @@ function wrapACodeAgentCommandWithStdioTapDevProxy(
     return command;
   }
 
-  const tapScript = findUpward("scripts/dev/acode-stdio-tap.mjs");
+  const tapScript = findUpwardRepoFile("scripts/dev/acode-stdio-tap.mjs");
   if (!tapScript) {
     debugLog("ACode stdio tap proxy enabled but script not found");
     return command;

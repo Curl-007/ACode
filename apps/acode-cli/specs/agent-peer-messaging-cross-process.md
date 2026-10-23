@@ -1,6 +1,6 @@
 # Agent 间跨进程通信 P1：SessionMailboxPort 写入方（编排方案 Phase 5 / ④-P1）
 
-来源：[`docs/codex-orchestration-integration-plan.md`](../../../docs/codex-orchestration-integration-plan.md)
+来源：[`docs/archive/codex-orchestration-integration-plan.md`](../../../docs/archive/codex-orchestration-integration-plan.md)
 §4 Phase 5 P1 与 §7④ 裁决（跨进程用 `SessionMailboxPort`、不建 board）。前置批次：
 P0 进程内同父兄弟（[`agent-peer-messaging.md`](agent-peer-messaging.md)，本批不改其
 sink/queued 路径任何行为）；peer-5 turn 起点 drain

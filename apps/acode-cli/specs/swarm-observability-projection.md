@@ -1,6 +1,6 @@
 # Swarm 编排可观测投影（编排方案 Phase 2 / ②）
 
-来源：[`docs/codex-orchestration-integration-plan.md`](../../../docs/codex-orchestration-integration-plan.md)
+来源：[`docs/archive/codex-orchestration-integration-plan.md`](../../../docs/archive/codex-orchestration-integration-plan.md)
 §4 Phase 2，经 2026-10-10 对照审计复核（模板全部健在、swarm 四表面零命中确认）后实施。
 参照机制：Codex app-server 统一事件面（core → app-server → 前端订阅）。只搬运机制设计。
 

@@ -4,7 +4,7 @@
 >
 > **最后更新**：2026-09-28（bot 权限桌面本机确认，两阶段 B+A）。**最近工作分支**：`feat/bot-permission-local-approval`（自 `dev/0.0.1` 切出，squash 合回）。**工作树**：干净。
 >
-> 计划全文见 [`docs/security-hardening-plan.md`](security-hardening-plan.md)；本文件是「实施进度 + 接手须知」，与计划互补。
+> 计划全文见 [`docs/security-hardening-plan.md`](../security-hardening-plan.md)；本文件是「实施进度 + 接手须知」，与计划互补。
 
 ---
 
@@ -31,7 +31,7 @@
 > **跨 track 动态（2026-09-29）**：非安全 track 的「CLI 调度与系统提示词升级」已于同日
 > squash 合入 `dev/0.0.1`（11 篇新 spec + Phase 0-3 实施，新增/更新 `apps/acode-cli/tests/`
 > 下约 20 个 `*.test.mjs`，跑法同 §2 的 `node --import tsx --test`）。其权威状态与验证记录
-> 见 [`docs/cli-dispatch-and-system-prompt-upgrade-plan.md`](cli-dispatch-and-system-prompt-upgrade-plan.md)，
+> 见 [`docs/archive/cli-dispatch-and-system-prompt-upgrade-plan.md`](cli-dispatch-and-system-prompt-upgrade-plan.md)，
 > 不在本文范围；本文三个既有红的清单不变。
 
 ---

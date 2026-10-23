@@ -1,6 +1,6 @@
 # 安全扫描分诊记录（Security Scan Triage, 2026-09-29 深度扫描）
 
-本文件是对 Mimosa 密封深度扫描 `scan-2026-09-29T15-27-11.841Z-8fdb6ff412a1` 全部 118 条 findings 与依赖公告面的**分诊结论记录**：逐簇判定误报 / 设计固有 / 已缓解 / 真实残留，并给出残留项的最小修复点与后续动作。与 [`security-hardening-plan.md`](security-hardening-plan.md)（加固路线）和 [`security-hardening-handoff.md`](security-hardening-handoff.md)（实施交接）互补：本文只做**扫描结果分诊**，不重开加固议题。
+本文件是对 Mimosa 密封深度扫描 `scan-2026-09-29T15-27-11.841Z-8fdb6ff412a1` 全部 118 条 findings 与依赖公告面的**分诊结论记录**：逐簇判定误报 / 设计固有 / 已缓解 / 真实残留，并给出残留项的最小修复点与后续动作。与 [`security-hardening-plan.md`](../security-hardening-plan.md)（加固路线）和 [`security-hardening-handoff.md`](security-hardening-handoff.md)（实施交接）互补：本文只做**扫描结果分诊**，不重开加固议题。
 
 > **文档状态**：分诊结论（triage record）。**生成日期**：2026-09-30。**代码基线**：git `91c1f71`（dev/0.0.1，工作区干净时扫描），文中 `file:line` 以该基线为准，随演进可能漂移。
 >

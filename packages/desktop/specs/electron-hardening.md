@@ -2,7 +2,7 @@
 
 - 状态：已实施（P2 第二批，分支 `feature/p2-hardening-batch2`）
 - 范围：`packages/desktop` 桌面壳进程。计划原文见 `docs/security-hardening-plan.md` P2 第 2、3、9 项。
-- 关联文档：`docs/security-hardening-handoff.md`（P0/P1 既有结论）、`docs/security-hardening-plan.md` P2。
+- 关联文档：`docs/archive/security-hardening-handoff.md`（P0/P1 既有结论）、`docs/security-hardening-plan.md` P2。
 
 本 spec 是行为变更的前置事实与规则来源。所有安全相关判断（协议白名单、权限矩阵、fuse 取值）以本文为准；实现里的中文注释引用本文小节。
 

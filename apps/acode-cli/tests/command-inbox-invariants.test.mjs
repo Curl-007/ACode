@@ -6,7 +6,7 @@ import { test } from "node:test";
  * CommandInbox 不变量测试套件（D3 审计修正项 #7 的落地）。
  *
  * 规格 apps/acode-cli/specs/command-terminal-state-audit.md 的 R3「不得改动的不变量」与
- * 验收场景 5；方案 docs/cli-dispatch-and-system-prompt-upgrade-plan.md §6 Phase 2 验收
+ * 验收场景 5；方案 docs/archive/cli-dispatch-and-system-prompt-upgrade-plan.md §6 Phase 2 验收
  * 要求「任何触碰队列的改动必跑」本套件。逐条覆盖 R3 点名的五条不变量：
  *
  *   1. 固定锁序：key gate → per-session admission gate（command-inbox.ts:139-141），

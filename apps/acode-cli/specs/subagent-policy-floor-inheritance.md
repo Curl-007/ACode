@@ -109,7 +109,7 @@ create-app（唯一注册点）
 
 ## 增补（2026-10-10）：R4 派发工具面永不经任何 allowlist 分支授予
 
-来源：[`docs/codex-orchestration-integration-plan.md`](../../../docs/codex-orchestration-integration-plan.md)
+来源：[`docs/archive/codex-orchestration-integration-plan.md`](../../../docs/archive/codex-orchestration-integration-plan.md)
 §5 R2（allowlist 洞）的修复，经 2026-10-10 对照审计（B2，独立复核 confirmed）核实后
 按方案「即使不放开嵌套也值得先做」单独先行。放开嵌套时的按 depth 重评**已随编排方案
 Phase 4 落地**（`allowDispatch`，与 child enabled 闸门同源派生，见

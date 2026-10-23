@@ -4,7 +4,7 @@
 >
 > **最后更新**：2026-09-30。**基线**：`dev/0.0.1` @ `8b95943`；**全部改动留在工作区、未做任何 git 操作**（本轮实测 `git status --porcelain` 共 77 条改动/新增，HEAD 仍为 `8b95943`）。
 >
-> 计划全文见 [`docs/jcode-inspired-upgrade-plan.md`](jcode-inspired-upgrade-plan.md)（其状态头与「优先级总览」表已随本文同步）；本文件是「实施进度 + 接手须知」，与计划互补。格式参照 [`docs/security-hardening-handoff.md`](security-hardening-handoff.md)。
+> 计划全文见 [`docs/archive/jcode-inspired-upgrade-plan.md`](jcode-inspired-upgrade-plan.md)（其状态头与「优先级总览」表已随本文同步）；本文件是「实施进度 + 接手须知」，与计划互补。格式参照 [`docs/archive/security-hardening-handoff.md`](security-hardening-handoff.md)。
 >
 > **本轮（交付记录员）核实范围声明**：文件存在性、spec 章节结构、关键代码符号、git 工作区状态、以及个别标注「本轮实测」的命令（如 contracts dist 重建）——均已亲自核实并在文中标注。**本轮未复跑任何测试或门禁**；所有测试计数与门禁 exit 码引自「实施状态记录」（出处与可得性见 **§1.1**），接手后请按 §2 复跑确认。
 

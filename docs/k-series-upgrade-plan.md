@@ -2,7 +2,7 @@
 
 本文件是 2026-10-04 对 jcode（本地检出 `C:\Users\ZhuanZ\Desktop\jcode`，v0.89.2，commit
 `76df6464b`）第二轮差距分析的落地路线图。第一轮（2026-09-30，
-[`jcode-inspired-upgrade-plan.md`](jcode-inspired-upgrade-plan.md) J1-J4）消化了 jcode
+[`jcode-inspired-upgrade-plan.md`](archive/jcode-inspired-upgrade-plan.md) J1-J4）消化了 jcode
 **工程防御层**的精华并已全部合入；本轮消化剩余的**产品级能力差距**——九个立项项（K1-K9），
 覆盖记忆语义召回、对话内自组织任务图、挂机执行、会话搜索、导入生态、预算感知调度、
 公开引擎边界与 IDE 嵌入。
@@ -27,7 +27,7 @@
 > 条目，与其 "copied source/assets" 的收录范围定义一致。判定依据：MIT 的义务随「副本或其
 > substantial 部分」的复制产生；跨语言机制/思想级参照不构成版权意义的衍生作品，既有头注与
 > spec 引注已高于许可的最低要求。**失效条件**：未来若引入 jcode 的逐字翻译代码段（表达层
-> 复制），本判定作废，须按 `docs/jcode-inspired-upgrade-plan.md` 登记口径重新评估。
+> 复制），本判定作废，须按 `docs/archive/jcode-inspired-upgrade-plan.md` 登记口径重新评估。
 
 ---
 
@@ -180,7 +180,7 @@ session/prompt↔SendMessage、权限请求双向桥。**严格依赖 K7**（翻
 | `src/cli/acp.rs`（2201 行）                                                                    | ACP 宿主适配层                                                     | K8            |
 | `crates/jcode-tool-core/src/lib.rs:48-92`（invalid 工具语义）                                  | 畸形调用显式反馈                                                   | K9            |
 
-（第一轮的参照索引见 [`jcode-inspired-upgrade-plan.md`](jcode-inspired-upgrade-plan.md) 附录 A，不重复。）
+（第一轮的参照索引见 [`jcode-inspired-upgrade-plan.md`](archive/jcode-inspired-upgrade-plan.md) 附录 A，不重复。）
 
 ## 附录 B · 分析来源
 

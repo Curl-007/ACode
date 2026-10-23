@@ -383,16 +383,16 @@ node dist/acode/debug/acode/bin/acode.mjs --web \
 
 历史主线记录——已完成的计划、交接与带日期的验证记录，覆盖主要的加固与升级主线（保留作实现状态与证据；完整清单见 [docs/README.md](docs/README.md)）：
 
-| 文档                                                                                                  | 内容                                                                                             |
-| ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| [security-hardening-plan.md](docs/security-hardening-plan.md)                                         | 基于逐行源码审查的 P0–P3 安全加固路线图                                                          |
-| [security-hardening-handoff.md](docs/security-hardening-handoff.md)                                   | 安全加固各批次的实现状态、验证命令与交接说明                                                     |
-| [security-scan-triage-2026-09-29.md](docs/security-scan-triage-2026-09-29.md)                         | 封存深度安全扫描全部 118 项发现的分级处置：误报 / 设计如此 / 已缓解 / 残留                       |
-| [j5-performance-baseline.md](docs/j5-performance-baseline.md)                                         | Agent CLI 四种运行形态的性能与资源基线，以及已实现的杠杆（生产 V8 字节码、token 估算）           |
-| [jcode-inspired-upgrade-plan.md](docs/jcode-inspired-upgrade-plan.md)                                 | 防御机制升级路线图：bash 目标爆炸半径门控、confirm 反射门、类型化 workflow 产物、provider doctor |
-| [jcode-upgrade-handoff.md](docs/jcode-upgrade-handoff.md)                                             | 上述升级的逐项实现状态、审查发现与后续                                                           |
-| [cli-dispatch-and-system-prompt-upgrade-plan.md](docs/cli-dispatch-and-system-prompt-upgrade-plan.md) | Agent dispatch 与系统提示升级路线图，含逐项实现状态                                              |
-| [renderer-memory-soak-2026-10-01.md](docs/renderer-memory-soak-2026-10-01.md)                         | Renderer 内存泄漏根因、修复与真机验证                                                            |
+| 文档                                                                                                          | 内容                                                                                             |
+| ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| [security-hardening-plan.md](docs/security-hardening-plan.md)                                                 | 基于逐行源码审查的 P0–P3 安全加固路线图                                                          |
+| [security-hardening-handoff.md](docs/archive/security-hardening-handoff.md)                                   | 安全加固各批次的实现状态、验证命令与交接说明                                                     |
+| [security-scan-triage-2026-09-29.md](docs/archive/security-scan-triage-2026-09-29.md)                         | 封存深度安全扫描全部 118 项发现的分级处置：误报 / 设计如此 / 已缓解 / 残留                       |
+| [j5-performance-baseline.md](docs/j5-performance-baseline.md)                                                 | Agent CLI 四种运行形态的性能与资源基线，以及已实现的杠杆（生产 V8 字节码、token 估算）           |
+| [jcode-inspired-upgrade-plan.md](docs/archive/jcode-inspired-upgrade-plan.md)                                 | 防御机制升级路线图：bash 目标爆炸半径门控、confirm 反射门、类型化 workflow 产物、provider doctor |
+| [jcode-upgrade-handoff.md](docs/archive/jcode-upgrade-handoff.md)                                             | 上述升级的逐项实现状态、审查发现与后续                                                           |
+| [cli-dispatch-and-system-prompt-upgrade-plan.md](docs/archive/cli-dispatch-and-system-prompt-upgrade-plan.md) | Agent dispatch 与系统提示升级路线图，含逐项实现状态                                              |
+| [renderer-memory-soak-2026-10-01.md](docs/archive/renderer-memory-soak-2026-10-01.md)                         | Renderer 内存泄漏根因、修复与真机验证                                                            |
 
 最新的全项目 review 是 [docs/project-review-2026-10-22.md](docs/project-review-2026-10-22.md)，其各专项发现位于 [docs/reviews/2026-10-22/](docs/reviews/2026-10-22/)。
 

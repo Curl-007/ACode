@@ -146,7 +146,7 @@ sequenceDiagram
 
 ### U09. 文档事实校准与升级/备份说明（1–2 人日）
 
-**证据：** [中文 README](../README.zh-CN.md) 仍把 OS keychain 写作未来方向；[英文 README](../README.md)、[master key 实现](../packages/shared/src/node/credentialMasterKey.ts)、[keychain 实现](../packages/shared/src/node/credentialKeychain.ts) 和 [凭据 spec](../packages/services/specs/credential-storage.md) 已描述/实现 OS keychain、Windows DPAPI 与 Linux fallback。[安全交接文档](./security-hardening-handoff.md) 记录的是较早阶段，需要标注历史适用范围。
+**证据：** [中文 README](../README.zh-CN.md) 仍把 OS keychain 写作未来方向；[英文 README](../README.md)、[master key 实现](../packages/shared/src/node/credentialMasterKey.ts)、[keychain 实现](../packages/shared/src/node/credentialKeychain.ts) 和 [凭据 spec](../packages/services/specs/credential-storage.md) 已描述/实现 OS keychain、Windows DPAPI 与 Linux fallback。[安全交接文档](./archive/security-hardening-handoff.md) 记录的是较早阶段，需要标注历史适用范围。
 
 **建议与所有者：** 各能力的模块 spec 保持权威，README 与升级说明链接该事实源；建立简短能力/状态索引，双语内容同步更新。按实际存储模式说明同机备份、跨机迁移和回滚限制。现有 mixed-generation key 恢复与备份行为应解释清楚，不重复设计。
 

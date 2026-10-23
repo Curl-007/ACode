@@ -7,9 +7,8 @@
 - **活跃治理 / 规范**：日常工作会反复引用的规则，多数被 `AGENTS.md`、CI 工作流、`scripts/` 或源码引用，**禁止移动或重命名**。
 - **路线图 / 进行中计划**：仍在指导后续工作的升级计划；条目常带「拟议 / 尚未实现」标记，不代表行为已落地。
 - **设计依据**：已实现功能的设计原理与基线记录，常被源码注释回指。
-- **历史主线记录**：已完成的 plan / handoff，保留作实现状态与验收证据。
 - **审查（reviews/）**：按日期归档的全项目 review 与各专项。
-- **归档（archive/）**：一次性外部验收报告、预研登记，不再指导后续工作。
+- **归档（archive/）**：已完成、不再指导后续工作的 plan / handoff / 一次性记录，保留作实现状态与验收证据。
 
 > 带 🔒 的文档被 `AGENTS.md` / CI / 源码 / 测试引用，移动会打断链接，改动前先查入链。
 
@@ -29,14 +28,14 @@
 
 ## 路线图 / 进行中计划
 
-| 文档                                                                                     | 内容                                      |
-| ---------------------------------------------------------------------------------------- | ----------------------------------------- |
-| [capability-uplift-plan.md](capability-uplift-plan.md) 🔒                                | 能力提升批次计划，多个 spec / script 回指 |
-| [project-upgrade-recommendations-2026-10.md](project-upgrade-recommendations-2026-10.md) | 2026-10 升级立项依据                      |
-| [upgrades/product-and-support-2026-10.md](upgrades/product-and-support-2026-10.md) 🔒    | 产品与支持升级项（多为提案）              |
-| [upgrades/runtime-and-protocol-2026-10.md](upgrades/runtime-and-protocol-2026-10.md)     | runtime 与协议升级项（多为提案）          |
-| [upgrades/quality-and-release-2026-10.md](upgrades/quality-and-release-2026-10.md) 🔒    | 质量与发布升级项（U01 已落地，其余提案）  |
-| [k-series-upgrade-plan.md](k-series-upgrade-plan.md)                                     | K 系列升级计划（spec 已落，代码未实施）   |
+| 文档                                                                                     | 内容                                                                                      |
+| ---------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| [capability-uplift-plan.md](capability-uplift-plan.md) 🔒                                | 能力提升批次计划，多个 spec / script 回指                                                 |
+| [project-upgrade-recommendations-2026-10.md](project-upgrade-recommendations-2026-10.md) | 2026-10 升级立项依据                                                                      |
+| [upgrades/product-and-support-2026-10.md](upgrades/product-and-support-2026-10.md) 🔒    | 产品与支持升级项（多为提案）                                                              |
+| [upgrades/runtime-and-protocol-2026-10.md](upgrades/runtime-and-protocol-2026-10.md)     | runtime 与协议升级项（多为提案）                                                          |
+| [upgrades/quality-and-release-2026-10.md](upgrades/quality-and-release-2026-10.md) 🔒    | 质量与发布升级项（U01 已落地，其余提案）                                                  |
+| [k-series-upgrade-plan.md](k-series-upgrade-plan.md)                                     | K 系列升级计划（spec 已落，代码未实施；被 10 个 spec 当 §K1–K9 立项依据引用，故留活跃区） |
 
 ## 设计依据
 
@@ -47,16 +46,6 @@
 | [auto-mode-classifier-design.md](auto-mode-classifier-design.md)        | auto 模式风险分类器设计（对应 spec 已存在） |
 | [prompt-corpus-audit-2026-10.md](prompt-corpus-audit-2026-10.md) 🔒     | 提示语料审计，源码注释回指                  |
 
-## 历史主线记录（已完成的 plan / handoff）
-
-| 文档                                                                                             | 内容                                                  |
-| ------------------------------------------------------------------------------------------------ | ----------------------------------------------------- |
-| [security-hardening-handoff.md](security-hardening-handoff.md)                                   | 安全加固各批次实现状态、验证命令与交接                |
-| [jcode-inspired-upgrade-plan.md](jcode-inspired-upgrade-plan.md)                                 | 防御机制升级路线图（多数已实施）                      |
-| [jcode-upgrade-handoff.md](jcode-upgrade-handoff.md)                                             | 上述升级的逐项实现状态与后续                          |
-| [cli-dispatch-and-system-prompt-upgrade-plan.md](cli-dispatch-and-system-prompt-upgrade-plan.md) | Agent dispatch 与系统提示升级路线图（被多个测试引用） |
-| [codex-orchestration-integration-plan.md](codex-orchestration-integration-plan.md)               | Codex 编排集成计划（被 9 个 spec 引用）               |
-
 ## 审查（reviews/）
 
 | 文档                                                                                         | 内容                                                                       |
@@ -65,13 +54,25 @@
 | [reviews/2026-10-22/](reviews/2026-10-22/)                                                   | 本轮 11 个专项 review + fix-status（多个 spec / test 引用，活跃）          |
 | [project-review-2026-10-08.md](project-review-2026-10-08.md)                                 | 上一轮全项目 review（基线 `dev/0.0.7`）                                    |
 | [reviews/2026-10-08/](reviews/2026-10-08/)                                                   | 上一轮专项 + 修复记录（仍被当前 review、活跃文档与源码注释引用，故留原位） |
-| [codex-orchestration-plan-audit-2026-10-10.md](codex-orchestration-plan-audit-2026-10-10.md) | Codex 编排计划审计                                                         |
-| [renderer-memory-soak-2026-10-01.md](renderer-memory-soak-2026-10-01.md)                     | Renderer 内存泄漏根因、修复与真机验证                                      |
-| [security-scan-triage-2026-09-29.md](security-scan-triage-2026-09-29.md)                     | 深度安全扫描 118 项发现的分级处置                                          |
+| [codex-orchestration-plan-audit-2026-10-10.md](codex-orchestration-plan-audit-2026-10-10.md) | Codex 编排计划审计（审计对象已归档，见下）                                 |
 
 ## 归档（archive/）
 
-一次性外部验收报告与预研登记，不再指导后续工作，仅彼此引用：
+已完成、不再指导后续工作的文档。部分仍被 spec / test 作为「来源」引用，链接已指向 `archive/`。
+
+**已完成的历史 plan / handoff / 记录**：
+
+| 文档                                                                                                             | 内容                                                                    |
+| ---------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| [archive/security-hardening-handoff.md](archive/security-hardening-handoff.md)                                   | 安全加固各批次实现状态、验证命令与交接                                  |
+| [archive/jcode-inspired-upgrade-plan.md](archive/jcode-inspired-upgrade-plan.md)                                 | 防御机制升级路线图（八个实施条目全部落地）                              |
+| [archive/jcode-upgrade-handoff.md](archive/jcode-upgrade-handoff.md)                                             | 上述升级的逐项实现状态与后续                                            |
+| [archive/cli-dispatch-and-system-prompt-upgrade-plan.md](archive/cli-dispatch-and-system-prompt-upgrade-plan.md) | Agent dispatch 与系统提示升级路线图（Phase 0–3 已实施；被多个测试引用） |
+| [archive/codex-orchestration-integration-plan.md](archive/codex-orchestration-integration-plan.md)               | Codex 编排集成计划（已全部实施；被 9 个 spec 引用）                     |
+| [archive/renderer-memory-soak-2026-10-01.md](archive/renderer-memory-soak-2026-10-01.md)                         | Renderer 内存泄漏根因、修复与真机验证                                   |
+| [archive/security-scan-triage-2026-09-29.md](archive/security-scan-triage-2026-09-29.md)                         | 深度安全扫描 118 项发现的分级处置                                       |
+
+**一次性外部验收报告与预研登记**：
 
 | 文档                                                                                               | 内容                                                           |
 | -------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
@@ -82,4 +83,4 @@
 | [archive/value-extraction-23737-registrations.md](archive/value-extraction-23737-registrations.md) | 逆向研究价值提取登记（基线 `feature/cli-value-extract-23737`） |
 | [archive/vm-sandbox-roadmap.md](archive/vm-sandbox-roadmap.md)                                     | VM / OS 容器级沙箱预研（当前构建无任何 OS 级隔离）             |
 
-归档规则：带日期的一次性记录、已完成且不再指导后续工作的计划归入 `archive/`；被 `AGENTS.md` / CI / 源码 / 测试引用者永不归档。
+归档规则：带日期的一次性记录、已完成且不再指导后续工作的计划归入 `archive/`；被 `AGENTS.md` / CI / 源码 / 测试当**活跃规则**引用者永不归档（历史「来源」引用不在此列，可归档并把链接指向 `archive/`）。

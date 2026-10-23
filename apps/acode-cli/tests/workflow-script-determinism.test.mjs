@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 
 /**
- * A9 待验证项（docs/cli-dispatch-and-system-prompt-upgrade-plan.md §8.2 #4）：
+ * A9 待验证项（docs/archive/cli-dispatch-and-system-prompt-upgrade-plan.md §8.2 #4）：
  * **workflow 脚本确定性约束现状**——harness/engine 是否限制或检测脚本内的非确定性来源，
  * 以及 resume 的前缀比对（script_text / journal / inputHash）在非确定性脚本下的行为。
  *

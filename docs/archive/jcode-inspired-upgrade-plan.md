@@ -1,6 +1,6 @@
 # jcode 对照升级方案（Jcode-Inspired Upgrade Plan）
 
-本文件是 ACode 基于 jcode 项目对照分析的升级路线图。jcode 是一个 Rust 编写的 TUI 编码代理 harness（MIT 许可），其大量机制是事故驱动打磨出来的防御性设计。本方案将其中经过验证、与 ACode 缺口对齐的设计模式提炼为可落地的升级项。适用于所有协作者与 AI 辅助会话；与 [AGENTS.md](../AGENTS.md) 冲突时以 AGENTS.md 为准。
+本文件是 ACode 基于 jcode 项目对照分析的升级路线图。jcode 是一个 Rust 编写的 TUI 编码代理 harness（MIT 许可），其大量机制是事故驱动打磨出来的防御性设计。本方案将其中经过验证、与 ACode 缺口对齐的设计模式提炼为可落地的升级项。适用于所有协作者与 AI 辅助会话；与 [AGENTS.md](../../AGENTS.md) 冲突时以 AGENTS.md 为准。
 
 > **文档状态**：方案（plan）+ **实施状态同步（2026-09-30）**。**已实施（部分受阻）**：J1-1 / J1-2 / J1-3 / J1-4 / J2-1 / J2-3 / J3-1 / J3-2 八个实施条目全部落地（spec-first，8 篇新 spec 已随实施落 `apps/acode-cli/specs/`），三轮独立评审 26 条 findings（17 actionable）全部核实成立并修复，脚本统一终验门禁全绿；「部分受阻」指 J2-1 协议/UI 投影、J1-3 的 413 接线点等**跨所有权边界的后续项**按收缩条款登记为后续批次（汇总清单见 [`jcode-upgrade-handoff.md`](jcode-upgrade-handoff.md) §6）。**J2-2 / J3-3 维持评估项未实施，J4 维持登记不立项**。逐项状态与一句话依据见「优先级总览」表的**实施状态**列；进度、门禁与评审明细见 [`jcode-upgrade-handoff.md`](jcode-upgrade-handoff.md)。**改动全部留在工作区、尚未提交**（基线 dev/0.0.1 `8b95943`）。每项落地前先按 AGENTS.md 的 spec-first 约定新增/更新 `apps/acode-cli/specs/*.md`，再改代码。
 >
@@ -8,7 +8,7 @@
 >
 > **合规声明**：jcode 为 MIT 许可仓库（`C:\Users\ZhuanZ\Desktop\jcode`，仅本地参照，不入库）。本文只做机制级提炼转述，不包含其源码原文；实施时对翻译 substantial 逻辑的文件，在文件头注释保留 jcode 出处与 MIT 归属，并评估是否需要在 `THIRD-PARTY-NOTICES.md` 登记。禁止将 jcode 仓库任何文件直接拷入 ACode。
 >
-> **与既有方案的关系**：J1 批次构建在 [`security-hardening-plan.md`](security-hardening-plan.md) 已落地的 P2 骨架（托管策略地板 + 旁路免疫熔断器）之上，不另起权限体系；J2 批次是 [`cli-dispatch-and-system-prompt-upgrade-plan.md`](cli-dispatch-and-system-prompt-upgrade-plan.md) D4（todo 依赖字段）与 expert workflow 的延伸。本方案不重写上述两文的既有结论。
+> **与既有方案的关系**：J1 批次构建在 [`security-hardening-plan.md`](../security-hardening-plan.md) 已落地的 P2 骨架（托管策略地板 + 旁路免疫熔断器）之上，不另起权限体系；J2 批次是 [`cli-dispatch-and-system-prompt-upgrade-plan.md`](cli-dispatch-and-system-prompt-upgrade-plan.md) D4（todo 依赖字段）与 expert workflow 的延伸。本方案不重写上述两文的既有结论。
 
 ---
 

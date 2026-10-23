@@ -206,7 +206,7 @@ const HOME_PREFIX_PATTERNS: readonly RegExp[] = [
  * 只收录**值可由 homedir/platform 纯词法推出**的变量——它们的落点是宿主事实、与命令
  * 无关，展开后才能命中保护表；其余 `%VAR%`/`$VAR` 仍按未解析处理（confirm）。
  *
- * 为什么必须展开：plan（docs/jcode-inspired-upgrade-plan.md J1-1「需补 Windows …
+ * 为什么必须展开：plan（docs/archive/jcode-inspired-upgrade-plan.md J1-1「需补 Windows …
  * `C:\Windows` …」）要求 Windows 目录绝对保护，而 cmd/PS 拼写 `rd /s /q %WINDIR%`、
  * `Remove-Item -Recurse $env:SystemRoot` 不展开就只到 confirm（yolo 下一次反射 +
  * 25 字符论证即放行），保护形同不存在。

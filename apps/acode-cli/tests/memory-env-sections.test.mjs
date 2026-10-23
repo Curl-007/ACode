@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 /**
- * P6（docs/cli-dispatch-and-system-prompt-upgrade-plan.md §4 P6）验收测试：
+ * P6（docs/archive/cli-dispatch-and-system-prompt-upgrade-plan.md §4 P6）验收测试：
  * memory 守则段 + env 段补齐。
  *
  * 覆盖两条验收标准：

@@ -1,6 +1,6 @@
 # 并发治理面只读诊断投影（D5）
 
-调度主线 P2 项（方案文档 `docs/cli-dispatch-and-system-prompt-upgrade-plan.md` 第 3 章 D5）。
+调度主线 P2 项（方案文档 `docs/archive/cli-dispatch-and-system-prompt-upgrade-plan.md` 第 3 章 D5）。
 并发上限今天分散在四个互不相识的域里，没有任何一处能回答「这个会话此刻的并发治理事实是什么」。
 本 spec 定义一个**只读诊断投影**：各调度器向 runtime 暴露统一的 `caps / current / degraded`
 快照，供 debug 日志与文档引用；参数调整权留在各域。

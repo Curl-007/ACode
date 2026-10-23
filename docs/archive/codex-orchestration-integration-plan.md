@@ -1,12 +1,12 @@
 # Codex Agent 编排对照集成方案（Codex Orchestration Integration Plan）
 
-本文件是 ACode 基于 OpenAI Codex（Rust 实现，`openai/codex`）agent 编排机制对照分析的集成路线图。Codex 采用「模型即编排器」的单一范式：LLM 在对话里自主 `spawn_agent / send_message / wait_agent / interrupt_agent`，agent 树在运行中自然涌现。本方案把其中经过验证、与 ACode 缺口对齐的机制提炼为可落地的集成项，同时明确划定「不集成」的边界——因为 Codex 的一部分优点恰恰是 ACode 刻意用围栏换掉的东西，全盘搬运会让 zcode 丢掉自己最强的三项能力。适用于所有协作者与 AI 辅助会话；与 [AGENTS.md](../AGENTS.md) 冲突时以 AGENTS.md 为准。
+本文件是 ACode 基于 OpenAI Codex（Rust 实现，`openai/codex`）agent 编排机制对照分析的集成路线图。Codex 采用「模型即编排器」的单一范式：LLM 在对话里自主 `spawn_agent / send_message / wait_agent / interrupt_agent`，agent 树在运行中自然涌现。本方案把其中经过验证、与 ACode 缺口对齐的机制提炼为可落地的集成项，同时明确划定「不集成」的边界——因为 Codex 的一部分优点恰恰是 ACode 刻意用围栏换掉的东西，全盘搬运会让 zcode 丢掉自己最强的三项能力。适用于所有协作者与 AI 辅助会话；与 [AGENTS.md](../../AGENTS.md) 冲突时以 AGENTS.md 为准。
 
 > **文档状态**：方案（plan），**已全部实施（2026-10-11 更新）**。Phase 1（①）、Phase 2（②，P2a 投影链 + P2b GUI 三键合流）、Phase 3 的 P0（④-P0，flag 默认关）、Phase 4（③，两批 + R5 origin 谱系拆分单元，maxDepth 缺省仍 1）、Phase 5（④-P1/P2，flag 默认关）全部在分支 `feature/cli-subagent-topology-persistence` 实施并全门禁验收——本方案登记的集成项（①②③④-P0/P1/P2）与安全项（R1-R5、peer-1..5、§6 四项）至此全部落地，无未实施单元。各 Phase 的产品规则以对应 spec 为准（subagent-topology-persistence / swarm-observability-projection / orchestration-side-pane / agent-peer-messaging / agent-peer-messaging-cross-process / agent-peer-tree-addressing / subagent-pending-message-drain / subagent-nesting-budget / subagent-interaction-origin-lineage）。本文保留原设计文本；与 spec 冲突处以 spec 为准。
 >
 > **生成日期**：2026-10-09。**核实基线**：分支 `dev/0.0.9`（HEAD `2855cce`，= origin/main / release/0.0.6）。所有 ACode 侧 `file:line` 以该检出为准；实施前需复核（行号会漂移），定位以文件名 + 符号名为主。
 >
-> **复核记录（2026-10-10）**：已在 `dev/0.0.7`（HEAD `372f40f`，已合并 dev/0.0.9）上按上述约定完成实施前复核——5 路独立核对 65 条承重论断 + 1 路独立反驳复核（9/9 confirmed），完整报告见 [codex-orchestration-plan-audit-2026-10-10.md](codex-orchestration-plan-audit-2026-10-10.md)。结论：「未实施」自述仍成立（五个 Phase 零实施痕迹）；`c453fca` 的并行改动使本文两处陈述失效（迁移编号 0028 已被占用、`session-store.port.ts` 契约面已破例出现 workflow 方法），已定点修订进正文；§6 四个未验证项已全部核实并回写结果。
+> **复核记录（2026-10-10）**：已在 `dev/0.0.7`（HEAD `372f40f`，已合并 dev/0.0.9）上按上述约定完成实施前复核——5 路独立核对 65 条承重论断 + 1 路独立反驳复核（9/9 confirmed），完整报告见 [codex-orchestration-plan-audit-2026-10-10.md](../codex-orchestration-plan-audit-2026-10-10.md)。结论：「未实施」自述仍成立（五个 Phase 零实施痕迹）；`c453fca` 的并行改动使本文两处陈述失效（迁移编号 0028 已被占用、`session-store.port.ts` 契约面已破例出现 workflow 方法），已定点修订进正文；§6 四个未验证项已全部核实并回写结果。
 >
 > **方法**：源自会话 `sess_78ec1b24`（对 `openai/codex` 浅克隆的源码级只读调研，含单 agent turn 循环、app-server 协议层、多 agent 编排三份报告）+ 5 路只读 Explore 子代理对 ACode 当前检出源码的 file:line 核实 + 对最高风险论断（R1 提权路径、R2 allowlist 洞、SessionMailboxPort 底座、peer 呈现文案）的亲自复核。
 >
@@ -20,7 +20,7 @@
 >
 > **合规声明**：`openai/codex` 为公开仓库（Apache-2.0，以仓库 LICENSE 为准；本方案调研用浅克隆仅本地参照、不入库）。本文只做机制级提炼转述，不包含其源码原文；实施时对翻译 substantial 逻辑的文件，在文件头注释保留 Codex 出处与归属，并评估是否需要在 `THIRD-PARTY-NOTICES.md` 登记。**禁止将 codex 仓库任何文件直接拷入 ACode。**
 >
-> **与既有方案的关系**：本方案是 [`jcode-inspired-upgrade-plan.md`](jcode-inspired-upgrade-plan.md)（swarm 即参照 jcode 落地）的 Codex 编排对照版，与 [`capability-uplift-plan.md`](capability-uplift-plan.md)、`apps/acode-cli/specs/swarm-task-graph.md` 互补，不重写其既有结论。Phase 4 的 swarm 边界划分直接引用 swarm-task-graph 的既有设计。
+> **与既有方案的关系**：本方案是 [`jcode-inspired-upgrade-plan.md`](jcode-inspired-upgrade-plan.md)（swarm 即参照 jcode 落地）的 Codex 编排对照版，与 [`capability-uplift-plan.md`](../capability-uplift-plan.md)、`apps/acode-cli/specs/swarm-task-graph.md` 互补，不重写其既有结论。Phase 4 的 swarm 边界划分直接引用 swarm-task-graph 的既有设计。
 
 ---
 
@@ -272,7 +272,7 @@
 
 ## 6. 落地前必须核实的未验证项（③④ 阻塞）——已于 2026-10-10 全部核实
 
-> 四条均已核实出明确结论（独立复核员逐环重追 confirmed）。以下保留原问题文本，逐条附加核实结果；完整证据链见 [审计报告](codex-orchestration-plan-audit-2026-10-10.md) §2.5。除特别注明外，结论均为「放开嵌套为条件」的反事实推演（当前嵌套被五道门硬关）。
+> 四条均已核实出明确结论（独立复核员逐环重追 confirmed）。以下保留原问题文本，逐条附加核实结果；完整证据链见 [审计报告](../codex-orchestration-plan-audit-2026-10-10.md) §2.5。除特别注明外，结论均为「放开嵌套为条件」的反事实推演（当前嵌套被五道门硬关）。
 
 1. **闲时轮 `subagentModelOverride` 是否传递到 depth≥2**（R4 计费泄漏）：`subagent.ts:110-115` 的 override 只作用当层，孙代理走 `resolveSubagentSelection`（`:104-109`）+ `inheritedModel`（`:111`）——传递链未核实。
    **核实结果：传递，R4 成立。** 显式选项确实只作用当层（child `executeTurn` 不传 `modelExecution`/`intent`，孙层 loopState 无 `subagentModelOverride`），但 override **模型**经三条继承链到达任意深度孙代理：① childSelection（= override selection）→ child `config.modelSelection` → 孙层 `resolveSubagentSelection` 的 parentSelection；② `context.model`（child 活动模型）→ 孙层 `inheritedModel`；③ 最强——`createSubagentOverrideModelFactory` 作为 childModelFactory 的 fallback，把任意 target selection 无条件重写为 override.selection（孙代理 profile 显式指定模型也不豁免）。放大项：background deny 门（`runner.ts:151`）以 `launchOptions.modelOverride` **存在**为判据，孙层无显式 override → 门失效，孙代理可携闲时轮凭据转后台。护栏须落在工厂链/deny 门判据上，仅显式透传 override 不够。
@@ -306,4 +306,4 @@
 
 ## 附：行号时效性与复核约定
 
-本文 ACode 侧 `file:line` 以基线 `dev/0.0.9 @ 2855cce` 检出为准，来自 5 路只读 Explore 子代理的逐行核实 + 对最高风险论断的亲自复核。行号会随后续提交漂移；**实施前必须复核，定位以文件名 + 符号名为主**（如 `resolveSubagentPermissionMode`、`emitSubagentEvent`、`budget-caps.ts`）。**该复核已于 2026-10-10 在 `dev/0.0.7`（HEAD `372f40f`）完成**：65 条承重论断 39 holds / 23 drifted / 3 invalid / 0 implemented，漂移以 ±16 行内的行号位移为主，逐条登记见 [codex-orchestration-plan-audit-2026-10-10.md](codex-orchestration-plan-audit-2026-10-10.md)。Codex 侧机制描述来自会话 `sess_78ec1b24` 对公开仓库的源码级调研，属外部参照，不在本仓举证。四项集成中 ①② 为纯增量基础设施、③④ 为带围栏的受约束自主，均全程 spec-first、③④ feature-flag 默认保持现状。
+本文 ACode 侧 `file:line` 以基线 `dev/0.0.9 @ 2855cce` 检出为准，来自 5 路只读 Explore 子代理的逐行核实 + 对最高风险论断的亲自复核。行号会随后续提交漂移；**实施前必须复核，定位以文件名 + 符号名为主**（如 `resolveSubagentPermissionMode`、`emitSubagentEvent`、`budget-caps.ts`）。**该复核已于 2026-10-10 在 `dev/0.0.7`（HEAD `372f40f`）完成**：65 条承重论断 39 holds / 23 drifted / 3 invalid / 0 implemented，漂移以 ±16 行内的行号位移为主，逐条登记见 [codex-orchestration-plan-audit-2026-10-10.md](../codex-orchestration-plan-audit-2026-10-10.md)。Codex 侧机制描述来自会话 `sess_78ec1b24` 对公开仓库的源码级调研，属外部参照，不在本仓举证。四项集成中 ①② 为纯增量基础设施、③④ 为带围栏的受约束自主，均全程 spec-first、③④ feature-flag 默认保持现状。

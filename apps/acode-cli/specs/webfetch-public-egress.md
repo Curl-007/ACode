@@ -1,6 +1,6 @@
 # WebFetch 公网出口策略（public egress）
 
-安全分诊残留观察项 #1 的落地规格（来源：[`docs/security-scan-triage-2026-09-29.md`](../../../docs/security-scan-triage-2026-09-29.md) §3）。
+安全分诊残留观察项 #1 的落地规格（来源：[`docs/archive/security-scan-triage-2026-09-29.md`](../../../docs/archive/security-scan-triage-2026-09-29.md) §3）。
 WebFetch 的 URL 是**模型可控输入**（prompt injection 可诱导抓取任意域名），既有防线只拦
 URL 字面量本地/私网目标；域名解析到内网 IP 的 DNS 重绑定可绕过字面守卫直达
 `httpClientPort` 的 fetch 快速路径。适配器层的公网 DNS 校验实现

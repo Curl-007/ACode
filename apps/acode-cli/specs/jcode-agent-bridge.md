@@ -348,7 +348,17 @@ A.8 的结论基于"桌面接线需要解析外部 jcode 二进制"这个假设�
 **对设计的三点影响**：
 
 1. **不需要独立二进制解析**：桌面态不必在 ACode 侧解析/分发 jcode 可执行文件。`acode.cjs` 自带 `jcode-bridge` 子命令；只有 jcode 本体（`jcode` 可执行文件）需要被发现——仍走 R7 的 PATH / `--jcode-binary`，但那是 shim 进程内部的事，不进 ACode 的命令解析链。
-2. **不需要新增 storage 解耦**（见「前置决策」中该条的修正）：`prepareSessionStorage` 的 Worker argv 硬编码 `app-server --stdio --prepare-storage`，与 `command.args` 无关。jcode 引擎的 resolver 只要复用同一个 `acode.cjs` bundle（`storagePreparationEntry` + `supportsStorageStartup` 照旧），仅把会话 `args` 换成 `["jcode-bridge","--stdio",...]`，两条路各自正确。
-3. **A.8 的根因收窄**：`unsupported_runtime` 失败的**唯一**原因是 env 覆盖分支不声明 storage 能力字段；换成注册表通道（bundled 分支同款）即天然带上。这进一步支持 `agent-command-env-gate.md` R3 的裁决——桌面接线走 Settings/注册表，不恢复 env 通道。
+2. **storage 与会话两条解析必须解耦（A.9 起草时误判为"不需要"，已由 R6 落地修正）**：`prepareSessionStorage` 的 Worker argv 确实硬编码 `app-server --stdio --prepare-storage`（与 `command.args` 无关），但**入口 bundle 的解析**此前耦合在 `resolveDefaultACodeAgentCommand` 的返回值上。R6 把它抽成独立的 `resolveACodeStoragePreparationEntry`（只走可信候选链、刻意不吃 env），于是 storage 入口与会话引擎选择彻底无关。见 `host-startup-storage-cwd.md` R6 与 A.10 验证。
+3. **A.8 根因收窄 + env 通道在 dev 桌面复活**：`unsupported_runtime` 的唯一原因是 env 覆盖分支不声明 storage 能力字段。R6 之后 storage 不再依赖会话命令，故 **dev 态 env 覆盖通道对桌面 Host 也生效了**（A.10 实测 spawn 决策选中 `jcode-bridge --stdio --surface desktop`）。注意**打包态仍不吃 env**——那是 `agent-command-env-gate.md` R1 的安全门禁（不受 R6 影响，也不应受影响），故打包态桌面接线仍需「前置决策」的注册表 + Settings 通道。两条通道的边界：dev/独立 CLI/远程 server 走 env（R6 已修通），打包态走注册表（前置决策）。
 
 **仍未验证**：Electron renderer 真正消费 shim 帧（需 Settings UI + 引擎选择打通后才能端到端）；打包态（`ACODE_APP_IS_PACKAGED=1`）下 `resources/glm/acode.cjs` 的 jcode-bridge 子命令是否同样在位（本 worktree 只构建了 dev 态 bundle，未跑 electron-builder 打包）。
+
+### A.10 桌面接线机制验证（R6 修复后）
+
+R6 落地后重跑受控对照与机制验证，两项均已固化为回归测试（`packages/services/tests/storage-entry-env-gate.test.mjs`，6/6 pass）：
+
+1. **storage 阻断已解除（受控对照，真 Electron）**：同一已构建 bundle、同一 jcode env 覆盖，`scripts/e2e-smoke.mjs` 下 Host 日志的 `unsupported_runtime` 计数 **1 → 0**，CP1–CP4 全 PASS。Host 已越过 storage 阶段走到 provider 就绪门禁，日志为 `provider/model 尚未就绪，ACode agent 保持未启动 {"providerCount":0}` —— 这是 e2e 隔离 profile 无登录凭据的**正确行为**（原生 glm 基线同样 `providerCount=0`，故基线冒烟也从不 spawn agent），非 jcode/shim 缺陷。
+2. **spawn 决策正确选中 jcode-bridge**：`resolveDefaultACodeAgentCommand({workspacePath, workspaceKey, presentationSurface:"desktop"})` 在 env 覆盖下实测返回 `command=<node>`、`args=["jcode-bridge","--stdio","--surface","desktop"]` —— 桌面 surface 追加的 `--surface desktop` 已在白名单内（`run.ts` 修复项），shim 不再被 `SURFACE_SCOPE_ERROR` 拒绝。
+3. **两条解析互不干扰**（R6 的核心不变量）：同一 env 下会话命令解析采纳覆盖值，而 storage 入口解析仍只走可信候选链、绝不返回注入路径。
+
+**桌面接线的剩余边界（如实登记）**：真实 Electron 内"spawn shim 并跑通一轮会话"还需要 Host 侧 provider 就绪（登录或配置 API key）+ 引擎选择通道。前者是 ACode 通用前提（与 jcode 无关），后者属「前置决策」的注册表/Settings 改造。当前已验证的是：R6 之后，桌面 Host 在 dev 态经 env 覆盖**能够**把会话 spawn 指向 jcode-bridge，且 storage 准备不再被它破坏。

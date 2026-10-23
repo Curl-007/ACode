@@ -137,3 +137,36 @@ test("R6(b): 源码断言——storage-startup 公开入口不重新暴露 env �
     "storage-startup.ts 必须导出 resolveACodeStoragePreparationEntry（R6 独立解析器）",
   );
 });
+
+test("R6 对照: env 覆盖仍正常决定**会话** spawn 命令（storage 与会话两条解析互不干扰）", async () => {
+  const { resolveDefaultACodeAgentCommand } =
+    await import("../src/acode-agent/acodeAgentProcessManager.ts");
+  await withEnv(
+    {
+      ACODE_AGENT_SERVER_COMMAND: EVIL,
+      ACODE_AGENT_SERVER_ARGS_JSON: JSON.stringify(["jcode-bridge", "--stdio"]),
+      ACODE_APP_IS_PACKAGED: null, // 非打包态：env 覆盖按 agent-command-env-gate R1 生效
+    },
+    () => {
+      const command = resolveDefaultACodeAgentCommand({
+        workspacePath: "/tmp/ws-probe",
+        workspaceKey: "/tmp/ws-probe",
+        presentationSurface: "desktop",
+      });
+      // 会话侧：env 覆盖照常生效（这是桌面 dev 态接线 jcode 后端的通道），
+      // 且桌面 surface 会追加 --surface desktop——jcode-bridge 必须接受它
+      // （run.ts isPresentationSurfaceSupportedInvocation 白名单，否则进程立即退出）。
+      assert.equal(command?.command, EVIL, "会话命令应采纳 env 覆盖");
+      assert.deepEqual(
+        command?.args,
+        ["jcode-bridge", "--stdio", "--surface", "desktop"],
+        "会话 args 应为 jcode-bridge + --stdio + 桌面 surface 追加项",
+      );
+      // storage 侧：同一 env 下入口解析仍走可信候选链，两条路互不干扰。
+      const storage = resolveACodeStoragePreparationEntry({ workspacePath: "/tmp/ws-probe" });
+      if (storage) {
+        assert.notEqual(storage.entry, EVIL, "storage 入口不得受会话 env 覆盖影响");
+      }
+    },
+  );
+});

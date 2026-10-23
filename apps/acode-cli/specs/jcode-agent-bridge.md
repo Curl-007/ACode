@@ -21,7 +21,8 @@
 - **argv 兼容**：入口必须接受 `app-server --stdio` 与 `--surface desktop` 等 native 形态的参数而不报错（宿主 `applyPresentationSurfaceToCommand` 会追加），未识别参数忽略。
 - **打包形态**：落在 `apps/acode-cli` 内（`architecture-policy.yaml:257-259` 该模块 `managed:false`），编进现有 SEA/`acode.cjs` 链，**零架构登记**；受"新文件 ≤400 行"ratchet 约束，故按 host 面拆分多文件（R6）。
 - **接线（分两态，边界明确）**：
-  - **dev / 独立 CLI / 远程 server（非打包态）**：设 `ACODE_AGENT_SERVER_COMMAND` + `ACODE_AGENT_SERVER_ARGS_JSON=["jcode-bridge","--stdio"]` 即可（`acodeAgentProcessManager.ts:604-620`）。**本 spec 的实现范围**。
+  - **dev / 独立 CLI / 远程 server（非打包态）**：设 `ACODE_AGENT_SERVER_COMMAND` + `ACODE_AGENT_SERVER_ARGS_JSON=["jcode-bridge","--stdio"]` 即可（`acodeAgentProcessManager.ts:604-620`）。**本 spec 的实现范围**——已由 L1/L2 真实客户端栈测试验证（附录 A.5）。
+    **⚠ 限定（附录 A.8 实证）**：此通道对**直接 new ProcessManager 的调用方**（独立 CLI、远程 server、L1/L2 测试）成立，但**对桌面 Host 不成立**——Host 的 `prepareSessionStorage` 硬性要求 command 带 `storagePreparationEntry`，而 env 覆盖分支不提供，故桌面走此通道会在 storage 准备阶段 `unsupported_runtime` 失败、agent 根本不被 spawn。桌面接线只能走下方「前置决策」的注册表通道（与 `agent-command-env-gate.md` R3「不恢复 env 通道」的裁决一致）。
   - **打包态桌面**：env 覆盖被 [`agent-command-env-gate.md`](../../../packages/services/specs/agent-command-env-gate.md) R1 禁用（安全加固 P2，不可绕）。需先推翻 [`agent-engine-external-slots-removal.md`](../../../packages/shared/specs/agent-engine-external-slots-removal.md) 的单引擎裁决、在注册表加回外部引擎槽位（`acode-agent-registry.ts:23`）+ Settings 显式选择。**这是治理决策，不在本 spec 实现范围**，见「前置决策」。
 
 ### R2 消息映射表（核心契约）
@@ -152,7 +153,8 @@ spike 三方印证（实测 + jcode ACP 源码 + jcode harness 源码）：**jco
 - 引擎描述符的 `supportedPermissionModes` 必须按 **R4-1** 收敛为诚实集合（jcode 后端不支持权限弹窗，不得声明 `build`/`edit` 的权限语义）；
 - 恢复 `externalEngineCommandResolver.ts`（已整文件删除）或等价候选链，且受 `agent-command-env-gate.md` R1 约束：**打包态不吃 env 注入**，只能走 Settings 显式配置 + `~/.acode/server/agents/<engine>` 候选；
 - `EngineSection.tsx` 设置页与 locales 键恢复；
-- bot `/engine` 命令与 `getBotSelectablePermissionModes` 天花板重新裁决。
+- bot `/engine` 命令与 `getBotSelectablePermissionModes` 天花板重新裁决；
+- **storage 入口与会话命令解耦**（A.8 实证的新增要求）：`resolveDefaultACodeAgentCommand` 当前返回单个 command 同时供 Host storage 准备与会话 spawn 使用。外部引擎槽位必须让 storage 准备仍指向 ACode CLI bundle（`--prepare-storage` 是 ACode 自己的 SQLite 迁移，jcode 不参与），仅会话 spawn 换成 jcode-bridge；否则 Host 在 storage 阶段即 `unsupported_runtime` 失败。
 
 本 spec 的实现只在**非打包态**（dev / 独立 CLI / 远程 server）可接线验证，这是 `agent-command-env-gate.md` R1 明确保留的合法配置通道。
 
@@ -288,7 +290,47 @@ L2 跑完后本机残留一个 jcode 进程：`jcode.exe --provider auto serve`�
 
 ### A.7 剩余未验项
 
-1. **真桌面 UI 端到端**：L2 已覆盖到 service 层（packages/ui 的直接消费面），但 Electron renderer 与 Host 装配仍未跑——需先落地「前置决策」（引擎注册表加回外部槽位 + Settings 选择）。本机 `node_modules/electron/dist/electron.exe` 已就绪，缺的只是治理决策而非环境。
+1. **真桌面 UI 端到端**：L2 已覆盖到 service 层（packages/ui 的直接消费面），但 Electron renderer 消费 shim 帧仍未验证。A.8 的真实 Electron 冒烟实证：**env 覆盖通道在桌面 Host 上跑不通**（storage 准备阶段即失败），桌面接线必须走「前置决策」的 Settings/注册表通道，不能靠 env。
 2. **Unix 侧行为**：三层测试全部在 Windows。Linux/macOS 上 daemon 生命周期与 socket 形态不同（Unix socket vs named pipe），须重跑。
 3. **多窗口 / 多会话并发**：只验单会话单轮。结合 A.6 的共享 daemon 与 spike §4.4 的 `JCODE_HOME` 部分失效，多窗口只能靠 sessionId 逻辑隔离。
 4. **长会话与 compaction**、**MCP 配置下发**、**ACode 凭据桥**：见「未做与取舍」。
+
+### A.8 真实 Electron 客户端冒烟（受控对照，含一个决定性发现）
+
+**客户端编译验证（全部通过）**：
+
+| 门禁              | 命令                            | 结果                                                                                      |
+| ----------------- | ------------------------------- | ----------------------------------------------------------------------------------------- |
+| 全仓类型编译      | `pnpm typecheck`                | **32 tasks successful / 0 error**（packages + desktop-renderer + cli 三段门禁，30s）      |
+| desktop main/host | `tsup`（packages/desktop）      | Build success，产出 `out/main/index.js`、`out/host/index.js`                              |
+| desktop renderer  | `vite build`                    | 产出 `out/renderer/index.html` 等                                                         |
+| 原生 agent bundle | `prepare-agent-node-bundle.mjs` | 产出 `apps/acode-cli/packages/cli/dist/acode.cjs`（25.9MB）+ 17 官方插件 + bundled-skills |
+
+**真实 Electron 启动链路（`scripts/e2e-smoke.mjs`，CI desktop-smoke 门禁同款）**：隔离 profile 拉起 dev 态 Electron，CP1 进程存活 / CP2 CDP 端口 / CP3 首窗 ready / CP4 Host fork 全部 PASS。
+
+**决定性受控对照实验**：同一 worktree、同一已构建 bundle，唯一变量是 `ACODE_AGENT_SERVER_*` env 覆盖。
+
+| 场景                               | `unsupported_runtime` | Host storage 准备 |
+| ---------------------------------- | --------------------- | ----------------- |
+| 基线（有 bundle，**无** env 覆盖） | **0**                 | 成功              |
+| jcode env 覆盖（有 bundle）        | **1**                 | **失败**          |
+
+**根因（读源码确认，非猜测）**：Host 的 `prepareSessionStorage`（`packages/desktop/src/host/storagePreparationProcesses.ts:121-127`）调同一个 `resolveDefaultACodeAgentCommand`，但硬性要求返回的 command 带 `supportsStorageStartup && storagePreparationEntry`：
+
+```ts
+const command = resolveDefaultACodeAgentCommand({
+  workspacePath,
+  workspaceKey,
+  presentationSurface: "desktop",
+});
+if (!command?.supportsStorageStartup || !command.storagePreparationEntry)
+  throw statusError("unsupported_runtime");
+```
+
+而 `resolveDefaultACodeAgentCommand` 的 **env 覆盖分支**（`acodeAgentProcessManager.ts:611-620`）返回的 command **两个字段都不带**——只有 bundled 分支（`:627`）才 `supportsStorageStartup: true` 且 `storagePreparationEntry` 指向 `acode.cjs`。故 env 覆盖一开，Host 在 storage 准备阶段就 `unsupported_runtime` 失败，**根本没走到 spawn 会话 agent，jcode-bridge 从未被启动**。
+
+**这次冒烟的诚实结论**：CP1–CP4 全绿与基线逐字相同，**证明不了任何关于 shim 的事**——shim 压根没被拉起。真正被验证的是"客户端能编译、Electron 启动链路正常"，以及"env 覆盖通道在桌面 Host 上不可用"这个负向事实。
+
+**与既有治理 spec 的印证**：`packages/services/specs/agent-command-env-gate.md` R3 早已预告——「外部引擎……接入会话时若需自定义路径，走 Settings 显式配置（用户可见动作），**不恢复 env 通道**」。本实验实证了这条约束的技术原因：env 覆盖天生不带 storage 能力声明。
+
+**修正 R1 的接线结论**：spec R1「接线（分两态）」原称非打包态可用 `ACODE_AGENT_SERVER_COMMAND` 接线——该结论对**独立 CLI / 远程 server / L1·L2 测试**（直接 new ProcessManager，不经桌面 Host 的 storage 准备）成立，但对**桌面 Host 不成立**。桌面接线只能走「前置决策」：引擎注册表加回外部槽位 + `resolveDefaultACodeAgentCommand` 为该槽位返回带 `storagePreparationEntry`（指向能跑 `--prepare-storage` 的 ACode CLI bundle，而非 jcode 二进制）的 command + Settings 显式配置。注意 storage 准备本质是 **ACode 自己的 SQLite 迁移**（`--prepare-storage` 入口，jcode 不参与），所以正确设计是让 storage 准备仍用 ACode CLI bundle、仅会话 agent 换成 jcode——这需要 `resolveDefaultACodeAgentCommand` 把「storage 入口」与「会话 spawn 命令」解耦，属注册表改造的一部分。

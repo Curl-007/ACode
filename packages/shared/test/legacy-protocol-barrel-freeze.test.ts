@@ -19,10 +19,29 @@ import { dirname, join } from "node:path";
 const here = dirname(fileURLToPath(import.meta.url));
 const barrelPath = join(here, "..", "src", "acode-protocol", "index.ts");
 const baselinePath = join(here, "legacy-protocol-barrel-schema-baseline.json");
+const exportsBaselinePath = join(here, "legacy-protocol-barrel-exports-baseline.json");
 
 /** barrel 内所有 `export const <name>Schema` 本地定义（不含 re-export 与类型）。 */
 function extractLocalSchemaDefinitions(source: string): string[] {
   const names = [...source.matchAll(/^export const ([A-Za-z0-9_]+Schema)(?=\s*[=:<])/gm)].map((m) => m[1]);
+  return [...new Set(names)].sort();
+}
+
+/**
+ * barrel 内**全部本地导出名**——`export const/function/async function/type/interface/class/enum/let/var <name>`。
+ * 覆盖成文冻结规则「不允许新增导出」（convergence-plan:37 / legacy-protocol-freeze.md:12），比 schema-only
+ * 集合更宽：`acodeProtocolMethods`、`acodeProtocolNotifications` 等非 Schema `export const` 与全部
+ * `export type` 也在守护内。不含 `export { ... } from` / `export *` re-export——那些符号的本地定义在
+ * 中立叶子或其它模块，由各自文件的冻结守护负责，barrel 只转发（既有 subset 处置保持不变）。
+ *
+ * 注意：本正则与 legacy-protocol-barrel-exports-baseline.json 的生成脚本逐字一致，二者必须同步。
+ */
+function extractLocalExportNames(source: string): string[] {
+  const names = [
+    ...source.matchAll(
+      /^export (?:const|async function|function|type|interface|class|enum|let|var) ([A-Za-z0-9_]+)/gm,
+    ),
+  ].map((m) => m[1]);
   return [...new Set(names)].sort();
 }
 
@@ -41,6 +60,46 @@ test("legacy barrel: 本地 `export const ...Schema` 定义集合是冻结基线
     `legacy 冻结面禁止新增 schema 定义。以下 ${newlyAdded.length} 个 \`export const ...Schema\` 不在冻结基线内：` +
       `${newlyAdded.join(", ")}。新 schema 必须落中立叶子 src/acode-protocol-shared.ts 或 v4/，` +
       `legacy barrel 只 \`export { ... } from\` 纯 re-export。见 specs/legacy-protocol-freeze.md。`,
+  );
+});
+
+// 1.0.4 review P3：冻结守护此前只覆盖 `export const ...Schema`（246），漏掉更广的「不允许新增导出」
+// 规则——barrel 另有 14 个非 Schema `export const`（含 acodeProtocolMethods/acodeProtocolNotifications）
+// 与 189 个 `export type`，向方法表加新方法或加非 schema const 都不触发守护。此测试把守护面扩展到
+// 全部本地导出名（449），断言子集关系。基线 246-schema 测试与 JSON 保持不变。
+test("legacy barrel: 全部本地导出名集合是冻结基线的子集（不允许新增导出）", () => {
+  const source = readFileSync(barrelPath, "utf-8");
+  const baseline = JSON.parse(readFileSync(exportsBaselinePath, "utf-8")) as {
+    localExportNames: string[];
+  };
+  const current = extractLocalExportNames(source);
+  const allowed = new Set(baseline.localExportNames);
+  const newlyAdded = current.filter((name) => !allowed.has(name));
+
+  assert.deepEqual(
+    newlyAdded,
+    [],
+    `legacy 冻结面禁止新增导出。以下 ${newlyAdded.length} 个本地导出（const/function/type/interface/` +
+      `class/enum/let/var）不在冻结基线内：${newlyAdded.join(", ")}。新命令/事件/schema 只进 v4 或中立叶子 ` +
+      `src/acode-protocol-shared.ts；向 acodeProtocolMethods/acodeProtocolNotifications 加条目、加非 schema ` +
+      `const 或 export type 都属新增导出。基线更新仅限合法删减（M1–M4 退役）或 review 批准的外移。` +
+      `见 specs/legacy-protocol-freeze.md。`,
+  );
+});
+
+test("legacy barrel: schema 基线是全导出基线的子集（两份基线一致，无遗漏）", () => {
+  const schemaBaseline = JSON.parse(readFileSync(baselinePath, "utf-8")) as {
+    schemaDefinitions: string[];
+  };
+  const exportsBaseline = JSON.parse(readFileSync(exportsBaselinePath, "utf-8")) as {
+    localExportNames: string[];
+  };
+  const all = new Set(exportsBaseline.localExportNames);
+  const missing = schemaBaseline.schemaDefinitions.filter((name) => !all.has(name));
+  assert.deepEqual(
+    missing,
+    [],
+    `schema 冻结基线中的定义必须也出现在全导出基线内（后者是前者的超集）。缺失：${missing.join(", ")}`,
   );
 });
 

@@ -80,13 +80,30 @@ consumer API，v4 command 直接依赖中立模块。这样 M4 删除 legacy bar
 
 ## 进度指标（每次发布级验证时更新）
 
-| 指标                                | 2026-10-05 基线 | 2026-10-09 实测                                                         | 目标    |
-| ----------------------------------- | --------------- | ----------------------------------------------------------------------- | ------- |
-| services legacy 消费文件数          | 7               | 6（independentPlanSupport 已切 v4，仅剩 type-only 引用）                | 0（M2） |
-| UI 旧投影消费文件数                 | 8               | 10（新增 v4/composer 两处 `parseModelPickerValue` 消费，M1 需一并迁移） | 0（M1） |
-| bootstrap legacy server 文件数/行数 | 48 / 14,713     | 48（M3 未启动）                                                         | 0（M3） |
-| shared legacy 协议文件行数          | 3,714           | 3,662（M2-B 已外移 MCP/browser schema 至 acode-protocol-shared）        | 0（M4） |
-| v4-bridge 过渡钩子数                | 6（见桥头注）   | 6                                                                       | 0（M3） |
+| 指标                                | 2026-10-05 基线 | 2026-10-09 实测                                                         | 2026-10-26 实测                                                              | 目标    |
+| ----------------------------------- | --------------- | ----------------------------------------------------------------------- | ---------------------------------------------------------------------------- | ------- |
+| services legacy 消费文件数          | 7               | 6（independentPlanSupport 已切 v4，仅剩 type-only 引用）                | 6（未推进；`acodeProtocolClient.ts` 仍在，independentPlanSupport 仍 type-only） | 0（M2） |
+| UI 旧投影消费文件数                 | 8               | 10（新增 v4/composer 两处 `parseModelPickerValue` 消费，M1 需一并迁移） | 12（未降反增：新增 settings/SubagentModelBatch{Bar,Dialog} 两处消费）         | 0（M1） |
+| bootstrap legacy server 文件数/行数 | 48 / 14,713     | 48（M3 未启动）                                                         | 48 / 15,188（M3 未启动；行数因 legacy 面内既有演进微增）                     | 0（M3） |
+| shared legacy 协议文件行数          | 3,714           | 3,662（M2-B 已外移 MCP/browser schema 至 acode-protocol-shared）        | 3,652（barrel −2，仅 R2-02 schema 外移所致，非退役；legacy-types 607 行）    | 0（M4） |
+| v4-bridge 过渡钩子数                | 6（见桥头注）   | 6                                                                       | 6（M3 未启动，桥头注仍列 6 个钩子）                                          | 0（M3） |
+
+**2026-10-26 状态说明（1.0.4 周期）**：本轮**未推进任何退役里程碑**（M1–M4 全部停滞；M1 的 UI 消费面
+未降反增 8→10→12）。**冻结纪律保持**：barrel 本地导出面精确守护——schema 定义基线 **246** 与当前精确
+相等（0 增 0 删），并已扩展机械守护到**全部本地导出名 449**（`export const/function/type/…`，含此前未守护的
+`acodeProtocolMethods`/`acodeProtocolNotifications` 与 189 个 `export type`），冻结日以来零新违规（详见
+`packages/shared/specs/legacy-protocol-freeze.md`「守护门禁」）。测量口径与上表一致：services 用
+`git grep -l "acodeProtocolMethods\|acodeProtocolClient" -- packages/services/src`（=6）；UI 用
+`git grep -l "acodeSessionProjection" -- packages/ui/src`（=12）。注：`docs/reviews/2026-10-26/shared-protocol.md`
+报告的「18」是更宽口径（UI 12 + `packages/shared` 内 6 个引用点，含 barrel 定义本体、spec 与基线 JSON，
+非全部为消费方），方向与本表一致——消费面未收敛。
+
+> **2026-12-31 例外 deadline（约 9 周）**：M4（删 shared legacy barrel）被停滞的 M2/M3 阻塞，落在通往该
+> deadline 的关键路径上，而 shared 层**不携带**本地 `expires` 绊线（barrel 用 `oxlint-disable max-lines`
+> 头注，非架构例外）。会「门禁转红」的硬例外（`onboard-b3-session-over-limit` 等 42 条
+> `expires: "2026-12-31"` 白名单）位于 `architecture-policy.yaml` 的 services/session 等层。到期前这些白名单
+> 必须见底；若 M2/M3 持续停滞，legacy 退役将无缓冲地撞上该 deadline。本轮只刷新测量与状态，不重构计划、
+> 不新增里程碑。
 
 2026-10-09 说明：本批只落地 M2-B（shared schema 边界）与 `v4/capabilities/query` 最小切片；
 其余 legacy 调用（plugins/mcp/skills/workflows hub/automation/offPeak/provider/workspace 写路径与

@@ -69,21 +69,28 @@ Host(CLI) 权威事实 ──publish/stream_op──▶ Main taskRealtimeBus（�
 `TaskRealtimeHostDeliveryKind = "desktop_window" | "relay_bridge"`（`packages/shared/src/task-realtime.ts:78`）
 是 shared 定义的枚举，**权威在 shared，不在本包**。
 
+`relay_bridge` 是**预留枚举值，当前全仓无生产者与分支消费者**（`git grep relay_bridge -- packages/ apps/`
+只命中 shared 两处声明 + 本文件/注释 + review 文档；`packages/acode-server-cli` 对 `relay_bridge`
+**零命中**）。它是死值，但保留在冻结的 legacy wire schema 面上，删除属 wire-compat 变更，不在本轮范围。
+
 ### 规则（Main 侧只实现 desktop_window）
 
 - desktop 全仓 `registerHost` 的 `deliveryKind` 恒为 `desktop_window`（`registerHost` 的 `?? "desktop_window"`
   默认值 + 无调用点传 `relay_bridge`，rg 全仓复核命中 0 个 `relay_bridge` 赋值点）。
 - Main 侧 `deliveryKind` **仅作诊断/日志字段**（`registerHost` 的 info 日志、`getHostDeliveryKindForTest`），
   全 desktop 无 `deliveryKind === "relay_bridge"` 的分支消费点。
-- 手机的 `web-remote-replayable` 恢复链路的真源在 **acode-server-cli**（`server-core/http.ts`，与
-  `desktop-continuous` 在 server-cli/host 侧按 clientMode 分流），**刻意不经 Main 的 taskRealtimeBus**，
-  复用窗口既有 Host attachment + server-cli 传输（AGENTS.md「不为手机另起 Agent/Local Host/远程会话」）。
+- 手机的 `web-remote-replayable` 恢复链路**刻意不经 Main 的 taskRealtimeBus**，复用窗口既有 Host
+  attachment + server-cli 传输（AGENTS.md「不为手机另起 Agent/Local Host/远程会话」）。注意：这条链路
+  与 `desktop-continuous` 的区分在 host/server-cli 层成立，但它**不使用 `relay_bridge` 这个枚举值**——
+  server-cli 侧无 `relay_bridge` 的生产或分支消费，故不能把 server-cli 称作 `relay_bridge` 的「权威实现」。
 
 ### 结论
 
-`relay_bridge` 在 Main 侧是**有意预留的枚举值**，不是未接线的缺陷：两链路的区分在 host/server-cli 侧成立，
-Main 侧只承载 `desktop_window` 这一条实时总线。后续维护不得把 `relay_bridge` 当作 Main 侧待补的分支去「接线」——
-手机远控的权威不在这里。若真要改动 shared 的枚举定义，归 shared 包所有权，本包不动。
+`relay_bridge` 目前是**死值 / 预留枚举**，全仓（含 acode-server-cli）无生产者与消费者；Main 侧只实现
+`desktop_window` 这一条实时总线。后续维护不得把它当作 Main 侧待补的分支去「接线」，也**不得再声称其权威
+已在某处实现**（源码不支持该说法）。**若未来真要接线 `relay_bridge`，必须先在本 spec 登记其权威实现位置**
+（生产者、分支消费者、与 desktop_window 的语义分界），再动代码。若真要改动 shared 的枚举定义，归 shared
+包所有权，本包不动。
 
 ---
 
@@ -106,7 +113,11 @@ Main 侧只承载 `desktop_window` 这一条实时总线。后续维护不得把
 ### 不变量：run 终止时回收桶（防泄漏）
 
 - terminal event：`handleStreamOpPublish` 在 terminal 分支 `discardSeenEventBucketForTask`。
-- lease 释放：`releaseLease` 调 `discardSeenEventBucketForTask`。
+- lease 释放：`releaseLease` 调 `discardSeenEventBucketForTask`。**顺序不变量（1.0.4 review P3）**：
+  必须先 `this.leases.delete(key)` 再调 `discardSeenEventBucketForTask`——该 helper 的 workspace 桶
+  回收判据是「扫描 `this.leases` 中是否还有其它 lease 使用该 workspaceKey」，若被释放的 lease 仍在
+  map 内，`stillUsed` 恒 true，单释放路径就永不回收 workspace 级桶（terminal/host 退出路径都先删
+  lease，故不受影响）。`discardSeenEventBucketForTask` 入参取自 `target` 而非 map，先删 lease 不影响它。
 - host 退出：`releaseLeasesForHost` 调 `discardSeenEventBucketsForHost`（遍历该 host 名下所有已释放 lease）。
 - 兜底：`evictSeenEventBucketsIfNeeded` 在新建桶时检查，桶数超过 `MAX_SEEN_EVENT_BUCKETS`（256）按
   Map 插入序淘汰最旧桶，防止生命周期钩子未覆盖的历史 run 让桶数无界增长。
@@ -117,4 +128,5 @@ Main 侧只承载 `desktop_window` 这一条实时总线。后续维护不得把
 
 见测试文件：terminal event 删 streamBatch、lease 释放删 streamBatch、host 退出删 streamBatch、
 超过 60 批后 `replay` 被截断且新 observer 收到 `stream_mirror_gap`、多 run 并发下 observer 无重复流事件、
-run 终止后其去重桶被回收。
+run 终止后其去重桶被回收；单释放 workspace 最后一个 lease 回收 workspace 级桶、同 workspace 两个 lease
+释放其一保留 workspace 桶（1.0.4 review P3 顺序修复的负向对照）。

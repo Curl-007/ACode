@@ -98,6 +98,10 @@ export const taskRealtimeReasonSchema = z.enum([
   "stream_mirror_owner_lost",
 ]);
 export const taskRealtimeDeliveryPurposeSchema = z.enum(["observer", "relay_owner"]);
+// 1.0.4 review P3：relay_bridge 是预留枚举值，当前全仓（含 acode-server-cli）无生产者与分支消费者，
+// Main 侧只实现 desktop_window。它保留在 legacy wire schema 面上属有意预留，删除是 wire-compat 变更；
+// 接线前必须先在 desktop specs/task-realtime-bus-mirror.md 登记权威实现位置。与 task-realtime.ts 的类型
+// 声明同源，两处注释一致。
 export const taskRealtimeHostDeliveryKindSchema = z.enum(["desktop_window", "relay_bridge"]);
 const taskRealtimeEnvelopeSchema = z
   .object({

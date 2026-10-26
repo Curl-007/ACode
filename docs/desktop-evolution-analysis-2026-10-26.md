@@ -11,6 +11,7 @@
 进化机会按杠杆分四档：
 
 1. **已立项未实施的四个 U 项**（U07/U08/U11/U12）——spec 齐全（含所有者、契约、验收场景、量化门槛），代码核验零落地，合计约 16-25 人日，全部是用户直接可感知的桌面 UX 进化。**开工阻力最小，建议先做。**
+   > **进度（2026-10-26 同日更新）**：**U12 已实施并提交**（`2a390ef8`，shared 契约 + desktop/web/ui 三端 + 41 测试全绿 + 真机 smoke 通过）；U08/U07/U11 与 overnight×通知接线正在并发实施中。§2 各节标注实时状态。
 2. **U14 Windows CUA（进行中）**——差异化能力，角色 B（纯 JS）大头已落，角色 A（C++ addon）阻塞在 node-gyp/VS2026 工具链版本表，**需一项三选一的用户裁决**即可解除。
 3. **协同接线机会**（本文新分析，提案文档未覆盖）——overnight×桌面通知、资源管理器×卡顿归因、内嵌浏览器×CUA 架构评估。成本低、复用既有地基。
 4. **战略大件**（维持登记不立项）——活会话跨机迁移、OS 级沙箱；以及 legacy 退役 2026-12-31 硬 deadline 对进化速度的结构约束。
@@ -40,28 +41,35 @@
 
 四项均在 [upgrades/product-and-support-2026-10.md](upgrades/product-and-support-2026-10.md)（U07/U08/U11/U12 章节）有完整实施标准：状态所有者、拟议契约、编号验收场景、量化门槛、回退条件。文档头部明示「仅定义拟议实施标准，不代表行为已经实现」。以下落地状态为本文 2026-10-26 代码核验（附录 A）：
 
-### 2.1 U12：桌面与手机 Web 本地诊断报告 —— **离用户最近，main 侧地基已就绪**
+### 2.1 U12：桌面与手机 Web 本地诊断报告 —— **✅ 已实施（2026-10-26，提交 `2a390ef8`）**
+
+> **状态更新**：本节原为「已立项未实施」，同日已按 spec-first 落地。实现与本文核验的差异：
+> build/env 事实的所有者**不只是** Desktop main——`appVersion`/`commit` 来自 `packages/shared/src/version.ts`
+> 的 bundler 注入常量，desktop 与 web 两个 vite 配置都注入，故 **Web 也能诚实上报构建版本**；
+> 只有 `os`/`arch` 是 main 独占。契约详见 `packages/shared/specs/local-diagnostic-report.md`，
+> 三端各自 spec 指回该真源。缺口比本文预估更窄：main 侧 `exportLogs.ts`、UI 侧动作分支、
+> Web 侧 Blob 下载全部就位，帮助菜单入口已暴露。
 
 - **用户价值**：桌面 App 出问题时用户能自助生成脱敏诊断文件、预览内容、自行决定是否发给维护者；手机离线也能导出客户端已知事实。当前报 bug 全靠口述。
-- **核验现状**：三段地基中两段已就位——`packages/desktop/src/main/exportLogs.ts` 已有日志整理与脱敏；`packages/ui/src/lib/helpMenuActions.ts:3,7,22` 已有 `exportLogs` 动作分支（经 `IPlatformService.exportLogs`）。**缺口精确在 UI 入口**：`packages/ui/src/WorkspaceHelpMenuButton.tsx` 未暴露该动作（grep `exportLogs|诊断` 零命中）；Web platform 侧返回 unsupported。
+- **核验现状（实施前）**：三段地基中两段已就位——`packages/desktop/src/main/exportLogs.ts` 已有日志整理与脱敏；`packages/ui/src/lib/helpMenuActions.ts:3,7,22` 已有 `exportLogs` 动作分支（经 `IPlatformService.exportLogs`）。**缺口精确在 UI 入口**：`packages/ui/src/WorkspaceHelpMenuButton.tsx` 未暴露该动作（grep `exportLogs|诊断` 零命中）；Web platform 侧返回 unsupported。
 - **估算**：3-5 人日（提案 §6.3）。**四项中最低成本**，且不碰协议面。
 - **边界**（提案已裁决）：不自动上传、不增遥测、不默认采集会话正文/凭据/机器路径。
 
-### 2.2 U08：首次配置与模型故障诊断 —— onboarding 留存关键
+### 2.2 U08：首次配置与模型故障诊断 —— onboarding 留存关键（🔨 实施中）
 
 - **用户价值**：保存 provider 后区分「已保存」vs「已验证」；故障时看到明确阶段（offline/catalog/live）；不重复建 provider 即可重试。
 - **核验现状**：`runProviderDiagnostics` 全仓零命中——拟议服务契约未落。但承接面已在：`useModelProviders` 连通性 hook、`providerSettingsConnectivity` service、CLI 侧 [provider-doctor spec](../apps/acode-cli/specs/provider-doctor.md) 的 offline/catalog/live 分档均已存在，GUI 只欠承接。
 - **估算**：4-6 人日（提案 §3.4）。
 - **边界**：不自动换模型、不自动修凭据、诊断失败≠保存失败。
 
-### 2.3 U07：长对话目录索引与窗口外跳转 —— 桌面主力场景
+### 2.3 U07：长对话目录索引与窗口外跳转 —— 桌面主力场景（🔨 实施中）
 
 - **用户价值**：长会话打开目录即找到已索引历史输入，点击定位窗口外正文，查看历史期间仍收运行状态，可一键返回最新。
 - **核验现状**：`getTurnIndexEntries()` 已存在（`conversationProjectionStore.ts`），但拟议的 store 公共入口 `focusIndexedRow(target)`/`returnToLive()` 全仓零命中；生产目录仍走 `renderUnits`，`loadAllOlder()` 逐页读正文。
 - **估算**：3-5 人日（提案 §2.3）；若产品要求超 8000 项索引的完整历史目录，另立 v4 分页目录能力追加 4-6 人日。
 - **边界**：不建全文搜索、不扩 renderer 预算（1200 行/32 MiB 约束不变）、打开目录零新增正文请求。
 
-### 2.4 U11：工具图片受授权附件引用 —— 内存与图片密集历史
+### 2.4 U11：工具图片受授权附件引用 —— 内存与图片密集历史（🔨 实施中）
 
 - **用户价值**：图片密集历史先看轻量行，图片可见/打开预览才读字节；重连后仍可预览；跨 workspace/session 媒体不可读。
 - **核验现状**：`packages/shared/src/acode-protocol-v4/toolDisplay.ts:239` 的 `node_repl_images` 仍是内联 base64（每张 ≤200×1024 字符、最多 2 张）；lazy img 只延迟解码、不减 row 字节。v4 Gateway 的授权媒体读取（userInput 附件 + 当前 session assistant artifact ref）已在，但不能直接用于工具 row——这是本项的主要工程面。
@@ -92,7 +100,7 @@
 
 以下三项的共同形态：**两侧地基都已建成，缺的是把它们接起来的线**。均为本文盘点 154 文件能力面 + K 系列实施记录时识别，非转述既有提案；实施前须按 spec-first 立项。
 
-### 5.1 Overnight（K3）× 桌面通知/角标 —— 已建成的引擎缺桌面出口
+### 5.1 Overnight（K3）× 桌面通知/角标 —— 已建成的引擎缺桌面出口（🔨 实施中）
 
 - **现状**：CLI 侧 K3 已实施（`/overnight` 时间闸状态机、晨报走任务卡片 markdown、桌面 UI 可直接渲染）。但桌面出口薄：`desktopNotifications.ts` 158 行、`unreadBadge.ts` 35 行、`desktopTray.ts` 111 行——挂机任务在 App 最小化/后台完成时，晨报到达缺一条「系统通知 → 托盘角标 → 点击直达任务卡」的链路。
 - **机会**：把 K3 的晨报/交接事件接入既有通知与角标部件。同类模式已有先例（`desktopCronScheduler.ts` 在 main 侧、`keepAwakeClaims` 的多源 claim 机制），接线成本可控。
@@ -125,15 +133,15 @@
 
 ## 7. 建议落地顺序
 
-| 顺位 | 项 | 理由 | 量级 |
-|---|---|---|---|
-| 1 | **U12 诊断报告** | main 侧 exportLogs + UI 侧动作分支已就绪，缺口只在菜单入口与 Web 降级——最便宜的用户可感知进化，且为 §5.2 铺路 | 3-5 人日 |
-| 2 | **U08 配置诊断** | onboarding 是留存关键；承接面（hook/service/doctor spec）全在，只欠 GUI 接线 | 4-6 人日 |
-| 3 | **U14 工具链裁决** | 一个三选一决策解除整条差异化功能线的阻塞；裁决本身零工程量 | 决策项 |
-| 4 | **Overnight×通知接线** | 引擎已建成、部件已存在、纯接线；桌面「挂机」体验的临门一脚 | ≤3 人日 |
-| 5 | **U07 目录跳转** | 桌面主力场景体验，但 store 语义裁决（窗口聚焦 vs 连续尾部）需先落 spec | 3-5 人日 |
-| 6 | **U11 图片授权引用** | 价值真实但最贵、动协议面；排最后让其吸收前序迭代对 toolDisplay 的理解 | 6-9 人日 |
-| 并行 | **U05 legacy 退役（M2/M3）** | 非功能项但决定功能生产速度；2026-12-31 前必须推进 | 里程碑 |
+| 顺位 | 项 | 理由 | 量级 | 状态（2026-10-26） |
+|---|---|---|---|---|
+| 1 | **U12 诊断报告** | main 侧 exportLogs + UI 侧动作分支已就绪，缺口只在菜单入口与 Web 降级——最便宜的用户可感知进化，且为 §5.2 铺路 | 3-5 人日 | **✅ 已实施** `2a390ef8` |
+| 2 | **U08 配置诊断** | onboarding 是留存关键；承接面（hook/service/doctor spec）全在，只欠 GUI 接线 | 4-6 人日 | 实施中 |
+| 3 | **U14 工具链裁决** | 一个三选一决策解除整条差异化功能线的阻塞；裁决本身零工程量 | 决策项 | **待用户裁决**（§4） |
+| 4 | **Overnight×通知接线** | 引擎已建成、部件已存在、纯接线；桌面「挂机」体验的临门一脚 | ≤3 人日 | 实施中 |
+| 5 | **U07 目录跳转** | 桌面主力场景体验，但 store 语义裁决（窗口聚焦 vs 连续尾部）需先落 spec | 3-5 人日 | 实施中 |
+| 6 | **U11 图片授权引用** | 价值真实但最贵、动协议面；排最后让其吸收前序迭代对 toolDisplay 的理解 | 6-9 人日 | 实施中 |
+| 并行 | **U05 legacy 退役（M2/M3）** | 非功能项但决定功能生产速度；2026-12-31 前必须推进 | 里程碑 | 未启动 |
 
 排序原则：先做「地基已在、只欠接线」的（1/2/4），再做需要设计裁决的（3/5），最贵且动协议面的殿后（6）；结构债（并行项）不与功能项抢同一批人力但必须有日程。
 

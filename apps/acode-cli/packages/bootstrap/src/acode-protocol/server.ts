@@ -5,6 +5,8 @@ import {
   acodeProtocolMethods,
   acodeWorkspaceCancelGenerateTextParamsSchema,
   acodeWorkspaceHookTrustGrantParamsSchema,
+  // U08 provider 诊断方法名取自中立叶子（不进 legacy barrel 冻结面）。
+  PROVIDER_DIAGNOSTICS_METHODS,
 } from "@acode/shared";
 import type { BrowserControlPort } from "@acode/contracts";
 import { InMemoryWorkspaceHookPolicyProvider } from "@acode/core";
@@ -55,6 +57,9 @@ import {
   readWorkspacePresentation,
   testProviderModelConnectivity,
 } from "./workspace-model-runtime.js";
+// U08 provider 诊断执行器的装配（specs/provider-diagnostics.md）。不 import server-types，
+// 因此不构成 server.ts ↔ provider-diagnostics.ts 循环。
+import { createProtocolProviderDiagnostics } from "./provider-diagnostics.js";
 import {
   addPluginMarketplace,
   configurePlugin,
@@ -249,6 +254,20 @@ export class ACodeProtocolAgentServer {
         deps.createSessionEventStore ?? (() => createInMemorySessionEventStore()),
       workspaceHookPolicyProvider:
         deps.workspaceHookPolicyProvider ?? new InMemoryWorkspaceHookPolicyProvider(),
+      // U08 provider 诊断：测试可直接注入 executor；否则用 entrypoint 交出的进程级 Registry
+      // runtime 现场装配（不绑定 workspace，首次配置也能跑 offline 档）。两者都缺 → 协议层
+      // 回 method-unavailable（requireProviderDiagnostics），不静默降级。
+      // logger 直接由 deps 现取：this.logger 在下一行才赋值，此处读它必为 undefined。
+      // createProtocolLogger 只读 deps.loggerFactory，与下方 this.logger 的取值同源。
+      providerDiagnostics:
+        deps.providerDiagnostics ??
+        (deps.providerRegistryRuntime
+          ? createProtocolProviderDiagnostics(
+              deps.providerRegistryRuntime,
+              deps.env ?? process.env,
+              createProtocolLogger(deps),
+            )
+          : undefined),
     };
     this.logger = createProtocolLogger(resolvedDeps);
     this.context = {
@@ -686,6 +705,12 @@ export class ACodeProtocolAgentServer {
         return this.cancelWorkspaceGenerateText(request.params);
       case acodeProtocolMethods.providerTestModelConnectivity:
         return await testProviderModelConnectivity(this.context, request.params);
+      // ── U08 provider 诊断（specs/provider-diagnostics.md）──
+      // 走进程级执行器（不建 workspace ACodeApp），因此首次配置尚无 workspace 也能诊断。
+      case PROVIDER_DIAGNOSTICS_METHODS.run:
+        return await this.requireProviderDiagnostics().run(request.params);
+      case PROVIDER_DIAGNOSTICS_METHODS.cancel:
+        return this.requireProviderDiagnostics().cancel(request.params);
       case acodeProtocolMethods.mcpList:
         return await listMcpServers(this.context, request.params);
       case acodeProtocolMethods.pluginsList:
@@ -768,6 +793,22 @@ export class ACodeProtocolAgentServer {
       throw new ProtocolRequestError(-32603, "v4 gateway is not initialized");
     }
     return this.context.v4Gateway;
+  }
+
+  /**
+   * U08 provider 诊断执行器（specs/provider-diagnostics.md）。
+   * 缺席 = 该宿主未装配诊断能力：回 method-unavailable 而不是静默返回空结果，
+   * 让 host 侧能把「没装配」与「诊断失败」区分开（错误是一等对象，不吞）。
+   */
+  private requireProviderDiagnostics() {
+    const diagnostics = this.context.deps.providerDiagnostics;
+    if (!diagnostics) {
+      throw new ProtocolRequestError(
+        -32601,
+        "provider diagnostics is not available in this agent runtime",
+      );
+    }
+    return diagnostics;
   }
 
   private async withPluginOperationSignal<T>(

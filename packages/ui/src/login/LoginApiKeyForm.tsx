@@ -26,11 +26,13 @@ import {
   SelectValue,
 } from "@/components/ui/select.js";
 import { usePlatform } from "@/hooks/usePlatform.js";
+import { useProviderDiagnostics } from "@/hooks/useProviderDiagnostics.js";
 import { useProviderSettingsView } from "@/hooks/useProviderSettingsView.js";
 import { useServices } from "@/hooks/useServices.js";
 import { useACodeIntl } from "@/i18n/IntlProvider.js";
 import { logger } from "@/logger.js";
 import { renderOAuthProviderIcon } from "@/lib/oauthProviderIcon.js";
+import { ProviderDiagnosticsPanel } from "@/components/ProviderDiagnosticsPanel.js";
 import {
   buildLoginApiKeyDefaultModelPreferenceFromSelection,
   buildLoginApiKeySkipSettings,
@@ -60,9 +62,24 @@ export function LoginApiKeyForm({ onCancel, onSaved, onSkipped }: LoginApiKeyFor
   const [saving, setSaving] = useState(false);
   const [skipping, setSkipping] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * 保存成功后的 provider 身份 + revision（U08）。
+   * revision 是 fencing 基线：用户在诊断期间改配置会前进它，旧结果据此被丢弃（U3/R2）。
+   * null = 还没保存，此时不渲染诊断面板。
+   */
+  const [savedProvider, setSavedProvider] = useState<{
+    providerId: string;
+    revision: number;
+  } | null>(null);
   const providerSettingsRead = useProviderSettingsView();
   const providerSettingsView =
     providerSettingsRead.state.status === "ready" ? providerSettingsRead.state.view : null;
+  // 诊断 hook 需要稳定的 providerId/revision；未保存时 providerId 为 null，hook 内部据此不动作。
+  const diagnostics = useProviderDiagnostics({
+    providerId: savedProvider?.providerId ?? null,
+    // 优先用最新的 view revision：保存后 view 会推进，用它才能让 fencing 反映真实当前配置。
+    revision: providerSettingsView?.revision ?? savedProvider?.revision ?? 0,
+  });
 
   const providerLabel = resolveLoginApiKeyProviderLabel(providerChoice);
   const templateId = resolveLoginApiKeyTemplateId(providerChoice);
@@ -105,7 +122,12 @@ export function LoginApiKeyForm({ onCancel, onSaved, onSkipped }: LoginApiKeyFor
         created.providerId,
       );
       markApiKeyLoginSuccess(defaultModelPreference);
-      await onSaved();
+      // U08：保存成功**不再直接跳走**。先落到「已保存、尚未验证」态，让用户在同一屏
+      // 选档位诊断、看到明确故障阶段与修复动作；想跳过就点「继续」（提案 §3.6：失败不清空
+      // 已保存 provider，可保持已保存未验证并稍后诊断）。诊断失败 != 保存失败——
+      // 上面的 markApiKeyLoginSuccess 已经生效，诊断只是附加验证，不是门禁。
+      // revision 取保存返回的 view：它是 fencing 的基线，迟到结果据此被丢弃（U3/R2）。
+      setSavedProvider({ providerId: created.providerId, revision: created.view.revision });
     } catch (saveError) {
       logger.error("[LoginEntry] 保存 API Key provider 失败", {
         templateId,
@@ -151,6 +173,56 @@ export function LoginApiKeyForm({ onCancel, onSaved, onSkipped }: LoginApiKeyFor
   };
 
   const busy = saving || skipping;
+
+  // ── 保存后的「已保存、尚未验证」态（U08）──────────────────────────
+  // 与上面的表单态互斥：保存成功即切到这里，用户在同一屏选档位诊断、看故障阶段与修复动作，
+  // 或点「继续」跳过验证（提案 §3.6：可保持已保存未验证并稍后在设置里诊断）。
+  // 刻意不新增第二个保存入口：重试诊断走 panel 的 run，绝不重新 createPersonalProvider
+  // （U08-A4：一次保存操作创建 provider 最多 1 次）。
+  if (savedProvider) {
+    return (
+      <div className="space-y-4">
+        <div className="space-y-2">
+          <h2 className="text-ui-base font-medium text-foreground">
+            {intl.formatMessage({ id: "login.apiKey.savedTitle" })}
+          </h2>
+          <p className="text-ui-xs leading-4 text-foreground-subtle">
+            {intl.formatMessage({ id: "login.apiKey.savedHint" })}
+          </p>
+        </div>
+
+        <ProviderDiagnosticsPanel
+          diagnostics={diagnostics}
+          saved
+          revision={providerSettingsView?.revision ?? savedProvider.revision}
+        />
+
+        <div className="space-y-2">
+          <Button
+            type="button"
+            className="h-10 w-full text-ui-base"
+            size="lg"
+            data-testid="login-api-key-saved-continue-button"
+            onClick={() => void onSaved()}
+          >
+            {intl.formatMessage({ id: "login.apiKey.continue" })}
+          </Button>
+          {/* 诊断在飞时禁用返回/跳过：取消语义由 panel 的「取消」负责，
+              这里不让用户带着一个在飞的计费请求离开当前屏（R4）。 */}
+          <Button
+            type="button"
+            variant="link"
+            className="h-7 w-full text-ui-base text-foreground-subtle hover:text-foreground"
+            data-testid={TID_LOGIN_API_KEY_SKIP_BUTTON}
+            disabled={diagnostics.running}
+            onClick={() => void onSkipped()}
+          >
+            {intl.formatMessage({ id: "login.apiKey.skipVerification" })}
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">

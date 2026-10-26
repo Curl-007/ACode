@@ -31,6 +31,10 @@ import {
   type ToolSearchAppMode,
 } from "@acode/shared";
 import type { ACodeApp, ACodeAppOptions } from "../app/types.js";
+import type {
+  ProviderDiagnosticsProtocolExecutor,
+  ProviderDiagnosticsRegistryRuntimeLike,
+} from "./provider-diagnostics.js";
 import type { V4InteractionRegistry } from "../acode-protocol-v4/interaction-registry.js";
 import type { ConversationV4Gateway } from "../acode-protocol-v4/v4-gateway.js";
 import type { SessionResidentPool, SessionResidentPoolOptions } from "./session-resident-pool.js";
@@ -65,6 +69,20 @@ export interface ACodeProtocolAgentDependencies {
   syncAccountProviderConfig?: (snapshot: AccountProviderConfigSnapshot) => Promise<boolean>;
   /** 连接测试前主动重读当前进程的 Config Source 并等待 Registry 发布。 */
   refreshProviderRegistry?: (reason: string) => Promise<void>;
+  /**
+   * U08 provider 诊断（specs/provider-diagnostics.md）：进程级 Registry runtime。
+   *
+   * 由 entrypoint 交出**进程级** runtime（它在启动时已拉起该 runtime），server 用它装配诊断
+   * 执行器。诊断不绑定任何 workspace/session，因此首次配置尚无 workspace 时也能跑 offline 档
+   * （提案 §3.2「不能硬复用要求 workspace 的设置页 probe」的顾虑在此不成立：本路径不经
+   * workspace app）。缺席 = 该宿主未装配诊断能力，协议层回 method-unavailable，不静默降级。
+   */
+  providerRegistryRuntime?: ProviderDiagnosticsRegistryRuntimeLike;
+  /**
+   * 直接注入的诊断执行器（测试与嵌入宿主用）。缺席时 server 用 providerRegistryRuntime
+   * 装配真实执行器；两者都缺 → 协议层回 method-unavailable。
+   */
+  providerDiagnostics?: ProviderDiagnosticsProtocolExecutor;
 }
 
 export type ACodeProtocolAgentResolvedDependencies = ACodeProtocolAgentDependencies & {

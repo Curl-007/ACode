@@ -9,6 +9,11 @@ import { ServiceChannels } from "@acode/shared";
 import type { AppUsageRange, AppUsageSnapshot, ACodeTaskTokenUsageResult } from "@acode/shared";
 import type { ACodeAutomation, ACodeAutomationRun } from "@acode/shared";
 import type {
+  ProviderDiagnosticsCancelResult,
+  ProviderDiagnosticsRequest,
+  ProviderDiagnosticsResult,
+} from "@acode/shared";
+import type {
   ACodeStorageStartupState,
   ACodeDeliveryKind,
   ACodeAgentMcpServer,
@@ -364,6 +369,20 @@ export interface ACodeAgentCancelWorkspaceGenerateTextParams extends ACodeAgentW
 export interface ACodeAgentTestModelConnectivityParams extends ACodeAgentWorkspaceTarget {
   selection: ACodeProviderTestModelConnectivityParams["selection"];
   signal?: AbortSignal;
+}
+
+/**
+ * U08 Provider 诊断参数（specs/provider-diagnostics.md）。
+ *
+ * 刻意**不** extends `ACodeAgentWorkspaceTarget`：诊断读的是进程级 provider 事实
+ * （配置文件路径、凭据库、Registry 快照），不绑定任何 workspace。这正是它与
+ * `testModelConnectivity` 的关键差异——首次配置（WelcomeScreen）尚无 workspace 时
+ * 仍可诊断，不必硬复用要求 workspace 的设置页 probe（提案 §3.2）。
+ */
+export interface ACodeAgentRunProviderDiagnosticsParams extends ProviderDiagnosticsRequest {}
+
+export interface ACodeAgentCancelProviderDiagnosticsParams {
+  requestId: string;
 }
 
 export interface ACodeAgentSessionRuntimePreferencesRequest extends ACodeSessionRequestRuntimePreferencesParams {
@@ -748,6 +767,19 @@ export interface IACodeAgentService {
     params: ACodeAgentTestModelConnectivityParams,
   ): Promise<ACodeProviderTestModelConnectivityResult>;
   /**
+   * U08 Provider 分档诊断（specs/provider-diagnostics.md）。执行体在 CLI 侧 adapters/doctor，
+   * host 只做载体路由与 schema 校验。不要求 workspace（进程级 provider 事实）。
+   */
+  runProviderDiagnostics(
+    params: ACodeAgentRunProviderDiagnosticsParams,
+  ): Promise<ProviderDiagnosticsResult>;
+  /**
+   * 取消某一次诊断（R4）：只取消该 requestId 所属执行。best-effort，不在飞回 cancelled:false。
+   */
+  cancelProviderDiagnostics(
+    params: ACodeAgentCancelProviderDiagnosticsParams,
+  ): Promise<ProviderDiagnosticsCancelResult>;
+  /**
    * @deprecated：send 主路径已收敛 v4 sendText 命令。仅剩两个消费点——
    * adapter 带附件输入回退（待附件命令面落地后移除）与 acodeSessionService
    * pass-through；新代码禁止回用。
@@ -993,6 +1025,8 @@ export const IACodeAgentService = createServiceDescriptor<IACodeAgentService>(
       "generateWorkspaceText",
       "cancelWorkspaceGenerateText",
       "testModelConnectivity",
+      "runProviderDiagnostics",
+      "cancelProviderDiagnostics",
       "sendPrompt",
       "compactSession",
       "goalSession",
@@ -1127,6 +1161,10 @@ export const IACodeAgentService = createServiceDescriptor<IACodeAgentService>(
       generateWorkspaceText: requireSingleParamsObject,
       cancelWorkspaceGenerateText: requireSingleParamsObject,
       testModelConnectivity: requireSingleParamsObject,
+      // U08 诊断：顶层只校验「单个参数对象」，业务形态由 shared 的 .strict() zod schema
+      // 在跨进程边界把关（providerDiagnosticsRequestSchema / ResultSchema）。
+      runProviderDiagnostics: requireSingleParamsObject,
+      cancelProviderDiagnostics: requireSingleParamsObject,
       sendPrompt: requireSingleParamsObject,
       compactSession: requireSingleParamsObject,
       goalSession: requireSingleParamsObject,

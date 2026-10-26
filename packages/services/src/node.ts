@@ -382,6 +382,8 @@ import {
   IProviderSettingsService,
 } from "./model-provider/providerFacadeServices.js";
 import { createProviderSettingsConnectivityTester } from "./model-provider/providerSettingsConnectivity.js";
+import { createProviderDiagnosticsExecutor } from "./model-provider/providerDiagnosticsExecutor.js";
+import { createProviderDiagnosticsRpcPort, createNoAgentRuntimeError } from "./acode-agent/providerDiagnosticsRpc.js";
 import {
   createProviderProvisioningSource,
   listProviderProvisioningCredentialKeys,
@@ -1643,6 +1645,30 @@ export function createLocalServices(options: {
   let providerConnectivityAgentService:
     | Pick<IACodeAgentService, "testModelConnectivity">
     | undefined;
+  // U08 provider 诊断：编排器需要 agentService（runProviderDiagnostics/cancel），但 agentService
+  // 在下方才创建——与 providerConnectivityAgentService 同一 lazy-holder 模式。诊断能力未装配时
+  // （holder 仍为 undefined）run 抛稳定 code，编排器归一成 no-agent-runtime 终态、零调用。
+  let providerDiagnosticsAgentService:
+    | Pick<IACodeAgentService, "runProviderDiagnostics" | "cancelProviderDiagnostics">
+    | undefined;
+  const providerDiagnosticsExecutor = createProviderDiagnosticsExecutor({
+    rpc: createProviderDiagnosticsRpcPort({
+      agentService: {
+        async runProviderDiagnostics(params) {
+          if (!providerDiagnosticsAgentService) {
+            throw createNoAgentRuntimeError();
+          }
+          return providerDiagnosticsAgentService.runProviderDiagnostics(params);
+        },
+        async cancelProviderDiagnostics(params) {
+          if (!providerDiagnosticsAgentService) {
+            throw createNoAgentRuntimeError();
+          }
+          return providerDiagnosticsAgentService.cancelProviderDiagnostics(params);
+        },
+      },
+    }),
+  });
   const providerRuntime = createProviderRuntimeFromConfigRuntime({
     configRuntime: providerConfigRuntime,
     accountSource: accountProviderConfigSource,
@@ -1653,6 +1679,7 @@ export function createLocalServices(options: {
     providerApiKeyVault,
     disposeModelSelectionConfiguredDefaultSource: () =>
       modelSelectionConfiguredDefaultSource.dispose(),
+    diagnosticsExecutor: providerDiagnosticsExecutor,
     testConnectivity: createProviderSettingsConnectivityTester({
       testModelConnectivity: async (input) => {
         if (!providerConnectivityAgentService) {
@@ -2376,6 +2403,8 @@ export function createLocalServices(options: {
         }),
   });
   providerConnectivityAgentService = acodeAgentService;
+  // U08：诊断编排器的 lazy holder 在此回填（创建顺序见上方 providerDiagnosticsExecutor）。
+  providerDiagnosticsAgentService = acodeAgentService;
   // Helper health probe 短暂超时不应在 Computer Use turn 中途回收 Agent。resolver 会把 restart
   // 推迟到下一个 request/turn 边界；若 broker 确实已失效，当前 turn 会自然失败并由下一次请求恢复。
   hasActiveTurnRef = () => acodeAgentService.hasActiveCuaOperationTurn();

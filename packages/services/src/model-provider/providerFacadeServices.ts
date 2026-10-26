@@ -18,12 +18,20 @@ import {
   type SavePersonalModelDraftInput,
 } from "@acode/provider";
 import { createServiceDescriptor } from "../descriptors.js";
-import type { ModelConnectivityResult } from "@acode/shared";
+import type {
+  ModelConnectivityResult,
+  ProviderDiagnosticsCancelRequest,
+  ProviderDiagnosticsCancelResult,
+  ProviderDiagnosticsRequest,
+  ProviderDiagnosticsResult,
+} from "@acode/shared";
 import { createServiceLogger } from "../logger/serviceLogger.js";
 import {
   discoverProviderModelsFromEndpoint,
   type ProviderModelDiscoveryResult,
 } from "./providerModelDiscovery.js";
+import type { ProviderDiagnosticsExecutor } from "./providerDiagnosticsExecutor.js";
+import { buildTerminalFailure } from "./providerDiagnosticsExecutor.js";
 import {
   modelSelectionArgumentValidators,
   providerSettingsArgumentValidators,
@@ -90,6 +98,25 @@ export interface IProviderSettingsService {
   discoverProviderModels(
     input: ProviderSettingsDiscoveryRequest,
   ): Promise<ProviderModelDiscoveryResult>;
+  /**
+   * Provider 分档诊断（U08，specs/provider-diagnostics.md）：把请求交给 CLI 侧既有的
+   * Provider Doctor 执行能力，返回固定 12 检查点、稳定错误码与修复动作白名单。
+   *
+   * 与 `testModelConnectivity` 的关键差异（提案 §3.2「首次配置可能没有 workspace」）：
+   * 本方法**不要求** workspace——Doctor 的 ports 全部读进程级事实（配置文件路径、凭据库、
+   * Registry 快照），因此首次配置场景无需先有 workspace 即可诊断 offline 档。
+   */
+  runProviderDiagnostics(
+    input: ProviderDiagnosticsRequest,
+  ): Promise<ProviderDiagnosticsResult>;
+  /**
+   * 取消某一次诊断（U08 R4）：只取消该 requestId 所属的那一次执行。
+   * best-effort：`cancelled:false` 表示不在飞，**不是错误**。
+   * 已发出的 live 计费请求无法追回，取消结果绝不承诺退费。
+   */
+  cancelProviderDiagnostics(
+    input: ProviderDiagnosticsCancelRequest,
+  ): Promise<ProviderDiagnosticsCancelResult>;
 }
 
 export interface ProviderSettingsDiscoveryRequest {
@@ -119,6 +146,8 @@ export const IProviderSettingsService = createServiceDescriptor<IProviderSetting
       "testModelConnectivity",
       "addPersonalModels",
       "discoverProviderModels",
+      "runProviderDiagnostics",
+      "cancelProviderDiagnostics",
     ],
     // 校验表拆到同目录伴生文件，避免本文件超过 400 行门禁；键仍受 interface keyof 约束。
     argumentValidators: providerSettingsArgumentValidators,
@@ -165,6 +194,7 @@ export function createProviderSettingsService(
   facade: ProviderSettingsFacade,
   ensureReady: () => Promise<void> = async () => {},
   testConnectivity?: ProviderSettingsConnectivityTester,
+  diagnostics?: ProviderDiagnosticsExecutor,
 ): IProviderSettingsService {
   return {
     onDidChange: toEvent((listener) => facade.onDidChange(listener)),
@@ -273,6 +303,30 @@ export function createProviderSettingsService(
       const discoveryInput = facade.readProviderDiscoveryInput(input.providerId);
       if (!discoveryInput) return { ok: false, error: { kind: "no-base-url" as const } };
       return discoverProviderModelsFromEndpoint(discoveryInput);
+    },
+    runProviderDiagnostics: async (input) => {
+      await ensureReady();
+      if (!diagnostics) {
+        // 未装配诊断能力（旧 Environment）：返回带稳定码的终态失败 DTO，而不是抛裸异常。
+        // 诊断失败 != 保存失败（提案非目标），UI 据此保持「已保存、尚未验证」并给「稍后验证」。
+        const at = new Date().toISOString();
+        return buildTerminalFailure({
+          request: input,
+          errorCode: "execution-failed",
+          startedAt: at,
+          finishedAt: at,
+        });
+      }
+      // 单次执行 / revision 回显 / 取消路由的不变量都在编排器里（specs/provider-diagnostics.md）。
+      return diagnostics.run(input);
+    },
+    cancelProviderDiagnostics: async (input) => {
+      await ensureReady();
+      if (!diagnostics) {
+        // 没装配就没有在飞的执行，取消自然「不在飞」——cancelled:false 是合法结果（R4）。
+        return { requestId: input.requestId, cancelled: false };
+      }
+      return diagnostics.cancel(input.requestId);
     },
   };
 }

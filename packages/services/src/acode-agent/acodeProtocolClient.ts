@@ -7,13 +7,16 @@ import type {
   ACodeProtocolRequest,
   ACodeProtocolRequestId,
   ACodeProtocolTrace,
+  ProviderDiagnosticsMethod,
 } from "@acode/shared";
 import type { V4Method } from "@acode/shared/acode-protocol-v4";
 import type { z } from "zod";
 import type { ACodeProtocolTransport } from "./acodeProtocolTransport.js";
 
-/** 客户端可发的方法名：旧 acodeProtocolMethods + v4/*（并存，收敛为 v4）。 */
-type ACodeProtocolClientMethod = ACodeProtocolMethod | V4Method;
+// 客户端可发的方法名：旧 acodeProtocolMethods + v4/* + U08 provider 诊断。诊断方法名落中立叶子
+// `PROVIDER_DIAGNOSTICS_METHODS`，不进 legacy barrel 冻结面（只删不增）；wire 上 method 本就是
+// 自由字符串、CLI dispatch 是普通 string switch，故扩联合即可打通，不必改任何被守护的方法表。
+type ACodeProtocolClientMethod = ACodeProtocolMethod | V4Method | ProviderDiagnosticsMethod;
 
 interface ACodeProtocolClientOptions {
   requireStorageStartup?: boolean;

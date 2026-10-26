@@ -326,3 +326,6 @@ export * from "./sessionEgressGate.js";
 export * from "./remoteWorkspaceConnection.js";
 
 export * from "./localDiagnosticReport.js";
+// U08 provider 诊断的跨进程契约（specs 见 packages/services/specs/provider-diagnostics.md）。
+// 中立叶子：不进 legacy acode-protocol barrel（冻结面只删不增）。
+export * from "./providerDiagnostics.js";

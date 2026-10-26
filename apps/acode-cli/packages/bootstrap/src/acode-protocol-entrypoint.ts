@@ -311,6 +311,12 @@ export async function runACodeProtocolAgent(
       refreshProviderRegistry: async (reason) => {
         await activeProviderRegistryRuntime.runtime.registryService.refresh(reason);
       },
+      // U08 provider 诊断（specs/provider-diagnostics.md）：交出**进程级** Registry runtime，
+      // 由 server 用它装配诊断执行器（装配细节与判定/投影同住 provider-diagnostics.ts；本文件
+      // 已贴着 400 行 max-lines 门禁，不再堆 import 与装配代码）。不绑定 workspace/session，
+      // 因此首次配置尚无 workspace 时也能跑 offline 档——提案 §3.2「不能硬复用要求 workspace
+      // 的设置页 probe」的正解：本路径根本不经 workspace app。
+      providerRegistryRuntime: activeProviderRegistryRuntime,
       version: options.version,
     }));
     officialMcpAuthContext = server.officialMcpAuthRequestContext;

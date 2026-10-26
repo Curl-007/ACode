@@ -67,5 +67,11 @@ async function runProbe(
   const outcome = await timedRun(run);
   // 只有真的发出了请求才计可计费调用：构造失败/档位缺失不该被记成花费。
   if (outcome.result.attempted) spend.recordModelCall(outcome.result.usage);
-  recorder.set(id, outcome.result.status, outcome.result.detail, outcome.durationMs);
+  recorder.set(
+    id,
+    outcome.result.status,
+    outcome.result.detail,
+    outcome.durationMs,
+    outcome.result.reasonCode,
+  );
 }

@@ -8,6 +8,7 @@
 
 import { PROVIDER_DOCTOR_CHECKPOINT_CATALOG } from "./checkpoints.js";
 import type { ProviderDoctorRedactor } from "./redaction.js";
+import type { ProviderDiagnosticsReasonCode } from "@acode/shared";
 import type {
   ProviderDoctorCheckResult,
   ProviderDoctorCheckStatus,
@@ -21,6 +22,12 @@ export interface ProviderDoctorCheckRecorder {
     status: ProviderDoctorCheckStatus,
     detail: string,
     durationMs?: number,
+    /**
+     * U08 结构化原因码（provider-diagnostics.md R7）。只有需要区分「同一 (id,status) 下的
+     * 多种故障」的检查点才传（当前仅 catalog_live_endpoint 用它把 401 拒凭据 / 网络不可达 /
+     * 目录为空分开）。缺省时 GUI 按 (id,status) 派生错误码，不传不影响既有语义。
+     */
+    reasonCode?: ProviderDiagnosticsReasonCode,
   ): void;
   skip(id: ProviderDoctorCheckpointId, reason: string): void;
   statusOf(id: ProviderDoctorCheckpointId): ProviderDoctorCheckStatus | undefined;
@@ -34,6 +41,7 @@ interface MutableCheckResult {
   status: ProviderDoctorCheckStatus;
   detail: string;
   durationMs?: number;
+  reasonCode?: ProviderDiagnosticsReasonCode;
 }
 
 export function createProviderDoctorCheckRecorder(
@@ -55,12 +63,15 @@ export function createProviderDoctorCheckRecorder(
     status: ProviderDoctorCheckStatus,
     detail: string,
     durationMs?: number,
+    reasonCode?: ProviderDiagnosticsReasonCode,
   ): void => {
     const check = byId.get(id);
     if (!check) return;
     check.status = status;
     check.detail = redactor.redact(detail);
     if (durationMs !== undefined) check.durationMs = durationMs;
+    // reasonCode 是结构化枚举、不含值，不过 redactor（redactor 只处理自由文本 detail）。
+    if (reasonCode !== undefined) check.reasonCode = reasonCode;
   };
 
   return {
@@ -76,6 +87,7 @@ export function createProviderDoctorCheckRecorder(
           status: check.status,
           detail: check.detail,
           ...(check.durationMs !== undefined ? { durationMs: check.durationMs } : {}),
+          ...(check.reasonCode !== undefined ? { reasonCode: check.reasonCode } : {}),
         }),
       ),
   };

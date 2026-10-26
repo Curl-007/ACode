@@ -95,6 +95,14 @@ export function writeTaskMetaToCaches(write: TaskMetaCacheWrite): void {
   if (write.workspaceIdentity) {
     const timeline = useRemoteTimelineTaskStore.getState();
     if (write.remoteTimeline === "upsert") {
+      // 身份键不变量（specs/task-meta-cache-ownership.md）：upsertTask 的 workspaceKey 是从
+      // **task 对象**派生的（remoteTimelineTaskStore.ts: getWorkspaceKey(task.workspacePath,
+      // task.workspaceIdentity)），而下面 removeTask 的 workspaceKey 用的是**显式参数**
+      // write.workspaceIdentity。调用方必须保证 write.nextTask.workspaceIdentity ===
+      // write.workspaceIdentity（且 workspacePath 一致），否则同一次事务的 upsert 与 remove
+      // 会落到不同的 workspaceKey，副本之间静默 drift，而这里的 identity gating 也察觉不到。
+      // 当前所有组件调用方都从同一个 item/meta 同时流入两处，天然满足；该不变量由
+      // taskMetaCacheComposition 的守护用例钉住，不在生产路径加运行时 throw。
       timeline.upsertTask(write.nextTask, write.remoteTimelineSortBy);
     } else if (write.remoteTimeline === "remove") {
       timeline.removeTask(write.workspacePath, write.taskId, write.workspaceIdentity);
@@ -102,6 +110,7 @@ export function writeTaskMetaToCaches(write: TaskMetaCacheWrite): void {
 
     const pinned = useRemotePinnedTaskStore.getState();
     if (write.remotePinned === "upsert") {
+      // 同上身份键不变量：remotePinnedTaskStore.upsertTask 亦从 nextTask 派生 workspaceKey。
       pinned.upsertTask(write.nextTask);
     } else if (write.remotePinned === "remove") {
       pinned.removeTask(write.workspacePath, write.taskId, write.workspaceIdentity);

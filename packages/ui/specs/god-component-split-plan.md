@@ -55,7 +55,37 @@
 > 三者都已把大量**纯函数**堆在文件顶部（helper 与组件同文件），拆分第一刀都是「helper 外迁 + 单测」，
 > 与 SessionPane 第二批同构，风险低。
 
+### 拆分动能备注（2026-10-26 review 登记，仅登记不改门禁）
+
+1.0.4 全项目 review（[../../../docs/reviews/2026-10-26/ui-components.md](../../../docs/reviews/2026-10-26/ui-components.md) §2/§3）
+观察到一条**拆分动能**事实，登记在此供后续批次参考：
+
+- **超 400 行 tsx 计数 115 → 115（精确持平，零 churn）**。本轮虽有多文件被修剪
+  （SessionPane −90、WorkspaceHeaderSections −47、WorkspacePinnedTasksSection −48、
+  WorkspaceSidebarItem −37、WorkspaceTimelineTasksSection −54、useTheme −36），
+  但**修剪都发生在上帝文件内部**，没有把任何文件推到 400 行以下，因此超阈值计数不变。
+  动能结论：拆分现大致追平增长，但**尚未反超**。
+- **`legacy-over-limit` ratchet 只在「跨越」400 时触发**（HEAD≤400 → tree>400），
+  对「已 >400 时继续增长」**失明**。故已登记的上帝组件可隐形继续增长——
+  例：`AutomationEditView.tsx` 本轮 2942→**2950**（+8，全是 Button a11y 迁移的良性修复成本），
+  门禁恒绿。即：只要一个文件已经超限，它再长多少都不会让门禁变红。
+
+**因此，本计划各已登记批次的完成判据补充**（见「每批拆分的固定验收」第 6 条）：
+适用时（拆分目标就是要把文件推到 400 以下的批次，如 settings 三件套的第一刀「helper 外迁」）
+必须显式验收「**目标文件行数跌破 400**」，而不是只看「行数下降」。内部修剪若未跨阈值，
+不计入拆分进度，避免「修剪很多、上帝文件计数纹丝不动」的动能假象。
+
+**后续治理项（登记，不在本计划实现）**：lead 应考虑为**已登记进本 split-plan 的文件**
+引入一条**行数 ratchet**——一旦某文件被登记，记录其登记时行数作为上限，后续任何增长
+（即使在 400 以上）都让门禁变红，直到该文件按批次跌破 400 或显式下调上限。
+门禁实现属 `scripts/architecture`（另一代理所有权），本计划只登记需求与验收口径，不改门禁代码。
+
 ### `settings/AutomationEditView.tsx`（2,942 行；27 state / 12 effect / 16 memo / 11 callback）
+
+> 动能备注（2026-10-26 review）：本轮该文件 2942→**2950**（+8），增量全部是 Button a11y 迁移
+> （裸 `<button className=...>` → `<Button variant size>` 行数变多）的良性修复成本，
+> 但因 `legacy-over-limit` ratchet 只在跨越 400 时触发，此增长门禁恒绿、不可见。
+> 属「已超限文件继续增长」的典型样本，见上「拆分动能备注」与固定验收第 7 条。
 
 - 职责分析：单文件混合「cron/自定义重复排程编辑器 + 时间/星期/月日选择器 + 表单 schema + 操作按钮簇 +
   运行历史分页」。顶部已有 ~15 个纯 helper（`buildRunsPageItems`/`workspaceLabelFromPath`/`daysInMonth`/
@@ -129,3 +159,11 @@ ui 测试无 jsdom 套件（node:test + `renderToStaticMarkup` 纯 .ts）。以�
 4. 涉及交互语义的批次（发送、排队、命令编排）必须先补交互测试或附人工验证记录（AGENTS.md E2E 要求）；
    无 jsdom 时以「提取纯函数 + 决策表单测」为接缝内测试的可行替代，并如实登记；
 5. 拆分不得改变 max-lines 豁免的现状语义：新模块自身必须 <400 行（架构 ratchet），豁免只允许随拆分收窄，不允许复制到新文件。
+6. **目标文件跌破 400 行**（仅适用于「登记目的就是要把某个已超限文件推到 400 以下」的批次，
+   如 settings 三件套的第一刀 helper 外迁）：验收时除「行数下降」外，必须实测目标文件 `wc -l < 400`，
+   并把超 400 计数（`find packages/ui/src -name '*.tsx' | wc -l` 口径）的变化记进报告。
+   内部修剪但未跨 400 阈值的，不计入拆分进度——见「拆分动能备注」，
+   现有 `legacy-over-limit` ratchet 只在跨越 400 时触发，对已超限文件的继续增长失明。
+7. 若某文件被登记进本计划后仍在增长（如 `AutomationEditView` 2942→2950 的 Button a11y 迁移成本），
+   在该批次的登记行里注明增量原因与当前行数，供 lead 判断是否需要「split-plan 登记文件行数 ratchet」
+   （后续治理项，门禁实现属 `scripts/architecture`，不在本计划内实现）。

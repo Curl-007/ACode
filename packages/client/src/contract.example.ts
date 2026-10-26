@@ -4,6 +4,7 @@
 import {
   connectViaWebSocket,
   createMessagePortServiceConnection,
+  type DisposableServiceAccessor,
   type MessagePortServiceConnection,
   type WebSocketConnectionCloseEvent,
 } from "./contract.js";
@@ -22,13 +23,21 @@ export function exampleConnectViaMessagePort(): MessagePortServiceConnection {
   return connection;
 }
 
-/** Web 远程链路：WebSocket 直连 server，close 事件带 code/reason/wasClean。 */
-export async function exampleConnectViaWebSocket(url: string): Promise<void> {
+/**
+ * Web 远程链路：WebSocket 直连 server，close 事件带 code/reason/wasClean。
+ * 门面是 `DisposableServiceAccessor`——除服务 getter 外带幂等 `dispose()`，
+ * 重连换代丢弃孤儿连接时经此释放 WebSocket + ChannelClient（否则泄漏活 socket）。
+ */
+export async function exampleConnectViaWebSocket(url: string): Promise<DisposableServiceAccessor> {
   const closed: WebSocketConnectionCloseEvent[] = [];
-  const services = await connectViaWebSocket(url, {
+  const services: DisposableServiceAccessor = await connectViaWebSocket(url, {
     onClose: (event) => {
       closed.push(event);
     },
   });
   void services.gitService;
+  // 幂等释放：关闭底层 WebSocket + dispose ChannelClient（reject 挂起 RPC）；重复调用只生效一次。
+  services.dispose();
+  services.dispose();
+  return services;
 }

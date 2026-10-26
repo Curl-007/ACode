@@ -19,6 +19,8 @@ import type { ServerRemoteInfo } from "@acode/shared";
 import { WEB_DEFAULT_THEME, resolveWebInitialTheme } from "./webThemeSeed.js";
 import { createWebPlatform } from "./webPlatform.js";
 import {
+  attachWebReconnectPageLifecycle,
+  createWebConnectionGenerationGuard,
   createWebReconnectController,
   WebDisconnectOverlay,
   type WebReconnectController,
@@ -220,14 +222,63 @@ async function bootstrapWebApp() {
   // R2-05 修复：此前 `onClose: () => {}` 空实现——WS 断开后 Web 入口不重连、不提示，用户停在
   // 死界面。现在 onClose 触发有上限的指数退避重连 + 断线态 overlay；重连成功用新 services 重挂
   // Root，经既有 web-remote-replayable 快照/resume 路径恢复会话（services 侧语义已齐备，不改）。
+  //
+  // 2026-10-26 review §2 两个 P2 生命周期缺陷修复（详见 specs/web-reconnect.md R5.4-5.5 / R7）：
+  //  - generation token（`createWebConnectionGenerationGuard`）：每个连接的 onClose 只在自己那代仍是
+  //    当前代时才驱动 controller.start()。retryNow 换代后孤儿 socket 的迟到 close 成为 no-op，不在
+  //    健康会话上误弹 overlay / 多开 socket / 重挂 Root。
+  //  - pagehide 按 persisted 分派 pause（bfcache，非终态）/ cancel（真卸载，终态），配 pageshow resume，
+  //    修复「bfcache 往返后 start() 永久 no-op → 手机死界面」。
   let controller: WebReconnectController | null = null;
+  /** 连接代际守卫：首连 = 第 1 代；retryNow 换代时 next()。详见 reconnect/webSocketReconnect.ts。 */
+  const generations = createWebConnectionGenerationGuard(1);
 
-  /** 建立一次 WS 连接；onClose 在「首次连接就绪后」才驱动重连（此时 controller 已存在）。 */
-  const establish = (): Promise<WebServices> =>
-    connectViaWebSocket(bootstrap.wsUrl, { onClose: () => controller?.start() });
+  /**
+   * 建立一次 WS 连接；onClose 在「首次连接就绪后」才驱动重连（此时 controller 已存在）。
+   * 捕获调用时的代——只有自己那代仍是当前代时才驱动 start()，否则（换代后的孤儿 socket 迟到 close）
+   * no-op，避免误驱动当前健康控制器。
+   */
+  const establish = (): Promise<WebServices> => {
+    const isCurrentGeneration = generations.capture();
+    return connectViaWebSocket(bootstrap.wsUrl, {
+      onClose: () => {
+        if (!isCurrentGeneration()) {
+          return; // 孤儿代：不驱动当前健康 controller（避免误弹 overlay + 多开 socket + 重挂 Root）。
+        }
+        controller?.start();
+      },
+    });
+  };
+
+  /** 释放一条被换代/卸载丢弃的孤儿连接（onDiscard）：dispose 底层 WebSocket + ChannelClient，防泄漏。 */
+  const discardServices = (services: WebServices): void => {
+    services.dispose();
+  };
+
+  /** 当前重连状态（供 retryNow 判定 connecting 阶段禁用手动重试）；null = 尚未进入循环。 */
+  let lastState: WebReconnectState | null = null;
+
+  /**
+   * 建立一个重连控制器（首次连接后、以及手动重试时各建一个；旧控制器先 cancel 再替换）。
+   * onDiscard：换代/卸载丢弃的孤儿 connect 结果经此释放（dispose socket），不静默泄漏。
+   */
+  const makeController = (): WebReconnectController =>
+    createWebReconnectController<WebServices>({
+      connect: establish,
+      onReconnected: (next) => renderWebApp(next, bootstrap),
+      onDiscard: discardServices,
+      onStateChange: (state: WebReconnectState) => {
+        lastState = state;
+        if (state.phase === "reconnected") {
+          return; // 由 onReconnected 重挂 app，避免与 overlay 抢同一帧。
+        }
+        root.render(<WebDisconnectOverlay state={state} onRetry={retryNow} />);
+      },
+    });
 
   // 首次连接：controller 尚未创建，onClose 是 no-op；就绪前失败 → reject → bootstrap 错误屏
-  // （保持既有首连失败语义，不进入重连循环）。
+  // （保持既有首连失败语义，不进入重连循环）。首连开启第 1 代（守卫初值即 1），使首连 socket 的
+  // onClose 捕获到第 1 代——首连成功后断开要能驱动重连。
   let services: WebServices;
   try {
     services = await establish();
@@ -236,22 +287,19 @@ async function bootstrapWebApp() {
     return;
   }
 
-  /** 建立一个重连控制器（首次连接后、以及手动重试时各建一个；旧控制器先 cancel 再替换）。 */
-  const makeController = (): WebReconnectController =>
-    createWebReconnectController<WebServices>({
-      connect: establish,
-      onReconnected: (next) => renderWebApp(next, bootstrap),
-      onStateChange: (state: WebReconnectState) => {
-        if (state.phase === "reconnected") {
-          return; // 由 onReconnected 重挂 app，避免与 overlay 抢同一帧。
-        }
-        root.render(<WebDisconnectOverlay state={state} onRetry={retryNow} />);
-      },
-    });
-
-  /** 手动重试：取消当前循环、重置退避计数、立即重新发起（exhausted / 用户主动触发用）。 */
+  /**
+   * 手动重试：取消当前循环、重置退避计数、立即重新发起（exhausted / 用户主动触发用）。
+   * `connecting` 阶段忽略——一次 connect 已在途，再换代会泄漏孤儿 socket（overlay 按钮同步禁用，
+   * 双保险；见 specs/web-reconnect.md R5.4 / R3.4）。
+   */
   function retryNow(): void {
+    if (lastState?.phase === "connecting") {
+      return;
+    }
     controller?.cancel();
+    // 换代：先作废当前代（generations.next()），旧 controller 的 in-flight connect resolve 后经
+    // onDiscard 释放、其 onClose 因代际失配 no-op；新 controller 的 establish 捕获新代。
+    generations.next();
     controller = makeController();
     controller.start();
   }
@@ -259,8 +307,10 @@ async function bootstrapWebApp() {
   controller = makeController();
   renderWebApp(services, bootstrap);
 
-  // 页面卸载时取消重连循环、清理挂起 timer，防定时器泄漏（AGENTS.md 生命周期约束）。
-  window.addEventListener("pagehide", () => controller?.cancel(), { once: true });
+  // bfcache / 真卸载生命周期（specs/web-reconnect.md R5.5）：按 event.persisted 分派 pause/cancel
+  // 与 resume，监听器成对常驻（不用 { once: true }——once 会在首次 bfcache 进入即移除，导致后续真卸载
+  // 无清理、timer 泄漏）。接线与分派逻辑抽到 reconnect/pageLifecycle.ts（可注入假事件/假 target 单测）。
+  attachWebReconnectPageLifecycle(() => controller, window);
 }
 
 void bootstrapWebApp();

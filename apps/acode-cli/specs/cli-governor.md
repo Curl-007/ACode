@@ -84,9 +84,14 @@ at-cap 判定与 evict 决策）：
 - **idle guard**：`idleSeconds * 1000 >= minVictimIdleMs`（缺省 60s）才够格
   被驱逐（蓝本 passesIdleGuard 同款）。
 - **受害者资格平台裁决**（蓝本 !isRunning/!isStopping/无 cron 等谓词的 ACode
-  收敛）：非归档 + **runtime-task 条目终态或缺席**（`isFleetSessionRunning`
-  为 false）。在跑（非终态）的会话绝不被驱逐——60s idle guard 保护 park 中
-  的 run，终态判定保护活跃 loop，双保险。
+  收敛）：非归档 + **运行态被某个已注册 App 的 runtimeTaskRegistry 正向解析为
+  present-terminal**（fail-safe floor，见 R9）。在跑（非终态）的会话绝不被驱逐
+  ——60s idle guard 保护 park 中的 run，终态判定保护活跃 loop，双保险。
+- **fail-safe floor（R9 不变量）**：会话运行态若无法从任何已注册 App 的
+  runtimeTaskRegistry 正向解析（present 条目），一律视为 unknown，绝不当 idle
+  受害候选——unknown ≠ idle。理由见 R9：跨 App 未注册或已 close 的 fleet 记录，
+  其 agentId 在任一已注册 registry 里都缺席，若按「缺席 = idle」判定，内存压力下
+  会误 stopTask 一个真在跑的会话。
 - 压力清扫循环防重入：驱逐是异步收口，peek 连续两次返回同一 sessionId 即
   break（蓝本 lastEvicted 守卫同款）；清扫数量以 demand 为上限。
 
@@ -102,6 +107,12 @@ at-cap 判定与 evict 决策）：
   `governor_would_evict`（evicted=false）记日志，不执行任何收口（蓝本
   `!!cfg.evictVictim` 同款）。端口由 fleet launch 面懒接（首个携带
   subagentPort 的 launch ctx 完成 attach），不要求 host 装配序。
+- **evictionPort 首到先得（多 App 语义）**：`attachCliGovernorEvictionPort`
+  用 `??=`——首个 fleet launch 的端口即进程驱逐事实源，后续 App 的 attach 忽略。
+  这在多 App 下安全：`stopTask` 是 app 作用域（runner.ts 闭包捕获本 app 的
+  registry，对未知/非 local_agent taskId no-op），故跨 App 最坏结果是「没能暂停
+  另一个 App 的 idle 会话」（fail-safe，无副作用），绝不会「误停另一个 App 的
+  在跑会话」。evictionPort 不做 per-App 化——它是进程级驱逐开关，不是状态所有者。
 - **同进程足迹诚实声明**（蓝本偏差根源）：ACode 空闲舰队会话常驻足迹小，
   evict 的直接内存收益有限；资源治理的主要收益在 R2 的 warm 让路（desktop
   侧少 spawn 完整 agent 进程）与 cap 对并发在册会话的约束。governor_evict
@@ -166,6 +177,55 @@ interface MemoryPressureSource {
 - 阈值常量与 R5 缺省一致（5%/2%），实现独立（跨包不共享代码：desktop 不
   依赖 @acode/core，进程也隔离）。
 
+## R9 多 App 同进程：per-App deps 注册表 + fail-safe floor
+
+**前提（真实，非假设）**：桌面 app-server 是每 workspace 一个 agent 进程、每会话
+一个 `createACodeApp`、**多 app 同进程并存**——证据：`specs/gen-ui-visualize.md`
+「注册表绑定（2026-10-12 实机修复：多 app 进程）」Bug 6（单一 activeStore 单例导致
+last-writer-wins + 跨 app dispose 腐败，修复为 sessionId 键控注册表）。CLI-04 的
+MCP 审计 / worktree 围栏 sink 会话化也是按此前提行动。（`specs/subagent-policy-floor-inheritance.md`
+「不在本项范围」小节旧断言「多 app 同进程不存在」是过时前提，已按其证据订正——
+该 spec 的范围排除保留，仅订正前提文字。）
+
+**状态所有者**：governor 单例（cap、10s unref 轮询、驱逐端口）是**进程级**事实源，
+唯一所有者；但每个 App 的 `runtimeTaskRegistry` / `logger` 是**app 作用域**依赖，
+必须按 App 注册、按 App 释放——不能让先建单例把后到 App 的 deps 快照丢弃。
+
+**deps 注册表（照 CLI-04 sink 范式）**：
+- `registerCliGovernorAppDeps(appId, deps): () => void`——create-app 装配期以
+  `sessionId` 为 appId 注册；返回**幂等释放函数**（实例身份校验：同 appId 后来者
+  覆盖后，早注册者的迟到释放不误删，对齐 `unregisterVisualizationFragmentStore`
+  的「迟到 dispose 不得清掉新 app 绑定」纪律）。create-app close 路径与启动失败
+  路径都调用释放（next to 4 个 CLI-04 sink 释放）。
+- `configureCliGovernor(deps)` 保留为**无 appId 的兼容面**，登记到进程缺省键
+  （测试与未迁移调用点）。
+- peek / logger / now / totalMemoryBytes / pressureSource 在 `getCliGovernor`
+  里走注册表**动态解析**（每次调用读当前并集），不再把某个 App 的 deps 快照进
+  闭包——第二个 App 注册后无需重建单例即生效（根治旧「构造期 `const deps =
+  configuredDeps` → 后到 App 被静默丢弃」的根因）。
+
+**在跑判定 = 并集（union）**：`peekFleetLruIdleVictim` 对每条 fleet 记录，迭代
+**所有已注册 App** 的 `runtimeTaskRegistry`：
+- 任一 registry 报 present-non-terminal → **running**（绝不驱逐）；
+- 无在跑但至少一个 registry 报 present-terminal → **idle**（够格候选）；
+- 所有已注册 registry 都无该 agentId 条目 → **unknown**（fail-safe floor：绝不当
+  idle 候选）。
+
+**为何用并集而非「按记录解析 owning app」**：`FleetSessionRecord`（registry.ts）
+**不携带 owning-app/host 身份**，只有 `launchedBySessionId`——无法按记录精确定位
+它属于哪个 App 的 registry，除非给记录加身份字段（越界改动）。并集是保守正确解：
+「任一 App 里在跑即在跑」，且无需扩张记录 schema。
+
+**为何 floor 不误伤合法驱逐**：真正 idle 的舰队会话在其 owning App registry 里是
+**present-terminal**——runner.ts 完成走 `registry.update(status:"completed")`（条目
+留在册），`registry.remove()` 只在启动失败/abort（那时还没有 fleet 记录——记录仅
+在 launch 成功返回后写入，session-fleet.md R3）或 archive/delete（那同时归档/删记录，
+记录已非 active）触发。故「absent 于所有已注册 registry」只发生在跨 App（owning app
+未注册 / 已 close 释放）——正是 floor 要挡的情形，不会挡住同 App 的合法 idle 受害。
+
+**evictionPort 不 per-App 化**：见 R4「首到先得（多 App 语义）」——它是进程级驱逐
+开关，`stopTask` app 作用域 + 对未知 taskId no-op，跨 App 失败方向是 fail-safe。
+
 ## 验收场景（测试钉住）
 
 1. **cap 公式**：24GiB → 8；18GiB → 6；8GiB → 6（floor 兜底）；48GiB → 16。
@@ -195,6 +255,17 @@ interface MemoryPressureSource {
 13. **desktop 让路钩子**：3 targets + ratio 0.03 → 只留 primary 且日志含
     level；ratio 0.5 → 3 个全放行；空/单 target 原样返回；60s 内重复调用
     日志只记一次。
+14. **多 App 在跑保护（R9 union）**：App#1 注册 governor deps（registry A）；
+    App#2 的 fleet 会话在 App#2 registry B 里 present-non-terminal（在跑），
+    但**缺席** registry A → `peekFleetLruIdleVictim` 绝不选它（并集判 running）。
+    负例：临时把 union 改成只读单一 registry → 该会话被误当 idle 选出 → 测试红。
+15. **多 App fail-safe floor（R9 unknown ≠ idle）**：App#2 close 释放其 deps
+    （registry B 从并集移除）后，App#2 的 fleet 记录仍在进程级 FleetRegistry，
+    但其 agentId 已无任何已注册 registry 能正向解析 → 判 unknown → 绝不当 idle
+    受害候选（peek 不选它）。
+16. **多 App 幂等释放不误删**：同 sessionId 的 App#2'（新 app 接管）重新注册后，
+    App#2 的迟到释放（实例身份校验）不删 App#2' 的注册项——App#2' 的会话仍受
+    并集保护。
 
 ## 非目标
 

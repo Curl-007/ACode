@@ -262,7 +262,8 @@ turn 编排（唯一写入方）
 | `lastAssistantCompletedAtMs` | 最近 assistant 完成时间戳 | 批次 3（单值游标，最简单） |
 
 其余 4 簇（`RuntimeContextMemoryState` / `RuntimeMessageProjectionState` / `RuntimeCacheDiagnosticsState`
-以及 `RuntimeTurnState` 上述剩余）约 46 个扁平字段，按「时序不变量密度」优先级分批：TurnState 剩余 →
+以及 `RuntimeTurnState` 上述剩余）28 个扁平字段（ContextMemory 19 + MessageProjection 5 +
+CacheDiagnostics 4；含 TurnState 剩余 5 个则共 33），按「时序不变量密度」优先级分批：TurnState 剩余 →
 ContextMemory（并发初始化最密）→ MessageProjection/CacheDiagnostics（派生游标，最低优先）。
 
 **长期方案（review R1-01 建议，本切片未做，需单独立项）**：把「原型注入 + `this: AgentRuntimeInternal`」

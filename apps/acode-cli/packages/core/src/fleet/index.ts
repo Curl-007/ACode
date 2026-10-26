@@ -51,12 +51,13 @@ export {
   type FleetSpawnSlotGate,
 } from "./session-launch.js";
 // WI-E4（specs/cli-governor.md）：内存压力会话治理——机制在 runtime/cli-governor，
-// 舰队组合面（单例/驱逐端口懒接/LRU peek）在这里。
+// 舰队组合面（单例/驱逐端口懒接/LRU peek/per-App deps 注册表）在这里。
 export {
   attachCliGovernorEvictionPort,
   configureCliGovernor,
   getCliGovernor,
   peekFleetLruIdleVictim,
+  registerCliGovernorAppDeps,
   resetCliGovernorForTest,
   type CliGovernorEvictionPort,
   type FleetGovernorDeps,

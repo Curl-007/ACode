@@ -42,7 +42,7 @@ async function fixture(t, legacySources = {}) {
   return cwd;
 }
 
-async function protocolBoundaryFixture(t, commandImport) {
+async function protocolBoundaryFixture(t, commandImport, extraFiles = {}) {
   const cwd = await mkdtemp(join(tmpdir(), "acode-architecture-protocol-boundary-"));
   t.after(() => rm(cwd, { recursive: true, force: true, maxRetries: 8, retryDelay: 60 }));
   const files = {
@@ -56,6 +56,9 @@ async function protocolBoundaryFixture(t, commandImport) {
       `import { schema } from "${commandImport}";\nexport { schema };\n`,
     "packages/shared/src/acode-protocol/index.ts": "export const schema = {};\n",
     "packages/shared/src/acode-protocol-shared.ts": "export const schema = {};\n",
+    "packages/shared/src/acode-protocol-legacy-types.ts":
+      "export const acodeWorkspaceRefSchema = {};\nexport const acodeSchemaToBeDeletedAtM4 = {};\n",
+    ...extraFiles,
   };
   for (const [file, source] of Object.entries(files)) {
     await mkdir(join(cwd, file, ".."), { recursive: true });
@@ -172,6 +175,72 @@ test("architecture boundary: shared v4 cannot import the legacy protocol barrel"
   );
   const accepted = await checkArchitecture({ cwd });
   assert.equal(accepted.newViolations.length, 0);
+});
+
+// 26R2-03：v4 → acode-protocol-legacy-types.ts（同级幸存文件）边界。旧谓词尾斜杠目录前缀
+// 漏掉该文件，故守护扩展为 barrel 全禁 + legacy-types 符号级白名单。fixture 的 legacy-types.ts
+// 导出一个白名单幸存符号（acodeWorkspaceRefSchema）与一个「M4 将删除」的非白名单符号
+// （acodeSchemaToBeDeletedAtM4），分别演练放行与拦截。
+
+test("architecture boundary: v4→legacy-types 白名单幸存符号放行", async (t) => {
+  const cwd = await protocolBoundaryFixture(t, "../acode-protocol-shared.js", {
+    "packages/shared/src/acode-protocol-v4/transport.ts":
+      'import { acodeWorkspaceRefSchema } from "../acode-protocol-legacy-types.js";\n' +
+      "export { acodeWorkspaceRefSchema };\n",
+  });
+  const result = await checkArchitecture({ cwd });
+  const violations = result.newViolations.filter(
+    (item) => item.rule === "v4-imports-legacy-protocol",
+  );
+  assert.equal(violations.length, 0);
+  assert.equal(result.newViolations.length, 0);
+});
+
+test("architecture boundary: v4→legacy-types 非白名单新符号被拦截（真负例）", async (t) => {
+  const cwd = await protocolBoundaryFixture(t, "../acode-protocol-shared.js", {
+    "packages/shared/src/acode-protocol-v4/new-consumer.ts":
+      // acodeSchemaToBeDeletedAtM4 不在冻结白名单内：这是 M4 会甄别删除的符号，
+      // 旧谓词完全不覆盖 legacy-types.ts 故此边曾静默通过；扩展后必须报违规。
+      'import { acodeSchemaToBeDeletedAtM4 } from "../acode-protocol-legacy-types.js";\n' +
+      "export { acodeSchemaToBeDeletedAtM4 };\n",
+  });
+  const result = await checkArchitecture({ cwd });
+  const violations = result.newViolations.filter(
+    (item) => item.rule === "v4-imports-legacy-protocol",
+  );
+  assert.equal(violations.length, 1);
+  assert.ok(violations[0].file.endsWith("packages/shared/src/acode-protocol-v4/new-consumer.ts"));
+  assert.match(violations[0].message, /acodeSchemaToBeDeletedAtM4/);
+});
+
+test("architecture boundary: v4→legacy-types namespace import 整体依赖 fail-closed", async (t) => {
+  const cwd = await protocolBoundaryFixture(t, "../acode-protocol-shared.js", {
+    "packages/shared/src/acode-protocol-v4/namespace.ts":
+      // `import * as` 拉入全部符号（含 M4 将删除者），无法按符号白名单收窄 → 报违规。
+      'import * as legacy from "../acode-protocol-legacy-types.js";\n' +
+      "export { legacy };\n",
+  });
+  const result = await checkArchitecture({ cwd });
+  const violations = result.newViolations.filter(
+    (item) => item.rule === "v4-imports-legacy-protocol",
+  );
+  assert.equal(violations.length, 1);
+});
+
+test("architecture boundary: 白名单符号与非法符号混在同一条 import 仍报违规", async (t) => {
+  const cwd = await protocolBoundaryFixture(t, "../acode-protocol-shared.js", {
+    "packages/shared/src/acode-protocol-v4/mixed.ts":
+      'import { acodeWorkspaceRefSchema, acodeSchemaToBeDeletedAtM4 } from "../acode-protocol-legacy-types.js";\n' +
+      "export { acodeWorkspaceRefSchema, acodeSchemaToBeDeletedAtM4 };\n",
+  });
+  const result = await checkArchitecture({ cwd });
+  const violations = result.newViolations.filter(
+    (item) => item.rule === "v4-imports-legacy-protocol",
+  );
+  // 违规 message 只列未登记符号，不列已放行的白名单符号。
+  assert.equal(violations.length, 1);
+  assert.match(violations[0].message, /acodeSchemaToBeDeletedAtM4/);
+  assert.ok(!violations[0].message.includes("acodeWorkspaceRefSchema"));
 });
 
 test("architecture resolution follows workspace package names through static and dynamic imports", async (t) => {

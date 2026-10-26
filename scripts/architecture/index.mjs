@@ -6,6 +6,7 @@ import { cycleViolations } from "./graph.mjs";
 import { architectureCoverage } from "./coverage.mjs";
 import { countPhysicalLines, gitHeadLineCount, RATCHET_EXEMPT_PATTERN } from "./ratchet.mjs";
 import { changedFilesFromGit, readBaseline, updateBaseline } from "./state.mjs";
+import { v4LegacyProtocolBoundaryViolation } from "./protocol-boundary.mjs";
 
 import {
   countPublicMethods,
@@ -39,14 +40,9 @@ function repoRelative(file) {
   return rel.startsWith("..") ? file : rel;
 }
 
-function isSharedV4ToLegacyProtocolImport(file, target, cwd) {
-  const importer = posix(path.relative(cwd, file));
-  const imported = posix(path.relative(cwd, target));
-  return (
-    importer.startsWith("packages/shared/src/acode-protocol-v4/") &&
-    imported.startsWith("packages/shared/src/acode-protocol/")
-  );
-}
+// v4 → legacy 协议面反向依赖守护已抽至 protocol-boundary.mjs（26R2-03：边界须同时覆盖
+// barrel 目录与同级幸存文件 acode-protocol-legacy-types.ts，后者按符号白名单判定，
+// 需要 specifier 与源码做 AST 分析，故独立成模块）。
 
 // legacy ratchet 的豁免面：测试/评测文件不参与「超限文件只减不增」基线，
 // 避免门禁阻碍补测试（长测试文件是常态，且测试不是生产代码债）。
@@ -266,14 +262,21 @@ export async function checkArchitecture({ cwd = process.cwd(), changedFiles = nu
         }
         continue;
       }
-      if (isSharedV4ToLegacyProtocolImport(file, target, cwd)) {
+      const legacyProtocolViolation = v4LegacyProtocolBoundaryViolation({
+        file,
+        target,
+        cwd,
+        specifier,
+        source,
+      });
+      if (legacyProtocolViolation) {
         violations.push(
           violation({
             rule: "v4-imports-legacy-protocol",
             file,
             detail: target,
             module,
-            message: "protocol v4 不能反向依赖 legacy acode-protocol；共享 schema 必须位于中立模块",
+            message: legacyProtocolViolation,
           }),
         );
       }

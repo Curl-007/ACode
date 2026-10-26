@@ -689,26 +689,47 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          # 免安装版解压后应含主可执行文件与 resources/app.asar（证明 zip 非损坏、结构完整）。
-          # 解压到子目录，避免污染上层 assets 的 *.exe（签名校验只针对 nsis 安装包）。
+          # 免安装版解压后应含主可执行文件（按产品名 ACode.exe 精确断言）与 resources/app.asar
+          # （证明 zip 非损坏、结构完整）。26R2-03：旧检查 `Get-ChildItem -Filter '*.exe' |
+          # Select-Object -First 1` 只证明「存在某个 exe」——若主 exe 改名/缺失而其他辅助 exe
+          # 在场仍会通过。改为按 electron-builder productName（production 身份 = ACode，见
+          # packages/desktop/scripts/desktop-product-identity.mjs）精确断言 ACode.exe。
+          # 解压到子目录，避免污染上层 assets 的 *.exe（顶层签名校验只针对 nsis 安装包）。
           $zip = "$env:RUNNER_TEMP\assets\ACode-${env:VERSION}-win-${{ matrix.arch }}.zip"
           $dest = "$env:RUNNER_TEMP\assets\zip-extracted"
           Expand-Archive -LiteralPath $zip -DestinationPath $dest -Force
-          $exe = Get-ChildItem -LiteralPath $dest -Filter '*.exe' -File | Select-Object -First 1
-          if (-not $exe) { Write-Host "::error::no .exe found in portable zip"; exit 1 }
+          $exe = Join-Path $dest 'ACode.exe'
+          if (-not (Test-Path -LiteralPath $exe)) { Write-Host "::error::ACode.exe not found in portable zip"; exit 1 }
           $asar = Join-Path $dest 'resources\app.asar'
           if (-not (Test-Path -LiteralPath $asar)) { Write-Host "::error::resources/app.asar missing in portable zip"; exit 1 }
-          Write-Host "portable zip OK: $($exe.Name) + resources/app.asar present"
+          Write-Host "portable zip OK: ACode.exe + resources/app.asar present"
 
       - name: Verify Authenticode signature (Windows, signing enabled)
         if: matrix.os == 'win' && env.WIN_SIGNING == 'true'
         shell: pwsh
         run: |
-          $exe = Get-ChildItem "$env:RUNNER_TEMP\assets\*.exe" | Select-Object -First 1
-          $sig = Get-AuthenticodeSignature -FilePath $exe.FullName
-          Write-Host "Authenticode status: $($sig.Status); signer: $($sig.SignerCertificate.Subject)"
-          if ($sig.Status -ne 'Valid') {
-            Write-Host "::error::installer signature is $($sig.Status), expected Valid"
+          $ErrorActionPreference = 'Stop'
+          # 顶层 nsis 安装包签名。
+          $installer = Get-ChildItem "$env:RUNNER_TEMP\assets\*.exe" | Select-Object -First 1
+          $installerSig = Get-AuthenticodeSignature -FilePath $installer.FullName
+          Write-Host "installer Authenticode status: $($installerSig.Status); signer: $($installerSig.SignerCertificate.Subject)"
+          if ($installerSig.Status -ne 'Valid') {
+            Write-Host "::error::installer signature is $($installerSig.Status), expected Valid"
+            exit 1
+          }
+          # 便携 zip 内层 ACode.exe 签名（26R2-03）：zip 与 nsis 共用同一 win-unpacked app
+          # 目录，签名开启时内层 exe 也应已签名。此前只校验顶层安装包，内层便携 exe 的
+          # Authenticode 即便 WIN_SIGNING=true 也不检查（旧注释刻意把签名限定于顶层 nsis）。
+          # 结构检查步已把 zip 解压到 zip-extracted，这里按名显式校验内层 exe。
+          $portable = Join-Path "$env:RUNNER_TEMP\assets\zip-extracted" 'ACode.exe'
+          if (-not (Test-Path -LiteralPath $portable)) {
+            Write-Host "::error::portable ACode.exe missing for signature check: $portable"
+            exit 1
+          }
+          $portableSig = Get-AuthenticodeSignature -FilePath $portable
+          Write-Host "portable Authenticode status: $($portableSig.Status); signer: $($portableSig.SignerCertificate.Subject)"
+          if ($portableSig.Status -ne 'Valid') {
+            Write-Host "::error::portable ACode.exe signature is $($portableSig.Status), expected Valid"
             exit 1
           }
 

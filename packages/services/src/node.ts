@@ -2465,7 +2465,7 @@ export function createLocalServices(options: {
         }
       })
       .catch((error) => {
-        acodeJwtLogoutLogger.warn("ACode JWT logout failed", { error });
+        acodeJwtLogoutLogger.warn(undefined, "ACode JWT logout failed", { error });
       });
   };
   // Desktop Host 曾从 Settings View 再扫描一次 Account Provider，既绕开
@@ -2730,13 +2730,13 @@ export function createLocalServices(options: {
   void providerRuntime.start().then(
     () => {
       const snapshot = providerRuntime.registryService.getSnapshot()!;
-      log.info("Provider Registry 已就绪", {
+      log.info(undefined, "Provider Registry 已就绪", {
         configRevision: snapshot.sourceRevisions.config,
         providerCount: snapshot.registry.providers.length,
       });
     },
     (error: unknown) => {
-      log.error("Provider 配置事实初始化失败", error);
+      log.error(undefined, "Provider 配置事实初始化失败", error);
     },
   );
 

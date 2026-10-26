@@ -263,6 +263,7 @@ export async function startOffPeakMockGateway(
     tickets.set(ticket.ticketId, ticket);
     latestByTask.set(taskId, ticket.ticketId);
     deps.logger.info(
+      undefined,
       `mock gateway take task=${taskId} ticket=${ticket.ticketId} state=${ticket.state}`,
     );
     json(res, 200, {
@@ -356,6 +357,7 @@ export async function startOffPeakMockGateway(
       ticket.state = "active";
       ticket.activeDeadline = now + config.activeMs;
       deps.logger.info(
+        undefined,
         `mock gateway admitted ticket=${ticketId} activeDeadline=${ticket.activeDeadline}`,
       );
     }
@@ -399,7 +401,7 @@ export async function startOffPeakMockGateway(
     try {
       upstream = await deps.resolveUpstream();
     } catch (error) {
-      deps.logger.warn("mock gateway resolveUpstream failed:", error);
+      deps.logger.warn(undefined, "mock gateway resolveUpstream failed:", error);
       upstream = null;
     }
     if (!upstream) {
@@ -450,7 +452,7 @@ export async function startOffPeakMockGateway(
       }
       res.end();
     } catch (error) {
-      deps.logger.warn("mock gateway upstream proxy failed:", error);
+      deps.logger.warn(undefined, "mock gateway upstream proxy failed:", error);
       json(res, 502, { code: 2001, msg: "mock upstream proxy failed" });
     }
   }
@@ -498,7 +500,7 @@ export async function startOffPeakMockGateway(
       }
       json(res, 404, { msg: `no mock route for ${url}` });
     })().catch((error) => {
-      deps.logger.warn("mock gateway handler failed:", error);
+      deps.logger.warn(undefined, "mock gateway handler failed:", error);
       try {
         json(res, 500, { msg: "mock gateway internal error" });
       } catch {
@@ -522,7 +524,7 @@ export async function startOffPeakMockGateway(
       // 多窗口：另一个 host 已起网关，共用它的票据状态（票在共享 sqlite 里跨 host 流转，
       // mock 状态必须单实例，否则 A 取的票在 B 的网关查不到）。
       const origin = `http://127.0.0.1:${requestedPort}`;
-      deps.logger.info(`off-peak mock gateway reusing existing instance at ${origin}`);
+      deps.logger.info(undefined, `off-peak mock gateway reusing existing instance at ${origin}`);
       return {
         origin,
         port: requestedPort,
@@ -537,7 +539,7 @@ export async function startOffPeakMockGateway(
     throw new Error("off-peak mock gateway failed to bind");
   }
   const origin = `http://127.0.0.1:${address.port}`;
-  deps.logger.info(`off-peak mock gateway listening at ${origin}`);
+  deps.logger.info(undefined, `off-peak mock gateway listening at ${origin}`);
   return {
     origin,
     port: address.port,

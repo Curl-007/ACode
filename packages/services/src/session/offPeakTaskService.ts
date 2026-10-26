@@ -138,7 +138,7 @@ export class OffPeakTaskService implements IOffPeakTaskService {
     try {
       this.deps.onTasksChanged?.();
     } catch (error) {
-      this.deps.logger.warn("off-peak onTasksChanged 回调失败:", error);
+      this.deps.logger.warn(undefined, "off-peak onTasksChanged 回调失败:", error);
     }
   }
 
@@ -251,6 +251,7 @@ export class OffPeakTaskService implements IOffPeakTaskService {
       };
     }
     this.deps.logger.info(
+      undefined,
       `off-peak task created id=${offPeakTaskId} ticket=${ticket.ticketId} state=${ticket.state}`,
     );
     this.emitChanged();
@@ -259,7 +260,7 @@ export class OffPeakTaskService implements IOffPeakTaskService {
       try {
         this.deps.requestSchedulerWake?.();
       } catch (error) {
-        this.deps.logger.warn("off-peak scheduler wake failed after create:", error);
+        this.deps.logger.warn(undefined, "off-peak scheduler wake failed after create:", error);
       }
     }
     return {
@@ -291,7 +292,7 @@ export class OffPeakTaskService implements IOffPeakTaskService {
           ...(existing.workspaceIdentity ? { workspaceIdentity: existing.workspaceIdentity } : {}),
         });
       } catch (error) {
-        this.deps.logger.warn(`off-peak cancel stop loop failed task=${offPeakTaskId}:`, error);
+        this.deps.logger.warn(undefined, `off-peak cancel stop loop failed task=${offPeakTaskId}:`, error);
       }
     }
     this.emitChanged();
@@ -335,6 +336,7 @@ export class OffPeakTaskService implements IOffPeakTaskService {
       } catch (error) {
         // 状态查询失败按票活处理，交给轮询兜底；不在 Continue 上白耗一次取号额度。
         this.deps.logger.warn(
+          undefined,
           `off-peak continue status check failed task=${offPeakTaskId}:`,
           error,
         );
@@ -457,6 +459,7 @@ export class OffPeakTaskService implements IOffPeakTaskService {
     });
     if (!requeued) {
       this.deps.logger.info(
+        undefined,
         `off-peak ticket-expired requeue dropped (not running) task=${offPeakTaskId}`,
       );
       return;
@@ -482,11 +485,12 @@ export class OffPeakTaskService implements IOffPeakTaskService {
       });
       if (ticket.state === "ready") this.deps.requestSchedulerWake?.();
       this.deps.logger.info(
+        undefined,
         `off-peak re-take ticket task=${offPeakTaskId} ticket=${ticket.ticketId} state=${ticket.state}`,
       );
     } catch (error) {
       // 取号失败（额度/网络）不终态化——任务留在 queued，下个轮询周期发现无有效票再补取。
-      this.deps.logger.warn(`off-peak re-take ticket failed task=${offPeakTaskId}:`, error);
+      this.deps.logger.warn(undefined, `off-peak re-take ticket failed task=${offPeakTaskId}:`, error);
     }
   }
 
@@ -513,7 +517,7 @@ export class OffPeakTaskService implements IOffPeakTaskService {
     try {
       this.deps.onDispose?.();
     } catch (error) {
-      this.deps.logger.warn("off-peak onDispose 清理失败:", error);
+      this.deps.logger.warn(undefined, "off-peak onDispose 清理失败:", error);
     }
   }
 
@@ -583,6 +587,7 @@ export class OffPeakTaskService implements IOffPeakTaskService {
         OFF_PEAK_SYNC_MAX_INTERVAL_MS,
       );
       this.deps.logger.warn(
+        undefined,
         `off-peak sync cycle failed (attempt ${this.consecutiveSyncFailures}):`,
         error,
       );
@@ -673,7 +678,7 @@ export class OffPeakTaskService implements IOffPeakTaskService {
         return;
       }
       // 网络/5xx：保持未核销，下个周期捎带补报（不新增计时器）。
-      this.deps.logger.warn(`off-peak settle failed ticket=${task.serverTicketId}:`, error);
+      this.deps.logger.warn(undefined, `off-peak settle failed ticket=${task.serverTicketId}:`, error);
     }
   }
 }

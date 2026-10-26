@@ -231,7 +231,7 @@ export class OAuthService implements IOAuthService {
     // provider access token，会把原本后台执行的 BigModel profile 迁移重新阻塞到首屏恢复链路。
     const acodeJwtToken = (await this.credentialService.load(ACODE_JWT_TOKEN_KEY))?.trim() ?? "";
     if (acodeJwtToken && resolveJwtExpiration(acodeJwtToken, this.now()).kind === "expired") {
-      serviceLog.info("cached session invalidated because acode JWT expired", {
+      serviceLog.info(undefined, "cached session invalidated because acode JWT expired", {
         provider: activeProvider,
       });
       const invalidated = await this.invalidateExpiredCachedSession(
@@ -308,7 +308,7 @@ export class OAuthService implements IOAuthService {
       ) {
         // 启动恢复读取过期凭据后，新登录或 provider 切换可能已经完成；
         // 旧恢复任务只能清理仍与其快照完全一致的会话，不能误删刚写入的新认证状态。
-        serviceLog.info("skipped stale expired JWT session invalidation", {
+        serviceLog.info(undefined, "skipped stale expired JWT session invalidation", {
           provider: expectedProvider,
         });
         return false;
@@ -325,7 +325,7 @@ export class OAuthService implements IOAuthService {
       await this.notifyProviderLogout(expectedProvider, expectedProfile.id);
     } catch (error) {
       // JWT 已过期时主认证事实必须先失效；派生 provider 清理失败不能把 UI 留在伪登录态。
-      serviceLog.warn("expired JWT derived provider cleanup failed", {
+      serviceLog.warn(undefined, "expired JWT derived provider cleanup failed", {
         provider: expectedProvider,
         error,
       });
@@ -720,7 +720,7 @@ export class OAuthService implements IOAuthService {
       },
     };
 
-    serviceLog.info("OAuth polling flow started", {
+    serviceLog.info(undefined, "OAuth polling flow started", {
       expiresInMs: timeoutMs,
       pollIntervalMs,
       provider,
@@ -776,7 +776,7 @@ export class OAuthService implements IOAuthService {
       }
       // 轮询是 deep link 丢失时的可靠路径，单次断网或 5xx 不能立即取消 flow。
       // 保留服务端下发的查询间隔，下一轮继续尝试；高频状态只记 debug，避免生产日志膨胀。
-      serviceLog.debug("OAuth polling request will retry", {
+      serviceLog.debug(undefined, "OAuth polling request will retry", {
         error: error instanceof Error ? error.message : String(error),
         provider: pending.provider,
       });
@@ -848,7 +848,7 @@ export class OAuthService implements IOAuthService {
         return { tokenSet, profile };
       });
       if (result?.kind === "session") {
-        serviceLog.info("OAuth polling flow completed", { provider: pending.provider });
+        serviceLog.info(undefined, "OAuth polling flow completed", { provider: pending.provider });
       }
       return result;
     } catch (error) {
@@ -1088,7 +1088,7 @@ export class OAuthService implements IOAuthService {
       } catch (error) {
         if (!isCurrent) throw error;
         // 凭据已经清理，派生配置失败不能吞掉原有过期提示；手动退出仍保留原错误语义。
-        serviceLog.warn("Unauthorized session provider cleanup failed", { error });
+        serviceLog.warn(undefined, "Unauthorized session provider cleanup failed", { error });
       }
     }
     return true;

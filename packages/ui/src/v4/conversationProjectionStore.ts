@@ -24,6 +24,20 @@ import type { ConversationTurnNavigatorHydrationResult } from "@/v4/conversation
 import type { ConversationTransport } from "@/v4/transport.js";
 import type { TurnIndexEntry } from "@/v4/conversationTurnIndex.js";
 import { ConversationTurnIndex } from "@/v4/conversationTurnIndex.js";
+import {
+  ConversationIndexFocusController,
+  EMPTY_INDEX_DIRECTORY,
+  IDLE_INDEX_FOCUS_STATE,
+  type IndexFocusResult,
+  type IndexFocusState,
+  type IndexFocusTarget,
+} from "@/v4/conversationIndexFocusController.js";
+import {
+  closedIndexFocusResult,
+  createIndexFocusController,
+} from "@/v4/conversationIndexFocusStoreAdapter.js";
+import type { IndexFocusRowsRangeParams } from "@/v4/conversationIndexFocusTypes.js";
+import type { IndexDirectory } from "@/v4/conversationIndexNavigation.js";
 import { uiMemoryDiagnosticsRegistry } from "@/lib/memoryDiagnostics.js";
 
 /**
@@ -142,215 +156,40 @@ const INITIAL_STATE: ConversationStoreState = {
   turnNavigatorDirectoryRevision: 0,
 };
 
-const TERMINAL_PLAN_STATUSES: ReadonlySet<ToolCallRow["status"]> = new Set([
-  "success",
-  "error",
-  "cancelled",
-]);
+// 帧分类纯函数（目录失效裁决 + subagent 跃迁日志 + 权威裁剪边界）外迁到
+// conversationProjectionFrames.ts（本文件已在 legacy ratchet 基线上、超限只减不增，
+// U07 历史焦点需要腾出行数）。
+import {
+  earliestRemovedFromRowId,
+  logSubagentProjectionTransition,
+  shouldInvalidatePlanDirectory,
+  shouldInvalidateTurnNavigatorDirectory,
+} from "@/v4/conversationProjectionFrames.js";
 
-function shouldInvalidatePlanDirectory(frame: ConversationTopicFrame): boolean {
-  if (frame.payload.kind === "snapshot") return true;
-  return frame.payload.deltas.some((delta) => {
-    if (delta.op === "row.removed") return true;
-    if (delta.op !== "row.appended" && delta.op !== "row.upserted") return false;
-    const row = delta.row;
-    return (
-      row.kind === "toolCall" &&
-      row.toolName === "ExitPlanMode" &&
-      TERMINAL_PLAN_STATUSES.has(row.status)
-    );
-  });
-}
-
-/**
- * 问题导航目录是否需要失效。
- * not-enough-queries 终态曾只以 logEpoch 判定，导致同一 epoch
- * 内追加 real-user query 后永久命中缓存。判定条件：
- * - snapshot 整体替换 → true（全新状态，终态作废）；
- * - row.removed → true（rewind/分支裁剪改变可导航 query 集合）；
- * - row.appended/row.upserted 命中 realUser userInput → true（新增/变更用户问题）；
- * - 其余 delta（assistant text、tool、reasoning 流式）→ false，不触发重探测。
- */
-function shouldInvalidateTurnNavigatorDirectory(frame: ConversationTopicFrame): boolean {
-  if (frame.payload.kind === "snapshot") return true;
-  return frame.payload.deltas.some((delta) => {
-    if (delta.op === "row.removed") return true;
-    if (delta.op !== "row.appended" && delta.op !== "row.upserted") return false;
-    const row = delta.row;
-    return row.kind === "userInput" && row.origin === "realUser";
-  });
-}
-
-function logSubagentProjectionTransition(
-  topic: string,
-  previous: ConversationSnapshot | null,
-  next: ConversationSnapshot,
-  delivery: "snapshot" | "deltas",
-): void {
-  const previousIds = previous?.subagents?.running.map((item) => item.childSessionId) ?? [];
-  const nextIds = next.subagents?.running.map((item) => item.childSessionId) ?? [];
-  if (
-    previousIds.length === nextIds.length &&
-    previousIds.every((childSessionId, index) => childSessionId === nextIds[index])
-  ) {
-    return;
-  }
-  // 交互 bug 的根因位于订阅快照交接，不在 React DOM；仅在 Agent 运行集变化时
-  // 记录轻量身份与水位，使本地复现能区分合法终态和迟到快照覆盖。
-  logger.info("[v4-store] running subagent projection changed", {
-    delivery,
-    nextBackgroundWorkIds: next.backgroundWorks
-      .filter((work) => work.kind === "subagent" && work.status === "running")
-      .map((work) => work.childSessionId ?? work.workId),
-    nextIds,
-    nextSeq: next.seq,
-    previousIds,
-    previousSeq: previous?.seq ?? null,
-    topic,
-  });
-}
-
-// ── 投影窗口双上限（specs/renderer-memory-budget.md 规则 3）──
-//
-// 全量历史常驻 renderer 是主窗口堆棘轮式增长直至 OOM 的活数据无界增长源：wire 尾窗
-// 只有 snapshotTailWindowRows(60) 行，但 loadOlder/loadAllOlder 合并历史后从不裁剪，
-// 宽窗口下 loadAllOlder 会把整条分支历史（含 CUA base64 截图的行）常驻内存。窗口因此
-// 始终保持「有界连续尾窗」：行数与字节双上限，超限从头部丢弃最旧行，
-// window[0].rowId 始终是 rowsRange 分页游标（hasOlderRows/beforeRowId 语义不变）。
-// 上限取值依据：wire 尾窗只有 snapshotTailWindowRows(60) 行，深滚动历史始终经
-// rowsRange 回拉（每页最多 rowsRangeMaxLimit(200) 行），窗口外 turn 由 turn 索引提供
-// 目录兜底，因此常驻 1200 行（≈ 6 个回拉页）已覆盖可视余量——深滚动只是多一两次
-// 分页，却把最坏常驻（含 CUA base64 截图行）压到原先的 1/3。字节上限随行数上限
-// 同比下调到 32MB（行均预算与 128MB/4000 行同量级），裁头不改变分页游标语义。
-export const PROJECTION_WINDOW_MAX_ROWS = 1200;
-export const PROJECTION_WINDOW_MAX_BYTES = 32 * 1024 * 1024;
-
-// 协议行不可变（结构变化换整行），字节估计按对象身份只算一次。
-const projectionRowBytesCache = new WeakMap<ConversationRow, number>();
-
-/**
- * 估算单行在 renderer 的驻留字节：对 row 内所有字符串字段按 UTF-16 code unit 求和
- * （row 是纯 JSON 数据，无环；纯函数，结果按行对象身份缓存）。
- * CUA 截图以 base64 dataUrl 字符串内嵌在 toolCall input 等字段，按原长度计入——
- * 这是行字节的支配项；CJK 正文按 char 计相对 UTF-8 字节低估，但相对截图量级可忽略。
- */
-export function estimateRowBytes(row: ConversationRow): number {
-  const cached = projectionRowBytesCache.get(row);
-  if (cached !== undefined) return cached;
-  let total = 0;
-  const visit = (value: unknown): void => {
-    if (typeof value === "string") {
-      total += value.length;
-      return;
-    }
-    if (Array.isArray(value)) {
-      for (const item of value) visit(item);
-      return;
-    }
-    if (value !== null && typeof value === "object") {
-      for (const item of Object.values(value as Record<string, unknown>)) visit(item);
-    }
-  };
-  visit(row);
-  projectionRowBytesCache.set(row, total);
-  return total;
-}
-
-export interface TrimmedProjectionWindow {
-  /** 满足双上限的连续尾窗；未超限时与输入同引用（避免无谓换引用触发渲染）。 */
-  window: ConversationRow[];
-  /** 从头部裁掉的最旧行；这些行仍保留在 turn 索引中（索引登记先于裁剪）。 */
-  evicted: readonly ConversationRow[];
-}
-
-/**
- * 窗口双上限裁剪：从头部丢弃最旧行，直到行数与字节同时满足上限。
- * 不变量：裁剪后 window 仍是连续尾窗，window[0].rowId 是合法分页游标
- * （hasOlderRows / loadOlder 的 beforeRowId 语义保持正确）。
- * 极端情形：单行即超字节预算时保留尾行、不裁出空窗口——游标与最新内容优先；
- * wire 帧上限（maxFrameBytes / logicalFrameAssemblyMaxBytes）使该情形实际不可达。
- */
-export function trimProjectionWindowToLimits(
-  window: readonly ConversationRow[],
-): TrimmedProjectionWindow {
-  let totalBytes = 0;
-  for (const row of window) totalBytes += estimateRowBytes(row);
-  if (window.length <= PROJECTION_WINDOW_MAX_ROWS && totalBytes <= PROJECTION_WINDOW_MAX_BYTES) {
-    return { window: window as ConversationRow[], evicted: [] };
-  }
-  let cut = 0;
-  while (
-    cut < window.length - 1 &&
-    (window.length - cut > PROJECTION_WINDOW_MAX_ROWS || totalBytes > PROJECTION_WINDOW_MAX_BYTES)
-  ) {
-    const oldest = window[cut];
-    if (oldest === undefined) break;
-    totalBytes -= estimateRowBytes(oldest);
-    cut += 1;
-  }
-  return { window: window.slice(cut), evicted: window.slice(0, cut) };
-}
-
-/** 对快照的 rows.window 应用双上限裁剪；未裁剪时原引用返回（避免无谓渲染）。 */
-function withProjectionWindowLimits(snapshot: ConversationSnapshot): ConversationSnapshot {
-  const { window, evicted } = trimProjectionWindowToLimits(snapshot.rows.window);
-  if (evicted.length === 0) return snapshot;
-  return { ...snapshot, rows: { ...snapshot.rows, window } };
-}
-
-/** 窗口是否已抵到任一上限（行数或估算字节）；封顶后 loadOlder 无法再让游标后退。 */
-function isProjectionWindowAtCap(window: readonly ConversationRow[]): boolean {
-  if (window.length >= PROJECTION_WINDOW_MAX_ROWS) return true;
-  let totalBytes = 0;
-  for (const row of window) totalBytes += estimateRowBytes(row);
-  return totalBytes >= PROJECTION_WINDOW_MAX_BYTES;
-}
-
-/**
- * 还有更早历史可拉 ⇔ 窗口首行不是全序首行（firstRowId 判定）。
- * 纯函数供 store/组件共用；快照缺失/空窗口/未知 firstRowId 一律 false。
- */
-export function hasOlderRows(snapshot: ConversationSnapshot | null): boolean {
-  if (!snapshot) return false;
-  const first = snapshot.rows.window[0];
-  if (!first || snapshot.rows.firstRowId === null) return false;
-  return first.rowId > snapshot.rows.firstRowId;
-}
-
-/**
- * 冷快照尾窗是否从一个 turn 的中间截断。turnHeader 是完整 turn 的权威起点；首行允许是
- * lightBoundary，因此不能只判断首行 kind，必须检查首个 turn 在当前窗口里是否已有 header。
- */
-export function shouldAutoLoadIncompleteLeadingTurn(
-  snapshot: ConversationSnapshot | null,
-  loadingOlder: boolean,
-): boolean {
-  if (loadingOlder || !hasOlderRows(snapshot) || !snapshot) return false;
-  // 双上限已封顶时，补拉行会被窗口裁剪原样吃掉（头部游标无法后退），继续补拉只会
-  // 空转；首 turn 缺 header 的展示降级让位于内存预算，不再为它自动补拉。
-  if (isProjectionWindowAtCap(snapshot.rows.window)) return false;
-  const leadingTurnId = snapshot.rows.window[0]?.turnId;
-  if (!leadingTurnId) return false;
-  return !snapshot.rows.window.some(
-    (row) => row.turnId === leadingTurnId && row.kind === "turnHeader",
-  );
-}
-
-/**
- * rows/range 结果并入本地窗口（合并规范）：按 rowId 键控、只收
- * 窗口首行之前的行、去重后前插；顺序键 = rowId 升序（全序保证）。
- * 返回 null 表示无可并入行（窗口无变化，调用方不换引用）；
- * older 是实际并入的行，供 turn 索引在进入窗口前登记。
- */
-function mergeOlderRows(
-  window: readonly ConversationRow[],
-  fetched: readonly ConversationRow[],
-): { window: ConversationRow[]; older: readonly ConversationRow[] } | null {
-  const firstRowId = window[0]?.rowId ?? Number.POSITIVE_INFINITY;
-  const older = fetched.filter((row) => row.rowId < firstRowId);
-  if (older.length === 0) return null;
-  return { window: [...older, ...window], older };
-}
+// 投影窗口双上限、字节估算与分页纯函数外迁到 conversationProjectionWindow.ts
+// （本文件已在 legacy ratchet 基线上、超限只减不增，U07 历史焦点需要腾出行数）。
+// 这里按原名再导出，保持既有 import 面（SessionPane / tests）逐字不变。
+export {
+  PROJECTION_WINDOW_MAX_ROWS,
+  PROJECTION_WINDOW_MAX_BYTES,
+  estimateRowBytes,
+  trimProjectionWindowToLimits,
+  hasOlderRows,
+  shouldAutoLoadIncompleteLeadingTurn,
+  withProjectionWindowLimits,
+  mergeOlderRows,
+  type TrimmedProjectionWindow,
+} from "@/v4/conversationProjectionWindow.js";
+import {
+  PROJECTION_WINDOW_MAX_ROWS,
+  PROJECTION_WINDOW_MAX_BYTES,
+  estimateRowBytes,
+  hasOlderRows,
+  mergeOlderRows,
+  shouldAutoLoadIncompleteLeadingTurn,
+  trimProjectionWindowToLimits,
+  withProjectionWindowLimits,
+} from "@/v4/conversationProjectionWindow.js";
 
 /**
  * 外部 store（useSyncExternalStore 兼容：subscribe + getState 返回稳定引用）。
@@ -457,6 +296,14 @@ export class ConversationProjectionStore {
    * 上限 TURN_INDEX_MAX_ENTRIES 条、超限丢最旧，close() 时与窗口一并释放。
    */
   private readonly turnIndex = new ConversationTurnIndex();
+  /**
+   * U07 历史焦点控制器（specs/conversation-index-navigation.md）。
+   *
+   * 懒建：构造期 `this` 尚未就绪，而控制器需要以闭包读取 store 的私有代际/快照。
+   * 它是**派生只读视图**的唯一载体，不产生 conversation 事实；与尾部共享同一个
+   * 1200 行 / 32 MiB 信封（不是各留一份再相加）。
+   */
+  private indexFocusController: ConversationIndexFocusController | null = null;
   private closed = false;
 
   constructor(
@@ -806,6 +653,9 @@ export class ConversationProjectionStore {
       this.subscriptionHasAppliedBase = true;
       this.reconcileOptimistic(committedSnapshot);
       this.reconcileAcceptedInputProjection(committedSnapshot);
+      // U07：snapshot 整体替换会把权威尾部换成一份全新窗口，其首行可能落到焦点正文
+      // 区间内。若不重算，焦点与尾部会出现重复 rowId（U07-A2「没有重复行」）。
+      this.reconcileIndexFocusAgainstTail();
       // initial 丢失时，publisher 允许完整 online snapshot 建立首个
       // applied base；其中的持久 transition 可能早于本次订阅，不能冒充实时新事件。
       // 首帧只播种观察基线，后续 online 跃迁才通知 pane。
@@ -847,13 +697,24 @@ export class ConversationProjectionStore {
         this.turnIndex.addRow(delta.row);
       }
     }
-    const removedFromRowId = frame.payload.deltas.reduce<number | null>(
-      (earliest, delta) =>
-        delta.op === "row.removed"
-          ? Math.min(earliest ?? delta.fromRowId, delta.fromRowId)
-          : earliest,
-      null,
-    );
+    const removedFromRowId = earliestRemovedFromRowId(frame);
+    if (removedFromRowId !== null) {
+      // U07：索引与聚焦一起失效（specs/conversation-index-navigation.md U07-A4）。
+      // 目录过去只按「登记序」增长，rewind/edit 移除的 query 仍留在索引里，
+      // 于是目录继续提供已不存在的入口、点击后定位到旧分支正文。
+      // 这里按权威裁剪边界同步删条目（与 apply.ts 的 row.removed 同一语义）。
+      const pruned = this.turnIndex.pruneFrom(removedFromRowId);
+      if (pruned > 0) {
+        logger.debug("[v4-store] row.removed 同步裁剪 turn 索引", {
+          fromRowId: removedFromRowId,
+          prunedEntries: pruned,
+          topic: this.topic,
+        });
+      }
+      // 焦点目标若落在被裁区间内，定位已不可达：作废焦点与在途请求，
+      // 收敛为确定的 target-missing 终态，不做无限重试（U07-A4）。
+      this.indexFocusController?.invalidateTarget(removedFromRowId);
+    }
     this.setState({
       snapshot: withProjectionWindowLimits(next),
       // row.removed 已给出权威裁剪边界，可以同步删掉缓存目录中的旧分支计划；
@@ -1112,6 +973,10 @@ export class ConversationProjectionStore {
    */
   async loadOlder(limit: number = PROTOCOL_V4_LIMITS.snapshotTailWindowRows): Promise<void> {
     if (this.closed || this.state.loadingOlder) return;
+    // U07：历史焦点生效时，「更早」方向由 focusIndexedRow/continueFocusOlder 独占。
+    // 若此处同时前插尾部行，会与焦点正文争用同一分页方向，制造重复 rowId 与滚动跳变
+    // （spec 不变量 3 / U07-A2「没有重复行」）。焦点退出后自动预取恢复既有行为。
+    if (this.indexFocusController?.isActive === true) return;
     const snapshot = this.state.snapshot;
     if (!hasOlderRows(snapshot) || !snapshot) return;
     const sessionId = parseConversationTopic(this.topic);
@@ -1160,6 +1025,10 @@ export class ConversationProjectionStore {
       this.setState({
         snapshot: { ...current, rows: { ...current.rows, window } },
       });
+      // U07：补拉可能在聚焦**之前**就已发出（自动预取），其响应在焦点提交之后落地，
+      // 于是权威尾部前插覆盖了已有焦点行 → 同一 rowId 渲染两次。焦点互斥只挡住
+      // 「聚焦期间发起补拉」，挡不住这个方向，故提交后按新尾部首行重算焦点。
+      this.reconcileIndexFocusAgainstTail();
     } catch (error) {
       // query 只读且可重发：失败不进 error 态，留给下次触发重试。
       logger.warn(
@@ -1185,6 +1054,11 @@ export class ConversationProjectionStore {
       logEpoch,
     });
     if (this.closed || this.state.loadingOlder) return stale();
+    // U07：历史焦点生效期间不得整分支补拉。两个理由——
+    // (1) 本方法会沿游标遍历全部历史，正是 spec 规则 3 明令禁止的「后台遍历」；
+    // (2) 它把历史行前插进权威尾部，与焦点争用同一分页方向，会产生重复 rowId。
+    // 焦点退出后 rail 的既有 hydration 资格判定会重新放行（不改变既有终态缓存语义）。
+    if (this.indexFocusController?.isActive === true) return stale();
     const snapshot = this.state.snapshot;
     if (!snapshot) return stale();
     // 终态必须同时匹配 logEpoch 与 directoryRevision。logEpoch 表示日志代际，
@@ -1519,6 +1393,127 @@ export class ConversationProjectionStore {
     return this.turnIndex.byteEstimate;
   }
 
+  // ── U07 目录索引与窗口外跳转（specs/conversation-index-navigation.md）──
+  //
+  // 宿主适配层在 conversationIndexFocusStoreAdapter.ts（本文件已在 legacy ratchet 基线上，
+  // 适配代码约 50 行必须留在 store 之外）。这里只暴露 store 的只读事实与裁尾回调。
+
+  private getIndexFocus(): ConversationIndexFocusController {
+    if (this.indexFocusController === null) {
+      const sessionId = parseConversationTopic(this.topic);
+      // 事实面全部为箭头函数，闭包直接捕获 this（不再 alias），避免 no-this-alias。
+      const controller = createIndexFocusController({
+        sessionId,
+        generation: () => this.generation,
+        isClosed: () => this.closed,
+        snapshot: () => this.state.snapshot,
+        directoryRevision: () => this.state.turnNavigatorDirectoryRevision,
+        turnIndexEntries: () => this.turnIndex.snapshotEntries(),
+        turnIndexEvictionCount: () => this.turnIndex.evictionCount,
+        turnIndexByteEstimate: () => this.turnIndex.byteEstimate,
+        turnIndexSize: () => this.turnIndex.size,
+        rowsRange: (params: IndexFocusRowsRangeParams) => this.transport.rowsRange(params),
+        applyTailTrim: (retainRows: number) => this.trimTailForIndexFocus(retainRows),
+      });
+      this.indexFocusController = controller;
+      return controller;
+    }
+    return this.indexFocusController;
+  }
+
+  /**
+   * 焦点争用共享信封时裁尾（spec「窗口语义裁决」步骤 2）。
+   *
+   * 只在信封真的装不下时被调用；被裁行仍留在 turn 索引中（目录与回拉依据不丢），
+   * 且下限由控制器按「60 与运行中 turn 行数」的较大者算出，永不裁进当前运行 turn。
+   */
+  private trimTailForIndexFocus(retainRows: number): void {
+    const snapshot = this.state.snapshot;
+    if (!snapshot) return;
+    const window = snapshot.rows.window;
+    const start = Math.max(0, window.length - Math.max(0, retainRows));
+    if (start === 0) return;
+    logger.debug("[v4-store] 历史焦点争用共享信封，裁剪尾部头部", {
+      evictedRows: start,
+      retainedRows: window.length - start,
+      topic: this.topic,
+    });
+    this.setState({
+      snapshot: { ...snapshot, rows: { ...snapshot.rows, window: window.slice(start) } },
+    });
+  }
+
+  /**
+   * 尾部窗口向后扩展后，让焦点让位（U07 不变量 3：焦点严格早于尾部首行）。
+   * 无焦点时零成本 no-op；详见 conversationIndexFocusController.reconcileAgainstTail。
+   */
+  private reconcileIndexFocusAgainstTail(): void {
+    const controller = this.indexFocusController;
+    if (controller === null) return;
+    controller.reconcileAgainstTail(this.state.snapshot?.rows.window[0]?.rowId ?? null);
+  }
+
+  /** 目录视图（0 个 rowsRange 请求，不扫描正文）；close() 后返回空目录。 */
+  getIndexDirectory(): IndexDirectory {
+    if (this.closed) return EMPTY_INDEX_DIRECTORY;
+    return this.getIndexFocus().getDirectory();
+  }
+
+  /** 焦点派生态（只读）；close() 后为 idle。 */
+  getIndexFocusState(): IndexFocusState {
+    if (this.closed) return IDLE_INDEX_FOCUS_STATE;
+    return this.getIndexFocus().getState();
+  }
+
+  /** 订阅焦点态变化（与主 state 分开，避免历史浏览触发整棵 timeline 重渲染）。 */
+  subscribeIndexFocus(listener: () => void): () => void {
+    if (this.closed) return () => {};
+    return this.getIndexFocus().subscribe(listener);
+  }
+
+  /** 定位入口（spec 接口表 focusIndexedRow）；≤3 个正文请求，超范围返回可恢复错误码。 */
+  focusIndexedRow(target: IndexFocusTarget): Promise<IndexFocusResult> {
+    if (this.closed) return Promise.resolve(closedIndexFocusResult("closed", target.rowId));
+    return this.getIndexFocus().focusIndexedRow(target);
+  }
+
+  /**
+   * 原子捕获一次点击的定位目标（sessionId + generation + logEpoch + rowId）。
+   *
+   * generation 与 snapshot 必须**同一次读取**捕获：若调用方先读 snapshot 再单独读
+   * generation，两次读取之间可能已 ++generation，捕获到的就是自相矛盾的身份。
+   * store 返回 null 表示当前无快照（草稿态 / 尚未连上），调用方据此不发请求。
+   */
+  captureIndexFocusTarget(rowId: number): IndexFocusTarget | null {
+    const snapshot = this.state.snapshot;
+    if (this.closed || !snapshot) return null;
+    const sessionId = parseConversationTopic(this.topic);
+    if (!sessionId) return null;
+    return { sessionId, generation: this.generation, logEpoch: snapshot.logEpoch, rowId };
+  }
+
+  /** 显式「继续加载更早」（spec 规则 3：超范围必须用户动作，绝不后台遍历历史）。 */
+  continueIndexFocusOlder(): Promise<IndexFocusResult> {
+    if (this.closed) return Promise.resolve(closedIndexFocusResult("closed", null));
+    return this.getIndexFocus().continueFocusOlder();
+  }
+
+  /** 返回最新（spec 接口表 returnToLive）；清焦点正文、作废在途请求。 */
+  returnToLive(): void {
+    this.indexFocusController?.returnToLive();
+  }
+
+  /** 内存诊断：焦点区行数/字节（预算断言涵盖焦点、尾部与临时 page buffer）。 */
+  indexFocusDiagnostics(): { focusRows: number; focusBytes: number } {
+    const diagnostics = this.indexFocusController?.diagnostics();
+    return { focusRows: diagnostics?.focusRows ?? 0, focusBytes: diagnostics?.focusBytes ?? 0 };
+  }
+
+  /** 目录摘要用的空文案（由 i18n 侧注入，store 不持有词典）。 */
+  setIndexDirectoryFallbackSummary(summary: string): void {
+    this.getIndexFocus().setDirectoryFallbackSummary(summary);
+  }
+
   /**
    * snapshot 整体替换时登记行进 turn 索引。logEpoch 变更（CLI 换代/重开日志）先清空：
    * rowId 只在 epoch 内单调，跨 epoch 复用会让去重集合误判，旧分支的窗口外 turn 也
@@ -1528,6 +1523,8 @@ export class ConversationProjectionStore {
     const previous = this.state.snapshot;
     if (previous && previous.logEpoch !== snapshot.logEpoch) {
       this.turnIndex.clear();
+      // 跨 epoch rowId 会重新编号：焦点目标与在途定位一并失效（spec 规则 7 / U07-A4）。
+      this.indexFocusController?.invalidate("epoch");
     }
     this.turnIndex.addRows(snapshot.rows.window);
   }
@@ -1555,6 +1552,9 @@ export class ConversationProjectionStore {
     this.modelTransitionListeners.clear();
     // specs 所有者表：投影窗口与 turn 索引在 store close() 时一并释放。
     this.turnIndex.clear();
+    // U07：焦点派生正文随 store 一并释放（spec 状态所有者表 / hidden-pane lease 规则）。
+    this.indexFocusController?.close();
+    this.indexFocusController = null;
     this.discardRecovery();
     this.awaitingInitial = null;
     this.subscriptionHasAppliedBase = false;

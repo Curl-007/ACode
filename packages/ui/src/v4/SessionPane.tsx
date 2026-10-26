@@ -33,9 +33,9 @@ import type {
   CommandAck,
   CommandEnvelope,
   CommandType,
+  ConversationRow,
   ConversationSnapshot,
   ConversationRowTarget,
-  SessionErrorInfo,
   SessionModelTransition,
   V4ConversationFileChangesResult,
 } from "@acode/shared/acode-protocol-v4";
@@ -45,7 +45,6 @@ import { useACodeIntl } from "@/i18n/IntlProvider.js";
 import { DEFAULT_CODE_PREVIEW_SETTINGS } from "@/lib/codePreviewSettings.js";
 import type { CodeViewerSource } from "@/lib/codeViewer.js";
 import type { OpenAutomationsMain } from "@/lib/taskNavigationHistory.js";
-import { WORKSPACE_FILE_DRAG_MIME } from "@/lib/workspaceFileDrag.js";
 import { buildChatSessionScrollMemoryKey } from "@/lib/chatSessionScrollMemory.js";
 import type { MessageFileLinkTarget } from "@/components/ai-elements/message.js";
 import { useServices } from "@/hooks/useServices.js";
@@ -93,6 +92,8 @@ import { shouldIgnoreEscapeForStopGeneration } from "@/v4/composer/escapeStop.js
 import { ConversationDraftEmptyState } from "@/v4/ConversationDraftEmptyState.js";
 import { ConversationDraftSuggestedPromptsContainer } from "@/v4/ConversationDraftSuggestedPromptsContainer.js";
 import { ConversationHeader, type PaneWorkspaceBadge } from "@/v4/ConversationHeader.js";
+import { ConversationIndexFocusBridge } from "@/v4/ConversationIndexFocusBridge.js";
+import { useConversationIndexFocus } from "@/hooks/useConversationIndexFocus.js";
 import { ConversationQueuePanel } from "@/v4/ConversationQueuePanel.js";
 import { projectPendingGuideQueue } from "@/v4/pendingGuideProjection.js";
 import { ConversationQuotaBanner } from "@/v4/ConversationQuotaBanner.js";
@@ -318,68 +319,22 @@ export interface SessionPaneProps {
   searchResultHighlightRequest?: ChatSearchResultHighlightRequest | null;
   onSearchResultHighlightDone?: (requestId: number) => void;
 }
-function createSessionErrorKey(
-  sessionId: string | null | undefined,
-  error: SessionErrorInfo,
-): string {
-  return [
-    sessionId?.trim() || "draft",
-    error.code,
-    error.at,
-    error.message,
-    error.traceId ?? "",
-    error.detail ?? "",
-  ].join(":");
-}
-
-const EMPTY_SUBAGENT_PROJECTION: NonNullable<ConversationSnapshot["subagents"]> = {
-  revision: 0,
-  childSessionIds: [],
-  running: [],
-  endedTotal: 0,
-};
-
-const MAX_CONVERSATION_FILE_CHANGES_CACHE_ENTRIES = 20;
-
-/** base64 → 字节（可视化卡片分块读）。renderer 里 `atob` 恒在（Chromium）。 */
-function decodeVisualizationBase64(value: string): Uint8Array<ArrayBuffer> {
-  const binary = atob(value);
-  const bytes = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index += 1) {
-    bytes[index] = binary.charCodeAt(index);
-  }
-  return bytes;
-}
-
-function toComposerUiError(
-  sessionId: string | null | undefined,
-  error: SessionErrorInfo,
-): ACodeUiError {
-  return {
-    code: error.code,
-    message: error.message,
-    ...(error.traceId ? { traceId: error.traceId } : {}),
-    ...(error.detail ? { detail: error.detail } : {}),
-    ...(error.underlyingErrorMessage
-      ? { underlyingErrorMessage: error.underlyingErrorMessage }
-      : {}),
-    ...(error.underlyingErrorDetail ? { underlyingErrorDetail: error.underlyingErrorDetail } : {}),
-    // V4 snapshot 已携带安全归因；此处透传归因字段，保证错误按安全归因聚类。
-    ...(error.attribution ? { attribution: error.attribution } : {}),
-    ...(sessionId ? { taskId: sessionId } : {}),
-  };
-}
-
+// createSessionErrorKey / EMPTY_SUBAGENT_PROJECTION / MAX_CONVERSATION_FILE_CHANGES_CACHE_ENTRIES
+// / decodeVisualizationBase64 / toComposerUiError / isConversationFileDrag
+// 已迁至 v4/session-pane/sessionPanePure.ts（纯决策/编码接缝）；此处 import 复用。
 // submissionConfigFromCommand / resolveQueuedComposerRestore / shouldRestoreQueuedComposerFromAck
 // 已迁至 v4/session-pane/commandOrchestration.ts（纯决策接缝，含单测），此处 import 复用。
-function isConversationFileDrag(dataTransfer: DataTransfer): boolean {
-  const types = Array.from(dataTransfer.types);
-  return (
-    types.includes("Files") ||
-    types.includes(WORKSPACE_FILE_DRAG_MIME) ||
-    Array.from(dataTransfer.items ?? []).some((item) => item.kind === "file")
-  );
-}
+import {
+  createSessionErrorKey,
+  decodeVisualizationBase64,
+  EMPTY_SUBAGENT_PROJECTION,
+  isConversationFileDrag,
+  MAX_CONVERSATION_FILE_CHANGES_CACHE_ENTRIES,
+  toComposerUiError,
+} from "@/v4/session-pane/sessionPanePure.js";
+
+// U07：合成 timelineRows 的稳定空引用，避免草稿/未就绪时每帧新建数组触发 memo 失效。
+const EMPTY_TIMELINE_ROWS: readonly ConversationRow[] = [];
 
 /**
  * 单 pane 竖切：订阅 → 渲染 rows → composer 发送 / stop。
@@ -559,6 +514,8 @@ export function SessionPane({
   const timelineScrollToQueryRef = useRef<
     ((target: { unitIndex: number; rowId: number }) => void) | null
   >(null);
+  // U07：目录定位的滚动落点由 timeline 解析（unitIndex 是 timeline 派生事实）。
+  const timelineScrollToRowIdRef = useRef<((rowId: number) => void) | null>(null);
   const hasExternalSummaryPanelVariantControl = Boolean(onSummaryPanelVariantOverrideChange);
   const effectiveSummaryPanelVariantOverride = hasExternalSummaryPanelVariantControl
     ? (summaryPanelVariantOverride ?? null)
@@ -3035,6 +2992,16 @@ export function SessionPane({
     !isDraft && (lease === null || sessionLeaseReady) && snapshot?.sessionId === sessionId
       ? snapshot
       : null;
+  // U07 目录索引与窗口外跳转（specs/conversation-index-navigation.md）。
+  // 焦点正文是**派生只读视图**，由 store 拥有；这里把它前插到权威尾部窗口之前，
+  // 合成一份 rows 交给 timeline。焦点严格早于尾部首行、与尾部无重复 rowId
+  // （控制器 commitFocus 已保证），因此前插不产生重复行。
+  const indexFocus = useConversationIndexFocus(sessionLeaseReady ? (lease?.store ?? null) : null);
+  const timelineFocusRows = indexFocus.focusRows;
+  const timelineRows = useMemo(() => {
+    const tailRows = timelineSnapshot?.rows.window ?? EMPTY_TIMELINE_ROWS;
+    return timelineFocusRows.length === 0 ? tailRows : [...timelineFocusRows, ...tailRows];
+  }, [timelineFocusRows, timelineSnapshot]);
   const initialDraftConfigForDiagnostics = isDraft ? resolveInitialDraftConfig() : undefined;
   // CLI V4 projection 是 running/count/manifest 的唯一权威；renderer 不再在 spawn
   // 事件后另发查询拼接第二份状态，避免并发 child 的 in-flight refresh 丢更新。
@@ -3491,6 +3458,23 @@ export function SessionPane({
       />
 
       <div className="@container/conversation relative flex min-h-0 flex-1 flex-col">
+        {/* U07 长对话目录入口（specs/conversation-index-navigation.md）。
+            浮在正文容器右上角：与左上角 pane chrome（工作区徽标/关闭）不重叠，
+            非 modal 的 Popover 打开后正文仍可独立操作（U07-A5）。仅正式会话挂载。 */}
+        {!isDraft && !readOnly && !selectionSideChat ? (
+          <div
+            data-v4-index-directory-anchor="floating"
+            className="pointer-events-none absolute right-2 top-2 z-20 flex items-center gap-1"
+          >
+            <ConversationIndexFocusBridge
+              focusApi={indexFocus}
+              scrollToRowIdRef={timelineScrollToRowIdRef}
+              scrollToBottomRef={timelineScrollToBottomRef}
+              isRunning={snapshot?.control.phase === "running"}
+              className="pointer-events-auto bg-[var(--color-popover)] shadow-md"
+            />
+          </div>
+        ) : null}
         {!isDraft ? (
           <ConversationStatusPanel
             workspacePath={workspacePath}
@@ -3591,7 +3575,8 @@ export function SessionPane({
             <ConversationTimeline
               scrollToBottomActionRef={timelineScrollToBottomRef}
               scrollToQueryActionRef={timelineScrollToQueryRef}
-              rows={timelineSnapshot?.rows.window ?? []}
+              scrollToRowIdActionRef={timelineScrollToRowIdRef}
+              rows={timelineRows}
               pendingGuides={timelineSnapshot ? pendingGuideProjection?.pendingGuides : []}
               apiRetry={timelineSnapshot?.control.apiRetry ?? null}
               totalCount={timelineSnapshot?.rows.totalCount ?? 0}

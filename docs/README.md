@@ -35,7 +35,8 @@
 | [upgrades/product-and-support-2026-10.md](upgrades/product-and-support-2026-10.md) 🔒    | 产品与支持升级项（多为提案）                                                              |
 | [upgrades/runtime-and-protocol-2026-10.md](upgrades/runtime-and-protocol-2026-10.md)     | runtime 与协议升级项（多为提案）                                                          |
 | [upgrades/quality-and-release-2026-10.md](upgrades/quality-and-release-2026-10.md) 🔒    | 质量与发布升级项（U01 已落地，其余提案）                                                  |
-| [k-series-upgrade-plan.md](k-series-upgrade-plan.md)                                     | K 系列升级计划（spec 已落，代码未实施；被 10 个 spec 当 §K1–K9 立项依据引用，故留活跃区） |
+| [k-series-upgrade-plan.md](k-series-upgrade-plan.md)                                     | K 系列升级计划（K1-K9 已全部实施；非目标项维持登记，被 spec 当 §K1–K9 立项依据引用，故留活跃区） |
+| [desktop-evolution-analysis-2026-10-26.md](desktop-evolution-analysis-2026-10-26.md)      | 桌面端功能进化分析：四个已立项未实施 U 项核验、U14 工具链裁决点、协同接线机会、建议排序       |
 
 ## 设计依据
 

@@ -324,3 +324,5 @@ export * from "./logRedactionPipeline.js";
 export * from "./sessionEgressGate.js";
 
 export * from "./remoteWorkspaceConnection.js";
+
+export * from "./localDiagnosticReport.js";

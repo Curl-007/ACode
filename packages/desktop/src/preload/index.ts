@@ -66,6 +66,8 @@ import type {
   WindowControlsOverlayReadyPayload,
   CreateTempTextAttachmentRequest,
   OpenCuaPermissionOnboardingOptions,
+  LocalDiagnosticFacts,
+  SaveDiagnosticReportResult,
 } from "@acode/shared";
 import type { PlatformChannelMap } from "@acode/shared";
 import { InternalChannels, PlatformChannels, formatACodeRendererProcessName } from "@acode/shared";
@@ -392,6 +394,21 @@ contextBridge.exposeInMainWorld("acode", {
    */
   exportSupportBundle: (): Promise<string | null> =>
     ipcRenderer.invoke(PlatformChannels.ExportSupportBundle),
+  /**
+   * U12 本地诊断（specs/local-diagnostic-report.md）：采集 Desktop 拥有的事实 DTO。
+   * 只读进程内既有事实，main 侧不 fetch/spawn/probe。
+   */
+  collectLocalDiagnostics: (): Promise<LocalDiagnosticFacts> =>
+    ipcRenderer.invoke(PlatformChannels.CollectLocalDiagnostics),
+  /**
+   * U12：保存已脱敏的报告 JSON。main 是哑 sink（不 re-parse/不改写字节）；
+   * 取消 → cancelled:true（非错误），写失败 → 稳定码（原始异常只进 main 日志）。
+   */
+  saveDiagnosticReport: (
+    json: string,
+    suggestedName: string,
+  ): Promise<SaveDiagnosticReportResult> =>
+    ipcRenderer.invoke(PlatformChannels.SaveDiagnosticReport, { json, suggestedName }),
   /** 注册 main 进程要求聚焦指定 workspace tab 的回调，返回 disposer */
   onFocusTab: (callback: (path: string) => void): (() => void) => {
     const handler = (_event: unknown, path: string) => callback(path);

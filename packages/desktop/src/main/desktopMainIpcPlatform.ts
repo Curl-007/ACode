@@ -22,6 +22,8 @@ import {
   type SaveCliMcpToUserDirectoryRequest,
   type CreateTempTextAttachmentRequest,
   type UpdateStatePayload,
+  type LocalDiagnosticFacts,
+  type SaveDiagnosticReportResult,
 } from "@acode/shared";
 
 /**
@@ -35,6 +37,10 @@ import { getInstalledEditors } from "./editors.js";
 import { getApplicationIcon } from "./applicationIcons.js";
 import { exportLogs } from "./exportLogs.js";
 import { exportSupportBundle } from "./supportBundle.js";
+import {
+  collectDesktopDiagnosticFacts,
+  saveDiagnosticReport,
+} from "./localDiagnostics.js";
 import { resolveCommunityUrl } from "./desktopCommandHandlers.js";
 import { openInEditor } from "./openInEditor.js";
 import {
@@ -546,6 +552,36 @@ export function registerPlatformIpcHandlers(options: {
         }
         return result.path ?? null;
       },
+    ),
+  );
+  // ── 本地诊断报告（U12，packages/shared/specs/local-diagnostic-report.md）──
+  // 采集 Desktop 独有的事实（os/arch 来自 Node 运行时，版本/commit 来自 bundler 注入常量，
+  // 与 about.ts 同源）；零副作用——只读进程内既有事实，不 fetch/spawn/probe。
+  ipcMain.handle(
+    PlatformChannels.CollectLocalDiagnostics,
+    wrapIpcHandle(
+      deriveIpcSyncLabel(PlatformChannels.CollectLocalDiagnostics),
+      async (): Promise<LocalDiagnosticFacts> =>
+        collectDesktopDiagnosticFacts({
+          // 语言偏好的权威源是 main 的当前应用 locale（renderer/Web 各自读取会分叉）。
+          locale: () => options.currentApplicationLocale(),
+        }),
+    ),
+  );
+  // 保存报告：main 是哑 sink（不 re-parse、不改写字节），只做大小上限校验与落盘。
+  // 错误对外只给稳定码，原始异常进 main 日志——避免把用户目录路径回传 renderer（同 R2-04 纪律）。
+  ipcMain.handle(
+    PlatformChannels.SaveDiagnosticReport,
+    wrapIpcHandle(
+      deriveIpcSyncLabel(PlatformChannels.SaveDiagnosticReport),
+      async (
+        _event: unknown,
+        payload: { json: string; suggestedName: string },
+      ): Promise<SaveDiagnosticReportResult> =>
+        saveDiagnosticReport(payload.json, payload.suggestedName, {
+          showSaveDialog: (dialogOptions) => dialog.showSaveDialog(dialogOptions),
+          logger: options.logger,
+        }),
     ),
   );
   ipcMain.handle(

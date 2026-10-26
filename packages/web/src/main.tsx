@@ -26,6 +26,10 @@ import {
   type WebReconnectController,
   type WebReconnectState,
 } from "./reconnect/index.js";
+import {
+  createWebConnectionFactsSource,
+  type WebConnectionFactsSource,
+} from "./diagnostics/webDiagnostics.js";
 
 /** connectViaWebSocket 成功返回的 services 门面类型（web 包不直接依赖 @acode/services）。 */
 type WebServices = Awaited<ReturnType<typeof connectViaWebSocket>>;
@@ -178,8 +182,12 @@ function renderWebBootstrapError(error: unknown): void {
 }
 
 /** 渲染正常 app（连接可用）：复用 web-remote-replayable 恢复路径，重挂 Root 即从 server 快照重建。 */
-function renderWebApp(services: WebServices, bootstrap: WebBootstrapResult): void {
-  const platform = createWebPlatform();
+function renderWebApp(
+  services: WebServices,
+  bootstrap: WebBootstrapResult,
+  connectionSource?: WebConnectionFactsSource,
+): void {
+  const platform = createWebPlatform(connectionSource);
   document.title = "ACode - Web + Server";
   root.render(
     <AppErrorBoundary>
@@ -259,13 +267,22 @@ async function bootstrapWebApp() {
   let lastState: WebReconnectState | null = null;
 
   /**
+   * U12 本地诊断的连接事实源：用 getter 惰性读入口已有的 controller/lastState，
+   * **不新建连接状态副本**（AGENTS.md：避免重复状态与多条写入路径）。
+   */
+  const connectionSource: WebConnectionFactsSource = createWebConnectionFactsSource({
+    getController: () => controller,
+    getLastState: () => lastState,
+  });
+
+  /**
    * 建立一个重连控制器（首次连接后、以及手动重试时各建一个；旧控制器先 cancel 再替换）。
    * onDiscard：换代/卸载丢弃的孤儿 connect 结果经此释放（dispose socket），不静默泄漏。
    */
   const makeController = (): WebReconnectController =>
     createWebReconnectController<WebServices>({
       connect: establish,
-      onReconnected: (next) => renderWebApp(next, bootstrap),
+      onReconnected: (next) => renderWebApp(next, bootstrap, connectionSource),
       onDiscard: discardServices,
       onStateChange: (state: WebReconnectState) => {
         lastState = state;
@@ -305,7 +322,7 @@ async function bootstrapWebApp() {
   }
 
   controller = makeController();
-  renderWebApp(services, bootstrap);
+  renderWebApp(services, bootstrap, connectionSource);
 
   // bfcache / 真卸载生命周期（specs/web-reconnect.md R5.5）：按 event.persisted 分派 pause/cancel
   // 与 resume，监听器成对常驻（不用 { once: true }——once 会在首次 bfcache 进入即移除，导致后续真卸载

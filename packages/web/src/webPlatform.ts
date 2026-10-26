@@ -1,6 +1,12 @@
 import { playTaskNotificationSound } from "@acode/ui";
 import type { IPlatformService, RemoteTarget } from "@acode/shared";
 import { resolveWebCommunityUrl, resolveWebHelpConfig } from "./communityUrl.js";
+import {
+  collectWebDiagnosticFacts,
+  createBrowserDownloadDeps,
+  saveWebDiagnosticReport,
+  type WebConnectionFactsSource,
+} from "./diagnostics/webDiagnostics.js";
 
 // 从 main.tsx 抽出（2026-10-22 review 修复批次）：createWebPlatform 是 Web 端
 // IPlatformService 的 fallback 适配器工厂，与入口的「启动/连接编排」是不同关注点。
@@ -11,7 +17,11 @@ async function resolveFeedbackUrl(): Promise<string | undefined> {
   return (await resolveWebHelpConfig()).feedback_url;
 }
 
-export function createWebPlatform(): IPlatformService {
+/**
+ * @param connectionSource U12 本地诊断的连接事实源（重连状态/尝试计数）。入口在首连后注入；
+ *   缺席（如渲染 bootstrap 错误屏路径）时诊断的 connection 组标 unavailable——不猜测、不伪造。
+ */
+export function createWebPlatform(connectionSource?: WebConnectionFactsSource): IPlatformService {
   return {
     canSelectFilePath: false,
     // Web 端无法打开系统目录选择框
@@ -120,6 +130,12 @@ export function createWebPlatform(): IPlatformService {
     onWindowFullscreenChanged: () => () => {},
     onTaskNotificationClick: () => () => {},
     exportLogs: () => Promise.resolve({ success: false, error: "Not supported in web mode" }),
+    // U12：Web 端也支持本地诊断报告——离线可导出客户端已知事实（build 组省略 Web 不可知的
+    // os/arch/appVersion，connection 组读重连控制器内存态）。零外联、零 probe（见 webDiagnostics.ts）。
+    collectLocalDiagnostics: () =>
+      Promise.resolve(collectWebDiagnosticFacts(connectionSource ?? null)),
+    saveDiagnosticReport: (json, suggestedName) =>
+      saveWebDiagnosticReport(json, suggestedName, createBrowserDownloadDeps()),
     captureWindowScreenshot: () => Promise.resolve(null),
     importChromeBrowserData: () =>
       Promise.resolve({

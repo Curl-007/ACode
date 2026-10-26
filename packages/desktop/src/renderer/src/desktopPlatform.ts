@@ -2,7 +2,9 @@ import { DesktopCommandIds, PlatformChannels, buildLocalMediaPreviewUrl } from "
 import type {
   ContentBreadcrumbWirePayload,
   IPlatformService,
+  LocalDiagnosticFacts,
   PlatformChannelMap,
+  SaveDiagnosticReportResult,
 } from "@acode/shared";
 
 import { desktopBrowserPlatformBridge } from "./desktopBrowserPlatformBridge.js";
@@ -37,6 +39,17 @@ type DesktopAcodeBridgeWithRecentSurface = typeof window.acode & {
   sendContentBreadcrumb?: (payload: ContentBreadcrumbWirePayload) => void;
   /** SEC-2 支持包导出（specs/log-privacy-redaction.md）；旧 preload 缺席即回退 null。 */
   exportSupportBundle?: () => Promise<string | null>;
+  /**
+   * U12 本地诊断事实采集（packages/shared/specs/local-diagnostic-report.md）。
+   * 事实由 main 进程采集（os/arch/appVersion 只有 main 可靠知道）；旧 preload 缺席即降级为
+   * buildAvailability:"unavailable"（诚实报告「本机拿不到构建事实」，不在 renderer 猜测）。
+   */
+  collectLocalDiagnostics?: () => Promise<LocalDiagnosticFacts>;
+  /** U12 保存报告 JSON；旧 preload 缺席即 UI 降级为剪贴板复制。 */
+  saveDiagnosticReport?: (
+    json: string,
+    suggestedName: string,
+  ) => Promise<SaveDiagnosticReportResult>;
 };
 
 export function createDesktopPlatform(options: {
@@ -51,6 +64,8 @@ export function createDesktopPlatform(options: {
   const syncEmbeddedEditableFocus = acodeBridge.syncEmbeddedEditableFocus;
   const sendContentBreadcrumb = acodeBridge.sendContentBreadcrumb;
   const exportSupportBundle = acodeBridge.exportSupportBundle;
+  const collectLocalDiagnostics = acodeBridge.collectLocalDiagnostics;
+  const saveDiagnosticReport = acodeBridge.saveDiagnosticReport;
   return {
     canSelectFilePath: true,
     createLocalMediaPreviewUrl: buildLocalMediaPreviewUrl,
@@ -135,6 +150,20 @@ export function createDesktopPlatform(options: {
       : undefined,
     // SEC-2：支持包导出；旧 preload 无桥时保持 undefined，UI 按缺席隐藏入口。
     exportSupportBundle: exportSupportBundle ? () => exportSupportBundle() : undefined,
+    // U12：本地诊断。collectLocalDiagnostics 是必需方法，故旧 preload 缺席时降级为
+    // build/connection 双 unavailable（诚实报告「本渲染进程拿不到构建事实」，绝不在 renderer 猜测
+    // os/arch/版本）；saveDiagnosticReport 可选，缺席即 UI 降级为剪贴板复制。
+    collectLocalDiagnostics: collectLocalDiagnostics
+      ? () => collectLocalDiagnostics()
+      : () =>
+          Promise.resolve({
+            platformType: "desktop" as const,
+            buildAvailability: "unavailable" as const,
+            connectionAvailability: "unavailable" as const,
+          }),
+    saveDiagnosticReport: saveDiagnosticReport
+      ? (json, suggestedName) => saveDiagnosticReport(json, suggestedName)
+      : undefined,
     onFocusTab: (handler) => window.acode.onFocusTab(handler),
     onNewTab: (handler) => window.acode.onNewTab(handler),
     onCloseActiveContextRequest: (handler) =>

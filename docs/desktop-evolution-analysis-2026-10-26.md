@@ -102,9 +102,11 @@
 
 ### 5.1 Overnight（K3）× 桌面通知/角标 —— 已建成的引擎缺桌面出口（🔨 实施中）
 
-- **现状**：CLI 侧 K3 已实施（`/overnight` 时间闸状态机、晨报走任务卡片 markdown、桌面 UI 可直接渲染）。但桌面出口薄：`desktopNotifications.ts` 158 行、`unreadBadge.ts` 35 行、`desktopTray.ts` 111 行——挂机任务在 App 最小化/后台完成时，晨报到达缺一条「系统通知 → 托盘角标 → 点击直达任务卡」的链路。
-- **机会**：把 K3 的晨报/交接事件接入既有通知与角标部件。同类模式已有先例（`desktopCronScheduler.ts` 在 main 侧、`keepAwakeClaims` 的多源 claim 机制），接线成本可控。
-- **量级**：估 S-M（≤3 人日），须裁决点：通知内容脱敏口径（晨报标题可含任务语义）沿用 `logPrivacy` 漏斗还是另立展示层过滤。
+- **现状**：CLI 侧 K3 已实施（`/overnight` 时间闸状态机、晨报走任务卡片 markdown、桌面 UI 可直接渲染）。桌面通知原语也在：`desktopNotifications.ts`、`unreadBadge.ts`、`desktopTray.ts`。挂机任务在 App 最小化/后台完成时，晨报到达缺一条「系统通知 → 托盘角标 → 点击直达任务卡」的链路。
+- **机会**：把 K3 的晨报/交接事件接入既有通知与角标部件。
+- **量级（本文原估 S-M「纯接线」偏乐观，实施核验后修正）**：本文初稿判为「两侧地基都已建成、缺的只是接线」，但实施期核验发现**缺口更深**——overnight 完成事件当前**根本不跨进程边界**。证据：supervisor 发 `overnight.completed/failed`（`core/src/overnight/supervisor.ts:50,234,241,269`），但 bootstrap 的 `onEvent` 只调 logger（`bootstrap/src/app/overnight-controller.ts:274-308`，无协议/host 发射）；coordinator 是 `hidden:true` 的 fork 子会话，其事件不进 sessions-index（`v4-bridge.ts:1480-1485` 无 sessions 记录）；全仓 `packages/**` grep `overnight` 只命中 slash-help 文案，**无任何协议事件/服务面/shared 类型把 overnight 状态送到桌面**。故真实成本是「新建一条 host→Main 协议通道 + bootstrap 发射点 + services reporter port」，量级 M（3-5 人日），非 S-M。
+- **实施现状（2026-10-27）**：Main 侧出口 seam 已建成并测试（`packages/desktop/src/main/overnightCompletionNotify.ts` + `specs/overnight-completion-notify.md`，12/12 测试，desktop 全套 439/439 绿）——runId 幂等、焦点闸、Main 侧本地化文案、点击路由到 parentTaskId（绕开 coordinator 不可导航问题）。但**无真实生产者**：seam 的触发信号需 `shared/channels.ts` 新增 host 事件类型 + `bootstrap/overnight-controller.ts` 发射 + services reporter port 三处跨包改动，其中 bootstrap 与 services 正被 U08 代理占用，故端到端接线**待 U08 释放文件后由主审补齐**（seam 已在 spec §7 如实登记「无生产者，不得声称端到端已通」）。
+- **附带发现（既有 K3 缺陷，非本轮引入）**：coordinator 的 `hidden:true`（`coordinator.ts:37`）从未被 fork 绑定消费——`forkCoordinatorTask` 只读 `targetMessageId` 并设 `taskType:"fork"`（`overnight-controller.ts:~180`），而 `"fork"` ∈ `TASK_LIST_SESSION_TYPES`（`task-list-session-membership.ts:12`），故 CLI 重启后冷启动 seed 会把 coordinator 投进侧栏显示为「Fork of X」——**「隐藏 coordinator」语义跨重启不成立**。修复归属 bootstrap（当前 U08 占用），登记待办。
 
 ### 5.2 资源管理器 × 卡顿归因 —— 两个诊断孤岛合成一个故事
 

@@ -175,8 +175,12 @@ Main: handleOvernightCompletionNotification(signal, targetWindow, logger, getLoc
 按任务红线「需要改他包就停下报精确 diff，不自行改」，登记如下（未实施）：
 
 1. **shared 协议**（`packages/shared/src/**`，他包所有）：新增 host→main 消息类型
-   `OvernightCompletionNotify`，载荷 `{ runId, coordinatorTaskId, parentTaskId, outcome: "completed"|"failed"|"cancelled", morningReportReady: boolean }`
-   （进 `HostMessageTypes` + `hostIncomingMessageSchema`）。
+   `OvernightCompletionNotify`，载荷 `{ runId, coordinatorTaskId, parentTaskId, outcome: "completed"|"failed"|"cancelled", morningReportReady: boolean }`。
+   **方向订正（主审 2026-10-27 核实）**：该信号是 host→main，故必须进 `HostResponseTypes`
+   （`channels.ts:661`「host process → main process 的反馈消息类型」）+ `hostResponseMessageSchema`
+   （`validation.ts`），**不是** `HostMessageTypes`（那是 main→host，`channels.ts:597`）。
+   本节原写 `HostMessageTypes` 有误，按此订正。参照同方向的既有先例
+   `WorkspaceRunningTaskCountChanged`（`channels.ts:701` + `validation.ts:786`）。
 2. **bootstrap 接线**（`apps/acode-cli/packages/bootstrap/src/app/overnight-controller.ts:274-308`，他包所有）：
    在 `onEvent` 的 `overnight.completed`/`overnight.failed` 分支，除既有日志外，经 host 的 realtime/控制通道
    向 Main 投递上述信号（需 host 暴露一个 emit 口；agent→host 边界在 `packages/desktop/src/host/**`，本包所有，

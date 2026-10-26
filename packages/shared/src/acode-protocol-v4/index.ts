@@ -7,6 +7,8 @@ export * from "./core.js";
 export * from "../background-bash-output.js";
 export * from "./rows.js";
 export * from "./toolDisplay.js";
+// U11：工具图片的受授权附件引用（ref 形态）与其形态校验；toolDisplay.ts 单向依赖它。
+export * from "./tool-media-ref.js";
 export * from "./create-workflow-display.js";
 export * from "./workflow-observation-display.js";
 export * from "./snapshot.js";

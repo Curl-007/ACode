@@ -150,6 +150,8 @@ import type {
   SessionUsageSeed,
 } from "./product-projection.js";
 import type { ConversationRowTargetAction } from "./product-projection.js";
+// U11：工具图片 ref 的读取授权（纯函数叶子，拆出不给本文件加码）。
+import { resolveAuthorizedToolMedia } from "./tool-media-authorization.js";
 import { SessionsIndexFanoutThrottle } from "./sessions-index-fanout-throttle.js";
 import { SessionsIndexPublisher } from "./sessions-index-publisher.js";
 import { SessionsIndexPublisherRegistry } from "./sessions-index-publisher-registry.js";
@@ -2277,6 +2279,18 @@ export class ConversationV4Gateway {
 
     // 旧 renderer 没有 row target，无法按消息定位持久 artifact；一旦
     // previewRef 存在就只能授权该 durable ref，不能重新放行可变的原始路径。
+    //
+    // U11：工具图片走 ref 形态时，字节不在 row 里，读取只能靠这条 ref-only 路径授权。判据是
+    // 「当前 session 的权威 toolCall row 的 node_repl_images display 是否携带该 ref」——由
+    // resolveAuthorizedToolMedia（sibling 叶子，不给本文件加码）逐字照 attachmentRead 纪律证明，
+    // 命中返回**行上的** mime/bytes（不采信 renderer 自报），越权/未命中一律 null。
+    const toolMedia = resolveAuthorizedToolMedia({
+      rows: publisher.getSnapshot().rows.window,
+      sessionId,
+      ref,
+    });
+    if (toolMedia) return { attachment: toolMedia };
+
     for (const row of publisher.getSnapshot().rows.window) {
       if (row.kind === "userInput") {
         for (const attachment of row.attachments ?? []) {

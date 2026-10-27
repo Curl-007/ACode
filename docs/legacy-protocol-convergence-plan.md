@@ -110,8 +110,47 @@
 > **结论**：M1 属「需先扩 v4 协议面」类，与 M2 同性质（见 2026-10-09 说明），**不是** 1-2 人日
 > 的机械迁移。只搬那 10 个并改名/删文件强行让 grep 归零，会留下 `readSession` /
 > `readWorkspacePresentation` 两条 legacy 读路径仍在底下活着——那是**表面通过而非收敛**，
-> 违反本仓「不假装完成」纪律。**本轮不做 M1**；正确顺序是先补 UI 侧测试与两处 v4 承接面
-> （归档单会话冷读 + TaskMeta 映射器、UI workspace-config 消费），再迁投影读路径。
+> 违反本仓「不假装完成」纪律。
+>
+> **实施进展（2026-10-28）**：M1 的两个前置件 + 第一批消费方已落地，M1 从「blocked」推进到
+> 「只剩 1 个真 import + 若干产品决策」：
+>
+> 1. **测试网（M1 先决条件）已补**：`packages/ui/test/acodeSessionProjection.test.ts`（16 测）
+>    + `modelPickerValue.test.ts`（10 测），覆盖桥的 3 个投影函数与 2 个 picker 函数，fixture
+>    经真实 zod schema 自校验。此前全仓零覆盖、验收门恒绿的问题解除。mutation 验证非空转。
+> 2. **第一个真投影消费方已迁 v4**（`useActiveTaskSnapshotMeta`）：新建 v4 归档冷读
+>    `v4/session/headerMeta`（spec `apps/acode-cli/specs/v4-session-header-meta.md`；提交
+>    `d6cfe2c6` 协议层 + `d833a776` services 端口 + `d1bcf9f9` UI 映射与 hook）。响应是
+>    「身份信封 + 投影」合成体（裸 ConversationSnapshot 缺 4 个必填身份字段，实测 snapshot.ts:524-560），
+>    不激活会话运行时、只读持久层、字段与 legacy 逐字 parity。
+> 3. **10 个 picker 消费方已搬迁**（提交 `eaa9d57a`）：`parseModelPickerValue`/`formatModelPickerValue`
+>    移到中立叶子 `packages/ui/src/lib/modelPickerValue.ts`（唯一定义），10 处 import 改指它，
+>    桥删本地定义改 import——消除重复实现。**保持 custom: 解码语义不变**（M1 头号陷阱，测试钉住）。
+> 4. **真实 import 计数 11 → 1**（`grep -l 'from "@/lib/acodeSessionProjection'` 实测）：
+>    只剩 `hooks/workspacePrepareRpc.ts` 用 `acodeWorkspacePresentationToConfigOptions`。
+>
+> **剩余（M1 未完全收口，如实登记）**：
+> - **`workspacePrepareRpc` 的迁移需产品决策**：调研实测推翻了「建 UI workspace-config 订阅库
+>   退役 legacy 广播」的原设想——① legacy `workspace_config_options_update` 广播在 **UI 侧已死**
+>   （`acodeTaskIndexSyncer.ts:1185` 仍 fire，但 desktop host 不转发 ACodeWorkspaceEvent 到
+>   renderer，UI 仅 `acodeSessionStoreWorkspaceSlice.ts:908` 一句注释引用它，无 handler）；
+>   ② v4 UI 的完整模型目录已由 **`modelSelectionService`**（provider registry 支撑，
+>   `useModelSelectionView.ts:175-195` → `providerFacadeServices.ts:334-351`）提供，与
+>   workspace-config topic 无关（该 hook 对 workspace-config 零引用）。故建 workspace-config
+>   订阅库会与 modelSelectionService 构成**第二份模型目录源**（重复状态，AGENTS.md 禁止），
+>   且无消费方。`workspacePrepareRpc` 产的是 mode-only configOptions（`presentation.mode` →
+>   单个 mode 项），其 v4 替代是「从 modelSelectionService/workspace-config 取 mode」的产品决策，
+>   不是机械搬迁。
+> - **`acodeSessionSnapshotToTaskMeta` 现零生产消费方**（第 2 项迁移后），但**刻意保留**作
+>   spec v4-session-header-meta.md §8 的回退路径；仅测试引用它，故 knip 不报。
+> - **M1 验收 grep 口径有缺陷**：`grep -l acodeSessionProjection` 现报 4 处，其中 2 处是
+>   **注释**引用（`useActiveTaskSnapshotMeta.ts:66`、`modelPickerValue.ts` 文件头来历说明），
+>   另 2 处是桥本体与新叶子。故「grep 归零」会被注释干扰，M1 收口时应改用「零 import」口径
+>   （`grep -l 'from "@/lib/acodeSessionProjection'`，现 = 1）。
+>
+> 综上：M1 的**机械可迁部分已全做完**（picker 搬迁 + 归档冷读消费方），**剩 1 个消费方
+> （workspacePrepareRpc）阻塞在产品决策**（mode 的 v4 权威源该用 modelSelectionService 还是
+> workspace-config），不在本轮范围。M1 未标记完成。
 
 ### M2 — services 双栈调用切换（可与 M1 并行）
 

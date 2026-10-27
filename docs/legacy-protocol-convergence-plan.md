@@ -42,9 +42,55 @@
 
 ### M1 — UI 旧投影收口（可与 M2 并行）
 
-- 内容：8 个 UI 消费文件从 `acodeSessionProjection` 读路径迁到 v4 snapshot/query 投影（`taskQueryCacheStore` / v4 conversation projection store 已有承接面）。
+- 内容：UI 消费文件从 `acodeSessionProjection` 读路径迁到 v4 snapshot/query 投影。
 - 验收：`git grep acodeSessionProjection -- packages/ui/src` 归零；`pnpm --filter @acode/ui test` 绿。
-- 风险：SessionPane.tsx 本身是 3,629 行上帝组件（带 max-lines 豁免），改动面大；迁移时不得顺手重构，只换投影读路径。
+- 风险：SessionPane.tsx 本身是上帝组件（带 max-lines 豁免），改动面大；迁移时不得顺手重构，只换投影读路径。
+
+> **实测订正（2026-10-27，M1 启动前调研）**：本节的三条前提经源码核验**均需修正**，且 M1
+> **不是** bounded 迁移——它阻塞在尚不存在的 v4 协议面上。逐条：
+>
+> 1. **「8 个 UI 消费文件」实为 12 个**（`grep -l acodeSessionProjection -- packages/ui/src` 实测，
+>    与进度表 2026-10-26 列的 12 一致；本节数字是 2026-10-05 基线，未随 M1 消费面增长更新）。
+> 2. **`acodeSessionProjection` 不是 legacy barrel 的 schema，而是 UI 本地迁移桥**
+>    （`packages/ui/src/lib/acodeSessionProjection.ts`，272 行，5 个导出）。barrel 里同名的
+>    `acodeSessionProjectionSchema`（`acode-protocol/index.ts:884-910`）是 legacy
+>    `acodeSessionStateSnapshotSchema` 的内部依赖，**12 个 UI 文件无一直接引它**——那是 M4 的面。
+>    故验收 grep 命中的是 UI 桥的 import 路径，不是协议 schema。
+> 3. **「`taskQueryCacheStore` / v4 conversation projection store 已有承接面」对 12 个中的 2 个为假**：
+>    - **10 个只 import 模型选择器字符串工具**（`parseModelPickerValue` / `formatModelPickerValue`），
+>      不是投影读取。且 UI 版 `parseModelPickerValue` **不是** shared 版的 re-export：它先跑
+>      `decodeCustomModelValue` 处理展示态 `custom:provider:model`（`acodeSessionProjection.ts:74-86`），
+>      而 shared 版遇到 `custom:` 串会**抛错**（无 `/` 分隔符，`model-selection.ts:48`）。
+>      因此把这 10 处 import 天真改指 `@acode/shared` 会**静默破坏自定义模型**。
+>      这 10 个是 bounded 的**搬迁**（把自定义感知的包装器移到中立 UI 模块 + 改 import），
+>      但**搬迁它们不会让验收 grep 归零**——桥文件与下面 2 个仍在，grep 依旧非零。
+>    - **2 个是真投影消费方，且 v4 承接面不存在**（三项均实测零命中）：
+>      `hooks/useActiveTaskSnapshotMeta.ts:76` 用 `acodeSessionSnapshotToTaskMeta(snapshot)`，
+>      snapshot 是 legacy `readSession` 返回的 `ACodeSessionStateSnapshot`；要迁需**先建**
+>      v4 归档/单会话一次性冷读（`V4_METHODS` 无 `readSession` 等价物，v4 conversation 是
+>      subscribe-only）**加** `ConversationSnapshot → ACodeTaskMeta` 映射器（全仓零命中）。
+>      `hooks/workspacePrepareRpc.ts:44` 用 `acodeWorkspacePresentationToConfigOptions`，
+>      数据来自 legacy `readWorkspacePresentation`；v4 workspace-config topic schema 已存在且
+>      services 已发射（`acodeTaskIndexSyncer.ts:1185`），但 **`packages/ui/src` 对其零消费**
+>      （`workspaceConfigTopic`/`WorkspaceConfigSnapshot` grep 全空）——承接面是 UI 侧空白，
+>      两个候选 store 都不合（`taskQueryCacheStore` 存 task meta 非 workspace 配置目录；
+>      `conversationProjectionStore` 是 per-conversation 非 workspace 级）。
+> 4. **M1 的第二道验收门无保护力**：全仓无任何测试引用 `acodeSessionProjection`、
+>    `acodeSessionSnapshotToTaskMeta`、`acodeWorkspacePresentationToConfigOptions` 或
+>    `parseModelPickerValue`（`packages/ui` 与 `packages/shared` 全部测试文件 grep 为空）。
+>    故 `pnpm --filter @acode/ui test` **无论迁移对错都恒绿**，捕获不到 `custom:` 回归。
+>    迁 M1 前必须先补这批测试，否则「测试绿」不构成任何证据。
+> 5. **SessionPane 的 M1 风险远低于本节所述**：它对桥的唯一牵连是 1 处
+>    `parseModelPickerValue`（`:2766`，在 `handleRecoverCustomModelSelection` 内，喂的正是
+>    `encodeCustomModelValue` 产出的 `custom:` 串）+ 1 行 import；它**不调**
+>    `acodeSessionSnapshotToTaskMeta`。故「3,629 行上帝组件改动面大」对本项不成立——
+>    真正的难点在上面第 3 条的 2 个消费方。
+>
+> **结论**：M1 属「需先扩 v4 协议面」类，与 M2 同性质（见 2026-10-09 说明），**不是** 1-2 人日
+> 的机械迁移。只搬那 10 个并改名/删文件强行让 grep 归零，会留下 `readSession` /
+> `readWorkspacePresentation` 两条 legacy 读路径仍在底下活着——那是**表面通过而非收敛**，
+> 违反本仓「不假装完成」纪律。**本轮不做 M1**；正确顺序是先补 UI 侧测试与两处 v4 承接面
+> （归档单会话冷读 + TaskMeta 映射器、UI workspace-config 消费），再迁投影读路径。
 
 ### M2 — services 双栈调用切换（可与 M1 并行）
 

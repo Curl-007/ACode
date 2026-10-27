@@ -753,6 +753,12 @@ export const HostResponseTypes = {
   ProviderProvisioningSourceChanged: "provider-provisioning-source-changed",
   /** host → main：一次 Remote Environment 同步执行完毕。 */
   ProviderProvisioningExecutionResult: "provider-provisioning-execution-result",
+  /**
+   * host → main：Overnight（K3）run 终态完成信号（specs/overnight-completion-notify.md §7）。
+   * agent 子进程内 supervisor 的 completed/failed/cancelled 事实经 v4 通知上报 host，
+   * host 原样镜像到 main；main 侧 overnightCompletionNotify 消费（弹系统通知 + 点击直达 parentTaskId）。
+   */
+  OvernightCompletionNotify: "overnight-completion-notify",
 } as const;
 
 // ============================================================================

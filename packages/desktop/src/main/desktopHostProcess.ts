@@ -175,6 +175,21 @@ export function spawnHostProcess(
         runningTaskCount: number;
       },
     ) => void;
+    /**
+     * host → main：Overnight（K3）run 终态完成信号（specs/overnight-completion-notify.md §7）。
+     * 直接带发送方 host 所属的 `win`（child.on("message") 闭包内即在作用域）作为通知目标窗口——
+     * main 无需再按 child 反查、也不落任何 child→window 映射状态。main 侧 overnightCompletionNotify
+     * 是唯一裁决者（幂等/焦点闸/文案/点击路由），本处只做 schema 校验后的透传。
+     */
+    onOvernightCompletionNotify?: (
+      win: BrowserWindow,
+      event: {
+        runId: string;
+        parentTaskId: string;
+        outcome: "completed" | "failed" | "cancelled";
+        morningReportReady: boolean;
+      },
+    ) => void;
     onAgentProcessExited?: (event: HostAgentProcessExitedResponse) => void;
     onAgentProcessError?: (event: HostAgentProcessErrorResponse) => void;
     onAgentProcessException?: (event: HostAgentProcessExceptionResponse) => void;
@@ -534,6 +549,19 @@ export function spawnHostProcess(
         workspacePath: result.data.workspacePath,
         workspaceIdentity: result.data.workspaceIdentity,
         runningTaskCount: result.data.runningTaskCount,
+      });
+      return;
+    }
+
+    // Overnight（K3）完成信号：host 原样镜像 agent 的 v4 通知（specs/overnight-completion-notify.md §7）。
+    // 载荷已被 hostResponseMessageSchema.safeParse 严格校验（顶部 result 判定），此处透传 + 带 win
+    // 供 main 解析目标窗口。裁决（幂等/焦点/文案/点击）全在 main 侧 notifier，本处不落任何状态。
+    if (result.data.type === HostResponseTypes.OvernightCompletionNotify) {
+      dependencies.onOvernightCompletionNotify?.(win, {
+        runId: result.data.runId,
+        parentTaskId: result.data.parentTaskId,
+        outcome: result.data.outcome,
+        morningReportReady: result.data.morningReportReady,
       });
       return;
     }

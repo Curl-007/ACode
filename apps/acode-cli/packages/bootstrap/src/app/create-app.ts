@@ -1166,6 +1166,11 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
       storageRoot,
       traceContext,
       workingDirectory,
+      // Overnight 完成信号出口（specs/overnight-completion-notify.md §7）：协议宿主注入时
+      // 打通 agent→host→main 通知链；缺席（纯 CLI/TUI）时 controller 内 optional-chain no-op。
+      ...(options.onOvernightCompletion
+        ? { emitOvernightCompletion: options.onOvernightCompletion }
+        : {}),
     });
     completeAppStartup({
       sessionId,

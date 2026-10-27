@@ -109,6 +109,7 @@ import type {
   V4ConversationResyncResult,
   V4ConversationSubscribeResult,
   V4NetworkCaptureRecordsNotification,
+  V4OvernightCompletionNotification,
   V4SessionsIndexSubscribeResult,
   V4WorkspaceConfigSubscribeResult,
   WorkspaceConfigTopicWireCandidate,
@@ -920,6 +921,11 @@ export interface IACodeAgentService {
   ): Promise<ACodeAgentNetworkCaptureSetEnabledResult>;
   /** v4 networkCaptureRecords（agent→host，仅 live）的批量观测记录事件面。 */
   onDynamicNetworkCaptureRecords(): Event<V4NetworkCaptureRecordsNotification>;
+  /**
+   * v4 overnightCompletion（agent→host，仅 live）的 Overnight run 终态事件面
+   * （specs/overnight-completion-notify.md §7）。消费者是 desktop host 转发器，原样镜像给 main。
+   */
+  onDynamicOvernightCompletion(): Event<V4OvernightCompletionNotification>;
   // ── sessions-index 通道（列表活性）──
   subscribeSessionsIndexV4(
     params: ACodeAgentSessionsIndexSubscribeParams,
@@ -1076,6 +1082,7 @@ export const IACodeAgentService = createServiceDescriptor<IACodeAgentService>(
       "onDynamicCuaPermissionObservation",
       "networkCaptureSetEnabledV4",
       "onDynamicNetworkCaptureRecords",
+      "onDynamicOvernightCompletion",
       "subscribeSessionsIndexV4",
       "resyncSessionsIndexV4",
       "unsubscribeSessionsIndexV4",
@@ -1214,6 +1221,7 @@ export const IACodeAgentService = createServiceDescriptor<IACodeAgentService>(
       onDynamicCuaPermissionObservation: requireNoArguments,
       networkCaptureSetEnabledV4: requireSingleParamsObject,
       onDynamicNetworkCaptureRecords: requireNoArguments,
+      onDynamicOvernightCompletion: requireNoArguments,
       subscribeSessionsIndexV4: requireSingleParamsObject,
       resyncSessionsIndexV4: requireSingleParamsObject,
       unsubscribeSessionsIndexV4: requireSingleParamsObject,

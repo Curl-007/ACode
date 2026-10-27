@@ -33,12 +33,17 @@ import {
   type OvernightPreflightCollectors,
   type OvernightPreflightGitSnapshot,
   type OvernightRunHandle,
+  type OvernightRunResult,
 } from "@acode/core";
 import {
   createScriptWorkflowAgentRuntime,
   type ScriptWorkflowAgentRuntimeDeps,
 } from "@acode/cli-workflow/contract";
 import { applyGitPostureGateway } from "@acode/shared";
+import type {
+  OvernightCompletionOutcome,
+  V4OvernightCompletionNotification,
+} from "@acode/shared/acode-protocol-v4";
 import { getCliGitInvocationEnvOverlay } from "@acode/shared/node";
 import type { ACodeOvernightHostCommand } from "../builtin-prompt-command.js";
 
@@ -47,6 +52,13 @@ export interface CreateOvernightControllerDeps extends ScriptWorkflowAgentRuntim
   fileSystemPort: FileSystemPort;
   runtimeTaskRegistry: RuntimeTaskRegistry;
   traceContext: TraceContext;
+  /**
+   * Overnight 完成信号的跨进程出口（specs/overnight-completion-notify.md §7）：run 落终态时
+   * 由本 controller 调用一次，宿主（协议 entrypoint）把它发成 v4 通知经 stdio 上报 host→main。
+   * 缺席（纯 CLI/TUI 形态、测试未注入）时静默 no-op——完成事实仍进日志与 runtime-task 投影，
+   * 只是不弹桌面系统通知。这是「既有 UI 通知面」在桌面形态下的进程内触发口，不新建外部渠道。
+   */
+  emitOvernightCompletion?: (signal: V4OvernightCompletionNotification) => void;
 }
 
 export interface OvernightStartResult {
@@ -70,6 +82,39 @@ export interface OvernightController {
 }
 
 const GIT_SNAPSHOT_TIMEOUT_MS = 10_000;
+
+/**
+ * 把 supervisor 的终态结果投影成跨进程完成信号（specs/overnight-completion-notify.md §7）。
+ * 纯函数、可离线单测：outcome 三态来自 `status` × `cancelled`（与 core runner.ts 落 runtime-task
+ * 投影同款判据——runner.ts:196-200 `status: event.cancelled ? "cancelled" : "completed"`），
+ * morningReportReady 来自 manifest 的权威标志 `morningReportPostedAtMs`（R5：只在晨报文件确认后置位）。
+ *
+ * 为什么读 completion 的 manifest 而非 onEvent 的事件对象：overnight.completed/failed 事件只带
+ * runId+cancelled，不带 manifest（supervisor.ts:50-51），拿不到 parentTaskId 与晨报标志；
+ * OvernightRunResult.manifest 是唯一同时含全部四个字段的权威快照，且 completion promise 每 run
+ * 恰 resolve 一次（supervisor.ts:299-314 的 runPromise 记忆化）——天然满足「一 run 一信号」幂等。
+ */
+export function toOvernightCompletionSignal(
+  result: OvernightRunResult,
+): V4OvernightCompletionNotification {
+  // 失败是最硬终态：先判 failed，取消标志不能掩盖一次真实失败（supervisor 正常路径下
+  // failed 与 cancelled 互斥——cancel 落 completed+cancelled，熔断落 failed+!cancelled；
+  // 这里的次序是防御性的，确保任何异常组合下失败都如实呈现，与 Main 侧 failed→"failed" 一致）。
+  const outcome: OvernightCompletionOutcome =
+    result.status === "failed"
+      ? "failed"
+      : result.cancelled
+        ? "cancelled"
+        : "completed";
+  return {
+    runId: result.manifest.runId,
+    // parentTaskId = 发起 /overnight 的可见会话（runner 装配时写 manifest.parentTaskId，
+    // 见 runner.ts:84 / startOvernightRun deps.parentTaskId）；点击直达目标是它，非 coordinator id。
+    parentTaskId: result.manifest.parentTaskId,
+    outcome,
+    morningReportReady: result.manifest.morningReportPostedAtMs !== null,
+  };
+}
 
 function parseGitStatusPorcelain(stdout: string): OvernightPreflightGitSnapshot {
   const lines = stdout.split("\n").filter((line) => line.trim().length > 0);
@@ -317,6 +362,23 @@ export function createOvernightController(deps: CreateOvernightControllerDeps): 
         return { ok: false, response: `overnight run 启动失败：${message}` };
       }
       activeRun = handle;
+      // 完成信号的单一发射点（specs/overnight-completion-notify.md §7）：completion promise 每 run
+      // 恰 resolve 一次（supervisor 的 runPromise 记忆化），故在此发射天然满足「一 run 一信号」，
+      // 无需在 onEvent 的 completed/failed 分支重复发（事件对象也不带 manifest，无法给出真实晨报标志）。
+      // 出口缺席（纯 CLI/TUI、测试未注入）时 optional-chain 静默 no-op——完成事实仍进日志与投影。
+      void handle.completion
+        .then((result) => {
+          deps.emitOvernightCompletion?.(toOvernightCompletionSignal(result));
+        })
+        .catch((error: unknown) => {
+          // supervisor.start() 内建 runLoop().catch 兜底（supervisor.ts:302-311），正常不 reject；
+          // 此处仅防 unhandledRejection，不外发信号（reject 无权威 manifest 可投影）。
+          logger?.warn("Overnight completion signal skipped: run promise rejected", {
+            error: error instanceof Error ? error.message : String(error),
+            event: "overnight.run.completion_rejected",
+            module: "bootstrap.overnight",
+          });
+        });
       // 终态后清空 active 槽，允许下一次 /overnight。
       void handle.completion.finally(() => {
         if (activeRun === handle) activeRun = undefined;

@@ -252,6 +252,8 @@ import {
   v4NetworkCaptureRecordsNotificationSchema,
   v4NetworkCaptureSetEnabledParamsSchema,
   v4NetworkCaptureSetEnabledResultSchema,
+  V4_OVERNIGHT_COMPLETION_METHOD,
+  v4OvernightCompletionNotificationSchema,
   sessionsIndexTopic,
   sessionsIndexTopicWireCandidateSchema,
   MAX_LEGACY_TASK_IDS_PER_SUBSCRIBE,
@@ -301,6 +303,7 @@ import {
   type WorkspaceConfigTopicWireCandidate,
   type CommandEnvelope,
   type V4NetworkCaptureRecordsNotification,
+  type V4OvernightCompletionNotification,
 } from "@acode/shared/acode-protocol-v4";
 import {
   readTrustedACodeAgentV4Connection,
@@ -1187,6 +1190,10 @@ export function createACodeAgentService(
   // v4 networkCaptureRecords（agent→host，仅 live）的进程级 fan-out；
   // 消费者是 desktop main 的 sink（资源管理器 network tab），不进任何 session/conversation 状态。
   const networkCaptureRecordsEmitter = new Emitter<V4NetworkCaptureRecordsNotification>();
+  // v4 overnightCompletion（agent→host，仅 live）的进程级 fan-out（specs/overnight-completion-notify.md §7）；
+  // 消费者是 desktop host 的转发器，它原样镜像成 HostResponseTypes.OvernightCompletionNotify 给 main。
+  // 与 networkCaptureRecords 同款：不进任何 session/conversation 状态，不落 host、不缓存、不去重。
+  const overnightCompletionEmitter = new Emitter<V4OvernightCompletionNotification>();
   // sessions-index 帧 fan-out：与 conversation 同一 conversationFrame 通知，按 topic 前缀分流到此 emitter。
   const sessionsIndexFrameEmitters = new Map<string, Emitter<SessionsIndexTopicWireCandidate>>();
   // workspace-config 帧 fan-out：配置目录活性（task-index syncer 消费），同一通知按前缀分流。
@@ -2129,6 +2136,24 @@ export function createACodeAgentService(
             logger.warn(undefined, "丢弃无效 v4 network capture records", {
               issues: parsed.error.issues.map((issue) => ({
                 code: issue.code,
+                path: issue.path.join("."),
+              })),
+              workspaceKey: resolveWorkspaceKey(workspace),
+            });
+          }
+          return;
+        }
+
+        if (message.method === V4_OVERNIGHT_COMPLETION_METHOD) {
+          const parsed = v4OvernightCompletionNotificationSchema.safeParse(message.params);
+          if (parsed.success) {
+            overnightCompletionEmitter.fire(parsed.data);
+          } else {
+            // 严格丢弃：跨进程边界的未知/畸形完成信号 fail-closed，不透传给 main 弹通知。
+            logger.warn(undefined, "丢弃无效 v4 overnight completion 信号", {
+              issues: parsed.error.issues.map((issue) => ({
+                code: issue.code,
+                message: issue.message,
                 path: issue.path.join("."),
               })),
               workspaceKey: resolveWorkspaceKey(workspace),
@@ -3328,6 +3353,7 @@ export function createACodeAgentService(
     conversationTelemetryFactEmitters.clear();
     cuaPermissionObservationEmitter.dispose();
     networkCaptureRecordsEmitter.dispose();
+    overnightCompletionEmitter.dispose();
     for (const emitter of workspaceConfigFrameEmitters.values()) {
       emitter.dispose();
     }
@@ -5827,6 +5853,10 @@ export function createACodeAgentService(
 
     onDynamicNetworkCaptureRecords() {
       return networkCaptureRecordsEmitter.event;
+    },
+
+    onDynamicOvernightCompletion() {
+      return overnightCompletionEmitter.event;
     },
 
     // ── sessions-index 通道（列表活性）：复用 conversationSubscribe RPC，

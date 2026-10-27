@@ -51,6 +51,7 @@ import {
 } from "@acode/services/node";
 import { createHostResourceUsageResponder } from "./hostResourceUsage.js";
 import { createHostNetworkCaptureForwarder } from "./hostNetworkCapture.js";
+import { createHostOvernightCompletionForwarder } from "./hostOvernightCompletion.js";
 import {
   HostMessageTypes,
   HostResponseTypes,
@@ -965,6 +966,18 @@ const hostNetworkCaptureForwarder = createHostNetworkCaptureForwarder({
   },
 });
 let stopHostNetworkCaptureForwarding: (() => void) | null = null;
+// Overnight（K3）完成信号转发：服务集合激活后订阅 agent 的完成事件镜像给 main；dispose 时退订。
+// 与 network capture 转发同款生命周期（进程级 Event 订阅，重复激活先退订上一轮）。
+const hostOvernightCompletionForwarder = createHostOvernightCompletionForwarder({
+  getAgentService: () => activeServices?.getOptional(IACodeAgentService),
+  postMessage: (message) => parentPort?.postMessage(message),
+  logger: {
+    warn: (message, detail) => {
+      reportHostLog("warn", [message, detail].filter((part) => part !== undefined));
+    },
+  },
+});
+let stopHostOvernightCompletionForwarding: (() => void) | null = null;
 let activeSessionRealtimePort: ReturnType<typeof createTaskRealtimeBridgeForHostInit> = null;
 let hasDisposedHostResources = false;
 let disposeHostResourcesInFlight: Promise<HostShutdownResult> | null = null;
@@ -1507,6 +1520,8 @@ async function disposeHostResources(reason: string): Promise<HostShutdownResult>
     activeServices = null;
     stopHostNetworkCaptureForwarding?.();
     stopHostNetworkCaptureForwarding = null;
+    stopHostOvernightCompletionForwarding?.();
+    stopHostOvernightCompletionForwarding = null;
     // Registry 是全部远端 connection 的唯一 owner；释放失败不能阻塞本地服务继续收口。
     const shutdownResult = await runHostShutdownPhases(
       [
@@ -1577,6 +1592,8 @@ function disposeHostResourcesBestEffort(reason: string): void {
       activeHostApiNetworkTransport = null;
       stopHostNetworkCaptureForwarding?.();
       stopHostNetworkCaptureForwarding = null;
+      stopHostOvernightCompletionForwarding?.();
+      stopHostOvernightCompletionForwarding = null;
     }
   }
 
@@ -2283,6 +2300,9 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
             // 服务就绪才可能订阅成功；重复激活时先退订上一轮（Event 订阅是进程级的）。
             stopHostNetworkCaptureForwarding?.();
             stopHostNetworkCaptureForwarding = hostNetworkCaptureForwarder.startForwarding();
+            stopHostOvernightCompletionForwarding?.();
+            stopHostOvernightCompletionForwarding =
+              hostOvernightCompletionForwarder.startForwarding();
             return initializedServices;
           },
         });

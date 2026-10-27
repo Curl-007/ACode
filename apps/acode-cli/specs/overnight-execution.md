@@ -22,6 +22,31 @@ overnight 是**本地进程内的长时执行模式**（桌面开着挂机），
 更安全，可见会话可继续他用）；不接通知渠道（完成通知走既有 UI 通知面，邮件/IM 批准
 回环属 bots 渠道后续）。
 
+> **完成通知出口登记（2026-10-27 接线落地）**：「既有 UI 通知面」在桌面形态下的落点是
+> Main 侧 `packages/desktop/src/main/overnightCompletionNotify.ts`（spec
+> `packages/desktop/specs/overnight-completion-notify.md`），它复用 core 的
+> `dispatchTaskNotification` 同款呈现核 `presentTaskNotification`——语义上正是「既有通知面」。
+> 但 coordinator 是 `hidden: true` 的 fork 子会话，live 期不进 sessions-index、renderer 无从观测
+> （桌面出口 spec §1.1 证据 4/5），故完成事实必须经一条**进程内**触发链主动上报，而非新建
+> 外部渠道。链路（agent→host→main）与本包出口点：
+>   - **发射点（本包）**：`packages/bootstrap/src/app/overnight-controller.ts` 的
+>     `toOvernightCompletionSignal(OvernightRunResult)` + `start()` 内
+>     `handle.completion.then(emit)`（每 run 恰 resolve 一次，天然「一 run 一信号」）；
+>     经 `createOvernightController({ emitOvernightCompletion })` 注入，`create-app.ts` 从
+>     `options.onOvernightCompletion` 透传，`acode-protocol-entrypoint.ts` 发成 v4 通知
+>     `V4_OVERNIGHT_COMPLETION_METHOD`（`connection.send`，与 `onToolExecResource` 同族出口）。
+>   - **协议面**：v4 词汇在 `packages/shared/src/acode-protocol-v4/overnight-completion.ts`
+>     （agent→host 通知 schema + 方法名常量，独立叶子，不进 `V4_NOTIFICATIONS`/legacy barrel，
+>     同 U08 `PROVIDER_DIAGNOSTICS_METHODS` 先例）；host→main 反馈类型
+>     `HostResponseTypes.OvernightCompletionNotify`（`channels.ts` + `validation.ts` 判别联合）。
+>   - **跨进程转发**：`packages/services/src/acode-agent/acodeAgentService.ts` 解析通知 →
+>     `onDynamicOvernightCompletion` 事件面 → `packages/desktop/src/host/hostOvernightCompletion.ts`
+>     镜像成 host→main 消息 → `packages/desktop/src/main/desktopHostProcess.ts` 派发 →
+>     `main/index.ts` 交 `overnightCompletionNotifier` 裁决弹出/点击。
+>
+> **仍属裁剪**：不接邮件/IM/bots 等进程外渠道（红线不变）；`morningReportReady` 只读
+> supervisor 的权威标志 `manifest.morningReportPostedAtMs`，不猜测、不硬编码。
+
 ---
 
 ## 背景：已核实的现状与 jcode 参照

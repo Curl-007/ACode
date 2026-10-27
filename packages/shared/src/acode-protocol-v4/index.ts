@@ -31,6 +31,8 @@ export * from "./workflow-artifacts.js";
 export * from "./visualization-read.js";
 // 运行时网络观测（agent 进程内）的 v4 词汇。
 export * from "./network-capture.js";
+// Overnight（K3）完成信号（agent 进程内 supervisor → host → main）的 v4 词汇。
+export * from "./overnight-completion.js";
 // 工作区 transcript（files.* / git.* / world.run 的回放）。
 export * from "./workflow-workspace.js";
 export * from "./attachment-ref.js";

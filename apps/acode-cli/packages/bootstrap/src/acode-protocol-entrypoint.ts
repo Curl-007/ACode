@@ -1,3 +1,7 @@
+/* eslint-disable max-lines -- 本文件在 Overnight 完成信号接线前已达 max-lines 上限（400，零余量）；
+   overnight-completion 出口（onOvernightCompletion → connection.send）必须落在 createACodeApp 调用处
+   与既有 onToolExecResource 同族，任何一行新增都会越界。头注豁免以恢复门禁信号；拆分重构超出本批范围
+   （与 server.ts / v4-bridge.ts / app/types.ts 等同款基线豁免一致）。 */
 import { createConfig } from "@acode/adapters/config";
 import { createNodeModelSelectionFacade } from "@acode/provider-node";
 import { createNodeLoggerFactory } from "@acode/adapters/logging";
@@ -16,6 +20,7 @@ import {
   type ACodeMcpTelemetryEvent,
 } from "@acode/shared";
 import type { SqliteSessionStore } from "@acode/adapters/storage";
+import { V4_OVERNIGHT_COMPLETION_METHOD } from "@acode/shared/acode-protocol-v4";
 import { traceContextToLogContext, createRootTraceContext } from "@acode/contracts";
 import type { McpPort, ModelSelection } from "@acode/contracts";
 import type { PresentationSurface } from "@acode/core";
@@ -300,6 +305,11 @@ export async function runACodeProtocolAgent(
           sourceTitle: "electron",
           onToolExecResource: (params) =>
             connection.send({ method: acodeProtocolNotifications.toolExecResource, params }),
+          // Overnight（K3）完成信号（specs/overnight-completion-notify.md §7）：agent 子进程内
+          // supervisor 落终态时经此出口发成 v4 通知，host 侧 acodeAgentService 解析后镜像给 main。
+          // method 用本仓 v4 叶子的常量（不进 legacy barrel 冻结面，同 U08 PROVIDER_DIAGNOSTICS_METHODS）。
+          onOvernightCompletion: (signal) =>
+            connection.send({ method: V4_OVERNIGHT_COMPLETION_METHOD, params: signal }),
         }),
       cwd: options.cwd,
       env: options.env,

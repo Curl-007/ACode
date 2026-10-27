@@ -7,7 +7,7 @@ import {
   resolveWorkspaceKey,
   type RemoteTarget,
 } from "@acode/shared";
-import { type IACodeTaskService as IACodeTaskServiceShape } from "../session/acodeTaskService.js";
+import { type IACodeTaskService as IACodeTaskServiceShape } from "../session/contract.js";
 import type { ICredentialService } from "../credential/credential.js";
 import type { ISettingService } from "../setting/setting.js";
 import { type ACodeAgentAppRuntimePreferences } from "../acode-agent/acodeAgent.js";

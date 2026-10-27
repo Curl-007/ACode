@@ -65,9 +65,8 @@ import {
   type Locale,
   type SelectionPrompt,
 } from "@acode/shared";
-import type { IACodeTaskService } from "../session/acodeTaskService.js";
-import { resolveProviderModeIdFromConfigOptions } from "#src/session/sessionModeOptions.js";
-import { deriveSessionTitle as deriveTaskTitle } from "#src/session/sessionTitle.js";
+import type { IACodeTaskService } from "../session/contract.js";
+import { resolveProviderModeIdFromConfigOptions, deriveSessionTitle as deriveTaskTitle } from "../session/contract.js";
 import type { IBroadcastService } from "../broadcast/broadcast.js";
 import type { ICredentialService } from "../credential/credential.js";
 import { getAppConfigDir } from "../paths.js";

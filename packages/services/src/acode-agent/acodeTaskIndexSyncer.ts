@@ -39,7 +39,7 @@ import {
 import { Emitter, type Event, type IDisposable } from "@acode/rpc";
 import { createServiceLogger } from "#src/logger/serviceLogger.js";
 import { TaskIndexRepo } from "#src/session/taskIndexRepo.js";
-import type { ACodeWorkspaceEventSubscriptionParams } from "#src/session/acodeTaskListTypes.js";
+import type { ACodeWorkspaceEventSubscriptionParams } from "#src/session/contract.js";
 import type {
   IACodeAgentService,
   ACodeAgentSessionTarget,

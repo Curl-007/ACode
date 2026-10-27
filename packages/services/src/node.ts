@@ -244,6 +244,8 @@ export {
 } from "./runtime-tools/runtimeCommandEnv.js";
 
 // 定时任务管理与 scheduler 共用同一套 node-only 存储和 cron 语义。
+// 全部经 session 契约面转出（specs/session-module-boundary.md）：node.ts 是装配根/barrel，
+// 不再直引 session 实现文件——deep-import 门禁因此对 session 强校验，internalEdgeAllowlist 见底。
 export {
   AutomationRepo,
   DISPATCH_RETRY_BASE_MS,
@@ -251,17 +253,19 @@ export {
   DISPATCH_MAX_ATTEMPTS,
   CLAIM_STALE_MS,
   computeRetryAt,
-} from "./session/automationRepo.js";
-export { AutomationService, InvalidCronExprError } from "./session/automationService.js";
-// 闲时任务与 automation 同库不同表；类型/常量全独立。
-export { OffPeakTaskRepo, OFF_PEAK_CLAIM_STALE_MS } from "./session/offPeakTaskRepo.js";
-// host 域终态回填 files_changed 复用现有 task diff 汇总。
-export { buildTaskChangeSummary } from "./session/taskChangeSummary.js";
-export { OffPeakTaskService } from "./session/offPeakTaskService.js";
-export { IOffPeakTaskService } from "./session/offPeakTask.js";
-export { createOffPeakServerClient, OffPeakServerError } from "./session/offPeakServerClient.js";
-export { isOffPeakMockEnabled, startOffPeakMockGateway } from "./session/offPeakMockGateway.js";
-export {
+  AutomationService,
+  InvalidCronExprError,
+  // 闲时任务与 automation 同库不同表；类型/常量全独立。
+  OffPeakTaskRepo,
+  OFF_PEAK_CLAIM_STALE_MS,
+  // host 域终态回填 files_changed 复用现有 task diff 汇总。
+  buildTaskChangeSummary,
+  OffPeakTaskService,
+  IOffPeakTaskService,
+  createOffPeakServerClient,
+  OffPeakServerError,
+  isOffPeakMockEnabled,
+  startOffPeakMockGateway,
   buildOffPeakRequestAuth,
   createOffPeakOriginResolver,
   resolveOffPeakCredentials,
@@ -271,7 +275,12 @@ export {
   OffPeakCredentialsUnavailableError,
   OffPeakModelUnavailableError,
   OffPeakPermanentDispatchError,
-} from "./session/offPeakRuntimeModel.js";
+  computeAutomationNextRunAt,
+  computeNextRunAt,
+  computeScheduleRuleNextRunAt,
+  isOneShotAutomation,
+  isValidCronExpr,
+} from "./session/contract.js";
 export { createServiceLogger } from "./logger/serviceLogger.js";
 // 运行期收名（specs/log-privacy-redaction.md services R3）：SSH/远程连接建立点
 // 把对端主机名登记进服务层脱敏注册表；桌面 main 侧收名走 logPrivacyIdentity 的
@@ -282,13 +291,6 @@ export {
   createOfficialMcpAuthHeadersResolver,
   resolveOfficialMcpCredentials,
 } from "./official-mcp/officialMcpCredentials.js";
-export {
-  computeAutomationNextRunAt,
-  computeNextRunAt,
-  computeScheduleRuleNextRunAt,
-  isOneShotAutomation,
-  isValidCronExpr,
-} from "./session/automationCron.js";
 
 import { ServiceCollection } from "./collection.js";
 import { IFileService } from "./file/file.js";
@@ -301,7 +303,7 @@ import { ISettingService } from "./setting/setting.js";
 import { IOnboardingRecordService } from "./onboarding/onboardingRecord.js";
 import { ICredentialService } from "./credential/credential.js";
 import { IBroadcastService } from "./broadcast/broadcast.js";
-import { IACodeTaskService } from "./session/acodeTaskService.js";
+import { IACodeTaskService } from "./session/contract.js";
 import { IACodeAgentService } from "./acode-agent/acodeAgent.js";
 import type { CuaOperationStateReporter } from "./acode-agent/cuaOperationTurnTracker.js";
 import { IACodeSessionService } from "./acode-session/acodeSession.js";
@@ -351,7 +353,7 @@ import { createACodeTaskIndexSyncer } from "./acode-agent/acodeTaskIndexSyncer.j
 import { TaskIndexRepo } from "./session/taskIndexRepo.js";
 import { createBotsService } from "./bots/botsService.js";
 import { createBotRemoteWorkspaceService } from "./bots/botRemoteWorkspaceBridge.js";
-import type { SessionMessageSendRequested } from "#src/session/sessionMailbox.js";
+import type { SessionMessageSendRequested } from "#src/session/contract.js";
 import { createFileWatcherService } from "./fileWatcher/fileWatcherService.js";
 import { createOAuthService } from "./oauth/oauthService.js";
 import { isCurrentOAuthCredentialRequest } from "#src/oauth/oauthUnauthorizedRequest.js";
@@ -438,17 +440,17 @@ import {
 import { ensureAppCaCert } from "./runtime-tools/appCaCert.js";
 import { buildHelperOpenArgs, isCuaLocalDevelopmentRuntime } from "@acode/acode-cua/broker/server";
 import { createServiceLogger, type ServiceLogger } from "#src/logger/serviceLogger.js";
-import { IOffPeakTaskService } from "./session/offPeakTask.js";
-import { OffPeakTaskService } from "./session/offPeakTaskService.js";
-import { OffPeakTaskRepo } from "./session/offPeakTaskRepo.js";
-import { createOffPeakServerClient } from "./session/offPeakServerClient.js";
 import {
+  IOffPeakTaskService,
+  OffPeakTaskService,
+  OffPeakTaskRepo,
+  createOffPeakServerClient,
   buildOffPeakRequestAuth,
   createOffPeakOriginResolver,
   resolveOffPeakCredentials,
   resolveOffPeakCodingPlanSupport,
   resolveOffPeakMockUpstream,
-} from "./session/offPeakRuntimeModel.js";
+} from "./session/contract.js";
 import {
   createOfficialMcpAuthHeadersResolver,
   resolveOfficialMcpCredentials,

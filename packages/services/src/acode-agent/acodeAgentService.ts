@@ -316,18 +316,21 @@ import {
   stampCreateSessionClientMode,
 } from "./acodeV4CreateSessionClientMode.js";
 import { createBackgroundSessionEventCoalescer } from "#src/acode-agent/acodeSessionEventCoalescer.js";
-import { AutomationService } from "#src/session/automationService.js";
 import {
+  AutomationService,
   AutomationManualTriggerRejectedError,
   type AutomationManualRunTriggerContext,
-} from "#src/session/automationManualTrigger.js";
+  AutomationRepo,
+} from "#src/session/contract.js";
 import type { AutomationManualTriggerOrigin } from "@acode/shared";
-import { AutomationRepo } from "#src/session/automationRepo.js";
+// TaskIndexRepo 是 tasks-index 表的唯一写入所有者，构造边刻意不走消费契约：
+// task-index-writers 守护把任何文本引用都当写入面评审（specs/task-index-write-ownership.md），
+// 本文件是守护白名单登记的写入方，故直引实现文件并由 internalEdgeAllowlist 登记。
 import { TaskIndexRepo } from "#src/session/taskIndexRepo.js";
 import { ACodeAgentMcpStatusModeUnsupportedError } from "#src/acode-agent/acodeAgentErrors.js";
 import { ACodeAgentProcessManager } from "./acodeAgentProcessManager.js";
 import type { ACodeAgentProcessManagerOptions } from "./acodeAgentProcessManager.js";
-import type { IOffPeakTaskService } from "#src/session/offPeakTask.js";
+import type { IOffPeakTaskService } from "#src/session/contract.js";
 import {
   ACodeProtocolRequestTimeoutError,
   type ACodeProtocolClient,

@@ -119,7 +119,7 @@ import type {
   ACodeArchivedTaskDeletionResult,
   ACodeTaskReadyOutcome,
   ACodeTaskTerminalOutcome,
-} from "../session/acodeTaskService.js";
+} from "../session/contract.js";
 import { createServiceLogger } from "#src/logger/serviceLogger.js";
 import {
   AUTOMATION_MUTATION_TOOL_NAMES,
@@ -129,7 +129,10 @@ import type { ISettingService } from "#src/setting/setting.js";
 import type {
   SessionMessageDeliveryResult,
   SessionMessageSendRequested,
-} from "#src/session/sessionMailbox.js";
+} from "#src/session/contract.js";
+// TaskIndexRepo 构造边 + claude-native/external-import 会话导入机器件：均为写入/装配面，
+// 刻意不走消费契约（见 task-index-writers 守护 specs/task-index-write-ownership.md）。
+// 本文件是守护白名单登记的写入方；这些边由 internalEdgeAllowlist 显式登记。
 import { TaskIndexRepo } from "#src/session/taskIndexRepo.js";
 import type {
   IACodeAgentService,

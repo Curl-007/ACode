@@ -79,43 +79,39 @@ modules:
     managed: true
     owner: conversation
     requires: [provider, rpc, services, shared]
-    # contract.ts（迁移目标入口，55 行 / 25 named re-export）已落地，但 publicEntrypoints
-    # 有意留空：checker 只在「目标模块声明了任一边界（精确入口 / 通配入口 / 内部边白名单）」
-    # 时校验 deep-import（scripts/architecture/index.mjs 的 hasBoundary）。留空 + 下方
-    # internalEdgeAllowlist 逐条冻结 24 条存量 services→session 内部边（checker 口径：
-    # distinct 非 test 跨模块 from→to 对；review §5 说的约 39-40 是含 test/specifier 重复的
-    # 另一口径），使这些边保持合法；**任何未登记的新边立即报 deep-import**——把「惰性保持
-    # 合法」变成「新增需显式登记」，止住内部边增长（ARCH-04 resolver 缺口④）。
-    # 收敛路径见 packages/services/specs/session-module-boundary.md：新代码从 contract.ts
-    # 导入，存量边逐条迁移到契约面后从白名单删除；白名单清空即把 contract.ts 注册为
-    # publicEntrypoints。到期（2026-12-31）前白名单必须见底。
-    publicEntrypoints: []
-    # 存量内部边白名单（只精确匹配 (from,to) 对，不做前缀/通配，范围最窄且可审计）。
+    # 迁移完成（2026-10-27）：contract.ts 覆盖全部**消费方**符号并注册为 publicEntrypoints，
+    # session 转为常规 deep-import 强校验。**同时修复一处 resolver 盲区**：此前 checker 只解析
+    # tsconfig paths 与 package.json exports，不解析 package.json imports 字段，故 `#src/*`
+    # 别名导入（services 包私有别名，102 处）对 deep-import 门禁**完全不可见**——原 24 条白名单
+    # 只登记了相对路径形态的边，23 条 `#src/session/*` 边从未受管。下方 global.aliasRules 新增
+    # `#src/* → packages/services/src/*` 后这些边显形，实测共 23 条：其中 8 条消费方边已迁到
+    # contract.ts，剩余 15 条是写入/装配面，逐条登记在 internalEdgeAllowlist。
+    # 原「留空 + 白名单冻结 24 条」的迁移态已收口（ARCH-04 resolver 缺口④，本轮补齐缺口①同类）。
+    publicEntrypoints: [packages/services/src/session/contract.ts]
+    # 剩余 15 条：全部是**写入路径或装配机器件**，刻意不经消费契约——
+    #   • TaskIndexRepo（5 条）：tasks-index 表唯一写入所有者；task-index-writers 守护
+    #     （specs/task-index-write-ownership.md）把任何文本引用都当待评审写入面，放进 contract.ts
+    #     会让每个消费方都成为登记写入方、守护失效（实测加转发叶子 composition.ts 即被判红）。
+    #     5 个引用方全部已在该守护白名单内。
+    #   • claude-native / external-import（6 条）：会话导入机器件，由 adapter/repair 专属消费。
+    #   • tasksDatabase startup/prepared（2 条）：存储启动编排，只由 storage-startup 消费。
+    #   • mcpWorkspaceScope（1 条）：acode-session 专属 MCP scope 装配。
     internalEdgeAllowlist:
-      - { from: "packages/services/src/index.ts", to: "packages/services/src/session/acodeTaskListTypes.ts" }
-      - { from: "packages/services/src/window-controller/windowController.ts", to: "packages/services/src/session/acodeTaskListTypes.ts" }
-      - { from: "packages/services/src/accessor.ts", to: "packages/services/src/session/acodeTaskService.ts" }
-      - { from: "packages/services/src/acode-agent/acodeTaskServiceAdapter.ts", to: "packages/services/src/session/acodeTaskService.ts" }
-      - { from: "packages/services/src/bots/botRemoteWorkspaceBridge.ts", to: "packages/services/src/session/acodeTaskService.ts" }
-      - { from: "packages/services/src/bots/botsService.ts", to: "packages/services/src/session/acodeTaskService.ts" }
-      - { from: "packages/services/src/index.ts", to: "packages/services/src/session/acodeTaskService.ts" }
-      - { from: "packages/services/src/node.ts", to: "packages/services/src/session/acodeTaskService.ts" }
-      - { from: "packages/services/src/node.ts", to: "packages/services/src/session/automationCron.ts" }
-      - { from: "packages/services/src/index.ts", to: "packages/services/src/session/automationCronValidation.ts" }
-      - { from: "packages/services/src/node.ts", to: "packages/services/src/session/automationRepo.ts" }
-      - { from: "packages/services/src/node.ts", to: "packages/services/src/session/automationService.ts" }
-      - { from: "packages/services/src/node.ts", to: "packages/services/src/session/offPeakMockGateway.ts" }
-      - { from: "packages/services/src/node.ts", to: "packages/services/src/session/offPeakRuntimeModel.ts" }
-      - { from: "packages/services/src/node.ts", to: "packages/services/src/session/offPeakServerClient.ts" }
-      - { from: "packages/services/src/accessor.ts", to: "packages/services/src/session/offPeakTask.ts" }
-      - { from: "packages/services/src/index.ts", to: "packages/services/src/session/offPeakTask.ts" }
-      - { from: "packages/services/src/node.ts", to: "packages/services/src/session/offPeakTask.ts" }
-      - { from: "packages/services/src/node.ts", to: "packages/services/src/session/offPeakTaskRepo.ts" }
-      - { from: "packages/services/src/node.ts", to: "packages/services/src/session/offPeakTaskService.ts" }
-      - { from: "packages/services/src/index.ts", to: "packages/services/src/session/sessionRealtimePort.ts" }
-      - { from: "packages/services/src/bots/statusFormatting.ts", to: "packages/services/src/session/taskChangeSummary.ts" }
-      - { from: "packages/services/src/node.ts", to: "packages/services/src/session/taskChangeSummary.ts" }
+      - { from: "packages/services/src/acode-agent/acodeAgentService.ts", to: "packages/services/src/session/taskIndexRepo.ts" }
+      - { from: "packages/services/src/acode-agent/acodeTaskIndexSyncer.ts", to: "packages/services/src/session/taskIndexRepo.ts" }
+      - { from: "packages/services/src/acode-agent/acodeTaskServiceAdapter.ts", to: "packages/services/src/session/taskIndexRepo.ts" }
+      - { from: "packages/services/src/acode-agent/repairSubagentTaskIndex.ts", to: "packages/services/src/session/taskIndexRepo.ts" }
       - { from: "packages/services/src/node.ts", to: "packages/services/src/session/taskIndexRepo.ts" }
+      - { from: "packages/services/src/acode-agent/acodeTaskServiceAdapter.ts", to: "packages/services/src/session/claude-native/buildImportedClaudeTaskFile.ts" }
+      - { from: "packages/services/src/acode-agent/acodeTaskServiceAdapter.ts", to: "packages/services/src/session/claude-native/claudeNativeSessionImportRepo.ts" }
+      - { from: "packages/services/src/acode-agent/acodeTaskServiceAdapter.ts", to: "packages/services/src/session/claude-native/claudeNativeSessionImportService.ts" }
+      - { from: "packages/services/src/acode-agent/acodeTaskServiceAdapter.ts", to: "packages/services/src/session/claude-native/importedClaudeHistoryRepair.ts" }
+      - { from: "packages/services/src/acode-session/importedClaudeSessionRepair.ts", to: "packages/services/src/session/claude-native/importedClaudeHistoryRepair.ts" }
+      - { from: "packages/services/src/acode-agent/acodeTaskServiceAdapter.ts", to: "packages/services/src/session/external-import/importService.ts" }
+      - { from: "packages/services/src/acode-agent/acodeTaskServiceAdapter.ts", to: "packages/services/src/session/external-import/types.ts" }
+      - { from: "packages/services/src/storage-startup.ts", to: "packages/services/src/session/tasksDatabase/startup.ts" }
+      - { from: "packages/services/src/storage-startup.ts", to: "packages/services/src/session/tasksDatabase/prepared.ts" }
+      - { from: "packages/services/src/acode-session/acodeSessionService.ts", to: "packages/services/src/session/mcpWorkspaceScope.ts" }
     # 单层 app：55 处 node: 导入（含 node:sqlite 直连），声明 domain 层会触发 domain-io。
     layers: { app: "." }
     layerOrder: [app]
@@ -352,6 +348,8 @@ global:
   # 只合并 global 规则与「导入方所在模块」的规则，而 acode-cua 的导入方在
   # services / desktop / acode-cli，模块级 aliasRules 对它们不生效。
   aliasRules:
+    - pattern: "#src/*"
+      target: packages/services/src/*
     - pattern: "@acode/acode-cua"
       target: packages/acode-cua/index.js
     - pattern: "@acode/acode-cua/frame-contract"

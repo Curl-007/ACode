@@ -553,4 +553,82 @@ test("internalEdgeAllowlist：登记边放行，未登记新边报 deep-import�
   assert.ok(deepImports[0].message.includes("packages/sess/src/impl.ts"));
 });
 
+/**
+ * 包私有 imports 别名（package.json `imports` 字段的 `#src/*`）必须解析成依赖边。
+ *
+ * 回归防护（2026-10-27 session 契约迁移实测发现）：checker 只解析 tsconfig paths 与
+ * package.json `exports`，**不**解析 package.json `imports` 字段，于是 services 的 102 处
+ * `#src/...` 导入对 deep-import 门禁完全不可见——23 条 services→session 边从未受管，
+ * 「止增机制在位」的结论对这批边不成立。补 global.aliasRules 后才显形。
+ * 本 fixture 钉住该机制：删掉别名规则 → 违规消失（守护失效，测试应红）。
+ */
+async function packagePrivateAliasFixture(t, { withAliasRule }) {
+  const cwd = await mkdtemp(join(tmpdir(), "acode-architecture-alias-"));
+  t.after(() => rm(cwd, { recursive: true, force: true, maxRetries: 8, retryDelay: 60 }));
+  const policy = {
+    version: 1,
+    modules: [
+      {
+        id: "sess",
+        roots: ["packages/svc/src/session"],
+        managed: true,
+        publicEntrypoints: ["packages/svc/src/session/contract.ts"],
+        layers: { domain: "." },
+        layerOrder: ["domain"],
+      },
+      // 消费方与 session 同属一个包（services 的真实形态：session 嵌套在 services/src 下）。
+      { id: "svc", roots: ["packages/svc/src"], managed: true, requires: [] },
+    ],
+    global: {
+      managedOnly: true,
+      ...(withAliasRule ? { aliasRules: [{ pattern: "#src/*", target: "packages/svc/src/*" }] } : {}),
+    },
+  };
+  const files = {
+    "architecture-policy.yaml": JSON.stringify(policy),
+    ".architecture-baseline.json": '{"version":1,"violations":[]}',
+    "packages/svc/package.json": JSON.stringify({
+      name: "@fixture/svc",
+      imports: { "#src/*": "./src/*" },
+    }),
+    "packages/svc/src/session/module.ts": 'export const module = { id: "sess", requires: [] };\n',
+    "packages/svc/src/session/contract.ts": "export interface Sess { read(): void; }\n",
+    "packages/svc/src/session/impl.ts": "export const impl = 1;\n",
+    // 经包私有别名直引实现文件 —— 与 `../session/impl.js` 形态是**同一条**跨模块边，
+    // 只是 specifier 写法不同。门禁必须同等对待，否则换个别名写法就能绕过 deep-import。
+    "packages/svc/src/consumer.ts":
+      'import { impl } from "#src/session/impl.js";\nexport { impl };\n',
+  };
+  for (const [file, source] of Object.entries(files)) {
+    await mkdir(join(cwd, file, ".."), { recursive: true });
+    await writeFile(join(cwd, file), source);
+  }
+  return cwd;
+}
+
+test("包私有 #src/* 别名经 aliasRules 解析成依赖边 → deep-import 被拦截（真负例）", async (t) => {
+  const cwd = await packagePrivateAliasFixture(t, { withAliasRule: true });
+  const result = await checkArchitecture({ cwd });
+  const deepImports = result.newViolations.filter((item) => item.rule === "deep-import");
+  assert.equal(
+    deepImports.length,
+    1,
+    "别名形态的跨模块直引必须与相对路径形态同等报 deep-import；0 条说明别名未被解析（守护盲区）",
+  );
+  assert.ok(deepImports[0].file.endsWith("packages/svc/src/consumer.ts"));
+  assert.ok(deepImports[0].message.includes("packages/svc/src/session/impl.ts"));
+});
+
+test("同一条边去掉 aliasRule 即不被解析 —— 证明盲区由 aliasRules 补齐而非偶然", async (t) => {
+  const cwd = await packagePrivateAliasFixture(t, { withAliasRule: false });
+  const result = await checkArchitecture({ cwd });
+  const deepImports = result.newViolations.filter((item) => item.rule === "deep-import");
+  assert.equal(
+    deepImports.length,
+    0,
+    "无 aliasRule 时 checker 解析不出 #src/* 边（即修复前的盲区形态）；若此断言失败说明解析面已变",
+  );
+});
+
+
 

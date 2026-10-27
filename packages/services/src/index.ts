@@ -77,35 +77,37 @@ export type {
 } from "./broadcast/broadcast.js";
 
 // ACode task wrapper service — task 列表/置顶/归档等 app 侧包装状态入口。
-export { IACodeTaskService } from "./session/acodeTaskService.js";
-export type {
-  ACodeArchivedTaskDeletionResult,
-  ACodeModelTrajectory,
-  ACodeModelTrajectoryCallSource,
-  ACodeModelTrajectoryCallSourceKind,
-  ACodeModelTrajectoryContentPart,
-  ACodeModelTrajectoryMessage,
-  ACodeModelTrajectoryRecord,
-  ACodeModelTrajectoryUsage,
-  ACodeTaskListKind,
-  ACodeTaskListQuery,
-  ACodeTaskListResult,
-  ACodeTaskListSortBy,
-  ACodeTaskListWorkspaceScope,
-  ACodeTaskReadyOutcome,
-  ACodeGroupedTaskRef,
-  ACodeGroupedTaskView,
-  ACodeGroupedTaskViewNode,
-  ACodeGroupedTaskViewOrderInput,
-  ACodeGroupedTaskViewQuery,
-  ACodeGroupedTaskViewStructure,
-  ACodeGroupedTaskViewStructureMember,
-  ACodeGroupedTaskViewStructureTopOrder,
-  ACodeGroupedTaskViewTopLevelNodeRef,
-  ACodeTaskGroup,
-  ACodeTaskGroupColor,
-} from "./session/acodeTaskService.js";
-export type { ACodeTaskListItem } from "./session/acodeTaskListTypes.js";
+// 全部经 session 契约面出面（specs/session-module-boundary.md「Public boundary」）：
+// 不再直引实现文件，deep-import 门禁因此可对 session 强校验。
+export {
+  IACodeTaskService,
+  type ACodeArchivedTaskDeletionResult,
+  type ACodeModelTrajectory,
+  type ACodeModelTrajectoryCallSource,
+  type ACodeModelTrajectoryCallSourceKind,
+  type ACodeModelTrajectoryContentPart,
+  type ACodeModelTrajectoryMessage,
+  type ACodeModelTrajectoryRecord,
+  type ACodeModelTrajectoryUsage,
+  type ACodeTaskListKind,
+  type ACodeTaskListQuery,
+  type ACodeTaskListResult,
+  type ACodeTaskListSortBy,
+  type ACodeTaskListWorkspaceScope,
+  type ACodeTaskReadyOutcome,
+  type ACodeGroupedTaskRef,
+  type ACodeGroupedTaskView,
+  type ACodeGroupedTaskViewNode,
+  type ACodeGroupedTaskViewOrderInput,
+  type ACodeGroupedTaskViewQuery,
+  type ACodeGroupedTaskViewStructure,
+  type ACodeGroupedTaskViewStructureMember,
+  type ACodeGroupedTaskViewStructureTopOrder,
+  type ACodeGroupedTaskViewTopLevelNodeRef,
+  type ACodeTaskGroup,
+  type ACodeTaskGroupColor,
+  type ACodeTaskListItem,
+} from "./session/contract.js";
 
 export { IWindowControllerService } from "./window-controller/windowController.js";
 export type {
@@ -199,7 +201,7 @@ export {
 } from "./memory/memory.js";
 export type { ProjectMemoryFileSummary, ProjectMemoryWorkspaceSummary } from "./memory/memory.js";
 
-export type { SessionRealtimePort } from "./session/sessionRealtimePort.js";
+export type { SessionRealtimePort } from "./session/contract.js";
 
 // FileWatcher service — IFileWatcherService is both a type (interface) and value (descriptor)
 export { IFileWatcherService } from "./fileWatcher/fileWatcher.js";
@@ -226,10 +228,9 @@ export {
   type ClientSceneResponseBody,
   type ClientScenesResponse,
 } from "./client-scenes/clientScenes.js";
-export { isValidCronExpr } from "./session/automationCronValidation.js";
+export { isValidCronExpr } from "./session/contract.js";
 // 闲时任务管理服务（与 automation 服务面独立）；接口/描述符 browser-safe。
-export { IOffPeakTaskService } from "./session/offPeakTask.js";
-export type { OffPeakUpdateTaskParams } from "./session/offPeakTask.js";
+export { IOffPeakTaskService, type OffPeakUpdateTaskParams } from "./session/contract.js";
 
 // Skills service — ISkillsService is both a type (interface) and value (descriptor)
 export { ISkillsService } from "./skills/skills.js";

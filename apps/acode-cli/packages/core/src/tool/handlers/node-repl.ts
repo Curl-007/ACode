@@ -6,11 +6,14 @@ import {
   type JsOutput,
 } from "@acode/contracts";
 import type { SessionId } from "@acode/contracts";
-import { isAbsolute, resolve } from "node:path";
 import { NodeReplSession } from "../../repl/node-repl-session.js";
 import { setupBrowserRuntime } from "../../browser-client/index.js";
 import type { ToolEntry, ToolExecutionContext, ToolHandler } from "../types.js";
 import { formatJsModelContent } from "./node-repl-model-content.js";
+import {
+  persistBrowserScreenshotPaths,
+  persistNodeReplImageRefsForOutput,
+} from "./node-repl-media.js";
 
 /**
  * 每个 acode session 一个持久 NodeReplSession，跨多次 js 调用保持内存状态（globalThis）。
@@ -191,87 +194,71 @@ export function disposeNodeReplSession(sessionId: SessionId): void {
   }
 }
 
-async function persistBrowserScreenshotPaths(
-  run: Awaited<ReturnType<NodeReplSession["run"]>>,
-  context: ToolExecutionContext,
-): Promise<string[]> {
-  const indices = run.browserScreenshotImageIndices;
-  const writeBinary = context.artifactStore?.writeToolResultBinaryArtifact;
-  if (!indices || indices.length === 0 || !writeBinary || !run.images) return [];
-
-  const paths: string[] = [];
-  for (const index of indices) {
-    const image = run.images[index];
-    if (!image) continue;
+/**
+ * js handler 工厂。
+ *
+ * `nodeReplMediaRefs` 是 U11 的**默认关闭**生产门（spec R10.1）：只有显式 true 才会把工具图片
+ * 写进 artifact store 并让 display 发 ref 形态。关闭时本 handler 与 U11 之前**逐字同行为**
+ * （不写盘、不发 ref、全 inline）。门开时还要过运行期的 `clientMode === "desktop-continuous"`
+ * 与 artifact store 在场两道判据（`shouldEmitToolMediaRefs`，spec R10.2/R9.4）。
+ *
+ * ref 不进 `JsOutput`：那是 `.strict()` 且声明给模型的对外契约，加字段等于改模型可见面。
+ * 改走 `node-repl-media.ts` 的 WeakMap 侧信道（键 = 本函数返回的 output 对象身份），
+ * 逐字照 `handlers/read-url.ts` 的既有先例（spec R7.2）。
+ */
+function createJsHandler(nodeReplMediaRefs: boolean): ToolHandler {
+  return async (input, context): Promise<JsOutput> => {
+    const { code, timeout_ms: timeoutMs, title } = JsRuntimeInputSchema.parse(input);
+    const session = getSession(context);
+    activeToolContexts.set(context.sessionId, context);
+    let runResult: Awaited<ReturnType<NodeReplSession["run"]>>;
     try {
-      const artifact = await writeBinary.call(
-        context.artifactStore,
-        {
+      runResult = await session.run(code, {
+        signal: context.abortSignal,
+
+        // 默认 30s/调用方覆盖一致，异步代码仍由工具 AbortSignal 中断。
+        syncTimeoutMs: Math.min(timeoutMs ?? 30_000, 120_000),
+        requestMeta: {
           sessionId: context.sessionId,
-          turnId: context.turnId,
+          title,
           toolCallId: context.toolCallId,
-          toolName: "js",
-          content: Buffer.from(image.base64, "base64"),
-          contentType: image.mimeType,
-          extension: extensionForImageMimeType(image.mimeType),
-          retention: "session",
-          trace: context.traceContext,
+          traceId: context.traceId,
+          turnId: context.turnId,
+          workingDirectory: context.workingDirectory,
+          workspaceRoot: context.workspaceRoot,
         },
-        { signal: context.abortSignal },
-      );
-      if (artifact.path)
-        paths.push(isAbsolute(artifact.path) ? artifact.path : resolve(artifact.path));
-    } catch (error) {
-      // 路径是截图的辅助输出，artifact 故障不能把已成功的
-      // Browser 命令改写为失败；但请求取消仍必须沿用工具的取消语义。
-      if (context.abortSignal.aborted) throw error;
+      });
+    } finally {
+      activeToolContexts.delete(context.sessionId);
     }
-  }
-  return paths;
-}
+    const browserScreenshotPaths = await persistBrowserScreenshotPaths(runResult, context);
+    const { result, logs, error, images, responseMeta } = runResult;
+    const output: JsOutput = {
+      ...(result !== undefined ? { result } : {}),
+      logs,
+      ...(error ? { error } : {}),
+      ...(images && images.length > 0 ? { images } : {}),
+      ...(browserScreenshotPaths.length > 0 ? { browserScreenshotPaths } : {}),
+      ...(responseMeta ? { responseMeta } : {}),
+    };
 
-function extensionForImageMimeType(mimeType: string): string {
-  const normalized = mimeType.split(";")[0]?.trim().toLowerCase();
-  if (normalized === "image/jpeg" || normalized === "image/jpg") return ".jpg";
-  if (normalized === "image/webp") return ".webp";
-  return ".png";
-}
-
-const jsHandler: ToolHandler = async (input, context): Promise<JsOutput> => {
-  const { code, timeout_ms: timeoutMs, title } = JsRuntimeInputSchema.parse(input);
-  const session = getSession(context);
-  activeToolContexts.set(context.sessionId, context);
-  let runResult: Awaited<ReturnType<NodeReplSession["run"]>>;
-  try {
-    runResult = await session.run(code, {
-      signal: context.abortSignal,
-
-      // 默认 30s/调用方覆盖一致，异步代码仍由工具 AbortSignal 中断。
-      syncTimeoutMs: Math.min(timeoutMs ?? 30_000, 120_000),
-      requestMeta: {
-        sessionId: context.sessionId,
-        title,
-        toolCallId: context.toolCallId,
-        traceId: context.traceId,
-        turnId: context.turnId,
-        workingDirectory: context.workingDirectory,
-        workspaceRoot: context.workspaceRoot,
-      },
-    });
-  } finally {
-    activeToolContexts.delete(context.sessionId);
-  }
-  const browserScreenshotPaths = await persistBrowserScreenshotPaths(runResult, context);
-  const { result, logs, error, images, responseMeta } = runResult;
-  return {
-    ...(result !== undefined ? { result } : {}),
-    logs,
-    ...(error ? { error } : {}),
-    ...(images && images.length > 0 ? { images } : {}),
-    ...(browserScreenshotPaths.length > 0 ? { browserScreenshotPaths } : {}),
-    ...(responseMeta ? { responseMeta } : {}),
+    // U11：图片外置持久化 + ref 侧信道（门判定、store 探测、失败降级都在这个叶子内；
+    // 门默认关闭时一步都不做，行为与 U11 之前逐字一致）。ref 不进 JsOutput——那是
+    // .strict() 且声明给模型的对外契约，改走 WeakMap 侧信道交给同步 display 构造器。
+    if (images && images.length > 0) {
+      await persistNodeReplImageRefsForOutput({
+        enabled: nodeReplMediaRefs,
+        context,
+        images,
+        output,
+      });
+    }
+    return output;
   };
-};
+}
+
+/** 默认关闭的 handler：模块级 `jsToolEntry` 用它，行为与 U11 之前逐字一致。 */
+const jsHandler: ToolHandler = createJsHandler(false);
 
 const HIGH_RISK_PERMISSION = {
   riskLevel: "high" as const,
@@ -292,6 +279,12 @@ const TRACE = {
 
 interface NodeReplToolOptions {
   browserUseEnabled?: boolean;
+  /**
+   * U11 工具图片外置引用生产门（specs/tool-media-attachment-ref.md R10.1）：**默认关闭**。
+   * 只有显式 true 才把 node-repl 图片写进 artifact store 并让 display 发 ref 形态；缺席/false
+   * 时行为与 U11 之前逐字一致（全 inline base64）。运行期还要过 clientMode 与 store 在场两道判据。
+   */
+  nodeReplMediaRefs?: boolean;
 }
 
 function buildJsToolDescription(options: NodeReplToolOptions = {}): string {
@@ -352,8 +345,12 @@ function buildJsToolDescription(options: NodeReplToolOptions = {}): string {
 }
 
 export function createJsToolEntry(options: NodeReplToolOptions = {}): ToolEntry {
+  // 门开启时才换 handler；关闭时用模块级 jsHandler（createJsHandler(false)），
+  // 保证默认路径与 U11 之前是同一份代码、同一份行为（spec R10.1）。
+  const gatedHandler = options.nodeReplMediaRefs === true ? createJsHandler(true) : jsHandler;
   return {
     ...jsToolEntry,
+    handler: gatedHandler,
     metadata: {
       shouldDefer: true, // tool-search wave1a: 非常驻内置工具默认 defer(specs/tool-search.md R4)
       ...jsToolEntry.metadata,

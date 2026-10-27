@@ -18,6 +18,7 @@ import {
   readToolResultDisplayPayloadSchema,
   searchToolResultDisplayPayloadSchema,
 } from "./read-search-display.js";
+import { nodeReplImageToolResultDisplayPayloadSchema } from "./node-repl-display.js";
 
 export const COMPLETED_TOOL_PART_METADATA_SCHEMA_VERSION = 1;
 export const TASK_OUTPUT_DISPLAY_MAX_STATUS_CHARS = 64;
@@ -153,42 +154,10 @@ export const cuaToolResultDisplayPayloadSchema = z
   .strict();
 
 /**
- * node_repl cell 的目标应用身份（Computer Use）。`appKey` 是 producer 的形态：
- * `darwin:<bundleId>` / `windows-aumid:<aumid>` / `windows-exe:<path>` / `linux-exe:<path>`；
- * UI 按前缀派生 `ApplicationIconLocator` 再交给平台服务解析，协议不承载图标字节。
+ * node_repl cell 的目标应用身份（Computer Use）与 `node_repl_images` display payload 已抽到
+ * `./node-repl-display.ts`（U11 的 ref 形态让这一族 schema 增长，理由同 read-search-display.ts）。
+ * 这里只 import union 成员，导出面经 `tools/index.ts` 的 `export *` 保持不变。
  */
-export const nodeReplCuaAppDisplaySchema = z
-  .object({
-    appKey: z.string().trim().min(1).max(2_048),
-    displayName: z.string().trim().min(1).max(512).optional(),
-  })
-  .strict();
-
-export const nodeReplImageToolResultDisplayPayloadSchema = z
-  .object({
-    kind: z.literal("node_repl_images"),
-    // images 可选而不是 min(1)：CUA 的纯动作 cell（点击、输入）没有截图，但仍要投影 app 身份。
-    // kind 名保留为 node_repl_images —— 改名会让已持久化的 row 在 strict union 里整段被剥掉。
-    images: z
-      .array(
-        z
-          .object({
-            base64: z
-              .string()
-              .min(1)
-              .max(200 * 1024),
-            mimeType: z.string().regex(/^image\/[a-z0-9.+-]+$/iu),
-          })
-          .strict(),
-      )
-      .min(1)
-      .max(2)
-      .optional(),
-    app: nodeReplCuaAppDisplaySchema.optional(),
-    truncated: z.boolean().optional(),
-    source: z.literal("browser_turn_end").optional(),
-  })
-  .strict();
 
 export const mcpToolResultDisplayPayloadSchema = z
   .object({
@@ -278,14 +247,10 @@ export type CuaToolResultDisplayPayload = z.infer<typeof cuaToolResultDisplayPay
 export type ApplicationIconLocator = z.infer<typeof applicationIconLocatorSchema>;
 export type CuaTargetAppDisplay = z.infer<typeof cuaTargetAppDisplaySchema>;
 export type CuaRequestAccessStatusDisplay = z.infer<typeof cuaRequestAccessStatusDisplaySchema>;
-export type NodeReplImageToolResultDisplayPayload = z.infer<
-  typeof nodeReplImageToolResultDisplayPayloadSchema
->;
 export type McpToolResultDisplayPayload = z.infer<typeof mcpToolResultDisplayPayloadSchema>;
 export type CreateWorkflowToolResultDisplayPayload = z.infer<
   typeof createWorkflowToolResultDisplayPayloadSchema
 >;
-export type NodeReplCuaAppDisplay = z.infer<typeof nodeReplCuaAppDisplaySchema>;
 
 export type ToolResultDisplayPayload = z.infer<typeof toolResultDisplayPayloadSchema>;
 

@@ -72,6 +72,10 @@ export * from "./workflow-observation-display.js";
 // core 的 result-display 装配器与 result 校验读走；漏掉这行 union 成员缺席，
 // agent 下发的 read/search display 会被整块剥掉（同 toolDisplay.ts 的教训）。
 export * from "./read-search-display.js";
+// U11 node_repl_images display payload（含 ref 形态镜像，specs/tool-media-attachment-ref.md R10.5）：
+// 从 tool-result-metadata.ts 抽出成叶，这里补 export 以保持 @acode/contracts 的导出面不变
+// （nodeReplCuaAppDisplaySchema / NodeReplImageToolResultDisplayPayload 等仍可从包根取）。
+export * from "./node-repl-display.js";
 export * from "./tool-result-metadata.js";
 export * from "./performance.js";
 // 会话级 git worktree 生命周期三工具（specs/session-worktree-lifecycle.md）：

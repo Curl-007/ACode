@@ -175,15 +175,37 @@ consumer API，v4 command 直接依赖中立模块。这样 M4 删除 legacy bar
 
 ### M3 — 删除 CLI legacy 协议 server（依赖 M2）
 
-- 内容：删除 `bootstrap/src/acode-protocol/` 48 文件；`v4-bridge.ts` 的过渡钩子内联进 v4 gateway 后删除桥文件；services 作为对端已在 M2 切换，此步是纯删除。
-- 验收：目录与桥文件删除；CLI 测试套件绿（当前基线 980）；`acode acp` 冒烟通过（ACP 面依赖 v4 gateway）；desktop 端到端冒烟（起窗口、跑一轮对话、恢复会话）。
-- 风险：`server-operations.ts`（3,973 行）内如有仍被 v4 复用的纯函数，先搬进 v4 目录再删（依赖方向只允许旧 → v4，搬运不违反）。
+- 内容：删除 `bootstrap/src/acode-protocol/` 文件；`v4-bridge.ts` 的过渡钩子内联进 v4 gateway 后删除桥文件；services 作为对端已在 M2 切换，此步是纯删除。
+- 验收：目录与桥文件删除；CLI 测试套件绿；`acode acp` 冒烟通过（ACP 面依赖 v4 gateway）；desktop 端到端冒烟（起窗口、跑一轮对话、恢复会话）。
+- 风险：`server-operations.ts` 内如有仍被 v4 复用的纯函数，先搬进 v4 目录再删（依赖方向只允许旧 → v4，搬运不违反）。
+
+> **实测订正（2026-10-27）**：本节三个计数已陈旧，且 M3 的「纯删除」前提是 M2 已完成——
+> 而 M2 本轮已判定为多周协议扩展工程（见 M2 节订正），故 **M3 结构性阻塞，本轮不做**。
+> - **目录规模 48 文件 → 50 文件 / 15,690 行**（U08 provider 诊断 `1ead67e2` 新增
+>   `provider-diagnostics.ts` 352 行 + `provider-diagnostics-ports.ts` 79 行；已在进度表登记）。
+> - **`server-operations.ts` 3,973 行 → 4,058 行**（legacy 面内既有演进微增）。
+> - **CLI 测试基线「980」严重陈旧**：实测 `apps/acode-cli/tests/**/*.test.mjs` 现为
+>   **3,151 个测试**（`node --import tsx --test` 实跑），M3 验收须以当前基线为准，不能用 980。
+> - **v4-bridge 过渡钩子仍是 6 个**（`v4-bridge.ts:8-9` 头注列 ensureModelReady /
+>   afterLegacyStateMutation / closeSession / createSessionRecord / child record registration /
+>   resumePersistedSession，`:983,995,1001` 等注入点实测仍在）。
+> - **阻塞证据（实测，非推断）**：legacy server 仍派发 services 侧仍在发的方法——
+>   `server.ts` 对 `acodeProtocolMethods.pluginsList` / `sessionRead` / `mcpList` 各有 1 处
+>   dispatch。删除 server 前必须先把 services 的 66 个 legacy 方法调用切到 v4（= M2）。
 
 ### M4 — 删除 shared legacy 协议文件（依赖 M1+M2+M3）
 
-- 内容：整删 `packages/shared/src/acode-protocol/index.ts`（3,714 行）；甄别 `acode-protocol-legacy-types.ts` 承重类型（迁 v4 或独立命名保留）；同步清理 legacy 词表残留 schema。
+- 内容：整删 `packages/shared/src/acode-protocol/index.ts`；甄别 `acode-protocol-legacy-types.ts` 承重类型（迁 v4 或独立命名保留）；同步清理 legacy 词表残留 schema。
 - 头注既有约束：「外部零消费 schema 多为存活 schema 联合的内部依赖，随宿主文件一起处理，勿单删」——删除以文件为单位，不做单导出抠除。
 - 验收：文件删除；全仓 typecheck + 全部测试绿；knip exports backlog 相应缩减；AGENTS.md 协议条目移除 legacy 文件引用。
+
+> **实测订正（2026-10-27）**：barrel 行数 **3,714 → 3,652**（2026-10-26 列已记；−2 是
+> R2-02 schema 外移所致，非退役）。**阻塞证据（实测）**：`acodeProtocolMethods` 在
+> `packages/services/src` 与 `bootstrap/src/acode-protocol/` 内仍有 **12 个活跃消费文件**，
+> 故 barrel 不可删。M4 依赖链 M1+M2+M3 三条全部未达成（M1 缺 v4 承接面、M2 缺 v4 契约、
+> M3 依赖 M2），**本轮不做**。另需注意：barrel 同时被 `onboard-b3-shared-over-limit` /
+> `-disables` 两条 `expires: "2026-12-31"` 架构例外覆盖（见本文 deadline 节订正），
+> 到期未删会让架构门禁**转红**，故 M4 是硬 deadline 项而非可无限延期的债务。
 
 ## 进度指标（每次发布级验证时更新）
 

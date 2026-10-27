@@ -130,6 +130,7 @@
 >    桥删本地定义改 import——消除重复实现。**保持 custom: 解码语义不变**（M1 头号陷阱，测试钉住）。
 > 4. **真实 import 计数 11 → 1**（`grep -l 'from "@/lib/acodeSessionProjection'` 实测）：
 >    只剩 `hooks/workspacePrepareRpc.ts` 用 `acodeWorkspacePresentationToConfigOptions`。
+>    （此为 picker 搬迁后的**中间态**；最后 1 个消费方经下方裁决迁走后计数归 0，见「M1 UI 投影收口进展（2026-10-28）」。）
 >
 > **剩余消费方的裁决（2026-10-28，实测）**：`workspacePrepareRpc` 的 v4 权威源**不是**
 > 「modelSelectionService vs workspace-config」二选一——**两个候选都不成立**：
@@ -307,7 +308,7 @@ consumer API，v4 command 直接依赖中立模块。这样 M4 删除 legacy bar
 | 指标                                | 2026-10-05 基线 | 2026-10-09 实测                                                         | 2026-10-26 实测                                                              | 目标    |
 | ----------------------------------- | --------------- | ----------------------------------------------------------------------- | ---------------------------------------------------------------------------- | ------- |
 | services legacy 消费文件数          | 7               | 6（independentPlanSupport 已切 v4，仅剩 type-only 引用）                | 6（未推进；`acodeProtocolClient.ts` 仍在，independentPlanSupport 仍 type-only） | 0（M2） |
-| UI 旧投影消费文件数                 | 8               | 10（新增 v4/composer 两处 `parseModelPickerValue` 消费，M1 需一并迁移） | 12（未降反增：新增 settings/SubagentModelBatch{Bar,Dialog} 两处消费）         | 0（M1） |
+| UI 旧投影消费文件数                 | 8               | 10（新增 v4/composer 两处 `parseModelPickerValue` 消费，M1 需一并迁移） | 12（未降反增：新增 settings/SubagentModelBatch{Bar,Dialog} 两处消费）→ **2026-10-28：桥已退役，真实 import = 0**（见下 M1 状态说明） | 0（M1） |
 | bootstrap legacy server 文件数/行数 | 48 / 14,713     | 48（M3 未启动）                                                         | 48 / 15,188（M3 未启动；行数因 legacy 面内既有演进微增）→ **2026-10-27 订正：50 / 15,690**（U08 `1ead67e2` 新增 2 文件，见下）| 0（M3） |
 | shared legacy 协议文件行数          | 3,714           | 3,662（M2-B 已外移 MCP/browser schema 至 acode-protocol-shared）        | 3,652（barrel −2，仅 R2-02 schema 外移所致，非退役；legacy-types 607 行）    | 0（M4） |
 | v4-bridge 过渡钩子数                | 6（见桥头注）   | 6                                                                       | 6（M3 未启动，桥头注仍列 6 个钩子）                                          | 0（M3） |
@@ -322,8 +323,32 @@ consumer API，v4 command 直接依赖中立模块。这样 M4 删除 legacy bar
 报告的「18」是更宽口径（UI 12 + `packages/shared` 内 6 个引用点，含 barrel 定义本体、spec 与基线 JSON，
 非全部为消费方），方向与本表一致——消费面未收敛。
 
-**bootstrap legacy server 增量登记（2026-10-27）**：M3 待删目录 `bootstrap/src/acode-protocol/` 自 1.0.4 后
-由 48 增至 **50 文件 / 15,690 行**——U08 provider 诊断（提交 `1ead67e2`）新增 `provider-diagnostics.ts`（352 行）
+**M1 UI 投影收口进展（2026-10-28）**：投影桥 `packages/ui/src/lib/acodeSessionProjection.ts`
+（272 行，5 导出）已**整体退役删除**。5 个导出的去向：
+- `parseModelPickerValue` / `formatModelPickerValue`（纯字符串工具，10 个消费方）→ 搬到
+  `lib/modelPickerValue.ts`（提交 `eaa9d57a`）。
+- `acodeWorkspacePresentationToConfigOptions`（1 个消费方 workspacePrepareRpc）→ 搬到
+  `lib/workspaceModeConfigOptions.ts`，改用 shared 权威 mode 档位表（提交 `07057d79`；
+  顺带修掉桥里 4 档副本缺 dontAsk 的漂移）。
+- `acodeSessionSnapshotToTaskMeta`（1 个消费方 useActiveTaskSnapshotMeta）→ 由 v4 归档冷读
+  `v4/session/headerMeta` + `v4/mapSessionHeaderMetaToTaskMeta.ts` 替代（提交 `d6cfe2c6`/`d833a776`/`d1bcf9f9`）。
+- `acodeSessionSettingsToConfigOptions`（**零运行时消费方**，是 shared
+  `acodeSessionSettingsToACodeConfigOptions` 的死副本）→ 随桥删除。
+
+**真实 import 计数 11 → 0**（`git grep -l 'from "@/lib/acodeSessionProjection' -- packages/ui/src`）。
+
+**M1 验收 grep 判据的口径缺陷（如实登记）**：验收命令 `git grep acodeSessionProjection --
+packages/ui/src` 现报 **3 个文件**（useActiveTaskSnapshotMeta.ts / modelPickerValue.ts /
+workspaceModeConfigOptions.ts），全部是**来历说明注释**（记录「这函数原住哪、为什么搬」），
+零 import。即字面 grep 判据无法归零，除非删掉解释性注释——那会损失「为什么在这里」的上下文，
+得不偿失。**建议 M1 收口判据改为 `git grep 'from "@/lib/acodeSessionProjection'`（现 = 0）**。
+
+**M1 的 UI 侧到此完成，但 M1 整体未标记完成**：legacy **协议**读路径 `readWorkspacePresentation`
+仍在被 workspacePrepareRpc 使用（经它取 mode + slashCommands）。那属 **M2/M4**（协议退役），
+不是 M1（UI 投影桥收口）——两者是不同里程碑。协议侧要收口须先解决「workspace-config 预热种子
+在无 live session 时返回 null」的问题（需产品决策：预热期的 mode 目录从哪来，见 M1 节 2026-10-28 裁决）。
+
+**bootstrap legacy server 增量登记（2026-10-27）**：M3 待删目录 `bootstrap/src/acode-protocol/` 自 1.0.4 后由 48 增至 **50 文件 / 15,690 行**——U08 provider 诊断（提交 `1ead67e2`）新增 `provider-diagnostics.ts`（352 行）
 与 `provider-diagnostics-ports.ts`（79 行）。**这不违反 shared barrel 冻结纪律**：新方法名 `PROVIDER_DIAGNOSTICS_METHODS`
 定义在中立叶子 `packages/shared/src/providerDiagnostics.ts:269`（不在冻结 barrel 内），schema 亦在中立叶子；
 载体选 bootstrap 协议层是 spec 明确裁决（`packages/services/specs/provider-diagnostics.md:238`「已评估并否决的

@@ -75,10 +75,32 @@
 必须显式验收「**目标文件行数跌破 400**」，而不是只看「行数下降」。内部修剪若未跨阈值，
 不计入拆分进度，避免「修剪很多、上帝文件计数纹丝不动」的动能假象。
 
-**后续治理项（登记，不在本计划实现）**：lead 应考虑为**已登记进本 split-plan 的文件**
-引入一条**行数 ratchet**——一旦某文件被登记，记录其登记时行数作为上限，后续任何增长
-（即使在 400 以上）都让门禁变红，直到该文件按批次跌破 400 或显式下调上限。
-门禁实现属 `scripts/architecture`（另一代理所有权），本计划只登记需求与验收口径，不改门禁代码。
+**后续治理项 —— ✅ 已落地（2026-10-27）**：为**已登记进本 split-plan 的文件**引入了一条
+**行数 ratchet**，实现为守护测试 `packages/ui/tests/godComponentLineRatchet.guard.test.mjs`
+（三条断言）：
+
+1. **上限表**：每个登记文件钉一个物理行上限，超过即红。基线取**实测当前行数**
+   （AutomationEditView 2,950 / SubagentsSection 2,671 / AutomationsSection 1,979），
+   不是表头的登记时行数——AutomationEditView 表头写 2,942，差的 8 行是本节自己记载的
+   Button a11y 迁移合法成本，ratchet 的职责是冻结债务在**当前**水位，不追溯已合入工作。
+2. **登记表防腐**：文件消失、或已跌破 400（拆分批次完成）时红，提示从上限表移除条目。
+3. **防漏登记**（关键：防盲区重开）：解析本文件所有 `### \`<path>.tsx\`（` 登记标记，
+   断言每个登记文件都在上限表内、且上限表不含本文件已不登记的条目。**新登记的批次若忘了加
+   上限，守护立即红**——这是「靠纪律」变「靠门禁」。
+
+选择守护测试而非改 `scripts/architecture`（本计划原文建议的方向）的理由：
+- `scripts/architecture/index.mjs` 已 447 行 / oxlint 有效行 398，只剩 **2 行**余量，加规则
+  必须先拆 checker，风险与本项收益不成比例；
+- 架构棘轮的 `newViolations` 是**基线过滤**后的集合，指纹类规则可被 `baseline:update` 吸收，
+  而守护测试不可被吸收——ratchet 必须不可绕过才有意义；
+- 仓库已有同构先例：`browser-open-pattern-repo-guard`、`legacy-protocol-barrel-freeze`、
+  `i18nLocaleParity`、`themeWriteOwnership.guard` 都是「机械不变量用守护测试兜」。
+
+**处置口径**（写进守护的失败消息）：超限只能二选一——按批次拆到上限以下（首选，最终目标
+跌破 400），或经评审显式上调上限并在提交信息写明理由；不得静默改数字让门禁变绿。
+
+**已验证非空转**：给 AutomationEditView 追加 1 行 → 守护红并报出 `2951 行 > 上限 2950（+1）`；
+还原后绿。
 
 ### `settings/AutomationEditView.tsx`（2,942 行；27 state / 12 effect / 16 memo / 11 callback）
 

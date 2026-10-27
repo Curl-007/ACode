@@ -33,6 +33,8 @@ export * from "./visualization-read.js";
 export * from "./network-capture.js";
 // Overnight（K3）完成信号（agent 进程内 supervisor → host → main）的 v4 词汇。
 export * from "./overnight-completion.js";
+// 归档会话 header 冷读（legacy M1 前置件：给 UI 归档任务 header 兜底一条 v4 只读路径）。
+export * from "./session-header-meta.js";
 // 工作区 transcript（files.* / git.* / world.run 的回放）。
 export * from "./workflow-workspace.js";
 export * from "./attachment-ref.js";

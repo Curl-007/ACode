@@ -18,6 +18,8 @@ import {
   parseWorkspaceConfigTopic,
 } from "@acode/shared/acode-protocol-v4";
 import { queryV4Capability } from "../acode-protocol-v4/capabilities.js";
+// 归档会话 header 冷读的实体（v4 目录）；本文件只留一行 dispatch case。
+import { querySessionHeaderMeta } from "../acode-protocol-v4/session-header-meta-query.js";
 import type {
   ACodeAgentQuiescenceFacts,
   ACodeProtocolError,
@@ -626,6 +628,11 @@ export class ACodeProtocolAgentServer {
         return await getUsageStats(this.context, request.params);
       case V4_METHODS.conversationUsage:
         return await getTaskTokenUsage(this.context, request.params);
+      // 归档会话 header 冷读（specs/v4-session-header-meta.md）。实体在 v4 目录
+      // （session-header-meta-query.ts），此处只一行转发——M3 搬迁入口时只需移动这一行，
+      // 不在本待删目录新增实体债。
+      case V4_METHODS.sessionHeaderMeta:
+        return await querySessionHeaderMeta(this.context, request.params);
       case V4_METHODS.command:
         return this.requireV4Gateway().handleCommand(request.params);
       case V4_METHODS.commandsQuery:

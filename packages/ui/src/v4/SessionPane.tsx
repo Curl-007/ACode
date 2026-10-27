@@ -59,7 +59,7 @@ import { useBaseWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
 import { useWorkspaceHomePath } from "@/hooks/useWorkspaceHomePath.js";
 import { prepareWorkspaceWithACodeSessionService } from "@/hooks/useWorkspacePrepare.js";
 import { decodeCustomModelValue, encodeCustomModelValue } from "@/lib/acodeCustomModelValue.js";
-import { parseModelPickerValue } from "@/lib/acodeSessionProjection.js";
+import { parseModelPickerValue } from "@/lib/modelPickerValue.js";
 import { captureComposerRecentSubmission } from "@/lib/composerRecent.js";
 import { resolveProviderLabel } from "@/lib/registryProviderView.js";
 import {

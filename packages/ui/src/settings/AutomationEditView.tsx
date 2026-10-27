@@ -130,7 +130,7 @@ import { useAutomationProjectOptions } from "@/hooks/useAutomationProjectOptions
 import { useModelSelectionView } from "@/hooks/useModelSelectionView.js";
 import { resolveModelThoughtOption } from "@/lib/modelThoughtOption.js";
 import { decodeCustomModelValue, encodeCustomModelValue } from "@/lib/acodeCustomModelValue.js";
-import { parseModelPickerValue } from "@/lib/acodeSessionProjection.js";
+import { parseModelPickerValue } from "@/lib/modelPickerValue.js";
 import { logger } from "@/logger.js";
 import {
   findAutomationWorkspaceOptionByKey,

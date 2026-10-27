@@ -20,7 +20,7 @@ import {
   type SubagentReasoningFieldState,
 } from "@/settings/SubagentReasoningField.js";
 import { SubagentSpeedField, type SubagentSpeedFieldState } from "@/settings/SubagentSpeedField.js";
-import { parseModelPickerValue } from "@/lib/acodeSessionProjection.js";
+import { parseModelPickerValue } from "@/lib/modelPickerValue.js";
 import { resolveModelThoughtOption } from "@/lib/modelThoughtOption.js";
 import { resolveModelDisplayName } from "@/lib/modelSelectionGroups.js";
 import {

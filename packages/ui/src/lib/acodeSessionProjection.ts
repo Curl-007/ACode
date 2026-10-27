@@ -1,10 +1,7 @@
 /* oxlint-disable eslint(max-lines) -- ACode session 到当前聊天 projection 的迁移桥需要同时保持 snapshot 和 event 映射一致。 */
 import {
-  decodeCustomModelValue,
   deriveACodeTaskStatusFromSessionSnapshot,
   generateTraceId,
-  parseModelPickerValue as parseSharedModelSelection,
-  formatModelPickerValue as formatSharedModelSelection,
   resolveACodeVisibleSessionTitle,
   ACODE_AGENT_PROVIDER,
   type ACodeConfigOption,
@@ -18,6 +15,11 @@ import {
   type ACodeSessionSettingsState,
   type ACodeSessionStateSnapshot,
 } from "@acode/shared";
+// 模型选择器字符串工具的唯一事实源已搬到 ./modelPickerValue.ts（2026-10-28，legacy M1 第一批
+// 消费方迁移）：它是纯字符串工具，与 session 投影无关，留在本桥会让 M1「删掉
+// acodeSessionProjection」被 10 个模型选择器消费方无谓阻塞。本桥仍从那里取用，不再本地定义
+// ——否则两份同名实现会让 custom: 解码逻辑漂移（AGENTS.md：一个语义一份实现）。
+import { formatModelPickerValue } from "./modelPickerValue.js";
 
 const MODEL_CONFIG_ID = "model";
 const THOUGHT_LEVEL_CONFIG_ID = "thought_level";
@@ -46,10 +48,6 @@ const ACODE_AGENT_MODE_OPTIONS = [
 ] as const satisfies readonly ACodeTaskModeInfo[];
 const ACODE_AGENT_MODE_ID_SET = new Set<string>(ACODE_AGENT_MODE_OPTIONS.map((mode) => mode.id));
 
-export function formatModelPickerValue(ref: ModelSelection | undefined): string {
-  return formatSharedModelSelection(ref);
-}
-
 function resolveLatestMessageModelSelection(
   messages: readonly ACodeMessageWithParts[],
 ): ModelSelection | undefined {
@@ -69,20 +67,6 @@ function resolveTaskMetaModelSelectionFromSnapshot(
   // 但消息 info.model 仍记录真实使用的模型。task meta 会作为下次冷恢复 hint，
   // 因此优先用最近消息模型让已污染的历史记录自愈。
   return resolveLatestMessageModelSelection(snapshot.messages) ?? snapshot.settings.model.current;
-}
-
-export function parseModelPickerValue(value: string): ModelSelection {
-  const customModel = decodeCustomModelValue(value);
-  if (customModel?.providerId && customModel.modelName) {
-    // UI 自定义模型值是展示态 custom:provider:model，
-    // ACode Protocol 必须收到严格的 providerId/modelId 结构。
-    return {
-      providerId: customModel.providerId,
-      modelId: customModel.modelName,
-    };
-  }
-
-  return parseSharedModelSelection(value);
 }
 
 export function acodeSessionSettingsToConfigOptions(

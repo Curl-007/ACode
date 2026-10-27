@@ -1,5 +1,5 @@
 import { thoughtLevelLabelId } from "@/chat-input-toolbar/thoughtLevelOptions.js";
-import { parseModelPickerValue } from "@/lib/acodeSessionProjection.js";
+import { parseModelPickerValue } from "@/lib/modelPickerValue.js";
 import { formatProviderModelLabel } from "@/v4/composer/modelTriggerDisplay.js";
 
 /**

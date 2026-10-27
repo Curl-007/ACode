@@ -21,7 +21,7 @@ import { useACodeIntl } from "@/i18n/IntlProvider.js";
 import { buildRegistryModelSelectGroups } from "@/lib/modelSelectionGroups.js";
 import { resolveModelThoughtOption } from "@/lib/modelThoughtOption.js";
 import { encodeCustomModelValue } from "@/lib/acodeCustomModelValue.js";
-import { parseModelPickerValue } from "@/lib/acodeSessionProjection.js";
+import { parseModelPickerValue } from "@/lib/modelPickerValue.js";
 import { logger } from "@/logger.js";
 import { formatProviderModelLabel } from "@/v4/composer/modelTriggerDisplay.js";
 import { describeWorkflowSubagentModel } from "./subagent-model-label.js";

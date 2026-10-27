@@ -26,7 +26,7 @@ import { prepareWorkspaceWithACodeSessionService } from "@/hooks/useWorkspacePre
 import { useACodeSessionService } from "@/hooks/useACodeSessionService.js";
 import { useSettings } from "@/hooks/useSettingService.js";
 import { useServices } from "@/hooks/useServices.js";
-import { parseModelPickerValue } from "@/lib/acodeSessionProjection.js";
+import { parseModelPickerValue } from "@/lib/modelPickerValue.js";
 import {
   initializeNewTaskDraft,
   refreshUneditedNewTaskDefaults,

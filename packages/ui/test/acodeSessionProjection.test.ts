@@ -6,8 +6,6 @@ import {
   ACODE_PROTOCOL_NAME,
   ACODE_PROTOCOL_VERSION,
   ACODE_AGENT_PROVIDER,
-  encodeCustomModelValue,
-  parseModelPickerValue as parseSharedModelSelection,
   type ACodeSessionStateSnapshot,
   type ModelSelection,
 } from "@acode/shared";
@@ -15,21 +13,25 @@ import {
   acodeSessionSettingsToConfigOptions,
   acodeSessionSnapshotToTaskMeta,
   acodeWorkspacePresentationToConfigOptions,
-  formatModelPickerValue,
-  parseModelPickerValue,
 } from "../src/lib/acodeSessionProjection.js";
 
 /**
- * `acodeSessionProjection` 的行为网（legacy M1 迁移的**前置件**）。
+ * `acodeSessionProjection` 三个投影函数的行为网（legacy M1 迁移的**前置件**）。
  *
  * 为什么这批测试是 M1 的先决条件而非可选项：review 2026-10-26 的 M1 调研实测，全仓
- * **没有任何**测试引用本桥或它的五个导出，故 `pnpm --filter @acode/ui test` 对 M1 迁移的
+ * **没有任何**测试引用本桥或它的导出，故 `pnpm --filter @acode/ui test` 对 M1 迁移的
  * 对错恒绿——那道验收门提供零保护力。M1 要换掉本桥的读路径，必须先有网兜住它现在的语义。
  *
- * 本文件钉住的头号不变量是**自定义模型的解析差异**（见「陷阱」一节）：UI 版
- * `parseModelPickerValue` 不是 shared 版的 re-export，它先解码展示态 `custom:provider:model`。
- * M1 若把 10 个消费方的 import 天真改指 `@acode/shared`，`custom:` 值会**静默抛错**，
- * 自定义模型选择当场坏掉，而现有测试一个都不会红。
+ * 覆盖本桥现存的 3 个导出：`acodeSessionSettingsToConfigOptions`、
+ * `acodeWorkspacePresentationToConfigOptions`、`acodeSessionSnapshotToTaskMeta`。
+ *
+ * **模型选择器字符串工具（`parseModelPickerValue`/`formatModelPickerValue`）已随 legacy M1
+ * 第一批消费方迁移搬到 `lib/modelPickerValue.ts`**，其测试（含 M1 头号陷阱「custom: 展示态
+ * UI 解码 vs shared 抛错」）见 `packages/ui/test/modelPickerValue.test.ts`。本桥不再定义它们，
+ * 只从那里 import `formatModelPickerValue` 供投影内部使用。
+ *
+ * fixture 一律经真实 `acodeSessionStateSnapshotSchema` 校验（见下），防止 fixture 与协议漂移后
+ * 测试仍假绿。
  */
 
 // ── fixtures：一律经真实 zod schema 校验，防止 fixture 与协议漂移后测试仍假绿 ──────────
@@ -54,7 +56,11 @@ function buildSnapshot(
     sessionMode?: "plan" | "build" | "edit" | "yolo" | "auto" | "dontAsk";
     title?: string;
     settingsModel?: ModelSelection | undefined;
-    thoughtLevel?: { enabled: boolean; current?: string; available?: { value: string; label: string }[] };
+    thoughtLevel?: {
+      enabled: boolean;
+      current?: string;
+      available?: { value: string; label: string }[];
+    };
     lastError?: { type: string; code?: string; message: string; detail?: string };
     goal?: Record<string, unknown> | null;
     messages?: ACodeSessionStateSnapshot["messages"];
@@ -119,91 +125,6 @@ function buildSnapshot(
 
 test("fixture 自身合法（schema 校验网的第一道）", () => {
   assert.equal(buildSnapshot().session.sessionId, "sess_fixture");
-});
-
-// ── parseModelPickerValue：M1 的头号陷阱 ────────────────────────────────────────
-
-test("parseModelPickerValue: 标准 provider/model 串与 shared 同解", () => {
-  assert.deepEqual(parseModelPickerValue("zai/glm-4.7"), {
-    providerId: "zai",
-    modelId: "glm-4.7",
-  });
-  assert.deepEqual(parseModelPickerValue("zai/glm-4.7"), parseSharedModelSelection("zai/glm-4.7"));
-});
-
-test("parseModelPickerValue: reasoning 后缀留在 modelId（与 shared 一致，不拆分）", () => {
-  // shared 的 reasoningLevel 分隔符不是 ':'，故 'modelId:high' 整体是 modelId。
-  // 本断言钉住 UI 与 shared 在这一形态上同解——迁移后不得变。
-  assert.deepEqual(parseModelPickerValue("zai/glm-4.7:high"), {
-    providerId: "zai",
-    modelId: "glm-4.7:high",
-  });
-  assert.deepEqual(
-    parseModelPickerValue("zai/glm-4.7:high"),
-    parseSharedModelSelection("zai/glm-4.7:high"),
-  );
-});
-
-test("【陷阱】parseModelPickerValue: custom: 展示态由 UI 解码，shared 会抛错", () => {
-  const encoded = encodeCustomModelValue("zai", "glm-4.7");
-  assert.equal(encoded, "custom:zai:glm-4.7", "encode 形态是展示态 custom:provider:model");
-
-  // UI 版：解码成严格 providerId/modelId 结构（协议要求）。
-  assert.deepEqual(parseModelPickerValue(encoded), {
-    providerId: "zai",
-    modelId: "glm-4.7",
-  });
-
-  // shared 版：同一串**抛错**（custom:zai:glm-4.7 无 '/' 分隔符）。
-  // 这条就是 M1 迁移的真实风险面：把消费方 import 改指 @acode/shared 会让自定义模型当场坏掉。
-  assert.throws(
-    () => parseSharedModelSelection(encoded),
-    /缺少 Provider/,
-    "shared 版必须对 custom: 串抛错——若它开始支持，本桥的包装就失去理由，需重新评估迁移",
-  );
-});
-
-test("【陷阱】parseModelPickerValue: legacy builtin: 三段形态也走 UI 解码", () => {
-  // decodeCustomModelValue 对 custom:builtin:<provider>:<model> 有专门分支：
-  // providerId 保留 'builtin:<provider>' 两段。迁移后必须保持这一 legacy 兼容形态。
-  assert.deepEqual(parseModelPickerValue("custom:builtin:openai:gpt-4o"), {
-    providerId: "builtin:openai",
-    modelId: "gpt-4o",
-  });
-  assert.throws(() => parseSharedModelSelection("custom:builtin:openai:gpt-4o"));
-});
-
-test("parseModelPickerValue: 仅 provider 无 model 的 custom 串回落 shared 并抛错（现状，非 UI 特有）", () => {
-  // decodeCustomModelValue('custom:provideronly') 返回 { providerId } 而无 modelName，
-  // 故 UI 的 `customModel?.providerId && customModel.modelName` 守卫不成立 → 回落 shared → 抛错。
-  // 钉住现状：这不是 UI 与 shared 的差异（两者都抛），迁移不改变这一行为。
-  assert.throws(() => parseModelPickerValue("custom:provideronly"), /缺少 Provider/);
-  assert.throws(() => parseSharedModelSelection("custom:provideronly"), /缺少 Provider/);
-});
-
-test("parseModelPickerValue: URL 编码的 provider/model 名被正确解码", () => {
-  // encode 走 encodeURIComponent，故含特殊字符的模型名必须能往返。
-  const encoded = encodeCustomModelValue("my provider", "model/with:special");
-  assert.deepEqual(parseModelPickerValue(encoded), {
-    providerId: "my provider",
-    modelId: "model/with:special",
-  });
-});
-
-// ── formatModelPickerValue ─────────────────────────────────────────────────────
-
-test("formatModelPickerValue: 选型 → 'provider/model'；undefined → 空串", () => {
-  assert.equal(formatModelPickerValue(GLM_REF), "zai/glm-4.7");
-  assert.equal(formatModelPickerValue(undefined), "");
-});
-
-test("formatModelPickerValue: 与 parseModelPickerValue 对标准形态往返一致", () => {
-  // 往返不变量：format(parse(x)) === x（仅对标准形态成立；custom: 形态不往返，见下）。
-  const roundTrip = formatModelPickerValue(parseModelPickerValue("zai/glm-4.7"));
-  assert.equal(roundTrip, "zai/glm-4.7");
-  // custom: 展示态**不**往返（format 产出 provider/model，不还原 custom: 前缀）——
-  // 钉住现状，防止迁移时被误当作 bug「修好」而改变既有 UI 行为。
-  assert.equal(formatModelPickerValue(parseModelPickerValue("custom:zai:glm-4.7")), "zai/glm-4.7");
 });
 
 // ── acodeWorkspacePresentationToConfigOptions ──────────────────────────────────
@@ -348,7 +269,11 @@ test("acodeSessionSnapshotToTaskMeta: lastError 映射为 code 优先于 type，
     buildSnapshot({ lastError: { type: "provider_error", code: "E429", message: "限流" } }),
   );
   assert.deepEqual(withCode.lastError, { code: "E429", message: "限流" });
-  assert.equal(withCode.status, "error", "lastError 在场即判 error（deriveACodeTaskStatus 首条规则）");
+  assert.equal(
+    withCode.status,
+    "error",
+    "lastError 在场即判 error（deriveACodeTaskStatus 首条规则）",
+  );
 
   const withoutCode = acodeSessionSnapshotToTaskMeta(
     buildSnapshot({ lastError: { type: "provider_error", message: "限流", detail: "重试中" } }),
@@ -416,7 +341,11 @@ test("acodeSessionSnapshotToTaskMeta: goal 的 summaryTitle 有值时透传（�
   );
   assert.equal(meta.target?.summaryTitle, "评审收口");
   assert.equal(meta.target?.status, "complete");
-  assert.equal(meta.target?.tokenBudget, null, "tokenBudget 可为 null（schema 允许），不得被回落成 0");
+  assert.equal(
+    meta.target?.tokenBudget,
+    null,
+    "tokenBudget 可为 null（schema 允许），不得被回落成 0",
+  );
 });
 
 test("【M1 迁移情报】fromACodeGoal 的 snake_case 与非法 status 兜底分支经 schema 校验后不可达", () => {
@@ -454,9 +383,7 @@ test("【M1 迁移情报】fromACodeGoal 的 snake_case 与非法 status 兜底�
     },
   });
   assert.equal(snakeCaseGoal.success, false, "snake_case + 非法 status 必须被 schema 拒绝");
-  const unknownKeys = snakeCaseGoal.success
-    ? []
-    : snakeCaseGoal.error.issues.map((i) => i.code);
+  const unknownKeys = snakeCaseGoal.success ? [] : snakeCaseGoal.error.issues.map((i) => i.code);
   assert.ok(
     unknownKeys.includes("unrecognized_keys") || unknownKeys.includes("invalid_value"),
     `拒绝原因应是未知键或非法枚举值，实测：${unknownKeys.join(", ")}`,

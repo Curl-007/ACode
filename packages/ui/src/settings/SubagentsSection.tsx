@@ -75,7 +75,7 @@ import {
 } from "@/lib/modelSelectionGroups.js";
 import { resolveModelThoughtOption } from "@/lib/modelThoughtOption.js";
 import { thoughtLevelLabelId } from "@/chat-input-toolbar/thoughtLevelOptions.js";
-import { parseModelPickerValue } from "@/lib/acodeSessionProjection.js";
+import { parseModelPickerValue } from "@/lib/modelPickerValue.js";
 import { encodeCustomModelValue } from "@/lib/acodeCustomModelValue.js";
 import { SUBAGENT_COLORS, SUBAGENT_COLOR_CLASS } from "@/lib/subagentColors.js";
 import { SettingsResourceGroupHeader } from "@/settings/SettingsResourceGroupHeader.js";

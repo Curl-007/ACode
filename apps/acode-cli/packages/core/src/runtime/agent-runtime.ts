@@ -727,6 +727,8 @@ export interface AgentRuntime {
     targetCheckpointId?: string;
     targetMessageId?: MessageId;
     traceContext?: TraceContext;
+    // overnight 隐藏 coordinator 的落盘身份覆盖（specs/overnight-execution.md R1a）。
+    hiddenCoordinatorTitle?: string;
   }): Promise<WorkspaceForkResult>;
   forkStableConversationAtMessage(
     options: StableConversationForkOptions,

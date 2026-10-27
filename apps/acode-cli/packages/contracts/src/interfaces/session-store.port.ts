@@ -43,6 +43,16 @@ export const SESSION_TASK_TYPES = [
   "workflow_child",
   "subagent_child",
   "nested_workflow_child",
+  // overnight（K3）隐藏 coordinator 的 fork 会话（specs/overnight-execution.md R1a）。
+  // 必须与 "fork" 区分：侧栏可见性由持久化的 taskType 决定（isTaskListSessionType 把
+  // interactive/fork/workflow_parent 判为可见），而 coordinator 是「不进 UI 会话列表」的形态。
+  // 用 "fork" 落盘会让它在 CLI 冷重启后被 seed 投进侧栏显示为「Fork of X」——隐藏语义跨重启失效。
+  // 刻意**不**加入 TASK_LIST_SESSION_TYPES：可见性靠既有集合的「不在即不可见」生效，
+  // 不新增 hidden 列或侧栏过滤分支（避免重复状态与第二条可见性写入路径）。
+  // 无 DB 迁移：session.task_type 是无 CHECK 约束的 text 列。
+  // 运行期 config.taskType 仍是 "fork"（见 overnight-controller 的 configOverrides），
+  // 因为 isMainMemoryTaskType 等运行期门正向枚举 "fork"；本值只用于持久化行的可见性判定。
+  "overnight_coordinator",
 ] as const;
 export type SessionTaskType = (typeof SESSION_TASK_TYPES)[number];
 

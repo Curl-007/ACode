@@ -101,6 +101,27 @@ overnight 是**本地进程内的长时执行模式**（桌面开着挂机），
 - **coordinator**：经 `sourceTaskId` fork 隐藏任务（不进 UI 会话列表主视图，runtime-task
   投影可见），继承父任务 messages/compact/provider 配置；**独立 turn loop**——不占用
   用户会话的输入通道；
+- **隐藏语义必须落盘（R1a，2026-10-27 补）**：coordinator 的 fork 会话行会持久化（fork 复制
+  走 sessionStore 事务链），而侧栏可见性由**持久化的 `taskType`** 决定——
+  `isTaskListSessionType`（`bootstrap/src/acode-protocol-v4/task-list-session-membership.ts`）
+  把 `interactive`/`fork`/`workflow_parent` 判为可见，且冷启动 seed 从 store 读同一判据
+  （`v4-bridge.ts:1487,1504`、`server-operations.ts:1594`）。故「隐藏」不能只存在于内存请求字段：
+  `OvernightCoordinatorForkRequest.hidden` 必须被 fork 绑定消费，落成专属 `taskType`
+  `"overnight_coordinator"`（`SESSION_TASK_TYPES` 新增值），并落 coordinator 自己的标题而非
+  `Fork of <父标题>`。
+  - **缺陷背景**（本轮修复的既有 bug，非新设计）：原实现只读 `targetMessageId`，`hidden` 无消费者，
+    会话行以 `taskType:"fork"` 落盘 → 冷重启后被 seed 投进侧栏显示为「Fork of X」。
+    「隐藏 coordinator」语义跨重启不成立。
+  - **无 DB 迁移**：`session.task_type` 是 `text`（`migrations.ts:231,413`），无 CHECK 约束，
+    新增枚举值不改表结构。
+  - **跨版本降级行为（如实登记，不做兜底）**：`decodeSessionTaskType`
+    （`adapters/src/storage/session-store/codecs.ts:45-49`）对未知值回落 `"interactive"`，故
+    **旧版 CLI 读新库会把 coordinator 显示为可见 interactive 会话**——即退化为修复前的行为，
+    不是崩溃或数据损坏，且 R1 本就不跨重启续跑（残留行已是孤儿）。降级面按此接受，
+    不加版本嗅探分支（AGENTS.md：不用兜底掩盖设计）。
+  - **可见性判据不新增第二条路径**：`"overnight_coordinator"` **不进**
+    `TASK_LIST_SESSION_TYPES`，靠既有集合的「不在即不可见」生效；不另加 `hidden` 列或
+    侧栏过滤分支（避免重复状态与多写入路径）。
 - **生命周期绑定**：overnight run 的 supervisor 状态（manifest）落**内存 + runtime-task
   快照**，不落盘跨重启续跑；app 退出（窗口关闭/进程终止）= run 终止，下次启动只读
   「上次 overnight 终止于 X 相位」的告警提示。理由：ACode agent 进程随 host 生命周期
@@ -239,6 +260,11 @@ UI 经 runtime-task 既有投影面读取）。
 6. 失败熔断：coordinator turn 连续 3 次抛错 → failed，不再发 poke；
 7. fork 语义：coordinator 任务携带父任务 messages 投影与 provider 配置（mock 任务服务
    断言 create 参数）；
+7a. **隐藏语义落盘（R1a）**：`forkCoordinatorTask` 收到 `hidden: true` 时，持久化的会话行
+   `taskType === "overnight_coordinator"`（非 `"fork"`），且标题为 coordinator 自己的标题
+   （不含 `Fork of`）；该 taskType **不在** `TASK_LIST_SESSION_TYPES` 内，故
+   `isTaskListSessionType("overnight_coordinator") === false` —— 冷启动 seed 不会把它投进侧栏。
+   负向断言：`hidden: true` 若未被消费（回落 `"fork"`）则测试红。
 8. 运营契约在场：首条 prompt 含禁止清单与卡片优先声明（prompt 快照）；
 9. 重启语义：supervisor 不存在（进程重启后）→ runtime-task 显示 terminated 告警，
    无残留定时器/无自动重启（单测以实例销毁+时钟推进断言零后续 turn）；

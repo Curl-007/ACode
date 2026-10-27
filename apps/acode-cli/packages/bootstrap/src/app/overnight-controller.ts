@@ -163,9 +163,14 @@ export function createOvernightController(deps: CreateOvernightControllerDeps): 
       // fork 全部父 messages 于当下：targetMessageId = 父 active 分支最后一条消息
       // （coordinator.ts 的投影已给出）。message 目标形态只撤销其后 checkpoint——
       // 目标即最新消息时等价纯对话 fork，不动工作区文件。
+      // R1a（specs/overnight-execution.md）：request.hidden 的消费点在这里——传 title 令落盘
+      // 会话行拿专属 taskType "overnight_coordinator" 与 coordinator 自己的标题，冷重启后不被
+      // seed 投进侧栏。此前 hidden 无消费者，行以 "fork" 落盘 → 重启后显示「Fork of X」。
+      // 不做运行期分支：coordinator 是唯一隐藏形态（spec「未做与取舍」2），hidden 恒为字面量 true。
       const forked = await runtime.forkWorkspaceFromCheckpoint({
         targetMessageId: request.targetMessageId as MessageId,
         traceContext: deps.traceContext,
+        hiddenCoordinatorTitle: request.title,
       });
       const childRuntime = createScriptWorkflowAgentRuntime({
         childSessionId: forked.forkedSessionId,
@@ -181,8 +186,17 @@ export function createOvernightController(deps: CreateOvernightControllerDeps): 
           mode: deps.runtimeConfig.mode,
           // dwf child 禁 subagents；运营契约要求 helper 只在正期望时可用——保留。
           subagents: { enabled: true },
-          // 与落盘 child session 的 taskType 对齐（buildForkedSessionInput 的 "fork"）。
-          taskType: "fork",
+          // **必须与上面 fork 落盘的 taskType 同值**（单一事实、两次写入不得冲突）：
+          // ensureSessionPersisted 在 child 首个 turn 会以 config.taskType upsert 会话行
+          // （turn.ts:332 → events.ts:593 → createSession 的 `task_type = excluded.task_type`），
+          // 而 child 的 sessionPersisted 初值为 false（agent-runtime.ts:340，fork 路径不预置），
+          // 故该 upsert 必然发生。若此处仍写 "fork"，首个 turn 就会把 R1a 的隐藏身份静默改回去。
+          // 运行期语义不变：其余 config.taskType 消费方全部只判 subagent_child/workflow_child
+          // （runtime-tools、swarm-plan-turn、tool-allowlist、model-request-session-type、
+          // auto-resume CHILD_SESSION_TASK_TYPES、querySourceForTask），"fork" 与
+          // "overnight_coordinator" 走同一分支；唯一差别是 isTaskListSessionType 判不可见
+          // （即本修复目标）。project-memory 的 isMainMemoryTaskType 已同批加该值以保持记忆启用。
+          taskType: "overnight_coordinator",
         },
       });
       // provider 配置继承：legacy fork 链不复制选型 entry，显式绑定父会话当前选择。

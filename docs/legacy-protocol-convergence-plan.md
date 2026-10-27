@@ -20,7 +20,10 @@
 
 - `acode-agent/acodeAgentProcessManager.ts`
 - `acode-agent/acodeAgentService.ts`
-- `acode-agent/acodeProtocolClient.ts`（legacy 客户端本体）
+- `acode-agent/acodeProtocolClient.ts`（**订正 2026-10-27**：原标注「legacy 客户端本体」有误。
+  它是 legacy 与 v4 **共用**的版本无关 JSON-RPC 传输载体——`acodeProtocolClient.ts:19` 的方法名
+  联合已含 `V4Method`，v4 方法经它派发，`transport.ts:370-371` 明写旧协议删除后「这里就是唯一
+  协议面」。**它不在退役清单内**，详见 M2 节订正 ①②）
 - `acode-agent/independentPlanSupport.ts`
 - `acode-agent/pluginReferenceCatalogRequest.ts`
 - `node.ts`（组合根装配）
@@ -94,9 +97,67 @@
 
 ### M2 — services 双栈调用切换（可与 M1 并行）
 
-- 内容：`acode-agent/` 6 文件的 legacy 方法调用逐个迁到 V4_METHODS；`acodeProtocolClient.ts` 退役；`node.ts` 装配同步收口。
+- 内容：`acode-agent/` 6 文件的 legacy 方法调用逐个迁到 V4_METHODS；~~`acodeProtocolClient.ts` 退役~~（见下方订正）；`node.ts` 装配同步收口。
 - 验收：`git grep -l "acodeProtocolMethods\|acodeProtocolClient" -- packages/services/src` 归零；services/desktop 测试绿。
 - 风险（AGENTS.md 要求）：`desktop-continuous` 与 `web-remote-replayable` 两种语义必须同时验证——迁移触及 stream/snapshot/queue 时，本地窗口链路与手机远控恢复链路各跑一遍真实冒烟；owner/lease 与 stale run 防护不得因改名/换路径被绕过。
+
+> **实测订正（2026-10-27，M2 启动前调研）**：本节的验收判据**结构性不可满足**，且「6 文件」
+> 的口径含 3 个假阳性。逐条（全部源码核验）：
+>
+> **① `acodeProtocolClient.ts` 不是「legacy 客户端本体」，而是 legacy 与 v4 共用的版本无关
+> JSON-RPC 传输载体——退役它会删掉 v4 的载体。** 证据：
+> - `acodeProtocolClient.ts:19`：`type ACodeProtocolClientMethod = ACodeProtocolMethod | V4Method | ProviderDiagnosticsMethod;`
+>   （方法名联合**已含 v4**）；`:12` import `V4Method`。
+> - `acode-protocol-v4/transport.ts:370-371` 头注明写：「载体复用现有 JSON-RPC（stdio NDJSON /
+>     socket），方法名带 v4/ 前缀与旧协议并存；**旧 session/\* 方法删除后，这里就是唯一协议面**」。
+> - v4 方法确实经该 client 派发：`acodeAgentService.ts:1257,1803,1824,3890`（`V4_METHODS.networkCaptureSetEnabled`
+>   / `conversationUnsubscribe` / `conversationResync` / `usageStats`）；`independentPlanSupport.ts:19`
+>   经它调 `V4_METHODS.capabilitiesQuery`。
+> - 单一构造点：`acodeAgentProcessManager.ts:1600` `new ACodeProtocolClient(transport, …)`。
+>
+> **② 因此验收 grep 只能靠改名归零**：`acodeProtocolClient` 这个名字必须在 M4 之后**继续存在**
+> （它是唯一协议面的载体）。把它从 grep 里清零的唯一办法是重命名模块——那是**表面通过而非收敛**，
+> 正是本节 M1 订正里谴责的失败形态。建议验收判据改为「services 内 legacy **方法**消费 = 0」，
+> 并把 client 模块明确认定为永久载体。
+>
+> **③ 「6 文件」含 3 个假阳性**（被字符串匹配到，并非 legacy 方法消费方）：
+> - `node.ts:108` 是 barrel re-export `export { ACodeProtocolClient } from "./acode-agent/acodeProtocolClient.js"`；
+> - `acodeAgentProcessManager.ts:45` 只是 import 路径，**该文件 `acodeProtocolMethods.` 消费数实测 = 0**；
+> - `acodeProtocolClient.ts` 命中自己的文件名。
+> 真消费方只有 3 个：`acodeAgentService.ts`（**66** 个不同 legacy 方法）、
+> `pluginReferenceCatalogRequest.ts`（2 个）、`independentPlanSupport.ts`（type-only）。
+>
+> **④ 68 个 legacy 方法里，0 个有干净的 v4 等价物**（`V4_METHODS` 实测 34 条 vs legacy
+> `acodeProtocolMethods` 84 条）：
+> - **54 个完全没有 v4 契约**——实测 `transport.ts` 对 plugins / mcp / skills / automation /
+>   offPeak / workspace 写路径**零命中**。其中 15 个是 **inbound**（agent→host）handler
+>   （`interactionRequestPermission`、`interactionRequestUserInput`、`automationCreate`、
+>   `offPeakCreate`、`computerUseOperationEvent` 等），迁移是**两侧协议变更**：必须 CLI 先发
+>   v4 形态请求，host 才能改 handler。permissions 尤其不是改名——v4 用 `pendingInteractions`
+>   快照行 + `resolveInteraction` 命令**架构性替换**（`command.ts:201`），是 broker 重设计。
+> - **14 个有部分 v4 面，但迁移会静默丢字段或收窄值域**（最危险，因为看起来可迁）：
+>   `sessionCreate`→`createSession` 丢 `engine`/`persistence`/`importedHistory`/`toolAllowlist`
+>   且返回从完整 snapshot 变 `CommandAck`；`sessionCompact`→`compact` 的 v4 payload 是
+>   `z.object({})` **空的**，带不了 `instructions`；`sessionSetMode`→`switchCollaborationMode`
+>   的 v4 值域**刻意排除 `auto`**（`index.ts:3529` 自己写着）；`sessionMessages`→`conversationRowsRange`
+>   分页方向**相反**（legacy `afterMessageId` 前向 vs v4 `beforeRowId` 后向）；`sessionClose`→
+>   `deleteSession` 语义不等价（close ≠ delete，且 legacy 断言 `expectedPersistence`）；
+>   `sessionSend`→`sendText` 有 `toolDenylist`→`toolDisallowlist` 改名陷阱。
+>   其中数个需先做**产品裁决**（`goal show`/`clear` 是否保留？`mode: auto` 是否保留？
+>   close 与 delete 是否真是两个语义？）。
+> - legacy 源码**自己记录了阻塞**：`index.ts:3543-3544` 对 `workspaceGenerateText` 写
+>   「LLM 执行面在 CLI，直连不可行；消费仅 services 内部，**待 v4 workspace 查询/命令面
+>   覆盖后移除**」。
+>
+> **⑤ 本节 2026-10-09 说明的「多数尚无 v4 契约」偏乐观**：对点名的那些家族是**全部 52 个**
+> 没有，不是「多数」。唯一有 v4 存在的家族是 `session/*`，且每一条都是「部分等价 + 丢字段」。
+>
+> **结论**：M2 不是迁移，而是**多周到多月的协议扩展工程**——54 个方法要先按 spec-first 建
+> v4 schema + CLI gateway 分支 + skew 安全分析；14 个部分等价项需先做产品裁决再迁；约 13 个
+> 触及 stream/snapshot/queue/reconnect，按本节风险条必须跑双链路真实冒烟（headless 不可跑）；
+> `sessionSubscribe` 还阻塞在 M1 上。**本轮不做 M2**；唯一诚实可推进的是把 type-only 消费方
+> 从具体传输类解耦到中立接口叶子（见 2026-10-27 提交），它让 M2 完成时这两个文件无需再改，
+> 但**不构成 M2 进度**（验收判据本身待重写）。
 
 #### M2-B — shared schema 边界（已落地，2026-10-09）
 

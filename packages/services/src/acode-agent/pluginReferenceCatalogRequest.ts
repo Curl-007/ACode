@@ -3,11 +3,11 @@ import {
   acodePluginsReferenceCatalogResultSchema,
   type ACodePluginsReferenceCatalogParams,
 } from "@acode/shared";
-import type { ACodeProtocolClient } from "#src/acode-agent/acodeProtocolClient.js";
+import type { ACodeAgentRpcClient } from "#src/acode-agent/acodeAgentRpcClient.js";
 
 /** 旧协议严格校验响应；新展示字段走独立入口，只有 -32601 能证明旧 Agent 不支持。 */
 export async function requestPluginReferenceCatalog(
-  client: Pick<ACodeProtocolClient, "request">,
+  client: Pick<ACodeAgentRpcClient, "request">,
   params: ACodePluginsReferenceCatalogParams,
 ) {
   try {

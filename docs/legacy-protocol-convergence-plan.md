@@ -71,7 +71,25 @@
 >      `hooks/useActiveTaskSnapshotMeta.ts:76` 用 `acodeSessionSnapshotToTaskMeta(snapshot)`，
 >      snapshot 是 legacy `readSession` 返回的 `ACodeSessionStateSnapshot`；要迁需**先建**
 >      v4 归档/单会话一次性冷读（`V4_METHODS` 无 `readSession` 等价物，v4 conversation 是
->      subscribe-only）**加** `ConversationSnapshot → ACodeTaskMeta` 映射器（全仓零命中）。
+>      subscribe-only）。
+>      **订正（2026-10-28，实施期实测）**：本文此前（提交 `9f8aea05`）说需「加
+>      `ConversationSnapshot → ACodeTaskMeta` 映射器」——该表述**不成立**，照它施工会产出
+>      非法对象。`ACodeTaskMeta` 有 7 个必填字段（`taskId`/`traceId`/`title`/`workspacePath`/
+>      `createdAt`/`updatedAt`/`mode`），而 `conversationSnapshotSchema` 的**顶层**只有
+>      `sessionId`/`logEpoch`/`seq`/`revision`/`control`/`availability`/`inputRouting`/`meta`/
+>      `config`/`usage`/`queue`/`rows` 等，**四个身份字段（`traceId`/`workspacePath`/
+>      `createdAt`/`updatedAt`）在快照里根本不存在**（实测 `snapshot.ts:524-560` 顶层字段清单）。
+>      快照只能供出 `title`（`meta.title`）、`mode`/`model`/`thought`（`config`）、
+>      `status`/`lastError`（`control`）、`taskId`（`sessionId`）——即 7 个必填里的 4 个。
+>      **故新冷读命令的响应必须是「身份信封 + 快照投影」的合成体**（identity envelope 携带
+>      workspacePath/workspaceIdentity/createdAt/updatedAt/traceId，与快照字段合并后才构成合法
+>      `ACodeTaskMeta`），而不是裸 `ConversationSnapshot`。这也解释了为什么既有
+>      `mapSessionSummaryToTaskMeta.ts`（sessions-index 侧的同类映射）必须靠 `options.workspacePath`
+>      与 `previous?.traceId` **外部注入**这四个字段——`SessionSummary` 同样不带它们。
+>      另需登记：`acodeSessionSnapshotToTaskMeta` 里 `fromACodeGoal` 的三处防御分支
+>      （snake_case `sessionID`/`targetID` 读取、非法 `status` 回落 `"active"`）对任何通过
+>      `acodeSessionGoalSchema`（`.strict()`、camelCase、闭集 enum）校验的输入**不可达**，
+>      迁移时不应照搬（已由 `packages/ui/test/acodeSessionProjection.test.ts` 专测钉住）。
 >      `hooks/workspacePrepareRpc.ts:44` 用 `acodeWorkspacePresentationToConfigOptions`，
 >      数据来自 legacy `readWorkspacePresentation`；v4 workspace-config topic schema 已存在且
 >      services 已发射（`acodeTaskIndexSyncer.ts:1185`），但 **`packages/ui/src` 对其零消费**
@@ -192,6 +210,19 @@ consumer API，v4 command 直接依赖中立模块。这样 M4 删除 legacy bar
 > - **阻塞证据（实测，非推断）**：legacy server 仍派发 services 侧仍在发的方法——
 >   `server.ts` 对 `acodeProtocolMethods.pluginsList` / `sessionRead` / `mcpList` 各有 1 处
 >   dispatch。删除 server 前必须先把 services 的 66 个 legacy 方法调用切到 v4（= M2）。
+> - **「纯删除」是错误定性（2026-10-28 补，实测）**：`bootstrap/src/acode-protocol/server.ts`
+>   （1,020 行）是**整个 agent 协议的唯一入口**——`acode-protocol-entrypoint.ts:349` 的
+>   `handleMessage` 直接绑到 `ACodeProtocolAgentServer.handleMessage`，而该文件的同一个 switch
+>   里既有 **59 个 `case acodeProtocolMethods.*`（legacy）也有 31 个 `case V4_METHODS.*`（v4）**
+>   （含 `V4_METHODS.command` / `commandsQuery` / `usageStats` / `conversationUsage` 等，
+>   其中 29 处经 `requireV4Gateway()` 转发进 v4-gateway）。`v4-gateway.ts`（3,500 行）自身
+>   **不含任何 V4_METHODS dispatch**——它只是被 server.ts 调用的 handler 集合。
+>   故即便 M2 把 services 侧全部切到 v4，M3 也**不能删掉 `acode-protocol/` 目录了事**：
+>   v4 的方法分发与 wire 入口仍住在那里。M3 的真实内容是「把 v4 dispatch + entrypoint 装配
+>   **搬到 v4 目录**，再删 legacy 残留」——是**搬迁**而非删除。这会影响 M3 的工作量与验收
+>   口径（`acode acp` 与 desktop 端到端冒烟必须覆盖搬迁后的入口，不能只看目录消失）。
+>   同一拓扑也解释了本轮 M1 调研为何把新 v4 冷读命令的落点选在 server.ts 而非 v4-gateway：
+>   新增 v4 方法**当前只能**在那个 switch 里接线（除非同时做 M3 的搬迁）。
 
 ### M4 — 删除 shared legacy 协议文件（依赖 M1+M2+M3）
 

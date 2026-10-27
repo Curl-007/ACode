@@ -21,6 +21,17 @@ import { resetServiceLogRedactorForTest } from "../src/logger/logPrivacy.js";
 const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
 const servicesSrc = fileURLToPath(new URL("../src/", import.meta.url));
 
+/** 全仓扫描的目录黑名单（与 scripts/architecture/discovery.mjs 的 SKIP_DIRECTORIES 同旨）。 */
+const SKIP_DIRECTORIES = new Set([
+  "node_modules",
+  "dist",
+  "out",
+  ".git",
+  ".acode",
+  "coverage",
+  "build",
+]);
+
 /**
  * message-first logger 的文件 allowlist：这些文件里的 `.warn("msg", …)` 首参本就是
  * message（接口签名 `info(message: string, …)`），不是 ServiceLogger 的 traceId 槽，
@@ -32,15 +43,24 @@ const MESSAGE_FIRST_LOGGER_FILES = new Set([
 ]);
 
 async function collectSources(dir: string): Promise<string[]> {
-  const entries = await readdir(dir, { withFileTypes: true });
+  let entries;
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch {
+    // 目录缺席（例如某些 checkout 没有 apps/）按零文件处理，不让守护因环境差异假红。
+    return [];
+  }
   const nested = await Promise.all(
-    entries.map((e) =>
-      e.isDirectory()
+    entries.map((e) => {
+      // 跳过依赖与构建产物：全仓扫描必须只看源码，否则既慢又会把 dist 里的旧形态
+      // 当成违规（且 pnpm 的 node_modules 是符号链接，走进去没有意义）。
+      if (SKIP_DIRECTORIES.has(e.name)) return [];
+      return e.isDirectory()
         ? collectSources(`${dir}/${e.name}`)
         : /\.(ts|tsx)$/.test(e.name) && !e.name.endsWith(".d.ts")
           ? [`${dir}/${e.name}`]
-          : [],
-    ),
+          : [];
+    }),
   );
   return nested.flat();
 }
@@ -99,6 +119,68 @@ test("message-first logger 豁免文件不 import ServiceLogger（allowlist 自�
     );
   }
 });
+
+/**
+ * 全仓 receiver-aware 扫描（review 2026-10-26 §5「修一处漏其余」的机械化）。
+ *
+ * 为什么 part-1 不够：它只扫 `packages/services/src`。而 `createServiceLogger` 经
+ * `@acode/services/node` 公开入口被**其它包**消费（acode-server-cli 的 supervisor/
+ * updateCommand/http），那些文件里的同类误用不在扫描范围内——fix-status 记载的
+ * 「39 处清扫归零」只对 services 成立。2026-10-27 实测 acode-server-cli 仍有 28 处。
+ *
+ * 为什么用 receiver-aware 而不是「任何 log.xxx("字面量")」：仓库里存在**同名但不同接口**的
+ * logger——`packages/desktop/src/host/index.ts:388` 的 `logger` 是本地 message-first 对象
+ * （`info: (...args) => writeHostLog("info", ...args)`），它的字面量首参是**正确**形态。
+ * 按名字扫描会误报它。故判据是「该名字在本文件内绑定到 createServiceLogger」。
+ */
+test("全仓：绑定到 createServiceLogger 的 logger 不得有字面量首参误用", async () => {
+  const offenders: string[] = [];
+  for (const file of await collectSources(repoRoot + "packages")) {
+    await scanFileForReceiverAwareMisuse(file, offenders);
+  }
+  for (const file of await collectSources(repoRoot + "apps")) {
+    await scanFileForReceiverAwareMisuse(file, offenders);
+  }
+  assert.deepEqual(
+    offenders,
+    [],
+    `以下调用把字面量字符串塞进了 ServiceLogger 的 traceId 首参槽（该接口是 traceId-first，` +
+      `正确形态 log.info(undefined, "msg", ctx)）。跨包消费方同样受脱敏漏斗契约约束，` +
+      `见 specs/log-privacy-redaction.md R7-R8：\n` +
+      offenders.join("\n"),
+  );
+});
+
+/**
+ * 扫描单个文件：只对**绑定到 createServiceLogger 的名字**匹配字面量首参。
+ * 返回 offenders 追加「相对路径:行 接收者.方法」。
+ */
+async function scanFileForReceiverAwareMisuse(
+  file: string,
+  offenders: string[],
+): Promise<void> {
+  const source = await readFile(file, "utf8");
+  if (!source.includes("createServiceLogger")) return;
+  const boundNames = [
+    ...source.matchAll(/(?:const|let|var)\s+(\w+)\s*=\s*createServiceLogger/g),
+  ].map((m) => m[1]);
+  if (boundNames.length === 0) return;
+  const rel = file
+    .slice(repoRoot.length)
+    .replace(/\\/g, "/")
+    .replace(/\/{2,}/g, "/");
+  for (const name of boundNames) {
+    const receiverCall = new RegExp(
+      `\\b${name}\\s*\\.\\s*(info|warn|error|debug)\\s*\\(\\s*[\`"']`,
+      "g",
+    );
+    let match: RegExpExecArray | null;
+    while ((match = receiverCall.exec(source)) !== null) {
+      const line = source.slice(0, match.index).split("\n").length;
+      offenders.push(`${rel}:${line} ${name}.${match[1]}(...)`);
+    }
+  }
+}
 
 interface CapturedCall {
   fn: string;

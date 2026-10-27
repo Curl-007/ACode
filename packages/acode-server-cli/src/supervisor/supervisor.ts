@@ -86,7 +86,7 @@ export class Supervisor {
     this.persistStatusSnapshot = createStatusPersister(
       this.layout.statusFile,
       () => this.status(),
-      (error) => log.warn("failed to persist status snapshot", error),
+      (error) => log.warn(undefined, "failed to persist status snapshot", error),
     );
   }
 
@@ -114,7 +114,7 @@ export class Supervisor {
       const handler: ControlHandler = (request) => this.handleControl(request);
       this.control = await createControlServer(this.layout.controlEndpoint, handler);
       this.state = "starting";
-      log.info("supervisor started", {
+      log.info(undefined, "supervisor started", {
         serverRoot: this.layout.serverRoot,
         version: this.options.version,
       });
@@ -132,7 +132,7 @@ export class Supervisor {
           await this.stopCore("startup-failed");
           coreStopped = true;
         } catch (stopError) {
-          log.error("failed to stop Core after supervisor startup failure", stopError);
+          log.error(undefined, "failed to stop Core after supervisor startup failure", stopError);
         }
       }
 
@@ -143,7 +143,11 @@ export class Supervisor {
           this.control = undefined;
           controlClosed = true;
         } catch (closeError) {
-          log.error("failed to close control server after supervisor startup failure", closeError);
+          log.error(
+            undefined,
+            "failed to close control server after supervisor startup failure",
+            closeError,
+          );
         }
       }
 
@@ -153,6 +157,7 @@ export class Supervisor {
         this.state = recoveryFailed ? "stop-failed" : "stopped";
         await this.persistStatusSnapshot().catch((snapshotError) => {
           log.warn(
+            undefined,
             "failed to persist stopped state after supervisor startup failure",
             snapshotError,
           );
@@ -162,6 +167,7 @@ export class Supervisor {
         this.state = "stop-failed";
         await this.persistStatusSnapshot().catch((snapshotError) => {
           log.warn(
+            undefined,
             "failed to persist stop-failed state after supervisor startup failure",
             snapshotError,
           );
@@ -191,7 +197,7 @@ export class Supervisor {
     await this.control?.close();
     this.control = undefined;
     await this.lock.release();
-    log.info("supervisor stopped", { reason });
+    log.info(undefined, "supervisor stopped", { reason });
     if (reason !== "restart") this.options.onStopped?.();
     return this.status();
   }
@@ -207,7 +213,7 @@ export class Supervisor {
     if (!this.core) return;
     this.state = "stopping";
     this.lastExitReason = reason;
-    log.info("stopping server core", { reason, pid: this.core.pid });
+    log.info(undefined, "stopping server core", { reason, pid: this.core.pid });
     const core = this.core;
     try {
       await new Promise<void>((resolve, reject) => {
@@ -238,10 +244,14 @@ export class Supervisor {
           );
         };
         const handleError = (error: Error): void => {
-          log.warn("server core emitted an error while stopping; awaiting exit or close", error);
+          log.warn(
+            undefined,
+            "server core emitted an error while stopping; awaiting exit or close",
+            error,
+          );
         };
         const forceKill = (): void => {
-          log.warn("server core did not exit within grace period, sending SIGKILL", {
+          log.warn(undefined, "server core did not exit within grace period, sending SIGKILL", {
             pid: core.pid,
           });
           core.kill("SIGKILL");
@@ -282,7 +292,7 @@ export class Supervisor {
       throw new Error("Running tasks require --force for update");
     }
     const previous = await this.releaseManager.readCurrent();
-    log.info("applying pending release", { version: pending.version, force });
+    log.info(undefined, "applying pending release", { version: pending.version, force });
     await this.stopCore("update");
     this.state = "updating";
     await this.persistStatusSnapshot();
@@ -293,7 +303,7 @@ export class Supervisor {
       this.launchCore();
       await waitForUpdateReady(() => this.state, this.options.coreReadyTimeoutMs ?? 15_000);
       await this.releaseManager.completeUpdate();
-      log.info("release applied", { version: pending.version });
+      log.info(undefined, "release applied", { version: pending.version });
       return { applied: true, version: pending.version };
     } catch (error) {
       this.enterUpdateRollback();
@@ -303,13 +313,13 @@ export class Supervisor {
         try {
           await this.stopCore("update-rollback");
         } catch (stopError) {
-          log.error("failed to stop unhealthy release during rollback", stopError);
+          log.error(undefined, "failed to stop unhealthy release during rollback", stopError);
           await this.persistStatusSnapshot();
           throw stopError;
         }
       }
       // 恢复 current 指针，避免下一次启动继续使用坏 release。
-      log.error("release apply failed, restoring previous current pointer", error);
+      log.error(undefined, "release apply failed, restoring previous current pointer", error);
       try {
         await this.releaseManager.restoreCurrent(previous);
         await this.releaseManager.completeUpdate();
@@ -329,7 +339,7 @@ export class Supervisor {
         try {
           await waitForUpdateReady(() => this.state, this.options.coreReadyTimeoutMs ?? 15_000);
         } catch (rollbackError) {
-          log.error("previous release rollback failed", rollbackError);
+          log.error(undefined, "previous release rollback failed", rollbackError);
           // 旧 release ready 超时只改状态会让仍存活的 Core、PID 和 lock 与 stopped 脱节；复用 stopCore 等待 exit/close，失败则保持 stop-failed。
           if (this.core) await this.stopCore("update-rollback");
           this.state = "stopped";
@@ -366,7 +376,7 @@ export class Supervisor {
     this.core = child;
     this.clearCoreScopedStatus();
     this.scheduleCoreHealthCheck(child, generation);
-    log.info("launching server core", { generation, pid: child.pid });
+    log.info(undefined, "launching server core", { generation, pid: child.pid });
     child.on("message", (raw: unknown) => this.handleCoreMessage(child, generation, raw));
     let terminalObserved = false;
     let spawnErrorReason: string | undefined;
@@ -393,7 +403,7 @@ export class Supervisor {
     child.once("error", (error: Error & { code?: string }) => {
       spawnErrorReason = `core spawn error code=${error.code ?? "unknown"}: ${error.message}`;
       this.lastExitReason = spawnErrorReason;
-      log.error("server core process error", error);
+      log.error(undefined, "server core process error", error);
       void this.persistStatusSnapshot();
     });
     child.once("exit", (code, signal) => {
@@ -416,13 +426,16 @@ export class Supervisor {
     const decision = this.crashBudget.recordCrash();
     if (!decision.shouldRestart) {
       this.state = "crash-loop-stopped";
-      log.error("server core crash budget exhausted, entering crash-loop-stopped", {
+      log.error(undefined, "server core crash budget exhausted, entering crash-loop-stopped", {
         lastExitReason: reason,
       });
       void this.persistStatusSnapshot();
       return;
     }
-    log.warn("server core failed, scheduling restart", { reason, delayMs: decision.delayMs });
+    log.warn(undefined, "server core failed, scheduling restart", {
+      reason,
+      delayMs: decision.delayMs,
+    });
     void this.persistStatusSnapshot();
     setTimeout(() => {
       if (
@@ -450,7 +463,7 @@ export class Supervisor {
         this.recordCoreFailure(reason);
         return this.status();
       }).catch((error) =>
-        log.error("automatic restart Core failed to stop after ready timeout", error),
+        log.error(undefined, "automatic restart Core failed to stop after ready timeout", error),
       );
     }, this.options.coreReadyTimeoutMs ?? 15_000);
     this.automaticReadyTimer.unref();
@@ -477,7 +490,7 @@ export class Supervisor {
       this.generation = message.generation;
       this.startedAt = Date.now();
       this.coreHealth.markReady(this.options.now?.() ?? Date.now());
-      log.info("server core ready", {
+      log.info(undefined, "server core ready", {
         host: this.host,
         port: this.port,
         generation: this.generation,
@@ -488,16 +501,16 @@ export class Supervisor {
       if (this.state !== "ready") return;
       this.runningTaskCount = message.runningTaskCount;
       this.coreHealth.markHeartbeat(this.options.now?.() ?? Date.now());
-      log.debug("core activity snapshot", {
+      log.debug(undefined, "core activity snapshot", {
         type: message.type,
         runningTaskCount: message.runningTaskCount,
       });
     } else if (message.type === "fatal") {
       this.lastExitReason = message.message;
-      log.error("server core reported fatal error", { message: message.message });
+      log.error(undefined, "server core reported fatal error", { message: message.message });
     } else if (message.type === "exit") {
       this.lastExitReason = message.reason;
-      log.info("server core reported exit", { reason: message.reason });
+      log.info(undefined, "server core reported exit", { reason: message.reason });
     }
     void this.persistStatusSnapshot();
   }
@@ -534,7 +547,7 @@ export class Supervisor {
       const before = this.coreHealth.currentHealth();
       const after = this.coreHealth.evaluate(this.options.now?.() ?? Date.now());
       if (before !== after.health) {
-        log.warn("server core heartbeat health changed", {
+        log.warn(undefined, "server core heartbeat health changed", {
           health: after.health,
           generation,
           lastHeartbeatAt: after.lastHeartbeatAt,
@@ -591,7 +604,7 @@ export class Supervisor {
             `Cannot uninstall while ${this.runningTaskCount} task(s) are running; stop the server first`,
           );
         }
-        log.info("uninstall confirmed, stopping server");
+        log.info(undefined, "uninstall confirmed, stopping server");
         this.startAcknowledgedLifecycleOperation("uninstall", () => this.stopInternal("uninstall"));
         return { uninstalled: true };
     }
@@ -632,7 +645,7 @@ export class Supervisor {
       return await operation();
     });
     void started.catch((error: unknown) => {
-      log.error(`lifecycle operation ${kind} failed`, error);
+      log.error(undefined, `lifecycle operation ${kind} failed`, error);
     });
   }
 

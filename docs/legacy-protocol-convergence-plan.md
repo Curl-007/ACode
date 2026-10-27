@@ -89,7 +89,9 @@
 >      另需登记：`acodeSessionSnapshotToTaskMeta` 里 `fromACodeGoal` 的三处防御分支
 >      （snake_case `sessionID`/`targetID` 读取、非法 `status` 回落 `"active"`）对任何通过
 >      `acodeSessionGoalSchema`（`.strict()`、camelCase、闭集 enum）校验的输入**不可达**，
->      迁移时不应照搬（已由 `packages/ui/test/acodeSessionProjection.test.ts` 专测钉住）。
+>      迁移时不应照搬（曾由 `packages/ui/test/acodeSessionProjection.test.ts` 专测钉住；
+>      该测试随投影桥退役删除，结论保留在 spec v4-session-header-meta.md §4.2 与
+>      `session-header-meta.ts` 的实现——叶子的 goal schema 未照搬那三处兜底）。
 >      `hooks/workspacePrepareRpc.ts:44` 用 `acodeWorkspacePresentationToConfigOptions`，
 >      数据来自 legacy `readWorkspacePresentation`；v4 workspace-config topic schema 已存在且
 >      services 已发射（`acodeTaskIndexSyncer.ts:1185`），但 **`packages/ui/src` 对其零消费**
@@ -129,28 +131,51 @@
 > 4. **真实 import 计数 11 → 1**（`grep -l 'from "@/lib/acodeSessionProjection'` 实测）：
 >    只剩 `hooks/workspacePrepareRpc.ts` 用 `acodeWorkspacePresentationToConfigOptions`。
 >
-> **剩余（M1 未完全收口，如实登记）**：
-> - **`workspacePrepareRpc` 的迁移需产品决策**：调研实测推翻了「建 UI workspace-config 订阅库
->   退役 legacy 广播」的原设想——① legacy `workspace_config_options_update` 广播在 **UI 侧已死**
->   （`acodeTaskIndexSyncer.ts:1185` 仍 fire，但 desktop host 不转发 ACodeWorkspaceEvent 到
->   renderer，UI 仅 `acodeSessionStoreWorkspaceSlice.ts:908` 一句注释引用它，无 handler）；
->   ② v4 UI 的完整模型目录已由 **`modelSelectionService`**（provider registry 支撑，
->   `useModelSelectionView.ts:175-195` → `providerFacadeServices.ts:334-351`）提供，与
->   workspace-config topic 无关（该 hook 对 workspace-config 零引用）。故建 workspace-config
->   订阅库会与 modelSelectionService 构成**第二份模型目录源**（重复状态，AGENTS.md 禁止），
->   且无消费方。`workspacePrepareRpc` 产的是 mode-only configOptions（`presentation.mode` →
->   单个 mode 项），其 v4 替代是「从 modelSelectionService/workspace-config 取 mode」的产品决策，
->   不是机械搬迁。
-> - **`acodeSessionSnapshotToTaskMeta` 现零生产消费方**（第 2 项迁移后），但**刻意保留**作
->   spec v4-session-header-meta.md §8 的回退路径；仅测试引用它，故 knip 不报。
-> - **M1 验收 grep 口径有缺陷**：`grep -l acodeSessionProjection` 现报 4 处，其中 2 处是
->   **注释**引用（`useActiveTaskSnapshotMeta.ts:66`、`modelPickerValue.ts` 文件头来历说明），
->   另 2 处是桥本体与新叶子。故「grep 归零」会被注释干扰，M1 收口时应改用「零 import」口径
->   （`grep -l 'from "@/lib/acodeSessionProjection'`，现 = 1）。
+> **剩余消费方的裁决（2026-10-28，实测）**：`workspacePrepareRpc` 的 v4 权威源**不是**
+> 「modelSelectionService vs workspace-config」二选一——**两个候选都不成立**：
 >
-> 综上：M1 的**机械可迁部分已全做完**（picker 搬迁 + 归档冷读消费方），**剩 1 个消费方
-> （workspacePrepareRpc）阻塞在产品决策**（mode 的 v4 权威源该用 modelSelectionService 还是
-> workspace-config），不在本轮范围。M1 未标记完成。
+> 1. **`modelSelectionService` 结构上不可能**：`ModelSelectionView`
+>    （`packages/provider/src/facades.ts:220-224`）只有 `revision` / `providers` /
+>    `preferredSelection`，`ModelSelectionProviderView`（`:207-214`）只有
+>    `providerId`/`config`/`models`——**没有 mode，也没有 slashCommands**（对
+>    `effective-model-selection.ts` 与 `facades.ts` grep `mode|slashCommand` 命中 0）。
+>    而 `workspacePrepareRpc` 必须产出这两样（`ACodeWorkspacePrepareResult.configOptions` +
+>    `.slashCommands`）。
+> 2. **`workspace-config` topic 会引入回归**：它的 CLI 种子 `buildLiveWorkspaceConfigStateV4`
+>    （`bootstrap/src/acode-protocol/v4-workspace-config.ts:42-60`）在**无在册会话时返回 null**
+>    （`:49` `if (!record) return null;`，注释明写「刻意不建 temporary app」）。而
+>    `workspacePrepareRpc` 是**预热路径**（返回 `preparedSessionId: ""`，`:58`），调用时机正是
+>    会话尚未建立之时。换成 topic 订阅会让预热拿到空目录——恰是它存在的理由被破坏。
+>    且它是 conflated **订阅**，prepare 是**一次性读**，形态不匹配；UI 侧还需新建
+>    transport+store（~1000 行）才能消费。
+> 3. **mode 从来不是协议事实**：legacy `readWorkspacePresentation`
+>    （`bootstrap/src/acode-protocol/workspace-model-runtime.ts:19-37`）**硬编码**
+>    `mode: "build" as const`（`:26`），根本不读任何持久/运行态 mode。故「mode 的 v4 权威源」
+>    这个提法本身不成立——它没有权威源，是个常量。
+>
+> **裁决**：不建 workspace-config 订阅库，不改用 modelSelectionService。正确修法是把
+> `acodeWorkspacePresentationToConfigOptions` 这个**纯格式化函数**搬出投影桥（与 picker 工具
+> 同一手法，提交 `eaa9d57a` 的先例），并改用 shared 的权威 helper——因为它现在**重复实现**了
+> `packages/shared/src/acode-agent-model-state.ts:47-57` 的
+> `normalizeAvailableACodeMode`/`getACodeAgentModeSelectOptions`，而且**两份已经漂移**：
+>
+> | | shared 权威（`acode-agent-model-state.ts:15-42`） | UI 桥本地副本（`acodeSessionProjection.ts:25-46`） |
+> |---|---|---|
+> | mode 档位 | build / edit / plan / yolo / **dontAsk**（5 个） | build / edit / plan / yolo（**4 个，缺 dontAsk**） |
+>
+> 后果是**潜在缺陷**：桥的 `normalizeAvailableACodeMode("dontAsk")` 因 `dontAsk` 不在其
+> 4 元素集合内而**静默回落 `"build"`**（`acodeSessionProjection.ts:202-204`）。
+> 实测该缺陷当前**不可见**：v4 composer 的 mode 选择器直接用 shared 的
+> `getACodeAgentAvailableModes()`（`V4ComposerModeControls.tsx:62,78`，5 档含 dontAsk），
+> 而桥的两个 config-options 函数一个零消费方、一个只服务预热路径且 mode 恒为常量 "build"。
+> 但重复实现 + 已漂移 = 下次改档位仍会漏一处，故搬迁时必须改为引用 shared 单一事实源。
+>
+> **另需订正**：3 处注释（`useWorkflowSubagentModelProviderName.ts:11`、
+> `subagent-model-label.ts:67`、`list-models.tsx:170`）把 `modelProviderName` 的
+> `providerLabel ?? providerId` 回落行为归给 `acodeSessionSettingsToConfigOptions`——该函数
+> **零运行时消费方**（实测）。真实权威是 shared 的
+> `acodeSessionSettingsToACodeConfigOptions`（`acode-agent-model-state.ts:92`，同一表达式）。
+> 桥里那份是它的重复副本。注释须改指真实权威，否则退役桥文件后 3 处引用悬空。
 
 ### M2 — services 双栈调用切换（可与 M1 并行）
 

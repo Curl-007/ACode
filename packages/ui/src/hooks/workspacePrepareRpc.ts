@@ -8,7 +8,7 @@ import type { IACodeSessionService } from "@acode/services";
 import { type ACodeProvider, type ACodeWorkspacePrepareResult } from "@acode/shared";
 import { getChatErrorMessage } from "@/lib/chatPrepareError.js";
 import { logger } from "@/logger.js";
-import { acodeWorkspacePresentationToConfigOptions } from "@/lib/acodeSessionProjection.js";
+import { acodeWorkspacePresentationToConfigOptions } from "@/lib/workspaceModeConfigOptions.js";
 
 export async function prepareWorkspaceWithACodeSessionService(params: {
   workspacePath: string;

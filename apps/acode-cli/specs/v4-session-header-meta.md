@@ -109,7 +109,10 @@ provider、traceId。它现在经 **legacy** `readSession`（`acodeProtocolMetho
   activeRunStartedAtMs/activeRunLastSeenAtMs/time.{created,updated}），`GoalStatus` 值域也与
   `ACodeTaskGoalStatus` 相同（active/paused/budget_limited/complete）。故 goal **零转换直通**，
   不需要 legacy `fromACodeGoal` 那套 snake_case 兼容与非法值回落（那些分支对经 schema 校验的
-  输入不可达，已由 `packages/ui/test/acodeSessionProjection.test.ts` 专测钉住）。
+  输入不可达。该结论曾由 `packages/ui/test/acodeSessionProjection.test.ts` 专测钉住（喂 snake_case
+  + 非法 status 给 goal schema 断言被拒）；该测试随投影桥退役一并删除，结论保留在此与
+  shared 叶子的实现里——`session-header-meta.ts` 的 goal schema **未照搬**那三处兜底
+  （实测 grep `isACodeTaskGoalStatus|stringValue(record` 命中 0）。
 
 ## 3. 状态所有者
 
@@ -303,9 +306,25 @@ Electron，逐边界以注入 store 的单测覆盖（H1-H8）。`pnpm --filter 
 
 ## 8. 回退
 
-关掉新读路径即回退：`useActiveTaskSnapshotMeta` 改回 `readSession` + `acodeSessionSnapshotToTaskMeta`
-（两者都仍在），行为退回当前状态。新增的 v4 方法是 additive，旧 host 不调用即无影响；
-`V4_METHODS` 只增一条不删任何既有词。回退**不得**让 header 显示错误标题或伪造 model。
+新增的 v4 方法是 additive：`V4_METHODS` 只增一条、不删任何既有词，旧 host 不调用即无影响。
+回退 = 把 `useActiveTaskSnapshotMeta` 改回 legacy 读路径。
+
+**回退的具体做法（2026-10-28 更新）**：本 spec 初稿写的是「改回 `readSession` +
+`acodeSessionSnapshotToTaskMeta`，两者都仍在」——该前提**已不成立**。M1 收口时投影桥
+`packages/ui/src/lib/acodeSessionProjection.ts` 及其 `acodeSessionSnapshotToTaskMeta`
+已随最后一个消费方迁走而**整体删除**（见 docs/legacy-protocol-convergence-plan.md M1 节
+2026-10-28 裁决与实施记录）。故回退不再是「翻一个 import」，而要：
+
+1. `readSession` 端口**仍在**（services `acodeSession.ts:146`、`acodeAgentService.ts:3908`，
+   仍被 `SessionPane.tsx:1213` 当存在性探针使用），可直接调用；
+2. 但**投影函数需重建**——`acodeSessionSnapshotToTaskMeta` 已删。可从 git 历史
+   （提交 `d1bcf9f9` 之前）取回，或按本 spec §4.5 parity 表重新实现。
+
+**这是有意的取舍**：保留一个零消费方的死函数只为「回退方便」，等于让 legacy 投影栈永久
+留在树上（knip 因测试引用而不报，反而掩盖它已死）。M1 的验收判据是该桥归零，故按裁决删除。
+回退成本从「翻 import」升为「取回一个纯函数」，可接受——它无 IO、无状态、有完整 parity 表可照抄。
+
+回退**不得**让 header 显示错误标题或伪造 model（R5/R6 在回退路径同样适用）。
 
 ## 9. 非目标
 

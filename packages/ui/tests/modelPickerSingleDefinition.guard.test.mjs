@@ -15,8 +15,9 @@ import { fileURLToPath } from "node:url";
  *
  * 判据：`export function parseModelPickerValue` / `export function formatModelPickerValue`
  * 在 packages/ui/src 内**各恰好 1 处定义**，且都在 `lib/modelPickerValue.ts`。
- * 允许 re-export（`export { … } from`）——那是转发不是第二份实现；
- * 桥文件 `acodeSessionProjection.ts` 现在正是以 import 方式取用 formatModelPickerValue。
+ * 允许 re-export（`export { … } from`）——那是转发不是第二份实现。
+ * 原住这两个函数的桥文件 `acodeSessionProjection.ts` 已在 M1 收口时整体删除，
+ * 本守护同时钉住「桥不得复活」（见下「legacy 投影桥已退役」测试）。
  */
 
 const root = fileURLToPath(new URL("../../../", import.meta.url));
@@ -75,29 +76,50 @@ test("parseModelPickerValue / formatModelPickerValue 在 packages/ui/src 内各�
         `${JSON.stringify(sites)}。` +
         `出现第二份定义会让 custom: 解码逻辑独立漂移——UI 版解码 custom:provider:model，` +
         `shared 版对 custom: 串抛错（model-selection.ts:48），两份实现一旦分叉，` +
-        `typecheck 与行为测试都不会红。桥文件 acodeSessionProjection.ts 应以 import 取用，` +
-        `不得本地重定义（re-export 转发是允许的）。`,
+        `typecheck 与行为测试都不会红。消费方应 import 这个叶子，不得本地重定义` +
+        `（re-export 转发是允许的）。`,
     );
   }
 });
 
-test("acodeSessionProjection.ts 不再本地定义 picker 函数（以 import 取用）", async () => {
-  const source = await readFile(`${uiSrc}/lib/acodeSessionProjection.ts`, "utf8");
-  // 桥仍需要 formatModelPickerValue 做投影，但必须是 import，不是本地定义。
-  assert.match(
-    source,
-    /import \{[^}]*\bformatModelPickerValue\b[^}]*\} from "\.\/modelPickerValue\.js"/,
-    "桥应从 ./modelPickerValue.js import formatModelPickerValue（唯一定义点在叶子）",
-  );
+test("legacy 投影桥 acodeSessionProjection.ts 已退役（M1 验收）", async () => {
+  // 2026-10-28 M1 收口：该桥的 5 个导出全部迁走——picker 两个搬到 modelPickerValue.ts、
+  // acodeWorkspacePresentationToConfigOptions 搬到 workspaceModeConfigOptions.ts、
+  // acodeSessionSnapshotToTaskMeta 由 v4 header 冷读替代（mapSessionHeaderMetaToTaskMeta.ts）、
+  // acodeSessionSettingsToConfigOptions 零消费方删除。桥文件整体删除。
+  // 断言它确实不存在——防止有人「为了方便」重新建一份，让 M1 表面回退。
+  let exists = true;
+  try {
+    await readFile(`${uiSrc}/lib/acodeSessionProjection.ts`, "utf8");
+  } catch {
+    exists = false;
+  }
   assert.equal(
-    localDefinitions(source, "formatModelPickerValue"),
-    0,
-    "桥不得本地重定义 formatModelPickerValue",
+    exists,
+    false,
+    "packages/ui/src/lib/acodeSessionProjection.ts 应已删除（legacy M1 收口）。" +
+      "若它重新出现，说明投影桥被复活——picker/mode 工具应留在 modelPickerValue.ts 与 " +
+      "workspaceModeConfigOptions.ts，快照投影应走 v4 header 冷读。",
   );
-  assert.equal(
-    localDefinitions(source, "parseModelPickerValue"),
-    0,
-    "桥不得本地重定义 parseModelPickerValue",
+});
+
+test("除 canonical 叶子外，packages/ui/src 无任何文件本地定义 picker 函数（含已删的桥）", async () => {
+  // 第一条测试已断言 sites === [CANONICAL_FILE]；这里从反面钉死：全树扫描，
+  // 任何本地定义 picker 的文件（无论叫不叫 acodeSessionProjection）都必须是 canonical 叶子。
+  const offenders = [];
+  for (const file of await collectSources(uiSrc)) {
+    const source = await readFile(file, "utf8");
+    const rel = file.slice(uiSrc.length + 1).replace(/\\/g, "/");
+    if (rel === CANONICAL_FILE) continue;
+    for (const name of ["parseModelPickerValue", "formatModelPickerValue"]) {
+      if (localDefinitions(source, name) > 0) offenders.push(`${rel} 本地定义了 ${name}`);
+    }
+  }
+  assert.deepEqual(
+    offenders,
+    [],
+    `以下文件在 canonical 叶子之外重复定义了 picker 函数（custom: 解码会漂移）：\n  ` +
+      offenders.join("\n  "),
   );
 });
 

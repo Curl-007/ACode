@@ -167,7 +167,8 @@ function listModelsGroupName(
   if (label !== undefined && label.length > 0 && label !== providerId) {
     return label;
   }
-  // 会话清单查不到时会退回 providerId 本身（acodeSessionSettingsToConfigOptions），当作没查到。
+  // 会话清单查不到时会退回 providerId 本身（权威：shared acodeSessionSettingsToACodeConfigOptions，
+  // acode-agent-model-state.ts:92），当作没查到。
   const resolved = providerName?.(providerId)?.trim();
   if (resolved !== undefined && resolved.length > 0 && resolved !== providerId) {
     return resolved;

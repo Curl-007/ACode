@@ -2,7 +2,11 @@
 // 剩余 5 个导出：旧 configOptions 投影函数（formatModelPickerValue/normalizeAvailableACodeMode/
 // getACodeAgentModeSelectOptions/getACodeAgentAvailableModes/
 // acodeSessionSettingsToACodeConfigOptions）。
-// 消费者：services acodeConfigOptions、UI acodeSessionProjection 等旧栈。
+// 消费者：services acodeConfigOptions（经 acodeSessionSettingsToACodeConfigOptions）、
+// UI workspaceModeConfigOptions（经 normalizeAvailableACodeMode / getACodeAgentModeSelectOptions）。
+// 注：UI 侧曾有一份重复实现（packages/ui/src/lib/acodeSessionProjection.ts 的本地
+// ACODE_AGENT_MODE_OPTIONS + acodeSessionSettingsToConfigOptions），2026-10-28 随 legacy M1
+// 收口删除——那份只有 4 档 mode（缺 dontAsk），与本文件的权威 5 档已漂移。本文件是单一事实源。
 import { formatModelPickerValue } from "./model-selection.js";
 import type { ACodeSessionMode, ACodeSessionSettingsState } from "./acode-protocol/index.js";
 import type { ACodeConfigOption, ACodeTaskModeInfo, ACodeProvider } from "./acode-task-types-core.js";

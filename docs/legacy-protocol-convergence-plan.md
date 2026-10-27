@@ -84,7 +84,7 @@ consumer API，v4 command 直接依赖中立模块。这样 M4 删除 legacy bar
 | ----------------------------------- | --------------- | ----------------------------------------------------------------------- | ---------------------------------------------------------------------------- | ------- |
 | services legacy 消费文件数          | 7               | 6（independentPlanSupport 已切 v4，仅剩 type-only 引用）                | 6（未推进；`acodeProtocolClient.ts` 仍在，independentPlanSupport 仍 type-only） | 0（M2） |
 | UI 旧投影消费文件数                 | 8               | 10（新增 v4/composer 两处 `parseModelPickerValue` 消费，M1 需一并迁移） | 12（未降反增：新增 settings/SubagentModelBatch{Bar,Dialog} 两处消费）         | 0（M1） |
-| bootstrap legacy server 文件数/行数 | 48 / 14,713     | 48（M3 未启动）                                                         | 48 / 15,188（M3 未启动；行数因 legacy 面内既有演进微增）                     | 0（M3） |
+| bootstrap legacy server 文件数/行数 | 48 / 14,713     | 48（M3 未启动）                                                         | 48 / 15,188（M3 未启动；行数因 legacy 面内既有演进微增）→ **2026-10-27 订正：50 / 15,690**（U08 `1ead67e2` 新增 2 文件，见下）| 0（M3） |
 | shared legacy 协议文件行数          | 3,714           | 3,662（M2-B 已外移 MCP/browser schema 至 acode-protocol-shared）        | 3,652（barrel −2，仅 R2-02 schema 外移所致，非退役；legacy-types 607 行）    | 0（M4） |
 | v4-bridge 过渡钩子数                | 6（见桥头注）   | 6                                                                       | 6（M3 未启动，桥头注仍列 6 个钩子）                                          | 0（M3） |
 
@@ -98,12 +98,41 @@ consumer API，v4 command 直接依赖中立模块。这样 M4 删除 legacy bar
 报告的「18」是更宽口径（UI 12 + `packages/shared` 内 6 个引用点，含 barrel 定义本体、spec 与基线 JSON，
 非全部为消费方），方向与本表一致——消费面未收敛。
 
+**bootstrap legacy server 增量登记（2026-10-27）**：M3 待删目录 `bootstrap/src/acode-protocol/` 自 1.0.4 后
+由 48 增至 **50 文件 / 15,690 行**——U08 provider 诊断（提交 `1ead67e2`）新增 `provider-diagnostics.ts`（352 行）
+与 `provider-diagnostics-ports.ts`（79 行）。**这不违反 shared barrel 冻结纪律**：新方法名 `PROVIDER_DIAGNOSTICS_METHODS`
+定义在中立叶子 `packages/shared/src/providerDiagnostics.ts:269`（不在冻结 barrel 内），schema 亦在中立叶子；
+载体选 bootstrap 协议层是 spec 明确裁决（`packages/services/specs/provider-diagnostics.md:238`「已评估并否决的
+载体方案」表：core 层无 `@acode/adapters` 依赖、拿不到 `runProviderDoctor`，故落 bootstrap——它已依赖 adapters
+且已是协议适配装配点）。**但需如实登记两点后果**：① 现有冻结守护只覆盖 `acode-protocol/index.ts` 的导出面，
+**不拦截新表面落进 bootstrap legacy server 目录**，故这 2 文件对门禁不可见；② M3（删 bootstrap legacy server）
+的删除范围因此**增大** 2 文件，且这 2 文件派发的 2 个新 legacy 方法（`server.ts:710-713`）M3 需一并处理——
+legacy 债务在「冻结」名义下仍在净增。建议：M3 启动前把 provider 诊断的派发迁到 v4 gateway（其中立 schema
+已就绪，只差 v4 method 与 gateway 分支），避免把新表面焊进待删目录。此为登记项，非本轮改动。
+
 > **2026-12-31 例外 deadline（约 9 周）**：M4（删 shared legacy barrel）被停滞的 M2/M3 阻塞，落在通往该
-> deadline 的关键路径上，而 shared 层**不携带**本地 `expires` 绊线（barrel 用 `oxlint-disable max-lines`
-> 头注，非架构例外）。会「门禁转红」的硬例外（`onboard-b3-session-over-limit` 等 42 条
-> `expires: "2026-12-31"` 白名单）位于 `architecture-policy.yaml` 的 services/session 等层。到期前这些白名单
-> 必须见底；若 M2/M3 持续停滞，legacy 退役将无缓冲地撞上该 deadline。本轮只刷新测量与状态，不重构计划、
-> 不新增里程碑。
+> deadline 的关键路径上。**shared 层同样携带 `expires` 绊线**（2026-10-27 订正，见下），故 barrel 到期未删
+> 会直接令架构门禁转红，不存在「shared 无本地绊线」的缓冲。到期前这些白名单必须见底；若 M2/M3 持续停滞，
+> legacy 退役将无缓冲地撞上该 deadline。本轮只刷新测量与状态，不重构计划、不新增里程碑。
+>
+> **订正（2026-10-27）**：本节此前断言「shared 层**不携带**本地 `expires` 绊线（barrel 用
+> `oxlint-disable max-lines` 头注，非架构例外）」，经逐行核验为**事实错误**，混淆了两套互不替代的机制：
+>
+> 1. **barrel 确实在架构例外的 paths 列表内**——`onboard-b3-shared-over-limit`
+>    （`architecture-policy.yaml:570`，`rule: max-file-lines`，`expires: "2026-12-31"`）于 `:585` 显式列出
+>    `packages/shared/src/acode-protocol/index.ts`；`onboard-b3-shared-disables`（`:602`，`rule: disable-count`，
+>    `expires: "2026-12-31"`）于 `:611` 同样列出它。即 barrel 被**两条**到期例外覆盖。
+> 2. **`oxlint-disable max-lines` 头注（`index.ts:6`）是 lint 关注点，不替代架构例外**：barrel 3652 物理行
+>    vs 全局 `maxFileLines: 400`（`architecture-policy.yaml:334`），靠的正是上述 `max-file-lines` 例外。
+> 3. **到期确会转红**：`scripts/architecture/index.mjs:75-88` 遍历 `policy.exceptions`，当
+>    `exception.expires < today` 时压入 `rule: "expired-exception"`、`global: true` 的违规（严格 `<`，故
+>    2027-01-01 起触发）。
+> 4. **42 条 `expires: "2026-12-31"` 的层分布订正**：`grep -c` 总数 42 准确，但其中 **2 条在 shared**
+>    （`onboard-b3-shared-over-limit` / `-disables`）、2 条在 server（`onboard-b3-server-*`）、其余在
+>    services/session 等层——原文「位于 services/session 等层」低估了 shared 的到期暴露面。
+>
+> 结论：原文方向性错误——shared 不是「无绊线的缓冲区」，而是与 services/session 同样受 2026-12-31 硬约束。
+> 该错误会让人误判 M4 停滞的后果（以为只是计划滑期，实为门禁转红）。
 
 2026-10-09 说明：本批只落地 M2-B（shared schema 边界）与 `v4/capabilities/query` 最小切片；
 其余 legacy 调用（plugins/mcp/skills/workflows hub/automation/offPeak/provider/workspace 写路径与

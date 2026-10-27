@@ -90,7 +90,7 @@ function makeResult(overrides = {}) {
   return {
     status: overrides.status ?? "completed",
     cancelled: overrides.cancelled ?? false,
-    manifest: { ...manifest, ...(overrides.manifestPatch ?? {}) },
+    manifest: { ...manifest, ...overrides.manifestPatch },
   };
 }
 

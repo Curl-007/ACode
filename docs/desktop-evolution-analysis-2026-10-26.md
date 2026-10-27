@@ -11,7 +11,7 @@
 进化机会按杠杆分四档：
 
 1. **已立项未实施的四个 U 项**（U07/U08/U11/U12）——spec 齐全（含所有者、契约、验收场景、量化门槛），代码核验零落地，合计约 16-25 人日，全部是用户直接可感知的桌面 UX 进化。**开工阻力最小，建议先做。**
-   > **进度（2026-10-27 更新）**：**U12/U08/U07 已完整实施并提交**（`2a390ef8`/`1ead67e2`/`9d33305a`），overnight×通知接线**端到端已通**（`89a515bb`+`b8a983c7`）；**U11 读取侧+生产者已实施但生产门默认关闭**（`87bc31f1`+`b1ad78e2`，正规能力协商待读侧改造，见 §2.4）。全部经主审逐行亲验 + 五门禁全绿 + 真机 smoke。§2 各节标注实时状态。
+   > **进度（2026-10-27 更新）**：**U12/U08/U07 已完整实施并提交**（`2a390ef8`/`1ead67e2`/`9d33305a`），overnight×通知接线**端到端已通**（`89a515bb`+`b8a983c7`+`f705b73e`）；**U11 读取侧+生产者已实施、生产门已打开**（`87bc31f1`+`b1ad78e2`+`149bb274`，仅 desktop-continuous 产 ref；跨版本降级仍延后，见 §2.4）。全部经主审逐行亲验 + 五门禁全绿 + 真机 smoke。§2 各节标注实时状态。
 2. **U14 Windows CUA（进行中）**——差异化能力，角色 B（纯 JS）大头已落，角色 A（C++ addon）阻塞在 node-gyp/VS2026 工具链版本表，**需一项三选一的用户裁决**即可解除。
 3. **协同接线机会**（本文新分析，提案文档未覆盖）——overnight×桌面通知、资源管理器×卡顿归因、内嵌浏览器×CUA 架构评估。成本低、复用既有地基。
 4. **战略大件**（维持登记不立项）——活会话跨机迁移、OS 级沙箱；以及 legacy 退役 2026-12-31 硬 deadline 对进化速度的结构约束。
@@ -58,27 +58,22 @@
 ### 2.2 U08：首次配置与模型故障诊断 —— onboarding 留存关键（✅ 已实施 `1ead67e2`）
 
 - **用户价值**：保存 provider 后区分「已保存」vs「已验证」；故障时看到明确阶段（offline/catalog/live）；不重复建 provider 即可重试。
-- **核验现状**：`runProviderDiagnostics` 全仓零命中——拟议服务契约未落。但承接面已在：`useModelProviders` 连通性 hook、`providerSettingsConnectivity` service、CLI 侧 [provider-doctor spec](../apps/acode-cli/specs/provider-doctor.md) 的 offline/catalog/live 分档均已存在，GUI 只欠承接。
+- **核验现状（实施前）**：`runProviderDiagnostics` 全仓零命中——拟议服务契约未落。但承接面已在：`useModelProviders` 连通性 hook、`providerSettingsConnectivity` service、CLI 侧 [provider-doctor spec](../apps/acode-cli/specs/provider-doctor.md) 的 offline/catalog/live 分档均已存在，GUI 只欠承接。**已于 `1ead67e2` 实施**（见本节标题）。
 - **估算**：4-6 人日（提案 §3.4）。
 - **边界**：不自动换模型、不自动修凭据、诊断失败≠保存失败。
 
 ### 2.3 U07：长对话目录索引与窗口外跳转 —— 桌面主力场景（✅ 已实施 `9d33305a`）
 
 - **用户价值**：长会话打开目录即找到已索引历史输入，点击定位窗口外正文，查看历史期间仍收运行状态，可一键返回最新。
-- **核验现状**：`getTurnIndexEntries()` 已存在（`conversationProjectionStore.ts`），但拟议的 store 公共入口 `focusIndexedRow(target)`/`returnToLive()` 全仓零命中；生产目录仍走 `renderUnits`，`loadAllOlder()` 逐页读正文。
+- **核验现状（实施前）**：`getTurnIndexEntries()` 已存在（`conversationProjectionStore.ts`），但拟议的 store 公共入口 `focusIndexedRow(target)`/`returnToLive()` 全仓零命中；生产目录仍走 `renderUnits`，`loadAllOlder()` 逐页读正文。**已于 `9d33305a` 实施**（实现采用了不同的入口命名与派生聚焦视图设计，见该提交与 `packages/ui/specs/conversation-index-navigation.md`）。
 - **估算**：3-5 人日（提案 §2.3）；若产品要求超 8000 项索引的完整历史目录，另立 v4 分页目录能力追加 4-6 人日。
 - **边界**：不建全文搜索、不扩 renderer 预算（1200 行/32 MiB 约束不变）、打开目录零新增正文请求。
 
-### 2.4 U11：工具图片受授权附件引用 —— 内存与图片密集历史（✅ 读取侧+生产者已实施 `87bc31f1`+`b1ad78e2`，**生产者默认关闭**）
+### 2.4 U11：工具图片受授权附件引用 —— 内存与图片密集历史（✅ 读取侧+生产者已实施并开门 `87bc31f1`+`b1ad78e2`+`149bb274`）
 
-> **状态更新**：schema/授权/渲染读取侧与生产者（node-repl 图片落 artifact 发 ref）均已实施并测试。
-> 但**生产门 `nodeReplMediaRefs` 默认关闭**，全仓无任何生产路径置 true——故 ref 形态当前
-> 零生产启用，功能可验证面是单测而非端到端。原因：正规能力协商需 client→host 方向的新增
-> `clientHello.capabilities` 键，而该 schema 是 `.strict()`，老 Host 见未知键会整条握手失败
-> （`transport.ts:92`）；per-connection 的 clientMode 又无法证明将来谁回放该持久化 row。
-> 故按「不 ship 破坏兼容的门」原则，生产者建好但保持关闭，字节收益记为 deferred，
-> 待读侧投影改造（投影异步化 + 网关拿 artifact store）设计好再开。详见
-> `apps/acode-cli/specs/tool-media-attachment-ref.md` R10 与 `b1ad78e2` 提交说明。
+> **状态更新（2026-10-27 收口）**：schema/授权/渲染读取侧与生产者（node-repl 图片落 artifact 发 ref）均已实施并测试，**生产门已打开**——但只对 `desktop-continuous`（可信桌面本地）会话产 ref，`web-remote-replayable` 与冷恢复 resume 一律 inline。开门的关键不是本文初判的「投影异步化」：主审调研核实**读路径早已可用**（renderer 经既有异步 `attachmentRead` RPC 取字节，gateway 经 `readPromptAttachment`→`readToolResultArtifact` 解析 `acode-artifact://`，授权由 `resolveAuthorizedToolMedia` 把关；投影只携带轻量 ref 字符串，从不需要字节）。真正缺的只是把**可信 clientMode** 从连接穿到工具执行上下文——一个 7 跳的 additive 穿线（照 `toolSearchMode` 范式），投影无需改。
+> 安全不变量：开门的 clientMode 必须来自可信 carrier（`withTrustedConnection` 删除 renderer 可伪造的顶层值后写入 host 真值），绝不读 `payload.clientMode`；端到端安全测试证明 web 连接下伪造 desktop-continuous 不产 ref。
+> **仍延后的跨版本降级**（用户已同意）：降级/老版本消费者读 ref 持久化会话会丢图，正规解法需读侧投影改造 + 能力协商（不能新增 `.strict()` 的 clientHello 键，见 `transport.ts:92`）；spec R10.4 登记撤回义务。详见 `apps/acode-cli/specs/tool-media-attachment-ref.md` R10 与 `149bb274` 提交说明。
 
 - **用户价值**：图片密集历史先看轻量行，图片可见/打开预览才读字节；重连后仍可预览；跨 workspace/session 媒体不可读。
 - **核验现状**：`packages/shared/src/acode-protocol-v4/toolDisplay.ts:239` 的 `node_repl_images` 仍是内联 base64（每张 ≤200×1024 字符、最多 2 张）；lazy img 只延迟解码、不减 row 字节。v4 Gateway 的授权媒体读取（userInput 附件 + 当前 session assistant artifact ref）已在，但不能直接用于工具 row——这是本项的主要工程面。
@@ -152,14 +147,18 @@
 | 3 | **U14 工具链裁决** | 一个三选一决策解除整条差异化功能线的阻塞；裁决本身零工程量 | 决策项 | **待用户裁决**（§4） |
 | 4 | **Overnight×通知接线** | 引擎已建成、部件已存在；实测非「纯接线」——需新建跨进程通道（见 §5.1） | 实为 M | **✅ 已实施** `89a515bb`+`b8a983c7` |
 | 5 | **U07 目录跳转** | 桌面主力场景体验，但 store 语义裁决（窗口聚焦 vs 连续尾部）需先落 spec | 3-5 人日 | **✅ 已实施** `9d33305a` |
-| 6 | **U11 图片授权引用** | 价值真实但最贵、动协议面；排最后让其吸收前序迭代对 toolDisplay 的理解 | 6-9 人日 | **✅ 已实施但生产门默认关** `87bc31f1`+`b1ad78e2` |
+| 6 | **U11 图片授权引用** | 价值真实但最贵、动协议面；排最后让其吸收前序迭代对 toolDisplay 的理解 | 6-9 人日 | **✅ 已实施并开门** `87bc31f1`+`b1ad78e2`+`149bb274`（跨版本降级仍延后） |
 | 并行 | **U05 legacy 退役（M2/M3）** | 非功能项但决定功能生产速度；2026-12-31 前必须推进 | 里程碑 | 未启动 |
 
 排序原则：先做「地基已在、只欠接线」的（1/2/4），再做需要设计裁决的（3/5），最贵且动协议面的殿后（6）；结构债（并行项）不与功能项抢同一批人力但必须有日程。
 
-> **落地复盘（2026-10-27）**：本表 1/2/4/5/6 五项当轮全部落地，但**两处量级估计被实施推翻**——① overnight×通知原估「≤3 人日纯接线」，实测需新建 agent→host→main 三进程协议通道（§5.1），实为 M；② U11 原以为最贵的只是协议面，实施发现真正的阻塞是**能力协商无法安全新增**（`.strict()` clientHello + per-connection vs per-session 持久化的错配），故生产者建好但**默认关闭**，字节收益 deferred 到读侧改造。教训：本表「量级」栏对「纯接线」类判断系统性偏乐观——凡跨进程或跨版本兼容的接线，成本都在通道与协商，不在业务逻辑。
+> **落地复盘（2026-10-27）**：本表 1/2/4/5/6 五项当轮全部落地，**三处估计被实施推翻**——① overnight×通知原估「≤3 人日纯接线」，实测需新建 agent→host→main 三进程协议通道（§5.1），实为 M；② U11 原以为「投影异步化 + 网关拿 artifact store」是开门前提，主审调研核实**读路径早已可用**（ref 经既有异步 `attachmentRead` RPC 取字节，投影只携带 ref 字符串），真正缺的只是把可信 clientMode 穿到工具上下文——一个照 `toolSearchMode` 范式的 7 跳 additive 穿线，投影零改动；生产门已开（仅 desktop-continuous），**只有跨版本降级仍延后**（`.strict()` clientHello 无法安全新增能力位）；③ U11 的量级因此远低于原估 6-9 人日。教训：本表「量级」栏对「纯接线」类判断系统性偏乐观——凡跨进程或跨版本兼容的接线，成本都在通道与协商，不在业务逻辑；且「必须先做 X 才能开门」的前提要先核实 X 是否真的在关键路径上（U11 的异步投影就不是）。
 
 ## 附录 A：核验证据索引（本文全部「未落地/已就绪」论断）
+
+> 本附录记录的是**分析当时（2026-10-26，实施前）**的代码级核验证据，故各项标「未落地/零命中」。
+> 这些论断在 2026-10-27 的实施中已被逐一改变（U07/U08/U11/U12/overnight 均已落地，见 §0 进度
+> 与 §2 各节标题的提交号）；保留原证据是为了记录「立项时的真实起点」，非当前状态。
 
 | 论断 | 核验方式 | 结果 |
 |---|---|---|

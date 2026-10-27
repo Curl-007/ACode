@@ -59,6 +59,11 @@ async function createSession(
     // 折叠出口现读 AppSettings，显式 off 也要传——冷恢复兜底缓存靠它刷新旧档位）；
     // 缺席 = 调用方不参与（旧 Host/legacy 面），CLI 按缺席即 off 处理。
     toolSearchMode: payload.toolSearchMode,
+    // U11 图片外置引用生产门的**可信** clientMode（specs/tool-media-attachment-ref.md R10.2a）：
+    // 该值由受信 Host（services/acodeAgentService）用 commandClientMode 盖进 payload，非 renderer
+    // 自选。desktop-continuous / web-remote-replayable 都透传；缺席（旧 Host/TUI/headless）= CLI 侧
+    // 按缺席即 inline 处理（fail-closed）。经 runtimeFlags 侧通道物化进 AgentRuntimeConfig.clientMode。
+    clientMode: payload.clientMode,
   });
   // createSession.config 消费——草稿态 UI 的先行选择（模型/思考深度/
   // 模式）在首发之前应用并补发事件，首条 turn 即用所选配置。必须在 firstInput 之前。

@@ -261,6 +261,15 @@ export interface V4CommandCoreHost {
      * AgentRuntimeConfig.toolSearchMode，存活 runtime 不变（无中途改档通道）。
      */
     toolSearchMode?: CommandPayloadMap["createSession"]["toolSearchMode"];
+    /**
+     * U11 图片外置引用生产门的**可信** clientMode（specs/tool-media-attachment-ref.md R10.2a）。
+     * 类型直接引用 v4 createSession payload 的两值域（desktop-continuous/web-remote-replayable），
+     * 与 @acode/shared 单源同步。由受信 Host（services/acodeAgentService）用 commandClientMode 盖进
+     * payload——**非** renderer 自选项。与 toolSearchMode 的关键差异：clientMode **不进**进程级
+     * appRuntimePreferences 兜底缓存（每连接属性，缓存会跨会话泄漏 desktop-continuous）。缺席
+     * （旧 Host/TUI/headless/冷恢复 resume）= 不写字段 = core 按缺席即 inline（fail-closed）。
+     */
+    clientMode?: CommandPayloadMap["createSession"]["clientMode"];
   }): Promise<{ sessionId: string }>;
   /** 从父会话稳定落盘边界创建隐藏 selection_side_chat child。 */
   createSelectionSideSession?(

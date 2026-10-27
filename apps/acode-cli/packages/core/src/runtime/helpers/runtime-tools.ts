@@ -122,6 +122,12 @@ function registerRuntimeBuiltInTools(runtime: AgentRuntimeInternal, deps: AgentR
     // browserControlPort 只是宿主能力，不应隐式暴露高权限 node_repl。
     // node_repl/browser-use 由 ACode 官方 browser-use 插件启停推导出的 runtimeFeatures 控制。
     includeNodeRepl: nodeReplEnabled,
+    // U11 图片外置引用生产门（specs/tool-media-attachment-ref.md R10.1）：**产品级 rollout 总闸，
+    // 现已 ON**。两层设计——本 flag 是总闸（注册期闭包进 js handler），R10.2 的 clientMode 判据是
+    // 每会话门（运行期 shouldEmitToolMediaRefs 读 context.clientMode）。总闸 ON 后仍只对
+    // `desktop-continuous` 会话产 ref；web-remote-replayable / clientMode 缺席（TUI/headless/冷恢复）
+    // 一律 inline。故这里无条件 true 是安全的：clientMode 判据（可信 Host 经 R10.2a 注入）逐会话兜底。
+    nodeReplMediaRefs: true,
     includeBrowserUse: browserUseEnabled,
     // Open 工具的平台门：宿主注入 platformOpenPort 才注册（K9 R2）。
     platformOpenPort: deps.platformOpenPort,

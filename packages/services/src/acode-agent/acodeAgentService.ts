@@ -308,8 +308,13 @@ import {
 import {
   readTrustedACodeAgentV4Connection,
   readTrustedACodeAgentV4UnsubscribeRoute,
+  type ACodeAgentV4ClientMode,
   type ACodeAgentV4ConnectionContext,
 } from "./acodeAgentConnectionScope.js";
+import {
+  resolveTrustedCommandClientMode,
+  stampCreateSessionClientMode,
+} from "./acodeV4CreateSessionClientMode.js";
 import { createBackgroundSessionEventCoalescer } from "#src/acode-agent/acodeSessionEventCoalescer.js";
 import { AutomationService } from "#src/session/automationService.js";
 import {
@@ -3473,6 +3478,10 @@ export function createACodeAgentService(
 
   async function buildConversationCommandEnvelope(
     params: ACodeAgentConversationCommandParams,
+    // U11（spec tool-media-attachment-ref.md R10.2a）：createSession 的可信 clientMode。由
+    // sendConversationCommandV4 从 trusted carrier 解析（resolveTrustedCommandClientMode），
+    // 传进来而非在信封里重算，保证「盖进 payload 的值」与「TTFT 门用的值」是同一个可信来源。
+    commandClientMode?: ACodeAgentV4ClientMode,
   ): Promise<CommandEnvelope> {
     const envelope = params.envelope;
     if (envelope.type === "createSession") {
@@ -3488,21 +3497,35 @@ export function createACodeAgentService(
       const offPeakToolEnabled = isOffPeakToolSupported(params);
       // scriptWorkflowEnabled 恒写，所以 createSession 没有可省略的 early return；
       // payload 解析对空 flag 组合也无害（同一条 zod schema）。
-      const payload = commandPayloadSchemas.createSession.parse(envelope.payload);
+      const parsedPayload = commandPayloadSchemas.createSession.parse(envelope.payload);
+      // **安全关键（R10.2a）**：先把 wire 上可能存在的 `clientMode` 从 payload 里**丢弃**——它是
+      // renderer 可控字段（facade 的 withTrustedConnection 只删顶层 clientMode，不触碰 payload），
+      // 唯一的合法来源是下面用可信 commandClientMode 重新盖章。丢弃 + 重盖 = 「wire clientMode 永不
+      // 被信任」的结构性不变量：即使可信值缺席（commandClientMode === undefined），伪造值也已随
+      // rest 解构被剔除，CLI 侧退回缺席即 inline（fail-closed），不会误开 ref 生产。
+      const { clientMode: _forgedClientMode, ...payload } = parsedPayload;
+      // 先装配 host 裁决的工具面 flag（顺序即优先级，后写覆盖前写）。
+      const withHostFlags = {
+        ...payload,
+        ...(offPeakToolEnabled ? { offPeakToolEnabled: true } : {}),
+        // 动态工作流灰度：V4 createSession 是桌面新会话的实际创建路径，不透传则那一批
+        // 工作流工具（core 的 GATED_WORKFLOW_TOOL_NAMES）永不注册。数量刻意不写进注释，
+        // 理由同 buildSessionCreateParams 里的同款说明。
+        ...(dynamicWorkflowEnabled ? { dynamicWorkflowEnabled: true } : {}),
+        scriptWorkflowEnabled,
+        // 工具按需检索档位：缺席 = off（CLI 侧 zod optional 静默兼容旧面），
+        // 显式三档（含 off）都写，供 CLI appRuntimePreferences 冷恢复兜底刷新。
+        ...(toolSearchMode === undefined ? {} : { toolSearchMode }),
+      };
       return {
         ...envelope,
-        payload: {
-          ...payload,
-          ...(offPeakToolEnabled ? { offPeakToolEnabled: true } : {}),
-          // 动态工作流灰度：V4 createSession 是桌面新会话的实际创建路径，不透传则那一批
-          // 工作流工具（core 的 GATED_WORKFLOW_TOOL_NAMES）永不注册。数量刻意不写进注释，
-          // 理由同 buildSessionCreateParams 里的同款说明。
-          ...(dynamicWorkflowEnabled ? { dynamicWorkflowEnabled: true } : {}),
-          scriptWorkflowEnabled,
-          // 工具按需检索档位：缺席 = off（CLI 侧 zod optional 静默兼容旧面），
-          // 显式三档（含 off）都写，供 CLI appRuntimePreferences 冷恢复兜底刷新。
-          ...(toolSearchMode === undefined ? {} : { toolSearchMode }),
-        },
+        // clientMode 必须**最后**盖（覆盖 withHostFlags）；覆盖语义在 stampCreateSessionClientMode
+        // （spread 在前、可信值在后，伪造值永不存活）。commandClientMode 缺席 = 不盖章 = 保持上面的
+        // 剔除结果 = CLI 侧缺席即 inline（fail-closed）。
+        payload:
+          commandClientMode === undefined
+            ? withHostFlags
+            : stampCreateSessionClientMode(withHostFlags, commandClientMode),
       };
     }
     if (envelope.type !== "sendText") return envelope;
@@ -5359,11 +5382,9 @@ export function createACodeAgentService(
         await ensureIndependentPlanSupport(client);
       }
       // RPC facade 会清掉调用方可伪造的顶层 clientMode，再用 trusted carrier 注入 host
-      // 真值；host 内部 adapter 直调仍兼容显式 clientMode。
-      const commandClientMode =
-        readTrustedACodeAgentV4Connection(params)?.clientMode ??
-        params.clientMode ??
-        "desktop-continuous";
+      // 真值；host 内部 adapter 直调仍兼容显式 clientMode。来源纪律单源在
+      // resolveTrustedCommandClientMode（**绝不**读 payload.clientMode，见该叶子注释）。
+      const commandClientMode = resolveTrustedCommandClientMode(params);
       if (params.envelope.type === "createSession") {
         // V4 草稿预热直接走 command 转发；新会话创建前只需等待 Account Config，
         // ACode Built-in / Personal 已由 Worker 进程 Registry 自己装配。
@@ -5373,7 +5394,7 @@ export function createACodeAgentService(
           workspace: params,
         });
       }
-      let envelope = await buildConversationCommandEnvelope(params);
+      let envelope = await buildConversationCommandEnvelope(params, commandClientMode);
       // TTFT 首版只允许可信桌面本地 continuous，手机/远端透传不能开启本地观测。
       if (
         commandClientMode !== "desktop-continuous" ||

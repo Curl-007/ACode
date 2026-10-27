@@ -1153,7 +1153,7 @@ export async function createSession(
 export async function createSessionRecordForV4(
   context: ACodeProtocolAgentServerContext,
   rawParams: unknown,
-  runtimeFlags?: { scriptWorkflowEnabled?: boolean; toolSearchMode?: ToolSearchAppMode },
+  runtimeFlags?: { scriptWorkflowEnabled?: boolean; toolSearchMode?: ToolSearchAppMode; clientMode?: ACodeDeliveryKind },
 ) {
   return createSessionWithProjection(
     context,
@@ -1177,7 +1177,7 @@ async function createSessionWithProjection<T>(
   // acodeSessionCreateParamsSchema 是 strict 的 legacy 面（只删不增），本 flag 不能进
   // rawParams（会被 strict parse 拒为未知键），只能绕协议参数单独下传。仅 v4 路径注入；
   // legacy/TUI 路径缺席 = CLI 按本机缺省档（onDemand）放行，与今天行为逐字一致。
-  runtimeFlags?: { scriptWorkflowEnabled?: boolean; toolSearchMode?: ToolSearchAppMode },
+  runtimeFlags?: { scriptWorkflowEnabled?: boolean; toolSearchMode?: ToolSearchAppMode; clientMode?: ACodeDeliveryKind },
 ): Promise<T> {
   const params = parseParams(acodeSessionCreateParamsSchema, rawParams);
   const startedAt = Date.now();
@@ -3255,7 +3255,7 @@ async function materializeSessionRecord(
   resume: boolean,
   source: SessionStartupPreferencesSource,
   trace?: ACodeProtocolTrace,
-  runtimeFlags?: { scriptWorkflowEnabled?: boolean; toolSearchMode?: ToolSearchAppMode },
+  runtimeFlags?: { scriptWorkflowEnabled?: boolean; toolSearchMode?: ToolSearchAppMode; clientMode?: ACodeDeliveryKind },
 ): Promise<ACodeProtocolSessionRecord> {
   const startupPreferences = await resolveSessionStartupPreferences(
     context,
@@ -3273,7 +3273,7 @@ async function createRecord(
   resume: boolean,
   startupPreferences: SessionStartupPreferences,
   trace?: ACodeProtocolTrace,
-  runtimeFlags?: { scriptWorkflowEnabled?: boolean; toolSearchMode?: ToolSearchAppMode },
+  runtimeFlags?: { scriptWorkflowEnabled?: boolean; toolSearchMode?: ToolSearchAppMode; clientMode?: ACodeDeliveryKind },
 ): Promise<ACodeProtocolSessionRecord> {
   const workspace =
     "workspace" in params && params.workspace
@@ -3336,6 +3336,13 @@ async function createRecord(
       // off 处理）；写入后在 runtime 创建期物化进 AgentRuntimeConfig.toolSearchMode，
       // 存活 runtime 不变（无会话中途改档通道，settings 修改下次创建/冷恢复生效）。
       ...(resolvedToolSearchMode === undefined ? {} : { toolSearchMode: resolvedToolSearchMode }),
+      // U11 图片外置引用生产门的可信 clientMode（specs/tool-media-attachment-ref.md R10.2a）：
+      // 只有本次 createSession 侧通道带来显式值才写；**刻意不读 appRuntimePreferences**（与
+      // toolSearchMode 的关键差异——clientMode 是每连接属性，进程缓存会跨会话泄漏
+      // desktop-continuous，误开 ref 生产门）。缺席（旧 Host/TUI/headless/冷恢复 resume）= 不写
+      // 字段 = core 按 R10.2 一律 inline（fail-closed）。物化进 AgentRuntimeConfig.clientMode 后，
+      // 经 runtime-tools.ts → ToolExecutionContext 决定 shouldEmitToolMediaRefs 的每会话门。
+      ...(runtimeFlags?.clientMode === undefined ? {} : { clientMode: runtimeFlags.clientMode }),
       // 协议侧的工具允许/拒绝列表是 session 级安全边界，必须进入 runtimeConfig，
       // 不能只依赖 prompt 文本约束，否则内置工具和动态 MCP 工具仍可能越过调用面。
       toolAllowlist: "toolAllowlist" in params ? params.toolAllowlist : undefined,

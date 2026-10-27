@@ -1024,6 +1024,7 @@ export function createConversationV4Gateway(
       dynamicWorkflowEnabled,
       scriptWorkflowEnabled,
       toolSearchMode,
+      clientMode,
     }) => {
       // workspaceId 双形态（Workspace Identity 约束）：
       // - 本地工作区 = workspacePath（identity 缺省时的 fallback）；
@@ -1053,7 +1054,11 @@ export function createConversationV4Gateway(
         // CLI 侧缺席即开启，Host 必须显式写 false 才能关（spec §4.4）。
         // 工具按需检索档位同走侧通道（同款 legacy strict 面纪律，specs/tool-search.md
         // R11）：auto/local/off 都透传，缺席 = off（core 侧缺省语义，零行为变化）。
-      }, { scriptWorkflowEnabled, toolSearchMode });
+        // U11 图片外置引用生产门的可信 clientMode 也走侧通道（specs/tool-media-attachment-ref.md
+        // R10.2a）：desktop-continuous/web-remote-replayable 都透传，缺席 = inline（fail-closed）。
+        // **刻意不进 appRuntimePreferences 进程缓存**——clientMode 是每连接属性，缓存会让一个
+        // desktop-continuous 会话把值泄漏给随后创建的 web-remote-replayable 会话，误开 ref 生产门。
+      }, { scriptWorkflowEnabled, toolSearchMode, clientMode });
       // 顺路刷新进程级目录缓存（server-types.ts 的 scriptWorkflowEnabled 注释）：档位在
       // 下次会话创建时生效，缓存在同一时机刷新即可，无需 legacy 推送命令。只影响
       // workspace presentation / 快照 `/` 目录的展示；本会话的工具面已由上面的侧通道裁决。

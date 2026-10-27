@@ -307,26 +307,58 @@ fail-closed 比信任更便宜。
 
 **因此本项的协商结论**：
 
-- **R10.1 门默认关闭。** `RegisterBuiltInToolsOptions.nodeReplMediaRefs`（缺席 = 关闭），
-  经 `createJsToolEntry({ nodeReplMediaRefs })` 闭包进 handler。极性沿用同族 `include*` 门
-  （`includeBrowserUse` / `includeOffPeak`：只有显式 true 才开）。关闭时行为与 U11 之前
+- **R10.1 生产门（rollout flag），现已 ON。** `RegisterBuiltInToolsOptions.nodeReplMediaRefs`
+  （缺席 = 关闭），经 `createJsToolEntry({ nodeReplMediaRefs })` 闭包进 handler。极性沿用同族
+  `include*` 门（`includeBrowserUse` / `includeOffPeak`：只有显式 true 才开）。
+  **接线缺口补齐后（R10.2a），`runtime-tools.ts` 已把它显式置 true**：这是**产品级 rollout 总闸**，
+  不再是「缺席=关闭」的默认态。总闸 ON **不等于**处处产 ref——每会话是否真产 ref 仍由 R10.2 的
+  `clientMode` 判据逐会话裁决（两层设计：R10.1 总闸 ON + R10.2 每会话门）。因此总闸 ON 后，
+  `web-remote-replayable` / clientMode 缺席（TUI/headless）的会话仍逐字 inline，行为与 U11 之前一致；
+  只有受信 Host 创建的 `desktop-continuous` 会话才产 ref。总闸 OFF（如临时回滚）时行为与 U11 之前
   **逐字一致**：不持久化、不发 ref、全 inline。
 - **R10.2 门开时还要过 `clientMode` 判据**（纵深防御，不是替代协商）：只有
   `context.clientMode === "desktop-continuous"` 才产 ref。`web-remote-replayable` 是唯一真实的
   版本偏斜面（web bundle 与桌面 Host 可不同版），一律 inline。`clientMode` 缺席（TUI/headless）
   也 inline——那些链路没有 renderer，产 ref 只会白写盘。
   `clientMode` 已在 `ToolExecutionContext` 上（`call-runner.ts:552`），无需新增协议面。
-- **R10.2a 已知接线缺口（当前使本门在生产中无法打开）**：`clientMode` 的传播链是
-  `AgentRuntimeConfig.clientMode` →（`runtime-tools.ts:303`）→ `ToolExecutorDeps` →
-  （`impl.ts:84`）→ `ToolExecutionContext`。链路本身完整，但**上游从未被写入**：
-  `bootstrap/src/app/runtime-config.ts` 构造 `AgentRuntimeConfig` 时只 `...options.runtimeConfig`
-  透传，而全仓库没有任何调用方在 `runtimeConfig` 里传 `clientMode`（v4 的 session/create
-  命令族也不认识它）。因此 `context.clientMode` 今天恒为 `undefined`，按 R10.2 一律 inline。
+- **R10.2a 接线缺口已补齐（本门现可在生产中打开）**：`clientMode` 的传播链曾是
+  「下游完整、上游从未写入」的 fail-closed 缺口。现已按 `toolSearchMode` 同款 hop-by-hop 接通，
+  可信值从 Host 连接贯穿到工具执行上下文：
 
-  这是**刻意的 fail-closed**，不是缺陷掩盖：判据缺席时宁可 inline，也不能猜一个 clientMode 就外置字节。
-  代价是——即便把 `nodeReplMediaRefs` 打开，生产链路仍全 inline。要真正启用，必须先补 §9 跨文件项 1
-  的 bootstrap 接线（把可信 clientMode 从 host attachment 注入 `AgentRuntimeConfig`）。
-  在那之前本功能的可验证面是单测（注入 `clientMode` 的 context）与门控矩阵，**不是**端到端产图。
+  1. **shared v4 `createSession` payload**（`command.ts`）新增 `clientMode:
+     z.enum(["desktop-continuous","web-remote-replayable"]).optional()`——**additive**，旧 CLI 的
+     `z.object` 静默丢弃该键（fail-safe 到缺席=inline）。legacy `session/create` params
+     （`acodeSessionCreateParamsSchema`，`.strict()`）**不加**本字段（legacy 面只删不增）。
+  2. **services 盖可信值**（`acodeAgentService.ts` 的 `sendConversationCommandV4` createSession 分支）：
+     用 `commandClientMode`（= `readTrustedACodeAgentV4Connection(params)?.clientMode ??
+     params.clientMode ?? "desktop-continuous"`）**无条件覆盖** `envelope.payload.clientMode`，
+     经导出的纯叶子 `stampCreateSessionClientMode(payload, trustedClientMode)` 完成（可单测）。
+     **安全不变量**：`withTrustedConnection` 只删顶层可伪造的 `params.clientMode`，**不触碰**
+     `params.envelope.payload.clientMode`——renderer 仍能在 payload 里伪造 `clientMode:
+     "desktop-continuous"`。故盖值必须是 `{ ...payload, clientMode: trusted }` 的**覆盖**语义
+     （spread 在前、可信值在后），伪造值永不存活。`resolveTrustedCommandClientMode` **绝不**读
+     `payload.clientMode`。
+  3. **CLI v4 handler**（`session-mgmt.ts`）读 `payload.clientMode` → `host.createSessionRecord({
+     ...clientMode })`。
+  4. **v4-bridge** `createSessionRecord` 解构 `clientMode`，经**第三个参数 runtimeFlags 侧通道**
+     下传（与 `scriptWorkflowEnabled`/`toolSearchMode` 同款：legacy strict params 不收新键）。
+  5. **server-operations** `createSessionRecordForV4` → `createSessionWithProjection` →
+     `materializeSessionRecord` → `createRecord` 逐跳透传 `runtimeFlags.clientMode`，在 `createRecord`
+     里写进 `createWorkspaceACodeApp(..., { runtimeConfig: { ...clientMode } })`。
+     **与 toolSearchMode 的关键差异**：clientMode **不设** `appRuntimePreferences` 进程级兜底缓存。
+     它是**每连接**属性（§6.4 论证 4），进程缓存会让一个 `desktop-continuous` 会话把值泄漏给随后
+     创建的 `web-remote-replayable` 会话，打开不该开的门。因此只有本次 createSession 侧通道带来的
+     显式值才写；缺席 = 不写字段 = core 按 R10.2 一律 inline（fail-closed）。
+  6. **runtime-config 透传**（`bootstrap/src/app/runtime-config.ts`）`...options.runtimeConfig` 已把
+     `clientMode` 带进 `AgentRuntimeConfig.clientMode`（字段声明于 `core/src/runtime/types.ts:129`）。
+  7. **下游**（既有，未改）：`runtime-tools.ts:303` 读 `runtime.config.clientMode` → `ToolExecutorDeps`
+     → `impl.ts:84` → `call-runner.ts:552` → `ToolExecutionContext.clientMode` → `shouldEmitToolMediaRefs`
+     的 R10.2 判据。
+
+  结论：refs 只对**受信 Host 创建的 `desktop-continuous` 会话**产出；`web-remote-replayable`、
+  clientMode 缺席（TUI/headless/冷恢复 resume）一律 inline。**已接受的残余**（用户已同意延后）：
+  一条已持久化 ref 的会话，被一个**更旧/降级**、其 contracts 镜像里没有 ref 分支的消费方读取时，
+  会丢图（整块 display 被剥，退化为无图卡，不崩溃）。跨版本降级是单独设计项，撤回义务见 R10.4。
 - **R10.3 ref 必须持久化**（不能「只在实时线上发 ref、落库写 inline」）：U11-A1 断言的正是
   **冷启动恢复后** row 里没有原图 base64。落库写 inline 会让每次冷启动都退回旧字节量，
   直接违背该验收场景。
@@ -401,6 +433,23 @@ fail-closed 比信任更便宜。
   shared `toolMediaImageSchema` 与 contracts `nodeReplImageToolResultDisplayPayloadSchema`
   对同一批正/负样本给出**相同**的接受/拒绝结论（additive union 不漂移）。
 
+clientMode 接线链（R10.2a，本批次新增）：
+
+- `packages/shared/test/tool-media-client-mode-command.test.ts` —— v4 createSession payload 的
+  `clientMode` additive 字段：两值域接受、缺席接受、非法值拒绝；旧 CLI 语义（additive z.object
+  静默丢弃未知键）不由本 schema 单测承担，属既有 zod 行为。
+- `packages/services/test/createSessionClientModeStamp.test.ts` —— **安全关键**：`stampCreateSessionClientMode`
+  用可信值**无条件覆盖** payload，含 renderer 伪造 `payload.clientMode: "desktop-continuous"` 而
+  trusted 连接是 `web-remote-replayable` 时结果仍是 `web-remote-replayable`（伪造不生效）；
+  `resolveTrustedCommandClientMode` 只信 carrier/显式 params、绝不读 payload。源码断言钉住
+  `sendConversationCommandV4` 的 createSession 分支调用盖值叶子、且**不**用 `params.clientMode` 作
+  ref 门来源；legacy create/resume 参数构造零新增 clientMode（legacy 只删不增）。
+- `apps/acode-cli/tests/tool-media-client-mode-chain.test.mjs` —— bootstrap 物化链钉住：
+  session-mgmt handler 透传 `payload.clientMode`；v4-bridge 经 runtimeFlags 侧通道下传；
+  server-operations 三处 runtimeFlags 签名含 clientMode、`createRecord` 写进 `runtimeConfig.clientMode`
+  且**不**写 `appRuntimePreferences.clientMode`（每连接属性不进程缓存）；`runtime-tools.ts` 把
+  `nodeReplMediaRefs` 显式置 true（R10.1 总闸 ON）。
+
 ## 9. 未落地与跨文件项
 
 1. **capability/schema 协商未做成安全增量**（§6.4）：安全的 host→client 协商方向与本项所需的
@@ -421,12 +470,16 @@ fail-closed 比信任更便宜。
 6. **双链路 E2E 与预算实验未执行**（提案 §5.3 步骤 5）：传输字节减少 ≥80%、renderer/Host 内存、
    UI 缓存预算（桌面 ≤16 MiB / 手机 ≤8 MiB）都需 fixture 校准后才能进 spec；本项门默认关闭，
    未接线默认生产路径，因此这些量化门槛**尚未在真实链路上验证**。
-7. **`clientMode` 从未注入 `AgentRuntimeConfig`**（R10.2a）：跨文件项，属 bootstrap。
-   链路下游完整（`runtime-tools.ts:303` → `impl.ts:84` → `call-runner.ts:552` →
-   `ToolExecutionContext.clientMode`），但 `bootstrap/src/app/runtime-config.ts` 构造
-   `AgentRuntimeConfig` 时不写这个键，v4 session/create 命令族也不认识它，故生产中恒为 `undefined`。
-   要启用本功能，需要在 host attachment / session 创建处把可信 clientMode 注入 runtimeConfig。
-   注意这只解决「门能打开」，**不**解决协商正确性（§6.4 论证 4 仍在）。
+7. **`clientMode` 已注入 `AgentRuntimeConfig`**（R10.2a，本批次落地）：曾记为跨文件缺口，现已按
+   `toolSearchMode` 同款 hop-by-hop 接通——shared v4 createSession additive 字段 → services 用可信
+   `commandClientMode` **无条件覆盖** payload → CLI handler → v4-bridge runtimeFlags 侧通道 →
+   server-operations `createRecord` 写进 `runtimeConfig.clientMode` → 下游既有链路物化进
+   `ToolExecutionContext`。**安全不变量**：盖值只信 `commandClientMode`（trusted connection carrier），
+   绝不读可伪造的 `payload.clientMode`；clientMode **不进** `appRuntimePreferences` 进程缓存
+   （每连接属性，缓存会跨会话泄漏 `desktop-continuous`）。`nodeReplMediaRefs` 总闸随之 ON（R10.1）。
+   注意这只解决「门能打开」，**不**解决协商正确性（§6.4 论证 4 仍在）：refs 是每 session 持久化一次的
+   生产决策，已接受的残余是降级消费方读 ref-persisted row 会丢图（R10.4 撤回义务单独设计）。
+   冷恢复 resume 路径不携带 runtimeFlags，故 `clientMode` 缺席 = 该会话 inline（fail-closed，符合 R10.2）。
 
 ## 10. 文件预算（max-lines 400）
 

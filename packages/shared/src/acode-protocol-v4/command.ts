@@ -82,6 +82,15 @@ export const commandPayloadSchemas = {
     // → 缺席 = off（fail-safe 到零行为变化）。legacy session/create params 不加本字段
     // （legacy 面只删不增，同 scriptWorkflowEnabled 的裁决）。
     toolSearchMode: z.enum(TOOL_SEARCH_APP_MODES).optional(),
+    // 可信连接模式（U11 工具图片外置引用生产门，spec tool-media-attachment-ref.md R10.2a）：
+    // **由受信 Host（services/acodeAgentService）用 commandClientMode 无条件盖章**，不是 renderer
+    // 的自选项。物化进 AgentRuntimeConfig.clientMode → ToolExecutionContext，决定 shouldEmitToolMediaRefs
+    // 的每会话门（只有 desktop-continuous 才产 ref）。取值域与 transport.ts 的 clientMode 逐字同族。
+    // additive：旧 CLI 的 z.object 静默丢弃该键（fail-safe 到缺席=inline）。
+    // ⚠ 注入纪律（安全关键）：withTrustedConnection 只删顶层可伪造的 clientMode，**不触碰本 payload 里的**
+    // 同名字段——故 Host 侧必须以覆盖语义（spread 在前、可信值在后）盖章，伪造值永不存活。
+    // legacy session/create params 不加本字段（legacy 面只删不增，同 toolSearchMode 的裁决）。
+    clientMode: z.enum(["desktop-continuous", "web-remote-replayable"]).optional(),
   }),
   // 父会话由 envelope.sessionId 指定；服务端从父 record 派生完整运行配置。
   // firstInput 存在时，child 创建完成后立即启动首条普通输入；缺省则保持空副屏。

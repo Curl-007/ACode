@@ -110,8 +110,9 @@ test("bootstrap 物化链：v4 createSession payload → createSessionRecord →
   const v4Bridge = await read("packages/bootstrap/src/acode-protocol/v4-bridge.ts");
   assert.match(
     v4Bridge,
-    /\}, \{ scriptWorkflowEnabled, toolSearchMode \}\);/,
-    "v4-bridge 必须经 runtimeFlags 侧通道下传（legacy strict params 不收新键）",
+    /\}, \{ scriptWorkflowEnabled, toolSearchMode, clientMode \}\);/,
+    "v4-bridge 必须经 runtimeFlags 侧通道下传（legacy strict params 不收新键）；" +
+      "clientMode 是 U11 同款侧通道新增键（specs/tool-media-attachment-ref.md R10.2a）",
   );
   assert.match(
     v4Bridge,

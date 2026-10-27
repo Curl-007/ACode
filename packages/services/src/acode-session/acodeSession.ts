@@ -17,6 +17,7 @@ import type {
   ACodeStateUpdatedNotification,
   ACodeWorkspacePresentation,
 } from "@acode/shared";
+import type { V4SessionHeaderMetaResult } from "@acode/shared/acode-protocol-v4";
 import { createServiceDescriptor } from "#src/descriptors.js";
 
 export interface ACodeSessionWorkspaceTarget {
@@ -144,6 +145,13 @@ export interface IACodeSessionService {
   resumeSession(params: ACodeSessionResumeParams): Promise<ACodeSessionStateSnapshot>;
   listSessions(params: ACodeSessionListParams): Promise<ACodeSessionInfo[]>;
   readSession(params: ACodeSessionReadParams): Promise<ACodeSessionStateSnapshot>;
+  /**
+   * 归档会话 header 冷读（apps/acode-cli/specs/v4-session-header-meta.md）：只回 header 元数据，
+   * 不带 messages/快照整包，不激活 session 运行时。useActiveTaskSnapshotMeta 的兜底读走这里，
+   * 替代 legacy readSession（M1 的两个真消费方之一）。返回 wire result（found + meta?），
+   * UI 侧再映射成 ACodeTaskMeta。
+   */
+  readSessionHeaderMeta(params: ACodeTaskTarget): Promise<V4SessionHeaderMetaResult>;
   readSessionMessages(params: ACodeSessionMessagesParams): Promise<ACodeMessageWithParts[]>;
   readSessionEvents(params: ACodeSessionEventsParams): Promise<ACodeSessionEvent[]>;
   promoteDeferredDraftSession(params: ACodeTaskTarget): Promise<void>;
@@ -166,6 +174,7 @@ export const IACodeSessionService = createServiceDescriptor<IACodeSessionService
       "resumeSession",
       "listSessions",
       "readSession",
+      "readSessionHeaderMeta",
       "readSessionMessages",
       "readSessionEvents",
       "promoteDeferredDraftSession",
@@ -185,6 +194,8 @@ export const IACodeSessionService = createServiceDescriptor<IACodeSessionService
       resumeSession: (args) => requireSessionParams(args, ["workspacePath", "sessionId"]),
       listSessions: (args) => requireSessionParams(args, ["workspacePath"]),
       readSession: (args) => requireSessionParams(args, ["workspacePath", "sessionId"]),
+      // ACodeTaskTarget = workspacePath + sessionId，与 readSession 同款校验器（ARCH-01 门禁）。
+      readSessionHeaderMeta: (args) => requireSessionParams(args, ["workspacePath", "sessionId"]),
       readSessionMessages: (args) => requireSessionParams(args, ["workspacePath", "sessionId"]),
       readSessionEvents: (args) => requireSessionParams(args, ["workspacePath", "sessionId"]),
       promoteDeferredDraftSession: (args) =>

@@ -111,6 +111,7 @@ import type {
   V4NetworkCaptureRecordsNotification,
   V4OvernightCompletionNotification,
   V4SessionsIndexSubscribeResult,
+  V4SessionHeaderMetaResult,
   V4WorkspaceConfigSubscribeResult,
   WorkspaceConfigTopicWireCandidate,
 } from "@acode/shared/acode-protocol-v4";
@@ -660,6 +661,13 @@ export interface IACodeAgentService {
   getAppUsageStats(params: ACodeAgentAppUsageParams): Promise<AppUsageSnapshot>;
   getTaskTokenUsage(params: ACodeAgentTaskTokenUsageParams): Promise<ACodeTaskTokenUsageResult>;
   readSession(params: ACodeAgentReadSessionParams): Promise<ACodeSessionStateSnapshot>;
+  /**
+   * 归档会话 header 冷读（apps/acode-cli/specs/v4-session-header-meta.md）。
+   * 与 readSession 的差别：不带 messages/快照整包，只回 header 元数据；**不建 session record /
+   * 不激活 session 运行时**（只复用 workspace agent 进程），故对已回收 runtime 的归档任务也能读。
+   * params 复用 ACodeAgentSessionTarget（只需 sessionId + workspace 定位选 client）。
+   */
+  readSessionHeaderMeta(params: ACodeAgentSessionTarget): Promise<V4SessionHeaderMetaResult>;
   readSessionMessages(
     params: ACodeAgentReadSessionMessagesParams,
   ): Promise<ACodeMessageWithParts[]>;
@@ -986,6 +994,7 @@ export const IACodeAgentService = createServiceDescriptor<IACodeAgentService>(
       "getAppUsageStats",
       "getTaskTokenUsage",
       "readSession",
+      "readSessionHeaderMeta",
       "readSessionMessages",
       "readSessionDebug",
       "readSessionEvents",
@@ -1114,6 +1123,7 @@ export const IACodeAgentService = createServiceDescriptor<IACodeAgentService>(
       getAppUsageStats: requireSingleParamsObject,
       getTaskTokenUsage: requireSingleParamsObject,
       readSession: requireSingleParamsObject,
+      readSessionHeaderMeta: requireSingleParamsObject,
       readSessionMessages: requireSingleParamsObject,
       readSessionDebug: requireSingleParamsObject,
       readSessionEvents: requireSingleParamsObject,

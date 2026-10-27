@@ -288,6 +288,7 @@ import {
   v4ConversationSubscribeResultSchema,
   v4ConversationUsageResultSchema,
   v4SessionsIndexSubscribeResultSchema,
+  v4SessionHeaderMetaResultSchema,
   v4UsageStatsResultSchema,
   v4WorkspaceConfigSubscribeResultSchema,
   workspaceConfigTopic,
@@ -3928,6 +3929,25 @@ export function createACodeAgentService(
       );
       rememberSessionTrace(params, snapshot);
       return snapshot;
+    },
+
+    async readSessionHeaderMeta(params: ACodeAgentSessionTarget) {
+      // 归档 header 冷读（apps/acode-cli/specs/v4-session-header-meta.md）。与 readSession 三点不同：
+      // ① 用默认 runtimePolicy（start-if-needed）而非 existing-only——归档任务的 workspace 进程可能
+      //    已回收，existing-only 会在无进程时抛 createRuntimeUnavailableError，让兜底读直接失败
+      //    （spec R2）。这里复用 workspace 进程，但**不建 session record / 不激活 session 运行时**：
+      //    CLI 侧 handler 只读持久层（sessionStore.getSession/readTarget/sessionEntries），不碰
+      //    context.sessions。
+      // ② 不 ensureAccountProviderConfigSynced——header 只回持久元数据，不依赖 provider 配置同步，
+      //    为一个兜底读触发账号同步是不必要的副作用。
+      // ③ 不 rememberSessionTrace——那是 readSession 快照消费链的职责；header meta 是纯展示兜底，
+      //    往 sessionTraceIdBySessionKey 写会是第二条 trace 写入路径（AGENTS.md：单一写入路径）。
+      const client = await getReadOnlyClient(params);
+      return client.request(
+        V4_METHODS.sessionHeaderMeta,
+        { sessionId: params.sessionId },
+        v4SessionHeaderMetaResultSchema,
+      );
     },
 
     async readSessionMessages(params: ACodeAgentReadSessionMessagesParams) {

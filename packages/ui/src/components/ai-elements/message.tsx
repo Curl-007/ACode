@@ -12,7 +12,7 @@ import { cn } from "../lib/utils.js";
 import { cjk } from "@streamdown/cjk";
 import { createMathPlugin } from "@streamdown/math";
 import { mermaid } from "@streamdown/mermaid";
-import type { EditorInfo, FileStat, OpenInEditorOptions } from "@acode/shared";
+import type { EditorInfo } from "@acode/shared";
 import type { UIMessage } from "ai";
 import { ChevronLeftIcon, ChevronRightIcon, CopyIcon, ExternalLinkIcon } from "lucide-react";
 import remarkCjkFriendlyGfmStrikethrough from "remark-cjk-friendly-gfm-strikethrough";
@@ -77,14 +77,17 @@ import {
   FOLDER_FILE_ICON_SRC,
   resolveFileDisplayDescriptor,
 } from "@/lib/fileDisplay.js";
+import { resolveMarkdownFileLink } from "@/lib/markdownFileLink.js";
 import {
-  normalizeWorkspaceRelativeFilePath,
-  parseMarkdownFileLinkTarget,
-  resolveMarkdownFileLink,
-} from "@/lib/markdownFileLink.js";
+  buildMessageFileLinkTarget,
+  isExternalWebHref,
+  type MessageFileLinkTarget,
+  openMessageFileLinkInEditor,
+  rewriteLocalFileMarkdownTargetsRehypePlugin,
+} from "./messageFileLinkTargets.js";
+import { normalizeMessageSingleDollarMath } from "./messageMarkdownMath.js";
 import { stripBalancedAssistantPathQuotes } from "@/lib/assistantPathQuotes.js";
 import { getPathLeaf } from "@/lib/path.js";
-import { getWorkspaceFileRelativePath } from "@/workspace-file-tree/model.js";
 import { resolveWorkspaceEditorSelection } from "@/lib/workspaceEditorSelection.js";
 import { sortInstalledEditorsForFileTree } from "@/workspace-file-tree/helpers.js";
 import type { CodePreviewSettings } from "@/lib/codePreviewSettings.js";
@@ -387,16 +390,10 @@ export type MessageResponseProps = {
   renderACodeFileCitations?: boolean;
 };
 
-export interface MessageFileLinkTarget {
-  path: string;
-  label: string;
-  /** 仅用于显式尾随斜杠的目录展示提示；打开第三方应用前必须重新 stat。 */
-  pathKind?: NonNullable<OpenInEditorOptions["pathKind"]>;
-  relativePath?: string;
-  workspacePath?: string;
-  workspaceIdentity?: string;
-  workspaceRemoteSessionId?: string;
-}
+// 批次 5：文件链接目标族单一来源迁至 ./messageFileLinkTargets.js；
+// re-export 保持 message.js 对外契约不变（workspacePathNavigation / side-pane 族 / 包导出面）。
+export type { MessageFileLinkTarget } from "./messageFileLinkTargets.js";
+export { buildMessageFileLinkTarget, openMessageFileLinkInEditor } from "./messageFileLinkTargets.js";
 
 // @streamdown/math 默认不解析 `$...$` 行内公式，导致客户消息里块级 `$$...$$`
 // 能渲染而 `$c(\mathbf{r})$` 会原样显示；聊天消息需要兼容常见 Markdown/LaTeX 输出。
@@ -452,21 +449,6 @@ const messageMarkdownHeadingClassNames = {
   h6: "mt-6 mb-4 text-ui-base font-normal",
 } as const;
 const languageClassNamePattern = /(?:^|\s)language-([^\s]+)/;
-const fileUrlProtocolPattern = /^file:\/\//i;
-const windowsDriveAbsolutePathPattern = /^[a-zA-Z]:[\\/]/;
-const knownExtensionlessFileNames = new Set([
-  "dockerfile",
-  "gemfile",
-  "license",
-  "makefile",
-  "readme",
-]);
-const markdownFencePattern = /^(?: {0,3})(`{3,}|~{3,})/;
-const likelyMathSyntaxPattern = /[\\{}^_=+\-*/<>|()[\]∇∂∫∑√∞≈≠≤≥±×÷πΠα-ωΑ-Ω]/u;
-const texCommandPattern = /\\[A-Za-z]+/;
-const simpleMathIdentifierPattern = /^(?:[A-Za-z]|[a-z][A-Za-z0-9]{1,2}|\d+(?:\.\d+)?)$/;
-const compactCurrencyRangePrefixPattern = /^(?:\d[\d,]*(?:\.\d+)?|\.\d+)[+\-*/]$/;
-const compactCurrencyAmountStartPattern = /^(?:\d|\.\d)/;
 
 type MarkdownCodeProps = ComponentProps<"code"> & {
   node?: unknown;
@@ -479,12 +461,6 @@ type MarkdownStrongProps = ComponentProps<"strong"> & {
   node?: unknown;
 };
 type MessageStreamdownMode = "static" | "streaming";
-type HastElementNode = {
-  type?: string;
-  tagName?: string;
-  properties?: Record<string, unknown>;
-  children?: HastElementNode[];
-};
 type MessageResponseBoundaryScope = {
   markdownLength: number;
   mode: MessageStreamdownMode;
@@ -517,190 +493,6 @@ function normalizeMarkdownRenderError(error: unknown): Error {
   return error instanceof Error
     ? error
     : new Error(typeof error === "string" ? error : "Unknown markdown render error");
-}
-
-function getMarkdownFence(line: string): { marker: string; length: number } | null {
-  const match = markdownFencePattern.exec(line);
-
-  if (!match) {
-    return null;
-  }
-
-  const sequence = match[1] ?? "";
-  return {
-    marker: sequence[0] ?? "",
-    length: sequence.length,
-  };
-}
-
-function isEscapedMarkdownCharacter(text: string, index: number): boolean {
-  let slashCount = 0;
-
-  for (let cursor = index - 1; cursor >= 0 && text[cursor] === "\\"; cursor--) {
-    slashCount++;
-  }
-
-  return slashCount % 2 === 1;
-}
-
-function isSingleDollarDelimiter(text: string, index: number): boolean {
-  return (
-    text[index] === "$" &&
-    text[index - 1] !== "$" &&
-    text[index + 1] !== "$" &&
-    !isEscapedMarkdownCharacter(text, index)
-  );
-}
-
-function findClosingSingleDollarDelimiter(text: string, startIndex: number): number {
-  for (let index = startIndex; index < text.length; index++) {
-    if (isSingleDollarDelimiter(text, index)) {
-      return index;
-    }
-  }
-
-  return -1;
-}
-
-function isLikelySingleDollarMath(content: string): boolean {
-  if (!content || content !== content.trim() || /[\r\n]/.test(content)) {
-    return false;
-  }
-
-  if (texCommandPattern.test(content) || likelyMathSyntaxPattern.test(content)) {
-    return true;
-  }
-
-  if (!/\s/.test(content) && simpleMathIdentifierPattern.test(content)) {
-    return true;
-  }
-
-  return false;
-}
-
-function isLikelyCompactCurrencyRangeText(
-  text: string,
-  closingIndex: number,
-  content: string,
-): boolean {
-  if (!compactCurrencyRangePrefixPattern.test(content)) {
-    return false;
-  }
-
-  return compactCurrencyAmountStartPattern.test(text.slice(closingIndex + 1));
-}
-
-function normalizeSingleDollarMathInText(text: string): string {
-  if (!text.includes("$")) {
-    return text;
-  }
-
-  let output = "";
-
-  for (let index = 0; index < text.length; index++) {
-    if (!isSingleDollarDelimiter(text, index)) {
-      output += text[index];
-      continue;
-    }
-
-    const closingIndex = findClosingSingleDollarDelimiter(text, index + 1);
-
-    if (closingIndex === -1) {
-      output += text[index];
-      continue;
-    }
-
-    const content = text.slice(index + 1, closingIndex);
-
-    if (isLikelyCompactCurrencyRangeText(text, closingIndex, content)) {
-      // `$5-$10` 这类紧凑价格区间的第二个 `$` 会被误当成公式闭合符。
-      // 只转义当前 `$`，让整段继续按普通文本渲染并保留美元符号。
-      output += "\\$";
-      continue;
-    }
-
-    if (isLikelySingleDollarMath(content)) {
-      output += text.slice(index, closingIndex + 1);
-      index = closingIndex;
-      continue;
-    }
-
-    // 开启 singleDollarTextMath 后，`$5 ... $10` / `$HOME ... $PATH`
-    // 这类普通文本会被误当成公式。只转义当前 `$`，让后续 `$` 继续按原文本扫描。
-    output += "\\$";
-  }
-
-  return output;
-}
-
-function normalizeSingleDollarMathOutsideInlineCode(line: string): string {
-  let output = "";
-  let cursor = 0;
-
-  while (cursor < line.length) {
-    const codeStart = line.indexOf("`", cursor);
-
-    if (codeStart === -1) {
-      output += normalizeSingleDollarMathInText(line.slice(cursor));
-      break;
-    }
-
-    output += normalizeSingleDollarMathInText(line.slice(cursor, codeStart));
-
-    let codeFenceEnd = codeStart + 1;
-    while (line[codeFenceEnd] === "`") {
-      codeFenceEnd++;
-    }
-
-    const codeMarker = line.slice(codeStart, codeFenceEnd);
-    const codeEnd = line.indexOf(codeMarker, codeFenceEnd);
-
-    if (codeEnd === -1) {
-      output += normalizeSingleDollarMathInText(line.slice(codeStart));
-      break;
-    }
-
-    output += line.slice(codeStart, codeEnd + codeMarker.length);
-    cursor = codeEnd + codeMarker.length;
-  }
-
-  return output;
-}
-
-function normalizeMessageSingleDollarMath(markdown: string): string {
-  if (!markdown.includes("$")) {
-    return markdown;
-  }
-
-  let output = "";
-  let cursor = 0;
-  let activeFence: { marker: string; length: number } | null = null;
-
-  while (cursor < markdown.length) {
-    const newlineIndex = markdown.indexOf("\n", cursor);
-    const lineEnd = newlineIndex === -1 ? markdown.length : newlineIndex;
-    const line = markdown.slice(cursor, lineEnd);
-    const newline = newlineIndex === -1 ? "" : "\n";
-    const fence = getMarkdownFence(line);
-
-    if (activeFence) {
-      output += line + newline;
-
-      if (fence && fence.marker === activeFence.marker && fence.length >= activeFence.length) {
-        activeFence = null;
-      }
-    } else {
-      output += normalizeSingleDollarMathOutsideInlineCode(line) + newline;
-
-      if (fence) {
-        activeFence = fence;
-      }
-    }
-
-    cursor = lineEnd + newline.length;
-  }
-
-  return output;
 }
 
 export function resolveMessageStreamdownMode(renderStreaming: boolean): MessageStreamdownMode {
@@ -751,81 +543,6 @@ class MessageResponseMarkdownBoundary extends Component<
 
     return this.props.children;
   }
-}
-
-function formatMarkdownFileLinkTargetHref(href: string): string {
-  const parsedTarget = parseMarkdownFileLinkTarget(href);
-  // Windows 盘符的 `C:` 会被 rehype-harden 当成未知 URI scheme，
-  // 在自定义文件链接 renderer 运行前直接替换成 `[blocked]`。临时补成 `/C:/...`
-  // 让安全层按普通 path 放行；resolveMarkdownFileLink 会在 Windows Host 上对称还原。
-  const path = windowsDriveAbsolutePathPattern.test(parsedTarget.path)
-    ? `/${parsedTarget.path.replaceAll("\\", "/")}`
-    : fileUrlProtocolPattern.test(href)
-      ? parsedTarget.path
-      : parsedTarget.path.startsWith("./") ||
-          parsedTarget.path.startsWith("/") ||
-          parsedTarget.path.startsWith("#") ||
-          parsedTarget.path.startsWith("../") ||
-          /^[a-zA-Z][a-zA-Z\d+.-]*:/.test(parsedTarget.path)
-        ? parsedTarget.path
-        : `./${parsedTarget.path}`;
-  if (parsedTarget.lineNumber === null) {
-    return path;
-  }
-
-  if (parsedTarget.columnNumber === null) {
-    return `${path}:${parsedTarget.lineNumber}`;
-  }
-
-  return `${path}:${parsedTarget.lineNumber}:${parsedTarget.columnNumber}`;
-}
-
-function shouldRewriteMarkdownFileLinkHref(href: string): boolean {
-  if (resolveMarkdownFileLink(undefined, href)) {
-    return true;
-  }
-
-  const parsedTarget = parseMarkdownFileLinkTarget(href);
-  return (
-    Boolean(parsedTarget.path) &&
-    !parsedTarget.path.startsWith("/") &&
-    !parsedTarget.path.startsWith("#") &&
-    !parsedTarget.path.startsWith("../") &&
-    !/^[a-zA-Z][a-zA-Z\d+.-]*:/.test(parsedTarget.path) &&
-    // 越界路径若先经过 rehype rewrite/harden，`..` 可能被 URL 归一后丢失，
-    // 点击层就无法还原原始逃逸意图；必须在改写前复用相对路径词法边界校验。
-    normalizeWorkspaceRelativeFilePath(parsedTarget.path) !== null &&
-    // `[README.md](README.md)` 这类裸文件名链接以前不会在 harden 前改写，
-    // Streamdown 会把它当成不安全链接渲染成 `[blocked]`。有扩展名的裸路径按工作区文件处理，
-    // 先规整成 `./README.md`，再交给统一的文件链接打开逻辑解析。
-    (parsedTarget.path.includes("/") ||
-      parsedTarget.path.includes("\\") ||
-      hasFileExtension(getPathLeaf(parsedTarget.path)))
-  );
-}
-
-function rewriteLocalFileMarkdownTargetsRehypePlugin() {
-  return (tree: HastElementNode) => {
-    const visitNode = (node: HastElementNode) => {
-      const targetProperty = node.tagName === "a" ? "href" : node.tagName === "img" ? "src" : null;
-      if (
-        node.type === "element" &&
-        targetProperty &&
-        typeof node.properties?.[targetProperty] === "string" &&
-        shouldRewriteMarkdownFileLinkHref(node.properties[targetProperty])
-      ) {
-        // markdown 图片和链接一样会先经过 rehype-harden。`file://` 会被安全层硬拦，
-        // 裸文件名又会被当成未知 URL；这里在 harden 前统一规整成本地路径/相对路径。
-        node.properties[targetProperty] = formatMarkdownFileLinkTargetHref(
-          node.properties[targetProperty],
-        );
-      }
-
-      node.children?.forEach(visitNode);
-    };
-
-    visitNode(tree);
-  };
 }
 
 const messageRehypePlugins: PluggableList = [
@@ -927,79 +644,8 @@ function extractLinkLabelText(children: ReactNode): string {
   return extractCodeText(children).trim();
 }
 
-function hasFileExtension(pathLeaf: string): boolean {
-  return /\.[^./\\]+$/.test(pathLeaf);
-}
-
-function isExplicitDirectoryMarkdownLink(path: string, href: string): boolean {
-  const trimmedHref = href.trim();
-  return /[\\/]$/.test(trimmedHref) || /[\\/]$/.test(path);
-}
-
-export function buildMessageFileLinkTarget(input: {
-  href: string;
-  label: string;
-  path: string;
-  workspacePath?: string;
-  workspaceIdentity?: string;
-  workspaceRemoteSessionId?: string;
-}): MessageFileLinkTarget {
-  // 文件名是否带扩展名不能代表文件系统类型；env、hosts、config 等无扩展名文件
-  // 过去会被误判为目录。这里只保留显式尾随斜杠作为图标提示，打开方式必须再 stat。
-  const pathKind = isExplicitDirectoryMarkdownLink(input.path, input.href)
-    ? ("directory" as const)
-    : undefined;
-  return {
-    path: input.path,
-    label: input.label,
-    pathKind,
-    relativePath: input.workspacePath
-      ? getWorkspaceFileRelativePath(input.workspacePath, input.path)
-      : input.label,
-    workspacePath: input.workspacePath,
-    workspaceIdentity: input.workspaceIdentity,
-    workspaceRemoteSessionId: input.workspaceRemoteSessionId,
-  };
-}
-
-export async function openMessageFileLinkInEditor({
-  editorId,
-  fileLink,
-  openInEditor,
-  remoteTarget,
-  statFile,
-}: {
-  editorId: string;
-  fileLink: MessageFileLinkTarget;
-  openInEditor: (
-    editorId: string,
-    path: string,
-    options: OpenInEditorOptions,
-  ) => Promise<{ success: boolean; error?: string }>;
-  remoteTarget?: OpenInEditorOptions["remoteTarget"];
-  statFile: (params: { path: string }) => Promise<Pick<FileStat, "type">>;
-}) {
-  // Markdown 渲染层无法从名称可靠判断文件/目录。这里在动作发生时通过
-  // 当前 workspace scope 的 file service 取真实类型，stat 失败时不会调用本机应用。
-  const fileStat = await statFile({ path: fileLink.path });
-  return openInEditor(editorId, fileLink.path, {
-    pathKind: fileStat.type,
-    remoteTarget,
-    workspaceIdentity: fileLink.workspaceIdentity,
-  });
-}
-
 function trimCodeFenceTrailingNewlines(codeText: string): string {
   return codeText.replace(/\n+$/, "");
-}
-
-function isExternalWebHref(href: string): boolean {
-  try {
-    const protocol = new URL(href).protocol;
-    return protocol === "http:" || protocol === "https:";
-  } catch {
-    return false;
-  }
 }
 
 interface MessageExternalLinkProps extends ComponentProps<"button"> {

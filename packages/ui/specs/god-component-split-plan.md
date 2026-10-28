@@ -1,6 +1,6 @@
 # v4 上帝组件拆分计划（SessionPane / ConversationComposer / settings 上帝组件）
 
-状态：第一批已实施（2026-10-05，附件预览接缝）；第二批已实施（2026-10-22，SessionPane 命令编排纯决策逻辑抽出 + 接缝内测试）；批次 4 已实施（2026-10-28，ExternalAgentImportDialog / PluginsSection / WorkspaceGroupedTasksSection / SettingsPage helper 外迁 + ConversationStatusPanel 保守纯函数外迁，见下文各节）。其余接缝为登记在案的后续批次。
+状态：第一批已实施（2026-10-05，附件预览接缝）；第二批已实施（2026-10-22，SessionPane 命令编排纯决策逻辑抽出 + 接缝内测试）；批次 4 已实施（2026-10-28，ExternalAgentImportDialog / PluginsSection / WorkspaceGroupedTasksSection / SettingsPage helper 外迁 + ConversationStatusPanel 保守纯函数外迁，见下文各节）；批次 5 已实施（2026-10-28，WorkspaceShellLayout / PreviewPane / WorkspaceSidebar / message / LexicalChatInput 五件 helper+受控组件外迁，见下文各节）。其余接缝为登记在案的后续批次。
 背景：`v4/SessionPane.tsx`（本轮起点 3,762 行，带 max-lines 豁免）与 `v4/ConversationComposer.tsx`
 （2,168 行）各自混合多种职责。拆分按「耦合最浅的接缝先行」推进，每批独立验证。
 
@@ -388,6 +388,129 @@
   - 前置测试 `test/conversationStatusPanelFormat.test.ts` 11 例全绿；既有渲染契约 `test/ConversationTeamStatusPanel.test.ts` 复测仍绿。
   - 后续批次建议：先补 section 渲染契约测试（renderToStaticMarkup 钉结构），再按「叶子 props 类型 → 单 section 外迁」逐批切，最后处理 Impl 投影与 tick 策略。
   - ratchet 上限登记 2102。
+
+### `app-shell/WorkspaceShellLayout.tsx`（1,980 行；max-lines 豁免）
+
+> 登记来源：批次 5 目标清单（2026-10-28 review top 候选，非 v4-session 域）。
+
+- 职责分析：单一 memo 组件编排 sidebar/chat/terminal/browser pane 布局联动；文件顶部是侧栏宽度
+  纯 helper 带（clamp/localStorage 读写/legacy RRP 百分比迁移），组件体内 537-723 是侧栏 resize
+  状态机簇（state + refs + 拖拽 CSS 直写 + 键盘步进 + 卸载清理）。
+- 状态：**批次 5 已实施（2026-10-28，helper 外迁 + resize controller 收口）**：1980→**1725**（−255）。
+  - 新建 `app-shell/workspaceSidebarWidth.ts`（82 行）：8 个常量 + `WorkspaceSidebarResizeSession` 类型 +
+    `clampWorkspaceSidebarWidth`/`readStoredWorkspaceSidebarWidthPx`/`readLegacyWorkspaceSidebarWidthRatio`/
+    `persistWorkspaceSidebarWidthPx` 逐字迁入（window/localStorage 访问守卫原样保留）。
+  - 新建 `app-shell/useWorkspaceSidebarResize.ts`（255 行）：resize 状态机收口为 controller hook，
+    hook 内部顺序与 useCallback/useEffect deps 逐字（ref 对象按 exhaustive-deps 惯例不入 deps，
+    与原文一致）；主文件在 auto-collapse effect 之后单点调用，消费方（JSX style memo 与
+    resize handle 四个事件槽）零改动。`aria-valuemin` 的 `WORKSPACE_SIDEBAR_MIN_WIDTH_PX`
+    由主文件从叶子 import。
+  - 前置测试 `test/workspaceSidebarWidth.test.ts` 5 例（clamp 矩阵 / storage 读取钳制与异常吞咽 /
+    legacy ratio 解析 / persist 取整）。hook 无 jsdom 不测，按固定验收第 4 条登记。
+  - ratchet 上限登记 1725。
+- 遗留：conversation auto-collapse 簇（`conversationAutoCollapseStateRef` + 两个 effect）与
+  主 JSX 的 pane 编排段为下一批候选；pane 子树外迁需先定义 props 边界（批次 4 ConversationStatusPanel 同纪律）。
+
+### `PreviewPane.tsx`（1,806 行；max-lines 豁免）
+
+> 登记来源：批次 5 目标清单（2026-10-28 review top 候选，非 v4-session 域）。
+
+- 职责分析：行 83-478 是纯 helper 密集带（source 类型判别与解析 / 错误分类与路径脱敏 /
+  面包屑构建 / 延迟占位组件），组件本体（文件读取编排 + 渲染）自 480 起。
+- 状态：**批次 5 已实施（2026-10-28，helper 外迁）**：1806→**1447**（−359）。
+  - 新建 `previewPane/previewPaneSources.ts`（227 行）：markdown/svg 判别、text 读取结果决策、
+    image/media/pdf/pptx source 解析族、header divider 与 display options 派生、PDF/PPTX 常量。
+  - 新建 `previewPane/previewPaneErrors.ts`（80 行）：ENOENT/过大/pptx 不完整错误分类 +
+    绝对路径脱敏（`getPreviewPaneSafeErrorMessage`）+ pptx 读取错误文案决策。
+  - 新建 `previewPane/previewPaneBreadcrumb.ts`（82 行）：`CodeViewerBreadcrumbData` /
+    `BreadcrumbMaskState` / 遮罩 class 映射 / `normalizeBreadcrumbPathSegments` /
+    `buildCodeViewerBreadcrumb`（workspace 相对段与 posix/windows 绝对路径双分支）。
+  - 新建 `previewPane/PreviewPaneDeferredHeavyContent.tsx`（35 行）：延迟占位纯展示组件 + 行宽常量。
+  - `readPreviewPaneScrollMetrics`（DOM metrics 读取）与 `EMPTY_CODE_COMMENT_PREVIEWS` 留主文件。
+  - 前置测试：`test/previewPaneSources.test.ts` 11 例 + `test/previewPaneErrors.test.ts` 6 例 +
+    `test/previewPaneBreadcrumb.test.ts` 6 例（source 解析矩阵 / 错误分类与脱敏 / 面包屑四分支）。
+  - ratchet 上限登记 1447。
+- 遗留：组件本体的文件读取编排（PDF range 拉取 / pptx watch）与 header 菜单段为下一批候选。
+
+### `WorkspaceSidebar.tsx`（1,701 行；max-lines 豁免）
+
+> 登记来源：批次 5 目标清单（2026-10-28 review top 候选，非 v4-session 域）。
+
+- 职责分析：顶部小件（NewTaskTooltip/DragOverlay/viewMode 决策）+ 主组件内
+  `workspaceTaskToolbar` 闭包（~215 行 JSX：一级视图 Tabs / 全组折叠 / 新建分组 / 筛选菜单 /
+  归档切换）。
+- 状态：**批次 5 已实施（2026-10-28，受控组件 + 纯函数外迁）**：1701→**1458**（−243）。
+  - 新建 `WorkspaceSidebar/WorkspaceSidebarTaskToolbar.tsx`（300 行）：toolbar 闭包 JSX 逐字外迁为
+    受控组件。性能契约不变——主文件仍以 useCallback 按原 deps 列表稳定 render prop（性能修复注释保留），
+    组件本体不带 memo；sort 守卫与 archived 切换的内联箭头移入组件内（经 props 回调，行为逐字等价）。
+  - 偏离登记：适配闭包 deps 增加 `workspaceReadOnly`/`workspaceReadOnlyReason`（原闭包引用但未声明，
+    属既有 stale-closure 隐患，受控化必须显式声明）；`intl` 移出 deps（不再被闭包引用，
+    locale 切换由 deps 内的 `archivedTasksActionLabel` 覆盖）。
+  - 新建 `WorkspaceSidebar/sidebarTaskViewMode.ts`（22 行）：`resolveSidebarTaskViewMode` +
+    `SidebarTaskViewMode` 类型（单一来源迁至叶子，主文件删本地别名）。
+  - 新建 `WorkspaceSidebar/sidebarChrome.tsx`（51 行）：`WorkspaceNewTaskTooltip` + `WorkspaceDragOverlay`。
+  - 前置测试：`test/sidebarTaskViewMode.test.ts` 2 例（四态矩阵）+
+    `test/workspaceSidebarChrome.test.ts` 4 例（tooltip 透传/包装、overlay 本地/远程分支）+
+    `test/workspaceSidebarTaskToolbar.test.ts` 5 例（渲染契约：Tabs 双触发器 / 新建分组按钮分支 /
+    筛选菜单触发器有无 / 归档容器与 data-state / 折叠按钮分支；Radix Portal 内容 SSR 不可见，
+    口径同 pluginListRows.test.ts）。
+  - ratchet 上限登记 1458。
+- 遗留：主组件内 grouped/timeline/workspace 三态编排与文件树滑出段为下一批候选。
+
+### `components/ai-elements/message.tsx`（1,691 行；oxlint ignorePatterns 覆盖的 vercel 衍生件）
+
+> 登记来源：批次 5 目标清单（2026-10-28 review top 候选，非 v4-session 域）。
+
+- 职责分析：行 454-705 是单美元行内公式归一化族（围栏跟踪 / 转义判定 / 货币区间保护），
+  行 756-1003 是 markdown 文件链接目标族（harden 前 href 规整 / rehype 插件 / link target 构建 /
+  stat 确认打开）。
+- 状态：**批次 5 已实施（2026-10-28，helper 外迁 + 死代码删除）**：1691→**1337**（−354）。
+  - 新建 `messageMarkdownMath.ts`（198 行，零依赖纯字符串函数）：6 个模式常量 + 9 个归一化函数
+    逐字迁入；主文件只消费 `normalizeMessageSingleDollarMath`。
+  - 新建 `messageFileLinkTargets.ts`（182 行）：`MessageFileLinkTarget` 类型单一来源迁入 +
+    `formatMarkdownFileLinkTargetHref`/`shouldRewriteMarkdownFileLinkHref`/
+    `rewriteLocalFileMarkdownTargetsRehypePlugin`/`hasFileExtension`/`isExplicitDirectoryMarkdownLink`/
+    `buildMessageFileLinkTarget`/`openMessageFileLinkInEditor`/`isExternalWebHref` + `HastElementNode`。
+    主文件 re-export `MessageFileLinkTarget`/`buildMessageFileLinkTarget`/`openMessageFileLinkInEditor`
+    保持对外契约（workspacePathNavigation 与 side-pane 族 import 路径不变、包导出面不变）。
+  - 删除死代码 `knownExtensionlessFileNames`（全仓零引用，定义于 457 行从未被消费）。
+  - `hashMarkdownCacheKey`/`normalizeMarkdownRenderError`（错误边界私有）与 `resolveMessageStreamdownMode`/
+    `buildMessageStreamdownRenderKey`/`getAttachmentReaderEpoch`/`resolveMessageCodeTheme` 留主文件。
+  - 前置测试：`test/messageMarkdownMath.test.ts` 11 例（围栏/转义/货币区间/行内代码跳过决策表）+
+    `test/messageFileLinkTargets.test.ts` 10 例（href 规整矩阵 / shouldRewrite 决策 / rehype 树改写 /
+    link target 派生 / stat 打开编排）。
+  - **连带登记**：message.tsx 是 third-party 台账（inventory.json）inputs 追踪件，本批改动导致
+    L01 干净树审计哈希漂移——按 orchestrator 纪律由 licenses-notices.yml CI Linux 统一重生成落位
+    （2ddaf691 先例），本代理不动台账。
+  - ratchet 上限登记 1337。
+- 遗留：MessageFileLink/MessageExternalLink 交互组件与 MessageResponse 主组件的 renderer memo 簇
+  为下一批候选（oxlint 豁免域，仅受 ratchet 与架构门禁约束）。
+
+### `LexicalChatInput.tsx`（1,517 行；max-lines 豁免）
+
+> 登记来源：批次 5 目标清单（2026-10-28 review top 候选，非 v4-session 域）。
+
+- 职责分析：行 93-178 是提交/重置/中文顿号别名纯决策；行 179-507 是编辑器动作族
+  （文本/mention 替换、追加、state JSON 恢复、选区归位——全部以 LexicalEditor 实例为参数的
+  命令式操作）；其余为 8 个 Lexical 插件组件 + 主组件。
+- 状态：**批次 5 已实施（2026-10-28，helper 外迁）**：1517→**1105**（−412）。
+  - 新建 `lexical-chat-input/lexicalChatInputDecisions.ts`（87 行）：4 个选项接口 +
+    `LexicalSubmitResult` + `CHINESE_SLASH_ALIAS`/`STANDARD_SLASH_TRIGGER` + 4 个决策函数。
+  - 新建 `lexical-chat-input/lexicalEditorActions.ts`（374 行）：`getEditorMarkdown`/
+    `replaceEditorText`/`INLINE_PLUGIN_MENTION_PATTERN`/`replaceEditorTextWithPluginMentions`/
+    `replaceEditorWithMention`/`prependEditorMentionIfMissing`/`replaceEditorStateJson`/`resetEditor`/
+    `replaceEditorWithSkillMention`/`replaceEditorWithSlashCommandMention`/`appendEditorFileMention`/
+    `appendEditorPlainText`/`selectAfterPromptMentionById`/`isCollapsedSelectionAtEditorStart`/
+    `insertEditorMention` 逐字迁入。
+  - DOM-selection 助手（`getPromptMentionIdAfterDomSelection`/`getPromptMentionIdFromBoundaryNode`，
+    window.getSelection/HTMLElement.matches）留主文件，无 jsdom 不测，按固定验收第 4 条登记。
+  - 前置测试：`test/lexicalChatInputDecisions.test.ts` 6 例（决策矩阵）+
+    `test/lexicalEditorActions.test.ts` 10 例（**headless Lexical**：createEditor + PromptMentionNode
+    无 DOM 跑真实 update/read；.png 资源链路用 module.registerHooks 重定向，对照 pluginListRows 先例；
+    update 提交用 registerUpdateListener 等真实事件，无 wall-clock 定时器）。
+  - ratchet 上限登记 1105。
+- 遗留：KeyboardPlugin 的改绑分发与 PromptHistoryPlugin 的发送回滚耦合为下一批候选
+  （需先补交互测试，见 v4 区登记表「提示词历史导航」前置条件）。
 
 ## 测试债清单（结构守护测试，非行为验证）
 

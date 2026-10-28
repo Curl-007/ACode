@@ -1489,7 +1489,7 @@
     "packages/ui/src/components/ai-elements/markdown-list.tsx": "ecf50ad4f48cd460ddcf90db7b463671f915d8c22c7cb8e7760ff3b02282c7f1",
     "packages/ui/src/components/ai-elements/markdown-table.tsx": "adfaad8d9e778e4909e3c11e83adc422e7795e8aa0f8f8c7de0833ad92bd4b6d",
     "packages/ui/src/components/ai-elements/mermaid-block.tsx": "2a92d857e3d9f909edb56bdd52d8afb773acd593e91d38dfeca21ae5056c5f5a",
-    "packages/ui/src/components/ai-elements/message.tsx": "262abf74565d1acb13d82f6befe944751c00e51d812eac52872939dcdc258c2c",
+    "packages/ui/src/components/ai-elements/message.tsx": "4025fc8562d776d5252056ce1d847a75166df7601b99a40a8c04ccd0b59726c1",
     "packages/ui/src/components/ai-elements/node.tsx": "886c85babeb7df31d2b649de0f761caa71f0bd0b0f7afcf1707e72bb0bb6ee45",
     "packages/ui/src/components/ai-elements/panel.tsx": "9c843f3c77b9a2b8e3c4bff0e767a58dc5ca8b2a22ce4f90b22fa211a2a6f2ca",
     "packages/ui/src/components/ai-elements/persona.tsx": "7dc0ec8750586726d2c51424865e5042f2907f92a638fb4f0225fb9c59158cf4",

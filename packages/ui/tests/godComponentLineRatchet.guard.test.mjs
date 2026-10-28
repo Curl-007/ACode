@@ -54,6 +54,16 @@ const REGISTERED_LINE_CAPS = {
   "SettingsPage.tsx": 1347,
   // 2026-10-28 batch-4 保守纯函数外迁（格式化/窗口/open-request 决策 → v4/conversationStatusPanelFormat.ts；组件与实时语义未动）：2246 → 2102。
   "v4/ConversationStatusPanel.tsx": 2102,
+  // 2026-10-28 batch-5 外迁（侧栏宽度纯函数 → workspaceSidebarWidth.ts + resize controller → useWorkspaceSidebarResize.ts）：1980 → 1725。
+  "app-shell/WorkspaceShellLayout.tsx": 1725,
+  // 2026-10-28 batch-5 外迁（source 解析/错误分类/面包屑/延迟占位 → previewPane/ 四叶子）：1806 → 1447。
+  "PreviewPane.tsx": 1447,
+  // 2026-10-28 batch-5 外迁（任务工具栏受控组件 + viewMode 纯决策 + chrome 小组件 → WorkspaceSidebar/ 三叶子）：1701 → 1458。
+  "WorkspaceSidebar.tsx": 1458,
+  // 2026-10-28 batch-5 外迁（单美元公式归一化 + 文件链接目标族 → messageMarkdownMath.ts / messageFileLinkTargets.ts；删除死代码 knownExtensionlessFileNames）：1691 → 1337。
+  "components/ai-elements/message.tsx": 1337,
+  // 2026-10-28 batch-5 外迁（提交/别名纯决策 + 编辑器动作族 → lexical-chat-input/ 两叶子）：1517 → 1105。
+  "LexicalChatInput.tsx": 1105,
 };
 
 /** 与 scripts/architecture/ratchet.mjs countPhysicalLines 同定义。 */

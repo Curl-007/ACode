@@ -236,12 +236,16 @@ test("buildConversationCommandEnvelope：先丢弃 wire clientMode，再用 stam
 
 test("legacy 面零新增：session create/resume 参数构造不携带 clientMode（legacy 只删不增）", () => {
   const source = readSource("../src/acode-agent/acodeAgentService.ts");
-  const createStart = source.indexOf("function buildSessionCreateParams");
-  const resumeStart = source.indexOf("function buildSessionResumeParams");
-  assert.ok(createStart > 0 && resumeStart > createStart, "legacy 参数构造函数仍在");
-  const legacyRegion = source.slice(createStart, resumeStart + 2500);
-  assert.ok(
-    !legacyRegion.includes("clientMode"),
-    "legacy session create/resume 参数构造不得出现 clientMode（legacy 会话缺席 = inline）",
+  // M2-3：legacy session/create|resume wire 面整体删除（v4 化完成），buildSessionCreateParams/
+  // buildSessionResumeParams 随之移除——「不携带 clientMode」由删除承载，比区域扫描更强。
+  assert.equal(
+    source.indexOf("function buildSessionCreateParams"),
+    -1,
+    "legacy create 参数构造已随 M2-3 删除",
+  );
+  assert.equal(
+    source.indexOf("function buildSessionResumeParams"),
+    -1,
+    "legacy resume 参数构造已随 M2-3 删除",
   );
 });

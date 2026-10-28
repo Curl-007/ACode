@@ -1,10 +1,15 @@
+// MCP server 状态列表的 v4 handler（apps/acode-cli/specs/m2-6-workflows-skills-mcp.md）。
+//
+// 实体自 legacy `acode-protocol/mcp.ts` 逐字迁入（M2-6：实体放 v4 目录，server.ts 只留一行
+// 转发，不在待删目录留实体债）。唯一改动：params/result 改 v4 schema（形状与 legacy 逐字
+// parity，含 `mode` 缺省 connect 语义）。
 import { createConfig, resolvePath } from "@acode/adapters/config";
 import type { Logger, McpConnectionSnapshot, McpPort, McpServerStatus } from "@acode/contracts";
 import {
-  acodeMcpListParamsSchema,
-  acodeMcpListResultSchema,
-  type ACodeMcpListResult,
-} from "@acode/shared";
+  v4McpListParamsSchema,
+  v4McpListResultSchema,
+  type V4McpListResult,
+} from "@acode/shared/acode-protocol-v4";
 import {
   listMcpServerStatuses,
   omitMcpServers,
@@ -18,8 +23,11 @@ import {
 import { StartupTimer, startupNow } from "../startup-logging.js";
 import { getCliStorageRoot } from "../app/paths.js";
 import { resolveStartupPlugins } from "../app/startup-marks.js";
-import { protocolMcpServersToRuntimeMcpConfig } from "./protocol-mcp-config.js";
-import { parseParams, type ACodeProtocolAgentServerContext } from "./server-types.js";
+import { protocolMcpServersToRuntimeMcpConfig } from "../acode-protocol/protocol-mcp-config.js";
+import {
+  parseParams,
+  type ACodeProtocolAgentServerContext,
+} from "../acode-protocol/server-types.js";
 
 const noopLogger: Logger = {
   debug: () => undefined,
@@ -35,8 +43,8 @@ const MCP_OAUTH_AUTHORIZATION_STATUS_POLL_MS = 100;
 export async function listMcpServers(
   context: ACodeProtocolAgentServerContext,
   rawParams: unknown,
-): Promise<ACodeMcpListResult> {
-  const params = parseParams(acodeMcpListParamsSchema, rawParams);
+): Promise<V4McpListResult> {
+  const params = parseParams(v4McpListParamsSchema, rawParams);
   const workingDirectory = params.workspace.workspacePath;
   const configResult = createConfig({
     env: context.deps.env,
@@ -46,7 +54,7 @@ export async function listMcpServers(
   const startupTimer = new StartupTimer(
     context.logger ?? noopLogger,
     {
-      module: "bootstrap.acode_protocol.mcp",
+      module: "bootstrap.acode_protocol_v4.mcp",
       workspaceKey: params.workspace.workspaceKey,
       workspacePath: params.workspace.workspacePath,
     },
@@ -111,7 +119,7 @@ export async function listMcpServers(
         configuredMcpServers,
         untrustedProjectMcpServers,
       );
-      return acodeMcpListResultSchema.parse({ statuses });
+      return v4McpListResultSchema.parse({ statuses });
     }
 
     // OAuth 轮询已由 mode=status 隔离；默认/connect 必须继续执行 replace 收敛，
@@ -143,7 +151,7 @@ export async function listMcpServers(
           workspacePath: params.workspace.workspacePath,
         });
       });
-      return acodeMcpListResultSchema.parse({
+      return v4McpListResultSchema.parse({
         statuses: pendingAuthorizationSnapshot.statuses,
       });
     }
@@ -155,7 +163,7 @@ export async function listMcpServers(
     configuredMcpServers,
     untrustedProjectMcpServers,
   );
-  return acodeMcpListResultSchema.parse({ statuses });
+  return v4McpListResultSchema.parse({ statuses });
 }
 
 async function waitForOAuthAuthorizationSnapshot(
@@ -196,5 +204,7 @@ function hasPendingOAuthAuthorization(statuses: Record<string, McpServerStatus>)
 }
 
 function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+  const { promise, resolve } = Promise.withResolvers<void>();
+  setTimeout(resolve, ms);
+  return promise;
 }

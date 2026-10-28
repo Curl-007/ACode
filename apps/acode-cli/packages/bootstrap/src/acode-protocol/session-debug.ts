@@ -7,11 +7,13 @@ import {
 import {
   SESSION_DEBUG_LIMITS,
   calculateOutputTps,
-  sessionDebugParamsSchema,
   acodeTaskNetworkDebugStatusFromPayload,
   type SessionDebugSnapshot,
 } from "@acode/shared";
-import { requireSession, type ACodeProtocolAgentServerContext } from "./server-types.js";
+
+// M2-2：legacy session/debug dispatch 与 querySessionDebug 壳已删（消费归零，
+// specs/m2-2-session-control.md §2.4）；本模块保留观测写入/读取存储，
+// v4 handler（acode-protocol-v4/session-debug-query.ts）复用 readSessionDebug。
 
 type SessionRecord = { app: { sessionId: string } };
 interface Observation {
@@ -179,12 +181,4 @@ export function observeSessionDebug(record: SessionRecord, event: SessionEvent):
 
 export function readSessionDebug(record: SessionRecord): SessionDebugSnapshot {
   return observations.get(record)?.snapshot ?? emptySnapshot(record.app.sessionId);
-}
-
-export function querySessionDebug(
-  context: ACodeProtocolAgentServerContext,
-  rawParams: unknown,
-): SessionDebugSnapshot {
-  const params = sessionDebugParamsSchema.parse(rawParams);
-  return readSessionDebug(requireSession(context, params.sessionId));
 }

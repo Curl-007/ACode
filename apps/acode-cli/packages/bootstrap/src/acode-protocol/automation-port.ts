@@ -7,14 +7,23 @@ import {
 } from "@acode/contracts";
 import {
   parseModelPickerValue,
-  acodeAutomationCheckTaskBindingResultSchema,
   acodeAutomationCreateResultSchema,
   acodeAutomationDeleteResultSchema,
   acodeAutomationListResultSchema,
   acodeAutomationUpdateResultSchema,
   acodeProtocolMethods,
+  type ACodeAutomationCreateProtocolResult,
   type ACodeAutomationProtocol,
 } from "@acode/shared";
+import {
+  V4_METHODS,
+  v4AutomationCheckTaskBindingResultSchema,
+  v4AutomationCreateResultSchema,
+  v4AutomationDeleteResultSchema,
+  v4AutomationListResultSchema,
+  v4AutomationUpdateResultSchema,
+} from "@acode/shared/acode-protocol-v4";
+import { requestV4WithLegacyFallback } from "./dual-form-request.js";
 import {
   ProtocolRequestError,
   type ACodeProtocolAgentServerContext,
@@ -59,20 +68,22 @@ export function createProtocolAutomationPort(
       if (ownSessionId) {
         let bound: boolean;
         try {
+          // M2-7 §2.1 dual-form：v4 checkTaskBinding 先行；旧 host（偏斜方向：新 CLI +
+          // 旧 host）无 v4 分支返回 -32601 时回落。spec §1 裁决：回落直接走 legacy 列表
+          // 筛选，不经 legacy checkTaskBinding（该法在 legacy 侧本就未实现）。
           try {
             const result = await context.requestClient(
-              acodeProtocolMethods.automationCheckTaskBinding,
+              V4_METHODS.automationCheckTaskBinding,
               { targetTaskId: ownSessionId },
-              acodeAutomationCheckTaskBindingResultSchema,
+              v4AutomationCheckTaskBindingResultSchema,
             );
             bound = result.bound;
           } catch (error) {
             if (!(error instanceof ProtocolRequestError && error.code === -32601)) {
               throw error;
             }
-            // 协议版本仍为 1，新 CLI 连接升级前仍存活或远端的旧 Host 时，专用归属
-            // 方法会返回 -32601。只有“方法不存在”能证明是能力差异，此时回退旧版列表筛选；
-            // 数据库、传输和协议错误仍交给外层 fail-closed，不能误判为未绑定。
+            // -32601 是旧 host 缺 v4 inbound 分支的唯一可信信号；数据库、传输和协议错误
+            // 仍交给外层 fail-closed，不能误判为未绑定。legacy 保留路径删除归属：M3。
             const legacyResult = await context.requestClient(
               acodeProtocolMethods.automationList,
               {},
@@ -109,47 +120,54 @@ export function createProtocolAutomationPort(
         })();
       const runtimeMode = activeSession?.app.getMode();
       const hasIntervalCarrier = input.intervalUnit !== undefined && input.interval !== undefined;
-      let result;
+      // v4/legacy 两形态的 params 逐字同形（只换方法名），一次构造双发。
+      const createParams = {
+        // 相对时间不由模型换算绝对时刻；兼容协议仍要求 cronExpr，服务层会用真实时钟覆盖占位值。
+        // `!== null` 判定会把省略 delayMinutes 的普通 cron 调用误走相对分支，
+        // 强制 recurring=false；相对任务的唯一口径是 hasRelativeDelayMinutes（显式数字）。
+        cronExpr: input.cron ?? "* * * * *",
+        ...(hasRelativeDelayMinutes(input) ? { relativeDelayMinutes: input.delayMinutes } : {}),
+        prompt: input.prompt,
+        title: input.title,
+        recurring: hasRelativeDelayMinutes(input)
+          ? false
+          : hasIntervalCarrier
+            ? true
+            : (input.recurring ?? true),
+        // workspace 仍由 protocol server 从当前 session 注入。
+        ...(runtimeModelSelection ? { modelSelection: runtimeModelSelection } : {}),
+        ...(runtimeMode ? { mode: runtimeMode === "auto" ? "build" : runtimeMode } : {}),
+        ...(createContext?.sessionId ? { targetTaskId: createContext.sessionId } : {}),
+        ...(activeSession?.activeBotDeliveryTarget
+          ? { botDeliveryTarget: activeSession.activeBotDeliveryTarget }
+          : {}),
+        ...(hasIntervalCarrier
+          ? {
+              // 新建 carrier 不透传有限上限；create 协议没有 maxRuns=null 清除语义。
+              intervalUnit: input.intervalUnit,
+              interval: input.interval,
+            }
+          : input.maxRuns !== undefined
+            ? { maxRuns: input.maxRuns }
+            : {}),
+      };
+      let result: ACodeAutomationCreateProtocolResult;
       try {
-        result = await context.requestClient(
+        // M2-7 §2.1 dual-form：v4 automationCreate 先行；旧 host 返回 -32601（偏斜方向：
+        // 新 CLI + 旧 host）回落 legacy 形态。legacy 保留路径删除归属：M3。
+        result = await requestV4WithLegacyFallback(
+          context,
+          V4_METHODS.automationCreate,
           acodeProtocolMethods.automationCreate,
-          {
-            // 相对时间不由模型换算绝对时刻；兼容协议仍要求 cronExpr，服务层会用真实时钟覆盖占位值。
-            // `!== null` 判定会把省略 delayMinutes 的普通 cron 调用误走相对分支，
-            // 强制 recurring=false；相对任务的唯一口径是 hasRelativeDelayMinutes（显式数字）。
-            cronExpr: input.cron ?? "* * * * *",
-            ...(hasRelativeDelayMinutes(input) ? { relativeDelayMinutes: input.delayMinutes } : {}),
-            prompt: input.prompt,
-            title: input.title,
-            recurring: hasRelativeDelayMinutes(input)
-              ? false
-              : hasIntervalCarrier
-                ? true
-                : (input.recurring ?? true),
-            // workspace 仍由 protocol server 从当前 session 注入。
-            ...(runtimeModelSelection ? { modelSelection: runtimeModelSelection } : {}),
-            ...(runtimeMode ? { mode: runtimeMode === "auto" ? "build" : runtimeMode } : {}),
-            ...(createContext?.sessionId ? { targetTaskId: createContext.sessionId } : {}),
-            ...(activeSession?.activeBotDeliveryTarget
-              ? { botDeliveryTarget: activeSession.activeBotDeliveryTarget }
-              : {}),
-            ...(hasIntervalCarrier
-              ? {
-                  // 新建 carrier 不透传有限上限；create 协议没有 maxRuns=null 清除语义。
-                  intervalUnit: input.intervalUnit,
-                  interval: input.interval,
-                }
-              : input.maxRuns !== undefined
-                ? { maxRuns: input.maxRuns }
-                : {}),
-          },
+          createParams,
+          v4AutomationCreateResultSchema,
           acodeAutomationCreateResultSchema,
         );
       } catch (error) {
         if (!isAutomationCreateLimitError(error)) throw error;
         // 协议错误过去以普通 Error 进入工具循环，模型会把错误里的删除建议当成
         // 可执行恢复步骤，继而反复 CronList/CronDelete/CronCreate。映射成稳定领域错误，
-        // 让 core 能在不依赖 shared 实现的情况下关闭当前 turn 的工具恢复边界。
+        // 让 core 可以在不依赖 shared 实现的情况下关闭当前 turn 的工具恢复边界。
         throw new AutomationCreateLimitError(
           error instanceof Error ? error.message : String(error),
           error,
@@ -178,43 +196,57 @@ export function createProtocolAutomationPort(
     },
     async update(input) {
       const hasIntervalCarrier = input.intervalUnit !== undefined && input.interval !== undefined;
-      const result = await context.requestClient(
+      // params 两形态同形，一次构造双发（同 create）。
+      const updateParams = {
+        automationId: input.id,
+        ...(input.title !== undefined ? { title: input.title } : {}),
+        ...(input.cron !== undefined ? { cronExpr: input.cron } : {}),
+        ...(input.prompt !== undefined ? { prompt: input.prompt } : {}),
+        ...(hasIntervalCarrier
+          ? {
+              // 历史一次性任务只透传 carrier 会保留 recurring=false，首次派发后
+              // 被 repository 标记 completed。carrier 必须在协议边界原子切换为无限循环。
+              recurring: true,
+              maxRuns: null,
+              intervalUnit: input.intervalUnit,
+              interval: input.interval,
+            }
+          : {
+              ...(input.recurring !== undefined ? { recurring: input.recurring } : {}),
+              ...(input.maxRuns !== undefined ? { maxRuns: input.maxRuns } : {}),
+            }),
+      };
+      // M2-7 §2.1 dual-form：v4 先行，-32601 回落（新 CLI + 旧 host）；M3 删除 legacy 分支。
+      const result = await requestV4WithLegacyFallback(
+        context,
+        V4_METHODS.automationUpdate,
         acodeProtocolMethods.automationUpdate,
-        {
-          automationId: input.id,
-          ...(input.title !== undefined ? { title: input.title } : {}),
-          ...(input.cron !== undefined ? { cronExpr: input.cron } : {}),
-          ...(input.prompt !== undefined ? { prompt: input.prompt } : {}),
-          ...(hasIntervalCarrier
-            ? {
-                // 历史一次性任务只透传 carrier 会保留 recurring=false，首次派发后
-                // 被 repository 标记 completed。carrier 必须在协议边界原子切换为无限循环。
-                recurring: true,
-                maxRuns: null,
-                intervalUnit: input.intervalUnit,
-                interval: input.interval,
-              }
-            : {
-                ...(input.recurring !== undefined ? { recurring: input.recurring } : {}),
-                ...(input.maxRuns !== undefined ? { maxRuns: input.maxRuns } : {}),
-              }),
-        },
+        updateParams,
+        v4AutomationUpdateResultSchema,
         acodeAutomationUpdateResultSchema,
       );
       return toCronAutomation(result.automation);
     },
     async list() {
-      const result = await context.requestClient(
+      // M2-7 §2.1 dual-form：v4 先行，-32601 回落（新 CLI + 旧 host）；M3 删除 legacy 分支。
+      const result = await requestV4WithLegacyFallback(
+        context,
+        V4_METHODS.automationList,
         acodeProtocolMethods.automationList,
         {},
+        v4AutomationListResultSchema,
         acodeAutomationListResultSchema,
       );
       return result.automations.map(toCronAutomation);
     },
     async delete(input) {
-      const result = await context.requestClient(
+      // M2-7 §2.1 dual-form：v4 先行，-32601 回落（新 CLI + 旧 host）；M3 删除 legacy 分支。
+      const result = await requestV4WithLegacyFallback(
+        context,
+        V4_METHODS.automationDelete,
         acodeProtocolMethods.automationDelete,
         { automationId: input.id },
+        v4AutomationDeleteResultSchema,
         acodeAutomationDeleteResultSchema,
       );
       return result.deleted;

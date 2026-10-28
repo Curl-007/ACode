@@ -151,7 +151,9 @@ test("计数只增且快照是拷贝（改返回值不影响 runtime 事实源�
 });
 
 test("闭集纪律：产出的每个因名都在 contracts 因集常量里", () => {
-  const contractsSource = read("../packages/contracts/src/events/session.events.ts");
+  // 锚点随 2026-10-28 拆分迁移：session.events.ts 已降级为纯桶（导出面逐名不变），
+  // 因集闭集常量的权威叶是 session-event-model.ts（「因集唯一家」注释所在地）。
+  const contractsSource = read("../packages/contracts/src/events/session-event-model.ts");
   const block = contractsSource.match(/PROMPT_CACHE_MISS_CAUSES = \[([\s\S]*?)\] as const;/);
   assert.ok(block, "contracts 必须导出 PROMPT_CACHE_MISS_CAUSES 闭集常量");
   const causes = [...block[1].matchAll(/"([a-z_]+)"/g)].map((match) => match[1]);

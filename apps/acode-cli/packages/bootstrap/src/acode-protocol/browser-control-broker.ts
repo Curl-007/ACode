@@ -5,16 +5,27 @@ import {
   acodeBrowserListResultSchema,
   acodeProtocolMethods,
 } from "@acode/shared";
+// v4 面符号只挂在子路径（根桶不 re-export v4，M2-3 既有纪律）。result 面本就中立，
+// v4 leaf 直接重导出中立叶——两侧 schema 是同一实例。
+import {
+  V4_METHODS,
+  v4InteractionBrowserExecuteResultSchema,
+  v4InteractionBrowserListResultSchema,
+} from "@acode/shared/acode-protocol-v4";
 import {
   protocolTraceFromTraceContext,
   requireSession,
   type ACodeProtocolAgentServerContext,
   type ACodeProtocolClientRequestOptions,
 } from "./server-types.js";
+import { requestV4WithLegacyFallback } from "./dual-form-request.js";
 
 /**
- * ProtocolBrowserControlBroker —— agent 侧 BrowserControlPort 实现。
+ * M2-4 dual-form（§2.3）：browser 反向请求经共享助手 requestV4WithLegacyFallback
+ * （dual-form-request.ts，M2-7 抽出）v4 先行，-32601 回落 legacy。四个 requestClient
+ * 站点（list / execute / cancelRequest / lifecycle）共用，保证偏斜门控一致。
  *
+ * ProtocolBrowserControlBroker —— agent 侧 BrowserControlPort 实现。
  * browser-client 的 agent.browsers.* 每个调用经此把一条 BrowserCommand 变成
  * ACode Protocol 的 interaction/browserExecute 反向请求，由 app（host→main WebContentsView/CDP）
  * 执行并返回结果。与 permission broker 并列注入（server-operations 的 createWorkspaceACodeApp options）。
@@ -41,7 +52,9 @@ export function createProtocolBrowserControlBroker(
     const connections = [...(connectionsBySession.get(sessionId)?.values() ?? [])];
     await Promise.allSettled(
       connections.map(({ browserId, browserGeneration }) =>
-        context.requestClient(
+        requestV4WithLegacyFallback(
+          context,
+          V4_METHODS.interactionBrowserExecute,
           acodeProtocolMethods.interactionBrowserExecute,
           {
             ...buildBrowserRequestContext(context, { sessionId, turnId }),
@@ -49,6 +62,7 @@ export function createProtocolBrowserControlBroker(
             browserGeneration,
             command,
           },
+          v4InteractionBrowserExecuteResultSchema,
           acodeBrowserExecuteResultSchema,
         ),
       ),
@@ -57,9 +71,12 @@ export function createProtocolBrowserControlBroker(
 
   return {
     async list({ sessionId, turnId, traceContext, signal }) {
-      const result = await context.requestClient(
+      const result = await requestV4WithLegacyFallback(
+        context,
+        V4_METHODS.interactionBrowserList,
         acodeProtocolMethods.interactionBrowserList,
         buildBrowserRequestContext(context, { sessionId, turnId, traceContext }),
+        v4InteractionBrowserListResultSchema,
         acodeBrowserListResultSchema,
         buildRequestOptions(traceContext, signal),
       );
@@ -85,24 +102,27 @@ export function createProtocolBrowserControlBroker(
         // 只取消 agent 侧 requestClient 会让 host/main 的 CDP 动作继续执行。
         // 这里用同一 backend/generation 发送内部 cancelRequest，main 再按原 requestId 中断 waiter；
         // 已下发动作无法证明无副作用时由 manager 返回 uncertain 标记。
-        void context
-          .requestClient(
-            acodeProtocolMethods.interactionBrowserExecute,
-            {
-              ...buildBrowserRequestContext(context, { sessionId, turnId, traceContext }),
-              browserId,
-              browserGeneration,
-              command: { method: "cancelRequest", requestId: requestContext.requestId },
-            },
-            acodeBrowserExecuteResultSchema,
-            buildRequestOptions(traceContext, undefined),
-          )
-          .catch(() => undefined);
+        void requestV4WithLegacyFallback(
+          context,
+          V4_METHODS.interactionBrowserExecute,
+          acodeProtocolMethods.interactionBrowserExecute,
+          {
+            ...buildBrowserRequestContext(context, { sessionId, turnId, traceContext }),
+            browserId,
+            browserGeneration,
+            command: { method: "cancelRequest", requestId: requestContext.requestId },
+          },
+          v4InteractionBrowserExecuteResultSchema,
+          acodeBrowserExecuteResultSchema,
+          buildRequestOptions(traceContext, undefined),
+        ).catch(() => undefined);
       };
       if (signal?.aborted) cancelBackendRequest();
       else signal?.addEventListener("abort", cancelBackendRequest, { once: true });
       try {
-        return await context.requestClient(
+        return await requestV4WithLegacyFallback(
+          context,
+          V4_METHODS.interactionBrowserExecute,
           acodeProtocolMethods.interactionBrowserExecute,
           {
             ...requestContext,
@@ -110,6 +130,7 @@ export function createProtocolBrowserControlBroker(
             browserGeneration,
             command,
           },
+          v4InteractionBrowserExecuteResultSchema,
           acodeBrowserExecuteResultSchema,
           buildRequestOptions(traceContext, signal),
         );

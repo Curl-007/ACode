@@ -261,6 +261,21 @@ export interface V4CommandCoreHost {
      * AgentRuntimeConfig.toolSearchMode，存活 runtime 不变（无中途改档通道）。
      */
     toolSearchMode?: CommandPayloadMap["createSession"]["toolSearchMode"];
+    // ── M2-3 parity 字段（specs/m2-3-session-readwrite.md §2.1）：facade 迁移后
+    // create 经 v4 命令直达 legacy createSessionWithProjection 路径（rawParams 直通，
+    // legacy acodeSessionCreateParamsSchema 既认这些键），sessionId 仅限
+    // importedHistory 创建的裁决在 op 内既有。persistence 缺省 = deferred（v4 draft
+    // 语义）；mode/model/thoughtLevel 走 legacy createRecord 语义（与 payload.config
+    // 的草稿态覆盖面分工，facade 不同时发）。
+    sessionId?: CommandPayloadMap["createSession"]["sessionId"];
+    persistence?: CommandPayloadMap["createSession"]["persistence"];
+    titleGenerationEnabled?: CommandPayloadMap["createSession"]["titleGenerationEnabled"];
+    toolAllowlist?: CommandPayloadMap["createSession"]["toolAllowlist"];
+    toolDenylist?: CommandPayloadMap["createSession"]["toolDenylist"];
+    importedHistory?: CommandPayloadMap["createSession"]["importedHistory"];
+    mode?: CommandPayloadMap["createSession"]["mode"];
+    model?: CommandPayloadMap["createSession"]["model"];
+    thoughtLevel?: CommandPayloadMap["createSession"]["thoughtLevel"];
     /**
      * U11 图片外置引用生产门的**可信** clientMode（specs/tool-media-attachment-ref.md R10.2a）。
      * 类型直接引用 v4 createSession payload 的两值域（desktop-continuous/web-remote-replayable），

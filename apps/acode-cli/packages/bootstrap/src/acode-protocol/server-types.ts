@@ -30,6 +30,7 @@ import {
   type ACodeWorkspaceRef,
   type ToolSearchAppMode,
 } from "@acode/shared";
+import type { V4Method } from "@acode/shared/acode-protocol-v4";
 import type { ACodeApp, ACodeAppOptions } from "../app/types.js";
 import type {
   ProviderDiagnosticsProtocolExecutor,
@@ -190,9 +191,18 @@ export interface ACodeProtocolAgentServerContext {
   // 协议请求则持有 operation lease，禁止异步 handler 与容量回收交错。
   sessionResidentPool?: SessionResidentPool;
   sessions: Map<string, ACodeProtocolSessionRecord>;
+  /**
+   * 连接级「host 已接住 v4 inbound」证据位（M2-4，specs/m2-4-inbound-interaction.md §2.4）。
+   *
+   * 只由 host 对六条 v4 反向请求的实际响应置位（server.requestClient 收到 v4/interaction/*
+   * 方法的成功响应），并在 setNotificationSink 重连/换 host 时归零。host 对未知**通知**是静默丢弃，
+   * 没有可观测回路，因此 CUA 通知不能用探测——发送前读本 flag：true 发 v4 形态，否则发 legacy，
+   * 双形态不叠加。-32601 是请求侧的 skew 门（见 automation-port 先例），与通知不共享证据。
+   */
+  hostV4InboundEstablished: boolean;
   notify(notification: ACodeProtocolNotification): void;
   requestClient<T>(
-    method: ACodeProtocolMethod,
+    method: ACodeProtocolMethod | V4Method,
     params: unknown,
     resultSchema: ParamsSchema<T>,
     options?: ACodeProtocolClientRequestOptions,

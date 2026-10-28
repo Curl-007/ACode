@@ -1059,7 +1059,9 @@ function normalizeText(value: string): string {
   return value.trim().replace(/\s+/g, " ").toLowerCase();
 }
 
-function mapSessionGoal(goal: SessionGoal | null | undefined): ACodeSessionGoal | null | undefined {
+// M2-2 导出：v4 goal query（session-goal-query.ts）与 goalControl result
+// （goal-compact.ts）共用同一 goal→wire 收窄，不再私有。
+export function mapSessionGoal(goal: SessionGoal | null | undefined): ACodeSessionGoal | null | undefined {
   if (goal === undefined) return undefined;
   if (goal === null) return null;
   return {

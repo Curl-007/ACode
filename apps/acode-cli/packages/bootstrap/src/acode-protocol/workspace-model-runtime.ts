@@ -1,72 +1,15 @@
-/* eslint-disable max-lines -- workspace 模型协议与兼容请求处理仍集中在本文件。 */
-import { createInMemorySessionEventStore } from "@acode/adapters/storage";
-import type { ModelSelection } from "@acode/contracts";
-import {
-  acodeProviderTestModelConnectivityParamsSchema,
-  acodeWorkspaceReadPresentationParamsSchema,
-  type ACodeWorkspaceRef,
-} from "@acode/shared";
+import type { ACodeWorkspaceRef } from "@acode/shared";
 import type { ACodeApp, ACodeAppOptions } from "../app/types.js";
-import { listProtocolSlashCommands } from "./slash-commands.js";
-import {
-  parseParams,
-  type ACodeProtocolAgentServerContext,
-  type ACodeProtocolSessionRecord,
+import type {
+  ACodeProtocolAgentServerContext,
+  ACodeProtocolSessionRecord,
 } from "./server-types.js";
 import { runSessionModelConfigMutation } from "../acode-protocol-v4/model-config-mutation.js";
 import { createProviderRuntimeHeadersPort } from "./provider-runtime-headers.js";
 
-export async function readWorkspacePresentation(
-  context: ACodeProtocolAgentServerContext,
-  rawParams: unknown,
-) {
-  const params = parseParams(acodeWorkspaceReadPresentationParamsSchema, rawParams);
-  return {
-    workspace: params.workspace,
-    mode: "build" as const,
-    slashCommands: await listProtocolSlashCommands({
-      // 灰度门是 Host 判定的 workspace 级事实，目录装配读进程缓存。
-      dynamicWorkflowEnabled: context.appRuntimePreferences.dynamicWorkflowEnabled,
-      // 脚本工作流门同读进程缓存（v4 createSession 时机刷新，server-types.ts 注释）。
-      scriptWorkflowEnabled: context.appRuntimePreferences.scriptWorkflowEnabled,
-      env: context.deps.env,
-      logger: context.logger,
-      workingDirectory: params.workspace.workspacePath,
-    }),
-  };
-}
-
-export async function testProviderModelConnectivity(
-  context: ACodeProtocolAgentServerContext,
-  rawParams: unknown,
-  abortSignal?: AbortSignal,
-) {
-  const params = parseParams(acodeProviderTestModelConnectivityParamsSchema, rawParams);
-  // 旧 Personal Config 跨进程 watcher 可能永久漏掉原子写事件；连接测试若不先
-  // 主动刷新，会反复查询旧 Registry。这里复用正式 Registry refresh，不旁路创建配置事实。
-  await context.deps.refreshProviderRegistry?.("provider-connectivity");
-  const active = Array.from(context.sessions.values()).find(
-    (record) => record.workspace.workspaceKey === params.workspace.workspaceKey,
-  );
-  const app =
-    active?.app ??
-    (await createWorkspaceACodeApp(context, params.workspace, {
-      env: context.deps.env,
-      eventStore: createInMemorySessionEventStore(),
-      runtimeConfig: { workingDirectory: params.workspace.workspacePath },
-      sessionStore: context.deps.sessionStore,
-      version: context.deps.version,
-    }));
-  try {
-    await app.testModelConnectivity(
-      { selection: params.selection as ModelSelection },
-      { abortSignal },
-    );
-    return { success: true as const };
-  } finally {
-    if (!active) await app.close?.();
-  }
-}
+// M2-8：readWorkspacePresentation / testProviderModelConnectivity 实体已迁
+// ../acode-protocol-v4/workspace-runtime.ts 与 provider-process.ts（specs/
+// m2-8-workspace-provider-process.md），本文件只留 session 模型运行时尚存 helper。
 
 export async function createWorkspaceACodeApp(
   context: ACodeProtocolAgentServerContext,

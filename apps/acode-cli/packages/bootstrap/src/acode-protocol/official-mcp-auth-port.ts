@@ -7,8 +7,13 @@ import {
   acodeProtocolMethods,
   type ACodeWorkspaceRef,
 } from "@acode/shared";
+// v4 面符号只挂在子路径（根桶不 re-export v4，M2-3 既有纪律）。
+import {
+  V4_METHODS,
+  v4OfficialMcpAuthHeadersResponseSchema,
+} from "@acode/shared/acode-protocol-v4";
 import type { OfficialMcpAuthHeadersPort } from "@acode/contracts";
-import type { ACodeProtocolAgentServerContext } from "./server-types.js";
+import { ProtocolRequestError, type ACodeProtocolAgentServerContext } from "./server-types.js";
 
 let requestSequence = 0;
 
@@ -55,19 +60,37 @@ export function createOfficialMcpAuthHeadersPort(input: {
         return { ok: false, reason: "official_auth_unavailable" };
       }
       requestSequence += 1;
+      const params = {
+        mcpKey: request.mcpKey,
+        pluginId: request.pluginId,
+        requestId: `official-mcp-auth:${requestSequence}`,
+        targetOrigin: request.targetOrigin,
+        workspace,
+      };
+      const requestOptions = request.signal ? { signal: request.signal } : {};
       try {
-        return await context.requestClient(
-          acodeProtocolMethods.interactionRequestOfficialMcpAuthHeaders,
-          {
-            mcpKey: request.mcpKey,
-            pluginId: request.pluginId,
-            requestId: `official-mcp-auth:${requestSequence}`,
-            targetOrigin: request.targetOrigin,
-            workspace,
-          },
-          acodeOfficialMcpAuthHeadersResponseSchema,
-          request.signal ? { signal: request.signal } : {},
-        );
+        try {
+          // M2-4 dual-form（§2.3）：v4 先行，-32601 回落 legacy；wire 形态逐字同形。
+          return await context.requestClient(
+            V4_METHODS.interactionRequestOfficialMcpAuthHeaders,
+            params,
+            v4OfficialMcpAuthHeadersResponseSchema,
+            requestOptions,
+          );
+        } catch (error) {
+          // 只有 -32601 能证明该 host 缺 v4 inbound 分支（能力偏斜）；其余错误交给外层
+          // catch-all 归为 official_auth_unavailable（本端口既有契约：失败走返回值不抛异常）。
+          if (!(error instanceof ProtocolRequestError && error.code === -32601)) {
+            throw error;
+          }
+          // 偏斜期 legacy 保留路径（M3 删除）。
+          return await context.requestClient(
+            acodeProtocolMethods.interactionRequestOfficialMcpAuthHeaders,
+            params,
+            acodeOfficialMcpAuthHeadersResponseSchema,
+            requestOptions,
+          );
+        }
       } catch {
         // host 不可达/协议错误：按不可用处理。错误详情不带出（可能含请求上下文），
         // host 侧已记录不含秘密的分类日志。

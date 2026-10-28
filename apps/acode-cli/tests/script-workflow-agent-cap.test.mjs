@@ -19,13 +19,16 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const RUNTIME = "../packages/cli-workflow/src/script-workflow-runtime.ts";
+// W1-R3 max-lines 拆分后：agent 上限强制在 run-agent，run 结算清计数在 run-body。
+const RUN_AGENT = "../packages/cli-workflow/src/script-workflow-run-agent.ts";
+const RUN_BODY = "../packages/cli-workflow/src/script-workflow-run-body.ts";
 
 function readSource(relativePath) {
   return readFileSync(new URL(relativePath, import.meta.url), "utf8");
 }
 
 test("上限常量与技能文档一致（1000），且超限是 throw 而不是静默截断", () => {
-  const source = readSource(RUNTIME);
+  const source = readSource(RUN_AGENT);
   assert.match(source, /const MAX_WORKFLOW_AGENT_CALLS = 1000;/);
   // fail-loud：静默截断会让 Promise.all 等一个永不结算的 promise，脚本挂死而不是报错。
   assert.match(
@@ -41,25 +44,30 @@ test("计数按 runId 分桶，不再是单个实例字段", () => {
   // 旧的实例字段一个都不许剩：留一个就等于把跨 run 累加重新引回来。
   // 只查代码行——字段注释里逐字引用了被删掉的 `this.callIndex = 0` 来解释这次修复，
   // 不排除注释行就会把「记录了 bug」误判成「bug 还在」。
-  const codeLines = source
-    .split("\n")
-    .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line));
-  const offenders = codeLines.filter((line) => /this\.callIndex|private callIndex/.test(line));
+  // 拆分后执行体在叶子（run-agent / run-body），回归复活也会长在那里，所以三个文件都扫。
+  const sources = [source, readSource(RUN_AGENT), readSource(RUN_BODY)];
+  const offenders = sources
+    .flatMap((text) =>
+      text.split("\n").filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line)),
+    )
+    .filter((line) => /this\.callIndex|private callIndex/.test(line));
   assert.deepEqual(
     offenders.map((line) => line.trim()),
     [],
     "不得再有实例级 callIndex 字段（注释里提到不算）",
   );
-  // 读写都必须以 run.id 为键。
-  assert.match(source, /this\.agentCallCounts\.get\(run\.id\)/);
-  assert.match(source, /this\.agentCallCounts\.set\(run\.id, callIndex\)/);
+  // 读写都必须以 run.id 为键（执行体在 run-agent，经宿主对象访问主类的计数 Map）。
+  const agentSource = readSource(RUN_AGENT);
+  assert.match(agentSource, /host\.agentCallCounts\.get\(run\.id\)/);
+  assert.match(agentSource, /host\.agentCallCounts\.set\(run\.id, callIndex\)/);
 });
 
 test("run 结算即清计数，否则长会话里每个 run 漏一条 Map 项", () => {
-  const source = readSource(RUNTIME);
-  assert.match(source, /this\.agentCallCounts\.delete\(run\.id\)/);
+  // 结算清理主体随拆分住在 run-body（finally 段，经宿主对象碰主类的两个按 run 键的 Map）。
+  const source = readSource(RUN_BODY);
+  assert.match(source, /host\.agentCallCounts\.delete\(run\.id\)/);
   // 清理必须在读回 finalRun 之前、且在 catch 之后——也就是成功与失败两条路都要经过。
-  const deleteIndex = source.indexOf("this.agentCallCounts.delete(run.id)");
+  const deleteIndex = source.indexOf("host.agentCallCounts.delete(run.id)");
   const finalRunIndex = source.indexOf("const finalRun = ");
   // 失败分支的锚点是那条终态事件。它现在是三元（取消 / 失败各发各的事件名，见
   // script-workflow-cancel-and-usage.test.mjs），所以锚在三元本身上而不是某一个事件名：

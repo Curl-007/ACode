@@ -1,23 +1,27 @@
-// Composer Skill 只读 catalog。
+// Composer Skill 只读 catalog 的 v4 handler（apps/acode-cli/specs/m2-6-workflows-skills-mcp.md）。
+//
+// 实体自 legacy `acode-protocol/skill-reference-catalog.ts` 逐字迁入（M2-6：实体放 v4 目录，
+// server.ts 只留一行转发，不在待删目录留实体债）。唯一改动：params/result 改 v4 schema
+// （形状与 legacy 逐字 parity）。
 // 与 Skills Settings 管理接口分离：这里的 sessionId 决定 authority，不提供启停/删除能力。
 import {
-  acodeSkillsReferenceCatalogParamsSchema,
-  type ACodeSkillReferenceCatalogEntry,
-  type ACodeSkillsReferenceCatalogResult,
-} from "@acode/shared";
+  v4SkillsReferenceCatalogParamsSchema,
+  type V4SkillReferenceCatalogEntry,
+  type V4SkillsReferenceCatalogResult,
+} from "@acode/shared/acode-protocol-v4";
 import type { SkillLoadOutcome, SkillMetadata } from "@acode/contracts";
 import { listACodeSkills } from "../skills.js";
 import {
   parseParams,
   requireSession,
   type ACodeProtocolAgentServerContext,
-} from "./server-types.js";
+} from "../acode-protocol/server-types.js";
 
 export async function getSkillReferenceCatalog(
   context: ACodeProtocolAgentServerContext,
   rawParams: unknown,
-): Promise<ACodeSkillsReferenceCatalogResult> {
-  const params = parseParams(acodeSkillsReferenceCatalogParamsSchema, rawParams);
+): Promise<V4SkillsReferenceCatalogResult> {
+  const params = parseParams(v4SkillsReferenceCatalogParamsSchema, rawParams);
   if (params.sessionId) {
     const record = requireSession(context, params.sessionId);
     const outcome = await record.app.getSkillCatalog();
@@ -36,9 +40,9 @@ export async function getSkillReferenceCatalog(
 }
 
 function toResult(
-  authority: ACodeSkillsReferenceCatalogResult["authority"],
+  authority: V4SkillsReferenceCatalogResult["authority"],
   outcome: SkillLoadOutcome,
-): ACodeSkillsReferenceCatalogResult {
+): V4SkillsReferenceCatalogResult {
   return {
     authority,
     // 内置技能包（bundled-skills.ts）不进引用面板：它由内置命令（`/workflow`）加载，不是用户
@@ -49,7 +53,7 @@ function toResult(
   };
 }
 
-function toReferenceCatalogEntry(skill: SkillMetadata): ACodeSkillReferenceCatalogEntry {
+function toReferenceCatalogEntry(skill: SkillMetadata): V4SkillReferenceCatalogEntry {
   const scope =
     skill.source === "plugin" ? "plugin" : skill.scope === "project" ? "workspace" : "user";
   return {

@@ -23,6 +23,13 @@ import {
   type ACodeUserInputQuestion,
   type ACodeUserInputResponse,
 } from "@acode/shared";
+// v4 面符号只挂在子路径（根桶不 re-export v4，M2-3 既有纪律）。
+import {
+  V4_METHODS,
+  v4InteractionRequestAckSchema,
+  type V4Method,
+} from "@acode/shared/acode-protocol-v4";
+import { ProtocolRequestError } from "./server-types.js";
 import type {
   V4InteractionAnswer,
   V4InteractionRegistrationOptions,
@@ -72,24 +79,36 @@ async function requestPermission(
     context,
     request.requestId,
     options?.signal,
-    (signal) =>
-      context.requestClient(
-        acodeProtocolMethods.interactionRequestPermission,
-        {
-          input: request.input,
-          reason: request.reason,
-          requestId: request.requestId,
-          riskLevel: request.riskLevel,
-          sessionId: request.sessionId,
-          ...(request.origin ? { origin: request.origin } : {}),
-          options: legacyPermissionOptions,
-          toolCallId: request.toolCallId,
-          toolName: request.toolName,
-          turnId: request.turnId,
-        },
-        acodePermissionResponseSchema,
-        withInteractionRequestRecovery(options, signal),
-      ),
+    // M2-4 dual-form（§2.2）：v4 announce + immediate ack 先行，-32601 回落 legacy。
+    // v4 与 legacy 的 params 逐字同形（wire 形态不变，只换方法名），故共用同一份载荷对象。
+    (signal) => {
+      const params = {
+        input: request.input,
+        reason: request.reason,
+        requestId: request.requestId,
+        riskLevel: request.riskLevel,
+        sessionId: request.sessionId,
+        ...(request.origin ? { origin: request.origin } : {}),
+        options: legacyPermissionOptions,
+        toolCallId: request.toolCallId,
+        toolName: request.toolName,
+        turnId: request.turnId,
+      };
+      return startV4AnnounceOrLegacyFallback(
+        context,
+        V4_METHODS.interactionRequestPermission,
+        params,
+        // 偏斜期 legacy 保留路径（M3 删除）：withInteractionRequestRecovery race 逐字。
+        (fallbackSignal) =>
+          context.requestClient(
+            acodeProtocolMethods.interactionRequestPermission,
+            params,
+            acodePermissionResponseSchema,
+            withInteractionRequestRecovery(options, fallbackSignal),
+          ),
+        signal,
+      );
+    },
     // v4 answer → ACodePermissionResponse：optionId 语义来自 v4 reducer 合成的
     // allowOnce/allowAlways/deny（见 product-projection onPermissionRequested）。
     (answer) => {
@@ -215,24 +234,36 @@ async function requestUserInput(
     context,
     request.requestId,
     options?.signal,
-    (signal) =>
-      context.requestClient(
-        acodeProtocolMethods.interactionRequestUserInput,
-        {
-          input: request.input,
-          prompt: request.reason,
-          questions: parsed.data.questions.map(mapAskUserQuestion),
-          requestId: request.requestId,
-          schema: { toolName: request.toolName },
-          sessionId: request.sessionId,
-          ...(request.origin ? { origin: request.origin } : {}),
-          toolCallId: request.toolCallId,
-          toolName: request.toolName,
-          turnId: request.turnId,
-        },
-        acodeUserInputResponseSchema,
-        withInteractionRequestRecovery(options, signal),
-      ),
+    // M2-4 dual-form（§2.2）：同 requestPermission——v4 announce + immediate ack 先行，
+    // -32601 回落 legacy；params 两形态逐字同形共用。
+    (signal) => {
+      const params = {
+        input: request.input,
+        prompt: request.reason,
+        questions: parsed.data.questions.map(mapAskUserQuestion),
+        requestId: request.requestId,
+        schema: { toolName: request.toolName },
+        sessionId: request.sessionId,
+        ...(request.origin ? { origin: request.origin } : {}),
+        toolCallId: request.toolCallId,
+        toolName: request.toolName,
+        turnId: request.turnId,
+      };
+      return startV4AnnounceOrLegacyFallback(
+        context,
+        V4_METHODS.interactionRequestUserInput,
+        params,
+        // 偏斜期 legacy 保留路径（M3 删除）：withInteractionRequestRecovery race 逐字。
+        (fallbackSignal) =>
+          context.requestClient(
+            acodeProtocolMethods.interactionRequestUserInput,
+            params,
+            acodeUserInputResponseSchema,
+            withInteractionRequestRecovery(options, fallbackSignal),
+          ),
+        signal,
+      );
+    },
     // v4 答 AskUserQuestion：freeText/optionId 落到单题 answer 槽位
     // （normalizeAskUserQuestionResponseContent 的 content.answer 兼容路径）；
     // deny 落 decline。多题场景等 v4 投影建模 userInput kind 后再精确映射。
@@ -276,24 +307,36 @@ async function requestExitPlanModeApproval(
     context,
     request.requestId,
     options?.signal,
-    (signal) =>
-      context.requestClient(
-        acodeProtocolMethods.interactionRequestUserInput,
-        {
-          input: request.input,
-          prompt: request.reason,
-          questions: [createExitPlanModeApprovalQuestion()],
-          requestId: request.requestId,
-          schema: { interaction: "plan_approval", toolName: request.toolName },
-          sessionId: request.sessionId,
-          ...(request.origin ? { origin: request.origin } : {}),
-          toolCallId: request.toolCallId,
-          toolName: request.toolName,
-          turnId: request.turnId,
-        },
-        acodeUserInputResponseSchema,
-        withInteractionRequestRecovery(options, signal),
-      ),
+    // M2-4 dual-form（§2.2）：plan approval 在 wire 上与 requestUserInput 同法（schema 字段
+    // 区分 plan_approval），dual-form 逻辑同前两条。
+    (signal) => {
+      const params = {
+        input: request.input,
+        prompt: request.reason,
+        questions: [createExitPlanModeApprovalQuestion()],
+        requestId: request.requestId,
+        schema: { interaction: "plan_approval", toolName: request.toolName },
+        sessionId: request.sessionId,
+        ...(request.origin ? { origin: request.origin } : {}),
+        toolCallId: request.toolCallId,
+        toolName: request.toolName,
+        turnId: request.turnId,
+      };
+      return startV4AnnounceOrLegacyFallback(
+        context,
+        V4_METHODS.interactionRequestUserInput,
+        params,
+        // 偏斜期 legacy 保留路径（M3 删除）：withInteractionRequestRecovery race 逐字。
+        (fallbackSignal) =>
+          context.requestClient(
+            acodeProtocolMethods.interactionRequestUserInput,
+            params,
+            acodeUserInputResponseSchema,
+            withInteractionRequestRecovery(options, fallbackSignal),
+          ),
+        signal,
+      );
+    },
     // v4 答 plan approval：allow 类 optionId = 批准；freeText = 计划反馈
     // （planApprovalResponseToBrokerResult 走 plan_approval_feedback deny）；否则 decline。
     (answer) => v4AnswerToPlanApprovalResponse(answer),
@@ -352,6 +395,54 @@ function withInteractionRequestRecovery(
     // requestId 重发现有协议请求，让 host 重新登记可响应的 protocolRequestId。
     reannounceIntervalMs: INTERACTION_REQUEST_REANNOUNCE_INTERVAL_MS,
   };
+}
+
+/**
+ * M2-4 dual-form announce sender（specs/m2-4-inbound-interaction.md §2.2）。
+ *
+ * permission/userInput 的 v4 请求是 announce + immediate ack：host 登记镜像 + emitSessionEvent
+ * 后立刻回 {}；真正应答走既有 v4 resolveInteraction command（race wrapper 的 register 回调）。
+ *
+ * 流程：
+ * 1. 发 v4 announce（经 requestClient，短暂登记在 pendingClientRequests 直到 ack）；
+ * 2. 收到 ack {} → 返回 hold promise（不在 pendingClientRequests，只随 signal abort 以 -32021 拒绝）；
+ * 3. -32601 → host 缺 v4 inbound 分支，回落 legacy withInteractionRequestRecovery race（逐字）；
+ * 4. 其他错误（超时/断连/响应非法）直接抛出（只有 -32601 能证明能力偏斜，见 §2.1）。
+ *
+ * v4 路径无 reannounce：host-restart 恢复走 v4 snapshot PendingInteraction 行，
+ * 不靠 legacy 的 protocolRequestId 重发。
+ */
+async function startV4AnnounceOrLegacyFallback<T>(
+  context: ACodeProtocolAgentServerContext,
+  v4Method: V4Method,
+  params: unknown,
+  legacyFallback: (signal: AbortSignal) => Promise<T>,
+  signal: AbortSignal,
+): Promise<T> {
+  try {
+    await context.requestClient(v4Method, params, v4InteractionRequestAckSchema);
+    // Ack 收到：真正应答由 v4 resolveInteraction 到达（race wrapper register 回调）。
+    // Hold promise 不登记在 pendingClientRequests——它不是协议请求，只是等 v4 应答的占位。
+    const { promise, reject } = Promise.withResolvers<T>();
+    const onAbort = () => {
+      signal.removeEventListener("abort", onAbort);
+      reject(new ProtocolRequestError(-32021, `Client request cancelled: ${v4Method}`));
+    };
+    if (signal.aborted) {
+      onAbort();
+    } else {
+      signal.addEventListener("abort", onAbort, { once: true });
+    }
+    return promise;
+  } catch (error) {
+    // 只有 -32601 能证明该 host 缺 v4 inbound 分支（能力偏斜）；
+    // 超时/断连/响应非法等直接抛出，不误判为偏斜（见 §2.1）。
+    if (!(error instanceof ProtocolRequestError && error.code === -32601)) {
+      throw error;
+    }
+    // Legacy 回落：withInteractionRequestRecovery race 逐字（偏斜期保留，M3 删除）。
+    return legacyFallback(signal);
+  }
 }
 
 function mapAskUserQuestion(question: AskUserQuestion): ACodeUserInputQuestion {

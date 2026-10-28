@@ -47,20 +47,15 @@ import {
 } from "@acode/contracts";
 import {
   DEFAULT_ACODE_MODEL_CONTEXT_BUDGET_STRATEGY,
-  ACODE_SESSION_RUNTIME_PREFERENCES_REQUEST_TIMEOUT_MS,
   acodeProtocolErrorCodes,
   acodeProtocolMethods,
   acodeSessionCancelBackgroundTaskParamsSchema,
-  acodeSessionCompactParamsSchema,
-  acodeSessionCloseParamsSchema,
   acodeSessionCreateParamsSchema,
   acodeSessionEventsParamsSchema,
   acodeSessionForkParamsSchema,
-  acodeSessionGoalParamsSchema,
   acodeSessionListParamsSchema,
   acodeSessionMessagesParamsSchema,
   acodeSessionReadParamsSchema,
-  acodeSessionRuntimePreferencesResultSchema,
   acodeSessionResumeParamsSchema,
   acodeSessionSendParamsSchema,
   acodeSessionSetThoughtLevelParamsSchema,
@@ -76,17 +71,17 @@ import {
   type ACodeSessionCreateParams,
   type ACodeDeliveryKind,
   type IntegratedTerminalShellSelection,
-  type ACodeSessionRuntimePreferencesScope,
-  type ACodeSessionRuntimePreferencesResult,
   type ACodeModelContextBudgetStrategy,
   type ACodeProtocolTrace,
   type ACodeSessionEvent,
   type ACodeSessionHistoryTarget,
   type ACodeSessionResumeParams,
-  type ACodeSessionPersistence,
   type ACodeStateUpdatedNotification,
   type ToolSearchAppMode,
 } from "@acode/shared";
+// v4 面符号只挂在子路径（根桶不 re-export v4，M2-3 既有纪律）。
+import { V4_NOTIFICATIONS } from "@acode/shared/acode-protocol-v4";
+import { readCachedSessionRuntimePreferences } from "../acode-protocol-v4/session-runtime-preferences.js";
 import {
   buildSessionSnapshot,
   buildWorkspaceRef,
@@ -125,7 +120,6 @@ import {
 import { runSessionModelConfigMutation } from "../acode-protocol-v4/model-config-mutation.js";
 import { runWithSessionResidencyFinalization } from "./session-residency.js";
 
-const PLAN_MODE_GOAL_CONTINUATION_SKIPPED_MESSAGE = "Plan mode 下已记录 goal，但不会自动继续。";
 const SLOW_SNAPSHOT_LOG_THRESHOLD_MS = 1000;
 
 type ProtocolGoalTarget = NonNullable<
@@ -1972,220 +1966,6 @@ export async function sendPrompt(context: ACodeProtocolAgentServerContext, rawPa
   return afterPromptAccepted(context, record, "prompt_started");
 }
 
-export async function compactSession(context: ACodeProtocolAgentServerContext, rawParams: unknown) {
-  const params = parseParams(acodeSessionCompactParamsSchema, rawParams);
-  const record = requireSession(context, params.sessionId);
-  assertExpectedRevision(record, params.expectedRevision);
-  const activeTurn = record.app.runtime.getActiveTurnInfo();
-  if (activeTurn?.kind === "compact") {
-    // 重复 `/compact` 是同一 session 的上下文维护请求；压缩中再收到时应直接丢弃，
-    // 不能进入普通 prompt/steer 队列，也不能渲染成一次失败的压缩横条。
-    return {
-      response: "",
-      snapshot: await snapshot(context, record, undefined, {
-        modelAvailability: "current",
-      }),
-      compact: {
-        state: "already_running" as const,
-        ...(params.inputId ? { inputId: params.inputId } : {}),
-      },
-    };
-  }
-  ensureNoActiveTurn(record, "Cannot compact while a prompt is running");
-  if (record.restoreWarning) {
-    throw new ProtocolRequestError(-32031, record.restoreWarning.message, {
-      code: record.restoreWarning.type,
-      sessionId: record.app.sessionId,
-      workspace: record.workspace,
-    });
-  }
-  await ensureSessionModelAvailableForNextTurn(context, record);
-  const instructions = params.instructions?.trim();
-  const command = instructions ? `/compact ${instructions}` : "/compact";
-  const abortController = new AbortController();
-  // compact 的真实模型请求在后台执行，但 Stop 仍通过 record.activeAbortController 中断。
-  // 如果这里不登记 controller，压缩中的模型请求会继续跑到自然结束。
-  record.activeAbortController = abortController;
-  void runWithSessionResidencyFinalization(record, () =>
-    runCompactTurnInBackground(context, record, {
-      abortController,
-      command,
-      inputId: params.inputId,
-    }),
-  ).catch(() => {
-    // 后台 compact 的错误会通过 compact timeline/state.updated 降级上报；这里兜底防 unhandled rejection。
-  });
-  record.stateRevision++;
-  record.updatedAt = Date.now();
-  const acceptedSnapshot = await snapshot(context, record, undefined, {
-    modelAvailability: "current",
-  });
-  emitStateUpdated(context, record, "compact_started", { status: "running" });
-  return {
-    response: "",
-    snapshot: acceptedSnapshot,
-    compact: {
-      state: "accepted" as const,
-      ...(params.inputId ? { inputId: params.inputId } : {}),
-    },
-  };
-}
-
-async function runCompactTurnInBackground(
-  context: ACodeProtocolAgentServerContext,
-  record: ACodeProtocolSessionRecord,
-  params: {
-    abortController: AbortController;
-    command: string;
-    inputId?: string;
-  },
-): Promise<void> {
-  const startedAt = Date.now();
-  let mutationReason = "session_compacted";
-  context.logger?.info("ACode Protocol background compact started", {
-    inputId: params.inputId,
-    sessionId: record.app.sessionId,
-    workspacePath: record.workspace.workspacePath,
-  });
-  try {
-    await record.app.submitPrompt(params.command, {
-      abortSignal: params.abortController.signal,
-      inputId: params.inputId,
-    });
-    context.logger?.info("ACode Protocol background compact completed", {
-      durationMs: Date.now() - startedAt,
-      inputId: params.inputId,
-      sessionId: record.app.sessionId,
-      workspacePath: record.workspace.workspacePath,
-    });
-  } catch (error) {
-    mutationReason = params.abortController.signal.aborted
-      ? "session_compact_cancelled"
-      : "session_compact_failed";
-    context.logger?.warn("ACode Protocol background compact failed", {
-      durationMs: Date.now() - startedAt,
-      error: error instanceof Error ? error.message : String(error),
-      inputId: params.inputId,
-      sessionId: record.app.sessionId,
-      workspacePath: record.workspace.workspacePath,
-    });
-  } finally {
-    if (record.activeAbortController === params.abortController) {
-      // compact 结束后必须先释放 active lock 再广播状态；否则 queued prompt
-      // 或后续 `/compact` 会在 ready 边界短暂撞上旧 controller。
-      record.activeAbortController = undefined;
-    }
-  }
-  await afterStateMutation(context, record, mutationReason);
-}
-
-export async function goalSession(context: ACodeProtocolAgentServerContext, rawParams: unknown) {
-  const params = parseParams(acodeSessionGoalParamsSchema, rawParams);
-  const record = requireSession(context, params.sessionId);
-  assertExpectedRevision(record, params.expectedRevision);
-  // /goal 是目标状态写入，不是普通 prompt；除 pause 外运行中允许执行会绕过前端队列并污染当前 turn。
-  // pause 是用户显式停止 active goal 的控制面命令，必须能打断当前 assistant turn 或 verifier。
-  const goalPauseMayInterruptActiveTurn = params.action === "pause";
-  if (!goalPauseMayInterruptActiveTurn) {
-    ensureNoActiveTurn(record, "Cannot manage goals while a prompt is running");
-  }
-
-  if (
-    !record.app.readTarget ||
-    !record.app.setTarget ||
-    !record.app.updateTargetStatus ||
-    !record.app.clearTarget
-  ) {
-    return {
-      response: "Goal management is not available in this client.",
-      snapshot: await snapshot(context, record),
-      startedTurn: false,
-    };
-  }
-
-  if (params.action === "show") {
-    return {
-      response: formatGoalSummary(await record.app.readTarget()),
-      snapshot: await snapshot(context, record),
-      startedTurn: false,
-    };
-  }
-
-  if (params.action === "pause") {
-    const activeAbortController = record.activeAbortController;
-    const target = await record.app.updateTargetStatus("paused");
-    if (target && activeAbortController) {
-      context.logger?.info("ACode Protocol goal pause aborting active turn", {
-        inputId: params.inputId,
-        sessionId: params.sessionId,
-        targetId: target.targetID,
-        workspacePath: record.workspace.workspacePath,
-      });
-      activeAbortController.abort(new Error("ACode Protocol goal paused"));
-    }
-    const snapshotAfterGoal = await afterStateMutation(context, record, "goal_paused");
-    return {
-      // pause 是状态控制动作，UI 已通过目标面板和 runtime 收口体现结果；
-      // 返回 "Goal paused Objective..." 会被渲染成一条无意义 assistant 气泡并重复暴露目标正文。
-      response: target ? "" : "No goal to pause.",
-      snapshot: snapshotAfterGoal,
-      startedTurn: false,
-    };
-  }
-
-  if (params.action === "resume") {
-    const target = await record.app.updateTargetStatus("active");
-    if (!target) {
-      return {
-        response: "No goal to resume.",
-        snapshot: await snapshot(context, record),
-        startedTurn: false,
-      };
-    }
-    return await continueGoalAfterChange(context, record, {
-      inputId: params.inputId,
-      reason: "goal_resumed",
-      target,
-      title: "Goal resumed",
-    });
-  }
-
-  if (params.action === "clear") {
-    const cleared = await record.app.clearTarget();
-    const snapshotAfterGoal = await afterStateMutation(context, record, "goal_cleared");
-    return {
-      response: cleared ? "Goal cleared." : "No goal to clear.",
-      snapshot: snapshotAfterGoal,
-      startedTurn: false,
-    };
-  }
-
-  const objective = params.objective?.trim() ?? "";
-  if (objective.length === 0) {
-    return {
-      response:
-        params.action === "replace"
-          ? "Usage: /goal replace <objective>"
-          : "Usage: /goal <objective>",
-      snapshot: await snapshot(context, record),
-      startedTurn: false,
-    };
-  }
-
-  // App 输入框里的 `/goal 新目标` 是用户显式提交的新目标；已有目标时继续要求
-  // replace 会让用户以为目标已变更但数据库仍保留旧目标。这里把重复 set 收敛成 replace 语义。
-  const replacesExistingGoal =
-    params.action === "replace" || Boolean(await record.app.readTarget());
-
-  const target = await record.app.setTarget({ objective, status: "active" });
-  return await continueGoalAfterChange(context, record, {
-    inputId: params.inputId,
-    reason: replacesExistingGoal ? "goal_replaced" : "goal_set",
-    target,
-    title: "Goal active",
-  });
-}
-
 export async function forkSession(context: ACodeProtocolAgentServerContext, rawParams: unknown) {
   const params = parseParams(acodeSessionForkParamsSchema, rawParams);
   const record = requireSession(context, params.sessionId);
@@ -2496,69 +2276,6 @@ function resolvePromptTurnOffPeakTaskId(params: {
   return offPeakTaskId.length > "offpeak-".length ? offPeakTaskId : undefined;
 }
 
-async function continueGoalAfterChange(
-  context: ACodeProtocolAgentServerContext,
-  record: ACodeProtocolSessionRecord,
-  params: {
-    inputId?: string;
-    reason: string;
-    target: ProtocolGoalTarget;
-    title: string;
-  },
-) {
-  const response = formatGoalChanged(params.title, params.target);
-  const isPlanMode = record.app.runtime.getPlanEnabled?.() ?? record.app.getMode?.() === "plan";
-  // continueActiveTarget 是 App 的必选能力；能否继续只取决于当前模式和是否已有活跃 turn。
-  const canContinue = !isPlanMode && !record.activeAbortController;
-
-  if (canContinue) {
-    await ensureSessionModelAvailableForNextTurn(context, record);
-    const abortController = new AbortController();
-    record.activeAbortController = abortController;
-    void runWithSessionResidencyFinalization(record, () =>
-      runGoalContinuationInBackground(context, record, {
-        abortController,
-        inputId: params.inputId,
-      }),
-    ).catch(() => {
-      // 后台 goal continuation 的失败会通过状态/事件流降级上报；这里兜底防 unhandled rejection。
-    });
-  }
-
-  const snapshotAfterGoal = await afterStateMutation(context, record, params.reason);
-  return {
-    response: isPlanMode ? appendPlanModeGoalContinuationNote(response) : response,
-    snapshot: snapshotAfterGoal,
-    startedTurn: canContinue,
-  };
-}
-
-async function runGoalContinuationInBackground(
-  context: ACodeProtocolAgentServerContext,
-  record: ACodeProtocolSessionRecord,
-  params: {
-    abortController: AbortController;
-    inputId?: string;
-  },
-): Promise<void> {
-  let mutationReason = "goal_continuation_completed";
-  try {
-    await record.app.continueActiveTarget?.({
-      abortSignal: params.abortController.signal,
-      inputId: params.inputId,
-    });
-  } catch {
-    mutationReason = "goal_continuation_failed";
-  } finally {
-    if (record.activeAbortController === params.abortController) {
-      // 续跑本身结束后应立刻释放活跃锁；snapshot/command discovery 只是后续广播，
-      // 如果继续占锁，连续 `/goal` 会被误判为已有活跃 turn。
-      record.activeAbortController = undefined;
-    }
-  }
-  await afterStateMutation(context, record, mutationReason);
-}
-
 export async function stopSession(context: ACodeProtocolAgentServerContext, rawParams: unknown) {
   const params = parseParams(acodeSessionStopParamsSchema, rawParams);
   const record = requireSession(context, params.sessionId);
@@ -2664,33 +2381,6 @@ export async function setThoughtLevel(
   return await afterStateMutation(context, record, "thought_level_changed");
 }
 
-export async function closeSession(context: ACodeProtocolAgentServerContext, rawParams: unknown) {
-  const params = parseParams(acodeSessionCloseParamsSchema, rawParams);
-  const record = requireSession(context, params.sessionId);
-  if (!shouldCloseSessionForExpectedPersistence(record.persistence, params.expectedPersistence)) {
-    // 连接切换与跨端首发可能并发。session/send 会先把 deferred 提升为
-    // immediate；条件关闭必须在 Agent record 上原子判断，不能依赖 renderer 的旧快照。
-    return { closed: false };
-  }
-  record.unsubscribe?.();
-  await record.app.close?.();
-  // v4 通道：会话关闭同时清 publisher / 订阅调度；重开会话走 snapshot 冷启动。
-  // dispose 必须先于注册表删除——gateway 靠 getSessionWorkspaceId
-  // （读 context.sessions）定位 workspace 才能推 session.removed 给 sessions-index 订阅者。
-  context.v4Gateway?.disposeSession(params.sessionId);
-  context.sessions.delete(params.sessionId);
-  // 内存 event store 随 record 释放。
-  await record.eventStore.deleteSession(params.sessionId as SessionId);
-  return { closed: true };
-}
-
-function shouldCloseSessionForExpectedPersistence(
-  currentPersistence: ACodeSessionPersistence,
-  expectedPersistence?: ACodeSessionPersistence,
-): boolean {
-  return expectedPersistence === undefined || currentPersistence === expectedPersistence;
-}
-
 export async function generateWorkspaceText(
   context: ACodeProtocolAgentServerContext,
   rawParams: unknown,
@@ -2749,33 +2439,6 @@ function ensureNoActiveTurn(record: ACodeProtocolSessionRecord, message: string)
     return;
   }
   throw new ProtocolRequestError(-32010, message);
-}
-
-function appendPlanModeGoalContinuationNote(response: string): string {
-  return `${response}\n\n${PLAN_MODE_GOAL_CONTINUATION_SKIPPED_MESSAGE}`;
-}
-
-function formatGoalSummary(target: ProtocolGoalTarget | null): string {
-  if (!target) {
-    return "No goal is set. Use /goal <objective> to set one.";
-  }
-
-  return formatGoalChanged(`Goal ${target.status}`, target);
-}
-
-function formatGoalChanged(title: string, target: ProtocolGoalTarget): string {
-  const lines = [title, `Objective: ${target.objective}`];
-  if (target.tokensUsed !== undefined || target.tokenBudget !== undefined) {
-    const budget =
-      target.tokenBudget === null || target.tokenBudget === undefined
-        ? "none"
-        : target.tokenBudget.toString();
-    lines.push(`Usage: ${target.tokensUsed ?? 0} tokens / ${budget}`);
-  }
-  if (target.timeUsedSeconds !== undefined) {
-    lines.push(`Time: ${target.timeUsedSeconds} seconds`);
-  }
-  return lines.join("\n");
 }
 
 function assertExpectedProviderRevision(
@@ -2947,8 +2610,14 @@ export function onSessionEvent(
     try {
       // 桌面 v4 主链没有旧 session/event 的 deliveryKind 订阅，顶部提示不能继续
       // 依赖该旧门控；这里只发送无内容的生命周期元数据，并与 v4 投影并行、互不阻断。
+      // M2-4 dual-form（§2.4）：通知无应答，无法用 -32601 探测偏斜；host 静默丢弃未知通知。
+      // 故按连接级 hostV4InboundEstablished 门控（仅当该连接已有 v4/interaction/* 请求
+      // 成功应答才判定 host 具备 v4 inbound 分支）。CUA 迁不删：两形态行为逐点等价，
+      // legacy 形态为偏斜期保留路径（M3 删除）。
       context.notify({
-        method: acodeProtocolMethods.computerUseOperationEvent,
+        method: context.hostV4InboundEstablished
+          ? V4_NOTIFICATIONS.cuaOperationEvent
+          : acodeProtocolMethods.computerUseOperationEvent,
         params: computerUseOperationEvent,
       });
       // 这条 notify 过去只在抛错时有日志，成功路径无痕，于是「agent 压根没发」
@@ -3107,81 +2776,13 @@ function resolveProtocolBashShellSelection(
   }).selection;
 }
 
-async function requestSessionRuntimePreferences(
-  context: ACodeProtocolAgentServerContext,
-  sessionId: SessionId,
-  scope: ACodeSessionRuntimePreferencesScope,
-  trace?: ACodeProtocolTrace,
-): Promise<ACodeSessionRuntimePreferencesResult> {
-  const startedAt = Date.now();
-  // ACodeProtocolTrace.traceId 是协议层的 string；LogContext 需要 branded TraceId，
-  // 按本文件既有惯例断言收口，避免多处日志构造重复转换。
-  const traceId = trace?.traceId as TraceId | undefined;
-  context.logger?.debug("ACode Protocol runtime preferences request started", {
-    event: "acode_protocol.runtime_preferences.request_started",
-    module: "bootstrap.acode_protocol",
-    scope,
-    sessionId,
-    traceId,
-  });
-  try {
-    const result = await context.requestClient(
-      acodeProtocolMethods.sessionRequestRuntimePreferences,
-      { sessionId, scope },
-      acodeSessionRuntimePreferencesResultSchema,
-      {
-        timeoutMs: ACODE_SESSION_RUNTIME_PREFERENCES_REQUEST_TIMEOUT_MS,
-        ...(trace ? { trace } : {}),
-      },
-    );
-    context.logger?.debug("ACode Protocol runtime preferences response received", {
-      durationMs: Math.max(0, Date.now() - startedAt),
-      event: "acode_protocol.runtime_preferences.response_received",
-      module: "bootstrap.acode_protocol",
-      scope,
-      sessionId,
-      traceId,
-    });
-    return result;
-  } catch (error) {
-    const errorCode = error instanceof ProtocolRequestError ? error.code : undefined;
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    const diagnostic = {
-      durationMs: Math.max(0, Date.now() - startedAt),
-      errorCode,
-      errorMessage,
-      event: "acode_protocol.runtime_preferences.request_failed",
-      module: "bootstrap.acode_protocol",
-      scope,
-      sessionId,
-      traceId,
-    };
-    if (errorCode === -32022) {
-      // 诊断：偏好请求超时发生在 runtime 注册前；记录 session/scope，区分
-      // “Host 没收到/没回包”和“恢复过程中其他阶段失败”。
-      context.logger?.warn("ACode Protocol runtime preferences request timed out", diagnostic);
-    } else if (errorCode !== -32601 && errorCode !== -32020) {
-      context.logger?.warn("ACode Protocol runtime preferences request failed", diagnostic);
-    } else {
-      context.logger?.debug(
-        "ACode Protocol runtime preferences compatibility fallback",
-        diagnostic,
-      );
-    }
-    if (error instanceof ProtocolRequestError && (error.code === -32601 || error.code === -32020)) {
-      // 兼容旧 Host 或无 Host 的纯 CLI 创建路径；Memory 服从产品默认关闭，
-      // 增强搜索维持原有默认开启，其他协议/传输错误仍阻止 runtime 创建。
-      return {
-        askUserQuestionAutoResolutionEnabled: true,
-        memoryEnabled: false,
-        modelContextBudgetStrategy: DEFAULT_ACODE_MODEL_CONTEXT_BUDGET_STRATEGY,
-        nativeSearchEnhancementsEnabled: true,
-      };
-    }
-    throw error;
-  }
-}
-
+// M2-3（spec apps/acode-cli/specs/m2-3-session-readwrite.md §2.8）：runtime preferences
+// 从 legacy session/requestRuntimePreferences 双向 pull 改为 host→CLI
+// `v4/session/runtimePreferences` 推送 + 进程级缓存（acode-protocol-v4/
+// session-runtime-preferences.ts）。host 在连接建立与每次物化（create/resume）前现读
+// 推送，freshness 与原 pull 语义对齐；缓存缺失回落到 legacy -32601/-32020 兼容分支的
+// 同一组缺省值。行为差（spec §2.8 登记）：原非兼容错误（如 -32022 超时）阻断物化，
+// 推送模型下以缺省值继续。
 async function resolveSessionStartupPreferences(
   context: ACodeProtocolAgentServerContext,
   sessionId: SessionId,
@@ -3198,32 +2799,33 @@ async function resolveSessionStartupPreferences(
     };
   }
 
-  const runtimePreferences = await requestSessionRuntimePreferences(
-    context,
-    sessionId,
-    "runtime-materialization",
-    trace,
-  );
+  const runtimePreferences = readCachedSessionRuntimePreferences();
+  if (runtimePreferences === undefined) {
+    // 缓存缺失 = host 未推送（无 Host 的纯 CLI 创建路径 / 推送失败）：
+    // 与 legacy pull 兼容回落同值——Memory 服从产品默认关闭，增强搜索维持默认开启。
+    context.logger?.debug("ACode Protocol runtime preferences cache miss; using defaults", {
+      event: "acode_protocol.runtime_preferences.cache_miss",
+      module: "bootstrap.acode_protocol",
+      sessionId,
+      // ACodeProtocolTrace.traceId 是协议层的 string；LogContext 需要 branded TraceId，
+      // 按本文件既有惯例断言收口。
+      traceId: trace?.traceId as TraceId | undefined,
+    });
+  }
   // 必须在 session runtime 可发出第一次提问前应用；关闭路径会等待已有 snooze 持久化完成。
   await context.v4Interactions.initializeAskUserQuestionAutoResolutionEnabled(
-    runtimePreferences.askUserQuestionAutoResolutionEnabled,
+    runtimePreferences?.askUserQuestionAutoResolutionEnabled ?? true,
   );
   return {
-    memoryEnabled: runtimePreferences.memoryEnabled,
+    memoryEnabled: runtimePreferences?.memoryEnabled ?? false,
     modelContextBudgetStrategy: DEFAULT_ACODE_MODEL_CONTEXT_BUDGET_STRATEGY,
-    nativeSearchEnhancementsEnabled: runtimePreferences.nativeSearchEnhancementsEnabled,
-    resolveInitialBashShellSelection: async () => {
-      const executionPreferences = await requestSessionRuntimePreferences(
+    nativeSearchEnhancementsEnabled: runtimePreferences?.nativeSearchEnhancementsEnabled ?? true,
+    resolveInitialBashShellSelection: async () =>
+      // 惰性读取：shell 选择以调用时刻的缓存为准（推送可能晚于物化到达）。
+      resolveProtocolBashShellSelection(
         context,
-        sessionId,
-        "user-execution",
-        trace,
-      );
-      return resolveProtocolBashShellSelection(
-        context,
-        executionPreferences.integratedTerminalShell,
-      );
-    },
+        readCachedSessionRuntimePreferences()?.integratedTerminalShell,
+      ),
   };
 }
 

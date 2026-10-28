@@ -1,12 +1,17 @@
-// 已保存工作流的 GUI 中枢：workspace 级、无会话的方法。
+// 已保存工作流 GUI 中枢的 v4 handler（apps/acode-cli/specs/m2-6-workflows-skills-mcp.md）。
 //
-// 与 skills/referenceCatalog 同一条先例：不带 sessionId，每次调用现扫目录——挂载时快照会漏掉
+// 实体自 legacy `acode-protocol/saved-workflows.ts` 逐字迁入（M2-6：legacy dispatch 消费归零后
+// 删除；实体放 v4 目录使 M3 搬迁入口时只需移动 server.ts 里的一行转发，不在待删目录留实体债）。
+// 唯一改动：params 改 parse v4 schema（`@acode/shared/acode-protocol-v4` 的 workflows.ts），
+// 形状与 legacy 逐字 parity，行为不变。
+//
+// 与 skills referenceCatalog 同一条先例：不带 sessionId，每次调用现扫目录——挂载时快照会漏掉
 // 用户手改 / 模型刚 SaveWorkflow 落盘的文件。
 // 解析器与序列化器只从 @acode/core 取：这里不解析 frontmatter，也不拼 YAML。
 //
-// 全局作用域：五个方法的 params 收可选 `scope`（缺省
+// 全局作用域：六个方法的 params 收可选 `scope`（缺省
 // `project`）。`global` 时改按本机全局根（`~/.acode/workflows/`）操作，`workspace` 只是**载体**——
-// 处理器对全局档不读它的路径。`workflows/move` 把全局档搬回 `workspace` 项目（只此一向）。
+// 处理器对全局档不读它的路径。`v4/workflows/move` 把全局档搬回 `workspace` 项目（只此一向）。
 import { unlink, writeFile } from "node:fs/promises";
 import { SavedWorkflowMetaSchema, isValidSavedWorkflowName } from "@acode/contracts";
 import {
@@ -19,40 +24,43 @@ import {
   type SavedWorkflowResolveFailure,
 } from "@acode/core";
 import {
-  ACODE_WORKFLOWS_RUNS_MAX_LIMIT,
-  acodeWorkflowsDeleteParamsSchema,
-  acodeWorkflowsGetParamsSchema,
-  acodeWorkflowsListParamsSchema,
-  acodeWorkflowsMoveParamsSchema,
-  acodeWorkflowsRunsParamsSchema,
-  acodeWorkflowsUpdateMetaParamsSchema,
-  type ACodeSavedWorkflowRun,
-  type ACodeSavedWorkflowScope,
-  type ACodeWorkflowsDeleteResult,
-  type ACodeWorkflowsGetResult,
-  type ACodeWorkflowsListResult,
-  type ACodeWorkflowsMoveResult,
-  type ACodeWorkflowsRunsResult,
-  type ACodeWorkflowsUpdateMetaResult,
-} from "@acode/shared";
+  V4_WORKFLOWS_RUNS_MAX_LIMIT,
+  v4WorkflowsDeleteParamsSchema,
+  v4WorkflowsGetParamsSchema,
+  v4WorkflowsListParamsSchema,
+  v4WorkflowsMoveParamsSchema,
+  v4WorkflowsRunsParamsSchema,
+  v4WorkflowsUpdateMetaParamsSchema,
+  type V4SavedWorkflowRun,
+  type V4SavedWorkflowScope,
+  type V4WorkflowsDeleteResult,
+  type V4WorkflowsGetResult,
+  type V4WorkflowsListResult,
+  type V4WorkflowsMoveResult,
+  type V4WorkflowsRunsResult,
+  type V4WorkflowsUpdateMetaResult,
+} from "@acode/shared/acode-protocol-v4";
 import type { JournalStorePort } from "@acode/dynamic-workflow";
 import {
   artifactsOf,
   resolveDynamicWorkflowJournalStore,
   supportsRunIntrospection,
 } from "@acode/cli-workflow/contract";
-import { parseParams, type ACodeProtocolAgentServerContext } from "./server-types.js";
+import {
+  parseParams,
+  type ACodeProtocolAgentServerContext,
+} from "../acode-protocol/server-types.js";
 
 // 缺省即 `project`：不给 scope 的旧 GUI 与项目档调用逐字走本项目根，形状不变（版本偏斜）。
-function scopeOf(params: { scope?: ACodeSavedWorkflowScope }): ACodeSavedWorkflowScope {
+function scopeOf(params: { scope?: V4SavedWorkflowScope }): V4SavedWorkflowScope {
   return params.scope ?? "project";
 }
 
 export async function listSavedWorkflowsOp(
   _context: ACodeProtocolAgentServerContext,
   rawParams: unknown,
-): Promise<ACodeWorkflowsListResult> {
-  const params = parseParams(acodeWorkflowsListParamsSchema, rawParams);
+): Promise<V4WorkflowsListResult> {
+  const params = parseParams(v4WorkflowsListParamsSchema, rawParams);
   const cwd = params.workspace.workspacePath;
   const scope = scopeOf(params);
   // 中枢的 PROJECT 组只列本项目那一份，全局组只列全局那一份——**永远**传定向 scope，绝不走
@@ -69,8 +77,8 @@ export async function listSavedWorkflowsOp(
 export async function getSavedWorkflowOp(
   _context: ACodeProtocolAgentServerContext,
   rawParams: unknown,
-): Promise<ACodeWorkflowsGetResult> {
-  const params = parseParams(acodeWorkflowsGetParamsSchema, rawParams);
+): Promise<V4WorkflowsGetResult> {
+  const params = parseParams(v4WorkflowsGetParamsSchema, rawParams);
   // 定向 scope：`global` 只查全局根、不做遮蔽——中枢的全局组要看到被项目档遮蔽的那份。
   const resolved = resolveSavedWorkflow({
     cwd: params.workspace.workspacePath,
@@ -95,8 +103,8 @@ export async function getSavedWorkflowOp(
 export async function updateSavedWorkflowMetaOp(
   _context: ACodeProtocolAgentServerContext,
   rawParams: unknown,
-): Promise<ACodeWorkflowsUpdateMetaResult> {
-  const params = parseParams(acodeWorkflowsUpdateMetaParamsSchema, rawParams);
+): Promise<V4WorkflowsUpdateMetaResult> {
+  const params = parseParams(v4WorkflowsUpdateMetaParamsSchema, rawParams);
   // shared 与 contracts 的 meta schema 逐字对齐，但序列化器认的是 contracts 那份类型；再过一遍
   // 让「两边漂移」在这里炸成 -32602 而不是写出一个自己读不回来的文件。
   const meta = SavedWorkflowMetaSchema.parse(params.meta);
@@ -118,8 +126,8 @@ export async function updateSavedWorkflowMetaOp(
 export async function deleteSavedWorkflowOp(
   _context: ACodeProtocolAgentServerContext,
   rawParams: unknown,
-): Promise<ACodeWorkflowsDeleteResult> {
-  const params = parseParams(acodeWorkflowsDeleteParamsSchema, rawParams);
+): Promise<V4WorkflowsDeleteResult> {
+  const params = parseParams(v4WorkflowsDeleteParamsSchema, rawParams);
   if (!isValidSavedWorkflowName(params.name)) {
     return { ok: false, reason: "invalid_name" };
   }
@@ -130,7 +138,11 @@ export async function deleteSavedWorkflowOp(
   } catch (error) {
     const code = (error as NodeJS.ErrnoException | undefined)?.code;
     if (code === "ENOENT" || code === "ENOTDIR") return { ok: false, reason: "not_found" };
-    return { ok: false, reason: "read_error", detail: describeError(error) };
+    return {
+      ok: false,
+      reason: "read_error",
+      detail: error instanceof Error ? error.message : String(error),
+    };
   }
   return { ok: true, path };
 }
@@ -146,11 +158,11 @@ export async function deleteSavedWorkflowOp(
 export async function listSavedWorkflowRunsOp(
   context: ACodeProtocolAgentServerContext,
   rawParams: unknown,
-): Promise<ACodeWorkflowsRunsResult> {
-  const params = parseParams(acodeWorkflowsRunsParamsSchema, rawParams);
+): Promise<V4WorkflowsRunsResult> {
+  const params = parseParams(v4WorkflowsRunsParamsSchema, rawParams);
   const journal = resolveDynamicWorkflowJournalStore(context.deps.sessionStore);
   if (journal === undefined || !supportsRunIntrospection(journal)) return { runs: [] };
-  const limit = Math.min(ACODE_WORKFLOWS_RUNS_MAX_LIMIT, params.limit);
+  const limit = Math.min(V4_WORKFLOWS_RUNS_MAX_LIMIT, params.limit);
   const global = scopeOf(params) === "global";
   // 多取一条**只为判定 truncated**（run service 与 v4 事件分页的同一惯例）。
   // 全局变体省掉 cwd 谓词（journal 的 cwd 可选 = 跨所有项目）；项目变体传 cwd，逐字不变。
@@ -164,7 +176,7 @@ export async function listSavedWorkflowRunsOp(
   // 产物汇总：每行一次 `listArtifactRows`（journal 的持久家），只在能力在场时做——缺席即
   // 整字段缺席，中枢的 chips 就不画。**只对这一页的行**取数，所以代价与页大小同阶（≤ 50）。
   const artifactsByRun = savedWorkflowRunArtifacts(journal, page);
-  const runs: ACodeSavedWorkflowRun[] = page.map((row) => ({
+  const runs: V4SavedWorkflowRun[] = page.map((row) => ({
     runId: row.runId,
     ...(row.name === undefined ? {} : { name: row.name }),
     status: row.status,
@@ -203,8 +215,8 @@ const SAVED_WORKFLOW_RUN_ARTIFACTS_LIMIT = 8;
 function savedWorkflowRunArtifacts(
   journal: JournalStorePort,
   page: readonly { runId: string }[],
-): Map<string, ACodeSavedWorkflowRun["artifacts"]> {
-  const byRun = new Map<string, ACodeSavedWorkflowRun["artifacts"]>();
+): Map<string, V4SavedWorkflowRun["artifacts"]> {
+  const byRun = new Map<string, V4SavedWorkflowRun["artifacts"]>();
   for (const row of page) {
     const { artifacts } = artifactsOf(row.runId, journal);
     if (artifacts === undefined || artifacts.length === 0) continue;
@@ -230,8 +242,8 @@ function savedWorkflowRunArtifacts(
 export async function moveSavedWorkflowOp(
   _context: ACodeProtocolAgentServerContext,
   rawParams: unknown,
-): Promise<ACodeWorkflowsMoveResult> {
-  const params = parseParams(acodeWorkflowsMoveParamsSchema, rawParams);
+): Promise<V4WorkflowsMoveResult> {
+  const params = parseParams(v4WorkflowsMoveParamsSchema, rawParams);
   const result = moveSavedWorkflow({ cwd: params.workspace.workspacePath, name: params.name });
   if (result.ok) {
     return { ok: true, from: result.from, to: result.to };
@@ -260,8 +272,4 @@ function toFailure(failure: SavedWorkflowResolveFailure) {
     case "read_error":
       return { ok: false as const, reason: failure.reason, detail: failure.detail };
   }
-}
-
-function describeError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

@@ -155,7 +155,9 @@ test("wire surface: snapshot optional key, patch key, event naming (R1/R2)", asy
     /swarmPlan: swarmPlanStateSchema\.nullable\(\)\.optional\(\),/.test(delta),
     "statePatchSchema 未挂 swarmPlan 键",
   );
-  const events = await readCli("packages/contracts/src/events/session.events.ts");
+  // 锚点随 2026-10-28 拆分迁移：session.events.ts 已降级为纯桶（导出面逐名不变），
+  // SessionEventType 词表（含本事件名）的权威叶是 session-event-type.ts。
+  const events = await readCli("packages/contracts/src/events/session-event-type.ts");
   assert.ok(/SwarmPlanProgress: "swarm_plan_progress",/.test(events), "事件命名缺前缀");
   // 旧快照 wire 兼容（场景 8）：不含 swarmPlan 键的快照照常解析
   const legacy = JSON.parse(JSON.stringify({ swarmPlan: undefined }));

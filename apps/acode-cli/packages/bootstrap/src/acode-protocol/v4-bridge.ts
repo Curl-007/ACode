@@ -1025,6 +1025,15 @@ export function createConversationV4Gateway(
       scriptWorkflowEnabled,
       toolSearchMode,
       clientMode,
+      sessionId,
+      persistence,
+      titleGenerationEnabled,
+      toolAllowlist,
+      toolDenylist,
+      importedHistory,
+      mode,
+      model,
+      thoughtLevel,
     }) => {
       // workspaceId 双形态（Workspace Identity 约束）：
       // - 本地工作区 = workspacePath（identity 缺省时的 fallback）；
@@ -1037,11 +1046,24 @@ export function createConversationV4Gateway(
       // 本地 workspacePath 处理。
       const created = await createSessionRecordForV4(context, {
         workspace: resolveWorkspaceRefFromId(workspaceId),
-        // 一律 deferred（draft 不进 sqlite）；提升时机归原生 prompt-turn。
-        persistence: "deferred",
+        // 缺省一律 deferred（draft 不进 sqlite）；提升时机归原生 prompt-turn /
+        // legacy sendPrompt。M2-3 起 Host 可显式带 immediate（导入修复路径，
+        // spec m2-3-session-readwrite.md §2.1 缺省翻转登记）。
+        persistence: persistence ?? "deferred",
         // MCP 是 runtime 创建期配置；v4 createSession 必须与 legacy
         // session/create 等价透传，否则创建的会话永远不会启动这些工具。
         mcpServers,
+        // M2-3 parity 字段直通 legacy acodeSessionCreateParamsSchema（strict 面既认
+        // 这些键）：sessionId 仅限 importedHistory 的裁决、模型/思考深度初始设置、
+        // titleGeneration/工具名单/导入历史物化全在下游 op 内既有逻辑承载。
+        ...(sessionId !== undefined ? { sessionId } : {}),
+        ...(titleGenerationEnabled !== undefined ? { titleGenerationEnabled } : {}),
+        ...(toolAllowlist !== undefined ? { toolAllowlist } : {}),
+        ...(toolDenylist !== undefined ? { toolDenylist } : {}),
+        ...(importedHistory !== undefined ? { importedHistory } : {}),
+        ...(mode !== undefined ? { mode } : {}),
+        ...(model !== undefined ? { model } : {}),
+        ...(thoughtLevel !== undefined ? { thoughtLevel } : {}),
         // Off-Peak 工具面 flag 同为 runtime 创建期配置，必须随 create 进入 record。
         ...(offPeakToolEnabled === true ? { offPeakToolEnabled: true } : {}),
         // 动态工作流灰度门同为 runtime 创建期配置：

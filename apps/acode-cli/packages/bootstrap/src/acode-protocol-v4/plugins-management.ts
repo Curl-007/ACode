@@ -1,61 +1,40 @@
-/* eslint-disable max-lines -- 存量基线豁免:该文件先于 CLI lint 门禁建立即超限(根 lint 的 ignorePatterns 排除 apps/acode-cli,turbo lint 因此从未变绿)。头注豁免以恢复门禁信号;拆分重构超出本批范围。 */
+// 插件管理面 v4 handler（M2-5，specs/m2-5-plugins.md）：本文件 = 共享投影/helper + 读路径
+// 四法（list/overview/validate/describe），自 legacy acode-protocol/plugins.ts 逐字迁
+// （该文件的全部 dispatch case 消费归零后随本批删除）；写路径十法在 ./plugins-mutations.js。
+// 形状由 @acode/shared/acode-protocol-v4 的 plugins 三叶承载（与 legacy 逐字 parity，
+// protocol-boundary 测试钉住）；storage 锁、missing 配置行投影、sensitive 过滤等不变量逐字保留。
+// helper 导出给 plugins-mutations.js 复用（投影单点，避免双份实现漂移）。
 import {
-  acodePluginsConfigureParamsSchema,
-  acodePluginsResetConfigParamsSchema,
-  acodePluginsInstallParamsSchema,
-  acodePluginsMarketplaceAddParamsSchema,
-  acodePluginsMarketplaceRemoveParamsSchema,
-  acodePluginsMarketplaceUpdateParamsSchema,
-  acodePluginsOverviewParamsSchema,
-  acodePluginsListParamsSchema,
-  acodePluginsSetEnabledParamsSchema,
-  acodePluginsUninstallParamsSchema,
-  acodePluginsUpdateParamsSchema,
-  acodePluginsValidateParamsSchema,
-  acodePluginsDescribeParamsSchema,
-  acodePluginsRestoreBuiltinParamsSchema,
-  type ACodeAvailablePluginSummary,
-  type ACodeInstalledPluginSummary,
-  type ACodePluginComponentGroup,
-  type ACodePluginDiagnostic,
-  type ACodePluginInfo,
-  type ACodePluginMarketplaceSummary,
-  type ACodePluginsConfigureResult,
-  type ACodePluginsDescribeResult,
-  type ACodePluginsInstallResult,
-  type ACodePluginsListResult,
-  type ACodePluginsMarketplaceMutationResult,
-  type ACodePluginsOverviewResult,
-  type ACodePluginsRestoreBuiltinResult,
-  type ACodePluginsSetEnabledResult,
-  type ACodePluginsUninstallResult,
-  type ACodePluginsValidateResult,
-} from "@acode/shared";
+  v4PluginsOverviewParamsSchema,
+  v4PluginsListParamsSchema,
+  v4PluginsValidateParamsSchema,
+  v4PluginsDescribeParamsSchema,
+  type V4AvailablePluginSummary,
+  type V4InstalledPluginSummary,
+  type V4PluginComponentGroup,
+  type V4PluginDiagnostic,
+  type V4PluginInfo,
+  type V4PluginMarketplaceSummary,
+  type V4PluginsDescribeResult,
+  type V4PluginsListResult,
+  type V4PluginsOverviewResult,
+  type V4PluginsValidateResult,
+} from "@acode/shared/acode-protocol-v4";
 import type { PluginDiagnostic, PluginMetadata } from "@acode/contracts";
 import {
-  addACodePluginMarketplace,
-  configureACodePlugin,
   describeACodePlugin,
   getACodePluginsOverview,
-  installACodeMarketplacePlugin,
-  removeACodePluginMarketplace,
   resolveACodePlugins,
-  resetACodePluginConfig,
-  restoreBuiltinPlugin as restoreBuiltinPluginCore,
-  setACodePluginEnabled,
-  uninstallACodeMarketplacePlugin,
-  updateACodePluginMarketplace,
   validateACodePlugin,
 } from "../plugins.js";
-import { listInstalledPluginRecords } from "@acode/adapters/plugins";
 import { withPluginStorageLock } from "../lib/plugin-storage-lock.js";
 import { getCliStorageRoot, getPluginStorageRoot } from "../app/paths.js";
 import { resolveOfficialPluginHostMcpServerNames } from "../app/official-plugin-definitions.js";
 import { createConfig, resolvePath, type ConfigResult } from "@acode/adapters/config";
-import { parseParams, type ACodeProtocolAgentServerContext } from "./server-types.js";
+import { parseParams, type ACodeProtocolAgentServerContext } from "../acode-protocol/server-types.js";
 
-// 把 CLI 的 PluginMetadata 投影成协议可序列化的 ACodePluginInfo (只保留 UI 需要的字段)。
-function toPluginInfo(plugin: PluginMetadata, configResult?: ConfigResult): ACodePluginInfo {
+// 把 CLI 的 PluginMetadata 投影成协议可序列化的 V4PluginInfo (只保留 UI 需要的字段)。
+export function toPluginInfo(plugin: PluginMetadata, configResult?: ConfigResult): V4PluginInfo {
   const hostMcpServerNames = resolveOfficialPluginHostMcpServerNames(plugin.id);
   const configuredOptions = Object.fromEntries(
     Object.entries(plugin.configuredOptions ?? {}).filter(
@@ -145,7 +124,7 @@ function createPluginConfigView(
 function createMissingConfiguredPluginInfos(
   configResult: ConfigResult,
   discoveredPluginIds: ReadonlySet<string>,
-): ACodePluginInfo[] {
+): V4PluginInfo[] {
   const configuredPluginIds = new Set([
     ...Object.keys(configResult.config.plugins.enabledPlugins),
     ...Object.keys(configResult.config.plugins.options),
@@ -190,7 +169,7 @@ function normalizePluginRootForComparison(
   return platform === "win32" ? resolvedRoot.replaceAll("\\", "/").toLowerCase() : resolvedRoot;
 }
 
-function toPluginDiagnostic(diagnostic: PluginDiagnostic): ACodePluginDiagnostic {
+export function toPluginDiagnostic(diagnostic: PluginDiagnostic): V4PluginDiagnostic {
   return {
     code: diagnostic.code,
     message: diagnostic.message,
@@ -202,8 +181,8 @@ function toPluginDiagnostic(diagnostic: PluginDiagnostic): ACodePluginDiagnostic
 export async function listPlugins(
   context: ACodeProtocolAgentServerContext,
   rawParams: unknown,
-): Promise<ACodePluginsListResult> {
-  const params = parseParams(acodePluginsListParamsSchema, rawParams);
+): Promise<V4PluginsListResult> {
+  const params = parseParams(v4PluginsListParamsSchema, rawParams);
   const configResult = createPluginConfigView(
     context,
     params.workspace.workspacePath,
@@ -227,36 +206,11 @@ export async function listPlugins(
   };
 }
 
-export async function setPluginEnabled(
-  context: ACodeProtocolAgentServerContext,
-  rawParams: unknown,
-  abortSignal?: AbortSignal,
-): Promise<ACodePluginsSetEnabledResult> {
-  const params = parseParams(acodePluginsSetEnabledParamsSchema, rawParams);
-  abortSignal?.throwIfAborted();
-  const result = await setACodePluginEnabled({
-    enabled: params.enabled,
-    logger: context.logger,
-    plugin: params.pluginId,
-    scope: params.scope,
-    workingDirectory: params.workspace.workspacePath,
-  });
-  // 启用配置写入当前不可回滚；若取消在 IO 期间到达，只阻断后续响应和 UI 写入。
-  abortSignal?.throwIfAborted();
-  return {
-    plugin: {
-      ...toPluginInfo(result.plugin),
-      enabledSource: params.scope ?? "user",
-    },
-    enabled: result.enabled,
-  };
-}
-
 export async function getPluginsOverview(
   context: ACodeProtocolAgentServerContext,
   rawParams: unknown,
-): Promise<ACodePluginsOverviewResult> {
-  const params = parseParams(acodePluginsOverviewParamsSchema, rawParams);
+): Promise<V4PluginsOverviewResult> {
+  const params = parseParams(v4PluginsOverviewParamsSchema, rawParams);
   const overview = getACodePluginsOverview({
     configResult: createPluginConfigView(
       context,
@@ -276,194 +230,11 @@ export async function getPluginsOverview(
   };
 }
 
-export async function addPluginMarketplace(
-  context: ACodeProtocolAgentServerContext,
-  rawParams: unknown,
-  abortSignal?: AbortSignal,
-): Promise<ACodePluginsMarketplaceMutationResult> {
-  const params = parseParams(acodePluginsMarketplaceAddParamsSchema, rawParams);
-  const pluginStorageRoot = resolvePluginStorageRoot(params.workspace.workspacePath);
-  const marketplace = await withPluginStorageLock(pluginStorageRoot, async () =>
-    addACodePluginMarketplace({
-      abortSignal,
-      dryRun: params.dryRun,
-      logger: context.logger,
-      source: params.source,
-      workingDirectory: params.workspace.workspacePath,
-    }),
-  );
-  return { marketplace: toMarketplaceSummary(marketplace), diagnostics: [] };
-}
-
-export async function removePluginMarketplace(
-  context: ACodeProtocolAgentServerContext,
-  rawParams: unknown,
-): Promise<ACodePluginsMarketplaceMutationResult> {
-  const params = parseParams(acodePluginsMarketplaceRemoveParamsSchema, rawParams);
-  const pluginStorageRoot = resolvePluginStorageRoot(params.workspace.workspacePath);
-  await withPluginStorageLock(pluginStorageRoot, async () =>
-    removeACodePluginMarketplace({
-      logger: context.logger,
-      marketplace: params.marketplace,
-      workingDirectory: params.workspace.workspacePath,
-    }),
-  );
-  return { diagnostics: [] };
-}
-
-export async function updatePluginMarketplace(
-  context: ACodeProtocolAgentServerContext,
-  rawParams: unknown,
-  abortSignal?: AbortSignal,
-): Promise<ACodePluginsMarketplaceMutationResult> {
-  const params = parseParams(acodePluginsMarketplaceUpdateParamsSchema, rawParams);
-  const pluginStorageRoot = resolvePluginStorageRoot(params.workspace.workspacePath);
-  const result = await withPluginStorageLock(pluginStorageRoot, async () =>
-    updateACodePluginMarketplace({
-      abortSignal,
-      logger: context.logger,
-      marketplace: params.marketplace,
-      workingDirectory: params.workspace.workspacePath,
-    }),
-  );
-  return {
-    marketplaces: result.marketplaces.map(toMarketplaceSummary),
-    diagnostics: result.diagnostics.map(toPluginDiagnostic),
-  };
-}
-
-export async function installPlugin(
-  context: ACodeProtocolAgentServerContext,
-  rawParams: unknown,
-  abortSignal?: AbortSignal,
-): Promise<ACodePluginsInstallResult> {
-  const params = parseParams(acodePluginsInstallParamsSchema, rawParams);
-  const pluginStorageRoot = resolvePluginStorageRoot(params.workspace.workspacePath);
-  const result = await withPluginStorageLock(pluginStorageRoot, async () =>
-    installACodeMarketplacePlugin({
-      abortSignal,
-      dryRun: params.dryRun,
-      logger: context.logger,
-      marketplace: params.marketplace,
-      pluginName: params.pluginName,
-      scope: params.scope,
-      workingDirectory: params.workspace.workspacePath,
-    }),
-  );
-  return {
-    dependencyClosure: result.dependencyClosure,
-    installedPlugins: result.installedPlugins.map(toInstalledPluginSummary),
-    diagnostics: result.diagnostics.map(toPluginDiagnostic),
-  };
-}
-
-export async function uninstallPlugin(
-  context: ACodeProtocolAgentServerContext,
-  rawParams: unknown,
-): Promise<ACodePluginsUninstallResult> {
-  const params = parseParams(acodePluginsUninstallParamsSchema, rawParams);
-  const removed = await uninstallACodeMarketplacePlugin({
-    logger: context.logger,
-    marketplace: params.marketplace,
-    pluginId: params.pluginId,
-    pluginName: params.pluginName,
-    removeCache: params.removeCache,
-    workingDirectory: params.workspace.workspacePath,
-  });
-  return {
-    ...(removed ? { removedPlugin: toInstalledPluginSummary(removed) } : {}),
-    diagnostics: [],
-  };
-}
-
-export async function updatePlugin(
-  context: ACodeProtocolAgentServerContext,
-  rawParams: unknown,
-): Promise<ACodePluginsInstallResult> {
-  const params = parseParams(acodePluginsUpdateParamsSchema, rawParams);
-  const pluginStorageRoot = resolvePluginStorageRoot(params.workspace.workspacePath);
-  const installed = listInstalledPluginRecords(pluginStorageRoot).filter((record) => {
-    if (params.pluginId) return record.id === params.pluginId;
-    if (params.marketplace) return record.marketplace === params.marketplace;
-    return true;
-  });
-  // 与 uninstall 一样把整个重装循环串行化到同一 storageRoot 的 in-process 锁里，
-  // 避免并发 update/install 交错读改写 installed_plugins.json / cache。
-  return withPluginStorageLock(pluginStorageRoot, async () => {
-    const installedPlugins: ACodeInstalledPluginSummary[] = [];
-    const dependencyClosure: string[] = [];
-    // 聚合每条记录重装产生的诊断：installACodeMarketplacePlugin 失败时不抛错，而是返回
-    // CLI 形态的 PluginDiagnostic（见其错误分支的 toMarketplaceInstallDiagnostic），
-    // 这里逐条经协议侧 toPluginDiagnostic 投影成 ACodePluginDiagnostic 回传，
-    // 让失败的重装显式暴露，而不是静默"成功"。
-    const diagnostics: ACodePluginDiagnostic[] = [];
-    for (const record of installed) {
-      const result = await installACodeMarketplacePlugin({
-        logger: context.logger,
-        marketplace: record.marketplace,
-        pluginName: record.name,
-        scope: record.scope,
-        workingDirectory: params.workspace.workspacePath,
-      });
-      installedPlugins.push(...result.installedPlugins.map(toInstalledPluginSummary));
-      dependencyClosure.push(...result.dependencyClosure);
-      diagnostics.push(...result.diagnostics.map(toPluginDiagnostic));
-    }
-    return { dependencyClosure, installedPlugins, diagnostics };
-  });
-}
-
-// 恢复一个被抑制（"卸载"）的内置插件：清除 suppressedBuiltins 标记并立即重新 seed。
-// bootstrap 侧的同名函数被别名为 restoreBuiltinPluginCore，避免与本协议处理器重名。
-export async function restoreBuiltinPlugin(
-  context: ACodeProtocolAgentServerContext,
-  rawParams: unknown,
-): Promise<ACodePluginsRestoreBuiltinResult> {
-  const params = parseParams(acodePluginsRestoreBuiltinParamsSchema, rawParams);
-  await restoreBuiltinPluginCore({
-    logger: context.logger,
-    pluginId: params.pluginId,
-    workingDirectory: params.workspace.workspacePath,
-  });
-  return { pluginId: params.pluginId, diagnostics: [] };
-}
-
-export async function configurePlugin(
-  context: ACodeProtocolAgentServerContext,
-  rawParams: unknown,
-): Promise<ACodePluginsConfigureResult> {
-  const params = parseParams(acodePluginsConfigureParamsSchema, rawParams);
-  await configureACodePlugin({
-    clearOptionKeys: params.clearOptionKeys,
-    dryRun: params.dryRun,
-    logger: context.logger,
-    options: params.options,
-    pluginId: params.pluginId,
-    scope: params.scope,
-    workingDirectory: params.workspace.workspacePath,
-  });
-  return { pluginId: params.pluginId, diagnostics: [] };
-}
-
-export async function resetPluginConfig(
-  context: ACodeProtocolAgentServerContext,
-  rawParams: unknown,
-): Promise<ACodePluginsConfigureResult> {
-  const params = parseParams(acodePluginsResetConfigParamsSchema, rawParams);
-  await resetACodePluginConfig({
-    logger: context.logger,
-    pluginId: params.pluginId,
-    scope: params.scope,
-    workingDirectory: params.workspace.workspacePath,
-  });
-  return { pluginId: params.pluginId, diagnostics: [] };
-}
-
 export async function validatePlugin(
   context: ACodeProtocolAgentServerContext,
   rawParams: unknown,
-): Promise<ACodePluginsValidateResult> {
-  const params = parseParams(acodePluginsValidateParamsSchema, rawParams);
+): Promise<V4PluginsValidateResult> {
+  const params = parseParams(v4PluginsValidateParamsSchema, rawParams);
   const pluginStorageRoot = resolvePluginStorageRoot(params.workspace.workspacePath);
   const diagnostics = await withPluginStorageLock(pluginStorageRoot, async () =>
     validateACodePlugin({
@@ -488,8 +259,8 @@ export async function validatePlugin(
 export async function describePlugin(
   context: ACodeProtocolAgentServerContext,
   rawParams: unknown,
-): Promise<ACodePluginsDescribeResult> {
-  const params = parseParams(acodePluginsDescribeParamsSchema, rawParams);
+): Promise<V4PluginsDescribeResult> {
+  const params = parseParams(v4PluginsDescribeParamsSchema, rawParams);
   const pluginStorageRoot = resolvePluginStorageRoot(params.workspace.workspacePath);
   const result = await withPluginStorageLock(pluginStorageRoot, async () =>
     describeACodePlugin({
@@ -499,7 +270,7 @@ export async function describePlugin(
       workingDirectory: params.workspace.workspacePath,
     }),
   );
-  const components: ACodePluginComponentGroup[] = result.components.map((group) => ({
+  const components: V4PluginComponentGroup[] = result.components.map((group) => ({
     kind: group.kind,
     items: group.items.map((item) => ({
       name: item.name,
@@ -514,7 +285,7 @@ export async function describePlugin(
   };
 }
 
-function toMarketplaceSummary(input: {
+export function toMarketplaceSummary(input: {
   id: string;
   name: string;
   source: Record<string, unknown>;
@@ -523,8 +294,8 @@ function toMarketplaceSummary(input: {
   pluginCount: number;
   isOfficial?: boolean;
   featured?: string[];
-  refreshFailure?: ACodePluginMarketplaceSummary["refreshFailure"];
-}): ACodePluginMarketplaceSummary {
+  refreshFailure?: V4PluginMarketplaceSummary["refreshFailure"];
+}): V4PluginMarketplaceSummary {
   return {
     id: input.id,
     name: input.name,
@@ -546,8 +317,8 @@ function toAvailablePluginSummary(input: {
   version?: string;
   installed: boolean;
   componentTypes?: string[];
-  listing?: ACodeAvailablePluginSummary["listing"];
-}): ACodeAvailablePluginSummary {
+  listing?: V4AvailablePluginSummary["listing"];
+}): V4AvailablePluginSummary {
   return {
     id: input.id,
     name: input.name,
@@ -560,7 +331,7 @@ function toAvailablePluginSummary(input: {
   };
 }
 
-function toInstalledPluginSummary(input: {
+export function toInstalledPluginSummary(input: {
   id: string;
   name: string;
   marketplace: string;
@@ -571,11 +342,11 @@ function toInstalledPluginSummary(input: {
   installPath?: string;
   installedAt?: string;
   componentTypes?: string[];
-  hookDetails?: ACodeInstalledPluginSummary["hookDetails"];
+  hookDetails?: V4InstalledPluginSummary["hookDetails"];
   updateStatus?: "none" | "update-available" | "version-changed";
   latestVersion?: string;
-  listing?: ACodeInstalledPluginSummary["listing"];
-}): ACodeInstalledPluginSummary {
+  listing?: V4InstalledPluginSummary["listing"];
+}): V4InstalledPluginSummary {
   return {
     id: input.id,
     name: input.name,
@@ -594,7 +365,7 @@ function toInstalledPluginSummary(input: {
   };
 }
 
-function resolvePluginStorageRoot(workingDirectory: string): string {
+export function resolvePluginStorageRoot(workingDirectory: string): string {
   const config = createConfig({ workingDirectory });
   const storageRoot = resolvePath(config.config.storage.dir);
   return getPluginStorageRoot(getCliStorageRoot(storageRoot));

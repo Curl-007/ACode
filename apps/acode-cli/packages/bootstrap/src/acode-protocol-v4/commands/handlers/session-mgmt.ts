@@ -1,4 +1,4 @@
-// 会话管理命令组：createSession / renameSession / deleteSession。
+// 会话管理命令组：createSession / renameSession / deleteSession / closeSession。
 // 每个命令组一个文件：handler 纯函数 (host, envelope) → CommandResult|undefined，
 // 决策逻辑直驱 core，环境能力走 host 钩子（见 ../types.ts 的过渡标注）。
 import type {
@@ -64,6 +64,18 @@ async function createSession(
     // 自选。desktop-continuous / web-remote-replayable 都透传；缺席（旧 Host/TUI/headless）= CLI 侧
     // 按缺席即 inline 处理（fail-closed）。经 runtimeFlags 侧通道物化进 AgentRuntimeConfig.clientMode。
     clientMode: payload.clientMode,
+    // M2-3 parity 字段直通（specs/m2-3-session-readwrite.md §2.1）：织进 legacy
+    // createSessionWithProjection 的 rawParams；sessionId 仅限 importedHistory 的
+    // 裁决、persistence 缺省 deferred 都在下游既有逻辑承载。
+    sessionId: payload.sessionId,
+    persistence: payload.persistence,
+    titleGenerationEnabled: payload.titleGenerationEnabled,
+    toolAllowlist: payload.toolAllowlist,
+    toolDenylist: payload.toolDenylist,
+    importedHistory: payload.importedHistory,
+    mode: payload.mode,
+    model: payload.model,
+    thoughtLevel: payload.thoughtLevel,
   });
   // createSession.config 消费——草稿态 UI 的先行选择（模型/思考深度/
   // 模式）在首发之前应用并补发事件，首条 turn 即用所选配置。必须在 firstInput 之前。
@@ -185,8 +197,39 @@ async function deleteSession(
 // 对话分享已下线：discardSharedContext 命令已删除
 // （specs/conversation-share-removal.md 2.2）。
 
+/**
+ * closeSession（M2-2 裁决 2026-10-28：close ≠ delete 两语义并存，spec
+ * specs/m2-2-session-control.md §2.3）：close = 终止/归档 snapshot 写入
+ * （关闭运行时 + 清通道），与 deleteSession 共用 host.closeSession 过渡钩子，
+ * 差异只在 expectedPersistence 条件断言——payload 期望档与 record.persistence
+ * 不匹配时 graceful no-op（typed result closed:false，不断言失败不抛错，对齐
+ * 旧 shouldCloseSessionForExpectedPersistence/{closed:false} 语义）。
+ */
+async function closeSession(
+  host: V4CommandCoreHost,
+  envelope: CommandEnvelope,
+): Promise<CommandResult | undefined> {
+  const payload = envelope.payload as CommandPayloadMap["closeSession"];
+  const record = requireRecord(host, envelope.sessionId);
+  if (
+    payload.expectedPersistence !== undefined &&
+    record.persistence !== payload.expectedPersistence
+  ) {
+    // 连接切换与跨端首发可能并发；条件关闭必须在 record 上原子判断（legacy 注释原意），
+    // 不匹配 = 不关闭，不是错误。
+    return { type: "closeSession", closed: false };
+  }
+  if (!host.closeSession) {
+    // 与 deleteSession 同一纪律：钩子缺失 = binder 接线不完整，直接失败（ACK failed）。
+    throw new Error("v4 closeSession requires host.closeSession capability");
+  }
+  await host.closeSession(record.app.sessionId);
+  return { type: "closeSession", closed: true };
+}
+
 export const sessionMgmtHandlers = {
   createSession,
   renameSession,
   deleteSession,
+  closeSession,
 };

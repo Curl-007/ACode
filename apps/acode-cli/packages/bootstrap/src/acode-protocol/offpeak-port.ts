@@ -5,6 +5,12 @@ import {
   acodeProtocolMethods,
   type ACodeOffPeakTaskProtocolSnapshot,
 } from "@acode/shared";
+import {
+  V4_METHODS,
+  v4OffPeakCreateResultSchema,
+  v4OffPeakListResultSchema,
+} from "@acode/shared/acode-protocol-v4";
+import { requestV4WithLegacyFallback } from "./dual-form-request.js";
 import type {
   ACodeProtocolAgentServerContext,
   ACodeProtocolSessionRecord,
@@ -49,9 +55,13 @@ export function createProtocolOffPeakPort(
       if (boundSessionId) {
         let bound: boolean;
         try {
-          const listed = await context.requestClient(
+          // M2-7 §2.1 dual-form：v4 offPeakList 先行；旧 host 无 v4 分支返回 -32601 时回落（偏斜方向：新 CLI + 旧 host）。M3 删除 legacy 分支。
+          const listed = await requestV4WithLegacyFallback(
+            context,
+            V4_METHODS.offPeakList,
             acodeProtocolMethods.offPeakList,
             {},
+            v4OffPeakListResultSchema,
             acodeOffPeakListResultSchema,
           );
           bound = listed.tasks.some(
@@ -69,17 +79,24 @@ export function createProtocolOffPeakPort(
         }
         if (bound) throw new Error(OFF_PEAK_CREATE_IN_BOUND_SESSION_ERROR);
       }
-      const result = await context.requestClient(
+      // params 两形态同形（只换方法名），一次构造双发。
+      const createParams = {
+        title: input.title,
+        prompt: input.prompt,
+        ...(input.permissionMode ? { permissionMode: input.permissionMode } : {}),
+        ...(input.model ? { model: input.model } : {}),
+        ...(input.thoughtLevel ? { thoughtLevel: input.thoughtLevel } : {}),
+        // 绑定当前会话；workspace 仍由 host 端从当前 session 注入（对称 automation/create）。
+        ...(boundSessionId ? { boundSessionId } : {}),
+      };
+      // M2-7 §2.1 dual-form：v4 offPeakCreate 先行；旧 host 返回 -32601（偏斜方向：
+      // 新 CLI + 旧 host）回落 legacy 形态。legacy 保留路径删除归属：M3。
+      const result = await requestV4WithLegacyFallback(
+        context,
+        V4_METHODS.offPeakCreate,
         acodeProtocolMethods.offPeakCreate,
-        {
-          title: input.title,
-          prompt: input.prompt,
-          ...(input.permissionMode ? { permissionMode: input.permissionMode } : {}),
-          ...(input.model ? { model: input.model } : {}),
-          ...(input.thoughtLevel ? { thoughtLevel: input.thoughtLevel } : {}),
-          // 绑定当前会话；workspace 仍由 host 端从当前 session 注入（对称 automation/create）。
-          ...(boundSessionId ? { boundSessionId } : {}),
-        },
+        createParams,
+        v4OffPeakCreateResultSchema,
         acodeOffPeakCreateResultSchema,
       );
       if (!result.ok) {
@@ -94,9 +111,13 @@ export function createProtocolOffPeakPort(
       return { ok: true, task: toOffPeakTaskSummary(result.task) };
     },
     async list() {
-      const result = await context.requestClient(
+      // M2-7 §2.1 dual-form：v4 先行，-32601 回落（新 CLI + 旧 host）；M3 删除 legacy 分支。
+      const result = await requestV4WithLegacyFallback(
+        context,
+        V4_METHODS.offPeakList,
         acodeProtocolMethods.offPeakList,
         {},
+        v4OffPeakListResultSchema,
         acodeOffPeakListResultSchema,
       );
       return result.tasks.map(toOffPeakTaskSummary);

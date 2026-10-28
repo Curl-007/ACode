@@ -1,10 +1,8 @@
 /* eslint-disable max-lines -- 存量基线豁免:该文件先于 CLI lint 门禁建立即超限(根 lint 的 ignorePatterns 排除 apps/acode-cli,turbo lint 因此从未变绿)。头注豁免以恢复门禁信号;拆分重构超出本批范围。 */
-import { querySessionDebug } from "./session-debug.js";
 import {
   acodePluginsCancelOperationParamsSchema,
   acodeProtocolMethods,
   acodeWorkspaceCancelGenerateTextParamsSchema,
-  acodeWorkspaceHookTrustGrantParamsSchema,
   // U08 provider 诊断方法名取自中立叶子（不进 legacy barrel 冻结面）。
   PROVIDER_DIAGNOSTICS_METHODS,
 } from "@acode/shared";
@@ -17,9 +15,21 @@ import {
   parseSessionsIndexTopic,
   parseWorkspaceConfigTopic,
 } from "@acode/shared/acode-protocol-v4";
+import { type V4Method } from "@acode/shared/acode-protocol-v4";
 import { queryV4Capability } from "../acode-protocol-v4/capabilities.js";
 // 归档会话 header 冷读的实体（v4 目录）；本文件只留一行 dispatch case。
 import { querySessionHeaderMeta } from "../acode-protocol-v4/session-header-meta-query.js";
+import { querySessionGoalV4 } from "../acode-protocol-v4/session-goal-query.js";
+import { querySessionDebugV4 } from "../acode-protocol-v4/session-debug-query.js";
+import {
+  querySessionEventsV4,
+  querySessionMessagesV4,
+  querySessionReadV4,
+  querySessionResumeV4,
+  querySessionsListV4,
+  subscribeSessionV4,
+} from "../acode-protocol-v4/session-readwrite.js";
+import { handleSessionRuntimePreferencesPushV4 } from "../acode-protocol-v4/session-runtime-preferences.js";
 import type {
   ACodeAgentQuiescenceFacts,
   ACodeProtocolError,
@@ -32,41 +42,29 @@ import type {
 } from "@acode/shared";
 import {
   cancelBackgroundTask,
-  closeSession,
-  compactSession,
-  createSession,
   forkSession,
   generateWorkspaceText,
-  goalSession,
   getTaskTokenUsage,
   getUsageStats,
-  listSessions,
   listSessionSubagents,
-  readEvents,
-  readMessages,
-  readSession,
-  resumeSession,
   sendPrompt,
   setThoughtLevel,
   stopSession,
-  subscribeSession,
 } from "./server-operations.js";
-import { listChildProcesses } from "./process-child-processes.js";
 import { ProtocolRuntimeResources } from "./runtime-resources.js";
-import {
-  readWorkspacePresentation,
-  testProviderModelConnectivity,
-} from "./workspace-model-runtime.js";
 // U08 provider 诊断执行器的装配（specs/provider-diagnostics.md）。不 import server-types，
 // 因此不构成 server.ts ↔ provider-diagnostics.ts 循环。
 import { createProtocolProviderDiagnostics } from "./provider-diagnostics.js";
 import {
-  addPluginMarketplace,
-  configurePlugin,
   describePlugin,
   getPluginsOverview,
-  installPlugin,
   listPlugins,
+  validatePlugin,
+} from "../acode-protocol-v4/plugins-management.js";
+import {
+  addPluginMarketplace,
+  configurePlugin,
+  installPlugin,
   removePluginMarketplace,
   resetPluginConfig,
   restoreBuiltinPlugin,
@@ -74,13 +72,13 @@ import {
   uninstallPlugin,
   updatePlugin,
   updatePluginMarketplace,
-  validatePlugin,
-} from "./plugins.js";
+} from "../acode-protocol-v4/plugins-mutations.js";
 import {
   getPluginReferenceCatalog,
   resolveSuggestedPluginReference,
 } from "./plugin-reference-catalog.js";
-import { getSkillReferenceCatalog } from "./skill-reference-catalog.js";
+// M2-6：workflows/skills/mcp 八法实体在 v4 目录（saved-workflows-hub /
+// skills-reference-catalog-query / mcp-list-query），legacy 实现文件已随 dispatch 删除。
 import {
   deleteSavedWorkflowOp,
   getSavedWorkflowOp,
@@ -88,14 +86,25 @@ import {
   listSavedWorkflowsOp,
   moveSavedWorkflowOp,
   updateSavedWorkflowMetaOp,
-} from "./saved-workflows.js";
-import { listMcpServers } from "./mcp.js";
-import { updateInteractionPreferences } from "./interaction-preferences.js";
-import { updateAccountProviderConfig } from "./account-provider-config.js";
-import { updateModelIoPreferences } from "./model-io-preferences.js";
-import { updateOffPeakToolPolicy } from "./off-peak-tool-policy.js";
-import { updateDynamicWorkflowPolicy } from "./dynamic-workflow-policy.js";
-import { grantWorkspaceHookTrustForProtocol } from "./workspace-hook-trust.js";
+} from "../acode-protocol-v4/saved-workflows-hub.js";
+import { getSkillReferenceCatalog } from "../acode-protocol-v4/skills-reference-catalog-query.js";
+import { listMcpServers } from "../acode-protocol-v4/mcp-list-query.js";
+// M2-8：workspace/provider/process 域 11 法实体在 v4 目录（workspace-runtime /
+// workspace-policies / workspace-hook-trust-grant / provider-process），legacy 实现文件
+// 已随 dispatch 删除；generateWorkspaceText 实体留驻 server-operations.ts（一行转发先例）。
+import { readWorkspacePresentationV4 } from "../acode-protocol-v4/workspace-runtime.js";
+import {
+  updateDynamicWorkflowPolicyV4,
+  updateInteractionPreferencesV4,
+  updateModelIoPreferencesV4,
+  updateOffPeakToolPolicyV4,
+} from "../acode-protocol-v4/workspace-policies.js";
+import { grantWorkspaceHookTrustV4 } from "../acode-protocol-v4/workspace-hook-trust-grant.js";
+import {
+  listChildProcessesV4,
+  testProviderModelConnectivityV4,
+  updateAccountProviderConfigV4,
+} from "../acode-protocol-v4/provider-process.js";
 import {
   V4InteractionRegistry,
   resolveV4InteractionRegistryOptionsFromEnv,
@@ -131,23 +140,9 @@ const MAX_CLIENT_REQUEST_REANNOUNCE_INTERVAL_MS = 10_000;
 
 type ACodeProtocolOutboundMessage = ACodeProtocolNotification | ACodeProtocolRequest;
 
-/**
- * Trust store 落盘后各 session 的 coordinator
- * 内存镜像（仅创建时 load）不会自动更新，已信任 Hook 继续被拒、banner pendingCount
- * 停留旧值。pretrust 授权成功后按 workspaceKey 通知所有匹配的活跃 session 重载。
- * 独立导出为纯调度函数（不触网、不发事件），便于回归测试直接构造 sessions Map。
- */
-async function notifyWorkspaceHookTrustGrantSessions(input: {
-  grantedWorkspaceKey?: string;
-  sessions: Map<string, ACodeProtocolSessionRecord>;
-}): Promise<void> {
-  if (!input.grantedWorkspaceKey) return;
-  await Promise.all(
-    [...input.sessions.values()]
-      .filter((record) => record.workspace.workspaceKey === input.grantedWorkspaceKey)
-      .map((record) => record.app.reloadWorkspaceHookTrust()),
-  );
-}
+// M2-8：hook trust grant 的 accepted→session 重载联动随实体迁入
+// ../acode-protocol-v4/workspace-hook-trust-grant.ts（notifyWorkspaceHookTrustGrantSessionsV4），
+// 本文件不再持有。
 
 function collectResidencySessionIds(params: unknown): string[] {
   if (!params || typeof params !== "object") return [];
@@ -278,14 +273,17 @@ export class ACodeProtocolAgentServer {
         askUserQuestionAutoResolutionEnabled: true,
         modelIoFullRetentionEnabled: false,
         offPeakToolEnabled: false,
-        // 动态工作流灰度门 fail-closed：Host 必须显式 workspace/updateDynamicWorkflowPolicy
-        // 才开启。
+        // 动态工作流灰度门 fail-closed：Host 必须显式 v4/workspace/updateDynamicWorkflowPolicy
+        // 才开启（M2-8 前为 legacy workspace/updateDynamicWorkflowPolicy 词）。
         dynamicWorkflowEnabled: false,
       },
       notify: (notification) => this.messageSink?.(notification),
       requestClient: (method, params, resultSchema, options) =>
         this.requestClient(method, params, resultSchema, options),
       sessions: new Map<string, ACodeProtocolSessionRecord>(),
+      // M2-4：连接级「host 已接住 v4 inbound」证据位（specs/m2-4-inbound-interaction.md §2.4）。
+      // 由六条 v4 反向请求的成功响应置位（requestClient 内），换连接时归零（setNotificationSink）。
+      hostV4InboundEstablished: false,
       // 交互应答登记表（broker 反向请求 × v4 resolveInteraction 命令的汇合点）。
       v4Interactions: new V4InteractionRegistry(
         resolveV4InteractionRegistryOptionsFromEnv(deps.env ?? process.env),
@@ -396,6 +394,9 @@ export class ACodeProtocolAgentServer {
     this.runtimeResources.assertServing();
     this.clientDisconnectError = undefined;
     this.messageSink = sink;
+    // M2-4：换连接 = 可能换了 host，证据位归零（CUA 通知会回落 legacy 形态，
+    // 直到六条反向请求重新证明）。见 specs/m2-4-inbound-interaction.md §2.4。
+    this.context.hostV4InboundEstablished = false;
   }
 
   disconnectClient(error: Error): void {
@@ -631,26 +632,141 @@ export class ACodeProtocolAgentServer {
       // 不在本待删目录新增实体债。
       case V4_METHODS.sessionHeaderMeta:
         return await querySessionHeaderMeta(this.context, request.params);
+      // M2-2 session 控制面读路径（specs/m2-2-session-control.md）：实体在 v4 目录
+      // （session-goal-query.ts / session-debug-query.ts），此处一行转发，同 headerMeta 纪律。
+      case V4_METHODS.sessionGoalQuery:
+        return await querySessionGoalV4(this.context, request.params);
+      case V4_METHODS.sessionDebug:
+        return querySessionDebugV4(this.context, request.params);
+      // M2-3 session 读写面（specs/m2-3-session-readwrite.md）：实体在 v4 目录
+      // （session-readwrite.ts / session-runtime-preferences.ts），此处一行转发，
+      // 同 headerMeta 纪律。resume 有冷恢复激活副作用；subscribe 写投递画像并
+      // 原子返回同一水位 replay+snapshot；runtimePreferences 是 host→CLI 推送。
+      case V4_METHODS.sessionRead:
+        return await querySessionReadV4(this.context, request.params);
+      case V4_METHODS.sessionResume:
+        return await querySessionResumeV4(this.context, request.params);
+      case V4_METHODS.sessionsList:
+        return await querySessionsListV4(this.context, request.params);
+      case V4_METHODS.sessionMessages:
+        return await querySessionMessagesV4(this.context, request.params);
+      case V4_METHODS.sessionEvents:
+        return await querySessionEventsV4(this.context, request.params);
+      case V4_METHODS.sessionSubscribe:
+        return await subscribeSessionV4(this.context, request.params);
+      case V4_METHODS.sessionRuntimePreferences:
+        return await handleSessionRuntimePreferencesPushV4(this.context, request.params);
+      // ── M2-6：workflows 中枢六法 + skills catalog + mcp list（additive 换名迁
+      // 徙，specs/m2-6-workflows-skills-mcp.md）。与 usageStats 同款：无会话投影依赖，
+      // 不经 v4Gateway，直调 v4 目录实体；载荷与 legacy 逐字 parity。──
+      case V4_METHODS.workflowsList:
+        return await listSavedWorkflowsOp(this.context, request.params);
+      case V4_METHODS.workflowsGet:
+        return await getSavedWorkflowOp(this.context, request.params);
+      case V4_METHODS.workflowsUpdateMeta:
+        return await updateSavedWorkflowMetaOp(this.context, request.params);
+      case V4_METHODS.workflowsDelete:
+        return await deleteSavedWorkflowOp(this.context, request.params);
+      case V4_METHODS.workflowsRuns:
+        return await listSavedWorkflowRunsOp(this.context, request.params);
+      case V4_METHODS.workflowsMove:
+        return await moveSavedWorkflowOp(this.context, request.params);
+      case V4_METHODS.skillsReferenceCatalog:
+        return await getSkillReferenceCatalog(this.context, request.params);
+      case V4_METHODS.mcpList:
+        return await listMcpServers(this.context, request.params);
+      // ── M2-5：plugins 管理面 16 法（specs/m2-5-plugins.md）。管理面 14 法实体在 v4 目录
+      // （plugins-management.ts 读四法+共享投影 / plugins-mutations.ts 写十法，自 legacy
+      // plugins.ts 逐字迁）；catalog/resolveSuggested 实体留在 legacy
+      // plugin-reference-catalog.ts——两个 legacy catalog case 因 services 侧
+      // -32601 fallback 链仍存活（usageStats 同款一行转发；v4 catalog 恒带 category）。
+      // setEnabled/resolveSuggested/marketplaceAdd/marketplaceUpdate/install 五个可取消操作
+      // 经 withPluginOperationSignal 包装；中止注册表按 operationId 键控、与协议代际无关，
+      // cancelOperation 因此保留 legacy 词（下方 legacy 区）。──
+      case V4_METHODS.pluginsList:
+        return await listPlugins(this.context, request.params);
+      case V4_METHODS.pluginsOverview:
+        return await getPluginsOverview(this.context, request.params);
+      case V4_METHODS.pluginsDescribe:
+        return await describePlugin(this.context, request.params);
+      case V4_METHODS.pluginsValidate:
+        return await validatePlugin(this.context, request.params);
+      case V4_METHODS.pluginsReferenceCatalog:
+        return await getPluginReferenceCatalog(this.context, request.params, true);
+      case V4_METHODS.pluginsResolveSuggestedReference:
+        return await this.withPluginOperationSignal(request, (signal) =>
+          resolveSuggestedPluginReference(this.context, request.params, signal),
+        );
+      case V4_METHODS.pluginsSetEnabled:
+        return await this.withPluginOperationSignal(request, (signal) =>
+          setPluginEnabled(this.context, request.params, signal),
+        );
+      case V4_METHODS.pluginsMarketplaceAdd:
+        return await this.withPluginOperationSignal(request, (signal) =>
+          addPluginMarketplace(this.context, request.params, signal),
+        );
+      case V4_METHODS.pluginsMarketplaceRemove:
+        return await removePluginMarketplace(this.context, request.params);
+      case V4_METHODS.pluginsMarketplaceUpdate:
+        return await this.withPluginOperationSignal(request, (signal) =>
+          updatePluginMarketplace(this.context, request.params, signal),
+        );
+      case V4_METHODS.pluginsInstall:
+        return await this.withPluginOperationSignal(request, (signal) =>
+          installPlugin(this.context, request.params, signal),
+        );
+      case V4_METHODS.pluginsUninstall:
+        return await uninstallPlugin(this.context, request.params);
+      case V4_METHODS.pluginsUpdate:
+        return await updatePlugin(this.context, request.params);
+      case V4_METHODS.pluginsRestoreBuiltin:
+        return await restoreBuiltinPlugin(this.context, request.params);
+      case V4_METHODS.pluginsConfigure:
+        return await configurePlugin(this.context, request.params);
+      case V4_METHODS.pluginsResetConfig:
+        return await resetPluginConfig(this.context, request.params);
+      // ── M2-8：workspace + provider + process 域 11 法（specs/m2-8-workspace-provider-process.md）。
+      // 与 usageStats 同款：无会话投影依赖，不经 v4Gateway，直调 v4 目录实体；载荷与 legacy
+      // 逐字 parity。generateText 实体留驻 server-operations.ts（该文件不在本批范围），
+      // 经既有 withWorkspaceGenerateTextSignal 包装（operationId 注册表与代际无关）；
+      // cancelGenerateText 复用同一私有方法/注册表。hookTrustGrant 的 accepted→同
+      // workspaceKey 活跃 session 重载联动在 v4 handler 内（迁移不变量）。──
+      case V4_METHODS.workspaceReadPresentation:
+        return await readWorkspacePresentationV4(this.context, request.params);
+      case V4_METHODS.workspaceHookTrustGrant:
+        return await grantWorkspaceHookTrustV4(this.context, request.params);
+      case V4_METHODS.workspaceUpdateInteractionPreferences:
+        return await updateInteractionPreferencesV4(this.context, request.params);
+      case V4_METHODS.workspaceUpdateModelIoPreferences:
+        return await updateModelIoPreferencesV4(this.context, request.params);
+      case V4_METHODS.workspaceUpdateOffPeakToolPolicy:
+        return await updateOffPeakToolPolicyV4(this.context, request.params);
+      case V4_METHODS.workspaceUpdateDynamicWorkflowPolicy:
+        return await updateDynamicWorkflowPolicyV4(this.context, request.params);
+      case V4_METHODS.workspaceGenerateText:
+        return await this.withWorkspaceGenerateTextSignal(request, (signal) =>
+          generateWorkspaceText(this.context, request.params, signal),
+        );
+      case V4_METHODS.workspaceCancelGenerateText:
+        return this.cancelWorkspaceGenerateText(request.params);
+      case V4_METHODS.providerUpdateAccountConfig:
+        return await updateAccountProviderConfigV4(this.context, request.params);
+      case V4_METHODS.providerTestModelConnectivity:
+        return await testProviderModelConnectivityV4(this.context, request.params);
+      case V4_METHODS.processChildProcesses:
+        return listChildProcessesV4(this.context.deps.mcpTelemetry?.listProcesses() ?? []);
       case V4_METHODS.command:
         return this.requireV4Gateway().handleCommand(request.params);
       case V4_METHODS.commandsQuery:
         return this.requireV4Gateway().queryCommands(request.params);
-      case acodeProtocolMethods.sessionCreate:
-        return await createSession(this.context, request.params, request.trace);
-      case acodeProtocolMethods.sessionResume:
-        return await resumeSession(this.context, request.params);
-      case acodeProtocolMethods.sessionList:
-        return await listSessions(this.context, request.params);
+      // M2-3：sessionCreate / sessionResume / sessionList / sessionRead / sessionMessages /
+      // sessionEvents / sessionSubscribe 的 services 消费已归零（facade 改经 v4/command
+      // createSession + v4/session|sessions/* 读写面 query；runtimePreferences 改 host→CLI
+      // 推送，见 specs/m2-3-session-readwrite.md），legacy 注册按「消费归零后删除」移除
+      // （M2-1 先例）；op 实体留 server-operations.ts 由 v4 handler 叶直通复用，M3 随
+      // 目录整体搬迁。
       case acodeProtocolMethods.sessionSubagents:
         return await listSessionSubagents(this.context, request.params);
-      case acodeProtocolMethods.sessionRead:
-        return await readSession(this.context, request.params);
-      case acodeProtocolMethods.sessionMessages:
-        return await readMessages(this.context, request.params);
-      case acodeProtocolMethods.sessionEvents:
-        return await readEvents(this.context, request.params);
-      case acodeProtocolMethods.sessionSubscribe:
-        return await subscribeSession(this.context, request.params);
       case acodeProtocolMethods.sessionSend:
         return await sendPrompt(this.context, request.params);
       case acodeProtocolMethods.sessionStop:
@@ -659,133 +775,53 @@ export class ACodeProtocolAgentServer {
         return await cancelBackgroundTask(this.context, request.params);
       case acodeProtocolMethods.sessionFork:
         return await forkSession(this.context, request.params);
-      case acodeProtocolMethods.sessionCompact:
-        return await compactSession(this.context, request.params);
-      case acodeProtocolMethods.sessionGoal:
-        return await goalSession(this.context, request.params);
+      // M2-2：sessionCompact / sessionGoal / sessionClose 的 services 消费已归零
+      // （facade 改经 v4 compact / sendGoalCommand+pauseGoal+resumeGoal+clearGoal+v4/session/goal
+      // / closeSession，见 specs/m2-2-session-control.md），legacy 注册按「消费归零后删除」移除。
       // M2-1：sessionSetModel / sessionSetMode 的 services 消费已归零（facade 改经 v4
       // switchModelConfig / switchCollaborationMode），legacy 注册按「消费归零后删除」移除。
-      // sessionSetThoughtLevel 保留：createSession 兼容重试仍会对不认识 thoughtLevel 的
-      // 旧 Agent 直发（pre-v4 链路，见 acodeAgentService createSession 段）。
+      // sessionSetThoughtLevel 保留：M2-1 裁决服务旧 Host skew（pre-v4 链路）。M2-3 起
+      // services 侧 createSession 兼容重试整支删除（v4 方法名即版本边界），本 case 的
+      // 存活理由仅剩旧 Host 直发。
       case acodeProtocolMethods.sessionSetThoughtLevel:
         return await setThoughtLevel(this.context, request.params);
-      case acodeProtocolMethods.sessionClose:
-        return await closeSession(this.context, request.params);
-      case acodeProtocolMethods.workspaceReadPresentation:
-        return await readWorkspacePresentation(this.context, request.params);
-      case acodeProtocolMethods.workspaceHookTrustGrant: {
-        const grantResult = await grantWorkspaceHookTrustForProtocol(request.params, {
-          appVersion: this.context.deps.version,
-          policyProvider: this.context.deps.workspaceHookPolicyProvider,
-        });
-        if (grantResult.accepted) {
-          await notifyWorkspaceHookTrustGrantSessions({
-            // dispatch 层的 params 是弱类型；grant 内部已用同一 schema parse 过，这里
-            // safeParse 只为取出 workspaceKey 做匹配，失败即跳过通知（防御，正常必成功）。
-            grantedWorkspaceKey: acodeWorkspaceHookTrustGrantParamsSchema.safeParse(request.params)
-              .success
-              ? acodeWorkspaceHookTrustGrantParamsSchema.parse(request.params).workspace
-                  .workspaceKey
-              : undefined,
-            sessions: this.context.sessions,
-          });
-        }
-        return grantResult;
-      }
-      case acodeProtocolMethods.providerUpdateAccountConfig:
-        return await updateAccountProviderConfig(this.context, request.params);
-      case acodeProtocolMethods.workspaceUpdateInteractionPreferences:
-        return await updateInteractionPreferences(this.context, request.params);
-      case acodeProtocolMethods.workspaceUpdateModelIoPreferences:
-        return await updateModelIoPreferences(this.context, request.params);
-      case acodeProtocolMethods.workspaceUpdateOffPeakToolPolicy:
-        return await updateOffPeakToolPolicy(this.context, request.params);
-      case acodeProtocolMethods.workspaceUpdateDynamicWorkflowPolicy:
-        return await updateDynamicWorkflowPolicy(this.context, request.params);
-      case acodeProtocolMethods.workspaceGenerateText:
-        return await this.withWorkspaceGenerateTextSignal(request, (signal) =>
-          generateWorkspaceText(this.context, request.params, signal),
-        );
-      case acodeProtocolMethods.workspaceCancelGenerateText:
-        return this.cancelWorkspaceGenerateText(request.params);
-      case acodeProtocolMethods.providerTestModelConnectivity:
-        return await testProviderModelConnectivity(this.context, request.params);
+      // M2-8：workspaceReadPresentation / workspaceHookTrustGrant / providerUpdateAccountConfig /
+      // workspaceUpdateInteractionPreferences / workspaceUpdateModelIoPreferences /
+      // workspaceUpdateOffPeakToolPolicy / workspaceUpdateDynamicWorkflowPolicy /
+      // workspaceGenerateText / workspaceCancelGenerateText / providerTestModelConnectivity /
+      // processChildProcesses 的 services 消费已归零（facade 改经 v4/workspace/*、
+      // v4/provider/*、v4/process/childProcesses，见 specs/m2-8-workspace-provider-process.md），
+      // legacy 注册按「消费归零后删除」移除（M2-1 先例）；实体迁 acode-protocol-v4/ 目录
+      // （generateWorkspaceText 留驻 server-operations.ts 一行转发）。
       // ── U08 provider 诊断（specs/provider-diagnostics.md）──
       // 走进程级执行器（不建 workspace ACodeApp），因此首次配置尚无 workspace 也能诊断。
       case PROVIDER_DIAGNOSTICS_METHODS.run:
         return await this.requireProviderDiagnostics().run(request.params);
       case PROVIDER_DIAGNOSTICS_METHODS.cancel:
         return this.requireProviderDiagnostics().cancel(request.params);
-      case acodeProtocolMethods.mcpList:
-        return await listMcpServers(this.context, request.params);
-      case acodeProtocolMethods.pluginsList:
-        return await listPlugins(this.context, request.params);
+      // M2-5：pluginsList 的 services 消费已归零（迁 v4/plugins/list），legacy 注册按
+      // 「消费归零后删除」移除（M2-1 先例）。referenceCatalog×2 保留：services 侧 -32601
+      // fallback 链仍消费（pre-v4 CLI skew，specs/m2-5-plugins.md §4）。
       case acodeProtocolMethods.pluginsReferenceCatalogWithCategory:
         return await getPluginReferenceCatalog(this.context, request.params, true);
       case acodeProtocolMethods.pluginsReferenceCatalog:
         return await getPluginReferenceCatalog(this.context, request.params);
-      case acodeProtocolMethods.skillsReferenceCatalog:
-        return await getSkillReferenceCatalog(this.context, request.params);
-      case acodeProtocolMethods.workflowsList:
-        return await listSavedWorkflowsOp(this.context, request.params);
-      case acodeProtocolMethods.workflowsGet:
-        return await getSavedWorkflowOp(this.context, request.params);
-      case acodeProtocolMethods.workflowsUpdateMeta:
-        return await updateSavedWorkflowMetaOp(this.context, request.params);
-      case acodeProtocolMethods.workflowsDelete:
-        return await deleteSavedWorkflowOp(this.context, request.params);
-      case acodeProtocolMethods.workflowsRuns:
-        return await listSavedWorkflowRunsOp(this.context, request.params);
-      case acodeProtocolMethods.workflowsMove:
-        return await moveSavedWorkflowOp(this.context, request.params);
-      case acodeProtocolMethods.pluginsResolveSuggestedReference:
-        return await this.withPluginOperationSignal(request, (signal) =>
-          resolveSuggestedPluginReference(this.context, request.params, signal),
-        );
-      case acodeProtocolMethods.pluginsSetEnabled:
-        return await this.withPluginOperationSignal(request, (signal) =>
-          setPluginEnabled(this.context, request.params, signal),
-        );
-      case acodeProtocolMethods.pluginsOverview:
-        return await getPluginsOverview(this.context, request.params);
-      case acodeProtocolMethods.processChildProcesses:
-        return listChildProcesses(this.context.deps.mcpTelemetry?.listProcesses() ?? []);
+      // M2-6：skillsReferenceCatalog / workflows×6 / mcpList 的 services 消费已归零
+      // （facade 改经 v4/skills/referenceCatalog、v4/workflows/*、v4/mcp/list），legacy
+      // 注册按「消费归零后删除」移除（M2-1 先例）；实体迁 acode-protocol-v4/ 目录。
+      // M2-5：resolveSuggestedReference/setEnabled/overview 消费归零删除（迁 v4/plugins/*）。
+      // M2-8：processChildProcesses 消费归零删除（迁 v4/process/childProcesses）。
       case acodeProtocolMethods.runtimeCapabilities:
         return { independentPlanState: true };
-      case acodeProtocolMethods.pluginsMarketplaceAdd:
-        return await this.withPluginOperationSignal(request, (signal) =>
-          addPluginMarketplace(this.context, request.params, signal),
-        );
-      case acodeProtocolMethods.pluginsMarketplaceRemove:
-        return await removePluginMarketplace(this.context, request.params);
-      case acodeProtocolMethods.pluginsMarketplaceUpdate:
-        return await this.withPluginOperationSignal(request, (signal) =>
-          updatePluginMarketplace(this.context, request.params, signal),
-        );
-      case acodeProtocolMethods.pluginsInstall:
-        return await this.withPluginOperationSignal(request, (signal) =>
-          installPlugin(this.context, request.params, signal),
-        );
+      // M2-5：marketplace×3/install/uninstall/update/restoreBuiltin/configure/resetConfig/
+      // validate/describe 消费归零删除（迁 v4/plugins/*）。cancelOperation 保留：中止注册表
+      // 按 operationId 键控、与协议代际无关，任何代际启动的在途操作都可取消（spec §4）。
       case acodeProtocolMethods.pluginsCancelOperation:
         return this.cancelPluginOperation(request.params);
-      case acodeProtocolMethods.pluginsUninstall:
-        return await uninstallPlugin(this.context, request.params);
-      case acodeProtocolMethods.pluginsUpdate:
-        return await updatePlugin(this.context, request.params);
-      case acodeProtocolMethods.pluginsRestoreBuiltin:
-        return await restoreBuiltinPlugin(this.context, request.params);
-      case acodeProtocolMethods.pluginsConfigure:
-        return await configurePlugin(this.context, request.params);
-      case acodeProtocolMethods.pluginsResetConfig:
-        return await resetPluginConfig(this.context, request.params);
-      case acodeProtocolMethods.pluginsValidate:
-        return await validatePlugin(this.context, request.params);
-      case acodeProtocolMethods.pluginsDescribe:
-        return await describePlugin(this.context, request.params);
       case acodeProtocolMethods.usageStats:
         return await getUsageStats(this.context, request.params);
-      case acodeProtocolMethods.sessionDebug:
-        return querySessionDebug(this.context, request.params);
+      // M2-2：sessionDebug 消费归零（facade 改经 v4/session/debug query），
+      // legacy 注册按「消费归零后删除」移除；观测存储与事件接线保留（v4 handler 复用）。
       case acodeProtocolMethods.sessionUsage:
         return await getTaskTokenUsage(this.context, request.params);
       default:
@@ -894,7 +930,7 @@ export class ACodeProtocolAgentServer {
   }
 
   private requestClient<T>(
-    method: ACodeProtocolMethod,
+    method: ACodeProtocolMethod | V4Method,
     params: unknown,
     resultSchema: ParamsSchema<T>,
     options?: ACodeProtocolClientRequestOptions,
@@ -988,6 +1024,13 @@ export class ACodeProtocolAgentServer {
       return;
     }
     this.cleanupClientRequest(pending);
+    // M2-4（§2.4）：host 对六条 v4 inbound 反向请求之一的成功响应，证明它确实在用 v4 分支
+    // 服务本连接——置位证据位，之后的 CUA 通知即可发 v4 形态。错误响应（含 -32601）走
+    // rejectClientRequest 不在此置位：-32601 恰说明该 host 缺 v4 inbound 分支，其通知面同样不认。
+    // 只认请求侧响应：host 对未知通知是静默丢弃，不构成证据。
+    if (!this.context.hostV4InboundEstablished && pending.method.startsWith("v4/interaction/")) {
+      this.context.hostV4InboundEstablished = true;
+    }
     try {
       pending.resolve(pending.resultSchema.parse(result));
     } catch (error) {

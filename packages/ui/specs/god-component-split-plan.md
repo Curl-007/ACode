@@ -108,6 +108,21 @@
 > （裸 `<button className=...>` → `<Button variant size>` 行数变多）的良性修复成本，
 > 但因 `legacy-over-limit` ratchet 只在跨越 400 时触发，此增长门禁恒绿、不可见。
 > 属「已超限文件继续增长」的典型样本，见上「拆分动能备注」与固定验收第 7 条。
+>
+> **批次 1 已实施（2026-10-28，helper 外迁）**：2950→**2799**（−151）。
+> - 新建 `settings/automation/scheduleModel.ts`（154 行）：`buildRunsPageItems`/`workspaceLabelFromPath`/
+>   `pad2`/`daysInMonth`/`toDateInputValue`/`localDateEndTimestamp`/`parseDateInputValue`/`resolveRunStatus`/
+>   `normalizeAutomationScheduleRule` + `FREQUENCIES`/`isCronFrequency`/`RUNS_PAGE_SIZE`/`CUSTOM_REPEAT_*`/
+>   `RUN_STATUS_*`/`AUTOMATION_STATUS_*` + `RunStatusKind` 类型（与 `resolveRunStatus` 同源共迁）。
+> - 新建 `settings/automation/cronBuilder.ts`（58 行）：`defaultBuilder`/`initialBuilder` + re-export
+>   `CronBuilderState`（类型单一来源仍在 `automationFormat.ts`，避免批次 3 落地时出现双份声明）。
+> - 前置测试：`test/automationScheduleModel.test.ts`（分页 / 日期解析 / 状态决策矩阵 22 用例）+
+>   `test/cronBuilder.test.ts`（defaultBuilder 初值稳定性 / initialBuilder 三路分支 7 用例）。
+> - 选择器族 7 个组件（批次 2）与 27 state（批次 3 处理）**未动**。
+> - 验证：`tsc -p packages/ui/tsconfig.json --noEmit` 0 错、`pnpm --filter @acode/ui test` 915/915、
+>   触碰文件 oxlint 0 警告、`godComponentLineRatchet.guard.test.mjs` 上限 2950→2799 已同步。
+> - 实减量 −151 < 计划 −320 的原因：`parseCronToBuilder`/`CronBuilderState` 等本就在
+>   `automationFormat.ts` 而非主文件，拆前估算的 grep 行段把它们算进去了；不影响批次实质。
 
 - 职责分析：单文件混合「cron/自定义重复排程编辑器 + 时间/星期/月日选择器 + 表单 schema + 操作按钮簇 +
   运行历史分页」。顶部已有 ~15 个纯 helper（`buildRunsPageItems`/`workspaceLabelFromPath`/`daysInMonth`/
@@ -116,14 +131,14 @@
   （`TimeUnitColumn`/`TimeOfDayPicker`/`ScrollNumberColumn`/`MonthDayPicker`/`WeekdayPicker`/
   `EndDatePicker`/`CustomRepeatDialog`）。
 - 建议接缝（从浅到深）：
-  1. **纯 helper 外迁** → `settings/automation/scheduleModel.ts`（排程规则/日期解析/分页），补决策表单测；
+  1. **纯 helper 外迁** → `settings/automation/scheduleModel.ts`（排程规则/日期解析/分页），补决策表单测——**已实施（2026-10-28）**；
   2. **日期/时间选择器族** → `settings/automation/pickers/`（TimeOfDayPicker/MonthDayPicker/WeekdayPicker/
      EndDatePicker/CustomRepeatDialog 各自成文件，纯展示 + 受控 props）；
   3. **cron builder state 机** → `settings/automation/cronBuilder.ts`（defaultBuilder/initialBuilder +
-     规约 reducer），把 27 state 里属于 builder 的收敛成单一 reducer；
+     规约 reducer），把 27 state 里属于 builder 的收敛成单一 reducer——helper 部分已落地，reducer 收敛待批次 3；
   4. **操作按钮簇** → 复用 `components/ui/button.tsx`（与 P2 的按钮/焦点环修复合并做）。
 - 前置测试：scheduleModel 与 cronBuilder 的纯函数单测（第一刀前建）；选择器族用 renderToStaticMarkup 钉受控渲染。
-- 预估批次：3 批（helper 外迁 → 选择器族拆分 → cron builder reducer 收敛）。
+- 预估批次：3 批（~~helper 外迁~~ → 选择器族拆分 → cron builder reducer 收敛）。
 
 ### `settings/SubagentsSection.tsx`（2,671 行；34 state / 6 effect / 22 callback / 17 memo）
 
@@ -141,6 +156,23 @@
   3. **详情面板** → `settings/subagents/SubagentDetail.tsx`。
 - 前置测试：agentModel 纯函数单测（能力矩阵、工具合并去重、模型档位可用性、表单初值 key 稳定性）。
 - 预估批次：3 批（helper 外迁 → 列表/表单拆分 → 详情拆分）。
+- 状态：**batch-1 helper 外迁已实施**（2026-10-28）。抽出 `settings/subagents/agentModel.ts`
+  （**318 行**，21 个纯函数 + 6 常量集中 export `TOOL_OPTIONS`/`TOOL_OPTION_SET`/`RISKY_TOOLS` 避免循环），
+  主文件 2671 → **2416**（−255；调研报告预估 2271，差 +145 因为 `groupAgentsByScope`/`groupPluginAgentsById`
+  按 21 函数严格边界未外迁，归下一批）；前置测试 `test/subagentModel.test.ts`（**31 测**全绿）覆盖
+  能力矩阵 × 工具合并去重 × 模型档位可用性 × 表单初值 key 稳定性；ratchet 上限同步调至 2416。
+
+### `settings/RemotePluginSyncDialog.tsx`（1,898 行；max-lines 豁免）
+
+> 登记来源：review 2026-10-28 batch-1 调研报告 §3.④（docs/reviews/2026-10-28/god-component-batch-1.md）。
+
+- 职责分析：行 57–1058 是 ~1000 行纯 helper（行构建/选择解析/进度计算/stopped 错误形态）+ 选择/进度/结果三段 UI 子组件 + 主组件（行 1515，~380 行）。
+- 建议接缝：
+  1. **纯 helper 外迁** → `settings/remote-plugin-sync/remotePluginSyncModel.ts`（~500 行，27 个纯函数整组搬，内部互相引用密集不拆散），补决策表单测；副作用函数 `emitRemotePluginSyncProgress`/`throwIfRemotePluginSyncStopped` 留在主文件；
+  2. （下一批）`SelectionList`/`ProgressList`/`ResultList` 三个子组件外迁。
+- 前置测试：`test/remotePluginSyncModel.test.ts`（行构建矩阵 × 选择解析 × portable option 值 × stopped 错误形态）。
+- 预估批次：2 批（helper 外迁 → 子组件外迁）。仅 helper 外迁后主文件 ~1398 行，**不跌破 400**（固定验收第 6 条不适用本批）。
+- 状态：**batch-1 helper 外迁已实施**（2026-10-28）。27 个纯函数拆入 `remote-plugin-sync/remotePluginSyncModel.ts`（394 行），类型/Error 类/constants 拆入 `remotePluginSyncTypes.ts`（126 行，为满足「新模块 <400 行」验收而分）；副作用函数与三个 UI 子组件留主文件。主文件 1898 → **1460**（−438）；ratchet 上限同步下调。前置测试 `test/remotePluginSyncModel.test.ts`（30 例）。下一批：SelectionList/ProgressList/ResultList 子组件外迁。
 
 ### `settings/AutomationsSection.tsx`（1,979 行；8 state / 11 effect / 22 callback / 2 memo）
 
@@ -158,6 +190,41 @@
   3. **列表 + 空态** → `settings/automations/AutomationList.tsx`。
 - 前置测试：navigationModel 纯函数单测（tab 可见性矩阵、off-peak 变更后 tab 落点、详情导航 id 判定）。
 - 预估批次：2 批（helper 外迁 → 菜单/列表拆分）。
+- 状态：**batch-1 helper 外迁已实施**（2026-10-28）：14 个纯函数 + 4 常量逐字迁入
+  `settings/automations/navigationModel.ts`（174 行），`AutomationActionsMenu`（145 行）与
+  `AutomationStatusFilterEmpty`（15 行）各自成文件；`AUTOMATIONS_TOAST_ANCHOR_ID` 由 navigationModel
+  持有、主文件 re-export 保持 WorkspaceShellLayout 的既有 import 路径不变；`toast` 包装函数按调研
+  结论留在主文件（DOM anchor 语义）。主文件 1979 → **1695**（仍 >400，本批按调研 §3.① 预期不跌破；
+  固定验收第 6 条不适用本批）。前置测试 `test/automationsNavigationModel.test.ts` 13 例全绿；
+  ratchet 上限同步下调至 1695。
+
+### `settings/McpSettingsSection.tsx`（1,595 行；max-lines 豁免）
+
+> 登记来源：review 2026-10-28 batch-1 调研报告 §3.⑤（docs/reviews/2026-10-28/god-component-batch-1.md）。
+
+- 职责分析：行 76–552 是 ~477 行纯 helper 密集带（refresh queue 决策 / status 决策 / OAuth
+  authorization build / server list key 计算）+ `PluginMcpServerList` 子组件 + 主组件（行 553 起，~1042 行）。
+- 建议接缝：
+  1. **纯 helper 外迁** → `settings/mcp/mcpSettingsModel.ts`（~290 行）：refresh queue 决策
+     （`resolveMcpStatusListRefreshSkipReason` / `transitionMcpAutoStatusListRefreshKey` /
+     `createMcpStatusListRefreshQueue`）、OAuth authorization build
+     （`buildMcpOAuthAuthorizationStatusRefreshServers` / `buildMcpOAuthAuthorizationStatusRefreshOptions` /
+     `buildPendingMcpOAuthAuthorizationRefreshKey` / `createMcpOAuthAuthorizationStatusRefreshDeadline` /
+     `isMcpOAuthAuthorizationStatusRefreshExpired` / `transitionMcpOAuthAuthorizationPendingRefresh`）、
+     status list key 计算（`buildMcpServerStatusListKey` / `buildPluginMcpServerStatusListKey` /
+     `shouldShowPluginMcpServersInMcpSettings`）+ 常量 `MCP_OAUTH_*`。
+     `createMcpStatusListRefreshQueue` 是**有状态工厂**（返回带闭包状态的 queue 对象），调用方不应假设纯函数。
+  2. （下一批）`PluginMcpServerList` 子组件外迁为受控组件。
+- 留在主文件：`refreshMcpServerStatusList`（async 副作用函数，调 `mcpSyncService.listWorkspaceMcpServerStatuses`，
+  不属于纯函数）、`DEFAULT_MCP_SOURCE`（表单默认值语义，不属于 refresh 决策）、
+  `McpServerStatusListRefreshOutcome`（refreshMcpServerStatusList 私用）。
+- 前置测试：`test/mcpSettingsModel.test.ts`（refresh deadline 边界 × queue transition × skip reason
+  决策矩阵 × OAuth build 矩阵 × key 构建矩阵）。
+- 预估批次：2 批（helper 外迁 → PluginMcpServerList 外迁）。仅 helper 外迁后 ~1295 行，**不跌破 400**
+  （固定验收第 6 条不适用本批）。
+- 状态：**batch-1 helper 外迁已实施**（2026-10-28）：12 个纯函数 + 3 个常量 + 4 个类型逐字迁入
+  `settings/mcp/mcpSettingsModel.ts`（289 行）。主文件 1595 → **1346**（仍 >400，符合调研预期）。
+  前置测试 `test/mcpSettingsModel.test.ts` 36 例全绿；ratchet 上限同步下调至 1346。
 
 ## 测试债清单（结构守护测试，非行为验证）
 

@@ -39,7 +39,6 @@ import {
   TID_AUTOMATION_YEAR_MONTHDAY,
   ACODE_AGENT_PROVIDER,
   type ACodeAutomation,
-  type ACodeAutomationRun,
   type ACodeAutomationScheduleRule,
 } from "@acode/shared";
 import {
@@ -139,6 +138,27 @@ import {
   type AutomationWorkspaceOption,
 } from "@/settings/automationWorkspaceOptions.js";
 import {
+  AUTOMATION_STATUS_DOT_CLASS,
+  buildRunsPageItems,
+  CUSTOM_REPEAT_INTERVAL_INPUT_MIN,
+  CUSTOM_REPEAT_INTERVAL_MAX,
+  CUSTOM_REPEAT_INTERVAL_SCHEDULABLE_MIN,
+  daysInMonth,
+  FREQUENCIES,
+  isCronFrequency,
+  localDateEndTimestamp,
+  normalizeAutomationScheduleRule,
+  pad2,
+  parseDateInputValue,
+  resolveRunStatus,
+  RUN_STATUS_DOT_CLASS,
+  RUN_STATUS_TEXT_CLASS,
+  RUNS_PAGE_SIZE,
+  toDateInputValue,
+  workspaceLabelFromPath,
+} from "@/settings/automation/scheduleModel.js";
+import { initialBuilder } from "@/settings/automation/cronBuilder.js";
+import {
   buildCronExpr,
   canVisualizeCronInAutomationEditor,
   describeCronBuilder,
@@ -146,12 +166,9 @@ import {
   formatDuration,
   formatGmtOffset,
   isSessionCreatedAutomation as resolveIsSessionCreatedAutomation,
-  parseCronToBuilder,
   resolveAutomationStatusKind,
   WEEKDAY_ORDER,
-  type AutomationStatusKind,
   type CronBuilderState,
-  type CronFrequency,
   type CustomRepeatUnit,
 } from "@/settings/automationFormat.js";
 import type {
@@ -161,56 +178,11 @@ import type {
 } from "@/store/automationManagementStore.js";
 
 const MODEL_ITEM_NEVER_LOCKED = () => false;
-const FREQUENCIES: CronFrequency[] = ["hourly", "daily", "weekdays", "weekly", "monthly", "custom"];
-const isCronFrequency = (value: string): value is CronFrequency =>
-  FREQUENCIES.includes(value as CronFrequency);
-/** 运行历史每页条数。 */
-const RUNS_PAGE_SIZE = 8;
-/** 自定义重复频率输入允许输入的视觉范围。 */
-const CUSTOM_REPEAT_INTERVAL_INPUT_MIN = 0;
-/** cron 的步长必须为正整数，0 不能形成有效调度。 */
-const CUSTOM_REPEAT_INTERVAL_SCHEDULABLE_MIN = 1;
-const CUSTOM_REPEAT_INTERVAL_MAX = 200;
 
 /**
  * 生成分页控件的页码序列：首尾各保留 3 页、当前页左右各 1 页，其余用省略号折叠。
  * 例：current=1,total=10 → [1,2,3,"ellipsis",8,9,10]。
  */
-function buildRunsPageItems(current: number, total: number): Array<number | "ellipsis"> {
-  if (total <= 7) {
-    return Array.from({ length: total }, (_, index) => index + 1);
-  }
-  const pages = new Set<number>([
-    1,
-    2,
-    3,
-    total - 2,
-    total - 1,
-    total,
-    current - 1,
-    current,
-    current + 1,
-  ]);
-  const sorted = [...pages].filter((page) => page >= 1 && page <= total).sort((a, b) => a - b);
-  const items: Array<number | "ellipsis"> = [];
-  let previous = 0;
-  for (const page of sorted) {
-    if (previous && page - previous > 1) {
-      items.push("ellipsis");
-    }
-    items.push(page);
-    previous = page;
-  }
-  return items;
-}
-
-function workspaceLabelFromPath(path: string): string {
-  return path.replace(/\\/g, "/").split("/").filter(Boolean).pop() ?? path;
-}
-
-function pad2(value: number): string {
-  return String(value).padStart(2, "0");
-}
 
 const CUSTOM_REPEAT_SELECT_CONTENT_CLASS =
   "w-[var(--radix-select-trigger-width)] px-0 py-1.5 [&_[data-position=popper]]:px-1 [&_[data-slot=select-scroll-up-button]]:hidden [&_[data-slot=select-scroll-down-button]]:hidden";
@@ -357,11 +329,6 @@ function ScrollNumberColumn({
   );
 }
 
-/** 某月天数（用闰年 2024 作参照，使 2 月可选到 29）；month 为 1-12。 */
-function daysInMonth(month: number): number {
-  return new Date(2024, month, 0).getDate();
-}
-
 /**
  * 月/日选择器（custom → yearly 用）：一个 pill 触发器 + 弹层内月/日两列滚动选择，
  * 样式与 TimeOfDayPicker 对齐。切月后当前日超过该月最大天数时自动收敛。
@@ -482,25 +449,6 @@ function WeekdayPicker({
       </PopoverContent>
     </Popover>
   );
-}
-
-function toDateInputValue(timestamp: number | undefined): string {
-  const date = timestamp ? new Date(timestamp) : new Date(Date.now() + 24 * 60 * 60 * 1_000);
-  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
-}
-
-function localDateEndTimestamp(value: string): number | undefined {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
-  if (!match) return undefined;
-  const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 23, 59, 59, 999);
-  return Number.isNaN(date.getTime()) ? undefined : date.getTime();
-}
-
-function parseDateInputValue(value: string): Date | null {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
-  if (!match) return null;
-  const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
-  return Number.isNaN(date.getTime()) ? null : date;
 }
 
 function EndDatePicker({
@@ -1093,105 +1041,6 @@ async function saveAndRunAutomation(
   if (!(await save())) return false;
   await run();
   return true;
-}
-
-function defaultBuilder(): CronBuilderState {
-  return {
-    frequency: "daily",
-    hour: 9,
-    minute: 0,
-    weekdays: [1],
-    dayOfMonth: 1,
-    rawExpr: "0 9 * * *",
-    customInterval: 1,
-    customUnit: "daily",
-    customWeekdays: [1],
-    customMonthDays: [1],
-    customMonth: new Date().getMonth() + 1,
-    customMonthlyMode: "date",
-  };
-}
-
-function initialBuilder(
-  editing: ACodeAutomation | null,
-  initialDraft?: { title: string; cronExpr: string; prompt: string } | null,
-): CronBuilderState {
-  if (!editing) {
-    return initialDraft ? parseCronToBuilder(initialDraft.cronExpr) : defaultBuilder();
-  }
-
-  const parsedBuilder = parseCronToBuilder(editing.cronExpr);
-  if (!editing.scheduleRule) return parsedBuilder;
-
-  return {
-    ...parsedBuilder,
-    frequency: "custom",
-    hour: editing.scheduleRule.hour,
-    minute: editing.scheduleRule.minute,
-    customInterval: editing.scheduleRule.interval,
-    customUnit: editing.scheduleRule.unit,
-    customWeekdays: editing.scheduleRule.weekdays ?? [1],
-    customMonthDays: editing.scheduleRule.monthDays ?? [1],
-    customMonth:
-      editing.scheduleRule.months?.[0] ?? new Date(editing.scheduleRule.anchorAt).getMonth() + 1,
-    customMonthlyMode: editing.scheduleRule.monthlyMode ?? "date",
-  };
-}
-
-// ---- 运行历史状态映射(与 AutomationRunsDialog 保持一致) ----
-type RunStatusKind = "running" | "succeeded" | "failed" | "stopped" | "skipped";
-function resolveRunStatus(run: ACodeAutomationRun): RunStatusKind {
-  if (run.dispatchStatus === "skipped") return "skipped";
-  if (run.dispatchStatus === "failed_to_dispatch") return "failed";
-  switch (run.outcome) {
-    case "succeeded":
-      return "succeeded";
-    case "failed":
-      return "failed";
-    case "stopped":
-      return "stopped";
-    default:
-      return "running";
-  }
-}
-// 运行状态用「圆点 + 彩色文字」呈现（Scheduled 历史表密度规格）。
-const RUN_STATUS_DOT_CLASS: Record<RunStatusKind, string> = {
-  running: "bg-primary",
-  succeeded: "bg-success",
-  failed: "bg-destructive",
-  stopped: "bg-foreground-subtlest",
-  skipped: "bg-warning",
-};
-const RUN_STATUS_TEXT_CLASS: Record<RunStatusKind, string> = {
-  running: "text-primary",
-  succeeded: "text-success",
-  failed: "text-destructive",
-  stopped: "text-foreground-subtle",
-  skipped: "text-warning",
-};
-
-const AUTOMATION_STATUS_DOT_CLASS: Record<AutomationStatusKind, string> = {
-  active: "bg-success",
-  paused: "bg-warning",
-  failed: "bg-destructive",
-  completed: "bg-foreground-subtlest",
-};
-
-function normalizeAutomationScheduleRule(
-  rule: ACodeAutomationScheduleRule | null | undefined,
-): Record<string, unknown> | null {
-  if (!rule) return null;
-  return {
-    unit: rule.unit,
-    interval: rule.interval,
-    hour: rule.hour,
-    minute: rule.minute,
-    anchorAt: rule.anchorAt,
-    weekdays: rule.weekdays ?? [],
-    monthDays: rule.monthDays ?? [],
-    months: rule.months ?? [],
-    monthlyMode: rule.monthlyMode ?? "date",
-  };
 }
 
 export function AutomationEditView({

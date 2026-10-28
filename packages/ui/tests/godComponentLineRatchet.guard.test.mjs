@@ -30,9 +30,15 @@ const uiSrc = `${root}packages/ui/src`;
 
 /** 已登记上帝组件的行数上限（物理行）。跌破 400 后删除对应条目。 */
 const REGISTERED_LINE_CAPS = {
-  "settings/AutomationEditView.tsx": 2950,
-  "settings/SubagentsSection.tsx": 2671,
-  "settings/AutomationsSection.tsx": 1979,
+  "settings/AutomationEditView.tsx": 2799,
+  // 2026-10-28 batch-1 helper 外迁落地（21 纯函数 + 6 常量 → settings/subagents/agentModel.ts，318 行）：2671 → 2416。
+  "settings/SubagentsSection.tsx": 2416,
+  // 2026-10-28 batch-1 helper 外迁落地（navigationModel + 操作菜单 + 空态）：1979 → 1695。
+  "settings/AutomationsSection.tsx": 1695,
+  // 2026-10-28 batch-1 helper 外迁落地（remotePluginSyncModel/Types 拆出）：1898 → 1460。
+  "settings/RemotePluginSyncDialog.tsx": 1460,
+  // 2026-10-28 batch-1 helper 外迁落地（refresh queue / status / OAuth authorization build 纯逻辑 → settings/mcp/mcpSettingsModel.ts）：1595 → 1346。
+  "settings/McpSettingsSection.tsx": 1346,
 };
 
 /** 与 scripts/architecture/ratchet.mjs countPhysicalLines 同定义。 */

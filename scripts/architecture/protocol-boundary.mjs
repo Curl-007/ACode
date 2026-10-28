@@ -20,9 +20,10 @@ const LEGACY_TYPES_FILE = "packages/shared/src/acode-protocol-legacy-types.ts";
 // v4→legacy-types 幸存符号白名单（冻结面）。
 //
 // acode-protocol-legacy-types.ts 的头注自述：旧协议 barrel（acode-protocol/index.ts）于 M4
-// 删除后，本文件是该协议面的**唯一幸存面**——故它不在 M4 被删，而是被甄别保留。当前 4 个 v4
-// 文件（snapshot / transport / telemetry / script-workflow-management）从中导入的这 6 个
-// schema 是合法的长期依赖，本白名单使这些既有边保持绿。
+// 删除后，本文件是该协议面的**唯一幸存面**——故它不在 M4 被删，而是被甄别保留。v4 文件
+// （snapshot / transport / telemetry / script-workflow-management / command）从中导入的
+// 已登记 schema 是合法的长期依赖，本白名单使这些既有边保持绿；M2-2 经 review 显式登记
+// acodeSessionGoalSchema（goal query / goalControl result 的 wire 契约面）。
 //
 // 缺陷不在这些既有边，而在守护谓词此前**完全不覆盖**这个文件——未来 v4 若新增导入一个 M4
 // 会甄别删除的符号，门禁不会拦截。本集合冻结这 6 个既有幸存符号；任何**新**符号（不在集合
@@ -36,6 +37,17 @@ const V4_LEGACY_TYPES_SURVIVOR_SYMBOLS = Object.freeze(
     "acodeSessionContextCacheUsageSchema",
     "acodeWorkspaceRefSchema",
     "acodeSyntheticUserMessageSourceSchema",
+    // M2-2（2026-10-28，spec apps/acode-cli/specs/m2-2-session-control.md）：goal wire 形态
+    // 是 v4 goal query 与 goalControl command result 的契约面；legacy-types.ts 是 M4 后
+    // 唯一幸存面，本符号随之幸存，显式登记（review = 本批 spec §3 所有权节）。
+    "acodeSessionGoalSchema",
+    // M2-3（2026-10-28，spec apps/acode-cli/specs/m2-3-session-readwrite.md §3）：
+    // session 读写面六 query 的 params/result 词汇（deliveryKind 投递画像、mode 值域、
+    // sessionInfo/messages result 元素形态）随 M4 幸存面收编，显式登记。
+    "acodeDeliveryKindSchema",
+    "acodeSessionModeSchema",
+    "acodeSessionInfoSchema",
+    "acodeMessageWithPartsSchema",
   ]),
 );
 

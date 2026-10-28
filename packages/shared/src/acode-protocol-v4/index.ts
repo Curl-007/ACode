@@ -35,6 +35,40 @@ export * from "./network-capture.js";
 export * from "./overnight-completion.js";
 // 归档会话 header 冷读（legacy M1 前置件：给 UI 归档任务 header 兜底一条 v4 只读路径）。
 export * from "./session-header-meta.js";
+// M2-2 session 控制面：goalControl / closeSession 的 command result variants
+// （specs/m2-2-session-control.md；command.ts 仅列引用，实体在本叶）。
+export * from "./session-control.js";
+// M2-4 inbound 交互面：六反向请求（permission/userInput announce + providerRuntimeHeaders/
+// officialMcp/browser×2 真 RPC）与两条通知（CUA 事件 / 凭据取消）的 wire schema
+// （specs/m2-4-inbound-interaction.md；transport.ts 仅登记方法名）。
+export * from "./inbound-interaction.js";
+
+// M2-7 定时任务 + Off-Peak 七法（inbound RPC）wire schema 叶
+// （specs/m2-7-automation-offpeak.md；transport.ts 仅登记方法名）。
+export * from "./automation-offpeak.js";
+// 插件管理面（M2-5：plugins.js 域零件；plugins-queries.js 读六法 list/overview/describe/
+// validate/referenceCatalog/resolveSuggestedReference；plugins-commands.js 写十法
+// setEnabled/marketplace×3/install/uninstall/update/restoreBuiltin/configure/resetConfig；
+// cancelOperation 保留 legacy 词，见 spec §4）。
+export * from "./plugins.js";
+export * from "./plugins-queries.js";
+export * from "./plugins-commands.js";
+// M2-6：已保存工作流 GUI 中枢（与 workflow-runs* 会话内执行面不同域）/ Skill 引用 catalog /
+// MCP server 列表的 v4 query/command 面（specs/m2-6-workflows-skills-mcp.md）。
+export * from "./workflows.js";
+export * from "./skills.js";
+// M2-3 session 读写面：read/resume/list/messages/events/subscribe 六 query params +
+// runtimePreferences 推送载荷 + createSession 命令 parity 字段形状
+// （specs/m2-3-session-readwrite.md）。
+export * from "./session-readwrite.js";
+export * from "./mcp.js";
+// M2-8：workspace 运行时面（readPresentation / generateText / cancelGenerateText）/
+// workspace 授权与策略同步面（hooks/trustGrant + update*×4）/ provider+process 域
+// （updateAccountConfig / testModelConnectivity / childProcesses）的 v4 面
+// （specs/m2-8-workspace-provider-process.md）。
+export * from "./workspace-runtime.js";
+export * from "./workspace-policies.js";
+export * from "./provider-process.js";
 // 工作区 transcript（files.* / git.* / world.run 的回放）。
 export * from "./workflow-workspace.js";
 export * from "./attachment-ref.js";

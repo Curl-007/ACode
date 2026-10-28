@@ -4,7 +4,12 @@ import { localTtftFactsSchema } from "../localTtft.js";
 // 阶段为类型占位（后半接通道层时启用），数据形状已按规范定稿。
 import { z } from "zod";
 import { APP_USAGE_RANGES, appUsageSnapshotSchema } from "../usage-stats.js";
-import { acodeWorkspaceRefSchema } from "../acode-protocol-legacy-types.js";
+import {
+  acodeSessionGoalSchema,
+  acodeWorkspaceRefSchema,
+} from "../acode-protocol-legacy-types.js";
+// M2-2 debug query 的 result 直接复用中立叶（零新建词汇；legacy session/debug 同 schema）。
+import { sessionDebugSnapshotSchema } from "../session-debug.js";
 import {
   PROTOCOL_V4_LIMITS,
   V4_WIRE_PROTOCOL_VERSION,
@@ -417,6 +422,100 @@ export const V4_METHODS = {
   // 为 header 兜底读拉起整个 agent 进程是不必要的成本，也违背「观察路径不改 session 生命周期」。
   // 新方法天然偏斜安全：旧桌面根本不会调用它。
   sessionHeaderMeta: "v4/session/headerMeta",
+  // ── M2-2 session 控制面读路径（specs/m2-2-session-control.md）──
+  // goal 状态查询（legacy session/goal action:"show" 的读形态）：live record 定域
+  // （goal 权威是 runtime target 面），只读、无状态、超时重发安全。
+  sessionGoalQuery: "v4/session/goal",
+  // session debug 观测快照（裁决：sessionDebug 保留）：result 复用中立叶
+  // ../session-debug.js 的 sessionDebugSnapshotSchema，零新建词汇。live-only。
+  sessionDebug: "v4/session/debug",
+  // ── M2-3 session 读写面（specs/m2-3-session-readwrite.md；params schema 在
+  // session-readwrite.ts）──read/resume/list/messages/events 只读、超时重发安全；
+  // resume 有冷恢复激活副作用（等价 legacy session/resume）；subscribe 写
+  // record.deliveryKind/legacyStreamSubscribed 并原子返回同一水位 replay+snapshot
+  // （换名承载 legacy 语义，spec §6.2）。runtimePreferences 是 host→CLI 推送
+  // （connectionFlow 先例），CLI 侧缓存供物化读取。createSession 复用 v4/command。
+  sessionRead: "v4/session/read",
+  sessionResume: "v4/session/resume",
+  sessionsList: "v4/sessions/list",
+  sessionMessages: "v4/session/messages",
+  sessionEvents: "v4/session/events",
+  sessionSubscribe: "v4/session/subscribe",
+  sessionRuntimePreferences: "v4/session/runtimePreferences",
+  // ── M2-6：已保存工作流 GUI 中枢（六法，workspace 级无会话；schema 在 workflows.ts）──
+  // 与 workflow-runs* 会话内执行面不同域。list/get/runs 只读；updateMeta/delete/move 是
+  // 文件写命令。全局档 scope 语义与 legacy 逐字一致。
+  workflowsList: "v4/workflows/list",
+  workflowsGet: "v4/workflows/get",
+  workflowsUpdateMeta: "v4/workflows/updateMeta",
+  workflowsDelete: "v4/workflows/delete",
+  workflowsRuns: "v4/workflows/runs",
+  workflowsMove: "v4/workflows/move",
+  // Skill 只读引用 catalog（schema 在 skills.ts；session/workspace 双 authority）。
+  skillsReferenceCatalog: "v4/skills/referenceCatalog",
+  // MCP server 状态列表（schema 在 mcp.ts；mode=status 只读，connect 收敛连接集）。
+  mcpList: "v4/mcp/list",
+  // ── M2-5：plugins 管理面（16 法，workspace 级无会话；schema 在 plugins.ts，
+  // spec m2-5-plugins.md）──list/overview/describe/validate/referenceCatalog/
+  // resolveSuggestedReference 为读（后两个有 IO/官方目录刷新副作用，语义仍是查询）；
+  // 其余为写命令。referenceCatalog 恒带 category（合并 legacy 两词）。
+  // cancelOperation 保留 legacy 词：中止注册表按 operationId 键控、与协议代际无关。
+  pluginsList: "v4/plugins/list",
+  pluginsOverview: "v4/plugins/overview",
+  pluginsDescribe: "v4/plugins/describe",
+  pluginsValidate: "v4/plugins/validate",
+  pluginsReferenceCatalog: "v4/plugins/referenceCatalog",
+  pluginsResolveSuggestedReference: "v4/plugins/resolveSuggestedReference",
+  pluginsSetEnabled: "v4/plugins/setEnabled",
+  pluginsMarketplaceAdd: "v4/plugins/marketplace/add",
+  pluginsMarketplaceRemove: "v4/plugins/marketplace/remove",
+  pluginsMarketplaceUpdate: "v4/plugins/marketplace/update",
+  pluginsInstall: "v4/plugins/install",
+  pluginsUninstall: "v4/plugins/uninstall",
+  pluginsUpdate: "v4/plugins/update",
+  pluginsRestoreBuiltin: "v4/plugins/restoreBuiltin",
+  pluginsConfigure: "v4/plugins/configure",
+  pluginsResetConfig: "v4/plugins/resetConfig",
+  // ── M2-8：workspace + provider + process 域 11 法（workspace 级无会话；
+  // schema 在 workspace-runtime.ts / workspace-policies.ts / provider-process.ts，
+  // spec m2-8-workspace-provider-process.md）──readPresentation/childProcesses 只读；
+  // generateText 有 LLM IO 且可取消（operationId 键控，与 legacy 共用同一注册表）；
+  // hooks/trustGrant 带 accepted→同 workspaceKey 活跃 session 重载联动；
+  // 四个 update*Policy/Preferences 是 host 判定结论的进程缓存同步；
+  // updateAccountConfig 是 Account 快照热同步（revision 回执）。11 法全迁、无保留词。
+  workspaceReadPresentation: "v4/workspace/readPresentation",
+  workspaceHookTrustGrant: "v4/workspace/hooks/trustGrant",
+  workspaceUpdateInteractionPreferences: "v4/workspace/updateInteractionPreferences",
+  workspaceUpdateModelIoPreferences: "v4/workspace/updateModelIoPreferences",
+  workspaceUpdateOffPeakToolPolicy: "v4/workspace/updateOffPeakToolPolicy",
+  workspaceUpdateDynamicWorkflowPolicy: "v4/workspace/updateDynamicWorkflowPolicy",
+  workspaceGenerateText: "v4/workspace/generateText",
+  workspaceCancelGenerateText: "v4/workspace/cancelGenerateText",
+  providerUpdateAccountConfig: "v4/provider/updateAccountConfig",
+  providerTestModelConnectivity: "v4/provider/testModelConnectivity",
+  processChildProcesses: "v4/process/childProcesses",
+  // ── M2-4：inbound 交互面六反向请求（agent/CLI → host；specs/m2-4-inbound-interaction.md）──
+  // permission/userInput 是 announce+immediate ack（host 登记镜像 + emitSessionEvent 后回 {}，
+  // 真正应答走既有 v4 resolveInteraction command）；其余四法是同形真 RPC。
+  // 偏斜门控：CLI 先发 v4，-32601 回落 legacy（automation-port 先例）。schema 在
+  // inbound-interaction.ts；wire 形态与 legacy 逐字一致，只换方法名。
+  interactionRequestPermission: "v4/interaction/requestPermission",
+  interactionRequestUserInput: "v4/interaction/requestUserInput",
+  interactionRequestProviderRuntimeHeaders: "v4/interaction/requestProviderRuntimeHeaders",
+  interactionRequestOfficialMcpAuthHeaders: "v4/interaction/requestOfficialMcpAuthHeaders",
+  interactionBrowserList: "v4/interaction/browserList",
+  interactionBrowserExecute: "v4/interaction/browserExecute",
+  // ── M2-7：定时任务 + Off-Peak 七法（agent/CLI → host 纯请求/响应真 RPC；
+  // specs/m2-7-automation-offpeak.md）──workspace 由 host 从当前 session 注入，
+  // 不进协议参数。偏斜门控：CLI 先发 v4，-32601 回落 legacy（automation-port 先例）。
+  // schema 在 automation-offpeak.ts；wire 形态与 legacy 逐字一致，只换方法名。
+  automationCreate: "v4/automation/create",
+  automationUpdate: "v4/automation/update",
+  automationCheckTaskBinding: "v4/automation/checkTaskBinding",
+  automationList: "v4/automation/list",
+  automationDelete: "v4/automation/delete",
+  offPeakCreate: "v4/offPeak/create",
+  offPeakList: "v4/offPeak/list",
   // 附件事务：禁止 full-data RPC。每个 chunk 的 decoded bytes <=512KiB，
   // renderer->host Channel 与 host->CLI NDJSON 都必须逐 request 证明 <=1MiB。
   attachmentBegin: "v4/attachment/begin",
@@ -466,6 +565,14 @@ export const V4_NOTIFICATIONS = {
   // 仅 live 的 agent 进程网络观测批量上报（schema 在 network-capture.ts）；
   // 进程内事实，重放不补造——与 cuaPermissionObservation 同一条纪律。
   networkCaptureRecords: "v4/networkCapture/records",
+  // ── M2-4（specs/m2-4-inbound-interaction.md）：CLI → host 两条通知 ──
+  // CUA 操作生命周期：仅当前进程 live 产生，重放不补造（与 cuaPermissionObservation 同族）；
+  // fail-closed 迁不删——形态与 legacy computer-use/operation-event 逐点等价。
+  // 发送门控 = 连接级 hostV4InboundEstablished flag（host 对未知通知静默丢弃，无探测回路）。
+  cuaOperationEvent: "v4/cua/operationEvent",
+  // providerRuntimeHeaders 请求的成对取消：形态绑定其触发请求的形态（spec §2.3），
+  // 不走上面的 flag。
+  interactionProviderRuntimeHeadersCancelled: "v4/interaction/providerRuntimeHeadersCancelled",
 } as const;
 
 /** 3.3.6 SSH 历史任务归属证明与 sessions-index 冷种子共享同一有界窗口。 */
@@ -840,6 +947,37 @@ export const v4UsageStatsParamsSchema = z
 export type V4UsageStatsParams = z.infer<typeof v4UsageStatsParamsSchema>;
 export const v4UsageStatsResultSchema = appUsageSnapshotSchema;
 export type V4UsageStatsResult = z.infer<typeof v4UsageStatsResultSchema>;
+
+// ── M2-2 session 控制面 query（specs/m2-2-session-control.md）──
+// goal 状态查询：legacy session/goal action:"show" 的读形态。live record 定域
+// （CLI handler 走 requireSession；goal 权威是 runtime target 面，刻意不做 headerMeta 式
+// 持久层冷读）。supported=false 承载 legacy「Goal management is not available」分支
+// （app.readTarget 缺席）；supported=true && target=null = 有能无目标。
+export const v4SessionGoalQueryParamsSchema = z
+  .object({
+    sessionId: z.string().min(1),
+  })
+  .strict();
+export type V4SessionGoalQueryParams = z.infer<typeof v4SessionGoalQueryParamsSchema>;
+export const v4SessionGoalQueryResultSchema = z
+  .object({
+    supported: z.boolean(),
+    target: acodeSessionGoalSchema.nullable().optional(),
+  })
+  .strict();
+export type V4SessionGoalQueryResult = z.infer<typeof v4SessionGoalQueryResultSchema>;
+
+// session debug 观测快照（裁决：保留）。result 复用中立叶 session-debug.ts 的
+// sessionDebugSnapshotSchema——legacy session/debug 同 schema，消费侧（useSessionDebug）
+// 字段集零迁移成本。
+export const v4SessionDebugParamsSchema = z
+  .object({
+    sessionId: z.string().min(1),
+  })
+  .strict();
+export type V4SessionDebugParams = z.infer<typeof v4SessionDebugParamsSchema>;
+export const v4SessionDebugResultSchema = sessionDebugSnapshotSchema;
+export type V4SessionDebugResult = z.infer<typeof v4SessionDebugResultSchema>;
 
 // 会话级 token 用量（旧 session/usage 的 v4 名字空间落位：会话是协议一等概念，
 // task 是 UI 投影概念不进协议词表）。字段与旧 result 同形，旧 schema 随词一起死。

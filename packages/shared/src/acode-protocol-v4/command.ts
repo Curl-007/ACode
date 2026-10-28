@@ -31,6 +31,13 @@ import {
   acodeBrowserAmbientContextSchema,
   acodeProtocolMcpServerSchema,
 } from "../acode-protocol-shared.js";
+// M2-2 result variants（goalControl / closeSession）的实体叶——本文件受 max-lines 400
+// 约束，schema 定义放 session-control.ts，此处只引名单（script-workflow-management 同例）。
+import { closeSessionResultSchema, goalControlResultSchema } from "./session-control.js";
+// M2-3 createSession parity 字段形状（specs/m2-3-session-readwrite.md §2.1）：
+// sessionId/persistence/titleGenerationEnabled/toolAllowlist/toolDenylist/
+// importedHistory/mode/model/thoughtLevel 的实体在 session-readwrite.ts，此处只 spread。
+import { v4SessionCreateParityFieldShapes } from "./session-readwrite.js";
 
 const createSessionRequestedConfigSchema = z.object({
   modelSelection: modelSelectionSchema.optional(),
@@ -91,6 +98,11 @@ export const commandPayloadSchemas = {
     // 同名字段——故 Host 侧必须以覆盖语义（spread 在前、可信值在后）盖章，伪造值永不存活。
     // legacy session/create params 不加本字段（legacy 面只删不增，同 toolSearchMode 的裁决）。
     clientMode: z.enum(["desktop-continuous", "web-remote-replayable"]).optional(),
+    // M2-3 parity 字段（实体在 session-readwrite.ts）：facade 迁移后 create 经 v4 命令
+    // 直达 CLI 的 legacy createSessionWithProjection 路径（rawParams 直通），
+    // mode/model/thoughtLevel 走 legacy createRecord 语义（不替代 payload.config 的
+    // 草稿态覆盖面）。additive：旧 CLI 静默丢键 fail-closed。
+    ...v4SessionCreateParityFieldShapes,
   }),
   // 父会话由 envelope.sessionId 指定；服务端从父 record 派生完整运行配置。
   // firstInput 存在时，child 创建完成后立即启动首条普通输入；缺省则保持空副屏。
@@ -253,6 +265,10 @@ export const commandPayloadSchemas = {
   setFollowupMode: z.object({ mode: z.enum(["queue", "guide"]) }),
   pauseGoal: z.object({}),
   resumeGoal: z.object({}),
+  // M2-2：legacy session/goal action:"clear" 的 v4 等价（保守无能力损失裁决——facade
+  // 的 clear 是存活 RPC 面能力；v4 UI slash 层标 unsupported 是产品面取舍，不回收协议能力）。
+  // 非 CAS：legacy clear 无 revision 断言；无目标时幂等成功（与 pause/resume 同族）。
+  clearGoal: z.object({}),
   cancelBackgroundWork: z.object({ workId: z.string() }),
   // cancel & resume：恢复一个已取消 / 被进程死亡
   // 打断的 dwf run。workId ≡ runId（与 cancelBackgroundWork 同一个身份等式）；`name` 可选，
@@ -278,6 +294,14 @@ export const commandPayloadSchemas = {
   amendWorkflowRunSettings: amendWorkflowRunSettingsPayloadSchema,
   renameSession: z.object({ title: z.string() }),
   deleteSession: z.object({}),
+  // M2-2 裁决（2026-10-28）：close ≠ delete 两语义并存。closeSession = 终止/归档
+  // snapshot 写入（关闭运行时 + 清通道），deleteSession 保持删除语义不动。
+  // expectedPersistence 是 legacy session/close 同名断言的等价物承载：调用方声明期望的
+  // 持久化档，CLI 侧与 record.persistence 不匹配时 graceful no-op（typed result
+  // closed:false），匹配/缺席才执行关闭。非 CAS——legacy close 本无 revision 断言，
+  // persistence 匹配即其条件断言语义（对应旧 shouldCloseSessionForExpectedPersistence）；
+  // 值域与 acodeSessionPersistenceSchema 逐字一致。
+  closeSession: z.object({ expectedPersistence: z.enum(["immediate", "deferred"]).optional() }),
   // /usage 查询命令族（apps/acode-cli/specs/usage-statusbar.md）：零 token 本地查询，
   // 不进模型轮。timeZone 由客户端携带（IANA），与 v4/usage/stats 通道同惯例；
   // 缺席按 UTC 归桶。
@@ -488,6 +512,10 @@ export const commandResultSchema = z.discriminatedUnion("type", [
   // 幂等；错误不走 result variant（failed ACK reasonCode/message 上行，不伪造空列表）。
   listScriptWorkflowRunsResultSchema,
   listScriptWorkflowDefinitionsResultSchema,
+  // M2-2：goal 控制四命令回执与 closeSession 断言裁决（schema 实体在 session-control.ts，
+  // 与 script-workflow-management 结果叶同例——command.ts 受 max-lines 400 约束只列引用）。
+  goalControlResultSchema,
+  closeSessionResultSchema,
 ]);
 export type CommandResult = z.infer<typeof commandResultSchema>;
 

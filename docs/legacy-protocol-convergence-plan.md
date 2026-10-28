@@ -43,11 +43,18 @@
 
 每个里程碑的验收都必须包含：对应 grep 归零命令 + `pnpm typecheck` + `pnpm test`（全仓）+ `pnpm architecture:check`；超限文件数下降时运行 `pnpm architecture:baseline:update` 收紧 ratchet 基线。
 
-### M1 — UI 旧投影收口（可与 M2 并行）
+### M1 — UI 旧投影收口（可与 M2 并行）——✅ 已完成（2026-10-28）
 
 - 内容：UI 消费文件从 `acodeSessionProjection` 读路径迁到 v4 snapshot/query 投影。
 - 验收：`git grep 'from "@/lib/acodeSessionProjection' -- packages/ui/src` 归零（**零 import** 判据，见下「验收口径」）；`pnpm --filter @acode/ui test` 绿。
 - 风险：SessionPane.tsx 本身是上帝组件（带 max-lines 豁免），改动面大；迁移时不得顺手重构，只换投影读路径。
+
+> **M1 完成登记（2026-10-28）**：UI 投影桥 `acodeSessionProjection.ts`（272 行、5 导出）已整体退役删除，
+> 真实 import = 0（满足「零 import」验收判据），`pnpm --filter @acode/ui test` 772/772 全绿。
+> 最后一个产品决策（`workspacePrepareRpc` 预热期 mode 目录来源）已裁决——**mode 是常量**
+> （legacy `readWorkspacePresentation` 硬编码 `mode:"build"`，协议从来不是 mode 的权威源），
+> 见 `packages/ui/specs/workspace-prepare-mode-source.md`。slashCommands 仍是真实协议事实，
+> 归 M2 切换，不在 M1 范围。
 
 > **实测订正（2026-10-27，M1 启动前调研）**：本节的三条前提经源码核验**均需修正**，且 M1
 > **不是** bounded 迁移——它阻塞在尚不存在的 v4 协议面上。逐条：
@@ -308,7 +315,7 @@ consumer API，v4 command 直接依赖中立模块。这样 M4 删除 legacy bar
 | 指标                                | 2026-10-05 基线 | 2026-10-09 实测                                                         | 2026-10-26 实测                                                              | 目标    |
 | ----------------------------------- | --------------- | ----------------------------------------------------------------------- | ---------------------------------------------------------------------------- | ------- |
 | services legacy 消费文件数          | 7               | 6（independentPlanSupport 已切 v4，仅剩 type-only 引用）                | 6（未推进；`acodeProtocolClient.ts` 仍在，independentPlanSupport 仍 type-only） | 0（M2） |
-| UI 旧投影消费文件数                 | 8               | 10（新增 v4/composer 两处 `parseModelPickerValue` 消费，M1 需一并迁移） | 12（未降反增：新增 settings/SubagentModelBatch{Bar,Dialog} 两处消费）→ **2026-10-28：桥已退役，真实 import = 0**（见下 M1 状态说明） | 0（M1） |
+| UI 旧投影消费文件数                 | 8               | 10（新增 v4/composer 两处 `parseModelPickerValue` 消费，M1 需一并迁移） | 12（未降反增：新增 settings/SubagentModelBatch{Bar,Dialog} 两处消费）→ **2026-10-28：M1 完成——桥已退役，真实 import = 0**（含 mode 来源裁决，见 M1 节） | 0（M1）✅ |
 | bootstrap legacy server 文件数/行数 | 48 / 14,713     | 48（M3 未启动）                                                         | 48 / 15,188（M3 未启动；行数因 legacy 面内既有演进微增）→ **2026-10-27 订正：50 / 15,690**（U08 `1ead67e2` 新增 2 文件，见下）| 0（M3） |
 | shared legacy 协议文件行数          | 3,714           | 3,662（M2-B 已外移 MCP/browser schema 至 acode-protocol-shared）        | 3,652（barrel −2，仅 R2-02 schema 外移所致，非退役；legacy-types 607 行）    | 0（M4） |
 | v4-bridge 过渡钩子数                | 6（见桥头注）   | 6                                                                       | 6（M3 未启动，桥头注仍列 6 个钩子）                                          | 0（M3） |
@@ -350,10 +357,13 @@ git grep 'from "@/lib/acodeSessionProjection' -- packages/ui/src   # 现 = 0，�
 本文件 §M1 的「验收」行、`docs/upgrades/runtime-and-protocol-2026-10.md` 的 M1 数量门禁行、
 以及本进度表 UI 行均已按此裁决更新。保留 3 处来历注释。
 
-**M1 的 UI 侧到此完成，但 M1 整体未标记完成**：legacy **协议**读路径 `readWorkspacePresentation`
-仍在被 workspacePrepareRpc 使用（经它取 mode + slashCommands）。那属 **M2/M4**（协议退役），
-不是 M1（UI 投影桥收口）——两者是不同里程碑。协议侧要收口须先解决「workspace-config 预热种子
-在无 live session 时返回 null」的问题（需产品决策：预热期的 mode 目录从哪来，见 M1 节 2026-10-28 裁决）。
+**M1 UI 侧到此完成，M1 整体也已标记完成（2026-10-28 终态）**：legacy **协议**读路径
+`readWorkspacePresentation` 仍在被 workspacePrepareRpc 使用，但**只取 slashCommands**
+——`mode` 字段经实测硬编码 `"build"`（`workspace-model-runtime.ts:26`），不是协议事实，
+UI 已改为不采信（`packages/ui/specs/workspace-prepare-mode-source.md` 裁决 + spec 化）。
+slashCommands 的协议切换属 **M2/M4**（协议退役），不是 M1（UI 投影桥收口）——两者是不同里程碑。
+原阻塞「预热期 mode 目录从哪来」是个伪问题（mode 无权威源，本来就是常量），已通过
+「接受 mode 是常量」裁决解除。
 
 **bootstrap legacy server 增量登记（2026-10-27）**：M3 待删目录 `bootstrap/src/acode-protocol/` 自 1.0.4 后由 48 增至 **50 文件 / 15,690 行**——U08 provider 诊断（提交 `1ead67e2`）新增 `provider-diagnostics.ts`（352 行）
 与 `provider-diagnostics-ports.ts`（79 行）。**这不违反 shared barrel 冻结纪律**：新方法名 `PROVIDER_DIAGNOSTICS_METHODS`

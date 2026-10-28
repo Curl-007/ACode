@@ -172,7 +172,12 @@ export const commandPayloadSchemas = {
   }),
   // compact 是输入型维护命令：idle 时立即执行，busy/held 时进入 FIFO。
   // 因为 admission 与当前 revision 无关，不走 CAS；sourceCommandId 提供幂等边界。
-  compact: z.object({}),
+  // instructions（M2-1 裁决 2026-10-28，默认裁决产品可推翻）：承载 legacy
+  // session/compact 的 instructions 字段，不丢字段；CLI handler 消费接线属 M2-2，
+  // 本批只落协议面（zod 缺省剥离未知键，旧 CLI 收到该字段静默丢弃，向后兼容）。
+  compact: z.object({
+    instructions: z.string().optional(),
+  }),
   // running 时对稳定 assistant row 可用。
   forkAssistant: z.object({ target: conversationRowTargetSchema }),
   applyFileRewind: z.object({ target: conversationRowTargetSchema }),
@@ -236,11 +241,14 @@ export const commandPayloadSchemas = {
     thought: z.string(),
   }),
   // additive（冻结面按黄金测试背书演进）：agent 协作模式切换。
-  // 值域 = core CollaborationMode 的可切换子集（auto 非用户可切，不进 UI 命令面）。
-  // dontAsk（P1 权限裁决批2，「拒绝代替询问」）随 contracts CollaborationMode 扩集
-  // 进入可切换子集：桌面 picker → services → 本命令 → CLI 的可达链在协议面不缺环。
+  // 值域 = core CollaborationMode 全值域。dontAsk（P1 权限裁决批2，「拒绝代替询问」）
+  // 随 contracts CollaborationMode 扩集进入可切换子集：桌面 picker → services → 本命令
+  // → CLI 的可达链在协议面不缺环。auto（M2-1 裁决 2026-10-28，默认裁决产品可推翻）：
+  // legacy session/setMode 接受 auto（acodeSessionModeSchema 含 auto）且有残留消费，
+  // v4 刻意排除会收窄 legacy 能力——补值 = 放宽，向后兼容；CLI handler 直驱
+  // app.setMode（core CollaborationMode 本就含 auto），无需改动。
   switchCollaborationMode: z.object({
-    mode: z.enum(["build", "edit", "plan", "yolo", "dontAsk"]),
+    mode: z.enum(["build", "edit", "plan", "yolo", "dontAsk", "auto"]),
   }),
   setFollowupMode: z.object({ mode: z.enum(["queue", "guide"]) }),
   pauseGoal: z.object({}),

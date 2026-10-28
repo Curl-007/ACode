@@ -63,8 +63,6 @@ import {
   acodeSessionRuntimePreferencesResultSchema,
   acodeSessionResumeParamsSchema,
   acodeSessionSendParamsSchema,
-  acodeSessionSetModeParamsSchema,
-  acodeSessionSetModelParamsSchema,
   acodeSessionSetThoughtLevelParamsSchema,
   acodeSessionStopParamsSchema,
   acodeSessionSubscribeParamsSchema,
@@ -2649,17 +2647,6 @@ export async function cancelBackgroundTask(
   return result;
 }
 
-export async function setModel(context: ACodeProtocolAgentServerContext, rawParams: unknown) {
-  const params = parseParams(acodeSessionSetModelParamsSchema, rawParams);
-  const record = requireSession(context, params.sessionId);
-  assertExpectedRevision(record, params.expectedRevision);
-  await runSessionModelConfigMutation(record.app, async () => {
-    // 完整 Session 配置命令不能经身份字符串丢掉 reasoning；由共享 setter 原子校验/保存。
-    await record.app.setModel(params.model);
-  });
-  return await afterStateMutation(context, record, "model_changed");
-}
-
 export async function setThoughtLevel(
   context: ACodeProtocolAgentServerContext,
   rawParams: unknown,
@@ -2675,14 +2662,6 @@ export async function setThoughtLevel(
     await record.app.setThoughtLevel(thoughtLevel);
   });
   return await afterStateMutation(context, record, "thought_level_changed");
-}
-
-export async function setMode(context: ACodeProtocolAgentServerContext, rawParams: unknown) {
-  const params = parseParams(acodeSessionSetModeParamsSchema, rawParams);
-  const record = requireSession(context, params.sessionId);
-  assertExpectedRevision(record, params.expectedRevision);
-  await record.app.setMode(params.mode);
-  return await afterStateMutation(context, record, "mode_changed");
 }
 
 export async function closeSession(context: ACodeProtocolAgentServerContext, rawParams: unknown) {

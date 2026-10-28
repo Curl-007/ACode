@@ -264,6 +264,19 @@ git grep -l "acodeProtocolMethods\." -- packages/services/src  # 必须归零
 
 **spec**：`apps/acode-cli/specs/m2-prepare.md`（含 M4 同步验收判据）。
 
+#### M2-1 — session 配置三件套 + 产品裁决落地（已落地，2026-10-28）
+
+**产品裁决**（orchestrator 默认裁决：保守无能力损失；**产品可推翻**；全文见 `docs/reviews/2026-10-28/m2-scoping.md` §6.3）：
+
+1. **`mode:"auto"` 保留**：v4 `switchCollaborationMode` 值域补 `auto`（`acode-protocol-v4/command.ts`）——legacy `acodeSessionModeSchema` 含 auto 且有残留消费，v4 刻意排除会收窄 legacy 能力；补值 = 放宽，向后兼容（core `CollaborationMode` 本就含 auto）。
+2. **`sessionCompact.instructions` 保留**：v4 `compact` 命令 payload 加可选 `instructions?: string`（原 `z.object({})`）。本批只落协议面；compact 消费迁移属 M2-2。
+3. **`sessionClose` 与 `deleteSession` 两个真语义都保留**：close=终止/归档 snapshot 写入（保留 legacy `expectedPersistence` 断言语义），delete=删除；v4 侧补 `closeSession` op 属 M2-2。
+4. 附加：`sessionDebug` 保留（M2-2 新建 v4 debug query）；`sessionEvents` 保持独立事件日志查询（不并入 conversation frame）；`workspaceGenerateText` 不直接退役（随 M2-8 workspace 域批次迁移）。
+
+**迁移**：`acodeAgentService.ts` 的 `setModel`/`setThoughtLevel`/`setMode` 三处 facade 改经 v4 `command` op（`switchModelConfig`/`switchCollaborationMode`），ACK 后回读快照保持 facade 返回契约；`acodeProtocolMethods.` 消费实测 **75 → 72**（残余 1 处 `sessionSetThoughtLevel` 是 createSession 兼容重试，目标为不认识 thoughtLevel 的旧 Agent—— pre-v4，必须留 legacy）。CLI legacy dispatch 对消费已归零的 `sessionSetModel`/`sessionSetMode` 删注册（`server.ts` + `server-operations.ts`），`sessionSetThoughtLevel` 因兼容重试残余保留。
+
+**冒烟**：本批三方法不在 §4 的 13 个 stream/snapshot/queue 高危名单；headless 环境未跑 desktop-continuous + web-remote-replayable 双链路真实冒烟（环境受限），以协议单测 + 既有套件全绿替代。
+
 #### M2-B — shared schema 边界（已落地，2026-10-09）
 
 v4 命令校验仍需要兼容的 MCP server 与 browser ambient context 载荷，但这些 schema

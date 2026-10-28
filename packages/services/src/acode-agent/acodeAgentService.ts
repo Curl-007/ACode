@@ -298,6 +298,7 @@ import {
   ACodeAttachmentFaultError,
   readPendingInteractionHints,
   type CommandAck,
+  type CommandPayloadMap,
   type ConversationTopicWireCandidate,
   type ConversationTelemetryFact,
   type SessionsIndexTopicWireCandidate,
@@ -316,6 +317,7 @@ import {
   resolveTrustedCommandClientMode,
   stampCreateSessionClientMode,
 } from "./acodeV4CreateSessionClientMode.js";
+import { sendHostCasCommandV4 } from "./acodeV4HostCommand.js";
 import { createBackgroundSessionEventCoalescer } from "#src/acode-agent/acodeSessionEventCoalescer.js";
 import {
   AutomationService,
@@ -3562,6 +3564,57 @@ export function createACodeAgentService(
     return envelope;
   }
 
+  /**
+   * session/read 线请求单点（M2-1）：readSession 方法与配置写后回读共用本函数，
+   * grep 判据（acodeProtocolMethods 点号消费计数）中 sessionRead 仍只有一个消费行——
+   * M2-3 迁读路径时只需改这里。配置写方法的「ACK 后回读」复刻旧 op 单调用返回变更后
+   * 快照的契约：v4 命令只回 ACK，host 无本地 v4 投影，全量快照只能再读一次（与
+   * adapter 的 resumeSnapshot 后置回读同型）。
+   */
+  async function requestSessionStateSnapshot(
+    client: ACodeProtocolClient,
+    params: Pick<
+      ACodeAgentReadSessionParams,
+      "sessionId" | "deliveryKind" | "messageLimit" | "afterSeq"
+    >,
+  ): Promise<ACodeSessionStateSnapshot> {
+    return client.request(
+      acodeProtocolMethods.sessionRead,
+      {
+        sessionId: params.sessionId,
+        deliveryKind: params.deliveryKind,
+        messageLimit: params.messageLimit,
+        afterSeq: params.afterSeq,
+      },
+      acodeSessionStateSnapshotSchema,
+    );
+  }
+
+  /**
+   * 会话级配置写（模型/思考深度/模式）的 v4 CAS 命令提交（M2-1：
+   * session/setModel|setThoughtLevel|setMode → switchModelConfig/switchCollaborationMode）。
+   * 与 adapter 的 sendConfigCasCommandV4 同一收口件：stale ACK 用 revisionAtDecision 收敛
+   * 重试；facade 的旧 expectedRevision 是 legacy stateRevision 计数器，与 v4 conversation
+   * revision 不互通，刻意不透传（无 CAS 提交语义保真，见 sendHostCasCommandV4 注释）。
+   */
+  async function sendSessionConfigCommandV4<
+    T extends "switchModelConfig" | "switchCollaborationMode",
+  >(
+    client: ACodeProtocolClient,
+    sessionId: string,
+    type: T,
+    payload: CommandPayloadMap[T],
+    contextMessage: string,
+  ): Promise<void> {
+    await sendHostCasCommandV4({
+      send: (envelope) => client.request(V4_METHODS.command, envelope, commandAckSchema),
+      type,
+      payload,
+      sessionId,
+      contextMessage,
+    });
+  }
+
   return {
     async prepareStorage(params) {
       const client = await processManager.getClient(params);
@@ -3917,16 +3970,7 @@ export function createACodeAgentService(
           workspace: params,
         });
       }
-      const snapshot = await client.request(
-        acodeProtocolMethods.sessionRead,
-        {
-          sessionId: params.sessionId,
-          deliveryKind: params.deliveryKind,
-          messageLimit: params.messageLimit,
-          afterSeq: params.afterSeq,
-        },
-        acodeSessionStateSnapshotSchema,
-      );
+      const snapshot = await requestSessionStateSnapshot(client, params);
       rememberSessionTrace(params, snapshot);
       return snapshot;
     },
@@ -4946,7 +4990,7 @@ export function createACodeAgentService(
     async setModel(params: ACodeAgentSetModelParams) {
       const startedAt = Date.now();
       const client = await getClient(params);
-      logger.info(undefined, "开始请求 ACode Protocol session/setModel", {
+      logger.info(undefined, "开始请求 v4 switchModelConfig（M2-1，legacy session/setModel 已迁）", {
         expectedRevision: params.expectedRevision ?? null,
         persistAsWorkspaceLastUsed: params.persistAsWorkspaceLastUsed ?? null,
         requestedModel: formatModelSelectionForLog(params.model),
@@ -4955,17 +4999,25 @@ export function createACodeAgentService(
         workspacePath: params.workspacePath,
       });
       try {
-        const snapshot = await client.request(
-          acodeProtocolMethods.sessionSetModel,
+        // M2-1：legacy session/setModel → v4 switchModelConfig。一条命令承载
+        // provider/model/thought 三件套；thought 缺省 = 目标模型默认档（与 legacy
+        // app.setModel(selection) 同语义）。expectedRevision 是旧 stateRevision 计数器，
+        // 与 v4 conversation revision 不互通，CAS 由 stale ACK 收敛承担；
+        // persistAsWorkspaceLastUsed 在 legacy CLI 侧本就是解析后未消费的死字段，不迁。
+        await sendSessionConfigCommandV4(
+          client,
+          params.sessionId,
+          "switchModelConfig",
           {
-            sessionId: params.sessionId,
-            model: params.model,
-            expectedRevision: params.expectedRevision,
-            persistAsWorkspaceLastUsed: params.persistAsWorkspaceLastUsed,
+            provider: params.model.providerId,
+            model: params.model.modelId,
+            thought: params.model.options?.reasoningLevel ?? "",
           },
-          acodeSessionStateSnapshotSchema,
+          `session=${params.sessionId} model=${params.model.providerId}/${params.model.modelId}`,
         );
-        logger.info(undefined, "ACode Protocol session/setModel 完成", {
+        // 保持 facade 返回契约（变更后全量快照）：v4 命令只回 ACK，快照经 session/read 回读。
+        const snapshot = await requestSessionStateSnapshot(client, params);
+        logger.info(undefined, "v4 switchModelConfig（session/setModel）完成", {
           durationMs: Date.now() - startedAt,
           requestedModel: formatModelSelectionForLog(params.model),
           sessionId: params.sessionId,
@@ -4975,7 +5027,7 @@ export function createACodeAgentService(
         });
         return snapshot;
       } catch (error) {
-        logger.warn(undefined, "ACode Protocol session/setModel 失败", {
+        logger.warn(undefined, "v4 switchModelConfig（session/setModel）失败", {
           durationMs: Date.now() - startedAt,
           message: error instanceof Error ? error.message : String(error),
           requestedModel: formatModelSelectionForLog(params.model),
@@ -4989,30 +5041,45 @@ export function createACodeAgentService(
 
     async setThoughtLevel(params: ACodeAgentSetThoughtLevelParams) {
       const client = await getClient(params);
-      const snapshot = await client.request(
-        acodeProtocolMethods.sessionSetThoughtLevel,
+      if (!params.thoughtLevel) {
+        // legacy CLI handler 的同款拒绝（"thoughtLevel is required"），迁移后前置到 host 侧。
+        throw new Error("thoughtLevel is required");
+      }
+      // M2-1：legacy session/setThoughtLevel → v4 switchModelConfig。v4 无独立思考深度
+      // 命令，thought 字段承载；provider/model 取当前会话选型（与桌面 v4 工具条
+      // setConfigOption 同一命令面）。前置读用于定位当前选型，返回契约要求的
+      // 变更后快照在 ACK 后再读一次。
+      const current = await requestSessionStateSnapshot(client, params);
+      const model = current.settings.model.current;
+      // 未绑定会话可以查看，但单独切档位不能猜测 Provider/Model。
+      if (!model) throw new Error("请先选择模型，再设置思考档位");
+      await sendSessionConfigCommandV4(
+        client,
+        params.sessionId,
+        "switchModelConfig",
         {
-          sessionId: params.sessionId,
-          thoughtLevel: params.thoughtLevel,
-          expectedRevision: params.expectedRevision,
-          persistAsWorkspaceLastUsed: params.persistAsWorkspaceLastUsed,
+          provider: model.providerId,
+          model: model.modelId,
+          thought: params.thoughtLevel,
         },
-        acodeSessionStateSnapshotSchema,
+        `session=${params.sessionId} thought=${params.thoughtLevel}`,
       );
-      return snapshot;
+      return requestSessionStateSnapshot(client, params);
     },
 
     async setMode(params: ACodeAgentSetModeParams) {
       const client = await getClient(params);
-      return client.request(
-        acodeProtocolMethods.sessionSetMode,
-        {
-          sessionId: params.sessionId,
-          mode: params.mode,
-          expectedRevision: params.expectedRevision,
-        },
-        acodeSessionStateSnapshotSchema,
+      // M2-1：legacy session/setMode → v4 switchCollaborationMode。auto 值域已补回
+      // v4 枚举（M2-1 裁决 2026-10-28，不收窄 legacy 能力），六值全量直透。
+      await sendSessionConfigCommandV4(
+        client,
+        params.sessionId,
+        "switchCollaborationMode",
+        { mode: params.mode },
+        `session=${params.sessionId} mode=${params.mode}`,
       );
+      // 保持 facade 返回契约（变更后全量快照）：ACK 后经 session/read 回读。
+      return requestSessionStateSnapshot(client, params);
     },
 
     async respondSessionRuntimePreferences(

@@ -47,8 +47,6 @@ import {
   readSession,
   resumeSession,
   sendPrompt,
-  setMode,
-  setModel,
   setThoughtLevel,
   stopSession,
   subscribeSession,
@@ -665,12 +663,12 @@ export class ACodeProtocolAgentServer {
         return await compactSession(this.context, request.params);
       case acodeProtocolMethods.sessionGoal:
         return await goalSession(this.context, request.params);
-      case acodeProtocolMethods.sessionSetModel:
-        return await setModel(this.context, request.params);
+      // M2-1：sessionSetModel / sessionSetMode 的 services 消费已归零（facade 改经 v4
+      // switchModelConfig / switchCollaborationMode），legacy 注册按「消费归零后删除」移除。
+      // sessionSetThoughtLevel 保留：createSession 兼容重试仍会对不认识 thoughtLevel 的
+      // 旧 Agent 直发（pre-v4 链路，见 acodeAgentService createSession 段）。
       case acodeProtocolMethods.sessionSetThoughtLevel:
         return await setThoughtLevel(this.context, request.params);
-      case acodeProtocolMethods.sessionSetMode:
-        return await setMode(this.context, request.params);
       case acodeProtocolMethods.sessionClose:
         return await closeSession(this.context, request.params);
       case acodeProtocolMethods.workspaceReadPresentation:

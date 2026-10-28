@@ -47,6 +47,10 @@ git grep "acodeProtocolMethods\." -- packages/services/src  # 必须归零（消
 - `acodeProtocolClient.ts` 状态：**已实现 `ACodeAgentRpcClient` 接口**（中立叶子已就位，2026-10-27）
 - `acodeAgentService.ts` 中 `ACodeProtocolClient` 类型引用：**20 处，架构上必须保留**（`wireClient` 需要 `onNotification`/`onRequest`/`onClose`/`respond` 等独有成员）
 
+## 批次进度
+
+- **M2-1（2026-10-28）**：`sessionSetModel`/`sessionSetThoughtLevel`/`sessionSetMode` 三处 facade 改经 v4 `command` op（`switchModelConfig`/`switchCollaborationMode`）。`acodeProtocolMethods.` 消费实测 **75 → 72**。残余：`acodeAgentService.ts` 保留 1 处 `sessionSetThoughtLevel`——createSession 兼容重试对不认识 thoughtLevel 的旧 Agent（pre-v4）直发，必须留 legacy；对应 CLI dispatch 保留。`sessionSetModel`/`sessionSetMode` 消费归零，CLI legacy 注册已删。裁决落档见 `docs/reviews/2026-10-28/m2-scoping.md` §6.3。
+
 ## 验收场景
 
 1. 本 spec 落地后，`docs/legacy-protocol-convergence-plan.md` M2 节验收判据已更新。

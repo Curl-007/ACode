@@ -64,7 +64,11 @@ function readActualThought(
 }
 
 /**
- * switchCollaborationMode 命令值域（command.ts z.enum 同源；auto 非用户可切不在内）。
+ * createSession.config 可应用的 mode 子集（用户可切档；不含 auto）。
+ * 与 switchCollaborationMode 命令 z.enum 不再同域：M2-1 裁决（2026-10-28，默认裁决
+ * 产品可推翻）已把 auto 补进命令值域以承接 legacy session/setMode；createSession.config
+ * 的 mode 过滤维持用户可切子集不变——legacy session/create 的 config 面迁移属 M2-3，
+ * auto-at-create 是否需要随该批另行裁决。
  * dontAsk 随 P1 权限裁决批2 进入可切换子集（「拒绝代替询问」档位）。
  */
 const SWITCHABLE_MODES: ReadonlySet<string> = new Set(["build", "edit", "plan", "yolo", "dontAsk"]);

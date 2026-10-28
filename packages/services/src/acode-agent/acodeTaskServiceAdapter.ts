@@ -1197,23 +1197,13 @@ export function createACodeTaskServiceAdapter(
 
   /**
    * session/setMode → v4 switchCollaborationMode。
-   * auto 例外保真：v4 命令值域刻意排除 auto（「auto 非用户可切，不进 UI 命令面」，
-   * command.ts 裁决），而旧协议 ACodeSessionMode 含 auto 且旧 op 接受它——为 UI 行为
-   * 零变化，auto 继续走旧 op，其余值一律 v4 原生。过渡归宿 = auto 语义在 v4 侧裁决后收口。
+   * auto 已收口（M2-1 裁决 2026-10-28，默认裁决产品可推翻）：v4 命令值域补回 auto，
+   * 不再例外走旧 op——六值（含 auto）一律 v4 原生。
    */
   async function switchCollaborationModeViaProtocol(
     target: TaskTarget,
     mode: ACodeSessionMode,
   ): Promise<void> {
-    if (mode === "auto") {
-      await options.acodeAgentService.setMode({
-        workspacePath: target.workspacePath,
-        workspaceIdentity: target.workspaceIdentity,
-        sessionId: target.taskId,
-        mode,
-      });
-      return;
-    }
     await sendConfigCasCommandV4(
       target,
       "switchCollaborationMode",

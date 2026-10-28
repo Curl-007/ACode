@@ -192,7 +192,7 @@ inbound 方向（agent→host）的 dispatch 不在 server.ts，而在 services 
 ### Batch M2-1 — session/* 配置切换三件套（3 个）
 
 - **方法**：`sessionSetModel` `sessionSetThoughtLevel` `sessionSetMode`。
-- **v4 改动**：`command.ts` 的 `switchModelConfig` 已存在；`switchCollaborationMode` 已存在。**裁决项**：`mode: "auto"` 是否保留——v4 值域刻意排除（`index.ts:3529`），legacy 残留。需产品裁决，再决定是否在 v4 加回 auto 或剔除 legacy 路径。
+- **v4 改动**：`command.ts` 的 `switchModelConfig` 已存在；`switchCollaborationMode` 已存在。~~**裁决项**：`mode: "auto"` 是否保留~~ → **已裁决（2026-10-28，默认裁决产品可推翻）：auto 保留**，v4 值域补 `auto`（见 §6.3）。
 - **services 改动**：`acodeAgentService.ts:4959, 4993, 5008` 三处切到 v4 `command` op。
 - **CLI 改动**：无（v4 handler 已就位，`commands/handlers/model-config.ts`）。
 - **验收**：双链路真实冒烟（切 model/mode 是流中段操作，触及 snapshot.config）；auto 裁决落地后补对应值域测试。
@@ -202,13 +202,13 @@ inbound 方向（agent→host）的 dispatch 不在 server.ts，而在 services 
 
 - **方法**：`sessionCompact` `sessionGoal` `sessionClose` `sessionDebug`。
 - **v4 改动**：
-  - `compact` 命令扩 payload 支持 `instructions`（当前是 `z.object({})`，`command.ts:175`）。
+  - `compact` 命令扩 payload 支持 `instructions`（当前是 `z.object({})`，`command.ts:175`）——**裁决已落（2026-10-28，默认裁决产品可推翻）：instructions 保留**，协议面已随 M2-1 落地，本批接管消费侧。
   - `sendGoalCommand`/`pauseGoal`/`resumeGoal` 已存在；需补 legacy goal 的 query 形态。
-  - `deleteSession` vs `closeSession` 语义裁决（**是否两个真语义**？）。
-  - `sessionDebug` 是否保留？若保留需新建 v4 debug query。
+  - ~~`deleteSession` vs `closeSession` 语义裁决~~ → **已裁决：两个真语义都保留**（close=终止/归档 snapshot 写入并保留 `expectedPersistence` 断言，delete=删除），v4 侧补 `closeSession` op 属本批。
+  - ~~`sessionDebug` 是否保留？~~ → **已裁决：保留**，本批新建 v4 debug query。
 - **services 改动**：`acodeAgentService.ts:4849, 4891, 4933` 三处 + debug 一处。
 - **CLI 改动**：`commands/handlers/goal-compact.ts` `session-mgmt.ts` 扩。
-- **验收**：3 个产品裁决（compact instructions 保留？goal query 怎么对？close/delete 是否合一？）+ 双链路冒烟（compact 重写 snapshot、close 终止 snapshot）。
+- **验收**：~~3 个产品裁决~~（已裁决，见 §6.3：compact instructions 保留 / close、delete 两语义并存 / debug 保留新建 v4 query；goal query 形态随本批设计）+ 双链路冒烟（compact 重写 snapshot、close 终止 snapshot）。
 - **预估**：3 人日（含 3 个裁决 + 协议扩展）。
 
 ### Batch M2-3 — session/* 读写面七件套（7 个，**最重**）
@@ -285,8 +285,8 @@ inbound 方向（agent→host）的 dispatch 不在 server.ts，而在 services 
 | 批次 | 方法数 | 预估人日 | 阻塞依赖 |
 |---|---:|---:|---|
 | M2-0 准备 | 0 | 0.5 | 无 |
-| M2-1 session 配置 | 3 | 1.5 | mode auto 产品裁决 |
-| M2-2 session 控制 | 4 | 3 | 3 个产品裁决（compact/goal/close） |
+| M2-1 session 配置 | 3 | 1.5 | ~~mode auto 产品裁决~~（已裁决 2026-10-28：auto 保留） |
+| M2-2 session 控制 | 4 | 3 | ~~3 个产品裁决（compact/goal/close）~~（已裁决 2026-10-28，见 §6.3） |
 | M2-3 session 读写 | 8 | 8 | M1 已落地；最重批次 |
 | M2-4 inbound interaction | 7 | 8 | broker 重设计 spec；两侧协议变更 |
 | M2-5 plugins | 16 | 6 | 无（全新建） |
@@ -305,11 +305,11 @@ inbound 方向（agent→host）的 dispatch 不在 server.ts，而在 services 
 
 2. **v4 协议面扩展节奏失控风险**。54 个方法需新建 v4 schema，但 v4 当前只有 40 method + 26 command。等于**翻一倍 v4 协议面**。必须先建立 spec-first 节奏（每个批次至少一份 spec），否则协议面会野蛮生长。证据：`transport.ts:372-436` 实测 v4 当前覆盖。
 
-3. **3 个产品裁决未落地**（不解决则 M2-1/M2-2 无法动工）：
-   - `mode: "auto"` 是否保留？v4 刻意排除（`index.ts:3529`），legacy 有残留消费。
-   - `sessionCompact` 的 `instructions` 字段是否保留？v4 payload 是空 object。
-   - `sessionClose` 与 `deleteSession` 是同一语义还是两个？legacy 断言 `expectedPersistence`，v4 delete 无该断言。
-   - 附加：`sessionDebug` 是否保留？`sessionEvents` 是独立事件日志查询还是并入 conversation frame？`workspaceGenerateText` 是否直接退役？
+3. ~~**3 个产品裁决未落地**（不解决则 M2-1/M2-2 无法动工）~~ → **已裁决（2026-10-28，orchestrator 默认裁决：保守无能力损失；产品可推翻）**：
+   - `mode: "auto"` **保留**。v4 `switchCollaborationMode` 值域补 `auto`（`command.ts`）——legacy `acodeSessionModeSchema` 含 auto 且有残留消费（adapter `switchCollaborationModeViaProtocol` 的 auto 分支），v4 刻意排除会收窄 legacy 能力；补值 = 放宽，向后兼容（core `CollaborationMode` 本就含 auto，CLI handler 直驱 `app.setMode` 无需改动）。**已随 M2-1 落地**。
+   - `sessionCompact` 的 `instructions` 字段**保留**。v4 `compact` 命令 payload 加可选 `instructions?: string`（原 `z.object({})` 带不了该字段）——不丢字段。**本批（M2-1）只落协议面**；compact 消费迁移属 M2-2。
+   - `sessionClose` 与 `deleteSession` **是两个真语义，都保留**：close = 终止/归档 snapshot 写入（保留 legacy `expectedPersistence` 断言语义），delete = 删除。v4 侧补 `closeSession` op 属 M2-2；本批只落裁决文档。
+   - 附加三问同批裁决：`sessionDebug` **保留**（M2-2 新建 v4 debug query）；`sessionEvents` **保持独立事件日志查询**（与 conversation frame 的 snapshot+deltas 模型不同，不并入）；`workspaceGenerateText` **不直接退役**（随 workspace 域批次 M2-8 迁移，不提前删除）。
 
 4. **inbound broker 重设计（M2-4 + M2-7 部分）是隐藏大坑**。9 个方法是 agent→host 方向，迁移需要 CLI 先发 v4 形态 + host 才能改 handler，**两侧协议变更**必须分 PR 落地（CLI 双形态共存 → host 切换 → CLI 删 legacy）。permissions 一对更复杂：架构性替换为 broker 模型，不是改名。证据：`acodeAgentService.ts:2301` handler 注册 vs `command.ts:201` resolveInteraction。
 
@@ -327,4 +327,4 @@ inbound 方向（agent→host）的 dispatch 不在 server.ts，而在 services 
 
 ## 7. 一句话总结
 
-**M2 共 68 个 legacy 方法，分 9 批，预估总工作量 41 人日，最大阻塞是 v4 协议面扩展节奏（54 个方法无 v4 契约需 spec-first 新建）与 3 个未落地的产品裁决（mode auto / compact instructions / close-vs-delete）。**
+**M2 共 68 个 legacy 方法，分 9 批，预估总工作量 41 人日，最大阻塞是 v4 协议面扩展节奏（54 个方法无 v4 契约需 spec-first 新建）；3 个产品裁决（mode auto / compact instructions / close-vs-delete）已于 2026-10-28 落地（默认裁决，产品可推翻，见 §6.3）。**

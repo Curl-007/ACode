@@ -47,7 +47,8 @@ export class V4GoalCompactRejectedError extends Error {
 const manualCompactControllers = new WeakSet<AbortController>();
 
 /**
- * compact：手动上下文压缩（v4 payload 为空对象，无 instructions 变体）。
+ * compact：手动上下文压缩（v4 payload 含可选 instructions——M2-1 裁决保留 legacy
+ * session/compact 同名字段；本 handler 的消费接线属 M2-2，当前仍走 "/compact" 原文）。
  *
  * barrier 语义：
  * 1. running/goal verifier/goal continuation/tool work → typed compact intent 入 FIFO。

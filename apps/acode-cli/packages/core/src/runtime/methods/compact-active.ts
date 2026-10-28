@@ -74,6 +74,7 @@ import { createRefreshRuntimeHeadersBeforeModelAttempt } from "./model-runtime-h
 import { recordModelUsageFact } from "./usage-observability.js";
 import { createRuntimeModel } from "./runtime-model.js";
 import { getRuntimeCacheDiagnosticsPort } from "../runtime-cache-diagnostics.js";
+import { getRuntimeMessageProjectionPort } from "../runtime-message-projection.js";
 import {
   filterOutputTokenContinuationEntries,
   preserveCanonicalContextPrefix,
@@ -758,7 +759,9 @@ async function compactActiveConversationImpl(
         events,
       );
 
-      this.latestConversationMessageId = summaryMessageId;
+      // R1-01 B3：latestConversationMessageId 归 RuntimeMessageProjectionOwner，
+      // compact summary 成为最新 anchor 的写入经端口。
+      getRuntimeMessageProjectionPort(this).recordConversationMessage(summaryMessageId);
       const recordablePostCompactEntries = filterOutputTokenContinuationEntries(postCompactEntries);
       this.messageHistory.replaceMessages(
         options.activeEntries

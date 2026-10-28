@@ -12,7 +12,6 @@ import {
   activeSessionMessages,
   hydrateReadFileStateFromSession,
   hydrateMessageHistoryFromSession,
-  MessageHistoryImpl,
 } from "../deps.js";
 import type {
   EnvInfo,
@@ -34,6 +33,8 @@ import { getRuntimeSessionPersistencePort } from "../runtime-session-persistence
 import { getRuntimeBranchRestorePort } from "../turn-coordination.js";
 import { getRuntimeTurnTimingPort } from "../runtime-turn-timing.js";
 import { getRuntimeCacheDiagnosticsPort } from "../runtime-cache-diagnostics.js";
+import { getRuntimeMessageProjectionPort } from "../runtime-message-projection.js";
+import { getRuntimeContextInitPort } from "../runtime-context-init.js";
 import {
   announceSessionShellEnvironmentNoticeAfterResume,
   getSessionShellSelection,
@@ -138,10 +139,13 @@ export async function resumeFromStore(
           ? String(session.workspaceID)
           : undefined;
       }
-      this.messageHistory = new MessageHistoryImpl();
-      this.contextBuilder = null;
-      this.contextInitialized = false;
-      this.lastEmittedLocalDate = undefined;
+      // R1-01 B4：messageHistory/contextBuilder/contextInitialized 归
+      // RuntimeContextInitOwner——cold resume 的三联重置经端口同一事务（原连续同步块
+      // `= new MessageHistoryImpl(); = null; = false`；新容器由 owner 内部构造，
+      // 旧容器无 by-value 长持有方）。
+      getRuntimeContextInitPort(this).resetForResume();
+      // R1-01 B3：日期游标归 RuntimeMessageProjectionOwner，cold resume 重置经端口。
+      getRuntimeMessageProjectionPort(this).resetLocalDateCursor();
       // cold resume 的历史 hydration 会先清空 runtime-local read-state；必须在
       // Context 初始化前完成，确保随后单次加载的 MEMORY.md 状态与 provider 所见内容一致。
       const readFileStateHydration = await hydrateReadFileStateFromSession({
@@ -192,9 +196,13 @@ export async function resumeFromStore(
       const latestAssistant = [...timelineActiveMessages]
         .reverse()
         .find((message) => message.info.role === "assistant");
-      this.latestConversationMessageId = getLatestActiveSessionMessageId(timelineActiveMessages);
-      this.latestAssistantMessageId = latestAssistant?.info.id;
-      this.latestAssistantTurnId = latestAssistant?.info.anchor?.turnId as TurnId | undefined;
+      // R1-01 B3：三个投影游标归 RuntimeMessageProjectionOwner，重建经端口（整体替换，
+      // 含清 undefined；日期游标不动——cold 路径已在上方 resetLocalDateCursor）。
+      getRuntimeMessageProjectionPort(this).rebuildFromMessages({
+        latestConversationMessageId: getLatestActiveSessionMessageId(timelineActiveMessages),
+        latestAssistantMessageId: latestAssistant?.info.id,
+        latestAssistantTurnId: latestAssistant?.info.anchor?.turnId as TurnId | undefined,
+      });
       // R1-01 B1：lastAssistantCompletedAtMs 归 RuntimeCacheDiagnosticsOwner，重建经端口。
       getRuntimeCacheDiagnosticsPort(this).restoreLastAssistantCompletedAtMs(
         latestAssistant && "completed" in latestAssistant.info.time

@@ -2,9 +2,6 @@ import { PermissionService, ToolScheduler } from "./deps.js";
 import type {
   Logger,
   EventReducer,
-  MessageId,
-  TurnId,
-  ModelToolContract,
   PermissionBrokerPort,
   SessionEventSink,
   SessionEventStorePort,
@@ -12,14 +9,11 @@ import type {
   SessionMailboxPort,
   SessionStorePort,
   ContextSourcePort,
-  ContextSourceSnapshot,
   ExecutionPort,
   FileSystemPort,
   HookRunner,
   ImageProcessorPort,
   PdfDocumentPort,
-  McpConnectionSnapshot,
-  SkillLoadOutcome,
   SkillPort,
   McpPort,
   DynamicWorkflowRunPort,
@@ -29,14 +23,10 @@ import type {
   ToolArtifactStorePort,
   VisualizationFragmentStorePort,
   TraceContext,
-  MessageHistory,
   ReadFileStateMap,
   ToolExecutor,
   ToolRegistry,
-  ContextBuilder,
-  ContextBuildResult,
 } from "./deps.js";
-import type { PromptFileRouting } from "../context/prompt-files.js";
 import type {
   AgentRuntimeConfig,
   AgentRuntimeDeps,
@@ -48,10 +38,12 @@ import type { SwarmPlanPort } from "../swarm/port.js";
 import type { AgentRuntimeCoreMethods } from "./internal-methods.js";
 import type { AgentRuntimeTurnMethods } from "./internal-turn-methods.js";
 import type { AgentRuntimeHookMethods } from "./internal-hook-methods.js";
-import type { ProjectMemoryExtractionScheduler } from "./helpers/project-memory-extraction.js";
-import type { MemorySemanticRecallChannel } from "./helpers/memory-semantic-recall.js";
 import type { RuntimeTelemetryFacade } from "../telemetry/runtime-telemetry.js";
 import type { WorkspaceHookRuntimeAdmissionPort } from "../hooks/workspace-hook-runtime-admission.js";
+import type { RuntimeContextInitView } from "./runtime-context-init.js";
+import type { RuntimeMcpLifecycleView } from "./runtime-mcp-lifecycle.js";
+import type { RuntimeToolCacheView } from "./runtime-tool-cache.js";
+import type { RuntimeSidecarView } from "./runtime-sidecar.js";
 import type { RuntimeTurnCoordinationView } from "./turn-coordination.js";
 import type { RuntimeTurnTimingView } from "./runtime-turn-timing.js";
 import type { RuntimeLifecycleView } from "./runtime-lifecycle.js";
@@ -62,6 +54,7 @@ import type { RuntimePermissionGrantView } from "./runtime-permission-grant.js";
 import type { RuntimeModelChangeTimelineView } from "./runtime-model-change-timeline.js";
 import type { RuntimeCacheDiagnosticsView } from "./runtime-cache-diagnostics.js";
 import type { RuntimeForegroundExecutionView } from "./runtime-foreground-execution.js";
+import type { RuntimeMessageProjectionView } from "./runtime-message-projection.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AgentRuntimeInternal 状态所有权分簇（specs/runtime-state-ownership.md）。
@@ -144,41 +137,24 @@ interface RuntimeInjectedDeps {
 
 /**
  * 上下文与记忆状态：上下文构建、MCP/skill 装配与语义召回。
- * 写入方集中在 methods/context-*、helpers/project-memory-extraction、
- * helpers/memory-semantic-recall 与 MCP 启动路径。
+ * R1-01 B4：18 个扁平可写字段已全部收敛到 4 个子 owner 的只读 getter——
+ * RuntimeContextInitView（runtime-context-init.ts：ensureContextInitialized 初始化面
+ * 逐点提交 + 构造期 builder 分支 + cold resume 三联重置 + messageHistory 容器引用）、
+ * RuntimeMcpLifecycleView（runtime-mcp-lifecycle.ts：MCP 启动 claim / initialize 并发守卫 /
+ * 工具注册单调提交）、RuntimeToolCacheView（runtime-tool-cache.ts：工具派生缓存 +
+ * 请求级搜索 context）、RuntimeSidecarView（runtime-sidecar.ts：memory 提取/召回
+ * sidecar 惰性构造 + residency 阻塞计数器）。写面只经各自 getRuntime*Port(this)
+ * 的有限端口。readFileState 零 method 重赋值（唯一赋值在构造期，grep 全仓确认），
+ * 与 runtimeCommandQueue 同款：类型级 readonly + 构造期不可写数据属性，不进 owner。
+ * 容器内写（messageHistory 的 addUser/replaceMessages 等、readFileState 的 set/delete）
+ * 不在本批范围。本接口不再持有扁平可写字段。
  */
-interface RuntimeContextMemoryState {
-  messageHistory: MessageHistory;
-  readFileState: ReadFileStateMap;
-  cachedTools: ModelToolContract[] | null;
-  /**
-   * 当前请求的工具搜索 context（specs/tool-search.md R8）：请求准备单点写入，
-   * executor deps 经 getToolSearchContext 读取注入 handler；undefined = 未启用。
-   * 发现集合唯一所有者是请求决策（每次准备重建），这里只是 executor 的读取缝，
-   * 不建第二缓存。
-   */
-  toolSearchContext?: import("@acode/contracts").ToolSearchExecutionContext;
-  contextBuilder: ContextBuilder | null;
-  contextInitialized: boolean;
-  contextSourceSnapshot?: ContextSourceSnapshot;
-  latestContextBuildResult?: ContextBuildResult;
-  memoryRoot?: string;
-  memoryIndexContent?: string;
-  /** 提示词文件路由（specs/stable-prefix-pause-gate.md R5）：ensureContextInitialized 的 async 面加载；无文件=空对象=零行为变化。 */
-  promptFileRouting?: PromptFileRouting;
-  memoryExtractionScheduler?: ProjectMemoryExtractionScheduler;
-  /**
-   * K1 会话级语义召回通道（specs/memory-semantic-recall.md R6/R9）：injector（含四层
-   * 去重账本）+ 检索管线 + 度量账本。会话唯一所有者（非模块级全局），首轮检索时惰性
-   * 构造；resume/rewind 不跨会话复用。
-   */
-  memorySemanticRecallChannel?: MemorySemanticRecallChannel;
-  mcpStartupPromise?: Promise<McpConnectionSnapshot>;
-  mcpInitializationPromise?: Promise<void>;
-  mcpInitialized: boolean;
-  mcpToolsRegistered: boolean;
-  skillLoadOutcome?: SkillLoadOutcome;
-  residencyBlockingWorkCount: number;
+interface RuntimeContextMemoryState
+  extends RuntimeContextInitView,
+    RuntimeMcpLifecycleView,
+    RuntimeToolCacheView,
+    RuntimeSidecarView {
+  readonly readFileState: ReadFileStateMap;
 }
 
 /**
@@ -204,14 +180,15 @@ interface RuntimeTurnState
   readonly runtimeCommandQueue: RuntimeCommandQueue;
 }
 
-/** 消息 ID 投影：event 发布路径派生的最近 ID 游标（写入方 = 事件发布/reducer 路径）。 */
-interface RuntimeMessageProjectionState {
-  latestConversationMessageId?: MessageId;
-  latestAssistantMessageId?: MessageId;
-  latestAssistantTurnId?: TurnId;
-  // lastRequestModelId 已迁出至 RuntimeCacheDiagnosticsView（R1-01 B1，cache 归因输入）。
-  lastEmittedLocalDate?: string;
-}
+/**
+ * 消息 ID 投影：event 发布路径派生的最近 ID 游标（写入方 = 事件发布/reducer 路径）。
+ * R1-01 B3：4 个投影游标字段（latestConversationMessageId / latestAssistantMessageId /
+ * latestAssistantTurnId / lastEmittedLocalDate）已全部收敛到 RuntimeMessageProjectionView
+ * 的只读 getter（runtime-message-projection.ts owner），写面只经
+ * getRuntimeMessageProjectionPort(this) 的有限端口。lastRequestModelId 已迁出至
+ * RuntimeCacheDiagnosticsView（R1-01 B1，cache 归因输入）。本接口不再持有扁平可写字段。
+ */
+interface RuntimeMessageProjectionState extends RuntimeMessageProjectionView {}
 
 /**
  * 缓存与压缩诊断：进程内累计，resume/rewind 重建后从空开始（写入方 = 模型请求路径）。

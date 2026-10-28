@@ -3,6 +3,7 @@ import { beginLocalTurnPreparation, type LocalTtftDetail } from "@acode/contract
 import { runtimeInputMetadata } from "../../agent/runtime-input-presentation.js";
 import { getRuntimeTurnTimingPort } from "../runtime-turn-timing.js";
 import { getRuntimeForegroundExecutionPort } from "../runtime-foreground-execution.js";
+import { getRuntimeMessageProjectionPort } from "../runtime-message-projection.js";
 // 技能激活期作用域（skill-frontmatter-governance R4）：回合边界重算触发点。
 import { refreshSessionSkillActivationScope } from "../../agent/skill-activation-scope.js";
 import {
@@ -912,8 +913,9 @@ export async function executeTurnCommand(
 
 function injectDateChangeReminderIntoMessageHistory(this: AgentRuntimeInternal): void {
   const currentDate = formatLocalIsoDate(this.now());
-  const previousDate = this.lastEmittedLocalDate;
-  this.lastEmittedLocalDate = currentDate;
+  // R1-01 B3：日期游标归 RuntimeMessageProjectionOwner，原子「读旧值 + 写新值」经端口；
+  // 首日/同日不注入提醒的比较行与迁移前逐字一致。
+  const previousDate = getRuntimeMessageProjectionPort(this).emitLocalDateReminder(currentDate);
 
   if (!previousDate || previousDate === currentDate) {
     return;

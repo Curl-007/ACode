@@ -89,11 +89,15 @@ export function buildToolsSchemaTokenMetric(tools: ModelToolContract[]): ToolsSc
 /**
  * 度量点一的日志出口：debug 级、每缓存重建至多一条。口径 = 运行时可见工具全集
  * （缓存重建时点；每模型的 WebSearch 过滤与 projection 只可能再减一个工具，不影响量级，R1）。
+ * R1-01 B4：cachedTools 收敛为 readonly getter 后，调用点（getTools 重建分支内）的
+ * 静态类型是 `ModelToolContract[] | null`（条件窄化残留）——参数放宽 union 并加 null
+ * 守卫；运行期该点缓存刚提交、恒非 null，度量内容与迁移前一致。
  */
 export function logToolsSchemaTokenMetric(
   runtime: AgentRuntimeInternal,
-  tools: ModelToolContract[],
+  tools: ModelToolContract[] | null,
 ): void {
+  if (tools === null) return;
   runtime.logger?.debug("Tools schema token metric", {
     event: "tools_schema_token_metric",
     module: "core.runtime",

@@ -25,6 +25,7 @@ import {
 } from "./synthetic-notice-metadata.js";
 import { buildPersistedConversationInputIntent } from "./input-intent-persistence.js";
 import { buildProjectionAnchor, mapSyntheticSourceToAnchorOrigin } from "./projection-anchor.js";
+import { getRuntimeMessageProjectionPort } from "../runtime-message-projection.js";
 
 export async function persistUserPrompt(
   this: AgentRuntimeInternal,
@@ -60,7 +61,8 @@ export async function persistUserPrompt(
     customCommand?: CustomCommandInvocationMeta;
   },
 ): Promise<void> {
-  this.latestConversationMessageId = messageID;
+  // R1-01 B3：latestConversationMessageId 归 RuntimeMessageProjectionOwner，写入经端口。
+  getRuntimeMessageProjectionPort(this).recordConversationMessage(messageID);
   if (!this.sessionStore) return;
 
   const created = Date.now();
@@ -215,7 +217,8 @@ export async function persistSyntheticUserNoticeForSession(
   },
 ): Promise<void> {
   if (options.sessionId === this.sessionId) {
-    this.latestConversationMessageId = options.messageID;
+    // R1-01 B3：latestConversationMessageId 归 RuntimeMessageProjectionOwner，写入经端口。
+    getRuntimeMessageProjectionPort(this).recordConversationMessage(options.messageID);
   }
   if (!this.sessionStore) return;
 
@@ -289,11 +292,9 @@ export async function persistAssistantMessage(
   traceContext: TraceContext,
   model?: Model,
 ): Promise<void> {
-  this.latestConversationMessageId = messageID;
-  this.latestAssistantMessageId = messageID;
-  if (traceContext.turnId) {
-    this.latestAssistantTurnId = traceContext.turnId;
-  }
+  // R1-01 B3：三个投影游标归 RuntimeMessageProjectionOwner——会话与 assistant 游标
+  // 同步推进，有 turnId 时推进 turn 游标（truthy 判定下沉端口，与迁移前一致）。
+  getRuntimeMessageProjectionPort(this).recordAssistantMessage(messageID, traceContext.turnId);
   if (!this.sessionStore) return;
   const selection = this.getSessionModelSelection();
   const providerId =

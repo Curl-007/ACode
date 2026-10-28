@@ -43,6 +43,7 @@ import { getRuntimeBranchRestorePort, type RuntimeBranchTransition } from "../tu
 import { getRuntimeTurnTimingPort } from "../runtime-turn-timing.js";
 import { getRuntimeCacheDiagnosticsPort } from "../runtime-cache-diagnostics.js";
 import { getRuntimeForegroundExecutionPort } from "../runtime-foreground-execution.js";
+import { getRuntimeMessageProjectionPort } from "../runtime-message-projection.js";
 import { rebuildContextPrefix } from "./context-refresh.js";
 import { mainTurnCacheHitAggregateFromMessages } from "./turn-model-step-usage.js";
 
@@ -731,9 +732,13 @@ async function rebuildConversationDerivedState(
   const latestAssistant = [...timelineActiveMessages]
     .reverse()
     .find((message) => message.info.role === "assistant");
-  this.latestConversationMessageId = getLatestActiveSessionMessageId(timelineActiveMessages);
-  this.latestAssistantMessageId = latestAssistant?.info.id;
-  this.latestAssistantTurnId = latestAssistant?.info.anchor?.turnId as TurnId | undefined;
+  // R1-01 B3：三个投影游标归 RuntimeMessageProjectionOwner，重建经端口（整体替换，
+  // 含清 undefined；日期游标不动——rewind 不重置日期游标，与迁移前一致）。
+  getRuntimeMessageProjectionPort(this).rebuildFromMessages({
+    latestConversationMessageId: getLatestActiveSessionMessageId(timelineActiveMessages),
+    latestAssistantMessageId: latestAssistant?.info.id,
+    latestAssistantTurnId: latestAssistant?.info.anchor?.turnId as TurnId | undefined,
+  });
   // R1-01 B1：cache 诊断 4 字段与 lastAssistantCompletedAtMs 归 RuntimeCacheDiagnosticsOwner，
   // 重建经端口（语义与迁移前完全一致：rewind 是显式 miss 事件，计数从空开始，聚合从持久
   // 消息反推，autoCompactConsecutiveFailures 重置）。

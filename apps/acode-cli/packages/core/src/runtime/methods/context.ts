@@ -15,6 +15,7 @@ import type {
   ContextBuilderConfig,
 } from "../deps.js";
 import type { AgentRuntimeInternal } from "../internal.js";
+import { getRuntimeContextInitPort } from "../runtime-context-init.js";
 import { loadPromptFileRouting } from "../../context/prompt-files.js";
 import { ensureMemoryDirectoryExists } from "../../memory/directory.js";
 import { formatProjectMemoryIndexContent } from "../../memory/index-content.js";
@@ -61,24 +62,33 @@ export async function ensureContextInitialized(
   this.workingDirectory = snapshot.workingDirectory;
   // Bash cd 之后 workingDirectory 会变化，但 workspaceRoot 仍表示会话初始工作区边界。
   this.workspaceRoot = snapshot.workingDirectory;
-  this.contextSourceSnapshot = snapshot;
+  // R1-01 B4：contextInitialized 事务 8 字段归 RuntimeContextInitOwner，写面经端口——
+  // 每个写点位置与迁移前逐行对应（初始化面各字段仍是逐点提交，contextInitialized
+  // 最后单调提交；并发语义不加固也不放宽，逐点等价）。
+  const contextInitPort = getRuntimeContextInitPort(this);
+  contextInitPort.commitContextSourceSnapshot(snapshot);
   this.startMcpStartup(traceContext);
-  this.skillLoadOutcome = await this.discoverSkillsForContext(traceContext);
-  this.memoryRoot = await this.loadProjectMemoryRoot(traceContext);
-  this.memoryIndexContent = await loadProjectMemoryIndexContent(this, this.memoryRoot);
+  contextInitPort.commitSkillLoadOutcome(await this.discoverSkillsForContext(traceContext));
+  contextInitPort.commitMemoryRoot(await this.loadProjectMemoryRoot(traceContext));
+  contextInitPort.commitMemoryIndexContent(
+    await loadProjectMemoryIndexContent(this, this.memoryRoot),
+  );
   // 提示词文件路由（specs/stable-prefix-pause-gate.md R5 生产接线）：APPEND_SYSTEM/
   // SYSTEM/TITLE_SYSTEM 发现+读取必须在 async 面（builder 的 build() 是同步通道）。
   // 无文件=空对象=零行为变化；单文件读取失败由 loader 跳过候选，绝不 fail 会话。
-  this.promptFileRouting = await loadPromptFileRouting({
-    workingDirectory: this.workingDirectory,
-    logger: this.logger,
-  });
-  this.contextBuilder = this.createContextBuilderFromSnapshot(snapshot, this.memoryRoot, {
+  contextInitPort.commitPromptFileRouting(
+    await loadPromptFileRouting({
+      workingDirectory: this.workingDirectory,
+      logger: this.logger,
+    }),
+  );
+  const contextBuilder = this.createContextBuilderFromSnapshot(snapshot, this.memoryRoot, {
     memoryIndexContent: this.memoryIndexContent,
     model,
   });
-  this.initializeMessageHistoryFromContext(this.contextBuilder, traceContext);
-  this.contextInitialized = true;
+  contextInitPort.commitContextBuilder(contextBuilder);
+  this.initializeMessageHistoryFromContext(contextBuilder, traceContext);
+  contextInitPort.markContextInitialized();
 }
 
 export async function getSkillCatalog(
@@ -293,7 +303,8 @@ export function initializeMessageHistoryFromContext(
   traceContext: TraceContext,
 ): void {
   const contextResult = contextBuilder.build();
-  this.latestContextBuildResult = contextResult;
+  // R1-01 B4：latestContextBuildResult 归 RuntimeContextInitOwner，写面经端口。
+  getRuntimeContextInitPort(this).commitContextBuildResult(contextResult);
   this.messageHistory.init(buildContextHistoryEntries(contextResult));
 
   this.logger?.debug("Context built", {

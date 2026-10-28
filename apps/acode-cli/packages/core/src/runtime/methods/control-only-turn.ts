@@ -17,6 +17,7 @@ import { realUserRuntimeMetadata } from "../../agent/message-history.js";
 import type { AgentRuntimeInternal } from "../internal.js";
 import { getRuntimeTurnTimingPort } from "../runtime-turn-timing.js";
 import { getRuntimeCacheDiagnosticsPort } from "../runtime-cache-diagnostics.js";
+import { getRuntimeMessageProjectionPort } from "../runtime-message-projection.js";
 import type { ControlOnlyTurnRuntimeCommand } from "../command-queue.js";
 import { buildProjectionAnchor } from "./projection-anchor.js";
 import { maybeStartGoalSummaryTitleGeneration } from "./goal-summary-title.js";
@@ -136,7 +137,8 @@ export async function persistWorkflowLaunchUserMessage(
     traceContext: TraceContext;
   },
 ): Promise<void> {
-  this.latestConversationMessageId = options.messageID;
+  // R1-01 B3：latestConversationMessageId 归 RuntimeMessageProjectionOwner，写入经端口。
+  getRuntimeMessageProjectionPort(this).recordConversationMessage(options.messageID);
   if (!this.sessionStore) return;
 
   const created = Date.now();

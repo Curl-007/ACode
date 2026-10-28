@@ -24,6 +24,7 @@ import {
   type RecallMetricsLedger,
 } from "../../memory/recall/retrieval/index.js";
 import type { AgentRuntimeInternal } from "../internal.js";
+import { getRuntimeSidecarPort } from "../runtime-sidecar.js";
 import { resolveEnabledProjectMemoryRoot } from "./project-memory.js";
 
 /** 会话级通道实例（R9 状态所有权表：runtime 字段，生命周期=会话）。 */
@@ -149,26 +150,28 @@ function ensureChannel(
   runtime: AgentRuntimeInternal,
   deps: { cliStorageRoot: string; fileSystem: NonNullable<AgentRuntimeInternal["fileSystemPort"]> },
 ): MemorySemanticRecallChannel {
-  if (runtime.memorySemanticRecallChannel) return runtime.memorySemanticRecallChannel;
+  // R1-01 B4：memorySemanticRecallChannel 归 RuntimeSidecarOwner——「读 → 同步构造 → 写」
+  // 惰性构造收敛为 getOrCreate 原子端口（构造段无 await，无观察窗变化）。
   // injector 先构造、pipeline 引用同一实例：账本与协议状态单一所有者（R9）。
-  const injector = createMemoryRecallInjector({
-    fileSystem: deps.fileSystem,
-    logger: runtime.logger,
-  });
-  const channel: MemorySemanticRecallChannel = {
-    injector,
-    metrics: createRecallMetricsLedger({
-      logger: runtime.logger,
-      metricsRoot: join(deps.cliStorageRoot, "memories", "metrics"),
-    }),
-    pipeline: createMemoryRetrievalPipeline({
+  return getRuntimeSidecarPort(runtime).getOrCreateSemanticRecallChannel(() => {
+    const injector = createMemoryRecallInjector({
       fileSystem: deps.fileSystem,
-      injector,
       logger: runtime.logger,
-    }),
-  };
-  runtime.memorySemanticRecallChannel = channel;
-  return channel;
+    });
+    const channel: MemorySemanticRecallChannel = {
+      injector,
+      metrics: createRecallMetricsLedger({
+        logger: runtime.logger,
+        metricsRoot: join(deps.cliStorageRoot, "memories", "metrics"),
+      }),
+      pipeline: createMemoryRetrievalPipeline({
+        fileSystem: deps.fileSystem,
+        injector,
+        logger: runtime.logger,
+      }),
+    };
+    return channel;
+  });
 }
 
 /**

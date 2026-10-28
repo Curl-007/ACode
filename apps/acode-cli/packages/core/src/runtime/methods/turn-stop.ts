@@ -11,6 +11,7 @@ import {
   commitTurnRequestEntries,
 } from "./turn-output-token-continuation.js";
 import { createRuntimeAssistantEntry } from "../../agent/message-history.js";
+import { getRuntimeMessageProjectionPort } from "../runtime-message-projection.js";
 
 interface AssistantPersistenceAnchor {
   latestAssistantMessageId: AgentRuntimeInternal["latestAssistantMessageId"];
@@ -64,15 +65,12 @@ export async function persistCompletedAssistantStep(
         messageID: options.assistantMessageId,
       });
     }
-    if (runtime.latestConversationMessageId === options.assistantMessageId) {
-      runtime.latestConversationMessageId =
-        options.assistantPersistenceAnchor.latestConversationMessageId;
-    }
-    if (runtime.latestAssistantMessageId === options.assistantMessageId) {
-      runtime.latestAssistantMessageId =
-        options.assistantPersistenceAnchor.latestAssistantMessageId;
-      runtime.latestAssistantTurnId = options.assistantPersistenceAnchor.latestAssistantTurnId;
-    }
+    // R1-01 B3：投影游标归 RuntimeMessageProjectionOwner——identity 前置条件
+    // （游标仍指向被回滚消息才恢复）与 anchor 恢复下沉端口，同一同步片。
+    getRuntimeMessageProjectionPort(runtime).restoreFromPersistenceAnchor(
+      options.assistantMessageId,
+      options.assistantPersistenceAnchor,
+    );
     return false;
   }
   const persistedTokens = toTokenUsageInfo(options.result.usage);

@@ -44,6 +44,16 @@ const REGISTERED_LINE_CAPS = {
   "settings/RemotePluginSyncDialog.tsx": 1132,
   // 2026-10-28 batch-1 helper 外迁落地（refresh queue / status / OAuth authorization build 纯逻辑 → settings/mcp/mcpSettingsModel.ts）：1595 → 1346。
   "settings/McpSettingsSection.tsx": 1346,
+  // 2026-10-28 batch-4 helper 外迁落地（importModel + useExternalAgentImportCategoryState → settings/external-agent-import/）：1442 → 1050。
+  "settings/ExternalAgentImportDialog.tsx": 1050,
+  // 2026-10-28 batch-4 落地（PluginList controller hook + rows/detail/uninstall/空态等 9 叶子 → settings/plugins/）：1400 → 498。
+  "settings/PluginsSection.tsx": 498,
+  // 2026-10-28 batch-4 helper 外迁落地（drag data 读取器 / preview view 构建器 / 布局测量动画 → workspace-grouped-tasks/）：1747 → 1320。
+  "WorkspaceGroupedTasksSection.tsx": 1320,
+  // 2026-10-28 batch-4 落地（usage coding-plan 派生簇收口 useSettingsUsageCodingPlanSources + 纯函数/chrome 两叶子）：1725 → 1347。
+  "SettingsPage.tsx": 1347,
+  // 2026-10-28 batch-4 保守纯函数外迁（格式化/窗口/open-request 决策 → v4/conversationStatusPanelFormat.ts；组件与实时语义未动）：2246 → 2102。
+  "v4/ConversationStatusPanel.tsx": 2102,
 };
 
 /** 与 scripts/architecture/ratchet.mjs countPhysicalLines 同定义。 */

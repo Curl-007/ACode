@@ -11,7 +11,9 @@ type ComputerUseAvailabilityKind =
   | "remote-server"
   | "web";
 
-interface ComputerUseAvailability {
+// 批次 4 外迁（2026-10-28）：PluginUnavailableComputerUseRow 叶子的 props 契约需要按名引用，
+// 依 ts-no-return-type 规则导出属主模块的具名类型，消费者不用 ReturnType<typeof …>。
+export interface ComputerUseAvailability {
   kind: ComputerUseAvailabilityKind;
   supported: boolean;
 }

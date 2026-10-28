@@ -12,7 +12,9 @@ interface UsePluginUninstallInput {
   onAfterUninstall: () => Promise<void>;
 }
 
-interface PluginUninstallController {
+// 批次 4 外迁（2026-10-28）：plugins/usePluginListController 的导出签名经推断引用本类型，
+// 依 TS4058/ts-no-return-type 规则由属主模块具名导出。
+export interface PluginUninstallController {
   pendingPlugin: ACodePluginInfo | ACodeInstalledPluginSummary | null;
   uninstalling: boolean;
   requestUninstall: (pluginId: string) => void;

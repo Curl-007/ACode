@@ -1,6 +1,6 @@
 # v4 上帝组件拆分计划（SessionPane / ConversationComposer / settings 上帝组件）
 
-状态：第一批已实施（2026-10-05，附件预览接缝）；第二批已实施（2026-10-22，SessionPane 命令编排纯决策逻辑抽出 + 接缝内测试）。其余接缝为登记在案的后续批次。
+状态：第一批已实施（2026-10-05，附件预览接缝）；第二批已实施（2026-10-22，SessionPane 命令编排纯决策逻辑抽出 + 接缝内测试）；批次 4 已实施（2026-10-28，ExternalAgentImportDialog / PluginsSection / WorkspaceGroupedTasksSection / SettingsPage helper 外迁 + ConversationStatusPanel 保守纯函数外迁，见下文各节）。其余接缝为登记在案的后续批次。
 背景：`v4/SessionPane.tsx`（本轮起点 3,762 行，带 max-lines 豁免）与 `v4/ConversationComposer.tsx`
 （2,168 行）各自混合多种职责。拆分按「耦合最浅的接缝先行」推进，每批独立验证。
 
@@ -329,6 +329,65 @@
 - 状态：**batch-1 helper 外迁已实施**（2026-10-28）：12 个纯函数 + 3 个常量 + 4 个类型逐字迁入
   `settings/mcp/mcpSettingsModel.ts`（289 行）。主文件 1595 → **1346**（仍 >400，符合调研预期）。
   前置测试 `test/mcpSettingsModel.test.ts` 36 例全绿；ratchet 上限同步下调至 1346。
+
+### `settings/ExternalAgentImportDialog.tsx`（1,442 行；max-lines 豁免）
+
+> 登记来源：review 2026-10-28 batch-1 调研报告全清单 Top 18；批次 4 实施（helper/hook 外迁）。
+
+- 职责分析：行 93-323 是纯 helper 带（selection key 编解码 / import selection 归组 / source root scope 推断与排序 / agent 分组 / 结果提取与格式化），行 358-490 是 `useExternalAgentImportCategoryState`（扫描-选择-导入目标状态机 hook），其余为弹窗主组件 + 12 个纯展示子组件。
+- 状态：**批次 4 已实施（2026-10-28，helper + hook 外迁）**：1442→**1050**（−392）。
+  - 新建 `settings/external-agent-import/importModel.ts`（279 行）：15 个纯函数 + 4 类型 + 2 常量逐字迁入；`ImportResourceCategory` 类型单一来源迁至本叶子，主文件 re-export 保持对外签名。
+  - 新建 `settings/external-agent-import/useExternalAgentImportCategoryState.ts`（175 行）：hook 与 `ExternalAgentImportCategoryState` 接口逐字迁入；主文件 re-export，消费方（OnboardingDialog / OnboardingFlowParts / SkillsSection / CommandsSection / McpSettingsSection）零改动。
+  - 偏离登记：`formatAgentName`/`formatSourceRootScope` 的 intl 形参标注由 `ReturnType<typeof useACodeIntl>["intl"]` 改具名类型 `IntlInstance`（类型恒等，遵守 ts-no-return-type）；函数体逐字未动。
+  - 前置测试 `test/externalAgentImportModel.test.ts` 13 例全绿（key round-trip / 畸形 key 矩阵 / selection 归组 / 结果提取 / 路径 scope 推断 / intl 桩格式化）。
+  - 12 个纯展示子组件留主文件（下一批候选）；ratchet 上限登记 1050。
+
+### `settings/PluginsSection.tsx`（1,400 行；max-lines 豁免）
+
+> 登记来源：review 2026-10-28 batch-1 调研报告全清单（1,000–2,000 梯队）；批次 4 实施（controller hook + 受控 UI 外迁）。
+
+- 职责分析：`PluginList`（原行 135-940，~800 行）承载 store 绑定 / 派生 memo / 操作回调 / 行渲染 / 详情分支 / 空态，主组件 `PluginsSection` 承载 tabs 与 Scope 聚合。
+- 状态：**批次 4 已实施（2026-10-28）**：1400→**498**（−902），9 个新叶子全部 <400 行：
+  - `settings/plugins/pluginTabs.ts`（19 行）：`normalizePluginTab`/`getPluginTabCountClass` + tab 类型；本地 `workspaceKey` 经实现比对确认为 `getPluginWorkspaceKey` 的纯委托别名，删除别名、9 个调用点改直调（去重，非迁移）。
+  - `settings/plugins/usePluginListController.ts`（378 行）：PluginList 的 store 绑定/派生 memo/回调逐字收口为 custom hook（hook 顺序与 deps 逐字）。
+  - `settings/plugins/usePluginOptionDrafts.ts`（103 行）：配置草稿三件套（controller 超 400 后的第二刀，hook 序列不变）。
+  - `settings/plugins/PluginList.tsx`（305 行）/ `PluginListDetail.tsx`（165 行，PluginList 超 400 后的第三刀）/ `PluginListRows.tsx`（219 行，原 `renderPluginRows` 受控化）/ `PluginListUninstallDialog.tsx`（41 行，两分支重复卸载弹窗消重）/ `PluginUnavailableComputerUseRow.tsx`（44 行）/ `PluginEmptyState.tsx`（13 行，PluginList 与主组件共用故独立成叶避免循环）。
+  - 集合外最小改动登记：`settings/computerUseAvailability.ts` / `settings/usePluginUninstall.ts` / `hooks/useWorkspaceServices.tsx` 各补 `export` 一个既有类型（ts-no-return-type / TS4058 契约要求，行为零改动）。
+  - 前置测试：`test/pluginTabs.test.ts` 3 例 + `test/pluginListRows.test.ts` 9 例全绿（渲染契约：row 锚点 / switch 三态 / missing 无菜单 / canUpdate 四态 / scope 徽标 / CUA 文案分支；Radix Portal 菜单 SSR 不可见，改由同谓词的行内 UpdateButton 钉住，测试头注已说明）。controller hook 无 jsdom 不测，按固定验收第 4 条登记。
+  - ratchet 上限登记 498。
+
+### `WorkspaceGroupedTasksSection.tsx`（1,747 行）
+
+> 登记来源：review 2026-10-28 batch-1 调研报告全清单 Top 12；批次 4 实施（drag/drop helper 外迁）。
+
+- 职责分析：行 74-520 是 drag/drop 纯 helper 密集带（8 个 drag data 读取器 / 碰撞检测 / 7 个 preview view 构建器 / view 签名 / 布局测量与 FLIP 动画），组件本体（DnD 编排）占 521-1747。
+- 状态：**批次 4 已实施（2026-10-28，helper 外迁）**：1747→**1320**（−427）。
+  - 新建 `workspace-grouped-tasks/groupedTaskDragData.ts`（120 行）/ `groupedTaskPreviewViews.ts`（164 行）/ `groupedTaskLayout.ts`（204 行）——沿用既有 `workspace-grouped-tasks/` 叶子目录；`findNearestScrollableAncestor` 因被布局族与组件本体共用而归置 layout 叶子（内聚性），主文件从该叶子 import。
+  - 组件本体零改动；失效 import 已清理。
+  - 前置测试：`test/groupedTaskDragData.test.ts` 15 例 + `test/groupedTaskPreviewViews.test.ts` 15 例全绿（读取器畸形矩阵 / 碰撞检测分支 / preview 决策表 / 签名稳定性）。布局/DOM 函数无 jsdom 不测，按固定验收第 4 条登记。
+  - ratchet 上限登记 1320。
+
+### `SettingsPage.tsx`（1,725 行）
+
+> 登记来源：review 2026-10-28 batch-1 调研报告全清单 Top 13；批次 4 实施（usage 派生簇 hook 收口 + 纯函数/小组件外迁）。
+
+- 职责分析：主组件内行 334-575 是 usage coding-plan 派生簇（provider settings 读取 / entitlement / 企业商品 / sources 派生 / tab 纠偏 effect），文件顶部另有 5 个 tab 纯函数与 2 个小组件。
+- 状态：**批次 4 已实施（2026-10-28）**：1725→**1347**（−378）。
+  - 新建 `settingsUsageCodingPlanTabs.ts`（56 行，5 纯函数）/ `useSettingsUsageCodingPlanSources.ts`（288 行，usage 簇 custom hook，hook 顺序与 deps 逐字，返回集按主文件实际引用裁剪为 9 值）/ `settingsPageChrome.tsx`（107 行，`SettingsUsageProviderTabs` + `SettingsSidebarButton`）——沿用既有 `settingsPageHelpers.tsx` 的同目录（src 根）叶子约定。
+  - 前置测试 `test/settingsUsageCodingPlanTabs.test.ts` 9 例全绿（team 判定 / tab id round-trip / 标签解析 / 快照矩阵）。hook 无 jsdom 不测，按固定验收第 4 条登记。
+  - ratchet 上限登记 1347。
+
+### `v4/ConversationStatusPanel.tsx`（2,246 行；max-lines 豁免）
+
+> 登记来源：review 2026-10-28 batch-1 调研报告全清单 Top 4；批次 4 实施（**仅保守纯函数外迁**，v4 实时链路投影组件的风险评估结论见下）。
+
+- 风险评估（批次 4 前置）：desktop-continuous 实时语义集中在 `ConversationStatusPanelImpl`（memo / tick 重渲染节律 / scroll policy）与 20+ 个 section 组件的 props 透传契约，组件级外迁需先定义公共 props 类型边界并补渲染契约测试，风险高于收益；顶部纯格式化/决策函数与实时语义零耦合，逐字外迁等价于批次 1-3 已验证的模式 A。**结论：本批只拆纯函数接缝，组件与 Impl 一律不动。**
+- 状态：**批次 4 已实施（2026-10-28，保守纯函数外迁）**：2246→**2102**（−144）。
+  - 新建 `v4/conversationStatusPanelFormat.ts`（181 行）：`EMPTY_*` 常量 / `formatDurationUnits` / elapsed 计算 / running count 文案 / todo focus 窗口（`COMPACT_TODO_THRESHOLD` 等）/ 两个 open-request 构建器 / plan 当前与最近完成项选取，逐字迁入；`STATUS_SECTION_SCROLL_POLICY`/`StatusSectionKind` 因组件共享留主文件。
+  - 偏离登记：`formatMessage` 形参类型改宿主具名类型 `IntlInstance["formatMessage"]`（类型恒等，ts-no-return-type）。
+  - 前置测试 `test/conversationStatusPanelFormat.test.ts` 11 例全绿；既有渲染契约 `test/ConversationTeamStatusPanel.test.ts` 复测仍绿。
+  - 后续批次建议：先补 section 渲染契约测试（renderToStaticMarkup 钉结构），再按「叶子 props 类型 → 单 section 外迁」逐批切，最后处理 Impl 投影与 tick 策略。
+  - ratchet 上限登记 2102。
 
 ## 测试债清单（结构守护测试，非行为验证）
 

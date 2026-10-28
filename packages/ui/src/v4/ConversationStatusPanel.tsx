@@ -1,4 +1,4 @@
-/* oxlint-disable eslint(max-lines) -- 状态面板同时维护收起态摘要、展开态分区、菜单策略和宽度自适应，同文件能保证两种形态共享同一内容优先级。 */
+/* oxlint-disable eslint(max-lines) -- 状态面板同时维护收起态摘要、展开态分区、菜单策略和宽度自适应，同文件能保证两种形态共享同一内容优先级；批次 4 已将纯格式化/决策函数外迁 conversationStatusPanelFormat.ts，实时投影语义（memo/tick/scroll policy）仍在本文件。 */
 import { useIsOfficeMode } from "@/hooks/useInterfaceMode.js";
 import {
   forwardRef,
@@ -94,10 +94,24 @@ import type {
 import type { ChatViewSummaryPanelVariant } from "@/v4/legacyChatViewTypes.js";
 import { resolveConversationStatusPanelVariant } from "@/v4/conversationLayout.js";
 import {
+  EMPTY_BACKGROUND_WORKS,
+  EMPTY_RUNNING_SUBAGENTS,
+  EMPTY_WORKFLOW_RUNS,
+  buildRunningSubagentOpenRequest,
+  buildSessionPlanOpenRequest,
+  formatDurationUnits,
+  formatRunningCount,
+  formatRunningSubagentCount,
+  getBackgroundWorkElapsedMs,
+  getCompletedPlanItem,
+  getCurrentPlanItem,
+  getLongestRunningWorkElapsedMs,
+  getStatusPanelTodoFocusWindow,
+} from "@/v4/conversationStatusPanelFormat.js";
+import {
   buildConversationStatusPanelModel,
   type ConversationStatusPanelRunningSubagent,
   type ConversationStatusPanelModel,
-  type ConversationStatusPanelSessionPlanItem,
   type ConversationStatusPanelWorkflowRun,
 } from "@/v4/conversationStatusPanelModel.js";
 import type { ConversationStatusPanelWorkflowRunTarget } from "@/v4/conversationStatusPanelModel.js";
@@ -161,80 +175,6 @@ interface ConversationStatusPanelProps {
   onOpenOrchestration?: (request: OpenOrchestrationSideTabRequest) => void;
   onOpenTeamPanel?: (request: OpenTeamSideTabRequest) => void;
   className?: string;
-}
-
-// memo 组件默认 props 不内联创建数组，避免每次渲染生成新引用触发稳定引用边界测试。
-const EMPTY_BACKGROUND_WORKS: readonly BackgroundWorkSummary[] = [];
-const EMPTY_RUNNING_SUBAGENTS: readonly ACodeSessionRunningSubagent[] = [];
-const EMPTY_WORKFLOW_RUNS: readonly WorkflowRunState[] = [];
-
-function formatDurationUnits(
-  totalSeconds: number,
-  formatMessage: ReturnType<typeof useACodeIntl>["intl"]["formatMessage"],
-) {
-  const seconds = Math.max(0, Math.floor(totalSeconds));
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  const restSeconds = seconds % 60;
-  const hourUnit = formatMessage({ id: "chat.summaryPanel.duration.hours" });
-  const minuteUnit = formatMessage({ id: "chat.summaryPanel.duration.minutes" });
-  const secondUnit = formatMessage({ id: "chat.summaryPanel.duration.seconds" });
-  const parts: string[] = [];
-
-  if (hours > 0) {
-    parts.push(`${hours}${hourUnit}`);
-  }
-  if (minutes > 0) {
-    parts.push(`${minutes}${minuteUnit}`);
-  }
-  if (restSeconds > 0 || parts.length === 0) {
-    parts.push(`${restSeconds}${secondUnit}`);
-  }
-  return parts.join(" ");
-}
-
-function getBackgroundWorkElapsedMs(work: BackgroundWorkSummary, now: number) {
-  return Math.max(0, now - work.startedAt);
-}
-
-function getLongestRunningWorkElapsedMs(works: readonly BackgroundWorkSummary[], now: number) {
-  return works.reduce(
-    (longestElapsedMs, work) => Math.max(longestElapsedMs, getBackgroundWorkElapsedMs(work, now)),
-    0,
-  );
-}
-
-function formatRunningCount(
-  formatMessage: ReturnType<typeof useACodeIntl>["intl"]["formatMessage"],
-  count: number,
-) {
-  return formatMessage(
-    {
-      id:
-        count === 1
-          ? "chat.summaryPanel.runningBackgroundTasksMiniValue"
-          : "chat.summaryPanel.runningBackgroundTasksMiniValuePlural",
-    },
-    { count: String(count) },
-  );
-}
-
-function formatRunningSubagentCount(
-  formatMessage: ReturnType<typeof useACodeIntl>["intl"]["formatMessage"],
-  count: number,
-) {
-  return formatMessage(
-    {
-      // 这里的计数至少包含 running 投影中的 subagent（可能是 mixed 胶囊总数）；
-      // subagent 又包含 foreground、background、blocked 和 waiting，复用后台任务文案
-      // 会把计数语义错误地缩窄成“后台”。
-      id:
-        count === 1
-          ? "chat.statusPanel.runningAgentsValue"
-          : "chat.statusPanel.runningAgentsValuePlural",
-    },
-    { count: String(count) },
-  );
 }
 
 type StatusSectionKind =
@@ -621,47 +561,6 @@ function PlanStatusIcon({ status }: { status: PlanState["items"][number]["status
   );
 }
 
-const COMPACT_TODO_THRESHOLD = 6;
-const TODO_FOCUS_WINDOW_SIZE = 3;
-
-interface StatusPanelTodoFocusWindow {
-  compact: boolean;
-  precedingItems: PlanState["items"];
-  focusItems: PlanState["items"];
-  followingItems: PlanState["items"];
-}
-
-function getStatusPanelTodoFocusWindow(items: PlanState["items"]): StatusPanelTodoFocusWindow {
-  if (items.length <= COMPACT_TODO_THRESHOLD) {
-    return {
-      compact: false,
-      precedingItems: [],
-      focusItems: items,
-      followingItems: [],
-    };
-  }
-
-  const runningIndex = items.findIndex((item) => item.status === "inProgress");
-  const firstUnfinishedIndex = items.findIndex((item) => item.status !== "completed");
-  const focusIndex =
-    runningIndex >= 0
-      ? runningIndex
-      : firstUnfinishedIndex >= 0
-        ? firstUnfinishedIndex
-        : Math.max(0, items.length - TODO_FOCUS_WINDOW_SIZE);
-  // 只取“当前 + 后两条”会让靠近列表末尾的当前项只剩一两条上下文。
-  // 从前面回补可以让精简窗口在项目数足够时始终保持三条，同时不改变 snapshot 原序。
-  const focusStartIndex = Math.max(0, Math.min(focusIndex, items.length - TODO_FOCUS_WINDOW_SIZE));
-  const focusEndIndex = Math.min(items.length, focusStartIndex + TODO_FOCUS_WINDOW_SIZE);
-
-  return {
-    compact: true,
-    precedingItems: items.slice(0, focusStartIndex),
-    focusItems: items.slice(focusStartIndex, focusEndIndex),
-    followingItems: items.slice(focusEndIndex),
-  };
-}
-
 function PlanStatusItemRows({ items }: { items: PlanState["items"] }) {
   return items.map((item) => (
     <li
@@ -871,18 +770,6 @@ function SessionPlansStatusSection({
   );
 }
 
-function buildSessionPlanOpenRequest(
-  parentSessionId: string,
-  item: ConversationStatusPanelSessionPlanItem,
-): OpenPlanDetailSideTabRequest {
-  return {
-    parentSessionId,
-    toolCallId: item.toolCallId,
-    markdown: item.markdown,
-    ...(item.planFilePath ? { planFilePath: item.planFilePath } : {}),
-  };
-}
-
 function PlanStatusSection({
   model,
   popoverSide,
@@ -958,25 +845,6 @@ function RunningWorkCancelButton({
       {intl.formatMessage({ id: "chat.statusPanel.runningStop" })}
     </Button>
   );
-}
-
-function buildRunningSubagentOpenRequest({
-  parentSessionId,
-  rootSessionId,
-  subagent,
-}: {
-  parentSessionId?: string;
-  rootSessionId?: string;
-  subagent: ACodeSessionRunningSubagent;
-}): OpenSubagentSideTabRequest | null {
-  if (!parentSessionId) return null;
-  return {
-    rootSessionId: rootSessionId ?? parentSessionId,
-    parentSessionId,
-    childSessionId: subagent.childSessionId,
-    subagentType: subagent.subagentType,
-    title: subagent.title,
-  };
 }
 
 function RunningStatusItem({
@@ -1591,18 +1459,6 @@ function StatusSummaryMetric({ children, icon }: { children: ReactNode; icon: Re
       {children}
     </div>
   );
-}
-
-function getCurrentPlanItem(plan: ConversationStatusPanelModel["plan"]) {
-  return (
-    plan?.items.find((item) => item.status === "inProgress") ??
-    plan?.items.find((item) => item.status === "pending") ??
-    null
-  );
-}
-
-function getCompletedPlanItem(plan: ConversationStatusPanelModel["plan"]) {
-  return [...(plan?.items ?? [])].reverse().find((item) => item.status === "completed") ?? null;
 }
 
 function StatusSummaryRow({

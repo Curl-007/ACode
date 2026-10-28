@@ -17,6 +17,10 @@ const { getRuntimeBranchRestorePort, getRuntimeCommandDrainPort } =
 const { getRuntimeTurnTimingPort } = await import(
   "../packages/core/src/runtime/runtime-turn-timing.ts"
 );
+const {
+  getRuntimeCacheDiagnosticsPort,
+  initializeRuntimeCacheDiagnostics,
+} = await import("../packages/core/src/runtime/runtime-cache-diagnostics.ts");
 const { getRuntimeLifecyclePort, initializeRuntimeLifecycle } =
   await import("../packages/core/src/runtime/runtime-lifecycle.ts");
 const { getRuntimeNotificationSealPort, initializeRuntimeNotificationSeal } =
@@ -644,6 +648,16 @@ test("CLI-05: real runtime exposes non-writable, non-replaceable state getters",
     ["pendingInputDrains", 5],
     ["queueAutoDrain", false],
     ["queueExternalDrainActive", true],
+    // R1-01 B1：cache 诊断 6 字段收敛到 RuntimeCacheDiagnosticsOwner，同样只读不可替换。
+    [
+      "mainTurnCacheHitAggregate",
+      { requestCount: 0, totalInputTokens: 0, totalCacheReadTokens: 0, totalCacheWriteTokens: 0 },
+    ],
+    ["pendingCacheMissCause", "compaction"],
+    ["cacheMissCauseCounts", { compaction: 5 }],
+    ["autoCompactConsecutiveFailures", 5],
+    ["lastRequestModelId", "model_bad"],
+    ["lastAssistantCompletedAtMs", 12345],
   ]) {
     assert.throws(() => {
       runtime[field] = value;
@@ -732,6 +746,131 @@ test("CLI-05 P1: turn timing fields are owned by a finite write port, not the fl
   assert.throws(() => {
     port.advanceTurn = () => {};
   }, TypeError);
+});
+
+test("R1-01 B1: cache diagnostics fields are owned by a finite write port, not the flat `this` surface", async (t) => {
+  const { runtime } = await fixture(t);
+  const port = getRuntimeCacheDiagnosticsPort(runtime);
+
+  // 初始值（迁移前 agent-runtime.ts 的字段初始化字面量等价）。
+  assert.deepEqual(runtime.mainTurnCacheHitAggregate, {
+    requestCount: 0,
+    totalInputTokens: 0,
+    totalCacheReadTokens: 0,
+    totalCacheWriteTokens: 0,
+  });
+  assert.equal(runtime.pendingCacheMissCause, undefined);
+  assert.deepEqual(runtime.cacheMissCauseCounts, {});
+  assert.equal(runtime.autoCompactConsecutiveFailures, 0);
+  assert.equal(runtime.lastRequestModelId, undefined);
+  assert.equal(runtime.lastAssistantCompletedAtMs, undefined);
+
+  // recordAssistantCompleted：推进 assistant 完成时间戳（归因 idle_ttl_suspected 输入）。
+  port.recordAssistantCompleted(1000);
+  assert.equal(runtime.lastAssistantCompletedAtMs, 1000);
+
+  // recordMainTurnUsage：原子累计 aggregate + 消费 pending + 更新 lastRequestModelId。
+  port.setPendingCacheMissCause("compaction");
+  assert.equal(runtime.pendingCacheMissCause, "compaction");
+  const first = port.recordMainTurnUsage({
+    inputTokens: 100,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 20,
+    isMiss: true,
+    cause: "compaction",
+    modelId: "model_a",
+  });
+  assert.equal(runtime.mainTurnCacheHitAggregate.requestCount, 1);
+  assert.equal(runtime.mainTurnCacheHitAggregate.totalInputTokens, 100);
+  assert.equal(runtime.mainTurnCacheHitAggregate.totalCacheReadTokens, 0);
+  assert.equal(runtime.mainTurnCacheHitAggregate.totalCacheWriteTokens, 20);
+  // pending 消费即清（无论命中或 miss）。
+  assert.equal(runtime.pendingCacheMissCause, undefined);
+  // miss 计数累计。
+  assert.deepEqual(runtime.cacheMissCauseCounts, { compaction: 1 });
+  assert.deepEqual(first.missCauses, { compaction: 1 });
+  // lastRequestModelId 更新。
+  assert.equal(runtime.lastRequestModelId, "model_a");
+  // lastAssistantCompletedAtMs 不被 recordMainTurnUsage 触碰（由 recordAssistantCompleted 负责）。
+  assert.equal(runtime.lastAssistantCompletedAtMs, 1000);
+
+  // 第二次命中：isMiss=false，cause 不累计，但 aggregate 仍累计、pending 仍清空。
+  port.setPendingCacheMissCause("context_refresh");
+  const second = port.recordMainTurnUsage({
+    inputTokens: 200,
+    cacheReadTokens: 150,
+    cacheWriteTokens: 0,
+    isMiss: false,
+    modelId: "model_b",
+  });
+  assert.equal(runtime.mainTurnCacheHitAggregate.requestCount, 2);
+  assert.equal(runtime.mainTurnCacheHitAggregate.totalInputTokens, 300);
+  assert.equal(runtime.mainTurnCacheHitAggregate.totalCacheReadTokens, 150);
+  assert.deepEqual(runtime.cacheMissCauseCounts, { compaction: 1 });
+  assert.equal(runtime.pendingCacheMissCause, undefined);
+  assert.equal(runtime.lastRequestModelId, "model_b");
+  assert.deepEqual(second.missCauses, { compaction: 1 });
+
+  // miss-cause 归因优先级（resolveCacheMissCause 读取的 3 个 peek 端口语义）。
+  port.setPendingCacheMissCause("control_only_turn");
+  assert.equal(port.peekPendingCacheMissCause(), "control_only_turn");
+  assert.equal(port.peekLastRequestModelId(), "model_b");
+  assert.equal(port.peekLastAssistantCompletedAtMs(), 1000);
+
+  // consumePendingCacheMissCause：原子「读 + 清」。
+  assert.equal(port.consumePendingCacheMissCause(), "control_only_turn");
+  assert.equal(runtime.pendingCacheMissCause, undefined);
+  assert.equal(port.consumePendingCacheMissCause(), undefined);
+
+  // recordAutoCompactFailure：原子 ++ 并返回新值（用于日志）。
+  assert.equal(port.recordAutoCompactFailure(), 1);
+  assert.equal(runtime.autoCompactConsecutiveFailures, 1);
+  assert.equal(port.recordAutoCompactFailure(), 2);
+  assert.equal(runtime.autoCompactConsecutiveFailures, 2);
+  // resetAutoCompactFailures：成功路径 reset 0。
+  port.resetAutoCompactFailures();
+  assert.equal(runtime.autoCompactConsecutiveFailures, 0);
+
+  // resume/rewind 重建端口：聚合重置 + 计数清空 + pending 清空 + 时间戳恢复。
+  port.setPendingCacheMissCause("conversation_rewind");
+  port.recordMainTurnUsage({
+    inputTokens: 50,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 10,
+    isMiss: true,
+    cause: "conversation_rewind",
+  });
+  assert.deepEqual(runtime.cacheMissCauseCounts, { compaction: 1, conversation_rewind: 1 });
+  port.resetMainTurnCacheHitAggregate({
+    requestCount: 5,
+    totalInputTokens: 500,
+    totalCacheReadTokens: 400,
+    totalCacheWriteTokens: 50,
+  });
+  port.resetCacheMissCauseCounts();
+  port.clearPendingCacheMissCause();
+  port.restoreLastAssistantCompletedAtMs(2000);
+  assert.equal(runtime.mainTurnCacheHitAggregate.requestCount, 5);
+  assert.deepEqual(runtime.cacheMissCauseCounts, {});
+  assert.equal(runtime.pendingCacheMissCause, undefined);
+  assert.equal(runtime.lastAssistantCompletedAtMs, 2000);
+
+  // restoreLastAssistantCompletedAtMs(undefined)：rewind 到无 assistant 消息的状态。
+  port.restoreLastAssistantCompletedAtMs(undefined);
+  assert.equal(runtime.lastAssistantCompletedAtMs, undefined);
+
+  // 端口冻结：不能替换写方法。
+  assert.throws(() => {
+    port.recordMainTurnUsage = () => ({ aggregate: {} });
+  }, TypeError);
+  assert.throws(() => {
+    port.recordAutoCompactFailure = () => 0;
+  }, TypeError);
+
+  // 重复初始化是幂等 no-op（owners.has 短路）：重新初始化不会重置已有计数。
+  port.recordAutoCompactFailure();
+  initializeRuntimeCacheDiagnostics(runtime);
+  assert.equal(runtime.autoCompactConsecutiveFailures, 1);
 });
 
 test("CLI-05: admission reserves synchronously and cancellation releases only its accepted turn", async (t) => {
@@ -983,6 +1122,12 @@ runtime.pendingInputReservations = new Map();
 runtime.pendingInputDrains = 5;
 runtime.queueAutoDrain = false;
 runtime.queueExternalDrainActive = true;
+runtime.mainTurnCacheHitAggregate = { requestCount: 0, totalInputTokens: 0, totalCacheReadTokens: 0, totalCacheWriteTokens: 0 };
+runtime.pendingCacheMissCause = "compaction";
+runtime.cacheMissCauseCounts = {};
+runtime.autoCompactConsecutiveFailures = 5;
+runtime.lastRequestModelId = "model_bad";
+runtime.lastAssistantCompletedAtMs = 12345;
 if (reservation) reservation.turnId = reservation.turnId;
 runtime.setBranchGeneration(4);
 `;
@@ -1012,8 +1157,11 @@ runtime.setBranchGeneration(4);
   const detail = diagnostics
     .map((diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n"))
     .join("\n");
-  assert.equal(diagnostics.length, 18, detail);
-  assert.equal(diagnostics.filter((diagnostic) => diagnostic.code === 2540).length, 17, detail);
+  // R1-01 B1：新增 6 个 cache 诊断字段（mainTurnCacheHitAggregate / pendingCacheMissCause /
+  // cacheMissCauseCounts / autoCompactConsecutiveFailures / lastRequestModelId /
+  // lastAssistantCompletedAtMs），readonly 违例 17 → 23、总诊断数 18 → 24。
+  assert.equal(diagnostics.length, 24, detail);
+  assert.equal(diagnostics.filter((diagnostic) => diagnostic.code === 2540).length, 23, detail);
   // TS 有拼写建议时用 2551、没有时用 2339；两者都必须真正拒绝不存在的任意 setter。
   assert.equal(
     diagnostics.filter((diagnostic) => diagnostic.code === 2339 || diagnostic.code === 2551).length,

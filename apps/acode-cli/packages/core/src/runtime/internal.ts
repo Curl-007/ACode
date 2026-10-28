@@ -1,5 +1,4 @@
 import { PermissionService, ToolScheduler } from "./deps.js";
-import type { PromptCacheMissCause } from "@acode/contracts";
 import type {
   Logger,
   EventReducer,
@@ -44,7 +43,6 @@ import type {
   AgentRuntimeConfig,
   AgentRuntimeDeps,
   ProviderRuntimeHeadersPort,
-  MainTurnCacheHitAggregate,
   RuntimeTurnFileChangeMap,
 } from "./types.js";
 import type { RuntimeCommandQueue } from "./command-queue.js";
@@ -65,6 +63,7 @@ import type { RuntimeModelSelectionView } from "./runtime-model-selection.js";
 import type { RuntimeSessionPersistenceView } from "./runtime-session-persistence.js";
 import type { RuntimePermissionGrantView } from "./runtime-permission-grant.js";
 import type { RuntimeModelChangeTimelineView } from "./runtime-model-change-timeline.js";
+import type { RuntimeCacheDiagnosticsView } from "./runtime-cache-diagnostics.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AgentRuntimeInternal 状态所有权分簇（specs/runtime-state-ownership.md）。
@@ -196,15 +195,15 @@ interface RuntimeContextMemoryState {
  * RuntimeTurnTimingView 的只读 getter（runtime-turn-timing.ts owner，CLI-05 P1 第一切片）：
  * `this.X = ...` 在运行时抛 TypeError、tsc 下报 readonly 违例，写面只经
  * getRuntimeTurnTimingPort(this) 的有限端口。activeForegroundExecution、foregroundPromotionLease、
- * runtimeCommandQueue、currentTurnFileChanges、lastAssistantCompletedAtMs 仍为扁平可写，
- * 登记为后续批次（spec 的 RuntimeTurnState 剩余字段）。
+ * runtimeCommandQueue、currentTurnFileChanges 仍为扁平可写，登记为后续批次
+ * （spec 的 RuntimeTurnState 剩余字段）；lastAssistantCompletedAtMs 已迁出至
+ * RuntimeCacheDiagnosticsView（R1-01 B1）。
  */
 interface RuntimeTurnState extends RuntimeTurnCoordinationView, RuntimeTurnTimingView {
   activeForegroundExecution?: ActiveForegroundExecutionState;
   foregroundPromotionLease?: ForegroundPromotionLeaseState;
   runtimeCommandQueue: RuntimeCommandQueue;
   currentTurnFileChanges: RuntimeTurnFileChangeMap;
-  lastAssistantCompletedAtMs?: number;
 }
 
 /** 消息 ID 投影：event 发布路径派生的最近 ID 游标（写入方 = 事件发布/reducer 路径）。 */
@@ -212,21 +211,17 @@ interface RuntimeMessageProjectionState {
   latestConversationMessageId?: MessageId;
   latestAssistantMessageId?: MessageId;
   latestAssistantTurnId?: TurnId;
-  lastRequestModelId?: string;
+  // lastRequestModelId 已迁出至 RuntimeCacheDiagnosticsView（R1-01 B1，cache 归因输入）。
   lastEmittedLocalDate?: string;
 }
 
-/** 缓存与压缩诊断：进程内累计，resume/rewind 重建后从空开始（写入方 = 模型请求路径）。 */
-interface RuntimeCacheDiagnosticsState {
-  mainTurnCacheHitAggregate: MainTurnCacheHitAggregate;
-  /**
-   * prompt-cache miss 归因（specs/prompt-cache-diagnostics.md R2/R3）：单格 pending
-   * 由显式事件点写入、归因消费即清；计数为进程内累计，resume/rewind 重建后从空开始。
-   */
-  pendingCacheMissCause?: PromptCacheMissCause;
-  cacheMissCauseCounts: Partial<Record<PromptCacheMissCause, number>>;
-  autoCompactConsecutiveFailures: number;
-}
+/**
+ * 缓存与压缩诊断：进程内累计，resume/rewind 重建后从空开始（写入方 = 模型请求路径）。
+ * R1-01 B1：4 个 cache 字段 + 迁入的 lastRequestModelId + lastAssistantCompletedAtMs 已全部
+ * 收敛到 RuntimeCacheDiagnosticsView 的只读 getter（runtime-cache-diagnostics.ts owner），
+ * 写面只经 getRuntimeCacheDiagnosticsPort(this) 的有限端口。本接口不再持有扁平可写字段。
+ */
+interface RuntimeCacheDiagnosticsState extends RuntimeCacheDiagnosticsView {}
 
 /** 会话级状态与生命周期旗标：一次性 flag 与开关（各自的消费点即写入点，评估即消费）。 */
 interface RuntimeSessionLifecycleState

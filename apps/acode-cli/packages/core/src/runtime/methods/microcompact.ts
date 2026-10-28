@@ -16,6 +16,7 @@ import { maybeLocalMicrocompactRuntimeEntries, throwIfTurnAborted } from "../hel
 import type { AgentRuntimeInternal } from "../internal.js";
 import { resolveNormalRequestMaxOutputTokens } from "./model-token-limits.js";
 import type { TurnRequestState } from "./turn-loop-state.js";
+import { getRuntimeCacheDiagnosticsPort } from "../runtime-cache-diagnostics.js";
 import {
   filterOutputTokenContinuationEntries,
   preserveCanonicalContextPrefix,
@@ -78,7 +79,8 @@ export async function microcompactIfNeeded(
     ),
   );
   // microcompact 清理工具结果同样重写前缀（prompt-cache-diagnostics.md R1，与全量压缩同因）。
-  this.pendingCacheMissCause = "compaction";
+  // R1-01 B1：pendingCacheMissCause 归 RuntimeCacheDiagnosticsOwner，写入经端口。
+  getRuntimeCacheDiagnosticsPort(this).setPendingCacheMissCause("compaction");
   context.turnRequestState.entries = result.entries;
 
   const payload = {

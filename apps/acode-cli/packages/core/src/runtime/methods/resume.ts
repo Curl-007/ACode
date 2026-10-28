@@ -33,6 +33,7 @@ import type { AgentRuntimeInternal } from "../internal.js";
 import { getRuntimeSessionPersistencePort } from "../runtime-session-persistence.js";
 import { getRuntimeBranchRestorePort } from "../turn-coordination.js";
 import { getRuntimeTurnTimingPort } from "../runtime-turn-timing.js";
+import { getRuntimeCacheDiagnosticsPort } from "../runtime-cache-diagnostics.js";
 import {
   announceSessionShellEnvironmentNoticeAfterResume,
   getSessionShellSelection,
@@ -194,10 +195,12 @@ export async function resumeFromStore(
       this.latestConversationMessageId = getLatestActiveSessionMessageId(timelineActiveMessages);
       this.latestAssistantMessageId = latestAssistant?.info.id;
       this.latestAssistantTurnId = latestAssistant?.info.anchor?.turnId as TurnId | undefined;
-      this.lastAssistantCompletedAtMs =
+      // R1-01 B1：lastAssistantCompletedAtMs 归 RuntimeCacheDiagnosticsOwner，重建经端口。
+      getRuntimeCacheDiagnosticsPort(this).restoreLastAssistantCompletedAtMs(
         latestAssistant && "completed" in latestAssistant.info.time
           ? latestAssistant.info.time.completed
-          : undefined;
+          : undefined,
+      );
 
       await restoreWorkspaceCheckpointEntries(this, traceContext);
       await restoreWorkspaceFileRewindEntries(this, traceContext);
@@ -230,14 +233,18 @@ export async function resumeFromStore(
 
       await restorePermissionGrantMarker(this, traceContext);
 
-      this.mainTurnCacheHitAggregate = mainTurnCacheHitAggregateFromMessages({
-        activeMessages,
-        persistedMessages: messages,
-      });
+      // R1-01 B1：cache 聚合 / miss 计数 / pending 归 RuntimeCacheDiagnosticsOwner，重建经端口。
+      const cachePort = getRuntimeCacheDiagnosticsPort(this);
+      cachePort.resetMainTurnCacheHitAggregate(
+        mainTurnCacheHitAggregateFromMessages({
+          activeMessages,
+          persistedMessages: messages,
+        }),
+      );
       // miss-cause 计数不可从持久化 tokens 重建，冷启动从空开始
       //（prompt-cache-diagnostics.md R3 诚实边界，与聚合重建同点）。
-      this.cacheMissCauseCounts = {};
-      this.pendingCacheMissCause = undefined;
+      cachePort.resetCacheMissCauseCounts();
+      cachePort.clearPendingCacheMissCause();
       getRuntimeTurnTimingPort(this).setTurnNumber(
         activeMessages.filter((message) => message.info.role === "user" && !message.info.summary)
           .length,

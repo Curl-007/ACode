@@ -41,6 +41,7 @@ import type {
 import type { AgentRuntimeInternal } from "../internal.js";
 import { getRuntimeBranchRestorePort, type RuntimeBranchTransition } from "../turn-coordination.js";
 import { getRuntimeTurnTimingPort } from "../runtime-turn-timing.js";
+import { getRuntimeCacheDiagnosticsPort } from "../runtime-cache-diagnostics.js";
 import { rebuildContextPrefix } from "./context-refresh.js";
 import { mainTurnCacheHitAggregateFromMessages } from "./turn-model-step-usage.js";
 
@@ -732,25 +733,32 @@ async function rebuildConversationDerivedState(
   this.latestConversationMessageId = getLatestActiveSessionMessageId(timelineActiveMessages);
   this.latestAssistantMessageId = latestAssistant?.info.id;
   this.latestAssistantTurnId = latestAssistant?.info.anchor?.turnId as TurnId | undefined;
-  this.lastAssistantCompletedAtMs =
+  // R1-01 B1：cache 诊断 4 字段与 lastAssistantCompletedAtMs 归 RuntimeCacheDiagnosticsOwner，
+  // 重建经端口（语义与迁移前完全一致：rewind 是显式 miss 事件，计数从空开始，聚合从持久
+  // 消息反推，autoCompactConsecutiveFailures 重置）。
+  const cachePort = getRuntimeCacheDiagnosticsPort(this);
+  cachePort.restoreLastAssistantCompletedAtMs(
     latestAssistant && "completed" in latestAssistant.info.time
       ? latestAssistant.info.time.completed
-      : undefined;
+      : undefined,
+  );
   this.messageHistory.setCacheMiss();
   // miss-cause 归因（prompt-cache-diagnostics.md R1/R3）：rewind 是显式 miss 事件；
   // 计数不可从持久化 tokens 重建，随聚合一并从空开始。
-  this.pendingCacheMissCause = "conversation_rewind";
-  this.cacheMissCauseCounts = {};
-  this.mainTurnCacheHitAggregate = mainTurnCacheHitAggregateFromMessages({
-    activeMessages,
-    persistedMessages: options.persistedMessages,
-  });
+  cachePort.setPendingCacheMissCause("conversation_rewind");
+  cachePort.resetCacheMissCauseCounts();
+  cachePort.resetMainTurnCacheHitAggregate(
+    mainTurnCacheHitAggregateFromMessages({
+      activeMessages,
+      persistedMessages: options.persistedMessages,
+    }),
+  );
   getRuntimeTurnTimingPort(this).setTurnNumber(
     activeMessages.filter((message) => message.info.role === "user" && !message.info.summary)
       .length,
   );
   this.currentTurnFileChanges = new Map();
-  this.autoCompactConsecutiveFailures = 0;
+  cachePort.resetAutoCompactFailures();
 }
 
 function isRewindableUserPrompt(message: MessageWithParts): boolean {

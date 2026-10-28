@@ -73,6 +73,7 @@ import { resolveNormalRequestMaxOutputTokens } from "./model-token-limits.js";
 import { createRefreshRuntimeHeadersBeforeModelAttempt } from "./model-runtime-headers.js";
 import { recordModelUsageFact } from "./usage-observability.js";
 import { createRuntimeModel } from "./runtime-model.js";
+import { getRuntimeCacheDiagnosticsPort } from "../runtime-cache-diagnostics.js";
 import {
   filterOutputTokenContinuationEntries,
   preserveCanonicalContextPrefix,
@@ -768,7 +769,8 @@ async function compactActiveConversationImpl(
           : recordablePostCompactEntries,
       );
       // 压缩重写消息前缀，下个请求缓存必 miss（prompt-cache-diagnostics.md R1）。
-      this.pendingCacheMissCause = "compaction";
+      // R1-01 B1：pendingCacheMissCause 归 RuntimeCacheDiagnosticsOwner，写入经端口。
+      getRuntimeCacheDiagnosticsPort(this).setPendingCacheMissCause("compaction");
       // 压缩后已读状态按「模型可见」口径修剪，不再整表清空
       // （specs/post-compact-read-state.md R1）：preserved tail 的 Read/Write/Edit 目标与
       // 内容投影提醒的文件保留，其余清除、要求重新 Read。保留条目写前仍走 stale 守卫

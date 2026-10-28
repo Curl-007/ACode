@@ -31,7 +31,8 @@ const uiSrc = `${root}packages/ui/src`;
 /** 已登记上帝组件的行数上限（物理行）。跌破 400 后删除对应条目。 */
 const REGISTERED_LINE_CAPS = {
   // 2026-10-28 batch-2 选择器族外迁落地（7 picker → settings/automation/pickers/）：2799 → 1944。
-  "settings/AutomationEditView.tsx": 1944,
+  // 2026-10-28 batch-3 cron builder reducer 收敛落地（builder 簇 useState→useReducer）：1944 → 1925。
+  "settings/AutomationEditView.tsx": 1925,
   // 2026-10-28 batch-1 helper 外迁落地（21 纯函数 + 6 常量 → settings/subagents/agentModel.ts，318 行）：2671 → 2416。
   // 2026-10-28 batch-2 列表/表单拆分落地（SubagentList + SubagentForm + SubagentModelOverrideControl +
   // SubagentFormFields + primitives，5 个新模块）：2416 → 1181。

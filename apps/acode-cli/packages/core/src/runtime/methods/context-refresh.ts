@@ -3,6 +3,7 @@ import type { Model } from "../deps.js";
 import type { RuntimeMessageEntry } from "../../agent/message-history.js";
 import type { AgentRuntimeInternal } from "../internal.js";
 import { buildContextHistoryEntries } from "./context-history-entries.js";
+import { getRuntimeCacheDiagnosticsPort } from "../runtime-cache-diagnostics.js";
 
 export function rebuildContextPrefix(
   runtime: AgentRuntimeInternal,
@@ -44,7 +45,8 @@ export function rebuildContextPrefix(
   runtime.latestContextBuildResult = effectiveContextResult;
   runtime.messageHistory.replaceMessages([...contextEntries, ...canonicalConversationEntries]);
   // context 前缀重建后缓存前缀可能已变（prompt-cache-diagnostics.md R1）。
-  runtime.pendingCacheMissCause = "context_refresh";
+  // R1-01 B1：pendingCacheMissCause 归 RuntimeCacheDiagnosticsOwner，写入经端口。
+  getRuntimeCacheDiagnosticsPort(runtime).setPendingCacheMissCause("context_refresh");
 
   const turnEntries = options.turnRequestEntries;
   if (!turnEntries) return runtime.messageHistory.borrowReadOnlyRuntimeEntries();

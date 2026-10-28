@@ -152,6 +152,7 @@ import { initializeRuntimeModelSelection } from "./runtime-model-selection.js";
 import { initializeRuntimeSessionPersistence } from "./runtime-session-persistence.js";
 import { initializeRuntimePermissionGrant } from "./runtime-permission-grant.js";
 import { initializeRuntimeModelChangeTimeline } from "./runtime-model-change-timeline.js";
+import { initializeRuntimeCacheDiagnostics } from "./runtime-cache-diagnostics.js";
 
 /**
  * 工作区身份根的构造期归一化（specs/subagent-parent-inheritance.md R1）：
@@ -234,21 +235,18 @@ export class AgentRuntime {
   private latestConversationMessageId?: MessageId;
   private latestAssistantMessageId?: MessageId;
   private latestAssistantTurnId?: TurnId;
-  private mainTurnCacheHitAggregate: MainTurnCacheHitAggregate = {
-    requestCount: 0,
-    totalInputTokens: 0,
-    totalCacheReadTokens: 0,
-    totalCacheWriteTokens: 0,
-  };
-  // prompt-cache miss 归因（specs/prompt-cache-diagnostics.md R2/R3）：进程内状态，
-  // resume/rewind 重建后计数从空开始（tokens 可重建命中率、不可重建归因）。
-  private pendingCacheMissCause?: PromptCacheMissCause;
-  private cacheMissCauseCounts: Partial<Record<PromptCacheMissCause, number>> = {};
-  private lastRequestModelId?: string;
+  // R1-01 B1：cache 诊断 6 字段已收敛到 RuntimeCacheDiagnosticsOwner
+  // （runtime-cache-diagnostics.ts），declare readonly getter 由 initializeRuntimeCacheDiagnostics
+  // 在构造期安装。迁移前的扁平赋值（mainTurnCacheHitAggregate 字面量、cacheMissCauseCounts={}、
+  // autoCompactConsecutiveFailures=0 等）全部下沉到 owner 默认值。
+  declare private readonly mainTurnCacheHitAggregate: MainTurnCacheHitAggregate;
+  declare private readonly pendingCacheMissCause?: PromptCacheMissCause;
+  declare private readonly cacheMissCauseCounts: Partial<Record<PromptCacheMissCause, number>>;
+  declare private readonly lastRequestModelId?: string;
+  declare private readonly lastAssistantCompletedAtMs?: number;
+  declare private readonly autoCompactConsecutiveFailures: number;
   private currentTurnFileChanges: RuntimeTurnFileChangeMap = new Map();
-  private lastAssistantCompletedAtMs?: number;
   private lastEmittedLocalDate?: string;
-  private autoCompactConsecutiveFailures = 0;
   private runtimeCommandQueue: RuntimeCommandQueue;
   declare private readonly runtimeCommandDrainActive: boolean;
   private activeForegroundExecution?: ActiveForegroundExecutionState;
@@ -340,6 +338,8 @@ export class AgentRuntime {
     initializeRuntimeSessionPersistence(runtime);
     initializeRuntimePermissionGrant(runtime);
     initializeRuntimeModelChangeTimeline(runtime);
+    // R1-01 B1：cache 诊断 6 字段 owner，与上述 owner 同款——必须先于任何 method 读面。
+    initializeRuntimeCacheDiagnostics(runtime);
     this.artifactStore = deps.artifactStore;
     this.executionPort = deps.executionPort;
     this.fileSystemPort = deps.fileSystemPort;

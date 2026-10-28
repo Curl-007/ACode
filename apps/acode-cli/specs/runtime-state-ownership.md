@@ -3,7 +3,8 @@
 状态：类型级分簇已实施；CLI-05 本批进一步封装 reservation、command drain 与 branch generation 的实际写权限（2026-10-09）。其余状态仍为分簇登记，不宣称整体 runtime 已隔离。
 同日增补（2026-10-09 批次）：`RuntimeSessionLifecycleState` 最后四个扁平可变字段（`shuttingDown` / `permissionFullAccessPending` / `lastPermissionGrantId` / `pendingModelChangeTimeline`）收敛到 owner 只读 getter + 有限写端口，该簇不再保留任何扁平可写字段。
 2026-10-22 增补（CLI-05 P1 第一切片，review R1-01）：`RuntimeTurnState` 的 7 个高频时序字段（`turnNumber` / `activeTurn` / `pendingInputSequence` / `pendingInputReservations` / `pendingInputDrains` / `queueAutoDrain` / `queueExternalDrainActive`）收敛到新的 `RuntimeTurnTimingOwner`（`runtime-turn-timing.ts`）——只读 getter + 有限写端口，形态与 turn-coordination/permission-grant 完全一致。这是「原型注入 `this` 面绕过 owner 只读约束」这条 P1 的有界第一切片，剩余字段与后续批次见 §RuntimeTurnState 剩余字段与后续批次。
-代码：`packages/core/src/runtime/internal.ts`（分簇子接口 + 组合）；`packages/core/src/runtime/agent-runtime.ts`（构造与原型安装）；`packages/core/src/runtime/turn-coordination.ts`（关键状态 owner）；`packages/core/src/runtime/runtime-turn-timing.ts`（turn 时序字段 owner，2026-10-22 新增）。
+2026-10-28 增补（R1-01 批次 B1）：`RuntimeCacheDiagnosticsState` 4 字段（`mainTurnCacheHitAggregate` / `pendingCacheMissCause` / `cacheMissCauseCounts` / `autoCompactConsecutiveFailures`）+ 迁入的 `lastRequestModelId`（原 MessageProjection，cache 归因输入）+ `lastAssistantCompletedAtMs`（原 TurnState 剩余，cache 归因输入）共 6 字段收敛到新的 `RuntimeCacheDiagnosticsOwner`（`runtime-cache-diagnostics.ts`）——只读 getter + 有限写端口，含原子归因事务 `recordMainTurnUsage`（聚合累计 + 消费 pending + 计数累计 + 模型记录更新）与重建端口 `resetMainTurnCacheHitAggregate` / `resetCacheMissCauseCounts` / `restoreLastAssistantCompletedAtMs`。负向 tsc 诊断数 18 → 24（+6 字段），运行时拒写与端口冻结由新增用例「cache diagnostics fields are owned by a finite write port」钉住。详见 §R1-01 批次 B1：CacheDiagnostics + 派生游标。
+代码：`packages/core/src/runtime/internal.ts`（分簇子接口 + 组合）；`packages/core/src/runtime/agent-runtime.ts`（构造与原型安装）；`packages/core/src/runtime/turn-coordination.ts`（关键状态 owner）；`packages/core/src/runtime/runtime-turn-timing.ts`（turn 时序字段 owner，2026-10-22 新增）；`packages/core/src/runtime/runtime-cache-diagnostics.ts`（cache 诊断字段 owner，2026-10-28 新增）。
 
 ## 背景
 
@@ -249,6 +250,36 @@ turn 编排（唯一写入方）
   用 fake-runtime 桩直接调真实 `beginActiveTurn`/`setQueueAutoDrain` 的既有测试
   （compact-invariants、cron-idle-trigger）在桩上补 `initializeRuntimeTurnTiming`（与真实构造期一致）。
 
+## R1-01 批次 B1：CacheDiagnostics + 派生游标（2026-10-28）
+
+**字段**（6 个）：D1 `mainTurnCacheHitAggregate`、D2 `pendingCacheMissCause`、D3 `cacheMissCauseCounts`、D4 `autoCompactConsecutiveFailures`、迁入 M4 `lastRequestModelId`（从 MessageProjection 拆出）、迁入 T5 `lastAssistantCompletedAtMs`（从 TurnState 剩余拆出）。
+
+**Owner**：`runtime-cache-diagnostics.ts`（`RuntimeCacheDiagnosticsOwner`），形态与 `runtime-turn-timing.ts` 完全一致——WeakMap 持有真值、构造期 `Object.defineProperty` 装只读 getter（无 setter、`configurable:false`）、写面只经 `getRuntimeCacheDiagnosticsPort(this)` 的有限端口。
+
+**端口形态**：
+
+| 端口 | 语义 | 唯一调用方 |
+| --- | --- | --- |
+| `recordAssistantCompleted(atMs)` | turn 完成时推进 `lastAssistantCompletedAtMs` | `turn-model-step.ts:661`（原 `this.lastAssistantCompletedAtMs = Date.now()`） |
+| `recordMainTurnUsage(input)` | 原子事务：聚合累计 + miss 计数累计 + pending 消费即清 + `lastRequestModelId` 更新 | `turn-model-step-usage.ts:138-174`（原 5 个字段的扁平读写） |
+| `setPendingCacheMissCause(cause)` | 显式事件点写入 pending（compaction / control_only_turn / context_refresh / conversation_rewind） | `compact-active.ts:771`、`microcompact.ts:81`、`control-only-turn.ts:116`、`context-refresh.ts:47`、`rewind-message.ts:742` |
+| `clearPendingCacheMissCause()` | resume 重建后清空 pending | `resume.ts:240` |
+| `consumePendingCacheMissCause()` | 原子「读 + 清」（供 resolveCacheMissCause 归因消费） | `turn-model-step-usage.ts`（内部） |
+| `peekPendingCacheMissCause()` / `peekLastRequestModelId()` / `peekLastAssistantCompletedAtMs()` | 只读快照（resolveCacheMissCause 归因输入，不消费） | `turn-model-step-usage.ts`（内部） |
+| `resetMainTurnCacheHitAggregate(aggregate)` | resume/rewind 从持久消息反推重建聚合 | `resume.ts:233`、`rewind-message.ts:744` |
+| `resetCacheMissCauseCounts()` | resume/rewind 重建后清空 miss 计数（不可从持久 tokens 重建，spec R3 诚实边界） | `resume.ts:239`、`rewind-message.ts:743` |
+| `resetAutoCompactFailures()` | compact 成功后重置失败计数为 0 | `compact.ts:305,460`、`rewind-message.ts:753` |
+| `recordAutoCompactFailure()` | compact 失败后计数 ++ 并返回新值（用于日志） | `compact.ts:320,473` |
+| `restoreLastAssistantCompletedAtMs(atMs)` | resume/rewind 从 latest assistant 消息时间反推 | `resume.ts:197`、`rewind-message.ts:735` |
+
+**关键设计**：`recordMainTurnUsage` 是 6 字段中事务密度最高的端口——`resolveCacheMissCause`（`turn-model-step-usage.ts:185-204`）把 `pendingCacheMissCause` / `lastRequestModelId` / `lastAssistantCompletedAtMs` 作为**同一归因事务的输入**读取；`recordMainTurnUsage` 同时写 D1/D2/D3/M4。分 owner 会切开原子性，故 6 字段必须同一 owner 持有。
+
+**验收**：
+- 负向 tsc 诊断数 18 → 24（+6 字段的 readonly 违例）；
+- 运行时拒写与端口冻结由「cache diagnostics fields are owned by a finite write port」用例钉住；
+- 既有 cache 归因测试套件（`prompt-cache-diagnostics.test.mjs` 9/9）全绿，fake-runtime 桩同步迁移到「先 `initializeRuntimeCacheDiagnostics` + 端口回放 overrides」形态；
+- R1/R3 事件点与重建复位守护的源码字符串断言同步换成端口调用形式（不变量本身不变）。
+
 ## RuntimeTurnState 剩余字段与后续批次
 
 本切片**未**迁移 `RuntimeTurnState` 的其余扁平可写字段，它们仍经 `this` 面共享读写，登记为后续批次：
@@ -259,12 +290,15 @@ turn 编排（唯一写入方）
 | `foregroundPromotionLease` | sendQueuedNow 的 Core 调度权 | 批次 2 |
 | `runtimeCommandQueue` | 命令队列实例（容器本身不变，内容经 queue 端口） | 批次 3（评估：可能只需 readonly 化引用） |
 | `currentTurnFileChanges` | turn 内文件改动图 | 批次 3 |
-| `lastAssistantCompletedAtMs` | 最近 assistant 完成时间戳 | 批次 3（单值游标，最简单） |
+| ~~`lastAssistantCompletedAtMs`~~ | 最近 assistant 完成时间戳 | **已迁出**（R1-01 B1，归 RuntimeCacheDiagnosticsOwner） |
 
 其余 4 簇（`RuntimeContextMemoryState` / `RuntimeMessageProjectionState` / `RuntimeCacheDiagnosticsState`
 以及 `RuntimeTurnState` 上述剩余）28 个扁平字段（ContextMemory 19 + MessageProjection 5 +
 CacheDiagnostics 4；含 TurnState 剩余 5 个则共 33），按「时序不变量密度」优先级分批：TurnState 剩余 →
 ContextMemory（并发初始化最密）→ MessageProjection/CacheDiagnostics（派生游标，最低优先）。
+**2026-10-28 更新**：R1-01 B1 已完成 CacheDiagnostics 4 字段 + 迁入 `lastRequestModelId`（MessageProjection）
++ `lastAssistantCompletedAtMs`（TurnState 剩余）共 6 字段；剩余 27 个扁平字段（ContextMemory 19 +
+MessageProjection 4 + TurnState 剩余 4）。
 
 **长期方案（review R1-01 建议，本切片未做，需单独立项）**：把「原型注入 + `this: AgentRuntimeInternal`」
 换为**显式组合**——构造期把方法绑到实例或委托对象，使 `this` 面不再等于全字段并集。这是根治 P1 的

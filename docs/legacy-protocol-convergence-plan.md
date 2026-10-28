@@ -187,8 +187,8 @@
 
 ### M2 — services 双栈调用切换（可与 M1 并行）
 
-- 内容：`acode-agent/` 6 文件的 legacy 方法调用逐个迁到 V4_METHODS；~~`acodeProtocolClient.ts` 退役~~（见下方订正）；`node.ts` 装配同步收口。
-- 验收：`git grep -l "acodeProtocolMethods\|acodeProtocolClient" -- packages/services/src` 归零；services/desktop 测试绿。
+- 内容：`acode-agent/` 6 文件的 legacy 方法调用逐个迁到 V4_METHODS；`acodeProtocolClient.ts` **保留为永久载体**（见下方订正与 `apps/acode-cli/specs/m2-prepare.md`）；`node.ts` 装配同步收口。
+- 验收：`git grep -l "acodeProtocolMethods\." -- packages/services/src` 归零（只查 legacy **方法名常量**消费，不查客户端类——`acodeProtocolClient.ts` 是 legacy 与 v4 共用载体，M4 删 barrel 不删它）；services/desktop 测试绿。
 - 风险（AGENTS.md 要求）：`desktop-continuous` 与 `web-remote-replayable` 两种语义必须同时验证——迁移触及 stream/snapshot/queue 时，本地窗口链路与手机远控恢复链路各跑一遍真实冒烟；owner/lease 与 stale run 防护不得因改名/换路径被绕过。
 
 > **实测订正（2026-10-27，M2 启动前调研）**：本节的验收判据**结构性不可满足**，且「6 文件」
@@ -249,6 +249,21 @@
 > 从具体传输类解耦到中立接口叶子（见 2026-10-27 提交），它让 M2 完成时这两个文件无需再改，
 > 但**不构成 M2 进度**（验收判据本身待重写）。
 
+#### M2-0 — 验收判据重写（已落地，2026-10-28）
+
+**裁决**：`acodeProtocolClient.ts` 是 legacy 与 v4 共用的版本无关 JSON-RPC 传输载体，M4 删 barrel 不删它。验收判据从「`acodeProtocolMethods|acodeProtocolClient` 归零」改为「`acodeProtocolMethods.` 归零」——只查 legacy **方法名常量**消费，豁免永久载体文件名。
+
+**新验收判据**（已写入本节第 191 行）：
+```bash
+git grep -l "acodeProtocolMethods\." -- packages/services/src  # 必须归零
+```
+
+**现状基线**（2026-10-28 实测）：`acodeProtocolMethods.` 消费 **75 处 / 2 文件**（`acodeAgentService.ts` 73 + `pluginReferenceCatalogRequest.ts` 2）。
+
+**接口抽离现状**：`acodeAgentRpcClient.ts` 中立接口叶子已就位（2026-10-27），`ACodeProtocolClient implements ACodeAgentRpcClient`。`acodeAgentService.ts` 中 20 处 `ACodeProtocolClient` 类型引用**架构上必须保留**——`wireClient` 需要 `onNotification`/`onRequest`/`onClose`/`respond` 等独有成员，无法换成中立接口。这不是未完成迁移，而是合理依赖。
+
+**spec**：`apps/acode-cli/specs/m2-prepare.md`（含 M4 同步验收判据）。
+
 #### M2-B — shared schema 边界（已落地，2026-10-09）
 
 v4 命令校验仍需要兼容的 MCP server 与 browser ambient context 载荷，但这些 schema
@@ -298,9 +313,9 @@ consumer API，v4 command 直接依赖中立模块。这样 M4 删除 legacy bar
 
 ### M4 — 删除 shared legacy 协议文件（依赖 M1+M2+M3）
 
-- 内容：整删 `packages/shared/src/acode-protocol/index.ts`；甄别 `acode-protocol-legacy-types.ts` 承重类型（迁 v4 或独立命名保留）；同步清理 legacy 词表残留 schema。
+- 内容：整删 `packages/shared/src/acode-protocol/index.ts`；甄别 `acode-protocol-legacy-types.ts` 承重类型（迁 v4 或独立命名保留）；同步清理 legacy 词表残留 schema。**`packages/services/src/acode-agent/acodeProtocolClient.ts` 保留**——它是 legacy 与 v4 共用的版本无关 JSON-RPC 传输载体（见 M2-0 裁决与 `apps/acode-cli/specs/m2-prepare.md`），M4 删 barrel 不删它。
 - 头注既有约束：「外部零消费 schema 多为存活 schema 联合的内部依赖，随宿主文件一起处理，勿单删」——删除以文件为单位，不做单导出抠除。
-- 验收：文件删除；全仓 typecheck + 全部测试绿；knip exports backlog 相应缩减；AGENTS.md 协议条目移除 legacy 文件引用。
+- 验收：文件删除；全仓 typecheck + 全部测试绿；knip exports backlog 相应缩减；AGENTS.md 协议条目移除 legacy 文件引用。新增：`git grep "acodeProtocolMethods" -- packages/shared/src` 归零（符号已删）；`git grep "acodeProtocolMethods\." -- packages/services/src` 归零（消费已清，M2 已达成）。
 
 > **实测订正（2026-10-27）**：barrel 行数 **3,714 → 3,652**（2026-10-26 列已记；−2 是
 > R2-02 schema 外移所致，非退役）。**阻塞证据（实测）**：`acodeProtocolMethods` 在

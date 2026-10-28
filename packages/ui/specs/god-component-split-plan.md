@@ -163,6 +163,32 @@
 > - 验证：`tsc -p packages/ui/tsconfig.json --noEmit` 0 错、`pnpm --filter @acode/ui test` 959/959、
 >   触碰文件 oxlint 0 警告、`godComponentLineRatchet.guard.test.mjs` 上限 2799→1944 已同步。
 > - 27 state 仍留在主文件，属批次 3（cron builder state 机收敛）范围。
+>
+> **批次 3 已实施（2026-10-28，cron builder reducer 收敛）**：1944→**1925**（−19）。
+> - 新建 `settings/automation/cronBuilderReducer.ts`（94 行）：`cronBuilderReducer` 纯函数 +
+>   `CronBuilderAction` 严格 discriminated union（8 种 action：`setFrequency` / `setDayOfMonth` /
+>   `setWeekdays` / `setTimeOfDay` / `setMinute` / `setYearlyMonthDay` / `applyCustomRepeat` / `reset`）。
+>   spec：packages/ui/specs/automation-edit-batch-3-cron-builder-reducer.md。
+> - 主文件 8 个 `setBuilder((prev) => ({...prev, ...}))` 调用点全部改为 `dispatchBuilder({...})`；
+>   `useState<CronBuilderState>` 改为 `useReducer(cronBuilderReducer, { editing, initialDraft },
+>   ({ editing, initialDraft }) => initialBuilder(editing, initialDraft))`（lazy init 保留
+>   「首帧即用真实 cron」语义，不引入 effect 回填）。
+> - weekdays 频率切换规则收敛：reducer 内 `resolveWeekdaysForFrequency` 统一处理
+>   「weekdays → [1..5] 强制，其它频率保留 weekdays」；原两个调用点逐字迁移同一规则。
+> - CustomRepeatDialog onConfirm 一次性提交语义保留：dispatch `applyCustomRepeat` 强制
+>   `frequency: "custom"`，5 个 custom* 字段同步更新；`endAt` 仍由独立 state 管理（不属于 builder）。
+> - 表单其它 state（title / prompt / model / mode / thoughtLevel / workspaceKey / endAt /
+>   scheduleRemoved / validationErrors / touchedFields / customRepeatOpen / runsPage / tab /
+>   saveAndRunPending）**未动**，不属于 builder 簇。
+> - 前置测试：`test/cronBuilderReducer.test.ts`（**15 测**全绿）覆盖 setFrequency 三个分支 /
+>   纯函数性（不改原 state）/ 单字段更新 / applyCustomRepeat 一次性提交语义 / reset 整体替换 /
+>   discriminated union 遍历 / 幂等性。
+> - 验证：`pnpm --filter @acode/ui test` 974/974、`npx tsc -p packages/ui/tsconfig.json --noEmit` 0 错、
+>   `pnpm architecture:check --changed` exit 0（new violations 0）、触碰 3 文件 oxlint 0 警告、
+>   `godComponentLineRatchet.guard.test.mjs` 上限 1944→1925 已同步。
+> - 注意：根 `pnpm typecheck` 当前**因 cli/core 的 baseline syntax error 失败**
+>   （`apps/acode-cli/packages/core/src/runtime/runtime-cache-diagnostics.ts:184` 缺 `=>`），
+>   与本批无关；ui 包 `tsc --noEmit` 单跑 exit 0。
 
 - 职责分析：单文件混合「cron/自定义重复排程编辑器 + 时间/星期/月日选择器 + 表单 schema + 操作按钮簇 +
   运行历史分页」。顶部已有 ~15 个纯 helper（`buildRunsPageItems`/`workspaceLabelFromPath`/`daysInMonth`/
@@ -174,8 +200,8 @@
   1. **纯 helper 外迁** → `settings/automation/scheduleModel.ts`（排程规则/日期解析/分页），补决策表单测——**已实施（2026-10-28）**；
   2. **日期/时间选择器族** → `settings/automation/pickers/`（TimeOfDayPicker/MonthDayPicker/WeekdayPicker/
      EndDatePicker/CustomRepeatDialog 各自成文件，纯展示 + 受控 props）——**已实施（2026-10-28）**；
-  3. **cron builder state 机** → `settings/automation/cronBuilder.ts`（defaultBuilder/initialBuilder +
-     规约 reducer），把 27 state 里属于 builder 的收敛成单一 reducer——helper 部分已落地，reducer 收敛待批次 3；
+  3. **cron builder state 机** → `settings/automation/cronBuilderReducer.ts`（cronBuilderReducer +
+     CronBuilderAction discriminated union），把 builder 簇的 useState 收敛为单一 useReducer——**已实施（2026-10-28）**；
   4. **操作按钮簇** → 复用 `components/ui/button.tsx`（与 P2 的按钮/焦点环修复合并做）。
 - 前置测试：scheduleModel 与 cronBuilder 的纯函数单测（第一刀前建）；选择器族用 renderToStaticMarkup 钉受控渲染。
 - 预估批次：3 批（~~helper 外迁~~ → 选择器族拆分 → cron builder reducer 收敛）。

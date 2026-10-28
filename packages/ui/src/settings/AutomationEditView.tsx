@@ -1,6 +1,6 @@
 /* eslint-disable max-lines -- 定时任务编辑整页集中维护 Settings/History 两个 tab、cron builder、项目/模型选择器与运行历史，集中更利于交互一致。 */
 import { useStartPlanRecommendation } from "@/hooks/useStartPlanRecommendation.js";
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type FormEvent } from "react";
 import { completeNewModelSelection } from "@acode/provider";
 import {
   ArrowLeft,
@@ -125,6 +125,7 @@ import {
   workspaceLabelFromPath,
 } from "@/settings/automation/scheduleModel.js";
 import { initialBuilder } from "@/settings/automation/cronBuilder.js";
+import { cronBuilderReducer } from "@/settings/automation/cronBuilderReducer.js";
 import { CustomRepeatDialog } from "@/settings/automation/pickers/CustomRepeatDialog.js";
 import { MonthDayPicker } from "@/settings/automation/pickers/MonthDayPicker.js";
 import { TimeOfDayPicker } from "@/settings/automation/pickers/TimeOfDayPicker.js";
@@ -138,7 +139,6 @@ import {
   formatGmtOffset,
   isSessionCreatedAutomation as resolveIsSessionCreatedAutomation,
   resolveAutomationStatusKind,
-  type CronBuilderState,
 } from "@/settings/automationFormat.js";
 import type {
   AutomationRunsEntry,
@@ -230,8 +230,11 @@ export function AutomationEditView({
   const thoughtTriggerRef = useRef<HTMLSpanElement | null>(null);
   // 不能首帧先渲染默认的“每天 09:00”、再由 effect 回填持久化调度。
   // 子级调度控件会先注册 value 回调，从而把默认值误记成 dirty baseline；编辑态必须首帧即使用真实值。
-  const [builder, setBuilder] = useState<CronBuilderState>(() =>
-    initialBuilder(editing, initialDraft),
+  // 批次 3：27 个 useState 中 builder 相关簇收敛为单一 useReducer（actions 见 cronBuilderReducer.ts）。
+  const [builder, dispatchBuilder] = useReducer(
+    cronBuilderReducer,
+    { editing, initialDraft },
+    ({ editing: editingArg, initialDraft: draftArg }) => initialBuilder(editingArg, draftArg),
   );
   // 新建任务默认不带日程，通过「Add schedule」显式添加；移除后未补齐标红提示。
   const [scheduleRemoved, setScheduleRemoved] = useState(!editing && !initialDraft);
@@ -304,7 +307,7 @@ export function AutomationEditView({
       modeRef.current = editingMode;
       setMode(editingMode);
       setThoughtLevel(editingThoughtLevel);
-      setBuilder(initialBuilder(editing, initialDraft));
+      dispatchBuilder({ type: "reset", next: initialBuilder(editing, initialDraft) });
       setEndAt(editing.endAt);
       setWorkspaceKey(
         resolveWorkspaceKey({
@@ -326,7 +329,7 @@ export function AutomationEditView({
       thoughtLevelRef.current = "";
       setMode(AUTOMATION_DEFAULT_MODE);
       setThoughtLevel("");
-      setBuilder(initialBuilder(editing, initialDraft));
+      dispatchBuilder({ type: "reset", next: initialBuilder(editing, initialDraft) });
       setEndAt(undefined);
       setWorkspaceKey(
         reconcileAutomationWorkspaceSelectionKey(workspaceOptionsRef.current, null, {
@@ -1194,11 +1197,7 @@ export function AutomationEditView({
                               setCustomRepeatOpen(true);
                               return;
                             }
-                            setBuilder((previous) => ({
-                              ...previous,
-                              frequency,
-                              ...(frequency === "weekdays" ? { weekdays: [1, 2, 3, 4, 5] } : {}),
-                            }));
+                            dispatchBuilder({ type: "setFrequency", frequency });
                             setScheduleRemoved(false);
                             clearRequiredFieldValidation("schedule");
                           }}
@@ -1233,11 +1232,7 @@ export function AutomationEditView({
                             setCustomRepeatOpen(true);
                             return;
                           }
-                          setBuilder((prev) => ({
-                            ...prev,
-                            frequency: value,
-                            ...(value === "weekdays" ? { weekdays: [1, 2, 3, 4, 5] } : {}),
-                          }));
+                          dispatchBuilder({ type: "setFrequency", frequency: value });
                         }}
                       >
                         {/* 频率触发器曾写死深色值，导致浅色主题下对比失真；
@@ -1274,10 +1269,7 @@ export function AutomationEditView({
                           value={String(builder.dayOfMonth)}
                           onValueChange={(value) => {
                             markFieldTouched("schedule");
-                            setBuilder((prev) => ({
-                              ...prev,
-                              dayOfMonth: Number(value),
-                            }));
+                            dispatchBuilder({ type: "setDayOfMonth", dayOfMonth: Number(value) });
                           }}
                         >
                           <SelectTrigger
@@ -1306,7 +1298,7 @@ export function AutomationEditView({
                           intl={intl}
                           onChange={(weekdays) => {
                             markFieldTouched("schedule");
-                            setBuilder((prev) => ({ ...prev, weekdays }));
+                            dispatchBuilder({ type: "setWeekdays", weekdays });
                           }}
                         />
                       ) : null}
@@ -1365,7 +1357,7 @@ export function AutomationEditView({
                             })}
                             onChange={(hour, minute) => {
                               markFieldTouched("schedule");
-                              setBuilder((prev) => ({ ...prev, hour, minute }));
+                              dispatchBuilder({ type: "setTimeOfDay", hour, minute });
                             }}
                           />
                           <span className="whitespace-nowrap text-foreground-subtle">
@@ -1385,10 +1377,7 @@ export function AutomationEditView({
                             value={String(builder.minute)}
                             onValueChange={(value) => {
                               markFieldTouched("schedule");
-                              setBuilder((prev) => ({
-                                ...prev,
-                                minute: Number(value),
-                              }));
+                              dispatchBuilder({ type: "setMinute", minute: Number(value) });
                             }}
                           >
                             <SelectTrigger
@@ -1424,10 +1413,7 @@ export function AutomationEditView({
                             value={String(builder.minute)}
                             onValueChange={(value) => {
                               markFieldTouched("schedule");
-                              setBuilder((prev) => ({
-                                ...prev,
-                                minute: Number(value),
-                              }));
+                              dispatchBuilder({ type: "setMinute", minute: Number(value) });
                             }}
                           >
                             <SelectTrigger
@@ -1459,11 +1445,7 @@ export function AutomationEditView({
                           intl={intl}
                           onChange={(month, day) => {
                             markFieldTouched("schedule");
-                            setBuilder((prev) => ({
-                              ...prev,
-                              customMonth: month,
-                              customMonthDays: [day],
-                            }));
+                            dispatchBuilder({ type: "setYearlyMonthDay", month, day });
                           }}
                         />
                       ) : null}
@@ -1482,7 +1464,7 @@ export function AutomationEditView({
                             minute={builder.minute}
                             onChange={(hour, minute) => {
                               markFieldTouched("schedule");
-                              setBuilder((prev) => ({ ...prev, hour, minute }));
+                              dispatchBuilder({ type: "setTimeOfDay", hour, minute });
                             }}
                           />
                           <span className="text-foreground-subtle">{formatGmtOffset()}</span>
@@ -1527,15 +1509,14 @@ export function AutomationEditView({
                     markFieldTouched("schedule");
                     setScheduleRemoved(false);
                     clearRequiredFieldValidation("schedule");
-                    setBuilder((prev) => ({
-                      ...prev,
-                      frequency: "custom",
-                      customInterval: interval,
-                      customUnit: unit,
-                      customWeekdays: weekdays,
-                      customMonthDays: monthDays,
-                      customMonthlyMode: monthlyMode,
-                    }));
+                    dispatchBuilder({
+                      type: "applyCustomRepeat",
+                      interval,
+                      unit,
+                      weekdays,
+                      monthDays,
+                      monthlyMode,
+                    });
                     setEndAt(nextEndAt);
                   }}
                 />

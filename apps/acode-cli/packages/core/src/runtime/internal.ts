@@ -38,12 +38,9 @@ import type {
 } from "./deps.js";
 import type { PromptFileRouting } from "../context/prompt-files.js";
 import type {
-  ActiveForegroundExecutionState,
-  ForegroundPromotionLeaseState,
   AgentRuntimeConfig,
   AgentRuntimeDeps,
   ProviderRuntimeHeadersPort,
-  RuntimeTurnFileChangeMap,
 } from "./types.js";
 import type { RuntimeCommandQueue } from "./command-queue.js";
 import type { RuntimeTaskRegistry } from "../runtime-task/contract.js";
@@ -64,6 +61,7 @@ import type { RuntimeSessionPersistenceView } from "./runtime-session-persistenc
 import type { RuntimePermissionGrantView } from "./runtime-permission-grant.js";
 import type { RuntimeModelChangeTimelineView } from "./runtime-model-change-timeline.js";
 import type { RuntimeCacheDiagnosticsView } from "./runtime-cache-diagnostics.js";
+import type { RuntimeForegroundExecutionView } from "./runtime-foreground-execution.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AgentRuntimeInternal 状态所有权分簇（specs/runtime-state-ownership.md）。
@@ -194,16 +192,16 @@ interface RuntimeContextMemoryState {
  * 高频时序字段（turnNumber、activeTurn、pendingInput 系列、queue drain 系列）已收敛到
  * RuntimeTurnTimingView 的只读 getter（runtime-turn-timing.ts owner，CLI-05 P1 第一切片）：
  * `this.X = ...` 在运行时抛 TypeError、tsc 下报 readonly 违例，写面只经
- * getRuntimeTurnTimingPort(this) 的有限端口。activeForegroundExecution、foregroundPromotionLease、
- * runtimeCommandQueue、currentTurnFileChanges 仍为扁平可写，登记为后续批次
- * （spec 的 RuntimeTurnState 剩余字段）；lastAssistantCompletedAtMs 已迁出至
- * RuntimeCacheDiagnosticsView（R1-01 B1）。
+ * getRuntimeTurnTimingPort(this) 的有限端口。剩余 4 字段已由 R1-01 B2 收敛：
+ * activeForegroundExecution、foregroundPromotionLease、currentTurnFileChanges 归
+ * RuntimeForegroundExecutionView（runtime-foreground-execution.ts owner），
+ * runtimeCommandQueue 零 method 写点、类型级 readonly + 构造期不可写数据属性；
+ * lastAssistantCompletedAtMs 已迁出至 RuntimeCacheDiagnosticsView（R1-01 B1）。
+ * 本接口不再持有扁平可写字段。
  */
-interface RuntimeTurnState extends RuntimeTurnCoordinationView, RuntimeTurnTimingView {
-  activeForegroundExecution?: ActiveForegroundExecutionState;
-  foregroundPromotionLease?: ForegroundPromotionLeaseState;
-  runtimeCommandQueue: RuntimeCommandQueue;
-  currentTurnFileChanges: RuntimeTurnFileChangeMap;
+interface RuntimeTurnState
+  extends RuntimeTurnCoordinationView, RuntimeTurnTimingView, RuntimeForegroundExecutionView {
+  readonly runtimeCommandQueue: RuntimeCommandQueue;
 }
 
 /** 消息 ID 投影：event 发布路径派生的最近 ID 游标（写入方 = 事件发布/reducer 路径）。 */

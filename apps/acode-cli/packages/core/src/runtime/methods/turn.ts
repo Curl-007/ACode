@@ -2,6 +2,7 @@
 import { beginLocalTurnPreparation, type LocalTtftDetail } from "@acode/contracts";
 import { runtimeInputMetadata } from "../../agent/runtime-input-presentation.js";
 import { getRuntimeTurnTimingPort } from "../runtime-turn-timing.js";
+import { getRuntimeForegroundExecutionPort } from "../runtime-foreground-execution.js";
 // 技能激活期作用域（skill-frontmatter-governance R4）：回合边界重算触发点。
 import { refreshSessionSkillActivationScope } from "../../agent/skill-activation-scope.js";
 import {
@@ -138,7 +139,8 @@ export async function executeTurnCommand(
   const targetRunInputID = options?.inputId ?? String(turnId);
   const events: SessionEvent[] = [];
   let turnMachine = TurnMachineImpl.create(this.sessionId, this.turnNumber, input, traceId, turnId);
-  this.currentTurnFileChanges = new Map();
+  // R1-01 B2：currentTurnFileChanges 归 RuntimeForegroundExecutionOwner，reset 经端口。
+  getRuntimeForegroundExecutionPort(this).resetTurnFileChanges();
   if (!startReservation) this.reserveTurnStart(turnId, turnTraceContext, "regular");
   // D5 并发只读诊断投影（specs/concurrency-diagnostics-projection.md R5）：每 turn 至多一条。
   // 并发治理事实的变化粒度是 turn 级，每模型请求/每工具批只会重复噪声；debug 级只走本地日志。

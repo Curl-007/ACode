@@ -153,6 +153,7 @@ import { initializeRuntimeSessionPersistence } from "./runtime-session-persisten
 import { initializeRuntimePermissionGrant } from "./runtime-permission-grant.js";
 import { initializeRuntimeModelChangeTimeline } from "./runtime-model-change-timeline.js";
 import { initializeRuntimeCacheDiagnostics } from "./runtime-cache-diagnostics.js";
+import { initializeRuntimeForegroundExecution } from "./runtime-foreground-execution.js";
 
 /**
  * 工作区身份根的构造期归一化（specs/subagent-parent-inheritance.md R1）：
@@ -245,13 +246,18 @@ export class AgentRuntime {
   declare private readonly lastRequestModelId?: string;
   declare private readonly lastAssistantCompletedAtMs?: number;
   declare private readonly autoCompactConsecutiveFailures: number;
-  private currentTurnFileChanges: RuntimeTurnFileChangeMap = new Map();
+  // R1-01 B2：TurnState 剩余 4 字段已收敛——activeForegroundExecution /
+  // foregroundPromotionLease / currentTurnFileChanges 归 RuntimeForegroundExecutionOwner
+  // （runtime-foreground-execution.ts），declare readonly getter 由
+  // initializeRuntimeForegroundExecution 在构造期安装。runtimeCommandQueue 零 method
+  // 写点（唯一赋值在构造期），declare readonly + 构造期不可写数据属性，不进 owner。
+  declare private readonly currentTurnFileChanges: RuntimeTurnFileChangeMap;
   private lastEmittedLocalDate?: string;
-  private runtimeCommandQueue: RuntimeCommandQueue;
+  declare private readonly runtimeCommandQueue: RuntimeCommandQueue;
   declare private readonly runtimeCommandDrainActive: boolean;
-  private activeForegroundExecution?: ActiveForegroundExecutionState;
+  declare private readonly activeForegroundExecution?: ActiveForegroundExecutionState;
   /** sendQueuedNow 的 Core 调度权；只活在当前进程，匹配 runtime command 出队即消费。 */
-  private foregroundPromotionLease?: ForegroundPromotionLeaseState;
+  declare private readonly foregroundPromotionLease?: ForegroundPromotionLeaseState;
   declare private readonly activeTurn?: ActiveTurnSteeringState;
   declare private readonly activeTurnStartReservation:
     | Readonly<ActiveTurnStartReservation>
@@ -321,7 +327,15 @@ export class AgentRuntime {
     // 旧会话的选择缺失不能阻断历史恢复；不在这里制造默认模型。
     this.messageHistory = new MessageHistoryImpl();
     this.readFileState = new Map();
-    this.runtimeCommandQueue = createRuntimeCommandQueue();
+    // R1-01 B2：runtimeCommandQueue 零 method 写点——构造期装不可写数据属性，引用
+    // 不可替换（运行时赋值/重定义抛 TypeError，tsc 下报 readonly 违例）；容器内容
+    // 变更（enqueue/dequeueNextBatch/removeById/...）经 queue 方法是设计内行为。
+    Object.defineProperty(this, "runtimeCommandQueue", {
+      configurable: false,
+      enumerable: true,
+      writable: false,
+      value: createRuntimeCommandQueue(),
+    });
     this.workingDirectory = config.workingDirectory ?? ".";
     this.contextSourcePort = deps.contextSourcePort;
     this.skillPort = deps.skillPort;
@@ -340,6 +354,8 @@ export class AgentRuntime {
     initializeRuntimeModelChangeTimeline(runtime);
     // R1-01 B1：cache 诊断 6 字段 owner，与上述 owner 同款——必须先于任何 method 读面。
     initializeRuntimeCacheDiagnostics(runtime);
+    // R1-01 B2：foreground execution / promotion lease / turn file changes owner，同款。
+    initializeRuntimeForegroundExecution(runtime);
     this.artifactStore = deps.artifactStore;
     this.executionPort = deps.executionPort;
     this.fileSystemPort = deps.fileSystemPort;

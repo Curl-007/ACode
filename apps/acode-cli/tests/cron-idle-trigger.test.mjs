@@ -36,6 +36,9 @@ const { initializeRuntimeTurnCoordination } =
 const { initializeRuntimeTurnTiming } = await import(
   "../packages/core/src/runtime/runtime-turn-timing.ts"
 );
+const { initializeRuntimeForegroundExecution } = await import(
+  "../packages/core/src/runtime/runtime-foreground-execution.ts"
+);
 const { SessionEventType } = await import("../packages/contracts/src/index.ts");
 
 const SESSION_ID = "sess-cron-idle-trigger";
@@ -80,10 +83,10 @@ function createRuntimeHarness() {
     logger: undefined,
     turnNumber: 1,
     // ── admitPrompt / hasActiveOrQueuedTurnWork 读取的 busy 事实 ──
+    // （foregroundPromotionLease / activeForegroundExecution 归 R1-01 B2
+    // RuntimeForegroundExecutionOwner，由下方 initializeRuntimeForegroundExecution 装 getter）
     activeTurn: undefined,
     activeTurnStartReservation: undefined,
-    foregroundPromotionLease: undefined,
-    activeForegroundExecution: undefined,
     runtimeCommandDrainActive: false,
     // ── steering 状态 ──
     pendingInputSequence: 0,
@@ -149,6 +152,9 @@ function createRuntimeHarness() {
   // RuntimeTurnTimingOwner（CLI-05 P1）：fake runtime 与真实构造期一样装只读 getter，
   // beginActiveTurn/createPendingInputId/setQueueAutoDrain 经端口读写。
   initializeRuntimeTurnTiming(runtime);
+  // foreground execution / promotion lease（R1-01 B2）同 owner 化：桩与真实构造期一样
+  // 装只读 getter，acquire/releaseForegroundPromotionLease 经端口读写。
+  initializeRuntimeForegroundExecution(runtime);
   return { runtime, events, pendingCommands, heldQueue };
 }
 

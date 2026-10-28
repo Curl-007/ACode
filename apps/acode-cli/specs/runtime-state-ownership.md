@@ -4,7 +4,8 @@
 同日增补（2026-10-09 批次）：`RuntimeSessionLifecycleState` 最后四个扁平可变字段（`shuttingDown` / `permissionFullAccessPending` / `lastPermissionGrantId` / `pendingModelChangeTimeline`）收敛到 owner 只读 getter + 有限写端口，该簇不再保留任何扁平可写字段。
 2026-10-22 增补（CLI-05 P1 第一切片，review R1-01）：`RuntimeTurnState` 的 7 个高频时序字段（`turnNumber` / `activeTurn` / `pendingInputSequence` / `pendingInputReservations` / `pendingInputDrains` / `queueAutoDrain` / `queueExternalDrainActive`）收敛到新的 `RuntimeTurnTimingOwner`（`runtime-turn-timing.ts`）——只读 getter + 有限写端口，形态与 turn-coordination/permission-grant 完全一致。这是「原型注入 `this` 面绕过 owner 只读约束」这条 P1 的有界第一切片，剩余字段与后续批次见 §RuntimeTurnState 剩余字段与后续批次。
 2026-10-28 增补（R1-01 批次 B1）：`RuntimeCacheDiagnosticsState` 4 字段（`mainTurnCacheHitAggregate` / `pendingCacheMissCause` / `cacheMissCauseCounts` / `autoCompactConsecutiveFailures`）+ 迁入的 `lastRequestModelId`（原 MessageProjection，cache 归因输入）+ `lastAssistantCompletedAtMs`（原 TurnState 剩余，cache 归因输入）共 6 字段收敛到新的 `RuntimeCacheDiagnosticsOwner`（`runtime-cache-diagnostics.ts`）——只读 getter + 有限写端口，含原子归因事务 `recordMainTurnUsage`（聚合累计 + 消费 pending + 计数累计 + 模型记录更新）与重建端口 `resetMainTurnCacheHitAggregate` / `resetCacheMissCauseCounts` / `restoreLastAssistantCompletedAtMs`。负向 tsc 诊断数 18 → 24（+6 字段），运行时拒写与端口冻结由新增用例「cache diagnostics fields are owned by a finite write port」钉住。详见 §R1-01 批次 B1：CacheDiagnostics + 派生游标。
-代码：`packages/core/src/runtime/internal.ts`（分簇子接口 + 组合）；`packages/core/src/runtime/agent-runtime.ts`（构造与原型安装）；`packages/core/src/runtime/turn-coordination.ts`（关键状态 owner）；`packages/core/src/runtime/runtime-turn-timing.ts`（turn 时序字段 owner，2026-10-22 新增）；`packages/core/src/runtime/runtime-cache-diagnostics.ts`（cache 诊断字段 owner，2026-10-28 新增）。
+2026-10-28 增补（R1-01 批次 B2）：`RuntimeTurnState` 剩余 4 字段收敛——`activeForegroundExecution` / `foregroundPromotionLease` / `currentTurnFileChanges` 归新的 `RuntimeForegroundExecutionOwner`（`runtime-foreground-execution.ts`，只读 getter + 有限写端口）；`runtimeCommandQueue` 零 method 写点（唯一赋值在构造期），readonly 化为构造期不可写数据属性 + 类型级 readonly，不进 owner。负向 tsc 诊断数 24 → 28（+4 字段），运行时拒写与端口冻结由新增用例「foreground execution fields are owned by a finite write port」钉住。详见 §R1-01 批次 B2：TurnState 剩余。
+代码：`packages/core/src/runtime/internal.ts`（分簇子接口 + 组合）；`packages/core/src/runtime/agent-runtime.ts`（构造与原型安装）；`packages/core/src/runtime/turn-coordination.ts`（关键状态 owner）；`packages/core/src/runtime/runtime-turn-timing.ts`（turn 时序字段 owner，2026-10-22 新增）；`packages/core/src/runtime/runtime-cache-diagnostics.ts`（cache 诊断字段 owner，2026-10-28 新增）；`packages/core/src/runtime/runtime-foreground-execution.ts`（前台执行与 promotion lease 字段 owner，2026-10-28 新增）。
 
 ## 背景
 
@@ -280,16 +281,66 @@ turn 编排（唯一写入方）
 - 既有 cache 归因测试套件（`prompt-cache-diagnostics.test.mjs` 9/9）全绿，fake-runtime 桩同步迁移到「先 `initializeRuntimeCacheDiagnostics` + 端口回放 overrides」形态；
 - R1/R3 事件点与重建复位守护的源码字符串断言同步换成端口调用形式（不变量本身不变）。
 
+## R1-01 批次 B2：TurnState 剩余（foreground execution + promotion lease + 队列引用）
+
+**字段**（4 个）：T1 `activeForegroundExecution`、T2 `foregroundPromotionLease`、T4 `currentTurnFileChanges` 收敛到新的 `RuntimeForegroundExecutionOwner`（`runtime-foreground-execution.ts`），形态与既有 owner 完全一致——WeakMap 持有真值、构造期 `Object.defineProperty` 装只读 getter（无 setter、`configurable:false`）、写面只经 `getRuntimeForegroundExecutionPort(this)` 的有限端口。T3 `runtimeCommandQueue` 零 method 写点（唯一赋值在 `agent-runtime.ts` 构造期，grep 全仓确认），不进 owner——构造期改为不可写数据属性（`writable:false, configurable:false`）+ `AgentRuntimeInternal` 类型级 readonly，读面（19 处 `this.runtimeCommandQueue.X(...)`）不变。
+
+**端口形态**：
+
+| 端口 | 语义 | 唯一调用方 |
+| --- | --- | --- |
+| `beginForegroundExecution(state)` | 建立当前前台执行状态（原 `this.activeForegroundExecution = state`）。state 由调用方构造（AbortController 接线是方法职责），owner 只持有引用 | `runtime-command-queue.ts` `beginForegroundExecution` |
+| `finishForegroundExecution(state)` | identity 命中才清除（`===` 不匹配是 no-op）；`disposeParentAbort` 副作用留在调用方 | `runtime-command-queue.ts` `finishForegroundExecution` |
+| `commitPromotionLease(lease)` | 提交 promotion lease；acquire 的 conflict/busy 裁决留在方法内（读面含 turn-timing/turn-coordination 等其他 owner 字段，不内移避免跨 owner 耦合）。owner 入库时浅冻结 lease（现有路径从不原地修改 lease，与 model-change-timeline 同先例） | `runtime-command-queue.ts` `acquireForegroundPromotionLease` |
+| `releasePromotionLease(leaseId)` | 原子「比对 leaseId + 清除」：不匹配返回 `false` 且 lease 保持；drain 恢复副作用（`void drainRuntimeCommandQueue()`）留在方法内，只在端口返回 true 后执行 | `runtime-command-queue.ts` `releaseForegroundPromotionLease` |
+| `consumePromotionLease()` | 出队 promoted command 成功后同步消费 lease | `runtime-command-queue.ts` `dequeueNextRunnableBatch` |
+| `resetTurnFileChanges()` | 整体替换为新空 Map（原 `this.currentTurnFileChanges = new Map()`） | `turn.ts:141`（turn 开始）、`rewind-message.ts`（rewind 重建） |
+
+**关键不变量**：
+
+- **lease 消费与 promoted command 出队同一同步片**（原注释钉住的 sendQueuedNow 竞态：notification B 不得在 Stop A 与 promoted 入队之间抢先出队）——`consumePromotionLease()` 只在 `removeById` 成功后调用；snapshot 未命中或 remove 失败时 lease 保持，不消费。
+- **`activeForegroundExecution` 的 state 引用不冻结**：`stopActiveForegroundExecution` 的 `active.preserveQueueAutoDrainOnCancel = ...` 容器内写保留（与 `activeTurn.pendingInputs` 原地 splice 同先例）；owner 只封「整体替换/清除」写面。
+- **`currentTurnFileChanges` 的 Map 内容写保留**（`tools.ts` 的 `recordTurnFileChange(map, ...)` 原地 set）；owner 只封整体替换。
+- **`runtimeCommandQueue` 引用不可替换**；容器内容变更（`enqueue`/`dequeueNextBatch`/`removeById`/…）经 queue 方法是设计内行为，不在本批范围。
+
+**事件顺序**：
+
+```text
+sendQueuedNow / queue promotion
+  → acquireForegroundPromotionLease：读 getter 判 conflict（已有 lease）与 busy（idle-only 模式）
+  → commitPromotionLease（owner 唯一写点，入库浅冻结）
+
+drain 循环 dequeueNextRunnableBatch（同步片）
+  → 读 lease getter → snapshot() 找 promoted command
+  → removeById 成功 → consumePromotionLease()   ← 出队与 lease 消费同一同步步
+  → 未命中 / remove 失败 → 返回空批，lease 保持
+
+release 路径（sendQueuedNow 失败回滚 / 完成清理）
+  → releasePromotionLease(leaseId)：不匹配 → false，零副作用
+                                  → 命中清除 → true → void drainRuntimeCommandQueue() 恢复 drain
+
+run 路径
+  → beginForegroundExecution：构造 state（parent abort 接线）→ 端口持有
+  → finally finishForegroundExecution：disposeParentAbort → identity 命中清除
+```
+
+**验收**：
+
+- 负向 tsc 诊断数 24 → 28（+4：T1/T2/T4 的 readonly 违例 + `runtimeCommandQueue` 类型级 readonly 违例），2540 计数 23 → 27；
+- 运行时拒写扩 4 字段进「non-writable, non-replaceable state getters」清单（T3 是不可写数据属性，赋值/重定义同样抛 TypeError）；
+- 「R1-01 B2: foreground execution fields are owned by a finite write port」用例钉住：begin/finish identity 语义、lease commit/release/consume 三转换、resetTurnFileChanges 替换 Map identity、state 与 Map 引用不冻结（容器内写可行）、端口冻结、幂等初始化；
+- 既有套件全绿：cron-idle-trigger（真实 `acquireForegroundPromotionLease`/`releaseForegroundPromotionLease` 绑桩——桩补 `initializeRuntimeForegroundExecution`）、runtime-branch-continuation-races（`runtime.activeForegroundExecution.controller.abort()` 读面不变）、compact-invariants、steering/queue 相关回归。
+
 ## RuntimeTurnState 剩余字段与后续批次
 
-本切片**未**迁移 `RuntimeTurnState` 的其余扁平可写字段，它们仍经 `this` 面共享读写，登记为后续批次：
+`RuntimeTurnState` 扁平可写字段已全部收敛（2026-10-28 B2 完成）；下表保留作历史对照：
 
-| 剩余字段 | 语义 | 建议后续批次顺序 |
+| 剩余字段 | 语义 | 批次结果 |
 | --- | --- | --- |
-| `activeForegroundExecution` | 前台执行状态（stop barrier、preserveQueueAutoDrainOnCancel） | 批次 2（与 foregroundPromotionLease 同族） |
-| `foregroundPromotionLease` | sendQueuedNow 的 Core 调度权 | 批次 2 |
-| `runtimeCommandQueue` | 命令队列实例（容器本身不变，内容经 queue 端口） | 批次 3（评估：可能只需 readonly 化引用） |
-| `currentTurnFileChanges` | turn 内文件改动图 | 批次 3 |
+| ~~`activeForegroundExecution`~~ | 前台执行状态（stop barrier、preserveQueueAutoDrainOnCancel） | **已迁出**（R1-01 B2，归 RuntimeForegroundExecutionOwner） |
+| ~~`foregroundPromotionLease`~~ | sendQueuedNow 的 Core 调度权 | **已迁出**（R1-01 B2，归 RuntimeForegroundExecutionOwner） |
+| ~~`runtimeCommandQueue`~~ | 命令队列实例（容器本身不变，内容经 queue 端口） | **已收敛**（R1-01 B2：零 method 写点，不可写数据属性 + 类型级 readonly，不进 owner） |
+| ~~`currentTurnFileChanges`~~ | turn 内文件改动图 | **已迁出**（R1-01 B2，归 RuntimeForegroundExecutionOwner） |
 | ~~`lastAssistantCompletedAtMs`~~ | 最近 assistant 完成时间戳 | **已迁出**（R1-01 B1，归 RuntimeCacheDiagnosticsOwner） |
 
 其余 4 簇（`RuntimeContextMemoryState` / `RuntimeMessageProjectionState` / `RuntimeCacheDiagnosticsState`
@@ -297,8 +348,11 @@ turn 编排（唯一写入方）
 CacheDiagnostics 4；含 TurnState 剩余 5 个则共 33），按「时序不变量密度」优先级分批：TurnState 剩余 →
 ContextMemory（并发初始化最密）→ MessageProjection/CacheDiagnostics（派生游标，最低优先）。
 **2026-10-28 更新**：R1-01 B1 已完成 CacheDiagnostics 4 字段 + 迁入 `lastRequestModelId`（MessageProjection）
-+ `lastAssistantCompletedAtMs`（TurnState 剩余）共 6 字段；剩余 27 个扁平字段（ContextMemory 19 +
-MessageProjection 4 + TurnState 剩余 4）。
++ `lastAssistantCompletedAtMs`（TurnState 剩余）共 6 字段；R1-01 B2 已完成 TurnState 剩余 4 字段
+（`activeForegroundExecution` / `foregroundPromotionLease` / `currentTurnFileChanges` 归
+RuntimeForegroundExecutionOwner，`runtimeCommandQueue` readonly 化）；剩余 23 个扁平字段
+（ContextMemory 19 + MessageProjection 4），对应后续批次 B3（MessageProjection，~1 人日）与
+B4（ContextMemory 5 个子 owner，~2.5 人日）。
 
 **长期方案（review R1-01 建议，本切片未做，需单独立项）**：把「原型注入 + `this: AgentRuntimeInternal`」
 换为**显式组合**——构造期把方法绑到实例或委托对象，使 `this` 面不再等于全字段并集。这是根治 P1 的

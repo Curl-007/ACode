@@ -21,6 +21,10 @@ const {
   getRuntimeCacheDiagnosticsPort,
   initializeRuntimeCacheDiagnostics,
 } = await import("../packages/core/src/runtime/runtime-cache-diagnostics.ts");
+const {
+  getRuntimeForegroundExecutionPort,
+  initializeRuntimeForegroundExecution,
+} = await import("../packages/core/src/runtime/runtime-foreground-execution.ts");
 const { getRuntimeLifecyclePort, initializeRuntimeLifecycle } =
   await import("../packages/core/src/runtime/runtime-lifecycle.ts");
 const { getRuntimeNotificationSealPort, initializeRuntimeNotificationSeal } =
@@ -658,6 +662,20 @@ test("CLI-05: real runtime exposes non-writable, non-replaceable state getters",
     ["autoCompactConsecutiveFailures", 5],
     ["lastRequestModelId", "model_bad"],
     ["lastAssistantCompletedAtMs", 12345],
+    // R1-01 B2：TurnState 剩余 4 字段收敛——前 3 个归 RuntimeForegroundExecutionOwner
+    // 只读 getter；runtimeCommandQueue 是构造期不可写数据属性（零 method 写点）。
+    [
+      "activeForegroundExecution",
+      {
+        controller: new AbortController(),
+        disposeParentAbort: () => {},
+        foregroundExecutionId: "exec_bad",
+        preserveQueueAutoDrainOnCancel: false,
+      },
+    ],
+    ["foregroundPromotionLease", { leaseId: "lease_bad", promotedInputId: "input_bad" }],
+    ["currentTurnFileChanges", new Map()],
+    ["runtimeCommandQueue", { enqueue: () => {} }],
   ]) {
     assert.throws(() => {
       runtime[field] = value;
@@ -871,6 +889,85 @@ test("R1-01 B1: cache diagnostics fields are owned by a finite write port, not t
   port.recordAutoCompactFailure();
   initializeRuntimeCacheDiagnostics(runtime);
   assert.equal(runtime.autoCompactConsecutiveFailures, 1);
+});
+
+test("R1-01 B2: foreground execution fields are owned by a finite write port, not the flat `this` surface", async (t) => {
+  const { runtime } = await fixture(t);
+  const port = getRuntimeForegroundExecutionPort(runtime);
+
+  // 初始值（迁移前 agent-runtime.ts 的字段初始化等价）。
+  assert.equal(runtime.activeForegroundExecution, undefined);
+  assert.equal(runtime.foregroundPromotionLease, undefined);
+  assert.ok(runtime.currentTurnFileChanges instanceof Map);
+  assert.equal(runtime.currentTurnFileChanges.size, 0);
+
+  // beginForegroundExecution：owner 持有 state；引用不冻结——
+  // stopActiveForegroundExecution 的 preserveQueueAutoDrainOnCancel 容器内写保留
+  // （与 activeTurn.pendingInputs 原地 splice 同先例）。
+  const state = {
+    controller: new AbortController(),
+    disposeParentAbort: () => {},
+    foregroundExecutionId: "exec_1",
+    preserveQueueAutoDrainOnCancel: false,
+  };
+  port.beginForegroundExecution(state);
+  assert.equal(runtime.activeForegroundExecution, state);
+  state.preserveQueueAutoDrainOnCancel = true;
+  assert.equal(runtime.activeForegroundExecution.preserveQueueAutoDrainOnCancel, true);
+
+  // finishForegroundExecution：identity 不匹配是 no-op，命中才清除。
+  const stranger = { ...state, foregroundExecutionId: "exec_stranger" };
+  port.finishForegroundExecution(stranger);
+  assert.equal(runtime.activeForegroundExecution, state);
+  port.finishForegroundExecution(state);
+  assert.equal(runtime.activeForegroundExecution, undefined);
+
+  // commitPromotionLease：owner 唯一写点；入库浅冻结，读面不能反向改写。
+  port.commitPromotionLease({ leaseId: "lease_a", promotedInputId: "input_a" });
+  assert.deepEqual(runtime.foregroundPromotionLease, {
+    leaseId: "lease_a",
+    promotedInputId: "input_a",
+  });
+  assert.throws(() => {
+    runtime.foregroundPromotionLease.promotedInputId = "input_bad";
+  }, TypeError);
+
+  // releasePromotionLease：leaseId 不匹配返回 false 且 lease 保持；命中清除返回 true。
+  assert.equal(port.releasePromotionLease("lease_bad"), false);
+  assert.equal(runtime.foregroundPromotionLease?.leaseId, "lease_a");
+  assert.equal(port.releasePromotionLease("lease_a"), true);
+  assert.equal(runtime.foregroundPromotionLease, undefined);
+  // 无 lease 时释放是安全 no-op。
+  assert.equal(port.releasePromotionLease("lease_a"), false);
+
+  // consumePromotionLease：出队 promoted command 成功后的同步消费点。
+  port.commitPromotionLease({ leaseId: "lease_b", promotedInputId: "input_b" });
+  port.consumePromotionLease();
+  assert.equal(runtime.foregroundPromotionLease, undefined);
+
+  // resetTurnFileChanges：整体替换为新空 Map（identity 变化），旧 Map 内容写不受影响。
+  const oldMap = runtime.currentTurnFileChanges;
+  oldMap.set("file.ts", { path: "file.ts" });
+  port.resetTurnFileChanges();
+  assert.notEqual(runtime.currentTurnFileChanges, oldMap);
+  assert.equal(runtime.currentTurnFileChanges.size, 0);
+  assert.equal(oldMap.size, 1);
+  // 新 Map 内容写保留（recordTurnFileChange 的容器内写不经端口）。
+  runtime.currentTurnFileChanges.set("other.ts", { path: "other.ts" });
+  assert.equal(runtime.currentTurnFileChanges.size, 1);
+
+  // 端口冻结：不能替换写方法。
+  assert.throws(() => {
+    port.beginForegroundExecution = () => {};
+  }, TypeError);
+  assert.throws(() => {
+    port.releasePromotionLease = () => true;
+  }, TypeError);
+
+  // 重复初始化是幂等 no-op（owners.has 短路）：重新初始化不重置已有状态。
+  port.commitPromotionLease({ leaseId: "lease_c", promotedInputId: "input_c" });
+  initializeRuntimeForegroundExecution(runtime);
+  assert.equal(runtime.foregroundPromotionLease?.leaseId, "lease_c");
 });
 
 test("CLI-05: admission reserves synchronously and cancellation releases only its accepted turn", async (t) => {
@@ -1128,6 +1225,10 @@ runtime.cacheMissCauseCounts = {};
 runtime.autoCompactConsecutiveFailures = 5;
 runtime.lastRequestModelId = "model_bad";
 runtime.lastAssistantCompletedAtMs = 12345;
+runtime.activeForegroundExecution = undefined;
+runtime.foregroundPromotionLease = undefined;
+runtime.runtimeCommandQueue = runtime.runtimeCommandQueue;
+runtime.currentTurnFileChanges = new Map();
 if (reservation) reservation.turnId = reservation.turnId;
 runtime.setBranchGeneration(4);
 `;
@@ -1160,8 +1261,11 @@ runtime.setBranchGeneration(4);
   // R1-01 B1：新增 6 个 cache 诊断字段（mainTurnCacheHitAggregate / pendingCacheMissCause /
   // cacheMissCauseCounts / autoCompactConsecutiveFailures / lastRequestModelId /
   // lastAssistantCompletedAtMs），readonly 违例 17 → 23、总诊断数 18 → 24。
-  assert.equal(diagnostics.length, 24, detail);
-  assert.equal(diagnostics.filter((diagnostic) => diagnostic.code === 2540).length, 23, detail);
+  // R1-01 B2：新增 4 个 TurnState 剩余字段（activeForegroundExecution /
+  // foregroundPromotionLease / runtimeCommandQueue / currentTurnFileChanges），
+  // readonly 违例 23 → 27、总诊断数 24 → 28。
+  assert.equal(diagnostics.length, 28, detail);
+  assert.equal(diagnostics.filter((diagnostic) => diagnostic.code === 2540).length, 27, detail);
   // TS 有拼写建议时用 2551、没有时用 2339；两者都必须真正拒绝不存在的任意 setter。
   assert.equal(
     diagnostics.filter((diagnostic) => diagnostic.code === 2339 || diagnostic.code === 2551).length,

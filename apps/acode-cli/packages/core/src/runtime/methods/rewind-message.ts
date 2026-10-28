@@ -42,6 +42,7 @@ import type { AgentRuntimeInternal } from "../internal.js";
 import { getRuntimeBranchRestorePort, type RuntimeBranchTransition } from "../turn-coordination.js";
 import { getRuntimeTurnTimingPort } from "../runtime-turn-timing.js";
 import { getRuntimeCacheDiagnosticsPort } from "../runtime-cache-diagnostics.js";
+import { getRuntimeForegroundExecutionPort } from "../runtime-foreground-execution.js";
 import { rebuildContextPrefix } from "./context-refresh.js";
 import { mainTurnCacheHitAggregateFromMessages } from "./turn-model-step-usage.js";
 
@@ -757,7 +758,8 @@ async function rebuildConversationDerivedState(
     activeMessages.filter((message) => message.info.role === "user" && !message.info.summary)
       .length,
   );
-  this.currentTurnFileChanges = new Map();
+  // R1-01 B2：currentTurnFileChanges 归 RuntimeForegroundExecutionOwner，reset 经端口。
+  getRuntimeForegroundExecutionPort(this).resetTurnFileChanges();
   cachePort.resetAutoCompactFailures();
 }
 

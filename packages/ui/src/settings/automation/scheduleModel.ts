@@ -6,7 +6,7 @@
  * 无 React 依赖**。函数体逐字迁移，不修改任何决策语义。
  *
  * 选择器族（TimeOfDayPicker / MonthDayPicker / WeekdayPicker / EndDatePicker / CustomRepeatDialog /
- * TimeUnitColumn / ScrollNumberColumn）仍留在主文件，属批次 2。
+ * TimeUnitColumn / ScrollNumberColumn）已批次 2 外迁至 `./pickers/` 子目录。
  */
 import type {
   ACodeAutomationRun,

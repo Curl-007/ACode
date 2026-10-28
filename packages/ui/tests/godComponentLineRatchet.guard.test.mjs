@@ -30,13 +30,17 @@ const uiSrc = `${root}packages/ui/src`;
 
 /** 已登记上帝组件的行数上限（物理行）。跌破 400 后删除对应条目。 */
 const REGISTERED_LINE_CAPS = {
-  "settings/AutomationEditView.tsx": 2799,
+  // 2026-10-28 batch-2 选择器族外迁落地（7 picker → settings/automation/pickers/）：2799 → 1944。
+  "settings/AutomationEditView.tsx": 1944,
   // 2026-10-28 batch-1 helper 外迁落地（21 纯函数 + 6 常量 → settings/subagents/agentModel.ts，318 行）：2671 → 2416。
-  "settings/SubagentsSection.tsx": 2416,
+  // 2026-10-28 batch-2 列表/表单拆分落地（SubagentList + SubagentForm + SubagentModelOverrideControl +
+  // SubagentFormFields + primitives，5 个新模块）：2416 → 1181。
+  "settings/SubagentsSection.tsx": 1181,
   // 2026-10-28 batch-1 helper 外迁落地（navigationModel + 操作菜单 + 空态）：1979 → 1695。
   "settings/AutomationsSection.tsx": 1695,
   // 2026-10-28 batch-1 helper 外迁落地（remotePluginSyncModel/Types 拆出）：1898 → 1460。
-  "settings/RemotePluginSyncDialog.tsx": 1460,
+  // 2026-10-28 batch-2 SelectionList/ProgressList/ResultList 三组件外迁落地：1460 → 1132。
+  "settings/RemotePluginSyncDialog.tsx": 1132,
   // 2026-10-28 batch-1 helper 外迁落地（refresh queue / status / OAuth authorization build 纯逻辑 → settings/mcp/mcpSettingsModel.ts）：1595 → 1346。
   "settings/McpSettingsSection.tsx": 1346,
 };

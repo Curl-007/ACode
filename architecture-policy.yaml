@@ -379,184 +379,49 @@ global:
 # 迁移时超过 400 物理行的 11 个引擎文件登记 max-file-lines；带 lint disable 头注的
 # 3 个文件登记 disable-count。**不刷新 .architecture-baseline.json**；例外到期前由
 # 后续批次拆 file 偿还。
+# 已偿还 14 条：批次 C 偿还 6 条（world-read / observation / tool-port / import /
+# artifact-publish / git-world-read 拆为叶子 + 薄 barrel）+ 2 条 disable-count
+# （tool-port / world-read 头注随拆删除）；DebtDDriverRuntime 偿还 script-workflow-runtime
+# （max-file-lines + disable-count）与 workflow-driver（max-file-lines）；
+# DebtDLaunchSvc 偿还 launch（693→346，拆出 launch-input / launch-actor-session /
+# launch-event-adapter 三叶）、submit（565→367，拆出 run-resume）、service（576→361，
+# 拆出 run-read-side，11 条只读端口方法整体迁出）。
+# w1r3 剩 0 条——全部偿还完毕（2026-12-31 到期例外清零）。
 exceptions:
-  - id: w1r3-max-file-lines-script-workflow-runtime
-    rule: max-file-lines
-    expires: "2026-12-31"
-    paths: [apps/acode-cli/packages/cli-workflow/src/script-workflow-runtime.ts]
-  - id: w1r3-max-file-lines-dynamic-workflow-run-launch
-    rule: max-file-lines
-    expires: "2026-12-31"
-    paths: [apps/acode-cli/packages/cli-workflow/src/dynamic-workflow-run-launch.ts]
-  - id: w1r3-max-file-lines-workflow-world-read
-    rule: max-file-lines
-    expires: "2026-12-31"
-    paths: [apps/acode-cli/packages/cli-workflow/src/workflow-world-read.ts]
-  - id: w1r3-max-file-lines-dynamic-workflow-run-observation
-    rule: max-file-lines
-    expires: "2026-12-31"
-    paths: [apps/acode-cli/packages/cli-workflow/src/dynamic-workflow-run-observation.ts]
-  - id: w1r3-max-file-lines-workflow-driver
-    rule: max-file-lines
-    expires: "2026-12-31"
-    paths: [apps/acode-cli/packages/cli-workflow/src/workflow-driver.ts]
-  - id: w1r3-max-file-lines-dynamic-workflow-run-submit
-    rule: max-file-lines
-    expires: "2026-12-31"
-    paths: [apps/acode-cli/packages/cli-workflow/src/dynamic-workflow-run-submit.ts]
-  - id: w1r3-max-file-lines-script-workflow-tool-port
-    rule: max-file-lines
-    expires: "2026-12-31"
-    paths: [apps/acode-cli/packages/cli-workflow/src/script-workflow-tool-port.ts]
-  - id: w1r3-max-file-lines-dynamic-workflow-import
-    rule: max-file-lines
-    expires: "2026-12-31"
-    paths: [apps/acode-cli/packages/cli-workflow/src/dynamic-workflow-import.ts]
-  - id: w1r3-max-file-lines-workflow-artifact-publish
-    rule: max-file-lines
-    expires: "2026-12-31"
-    paths: [apps/acode-cli/packages/cli-workflow/src/workflow-artifact-publish.ts]
-  - id: w1r3-max-file-lines-dynamic-workflow-run-service
-    rule: max-file-lines
-    expires: "2026-12-31"
-    paths: [apps/acode-cli/packages/cli-workflow/src/dynamic-workflow-run-service.ts]
-  - id: w1r3-max-file-lines-workflow-git-world-read
-    rule: max-file-lines
-    expires: "2026-12-31"
-    paths: [apps/acode-cli/packages/cli-workflow/src/workflow-git-world-read.ts]
-  - id: w1r3-disable-count-script-workflow-runtime
-    rule: disable-count
-    expires: "2026-12-31"
-    paths: [apps/acode-cli/packages/cli-workflow/src/script-workflow-runtime.ts]
-  - id: w1r3-disable-count-script-workflow-tool-port
-    rule: disable-count
-    expires: "2026-12-31"
-    paths: [apps/acode-cli/packages/cli-workflow/src/script-workflow-tool-port.ts]
-  - id: w1r3-disable-count-workflow-world-read
-    rule: disable-count
-    expires: "2026-12-31"
-    paths: [apps/acode-cli/packages/cli-workflow/src/workflow-world-read.ts]
   # acode-cli-contracts 纳管（ARCH-04，specs/architecture-contracts-module.md）的实存
-  # 例外：11 个 >400 物理行的存量文件登记 max-file-lines；6 个带 eslint-disable max-lines
-  # 头注的文件登记 disable-count。**不刷新 .architecture-baseline.json**；到期前由后续
-  # 批次按职责拆分偿还（拆分一个删一条）。cycle/deep-import/max-contract-lines
-  # 不可例外，已在纳管同批实修（断环叶子文件见 spec）。
-  - id: contracts-onboarding-max-file-lines-session-events
-    rule: max-file-lines
-    expires: "2026-12-31"
-    paths: [apps/acode-cli/packages/contracts/src/events/session.events.ts]
-  - id: contracts-onboarding-max-file-lines-session-store-port
-    rule: max-file-lines
-    expires: "2026-12-31"
-    paths: [apps/acode-cli/packages/contracts/src/interfaces/session-store.port.ts]
-  - id: contracts-onboarding-max-file-lines-model-index
-    rule: max-file-lines
-    expires: "2026-12-31"
-    paths: [apps/acode-cli/packages/contracts/src/model/index.ts]
-  - id: contracts-onboarding-max-file-lines-dynamic-workflow-run-port
-    rule: max-file-lines
-    expires: "2026-12-31"
-    paths: [apps/acode-cli/packages/contracts/src/interfaces/dynamic-workflow-run.port.ts]
-  - id: contracts-onboarding-max-file-lines-workflow-index
-    rule: max-file-lines
-    expires: "2026-12-31"
-    paths: [apps/acode-cli/packages/contracts/src/workflow/index.ts]
-  - id: contracts-onboarding-max-file-lines-event-reducer
-    rule: max-file-lines
-    expires: "2026-12-31"
-    paths: [apps/acode-cli/packages/contracts/src/events/event-reducer.ts]
-  - id: contracts-onboarding-max-file-lines-browser-control-port
-    rule: max-file-lines
-    expires: "2026-12-31"
-    paths: [apps/acode-cli/packages/contracts/src/interfaces/browser-control.port.ts]
-  - id: contracts-onboarding-max-file-lines-create-workflow
-    rule: max-file-lines
-    expires: "2026-12-31"
-    paths: [apps/acode-cli/packages/contracts/src/tools/create-workflow.ts]
-  - id: contracts-onboarding-max-file-lines-target
-    rule: max-file-lines
-    expires: "2026-12-31"
-    paths: [apps/acode-cli/packages/contracts/src/tools/target.ts]
-  - id: contracts-onboarding-max-file-lines-config-index
-    rule: max-file-lines
-    expires: "2026-12-31"
-    paths: [apps/acode-cli/packages/contracts/src/config/index.ts]
-  - id: contracts-onboarding-max-file-lines-hooks-index
-    rule: max-file-lines
-    expires: "2026-12-31"
-    paths: [apps/acode-cli/packages/contracts/src/hooks/index.ts]
-  - id: contracts-onboarding-disable-count-event-reducer
-    rule: disable-count
-    expires: "2026-12-31"
-    paths: [apps/acode-cli/packages/contracts/src/events/event-reducer.ts]
-  - id: contracts-onboarding-disable-count-session-events
-    rule: disable-count
-    expires: "2026-12-31"
-    paths: [apps/acode-cli/packages/contracts/src/events/session.events.ts]
-  - id: contracts-onboarding-disable-count-browser-control-port
-    rule: disable-count
-    expires: "2026-12-31"
-    paths: [apps/acode-cli/packages/contracts/src/interfaces/browser-control.port.ts]
-  - id: contracts-onboarding-disable-count-session-store-port
-    rule: disable-count
-    expires: "2026-12-31"
-    paths: [apps/acode-cli/packages/contracts/src/interfaces/session-store.port.ts]
-  - id: contracts-onboarding-disable-count-model-index
-    rule: disable-count
-    expires: "2026-12-31"
-    paths: [apps/acode-cli/packages/contracts/src/model/index.ts]
-  - id: contracts-onboarding-disable-count-workflow-index
-    rule: disable-count
-    expires: "2026-12-31"
-    paths: [apps/acode-cli/packages/contracts/src/workflow/index.ts]
+  # 例外：**0 个 max-file-lines；0 个 disable-count**——全部偿还完毕。
+  # cycle/deep-import/max-contract-lines 不可例外，已在纳管同批实修（断环叶子文件见 spec）。
+  # 批次 A（DebtContractsEasy）已偿还：model/index、workflow/index、browser-control.port、
+  # create-workflow、target、config-index 拆分为叶子 + barrel（头注随拆删除）；
+  # hooks/index 已合规（205 行）仅删例外条目。
+  # 批次 B（DebtBEventsStore）已偿还：session.events 拆为 9 叶 + 纯桶，
+  # session-store.port 拆为 7 叶 + 纯桶；三组共享词汇（SessionTitleSource /
+  # MessageVisibility / SyntheticUserMessageSource）下沉 interfaces/session-shared.ts
+  # 断环叶子；两处首行 max-lines 头注随拆删除（导出面逐名不变，消费方零改动）。
+  # 批次 B（DebtBReducerDwf）已偿还：event-reducer 拆为 3 个纯函数叶（turn / tool /
+  # task-permission）+ 主体 372 行；dynamic-workflow-run.port 拆为 4 叶（submit /
+  # artifact / event / view）+ 主体 375 行；首行 max-lines 头注随拆删除（导出面逐名不变）。
   # ARCH-04 batch 2 legacy 模块纳管（rpc/client/provider-node/formal-proof/provider/
   # acode-server-cli，各包 specs/module-boundary.md）的实存例外：存量 >400 物理行文件
   # 登记 max-file-lines；带首行 max-lines 抑制头注的文件登记 disable-count。
   # **不刷新 .architecture-baseline.json**；到期前由后续批次按职责拆分/清理偿还
   #（拆一个删一条）。rpc/client/provider-node 无超限文件、无 lint disable，零例外。
-  - id: onboard-formal-proof-over-limit
-    rule: max-file-lines
-    expires: "2026-12-31"
-    paths: [packages/formal-proof/src/main.ts, packages/formal-proof/src/model.ts]
-  - id: onboard-provider-over-limit
-    rule: max-file-lines
-    expires: "2026-12-31"
-    paths:
-      [
-        packages/provider/src/config-service.ts,
-        packages/provider/src/config/model-config.ts,
-        packages/provider/src/config/provider-config.ts,
-        packages/provider/src/facades.ts,
-      ]
+  # 2026-10-28 偿还：onboard-formal-proof-over-limit 已删——main.ts 拆为 388 行 +
+  # 5 叶（appShell/graphModel/columnBands/renderBudget/reviewCases），model.ts 拆为
+  # 37 行 barrel + model/ 五叶（types/profiles/decisions/evaluate/trace），全部 <400。
+  # 2026-10-28 偿还：onboard-provider-over-limit 已删——config-service.ts 拆为 235 行
+  # + 4 叶、config/model-config.ts 拆为 8 行 barrel + 3 叶、config/provider-config.ts
+  # 拆为 10 行 barrel + 4 叶、facades.ts 拆为 28 行 barrel + 4 叶，全部 <400。
   - id: onboard-provider-disables
     rule: disable-count
     expires: "2026-12-31"
-    paths:
-      [
-        packages/provider/src/config-service.ts,
-        packages/provider/src/config/model-config.ts,
-        packages/provider/src/config/provider-config.ts,
-        packages/provider/src/facades.ts,
-        packages/provider/src/resolver.ts,
-      ]
-  - id: onboard-server-cli-over-limit
-    rule: max-file-lines
-    expires: "2026-12-31"
-    paths:
-      [
-        packages/acode-server-cli/src/cli.ts,
-        packages/acode-server-cli/src/packaging/stage.ts,
-        packages/acode-server-cli/src/supervisor/supervisor.ts,
-      ]
-  - id: onboard-server-cli-disables
-    rule: disable-count
-    expires: "2026-12-31"
-    paths:
-      [
-        packages/acode-server-cli/src/cli.ts,
-        packages/acode-server-cli/src/packaging/stage.ts,
-        packages/acode-server-cli/src/supervisor/supervisor.ts,
-      ]
+    # 2026-10-28 收窄：config-service/model-config/provider-config/facades 四文件拆分
+    # 后已删首行 max-lines 头注（零 disable），移出本例外；resolver.ts 未拆动保留。
+    paths: [packages/provider/src/resolver.ts]
+  # 2026-10-28 偿还：onboard-server-cli-over-limit / onboard-server-cli-disables 已删——
+  # cli.ts 拆为 106 行 + cli/ 五叶、packaging/stage.ts 拆为 317 行 + 3 叶、
+  # supervisor/supervisor.ts 拆为 385 行 + 8 叶，全部 <400；3 条首行 max-lines
+  # 头注同步删除，src 内 disable 计数归零。
   # ARCH-04 batch 3 legacy 模块纳管（shared/server/session；packages/shared/specs/
   # module-boundary.md、packages/server/specs/module-boundary.md、packages/services/
   # specs/session-module-boundary.md）的实存例外：存量 >400 物理行文件登记
@@ -626,29 +491,14 @@ exceptions:
     expires: "2026-12-31"
     paths:
       [
-        packages/server/src/harness/translate.ts,
         packages/server/src/http.ts,
-        packages/server/src/remote/acodeAgentDevDeploy.ts,
-        packages/server/src/remote/deploy.ts,
-        packages/server/src/remote/localTarGz.ts,
-        packages/server/src/remote/remoteAssetCache.ts,
-        packages/server/src/remote/remoteAssetInstaller.ts,
-        packages/server/src/remote/ssh-backend.ts,
-        packages/server/src/remote/wsl-backend.ts,
       ]
   - id: onboard-b3-server-disables
     rule: disable-count
     expires: "2026-12-31"
     paths:
       [
-        packages/server/src/harness/translate.ts,
         packages/server/src/http.ts,
-        packages/server/src/remote/acodeAgentDevDeploy.ts,
-        packages/server/src/remote/deploy.ts,
-        packages/server/src/remote/remoteAssetCache.ts,
-        packages/server/src/remote/remoteAssetInstaller.ts,
-        packages/server/src/remote/ssh-backend.ts,
-        packages/server/src/remote/wsl-backend.ts,
       ]
   - id: onboard-b3-session-over-limit
     rule: max-file-lines

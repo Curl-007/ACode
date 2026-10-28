@@ -41,12 +41,19 @@ lock/manifest/release 安装事实，packaging 负责离线部署 staging。本 
   scripts/architecture/index.mjs）。
 - 全仓无源码以包名 import 本模块（bin/exports 消费；纳管前扫描确认零 deep
   import）。
-- 行数/抑制例外（限期债，expires 2026-12-31）：
-  - `onboard-server-cli-over-limit`（max-file-lines）：cli.ts 517、
-    packaging/stage.ts 652、supervisor/supervisor.ts 648；
-  - `onboard-server-cli-disables`（disable-count）：同 3 文件（各 1 条首行
-    max-lines 抑制）。
-    到期前必须拆分/清理并移除例外；`.architecture-baseline.json` 不动。
+- 行数/抑制例外（限期债，expires 2026-12-31）——**已偿还（2026-10-28）**：
+  - `onboard-server-cli-over-limit`（max-file-lines）：原 cli.ts 517、
+    packaging/stage.ts 652、supervisor/supervisor.ts 648 已按职责拆分，
+    拆后 cli.ts 106、stage.ts 317、supervisor.ts 385，全部新叶子均 <400
+    （cli/{io,serviceRegistration,control,uninstall,serve}.ts、
+    packaging/stage{DependencyClosure,RuntimeAssets,Archive}.ts、
+    supervisor/{supervisorOptions,lifecycleOperationGate,coreTermination,
+    coreHealthCheck,releaseUpdate,automaticRecovery,startupFailure,
+    controlDispatch}.ts）；导出面逐名保持不变；
+  - `onboard-server-cli-disables`（disable-count）：3 条首行 max-lines 抑制
+    已随拆分全部删除，`src/` 下现存 0 条 lint 抑制。
+    `architecture-policy.yaml` 中两条例外登记的收口由集成者统一处理（本包
+    侧债务已清偿，checker 可直接移除例外验证零违规）。
 
 ## Dependency direction
 
@@ -63,9 +70,10 @@ lock/manifest/release 安装事实，packaging 负责离线部署 staging。本 
 ## Acceptance scenarios
 
 1. `node scripts/architecture/architecture-check.mjs check`：acode-server-cli 在
-   managed 语义下，除已登记的 `onboard-server-cli-over-limit` 与
-   `onboard-server-cli-disables` 两条例外外零违规（forbidCycles、deep-import、
-   max-contract-lines、max-public-methods）。
+   managed 语义下零违规（forbidCycles、deep-import、max-contract-lines、
+   max-public-methods、max-file-lines、disable-count）；原
+   `onboard-server-cli-over-limit` 与 `onboard-server-cli-disables` 两条例外
+   已于 2026-10-28 拆分偿还，policy 登记由集成者移除。
 2. `node scripts/architecture/architecture-check.mjs context acode-server-cli`
    展示 owner `server-cli-supervisor`、module.ts 与 contract.ts（contracts.ts
    会作为 `contract.` 前缀文件一并列入阅读包，属预期展示而非契约面）。

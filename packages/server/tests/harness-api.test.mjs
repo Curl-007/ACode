@@ -720,6 +720,27 @@ test("红线：server harness 只允许已登记的 protocol capability/schema �
     // 按红线流程登记：新 v4 协议文件只进 acode-protocol-v4，提供严格类型与运行时校验，
     // legacy 协议面不增（AGENTS.md 进程、协议与远程控制一节的收敛方向）。
     "?? packages/shared/src/acode-protocol-v4/script-workflow-management.ts",
+    // M2-3 session 读写面 v4 wire schema 叶（spec: apps/acode-cli/specs/m2-3-session-readwrite.md）。
+    "?? packages/shared/src/acode-protocol-v4/session-readwrite.ts",
+    // M2-2 session 控制面叶（spec: apps/acode-cli/specs/m2-2-session-control.md）——已落地批次
+    // 补登记（原批次未进本 allowlist，server suite 红线由补登记者平账）。
+    "?? packages/shared/src/acode-protocol-v4/session-control.ts",
+    // M2-5 plugins 三叶拆分（spec: apps/acode-cli/specs/m2-5-plugins.md）。
+    "?? packages/shared/src/acode-protocol-v4/plugins.ts",
+    "?? packages/shared/src/acode-protocol-v4/plugins-queries.ts",
+    "?? packages/shared/src/acode-protocol-v4/plugins-commands.ts",
+    // M2-6 workflows/skills/mcp 域叶。
+    "?? packages/shared/src/acode-protocol-v4/workflows.ts",
+    "?? packages/shared/src/acode-protocol-v4/skills.ts",
+    "?? packages/shared/src/acode-protocol-v4/mcp.ts",
+    // M2-8 workspace/provider/process 域三叶（spec: apps/acode-cli/specs/m2-8-workspace-provider-process.md）。
+    "?? packages/shared/src/acode-protocol-v4/workspace-runtime.ts",
+    "?? packages/shared/src/acode-protocol-v4/workspace-policies.ts",
+    "?? packages/shared/src/acode-protocol-v4/provider-process.ts",
+    // M2-4 inbound interaction broker 叶（spec: apps/acode-cli/specs/m2-4-inbound-interaction.md）。
+    "?? packages/shared/src/acode-protocol-v4/inbound-interaction.ts",
+    // M2-7 automation/offPeak 七法叶（spec: apps/acode-cli/specs/m2-7-automation-offpeak.md）。
+    "?? packages/shared/src/acode-protocol-v4/automation-offpeak.ts",
   ]);
   const unexpected = stdout
     .split(/\r?\n/)

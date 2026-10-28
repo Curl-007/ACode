@@ -46,10 +46,16 @@
 
 ## Registered debt（例外，expires 2026-12-31）
 
-- `onboard-b3-server-over-limit`：9 个存量超 400 行文件（remoteAssetCache.ts
-  1928 行、remoteAssetInstaller.ts 1087 行为最大头）；例外只冻结存量。
-- `onboard-b3-server-disables`：8 个含 lint disable 的存量文件。
-- 到期前应拆分文件、移除 disable，而不是续期例外。
+- `onboard-b3-server-over-limit` / `onboard-b3-server-disables`：9 个存量超 400
+  行文件已偿还 8 个（含最大头 remoteAssetCache.ts 1928 行、
+  remoteAssetInstaller.ts 1087 行），全部拆出 <400 行叶子并移除 disable；
+  两条例外的 `paths` 收窄至仅剩 `packages/server/src/http.ts`。
+- http.ts（783 行）登记为未拆分：`server-auth.test.mjs` 以 stub 依赖表对
+  http.ts 做**单文件** `transpileModule` 执行（每个 import 必须命中 stub 表），
+  且用源码文本断言把 token 裁决 / credential 收窄 / 升级来源信任等安全不变量
+  钉在 http.ts 本体。拆分需重写安全测试的 stub 管线，存在静默绕过鉴权 /
+  WS 升级 / 静态穿越行为测试的风险，留待安全测试管线改造后一并处理。
+- 到期前应继续拆分剩余文件、移除 disable，而不是续期例外。
 
 ## Acceptance scenarios
 

@@ -67,8 +67,12 @@
   `findACodeAgentRuntimeNodeBundle(engineId?)` 按描述符参数化。
 - `packages/services/src/acode-agent/acodeAgentProcessManager.ts`：`ACodeAgentCommandResolverContext.engineId`，
   `resolveDefaultACodeAgentCommand` 引擎 dispatch，事件标记 engineId，exit/stderr 接错误分类。
-- UI：`packages/ui/src/lib/acodeSessionProjection.ts` 与 `display-help.ts` 引擎作用域模式投影；
+- UI：`packages/ui/src/chat-input-toolbar/display-help.ts` 承载引擎作用域的 mode
+  label/description 映射（按 `glm:` 键）；mode 档位选项经 shared
+  `getACodeAgentModeSelectOptions`/`normalizeAvailableACodeMode` 取用，UI 侧消费点见
+  `lib/workspaceModeConfigOptions.ts` 与 `v4/composer/V4ComposerModeControls.tsx`；
   `packages/ui/src/i18n/locales/{en-US,zh-CN}.ts` 增 `engine.*` / `settings.engine.*` 键。
+  （原 `packages/ui/src/lib/acodeSessionProjection.ts` 已于 2026-10-28 legacy M1 收口时退役删除。）
 
 ## 事件顺序
 

@@ -61,7 +61,7 @@ export function getACodeAgentModeSelectOptions(): NonNullable<ACodeConfigOption[
 }
 
 /**
- * native(glm) 引擎的可用模式（build/edit/plan/yolo）。
+ * native(glm) 引擎的可用模式（build/edit/plan/yolo/dontAsk）。
  *
  * 外部引擎槽位已下线，引擎联合只剩 native；保留 engineId 入参以维持调用方形状，
  * 非法/旧值经 resolveAgentEngine 归一后仍走 native 分支。

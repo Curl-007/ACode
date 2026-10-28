@@ -215,7 +215,7 @@ P01–P13 均运行 `desktop-continuous` 与 `web-remote-replayable` 两种配�
 
 | 里程碑 | 数量门禁                                                                      | 额外验收                                             |
 | ------ | ----------------------------------------------------------------------------- | ---------------------------------------------------- |
-| M1     | `rg acodeSessionProjection packages/ui/src` 无命中；退出码 1 表示无匹配       | UI 包测试；只迁读路径，不混入组件拆分                |
+| M1     | `git grep 'from "@/lib/acodeSessionProjection' -- packages/ui/src` 无命中（零 import；退出码 1 表示无匹配）。**注（2026-10-28）**：原判据 `rg acodeSessionProjection packages/ui/src` 会命中来历说明注释，无法归零，已改判据。 | UI 包测试；只迁读路径，不混入组件拆分                |
 | M2     | `rg 'acodeProtocolMethods\|acodeProtocolClient' packages/services/src` 无命中 | services/Desktop 测试，双模式真实冒烟，node 装配收口 |
 | M3     | legacy server 目录和其中 `v4-bridge.ts` 均不存在；V4 不反向依赖 legacy        | CLI 测试、ACP 冒烟、Desktop 一轮对话和恢复           |
 | M4     | shared legacy 宿主文件删除；分类清单无未处理项；指令/技能残留清零             | 全仓测试/类型/架构；knip 相关 backlog 按实际结果下降 |

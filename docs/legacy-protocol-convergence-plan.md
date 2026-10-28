@@ -46,7 +46,7 @@
 ### M1 — UI 旧投影收口（可与 M2 并行）
 
 - 内容：UI 消费文件从 `acodeSessionProjection` 读路径迁到 v4 snapshot/query 投影。
-- 验收：`git grep acodeSessionProjection -- packages/ui/src` 归零；`pnpm --filter @acode/ui test` 绿。
+- 验收：`git grep 'from "@/lib/acodeSessionProjection' -- packages/ui/src` 归零（**零 import** 判据，见下「验收口径」）；`pnpm --filter @acode/ui test` 绿。
 - 风险：SessionPane.tsx 本身是上帝组件（带 max-lines 豁免），改动面大；迁移时不得顺手重构，只换投影读路径。
 
 > **实测订正（2026-10-27，M1 启动前调研）**：本节的三条前提经源码核验**均需修正**，且 M1
@@ -337,11 +337,18 @@ consumer API，v4 command 直接依赖中立模块。这样 M4 删除 legacy bar
 
 **真实 import 计数 11 → 0**（`git grep -l 'from "@/lib/acodeSessionProjection' -- packages/ui/src`）。
 
-**M1 验收 grep 判据的口径缺陷（如实登记）**：验收命令 `git grep acodeSessionProjection --
-packages/ui/src` 现报 **3 个文件**（useActiveTaskSnapshotMeta.ts / modelPickerValue.ts /
-workspaceModeConfigOptions.ts），全部是**来历说明注释**（记录「这函数原住哪、为什么搬」），
-零 import。即字面 grep 判据无法归零，除非删掉解释性注释——那会损失「为什么在这里」的上下文，
-得不偿失。**建议 M1 收口判据改为 `git grep 'from "@/lib/acodeSessionProjection'`（现 = 0）**。
+**验收口径（2026-10-28 裁决，用户确认）**：M1 的收口判据从「grep 归零」改为**「零 import」**。
+原判据 `git grep acodeSessionProjection -- packages/ui/src` 无法归零——它现报 **3 个文件**
+（useActiveTaskSnapshotMeta.ts / modelPickerValue.ts / workspaceModeConfigOptions.ts），全部是
+**来历说明注释**（记录「这函数原住哪、为什么搬」），零 import。删掉这些注释可让字面 grep 归零，
+但会损失「为什么在这里」的上下文，得不偿失。故判据改为：
+
+```
+git grep 'from "@/lib/acodeSessionProjection' -- packages/ui/src   # 现 = 0，退出码 1（无匹配）
+```
+
+本文件 §M1 的「验收」行、`docs/upgrades/runtime-and-protocol-2026-10.md` 的 M1 数量门禁行、
+以及本进度表 UI 行均已按此裁决更新。保留 3 处来历注释。
 
 **M1 的 UI 侧到此完成，但 M1 整体未标记完成**：legacy **协议**读路径 `readWorkspacePresentation`
 仍在被 workspacePrepareRpc 使用（经它取 mode + slashCommands）。那属 **M2/M4**（协议退役），

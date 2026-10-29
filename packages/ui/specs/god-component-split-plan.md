@@ -1,6 +1,6 @@
 # v4 上帝组件拆分计划（SessionPane / ConversationComposer / settings 上帝组件）
 
-状态：第一批已实施（2026-10-05，附件预览接缝）；第二批已实施（2026-10-22，SessionPane 命令编排纯决策逻辑抽出 + 接缝内测试）；批次 4 已实施（2026-10-28，ExternalAgentImportDialog / PluginsSection / WorkspaceGroupedTasksSection / SettingsPage helper 外迁 + ConversationStatusPanel 保守纯函数外迁，见下文各节）；批次 5 已实施（2026-10-28，WorkspaceShellLayout / PreviewPane / WorkspaceSidebar / message / LexicalChatInput 五件 helper+受控组件外迁，见下文各节）；批次 6 已实施（2026-10-29，GitActionMenu / BotsDialog / AnimatedSidePanePanel / markdown-table 四件外迁 + ConversationStatusPanel 第一阶段分区契约测试与外迁，见下文各节）。其余接缝为登记在案的后续批次。
+状态：第一批已实施（2026-10-05，附件预览接缝）；第二批已实施（2026-10-22，SessionPane 命令编排纯决策逻辑抽出 + 接缝内测试）；批次 4 已实施（2026-10-28，ExternalAgentImportDialog / PluginsSection / WorkspaceGroupedTasksSection / SettingsPage helper 外迁 + ConversationStatusPanel 保守纯函数外迁，见下文各节）；批次 5 已实施（2026-10-28，WorkspaceShellLayout / PreviewPane / WorkspaceSidebar / message / LexicalChatInput 五件 helper+受控组件外迁，见下文各节）；批次 6 已实施（2026-10-29，GitActionMenu / BotsDialog / AnimatedSidePanePanel / markdown-table 四件外迁 + ConversationStatusPanel 第一阶段分区契约测试与外迁，见下文各节）；批次 7 已实施（2026-10-30，GitActionMenu trigger+mutation 收口（跌破 400，撤销 ratchet 登记）/ BotsDialog 四组轮询与写入闭环收口 / AnimatedSidePanePanel tab 条簇外迁 / ConversationStatusPanel 第二阶段四分区+秒针统一+胶囊分支契约，见下文各节）。其余接缝为登记在案的后续批次。
 背景：`v4/SessionPane.tsx`（本轮起点 3,762 行，带 max-lines 豁免）与 `v4/ConversationComposer.tsx`
 （2,168 行）各自混合多种职责。拆分按「耦合最浅的接缝先行」推进，每批独立验证。
 
@@ -411,6 +411,37 @@
     useGitBranchSwitcher → useServices；GitActionMenu 同），当前无 jsdom 且 services 面很大，按
     「固定验收」第 4 条登记为无单测覆盖，其缺席分支由 `ConversationTeamStatusPanel.test.ts` 间接覆盖。
   - ratchet 上限 2102 → 1486。
+- 状态：**批次 7 第二阶段已实施（2026-10-30，四个秒级分区 + 秒针统一 + 胶囊分支契约）**：1486→**612**（−874）。
+  - **前置：秒针契约测试先行**（`test/conversationStatusPanelTicks.test.ts` 9 例 + 同批
+    `test/conversationStatusPanelTickSections.test.ts` 16 例）。前者钉住四条「该不该开表」条件与
+    两条收起态耗时口径；后者钉住四个分区迁移后的渲染结构锚点。这是「tick 统一」属**行为保持的重构**的
+    对照基线——先钉渲染与节奏语义，再动代码。
+  - `v4/conversation-status-panel/conversationStatusPanelTicks.ts`（66 行）：
+    `shouldTickBackgroundWorks` / `shouldTickWorkflowRuns` / `shouldTickSubagents` / `shouldTickGoal`
+    + `toCollapsedElapsedSeconds`（0ms 显示 1 秒）/ `shouldShowWorkflowCollapsedElapsed`。
+  - **tick 统一**：四个分区原先各自 `useState(now) + setInterval(1000)`（「关」写在 effect early return
+    里，无法单测），全部改为 `useNowTicker(谓词)` 单点驱动。节律不变（仍 1000ms 自然粒度）；
+    `useNowTicker` 在 `active=false` 时不建定时器、变真时先重取一次 now（与四组原实现共同语义一致）。
+    **未新建 hook**：`useNowTicker` 已存在于 `components/workflow-graph/use-now-ticker.ts` 并被
+    WorkflowRunSidePaneSections / eval-workflow-snippet / 本面板 Goal 分区使用（无广播/回环面，
+    纯本地定时器，不写 store）。
+  - `v4/conversation-status-panel/StatusActivityRows.tsx`（106 行）：`RunningWorkCancelButton` +
+    `RunningStatusItem`（三处分区共用，避免重复实现，也是各分区 <400 行的前提）。
+  - `v4/conversation-status-panel/GoalStatusSection.tsx`（151 行）：Goal 分区逐字迁入。
+  - `v4/conversation-status-panel/BackgroundWorkStatusSection.tsx`（99 行）：Terminals 分区。
+  - `v4/conversation-status-panel/WorkflowStatusSection.tsx`（230 行）：Workflows 分区（三簇缺席、
+    不排序、已结束页脚）。
+  - `v4/conversation-status-panel/SubagentStatusSection.tsx`（169 行）：Agents 分区（按 startedAt 排序、
+    详情与 Stop 的双交互层）。
+  - **第三阶段前置已完成**：`statusSummaryCapsuleModel.ts`（170 行）把 10 分支三元链收成
+    `StatusSummaryCapsuleKind` 判别联合 + `STATUS_SUMMARY_CAPSULE_PRIORITY`（顺序即产品行为）+
+    `resolveStatusSummaryCapsuleKind` 单入口；`test/conversationStatusPanelCapsule.test.ts` **21 例**
+    钉住优先级全序、逐分支命中、相邻覆盖关系、空模型缺席、实时活动图标族与计数文案。
+    `StatusSummaryRow.tsx`（255 行）只做「按 kind 渲染」，另有
+    `test/conversationStatusPanelCapsuleRender.test.ts` 8 例钉各分支可见锚点。
+  - 主文件保留：`ConversationStatusPanelImpl` 的 memo / `miniWidth` ResizeObserver / variant 门控 /
+    分区编排 JSX（含团队卡折叠）/ 面板菜单。导出面不变。
+  - ratchet 上限 1486 → 612。
 
 ### `app-shell/WorkspaceShellLayout.tsx`（1,980 行；max-lines 豁免）
 
@@ -535,9 +566,12 @@
 - 遗留：KeyboardPlugin 的改绑分发与 PromptHistoryPlugin 的发送回滚耦合为下一批候选
   （需先补交互测试，见 v4 区登记表「提示词历史导航」前置条件）。
 
-### `GitActionMenu.tsx`（1,398 行；max-lines 豁免）
+### GitActionMenu.tsx（1,398 行 → **188 行，已跌破 400，登记完成并从 ratchet 上限表移除**）
 
 > 登记来源：批次 6 目标清单（2026-10-28 review 第二梯队 top 候选，非 v4-session 域）。
+> 批次 7 收口后已跌破 400，按 `godComponentLineRatchet.guard.test.mjs` 第 2 条断言（已跌破 400
+> 的登记项必须从上限表移除）撤销登记——此后该文件的增长由架构棘轮的「跨越 400」规则兜住。
+> 标题刻意不再使用 `### \`<path>.tsx\`（` 登记标记形式，以免触发「防漏登记」断言。
 
 - 职责分析：顶部 trigger 状态机（`primaryActionId` 决策 / 状态行点击 / pending 图标切换）+
   commit dialog（分支头 / 提交信息 / 暂存开关 / 三动作 Command 键盘导航）+ push dialog（分支/upstream/
@@ -557,6 +591,26 @@
   - 前置测试：`test/gitActionMenuDialogsModel.test.ts` 9 例（action id 守卫 / testid / 文件集合两态 /
     stagePath 去重 / textarea 目标判定）。
   - ratchet 上限 1398 → 628。
+- 状态：**批次 7 已实施（2026-10-30，trigger 状态机 + mutation 编排收口）**：628→**188**（−440，
+  **跌破 400**，ratchet 条目已移除）。
+  - `git-action-menu/gitActionMenuCommitFlow.ts`（99 行）：从 `handleCommitAction` / `handleGenerateCommitMessage`
+    的 async 编排里抽出的**纯判定**——`resolveCommitStagePlan`（includeUnstaged 的路径投影）/
+    `resolveCommitPreflight`（identity 优先于 no-changes 的三态门）/ `shouldGenerateCommitMessage` /
+    `resolveCommitSuccessToastId` / `resolveCommitFailureErrorId`（已提交但 push 失败用专用 key）/
+    `resolveTriggerIconKind` / `resolveTriggerDisabled`。副作用（RPC/setState/日志）一律不进本叶。
+  - `git-action-menu/useGitActionMenuCommitDialog.ts`（267 行）：提交弹窗 7 个 state +
+    `closeCommitDialog` / `loadCommitDialogState` / `openCommitDialog` / `refreshCommitDialogAfterBranchChange` /
+    `generateCommitMessage` / `handleGenerateCommitMessage`，hook 顺序与 deps 逐字。
+  - `git-action-menu/useGitActionMenuController.ts`（396 行）：controller hook 首版 563 行超 400 的**第二刀**——
+    本 hook 只留 trigger 派生（`actionAvailable` / `primaryActionId` / `triggerPending` /
+    `primaryActionDisabled`）+ 可用性日志 effect + push 弹窗 + `handleCommitAction` 编排 +
+    `handlePrimaryAction`；提交弹窗状态委托给上一条叶子。
+  - 主文件保留 props 契约、trigger JSX（三态图标抽成 `GitActionMenuTriggerIcon` 受控小组件）、
+    两个弹窗接线。导出面不变（`GitActionMenu` 仍从 `@/GitActionMenu.js` 导出，消费方零改动）。
+  - 前置测试：`test/gitActionMenuCommitFlow.test.ts` 18 例（暂存计划两态与去重 / 前置门优先级
+    四种组合 / 自动生成条件 / 成功与失败 key 全组合 / 三态图标 / 禁用三条件）。
+  - 偏离登记：`handlePrimaryAction` 原为一个 IIFE 包着两个分支，改为等价直写（无行为变化）；
+    `primaryActionDisabled` 由内联表达式改为 `resolveTriggerDisabled` 调用（同谓词）。
 
 ### `BotsDialog.tsx`（1,434 行）
 
@@ -581,6 +635,34 @@
     `test/botsDialogPanels.test.ts` 7 例（侧栏空态/选中高亮/显示名兜底；新建网格 webhook 排除与
     disabled 占位；`.png` 渠道图标经 `module.registerHooks` 重定向，口径同 pluginListRows）。
   - ratchet 上限 1434 → 1177。
+- 状态：**批次 7 已实施（2026-10-30，四组轮询 + 配置写入闭环收口）**：1177→**469**（−708）。
+  - `BotsDialog/botsDialogPolling.ts`（212 行）：**可注入计时器的轮询原语** `createCancellablePollLoop`
+    （`interval` 固定节拍 / `serial` 串行自调度两种模式）+ 五条「该不该开表」守卫
+    （`shouldTickBindCountdown` / `shouldPollBindResult` / `shouldCollapseBindCode` /
+    `shouldPollWeixinActivation` / `shouldPollFeishuRegistration` / `shouldPollWeixinRegistration`）
+    + `resolveBindCountdown`。原实现四处手写的 `let cancelled = false` + timer 清理 + `if (cancelled) return;`
+    收成原语的一部分：`stop()` 后不再触发新 run，在途 run 通过 `isCancelled()` 放弃写回。
+  - `BotsDialog/useBotsDialogData.ts`（112 行）：config/status/workspaceRefs/botStates/selectedBotId/
+    creatingBot/configLoaded 七 state + `refresh` 编排 + `currentWorkspace`/`selectedBot` 派生。
+  - `BotsDialog/useBotsDialogActions.ts`（358 行）：`saveBot`（配置写入唯一入口）+ 字段补丁 / 重命名草稿
+    （IME Enter 与 Esc 语义逐字）/ 凭据与企业微信保存 / 解绑 / 删除 / 工作区访问范围 / 新建 Bot。
+  - `BotsDialog/useBotsDialogRegistrations.ts`（172 行）：`bindCode` / `feishuRegistration` /
+    `weixinRegistration` 三个临时状态与发起入口（二维码 data URL 生成失败只记日志、保留 qrUrl 兜底）。
+  - `BotsDialog/useBotsDialogBindCodePolling.ts`（104 行）+ `useBotsDialogStatusPolling.ts`（343 行）：
+    首版单文件 `useBotsDialogPolling.ts`（414 行）超 400 的**第二刀**——按「只碰 bindCode/nowMs」与
+    「只碰 status/botStates/扫码注册」两组互不写入的状态切开，各自独立启停。
+  - **依赖纪律**：两个轮询 hook 只接受原始值 / 稳定回调作入参，绝不以聚合对象作 effect 依赖
+    （否则每次 render 新对象都会重启轮询，即原注释警告的「毫秒级 RPC 风暴」）。
+  - 主文件保留：`useBotsDialogData/Actions/Registrations` + 两个轮询 hook 的接线、自动连接 effect
+    （决策表仍来自批次 6 的 `resolveBotAutoConnectAction`）、入口渠道 effect、`renderChannelName`、
+    弹窗三段 UI 编排。
+  - 前置测试：`test/botsDialogPolling.test.ts` **18 例**，其中 **4 例是批次 6 报告点名的
+    「轮询取消后不回写」时序测试**（假计时器驱动）：`stop()` 清理定时器不再触发 run /
+    在途 run 在 stop 后放弃写回 / 对照组未取消时正常写回（防测试恒真）/ serial 模式并发上限恒为 1
+    与 stop 后不排下一次；另有五条守卫决策表与倒计时读数边界。
+  - 偏离登记：`useBotsDialogStatusPolling` 不再自己 `refresh()`——打开弹窗的配置加载留在宿主
+    effect（与 `configLoaded` 复位同一处），避免出现第二条配置写入路径。
+  - ratchet 上限 1177 → 465。
 
 ### `app-shell/AnimatedSidePanePanel.tsx`（1,422 行；max-lines 豁免）
 
@@ -597,6 +679,21 @@
     state/effect、pane 类型分发 JSX、`resolveAnimatedSidePanePanelLayout` 的布局分支。
   - 前置测试：`test/sidePaneViewportMetrics.test.ts` 7 例（无 window / 视口宽 0 / 三向裁切 / 四舍五入）。
     两个 hook 依赖 window + ResizeObserver，无 jsdom 不测，按固定验收第 4 条登记。
+- 状态：**批次 7 已实施（2026-10-30，tab 条 state/effect 簇外迁）**：1306→**1083**（−223）。
+  - `app-shell/useSidePaneTabStrip.ts`（365 行）：tab 条的全部 state/ref/effect 收口——
+    溢出判定（RAF 合并 + ResizeObserver 反馈环规避，原注释逐字保留）、两侧渐变 mask、
+    active tab 滚入视区（按真实 DOM 宽度）、收起/展开内容锁宽（200ms 后解除）、tab 拖拽态。
+    两个 effect 体内抽出的纯函数导出以便单测：`resolveTabsScrollMaskEdges`（mask 与 scrollLeft
+    绑定 + 1px 容差）与 `resolveLockedContentWidthPx`（收起锁当前宽 / 首次展开按分组宽 × 默认比例，
+    宽度读不到时不锁成 0）。
+  - **pane 分发未动**（20 类 pane 的 props 边界仍未定义），按任务书口径登记为批次 8 候选；
+    本 hook 与 pane 渲染零耦合（只依赖 `visibleTabs` / `visibleActiveTabId` / `isVisible`）。
+  - 主文件保留：`SuspendedBrowserSidePaneContent`、add-tab 菜单与 open-tab launcher 的 JSX、
+    pane 类型分发、`resolveAnimatedSidePanePanelLayout` 布局分支。
+  - 前置测试：`test/sidePaneTabStrip.test.ts` 13 例（mask 六态含端点与亚像素容差 / 锁宽七态含
+    0 宽度、NaN 与取整）。hook 本体依赖 window + ResizeObserver + rAF，无 jsdom 不测，
+    按固定验收第 4 条登记。
+  - ratchet 上限 1306 → 1083。
   - ratchet 上限 1422 → 1306。
 
 ### `components/ai-elements/markdown-table.tsx`（1,420 行；oxlint ignorePatterns 覆盖的 vercel 衍生件）

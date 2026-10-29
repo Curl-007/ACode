@@ -54,7 +54,7 @@ const REGISTERED_LINE_CAPS = {
   "SettingsPage.tsx": 1347,
   // 2026-10-28 batch-4 保守纯函数外迁（格式化/窗口/open-request 决策 → v4/conversationStatusPanelFormat.ts；组件与实时语义未动）：2246 → 2102。
   // 2026-10-29 batch-6 第一阶段（分区外壳/契约测试 + environment/plan/agent-teams/已结束页脚 → v4/conversation-status-panel/ 四叶子；tick 分区与 Impl 未动）：2102 → 1486。
-  "v4/ConversationStatusPanel.tsx": 1486,
+  // 2026-10-30 batch-7 第二阶段见文件末尾（四个秒级分区 + 胶囊 + 秒针决策外迁）：1486 → 612。
   // 2026-10-28 batch-5 外迁（侧栏宽度纯函数 → workspaceSidebarWidth.ts + resize controller → useWorkspaceSidebarResize.ts）：1980 → 1725。
   "app-shell/WorkspaceShellLayout.tsx": 1725,
   // 2026-10-28 batch-5 外迁（source 解析/错误分类/面包屑/延迟占位 → previewPane/ 四叶子）：1806 → 1447。
@@ -66,13 +66,17 @@ const REGISTERED_LINE_CAPS = {
   // 2026-10-28 batch-5 外迁（提交/别名纯决策 + 编辑器动作族 → lexical-chat-input/ 两叶子）：1517 → 1105。
   "LexicalChatInput.tsx": 1105,
   // 2026-10-29 batch-6 外迁（弹窗族 → git-action-menu/ 四叶子：dialogsModel + GitCommitDialog + GitCommitDialogBody + GitPushDialog）：1398 → 628。
-  "GitActionMenu.tsx": 628,
+  // 2026-10-30 batch-7 编排收口（trigger 状态机 + mutation 编排 → useGitActionMenuController + useGitActionMenuCommitDialog + gitActionMenuCommitFlow）：628 → 188，**已跌破 400，从本表移除**。
   // 2026-10-29 batch-6 外迁（纯决策 models + 侧栏/新建/详情三面板 → BotsDialog/ 四叶子）：1434 → 1177。
-  "BotsDialog.tsx": 1177,
+  // 2026-10-30 batch-7 编排收口（数据层/写入动作/扫码注册/两组轮询 → BotsDialog/useBotsDialog*.ts 五叶子 + botsDialogPolling.ts）：1177 → 469。
+  "BotsDialog.tsx": 469,
   // 2026-10-29 batch-6 外迁（视口度量 hooks + 可见内联宽度读数 → app-shell/useSidePaneViewportMetrics.ts）：1422 → 1306。
-  "app-shell/AnimatedSidePanePanel.tsx": 1306,
+  // 2026-10-30 batch-7 tab 条 state/effect 簇外迁（→ app-shell/useSidePaneTabStrip.ts）：1306 → 1083。
+  "app-shell/AnimatedSidePanePanel.tsx": 1083,
   // 2026-10-29 batch-6 外迁（文本导出模型 + 几何/吸底决策模型 → markdown-table/ 两叶子）：1420 → 1093。
   "components/ai-elements/markdown-table.tsx": 1093,
+  // 2026-10-30 batch-7 第二阶段（四个秒级分区 + 胶囊行 + 秒针决策 → v4/conversation-status-panel/ 八叶子）：1486 → 612。
+  "v4/ConversationStatusPanel.tsx": 612,
 };
 
 /** 与 scripts/architecture/ratchet.mjs countPhysicalLines 同定义。 */

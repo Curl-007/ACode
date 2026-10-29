@@ -148,7 +148,11 @@ test("U12-A5: 用户取消保存框 → cancelled:true 且不写文件（取消�
 
 test("U12-A5: 写盘失败 → 稳定码，原始异常只进日志不回传（不泄漏用户路径）", async () => {
   const { logger, warnings } = fakeLogger();
-  const secretPath = "C:\\Users\\SecretUser\\Desktop\\报告.json";
+  // 跨平台写失败模拟：tmpdir 下必不存在的子目录 → 两个平台都稳定 ENOENT。
+  // 旧写法用盘符反斜杠路径（Windows 上 ENOENT），但 Linux 上该形态是合法相对文件名，
+  // writeFile 会在 cwd 真实写成功（saved:true），测试意图整体失效——CI Linux 红的根因，
+  // 本地 Windows 门禁与 Windows CI（不跑 desktop 包）都掩盖了它。
+  const secretPath = join(tmpdir(), "acode-diag-SecretUser-missing", "报告.json");
 
   const result = await saveDiagnosticReport("{}", "report.json", {
     showSaveDialog: async () => ({ canceled: false, filePath: secretPath }),
@@ -157,7 +161,7 @@ test("U12-A5: 写盘失败 → 稳定码，原始异常只进日志不回传（�
   // 上面的 dialog 返回一个不存在目录的路径 → writeFile 失败（ENOENT）
   assert.equal(result.saved, false);
   assert.equal(result.error, DIAGNOSTIC_SAVE_WRITE_FAILED);
-  // 关键：返回体不含原始错误消息（其中带用户路径）
+  // 关键：返回体不含原始错误消息（其中带用户路径标记段）
   assert.ok(!JSON.stringify(result).includes("SecretUser"), "错误码回传泄漏了用户路径");
   assert.ok(!result.error.includes("ENOENT"));
   // 但原始异常确实进了 main 日志（可诊断）

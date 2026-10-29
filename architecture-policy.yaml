@@ -86,9 +86,14 @@ modules:
     # 只登记了相对路径形态的边，23 条 `#src/session/*` 边从未受管。下方 global.aliasRules 新增
     # `#src/* → packages/services/src/*` 后这些边显形，实测共 23 条：其中 8 条消费方边已迁到
     # contract.ts，剩余 15 条是写入/装配面，逐条登记在 internalEdgeAllowlist。
+    # 2026-10-30 白屏事故后新增 3 条根 barrel→浏览器安全叶子的值边（共 18 条）：barrel 是
+    # desktop/web renderer 的值导入面，session 值边经 contract.ts hub 转发会被 rolldown 把
+    # hub 的 Node-only 副作用 re-export（automationRepo/offPeakTaskRepo 顶层 createRequire、
+    # paths.ts 顶层 homedir()）保守保留进 renderer 产物——Windows 生产/dev 双白屏。详见
+    # packages/services/specs/session-module-boundary.md「浏览器安全不变量」。
     # 原「留空 + 白名单冻结 24 条」的迁移态已收口（ARCH-04 resolver 缺口④，本轮补齐缺口①同类）。
     publicEntrypoints: [packages/services/src/session/contract.ts]
-    # 剩余 15 条：全部是**写入路径或装配机器件**，刻意不经消费契约——
+    # 共 18 条：15 条**写入路径或装配机器件**（刻意不经消费契约）+ 3 条根 barrel 浏览器安全值边——
     #   • TaskIndexRepo（5 条）：tasks-index 表唯一写入所有者；task-index-writers 守护
     #     （specs/task-index-write-ownership.md）把任何文本引用都当待评审写入面，放进 contract.ts
     #     会让每个消费方都成为登记写入方、守护失效（实测加转发叶子 composition.ts 即被判红）。
@@ -96,6 +101,9 @@ modules:
     #   • claude-native / external-import（6 条）：会话导入机器件，由 adapter/repair 专属消费。
     #   • tasksDatabase startup/prepared（2 条）：存储启动编排，只由 storage-startup 消费。
     #   • mcpWorkspaceScope（1 条）：acode-session 专属 MCP scope 装配。
+    #   • 根 barrel 浏览器安全值边（3 条，2026-10-30）：index.ts 直连 acodeTaskService /
+    #     automationCronValidation / offPeakTask 三个无 node: 导入的叶子；值边经 contract.ts
+    #     hub 会把 Node-only 仓库件带进 renderer 产物（白屏事故，见上方注释与 spec）。
     internalEdgeAllowlist:
       - { from: "packages/services/src/acode-agent/acodeAgentService.ts", to: "packages/services/src/session/taskIndexRepo.ts" }
       - { from: "packages/services/src/acode-agent/acodeTaskIndexSyncer.ts", to: "packages/services/src/session/taskIndexRepo.ts" }
@@ -112,6 +120,9 @@ modules:
       - { from: "packages/services/src/storage-startup.ts", to: "packages/services/src/session/tasksDatabase/startup.ts" }
       - { from: "packages/services/src/storage-startup.ts", to: "packages/services/src/session/tasksDatabase/prepared.ts" }
       - { from: "packages/services/src/acode-session/acodeSessionService.ts", to: "packages/services/src/session/mcpWorkspaceScope.ts" }
+      - { from: "packages/services/src/index.ts", to: "packages/services/src/session/acodeTaskService.ts" }
+      - { from: "packages/services/src/index.ts", to: "packages/services/src/session/automationCronValidation.ts" }
+      - { from: "packages/services/src/index.ts", to: "packages/services/src/session/offPeakTask.ts" }
     # 单层 app：55 处 node: 导入（含 node:sqlite 直连），声明 domain 层会触发 domain-io。
     layers: { app: "." }
     layerOrder: [app]

@@ -77,36 +77,41 @@ export type {
 } from "./broadcast/broadcast.js";
 
 // ACode task wrapper service — task 列表/置顶/归档等 app 侧包装状态入口。
-// 全部经 session 契约面出面（specs/session-module-boundary.md「Public boundary」）：
-// 不再直引实现文件，deep-import 门禁因此可对 session 强校验。
-export {
-  IACodeTaskService,
-  type ACodeArchivedTaskDeletionResult,
-  type ACodeModelTrajectory,
-  type ACodeModelTrajectoryCallSource,
-  type ACodeModelTrajectoryCallSourceKind,
-  type ACodeModelTrajectoryContentPart,
-  type ACodeModelTrajectoryMessage,
-  type ACodeModelTrajectoryRecord,
-  type ACodeModelTrajectoryUsage,
-  type ACodeTaskListKind,
-  type ACodeTaskListQuery,
-  type ACodeTaskListResult,
-  type ACodeTaskListSortBy,
-  type ACodeTaskListWorkspaceScope,
-  type ACodeTaskReadyOutcome,
-  type ACodeGroupedTaskRef,
-  type ACodeGroupedTaskView,
-  type ACodeGroupedTaskViewNode,
-  type ACodeGroupedTaskViewOrderInput,
-  type ACodeGroupedTaskViewQuery,
-  type ACodeGroupedTaskViewStructure,
-  type ACodeGroupedTaskViewStructureMember,
-  type ACodeGroupedTaskViewStructureTopOrder,
-  type ACodeGroupedTaskViewTopLevelNodeRef,
-  type ACodeTaskGroup,
-  type ACodeTaskGroupColor,
-  type ACodeTaskListItem,
+// 消费方符号经 session 契约面出面（specs/session-module-boundary.md「Public boundary」）。
+// 修复依据（同 spec「浏览器安全不变量」，2026-10-30 白屏事故）：本 barrel 是 desktop/web
+// renderer 的值导入面，值边经 contract.ts hub 转发时，rolldown 会把 hub 上 Node-only 仓库件
+// （automationRepo/offPeakTaskRepo 顶层 createRequire("node:sqlite")、paths.ts 顶层 homedir()）
+// 的副作用 re-export 保守保留进 renderer 产物，Windows 生产构建启动即白屏，vite dev 全图求值
+// 同样炸（node:crypto externalized）。故值导出直指浏览器安全叶子；类型导出仍经 contract.ts
+// （export type 被擦除，不产生 bundle 边）。
+export { IACodeTaskService } from "./session/acodeTaskService.js";
+export type {
+  ACodeArchivedTaskDeletionResult,
+  ACodeModelTrajectory,
+  ACodeModelTrajectoryCallSource,
+  ACodeModelTrajectoryCallSourceKind,
+  ACodeModelTrajectoryContentPart,
+  ACodeModelTrajectoryMessage,
+  ACodeModelTrajectoryRecord,
+  ACodeModelTrajectoryUsage,
+  ACodeTaskListKind,
+  ACodeTaskListQuery,
+  ACodeTaskListResult,
+  ACodeTaskListSortBy,
+  ACodeTaskListWorkspaceScope,
+  ACodeTaskReadyOutcome,
+  ACodeGroupedTaskRef,
+  ACodeGroupedTaskView,
+  ACodeGroupedTaskViewNode,
+  ACodeGroupedTaskViewOrderInput,
+  ACodeGroupedTaskViewQuery,
+  ACodeGroupedTaskViewStructure,
+  ACodeGroupedTaskViewStructureMember,
+  ACodeGroupedTaskViewStructureTopOrder,
+  ACodeGroupedTaskViewTopLevelNodeRef,
+  ACodeTaskGroup,
+  ACodeTaskGroupColor,
+  ACodeTaskListItem,
 } from "./session/contract.js";
 
 export { IWindowControllerService } from "./window-controller/windowController.js";
@@ -228,9 +233,10 @@ export {
   type ClientSceneResponseBody,
   type ClientScenesResponse,
 } from "./client-scenes/clientScenes.js";
-export { isValidCronExpr } from "./session/contract.js";
+// 浏览器安全不变量（见上方 IACodeTaskService 注释）：值导出直连叶子，不经 contract hub。
+export { isValidCronExpr } from "./session/automationCronValidation.js";
 // 闲时任务管理服务（与 automation 服务面独立）；接口/描述符 browser-safe。
-export { IOffPeakTaskService, type OffPeakUpdateTaskParams } from "./session/contract.js";
+export { IOffPeakTaskService, type OffPeakUpdateTaskParams } from "./session/offPeakTask.js";
 
 // Skills service — ISkillsService is both a type (interface) and value (descriptor)
 export { ISkillsService } from "./skills/skills.js";

@@ -31,8 +31,22 @@ services 包的公开 API。
   cron/手动触发语义）、off-peak（repo/service/client/mock/上游模型解析与鉴权装配）、
   跨会话 mailbox 类型、会话模式与标题派生。deep-import 对 session **强校验**（不再是迁移态的
   惰性放行）。
-- **`internalEdgeAllowlist` 保留 15 条**（原 24 条迁移态白名单已收口），全部是写入路径或装配
-  机器件，刻意不经消费契约：
+- **浏览器安全不变量（2026-10-30 白屏事故后补，实测回归）**：services 根 barrel（`src/index.ts`）
+  同时是 desktop/web renderer 的**值导入面**（ui/client 从中值导入服务 ID 类与纯函数），因此
+  barrel 对 session 的**值边**必须直指浏览器安全叶子模块（`acodeTaskService.js` /
+  `automationCronValidation.js` / `offPeakTask.js`），**不得经 contract.ts hub 转发**。原因：
+  contract.ts 值再导出 Node-only 仓库件（automationRepo/offPeakTaskRepo 顶层
+  `createRequire("node:sqlite")`、paths.ts 顶层 `homedir()`），rolldown 生产构建对 hub 的
+  副作用 re-export 边**保守保留**（即使 barrel 只取安全绑定，hub 的 Node-only 边也进
+  renderer 产物）；vite dev 更是全图求值。事故表现：Windows 生产/dev 双白屏
+  （`(0,zA.homedir) is not a function` / `node:crypto has been externalized`），main 干净
+  构建对照 + 安装版 asar renderer 2273 文件零特征码证实为 eb0378d3 barrel→contract 路由
+  引入的回归。**类型边不受限**（`export type` 被 esbuild/oxc 擦除，不产生 bundle 边），可继续
+  经 contract.ts。守护测试：`packages/desktop/tests/renderer-browser-safety.test.mjs`
+  （renderer 值导入闭包遍历，node: builtin 即红；logger 链 logPrivacy.ts 为登记豁免——
+  命名空间导入 + 调用点 try/catch 的「模块加载零副作用」既有审计模式，见该文件头注释）。
+- **`internalEdgeAllowlist` 保留 18 条**（原 24 条迁移态白名单已收口；2026-10-30 因浏览器安全
+  不变量新增 3 条 barrel→叶子值边），15 条是写入路径或装配机器件，刻意不经消费契约：
   - `TaskIndexRepo` 构造边 **5 条**（node.ts 装配根、acodeAgentService、acodeTaskIndexSyncer、
     acodeTaskServiceAdapter、repairSubagentTaskIndex）。task-index-writers 守护把源码中对该
     repo 符号的**任何文本引用**都当待评审写入面（barrel 转发乃至注释都算），放进 contract.ts
@@ -44,6 +58,11 @@ services 包的公开 API。
   - tasksDatabase startup/prepared **2 条**（只由 storage-startup 消费）。
   - mcpWorkspaceScope **1 条**（acode-session 专属 MCP scope 装配）。
   - acodeTaskIndexSyncer 的 `acodeTaskListTypes` 边已迁入契约（不再是白名单项）。
+  - **根 barrel 浏览器安全值边 3 条**（2026-10-30）：`src/index.ts` → `session/acodeTaskService.js`
+    （`IACodeTaskService`）、→ `session/automationCronValidation.js`（`isValidCronExpr`）、
+    → `session/offPeakTask.js`（`IOffPeakTaskService`）。三个叶子均无 node: 导入（与 main
+    干净构建同源），值边不经 contract hub 是上条浏览器安全不变量的直接要求；类型边仍经
+    contract.ts（擦除后无 bundle 边）。
 - **修复了一处 resolver 盲区（本轮实测发现）**：checker 只解析 tsconfig paths 与 package.json
   `exports`，**不**解析 package.json `imports` 字段，故 services 的 102 处 `#src/...` 导入对
   deep-import 门禁完全不可见。原 24 条白名单只登记了相对路径形态的边，**23 条 `#src/session/*`
@@ -106,3 +125,8 @@ services 包的公开 API。
    owner conversation 与 contract。
 4. `pnpm --filter @acode/services test` 全绿（session 无独立 test 入口）。
 5. `pnpm exec tsc -b packages/services` 通过（contract.example.ts 参与编译）。
+6. renderer 浏览器安全守护：`packages/desktop/tests/renderer-browser-safety.test.mjs` 遍历
+   desktop/web renderer 入口的**值导入闭包**（type-only 边擦除后不计），命中任何 `node:`
+   builtin 导入即红（logPrivacy.ts 命名空间导入豁免为唯一登记项）；2026-10-30 白屏事故的
+   缺失门禁由该测试补位（单测跑 Node 环境、e2e 冒烟跑生产构建，均测不到 dev 全图求值与
+   rolldown 对 hub 副作用 re-export 的保守保留）。

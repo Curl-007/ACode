@@ -1490,6 +1490,8 @@
     "packages/ui/src/components/ai-elements/markdown-table.tsx": "48309e2361093f40db2f061efaddf36bbf517f0a70300fbbf208d831bddd1745",
     "packages/ui/src/components/ai-elements/mermaid-block.tsx": "2a92d857e3d9f909edb56bdd52d8afb773acd593e91d38dfeca21ae5056c5f5a",
     "packages/ui/src/components/ai-elements/message.tsx": "4025fc8562d776d5252056ce1d847a75166df7601b99a40a8c04ccd0b59726c1",
+    "packages/ui/src/components/ai-elements/messageFileLinkTargets.ts": "729948c9447e64df9c70745a67d63322b728754e4ff1a9ace01854edc767ba36",
+    "packages/ui/src/components/ai-elements/messageMarkdownMath.ts": "8ebf4827bc301d54487c38fa2f0dda1ecc62558425a12866c2a98c4bcb376b7d",
     "packages/ui/src/components/ai-elements/node.tsx": "886c85babeb7df31d2b649de0f761caa71f0bd0b0f7afcf1707e72bb0bb6ee45",
     "packages/ui/src/components/ai-elements/panel.tsx": "9c843f3c77b9a2b8e3c4bff0e767a58dc5ca8b2a22ce4f90b22fa211a2a6f2ca",
     "packages/ui/src/components/ai-elements/persona.tsx": "7dc0ec8750586726d2c51424865e5042f2907f92a638fb4f0225fb9c59158cf4",
@@ -14832,7 +14834,7 @@
         },
         {
           "file": "packages/ui/src/components/ai-elements/markdown-table.tsx",
-          "sha256": "adfaad8d9e778e4909e3c11e83adc422e7795e8aa0f8f8c7de0833ad92bd4b6d"
+          "sha256": "48309e2361093f40db2f061efaddf36bbf517f0a70300fbbf208d831bddd1745"
         },
         {
           "file": "packages/ui/src/components/ai-elements/mermaid-block.tsx",
@@ -14840,7 +14842,15 @@
         },
         {
           "file": "packages/ui/src/components/ai-elements/message.tsx",
-          "sha256": "262abf74565d1acb13d82f6befe944751c00e51d812eac52872939dcdc258c2c"
+          "sha256": "4025fc8562d776d5252056ce1d847a75166df7601b99a40a8c04ccd0b59726c1"
+        },
+        {
+          "file": "packages/ui/src/components/ai-elements/messageFileLinkTargets.ts",
+          "sha256": "729948c9447e64df9c70745a67d63322b728754e4ff1a9ace01854edc767ba36"
+        },
+        {
+          "file": "packages/ui/src/components/ai-elements/messageMarkdownMath.ts",
+          "sha256": "8ebf4827bc301d54487c38fa2f0dda1ecc62558425a12866c2a98c4bcb376b7d"
         },
         {
           "file": "packages/ui/src/components/ai-elements/node.tsx",

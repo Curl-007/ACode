@@ -1,4 +1,5 @@
-import type { ACodePluginMarketplaceSummary } from "@acode/shared";
+
+import { type V4PluginMarketplaceSummary } from "@acode/shared/acode-protocol-v4";
 
 /**
  * 把 marketplace id 解析为对用户友好的展示名：
@@ -7,7 +8,7 @@ import type { ACodePluginMarketplaceSummary } from "@acode/shared";
  */
 export function resolveMarketplaceDisplayName(
   marketplaceId: string,
-  marketplaces: readonly ACodePluginMarketplaceSummary[],
+  marketplaces: readonly V4PluginMarketplaceSummary[],
 ): string {
   const matched = marketplaces.find((marketplace) => marketplace.id === marketplaceId);
   return matched?.name ?? marketplaceId;

@@ -1,4 +1,4 @@
-import type { ACodeProtocolMethod } from "@acode/shared";
+import type { LegacySkewFallbackMethod } from "@acode/shared";
 import type { V4Method } from "@acode/shared/acode-protocol-v4";
 import type { ACodeProtocolAgentServerContext, ACodeProtocolClientRequestOptions, ParamsSchema } from "./server-types.js";
 import { ProtocolRequestError } from "./server-types.js";
@@ -19,7 +19,7 @@ import { ProtocolRequestError } from "./server-types.js";
 export async function requestV4WithLegacyFallback<T>(
   context: Pick<ACodeProtocolAgentServerContext, "requestClient">,
   v4Method: V4Method,
-  legacyMethod: ACodeProtocolMethod,
+  legacyMethod: LegacySkewFallbackMethod,
   params: unknown,
   v4ResultSchema: ParamsSchema<T>,
   legacyResultSchema: ParamsSchema<T>,

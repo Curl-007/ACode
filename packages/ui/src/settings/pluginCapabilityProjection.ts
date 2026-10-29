@@ -2,13 +2,8 @@ import {
   resolveManagedPluginDisplay,
   type StorePluginItem,
 } from "@/settings/pluginStoreListing.js";
-import type {
-  SkillSummary,
-  ACodeCommand,
-  ACodeInstalledPluginSummary,
-  ACodePluginInfo,
-  ACodePluginScope,
-} from "@acode/shared";
+import type { SkillSummary, ACodeCommand } from "@acode/shared";
+import { type V4InstalledPluginSummary, type V4PluginInfo, type V4PluginScope } from "@acode/shared/acode-protocol-v4";
 import { compareDocumentPluginPriority, isPluginCommand, isUserCommand } from "@acode/shared";
 import { pluginSearchMatches } from "@/settings/pluginSearch.js";
 
@@ -17,16 +12,16 @@ function canonicalPluginName(value: string): string {
 }
 
 export function selectBuiltInPlugins(
-  plugins: readonly ACodePluginInfo[],
-  installedPlugins: readonly ACodeInstalledPluginSummary[],
-): ACodePluginInfo[] {
+  plugins: readonly V4PluginInfo[],
+  installedPlugins: readonly V4InstalledPluginSummary[],
+): V4PluginInfo[] {
   const installedIds = new Set(installedPlugins.map((plugin) => plugin.id));
   return plugins.filter((plugin) => plugin.source === "official" && !installedIds.has(plugin.id));
 }
 
 interface PluginSettingsGroups {
-  installed: ACodePluginInfo[];
-  builtIn: ACodePluginInfo[];
+  installed: V4PluginInfo[];
+  builtIn: V4PluginInfo[];
 }
 
 /**
@@ -34,7 +29,7 @@ interface PluginSettingsGroups {
  * 进入 Installed / Built-in，否则会出现“已安装分组 + 未安装状态”的矛盾行。
  */
 export function partitionPluginsForSettings(
-  plugins: readonly ACodePluginInfo[],
+  plugins: readonly V4PluginInfo[],
   builtInPluginIds: ReadonlySet<string>,
 ): PluginSettingsGroups {
   const materializedPlugins = plugins.filter((plugin) => plugin.packageStatus !== "missing");
@@ -47,11 +42,11 @@ export function partitionPluginsForSettings(
 }
 
 export function filterPluginsByQuery(
-  plugins: readonly ACodePluginInfo[],
+  plugins: readonly V4PluginInfo[],
   query: string,
   itemsById?: ReadonlyMap<string, StorePluginItem>,
   locale = "en-US",
-): ACodePluginInfo[] {
+): V4PluginInfo[] {
   const normalizedQuery = query.trim().toLocaleLowerCase();
   if (!normalizedQuery) return [...plugins];
   return plugins.filter((plugin) => {
@@ -71,10 +66,10 @@ export function filterPluginsByQuery(
 }
 
 export function selectPluginsForScope(
-  plugins: readonly ACodePluginInfo[],
-  _installedPlugins: readonly ACodeInstalledPluginSummary[],
-  _scope: ACodePluginScope,
-): ACodePluginInfo[] {
+  plugins: readonly V4PluginInfo[],
+  _installedPlugins: readonly V4InstalledPluginSummary[],
+  _scope: V4PluginScope,
+): V4PluginInfo[] {
   // User / Workspace 已经由 plugins/list(configScope) 返回各自的配置投影。
   // 这里不能再按 enabledSource/rootSource 做“归属”过滤，否则 Workspace 会丢掉继承 User
   // 的 Host inventory，User 也会被当前 Workspace override 污染后的来源字段误删。
@@ -83,8 +78,8 @@ export function selectPluginsForScope(
 
 export function selectSkillsForScope(
   skills: readonly SkillSummary[],
-  scopedPlugins: readonly Pick<ACodePluginInfo, "id" | "name" | "enabled">[],
-  scope: ACodePluginScope,
+  scopedPlugins: readonly Pick<V4PluginInfo, "id" | "name" | "enabled">[],
+  scope: V4PluginScope,
 ): SkillSummary[] {
   const enabledPlugins = scopedPlugins.filter((plugin) => plugin.enabled);
   const scopedPluginIds = new Set(enabledPlugins.map((plugin) => plugin.id));
@@ -113,8 +108,8 @@ export function selectSkillsForScope(
 
 export function selectCommandsForScope(
   commands: readonly ACodeCommand[],
-  scopedPlugins: readonly Pick<ACodePluginInfo, "id" | "name" | "enabled">[],
-  scope: ACodePluginScope,
+  scopedPlugins: readonly Pick<V4PluginInfo, "id" | "name" | "enabled">[],
+  scope: V4PluginScope,
 ): ACodeCommand[] {
   const enabledPlugins = scopedPlugins.filter((plugin) => plugin.enabled);
   const scopedPluginIds = new Set(enabledPlugins.map((plugin) => plugin.id));

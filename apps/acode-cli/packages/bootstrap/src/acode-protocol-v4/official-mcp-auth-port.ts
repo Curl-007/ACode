@@ -2,16 +2,10 @@
    Agent 进程不是身份权威：经 interaction/requestOfficialMcpAuthHeaders 反向请求 host，
    由 host 解析当前 Coding Plan 凭证后回传本次请求的身份头。凭证不落 runtime config、
    不持久化、不进日志。 */
-import {
-  acodeOfficialMcpAuthHeadersResponseSchema,
-  acodeProtocolMethods,
-  type ACodeWorkspaceRef,
-} from "@acode/shared";
+import { type ACodeWorkspaceRef , LEGACY_SKEW_FALLBACK_METHODS} from "@acode/shared";
+import { v4OfficialMcpAuthHeadersResponseSchema, V4_METHODS } from "@acode/shared/acode-protocol-v4";
 // v4 面符号只挂在子路径（根桶不 re-export v4，M2-3 既有纪律）。
-import {
-  V4_METHODS,
-  v4OfficialMcpAuthHeadersResponseSchema,
-} from "@acode/shared/acode-protocol-v4";
+
 import type { OfficialMcpAuthHeadersPort } from "@acode/contracts";
 import { ProtocolRequestError, type ACodeProtocolAgentServerContext } from "./server-types.js";
 
@@ -85,9 +79,9 @@ export function createOfficialMcpAuthHeadersPort(input: {
           }
           // 偏斜期 legacy 保留路径（M3 删除）。
           return await context.requestClient(
-            acodeProtocolMethods.interactionRequestOfficialMcpAuthHeaders,
+            LEGACY_SKEW_FALLBACK_METHODS.interactionRequestOfficialMcpAuthHeaders,
             params,
-            acodeOfficialMcpAuthHeadersResponseSchema,
+            v4OfficialMcpAuthHeadersResponseSchema,
             requestOptions,
           );
         }

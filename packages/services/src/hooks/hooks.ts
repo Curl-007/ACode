@@ -1,4 +1,5 @@
-import type { Hook, ACodeWorkspaceHookTrustGrantResult } from "@acode/shared";
+import type { Hook } from "@acode/shared";
+import { type V4WorkspaceHookTrustGrantResult } from "@acode/shared/acode-protocol-v4";
 import type { WorkspaceHookBundleSnapshotData } from "@acode/shared/workspace-hook-discovery";
 import { ServiceChannels } from "@acode/shared";
 import { createServiceDescriptor } from "../descriptors.js";
@@ -33,7 +34,7 @@ export interface IHooksService {
     workspacePath: string;
     bundleDigest: string;
     hookDeclarationDigest: string;
-  }): Promise<ACodeWorkspaceHookTrustGrantResult>;
+  }): Promise<V4WorkspaceHookTrustGrantResult>;
 }
 
 export const IHooksService = createServiceDescriptor<IHooksService>(ServiceChannels.Hooks, {

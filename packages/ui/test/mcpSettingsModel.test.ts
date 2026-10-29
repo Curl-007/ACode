@@ -1,11 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type {
-  ACodeAgentMcpServer,
-  ACodeMcpServer,
-  ACodeMcpServerStatusSnapshot,
-  ACodePluginInfo,
-} from "@acode/shared";
+import type { ACodeAgentMcpServer, ACodeMcpServer } from "@acode/shared";
+import { type V4McpServerStatusSnapshot, type V4PluginInfo } from "@acode/shared/acode-protocol-v4";
 import {
   MCP_OAUTH_AUTHORIZATION_FOLLOWUP_REFRESH_ATTEMPTS,
   MCP_OAUTH_AUTHORIZATION_STATUS_REFRESH_DURATION_MS,
@@ -48,18 +44,18 @@ function makeServer(overrides: Partial<ACodeMcpServer> = {}): ACodeMcpServer {
 }
 
 function makeSnapshot(
-  overrides: Partial<ACodeMcpServerStatusSnapshot> = {},
-): ACodeMcpServerStatusSnapshot {
+  overrides: Partial<V4McpServerStatusSnapshot> = {},
+): V4McpServerStatusSnapshot {
   return {
     status: "connected",
     transport: "stdio",
     toolCount: 0,
     updatedAt: "2026-10-28T00:00:00.000Z",
     ...overrides,
-  } as ACodeMcpServerStatusSnapshot;
+  } as V4McpServerStatusSnapshot;
 }
 
-function makePlugin(overrides: Partial<ACodePluginInfo> = {}): ACodePluginInfo {
+function makePlugin(overrides: Partial<V4PluginInfo> = {}): V4PluginInfo {
   return {
     id: "com.acode.alpha",
     name: "alpha",
@@ -70,7 +66,7 @@ function makePlugin(overrides: Partial<ACodePluginInfo> = {}): ACodePluginInfo {
     commandRootCount: 0,
     mcpServerNames: [],
     ...overrides,
-  } as ACodePluginInfo;
+  } as V4PluginInfo;
 }
 
 // ── 常量钉死（review §3.⑤ 明示要外露）──
@@ -414,7 +410,7 @@ test("buildMcpOAuthAuthorizationStatusRefreshServers: 只挑 acodeagentmcp + ena
 
 test("buildMcpOAuthAuthorizationStatusRefreshServers: statusSnapshots 中的 pending 也算", () => {
   const srv = makeServer({ id: "p1", name: "p1" });
-  const snapshots: Record<string, ACodeMcpServerStatusSnapshot> = {
+  const snapshots: Record<string, V4McpServerStatusSnapshot> = {
     p1: makeSnapshot({
       authorization: {
         type: "oauth_authorization_code",
@@ -579,7 +575,7 @@ test("buildPendingMcpOAuthAuthorizationRefreshKey: 本地 pending + runtime pend
     },
   });
   const other = makeServer({ id: "l2", name: "l2" }); // 无 authorization → 不计
-  const snapshots: Record<string, ACodeMcpServerStatusSnapshot> = {
+  const snapshots: Record<string, V4McpServerStatusSnapshot> = {
     rt1: makeSnapshot({
       authorization: {
         type: "oauth_authorization_code",
@@ -606,7 +602,7 @@ test("buildPendingMcpOAuthAuthorizationRefreshKey: 同名去重（本地 + runti
       startedAt: "t",
     },
   });
-  const snapshots: Record<string, ACodeMcpServerStatusSnapshot> = {
+  const snapshots: Record<string, V4McpServerStatusSnapshot> = {
     s: makeSnapshot({
       authorization: {
         type: "oauth_authorization_code",

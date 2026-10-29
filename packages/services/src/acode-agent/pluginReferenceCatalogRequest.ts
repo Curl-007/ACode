@@ -1,8 +1,6 @@
-import { type ACodePluginsReferenceCatalogParams } from "@acode/shared";
-import {
-  V4_METHODS,
-  v4PluginsReferenceCatalogResultSchema,
-} from "@acode/shared/acode-protocol-v4";
+
+import { type V4PluginsReferenceCatalogParams, V4_METHODS, v4PluginsReferenceCatalogResultSchema } from "@acode/shared/acode-protocol-v4";
+
 import type { ACodeAgentRpcClient } from "#src/acode-agent/acodeAgentRpcClient.js";
 
 /**
@@ -13,7 +11,7 @@ import type { ACodeAgentRpcClient } from "#src/acode-agent/acodeAgentRpcClient.j
  */
 export async function requestPluginReferenceCatalog(
   client: Pick<ACodeAgentRpcClient, "request">,
-  params: ACodePluginsReferenceCatalogParams,
+  params: V4PluginsReferenceCatalogParams,
 ) {
   return client.request(
     V4_METHODS.pluginsReferenceCatalog,

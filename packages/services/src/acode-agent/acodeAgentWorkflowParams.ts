@@ -1,4 +1,5 @@
-import type { ACodeSavedWorkflowMeta, ACodeSavedWorkflowScope } from "@acode/shared";
+
+import { type V4SavedWorkflowMeta, type V4SavedWorkflowScope } from "@acode/shared/acode-protocol-v4";
 import type { ACodeAgentWorkspaceTarget } from "./acodeAgentPluginParams.js";
 
 // 已保存工作流的 GUI 中枢：五个 workspace 级、无会话的方法。
@@ -11,7 +12,7 @@ import type { ACodeAgentWorkspaceTarget } from "./acodeAgentPluginParams.js";
 // 项目组内的动作仍带自己的 workspace（既是运行目标又是载体），因此下面用一个 union：
 // 要么带 workspace（scope 可选，缺省 project），要么只给 `scope: "global"`（workspace 可省）。
 export type ACodeAgentSavedWorkflowTarget =
-  | (ACodeAgentWorkspaceTarget & { scope?: ACodeSavedWorkflowScope })
+  | (ACodeAgentWorkspaceTarget & { scope?: V4SavedWorkflowScope })
   | ({ scope: "global" } & Partial<ACodeAgentWorkspaceTarget>);
 
 export type ACodeAgentListSavedWorkflowsParams = ACodeAgentSavedWorkflowTarget;
@@ -22,7 +23,7 @@ export type ACodeAgentGetSavedWorkflowParams = ACodeAgentSavedWorkflowTarget & {
 
 export type ACodeAgentUpdateSavedWorkflowMetaParams = ACodeAgentSavedWorkflowTarget & {
   name: string;
-  meta: ACodeSavedWorkflowMeta;
+  meta: V4SavedWorkflowMeta;
 };
 
 export type ACodeAgentDeleteSavedWorkflowParams = ACodeAgentSavedWorkflowTarget & {

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { acodeWorkspaceRefSchema } from "../acode-protocol-legacy-types.js";
+import { acodeWorkspaceRefSchema } from "../acode-session-types.js";
 import { modelSelectionSchema } from "../model-selection.js";
 import { accountProviderUnavailableReasonSchema } from "../account-provider-state.js";
 

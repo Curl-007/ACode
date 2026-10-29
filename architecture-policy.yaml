@@ -435,7 +435,6 @@ exceptions:
     expires: "2026-12-31"
     paths:
       [
-        packages/shared/src/acode-protocol-legacy-types.ts,
         packages/shared/src/acode-protocol-v4/command.ts,
         packages/shared/src/acode-protocol-v4/rows.ts,
         packages/shared/src/acode-protocol-v4/snapshot.ts,
@@ -445,7 +444,6 @@ exceptions:
         packages/shared/src/acode-protocol-v4/workflow-runs-eviction.ts,
         packages/shared/src/acode-protocol-v4/workflow-runs-reducer.ts,
         packages/shared/src/acode-protocol-v4/workflow-runs.ts,
-        packages/shared/src/acode-protocol/index.ts,
         packages/shared/src/acode-task-types-core.ts,
         packages/shared/src/background-task-controls.ts,
         packages/shared/src/bots.ts,
@@ -467,11 +465,9 @@ exceptions:
     expires: "2026-12-31"
     paths:
       [
-        packages/shared/src/acode-protocol-legacy-types.ts,
         packages/shared/src/acode-protocol-v4/snapshot.ts,
         packages/shared/src/acode-protocol-v4/transport.ts,
         packages/shared/src/acode-protocol-v4/wire-assembler.ts,
-        packages/shared/src/acode-protocol/index.ts,
         packages/shared/src/acode-task-types-core.ts,
         packages/shared/src/acode-task-types.ts,
         packages/shared/src/bots.ts,

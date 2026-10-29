@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { acodeWorkspaceRefSchema } from "../acode-protocol-legacy-types.js";
+import { acodeWorkspaceRefSchema } from "../acode-session-types.js";
 import { modelSelectionSchema } from "../model-selection.js";
 
 // workspace 运行时面的 v4 域零件（M2-8，specs/m2-8-workspace-provider-process.md）：

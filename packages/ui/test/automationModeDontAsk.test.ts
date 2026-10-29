@@ -1,10 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {
-  acodeOffPeakCreateParamsSchema,
-  acodeOffPeakPermissionModeSchema,
-  acodeTaskModeSchema,
-} from "@acode/shared";
+import { acodeTaskModeSchema } from "@acode/shared";
+import { v4OffPeakCreateParamsSchema, v4OffPeakPermissionModeSchema } from "@acode/shared/acode-protocol-v4";
 import { buildAutomationModeOption } from "../src/settings/automationAgentConfigOptions.js";
 
 // WI2-D 微收尾①：Automations / Off-peak 表单权限档扩集 dontAsk（权限批 2 R1，
@@ -14,8 +11,8 @@ import { buildAutomationModeOption } from "../src/settings/automationAgentConfig
 //    - Automations：services automationRepo.assertValidAutomationMode 走 acodeTaskModeSchema
 //      （Repo 是绕过 RPC 时的最终持久化边界）；CLI 侧 contracts CronAutomationSchema.mode
 //      与 automation-port 透传已在前序接线扩集；
-//    - Off-peak：会话内创建协议 acodeOffPeakCreateParamsSchema.permissionMode 走
-//      acodeOffPeakPermissionModeSchema。
+//    - Off-peak：会话内创建协议 v4OffPeakCreateParamsSchema.permissionMode 走
+//      v4OffPeakPermissionModeSchema。
 
 test("automation mode picker offers dontAsk alongside the four legacy modes", () => {
   const option = buildAutomationModeOption("dontAsk");
@@ -40,8 +37,8 @@ test("every offered automation mode passes the persistence-boundary schema", () 
 });
 
 test("off-peak create chain accepts dontAsk permission mode", () => {
-  assert.equal(acodeOffPeakPermissionModeSchema.safeParse("dontAsk").success, true);
-  const params = acodeOffPeakCreateParamsSchema.safeParse({
+  assert.equal(v4OffPeakPermissionModeSchema.safeParse("dontAsk").success, true);
+  const params = v4OffPeakCreateParamsSchema.safeParse({
     title: "nightly refactor",
     prompt: "run the nightly refactor",
     permissionMode: "dontAsk",

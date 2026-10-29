@@ -1,15 +1,7 @@
 import { memo, type ReactNode } from "react";
 import { Ban, CircleCheck, Loader2, TriangleAlert } from "lucide-react";
-import {
-  TID_WORKFLOW_CARD,
-  TID_WORKFLOW_CARD_MENU,
-  TID_WORKFLOW_CARD_RUN,
-  TID_WORKFLOW_ACTION_DELETE,
-  TID_WORKFLOW_ACTION_MOVE,
-  testId,
-  type ACodeSavedWorkflowEntry,
-  type ACodeSavedWorkflowRun,
-} from "@acode/shared";
+import { TID_WORKFLOW_CARD, TID_WORKFLOW_CARD_MENU, TID_WORKFLOW_CARD_RUN, TID_WORKFLOW_ACTION_DELETE, TID_WORKFLOW_ACTION_MOVE, testId } from "@acode/shared";
+import { type V4SavedWorkflowEntry, type V4SavedWorkflowRun } from "@acode/shared/acode-protocol-v4";
 import { Button } from "@/components/ui/button.js";
 import {
   DropdownMenu,
@@ -35,7 +27,7 @@ function SavedWorkflowLastRunBadge({
   run,
   now,
 }: {
-  run: ACodeSavedWorkflowRun | undefined;
+  run: V4SavedWorkflowRun | undefined;
   now: number;
 }) {
   const { intl } = useACodeIntl();
@@ -86,17 +78,17 @@ function SavedWorkflowLastRunBadge({
 }
 
 interface SavedWorkflowCardProps {
-  entry: ACodeSavedWorkflowEntry;
-  lastRun: ACodeSavedWorkflowRun | undefined;
+  entry: V4SavedWorkflowEntry;
+  lastRun: V4SavedWorkflowRun | undefined;
   now: number;
   busy?: boolean;
-  onOpen: (entry: ACodeSavedWorkflowEntry) => void;
-  onRun: (entry: ACodeSavedWorkflowEntry) => void;
-  onRevise: (entry: ACodeSavedWorkflowEntry) => void;
-  onCopyPath: (entry: ACodeSavedWorkflowEntry) => void;
+  onOpen: (entry: V4SavedWorkflowEntry) => void;
+  onRun: (entry: V4SavedWorkflowEntry) => void;
+  onRevise: (entry: V4SavedWorkflowEntry) => void;
+  onCopyPath: (entry: V4SavedWorkflowEntry) => void;
   /** 作用域动作：项目档「提升为全局」（AI 概括）/ 全局档「移到项目…」；仅在传入时出现。 */
-  onMove?: (entry: ACodeSavedWorkflowEntry) => void;
-  onDelete: (entry: ACodeSavedWorkflowEntry) => void;
+  onMove?: (entry: V4SavedWorkflowEntry) => void;
+  onDelete: (entry: V4SavedWorkflowEntry) => void;
 }
 
 /**

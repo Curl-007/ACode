@@ -1,23 +1,7 @@
 import { ServiceChannels } from "@acode/shared";
-import type {
-  TraceId,
-  ACodeAgentMcpServer,
-  ACodeDeliveryKind,
-  ACodeMessageWithParts,
-  ModelSelection,
-  ACodePermissionRequestParams,
-  ACodeUserInputRequestParams,
-  ACodeUserInputResponse,
-  ACodeSessionInfo,
-  ACodeSessionImportHistory,
-  ACodeSessionEvent,
-  ACodeSessionMode,
-  ACodeSessionPersistence,
-  ACodeSessionStateSnapshot,
-  ACodeStateUpdatedNotification,
-  ACodeWorkspacePresentation,
-} from "@acode/shared";
-import type { V4SessionHeaderMetaResult } from "@acode/shared/acode-protocol-v4";
+import type { TraceId, ACodeAgentMcpServer, ACodeDeliveryKind, ACodeMessageWithParts, ModelSelection, ACodeSessionInfo, ACodeSessionImportHistory, ACodeSessionEvent, ACodeSessionMode, ACodeSessionStateSnapshot, ACodeStateUpdatedNotification } from "@acode/shared";
+import { type V4InteractionRequestPermissionParams, type V4InteractionRequestUserInputParams, type V4UserInputResponse, type V4SessionPersistence, type V4WorkspacePresentation, type V4SessionHeaderMetaResult } from "@acode/shared/acode-protocol-v4";
+
 import { createServiceDescriptor } from "#src/descriptors.js";
 
 export interface ACodeSessionWorkspaceTarget {
@@ -39,13 +23,13 @@ export interface ACodeSessionCreateParams extends ACodeSessionWorkspaceTarget {
   parentSessionId?: string;
   mode?: ACodeSessionMode;
   model?: ModelSelection;
-  persistence?: ACodeSessionPersistence;
+  persistence?: V4SessionPersistence;
   thoughtLevel?: string;
   mcpServers?: ACodeAgentMcpServer[];
   importedHistory?: ACodeSessionImportHistory;
 }
 
-export interface ACodeSessionResumeParams extends ACodeTaskTarget {
+export interface V4SessionResumeParams extends ACodeTaskTarget {
   model?: ModelSelection;
   thoughtLevel?: string;
   mcpServers?: ACodeAgentMcpServer[];
@@ -107,12 +91,12 @@ export interface ACodeSessionSubscribeParams extends ACodeTaskTarget {
 export type ACodeSessionServiceEvent =
   | { type: "session.event"; event: ACodeSessionEvent }
   | { type: "state.updated"; notification: ACodeStateUpdatedNotification }
-  | { type: "permission.request"; request: ACodePermissionRequestParams }
-  | { type: "userInput.request"; request: ACodeUserInputRequestParams }
+  | { type: "permission.request"; request: V4InteractionRequestPermissionParams }
+  | { type: "userInput.request"; request: V4InteractionRequestUserInputParams }
   | {
       type: "userInput.response";
       requestId: string;
-      response: ACodeUserInputResponse;
+      response: V4UserInputResponse;
     }
   | { type: "snapshot"; snapshot: ACodeSessionStateSnapshot };
 
@@ -140,9 +124,9 @@ export interface IACodeSessionService {
   ): Promise<ACodeSessionWorkspaceRuntimeIdentity>;
   readWorkspacePresentation(
     params: ACodeSessionReadWorkspacePresentationParams,
-  ): Promise<ACodeWorkspacePresentation>;
+  ): Promise<V4WorkspacePresentation>;
   createSession(params: ACodeSessionCreateParams): Promise<ACodeSessionStateSnapshot>;
-  resumeSession(params: ACodeSessionResumeParams): Promise<ACodeSessionStateSnapshot>;
+  resumeSession(params: V4SessionResumeParams): Promise<ACodeSessionStateSnapshot>;
   listSessions(params: ACodeSessionListParams): Promise<ACodeSessionInfo[]>;
   readSession(params: ACodeSessionReadParams): Promise<ACodeSessionStateSnapshot>;
   /**

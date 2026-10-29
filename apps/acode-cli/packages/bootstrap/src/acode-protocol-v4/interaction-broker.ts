@@ -13,22 +13,10 @@ import {
   type PermissionBrokerRequestOptions,
   type PermissionBrokerResult,
 } from "@acode/contracts";
-import {
-  WORKFLOW_REFINE_PERMISSION_OPTION_ID,
-  acodePermissionResponseSchema,
-  acodeProtocolMethods,
-  acodeUserInputResponseSchema,
-  type ACodePermissionOption,
-  type ACodePermissionResponse,
-  type ACodeUserInputQuestion,
-  type ACodeUserInputResponse,
-} from "@acode/shared";
+import { WORKFLOW_REFINE_PERMISSION_OPTION_ID, acodePermissionResponseSchema, type ACodePermissionOption, type ACodePermissionResponse , LEGACY_SKEW_FALLBACK_METHODS} from "@acode/shared";
+import { v4UserInputResponseSchema, type V4UserInputQuestion, type V4UserInputResponse, V4_METHODS, v4InteractionRequestAckSchema, type V4Method } from "@acode/shared/acode-protocol-v4";
 // v4 面符号只挂在子路径（根桶不 re-export v4，M2-3 既有纪律）。
-import {
-  V4_METHODS,
-  v4InteractionRequestAckSchema,
-  type V4Method,
-} from "@acode/shared/acode-protocol-v4";
+
 import { ProtocolRequestError } from "./server-types.js";
 import type {
   V4InteractionAnswer,
@@ -101,7 +89,7 @@ async function requestPermission(
         // 偏斜期 legacy 保留路径（M3 删除）：withInteractionRequestRecovery race 逐字。
         (fallbackSignal) =>
           context.requestClient(
-            acodeProtocolMethods.interactionRequestPermission,
+            LEGACY_SKEW_FALLBACK_METHODS.interactionRequestPermission,
             params,
             acodePermissionResponseSchema,
             withInteractionRequestRecovery(options, fallbackSignal),
@@ -256,9 +244,9 @@ async function requestUserInput(
         // 偏斜期 legacy 保留路径（M3 删除）：withInteractionRequestRecovery race 逐字。
         (fallbackSignal) =>
           context.requestClient(
-            acodeProtocolMethods.interactionRequestUserInput,
+            LEGACY_SKEW_FALLBACK_METHODS.interactionRequestUserInput,
             params,
-            acodeUserInputResponseSchema,
+            v4UserInputResponseSchema,
             withInteractionRequestRecovery(options, fallbackSignal),
           ),
         signal,
@@ -279,7 +267,7 @@ async function requestUserInput(
   return userInputResponseToBrokerResult(request, response);
 }
 
-function v4AnswerToUserInputResponse(answer: V4InteractionAnswer): ACodeUserInputResponse {
+function v4AnswerToUserInputResponse(answer: V4InteractionAnswer): V4UserInputResponse {
   // answer.action 存在（host adapter respondElicitation 收敛路径）
   // 时按旧 respondUserInput 语义精确直传——content 携带多题 answers/annotations，
   // normalizeAskUserQuestionResponseContent 继续负责 schema 收敛。
@@ -329,9 +317,9 @@ async function requestExitPlanModeApproval(
         // 偏斜期 legacy 保留路径（M3 删除）：withInteractionRequestRecovery race 逐字。
         (fallbackSignal) =>
           context.requestClient(
-            acodeProtocolMethods.interactionRequestUserInput,
+            LEGACY_SKEW_FALLBACK_METHODS.interactionRequestUserInput,
             params,
-            acodeUserInputResponseSchema,
+            v4UserInputResponseSchema,
             withInteractionRequestRecovery(options, fallbackSignal),
           ),
         signal,
@@ -346,7 +334,7 @@ async function requestExitPlanModeApproval(
   return planApprovalResponseToBrokerResult(response);
 }
 
-function v4AnswerToPlanApprovalResponse(answer: V4InteractionAnswer): ACodeUserInputResponse {
+function v4AnswerToPlanApprovalResponse(answer: V4InteractionAnswer): V4UserInputResponse {
   // 同 v4AnswerToUserInputResponse——host adapter 收敛路径直传
   // action/content，planApprovalResponseToBrokerResult 继续做 approve/feedback 归一。
   if (answer.action) {
@@ -367,7 +355,7 @@ function v4AnswerToPlanApprovalResponse(answer: V4InteractionAnswer): ACodeUserI
   return { action: "decline" };
 }
 
-function createExitPlanModeApprovalQuestion(): ACodeUserInputQuestion {
+function createExitPlanModeApprovalQuestion(): V4UserInputQuestion {
   return {
     header: "Plan",
     options: [
@@ -445,7 +433,7 @@ async function startV4AnnounceOrLegacyFallback<T>(
   }
 }
 
-function mapAskUserQuestion(question: AskUserQuestion): ACodeUserInputQuestion {
+function mapAskUserQuestion(question: AskUserQuestion): V4UserInputQuestion {
   return {
     header: question.header,
     multiSelect: question.multiSelect,
@@ -461,7 +449,7 @@ function mapAskUserQuestion(question: AskUserQuestion): ACodeUserInputQuestion {
 
 function userInputResponseToBrokerResult(
   request: PermissionBrokerRequest,
-  response: ACodeUserInputResponse,
+  response: V4UserInputResponse,
 ): PermissionBrokerResult {
   if (response.action !== "accept") {
     return {
@@ -489,7 +477,7 @@ function userInputResponseToBrokerResult(
 }
 
 function planApprovalResponseToBrokerResult(
-  response: ACodeUserInputResponse,
+  response: V4UserInputResponse,
 ): PermissionBrokerResult {
   if (response.action !== "accept") {
     return {

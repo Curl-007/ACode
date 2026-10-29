@@ -1,15 +1,7 @@
 import type { OffPeakPort, OffPeakTaskSummary } from "@acode/contracts";
-import {
-  acodeOffPeakCreateResultSchema,
-  acodeOffPeakListResultSchema,
-  acodeProtocolMethods,
-  type ACodeOffPeakTaskProtocolSnapshot,
-} from "@acode/shared";
-import {
-  V4_METHODS,
-  v4OffPeakCreateResultSchema,
-  v4OffPeakListResultSchema,
-} from "@acode/shared/acode-protocol-v4";
+import { LEGACY_SKEW_FALLBACK_METHODS } from "@acode/shared";
+import { v4OffPeakCreateResultSchema, v4OffPeakListResultSchema, type V4OffPeakTaskSnapshot, V4_METHODS } from "@acode/shared/acode-protocol-v4";
+
 import { requestV4WithLegacyFallback } from "./dual-form-request.js";
 import type {
   ACodeProtocolAgentServerContext,
@@ -59,10 +51,10 @@ export function createProtocolOffPeakPort(
           const listed = await requestV4WithLegacyFallback(
             context,
             V4_METHODS.offPeakList,
-            acodeProtocolMethods.offPeakList,
+            LEGACY_SKEW_FALLBACK_METHODS.offPeakList,
             {},
             v4OffPeakListResultSchema,
-            acodeOffPeakListResultSchema,
+            v4OffPeakListResultSchema,
           );
           bound = listed.tasks.some(
             (task) =>
@@ -94,10 +86,10 @@ export function createProtocolOffPeakPort(
       const result = await requestV4WithLegacyFallback(
         context,
         V4_METHODS.offPeakCreate,
-        acodeProtocolMethods.offPeakCreate,
+        LEGACY_SKEW_FALLBACK_METHODS.offPeakCreate,
         createParams,
         v4OffPeakCreateResultSchema,
-        acodeOffPeakCreateResultSchema,
+        v4OffPeakCreateResultSchema,
       );
       if (!result.ok) {
         // 失败分类原样透传给 handler 翻译，禁止在端口层降级为 message 字符串。
@@ -115,17 +107,17 @@ export function createProtocolOffPeakPort(
       const result = await requestV4WithLegacyFallback(
         context,
         V4_METHODS.offPeakList,
-        acodeProtocolMethods.offPeakList,
+        LEGACY_SKEW_FALLBACK_METHODS.offPeakList,
         {},
         v4OffPeakListResultSchema,
-        acodeOffPeakListResultSchema,
+        v4OffPeakListResultSchema,
       );
       return result.tasks.map(toOffPeakTaskSummary);
     },
   };
 }
 
-function toOffPeakTaskSummary(input: ACodeOffPeakTaskProtocolSnapshot): OffPeakTaskSummary {
+function toOffPeakTaskSummary(input: V4OffPeakTaskSnapshot): OffPeakTaskSummary {
   return {
     offPeakTaskId: input.offPeakTaskId,
     title: input.title,

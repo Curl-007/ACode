@@ -1,5 +1,6 @@
 import { SessionEventType, type SessionEvent } from "@acode/contracts";
-import type { ACodeComputerUseOperationEvent } from "@acode/shared";
+
+import { type V4CuaOperationEvent } from "@acode/shared/acode-protocol-v4";
 
 function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -42,7 +43,7 @@ function baseEvent(event: SessionEvent) {
 
 export function mapComputerUseOperationEvent(
   event: SessionEvent,
-): ACodeComputerUseOperationEvent | undefined {
+): V4CuaOperationEvent | undefined {
   const turnId = event.turnId ? String(event.turnId) : undefined;
   const payload = asRecord(event.payload);
   switch (event.type) {

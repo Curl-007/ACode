@@ -1,13 +1,6 @@
 import { create } from "zustand";
-import type {
-  ACodeAvailablePluginSummary,
-  ACodeInstalledPluginSummary,
-  ACodePluginDiagnostic,
-  ACodePluginInfo,
-  ACodePluginMarketplaceSummary,
-  ACodePluginScope,
-  ACodePluginsDescribeResult,
-} from "@acode/shared";
+
+import { type V4AvailablePluginSummary, type V4InstalledPluginSummary, type V4PluginDiagnostic, type V4PluginInfo, type V4PluginMarketplaceSummary, type V4PluginScope, type V4PluginsDescribeResult } from "@acode/shared/acode-protocol-v4";
 import type { IPluginManagementService } from "@acode/services";
 import { logger } from "@/logger.js";
 import { loadInto, runWorkspaceOperation } from "@/store/pluginManagementStoreLoading.js";
@@ -16,7 +9,7 @@ import { setPluginEnabledOptimistically } from "@/store/pluginManagementStoreEna
 // 市场详情按需拉取的组件清单缓存：按 pluginId 记 loading/data/error，避免重复请求与切换闪烁。
 export interface PluginDescribeEntry {
   status: "loading" | "loaded" | "error";
-  data?: ACodePluginsDescribeResult;
+  data?: V4PluginsDescribeResult;
   error?: string;
 }
 
@@ -26,9 +19,9 @@ export interface PluginDescribeEntry {
 export interface PluginManagementState {
   workspacePath: string | null;
   workspaceIdentity: string | null;
-  configScope: ACodePluginScope | null;
-  plugins: ACodePluginInfo[];
-  marketplaces: ACodePluginMarketplaceSummary[];
+  configScope: V4PluginScope | null;
+  plugins: V4PluginInfo[];
+  marketplaces: V4PluginMarketplaceSummary[];
   /** 最近一次 overview 是否成功；false 表示来源存在性未知，不能推导孤立状态。 */
   marketplaceAvailabilityKnown: boolean;
   /**
@@ -36,10 +29,10 @@ export interface PluginManagementState {
    * false 时 Host 已过滤官方市场与候选插件；“公开”分段展示引导用户去设置打开。
    */
   officialMarketplaceEnabled: boolean;
-  availablePlugins: ACodeAvailablePluginSummary[];
-  installedPlugins: ACodeInstalledPluginSummary[];
-  restorableBuiltins: ACodeAvailablePluginSummary[];
-  diagnostics: ACodePluginDiagnostic[];
+  availablePlugins: V4AvailablePluginSummary[];
+  installedPlugins: V4InstalledPluginSummary[];
+  restorableBuiltins: V4AvailablePluginSummary[];
+  diagnostics: V4PluginDiagnostic[];
   loading: boolean;
   error: string | null;
   /**
@@ -56,7 +49,7 @@ export interface PluginManagementState {
   initialize: (params: {
     workspacePath: string;
     workspaceIdentity?: string;
-    configScope?: ACodePluginScope;
+    configScope?: V4PluginScope;
     pluginService: IPluginManagementService;
   }) => Promise<void>;
   refresh: (pluginService: IPluginManagementService) => Promise<void>;
@@ -73,7 +66,7 @@ export interface PluginManagementState {
     pluginName: string,
     marketplace: string,
     pluginService: IPluginManagementService,
-    scope?: ACodePluginScope,
+    scope?: V4PluginScope,
   ) => Promise<void>;
   uninstallPlugin: (
     pluginId: string,
@@ -86,20 +79,20 @@ export interface PluginManagementState {
     pluginId: string,
     options: Record<string, string | number | boolean>,
     pluginService: IPluginManagementService,
-    scope?: ACodePluginScope,
+    scope?: V4PluginScope,
     clearOptionKeys?: string[],
   ) => Promise<boolean>;
   resetPluginConfig: (
     pluginId: string,
     pluginService: IPluginManagementService,
-    scope?: ACodePluginScope,
+    scope?: V4PluginScope,
   ) => Promise<boolean>;
   validateSource: (source: string, pluginService: IPluginManagementService) => Promise<void>;
   setEnabled: (
     pluginId: string,
     enabled: boolean,
     pluginService: IPluginManagementService,
-    scope?: ACodePluginScope,
+    scope?: V4PluginScope,
   ) => Promise<boolean>;
   // 按需拉取插件组件清单（名称+描述）；force 跳过缓存重试。
   describePlugin: (
@@ -115,7 +108,7 @@ function toMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function throwForErrorDiagnostic(diagnostics: ACodePluginDiagnostic[]): void {
+function throwForErrorDiagnostic(diagnostics: V4PluginDiagnostic[]): void {
   const blockingDiagnostic = diagnostics.find((diagnostic) => diagnostic.severity === "error");
   if (blockingDiagnostic) {
     throw new Error(blockingDiagnostic.message);

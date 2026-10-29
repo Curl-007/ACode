@@ -6,7 +6,8 @@
  * intl 由原闭包改为 useACodeIntl 自取（原文 intl 也只用于 formatMessage，行为等价）；
  * 卸载确认弹窗复用 ./PluginListUninstallDialog.js（原两处逐字重复块的收口）。
  */
-import type { ACodePluginInfo, ACodePluginScope } from "@acode/shared";
+
+import { type V4PluginInfo, type V4PluginScope } from "@acode/shared/acode-protocol-v4";
 import type { CreateTaskRequest } from "@/app-shell/types.js";
 import { useACodeIntl } from "@/i18n/IntlProvider.js";
 import {
@@ -35,14 +36,14 @@ import { PluginListUninstallDialog } from "@/settings/plugins/PluginListUninstal
 import type { PluginOptionDraftsController } from "@/settings/plugins/usePluginOptionDrafts.js";
 
 export interface PluginListDetailProps {
-  plugin: ACodePluginInfo;
+  plugin: V4PluginInfo;
   storeItem: StorePluginItem;
   pluginWarnings: PluginManagementState["diagnostics"];
   optionDrafts: PluginOptionDraftsController;
   uninstall: PluginUninstallController;
   storeItemById: ReadonlyMap<string, StorePluginItem>;
   actions: PluginStoreActions;
-  configScope: ACodePluginScope;
+  configScope: V4PluginScope;
   operationId: string | null;
   locale: string;
   showMarketplaceBreadcrumb: boolean;

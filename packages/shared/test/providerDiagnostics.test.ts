@@ -10,7 +10,7 @@
 // 3. `revision` 必填回显——迟到结果对新 revision 的写入为 0（R2 / U08-A3）；
 // 4. 12 检查点恒定——数量、id 集合、去重由 schema `superRefine` 强制（provider-doctor.md R3）。
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -404,16 +404,16 @@ test("中立叶子纪律：不 import legacy barrel / v4 目录，只依赖 zod�
   }
 });
 
-test("legacy barrel 冻结面：新契约不得回流进 acode-protocol/index.ts", () => {
-  // U08 的 DTO 必须走中立叶子；既有 ACodeProviderTestModelConnectivityResult 在 barrel 里
-  // 是存量，不是可效仿的先例（冻结规则只删不增）。
-  const barrel = readFileSync(join(HERE, "..", "src", "acode-protocol", "index.ts"), "utf-8");
+test("M4a：provider 诊断契约走中立叶，根入口公开本叶且 legacy barrel 已删除", () => {
+  // U08 的 DTO 必须走中立叶子（spec: packages/services/specs/provider-diagnostics.md）。
+  // M4a 已整删 legacy barrel（acode-protocol/index.ts），故「不得回流进 barrel」的断言
+  // 改为「barrel 路径不得复活」——比读文件断言更强，任何重建都会立即红。
   assert.equal(
-    /providerDiagnostics|ProviderDiagnostics/.test(barrel),
+    existsSync(join(HERE, "..", "src", "acode-protocol", "index.ts")),
     false,
-    "provider 诊断契约不得进 legacy barrel",
+    "M4a：legacy barrel 必须已删除（复活即红）",
   );
-  // 根 barrel 必须公开本叶子，否则跨包消费者拿不到契约。
+  // 根入口必须公开本叶子，否则跨包消费者拿不到契约。
   const root = readFileSync(join(HERE, "..", "src", "index.ts"), "utf-8");
   assert.match(root, /export \* from "\.\/providerDiagnostics\.js";/);
 });

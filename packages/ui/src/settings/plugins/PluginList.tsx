@@ -11,7 +11,8 @@
  */
 import { Plus, UploadCloud } from "lucide-react";
 import { TID_PLUGIN_STORE_BROWSE } from "@acode/shared";
-import type { ACodePluginScope } from "@acode/shared";
+
+import { type V4PluginScope } from "@acode/shared/acode-protocol-v4";
 import type { CreateTaskRequest } from "@/app-shell/types.js";
 import { Button } from "@/components/ui/button.js";
 import { ControlHintTooltip } from "@/ControlHintTooltip.js";
@@ -45,7 +46,7 @@ export function PluginList({
   onVisibleCountChange,
 }: {
   target: WorkspaceTabState | null;
-  configScope: ACodePluginScope;
+  configScope: V4PluginScope;
   searchQuery: string;
   isDesktop: boolean;
   isMacDesktop: boolean;

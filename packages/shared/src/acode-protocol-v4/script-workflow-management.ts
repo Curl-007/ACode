@@ -14,7 +14,7 @@
 // owner 语义都不同，两套 journal 刻意不混在同一列表里（§2.2）。
 
 import { z } from "zod";
-import { acodeWorkspaceRefSchema } from "../acode-protocol-legacy-types.js";
+import { acodeWorkspaceRefSchema } from "../acode-session-types.js";
 
 /**
  * 逻辑状态词表 = 物理六词 + interrupted（孤儿收敛投影）。

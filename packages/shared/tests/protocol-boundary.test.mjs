@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { readdir, readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 
 const shared = await import("../src/acode-protocol-shared.ts");
-const legacy = await import("../src/acode-protocol/index.ts");
-const legacyTypes = await import("../src/acode-protocol-legacy-types.ts");
+const sessionTypes = await import("../src/acode-session-types.ts");
+const sessionProjection = await import("../src/acode-session-projection.ts");
+const sessionEvents = await import("../src/acode-session-events.ts");
 const v4 = await import("../src/acode-protocol-v4/command.ts");
 const v4Transport = await import("../src/acode-protocol-v4/transport.ts");
 const v4Inbound = await import("../src/acode-protocol-v4/inbound-interaction.ts");
@@ -16,9 +20,8 @@ const mcpServer = {
   env: [],
 };
 
-test("legacy and v4 consume the neutral MCP/browser schema without changing validation", () => {
+test("neutral MCP/browser schema and v4 consume the same validation", () => {
   assert.equal(shared.acodeProtocolMcpServerSchema.safeParse(mcpServer).success, true);
-  assert.equal(legacy.acodeProtocolMcpServerSchema.safeParse(mcpServer).success, true);
   assert.equal(
     v4.commandPayloadSchemas.createSession.safeParse({
       workspaceId: "workspace-1",
@@ -29,7 +32,6 @@ test("legacy and v4 consume the neutral MCP/browser schema without changing vali
 
   const ambient = { tabCount: 1, currentUrl: "https://example.test/" };
   assert.equal(shared.acodeBrowserAmbientContextSchema.safeParse(ambient).success, true);
-  assert.equal(legacy.acodeBrowserAmbientContextSchema.safeParse(ambient).success, true);
   assert.equal(
     v4.commandPayloadSchemas.sendText.safeParse({ text: "hello", browserAmbientContext: ambient })
       .success,
@@ -58,13 +60,13 @@ test("session subscription dual-delivery contract keeps legacy replay separate f
   // Legacy session/subscribe returns an event-seq cursor and optionally embeds a snapshot in
   // the response. Its delivery kind names the old stream selector, even though the strings
   // happen to match the v4 client profiles.
-  const legacyOnline = legacy.acodeSessionSubscribeParamsSchema.parse({
+  const legacyOnline = v4SessionReadwrite.v4SessionSubscribeParamsSchema.parse({
     sessionId: "session-1",
     deliveryKind: "desktop-continuous",
     afterSeq: 7,
     includeSnapshot: false,
   });
-  const legacyReplayable = legacy.acodeSessionSubscribeParamsSchema.parse({
+  const legacyReplayable = v4SessionReadwrite.v4SessionSubscribeParamsSchema.parse({
     sessionId: "session-1",
     deliveryKind: "web-remote-replayable",
     includeSnapshot: true,
@@ -109,7 +111,7 @@ test("session subscription dual-delivery contract keeps legacy replay separate f
     "v4 subscribe ACK must stay separate from legacy event replay payload",
   );
   assert.equal(
-    legacy.acodeSessionSubscribeResultSchema.safeParse(ack).success,
+    sessionEvents.acodeSessionSubscribeResultSchema.safeParse(ack).success,
     false,
     "legacy session/subscribe consumers must not be handed a v4 ACK",
   );
@@ -130,12 +132,12 @@ test("v4 switchCollaborationMode accepts auto alongside the user-switchable mode
   // 值域与 legacy acodeSessionModeSchema 逐字一致：session/setMode → switchCollaborationMode
   // 迁移（M2-1）不丢任何 legacy 可表达值。
   assert.deepEqual(
-    [...legacyTypes.acodeSessionModeSchema.options].sort(),
+    [...sessionTypes.acodeSessionModeSchema.options].sort(),
     ["auto", "build", "dontAsk", "edit", "plan", "yolo"],
   );
   assert.deepEqual(
     [...v4.commandPayloadSchemas.switchCollaborationMode.shape.mode.options].sort(),
-    [...legacyTypes.acodeSessionModeSchema.options].sort(),
+    [...sessionTypes.acodeSessionModeSchema.options].sort(),
     "v4 switchCollaborationMode 值域必须与 legacy acodeSessionModeSchema 逐字一致",
   );
   assert.equal(
@@ -174,7 +176,7 @@ test("v4 closeSession payload carries the expectedPersistence assertion equivale
     );
   }
   assert.deepEqual(
-    [...legacy.acodeSessionPersistenceSchema.options].sort(),
+    [...sessionProjection.acodeSessionPersistenceSchema.options].sort(),
     ["deferred", "immediate"],
   );
   assert.equal(
@@ -308,44 +310,39 @@ test("v4 plugins method names occupy the v4/plugins namespace and exclude cancel
   );
 });
 
-test("v4 plugins params schemas keep verbatim parity with legacy", () => {
+test("v4 plugins params schemas are strict and shape-preserving", () => {
   const workspace = { workspacePath: "/repo", workspaceKey: "wk-1" };
   const parityPairs = [
-    [v4Plugins.v4PluginsListParamsSchema, legacy.acodePluginsListParamsSchema, { workspace, configScope: "user" }],
-    [v4Plugins.v4PluginsOverviewParamsSchema, legacy.acodePluginsOverviewParamsSchema, { workspace }],
-    [v4Plugins.v4PluginsDescribeParamsSchema, legacy.acodePluginsDescribeParamsSchema, { workspace, pluginName: "p", marketplace: "m" }],
-    [v4Plugins.v4PluginsValidateParamsSchema, legacy.acodePluginsValidateParamsSchema, { workspace, source: "gh:acode/p" }],
-    [v4Plugins.v4PluginsReferenceCatalogParamsSchema, legacy.acodePluginsReferenceCatalogParamsSchema, { workspace, sessionId: "s-1" }],
-    [v4Plugins.v4PluginsResolveSuggestedReferenceParamsSchema, legacy.acodePluginsResolveSuggestedReferenceParamsSchema, { workspace, stableId: "p@m", operationId: "op-1", clientMode: "desktop-continuous", deliveryKind: "web-remote-replayable" }],
-    [v4Plugins.v4PluginsSetEnabledParamsSchema, legacy.acodePluginsSetEnabledParamsSchema, { workspace, pluginId: "p@m", enabled: true, operationId: "op-1", scope: "workspace" }],
-    [v4Plugins.v4PluginsMarketplaceAddParamsSchema, legacy.acodePluginsMarketplaceAddParamsSchema, { workspace, source: "gh:acode/m", dryRun: true, operationId: "op-1" }],
-    [v4Plugins.v4PluginsMarketplaceRemoveParamsSchema, legacy.acodePluginsMarketplaceRemoveParamsSchema, { workspace, marketplace: "m" }],
-    [v4Plugins.v4PluginsMarketplaceUpdateParamsSchema, legacy.acodePluginsMarketplaceUpdateParamsSchema, { workspace, operationId: "op-1" }],
-    [v4Plugins.v4PluginsInstallParamsSchema, legacy.acodePluginsInstallParamsSchema, { workspace, pluginName: "p", marketplace: "m", scope: "user", dryRun: false, operationId: "op-1" }],
-    [v4Plugins.v4PluginsUninstallParamsSchema, legacy.acodePluginsUninstallParamsSchema, { workspace, pluginId: "p@m", removeCache: true }],
-    [v4Plugins.v4PluginsUpdateParamsSchema, legacy.acodePluginsUpdateParamsSchema, { workspace, marketplace: "m" }],
-    [v4Plugins.v4PluginsRestoreBuiltinParamsSchema, legacy.acodePluginsRestoreBuiltinParamsSchema, { workspace, pluginId: "p@m" }],
-    [v4Plugins.v4PluginsConfigureParamsSchema, legacy.acodePluginsConfigureParamsSchema, { workspace, pluginId: "p@m", options: { k: 1 }, clearOptionKeys: ["x"], scope: "user", dryRun: true }],
-    [v4Plugins.v4PluginsResetConfigParamsSchema, legacy.acodePluginsResetConfigParamsSchema, { workspace, pluginId: "p@m", scope: "workspace" }],
+    [v4Plugins.v4PluginsListParamsSchema, { workspace, configScope: "user" }],
+    [v4Plugins.v4PluginsOverviewParamsSchema, { workspace }],
+    [v4Plugins.v4PluginsDescribeParamsSchema, { workspace, pluginName: "p", marketplace: "m" }],
+    [v4Plugins.v4PluginsValidateParamsSchema, { workspace, source: "gh:acode/p" }],
+    [v4Plugins.v4PluginsReferenceCatalogParamsSchema, { workspace, sessionId: "s-1" }],
+    [v4Plugins.v4PluginsResolveSuggestedReferenceParamsSchema, { workspace, stableId: "p@m", operationId: "op-1", clientMode: "desktop-continuous", deliveryKind: "web-remote-replayable" }],
+    [v4Plugins.v4PluginsSetEnabledParamsSchema, { workspace, pluginId: "p@m", enabled: true, operationId: "op-1", scope: "workspace" }],
+    [v4Plugins.v4PluginsMarketplaceAddParamsSchema, { workspace, source: "gh:acode/m", dryRun: true, operationId: "op-1" }],
+    [v4Plugins.v4PluginsMarketplaceRemoveParamsSchema, { workspace, marketplace: "m" }],
+    [v4Plugins.v4PluginsMarketplaceUpdateParamsSchema, { workspace, operationId: "op-1" }],
+    [v4Plugins.v4PluginsInstallParamsSchema, { workspace, pluginName: "p", marketplace: "m", scope: "user", dryRun: false, operationId: "op-1" }],
+    [v4Plugins.v4PluginsUninstallParamsSchema, { workspace, pluginId: "p@m", removeCache: true }],
+    [v4Plugins.v4PluginsUpdateParamsSchema, { workspace, marketplace: "m" }],
+    [v4Plugins.v4PluginsRestoreBuiltinParamsSchema, { workspace, pluginId: "p@m" }],
+    [v4Plugins.v4PluginsConfigureParamsSchema, { workspace, pluginId: "p@m", options: { k: 1 }, clearOptionKeys: ["x"], scope: "user", dryRun: true }],
+    [v4Plugins.v4PluginsResetConfigParamsSchema, { workspace, pluginId: "p@m", scope: "workspace" }],
   ];
-  for (const [v4Schema, legacySchema, payload] of parityPairs) {
+  for (const [v4Schema, payload] of parityPairs) {
     const v4Parsed = v4Schema.safeParse(payload);
-    const legacyParsed = legacySchema.safeParse(payload);
     assert.equal(v4Parsed.success, true, `v4 必须接受合法 payload：${JSON.stringify(payload)}`);
-    assert.equal(legacyParsed.success, true, `legacy 必须接受合法 payload：${JSON.stringify(payload)}`);
-    assert.deepEqual(v4Parsed.data, legacyParsed.data, "v4/legacy parse 产出必须逐字一致");
     // strict parity：未知键两侧同拒。
     const widened = { ...payload, unexpectedM2Probe: true };
     assert.equal(v4Schema.safeParse(widened).success, false, "v4 strict 必须拒未知键");
-    assert.equal(legacySchema.safeParse(widened).success, false, "legacy strict 必须拒未知键");
   }
   // workspace ref 缺 workspaceKey 两侧同拒（中性 schema 共用）。
   const noKey = { workspace: { workspacePath: "/repo" } };
   assert.equal(v4Plugins.v4PluginsListParamsSchema.safeParse(noKey).success, false);
-  assert.equal(legacy.acodePluginsListParamsSchema.safeParse(noKey).success, false);
 });
 
-test("v4 plugins result schemas keep verbatim parity with legacy", () => {
+test("v4 plugins result schemas are strict and shape-preserving", () => {
   const diagnostic = { code: "c", message: "m", severity: "error", pluginId: "p@m" };
   const hookDetail = {
     event: "PreToolUse",
@@ -385,33 +382,31 @@ test("v4 plugins result schemas keep verbatim parity with legacy", () => {
     mcpServerNames: [],
   };
   const resultPairs = [
-    [v4Plugins.v4PluginsListResultSchema, legacy.acodePluginsListResultSchema, { plugins: [info], diagnostics: [diagnostic] }],
-    [v4Plugins.v4PluginsOverviewResultSchema, legacy.acodePluginsOverviewResultSchema, { marketplaces: [marketplaceSummary], availablePlugins: [available], installedPlugins: [installed], restorableBuiltins: [], diagnostics: [], capability: { supported: true } }],
-    [v4Plugins.v4PluginsDescribeResultSchema, legacy.acodePluginsDescribeResultSchema, { components: [{ kind: "mcp", items: [{ name: "srv" }] }], metadata: { version: "1.0.0" } }],
-    [v4Plugins.v4PluginsValidateResultSchema, legacy.acodePluginsValidateResultSchema, { ok: false, diagnostics: [diagnostic], compatibility: { runnable: ["skills"], diagnosticOnly: ["agents"], unsupported: ["mcpb"] } }],
-    [v4Plugins.v4PluginsReferenceCatalogResultSchema, legacy.acodePluginsReferenceCatalogResultSchema, { authority: "session", plugins: [catalogEntry] }],
-    [v4Plugins.v4PluginsSetEnabledResultSchema, legacy.acodePluginsSetEnabledResultSchema, { plugin: info, enabled: false }],
-    [v4Plugins.v4PluginsMarketplaceMutationResultSchema, legacy.acodePluginsMarketplaceMutationResultSchema, { marketplaces: [marketplaceSummary], diagnostics: [diagnostic] }],
-    [v4Plugins.v4PluginsInstallResultSchema, legacy.acodePluginsInstallResultSchema, { installedPlugins: [installed], dependencyClosure: ["p@m"], diagnostics: [] }],
-    [v4Plugins.v4PluginsUninstallResultSchema, legacy.acodePluginsUninstallResultSchema, { removedPlugin: installed, diagnostics: [] }],
-    [v4Plugins.v4PluginsRestoreBuiltinResultSchema, legacy.acodePluginsRestoreBuiltinResultSchema, { pluginId: "p@m", diagnostics: [] }],
-    [v4Plugins.v4PluginsConfigureResultSchema, legacy.acodePluginsConfigureResultSchema, { pluginId: "p@m", diagnostics: [diagnostic] }],
+    [v4Plugins.v4PluginsListResultSchema, { plugins: [info], diagnostics: [diagnostic] }],
+    [v4Plugins.v4PluginsOverviewResultSchema, { marketplaces: [marketplaceSummary], availablePlugins: [available], installedPlugins: [installed], restorableBuiltins: [], diagnostics: [], capability: { supported: true } }],
+    [v4Plugins.v4PluginsDescribeResultSchema, { components: [{ kind: "mcp", items: [{ name: "srv" }] }], metadata: { version: "1.0.0" } }],
+    [v4Plugins.v4PluginsValidateResultSchema, { ok: false, diagnostics: [diagnostic], compatibility: { runnable: ["skills"], diagnosticOnly: ["agents"], unsupported: ["mcpb"] } }],
+    [v4Plugins.v4PluginsReferenceCatalogResultSchema, { authority: "session", plugins: [catalogEntry] }],
+    [v4Plugins.v4PluginsSetEnabledResultSchema, { plugin: info, enabled: false }],
+    [v4Plugins.v4PluginsMarketplaceMutationResultSchema, { marketplaces: [marketplaceSummary], diagnostics: [diagnostic] }],
+    [v4Plugins.v4PluginsInstallResultSchema, { installedPlugins: [installed], dependencyClosure: ["p@m"], diagnostics: [] }],
+    [v4Plugins.v4PluginsUninstallResultSchema, { removedPlugin: installed, diagnostics: [] }],
+    [v4Plugins.v4PluginsRestoreBuiltinResultSchema, { pluginId: "p@m", diagnostics: [] }],
+    [v4Plugins.v4PluginsConfigureResultSchema, { pluginId: "p@m", diagnostics: [diagnostic] }],
   ];
-  for (const [v4Schema, legacySchema, payload] of resultPairs) {
+  for (const [v4Schema, payload] of resultPairs) {
     const v4Parsed = v4Schema.safeParse(payload);
-    const legacyParsed = legacySchema.safeParse(payload);
     assert.equal(v4Parsed.success, true, `v4 必须接受合法 result：${JSON.stringify(payload).slice(0, 80)}`);
-    assert.equal(legacyParsed.success, true, "legacy 必须接受同一 result");
-    assert.deepEqual(v4Parsed.data, legacyParsed.data, "v4/legacy parse 产出必须逐字一致");
     assert.equal(v4Schema.safeParse({ ...payload, unexpectedM2Probe: 1 }).success, false);
   }
-  // catalog entry 的 subagentNames default([]) 两侧同形（缺省补齐一致）。
+  // catalog entry 的 subagentNames default([])：legacy barrel 已删，parity 改为对 v4
+  // 自身的字面钉住——缺省补齐必须稳定为 []，不得变成 undefined 或抛错。
   const noSubagents = { ...catalogEntry };
   delete noSubagents.subagentNames;
-  assert.deepEqual(
-    v4Plugins.v4PluginReferenceCatalogEntrySchema.parse(noSubagents),
-    legacy.acodePluginReferenceCatalogEntrySchema.parse(noSubagents),
-  );
+  assert.deepEqual(v4Plugins.v4PluginReferenceCatalogEntrySchema.parse(noSubagents), {
+    ...catalogEntry,
+    subagentNames: [],
+  });
 });
 
 test("v4 referenceCatalog merges the legacy pair: category always available", () => {
@@ -462,11 +457,6 @@ test("v4 resolveSuggestedReference keeps the actionable-identity superRefine", (
       false,
       `${status} 缺 marketplace/pluginName/sourceTrust 必须拒绝`,
     );
-    assert.equal(
-      legacy.acodePluginsResolveSuggestedReferenceResultSchema.safeParse(incomplete).success,
-      false,
-      "legacy 同款 superRefine 必须同拒",
-    );
     const complete = {
       ...base,
       status,
@@ -504,32 +494,33 @@ test("v4 plugins schema leaves have no reverse import into the legacy protocol b
     );
     assert.doesNotMatch(source, /acode-protocol\/index(?:\.js|\.ts)?/);
   }
-  // v4-imports-legacy-protocol 白名单纪律：两叶只许引 acodeWorkspaceRefSchema 一个幸存符号
-  // （architecture 门禁实测会拦未登记符号——acodeDeliveryKindSchema 因此被本地再声明）。
+  // acode-session-types 中立叶纪律：两叶只许引 acodeWorkspaceRefSchema。
+  // M4 前该符号在 acode-protocol-legacy-types.ts（已随 barrel 删除）；本断言改指新家园，
+  // 仍钉住「不得从该叶引白名单外符号」的原意。
   for (const leaf of ["plugins-queries.ts", "plugins-commands.ts"]) {
     const source = await readFile(
       new URL(`../src/acode-protocol-v4/${leaf}`, import.meta.url),
       "utf8",
     );
-    const legacyTypesImport = source.match(
-      /import \{([^}]*)\} from "\.\.\/acode-protocol-legacy-types\.js"/,
+    const sessionTypesImport = source.match(
+      /import \{([^}]*)\} from "\.\.\/acode-session-types\.js"/,
     );
-    assert.ok(legacyTypesImport, `${leaf} 应从 legacy-types 取 workspace ref`);
+    assert.ok(sessionTypesImport, `${leaf} 应从 acode-session-types 取 workspace ref`);
     assert.deepEqual(
-      legacyTypesImport[1].split(",").map((name) => name.trim()),
+      sessionTypesImport[1].split(",").map((name) => name.trim()),
       ["acodeWorkspaceRefSchema"],
-      `${leaf} 不得从 legacy-types 引白名单外符号`,
+      `${leaf} 不得从 acode-session-types 引白名单外符号`,
     );
   }
   // 本地再声明的 deliveryKind 值域与 legacy acodeDeliveryKindSchema 逐字一致。
   assert.deepEqual(
     v4Plugins.v4PluginsResolveSuggestedReferenceParamsSchema.shape.clientMode.options,
-    [...legacyTypes.acodeDeliveryKindSchema.options],
+    [...sessionTypes.acodeDeliveryKindSchema.options],
     "v4 deliveryKind 本地再声明必须与 legacy 值域逐字一致",
   );
   assert.deepEqual(
     v4Plugins.v4PluginsResolveSuggestedReferenceParamsSchema.shape.deliveryKind.options,
-    [...legacyTypes.acodeDeliveryKindSchema.options],
+    [...sessionTypes.acodeDeliveryKindSchema.options],
   );
 });
 
@@ -568,22 +559,14 @@ test("M2-6 v4 method names land in V4_METHODS with v4/ prefix", () => {
   );
 });
 
-test("M2-6 workflows params/result schemas keep verbatim parity with legacy", () => {
-  // params 六法：同一输入两侧 parse 结果 deep-equal（strict 形状一致）。
+test("M2-6 workflows params schemas are strict and shape-preserving", () => {
+  // M4 后 legacy barrel 已删，原先的「两侧 parity」对象不存在；本用例改为对 v4 自身的
+  // 字面钉住：同一输入 parse 后形态不变（无隐式补值/丢键），且 strict 拒未知键。
   const paramPairs = [
-    ["acodeWorkflowsListParamsSchema", "v4WorkflowsListParamsSchema", { workspace: m26Workspace }],
+    ["v4WorkflowsListParamsSchema", { workspace: m26Workspace }],
+    ["v4WorkflowsListParamsSchema", { workspace: m26Workspace, scope: "global" }],
+    ["v4WorkflowsGetParamsSchema", { workspace: m26Workspace, name: "daily" }],
     [
-      "acodeWorkflowsListParamsSchema",
-      "v4WorkflowsListParamsSchema",
-      { workspace: m26Workspace, scope: "global" },
-    ],
-    [
-      "acodeWorkflowsGetParamsSchema",
-      "v4WorkflowsGetParamsSchema",
-      { workspace: m26Workspace, name: "daily" },
-    ],
-    [
-      "acodeWorkflowsUpdateMetaParamsSchema",
       "v4WorkflowsUpdateMetaParamsSchema",
       {
         workspace: m26Workspace,
@@ -595,29 +578,15 @@ test("M2-6 workflows params/result schemas keep verbatim parity with legacy", ()
         },
       },
     ],
+    ["v4WorkflowsDeleteParamsSchema", { workspace: m26Workspace, name: "daily", scope: "project" }],
     [
-      "acodeWorkflowsDeleteParamsSchema",
-      "v4WorkflowsDeleteParamsSchema",
-      { workspace: m26Workspace, name: "daily", scope: "project" },
-    ],
-    [
-      "acodeWorkflowsRunsParamsSchema",
       "v4WorkflowsRunsParamsSchema",
       { workspace: m26Workspace, name: "daily", limit: 20, scope: "global" },
     ],
-    [
-      "acodeWorkflowsMoveParamsSchema",
-      "v4WorkflowsMoveParamsSchema",
-      { workspace: m26Workspace, name: "daily" },
-    ],
+    ["v4WorkflowsMoveParamsSchema", { workspace: m26Workspace, name: "daily" }],
   ];
-  for (const [legacyKey, v4Key, input] of paramPairs) {
-    assert.deepEqual(
-      v4Workflows[v4Key].parse(input),
-      legacy[legacyKey].parse(input),
-      `${v4Key} 必须与 ${legacyKey} parse 同形`,
-    );
-    // strict：未知键两侧同拒。
+  for (const [v4Key, input] of paramPairs) {
+    assert.deepEqual(v4Workflows[v4Key].parse(input), input, `${v4Key} parse 必须形态不变`);
     assert.equal(
       v4Workflows[v4Key].safeParse({ ...input, bogus: 1 }).success,
       false,
@@ -625,7 +594,7 @@ test("M2-6 workflows params/result schemas keep verbatim parity with legacy", ()
     );
   }
 
-  // runs limit 界：1/50 收，0/51/非整数两侧同拒。
+  // runs limit 界：1/50 收，0/51/非整数拒。
   for (const limit of [1, 50]) {
     assert.equal(
       v4Workflows.v4WorkflowsRunsParamsSchema.safeParse({ workspace: m26Workspace, limit }).success,
@@ -638,17 +607,12 @@ test("M2-6 workflows params/result schemas keep verbatim parity with legacy", ()
       false,
       `limit=${limit} must stay rejected`,
     );
-    assert.equal(
-      legacy.acodeWorkflowsRunsParamsSchema.safeParse({ workspace: m26Workspace, limit }).success,
-      false,
-    );
   }
-  assert.equal(v4Workflows.V4_WORKFLOWS_RUNS_MAX_LIMIT, legacy.ACODE_WORKFLOWS_RUNS_MAX_LIMIT);
+  assert.equal(v4Workflows.V4_WORKFLOWS_RUNS_MAX_LIMIT, 50);
 
-  // result 六法：代表性 fixture 两侧 parse 同形。
+  // result 六法：代表性 fixture parse 后形态不变。
   const resultPairs = [
     [
-      "acodeWorkflowsListResultSchema",
       "v4WorkflowsListResultSchema",
       {
         workflows: [
@@ -665,7 +629,6 @@ test("M2-6 workflows params/result schemas keep verbatim parity with legacy", ()
       },
     ],
     [
-      "acodeWorkflowsGetResultSchema",
       "v4WorkflowsGetResultSchema",
       {
         ok: true,
@@ -676,23 +639,13 @@ test("M2-6 workflows params/result schemas keep verbatim parity with legacy", ()
         script: "await world.run('x')",
       },
     ],
+    ["v4WorkflowsGetResultSchema", { ok: false, reason: "not_found" }],
     [
-      "acodeWorkflowsGetResultSchema",
-      "v4WorkflowsGetResultSchema",
-      { ok: false, reason: "not_found" },
-    ],
-    [
-      "acodeWorkflowsUpdateMetaResultSchema",
       "v4WorkflowsUpdateMetaResultSchema",
       { ok: true, path: "F:/repo/.acode/workflows/daily.md" },
     ],
+    ["v4WorkflowsDeleteResultSchema", { ok: false, reason: "parse_error", detail: "bad yaml" }],
     [
-      "acodeWorkflowsDeleteResultSchema",
-      "v4WorkflowsDeleteResultSchema",
-      { ok: false, reason: "parse_error", detail: "bad yaml" },
-    ],
-    [
-      "acodeWorkflowsRunsResultSchema",
       "v4WorkflowsRunsResultSchema",
       {
         runs: [
@@ -715,41 +668,43 @@ test("M2-6 workflows params/result schemas keep verbatim parity with legacy", ()
       },
     ],
     [
-      "acodeWorkflowsMoveResultSchema",
       "v4WorkflowsMoveResultSchema",
       { ok: true, from: "C:/Users/u/.acode/workflows/daily.md", to: "F:/repo/.acode/workflows/daily.md" },
     ],
     [
-      "acodeWorkflowsMoveResultSchema",
       "v4WorkflowsMoveResultSchema",
       { ok: false, reason: "target_exists", path: "F:/repo/.acode/workflows/daily.md" },
     ],
   ];
-  for (const [legacyKey, v4Key, input] of resultPairs) {
-    assert.deepEqual(
-      v4Workflows[v4Key].parse(input),
-      legacy[legacyKey].parse(input),
-      `${v4Key} 必须与 ${legacyKey} parse 同形`,
-    );
+  for (const [v4Key, input] of resultPairs) {
+    assert.deepEqual(v4Workflows[v4Key].parse(input), input, `${v4Key} parse 必须形态不变`);
   }
 
-  // 失败/状态词表逐字一致。
-  assert.deepEqual(
-    [...v4Workflows.v4SavedWorkflowFailureReasonSchema.options].sort(),
-    [...legacy.acodeSavedWorkflowFailureReasonSchema.options].sort(),
-  );
-  assert.deepEqual(
-    [...v4Workflows.v4SavedWorkflowRunStatusSchema.options].sort(),
-    [...legacy.acodeSavedWorkflowRunStatusSchema.options].sort(),
-  );
-  assert.deepEqual(
-    [...v4Workflows.v4SavedWorkflowRunStopReasonSchema.options].sort(),
-    [...legacy.acodeSavedWorkflowRunStopReasonSchema.options].sort(),
-  );
-  assert.deepEqual(
-    [...v4Workflows.v4SavedWorkflowScopeSchema.options].sort(),
-    [...legacy.acodeSavedWorkflowScopeSchema.options].sort(),
-  );
+  // 失败/状态词表逐字钉住（词表是 wire 契约，漂移即红）。
+  assert.deepEqual([...v4Workflows.v4SavedWorkflowFailureReasonSchema.options].sort(), [
+    "invalid_name",
+    "not_found",
+    "parse_error",
+    "read_error",
+  ]);
+  assert.deepEqual([...v4Workflows.v4SavedWorkflowRunStatusSchema.options].sort(), [
+    "completed",
+    "errored",
+    "pending",
+    "running",
+    "stopped",
+  ]);
+  assert.deepEqual([...v4Workflows.v4SavedWorkflowRunStopReasonSchema.options].sort(), [
+    "interrupted",
+    "model",
+    "provider",
+    "superseded",
+    "user",
+  ]);
+  assert.deepEqual([...v4Workflows.v4SavedWorkflowScopeSchema.options].sort(), [
+    "global",
+    "project",
+  ]);
   // artifacts chips 上界 8：第 9 件两侧同拒。
   const nineArtifacts = Array.from({ length: 9 }, (_, i) => ({ id: `a${i}`, kind: "file", version: 1 }));
   const runWithNine = {
@@ -767,14 +722,16 @@ test("M2-6 workflows params/result schemas keep verbatim parity with legacy", ()
   );
 });
 
-test("M2-6 skills referenceCatalog schemas keep verbatim parity with legacy", () => {
+test("M2-6 skills referenceCatalog schemas are strict and shape-preserving", () => {
+  // M4 后 legacy barrel 已删，parity 改为对 v4 自身形态的字面钉住。
   for (const input of [
     { workspace: m26Workspace },
     { workspace: m26Workspace, sessionId: "session-1" },
   ]) {
     assert.deepEqual(
       v4Skills.v4SkillsReferenceCatalogParamsSchema.parse(input),
-      legacy.acodeSkillsReferenceCatalogParamsSchema.parse(input),
+      input,
+      "params parse 必须形态不变",
     );
     assert.equal(
       v4Skills.v4SkillsReferenceCatalogParamsSchema.safeParse({ ...input, bogus: 1 }).success,
@@ -805,12 +762,13 @@ test("M2-6 skills referenceCatalog schemas keep verbatim parity with legacy", ()
   };
   assert.deepEqual(
     v4Skills.v4SkillsReferenceCatalogResultSchema.parse(catalog),
-    legacy.acodeSkillsReferenceCatalogResultSchema.parse(catalog),
+    catalog,
+    "result parse 必须形态不变",
   );
-  // authority 词表逐字一致；enabled 恒 true（literal）。
+  // authority 词表逐字钉住；enabled 恒 true（literal）。
   assert.deepEqual(
     [...v4Skills.v4SkillsReferenceCatalogResultSchema.shape.authority.options].sort(),
-    [...legacy.acodeSkillsReferenceCatalogResultSchema.shape.authority.options].sort(),
+    ["session", "workspace"],
   );
   assert.equal(
     v4Skills.v4SkillsReferenceCatalogResultSchema.safeParse({
@@ -822,11 +780,10 @@ test("M2-6 skills referenceCatalog schemas keep verbatim parity with legacy", ()
   );
 });
 
-test("M2-6 mcp list schemas keep verbatim parity with legacy", () => {
-  // mode 缺省 connect：两侧 default 同值。
+test("M2-6 mcp list schemas are strict and shape-preserving", () => {
+  // mode 缺省 connect（default 补齐是 wire 契约的一部分，必须逐字钉住）。
   const parsed = v4Mcp.v4McpListParamsSchema.parse({ workspace: m26Workspace });
-  assert.equal(parsed.mode, "connect");
-  assert.deepEqual(parsed, legacy.acodeMcpListParamsSchema.parse({ workspace: m26Workspace }));
+  assert.deepEqual(parsed, { workspace: m26Workspace, mode: "connect" });
   for (const input of [
     { workspace: m26Workspace, mode: "status" },
     { workspace: m26Workspace, mcpServers: [mcpServer] },
@@ -834,14 +791,15 @@ test("M2-6 mcp list schemas keep verbatim parity with legacy", () => {
   ]) {
     assert.deepEqual(
       v4Mcp.v4McpListParamsSchema.parse(input),
-      legacy.acodeMcpListParamsSchema.parse(input),
+      { ...input, mode: input.mode ?? "connect" },
+      "params parse 除 mode 缺省补齐外形态不变",
     );
     assert.equal(
       v4Mcp.v4McpListParamsSchema.safeParse({ ...input, bogus: 1 }).success,
       false,
     );
   }
-  // 状态快照：全字段 fixture 两侧同形；failure kind / status kind 词表逐字一致。
+  // 状态快照：全字段 fixture parse 后形态不变；failure kind / status kind 词表逐字钉住。
   const snapshot = {
     status: "failed",
     transport: "stdio",
@@ -866,17 +824,38 @@ test("M2-6 mcp list schemas keep verbatim parity with legacy", () => {
   const statuses = { statuses: { local: snapshot } };
   assert.deepEqual(
     v4Mcp.v4McpListResultSchema.parse(statuses),
-    legacy.acodeMcpListResultSchema.parse(statuses),
+    statuses,
+    "result parse 必须形态不变",
   );
-  assert.deepEqual(
-    [...v4Mcp.v4McpServerStatusKindSchema.options].sort(),
-    [...legacy.acodeMcpServerStatusKindSchema.options].sort(),
-  );
-  assert.deepEqual(
-    [...v4Mcp.V4_MCP_SERVER_FAILURE_KINDS].sort(),
-    [...legacy.MCP_SERVER_FAILURE_KINDS].sort(),
-    "v4 failure kinds 词表必须与 legacy 逐字一致",
-  );
+  assert.deepEqual([...v4Mcp.v4McpServerStatusKindSchema.options].sort(), [
+    "connected",
+    "connecting",
+    "disabled",
+    "disconnected",
+    "failed",
+    "untrusted",
+  ]);
+  assert.deepEqual([...v4Mcp.V4_MCP_SERVER_FAILURE_KINDS].sort(), [
+    "coding_plan_required",
+    "config_invalid",
+    "connection_failed",
+    "connection_timeout",
+    "network_unreachable",
+    "not_authenticated",
+    "oauth_authorization_failed",
+    "official_origin_untrusted",
+    "process_start_failed",
+    "protocol_error",
+    "protocol_negotiation_failed",
+    "rate_limited",
+    "runtime_unavailable",
+    "server_internal_error",
+    "server_not_found",
+    "server_unavailable",
+    "status_unavailable",
+    "tool_list_failed",
+    "unexpected_disconnect",
+  ]);
 });
 
 test("M2-6 new v4 schema files have no reverse import into the legacy protocol barrel", async () => {
@@ -935,40 +914,27 @@ test("M2-8 v4 method names land in V4_METHODS with v4/ prefix", () => {
   );
 });
 
-test("M2-8 params schemas keep verbatim parity with legacy", () => {
+test("M2-8 params schemas are strict and shape-preserving", () => {
   const parityPairs = [
-    [
-      legacy.acodeWorkspaceReadPresentationParamsSchema,
-      v4WorkspaceRuntime.v4WorkspaceReadPresentationParamsSchema,
+    [v4WorkspaceRuntime.v4WorkspaceReadPresentationParamsSchema,
       { workspace: m28Workspace },
     ],
-    [
-      legacy.acodeWorkspaceHookTrustGrantParamsSchema,
-      v4WorkspacePolicies.v4WorkspaceHookTrustGrantParamsSchema,
+    [v4WorkspacePolicies.v4WorkspaceHookTrustGrantParamsSchema,
       { workspace: m28Workspace, bundleDigest: m28Digest, hookDeclarationDigest: m28Digest },
     ],
-    [
-      legacy.acodeWorkspaceUpdateInteractionPreferencesParamsSchema,
-      v4WorkspacePolicies.v4WorkspaceUpdateInteractionPreferencesParamsSchema,
+    [v4WorkspacePolicies.v4WorkspaceUpdateInteractionPreferencesParamsSchema,
       { workspace: m28Workspace, preferences: { askUserQuestionAutoResolutionEnabled: true } },
     ],
-    [
-      legacy.acodeWorkspaceUpdateModelIoPreferencesParamsSchema,
-      v4WorkspacePolicies.v4WorkspaceUpdateModelIoPreferencesParamsSchema,
+    [v4WorkspacePolicies.v4WorkspaceUpdateModelIoPreferencesParamsSchema,
       { workspace: m28Workspace, preferences: { fullRetentionEnabled: false } },
     ],
-    [
-      legacy.acodeWorkspaceUpdateOffPeakToolPolicyParamsSchema,
-      v4WorkspacePolicies.v4WorkspaceUpdateOffPeakToolPolicyParamsSchema,
+    [v4WorkspacePolicies.v4WorkspaceUpdateOffPeakToolPolicyParamsSchema,
       { workspace: m28Workspace, enabled: true },
     ],
-    [
-      legacy.acodeWorkspaceUpdateDynamicWorkflowPolicyParamsSchema,
-      v4WorkspacePolicies.v4WorkspaceUpdateDynamicWorkflowPolicyParamsSchema,
+    [v4WorkspacePolicies.v4WorkspaceUpdateDynamicWorkflowPolicyParamsSchema,
       { workspace: m28Workspace, enabled: false },
     ],
     [
-      legacy.acodeWorkspaceGenerateTextParamsSchema,
       v4WorkspaceRuntime.v4WorkspaceGenerateTextParamsSchema,
       {
         workspace: m28Workspace,
@@ -980,7 +946,6 @@ test("M2-8 params schemas keep verbatim parity with legacy", () => {
       },
     ],
     [
-      legacy.acodeWorkspaceGenerateTextParamsSchema,
       v4WorkspaceRuntime.v4WorkspaceGenerateTextParamsSchema,
       {
         workspace: m28Workspace,
@@ -1000,13 +965,10 @@ test("M2-8 params schemas keep verbatim parity with legacy", () => {
       },
     ],
     [
-      legacy.acodeWorkspaceCancelGenerateTextParamsSchema,
       v4WorkspaceRuntime.v4WorkspaceCancelGenerateTextParamsSchema,
       { operationId: "op-1" },
     ],
-    [
-      legacy.acodeProviderUpdateAccountConfigParamsSchema,
-      v4ProviderProcess.v4ProviderUpdateAccountConfigParamsSchema,
+    [v4ProviderProcess.v4ProviderUpdateAccountConfigParamsSchema,
       {
         revision: "r-1",
         basedOnACodeBuiltinRevision: "b-1",
@@ -1023,27 +985,19 @@ test("M2-8 params schemas keep verbatim parity with legacy", () => {
         },
       },
     ],
-    [
-      legacy.acodeProviderTestModelConnectivityParamsSchema,
-      v4ProviderProcess.v4ProviderTestModelConnectivityParamsSchema,
+    [v4ProviderProcess.v4ProviderTestModelConnectivityParamsSchema,
       { workspace: m28Workspace, selection: m28Selection },
     ],
-    [
-      legacy.acodeProcessChildProcessesParamsSchema,
-      v4ProviderProcess.v4ProcessChildProcessesParamsSchema,
+    [v4ProviderProcess.v4ProcessChildProcessesParamsSchema,
       {},
     ],
   ];
-  for (const [legacySchema, v4Schema, payload] of parityPairs) {
-    const legacyParsed = legacySchema.safeParse(payload);
+  for (const [v4Schema, payload] of parityPairs) {
     const v4Parsed = v4Schema.safeParse(payload);
-    assert.equal(legacyParsed.success, true, `legacy 必须接受合法 payload：${JSON.stringify(payload)}`);
     assert.equal(v4Parsed.success, true, `v4 必须接受合法 payload：${JSON.stringify(payload)}`);
-    assert.deepEqual(v4Parsed.data, legacyParsed.data, "v4/legacy parse 产出必须逐字一致");
     // strict parity：未知键两侧同拒。
     const widened = { ...payload, unexpectedM28Probe: true };
     assert.equal(v4Schema.safeParse(widened).success, false, "v4 strict 必须拒未知键");
-    assert.equal(legacySchema.safeParse(widened).success, false, "legacy strict 必须拒未知键");
   }
   // generateText refine parity：prompt/messages 至少其一，两侧同拒同收。
   const noPrompt = {
@@ -1052,22 +1006,18 @@ test("M2-8 params schemas keep verbatim parity with legacy", () => {
     querySource: "prompt-polish",
   };
   assert.equal(v4WorkspaceRuntime.v4WorkspaceGenerateTextParamsSchema.safeParse(noPrompt).success, false);
-  assert.equal(legacy.acodeWorkspaceGenerateTextParamsSchema.safeParse(noPrompt).success, false);
+  assert.equal(v4WorkspaceRuntime.v4WorkspaceGenerateTextParamsSchema.safeParse(noPrompt).success, false);
   // hookTrust digest 正则 parity：非 64 位小写 hex 两侧同拒。
   const badDigest = { workspace: m28Workspace, bundleDigest: "zz", hookDeclarationDigest: m28Digest };
   assert.equal(v4WorkspacePolicies.v4WorkspaceHookTrustGrantParamsSchema.safeParse(badDigest).success, false);
-  assert.equal(legacy.acodeWorkspaceHookTrustGrantParamsSchema.safeParse(badDigest).success, false);
   // workspace ref 缺 workspaceKey 两侧同拒（中性 schema 共用）。
   const noKey = { workspace: { workspacePath: "/repo" } };
   assert.equal(v4WorkspaceRuntime.v4WorkspaceReadPresentationParamsSchema.safeParse(noKey).success, false);
-  assert.equal(legacy.acodeWorkspaceReadPresentationParamsSchema.safeParse(noKey).success, false);
 });
 
-test("M2-8 result schemas keep verbatim parity with legacy", () => {
+test("M2-8 result schemas are strict and shape-preserving", () => {
   const resultPairs = [
-    [
-      legacy.acodeWorkspacePresentationSchema,
-      v4WorkspaceRuntime.v4WorkspacePresentationSchema,
+    [v4WorkspaceRuntime.v4WorkspacePresentationSchema,
       {
         workspace: m28Workspace,
         mode: "build",
@@ -1077,39 +1027,25 @@ test("M2-8 result schemas keep verbatim parity with legacy", () => {
         ],
       },
     ],
-    [
-      legacy.acodeWorkspaceHookTrustGrantResultSchema,
-      v4WorkspacePolicies.v4WorkspaceHookTrustGrantResultSchema,
+    [v4WorkspacePolicies.v4WorkspaceHookTrustGrantResultSchema,
       { accepted: false, reasonCode: "workspace_hooks_policy_requires_pretrust" },
     ],
-    [
-      legacy.acodeWorkspaceHookTrustGrantResultSchema,
-      v4WorkspacePolicies.v4WorkspaceHookTrustGrantResultSchema,
+    [v4WorkspacePolicies.v4WorkspaceHookTrustGrantResultSchema,
       { accepted: true },
     ],
-    [
-      legacy.acodeWorkspaceUpdateInteractionPreferencesResultSchema,
-      v4WorkspacePolicies.v4WorkspaceUpdateInteractionPreferencesResultSchema,
+    [v4WorkspacePolicies.v4WorkspaceUpdateInteractionPreferencesResultSchema,
       { workspace: m28Workspace, askUserQuestionAutoResolutionEnabled: true, snoozedInteractionCount: 2 },
     ],
-    [
-      legacy.acodeWorkspaceUpdateModelIoPreferencesResultSchema,
-      v4WorkspacePolicies.v4WorkspaceUpdateModelIoPreferencesResultSchema,
+    [v4WorkspacePolicies.v4WorkspaceUpdateModelIoPreferencesResultSchema,
       { workspace: m28Workspace, fullRetentionEnabled: true, updatedSessionCount: 3 },
     ],
-    [
-      legacy.acodeWorkspaceUpdateOffPeakToolPolicyResultSchema,
-      v4WorkspacePolicies.v4WorkspaceUpdateOffPeakToolPolicyResultSchema,
+    [v4WorkspacePolicies.v4WorkspaceUpdateOffPeakToolPolicyResultSchema,
       { workspace: m28Workspace, enabled: true },
     ],
-    [
-      legacy.acodeWorkspaceUpdateDynamicWorkflowPolicyResultSchema,
-      v4WorkspacePolicies.v4WorkspaceUpdateDynamicWorkflowPolicyResultSchema,
+    [v4WorkspacePolicies.v4WorkspaceUpdateDynamicWorkflowPolicyResultSchema,
       { workspace: m28Workspace, enabled: false },
     ],
-    [
-      legacy.acodeWorkspaceGenerateTextResultSchema,
-      v4WorkspaceRuntime.v4WorkspaceGenerateTextResultSchema,
+    [v4WorkspaceRuntime.v4WorkspaceGenerateTextResultSchema,
       {
         text: "润色后",
         selection: m28Selection,
@@ -1126,24 +1062,16 @@ test("M2-8 result schemas keep verbatim parity with legacy", () => {
         },
       },
     ],
-    [
-      legacy.acodeWorkspaceCancelGenerateTextResultSchema,
-      v4WorkspaceRuntime.v4WorkspaceCancelGenerateTextResultSchema,
+    [v4WorkspaceRuntime.v4WorkspaceCancelGenerateTextResultSchema,
       { operationId: "op-1", cancelled: true },
     ],
-    [
-      legacy.acodeProviderUpdateAccountConfigResultSchema,
-      v4ProviderProcess.v4ProviderUpdateAccountConfigResultSchema,
+    [v4ProviderProcess.v4ProviderUpdateAccountConfigResultSchema,
       { receivedRevision: "r-1", providerCount: 2, status: "received" },
     ],
-    [
-      legacy.acodeProviderTestModelConnectivityResultSchema,
-      v4ProviderProcess.v4ProviderTestModelConnectivityResultSchema,
+    [v4ProviderProcess.v4ProviderTestModelConnectivityResultSchema,
       { success: true },
     ],
-    [
-      legacy.acodeProcessChildProcessesResultSchema,
-      v4ProviderProcess.v4ProcessChildProcessesResultSchema,
+    [v4ProviderProcess.v4ProcessChildProcessesResultSchema,
       {
         processes: [
           { pid: 100, serverName: "mcp-1", mcpSource: "builtin", pluginName: "official" },
@@ -1152,32 +1080,35 @@ test("M2-8 result schemas keep verbatim parity with legacy", () => {
       },
     ],
   ];
-  for (const [legacySchema, v4Schema, payload] of resultPairs) {
-    const legacyParsed = legacySchema.safeParse(payload);
+  for (const [v4Schema, payload] of resultPairs) {
     const v4Parsed = v4Schema.safeParse(payload);
-    assert.equal(legacyParsed.success, true, `legacy 必须接受合法 result：${JSON.stringify(payload)}`);
     assert.equal(v4Parsed.success, true, `v4 必须接受合法 result：${JSON.stringify(payload)}`);
-    assert.deepEqual(v4Parsed.data, legacyParsed.data, "v4/legacy result parse 产出必须逐字一致");
     assert.equal(v4Schema.safeParse({ ...payload, unexpectedM28Probe: true }).success, false);
-    assert.equal(legacySchema.safeParse({ ...payload, unexpectedM28Probe: true }).success, false);
   }
-  // hookTrust reasonCode 词表逐字一致。
+  // hookTrust reasonCode 词表逐字钉住（wire 契约，漂移即红）。
   assert.deepEqual(
     [...v4WorkspacePolicies.v4WorkspaceHookTrustGrantReasonCodeSchema.options].sort(),
-    [...legacy.acodeWorkspaceHookTrustGrantReasonCodeSchema.options].sort(),
-    "v4 hookTrust reasonCode 词表必须与 legacy 逐字一致",
+    [
+      "workspace_hooks_blocked_by_policy",
+      "workspace_hooks_bundle_changed",
+      "workspace_hooks_config_unreadable",
+      "workspace_hooks_policy_requires_pretrust",
+      "workspace_hooks_snapshot_mismatch",
+      "workspace_hooks_trust_store_corrupt",
+    ],
+    "hookTrust reasonCode 词表漂移",
   );
-  // sessionMode / slashCommand 是本地再声明件（白名单未登记/barrel 全禁），值域逐字钉住。
+  // sessionMode / slashCommand 是本地再声明件（v4 不反向 import legacy 面），值域逐字钉住。
   assert.deepEqual(
     [...v4WorkspaceRuntime.v4WorkspaceSessionModeSchema.options].sort(),
-    [...legacyTypes.acodeSessionModeSchema.options].sort(),
-    "v4 sessionMode 值域必须与 legacy-types 逐字一致",
+    [...sessionTypes.acodeSessionModeSchema.options].sort(),
+    "v4 sessionMode 值域必须与中立 session-types 叶逐字一致",
   );
   const slash = { name: "review", description: "评审", inputHint: "[p]", source: "custom" };
   assert.deepEqual(
     v4WorkspaceRuntime.v4WorkspaceSlashCommandSchema.parse(slash),
-    legacy.acodeSlashCommandSchema.parse(slash),
-    "v4 slashCommand 形状必须与 legacy barrel 逐字一致",
+    sessionProjection.acodeSlashCommandSchema.parse(slash),
+    "v4 slashCommand 形状必须与中立 session-projection 叶逐字一致",
   );
 });
 
@@ -1217,26 +1148,19 @@ test("M2-3 v4 session read/write method names land in V4_METHODS with v4/ prefix
   );
 });
 
-test("M2-3 v4 session params schemas keep verbatim parity with legacy", () => {
-  // 同一输入两侧 parse 结果 deep-equal（strict 形状一致；v4 未新增/删减字段的面全量 parity）。
-  const pairs = [
+test("M2-3 v4 session params schemas are strict and shape-preserving", () => {
+  // M4 后 legacy barrel 已删，原「v4/legacy 两侧 parity」的对象不复存在。这里改为：
+  // ① v4 自身 parse 形态不变（strict，无隐式补值/丢键）；
+  // ② 仍存在的中立叶（session-projection 的 acodeSessionListParamsSchema）与 v4 逐字 parity
+  //    ——该叶是 M4 后 sessions/list params 的承重家园，漂移仍须红。
+  const v4Only = [
+    [v4SessionReadwrite.v4SessionReadParamsSchema, { sessionId: "s1" }],
     [
-      legacy.acodeSessionReadParamsSchema,
-      v4SessionReadwrite.v4SessionReadParamsSchema,
-      { sessionId: "s1" },
-    ],
-    [
-      legacy.acodeSessionReadParamsSchema,
       v4SessionReadwrite.v4SessionReadParamsSchema,
       { sessionId: "s1", deliveryKind: "desktop-continuous", messageLimit: 50, afterSeq: 3 },
     ],
+    [v4SessionReadwrite.v4SessionResumeParamsSchema, { sessionId: "s1" }],
     [
-      legacy.acodeSessionResumeParamsSchema,
-      v4SessionReadwrite.v4SessionResumeParamsSchema,
-      { sessionId: "s1" },
-    ],
-    [
-      legacy.acodeSessionResumeParamsSchema,
       v4SessionReadwrite.v4SessionResumeParamsSchema,
       {
         sessionId: "s1",
@@ -1250,36 +1174,34 @@ test("M2-3 v4 session params schemas keep verbatim parity with legacy", () => {
       },
     ],
     [
-      legacy.acodeSessionListParamsSchema,
-      v4SessionReadwrite.v4SessionsListParamsSchema,
-      { workspace: { workspacePath: "/w", workspaceKey: "wk" }, limit: 10 },
-    ],
-    [
-      legacy.acodeSessionListParamsSchema,
-      v4SessionReadwrite.v4SessionsListParamsSchema,
-      { sessionIds: ["a", "b"], includeArchived: true },
-    ],
-    [
-      legacy.acodeSessionMessagesParamsSchema,
       v4SessionReadwrite.v4SessionMessagesParamsSchema,
       { sessionId: "s1", afterMessageId: "m1", limit: 20 },
     ],
+    [v4SessionReadwrite.v4SessionEventsParamsSchema, { sessionId: "s1", afterSeq: 2, limit: 100 }],
     [
-      legacy.acodeSessionEventsParamsSchema,
-      v4SessionReadwrite.v4SessionEventsParamsSchema,
-      { sessionId: "s1", afterSeq: 2, limit: 100 },
-    ],
-    [
-      legacy.acodeSessionSubscribeParamsSchema,
       v4SessionReadwrite.v4SessionSubscribeParamsSchema,
-      { sessionId: "s1", deliveryKind: "web-remote-replayable", afterSeq: 1, includeSnapshot: true },
+      {
+        sessionId: "s1",
+        deliveryKind: "web-remote-replayable",
+        afterSeq: 1,
+        includeSnapshot: true,
+      },
     ],
   ];
-  for (const [legacySchema, v4Schema, input] of pairs) {
+  for (const [v4Schema, input] of v4Only) {
+    assert.deepEqual(v4Schema.parse(input), input, `params parse 必须形态不变：${JSON.stringify(input)}`);
+  }
+
+  // sessions/list params：v4 与中立 session-projection 叶逐字 parity。
+  const listParity = [
+    { workspace: { workspacePath: "/w", workspaceKey: "wk" }, limit: 10 },
+    { sessionIds: ["a", "b"], includeArchived: true },
+  ];
+  for (const input of listParity) {
     assert.deepEqual(
-      v4Schema.parse(input),
-      legacySchema.parse(input),
-      `v4/legacy params parse 必须逐字一致：${JSON.stringify(input)}`,
+      v4SessionReadwrite.v4SessionsListParamsSchema.parse(input),
+      sessionProjection.acodeSessionListParamsSchema.parse(input),
+      `sessions/list params 必须与 session-projection 叶逐字一致：${JSON.stringify(input)}`,
     );
   }
   // strict：未知键两侧都必须拒绝。
@@ -1303,10 +1225,10 @@ test("M2-3 v4 session params schemas keep verbatim parity with legacy", () => {
   );
 });
 
-test("M2-3 v4 sessions/list result schema is the normalized legacy-types sessionInfo", () => {
-  // 注意同名歧义：barrel 的 acodeSessionInfoSchema 是 opencode Session.Info 形状，
-  // v4 wire 用的是 legacy-types 的规范化 sessionInfo（sessionId/workspace/sessionKind/
-  // mode/status/createdAt/updatedAt）——与 M2-2 session-control 同一条约。
+test("M2-3 v4 sessions/list result schema is the normalized session-types sessionInfo", () => {
+  // 注意同名歧义：历史 barrel 的 acodeSessionInfoSchema 是 opencode Session.Info 形状，
+  // v4 wire 用的是 session-types 中立叶的规范化 sessionInfo（sessionId/workspace/
+  // sessionKind/mode/status/createdAt/updatedAt）——与 M2-2 session-control 同一条约。
   const sessionInfo = {
     sessionId: "s1",
     workspace: { workspacePath: "/w", workspaceKey: "wk" },
@@ -1317,22 +1239,22 @@ test("M2-3 v4 sessions/list result schema is the normalized legacy-types session
     createdAt: 1,
     updatedAt: 2,
   };
-  const normalized = legacyTypes.acodeSessionInfoSchema.parse(sessionInfo);
+  const normalized = sessionTypes.acodeSessionInfoSchema.parse(sessionInfo);
   assert.deepEqual(
     v4SessionReadwrite.v4SessionsListResultSchema.parse({ sessions: [sessionInfo] }),
     { sessions: [normalized] },
-    "sessions/list 结果面必须是 legacy-types 规范化 sessionInfo 数组",
+    "sessions/list 结果面必须是 session-types 规范化 sessionInfo 数组",
   );
   // messages 刻意无 v4 result schema：op 直通 raw opencode MessageWithParts（info.id
-  // 词汇），legacy services 对 barrel acodeSessionMessagesResultSchema 仅是孤儿 import
+  // 词汇），legacy services 对旧 barrel acodeSessionMessagesResultSchema 仅是孤儿 import
   // 从不校验——迁移 parity 即「不校验」。normalized 词汇只在 session/read snapshot 的
   // mapMessageWithParts 路径（spec §6 登记）。
   assert.equal(v4SessionReadwrite.v4SessionMessagesResultSchema, undefined);
   // read/resume/events/subscribe 的 result schema 刻意不自立：事件词汇 26 变体与
-  // snapshot 闭合不复制，services 侧继续用 legacy barrel result schema 校验（wire 形态
-  // 逐字一致，居所 consolidation 归 M4，spec §2.6）。
+  // snapshot 闭合不复制，services 侧继续用中立 session-events 叶的 result schema 校验
+  // （wire 形态逐字一致；居所 consolidation 已在 M4 完成，spec §2.6）。
   assert.equal(v4SessionReadwrite.v4SessionSubscribeResultSchema, undefined);
-  assert.equal(typeof legacy.acodeSessionSubscribeResultSchema.parse, "function");
+  assert.equal(typeof sessionEvents.acodeSessionSubscribeResultSchema.parse, "function");
 });
 
 test("M2-3 v4 createSession payload carries the nine additive parity fields, all optional", () => {
@@ -1446,8 +1368,9 @@ test("M2-3 session-readwrite schema leaf has no reverse import into the legacy p
 });
 
 // ── M2-4 inbound 交互面（specs/m2-4-inbound-interaction.md）──
-// 纪律：六反向请求 + 两通知只换方法名/通知名，不换载荷——故这里逐字钉住 v4 wire 形态
-// 与 legacy barrel 的 parity（同一份合法/非法载荷两侧判定一致），以及 transport 登记的字面值。
+// 纪律：六反向请求 + 两通知只换方法名/通知名，不换载荷。M4 删除 legacy barrel 后，
+// 「两侧 parity」不再可测；改为逐字钉住 v4 wire 形态本身（合法载荷 parse 形态不变、
+// strict 拒未知键、值域 fail-closed），以及 transport 登记的字面值。
 
 test("M2-4 transport registers six inbound request methods with v4/interaction prefix", () => {
   assert.equal(v4Transport.V4_METHODS.interactionRequestPermission, "v4/interaction/requestPermission");
@@ -1477,7 +1400,7 @@ test("M2-4 announce+ack result schema is the empty strict object", () => {
   assert.equal(v4Inbound.v4InteractionRequestAckSchema.safeParse({ echoed: 1 }).success, false);
 });
 
-test("M2-4 permission request params wire shape is verbatim parity with legacy", () => {
+test("M2-4 permission request params wire shape is strict and shape-preserving", () => {
   const params = {
     requestId: "req-1",
     sessionId: "sess-1",
@@ -1498,8 +1421,8 @@ test("M2-4 permission request params wire shape is verbatim parity with legacy",
   };
   assert.deepEqual(
     v4Inbound.v4InteractionRequestPermissionParamsSchema.parse(params),
-    legacy.acodePermissionRequestParamsSchema.parse(params),
-    "合法载荷两侧判定与产物逐字一致",
+    params,
+    "合法载荷 parse 必须形态不变",
   );
   // strict：未知键拒绝（与 legacy 同纪律）。
   assert.equal(
@@ -1519,7 +1442,7 @@ test("M2-4 permission request params wire shape is verbatim parity with legacy",
   );
 });
 
-test("M2-4 userInput request params and response are verbatim parity with legacy", () => {
+test("M2-4 userInput request params and response are strict and shape-preserving", () => {
   const params = {
     requestId: "req-2",
     sessionId: "sess-2",
@@ -1535,18 +1458,20 @@ test("M2-4 userInput request params and response are verbatim parity with legacy
   };
   assert.deepEqual(
     v4Inbound.v4InteractionRequestUserInputParamsSchema.parse(params),
-    legacy.acodeUserInputRequestParamsSchema.parse(params),
+    params,
+    "params parse 必须形态不变",
   );
   const response = { action: "accept", content: { answer: "a" } };
   assert.deepEqual(
     v4Inbound.v4UserInputResponseSchema.parse(response),
-    legacy.acodeUserInputResponseSchema.parse(response),
+    response,
+    "response parse 必须形态不变",
   );
   // action 值域钉住。
   assert.equal(v4Inbound.v4UserInputResponseSchema.safeParse({ action: "bogus" }).success, false);
 });
 
-test("M2-4 providerRuntimeHeaders params/cancelled/response are verbatim parity with legacy", () => {
+test("M2-4 providerRuntimeHeaders params/cancelled/response are strict and shape-preserving", () => {
   const params = {
     requestId: "req-3",
     sessionId: "sess-3",
@@ -1557,22 +1482,26 @@ test("M2-4 providerRuntimeHeaders params/cancelled/response are verbatim parity 
   };
   assert.deepEqual(
     v4Inbound.v4InteractionRequestProviderRuntimeHeadersParamsSchema.parse(params),
-    legacy.acodeProviderRuntimeHeadersRequestParamsSchema.parse(params),
+    params,
+    "params parse 必须形态不变",
   );
   const cancelled = { requestId: "req-3", sessionId: "sess-3", workspace: { workspacePath: "/w", workspaceKey: "w-key" } };
   assert.deepEqual(
     v4Inbound.v4ProviderRuntimeHeadersCancelledSchema.parse(cancelled),
-    legacy.acodeProviderRuntimeHeadersCancelledSchema.parse(cancelled),
+    cancelled,
+    "cancelled 通知 parse 必须形态不变",
   );
   const ok = { headersApplied: true, requestAuth: { apiKey: "sk-x" } };
   const fail = { headersApplied: false, errorMessage: "no auth" };
   assert.deepEqual(
     v4Inbound.v4ProviderRuntimeHeadersResponseSchema.parse(ok),
-    legacy.acodeProviderRuntimeHeadersResponseSchema.parse(ok),
+    ok,
+    "ok 臂 parse 必须形态不变",
   );
   assert.deepEqual(
     v4Inbound.v4ProviderRuntimeHeadersResponseSchema.parse(fail),
-    legacy.acodeProviderRuntimeHeadersResponseSchema.parse(fail),
+    fail,
+    "fail 臂 parse 必须形态不变",
   );
   // reason 值域钉住。
   assert.equal(
@@ -1582,7 +1511,7 @@ test("M2-4 providerRuntimeHeaders params/cancelled/response are verbatim parity 
   );
 });
 
-test("M2-4 officialMcp params/response are verbatim parity with legacy; failure reasons enumerable", () => {
+test("M2-4 officialMcp params/response are strict; failure reasons enumerable", () => {
   const params = {
     requestId: "req-4",
     workspace: { workspacePath: "/w", workspaceKey: "w-key" },
@@ -1592,17 +1521,20 @@ test("M2-4 officialMcp params/response are verbatim parity with legacy; failure 
   };
   assert.deepEqual(
     v4Inbound.v4InteractionRequestOfficialMcpAuthHeadersParamsSchema.parse(params),
-    legacy.acodeOfficialMcpAuthHeadersRequestParamsSchema.parse(params),
+    params,
+    "params parse 必须形态不变",
   );
   const okResp = { ok: true, headers: { Authorization: "Bearer x" } };
   const failResp = { ok: false, reason: "official_auth_unavailable" };
   assert.deepEqual(
     v4Inbound.v4OfficialMcpAuthHeadersResponseSchema.parse(okResp),
-    legacy.acodeOfficialMcpAuthHeadersResponseSchema.parse(okResp),
+    okResp,
+    "ok 臂 parse 必须形态不变",
   );
   assert.deepEqual(
     v4Inbound.v4OfficialMcpAuthHeadersResponseSchema.parse(failResp),
-    legacy.acodeOfficialMcpAuthHeadersResponseSchema.parse(failResp),
+    failResp,
+    "fail 臂 parse 必须形态不变",
   );
   // 失败原因必须落在可枚举集合内（自由文本拒绝）。
   assert.equal(
@@ -1617,7 +1549,7 @@ test("M2-4 officialMcp params/response are verbatim parity with legacy; failure 
   );
 });
 
-test("M2-4 browserList/browserExecute params parity with legacy; results re-export the neutral leaves", () => {
+test("M2-4 browserList/browserExecute params are strict and shape-preserving", () => {
   const listParams = {
     requestId: "req-5",
     sessionId: "sess-5",
@@ -1628,7 +1560,8 @@ test("M2-4 browserList/browserExecute params parity with legacy; results re-expo
   };
   assert.deepEqual(
     v4Inbound.v4InteractionBrowserListParamsSchema.parse(listParams),
-    legacy.acodeBrowserListParamsSchema.parse(listParams),
+    listParams,
+    "browserList params parse 必须形态不变",
   );
   const executeParams = {
     requestId: "req-6",
@@ -1637,14 +1570,22 @@ test("M2-4 browserList/browserExecute params parity with legacy; results re-expo
   };
   assert.deepEqual(
     v4Inbound.v4InteractionBrowserExecuteParamsSchema.parse(executeParams),
-    legacy.acodeBrowserExecuteParamsSchema.parse(executeParams),
+    executeParams,
+    "browserExecute params parse 必须形态不变",
   );
-  // result 面直接重导出中立叶（同一 schema 实例）。
-  assert.equal(v4Inbound.v4InteractionBrowserListResultSchema, legacy.acodeBrowserListResultSchema);
-  assert.equal(v4Inbound.v4InteractionBrowserExecuteResultSchema, legacy.acodeBrowserExecuteResultSchema);
+  // strict：未知键拒绝。
+  assert.equal(
+    v4Inbound.v4InteractionBrowserListParamsSchema.safeParse({ ...listParams, bogus: 1 }).success,
+    false,
+  );
+  assert.equal(
+    v4Inbound.v4InteractionBrowserExecuteParamsSchema.safeParse({ ...executeParams, bogus: 1 })
+      .success,
+    false,
+  );
 });
 
-test("M2-4 CUA operation event discriminated union is point-equivalent to legacy (fail-closed)", () => {
+test("M2-4 CUA operation event discriminated union is shape-preserving (fail-closed)", () => {
   const base = { eventId: "e1", sequenceNumber: 1, sessionId: "sess-c", timestamp: 1735000000000 };
   for (const variant of [
     { ...base, kind: "turn-started", turnId: "t1" },
@@ -1656,20 +1597,16 @@ test("M2-4 CUA operation event discriminated union is point-equivalent to legacy
   ]) {
     assert.deepEqual(
       v4Inbound.v4CuaOperationEventSchema.parse(variant),
-      legacy.acodeComputerUseOperationEventSchema.parse(variant),
-      `kind=${variant.kind} 逐点等价`,
+      variant,
+      `kind=${variant.kind} parse 必须形态不变`,
     );
   }
-  // fail-closed：未知 kind / 缺字段两侧都拒绝。
+  // fail-closed：未知 kind / 缺字段都拒绝。
   assert.equal(v4Inbound.v4CuaOperationEventSchema.safeParse({ ...base, kind: "bogus" }).success, false);
   assert.equal(
     v4Inbound.v4CuaOperationEventSchema.safeParse({ ...base, kind: "turn-started" }).success,
     false,
     "turn-started 必须带 turnId",
-  );
-  assert.equal(
-    legacy.acodeComputerUseOperationEventSchema.safeParse({ ...base, kind: "turn-started" }).success,
-    false,
   );
 });
 
@@ -1711,10 +1648,9 @@ test("M2-7 v4 automation/offPeak method names land in V4_METHODS with v4/ prefix
   );
 });
 
-test("M2-7 automation params parity with legacy barrel (refines included)", () => {
+test("M2-7 automation params are strict; refines preserved", () => {
   const automationParamsPairs = [
     [
-      legacy.acodeAutomationCreateParamsSchema,
       v4AutomationOffPeak.v4AutomationCreateParamsSchema,
       {
         title: "nightly",
@@ -1725,7 +1661,6 @@ test("M2-7 automation params parity with legacy barrel (refines included)", () =
       },
     ],
     [
-      legacy.acodeAutomationCreateParamsSchema,
       v4AutomationOffPeak.v4AutomationCreateParamsSchema,
       {
         cronExpr: "0 * * * *",
@@ -1736,39 +1671,30 @@ test("M2-7 automation params parity with legacy barrel (refines included)", () =
       },
     ],
     [
-      legacy.acodeAutomationUpdateParamsSchema,
       v4AutomationOffPeak.v4AutomationUpdateParamsSchema,
       { automationId: "auto-1", title: "renamed", recurring: true },
     ],
     [
-      legacy.acodeAutomationUpdateParamsSchema,
       v4AutomationOffPeak.v4AutomationUpdateParamsSchema,
       { automationId: "auto-1", maxRuns: null, recurring: true },
     ],
     [
-      legacy.acodeAutomationCheckTaskBindingParamsSchema,
       v4AutomationOffPeak.v4AutomationCheckTaskBindingParamsSchema,
       { targetTaskId: "task-1" },
     ],
     [
-      legacy.acodeAutomationDeleteParamsSchema,
       v4AutomationOffPeak.v4AutomationDeleteParamsSchema,
       { automationId: "auto-1" },
     ],
   ];
-  for (const [legacySchema, v4Schema, payload] of automationParamsPairs) {
-    const legacyParsed = legacySchema.safeParse(payload);
+  for (const [v4Schema, payload] of automationParamsPairs) {
     const v4Parsed = v4Schema.safeParse(payload);
-    assert.equal(legacyParsed.success, true, `legacy 必须接受合法 params：${JSON.stringify(payload)}`);
     assert.equal(v4Parsed.success, true, `v4 必须接受合法 params：${JSON.stringify(payload)}`);
-    assert.deepEqual(v4Parsed.data, legacyParsed.data, "v4/legacy params parse 产出必须逐字一致");
     assert.equal(v4Schema.safeParse({ ...payload, unexpectedM27Probe: true }).success, false);
-    assert.equal(legacySchema.safeParse({ ...payload, unexpectedM27Probe: true }).success, false);
   }
 
   // create refine 逐字等价：intervalUnit/interval 必须配对。
   for (const schema of [
-    legacy.acodeAutomationCreateParamsSchema,
     v4AutomationOffPeak.v4AutomationCreateParamsSchema,
   ]) {
     const base = { cronExpr: "0 * * * *", prompt: "p" };
@@ -1792,7 +1718,6 @@ test("M2-7 automation params parity with legacy barrel (refines included)", () =
 
   // update refine 逐字等价：至少一个可改字段。
   for (const schema of [
-    legacy.acodeAutomationUpdateParamsSchema,
     v4AutomationOffPeak.v4AutomationUpdateParamsSchema,
   ]) {
     assert.equal(schema.safeParse({ automationId: "auto-1" }).success, false);
@@ -1811,7 +1736,6 @@ test("M2-7 automation params parity with legacy barrel (refines included)", () =
 
   // list params：两侧都是空对象严格面。
   for (const schema of [
-    legacy.acodeAutomationListParamsSchema,
     v4AutomationOffPeak.v4AutomationListParamsSchema,
   ]) {
     assert.deepEqual(schema.parse({}), {});
@@ -1842,42 +1766,32 @@ test("M2-7 automation/offPeak result parity (full object incl. scheduleRule; off
   };
   const resultPairs = [
     [
-      legacy.acodeAutomationCreateResultSchema,
       v4AutomationOffPeak.v4AutomationCreateResultSchema,
       { automation },
     ],
     [
-      legacy.acodeAutomationUpdateResultSchema,
       v4AutomationOffPeak.v4AutomationUpdateResultSchema,
       { automation: { ...automation, title: "renamed", scheduleRule: undefined } },
     ],
     [
-      legacy.acodeAutomationListResultSchema,
       v4AutomationOffPeak.v4AutomationListResultSchema,
       { automations: [automation] },
     ],
-    [
-      legacy.acodeAutomationCheckTaskBindingResultSchema,
-      v4AutomationOffPeak.v4AutomationCheckTaskBindingResultSchema,
+    [v4AutomationOffPeak.v4AutomationCheckTaskBindingResultSchema,
       { bound: true },
     ],
     [
-      legacy.acodeAutomationDeleteResultSchema,
       v4AutomationOffPeak.v4AutomationDeleteResultSchema,
       { deleted: false },
     ],
   ];
-  for (const [legacySchema, v4Schema, payload] of resultPairs) {
-    const legacyParsed = legacySchema.safeParse(payload);
+  for (const [v4Schema, payload] of resultPairs) {
     const v4Parsed = v4Schema.safeParse(payload);
-    assert.equal(legacyParsed.success, true, `legacy 必须接受合法 result：${JSON.stringify(payload)}`);
     assert.equal(v4Parsed.success, true, `v4 必须接受合法 result：${JSON.stringify(payload)}`);
-    assert.deepEqual(v4Parsed.data, legacyParsed.data, "v4/legacy result parse 产出必须逐字一致");
     assert.equal(v4Schema.safeParse({ ...payload, unexpectedM27Probe: true }).success, false);
-    assert.equal(legacySchema.safeParse({ ...payload, unexpectedM27Probe: true }).success, false);
   }
 
-  // offPeak 判别联合两臂逐字等价。
+  // offPeak 判别联合两臂：合法载荷必须被接受（M4 后不再与 legacy 对拍，改为 v4 自身断言）。
   const offPeakPairs = [
     {
       ok: true,
@@ -1904,18 +1818,16 @@ test("M2-7 automation/offPeak result parity (full object incl. scheduleRule; off
     },
   ];
   for (const payload of offPeakPairs) {
-    const legacyParsed = legacy.acodeOffPeakCreateResultSchema.safeParse(payload);
     const v4Parsed = v4AutomationOffPeak.v4OffPeakCreateResultSchema.safeParse(payload);
-    assert.equal(legacyParsed.success, true, `legacy 必须接受合法 offPeak result：${JSON.stringify(payload)}`);
     assert.equal(v4Parsed.success, true, `v4 必须接受合法 offPeak result：${JSON.stringify(payload)}`);
-    assert.deepEqual(v4Parsed.data, legacyParsed.data, "offPeak 判别联合 parse 产出必须逐字一致");
   }
 
   // offPeak create params 与 list 面。
   const offPeakCreate = { title: "夜间批跑", prompt: "跑全量回归", permissionMode: "dontAsk", model: "glm-4.6" };
   assert.deepEqual(
     v4AutomationOffPeak.v4OffPeakCreateParamsSchema.parse(offPeakCreate),
-    legacy.acodeOffPeakCreateParamsSchema.parse(offPeakCreate),
+    offPeakCreate,
+    "offPeak create params parse 必须形态不变",
   );
   assert.equal(
     v4AutomationOffPeak.v4OffPeakCreateParamsSchema.safeParse({ ...offPeakCreate, permissionMode: "auto" }).success,
@@ -1924,7 +1836,8 @@ test("M2-7 automation/offPeak result parity (full object incl. scheduleRule; off
   );
   assert.deepEqual(
     v4AutomationOffPeak.v4OffPeakListParamsSchema.parse({}),
-    legacy.acodeOffPeakListParamsSchema.parse({}),
+    {},
+    "offPeak list params 是空严格对象",
   );
   const offPeakListResult = {
     tasks: [
@@ -1933,7 +1846,8 @@ test("M2-7 automation/offPeak result parity (full object incl. scheduleRule; off
   };
   assert.deepEqual(
     v4AutomationOffPeak.v4OffPeakListResultSchema.parse(offPeakListResult),
-    legacy.acodeOffPeakListResultSchema.parse(offPeakListResult),
+    offPeakListResult,
+    "offPeak list result parse 必须形态不变",
   );
 });
 
@@ -1947,4 +1861,92 @@ test("M2-7 automation-offpeak schema leaf has no reverse import into the legacy 
     /acode-protocol\/index(?:\.js|\.ts)?/,
     "automation-offpeak.ts 不得反向 import legacy barrel",
   );
+});
+
+// ── M4a：legacy barrel 终态（spec apps/acode-cli/specs/m4-shared-barrel-removal.md §0）──
+// barrel 与 legacy-types 已整删；承重面收编为一组有意命名的中立模块，幸存/偏斜 wire 词
+// 收敛到两个最小登记模块。以下用例把「删除」与「收编」两个方向都钉住，防回流。
+
+test("M4a: legacy protocol barrel and legacy-types are gone", () => {
+  assert.equal(existsSync(new URL("../src/acode-protocol/index.ts", import.meta.url)), false);
+  assert.equal(existsSync(new URL("../src/acode-protocol", import.meta.url)), false);
+  assert.equal(existsSync(new URL("../src/acode-protocol-legacy-types.ts", import.meta.url)), false);
+});
+
+test("M4a: root entry no longer re-exports the barrel; survivors/skew exposed directly", async () => {
+  const root = await readFile(new URL("../src/index.ts", import.meta.url), "utf8");
+  assert.doesNotMatch(root, /acode-protocol\/index\.js/);
+  assert.doesNotMatch(root, /acode-protocol-legacy-types\.js/);
+  assert.match(root, /export \* from "\.\/acode-protocol-legacy-survivors\.js";/);
+  assert.match(root, /export \* from "\.\/acode-protocol-legacy-skew\.js";/);
+  assert.match(root, /export \* from "\.\/acode-protocol-envelope\.js";/);
+});
+
+test("M4a: survivor and skew modules exist and carry their registration header", async () => {
+  for (const [file, marker] of [
+    ["../src/acode-protocol-legacy-survivors.ts", /M3 幸存三词的最小登记模块/],
+    ["../src/acode-protocol-legacy-skew.ts", /M3 遗留偏斜面/],
+  ]) {
+    const source = await readFile(new URL(file, import.meta.url), "utf8");
+    assert.match(source, marker, `${file} 头部必须保留登记裁决依据`);
+  }
+  // 幸存三词只许出现在 survivor 模块的登记表里（wire 字面量收敛到唯一登记点）。
+  const survivors = await import("../src/acode-protocol-legacy-survivors.ts");
+  assert.deepEqual(survivors.LEGACY_SURVIVOR_METHODS, {
+    sessionSubagents: "session/subagents",
+    sessionSend: "session/send",
+    pluginsCancelOperation: "plugins/cancelOperation",
+  });
+});
+
+test("M4a: v4 surface contains no survivor or legacy notification wire word", async () => {
+  const survivors = await import("../src/acode-protocol-legacy-survivors.ts");
+  const skew = await import("../src/acode-protocol-legacy-skew.ts");
+  const v4MethodValues = new Set(Object.values(v4Transport.V4_METHODS));
+  const v4NotificationValues = new Set(Object.values(v4Transport.V4_NOTIFICATIONS));
+  for (const word of Object.values(survivors.LEGACY_SURVIVOR_METHODS)) {
+    assert.equal(v4MethodValues.has(word), false, `v4 方法面不得出现幸存词 ${word}`);
+    assert.equal(v4NotificationValues.has(word), false, `v4 通知面不得出现幸存词 ${word}`);
+  }
+  for (const word of Object.values(skew.LEGACY_NOTIFICATIONS)) {
+    assert.equal(v4NotificationValues.has(word), false, `v4 通知面不得出现 legacy 通知词 ${word}`);
+  }
+  // 偏斜回落词在 v4 已有 v4/ 前缀等价物：legacy 字面量只许作为回落备选，不得进 v4 表。
+  for (const word of Object.values(skew.LEGACY_SKEW_FALLBACK_METHODS)) {
+    assert.equal(v4MethodValues.has(word), false, `v4 方法面不得出现偏斜回落词 ${word}`);
+  }
+});
+
+test("M4a: envelope module carries the version-agnostic JSON-RPC wire family", async () => {
+  // 裁决 E：NDJSON 信封是永久 wire 载体面（非 legacy 债务），迁入有意命名的中立模块。
+  const envelope = await import("../src/acode-protocol-envelope.ts");
+  for (const name of [
+    "acodeProtocolRequestSchema",
+    "acodeProtocolNotificationSchema",
+    "acodeProtocolResponseSchema",
+    "acodeProtocolErrorSchema",
+    "acodeProtocolMessageSchema",
+  ]) {
+    assert.equal(typeof envelope[name]?.safeParse, "function", `envelope 必须导出 ${name}`);
+  }
+  assert.equal(envelope.ACODE_PROTOCOL_NAME, "ACode Protocol");
+  assert.equal(envelope.ACODE_PROTOCOL_VERSION, 1);
+});
+
+test("M4a: no source file imports the deleted barrel path", async () => {
+  const offenders = [];
+  const walk = async (dir) => {
+    for (const entry of await readdir(dir, { withFileTypes: true })) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name === "node_modules" || entry.name === "dist") continue;
+        await walk(full);
+      } else if (/\.(ts|tsx|mjs|cjs|js)$/.test(entry.name)) {
+        const source = await readFile(full, "utf8");
+        if (/from\s+"[^"]*acode-protocol\/index(?:\.js)?"/.test(source)) offenders.push(full);
+      }
+    }
+  };
+  await walk(fileURLToPath(new URL("../src", import.meta.url)));
+  assert.deepEqual(offenders, [], `仍有文件 import 已删除的 legacy barrel：${offenders.join(", ")}`);
 });

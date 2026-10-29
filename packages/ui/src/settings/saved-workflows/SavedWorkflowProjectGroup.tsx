@@ -1,13 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Plus } from "lucide-react";
-import {
-  TID_WORKFLOWS_CREATE_VIA_CHAT,
-  TID_WORKFLOWS_LIST,
-  TID_WORKFLOW_PROJECT_GROUP,
-  resolveWorkspaceKey,
-  testId,
-  type ACodeSavedWorkflowEntry,
-} from "@acode/shared";
+import { TID_WORKFLOWS_CREATE_VIA_CHAT, TID_WORKFLOWS_LIST, TID_WORKFLOW_PROJECT_GROUP, resolveWorkspaceKey, testId } from "@acode/shared";
+import { type V4SavedWorkflowEntry } from "@acode/shared/acode-protocol-v4";
 import { Button } from "@/components/ui/button.js";
 import { toast } from "@/components/ui/toast.js";
 import { useACodeIntl } from "@/i18n/IntlProvider.js";
@@ -111,7 +105,7 @@ export function SavedWorkflowProjectGroup({
 
   const state = useSavedWorkflowStore((store) => selectSavedWorkflowState(store, target));
   const load = useSavedWorkflowStore((store) => store.load);
-  const [launchEntry, setLaunchEntry] = useState<ACodeSavedWorkflowEntry | null>(null);
+  const [launchEntry, setLaunchEntry] = useState<V4SavedWorkflowEntry | null>(null);
   const [busyName, setBusyName] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
 
@@ -159,7 +153,7 @@ export function SavedWorkflowProjectGroup({
   });
 
   const launch = useCallback(
-    async (entry: ACodeSavedWorkflowEntry, args: Record<string, unknown>) => {
+    async (entry: V4SavedWorkflowEntry, args: Record<string, unknown>) => {
       const result = await launcher.launch(launchTarget, {
         name: entry.name,
         scope: "project",
@@ -174,7 +168,7 @@ export function SavedWorkflowProjectGroup({
     [launchTarget, launcher],
   );
   const handleRun = useCallback(
-    (entry: ACodeSavedWorkflowEntry) => {
+    (entry: V4SavedWorkflowEntry) => {
       if (entry.args && Object.keys(entry.args).length > 0) {
         launcher.clearError();
         setLaunchEntry(entry);
@@ -190,7 +184,7 @@ export function SavedWorkflowProjectGroup({
     [intl, launch, launcher],
   );
   const handleRevise = useCallback(
-    (entry: ACodeSavedWorkflowEntry) => {
+    (entry: V4SavedWorkflowEntry) => {
       onCreateViaChat?.(
         buildSavedWorkflowRevisePrompt({ name: entry.name, path: entry.path, locale }),
         projectTarget,
@@ -199,7 +193,7 @@ export function SavedWorkflowProjectGroup({
     [locale, onCreateViaChat, projectTarget],
   );
   const handleCopyPath = useCallback(
-    (entry: ACodeSavedWorkflowEntry) => {
+    (entry: V4SavedWorkflowEntry) => {
       void navigator.clipboard
         ?.writeText(entry.path)
         .then(() => toast(intl.formatMessage({ id: "workflows.hub.copied" })))
@@ -212,7 +206,7 @@ export function SavedWorkflowProjectGroup({
     [intl],
   );
   const handleDelete = useCallback(
-    async (entry: ACodeSavedWorkflowEntry) => {
+    async (entry: V4SavedWorkflowEntry) => {
       const confirmed = await requestConfirmation({
         title: intl.formatMessage({ id: "workflows.hub.delete.title" }, { name: entry.name }),
         description: intl.formatMessage(
@@ -252,7 +246,7 @@ export function SavedWorkflowProjectGroup({
     [agentService, intl, mode, onBack, refresh, requestConfirmation, target],
   );
   const handleCardDelete = useCallback(
-    (entry: ACodeSavedWorkflowEntry) => void handleDelete(entry),
+    (entry: V4SavedWorkflowEntry) => void handleDelete(entry),
     [handleDelete],
   );
   // 「提升为全局」：不搬文件——在本项目开新会话、
@@ -261,7 +255,7 @@ export function SavedWorkflowProjectGroup({
   const isLocalProject = !project.remoteSessionId;
   const promoter = useSavedWorkflowPromote({ agentService, onNavigate: onNavigateToLaunchedRun });
   const handlePromote = useCallback(
-    async (entry: ACodeSavedWorkflowEntry) => {
+    async (entry: V4SavedWorkflowEntry) => {
       setBusyName(entry.name);
       try {
         const result = await promoter.promote(launchTarget, {
@@ -284,11 +278,11 @@ export function SavedWorkflowProjectGroup({
     [intl, launchTarget, locale, promoter],
   );
   const handleCardPromote = useCallback(
-    (entry: ACodeSavedWorkflowEntry) => void handlePromote(entry),
+    (entry: V4SavedWorkflowEntry) => void handlePromote(entry),
     [handlePromote],
   );
   const handleOpen = useCallback(
-    (entry: ACodeSavedWorkflowEntry) => onOpenDetail(entry.name),
+    (entry: V4SavedWorkflowEntry) => onOpenDetail(entry.name),
     [onOpenDetail],
   );
   // 两个「打开」的门与实参构造与全局档共用（见该 hook 的注释：产物不需要 toolCallId）。

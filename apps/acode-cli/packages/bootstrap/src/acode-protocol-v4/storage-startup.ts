@@ -3,9 +3,9 @@ import { SqliteSessionStore, type SqliteMigrationProgress } from "@acode/adapter
 import {
   classifyDatabaseStartupError,
   databaseStartupErrorDetails,
-  acodeProtocolNotifications,
   acodeStorageStartupStateSchema,
   type ACodeStorageStartupState,
+  LEGACY_NOTIFICATIONS,
 } from "@acode/shared";
 
 export async function openProtocolStartupStorage(options: {
@@ -31,7 +31,7 @@ export async function openProtocolStartupStorage(options: {
     // 不能先写入 JS 缓冲后立即阻塞执行 SQL；等待 Writable 确认控制帧已交给传输层。
     await new Promise<void>((resolve, reject) => {
       options.output.write(
-        `${JSON.stringify({ method: acodeProtocolNotifications.storageStartup, params })}\n`,
+        `${JSON.stringify({ method: LEGACY_NOTIFICATIONS.storageStartup, params })}\n`,
         (error?: Error | null) => (error ? reject(error) : resolve()),
       );
     });

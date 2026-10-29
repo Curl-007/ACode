@@ -13,108 +13,9 @@ import type {
   ProviderDiagnosticsRequest,
   ProviderDiagnosticsResult,
 } from "@acode/shared";
-import type {
-  ACodeStorageStartupState,
-  ACodeDeliveryKind,
-  ACodeAgentMcpServer,
-  ACodeBackgroundTurnAttribution,
-  TraceId,
-  ACodeSessionCompactResult,
-  ACodeSessionGoalAction,
-  ACodeSessionGoalResult,
-  ACodeMessageWithParts,
-  ModelSelection,
-  ACodeSessionImportHistory,
-  ACodePermissionRequestParams,
-  AgentLaneResourceSample,
-  ACodeMcpTelemetryEvent,
-  ACodeMcpResourceSample,
-  ACodeToolExecResource,
-  ACodeProcessChildProcess,
-  ACodeMcpListResult,
-  ACodePluginsListResult,
-  ACodePluginsOverviewResult,
-  ACodePluginsMarketplaceMutationResult,
-  ACodePluginsInstallResult,
-  ACodePluginsReferenceCatalogResult,
-  ACodeSkillsReferenceCatalogResult,
-  ACodeWorkflowsDeleteResult,
-  ACodeWorkflowsGetResult,
-  ACodeWorkflowsListResult,
-  ACodeWorkflowsMoveResult,
-  ACodeWorkflowsRunsResult,
-  ACodeWorkflowsUpdateMetaResult,
-  ACodePluginsUninstallResult,
-  ACodePluginsRestoreBuiltinResult,
-  ACodePluginsConfigureResult,
-  ACodePluginsDescribeResult,
-  ACodePluginsValidateResult,
-  ACodePluginsSetEnabledResult,
-  ACodePluginsCancelOperationResult,
-  ACodePluginOperationProgressNotification,
-  ACodeProviderTestModelConnectivityParams,
-  ACodeProviderTestModelConnectivityResult,
-  ACodeUserInputRequestParams,
-  ACodeUserInputResponse,
-  ACodeSessionEvent,
-  ACodeSessionInfo,
-  ACodeSessionMode,
-  ACodeSessionPersistence,
-  ACodeSessionSendResult,
-  ACodeSessionRequestRuntimePreferencesParams,
-  ACodeSessionRuntimePreferencesResult,
-  ACodeSessionStateSnapshot,
-  ACodeSessionSubagentsResult,
-  ACodeStateUpdatedNotification,
-  ACodeTaskClientMode,
-  ACodeBrowserAmbientContext,
-  ACodeWorkspacePresentation,
-  ACodeWorkspaceGenerateTextResult,
-  ACodeWorkspaceGenerateTextParams,
-  ACodeWorkspaceHookTrustGrantResult,
-  ACodeAutomationBotDeliveryTarget,
-} from "@acode/shared";
-import type {
-  ClientHello,
-  CommandAck,
-  CommandEnvelope,
-  CommandKey,
-  CommandsQueryResult,
-  ConversationTopicWireCandidate,
-  ConversationTelemetryFact,
-  CuaPermissionObservation,
-  ConversationRowTarget,
-  HelloMessage,
-  SessionsIndexTopicWireCandidate,
-  V4AttachmentBeginResult,
-  V4AttachmentChunkResult,
-  V4AttachmentCommitResult,
-  V4AttachmentPreviewSourceResult,
-  V4AttachmentReadResult,
-  V4ConversationAttachmentReadResult,
-  V4ConversationAttachmentStatResult,
-  V4ConnectionFlowState,
-  V4ConversationFileChangesResult,
-  V4ConversationFileRewindPreviewResult,
-  V4ConversationPlansResult,
-  V4ConversationWorkflowRunEventsResult,
-  V4ConversationWorkflowRunArtifactDataResult,
-  V4ConversationWorkflowRunArtifactReadResult,
-  V4ConversationVisualizationReadResult,
-  V4ConversationWorkflowRunArtifactsResult,
-  V4ConversationWorkflowRunNodeResultResult,
-  V4ConversationWorkflowRunWorkspaceResult,
-  V4ConversationWorkflowRunsResult,
-  V4ConversationRowsRangeResult,
-  V4ConversationResyncResult,
-  V4ConversationSubscribeResult,
-  V4NetworkCaptureRecordsNotification,
-  V4OvernightCompletionNotification,
-  V4SessionsIndexSubscribeResult,
-  V4SessionHeaderMetaResult,
-  V4WorkspaceConfigSubscribeResult,
-  WorkspaceConfigTopicWireCandidate,
-} from "@acode/shared/acode-protocol-v4";
+import type { ACodeStorageStartupState, ACodeDeliveryKind, ACodeAgentMcpServer, ACodeBackgroundTurnAttribution, TraceId, ACodeSessionCompactResult, ACodeSessionGoalAction, ACodeSessionGoalResult, ACodeMessageWithParts, ModelSelection, ACodeSessionImportHistory, AgentLaneResourceSample, ACodeMcpTelemetryEvent, ACodeMcpResourceSample, ACodeToolExecResource, ACodePluginsCancelOperationResult, ACodePluginOperationProgressNotification, ACodeSessionEvent, ACodeSessionInfo, ACodeSessionMode, ACodeSessionSendResult, ACodeSessionRequestRuntimePreferencesParams, ACodeSessionRuntimePreferencesResult, ACodeSessionStateSnapshot, ACodeSessionSubagentsResult, ACodeStateUpdatedNotification, ACodeTaskClientMode, ACodeBrowserAmbientContext, ACodeAutomationBotDeliveryTarget } from "@acode/shared";
+import { type V4InteractionRequestPermissionParams, type V4ProcessChildProcess, type V4McpListResult, type V4PluginsListResult, type V4PluginsOverviewResult, type V4PluginsMarketplaceMutationResult, type V4PluginsInstallResult, type V4PluginsReferenceCatalogResult, type V4SkillsReferenceCatalogResult, type V4WorkflowsDeleteResult, type V4WorkflowsGetResult, type V4WorkflowsListResult, type V4WorkflowsMoveResult, type V4WorkflowsRunsResult, type V4WorkflowsUpdateMetaResult, type V4PluginsUninstallResult, type V4PluginsRestoreBuiltinResult, type V4PluginsConfigureResult, type V4PluginsDescribeResult, type V4PluginsValidateResult, type V4PluginsSetEnabledResult, type V4ProviderTestModelConnectivityParams, type V4ProviderTestModelConnectivityResult, type V4InteractionRequestUserInputParams, type V4UserInputResponse, type V4SessionPersistence, type V4WorkspacePresentation, type V4WorkspaceGenerateTextResult, type V4WorkspaceGenerateTextParams, type V4WorkspaceHookTrustGrantResult, type ClientHello, type CommandAck, type CommandEnvelope, type CommandKey, type CommandsQueryResult, type ConversationTopicWireCandidate, type ConversationTelemetryFact, type CuaPermissionObservation, type ConversationRowTarget, type HelloMessage, type SessionsIndexTopicWireCandidate, type V4AttachmentBeginResult, type V4AttachmentChunkResult, type V4AttachmentCommitResult, type V4AttachmentPreviewSourceResult, type V4AttachmentReadResult, type V4ConversationAttachmentReadResult, type V4ConversationAttachmentStatResult, type V4ConnectionFlowState, type V4ConversationFileChangesResult, type V4ConversationFileRewindPreviewResult, type V4ConversationPlansResult, type V4ConversationWorkflowRunEventsResult, type V4ConversationWorkflowRunArtifactDataResult, type V4ConversationWorkflowRunArtifactReadResult, type V4ConversationVisualizationReadResult, type V4ConversationWorkflowRunArtifactsResult, type V4ConversationWorkflowRunNodeResultResult, type V4ConversationWorkflowRunWorkspaceResult, type V4ConversationWorkflowRunsResult, type V4ConversationRowsRangeResult, type V4ConversationResyncResult, type V4ConversationSubscribeResult, type V4NetworkCaptureRecordsNotification, type V4OvernightCompletionNotification, type V4SessionsIndexSubscribeResult, type V4SessionHeaderMetaResult, type V4WorkspaceConfigSubscribeResult, type WorkspaceConfigTopicWireCandidate } from "@acode/shared/acode-protocol-v4";
+
 import { createServiceDescriptor } from "../descriptors.js";
 
 export * from "./acodeAgentPluginParams.js";
@@ -232,7 +133,7 @@ export interface ACodeAgentCreateSessionParams extends ACodeAgentWorkspaceTarget
   parentSessionId?: string;
   mode?: ACodeSessionMode;
   model?: ModelSelection;
-  persistence?: ACodeSessionPersistence;
+  persistence?: V4SessionPersistence;
   thoughtLevel?: string;
   /** automation 执行会话关闭模型二次命名，保持首条用户 query 作为稳定标题。 */
   titleGenerationEnabled?: boolean;
@@ -342,10 +243,10 @@ export interface ACodeAgentSetModeParams extends ACodeAgentSessionTarget {
 }
 
 export interface ACodeAgentGenerateWorkspaceTextParams extends ACodeAgentWorkspaceTarget {
-  selection: ACodeWorkspaceGenerateTextParams["selection"];
+  selection: V4WorkspaceGenerateTextParams["selection"];
   prompt?: string;
-  messages?: ACodeWorkspaceGenerateTextParams["messages"];
-  tools?: ACodeWorkspaceGenerateTextParams["tools"];
+  messages?: V4WorkspaceGenerateTextParams["messages"];
+  tools?: V4WorkspaceGenerateTextParams["tools"];
   querySource: string;
   maxOutputTokens?: number;
   signal?: AbortSignal;
@@ -369,7 +270,7 @@ export interface ACodeAgentCancelWorkspaceGenerateTextParams extends ACodeAgentW
 }
 
 export interface ACodeAgentTestModelConnectivityParams extends ACodeAgentWorkspaceTarget {
-  selection: ACodeProviderTestModelConnectivityParams["selection"];
+  selection: V4ProviderTestModelConnectivityParams["selection"];
   signal?: AbortSignal;
 }
 
@@ -608,12 +509,12 @@ export interface ACodeAgentWorkspaceConfigSubscribeParams extends ACodeAgentWork
 export type ACodeAgentServiceEvent =
   | { type: "session.event"; event: ACodeSessionEvent }
   | { type: "state.updated"; notification: ACodeStateUpdatedNotification }
-  | { type: "permission.request"; request: ACodePermissionRequestParams }
-  | { type: "userInput.request"; request: ACodeUserInputRequestParams }
+  | { type: "permission.request"; request: V4InteractionRequestPermissionParams }
+  | { type: "userInput.request"; request: V4InteractionRequestUserInputParams }
   | {
       type: "userInput.response";
       requestId: string;
-      response: ACodeUserInputResponse;
+      response: V4UserInputResponse;
     }
   | { type: "snapshot"; snapshot: ACodeSessionStateSnapshot };
 
@@ -627,7 +528,7 @@ export interface ACodeAgentLocalRuntimeChildProcesses {
   provider: string;
   workspacePath: string;
   lane?: string;
-  children: ACodeProcessChildProcess[];
+  children: V4ProcessChildProcess[];
 }
 
 export interface ACodeAgentStorageStartupSnapshot {
@@ -675,48 +576,48 @@ export interface IACodeAgentService {
   readSessionEvents(params: ACodeAgentReadSessionEventsParams): Promise<ACodeSessionEvent[]>;
   readWorkspacePresentation(
     params: ACodeAgentReadWorkspacePresentationParams,
-  ): Promise<ACodeWorkspacePresentation>;
+  ): Promise<V4WorkspacePresentation>;
   /** 无 task/session 的 Settings 预信任；Agent 会重新发现并校验 canonical snapshot。 */
   grantWorkspaceHookTrust(
     params: ACodeAgentGrantWorkspaceHookTrustParams,
-  ): Promise<ACodeWorkspaceHookTrustGrantResult>;
-  listMcpServerStatuses(params: ACodeAgentListMcpServerStatusesParams): Promise<ACodeMcpListResult>;
-  listPlugins(params: ACodeAgentPluginViewParams): Promise<ACodePluginsListResult>;
+  ): Promise<V4WorkspaceHookTrustGrantResult>;
+  listMcpServerStatuses(params: ACodeAgentListMcpServerStatusesParams): Promise<V4McpListResult>;
+  listPlugins(params: ACodeAgentPluginViewParams): Promise<V4PluginsListResult>;
   /**
    * Plugin 对话引用 catalog：session-scoped 只读投影。
    * 走 workspace 级 agent client（session 记录只存在于该进程），不走独立插件管理进程。
    */
   getPluginReferenceCatalog(
     params: ACodeAgentPluginReferenceCatalogParams,
-  ): Promise<ACodePluginsReferenceCatalogResult>;
+  ): Promise<V4PluginsReferenceCatalogResult>;
   /** Composer Skill 引用 catalog；带 sessionId 时读取该 runtime 的冻结快照。 */
   getSkillReferenceCatalog(
     params: ACodeAgentSkillReferenceCatalogParams,
-  ): Promise<ACodeSkillsReferenceCatalogResult>;
+  ): Promise<V4SkillsReferenceCatalogResult>;
   // 已保存工作流的 GUI 中枢：workspace 级、无会话，每次调用现扫 `<cwd>/.acode/workflows/`。
   // 全局档传 `scope: "global"`：带 workspace 就用它当载体，不带则由 services 层自选本机载体运行时。
-  listSavedWorkflows(params: ACodeAgentListSavedWorkflowsParams): Promise<ACodeWorkflowsListResult>;
-  getSavedWorkflow(params: ACodeAgentGetSavedWorkflowParams): Promise<ACodeWorkflowsGetResult>;
+  listSavedWorkflows(params: ACodeAgentListSavedWorkflowsParams): Promise<V4WorkflowsListResult>;
+  getSavedWorkflow(params: ACodeAgentGetSavedWorkflowParams): Promise<V4WorkflowsGetResult>;
   updateSavedWorkflowMeta(
     params: ACodeAgentUpdateSavedWorkflowMetaParams,
-  ): Promise<ACodeWorkflowsUpdateMetaResult>;
+  ): Promise<V4WorkflowsUpdateMetaResult>;
   deleteSavedWorkflow(
     params: ACodeAgentDeleteSavedWorkflowParams,
-  ): Promise<ACodeWorkflowsDeleteResult>;
+  ): Promise<V4WorkflowsDeleteResult>;
   listSavedWorkflowRuns(
     params: ACodeAgentListSavedWorkflowRunsParams,
-  ): Promise<ACodeWorkflowsRunsResult>;
+  ): Promise<V4WorkflowsRunsResult>;
   // 在项目档 / 全局档之间移动同名文件：
   // `workspace` 是载体（移到项目传目标项目、移到全局传源项目），`to` 是落点档；不覆盖已存在的目标。
-  moveSavedWorkflow(params: ACodeAgentMoveSavedWorkflowParams): Promise<ACodeWorkflowsMoveResult>;
+  moveSavedWorkflow(params: ACodeAgentMoveSavedWorkflowParams): Promise<V4WorkflowsMoveResult>;
   resolveSuggestedPluginReference(
     params: ACodeAgentResolveSuggestedPluginReferenceParams,
-  ): Promise<import("@acode/shared").ACodePluginsResolveSuggestedReferenceResult>;
+  ): Promise<import("@acode/shared/acode-protocol-v4").V4PluginsResolveSuggestedReferenceResult>;
   /** 推荐项 Plugin 首次本地检查缺失后的 operation-scoped 刷新进度。 */
   onDynamicPluginOperationProgress(
     operationId: string,
   ): Event<ACodePluginOperationProgressNotification>;
-  getPluginsOverview(params: ACodeAgentPluginViewParams): Promise<ACodePluginsOverviewResult>;
+  getPluginsOverview(params: ACodeAgentPluginViewParams): Promise<V4PluginsOverviewResult>;
   /**
    * 资源管理器：枚举本 Host 内全部本地 Agent 进程（含 plugin / mcp-status 泳道），
    * 并向每个存活 runtime 请求 `process/childProcesses`；单个 runtime 失败只让它的 children 为空。
@@ -726,29 +627,29 @@ export interface IACodeAgentService {
   ): Promise<ACodeAgentLocalRuntimeChildProcesses[]>;
   addPluginMarketplace(
     params: ACodeAgentAddPluginMarketplaceParams,
-  ): Promise<ACodePluginsMarketplaceMutationResult>;
+  ): Promise<V4PluginsMarketplaceMutationResult>;
   removePluginMarketplace(
     params: ACodeAgentRemovePluginMarketplaceParams,
-  ): Promise<ACodePluginsMarketplaceMutationResult>;
+  ): Promise<V4PluginsMarketplaceMutationResult>;
   updatePluginMarketplace(
     params: ACodeAgentUpdatePluginMarketplaceParams,
-  ): Promise<ACodePluginsMarketplaceMutationResult>;
-  installPlugin(params: ACodeAgentInstallPluginParams): Promise<ACodePluginsInstallResult>;
+  ): Promise<V4PluginsMarketplaceMutationResult>;
+  installPlugin(params: ACodeAgentInstallPluginParams): Promise<V4PluginsInstallResult>;
   cancelPluginOperation(
     params: ACodeAgentCancelPluginOperationParams,
   ): Promise<ACodePluginsCancelOperationResult>;
-  uninstallPlugin(params: ACodeAgentUninstallPluginParams): Promise<ACodePluginsUninstallResult>;
-  updatePlugin(params: ACodeAgentUpdatePluginParams): Promise<ACodePluginsInstallResult>;
+  uninstallPlugin(params: ACodeAgentUninstallPluginParams): Promise<V4PluginsUninstallResult>;
+  updatePlugin(params: ACodeAgentUpdatePluginParams): Promise<V4PluginsInstallResult>;
   restoreBuiltinPlugin(
     params: ACodeAgentRestoreBuiltinPluginParams,
-  ): Promise<ACodePluginsRestoreBuiltinResult>;
-  configurePlugin(params: ACodeAgentConfigurePluginParams): Promise<ACodePluginsConfigureResult>;
+  ): Promise<V4PluginsRestoreBuiltinResult>;
+  configurePlugin(params: ACodeAgentConfigurePluginParams): Promise<V4PluginsConfigureResult>;
   resetPluginConfig(
     params: ACodeAgentResetPluginConfigParams,
-  ): Promise<ACodePluginsConfigureResult>;
-  validatePlugin(params: ACodeAgentValidatePluginParams): Promise<ACodePluginsValidateResult>;
-  describePlugin(params: ACodeAgentDescribePluginParams): Promise<ACodePluginsDescribeResult>;
-  setPluginEnabled(params: ACodeAgentSetPluginEnabledParams): Promise<ACodePluginsSetEnabledResult>;
+  ): Promise<V4PluginsConfigureResult>;
+  validatePlugin(params: ACodeAgentValidatePluginParams): Promise<V4PluginsValidateResult>;
+  describePlugin(params: ACodeAgentDescribePluginParams): Promise<V4PluginsDescribeResult>;
+  setPluginEnabled(params: ACodeAgentSetPluginEnabledParams): Promise<V4PluginsSetEnabledResult>;
   // ---- 定时任务(automation)管理 ----
   listAutomations(params: ACodeAgentWorkspaceTarget): Promise<ACodeAutomation[]>;
   listAllAutomations(): Promise<ACodeAutomation[]>;
@@ -764,7 +665,7 @@ export interface IACodeAgentService {
   deleteAutomationRun(params: ACodeAgentDeleteAutomationRunParams): Promise<void>;
   generateWorkspaceText(
     params: ACodeAgentGenerateWorkspaceTextParams,
-  ): Promise<ACodeWorkspaceGenerateTextResult>;
+  ): Promise<V4WorkspaceGenerateTextResult>;
   /**
    * best-effort 取消在飞的 workspace 单发生成（跨 RPC 边界的 signal 替代面）；
    * 通知失败不抛，返回 cancelled:false——调用方语义=丢弃回包，由代际守卫兜底。
@@ -774,7 +675,7 @@ export interface IACodeAgentService {
   ): Promise<{ cancelled: boolean; operationId: string }>;
   testModelConnectivity(
     params: ACodeAgentTestModelConnectivityParams,
-  ): Promise<ACodeProviderTestModelConnectivityResult>;
+  ): Promise<V4ProviderTestModelConnectivityResult>;
   /**
    * U08 Provider 分档诊断（specs/provider-diagnostics.md）。执行体在 CLI 侧 adapters/doctor，
    * host 只做载体路由与 schema 校验。不要求 workspace（进程级 provider 事实）。

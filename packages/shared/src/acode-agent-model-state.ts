@@ -8,7 +8,8 @@
 // ACODE_AGENT_MODE_OPTIONS + acodeSessionSettingsToConfigOptions），2026-10-28 随 legacy M1
 // 收口删除——那份只有 4 档 mode（缺 dontAsk），与本文件的权威 5 档已漂移。本文件是单一事实源。
 import { formatModelPickerValue } from "./model-selection.js";
-import type { ACodeSessionMode, ACodeSessionSettingsState } from "./acode-protocol/index.js";
+import type { ACodeSessionSettingsState } from "./acode-session-projection.js";
+import type { ACodeSessionMode } from "./acode-session-types.js";
 import type { ACodeConfigOption, ACodeTaskModeInfo, ACodeProvider } from "./acode-task-types-core.js";
 const MODEL_CONFIG_ID = "model";
 const MODEL_CONFIG_CATEGORY = "model";

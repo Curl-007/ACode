@@ -11,7 +11,8 @@
  */
 import { Fragment } from "react";
 import { Loader2, MoreHorizontal, RefreshCw, RotateCcw, Trash2 } from "lucide-react";
-import type { ACodePluginInfo, ACodePluginScope } from "@acode/shared";
+
+import { type V4PluginInfo, type V4PluginScope } from "@acode/shared/acode-protocol-v4";
 import { Button } from "@/components/ui/button.js";
 import {
   DropdownMenu,
@@ -35,10 +36,10 @@ import {
 } from "@/settings/pluginStoreListing.js";
 
 export interface PluginListRowsProps {
-  items: ACodePluginInfo[];
+  items: V4PluginInfo[];
   storeItemById: ReadonlyMap<string, StorePluginItem>;
   actions: PluginStoreActions;
-  configScope: ACodePluginScope;
+  configScope: V4PluginScope;
   operationId: string | null;
   togglingPluginId: string | null;
   locale: string;

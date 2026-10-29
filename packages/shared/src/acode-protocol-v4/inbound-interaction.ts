@@ -16,11 +16,8 @@
 // v4CuaOperationEventSchema 与 legacy discriminatedUnion("kind") 六变体逐点等价（保守默认，
 // 零功能变化）；strict parse 失败丢弃 + warn 的宿主纪律在 services 分支执行，不在 schema 面。
 import { z } from "zod";
-import {
-  acodeInteractionRequestOriginSchema,
-  acodePermissionResponseSchema,
-  acodeWorkspaceRefSchema,
-} from "../acode-protocol-legacy-types.js";
+import { acodeInteractionRequestOriginSchema, acodePermissionResponseSchema } from "../acode-interaction-types.js";
+import { acodeWorkspaceRefSchema } from "../acode-session-types.js";
 import { acodeProviderAccountAccessSchema } from "../account-access-types.js";
 import { browserBackendListResultSchema, browserSessionContextKindSchema } from "../browser-use/backend.js";
 import { browserClientModeSchema, browserCommandSchema } from "../browser-use/commands.js";
@@ -53,7 +50,7 @@ export const v4PermissionOptionSchema = z
   .strict();
 export type V4PermissionOption = z.infer<typeof v4PermissionOptionSchema>;
 
-// parity legacy acodePermissionRequestParamsSchema（:2204）。
+// parity legacy v4InteractionRequestPermissionParamsSchema（:2204）。
 export const v4InteractionRequestPermissionParamsSchema = z
   .object({
     requestId: nonEmptyString,
@@ -94,7 +91,7 @@ export const v4UserInputQuestionSchema = z
   .strict();
 export type V4UserInputQuestion = z.infer<typeof v4UserInputQuestionSchema>;
 
-// parity legacy acodeUserInputRequestParamsSchema（:2281）。
+// parity legacy v4InteractionRequestUserInputParamsSchema（:2281）。
 export const v4InteractionRequestUserInputParamsSchema = z
   .object({
     requestId: nonEmptyString,
@@ -113,7 +110,7 @@ export type V4InteractionRequestUserInputParams = z.infer<
   typeof v4InteractionRequestUserInputParamsSchema
 >;
 
-// parity legacy acodeUserInputResponseSchema（:2297）。v4 announce 路径不用它收口（应答走
+// parity legacy v4UserInputResponseSchema（:2297）。v4 announce 路径不用它收口（应答走
 // resolveInteraction），-32601 回落的 legacy 反向 RPC 仍按它校验。
 export const v4UserInputResponseSchema = z
   .object({
@@ -131,7 +128,7 @@ export type V4ProviderRuntimeHeadersRequestReason = z.infer<
   typeof v4ProviderRuntimeHeadersRequestReasonSchema
 >;
 
-// parity legacy acodeProviderRuntimeHeadersRequestParamsSchema（:2308-2320）。
+// parity legacy v4InteractionRequestProviderRuntimeHeadersParamsSchema（:2308-2320）。
 export const v4InteractionRequestProviderRuntimeHeadersParamsSchema = z
   .object({
     requestId: nonEmptyString,
@@ -148,7 +145,7 @@ export type V4InteractionRequestProviderRuntimeHeadersParams = z.infer<
   typeof v4InteractionRequestProviderRuntimeHeadersParamsSchema
 >;
 
-// parity legacy acodeProviderRuntimeHeadersCancelledSchema（:2322-2328）。请求取消只作用于同
+// parity legacy v4ProviderRuntimeHeadersCancelledSchema（:2322-2328）。请求取消只作用于同
 // workspace/session 的这一轮凭据刷新；通知形态绑定其触发请求的形态（spec §2.3）。
 export const v4ProviderRuntimeHeadersCancelledSchema = z
   .object({
@@ -159,7 +156,7 @@ export const v4ProviderRuntimeHeadersCancelledSchema = z
   .strict();
 export type V4ProviderRuntimeHeadersCancelled = z.infer<typeof v4ProviderRuntimeHeadersCancelledSchema>;
 
-// parity legacy acodeProviderRuntimeHeadersResponseSchema（:2335-2358）：成功必须携带当前请求的
+// parity legacy v4ProviderRuntimeHeadersResponseSchema（:2335-2358）：成功必须携带当前请求的
 // 鉴权材料，不依赖旧 Registry 已被写入。
 export const v4ProviderRuntimeHeadersResponseSchema = z.discriminatedUnion("headersApplied", [
   z
@@ -186,7 +183,7 @@ export type V4ProviderRuntimeHeadersResponse = z.infer<typeof v4ProviderRuntimeH
 // ── interaction/requestOfficialMcpAuthHeaders（真 RPC）──
 // Agent 进程不是用户身份权威：把 (pluginId, mcpKey, targetOrigin) 报给 host，由 host 解析当前
 // Coding Plan 凭证并回传本次请求的身份头。请求侧不含任何秘密。
-// parity legacy acodeOfficialMcpAuthHeadersRequestParamsSchema（:2364-2371）。
+// parity legacy v4InteractionRequestOfficialMcpAuthHeadersParamsSchema（:2364-2371）。
 export const v4InteractionRequestOfficialMcpAuthHeadersParamsSchema = z
   .object({
     requestId: nonEmptyString,
@@ -205,7 +202,7 @@ export type V4InteractionRequestOfficialMcpAuthHeadersParams = z.infer<
 export const v4OfficialMcpAuthFailureReasonSchema = z.enum(OFFICIAL_MCP_AUTH_PORT_FAILURE_REASONS);
 export type V4OfficialMcpAuthFailureReason = z.infer<typeof v4OfficialMcpAuthFailureReasonSchema>;
 
-// parity legacy acodeOfficialMcpAuthHeadersResponseSchema（:2391-2402）。
+// parity legacy v4OfficialMcpAuthHeadersResponseSchema（:2391-2402）。
 export const v4OfficialMcpAuthHeadersResponseSchema = z.discriminatedUnion("ok", [
   z
     .object({
@@ -223,7 +220,7 @@ export const v4OfficialMcpAuthHeadersResponseSchema = z.discriminatedUnion("ok",
 export type V4OfficialMcpAuthHeadersResponse = z.infer<typeof v4OfficialMcpAuthHeadersResponseSchema>;
 
 // ── interaction/browserList / interaction/browserExecute（真 RPC）──
-// parity legacy acodeBrowserListParamsSchema（:2221-2234）。Agent 请求 app 枚举当前
+// parity legacy v4InteractionBrowserListParamsSchema（:2221-2234）。Agent 请求 app 枚举当前
 // workspace/session 可达且已完成握手的 browser backend。
 export const v4InteractionBrowserListParamsSchema = z
   .object({
@@ -244,7 +241,7 @@ export type V4InteractionBrowserListParams = z.infer<typeof v4InteractionBrowser
 export const v4InteractionBrowserListResultSchema = browserBackendListResultSchema;
 export type V4InteractionBrowserListResult = z.infer<typeof v4InteractionBrowserListResultSchema>;
 
-// parity legacy acodeBrowserExecuteParamsSchema（:2240-2258）：Agent 把一条 browser-use 命令
+// parity legacy v4InteractionBrowserExecuteParamsSchema（:2240-2258）：Agent 把一条 browser-use 命令
 // 发送给 app 执行。workspace 三字段在 host 侧回退连接 workspace（既有 spread 缺省）。
 export const v4InteractionBrowserExecuteParamsSchema = z
   .object({

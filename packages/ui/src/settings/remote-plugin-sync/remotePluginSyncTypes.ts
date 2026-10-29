@@ -7,12 +7,8 @@
  * RemotePluginSyncStoppedError 这个 Error 子类与 REMOTE_PLUGIN_SYNC_CONFIG_SCOPE 常量），
  * 拆到本文件不改变任何行为；函数实现全部留在 remotePluginSyncModel.ts。
  */
-import type {
-  ACodePluginOptionValue,
-  ACodePluginUserConfigOption,
-  PluginSyncCandidate,
-  PluginSyncImportResult,
-} from "@acode/shared";
+import type { PluginSyncCandidate, PluginSyncImportResult } from "@acode/shared";
+import { type V4PluginOptionValue, type V4PluginUserConfigOption } from "@acode/shared/acode-protocol-v4";
 import type { IACodeAgentService } from "@acode/services";
 
 export type RemotePluginSyncDialogStep =
@@ -25,8 +21,8 @@ export type RemotePluginSyncDialogStep =
 export type RemotePluginSyncKind = "inline" | "marketplace";
 
 export interface RemotePluginSyncPluginOptions {
-  configuredOptions: Record<string, ACodePluginOptionValue>;
-  userConfig: Record<string, ACodePluginUserConfigOption>;
+  configuredOptions: Record<string, V4PluginOptionValue>;
+  userConfig: Record<string, V4PluginUserConfigOption>;
 }
 
 export type RemotePluginSyncAgentService = Pick<

@@ -1,5 +1,6 @@
 import type { IPluginManagementService } from "@acode/services";
-import type { ACodePluginScope } from "@acode/shared";
+
+import { type V4PluginScope } from "@acode/shared/acode-protocol-v4";
 import { logger } from "@/logger.js";
 import type { PluginManagementState } from "@/store/pluginManagementStore.js";
 
@@ -74,7 +75,7 @@ export async function loadInto(
   params: {
     workspacePath: string;
     workspaceIdentity: string | null;
-    configScope: ACodePluginScope | null;
+    configScope: V4PluginScope | null;
     pluginService: IPluginManagementService;
   },
 ): Promise<void> {
@@ -106,7 +107,7 @@ async function runLoadInto(
   params: {
     workspacePath: string;
     workspaceIdentity: string | null;
-    configScope: ACodePluginScope | null;
+    configScope: V4PluginScope | null;
     workspaceKey: string;
     pluginService: IPluginManagementService;
   },

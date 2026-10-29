@@ -13,7 +13,8 @@
  * ./usePluginOptionDrafts.js；调用点占据原 drafts useState 的顺序槽位，hook 顺序不变。
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { ACodePluginScope } from "@acode/shared";
+
+import { type V4PluginScope } from "@acode/shared/acode-protocol-v4";
 import { toast } from "@/components/ui/toast.js";
 import {
   useBaseWorkspaceServices,
@@ -59,7 +60,7 @@ export function usePluginListController({
   onVisibleCountChange,
 }: {
   target: WorkspaceTabState | null;
-  configScope: ACodePluginScope;
+  configScope: V4PluginScope;
   searchQuery: string;
   isDesktop: boolean;
   isMacDesktop: boolean;

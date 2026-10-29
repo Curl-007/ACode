@@ -170,7 +170,7 @@ export type {
   ACodeSessionListParams,
   ACodeSessionMessagesParams,
   ACodeSessionReadParams,
-  ACodeSessionResumeParams,
+  V4SessionResumeParams,
   ACodeSessionServiceEvent,
   ACodeSessionSetModeParams,
   ACodeSessionSetModelParams,

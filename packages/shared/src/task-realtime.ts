@@ -17,7 +17,7 @@ import type {
   TaskStreamMirrorStreamEventOp,
   TaskStreamMirrorOp,
 } from "./acode-task-types-core.js";
-import type { ACodePermissionResponse } from "./acode-protocol-legacy-types.js";
+import type { ACodePermissionResponse } from "./acode-interaction-types.js";
 import type { WorkspaceHookReviewDecision } from "./acode-protocol-v4/workspace-hook-review.js";
 
 export interface TaskRealtimeEnvelope {

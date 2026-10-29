@@ -16,11 +16,7 @@ import {
   networkCaptureRecordSchema,
 } from "./acode-protocol-v4/network-capture.js";
 import { overnightCompletionOutcomeSchema } from "./acode-protocol-v4/overnight-completion.js";
-import {
-  acodeMcpResourceSamplesSchema,
-  acodeToolExecResourceSchema,
-  acodeProcessResourceSampleSchema,
-} from "./acode-protocol/index.js";
+import { acodeMcpResourceSamplesSchema, acodeToolExecResourceSchema, acodeProcessResourceSampleSchema } from "./acode-agent-notifications.js";
 import { acodeTaskModeSchema } from "./acode-task-mode-schema.js";
 import { errorAttributionSchema } from "./acode-protocol-v4/snapshot.js";
 import {

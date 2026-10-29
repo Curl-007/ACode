@@ -4,11 +4,8 @@
  * 错误形态/install 诊断格式化；互相引用密集，整组一起搬。副作用函数留在主文件；类型在
  * ./remotePluginSyncTypes.ts（re-export 于下方，消费方只需 import 本模块一个口）。
  */
-import type {
-  ACodePluginInfo, ACodePluginMarketplaceSummary, ACodePluginOptionValue,
-  ACodePluginUserConfigOption, ACodePluginsOverviewResult, PluginSyncCandidate,
-  PluginSyncRemoteStatus,
-} from "@acode/shared";
+import type { PluginSyncCandidate, PluginSyncRemoteStatus } from "@acode/shared";
+import { type V4PluginInfo, type V4PluginMarketplaceSummary, type V4PluginOptionValue, type V4PluginUserConfigOption, type V4PluginsOverviewResult } from "@acode/shared/acode-protocol-v4";
 import {
   RemotePluginSyncStoppedError,
   type RemotePluginSyncAgentService, type RemotePluginSyncCandidate,
@@ -126,8 +123,8 @@ export function shouldAllowRemotePluginSyncDialogOpenChange(
 }
 
 export function buildMarketplaceRemotePluginSyncCandidates(
-  overview: ACodePluginsOverviewResult,
-  plugins: readonly ACodePluginInfo[],
+  overview: V4PluginsOverviewResult,
+  plugins: readonly V4PluginInfo[],
 ): RemotePluginSyncCandidate[] {
   const pluginInfoById = new Map(plugins.map((plugin) => [plugin.id, plugin]));
   const marketplaceSourceById = new Map(
@@ -167,7 +164,7 @@ export function buildMarketplaceRemotePluginSyncCandidates(
 
 export function buildMarketplaceRemotePluginStatuses(
   candidates: readonly RemotePluginSyncCandidate[],
-  remoteOverview: ACodePluginsOverviewResult,
+  remoteOverview: V4PluginsOverviewResult,
 ): RemotePluginSyncCandidateStatus[] {
   const installedById = new Map(
     remoteOverview.installedPlugins.map((plugin) => [plugin.id, plugin]),
@@ -187,12 +184,12 @@ export function buildMarketplaceRemotePluginStatuses(
   });
 }
 
-export function componentTypesFromPluginInfo(plugin: ACodePluginInfo | undefined): string[] {
+export function componentTypesFromPluginInfo(plugin: V4PluginInfo | undefined): string[] {
   return plugin?.components?.map((component) => component.kind) ?? [];
 }
 
 export function buildRemotePluginSyncPluginOptions(
-  plugin: ACodePluginInfo | undefined,
+  plugin: V4PluginInfo | undefined,
 ): RemotePluginSyncPluginOptions | undefined {
   const configuredOptions = plugin?.configuredOptions ?? {};
   if (Object.keys(configuredOptions).length === 0) {
@@ -207,7 +204,7 @@ export function buildRemotePluginSyncPluginOptions(
 
 export function applyPluginInfoToRemoteSyncCandidate(
   candidate: RemotePluginSyncCandidate,
-  plugin: ACodePluginInfo | undefined,
+  plugin: V4PluginInfo | undefined,
 ): RemotePluginSyncCandidate {
   const pluginOptions = buildRemotePluginSyncPluginOptions(plugin);
   return pluginOptions ? { ...candidate, pluginOptions } : candidate;
@@ -215,7 +212,7 @@ export function applyPluginInfoToRemoteSyncCandidate(
 
 export function enrichRemotePluginSyncCandidatesWithPluginInfo(
   candidates: readonly RemotePluginSyncCandidate[],
-  plugins: readonly ACodePluginInfo[],
+  plugins: readonly V4PluginInfo[],
 ): RemotePluginSyncCandidate[] {
   const pluginInfoById = new Map(plugins.map((plugin) => [plugin.id, plugin]));
   return candidates.map((candidate) =>
@@ -243,7 +240,7 @@ export function summarizeLocalPluginOptionsForDisplay(
 }
 
 export function serializeMarketplaceSourceInput(
-  marketplace: ACodePluginMarketplaceSummary,
+  marketplace: V4PluginMarketplaceSummary,
 ): string | undefined {
   const source = marketplace.source;
   const sourceKind = typeof source.source === "string" ? source.source : "";
@@ -262,7 +259,7 @@ export function serializeMarketplaceSourceInput(
 }
 
 export function buildMarketplaceSourceSyncInfo(
-  marketplace: ACodePluginMarketplaceSummary,
+  marketplace: V4PluginMarketplaceSummary,
 ): Pick<
   NonNullable<RemotePluginSyncCandidate["marketplacePlugin"]>,
   "marketplaceSourceArchive" | "marketplaceSourceInput"
@@ -303,14 +300,14 @@ export function buildStoppedRemotePluginResult(row: RemotePluginSyncRow): Remote
   };
 }
 
-export function isPathPluginOption(option: ACodePluginUserConfigOption | undefined): boolean {
+export function isPathPluginOption(option: V4PluginUserConfigOption | undefined): boolean {
   return option?.type === "file" || option?.type === "directory";
 }
 
 export function isPortablePluginOptionValue(
-  value: ACodePluginOptionValue,
-  localOption: ACodePluginUserConfigOption | undefined,
-  remoteOption: ACodePluginUserConfigOption | undefined,
+  value: V4PluginOptionValue,
+  localOption: V4PluginUserConfigOption | undefined,
+  remoteOption: V4PluginUserConfigOption | undefined,
 ): boolean {
   if (!localOption || !remoteOption) {
     return false;
@@ -330,9 +327,9 @@ export function isPortablePluginOptionValue(
 
 export function buildPortablePluginOptionsSyncPlan(
   localOptions: RemotePluginSyncPluginOptions,
-  remotePlugin: ACodePluginInfo,
-): { options: Record<string, ACodePluginOptionValue>; skippedCount: number } {
-  const options: Record<string, ACodePluginOptionValue> = {};
+  remotePlugin: V4PluginInfo,
+): { options: Record<string, V4PluginOptionValue>; skippedCount: number } {
+  const options: Record<string, V4PluginOptionValue> = {};
   let skippedCount = 0;
   for (const [key, value] of Object.entries(localOptions.configuredOptions)) {
     if (
@@ -351,8 +348,8 @@ export function buildPortablePluginOptionsSyncPlan(
 }
 
 export function arePluginOptionsEqual(
-  left: Record<string, ACodePluginOptionValue>,
-  right: Record<string, ACodePluginOptionValue>,
+  left: Record<string, V4PluginOptionValue>,
+  right: Record<string, V4PluginOptionValue>,
 ): boolean {
   const leftEntries = Object.entries(left);
   if (leftEntries.length !== Object.keys(right).length) {

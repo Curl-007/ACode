@@ -1,16 +1,8 @@
 import { randomUUID } from "node:crypto";
-import {
-  acodeProtocolMethods,
-  acodeProtocolNotifications,
-  acodeProviderRuntimeHeadersResponseSchema,
-  type ACodeWorkspaceRef,
-} from "@acode/shared";
+import { type ACodeWorkspaceRef , LEGACY_SKEW_FALLBACK_METHODS, LEGACY_NOTIFICATIONS} from "@acode/shared";
+import { v4ProviderRuntimeHeadersResponseSchema, V4_METHODS, V4_NOTIFICATIONS } from "@acode/shared/acode-protocol-v4";
 // v4 面符号只挂在子路径（根桶不 re-export v4，M2-3 既有纪律）。
-import {
-  V4_METHODS,
-  V4_NOTIFICATIONS,
-  v4ProviderRuntimeHeadersResponseSchema,
-} from "@acode/shared/acode-protocol-v4";
+
 import type { ACodeAppOptions } from "../app/types.js";
 import {
   ProtocolRequestError,
@@ -72,9 +64,9 @@ export function createProviderRuntimeHeadersPort(
           // 偏斜期 legacy 保留路径（M3 删除）：wire 形态逐字同形，只换方法名。
           requestForm = "legacy";
           result = await context.requestClient(
-            acodeProtocolMethods.interactionRequestProviderRuntimeHeaders,
+            LEGACY_SKEW_FALLBACK_METHODS.interactionRequestProviderRuntimeHeaders,
             params,
-            acodeProviderRuntimeHeadersResponseSchema,
+            v4ProviderRuntimeHeadersResponseSchema,
             requestOptions,
           );
         }
@@ -91,7 +83,7 @@ export function createProviderRuntimeHeadersPort(
             method:
               requestForm === "v4"
                 ? V4_NOTIFICATIONS.interactionProviderRuntimeHeadersCancelled
-                : acodeProtocolNotifications.providerRuntimeHeadersCancelled,
+                : LEGACY_NOTIFICATIONS.providerRuntimeHeadersCancelled,
             trace: protocolTraceFromTraceContext(input.traceContext),
             params: cancelParams,
           });

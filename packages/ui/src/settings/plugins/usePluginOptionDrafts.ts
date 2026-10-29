@@ -8,11 +8,8 @@
  */
 import { useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
-import type {
-  ACodePluginInfo,
-  ACodePluginScope,
-  ACodePluginUserConfigOption,
-} from "@acode/shared";
+
+import { type V4PluginInfo, type V4PluginScope, type V4PluginUserConfigOption } from "@acode/shared/acode-protocol-v4";
 import type { IPluginManagementService } from "@acode/services";
 import {
   buildPluginConfigPatch,
@@ -28,11 +25,11 @@ export interface PluginOptionDraftsController {
   >;
   setPluginOptionDraft: (pluginId: string, key: string, value: string | number | boolean) => void;
   getPluginOptionValue: (
-    plugin: ACodePluginInfo,
+    plugin: V4PluginInfo,
     key: string,
-    option: ACodePluginUserConfigOption,
+    option: V4PluginUserConfigOption,
   ) => string | number | boolean;
-  savePluginOptions: (plugin: ACodePluginInfo) => Promise<void>;
+  savePluginOptions: (plugin: V4PluginInfo) => Promise<void>;
 }
 
 export function usePluginOptionDrafts({
@@ -40,7 +37,7 @@ export function usePluginOptionDrafts({
   configurePlugin,
   pluginManagementService,
 }: {
-  configScope: ACodePluginScope;
+  configScope: V4PluginScope;
   configurePlugin: PluginManagementState["configurePlugin"];
   pluginManagementService: IPluginManagementService;
 }): PluginOptionDraftsController {
@@ -58,9 +55,9 @@ export function usePluginOptionDrafts({
     }));
   };
   const getPluginOptionValue = (
-    plugin: ACodePluginInfo,
+    plugin: V4PluginInfo,
     key: string,
-    option: ACodePluginUserConfigOption,
+    option: V4PluginUserConfigOption,
   ): string | number | boolean => {
     const draft = pluginOptionsDrafts[plugin.id]?.[key];
     if (draft === null) return "";
@@ -71,7 +68,7 @@ export function usePluginOptionDrafts({
       (option.type === "boolean" ? false : "")
     );
   };
-  const savePluginOptions = async (plugin: ACodePluginInfo) => {
+  const savePluginOptions = async (plugin: V4PluginInfo) => {
     const { options, clearOptionKeys } = buildPluginConfigPatch(
       plugin,
       pluginOptionsDrafts[plugin.id] ?? {},

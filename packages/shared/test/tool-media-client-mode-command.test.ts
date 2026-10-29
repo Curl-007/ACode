@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { commandPayloadSchemas, parseCommandEnvelope } from "../src/acode-protocol-v4/index.js";
-import { acodeSessionCreateParamsSchema } from "../src/acode-protocol/index.js";
+import { acodeSessionCreateParamsSchema } from "../src/acode-session-projection.js";
 
 const createSession = commandPayloadSchemas.createSession;
 

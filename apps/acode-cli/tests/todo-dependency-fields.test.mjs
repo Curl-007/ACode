@@ -56,8 +56,10 @@ const { buildDelegatingWorkGroupSection } = await import(
 const { extractPlanStepsFromToolInput, extractPlanStepsFromToolOutput } = await import(
   "../../../packages/shared/src/tool-plan-adapter.ts"
 );
+// M4a：legacy barrel（acode-protocol/index.ts）已整删，acodeSessionTodoItemSchema 随承重面
+// 收编进中立 session-projection 叶（wire 形态逐字未变）。
 const { acodeSessionTodoItemSchema } = await import(
-  "../../../packages/shared/src/acode-protocol/index.ts"
+  "../../../packages/shared/src/acode-session-projection.ts"
 );
 
 // —— 构造器与假 store ——

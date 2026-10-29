@@ -4,7 +4,7 @@
 import { z } from "zod";
 // goal wire 形态复用 legacy-types 叶（M4 后唯一幸存面；符号已在 scripts/architecture/
 // protocol-boundary.mjs 白名单显式登记）。
-import { acodeSessionGoalSchema } from "../acode-protocol-legacy-types.js";
+import { acodeSessionGoalSchema } from "../acode-session-types.js";
 
 /**
  * goal 控制四命令（sendGoalCommand/pauseGoal/resumeGoal/clearGoal）原地执行后的结构化回执

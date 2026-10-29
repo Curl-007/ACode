@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { acodeWorkspaceRefSchema } from "../acode-protocol-legacy-types.js";
+import { acodeWorkspaceRefSchema } from "../acode-session-types.js";
 import {
   v4PluginComponentGroupSchema,
   v4PluginDiagnosticSchema,

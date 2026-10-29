@@ -10,12 +10,7 @@
 // workspaceRef）经 scripts/architecture/protocol-boundary.mjs 白名单 M2-3 显式登记。
 import { z } from "zod";
 import { acodeProtocolMcpServerSchema } from "../acode-protocol-shared.js";
-import {
-  acodeDeliveryKindSchema,
-  acodeSessionInfoSchema,
-  acodeSessionModeSchema,
-  acodeWorkspaceRefSchema,
-} from "../acode-protocol-legacy-types.js";
+import { acodeDeliveryKindSchema, acodeSessionInfoSchema, acodeSessionModeSchema, acodeWorkspaceRefSchema } from "../acode-session-types.js";
 import { modelSelectionSchema } from "../model-selection.js";
 import { integratedTerminalShellSelectionSchema } from "../validationAppSettings.js";
 
@@ -25,7 +20,7 @@ const timestampMsSchema = z.number().int().nonnegative();
 
 // ── params：六 query + 一推送（逐字 parity legacy barrel 对应 params schema）──
 
-// v4/session/read：parity legacy acodeSessionReadParamsSchema（deliveryKind 写入 record
+// v4/session/read：parity legacy v4SessionReadParamsSchema（deliveryKind 写入 record
 // 的副作用承载 legacy live 转发的投递画像，CLI op 直通保留）。
 export const v4SessionReadParamsSchema = z
   .object({
@@ -37,7 +32,7 @@ export const v4SessionReadParamsSchema = z
   .strict();
 export type V4SessionReadParams = z.infer<typeof v4SessionReadParamsSchema>;
 
-// v4/session/resume：parity legacy acodeSessionResumeParamsSchema（冷恢复重建 runtime 的
+// v4/session/resume：parity legacy v4SessionResumeParamsSchema（冷恢复重建 runtime 的
 // 工具面/灰度透传语义逐字保留）。
 export const v4SessionResumeParamsSchema = z
   .object({
@@ -65,7 +60,7 @@ export const v4SessionsListParamsSchema = z
   .strict();
 export type V4SessionsListParams = z.infer<typeof v4SessionsListParamsSchema>;
 
-// v4/session/messages：parity legacy acodeSessionMessagesParamsSchema
+// v4/session/messages：parity legacy v4SessionMessagesParamsSchema
 // （afterMessageId = 严格其后；limit = 尾部 N 条，语义由 CLI op 承载）。
 export const v4SessionMessagesParamsSchema = z
   .object({
@@ -76,7 +71,7 @@ export const v4SessionMessagesParamsSchema = z
   .strict();
 export type V4SessionMessagesParams = z.infer<typeof v4SessionMessagesParamsSchema>;
 
-// v4/session/events：parity legacy acodeSessionEventsParamsSchema（裁决：独立事件日志查询，
+// v4/session/events：parity legacy v4SessionEventsParamsSchema（裁决：独立事件日志查询，
 // 不并入 conversation frame）。
 export const v4SessionEventsParamsSchema = z
   .object({
@@ -87,7 +82,7 @@ export const v4SessionEventsParamsSchema = z
   .strict();
 export type V4SessionEventsParams = z.infer<typeof v4SessionEventsParamsSchema>;
 
-// v4/session/subscribe：parity legacy acodeSessionSubscribeParamsSchema
+// v4/session/subscribe：parity legacy v4SessionSubscribeParamsSchema
 // （换名承载 legacy 语义；eventSeq+events+snapshot 同一水位原子返回，spec §6.2）。
 export const v4SessionSubscribeParamsSchema = z
   .object({

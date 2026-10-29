@@ -1,5 +1,6 @@
 import type { IPluginManagementService } from "@acode/services";
-import type { ACodePluginScope } from "@acode/shared";
+
+import { type V4PluginScope } from "@acode/shared/acode-protocol-v4";
 import { logger } from "@/logger.js";
 import { loadInto } from "@/store/pluginManagementStoreLoading.js";
 import type { PluginManagementState } from "@/store/pluginManagementStore.js";
@@ -14,7 +15,7 @@ const activeToggleRequests = new Map<string, number>();
 function buildToggleRequestKey(input: {
   workspacePath: string;
   workspaceIdentity: string | null;
-  configScope: ACodePluginScope | null;
+  configScope: V4PluginScope | null;
   pluginId: string;
 }): string {
   const workspaceKey = input.workspaceIdentity?.trim() || input.workspacePath;
@@ -27,7 +28,7 @@ export async function setPluginEnabledOptimistically(
   pluginId: string,
   enabled: boolean,
   pluginService: IPluginManagementService,
-  scope: ACodePluginScope = "user",
+  scope: V4PluginScope = "user",
 ): Promise<boolean> {
   const { workspacePath, workspaceIdentity, configScope } = get();
   if (!workspacePath) return false;

@@ -14,7 +14,8 @@ import {
   TriangleAlert,
   WandSparkles,
 } from "lucide-react";
-import type { ACodePluginComponentKind, ACodePluginsDescribeResult } from "@acode/shared";
+
+import { type V4PluginComponentKind, type V4PluginsDescribeResult } from "@acode/shared/acode-protocol-v4";
 import { Button } from "@/components/ui/button.js";
 import { useACodeIntl } from "@/i18n/IntlProvider.js";
 import { useOptionalPlatform } from "@/hooks/usePlatform.js";
@@ -46,9 +47,9 @@ import type { PluginComponentDisplayGroup } from "@/settings/PluginComponentGrou
 import type { PluginDescribeEntry } from "@/store/pluginManagementStore.js";
 
 // 组件分区顺序与截图一致：MCP 服务器 → 技能 → 命令 → 子智能体 → Hooks。
-const SECTION_ORDER: ACodePluginComponentKind[] = ["mcp", "skill", "command", "agent", "hook"];
+const SECTION_ORDER: V4PluginComponentKind[] = ["mcp", "skill", "command", "agent", "hook"];
 
-const SECTION_TITLE_IDS: Record<ACodePluginComponentKind, string> = {
+const SECTION_TITLE_IDS: Record<V4PluginComponentKind, string> = {
   mcp: "settings.plugins.store.section.mcp",
   skill: "settings.plugins.store.section.skills",
   command: "settings.plugins.store.section.commands",
@@ -57,7 +58,7 @@ const SECTION_TITLE_IDS: Record<ACodePluginComponentKind, string> = {
 };
 
 // 与各资源设置列表共用同一图标语义，避免详情页用近似图标造成识别不一致。
-const SECTION_ICONS: Record<ACodePluginComponentKind, typeof Server> = {
+const SECTION_ICONS: Record<V4PluginComponentKind, typeof Server> = {
   mcp: Server,
   skill: WandSparkles,
   command: Terminal,
@@ -201,7 +202,7 @@ export function PluginStoreDetailView({
         />
       ) : null}
 
-      {/* 组件分区：已安装走权威枚举（ACodePluginInfo.components），候选走 plugins/describe 按需拉取。 */}
+      {/* 组件分区：已安装走权威枚举（V4PluginInfo.components），候选走 plugins/describe 按需拉取。 */}
       {componentsLoading ? (
         <div
           className="flex items-center gap-2 py-2 text-ui-base text-foreground-subtle"
@@ -365,7 +366,7 @@ function InfoSection({
   describeMetadata,
 }: {
   item: StorePluginItem;
-  describeMetadata: ACodePluginsDescribeResult["metadata"];
+  describeMetadata: V4PluginsDescribeResult["metadata"];
 }) {
   const { intl } = useACodeIntl();
   const platform = useOptionalPlatform();

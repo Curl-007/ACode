@@ -1,12 +1,6 @@
 import { useMemo } from "react";
-import {
-  sortPluginStoreEntries,
-  isPublicStoreMarketplaceId,
-  type PluginStoreModeOrder,
-  resolvePluginDisplayName,
-  resolveLocalizedText,
-  type ACodePluginReferenceCatalogEntry,
-} from "@acode/shared";
+import { sortPluginStoreEntries, isPublicStoreMarketplaceId, type PluginStoreModeOrder, resolvePluginDisplayName, resolveLocalizedText } from "@acode/shared";
+import { type V4PluginReferenceCatalogEntry } from "@acode/shared/acode-protocol-v4";
 import type { MentionCategoryResult, MentionItem } from "@/mentions/mentionTypes.js";
 import { filterMentionItemsWithOptions } from "@/mentions/mentionSearch.js";
 import { buildPluginMentionMarkdown } from "@/mentions/mentionMarkdown.js";
@@ -28,7 +22,7 @@ interface PluginMentionLabels {
 // - keywords 并入 listing 的全部语言显示名（无论当前 locale）：英文界面下打中文
 //   也能搜到官方插件（插件 @ 引用中文搜索）。
 function mapPluginCatalogToMentionItemsForTest(
-  entries: ACodePluginReferenceCatalogEntry[],
+  entries: V4PluginReferenceCatalogEntry[],
   labels: PluginMentionLabels,
   locale: string,
   order?: PluginStoreModeOrder,

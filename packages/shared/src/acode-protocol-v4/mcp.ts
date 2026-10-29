@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { acodeWorkspaceRefSchema } from "../acode-protocol-legacy-types.js";
+import { acodeWorkspaceRefSchema } from "../acode-session-types.js";
 import {
   acodeMcpReconnectSuspensionSchema,
   acodeProtocolMcpServerSchema,
@@ -26,7 +26,7 @@ export const v4McpServerStatusKindSchema = z.enum([
 ]);
 export type V4McpServerStatusKind = z.infer<typeof v4McpServerStatusKindSchema>;
 
-// 值域与 legacy MCP_SERVER_FAILURE_KINDS 逐字一致（测试逐字钉住）。
+// 值域与 legacy V4_MCP_SERVER_FAILURE_KINDS 逐字一致（测试逐字钉住）。
 export const V4_MCP_SERVER_FAILURE_KINDS = [
   "config_invalid",
   "runtime_unavailable",

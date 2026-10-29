@@ -7,7 +7,7 @@
 import { z } from "zod";
 import type { ACodeTaskMigrationSource, ACodeTaskMode } from "./acode-task-types-core.js";
 import { acodeAgentProviderSchema } from "./acode-agent-policy.js";
-import { acodePermissionResponseSchema } from "./acode-protocol-legacy-types.js";
+import { acodePermissionResponseSchema } from "./acode-interaction-types.js";
 import { workspaceHookReviewDecisionSchema } from "./acode-protocol-v4/workspace-hook-review.js";
 import { errorAttributionSchema } from "./acode-protocol-v4/snapshot.js";
 

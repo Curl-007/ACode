@@ -45,36 +45,10 @@ import {
   type UsageStorePort,
   type WorkspaceId,
 } from "@acode/contracts";
-import {
-  DEFAULT_ACODE_MODEL_CONTEXT_BUDGET_STRATEGY,
-  acodeProtocolErrorCodes,
-  acodeProtocolMethods,
-  acodeSessionCreateParamsSchema,
-  acodeSessionEventsParamsSchema,
-  acodeSessionListParamsSchema,
-  acodeSessionMessagesParamsSchema,
-  acodeSessionReadParamsSchema,
-  acodeSessionResumeParamsSchema,
-  acodeSessionSendParamsSchema,
-  acodeSessionSubscribeParamsSchema,
-  acodeSessionSubagentsParamsSchema,
-  acodeTaskTokenUsageParamsSchema,
-  acodeUsageStatsParamsSchema,
-  acodeWorkspaceGenerateTextParamsSchema,
-  parseRemoteWorkspaceIdentity,
-  type ACodeAutomationBotDeliveryTarget,
-  type ACodeSessionCreateParams,
-  type ACodeDeliveryKind,
-  type IntegratedTerminalShellSelection,
-  type ACodeModelContextBudgetStrategy,
-  type ACodeProtocolTrace,
-  type ACodeSessionEvent,
-  type ACodeSessionResumeParams,
-  type ACodeStateUpdatedNotification,
-  type ToolSearchAppMode,
-} from "@acode/shared";
+import { DEFAULT_ACODE_MODEL_CONTEXT_BUDGET_STRATEGY, acodeProtocolErrorCodes, acodeSessionCreateParamsSchema, acodeSessionListParamsSchema, acodeSessionSendParamsSchema, acodeSessionSubagentsParamsSchema, acodeTaskTokenUsageParamsSchema, parseRemoteWorkspaceIdentity, type ACodeAutomationBotDeliveryTarget, type ACodeSessionCreateParams, type ACodeDeliveryKind, type IntegratedTerminalShellSelection, type ACodeModelContextBudgetStrategy, type ACodeProtocolTrace, type ACodeSessionEvent, type ACodeStateUpdatedNotification, type ToolSearchAppMode , LEGACY_SKEW_FALLBACK_METHODS} from "@acode/shared";
+import { v4SessionEventsParamsSchema, v4SessionMessagesParamsSchema, v4SessionReadParamsSchema, v4SessionResumeParamsSchema, v4SessionSubscribeParamsSchema, v4UsageStatsParamsSchema, v4WorkspaceGenerateTextParamsSchema, type V4SessionResumeParams, V4_NOTIFICATIONS } from "@acode/shared/acode-protocol-v4";
 // v4 面符号只挂在子路径（根桶不 re-export v4，M2-3 既有纪律）。
-import { V4_NOTIFICATIONS } from "@acode/shared/acode-protocol-v4";
+
 import { readCachedSessionRuntimePreferences } from "./session-runtime-preferences.js";
 import {
   buildSessionSnapshot,
@@ -118,7 +92,7 @@ const SLOW_SNAPSHOT_LOG_THRESHOLD_MS = 1000;
 
 type ACodeSessionRecordParams = (
   | ACodeSessionCreateParams
-  | (ACodeSessionResumeParams & {
+  | (V4SessionResumeParams & {
       mode?: ACodeSessionCreateParams["mode"];
       model?: ACodeSessionCreateParams["model"];
       parentSessionId?: ACodeSessionCreateParams["parentSessionId"];
@@ -1328,7 +1302,7 @@ interface ActivatedSessionForResume {
  */
 export async function activateSessionForResume(
   context: ACodeProtocolAgentServerContext,
-  params: ACodeSessionResumeParams,
+  params: V4SessionResumeParams,
   options: { reusePersistedMessages?: boolean } = {},
 ): Promise<ActivatedSessionForResume> {
   const resumeStartedAt = Date.now();
@@ -1436,7 +1410,7 @@ export async function activateSessionForResume(
 }
 
 export async function resumeSession(context: ACodeProtocolAgentServerContext, rawParams: unknown) {
-  const params = parseParams(acodeSessionResumeParamsSchema, rawParams);
+  const params = parseParams(v4SessionResumeParamsSchema, rawParams);
   const activated = await activateSessionForResume(context, params);
   return await snapshot(context, activated.record, activated.knownSession);
 }
@@ -1710,7 +1684,7 @@ export async function listSessionSubagents(
 const APP_USAGE_RANGE_DAYS: Record<string, number> = { "7d": 7, "30d": 30 };
 
 export async function getUsageStats(context: ACodeProtocolAgentServerContext, rawParams: unknown) {
-  const params = parseParams(acodeUsageStatsParamsSchema, rawParams ?? {});
+  const params = parseParams(v4UsageStatsParamsSchema, rawParams ?? {});
   const timeZone = params.timeZone ?? "UTC";
   const until = Date.now();
   const tzOffsetMs = resolveTzOffsetMs(timeZone, until);
@@ -1764,7 +1738,7 @@ export async function getUsageStats(context: ACodeProtocolAgentServerContext, ra
 }
 
 export async function readSession(context: ACodeProtocolAgentServerContext, rawParams: unknown) {
-  const params = parseParams(acodeSessionReadParamsSchema, rawParams);
+  const params = parseParams(v4SessionReadParamsSchema, rawParams);
   const record = requireSession(context, params.sessionId, {
     deliveryKind: params.deliveryKind,
     operation: "session_read",
@@ -1808,7 +1782,7 @@ export async function readSessionContextUsage(
 }
 
 export async function readMessages(context: ACodeProtocolAgentServerContext, rawParams: unknown) {
-  const params = parseParams(acodeSessionMessagesParamsSchema, rawParams);
+  const params = parseParams(v4SessionMessagesParamsSchema, rawParams);
   const record = requireSession(context, params.sessionId);
   const allMessages = await readActiveSessionMessages(context, record);
   const afterMessageIndex = params.afterMessageId
@@ -1821,7 +1795,7 @@ export async function readMessages(context: ACodeProtocolAgentServerContext, raw
 }
 
 export async function readEvents(context: ACodeProtocolAgentServerContext, rawParams: unknown) {
-  const params = parseParams(acodeSessionEventsParamsSchema, rawParams);
+  const params = parseParams(v4SessionEventsParamsSchema, rawParams);
   const record = requireSession(context, params.sessionId);
   return {
     events: await readProtocolSessionEvents(context, record, record.deliveryKind, {
@@ -1835,7 +1809,7 @@ export async function subscribeSession(
   context: ACodeProtocolAgentServerContext,
   rawParams: unknown,
 ) {
-  const params = parseParams(acodeSessionSubscribeParamsSchema, rawParams);
+  const params = parseParams(v4SessionSubscribeParamsSchema, rawParams);
   const record = requireSession(context, params.sessionId);
   record.deliveryKind = params.deliveryKind;
   // 兼容保护：旧 replayable 流没有 unsubscribe RPC。这里只记录真正的 subscribe，
@@ -2252,7 +2226,7 @@ export async function generateWorkspaceText(
   rawParams: unknown,
   abortSignal?: AbortSignal,
 ) {
-  const params = parseParams(acodeWorkspaceGenerateTextParamsSchema, rawParams);
+  const params = parseParams(v4WorkspaceGenerateTextParamsSchema, rawParams);
   const active = Array.from(context.sessions.values()).find(
     (record) => record.workspace.workspaceKey === params.workspace.workspaceKey,
   );
@@ -2418,7 +2392,7 @@ export function onSessionEvent(
       context.notify({
         method: context.hostV4InboundEstablished
           ? V4_NOTIFICATIONS.cuaOperationEvent
-          : acodeProtocolMethods.computerUseOperationEvent,
+          : LEGACY_SKEW_FALLBACK_METHODS.computerUseOperationEvent,
         params: computerUseOperationEvent,
       });
       // 这条 notify 过去只在抛错时有日志，成功路径无痕，于是「agent 压根没发」

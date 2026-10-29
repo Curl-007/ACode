@@ -18,12 +18,7 @@ import type {
   ACodeTaskMeta,
   ACodeTaskRuntimeStatus,
 } from "./acode-task-types-core.js";
-import {
-  acodeInteractionRequestOriginSchema,
-  acodePermissionResponseSchema,
-  type ACodeInteractionRequestOrigin,
-  type ACodePermissionResponse,
-} from "./acode-protocol-legacy-types.js";
+import { acodeInteractionRequestOriginSchema, acodePermissionResponseSchema, type ACodeInteractionRequestOrigin, type ACodePermissionResponse } from "./acode-interaction-types.js";
 import type { Locale } from "./protocol.js";
 
 export const botProviders = [

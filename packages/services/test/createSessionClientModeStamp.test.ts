@@ -24,8 +24,7 @@ import {
   resolveTrustedCommandClientMode,
   stampCreateSessionClientMode,
 } from "../src/acode-agent/acodeV4CreateSessionClientMode.js";
-import { commandPayloadSchemas } from "@acode/shared/acode-protocol-v4";
-import { V4_WIRE_PROTOCOL_VERSION } from "@acode/shared/acode-protocol-v4";
+import { commandPayloadSchemas, V4_WIRE_PROTOCOL_VERSION } from "@acode/shared/acode-protocol-v4";
 
 function readSource(relativePath: string): string {
   return readFileSync(new URL(relativePath, import.meta.url), "utf8");

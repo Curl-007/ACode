@@ -13,74 +13,7 @@ import type {
 } from "@acode/provider";
 import { completeNewModelSelection } from "@acode/provider";
 import type { OffPeakClientConfig } from "#src/coding-plan-subscription/codingPlanSubscription.js";
-import {
-  ACODE_SESSION_RUNTIME_PREFERENCES_REQUEST_TIMEOUT_MS,
-  resolveWorkspaceKey,
-  type TraceId,
-  ACODE_AGENT_PROVIDER,
-  ACODE_AGENT_PROVIDER_NOT_READY_CODE,
-  ACODE_AGENT_PROVIDER_NOT_READY_REASON,
-  ACODE_MODEL_REASONING_SEPARATOR,
-  isRemoteWorkspaceIdentity,
-  ACODE_PROTOCOL_NAME,
-  ACODE_PROTOCOL_VERSION,
-  acodePermissionRequestParamsSchema,
-  acodeBrowserListParamsSchema,
-  acodeBrowserExecuteParamsSchema,
-  acodePluginOperationProgressNotificationSchema,
-  // M2-5：cancelOperation 保留 legacy 词与 legacy schema（中止注册表与协议代际无关，
-  // specs/m2-5-plugins.md §4）；其余 plugins 域 result schema 已迁 v4 子路径 barrel。
-  acodePluginsCancelOperationResultSchema,
-  acodeAutomationCheckTaskBindingParamsSchema,
-  acodeAutomationCreateParamsSchema,
-  acodeAutomationDeleteParamsSchema,
-  acodeAutomationListParamsSchema,
-  acodeAutomationUpdateParamsSchema,
-  acodeOffPeakCreateParamsSchema,
-  acodeOffPeakListParamsSchema,
-  OFF_PEAK_PROVIDER_IDS,
-  acodeComputerUseOperationEventSchema,
-  acodeProviderRuntimeHeadersCancelledSchema,
-  acodeProviderRuntimeHeadersRequestParamsSchema,
-  // U08 provider 诊断：方法名与 schema 都取自中立叶子 providerDiagnostics.ts，
-  // 不进 legacy barrel 冻结面（specs/legacy-protocol-freeze.md 只删不增）。
-  PROVIDER_DIAGNOSTICS_METHODS,
-  providerDiagnosticsResultSchema,
-  providerDiagnosticsCancelResultSchema,
-  acodeOfficialMcpAuthHeadersRequestParamsSchema,
-  summarizeOfficialMcpIdentityHeaders,
-  acodeProtocolEmptyResultSchema,
-  acodeProtocolMethods,
-  acodeProtocolNotifications,
-  acodeMcpTelemetryEventSchema,
-  acodeMcpResourceSamplesSchema,
-  acodeToolExecResourceSchema,
-  acodeProcessResourceSampleSchema,
-  acodeSessionEventsResultSchema,
-  acodeSessionSubagentsResultSchema,
-  acodeSessionEventSchema,
-  acodeSessionSendResultSchema,
-  acodeSessionRuntimePreferencesResultSchema,
-  acodeSessionStateSnapshotSchema,
-  acodeSessionSubscribeResultSchema,
-  acodeStateUpdatedNotificationSchema,
-  acodeUserInputRequestParamsSchema,
-  type ACodeSessionStateSnapshot,
-  type ACodeSessionGoal,
-  type ACodeAutomation,
-  type ACodeAutomationRun,
-  type DynamicWorkflowClientConfig,
-  type ScriptWorkflowMode,
-  isScriptWorkflowModeEnabled,
-  type ToolSearchAppMode,
-  type AgentLaneResourceSample,
-  type ProcessResourceCliLane,
-  type ACodeMcpTelemetryEvent,
-  type ACodeMcpResourceSample,
-  type ACodeToolExecResource,
-  type ACodePluginOperationProgressNotification,
-  type ACodeTaskMode,
-} from "@acode/shared";
+import { ACODE_SESSION_RUNTIME_PREFERENCES_REQUEST_TIMEOUT_MS, resolveWorkspaceKey, type TraceId, ACODE_AGENT_PROVIDER, ACODE_AGENT_PROVIDER_NOT_READY_CODE, ACODE_AGENT_PROVIDER_NOT_READY_REASON, ACODE_MODEL_REASONING_SEPARATOR, isRemoteWorkspaceIdentity, ACODE_PROTOCOL_NAME, ACODE_PROTOCOL_VERSION, acodePluginOperationProgressNotificationSchema, acodePluginsCancelOperationResultSchema, OFF_PEAK_PROVIDER_IDS, PROVIDER_DIAGNOSTICS_METHODS, providerDiagnosticsResultSchema, providerDiagnosticsCancelResultSchema, summarizeOfficialMcpIdentityHeaders, acodeProtocolEmptyResultSchema, LEGACY_SURVIVOR_METHODS, LEGACY_NOTIFICATIONS, acodeMcpTelemetryEventSchema, acodeMcpResourceSamplesSchema, acodeToolExecResourceSchema, acodeProcessResourceSampleSchema, acodeSessionEventsResultSchema, acodeSessionSubagentsResultSchema, acodeSessionEventSchema, acodeSessionSendResultSchema, acodeSessionRuntimePreferencesResultSchema, acodeSessionStateSnapshotSchema, acodeSessionSubscribeResultSchema, acodeStateUpdatedNotificationSchema, type ACodeSessionStateSnapshot, type ACodeSessionGoal, type ACodeAutomation, type ACodeAutomationRun, type DynamicWorkflowClientConfig, type ScriptWorkflowMode, isScriptWorkflowModeEnabled, type ToolSearchAppMode, type AgentLaneResourceSample, type ProcessResourceCliLane, type ACodeMcpTelemetryEvent, type ACodeMcpResourceSample, type ACodeToolExecResource, type ACodePluginOperationProgressNotification, type ACodeTaskMode } from "@acode/shared";
 import { createServiceLogger } from "#src/logger/serviceLogger.js";
 import { createOfficialMcpIssuanceAudit } from "#src/official-mcp/officialMcpIssuanceAudit.js";
 import type {
@@ -92,26 +25,7 @@ import {
   mergeOffPeakMutationToolDenylist,
 } from "#src/acode-agent/automationToolPolicy.js";
 import { ACODE_AGENT_RUNTIME_UNAVAILABLE_CODE } from "./acodeAgent.js";
-import type {
-  ACodeProtocolRequestId,
-  ModelSelection,
-  ACodeBrowserExecuteParams,
-  ACodeBrowserListParams,
-  ACodeComputerUseOperationEvent,
-  ACodeMessageWithParts,
-  // M2-4：v4 分支的 params 经 v4 叶 schema 解析后结构与这些 legacy 类型逐点等价，
-  // 核心函数沿用既有类型，无需引入 v4 专用类型面。
-  ACodeOfficialMcpAuthHeadersRequestParams,
-  ACodePermissionRequestParams,
-  ACodeProviderRuntimeHeadersRequestParams,
-  ACodeUserInputRequestParams,
-  ACodeSessionEvent,
-  ACodeSessionRuntimePreferencesScope,
-  ACodeSavedWorkflowScope,
-  ACodeStateUpdatedNotification,
-  ACodeWorkspaceRef,
-  ACodeSessionRuntimePreferencesResult,
-} from "@acode/shared";
+import type { ACodeProtocolRequestId, ModelSelection, ACodeMessageWithParts, ACodeSessionEvent, ACodeSessionRuntimePreferencesScope, ACodeStateUpdatedNotification, ACodeWorkspaceRef, ACodeSessionRuntimePreferencesResult } from "@acode/shared";
 import type {
   IACodeAgentService,
   ACodeAgentBackgroundBashOutputParams,
@@ -208,147 +122,7 @@ import type {
   ACodeAgentSessionsIndexSubscribeParams,
   ACodeAgentWorkspaceConfigSubscribeParams,
 } from "./acodeAgent.js";
-import {
-  backgroundBashOutputResultSchema,
-  v4BackgroundBashOutputParamsSchema,
-  V4_WIRE_PROTOCOL_VERSION,
-  PROTOCOL_V4_LIMITS,
-  clientHelloSchema,
-  commandAckSchema,
-  commandPayloadSchemas,
-  commandsQueryParamsSchema,
-  commandsQueryResultSchema,
-  conversationTopic,
-  conversationTopicWireCandidateSchema,
-  conversationTelemetryFactSchema,
-  cuaPermissionObservationSchema,
-  v4NetworkCaptureRecordsNotificationSchema,
-  v4NetworkCaptureSetEnabledParamsSchema,
-  v4NetworkCaptureSetEnabledResultSchema,
-  V4_OVERNIGHT_COMPLETION_METHOD,
-  v4OvernightCompletionNotificationSchema,
-  sessionsIndexTopic,
-  sessionsIndexTopicWireCandidateSchema,
-  MAX_LEGACY_TASK_IDS_PER_SUBSCRIBE,
-  V4_METHODS,
-  V4_NOTIFICATIONS,
-  v4AttachmentAbortResultSchema,
-  v4AttachmentBeginResultSchema,
-  v4AttachmentChunkResultSchema,
-  v4AttachmentCommitResultSchema,
-  v4AttachmentPreviewSourceParamsSchema,
-  v4AttachmentPreviewSourceResultSchema,
-  v4AttachmentReadParamsSchema,
-  v4AttachmentReadResultSchema,
-  v4ConversationAttachmentReadParamsSchema,
-  v4ConversationAttachmentReadResultSchema,
-  v4ConversationAttachmentStatParamsSchema,
-  v4ConversationAttachmentStatResultSchema,
-  v4ConnectionFlowResultSchema,
-  v4ConversationFileChangesResultSchema,
-  v4ConversationFileRewindPreviewResultSchema,
-  v4ConversationRowsRangeResultSchema,
-  v4ConversationPlansResultSchema,
-  v4ConversationWorkflowRunEventsResultSchema,
-  v4ConversationWorkflowRunArtifactDataResultSchema,
-  v4ConversationWorkflowRunArtifactReadResultSchema,
-  v4ConversationVisualizationReadResultSchema,
-  v4ConversationWorkflowRunArtifactsResultSchema,
-  v4ConversationWorkflowRunNodeResultResultSchema,
-  v4ConversationWorkflowRunWorkspaceResultSchema,
-  v4ConversationWorkflowRunsResultSchema,
-  v4ConversationResyncResultSchema,
-  v4ConversationSubscribeResultSchema,
-  v4ConversationUsageResultSchema,
-  v4McpListResultSchema,
-  // M2-8：workspace/provider/process 域 11 法的 result schema（params 由 CLI handler 侧
-  // parse，host 只校验响应；specs/m2-8-workspace-provider-process.md）。
-  v4ProcessChildProcessesResultSchema,
-  v4ProviderTestModelConnectivityResultSchema,
-  v4ProviderUpdateAccountConfigResultSchema,
-  v4WorkspaceCancelGenerateTextResultSchema,
-  v4WorkspaceGenerateTextResultSchema,
-  v4WorkspaceHookTrustGrantResultSchema,
-  v4WorkspacePresentationSchema,
-  v4WorkspaceUpdateDynamicWorkflowPolicyResultSchema,
-  v4WorkspaceUpdateInteractionPreferencesResultSchema,
-  v4WorkspaceUpdateModelIoPreferencesResultSchema,
-  v4WorkspaceUpdateOffPeakToolPolicyResultSchema,
-  type V4ProcessChildProcess,
-  type V4WorkspacePresentation,
-  // M2-5：plugins 域 11 个 result schema（params 由 CLI handler 侧 parse，host 只校验响应）。
-  v4PluginsConfigureResultSchema,
-  v4PluginsDescribeResultSchema,
-  v4PluginsInstallResultSchema,
-  v4PluginsListResultSchema,
-  v4PluginsMarketplaceMutationResultSchema,
-  v4PluginsOverviewResultSchema,
-  v4PluginsResolveSuggestedReferenceResultSchema,
-  v4PluginsRestoreBuiltinResultSchema,
-  v4PluginsSetEnabledResultSchema,
-  v4PluginsUninstallResultSchema,
-  v4PluginsValidateResultSchema,
-  v4SessionsIndexSubscribeResultSchema,
-  v4SessionHeaderMetaResultSchema,
-  v4SkillsReferenceCatalogResultSchema,
-  v4UsageStatsResultSchema,
-  v4WorkflowsDeleteResultSchema,
-  v4WorkflowsGetResultSchema,
-  v4WorkflowsListResultSchema,
-  v4WorkflowsMoveResultSchema,
-  v4WorkflowsRunsResultSchema,
-  v4WorkflowsUpdateMetaResultSchema,
-  v4WorkspaceConfigSubscribeResultSchema,
-  workspaceConfigTopic,
-  workspaceConfigTopicWireCandidateSchema,
-  utf8JsonByteLength,
-  ACODE_ATTACHMENT_FAULT_CODES,
-  ACodeAttachmentFaultError,
-  readPendingInteractionHints,
-  type CommandAck,
-  type CommandPayloadMap,
-  type ConversationTopicWireCandidate,
-  type ConversationTelemetryFact,
-  type SessionsIndexTopicWireCandidate,
-  type WorkspaceConfigTopicWireCandidate,
-  type CommandEnvelope,
-  type V4NetworkCaptureRecordsNotification,
-  type V4OvernightCompletionNotification,
-  v4SessionGoalQueryResultSchema,
-  v4SessionDebugResultSchema,
-  // M2-3（specs/m2-3-session-readwrite.md）：list 的 result 校验用新 v4 叶
-  // （normalized sessionInfo，与 mapSessionInfo 输出同形，边界测试钉住）；
-  // read/resume/subscribe/events 继续用既有 barrel schema（同形直通，保持单一校验面）；
-  // messages 刻意无 result schema——wire 直通 raw opencode MessageWithParts。
-  v4SessionsListResultSchema,
-  v4SessionRuntimePreferencesResultSchema,
-  // M2-4（specs/m2-4-inbound-interaction.md）：交互面 6 法 + CUA 事件 + 取消通知的
-  // inbound params 校验。host 端 v4 分支优先，legacy 字面量分支为偏斜期兜底（M3 删）。
-  // 语义与 legacy schema 逐点等价（v4 叶是中性重述，边界测试已钉住等价性）。
-  v4InteractionRequestPermissionParamsSchema,
-  v4InteractionRequestUserInputParamsSchema,
-  v4InteractionRequestProviderRuntimeHeadersParamsSchema,
-  v4InteractionRequestOfficialMcpAuthHeadersParamsSchema,
-  v4InteractionBrowserListParamsSchema,
-  v4InteractionBrowserExecuteParamsSchema,
-  v4CuaOperationEventSchema,
-  v4ProviderRuntimeHeadersCancelledSchema,
-  // M2-7（specs/m2-7-automation-offpeak.md）：automation/offPeak 七法 inbound params 校验。
-  v4AutomationCreateParamsSchema,
-  v4AutomationUpdateParamsSchema,
-  v4AutomationListParamsSchema,
-  v4AutomationCheckTaskBindingParamsSchema,
-  v4AutomationDeleteParamsSchema,
-  v4OffPeakCreateParamsSchema,
-  v4OffPeakListParamsSchema,
-  // M2-7 §2.2：legacy barrel 不导出这组 params 类型别名；两形态逐字等价，
-  // 核心助手统一沿用 v4 类型面（同 M2-4 核心助手裁决）。
-  type V4AutomationCheckTaskBindingParams,
-  type V4AutomationCreateParams,
-  type V4AutomationDeleteParams,
-  type V4AutomationUpdateParams,
-  type V4OffPeakCreateParams,
-} from "@acode/shared/acode-protocol-v4";
+import { backgroundBashOutputResultSchema, v4BackgroundBashOutputParamsSchema, V4_WIRE_PROTOCOL_VERSION, PROTOCOL_V4_LIMITS, clientHelloSchema, commandAckSchema, commandPayloadSchemas, commandsQueryParamsSchema, commandsQueryResultSchema, conversationTopic, conversationTopicWireCandidateSchema, conversationTelemetryFactSchema, cuaPermissionObservationSchema, v4NetworkCaptureRecordsNotificationSchema, v4NetworkCaptureSetEnabledParamsSchema, v4NetworkCaptureSetEnabledResultSchema, V4_OVERNIGHT_COMPLETION_METHOD, v4OvernightCompletionNotificationSchema, sessionsIndexTopic, sessionsIndexTopicWireCandidateSchema, MAX_LEGACY_TASK_IDS_PER_SUBSCRIBE, V4_METHODS, V4_NOTIFICATIONS, v4AttachmentAbortResultSchema, v4AttachmentBeginResultSchema, v4AttachmentChunkResultSchema, v4AttachmentCommitResultSchema, v4AttachmentPreviewSourceParamsSchema, v4AttachmentPreviewSourceResultSchema, v4AttachmentReadParamsSchema, v4AttachmentReadResultSchema, v4ConversationAttachmentReadParamsSchema, v4ConversationAttachmentReadResultSchema, v4ConversationAttachmentStatParamsSchema, v4ConversationAttachmentStatResultSchema, v4ConnectionFlowResultSchema, v4ConversationFileChangesResultSchema, v4ConversationFileRewindPreviewResultSchema, v4ConversationRowsRangeResultSchema, v4ConversationPlansResultSchema, v4ConversationWorkflowRunEventsResultSchema, v4ConversationWorkflowRunArtifactDataResultSchema, v4ConversationWorkflowRunArtifactReadResultSchema, v4ConversationVisualizationReadResultSchema, v4ConversationWorkflowRunArtifactsResultSchema, v4ConversationWorkflowRunNodeResultResultSchema, v4ConversationWorkflowRunWorkspaceResultSchema, v4ConversationWorkflowRunsResultSchema, v4ConversationResyncResultSchema, v4ConversationSubscribeResultSchema, v4ConversationUsageResultSchema, v4McpListResultSchema, v4ProcessChildProcessesResultSchema, v4ProviderTestModelConnectivityResultSchema, v4ProviderUpdateAccountConfigResultSchema, v4WorkspaceCancelGenerateTextResultSchema, v4WorkspaceGenerateTextResultSchema, v4WorkspaceHookTrustGrantResultSchema, v4WorkspacePresentationSchema, v4WorkspaceUpdateDynamicWorkflowPolicyResultSchema, v4WorkspaceUpdateInteractionPreferencesResultSchema, v4WorkspaceUpdateModelIoPreferencesResultSchema, v4WorkspaceUpdateOffPeakToolPolicyResultSchema, type V4ProcessChildProcess, type V4WorkspacePresentation, v4PluginsConfigureResultSchema, v4PluginsDescribeResultSchema, v4PluginsInstallResultSchema, v4PluginsListResultSchema, v4PluginsMarketplaceMutationResultSchema, v4PluginsOverviewResultSchema, v4PluginsResolveSuggestedReferenceResultSchema, v4PluginsRestoreBuiltinResultSchema, v4PluginsSetEnabledResultSchema, v4PluginsUninstallResultSchema, v4PluginsValidateResultSchema, v4SessionsIndexSubscribeResultSchema, v4SessionHeaderMetaResultSchema, v4SkillsReferenceCatalogResultSchema, v4UsageStatsResultSchema, v4WorkflowsDeleteResultSchema, v4WorkflowsGetResultSchema, v4WorkflowsListResultSchema, v4WorkflowsMoveResultSchema, v4WorkflowsRunsResultSchema, v4WorkflowsUpdateMetaResultSchema, v4WorkspaceConfigSubscribeResultSchema, workspaceConfigTopic, workspaceConfigTopicWireCandidateSchema, utf8JsonByteLength, ACODE_ATTACHMENT_FAULT_CODES, ACodeAttachmentFaultError, readPendingInteractionHints, type CommandAck, type CommandPayloadMap, type ConversationTopicWireCandidate, type ConversationTelemetryFact, type SessionsIndexTopicWireCandidate, type WorkspaceConfigTopicWireCandidate, type CommandEnvelope, type V4NetworkCaptureRecordsNotification, type V4OvernightCompletionNotification, v4SessionGoalQueryResultSchema, v4SessionDebugResultSchema, v4SessionsListResultSchema, v4SessionRuntimePreferencesResultSchema, v4InteractionRequestPermissionParamsSchema, v4InteractionRequestUserInputParamsSchema, v4InteractionRequestProviderRuntimeHeadersParamsSchema, v4InteractionRequestOfficialMcpAuthHeadersParamsSchema, v4InteractionBrowserListParamsSchema, v4InteractionBrowserExecuteParamsSchema, v4CuaOperationEventSchema, v4ProviderRuntimeHeadersCancelledSchema, v4AutomationCreateParamsSchema, v4AutomationUpdateParamsSchema, v4AutomationListParamsSchema, v4AutomationCheckTaskBindingParamsSchema, v4AutomationDeleteParamsSchema, v4OffPeakCreateParamsSchema, v4OffPeakListParamsSchema, type V4AutomationCheckTaskBindingParams, type V4AutomationCreateParams, type V4AutomationDeleteParams, type V4AutomationUpdateParams, type V4OffPeakCreateParams, type V4InteractionBrowserExecuteParams, type V4InteractionBrowserListParams, type V4CuaOperationEvent, type V4InteractionRequestOfficialMcpAuthHeadersParams, type V4InteractionRequestPermissionParams, type V4InteractionRequestProviderRuntimeHeadersParams, type V4InteractionRequestUserInputParams, type V4SavedWorkflowScope } from "@acode/shared/acode-protocol-v4";
 import {
   readTrustedACodeAgentV4Connection,
   readTrustedACodeAgentV4UnsubscribeRoute,
@@ -417,7 +191,7 @@ interface PendingPermissionRequest {
 }
 
 interface PendingProviderRuntimeHeadersRequest extends PendingPermissionRequest {
-  request: ACodeProviderRuntimeHeadersRequestParams;
+  request: V4InteractionRequestProviderRuntimeHeadersParams;
   responding?: boolean;
 }
 
@@ -503,13 +277,13 @@ function buildWorkspaceRef(params: ACodeAgentWorkspaceTarget): ACodeWorkspaceRef
 // 全局组动作不带，交给 services 自选载体。
 function savedWorkflowTargetHasWorkspace(
   params: ACodeAgentSavedWorkflowTarget,
-): params is ACodeAgentWorkspaceTarget & { scope?: ACodeSavedWorkflowScope } {
+): params is ACodeAgentWorkspaceTarget & { scope?: V4SavedWorkflowScope } {
   return typeof (params as Partial<ACodeAgentWorkspaceTarget>).workspacePath === "string";
 }
 
 // 只在 `scope` 有定义时下推到 RPC params：不给 scope 的项目档保持与今天逐字一致的线上形状。
 function savedWorkflowScopeParam(params: ACodeAgentSavedWorkflowTarget): {
-  scope?: ACodeSavedWorkflowScope;
+  scope?: V4SavedWorkflowScope;
 } {
   return params.scope === undefined ? {} : { scope: params.scope };
 }
@@ -1256,7 +1030,7 @@ export function createACodeAgentService(
   });
 
   async function resolveAccountRequestAuth(
-    request: ACodeProviderRuntimeHeadersRequestParams,
+    request: V4InteractionRequestProviderRuntimeHeadersParams,
   ): Promise<AccountRequestAuthMaterial | undefined> {
     if (!request.accountAccess || !accountRequestAuthService) {
       return undefined;
@@ -1992,7 +1766,7 @@ export function createACodeAgentService(
       if (pending?.client === client) cancelProviderRuntimeHeaders(key, pending);
     }
 
-    function acceptCuaOperationEventData(event: ACodeComputerUseOperationEvent): void {
+    function acceptCuaOperationEventData(event: V4CuaOperationEvent): void {
       // v4 会话不会投影 legacy session/event，CUA 提示必须直接消费 runtime sideband，
       // 避免把两条独立事件流的 sequenceNumber/seq 混为同一顺序域。
       cuaOperationTurnTracker?.accept(workspace, event);
@@ -2001,7 +1775,7 @@ export function createACodeAgentService(
     // announce 语义：只登记 + 广播，不 respond。v4 形态由分支侧立即回 `{}` ack；
     // legacy 形态保持原有"请求悬置、答案经 resolveInteraction 回流"语义。
     function registerPendingPermission(
-      data: ACodePermissionRequestParams,
+      data: V4InteractionRequestPermissionParams,
       protocolRequestId: ACodeProtocolRequestId,
     ): void {
       const key = permissionRequestKey({
@@ -2020,7 +1794,7 @@ export function createACodeAgentService(
     }
 
     function registerPendingUserInput(
-      data: ACodeUserInputRequestParams,
+      data: V4InteractionRequestUserInputParams,
       protocolRequestId: ACodeProtocolRequestId,
     ): void {
       const key = userInputRequestKey({
@@ -2043,7 +1817,7 @@ export function createACodeAgentService(
 
     // 真 RPC：accountAccess 自动应答或快速失败，两条路径都必须响应请求。
     function handleProviderRuntimeHeadersRequest(
-      data: ACodeProviderRuntimeHeadersRequestParams,
+      data: V4InteractionRequestProviderRuntimeHeadersParams,
       protocolRequestId: ACodeProtocolRequestId,
       traceId?: TraceId,
     ): void {
@@ -2084,7 +1858,7 @@ export function createACodeAgentService(
     // 官方 Server MCP 身份头：纯 RPC 中继，host 自动解析并响应。
     // 不 emitSessionEvent、不进 pending map——该请求没有 UI 语义，renderer 不参与。
     function handleOfficialMcpAuthHeadersRequest(
-      data: ACodeOfficialMcpAuthHeadersRequestParams,
+      data: V4InteractionRequestOfficialMcpAuthHeadersParams,
       protocolRequestId: ACodeProtocolRequestId,
       traceId?: TraceId,
     ): void {
@@ -2182,7 +1956,7 @@ export function createACodeAgentService(
     }
 
     function handleBrowserListRequest(
-      data: ACodeBrowserListParams,
+      data: V4InteractionBrowserListParams,
       protocolRequestId: ACodeProtocolRequestId,
     ): void {
       const executor = options?.browserControlExecutor;
@@ -2202,7 +1976,7 @@ export function createACodeAgentService(
     }
 
     function handleBrowserExecuteRequest(
-      data: ACodeBrowserExecuteParams,
+      data: V4InteractionBrowserExecuteParams,
       protocolRequestId: ACodeProtocolRequestId,
     ): void {
       const executor = options?.browserControlExecutor;
@@ -2534,11 +2308,11 @@ export function createACodeAgentService(
         }
         // 偏斜期 legacy 分支：字面量匹配（legacy 常量消费归零），M3 删除。
         if (message.method === "interaction/providerRuntimeHeadersCancelled") {
-          const parsed = acodeProviderRuntimeHeadersCancelledSchema.safeParse(message.params);
+          const parsed = v4ProviderRuntimeHeadersCancelledSchema.safeParse(message.params);
           if (parsed.success) handleProviderRuntimeHeadersCancel(parsed.data);
           return;
         }
-        if (message.method === acodeProtocolNotifications.processResourceSample) {
+        if (message.method === LEGACY_NOTIFICATIONS.processResourceSample) {
           const parsed = acodeProcessResourceSampleSchema.safeParse(message.params);
           if (parsed.success) {
             processResourceSampleEmitter.fire({ ...parsed.data, lane });
@@ -2553,19 +2327,19 @@ export function createACodeAgentService(
           return;
         }
 
-        if (message.method === acodeProtocolNotifications.toolExecResource) {
+        if (message.method === LEGACY_NOTIFICATIONS.toolExecResource) {
           const parsed = acodeToolExecResourceSchema.safeParse(message.params);
           if (parsed.success) toolExecResourceEmitter.fire(parsed.data);
           return;
         }
-        if (message.method === acodeProtocolNotifications.mcpResourceSamples) {
+        if (message.method === LEGACY_NOTIFICATIONS.mcpResourceSamples) {
           const parsed = acodeMcpResourceSamplesSchema.safeParse(message.params);
           if (parsed.success) mcpResourceSamplesEmitter.fire(parsed.data);
           else logger.debug(undefined, "丢弃无效 MCP 资源样本");
           return;
         }
 
-        if (message.method === acodeProtocolNotifications.mcpTelemetry) {
+        if (message.method === LEGACY_NOTIFICATIONS.mcpTelemetry) {
           const parsed = acodeMcpTelemetryEventSchema.safeParse(message.params);
           if (parsed.success) {
             mcpTelemetryEmitter.fire(parsed.data);
@@ -2580,7 +2354,7 @@ export function createACodeAgentService(
           return;
         }
 
-        if (message.method === acodeProtocolNotifications.pluginOperationProgress) {
+        if (message.method === LEGACY_NOTIFICATIONS.pluginOperationProgress) {
           const parsed = acodePluginOperationProgressNotificationSchema.safeParse(message.params);
           if (parsed.success) {
             pluginOperationProgressEmitters.get(parsed.data.operationId)?.fire(parsed.data);
@@ -2616,7 +2390,7 @@ export function createACodeAgentService(
         }
         // 偏斜期 legacy 分支：字面量匹配（legacy 常量消费归零），M3 删除。
         if (message.method === "computer-use/operation-event") {
-          const parsed = acodeComputerUseOperationEventSchema.safeParse(message.params);
+          const parsed = v4CuaOperationEventSchema.safeParse(message.params);
           if (parsed.success) {
             acceptCuaOperationEventData(parsed.data);
           } else {
@@ -2823,7 +2597,7 @@ export function createACodeAgentService(
         // 偏斜期 legacy 分支：字面量匹配（legacy 常量消费归零），M3 删除。
         // 语义保持原样：请求悬置不 respond，答案经 resolveInteraction 回流。
         if (request.method === "interaction/requestPermission") {
-          const parsed = acodePermissionRequestParamsSchema.safeParse(request.params);
+          const parsed = v4InteractionRequestPermissionParamsSchema.safeParse(request.params);
           if (!parsed.success) {
             void client.respondError(request.id, {
               code: -32602,
@@ -2853,7 +2627,7 @@ export function createACodeAgentService(
         }
         // 偏斜期 legacy 分支：字面量匹配（legacy 常量消费归零），M3 删除。
         if (request.method === "interaction/requestUserInput") {
-          const parsed = acodeUserInputRequestParamsSchema.safeParse(request.params);
+          const parsed = v4InteractionRequestUserInputParamsSchema.safeParse(request.params);
           if (!parsed.success) {
             void client.respondError(request.id, {
               code: -32602,
@@ -2883,7 +2657,7 @@ export function createACodeAgentService(
         }
         // 偏斜期 legacy 分支：字面量匹配（legacy 常量消费归零），M3 删除。
         if (request.method === "interaction/requestProviderRuntimeHeaders") {
-          const parsed = acodeProviderRuntimeHeadersRequestParamsSchema.safeParse(request.params);
+          const parsed = v4InteractionRequestProviderRuntimeHeadersParamsSchema.safeParse(request.params);
           if (!parsed.success) {
             void client.respondError(request.id, {
               code: -32602,
@@ -2915,7 +2689,7 @@ export function createACodeAgentService(
         }
         // 偏斜期 legacy 分支：字面量匹配（legacy 常量消费归零），M3 删除。
         if (request.method === "interaction/requestOfficialMcpAuthHeaders") {
-          const parsed = acodeOfficialMcpAuthHeadersRequestParamsSchema.safeParse(request.params);
+          const parsed = v4InteractionRequestOfficialMcpAuthHeadersParamsSchema.safeParse(request.params);
           if (!parsed.success) {
             void client.respondError(request.id, {
               code: -32602,
@@ -2946,7 +2720,7 @@ export function createACodeAgentService(
         }
         // 偏斜期 legacy 分支：字面量匹配（legacy 常量消费归零），M3 删除。
         if (request.method === "interaction/browserList") {
-          const parsed = acodeBrowserListParamsSchema.safeParse(request.params);
+          const parsed = v4InteractionBrowserListParamsSchema.safeParse(request.params);
           if (!parsed.success) {
             void client.respondError(request.id, {
               code: -32602,
@@ -2978,7 +2752,7 @@ export function createACodeAgentService(
         }
         // 偏斜期 legacy 分支：字面量匹配（legacy 常量消费归零），M3 删除。
         if (request.method === "interaction/browserExecute") {
-          const parsed = acodeBrowserExecuteParamsSchema.safeParse(request.params);
+          const parsed = v4InteractionBrowserExecuteParamsSchema.safeParse(request.params);
           if (!parsed.success) {
             void client.respondError(request.id, {
               code: -32602,
@@ -3006,7 +2780,7 @@ export function createACodeAgentService(
         }
         // 偏斜期 legacy 分支：字面量匹配（legacy 常量消费归零），M3 删除。
         if (request.method === "automation/create") {
-          const parsed = acodeAutomationCreateParamsSchema.safeParse(request.params);
+          const parsed = v4AutomationCreateParamsSchema.safeParse(request.params);
           if (!parsed.success) {
             void client.respondError(request.id, {
               code: -32602,
@@ -3034,7 +2808,7 @@ export function createACodeAgentService(
         }
         // 偏斜期 legacy 分支：字面量匹配（legacy 常量消费归零），M3 删除。
         if (request.method === "offPeak/create") {
-          const parsed = acodeOffPeakCreateParamsSchema.safeParse(request.params);
+          const parsed = v4OffPeakCreateParamsSchema.safeParse(request.params);
           if (!parsed.success) {
             void client.respondError(request.id, {
               code: -32602,
@@ -3062,7 +2836,7 @@ export function createACodeAgentService(
         }
         // 偏斜期 legacy 分支：字面量匹配（legacy 常量消费归零），M3 删除。
         if (request.method === "offPeak/list") {
-          const parsed = acodeOffPeakListParamsSchema.safeParse(request.params ?? {});
+          const parsed = v4OffPeakListParamsSchema.safeParse(request.params ?? {});
           if (!parsed.success) {
             void client.respondError(request.id, {
               code: -32602,
@@ -3090,7 +2864,7 @@ export function createACodeAgentService(
         }
         // 偏斜期 legacy 分支：字面量匹配（legacy 常量消费归零），M3 删除。
         if (request.method === "automation/list") {
-          const parsed = acodeAutomationListParamsSchema.safeParse(request.params ?? {});
+          const parsed = v4AutomationListParamsSchema.safeParse(request.params ?? {});
           if (!parsed.success) {
             void client.respondError(request.id, {
               code: -32602,
@@ -3118,7 +2892,7 @@ export function createACodeAgentService(
         }
         // 偏斜期 legacy 分支：字面量匹配（legacy 常量消费归零），M3 删除。
         if (request.method === "automation/checkTaskBinding") {
-          const parsed = acodeAutomationCheckTaskBindingParamsSchema.safeParse(request.params);
+          const parsed = v4AutomationCheckTaskBindingParamsSchema.safeParse(request.params);
           if (!parsed.success) {
             void client.respondError(request.id, {
               code: -32602,
@@ -3146,7 +2920,7 @@ export function createACodeAgentService(
         }
         // 偏斜期 legacy 分支：字面量匹配（legacy 常量消费归零），M3 删除。
         if (request.method === "automation/update") {
-          const parsed = acodeAutomationUpdateParamsSchema.safeParse(request.params);
+          const parsed = v4AutomationUpdateParamsSchema.safeParse(request.params);
           if (!parsed.success) {
             void client.respondError(request.id, {
               code: -32602,
@@ -3174,7 +2948,7 @@ export function createACodeAgentService(
         }
         // 偏斜期 legacy 分支：字面量匹配（legacy 常量消费归零），M3 删除。
         if (request.method === "automation/delete") {
-          const parsed = acodeAutomationDeleteParamsSchema.safeParse(request.params);
+          const parsed = v4AutomationDeleteParamsSchema.safeParse(request.params);
           if (!parsed.success) {
             void client.respondError(request.id, {
               code: -32602,
@@ -4288,7 +4062,7 @@ export function createACodeAgentService(
     async listSessionSubagents(params: ACodeAgentListSessionSubagentsParams) {
       const client = await getReadOnlyClient(params);
       return client.request(
-        acodeProtocolMethods.sessionSubagents,
+        LEGACY_SURVIVOR_METHODS.sessionSubagents,
         {
           sessionId: params.sessionId,
           endedCursor: params.endedCursor,
@@ -4773,7 +4547,7 @@ export function createACodeAgentService(
     async cancelPluginOperation(params: ACodeAgentCancelPluginOperationParams) {
       const client = await getPluginManagementClient();
       return client.request(
-        acodeProtocolMethods.pluginsCancelOperation,
+        LEGACY_SURVIVOR_METHODS.pluginsCancelOperation,
         { operationId: params.operationId },
         acodePluginsCancelOperationResultSchema,
         { timeoutMs: PLUGIN_OPERATION_CANCEL_REQUEST_TIMEOUT_MS },
@@ -5188,7 +4962,7 @@ export function createACodeAgentService(
       });
       try {
         const result = await client.request(
-          acodeProtocolMethods.sessionSend,
+          LEGACY_SURVIVOR_METHODS.sessionSend,
           buildSessionSendParams(protocolParams),
           acodeSessionSendResultSchema,
         );
@@ -5213,7 +4987,7 @@ export function createACodeAgentService(
             workspacePath: params.workspacePath,
           });
           const result = await client.request(
-            acodeProtocolMethods.sessionSend,
+            LEGACY_SURVIVOR_METHODS.sessionSend,
             buildSessionSendParams(protocolParams, new Set(compatFields)),
             acodeSessionSendResultSchema,
           );

@@ -10,16 +10,16 @@
 //
 // 纯类型叶子：无运行时代码、无 IO、不引入依赖方向变化（只被 services 内部 type-only 引用）。
 import type {
-  ACodeProtocolMethod,
   ACodeProtocolRequestId,
   ACodeProtocolTrace,
   ProviderDiagnosticsMethod,
+  LegacySurvivorMethod,
 } from "@acode/shared";
 import type { V4Method } from "@acode/shared/acode-protocol-v4";
 import type { z } from "zod";
 
 /** 客户端可发的方法名联合（与 acodeProtocolClient.ts 的同名 type 逐字一致，单一事实靠 implements 钉住）。 */
-export type ACodeAgentRpcMethod = ACodeProtocolMethod | V4Method | ProviderDiagnosticsMethod;
+export type ACodeAgentRpcMethod = LegacySurvivorMethod | V4Method | ProviderDiagnosticsMethod;
 
 /** 请求选项（结构等价于 acodeProtocolClient.ts 的 ACodeProtocolClientRequestOptions）。 */
 export interface ACodeAgentRpcRequestOptions {

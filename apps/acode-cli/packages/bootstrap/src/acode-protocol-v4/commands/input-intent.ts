@@ -1,7 +1,7 @@
 import type { TurnInputIntentMetadata } from "@acode/contracts";
 import type { ModelSelection } from "@acode/shared";
-import type { AttachmentRef, CommandEnvelope, QueueItem } from "@acode/shared/acode-protocol-v4";
-import type { SubmissionMode } from "@acode/shared/acode-protocol-v4";
+import type { AttachmentRef, CommandEnvelope, QueueItem, SubmissionMode } from "@acode/shared/acode-protocol-v4";
+
 import { commandAdmissionOf } from "./executor.js";
 
 interface CanonicalCommandIntent {

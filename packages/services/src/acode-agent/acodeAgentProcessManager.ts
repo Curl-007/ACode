@@ -25,7 +25,7 @@ import {
   ACODE_AGENT_MAX_OLD_SPACE_MB_ENV_KEY,
   ACODE_RUNTIME_ENV_KEY,
   DEFAULT_AGENT_MAX_OLD_SPACE_MB,
-  acodeProtocolNotifications,
+  LEGACY_NOTIFICATIONS,
   acodeRuntimeIdleExitParamsSchema,
   appendMaxOldSpaceToNodeOptions,
   isPackagedACodeDesktopRuntime,
@@ -1667,7 +1667,7 @@ export class ACodeAgentProcessManager {
     // protocol close/exit 不再被当作崩溃。宣告帧先于 EOF 到达(stdout 帧序保证),
     // 竞态丢帧由退出码兜底(见 exit handler)。
     client.onNotification((message) => {
-      if (message.method !== acodeProtocolNotifications.runtimeIdleExit) return;
+      if (message.method !== LEGACY_NOTIFICATIONS.runtimeIdleExit) return;
       if (this.disposed || managed.exited) return;
       if (this.processesByWorkspaceKey.get(managed.workspaceKey) !== managed) return;
       const parsed = acodeRuntimeIdleExitParamsSchema.safeParse(message.params);

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { acodeWorkspaceRefSchema } from "../acode-protocol-legacy-types.js";
+import { acodeWorkspaceRefSchema } from "../acode-session-types.js";
 
 // workspace 授权/配置同步面的 v4 域零件（M2-8，specs/m2-8-workspace-provider-process.md）：
 // hooks/trustGrant（workspace 级 hook 预信任授权，CLI 侧带 accepted→session 重载联动）+

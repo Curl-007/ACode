@@ -872,9 +872,9 @@ function contextCacheUsageFromMessages(
 function mapPendingPermission(permission: PendingPermission): ACodePendingPermission {
   // display / optionsPolicy 刻意不进 legacy v3 输出。
   // 根因不是"扩 schema 只能单向兼容"，而是 strict schema 随 packages/shared 打进每个桌面端
-  // 的产物：今天把 acodePendingPermissionSchema（shared/src/acode-protocol/index.ts:1139）和
-  // acodePermissionRequestedEventPayloadSchema（同文件:1536）改成可选，也保护不了已经装出去
-  // 的旧桌面。新 CLI 一旦在 v3 路径上带这两个字段，旧桌面会整份快照解析失败、并用 safeParse
+  // 的产物：今天把 acodePendingPermissionSchema（M4a 后居 shared/src/acode-interaction-types.ts）
+  // 和 acodePermissionRequestedEventPayloadSchema（同批收编进 acode-session-event-payloads.ts）
+  // 改成可选，也保护不了已经装出去的旧桌面。新 CLI 一旦在 v3 路径上带这两个字段，旧桌面会整份快照解析失败、并用 safeParse
   // 静默丢弃整个 permission.requested 事件——确认窗本身就没了，这违反"只允许预览降级、
   // 不允许 gate 降级"。剥离在源头是唯一对版本偏斜安全的做法；legacy 也没有画因果图的界面。
   // optionsPolicy 的效果仍然生效：它作为 buildProtocolPermissionOptions 的输入裁掉
@@ -1084,8 +1084,8 @@ export function mapSessionGoal(goal: SessionGoal | null | undefined): ACodeSessi
 /**
  * 协议投影（D4，specs/todo-dependency-fields.md R5）：必须携带 id/blockedBy/metadata——
  * 显式重建三字段曾是「写进去了、投影读回来只剩三字段」的 narrowing 点。根协议 schema
- * acodeSessionTodoItemSchema（packages/shared/src/acode-protocol/index.ts）已同批最小加宽
- * 为三个可选成员、保持 strict，桌面接收方校验不破。导出供 D4 往返测试直接断言。
+ * acodeSessionTodoItemSchema（M4a 后居 packages/shared/src/acode-session-projection.ts）已
+ * 同批最小加宽为三个可选成员、保持 strict，桌面接收方校验不破。导出供 D4 往返测试直接断言。
  */
 export function mapTodoItem(todo: TodoItem): TodoItem {
   return {

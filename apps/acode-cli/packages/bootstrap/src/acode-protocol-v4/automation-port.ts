@@ -5,24 +5,9 @@ import {
   type AutomationPort,
   type CronAutomation,
 } from "@acode/contracts";
-import {
-  parseModelPickerValue,
-  acodeAutomationCreateResultSchema,
-  acodeAutomationDeleteResultSchema,
-  acodeAutomationListResultSchema,
-  acodeAutomationUpdateResultSchema,
-  acodeProtocolMethods,
-  type ACodeAutomationCreateProtocolResult,
-  type ACodeAutomationProtocol,
-} from "@acode/shared";
-import {
-  V4_METHODS,
-  v4AutomationCheckTaskBindingResultSchema,
-  v4AutomationCreateResultSchema,
-  v4AutomationDeleteResultSchema,
-  v4AutomationListResultSchema,
-  v4AutomationUpdateResultSchema,
-} from "@acode/shared/acode-protocol-v4";
+import { parseModelPickerValue , LEGACY_SKEW_FALLBACK_METHODS} from "@acode/shared";
+import { v4AutomationCreateResultSchema, v4AutomationDeleteResultSchema, v4AutomationListResultSchema, v4AutomationUpdateResultSchema, type V4AutomationCreateResult, type V4AutomationProtocol, V4_METHODS, v4AutomationCheckTaskBindingResultSchema } from "@acode/shared/acode-protocol-v4";
+
 import { requestV4WithLegacyFallback } from "./dual-form-request.js";
 import {
   ProtocolRequestError,
@@ -85,9 +70,9 @@ export function createProtocolAutomationPort(
             // -32601 是旧 host 缺 v4 inbound 分支的唯一可信信号；数据库、传输和协议错误
             // 仍交给外层 fail-closed，不能误判为未绑定。legacy 保留路径删除归属：M3。
             const legacyResult = await context.requestClient(
-              acodeProtocolMethods.automationList,
+              LEGACY_SKEW_FALLBACK_METHODS.automationList,
               {},
-              acodeAutomationListResultSchema,
+              v4AutomationListResultSchema,
             );
             bound = legacyResult.automations.some(
               (automation) => automation.targetTaskId === ownSessionId,
@@ -151,17 +136,17 @@ export function createProtocolAutomationPort(
             ? { maxRuns: input.maxRuns }
             : {}),
       };
-      let result: ACodeAutomationCreateProtocolResult;
+      let result: V4AutomationCreateResult;
       try {
         // M2-7 §2.1 dual-form：v4 automationCreate 先行；旧 host 返回 -32601（偏斜方向：
         // 新 CLI + 旧 host）回落 legacy 形态。legacy 保留路径删除归属：M3。
         result = await requestV4WithLegacyFallback(
           context,
           V4_METHODS.automationCreate,
-          acodeProtocolMethods.automationCreate,
+          LEGACY_SKEW_FALLBACK_METHODS.automationCreate,
           createParams,
           v4AutomationCreateResultSchema,
-          acodeAutomationCreateResultSchema,
+          v4AutomationCreateResultSchema,
         );
       } catch (error) {
         if (!isAutomationCreateLimitError(error)) throw error;
@@ -220,10 +205,10 @@ export function createProtocolAutomationPort(
       const result = await requestV4WithLegacyFallback(
         context,
         V4_METHODS.automationUpdate,
-        acodeProtocolMethods.automationUpdate,
+        LEGACY_SKEW_FALLBACK_METHODS.automationUpdate,
         updateParams,
         v4AutomationUpdateResultSchema,
-        acodeAutomationUpdateResultSchema,
+        v4AutomationUpdateResultSchema,
       );
       return toCronAutomation(result.automation);
     },
@@ -232,10 +217,10 @@ export function createProtocolAutomationPort(
       const result = await requestV4WithLegacyFallback(
         context,
         V4_METHODS.automationList,
-        acodeProtocolMethods.automationList,
+        LEGACY_SKEW_FALLBACK_METHODS.automationList,
         {},
         v4AutomationListResultSchema,
-        acodeAutomationListResultSchema,
+        v4AutomationListResultSchema,
       );
       return result.automations.map(toCronAutomation);
     },
@@ -244,10 +229,10 @@ export function createProtocolAutomationPort(
       const result = await requestV4WithLegacyFallback(
         context,
         V4_METHODS.automationDelete,
-        acodeProtocolMethods.automationDelete,
+        LEGACY_SKEW_FALLBACK_METHODS.automationDelete,
         { automationId: input.id },
         v4AutomationDeleteResultSchema,
-        acodeAutomationDeleteResultSchema,
+        v4AutomationDeleteResultSchema,
       );
       return result.deleted;
     },
@@ -255,7 +240,7 @@ export function createProtocolAutomationPort(
 }
 
 function normalizeCronAutomationMode(
-  mode: ACodeAutomationProtocol["mode"],
+  mode: V4AutomationProtocol["mode"],
 ): CronAutomation["mode"] {
   switch (mode) {
     case undefined:
@@ -279,7 +264,7 @@ function normalizeCronAutomationMode(
   }
 }
 
-function toCronAutomation(input: ACodeAutomationProtocol): CronAutomation {
+function toCronAutomation(input: V4AutomationProtocol): CronAutomation {
   return {
     automationId: input.automationId,
     title: input.title,

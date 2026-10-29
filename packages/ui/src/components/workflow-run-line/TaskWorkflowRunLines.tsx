@@ -4,11 +4,9 @@
 // 没有子代理数、没有箭头——那些进 hover tooltip。结束的 run 只剩一个中性词，颜色只留给灯。
 import { useEffect, useMemo, type MouseEvent } from "react";
 import { Workflow } from "lucide-react";
-import type {
-  SessionWorkflowActivity,
-  SessionWorkflowRunSummary,
-} from "@acode/shared/acode-protocol-v4";
 import { isSessionWorkflowRunLive } from "@acode/shared/acode-protocol-v4";
+import type { SessionWorkflowActivity, SessionWorkflowRunSummary } from "@acode/shared/acode-protocol-v4";
+
 import { cn } from "@/components/lib/utils.js";
 import { ControlHintTooltip } from "@/ControlHintTooltip.js";
 import {

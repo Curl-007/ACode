@@ -4,10 +4,7 @@ import { localTtftFactsSchema } from "../localTtft.js";
 // 阶段为类型占位（后半接通道层时启用），数据形状已按规范定稿。
 import { z } from "zod";
 import { APP_USAGE_RANGES, appUsageSnapshotSchema } from "../usage-stats.js";
-import {
-  acodeSessionGoalSchema,
-  acodeWorkspaceRefSchema,
-} from "../acode-protocol-legacy-types.js";
+import { acodeSessionGoalSchema, acodeWorkspaceRefSchema } from "../acode-session-types.js";
 // M2-2 debug query 的 result 直接复用中立叶（零新建词汇；legacy session/debug 同 schema）。
 import { sessionDebugSnapshotSchema } from "../session-debug.js";
 import {

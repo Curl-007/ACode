@@ -84,10 +84,29 @@ export type { SessionCreateSource } from "./sessionCreateSource.js";
 export { resolveSafeEndpointHostname } from "./endpointHostname.js";
 export * from "./validation.js";
 export * from "./api.js";
-export * from "./acode-protocol/index.js";
+// M4：legacy barrel（acode-protocol/）已整删，承重面收编为一组中立模块（见
+// apps/acode-cli/specs/m4-shared-barrel-removal.md §0）。legacy-types 同步甄别迁出。
+export * from "./acode-protocol-envelope.js";
+export * from "./acode-storage-startup.js";
+export * from "./acode-agent-notifications.js";
+export * from "./acode-model-options.js";
+export * from "./acode-session-types.js";
+export * from "./acode-message-types.js";
+export * from "./acode-interaction-types.js";
+export * from "./acode-session-runtime-types.js";
+export * from "./acode-session-projection.js";
+export * from "./acode-session-events.js";
+export * from "./acode-session-event-payloads.js";
+export * from "./acode-tool-result-display.js";
+export * from "./acode-protocol-legacy-survivors.js";
+export * from "./acode-protocol-legacy-skew.js";
+// 中立叶子原本只经 barrel 的 re-export 暴露到根；barrel 删除后直接暴露（M2-B 模式）。
+export * from "./acode-protocol-shared.js";
+export * from "./account-access-types.js";
+// barrel 的 3 个 `export *` 转发模块里仅这两个此前不在根入口公开面；直接暴露保持既有消费不破。
+export * from "./background-bash-output.js";
+export * from "./process-diagnostic.js";
 export * from "./account-provider-state.js";
-// re-home：旧协议承重面的幸存文件（消费者继续走 barrel，零感知）
-export * from "./acode-protocol-legacy-types.js";
 export * from "./acode-task-types-core.js";
 export * from "./task-realtime-core.js";
 export * from "./remote-workspace-identity.js";

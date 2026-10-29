@@ -1,6 +1,7 @@
 import { Eye, EyeOff, RotateCcw, Save, Trash2 } from "lucide-react";
 import { useState } from "react";
-import type { ACodePluginInfo, ACodePluginScope, ACodePluginUserConfigOption } from "@acode/shared";
+
+import { type V4PluginInfo, type V4PluginScope, type V4PluginUserConfigOption } from "@acode/shared/acode-protocol-v4";
 import { Button } from "@/components/ui/button.js";
 import { Input } from "@/components/ui/input.js";
 import { Switch } from "@/components/ui/switch.js";
@@ -9,17 +10,17 @@ import { SettingsScopeBadge } from "@/settings/SettingsScopeBadge.js";
 
 interface PluginConfigControlsProps {
   getValue: (
-    plugin: ACodePluginInfo,
+    plugin: V4PluginInfo,
     key: string,
-    option: ACodePluginUserConfigOption,
+    option: V4PluginUserConfigOption,
   ) => string | number | boolean;
   isOptionClearPending?: (pluginId: string, key: string) => boolean;
   onClearOption?: (pluginId: string, key: string, clear: boolean) => void;
-  onSave: (plugin: ACodePluginInfo) => void;
+  onSave: (plugin: V4PluginInfo) => void;
   onSetDraft: (pluginId: string, key: string, value: string | number | boolean) => void;
   operationId: string | null;
-  plugin: ACodePluginInfo;
-  scope: ACodePluginScope;
+  plugin: V4PluginInfo;
+  scope: V4PluginScope;
 }
 
 export function PluginConfigControls({

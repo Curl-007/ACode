@@ -1,17 +1,8 @@
 // sessions-index 传输面（desktop/host 实现）：桥到 IACodeAgentService 的 v4 sessions-index 转发面
 // （与 agentConversationTransport 同构；web 直连 relay 时换实现即可）。
 import type { IACodeAgentService } from "@acode/services";
-import {
-  sessionsIndexTopicFrameSchema,
-  TopicWireFrameAssembler,
-  type ConversationResyncParams,
-  type SessionsIndexTopicFrame,
-  type SessionsIndexTopicWireCandidate,
-  type TopicFrameDeliveryKind,
-  type V4ConversationResyncResult,
-  type V4SessionsIndexSubscribeResult,
-} from "@acode/shared/acode-protocol-v4";
-import { sessionsIndexTopic } from "@acode/shared/acode-protocol-v4";
+import { sessionsIndexTopicFrameSchema, TopicWireFrameAssembler, type ConversationResyncParams, type SessionsIndexTopicFrame, type SessionsIndexTopicWireCandidate, type TopicFrameDeliveryKind, type V4ConversationResyncResult, type V4SessionsIndexSubscribeResult, sessionsIndexTopic } from "@acode/shared/acode-protocol-v4";
+
 import { logger } from "@/logger.js";
 import { ensureAgentV4ConnectionHandshake } from "@/v4/agentV4ConnectionHandshake.js";
 import { createAckActivationBarrier } from "@/v4/ackActivationBarrier.js";

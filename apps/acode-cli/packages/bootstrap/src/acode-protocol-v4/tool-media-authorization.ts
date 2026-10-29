@@ -23,12 +23,8 @@
 //   renderer 自报 MIME。
 // - 越权（另一个 session/workspace 的 ref）与「ref 根本不在投影里」对调用方是同一个业务事实：
 //   一律返回 null，由 gateway 归一成 `previewRefNotAuthorized`，不告诉越权者它猜对了哪一半。
-import type { AttachmentRef, ConversationRow } from "@acode/shared/acode-protocol-v4";
-import {
-  TOOL_MEDIA_REF_SCHEME,
-  inspectToolMediaRef,
-  type ToolMediaRefImage,
-} from "@acode/shared/acode-protocol-v4";
+import { TOOL_MEDIA_REF_SCHEME, inspectToolMediaRef } from "@acode/shared/acode-protocol-v4";
+import type { AttachmentRef, ConversationRow, ToolMediaRefImage } from "@acode/shared/acode-protocol-v4";
 
 /**
  * ref 是否归属某个 session：形态合法 ∧ authority 段逐字等于 `encodeURIComponent(sessionId)`。

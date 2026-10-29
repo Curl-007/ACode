@@ -1,17 +1,10 @@
 import { randomUUID } from "node:crypto";
 import type { BrowserControlPort, TraceContext } from "@acode/contracts";
-import {
-  acodeBrowserExecuteResultSchema,
-  acodeBrowserListResultSchema,
-  acodeProtocolMethods,
-} from "@acode/shared";
+import { LEGACY_SKEW_FALLBACK_METHODS } from "@acode/shared";
+import { v4InteractionBrowserExecuteResultSchema, v4InteractionBrowserListResultSchema, V4_METHODS } from "@acode/shared/acode-protocol-v4";
 // v4 面符号只挂在子路径（根桶不 re-export v4，M2-3 既有纪律）。result 面本就中立，
 // v4 leaf 直接重导出中立叶——两侧 schema 是同一实例。
-import {
-  V4_METHODS,
-  v4InteractionBrowserExecuteResultSchema,
-  v4InteractionBrowserListResultSchema,
-} from "@acode/shared/acode-protocol-v4";
+
 import {
   protocolTraceFromTraceContext,
   requireSession,
@@ -55,7 +48,7 @@ export function createProtocolBrowserControlBroker(
         requestV4WithLegacyFallback(
           context,
           V4_METHODS.interactionBrowserExecute,
-          acodeProtocolMethods.interactionBrowserExecute,
+          LEGACY_SKEW_FALLBACK_METHODS.interactionBrowserExecute,
           {
             ...buildBrowserRequestContext(context, { sessionId, turnId }),
             browserId,
@@ -63,7 +56,7 @@ export function createProtocolBrowserControlBroker(
             command,
           },
           v4InteractionBrowserExecuteResultSchema,
-          acodeBrowserExecuteResultSchema,
+          v4InteractionBrowserExecuteResultSchema,
         ),
       ),
     );
@@ -74,10 +67,10 @@ export function createProtocolBrowserControlBroker(
       const result = await requestV4WithLegacyFallback(
         context,
         V4_METHODS.interactionBrowserList,
-        acodeProtocolMethods.interactionBrowserList,
+        LEGACY_SKEW_FALLBACK_METHODS.interactionBrowserList,
         buildBrowserRequestContext(context, { sessionId, turnId, traceContext }),
         v4InteractionBrowserListResultSchema,
-        acodeBrowserListResultSchema,
+        v4InteractionBrowserListResultSchema,
         buildRequestOptions(traceContext, signal),
       );
       return result.browsers;
@@ -105,7 +98,7 @@ export function createProtocolBrowserControlBroker(
         void requestV4WithLegacyFallback(
           context,
           V4_METHODS.interactionBrowserExecute,
-          acodeProtocolMethods.interactionBrowserExecute,
+          LEGACY_SKEW_FALLBACK_METHODS.interactionBrowserExecute,
           {
             ...buildBrowserRequestContext(context, { sessionId, turnId, traceContext }),
             browserId,
@@ -113,7 +106,7 @@ export function createProtocolBrowserControlBroker(
             command: { method: "cancelRequest", requestId: requestContext.requestId },
           },
           v4InteractionBrowserExecuteResultSchema,
-          acodeBrowserExecuteResultSchema,
+          v4InteractionBrowserExecuteResultSchema,
           buildRequestOptions(traceContext, undefined),
         ).catch(() => undefined);
       };
@@ -123,7 +116,7 @@ export function createProtocolBrowserControlBroker(
         return await requestV4WithLegacyFallback(
           context,
           V4_METHODS.interactionBrowserExecute,
-          acodeProtocolMethods.interactionBrowserExecute,
+          LEGACY_SKEW_FALLBACK_METHODS.interactionBrowserExecute,
           {
             ...requestContext,
             browserId,
@@ -131,7 +124,7 @@ export function createProtocolBrowserControlBroker(
             command,
           },
           v4InteractionBrowserExecuteResultSchema,
-          acodeBrowserExecuteResultSchema,
+          v4InteractionBrowserExecuteResultSchema,
           buildRequestOptions(traceContext, signal),
         );
       } finally {

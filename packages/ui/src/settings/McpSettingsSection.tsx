@@ -11,14 +11,8 @@ import {
   TID_PLUGIN_MCP_SERVER_ROW,
   testId,
 } from "@acode/shared";
-import type {
-  RemoteTarget,
-  ACodeAvailablePluginSummary,
-  ACodeAgentMcpServer,
-  ACodeMcpListMode,
-  ACodeMcpServer,
-  ACodeMcpServerStatusSnapshot,
-} from "@acode/shared";
+import type { RemoteTarget, ACodeAgentMcpServer, ACodeMcpServer } from "@acode/shared";
+import { type V4AvailablePluginSummary, type V4McpListMode, type V4McpServerStatusSnapshot } from "@acode/shared/acode-protocol-v4";
 import { isACodeAgentMcpStatusModeUnsupportedError, type IMcpSyncService } from "@acode/services";
 import { Button } from "@/components/ui/button.js";
 import { toast } from "@/components/ui/toast.js";
@@ -110,19 +104,19 @@ async function refreshMcpServerStatusList({
   workspacePath,
   mcpSyncService,
 }: {
-  beginServerStatusListRefresh: (mode?: ACodeMcpListMode) => number;
+  beginServerStatusListRefresh: (mode?: V4McpListMode) => number;
   markServerStatusListRefreshFailed?: (
     error: string,
     requestEpoch: number,
-    mode?: ACodeMcpListMode,
+    mode?: V4McpListMode,
   ) => void;
   mergeServerStatusSnapshots: (
-    statuses: Record<string, ACodeMcpServerStatusSnapshot>,
+    statuses: Record<string, V4McpServerStatusSnapshot>,
     requestEpoch: number,
-    mode?: ACodeMcpListMode,
+    mode?: V4McpListMode,
   ) => void;
   getCurrentWorkspaceKey: () => string;
-  mode?: ACodeMcpListMode;
+  mode?: V4McpListMode;
   mcpServers?: ACodeAgentMcpServer[];
   requestedWorkspaceKey: string;
   workspaceIdentity?: string;
@@ -169,7 +163,7 @@ function PluginMcpServerList({
   onOpenAuthorization,
 }: {
   items: PluginMcpServerItem[];
-  pluginListingById: ReadonlyMap<string, ACodeAvailablePluginSummary["listing"]>;
+  pluginListingById: ReadonlyMap<string, V4AvailablePluginSummary["listing"]>;
   onOpenAuthorization?: (item: PluginMcpServerItem) => void;
 }) {
   const { intl } = useACodeIntl();
@@ -464,7 +458,7 @@ export function McpSettingsSection({
   const requestMcpServerStatusList = useCallback(
     async (options?: {
       mcpServers?: ACodeAgentMcpServer[];
-      mode?: ACodeMcpListMode;
+      mode?: V4McpListMode;
       trigger?: McpStatusListRefreshTrigger;
     }) => {
       const trigger = options?.trigger ?? "auto";

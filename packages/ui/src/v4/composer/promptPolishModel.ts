@@ -1,4 +1,5 @@
-import type { ACodeWorkspaceModelMessage } from "@acode/shared";
+
+import { type V4WorkspaceModelMessage } from "@acode/shared/acode-protocol-v4";
 import {
   normalizePromptPolishModelSelection,
   type PromptPolishModelSelection,
@@ -125,7 +126,7 @@ export const PROMPT_POLISH_SYSTEM_INSTRUCTION = [
 
 export function buildPromptPolishMessages(
   draftText: string,
-): ACodeWorkspaceModelMessage[] {
+): V4WorkspaceModelMessage[] {
   return [
     { role: "system", content: PROMPT_POLISH_SYSTEM_INSTRUCTION },
     { role: "user", content: draftText },
@@ -138,7 +139,7 @@ export type PromptPolishPreparedRequest =
   | {
       ok: true;
       selection: PromptPolishModelSelection;
-      messages: ACodeWorkspaceModelMessage[];
+      messages: V4WorkspaceModelMessage[];
       querySource: string;
       maxOutputTokens: number;
     }

@@ -6,15 +6,8 @@
 // marketplace source 序列化 × install 诊断格式化。逐字迁移的行为安全网。
 import assert from "node:assert/strict";
 import test from "node:test";
-import type {
-  ACodePluginInfo,
-  ACodePluginMarketplaceSummary,
-  ACodePluginUserConfigOption,
-  ACodePluginsOverviewResult,
-  PluginSyncCandidate,
-  PluginSyncImportResult,
-  PluginSyncRemoteStatus,
-} from "@acode/shared";
+import type { PluginSyncCandidate, PluginSyncImportResult, PluginSyncRemoteStatus } from "@acode/shared";
+import { type V4PluginInfo, type V4PluginMarketplaceSummary, type V4PluginUserConfigOption, type V4PluginsOverviewResult } from "@acode/shared/acode-protocol-v4";
 import {
   RemotePluginSyncStoppedError,
   applyPluginInfoToRemoteSyncCandidate,
@@ -88,8 +81,8 @@ function rowFor(
 
 function marketplaceSummary(
   source: Record<string, unknown>,
-  overrides: Partial<ACodePluginMarketplaceSummary> = {},
-): ACodePluginMarketplaceSummary {
+  overrides: Partial<V4PluginMarketplaceSummary> = {},
+): V4PluginMarketplaceSummary {
   return {
     id: "acode-official",
     name: "Official",
@@ -100,8 +93,8 @@ function marketplaceSummary(
 }
 
 function overviewResult(
-  overrides: Partial<ACodePluginsOverviewResult> = {},
-): ACodePluginsOverviewResult {
+  overrides: Partial<V4PluginsOverviewResult> = {},
+): V4PluginsOverviewResult {
   return {
     marketplaces: [],
     availablePlugins: [],
@@ -110,10 +103,10 @@ function overviewResult(
     diagnostics: [],
     capability: { supported: true },
     ...overrides,
-  } as ACodePluginsOverviewResult;
+  } as V4PluginsOverviewResult;
 }
 
-function pluginInfo(overrides: Partial<ACodePluginInfo> = {}): ACodePluginInfo {
+function pluginInfo(overrides: Partial<V4PluginInfo> = {}): V4PluginInfo {
   return {
     id: "com.acode.alpha",
     name: "alpha",
@@ -123,7 +116,7 @@ function pluginInfo(overrides: Partial<ACodePluginInfo> = {}): ACodePluginInfo {
     skillRootCount: 0,
     commandRootCount: 0,
     ...overrides,
-  } as ACodePluginInfo;
+  } as V4PluginInfo;
 }
 
 // ── shouldFinishRemotePluginSyncRun ──
@@ -252,7 +245,7 @@ test("buildMarketplaceRemotePluginSyncCandidates: 合并 overview + pluginInfo +
       },
     ],
   });
-  const plugins: ACodePluginInfo[] = [
+  const plugins: V4PluginInfo[] = [
     pluginInfo({
       id: "com.acode.beta",
       name: "beta",
@@ -289,7 +282,7 @@ test("buildMarketplaceRemotePluginSyncCandidates: installedPlugins 自带 compon
       },
     ],
   });
-  const plugins: ACodePluginInfo[] = [
+  const plugins: V4PluginInfo[] = [
     pluginInfo({
       id: "com.acode.beta",
       components: [{ kind: "skill", items: [{ name: "s1" }] }],
@@ -403,9 +396,9 @@ test("isPathPluginOption: file/directory 判定", () => {
 });
 
 test("isPortablePluginOptionValue: 缺 schema/sensitive/path 型不可携带，类型须匹配", () => {
-  const stringOption: ACodePluginUserConfigOption = { type: "string" };
-  const numberOption: ACodePluginUserConfigOption = { type: "number" };
-  const booleanOption: ACodePluginUserConfigOption = { type: "boolean" };
+  const stringOption: V4PluginUserConfigOption = { type: "string" };
+  const numberOption: V4PluginUserConfigOption = { type: "number" };
+  const booleanOption: V4PluginUserConfigOption = { type: "boolean" };
   assert.equal(isPortablePluginOptionValue("v", undefined, stringOption), false);
   assert.equal(isPortablePluginOptionValue("v", stringOption, undefined), false);
   assert.equal(isPortablePluginOptionValue("v", { sensitive: true }, stringOption), false);

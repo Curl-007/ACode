@@ -16,11 +16,8 @@ import { registerHooks } from "node:module";
 import test from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import type {
-  ACodeInstalledPluginSummary,
-  ACodePluginInfo,
-  ACodePluginScope,
-} from "@acode/shared";
+
+import { type V4InstalledPluginSummary, type V4PluginInfo, type V4PluginScope } from "@acode/shared/acode-protocol-v4";
 
 import { ACodeIntlProvider } from "../src/i18n/IntlProvider.js";
 import { getLocaleMessagesResource } from "../src/i18n/localeMessages.js";
@@ -51,7 +48,7 @@ test.before(async () => {
 const render = (node: React.ReactNode): string =>
   renderToStaticMarkup(createElement(ACodeIntlProvider, { initialLocale: "zh-CN" }, node));
 
-function makePlugin(overrides: Partial<ACodePluginInfo> = {}): ACodePluginInfo {
+function makePlugin(overrides: Partial<V4PluginInfo> = {}): V4PluginInfo {
   return {
     id: "com.acode.alpha",
     name: "alpha",
@@ -62,7 +59,7 @@ function makePlugin(overrides: Partial<ACodePluginInfo> = {}): ACodePluginInfo {
     commandRootCount: 0,
     mcpServerNames: [],
     ...overrides,
-  } as ACodePluginInfo;
+  } as V4PluginInfo;
 }
 
 function makeStoreItem(overrides: Partial<StorePluginItem> = {}): StorePluginItem {
@@ -79,7 +76,7 @@ function makeStoreItem(overrides: Partial<StorePluginItem> = {}): StorePluginIte
 
 function makeUpdatableStoreItem(): StorePluginItem {
   return makeStoreItem({
-    installedMeta: { updateStatus: "update-available" } as ACodeInstalledPluginSummary,
+    installedMeta: { updateStatus: "update-available" } as V4InstalledPluginSummary,
   });
 }
 
@@ -101,14 +98,14 @@ function renderRows({
   items = [makePlugin()],
   storeItemById = new Map<string, StorePluginItem>(),
   actions = makeActions(),
-  configScope = "user" as ACodePluginScope,
+  configScope = "user" as V4PluginScope,
   operationId = null,
   togglingPluginId = null,
 }: {
-  items?: ACodePluginInfo[];
+  items?: V4PluginInfo[];
   storeItemById?: ReadonlyMap<string, StorePluginItem>;
   actions?: PluginStoreActions;
-  configScope?: ACodePluginScope;
+  configScope?: V4PluginScope;
   operationId?: string | null;
   togglingPluginId?: string | null;
 } = {}): string {

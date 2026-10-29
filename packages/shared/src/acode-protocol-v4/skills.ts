@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { acodeWorkspaceRefSchema } from "../acode-protocol-legacy-types.js";
+import { acodeWorkspaceRefSchema } from "../acode-session-types.js";
 
 // Composer Skill 只读引用 catalog 的 v4 面（apps/acode-cli/specs/m2-6-workflows-skills-mcp.md）。
 //

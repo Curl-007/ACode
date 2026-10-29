@@ -2,9 +2,9 @@ import type { Logger } from "@acode/contracts";
 import {
   createMemorySampleWriteGate,
   memoryUsageToSampleFields,
-  acodeProtocolNotifications,
   type MemorySample,
   type ACodeProtocolNotification,
+  LEGACY_NOTIFICATIONS,
 } from "@acode/shared";
 import {
   createACodeProcessResourceSampler,
@@ -34,7 +34,7 @@ export function startProtocolResourceSampler(
     const sampler = createACodeProcessResourceSampler({
       onSample: (sample, memoryUsage) => {
         send({
-          method: acodeProtocolNotifications.processResourceSample,
+          method: LEGACY_NOTIFICATIONS.processResourceSample,
           params: sample,
         });
         // resident session TTL / 水位收敛借用资源采样节拍（60s）作兜底，不新增定时器；

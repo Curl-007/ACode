@@ -15,7 +15,7 @@ import type {
   ACodeSessionMessagesParams,
   ACodeSessionReadParams,
   ACodeSessionReadWorkspacePresentationParams,
-  ACodeSessionResumeParams,
+  V4SessionResumeParams,
   ACodeSessionSetModeParams,
   ACodeSessionSetModelParams,
   ACodeSessionSetThoughtLevelParams,
@@ -161,7 +161,7 @@ export function createACodeSessionService({
 
   async function repairEmptyImportedClaudeSession(
     snapshot: ACodeSessionStateSnapshot,
-    params: ACodeSessionResumeParams | ACodeSessionReadParams,
+    params: V4SessionResumeParams | ACodeSessionReadParams,
   ): Promise<ACodeSessionStateSnapshot> {
     return withApiRetryRuntime(
       await repairEmptyImportedClaudeSessionSnapshot({
@@ -173,7 +173,7 @@ export function createACodeSessionService({
   }
 
   async function withResolvedMcpServers<
-    T extends ACodeSessionCreateParams | ACodeSessionResumeParams,
+    T extends ACodeSessionCreateParams | V4SessionResumeParams,
   >(params: T): Promise<T> {
     const mcpServers = appendWorkspaceToFilesystemMcpServers(
       params.mcpServers,
@@ -272,7 +272,7 @@ export function createACodeSessionService({
       return snapshotWithRuntime;
     },
 
-    async resumeSession(params: ACodeSessionResumeParams) {
+    async resumeSession(params: V4SessionResumeParams) {
       const startedAt = Date.now();
       const { broadcastSnapshot: shouldBroadcastSnapshot = true, ...resumeParams } = params;
       const agentParams = await withResolvedMcpServers(resumeParams);

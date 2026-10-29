@@ -1,13 +1,5 @@
-import type {
-  BackgroundWorkSummary,
-  RunningSubagentSummary,
-  SubagentProjectionState,
-  SwarmPlanState,
-  WorkflowRunPendingHole,
-  WorkflowRunState,
-  WorkflowRunsState,
-} from "@acode/shared/acode-protocol-v4";
 import { workflowRunStepCounts } from "@acode/shared/acode-protocol-v4";
+import type { BackgroundWorkSummary, RunningSubagentSummary, SubagentProjectionState, SwarmPlanState, WorkflowRunPendingHole, WorkflowRunState, WorkflowRunsState } from "@acode/shared/acode-protocol-v4";
 
 /**
  * 统一编排 side pane 的纯模型（packages/ui/specs/orchestration-side-pane.md R0/R2）。

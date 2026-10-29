@@ -1,8 +1,5 @@
-import type {
-  PluginScope,
-  PluginsOverviewResult,
-  ACodePluginsMarketplaceMutationResult,
-} from "@acode/shared";
+import type { PluginScope, PluginsOverviewResult } from "@acode/shared";
+import { type V4PluginsMarketplaceMutationResult } from "@acode/shared/acode-protocol-v4";
 import { ServiceChannels } from "@acode/shared";
 import { createServiceDescriptor } from "../descriptors.js";
 
@@ -25,7 +22,7 @@ export interface IPluginsService {
     workspacePath: string;
     workspaceIdentity?: string;
     marketplace?: string;
-  }): Promise<ACodePluginsMarketplaceMutationResult | void>;
+  }): Promise<V4PluginsMarketplaceMutationResult | void>;
   installPlugin(params: {
     workspacePath: string;
     workspaceIdentity?: string;

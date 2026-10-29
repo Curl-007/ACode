@@ -253,10 +253,11 @@ export const PROVIDER_DIAGNOSTICS_ZERO_SPEND: ProviderDiagnosticsSpend = Object.
 /**
  * host → CLI 的协议方法名。
  *
- * **刻意落在这个中立叶子，不进 `acodeProtocolMethods`**：legacy barrel
- * `acode-protocol/index.ts` 是冻结面（只删不增，见 specs/legacy-protocol-freeze.md），
- * 既有 `providerTestModelConnectivity` 在 barrel 里是存量、不是可效仿的先例。方法名走
- * 中立叶子 + 客户端方法联合扩一项，是「新命令不进冻结面」的合规形态。
+ * **刻意落在这个中立叶子，不进 legacy 协议面**：原 legacy barrel
+ * `acode-protocol/index.ts`（M4a 已删）是冻结面（只删不增，见
+ * specs/legacy-protocol-freeze.md），既有 `providerTestModelConnectivity` 在 barrel 里是
+ * 存量、不是可效仿的先例。方法名走中立叶子 + 客户端方法联合扩一项，是「新命令不进冻结面」
+ * 的合规形态。
  *
  * 命名沿用 `provider/` 前缀（与既有 `provider/testModelConnectivity` 同族）。
  *

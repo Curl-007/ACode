@@ -1,13 +1,7 @@
 import type { GitRepositorySummary } from "@acode/shared";
-import type {
-  BackgroundWorkSummary,
-  GoalState,
-  PlanState,
-  RunningSubagentSummary,
-  ToolCallRow,
-  WorkflowRunState,
-} from "@acode/shared/acode-protocol-v4";
 import { workflowRunStepCounts } from "@acode/shared/acode-protocol-v4";
+import type { BackgroundWorkSummary, GoalState, PlanState, RunningSubagentSummary, ToolCallRow, WorkflowRunState } from "@acode/shared/acode-protocol-v4";
+
 import { extractPlanToolCallContent, getPlanDirectoryTitle } from "@/lib/planToolCall.js";
 
 // 团队分区的类型与投影住在 teamPanelModel（见其文件头注释），此处只转发调用。

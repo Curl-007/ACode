@@ -4,12 +4,9 @@
 // 注：UI 侧 acodeSessionProjection 曾是消费方，2026-10-28 随 legacy M1 收口删除。
 // textFromACodeMessageParts 已迁 acode-protocol-legacy-types.ts（幸存面）。
 // 本文件与旧投影栈同生命周期。
-import type { ACodeSessionGoal } from "./acode-protocol/index.js";
+import type { ACodeSessionGoal } from "./acode-session-types.js";
 import { getConversationMessageProjectionPolicy } from "./conversation-message-projection-policy.js";
-import {
-  type ACodeMessageWithParts,
-  textFromACodeMessageParts,
-} from "./acode-protocol-legacy-types.js";
+import { type ACodeMessageWithParts, textFromACodeMessageParts } from "./acode-message-types.js";
 
 const GOAL_CONTINUATION_REMINDER_PREFIX = '<system-reminder source="goal-continuation">';
 const GOAL_CONTINUATION_TEXT_MARKER = "Continue working toward the active session goal.";

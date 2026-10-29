@@ -1,6 +1,7 @@
 /* eslint-disable max-lines -- 已安装插件列表与详情弹窗共享组件分组/Hook 明细渲染，集中维护更利于与参考图保持一致。 */
 import { AlertTriangle } from "lucide-react";
-import type { ACodePluginDiagnostic, ACodePluginInfo } from "@acode/shared";
+
+import { type V4PluginDiagnostic, type V4PluginInfo } from "@acode/shared/acode-protocol-v4";
 import { Badge } from "@/components/ui/badge.js";
 import { useACodeIntl } from "@/i18n/IntlProvider.js";
 
@@ -9,7 +10,7 @@ import { useACodeIntl } from "@/i18n/IntlProvider.js";
  * 只写 diagnostics 的话 UI 无渲染位置，用户无从排查。message 由 CLI 下发并包含
  * 具体路径（协议 wire 不携带 path 字段），因此正文直出 message 即可。
  */
-export function PluginWarningList({ warnings }: { warnings: ACodePluginDiagnostic[] }) {
+export function PluginWarningList({ warnings }: { warnings: V4PluginDiagnostic[] }) {
   return (
     <ul className="space-y-2">
       {warnings.map((diagnostic, index) => (
@@ -28,7 +29,7 @@ export function PluginWarningList({ warnings }: { warnings: ACodePluginDiagnosti
 export function PluginHookDetails({
   hooks,
 }: {
-  hooks: NonNullable<ACodePluginInfo["hookDetails"]>;
+  hooks: NonNullable<V4PluginInfo["hookDetails"]>;
 }) {
   const { intl } = useACodeIntl();
   return (
@@ -138,7 +139,7 @@ function PluginDetailInlineValue({ label, value }: { label: string; value: strin
   );
 }
 
-function formatHookCommand(hook: NonNullable<ACodePluginInfo["hookDetails"]>[number]): string {
+function formatHookCommand(hook: NonNullable<V4PluginInfo["hookDetails"]>[number]): string {
   if (!hook.args || hook.args.length === 0) return hook.command;
   return `${hook.command} ${hook.args.join(" ")}`;
 }

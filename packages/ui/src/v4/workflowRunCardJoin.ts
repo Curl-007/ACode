@@ -1,5 +1,5 @@
-import { workflowRunStepCounts, type WorkflowRunState } from "@acode/shared/acode-protocol-v4";
-import type { ConversationRow } from "@acode/shared/acode-protocol-v4";
+import { workflowRunStepCounts, type WorkflowRunState, type ConversationRow } from "@acode/shared/acode-protocol-v4";
+
 import type { WorkflowCausalityGraphData } from "@/components/workflow-graph/types.js";
 import type { WorkflowRunCardSummary } from "@/ToolCallBlocks/shared.js";
 

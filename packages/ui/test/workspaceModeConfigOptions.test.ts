@@ -54,7 +54,8 @@ test("dontAsk 不再被静默回落成 build（搬迁修掉的潜在缺陷）", 
 });
 
 test("未知/auto 档位仍归一到 build（与 legacy 一致，不产出空 currentValue）", () => {
-  // v4 值域刻意排除 auto（acode-protocol/index.ts:3529），故 'auto' 落到这里必须归一，
+  // v4 值域刻意排除 auto（原 acode-protocol/index.ts:3529，M4a 后该 schema 已随承重面
+  // 收编进中立 session-types 叶），故 'auto' 落到这里必须归一，
   // 否则工具栏会拿到没有档位被选中的 UI。这条是 legacy 行为的**保持**，不是修改。
   assert.equal(acodeWorkspacePresentationToConfigOptions("auto")[0]!.currentValue, "build");
   // 未知字符串同样归一（类型上不可达，但 normalize 的兜底语义要钉住）。

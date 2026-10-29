@@ -1,21 +1,9 @@
 /* eslint-disable max-lines -- 存量基线豁免:该文件先于 CLI lint 门禁建立即超限(根 lint 的 ignorePatterns 排除 apps/acode-cli,turbo lint 因此从未变绿)。头注豁免以恢复门禁信号;拆分重构超出本批范围。 */
-import {
-  acodePluginsCancelOperationParamsSchema,
-  acodeProtocolMethods,
-  acodeWorkspaceCancelGenerateTextParamsSchema,
-  // U08 provider 诊断方法名取自中立叶子（不进 legacy barrel 冻结面）。
-  PROVIDER_DIAGNOSTICS_METHODS,
-} from "@acode/shared";
+import { acodePluginsCancelOperationParamsSchema, PROVIDER_DIAGNOSTICS_METHODS , LEGACY_SURVIVOR_METHODS} from "@acode/shared";
+import { v4WorkspaceCancelGenerateTextParamsSchema, V4_METHODS, V4_NOTIFICATIONS, parseConversationTopic, parseSessionsIndexTopic, parseWorkspaceConfigTopic, type V4Method } from "@acode/shared/acode-protocol-v4";
 import type { BrowserControlPort } from "@acode/contracts";
 import { InMemoryWorkspaceHookPolicyProvider } from "@acode/core";
-import {
-  V4_METHODS,
-  V4_NOTIFICATIONS,
-  parseConversationTopic,
-  parseSessionsIndexTopic,
-  parseWorkspaceConfigTopic,
-} from "@acode/shared/acode-protocol-v4";
-import { type V4Method } from "@acode/shared/acode-protocol-v4";
+
 import { queryV4Capability } from "./capabilities.js";
 // 归档会话 header 冷读的实体（v4 目录）；本文件只留一行 dispatch case。
 import { querySessionHeaderMeta } from "./session-header-meta-query.js";
@@ -34,7 +22,8 @@ import type {
   ACodeAgentQuiescenceFacts,
   ACodeProtocolError,
   ACodeProtocolMessage,
-  ACodeProtocolMethod,
+  LegacySurvivorMethod,
+  LegacySkewFallbackMethod,
   ACodeProtocolNotification,
   ACodeProtocolRequest,
   ACodeProtocolRequestId,
@@ -762,12 +751,12 @@ export class ACodeProtocolAgentServer {
       // 其 services 消费在 M2 季已归零或为 skew-only，op 实体若仅服务这些 case 则随删）。
       // 幸存词保留最小执行面，登记移除条件见 spec §0 幸存清单。
       // 裁决 1：session/subagents 无 v4 分页 query，UI 已结束子代理目录依赖；幸存待产品裁决。
-      case acodeProtocolMethods.sessionSubagents:
+      case LEGACY_SURVIVOR_METHODS.sessionSubagents:
         return await listSessionSubagents(this.context, request.params);
       // 裁决 3：session/send 仅附件回退路径幸存——v4 sendText 只收 attachmentRef，
       // 宿主发送侧上传/寄存命令面尚未建模；bot/手机 replayable 附件输入走此路
       // （acodeTaskServiceAdapter.ts 附件分支）。
-      case acodeProtocolMethods.sessionSend:
+      case LEGACY_SURVIVOR_METHODS.sessionSend:
         return await sendPrompt(this.context, request.params);
       // ── U08 provider 诊断（specs/provider-diagnostics.md）──
       // 走进程级执行器（不建 workspace ACodeApp），因此首次配置尚无 workspace 也能诊断。
@@ -777,7 +766,7 @@ export class ACodeProtocolAgentServer {
         return this.requireProviderDiagnostics().cancel(request.params);
       // 裁决 2：plugins/cancelOperation 中止注册表按 operationId 键控、与协议代际无关，
       // legacy 词保留（M2-5 §4 先例；shared protocol-boundary 测试断言其不进 v4 面）。
-      case acodeProtocolMethods.pluginsCancelOperation:
+      case LEGACY_SURVIVOR_METHODS.pluginsCancelOperation:
         return this.cancelPluginOperation(request.params);
       default:
         throw new ProtocolRequestError(-32601, `Method not found: ${request.method}`);
@@ -863,7 +852,7 @@ export class ACodeProtocolAgentServer {
   }
 
   private cancelWorkspaceGenerateText(rawParams: unknown) {
-    const params = parseParams(acodeWorkspaceCancelGenerateTextParamsSchema, rawParams);
+    const params = parseParams(v4WorkspaceCancelGenerateTextParamsSchema, rawParams);
     const controller = this.workspaceGenerateTextControllers.get(params.operationId);
     if (!controller) return { operationId: params.operationId, cancelled: false };
     controller.abort(new DOMException("Workspace model request cancelled", "AbortError"));
@@ -885,7 +874,7 @@ export class ACodeProtocolAgentServer {
   }
 
   private requestClient<T>(
-    method: ACodeProtocolMethod | V4Method,
+    method: LegacySurvivorMethod | LegacySkewFallbackMethod | V4Method,
     params: unknown,
     resultSchema: ParamsSchema<T>,
     options?: ACodeProtocolClientRequestOptions,

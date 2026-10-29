@@ -1,14 +1,7 @@
 import { useEffect, useState } from "react";
 import { Info, Workflow } from "lucide-react";
-import {
-  TID_WORKFLOW_LAUNCH_ARG,
-  TID_WORKFLOW_LAUNCH_DIALOG,
-  TID_WORKFLOW_LAUNCH_ERROR,
-  TID_WORKFLOW_LAUNCH_SUBMIT,
-  TID_WORKFLOW_LAUNCH_TARGET,
-  testId,
-  type ACodeSavedWorkflowEntry,
-} from "@acode/shared";
+import { TID_WORKFLOW_LAUNCH_ARG, TID_WORKFLOW_LAUNCH_DIALOG, TID_WORKFLOW_LAUNCH_ERROR, TID_WORKFLOW_LAUNCH_SUBMIT, TID_WORKFLOW_LAUNCH_TARGET, testId } from "@acode/shared";
+import { type V4SavedWorkflowEntry } from "@acode/shared/acode-protocol-v4";
 import { Button } from "@/components/ui/button.js";
 import {
   Dialog,
@@ -46,7 +39,7 @@ import {
 import type { SavedWorkflowLaunchError } from "@/settings/saved-workflows/useSavedWorkflowLauncher.js";
 
 interface SavedWorkflowLaunchDialogProps {
-  entry: ACodeSavedWorkflowEntry | null;
+  entry: V4SavedWorkflowEntry | null;
   /** 作用域徽标与「将立即在 X 的新会话中运行」文案都要它；也决定启动命令的 scope。 */
   scope: "project" | "global";
   /**
@@ -56,7 +49,7 @@ interface SavedWorkflowLaunchDialogProps {
   projectLabel: string;
   onOpenChange: (open: boolean) => void;
   onSubmit: (
-    entry: ACodeSavedWorkflowEntry,
+    entry: V4SavedWorkflowEntry,
     args: Record<string, unknown>,
     target?: AutomationWorkspaceOption,
   ) => void;

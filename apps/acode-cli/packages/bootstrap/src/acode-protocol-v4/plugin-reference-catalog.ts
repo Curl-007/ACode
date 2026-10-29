@@ -1,16 +1,8 @@
 // Plugin 对话引用 catalog 的协议 handler。
 // 与 plugins.ts（安装/市场/启停等管理面）分文件：本查询是会话/草稿 Picker 的只读投影，
 // 且 plugins.ts 已接近 max-lines 门禁。
-import {
-  ACODE_OFFICIAL_PLUGIN_MARKETPLACE_ID,
-  acodeProtocolNotifications,
-  acodePluginsReferenceCatalogParamsSchema,
-  acodePluginsResolveSuggestedReferenceParamsSchema,
-  type ACodePluginReferenceCatalogEntry,
-  type ACodePluginDiagnostic as SharedPluginDiagnostic,
-  type ACodePluginsReferenceCatalogResult,
-  type ACodePluginsResolveSuggestedReferenceResult,
-} from "@acode/shared";
+import { ACODE_OFFICIAL_PLUGIN_MARKETPLACE_ID , LEGACY_NOTIFICATIONS} from "@acode/shared";
+import { v4PluginsReferenceCatalogParamsSchema, v4PluginsResolveSuggestedReferenceParamsSchema, type V4PluginReferenceCatalogEntry, type V4PluginDiagnostic as SharedPluginDiagnostic, type V4PluginsReferenceCatalogResult, type V4PluginsResolveSuggestedReferenceResult } from "@acode/shared/acode-protocol-v4";
 import type { PluginReferenceCatalogEntry } from "@acode/contracts";
 import { buildPluginReferenceCatalog } from "@acode/core";
 import {
@@ -31,8 +23,8 @@ export async function getPluginReferenceCatalog(
   context: ACodeProtocolAgentServerContext,
   rawParams: unknown,
   includeCategory = false,
-): Promise<ACodePluginsReferenceCatalogResult> {
-  const params = parseParams(acodePluginsReferenceCatalogParamsSchema, rawParams);
+): Promise<V4PluginsReferenceCatalogResult> {
+  const params = parseParams(v4PluginsReferenceCatalogParamsSchema, rawParams);
   if (params.sessionId) {
     const record = requireSession(context, params.sessionId);
     const displayByPluginId = resolveReferenceListingDisplayByPluginId(
@@ -67,8 +59,8 @@ export async function resolveSuggestedPluginReference(
   context: ACodeProtocolAgentServerContext,
   rawParams: unknown,
   signal?: AbortSignal,
-): Promise<ACodePluginsResolveSuggestedReferenceResult> {
-  const params = parseParams(acodePluginsResolveSuggestedReferenceParamsSchema, rawParams);
+): Promise<V4PluginsResolveSuggestedReferenceResult> {
+  const params = parseParams(v4PluginsResolveSuggestedReferenceParamsSchema, rawParams);
   const stableId = params.stableId.trim();
   const at = stableId.lastIndexOf("@");
   const pluginName = at > 0 ? stableId.slice(0, at) : "";
@@ -142,7 +134,7 @@ export async function resolveSuggestedPluginReference(
   // 旧流程只有官方 Marketplace 刷新完成后才把 missing 结果返回 UI，网络等待期间
   // 没有任何反馈，用户会误以为点击未生效。首次本地检查缺失后先通知同一 operation 进入 loading。
   context.notify({
-    method: acodeProtocolNotifications.pluginOperationProgress,
+    method: LEGACY_NOTIFICATIONS.pluginOperationProgress,
     params: { operationId: params.operationId, state: "refreshing" },
   });
 
@@ -271,7 +263,7 @@ function toReferenceCatalogEntry(
   entry: PluginReferenceCatalogEntry,
   displayByPluginId: ReadonlyMap<string, PluginReferenceListingDisplay>,
   includeCategory = false,
-): ACodePluginReferenceCatalogEntry {
+): V4PluginReferenceCatalogEntry {
   const display = displayByPluginId.get(entry.pluginId);
   return {
     ...(includeCategory ? { category: display?.category ?? "other" } : {}),

@@ -1,6 +1,6 @@
 /* eslint-disable max-lines -- 拆分批次 1 已抽出全部 module-level 纯叶子（types/primitives/hooks/model/tool-display 五个姊妹模块，specs/product-projection-structure.md §4）。剩余 bulk 是有状态 ProductProjection class（约 60 共享可变字段 + cloneProjection/adoptProjection 逐字段原子提交），其事件域拆分被前置条件阻塞：需先建 replay-equivalence 黄金 harness（spec §4 批次 2）机械保证 delta 流不变，否则字段/clone 遗漏会静默改行为。harness 就位前保留头注豁免。 */
 import { isDeepStrictEqual } from "node:util";
-import { PERMISSION_FULL_ACCESS_OPTION_ID } from "@acode/shared/acode-protocol-v4";
+import { PERMISSION_FULL_ACCESS_OPTION_ID, type ArtifactRow, type AssistantTextRow, type ApiRetryState, type BackgroundWorkSummary, type CuaAppIdentity, type ConversationDelta, type ConversationRow, type ConversationRowTarget, type ConversationSnapshot, type ComposerTurnMetrics, type GoalState, type HookExecutionProjection, type HookInvocationRow, type PendingInteraction, type ReasoningRow, type SessionControl, type SessionToolStats, type StatePatch, type SubagentRow, type TimelineMarkerPayload, type TimelineMarkerRow, type ToolCallRow, type RunningSubagentSummary, type SubagentProjectionState, type TurnHeaderRow, type TurnHeaderStats, type TurnMetrics, type TurnWorkSegment, type UserInputRow, type QueueItem, type MutableConversationSnapshotAccumulator, type SwarmPlanProgressEnvelope, type WorkflowRunProgressEnvelope, PROTOCOL_V4_LIMITS, applyConversationDeltas, applyConversationDeltasMutable, createMutableConversationSnapshotAccumulator, diffWorkflowRunsState, reduceSwarmPlanState, reduceWorkflowRunsState, workspaceHookReviewRequestPayloadSchema } from "@acode/shared/acode-protocol-v4";
 // ProductProjection —— CLI 权威投影第二 reducer。
 // 输入：CLI 事件日志（SessionEvent，权威事实源）；输出：ConversationDelta[]。
 // 快照推进复用协议规范 apply（applyConversationDeltas）——投影演进与 delta 流
@@ -100,56 +100,13 @@ import {
   acodeBackgroundTaskNotificationToolUpdateStatus,
 } from "@acode/shared";
 import { lookupVisualizationFragment, parseVisualizeReferences } from "./visualization-registry.js";
-import type {
-  ArtifactRow,
-  AssistantTextRow,
-  ApiRetryState,
-  BackgroundWorkSummary,
-  CuaAppIdentity,
-  ConversationDelta,
-  ConversationRow,
-  ConversationRowTarget,
-  ConversationSnapshot,
-  ComposerTurnMetrics,
-  GoalState,
-  HookExecutionProjection,
-  HookInvocationRow,
-  PendingInteraction,
-  ReasoningRow,
-  SessionControl,
-  SessionToolStats,
-  StatePatch,
-  SubagentRow,
-  TimelineMarkerPayload,
-  TimelineMarkerRow,
-  ToolCallRow,
-  RunningSubagentSummary,
-  SubagentProjectionState,
-  TurnHeaderRow,
-  TurnHeaderStats,
-  TurnMetrics,
-  TurnWorkSegment,
-  UserInputRow,
-  QueueItem,
-  MutableConversationSnapshotAccumulator,
-  SwarmPlanProgressEnvelope,
-  WorkflowRunProgressEnvelope,
-} from "@acode/shared/acode-protocol-v4";
+
 import {
   parseListAppsSnapshot,
   readOfficialCuaAction,
   resolveCuaAppIdentity,
 } from "./cua-app-snapshot.js";
-import {
-  PROTOCOL_V4_LIMITS,
-  applyConversationDeltas,
-  applyConversationDeltasMutable,
-  createMutableConversationSnapshotAccumulator,
-  diffWorkflowRunsState,
-  reduceSwarmPlanState,
-  reduceWorkflowRunsState,
-  workspaceHookReviewRequestPayloadSchema,
-} from "@acode/shared/acode-protocol-v4";
+
 import {
   buildToolOutput,
   buildTurnHeaderRow,

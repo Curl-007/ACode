@@ -182,12 +182,17 @@ test("闭集纪律：产出的每个因名都在 contracts 因集常量里", () 
 });
 
 test("R4 同批加宽守护：shared 三处 strict 镜像 + services 中继挑取缺一不可", () => {
-  const legacy = read("../../../packages/shared/src/acode-protocol-legacy-types.ts");
-  const legacySchema = legacy.slice(
-    legacy.indexOf("export const acodeSessionContextCacheUsageSchema"),
-    legacy.indexOf(".strict();", legacy.indexOf("export const acodeSessionContextCacheUsageSchema")),
+  // M4a：legacy-types.ts 已整删，acodeSessionContextCacheUsageSchema 随承重面收编进
+  // 中立 session-runtime-types 叶（strict 镜像形态逐字未变）。
+  const runtimeTypes = read("../../../packages/shared/src/acode-session-runtime-types.ts");
+  const runtimeSchema = runtimeTypes.slice(
+    runtimeTypes.indexOf("export const acodeSessionContextCacheUsageSchema"),
+    runtimeTypes.indexOf(
+      ".strict();",
+      runtimeTypes.indexOf("export const acodeSessionContextCacheUsageSchema"),
+    ),
   );
-  assert.ok(legacySchema.includes("missCauses"), "v3/v4 客户端校验镜像必须含 missCauses");
+  assert.ok(runtimeSchema.includes("missCauses"), "v3/v4 客户端校验镜像必须含 missCauses");
 
   const taskTypes = read("../../../packages/shared/src/acode-task-types-core.ts");
   const cacheUsage = taskTypes.slice(

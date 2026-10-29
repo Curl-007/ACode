@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { acodeWorkspaceRefSchema } from "../acode-protocol-legacy-types.js";
+import { acodeWorkspaceRefSchema } from "../acode-session-types.js";
 
 // 已保存工作流 GUI 中枢的 v4 面（apps/acode-cli/specs/m2-6-workflows-skills-mcp.md）。
 //

@@ -13,24 +13,9 @@ import {
 import type { McpTelemetryTracker } from "@acode/adapters";
 import type { WorkspaceHookPolicyProvider } from "@acode/core";
 import type { AccountProviderConfigSnapshot } from "@acode/provider";
-import {
-  acodeProtocolErrorCodes,
-  type ACodeAutomationBotDeliveryTarget,
-  type ACodeDeliveryKind,
-  type ModelSelection,
-  type ACodeModelContextBudgetStrategy,
-  type ACodeProtocolMessage,
-  type ACodeProtocolMethod,
-  type ACodeProtocolNotification,
-  type ACodeProtocolRequest,
-  type ACodeProtocolRequestId,
-  type ACodeProtocolTrace,
-  type ACodeSessionMode,
-  type ACodeSessionPersistence,
-  type ACodeWorkspaceRef,
-  type ToolSearchAppMode,
-} from "@acode/shared";
-import type { V4Method } from "@acode/shared/acode-protocol-v4";
+import { acodeProtocolErrorCodes, type ACodeAutomationBotDeliveryTarget, type ACodeDeliveryKind, type ModelSelection, type ACodeModelContextBudgetStrategy, type ACodeProtocolMessage, type LegacySurvivorMethod, type LegacySkewFallbackMethod, type ACodeProtocolNotification, type ACodeProtocolRequest, type ACodeProtocolRequestId, type ACodeProtocolTrace, type ACodeSessionMode, type ACodeWorkspaceRef, type ToolSearchAppMode } from "@acode/shared";
+import { type V4SessionPersistence, type V4Method } from "@acode/shared/acode-protocol-v4";
+
 import type { ACodeApp, ACodeAppOptions } from "../app/types.js";
 import type {
   ProviderDiagnosticsProtocolExecutor,
@@ -114,7 +99,7 @@ export interface ACodeProtocolSessionRecord {
   legacyStreamSubscribed?: boolean;
   eventStore: SessionEventStorePort;
   parentSessionId?: SessionId;
-  persistence: ACodeSessionPersistence;
+  persistence: V4SessionPersistence;
   protocolEventSequences: Map<string, ACodeProtocolEventSequenceState>;
   protocolToolInputTransmissions: Map<string, ACodeProtocolToolInputTransmissionState>;
   stateRevision: number;
@@ -202,7 +187,7 @@ export interface ACodeProtocolAgentServerContext {
   hostV4InboundEstablished: boolean;
   notify(notification: ACodeProtocolNotification): void;
   requestClient<T>(
-    method: ACodeProtocolMethod | V4Method,
+    method: LegacySurvivorMethod | LegacySkewFallbackMethod | V4Method,
     params: unknown,
     resultSchema: ParamsSchema<T>,
     options?: ACodeProtocolClientRequestOptions,

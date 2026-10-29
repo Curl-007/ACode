@@ -9,12 +9,8 @@
  * 测试：`packages/ui/test/mcpSettingsModel.test.ts`。
  */
 import { convertToACodeAgentMcpServer } from "@acode/shared";
-import type {
-  ACodeAgentMcpServer,
-  ACodeMcpServer,
-  ACodeMcpServerStatusSnapshot,
-  ACodePluginInfo,
-} from "@acode/shared";
+import type { ACodeAgentMcpServer, ACodeMcpServer } from "@acode/shared";
+import { type V4McpServerStatusSnapshot, type V4PluginInfo } from "@acode/shared/acode-protocol-v4";
 
 /** MCP 来源常量。`DEFAULT_MCP_SOURCE` 留在主文件（属于表单/编辑器默认值，不属于 refresh 决策）。 */
 
@@ -190,7 +186,7 @@ export function createMcpStatusListRefreshQueue(): McpStatusListRefreshQueue {
 
 export function buildMcpOAuthAuthorizationStatusRefreshServers(
   servers: ACodeMcpServer[],
-  statusSnapshots: Record<string, ACodeMcpServerStatusSnapshot> = {},
+  statusSnapshots: Record<string, V4McpServerStatusSnapshot> = {},
 ): ACodeAgentMcpServer[] {
   const pendingSnapshotNames = new Set(
     Object.entries(statusSnapshots)
@@ -241,7 +237,7 @@ export function buildMcpServerStatusListKey(servers: ACodeMcpServer[]): string {
     .join("|");
 }
 
-export function buildPluginMcpServerStatusListKey(plugins: ACodePluginInfo[]): string {
+export function buildPluginMcpServerStatusListKey(plugins: V4PluginInfo[]): string {
   return plugins
     .map((plugin) => {
       const declaredNames = plugin.declaredMcpServerNames ?? [];
@@ -272,7 +268,7 @@ export function shouldShowPluginMcpServersInMcpSettings(isRemoteSyncContext: boo
 
 export function buildPendingMcpOAuthAuthorizationRefreshKey(
   servers: ACodeMcpServer[],
-  statusSnapshots: Record<string, ACodeMcpServerStatusSnapshot> = {},
+  statusSnapshots: Record<string, V4McpServerStatusSnapshot> = {},
 ): string {
   const localPendingKeys = servers
     .filter(

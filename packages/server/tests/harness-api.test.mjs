@@ -715,6 +715,30 @@ test("红线：server harness 只允许已登记的 protocol capability/schema �
     " M packages/shared/src/acode-protocol-v4/command.ts",
     "M  packages/shared/src/acode-protocol/index.ts",
     " M packages/shared/src/acode-protocol/index.ts",
+    // M4a legacy barrel 整删（spec: apps/acode-cli/specs/m4-shared-barrel-removal.md §0
+    // 裁决 A/E）。这是本批唯一的「删除」登记项：barrel 的承重面已按符号归属收编进一组
+    // 有意命名的中立模块（envelope/storage-startup/agent-notifications/model-options/
+    // session-types/message-types/interaction-types/session-runtime-types/
+    // session-projection/session-events/session-event-payloads/tool-result-display +
+    // legacy-survivors/legacy-skew），根入口不再 re-export 该路径。
+    " D packages/shared/src/acode-protocol/index.ts",
+    // M4a：v4 各 schema 叶的 import 改指中立叶（legacy-types 删除后的接线，wire 形态零变化）。
+    // 逐文件登记而非通配，保持「每个改动都有可追溯的协议面归属」的红线语义。
+    " M packages/shared/src/acode-protocol-v4/inbound-interaction.ts",
+    " M packages/shared/src/acode-protocol-v4/mcp.ts",
+    " M packages/shared/src/acode-protocol-v4/plugins-commands.ts",
+    " M packages/shared/src/acode-protocol-v4/plugins-queries.ts",
+    " M packages/shared/src/acode-protocol-v4/provider-process.ts",
+    " M packages/shared/src/acode-protocol-v4/script-workflow-management.ts",
+    " M packages/shared/src/acode-protocol-v4/session-control.ts",
+    " M packages/shared/src/acode-protocol-v4/session-readwrite.ts",
+    " M packages/shared/src/acode-protocol-v4/skills.ts",
+    " M packages/shared/src/acode-protocol-v4/snapshot.ts",
+    " M packages/shared/src/acode-protocol-v4/telemetry.ts",
+    " M packages/shared/src/acode-protocol-v4/transport.ts",
+    " M packages/shared/src/acode-protocol-v4/workflows.ts",
+    " M packages/shared/src/acode-protocol-v4/workspace-policies.ts",
+    " M packages/shared/src/acode-protocol-v4/workspace-runtime.ts",
     "?? packages/shared/src/acode-protocol-v4/capabilities.ts",
     // script-workflow 管理面的 v4 命令 schema（spec: apps/acode-cli/specs/script-workflow-management-surface.md）。
     // 按红线流程登记：新 v4 协议文件只进 acode-protocol-v4，提供严格类型与运行时校验，

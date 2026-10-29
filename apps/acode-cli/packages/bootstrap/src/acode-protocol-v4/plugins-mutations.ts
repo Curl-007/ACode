@@ -42,7 +42,7 @@ import {
   toPluginDiagnostic,
   toPluginInfo,
 } from "./plugins-management.js";
-import { parseParams, type ACodeProtocolAgentServerContext } from "../acode-protocol/server-types.js";
+import { parseParams, type ACodeProtocolAgentServerContext } from "./server-types.js";
 
 export async function setPluginEnabled(
   context: ACodeProtocolAgentServerContext,

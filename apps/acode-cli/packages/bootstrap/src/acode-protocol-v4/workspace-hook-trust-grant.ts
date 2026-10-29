@@ -1,7 +1,7 @@
 // workspace hook 预信任授权的 v4 handler（apps/acode-cli/specs/m2-8-workspace-provider-process.md）。
 //
-// 授权实体自 legacy `acode-protocol/workspace-hook-trust.ts` 逐字迁入（parse 改 v4 schema，
-// 形状逐字 parity）；notify 联动自 `acode-protocol/server.ts` 迁入——accepted 后按
+// 授权实体自 legacy `acode-protocol-v4/workspace-hook-trust.ts` 逐字迁入（parse 改 v4 schema，
+// 形状逐字 parity）；notify 联动自 `acode-protocol-v4/server.ts` 迁入——accepted 后按
 // workspaceKey 通知全部活跃 session 重载 trust store（迁移不变量，spec §3.1）。legacy
 // case 删除后 server.ts 不再持有该联动（不向待删目录留实体债）。
 import { resolve } from "node:path";
@@ -21,7 +21,7 @@ import {
 import type {
   ACodeProtocolAgentServerContext,
   ACodeProtocolSessionRecord,
-} from "../acode-protocol/server-types.js";
+} from "./server-types.js";
 
 type GrantWorkspaceHookTrust = typeof grantWorkspaceHookTrust;
 

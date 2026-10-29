@@ -17,7 +17,7 @@ const { BUILTIN_ACODE_SLASH_COMMAND_HELP_ENTRIES } = await import(
 const { resolveACodeBuiltinPromptCommand } = await import(
   `${BOOTSTRAP}/builtin-prompt-command.ts`
 );
-const { listProtocolSlashCommands } = await import(`${BOOTSTRAP}/acode-protocol/slash-commands.ts`);
+const { listProtocolSlashCommands } = await import(`${BOOTSTRAP}/acode-protocol-v4/slash-commands.ts`);
 const {
   APP_PROTOCOL_VISIBLE_BUILTIN_SLASH_COMMAND_NAMES,
   isReservedACodeSlashCommandName,

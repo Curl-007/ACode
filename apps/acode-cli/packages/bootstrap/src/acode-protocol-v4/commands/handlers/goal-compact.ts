@@ -22,8 +22,8 @@ import type {
 } from "@acode/shared/acode-protocol-v4";
 import type { SessionGoal } from "@acode/contracts";
 import type { SteerTurnOptions, SubmitPromptOptions } from "../../../app/types.js";
-import { runWithSessionResidencyFinalization } from "../../../acode-protocol/session-residency.js";
-import { mapSessionGoal } from "../../../acode-protocol/session-mapper.js";
+import { runWithSessionResidencyFinalization } from "../../session-residency.js";
+import { mapSessionGoal } from "../../session-mapper.js";
 import { inputIntentMetadata } from "../input-intent.js";
 import { requireRecord } from "../record-access.js";
 import type { V4CommandCoreHost, V4SessionRecordView } from "../types.js";

@@ -26,7 +26,7 @@ const POLICY_FLOOR = "packages/core/src/permission/process-policy-floor.ts";
 const RUNNER = "packages/core/src/subagent/runner.ts";
 const SUBAGENT_METHODS = "packages/core/src/runtime/methods/subagent.ts";
 const RESUME = "packages/core/src/runtime/methods/resume.ts";
-const SERVER_OPS = "packages/bootstrap/src/acode-protocol/server-operations.ts";
+const SERVER_OPS = "packages/bootstrap/src/acode-protocol-v4/server-operations.ts";
 const OBSERVATION = "packages/bootstrap/src/app/subagent-observation.ts";
 
 test("R8: SessionStorePort gains no subagent edge methods (contract face stays duck-typed)", async () => {

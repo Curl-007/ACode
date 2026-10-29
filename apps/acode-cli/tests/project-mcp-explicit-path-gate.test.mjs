@@ -27,7 +27,7 @@ const { grantProjectMcpTrust, revokeProjectMcpTrustCli } = await import(
   "../packages/bootstrap/src/project-mcp-trust-cli.ts"
 );
 const { protocolMcpServersToRuntimeMcpConfig } = await import(
-  "../packages/bootstrap/src/acode-protocol/protocol-mcp-config.ts"
+  "../packages/bootstrap/src/acode-protocol-v4/protocol-mcp-config.ts"
 );
 const { resolveAppRuntimeConfig } = await import(
   "../packages/bootstrap/src/app/runtime-config.ts"

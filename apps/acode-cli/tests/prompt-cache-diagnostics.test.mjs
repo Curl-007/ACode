@@ -234,7 +234,7 @@ test("R1/R3 事件点与重建复位守护", () => {
 test("R6 no-telemetry：归因与 debug 旁路零网络出口（负向断言）", () => {
   for (const rel of [
     "../packages/core/src/runtime/methods/turn-model-step-usage.ts",
-    "../packages/bootstrap/src/acode-protocol/session-debug.ts",
+    "../packages/bootstrap/src/acode-protocol-v4/session-debug.ts",
   ]) {
     const source = read(rel);
     assert.ok(!source.includes("fetch("), `${rel} 不得出现 fetch`);

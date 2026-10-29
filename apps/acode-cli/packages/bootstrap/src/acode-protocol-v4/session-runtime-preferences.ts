@@ -13,7 +13,7 @@ import {
 import {
   parseParams,
   type ACodeProtocolAgentServerContext,
-} from "../acode-protocol/server-types.js";
+} from "./server-types.js";
 
 // 偏好是 app-global（scope 键控已由 host 侧合并为全量快照），进程级单槽缓存即可。
 let cachedPreferences: V4SessionRuntimePreferences | undefined;

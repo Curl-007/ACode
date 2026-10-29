@@ -16,12 +16,12 @@ import {
 } from "@acode/shared/acode-protocol-v4";
 import { parseProcessAccountProviderConfigSnapshot } from "../app/process-provider-registry-runtime.js";
 import { resolveOfficialPluginNameByHostMcpServerName } from "../app/official-plugin-definitions.js";
-import { createWorkspaceACodeApp } from "../acode-protocol/workspace-model-runtime.js";
+import { createWorkspaceACodeApp } from "./workspace-model-runtime.js";
 import {
   parseParams,
   ProtocolRequestError,
   type ACodeProtocolAgentServerContext,
-} from "../acode-protocol/server-types.js";
+} from "./server-types.js";
 
 /**
  * 更新进程级 Account Provider Config。

@@ -49,7 +49,7 @@ test("types：createSessionRecord 参数类型含 clientMode?", async () => {
 });
 
 test("v4-bridge：clientMode 经 runtimeFlags 侧通道下传，且不进 appRuntimePreferences", async () => {
-  const v4Bridge = await read("packages/bootstrap/src/acode-protocol/v4-bridge.ts");
+  const v4Bridge = await read("packages/bootstrap/src/acode-protocol-v4/v4-binder.ts");
   assert.match(
     v4Bridge,
     /\}, \{ scriptWorkflowEnabled, toolSearchMode, clientMode \}\);/,
@@ -63,7 +63,7 @@ test("v4-bridge：clientMode 经 runtimeFlags 侧通道下传，且不进 appRun
 });
 
 test("server-operations：三处 runtimeFlags 签名含 clientMode，createRecord 写进 runtimeConfig", async () => {
-  const serverOperations = await read("packages/bootstrap/src/acode-protocol/server-operations.ts");
+  const serverOperations = await read("packages/bootstrap/src/acode-protocol-v4/server-operations.ts");
   // 四处 runtimeFlags 内联类型（createSessionRecordForV4 / createSessionWithProjection /
   // materializeSessionRecord / createRecord）都必须含 clientMode。
   const flagSig =

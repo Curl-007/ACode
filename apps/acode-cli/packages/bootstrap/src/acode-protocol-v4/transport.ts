@@ -6,7 +6,8 @@ import type {
   ACodeProtocolRequestId,
   ACodeProtocolResponse,
 } from "@acode/shared";
-import { acodeProtocolMessageSchema, acodeProtocolMethods } from "@acode/shared";
+import { acodeProtocolMessageSchema } from "@acode/shared";
+import { V4_METHODS } from "@acode/shared/acode-protocol-v4";
 import type { Logger } from "@acode/contracts";
 
 type ACodeProtocolOutgoingMessage =
@@ -244,13 +245,15 @@ export class ACodeProtocolNdjsonConnection {
   }
 
   private shouldBypassProcessingQueue(message: ACodeProtocolMessage): boolean {
-    // 模型任务占住串行队列时，停止/取消请求必须仍能进入 server，
+    // 模型任务占住串行队列时，取消请求必须仍能进入 server，
     // 才能把底层 AbortSignal 传给真实模型请求。控制面只旁路当前执行，普通请求仍保持串行。
+    // M3：legacy session/stop 词已随 legacy dispatch 删除；v4 stop 经 v4/command 信封
+    // （turn 后台执行、不占串行队列）无需旁路。仅 workspace/cancelGenerateText 仍旁路——
+    // 其对应 handler（generateWorkspaceText）同步 await 长 LLM 调用，占用队列。
     return (
       "id" in message &&
       "method" in message &&
-      (message.method === acodeProtocolMethods.sessionStop ||
-        message.method === acodeProtocolMethods.workspaceCancelGenerateText)
+      message.method === V4_METHODS.workspaceCancelGenerateText
     );
   }
 

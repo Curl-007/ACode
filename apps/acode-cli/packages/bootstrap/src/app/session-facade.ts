@@ -30,7 +30,7 @@ import {
   type UsageStorePort,
 } from "@acode/contracts";
 import { listMcpServerStatuses } from "../mcp-config.js";
-import { resolveTzOffsetMs } from "../acode-protocol/usage-stats-builder.js";
+import { resolveTzOffsetMs } from "../acode-protocol-v4/usage-stats-builder.js";
 import { loadSessionTranscriptFromStore } from "../session-transcript.js";
 import { createSubagentObservation } from "./subagent-observation.js";
 import { getLocaleConfigPath } from "./locale-selection.js";

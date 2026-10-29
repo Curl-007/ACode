@@ -8,13 +8,13 @@ import test from "node:test";
  * 归属守卫的 fail-closed、递归守卫、创建上限错误映射、offPeak 终态过滤与失败分类透传。
  */
 const { createProtocolAutomationPort } = await import(
-  "../packages/bootstrap/src/acode-protocol/automation-port.ts"
+  "../packages/bootstrap/src/acode-protocol-v4/automation-port.ts"
 );
 const { createProtocolOffPeakPort } = await import(
-  "../packages/bootstrap/src/acode-protocol/offpeak-port.ts"
+  "../packages/bootstrap/src/acode-protocol-v4/offpeak-port.ts"
 );
 const { ProtocolRequestError } = await import(
-  "../packages/bootstrap/src/acode-protocol/server-types.ts"
+  "../packages/bootstrap/src/acode-protocol-v4/server-types.ts"
 );
 
 const methodNotFound = (method) =>

@@ -98,7 +98,7 @@ test("projection chain wiring invariants (dispatch / cold replay / v3 strip / co
     "delta 不是 swarmPlan 键级整体替换",
   );
 
-  const bridge = await readCli("packages/bootstrap/src/acode-protocol/v4-bridge.ts");
+  const bridge = await readCli("packages/bootstrap/src/acode-protocol-v4/v4-binder.ts");
   assert.ok(/async function replaySwarmPlanEvent\(/.test(bridge), "冷回放函数缺失");
   assert.ok(/\.\.\.replayedSwarm/.test(bridge), "冷回放事件未前置进 memoryEvents");
   assert.ok(
@@ -113,7 +113,7 @@ test("projection chain wiring invariants (dispatch / cold replay / v3 strip / co
   );
 
   // R2 v4-only：v3 面剥离（场景 7 负向断言）
-  const sessionMapper = await readCli("packages/bootstrap/src/acode-protocol/session-mapper.ts");
+  const sessionMapper = await readCli("packages/bootstrap/src/acode-protocol-v4/session-mapper.ts");
   const stripBlock = sessionMapper.slice(
     sessionMapper.indexOf("event.type === SessionEventType.SwarmPlanProgress"),
   );

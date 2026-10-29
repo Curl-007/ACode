@@ -1,6 +1,6 @@
 // Composer Skill 只读 catalog 的 v4 handler（apps/acode-cli/specs/m2-6-workflows-skills-mcp.md）。
 //
-// 实体自 legacy `acode-protocol/skill-reference-catalog.ts` 逐字迁入（M2-6：实体放 v4 目录，
+// 实体自 legacy `acode-protocol-v4/skill-reference-catalog.ts` 逐字迁入（M2-6：实体放 v4 目录，
 // server.ts 只留一行转发，不在待删目录留实体债）。唯一改动：params/result 改 v4 schema
 // （形状与 legacy 逐字 parity）。
 // 与 Skills Settings 管理接口分离：这里的 sessionId 决定 authority，不提供启停/删除能力。
@@ -15,7 +15,7 @@ import {
   parseParams,
   requireSession,
   type ACodeProtocolAgentServerContext,
-} from "../acode-protocol/server-types.js";
+} from "./server-types.js";
 
 export async function getSkillReferenceCatalog(
   context: ACodeProtocolAgentServerContext,

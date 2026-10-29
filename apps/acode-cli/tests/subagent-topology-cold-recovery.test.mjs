@@ -12,7 +12,7 @@ const {
   collectSubagentChildSessionIds,
   projectSessionSubagents,
   readPersistedSubagentEdges,
-} = await import("../packages/bootstrap/src/acode-protocol/subagent-session-query.ts");
+} = await import("../packages/bootstrap/src/acode-protocol-v4/subagent-session-query.ts");
 const { createSessionId } = await import("../packages/contracts/src/interfaces/shared.ts");
 
 const childSessionId = createSessionId("subagent_agent_x");

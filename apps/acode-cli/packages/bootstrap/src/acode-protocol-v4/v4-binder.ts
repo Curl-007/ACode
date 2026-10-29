@@ -1,15 +1,14 @@
 /* eslint-disable max-lines -- 存量基线豁免:该文件先于 CLI lint 门禁建立即超限(根 lint 的 ignorePatterns 排除 apps/acode-cli,turbo lint 因此从未变绿)。头注豁免以恢复门禁信号;拆分重构超出本批范围。 */
 import { readBackgroundBashOutputFromOwner } from "./background-work-owner.js";
-// v4 网关 binder。
+// v4 网关 binder（M3 收编后形态：原 acode-protocol/v4-bridge.ts，随目录收编迁入本目录）。
 // 定位：ConversationV4Gateway 是域无关的通道运行时，本文件把它绑到协议服务器上下文：
-// - 帧出口 = context.notify（stdio NDJSON notification，与旧 session/event 同一条管道并存）；
-// - 命令执行 = V4CommandExecutor（acode-protocol-v4/commands/，原生直驱 core）；
+// - 帧出口 = context.notify（stdio NDJSON notification）；
+// - 命令执行 = V4CommandExecutor（./commands/，原生直驱 core）；
 //   20 命令全部原生，supports() 未命中（未知命令）→ notImplemented。
-// - 过渡钩子（ensureModelReady / afterLegacyStateMutation / closeSession /
-//   createSessionRecord / child record registration / resumePersistedSession）在此注入旧协议实现，随旧协议一同删除。
-//
-// 不做桥接：依赖方向只允许 旧目录 → v4 目录。
-// 本文件在旧目录，import v4 executor 合法；v4 目录禁止反向 import 本目录任何模块。
+// - 会话生命周期宿主能力（ensureModelReady / afterLegacyStateMutation / closeSession /
+//   createSessionRecord / createSelectionSideSession / resumePersistedSession）在此实现，
+//   执行面调同目录 session-operations.js / workspace-model-runtime.js——M3 收编后这些不再是
+//   跨目录注入的过渡钩子，而是本目录的原生宿主能力（commands/types.ts 已改为必填字段）。
 import {
   isConversationRealUserTurnStarter,
   parseRemoteWorkspaceIdentity,
@@ -27,40 +26,40 @@ import {
   type V4ConversationFileRewindPreviewResult,
   type SessionSummary,
 } from "@acode/shared/acode-protocol-v4";
-import { V4CommandExecutor } from "../acode-protocol-v4/commands/executor.js";
-import { V4QueuePromotionLeaseUnavailableError } from "../acode-protocol-v4/commands/handlers/queue.js";
-import { V4CapabilityUnsupportedError } from "../acode-protocol-v4/commands/handlers/interaction-background.js";
+import { V4CommandExecutor } from "./commands/executor.js";
+import { V4QueuePromotionLeaseUnavailableError } from "./commands/handlers/queue.js";
+import { V4CapabilityUnsupportedError } from "./commands/handlers/interaction-background.js";
 import {
   buildColdFileChangeSummaries,
   readConversationFileChangesFromEvents,
-} from "../acode-protocol-v4/cold-file-change-summaries.js";
+} from "./cold-file-change-summaries.js";
 import {
   loadPersistedConversationMaterialization,
   mergeColdConversationEvents,
-} from "../acode-protocol-v4/cold-event-merge.js";
-import { lookupGlobalCreateSessionCommand } from "../acode-protocol-v4/create-session-command-fact.js";
-import type { V4CommandCoreHost } from "../acode-protocol-v4/commands/types.js";
+} from "./cold-event-merge.js";
+import { lookupGlobalCreateSessionCommand } from "./create-session-command-fact.js";
+import type { V4CommandCoreHost } from "./commands/types.js";
 import type {
   ConversationRowTargetResolution,
   SessionUsageSeed,
-} from "../acode-protocol-v4/product-projection.js";
-import { PersistentCommandIndex } from "../acode-protocol-v4/persistent-command-index.js";
-import { queueItemIdForCommand } from "../acode-protocol-v4/command-inbox.js";
-import { resolveStableForkTargetFromTranscript } from "../acode-protocol-v4/stable-fork-target.js";
-import { shouldAutoDrainV4QueueHead } from "../acode-protocol-v4/queue-auto-drain.js";
-import { persistAssistantFeedback } from "../acode-protocol-v4/assistant-feedback-persistence.js";
+} from "./product-projection.js";
+import { PersistentCommandIndex } from "./persistent-command-index.js";
+import { queueItemIdForCommand } from "./command-inbox.js";
+import { resolveStableForkTargetFromTranscript } from "./stable-fork-target.js";
+import { shouldAutoDrainV4QueueHead } from "./queue-auto-drain.js";
+import { persistAssistantFeedback } from "./assistant-feedback-persistence.js";
 import {
   TASK_LIST_SESSION_TYPES,
   isTaskListSessionType,
-} from "../acode-protocol-v4/task-list-session-membership.js";
+} from "./task-list-session-membership.js";
 import {
   loadPersistentCommandFacts,
   savePersistentCommandFact,
-} from "../acode-protocol-v4/persistent-command-facts.js";
+} from "./persistent-command-facts.js";
 import {
   ConversationV4Gateway,
   V4CommandNotImplementedError,
-} from "../acode-protocol-v4/v4-gateway.js";
+} from "./v4-gateway.js";
 import {
   SESSION_ENTRY_TARGET_COMPLETION_VERIFICATION,
   SessionEventType,
@@ -83,7 +82,7 @@ import type {
   TurnId,
   WorkspaceId,
 } from "@acode/contracts";
-import { HYDRATION_TRACE_ID } from "../acode-protocol-v4/projection-state.js";
+import { HYDRATION_TRACE_ID } from "./projection-state.js";
 import { resolveWorkspaceRefFromId } from "./mapper.js";
 import { buildLiveWorkspaceConfigStateV4 } from "./v4-workspace-config.js";
 import {

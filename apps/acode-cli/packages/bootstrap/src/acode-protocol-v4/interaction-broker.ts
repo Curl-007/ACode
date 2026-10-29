@@ -33,7 +33,7 @@ import { ProtocolRequestError } from "./server-types.js";
 import type {
   V4InteractionAnswer,
   V4InteractionRegistrationOptions,
-} from "../acode-protocol-v4/interaction-registry.js";
+} from "./interaction-registry.js";
 import type { ACodeProtocolAgentServerContext } from "./server-types.js";
 import {
   buildProtocolPermissionOptions,

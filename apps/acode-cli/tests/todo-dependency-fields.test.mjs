@@ -48,7 +48,7 @@ const { createSqliteSessionStore } = await import(
   "../packages/adapters/src/storage/session-store/sqlite-session-store.ts"
 );
 const { mapTodoItem } = await import(
-  "../packages/bootstrap/src/acode-protocol/session-mapper.ts"
+  "../packages/bootstrap/src/acode-protocol-v4/session-mapper.ts"
 );
 const { buildDelegatingWorkGroupSection } = await import(
   "../packages/core/src/context/dynamic-sections.ts"

@@ -1,17 +1,17 @@
 // workspace 运行时面的 v4 handler（apps/acode-cli/specs/m2-8-workspace-provider-process.md）。
 //
-// 实体自 legacy `acode-protocol/workspace-model-runtime.ts` 逐字迁入（M2-8：实体放 v4 目录，
+// 实体自 legacy `acode-protocol-v4/workspace-model-runtime.ts` 逐字迁入（M2-8：实体放 v4 目录，
 // server.ts 只留一行转发，不在待删目录留实体债）。唯一改动：params/result 改 v4 schema
 // （形状与 legacy 逐字 parity）。
 import {
   v4WorkspaceReadPresentationParamsSchema,
   type V4WorkspacePresentation,
 } from "@acode/shared/acode-protocol-v4";
-import { listProtocolSlashCommands } from "../acode-protocol/slash-commands.js";
+import { listProtocolSlashCommands } from "./slash-commands.js";
 import {
   parseParams,
   type ACodeProtocolAgentServerContext,
-} from "../acode-protocol/server-types.js";
+} from "./server-types.js";
 
 export async function readWorkspacePresentationV4(
   context: ACodeProtocolAgentServerContext,

@@ -12,12 +12,12 @@ import {
   v4SessionGoalQueryParamsSchema,
   type V4SessionGoalQueryResult,
 } from "@acode/shared/acode-protocol-v4";
-import { mapSessionGoal } from "../acode-protocol/session-mapper.js";
+import { mapSessionGoal } from "./session-mapper.js";
 import {
   parseParams,
   requireSession,
   type ACodeProtocolAgentServerContext,
-} from "../acode-protocol/server-types.js";
+} from "./server-types.js";
 
 export async function querySessionGoalV4(
   context: ACodeProtocolAgentServerContext,

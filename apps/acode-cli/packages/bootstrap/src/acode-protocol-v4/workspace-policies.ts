@@ -17,7 +17,7 @@ import {
 import {
   parseParams,
   type ACodeProtocolAgentServerContext,
-} from "../acode-protocol/server-types.js";
+} from "./server-types.js";
 
 /**
  * 应用 workspace 交互偏好。CLI 进程按 workspace 隔离，因此 registry 是该 workspace

@@ -324,6 +324,44 @@ consumer API，v4 command 直接依赖中立模块。这样 M4 删除 legacy bar
 >   同一拓扑也解释了本轮 M1 调研为何把新 v4 冷读命令的落点选在 server.ts 而非 v4-gateway：
 >   新增 v4 方法**当前只能**在那个 switch 里接线（除非同时做 M3 的搬迁）。
 
+> **M3 已完成（2026-10-29，两段式落地；幸存面登记为 M3 完成形态的一部分，3 项待产品裁决）**：
+> spec `apps/acode-cli/specs/m3-legacy-server-removal.md`（含裁决节 + §A.2 逐项核验），
+> 实施记录 `docs/reviews/2026-10-29/m3-implementation.md`。
+>
+> - **启动核验（实施前快照）**：§A.2 九项前置实测 0 完全满足 / 2 部分 / 7 未满足，其中三项
+>   硬阻塞经裁决落地（见下）。目录实施前为 **40 文件 / 14,161 行**（非旧档 50/15,690），
+>   legacy `case` **12**、v4 `case` **76**。
+> - **三项裁决（保守无能力损失默认，标注产品可推翻）**：
+>   ① `sessionSubagents` 幸存（v4 无 subagents 分页 query；UI 两面板依赖）；
+>   ② `pluginsCancelOperation` 幸存（不推翻 M2-5 §4，shared 不动）；
+>   ③ `sessionSend` 附件回退幸存（v4 sendText 只收 attachmentRef，宿主发送侧上传/寄存面未建模）。
+>   验收判据随之重写为「除 spec 登记的幸存清单外归零」。
+> - **搬迁段**：40 文件整目录迁入 `acode-protocol-v4/`（仅 `v4-bridge.ts → v4-binder.ts` 改名），
+>   **25 条 v4→legacy 反向 import 全部解除**；`server.ts` 的 76 个 v4 case + dispatch 装配随迁；
+>   entrypoint 只装 v4 server；`transport.ts` 迁 v4 侧。搬迁段测试 3,206 pass / 0 fail。
+> - **钩子收编**：6 个过渡钩子收编为 `V4CommandCoreHost`/`V4GatewayHost` 的**必填原生宿主能力**
+>   （`ensureModelReady` / `afterLegacyStateMutation` / `closeSession` / `createSessionRecord` /
+>   `createSelectionSideSession` / `resumePersistedSession`），执行面在 `v4-binder.ts` 调同目录
+>   `session-operations.js`。结构性说明：handler 仅持窄视图（record + host）、无 context 通道，
+>   字段保留为必填原生能力而非字面删除——字面删除需重设计 handler 的 context 访问，超出 M3 范围。
+> - **删除段**：删 9 个非幸存 legacy case + 对应死 op 函数与级联 helper（`server-operations.ts`
+>   3,639 → 3,438 行）+ services catalog 回落链 + transport 的 legacy `sessionStop` 旁路；
+>   **`bootstrap/src/acode-protocol/` 目录已删除**，`v4-bridge.ts` 已删除。
+> - **终态证据**：CLI `tests 3243 / pass 3206 / fail 0 / skip 37`；services `578/0/7`；
+>   bootstrap/cli/cli-workflow/services 四包 `tsc --noEmit` 各 exit 0；
+>   `architecture:check --changed` new 0 / regrown 0；`acode --help` 与 `acp`（stdin EOF）冒烟不崩。
+> - **幸存清单（M3 完成形态的一部分，3 项待产品裁决）**：`session/subagents`、
+>   `plugins/cancelOperation`、`session/send`（附件回退）——终态 grep：
+>   services `acodeProtocolMethods.` = 4（全在幸存清单），bootstrap legacy case = 3。
+> - **遗留（不阻塞 M3）**：host 侧 17 条 inbound legacy 字面量分支（`acodeAgentService.ts`
+>   偏斜期兜底）本批未动，与 CLI 侧 inbound 端口的 `-32601` 回落发送器同属独立偏斜面，
+>   建议后续单独裁决；`afterLegacyStateMutation` 的 `state.updated` legacy 广播面未删
+>   （services 仍消费）；`packages/ui/src/store/scriptWorkflowStore.ts:109` 一处注释仍引用
+>   旧 `v4-bridge.ts` 路径（并发 UI 代理范围，未动）。
+> - **台账**：`markdown-table.tsx` 漂移 1 项来自并发 UI 代理，非 M3；交 CI Linux 回补。
+>   `.architecture-baseline.json` 定点收窄：删 7 条 `acode-protocol/*` 旧路径条目、加 6 条
+>   `acode-protocol-v4/*` 新路径条目（复用仓库 fingerprint 算法，实测复算一致）。
+
 ### M4 — 删除 shared legacy 协议文件（依赖 M1+M2+M3）
 
 - 内容：整删 `packages/shared/src/acode-protocol/index.ts`；甄别 `acode-protocol-legacy-types.ts` 承重类型（迁 v4 或独立命名保留）；同步清理 legacy 词表残留 schema。**`packages/services/src/acode-agent/acodeProtocolClient.ts` 保留**——它是 legacy 与 v4 共用的版本无关 JSON-RPC 传输载体（见 M2-0 裁决与 `apps/acode-cli/specs/m2-prepare.md`），M4 删 barrel 不删它。
@@ -342,11 +380,11 @@ consumer API，v4 command 直接依赖中立模块。这样 M4 删除 legacy bar
 
 | 指标                                | 2026-10-05 基线 | 2026-10-09 实测                                                         | 2026-10-26 实测                                                              | 目标    |
 | ----------------------------------- | --------------- | ----------------------------------------------------------------------- | ---------------------------------------------------------------------------- | ------- |
-| services legacy 消费文件数          | 7               | 6（independentPlanSupport 已切 v4，仅剩 type-only 引用）                | 6（未推进；`acodeProtocolClient.ts` 仍在，independentPlanSupport 仍 type-only） | 0（M2） |
+| services legacy 消费文件数          | 7               | 6（independentPlanSupport 已切 v4，仅剩 type-only 引用）                | 6（未推进；`acodeProtocolClient.ts` 仍在，independentPlanSupport 仍 type-only）→ **2026-10-29：M2+M3 后 1 文件 / 4 处**（仅 `acodeAgentService.ts`，全部属 M3 幸存清单登记项、待产品裁决；`pluginReferenceCatalogRequest.ts` 2 处 -32601 回落已删） | 0（M2）（幸存 4 处除外） |
 | UI 旧投影消费文件数                 | 8               | 10（新增 v4/composer 两处 `parseModelPickerValue` 消费，M1 需一并迁移） | 12（未降反增：新增 settings/SubagentModelBatch{Bar,Dialog} 两处消费）→ **2026-10-28：M1 完成——桥已退役，真实 import = 0**（含 mode 来源裁决，见 M1 节） | 0（M1）✅ |
-| bootstrap legacy server 文件数/行数 | 48 / 14,713     | 48（M3 未启动）                                                         | 48 / 15,188（M3 未启动；行数因 legacy 面内既有演进微增）→ **2026-10-27 订正：50 / 15,690**（U08 `1ead67e2` 新增 2 文件，见下）| 0（M3） |
+| bootstrap legacy server 文件数/行数 | 48 / 14,713     | 48（M3 未启动）                                                         | 48 / 15,188（M3 未启动；行数因 legacy 面内既有演进微增）→ **2026-10-27 订正：50 / 15,690**（U08 `1ead67e2` 新增 2 文件，见下）→ **2026-10-29 实测：40 / 14,161**（M2 `caa38080` 删 11 文件）→ **2026-10-29：0 / 0（M3 已完成，目录整体删除）** | 0（M3）✅ |
 | shared legacy 协议文件行数          | 3,714           | 3,662（M2-B 已外移 MCP/browser schema 至 acode-protocol-shared）        | 3,652（barrel −2，仅 R2-02 schema 外移所致，非退役；legacy-types 607 行）    | 0（M4） |
-| v4-bridge 过渡钩子数                | 6（见桥头注）   | 6                                                                       | 6（M3 未启动，桥头注仍列 6 个钩子）                                          | 0（M3） |
+| v4-bridge 过渡钩子数                | 6（见桥头注）   | 6                                                                       | 6（M3 未启动，桥头注仍列 6 个钩子）→ **2026-10-29：0（M3 已完成——6 钩子收编为 `V4CommandCoreHost`/`V4GatewayHost` 必填宿主能力，`v4-bridge.ts` 删除，执行面迁 `v4-binder.ts`）** | 0（M3）✅ |
 
 **2026-10-26 状态说明（1.0.4 周期）**：本轮**未推进任何退役里程碑**（M1–M4 全部停滞；M1 的 UI 消费面
 未降反增 8→10→12）。**冻结纪律保持**：barrel 本地导出面精确守护——schema 定义基线 **246** 与当前精确

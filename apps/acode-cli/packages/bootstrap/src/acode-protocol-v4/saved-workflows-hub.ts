@@ -1,6 +1,6 @@
 // 已保存工作流 GUI 中枢的 v4 handler（apps/acode-cli/specs/m2-6-workflows-skills-mcp.md）。
 //
-// 实体自 legacy `acode-protocol/saved-workflows.ts` 逐字迁入（M2-6：legacy dispatch 消费归零后
+// 实体自 legacy `acode-protocol-v4/saved-workflows.ts` 逐字迁入（M2-6：legacy dispatch 消费归零后
 // 删除；实体放 v4 目录使 M3 搬迁入口时只需移动 server.ts 里的一行转发，不在待删目录留实体债）。
 // 唯一改动：params 改 parse v4 schema（`@acode/shared/acode-protocol-v4` 的 workflows.ts），
 // 形状与 legacy 逐字 parity，行为不变。
@@ -49,7 +49,7 @@ import {
 import {
   parseParams,
   type ACodeProtocolAgentServerContext,
-} from "../acode-protocol/server-types.js";
+} from "./server-types.js";
 
 // 缺省即 `project`：不给 scope 的旧 GUI 与项目档调用逐字走本项目根，形状不变（版本偏斜）。
 function scopeOf(params: { scope?: V4SavedWorkflowScope }): V4SavedWorkflowScope {

@@ -105,9 +105,10 @@ function ackFailureMessage(reasonCode: string | undefined, message: string | und
 }
 
 /**
- * 锚会话不在运行时的结构化拒绝码。CLI v4-bridge 对「路由 sessionId 查不到记录」抛
- * `Error("proto.sessionNotFound")`（apps/acode-cli/packages/bootstrap/src/acode-protocol/v4-bridge.ts），
- * transport 把 message 折进 ack.reasonCode。无共享常量导出，这里按字面量对齐；
+ * 锚会话不在运行时的结构化拒绝码。CLI CommandInbox 对「路由 sessionId 查不到记录」在拒绝
+ * ack 中直接给出 `reasonCode: "proto.sessionNotFound"`
+ * （apps/acode-cli/packages/bootstrap/src/acode-protocol-v4/command-inbox.ts 的 decide()）。
+ * 无共享常量导出，这里按字面量对齐；
  * 判断只认 reasonCode 字段，绝不用 message 文本 includes（消息文案不是契约）。
  */
 const SESSION_NOT_FOUND_REASON_CODE = "proto.sessionNotFound";

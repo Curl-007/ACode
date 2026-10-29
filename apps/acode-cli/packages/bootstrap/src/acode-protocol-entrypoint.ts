@@ -33,16 +33,16 @@ import {
 import {
   openProtocolStartupStorage,
   prepareProtocolStartupStorage,
-} from "./acode-protocol/storage-startup.js";
+} from "./acode-protocol-v4/storage-startup.js";
 import { closeSessionStore, getSessionDbPath } from "./app/session-store.js";
 import { startProcessProviderRegistryRuntime } from "./app/process-provider-registry-runtime.js";
 import { scheduleStartupLogRetentionCleanup } from "./log-retention.js";
 import { StartupTimer, startupNow } from "./startup-logging.js";
-import { installACodeProtocolAiSdkWarningLogger } from "./acode-protocol/ai-sdk-warning-logger.js";
+import { installACodeProtocolAiSdkWarningLogger } from "./acode-protocol-v4/ai-sdk-warning-logger.js";
 import {
   createOfficialMcpAuthHeadersPort,
   type OfficialMcpAuthRequestContext,
-} from "./acode-protocol/official-mcp-auth-port.js";
+} from "./acode-protocol-v4/official-mcp-auth-port.js";
 import {
   createOfficialMcpTrustedOriginRegistry,
   OFFICIAL_MCP_DEV_TRUSTED_ORIGINS_ENV,
@@ -51,11 +51,11 @@ import {
   ACODE_WORKSPACE_IDENTITY_ENV,
   resolveRuntimeACodeEndpointOrigin,
 } from "@acode/shared";
-import { ACodeProtocolAgentServer } from "./acode-protocol/server.js";
-import { ACodeProtocolNdjsonConnection } from "./acode-protocol/transport.js";
-import { cleanupProtocolRuntime } from "./acode-protocol/runtime-cleanup.js";
-import { startProtocolResourceSampler } from "./acode-protocol/resource-sampler.js";
-import { acquireProtocolStartupResource } from "./acode-protocol/startup-resource.js";
+import { ACodeProtocolAgentServer } from "./acode-protocol-v4/server.js";
+import { ACodeProtocolNdjsonConnection } from "./acode-protocol-v4/transport.js";
+import { cleanupProtocolRuntime } from "./acode-protocol-v4/runtime-cleanup.js";
+import { startProtocolResourceSampler } from "./acode-protocol-v4/resource-sampler.js";
+import { acquireProtocolStartupResource } from "./acode-protocol-v4/startup-resource.js";
 import type { ACodeProcessResourceSampler } from "./process-resource-sampler.js";
 
 function applyProtocolPresentationSurface(

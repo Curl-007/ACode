@@ -257,6 +257,6 @@ test("(C1) inbox/gateway 的取代接线文字与调用点在案", async () => {
   assert.match(gatewaySource, /abortRunningTurn\?/u, "V4GatewayHost 的执行中 stop 通道缺失");
   assert.match(gatewaySource, /SUPERSEDED_BY_REDELIVERY_REASON_CODE/u, "gateway abort 的 reasonCode 接线缺失");
 
-  const bridgeSource = await read(`${CLI}/bootstrap/src/acode-protocol/v4-bridge.ts`);
+  const bridgeSource = await read(`${CLI}/bootstrap/src/acode-protocol-v4/v4-binder.ts`);
   assert.match(bridgeSource, /abortRunningTurn: \(sessionId, reasonCode\)/u, "v4-bridge 的 stop 通道实现缺失");
 });

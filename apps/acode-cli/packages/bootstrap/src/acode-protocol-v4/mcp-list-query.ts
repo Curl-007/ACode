@@ -1,6 +1,6 @@
 // MCP server 状态列表的 v4 handler（apps/acode-cli/specs/m2-6-workflows-skills-mcp.md）。
 //
-// 实体自 legacy `acode-protocol/mcp.ts` 逐字迁入（M2-6：实体放 v4 目录，server.ts 只留一行
+// 实体自 legacy `acode-protocol-v4/mcp.ts` 逐字迁入（M2-6：实体放 v4 目录，server.ts 只留一行
 // 转发，不在待删目录留实体债）。唯一改动：params/result 改 v4 schema（形状与 legacy 逐字
 // parity，含 `mode` 缺省 connect 语义）。
 import { createConfig, resolvePath } from "@acode/adapters/config";
@@ -23,11 +23,11 @@ import {
 import { StartupTimer, startupNow } from "../startup-logging.js";
 import { getCliStorageRoot } from "../app/paths.js";
 import { resolveStartupPlugins } from "../app/startup-marks.js";
-import { protocolMcpServersToRuntimeMcpConfig } from "../acode-protocol/protocol-mcp-config.js";
+import { protocolMcpServersToRuntimeMcpConfig } from "./protocol-mcp-config.js";
 import {
   parseParams,
   type ACodeProtocolAgentServerContext,
-} from "../acode-protocol/server-types.js";
+} from "./server-types.js";
 
 const noopLogger: Logger = {
   debug: () => undefined,

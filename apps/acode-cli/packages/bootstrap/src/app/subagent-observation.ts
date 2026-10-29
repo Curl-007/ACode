@@ -13,7 +13,7 @@ import {
   paginateEndedSubagents,
   projectSessionSubagents,
   readPersistedSubagentEdges,
-} from "../acode-protocol/subagent-session-query.js";
+} from "../acode-protocol-v4/subagent-session-query.js";
 
 export interface SubagentTranscriptSnapshot {
   sessionId: string;

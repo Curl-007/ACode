@@ -68,7 +68,7 @@ import {
 } from "@acode/shared/acode-protocol-v4";
 
 import { createModelAdapter } from "../model-factory.js";
-import { resolveTzOffsetMs } from "../acode-protocol/usage-stats-builder.js";
+import { resolveTzOffsetMs } from "../acode-protocol-v4/usage-stats-builder.js";
 import { StartupTimer, startupNow } from "../startup-logging.js";
 import { scheduleStartupLogRetentionCleanup } from "../log-retention.js";
 import type {

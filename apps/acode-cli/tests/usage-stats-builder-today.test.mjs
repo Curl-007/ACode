@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 const { buildAppUsageSnapshot } = await import(
-  "../packages/bootstrap/src/acode-protocol/usage-stats-builder.ts"
+  "../packages/bootstrap/src/acode-protocol-v4/usage-stats-builder.ts"
 );
 
 const DAY_MS = 86_400_000;

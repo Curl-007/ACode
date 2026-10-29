@@ -24,11 +24,11 @@ import {
   readSession,
   resumeSession,
   subscribeSession,
-} from "../acode-protocol/server-operations.js";
+} from "./server-operations.js";
 import {
   parseParams,
   type ACodeProtocolAgentServerContext,
-} from "../acode-protocol/server-types.js";
+} from "./server-types.js";
 
 export async function querySessionReadV4(
   context: ACodeProtocolAgentServerContext,

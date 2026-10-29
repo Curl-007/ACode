@@ -11,12 +11,12 @@ import {
   v4SessionDebugParamsSchema,
   type V4SessionDebugResult,
 } from "@acode/shared/acode-protocol-v4";
-import { readSessionDebug } from "../acode-protocol/session-debug.js";
+import { readSessionDebug } from "./session-debug.js";
 import {
   parseParams,
   requireSession,
   type ACodeProtocolAgentServerContext,
-} from "../acode-protocol/server-types.js";
+} from "./server-types.js";
 
 export function querySessionDebugV4(
   context: ACodeProtocolAgentServerContext,

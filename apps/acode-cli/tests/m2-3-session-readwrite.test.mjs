@@ -21,7 +21,7 @@ const {
   resetCachedSessionRuntimePreferencesForTest,
 } = await import("../packages/bootstrap/src/acode-protocol-v4/session-runtime-preferences.ts");
 const { createSessionRecordForV4 } = await import(
-  "../packages/bootstrap/src/acode-protocol/server-operations.ts"
+  "../packages/bootstrap/src/acode-protocol-v4/server-operations.ts"
 );
 
 /**

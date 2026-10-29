@@ -21,7 +21,7 @@ import { test } from "node:test";
  */
 
 const { createProviderDiagnosticsProtocolExecutor } = await import(
-  "../packages/bootstrap/src/acode-protocol/provider-diagnostics.ts"
+  "../packages/bootstrap/src/acode-protocol-v4/provider-diagnostics.ts"
 );
 // CLI 测试目录不解析裸 `@acode/shared`（pnpm 未把它提升到 apps/acode-cli），
 // 与仓库既有惯例一致，走相对路径引 root 侧 shared 源码。

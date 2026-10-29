@@ -4,7 +4,7 @@ import type {
   ACodeProtocolAgentServerContext,
   ACodeProtocolSessionRecord,
 } from "./server-types.js";
-import { runSessionModelConfigMutation } from "../acode-protocol-v4/model-config-mutation.js";
+import { runSessionModelConfigMutation } from "./model-config-mutation.js";
 import { createProviderRuntimeHeadersPort } from "./provider-runtime-headers.js";
 
 // M2-8：readWorkspacePresentation / testProviderModelConnectivity 实体已迁

@@ -222,10 +222,11 @@ export interface V4GatewayHost {
   /** 会话是否在宿主注册表中活跃（inbox 的 sessionNotFound 裁决依据）。 */
   sessionExists(sessionId: string): boolean;
   /**
-   * V4 冷恢复钩子。gateway 用同一个 READY promise 包住 runtime activation 与 projection
-   * hydration；宿主只负责恢复 record。
+   * V4 冷恢复能力。gateway 用同一个 READY promise 包住 runtime activation 与 projection
+   * hydration；宿主（v4-binder）只负责恢复 record。
+   * M3 收编：曾为可选过渡钩子；legacy 目录删除后执行面与 binder 同归 v4 目录，转为必填。
    */
-  resumePersistedSession?(
+  resumePersistedSession(
     sessionId: string,
     resumeThoughtLevel?: string,
     workspace?: ACodeWorkspaceRef,
@@ -1947,7 +1948,7 @@ export class ConversationV4Gateway {
    *
    * 这两个 query 都经 app 能力读 journal，而宿主按 sessionId 找 record——历史
    * 会话的 record 只由**订阅**路径激活。renderer 里发现查询的 effect 声明在 lease/订阅
-   * effect 之前，而 CLI 严格串行派发请求（`acode-protocol/transport.ts`，只有 session/stop
+   * effect 之前，而 CLI 严格串行派发请求（`acode-protocol-v4/transport.ts`，只有 session/stop
    * 越队），于是「重启后打开历史会话」时它必然先于订阅被处理、必然拿到 sessionNotFound：
    * 工具卡的 join 回退整块消失，卡片退回编译态，被打断的 run 连入口都没有。
    *

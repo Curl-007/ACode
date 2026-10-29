@@ -107,7 +107,7 @@ test("bootstrap 物化链：v4 createSession payload → createSessionRecord →
     "v4 createSession handler 必须把 payload.toolSearchMode 传给 host.createSessionRecord",
   );
 
-  const v4Bridge = await read("packages/bootstrap/src/acode-protocol/v4-bridge.ts");
+  const v4Bridge = await read("packages/bootstrap/src/acode-protocol-v4/v4-binder.ts");
   assert.match(
     v4Bridge,
     /\}, \{ scriptWorkflowEnabled, toolSearchMode, clientMode \}\);/,
@@ -120,7 +120,7 @@ test("bootstrap 物化链：v4 createSession payload → createSessionRecord →
     "createSession 时机必须刷新进程级兜底缓存（冷恢复/fork 路径回读）",
   );
 
-  const serverOperations = await read("packages/bootstrap/src/acode-protocol/server-operations.ts");
+  const serverOperations = await read("packages/bootstrap/src/acode-protocol-v4/server-operations.ts");
   assert.match(
     serverOperations,
     /const resolvedToolSearchMode =\s*\n?\s*runtimeFlags\?\.toolSearchMode \?\? context\.appRuntimePreferences\.toolSearchMode;/,
@@ -132,7 +132,7 @@ test("bootstrap 物化链：v4 createSession payload → createSessionRecord →
     "runtimeConfig 条件写入：两者都无 = 不写字段 = core 按缺席即 off（零行为变化红线）",
   );
 
-  const serverTypes = await read("packages/bootstrap/src/acode-protocol/server-types.ts");
+  const serverTypes = await read("packages/bootstrap/src/acode-protocol-v4/server-types.ts");
   assert.match(
     serverTypes,
     /toolSearchMode\?: ToolSearchAppMode;/,

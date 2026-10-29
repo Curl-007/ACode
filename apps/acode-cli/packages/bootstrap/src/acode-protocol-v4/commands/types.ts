@@ -202,13 +202,17 @@ export interface V4CommandCoreHost {
    */
   interactions?: V4InteractionRegistry;
 
-  // ── 过渡期钩子（legacy 兼容窗口）─────────────────────────
+  // ── 会话生命周期宿主能力（v4 原生，M3 收编）─────────────────────────
+  // M3 收编说明：这些字段曾是「旧协议 binder 注入的过渡钩子」。legacy 协议目录删除后，
+  // 执行面（session-operations / workspace-model-runtime）与 binder（v4-binder.ts）同归
+  // acode-protocol-v4 目录，不再存在跨目录注入，故从可选钩子转为必填原生能力。
+  // 结构性说明：handler 只持窄视图（V4SessionRecordView + 本 host），无 context 通道，
+  // 因此会话生命周期只能经宿主能力暴露——这是接口设计，不是待删的过渡债。
   /**
    * turn 开跑前的模型就绪检查（凭据/catalog 解析）。
-   * 现由旧协议 binder 实现（ensureSessionModelAvailableForNextTurn）；
-   * 归宿：core app 层自持模型解析后，由其取代本钩子。
+   * 执行面：v4-binder → session-operations.ensureSessionModelAvailableForNextTurn。
    */
-  ensureModelReady?(record: V4SessionRecordView): Promise<void>;
+  ensureModelReady(record: V4SessionRecordView): Promise<void>;
   /**
    * 切模型前由 Agent 进程 Registry 校验目标 Provider。普通模型命令只携带 Selection，
    * 因此这里不能接收或安装 Host 运行快照。
@@ -218,24 +222,22 @@ export interface V4CommandCoreHost {
     providerId: string,
   ): Promise<{ available: boolean; reason?: string }>;
   /**
-   * legacy 广播（state.updated + record.stateRevision）：旧协议消费者（侧栏/任务索引）
-   * 在侧栏迁移完成前仍靠它感知状态变更。v4 自身投影走 gateway 事件 ingest，
-   * 不依赖本钩子；旧广播机制收口时本钩子随之收口。
+   * 状态变更收尾：record.stateRevision 自增 + legacy `state.updated` 广播
+   * （services 任务索引仍消费该通知，见 acodeAgentService.ts 的 state.updated 分支）
+   * + v4 queue 自动 drain 重评。执行面：v4-binder → session-operations.afterStateMutation。
    */
-  afterLegacyStateMutation?(record: V4SessionRecordView, reason: string): Promise<void>;
+  afterLegacyStateMutation(record: V4SessionRecordView, reason: string): Promise<void>;
   /**
    * 会话关闭（deleteSession 的执行面：退订事件 → app.close → 注册表摘除 → gateway 清通道）。
-   * 过渡形态：会话注册表现归旧协议宿主，binder 内联实现（顺序对齐旧 closeSession op，
-   * 见 acode-protocol/server-operations.ts）；v4 自持会话注册表后收编为原生实现。
+   * 执行面：v4-binder 内联实现（顺序对齐旧 closeSession op，见 ./server-operations.js）。
    */
-  closeSession?(sessionId: string): Promise<void>;
+  closeSession(sessionId: string): Promise<void>;
   /**
    * 会话记录创建（createSession 的执行面：record 建立/事件接线/模型 catalog 同步/
-   * 失败清理，全部与旧协议宿主纠缠）。binder 实现调旧 createSession op；
-   * v4 自持会话注册表后由原生实现取代本钩子。
+   * 失败清理）。执行面：v4-binder → session-operations.createSessionRecordForV4。
    * 语义决策（draft persistence / firstInput 提交）留在原生 handler，不进钩子。
    */
-  createSessionRecord?(params: {
+  createSessionRecord(params: {
     workspaceId: string;
     mcpServers?: CommandPayloadMap["createSession"]["mcpServers"];
     /** host 判定的 Off-Peak 工具面门禁；缺省不注册工具。 */
@@ -287,7 +289,7 @@ export interface V4CommandCoreHost {
     clientMode?: CommandPayloadMap["createSession"]["clientMode"];
   }): Promise<{ sessionId: string }>;
   /** 从父会话稳定落盘边界创建隐藏 selection_side_chat child。 */
-  createSelectionSideSession?(
+  createSelectionSideSession(
     sessionId: string,
     options: {
       sourceCommandId: string;

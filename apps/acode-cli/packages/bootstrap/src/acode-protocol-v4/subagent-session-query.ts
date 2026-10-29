@@ -1,4 +1,7 @@
 /* eslint-disable max-lines -- 存量基线豁免:该文件先于 CLI lint 门禁建立即超限(根 lint 的 ignorePatterns 排除 apps/acode-cli,turbo lint 因此从未变绿)。头注豁免以恢复门禁信号;拆分重构超出本批范围。 */
+// M3 幸存面（spec m3-legacy-server-removal.md §0 裁决 1）：`session/subagents` 的 ended
+// 游标分页明细在 v4 无等价物（v4 snapshot 仅 endedTotal 计数），UI 的「已结束」子代理目录依赖它。
+// 移除条件：v4 侧新增 subagents 分页 query（协议扩展批次），或产品确认下线该分组。
 import { Buffer } from "node:buffer";
 import {
   createSessionId,

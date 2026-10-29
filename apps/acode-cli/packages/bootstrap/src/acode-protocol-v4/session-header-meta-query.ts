@@ -17,7 +17,7 @@ import {
   type V4SessionHeaderMetaResult,
 } from "@acode/shared/acode-protocol-v4";
 import { readSessionModelSelection } from "../app/session-store.js";
-import { parseParams, type ACodeProtocolAgentServerContext } from "../acode-protocol/server-types.js";
+import { parseParams, type ACodeProtocolAgentServerContext } from "./server-types.js";
 
 /**
  * `SessionGoal`（contracts）与 `ACodeTaskGoal`（shared）字段名/类型/值域逐字相同

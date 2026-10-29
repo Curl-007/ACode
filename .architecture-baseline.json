@@ -147,11 +147,29 @@
     },
     {
       "rule": "max-file-lines",
+      "file": "apps/acode-cli/packages/bootstrap/src/acode-protocol-v4/server.ts",
+      "module": "acode-cli",
+      "detail": "legacy-over-limit",
+      "message": "文件 1023 行，超过上限 400 行（legacy ratchet：超限文件只减不增）",
+      "fingerprint": "092fb561876130d6",
+      "global": false
+    },
+    {
+      "rule": "max-file-lines",
       "file": "packages/ui/src/App.tsx",
       "module": "ui",
       "detail": "legacy-over-limit",
       "message": "文件 1273 行，超过上限 400 行（legacy ratchet：超限文件只减不增）",
       "fingerprint": "09b63dbeb71cb69a",
+      "global": false
+    },
+    {
+      "rule": "max-file-lines",
+      "file": "apps/acode-cli/packages/bootstrap/src/acode-protocol-v4/server-operations.ts",
+      "module": "acode-cli",
+      "detail": "legacy-over-limit",
+      "message": "文件 3438 行，超过上限 400 行（legacy ratchet：超限文件只减不增）",
+      "fingerprint": "0ab7ffe193f55c31",
       "global": false
     },
     {
@@ -224,15 +242,6 @@
       "detail": "legacy-over-limit",
       "message": "文件 546 行，超过上限 400 行（legacy ratchet：超限文件只减不增）",
       "fingerprint": "1107c970282a4f11",
-      "global": false
-    },
-    {
-      "rule": "max-file-lines",
-      "file": "apps/acode-cli/packages/bootstrap/src/acode-protocol/server.ts",
-      "module": "acode-cli",
-      "detail": "legacy-over-limit",
-      "message": "文件 979 行，超过上限 400 行（legacy ratchet：超限文件只减不增）",
-      "fingerprint": "116def9b29f07245",
       "global": false
     },
     {
@@ -1587,15 +1596,6 @@
     },
     {
       "rule": "max-file-lines",
-      "file": "apps/acode-cli/packages/bootstrap/src/acode-protocol/subagent-session-query.ts",
-      "module": "acode-cli",
-      "detail": "legacy-over-limit",
-      "message": "文件 643 行，超过上限 400 行（legacy ratchet：超限文件只减不增）",
-      "fingerprint": "6d17af1a7e4dbb2f",
-      "global": false
-    },
-    {
-      "rule": "max-file-lines",
       "file": "apps/acode-cli/packages/core/src/tool/edit-matchers.ts",
       "module": "acode-cli",
       "detail": "legacy-over-limit",
@@ -1745,15 +1745,6 @@
       "detail": "legacy-over-limit",
       "message": "文件 473 行，超过上限 400 行（legacy ratchet：超限文件只减不增）",
       "fingerprint": "745f30853f14c1e3",
-      "global": false
-    },
-    {
-      "rule": "max-file-lines",
-      "file": "apps/acode-cli/packages/bootstrap/src/acode-protocol/v4-bridge.ts",
-      "module": "acode-cli",
-      "detail": "legacy-over-limit",
-      "message": "文件 1878 行，超过上限 400 行（legacy ratchet：超限文件只减不增）",
-      "fingerprint": "7574f12c1d68b6a0",
       "global": false
     },
     {
@@ -1938,6 +1929,15 @@
     },
     {
       "rule": "max-file-lines",
+      "file": "apps/acode-cli/packages/bootstrap/src/acode-protocol-v4/v4-binder.ts",
+      "module": "acode-cli",
+      "detail": "legacy-over-limit",
+      "message": "文件 1904 行，超过上限 400 行（legacy ratchet：超限文件只减不增）",
+      "fingerprint": "873dbb1ade6ce900",
+      "global": false
+    },
+    {
+      "rule": "max-file-lines",
       "file": "packages/ui/src/settings/automationFormat.ts",
       "module": "ui",
       "detail": "legacy-over-limit",
@@ -2033,6 +2033,15 @@
       "detail": "legacy-over-limit",
       "message": "文件 550 行，超过上限 400 行（legacy ratchet：超限文件只减不增）",
       "fingerprint": "8dfe22c7b420de00",
+      "global": false
+    },
+    {
+      "rule": "max-file-lines",
+      "file": "apps/acode-cli/packages/bootstrap/src/acode-protocol-v4/interaction-broker.ts",
+      "module": "acode-cli",
+      "detail": "legacy-over-limit",
+      "message": "文件 755 行，超过上限 400 行（legacy ratchet：超限文件只减不增）",
+      "fingerprint": "8e92cbd761a110f7",
       "global": false
     },
     {
@@ -2217,15 +2226,6 @@
     },
     {
       "rule": "max-file-lines",
-      "file": "apps/acode-cli/packages/bootstrap/src/acode-protocol/plugins.ts",
-      "module": "acode-cli",
-      "detail": "legacy-over-limit",
-      "message": "文件 601 行，超过上限 400 行（legacy ratchet：超限文件只减不增）",
-      "fingerprint": "99b34abc1785333f",
-      "global": false
-    },
-    {
-      "rule": "max-file-lines",
       "file": "apps/acode-cli/packages/bootstrap/src/app/session-facade.ts",
       "module": "acode-cli",
       "detail": "legacy-over-limit",
@@ -2312,15 +2312,6 @@
       "detail": "legacy-over-limit",
       "message": "文件 528 行，超过上限 400 行（legacy ratchet：超限文件只减不增）",
       "fingerprint": "a1d6a1ac24e0ca96",
-      "global": false
-    },
-    {
-      "rule": "max-file-lines",
-      "file": "apps/acode-cli/packages/bootstrap/src/acode-protocol/session-mapper.ts",
-      "module": "acode-cli",
-      "detail": "legacy-over-limit",
-      "message": "文件 1586 行，超过上限 400 行（legacy ratchet：超限文件只减不增）",
-      "fingerprint": "a2f3856d88c591ad",
       "global": false
     },
     {
@@ -2829,6 +2820,15 @@
     },
     {
       "rule": "max-file-lines",
+      "file": "apps/acode-cli/packages/bootstrap/src/acode-protocol-v4/subagent-session-query.ts",
+      "module": "acode-cli",
+      "detail": "legacy-over-limit",
+      "message": "文件 646 行，超过上限 400 行（legacy ratchet：超限文件只减不增）",
+      "fingerprint": "c38728e07b378e88",
+      "global": false
+    },
+    {
+      "rule": "max-file-lines",
       "file": "apps/acode-cli/packages/bootstrap/src/acode-protocol-v4/event-normalizer.ts",
       "module": "acode-cli",
       "detail": "legacy-over-limit",
@@ -3104,15 +3104,6 @@
       "detail": "legacy-over-limit",
       "message": "文件 445 行，超过上限 400 行（legacy ratchet：超限文件只减不增）",
       "fingerprint": "d4e778d029471253",
-      "global": false
-    },
-    {
-      "rule": "max-file-lines",
-      "file": "apps/acode-cli/packages/bootstrap/src/acode-protocol/interaction-broker.ts",
-      "module": "acode-cli",
-      "detail": "legacy-over-limit",
-      "message": "文件 664 行，超过上限 400 行（legacy ratchet：超限文件只减不增）",
-      "fingerprint": "d4f37f3ab6e2781d",
       "global": false
     },
     {
@@ -3495,11 +3486,11 @@
     },
     {
       "rule": "max-file-lines",
-      "file": "apps/acode-cli/packages/bootstrap/src/acode-protocol/server-operations.ts",
+      "file": "apps/acode-cli/packages/bootstrap/src/acode-protocol-v4/session-mapper.ts",
       "module": "acode-cli",
       "detail": "legacy-over-limit",
-      "message": "文件 4051 行，超过上限 400 行（legacy ratchet：超限文件只减不增）",
-      "fingerprint": "f06b02344f02cce1",
+      "message": "文件 1588 行，超过上限 400 行（legacy ratchet：超限文件只减不增）",
+      "fingerprint": "f12b4d92eda9dd4e",
       "global": false
     },
     {

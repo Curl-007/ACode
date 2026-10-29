@@ -36,8 +36,8 @@ import type {
   ProviderDiagnosticsProtocolExecutor,
   ProviderDiagnosticsRegistryRuntimeLike,
 } from "./provider-diagnostics.js";
-import type { V4InteractionRegistry } from "../acode-protocol-v4/interaction-registry.js";
-import type { ConversationV4Gateway } from "../acode-protocol-v4/v4-gateway.js";
+import type { V4InteractionRegistry } from "./interaction-registry.js";
+import type { ConversationV4Gateway } from "./v4-gateway.js";
 import type { SessionResidentPool, SessionResidentPoolOptions } from "./session-resident-pool.js";
 
 export interface ParamsSchema<T> {

@@ -31,7 +31,7 @@ import { withPluginStorageLock } from "../lib/plugin-storage-lock.js";
 import { getCliStorageRoot, getPluginStorageRoot } from "../app/paths.js";
 import { resolveOfficialPluginHostMcpServerNames } from "../app/official-plugin-definitions.js";
 import { createConfig, resolvePath, type ConfigResult } from "@acode/adapters/config";
-import { parseParams, type ACodeProtocolAgentServerContext } from "../acode-protocol/server-types.js";
+import { parseParams, type ACodeProtocolAgentServerContext } from "./server-types.js";
 
 // 把 CLI 的 PluginMetadata 投影成协议可序列化的 V4PluginInfo (只保留 UI 需要的字段)。
 export function toPluginInfo(plugin: PluginMetadata, configResult?: ConfigResult): V4PluginInfo {

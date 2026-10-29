@@ -10,25 +10,25 @@ import test from "node:test";
  * CUA 通知形态门控、providerRuntimeHeaders 取消通知形态绑定（= 触发请求形态）。
  */
 const { raceClientRequestWithV4Interaction } = await import(
-  "../packages/bootstrap/src/acode-protocol/interaction-response-race.ts"
+  "../packages/bootstrap/src/acode-protocol-v4/interaction-response-race.ts"
 );
 const { createProtocolInteractionBroker } = await import(
-  "../packages/bootstrap/src/acode-protocol/interaction-broker.ts"
+  "../packages/bootstrap/src/acode-protocol-v4/interaction-broker.ts"
 );
 const { createProviderRuntimeHeadersPort } = await import(
-  "../packages/bootstrap/src/acode-protocol/provider-runtime-headers.ts"
+  "../packages/bootstrap/src/acode-protocol-v4/provider-runtime-headers.ts"
 );
 const { ProtocolRequestError } = await import(
-  "../packages/bootstrap/src/acode-protocol/server-types.ts"
+  "../packages/bootstrap/src/acode-protocol-v4/server-types.ts"
 );
 const { V4InteractionRegistry } = await import(
   "../packages/bootstrap/src/acode-protocol-v4/interaction-registry.ts"
 );
 const { ACodeProtocolAgentServer } = await import(
-  "../packages/bootstrap/src/acode-protocol/server.ts"
+  "../packages/bootstrap/src/acode-protocol-v4/server.ts"
 );
 const { onSessionEvent } = await import(
-  "../packages/bootstrap/src/acode-protocol/server-operations.ts"
+  "../packages/bootstrap/src/acode-protocol-v4/server-operations.ts"
 );
 const { SessionEventType } = await import(
   "../packages/contracts/src/events/session-event-type.ts"

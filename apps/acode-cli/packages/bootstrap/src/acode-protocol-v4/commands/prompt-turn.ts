@@ -12,7 +12,7 @@ import {
 } from "@acode/core";
 import type { ACodeAutomationBotDeliveryTarget } from "@acode/shared";
 import type { SendInputOptions, SendInputResult } from "../../app/types.js";
-import { runWithSessionResidencyFinalization } from "../../acode-protocol/session-residency.js";
+import { runWithSessionResidencyFinalization } from "../session-residency.js";
 import type { V4CommandCoreHost, V4SessionRecordView } from "./types.js";
 
 interface StartPromptTurnParamsBase {

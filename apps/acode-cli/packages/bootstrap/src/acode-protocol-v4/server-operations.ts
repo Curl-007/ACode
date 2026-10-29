@@ -1,11 +1,11 @@
-/* eslint-disable max-lines -- ACode Protocol 的 session/workspace 方法共享同一个 server context 与 snapshot helpers，迁移期先集中维护。 */
+/* eslint-disable max-lines -- ACode Protocol v4 宿主 session/workspace 方法共享同一个 server context 与 snapshot helpers。M3 收编：本文件是 acode-protocol-v4 的原生会话操作实现（原 acode-protocol/server-operations.ts 迁入）。幸存面（spec m3-legacy-server-removal.md §0）：sendPrompt（裁决 3，附件回退）与 listSessionSubagents（裁决 1，ended 子代理目录）保留 legacy 词；移除条件见各函数注释。 */
 import { observeSessionDebug } from "./session-debug.js";
 import {
   TASK_LIST_SESSION_TYPES,
   isTaskListSessionType,
-} from "../acode-protocol-v4/task-list-session-membership.js";
+} from "./task-list-session-membership.js";
 import { resolveEffectiveBashShellSelection } from "@acode/adapters/exec";
-import { inputIntentMetadata } from "../acode-protocol-v4/commands/input-intent.js";
+import { inputIntentMetadata } from "./commands/input-intent.js";
 import { createModelExecutionContext } from "./model-execution.js";
 import type { SendInputOptions } from "../app/types.js";
 import {
@@ -49,23 +49,18 @@ import {
   DEFAULT_ACODE_MODEL_CONTEXT_BUDGET_STRATEGY,
   acodeProtocolErrorCodes,
   acodeProtocolMethods,
-  acodeSessionCancelBackgroundTaskParamsSchema,
   acodeSessionCreateParamsSchema,
   acodeSessionEventsParamsSchema,
-  acodeSessionForkParamsSchema,
   acodeSessionListParamsSchema,
   acodeSessionMessagesParamsSchema,
   acodeSessionReadParamsSchema,
   acodeSessionResumeParamsSchema,
   acodeSessionSendParamsSchema,
-  acodeSessionSetThoughtLevelParamsSchema,
-  acodeSessionStopParamsSchema,
   acodeSessionSubscribeParamsSchema,
   acodeSessionSubagentsParamsSchema,
   acodeTaskTokenUsageParamsSchema,
   acodeUsageStatsParamsSchema,
   acodeWorkspaceGenerateTextParamsSchema,
-  getConversationMessageProjectionPolicy,
   parseRemoteWorkspaceIdentity,
   type ACodeAutomationBotDeliveryTarget,
   type ACodeSessionCreateParams,
@@ -74,14 +69,13 @@ import {
   type ACodeModelContextBudgetStrategy,
   type ACodeProtocolTrace,
   type ACodeSessionEvent,
-  type ACodeSessionHistoryTarget,
   type ACodeSessionResumeParams,
   type ACodeStateUpdatedNotification,
   type ToolSearchAppMode,
 } from "@acode/shared";
 // v4 面符号只挂在子路径（根桶不 re-export v4，M2-3 既有纪律）。
 import { V4_NOTIFICATIONS } from "@acode/shared/acode-protocol-v4";
-import { readCachedSessionRuntimePreferences } from "../acode-protocol-v4/session-runtime-preferences.js";
+import { readCachedSessionRuntimePreferences } from "./session-runtime-preferences.js";
 import {
   buildSessionSnapshot,
   buildWorkspaceRef,
@@ -117,14 +111,10 @@ import {
   projectSessionSubagents,
   readPersistedSubagentEdges,
 } from "./subagent-session-query.js";
-import { runSessionModelConfigMutation } from "../acode-protocol-v4/model-config-mutation.js";
+import { runSessionModelConfigMutation } from "./model-config-mutation.js";
 import { runWithSessionResidencyFinalization } from "./session-residency.js";
 
 const SLOW_SNAPSHOT_LOG_THRESHOLD_MS = 1000;
-
-type ProtocolGoalTarget = NonNullable<
-  Awaited<ReturnType<NonNullable<ACodeProtocolSessionRecord["app"]["readTarget"]>>>
->;
 
 type ACodeSessionRecordParams = (
   | ACodeSessionCreateParams
@@ -1869,6 +1859,10 @@ export async function subscribeSession(
   };
 }
 
+// M3 幸存面（裁决 3，spec m3-legacy-server-removal.md §0）：本函数只服务 legacy
+// `session/send` 的**附件回退**路径——v4 sendText 只收 attachmentRef，宿主发送侧
+// 上传/寄存命令面尚未建模，bot（botsService）与手机 replayable 的附件输入走这里。
+// 移除条件：v4 附件上传/寄存命令面补齐 + 双链路冒烟通过。主路径已迁 v4 sendText。
 export async function sendPrompt(context: ACodeProtocolAgentServerContext, rawParams: unknown) {
   const params = parseParams(acodeSessionSendParamsSchema, rawParams);
   const record = requireSession(context, params.sessionId);
@@ -1964,29 +1958,6 @@ export async function sendPrompt(context: ACodeProtocolAgentServerContext, rawPa
   // 同步等待首 token/整轮会让超过 30s 的请求触发 host timeout，并且阻塞后续 session/resume、list 等协议消息。
   // 这里收到输入后立即 ACK，后台 turn 继续通过 session event/state.updated 推送进度。
   return afterPromptAccepted(context, record, "prompt_started");
-}
-
-export async function forkSession(context: ACodeProtocolAgentServerContext, rawParams: unknown) {
-  const params = parseParams(acodeSessionForkParamsSchema, rawParams);
-  const record = requireSession(context, params.sessionId);
-  assertExpectedRevision(record, params.expectedRevision);
-  ensureNoActiveTurn(record, "Cannot fork while a prompt is running");
-  const forkTarget = await resolveForkTarget(context, record, params.target);
-  const parentMode = record.app.getMode();
-  const parentModel = record.app.getModel();
-  const parentThoughtLevel = record.app.getThoughtLevel();
-  const fork = await record.app.forkFromCheckpoint({
-    targetCheckpointId: forkTarget.targetCheckpointId,
-    targetMessageId: forkTarget.targetMessageId,
-  });
-  return await registerForkedSession(context, record, fork, {
-    runtimeConfig: {
-      mode: parentMode,
-      model: parentModel,
-      thoughtLevel: parentThoughtLevel,
-    },
-    inheritLatestTarget: true,
-  });
 }
 
 /**
@@ -2276,111 +2247,6 @@ function resolvePromptTurnOffPeakTaskId(params: {
   return offPeakTaskId.length > "offpeak-".length ? offPeakTaskId : undefined;
 }
 
-export async function stopSession(context: ACodeProtocolAgentServerContext, rawParams: unknown) {
-  const params = parseParams(acodeSessionStopParamsSchema, rawParams);
-  const record = requireSession(context, params.sessionId);
-  const hadActivePrompt = Boolean(record.activeAbortController);
-  let pausedTarget: ProtocolGoalTarget | null = null;
-  context.logger?.info("ACode Protocol session/stop received", {
-    hadActivePrompt,
-    sessionId: params.sessionId,
-    workspacePath: record.workspace.workspacePath,
-  });
-  if (hadActivePrompt) {
-    pausedTarget = await pauseActiveGoalForSessionStop(context, record, {
-      sessionId: params.sessionId,
-    });
-  }
-  record.activeAbortController?.abort(new Error("ACode Protocol session stopped"));
-  if (pausedTarget) {
-    await afterStateMutation(context, record, "session_stop_goal_paused");
-  }
-  return {};
-}
-
-async function pauseActiveGoalForSessionStop(
-  context: ACodeProtocolAgentServerContext,
-  record: ACodeProtocolSessionRecord,
-  params: { sessionId: string },
-): Promise<ProtocolGoalTarget | null> {
-  if (!record.app.readTarget || !record.app.updateTargetStatus) {
-    return null;
-  }
-  const target = await record.app.readTarget();
-  if (!target || target.status !== "active") {
-    return null;
-  }
-
-  try {
-    // Stop 只 abort controller 时，goal verifier 若没及时收到 abort，
-    // 会在队列仍持有 stopRequested 的情况下保留 active goal，导致后续队列无法 drain。
-    const pausedTarget = await record.app.updateTargetStatus("paused");
-    if (pausedTarget) {
-      context.logger?.info("ACode Protocol session/stop paused active goal", {
-        sessionId: params.sessionId,
-        targetId: pausedTarget.targetID,
-        workspacePath: record.workspace.workspacePath,
-      });
-    }
-    return pausedTarget;
-  } catch (error) {
-    context.logger?.warn("ACode Protocol session/stop failed to pause active goal", {
-      error: error instanceof Error ? error.message : String(error),
-      sessionId: params.sessionId,
-      targetId: target.targetID,
-      workspacePath: record.workspace.workspacePath,
-    });
-    return null;
-  }
-}
-
-export async function cancelBackgroundTask(
-  context: ACodeProtocolAgentServerContext,
-  rawParams: unknown,
-) {
-  const params = parseParams(acodeSessionCancelBackgroundTaskParamsSchema, rawParams);
-  const record = requireSession(context, params.sessionId);
-  context.logger?.info("ACode Protocol session/cancelBackgroundTask received", {
-    sessionId: params.sessionId,
-    taskId: params.taskId,
-    workspacePath: record.workspace.workspacePath,
-  });
-
-  if (!record.app.cancelBackgroundTask) {
-    throw new ProtocolRequestError(
-      -32031,
-      "Background task cancellation is not supported by this session runtime",
-      {
-        sessionId: params.sessionId,
-        taskId: params.taskId,
-      },
-    );
-  }
-
-  const result = await record.app.cancelBackgroundTask(params.taskId);
-  // 后台 bash 取消是运行态变更，不会经过普通 prompt 终态。
-  // 取消后立即发 state.updated，让桌面 continuous 和手机 replayable 都通过各自 snapshot 边界刷新投影。
-  await afterStateMutation(context, record, "background_task_cancelled");
-  return result;
-}
-
-export async function setThoughtLevel(
-  context: ACodeProtocolAgentServerContext,
-  rawParams: unknown,
-) {
-  const params = parseParams(acodeSessionSetThoughtLevelParamsSchema, rawParams);
-  if (!params.thoughtLevel) {
-    throw new ProtocolRequestError(-32602, "thoughtLevel is required");
-  }
-  const thoughtLevel = params.thoughtLevel;
-  const record = requireSession(context, params.sessionId);
-  assertExpectedRevision(record, params.expectedRevision);
-  await runSessionModelConfigMutation(record.app, async () => {
-    await record.app.setThoughtLevel(thoughtLevel);
-  });
-  return await afterStateMutation(context, record, "thought_level_changed");
-}
-
 export async function generateWorkspaceText(
   context: ACodeProtocolAgentServerContext,
   rawParams: unknown,
@@ -2434,13 +2300,6 @@ export async function generateWorkspaceText(
   }
 }
 
-function ensureNoActiveTurn(record: ACodeProtocolSessionRecord, message: string): void {
-  if (!record.activeAbortController) {
-    return;
-  }
-  throw new ProtocolRequestError(-32010, message);
-}
-
 function assertExpectedProviderRevision(
   _context: ACodeProtocolAgentServerContext,
   _record: ACodeProtocolSessionRecord,
@@ -2457,64 +2316,6 @@ export async function ensureSessionModelAvailableForNextTurn(
   if (await ensureSessionModelAvailable(context, record)) {
     record.stateRevision++;
   }
-}
-
-async function resolveForkTarget(
-  context: ACodeProtocolAgentServerContext,
-  record: ACodeProtocolSessionRecord,
-  target: ACodeSessionHistoryTarget,
-): Promise<{ targetCheckpointId?: string; targetMessageId?: string }> {
-  if (target.kind === "latestCheckpoint") {
-    return {};
-  }
-  if (target.kind === "checkpoint") {
-    return { targetCheckpointId: target.checkpointId };
-  }
-  if (target.kind === "message") {
-    return { targetMessageId: target.messageId };
-  }
-  return {
-    targetMessageId: await resolveTurnMessageId(context, record, target.turnIndex, "assistant"),
-  };
-}
-
-async function resolveTurnMessageId(
-  context: ACodeProtocolAgentServerContext,
-  record: ACodeProtocolSessionRecord,
-  turnIndex: number,
-  role: "assistant" | "user",
-): Promise<MessageId> {
-  const messages = (await readActiveSessionMessages(context, record)).filter(
-    isUserVisibleSessionMessage,
-  );
-  let currentTurn = -1;
-  let lastAssistantForTargetTurn: MessageId | undefined;
-  for (const message of messages) {
-    if (message.info.role === "user") {
-      if (role === "assistant" && currentTurn === turnIndex && lastAssistantForTargetTurn) {
-        // fork/rewind 的 legacy turn target 是“目标轮次的 assistant”，
-        // 不是“扫描到历史末尾时仍然处于目标轮次”。遇到下一条 user 就清空已找到的
-        // assistant，导致只有最后一轮能 fork；compact summary 和 fork notice 这类 synthetic
-        // user 又会把最后一轮变成非最后一轮。离开目标轮次前直接返回稳定目标。
-        return lastAssistantForTargetTurn;
-      }
-      currentTurn += 1;
-      if (role === "user" && currentTurn === turnIndex) {
-        return message.info.id as MessageId;
-      }
-      continue;
-    }
-    if (message.info.role === "assistant" && currentTurn === turnIndex) {
-      lastAssistantForTargetTurn = message.info.id as MessageId;
-    }
-  }
-  if (role === "assistant" && lastAssistantForTargetTurn) {
-    return lastAssistantForTargetTurn;
-  }
-  throw new ProtocolRequestError(
-    acodeProtocolErrorCodes.sessionUnavailable,
-    `Cannot resolve ${role} message for turnIndex=${turnIndex}`,
-  );
 }
 
 export async function getTaskTokenUsage(
@@ -3487,14 +3288,6 @@ function isRewindCommandAckMessage(
   // 内部 `/rewind conversation <messageId>` 的成功回执可能被旧事件投影落成
   // assistant 文本。它只是编辑/重试的控制命令 ACK，刷新或恢复时不能再渲染给用户。
   return text === ackText || text.endsWith(`\n${ackText}`);
-}
-
-function isUserVisibleSessionMessage(message: MessageWithParts): boolean {
-  if (message.info.role !== "user") {
-    return true;
-  }
-  const policy = getConversationMessageProjectionPolicy(message);
-  return policy === "realUserInput" || policy === "timelineOnly";
 }
 
 function applyRewindBranch(

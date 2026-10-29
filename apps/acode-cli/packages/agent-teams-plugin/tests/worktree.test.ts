@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
@@ -11,6 +11,7 @@ import {
   createMemberWorktree,
   mergeMemberWorktree,
 } from "../src/worktree/manager.js";
+import { snapshotPendingChanges } from "../src/worktree/git.js";
 import {
   WORKTREES_RELATIVE_DIR,
   isManagedWorktreeBranch,
@@ -34,9 +35,18 @@ async function git(cwd: string, args: string[]): Promise<string> {
   return stdout;
 }
 
-async function makeRepo(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "agent-teams-wt-"));
+async function makeRepo(options?: { autocrlf?: "true" | "false" }): Promise<string> {
+  const created = await mkdtemp(join(tmpdir(), "agent-teams-wt-"));
+  // Windows 的 tmpdir 可能返回 8.3 短路径（C:\Users\ADMINI~1\...），而
+  // `git rev-parse --show-toplevel` / `git worktree list` 输出长路径。产品侧
+  // repoRoot 一律来自 inspectRepo（即 git 的长路径），两侧身份天然一致；
+  // 只有测试直接把 mkdtemp 的短路径喂给产品函数时才会错位，导致
+  // snapshotPendingChanges 认不出登记的工作树、cleanup 删不掉。
+  // 这里把 fixture 目录规范化成真实长路径，模拟产品入口的真实语义，
+  // 而不是掩盖产品缺陷（产品路径已按真实入口单独验证）。
+  const dir = await realpath(created);
   await git(dir, ["init", "-q", "-b", "main"]);
+  if (options?.autocrlf) await git(dir, ["config", "core.autocrlf", options.autocrlf]);
   await git(dir, ["config", "user.name", "Agent Teams Test"]);
   await git(dir, ["config", "user.email", "teams@example.com"]);
   await git(dir, ["config", "commit.gpgsign", "false"]);
@@ -44,6 +54,15 @@ async function makeRepo(): Promise<string> {
   await git(dir, ["add", "."]);
   await git(dir, ["commit", "-q", "-m", "init"]);
   return dir;
+}
+
+/**
+ * 按 LF 原样重写文件（模拟 agent/编辑器写回）：内容语义不变，只是换行形态
+ * 从检出形态（autocrlf=true 时是 CRLF）变回 LF。
+ */
+async function rewriteAsLf(path: string) {
+  const current = await readFile(path, "utf8");
+  await writeFile(path, current.replace(/\r\n/gu, "\n"));
 }
 
 async function branchExists(repo: string, branch: string): Promise<boolean> {
@@ -298,6 +317,158 @@ describe("member worktree lifecycle (real git)", () => {
     assert.equal(await branchExists(repo, handle.branch), true);
     assert.ok(existsSync(handle.path), "unmerged squash keeps the tree too");
     assert.equal((await readFile(join(repo, "squash.txt"), "utf8")).replace(/\r\n/gu, "\n"), "x\n");
+  });
+});
+
+// Windows 用户全局 core.autocrlf=true 是常态：检出把索引 LF 转成 CRLF，agent 按 LF
+// 原样写回后 `git status` 会因 stat 缓存报 ` M`，而内容与 HEAD 按 git 转换规则相同。
+// 这组用例钉住「内容判据而非 status」的语义：幻影不得阻断 merge/cleanup，真实改动仍须识别。
+describe("member worktree lifecycle (core.autocrlf=true)", () => {
+  let repo: string;
+
+  before(async () => {
+    repo = await makeRepo({ autocrlf: "true" });
+  });
+
+  after(async () => {
+    await rm(repo, { force: true, recursive: true });
+  });
+
+  it("does not treat an LF rewrite of the CRLF checkout as dirty or block merge", async () => {
+    const handle = await createMemberWorktree({
+      repoRoot: repo,
+      baseBranch: "main",
+      teamId: "team-crlf0001",
+      memberName: "dev-1",
+    });
+    const checkout = await readFile(join(handle.path, "shared.txt"), "utf8");
+    assert.ok(checkout.includes("\r"), "autocrlf=true must smudge the checkout to CRLF");
+    // 成员按 LF 原样写回（语义不变）：git status 会报 ` M`，内容与 HEAD 相同。
+    await rewriteAsLf(join(handle.path, "shared.txt"));
+    assert.equal(
+      (await git(handle.path, ["status", "--porcelain"])).trim(),
+      "M shared.txt",
+      "precondition: status reports the autocrlf phantom this fix neutralizes",
+    );
+    await writeFile(join(handle.path, "feature.txt"), "feature\n");
+    const merged = await mergeMemberWorktree({
+      repoRoot: repo,
+      baseBranch: "main",
+      handle,
+      method: "merge",
+    });
+    assert.equal(merged.noChanges, false, "real change must still merge");
+    assert.equal(
+      (await readFile(join(repo, "feature.txt"), "utf8")).replace(/\r\n/gu, "\n"),
+      "feature\n",
+    );
+  });
+
+  it("does not refuse a merge when the main workspace only has an autocrlf phantom", async () => {
+    const handle = await createMemberWorktree({
+      repoRoot: repo,
+      baseBranch: "main",
+      teamId: "team-crlf0002",
+      memberName: "dev-1",
+    });
+    await writeFile(join(handle.path, "phantom-guard.txt"), "x\n");
+    // 主工作区按 LF 原样重写：status 报 ` M`，内容未变。
+    await rewriteAsLf(join(repo, "shared.txt"));
+    const merged = await mergeMemberWorktree({
+      repoRoot: repo,
+      baseBranch: "main",
+      handle,
+      method: "merge",
+    });
+    assert.equal(merged.noChanges, false);
+    assert.equal(
+      (await readFile(join(repo, "phantom-guard.txt"), "utf8")).replace(/\r\n/gu, "\n"),
+      "x\n",
+    );
+  });
+
+  it("still refuses a real main workspace change", async () => {
+    const handle = await createMemberWorktree({
+      repoRoot: repo,
+      baseBranch: "main",
+      teamId: "team-crlf0003",
+      memberName: "dev-1",
+    });
+    await writeFile(join(handle.path, "blocked.txt"), "x\n");
+    await writeFile(join(repo, "shared.txt"), "base\nreal-change\n");
+    await assert.rejects(
+      mergeMemberWorktree({ repoRoot: repo, baseBranch: "main", handle, method: "merge" }),
+      (error: unknown) => (error as { code?: string }).code === "worktree_dirty_workspace",
+    );
+    await git(repo, ["checkout", "--", "shared.txt"]);
+  });
+
+  it("still reports a dirty member tree and still removes a clean one", async () => {
+    const dirty = await createMemberWorktree({
+      repoRoot: repo,
+      baseBranch: "main",
+      teamId: "team-crlf0004",
+      memberName: "dev-1",
+    });
+    await writeFile(join(dirty.path, "dirty.txt"), "x\n");
+    await git(dirty.path, ["add", "."]);
+    await git(dirty.path, ["commit", "-q", "-m", "dirty work"]);
+    await writeFile(join(dirty.path, "dirty.txt"), "changed\n");
+    const kept = await cleanupMemberWorktree({
+      repoRoot: repo,
+      baseBranch: "main",
+      handle: dirty,
+    });
+    assert.equal(kept.keptReason, "dirty", "a real content change must still be dirty");
+    assert.ok(existsSync(dirty.path));
+
+    // 干净且已合并的树：CRLF 检出的 autocrlf 幻影不得阻止删除。
+    const clean = await createMemberWorktree({
+      repoRoot: repo,
+      baseBranch: "main",
+      teamId: "team-crlf0005",
+      memberName: "dev-1",
+    });
+    await writeFile(join(clean.path, "merged.txt"), "x\n");
+    await mergeMemberWorktree({
+      repoRoot: repo,
+      baseBranch: "main",
+      handle: clean,
+      method: "merge",
+    });
+    await rewriteAsLf(join(clean.path, "shared.txt"));
+    const cleaned = await cleanupMemberWorktree({
+      repoRoot: repo,
+      baseBranch: "main",
+      handle: clean,
+    });
+    assert.equal(cleaned.removed, true);
+    assert.equal(cleaned.branchRemoved, true);
+    assert.equal(existsSync(clean.path), false);
+  });
+
+  it("snapshot returns false instead of throwing when only an autocrlf phantom exists", async () => {
+    const handle = await createMemberWorktree({
+      repoRoot: repo,
+      baseBranch: "main",
+      teamId: "team-crlf0006",
+      memberName: "dev-1",
+    });
+    await rewriteAsLf(join(handle.path, "shared.txt"));
+    assert.equal(
+      (await git(handle.path, ["status", "--porcelain"])).trim(),
+      "M shared.txt",
+      "precondition: phantom is visible to status",
+    );
+    assert.equal(
+      await snapshotPendingChanges(repo, handle, "snapshot"),
+      false,
+      "no content change means nothing to snapshot",
+    );
+    // 真实改动仍然要被快照进成员分支。
+    await writeFile(join(handle.path, "real.txt"), "real\n");
+    assert.equal(await snapshotPendingChanges(repo, handle, "snapshot real"), true);
+    assert.match(await git(handle.path, ["log", "-1", "--format=%s"]), /snapshot real/u);
   });
 });
 

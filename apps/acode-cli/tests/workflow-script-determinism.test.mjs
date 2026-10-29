@@ -180,6 +180,12 @@ test("(B4) 确定性的 Date 面被刻意留住：new Date(ms) / Date.parse / Da
 
 test("(C1) 绕过：Object.getPrototypeOf(Date).now() 拿到真时钟，run 照常 completed", async () => {
   await withTempDir(async (dir) => {
+    // 窗口带对称容差：本用例的判别目的是把真墙钟（~1.79e12）与沙箱假时钟
+    // （0 / NaN / 冻结值 1577836800000 = 2020-01-01）分开。真钟与假钟的差距是
+    // 数量级级别（十几年），而系统时钟回拨（NTP 校准）幅度是毫秒到秒级；
+    // 因此 ±5s 的容差既远小于判别所需的分辨力，又远大于 NTP 抖动，
+    // 消除「长跑时恰逢时钟回拨 → 读数落在 before 之前」的偶发 flake。
+    const CLOCK_TOLERANCE_MS = 5_000;
     const before = Date.now();
     const { settlement } = await runScript(dir, "return Object.getPrototypeOf(Date).now();");
     const after = Date.now();
@@ -187,7 +193,8 @@ test("(C1) 绕过：Object.getPrototypeOf(Date).now() 拿到真时钟，run 照�
     assert.equal(typeof settlement.artifact, "number");
     // 断言它真是**墙钟**（而不是 0 / NaN / 抛错后的兜底）：落在测试自身的取值窗口内。
     assert.ok(
-      settlement.artifact >= before && settlement.artifact <= after,
+      settlement.artifact >= before - CLOCK_TOLERANCE_MS &&
+        settlement.artifact <= after + CLOCK_TOLERANCE_MS,
       `expected a real wall-clock reading, got ${settlement.artifact}`,
     );
   });

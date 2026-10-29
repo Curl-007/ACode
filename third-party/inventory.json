@@ -1487,7 +1487,7 @@
     "packages/ui/src/components/ai-elements/markdown-blockquote.tsx": "0c76599780a464136703d40d07172dcc62730dee1ce01a155100cf4712440a7f",
     "packages/ui/src/components/ai-elements/markdown-image.tsx": "d918c15456ad8b0254532bfc4ebbfdc7cdd4450525bed4ec01de43ed9ac091f9",
     "packages/ui/src/components/ai-elements/markdown-list.tsx": "ecf50ad4f48cd460ddcf90db7b463671f915d8c22c7cb8e7760ff3b02282c7f1",
-    "packages/ui/src/components/ai-elements/markdown-table.tsx": "adfaad8d9e778e4909e3c11e83adc422e7795e8aa0f8f8c7de0833ad92bd4b6d",
+    "packages/ui/src/components/ai-elements/markdown-table.tsx": "48309e2361093f40db2f061efaddf36bbf517f0a70300fbbf208d831bddd1745",
     "packages/ui/src/components/ai-elements/mermaid-block.tsx": "2a92d857e3d9f909edb56bdd52d8afb773acd593e91d38dfeca21ae5056c5f5a",
     "packages/ui/src/components/ai-elements/message.tsx": "4025fc8562d776d5252056ce1d847a75166df7601b99a40a8c04ccd0b59726c1",
     "packages/ui/src/components/ai-elements/node.tsx": "886c85babeb7df31d2b649de0f761caa71f0bd0b0f7afcf1707e72bb0bb6ee45",

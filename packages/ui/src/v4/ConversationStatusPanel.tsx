@@ -1,14 +1,12 @@
-/* oxlint-disable eslint(max-lines) -- 状态面板同时维护收起态摘要、展开态分区、菜单策略和宽度自适应，同文件能保证两种形态共享同一内容优先级；批次 4 已将纯格式化/决策函数外迁 conversationStatusPanelFormat.ts，实时投影语义（memo/tick/scroll policy）仍在本文件。 */
+/* oxlint-disable eslint(max-lines) -- 状态面板同时维护收起态摘要、展开态分区、菜单策略和宽度自适应，同文件能保证两种形态共享同一内容优先级；批次 4 已将纯格式化/决策函数外迁 conversationStatusPanelFormat.ts，批次 6 第一阶段已将分区外壳与 environment/plan/agent-teams/已结束页脚外迁 conversation-status-panel/，实时投影语义（memo/tick/scroll policy）仍在本文件。 */
 import { useIsOfficeMode } from "@/hooks/useInterfaceMode.js";
 import {
-  forwardRef,
   memo,
   useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
-  type ComponentPropsWithoutRef,
   type CSSProperties,
   type MouseEvent,
   type ReactNode,
@@ -18,11 +16,7 @@ import {
   ArrowRightIcon,
   BotIcon,
   CheckCircle2Icon,
-  ChevronDownIcon,
-  ChevronLeftIcon,
-  ChevronRightIcon,
   CircleCheckBigIcon,
-  CircleIcon,
   EllipsisIcon,
   FileDiffIcon,
   GoalIcon,
@@ -62,9 +56,6 @@ import {
 } from "@/components/workflow-graph/run-status-presentation.js";
 import { useNowTicker } from "@/components/workflow-graph/use-now-ticker.js";
 import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
 } from "@/components/ui/collapsible.js";
 import {
   DropdownMenu,
@@ -75,13 +66,9 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu.js";
-import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card.js";
 import { ControlHintTooltip } from "@/ControlHintTooltip.js";
 import { formatBackgroundTaskElapsedLabel } from "@/BackgroundTaskElapsedLabel.js";
-import { GitActionMenu } from "@/GitActionMenu.js";
-import { GitBranchSwitcher } from "@/GitBranchSwitcher.js";
 import { useACodeIntl } from "@/i18n/IntlProvider.js";
-import { TeamStatusSummary } from "@/components/TeamStatusSummary.js";
 import { TeamEndedSection } from "@/v4/TeamEndedSection.js";
 import type {
   OpenPlanDetailSideTabRequest,
@@ -98,7 +85,6 @@ import {
   EMPTY_RUNNING_SUBAGENTS,
   EMPTY_WORKFLOW_RUNS,
   buildRunningSubagentOpenRequest,
-  buildSessionPlanOpenRequest,
   formatDurationUnits,
   formatRunningCount,
   formatRunningSubagentCount,
@@ -106,7 +92,6 @@ import {
   getCompletedPlanItem,
   getCurrentPlanItem,
   getLongestRunningWorkElapsedMs,
-  getStatusPanelTodoFocusWindow,
 } from "@/v4/conversationStatusPanelFormat.js";
 import {
   buildConversationStatusPanelModel,
@@ -115,12 +100,22 @@ import {
   type ConversationStatusPanelWorkflowRun,
 } from "@/v4/conversationStatusPanelModel.js";
 import type { ConversationStatusPanelWorkflowRunTarget } from "@/v4/conversationStatusPanelModel.js";
-import type { ConversationStatusPanelTeam } from "@/v4/teamPanelModel.js";
 import { workflowRunOpenTarget } from "@/v4/conversationStatusPanelModel.js";
 import {
   buildConversationGoalIterationSummaries,
   getConversationGoalElapsedSeconds,
 } from "@/v4/conversationGoalSummaryModel.js";
+import { StatusSection } from "@/v4/conversation-status-panel/StatusSectionShell.js";
+import { GitStatusSection } from "@/v4/conversation-status-panel/GitStatusSection.js";
+import {
+  PlanStatusSection,
+  SessionPlansStatusSection,
+} from "@/v4/conversation-status-panel/PlanStatusSections.js";
+import {
+  EndedDirectoryRow,
+  EndedSubagentDirectoryRow,
+  TeamStatusSection,
+} from "@/v4/conversation-status-panel/TeamAndEndedSections.js";
 
 interface ConversationStatusPanelProps {
   workspacePath: string;
@@ -177,237 +172,6 @@ interface ConversationStatusPanelProps {
   className?: string;
 }
 
-type StatusSectionKind =
-  | "environment"
-  | "goal"
-  | "sessionPlans"
-  | "plan"
-  | "agent-teams"
-  | "terminal"
-  | "workflow"
-  | "agent";
-
-const STATUS_SECTION_SCROLL_POLICY = {
-  environment: null,
-  goal: "max-h-48",
-  sessionPlans: "max-h-48",
-  // 六个双行 Todo（6 × 52px）需要约 20rem；超过后只滚动进程区块。
-  plan: "max-h-80",
-  // agent-teams：任务列表自管折叠（默认收起），分区本体给一档宽松限高兜底。
-  "agent-teams": "max-h-96",
-  terminal: "max-h-48",
-  // workflow 行与 terminal / agent 行同高（两行 + 控制），限高沿用同一档。
-  workflow: "max-h-48",
-  agent: "max-h-48",
-} as const satisfies Record<StatusSectionKind, string | null>;
-
-function StatusSectionHeader({
-  children,
-  isOpen,
-  section,
-  title,
-}: {
-  children?: ReactNode;
-  isOpen: boolean;
-  section: StatusSectionKind;
-  title: string;
-}) {
-  return (
-    <div className="mb-0.5 flex h-8 min-w-0 shrink-0 items-center gap-1.5 px-2 pr-8">
-      <CollapsibleTrigger asChild>
-        <button
-          type="button"
-          aria-expanded={isOpen}
-          data-status-section-trigger={section}
-          className="group flex min-w-0 shrink-0 items-center gap-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-input-border-focused)]"
-        >
-          <span className="shrink-0 text-ui-base text-[var(--color-foreground-subtle)]">
-            {title}
-          </span>
-          {isOpen ? (
-            <ChevronDownIcon className="size-3.5 shrink-0 text-[var(--color-foreground-subtle)] opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100" />
-          ) : (
-            <ChevronRightIcon className="size-3.5 shrink-0 text-[var(--color-foreground-subtle)] opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100" />
-          )}
-        </button>
-      </CollapsibleTrigger>
-      {children ? (
-        <div className="inline-flex min-w-0 max-w-full shrink items-center gap-1.5 text-ui-sm text-[var(--color-foreground-subtlest)]">
-          {children}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function StatusSection({
-  children,
-  defaultOpen = true,
-  onOpenChange,
-  open,
-  separated = false,
-  section,
-  title,
-  trailing,
-}: {
-  children: ReactNode;
-  defaultOpen?: boolean;
-  onOpenChange?: (open: boolean) => void;
-  open?: boolean;
-  separated?: boolean;
-  section: StatusSectionKind;
-  title: string;
-  trailing?: (isOpen: boolean) => ReactNode;
-}) {
-  const [uncontrolledOpen, setUncontrolledOpen] = useState(defaultOpen);
-  const isControlled = open !== undefined;
-  const isOpen = open ?? uncontrolledOpen;
-  // 限高过去依赖每个调用方显式传 scrollable，组合区块或新增类型时容易
-  // 旁路滚动视口。改为按完整区块类型表统一裁决，让计划等新类型漏配时直接触发类型检查。
-  const scrollViewportMaxHeightClass = STATUS_SECTION_SCROLL_POLICY[section];
-  const handleOpenChange = useCallback(
-    (nextOpen: boolean) => {
-      if (!isControlled) {
-        setUncontrolledOpen(nextOpen);
-      }
-      onOpenChange?.(nextOpen);
-    },
-    [isControlled, onOpenChange],
-  );
-
-  return (
-    <Collapsible
-      open={isOpen}
-      onOpenChange={handleOpenChange}
-      data-status-section={section}
-      className={cn("min-w-0 flex-none", separated && "border-t border-[var(--color-border)] pt-2")}
-    >
-      <section className="min-w-0 flex-none">
-        <StatusSectionHeader isOpen={isOpen} section={section} title={title}>
-          {trailing?.(isOpen)}
-        </StatusSectionHeader>
-        <CollapsibleContent>
-          {scrollViewportMaxHeightClass ? (
-            // 长 Goal / 计划 / Todo / 终端 / 智能体列表过去保持自然高度，外层 shell
-            // 只能把超出 max-height 的内容裁掉。滚动边界必须放在折叠动画内容层内部，
-            // 既固定区块标题和控制，也不破坏 CollapsibleContent 的高度动画。
-            <div
-              data-status-section-scroll={section}
-              className={cn(
-                scrollViewportMaxHeightClass,
-                "min-h-0 overflow-x-hidden overflow-y-auto pr-1",
-              )}
-            >
-              {children}
-            </div>
-          ) : (
-            children
-          )}
-        </CollapsibleContent>
-      </section>
-    </Collapsible>
-  );
-}
-
-function GitStatusSection({
-  activeTaskChangeSummary,
-  gitSummary,
-  gitWorktreeReviewSourceId,
-  model,
-  onOpenGitReview,
-  onRefreshGit,
-  separated,
-  workspaceIdentity,
-  workspacePath,
-  useVerticalFloatingPanels,
-}: {
-  activeTaskChangeSummary?: ACodeTaskChangeSummary | null;
-  gitSummary: GitRepositorySummary | null | undefined;
-  gitWorktreeReviewSourceId?: GitChangeSourceId | null;
-  model: ConversationStatusPanelModel;
-  onOpenGitReview?: (sourceId?: GitChangeSourceId) => void;
-  onRefreshGit?: () => void;
-  separated: boolean;
-  workspaceIdentity?: string;
-  workspacePath: string;
-  useVerticalFloatingPanels: boolean;
-}) {
-  const { intl } = useACodeIntl();
-  const git = model.git;
-  if (!git || !gitSummary || !onRefreshGit) {
-    return null;
-  }
-  const hasChanges = git.added + git.removed > 0;
-  const canOpenReview = Boolean(onOpenGitReview && gitSummary.isRepository);
-
-  return (
-    <StatusSection
-      section="environment"
-      separated={separated}
-      title={intl.formatMessage({ id: "chat.statusPanel.environment" })}
-      trailing={(isOpen) =>
-        isOpen ? null : (
-          <span className="shrink-0 font-mono text-ui-sm tabular-nums">
-            <span className={cn("text-[var(--color-diff-added)]", !hasChanges && "opacity-50")}>
-              +{git.added}
-            </span>{" "}
-            <span className={cn("text-[var(--color-diff-removed)]", !hasChanges && "opacity-50")}>
-              -{git.removed}
-            </span>
-          </span>
-        )
-      }
-    >
-      <div className="space-y-0">
-        {/* V4 状态面板迁移时只保留了 Changes 的静态展示，
-            没有继续透传旧版 Git review 回调，导致规范中的审阅入口不可点击。 */}
-        <button
-          type="button"
-          disabled={!canOpenReview}
-          className={cn(
-            "flex h-8 w-full min-w-0 items-center gap-2 rounded-lg px-2 text-left text-ui-base text-[var(--color-foreground)] transition-colors",
-            canOpenReview
-              ? "hover:bg-[var(--color-hover)] hover:text-[var(--color-foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-input-border-focused)]"
-              : "cursor-default opacity-50",
-          )}
-          onClick={() => {
-            onOpenGitReview?.(gitWorktreeReviewSourceId ?? undefined);
-          }}
-        >
-          <FileDiffIcon className="size-4 shrink-0 text-[var(--color-foreground)]" />
-          <span className="min-w-0 flex-1 truncate">
-            {intl.formatMessage({ id: "chat.statusPanel.changes" })}
-          </span>
-          <span className="shrink-0 font-mono tabular-nums">
-            <span className="text-[var(--color-diff-added)]">+{git.added}</span>{" "}
-            <span className="text-[var(--color-diff-removed)]">-{git.removed}</span>
-          </span>
-        </button>
-        <GitBranchSwitcher
-          workspacePath={workspacePath}
-          gitSummary={gitSummary}
-          dirtyFileCount={git.dirtyFileCount}
-          onRefreshGit={onRefreshGit}
-          className="w-full px-0 pt-0"
-          triggerClassName="flex h-8 w-full min-w-0 justify-start gap-2 rounded-lg px-2 text-left text-ui-base text-[var(--color-foreground)] hover:bg-[var(--color-hover)] hover:text-[var(--color-foreground)] [&>span]:max-w-[calc(100%-3.5rem)] [&_svg:first-child]:text-[var(--color-foreground)]"
-          popoverClassName="w-72 max-w-[calc(100vw-2rem)]"
-          branchListClassName="max-h-56"
-          popoverSide={useVerticalFloatingPanels ? "bottom" : "left"}
-          showFooterActions
-        />
-        <GitActionMenu
-          workspacePath={workspacePath}
-          workspaceIdentity={workspaceIdentity}
-          gitSummary={gitSummary}
-          activeTaskChangeSummary={activeTaskChangeSummary ?? null}
-          onRefreshGit={onRefreshGit}
-          triggerLayout="status-row"
-          className="w-full"
-        />
-      </div>
-    </StatusSection>
-  );
-}
 
 function GoalStatusSection({
   model,
@@ -536,280 +300,6 @@ function GoalStatusSection({
   );
 }
 
-function PlanStatusIcon({ status }: { status: PlanState["items"][number]["status"] }) {
-  if (status === "completed") {
-    return (
-      <CheckCircle2Icon
-        aria-hidden
-        className="mt-0.5 size-3.5 shrink-0 text-[var(--color-success)]"
-      />
-    );
-  }
-  if (status === "inProgress") {
-    return (
-      <ArrowRightIcon
-        aria-hidden
-        className="mt-0.5 size-3.5 shrink-0 text-[var(--color-foreground)]"
-      />
-    );
-  }
-  return (
-    <CircleIcon
-      aria-hidden
-      className="mt-0.5 size-3.5 shrink-0 text-[var(--color-foreground-subtlest)]"
-    />
-  );
-}
-
-function PlanStatusItemRows({ items }: { items: PlanState["items"] }) {
-  return items.map((item) => (
-    <li
-      key={item.id}
-      data-plan-status={item.status}
-      className="flex min-h-8 items-start gap-2 rounded-lg px-2 py-1.5 text-ui-base hover:bg-[var(--color-hover)]"
-    >
-      <PlanStatusIcon status={item.status} />
-      <span
-        title={item.content}
-        className={cn(
-          "line-clamp-2 min-w-0 flex-1 break-words leading-5",
-          item.status === "completed"
-            ? "text-[var(--color-foreground-subtlest)] line-through"
-            : "text-[var(--color-foreground)]",
-        )}
-      >
-        {item.content}
-      </span>
-    </li>
-  ));
-}
-
-const TodoPreviewTrigger = forwardRef<
-  HTMLButtonElement,
-  ComponentPropsWithoutRef<"button"> & {
-    group: "preceding" | "following";
-    label: string;
-    open: boolean;
-    onTouchOpen: () => void;
-  }
->(function TodoPreviewTrigger({ group, label, onClick, onTouchOpen, open, ...buttonProps }, ref) {
-  return (
-    <button
-      {...buttonProps}
-      ref={ref}
-      type="button"
-      aria-expanded={open}
-      data-status-todo-preview-trigger={group}
-      className="flex h-8 w-full min-w-0 items-center gap-2 rounded-lg px-2 text-left text-ui-base text-[var(--color-foreground-subtle)] hover:bg-[var(--color-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-input-border-focused)]"
-      onClick={(event) => {
-        onClick?.(event);
-        // HoverCard 在桌面由 hover/focus 驱动；仅无 hover 输入补充点击打开，
-        // 避免桌面点击把已经由 hover 打开的预览反向关闭。
-        if (
-          !event.defaultPrevented &&
-          typeof window !== "undefined" &&
-          window.matchMedia?.("(hover: none)").matches
-        ) {
-          onTouchOpen();
-        }
-      }}
-    >
-      <ChevronLeftIcon className="size-3.5 shrink-0" />
-      <span className="min-w-0 truncate">{label}</span>
-    </button>
-  );
-});
-
-type TodoPreviewGroup = "preceding" | "following";
-
-function TodoHiddenGroupPreview({
-  group,
-  items,
-  onOpenChange,
-  open,
-  popoverSide,
-}: {
-  group: TodoPreviewGroup;
-  items: PlanState["items"];
-  onOpenChange: (open: boolean) => void;
-  open: boolean;
-  popoverSide: "bottom" | "left";
-}) {
-  const { intl } = useACodeIntl();
-  const messageId =
-    group === "preceding"
-      ? items.every((item) => item.status === "completed")
-        ? "chat.statusPanel.todoCompletedFold"
-        : "chat.statusPanel.todoEarlierFold"
-      : items.every((item) => item.status === "pending")
-        ? "chat.statusPanel.todoWaitingFold"
-        : "chat.statusPanel.todoLaterFold";
-  const label = intl.formatMessage({ id: messageId }, { count: String(items.length) });
-
-  return (
-    <HoverCard closeDelay={80} open={open} openDelay={120} onOpenChange={onOpenChange}>
-      <HoverCardTrigger asChild>
-        <TodoPreviewTrigger
-          group={group}
-          label={label}
-          open={open}
-          onTouchOpen={() => onOpenChange(true)}
-        />
-      </HoverCardTrigger>
-      <HoverCardContent
-        align="start"
-        side={popoverSide}
-        sideOffset={4}
-        data-status-todo-preview-content={group}
-        className="w-80 max-w-[min(20rem,calc(100vw-2rem))] rounded-xl border border-[var(--color-popover-border)] bg-[var(--color-menu)] p-3 shadow-md ring-0"
-      >
-        <div className="flex max-h-[min(24rem,calc(100dvh-2rem))] min-w-0 flex-col">
-          <p className="flex h-8 shrink-0 items-center px-2 text-ui-base text-[var(--color-foreground-subtle)]">
-            {label}
-          </p>
-          <ul className="min-h-0 space-y-0 overflow-y-auto pr-1">
-            <PlanStatusItemRows items={items} />
-          </ul>
-        </div>
-      </HoverCardContent>
-    </HoverCard>
-  );
-}
-
-function PlanStatusItems({
-  plan,
-  popoverSide,
-}: {
-  plan: NonNullable<ConversationStatusPanelModel["plan"]>;
-  popoverSide: "bottom" | "left";
-}) {
-  const [openPreviewGroup, setOpenPreviewGroup] = useState<TodoPreviewGroup | null>(null);
-  const window = getStatusPanelTodoFocusWindow(plan.displayItems);
-  const handlePreviewOpenChange = (group: TodoPreviewGroup, open: boolean) => {
-    setOpenPreviewGroup((current) => (open ? group : current === group ? null : current));
-  };
-
-  return (
-    <ul className="space-y-0 pb-1">
-      {window.compact && window.precedingItems.length > 0 ? (
-        <li>
-          <TodoHiddenGroupPreview
-            group="preceding"
-            items={window.precedingItems}
-            open={openPreviewGroup === "preceding"}
-            onOpenChange={(open) => handlePreviewOpenChange("preceding", open)}
-            popoverSide={popoverSide}
-          />
-        </li>
-      ) : null}
-      <PlanStatusItemRows items={window.focusItems} />
-      {window.compact && window.followingItems.length > 0 ? (
-        <li>
-          <TodoHiddenGroupPreview
-            group="following"
-            items={window.followingItems}
-            open={openPreviewGroup === "following"}
-            onOpenChange={(open) => handlePreviewOpenChange("following", open)}
-            popoverSide={popoverSide}
-          />
-        </li>
-      ) : null}
-    </ul>
-  );
-}
-
-function SessionPlansStatusSection({
-  model,
-  onOpenPlanDetail,
-  parentSessionId,
-  separated,
-}: {
-  model: ConversationStatusPanelModel;
-  onOpenPlanDetail?: (request: OpenPlanDetailSideTabRequest) => void;
-  parentSessionId?: string;
-  separated: boolean;
-}) {
-  const { intl } = useACodeIntl();
-  const sessionPlans = model.sessionPlans;
-  if (!sessionPlans) return null;
-
-  return (
-    <StatusSection
-      section="sessionPlans"
-      separated={separated}
-      title={intl.formatMessage({ id: "chat.statusPanel.sessionPlans" })}
-    >
-      <ul className="space-y-0">
-        {sessionPlans.items.map((item) => {
-          const title = item.title ?? intl.formatMessage({ id: "chat.statusPanel.planFallback" });
-          const canOpen = Boolean(parentSessionId && onOpenPlanDetail);
-          return (
-            <li key={item.toolCallId}>
-              <button
-                type="button"
-                data-plan-directory-tool-call-id={item.toolCallId}
-                disabled={!canOpen}
-                aria-label={intl.formatMessage({ id: "chat.statusPanel.openPlan" }, { title })}
-                onClick={() => {
-                  if (!parentSessionId) return;
-                  onOpenPlanDetail?.(buildSessionPlanOpenRequest(parentSessionId, item));
-                }}
-                className={cn(
-                  "flex min-h-8 w-full min-w-0 items-center gap-2 rounded-lg px-2 py-1.5 text-left text-ui-base text-[var(--color-foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-input-border-focused)]",
-                  canOpen && "hover:bg-[var(--color-hover)]",
-                )}
-              >
-                <ListChecksIcon className="size-4 shrink-0 text-[var(--color-foreground-subtle)]" />
-                <span className="min-w-0 flex-1 truncate">{title}</span>
-              </button>
-            </li>
-          );
-        })}
-      </ul>
-    </StatusSection>
-  );
-}
-
-function PlanStatusSection({
-  model,
-  popoverSide,
-  separated,
-}: {
-  model: ConversationStatusPanelModel;
-  popoverSide: "bottom" | "left";
-  separated: boolean;
-}) {
-  const { intl } = useACodeIntl();
-  const plan = model.plan;
-  if (!plan) return null;
-  const isCompleted = plan.totalCount > 0 && plan.completedCount >= plan.totalCount;
-
-  return (
-    <StatusSection
-      section="plan"
-      separated={separated}
-      title={intl.formatMessage({ id: "chat.statusPanel.todo" })}
-      trailing={() => (
-        <span
-          className={cn(
-            "tabular-nums",
-            isCompleted ? "text-[var(--color-success)]" : "text-[var(--color-foreground-subtle)]",
-          )}
-        >
-          {plan.completedCount}/{plan.totalCount}
-        </span>
-      )}
-    >
-      <PlanStatusItems
-        key={plan.displayItems
-          .map((item) => `${item.id}\u0000${item.content}\u0000${item.status}`)
-          .join("\u0001")}
-        plan={plan}
-        popoverSide={popoverSide}
-      />
-    </StatusSection>
-  );
-}
 
 function RunningWorkCancelButton({
   workId,
@@ -1196,38 +686,6 @@ function WorkflowStatusSection({
   );
 }
 
-function TeamStatusSection({
-  separated,
-  team,
-  title,
-  parentSessionId,
-  onOpenTeamPanel,
-}: {
-  separated: boolean;
-  team: ConversationStatusPanelTeam;
-  title: string;
-  parentSessionId?: string;
-  onOpenTeamPanel?: (request: OpenTeamSideTabRequest) => void;
-}) {
-  return (
-    <StatusSection
-      section="agent-teams"
-      separated={separated}
-      title={title}
-      trailing={() => (
-        <span className="shrink-0 tabular-nums text-foreground-subtle">
-          {team.counts.done}/{team.tasks.length}
-        </span>
-      )}
-    >
-      <TeamStatusSummary
-        team={team}
-        parentSessionId={parentSessionId}
-        onOpenTeamPanel={onOpenTeamPanel}
-      />
-    </StatusSection>
-  );
-}
 
 function SubagentStatusSection({
   endedSubagentCount,
@@ -1372,80 +830,6 @@ function SubagentStatusSection({
   );
 }
 
-/**
- * 「已结束的 X · N ›」页脚行：分区里那条通往目录页的入口。
- *
- * Agents 与 Workflows **共用这一个** affordance（图标/文案/计数/回调由调用方给）。抽出来的
- * 理由不是省行数，而是不出现第二套画法：两个分区的页脚行若各写一遍，两者会随时间长出不同的
- * 间距、不同的 hover、不同的计数位置，而它们在读者眼里本来是同一个动作。
- *
- * `count <= 0` 或缺回调即整行缺席：一个点了没反应的入口比没有入口更糟。
- */
-function EndedDirectoryRow({
-  count,
-  icon,
-  label,
-  onOpen,
-  separated,
-  testId,
-}: {
-  count: number;
-  icon: ReactNode;
-  label: string;
-  onOpen?: () => void;
-  separated: boolean;
-  testId?: string;
-}) {
-  if (count <= 0 || !onOpen) return null;
-  return (
-    <div className={cn(separated && "border-t border-[var(--color-border)] pt-2")}>
-      <button
-        type="button"
-        data-testid={testId}
-        className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-ui-base text-[var(--color-foreground)] hover:bg-[var(--color-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-input-border-focused)]"
-        onClick={onOpen}
-      >
-        {icon}
-        <span>{label}</span>
-        <span className="ml-auto text-[var(--color-foreground-subtle)]">{count}</span>
-        <ChevronRightIcon className="size-4 text-[var(--color-foreground-subtle)]" />
-      </button>
-    </div>
-  );
-}
-
-function EndedSubagentDirectoryRow({
-  count,
-  onOpen,
-  parentSessionId,
-  rootSessionId,
-  separated,
-}: {
-  count: number;
-  onOpen?: (request: OpenSubagentDirectorySideTabRequest) => void;
-  parentSessionId?: string;
-  rootSessionId?: string;
-  separated: boolean;
-}) {
-  const { intl } = useACodeIntl();
-  return (
-    <EndedDirectoryRow
-      count={count}
-      icon={<CheckCircle2Icon className="size-4 shrink-0 text-[var(--color-foreground-subtle)]" />}
-      label={intl.formatMessage({ id: "chat.statusPanel.endedAgents" })}
-      separated={separated}
-      onOpen={
-        parentSessionId && onOpen
-          ? () =>
-              onOpen({
-                rootSessionId: rootSessionId ?? parentSessionId,
-                parentSessionId,
-              })
-          : undefined
-      }
-    />
-  );
-}
 
 function StatusSummaryMetric({ children, icon }: { children: ReactNode; icon: ReactNode }) {
   return (

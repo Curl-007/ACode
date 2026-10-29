@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- BotsDialog 现在保留数据加载、保存和轮询编排；右侧卡片已拆到 BotsDialog/* 子组件，后续再继续下沉状态 hook。 */
+/* eslint-disable max-lines -- BotsDialog 保留数据加载、保存与四组轮询编排；卡片已拆到 BotsDialog/* 子组件，批次 6 又外迁了自动连接决策与侧栏/新建/详情三段 UI。 */
 import {
   useCallback,
   useEffect,
@@ -8,7 +8,7 @@ import {
   type KeyboardEvent,
 } from "react";
 import QRCode from "qrcode";
-import { Bot, Loader2, Plus } from "lucide-react";
+import { Bot } from "lucide-react";
 import type {
   BotConfig,
   BotProvider,
@@ -19,12 +19,8 @@ import type {
 } from "@acode/shared";
 import {
   ALL_BOT_WORKSPACES,
-  createUuid,
-  DEFAULT_BOT_REPLY_GRANULARITY,
   isFeishuBotProvider,
-  normalizeBotReplyGranularity,
 } from "@acode/shared";
-import { Button } from "@/components/ui/button.js";
 import {
   Dialog,
   DialogContent,
@@ -40,58 +36,31 @@ import { useACodeIntl } from "@/i18n/IntlProvider.js";
 import { isImeComposingKeyEvent } from "@/lib/imeComposition.js";
 import { logger } from "@/logger.js";
 import {
-  BOT_PROVIDERS,
   buildCurrentWorkspaceId,
   getBotProviderRegionTagLabelId,
   resolveBotProviderEntry,
   type BotProviderEntryId,
 } from "@/botsUi.js";
-import { cn } from "@/components/lib/utils.js";
-import {
-  BotDangerCard,
-  BotEngineCard,
-  BotPermissionModeCard,
-  BotReplyGranularityCard,
-  BotSummaryCard,
-} from "@/BotsDialog/BotSummaryCard.js";
-import { ProviderSettingsCard } from "@/BotsDialog/ProviderSettingsCard.js";
-import { WorkspaceAccessCard } from "@/BotsDialog/WorkspaceAccessCard.js";
-import { SettingsGroupCard } from "@/settings/SettingsPageParts.js";
 import {
   BIND_CODE_TTL_MS,
-  ProviderIcon,
   TELEGRAM_BOTFATHER_URL,
-  createDefaultCommands,
   formatBotDisplayName,
   isAllWorkspacesAllowed,
-  runtimeDot,
   type BindCodeState,
   type FeishuRegistrationState,
   type WeixinRegistrationState,
 } from "@/BotsDialog/shared.js";
-
-function createEmptyConfig(): BotsConfigFile {
-  return { version: 3, bots: [] };
-}
-
-function createDraftBot(params: { provider: BotProvider }): BotConfig {
-  // Bugfix: Bot id 只是配置实体身份，不应该带 provider 前缀；
-  // 新建时如果看到 telegram-* 这类 id，容易误以为渠道被固定到了 Telegram。
-  const id = `bot-${createUuid()}`;
-  return {
-    id,
-    name: "",
-    provider: params.provider,
-    enabled: true,
-    allowedWorkspaces: [ALL_BOT_WORKSPACES],
-    allowedCommands: createDefaultCommands(),
-    currentOptions: {},
-    replyMode: normalizeBotReplyGranularity(
-      params.provider,
-      DEFAULT_BOT_REPLY_GRANULARITY,
-    ),
-  };
-}
+import {
+  createDraftBot,
+  createEmptyConfig,
+  resolveBotAutoConnectAction,
+} from "@/BotsDialog/botsDialogModels.js";
+import { BotsDialogSidebar } from "@/BotsDialog/BotsDialogSidebar.js";
+import { BotsDialogCreatePanel } from "@/BotsDialog/BotsDialogCreatePanel.js";
+import {
+  BotsDialogDetailPanel,
+  BotsDialogEmptyState,
+} from "@/BotsDialog/BotsDialogDetailPanel.js";
 
 export function BotsDialog({
   open,
@@ -948,85 +917,28 @@ export function BotsDialog({
   }, [botsService, intl, selectedBot]);
 
   useEffect(() => {
-    if (!open || creatingBot || !selectedBot) {
+    // 自动扫码 / 自动续绑定码的 120 行分支链收在 resolveBotAutoConnectAction（纯决策表，
+    // 批次 6 外迁）。effect 只负责副作用：ref 去重集合的增删与发起动作。
+    const action = resolveBotAutoConnectAction({
+      open,
+      creatingBot,
+      selectedBot,
+      bindCode,
+      bindExpired,
+      feishuRegistration,
+      feishuRegistrationLoading,
+      weixinRegistration,
+      weixinRegistrationLoading,
+      autoQrStartedKeys: autoQrStartedBotIdsRef.current,
+      autoBindCreatingIds: autoBindCreatingBotIdsRef.current,
+    });
+
+    if (action.kind === "none") {
       return;
     }
 
-    if (isFeishuBotProvider(selectedBot.provider)) {
-      if (!selectedBot.credentialRef) {
-        if (feishuRegistrationLoading) {
-          return;
-        }
-        if (feishuRegistration?.botId === selectedBot.id) {
-          return;
-        }
-
-        const autoKey = `${selectedBot.id}:feishu-registration`;
-        if (autoQrStartedBotIdsRef.current.has(autoKey)) {
-          return;
-        }
-
-        // Bugfix: 未配置 token 的飞书/Lark Bot 首次进入详情时只显示“扫码”按钮，
-        // 用户会误以为还需要额外展开；自动启动一次二维码流程，让缺失凭据的默认状态直接可操作。
-        autoQrStartedBotIdsRef.current.add(autoKey);
-        void handleStartFeishuRegistration();
-        return;
-      }
-
-      if (!selectedBot.providerUserId) {
-        if (bindCode?.botId === selectedBot.id && !bindExpired) {
-          return;
-        }
-        if (autoBindCreatingBotIdsRef.current.has(selectedBot.id)) {
-          return;
-        }
-
-        // Bugfix: 飞书/Lark 的接入凭据和聊天绑定是两个阶段；已有凭据但未绑定时需要自动展示 /bind。
-        // 绑定码现在只有 30 秒有效期，过期后如果还停在旧码会打断自动绑定流程；这里自动续一枚新码。
-        autoBindCreatingBotIdsRef.current.add(selectedBot.id);
-        void createBindCodeForBot(selectedBot).finally(() => {
-          autoBindCreatingBotIdsRef.current.delete(selectedBot.id);
-        });
-      }
-      return;
-    }
-
-    if (
-      selectedBot.provider === "telegram" ||
-      selectedBot.provider === "discord"
-    ) {
-      if (!selectedBot.credentialRef || selectedBot.providerUserId) {
-        return;
-      }
-      if (bindCode?.botId === selectedBot.id && !bindExpired) {
-        return;
-      }
-      if (autoBindCreatingBotIdsRef.current.has(selectedBot.id)) {
-        return;
-      }
-
-      // Bugfix: Telegram / Discord 和飞书/Lark 一样分成凭据接入与私聊绑定两步；
-      // token 保存后自动展示 /bind；绑定码过期也自动续码，避免 30 秒有效期让用户卡在旧码上。
-      autoBindCreatingBotIdsRef.current.add(selectedBot.id);
-      void createBindCodeForBot(selectedBot).finally(() => {
-        autoBindCreatingBotIdsRef.current.delete(selectedBot.id);
-      });
-      return;
-    }
-
-    if (selectedBot.provider === "wecom") {
-      // 企业微信回调配置齐全但未绑定成员时，自动展示 /bind，让首屏直接可操作。
-      const wecomConfigured =
-        Boolean(selectedBot.credentialRef) &&
-        Boolean(selectedBot.webhookSecretRef) &&
-        Boolean(selectedBot.wecomEncodingAESKey);
-      if (!wecomConfigured || selectedBot.providerUserId) {
-        return;
-      }
-      if (bindCode?.botId === selectedBot.id && !bindExpired) {
-        return;
-      }
-      if (autoBindCreatingBotIdsRef.current.has(selectedBot.id)) {
+    if (action.kind === "create-bind-code") {
+      if (!selectedBot) {
         return;
       }
       autoBindCreatingBotIdsRef.current.add(selectedBot.id);
@@ -1036,32 +948,19 @@ export function BotsDialog({
       return;
     }
 
-    if (selectedBot.provider !== "weixin") {
+    autoQrStartedBotIdsRef.current.add(action.dedupeKey);
+    if (action.kind === "start-feishu-qr") {
+      void handleStartFeishuRegistration();
       return;
     }
-    if (selectedBot.credentialRef || weixinRegistrationLoading) {
-      return;
-    }
-    if (weixinRegistration?.botId === selectedBot.id) {
-      return;
-    }
-
-    const autoKey = `${selectedBot.id}:weixin-registration`;
-    if (autoQrStartedBotIdsRef.current.has(autoKey)) {
-      return;
-    }
-
-    // Bugfix: 微信 Bot 没有 token/绑定状态时需要立即给出登录二维码，
-    // 否则新建后右侧默认只露出按钮，和“扫码接入”的主流程不一致。
-    autoQrStartedBotIdsRef.current.add(autoKey);
     void handleStartWeixinRegistration();
   }, [
-    creatingBot,
-    feishuRegistration,
-    feishuRegistrationLoading,
     bindCode,
     bindExpired,
     createBindCodeForBot,
+    creatingBot,
+    feishuRegistration,
+    feishuRegistrationLoading,
     handleStartFeishuRegistration,
     handleStartWeixinRegistration,
     open,
@@ -1069,6 +968,7 @@ export function BotsDialog({
     weixinRegistration,
     weixinRegistrationLoading,
   ]);
+
 
   const handleOpenTelegramBotFather = () => {
     platform.openExternal(TELEGRAM_BOTFATHER_URL);
@@ -1194,237 +1094,80 @@ export function BotsDialog({
         </DialogHeader>
 
         <div className="flex min-h-0 flex-1 gap-3">
-          <aside className="flex w-64 shrink-0 flex-col">
-            <div className="min-h-0 flex-1 overflow-y-auto">
-              <Button
-                type="button"
-                variant="outline"
-                size="lg"
-                onClick={handleBeginAddBot}
-                className="mb-3 w-full justify-start gap-2 rounded-xl"
-              >
-                <Plus className="size-4" />
-                <span className="min-w-0 truncate">
-                  {intl.formatMessage({ id: "bots.addBot" })}
-                </span>
-              </Button>
-              {config.bots.length === 0 ? (
-                <div className="p-4 text-ui-base text-foreground-subtle">
-                  {creatingBot
-                    ? intl.formatMessage({
-                        id: "bots.newBot.selectProviderHint",
-                      })
-                    : intl.formatMessage({ id: "bots.empty" })}
-                </div>
-              ) : (
-                config.bots.map((bot) => {
-                  const runtime = status?.botRuntime.find(
-                    (item) => item.botId === bot.id,
-                  );
-                  const selected = bot.id === selectedBotId;
-                  return (
-                    <button
-                      key={bot.id}
-                      type="button"
-                      onClick={() => {
-                        setCreatingBot(false);
-                        setSelectedBotId(bot.id);
-                      }}
-                      className={cn(
-                        "mb-1 w-full rounded-xl px-2.5 pr-4 py-3 text-left transition-colors",
-                        selected
-                          ? "bg-surface-hover text-foreground"
-                          : "text-foreground-subtle hover:bg-surface-hover hover:text-foreground",
-                      )}
-                    >
-                      <div className="flex items-center gap-2">
-                        <ProviderIcon
-                          provider={bot.provider}
-                          className="size-10 shrink-0 object-contain text-foreground-subtle"
-                        />
-                        <span className="min-w-0 flex-1">
-                          <span className="block text-foreground truncate text-ui-base font-medium">
-                            {formatBotDisplayName(bot.name, fallbackBotName)}
-                          </span>
-                          <span className="mt-0.5 flex min-w-0 text-ui-base text-foreground-subtle">
-                            {renderChannelName(bot.provider)}
-                          </span>
-                        </span>
-                        <span
-                          className={cn(
-                            "size-2 shrink-0 rounded-full",
-                            runtimeDot(runtime, bot.enabled),
-                          )}
-                        />
-                      </div>
-                    </button>
-                  );
-                })
-              )}
-            </div>
-          </aside>
+          <BotsDialogSidebar
+            bots={config.bots}
+            status={status}
+            selectedBotId={selectedBotId}
+            creatingBot={creatingBot}
+            fallbackBotName={fallbackBotName}
+            onBeginAddBot={handleBeginAddBot}
+            onSelectBot={(botId) => {
+              setCreatingBot(false);
+              setSelectedBotId(botId);
+            }}
+            renderChannelName={renderChannelName}
+          />
 
           <section className="min-w-0 flex-1 overflow-y-auto rounded-xl border border-border bg-background p-4">
             {creatingBot ? (
-              <div className="mx-auto flex min-h-full max-w-3xl flex-col justify-start gap-6">
-                <div className="space-y-2">
-                  <div className="text-ui-lg font-medium">
-                    {intl.formatMessage({ id: "bots.newBot.title" })}
-                  </div>
-                  <p className="max-w-2xl text-ui-base leading-6 text-foreground-subtle">
-                    {intl.formatMessage({ id: "bots.newBot.description" })}
-                  </p>
-                </div>
-                <div className="grid gap-3 md:grid-cols-2">
-                  {BOT_PROVIDERS.filter(
-                    (provider) => provider.id !== "webhook",
-                  ).map((provider) => {
-                    const implemented = provider.implemented;
-                    const isCreatingThisProvider =
-                      creatingProvider === provider.id;
-                    const isCreatingAnyProvider = creatingProvider !== null;
-                    return (
-                      <button
-                        key={provider.id}
-                        type="button"
-                        disabled={!implemented || isCreatingAnyProvider}
-                        aria-busy={isCreatingThisProvider}
-                        onClick={() =>
-                          implemented
-                            ? void handleAddBot(provider.id)
-                            : undefined
-                        }
-                        className={cn(
-                          "flex items-start gap-3 rounded-lg border border-card-border bg-card py-4 px-3 text-left transition-colors",
-                          implemented && !isCreatingAnyProvider
-                            ? "hover:border-input-border-focused hover:bg-surface-hover"
-                            : "cursor-not-allowed opacity-60",
-                          isCreatingThisProvider &&
-                            "border-input-border-focused bg-surface-hover opacity-100",
-                        )}
-                      >
-                        {isCreatingThisProvider ? (
-                          <div className="flex size-10 items-center justify-center">
-                            <Loader2 className="size-6 shrink-0 animate-spin text-foreground-subtle" />
-                          </div>
-                        ) : (
-                          <ProviderIcon
-                            provider={provider.id}
-                            className="size-10 shrink-0 text-foreground"
-                          />
-                        )}
-                        <span className="min-w-0 flex-1">
-                          <span className="flex min-w-0 text-ui-lg font-medium">
-                            {renderChannelName(provider.id)}
-                          </span>
-                          <span className="mt-1 block text-ui-base text-foreground-subtle">
-                            {implemented
-                              ? intl.formatMessage({
-                                  id: `bots.newBot.providerDescription.${provider.id}`,
-                                })
-                              : intl.formatMessage({
-                                  id: "bots.newBot.comingSoon",
-                                })}
-                          </span>
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
+              <BotsDialogCreatePanel
+                creatingProvider={creatingProvider}
+                onAddBot={(provider) => {
+                  void handleAddBot(provider);
+                }}
+                renderChannelName={renderChannelName}
+              />
             ) : !selectedBot ? (
-              <div className="flex h-full flex-col items-center justify-center gap-3 text-ui-base text-foreground-subtle">
-                <Bot className="size-8" />
-                <div>{intl.formatMessage({ id: "bots.empty" })}</div>
-                <Button variant="outline" size="lg" onClick={handleBeginAddBot}>
-                  <Plus className="size-4" />
-                  {intl.formatMessage({ id: "bots.addBot" })}
-                </Button>
-              </div>
+              <BotsDialogEmptyState onBeginAddBot={handleBeginAddBot} />
             ) : (
-              <div className="space-y-4">
-                <BotSummaryCard
-                  bot={selectedBot}
-                  runtime={selectedRuntime}
-                  selectedBotDisplayName={selectedBotDisplayName}
-                  selectedBotName={selectedBotName}
-                  fallbackBotName={fallbackBotName}
-                  renaming={renamingBotId === selectedBot.id}
-                  onStartRename={startBotNameRename}
-                  onCommitNameDraft={commitBotNameDraft}
-                  onNameDraftChange={(value) =>
-                    setBotNameDraft({ botId: selectedBot.id, value })
-                  }
-                  onNameCompositionEnd={() => {
-                    botNameCompositionActiveRef.current = false;
-                  }}
-                  onNameCompositionStart={() => {
-                    botNameCompositionActiveRef.current = true;
-                  }}
-                  onNameInputKeyDown={handleBotNameKeyDown}
-                  onPatchBot={patchSelectedBot}
-                />
-
-                <ProviderSettingsCard
-                  bot={selectedBot}
-                  runtime={selectedRuntime}
-                  credentialValue={credentialValue}
-                  bindCode={bindCode}
-                  bindExpired={bindExpired}
-                  bindRemainingMs={bindRemainingMs}
-                  bindCountdownProgress={bindCountdownProgress}
-                  feishuRegistration={feishuRegistration}
-                  feishuRegistrationLoading={feishuRegistrationLoading}
-                  weixinRegistration={weixinRegistration}
-                  weixinRegistrationLoading={weixinRegistrationLoading}
-                  weixinActivated={Boolean(selectedBotState?.weixinActivatedAt)}
-                  secretSaving={secretSaving}
-                  onCredentialValueChange={setCredentialValue}
-                  onSaveSecret={() => void handleSaveSecret()}
-                  onSaveWeCom={(values) => void handleSaveWeCom(values)}
-                  onRemoveSecret={() => void handleRemoveSecret()}
-                  onOpenTelegramBotFather={handleOpenTelegramBotFather}
-                  onStartWeixinRegistration={() =>
-                    void handleStartWeixinRegistration()
-                  }
-                  onStartFeishuRegistration={() =>
-                    void handleStartFeishuRegistration()
-                  }
-                  onCreateBindCode={() => void handleCreateBindCode()}
-                  onUnbind={() => void handleUnbind()}
-                  onCopyBindCommand={() => void copyBindCommand()}
-                />
-
-                <SettingsGroupCard>
-                  <BotEngineCard bot={selectedBot} onPatchBot={patchSelectedBot} />
-
-                  <BotPermissionModeCard
-                    bot={selectedBot}
-                    onPatchBot={patchSelectedBot}
-                  />
-
-                  <BotReplyGranularityCard
-                    bot={selectedBot}
-                    onPatchBot={patchSelectedBot}
-                  />
-
-                  {/*
-                    暂不暴露命令权限编辑入口，避免用户在 bot 可用前把关键命令关掉。
-                    如果要恢复 UI，重新渲染 selectedBot.allowedCommands 的列表并用 patchSelectedBot 保存。
-                  */}
-
-                  <WorkspaceAccessCard
-                    bot={selectedBot}
-                    workspaceRefs={workspaceRefs}
-                    currentWorkspace={currentWorkspace}
-                    loading={workspaceAccessSaving}
-                    onPatchAllowedWorkspaces={patchAllowedWorkspaces}
-                    onToggleWorkspaceAccess={toggleWorkspaceAccess}
-                  />
-                </SettingsGroupCard>
-
-                <BotDangerCard onDelete={() => void handleDelete()} />
-              </div>
+              <BotsDialogDetailPanel
+                bot={selectedBot}
+                runtime={selectedRuntime}
+                workspaceRefs={workspaceRefs}
+                currentWorkspace={currentWorkspace}
+                selectedBotDisplayName={selectedBotDisplayName}
+                selectedBotName={selectedBotName}
+                fallbackBotName={fallbackBotName}
+                renaming={renamingBotId === selectedBot.id}
+                credentialValue={credentialValue}
+                bindCode={bindCode}
+                bindExpired={bindExpired}
+                bindRemainingMs={bindRemainingMs}
+                bindCountdownProgress={bindCountdownProgress}
+                feishuRegistration={feishuRegistration}
+                feishuRegistrationLoading={feishuRegistrationLoading}
+                weixinRegistration={weixinRegistration}
+                weixinRegistrationLoading={weixinRegistrationLoading}
+                weixinActivated={Boolean(selectedBotState?.weixinActivatedAt)}
+                secretSaving={secretSaving}
+                workspaceAccessSaving={workspaceAccessSaving}
+                onStartRename={startBotNameRename}
+                onCommitNameDraft={commitBotNameDraft}
+                onNameDraftChange={(value) =>
+                  setBotNameDraft({ botId: selectedBot.id, value })
+                }
+                onNameCompositionEnd={() => {
+                  botNameCompositionActiveRef.current = false;
+                }}
+                onNameCompositionStart={() => {
+                  botNameCompositionActiveRef.current = true;
+                }}
+                onNameInputKeyDown={handleBotNameKeyDown}
+                onPatchBot={patchSelectedBot}
+                onCredentialValueChange={setCredentialValue}
+                onSaveSecret={() => void handleSaveSecret()}
+                onSaveWeCom={(values) => void handleSaveWeCom(values)}
+                onRemoveSecret={() => void handleRemoveSecret()}
+                onOpenTelegramBotFather={handleOpenTelegramBotFather}
+                onStartWeixinRegistration={() => void handleStartWeixinRegistration()}
+                onStartFeishuRegistration={() => void handleStartFeishuRegistration()}
+                onCreateBindCode={() => void handleCreateBindCode()}
+                onUnbind={() => void handleUnbind()}
+                onCopyBindCommand={() => void copyBindCommand()}
+                onPatchAllowedWorkspaces={patchAllowedWorkspaces}
+                onToggleWorkspaceAccess={toggleWorkspaceAccess}
+                onDelete={() => void handleDelete()}
+              />
             )}
           </section>
         </div>

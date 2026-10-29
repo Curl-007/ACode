@@ -1,6 +1,6 @@
 # v4 上帝组件拆分计划（SessionPane / ConversationComposer / settings 上帝组件）
 
-状态：第一批已实施（2026-10-05，附件预览接缝）；第二批已实施（2026-10-22，SessionPane 命令编排纯决策逻辑抽出 + 接缝内测试）；批次 4 已实施（2026-10-28，ExternalAgentImportDialog / PluginsSection / WorkspaceGroupedTasksSection / SettingsPage helper 外迁 + ConversationStatusPanel 保守纯函数外迁，见下文各节）；批次 5 已实施（2026-10-28，WorkspaceShellLayout / PreviewPane / WorkspaceSidebar / message / LexicalChatInput 五件 helper+受控组件外迁，见下文各节）。其余接缝为登记在案的后续批次。
+状态：第一批已实施（2026-10-05，附件预览接缝）；第二批已实施（2026-10-22，SessionPane 命令编排纯决策逻辑抽出 + 接缝内测试）；批次 4 已实施（2026-10-28，ExternalAgentImportDialog / PluginsSection / WorkspaceGroupedTasksSection / SettingsPage helper 外迁 + ConversationStatusPanel 保守纯函数外迁，见下文各节）；批次 5 已实施（2026-10-28，WorkspaceShellLayout / PreviewPane / WorkspaceSidebar / message / LexicalChatInput 五件 helper+受控组件外迁，见下文各节）；批次 6 已实施（2026-10-29，GitActionMenu / BotsDialog / AnimatedSidePanePanel / markdown-table 四件外迁 + ConversationStatusPanel 第一阶段分区契约测试与外迁，见下文各节）。其余接缝为登记在案的后续批次。
 背景：`v4/SessionPane.tsx`（本轮起点 3,762 行，带 max-lines 豁免）与 `v4/ConversationComposer.tsx`
 （2,168 行）各自混合多种职责。拆分按「耦合最浅的接缝先行」推进，每批独立验证。
 
@@ -388,6 +388,29 @@
   - 前置测试 `test/conversationStatusPanelFormat.test.ts` 11 例全绿；既有渲染契约 `test/ConversationTeamStatusPanel.test.ts` 复测仍绿。
   - 后续批次建议：先补 section 渲染契约测试（renderToStaticMarkup 钉结构），再按「叶子 props 类型 → 单 section 外迁」逐批切，最后处理 Impl 投影与 tick 策略。
   - ratchet 上限登记 2102。
+- 状态：**批次 6 第一阶段已实施（2026-10-29，section 渲染契约测试 + 无 tick 分区外迁）**：2102→**1486**（−616）。
+  - 先补 `test/conversationStatusPanelSections.test.ts`（**21 例**）钉住分区可见结构：StatusSectionShell
+    的 `data-status-section[-trigger|-scroll]` 锚点 / 展开-收起两态 / separated 分隔线 / trailing 回调
+    收参 / 八类型 scroll policy 穷举；PlanStatusSection 的计数与 `data-plan-status` 三态、完成项删除线；
+    SessionPlansStatusSection 的目录按钮禁用谓词（缺 parentSessionId）；TeamStatusSection 的完成比与
+    团队摘要；EndedDirectoryRow 的 `count<=0 || !onOpen` 双缺席条件与 testid。**这是「逐 section 外迁」
+    的前置契约**——后续批次移动 section 时可区分「结构没变」与「行为被改」。
+  - 新建 `v4/conversation-status-panel/` 四个叶子（全部 <400 行）：
+    - `StatusSectionShell.tsx`（148 行）：`StatusSectionKind` + `STATUS_SECTION_SCROLL_POLICY` +
+      `StatusSectionHeader` + `StatusSection`，逐字迁入（类型单一来源迁至叶子，主文件 import）。
+    - `GitStatusSection.tsx`（114 行）：environment 分区（Changes 行 / GitBranchSwitcher / GitActionMenu）。
+    - `PlanStatusSections.tsx`（302 行）：`PlanStatusIcon` / `PlanStatusItemRows` / `TodoPreviewTrigger` /
+      `TodoHiddenGroupPreview` / `PlanStatusItems` / `SessionPlansStatusSection` / `PlanStatusSection`。
+    - `TeamAndEndedSections.tsx`（124 行）：`TeamStatusSection` / `EndedDirectoryRow` /
+      `EndedSubagentDirectoryRow`。
+  - **未动（下一批）**：`ConversationStatusPanelImpl` 的 memo / `miniWidth` ResizeObserver / tick 节律 /
+    variant 门控 / StatusSummaryRow 胶囊链；带秒级 tick 的三个分区（Goal / BackgroundWork / Workflow /
+    Subagent）与 BackgroundWorkStatusSection 的 `useState(now)` + `setInterval` 仍留主文件——它们与
+    desktop-continuous 时序假设强耦，按批次 4 的三阶段路径留到最后一阶段。
+  - 测试债登记：`GitStatusSection` 静态渲染需完整 ServiceProvider 桩（GitBranchSwitcher →
+    useGitBranchSwitcher → useServices；GitActionMenu 同），当前无 jsdom 且 services 面很大，按
+    「固定验收」第 4 条登记为无单测覆盖，其缺席分支由 `ConversationTeamStatusPanel.test.ts` 间接覆盖。
+  - ratchet 上限 2102 → 1486。
 
 ### `app-shell/WorkspaceShellLayout.tsx`（1,980 行；max-lines 豁免）
 
@@ -512,8 +535,102 @@
 - 遗留：KeyboardPlugin 的改绑分发与 PromptHistoryPlugin 的发送回滚耦合为下一批候选
   （需先补交互测试，见 v4 区登记表「提示词历史导航」前置条件）。
 
-## 测试债清单（结构守护测试，非行为验证）
+### `GitActionMenu.tsx`（1,398 行；max-lines 豁免）
 
+> 登记来源：批次 6 目标清单（2026-10-28 review 第二梯队 top 候选，非 v4-session 域）。
+
+- 职责分析：顶部 trigger 状态机（`primaryActionId` 决策 / 状态行点击 / pending 图标切换）+
+  commit dialog（分支头 / 提交信息 / 暂存开关 / 三动作 Command 键盘导航）+ push dialog（分支/upstream/
+  ahead-behind 摘要 / 错误复制）。三者共用 `commitDialogState` 与 `mutationPending`，但弹窗本体只消费 props。
+- 状态：**批次 6 已实施（2026-10-29，弹窗族外迁）**：1398→**628**（−770）。
+  - `git-action-menu/gitActionMenuDialogsModel.ts`（82 行）：`GitCommitPreviewFile` 类型 /
+    9 个 TID 常量 / `CommitDialogActionId` 守卫 / `getCommitDialogFiles` / `getCommitDialogStagePaths` /
+    `GitCommitDialogState` + `GitCommitDialogProps`，逐字迁入主文件顶部 helper 带。
+  - `git-action-menu/GitCommitDialog.tsx`（287 行）：弹窗 shell + 派生状态 + 键盘导航（原 `GitCommitDialog`）。
+  - `git-action-menu/GitCommitDialogBody.tsx`（283 行）：GitCommitDialog 首版 492 行超 400 的第二次切分——
+    表单四段 JSX（分支头 / 提交信息 / 暂存开关 / 动作 Command）改受控渲染，`CommitCommandActionItem`
+    消重为内联 `CommandItem`（同谓词、同 testid、同 class）。
+  - `git-action-menu/GitPushDialog.tsx`（260 行）：推送弹窗逐字迁入，自带 `errorCopied` 局部态。
+  - 主文件保留：`ActionMenu` 本体的全部 state（commit/push 弹窗开关、message、error、pending）、
+    `loadCommitDialogState` / `generateCommitMessage` / `handleCommitAction` / `pushCurrentBranch` 编排、
+    trigger JSX。导出面不变（`GitActionMenu` 仍从原路径导出）。
+  - 前置测试：`test/gitActionMenuDialogsModel.test.ts` 9 例（action id 守卫 / testid / 文件集合两态 /
+    stagePath 去重 / textarea 目标判定）。
+  - ratchet 上限 1398 → 628。
+
+### `BotsDialog.tsx`（1,434 行）
+
+> 登记来源：批次 6 目标清单（2026-10-28 review Top 19，settings-adjacent bots 域）。
+
+- 职责分析：数据加载/保存/轮询编排（4 组 interval 轮询：绑定码、飞书扫码、微信扫码、运行态）+
+  120 行「自动扫码 / 自动续绑定码」if 链 + 左栏 Bot 列表 + 新建渠道网格 + 选中 Bot 的详情编排。
+- 状态：**批次 6 已实施（2026-10-29，纯决策 + 三段 UI 外迁）**：1434→**1177**（−257）。
+  - `BotsDialog/botsDialogModels.ts`（171 行）：`createEmptyConfig` / `createDraftBot` 逐字迁入 +
+    `resolveBotAutoConnectAction`——把原 effect 里 120 行的渠道 if 链收成判别联合
+    （`none` / `start-feishu-qr` / `start-weixin-qr` / `create-bind-code`）。**副作用仍留在组件 effect**
+    （ref 去重集合的增删、异步调用），决策函数只回答「该做什么」，因此可在无 DOM 环境下用决策表覆盖
+    全部分支（含 30 秒绑定码有效期边界与 lark 走飞书分支）。
+  - `BotsDialog/BotsDialogSidebar.tsx`（102 行）：左栏列表受控组件（Bot 行 / 运行态圆点 / 空态文案）。
+  - `BotsDialog/BotsDialogCreatePanel.tsx`（85 行）：新建渠道网格受控组件（排除 webhook / 未实现渠
+    道置灰 / `aria-busy` 当前创建项）。
+  - `BotsDialog/BotsDialogDetailPanel.tsx`（237 行）：选中 Bot 的详情编排（BotSummaryCard /
+    ProviderSettingsCard / SettingsGroupCard 四卡 / BotDangerCard）+ `BotsDialogEmptyState`。
+  - 偏离登记：`renderChannelName`（渠道名 + 地区徽标）仍由宿主实现并作为 render prop 注入两个面板，
+    避免把 `botsUi` 的 i18n key 拼装逻辑复制到叶子（单一实现原则）。
+  - 前置测试：`test/botsDialogModels.test.ts` 19 例（构造器 + 五渠道自动连接决策矩阵）+
+    `test/botsDialogPanels.test.ts` 7 例（侧栏空态/选中高亮/显示名兜底；新建网格 webhook 排除与
+    disabled 占位；`.png` 渠道图标经 `module.registerHooks` 重定向，口径同 pluginListRows）。
+  - ratchet 上限 1434 → 1177。
+
+### `app-shell/AnimatedSidePanePanel.tsx`（1,422 行；max-lines 豁免）
+
+> 登记来源：批次 6 目标清单（2026-10-28 review Top 20，app-shell 域）。
+
+- 职责分析：side pane 的 tab 条（溢出判定 / mask / active tab 滚入视区）+ DnD 重排 + 20 个 pane
+  类型分发 + 视口度量 hooks（可见内联宽度 / 窗口 resize 平滑期）。
+- 状态：**批次 6 已实施（2026-10-29，视口度量 hooks 外迁）**：1422→**1306**（−116）。
+  - `app-shell/useSidePaneViewportMetrics.ts`（129 行）：`readViewportInlineIntersectionSize`（导出以便
+    单测）+ `useViewportInlineIntersectionSize` + `useWindowResizeSettling` 逐字迁入；
+    `useWindowResizeSettling` 的 settle 延时由闭包常量改为显式 `settleDelayMs` 入参（调用点传原
+    `PREVIEW_PANE_RESIZE_SETTLE_DELAY_MS`，行为逐字等价）。
+  - 主文件保留：`SuspendedBrowserSidePaneContent`（residency ack 日志与 platform 调用）、tab 条全部
+    state/effect、pane 类型分发 JSX、`resolveAnimatedSidePanePanelLayout` 的布局分支。
+  - 前置测试：`test/sidePaneViewportMetrics.test.ts` 7 例（无 window / 视口宽 0 / 三向裁切 / 四舍五入）。
+    两个 hook 依赖 window + ResizeObserver，无 jsdom 不测，按固定验收第 4 条登记。
+  - ratchet 上限 1422 → 1306。
+
+### `components/ai-elements/markdown-table.tsx`（1,420 行；oxlint ignorePatterns 覆盖的 vercel 衍生件）
+
+> 登记来源：批次 6 目标清单（2026-10-28 review 第二梯队，ai-elements 域）。
+
+- 职责分析：导出文本（Markdown / CSV）+ 表格 DOM 读取 + 帧距离与虚拟滚动条几何 + 吸底判定 +
+  `MarkdownTable` 主组件（虚拟滚动拖拽 / 边缘阴影 / 展开预览）。
+- 状态：**批次 6 已实施（2026-10-29，纯函数外迁）**：1420→**1093**（−327）。
+  - `markdown-table/markdownTableTextModel.ts`（67 行）：`MarkdownTableRows` 类型单一来源 +
+    `buildMarkdownTableText` / `buildCsvTableText`（CSV 注入防护与 BOM 注释原样）+ `readRowsFromTable`。
+  - `markdown-table/markdownTableGeometryModel.ts`（308 行）：11 个常量 / `MARKDOWN_TABLE_V4_COMPOSER_DOCK_SELECTOR`
+    （主文件也消费，故导出）/ `resolveMarkdownTableRoot` / `getMarkdownTableRootInlineInsets` /
+    `readMarkdownTableObservedRect` / `isMarkdownTableObservedRectEqual` / `readCssPixelValue` /
+    `readMarkdownTableDockHeight` / `readMarkdownTableBackToBottomClearance` /
+    `resolveMarkdownTableVerticalViewport` / `resolveMarkdownTableStickyScrollbarMode` /
+    `resolveMarkdownTableStickyScrollbarOffset` / `shouldUseMarkdownTableStickyScrollbar` /
+    `resolveMarkdownTableFrameDistances` / `resolveMarkdownTableVirtualScrollbarMetrics` /
+    `resolveMarkdownTableVirtualScrollMax`。
+  - 导出面保持：主文件 re-export `MarkdownTableRows` / `buildMarkdownTableText` / `buildCsvTableText` /
+    `resolveMarkdownTableFrameDistances` / `resolveMarkdownTableStickyScrollbarOffset` /
+    `resolveMarkdownTableVirtualScrollMax` / `resolveMarkdownTableVirtualScrollbarMetrics` /
+    `resolveMarkdownTableStickyScrollbarMode`（`message.tsx` 等消费方 import 路径零改动）。
+  - 前置测试：`test/markdownTableTextModel.test.ts` 14 例（Markdown 转义/列对齐；CSV BOM / CRLF /
+    引号双写 / 公式注入降级；DOM 读取空白归一与空行过滤）+
+    `test/markdownTableGeometryModel.test.ts` 29 例（吸底 80% 阈值与 dock 扣减 / 偏移三段钳制 /
+    帧距离 inset / 虚拟滚动 metrics / rect 签名 / 各 DOM 读数降级路径）。
+  - **连带登记**：markdown-table.tsx 是 third-party 台账（`third-party/inventory.json`）inputs
+    追踪件，本批改动导致 L01 审计哈希漂移——按批次 5 验证过的「单条定点回补」处理：
+    sha256(CRLF→LF 归一) 回写 inputs 条目，`node scripts/licenses.mjs reproducibility --inputs-only` 转绿。
+    `copied[]` 里的快照 `sha256` 是字节级（未归一）历史快照，与 inputs 口径不同，本批不动。
+  - ratchet 上限 1420 → 1093。
+
+## 测试债清单（结构守护测试，非行为验证）
 ui 测试无 jsdom 套件（node:test + `renderToStaticMarkup` 纯 .ts）。以下测试用 `readFileSync` 钉源码结构，
 **无法在无 DOM 环境下升级为真实行为验证**，保留但加中文注释标注「结构守护测试，非行为验证」：
 

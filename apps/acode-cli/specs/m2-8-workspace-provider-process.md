@@ -1,6 +1,24 @@
 # M2-8：workspace + provider + process 域 legacy 方法迁 v4
 
-> 创建日期：2026-10-28
+> 状态：**已实施**（2026-10-28 落地，2026-10-29 补录）。
+> 实施记录（验收节逐项证据）：
+> A. `acodeProtocolMethods.` 消费：本域 11 法 12 → 0（§7 分词 grep 自证；
+>    workspaceCancelGenerateText 原 2 处消费）；开工时 43 → 落地后 31（−12 处 / −11 法）。
+> B. shared protocol-boundary.test.mjs 46/46 绿，其中本批 M2-8 块 4 条（892 行起）：
+>    方法名面 11 条目、params parity×12 负载（含 refine/digest/noKey 边界）、result
+>    parity×13 负载（reasonCode 六值/sessionMode/slashCommand 词表钉住）、三叶无反向 import。
+> C. CLI handler 测试：按 §5 边界（apps/acode-cli/tests 无协议面引用）未建专属文件；
+>    hookTrustGrant notify 联动（accepted → 同 workspaceKey 活跃 session 重载 trust）经
+>    bootstrap typecheck + v4 handler 内逐字迁移接线证明；processManager cancel 超时
+>    白名单已切 `V4_METHODS.workspaceCancelGenerateText`（不切 = cancel 超时误杀 client）。
+> D. 套件（季末收口值；§7 为本批落地时点口径——shared 458、CLI 3181/1 红归兄弟批次台账）：
+>    shared 478/478；services 578 pass/0 fail（7 skip 基线）；ui 1125/1125；
+>    CLI 3205 pass/0 fail（38 skip 基线）；typecheck 32/32。
+> E. lint 163w/0e（基线 164，−1）；architecture:check --changed new 0/regrown 0
+>    （violations 303 = 基线，legacy 棘轮 413）。
+> 冒烟：§6 如实登记——本批 11 方法**不在** 13 个高危名单；单链路功能测试 + 单测口径。
+> 关联：docs/reviews/2026-10-28/m2-scoping.md §5 Batch M2-8；M2-5 三叶/实体迁移先例；
+>    M2-6 additive 换名先例；§7 批次记录（含 server 红线三叶自登记录）。
 > 上游调研：`docs/reviews/2026-10-28/m2-scoping.md` §5 Batch M2-8
 > 收敛计划：`docs/legacy-protocol-convergence-plan.md` M2 节
 > 迁移样板：M2-1（commit 5da76197）+ M2-5 plugins 三叶/实体迁移先例 + M2-6 additive 换名先例

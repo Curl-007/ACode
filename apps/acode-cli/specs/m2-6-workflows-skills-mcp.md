@@ -1,6 +1,27 @@
 # M2-6：workflows + skills + mcp 域 8 个 legacy 方法迁 v4
 
-> 创建日期：2026-10-28
+> 状态：**已实施**（2026-10-28 落地，2026-10-29 补录）。
+> 实施记录（验收节逐项证据）：
+> A. `acodeProtocolMethods.` 消费：本域 8 法 9 → 0（mcpList 占 2 行：请求 +
+>    isProtocolRequestTimeout 方法名匹配，均切 V4_METHODS.mcpList；§7 分词 grep 自证）；
+>    单批口径 72 → 63（优于批次预估 −8/→64，差异即 mcpList 第二行）。
+> B. shared protocol-boundary.test.mjs 46/46 绿，其中本批 M2-6 块 5 条（536 行起）：
+>    八法名落 V4_METHODS 带 v4/ 前缀、workflows params/result 逐字 parity、skills
+>    referenceCatalog parity、mcp list parity、新叶无反向 import。
+> C. CLI handler 测试：按 §5 边界（apps/acode-cli/tests 无引用被删符号）未建专属文件；
+>    CLI 耦合套件 20 文件 134 pass/0 fail/2 skip（project-mcp×2、config-mcp、skill×8、
+>    script-workflow×2、protocol-server 耦合×5、v4/protocol×3）。
+> D. 套件（季末收口值；§7 为本批落地时点口径——shared 449、boundary 17/17、CLI 耦合 134）：
+>    shared 478/478；services 578 pass/0 fail（7 skip 基线）；ui 1125/1125；
+>    CLI 3205 pass/0 fail（38 skip 基线）；typecheck 32/32。
+> E. lint 163w/0e（基线 164，−1）；architecture:check --changed new 0/regrown 0
+>    （violations 303 = 基线，legacy 棘轮 413）。
+> 冒烟：§6 如实登记——本批 8 方法**不在** 13 个高危名单；单链路功能测试 + 单测口径。
+>    裁决落实：services mcpList unrecognizedKeys 兼容重试链已退役（v4 方法名即版本边界）；
+>    `ACodeAgentMcpStatusModeUnsupportedError` 保留（UI McpSettingsSection.tsx 仍 import，
+>    本路径不再抛出）。
+> 关联：docs/reviews/2026-10-28/m2-scoping.md §5 Batch M2-6；M2-1 迁移样板；
+>    M2-5 三叶拆分先例；§7 批次记录。
 > 上游调研：`docs/reviews/2026-10-28/m2-scoping.md` §5 Batch M2-6
 > 收敛计划：`docs/legacy-protocol-convergence-plan.md` M2 节
 > 迁移样板：M2-1（commit 5da76197）+ usage/headerMeta 的 v4 独立 query 先例

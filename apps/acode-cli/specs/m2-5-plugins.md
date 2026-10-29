@@ -1,6 +1,27 @@
 # M2-5：plugins 域 legacy 方法迁 v4
 
-> 创建日期：2026-10-28
+> 状态：**已实施**（2026-10-28 落地，2026-10-29 补录）。
+> 实施记录（验收节逐项证据）：
+> A. `acodeProtocolMethods.` 消费：本域 16 法 16 → 0（§7 分词 grep 自证）；单批口径 72 → 56。
+>    残留 3 处 = pluginsCancelOperation×1（acodeAgentService.ts）+ referenceCatalogWithCategory/
+>    referenceCatalog fallback×2（pluginReferenceCatalogRequest.ts）——§4 裁决保留，归 M4。
+> B. shared protocol-boundary.test.mjs 46/46 绿，其中本批 M2-5 块 6 条（272 行起）：
+>    16 法名落 V4_METHODS 且排除 cancelOperation、params parity×16、result parity×11、
+>    catalog category 合并语义（v4 单方法恒带 category）、resolveSuggested superRefine、
+>    三叶无反向 import + 白名单纪律 + deliveryKind 值域钉住。
+> C. CLI handler 测试：按 §5 边界（apps/acode-cli/tests 无协议面引用）未建专属文件；
+>    插件域耦合套件（project-mcp×2、config-mcp、skill×8、script-workflow×2、
+>    protocol-server 耦合×5 等 20 文件）全绿。
+> D. 套件（季末收口值；§7 为本批落地时点口径——shared 449、CLI 3170/1 红归兄弟批次台账）：
+>    shared 478/478；services 578 pass/0 fail（7 skip 基线）；ui 1125/1125；
+>    CLI 3205 pass/0 fail（38 skip 基线）；typecheck 32/32。
+> E. lint 163w/0e（基线 164，−1）；architecture:check --changed new 0/regrown 0
+>    （violations 303 = 基线，legacy 棘轮 413）。
+> 冒烟：§6 如实登记——本批 16 方法**不在** 13 个 stream/snapshot/queue 高危名单；
+>    单链路功能测试 + 单测口径（协议单测钉住载荷逐字 parity + CLI 实体逐字迁移 +
+>    受影响套件全绿）。
+> 关联：docs/reviews/2026-10-28/m2-scoping.md §5 Batch M2-5；M2-1 迁移样板；
+>    M2-6 同季分区先例；§7 批次记录（落地时点中间数字与归属裁决）。
 > 上游调研：`docs/reviews/2026-10-28/m2-scoping.md` §5 Batch M2-5
 > 收敛计划：`docs/legacy-protocol-convergence-plan.md` M2 节
 > 迁移样板：M2-1（commit 5da76197）+ usageStats/headerMeta 的 v4 独立 query 先例 + M2-6 同季分区习惯

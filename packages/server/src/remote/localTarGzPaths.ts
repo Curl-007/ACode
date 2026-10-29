@@ -16,7 +16,17 @@ export function normalizeExtractEntryPath(entryPath: string): string | null {
   if (!trimmed || trimmed === ".") {
     return null;
   }
-  if (trimmed.includes("\\") || isAbsolute(trimmed) || posix.isAbsolute(trimmed)) {
+  // 判据必须平台无关：POSIX 的 isAbsolute 不认识「C:/…」盘符形态，Linux 解包宿主上
+  // win32 语义的 isAbsolute 也不存在，盘符绝对路径会被当作相对段放行（CI Linux 红的
+  // 根因；本地 Windows 因 win32 isAbsolute 认识盘符而掩盖）。「C:foo」盘符相对形态
+  // 在两个平台都能绕过 isAbsolute，一并按盘符前缀拒绝——与 normalizeSymlinkLinkName
+  // 的盘符拒绝纪律对齐。
+  if (
+    trimmed.includes("\\") ||
+    /^[a-zA-Z]:/u.test(trimmed) ||
+    isAbsolute(trimmed) ||
+    posix.isAbsolute(trimmed)
+  ) {
     throw new Error(`[remote-assets] unsafe tar entry path: ${entryPath}`);
   }
 

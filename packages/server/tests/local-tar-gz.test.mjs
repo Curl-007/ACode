@@ -114,6 +114,10 @@ test("normalizeExtractEntryPath rejects absolute, backslash and escaping paths",
   for (const unsafe of [
     "/etc/passwd",
     "C:/Windows/system32.dll",
+    // 盘符判据必须平台无关：POSIX isAbsolute 不认识盘符，Linux 解包宿主上
+    // 「C:/…」与盘符相对的「C:evil」（win32 上同样绕过 isAbsolute）都曾被放行。
+    "c:/windows/system32.dll",
+    "C:evil",
     "..\\evil",
     "../escape",
     "a/../../escape",

@@ -36,7 +36,6 @@ import type { AssistantFeedbackHandler } from "@/v4/ConversationRowView.js";
 import { ConversationTurnNavigator } from "@/v4/ConversationTurnNavigator.js";
 import type { ConversationRowRenderContext } from "@/v4/conversationRowContext.js";
 import { splitConversationTimelineLiveTail } from "@/v4/conversationTimelineLiveTail.js";
-import { resolveUnitIndexForRowId } from "@/v4/conversationIndexNavigation.js";
 import {
   getConversationContentWidthClassName,
   getConversationStatusPanelOffsetClassName,
@@ -297,13 +296,6 @@ interface ConversationTimelineProps {
   scrollToQueryActionRef?: {
     current: ((target: { unitIndex: number; rowId: number }) => void) | null;
   };
-  /**
-   * U07 目录定位：宿主只给 rowId，unitIndex 由 timeline 从自己的 renderUnits 解析。
-   *
-   * 归属裁决：unitIndex 是 timeline 派生事实（依赖虚拟列表的单元切分），
-   * 因此**不能**由宿主或目录面板反推——那会造出第二条单元索引写入路径。
-   */
-  scrollToRowIdActionRef?: { current: ((rowId: number) => void) | null };
   selectionActions?: {
     enabled: boolean;
     sideActionDisabled?: boolean;
@@ -353,7 +345,6 @@ function ConversationTimelineImpl({
   sessionPhase,
   scrollToBottomActionRef,
   scrollToQueryActionRef,
-  scrollToRowIdActionRef,
   selectionActions,
 }: ConversationTimelineProps) {
   const { intl } = useACodeIntl();
@@ -1300,24 +1291,6 @@ function ConversationTimelineImpl({
       }
     };
   }, [scrollToQuery, scrollToQueryActionRef]);
-
-  // U07 目录定位：宿主给 rowId，这里从 renderUnits 解析 unitIndex（timeline 派生事实），
-  // 再复用 scrollToQuery 的「挂载后精确对齐」路径。目标未挂载时返回，不猜测性跳转。
-  useLayoutEffect(() => {
-    if (!scrollToRowIdActionRef) return;
-    const action = (rowId: number) => {
-      const unitIndex = resolveUnitIndexForRowId(unitsRef.current, rowId);
-      if (unitIndex === null) return;
-      scrollToQuery({ unitIndex, rowId });
-    };
-    scrollToRowIdActionRef.current = action;
-    return () => {
-      if (scrollToRowIdActionRef.current === action) {
-        scrollToRowIdActionRef.current = null;
-      }
-    };
-    // unitsRef 是稳定 ref 对象，不入依赖；action 内每次读 .current 取最新单元切分。
-  }, [scrollToQuery, scrollToRowIdActionRef]);
 
   useEffect(
     () => () => {

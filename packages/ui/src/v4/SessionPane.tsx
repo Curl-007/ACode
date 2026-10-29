@@ -92,8 +92,6 @@ import { shouldIgnoreEscapeForStopGeneration } from "@/v4/composer/escapeStop.js
 import { ConversationDraftEmptyState } from "@/v4/ConversationDraftEmptyState.js";
 import { ConversationDraftSuggestedPromptsContainer } from "@/v4/ConversationDraftSuggestedPromptsContainer.js";
 import { ConversationHeader, type PaneWorkspaceBadge } from "@/v4/ConversationHeader.js";
-import { ConversationIndexFocusBridge } from "@/v4/ConversationIndexFocusBridge.js";
-import { useConversationIndexFocus } from "@/hooks/useConversationIndexFocus.js";
 import { ConversationQueuePanel } from "@/v4/ConversationQueuePanel.js";
 import { projectPendingGuideQueue } from "@/v4/pendingGuideProjection.js";
 import { ConversationQuotaBanner } from "@/v4/ConversationQuotaBanner.js";
@@ -514,8 +512,6 @@ export function SessionPane({
   const timelineScrollToQueryRef = useRef<
     ((target: { unitIndex: number; rowId: number }) => void) | null
   >(null);
-  // U07：目录定位的滚动落点由 timeline 解析（unitIndex 是 timeline 派生事实）。
-  const timelineScrollToRowIdRef = useRef<((rowId: number) => void) | null>(null);
   const hasExternalSummaryPanelVariantControl = Boolean(onSummaryPanelVariantOverrideChange);
   const effectiveSummaryPanelVariantOverride = hasExternalSummaryPanelVariantControl
     ? (summaryPanelVariantOverride ?? null)
@@ -2992,16 +2988,10 @@ export function SessionPane({
     !isDraft && (lease === null || sessionLeaseReady) && snapshot?.sessionId === sessionId
       ? snapshot
       : null;
-  // U07 目录索引与窗口外跳转（specs/conversation-index-navigation.md）。
-  // 焦点正文是**派生只读视图**，由 store 拥有；这里把它前插到权威尾部窗口之前，
-  // 合成一份 rows 交给 timeline。焦点严格早于尾部首行、与尾部无重复 rowId
-  // （控制器 commitFocus 已保证），因此前插不产生重复行。
-  const indexFocus = useConversationIndexFocus(sessionLeaseReady ? (lease?.store ?? null) : null);
-  const timelineFocusRows = indexFocus.focusRows;
-  const timelineRows = useMemo(() => {
-    const tailRows = timelineSnapshot?.rows.window ?? EMPTY_TIMELINE_ROWS;
-    return timelineFocusRows.length === 0 ? tailRows : [...timelineFocusRows, ...tailRows];
-  }, [timelineFocusRows, timelineSnapshot]);
+  const timelineRows = useMemo(
+    () => timelineSnapshot?.rows.window ?? EMPTY_TIMELINE_ROWS,
+    [timelineSnapshot],
+  );
   const initialDraftConfigForDiagnostics = isDraft ? resolveInitialDraftConfig() : undefined;
   // CLI V4 projection 是 running/count/manifest 的唯一权威；renderer 不再在 spawn
   // 事件后另发查询拼接第二份状态，避免并发 child 的 in-flight refresh 丢更新。
@@ -3458,23 +3448,6 @@ export function SessionPane({
       />
 
       <div className="@container/conversation relative flex min-h-0 flex-1 flex-col">
-        {/* U07 长对话目录入口（specs/conversation-index-navigation.md）。
-            浮在正文容器右上角：与左上角 pane chrome（工作区徽标/关闭）不重叠，
-            非 modal 的 Popover 打开后正文仍可独立操作（U07-A5）。仅正式会话挂载。 */}
-        {!isDraft && !readOnly && !selectionSideChat ? (
-          <div
-            data-v4-index-directory-anchor="floating"
-            className="pointer-events-none absolute right-2 top-2 z-20 flex items-center gap-1"
-          >
-            <ConversationIndexFocusBridge
-              focusApi={indexFocus}
-              scrollToRowIdRef={timelineScrollToRowIdRef}
-              scrollToBottomRef={timelineScrollToBottomRef}
-              isRunning={snapshot?.control.phase === "running"}
-              className="pointer-events-auto bg-[var(--color-popover)] shadow-md"
-            />
-          </div>
-        ) : null}
         {!isDraft ? (
           <ConversationStatusPanel
             workspacePath={workspacePath}
@@ -3575,7 +3548,6 @@ export function SessionPane({
             <ConversationTimeline
               scrollToBottomActionRef={timelineScrollToBottomRef}
               scrollToQueryActionRef={timelineScrollToQueryRef}
-              scrollToRowIdActionRef={timelineScrollToRowIdRef}
               rows={timelineRows}
               pendingGuides={timelineSnapshot ? pendingGuideProjection?.pendingGuides : []}
               apiRetry={timelineSnapshot?.control.apiRetry ?? null}

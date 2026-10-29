@@ -251,6 +251,10 @@ export class ConversationIndexFocusController {
       committedRowCount: commit.rows.length,
       targetFound,
       nextAction,
+      // 短会话收敛信号：fetch 行全被尾窗去重且焦点容量充足 = 目标已在尾窗（spec
+      // 「目标已在尾窗」），不得误报 no-budget「当前回答过长」。
+      postDedupRowCount: commit.postDedupRowCount,
+      focusRowCapacity: commit.focusRowCapacity,
     });
     if (outcome.status === "no-budget") {
       logger.debug("[v4-index-focus] 共享信封无可用预算，聚焦降级", {

@@ -523,6 +523,35 @@ test("resolveIndexFocusOutcome: merged 本就为空时不误报 no-budget（空�
   assert.equal(o.status, "target-missing", "空页应收敛为 target-missing，不是 no-budget");
 });
 
+test("resolveIndexFocusOutcome: 去重后为空且容量充足 → focused（目标已在尾窗，短会话回归）", () => {
+  // 2026-10-30 实测回归：短会话整条在尾窗内，fetch 行全被去重（postDedup=0）而容量充足，
+  // 修复前误报 no-budget「当前回答过长」；修复后收敛 focused，Bridge 按尾窗 rowId 滚动。
+  const o = resolveIndexFocusOutcome({
+    mergedRowCount: 8,
+    committedRowCount: 0,
+    targetFound: true,
+    nextAction: "none",
+    postDedupRowCount: 0,
+    focusRowCapacity: 1200,
+  });
+  assert.equal(o.status, "focused");
+  assert.equal(o.code, "ok");
+  assert.equal(o.targetFound, true);
+  assert.equal(o.nextAction, "none");
+});
+
+test("resolveIndexFocusOutcome: 去重后仍有行但容量为 0 → 真争用 no-budget（不被短会话收敛吞掉）", () => {
+  const o = resolveIndexFocusOutcome({
+    mergedRowCount: 200,
+    committedRowCount: 0,
+    targetFound: false,
+    nextAction: "none",
+    postDedupRowCount: 200,
+    focusRowCapacity: 0,
+  });
+  assert.equal(o.status, "no-budget", "运行中 turn 独占信封的真争用必须仍是 no-budget");
+});
+
 // ── 尾部前插后的焦点让位裁决（spec 不变量 3 / U07-A2）──
 
 test("resolveIndexFocusReconciliation: 无重叠 → changed=false（不得换 state 引用）", () => {

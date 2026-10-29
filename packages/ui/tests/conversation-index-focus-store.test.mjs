@@ -808,3 +808,37 @@ test("淘汰语义: 预算淘汰计入 evictedCount，权威裁剪不计入", as
     "rewind 裁剪不得计入 FIFO 淘汰计数（否则 isPartial 会把「已 rewind」误报成「目录不完整」）",
   );
 });
+
+// 回归修复（specs/conversation-index-navigation.md「目标已在尾窗」，2026-10-30 实测）：
+// 短会话整条都在权威尾窗内，点击目录条目若走 fetch→commit，fetch 的 rows 会被尾窗去重
+// 全部排除（committed=0），被「有行可放却一行没放下」误判为 no-budget，向用户误报
+// 「当前回答过长，返回最新后重试」。修复后前置收敛 focused + targetFound，零正文请求。
+test("目标已在尾窗：直接收敛 focused + targetFound，零 rowsRange 请求（短会话 no-budget 误判回归）", async () => {
+  const fixture = makeFixture({ totalRows: 60 });
+  const store = await makeStore(fixture);
+
+  const directory = store.getIndexDirectory();
+  assert.ok(directory.items.length > 0, "fixture 索引应非空");
+  const target = directory.items[0];
+  const tail = store.getState().snapshot?.rows.window ?? [];
+  assert.ok(tail.length > 0, "前置：尾窗非空");
+  assert.ok(
+    target.rowId >= tail[0].rowId,
+    `前置：首个索引条目（rowId=${target.rowId}）应在尾窗内（tailFirst=${tail[0].rowId}）`,
+  );
+
+  const callsBefore = fixture.calls.rowsRange.length;
+  const result = await store.focusIndexedRow(store.captureIndexFocusTarget(target.rowId));
+
+  assert.equal(result.code, "ok");
+  assert.equal(result.status, "focused", "目标已在尾窗不得误判 no-budget/target-missing");
+  assert.equal(
+    fixture.calls.rowsRange.length - callsBefore,
+    1,
+    "收敛允许一次定向请求（rewind 竞态仍需服务端校验）",
+  );
+  const focus = store.getIndexFocusState();
+  assert.equal(focus.targetFound, true, "Bridge 靠 targetFound 翻真滚动到尾窗行");
+  assert.equal(focus.targetRowId, target.rowId);
+  assert.equal(focus.rows.length, 0, "焦点正文无需补行");
+});

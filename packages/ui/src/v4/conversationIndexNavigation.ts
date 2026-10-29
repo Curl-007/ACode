@@ -99,7 +99,15 @@ export function resolveIndexFocusCommit<T extends { rowId: number }>(params: {
   maxRows: number;
   maxBytes: number;
   byteOf: (row: T) => number;
-}): { rows: T[]; focusBytes: number; tailRetainRows: number; tailTrimmed: boolean } {
+}): {
+  rows: T[];
+  focusBytes: number;
+  tailRetainRows: number;
+  tailTrimmed: boolean;
+  /** 尾窗去重后的行数；为 0 且焦点容量充足 = 目标已在权威尾窗内（短会话收敛信号）。 */
+  postDedupRowCount: number;
+  focusRowCapacity: number;
+} {
   const ascending = resolveIndexFocusRows(params.merged, params.tailFirstRowId);
   const budget = resolveIndexFocusBudget({
     tailRowCount: params.tailRowCount,
@@ -120,6 +128,8 @@ export function resolveIndexFocusCommit<T extends { rowId: number }>(params: {
     focusBytes: trimmed.bytes,
     tailRetainRows: budget.tailRetainRows,
     tailTrimmed: budget.tailTrimmed,
+    postDedupRowCount: ascending.length,
+    focusRowCapacity: budget.focusRowCapacity,
   };
 }
 
@@ -141,14 +151,30 @@ export interface IndexFocusOutcome {
  *
  * 入参 `committedRowCount` 是裁剪提交**之后**的焦点行数：
  * 「有行可放却一行没放下」正是共享信封被权威尾部占满的信号。
+ * 例外（2026-10-30 回归修复，spec「目标已在尾窗」）：`postDedupRowCount === 0` 且
+ * `focusRowCapacity > 0` 时，committed=0 的原因是 fetch 行**全部落在尾窗内被去重**
+ * （短会话整条在尾窗内），而非信封争用——收敛为 `focused`（Bridge 按尾窗 rowId 滚动），
+ * 不得误报 no-budget「当前回答过长」。缺省入参（旧调用点）保持原 no-budget 语义。
  */
 export function resolveIndexFocusOutcome(params: {
   mergedRowCount: number;
   committedRowCount: number;
   targetFound: boolean;
   nextAction: IndexFocusNextAction;
+  postDedupRowCount?: number;
+  focusRowCapacity?: number;
 }): IndexFocusOutcome {
   if (params.mergedRowCount > 0 && params.committedRowCount === 0) {
+    const postDedup = params.postDedupRowCount ?? params.mergedRowCount;
+    const capacity = params.focusRowCapacity ?? 0;
+    if (postDedup === 0 && capacity > 0) {
+      return {
+        status: "focused",
+        nextAction: "none",
+        targetFound: params.targetFound,
+        code: "ok",
+      };
+    }
     return { status: "no-budget", nextAction: "none", targetFound: false, code: "no-budget" };
   }
   if (!params.targetFound && params.nextAction === "none") {

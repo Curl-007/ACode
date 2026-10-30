@@ -31,18 +31,11 @@ export interface PresetProviderSpec {
   oauthProviderId?: OAuthProviderId;
 }
 
-export const PRESET_PROVIDER_SPECS: PresetProviderSpec[] = [
-  {
-    id: BUILTIN_MODEL_PROVIDER_IDS.zaiStartPlan,
-    displayName: "Z.ai",
-    oauthProviderId: ZAI_PROVIDER_ID,
-  },
-  {
-    id: BUILTIN_MODEL_PROVIDER_IDS.bigmodelStartPlan,
-    displayName: "BigModel",
-    oauthProviderId: BIGMODEL_PROVIDER_ID,
-  },
-];
+// 2026-10-30 用户裁决：智谱账号家族预设卡（Z.ai Start Plan / BigModel）自设置页移除
+// （handoff #31/#33）；builtin catalog 的 zhipu-account 条目已清零、release 解码期剥离，
+// 此处清空使 preset 导航组恒空（空组隐藏）、Detail preset 分支不可达。
+// 底层 oauth/权益/配额机器保留为登记保留债，不再有任何设置页入口。
+export const PRESET_PROVIDER_SPECS: PresetProviderSpec[] = [];
 
 export const PRESET_PROVIDER_SPEC_BY_ID = new Map<BuiltinModelProviderId, PresetProviderSpec>(
   PRESET_PROVIDER_SPECS.map((item) => [item.id, item]),

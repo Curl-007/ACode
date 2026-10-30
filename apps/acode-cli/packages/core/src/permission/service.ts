@@ -25,6 +25,7 @@ import { isPreapprovedWorkflowDraftWrite } from "./workflow-draft-path.js";
 import {
   breakerContextFromPermissionContext,
   evaluateBypassImmuneBreakers,
+  type BypassImmuneBreakerHit,
 } from "./bypass-immune-breakers.js";
 import {
   BashConfirmReflexGate,
@@ -64,6 +65,21 @@ import type { SkillActivationScope } from "@acode/contracts";
 
 /** 草稿免确认的规则号。 */
 const WORKFLOW_DRAFT_PREAPPROVED_RULE_ID = "tool.workflowDraft.preapproved";
+
+/**
+ * R8（2026-10-30 用户裁决「完全访问 不弹」，spec managed-policy-floor-and-bypass-immune-breakers.md R8）：
+ * yolo 直通条件下**静默放行**的 ask 级熔断闭集——R6 的单条 pathEscapeWrite 豁免收口进
+ * 本集合（语义不变，只扩面）。集合只列 ask 级类；deny 级命中（breaker.bashTargetCatastrophic）
+ * 另有 behavior !== "deny" 的结构性守门——deny 是拒绝不是弹窗，永不进本豁免语义。
+ */
+const YOLO_SILENCED_ASK_BREAKERS: ReadonlySet<string> = new Set([
+  "breaker.pathEscapeWrite",
+  "breaker.sensitiveRead",
+  "breaker.bashRootDelete",
+]);
+
+/** R8 审计：Bash/PowerShell 面命令文本摘要的截断上限（路径可记、内容绝不记）。 */
+const BREAKER_AUDIT_COMMAND_MAX_CHARS = 120;
 
 export interface PermissionContext {
   toolName: string;
@@ -274,6 +290,38 @@ export class PermissionService {
     );
   }
 
+  /**
+   * R8 豁免判定（spec R8.1/R8.3）：yolo 直通条件 ∧ ruleId 属 YOLO_SILENCED_ASK_BREAKERS
+   * ∧ 非 deny 级——三合一才豁免。deny 级（catastrophic 目标档）与集合外命中原样透传；
+   * 非 yolo（含策略地板 disableBypass 的 yolo）不豁免。
+   */
+  private shouldSilenceBreakerUnderYolo(
+    context: PermissionContext,
+    rawHit: BypassImmuneBreakerHit | undefined,
+  ): boolean {
+    return (
+      rawHit !== undefined &&
+      rawHit.behavior !== "deny" &&
+      YOLO_SILENCED_ASK_BREAKERS.has(rawHit.ruleId) &&
+      this.isYoloTrustBypassActive(context)
+    );
+  }
+
+  /**
+   * R8 warn 审计（spec R8.2）：豁免逐条留痕，先审计后放行。路径可记、内容绝不记
+   * （目标摘要规则见 summarizeBreakerAuditTarget）。审计缺席（legacy/defaultPermissionConfig
+   * 构造）绝不阻断放行——与决策日志「失败静默」同一哲学。
+   */
+  private auditSilencedBreaker(context: PermissionContext, hit: BypassImmuneBreakerHit): void {
+    const target = summarizeBreakerAuditTarget(context);
+    this.config.logger?.warn?.("Bypass-immune breaker silenced under yolo (R8)", {
+      event: "permission.breaker.silenced_under_yolo",
+      ruleId: hit.ruleId,
+      toolName: context.toolName,
+      ...(target !== undefined ? { target } : {}),
+    });
+  }
+
   checkPermission(
     context: PermissionContext,
     toolCapability?: PermissionToolCapability,
@@ -408,15 +456,19 @@ export class PermissionService {
       const rawBreakerHit = evaluateBypassImmuneBreakers(
         breakerContextFromPermissionContext(context),
       );
-      // R6（2026-10-14 用户二次裁决 A，spec managed-policy-floor-and-bypass-immune-breakers.md）：
-      // pathEscapeWrite 在 yolo 直通条件下不再降级 allow——完全访问 = 字面完全访问
-      // （对齐上游；Bash 面越界写本就静默，本类的 yolo 兜底防事故不防注入）。判定分层：
-      // 熔断器模块保持模式无关，裁决在收口层叠加。非 yolo 的 allow 来源（build/edit 的
-      // 项目 allow 规则、allowedTools 等）照旧降级；其余熔断类不受本豁免影响。
-      const breakerHit =
-        rawBreakerHit?.ruleId === "breaker.pathEscapeWrite" && this.isYoloTrustBypassActive(context)
-          ? undefined
-          : rawBreakerHit;
+      // R8（2026-10-30 用户裁决「完全访问 不弹」，spec managed-policy-floor-and-bypass-immune-breakers.md R8）：
+      // yolo 直通条件下 ask 级熔断三类（R6 的 pathEscapeWrite + sensitiveRead +
+      // bashRootDelete，YOLO_SILENCED_ASK_BREAKERS）静默放行——先记 warn 审计再置未命中；
+      // deny 级（catastrophic 目标档）永不豁免（deny 是拒绝不是弹窗）。判定分层与 R6
+      // 同架构：熔断器模块保持模式无关一字不动，模式裁决在收口层叠加——两个调用方
+      // （executor 与 input-recheck）与 PowerShell 面（同一 evaluator）自动同语义。
+      // 非 yolo 的 allow 来源（build/edit 的项目 allow 规则、allowedTools 等）照旧降级。
+      const silencedByYolo = this.shouldSilenceBreakerUnderYolo(context, rawBreakerHit);
+      if (silencedByYolo && rawBreakerHit !== undefined) {
+        // shouldSilenceBreakerUnderYolo 为真蕴含 rawBreakerHit 在场；先审计后豁免（R8.2）。
+        this.auditSilencedBreaker(context, rawBreakerHit);
+      }
+      const breakerHit = silencedByYolo ? undefined : rawBreakerHit;
       if (breakerHit?.behavior === "deny") {
         return this.deny(context, capability, breakerHit.ruleId, breakerHit.reason);
       }
@@ -425,9 +477,11 @@ export class PermissionService {
       }
       // J1-2（bash-confirm-reflexive-gate R1/R2）：仅在无熔断器命中时叠加反射门——
       // 既有熔断优先，confirm 级形态已被类 1 覆盖的（rm -rf "$DIR" 族）不重复反射。
+      // R8.5：被 yolo 豁免的命中视同「熔断器仍在覆盖」——门不接管，否则该族在 yolo
+      // 下会从「熔断 ask」退化成「门首轮 reflect deny」，「不弹」裁决落空。
       // 门只收紧 allow/ask：首次调用 deny + 四问回喂；有效 justification 后
       // ask lane 收敛到 ask（用户裁决），allow lane 放行且必留审计。
-      if (!breakerHit) {
+      if (!breakerHit && !silencedByYolo) {
         const gateOutcome = this.evaluateBashReflexGate(
           context,
           decision.decision as "allow" | "ask",
@@ -1239,6 +1293,24 @@ function buildPolicyAskWithGateReason(toolName: string, gateAskReason: string): 
   ].join("\n");
 }
 
+/**
+ * R8 审计目标摘要（spec R8.2）：**路径可记、内容绝不记**。
+ * Bash/PowerShell 面记命令文本前 120 字符（超长补 …，与决策日志 reason 截断同风格）；
+ * Write/Edit 面记目标路径；ApplyPatch 的目标内嵌于 patch 文本（文本即内容），宁缺不记。
+ */
+function summarizeBreakerAuditTarget(context: PermissionContext): string | undefined {
+  if (!context.input || typeof context.input !== "object") return undefined;
+  const record = context.input as Record<string, unknown>;
+  const command = record.command;
+  if (typeof command === "string" && command.length > 0) {
+    return command.length <= BREAKER_AUDIT_COMMAND_MAX_CHARS
+      ? command
+      : `${command.slice(0, BREAKER_AUDIT_COMMAND_MAX_CHARS)}…`;
+  }
+  const filePath = record.file_path ?? record.path;
+  return typeof filePath === "string" && filePath.length > 0 ? filePath : undefined;
+}
+
 /** TTL 存储的写入面探测：只读替身（测试/降级装配）缺 applyPermissionUpdates。 */
 function asTtlApprovalWriter(store: TtlApprovalReader): TtlApprovalWriter | undefined {
   const candidate = store as Partial<TtlApprovalWriter>;
@@ -1269,6 +1341,17 @@ export interface PermissionConfig {
    * 授权（零行为变化）。策略地板与项目 deny/ask 结构性压过它（判定位次见 spec）。
    */
   ttlApprovals?: TtlApprovalReader;
+  /**
+   * R8 审计通道（2026-10-30 用户裁决「完全访问 不弹」，spec
+   * managed-policy-floor-and-bypass-immune-breakers.md R8.2）：yolo 下被静默放行的
+   * ask 级熔断逐条 warn 留痕（event permission.breaker.silenced_under_yolo）。
+   * 装配层注入 permissionAuditLogger（NodeFileLogger 落盘，与反射门 auditedAllow
+   * 同一通道）；缺省 = 不留痕——legacy/defaultPermissionConfig 构造零行为变化，
+   * 审计缺席绝不阻断放行。
+   */
+  logger?: {
+    warn?: (member: string, details?: Record<string, unknown>) => void;
+  };
 }
 
 export const defaultPermissionConfig: PermissionConfig = {

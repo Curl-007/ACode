@@ -607,6 +607,16 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
       // R4 判定位次的消费入口：TTL allow 在策略地板/disallowedTools/项目 deny/ask/
       // plan 拒写之后被 checkPermission 消费，只收紧不放宽的总原则不变。
       ttlApprovals: ttlApprovalStore,
+      // R8（2026-10-30 用户裁决「完全访问 不弹」，spec managed-policy-floor-and-bypass-immune-breakers.md R8.2）：
+      // yolo 下被静默放行的 ask 级熔断逐条 warn 落盘审计——与反射门 auditedAllow 同一
+      // permissionAuditLogger 通道（NodeFileLogger JSONL）。general-purpose 子代理继承父
+      // PermissionService 实例自动同通道；Explore 的 defaultPermissionConfig 自建实例
+      // 未注入（spec R8.2 登记边界）。
+      logger: {
+        warn: (member, details) => {
+          permissionAuditLogger.warn(member, details);
+        },
+      },
     });
     // 双 shell 联动警告（specs/powershell-tool.md R5/R8③ 接线）：Bash 与 PowerShell
     // 同时被 bare deny → 终端命令能力全灭，启动期显式警告。事实 = disallowedTools ∪

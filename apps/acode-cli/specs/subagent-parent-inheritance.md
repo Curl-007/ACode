@@ -121,8 +121,10 @@
   2. 托管策略地板拒绝（modePolicyForbidden）或 child 授权 busy：warn-skip 该 child，
      不回滚根授权（部分传播优于整体失败，地板仍是底线）。
   3. child 已在 bypass 档：`applyRuntimeExecutionState` 同档早退，无事件刷屏。
-  4. 熔断器 bypass-immune 面（sensitiveRead / bashRootDelete / catastrophic）在 yolo
-     下照弹——安全加固 P2 不变量，不随本修复拆除。
+  4. 熔断器 bypass-immune 面按 R8 分层（managed-policy-floor-and-bypass-immune-breakers.md，
+     2026-10-30 用户裁决「完全访问 不弹」）：ask 级三类（pathEscapeWrite /
+     sensitiveRead / bashRootDelete）在 yolo 下静默放行 + warn 审计留痕；deny 级
+     （catastrophic 目标档）照旧硬堵——拒绝不是弹窗，安全底线不随本修复拆除。
 - **子弹窗放开**：`interaction-broker.ts` 与 `product-projection.ts` 的 origin 抑制
   移除；子来源弹窗的「完全访问」选项选中后走根授权 + 广播（origin child 一并收敛）。
   `optionsPolicy` 抑制保留（托管选项策略仍是地板）。

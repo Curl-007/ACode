@@ -7,7 +7,9 @@ import { test } from "node:test";
  * 安全加固 P2 的验收测试：旁路免疫熔断器（bypass-immune circuit breakers）。
  *
  * 覆盖规格 apps/acode-cli/specs/managed-policy-floor-and-bypass-immune-breakers.md
- * 的 R2/R3 与验收场景 8–12。纯函数测试 + PermissionService 集成断言，无文件系统副作用。
+ * 的 R2/R3 与验收场景 8–12，及 R8（2026-10-30 用户裁决「完全访问 不弹」，场景 24-28：
+ * yolo 下 ask 级熔断三类静默放行 + warn 审计，deny 级永不豁免）。
+ * 纯函数测试 + PermissionService 集成断言，无文件系统副作用。
  */
 
 const { evaluateBypassImmuneBreakers } = await import(
@@ -141,7 +143,19 @@ function makeService(extra = {}) {
     disallowedTools: new Set(extra.disallowedTools ?? []),
     autoApproveHighRisk: false,
     allowMediumRiskInAutoMode: false,
+    ...(extra.logger ? { logger: extra.logger } : {}),
   });
+}
+
+/** R8 审计捕获：service 注入 warn 收集器，details 形态（event/ruleId/toolName/target）断言用。 */
+function makeAuditedService() {
+  const warnings = [];
+  return {
+    service: makeService({
+      logger: { warn: (member, details) => warnings.push({ member, details }) },
+    }),
+    warnings,
+  };
 }
 
 function bashCtx(command, mode = "yolo") {
@@ -155,10 +169,19 @@ function bashCtx(command, mode = "yolo") {
   };
 }
 
-test("(11a) yolo + dangerous delete downgrades to ask via breaker", () => {
-  const decision = makeService().checkPermission(bashCtx('rm -rf "$OUT"/'));
-  assert.equal(decision.decision, "ask");
-  assert.equal(decision.ruleId, "breaker.bashRootDelete");
+test("(11a) R8：yolo + 空变量根删除静默放行（allow）+ warn 审计", () => {
+  // R8（2026-10-30 用户裁决「完全访问 不弹」，场景 24）：原「yolo 降级 ask」废止——
+  // bashRootDelete 并入 YOLO_SILENCED_ASK_BREAKERS，yolo 直通条件下先记 warn 审计再
+  // 静默放行；反射门不接管（R8.5 不重复反射，首轮无 reflect deny）。
+  const { service, warnings } = makeAuditedService();
+  const decision = service.checkPermission(bashCtx('rm -rf "$OUT"/'));
+  assert.equal(decision.decision, "allow");
+  assert.equal(decision.ruleId, "mode.yolo");
+  assert.equal(warnings.length, 1);
+  assert.equal(warnings[0].details.event, "permission.breaker.silenced_under_yolo");
+  assert.equal(warnings[0].details.ruleId, "breaker.bashRootDelete");
+  assert.equal(warnings[0].details.toolName, "Bash");
+  assert.equal(warnings[0].details.target, 'rm -rf "$OUT"/');
 });
 
 test("(11b) yolo + ordinary command still fast-allows", () => {
@@ -352,6 +375,107 @@ test("(15) exemption is pathEscapeWrite-only: other breaker classes untouched", 
   );
   // Bash 删除类熔断不受豁免面影响。
   assert.equal(evaluateBashRootDelete('rm -rf "$OUT"/'), "breaker.bashRootDelete");
+});
+
+// ── R8：yolo 静默豁免的边界与审计字段（2026-10-30 用户裁决，场景 24-28）──────
+
+test("(R8-1/25) yolo 敏感位置读静默放行：warn 审计含 ruleId 与目标路径摘要", () => {
+  const { service, warnings } = makeAuditedService();
+  const sshKey = join(homedir(), ".ssh", "id_rsa");
+  const decision = service.checkPermission({
+    toolName: "Read",
+    input: { file_path: sshKey },
+    riskLevel: "low",
+    mode: "yolo",
+    workingDirectory: WORKSPACE,
+    workspaceRoot: WORKSPACE,
+  });
+  assert.equal(decision.decision, "allow");
+  assert.equal(decision.ruleId, "mode.yolo");
+  assert.equal(warnings.length, 1);
+  assert.equal(warnings[0].details.event, "permission.breaker.silenced_under_yolo");
+  assert.equal(warnings[0].details.ruleId, "breaker.sensitiveRead");
+  assert.equal(warnings[0].details.toolName, "Read");
+  assert.equal(warnings[0].details.target, sshKey);
+});
+
+test("(R8-2/26) deny 级命中不被豁免集合误吞：catastrophic 在 yolo 下仍 deny、零审计", () => {
+  // 集合边界：豁免集合只列 ask 级类，且判定带 behavior !== "deny" 守门——
+  // behavior=deny 的 hit（catastrophic 目标档）永不进 R8 静默通道（拒绝不是弹窗）。
+  const { service, warnings } = makeAuditedService();
+  const decision = service.checkPermission(bashCtx("rm -rf ~"));
+  assert.equal(decision.decision, "deny");
+  assert.equal(decision.ruleId, "breaker.bashTargetCatastrophic");
+  assert.equal(warnings.length, 0, "deny 级命中不走 R8 静默通道");
+});
+
+test("(R8-3/25) 非 yolo 的 ask 语义保留：build 下敏感读照旧弹 breaker.sensitiveRead", () => {
+  const { service, warnings } = makeAuditedService();
+  const decision = service.checkPermission({
+    toolName: "Read",
+    input: { file_path: join(homedir(), ".ssh", "id_rsa") },
+    riskLevel: "low",
+    mode: "build",
+    workingDirectory: WORKSPACE,
+    workspaceRoot: WORKSPACE,
+  });
+  assert.equal(decision.decision, "ask");
+  assert.equal(decision.ruleId, "breaker.sensitiveRead");
+  assert.equal(warnings.length, 0, "非 yolo 无静默、无审计");
+});
+
+test("(R8-4/24+27) 审计纪律：命令摘要截断 120 字符；写工具内容绝不进审计", () => {
+  const { service, warnings } = makeAuditedService();
+  // 超长命令：150 字符的未解析变量名仍命中 bashRootDelete，摘要截断到 120 + …。
+  const longCommand = `rm -rf "$${"X".repeat(150)}"/`;
+  const bashDecision = service.checkPermission(bashCtx(longCommand));
+  assert.equal(bashDecision.decision, "allow");
+  assert.equal(warnings.length, 1);
+  assert.equal(warnings[0].details.ruleId, "breaker.bashRootDelete");
+  assert.equal(warnings[0].details.target.length, 121);
+  assert.ok(warnings[0].details.target.endsWith("…"));
+  assert.ok(longCommand.startsWith(warnings[0].details.target.slice(0, -1)));
+  // R6 回归（裁决语义不变，审计同格）：越界写在 yolo 下 allow + warn，
+  // target 是路径，content 标记绝不进审计字段。
+  const escaped = join(PROJECT, "..", "pwned.txt");
+  const writeDecision = service.checkPermission(
+    {
+      toolName: "Write",
+      input: { file_path: escaped, content: "SECRET_BODY_MARKER_NEVER_LOGGED" },
+      riskLevel: "medium",
+      mode: "yolo",
+      workingDirectory: PROJECT,
+      workspaceRoot: PROJECT,
+    },
+    { readOnly: false, destructive: false, sideEffectScope: "workspace", needsApproval: true },
+  );
+  assert.equal(writeDecision.decision, "allow");
+  assert.equal(writeDecision.ruleId, "mode.yolo");
+  assert.equal(warnings.length, 2);
+  assert.equal(warnings[1].details.ruleId, "breaker.pathEscapeWrite");
+  assert.equal(warnings[1].details.target, escaped);
+  assert.ok(
+    !JSON.stringify(warnings[1]).includes("SECRET_BODY_MARKER_NEVER_LOGGED"),
+    "写工具 content 绝不进审计",
+  );
+});
+
+test("(R8-5/28) PowerShell 面自动同语义：yolo 下 PS 敏感读命令静默放行 + 审计", () => {
+  // 豁免发生在 service 收口层，与 shell 种类无关（cross-ref powershell-tool.md R8②）。
+  const { service, warnings } = makeAuditedService();
+  const decision = service.checkPermission({
+    toolName: "PowerShell",
+    input: { command: "Get-Content $HOME\\.ssh\\id_rsa" },
+    riskLevel: "high",
+    mode: "yolo",
+    workingDirectory: WORKSPACE,
+    workspaceRoot: WORKSPACE,
+  });
+  assert.equal(decision.decision, "allow");
+  assert.equal(decision.ruleId, "mode.yolo");
+  assert.equal(warnings.length, 1);
+  assert.equal(warnings[0].details.ruleId, "breaker.sensitiveRead");
+  assert.equal(warnings[0].details.toolName, "PowerShell");
 });
 
 // sep 引用防止未使用导入告警（跨平台路径拼接断言里用到）。

@@ -1,4 +1,4 @@
-// R5.4/R5.2/R6 验收（spec managed-policy-floor-and-bypass-immune-breakers.md 场景 16/17/19-20）：
+// R5.4/R5.2/R6/R8 验收（spec managed-policy-floor-and-bypass-immune-breakers.md 场景 16/17/19-20/24-25）：
 // ① 熔断 ask 的弹窗不再携带永远无法生效的持久授权建议——熔断判定在 checkPermission
 //    收口处把任何 allow 无条件降级 ask、从不咨询项目/会话规则，「总是允许」持久化的
 //    规则永远不被消费（2026-10-11 本机日志实证三连弹）。事件与 broker 请求两个消费点
@@ -7,8 +7,9 @@
 //    接缝鉴别力移到「build + allowedTools 放行」形态（非 yolo 的 allow 来源照旧被熔断
 //    降级，R5.2 豁免使其不降级）；子代理 spawn 构造点透传 deps.scratchRoot 为单行机械
 //    接线，与 subagent-parent-inheritance R1 同先例由 typecheck 钉住。
-// ③ R6：yolo 越界写（非豁免根）零弹窗直通；yolo 下熔断 ask 仅剩非 pathEscapeWrite 类
-//    （16a 用 sensitiveRead 驱动抑制断言）。
+// ③ R8（2026-10-30 用户裁决「完全访问 不弹」）：yolo 下三类 ask 级熔断全静默 +
+//    warn 审计（16c 钉 executor 链路）；熔断 ask 的抑制断言驱动移到 build 模式
+//    （16a 用 sensitiveRead 类——非 yolo 的熔断兜底保留）。
 // 全部使用虚拟路径（homedir 系拼接），零文件系统副作用。
 import assert from "node:assert/strict";
 import { homedir, tmpdir } from "node:os";
@@ -81,7 +82,9 @@ function requestedEvent(capture) {
 }
 
 test("(16a) 熔断 ask：事件与 broker 请求的授权建议同源置空", async () => {
-  // R6 后 yolo 下 pathEscapeWrite 直通，熔断 ask 用 sensitiveRead 类驱动（yolo 仍兜底）。
+  // R8 后 yolo 下三类 ask 级熔断全静默（16c），熔断 ask 的驱动移到 build 模式：
+  // Read 只读直通（mode.build.readOnly allow）→ sensitiveRead 熔断降级 ask——
+  // 非 yolo 的熔断兜底保留，抑制语义（R5.4）的鉴别面不变。
   const capture = { brokerRequests: [], events: [] };
   const sshKey = join(homedir(), ".ssh", "id_rsa");
   const result = await runTool(
@@ -89,7 +92,7 @@ test("(16a) 熔断 ask：事件与 broker 请求的授权建议同源置空", as
     "Read",
     readToolEntry,
     { file_path: sshKey },
-    "yolo",
+    "build",
   );
   // fake broker 允许一次 → 本次调用放行；断言的是弹窗携带面，不是裁决结果。
   assert.equal(result.allowed, true);
@@ -99,6 +102,33 @@ test("(16a) 熔断 ask：事件与 broker 请求的授权建议同源置空", as
   const event = requestedEvent(capture);
   assert.ok(event, "permission-requested 事件已发出");
   assert.deepEqual(event.payload.suggestedPermissionUpdates, []);
+});
+
+test("(16c/R8-25) yolo 敏感读静默放行：零弹窗零 broker + warn 审计留痕", async () => {
+  // R8（2026-10-30 用户裁决「完全访问 不弹」）：executor 链路同语义——yolo 下
+  // sensitiveRead 命中不再产生 permission-requested，warn 审计经 PermissionConfig.logger
+  // 留痕（event/ruleId/target 路径）。
+  const warnings = [];
+  const capture = { brokerRequests: [], events: [] };
+  const sshKey = join(homedir(), ".ssh", "id_rsa");
+  const deps = makeDeps(capture, {
+    permissionService: new PermissionService({
+      allowedTools: new Set(),
+      disallowedTools: new Set(),
+      autoApproveHighRisk: false,
+      allowMediumRiskInAutoMode: false,
+      logger: { warn: (member, details) => warnings.push({ member, details }) },
+    }),
+  });
+  const result = await runTool(deps, "Read", readToolEntry, { file_path: sshKey }, "yolo");
+  assert.equal(result.allowed, true);
+  assert.equal(capture.brokerRequests.length, 0, "R8：yolo 静默放行 → 零 broker 请求");
+  assert.equal(requestedEvent(capture), undefined, "R8：不得发出 permission-requested 事件");
+  assert.equal(warnings.length, 1);
+  assert.equal(warnings[0].details.event, "permission.breaker.silenced_under_yolo");
+  assert.equal(warnings[0].details.ruleId, "breaker.sensitiveRead");
+  assert.equal(warnings[0].details.toolName, "Read");
+  assert.equal(warnings[0].details.target, sshKey);
 });
 
 test("(16b) 非熔断 ask：建议规则照常携带（对照组，防过度抑制）", async () => {

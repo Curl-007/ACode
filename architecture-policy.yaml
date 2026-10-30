@@ -423,12 +423,9 @@ exceptions:
   # 2026-10-28 偿还：onboard-provider-over-limit 已删——config-service.ts 拆为 235 行
   # + 4 叶、config/model-config.ts 拆为 8 行 barrel + 3 叶、config/provider-config.ts
   # 拆为 10 行 barrel + 4 叶、facades.ts 拆为 28 行 barrel + 4 叶，全部 <400。
-  - id: onboard-provider-disables
-    rule: disable-count
-    expires: "2026-12-31"
-    # 2026-10-28 收窄：config-service/model-config/provider-config/facades 四文件拆分
-    # 后已删首行 max-lines 头注（零 disable），移出本例外；resolver.ts 未拆动保留。
-    paths: [packages/provider/src/resolver.ts]
+  # 2026-10-30 偿还：onboard-provider-disables 已删——resolver.ts 首行 max-lines 头注
+  # 系陈旧残留（文件物理 392 行，oxlint max-lines 口径 skipBlankLines/skipComments
+  # 下本就低于 400 上限），删除头注后 provider 模块 disable 计数归零。
   # 2026-10-28 偿还：onboard-server-cli-over-limit / onboard-server-cli-disables 已删——
   # cli.ts 拆为 106 行 + cli/ 五叶、packaging/stage.ts 拆为 317 行 + 3 叶、
   # supervisor/supervisor.ts 拆为 385 行 + 8 叶，全部 <400；3 条首行 max-lines

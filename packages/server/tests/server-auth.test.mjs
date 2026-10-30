@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import { posix as posixPath } from "node:path";
 import { test } from "node:test";
 import { transpileModule, ModuleKind } from "typescript";
 
@@ -25,23 +27,63 @@ const credentialAccess =
 const serverRemote = await import("../node_modules/@acode/shared/src/server-remote.ts");
 
 async function load(path, imports = {}) {
-  const exports = {};
-  new Function(
-    "require",
-    "exports",
-    "module",
-    transpileModule(await read(path), {
+  const seen = new Map();
+  const loadModule = (repoPath) => {
+    if (seen.has(repoPath)) {
+      return seen.get(repoPath);
+    }
+    const exports = {};
+    // 执行前先登记（http/* 叶图无环，此防御只为意外环不致栈溢出）。
+    seen.set(repoPath, exports);
+    const dir = repoPath.slice(0, repoPath.lastIndexOf("/") + 1);
+    const transpiled = transpileModule(readFileSync(new URL(repoPath, root), "utf8"), {
       compilerOptions: { module: ModuleKind.CommonJS, target: 99 },
-    }).outputText,
-  )(
-    (name) => {
-      assert.ok(name in imports, `unexpected import ${name}`);
-      return imports[name];
-    },
-    exports,
-    { exports },
-  );
-  return exports;
+    }).outputText;
+    new Function(
+      "require",
+      "exports",
+      "module",
+      transpiled,
+    )(
+      (name) => {
+        // stub 表优先：显式登记的 stub（如 ./remote/index.js——真实 ssh2/WSL 后端不进
+        // 测试进程）保持原语义；表外的相对导入（http.ts 2026-10-30 拆分出的 src/http/*
+        // 叶子）递归**真实执行**——安全行为测试必须跑真实叶子逻辑，stub 化会静默绕过
+        // 真实守护（specs/module-boundary.md「Registered debt」登记的管线改造）。
+        if (name in imports) {
+          return imports[name];
+        }
+        if (name.startsWith(".")) {
+          return loadModule(posixPath.join(dir, name).replace(/\.js$/, ".ts"));
+        }
+        assert.ok(false, `unexpected import ${name}`);
+      },
+      exports,
+      { exports },
+    );
+    return exports;
+  };
+  return loadModule(path);
+}
+
+/**
+ * packages/server http 面 = http.ts 本体 + src/http/ 全部拆分叶（2026-10-30）。
+ * 负向源码断言（禁内联第二份实现 / 禁 legacy 字面量）必须覆盖整个面：代码从本体迁到
+ * 叶子后，单文件断言会空转成真（原 module-boundary.md 债务条目登记的「静默绕过」风险）。
+ * 正向 pin 不用本拼接面——按归属文件精确锚定（见各用例）。
+ */
+const serverHttpSurfaceFiles = [
+  "packages/server/src/http.ts",
+  "packages/server/src/http/log.ts",
+  "packages/server/src/http/token-request-view.ts",
+  "packages/server/src/http/pending-connections.ts",
+  "packages/server/src/http/server-info.ts",
+  "packages/server/src/http/static-files.ts",
+  "packages/server/src/http/bot-callbacks.ts",
+  "packages/server/src/http/channel-server.ts",
+];
+async function readServerHttpSurface() {
+  return (await Promise.all(serverHttpSurfaceFiles.map((file) => read(file)))).join("\n");
 }
 
 // http.ts / server-core/http.ts 的 stub 依赖：RPC 与服务集合在本测试中不参与鉴权/能力路径，
@@ -1095,9 +1137,12 @@ test("server: /api/connect-remote caps pending unclaimed connections (16/M11)", 
     "@acode/shared/node": { ...serverAuth, ...hostCapability, ...credentialAccess },
     "./remote/index.js": remoteOkStub,
   });
-  // 上限常量从源码解析，避免测试与实现各写一份魔法数。
-  const src = await read("packages/server/src/http.ts");
-  const maxPending = Number(src.match(/MAX_PENDING_REMOTE_CONNECTIONS = (\d+)/)?.[1] ?? "0");
+  // 上限常量从源码解析（2026-10-30 拆分后 owner 在 pending-connections 叶），
+  // 避免测试与实现各写一份魔法数。
+  const pendingSrc = await read("packages/server/src/http/pending-connections.ts");
+  const maxPending = Number(
+    pendingSrc.match(/MAX_PENDING_REMOTE_CONNECTIONS = (\d+)/)?.[1] ?? "0",
+  );
   assert.ok(maxPending > 0 && maxPending <= 1000, "cap must be a bounded positive constant");
   const ctx = await startHttp(createHttpServer, {});
   try {
@@ -1154,9 +1199,9 @@ test("server: server-info reports authRequired truthfully; legacy env name is de
     else process.env[legacyName] = savedLegacy;
   }
 
-  // 静态守护：http.ts 源码不再出现 "ACODE_SERVER_TOKEN" 字面量（只允许 AUTH 变量名）。
-  const src = await read("packages/server/src/http.ts");
-  assert.ok(!src.includes('"ACODE_SERVER_TOKEN"'), "legacy env literal must be gone");
+  // 静态守护：http 面（本体+全部叶子）不再出现 "ACODE_SERVER_TOKEN" 字面量（只允许 AUTH 变量名）。
+  const surface = await readServerHttpSurface();
+  assert.ok(!surface.includes('"ACODE_SERVER_TOKEN"'), "legacy env literal must be gone");
   const coreSrc = await read("packages/acode-server-cli/src/server-core/http.ts");
   assert.ok(!coreSrc.includes('"ACODE_SERVER_TOKEN"'), "legacy env literal must be gone");
 });
@@ -1359,28 +1404,45 @@ test("server-core: ACODE_SERVER_AUTH_TOKEN env enables auth; no-token default wa
 test("static: both servers share token adjudication and credential guard (20)", async () => {
   // 不变量守护：token 裁决与 credential 收窄都必须走共享单一实现，
   // 任一侧不得内联第二份 cookie 解码 / 接受顺序 / allowlist。
+  // 2026-10-30 拆分后正向 pin 按归属文件精确锚定：token 裁决三符号在 http.ts 本体
+  // （中间件与 /ws/host 绑定所在）；credential 收窄在 http/channel-server.ts 叶
+  // （setupChannelServer 的 overrides 注册层）。负向断言走全拼接面，防迁移后空转。
   const serverHttp = await read("packages/server/src/http.ts");
+  const serverChannelLeaf = await read("packages/server/src/http/channel-server.ts");
+  const serverSurface = await readServerHttpSurface();
   const coreHttp = await read("packages/acode-server-cli/src/server-core/http.ts");
+  assert.match(
+    serverHttp,
+    /resolveServerTokenAuth\(/,
+    "packages/server must use the shared token adjudication",
+  );
+  assert.match(
+    serverHttp,
+    /readPresentedServerToken\(/,
+    "packages/server must use the shared presented-token reader",
+  );
+  assert.match(
+    serverHttp,
+    /isTokenProtectedPathname\(/,
+    "packages/server must use the shared protected-path predicate",
+  );
+  assert.match(
+    serverChannelLeaf,
+    /createTerminalClientCredentialGuard\(/,
+    "packages/server must use the shared credential guard",
+  );
+  for (const pattern of [
+    /resolveServerTokenAuth\(/,
+    /readPresentedServerToken\(/,
+    /isTokenProtectedPathname\(/,
+    /createTerminalClientCredentialGuard\(/,
+  ]) {
+    assert.match(coreHttp, pattern, `server-core must keep the shared implementation ${pattern}`);
+  }
   for (const [name, src] of [
-    ["packages/server", serverHttp],
+    ["packages/server", serverSurface],
     ["server-core", coreHttp],
   ]) {
-    assert.match(src, /resolveServerTokenAuth\(/, `${name} must use the shared token adjudication`);
-    assert.match(
-      src,
-      /readPresentedServerToken\(/,
-      `${name} must use the shared presented-token reader`,
-    );
-    assert.match(
-      src,
-      /isTokenProtectedPathname\(/,
-      `${name} must use the shared protected-path predicate`,
-    );
-    assert.match(
-      src,
-      /createTerminalClientCredentialGuard\(/,
-      `${name} must use the shared credential guard`,
-    );
     assert.ok(
       !src.includes("acode_lite_token"),
       `${name} must not inline a second cookie name/decode`,

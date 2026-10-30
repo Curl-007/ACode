@@ -490,20 +490,12 @@ exceptions:
         packages/shared/src/validation.ts,
         packages/shared/src/validationAppSettings.ts,
       ]
-  - id: onboard-b3-server-over-limit
-    rule: max-file-lines
-    expires: "2026-12-31"
-    paths:
-      [
-        packages/server/src/http.ts,
-      ]
-  - id: onboard-b3-server-disables
-    rule: disable-count
-    expires: "2026-12-31"
-    paths:
-      [
-        packages/server/src/http.ts,
-      ]
+  # 2026-10-30 偿还：onboard-b3-server-over-limit / onboard-b3-server-disables 已删——
+  # 最后存量 http.ts（783 行）拆为本体（路由注册与安全裁决，<400 行）+ src/http/ 七叶
+  # （log / channel-server / pending-connections / server-info / static-files /
+  # bot-callbacks / token-request-view，全部 <400 行），首行 max-lines 头注删除；
+  # server 模块 2026-12-31 例外面清零。安全测试管线（server-auth.test.mjs 的 stub 加载
+  # 与源码断言面）同步改造，见 packages/server/specs/module-boundary.md「Registered debt」。
   - id: onboard-b3-session-over-limit
     rule: max-file-lines
     expires: "2026-12-31"

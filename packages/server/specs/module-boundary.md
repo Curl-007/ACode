@@ -46,16 +46,22 @@
 
 ## Registered debt（例外，expires 2026-12-31）
 
-- `onboard-b3-server-over-limit` / `onboard-b3-server-disables`：9 个存量超 400
-  行文件已偿还 8 个（含最大头 remoteAssetCache.ts 1928 行、
-  remoteAssetInstaller.ts 1087 行），全部拆出 <400 行叶子并移除 disable；
-  两条例外的 `paths` 收窄至仅剩 `packages/server/src/http.ts`。
-- http.ts（783 行）登记为未拆分：`server-auth.test.mjs` 以 stub 依赖表对
-  http.ts 做**单文件** `transpileModule` 执行（每个 import 必须命中 stub 表），
-  且用源码文本断言把 token 裁决 / credential 收窄 / 升级来源信任等安全不变量
-  钉在 http.ts 本体。拆分需重写安全测试的 stub 管线，存在静默绕过鉴权 /
-  WS 升级 / 静态穿越行为测试的风险，留待安全测试管线改造后一并处理。
-- 到期前应继续拆分剩余文件、移除 disable，而不是续期例外。
+- **已全部偿还（2026-10-30）**：`onboard-b3-server-over-limit` / `onboard-b3-server-disables`
+  两条删除——9 个存量超限文件的最后一个 http.ts（783 行）拆为本体（路由注册与安全裁决，
+  <400 行）+ `src/http/` 七叶（log / channel-server / pending-connections / server-info /
+  static-files / bot-callbacks / token-request-view，全部 <400 行），首行 max-lines
+  disable 删除。server 模块 2026-12-31 例外面清零。
+- 原债务登记的前置条件（安全测试管线改造）已随本批兑现，`server-auth.test.mjs`：
+  - `load` 改为「stub 表优先 + 相对导入递归真实执行」——`http/*` 叶子在安全行为测试中
+    真实运行（不是 stub，防静默绕过）；`./remote/index.js` 等显式 stub 键仍优先命中表。
+  - 负向源码断言（禁内联第二份 cookie 解码/allowlist、禁 legacy env 字面量）从
+    http.ts 单文件扩为「http.ts + 全部叶子」拼接面，防代码迁出后断言空转。
+  - 正向安全 pin 按文件精确重锚：路由顺序/Origin 裁决 pin 留 http.ts 本体；
+    credential 收窄（createTerminalClientCredentialGuard）pin 到 channel-server.ts；
+    共享 token 裁决三符号 pin 留本体（中间件与 /ws/host 绑定所在）。
+- 待认领远程连接 Map 的所有权随拆分收窄：唯一所有者迁 `src/http/pending-connections.ts`，
+  写入路径收敛为叶内 register/claim/prune 三函数，本体不再直接持有 Map
+  （owner 登记见 server-auth.md「待认领远程连接唯一所有者」）。
 
 ## Acceptance scenarios
 

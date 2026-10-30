@@ -1,50 +1,21 @@
-/* eslint-disable max-lines -- HTTP、WebSocket 与静态资源路由集中注册，保持同一鉴权顺序。 */
-import { randomUUID } from "node:crypto";
-import { readFile, stat } from "node:fs/promises";
-import { basename, extname, isAbsolute, relative, resolve } from "node:path";
-import { hostname } from "node:os";
-import { Hono, type Context, type MiddlewareHandler } from "hono";
+import { readFile } from "node:fs/promises";
+import { Hono, type MiddlewareHandler } from "hono";
 import { serve } from "@hono/node-server";
 import { createNodeWebSocket } from "@hono/node-ws";
 import type { WebSocket } from "ws";
 import {
-  Emitter,
-  VSBuffer,
-  SocketProtocol,
-  ChannelServer,
-  LoggingChannelServer,
-  type ISocket,
-} from "@acode/rpc";
-import {
   ServiceCollection,
-  IACodeAgentService,
-  createACodeAgentConnectionScope,
-  ICredentialService,
   IFileService,
   IGitService,
   ISystemService,
   ITerminalService,
-  IBotsService,
-  IProviderProvisioningTargetService,
 } from "@acode/services";
-import {
-  botProviders,
-  formatLogPrefix,
-  formatZodError,
-  remoteTargetSchema,
-  SERVER_REMOTE_PROTOCOL_VERSION,
-  ACODE_RPC_HOST_CAPABILITY_HEADER,
-  ACODE_VERSION,
-  type BotProvider,
-  type ServerRemoteInfo,
-  type ServerRemoteWorkspaceInfo,
-} from "@acode/shared";
-import { connectRemote, createRemoteBackend, type RemoteConnection } from "./remote/index.js";
+import { formatZodError, remoteTargetSchema, ACODE_RPC_HOST_CAPABILITY_HEADER } from "@acode/shared";
+import { connectRemote, createRemoteBackend } from "./remote/index.js";
 import {
   ANONYMOUS_HOST_CAPABILITY_PRINCIPAL,
   assertServerAuthInvariant,
   createHostCapabilityStore,
-  createTerminalClientCredentialGuard,
   describeNoAuthLoopbackWarning,
   fingerprintPrincipal,
   isTokenProtectedPathname,
@@ -52,390 +23,29 @@ import {
   resolveHostCapabilityBinding,
   resolveRequestOriginTrust,
   resolveServerTokenAuth,
-  type ServerTokenRequestView,
 } from "@acode/shared/node";
-
-function wrapWebSocket(ws: WebSocket): ISocket {
-  const onData = new Emitter<VSBuffer>();
-  const onClose = new Emitter<void>();
-  const onEnd = new Emitter<void>();
-
-  ws.on("message", (raw: Buffer | ArrayBuffer | Buffer[]) => {
-    const buf = Buffer.isBuffer(raw) ? raw : Buffer.from(raw as ArrayBuffer);
-    onData.fire(VSBuffer.wrap(new Uint8Array(buf)));
-  });
-  ws.on("close", () => {
-    onClose.fire();
-    onEnd.fire();
-  });
-  ws.on("error", () => {
-    onClose.fire();
-    onEnd.fire();
-  });
-
-  return {
-    onData: onData.event,
-    onClose: onClose.event,
-    onEnd: onEnd.event,
-    write(buffer: VSBuffer) {
-      if (ws.readyState === ws.OPEN) {
-        ws.send(buffer.buffer);
-      }
-    },
-    end() {
-      ws.close();
-    },
-    drain() {
-      return Promise.resolve();
-    },
-    dispose() {
-      ws.close();
-    },
-  };
-}
-
-const log = (...args: unknown[]) =>
-  console.log(formatLogPrefix("acode-server:http", process.pid), ...args);
-
-const warn = (...args: unknown[]) =>
-  console.warn(formatLogPrefix("acode-server:http", process.pid), ...args);
-
-function setupChannelServer(
-  ws: WebSocket,
-  services: ServiceCollection,
-  clientMode: "desktop-continuous" | "web-remote-replayable",
-) {
-  const socket = wrapWebSocket(ws);
-  const protocol = new SocketProtocol(socket);
-  const rawServer = new ChannelServer(protocol, "server");
-  // 用日志中间件包装，统一记录所有 RPC 调用
-  const server = new LoggingChannelServer(rawServer, log);
-  const agentService = services.getOptional(IACodeAgentService);
-  const connectionScope = agentService
-    ? createACodeAgentConnectionScope(agentService, {
-        connectionId: `server-ws-${randomUUID()}`,
-        clientMode,
-        role: clientMode === "desktop-continuous" ? "trusted-host-relay" : "terminal-client",
-      })
-    : undefined;
-  const overrides = new Map<string, unknown>();
-  if (connectionScope) {
-    overrides.set(IACodeAgentService.channelName, connectionScope.service);
-  }
-  // Provisioning 携带跨 Environment 凭据，只允许 Desktop trusted host 使用；普通 Web
-  // remote/replayable 客户端即使知道频道名，也不能获得 target 写入接口。
-  if (
-    clientMode !== "desktop-continuous" &&
-    services.getOptional(IProviderProvisioningTargetService)
-  ) {
-    overrides.set(IProviderProvisioningTargetService.channelName, {
-      apply: async () => {
-        throw new Error("Provider Provisioning 仅支持受信 Desktop Host");
-      },
-    });
-  }
-  // M4：Credential 通道承载全仓明文凭据（OAuth token / JWT / BYO API Key / MCP token /
-  // bot secret），此前无差别注册给每条连接——默认 loopback 无 token 姿态下本机任意进程/
-  // 恶意网页可 dump 全部凭据。与上方 Provisioning 先例同模式，在传输注册层（overrides）
-  // 按 clientMode 收窄：desktop-continuous 保持全量（renderer 登录态与 remote-workspace
-  // token 流依赖）；terminal-client 仅放行 allowlist 键的只读 load（allowlist 证据与拒绝
-  // 语义的唯一所有者在 @acode/shared/node credentialChannelAccess，两套 server 共用）。
-  if (clientMode !== "desktop-continuous") {
-    const credentialService = services.getOptional(ICredentialService);
-    if (credentialService) {
-      overrides.set(
-        ICredentialService.channelName,
-        createTerminalClientCredentialGuard(credentialService),
-      );
-    }
-  }
-  services.exposeOnChannelServer(server, overrides);
-  socket.onClose(() => {
-    void connectionScope?.dispose();
-    rawServer.dispose();
-  });
-}
+import { log, warn } from "./http/log.js";
+import { setupChannelServer } from "./http/channel-server.js";
+import {
+  MAX_PENDING_REMOTE_CONNECTIONS,
+  PENDING_REMOTE_CONNECTION_TTL_MS,
+  claimPendingConnection,
+  generateId,
+  getPendingConnectionCount,
+  pruneExpiredPendingConnections,
+  registerPendingConnection,
+} from "./http/pending-connections.js";
+import { createServerInfo, type HttpServerOptions } from "./http/server-info.js";
+import { resolveStaticFile, staticContentType } from "./http/static-files.js";
+import { createBotCallbackHandlers } from "./http/bot-callbacks.js";
+import { serverTokenRequestView, warnDeprecatedQueryTokenOnce } from "./http/token-request-view.js";
 
 /**
- * 待认领条目 = 已建立的远程连接 + 其 spawn 完成时刻（惰性过期依据，见下方 TTL 注释）。
- * 唯一所有者仍是本 Map（specs/server-auth.md「待认领远程连接唯一所有者」）；包装 spawnedAt
- * 不新增第二条写入路径，写入仍只在 `/api/connect-remote`，删除在认领或惰性过期时。
+ * HTTP/WS 路由注册本体（2026-10-30 拆分：辅助族迁 `src/http/` 七叶，本文件只保留
+ * 路由注册与安全裁决——token 中间件、Origin 信任、host 能力铸造/消费/绑定、预算门——
+ * 保证「同一鉴权顺序」在单文件内可审）。叶子清单与安全测试断言面见
+ * specs/module-boundary.md「Registered debt」。
  */
-interface PendingRemoteConnection {
-  connection: RemoteConnection;
-  spawnedAt: number;
-}
-
-/** 存储 web 模式下的远程连接，key 为随机 ID */
-const remoteConnections = new Map<string, PendingRemoteConnection>();
-
-/**
- * 待认领（已 spawn 但尚未被 `/ws/remote/:id` WS 客户端认领）远程连接的硬上限（M11）。
- *
- * 根因：条目只在 WS 认领时删除，`POST /api/connect-remote` 又可被盲刷——每次成功都会
- * spawn 真实后端（SSH 外联 / WSL / Docker），未认领条目无限累积即内存与进程句柄 DoS。
- * Origin 裁决封死浏览器攻击者后，本上限是有界性兜底：达上限即 503 拒绝新连接。
- */
-const MAX_PENDING_REMOTE_CONNECTIONS = 32;
-
-/**
- * 待认领连接的存活上限（惰性过期，R2 review 第三条 finding）。
- *
- * 根因：`POST /api/connect-remote` 成功后 id 已下发给客户端，客户端应立即连
- * `/ws/remote/:id` 认领；若客户端崩溃/放弃，条目连同其持有的真实后端句柄（SSH 进程、
- * stdio socket）永久滞留到进程重启——`MAX_PENDING_REMOTE_CONNECTIONS` 只兜住数量上限，
- * 慢泄漏（句柄/内存）仍在。
- *
- * 为什么用**惰性过期**而非常驻定时器：AGENTS.md 明确「不能用超时掩盖同步问题」——认领本身
- * 是同步的请求/响应链，不需要定时器兜底。这里做的是**有界资源回收**：在两个既有请求触点
- * （新连接的容量检查、认领时的存活校验）顺带清理已超期条目，不引入新的常驻定时器所有权，
- * 也不改变认领的同步语义。TTL 取 60s：远大于正常「拿到 id → WS 认领」的往返（秒级），
- * 又足够短以在客户端放弃后及时回收句柄。
- */
-const PENDING_REMOTE_CONNECTION_TTL_MS = 60_000;
-
-/**
- * 判定一条待认领连接是否已超期（纯函数，便于边界单测）。
- * `>=` 而非 `>`：到达 TTL 当刻即视为失效，避免「恰好等于」的边界歧义。
- */
-function isPendingConnectionExpired(spawnedAt: number, now: number, ttlMs: number): boolean {
-  return now - spawnedAt >= ttlMs;
-}
-
-/**
- * 惰性驱逐：遍历待认领表，dispose 并移除已超期条目。
- * 由请求触点同步调用（容量检查 / 认领校验），无常驻定时器。dispose 失败只吞掉，
- * 不阻断本次请求——回收是尽力而为，句柄泄漏的兜底仍是进程退出。
- */
-function pruneExpiredPendingConnections(now: number, ttlMs: number): void {
-  for (const [id, entry] of remoteConnections) {
-    if (!isPendingConnectionExpired(entry.spawnedAt, now, ttlMs)) {
-      continue;
-    }
-    remoteConnections.delete(id);
-    try {
-      entry.connection.dispose();
-    } catch {
-      // 过期条目 dispose 失败不阻断：条目已从表移除，句柄随进程退出回收。
-    }
-  }
-}
-
-function generateId(): string {
-  return Math.random().toString(36).slice(2) + Date.now().toString(36);
-}
-
-interface HttpServerOptions {
-  serverId?: string;
-  name?: string;
-  host?: string;
-  authRequired?: boolean;
-  authToken?: string;
-  spaFallback?: boolean;
-  staticRoot?: string;
-  workspaces?: ServerRemoteWorkspaceInfo[];
-  /** `/ws/host` 升级允许的非 loopback Origin 白名单（DNS-rebinding / 恶意网页防护）。 */
-  allowedOrigins?: string[];
-  /**
-   * 待认领连接惰性过期的时钟源（注入点，供测试用虚拟时间；默认 `Date.now`）。
-   * 与 `createHostCapabilityStore({ now })` 同一注入范式，不新增常驻定时器。
-   */
-  pendingConnectionClock?: () => number;
-  /** 待认领连接存活上限（ms），默认 `PENDING_REMOTE_CONNECTION_TTL_MS`；测试可注入更小值。 */
-  pendingConnectionTtlMs?: number;
-}
-
-function readTrimmedEnv(name: string): string | undefined {
-  const value = process.env[name]?.trim();
-  return value ? value : undefined;
-}
-
-function resolveServerId(options: HttpServerOptions): string {
-  return (
-    options.serverId?.trim() || readTrimmedEnv("ACODE_SERVER_ID") || hostname() || "acode-server"
-  );
-}
-
-function resolveServerWorkspaces(options: HttpServerOptions): ServerRemoteWorkspaceInfo[] {
-  if (options.workspaces) {
-    return options.workspaces;
-  }
-  const workspacePath = readTrimmedEnv("ACODE_SERVER_WORKSPACE") || process.cwd();
-  return [
-    {
-      path: workspacePath,
-      label: basename(workspacePath) || workspacePath,
-    },
-  ];
-}
-
-function createServerInfo(
-  options: HttpServerOptions,
-  resolvedAuthToken?: string,
-): ServerRemoteInfo {
-  return {
-    serverId: resolveServerId(options),
-    ...(options.name?.trim() || readTrimmedEnv("ACODE_SERVER_NAME")
-      ? { name: options.name?.trim() || readTrimmedEnv("ACODE_SERVER_NAME") }
-      : {}),
-    version: ACODE_VERSION,
-    protocolVersion: SERVER_REMOTE_PROTOCOL_VERSION,
-    // M2 修复：authRequired 必须如实反映「鉴权中间件是否真的挂载」。此前 fallback 读
-    // ACODE_SERVER_TOKEN，而真实强制点（entry-http.ts）只读 ACODE_SERVER_AUTH_TOKEN 并经
-    // options.authToken 传入——按文档配置旧变量名会得到「自报已鉴权、实际无鉴权」。
-    // 现在以调用方实际用于挂中间件的 resolvedAuthToken 为准，不再读任何环境变量；
-    // 全仓唯一鉴权 env 名 = ACODE_SERVER_AUTH_TOKEN（本包读取点在 entry-http.ts；
-    // Server Core 在 server-core/http.ts 另有自己的单一读取点，见 server-auth.md）。
-    authRequired: options.authRequired ?? Boolean(resolvedAuthToken),
-    workspaces: resolveServerWorkspaces(options),
-    capabilities: {
-      desktopContinuous: true,
-      websocketRpc: true,
-    },
-  };
-}
-
-/**
- * hono Context → 共享 token 裁决的请求视图。
- *
- * 裁决本体（凭据接受顺序 Bearer > lite token cookie > query 仅 `/ws*`、cookie 名与安全解码、
- * 受保护路径判定）已收敛到 `@acode/shared/node` serverAuth 的 `resolveServerTokenAuth` /
- * `readPresentedServerToken` / `isTokenProtectedPathname`，与 Server Core 共用单一实现；
- * 本文件只保留这一层 Context 适配，不再维护第二份接受顺序或 cookie 解码。
- */
-function serverTokenRequestView(c: Context): ServerTokenRequestView {
-  return {
-    authorizationHeader: c.req.header("authorization"),
-    cookieHeader: c.req.header("cookie"),
-    url: c.req.url,
-  };
-}
-
-// `?token=` 移除告警每进程只打印一次，避免刷屏，同时确保旧客户端能被明确告知迁移路径。
-let warnedDeprecatedQueryToken = false;
-function warnDeprecatedQueryTokenOnce(): void {
-  if (warnedDeprecatedQueryToken) return;
-  warnedDeprecatedQueryToken = true;
-  console.warn(
-    formatLogPrefix("acode-server:http", process.pid),
-    "DEPRECATION REMOVED: the ?token= URL query is no longer accepted on HTTP routes and the request was rejected (it leaks into logs, browser history and Referer). Send `Authorization: Bearer <token>` instead. The query form remains supported only for WebSocket upgrade handshakes (/ws*), which cannot carry custom headers.",
-  );
-}
-
-const staticMimeTypes: Record<string, string> = {
-  ".css": "text/css; charset=utf-8",
-  ".gif": "image/gif",
-  ".html": "text/html; charset=utf-8",
-  ".ico": "image/x-icon",
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".js": "text/javascript; charset=utf-8",
-  ".json": "application/json; charset=utf-8",
-  ".map": "application/json; charset=utf-8",
-  ".png": "image/png",
-  ".svg": "image/svg+xml",
-  ".txt": "text/plain; charset=utf-8",
-  ".wasm": "application/wasm",
-  ".webp": "image/webp",
-  ".woff": "font/woff",
-  ".woff2": "font/woff2",
-};
-
-function isStaticFallbackAllowed(pathname: string): boolean {
-  return !isTokenProtectedPathname(pathname);
-}
-
-function isInsideDirectory(root: string, candidate: string): boolean {
-  // M10 修复：Windows 上 path.win32.relative 在 root 与 candidate 位于**不同盘符根**时
-  // 原样返回 candidate 的绝对路径（如 relative("D:\\web", "C:\\Windows\\win.ini") ===
-  // "C:\\Windows\\win.ini"），它不以 ".." 开头——旧判定 !startsWith("..") 会把
-  // `GET /C:/Windows/win.ini` 这类跨盘符请求误判为「目录内」，而静态路由匿名可达
-  // （不在 token 保护面），等于任意文件读取。relative() 的合法结果只可能是空串、
-  // 目录内相对路径或 ".." 逃逸；出现绝对路径必然是跨盘符/跨根逃逸，一律拒绝。
-  const diff = relative(root, candidate);
-  return diff === "" || (!diff.startsWith("..") && !isAbsolute(diff));
-}
-
-async function resolveStaticFile(
-  staticRoot: string,
-  pathname: string,
-  spaFallback: boolean,
-): Promise<string | null> {
-  const root = resolve(staticRoot);
-  const normalizedPathname = pathname === "/" ? "/index.html" : pathname;
-  // R2 finding 2：畸形百分号编码（`/%`、`/%zz`、`/%e0%a4`）会让 decodeURIComponent 抛
-  // URIError。此前 try/catch 只包住 stat，decode 异常冒泡成 500。decode 失败等价于
-  //「该 pathname 不可能命中任何真实文件」，按未命中返回 null（→ 上层 404），不进 SPA fallback。
-  let relativePath: string;
-  try {
-    relativePath = decodeURIComponent(normalizedPathname).replace(/^\/+/, "");
-  } catch {
-    return null;
-  }
-  let candidate = resolve(root, relativePath);
-  if (!isInsideDirectory(root, candidate)) {
-    return null;
-  }
-
-  try {
-    const candidateStat = await stat(candidate);
-    if (candidateStat.isDirectory()) {
-      candidate = resolve(candidate, "index.html");
-      if (!isInsideDirectory(root, candidate)) {
-        return null;
-      }
-      const indexStat = await stat(candidate);
-      return indexStat.isFile() ? candidate : null;
-    }
-    if (candidateStat.isFile()) {
-      return candidate;
-    }
-  } catch {
-    // 静态资源未命中时再进入 SPA fallback，保留真实文件错误的 404 语义。
-  }
-
-  if (!spaFallback || !isStaticFallbackAllowed(pathname)) {
-    return null;
-  }
-  const indexFile = resolve(root, "index.html");
-  try {
-    const indexStat = await stat(indexFile);
-    return indexStat.isFile() ? indexFile : null;
-  } catch {
-    return null;
-  }
-}
-
-function staticContentType(filePath: string): string {
-  return staticMimeTypes[extname(filePath).toLowerCase()] ?? "application/octet-stream";
-}
-
-/** 企业微信回调验签参数固定来自 query；GET 校验和 POST 消息复用同一份读取。 */
-function readWeComQuery(c: Context): Record<string, string> {
-  const url = new URL(c.req.url);
-  const query: Record<string, string> = {};
-  for (const key of ["msg_signature", "timestamp", "nonce", "echostr"] as const) {
-    const value = url.searchParams.get(key);
-    if (value !== null) {
-      query[key] = value;
-    }
-  }
-  return query;
-}
-
-/**
- * Bot 回调统一响应：string responseBody 以 text/plain 原样返回（企业微信 URL 校验回明文 echostr），
- * 其余以 JSON 返回，并保留 400/401/503 的可重试语义。
- */
-function respondBotCallback(c: Context, status: number | undefined, responseBody: unknown) {
-  const httpStatus = status === 400 || status === 401 || status === 503 ? status : 200;
-  if (typeof responseBody === "string") {
-    // Bugfix：企业微信 URL 校验要求返回解密后的明文 echostr，包成 JSON 会让校验失败。
-    return c.body(responseBody, httpStatus, { "Content-Type": "text/plain; charset=utf-8" });
-  }
-  return c.json(responseBody, httpStatus);
-}
-
 export function createHttpServer(
   services: ServiceCollection,
   port = 3030,
@@ -599,7 +209,7 @@ export function createHttpServer(
     // R2 finding 3：容量检查前先惰性驱逐超期条目，回收放弃认领客户端留下的句柄/内存；
     // 驱逐后仍达上限才拒绝，避免陈旧条目把合法新连接挤成 503。
     pruneExpiredPendingConnections(pendingClock(), pendingTtlMs);
-    if (remoteConnections.size >= MAX_PENDING_REMOTE_CONNECTIONS) {
+    if (getPendingConnectionCount() >= MAX_PENDING_REMOTE_CONNECTIONS) {
       return c.json({ error: "Pending remote connection budget exhausted; retry later" }, 503);
     }
     const rawBody = await c.req.json();
@@ -613,8 +223,9 @@ export function createHttpServer(
       const backend = await createRemoteBackend(body);
       const connection = await connectRemote(backend);
       const id = generateId();
-      // 记录 spawn 完成时刻作为惰性过期依据（R2 finding 3）。
-      remoteConnections.set(id, { connection, spawnedAt: pendingClock() });
+      // 记录 spawn 完成时刻作为惰性过期依据（R2 finding 3）；登记经唯一所有者叶
+      // pending-connections.ts 的 registerPendingConnection，不直接写 Map。
+      registerPendingConnection(id, connection, pendingClock());
 
       return c.json({ id });
     } catch (err: unknown) {
@@ -629,63 +240,7 @@ export function createHttpServer(
     }
   });
 
-  const handleBotCallback = async (c: Context) => {
-    const provider = c.req.param("provider") as BotProvider;
-    if (!botProviders.includes(provider)) {
-      return c.json({ error: `Unsupported provider: ${provider}` }, 400);
-    }
-    // wecom 走企业微信加密回调（POST 消息 + GET URL 校验）；其余 provider 仅 webhook 支持 HTTP 回调，
-    // discord 为出站 Gateway、telegram/feishu/weixin 各有自己的长连接/轮询通道。
-    if (provider !== "webhook" && provider !== "wecom") {
-      return c.json({ error: `Provider ${provider} does not support HTTP callbacks.` }, 400);
-    }
-    const botsService = services.getOptional(IBotsService);
-    if (!botsService) {
-      return c.json({ error: "Bots service is not available." }, 503);
-    }
-    const rawBodyText = await c.req.text().catch(() => "");
-    let rawBody: unknown = {};
-    if (rawBodyText) {
-      try {
-        rawBody = JSON.parse(rawBodyText) as unknown;
-      } catch {
-        rawBody = { payload: rawBodyText };
-      }
-    }
-    const webhookSecret = c.req.header("x-acode-bot-secret");
-    const botId = c.req.param("botId");
-    // 企业微信把验签参数放在 query（msg_signature/timestamp/nonce），密文 Encrypt 放在 body；
-    // 两者都要透传给 adapter.prepareCallbackPayload 才能完成 SHA1 验签 + AES 解密。
-    const acodeWecomQuery = provider === "wecom" ? readWeComQuery(c) : undefined;
-    const result = await botsService.handleProviderCallbackResponse(provider, {
-      ...(typeof rawBody === "object" && rawBody !== null ? rawBody : { payload: rawBody }),
-      rawBody: rawBodyText,
-      ...(botId ? { botId } : {}),
-      ...(webhookSecret ? { webhookSecret } : {}),
-      ...(acodeWecomQuery ? { acodeWecomQuery } : {}),
-    });
-    const responseBody = result.responseBody ?? { ok: result.ok, replies: result.replies };
-    return respondBotCallback(c, result.status, responseBody);
-  };
-
-  const handleBotVerify = async (c: Context) => {
-    const provider = c.req.param("provider") as BotProvider;
-    // GET 校验仅企业微信需要：解密 echostr 后原样回明文，企业微信据此判定回调 URL 配置成功。
-    if (provider !== "wecom") {
-      return c.json({ error: `Provider ${provider} does not support GET verification.` }, 400);
-    }
-    const botsService = services.getOptional(IBotsService);
-    if (!botsService) {
-      return c.json({ error: "Bots service is not available." }, 503);
-    }
-    const botId = c.req.param("botId");
-    const result = await botsService.handleProviderCallbackResponse(provider, {
-      ...(botId ? { botId } : {}),
-      acodeWecomVerify: true,
-      acodeWecomQuery: readWeComQuery(c),
-    });
-    return respondBotCallback(c, result.status, result.responseBody ?? "");
-  };
+  const { handleBotCallback, handleBotVerify } = createBotCallbackHandlers(services);
 
   app.post("/api/bots/:provider", handleBotCallback);
   app.post("/api/bots/:provider/:botId", handleBotCallback);
@@ -707,28 +262,16 @@ export function createHttpServer(
             return;
           }
           // R2 finding 3：认领是第二个惰性过期触点。先整体驱逐超期条目（有界资源回收，
-          // 非常驻定时器），再取本条；被本次驱逐命中的条目等同「不存在」。
+          // 非常驻定时器），再认领本条；被本次驱逐命中的条目等同「不存在」。
           pruneExpiredPendingConnections(pendingClock(), pendingTtlMs);
-          const entry = remoteConnections.get(id);
-          if (!entry) {
+          // 认领时校验 spawn 时间、超期 dispose、取出即从表移除，全部封装在唯一所有者叶
+          // claimPendingConnection 内：不存在与已超期一律 null → close 4004，
+          // 避免陈旧连接被迟到客户端复活（判定与 prune 同源 isPendingConnectionExpired）。
+          const connection = claimPendingConnection(id, pendingClock(), pendingTtlMs);
+          if (!connection) {
             ws.close(4004, "Remote connection not found");
             return;
           }
-          // 认领时校验 spawn 时间：超期条目按失效处理——dispose 句柄、从表移除、拒绝认领。
-          // 与 prune 同一判定（isPendingConnectionExpired），避免陈旧连接被迟到客户端复活。
-          if (isPendingConnectionExpired(entry.spawnedAt, pendingClock(), pendingTtlMs)) {
-            remoteConnections.delete(id);
-            try {
-              entry.connection.dispose();
-            } catch {
-              // 同 prune：dispose 失败不阻断拒绝路径。
-            }
-            ws.close(4004, "Remote connection not found");
-            return;
-          }
-          const connection = entry.connection;
-          // 一个连接只给一个 WS 客户端使用，取出后从 Map 移除
-          remoteConnections.delete(id);
 
           // 将远程 services 包装为 ServiceCollection，复用 exposeOnChannelServer 统一注册
           const remoteServices = new ServiceCollection()

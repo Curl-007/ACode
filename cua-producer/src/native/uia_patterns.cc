@@ -411,12 +411,24 @@ class ElementClickablePointWorker final : public PromiseWorker {
  protected:
   void Execute() override {
     g_cancelRequested.store(false);
+    // clickable point 是屏幕坐标产出面（§10.7 R 裁决触点）：本 worker 线程先过线程级
+    // PMv2 复核，失败即既有 fail-closed（只读观察 → dispatchStarted=false）。
+    if (!EnsureThreadDpiPerMonitorV2()) {
+      FailAx(kNonInteractiveDesktop, false);
+      return;
+    }
     auto state = state_;
     // 只读观察（无副作用）：可取消等待。
     const UiaTaskOutcome outcome =
         RunPatternTask(
             state,
             [](const std::shared_ptr<ClickablePointState>& s) {
+              // 任务体前奏：GetClickablePoint 在 MTA 线程执行，该线程必须是真 PMv2
+              // （虚拟化坐标与 capture/SendInput 失配，绝不带病产出）。
+              if (!EnsureThreadDpiPerMonitorV2()) {
+                s->errorCode = kNonInteractiveDesktop;
+                return;
+              }
               winrt::com_ptr<IUIAutomationElement> element;
               if (!AcquireLiveElement(s->token, s->index, element, &s->errorCode)) return;
               POINT point{};

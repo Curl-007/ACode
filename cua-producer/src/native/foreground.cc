@@ -117,6 +117,12 @@ class CursorPositionWorker final : public PromiseWorker {
 
  protected:
   void Execute() override {
+    // 坐标触点（§10.7 R 裁决）：GetCursorPos 返回调用线程 DPI 语境的坐标——线程必须
+    // 是真 PMv2，否则产出虚拟化坐标（moveTo 负控制的断言基准失准），诚实 fail-closed。
+    if (!EnsureThreadDpiPerMonitorV2()) {
+      FailAx(kNonInteractiveDesktop, false);
+      return;
+    }
     POINT point{};
     if (!GetCursorPos(&point)) {
       FailAx(kInternalNative, false);

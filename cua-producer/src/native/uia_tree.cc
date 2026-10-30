@@ -328,7 +328,8 @@ void CaptureUiTreeWorker::Execute() {
   // stop 非闩锁（§10.6/§18 第 6 条同律）：新观察在入口清零取消旗标。
   g_cancelRequested.store(false);
   // 统一 preflight 门（§10.9：A3 的 UIA 读走同一门——非交互桌面整体诚实拒绝）。
-  if (!DetectInteractiveDesktop() || DetectSessionZero() || !g_dpiAware.load()) {
+  // DPI 判据 = 线程级 PMv2 复核（§10.7 R 裁决）；元素 bounds 在 MTA 任务体同律复核。
+  if (!DetectInteractiveDesktop() || DetectSessionZero() || !EnsureThreadDpiPerMonitorV2()) {
     FailAx(kNonInteractiveDesktop, false);
     return;
   }
@@ -348,6 +349,12 @@ void CaptureUiTreeWorker::Execute() {
       const auto pinned = weakSlot.lock();
       return !pinned || pinned->abandoned.load();
     };
+    // 任务体前奏（§10.7 R 裁决）：元素 bounds/window bounds 的 COM 调用在本 MTA 线程
+    // 执行——该线程必须是真 PMv2，否则坐标经 DPI 虚拟化与 capture/SendInput 失配。
+    if (!EnsureThreadDpiPerMonitorV2()) {
+      taskState->errorCode = kNonInteractiveDesktop;
+      return;
+    }
     // 任务开始时的 worker 代——提交进注册表的冻结域归属该代（poison 后孤儿代查找即
     // stale fail-closed，绝不跨代触碰 COM 指针，§11.1/§11.5）。
     const uint64_t generation = UiaWorkerGeneration();
@@ -680,7 +687,8 @@ class ListApplicationsWorker final : public PromiseWorker {
  protected:
   void Execute() override {
     g_cancelRequested.store(false);
-    if (!DetectInteractiveDesktop() || DetectSessionZero() || !g_dpiAware.load()) {
+    // DPI 判据 = 线程级 PMv2 复核（§10.7 R 裁决；本面不产出坐标，统一门同律替换）。
+    if (!DetectInteractiveDesktop() || DetectSessionZero() || !EnsureThreadDpiPerMonitorV2()) {
       FailAx(kNonInteractiveDesktop, false);
       return;
     }
@@ -766,15 +774,28 @@ class ListWindowsWorker final : public PromiseWorker {
  protected:
   void Execute() override {
     g_cancelRequested.store(false);
-    if (!DetectInteractiveDesktop() || DetectSessionZero() || !g_dpiAware.load()) {
+    // DPI 判据 = 线程级 PMv2 复核（§10.7 R 裁决）；window bounds 在 MTA 任务体同律复核。
+    if (!DetectInteractiveDesktop() || DetectSessionZero() || !EnsureThreadDpiPerMonitorV2()) {
       FailAx(kNonInteractiveDesktop, false);
       return;
     }
-    auto taskState = std::make_shared<std::vector<WindowFactOut>>();
+    // errorCode 通道（§10.7 R 裁决：MTA 任务体的线程级 PMv2 复核失败必须类型化收口，
+    // 不得以空窗口列表冒充成功——C09 同律）。
+    struct ListWindowsTaskState {
+      const char* errorCode = nullptr;
+      std::vector<WindowFactOut> windows;
+    };
+    auto taskState = std::make_shared<ListWindowsTaskState>();
     auto slot = std::make_shared<UiaTaskSlot>();
     const std::weak_ptr<UiaTaskSlot> weakSlot = slot;
     const DWORD pidFilter = pidFilter_;
     slot->body = [taskState, weakSlot, pidFilter] {
+      // 任务体前奏（§10.7 R 裁决）：window bounds 的 GetWindowRect 在本 MTA 线程执行，
+      // 线程必须是真 PMv2（虚拟化坐标与 capture/SendInput 失配，绝不带病产出）。
+      if (!EnsureThreadDpiPerMonitorV2()) {
+        taskState->errorCode = kNonInteractiveDesktop;
+        return;
+      }
       const std::vector<TopLevelWindowFact> facts = EnumerateVisibleTopLevelWindows();
       std::map<DWORD, std::wstring> exeCache;
       for (const TopLevelWindowFact& fact : facts) {
@@ -794,10 +815,10 @@ class ListWindowsWorker final : public PromiseWorker {
         out.exePath = appCached->second;
         out.bounds = fact.bounds;
         out.minimized = fact.minimized;
-        taskState->push_back(std::move(out));
+        taskState->windows.push_back(std::move(out));
       }
       const auto pinned = weakSlot.lock();
-      if (!pinned || pinned->abandoned.load()) taskState->clear();
+      if (!pinned || pinned->abandoned.load()) taskState->windows.clear();
     };
     const UiaTaskOutcome outcome = RunUiaTask(slot, kObserveDeadlineMs, /*cancelable=*/true);
     if (outcome == UiaTaskOutcome::canceled) {
@@ -812,7 +833,11 @@ class ListWindowsWorker final : public PromiseWorker {
       FailAx(kInternalNative, false);
       return;
     }
-    windows_ = std::move(*taskState);
+    if (taskState->errorCode) {
+      FailAx(taskState->errorCode, false);
+      return;
+    }
+    windows_ = std::move(taskState->windows);
   }
 
   Napi::Value BuildResult(const Napi::Env& env) override {

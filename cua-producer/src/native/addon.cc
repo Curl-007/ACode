@@ -59,9 +59,11 @@ Napi::Value UiaWorkerShutdown(const Napi::CallbackInfo& info) {
 }
 
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
-  // DPI awareness 在 Init 设置（§10.7：Per-Monitor-V2；Electron 宿主 manifest 已带 PMv2
-  // 时 Set 失败但查询判定达标；失败 → environmentProbe.dpiAware=false → preflight 拒绝，
-  // 绝不带病派发）。
+  // DPI awareness 在 Init 做进程级尝试（§10.7 R 裁决：plain node 形态的最优默认——成功
+  // 后全部线程缺省 PMv2；electron fork 下 manifest 已预设非 PMv2 意识，进程级 Set 被拒
+  // 属预期形态）。门禁不归此处：坐标触点 worker 的 Execute 前奏做线程级 PMv2 复核
+  // （EnsureThreadDpiPerMonitorV2），复核失败 → environmentProbe.dpiAware=false /
+  // non_interactive_desktop → preflight 拒绝，绝不带病派发。
   ax::InitializeProcessDpi();
 
   exports.Set("addonVersion", Napi::String::New(env, ADDON_VERSION));

@@ -38,9 +38,6 @@ namespace ax {
 // 的窗口（input-session.ts 的 stop 编排注释）。
 inline std::atomic<bool> g_cancelRequested{false};
 
-// ── DPI awareness 事实（§10.7）：addon Init 设 Per-Monitor-V2，environmentProbe 回读 ──
-inline std::atomic<bool> g_dpiAware{false};
-
 // ── 类型化错误 code 封闭集（§10.3；实现不得新增，新增先改 spec）──
 constexpr const char* kForegroundLost = "foreground_lost";
 constexpr const char* kNonInteractiveDesktop = "non_interactive_desktop";
@@ -108,6 +105,10 @@ bool IsExpectedForeground(DWORD expectedPid);
 bool DetectInteractiveDesktop();
 bool DetectSessionZero();
 void InitializeProcessDpi();
+// 线程级 PMv2 override（environment.cc；§10.7 R 裁决）：manifest 抢占宿主（electron
+// fork）下进程级 Set 恒被拒，坐标/栅格触点 worker 的 Execute 前奏以此把当前线程提升为
+// 真 PMv2 并复核；false = 本线程未达 PMv2 → 调用方按既有 fail-closed 码收口。
+bool EnsureThreadDpiPerMonitorV2();
 
 // ── Promise AsyncWorker 基类：类型化错误通道（code + dispatchStarted）──
 // Execute 覆写体必须自行捕获全部异常（含 C++/WinRT hresult_error）并调 FailAx(code,

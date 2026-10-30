@@ -3168,7 +3168,10 @@ export class ProductProjection {
         summary: payload.reason,
         detail: payload.input,
         freeText: true,
-        ...(payload.fullAccessSupported === true && !payload.origin && !payload.optionsPolicy
+        // R7（subagent-parent-inheritance 2026-10-30）：移除 origin 抑制——子来源弹窗也带
+        // fullAccessOption，选中后走根授权 + 广播（origin child 一并收敛）；optionsPolicy
+        // （托管选项策略）抑制保留。
+        ...(payload.fullAccessSupported === true && !payload.optionsPolicy
           ? {
               fullAccessOption: {
                 optionId: PERMISSION_FULL_ACCESS_OPTION_ID,

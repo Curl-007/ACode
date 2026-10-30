@@ -3,7 +3,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { mergeMcpServerStatusSnapshots } from "../src/store/mcpStoreStatusList.js";
-import type { ACodeMcpServer, ACodeMcpServerStatusSnapshot } from "@acode/shared";
+import type { ACodeMcpServer } from "@acode/shared";
+import { type V4McpServerStatusSnapshot } from "@acode/shared/acode-protocol-v4";
 
 const SERVER: ACodeMcpServer = {
   id: "srv",
@@ -21,17 +22,17 @@ const SUSPENSION = {
 } as const;
 
 function snapshot(
-  partial: Partial<ACodeMcpServerStatusSnapshot> & {
-    reconnectSuspension?: ACodeMcpServerStatusSnapshot["reconnectSuspension"];
+  partial: Partial<V4McpServerStatusSnapshot> & {
+    reconnectSuspension?: V4McpServerStatusSnapshot["reconnectSuspension"];
   },
-): ACodeMcpServerStatusSnapshot {
+): V4McpServerStatusSnapshot {
   return {
     status: "failed",
     transport: "stdio",
     toolCount: 0,
     updatedAt: "2026-10-18T12:00:00.000Z",
     ...partial,
-  } as ACodeMcpServerStatusSnapshot;
+  } as V4McpServerStatusSnapshot;
 }
 
 test("failed 快照带挂起：映射保留 reconnectSuspension 且 status=error", () => {

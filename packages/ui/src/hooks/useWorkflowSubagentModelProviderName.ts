@@ -8,7 +8,8 @@ import { selectWorkspaceACodeState, useACodeSessionStore } from "@/store/acodeSe
  * `modelProviderId` / `modelProviderName`，不必为一行字再开第二份 provider 目录。
  *
  * 只给**名字**，不给 id：`modelProviderName` 在没有 providerLabel 时会退回 providerId 本身
- * （见 acodeSessionSettingsToConfigOptions），那种「名字」在这里就当作没有——屏幕上绝不出现
+ * （权威：shared `acodeSessionSettingsToACodeConfigOptions`，acode-agent-model-state.ts:92
+ * 的 `model.providerLabel ?? model.ref.providerId`），那种「名字」在这里就当作没有——屏幕上绝不出现
  * providerId（团队套餐的它是一个 UUID）。
  */
 function workflowSubagentProviderNameLookup(

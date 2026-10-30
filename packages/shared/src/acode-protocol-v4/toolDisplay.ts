@@ -4,6 +4,7 @@
 import { z } from "zod";
 import { bashOutputDisplaySchema } from "../bash-output-display.js";
 import { timestampSchema } from "./core.js";
+import { toolMediaImageSchema, TOOL_MEDIA_MAX_IMAGES } from "./tool-media-ref.js";
 import { OFFICIAL_MCP_TOOL_ERROR_CODES } from "../official-mcp-tool-error.js";
 import { cuaRequestAccessStatusSchema } from "./cuaPermission.js";
 import { toolCallCreateWorkflowDisplaySchema } from "./create-workflow-display.js";
@@ -232,21 +233,11 @@ const toolCallNodeReplImageDisplaySchema = z
     kind: z.literal("node_repl_images"),
     // images 可选：CUA 的纯动作 cell 没有截图，但仍要携带 app 身份。kind 名保留不动，
     // 改名会让已持久化的 row 在这条 strict union 里整段校验失败。
-    images: z
-      .array(
-        z
-          .object({
-            base64: z
-              .string()
-              .min(1)
-              .max(200 * 1024),
-            mimeType: z.string().regex(/^image\/[a-z0-9.+-]+$/iu),
-          })
-          .strict(),
-      )
-      .min(1)
-      .max(2)
-      .optional(),
+    //
+    // U11：每张图片是 inline base64 形态（legacy）**或** ref 形态（受授权附件引用，字节按需读取）
+    // 二者之一，形态与上限都在 `./tool-media-ref.ts`——不在此处内联第二套 base64 上限，避免两处
+    // 漂移。min(1)/max(TOOL_MEDIA_MAX_IMAGES) 与原 `.min(1).max(2)` 逐字同界（不提高生产上限）。
+    images: z.array(toolMediaImageSchema).min(1).max(TOOL_MEDIA_MAX_IMAGES).optional(),
     app: toolCallNodeReplCuaAppDisplaySchema.optional(),
     truncated: z.boolean().optional(),
     source: z.literal("browser_turn_end").optional(),

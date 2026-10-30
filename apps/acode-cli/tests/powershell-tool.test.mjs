@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { realpathSync } from "node:fs";
 import { access, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -30,7 +31,57 @@ const { createBashProviderDescription } = await import(
   "../packages/core/src/tool/handlers/bash-prompt.ts"
 );
 
-const normalizeWin = (value) => value.toLowerCase().replaceAll("/", "\\");
+// Windows 8.3 短名归一（review §3 P3：PS-13/PS-14 8.3 类「实际未硬化」）。
+// 修复依据（先例 afdd7c79）：CI runner 的 %TEMP% 是短名形态（C:\Users\RUNNER~1\...），
+// 而工具从 PowerShell `(Get-Location).Path` 读回的 cwd 是长名——未归一时相等断言
+// 短名≠长名失配。afdd7c79 在 mkdtemp 前 realpath(tmpdir()) 展开短名；本文件把等价归一
+// 收敛到唯一的比较漏斗 normalizeWin 上，比较两侧都过一遍，断言严格度不变（仍是全串
+// assert.equal，不降级为子串、不 skip）。
+// 关键：必须用 realpathSync.**native**——非 native 的 realpathSync 只解析 symlink，
+// 不展开 8.3 短名（本机实测 ACODEV~2 仍返回 ACODEV~2）；.native 走 OS 的
+// GetFinalPathNameByHandle 才返回长名（ACODEV~2 → acodeverylongdirectoryname-xxxx）。
+// 对不存在的路径回退原值，保持 normalizeWin 仍是纯字符串函数、不因 ENOENT 抛错；
+// 真机比较点（PS-13/14/17）两侧路径在断言时都真实存在，故都走 canonical 分支。
+const normalizeWin = (value) => {
+  let canonical = value;
+  try {
+    canonical = realpathSync.native(value);
+  } catch {
+    canonical = value;
+  }
+  return canonical.toLowerCase().replaceAll("/", "\\");
+};
+
+// normalizeWin 的 8.3 短名归一守护（证明 FIX 1「correct under short names」而非仅本机 no-op）：
+// 用 cmd 的 `for %~sI` 读取一个长名目录的 8.3 别名，断言短名与长名经 normalizeWin 后完全相等。
+// 这条直接锁死「必须用 realpathSync.native」：若有人改回非 native 的 realpathSync，短名不再
+// 展开（本机实测 ACODEV~2 原样返回），下面的 assert.equal 立即转红。仅 win32 有意义（Linux CI
+// 无 cmd.exe）；该卷未启用 8.3 别名生成时 short===long，无从造对，直接放行（此机器不触发本类问题）。
+test(
+  "normalizeWin: 8.3 短名与长名归一为同一比较值（锁定 realpathSync.native 的短名展开）",
+  { skip: process.platform === "win32" ? false : "非 win32 无 cmd.exe/8.3 短名" },
+  async () => {
+    const { spawnSync } = await import("node:child_process");
+    const dir = await mkdtemp(join(tmpdir(), "acode-ps-83-longname-"));
+    try {
+      // windowsVerbatimArguments:true 让 cmd 原样收到 `for %~sI` 命令——否则 Node 的默认参数
+      // 转义会把内层双引号重引号成 `C:\"...\"`，`%~sI` 解析不到路径（本机曾实测到该失败）。
+      const probe = spawnSync(
+        process.env.ComSpec ?? "cmd.exe",
+        ["/c", `for %I in ("${dir}") do @echo %~sI`],
+        { encoding: "utf8", windowsVerbatimArguments: true },
+      );
+      assert.equal(probe.status, 0, `读取 8.3 短名失败: ${probe.stderr}`);
+      const shortName = (probe.stdout ?? "").trim();
+      if (shortName === dir) return; // 该卷未生成 8.3 别名，无从造对，放行。
+      assert.match(shortName, /~\d/u, "8.3 别名应含 ~N 段");
+      // 核心：短名与长名归一后全串相等（不降级为子串/前缀）。
+      assert.equal(normalizeWin(shortName), normalizeWin(dir));
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  },
+);
 
 // ── 纯函数面：命令包裹与 cwd 捕获（R3） ────────────────────────────────
 

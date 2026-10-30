@@ -1,12 +1,13 @@
 import { InfoIcon, TriangleAlertIcon } from "lucide-react";
-import type { ACodeMcpReconnectSuspension, McpServerFailureKind } from "@acode/shared";
+import type { ACodeMcpReconnectSuspension } from "@acode/shared";
+import { type V4McpServerFailureKind } from "@acode/shared/acode-protocol-v4";
 import { Button } from "@/components/ui/button.js";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover.js";
 import { useACodeIntl, type IntlInstance } from "@/i18n/IntlProvider.js";
 
 export function resolveMcpFailureMessageId(
-  failureKind: McpServerFailureKind | undefined,
-): `settings.mcp.failure.${McpServerFailureKind}` {
+  failureKind: V4McpServerFailureKind | undefined,
+): `settings.mcp.failure.${V4McpServerFailureKind}` {
   return `settings.mcp.failure.${failureKind ?? "connection_failed"}`;
 }
 
@@ -61,7 +62,7 @@ export function McpFailurePresentation({
   failureKind,
 }: {
   error?: string;
-  failureKind?: McpServerFailureKind;
+  failureKind?: V4McpServerFailureKind;
 }) {
   const { intl } = useACodeIntl();
   const message = intl.formatMessage({

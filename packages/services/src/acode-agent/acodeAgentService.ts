@@ -1,5 +1,4 @@
 import { requestPluginReferenceCatalog } from "#src/acode-agent/pluginReferenceCatalogRequest.js";
-import { sessionDebugSnapshotSchema } from "@acode/shared";
 /* oxlint-disable eslint(max-lines) -- ACode Protocol transport、通知 wiring 和 app-facing session 方法必须共享同一个 client/emitter 上下文。 */
 import { randomUUID } from "node:crypto";
 import { ensureIndependentPlanSupport } from "./independentPlanSupport.js";
@@ -14,103 +13,7 @@ import type {
 } from "@acode/provider";
 import { completeNewModelSelection } from "@acode/provider";
 import type { OffPeakClientConfig } from "#src/coding-plan-subscription/codingPlanSubscription.js";
-import {
-  ACODE_SESSION_RUNTIME_PREFERENCES_REQUEST_TIMEOUT_MS,
-  resolveWorkspaceKey,
-  type TraceId,
-  ACODE_AGENT_PROVIDER,
-  ACODE_AGENT_PROVIDER_NOT_READY_CODE,
-  ACODE_AGENT_PROVIDER_NOT_READY_REASON,
-  ACODE_MODEL_REASONING_SEPARATOR,
-  isRemoteWorkspaceIdentity,
-  ACODE_PROTOCOL_NAME,
-  ACODE_PROTOCOL_VERSION,
-  acodeMcpListResultSchema,
-  acodePermissionRequestParamsSchema,
-  acodeBrowserListParamsSchema,
-  acodeBrowserExecuteParamsSchema,
-  acodePluginsConfigureResultSchema,
-  acodePluginsInstallResultSchema,
-  acodePluginsListResultSchema,
-  acodePluginsMarketplaceMutationResultSchema,
-  acodePluginsOverviewResultSchema,
-  acodeProcessChildProcessesResultSchema,
-  type ACodeProcessChildProcess,
-  acodeSkillsReferenceCatalogResultSchema,
-  acodeWorkflowsDeleteResultSchema,
-  acodeWorkflowsGetResultSchema,
-  acodeWorkflowsListResultSchema,
-  acodeWorkflowsMoveResultSchema,
-  acodeWorkflowsRunsResultSchema,
-  acodeWorkflowsUpdateMetaResultSchema,
-  acodePluginsResolveSuggestedReferenceResultSchema,
-  acodePluginOperationProgressNotificationSchema,
-  acodePluginsRestoreBuiltinResultSchema,
-  acodePluginsSetEnabledResultSchema,
-  acodePluginsCancelOperationResultSchema,
-  acodePluginsUninstallResultSchema,
-  acodePluginsValidateResultSchema,
-  acodePluginsDescribeResultSchema,
-  acodeAutomationCheckTaskBindingParamsSchema,
-  acodeAutomationCreateParamsSchema,
-  acodeAutomationDeleteParamsSchema,
-  acodeAutomationListParamsSchema,
-  acodeAutomationUpdateParamsSchema,
-  acodeOffPeakCreateParamsSchema,
-  acodeOffPeakListParamsSchema,
-  OFF_PEAK_PROVIDER_IDS,
-  acodeComputerUseOperationEventSchema,
-  acodeProviderRuntimeHeadersCancelledSchema,
-  acodeProviderRuntimeHeadersRequestParamsSchema,
-  acodeProviderTestModelConnectivityResultSchema,
-  acodeOfficialMcpAuthHeadersRequestParamsSchema,
-  summarizeOfficialMcpIdentityHeaders,
-  acodeProtocolEmptyResultSchema,
-  acodeProtocolMethods,
-  acodeProtocolNotifications,
-  acodeMcpTelemetryEventSchema,
-  acodeMcpResourceSamplesSchema,
-  acodeToolExecResourceSchema,
-  acodeProcessResourceSampleSchema,
-  acodeSessionCloseResultSchema,
-  acodeSessionCompactResultSchema,
-  acodeSessionEventsResultSchema,
-  acodeSessionGoalResultSchema,
-  acodeSessionListResultSchema,
-  acodeSessionSubagentsResultSchema,
-  acodeSessionMessagesResultSchema,
-  acodeSessionEventSchema,
-  acodeSessionSendResultSchema,
-  acodeSessionRequestRuntimePreferencesParamsSchema,
-  acodeSessionRuntimePreferencesResultSchema,
-  acodeSessionStateSnapshotSchema,
-  acodeSessionSubscribeResultSchema,
-  acodeStateUpdatedNotificationSchema,
-  acodeUserInputRequestParamsSchema,
-  acodeWorkspacePresentationSchema,
-  acodeWorkspaceCancelGenerateTextResultSchema,
-  acodeWorkspaceGenerateTextResultSchema,
-  acodeWorkspaceHookTrustGrantResultSchema,
-  acodeWorkspaceUpdateInteractionPreferencesResultSchema,
-  acodeWorkspaceUpdateModelIoPreferencesResultSchema,
-  acodeProviderUpdateAccountConfigResultSchema,
-  type ACodeSessionStateSnapshot,
-  type ACodeAutomation,
-  type ACodeAutomationRun,
-  acodeWorkspaceUpdateOffPeakToolPolicyResultSchema,
-  acodeWorkspaceUpdateDynamicWorkflowPolicyResultSchema,
-  type DynamicWorkflowClientConfig,
-  type ScriptWorkflowMode,
-  isScriptWorkflowModeEnabled,
-  type ToolSearchAppMode,
-  type AgentLaneResourceSample,
-  type ProcessResourceCliLane,
-  type ACodeMcpTelemetryEvent,
-  type ACodeMcpResourceSample,
-  type ACodeToolExecResource,
-  type ACodePluginOperationProgressNotification,
-  type ACodeTaskMode,
-} from "@acode/shared";
+import { ACODE_SESSION_RUNTIME_PREFERENCES_REQUEST_TIMEOUT_MS, resolveWorkspaceKey, type TraceId, ACODE_AGENT_PROVIDER, ACODE_AGENT_PROVIDER_NOT_READY_CODE, ACODE_AGENT_PROVIDER_NOT_READY_REASON, ACODE_MODEL_REASONING_SEPARATOR, isRemoteWorkspaceIdentity, ACODE_PROTOCOL_NAME, ACODE_PROTOCOL_VERSION, acodePluginOperationProgressNotificationSchema, acodePluginsCancelOperationResultSchema, OFF_PEAK_PROVIDER_IDS, summarizeOfficialMcpIdentityHeaders, acodeProtocolEmptyResultSchema, LEGACY_SURVIVOR_METHODS, LEGACY_NOTIFICATIONS, acodeMcpTelemetryEventSchema, acodeMcpResourceSamplesSchema, acodeToolExecResourceSchema, acodeProcessResourceSampleSchema, acodeSessionEventsResultSchema, acodeSessionSubagentsResultSchema, acodeSessionEventSchema, acodeSessionSendResultSchema, acodeSessionRuntimePreferencesResultSchema, acodeSessionStateSnapshotSchema, acodeSessionSubscribeResultSchema, acodeStateUpdatedNotificationSchema, type ACodeSessionStateSnapshot, type ACodeSessionGoal, type ACodeAutomation, type ACodeAutomationRun, type DynamicWorkflowClientConfig, type ScriptWorkflowMode, isScriptWorkflowModeEnabled, type ToolSearchAppMode, type AgentLaneResourceSample, type ProcessResourceCliLane, type ACodeMcpTelemetryEvent, type ACodeMcpResourceSample, type ACodeToolExecResource, type ACodePluginOperationProgressNotification, type ACodeTaskMode } from "@acode/shared";
 import { createServiceLogger } from "#src/logger/serviceLogger.js";
 import { createOfficialMcpIssuanceAudit } from "#src/official-mcp/officialMcpIssuanceAudit.js";
 import type {
@@ -122,18 +25,7 @@ import {
   mergeOffPeakMutationToolDenylist,
 } from "#src/acode-agent/automationToolPolicy.js";
 import { ACODE_AGENT_RUNTIME_UNAVAILABLE_CODE } from "./acodeAgent.js";
-import type {
-  ACodeProtocolRequestId,
-  ModelSelection,
-  ACodeProviderRuntimeHeadersRequestParams,
-  ACodeSessionEvent,
-  ACodeSessionRuntimePreferencesScope,
-  ACodeSavedWorkflowScope,
-  ACodeStateUpdatedNotification,
-  ACodeWorkspacePresentation,
-  ACodeWorkspaceRef,
-  ACodeSessionRuntimePreferencesResult,
-} from "@acode/shared";
+import type { ACodeProtocolRequestId, ModelSelection, ACodeMessageWithParts, ACodeSessionEvent, ACodeSessionRuntimePreferencesScope, ACodeStateUpdatedNotification, ACodeWorkspaceRef, ACodeSessionRuntimePreferencesResult } from "@acode/shared";
 import type {
   IACodeAgentService,
   ACodeAgentBackgroundBashOutputParams,
@@ -228,91 +120,39 @@ import type {
   ACodeAgentSessionsIndexSubscribeParams,
   ACodeAgentWorkspaceConfigSubscribeParams,
 } from "./acodeAgent.js";
-import {
-  backgroundBashOutputResultSchema,
-  v4BackgroundBashOutputParamsSchema,
-  V4_WIRE_PROTOCOL_VERSION,
-  PROTOCOL_V4_LIMITS,
-  clientHelloSchema,
-  commandAckSchema,
-  commandPayloadSchemas,
-  commandsQueryParamsSchema,
-  commandsQueryResultSchema,
-  conversationTopic,
-  conversationTopicWireCandidateSchema,
-  conversationTelemetryFactSchema,
-  cuaPermissionObservationSchema,
-  v4NetworkCaptureRecordsNotificationSchema,
-  v4NetworkCaptureSetEnabledParamsSchema,
-  v4NetworkCaptureSetEnabledResultSchema,
-  sessionsIndexTopic,
-  sessionsIndexTopicWireCandidateSchema,
-  MAX_LEGACY_TASK_IDS_PER_SUBSCRIBE,
-  V4_METHODS,
-  V4_NOTIFICATIONS,
-  v4AttachmentAbortResultSchema,
-  v4AttachmentBeginResultSchema,
-  v4AttachmentChunkResultSchema,
-  v4AttachmentCommitResultSchema,
-  v4AttachmentPreviewSourceParamsSchema,
-  v4AttachmentPreviewSourceResultSchema,
-  v4AttachmentReadParamsSchema,
-  v4AttachmentReadResultSchema,
-  v4ConversationAttachmentReadParamsSchema,
-  v4ConversationAttachmentReadResultSchema,
-  v4ConversationAttachmentStatParamsSchema,
-  v4ConversationAttachmentStatResultSchema,
-  v4ConnectionFlowResultSchema,
-  v4ConversationFileChangesResultSchema,
-  v4ConversationFileRewindPreviewResultSchema,
-  v4ConversationRowsRangeResultSchema,
-  v4ConversationPlansResultSchema,
-  v4ConversationWorkflowRunEventsResultSchema,
-  v4ConversationWorkflowRunArtifactDataResultSchema,
-  v4ConversationWorkflowRunArtifactReadResultSchema,
-  v4ConversationVisualizationReadResultSchema,
-  v4ConversationWorkflowRunArtifactsResultSchema,
-  v4ConversationWorkflowRunNodeResultResultSchema,
-  v4ConversationWorkflowRunWorkspaceResultSchema,
-  v4ConversationWorkflowRunsResultSchema,
-  v4ConversationResyncResultSchema,
-  v4ConversationSubscribeResultSchema,
-  v4ConversationUsageResultSchema,
-  v4SessionsIndexSubscribeResultSchema,
-  v4UsageStatsResultSchema,
-  v4WorkspaceConfigSubscribeResultSchema,
-  workspaceConfigTopic,
-  workspaceConfigTopicWireCandidateSchema,
-  utf8JsonByteLength,
-  ACODE_ATTACHMENT_FAULT_CODES,
-  ACodeAttachmentFaultError,
-  readPendingInteractionHints,
-  type CommandAck,
-  type ConversationTopicWireCandidate,
-  type ConversationTelemetryFact,
-  type SessionsIndexTopicWireCandidate,
-  type WorkspaceConfigTopicWireCandidate,
-  type CommandEnvelope,
-  type V4NetworkCaptureRecordsNotification,
-} from "@acode/shared/acode-protocol-v4";
+import { backgroundBashOutputResultSchema, v4BackgroundBashOutputParamsSchema, V4_WIRE_PROTOCOL_VERSION, PROTOCOL_V4_LIMITS, clientHelloSchema, commandAckSchema, commandPayloadSchemas, commandsQueryParamsSchema, commandsQueryResultSchema, conversationTopic, conversationTopicWireCandidateSchema, conversationTelemetryFactSchema, cuaPermissionObservationSchema, v4NetworkCaptureRecordsNotificationSchema, v4NetworkCaptureSetEnabledParamsSchema, v4NetworkCaptureSetEnabledResultSchema, V4_OVERNIGHT_COMPLETION_METHOD, v4OvernightCompletionNotificationSchema, sessionsIndexTopic, sessionsIndexTopicWireCandidateSchema, MAX_LEGACY_TASK_IDS_PER_SUBSCRIBE, V4_METHODS, V4_NOTIFICATIONS, v4AttachmentAbortResultSchema, v4AttachmentBeginResultSchema, v4AttachmentChunkResultSchema, v4AttachmentCommitResultSchema, v4AttachmentPreviewSourceParamsSchema, v4AttachmentPreviewSourceResultSchema, v4AttachmentReadParamsSchema, v4AttachmentReadResultSchema, v4ConversationAttachmentReadParamsSchema, v4ConversationAttachmentReadResultSchema, v4ConversationAttachmentStatParamsSchema, v4ConversationAttachmentStatResultSchema, v4ConnectionFlowResultSchema, v4ConversationFileChangesResultSchema, v4ConversationFileRewindPreviewResultSchema, v4ConversationRowsRangeResultSchema, v4ConversationPlansResultSchema, v4ConversationWorkflowRunEventsResultSchema, v4ConversationWorkflowRunArtifactDataResultSchema, v4ConversationWorkflowRunArtifactReadResultSchema, v4ConversationVisualizationReadResultSchema, v4ConversationWorkflowRunArtifactsResultSchema, v4ConversationWorkflowRunNodeResultResultSchema, v4ConversationWorkflowRunWorkspaceResultSchema, v4ConversationWorkflowRunsResultSchema, v4ConversationResyncResultSchema, v4ConversationSubscribeResultSchema, v4ConversationUsageResultSchema, v4McpListResultSchema, v4ProcessChildProcessesResultSchema, v4ProviderTestModelConnectivityResultSchema, v4ProviderUpdateAccountConfigResultSchema, v4WorkspaceCancelGenerateTextResultSchema, v4WorkspaceGenerateTextResultSchema, v4WorkspaceHookTrustGrantResultSchema, v4WorkspacePresentationSchema, v4WorkspaceUpdateDynamicWorkflowPolicyResultSchema, v4WorkspaceUpdateInteractionPreferencesResultSchema, v4WorkspaceUpdateModelIoPreferencesResultSchema, v4WorkspaceUpdateOffPeakToolPolicyResultSchema, type V4ProcessChildProcess, type V4WorkspacePresentation, v4PluginsConfigureResultSchema, v4PluginsDescribeResultSchema, v4PluginsInstallResultSchema, v4PluginsListResultSchema, v4PluginsMarketplaceMutationResultSchema, v4PluginsOverviewResultSchema, v4PluginsResolveSuggestedReferenceResultSchema, v4PluginsRestoreBuiltinResultSchema, v4PluginsSetEnabledResultSchema, v4PluginsUninstallResultSchema, v4PluginsValidateResultSchema, v4SessionsIndexSubscribeResultSchema, v4SessionHeaderMetaResultSchema, v4SkillsReferenceCatalogResultSchema, v4UsageStatsResultSchema, v4WorkflowsDeleteResultSchema, v4WorkflowsGetResultSchema, v4WorkflowsListResultSchema, v4WorkflowsMoveResultSchema, v4WorkflowsRunsResultSchema, v4WorkflowsUpdateMetaResultSchema, v4WorkspaceConfigSubscribeResultSchema, workspaceConfigTopic, workspaceConfigTopicWireCandidateSchema, utf8JsonByteLength, ACODE_ATTACHMENT_FAULT_CODES, ACodeAttachmentFaultError, readPendingInteractionHints, type CommandAck, type CommandPayloadMap, type ConversationTopicWireCandidate, type ConversationTelemetryFact, type SessionsIndexTopicWireCandidate, type WorkspaceConfigTopicWireCandidate, type CommandEnvelope, type V4NetworkCaptureRecordsNotification, type V4OvernightCompletionNotification, v4SessionGoalQueryResultSchema, v4SessionDebugResultSchema, v4SessionsListResultSchema, v4SessionRuntimePreferencesResultSchema, v4InteractionRequestPermissionParamsSchema, v4InteractionRequestUserInputParamsSchema, v4InteractionRequestProviderRuntimeHeadersParamsSchema, v4InteractionRequestOfficialMcpAuthHeadersParamsSchema, v4InteractionBrowserListParamsSchema, v4InteractionBrowserExecuteParamsSchema, v4CuaOperationEventSchema, v4ProviderRuntimeHeadersCancelledSchema, v4AutomationCreateParamsSchema, v4AutomationUpdateParamsSchema, v4AutomationListParamsSchema, v4AutomationCheckTaskBindingParamsSchema, v4AutomationDeleteParamsSchema, v4OffPeakCreateParamsSchema, v4OffPeakListParamsSchema, type V4AutomationCheckTaskBindingParams, type V4AutomationCreateParams, type V4AutomationDeleteParams, type V4AutomationUpdateParams, type V4OffPeakCreateParams, type V4InteractionBrowserExecuteParams, type V4InteractionBrowserListParams, type V4CuaOperationEvent, type V4InteractionRequestOfficialMcpAuthHeadersParams, type V4InteractionRequestPermissionParams, type V4InteractionRequestProviderRuntimeHeadersParams, type V4InteractionRequestUserInputParams, type V4SavedWorkflowScope } from "@acode/shared/acode-protocol-v4";
 import {
   readTrustedACodeAgentV4Connection,
   readTrustedACodeAgentV4UnsubscribeRoute,
+  type ACodeAgentV4ClientMode,
   type ACodeAgentV4ConnectionContext,
 } from "./acodeAgentConnectionScope.js";
-import { createBackgroundSessionEventCoalescer } from "#src/acode-agent/acodeSessionEventCoalescer.js";
-import { AutomationService } from "#src/session/automationService.js";
 import {
+  resolveTrustedCommandClientMode,
+  stampCreateSessionClientMode,
+} from "./acodeV4CreateSessionClientMode.js";
+import {
+  assertV4CommandAckOk,
+  createHostCommandEnvelope,
+  sendHostCasCommandV4,
+} from "./acodeV4HostCommand.js";
+import { createBackgroundSessionEventCoalescer } from "#src/acode-agent/acodeSessionEventCoalescer.js";
+import {
+  AutomationService,
   AutomationManualTriggerRejectedError,
   type AutomationManualRunTriggerContext,
-} from "#src/session/automationManualTrigger.js";
+  AutomationRepo,
+} from "#src/session/contract.js";
 import type { AutomationManualTriggerOrigin } from "@acode/shared";
-import { AutomationRepo } from "#src/session/automationRepo.js";
+// TaskIndexRepo 是 tasks-index 表的唯一写入所有者，构造边刻意不走消费契约：
+// task-index-writers 守护把任何文本引用都当写入面评审（specs/task-index-write-ownership.md），
+// 本文件是守护白名单登记的写入方，故直引实现文件并由 internalEdgeAllowlist 登记。
 import { TaskIndexRepo } from "#src/session/taskIndexRepo.js";
-import { ACodeAgentMcpStatusModeUnsupportedError } from "#src/acode-agent/acodeAgentErrors.js";
+// M2-6：ACodeAgentMcpStatusModeUnsupportedError 不再由本文件抛出（v4/mcp/list 无
+// legacy 兼容重试链）；类本体与 index.ts 导出保留——UI 仍 import 该符号（禁改面）。
 import { ACodeAgentProcessManager } from "./acodeAgentProcessManager.js";
 import type { ACodeAgentProcessManagerOptions } from "./acodeAgentProcessManager.js";
-import type { IOffPeakTaskService } from "#src/session/offPeakTask.js";
+import type { IOffPeakTaskService } from "#src/session/contract.js";
 import {
   ACodeProtocolRequestTimeoutError,
   type ACodeProtocolClient,
@@ -349,31 +189,22 @@ interface PendingPermissionRequest {
 }
 
 interface PendingProviderRuntimeHeadersRequest extends PendingPermissionRequest {
-  request: ACodeProviderRuntimeHeadersRequestParams;
+  request: V4InteractionRequestProviderRuntimeHeadersParams;
   responding?: boolean;
 }
 
-interface PendingSessionRuntimePreferencesRequest extends PendingPermissionRequest {
+interface PendingSessionRuntimePreferencesRequest {
+  // M2-3（specs/m2-3-session-readwrite.md §2.8）：偏好供给改为 host→CLI v4 push 后，
+  // pending 不再承载 CLI 请求的 respond 通道（protocolRequestId 消亡），改为内部
+  // await 的 promise 结算回调；client 仅保留用于断连时快速失败在途解析。
+  client: ACodeProtocolClient;
   request: ACodeAgentSessionRuntimePreferencesRequest;
   timeout: ReturnType<typeof setTimeout>;
   workspaceKey: string;
+  resolve: (preferences: ACodeSessionRuntimePreferencesResult) => void;
+  reject: (error: Error) => void;
 }
 
-type SessionCreateCompatField =
-  | "persistence"
-  | "thoughtLevel"
-  | "mcpServers"
-  | "toolAllowlist"
-  | "toolDenylist"
-  | "offPeakToolEnabled"
-  | "dynamicWorkflowEnabled";
-type SessionResumeCompatField =
-  | "thoughtLevel"
-  | "mcpServers"
-  | "toolAllowlist"
-  | "toolDenylist"
-  | "offPeakToolEnabled"
-  | "dynamicWorkflowEnabled";
 type SessionSendCompatField =
   | "browserAmbientContext"
   | "automationId"
@@ -382,29 +213,6 @@ type SessionSendCompatField =
   | "botDeliveryTarget"
   | "toolDenylist";
 
-const SESSION_CREATE_OPTIONAL_COMPAT_FIELDS = new Set<SessionCreateCompatField>([
-  "persistence",
-  "thoughtLevel",
-  "mcpServers",
-  // CUA 工具隔离新增：buildSessionCreateParams 会带 toolAllowlist/toolDenylist。若旧 app-server
-  // 的 .strict() schema 不认，需可降级重试而不是整个 createSession 硬失败。
-  "toolAllowlist",
-  "toolDenylist",
-  // Off-Peak 工具面 flag 同为可降级字段；旧 app-server 不认时省略重试（工具随之不注册，fail-closed）。
-  "offPeakToolEnabled",
-  // 动态工作流灰度 flag 同理：旧 CLI 不认时
-  // 省略重试，工作流工具簇随之不注册，绝不让整个 create 硬失败。
-  "dynamicWorkflowEnabled",
-]);
-const SESSION_RESUME_OPTIONAL_COMPAT_FIELDS = new Set<SessionResumeCompatField>([
-  "thoughtLevel",
-  "mcpServers",
-  // 冷恢复也带工具面约束；旧 app-server 不认时降级重试而不是硬失败（与 create 一致）。
-  "toolAllowlist",
-  "toolDenylist",
-  "offPeakToolEnabled",
-  "dynamicWorkflowEnabled",
-]);
 const SESSION_SEND_OPTIONAL_COMPAT_FIELDS = new Set<SessionSendCompatField>([
   "browserAmbientContext",
   "automationId",
@@ -467,13 +275,13 @@ function buildWorkspaceRef(params: ACodeAgentWorkspaceTarget): ACodeWorkspaceRef
 // 全局组动作不带，交给 services 自选载体。
 function savedWorkflowTargetHasWorkspace(
   params: ACodeAgentSavedWorkflowTarget,
-): params is ACodeAgentWorkspaceTarget & { scope?: ACodeSavedWorkflowScope } {
+): params is ACodeAgentWorkspaceTarget & { scope?: V4SavedWorkflowScope } {
   return typeof (params as Partial<ACodeAgentWorkspaceTarget>).workspacePath === "string";
 }
 
 // 只在 `scope` 有定义时下推到 RPC params：不给 scope 的项目档保持与今天逐字一致的线上形状。
 function savedWorkflowScopeParam(params: ACodeAgentSavedWorkflowTarget): {
-  scope?: ACodeSavedWorkflowScope;
+  scope?: V4SavedWorkflowScope;
 } {
   return params.scope === undefined ? {} : { scope: params.scope };
 }
@@ -563,36 +371,6 @@ function getUnrecognizedTopLevelKeys(error: unknown): string[] {
   return [...keys];
 }
 
-function getSessionCreateCompatFields(error: unknown): SessionCreateCompatField[] {
-  const keys = getUnrecognizedTopLevelKeys(error);
-  if (keys.length === 0) {
-    return [];
-  }
-  if (
-    !keys.every((key): key is SessionCreateCompatField =>
-      SESSION_CREATE_OPTIONAL_COMPAT_FIELDS.has(key as SessionCreateCompatField),
-    )
-  ) {
-    return [];
-  }
-  return keys;
-}
-
-function getSessionResumeCompatFields(error: unknown): SessionResumeCompatField[] {
-  const keys = getUnrecognizedTopLevelKeys(error);
-  if (keys.length === 0) {
-    return [];
-  }
-  if (
-    !keys.every((key): key is SessionResumeCompatField =>
-      SESSION_RESUME_OPTIONAL_COMPAT_FIELDS.has(key as SessionResumeCompatField),
-    )
-  ) {
-    return [];
-  }
-  return keys;
-}
-
 function getSessionSendCompatFields(error: unknown): SessionSendCompatField[] {
   const keys = getUnrecognizedTopLevelKeys(error);
   if (keys.length === 0) {
@@ -621,95 +399,6 @@ function assertV4AttachmentNdjsonEnvelope(method: string, params: unknown): void
   if (bytes > PROTOCOL_V4_LIMITS.maxFrameBytes) {
     throw new Error("proto.frameTooLarge");
   }
-}
-
-function buildSessionCreateParams(
-  params: ACodeAgentCreateSessionParams & {
-    offPeakToolEnabled?: boolean;
-    dynamicWorkflowEnabled?: boolean;
-  },
-  omittedFields: ReadonlySet<SessionCreateCompatField> = new Set(),
-) {
-  return {
-    sessionId: params.sessionId,
-    workspace: buildWorkspaceRef(params),
-    parentSessionId: params.parentSessionId,
-    mode: params.mode,
-    model: params.model,
-    ...(params.persistence !== undefined && !omittedFields.has("persistence")
-      ? { persistence: params.persistence }
-      : {}),
-    ...(params.thoughtLevel !== undefined && !omittedFields.has("thoughtLevel")
-      ? { thoughtLevel: params.thoughtLevel }
-      : {}),
-    ...(params.titleGenerationEnabled !== undefined
-      ? { titleGenerationEnabled: params.titleGenerationEnabled }
-      : {}),
-    // desktop-continuous 首发/恢复走 session service，不经过 legacy task adapter。
-    // 之前这里没有把 UI 已解析的 MCP 带进 strict protocol params，runtimeConfig 只能看到空 MCP。
-    // MCP 是 runtime 启动期配置，必须在 create/resume 请求边界显式传递，后续 sendPrompt 无法补上。
-    ...(params.mcpServers !== undefined && !omittedFields.has("mcpServers")
-      ? { mcpServers: params.mcpServers }
-      : {}),
-    // CUA 工具隔离字段是可降级的：旧 app-server 的 .strict() schema 若不认，兼容重试会把它们放进
-    // omittedFields 省略后重试（而不是硬失败）。故这里必须同样受 omittedFields 门控。
-    ...(params.toolAllowlist !== undefined && !omittedFields.has("toolAllowlist")
-      ? { toolAllowlist: params.toolAllowlist }
-      : {}),
-    ...(params.toolDenylist !== undefined && !omittedFields.has("toolDenylist")
-      ? { toolDenylist: params.toolDenylist }
-      : {}),
-    // importedHistory 是导入历史的完整性边界，不能像 thoughtLevel/persistence
-    // 那样在旧协议兼容重试里省略，否则会创建一个可切模型但没有历史内容的空 session。
-    ...(params.importedHistory !== undefined ? { importedHistory: params.importedHistory } : {}),
-    // 只在灰度命中时下发 true（缺省不发字段）；旧 CLI strict schema 不认时经 compat 省略。
-    ...(params.offPeakToolEnabled === true && !omittedFields.has("offPeakToolEnabled")
-      ? { offPeakToolEnabled: true }
-      : {}),
-    // 动态工作流灰度：同 Off-Peak 的下发形状，关闭时不写字段——CLI 的缺省就是不注册
-    // 那一批工作流工具。这里刻意不写具体数量：名单的唯一所有者是 core 的
-    // GATED_WORKFLOW_TOOL_NAMES（dwf 十个 + 脚本工作流的 RunWorkflow），写死数字的注释
-    // 已经错过一次（曾写「九个」而当时是十个），第二次不会有人再发现。
-    ...(params.dynamicWorkflowEnabled === true && !omittedFields.has("dynamicWorkflowEnabled")
-      ? { dynamicWorkflowEnabled: true }
-      : {}),
-  };
-}
-
-function buildSessionResumeParams(
-  params: ACodeAgentResumeSessionParams & {
-    offPeakToolEnabled?: boolean;
-    dynamicWorkflowEnabled?: boolean;
-  },
-  omittedFields: ReadonlySet<SessionResumeCompatField> = new Set(),
-) {
-  return {
-    sessionId: params.sessionId,
-    workspace: buildWorkspaceRef(params),
-    ...(params.thoughtLevel !== undefined && !omittedFields.has("thoughtLevel")
-      ? { thoughtLevel: params.thoughtLevel }
-      : {}),
-    // 冷恢复 session 时 app-server 可能重新创建 runtime；MCP 同样需要随 resume 请求下发。
-    ...(params.mcpServers !== undefined && !omittedFields.has("mcpServers")
-      ? { mcpServers: params.mcpServers }
-      : {}),
-    // 工具面约束必须和 create 路径一致随 resume 下发，否则冷恢复重建 runtime 后会丢失 allow/deny
-    // 隔离（CUA 会话会重新可见 Bash 等被禁工具）。旧 app-server 不认时经 omittedFields 降级。
-    ...(params.toolAllowlist !== undefined && !omittedFields.has("toolAllowlist")
-      ? { toolAllowlist: params.toolAllowlist }
-      : {}),
-    ...(params.toolDenylist !== undefined && !omittedFields.has("toolDenylist")
-      ? { toolDenylist: params.toolDenylist }
-      : {}),
-    // resume 不带该 flag 会让冷恢复丢 Off-Peak 工具面（与 toolAllowlist 同因）。
-    ...(params.offPeakToolEnabled === true && !omittedFields.has("offPeakToolEnabled")
-      ? { offPeakToolEnabled: true }
-      : {}),
-    // 同因：resume 不带该 flag 会让冷恢复丢掉工作流工具簇。
-    ...(params.dynamicWorkflowEnabled === true && !omittedFields.has("dynamicWorkflowEnabled")
-      ? { dynamicWorkflowEnabled: true }
-      : {}),
-  };
 }
 
 function buildSessionSendParams(
@@ -748,13 +437,25 @@ function buildSessionSendParams(
   };
 }
 
-function buildSessionCompactParams(params: ACodeAgentCompactParams) {
-  return {
-    sessionId: params.sessionId,
-    inputId: params.inputId,
-    instructions: params.instructions,
-    expectedRevision: params.expectedRevision,
-  };
+// ── M2-2：legacy session/goal 回执文案的逐字等价物（旧 CLI op 已删，facade 承担格式化）──
+// 字符串与旧 server-operations.ts formatGoalSummary/formatGoalChanged 一致。wire goal
+// （acodeSessionGoalSchema）的 tokensUsed/tokenBudget/timeUsedSeconds 恒定义，故
+// Usage/Time 两行恒在（旧 ProtocolGoalTarget 可选字段经 mapSessionGoal 补 0 后同形）。
+const GOAL_PLAN_CONTINUATION_SKIPPED_MESSAGE = "Plan mode 下已记录 goal，但不会自动继续。";
+
+function formatGoalChangedText(title: string, target: ACodeSessionGoal): string {
+  const lines = [title, `Objective: ${target.objective}`];
+  const budget = target.tokenBudget === null ? "none" : target.tokenBudget.toString();
+  lines.push(`Usage: ${target.tokensUsed} tokens / ${budget}`);
+  lines.push(`Time: ${target.timeUsedSeconds} seconds`);
+  return lines.join("\n");
+}
+
+function formatGoalSummaryText(target: ACodeSessionGoal | null): string {
+  if (!target) {
+    return "No goal is set. Use /goal <objective> to set one.";
+  }
+  return formatGoalChangedText(`Goal ${target.status}`, target);
 }
 
 function formatModelSelectionForLog(ref: ModelSelection | undefined): string | null {
@@ -1180,6 +881,10 @@ export function createACodeAgentService(
   // v4 networkCaptureRecords（agent→host，仅 live）的进程级 fan-out；
   // 消费者是 desktop main 的 sink（资源管理器 network tab），不进任何 session/conversation 状态。
   const networkCaptureRecordsEmitter = new Emitter<V4NetworkCaptureRecordsNotification>();
+  // v4 overnightCompletion（agent→host，仅 live）的进程级 fan-out（specs/overnight-completion-notify.md §7）；
+  // 消费者是 desktop host 的转发器，它原样镜像成 HostResponseTypes.OvernightCompletionNotify 给 main。
+  // 与 networkCaptureRecords 同款：不进任何 session/conversation 状态，不落 host、不缓存、不去重。
+  const overnightCompletionEmitter = new Emitter<V4OvernightCompletionNotification>();
   // sessions-index 帧 fan-out：与 conversation 同一 conversationFrame 通知，按 topic 前缀分流到此 emitter。
   const sessionsIndexFrameEmitters = new Map<string, Emitter<SessionsIndexTopicWireCandidate>>();
   // workspace-config 帧 fan-out：配置目录活性（task-index syncer 消费），同一通知按前缀分流。
@@ -1288,6 +993,8 @@ export function createACodeAgentService(
       if (pending.client === client) {
         clearTimeout(pending.timeout);
         pendingSessionRuntimePreferences.delete(key);
+        // M2-3：client 断连时在途解析快速失败（push 目标已死），push 帮助器捕获后跳过。
+        pending.reject(new Error("ACode Protocol client disconnected"));
       }
     }
     for (const disposable of clientDisposables.get(client) ?? []) {
@@ -1321,7 +1028,7 @@ export function createACodeAgentService(
   });
 
   async function resolveAccountRequestAuth(
-    request: ACodeProviderRuntimeHeadersRequestParams,
+    request: V4InteractionRequestProviderRuntimeHeadersParams,
   ): Promise<AccountRequestAuthMaterial | undefined> {
     if (!request.accountAccess || !accountRequestAuthService) {
       return undefined;
@@ -1406,22 +1113,122 @@ export function createACodeAgentService(
       timeoutMs: ACODE_SESSION_RUNTIME_PREFERENCES_REQUEST_TIMEOUT_MS,
       workspaceKey: pending.workspaceKey,
     });
-    void pending.client
-      .respondError(pending.protocolRequestId, {
-        code: -32022,
-        message: "Session runtime preferences request timed out",
-        data: {
-          timeoutMs: ACODE_SESSION_RUNTIME_PREFERENCES_REQUEST_TIMEOUT_MS,
-        },
-      })
-      .catch((error: unknown) => {
-        logger.debug(undefined, "运行时偏好超时响应发送失败", {
-          error: error instanceof Error ? error.message : String(error),
-          requestId,
-          scope: pending.request.scope,
-          sessionId: pending.request.sessionId,
-        });
+    // M2-3：pending 不再承载 CLI respond 通道；超时改为 reject 内部 await，
+    // pushSessionRuntimePreferences 捕获后跳过本次推送（CLI 沿用上次推送或缺省，
+    // 与 legacy CLI 侧超时落缺省的值结论一致）。
+    pending.reject(new Error("Session runtime preferences request timed out"));
+  }
+
+  /**
+   * M2-3（specs/m2-3-session-readwrite.md §2.8）：外部权威（desktop-attached remote）的
+   * 偏好经既有 emitter/pending 桥逐 scope 取回。sessionId 仅作诊断（desktop 桥只进日志）；
+   * 物化时机外的连接预热推送没有会话，用占位串（schema 要求非空 string）。
+   */
+  function requestExternalSessionRuntimePreferences(
+    client: ACodeProtocolClient,
+    workspace: ACodeAgentWorkspaceTarget,
+    scope: ACodeSessionRuntimePreferencesScope,
+    sessionId?: string,
+  ): Promise<ACodeSessionRuntimePreferencesResult> {
+    const requestId = randomUUID();
+    const dynamicRequest: ACodeAgentSessionRuntimePreferencesRequest = {
+      sessionId: (sessionId ??
+        "runtime-preferences-sync") as ACodeAgentSessionRuntimePreferencesRequest["sessionId"],
+      scope,
+      requestId,
+    };
+    const { promise, resolve, reject } =
+      Promise.withResolvers<ACodeSessionRuntimePreferencesResult>();
+    pendingSessionRuntimePreferences.set(requestId, {
+      client,
+      request: dynamicRequest,
+      timeout: setTimeout(
+        () => expireSessionRuntimePreferencesRequest(requestId),
+        ACODE_SESSION_RUNTIME_PREFERENCES_REQUEST_TIMEOUT_MS,
+      ),
+      workspaceKey: resolveWorkspaceKey(workspace),
+      resolve,
+      reject,
+    });
+    logger.info(undefined, "运行时偏好请求已转发给 Host", {
+      event: "acode_agent.runtime_preferences.host_request_dispatched",
+      module: "services.acode_agent",
+      requestId,
+      scope: dynamicRequest.scope,
+      sessionId: dynamicRequest.sessionId,
+      workspaceKey: resolveWorkspaceKey(workspace),
+    });
+    sessionRuntimePreferencesRequestEmitter.fire(dynamicRequest);
+    return promise;
+  }
+
+  /**
+   * M2-3：legacy session/requestRuntimePreferences 是 CLI→host 的 per-materialization
+   * pull；v4 面改为 host→CLI push（v4/session/runtimePreferences，CLI 落缓存后在
+   * resolveSessionStartupPreferences 物化时机读取，cache miss 回落缺省）。触发点：
+   * client 入池（冷恢复预热）、facade createSession/resumeSession 物化时机前。
+   * 永不抛出：推送失败只记 warn，CLI 沿用上次推送或缺省值。
+   */
+  async function pushSessionRuntimePreferences(
+    client: ACodeProtocolClient,
+    workspace: ACodeAgentWorkspaceTarget,
+    sessionId?: string,
+  ): Promise<void> {
+    try {
+      // 两个 scope 各取所长后合并推送：materialization 承载三开关+预算策略，
+      // user-execution 独占 integratedTerminalShell（同 legacy CLI compat 分支
+      // 两次请求的合并结果）。
+      let materialization: ACodeSessionRuntimePreferencesResult;
+      let userExecution: ACodeSessionRuntimePreferencesResult;
+      if (sessionRuntimePreferencesAuthority === "local") {
+        materialization = acodeSessionRuntimePreferencesResultSchema.parse(
+          (await resolveSessionRuntimePreferences?.("runtime-materialization")) ?? {
+            askUserQuestionAutoResolutionEnabled: true,
+            nativeSearchEnhancementsEnabled: true,
+            memoryEnabled: false,
+          },
+        );
+        userExecution = acodeSessionRuntimePreferencesResultSchema.parse(
+          (await resolveSessionRuntimePreferences?.("user-execution")) ?? {},
+        );
+      } else {
+        [materialization, userExecution] = await Promise.all([
+          requestExternalSessionRuntimePreferences(
+            client,
+            workspace,
+            "runtime-materialization",
+            sessionId,
+          ),
+          requestExternalSessionRuntimePreferences(client, workspace, "user-execution", sessionId),
+        ]);
+      }
+      const merged = {
+        ...materialization,
+        ...(userExecution.integratedTerminalShell !== undefined
+          ? { integratedTerminalShell: userExecution.integratedTerminalShell }
+          : {}),
+      };
+      await client.request(
+        V4_METHODS.sessionRuntimePreferences,
+        { preferences: merged },
+        // 推送面是无返回值的承载（CLI handler 落缓存后回 {}）。
+        v4SessionRuntimePreferencesResultSchema,
+      );
+      logger.debug(undefined, "运行时偏好已推送到 CLI", {
+        event: "acode_agent.runtime_preferences.pushed",
+        module: "services.acode_agent",
+        sessionId: sessionId ?? null,
+        workspaceKey: resolveWorkspaceKey(workspace),
       });
+    } catch (error) {
+      logger.warn(undefined, "运行时偏好推送失败，CLI 沿用上次推送或缺省值", {
+        event: "acode_agent.runtime_preferences.push_failed",
+        module: "services.acode_agent",
+        errorMessage: error instanceof Error ? error.message : String(error),
+        sessionId: sessionId ?? null,
+        workspaceKey: resolveWorkspaceKey(workspace),
+      });
+    }
   }
 
   let modelSelectionSubscription = modelSelectionReadinessSource?.onDidChange?.((view) => {
@@ -1459,7 +1266,7 @@ export function createACodeAgentService(
         const snapshot = await accountProviderConfigSource.read();
         if (accountConfigReceivedRevisionByClient.get(params.client) === snapshot.revision) return;
         const result = await params.client.request(
-          acodeProtocolMethods.providerUpdateAccountConfig,
+          V4_METHODS.providerUpdateAccountConfig,
           {
             revision: snapshot.revision,
             basedOnACodeBuiltinRevision: snapshot.basedOnACodeBuiltinRevision,
@@ -1472,7 +1279,7 @@ export function createACodeAgentService(
             ),
             states: snapshot.states ?? {},
           },
-          acodeProviderUpdateAccountConfigResultSchema,
+          v4ProviderUpdateAccountConfigResultSchema,
         );
         if (result.receivedRevision !== snapshot.revision) {
           throw new Error("Account Config 接收回执版本与交付版本不一致");
@@ -1530,7 +1337,7 @@ export function createACodeAgentService(
       })
       .then(async () => {
         await params.client.request(
-          acodeProtocolMethods.workspaceUpdateInteractionPreferences,
+          V4_METHODS.workspaceUpdateInteractionPreferences,
           {
             workspace: buildWorkspaceRef(params.workspace),
             preferences: {
@@ -1538,18 +1345,18 @@ export function createACodeAgentService(
                 params.preferences.askUserQuestionAutoResolutionEnabled,
             },
           },
-          acodeWorkspaceUpdateInteractionPreferencesResultSchema,
+          v4WorkspaceUpdateInteractionPreferencesResultSchema,
         );
         try {
           await params.client.request(
-            acodeProtocolMethods.workspaceUpdateModelIoPreferences,
+            V4_METHODS.workspaceUpdateModelIoPreferences,
             {
               workspace: buildWorkspaceRef(params.workspace),
               preferences: {
                 fullRetentionEnabled: params.preferences.modelIoFullRetentionEnabled === true,
               },
             },
-            acodeWorkspaceUpdateModelIoPreferencesResultSchema,
+            v4WorkspaceUpdateModelIoPreferencesResultSchema,
           );
         } catch (error) {
           // 新 Host 兼容尚未升级的 CLI：只有 method-not-found 可降级，其他同步失败仍需上抛。
@@ -1936,26 +1743,574 @@ export function createACodeAgentService(
       return;
     }
     wiredClients.add(client);
-    const disposables = [
-      client.onNotification((message) => {
-        if (message.method === acodeProtocolNotifications.providerRuntimeHeadersCancelled) {
-          const parsed = acodeProviderRuntimeHeadersCancelledSchema.safeParse(message.params);
-          if (
-            !parsed.success ||
-            resolveWorkspaceKey(parsed.data.workspace) !== resolveWorkspaceKey(workspace)
-          )
-            return;
-          const key = providerRuntimeHeadersRequestKey({
-            ...workspace,
-            sessionId: parsed.data.sessionId,
-            requestId: parsed.data.requestId,
+
+    // ── M2-4 交互面 inbound 核心（specs/m2-4-inbound-interaction.md）──
+    // v4 与 legacy 两种 wire 形态解析成功后统一走这些核心，保证形态切换行为逐点等价。
+    // 偏斜期结束后（M3）删除 legacy 分支即可，核心无需再动。
+
+    function handleProviderRuntimeHeadersCancel(params: {
+      requestId: string;
+      sessionId: string;
+      workspace: ACodeWorkspaceRef;
+    }): void {
+      if (resolveWorkspaceKey(params.workspace) !== resolveWorkspaceKey(workspace)) return;
+      const key = providerRuntimeHeadersRequestKey({
+        ...workspace,
+        sessionId: params.sessionId,
+        requestId: params.requestId,
+      });
+      const pending = pendingProviderRuntimeHeaders.get(key);
+      // 旧 client 或同路径不同 identity 的取消不能删除新 runtime/其他工作区的请求。
+      if (pending?.client === client) cancelProviderRuntimeHeaders(key, pending);
+    }
+
+    function acceptCuaOperationEventData(event: V4CuaOperationEvent): void {
+      // v4 会话不会投影 legacy session/event，CUA 提示必须直接消费 runtime sideband，
+      // 避免把两条独立事件流的 sequenceNumber/seq 混为同一顺序域。
+      cuaOperationTurnTracker?.accept(workspace, event);
+    }
+
+    // announce 语义：只登记 + 广播，不 respond。v4 形态由分支侧立即回 `{}` ack；
+    // legacy 形态保持原有"请求悬置、答案经 resolveInteraction 回流"语义。
+    function registerPendingPermission(
+      data: V4InteractionRequestPermissionParams,
+      protocolRequestId: ACodeProtocolRequestId,
+    ): void {
+      const key = permissionRequestKey({
+        ...workspace,
+        sessionId: data.sessionId,
+        requestId: data.requestId,
+      });
+      const wasPending = pendingPermissions.has(key);
+      pendingPermissions.set(key, { client, protocolRequestId });
+      if (!wasPending) {
+        emitSessionEvent(workspace, data.sessionId, {
+          type: "permission.request",
+          request: data,
+        });
+      }
+    }
+
+    function registerPendingUserInput(
+      data: V4InteractionRequestUserInputParams,
+      protocolRequestId: ACodeProtocolRequestId,
+    ): void {
+      const key = userInputRequestKey({
+        ...workspace,
+        sessionId: data.sessionId,
+        requestId: data.requestId,
+      });
+      const wasPending = pendingUserInputs.has(key);
+      pendingUserInputs.set(key, { client, protocolRequestId });
+      if (!wasPending) {
+        // agent 为恢复丢失的 protocol id 会重发同一业务 requestId。
+        // host 需要刷新可响应的 protocolRequestId，但不能重复广播给 UI，
+        // 否则多问题 AskUserQuestion 会在用户翻到后续问题时被重置回第一页。
+        emitSessionEvent(workspace, data.sessionId, {
+          type: "userInput.request",
+          request: data,
+        });
+      }
+    }
+
+    // 真 RPC：accountAccess 自动应答或快速失败，两条路径都必须响应请求。
+    function handleProviderRuntimeHeadersRequest(
+      data: V4InteractionRequestProviderRuntimeHeadersParams,
+      protocolRequestId: ACodeProtocolRequestId,
+      traceId?: TraceId,
+    ): void {
+      const pendingKey = providerRuntimeHeadersRequestKey({
+        ...workspace,
+        sessionId: data.sessionId,
+        requestId: data.requestId,
+      });
+      const pending = { client, protocolRequestId, request: data };
+      pendingProviderRuntimeHeaders.set(pendingKey, pending);
+      logger.info(traceId, "收到 ACode provider runtime headers 请求", {
+        modelId: data.modelSelection.modelId,
+        providerId: data.providerId,
+        requestId: data.requestId,
+        sessionId: data.sessionId,
+        turnId: data.turnId ?? null,
+        workspaceKey: resolveWorkspaceKey(workspace),
+        workspacePath: workspace.workspacePath,
+      });
+      const accountAccess = data.accountAccess;
+      if (accountRequestAuthService && accountAccess) {
+        // Account API Key / Team Runtime Key / Start Plan JWT 都不需要 Renderer 交互。
+        // Host 按 Model 固定的 Account Access 自动应答，避免后台任务和无 pane 会话依赖 UI 订阅者。
+        void respondAccountRequestAuthWithoutInteraction({
+          key: pendingKey,
+          pending,
+        });
+        return;
+      }
+      // 没有账号凭据解析器的请求无人应答只会滞留到 CLI 侧 180s 超时，直接快速失败。
+      pendingProviderRuntimeHeaders.delete(pendingKey);
+      void client.respond(protocolRequestId, {
+        headersApplied: false,
+        errorMessage: "Provider request auth is unavailable",
+      });
+    }
+
+    // 官方 Server MCP 身份头：纯 RPC 中继，host 自动解析并响应。
+    // 不 emitSessionEvent、不进 pending map——该请求没有 UI 语义，renderer 不参与。
+    function handleOfficialMcpAuthHeadersRequest(
+      data: V4InteractionRequestOfficialMcpAuthHeadersParams,
+      protocolRequestId: ACodeProtocolRequestId,
+      traceId?: TraceId,
+    ): void {
+      // host 侧二次校验必须发生在**读取凭据之前**：未命中即返回，resolveHeaders 不被调用，
+      // 因此不会有任何凭据被读入内存。
+      void (async () => {
+        const trustedOrigins = options?.officialMcpTrustedOrigins;
+        const trust = trustedOrigins
+          ? await trustedOrigins
+              .isTrusted({
+                mcpKey: data.mcpKey,
+                origin: data.targetOrigin,
+                pluginId: data.pluginId,
+              })
+              // 判定自身异常也按不可信处理，绝不因为校验失败就放行。
+              .catch(() => ({ detail: "validator_error", trusted: false }))
+          : { detail: "validator_missing", trusted: false };
+        if (!trust.trusted) {
+          // 只记录非敏感的请求上下文；凭据未被读取，自然也无从泄露。
+          logger.warn(traceId, "官方 MCP 身份头请求未通过 host 侧可信校验", {
+            detail: trust.detail ?? "unknown",
+            mcpKey: data.mcpKey,
+            pluginId: data.pluginId,
+            requestId: data.requestId,
+            targetOrigin: data.targetOrigin,
+            workspaceKey: data.workspace.workspaceKey,
           });
-          const pending = pendingProviderRuntimeHeaders.get(key);
-          // 旧 client 或同路径不同 identity 的取消不能删除新 runtime/其他工作区的请求。
-          if (pending?.client === client) cancelProviderRuntimeHeaders(key, pending);
+          void client.respond(protocolRequestId, {
+            ok: false,
+            reason: "official_mcp_origin_untrusted",
+          });
           return;
         }
-        if (message.method === acodeProtocolNotifications.processResourceSample) {
+        const resolver = options?.officialMcpAuthHeadersResolver;
+        if (!resolver) {
+          void client.respond(protocolRequestId, {
+            ok: false,
+            reason: "official_auth_unavailable",
+          });
+          return;
+        }
+        try {
+          const resolveStartedAt = Date.now();
+          const result = await resolver.resolveHeaders({
+            mcpKey: data.mcpKey,
+            pluginId: data.pluginId,
+            targetOrigin: data.targetOrigin,
+            workspace: data.workspace,
+          });
+          // host 侧不能只在失败时留日志，成功路径完全静默会无法回答"到底发了哪几个头"。
+          // 只记 header 名与套餐维度：凭证值绝不入日志（日志留存周期不受控）。
+          if (result.ok) {
+            const firstIssuance = officialMcpIssuanceAudit.markFirst(
+              data.pluginId,
+              data.mcpKey,
+              data.workspace.workspaceKey,
+            );
+            const logIssuance = firstIssuance ? logger.info : logger.debug;
+            logIssuance(traceId, "官方 MCP 身份头已解析", {
+              firstIssuance,
+              ...summarizeOfficialMcpIdentityHeaders(result.headers),
+              mcpKey: data.mcpKey,
+              pluginId: data.pluginId,
+              requestId: data.requestId,
+              resolveDurationMs: Date.now() - resolveStartedAt,
+              targetOrigin: data.targetOrigin,
+            });
+          } else {
+            logger.info(traceId, "官方 MCP 身份头不可用", {
+              mcpKey: data.mcpKey,
+              pluginId: data.pluginId,
+              reason: result.reason,
+              requestId: data.requestId,
+              resolveDurationMs: Date.now() - resolveStartedAt,
+              targetOrigin: data.targetOrigin,
+            });
+          }
+          void client.respond(protocolRequestId, result);
+        } catch (error: unknown) {
+          // 解析异常按不可用返回而非 respondError：adapter 只按可枚举 reason 分流，
+          // 且此处绝不能让 MCP 退化成匿名请求。凭证原文不进日志。
+          logger.warn(traceId, "官方 MCP 身份头解析失败", {
+            error: error instanceof Error ? error.message : String(error),
+            mcpKey: data.mcpKey,
+            pluginId: data.pluginId,
+            requestId: data.requestId,
+            targetOrigin: data.targetOrigin,
+          });
+          void client.respond(protocolRequestId, {
+            ok: false,
+            reason: "official_auth_unavailable",
+          });
+        }
+      })();
+    }
+
+    function handleBrowserListRequest(
+      data: V4InteractionBrowserListParams,
+      protocolRequestId: ACodeProtocolRequestId,
+    ): void {
+      const executor = options?.browserControlExecutor;
+      if (!executor) {
+        void client.respond(protocolRequestId, { browsers: [] });
+        return;
+      }
+      void executor
+        .list(data)
+        .then((browsers) => client.respond(protocolRequestId, { browsers }))
+        .catch((error: unknown) => {
+          void client.respondError(protocolRequestId, {
+            code: -32603,
+            message: error instanceof Error ? error.message : String(error),
+          });
+        });
+    }
+
+    function handleBrowserExecuteRequest(
+      data: V4InteractionBrowserExecuteParams,
+      protocolRequestId: ACodeProtocolRequestId,
+    ): void {
+      const executor = options?.browserControlExecutor;
+      if (!executor) {
+        void client.respond(protocolRequestId, {
+          ok: false,
+          error: {
+            code: "backend_unavailable",
+            message: "browser control not available",
+          },
+          elapsedMs: 0,
+        });
+        return;
+      }
+      void executor
+        .execute({
+          requestId: data.requestId,
+          ...(data.browserId ? { browserId: data.browserId } : {}),
+          ...(data.browserGeneration !== undefined
+            ? { browserGeneration: data.browserGeneration }
+            : {}),
+          sessionId: data.sessionId,
+          ...(data.turnId ? { turnId: data.turnId } : {}),
+          workspaceKey: data.workspaceKey ?? resolveWorkspaceKey(workspace),
+          workspacePath: data.workspacePath ?? workspace.workspacePath,
+          ...((data.workspaceIdentity ?? workspace.workspaceIdentity)
+            ? { workspaceIdentity: data.workspaceIdentity ?? workspace.workspaceIdentity }
+            : {}),
+          ...(data.remoteSessionId ? { remoteSessionId: data.remoteSessionId } : {}),
+          clientMode: data.clientMode ?? "desktop-continuous",
+          sessionContext: data.sessionContext ?? "live",
+          command: data.command,
+        })
+        .then((result) => client.respond(protocolRequestId, result))
+        .catch((error: unknown) => {
+          void client.respond(protocolRequestId, {
+            ok: false,
+            error: {
+              code: "execution_error",
+              message: error instanceof Error ? error.message : String(error),
+            },
+            elapsedMs: 0,
+          });
+        });
+    }
+
+    // M2-7（specs/m2-7-automation-offpeak.md §2.2）：automation/offPeak 七法核心助手。
+    // v4 分支与偏斜期字面量 legacy 分支共用，语义与迁移前逐点不变；原分支体的逻辑只换位置、不改行为。
+    function handleAutomationCreate(
+      data: V4AutomationCreateParams,
+      requestId: ACodeProtocolRequestId,
+    ): void {
+      void (async () => {
+        try {
+          const automation = await automationService.create({
+            title: data.title ?? "",
+            cronExpr: data.cronExpr,
+            relativeDelayMinutes: data.relativeDelayMinutes,
+            // 会话侧长间隔 carrier（intervalUnit+interval）透传给 service 归一化为权威 scheduleRule。
+            intervalUnit: data.intervalUnit,
+            interval: data.interval,
+            prompt: data.prompt,
+            modelSelection: data.modelSelection,
+            mode: data.mode,
+            targetTaskId: data.targetTaskId,
+            botDeliveryTarget: data.botDeliveryTarget,
+            workspacePath: workspace.workspacePath,
+            workspaceIdentity: workspace.workspaceIdentity,
+            recurring: data.recurring ?? true,
+            maxRuns: data.maxRuns,
+          });
+          if (automation.targetTaskId) {
+            const taskMeta = await automationTaskIndexRepo
+              .getTaskMeta({
+                workspacePath: automation.workspacePath,
+                workspaceIdentity: automation.workspaceIdentity,
+                taskId: automation.targetTaskId,
+              })
+              .catch(() => null);
+            if (taskMeta) {
+              await automationTaskIndexRepo.syncTaskMeta({
+                meta: {
+                  ...taskMeta,
+                  // 会话内创建的 automation 复用当前 session；显式写入标记供 V4 侧栏展示。
+                  cronAutomationId: automation.automationId,
+                  updatedAt: Math.max(taskMeta.updatedAt, Date.now()),
+                },
+              });
+            }
+          }
+          await client.respond(requestId, {
+            automation: toProtocolAutomation(automation),
+          });
+        } catch (error) {
+          await client.respondError(requestId, {
+            code: -32603,
+            message: error instanceof Error ? error.message : String(error),
+          });
+        }
+      })();
+    }
+
+    function handleAutomationUpdate(
+      data: V4AutomationUpdateParams,
+      requestId: ACodeProtocolRequestId,
+    ): void {
+      void (async () => {
+        try {
+          const automation = await automationService.update(
+            data.automationId,
+            {
+              title: data.title,
+              cronExpr: data.cronExpr,
+              prompt: data.prompt,
+              recurring: data.recurring,
+              maxRuns: data.maxRuns,
+              // 会话侧长间隔 carrier（intervalUnit+interval）透传给 service 归一化为权威 scheduleRule。
+              intervalUnit: data.intervalUnit,
+              interval: data.interval,
+            },
+            workspace,
+          );
+          if (!automation) {
+            throw new Error("Scheduled task not found in the current workspace.");
+          }
+          await client.respond(requestId, {
+            automation: toProtocolAutomation(automation),
+          });
+        } catch (error) {
+          await client.respondError(requestId, {
+            code: -32603,
+            message: error instanceof Error ? error.message : String(error),
+          });
+        }
+      })();
+    }
+
+    function handleAutomationList(requestId: ACodeProtocolRequestId): void {
+      void (async () => {
+        try {
+          const automations = await automationService.list(workspace);
+          await client.respond(requestId, {
+            automations: automations.map(toProtocolAutomation),
+          });
+        } catch (error) {
+          await client.respondError(requestId, {
+            code: -32603,
+            message: error instanceof Error ? error.message : String(error),
+          });
+        }
+      })();
+    }
+
+    function handleAutomationCheckTaskBinding(
+      data: V4AutomationCheckTaskBindingParams,
+      requestId: ACodeProtocolRequestId,
+    ): void {
+      void (async () => {
+        try {
+          const bound = await automationService.hasTaskBinding({
+            workspacePath: workspace.workspacePath,
+            workspaceIdentity: workspace.workspaceIdentity,
+            targetTaskId: data.targetTaskId,
+          });
+          await client.respond(requestId, { bound });
+        } catch (error) {
+          await client.respondError(requestId, {
+            code: -32603,
+            message: error instanceof Error ? error.message : String(error),
+          });
+        }
+      })();
+    }
+
+    function handleAutomationDelete(
+      data: V4AutomationDeleteParams,
+      requestId: ACodeProtocolRequestId,
+    ): void {
+      void (async () => {
+        try {
+          const deleted = await automationService.delete(data.automationId, workspace);
+          await client.respond(requestId, { deleted });
+        } catch (error) {
+          await client.respondError(requestId, {
+            code: -32603,
+            message: error instanceof Error ? error.message : String(error),
+          });
+        }
+      })();
+    }
+
+    function handleOffPeakCreate(
+      data: V4OffPeakCreateParams,
+      requestId: ACodeProtocolRequestId,
+      method: string,
+    ): void {
+      void (async () => {
+        try {
+          const offPeakTaskService = options?.resolveOffPeakTaskService?.();
+          if (!offPeakTaskService) {
+            await client.respondError(requestId, {
+              code: -32601,
+              message: "Off-peak task service is unavailable on this host",
+            });
+            return;
+          }
+          const grayConfig = await options
+            ?.resolveOffPeakClientConfig?.()
+            .catch(() => undefined);
+          // 工具注册后灰度被关闭/配置解析失败时，不能继续走"白名单为空"的推导
+          // （显式 model 会误报 model_not_allowed，省略 model 会以空模型落库）；直接返回稳定分类。
+          // 模型视图可同时包含两个域；必须用已有支持快照确认归属，不能从首个 Provider 猜。
+          const support =
+            resolveOffPeakAllowedModels(grayConfig).length > 0
+              ? await offPeakTaskService.getCodingPlanSupport()
+              : undefined;
+          const providerId = support?.supported
+            ? OFF_PEAK_PROVIDER_IDS[support.providerFamily]
+            : undefined;
+          const allowedModels = providerId
+            ? resolveOffPeakAllowedModels(grayConfig, providerId)
+            : [];
+          if (allowedModels.length === 0) {
+            await client.respond(requestId, {
+              ok: false,
+              failureStage: "client_validation",
+              errorCategory: "client_validation",
+              errorCode: "offpeak_disabled",
+            });
+            return;
+          }
+          // model 白名单预校：显式入参不在白名单返回稳定分类，
+          // 复用 client_validation 分类 + 专用 errorCode，不扩分类枚举。
+          // 匹配与 thoughtLevel/UI 同语义（trim + 大小写不敏感），命中后回写白名单原写法。
+          const model = resolveOffPeakCreateModel(allowedModels, data.model);
+          if (model === null) {
+            await client.respond(requestId, {
+              ok: false,
+              failureStage: "client_validation",
+              errorCategory: "client_validation",
+              errorCode: "model_not_allowed",
+            });
+            return;
+          }
+          const modelSelection =
+            grayConfig && providerId
+              ? resolveOffPeakToolSelection(
+                  grayConfig.modelSelectionView,
+                  providerId,
+                  model,
+                  data.thoughtLevel,
+                )
+              : undefined;
+          if (!modelSelection) {
+            await client.respond(requestId, {
+              ok: false,
+              failureStage: "client_validation",
+              errorCategory: "client_validation",
+              errorCode: "model_not_allowed",
+            });
+            return;
+          }
+          const result = await offPeakTaskService.createTask({
+            title: data.title,
+            prompt: data.prompt,
+            permissionMode: data.permissionMode ?? "yolo",
+            modelSelection,
+            // 会话内创建绑定当前会话，派发时 resume 该会话执行。
+            ...(data.boundSessionId ? { boundSessionId: data.boundSessionId } : {}),
+            // workspace 由 host 从当前 session 注入（对称 automation/create），不进协议参数。
+            workspacePath: workspace.workspacePath,
+            ...(workspace.workspaceIdentity
+              ? { workspaceIdentity: workspace.workspaceIdentity }
+              : {}),
+          });
+          if (!result.ok) {
+            // 失败分类原样过协议（不 respondError），供 CLI handler 翻译为稳定错误。
+            await client.respond(requestId, {
+              ok: false,
+              failureStage: result.failureStage,
+              errorCategory: result.errorCategory,
+              errorCode: result.errorCode,
+            });
+            return;
+          }
+          await client.respond(requestId, {
+            ok: true,
+            task: toProtocolOffPeakTaskSnapshot(result.task),
+          });
+        } catch (error) {
+          await respondOffPeakInternalError(client, { id: requestId, method }, workspace, error);
+        }
+      })();
+    }
+
+    function handleOffPeakList(requestId: ACodeProtocolRequestId, method: string): void {
+      void (async () => {
+        try {
+          const offPeakTaskService = options?.resolveOffPeakTaskService?.();
+          if (!offPeakTaskService) {
+            await client.respondError(requestId, {
+              code: -32601,
+              message: "Off-peak task service is unavailable on this host",
+            });
+            return;
+          }
+          const workspaceKey = resolveWorkspaceKey(workspace);
+          const tasks = (await offPeakTaskService.list())
+            .filter((task) => task.workspaceKey === workspaceKey)
+            .sort((a, b) => b.createdAt - a.createdAt)
+            .slice(0, 20);
+          await client.respond(requestId, {
+            tasks: tasks.map(toProtocolOffPeakTaskSnapshot),
+          });
+        } catch (error) {
+          await respondOffPeakInternalError(client, { id: requestId, method }, workspace, error);
+        }
+      })();
+    }
+
+    const disposables = [
+      client.onNotification((message) => {
+        // M2-4 第八点：取消通知的形态绑定其触发请求的形态（CLI 侧 closure-local），
+        // host 两个形态都收，行为一致（只认同 workspace + 同 client 的 pending）。
+        if (message.method === V4_NOTIFICATIONS.interactionProviderRuntimeHeadersCancelled) {
+          const parsed = v4ProviderRuntimeHeadersCancelledSchema.safeParse(message.params);
+          if (parsed.success) handleProviderRuntimeHeadersCancel(parsed.data);
+          return;
+        }
+        // 偏斜期 legacy 分支：字面量匹配（legacy 常量消费归零），M3 删除。
+        if (message.method === "interaction/providerRuntimeHeadersCancelled") {
+          const parsed = v4ProviderRuntimeHeadersCancelledSchema.safeParse(message.params);
+          if (parsed.success) handleProviderRuntimeHeadersCancel(parsed.data);
+          return;
+        }
+        if (message.method === LEGACY_NOTIFICATIONS.processResourceSample) {
           const parsed = acodeProcessResourceSampleSchema.safeParse(message.params);
           if (parsed.success) {
             processResourceSampleEmitter.fire({ ...parsed.data, lane });
@@ -1970,19 +2325,19 @@ export function createACodeAgentService(
           return;
         }
 
-        if (message.method === acodeProtocolNotifications.toolExecResource) {
+        if (message.method === LEGACY_NOTIFICATIONS.toolExecResource) {
           const parsed = acodeToolExecResourceSchema.safeParse(message.params);
           if (parsed.success) toolExecResourceEmitter.fire(parsed.data);
           return;
         }
-        if (message.method === acodeProtocolNotifications.mcpResourceSamples) {
+        if (message.method === LEGACY_NOTIFICATIONS.mcpResourceSamples) {
           const parsed = acodeMcpResourceSamplesSchema.safeParse(message.params);
           if (parsed.success) mcpResourceSamplesEmitter.fire(parsed.data);
           else logger.debug(undefined, "丢弃无效 MCP 资源样本");
           return;
         }
 
-        if (message.method === acodeProtocolNotifications.mcpTelemetry) {
+        if (message.method === LEGACY_NOTIFICATIONS.mcpTelemetry) {
           const parsed = acodeMcpTelemetryEventSchema.safeParse(message.params);
           if (parsed.success) {
             mcpTelemetryEmitter.fire(parsed.data);
@@ -1997,7 +2352,7 @@ export function createACodeAgentService(
           return;
         }
 
-        if (message.method === acodeProtocolNotifications.pluginOperationProgress) {
+        if (message.method === LEGACY_NOTIFICATIONS.pluginOperationProgress) {
           const parsed = acodePluginOperationProgressNotificationSchema.safeParse(message.params);
           if (parsed.success) {
             pluginOperationProgressEmitters.get(parsed.data.operationId)?.fire(parsed.data);
@@ -2013,12 +2368,29 @@ export function createACodeAgentService(
           return;
         }
 
-        if (message.method === acodeProtocolMethods.computerUseOperationEvent) {
-          const parsed = acodeComputerUseOperationEventSchema.safeParse(message.params);
+        // M2-4：CUA 操作事件迁不删（fail-closed 面），v4 形态与 legacy 逐点等价。
+        // CLI 侧按 established flag 决定发哪个形态，host 两边都收。
+        if (message.method === V4_NOTIFICATIONS.cuaOperationEvent) {
+          const parsed = v4CuaOperationEventSchema.safeParse(message.params);
           if (parsed.success) {
-            // v4 会话不会投影 legacy session/event，CUA 提示必须直接消费 runtime sideband，
-            // 避免把两条独立事件流的 sequenceNumber/seq 混为同一顺序域。
-            cuaOperationTurnTracker?.accept(workspace, parsed.data);
+            acceptCuaOperationEventData(parsed.data);
+          } else {
+            logger.warn(undefined, "丢弃无效 ACode Protocol Computer Use operation event", {
+              issues: parsed.error.issues.map((issue) => ({
+                code: issue.code,
+                message: issue.message,
+                path: issue.path.join("."),
+              })),
+              workspaceKey: resolveWorkspaceKey(workspace),
+            });
+          }
+          return;
+        }
+        // 偏斜期 legacy 分支：字面量匹配（legacy 常量消费归零），M3 删除。
+        if (message.method === "computer-use/operation-event") {
+          const parsed = v4CuaOperationEventSchema.safeParse(message.params);
+          if (parsed.success) {
+            acceptCuaOperationEventData(parsed.data);
           } else {
             logger.warn(undefined, "丢弃无效 ACode Protocol Computer Use operation event", {
               issues: parsed.error.issues.map((issue) => ({
@@ -2130,6 +2502,24 @@ export function createACodeAgentService(
           return;
         }
 
+        if (message.method === V4_OVERNIGHT_COMPLETION_METHOD) {
+          const parsed = v4OvernightCompletionNotificationSchema.safeParse(message.params);
+          if (parsed.success) {
+            overnightCompletionEmitter.fire(parsed.data);
+          } else {
+            // 严格丢弃：跨进程边界的未知/畸形完成信号 fail-closed，不透传给 main 弹通知。
+            logger.warn(undefined, "丢弃无效 v4 overnight completion 信号", {
+              issues: parsed.error.issues.map((issue) => ({
+                code: issue.code,
+                message: issue.message,
+                path: issue.path.join("."),
+              })),
+              workspaceKey: resolveWorkspaceKey(workspace),
+            });
+          }
+          return;
+        }
+
         if (message.method === V4_NOTIFICATIONS.conversationFrame) {
           // 同一通知也载 sessions-index 帧，按 topic 前缀分流到列表 emitter
           // （否则会被 conversation schema 校验丢弃）。
@@ -2183,82 +2573,13 @@ export function createACodeAgentService(
         }
       }),
       client.onRequest((request) => {
-        if (request.method === acodeProtocolMethods.sessionRequestRuntimePreferences) {
-          const reportResponseFailure = (error: unknown): void => {
-            logger.debug(undefined, "运行时偏好响应发送失败", {
-              error: error instanceof Error ? error.message : String(error),
-              workspaceKey: resolveWorkspaceKey(workspace),
-            });
-          };
-          const parsed = acodeSessionRequestRuntimePreferencesParamsSchema.safeParse(
-            request.params,
-          );
-          if (!parsed.success) {
-            void client
-              .respondError(request.id, {
-                code: -32602,
-                message: "Invalid session runtime preferences request params",
-                data: parsed.error.flatten(),
-              })
-              .catch(reportResponseFailure);
-            return;
-          }
-          if (sessionRuntimePreferencesAuthority === "local") {
-            void (async () => {
-              let preferences: ACodeSessionRuntimePreferencesResult;
-              try {
-                preferences = acodeSessionRuntimePreferencesResultSchema.parse(
-                  // 同一 RPC 承载 runtime 创建与首次执行两个时机；必须继续传递
-                  // 已校验的 scope，避免首次执行为了 Shell 再次等待远端 client config。
-                  (await resolveSessionRuntimePreferences?.(parsed.data.scope)) ?? {
-                    askUserQuestionAutoResolutionEnabled: true,
-                    nativeSearchEnhancementsEnabled: true,
-                    memoryEnabled: false,
-                  },
-                );
-              } catch (error) {
-                await client.respondError(request.id, {
-                  code: -32603,
-                  message: error instanceof Error ? error.message : String(error),
-                });
-                return;
-              }
-              // 响应发送失败表示 transport 已关闭，不能再把它当成设置读取失败
-              // 并尝试发送第二个 error response。
-              await client.respond(request.id, preferences);
-            })().catch(reportResponseFailure);
-            return;
-          }
-
-          const requestId = randomUUID();
-          const dynamicRequest: ACodeAgentSessionRuntimePreferencesRequest = {
-            ...parsed.data,
-            requestId,
-          };
-          pendingSessionRuntimePreferences.set(requestId, {
-            client,
-            protocolRequestId: request.id,
-            request: dynamicRequest,
-            timeout: setTimeout(
-              () => expireSessionRuntimePreferencesRequest(requestId),
-              ACODE_SESSION_RUNTIME_PREFERENCES_REQUEST_TIMEOUT_MS,
-            ),
-            workspaceKey: resolveWorkspaceKey(workspace),
-          });
-          logger.info(undefined, "运行时偏好请求已转发给 Host", {
-            event: "acode_agent.runtime_preferences.host_request_dispatched",
-            module: "services.acode_agent",
-            requestId,
-            scope: dynamicRequest.scope,
-            sessionId: dynamicRequest.sessionId,
-            workspaceKey: resolveWorkspaceKey(workspace),
-          });
-          sessionRuntimePreferencesRequestEmitter.fire(dynamicRequest);
-          return;
-        }
-
-        if (request.method === acodeProtocolMethods.interactionRequestPermission) {
-          const parsed = acodePermissionRequestParamsSchema.safeParse(request.params);
+        // M2-3（specs/m2-3-session-readwrite.md §2.8）：legacy
+        // session/requestRuntimePreferences（CLI→host pull）已删除；偏好供给改为
+        // host→CLI 的 v4/session/runtimePreferences push（见 pushSessionRuntimePreferences）。
+        // M2-4：v4 announce + 立即 ack `{}`（CLI 侧 hold promise 与 wire 解耦），
+        // 答案仍经 v4 resolveInteraction 回流；-32601 时 CLI 回落 legacy 反向 RPC。
+        if (request.method === V4_METHODS.interactionRequestPermission) {
+          const parsed = v4InteractionRequestPermissionParamsSchema.safeParse(request.params);
           if (!parsed.success) {
             void client.respondError(request.id, {
               code: -32602,
@@ -2267,27 +2588,29 @@ export function createACodeAgentService(
             });
             return;
           }
-          const key = permissionRequestKey({
-            ...workspace,
-            sessionId: parsed.data.sessionId,
-            requestId: parsed.data.requestId,
-          });
-          const wasPending = pendingPermissions.has(key);
-          pendingPermissions.set(key, {
-            client,
-            protocolRequestId: request.id,
-          });
-          if (!wasPending) {
-            emitSessionEvent(workspace, parsed.data.sessionId, {
-              type: "permission.request",
-              request: parsed.data,
+          registerPendingPermission(parsed.data, request.id);
+          void client.respond(request.id, {});
+          return;
+        }
+        // 偏斜期 legacy 分支：字面量匹配（legacy 常量消费归零），M3 删除。
+        // 语义保持原样：请求悬置不 respond，答案经 resolveInteraction 回流。
+        if (request.method === "interaction/requestPermission") {
+          const parsed = v4InteractionRequestPermissionParamsSchema.safeParse(request.params);
+          if (!parsed.success) {
+            void client.respondError(request.id, {
+              code: -32602,
+              message: "Invalid permission request params",
+              data: parsed.error.flatten(),
             });
+            return;
           }
+          registerPendingPermission(parsed.data, request.id);
           return;
         }
 
-        if (request.method === acodeProtocolMethods.interactionRequestUserInput) {
-          const parsed = acodeUserInputRequestParamsSchema.safeParse(request.params);
+        // M2-4：同 permission，v4 announce + 立即 ack `{}`；重发去重逻辑在核心内保留。
+        if (request.method === V4_METHODS.interactionRequestUserInput) {
+          const parsed = v4InteractionRequestUserInputParamsSchema.safeParse(request.params);
           if (!parsed.success) {
             void client.respondError(request.id, {
               code: -32602,
@@ -2296,27 +2619,29 @@ export function createACodeAgentService(
             });
             return;
           }
-          const key = userInputRequestKey({
-            ...workspace,
-            sessionId: parsed.data.sessionId,
-            requestId: parsed.data.requestId,
-          });
-          const wasPending = pendingUserInputs.has(key);
-          pendingUserInputs.set(key, { client, protocolRequestId: request.id });
-          if (!wasPending) {
-            // agent 为恢复丢失的 protocol id 会重发同一业务 requestId。
-            // host 需要刷新可响应的 protocolRequestId，但不能重复广播给 UI，
-            // 否则多问题 AskUserQuestion 会在用户翻到后续问题时被重置回第一页。
-            emitSessionEvent(workspace, parsed.data.sessionId, {
-              type: "userInput.request",
-              request: parsed.data,
+          registerPendingUserInput(parsed.data, request.id);
+          void client.respond(request.id, {});
+          return;
+        }
+        // 偏斜期 legacy 分支：字面量匹配（legacy 常量消费归零），M3 删除。
+        if (request.method === "interaction/requestUserInput") {
+          const parsed = v4InteractionRequestUserInputParamsSchema.safeParse(request.params);
+          if (!parsed.success) {
+            void client.respondError(request.id, {
+              code: -32602,
+              message: "Invalid user input request params",
+              data: parsed.error.flatten(),
             });
+            return;
           }
+          registerPendingUserInput(parsed.data, request.id);
           return;
         }
 
-        if (request.method === acodeProtocolMethods.interactionRequestProviderRuntimeHeaders) {
-          const parsed = acodeProviderRuntimeHeadersRequestParamsSchema.safeParse(request.params);
+        // M2-4：真 RPC（无 announce/ack 语义）；v4 优先，-32601 回落走下方字面量分支。
+        if (request.method === V4_METHODS.interactionRequestProviderRuntimeHeaders) {
+          const parsed =
+            v4InteractionRequestProviderRuntimeHeadersParamsSchema.safeParse(request.params);
           if (!parsed.success) {
             void client.respondError(request.id, {
               code: -32602,
@@ -2325,49 +2650,30 @@ export function createACodeAgentService(
             });
             return;
           }
-          const pendingKey = providerRuntimeHeadersRequestKey({
-            ...workspace,
-            sessionId: parsed.data.sessionId,
-            requestId: parsed.data.requestId,
-          });
-          const pending = {
-            client,
-            protocolRequestId: request.id,
-            request: parsed.data,
-          };
-          pendingProviderRuntimeHeaders.set(pendingKey, pending);
-          logger.info(request.trace?.traceId, "收到 ACode provider runtime headers 请求", {
-            modelId: parsed.data.modelSelection.modelId,
-            providerId: parsed.data.providerId,
-            requestId: parsed.data.requestId,
-            sessionId: parsed.data.sessionId,
-            turnId: parsed.data.turnId ?? null,
-            workspaceKey: resolveWorkspaceKey(workspace),
-            workspacePath: workspace.workspacePath,
-          });
-          const accountAccess = parsed.data.accountAccess;
-          if (accountRequestAuthService && accountAccess) {
-            // Account API Key / Team Runtime Key / Start Plan JWT 都不需要 Renderer 交互。
-            // Host 按 Model 固定的 Account Access 自动应答，避免后台任务和无 pane 会话依赖 UI 订阅者。
-            void respondAccountRequestAuthWithoutInteraction({
-              key: pendingKey,
-              pending,
+          handleProviderRuntimeHeadersRequest(parsed.data, request.id, request.trace?.traceId);
+          return;
+        }
+        // 偏斜期 legacy 分支：字面量匹配（legacy 常量消费归零），M3 删除。
+        if (request.method === "interaction/requestProviderRuntimeHeaders") {
+          const parsed = v4InteractionRequestProviderRuntimeHeadersParamsSchema.safeParse(request.params);
+          if (!parsed.success) {
+            void client.respondError(request.id, {
+              code: -32602,
+              message: "Invalid provider runtime headers request params",
+              data: parsed.error.flatten(),
             });
             return;
           }
-          // 没有账号凭据解析器的请求无人应答只会滞留到 CLI 侧 180s 超时，直接快速失败。
-          pendingProviderRuntimeHeaders.delete(pendingKey);
-          void pending.client.respond(pending.protocolRequestId, {
-            headersApplied: false,
-            errorMessage: "Provider request auth is unavailable",
-          });
+          handleProviderRuntimeHeadersRequest(parsed.data, request.id, request.trace?.traceId);
           return;
         }
 
         // 官方 Server MCP 身份头：纯 RPC 中继，host 自动解析并响应。
         // 不 emitSessionEvent、不进 pending map——该请求没有 UI 语义，renderer 不参与。
-        if (request.method === acodeProtocolMethods.interactionRequestOfficialMcpAuthHeaders) {
-          const parsed = acodeOfficialMcpAuthHeadersRequestParamsSchema.safeParse(request.params);
+        // M2-4：信任校验与凭据读取顺序约束全部收进 handleOfficialMcpAuthHeadersRequest。
+        if (request.method === V4_METHODS.interactionRequestOfficialMcpAuthHeaders) {
+          const parsed =
+            v4InteractionRequestOfficialMcpAuthHeadersParamsSchema.safeParse(request.params);
           if (!parsed.success) {
             void client.respondError(request.id, {
               code: -32602,
@@ -2376,104 +2682,29 @@ export function createACodeAgentService(
             });
             return;
           }
-          // host 侧二次校验必须发生在**读取凭据之前**：未命中即返回，resolveHeaders 不被调用，
-          // 因此不会有任何凭据被读入内存。
-          void (async () => {
-            const trustedOrigins = options?.officialMcpTrustedOrigins;
-            const trust = trustedOrigins
-              ? await trustedOrigins
-                  .isTrusted({
-                    mcpKey: parsed.data.mcpKey,
-                    origin: parsed.data.targetOrigin,
-                    pluginId: parsed.data.pluginId,
-                  })
-                  // 判定自身异常也按不可信处理，绝不因为校验失败就放行。
-                  .catch(() => ({ detail: "validator_error", trusted: false }))
-              : { detail: "validator_missing", trusted: false };
-            if (!trust.trusted) {
-              // 只记录非敏感的请求上下文；凭据未被读取，自然也无从泄露。
-              logger.warn(request.trace?.traceId, "官方 MCP 身份头请求未通过 host 侧可信校验", {
-                detail: trust.detail ?? "unknown",
-                mcpKey: parsed.data.mcpKey,
-                pluginId: parsed.data.pluginId,
-                requestId: parsed.data.requestId,
-                targetOrigin: parsed.data.targetOrigin,
-                workspaceKey: parsed.data.workspace.workspaceKey,
-              });
-              void client.respond(request.id, {
-                ok: false,
-                reason: "official_mcp_origin_untrusted",
-              });
-              return;
-            }
-            const resolver = options?.officialMcpAuthHeadersResolver;
-            if (!resolver) {
-              void client.respond(request.id, {
-                ok: false,
-                reason: "official_auth_unavailable",
-              });
-              return;
-            }
-            try {
-              const resolveStartedAt = Date.now();
-              const result = await resolver.resolveHeaders({
-                mcpKey: parsed.data.mcpKey,
-                pluginId: parsed.data.pluginId,
-                targetOrigin: parsed.data.targetOrigin,
-                workspace: parsed.data.workspace,
-              });
-              // host 侧不能只在失败时留日志，成功路径完全静默会无法回答"到底发了哪几个头"。
-              // 只记 header 名与套餐维度：凭证值绝不入日志（日志留存周期不受控）。
-              if (result.ok) {
-                const firstIssuance = officialMcpIssuanceAudit.markFirst(
-                  parsed.data.pluginId,
-                  parsed.data.mcpKey,
-                  parsed.data.workspace.workspaceKey,
-                );
-                const logIssuance = firstIssuance ? logger.info : logger.debug;
-                logIssuance(request.trace?.traceId, "官方 MCP 身份头已解析", {
-                  firstIssuance,
-                  ...summarizeOfficialMcpIdentityHeaders(result.headers),
-                  mcpKey: parsed.data.mcpKey,
-                  pluginId: parsed.data.pluginId,
-                  requestId: parsed.data.requestId,
-                  resolveDurationMs: Date.now() - resolveStartedAt,
-                  targetOrigin: parsed.data.targetOrigin,
-                });
-              } else {
-                logger.info(request.trace?.traceId, "官方 MCP 身份头不可用", {
-                  mcpKey: parsed.data.mcpKey,
-                  pluginId: parsed.data.pluginId,
-                  reason: result.reason,
-                  requestId: parsed.data.requestId,
-                  resolveDurationMs: Date.now() - resolveStartedAt,
-                  targetOrigin: parsed.data.targetOrigin,
-                });
-              }
-              void client.respond(request.id, result);
-            } catch (error: unknown) {
-              // 解析异常按不可用返回而非 respondError：adapter 只按可枚举 reason 分流，
-              // 且此处绝不能让 MCP 退化成匿名请求。凭证原文不进日志。
-              logger.warn(request.trace?.traceId, "官方 MCP 身份头解析失败", {
-                error: error instanceof Error ? error.message : String(error),
-                mcpKey: parsed.data.mcpKey,
-                pluginId: parsed.data.pluginId,
-                requestId: parsed.data.requestId,
-                targetOrigin: parsed.data.targetOrigin,
-              });
-              void client.respond(request.id, {
-                ok: false,
-                reason: "official_auth_unavailable",
-              });
-            }
-          })();
+          handleOfficialMcpAuthHeadersRequest(parsed.data, request.id, request.trace?.traceId);
+          return;
+        }
+        // 偏斜期 legacy 分支：字面量匹配（legacy 常量消费归零），M3 删除。
+        if (request.method === "interaction/requestOfficialMcpAuthHeaders") {
+          const parsed = v4InteractionRequestOfficialMcpAuthHeadersParamsSchema.safeParse(request.params);
+          if (!parsed.success) {
+            void client.respondError(request.id, {
+              code: -32602,
+              message: "Invalid interaction/requestOfficialMcpAuthHeaders params",
+              data: parsed.error.flatten(),
+            });
+            return;
+          }
+          handleOfficialMcpAuthHeadersRequest(parsed.data, request.id, request.trace?.traceId);
           return;
         }
 
         // browser-use discovery：backend 在线状态与 plugin/skill 是否暴露是两层状态。
         // executor 缺省时返回空列表，禁止 facade 伪造 IAB available。
-        if (request.method === acodeProtocolMethods.interactionBrowserList) {
-          const parsed = acodeBrowserListParamsSchema.safeParse(request.params);
+        // M2-4：v4 优先，行为收进 handleBrowserListRequest（两形态等价）。
+        if (request.method === V4_METHODS.interactionBrowserList) {
+          const parsed = v4InteractionBrowserListParamsSchema.safeParse(request.params);
           if (!parsed.success) {
             void client.respondError(request.id, {
               code: -32602,
@@ -2482,28 +2713,30 @@ export function createACodeAgentService(
             });
             return;
           }
-          const executor = options?.browserControlExecutor;
-          if (!executor) {
-            void client.respond(request.id, { browsers: [] });
+          handleBrowserListRequest(parsed.data, request.id);
+          return;
+        }
+        // 偏斜期 legacy 分支：字面量匹配（legacy 常量消费归零），M3 删除。
+        if (request.method === "interaction/browserList") {
+          const parsed = v4InteractionBrowserListParamsSchema.safeParse(request.params);
+          if (!parsed.success) {
+            void client.respondError(request.id, {
+              code: -32602,
+              message: "Invalid interaction/browserList params",
+              data: parsed.error.flatten(),
+            });
             return;
           }
-          void executor
-            .list(parsed.data)
-            .then((browsers) => client.respond(request.id, { browsers }))
-            .catch((error: unknown) => {
-              void client.respondError(request.id, {
-                code: -32603,
-                message: error instanceof Error ? error.message : String(error),
-              });
-            });
+          handleBrowserListRequest(parsed.data, request.id);
           return;
         }
 
         // browser-use：agent 的 agent.browsers.* 经 interaction/browserExecute 到达这里。
         // 纯 RPC 中继——转发给 main（WebContentsView+CDP）执行后 respondResult，不 emitSessionEvent、
         // 不进 pending map（区别于 permission 的 UI 阻塞语义）。executor 缺省则 backend_unavailable。
-        if (request.method === acodeProtocolMethods.interactionBrowserExecute) {
-          const parsed = acodeBrowserExecuteParamsSchema.safeParse(request.params);
+        // M2-4：v4 优先，execute 归一化收进 handleBrowserExecuteRequest（两形态等价）。
+        if (request.method === V4_METHODS.interactionBrowserExecute) {
+          const parsed = v4InteractionBrowserExecuteParamsSchema.safeParse(request.params);
           if (!parsed.success) {
             void client.respondError(request.id, {
               code: -32602,
@@ -2512,57 +2745,26 @@ export function createACodeAgentService(
             });
             return;
           }
-          const executor = options?.browserControlExecutor;
-          if (!executor) {
-            void client.respond(request.id, {
-              ok: false,
-              error: {
-                code: "backend_unavailable",
-                message: "browser control not available",
-              },
-              elapsedMs: 0,
+          handleBrowserExecuteRequest(parsed.data, request.id);
+          return;
+        }
+        // 偏斜期 legacy 分支：字面量匹配（legacy 常量消费归零），M3 删除。
+        if (request.method === "interaction/browserExecute") {
+          const parsed = v4InteractionBrowserExecuteParamsSchema.safeParse(request.params);
+          if (!parsed.success) {
+            void client.respondError(request.id, {
+              code: -32602,
+              message: "Invalid interaction/browserExecute params",
+              data: parsed.error.flatten(),
             });
             return;
           }
-          void executor
-            .execute({
-              requestId: parsed.data.requestId,
-              ...(parsed.data.browserId ? { browserId: parsed.data.browserId } : {}),
-              ...(parsed.data.browserGeneration !== undefined
-                ? { browserGeneration: parsed.data.browserGeneration }
-                : {}),
-              sessionId: parsed.data.sessionId,
-              ...(parsed.data.turnId ? { turnId: parsed.data.turnId } : {}),
-              workspaceKey: parsed.data.workspaceKey ?? resolveWorkspaceKey(workspace),
-              workspacePath: parsed.data.workspacePath ?? workspace.workspacePath,
-              ...((parsed.data.workspaceIdentity ?? workspace.workspaceIdentity)
-                ? {
-                    workspaceIdentity: parsed.data.workspaceIdentity ?? workspace.workspaceIdentity,
-                  }
-                : {}),
-              ...(parsed.data.remoteSessionId
-                ? { remoteSessionId: parsed.data.remoteSessionId }
-                : {}),
-              clientMode: parsed.data.clientMode ?? "desktop-continuous",
-              sessionContext: parsed.data.sessionContext ?? "live",
-              command: parsed.data.command,
-            })
-            .then((result) => client.respond(request.id, result))
-            .catch((error: unknown) => {
-              void client.respond(request.id, {
-                ok: false,
-                error: {
-                  code: "execution_error",
-                  message: error instanceof Error ? error.message : String(error),
-                },
-                elapsedMs: 0,
-              });
-            });
+          handleBrowserExecuteRequest(parsed.data, request.id);
           return;
         }
 
-        if (request.method === acodeProtocolMethods.automationCreate) {
-          const parsed = acodeAutomationCreateParamsSchema.safeParse(request.params);
+        if (request.method === V4_METHODS.automationCreate) {
+          const parsed = v4AutomationCreateParamsSchema.safeParse(request.params);
           if (!parsed.success) {
             void client.respondError(request.id, {
               code: -32602,
@@ -2571,59 +2773,26 @@ export function createACodeAgentService(
             });
             return;
           }
-          void (async () => {
-            try {
-              const automation = await automationService.create({
-                title: parsed.data.title ?? "",
-                cronExpr: parsed.data.cronExpr,
-                relativeDelayMinutes: parsed.data.relativeDelayMinutes,
-                // 会话侧长间隔 carrier（intervalUnit+interval）透传给 service 归一化为权威 scheduleRule。
-                intervalUnit: parsed.data.intervalUnit,
-                interval: parsed.data.interval,
-                prompt: parsed.data.prompt,
-                modelSelection: parsed.data.modelSelection,
-                mode: parsed.data.mode,
-                targetTaskId: parsed.data.targetTaskId,
-                botDeliveryTarget: parsed.data.botDeliveryTarget,
-                workspacePath: workspace.workspacePath,
-                workspaceIdentity: workspace.workspaceIdentity,
-                recurring: parsed.data.recurring ?? true,
-                maxRuns: parsed.data.maxRuns,
-              });
-              if (automation.targetTaskId) {
-                const taskMeta = await automationTaskIndexRepo
-                  .getTaskMeta({
-                    workspacePath: automation.workspacePath,
-                    workspaceIdentity: automation.workspaceIdentity,
-                    taskId: automation.targetTaskId,
-                  })
-                  .catch(() => null);
-                if (taskMeta) {
-                  await automationTaskIndexRepo.syncTaskMeta({
-                    meta: {
-                      ...taskMeta,
-                      // 会话内创建的 automation 复用当前 session；显式写入标记供 V4 侧栏展示。
-                      cronAutomationId: automation.automationId,
-                      updatedAt: Math.max(taskMeta.updatedAt, Date.now()),
-                    },
-                  });
-                }
-              }
-              await client.respond(request.id, {
-                automation: toProtocolAutomation(automation),
-              });
-            } catch (error) {
-              await client.respondError(request.id, {
-                code: -32603,
-                message: error instanceof Error ? error.message : String(error),
-              });
-            }
-          })();
+          handleAutomationCreate(parsed.data, request.id);
+          return;
+        }
+        // 偏斜期 legacy 分支：字面量匹配（legacy 常量消费归零），M3 删除。
+        if (request.method === "automation/create") {
+          const parsed = v4AutomationCreateParamsSchema.safeParse(request.params);
+          if (!parsed.success) {
+            void client.respondError(request.id, {
+              code: -32602,
+              message: "Invalid automation create params",
+              data: parsed.error.flatten(),
+            });
+            return;
+          }
+          handleAutomationCreate(parsed.data, request.id);
           return;
         }
 
-        if (request.method === acodeProtocolMethods.offPeakCreate) {
-          const parsed = acodeOffPeakCreateParamsSchema.safeParse(request.params);
+        if (request.method === V4_METHODS.offPeakCreate) {
+          const parsed = v4OffPeakCreateParamsSchema.safeParse(request.params);
           if (!parsed.success) {
             void client.respondError(request.id, {
               code: -32602,
@@ -2632,110 +2801,26 @@ export function createACodeAgentService(
             });
             return;
           }
-          void (async () => {
-            try {
-              const offPeakTaskService = options?.resolveOffPeakTaskService?.();
-              if (!offPeakTaskService) {
-                await client.respondError(request.id, {
-                  code: -32601,
-                  message: "Off-peak task service is unavailable on this host",
-                });
-                return;
-              }
-              const grayConfig = await options
-                ?.resolveOffPeakClientConfig?.()
-                .catch(() => undefined);
-              // 工具注册后灰度被关闭/配置解析失败时，不能继续走"白名单为空"的推导
-              // （显式 model 会误报 model_not_allowed，省略 model 会以空模型落库）；直接返回稳定分类。
-              // 模型视图可同时包含两个域；必须用已有支持快照确认归属，不能从首个 Provider 猜。
-              const support =
-                resolveOffPeakAllowedModels(grayConfig).length > 0
-                  ? await offPeakTaskService.getCodingPlanSupport()
-                  : undefined;
-              const providerId = support?.supported
-                ? OFF_PEAK_PROVIDER_IDS[support.providerFamily]
-                : undefined;
-              const allowedModels = providerId
-                ? resolveOffPeakAllowedModels(grayConfig, providerId)
-                : [];
-              if (allowedModels.length === 0) {
-                await client.respond(request.id, {
-                  ok: false,
-                  failureStage: "client_validation",
-                  errorCategory: "client_validation",
-                  errorCode: "offpeak_disabled",
-                });
-                return;
-              }
-              // model 白名单预校：显式入参不在白名单返回稳定分类，
-              // 复用 client_validation 分类 + 专用 errorCode，不扩分类枚举。
-              // 匹配与 thoughtLevel/UI 同语义（trim + 大小写不敏感），命中后回写白名单原写法。
-              const model = resolveOffPeakCreateModel(allowedModels, parsed.data.model);
-              if (model === null) {
-                await client.respond(request.id, {
-                  ok: false,
-                  failureStage: "client_validation",
-                  errorCategory: "client_validation",
-                  errorCode: "model_not_allowed",
-                });
-                return;
-              }
-              const modelSelection =
-                grayConfig && providerId
-                  ? resolveOffPeakToolSelection(
-                      grayConfig.modelSelectionView,
-                      providerId,
-                      model,
-                      parsed.data.thoughtLevel,
-                    )
-                  : undefined;
-              if (!modelSelection) {
-                await client.respond(request.id, {
-                  ok: false,
-                  failureStage: "client_validation",
-                  errorCategory: "client_validation",
-                  errorCode: "model_not_allowed",
-                });
-                return;
-              }
-              const result = await offPeakTaskService.createTask({
-                title: parsed.data.title,
-                prompt: parsed.data.prompt,
-                permissionMode: parsed.data.permissionMode ?? "yolo",
-                modelSelection,
-                // 会话内创建绑定当前会话，派发时 resume 该会话执行。
-                ...(parsed.data.boundSessionId
-                  ? { boundSessionId: parsed.data.boundSessionId }
-                  : {}),
-                // workspace 由 host 从当前 session 注入（对称 automation/create），不进协议参数。
-                workspacePath: workspace.workspacePath,
-                ...(workspace.workspaceIdentity
-                  ? { workspaceIdentity: workspace.workspaceIdentity }
-                  : {}),
-              });
-              if (!result.ok) {
-                // 失败分类原样过协议（不 respondError），供 CLI handler 翻译为稳定错误。
-                await client.respond(request.id, {
-                  ok: false,
-                  failureStage: result.failureStage,
-                  errorCategory: result.errorCategory,
-                  errorCode: result.errorCode,
-                });
-                return;
-              }
-              await client.respond(request.id, {
-                ok: true,
-                task: toProtocolOffPeakTaskSnapshot(result.task),
-              });
-            } catch (error) {
-              await respondOffPeakInternalError(client, request, workspace, error);
-            }
-          })();
+          handleOffPeakCreate(parsed.data, request.id, request.method);
+          return;
+        }
+        // 偏斜期 legacy 分支：字面量匹配（legacy 常量消费归零），M3 删除。
+        if (request.method === "offPeak/create") {
+          const parsed = v4OffPeakCreateParamsSchema.safeParse(request.params);
+          if (!parsed.success) {
+            void client.respondError(request.id, {
+              code: -32602,
+              message: "Invalid off-peak create params",
+              data: parsed.error.flatten(),
+            });
+            return;
+          }
+          handleOffPeakCreate(parsed.data, request.id, request.method);
           return;
         }
 
-        if (request.method === acodeProtocolMethods.offPeakList) {
-          const parsed = acodeOffPeakListParamsSchema.safeParse(request.params ?? {});
+        if (request.method === V4_METHODS.offPeakList) {
+          const parsed = v4OffPeakListParamsSchema.safeParse(request.params ?? {});
           if (!parsed.success) {
             void client.respondError(request.id, {
               code: -32602,
@@ -2744,33 +2829,26 @@ export function createACodeAgentService(
             });
             return;
           }
-          void (async () => {
-            try {
-              const offPeakTaskService = options?.resolveOffPeakTaskService?.();
-              if (!offPeakTaskService) {
-                await client.respondError(request.id, {
-                  code: -32601,
-                  message: "Off-peak task service is unavailable on this host",
-                });
-                return;
-              }
-              const workspaceKey = resolveWorkspaceKey(workspace);
-              const tasks = (await offPeakTaskService.list())
-                .filter((task) => task.workspaceKey === workspaceKey)
-                .sort((a, b) => b.createdAt - a.createdAt)
-                .slice(0, 20);
-              await client.respond(request.id, {
-                tasks: tasks.map(toProtocolOffPeakTaskSnapshot),
-              });
-            } catch (error) {
-              await respondOffPeakInternalError(client, request, workspace, error);
-            }
-          })();
+          handleOffPeakList(request.id, request.method);
+          return;
+        }
+        // 偏斜期 legacy 分支：字面量匹配（legacy 常量消费归零），M3 删除。
+        if (request.method === "offPeak/list") {
+          const parsed = v4OffPeakListParamsSchema.safeParse(request.params ?? {});
+          if (!parsed.success) {
+            void client.respondError(request.id, {
+              code: -32602,
+              message: "Invalid off-peak list params",
+              data: parsed.error.flatten(),
+            });
+            return;
+          }
+          handleOffPeakList(request.id, request.method);
           return;
         }
 
-        if (request.method === acodeProtocolMethods.automationList) {
-          const parsed = acodeAutomationListParamsSchema.safeParse(request.params ?? {});
+        if (request.method === V4_METHODS.automationList) {
+          const parsed = v4AutomationListParamsSchema.safeParse(request.params ?? {});
           if (!parsed.success) {
             void client.respondError(request.id, {
               code: -32602,
@@ -2779,24 +2857,26 @@ export function createACodeAgentService(
             });
             return;
           }
-          void (async () => {
-            try {
-              const automations = await automationService.list(workspace);
-              await client.respond(request.id, {
-                automations: automations.map(toProtocolAutomation),
-              });
-            } catch (error) {
-              await client.respondError(request.id, {
-                code: -32603,
-                message: error instanceof Error ? error.message : String(error),
-              });
-            }
-          })();
+          handleAutomationList(request.id);
+          return;
+        }
+        // 偏斜期 legacy 分支：字面量匹配（legacy 常量消费归零），M3 删除。
+        if (request.method === "automation/list") {
+          const parsed = v4AutomationListParamsSchema.safeParse(request.params ?? {});
+          if (!parsed.success) {
+            void client.respondError(request.id, {
+              code: -32602,
+              message: "Invalid automation list params",
+              data: parsed.error.flatten(),
+            });
+            return;
+          }
+          handleAutomationList(request.id);
           return;
         }
 
-        if (request.method === acodeProtocolMethods.automationCheckTaskBinding) {
-          const parsed = acodeAutomationCheckTaskBindingParamsSchema.safeParse(request.params);
+        if (request.method === V4_METHODS.automationCheckTaskBinding) {
+          const parsed = v4AutomationCheckTaskBindingParamsSchema.safeParse(request.params);
           if (!parsed.success) {
             void client.respondError(request.id, {
               code: -32602,
@@ -2805,26 +2885,26 @@ export function createACodeAgentService(
             });
             return;
           }
-          void (async () => {
-            try {
-              const bound = await automationService.hasTaskBinding({
-                workspacePath: workspace.workspacePath,
-                workspaceIdentity: workspace.workspaceIdentity,
-                targetTaskId: parsed.data.targetTaskId,
-              });
-              await client.respond(request.id, { bound });
-            } catch (error) {
-              await client.respondError(request.id, {
-                code: -32603,
-                message: error instanceof Error ? error.message : String(error),
-              });
-            }
-          })();
+          handleAutomationCheckTaskBinding(parsed.data, request.id);
+          return;
+        }
+        // 偏斜期 legacy 分支：字面量匹配（legacy 常量消费归零），M3 删除。
+        if (request.method === "automation/checkTaskBinding") {
+          const parsed = v4AutomationCheckTaskBindingParamsSchema.safeParse(request.params);
+          if (!parsed.success) {
+            void client.respondError(request.id, {
+              code: -32602,
+              message: "Invalid automation task binding params",
+              data: parsed.error.flatten(),
+            });
+            return;
+          }
+          handleAutomationCheckTaskBinding(parsed.data, request.id);
           return;
         }
 
-        if (request.method === acodeProtocolMethods.automationUpdate) {
-          const parsed = acodeAutomationUpdateParamsSchema.safeParse(request.params);
+        if (request.method === V4_METHODS.automationUpdate) {
+          const parsed = v4AutomationUpdateParamsSchema.safeParse(request.params);
           if (!parsed.success) {
             void client.respondError(request.id, {
               code: -32602,
@@ -2833,40 +2913,26 @@ export function createACodeAgentService(
             });
             return;
           }
-          void (async () => {
-            try {
-              const automation = await automationService.update(
-                parsed.data.automationId,
-                {
-                  title: parsed.data.title,
-                  cronExpr: parsed.data.cronExpr,
-                  prompt: parsed.data.prompt,
-                  recurring: parsed.data.recurring,
-                  maxRuns: parsed.data.maxRuns,
-                  // 会话侧长间隔 carrier（intervalUnit+interval）透传给 service 归一化为权威 scheduleRule。
-                  intervalUnit: parsed.data.intervalUnit,
-                  interval: parsed.data.interval,
-                },
-                workspace,
-              );
-              if (!automation) {
-                throw new Error("Scheduled task not found in the current workspace.");
-              }
-              await client.respond(request.id, {
-                automation: toProtocolAutomation(automation),
-              });
-            } catch (error) {
-              await client.respondError(request.id, {
-                code: -32603,
-                message: error instanceof Error ? error.message : String(error),
-              });
-            }
-          })();
+          handleAutomationUpdate(parsed.data, request.id);
+          return;
+        }
+        // 偏斜期 legacy 分支：字面量匹配（legacy 常量消费归零），M3 删除。
+        if (request.method === "automation/update") {
+          const parsed = v4AutomationUpdateParamsSchema.safeParse(request.params);
+          if (!parsed.success) {
+            void client.respondError(request.id, {
+              code: -32602,
+              message: "Invalid automation update params",
+              data: parsed.error.flatten(),
+            });
+            return;
+          }
+          handleAutomationUpdate(parsed.data, request.id);
           return;
         }
 
-        if (request.method === acodeProtocolMethods.automationDelete) {
-          const parsed = acodeAutomationDeleteParamsSchema.safeParse(request.params);
+        if (request.method === V4_METHODS.automationDelete) {
+          const parsed = v4AutomationDeleteParamsSchema.safeParse(request.params);
           if (!parsed.success) {
             void client.respondError(request.id, {
               code: -32602,
@@ -2875,17 +2941,21 @@ export function createACodeAgentService(
             });
             return;
           }
-          void (async () => {
-            try {
-              const deleted = await automationService.delete(parsed.data.automationId, workspace);
-              await client.respond(request.id, { deleted });
-            } catch (error) {
-              await client.respondError(request.id, {
-                code: -32603,
-                message: error instanceof Error ? error.message : String(error),
-              });
-            }
-          })();
+          handleAutomationDelete(parsed.data, request.id);
+          return;
+        }
+        // 偏斜期 legacy 分支：字面量匹配（legacy 常量消费归零），M3 删除。
+        if (request.method === "automation/delete") {
+          const parsed = v4AutomationDeleteParamsSchema.safeParse(request.params);
+          if (!parsed.success) {
+            void client.respondError(request.id, {
+              code: -32602,
+              message: "Invalid automation delete params",
+              data: parsed.error.flatten(),
+            });
+            return;
+          }
+          handleAutomationDelete(parsed.data, request.id);
           return;
         }
 
@@ -3048,9 +3118,9 @@ export function createACodeAgentService(
       if (!isOffPeakToolSupported(params)) return;
       try {
         await client.request(
-          acodeProtocolMethods.workspaceUpdateOffPeakToolPolicy,
+          V4_METHODS.workspaceUpdateOffPeakToolPolicy,
           { workspace: buildWorkspaceRef(params), enabled: true },
-          acodeWorkspaceUpdateOffPeakToolPolicyResultSchema,
+          v4WorkspaceUpdateOffPeakToolPolicyResultSchema,
         );
       } catch (error) {
         // 策略同步是尽力而为的能力分发，失败方向是 fail-closed（CLI 缺省不注册工具），
@@ -3070,9 +3140,9 @@ export function createACodeAgentService(
       if (!(await resolveDynamicWorkflowGate())) return;
       try {
         await client.request(
-          acodeProtocolMethods.workspaceUpdateDynamicWorkflowPolicy,
+          V4_METHODS.workspaceUpdateDynamicWorkflowPolicy,
           { workspace: buildWorkspaceRef(params), enabled: true },
-          acodeWorkspaceUpdateDynamicWorkflowPolicyResultSchema,
+          v4WorkspaceUpdateDynamicWorkflowPolicyResultSchema,
         );
       } catch (error) {
         // 与 Off-Peak 同判据：-32601 是旧 CLI 的正常降级（其 z.object 也会丢掉 session flag，
@@ -3089,6 +3159,10 @@ export function createACodeAgentService(
       interactionPreferencesReady,
       offPeakToolPolicyReady,
       dynamicWorkflowPolicyReady,
+      // M2-3（specs/m2-3-session-readwrite.md §2.8）：偏好推送纳入入池就绪，保证冷恢复
+      // （conversationSubscribe 物化）发生前 CLI 侧缓存已暖；推送内部吞错（永不 reject），
+      // 不进 Promise.all 失败面。
+      pushSessionRuntimePreferences(client, params),
     ]).then(() => undefined);
     try {
       // 新建或重启 runtime 在允许任何 session 工作前追平缓存；同步期间的新开关
@@ -3293,6 +3367,7 @@ export function createACodeAgentService(
     conversationTelemetryFactEmitters.clear();
     cuaPermissionObservationEmitter.dispose();
     networkCaptureRecordsEmitter.dispose();
+    overnightCompletionEmitter.dispose();
     for (const emitter of workspaceConfigFrameEmitters.values()) {
       emitter.dispose();
     }
@@ -3307,6 +3382,8 @@ export function createACodeAgentService(
     pendingProviderRuntimeHeaders.clear();
     for (const pending of pendingSessionRuntimePreferences.values()) {
       clearTimeout(pending.timeout);
+      // M2-3：dispose 时在途解析快速失败，避免 push 帮助器的 await 悬挂。
+      pending.reject(new Error("ACode agent service disposed"));
     }
     pendingSessionRuntimePreferences.clear();
     activeClientsByWorkspaceKey.clear();
@@ -3412,6 +3489,10 @@ export function createACodeAgentService(
 
   async function buildConversationCommandEnvelope(
     params: ACodeAgentConversationCommandParams,
+    // U11（spec tool-media-attachment-ref.md R10.2a）：createSession 的可信 clientMode。由
+    // sendConversationCommandV4 从 trusted carrier 解析（resolveTrustedCommandClientMode），
+    // 传进来而非在信封里重算，保证「盖进 payload 的值」与「TTFT 门用的值」是同一个可信来源。
+    commandClientMode?: ACodeAgentV4ClientMode,
   ): Promise<CommandEnvelope> {
     const envelope = params.envelope;
     if (envelope.type === "createSession") {
@@ -3427,21 +3508,36 @@ export function createACodeAgentService(
       const offPeakToolEnabled = isOffPeakToolSupported(params);
       // scriptWorkflowEnabled 恒写，所以 createSession 没有可省略的 early return；
       // payload 解析对空 flag 组合也无害（同一条 zod schema）。
-      const payload = commandPayloadSchemas.createSession.parse(envelope.payload);
+      const parsedPayload = commandPayloadSchemas.createSession.parse(envelope.payload);
+      // **安全关键（R10.2a）**：先把 wire 上可能存在的 `clientMode` 从 payload 里**丢弃**——它是
+      // renderer 可控字段（facade 的 withTrustedConnection 只删顶层 clientMode，不触碰 payload），
+      // 唯一的合法来源是下面用可信 commandClientMode 重新盖章。丢弃 + 重盖 = 「wire clientMode 永不
+      // 被信任」的结构性不变量：即使可信值缺席（commandClientMode === undefined），伪造值也已随
+      // rest 解构被剔除，CLI 侧退回缺席即 inline（fail-closed），不会误开 ref 生产。
+      const { clientMode: _forgedClientMode, ...payload } = parsedPayload;
+      // 先装配 host 裁决的工具面 flag（顺序即优先级，后写覆盖前写）。
+      const withHostFlags = {
+        ...payload,
+        ...(offPeakToolEnabled ? { offPeakToolEnabled: true } : {}),
+        // 动态工作流灰度：V4 createSession 是桌面新会话的实际创建路径，不透传则那一批
+        // 工作流工具（core 的 GATED_WORKFLOW_TOOL_NAMES）永不注册。数量刻意不写进注释：
+        // 名单的唯一所有者是 core 的 GATED_WORKFLOW_TOOL_NAMES（dwf 十个 + 脚本工作流的
+        // RunWorkflow），写死数字的注释已经错过一次，第二次不会有人再发现。
+        ...(dynamicWorkflowEnabled ? { dynamicWorkflowEnabled: true } : {}),
+        scriptWorkflowEnabled,
+        // 工具按需检索档位：缺席 = off（CLI 侧 zod optional 静默兼容旧面），
+        // 显式三档（含 off）都写，供 CLI appRuntimePreferences 冷恢复兜底刷新。
+        ...(toolSearchMode === undefined ? {} : { toolSearchMode }),
+      };
       return {
         ...envelope,
-        payload: {
-          ...payload,
-          ...(offPeakToolEnabled ? { offPeakToolEnabled: true } : {}),
-          // 动态工作流灰度：V4 createSession 是桌面新会话的实际创建路径，不透传则那一批
-          // 工作流工具（core 的 GATED_WORKFLOW_TOOL_NAMES）永不注册。数量刻意不写进注释，
-          // 理由同 buildSessionCreateParams 里的同款说明。
-          ...(dynamicWorkflowEnabled ? { dynamicWorkflowEnabled: true } : {}),
-          scriptWorkflowEnabled,
-          // 工具按需检索档位：缺席 = off（CLI 侧 zod optional 静默兼容旧面），
-          // 显式三档（含 off）都写，供 CLI appRuntimePreferences 冷恢复兜底刷新。
-          ...(toolSearchMode === undefined ? {} : { toolSearchMode }),
-        },
+        // clientMode 必须**最后**盖（覆盖 withHostFlags）；覆盖语义在 stampCreateSessionClientMode
+        // （spread 在前、可信值在后，伪造值永不存活）。commandClientMode 缺席 = 不盖章 = 保持上面的
+        // 剔除结果 = CLI 侧缺席即 inline（fail-closed）。
+        payload:
+          commandClientMode === undefined
+            ? withHostFlags
+            : stampCreateSessionClientMode(withHostFlags, commandClientMode),
       };
     }
     if (envelope.type !== "sendText") return envelope;
@@ -3472,6 +3568,168 @@ export function createACodeAgentService(
       };
     }
     return envelope;
+  }
+
+  /**
+   * session/read 线请求单点（M2-1）：readSession 方法与配置写后回读共用本函数，
+   * grep 判据（acodeProtocolMethods 点号消费计数）中 sessionRead 仍只有一个消费行——
+   * M2-3 迁读路径时只需改这里。配置写方法的「ACK 后回读」复刻旧 op 单调用返回变更后
+   * 快照的契约：v4 命令只回 ACK，host 无本地 v4 投影，全量快照只能再读一次（与
+   * adapter 的 resumeSnapshot 后置回读同型）。
+   */
+  async function requestSessionStateSnapshot(
+    client: ACodeProtocolClient,
+    params: Pick<
+      ACodeAgentReadSessionParams,
+      "sessionId" | "deliveryKind" | "messageLimit" | "afterSeq"
+    >,
+  ): Promise<ACodeSessionStateSnapshot> {
+    // M2-3（specs/m2-3-session-readwrite.md §2.4）：legacy session/read → v4/session/read
+    // query。wire 参数与返回形状与 legacy 逐字同形（CLI handler 直通 legacy readSession op），
+    // 结果继续用既有 barrel acodeSessionStateSnapshotSchema 校验。
+    return client.request(
+      V4_METHODS.sessionRead,
+      {
+        sessionId: params.sessionId,
+        deliveryKind: params.deliveryKind,
+        messageLimit: params.messageLimit,
+        afterSeq: params.afterSeq,
+      },
+      acodeSessionStateSnapshotSchema,
+    );
+  }
+
+  /**
+   * 会话级配置写（模型/思考深度/模式）的 v4 CAS 命令提交（M2-1：
+   * session/setModel|setThoughtLevel|setMode → switchModelConfig/switchCollaborationMode）。
+   * 与 adapter 的 sendConfigCasCommandV4 同一收口件：stale ACK 用 revisionAtDecision 收敛
+   * 重试；facade 的旧 expectedRevision 是 legacy stateRevision 计数器，与 v4 conversation
+   * revision 不互通，刻意不透传（无 CAS 提交语义保真，见 sendHostCasCommandV4 注释）。
+   */
+  async function sendSessionConfigCommandV4<
+    T extends "switchModelConfig" | "switchCollaborationMode",
+  >(
+    client: ACodeProtocolClient,
+    sessionId: string,
+    type: T,
+    payload: CommandPayloadMap[T],
+    contextMessage: string,
+  ): Promise<void> {
+    await sendHostCasCommandV4({
+      send: (envelope) => client.request(V4_METHODS.command, envelope, commandAckSchema),
+      type,
+      payload,
+      sessionId,
+      contextMessage,
+    });
+  }
+
+  /**
+   * M2-2：goalSession facade 的 action→v4 分派（legacy session/goal 六 action 的等价物，
+   * spec apps/acode-cli/specs/m2-2-session-control.md §2.2）。show→v4/session/goal query；
+   * set/replace→sendGoalCommand（重复 set 收敛 replace 由 CLI handler 原生承担）；
+   * pause/resume→CAS（sendHostCasCommandV4，stale 以 revisionAtDecision 收敛）；
+   * clear→clearGoal。返回旧 op 回执的 response/startedTurn 两字段；全量快照由调用方
+   * 统一 ACK 后回读（requestSessionStateSnapshot）。
+   * 有意的行为收敛（spec §2.2）：busy 时 set 走 v4 原生 FIFO 入队（legacy 抛 -32010），
+   * 此时 ACK 无 goalControl result，按 response=""/startedTurn=false 收口；resume 遇
+   * plan 模式由 v4 guard.planGoalMutuallyExclusive 拒绝（legacy 落库不续跑），不削弱 guard。
+   */
+  async function dispatchGoalActionV4(
+    client: ACodeProtocolClient,
+    params: ACodeAgentGoalParams,
+  ): Promise<{ response: string; startedTurn: boolean }> {
+    const action = params.action;
+    if (action === "show") {
+      const result = await client.request(
+        V4_METHODS.sessionGoalQuery,
+        { sessionId: params.sessionId },
+        v4SessionGoalQueryResultSchema,
+      );
+      return {
+        response: result.supported
+          ? formatGoalSummaryText(result.target ?? null)
+          : "Goal management is not available in this client.",
+        startedTurn: false,
+      };
+    }
+    if (action === "set" || action === "replace") {
+      const objective = params.objective?.trim() ?? "";
+      if (objective.length === 0) {
+        // legacy 空 objective 不发命令直接回 usage 文案（snapshot 由调用方统一回读）。
+        return {
+          response:
+            action === "replace" ? "Usage: /goal replace <objective>" : "Usage: /goal <objective>",
+          startedTurn: false,
+        };
+      }
+      const ack = await client.request(
+        V4_METHODS.command,
+        createHostCommandEnvelope({
+          type: "sendGoalCommand",
+          payload: { text: objective },
+          sessionId: params.sessionId,
+          // commandId=inputId 对齐（sendText 同例）：goal turn 的终态事件 inputId 与
+          // host command queue 的 traceId 对账收口。
+          ...(params.inputId ? { commandId: params.inputId } : {}),
+        }),
+        commandAckSchema,
+      );
+      assertV4CommandAckOk("sendGoalCommand", ack, `session=${params.sessionId} action=${action}`);
+      const control = ack.result?.type === "goalControl" ? ack.result : undefined;
+      if (!control) return { response: "", startedTurn: false };
+      const base = control.target ? formatGoalChangedText("Goal active", control.target) : "";
+      return {
+        response: control.planContinuationSkipped
+          ? `${base}\n\n${GOAL_PLAN_CONTINUATION_SKIPPED_MESSAGE}`
+          : base,
+        startedTurn: control.startedTurn,
+      };
+    }
+    if (action === "pause" || action === "resume") {
+      const ack = await sendHostCasCommandV4({
+        send: (envelope) => client.request(V4_METHODS.command, envelope, commandAckSchema),
+        type: action === "pause" ? "pauseGoal" : "resumeGoal",
+        payload: {},
+        sessionId: params.sessionId,
+        contextMessage: `session=${params.sessionId} action=${action}`,
+      });
+      const control = ack.result?.type === "goalControl" ? ack.result : undefined;
+      if (!control) return { response: "", startedTurn: false };
+      if (!control.hadTarget) {
+        return {
+          response: action === "pause" ? "No goal to pause." : "No goal to resume.",
+          startedTurn: false,
+        };
+      }
+      if (action === "pause") {
+        // legacy pause 有目标时 response 恒 ""（UI 经目标面板收口，不渲染气泡）。
+        return { response: "", startedTurn: false };
+      }
+      const base = control.target ? formatGoalChangedText("Goal resumed", control.target) : "";
+      return {
+        response: control.planContinuationSkipped
+          ? `${base}\n\n${GOAL_PLAN_CONTINUATION_SKIPPED_MESSAGE}`
+          : base,
+        startedTurn: control.startedTurn,
+      };
+    }
+    // action === "clear"（非 CAS：legacy clear 无 revision 断言）。
+    const ack = await client.request(
+      V4_METHODS.command,
+      createHostCommandEnvelope({
+        type: "clearGoal",
+        payload: {},
+        sessionId: params.sessionId,
+      }),
+      commandAckSchema,
+    );
+    assertV4CommandAckOk("clearGoal", ack, `session=${params.sessionId} action=clear`);
+    const control = ack.result?.type === "goalControl" ? ack.result : undefined;
+    return {
+      response: control ? (control.hadTarget ? "Goal cleared." : "No goal to clear.") : "",
+      startedTurn: false,
+    };
   }
 
   return {
@@ -3583,17 +3841,72 @@ export function createACodeAgentService(
         workspaceKey: resolveWorkspaceKey(params),
         workspacePath: params.workspacePath,
       });
-      const offPeakToolEnabled = isOffPeakToolSupported(params);
-      // 灰度在 client 就绪时已判定，这里是进程内已解析 promise 的再次 await（不打远端）。
-      const dynamicWorkflowEnabled = await resolveDynamicWorkflowGate();
+      // M2-3（specs/m2-3-session-readwrite.md §2.8）：create 是偏好物化时机，发命令前
+      // 先把最新偏好推给 CLI（推送失败不阻断创建，CLI 沿用上次推送或缺省）。
+      await pushSessionRuntimePreferences(client, params, params.sessionId);
       try {
-        const snapshot = await client.request(
-          acodeProtocolMethods.sessionCreate,
-          buildSessionCreateParams({ ...params, offPeakToolEnabled, dynamicWorkflowEnabled }),
-          acodeSessionStateSnapshotSchema,
+        // M2-3（specs/m2-3-session-readwrite.md §2.1）：legacy session/create →
+        // v4/command createSession + ACK 后 v4/session/read 回读。信封经
+        // buildConversationCommandEnvelope 同源注入 host 工具面 flag（offPeak/dwf/
+        // scriptWorkflow/toolSearchMode）——与桌面 v4 草稿创建路径同口径。
+        // commandClientMode 刻意传 undefined：本 facade 不经 trusted carrier（R10.2a
+        // 盖章只在 sendConversationCommandV4），伪造值被信封构造剔除后不盖章 =
+        // CLI 缺席即 inline（fail-closed），与 legacy session/create 无 clientMode
+        // 侧通道的旧行为零差。
+        const envelope = await buildConversationCommandEnvelope(
+          {
+            ...params,
+            envelope: createHostCommandEnvelope({
+              type: "createSession",
+              sessionId: null,
+              payload: {
+                workspaceId: resolveWorkspaceKey(params),
+                // parity 字段直通 legacy createSessionWithProjection 的 rawParams：
+                // sessionId 仅限 importedHistory 的裁决、persistence 缺省 deferred、
+                // mode/model/thoughtLevel 的 createRecord 语义全在 CLI 下游既有逻辑承载。
+                ...(params.sessionId ? { sessionId: params.sessionId } : {}),
+                ...(params.persistence !== undefined ? { persistence: params.persistence } : {}),
+                ...(params.titleGenerationEnabled !== undefined
+                  ? { titleGenerationEnabled: params.titleGenerationEnabled }
+                  : {}),
+                ...(params.toolAllowlist !== undefined
+                  ? { toolAllowlist: params.toolAllowlist }
+                  : {}),
+                ...(params.toolDenylist !== undefined ? { toolDenylist: params.toolDenylist } : {}),
+                // importedHistory 是导入历史的完整性边界，绝不省略——否则会创建一个可切
+                // 模型但没有历史内容的空 session。
+                ...(params.importedHistory !== undefined
+                  ? { importedHistory: params.importedHistory }
+                  : {}),
+                ...(params.mode !== undefined ? { mode: params.mode } : {}),
+                ...(params.model !== undefined ? { model: params.model } : {}),
+                ...(params.thoughtLevel !== undefined
+                  ? { thoughtLevel: params.thoughtLevel }
+                  : {}),
+                // desktop-continuous 首发/恢复走 session service，不经过 legacy task adapter。
+                // MCP 是 runtime 启动期配置，必须在 create 请求边界显式传递，后续 sendPrompt 无法补上。
+                ...(params.mcpServers !== undefined ? { mcpServers: params.mcpServers } : {}),
+              },
+            }),
+          },
+          undefined,
+        );
+        const ack: CommandAck = await client.request(
+          V4_METHODS.command,
+          envelope,
+          commandAckSchema,
           sessionTraceId ? { trace: { traceId: sessionTraceId } } : undefined,
         );
-        rememberSessionTrace({ ...params, sessionId: snapshot.session.sessionId }, snapshot);
+        assertV4CommandAckOk("createSession", ack, `workspace=${params.workspacePath}`);
+        const sessionId = ack.result?.type === "createSession" ? ack.result.sessionId : undefined;
+        if (!sessionId) {
+          // ACK accepted 必带 createSession result（taskAdapter v4Create 同款判空先例）。
+          throw new Error("v4 createSession accepted without sessionId result");
+        }
+        // 回读全量快照复刻 legacy session/create 单调用返回快照的契约（host 无本地 v4
+        // 投影；与配置写方法的 ACK 后回读同型，见 requestSessionStateSnapshot 注释）。
+        const snapshot = await requestSessionStateSnapshot(client, { sessionId });
+        rememberSessionTrace({ ...params, sessionId }, snapshot);
         logger.info(sessionTraceId, "ACode Protocol session/create 完成", {
           durationMs: Date.now() - startedAt,
           messageCount: snapshot.messages.length,
@@ -3607,74 +3920,16 @@ export function createACodeAgentService(
         });
         return snapshot;
       } catch (error) {
-        const compatFields = getSessionCreateCompatFields(error);
-        if (compatFields.length === 0) {
-          logger.warn(sessionTraceId, "ACode Protocol session/create 失败", {
-            durationMs: Date.now() - startedAt,
-            message: error instanceof Error ? error.message : String(error),
-            persistence: params.persistence,
-            workspaceKey: resolveWorkspaceKey(params),
-            workspacePath: params.workspacePath,
-          });
-          throw error;
-        }
-        logger.warn(sessionTraceId, "ACode Protocol session/create 命中新旧协议兼容重试", {
-          compatFields,
+        // v4 方法名即版本边界：legacy 的新旧 schema 兼容重试（omittedFields 降级）与
+        // 兼容重试内补发 session/setThoughtLevel 的链路随本批一起删除。
+        logger.warn(sessionTraceId, "ACode Protocol session/create 失败", {
           durationMs: Date.now() - startedAt,
+          message: error instanceof Error ? error.message : String(error),
+          persistence: params.persistence,
           workspaceKey: resolveWorkspaceKey(params),
           workspacePath: params.workspacePath,
         });
-        // host/UI 可能已经发送新版 session/create 可选字段，但本地打包、
-        // 远端部署或仍存活的旧 app-server 还在使用旧 strict schema。只对已知
-        // 可选字段降级重试，避免 thoughtLevel/persistence 版本差阻塞首发创建。
-        const snapshot = await client.request(
-          acodeProtocolMethods.sessionCreate,
-          buildSessionCreateParams(
-            { ...params, offPeakToolEnabled, dynamicWorkflowEnabled },
-            new Set(compatFields),
-          ),
-          acodeSessionStateSnapshotSchema,
-          sessionTraceId ? { trace: { traceId: sessionTraceId } } : undefined,
-        );
-        rememberSessionTrace({ ...params, sessionId: snapshot.session.sessionId }, snapshot);
-        if (!compatFields.includes("thoughtLevel") || !params.thoughtLevel) {
-          logger.info(sessionTraceId, "ACode Protocol session/create 兼容重试完成", {
-            durationMs: Date.now() - startedAt,
-            sessionId: snapshot.session.sessionId,
-            snapshotTraceId: snapshot.session.traceId ?? null,
-            workspaceKey: resolveWorkspaceKey(params),
-            workspacePath: params.workspacePath,
-          });
-          return snapshot;
-        }
-        // 旧 create schema 不认识 thoughtLevel 时，创建后再走旧协议已有的
-        // session/setThoughtLevel，保证首轮 prompt 仍使用用户在工具栏选择的推理强度。
-        const snapshotWithThoughtLevel = await client.request(
-          acodeProtocolMethods.sessionSetThoughtLevel,
-          {
-            sessionId: snapshot.session.sessionId,
-            thoughtLevel: params.thoughtLevel,
-            persistAsWorkspaceLastUsed: true,
-          },
-          acodeSessionStateSnapshotSchema,
-          sessionTraceId ? { trace: { traceId: sessionTraceId } } : undefined,
-        );
-        rememberSessionTrace(
-          { ...params, sessionId: snapshotWithThoughtLevel.session.sessionId },
-          snapshotWithThoughtLevel,
-        );
-        logger.info(
-          sessionTraceId,
-          "ACode Protocol session/create 兼容重试后设置 thoughtLevel 完成",
-          {
-            durationMs: Date.now() - startedAt,
-            sessionId: snapshot.session.sessionId,
-            snapshotTraceId: snapshotWithThoughtLevel.session.traceId ?? null,
-            workspaceKey: resolveWorkspaceKey(params),
-            workspacePath: params.workspacePath,
-          },
-        );
-        return snapshotWithThoughtLevel;
+        throw error;
       }
     },
 
@@ -3687,6 +3942,10 @@ export function createACodeAgentService(
         workspace: params,
       });
       const cachedTraceId = getSessionTraceId(params);
+      // M2-3（specs/m2-3-session-readwrite.md §2.8）：legacy 是 CLI 侧 per-materialization
+      // pull 偏好；v4 push 模型下 resume 的 runtime 重建是物化时机，必须先推再查（推送失败
+      // 不阻断 resume，CLI 沿用上次推送或缺省）。
+      await pushSessionRuntimePreferences(client, params, params.sessionId);
       const offPeakToolEnabled = isOffPeakToolSupported(params);
       // 冷恢复同样按 Host 的灰度判定下发，否则恢复出来的会话会丢掉工作流工具簇。
       const dynamicWorkflowEnabled = await resolveDynamicWorkflowGate();
@@ -3699,9 +3958,26 @@ export function createACodeAgentService(
         workspacePath: params.workspacePath,
       });
       try {
+        // M2-3：legacy session/resume → v4/session/resume query（CLI handler 直通 legacy
+        // resumeSession op，冷恢复/消息保留/thoughtLevel/MCP/工具名单语义逐字一致）。
+        // v4 方法名即版本边界，新旧 schema 兼容重试（omittedFields 降级）随 legacy 面一起删除。
         const snapshot = await client.request(
-          acodeProtocolMethods.sessionResume,
-          buildSessionResumeParams({ ...params, offPeakToolEnabled, dynamicWorkflowEnabled }),
+          V4_METHODS.sessionResume,
+          {
+            sessionId: params.sessionId,
+            workspace: buildWorkspaceRef(params),
+            ...(params.thoughtLevel !== undefined ? { thoughtLevel: params.thoughtLevel } : {}),
+            // 冷恢复 session 时 app-server 可能重新创建 runtime；MCP 同样需要随 resume 请求下发。
+            ...(params.mcpServers !== undefined ? { mcpServers: params.mcpServers } : {}),
+            // 工具面约束必须和 create 路径一致随 resume 下发，否则冷恢复重建 runtime 后会丢失
+            // allow/deny 隔离（CUA 会话会重新可见 Bash 等被禁工具）。
+            ...(params.toolAllowlist !== undefined ? { toolAllowlist: params.toolAllowlist } : {}),
+            ...(params.toolDenylist !== undefined ? { toolDenylist: params.toolDenylist } : {}),
+            // resume 不带该 flag 会让冷恢复丢 Off-Peak 工具面（与 toolAllowlist 同因）。
+            ...(offPeakToolEnabled === true ? { offPeakToolEnabled: true } : {}),
+            // 同因：resume 不带该 flag 会让冷恢复丢掉工作流工具簇。
+            ...(dynamicWorkflowEnabled === true ? { dynamicWorkflowEnabled: true } : {}),
+          },
           acodeSessionStateSnapshotSchema,
         );
         const sessionTraceId = rememberSessionTrace(params, snapshot) ?? cachedTraceId;
@@ -3717,55 +3993,30 @@ export function createACodeAgentService(
         });
         return snapshot;
       } catch (error) {
-        const compatFields = getSessionResumeCompatFields(error);
-        if (compatFields.length === 0) {
-          logger.warn(cachedTraceId, "ACode Protocol session/resume 失败", {
-            durationMs: Date.now() - startedAt,
-            message: error instanceof Error ? error.message : String(error),
-            sessionId: params.sessionId,
-            workspaceKey: resolveWorkspaceKey(params),
-            workspacePath: params.workspacePath,
-          });
-          throw error;
-        }
-        logger.warn(cachedTraceId, "ACode Protocol session/resume 命中新旧协议兼容重试", {
-          compatFields,
+        logger.warn(cachedTraceId, "ACode Protocol session/resume 失败", {
           durationMs: Date.now() - startedAt,
+          message: error instanceof Error ? error.message : String(error),
           sessionId: params.sessionId,
           workspaceKey: resolveWorkspaceKey(params),
           workspacePath: params.workspacePath,
         });
-        const snapshot = await client.request(
-          acodeProtocolMethods.sessionResume,
-          buildSessionResumeParams(
-            { ...params, offPeakToolEnabled, dynamicWorkflowEnabled },
-            new Set(compatFields),
-          ),
-          acodeSessionStateSnapshotSchema,
-        );
-        const sessionTraceId = rememberSessionTrace(params, snapshot) ?? cachedTraceId;
-        logger.info(sessionTraceId, "ACode Protocol session/resume 兼容重试完成", {
-          durationMs: Date.now() - startedAt,
-          sessionId: params.sessionId,
-          snapshotTraceId: snapshot.session.traceId ?? null,
-          workspaceKey: resolveWorkspaceKey(params),
-          workspacePath: params.workspacePath,
-        });
-        return snapshot;
+        throw error;
       }
     },
 
     async listSessions(params: ACodeAgentListSessionsParams) {
       const client = await getReadOnlyClient(params, params.runtimePolicy);
+      // M2-3（specs/m2-3-session-readwrite.md §2.3）：legacy session/list → v4/sessions/list
+      // query；CLI handler 直通 legacy listSessions op（分页/归档/trace 保留逐字一致）。
       const result = await client.request(
-        acodeProtocolMethods.sessionList,
+        V4_METHODS.sessionsList,
         {
           workspace: buildWorkspaceRef(params),
           includeArchived: params.includeArchived ?? false,
           limit: params.limit,
           ...(params.sessionIds ? { sessionIds: params.sessionIds } : {}),
         },
-        acodeSessionListResultSchema,
+        v4SessionsListResultSchema,
       );
       for (const session of result.sessions) {
         if (session.traceId) {
@@ -3781,7 +4032,7 @@ export function createACodeAgentService(
     async listSessionSubagents(params: ACodeAgentListSessionSubagentsParams) {
       const client = await getReadOnlyClient(params);
       return client.request(
-        acodeProtocolMethods.sessionSubagents,
+        LEGACY_SURVIVOR_METHODS.sessionSubagents,
         {
           sessionId: params.sessionId,
           endedCursor: params.endedCursor,
@@ -3829,47 +4080,69 @@ export function createACodeAgentService(
           workspace: params,
         });
       }
-      const snapshot = await client.request(
-        acodeProtocolMethods.sessionRead,
-        {
-          sessionId: params.sessionId,
-          deliveryKind: params.deliveryKind,
-          messageLimit: params.messageLimit,
-          afterSeq: params.afterSeq,
-        },
-        acodeSessionStateSnapshotSchema,
-      );
+      const snapshot = await requestSessionStateSnapshot(client, params);
       rememberSessionTrace(params, snapshot);
       return snapshot;
     },
 
+    async readSessionHeaderMeta(params: ACodeAgentSessionTarget) {
+      // 归档 header 冷读（apps/acode-cli/specs/v4-session-header-meta.md）。与 readSession 三点不同：
+      // ① 用默认 runtimePolicy（start-if-needed）而非 existing-only——归档任务的 workspace 进程可能
+      //    已回收，existing-only 会在无进程时抛 createRuntimeUnavailableError，让兜底读直接失败
+      //    （spec R2）。这里复用 workspace 进程，但**不建 session record / 不激活 session 运行时**：
+      //    CLI 侧 handler 只读持久层（sessionStore.getSession/readTarget/sessionEntries），不碰
+      //    context.sessions。
+      // ② 不 ensureAccountProviderConfigSynced——header 只回持久元数据，不依赖 provider 配置同步，
+      //    为一个兜底读触发账号同步是不必要的副作用。
+      // ③ 不 rememberSessionTrace——那是 readSession 快照消费链的职责；header meta 是纯展示兜底，
+      //    往 sessionTraceIdBySessionKey 写会是第二条 trace 写入路径（AGENTS.md：单一写入路径）。
+      const client = await getReadOnlyClient(params);
+      return client.request(
+        V4_METHODS.sessionHeaderMeta,
+        { sessionId: params.sessionId },
+        v4SessionHeaderMetaResultSchema,
+      );
+    },
+
     async readSessionMessages(params: ACodeAgentReadSessionMessagesParams) {
       const client = await getReadOnlyClient(params);
-      const result = await client.request(
-        acodeProtocolMethods.sessionMessages,
+      // M2-3（specs/m2-3-session-readwrite.md §2.5）：legacy session/messages →
+      // v4/session/messages query；afterMessageId 越界抛错 + 尾切片语义由直通 op 承载。
+      // result 不挂 schema 校验（legacy parity）：wire 直通 raw opencode MessageWithParts
+      // （info.id 词汇），legacy services 对 barrel result schema 仅是孤儿 import 从不
+      // 校验；normalized 词汇（messageId/sessionId）只存在于 session/read snapshot 的
+      // mapMessageWithParts 路径。接口返回类型是历史类型谎言，原样承载（spec §6 登记）。
+      const result = await client.request<{ messages: ACodeMessageWithParts[] }>(
+        V4_METHODS.sessionMessages,
         {
           sessionId: params.sessionId,
           afterMessageId: params.afterMessageId,
           limit: params.limit,
         },
-        acodeSessionMessagesResultSchema,
       );
       return result.messages;
     },
 
     async readSessionDebug(params) {
+      // M2-2：legacy session/debug → v4/session/debug query（裁决：sessionDebug 保留新建
+      // v4 query，spec m2-2-session-control.md §2.4）。result schema 同形直通
+      // （v4SessionDebugResultSchema = sessionDebugSnapshotSchema 中立叶复用）；
+      // existing-only 策略与 live-only 语义不变（无 record 时 CLI 侧 requireSession 抛错）。
       const client = await getReadOnlyClient(params, "existing-only");
       return client.request(
-        acodeProtocolMethods.sessionDebug,
+        V4_METHODS.sessionDebug,
         { sessionId: params.sessionId },
-        sessionDebugSnapshotSchema,
+        v4SessionDebugResultSchema,
       );
     },
 
     async readSessionEvents(params: ACodeAgentReadSessionEventsParams) {
       const client = await getReadOnlyClient(params);
+      // M2-3（specs/m2-3-session-readwrite.md §2.6）：legacy session/events →
+      // v4/session/events query；独立事件日志查询面保留（裁决：不并入 conversation
+      // frame），afterSeq/尾切片语义由直通 op 承载，结果校验沿用既有 barrel schema。
       const result = await client.request(
-        acodeProtocolMethods.sessionEvents,
+        V4_METHODS.sessionEvents,
         {
           sessionId: params.sessionId,
           afterSeq: params.afterSeq,
@@ -3887,7 +4160,7 @@ export function createACodeAgentService(
         workspacePath: params.workspacePath,
       });
       try {
-        let presentation: ACodeWorkspacePresentation | undefined;
+        let presentation: V4WorkspacePresentation | undefined;
         for (let attempt = 0; attempt < 2; attempt += 1) {
           const client = await getReadOnlyClient(params);
           try {
@@ -3897,9 +4170,9 @@ export function createACodeAgentService(
               workspace: params,
             });
             presentation = await client.request(
-              acodeProtocolMethods.workspaceReadPresentation,
+              V4_METHODS.workspaceReadPresentation,
               { workspace: buildWorkspaceRef(params) },
-              acodeWorkspacePresentationSchema,
+              v4WorkspacePresentationSchema,
             );
             break;
           } catch (error) {
@@ -3951,62 +4224,37 @@ export function createACodeAgentService(
       // Settings 操作伪造 session，也不能要求 provider/model 已就绪。
       const client = await getReadOnlyClient(params);
       return client.request(
-        acodeProtocolMethods.workspaceHookTrustGrant,
+        V4_METHODS.workspaceHookTrustGrant,
         {
           workspace: buildWorkspaceRef(params),
           bundleDigest: params.bundleDigest,
           hookDeclarationDigest: params.hookDeclarationDigest,
         },
-        acodeWorkspaceHookTrustGrantResultSchema,
+        v4WorkspaceHookTrustGrantResultSchema,
       );
     },
 
     async listMcpServerStatuses(params: ACodeAgentListMcpServerStatusesParams) {
-      const requestMcpList = async (options?: { omitMcpServers?: boolean; omitMode?: boolean }) => {
+      // M2-6：mcp/list → v4/mcp/list（载荷逐字 parity；specs/m2-6-workflows-skills-mcp.md）。
+      // legacy 的 unrecognizedKeys 兼容重试链不迁：它服务 legacy strict-parse 旧 Agent，
+      // v4 方法名本身就是版本边界（不认识的旧 CLI 报 -32601 而非 -32602）。
+      // ACodeAgentMcpStatusModeUnsupportedError 保持导出（UI 仍引用该符号），本路径不再抛出。
+      const requestMcpList = async () => {
         const client = await getMcpStatusClient();
         return client.request(
-          acodeProtocolMethods.mcpList,
+          V4_METHODS.mcpList,
           {
             workspace: buildWorkspaceRef(params),
-            ...(params.mcpServers !== undefined && !options?.omitMcpServers
-              ? { mcpServers: params.mcpServers }
-              : {}),
-            ...(params.mode !== undefined && !options?.omitMode ? { mode: params.mode } : {}),
+            ...(params.mcpServers !== undefined ? { mcpServers: params.mcpServers } : {}),
+            ...(params.mode !== undefined ? { mode: params.mode } : {}),
           },
-          acodeMcpListResultSchema,
+          v4McpListResultSchema,
         );
       };
       try {
         return await requestMcpList();
       } catch (error) {
-        const unrecognizedKeys = getUnrecognizedTopLevelKeys(error);
-        if (params.mode === "status" && unrecognizedKeys.includes("mode")) {
-          // 旧 Agent 不认识 status-only 时，省略 mode 重试会退回默认 connect，
-          // 重新执行 replace 收敛并可能断开 UI 显式下发但旧 Agent 配置中不存在的 MCP；
-          // 稳定错误码会跨 host RPC 保留，供 UI 停止不可能成功的轮询。
-          logger.warn(undefined, "旧 Agent 不支持 MCP status-only，跳过会改变连接集合的兼容重试", {
-            workspaceKey: resolveWorkspaceKey(params),
-            workspacePath: params.workspacePath,
-          });
-          throw new ACodeAgentMcpStatusModeUnsupportedError();
-        }
-        if (
-          (params.mode !== undefined && unrecognizedKeys.includes("mode")) ||
-          (params.mcpServers !== undefined && unrecognizedKeys.includes("mcpServers"))
-        ) {
-          const omitMode = unrecognizedKeys.includes("mode");
-          const omitMcpServers = unrecognizedKeys.includes("mcpServers");
-          logger.warn(undefined, "MCP 状态列表命中新旧协议兼容重试", {
-            omittedKeys: [...(omitMode ? ["mode"] : []), ...(omitMcpServers ? ["mcpServers"] : [])],
-            workspaceKey: resolveWorkspaceKey(params),
-            workspacePath: params.workspacePath,
-          });
-          return await requestMcpList({
-            omitMcpServers,
-            omitMode,
-          });
-        }
-        if (!isProtocolRequestTimeout(error, acodeProtocolMethods.mcpList)) {
+        if (!isProtocolRequestTimeout(error, V4_METHODS.mcpList)) {
           throw error;
         }
         logger.warn(undefined, "MCP 状态列表请求超时，重启无响应 agent 后重试一次", {
@@ -4021,21 +4269,21 @@ export function createACodeAgentService(
     async listPlugins(params: ACodeAgentPluginViewParams) {
       const requestPluginsList = async () => {
         const client = await getPluginManagementClient();
-        // plugins/list 只读取本地 plugin metadata，与 mcp/list 一样走默认协议超时，
+        // v4/plugins/list（M2-5 迁移）只读取本地 plugin metadata，与 mcp/list 一样走默认协议超时，
         // 这样 stale client 能在合理时间内触发回收并重试，而不是被 5 分钟市场 I/O 超时拖住。
         return client.request(
-          acodeProtocolMethods.pluginsList,
+          V4_METHODS.pluginsList,
           {
             workspace: buildWorkspaceRef(params),
             ...(params.configScope ? { configScope: params.configScope } : {}),
           },
-          acodePluginsListResultSchema,
+          v4PluginsListResultSchema,
         );
       };
       try {
         return await requestPluginsList();
       } catch (error) {
-        if (!isProtocolRequestTimeout(error, acodeProtocolMethods.pluginsList)) {
+        if (!isProtocolRequestTimeout(error, V4_METHODS.pluginsList)) {
           throw error;
         }
         logger.warn(undefined, "插件列表请求超时，重启无响应 agent 后重试一次", {
@@ -4065,13 +4313,14 @@ export function createACodeAgentService(
       // 与 Plugin 引用一样，Session 快照只存在于 workspace agent 进程；独立管理进程
       // 没有 resident Session，不能作为对话 authority。
       const client = await getReadOnlyClient(params);
+      // M2-6：skills/referenceCatalog → v4/skills/referenceCatalog（载荷逐字 parity）。
       return client.request(
-        acodeProtocolMethods.skillsReferenceCatalog,
+        V4_METHODS.skillsReferenceCatalog,
         {
           workspace: buildWorkspaceRef(params),
           ...(params.sessionId ? { sessionId: params.sessionId } : {}),
         },
-        acodeSkillsReferenceCatalogResultSchema,
+        v4SkillsReferenceCatalogResultSchema,
       );
     },
 
@@ -4081,51 +4330,52 @@ export function createACodeAgentService(
     // `scope` 只在有定义时下推。
     async listSavedWorkflows(params: ACodeAgentListSavedWorkflowsParams) {
       const { client, workspace } = await resolveSavedWorkflowCarrier(params);
+      // M2-6：workflows/* → v4/workflows/*（载荷逐字 parity）。
       return client.request(
-        acodeProtocolMethods.workflowsList,
+        V4_METHODS.workflowsList,
         { workspace, ...savedWorkflowScopeParam(params) },
-        acodeWorkflowsListResultSchema,
+        v4WorkflowsListResultSchema,
       );
     },
 
     async getSavedWorkflow(params: ACodeAgentGetSavedWorkflowParams) {
       const { client, workspace } = await resolveSavedWorkflowCarrier(params);
       return client.request(
-        acodeProtocolMethods.workflowsGet,
+        V4_METHODS.workflowsGet,
         { workspace, name: params.name, ...savedWorkflowScopeParam(params) },
-        acodeWorkflowsGetResultSchema,
+        v4WorkflowsGetResultSchema,
       );
     },
 
     async updateSavedWorkflowMeta(params: ACodeAgentUpdateSavedWorkflowMetaParams) {
       const { client, workspace } = await resolveSavedWorkflowCarrier(params);
       return client.request(
-        acodeProtocolMethods.workflowsUpdateMeta,
+        V4_METHODS.workflowsUpdateMeta,
         { workspace, name: params.name, meta: params.meta, ...savedWorkflowScopeParam(params) },
-        acodeWorkflowsUpdateMetaResultSchema,
+        v4WorkflowsUpdateMetaResultSchema,
       );
     },
 
     async deleteSavedWorkflow(params: ACodeAgentDeleteSavedWorkflowParams) {
       const { client, workspace } = await resolveSavedWorkflowCarrier(params);
       return client.request(
-        acodeProtocolMethods.workflowsDelete,
+        V4_METHODS.workflowsDelete,
         { workspace, name: params.name, ...savedWorkflowScopeParam(params) },
-        acodeWorkflowsDeleteResultSchema,
+        v4WorkflowsDeleteResultSchema,
       );
     },
 
     async listSavedWorkflowRuns(params: ACodeAgentListSavedWorkflowRunsParams) {
       const { client, workspace } = await resolveSavedWorkflowCarrier(params);
       return client.request(
-        acodeProtocolMethods.workflowsRuns,
+        V4_METHODS.workflowsRuns,
         {
           workspace,
           ...(params.name === undefined ? {} : { name: params.name }),
           limit: params.limit,
           ...savedWorkflowScopeParam(params),
         },
-        acodeWorkflowsRunsResultSchema,
+        v4WorkflowsRunsResultSchema,
       );
     },
 
@@ -4135,16 +4385,16 @@ export function createACodeAgentService(
     async moveSavedWorkflow(params: ACodeAgentMoveSavedWorkflowParams) {
       const client = await getReadOnlyClient(params);
       return client.request(
-        acodeProtocolMethods.workflowsMove,
+        V4_METHODS.workflowsMove,
         { workspace: buildWorkspaceRef(params), name: params.name },
-        acodeWorkflowsMoveResultSchema,
+        v4WorkflowsMoveResultSchema,
       );
     },
 
     async resolveSuggestedPluginReference(params: ACodeAgentResolveSuggestedPluginReferenceParams) {
       const client = await getPluginManagementClient();
       return client.request(
-        acodeProtocolMethods.pluginsResolveSuggestedReference,
+        V4_METHODS.pluginsResolveSuggestedReference,
         {
           workspace: buildWorkspaceRef(params),
           stableId: params.stableId,
@@ -4152,7 +4402,7 @@ export function createACodeAgentService(
           clientMode: params.clientMode,
           deliveryKind: params.deliveryKind,
         },
-        acodePluginsResolveSuggestedReferenceResultSchema,
+        v4PluginsResolveSuggestedReferenceResultSchema,
         { timeoutMs: PLUGIN_MANAGEMENT_REQUEST_TIMEOUT_MS },
       );
     },
@@ -4169,12 +4419,12 @@ export function createACodeAgentService(
         );
       return Promise.all(
         managed.map(async (runtime) => {
-          let children: ACodeProcessChildProcess[] = [];
+          let children: V4ProcessChildProcess[] = [];
           try {
             const result = await runtime.client.request(
-              acodeProtocolMethods.processChildProcesses,
+              V4_METHODS.processChildProcesses,
               {},
-              acodeProcessChildProcessesResultSchema,
+              v4ProcessChildProcessesResultSchema,
               { timeoutMs: CHILD_PROCESSES_REQUEST_TIMEOUT_MS, lifecycle: "observation", signal },
             );
             children = result.processes;
@@ -4195,12 +4445,12 @@ export function createACodeAgentService(
     async getPluginsOverview(params: ACodeAgentPluginViewParams) {
       const client = await getPluginManagementClient();
       return client.request(
-        acodeProtocolMethods.pluginsOverview,
+        V4_METHODS.pluginsOverview,
         {
           workspace: buildWorkspaceRef(params),
           ...(params.configScope ? { configScope: params.configScope } : {}),
         },
-        acodePluginsOverviewResultSchema,
+        v4PluginsOverviewResultSchema,
         { timeoutMs: PLUGIN_MANAGEMENT_REQUEST_TIMEOUT_MS },
       );
     },
@@ -4208,14 +4458,14 @@ export function createACodeAgentService(
     async addPluginMarketplace(params: ACodeAgentAddPluginMarketplaceParams) {
       const client = await getPluginManagementClient();
       return client.request(
-        acodeProtocolMethods.pluginsMarketplaceAdd,
+        V4_METHODS.pluginsMarketplaceAdd,
         {
           workspace: buildWorkspaceRef(params),
           source: params.source,
           ...(params.dryRun !== undefined ? { dryRun: params.dryRun } : {}),
           ...(params.operationId ? { operationId: params.operationId } : {}),
         },
-        acodePluginsMarketplaceMutationResultSchema,
+        v4PluginsMarketplaceMutationResultSchema,
         { timeoutMs: PLUGIN_MANAGEMENT_REQUEST_TIMEOUT_MS },
       );
     },
@@ -4223,12 +4473,12 @@ export function createACodeAgentService(
     async removePluginMarketplace(params: ACodeAgentRemovePluginMarketplaceParams) {
       const client = await getPluginManagementClient();
       return client.request(
-        acodeProtocolMethods.pluginsMarketplaceRemove,
+        V4_METHODS.pluginsMarketplaceRemove,
         {
           workspace: buildWorkspaceRef(params),
           marketplace: params.marketplace,
         },
-        acodePluginsMarketplaceMutationResultSchema,
+        v4PluginsMarketplaceMutationResultSchema,
         { timeoutMs: PLUGIN_MANAGEMENT_REQUEST_TIMEOUT_MS },
       );
     },
@@ -4236,13 +4486,13 @@ export function createACodeAgentService(
     async updatePluginMarketplace(params: ACodeAgentUpdatePluginMarketplaceParams) {
       const client = await getPluginManagementClient();
       return client.request(
-        acodeProtocolMethods.pluginsMarketplaceUpdate,
+        V4_METHODS.pluginsMarketplaceUpdate,
         {
           workspace: buildWorkspaceRef(params),
           ...(params.marketplace ? { marketplace: params.marketplace } : {}),
           ...(params.operationId ? { operationId: params.operationId } : {}),
         },
-        acodePluginsMarketplaceMutationResultSchema,
+        v4PluginsMarketplaceMutationResultSchema,
         { timeoutMs: PLUGIN_MANAGEMENT_REQUEST_TIMEOUT_MS },
       );
     },
@@ -4250,7 +4500,7 @@ export function createACodeAgentService(
     async installPlugin(params: ACodeAgentInstallPluginParams) {
       const client = await getPluginManagementClient();
       return client.request(
-        acodeProtocolMethods.pluginsInstall,
+        V4_METHODS.pluginsInstall,
         {
           workspace: buildWorkspaceRef(params),
           pluginName: params.pluginName,
@@ -4259,7 +4509,7 @@ export function createACodeAgentService(
           ...(params.dryRun !== undefined ? { dryRun: params.dryRun } : {}),
           ...(params.operationId ? { operationId: params.operationId } : {}),
         },
-        acodePluginsInstallResultSchema,
+        v4PluginsInstallResultSchema,
         { timeoutMs: PLUGIN_MANAGEMENT_REQUEST_TIMEOUT_MS },
       );
     },
@@ -4267,7 +4517,7 @@ export function createACodeAgentService(
     async cancelPluginOperation(params: ACodeAgentCancelPluginOperationParams) {
       const client = await getPluginManagementClient();
       return client.request(
-        acodeProtocolMethods.pluginsCancelOperation,
+        LEGACY_SURVIVOR_METHODS.pluginsCancelOperation,
         { operationId: params.operationId },
         acodePluginsCancelOperationResultSchema,
         { timeoutMs: PLUGIN_OPERATION_CANCEL_REQUEST_TIMEOUT_MS },
@@ -4277,7 +4527,7 @@ export function createACodeAgentService(
     async uninstallPlugin(params: ACodeAgentUninstallPluginParams) {
       const client = await getPluginManagementClient();
       return client.request(
-        acodeProtocolMethods.pluginsUninstall,
+        V4_METHODS.pluginsUninstall,
         {
           workspace: buildWorkspaceRef(params),
           ...(params.pluginId ? { pluginId: params.pluginId } : {}),
@@ -4285,7 +4535,7 @@ export function createACodeAgentService(
           ...(params.marketplace ? { marketplace: params.marketplace } : {}),
           ...(params.removeCache !== undefined ? { removeCache: params.removeCache } : {}),
         },
-        acodePluginsUninstallResultSchema,
+        v4PluginsUninstallResultSchema,
         { timeoutMs: PLUGIN_MANAGEMENT_REQUEST_TIMEOUT_MS },
       );
     },
@@ -4293,13 +4543,13 @@ export function createACodeAgentService(
     async updatePlugin(params: ACodeAgentUpdatePluginParams) {
       const client = await getPluginManagementClient();
       return client.request(
-        acodeProtocolMethods.pluginsUpdate,
+        V4_METHODS.pluginsUpdate,
         {
           workspace: buildWorkspaceRef(params),
           ...(params.pluginId ? { pluginId: params.pluginId } : {}),
           ...(params.marketplace ? { marketplace: params.marketplace } : {}),
         },
-        acodePluginsInstallResultSchema,
+        v4PluginsInstallResultSchema,
         { timeoutMs: PLUGIN_MANAGEMENT_REQUEST_TIMEOUT_MS },
       );
     },
@@ -4307,12 +4557,12 @@ export function createACodeAgentService(
     async restoreBuiltinPlugin(params: ACodeAgentRestoreBuiltinPluginParams) {
       const client = await getPluginManagementClient();
       return client.request(
-        acodeProtocolMethods.pluginsRestoreBuiltin,
+        V4_METHODS.pluginsRestoreBuiltin,
         {
           workspace: buildWorkspaceRef(params),
           pluginId: params.pluginId,
         },
-        acodePluginsRestoreBuiltinResultSchema,
+        v4PluginsRestoreBuiltinResultSchema,
         { timeoutMs: PLUGIN_MANAGEMENT_REQUEST_TIMEOUT_MS },
       );
     },
@@ -4320,7 +4570,7 @@ export function createACodeAgentService(
     async configurePlugin(params: ACodeAgentConfigurePluginParams) {
       const client = await getPluginManagementClient();
       return client.request(
-        acodeProtocolMethods.pluginsConfigure,
+        V4_METHODS.pluginsConfigure,
         {
           workspace: buildWorkspaceRef(params),
           pluginId: params.pluginId,
@@ -4329,7 +4579,7 @@ export function createACodeAgentService(
           ...(params.scope ? { scope: params.scope } : {}),
           ...(params.dryRun !== undefined ? { dryRun: params.dryRun } : {}),
         },
-        acodePluginsConfigureResultSchema,
+        v4PluginsConfigureResultSchema,
         { timeoutMs: PLUGIN_MANAGEMENT_REQUEST_TIMEOUT_MS },
       );
     },
@@ -4337,13 +4587,13 @@ export function createACodeAgentService(
     async resetPluginConfig(params: ACodeAgentResetPluginConfigParams) {
       const client = await getPluginManagementClient();
       return client.request(
-        acodeProtocolMethods.pluginsResetConfig,
+        V4_METHODS.pluginsResetConfig,
         {
           workspace: buildWorkspaceRef(params),
           pluginId: params.pluginId,
           ...(params.scope ? { scope: params.scope } : {}),
         },
-        acodePluginsConfigureResultSchema,
+        v4PluginsConfigureResultSchema,
         { timeoutMs: PLUGIN_MANAGEMENT_REQUEST_TIMEOUT_MS },
       );
     },
@@ -4351,14 +4601,14 @@ export function createACodeAgentService(
     async validatePlugin(params: ACodeAgentValidatePluginParams) {
       const client = await getPluginManagementClient();
       return client.request(
-        acodeProtocolMethods.pluginsValidate,
+        V4_METHODS.pluginsValidate,
         {
           workspace: buildWorkspaceRef(params),
           ...(params.pluginName ? { pluginName: params.pluginName } : {}),
           ...(params.marketplace ? { marketplace: params.marketplace } : {}),
           ...(params.source ? { source: params.source } : {}),
         },
-        acodePluginsValidateResultSchema,
+        v4PluginsValidateResultSchema,
         { timeoutMs: PLUGIN_MANAGEMENT_REQUEST_TIMEOUT_MS },
       );
     },
@@ -4366,13 +4616,13 @@ export function createACodeAgentService(
     async describePlugin(params: ACodeAgentDescribePluginParams) {
       const client = await getPluginManagementClient();
       return client.request(
-        acodeProtocolMethods.pluginsDescribe,
+        V4_METHODS.pluginsDescribe,
         {
           workspace: buildWorkspaceRef(params),
           marketplace: params.marketplace,
           pluginName: params.pluginName,
         },
-        acodePluginsDescribeResultSchema,
+        v4PluginsDescribeResultSchema,
         { timeoutMs: PLUGIN_MANAGEMENT_REQUEST_TIMEOUT_MS },
       );
     },
@@ -4380,7 +4630,7 @@ export function createACodeAgentService(
     async setPluginEnabled(params: ACodeAgentSetPluginEnabledParams) {
       const client = await getPluginManagementClient();
       return client.request(
-        acodeProtocolMethods.pluginsSetEnabled,
+        V4_METHODS.pluginsSetEnabled,
         {
           workspace: buildWorkspaceRef(params),
           pluginId: params.pluginId,
@@ -4388,7 +4638,7 @@ export function createACodeAgentService(
           ...(params.operationId ? { operationId: params.operationId } : {}),
           ...(params.scope ? { scope: params.scope } : {}),
         },
-        acodePluginsSetEnabledResultSchema,
+        v4PluginsSetEnabledResultSchema,
         { timeoutMs: PLUGIN_MANAGEMENT_REQUEST_TIMEOUT_MS },
       );
     },
@@ -4538,9 +4788,9 @@ export function createACodeAgentService(
         if (!operationId) return;
         void client
           .request(
-            acodeProtocolMethods.workspaceCancelGenerateText,
+            V4_METHODS.workspaceCancelGenerateText,
             { operationId },
-            acodeWorkspaceCancelGenerateTextResultSchema,
+            v4WorkspaceCancelGenerateTextResultSchema,
             { timeoutMs: 5_000 },
           )
           .catch((error: unknown) => {
@@ -4556,7 +4806,7 @@ export function createACodeAgentService(
       if (hasLocalSignal) params.signal?.addEventListener("abort", cancel, { once: true });
       try {
         return await client.request(
-          acodeProtocolMethods.workspaceGenerateText,
+          V4_METHODS.workspaceGenerateText,
           {
             workspace: buildWorkspaceRef(params),
             selection: params.selection,
@@ -4567,7 +4817,7 @@ export function createACodeAgentService(
             ...(params.maxOutputTokens ? { maxOutputTokens: params.maxOutputTokens } : {}),
             ...(operationId ? { operationId } : {}),
           },
-          acodeWorkspaceGenerateTextResultSchema,
+          v4WorkspaceGenerateTextResultSchema,
           // 不传 timeoutMs 时协议 client 默认 3 分钟超时会对 thinking 模型的长请求
           // 先于调用方自身 deadline 触发，并被 onRequestTimeout 误判 stale 杀进程。
           // 调用方显式传入 requestTimeoutMs（自身 deadline + 取消缓冲）时以其为准。
@@ -4585,9 +4835,9 @@ export function createACodeAgentService(
       const client = await getClient(params);
       try {
         return await client.request(
-          acodeProtocolMethods.workspaceCancelGenerateText,
+          V4_METHODS.workspaceCancelGenerateText,
           { operationId: params.operationId },
-          acodeWorkspaceCancelGenerateTextResultSchema,
+          v4WorkspaceCancelGenerateTextResultSchema,
           { timeoutMs: 5_000 },
         );
       } catch (error: unknown) {
@@ -4610,12 +4860,12 @@ export function createACodeAgentService(
         workspace: params,
       });
       return client.request(
-        acodeProtocolMethods.providerTestModelConnectivity,
+        V4_METHODS.providerTestModelConnectivity,
         {
           workspace: buildWorkspaceRef(params),
           selection: params.selection,
         },
-        acodeProviderTestModelConnectivityResultSchema,
+        v4ProviderTestModelConnectivityResultSchema,
         { signal: params.signal },
       );
     },
@@ -4651,7 +4901,7 @@ export function createACodeAgentService(
       });
       try {
         const result = await client.request(
-          acodeProtocolMethods.sessionSend,
+          LEGACY_SURVIVOR_METHODS.sessionSend,
           buildSessionSendParams(protocolParams),
           acodeSessionSendResultSchema,
         );
@@ -4676,7 +4926,7 @@ export function createACodeAgentService(
             workspacePath: params.workspacePath,
           });
           const result = await client.request(
-            acodeProtocolMethods.sessionSend,
+            LEGACY_SURVIVOR_METHODS.sessionSend,
             buildSessionSendParams(protocolParams, new Set(compatFields)),
             acodeSessionSendResultSchema,
           );
@@ -4697,27 +4947,61 @@ export function createACodeAgentService(
     },
 
     async compactSession(params: ACodeAgentCompactParams) {
+      // M2-2：legacy session/compact → v4 compact 命令（spec m2-2-session-control.md §2.1）。
+      // instructions 透传（M2-1 协议面已落，本批消费接线）；非 CAS（admission 与 revision
+      // 无关，protocol 注释）；expectedRevision 不透传（legacy stateRevision 与 v4
+      // conversation revision 不互通，M2-1 同例）。compactOperationLock（compact 运行中/
+      // 已入队）映回 legacy already_running graceful 收口；busy 入队是 v4 原生语义
+      // （legacy 抛 -32010，有意收敛，adapter 无依赖）。facade 全量快照契约经 ACK 后
+      // 回读保持（requestSessionStateSnapshot，M2-1 单点）。
       const startedAt = Date.now();
       const client = await getClient(params);
       const sessionTraceId = getSessionTraceId(params);
-      logger.info(sessionTraceId ?? params.inputId, "ACode Protocol session/compact 开始", {
+      logger.info(sessionTraceId ?? params.inputId, "ACode Protocol v4 compact 开始（M2-2，legacy 已迁）", {
         inputId: params.inputId,
         sessionId: params.sessionId,
         workspaceKey: resolveWorkspaceKey(params),
         workspacePath: params.workspacePath,
       });
       try {
-        const result = await client.request(
-          acodeProtocolMethods.sessionCompact,
-          buildSessionCompactParams(params),
-          acodeSessionCompactResultSchema,
+        const ack = await client.request(
+          V4_METHODS.command,
+          createHostCommandEnvelope({
+            type: "compact",
+            payload: params.instructions ? { instructions: params.instructions } : {},
+            sessionId: params.sessionId,
+            // commandId=inputId 对齐：compact turn 终态事件的 inputId 与 host command
+            // queue 的 traceId 对账收口（sendText 同例）。
+            ...(params.inputId ? { commandId: params.inputId } : {}),
+          }),
+          commandAckSchema,
           {
             // compact 的模型维护态可能进入分钟级窗口；这里放宽的是 ACK 边界，
             // 终态仍由 session timeline / snapshot 推送，不能把它当作同步 compact 结果。
             timeoutMs: SESSION_COMPACT_REQUEST_TIMEOUT_MS,
           },
         );
-        logger.info(sessionTraceId ?? params.inputId, "ACode Protocol session/compact ACK", {
+        // already_running 等价物：legacy 在 compact 运行中 graceful 返回
+        // {compact.state:"already_running"}；v4 同情形是 failed ACK + compactOperationLock。
+        // 只把这一个 reasonCode 映回 graceful，其余失败一律抛（spec §4）。
+        const alreadyRunning =
+          ack.status === "failed" && ack.reasonCode === "compactOperationLock";
+        if (!alreadyRunning) {
+          assertV4CommandAckOk("compact", ack, `session=${params.sessionId}`);
+        }
+        const snapshot = await requestSessionStateSnapshot(client, {
+          sessionId: params.sessionId,
+        });
+        const result = {
+          response: "",
+          snapshot,
+          compact: {
+            state: alreadyRunning ? ("already_running" as const) : ("accepted" as const),
+            ...(params.inputId ? { inputId: params.inputId } : {}),
+          },
+        };
+        logger.info(sessionTraceId ?? params.inputId, "ACode Protocol v4 compact ACK", {
+          compactState: result.compact.state,
           durationMs: Date.now() - startedAt,
           inputId: params.inputId,
           sessionId: params.sessionId,
@@ -4726,7 +5010,7 @@ export function createACodeAgentService(
         });
         return result;
       } catch (error) {
-        logger.warn(sessionTraceId ?? params.inputId, "ACode Protocol session/compact 失败", {
+        logger.warn(sessionTraceId ?? params.inputId, "ACode Protocol v4 compact 失败", {
           durationMs: Date.now() - startedAt,
           error: error instanceof Error ? error.message : String(error),
           inputId: params.inputId,
@@ -4739,9 +5023,13 @@ export function createACodeAgentService(
     },
 
     async goalSession(params: ACodeAgentGoalParams) {
+      // M2-2：legacy session/goal → v4 goal 命令族 + goal query（spec §2.2，分派细节
+      // 在 dispatchGoalActionV4）。回执文本由 goalControl typed result / goal query
+      // 逐字推导（旧 op 已删）；全量快照契约经 ACK 后回读保持（M2-1 同例）；
+      // expectedRevision 不透传（legacy stateRevision 与 v4 conversation revision 不互通）。
       const startedAt = Date.now();
       const client = await getClient(params);
-      logger.info(params.inputId, "开始请求 ACode Protocol session/goal", {
+      logger.info(params.inputId, "开始请求 v4 goal 控制（M2-2，legacy session/goal 已迁）", {
         action: params.action,
         hasObjective: Boolean(params.objective?.trim()),
         sessionId: params.sessionId,
@@ -4749,18 +5037,16 @@ export function createACodeAgentService(
         workspacePath: params.workspacePath,
       });
       try {
-        const result = await client.request(
-          acodeProtocolMethods.sessionGoal,
-          {
-            sessionId: params.sessionId,
-            inputId: params.inputId,
-            action: params.action,
-            objective: params.objective,
-            expectedRevision: params.expectedRevision,
-          },
-          acodeSessionGoalResultSchema,
-        );
-        logger.info(params.inputId, "ACode Protocol session/goal 完成", {
+        const outcome = await dispatchGoalActionV4(client, params);
+        const snapshot = await requestSessionStateSnapshot(client, {
+          sessionId: params.sessionId,
+        });
+        const result = {
+          response: outcome.response,
+          snapshot,
+          startedTurn: outcome.startedTurn,
+        };
+        logger.info(params.inputId, "v4 goal 控制完成", {
           action: params.action,
           durationMs: Date.now() - startedAt,
           messageCount: result.snapshot.messages.length,
@@ -4773,7 +5059,7 @@ export function createACodeAgentService(
         });
         return result;
       } catch (error) {
-        logger.warn(params.inputId, "ACode Protocol session/goal 失败", {
+        logger.warn(params.inputId, "v4 goal 控制失败", {
           action: params.action,
           durationMs: Date.now() - startedAt,
           message: error instanceof Error ? error.message : String(error),
@@ -4790,25 +5076,31 @@ export function createACodeAgentService(
         expectedPersistence?: "deferred" | "immediate";
       },
     ): Promise<boolean> {
+      // M2-2：legacy session/close → v4 closeSession 命令（裁决 2026-10-28：close≠delete
+      // 两语义并存；expectedPersistence 断言由 v4 payload 等价承载，断言裁决经 typed
+      // result 的 closed 字段上行，spec m2-2-session-control.md §2.3）。
       const client = await getClient(params);
-      const result = await client.request(
-        acodeProtocolMethods.sessionClose,
-        {
-          sessionId: params.sessionId,
-          ...(params.expectedPersistence
+      const ack = await client.request(
+        V4_METHODS.command,
+        createHostCommandEnvelope({
+          type: "closeSession",
+          payload: params.expectedPersistence
             ? { expectedPersistence: params.expectedPersistence }
-            : {}),
-        },
-        acodeSessionCloseResultSchema,
+            : {},
+          sessionId: params.sessionId,
+        }),
+        commandAckSchema,
       );
-      // 兼容尚未返回 closed 字段、但已成功执行普通 close 的 Agent。
-      return result.closed ?? true;
+      assertV4CommandAckOk("closeSession", ack, `session=${params.sessionId}`);
+      // v4 必带 closeSession typed result；缺省 true 保留旧兼容行
+      // （面向不产 result 的旧 Agent 容忍）。
+      return ack.result?.type === "closeSession" ? ack.result.closed : true;
     },
 
     async setModel(params: ACodeAgentSetModelParams) {
       const startedAt = Date.now();
       const client = await getClient(params);
-      logger.info(undefined, "开始请求 ACode Protocol session/setModel", {
+      logger.info(undefined, "开始请求 v4 switchModelConfig（M2-1，legacy session/setModel 已迁）", {
         expectedRevision: params.expectedRevision ?? null,
         persistAsWorkspaceLastUsed: params.persistAsWorkspaceLastUsed ?? null,
         requestedModel: formatModelSelectionForLog(params.model),
@@ -4817,17 +5109,25 @@ export function createACodeAgentService(
         workspacePath: params.workspacePath,
       });
       try {
-        const snapshot = await client.request(
-          acodeProtocolMethods.sessionSetModel,
+        // M2-1：legacy session/setModel → v4 switchModelConfig。一条命令承载
+        // provider/model/thought 三件套；thought 缺省 = 目标模型默认档（与 legacy
+        // app.setModel(selection) 同语义）。expectedRevision 是旧 stateRevision 计数器，
+        // 与 v4 conversation revision 不互通，CAS 由 stale ACK 收敛承担；
+        // persistAsWorkspaceLastUsed 在 legacy CLI 侧本就是解析后未消费的死字段，不迁。
+        await sendSessionConfigCommandV4(
+          client,
+          params.sessionId,
+          "switchModelConfig",
           {
-            sessionId: params.sessionId,
-            model: params.model,
-            expectedRevision: params.expectedRevision,
-            persistAsWorkspaceLastUsed: params.persistAsWorkspaceLastUsed,
+            provider: params.model.providerId,
+            model: params.model.modelId,
+            thought: params.model.options?.reasoningLevel ?? "",
           },
-          acodeSessionStateSnapshotSchema,
+          `session=${params.sessionId} model=${params.model.providerId}/${params.model.modelId}`,
         );
-        logger.info(undefined, "ACode Protocol session/setModel 完成", {
+        // 保持 facade 返回契约（变更后全量快照）：v4 命令只回 ACK，快照经 session/read 回读。
+        const snapshot = await requestSessionStateSnapshot(client, params);
+        logger.info(undefined, "v4 switchModelConfig（session/setModel）完成", {
           durationMs: Date.now() - startedAt,
           requestedModel: formatModelSelectionForLog(params.model),
           sessionId: params.sessionId,
@@ -4837,7 +5137,7 @@ export function createACodeAgentService(
         });
         return snapshot;
       } catch (error) {
-        logger.warn(undefined, "ACode Protocol session/setModel 失败", {
+        logger.warn(undefined, "v4 switchModelConfig（session/setModel）失败", {
           durationMs: Date.now() - startedAt,
           message: error instanceof Error ? error.message : String(error),
           requestedModel: formatModelSelectionForLog(params.model),
@@ -4851,30 +5151,45 @@ export function createACodeAgentService(
 
     async setThoughtLevel(params: ACodeAgentSetThoughtLevelParams) {
       const client = await getClient(params);
-      const snapshot = await client.request(
-        acodeProtocolMethods.sessionSetThoughtLevel,
+      if (!params.thoughtLevel) {
+        // legacy CLI handler 的同款拒绝（"thoughtLevel is required"），迁移后前置到 host 侧。
+        throw new Error("thoughtLevel is required");
+      }
+      // M2-1：legacy session/setThoughtLevel → v4 switchModelConfig。v4 无独立思考深度
+      // 命令，thought 字段承载；provider/model 取当前会话选型（与桌面 v4 工具条
+      // setConfigOption 同一命令面）。前置读用于定位当前选型，返回契约要求的
+      // 变更后快照在 ACK 后再读一次。
+      const current = await requestSessionStateSnapshot(client, params);
+      const model = current.settings.model.current;
+      // 未绑定会话可以查看，但单独切档位不能猜测 Provider/Model。
+      if (!model) throw new Error("请先选择模型，再设置思考档位");
+      await sendSessionConfigCommandV4(
+        client,
+        params.sessionId,
+        "switchModelConfig",
         {
-          sessionId: params.sessionId,
-          thoughtLevel: params.thoughtLevel,
-          expectedRevision: params.expectedRevision,
-          persistAsWorkspaceLastUsed: params.persistAsWorkspaceLastUsed,
+          provider: model.providerId,
+          model: model.modelId,
+          thought: params.thoughtLevel,
         },
-        acodeSessionStateSnapshotSchema,
+        `session=${params.sessionId} thought=${params.thoughtLevel}`,
       );
-      return snapshot;
+      return requestSessionStateSnapshot(client, params);
     },
 
     async setMode(params: ACodeAgentSetModeParams) {
       const client = await getClient(params);
-      return client.request(
-        acodeProtocolMethods.sessionSetMode,
-        {
-          sessionId: params.sessionId,
-          mode: params.mode,
-          expectedRevision: params.expectedRevision,
-        },
-        acodeSessionStateSnapshotSchema,
+      // M2-1：legacy session/setMode → v4 switchCollaborationMode。auto 值域已补回
+      // v4 枚举（M2-1 裁决 2026-10-28，不收窄 legacy 能力），六值全量直透。
+      await sendSessionConfigCommandV4(
+        client,
+        params.sessionId,
+        "switchCollaborationMode",
+        { mode: params.mode },
+        `session=${params.sessionId} mode=${params.mode}`,
       );
+      // 保持 facade 返回契约（变更后全量快照）：ACK 后经 session/read 回读。
+      return requestSessionStateSnapshot(client, params);
     },
 
     async respondSessionRuntimePreferences(
@@ -4902,10 +5217,8 @@ export function createACodeAgentService(
           ...responseContext,
           error: params.resolution.message,
         });
-        await pending.client.respondError(pending.protocolRequestId, {
-          code: -32603,
-          message: params.resolution.message,
-        });
+        // M2-3：push 模型下没有 CLI respond 通道；失败改为 reject 内部 await。
+        pending.reject(new Error(params.resolution.message));
         return;
       }
       let preferences: ACodeSessionRuntimePreferencesResult;
@@ -4918,14 +5231,10 @@ export function createACodeAgentService(
           ...responseContext,
           error: error instanceof Error ? error.message : String(error),
         });
-        await pending.client.respondError(pending.protocolRequestId, {
-          code: -32603,
-          message: error instanceof Error ? error.message : String(error),
-        });
+        pending.reject(error instanceof Error ? error : new Error(String(error)));
         return;
       }
-      // 发送失败表示 transport 已关闭，不能误判为偏好校验失败并发送第二个响应。
-      await pending.client.respond(pending.protocolRequestId, preferences);
+      pending.resolve(preferences);
       logger.info(undefined, "运行时偏好响应已回传 Agent", responseContext);
     },
 
@@ -5013,13 +5322,16 @@ export function createACodeAgentService(
               return;
             }
             const result = await client.request(
-              acodeProtocolMethods.sessionSubscribe,
+              V4_METHODS.sessionSubscribe,
               {
                 sessionId: params.sessionId,
                 deliveryKind: params.deliveryKind,
                 afterSeq: params.afterSeq,
                 includeSnapshot: params.includeSnapshot ?? false,
               },
+              // M2-3（specs/m2-3-session-readwrite.md §2.7）：legacy session/subscribe →
+              // v4/session/subscribe query；水位原子性/replay 不 fire 共享 emitter 的纪律
+              // 不变，结果校验沿用既有 barrel schema。
               acodeSessionSubscribeResultSchema,
             );
             if (cancelled) {
@@ -5267,11 +5579,9 @@ export function createACodeAgentService(
         await ensureIndependentPlanSupport(client);
       }
       // RPC facade 会清掉调用方可伪造的顶层 clientMode，再用 trusted carrier 注入 host
-      // 真值；host 内部 adapter 直调仍兼容显式 clientMode。
-      const commandClientMode =
-        readTrustedACodeAgentV4Connection(params)?.clientMode ??
-        params.clientMode ??
-        "desktop-continuous";
+      // 真值；host 内部 adapter 直调仍兼容显式 clientMode。来源纪律单源在
+      // resolveTrustedCommandClientMode（**绝不**读 payload.clientMode，见该叶子注释）。
+      const commandClientMode = resolveTrustedCommandClientMode(params);
       if (params.envelope.type === "createSession") {
         // V4 草稿预热直接走 command 转发；新会话创建前只需等待 Account Config，
         // ACode Built-in / Personal 已由 Worker 进程 Registry 自己装配。
@@ -5281,7 +5591,7 @@ export function createACodeAgentService(
           workspace: params,
         });
       }
-      let envelope = await buildConversationCommandEnvelope(params);
+      let envelope = await buildConversationCommandEnvelope(params, commandClientMode);
       // TTFT 首版只允许可信桌面本地 continuous，手机/远端透传不能开启本地观测。
       if (
         commandClientMode !== "desktop-continuous" ||
@@ -5761,6 +6071,10 @@ export function createACodeAgentService(
 
     onDynamicNetworkCaptureRecords() {
       return networkCaptureRecordsEmitter.event;
+    },
+
+    onDynamicOvernightCompletion() {
+      return overnightCompletionEmitter.event;
     },
 
     // ── sessions-index 通道（列表活性）：复用 conversationSubscribe RPC，

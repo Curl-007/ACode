@@ -45,7 +45,18 @@ export function createServiceLogger(
     if (level === "debug" && !resolveDebugEnabled()) {
       return;
     }
-    const source = traceId ? `${scope}][trace:${traceId}` : scope;
+    // 修复原因（review 2026-10-26 §2 R2-04 / specs/log-privacy-redaction.md R7）：
+    // ServiceLogger 首参类型是 TraceId=string，调用方误把消息串传进 traceId 槽时，
+    // 该串会被内插进 `[trace:…]` 前缀。此前只有 ...args 过 redactServiceLogArg，
+    // 前缀整体绕过脱敏漏斗——漏斗「单一脱敏点」不变量不覆盖前缀槽。这里让 traceId
+    // 与前缀同经漏斗：字符串路径的 redactServiceLogArg 是纯函数式 redactLine，成本低
+    // 可进热路径，且与 args 命中同一 redactor 单例、依赖脱敏幂等不变量（双层串联）。
+    // 结构性封堵后，即使槽位被误用也无法直出未脱敏秘密。
+    const safeTraceId =
+      typeof traceId === "string" && traceId
+        ? (redactServiceLogArg(traceId) as string)
+        : traceId;
+    const source = safeTraceId ? `${scope}][trace:${safeTraceId}` : scope;
     const consoleFn =
       level === "error"
         ? sink.error

@@ -42,9 +42,13 @@ async function fixture(t, legacySources = {}) {
   return cwd;
 }
 
-async function protocolBoundaryFixture(t, commandImport) {
+async function protocolBoundaryFixture(t, commandImport, extraFiles = {}) {
   const cwd = await mkdtemp(join(tmpdir(), "acode-architecture-protocol-boundary-"));
   t.after(() => rm(cwd, { recursive: true, force: true, maxRetries: 8, retryDelay: 60 }));
+  // 夹具刻意重建 M4a 前的目录形态：真实仓库已删除 acode-protocol/ 与 legacy-types，
+  // 而检查器的两条判定（barrel 全禁 + legacy-types 符号白名单）仍作为「复活式引用」的
+  // fail-closed 兜底保留。本夹具即该兜底的回归护栏——若有人重建这两个路径并被 v4 import，
+  // 必须立即报 v4-imports-legacy-protocol。
   const files = {
     "architecture-policy.yaml": JSON.stringify({
       version: 1,
@@ -56,6 +60,9 @@ async function protocolBoundaryFixture(t, commandImport) {
       `import { schema } from "${commandImport}";\nexport { schema };\n`,
     "packages/shared/src/acode-protocol/index.ts": "export const schema = {};\n",
     "packages/shared/src/acode-protocol-shared.ts": "export const schema = {};\n",
+    "packages/shared/src/acode-protocol-legacy-types.ts":
+      "export const acodeWorkspaceRefSchema = {};\nexport const acodeUnregisteredLegacySchema = {};\n",
+    ...extraFiles,
   };
   for (const [file, source] of Object.entries(files)) {
     await mkdir(join(cwd, file, ".."), { recursive: true });
@@ -172,6 +179,75 @@ test("architecture boundary: shared v4 cannot import the legacy protocol barrel"
   );
   const accepted = await checkArchitecture({ cwd });
   assert.equal(accepted.newViolations.length, 0);
+});
+
+// 26R2-03：v4 → acode-protocol-legacy-types.ts（同级文件）边界。旧谓词尾斜杠目录前缀
+// 漏掉该文件，故守护扩展为 barrel 全禁 + legacy-types 符号级白名单。
+//
+// M4a（2026-10-29）已整删 barrel 目录与该文件，真实仓库不再存在这两个路径；但检查器的
+// 两条判定保留为**复活式引用**的 fail-closed 兜底，故本组夹具继续重建旧目录形态来演练：
+// legacy-types.ts 导出一个白名单幸存符号（acodeWorkspaceRefSchema）与一个未登记符号
+// （acodeUnregisteredLegacySchema），分别演练放行与拦截。
+
+test("architecture boundary: v4→legacy-types 白名单幸存符号放行", async (t) => {
+  const cwd = await protocolBoundaryFixture(t, "../acode-protocol-shared.js", {
+    "packages/shared/src/acode-protocol-v4/transport.ts":
+      'import { acodeWorkspaceRefSchema } from "../acode-protocol-legacy-types.js";\n' +
+      "export { acodeWorkspaceRefSchema };\n",
+  });
+  const result = await checkArchitecture({ cwd });
+  const violations = result.newViolations.filter(
+    (item) => item.rule === "v4-imports-legacy-protocol",
+  );
+  assert.equal(violations.length, 0);
+  assert.equal(result.newViolations.length, 0);
+});
+
+test("architecture boundary: v4→legacy-types 非白名单新符号被拦截（真负例）", async (t) => {
+  const cwd = await protocolBoundaryFixture(t, "../acode-protocol-shared.js", {
+    "packages/shared/src/acode-protocol-v4/new-consumer.ts":
+      // acodeUnregisteredLegacySchema 不在冻结白名单内：旧谓词完全不覆盖 legacy-types.ts，
+      // 故此边曾静默通过；扩展后必须报违规。M4a 后该文件已删，本用例守护「复活即拦」。
+      'import { acodeUnregisteredLegacySchema } from "../acode-protocol-legacy-types.js";\n' +
+      "export { acodeUnregisteredLegacySchema };\n",
+  });
+  const result = await checkArchitecture({ cwd });
+  const violations = result.newViolations.filter(
+    (item) => item.rule === "v4-imports-legacy-protocol",
+  );
+  assert.equal(violations.length, 1);
+  assert.ok(violations[0].file.endsWith("packages/shared/src/acode-protocol-v4/new-consumer.ts"));
+  assert.match(violations[0].message, /acodeUnregisteredLegacySchema/);
+});
+
+test("architecture boundary: v4→legacy-types namespace import 整体依赖 fail-closed", async (t) => {
+  const cwd = await protocolBoundaryFixture(t, "../acode-protocol-shared.js", {
+    "packages/shared/src/acode-protocol-v4/namespace.ts":
+      // `import * as` 拉入全部符号（含 M4 将删除者），无法按符号白名单收窄 → 报违规。
+      'import * as legacy from "../acode-protocol-legacy-types.js";\n' +
+      "export { legacy };\n",
+  });
+  const result = await checkArchitecture({ cwd });
+  const violations = result.newViolations.filter(
+    (item) => item.rule === "v4-imports-legacy-protocol",
+  );
+  assert.equal(violations.length, 1);
+});
+
+test("architecture boundary: 白名单符号与非法符号混在同一条 import 仍报违规", async (t) => {
+  const cwd = await protocolBoundaryFixture(t, "../acode-protocol-shared.js", {
+    "packages/shared/src/acode-protocol-v4/mixed.ts":
+      'import { acodeWorkspaceRefSchema, acodeUnregisteredLegacySchema } from "../acode-protocol-legacy-types.js";\n' +
+      "export { acodeWorkspaceRefSchema, acodeUnregisteredLegacySchema };\n",
+  });
+  const result = await checkArchitecture({ cwd });
+  const violations = result.newViolations.filter(
+    (item) => item.rule === "v4-imports-legacy-protocol",
+  );
+  // 违规 message 只列未登记符号，不列已放行的白名单符号。
+  assert.equal(violations.length, 1);
+  assert.match(violations[0].message, /acodeUnregisteredLegacySchema/);
+  assert.ok(!violations[0].message.includes("acodeWorkspaceRefSchema"));
 });
 
 test("architecture resolution follows workspace package names through static and dynamic imports", async (t) => {
@@ -483,5 +559,83 @@ test("internalEdgeAllowlist：登记边放行，未登记新边报 deep-import�
   assert.ok(deepImports[0].file.endsWith("packages/svc/src/unregistered.ts"));
   assert.ok(deepImports[0].message.includes("packages/sess/src/impl.ts"));
 });
+
+/**
+ * 包私有 imports 别名（package.json `imports` 字段的 `#src/*`）必须解析成依赖边。
+ *
+ * 回归防护（2026-10-27 session 契约迁移实测发现）：checker 只解析 tsconfig paths 与
+ * package.json `exports`，**不**解析 package.json `imports` 字段，于是 services 的 102 处
+ * `#src/...` 导入对 deep-import 门禁完全不可见——23 条 services→session 边从未受管，
+ * 「止增机制在位」的结论对这批边不成立。补 global.aliasRules 后才显形。
+ * 本 fixture 钉住该机制：删掉别名规则 → 违规消失（守护失效，测试应红）。
+ */
+async function packagePrivateAliasFixture(t, { withAliasRule }) {
+  const cwd = await mkdtemp(join(tmpdir(), "acode-architecture-alias-"));
+  t.after(() => rm(cwd, { recursive: true, force: true, maxRetries: 8, retryDelay: 60 }));
+  const policy = {
+    version: 1,
+    modules: [
+      {
+        id: "sess",
+        roots: ["packages/svc/src/session"],
+        managed: true,
+        publicEntrypoints: ["packages/svc/src/session/contract.ts"],
+        layers: { domain: "." },
+        layerOrder: ["domain"],
+      },
+      // 消费方与 session 同属一个包（services 的真实形态：session 嵌套在 services/src 下）。
+      { id: "svc", roots: ["packages/svc/src"], managed: true, requires: [] },
+    ],
+    global: {
+      managedOnly: true,
+      ...(withAliasRule ? { aliasRules: [{ pattern: "#src/*", target: "packages/svc/src/*" }] } : {}),
+    },
+  };
+  const files = {
+    "architecture-policy.yaml": JSON.stringify(policy),
+    ".architecture-baseline.json": '{"version":1,"violations":[]}',
+    "packages/svc/package.json": JSON.stringify({
+      name: "@fixture/svc",
+      imports: { "#src/*": "./src/*" },
+    }),
+    "packages/svc/src/session/module.ts": 'export const module = { id: "sess", requires: [] };\n',
+    "packages/svc/src/session/contract.ts": "export interface Sess { read(): void; }\n",
+    "packages/svc/src/session/impl.ts": "export const impl = 1;\n",
+    // 经包私有别名直引实现文件 —— 与 `../session/impl.js` 形态是**同一条**跨模块边，
+    // 只是 specifier 写法不同。门禁必须同等对待，否则换个别名写法就能绕过 deep-import。
+    "packages/svc/src/consumer.ts":
+      'import { impl } from "#src/session/impl.js";\nexport { impl };\n',
+  };
+  for (const [file, source] of Object.entries(files)) {
+    await mkdir(join(cwd, file, ".."), { recursive: true });
+    await writeFile(join(cwd, file), source);
+  }
+  return cwd;
+}
+
+test("包私有 #src/* 别名经 aliasRules 解析成依赖边 → deep-import 被拦截（真负例）", async (t) => {
+  const cwd = await packagePrivateAliasFixture(t, { withAliasRule: true });
+  const result = await checkArchitecture({ cwd });
+  const deepImports = result.newViolations.filter((item) => item.rule === "deep-import");
+  assert.equal(
+    deepImports.length,
+    1,
+    "别名形态的跨模块直引必须与相对路径形态同等报 deep-import；0 条说明别名未被解析（守护盲区）",
+  );
+  assert.ok(deepImports[0].file.endsWith("packages/svc/src/consumer.ts"));
+  assert.ok(deepImports[0].message.includes("packages/svc/src/session/impl.ts"));
+});
+
+test("同一条边去掉 aliasRule 即不被解析 —— 证明盲区由 aliasRules 补齐而非偶然", async (t) => {
+  const cwd = await packagePrivateAliasFixture(t, { withAliasRule: false });
+  const result = await checkArchitecture({ cwd });
+  const deepImports = result.newViolations.filter((item) => item.rule === "deep-import");
+  assert.equal(
+    deepImports.length,
+    0,
+    "无 aliasRule 时 checker 解析不出 #src/* 边（即修复前的盲区形态）；若此断言失败说明解析面已变",
+  );
+});
+
 
 

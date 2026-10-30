@@ -9,6 +9,7 @@ import {
   type BashShellSnapshotRestore,
 } from "./bash-shell-snapshot.js";
 import { rebuildContextPrefix } from "./context-refresh.js";
+import { getRuntimeContextInitPort } from "../runtime-context-init.js";
 import {
   buildShellEnvironmentResumeNotice,
   getShellEnvironmentResumeNoticeKind,
@@ -218,9 +219,11 @@ function refreshPreConversationShellContext(
   // conversation message。此时应把 session-start # Environment 一并刷新，
   // 避免模型看到的 Shell 和 Bash 实际执行 shell 不一致。
   runtime.config.envInfo = applySessionShellToEnvInfo(runtime.config.envInfo, selection);
-  runtime.contextSourceSnapshot = {
+  // R1-01 B4：contextSourceSnapshot 归 RuntimeContextInitOwner——shell 选择 patch 的
+  // 新对象构造留在调用方，写面经端口（逐点等价）。
+  getRuntimeContextInitPort(runtime).commitContextSourceSnapshot({
     ...runtime.contextSourceSnapshot,
     envInfo: applySessionShellToEnvInfo(runtime.contextSourceSnapshot.envInfo, selection),
-  };
+  });
   rebuildContextPrefix(runtime);
 }

@@ -27,7 +27,7 @@ import {
   initOtelTelemetry,
   InMemoryRuntimeTaskRegistry,
   PermissionService,
-  configureCliGovernor,
+  registerCliGovernorAppDeps,
   detectNoShellToolWarning,
   registerAutoClassifierAuditSink,
   registerBashReflexAuditSink,
@@ -68,7 +68,7 @@ import {
 } from "@acode/shared/acode-protocol-v4";
 
 import { createModelAdapter } from "../model-factory.js";
-import { resolveTzOffsetMs } from "../acode-protocol/usage-stats-builder.js";
+import { resolveTzOffsetMs } from "../acode-protocol-v4/usage-stats-builder.js";
 import { StartupTimer, startupNow } from "../startup-logging.js";
 import { scheduleStartupLogRetentionCleanup } from "../log-retention.js";
 import type {
@@ -360,6 +360,9 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
   // 启动失败路径（catch）看不到 try 内的 const；注册过的可视化 store 单独提一份供
   // 身份校验注销（specs/gen-ui-visualize.md 注册表绑定小节）。
   let registeredVisualizationFragmentStore: VisualizationFragmentStorePort | undefined;
+  // 同理：CliGovernor deps 的释放函数提一份，使启动失败路径也能注销本 app 的注册项
+  // （不注销会让已死 app 的 runtimeTaskRegistry 永久留在进程级并集里）。
+  let releaseCliGovernorAppDeps: (() => void) | undefined;
   try {
     const storageRoot = resolvePath(configResult.config.storage.dir);
     const cliStorageRoot = getCliStorageRoot(storageRoot);
@@ -970,7 +973,12 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
     // CliGovernor host 装配（specs/cli-governor.md）：预置 registry 与 logger，受害者判定
     // 在 60s idle guard 之外精确排除在跑会话；governor 懒建，此处纯 deps 预置、无副作用序依赖。
     // 单参适配：bootstrap logger 第二槽是 Error 语义，与 governor 的 meta dict 不兼容，弃 meta 保消息。
-    configureCliGovernor({
+    // 多 App 修复（2026-10-26 review §2 P3）：按 sessionId 注册本 app 的 deps（照 CLI-04
+    // registerMcpCallAuditSink 范式），不再走会被进程单例静默丢弃的 configureCliGovernor；
+    // 返回的释放函数在 close 路径调用（只删本 app 的注册项，不误伤同进程其它在世 app）。
+    // registry 是本 app 作用域（上面 new InMemoryRuntimeTaskRegistry），governor 受害扫描
+    // 读所有已注册 app registry 的并集判「在跑」，跨 App 在跑会话不再被误当 idle 驱逐。
+    releaseCliGovernorAppDeps = registerCliGovernorAppDeps(sessionId, {
       runtimeTaskRegistry,
       logger: {
         debug: (message) => logger.debug(message),
@@ -1158,6 +1166,11 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
       storageRoot,
       traceContext,
       workingDirectory,
+      // Overnight 完成信号出口（specs/overnight-completion-notify.md §7）：协议宿主注入时
+      // 打通 agent→host→main 通知链；缺席（纯 CLI/TUI）时 controller 内 optional-chain no-op。
+      ...(options.onOvernightCompletion
+        ? { emitOvernightCompletion: options.onOvernightCompletion }
+        : {}),
     });
     completeAppStartup({
       sessionId,
@@ -1589,6 +1602,12 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
           unregisterMcpCallAuditSink();
           // 围栏 warn sink 同款按 sessionId 幂等释放（见装配处注释）。
           unregisterSessionWorktreeFenceWarnSink();
+          // CliGovernor deps：按 sessionId 幂等释放本 app 的注册项（多 App 修复，见装配处
+          // 注释）。只删自己那份——同进程其它在世 app 的 registry 仍参与并集在跑判定；本 app
+          // 的 fleet 记录此后无人正向解析运行态 → governor fail-safe floor 判 unknown，绝不当
+          // idle 驱逐（unknown ≠ idle）。实例身份校验在 registerCliGovernorAppDeps 里，同
+          // sessionId 新 app 已接管时迟到释放不误删。
+          releaseCliGovernorAppDeps?.();
           // TTL 授权落盘收口（specs/mcp-lifecycle-ttl-approval.md R4）：内存是唯一读源、
           // 落盘异步 best-effort——进程收口前等待挂起写入完成，避免最后一笔批准丢失
           // （丢失方向是回落 ask，安全但打扰用户）。flush 内部串行链自带 catch，不抛。
@@ -1649,6 +1668,8 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
     // 启动失败也要收口遥测（best-effort，不 await：不延迟错误上抛）。
     void otelTelemetry?.shutdown();
     unregisterVisualizationFragmentStore(sessionId, registeredVisualizationFragmentStore);
+    // 启动失败也注销 governor deps 注册项（幂等；实例身份校验防误删同 sessionId 新 app）。
+    releaseCliGovernorAppDeps?.();
     void ownedNodeReplBrowserBroker?.close();
     startupTimer.fail("ACode app startup failed", error, {
       context: { sessionId, workingDirectory },

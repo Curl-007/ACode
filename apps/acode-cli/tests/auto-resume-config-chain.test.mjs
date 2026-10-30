@@ -1,7 +1,7 @@
 // 验收场景 6（apps/acode-cli/specs/turn-auto-resume.md）：配置链——schema 解析 / 默认值 /
 // 覆盖 / merge / 文件 patch 面（/auto-resume 裸 on|off 与 msg 的持久化落点）。
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
@@ -108,8 +108,14 @@ describe("mergeConfigs - autoResume 逐字段合并", () => {
 });
 
 describe("updateAutoResumeInFileConfig - 文件 patch 面", () => {
-  it("writes enabled/continueMessage without touching other sections, and clears on null", async () => {
+  it("writes enabled/continueMessage without touching other sections, and clears on null", async (t) => {
     const dir = await mkdtemp(join(tmpdir(), "auto-resume-config-"));
+    // 修复依据（review §3 P3「临时目录泄漏清扫漏网一处」）：本文件两处 mkdtemp 全程无 rm，
+    // CI 反复跑会在 %TEMP%/tmp 累积占盘。用 t.after 注册清理，断言成败都回收目录树
+    // （与 guide-live-build-section.test.mjs:49 makeTree→t.after 同款）。
+    t.after(async () => {
+      await rm(dir, { recursive: true, force: true });
+    });
     const filePath = join(dir, "config.json");
     await writeFile(
       filePath,
@@ -136,8 +142,12 @@ describe("updateAutoResumeInFileConfig - 文件 patch 面", () => {
     assert.equal("continueMessage" in afterClear.autoResume, false);
   });
 
-  it("creates the file and section when missing", async () => {
+  it("creates the file and section when missing", async (t) => {
     const dir = await mkdtemp(join(tmpdir(), "auto-resume-config-"));
+    // 同上：t.after 回收本用例 mkdtemp 出来的目录树（含嵌套 config.json），避免 %TEMP% 残留。
+    t.after(async () => {
+      await rm(dir, { recursive: true, force: true });
+    });
     const filePath = join(dir, "nested", "config.json");
     await updateAutoResumeInFileConfig(filePath, { enabled: false });
     const parsed = JSON.parse(await readFile(filePath, "utf8"));

@@ -448,6 +448,17 @@ export const PlatformChannels = {
   // ── 支持包导出（specs/log-privacy-redaction.md）──
   /** Renderer → Main：导出分节支持包，返回保存路径或 null（失败/取消） */
   ExportSupportBundle: "acode:export-support-bundle",
+  // ── 本地诊断报告（specs/local-diagnostic-report.md，U12）──
+  /**
+   * Renderer → Main：采集 Desktop 拥有的诊断事实（app 版本/OS/arch/locale/能力面）。
+   * 这些事实只有 main 进程可靠知道（`app.getVersion()` 等），renderer 不得自行猜测。
+   */
+  CollectLocalDiagnostics: "acode:collect-local-diagnostics",
+  /**
+   * Renderer → Main：把已脱敏的报告 JSON 存盘（save dialog + 写文件）。
+   * main 是哑 sink：不 re-parse、不改写字节，只做大小上限校验与落盘。
+   */
+  SaveDiagnosticReport: "acode:save-diagnostic-report",
 } as const;
 
 export type PlatformChannelName = (typeof PlatformChannels)[keyof typeof PlatformChannels];
@@ -742,6 +753,12 @@ export const HostResponseTypes = {
   ProviderProvisioningSourceChanged: "provider-provisioning-source-changed",
   /** host → main：一次 Remote Environment 同步执行完毕。 */
   ProviderProvisioningExecutionResult: "provider-provisioning-execution-result",
+  /**
+   * host → main：Overnight（K3）run 终态完成信号（specs/overnight-completion-notify.md §7）。
+   * agent 子进程内 supervisor 的 completed/failed/cancelled 事实经 v4 通知上报 host，
+   * host 原样镜像到 main；main 侧 overnightCompletionNotify 消费（弹系统通知 + 点击直达 parentTaskId）。
+   */
+  OvernightCompletionNotify: "overnight-completion-notify",
 } as const;
 
 // ============================================================================
@@ -1311,5 +1328,15 @@ export interface PlatformChannelMap {
     request: void;
     /** 保存路径；null = 失败或取消（错误详情走 main 日志，不回传敏感内容）。 */
     response: string | null;
+  };
+  // ── 本地诊断报告（specs/local-diagnostic-report.md，U12）──
+  [PlatformChannels.CollectLocalDiagnostics]: {
+    request: void;
+    /** Desktop 拥有的事实 DTO；UI 合并 renderer 内存计数/provider/events 组装完整报告。 */
+    response: import("./localDiagnosticReport.js").LocalDiagnosticFacts;
+  };
+  [PlatformChannels.SaveDiagnosticReport]: {
+    request: { json: string; suggestedName: string };
+    response: import("./localDiagnosticReport.js").SaveDiagnosticReportResult;
   };
 }

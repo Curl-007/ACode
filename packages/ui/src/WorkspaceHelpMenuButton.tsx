@@ -1,3 +1,4 @@
+import { useState } from "react";
 import {
   DesktopCommandIds,
   ACODE_ISSUES_URL,
@@ -7,9 +8,11 @@ import {
 import {
   ActivityIcon,
   CircleHelpIcon,
+  FileTextIcon,
   LightbulbIcon,
   InfoIcon,
   MessageSquareIcon,
+  StethoscopeIcon,
   UsersIcon,
   RefreshCwIcon,
 } from "lucide-react";
@@ -29,6 +32,7 @@ import { useDesktopUpdateMenu } from "@/hooks/useDesktopUpdateMenu.js";
 import { usePlatform } from "@/hooks/usePlatform.js";
 import { useACodeIntl } from "@/i18n/IntlProvider.js";
 import { createHelpMenuActionHandlers } from "@/lib/helpMenuActions.js";
+import { LocalDiagnosticReportDialog } from "@/LocalDiagnosticReportDialog.js";
 
 export function WorkspaceHelpMenuButton({
   className,
@@ -63,9 +67,12 @@ export function WorkspaceHelpMenuButton({
   const handleShowAbout = () => {
     void platform.executeDesktopCommand(DesktopCommandIds.ShowAbout);
   };
+  // U12 本地诊断报告对话框开关。菜单项在桌面/Web 都渲染（Web 离线也能导出客户端事实）。
+  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
 
   return (
-    <DropdownMenu>
+    <>
+      <DropdownMenu>
       <ControlHintTooltip title={helpMenuLabel} side="bottom">
         <DropdownMenuTrigger asChild>
           <Button
@@ -100,6 +107,15 @@ export function WorkspaceHelpMenuButton({
         <DropdownMenuItem onSelect={handleOpenFeatureRequest}>
           <LightbulbIcon className="size-4" />
           {intl.formatMessage({ id: "workspaceHeader.help.productRequest" })}
+        </DropdownMenuItem>
+        {/* U12 本地诊断报告：桌面与 Web 都渲染（手机离线也能导出客户端已知事实）。
+            与重型 zip 导出（exportLogs，桌面专属）并存，范围区别在对话框内说明。 */}
+        <DropdownMenuItem
+          data-testid="workspace-help-menu-diagnostics"
+          onSelect={() => setDiagnosticsOpen(true)}
+        >
+          <StethoscopeIcon className="size-4" />
+          {intl.formatMessage({ id: "workspaceHeader.help.diagnostics" })}
         </DropdownMenuItem>
         {/* Windows/Linux 没有原生菜单栏，自绘标题栏箭头菜单也已下线，
             资源管理器只能从这里进；Web 端没有该窗口，不渲染。 */}
@@ -136,6 +152,10 @@ export function WorkspaceHelpMenuButton({
                 )}
               </DropdownMenuItem>
             ) : null}
+            <DropdownMenuItem onSelect={helpMenuActions.exportLogs}>
+              <FileTextIcon className="size-4" />
+              {intl.formatMessage({ id: "sidebar.exportLogs" })}
+            </DropdownMenuItem>
             <DropdownMenuItem onSelect={handleShowAbout}>
               <InfoIcon className="size-4" />
               {intl.formatMessage({ id: "titleBar.menu.help.about" })}
@@ -144,5 +164,7 @@ export function WorkspaceHelpMenuButton({
         ) : null}
       </DropdownMenuContent>
     </DropdownMenu>
+      <LocalDiagnosticReportDialog open={diagnosticsOpen} onOpenChange={setDiagnosticsOpen} />
+    </>
   );
 }

@@ -105,10 +105,43 @@ export async function listRegisteredWorktrees(
   return entries;
 }
 
-/** 查不到状态时按 dirty 处理：清理路径绝不因为「查不出来」而误删。 */
+/**
+ * 内容级脏判据：tracked 改动（含已暂存）+ 未跟踪文件。
+ *
+ * 不用 `git status --porcelain`：Windows 全局 `core.autocrlf=true` 时，检出把索引里的
+ * LF 转成 CRLF，agent/编辑器按 LF 原样重写内容后，status 会依据 stat 缓存报 ` M`，
+ * 而内容按 git 自己的转换规则与 HEAD 完全相同（`git diff --quiet HEAD` 返回 0）。
+ * 用 status 会把「仅换行差异、语义未变」的树判成真实改动，导致主工作区被误拒合并、
+ * 成员树永远删不掉、快照提交报 `nothing to commit`。内容比较才是脏的语义事实。
+ *
+ * 查不出结果（非 1 的退出码、ls-files 失败）一律按 dirty 处理：
+ * 清理路径绝不因为「查不出来」而误删。
+ */
 export async function isWorktreeDirty(path: string): Promise<boolean> {
-  const status = await runGit(path, ["status", "--porcelain", "--untracked-files=all"]);
-  return status.exitCode !== 0 || status.stdout.trim().length > 0;
+  const tracked = await runGit(path, ["diff", "--quiet", "HEAD"]);
+  if (tracked.exitCode !== 0) return true;
+  const untracked = await runGit(path, ["ls-files", "--others", "--exclude-standard"]);
+  if (untracked.exitCode !== 0) return true;
+  return untracked.stdout.trim().length > 0;
+}
+
+/**
+ * 主工作区是否有内容改动（只看 tracked，沿用既有 `--untracked-files=no` 语义）。
+ * 与 isWorktreeDirty 同源理由：stat 缓存里的 autocrlf 幻影不能算脏。
+ * 返回 exitCode：0 干净、1 有改动、其它为无法判定（调用方按错误处理）。
+ */
+export async function mainWorkspaceDiffStatus(repoRoot: string): Promise<GitResult> {
+  return runGit(repoRoot, ["diff", "--quiet", "HEAD"]);
+}
+
+/**
+ * 刷新 tracked 文件的 stat 缓存，不引入新内容、不收集未跟踪文件。
+ *
+ * `git add -u` 在内容干净时只会重写与 HEAD 相同的索引项，用于清掉 autocrlf 幻影；
+ * 之后 `git worktree remove`（不带 --force）与 `git merge` 才不会把幻影当本地改动。
+ */
+export async function refreshTrackedStat(path: string): Promise<GitResult> {
+  return runGit(path, ["add", "-u"]);
 }
 
 /** 分支相对基线的独有提交数；数不出来按 1 处理（宁可保留）。 */
@@ -140,6 +173,11 @@ export async function snapshotPendingChanges(
       describeGitFailure("git add -A (member worktree)", staged),
     );
   }
+  // add -A 之后用暂存区内容判定是否真有东西可提交。
+  // autocrlf 幻影（仅换行差异）会在这里表现为「status 有改动、staged diff 为空」：
+  // 此时提交必然报 nothing to commit，直接返回 false 才是如实结果。
+  const stagedDiff = await runGit(handle.path, ["diff", "--cached", "--quiet"]);
+  if (stagedDiff.exitCode === 0) return false;
   const committed = await runGit(handle.path, ["commit", "-m", message]);
   if (committed.exitCode !== 0) {
     throw new TeamError(

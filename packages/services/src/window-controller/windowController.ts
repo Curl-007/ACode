@@ -13,12 +13,12 @@ import type {
   WindowHostTaskAddress,
 } from "@acode/shared/acode-protocol-v4";
 import { createServiceDescriptor } from "../descriptors.js";
-import type { ACodeArchivedTaskDeletionResult } from "#src/session/acodeTaskService.js";
 import type {
+  ACodeArchivedTaskDeletionResult,
   ACodeTaskListItem,
   ACodeTaskListQuery,
   ACodeTaskListResult,
-} from "../session/acodeTaskListTypes.js";
+} from "../session/contract.js";
 
 export type WindowHostControllerMutation =
   | { kind: "pin"; pinned: boolean }

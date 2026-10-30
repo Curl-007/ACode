@@ -1,5 +1,6 @@
 import { resolvePluginIconSource } from "@/lib/pluginIconSource.js";
-import type { ACodePluginReferenceCatalogEntry } from "@acode/shared";
+
+import { type V4PluginReferenceCatalogEntry } from "@acode/shared/acode-protocol-v4";
 import type { ConversationStoreStatus } from "@/v4/conversationProjectionStore.js";
 
 export function isSessionPluginCatalogReady(
@@ -25,7 +26,7 @@ export function hasPluginReferenceUserRows(
  */
 export function buildSessionPluginIconMap(
   authority: "session" | "workspace" | null,
-  entries: readonly ACodePluginReferenceCatalogEntry[],
+  entries: readonly V4PluginReferenceCatalogEntry[],
 ): ReadonlyMap<string, string> {
   if (authority !== "session") {
     return new Map();

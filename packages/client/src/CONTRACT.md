@@ -12,6 +12,11 @@ request 表）唯一所有者是 @acode/rpc 的 `ChannelClient` 与其 Protocol 
 `RemoteServiceAccess` 只是按 getter 惰性生成的代理门面，不缓存业务数据、不保存
 第二份连接状态；`MessagePortServiceConnection.dispose` 是幂等的一次性释放边界
 （同时释放 ChannelClient 与底层 port，防止旧 attachment 的挂起 RPC 无法 settle）。
+WebSocket 链路对称提供幂等释放边界：`connectViaWebSocket`/`connectViaProtocol` 返回的
+`IServiceAccessor` 门面带 `dispose()`（`RemoteServiceAccess.dispose`），按
+`client.dispose() → protocol.dispose() → socket.dispose()` 顺序收口，释放
+ChannelClient + SocketProtocol + 底层 WebSocket。消费方（如 web 重连换代丢弃孤儿
+连接）经此 `dispose()` 释放已打开的活 socket，不静默丢弃；`dispose()` 幂等。
 
 依赖方向：requires [rpc, services, shared]——传输与代理机制来自 `@acode/rpc`，
 服务接口类型（`IServiceAccessor` 与各 `I*Service`）来自 `@acode/services`，

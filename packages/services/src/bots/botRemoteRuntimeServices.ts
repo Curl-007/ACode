@@ -8,7 +8,7 @@ import {
 import {
   IACodeTaskService,
   type IACodeTaskService as IACodeTaskServiceShape,
-} from "#src/session/acodeTaskService.js";
+} from "#src/session/contract.js";
 import {
   IACodeAgentService,
   type IACodeAgentService as IACodeAgentServiceShape,

@@ -1,6 +1,6 @@
 # v4 上帝组件拆分计划（SessionPane / ConversationComposer / settings 上帝组件）
 
-状态：第一批已实施（2026-10-05，附件预览接缝）；第二批已实施（2026-10-22，SessionPane 命令编排纯决策逻辑抽出 + 接缝内测试）。其余接缝为登记在案的后续批次。
+状态：第一批已实施（2026-10-05，附件预览接缝）；第二批已实施（2026-10-22，SessionPane 命令编排纯决策逻辑抽出 + 接缝内测试）；批次 4 已实施（2026-10-28，ExternalAgentImportDialog / PluginsSection / WorkspaceGroupedTasksSection / SettingsPage helper 外迁 + ConversationStatusPanel 保守纯函数外迁，见下文各节）；批次 5 已实施（2026-10-28，WorkspaceShellLayout / PreviewPane / WorkspaceSidebar / message / LexicalChatInput 五件 helper+受控组件外迁，见下文各节）；批次 6 已实施（2026-10-29，GitActionMenu / BotsDialog / AnimatedSidePanePanel / markdown-table 四件外迁 + ConversationStatusPanel 第一阶段分区契约测试与外迁，见下文各节）；批次 7 已实施（2026-10-30，GitActionMenu trigger+mutation 收口（跌破 400，撤销 ratchet 登记）/ BotsDialog 四组轮询与写入闭环收口 / AnimatedSidePanePanel tab 条簇外迁 / ConversationStatusPanel 第二阶段四分区+秒针统一+胶囊分支契约，见下文各节）。其余接缝为登记在案的后续批次。
 背景：`v4/SessionPane.tsx`（本轮起点 3,762 行，带 max-lines 豁免）与 `v4/ConversationComposer.tsx`
 （2,168 行）各自混合多种职责。拆分按「耦合最浅的接缝先行」推进，每批独立验证。
 
@@ -55,7 +55,140 @@
 > 三者都已把大量**纯函数**堆在文件顶部（helper 与组件同文件），拆分第一刀都是「helper 外迁 + 单测」，
 > 与 SessionPane 第二批同构，风险低。
 
+### 拆分动能备注（2026-10-26 review 登记，仅登记不改门禁）
+
+1.0.4 全项目 review（[../../../docs/reviews/2026-10-26/ui-components.md](../../../docs/reviews/2026-10-26/ui-components.md) §2/§3）
+观察到一条**拆分动能**事实，登记在此供后续批次参考：
+
+- **超 400 行 tsx 计数 115 → 115（精确持平，零 churn）**。本轮虽有多文件被修剪
+  （SessionPane −90、WorkspaceHeaderSections −47、WorkspacePinnedTasksSection −48、
+  WorkspaceSidebarItem −37、WorkspaceTimelineTasksSection −54、useTheme −36），
+  但**修剪都发生在上帝文件内部**，没有把任何文件推到 400 行以下，因此超阈值计数不变。
+  动能结论：拆分现大致追平增长，但**尚未反超**。
+- **`legacy-over-limit` ratchet 只在「跨越」400 时触发**（HEAD≤400 → tree>400），
+  对「已 >400 时继续增长」**失明**。故已登记的上帝组件可隐形继续增长——
+  例：`AutomationEditView.tsx` 本轮 2942→**2950**（+8，全是 Button a11y 迁移的良性修复成本），
+  门禁恒绿。即：只要一个文件已经超限，它再长多少都不会让门禁变红。
+
+**因此，本计划各已登记批次的完成判据补充**（见「每批拆分的固定验收」第 6 条）：
+适用时（拆分目标就是要把文件推到 400 以下的批次，如 settings 三件套的第一刀「helper 外迁」）
+必须显式验收「**目标文件行数跌破 400**」，而不是只看「行数下降」。内部修剪若未跨阈值，
+不计入拆分进度，避免「修剪很多、上帝文件计数纹丝不动」的动能假象。
+
+**后续治理项 —— ✅ 已落地（2026-10-27）**：为**已登记进本 split-plan 的文件**引入了一条
+**行数 ratchet**，实现为守护测试 `packages/ui/tests/godComponentLineRatchet.guard.test.mjs`
+（三条断言）：
+
+1. **上限表**：每个登记文件钉一个物理行上限，超过即红。基线取**实测当前行数**
+   （AutomationEditView 2,950 / SubagentsSection 2,671 / AutomationsSection 1,979），
+   不是表头的登记时行数——AutomationEditView 表头写 2,942，差的 8 行是本节自己记载的
+   Button a11y 迁移合法成本，ratchet 的职责是冻结债务在**当前**水位，不追溯已合入工作。
+2. **登记表防腐**：文件消失、或已跌破 400（拆分批次完成）时红，提示从上限表移除条目。
+3. **防漏登记**（关键：防盲区重开）：解析本文件所有 `### \`<path>.tsx\`（` 登记标记，
+   断言每个登记文件都在上限表内、且上限表不含本文件已不登记的条目。**新登记的批次若忘了加
+   上限，守护立即红**——这是「靠纪律」变「靠门禁」。
+
+选择守护测试而非改 `scripts/architecture`（本计划原文建议的方向）的理由：
+- `scripts/architecture/index.mjs` 已 447 行 / oxlint 有效行 398，只剩 **2 行**余量，加规则
+  必须先拆 checker，风险与本项收益不成比例；
+- 架构棘轮的 `newViolations` 是**基线过滤**后的集合，指纹类规则可被 `baseline:update` 吸收，
+  而守护测试不可被吸收——ratchet 必须不可绕过才有意义；
+- 仓库已有同构先例：`browser-open-pattern-repo-guard`、`legacy-protocol-barrel-freeze`、
+  `i18nLocaleParity`、`themeWriteOwnership.guard` 都是「机械不变量用守护测试兜」。
+
+**处置口径**（写进守护的失败消息）：超限只能二选一——按批次拆到上限以下（首选，最终目标
+跌破 400），或经评审显式上调上限并在提交信息写明理由；不得静默改数字让门禁变绿。
+
+**已验证非空转**：给 AutomationEditView 追加 1 行 → 守护红并报出 `2951 行 > 上限 2950（+1）`；
+还原后绿。
+
 ### `settings/AutomationEditView.tsx`（2,942 行；27 state / 12 effect / 16 memo / 11 callback）
+
+> 动能备注（2026-10-26 review）：本轮该文件 2942→**2950**（+8），增量全部是 Button a11y 迁移
+> （裸 `<button className=...>` → `<Button variant size>` 行数变多）的良性修复成本，
+> 但因 `legacy-over-limit` ratchet 只在跨越 400 时触发，此增长门禁恒绿、不可见。
+> 属「已超限文件继续增长」的典型样本，见上「拆分动能备注」与固定验收第 7 条。
+>
+> **批次 1 已实施（2026-10-28，helper 外迁）**：2950→**2799**（−151）。
+> - 新建 `settings/automation/scheduleModel.ts`（154 行）：`buildRunsPageItems`/`workspaceLabelFromPath`/
+>   `pad2`/`daysInMonth`/`toDateInputValue`/`localDateEndTimestamp`/`parseDateInputValue`/`resolveRunStatus`/
+>   `normalizeAutomationScheduleRule` + `FREQUENCIES`/`isCronFrequency`/`RUNS_PAGE_SIZE`/`CUSTOM_REPEAT_*`/
+>   `RUN_STATUS_*`/`AUTOMATION_STATUS_*` + `RunStatusKind` 类型（与 `resolveRunStatus` 同源共迁）。
+> - 新建 `settings/automation/cronBuilder.ts`（58 行）：`defaultBuilder`/`initialBuilder` + re-export
+>   `CronBuilderState`（类型单一来源仍在 `automationFormat.ts`，避免批次 3 落地时出现双份声明）。
+> - 前置测试：`test/automationScheduleModel.test.ts`（分页 / 日期解析 / 状态决策矩阵 22 用例）+
+>   `test/cronBuilder.test.ts`（defaultBuilder 初值稳定性 / initialBuilder 三路分支 7 用例）。
+> - 选择器族 7 个组件（批次 2，下文接续实施）与 27 state（批次 3 处理）**未动**。
+> - 验证：`tsc -p packages/ui/tsconfig.json --noEmit` 0 错、`pnpm --filter @acode/ui test` 915/915、
+>   触碰文件 oxlint 0 警告、`godComponentLineRatchet.guard.test.mjs` 上限 2950→2799 已同步。
+> - 实减量 −151 < 计划 −320 的原因：`parseCronToBuilder`/`CronBuilderState` 等本就在
+>   `automationFormat.ts` 而非主文件，拆前估算的 grep 行段把它们算进去了；不影响批次实质。
+>
+> **批次 2 已实施（2026-10-28，选择器族外迁）**：2799→**1944**（−855）。
+> - 新建 `settings/automation/pickers/` 子目录，7 个 picker 各自成文件 + 1 个共享 section 文件：
+>   - `TimeUnitColumn.tsx`（49 行）/ `TimeOfDayPicker.tsx`（53 行）/
+>     `ScrollNumberColumn.tsx`（53 行）/ `MonthDayPicker.tsx`（78 行）/
+>     `WeekdayPicker.tsx`（70 行）/ `EndDatePicker.tsx`（150 行）/
+>     `CustomRepeatDialog.tsx`（391 行）；
+>   - `CustomRepeatUnitSections.tsx`（178 行）：`CustomRepeatWeeklyGrid`（weekly 7 日勾选网格）+
+>     `CustomRepeatMonthlySection`（monthly 的 monthlyMode select + byDate/byWeekday 二选一网格），
+>     抽出是为让 `CustomRepeatDialog` 自身落到 max-lines 400 以下（拆前 472 有效行），
+>     语义与样式逐字从 Dialog 迁入，**不改行为**。
+> - 受控 props 模式保留：TimeOfDay/MonthDay/Weekday/EndDate 四个 picker 仍是「受控组件」
+>   （`value`+`onChange`），open 弹层态为内部视觉态不属于受控值。CustomRepeatDialog 例外
+>   保留原「编辑型弹窗」语义——打开时把 builder/endAt 拷进内部 state 作草稿，确认时一次性
+>   `onConfirm` 提交；这是「草稿」语义而非受控值语义，与原实现逐字一致。
+> - 共享 helper 收敛：`CustomRepeatSelectIndicator` / `CustomRepeatCalendarIcon` /
+>   `CUSTOM_REPEAT_SELECT_CONTENT_CLASS` / `CUSTOM_REPEAT_SELECT_ITEM_CLASS` 只服务
+>   CustomRepeatDialog / EndDatePicker，分别就近迁入 `CustomRepeatDialog.tsx` /
+>   `EndDatePicker.tsx` / `CustomRepeatUnitSections.tsx`（不是新模块共享 export，避免循环）。
+> - 主文件清理：删掉 7 个 picker 函数定义 + 4 个共享 helper + dead JSDoc；同步清理
+>   已无消费的 import（lucide 的 CalendarDays/Check/Chevron*/X、shared 的 TID_AUTOMATION_CUSTOM_*/
+>   TID_AUTOMATION_YEAR_*、组件库的 Popover/Dialog/ScrollArea、scheduleModel 的
+>   CUSTOM_REPEAT_INTERVAL_*/daysInMonth/localDateEndTimestamp/parseDateInputValue/toDateInputValue、
+>   automationFormat 的 WEEKDAY_ORDER 与 CustomRepeatUnit）。
+> - 前置测试：`test/automationPickers.test.ts`（**14 测**全绿）：
+>   - TimeUnitColumn（2 测）：count=24 渲染 0..23 + 受控 selected 高亮；count=60 与 count=0 边界。
+>   - ScrollNumberColumn（2 测）：values 数组渲染 + buttonTestIdPrefix 透传 e2e testid；与
+>     TimeUnitColumn 的选中样式差（bg-primary vs bg-menu-hover）。
+>   - TimeOfDayPicker（2 测）：触发器 HH:MM 受控值（pad2 补零）；hour=0/minute=59 与 hour=23/minute=0 边界。
+>   - MonthDayPicker（2 测）：触发器「M 月 D 日」受控值；data-testid=TID_AUTOMATION_YEAR_MONTHDAY
+>     e2e 稳定选择器。
+>   - WeekdayPicker（2 测）：受控 weekdays prop 决定 trigger label；空数组与全 7 天边界不抛错。
+>   - EndDatePicker（2 测）：受控 value（YYYY/M/D）+ disabled attribute 精确断言（规避
+>     Tailwind `disabled:` 变体类的误匹配）；无效 value 回退渲染原始字符串。
+>   - CustomRepeatDialog（2 测）：open=false Portal 空串；open=true 接受全部
+>     customUnit × endAt 组合不抛错（Radix Portal 在 renderToStaticMarkup 下无 DOM 输出，
+>     DOM 内容断言属 e2e 范畴）。
+> - 验证：`tsc -p packages/ui/tsconfig.json --noEmit` 0 错、`pnpm --filter @acode/ui test` 959/959、
+>   触碰文件 oxlint 0 警告、`godComponentLineRatchet.guard.test.mjs` 上限 2799→1944 已同步。
+> - 27 state 仍留在主文件，属批次 3（cron builder state 机收敛）范围。
+>
+> **批次 3 已实施（2026-10-28，cron builder reducer 收敛）**：1944→**1925**（−19）。
+> - 新建 `settings/automation/cronBuilderReducer.ts`（94 行）：`cronBuilderReducer` 纯函数 +
+>   `CronBuilderAction` 严格 discriminated union（8 种 action：`setFrequency` / `setDayOfMonth` /
+>   `setWeekdays` / `setTimeOfDay` / `setMinute` / `setYearlyMonthDay` / `applyCustomRepeat` / `reset`）。
+>   spec：packages/ui/specs/automation-edit-batch-3-cron-builder-reducer.md。
+> - 主文件 8 个 `setBuilder((prev) => ({...prev, ...}))` 调用点全部改为 `dispatchBuilder({...})`；
+>   `useState<CronBuilderState>` 改为 `useReducer(cronBuilderReducer, { editing, initialDraft },
+>   ({ editing, initialDraft }) => initialBuilder(editing, initialDraft))`（lazy init 保留
+>   「首帧即用真实 cron」语义，不引入 effect 回填）。
+> - weekdays 频率切换规则收敛：reducer 内 `resolveWeekdaysForFrequency` 统一处理
+>   「weekdays → [1..5] 强制，其它频率保留 weekdays」；原两个调用点逐字迁移同一规则。
+> - CustomRepeatDialog onConfirm 一次性提交语义保留：dispatch `applyCustomRepeat` 强制
+>   `frequency: "custom"`，5 个 custom* 字段同步更新；`endAt` 仍由独立 state 管理（不属于 builder）。
+> - 表单其它 state（title / prompt / model / mode / thoughtLevel / workspaceKey / endAt /
+>   scheduleRemoved / validationErrors / touchedFields / customRepeatOpen / runsPage / tab /
+>   saveAndRunPending）**未动**，不属于 builder 簇。
+> - 前置测试：`test/cronBuilderReducer.test.ts`（**15 测**全绿）覆盖 setFrequency 三个分支 /
+>   纯函数性（不改原 state）/ 单字段更新 / applyCustomRepeat 一次性提交语义 / reset 整体替换 /
+>   discriminated union 遍历 / 幂等性。
+> - 验证：`pnpm --filter @acode/ui test` 974/974、`npx tsc -p packages/ui/tsconfig.json --noEmit` 0 错、
+>   `pnpm architecture:check --changed` exit 0（new violations 0）、触碰 3 文件 oxlint 0 警告、
+>   `godComponentLineRatchet.guard.test.mjs` 上限 1944→1925 已同步。
+> - 注意：根 `pnpm typecheck` 当前**因 cli/core 的 baseline syntax error 失败**
+>   （`apps/acode-cli/packages/core/src/runtime/runtime-cache-diagnostics.ts:184` 缺 `=>`），
+>   与本批无关；ui 包 `tsc --noEmit` 单跑 exit 0。
 
 - 职责分析：单文件混合「cron/自定义重复排程编辑器 + 时间/星期/月日选择器 + 表单 schema + 操作按钮簇 +
   运行历史分页」。顶部已有 ~15 个纯 helper（`buildRunsPageItems`/`workspaceLabelFromPath`/`daysInMonth`/
@@ -64,14 +197,14 @@
   （`TimeUnitColumn`/`TimeOfDayPicker`/`ScrollNumberColumn`/`MonthDayPicker`/`WeekdayPicker`/
   `EndDatePicker`/`CustomRepeatDialog`）。
 - 建议接缝（从浅到深）：
-  1. **纯 helper 外迁** → `settings/automation/scheduleModel.ts`（排程规则/日期解析/分页），补决策表单测；
+  1. **纯 helper 外迁** → `settings/automation/scheduleModel.ts`（排程规则/日期解析/分页），补决策表单测——**已实施（2026-10-28）**；
   2. **日期/时间选择器族** → `settings/automation/pickers/`（TimeOfDayPicker/MonthDayPicker/WeekdayPicker/
-     EndDatePicker/CustomRepeatDialog 各自成文件，纯展示 + 受控 props）；
-  3. **cron builder state 机** → `settings/automation/cronBuilder.ts`（defaultBuilder/initialBuilder +
-     规约 reducer），把 27 state 里属于 builder 的收敛成单一 reducer；
+     EndDatePicker/CustomRepeatDialog 各自成文件，纯展示 + 受控 props）——**已实施（2026-10-28）**；
+  3. **cron builder state 机** → `settings/automation/cronBuilderReducer.ts`（cronBuilderReducer +
+     CronBuilderAction discriminated union），把 builder 簇的 useState 收敛为单一 useReducer——**已实施（2026-10-28）**；
   4. **操作按钮簇** → 复用 `components/ui/button.tsx`（与 P2 的按钮/焦点环修复合并做）。
 - 前置测试：scheduleModel 与 cronBuilder 的纯函数单测（第一刀前建）；选择器族用 renderToStaticMarkup 钉受控渲染。
-- 预估批次：3 批（helper 外迁 → 选择器族拆分 → cron builder reducer 收敛）。
+- 预估批次：3 批（~~helper 外迁~~ → 选择器族拆分 → cron builder reducer 收敛）。
 
 ### `settings/SubagentsSection.tsx`（2,671 行；34 state / 6 effect / 22 callback / 17 memo）
 
@@ -84,11 +217,66 @@
 - 建议接缝：
   1. **纯 helper 外迁** → `settings/subagents/agentModel.ts`（能力判定 + 工具合并 + 模型/思考档位解析 +
      表单初值），补决策表单测；
-  2. **列表** → `settings/subagents/SubagentList.tsx`；**编辑表单** → `settings/subagents/SubagentForm.tsx`
-     （34 state 按列表选择态 / 表单草稿态拆到两个组件，避免单文件持有全部）；
-  3. **详情面板** → `settings/subagents/SubagentDetail.tsx`。
+  2. **列表 + 行内摘要/覆盖控件** → `settings/subagents/SubagentList.tsx`（含 `AgentListRow` 行组件与
+     `SubagentModelOverrideControl` 行内 model 覆盖控件——它们就是 split-plan 原稿里
+     「详情展示态」的实际对应物，本文件**没有独立的「选中 agent 只读完整详情视图」**，
+     `isFormView` 分支渲染的是可编辑 `SubagentForm`，非只读详情）；
+     **编辑表单** → `settings/subagents/SubagentForm.tsx`（34 state 按列表选择态 / 表单草稿态
+     拆到两个组件，避免单文件持有全部）。
 - 前置测试：agentModel 纯函数单测（能力矩阵、工具合并去重、模型档位可用性、表单初值 key 稳定性）。
-- 预估批次：3 批（helper 外迁 → 列表/表单拆分 → 详情拆分）。
+- 预估批次：2 批（helper 外迁 → 列表/表单拆分）。原稿的「详情拆分」经 2026-10-28 批次 2 实施前
+  实测不存在（无独立只读详情视图），已并入 SubagentList 的行内摘要/覆盖控件，不再单列。
+- 状态：**batch-1 helper 外迁已实施**（2026-10-28）。抽出 `settings/subagents/agentModel.ts`
+  （**318 行**，21 个纯函数 + 6 常量集中 export `TOOL_OPTIONS`/`TOOL_OPTION_SET`/`RISKY_TOOLS` 避免循环），
+  主文件 2671 → **2416**（−255；调研报告预估 2271，差 +145 因为 `groupAgentsByScope`/`groupPluginAgentsById`
+  按 21 函数严格边界未外迁，归下一批）；前置测试 `test/subagentModel.test.ts`（**31 测**全绿）覆盖
+  能力矩阵 × 工具合并去重 × 模型档位可用性 × 表单初值 key 稳定性；ratchet 上限同步调至 2416。
+- 状态：**batch-2 列表/表单拆分已实施**（2026-10-28）。新建 7 个模块（architecture max-file-lines
+  物理行口径 400 上限，初版 SubagentForm.tsx 421 / SubagentFormFields.tsx 409 超上限于 2026-10-28 二次拆分）：
+  - `settings/subagents/SubagentList.tsx`（**370 行**）：`SubagentGroupBatchMenu` /
+    `SubagentGroupSelectAll` / `AgentListRow` 三个受控组件，列表选择态的批量菜单 / 分组
+    三态全选 / 行内只读摘要徽标与批量复选框；
+  - `settings/subagents/SubagentModelOverrideControl.tsx`（**292 行**）：行内 model/effort
+    覆盖控件（即改即存 + persistConfig 回滚语义）；独立成文件是为满足「新模块 <400 行」，
+    从 SubagentList.tsx 再拆出；
+  - `settings/subagents/SubagentForm.tsx`（**379 行**）：编辑表单 + 12 个草稿 state +
+    `previousInitialFormStateKeyRef` 回灌守卫；validate 函数（60 行）抽为纯函数
+    `subagentFormValidate.ts`；
+  - `settings/subagents/SubagentFormIdentityFields.tsx`（**168 行**）：身份组字段子组件
+    （Scope/Name/Color/Description），从 SubagentFormFields.tsx（409）按职责拆出；
+  - `settings/subagents/SubagentFormCapabilityFields.tsx`（**263 行**）：能力组字段子组件
+    （Model/Tools/SystemPrompt/InjectAgentsMd），同源拆出；
+  - `settings/subagents/subagentFormValidate.ts`（**120 行**）：`validateSubagentFormFields`
+    纯函数（名称 3–50 + 字符集 / description/systemPrompt 必填 / 失效模型阻止保存），
+    接收 intl 适配器与 4 个 setError 回调，主文件经它做提交前校验；
+  - `settings/subagents/primitives.tsx`（**145 行**）：`FormFieldLabel` / `AgentColorDot` /
+    `AgentBadge` / `ToolCheckbox` / `BatchRowCheckbox` 5 个纯展示子组件。
+  主文件 2416 → **1181**（−1235）。前置测试 `test/subagentSections.test.ts`（**13 测**全绿）：
+  5 个纯展示子组件的 `renderToStaticMarkup` DOM 契约 + SubagentList/SubagentForm 的
+  结构守护（无 jsdom 时的接缝内测试替代，split-plan 「每批拆分的固定验收」第 4 条登记口径）。
+  `test/subagentBatchWiring.test.ts` 同步更新断言锚点（行交互/分组组件已迁至 SubagentList.tsx，
+  TID 字面量按所有权分布到三个文件）；ratchet 上限同步调至 1181。
+  `SubagentDetail` 经 2026-10-28 批次 2 实施前实测不存在（无独立只读详情视图），其职责
+  实际由 `AgentListRow` 的行内摘要 + `SubagentModelOverrideControl` 行内覆盖控件承担，
+  已并入 SubagentList 不再单列。
+  门禁实跑：`pnpm architecture:check --changed` exit 0（new violations 0）、
+  `pnpm --filter @acode/ui test` 959/959、`tsc -p packages/ui/tsconfig.json --noEmit` exit 0、
+  触碰 12 个文件 oxlint 0 警告 0 错。
+- 状态：**所有已登记批次完成**。`SubagentsSection.tsx` 当前 1181 行，仍 >400；下一刀是
+  主组件内 22 个 state 的 reducer 收敛（批次 3，独立登记）。
+
+### `settings/RemotePluginSyncDialog.tsx`（1,898 行；max-lines 豁免）
+
+> 登记来源：review 2026-10-28 batch-1 调研报告 §3.④（docs/reviews/2026-10-28/god-component-batch-1.md）。
+
+- 职责分析：行 57–1058 是 ~1000 行纯 helper（行构建/选择解析/进度计算/stopped 错误形态）+ 选择/进度/结果三段 UI 子组件 + 主组件（行 1515，~380 行）。
+- 建议接缝：
+  1. **纯 helper 外迁** → `settings/remote-plugin-sync/remotePluginSyncModel.ts`（~500 行，27 个纯函数整组搬，内部互相引用密集不拆散），补决策表单测；副作用函数 `emitRemotePluginSyncProgress`/`throwIfRemotePluginSyncStopped` 留在主文件；
+  2. （下一批）`SelectionList`/`ProgressList`/`ResultList` 三个子组件外迁。
+- 前置测试：`test/remotePluginSyncModel.test.ts`（行构建矩阵 × 选择解析 × portable option 值 × stopped 错误形态）。
+- 预估批次：2 批（helper 外迁 → 子组件外迁）。仅 helper 外迁后主文件 ~1398 行，**不跌破 400**（固定验收第 6 条不适用本批）。
+- 状态：**batch-1 helper 外迁已实施**（2026-10-28）。27 个纯函数拆入 `remote-plugin-sync/remotePluginSyncModel.ts`（394 行），类型/Error 类/constants 拆入 `remotePluginSyncTypes.ts`（126 行，为满足「新模块 <400 行」验收而分）；副作用函数与三个 UI 子组件留主文件。主文件 1898 → **1460**（−438）；ratchet 上限同步下调。前置测试 `test/remotePluginSyncModel.test.ts`（30 例）。
+- 状态：**batch-2 三组件外迁已实施**（2026-10-28）。`SelectionList.tsx`（121 行，含 `RemotePluginSyncSelectionList`）、`ProgressList.tsx`（191 行，含 `RemotePluginSyncProgressList` + 复用给 ResultList 的 `RemotePluginSyncStatusBadge`/`RemotePluginSyncLogHoverCard`）、`ResultList.tsx`（46 行，含 `RemotePluginSyncResultList`）三个新模块各自 <400 行；副作用函数 `emitRemotePluginSyncProgress`/`throwIfRemotePluginSyncStopped`/`awaitRemotePluginSyncStep` 按登记口径留在主文件。主文件 1460 → **1132**（−328）；ratchet 上限同步下调至 1132。前置测试 `test/remotePluginSyncSections.test.ts`（**16 例**全绿）覆盖三组件渲染契约：SelectionList 空态/已存在行禁用/徽章汇总/optionsSummary/marketplace vs inline 徽章；ProgressList 空态/stop 按钮可点性/queued 回退/error 优先于 path/无 meta 段；ResultList null/空/三态徽章/error 优先/三元组 key。
 
 ### `settings/AutomationsSection.tsx`（1,979 行；8 state / 11 effect / 22 callback / 2 memo）
 
@@ -106,9 +294,440 @@
   3. **列表 + 空态** → `settings/automations/AutomationList.tsx`。
 - 前置测试：navigationModel 纯函数单测（tab 可见性矩阵、off-peak 变更后 tab 落点、详情导航 id 判定）。
 - 预估批次：2 批（helper 外迁 → 菜单/列表拆分）。
+- 状态：**batch-1 helper 外迁已实施**（2026-10-28）：14 个纯函数 + 4 常量逐字迁入
+  `settings/automations/navigationModel.ts`（174 行），`AutomationActionsMenu`（145 行）与
+  `AutomationStatusFilterEmpty`（15 行）各自成文件；`AUTOMATIONS_TOAST_ANCHOR_ID` 由 navigationModel
+  持有、主文件 re-export 保持 WorkspaceShellLayout 的既有 import 路径不变；`toast` 包装函数按调研
+  结论留在主文件（DOM anchor 语义）。主文件 1979 → **1695**（仍 >400，本批按调研 §3.① 预期不跌破；
+  固定验收第 6 条不适用本批）。前置测试 `test/automationsNavigationModel.test.ts` 13 例全绿；
+  ratchet 上限同步下调至 1695。
+
+### `settings/McpSettingsSection.tsx`（1,595 行；max-lines 豁免）
+
+> 登记来源：review 2026-10-28 batch-1 调研报告 §3.⑤（docs/reviews/2026-10-28/god-component-batch-1.md）。
+
+- 职责分析：行 76–552 是 ~477 行纯 helper 密集带（refresh queue 决策 / status 决策 / OAuth
+  authorization build / server list key 计算）+ `PluginMcpServerList` 子组件 + 主组件（行 553 起，~1042 行）。
+- 建议接缝：
+  1. **纯 helper 外迁** → `settings/mcp/mcpSettingsModel.ts`（~290 行）：refresh queue 决策
+     （`resolveMcpStatusListRefreshSkipReason` / `transitionMcpAutoStatusListRefreshKey` /
+     `createMcpStatusListRefreshQueue`）、OAuth authorization build
+     （`buildMcpOAuthAuthorizationStatusRefreshServers` / `buildMcpOAuthAuthorizationStatusRefreshOptions` /
+     `buildPendingMcpOAuthAuthorizationRefreshKey` / `createMcpOAuthAuthorizationStatusRefreshDeadline` /
+     `isMcpOAuthAuthorizationStatusRefreshExpired` / `transitionMcpOAuthAuthorizationPendingRefresh`）、
+     status list key 计算（`buildMcpServerStatusListKey` / `buildPluginMcpServerStatusListKey` /
+     `shouldShowPluginMcpServersInMcpSettings`）+ 常量 `MCP_OAUTH_*`。
+     `createMcpStatusListRefreshQueue` 是**有状态工厂**（返回带闭包状态的 queue 对象），调用方不应假设纯函数。
+  2. （下一批）`PluginMcpServerList` 子组件外迁为受控组件。
+- 留在主文件：`refreshMcpServerStatusList`（async 副作用函数，调 `mcpSyncService.listWorkspaceMcpServerStatuses`，
+  不属于纯函数）、`DEFAULT_MCP_SOURCE`（表单默认值语义，不属于 refresh 决策）、
+  `McpServerStatusListRefreshOutcome`（refreshMcpServerStatusList 私用）。
+- 前置测试：`test/mcpSettingsModel.test.ts`（refresh deadline 边界 × queue transition × skip reason
+  决策矩阵 × OAuth build 矩阵 × key 构建矩阵）。
+- 预估批次：2 批（helper 外迁 → PluginMcpServerList 外迁）。仅 helper 外迁后 ~1295 行，**不跌破 400**
+  （固定验收第 6 条不适用本批）。
+- 状态：**batch-1 helper 外迁已实施**（2026-10-28）：12 个纯函数 + 3 个常量 + 4 个类型逐字迁入
+  `settings/mcp/mcpSettingsModel.ts`（289 行）。主文件 1595 → **1346**（仍 >400，符合调研预期）。
+  前置测试 `test/mcpSettingsModel.test.ts` 36 例全绿；ratchet 上限同步下调至 1346。
+
+### `settings/ExternalAgentImportDialog.tsx`（1,442 行；max-lines 豁免）
+
+> 登记来源：review 2026-10-28 batch-1 调研报告全清单 Top 18；批次 4 实施（helper/hook 外迁）。
+
+- 职责分析：行 93-323 是纯 helper 带（selection key 编解码 / import selection 归组 / source root scope 推断与排序 / agent 分组 / 结果提取与格式化），行 358-490 是 `useExternalAgentImportCategoryState`（扫描-选择-导入目标状态机 hook），其余为弹窗主组件 + 12 个纯展示子组件。
+- 状态：**批次 4 已实施（2026-10-28，helper + hook 外迁）**：1442→**1050**（−392）。
+  - 新建 `settings/external-agent-import/importModel.ts`（279 行）：15 个纯函数 + 4 类型 + 2 常量逐字迁入；`ImportResourceCategory` 类型单一来源迁至本叶子，主文件 re-export 保持对外签名。
+  - 新建 `settings/external-agent-import/useExternalAgentImportCategoryState.ts`（175 行）：hook 与 `ExternalAgentImportCategoryState` 接口逐字迁入；主文件 re-export，消费方（OnboardingDialog / OnboardingFlowParts / SkillsSection / CommandsSection / McpSettingsSection）零改动。
+  - 偏离登记：`formatAgentName`/`formatSourceRootScope` 的 intl 形参标注由 `ReturnType<typeof useACodeIntl>["intl"]` 改具名类型 `IntlInstance`（类型恒等，遵守 ts-no-return-type）；函数体逐字未动。
+  - 前置测试 `test/externalAgentImportModel.test.ts` 13 例全绿（key round-trip / 畸形 key 矩阵 / selection 归组 / 结果提取 / 路径 scope 推断 / intl 桩格式化）。
+  - 12 个纯展示子组件留主文件（下一批候选）；ratchet 上限登记 1050。
+
+### `settings/PluginsSection.tsx`（1,400 行；max-lines 豁免）
+
+> 登记来源：review 2026-10-28 batch-1 调研报告全清单（1,000–2,000 梯队）；批次 4 实施（controller hook + 受控 UI 外迁）。
+
+- 职责分析：`PluginList`（原行 135-940，~800 行）承载 store 绑定 / 派生 memo / 操作回调 / 行渲染 / 详情分支 / 空态，主组件 `PluginsSection` 承载 tabs 与 Scope 聚合。
+- 状态：**批次 4 已实施（2026-10-28）**：1400→**498**（−902），9 个新叶子全部 <400 行：
+  - `settings/plugins/pluginTabs.ts`（19 行）：`normalizePluginTab`/`getPluginTabCountClass` + tab 类型；本地 `workspaceKey` 经实现比对确认为 `getPluginWorkspaceKey` 的纯委托别名，删除别名、9 个调用点改直调（去重，非迁移）。
+  - `settings/plugins/usePluginListController.ts`（378 行）：PluginList 的 store 绑定/派生 memo/回调逐字收口为 custom hook（hook 顺序与 deps 逐字）。
+  - `settings/plugins/usePluginOptionDrafts.ts`（103 行）：配置草稿三件套（controller 超 400 后的第二刀，hook 序列不变）。
+  - `settings/plugins/PluginList.tsx`（305 行）/ `PluginListDetail.tsx`（165 行，PluginList 超 400 后的第三刀）/ `PluginListRows.tsx`（219 行，原 `renderPluginRows` 受控化）/ `PluginListUninstallDialog.tsx`（41 行，两分支重复卸载弹窗消重）/ `PluginUnavailableComputerUseRow.tsx`（44 行）/ `PluginEmptyState.tsx`（13 行，PluginList 与主组件共用故独立成叶避免循环）。
+  - 集合外最小改动登记：`settings/computerUseAvailability.ts` / `settings/usePluginUninstall.ts` / `hooks/useWorkspaceServices.tsx` 各补 `export` 一个既有类型（ts-no-return-type / TS4058 契约要求，行为零改动）。
+  - 前置测试：`test/pluginTabs.test.ts` 3 例 + `test/pluginListRows.test.ts` 9 例全绿（渲染契约：row 锚点 / switch 三态 / missing 无菜单 / canUpdate 四态 / scope 徽标 / CUA 文案分支；Radix Portal 菜单 SSR 不可见，改由同谓词的行内 UpdateButton 钉住，测试头注已说明）。controller hook 无 jsdom 不测，按固定验收第 4 条登记。
+  - ratchet 上限登记 498。
+
+### `WorkspaceGroupedTasksSection.tsx`（1,747 行）
+
+> 登记来源：review 2026-10-28 batch-1 调研报告全清单 Top 12；批次 4 实施（drag/drop helper 外迁）。
+
+- 职责分析：行 74-520 是 drag/drop 纯 helper 密集带（8 个 drag data 读取器 / 碰撞检测 / 7 个 preview view 构建器 / view 签名 / 布局测量与 FLIP 动画），组件本体（DnD 编排）占 521-1747。
+- 状态：**批次 4 已实施（2026-10-28，helper 外迁）**：1747→**1320**（−427）。
+  - 新建 `workspace-grouped-tasks/groupedTaskDragData.ts`（120 行）/ `groupedTaskPreviewViews.ts`（164 行）/ `groupedTaskLayout.ts`（204 行）——沿用既有 `workspace-grouped-tasks/` 叶子目录；`findNearestScrollableAncestor` 因被布局族与组件本体共用而归置 layout 叶子（内聚性），主文件从该叶子 import。
+  - 组件本体零改动；失效 import 已清理。
+  - 前置测试：`test/groupedTaskDragData.test.ts` 15 例 + `test/groupedTaskPreviewViews.test.ts` 15 例全绿（读取器畸形矩阵 / 碰撞检测分支 / preview 决策表 / 签名稳定性）。布局/DOM 函数无 jsdom 不测，按固定验收第 4 条登记。
+  - ratchet 上限登记 1320。
+
+### `SettingsPage.tsx`（1,725 行）
+
+> 登记来源：review 2026-10-28 batch-1 调研报告全清单 Top 13；批次 4 实施（usage 派生簇 hook 收口 + 纯函数/小组件外迁）。
+
+- 职责分析：主组件内行 334-575 是 usage coding-plan 派生簇（provider settings 读取 / entitlement / 企业商品 / sources 派生 / tab 纠偏 effect），文件顶部另有 5 个 tab 纯函数与 2 个小组件。
+- 状态：**批次 4 已实施（2026-10-28）**：1725→**1347**（−378）。
+  - 新建 `settingsUsageCodingPlanTabs.ts`（56 行，5 纯函数）/ `useSettingsUsageCodingPlanSources.ts`（288 行，usage 簇 custom hook，hook 顺序与 deps 逐字，返回集按主文件实际引用裁剪为 9 值）/ `settingsPageChrome.tsx`（107 行，`SettingsUsageProviderTabs` + `SettingsSidebarButton`）——沿用既有 `settingsPageHelpers.tsx` 的同目录（src 根）叶子约定。
+  - 前置测试 `test/settingsUsageCodingPlanTabs.test.ts` 9 例全绿（team 判定 / tab id round-trip / 标签解析 / 快照矩阵）。hook 无 jsdom 不测，按固定验收第 4 条登记。
+  - ratchet 上限登记 1347。
+
+### `v4/ConversationStatusPanel.tsx`（2,246 行；max-lines 豁免）
+
+> 登记来源：review 2026-10-28 batch-1 调研报告全清单 Top 4；批次 4 实施（**仅保守纯函数外迁**，v4 实时链路投影组件的风险评估结论见下）。
+
+- 风险评估（批次 4 前置）：desktop-continuous 实时语义集中在 `ConversationStatusPanelImpl`（memo / tick 重渲染节律 / scroll policy）与 20+ 个 section 组件的 props 透传契约，组件级外迁需先定义公共 props 类型边界并补渲染契约测试，风险高于收益；顶部纯格式化/决策函数与实时语义零耦合，逐字外迁等价于批次 1-3 已验证的模式 A。**结论：本批只拆纯函数接缝，组件与 Impl 一律不动。**
+- 状态：**批次 4 已实施（2026-10-28，保守纯函数外迁）**：2246→**2102**（−144）。
+  - 新建 `v4/conversationStatusPanelFormat.ts`（181 行）：`EMPTY_*` 常量 / `formatDurationUnits` / elapsed 计算 / running count 文案 / todo focus 窗口（`COMPACT_TODO_THRESHOLD` 等）/ 两个 open-request 构建器 / plan 当前与最近完成项选取，逐字迁入；`STATUS_SECTION_SCROLL_POLICY`/`StatusSectionKind` 因组件共享留主文件。
+  - 偏离登记：`formatMessage` 形参类型改宿主具名类型 `IntlInstance["formatMessage"]`（类型恒等，ts-no-return-type）。
+  - 前置测试 `test/conversationStatusPanelFormat.test.ts` 11 例全绿；既有渲染契约 `test/ConversationTeamStatusPanel.test.ts` 复测仍绿。
+  - 后续批次建议：先补 section 渲染契约测试（renderToStaticMarkup 钉结构），再按「叶子 props 类型 → 单 section 外迁」逐批切，最后处理 Impl 投影与 tick 策略。
+  - ratchet 上限登记 2102。
+- 状态：**批次 6 第一阶段已实施（2026-10-29，section 渲染契约测试 + 无 tick 分区外迁）**：2102→**1486**（−616）。
+  - 先补 `test/conversationStatusPanelSections.test.ts`（**21 例**）钉住分区可见结构：StatusSectionShell
+    的 `data-status-section[-trigger|-scroll]` 锚点 / 展开-收起两态 / separated 分隔线 / trailing 回调
+    收参 / 八类型 scroll policy 穷举；PlanStatusSection 的计数与 `data-plan-status` 三态、完成项删除线；
+    SessionPlansStatusSection 的目录按钮禁用谓词（缺 parentSessionId）；TeamStatusSection 的完成比与
+    团队摘要；EndedDirectoryRow 的 `count<=0 || !onOpen` 双缺席条件与 testid。**这是「逐 section 外迁」
+    的前置契约**——后续批次移动 section 时可区分「结构没变」与「行为被改」。
+  - 新建 `v4/conversation-status-panel/` 四个叶子（全部 <400 行）：
+    - `StatusSectionShell.tsx`（148 行）：`StatusSectionKind` + `STATUS_SECTION_SCROLL_POLICY` +
+      `StatusSectionHeader` + `StatusSection`，逐字迁入（类型单一来源迁至叶子，主文件 import）。
+    - `GitStatusSection.tsx`（114 行）：environment 分区（Changes 行 / GitBranchSwitcher / GitActionMenu）。
+    - `PlanStatusSections.tsx`（302 行）：`PlanStatusIcon` / `PlanStatusItemRows` / `TodoPreviewTrigger` /
+      `TodoHiddenGroupPreview` / `PlanStatusItems` / `SessionPlansStatusSection` / `PlanStatusSection`。
+    - `TeamAndEndedSections.tsx`（124 行）：`TeamStatusSection` / `EndedDirectoryRow` /
+      `EndedSubagentDirectoryRow`。
+  - **未动（下一批）**：`ConversationStatusPanelImpl` 的 memo / `miniWidth` ResizeObserver / tick 节律 /
+    variant 门控 / StatusSummaryRow 胶囊链；带秒级 tick 的三个分区（Goal / BackgroundWork / Workflow /
+    Subagent）与 BackgroundWorkStatusSection 的 `useState(now)` + `setInterval` 仍留主文件——它们与
+    desktop-continuous 时序假设强耦，按批次 4 的三阶段路径留到最后一阶段。
+  - 测试债登记：`GitStatusSection` 静态渲染需完整 ServiceProvider 桩（GitBranchSwitcher →
+    useGitBranchSwitcher → useServices；GitActionMenu 同），当前无 jsdom 且 services 面很大，按
+    「固定验收」第 4 条登记为无单测覆盖，其缺席分支由 `ConversationTeamStatusPanel.test.ts` 间接覆盖。
+  - ratchet 上限 2102 → 1486。
+- 状态：**批次 7 第二阶段已实施（2026-10-30，四个秒级分区 + 秒针统一 + 胶囊分支契约）**：1486→**612**（−874）。
+  - **前置：秒针契约测试先行**（`test/conversationStatusPanelTicks.test.ts` 9 例 + 同批
+    `test/conversationStatusPanelTickSections.test.ts` 16 例）。前者钉住四条「该不该开表」条件与
+    两条收起态耗时口径；后者钉住四个分区迁移后的渲染结构锚点。这是「tick 统一」属**行为保持的重构**的
+    对照基线——先钉渲染与节奏语义，再动代码。
+  - `v4/conversation-status-panel/conversationStatusPanelTicks.ts`（66 行）：
+    `shouldTickBackgroundWorks` / `shouldTickWorkflowRuns` / `shouldTickSubagents` / `shouldTickGoal`
+    + `toCollapsedElapsedSeconds`（0ms 显示 1 秒）/ `shouldShowWorkflowCollapsedElapsed`。
+  - **tick 统一**：四个分区原先各自 `useState(now) + setInterval(1000)`（「关」写在 effect early return
+    里，无法单测），全部改为 `useNowTicker(谓词)` 单点驱动。节律不变（仍 1000ms 自然粒度）；
+    `useNowTicker` 在 `active=false` 时不建定时器、变真时先重取一次 now（与四组原实现共同语义一致）。
+    **未新建 hook**：`useNowTicker` 已存在于 `components/workflow-graph/use-now-ticker.ts` 并被
+    WorkflowRunSidePaneSections / eval-workflow-snippet / 本面板 Goal 分区使用（无广播/回环面，
+    纯本地定时器，不写 store）。
+  - `v4/conversation-status-panel/StatusActivityRows.tsx`（106 行）：`RunningWorkCancelButton` +
+    `RunningStatusItem`（三处分区共用，避免重复实现，也是各分区 <400 行的前提）。
+  - `v4/conversation-status-panel/GoalStatusSection.tsx`（151 行）：Goal 分区逐字迁入。
+  - `v4/conversation-status-panel/BackgroundWorkStatusSection.tsx`（99 行）：Terminals 分区。
+  - `v4/conversation-status-panel/WorkflowStatusSection.tsx`（230 行）：Workflows 分区（三簇缺席、
+    不排序、已结束页脚）。
+  - `v4/conversation-status-panel/SubagentStatusSection.tsx`（169 行）：Agents 分区（按 startedAt 排序、
+    详情与 Stop 的双交互层）。
+  - **第三阶段前置已完成**：`statusSummaryCapsuleModel.ts`（170 行）把 10 分支三元链收成
+    `StatusSummaryCapsuleKind` 判别联合 + `STATUS_SUMMARY_CAPSULE_PRIORITY`（顺序即产品行为）+
+    `resolveStatusSummaryCapsuleKind` 单入口；`test/conversationStatusPanelCapsule.test.ts` **21 例**
+    钉住优先级全序、逐分支命中、相邻覆盖关系、空模型缺席、实时活动图标族与计数文案。
+    `StatusSummaryRow.tsx`（255 行）只做「按 kind 渲染」，另有
+    `test/conversationStatusPanelCapsuleRender.test.ts` 8 例钉各分支可见锚点。
+  - 主文件保留：`ConversationStatusPanelImpl` 的 memo / `miniWidth` ResizeObserver / variant 门控 /
+    分区编排 JSX（含团队卡折叠）/ 面板菜单。导出面不变。
+  - ratchet 上限 1486 → 612。
+
+### `app-shell/WorkspaceShellLayout.tsx`（1,980 行；max-lines 豁免）
+
+> 登记来源：批次 5 目标清单（2026-10-28 review top 候选，非 v4-session 域）。
+
+- 职责分析：单一 memo 组件编排 sidebar/chat/terminal/browser pane 布局联动；文件顶部是侧栏宽度
+  纯 helper 带（clamp/localStorage 读写/legacy RRP 百分比迁移），组件体内 537-723 是侧栏 resize
+  状态机簇（state + refs + 拖拽 CSS 直写 + 键盘步进 + 卸载清理）。
+- 状态：**批次 5 已实施（2026-10-28，helper 外迁 + resize controller 收口）**：1980→**1725**（−255）。
+  - 新建 `app-shell/workspaceSidebarWidth.ts`（82 行）：8 个常量 + `WorkspaceSidebarResizeSession` 类型 +
+    `clampWorkspaceSidebarWidth`/`readStoredWorkspaceSidebarWidthPx`/`readLegacyWorkspaceSidebarWidthRatio`/
+    `persistWorkspaceSidebarWidthPx` 逐字迁入（window/localStorage 访问守卫原样保留）。
+  - 新建 `app-shell/useWorkspaceSidebarResize.ts`（255 行）：resize 状态机收口为 controller hook，
+    hook 内部顺序与 useCallback/useEffect deps 逐字（ref 对象按 exhaustive-deps 惯例不入 deps，
+    与原文一致）；主文件在 auto-collapse effect 之后单点调用，消费方（JSX style memo 与
+    resize handle 四个事件槽）零改动。`aria-valuemin` 的 `WORKSPACE_SIDEBAR_MIN_WIDTH_PX`
+    由主文件从叶子 import。
+  - 前置测试 `test/workspaceSidebarWidth.test.ts` 5 例（clamp 矩阵 / storage 读取钳制与异常吞咽 /
+    legacy ratio 解析 / persist 取整）。hook 无 jsdom 不测，按固定验收第 4 条登记。
+  - ratchet 上限登记 1725。
+- 遗留：conversation auto-collapse 簇（`conversationAutoCollapseStateRef` + 两个 effect）与
+  主 JSX 的 pane 编排段为下一批候选；pane 子树外迁需先定义 props 边界（批次 4 ConversationStatusPanel 同纪律）。
+
+### `PreviewPane.tsx`（1,806 行；max-lines 豁免）
+
+> 登记来源：批次 5 目标清单（2026-10-28 review top 候选，非 v4-session 域）。
+
+- 职责分析：行 83-478 是纯 helper 密集带（source 类型判别与解析 / 错误分类与路径脱敏 /
+  面包屑构建 / 延迟占位组件），组件本体（文件读取编排 + 渲染）自 480 起。
+- 状态：**批次 5 已实施（2026-10-28，helper 外迁）**：1806→**1447**（−359）。
+  - 新建 `previewPane/previewPaneSources.ts`（227 行）：markdown/svg 判别、text 读取结果决策、
+    image/media/pdf/pptx source 解析族、header divider 与 display options 派生、PDF/PPTX 常量。
+  - 新建 `previewPane/previewPaneErrors.ts`（80 行）：ENOENT/过大/pptx 不完整错误分类 +
+    绝对路径脱敏（`getPreviewPaneSafeErrorMessage`）+ pptx 读取错误文案决策。
+  - 新建 `previewPane/previewPaneBreadcrumb.ts`（82 行）：`CodeViewerBreadcrumbData` /
+    `BreadcrumbMaskState` / 遮罩 class 映射 / `normalizeBreadcrumbPathSegments` /
+    `buildCodeViewerBreadcrumb`（workspace 相对段与 posix/windows 绝对路径双分支）。
+  - 新建 `previewPane/PreviewPaneDeferredHeavyContent.tsx`（35 行）：延迟占位纯展示组件 + 行宽常量。
+  - `readPreviewPaneScrollMetrics`（DOM metrics 读取）与 `EMPTY_CODE_COMMENT_PREVIEWS` 留主文件。
+  - 前置测试：`test/previewPaneSources.test.ts` 11 例 + `test/previewPaneErrors.test.ts` 6 例 +
+    `test/previewPaneBreadcrumb.test.ts` 6 例（source 解析矩阵 / 错误分类与脱敏 / 面包屑四分支）。
+  - ratchet 上限登记 1447。
+- 遗留：组件本体的文件读取编排（PDF range 拉取 / pptx watch）与 header 菜单段为下一批候选。
+
+### `WorkspaceSidebar.tsx`（1,701 行；max-lines 豁免）
+
+> 登记来源：批次 5 目标清单（2026-10-28 review top 候选，非 v4-session 域）。
+
+- 职责分析：顶部小件（NewTaskTooltip/DragOverlay/viewMode 决策）+ 主组件内
+  `workspaceTaskToolbar` 闭包（~215 行 JSX：一级视图 Tabs / 全组折叠 / 新建分组 / 筛选菜单 /
+  归档切换）。
+- 状态：**批次 5 已实施（2026-10-28，受控组件 + 纯函数外迁）**：1701→**1458**（−243）。
+  - 新建 `WorkspaceSidebar/WorkspaceSidebarTaskToolbar.tsx`（300 行）：toolbar 闭包 JSX 逐字外迁为
+    受控组件。性能契约不变——主文件仍以 useCallback 按原 deps 列表稳定 render prop（性能修复注释保留），
+    组件本体不带 memo；sort 守卫与 archived 切换的内联箭头移入组件内（经 props 回调，行为逐字等价）。
+  - 偏离登记：适配闭包 deps 增加 `workspaceReadOnly`/`workspaceReadOnlyReason`（原闭包引用但未声明，
+    属既有 stale-closure 隐患，受控化必须显式声明）；`intl` 移出 deps（不再被闭包引用，
+    locale 切换由 deps 内的 `archivedTasksActionLabel` 覆盖）。
+  - 新建 `WorkspaceSidebar/sidebarTaskViewMode.ts`（22 行）：`resolveSidebarTaskViewMode` +
+    `SidebarTaskViewMode` 类型（单一来源迁至叶子，主文件删本地别名）。
+  - 新建 `WorkspaceSidebar/sidebarChrome.tsx`（51 行）：`WorkspaceNewTaskTooltip` + `WorkspaceDragOverlay`。
+  - 前置测试：`test/sidebarTaskViewMode.test.ts` 2 例（四态矩阵）+
+    `test/workspaceSidebarChrome.test.ts` 4 例（tooltip 透传/包装、overlay 本地/远程分支）+
+    `test/workspaceSidebarTaskToolbar.test.ts` 5 例（渲染契约：Tabs 双触发器 / 新建分组按钮分支 /
+    筛选菜单触发器有无 / 归档容器与 data-state / 折叠按钮分支；Radix Portal 内容 SSR 不可见，
+    口径同 pluginListRows.test.ts）。
+  - ratchet 上限登记 1458。
+- 遗留：主组件内 grouped/timeline/workspace 三态编排与文件树滑出段为下一批候选。
+
+### `components/ai-elements/message.tsx`（1,691 行；oxlint ignorePatterns 覆盖的 vercel 衍生件）
+
+> 登记来源：批次 5 目标清单（2026-10-28 review top 候选，非 v4-session 域）。
+
+- 职责分析：行 454-705 是单美元行内公式归一化族（围栏跟踪 / 转义判定 / 货币区间保护），
+  行 756-1003 是 markdown 文件链接目标族（harden 前 href 规整 / rehype 插件 / link target 构建 /
+  stat 确认打开）。
+- 状态：**批次 5 已实施（2026-10-28，helper 外迁 + 死代码删除）**：1691→**1337**（−354）。
+  - 新建 `messageMarkdownMath.ts`（198 行，零依赖纯字符串函数）：6 个模式常量 + 9 个归一化函数
+    逐字迁入；主文件只消费 `normalizeMessageSingleDollarMath`。
+  - 新建 `messageFileLinkTargets.ts`（182 行）：`MessageFileLinkTarget` 类型单一来源迁入 +
+    `formatMarkdownFileLinkTargetHref`/`shouldRewriteMarkdownFileLinkHref`/
+    `rewriteLocalFileMarkdownTargetsRehypePlugin`/`hasFileExtension`/`isExplicitDirectoryMarkdownLink`/
+    `buildMessageFileLinkTarget`/`openMessageFileLinkInEditor`/`isExternalWebHref` + `HastElementNode`。
+    主文件 re-export `MessageFileLinkTarget`/`buildMessageFileLinkTarget`/`openMessageFileLinkInEditor`
+    保持对外契约（workspacePathNavigation 与 side-pane 族 import 路径不变、包导出面不变）。
+  - 删除死代码 `knownExtensionlessFileNames`（全仓零引用，定义于 457 行从未被消费）。
+  - `hashMarkdownCacheKey`/`normalizeMarkdownRenderError`（错误边界私有）与 `resolveMessageStreamdownMode`/
+    `buildMessageStreamdownRenderKey`/`getAttachmentReaderEpoch`/`resolveMessageCodeTheme` 留主文件。
+  - 前置测试：`test/messageMarkdownMath.test.ts` 11 例（围栏/转义/货币区间/行内代码跳过决策表）+
+    `test/messageFileLinkTargets.test.ts` 10 例（href 规整矩阵 / shouldRewrite 决策 / rehype 树改写 /
+    link target 派生 / stat 打开编排）。
+  - **连带登记**：message.tsx 是 third-party 台账（inventory.json）inputs 追踪件，本批改动导致
+    L01 干净树审计哈希漂移——按 orchestrator 纪律由 licenses-notices.yml CI Linux 统一重生成落位
+    （2ddaf691 先例），本代理不动台账。
+  - ratchet 上限登记 1337。
+- 遗留：MessageFileLink/MessageExternalLink 交互组件与 MessageResponse 主组件的 renderer memo 簇
+  为下一批候选（oxlint 豁免域，仅受 ratchet 与架构门禁约束）。
+
+### `LexicalChatInput.tsx`（1,517 行；max-lines 豁免）
+
+> 登记来源：批次 5 目标清单（2026-10-28 review top 候选，非 v4-session 域）。
+
+- 职责分析：行 93-178 是提交/重置/中文顿号别名纯决策；行 179-507 是编辑器动作族
+  （文本/mention 替换、追加、state JSON 恢复、选区归位——全部以 LexicalEditor 实例为参数的
+  命令式操作）；其余为 8 个 Lexical 插件组件 + 主组件。
+- 状态：**批次 5 已实施（2026-10-28，helper 外迁）**：1517→**1105**（−412）。
+  - 新建 `lexical-chat-input/lexicalChatInputDecisions.ts`（87 行）：4 个选项接口 +
+    `LexicalSubmitResult` + `CHINESE_SLASH_ALIAS`/`STANDARD_SLASH_TRIGGER` + 4 个决策函数。
+  - 新建 `lexical-chat-input/lexicalEditorActions.ts`（374 行）：`getEditorMarkdown`/
+    `replaceEditorText`/`INLINE_PLUGIN_MENTION_PATTERN`/`replaceEditorTextWithPluginMentions`/
+    `replaceEditorWithMention`/`prependEditorMentionIfMissing`/`replaceEditorStateJson`/`resetEditor`/
+    `replaceEditorWithSkillMention`/`replaceEditorWithSlashCommandMention`/`appendEditorFileMention`/
+    `appendEditorPlainText`/`selectAfterPromptMentionById`/`isCollapsedSelectionAtEditorStart`/
+    `insertEditorMention` 逐字迁入。
+  - DOM-selection 助手（`getPromptMentionIdAfterDomSelection`/`getPromptMentionIdFromBoundaryNode`，
+    window.getSelection/HTMLElement.matches）留主文件，无 jsdom 不测，按固定验收第 4 条登记。
+  - 前置测试：`test/lexicalChatInputDecisions.test.ts` 6 例（决策矩阵）+
+    `test/lexicalEditorActions.test.ts` 10 例（**headless Lexical**：createEditor + PromptMentionNode
+    无 DOM 跑真实 update/read；.png 资源链路用 module.registerHooks 重定向，对照 pluginListRows 先例；
+    update 提交用 registerUpdateListener 等真实事件，无 wall-clock 定时器）。
+  - ratchet 上限登记 1105。
+- 遗留：KeyboardPlugin 的改绑分发与 PromptHistoryPlugin 的发送回滚耦合为下一批候选
+  （需先补交互测试，见 v4 区登记表「提示词历史导航」前置条件）。
+
+### GitActionMenu.tsx（1,398 行 → **188 行，已跌破 400，登记完成并从 ratchet 上限表移除**）
+
+> 登记来源：批次 6 目标清单（2026-10-28 review 第二梯队 top 候选，非 v4-session 域）。
+> 批次 7 收口后已跌破 400，按 `godComponentLineRatchet.guard.test.mjs` 第 2 条断言（已跌破 400
+> 的登记项必须从上限表移除）撤销登记——此后该文件的增长由架构棘轮的「跨越 400」规则兜住。
+> 标题刻意不再使用 `### \`<path>.tsx\`（` 登记标记形式，以免触发「防漏登记」断言。
+
+- 职责分析：顶部 trigger 状态机（`primaryActionId` 决策 / 状态行点击 / pending 图标切换）+
+  commit dialog（分支头 / 提交信息 / 暂存开关 / 三动作 Command 键盘导航）+ push dialog（分支/upstream/
+  ahead-behind 摘要 / 错误复制）。三者共用 `commitDialogState` 与 `mutationPending`，但弹窗本体只消费 props。
+- 状态：**批次 6 已实施（2026-10-29，弹窗族外迁）**：1398→**628**（−770）。
+  - `git-action-menu/gitActionMenuDialogsModel.ts`（82 行）：`GitCommitPreviewFile` 类型 /
+    9 个 TID 常量 / `CommitDialogActionId` 守卫 / `getCommitDialogFiles` / `getCommitDialogStagePaths` /
+    `GitCommitDialogState` + `GitCommitDialogProps`，逐字迁入主文件顶部 helper 带。
+  - `git-action-menu/GitCommitDialog.tsx`（287 行）：弹窗 shell + 派生状态 + 键盘导航（原 `GitCommitDialog`）。
+  - `git-action-menu/GitCommitDialogBody.tsx`（283 行）：GitCommitDialog 首版 492 行超 400 的第二次切分——
+    表单四段 JSX（分支头 / 提交信息 / 暂存开关 / 动作 Command）改受控渲染，`CommitCommandActionItem`
+    消重为内联 `CommandItem`（同谓词、同 testid、同 class）。
+  - `git-action-menu/GitPushDialog.tsx`（260 行）：推送弹窗逐字迁入，自带 `errorCopied` 局部态。
+  - 主文件保留：`ActionMenu` 本体的全部 state（commit/push 弹窗开关、message、error、pending）、
+    `loadCommitDialogState` / `generateCommitMessage` / `handleCommitAction` / `pushCurrentBranch` 编排、
+    trigger JSX。导出面不变（`GitActionMenu` 仍从原路径导出）。
+  - 前置测试：`test/gitActionMenuDialogsModel.test.ts` 9 例（action id 守卫 / testid / 文件集合两态 /
+    stagePath 去重 / textarea 目标判定）。
+  - ratchet 上限 1398 → 628。
+- 状态：**批次 7 已实施（2026-10-30，trigger 状态机 + mutation 编排收口）**：628→**188**（−440，
+  **跌破 400**，ratchet 条目已移除）。
+  - `git-action-menu/gitActionMenuCommitFlow.ts`（99 行）：从 `handleCommitAction` / `handleGenerateCommitMessage`
+    的 async 编排里抽出的**纯判定**——`resolveCommitStagePlan`（includeUnstaged 的路径投影）/
+    `resolveCommitPreflight`（identity 优先于 no-changes 的三态门）/ `shouldGenerateCommitMessage` /
+    `resolveCommitSuccessToastId` / `resolveCommitFailureErrorId`（已提交但 push 失败用专用 key）/
+    `resolveTriggerIconKind` / `resolveTriggerDisabled`。副作用（RPC/setState/日志）一律不进本叶。
+  - `git-action-menu/useGitActionMenuCommitDialog.ts`（267 行）：提交弹窗 7 个 state +
+    `closeCommitDialog` / `loadCommitDialogState` / `openCommitDialog` / `refreshCommitDialogAfterBranchChange` /
+    `generateCommitMessage` / `handleGenerateCommitMessage`，hook 顺序与 deps 逐字。
+  - `git-action-menu/useGitActionMenuController.ts`（396 行）：controller hook 首版 563 行超 400 的**第二刀**——
+    本 hook 只留 trigger 派生（`actionAvailable` / `primaryActionId` / `triggerPending` /
+    `primaryActionDisabled`）+ 可用性日志 effect + push 弹窗 + `handleCommitAction` 编排 +
+    `handlePrimaryAction`；提交弹窗状态委托给上一条叶子。
+  - 主文件保留 props 契约、trigger JSX（三态图标抽成 `GitActionMenuTriggerIcon` 受控小组件）、
+    两个弹窗接线。导出面不变（`GitActionMenu` 仍从 `@/GitActionMenu.js` 导出，消费方零改动）。
+  - 前置测试：`test/gitActionMenuCommitFlow.test.ts` 18 例（暂存计划两态与去重 / 前置门优先级
+    四种组合 / 自动生成条件 / 成功与失败 key 全组合 / 三态图标 / 禁用三条件）。
+  - 偏离登记：`handlePrimaryAction` 原为一个 IIFE 包着两个分支，改为等价直写（无行为变化）；
+    `primaryActionDisabled` 由内联表达式改为 `resolveTriggerDisabled` 调用（同谓词）。
+
+### `BotsDialog.tsx`（1,434 行）
+
+> 登记来源：批次 6 目标清单（2026-10-28 review Top 19，settings-adjacent bots 域）。
+
+- 职责分析：数据加载/保存/轮询编排（4 组 interval 轮询：绑定码、飞书扫码、微信扫码、运行态）+
+  120 行「自动扫码 / 自动续绑定码」if 链 + 左栏 Bot 列表 + 新建渠道网格 + 选中 Bot 的详情编排。
+- 状态：**批次 6 已实施（2026-10-29，纯决策 + 三段 UI 外迁）**：1434→**1177**（−257）。
+  - `BotsDialog/botsDialogModels.ts`（171 行）：`createEmptyConfig` / `createDraftBot` 逐字迁入 +
+    `resolveBotAutoConnectAction`——把原 effect 里 120 行的渠道 if 链收成判别联合
+    （`none` / `start-feishu-qr` / `start-weixin-qr` / `create-bind-code`）。**副作用仍留在组件 effect**
+    （ref 去重集合的增删、异步调用），决策函数只回答「该做什么」，因此可在无 DOM 环境下用决策表覆盖
+    全部分支（含 30 秒绑定码有效期边界与 lark 走飞书分支）。
+  - `BotsDialog/BotsDialogSidebar.tsx`（102 行）：左栏列表受控组件（Bot 行 / 运行态圆点 / 空态文案）。
+  - `BotsDialog/BotsDialogCreatePanel.tsx`（85 行）：新建渠道网格受控组件（排除 webhook / 未实现渠
+    道置灰 / `aria-busy` 当前创建项）。
+  - `BotsDialog/BotsDialogDetailPanel.tsx`（237 行）：选中 Bot 的详情编排（BotSummaryCard /
+    ProviderSettingsCard / SettingsGroupCard 四卡 / BotDangerCard）+ `BotsDialogEmptyState`。
+  - 偏离登记：`renderChannelName`（渠道名 + 地区徽标）仍由宿主实现并作为 render prop 注入两个面板，
+    避免把 `botsUi` 的 i18n key 拼装逻辑复制到叶子（单一实现原则）。
+  - 前置测试：`test/botsDialogModels.test.ts` 19 例（构造器 + 五渠道自动连接决策矩阵）+
+    `test/botsDialogPanels.test.ts` 7 例（侧栏空态/选中高亮/显示名兜底；新建网格 webhook 排除与
+    disabled 占位；`.png` 渠道图标经 `module.registerHooks` 重定向，口径同 pluginListRows）。
+  - ratchet 上限 1434 → 1177。
+- 状态：**批次 7 已实施（2026-10-30，四组轮询 + 配置写入闭环收口）**：1177→**469**（−708）。
+  - `BotsDialog/botsDialogPolling.ts`（212 行）：**可注入计时器的轮询原语** `createCancellablePollLoop`
+    （`interval` 固定节拍 / `serial` 串行自调度两种模式）+ 五条「该不该开表」守卫
+    （`shouldTickBindCountdown` / `shouldPollBindResult` / `shouldCollapseBindCode` /
+    `shouldPollWeixinActivation` / `shouldPollFeishuRegistration` / `shouldPollWeixinRegistration`）
+    + `resolveBindCountdown`。原实现四处手写的 `let cancelled = false` + timer 清理 + `if (cancelled) return;`
+    收成原语的一部分：`stop()` 后不再触发新 run，在途 run 通过 `isCancelled()` 放弃写回。
+  - `BotsDialog/useBotsDialogData.ts`（112 行）：config/status/workspaceRefs/botStates/selectedBotId/
+    creatingBot/configLoaded 七 state + `refresh` 编排 + `currentWorkspace`/`selectedBot` 派生。
+  - `BotsDialog/useBotsDialogActions.ts`（358 行）：`saveBot`（配置写入唯一入口）+ 字段补丁 / 重命名草稿
+    （IME Enter 与 Esc 语义逐字）/ 凭据与企业微信保存 / 解绑 / 删除 / 工作区访问范围 / 新建 Bot。
+  - `BotsDialog/useBotsDialogRegistrations.ts`（172 行）：`bindCode` / `feishuRegistration` /
+    `weixinRegistration` 三个临时状态与发起入口（二维码 data URL 生成失败只记日志、保留 qrUrl 兜底）。
+  - `BotsDialog/useBotsDialogBindCodePolling.ts`（104 行）+ `useBotsDialogStatusPolling.ts`（343 行）：
+    首版单文件 `useBotsDialogPolling.ts`（414 行）超 400 的**第二刀**——按「只碰 bindCode/nowMs」与
+    「只碰 status/botStates/扫码注册」两组互不写入的状态切开，各自独立启停。
+  - **依赖纪律**：两个轮询 hook 只接受原始值 / 稳定回调作入参，绝不以聚合对象作 effect 依赖
+    （否则每次 render 新对象都会重启轮询，即原注释警告的「毫秒级 RPC 风暴」）。
+  - 主文件保留：`useBotsDialogData/Actions/Registrations` + 两个轮询 hook 的接线、自动连接 effect
+    （决策表仍来自批次 6 的 `resolveBotAutoConnectAction`）、入口渠道 effect、`renderChannelName`、
+    弹窗三段 UI 编排。
+  - 前置测试：`test/botsDialogPolling.test.ts` **18 例**，其中 **4 例是批次 6 报告点名的
+    「轮询取消后不回写」时序测试**（假计时器驱动）：`stop()` 清理定时器不再触发 run /
+    在途 run 在 stop 后放弃写回 / 对照组未取消时正常写回（防测试恒真）/ serial 模式并发上限恒为 1
+    与 stop 后不排下一次；另有五条守卫决策表与倒计时读数边界。
+  - 偏离登记：`useBotsDialogStatusPolling` 不再自己 `refresh()`——打开弹窗的配置加载留在宿主
+    effect（与 `configLoaded` 复位同一处），避免出现第二条配置写入路径。
+  - ratchet 上限 1177 → 465。
+
+### `app-shell/AnimatedSidePanePanel.tsx`（1,422 行；max-lines 豁免）
+
+> 登记来源：批次 6 目标清单（2026-10-28 review Top 20，app-shell 域）。
+
+- 职责分析：side pane 的 tab 条（溢出判定 / mask / active tab 滚入视区）+ DnD 重排 + 20 个 pane
+  类型分发 + 视口度量 hooks（可见内联宽度 / 窗口 resize 平滑期）。
+- 状态：**批次 6 已实施（2026-10-29，视口度量 hooks 外迁）**：1422→**1306**（−116）。
+  - `app-shell/useSidePaneViewportMetrics.ts`（129 行）：`readViewportInlineIntersectionSize`（导出以便
+    单测）+ `useViewportInlineIntersectionSize` + `useWindowResizeSettling` 逐字迁入；
+    `useWindowResizeSettling` 的 settle 延时由闭包常量改为显式 `settleDelayMs` 入参（调用点传原
+    `PREVIEW_PANE_RESIZE_SETTLE_DELAY_MS`，行为逐字等价）。
+  - 主文件保留：`SuspendedBrowserSidePaneContent`（residency ack 日志与 platform 调用）、tab 条全部
+    state/effect、pane 类型分发 JSX、`resolveAnimatedSidePanePanelLayout` 的布局分支。
+  - 前置测试：`test/sidePaneViewportMetrics.test.ts` 7 例（无 window / 视口宽 0 / 三向裁切 / 四舍五入）。
+    两个 hook 依赖 window + ResizeObserver，无 jsdom 不测，按固定验收第 4 条登记。
+- 状态：**批次 7 已实施（2026-10-30，tab 条 state/effect 簇外迁）**：1306→**1083**（−223）。
+  - `app-shell/useSidePaneTabStrip.ts`（365 行）：tab 条的全部 state/ref/effect 收口——
+    溢出判定（RAF 合并 + ResizeObserver 反馈环规避，原注释逐字保留）、两侧渐变 mask、
+    active tab 滚入视区（按真实 DOM 宽度）、收起/展开内容锁宽（200ms 后解除）、tab 拖拽态。
+    两个 effect 体内抽出的纯函数导出以便单测：`resolveTabsScrollMaskEdges`（mask 与 scrollLeft
+    绑定 + 1px 容差）与 `resolveLockedContentWidthPx`（收起锁当前宽 / 首次展开按分组宽 × 默认比例，
+    宽度读不到时不锁成 0）。
+  - **pane 分发未动**（20 类 pane 的 props 边界仍未定义），按任务书口径登记为批次 8 候选；
+    本 hook 与 pane 渲染零耦合（只依赖 `visibleTabs` / `visibleActiveTabId` / `isVisible`）。
+  - 主文件保留：`SuspendedBrowserSidePaneContent`、add-tab 菜单与 open-tab launcher 的 JSX、
+    pane 类型分发、`resolveAnimatedSidePanePanelLayout` 布局分支。
+  - 前置测试：`test/sidePaneTabStrip.test.ts` 13 例（mask 六态含端点与亚像素容差 / 锁宽七态含
+    0 宽度、NaN 与取整）。hook 本体依赖 window + ResizeObserver + rAF，无 jsdom 不测，
+    按固定验收第 4 条登记。
+  - ratchet 上限 1306 → 1083。
+  - ratchet 上限 1422 → 1306。
+
+### `components/ai-elements/markdown-table.tsx`（1,420 行；oxlint ignorePatterns 覆盖的 vercel 衍生件）
+
+> 登记来源：批次 6 目标清单（2026-10-28 review 第二梯队，ai-elements 域）。
+
+- 职责分析：导出文本（Markdown / CSV）+ 表格 DOM 读取 + 帧距离与虚拟滚动条几何 + 吸底判定 +
+  `MarkdownTable` 主组件（虚拟滚动拖拽 / 边缘阴影 / 展开预览）。
+- 状态：**批次 6 已实施（2026-10-29，纯函数外迁）**：1420→**1093**（−327）。
+  - `markdown-table/markdownTableTextModel.ts`（67 行）：`MarkdownTableRows` 类型单一来源 +
+    `buildMarkdownTableText` / `buildCsvTableText`（CSV 注入防护与 BOM 注释原样）+ `readRowsFromTable`。
+  - `markdown-table/markdownTableGeometryModel.ts`（308 行）：11 个常量 / `MARKDOWN_TABLE_V4_COMPOSER_DOCK_SELECTOR`
+    （主文件也消费，故导出）/ `resolveMarkdownTableRoot` / `getMarkdownTableRootInlineInsets` /
+    `readMarkdownTableObservedRect` / `isMarkdownTableObservedRectEqual` / `readCssPixelValue` /
+    `readMarkdownTableDockHeight` / `readMarkdownTableBackToBottomClearance` /
+    `resolveMarkdownTableVerticalViewport` / `resolveMarkdownTableStickyScrollbarMode` /
+    `resolveMarkdownTableStickyScrollbarOffset` / `shouldUseMarkdownTableStickyScrollbar` /
+    `resolveMarkdownTableFrameDistances` / `resolveMarkdownTableVirtualScrollbarMetrics` /
+    `resolveMarkdownTableVirtualScrollMax`。
+  - 导出面保持：主文件 re-export `MarkdownTableRows` / `buildMarkdownTableText` / `buildCsvTableText` /
+    `resolveMarkdownTableFrameDistances` / `resolveMarkdownTableStickyScrollbarOffset` /
+    `resolveMarkdownTableVirtualScrollMax` / `resolveMarkdownTableVirtualScrollbarMetrics` /
+    `resolveMarkdownTableStickyScrollbarMode`（`message.tsx` 等消费方 import 路径零改动）。
+  - 前置测试：`test/markdownTableTextModel.test.ts` 14 例（Markdown 转义/列对齐；CSV BOM / CRLF /
+    引号双写 / 公式注入降级；DOM 读取空白归一与空行过滤）+
+    `test/markdownTableGeometryModel.test.ts` 29 例（吸底 80% 阈值与 dock 扣减 / 偏移三段钳制 /
+    帧距离 inset / 虚拟滚动 metrics / rect 签名 / 各 DOM 读数降级路径）。
+  - **连带登记**：markdown-table.tsx 是 third-party 台账（`third-party/inventory.json`）inputs
+    追踪件，本批改动导致 L01 审计哈希漂移——按批次 5 验证过的「单条定点回补」处理：
+    sha256(CRLF→LF 归一) 回写 inputs 条目，`node scripts/licenses.mjs reproducibility --inputs-only` 转绿。
+    `copied[]` 里的快照 `sha256` 是字节级（未归一）历史快照，与 inputs 口径不同，本批不动。
+  - ratchet 上限 1420 → 1093。
 
 ## 测试债清单（结构守护测试，非行为验证）
-
 ui 测试无 jsdom 套件（node:test + `renderToStaticMarkup` 纯 .ts）。以下测试用 `readFileSync` 钉源码结构，
 **无法在无 DOM 环境下升级为真实行为验证**，保留但加中文注释标注「结构守护测试，非行为验证」：
 
@@ -129,3 +748,11 @@ ui 测试无 jsdom 套件（node:test + `renderToStaticMarkup` 纯 .ts）。以�
 4. 涉及交互语义的批次（发送、排队、命令编排）必须先补交互测试或附人工验证记录（AGENTS.md E2E 要求）；
    无 jsdom 时以「提取纯函数 + 决策表单测」为接缝内测试的可行替代，并如实登记；
 5. 拆分不得改变 max-lines 豁免的现状语义：新模块自身必须 <400 行（架构 ratchet），豁免只允许随拆分收窄，不允许复制到新文件。
+6. **目标文件跌破 400 行**（仅适用于「登记目的就是要把某个已超限文件推到 400 以下」的批次，
+   如 settings 三件套的第一刀 helper 外迁）：验收时除「行数下降」外，必须实测目标文件 `wc -l < 400`，
+   并把超 400 计数（`find packages/ui/src -name '*.tsx' | wc -l` 口径）的变化记进报告。
+   内部修剪但未跨 400 阈值的，不计入拆分进度——见「拆分动能备注」，
+   现有 `legacy-over-limit` ratchet 只在跨越 400 时触发，对已超限文件的继续增长失明。
+7. 若某文件被登记进本计划后仍在增长（如 `AutomationEditView` 2942→2950 的 Button a11y 迁移成本），
+   在该批次的登记行里注明增量原因与当前行数，供 lead 判断是否需要「split-plan 登记文件行数 ratchet」
+   （后续治理项，门禁实现属 `scripts/architecture`，不在本计划内实现）。

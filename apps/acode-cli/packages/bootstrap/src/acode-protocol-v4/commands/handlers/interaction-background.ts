@@ -1,21 +1,9 @@
-import { PERMISSION_FULL_ACCESS_OPTION_ID } from "@acode/shared/acode-protocol-v4";
+import { PERMISSION_FULL_ACCESS_OPTION_ID, type CommandEnvelope, type CommandPayloadMap, type CommandResult, type SavedWorkflowStartRejectionReason, type WorkflowRunSettingsRejectionReason, BACKGROUND_WORK_CANCEL_REJECTED_FAULT_PREFIX, SAVED_WORKFLOW_START_REJECTED_FAULT_PREFIX, WORKFLOW_RUN_RESUME_REJECTED_FAULT_PREFIX, WORKFLOW_RUN_SETTINGS_REJECTED_FAULT_PREFIX } from "@acode/shared/acode-protocol-v4";
 // 权限/后台命令组：resolveInteraction / cancelBackgroundWork。
 // - resolveInteraction：前向命令收口反向请求（permission/AskUserQuestion），经
 //   host.interactions（V4InteractionRegistry）投递给 broker 侧等待中的 deferred。
 // - cancelBackgroundWork：直驱 core 的可选能力 cancelBackgroundTask（workId ≡ taskId）。
-import type {
-  CommandEnvelope,
-  CommandPayloadMap,
-  CommandResult,
-  SavedWorkflowStartRejectionReason,
-  WorkflowRunSettingsRejectionReason,
-} from "@acode/shared/acode-protocol-v4";
-import {
-  BACKGROUND_WORK_CANCEL_REJECTED_FAULT_PREFIX,
-  SAVED_WORKFLOW_START_REJECTED_FAULT_PREFIX,
-  WORKFLOW_RUN_RESUME_REJECTED_FAULT_PREFIX,
-  WORKFLOW_RUN_SETTINGS_REJECTED_FAULT_PREFIX,
-} from "@acode/shared/acode-protocol-v4";
+
 import { requireRecord } from "../record-access.js";
 import type { V4CommandCoreHost } from "../types.js";
 

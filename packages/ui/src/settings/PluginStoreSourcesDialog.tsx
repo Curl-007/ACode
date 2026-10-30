@@ -1,5 +1,6 @@
 import { AlertTriangle, Loader2, RefreshCw, Trash2 } from "lucide-react";
-import type { ACodePluginMarketplaceSummary } from "@acode/shared";
+
+import { type V4PluginMarketplaceSummary } from "@acode/shared/acode-protocol-v4";
 import { Button } from "@/components/ui/button.js";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog.js";
 import { useACodeIntl } from "@/i18n/IntlProvider.js";
@@ -10,14 +11,14 @@ import {
 } from "@/settings/pluginStoreListing.js";
 
 // 官方市场不可移除：移除后启动时会被重新补种，只会造成「删了又回来」的困惑。
-function isRemovableMarketplace(marketplace: ACodePluginMarketplaceSummary): boolean {
+function isRemovableMarketplace(marketplace: V4PluginMarketplaceSummary): boolean {
   return !isPublicStoreMarketplaceId(marketplace.id);
 }
 
 function PluginStoreSourceRefreshFailure({
   failure,
 }: {
-  failure: NonNullable<ACodePluginMarketplaceSummary["refreshFailure"]>;
+  failure: NonNullable<V4PluginMarketplaceSummary["refreshFailure"]>;
 }) {
   const { intl } = useACodeIntl();
   return (
@@ -48,7 +49,7 @@ export function PluginStoreSourcesDialog({
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  marketplaces: ACodePluginMarketplaceSummary[];
+  marketplaces: V4PluginMarketplaceSummary[];
   onUpdateMarketplace: (marketplace: string) => void;
   onRemoveMarketplace: (marketplace: string) => void;
   operationId: string | null;

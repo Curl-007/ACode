@@ -1,31 +1,11 @@
 /* eslint-disable max-lines -- 远端 plugin 同步弹窗集中维护加载、选择、风险提示、逐项进度和结果状态，保持与 Skill/MCP 同步弹窗一致。 */
 import { useEffect, useMemo, useRef, useState } from "react";
-import {
-  AlertCircleIcon,
-  CheckCircle2,
-  CircleStop,
-  CircleX,
-  Loader2,
-  Cable,
-  UploadCloud,
-} from "lucide-react";
-import type {
-  PluginSyncCandidate,
-  PluginSyncImportResult,
-  PluginSyncRemoteStatus,
-  RemoteTarget,
-  ACodePluginOptionValue,
-  ACodePluginInfo,
-  ACodePluginMarketplaceSummary,
-  ACodePluginUserConfigOption,
-  ACodePluginsOverviewResult,
-} from "@acode/shared";
-import type { IPluginSyncService, IACodeAgentService } from "@acode/services";
+import { AlertCircleIcon, Loader2, UploadCloud } from "lucide-react";
+import type { RemoteTarget } from "@acode/shared";
+import type { IPluginSyncService } from "@acode/services";
 import { ControlHintTooltip } from "@/ControlHintTooltip.js";
-import { cn } from "@/components/lib/utils.js";
 import { Button } from "@/components/ui/button.js";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog.js";
-import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card.js";
 import { useACodeIntl } from "@/i18n/IntlProvider.js";
 import { formatRemoteSkillSyncTarget } from "@/settings/RemoteSkillSyncDialog.js";
 import {
@@ -33,124 +13,46 @@ import {
   runRemoteSyncPreflightWithTimeout,
   shouldStartRemoteSyncOperation,
 } from "@/settings/RemoteSyncActions.js";
+// 纯决策 helper 已整组外迁到 remote-plugin-sync/remotePluginSyncModel.ts
+// （god-component-split-plan.md 本文件批次第一刀）；本文件只保留副作用函数、
+// 三个 UI 子组件与主组件。类型也从叶子模块 re-import，避免双份定义漂移。
+import {
+  REMOTE_PLUGIN_SYNC_CONFIG_SCOPE,
+  RemotePluginSyncStoppedError,
+  arePluginOptionsEqual,
+  buildMarketplaceRemotePluginStatuses,
+  buildMarketplaceRemotePluginSyncCandidates,
+  buildPortablePluginOptionsSyncPlan,
+  buildRemotePluginSyncRows,
+  buildRemotePluginSyncRowsForCandidates,
+  buildSelectedMarketplacePluginNames,
+  buildStoppedRemotePluginResult,
+  createRemotePluginSyncOperationId,
+  enrichRemotePluginSyncCandidatesWithPluginInfo,
+  filterRemotePluginSyncRows,
+  formatInstallError,
+  isRemotePluginSyncStoppedError,
+  resolveDefaultRemotePluginSyncSelection,
+  shouldAllowRemotePluginSyncDialogOpenChange,
+  shouldFinishRemotePluginSyncRun,
+  toInlineRemotePluginSyncCandidate,
+  type RemotePluginSyncAgentService,
+  type RemotePluginSyncCandidate,
+  type RemotePluginSyncCandidateStatus,
+  type RemotePluginSyncDialogStep,
+  type RemotePluginSyncProgressEvent,
+  type RemotePluginSyncProgressStatus,
+  type RemotePluginSyncProgressView,
+  type RemotePluginSyncResultItem,
+  type RemotePluginSyncRow,
+  type RemotePluginSyncRunResult,
+  type RemotePluginSyncStopControl,
+} from "@/settings/remote-plugin-sync/remotePluginSyncModel.js";
+import { RemotePluginSyncSelectionList } from "@/settings/remote-plugin-sync/SelectionList.js";
+import { RemotePluginSyncProgressList } from "@/settings/remote-plugin-sync/ProgressList.js";
+import { RemotePluginSyncResultList } from "@/settings/remote-plugin-sync/ResultList.js";
 
-type RemotePluginSyncDialogStep = "loading" | "selection" | "preflighting" | "syncing" | "complete";
 type Step = RemotePluginSyncDialogStep;
-type RemotePluginSyncKind = "inline" | "marketplace";
-
-interface RemotePluginSyncPluginOptions {
-  configuredOptions: Record<string, ACodePluginOptionValue>;
-  userConfig: Record<string, ACodePluginUserConfigOption>;
-}
-
-type RemotePluginSyncAgentService = Pick<
-  IACodeAgentService,
-  | "addPluginMarketplace"
-  | "cancelPluginOperation"
-  | "configurePlugin"
-  | "getPluginsOverview"
-  | "installPlugin"
-  | "listPlugins"
-  | "setPluginEnabled"
->;
-
-const REMOTE_PLUGIN_SYNC_CONFIG_SCOPE = "user" as const;
-
-interface RemotePluginSyncCandidate {
-  id: string;
-  kind: RemotePluginSyncKind;
-  name: string;
-  pluginId: string;
-  marketplace: string;
-  description?: string;
-  version?: string;
-  path?: string;
-  enabled: boolean;
-  componentTypes: string[];
-  inlineCandidate?: PluginSyncCandidate;
-  pluginOptions?: RemotePluginSyncPluginOptions;
-  marketplacePlugin?: {
-    marketplaceSourceArchive?: {
-      marketplaceId: string;
-      source: Record<string, unknown>;
-    };
-    marketplaceSourceInput?: string;
-    pluginName: string;
-  };
-}
-
-interface RemotePluginSyncCandidateStatus {
-  candidateId: string;
-  exists: boolean;
-  path?: string;
-  reason?: "samePluginId" | "targetExists";
-  remoteMarketplaceExists?: boolean;
-}
-
-interface RemotePluginSyncRow {
-  candidate: RemotePluginSyncCandidate;
-  exists: boolean;
-  path?: string;
-  reason?: "samePluginId" | "targetExists";
-  remoteMarketplaceExists?: boolean;
-}
-
-type RemotePluginSyncResultStatus = PluginSyncImportResult["results"][number]["status"] | "stopped";
-
-interface RemotePluginSyncResultItem extends Omit<
-  PluginSyncImportResult["results"][number],
-  "status"
-> {
-  status: RemotePluginSyncResultStatus;
-}
-
-interface RemotePluginSyncRunResult {
-  results: RemotePluginSyncResultItem[];
-}
-
-function shouldFinishRemotePluginSyncRun(
-  currentRun: AbortController | null,
-  run: AbortController,
-): boolean {
-  return currentRun === run;
-}
-
-type RemotePluginSyncProgressStatus = "queued" | "syncing" | RemotePluginSyncResultStatus;
-
-interface RemotePluginSyncProgressEvent {
-  candidateId: string;
-  log: string;
-  pluginId: string;
-  result?: RemotePluginSyncResultItem;
-  status: RemotePluginSyncProgressStatus;
-}
-
-interface RemotePluginSyncStopControl {
-  cancelOperation?: (operationId: string) => Promise<void>;
-  isStopped: (candidateId: string) => boolean;
-  waitForStop?: (candidateId: string) => Promise<void>;
-}
-
-interface RemotePluginSyncProgressView {
-  logs: string[];
-  result?: RemotePluginSyncResultItem;
-  status: RemotePluginSyncProgressStatus;
-}
-
-class RemotePluginSyncStoppedError extends Error {
-  constructor(readonly row: RemotePluginSyncRow) {
-    super(`Stopped sync for ${row.candidate.pluginId}`);
-    this.name = "RemotePluginSyncStoppedError";
-  }
-}
-
-let remotePluginSyncOperationCounter = 0;
-
-function createRemotePluginSyncOperationId(row: RemotePluginSyncRow): string {
-  remotePluginSyncOperationCounter += 1;
-  const safePluginId = row.candidate.pluginId.replace(/[^a-z0-9._-]+/giu, "-");
-  return `remote-plugin-sync-${remotePluginSyncOperationCounter}-${safePluginId}`;
-}
 
 interface RemotePluginSyncDialogProps {
   open: boolean;
@@ -164,250 +66,6 @@ interface RemotePluginSyncDialogProps {
   workspacePath: string;
   workspaceIdentity?: string;
   onSynced: () => Promise<void> | void;
-}
-
-function toInlineRemotePluginSyncCandidate(
-  candidate: PluginSyncCandidate,
-): RemotePluginSyncCandidate {
-  return {
-    id: `inline:${candidate.id}`,
-    kind: "inline",
-    name: candidate.name,
-    pluginId: candidate.pluginId,
-    marketplace: "inline",
-    ...(candidate.description ? { description: candidate.description } : {}),
-    ...(candidate.version ? { version: candidate.version } : {}),
-    path: candidate.path,
-    enabled: candidate.enabled,
-    componentTypes: candidate.componentTypes,
-    inlineCandidate: candidate,
-  };
-}
-
-function createInlineStatusKey(pluginId: string, directoryName: string): string {
-  return `${pluginId.toLowerCase()}\u0000${directoryName}`;
-}
-
-function buildRemotePluginSyncRows(
-  candidates: readonly PluginSyncCandidate[],
-  statuses: readonly PluginSyncRemoteStatus[],
-): RemotePluginSyncRow[] {
-  const statusByKey = new Map(
-    statuses.map((status) => [
-      createInlineStatusKey(status.pluginId, status.directoryName),
-      status,
-    ]),
-  );
-  return buildRemotePluginSyncRowsForCandidates(
-    candidates.map(toInlineRemotePluginSyncCandidate),
-    candidates.map((candidate) => {
-      const status = statusByKey.get(
-        createInlineStatusKey(candidate.pluginId, candidate.directoryName),
-      );
-      return {
-        candidateId: `inline:${candidate.id}`,
-        exists: status?.exists ?? false,
-        ...(status?.path ? { path: status.path } : {}),
-        ...(status?.reason ? { reason: status.reason } : {}),
-      };
-    }),
-  );
-}
-
-function buildRemotePluginSyncRowsForCandidates(
-  candidates: readonly RemotePluginSyncCandidate[],
-  statuses: readonly RemotePluginSyncCandidateStatus[],
-): RemotePluginSyncRow[] {
-  const statusById = new Map(statuses.map((status) => [status.candidateId, status]));
-  return candidates.map((candidate) => {
-    const status = statusById.get(candidate.id);
-    return {
-      candidate,
-      exists: status?.exists ?? false,
-      ...(status?.path ? { path: status.path } : {}),
-      ...(status?.reason ? { reason: status.reason } : {}),
-      ...(status?.remoteMarketplaceExists !== undefined
-        ? { remoteMarketplaceExists: status.remoteMarketplaceExists }
-        : {}),
-    };
-  });
-}
-
-function resolveDefaultRemotePluginSyncSelection(
-  rows: readonly RemotePluginSyncRow[],
-): Set<string> {
-  return new Set(rows.filter((row) => !row.exists).map((row) => row.candidate.id));
-}
-
-function filterRemotePluginSyncRows(
-  rows: readonly RemotePluginSyncRow[],
-  showExistingRemotePlugins: boolean,
-): RemotePluginSyncRow[] {
-  return showExistingRemotePlugins ? [...rows] : rows.filter((row) => !row.exists);
-}
-
-function shouldAllowRemotePluginSyncDialogOpenChange(
-  step: RemotePluginSyncDialogStep,
-  nextOpen: boolean,
-): boolean {
-  return nextOpen || (step !== "preflighting" && step !== "syncing");
-}
-
-function buildMarketplaceRemotePluginSyncCandidates(
-  overview: ACodePluginsOverviewResult,
-  plugins: readonly ACodePluginInfo[],
-): RemotePluginSyncCandidate[] {
-  const pluginInfoById = new Map(plugins.map((plugin) => [plugin.id, plugin]));
-  const marketplaceSourceById = new Map(
-    overview.marketplaces.map((marketplace) => [
-      marketplace.id,
-      buildMarketplaceSourceSyncInfo(marketplace),
-    ]),
-  );
-  return overview.installedPlugins.map((plugin) => {
-    const info = pluginInfoById.get(plugin.id);
-    const componentTypes = plugin.componentTypes ?? componentTypesFromPluginInfo(info);
-    const marketplaceSource = marketplaceSourceById.get(plugin.marketplace);
-    const pluginOptions = buildRemotePluginSyncPluginOptions(info);
-    return {
-      id: `marketplace:${plugin.id}`,
-      kind: "marketplace",
-      name: plugin.name,
-      pluginId: plugin.id,
-      marketplace: plugin.marketplace,
-      ...((plugin.description ?? info?.description)
-        ? { description: plugin.description ?? info?.description }
-        : {}),
-      ...((plugin.version ?? info?.version) ? { version: plugin.version ?? info?.version } : {}),
-      ...((plugin.installPath ?? info?.rootPath)
-        ? { path: plugin.installPath ?? info?.rootPath }
-        : {}),
-      enabled: plugin.enabled,
-      componentTypes,
-      ...(pluginOptions ? { pluginOptions } : {}),
-      marketplacePlugin: {
-        ...marketplaceSource,
-        pluginName: plugin.name,
-      },
-    };
-  });
-}
-
-function buildMarketplaceRemotePluginStatuses(
-  candidates: readonly RemotePluginSyncCandidate[],
-  remoteOverview: ACodePluginsOverviewResult,
-): RemotePluginSyncCandidateStatus[] {
-  const installedById = new Map(
-    remoteOverview.installedPlugins.map((plugin) => [plugin.id, plugin]),
-  );
-  const remoteMarketplaceIds = new Set(
-    remoteOverview.marketplaces.map((marketplace) => marketplace.id),
-  );
-  return candidates.map((candidate) => {
-    const installed = installedById.get(candidate.pluginId);
-    return {
-      candidateId: candidate.id,
-      exists: Boolean(installed),
-      ...(installed?.installPath ? { path: installed.installPath } : {}),
-      ...(installed ? { reason: "samePluginId" as const } : {}),
-      remoteMarketplaceExists: remoteMarketplaceIds.has(candidate.marketplace),
-    };
-  });
-}
-
-function componentTypesFromPluginInfo(plugin: ACodePluginInfo | undefined): string[] {
-  return plugin?.components?.map((component) => component.kind) ?? [];
-}
-
-function buildRemotePluginSyncPluginOptions(
-  plugin: ACodePluginInfo | undefined,
-): RemotePluginSyncPluginOptions | undefined {
-  const configuredOptions = plugin?.configuredOptions ?? {};
-  if (Object.keys(configuredOptions).length === 0) {
-    return undefined;
-  }
-  return {
-    configuredOptions: { ...configuredOptions },
-    userConfig: { ...(plugin?.userConfig ?? {}) },
-  };
-}
-
-function applyPluginInfoToRemoteSyncCandidate(
-  candidate: RemotePluginSyncCandidate,
-  plugin: ACodePluginInfo | undefined,
-): RemotePluginSyncCandidate {
-  const pluginOptions = buildRemotePluginSyncPluginOptions(plugin);
-  return pluginOptions ? { ...candidate, pluginOptions } : candidate;
-}
-
-function enrichRemotePluginSyncCandidatesWithPluginInfo(
-  candidates: readonly RemotePluginSyncCandidate[],
-  plugins: readonly ACodePluginInfo[],
-): RemotePluginSyncCandidate[] {
-  const pluginInfoById = new Map(plugins.map((plugin) => [plugin.id, plugin]));
-  return candidates.map((candidate) =>
-    applyPluginInfoToRemoteSyncCandidate(candidate, pluginInfoById.get(candidate.pluginId)),
-  );
-}
-
-function summarizeLocalPluginOptionsForDisplay(
-  pluginOptions: RemotePluginSyncPluginOptions | undefined,
-): { manualCount: number; syncableCount: number } | null {
-  if (!pluginOptions || Object.keys(pluginOptions.configuredOptions).length === 0) {
-    return null;
-  }
-  let syncableCount = 0;
-  let manualCount = 0;
-  for (const [key, value] of Object.entries(pluginOptions.configuredOptions)) {
-    const option = pluginOptions.userConfig[key];
-    if (isPortablePluginOptionValue(value, option, option)) {
-      syncableCount += 1;
-    } else {
-      manualCount += 1;
-    }
-  }
-  return { manualCount, syncableCount };
-}
-
-function serializeMarketplaceSourceInput(
-  marketplace: ACodePluginMarketplaceSummary,
-): string | undefined {
-  const source = marketplace.source;
-  const sourceKind = typeof source.source === "string" ? source.source : "";
-  const refSuffix =
-    typeof source.ref === "string" && source.ref.trim() ? `#${source.ref.trim()}` : "";
-  if (sourceKind === "github" && typeof source.repo === "string" && source.repo.trim()) {
-    return `${source.repo.trim()}${refSuffix}`;
-  }
-  if (sourceKind === "git" && typeof source.url === "string" && source.url.trim()) {
-    return `${source.url.trim()}${refSuffix}`;
-  }
-  if (sourceKind === "url" && typeof source.url === "string" && source.url.trim()) {
-    return source.url.trim();
-  }
-  return undefined;
-}
-
-function buildMarketplaceSourceSyncInfo(
-  marketplace: ACodePluginMarketplaceSummary,
-): Pick<
-  NonNullable<RemotePluginSyncCandidate["marketplacePlugin"]>,
-  "marketplaceSourceArchive" | "marketplaceSourceInput"
-> {
-  const sourceInput = serializeMarketplaceSourceInput(marketplace);
-  if (sourceInput) {
-    return { marketplaceSourceInput: sourceInput };
-  }
-  const sourceKind = typeof marketplace.source.source === "string" ? marketplace.source.source : "";
-  if (["file", "directory", "settings"].includes(sourceKind)) {
-    return {
-      marketplaceSourceArchive: {
-        marketplaceId: marketplace.id,
-        source: marketplace.source,
-      },
-    };
-  }
-  return {};
 }
 
 async function loadRemotePluginSyncCandidates(params: {
@@ -479,23 +137,6 @@ async function loadRemotePluginSyncCandidates(params: {
   };
 }
 
-function isRemotePluginSyncStoppedError(error: unknown): error is RemotePluginSyncStoppedError {
-  return error instanceof RemotePluginSyncStoppedError;
-}
-
-function buildStoppedRemotePluginResult(row: RemotePluginSyncRow): RemotePluginSyncResultItem {
-  return {
-    name: row.candidate.name,
-    pluginId: row.candidate.pluginId,
-    directoryName:
-      row.candidate.kind === "inline"
-        ? (row.candidate.inlineCandidate?.directoryName ?? row.candidate.name)
-        : `${row.candidate.marketplace}/${row.candidate.name}`,
-    status: "stopped",
-    error:
-      "stop requested; stopped waiting for this plugin sync. Any remote RPC that already started may still finish on the remote target.",
-  };
-}
 
 function emitRemotePluginSyncProgress(
   params: {
@@ -599,63 +240,6 @@ async function awaitRemotePluginSyncStep<T>(
   }
 }
 
-function isPathPluginOption(option: ACodePluginUserConfigOption | undefined): boolean {
-  return option?.type === "file" || option?.type === "directory";
-}
-
-function isPortablePluginOptionValue(
-  value: ACodePluginOptionValue,
-  localOption: ACodePluginUserConfigOption | undefined,
-  remoteOption: ACodePluginUserConfigOption | undefined,
-): boolean {
-  if (!localOption || !remoteOption) {
-    return false;
-  }
-  if (localOption.sensitive === true || remoteOption.sensitive === true) {
-    return false;
-  }
-  if (isPathPluginOption(localOption) || isPathPluginOption(remoteOption)) {
-    return false;
-  }
-  const expectedType = remoteOption.type ?? localOption.type;
-  if (expectedType === "boolean") return typeof value === "boolean";
-  if (expectedType === "number") return typeof value === "number";
-  if (expectedType === "string") return typeof value === "string";
-  return typeof value === "string" || typeof value === "number" || typeof value === "boolean";
-}
-
-function buildPortablePluginOptionsSyncPlan(
-  localOptions: RemotePluginSyncPluginOptions,
-  remotePlugin: ACodePluginInfo,
-): { options: Record<string, ACodePluginOptionValue>; skippedCount: number } {
-  const options: Record<string, ACodePluginOptionValue> = {};
-  let skippedCount = 0;
-  for (const [key, value] of Object.entries(localOptions.configuredOptions)) {
-    if (
-      isPortablePluginOptionValue(
-        value,
-        localOptions.userConfig[key],
-        remotePlugin.userConfig?.[key],
-      )
-    ) {
-      options[key] = value;
-    } else {
-      skippedCount += 1;
-    }
-  }
-  return { options, skippedCount };
-}
-
-function arePluginOptionsEqual(
-  left: Record<string, ACodePluginOptionValue>,
-  right: Record<string, ACodePluginOptionValue>,
-): boolean {
-  const leftEntries = Object.entries(left);
-  if (leftEntries.length !== Object.keys(right).length) {
-    return false;
-  }
-  return leftEntries.every(([key, value]) => right[key] === value);
-}
 
 async function syncPortablePluginOptions(
   params: {
@@ -949,21 +533,6 @@ async function syncMarketplaceRemotePlugin(
   }
 }
 
-function buildSelectedMarketplacePluginNames(
-  rows: readonly RemotePluginSyncRow[],
-): Map<string, string[]> {
-  const result = new Map<string, string[]>();
-  for (const row of rows) {
-    const marketplacePlugin = row.candidate.marketplacePlugin;
-    if (row.candidate.kind !== "marketplace" || !marketplacePlugin) {
-      continue;
-    }
-    const names = result.get(row.candidate.marketplace) ?? [];
-    names.push(marketplacePlugin.pluginName);
-    result.set(row.candidate.marketplace, names);
-  }
-  return result;
-}
 
 async function prepareRemoteMarketplaceSource(
   params: {
@@ -1040,21 +609,6 @@ async function prepareRemoteMarketplaceSource(
   );
 }
 
-function formatInstallError(
-  result: Awaited<ReturnType<RemotePluginSyncAgentService["installPlugin"]>>,
-  pluginId: string,
-): string | null {
-  const diagnostics = result.diagnostics.filter((diagnostic) => diagnostic.severity !== "warning");
-  if (diagnostics.length === 0) {
-    return null;
-  }
-  return diagnostics
-    .map((diagnostic) => {
-      const target = diagnostic.pluginId ?? pluginId;
-      return `${target}: ${diagnostic.message}`;
-    })
-    .join("; ");
-}
 
 function RemotePluginSyncTitle() {
   const { intl } = useACodeIntl();
@@ -1189,326 +743,6 @@ function RemotePluginSyncBulkSelectionCheckbox({
       />
       <span>{intl.formatMessage({ id: "settings.plugins.remoteSync.selectAll" })}</span>
     </label>
-  );
-}
-
-function RemotePluginSyncSelectionList({
-  rows,
-  selectedIds,
-  emptyMessageId = "settings.plugins.remoteSync.empty",
-  onToggle,
-}: {
-  rows: readonly RemotePluginSyncRow[];
-  selectedIds: ReadonlySet<string>;
-  emptyMessageId?: string;
-  onToggle: (pluginId: string, checked: boolean) => void;
-}) {
-  const { intl } = useACodeIntl();
-
-  if (rows.length === 0) {
-    return (
-      <div className="rounded-lg border border-border bg-surface px-3 py-3 text-ui-base text-foreground-subtle">
-        {intl.formatMessage({ id: emptyMessageId })}
-      </div>
-    );
-  }
-
-  return (
-    <div className="grid gap-2">
-      {rows.map((row) => {
-        const checkboxId = `remote-plugin-sync-${row.candidate.id}`;
-        const labelId = `${checkboxId}-label`;
-        const selected = !row.exists && selectedIds.has(row.candidate.id);
-        const optionSummary = summarizeLocalPluginOptionsForDisplay(row.candidate.pluginOptions);
-        return (
-          <label
-            key={row.candidate.id}
-            htmlFor={checkboxId}
-            className={`grid grid-cols-[auto_auto_minmax(0,1fr)] gap-3 rounded-lg border border-border bg-surface px-3 py-2 text-ui-base ${
-              row.exists
-                ? "cursor-default"
-                : "cursor-pointer hover:border-border-hover hover:bg-surface-hover"
-            }`}
-          >
-            <input
-              id={checkboxId}
-              type="checkbox"
-              aria-labelledby={labelId}
-              className="mt-1 size-4"
-              checked={selected}
-              disabled={row.exists}
-              onChange={(event) => onToggle(row.candidate.id, event.currentTarget.checked)}
-            />
-            <span
-              className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full border border-border text-foreground-subtle"
-              aria-hidden="true"
-            >
-              <Cable className="size-4" />
-            </span>
-            <span className="min-w-0">
-              <span className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1">
-                <span id={labelId} className="font-medium text-foreground">
-                  {row.candidate.name}
-                </span>
-                {row.candidate.version ? (
-                  <span className="rounded-md bg-secondary px-1.5 py-0.5 text-ui-xs font-medium text-foreground-subtle">
-                    {row.candidate.version}
-                  </span>
-                ) : null}
-                {row.candidate.componentTypes.map((type) => (
-                  <span
-                    key={type}
-                    className="rounded-md bg-secondary px-1.5 py-0.5 text-ui-xs font-medium text-foreground-subtle"
-                  >
-                    {type}
-                  </span>
-                ))}
-                <span className="rounded-md bg-secondary px-1.5 py-0.5 text-ui-xs font-medium text-foreground-subtle">
-                  {row.candidate.kind === "inline" ? "inline" : row.candidate.marketplace}
-                </span>
-                {row.exists ? (
-                  <span className="text-ui-base text-foreground-subtlest">
-                    {intl.formatMessage({ id: "settings.plugins.remoteSync.existing" })}
-                  </span>
-                ) : null}
-              </span>
-              {row.candidate.description ? (
-                <span className="mt-1 block text-ui-base text-foreground-subtle">
-                  {row.candidate.description}
-                </span>
-              ) : null}
-              {row.candidate.path ? (
-                <span className="mt-1 block break-all font-mono text-ui-base text-foreground-subtlest">
-                  {row.candidate.path}
-                </span>
-              ) : null}
-              {optionSummary ? (
-                <span className="mt-1 block text-ui-xs text-foreground-subtle">
-                  {intl.formatMessage(
-                    { id: "settings.plugins.remoteSync.optionsSummary" },
-                    {
-                      manual: String(optionSummary.manualCount),
-                      syncable: String(optionSummary.syncableCount),
-                    },
-                  )}
-                </span>
-              ) : null}
-            </span>
-          </label>
-        );
-      })}
-    </div>
-  );
-}
-
-function RemotePluginSyncStatusBadge({ status }: { status: RemotePluginSyncProgressStatus }) {
-  const { intl } = useACodeIntl();
-  const label = intl.formatMessage({ id: `settings.plugins.remoteSync.${status}` });
-  const icon =
-    status === "synced" ? (
-      <CheckCircle2 className="size-3" aria-hidden="true" />
-    ) : status === "failed" ? (
-      <CircleX className="size-3" aria-hidden="true" />
-    ) : status === "stopped" ? (
-      <CircleStop className="size-3" aria-hidden="true" />
-    ) : null;
-  return (
-    <span
-      className={cn(
-        "inline-flex h-6 shrink-0 items-center gap-1 rounded-md border px-2 text-ui-xs font-medium",
-        status === "synced" && "border-success/30 bg-success/10 text-success dark:bg-success/14",
-        status === "failed" && "border-destructive/30 bg-destructive/10 text-destructive",
-        status === "stopped" && "border-warning/30 bg-warning/10 text-warning",
-        status === "skipped" && "border-border bg-secondary text-foreground-subtle",
-        (status === "queued" || status === "syncing") &&
-          "border-border bg-secondary text-foreground-subtle",
-      )}
-    >
-      {icon}
-      {label}
-    </span>
-  );
-}
-
-function RemotePluginSyncLogHoverCard({ logs }: { logs: readonly string[] }) {
-  const { intl } = useACodeIntl();
-  const shownLogs = logs.length > 0 ? logs : ["Queued plugin sync"];
-
-  return (
-    <HoverCard closeDelay={160} openDelay={120}>
-      <HoverCardTrigger asChild>
-        <span
-          aria-label={intl.formatMessage({ id: "settings.plugins.remoteSync.logTooltip" })}
-          className="inline-flex size-6 cursor-help items-center justify-center rounded-md text-foreground-subtle hover:bg-hover hover:text-foreground"
-          role="img"
-        >
-          <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
-        </span>
-      </HoverCardTrigger>
-      <HoverCardContent
-        align="end"
-        side="left"
-        sideOffset={6}
-        className="flex w-[min(24rem,calc(100vw-2rem))] flex-col gap-2 bg-popover p-3 text-left"
-      >
-        <div className="text-ui-base font-medium text-popover-foreground">
-          {intl.formatMessage({ id: "settings.plugins.remoteSync.logTooltip" })}
-        </div>
-        <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-md bg-secondary p-2 font-mono text-ui-xs/relaxed text-popover-foreground">
-          {shownLogs.join("\n")}
-        </pre>
-      </HoverCardContent>
-    </HoverCard>
-  );
-}
-
-function RemotePluginSyncProgressList({
-  progressById,
-  rows,
-  onStop,
-}: {
-  progressById: ReadonlyMap<string, RemotePluginSyncProgressView>;
-  rows: readonly RemotePluginSyncRow[];
-  onStop: (candidateId: string) => void;
-}) {
-  const { intl } = useACodeIntl();
-
-  if (rows.length === 0) {
-    return (
-      <div className="rounded-lg border border-border bg-surface px-3 py-3 text-ui-base text-foreground-subtle">
-        {intl.formatMessage({ id: "settings.plugins.remoteSync.resultEmpty" })}
-      </div>
-    );
-  }
-
-  return (
-    <div className="grid gap-2">
-      {rows.map((row) => {
-        const progress = progressById.get(row.candidate.id) ?? {
-          logs: ["Queued plugin sync"],
-          status: "queued" as const,
-        };
-        const optionSummary = summarizeLocalPluginOptionsForDisplay(row.candidate.pluginOptions);
-        const canStop = progress.status === "queued" || progress.status === "syncing";
-        return (
-          <div
-            key={row.candidate.id}
-            className="grid grid-cols-[auto_minmax(0,1fr)_auto] gap-3 rounded-lg border border-border bg-surface px-3 py-2 text-ui-base"
-          >
-            <span
-              className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full border border-border text-foreground-subtle"
-              aria-hidden="true"
-            >
-              <Cable className="size-4" />
-            </span>
-            <div className="min-w-0">
-              <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1">
-                <span className="font-medium text-foreground">{row.candidate.name}</span>
-                {row.candidate.version ? (
-                  <span className="rounded-md bg-secondary px-1.5 py-0.5 text-ui-xs font-medium text-foreground-subtle">
-                    {row.candidate.version}
-                  </span>
-                ) : null}
-                {row.candidate.componentTypes.map((type) => (
-                  <span
-                    key={type}
-                    className="rounded-md bg-secondary px-1.5 py-0.5 text-ui-xs font-medium text-foreground-subtle"
-                  >
-                    {type}
-                  </span>
-                ))}
-                <span className="rounded-md bg-secondary px-1.5 py-0.5 text-ui-xs font-medium text-foreground-subtle">
-                  {row.candidate.kind === "inline" ? "inline" : row.candidate.marketplace}
-                </span>
-              </div>
-              {progress.result?.error ? (
-                <div className="mt-1 break-words text-ui-base text-destructive">
-                  {progress.result.error}
-                </div>
-              ) : row.candidate.path ? (
-                <div className="mt-1 break-all font-mono text-ui-base text-foreground-subtlest">
-                  {row.candidate.path}
-                </div>
-              ) : null}
-              {optionSummary && !progress.result?.error ? (
-                <div className="mt-1 text-ui-xs text-foreground-subtle">
-                  {intl.formatMessage(
-                    { id: "settings.plugins.remoteSync.optionsSummary" },
-                    {
-                      manual: String(optionSummary.manualCount),
-                      syncable: String(optionSummary.syncableCount),
-                    },
-                  )}
-                </div>
-              ) : null}
-            </div>
-            <div className="flex shrink-0 items-start gap-1">
-              {progress.status === "syncing" ? (
-                <RemotePluginSyncLogHoverCard logs={progress.logs} />
-              ) : null}
-              <RemotePluginSyncStatusBadge status={progress.status} />
-              {canStop ? (
-                <ControlHintTooltip
-                  title={intl.formatMessage({ id: "settings.plugins.remoteSync.stop" })}
-                  side="left"
-                >
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon-sm"
-                    aria-label={intl.formatMessage({
-                      id: "settings.plugins.remoteSync.stop",
-                    })}
-                    className="text-foreground-subtle hover:text-warning"
-                    onClick={() => onStop(row.candidate.id)}
-                  >
-                    <CircleStop className="size-3.5" aria-hidden="true" />
-                  </Button>
-                </ControlHintTooltip>
-              ) : null}
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function RemotePluginSyncResultList({ result }: { result: RemotePluginSyncRunResult | null }) {
-  const { intl } = useACodeIntl();
-  const items = result?.results ?? [];
-
-  if (items.length === 0) {
-    return (
-      <div className="rounded-lg border border-border bg-surface px-3 py-3 text-ui-base text-foreground-subtle">
-        {intl.formatMessage({ id: "settings.plugins.remoteSync.resultEmpty" })}
-      </div>
-    );
-  }
-
-  return (
-    <div className="overflow-hidden rounded-xl border border-border bg-card">
-      <div className="divide-y divide-border">
-        {items.map((item) => (
-          <div
-            key={`${item.pluginId}-${item.directoryName}-${item.status}`}
-            className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 px-4 py-3"
-          >
-            <div className="min-w-0">
-              <div className="truncate text-ui-base font-medium text-foreground">{item.name}</div>
-              {item.error ? (
-                <div className="mt-0.5 break-words text-ui-base text-destructive">{item.error}</div>
-              ) : item.path ? (
-                <div className="mt-0.5 truncate font-mono text-ui-xs text-foreground-subtlest">
-                  {item.path}
-                </div>
-              ) : null}
-            </div>
-            <RemotePluginSyncStatusBadge status={item.status} />
-          </div>
-        ))}
-      </div>
-    </div>
   );
 }
 

@@ -1,20 +1,29 @@
 /* eslint-disable max-lines -- 存量基线豁免:该文件先于 CLI lint 门禁建立即超限(根 lint 的 ignorePatterns 排除 apps/acode-cli,turbo lint 因此从未变绿)。头注豁免以恢复门禁信号;拆分重构超出本批范围。 */
-// goal/compact 命令组：compact / sendGoalCommand / pauseGoal / resumeGoal。
+// goal/compact 命令组：compact / sendGoalCommand / pauseGoal / resumeGoal / clearGoal。
 // 语义自旧 server-operations compactSession/goalSession/continueGoalAfterChange 搬运，
 // 决策逻辑（compact 去重 / active turn barrier / goal 续跑）直驱 core，不经旧协议 op。
 //
 // 与旧协议路径的映射（保真基线）：
 // - compactSession（server-operations.ts:1805）→ compact
+//   （M2-2：payload.instructions 消费接线——非空时提交 `/compact <instructions>`，
+//   与旧 op 的 command 构造逐字一致；空闲直启与 FIFO 队列项共用同一文本）
 // - goalSession action:"set"（:1919，含重复 set 收敛 replace）→ sendGoalCommand
 // - goalSession action:"resume"（:1980）→ resumeGoal
+// - goalSession action:"clear"（M2-2，保守无能力损失）→ clearGoal
 // - continueGoalAfterChange / runGoalContinuationInBackground（:2204-2269）→ 组内私有共用函数
+//
+// M2-2：四命令原地执行后回 goalControl typed result（legacy goalSession 的
+// {response, startedTurn} 契约等价物，见 command.ts 该 variant 注释）；
+// 入队收口的 sendGoalCommand 不带 result（执行后移至队列消费，facade 按 startedTurn=false 收口）。
 import type {
   CommandEnvelope,
   CommandPayloadMap,
   CommandResult,
 } from "@acode/shared/acode-protocol-v4";
+import type { SessionGoal } from "@acode/contracts";
 import type { SteerTurnOptions, SubmitPromptOptions } from "../../../app/types.js";
-import { runWithSessionResidencyFinalization } from "../../../acode-protocol/session-residency.js";
+import { runWithSessionResidencyFinalization } from "../../session-residency.js";
+import { mapSessionGoal } from "../../session-mapper.js";
 import { inputIntentMetadata } from "../input-intent.js";
 import { requireRecord } from "../record-access.js";
 import type { V4CommandCoreHost, V4SessionRecordView } from "../types.js";
@@ -47,7 +56,9 @@ export class V4GoalCompactRejectedError extends Error {
 const manualCompactControllers = new WeakSet<AbortController>();
 
 /**
- * compact：手动上下文压缩（v4 payload 为空对象，无 instructions 变体）。
+ * compact：手动上下文压缩（M2-2 消费接线：payload.instructions 非空时提交
+ * `/compact <instructions>`，与 legacy compactSession 的 command 构造逐字一致；
+ * 空闲直启 / FIFO 入队 / 队列提升三路径共用同一文本）。
  *
  * barrier 语义：
  * 1. running/goal verifier/goal continuation/tool work → typed compact intent 入 FIFO。
@@ -59,6 +70,10 @@ async function compact(
   envelope: CommandEnvelope,
 ): Promise<CommandResult | undefined> {
   const record = requireRecord(host, envelope.sessionId);
+  // M2-2 裁决（2026-10-28）：instructions 保留——legacy session/compact 同名字段透传。
+  const payload = envelope.payload as CommandPayloadMap["compact"];
+  const instructions = payload.instructions?.trim();
+  const compactText = instructions ? `/compact ${instructions}` : "/compact";
   const activeTurn = record.app.runtime.getActiveTurnInfo();
   const activeController = record.activeAbortController;
   if (
@@ -86,7 +101,7 @@ async function compact(
   if (busy || routingMode === "enqueue" || routingMode === "guide" || routingMode === "choice") {
     const intent = inputIntentMetadata(envelope, {
       requestedDelivery: "queue",
-      text: "/compact",
+      text: compactText,
     });
     const queueOptions = {
       commandKind: "compact" as const,
@@ -94,10 +109,10 @@ async function compact(
       intent,
       queryId: envelope.commandId as NonNullable<SteerTurnOptions["queryId"]>,
     };
-    if (await enqueueDeferredInputForBusyWork(record, "/compact", queueOptions)) {
+    if (await enqueueDeferredInputForBusyWork(record, compactText, queueOptions)) {
       return undefined;
     }
-    const queued = await record.app.steerTurn("/compact", {
+    const queued = await record.app.steerTurn(compactText, {
       ...queueOptions,
       delivery: "queue",
     });
@@ -114,7 +129,7 @@ async function compact(
     return undefined;
   }
 
-  await startManualCompact(host, record, envelope.commandId);
+  await startManualCompact(host, record, envelope.commandId, undefined, compactText);
   return undefined;
 }
 
@@ -124,6 +139,9 @@ export async function startManualCompact(
   record: V4SessionRecordView,
   inputId: string,
   foregroundPromotionLeaseId?: string,
+  // M2-2：instructions 已并入本提交文本（"/compact <instructions>" 或 "/compact"）；
+  // 缺省 "/compact" 兼容旧调用与重启恢复的旧队列项（其文本恒为 "/compact"）。
+  compactText: string = "/compact",
 ): Promise<void> {
   if (record.restoreWarning) {
     throw new V4GoalCompactRejectedError("restoreWarning", record.restoreWarning.message);
@@ -139,6 +157,7 @@ export async function startManualCompact(
   void runWithSessionResidencyFinalization(record, () =>
     runCompactTurnInBackground(host, record, {
       abortController,
+      command: compactText,
       foregroundPromotionLeaseId,
       inputId,
     }),
@@ -152,6 +171,8 @@ async function runCompactTurnInBackground(
   record: V4SessionRecordView,
   params: {
     abortController: AbortController;
+    /** 提交文本（"/compact" 或 "/compact <instructions>"，M2-2 instructions 消费面）。 */
+    command: string;
     foregroundPromotionLeaseId?: string;
     inputId: string;
   },
@@ -165,7 +186,7 @@ async function runCompactTurnInBackground(
     workspacePath: record.workspace.workspacePath,
   });
   try {
-    await record.app.submitPrompt("/compact", {
+    await record.app.submitPrompt(params.command, {
       abortSignal: params.abortController.signal,
       inputId: params.inputId,
     });
@@ -293,7 +314,7 @@ async function sendGoalCommand(
     }
     return undefined;
   }
-  await applyGoalCommand(host, record, {
+  const applied = await applyGoalCommand(host, record, {
     displayText: goalCommandQueueText(payload.displayText, objective),
     heldQueueDisposition: payload.heldQueueDisposition,
     expectedHeldQueueItemIds: payload.expectedHeldQueueItemIds,
@@ -301,7 +322,15 @@ async function sendGoalCommand(
     objective,
     intent: submissionIntent({ requestedDelivery: "startNow", text: objective }),
   });
-  return undefined;
+  // M2-2：goalControl typed result（legacy goalSession {response, startedTurn} 等价物）。
+  return {
+    type: "goalControl",
+    action: "set",
+    hadTarget: applied.hadTarget,
+    target: mapSessionGoal(applied.target) ?? null,
+    startedTurn: applied.startedTurn,
+    ...(applied.planContinuationSkipped ? { planContinuationSkipped: true } : {}),
+  };
 }
 
 export async function applyGoalCommand(
@@ -316,7 +345,13 @@ export async function applyGoalCommand(
     foregroundPromotionLeaseId?: string;
     intent?: SteerTurnOptions["intent"];
   },
-): Promise<void> {
+  // M2-2：返回裁决事实供 goalControl result 组装（hadTarget = 重复 set 收敛 replace 判据）。
+): Promise<{
+  hadTarget: boolean;
+  target: SessionGoal;
+  startedTurn: boolean;
+  planContinuationSkipped: boolean;
+}> {
   // held choice 裁决（同 sendText；sendGoalCommand）。
   await applyHeldQueueDisposition(
     host,
@@ -337,18 +372,19 @@ export async function applyGoalCommand(
       record.traceContext,
     );
   }
-  await record.app.setTarget({
+  const target = await record.app.setTarget({
     ...(params.displayText ? { displayText: params.displayText } : {}),
     objective: params.objective,
     status: "active",
     ...(params.intent ? { intent: params.intent } : {}),
   });
-  await continueGoalAfterChange(host, record, {
+  const continuation = await continueGoalAfterChange(host, record, {
     foregroundPromotionLeaseId: params.foregroundPromotionLeaseId,
     inputId: params.inputId,
     intent: params.intent,
     reason: replacesExistingGoal ? "goal_replaced" : "goal_set",
   });
+  return { hadTarget: replacesExistingGoal, target, ...continuation };
 }
 
 export function parseGoalObjectiveFromCommandText(text: string): string {
@@ -368,6 +404,10 @@ function goalCommandQueueText(displayText: string | undefined, objective: string
  * pauseGoal：独立 target 控制，不复用通用 stop 的 queue hold/disposition。
  * 旧 V4 只有 stop，导致没有 active controller 时无法暂停目标，也让 UI 无法
  * 准确表达“暂停目标”与“终止本轮”的差别。先结算 target active run，再终止当前 goal work。
+ *
+ * M2-2：goalControl result 的 hadTarget = 裁决前目标存在性（facade 的
+ * "No goal to pause." 文案判据）；目标存在但非 active → 幂等成功（同旧 updateTargetStatus
+ * 落空分支，facade 以 hadTarget=true 收口为静默成功）。
  */
 async function pauseGoal(
   host: V4CommandCoreHost,
@@ -376,16 +416,36 @@ async function pauseGoal(
   const record = requireRecord(host, envelope.sessionId);
   const target = await record.app.readTarget();
   if (!target || target.status !== "active") {
-    return undefined;
+    return {
+      type: "goalControl",
+      action: "pause",
+      hadTarget: Boolean(target),
+      target: mapSessionGoal(target) ?? null,
+      startedTurn: false,
+    };
   }
 
   const activeController = record.activeAbortController;
   const paused = await record.app.updateTargetStatus("paused");
-  if (!paused) return undefined;
+  if (!paused) {
+    return {
+      type: "goalControl",
+      action: "pause",
+      hadTarget: true,
+      target: mapSessionGoal(target) ?? null,
+      startedTurn: false,
+    };
+  }
 
   activeController?.abort(new Error("v4 goal paused"));
   await host.afterLegacyStateMutation?.(record, "goal_paused");
-  return undefined;
+  return {
+    type: "goalControl",
+    action: "pause",
+    hadTarget: true,
+    target: mapSessionGoal(paused) ?? null,
+    startedTurn: false,
+  };
 }
 
 /**
@@ -418,19 +478,52 @@ async function resumeGoal(
       commandId: envelope.commandId,
       sessionId: record.app.sessionId,
     });
-    return undefined;
+    // M2-2：hadTarget=false → facade 映回 legacy "No goal to resume." 文案。
+    return { type: "goalControl", action: "resume", hadTarget: false, target: null, startedTurn: false };
   }
-  await continueGoalAfterChange(host, record, {
+  const continuation = await continueGoalAfterChange(host, record, {
     inputId: envelope.commandId,
     reason: "goal_resumed",
   });
-  return undefined;
+  return {
+    type: "goalControl",
+    action: "resume",
+    hadTarget: true,
+    target: mapSessionGoal(target) ?? null,
+    startedTurn: continuation.startedTurn,
+    ...(continuation.planContinuationSkipped ? { planContinuationSkipped: true } : {}),
+  };
+}
+
+/**
+ * clearGoal（M2-2 新增，spec specs/m2-2-session-control.md §2.2）：legacy session/goal
+ * action:"clear" 的 v4 等价——保守无能力损失裁决（facade 的 clear 是存活 RPC 面能力；
+ * v4 UI slash 层标 unsupported 是产品面取舍，不回收协议能力）。
+ * 无目标 → 幂等成功（hadTarget=false，facade 映回 "No goal to clear."）；
+ * 有目标 → clearTarget + legacy 广播（goal_cleared，对齐旧 op）。
+ */
+async function clearGoal(
+  host: V4CommandCoreHost,
+  envelope: CommandEnvelope,
+): Promise<CommandResult | undefined> {
+  const record = requireRecord(host, envelope.sessionId);
+  const existing = typeof record.app.readTarget === "function" ? await record.app.readTarget() : null;
+  if (!existing) {
+    return { type: "goalControl", action: "clear", hadTarget: false, target: null, startedTurn: false };
+  }
+  await record.app.clearTarget();
+  await host.afterLegacyStateMutation?.(record, "goal_cleared");
+  return { type: "goalControl", action: "clear", hadTarget: true, target: null, startedTurn: false };
 }
 
 /**
  * goal 变更后的续跑（旧 continueGoalAfterChange 搬运，set/resume 两处共用）：
  * plan 模式或已有 active turn 时不续跑（只落库目标，用户后续显式推进）；
  * 否则模型就绪检查 → 上锁 → 后台 continueActiveTarget。
+ *
+ * M2-2：返回 { startedTurn, planContinuationSkipped } 供 goalControl result 组装——
+ * startedTurn = 旧 canContinue；planContinuationSkipped = plan 模式落库未续跑
+ * （旧 op 在 response 尾部追加提示文案的事实源）。
  */
 async function continueGoalAfterChange(
   host: V4CommandCoreHost,
@@ -441,7 +534,7 @@ async function continueGoalAfterChange(
     intent?: SteerTurnOptions["intent"];
     reason: string;
   },
-): Promise<void> {
+): Promise<{ startedTurn: boolean; planContinuationSkipped: boolean }> {
   const isPlanMode = record.app.runtime?.getPlanEnabled?.() ?? record.app.getMode?.() === "plan";
   // continueActiveTarget 是 App 的必选能力；能否继续只取决于当前模式和是否已有活跃 turn。
   const canContinue = !isPlanMode && !record.activeAbortController;
@@ -463,6 +556,7 @@ async function continueGoalAfterChange(
   // 旧协议路径在续跑起跑后立即 afterStateMutation(goal_set/goal_replaced/goal_resumed)
   // → 钩子等价替代；v4 投影经 TargetChanged 事件自然收口。
   await host.afterLegacyStateMutation?.(record, params.reason);
+  return { startedTurn: canContinue, planContinuationSkipped: isPlanMode };
 }
 
 async function runGoalContinuationInBackground(
@@ -498,4 +592,4 @@ async function runGoalContinuationInBackground(
   await host.afterLegacyStateMutation?.(record, mutationReason);
 }
 
-export const goalCompactHandlers = { compact, pauseGoal, resumeGoal, sendGoalCommand };
+export const goalCompactHandlers = { compact, clearGoal, pauseGoal, resumeGoal, sendGoalCommand };

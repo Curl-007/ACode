@@ -56,6 +56,9 @@ const {
   isFirstConversationTurn,
   latestRealUserPlainTextQuery,
 } = await import("../packages/core/src/runtime/helpers/memory-semantic-recall.ts");
+const { initializeRuntimeSidecar } = await import(
+  "../packages/core/src/runtime/runtime-sidecar.ts"
+);
 const { createNodeFileSystemAdapter } = await import("../packages/adapters/src/fs/index.ts");
 
 // ── 夹具（与 J3-2 测试同款内存 FileSystemPort 桩件） ─────────────────────
@@ -593,6 +596,9 @@ async function createChannelFixture(files = {}) {
     logger: spy.logger,
     workspaceRoot: "/work/demo",
   };
+  // R1-01 B4：memorySemanticRecallChannel 归 RuntimeSidecarOwner——桩与真实构造期一样装
+  // 只读 getter（初始值 undefined），ensureChannel 的惰性构造经端口。
+  initializeRuntimeSidecar(runtime);
   return { cliStorageRoot, memoryRoot, runtime, spy };
 }
 

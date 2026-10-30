@@ -3,19 +3,8 @@
  * MCP (Model Context Protocol) UI State Store
  */
 import { create } from "zustand";
-import type {
-  ACodeAgentMcpServer,
-  CliMcpSource,
-  McpConfig,
-  McpScope,
-  McpServerConfig,
-  McpServerStatus,
-  McpSource,
-  NativeMcpServerRecord,
-  ACodeMcpListMode,
-  ACodeMcpServerStatusSnapshot,
-  ACodeMcpServer,
-} from "@acode/shared";
+import type { ACodeAgentMcpServer, CliMcpSource, McpConfig, McpScope, McpServerConfig, McpServerStatus, McpSource, NativeMcpServerRecord, ACodeMcpServer } from "@acode/shared";
+import { type V4McpListMode, type V4McpServerStatusSnapshot } from "@acode/shared/acode-protocol-v4";
 import { convertToACodeAgentMcpServer } from "@acode/shared";
 import { logger } from "@/logger.js";
 import {
@@ -62,7 +51,7 @@ interface McpStoreState {
   config: McpConfig;
   nativeServers: NativeMcpServerRecord[];
   servers: ACodeMcpServer[];
-  statusSnapshots: Record<string, ACodeMcpServerStatusSnapshot>;
+  statusSnapshots: Record<string, V4McpServerStatusSnapshot>;
   currentProjectPath: string;
   currentWorkspaceIdentity?: string;
   enabledStates: Record<string, boolean>;
@@ -106,14 +95,14 @@ interface McpStoreState {
     error?: string,
     options?: UpdateServerStatusOptions,
   ) => void;
-  beginServerStatusListRefresh: (mode?: ACodeMcpListMode) => number;
+  beginServerStatusListRefresh: (mode?: V4McpListMode) => number;
   markServerStatusListRefreshFailed: (
     error: string,
     requestEpoch: number,
-    mode?: ACodeMcpListMode,
+    mode?: V4McpListMode,
   ) => void;
   mergeServerStatusSnapshots: (
-    statuses: Record<string, ACodeMcpServerStatusSnapshot>,
+    statuses: Record<string, V4McpServerStatusSnapshot>,
     requestEpoch: number,
     mode?: "connect" | "status",
   ) => void;
@@ -136,7 +125,7 @@ interface McpStoreState {
 export const useMcpStore = create<McpStoreState>((set, get) => {
   let loadMcpPromise: Promise<boolean> | null = null;
   let loadMcpWorkspaceKey: string | null = null;
-  const statusListEpochs: Record<ACodeMcpListMode, number> = {
+  const statusListEpochs: Record<V4McpListMode, number> = {
     connect: 0,
     status: 0,
   };

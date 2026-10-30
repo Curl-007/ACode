@@ -296,9 +296,18 @@ async function recordCatalogChecks(context: CatalogChecksInput): Promise<readonl
   if (probe.status === "ok") {
     recorder.set("catalog_live_endpoint", "passed", probe.detail, outcome.durationMs);
   } else if (probe.status === "unsupported") {
-    recorder.set("catalog_live_endpoint", "skipped", probe.detail, outcome.durationMs);
+    // catalog-unsupported 是「端点不提供目录」，Doctor 记 skipped；带上结构化码供 GUI 区分。
+    recorder.set(
+      "catalog_live_endpoint",
+      "skipped",
+      probe.detail,
+      outcome.durationMs,
+      probe.reasonCode ?? "catalog-unsupported",
+    );
   } else {
-    recorder.set("catalog_live_endpoint", "failed", probe.detail, outcome.durationMs);
+    // 结构化码就地透传（provider-diagnostics.md R6）：GUI 靠它把「密钥被拒 / 网络不可达 /
+    // 目录为空」分开，不再靠解析 detail 文本。缺码时 GUI 退回 (id,status) 派生。
+    recorder.set("catalog_live_endpoint", "failed", probe.detail, outcome.durationMs, probe.reasonCode);
   }
 
   if (probe.status !== "ok") {

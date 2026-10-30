@@ -31,6 +31,13 @@ import {
   acodeBrowserAmbientContextSchema,
   acodeProtocolMcpServerSchema,
 } from "../acode-protocol-shared.js";
+// M2-2 result variants（goalControl / closeSession）的实体叶——本文件受 max-lines 400
+// 约束，schema 定义放 session-control.ts，此处只引名单（script-workflow-management 同例）。
+import { closeSessionResultSchema, goalControlResultSchema } from "./session-control.js";
+// M2-3 createSession parity 字段形状（specs/m2-3-session-readwrite.md §2.1）：
+// sessionId/persistence/titleGenerationEnabled/toolAllowlist/toolDenylist/
+// importedHistory/mode/model/thoughtLevel 的实体在 session-readwrite.ts，此处只 spread。
+import { v4SessionCreateParityFieldShapes } from "./session-readwrite.js";
 
 const createSessionRequestedConfigSchema = z.object({
   modelSelection: modelSelectionSchema.optional(),
@@ -82,6 +89,20 @@ export const commandPayloadSchemas = {
     // → 缺席 = off（fail-safe 到零行为变化）。legacy session/create params 不加本字段
     // （legacy 面只删不增，同 scriptWorkflowEnabled 的裁决）。
     toolSearchMode: z.enum(TOOL_SEARCH_APP_MODES).optional(),
+    // 可信连接模式（U11 工具图片外置引用生产门，spec tool-media-attachment-ref.md R10.2a）：
+    // **由受信 Host（services/acodeAgentService）用 commandClientMode 无条件盖章**，不是 renderer
+    // 的自选项。物化进 AgentRuntimeConfig.clientMode → ToolExecutionContext，决定 shouldEmitToolMediaRefs
+    // 的每会话门（只有 desktop-continuous 才产 ref）。取值域与 transport.ts 的 clientMode 逐字同族。
+    // additive：旧 CLI 的 z.object 静默丢弃该键（fail-safe 到缺席=inline）。
+    // ⚠ 注入纪律（安全关键）：withTrustedConnection 只删顶层可伪造的 clientMode，**不触碰本 payload 里的**
+    // 同名字段——故 Host 侧必须以覆盖语义（spread 在前、可信值在后）盖章，伪造值永不存活。
+    // legacy session/create params 不加本字段（legacy 面只删不增，同 toolSearchMode 的裁决）。
+    clientMode: z.enum(["desktop-continuous", "web-remote-replayable"]).optional(),
+    // M2-3 parity 字段（实体在 session-readwrite.ts）：facade 迁移后 create 经 v4 命令
+    // 直达 CLI 的 legacy createSessionWithProjection 路径（rawParams 直通），
+    // mode/model/thoughtLevel 走 legacy createRecord 语义（不替代 payload.config 的
+    // 草稿态覆盖面）。additive：旧 CLI 静默丢键 fail-closed。
+    ...v4SessionCreateParityFieldShapes,
   }),
   // 父会话由 envelope.sessionId 指定；服务端从父 record 派生完整运行配置。
   // firstInput 存在时，child 创建完成后立即启动首条普通输入；缺省则保持空副屏。
@@ -163,7 +184,12 @@ export const commandPayloadSchemas = {
   }),
   // compact 是输入型维护命令：idle 时立即执行，busy/held 时进入 FIFO。
   // 因为 admission 与当前 revision 无关，不走 CAS；sourceCommandId 提供幂等边界。
-  compact: z.object({}),
+  // instructions（M2-1 裁决 2026-10-28，默认裁决产品可推翻）：承载 legacy
+  // session/compact 的 instructions 字段，不丢字段；CLI handler 消费接线属 M2-2，
+  // 本批只落协议面（zod 缺省剥离未知键，旧 CLI 收到该字段静默丢弃，向后兼容）。
+  compact: z.object({
+    instructions: z.string().optional(),
+  }),
   // running 时对稳定 assistant row 可用。
   forkAssistant: z.object({ target: conversationRowTargetSchema }),
   applyFileRewind: z.object({ target: conversationRowTargetSchema }),
@@ -227,15 +253,22 @@ export const commandPayloadSchemas = {
     thought: z.string(),
   }),
   // additive（冻结面按黄金测试背书演进）：agent 协作模式切换。
-  // 值域 = core CollaborationMode 的可切换子集（auto 非用户可切，不进 UI 命令面）。
-  // dontAsk（P1 权限裁决批2，「拒绝代替询问」）随 contracts CollaborationMode 扩集
-  // 进入可切换子集：桌面 picker → services → 本命令 → CLI 的可达链在协议面不缺环。
+  // 值域 = core CollaborationMode 全值域。dontAsk（P1 权限裁决批2，「拒绝代替询问」）
+  // 随 contracts CollaborationMode 扩集进入可切换子集：桌面 picker → services → 本命令
+  // → CLI 的可达链在协议面不缺环。auto（M2-1 裁决 2026-10-28，默认裁决产品可推翻）：
+  // legacy session/setMode 接受 auto（acodeSessionModeSchema 含 auto）且有残留消费，
+  // v4 刻意排除会收窄 legacy 能力——补值 = 放宽，向后兼容；CLI handler 直驱
+  // app.setMode（core CollaborationMode 本就含 auto），无需改动。
   switchCollaborationMode: z.object({
-    mode: z.enum(["build", "edit", "plan", "yolo", "dontAsk"]),
+    mode: z.enum(["build", "edit", "plan", "yolo", "dontAsk", "auto"]),
   }),
   setFollowupMode: z.object({ mode: z.enum(["queue", "guide"]) }),
   pauseGoal: z.object({}),
   resumeGoal: z.object({}),
+  // M2-2：legacy session/goal action:"clear" 的 v4 等价（保守无能力损失裁决——facade
+  // 的 clear 是存活 RPC 面能力；v4 UI slash 层标 unsupported 是产品面取舍，不回收协议能力）。
+  // 非 CAS：legacy clear 无 revision 断言；无目标时幂等成功（与 pause/resume 同族）。
+  clearGoal: z.object({}),
   cancelBackgroundWork: z.object({ workId: z.string() }),
   // cancel & resume：恢复一个已取消 / 被进程死亡
   // 打断的 dwf run。workId ≡ runId（与 cancelBackgroundWork 同一个身份等式）；`name` 可选，
@@ -261,6 +294,14 @@ export const commandPayloadSchemas = {
   amendWorkflowRunSettings: amendWorkflowRunSettingsPayloadSchema,
   renameSession: z.object({ title: z.string() }),
   deleteSession: z.object({}),
+  // M2-2 裁决（2026-10-28）：close ≠ delete 两语义并存。closeSession = 终止/归档
+  // snapshot 写入（关闭运行时 + 清通道），deleteSession 保持删除语义不动。
+  // expectedPersistence 是 legacy session/close 同名断言的等价物承载：调用方声明期望的
+  // 持久化档，CLI 侧与 record.persistence 不匹配时 graceful no-op（typed result
+  // closed:false），匹配/缺席才执行关闭。非 CAS——legacy close 本无 revision 断言，
+  // persistence 匹配即其条件断言语义（对应旧 shouldCloseSessionForExpectedPersistence）；
+  // 值域与 acodeSessionPersistenceSchema 逐字一致。
+  closeSession: z.object({ expectedPersistence: z.enum(["immediate", "deferred"]).optional() }),
   // /usage 查询命令族（apps/acode-cli/specs/usage-statusbar.md）：零 token 本地查询，
   // 不进模型轮。timeZone 由客户端携带（IANA），与 v4/usage/stats 通道同惯例；
   // 缺席按 UTC 归桶。
@@ -471,6 +512,10 @@ export const commandResultSchema = z.discriminatedUnion("type", [
   // 幂等；错误不走 result variant（failed ACK reasonCode/message 上行，不伪造空列表）。
   listScriptWorkflowRunsResultSchema,
   listScriptWorkflowDefinitionsResultSchema,
+  // M2-2：goal 控制四命令回执与 closeSession 断言裁决（schema 实体在 session-control.ts，
+  // 与 script-workflow-management 结果叶同例——command.ts 受 max-lines 400 约束只列引用）。
+  goalControlResultSchema,
+  closeSessionResultSchema,
 ]);
 export type CommandResult = z.infer<typeof commandResultSchema>;
 

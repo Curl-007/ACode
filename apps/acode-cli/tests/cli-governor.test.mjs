@@ -14,6 +14,7 @@ const {
   configureCliGovernor,
   getCliGovernor,
   peekFleetLruIdleVictim,
+  registerCliGovernorAppDeps,
   resetCliGovernorForTest,
 } = await import("../packages/core/src/fleet/governor.ts");
 const { resetFleetRegistryForTest } = await import("../packages/core/src/fleet/registry.ts");
@@ -341,6 +342,21 @@ test("fleet composition: cap from RAM, LRU peek skips running, evict is recovera
   const t0 = Date.now();
   registry.register(makeFleetRecord("sess_idle", "agent_idle", t0 - 120_000));
   registry.register(makeFleetRecord("sess_busy", "agent_busy", t0 - 300_000));
+  // 真正 idle 的舰队会话在其 owning registry 里是 present-terminal（runner.ts 完成走
+  // update(status:"completed")，条目留在册）——fail-safe floor（R9）据此判 idle。缺席
+  // 条目会被判 unknown（跨 App 情形），不够格；故这里必须注册终态条目才符合生产语义。
+  taskRegistry.register({
+    taskId: "agent_idle",
+    agentId: "agent_idle",
+    agentType: "general-purpose",
+    description: "idle",
+    status: "completed",
+    startedAt: new Date(),
+    completedAt: new Date(),
+    type: "local_agent",
+    childSessionId: "sess_idle",
+    isBackgrounded: true,
+  });
   taskRegistry.register({
     taskId: "agent_busy",
     agentId: "agent_busy",
@@ -389,6 +405,169 @@ test("fleet composition: cap from RAM, LRU peek skips running, evict is recovera
     const record = registry.get("sess_idle");
     assert.ok(record !== undefined, "驱逐不删舰队记录");
     assert.equal(record.archived, false, "驱逐不归档");
+  } finally {
+    resetCliGovernorForTest();
+    resetFleetRegistryForTest();
+  }
+});
+
+// ── R9 多 App 同进程：per-App deps 注册表 + fail-safe floor ─────────────
+// 前提证据：specs/gen-ui-visualize.md Bug 6（2026-10-12 真机：每会话一个
+// create-app、多 app 并存）。以下测试钉住 union 在跑判定与 unknown ≠ idle floor。
+
+function runningTaskEntry(agentId, childSessionId) {
+  return {
+    taskId: agentId,
+    agentId,
+    agentType: "general-purpose",
+    description: agentId,
+    status: "running",
+    startedAt: new Date(),
+    type: "local_agent",
+    childSessionId,
+    isBackgrounded: true,
+  };
+}
+
+function terminalTaskEntry(agentId, childSessionId) {
+  return {
+    ...runningTaskEntry(agentId, childSessionId),
+    status: "completed",
+    completedAt: new Date(),
+  };
+}
+
+test("R9 scenario 14: session running in App#2's registry is never an eviction victim (union)", () => {
+  resetCliGovernorForTest();
+  const registry = resetFleetRegistryForTest();
+  const t0 = Date.now();
+  // App#1 registry：不拥有 App#2 会话的 agent 条目（这正是旧单例快照的全部视野）。
+  const registryA = new InMemoryRuntimeTaskRegistry();
+  const releaseA = registerCliGovernorAppDeps("app1", {
+    runtimeTaskRegistry: registryA,
+    now: () => t0,
+  });
+  // App#2 的舰队会话：真在跑（present-non-terminal），但只登记在 App#2 自己的 registry。
+  registry.register(makeFleetRecord("sess_app2", "agent_app2", t0 - 600_000));
+  const registryB = new InMemoryRuntimeTaskRegistry();
+  registryB.register(runningTaskEntry("agent_app2", "sess_app2"));
+
+  try {
+    // 负例（缺陷重现）：App#2 尚未注册 → 并集里没有任何 registry 正向命中该 agentId。
+    // 旧实现把「缺席」当 idle → 这个真在跑的会话会被选为受害者。floor 把它判 unknown
+    // → 绝不选出。断言 null 即钉住 floor；临时移除 floor（unknown→idle）会让本断言红。
+    assert.equal(
+      peekFleetLruIdleVictim(),
+      null,
+      "fail-safe floor：无法正向解析运行态的在跑会话绝不当 idle 受害者（unknown ≠ idle）",
+    );
+
+    // union：App#2 注册后，其 registry 报 present-non-terminal → running → 仍绝不选出。
+    // App#2 同时有一个自己视角 idle（present-terminal）的会话：并集判定必须选中它而非
+    // 在跑的那个——「只读首个 App registry」的 union 破坏会让 app2_idle 转 unknown、
+    // 受害者回落为 App#1 的 idle1（本阶段未注册则 null），此断言即红。
+    registry.register(makeFleetRecord("sess_idle1", "agent_idle1", t0 - 120_000));
+    registryA.register(terminalTaskEntry("agent_idle1", "sess_idle1"));
+    registry.register(makeFleetRecord("sess_app2_idle", "agent_app2_idle", t0 - 300_000));
+    registryB.register(terminalTaskEntry("agent_app2_idle", "sess_app2_idle"));
+    const releaseB = registerCliGovernorAppDeps("app2", {
+      runtimeTaskRegistry: registryB,
+      now: () => t0,
+    });
+    try {
+      assert.equal(
+        peekFleetLruIdleVictim().sessionId,
+        "sess_app2_idle",
+        "并集正向解析：App#2 自己视角 idle 的会话可被选中，在跑的绝不被选中",
+      );
+    } finally {
+      releaseB();
+    }
+  } finally {
+    releaseA();
+    resetCliGovernorForTest();
+    resetFleetRegistryForTest();
+  }
+});
+
+test("R9 scenario 15: after App#2 releases, its records stay unknown and are never victims", () => {
+  resetCliGovernorForTest();
+  const registry = resetFleetRegistryForTest();
+  const t0 = Date.now();
+  // App#1 在世并注册，拥有一个真 idle（present-terminal）的会话 → 合法受害者基线。
+  const registryA = new InMemoryRuntimeTaskRegistry();
+  registryA.register(terminalTaskEntry("agent_idle1", "sess_idle1"));
+  const releaseA = registerCliGovernorAppDeps("app1", {
+    runtimeTaskRegistry: registryA,
+    now: () => t0,
+  });
+  registry.register(makeFleetRecord("sess_idle1", "agent_idle1", t0 - 120_000));
+  // App#2 的会话：进程级 FleetRegistry 里的记录在 close 后仍在（舰队记录不随 app
+  // close 移除），但其 agentId 此后再无任何已注册 registry 能正向解析。
+  registry.register(makeFleetRecord("sess_app2", "agent_app2", t0 - 600_000));
+  const registryB = new InMemoryRuntimeTaskRegistry();
+  registryB.register(runningTaskEntry("agent_app2", "sess_app2"));
+  const releaseB = registerCliGovernorAppDeps("app2", {
+    runtimeTaskRegistry: registryB,
+    now: () => t0,
+  });
+
+  try {
+    // 释放前：并集判 sess_app2 running；受害者 = App#1 的 idle 会话（更近但合法）。
+    assert.equal(peekFleetLruIdleVictim().sessionId, "sess_idle1");
+
+    // App#2 close → 幂等释放其 deps（照 create-app close 路径）。
+    releaseB();
+
+    // sess_app2 现在 absent 于所有已注册 registry → unknown → 绝不当 idle 受害者，
+    // 即便它 lastActivityAt 最旧（600s > 120s，LRU 会优先选它若按缺席=idle 判定）。
+    // 受害者仍是 App#1 的合法 idle 会话。
+    assert.equal(
+      peekFleetLruIdleVictim().sessionId,
+      "sess_idle1",
+      "close 后 App#2 记录判 unknown：LRU 绝不选它（unknown ≠ idle），只选正向解析为 idle 者",
+    );
+
+    // App#1 也释放 → 并集为空，两条记录都 unknown → 无任何受害者（floor 兜底）。
+    releaseA();
+    assert.equal(peekFleetLruIdleVictim(), null, "并集空 → 全部 unknown → 无受害者");
+  } finally {
+    resetCliGovernorForTest();
+    resetFleetRegistryForTest();
+  }
+});
+
+test("R9 scenario 16: late release of a superseded app does not evict the new app's deps", () => {
+  resetCliGovernorForTest();
+  const registry = resetFleetRegistryForTest();
+  const t0 = Date.now();
+  registry.register(makeFleetRecord("sess_app2b", "agent_app2b", t0 - 600_000));
+  // 同 sessionId（appId）：旧 app 注册后，新 app 接管再注册（浅合并覆盖为同一键）。
+  const registryOld = new InMemoryRuntimeTaskRegistry();
+  const releaseOld = registerCliGovernorAppDeps("app2", {
+    runtimeTaskRegistry: registryOld,
+    now: () => t0,
+  });
+  const registryNew = new InMemoryRuntimeTaskRegistry();
+  registryNew.register(runningTaskEntry("agent_app2b", "sess_app2b"));
+  const releaseNew = registerCliGovernorAppDeps("app2", {
+    runtimeTaskRegistry: registryNew,
+    now: () => t0,
+  });
+
+  try {
+    // 旧 app 的迟到释放：实例身份校验（registry.get(appId) === merged）不成立 →
+    // no-op，不得删掉新 app 的注册项。
+    releaseOld();
+    // 新 app 的会话仍受并集保护（present-non-terminal → running）→ 绝不选出。
+    assert.equal(
+      peekFleetLruIdleVictim(),
+      null,
+      "迟到释放不误删接管 app 的注册项：其会话仍受并集在跑保护",
+    );
+    // 新 app 自己的释放仍生效（身份匹配）→ 记录转 unknown（floor 仍不选）。
+    releaseNew();
+    assert.equal(peekFleetLruIdleVictim(), null, "新 app 释放后 unknown → 仍不当受害者");
   } finally {
     resetCliGovernorForTest();
     resetFleetRegistryForTest();

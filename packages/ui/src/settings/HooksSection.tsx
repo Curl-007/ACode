@@ -1,7 +1,8 @@
 /* eslint-disable max-lines -- Hooks 页面聚合 Scope、插件投影、搜索与配置写入流程。 */
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { Plus } from "lucide-react";
-import type { Hook, HookConfig, ACodeInstalledPluginSummary, ACodePluginInfo } from "@acode/shared";
+import type { Hook, HookConfig } from "@acode/shared";
+import { type V4InstalledPluginSummary, type V4PluginInfo } from "@acode/shared/acode-protocol-v4";
 import { Button } from "@/components/ui/button.js";
 import { toast } from "@/components/ui/toast.js";
 import { useConfirmDialog } from "@/hooks/useConfirmDialog.js";
@@ -107,8 +108,8 @@ function resolveLatestReviewScopeTarget(
 }
 
 function buildPluginHookRows(
-  plugins: readonly Pick<ACodePluginInfo, "enabled" | "hookDetails" | "id" | "name">[],
-  installedPlugins: readonly Pick<ACodeInstalledPluginSummary, "id" | "scope">[],
+  plugins: readonly Pick<V4PluginInfo, "enabled" | "hookDetails" | "id" | "name">[],
+  installedPlugins: readonly Pick<V4InstalledPluginSummary, "id" | "scope">[],
   scopeMetadataKnown: boolean,
 ): PluginHookRow[] {
   const scopeByPluginId = new Map(

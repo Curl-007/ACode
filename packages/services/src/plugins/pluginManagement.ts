@@ -8,21 +8,8 @@
 // 注意与既有 IPluginsService（已 retired 的 marketplace pluginStore 通道）区分：
 // 那套接口按 pluginName+marketplace 寻址且方法语义过时，不复用避免签名冲突。
 import type { Event } from "@acode/rpc";
-import type {
-  ACodePluginOperationProgressNotification,
-  ACodePluginsConfigureResult,
-  ACodePluginsCancelOperationResult,
-  ACodePluginsDescribeResult,
-  ACodePluginsInstallResult,
-  ACodePluginsListResult,
-  ACodePluginsMarketplaceMutationResult,
-  ACodePluginsOverviewResult,
-  ACodePluginsReferenceCatalogResult,
-  ACodePluginsRestoreBuiltinResult,
-  ACodePluginsSetEnabledResult,
-  ACodePluginsUninstallResult,
-  ACodePluginsValidateResult,
-} from "@acode/shared";
+import type { ACodePluginOperationProgressNotification, ACodePluginsCancelOperationResult } from "@acode/shared";
+import { type V4PluginsConfigureResult, type V4PluginsDescribeResult, type V4PluginsInstallResult, type V4PluginsListResult, type V4PluginsMarketplaceMutationResult, type V4PluginsOverviewResult, type V4PluginsReferenceCatalogResult, type V4PluginsRestoreBuiltinResult, type V4PluginsSetEnabledResult, type V4PluginsUninstallResult, type V4PluginsValidateResult } from "@acode/shared/acode-protocol-v4";
 import { ServiceChannels } from "@acode/shared";
 import { createServiceDescriptor } from "../descriptors.js";
 import type {
@@ -45,7 +32,7 @@ import type {
 } from "../acode-agent/acodeAgentPluginParams.js";
 
 export interface IPluginManagementService {
-  listPlugins(params: ACodeAgentPluginViewParams): Promise<ACodePluginsListResult>;
+  listPlugins(params: ACodeAgentPluginViewParams): Promise<V4PluginsListResult>;
   /**
    * Plugin 对话引用 catalog：
    * 带 sessionId → session-owned 冻结 catalog；不带 → workspace 当前 catalog。
@@ -53,39 +40,39 @@ export interface IPluginManagementService {
    */
   getPluginReferenceCatalog(
     params: ACodeAgentPluginReferenceCatalogParams,
-  ): Promise<ACodePluginsReferenceCatalogResult>;
+  ): Promise<V4PluginsReferenceCatalogResult>;
   resolveSuggestedPluginReference(
     params: ACodeAgentResolveSuggestedPluginReferenceParams,
-  ): Promise<import("@acode/shared").ACodePluginsResolveSuggestedReferenceResult>;
+  ): Promise<import("@acode/shared/acode-protocol-v4").V4PluginsResolveSuggestedReferenceResult>;
   onDynamicPluginOperationProgress(
     operationId: string,
   ): Event<ACodePluginOperationProgressNotification>;
-  getPluginsOverview(params: ACodeAgentPluginViewParams): Promise<ACodePluginsOverviewResult>;
+  getPluginsOverview(params: ACodeAgentPluginViewParams): Promise<V4PluginsOverviewResult>;
   addPluginMarketplace(
     params: ACodeAgentAddPluginMarketplaceParams,
-  ): Promise<ACodePluginsMarketplaceMutationResult>;
+  ): Promise<V4PluginsMarketplaceMutationResult>;
   removePluginMarketplace(
     params: ACodeAgentRemovePluginMarketplaceParams,
-  ): Promise<ACodePluginsMarketplaceMutationResult>;
+  ): Promise<V4PluginsMarketplaceMutationResult>;
   updatePluginMarketplace(
     params: ACodeAgentUpdatePluginMarketplaceParams,
-  ): Promise<ACodePluginsMarketplaceMutationResult>;
-  installPlugin(params: ACodeAgentInstallPluginParams): Promise<ACodePluginsInstallResult>;
+  ): Promise<V4PluginsMarketplaceMutationResult>;
+  installPlugin(params: ACodeAgentInstallPluginParams): Promise<V4PluginsInstallResult>;
   cancelPluginOperation(
     params: ACodeAgentCancelPluginOperationParams,
   ): Promise<ACodePluginsCancelOperationResult>;
-  uninstallPlugin(params: ACodeAgentUninstallPluginParams): Promise<ACodePluginsUninstallResult>;
-  updatePlugin(params: ACodeAgentUpdatePluginParams): Promise<ACodePluginsInstallResult>;
+  uninstallPlugin(params: ACodeAgentUninstallPluginParams): Promise<V4PluginsUninstallResult>;
+  updatePlugin(params: ACodeAgentUpdatePluginParams): Promise<V4PluginsInstallResult>;
   restoreBuiltinPlugin(
     params: ACodeAgentRestoreBuiltinPluginParams,
-  ): Promise<ACodePluginsRestoreBuiltinResult>;
-  configurePlugin(params: ACodeAgentConfigurePluginParams): Promise<ACodePluginsConfigureResult>;
+  ): Promise<V4PluginsRestoreBuiltinResult>;
+  configurePlugin(params: ACodeAgentConfigurePluginParams): Promise<V4PluginsConfigureResult>;
   resetPluginConfig(
     params: ACodeAgentResetPluginConfigParams,
-  ): Promise<ACodePluginsConfigureResult>;
-  validatePlugin(params: ACodeAgentValidatePluginParams): Promise<ACodePluginsValidateResult>;
-  describePlugin(params: ACodeAgentDescribePluginParams): Promise<ACodePluginsDescribeResult>;
-  setPluginEnabled(params: ACodeAgentSetPluginEnabledParams): Promise<ACodePluginsSetEnabledResult>;
+  ): Promise<V4PluginsConfigureResult>;
+  validatePlugin(params: ACodeAgentValidatePluginParams): Promise<V4PluginsValidateResult>;
+  describePlugin(params: ACodeAgentDescribePluginParams): Promise<V4PluginsDescribeResult>;
+  setPluginEnabled(params: ACodeAgentSetPluginEnabledParams): Promise<V4PluginsSetEnabledResult>;
 }
 
 export const IPluginManagementService = createServiceDescriptor<IPluginManagementService>(

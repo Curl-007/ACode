@@ -1,7 +1,7 @@
 // MCP 连接状态与状态变更事件面（mcp.port.ts 拆分产物，2026-10-15）。
 // 状态机、重连熔断挂起附加事实、事件触发原因闭集与监听器契约。
 
-import type { McpServerFailureKind } from "@acode/shared";
+import { type V4McpServerFailureKind } from "@acode/shared/acode-protocol-v4";
 import type { McpServerTransportType } from "./mcp-config.port.js";
 
 export type McpServerStatusKind =
@@ -39,7 +39,7 @@ export interface McpServerStatus {
   toolCount: number;
   updatedAt: string;
   error?: string;
-  failureKind?: McpServerFailureKind;
+  failureKind?: V4McpServerFailureKind;
   serverRequestId?: string;
   protocolEra?: "legacy" | "modern";
   reconnectSuspension?: McpReconnectSuspension;

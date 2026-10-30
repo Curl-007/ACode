@@ -387,7 +387,12 @@ export function ModelProviderSectionNavigation({
     <aside className="px-1.5 py-3 md:py-2 md:px-2">
       <div className="flex min-h-0 flex-col gap-3 max-md:gap-1">
         {navigationGroups
-          .filter((group) => group.id !== "custom" || group.items.length > 0)
+          // 空组隐藏：custom 组历来如此；preset 组自 2026-10-30 智谱账号集成退役后
+          // 恒为空（builtin catalog 已无 zhipu-account 条目），空标题节点不应再出现。
+          .filter(
+            (group) =>
+              (group.id !== "custom" && group.id !== "preset") || group.items.length > 0,
+          )
           .map((group) => (
             <div key={group.id} className="flex flex-col gap-2 max-md:gap-1">
               <div className="flex h-7 items-center justify-between px-2 py-1 max-md:hidden">

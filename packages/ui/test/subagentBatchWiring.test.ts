@@ -13,6 +13,8 @@ import { dirname, resolve } from "node:path";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SECTION_PATH = resolve(__dirname, "../src/settings/SubagentsSection.tsx");
+const LIST_PATH = resolve(__dirname, "../src/settings/subagents/SubagentList.tsx");
+const PRIMITIVES_PATH = resolve(__dirname, "../src/settings/subagents/primitives.tsx");
 const BAR_PATH = resolve(__dirname, "../src/settings/SubagentModelBatchBar.tsx");
 const DIALOG_PATH = resolve(__dirname, "../src/settings/SubagentModelBatchDialog.tsx");
 const APPLY_PATH = resolve(__dirname, "../src/settings/SubagentModelBatchApply.ts");
@@ -70,17 +72,20 @@ test("接线：批量应用只经 SubagentsSection 单点分流到既有 service
 
 test("接线：批量模式下行点击切换选中而非进编辑表单，选中集随过滤裁剪", () => {
   const section = readSource(SECTION_PATH);
-  // 行交互：checkbox 可见时行点击走 onBatchCheckChange，否则才落到 onEdit。
+  // 批次 2：行交互（checkboxVisible / rowEditable 分流）已随 AgentListRow 外迁至
+  // subagents/SubagentList.tsx；主文件继续持有 batchMode/selectedBatchIds state 与
+  // handleBatchCheckChange handler。
+  const list = readSource(LIST_PATH);
   assert.match(
-    section,
+    list,
     /checkboxVisible\s*\?\s*\(\) => onBatchCheckChange\(agent, !batchChecked\)\s*:\s*rowEditable\s*\?\s*\(\) => onEdit\(agent\)/u,
   );
-  // 选中集裁剪 effect 存在且只保留当前可见可批量集内的 id。
+  // 选中集裁剪 effect 存在且只保留当前可见可批量集内的 id（仍在主文件，state 所有者）。
   assert.match(
     section,
     /resolveBatchApplyTargets\(filteredAgents\)\.map\(\(agent\) => agent\.id\)/u,
   );
-  // 分组三态勾选消费 resolveGroupBatchCheckState。
+  // 分组三态勾选消费 resolveGroupBatchCheckState（主文件计算 check state，传给子组件）。
   assert.match(section, /resolveGroupBatchCheckState\(groupAgents, selectedBatchIds\)/u);
 });
 
@@ -88,21 +93,22 @@ test("接线：批量模式下行点击切换选中而非进编辑表单，选�
 
 test("接线：batchApplying 期间行复选框与行点击均不可改选中", () => {
   const section = readSource(SECTION_PATH);
+  const list = readSource(LIST_PATH);
   // 复选框 disabled = applying || 不可批量；checkboxVisible 在 applying 期间为 false，
-  // 行点击因此不会落到 onBatchCheckChange。
+  // 行点击因此不会落到 onBatchCheckChange。（行级判定已随 AgentListRow 外迁）
   assert.match(
-    section,
+    list,
     /const checkboxVisible = batchMode && isBatchApplicableAgent\(agent\) && !batchApplying;/u,
   );
   // 复选框在 applying 期间仍渲染（列不塌陷），但 disabled 置灰。
-  assert.match(section, /const checkboxRendered = batchMode && isBatchApplicableAgent\(agent\);/u);
+  assert.match(list, /const checkboxRendered = batchMode && isBatchApplicableAgent\(agent\);/u);
   assert.match(
-    section,
+    list,
     /const batchCheckboxDisabled = batchApplying \|\| !isBatchApplicableAgent\(agent\);/u,
   );
-  assert.match(section, /disabled=\{batchCheckboxDisabled\}/u);
-  assert.match(section, /\{checkboxRendered \? \(/u);
-  // handler 入口兜底：applying 期间直接 return，选中集不变。
+  assert.match(list, /disabled=\{batchCheckboxDisabled\}/u);
+  assert.match(list, /\{checkboxRendered \? \(/u);
+  // handler 入口兜底：applying 期间直接 return，选中集不变（state 在主文件）。
   const handlerBody = sectionBetween(
     section,
     "const handleBatchCheckChange",
@@ -116,9 +122,11 @@ test("接线：batchApplying 期间行复选框与行点击均不可改选中", 
 
 test("接线：分组「…」菜单同时提供统一设置与本组恢复继承默认", () => {
   const section = readSource(SECTION_PATH);
-  assert.match(section, /function SubagentGroupBatchMenu\(/u);
-  assert.match(section, /settings\.subagents\.batch\.groupMenu\.setModels/u);
-  assert.match(section, /settings\.subagents\.batch\.groupMenu\.resetInherit/u);
+  // 批次 2：分组批量菜单组件已外迁至 subagents/SubagentList.tsx；主文件负责调用。
+  const list = readSource(LIST_PATH);
+  assert.match(list, /function SubagentGroupBatchMenu\(/u);
+  assert.match(list, /settings\.subagents\.batch\.groupMenu\.setModels/u);
+  assert.match(list, /settings\.subagents\.batch\.groupMenu\.resetInherit/u);
   assert.match(section, /onResetInherit=\{\(\) => handleGroupBatchApply\(groupAgents\)\}/u);
   // 重置继承 = 对全组可批量行应用空目标值，仍走同一 apply 入口。
   const resetBody = sectionBetween(section, "const handleGroupBatchApply", "const handleEdit");
@@ -128,8 +136,10 @@ test("接线：分组「…」菜单同时提供统一设置与本组恢复继�
 
 test("接线：分组三态全选与搜索栏全局全选共用可批量判定", () => {
   const section = readSource(SECTION_PATH);
-  assert.match(section, /function SubagentGroupSelectAll\(/u);
-  assert.match(section, /settings\.subagents\.batch\.groupSelectAll\.label/u);
+  // 批次 2：分组三态全选组件已外迁至 subagents/SubagentList.tsx；主文件负责调用。
+  const list = readSource(LIST_PATH);
+  assert.match(list, /function SubagentGroupSelectAll\(/u);
+  assert.match(list, /settings\.subagents\.batch\.groupSelectAll\.label/u);
   assert.match(section, /const toggleBatchAll = useCallback/u);
   assert.match(section, /settings\.subagents\.batch\.selectAll\.label/u);
   assert.match(section, /toggleBatchAll\(checked === true\)/u);
@@ -192,7 +202,14 @@ test("i18n：批量编辑全部文案在双语 locale 成对出现", () => {
   const en = readSource(EN);
   const zh = readSource(ZH);
   const usedIds = new Set<string>();
-  for (const source of [readSource(BAR_PATH), readSource(DIALOG_PATH), readSource(SECTION_PATH)]) {
+  // 批次 2：分组菜单 / 分组三态全选已外迁至 subagents/SubagentList.tsx，
+  // 该文件同样贡献批量文案键。
+  for (const source of [
+    readSource(BAR_PATH),
+    readSource(DIALOG_PATH),
+    readSource(SECTION_PATH),
+    readSource(LIST_PATH),
+  ]) {
     for (const match of source.matchAll(/id: "(settings\.subagents\.batch\.[a-zA-Z.]+)"/gu)) {
       usedIds.add(match[1] ?? "");
     }
@@ -225,14 +242,18 @@ test("testid：批量 TID 在 shared test-ids.ts 有定义且与组件引用一�
 });
 
 test("testid：源仓新增的批量入口/行勾选/组菜单 TID 以局部字面量落地", () => {
+  // 批次 2 拆分后字面量按所有权分布：
+  //   - SubagentsSection.tsx：批量模式入口 + 全部全选（主组件持有 batchMode state）；
+  //   - subagents/SubagentList.tsx：分组菜单 + 分组三态全选（已外迁的列表选择态组件族）；
+  //   - subagents/primitives.tsx：行复选框（已外迁的纯展示子组件）。
   const section = readSource(SECTION_PATH);
-  for (const tid of [
-    "subagent-batch-trigger",
-    "subagent-batch-row-checkbox",
-    "subagent-group-menu-trigger",
-    "subagent-batch-select-all",
-    "subagent-batch-group-select-all",
-  ]) {
-    assert.match(section, new RegExp(`"${tid}"`), tid);
+  const list = readSource(LIST_PATH);
+  const primitives = readSource(PRIMITIVES_PATH);
+  for (const tid of ["subagent-batch-trigger", "subagent-batch-select-all"]) {
+    assert.match(section, new RegExp(`"${tid}"`), `section:${tid}`);
   }
+  for (const tid of ["subagent-group-menu-trigger", "subagent-batch-group-select-all"]) {
+    assert.match(list, new RegExp(`"${tid}"`), `list:${tid}`);
+  }
+  assert.match(primitives, /"subagent-batch-row-checkbox"/, "primitives:subagent-batch-row-checkbox");
 });

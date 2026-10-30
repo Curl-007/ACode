@@ -24,29 +24,63 @@ services 包的公开 API。
 - mailbox 消息自带 `requestId`，投递结果以 `SessionMessageDeliveryResult`
   闭环（success/failed 二态 + 可选 error），不引入第二套确认通道。
 
-## Public boundary（登记的迁移状态）
+## Public boundary（迁移已完成，2026-10-27）
 
-- `contract.ts` 是迁移目标入口，已落地（55 行 / 25 named re-export：任务索引/列表、
-  automation、off-peak、mailbox 等名字），但 **publicEntrypoints 有意为空**：
-  checker 只在目标模块声明了任一边界（精确入口 / 通配入口 / 内部边白名单）时才校验
-  deep-import（`scripts/architecture/index.mjs` 的 `moduleHasBoundary`）。
-- **内部边白名单机制（ARCH-04 resolver 缺口④，2026-10-22 落地）**：session 用
-  `architecture-policy.yaml` 的 `internalEdgeAllowlist` 逐条冻结 **24 条** services→session
-  存量实现文件直引（checker 口径 = distinct 非 test 跨模块 (from,to) 对，与 deep-import
-  指纹一致；review §5 说的约 39-40 是含 test 文件与 specifier 重复计数的另一口径）。白名单
-  只精确匹配 (from,to) 对，不做前缀/通配，范围最窄且可审计。效果：既有 24 条边保持合法，
-  **任何未登记的新 services→session 边立即报 deep-import**——把「惰性保持合法」变成
-  「新增需显式登记」，止住内部边增长（不再靠评审纪律）。
-- 收敛路径（ratchet）：新代码从 `contract.ts` 导入；存量内部边逐条迁到契约面，迁一条就从
-  白名单删一条；白名单见底即把 `contract.ts` 注册为 publicEntrypoints、清空 `internalEdgeAllowlist`，
-  session 转为常规 deep-import 强校验。**例外到期（2026-12-31）前白名单必须见底**——这与
-  `onboard-b3-session-over-limit` / `-disables` 两个例外同批到期，是同一里程碑的三面
-  （拆 7 个 over-limit 文件 + 移 8 处 disable + 迁 24 条内部边）。
-- 里程碑工作量（评估，不在本轮实施）：24 条边集中在 `acodeTaskService.ts`(6)、`offPeakTask.ts`(3)、
-  `acodeTaskListTypes.ts`(2)、`taskChangeSummary.ts`(2) 等 15 个 target；importer 集中在
-  `services/src/node.ts`(装配根，12 条)、`index.ts`(barrel，5 条)、`accessor.ts`(2 条)。
-  barrel/装配根的边迁移即「contract.ts 补名 + 调用方改 import 路径」，预估 1-2 人日；
-  `taskIndexRepo` 有意不入 contract.ts（见 Ownership），其 1 条边需单独设计只读投影出口。
+- `contract.ts` 是**已注册的公开入口**（`architecture-policy.yaml` 的 `publicEntrypoints`），
+  覆盖全部消费方符号：任务索引/列表投影与 `IACodeTaskService`、automation 调度（repo/service/
+  cron/手动触发语义）、off-peak（repo/service/client/mock/上游模型解析与鉴权装配）、
+  跨会话 mailbox 类型、会话模式与标题派生。deep-import 对 session **强校验**（不再是迁移态的
+  惰性放行）。
+- **浏览器安全不变量（2026-10-30 白屏事故后补，实测回归）**：services 根 barrel（`src/index.ts`）
+  同时是 desktop/web renderer 的**值导入面**（ui/client 从中值导入服务 ID 类与纯函数），因此
+  barrel 对 session 的**值边**必须直指浏览器安全叶子模块（`acodeTaskService.js` /
+  `automationCronValidation.js` / `offPeakTask.js`），**不得经 contract.ts hub 转发**。原因：
+  contract.ts 值再导出 Node-only 仓库件（automationRepo/offPeakTaskRepo 顶层
+  `createRequire("node:sqlite")`、paths.ts 顶层 `homedir()`），rolldown 生产构建对 hub 的
+  副作用 re-export 边**保守保留**（即使 barrel 只取安全绑定，hub 的 Node-only 边也进
+  renderer 产物）；vite dev 更是全图求值。事故表现：Windows 生产/dev 双白屏
+  （`(0,zA.homedir) is not a function` / `node:crypto has been externalized`），main 干净
+  构建对照 + 安装版 asar renderer 2273 文件零特征码证实为 eb0378d3 barrel→contract 路由
+  引入的回归。**类型边不受限**（`export type` 被 esbuild/oxc 擦除，不产生 bundle 边），可继续
+  经 contract.ts。守护测试：`packages/desktop/tests/renderer-browser-safety.test.mjs`
+  （renderer 值导入闭包遍历，node: builtin 即红；logger 链 logPrivacy.ts 为登记豁免——
+  命名空间导入 + 调用点 try/catch 的「模块加载零副作用」既有审计模式，见该文件头注释）。
+- **`internalEdgeAllowlist` 保留 18 条**（原 24 条迁移态白名单已收口；2026-10-30 因浏览器安全
+  不变量新增 3 条 barrel→叶子值边），15 条是写入路径或装配机器件，刻意不经消费契约：
+  - `TaskIndexRepo` 构造边 **5 条**（node.ts 装配根、acodeAgentService、acodeTaskIndexSyncer、
+    acodeTaskServiceAdapter、repairSubagentTaskIndex）。task-index-writers 守护把源码中对该
+    repo 符号的**任何文本引用**都当待评审写入面（barrel 转发乃至注释都算），放进 contract.ts
+    会让每个消费方都成为登记写入方、守护失效。实测验证过两条替代路径均被守护判红：加
+    `composition.ts` 转发叶子、以及在 contract.ts 里以类名书写说明注释。故 contract.ts 的
+    文件头刻意用描述性说法而不写该类名——改动该注释时须保持这一写法。5 个引用方全部已在
+    task-index-writers 白名单内（双重登记：写所有权守护 + internalEdgeAllowlist）。
+  - claude-native / external-import 会话导入机器件 **6 条**（adapter 与 repair 专属消费）。
+  - tasksDatabase startup/prepared **2 条**（只由 storage-startup 消费）。
+  - mcpWorkspaceScope **1 条**（acode-session 专属 MCP scope 装配）。
+  - acodeTaskIndexSyncer 的 `acodeTaskListTypes` 边已迁入契约（不再是白名单项）。
+  - **根 barrel 浏览器安全值边 3 条**（2026-10-30）：`src/index.ts` → `session/acodeTaskService.js`
+    （`IACodeTaskService`）、→ `session/automationCronValidation.js`（`isValidCronExpr`）、
+    → `session/offPeakTask.js`（`IOffPeakTaskService`）。三个叶子均无 node: 导入（与 main
+    干净构建同源），值边不经 contract hub 是上条浏览器安全不变量的直接要求；类型边仍经
+    contract.ts（擦除后无 bundle 边）。
+- **修复了一处 resolver 盲区（本轮实测发现）**：checker 只解析 tsconfig paths 与 package.json
+  `exports`，**不**解析 package.json `imports` 字段，故 services 的 102 处 `#src/...` 导入对
+  deep-import 门禁完全不可见。原 24 条白名单只登记了相对路径形态的边，**23 条 `#src/session/*`
+  边从未受管**——「止增机制在位」的结论对这批边不成立（正是 review §3 26R2-03 的同构问题：
+  守护边界窄于成文规则）。修法：`global.aliasRules` 新增 `#src/* → packages/services/src/*`
+  （仅 services 包声明该别名，故规则作用面精确），并补 fixture 守护
+  `apps/acode-cli/tests/architecture-coverage.test.mjs`「包私有 #src/* 别名…被拦截（真负例）」
+  与「去掉 aliasRule 即不被解析」双向钉住，防止盲区静默重开。
+- 收敛纪律（继续有效）：新代码一律从 `contract.ts` 导入；需要新的写入/装配边时先在
+  internalEdgeAllowlist 登记并说明为何不能进消费契约（TaskIndexRepo 的判据是写所有权守护），
+  不允许直引实现文件了事。
+- 里程碑工作量（已落地，2026-10-27）：迁移前共 **47 条**真实 services→session 边——24 条相对
+  路径形态（原 internalEdgeAllowlist，门禁可见）+ **23 条 `#src/session/*` 形态（门禁不可见）**。
+  迁移后 **15 条**保留登记（1 条相对 + 14 条 `#src`），全部是上述写入/装配面；其余 32 条消费方
+  边已改指 `contract.ts`。
+  **原评估低估了两点**：① 「`taskIndexRepo` 只 1 条边需单独设计」实为 **5 条写入方边**，因为
+  其中 4 条是 `#src` 形态、门禁看不见；② 白名单「见底」在补齐别名解析前无法真正成立——24 条
+  只是可见面的数字。review §5 的约 39-40 是含 test/specifier 重复计数的另一口径。
 - session 模块内部 0 文件级环（纳管时实测）。
 
 ## Dependency direction
@@ -72,10 +106,24 @@ services 包的公开 API。
 
 ## Registered debt（例外，expires 2026-12-31）
 
-- `onboard-b3-session-over-limit`：7 个存量超 400 行文件（taskIndexRepo.ts
-  2567 行为最大头）；例外只冻结存量，新增超限文件仍阻断。
-- `onboard-b3-session-disables`：8 个含 lint disable 的存量文件。
-- 到期前应拆分文件、移除 disable，而不是续期例外。
+- **已全部偿还（2026-10-30）**：`onboard-b3-session-over-limit`（7 个超 400 行文件，
+  taskIndexRepo.ts 2567 行最大头）与 `onboard-b3-session-disables`（8 个含 disable
+  头注文件）两条删除，session 模块 2026-12-31 例外面清零。
+  - 拆分形态：7 个本体降为 30–386 行 facade（导出面逐名不变，internalEdgeAllowlist
+    15 条登记边与全部消费方零改动），新增 task-index/(13)、automation/(9)、
+    off-peak/(14)、acode-task/(7) 四子目录 43 叶，全部 <400 物理行、0 lint disable。
+  - 所有权与守护：`TaskIndexRepo` 类定义留 taskIndexRepo.ts 本体，叶子零该类名文本
+    引用（task-index-writers 守护文本引用面未扩张，2/2 绿）；`acodeTaskService.ts`
+    及其新增值边叶子（argumentValidators）闭包零 node: 导入，barrel 浏览器安全值边
+    不变（renderer-browser-safety 3/3 绿）；offPeak mock 共享票据状态唯一所有者在
+    off-peak/offPeakMockTicketStore.ts（工厂闭包，处理器经其方法读写）；automation
+    repo 的 Node-only `createRequire("node:sqlite")` 边收敛在
+    automation/automationRepoBase.ts（继承链 Base→Crud→Claiming→Dispatch→Runs，
+    共享同一库连接，不复制状态）。
+  - 两处陈旧 max-lines 头注（claudeNativeSessionImportParser.ts 369 行、
+    offPeakRuntimeModel.ts 357 行——物理行本就低于上限）先行单独删除。
+- 本节「Dependency direction」的描述性数字为拆分前口径；拆分后实测：模块 99 文件、
+  含 node: 导入 44 文件、lint disable 0 处、最大文件 386 行（automationService.ts）。
 
 ## Acceptance scenarios
 
@@ -91,3 +139,8 @@ services 包的公开 API。
    owner conversation 与 contract。
 4. `pnpm --filter @acode/services test` 全绿（session 无独立 test 入口）。
 5. `pnpm exec tsc -b packages/services` 通过（contract.example.ts 参与编译）。
+6. renderer 浏览器安全守护：`packages/desktop/tests/renderer-browser-safety.test.mjs` 遍历
+   desktop/web renderer 入口的**值导入闭包**（type-only 边擦除后不计），命中任何 `node:`
+   builtin 导入即红（logPrivacy.ts 命名空间导入豁免为唯一登记项）；2026-10-30 白屏事故的
+   缺失门禁由该测试补位（单测跑 Node 环境、e2e 冒烟跑生产构建，均测不到 dev 全图求值与
+   rolldown 对 hub 副作用 re-export 的保守保留）。

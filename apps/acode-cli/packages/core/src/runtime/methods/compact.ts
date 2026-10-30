@@ -30,6 +30,7 @@ import {
 } from "../helpers/index.js";
 import type { TurnResult, RunModelTextRequestOptions } from "../types.js";
 import { getRuntimeTurnTimingPort } from "../runtime-turn-timing.js";
+import { getRuntimeCacheDiagnosticsPort } from "../runtime-cache-diagnostics.js";
 import type { Model } from "../deps.js";
 import type { ProviderContextUsageSnapshot } from "../types.js";
 import type { AgentRuntimeInternal } from "../internal.js";
@@ -302,7 +303,8 @@ export async function autoCompactIfNeeded(
       return "skipped";
     }
     context.turnRequestState.entries = compactResult.entries;
-    this.autoCompactConsecutiveFailures = 0;
+    // R1-01 B1：autoCompactConsecutiveFailures 归 RuntimeCacheDiagnosticsOwner，reset 经端口。
+    getRuntimeCacheDiagnosticsPort(this).resetAutoCompactFailures();
     this.logger?.info("Auto compact completed", {
       ...traceContextToLogContext(turnTraceContext),
       event: "compact.auto.completed",
@@ -317,12 +319,13 @@ export async function autoCompactIfNeeded(
     if (isTurnCancellationError(error, abortSignal)) {
       throw error;
     }
-    this.autoCompactConsecutiveFailures++;
+    // R1-01 B1：失败计数经端口原子 ++ 并返回新值（用于日志）。
+    const failureCount = getRuntimeCacheDiagnosticsPort(this).recordAutoCompactFailure();
     this.logger?.warn("Auto compact failed", {
       ...traceContextToLogContext(turnTraceContext),
       errorMessage: error instanceof Error ? error.message : String(error),
       event: "compact.auto.failed",
-      failureCount: this.autoCompactConsecutiveFailures,
+      failureCount,
       compactReason: context.compactReason,
       modelStepIndex: context.modelStepIndex,
       module: "core.runtime",
@@ -457,7 +460,8 @@ export async function reactiveCompactAfterContextExceeded(
       return "skipped";
     }
     context.turnRequestState.entries = compactResult.entries;
-    this.autoCompactConsecutiveFailures = 0;
+    // R1-01 B1：autoCompactConsecutiveFailures 归 RuntimeCacheDiagnosticsOwner，reset 经端口。
+    getRuntimeCacheDiagnosticsPort(this).resetAutoCompactFailures();
     this.logger?.info("Reactive compact completed; retrying model request", {
       ...traceContextToLogContext(turnTraceContext),
       event: "compact.reactive.completed",
@@ -470,12 +474,13 @@ export async function reactiveCompactAfterContextExceeded(
     if (isTurnCancellationError(error, abortSignal)) {
       throw error;
     }
-    this.autoCompactConsecutiveFailures++;
+    // R1-01 B1：失败计数经端口原子 ++ 并返回新值（用于日志）。
+    const failureCount = getRuntimeCacheDiagnosticsPort(this).recordAutoCompactFailure();
     this.logger?.warn("Reactive compact failed after model context overflow", {
       ...traceContextToLogContext(turnTraceContext),
       errorMessage: error instanceof Error ? error.message : String(error),
       event: "compact.reactive.failed",
-      failureCount: this.autoCompactConsecutiveFailures,
+      failureCount,
       modelStepIndex: context?.modelStepIndex,
       module: "core.runtime",
       rapidRefillCount: context?.rapidRefillCount,

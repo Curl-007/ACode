@@ -1,4 +1,4 @@
-import { ProxyChannel, type IChannelClient } from "@acode/rpc";
+import { ProxyChannel, type IChannelClient, type IDisposable } from "@acode/rpc";
 import {
   IFileService,
   IMediaPreviewService,
@@ -43,11 +43,24 @@ import {
 } from "@acode/services";
 
 /**
+ * 带幂等释放边界的 `IServiceAccessor`——WebSocket / 裸协议连接的门面类型。
+ *
+ * 除服务代理外额外暴露 `dispose()`：关闭底层传输（WebSocket/port）+ dispose ChannelClient
+ *（reject 挂起 RPC，fail-closed），幂等（重复调用只生效一次）。消费方（如 web 重连换代丢弃
+ * 孤儿连接时）据此释放已打开的活 socket，而非静默丢弃——与 `MessagePortServiceConnection.dispose`
+ * 同一「一次性释放边界」语义（specs/module-boundary.md）。
+ */
+export interface DisposableServiceAccessor extends IServiceAccessor {
+  /** 幂等释放底层连接（WebSocket/port + ChannelClient）；重复调用只生效一次。 */
+  dispose(): void;
+}
+
+/**
  * RemoteServiceAccess — 通过 ChannelClient 自动创建类型安全的服务代理
  *
  * 新增服务只需在此添加一个 getter。
  */
-export class RemoteServiceAccess implements IServiceAccessor {
+export class RemoteServiceAccess implements DisposableServiceAccessor {
   readonly fileService: IFileService;
   readonly mediaPreviewService: IMediaPreviewService;
   readonly gitService: IGitService;
@@ -91,7 +104,12 @@ export class RemoteServiceAccess implements IServiceAccessor {
   readonly feedbackService: IFeedbackService;
   readonly promptAttachmentTransferService: IPromptAttachmentTransferService;
 
-  constructor(channelClient: IChannelClient) {
+  /** 底层传输的一次性释放边界（client+protocol+socket 的收口），由连接工厂注入；缺省时 dispose 为 no-op。 */
+  private readonly transport?: IDisposable;
+  private disposed = false;
+
+  constructor(channelClient: IChannelClient, transport?: IDisposable) {
+    this.transport = transport;
     this.fileService = ProxyChannel.toService<IFileService>(
       channelClient.getChannel(IFileService.channelName),
     );
@@ -214,5 +232,21 @@ export class RemoteServiceAccess implements IServiceAccessor {
     this.promptAttachmentTransferService = ProxyChannel.toService<IPromptAttachmentTransferService>(
       channelClient.getChannel(IPromptAttachmentTransferService.channelName),
     );
+  }
+
+  /**
+   * 幂等释放底层连接（transport 由连接工厂注入，收口 client+protocol+socket）。
+   *
+   * 修复依据（specs/module-boundary.md）：web 重连换代时会丢弃在途 connect 的 resolve 结果，
+   * 此前门面无任何释放路径，打开的 WebSocket + ChannelClient 泄漏。dispose() 提供对称的
+   * 一次性释放边界，与 MessagePortServiceConnection.dispose 同语义。重复调用只生效一次
+   *（disposed 守卫），未注入 transport 时为 no-op（例如仅用 ChannelClient 构造的裸门面）。
+   */
+  dispose(): void {
+    if (this.disposed) {
+      return;
+    }
+    this.disposed = true;
+    this.transport?.dispose();
   }
 }

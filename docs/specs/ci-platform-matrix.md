@@ -64,6 +64,23 @@
     发布门禁**（发布是低频、高价值、需要启动链路确证的时刻）；ci.yml 的 Windows leg 覆盖
     跨平台**单元/集成**回归（R1），两者互补不重叠。此分工是本 spec 的正式结论。
 
+### R3. 发布产物校验 leg（release.yml `verify_assets`）
+
+11. `verify_assets` 下载各平台发布产物后做结构/尺寸/哈希/签名校验。Windows leg 校验**两个**产物：
+    安装版 `ACode-<VERSION>-win-<arch>.exe`（nsis）与免安装版 `ACode-<VERSION>-win-<arch>.zip`。
+    二者各做 sha256 + 50MiB 尺寸下限；zip 额外解压做结构抽查。
+12. **zip 结构检查按产品名精确断言主 exe**（26R2-03）：解压到子目录 `zip-extracted` 后，必须
+    `Test-Path ACode.exe`（产品名取自 `desktop-product-identity.mjs` production 身份
+    `productName: "ACode"`，release 说明 :232/:267 亦以此名指引用户运行），并 `resources/app.asar`
+    在场。**不得**退回 `Get-ChildItem -Filter '*.exe' | Select-Object -First 1`——那只证明「存在
+    某个 exe」，主 exe 改名/缺失而其他辅助 exe 在场仍会通过。解压到子目录是为避免污染顶层
+    `assets\*.exe`（顶层 glob 非递归，只匹配 nsis 安装包）。
+13. **签名校验覆盖内层便携 exe**（26R2-03）：`WIN_SIGNING=true` 时，除顶层 nsis 安装包外，
+    `zip-extracted\ACode.exe`（内层便携 exe）的 Authenticode 也必须为 `Valid`。zip 与 nsis 共用
+    同一 win-unpacked app 目录，签名开启时内层 exe 同样已签名；此前只校验顶层安装包，内层便携
+    exe 即便 `WIN_SIGNING=true` 也不检查。未签名（`WIN_SIGNING != 'true'`）时走 `Signature note`
+    步显式跳过（当前仓库未配置 Windows 签名 secrets，三态 none）。
+
 ## 与既有门禁的关系
 
 - cli-validation-gates.md 规则 3/5：`typecheck` 单一入口约束继续适用——Windows leg 的 typecheck
@@ -83,6 +100,10 @@
 4. 两个 workflow 所有含 `typecheck` 的 `run` 仍逐字 `pnpm typecheck`（cli-validation-gates 规则 5）。
 5. Windows leg 与 smoke leg 均无 `continue-on-error`、无 `setup-node` 的 `cache: pnpm`、无
    `actions/cache` save（缓存纪律）。
+6. release.yml `verify_assets` 的 zip 结构检查按名断言 `ACode.exe`（非「某 exe 存在」）；
+   `WIN_SIGNING=true` 的签名校验步同时校验顶层 nsis 安装包与 `zip-extracted\ACode.exe` 内层
+   便携 exe 的 Authenticode。YAML 可解析、步骤顺序为「结构检查 → 签名校验」（签名步依赖结构步
+   的解压产物）。
 
 ## 未验证边界
 

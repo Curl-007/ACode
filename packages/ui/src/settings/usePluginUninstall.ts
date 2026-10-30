@@ -1,19 +1,22 @@
 import { useCallback, useMemo, useState } from "react";
-import type { ACodeInstalledPluginSummary, ACodePluginInfo } from "@acode/shared";
+
+import { type V4InstalledPluginSummary, type V4PluginInfo } from "@acode/shared/acode-protocol-v4";
 import type { IPluginManagementService } from "@acode/services";
 import { usePluginManagementStore } from "@/store/pluginManagementStore.js";
 
 interface UsePluginUninstallInput {
   pluginService: IPluginManagementService;
-  installedPlugins: ACodeInstalledPluginSummary[];
-  plugins: ACodePluginInfo[];
+  installedPlugins: V4InstalledPluginSummary[];
+  plugins: V4PluginInfo[];
   operationId: string | null;
   // 卸载会让插件提供的技能/命令失效，调用方传入统一的「能力变更后刷新」收尾逻辑。
   onAfterUninstall: () => Promise<void>;
 }
 
-interface PluginUninstallController {
-  pendingPlugin: ACodePluginInfo | ACodeInstalledPluginSummary | null;
+// 批次 4 外迁（2026-10-28）：plugins/usePluginListController 的导出签名经推断引用本类型，
+// 依 TS4058/ts-no-return-type 规则由属主模块具名导出。
+export interface PluginUninstallController {
+  pendingPlugin: V4PluginInfo | V4InstalledPluginSummary | null;
   uninstalling: boolean;
   requestUninstall: (pluginId: string) => void;
   cancelUninstall: () => void;

@@ -13,6 +13,7 @@ import {
   type ToolSearchModelFacts,
 } from "../../tool/search/exposure.js";
 import type { RuntimeMessageEntry } from "../../agent/message-history.js";
+import { getRuntimeToolCachePort } from "../runtime-tool-cache.js";
 
 /** 模型侧事实解析：波 1 native 恒不可用（R2），capability 只登记不参与 auto 解析。 */
 function resolveToolSearchModelFacts(model: Model): ToolSearchModelFacts {
@@ -60,7 +61,8 @@ export function projectToolSearchRequest(
 ): { tools: ModelToolContract[]; entries: readonly RuntimeMessageEntry[] } {
   const mode = resolveConfiguredMode(runtime);
   if (mode === "off") {
-    runtime.toolSearchContext = undefined;
+    // R1-01 B4：toolSearchContext 归 RuntimeToolCacheOwner，写面经端口。
+    getRuntimeToolCachePort(runtime).clearToolSearchContext();
     return { tools: [...tools], entries };
   }
   const exposure = buildToolExposure({
@@ -70,7 +72,8 @@ export function projectToolSearchRequest(
     registry: runtime.registry,
     entries,
   });
-  runtime.toolSearchContext = exposure.context;
+  // R1-01 B4：toolSearchContext 归 RuntimeToolCacheOwner，写面经端口。
+  getRuntimeToolCachePort(runtime).commitToolSearchContext(exposure.context);
   if (!exposure.enabled) {
     // R12 降级：fail-open 到现状（全量目录照常发送），一次性 debug 原因，不 fail 请求。
     runtime.logger?.debug("Tool search disabled for this request", {

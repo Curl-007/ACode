@@ -4,6 +4,7 @@ import type { RuntimeCommand, TaskNotificationRuntimeCommand } from "../command-
 import { uuidv7 } from "@acode/shared";
 import type { AgentRuntimeInternal } from "../internal.js";
 import { getRuntimeCommandDrainPort } from "../turn-coordination.js";
+import { getRuntimeForegroundExecutionPort } from "../runtime-foreground-execution.js";
 import {
   persistBackgroundTaskNotificationBatch,
   shouldSuppressTaskNotificationRuntimeCommand,
@@ -84,7 +85,7 @@ function dequeueNextRunnableBatch(this: AgentRuntimeInternal): readonly RuntimeC
 
   // sendQueuedNow 过去在 Stop A 与 promoted command 入队之间没有 Core
   // 调度所有权，notification B 会抢先出队。匹配 command 出队与 lease 消费必须同一同步步。
-  this.foregroundPromotionLease = undefined;
+  getRuntimeForegroundExecutionPort(this).consumePromotionLease();
   return Object.freeze([removedPromotedCommand]);
 }
 
@@ -134,10 +135,12 @@ export function acquireForegroundPromotionLease(
   ) {
     return { kind: "busy" };
   }
-  this.foregroundPromotionLease = {
+  // R1-01 B2：lease 提交归 RuntimeForegroundExecutionOwner（conflict/busy 裁决留在
+  // 本方法——读面含其他 owner 字段；owner 入库时浅冻结 lease）。
+  getRuntimeForegroundExecutionPort(this).commitPromotionLease({
     leaseId: options.leaseId,
     promotedInputId: options.promotedInputId,
-  };
+  });
   return { kind: "acquired", leaseId: options.leaseId };
 }
 
@@ -145,8 +148,8 @@ export function releaseForegroundPromotionLease(
   this: AgentRuntimeInternal,
   leaseId: string,
 ): boolean {
-  if (this.foregroundPromotionLease?.leaseId !== leaseId) return false;
-  this.foregroundPromotionLease = undefined;
+  // R1-01 B2：lease 比对 + 清除归 owner 端口；只在命中释放后恢复 drain（语义不变）。
+  if (!getRuntimeForegroundExecutionPort(this).releasePromotionLease(leaseId)) return false;
   // 启动前失败时 B 可能已在 lease 后等待；释放必须主动恢复 drain，不能等下一条 enqueue。
   void this.drainRuntimeCommandQueue();
   return true;
@@ -424,7 +427,9 @@ function beginForegroundExecution(
   // 旧 Stop 只持有 bootstrap 外层 controller，而 goal verifier/continuation
   // 已经越过普通 turn 生命周期。取消域必须覆盖整条 runtime command，才能在两个阶段
   // 的交界处仍命中同一次前台执行。
-  this.activeForegroundExecution = state;
+  // R1-01 B2：state 持有归 RuntimeForegroundExecutionOwner（引用不冻结——
+  // stopActiveForegroundExecution 的 preserveQueueAutoDrainOnCancel 容器内写保留）。
+  getRuntimeForegroundExecutionPort(this).beginForegroundExecution(state);
   return state;
 }
 
@@ -433,9 +438,8 @@ function finishForegroundExecution(
   state: ActiveForegroundExecutionState,
 ): void {
   state.disposeParentAbort();
-  if (this.activeForegroundExecution === state) {
-    this.activeForegroundExecution = undefined;
-  }
+  // R1-01 B2：identity 命中清除归 owner 端口（不匹配是 no-op，语义不变）。
+  getRuntimeForegroundExecutionPort(this).finishForegroundExecution(state);
 }
 
 function runtimeCommandAbortSignal(command: RuntimeCommand): AbortSignal | undefined {

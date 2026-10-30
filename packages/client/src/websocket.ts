@@ -3,11 +3,12 @@ import {
   VSBuffer,
   SocketProtocol,
   ChannelClient,
+  toDisposable,
+  type IDisposable,
   type IMessagePassingProtocol,
   type ISocket,
 } from "@acode/rpc";
-import type { IServiceAccessor } from "@acode/services";
-import { RemoteServiceAccess } from "./remoteServiceAccess.js";
+import { RemoteServiceAccess, type DisposableServiceAccessor } from "./remoteServiceAccess.js";
 
 export interface WebSocketConnectionCloseEvent {
   code: number;
@@ -62,7 +63,7 @@ function wrapBrowserWebSocket(ws: WebSocket): ISocket {
 export function connectViaWebSocket(
   wsUrl: string,
   options?: WebSocketConnectionOptions,
-): Promise<IServiceAccessor> {
+): Promise<DisposableServiceAccessor> {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(wsUrl);
     let settled = false;
@@ -94,12 +95,30 @@ export function connectViaWebSocket(
       settled = true;
       options?.onOpenSocket?.(ws);
       const socket = wrapBrowserWebSocket(ws);
-      resolve(connectViaProtocol(new SocketProtocol(socket)));
+      // socket 作为底层传输交给 connectViaProtocol，使门面 dispose() 能一路收口到 ws.close()。
+      resolve(connectViaProtocol(new SocketProtocol(socket), socket));
     });
   });
 }
 
-export function connectViaProtocol(protocol: IMessagePassingProtocol): IServiceAccessor {
+/**
+ * 在既有协议上装配 ChannelClient + 服务门面，并绑定幂等释放边界。
+ *
+ * `extraTransport`（WebSocket 链路传底层 ISocket）与 protocol 一起构成 client 之下的传输栈；
+ * 门面 `dispose()` 按 desktop `serverRemoteConnection.beginDisposal` 的顺序收口：
+ * client.dispose()（reject 挂起 RPC，fail-closed）→ protocol.dispose?.()（摘 onMessage 订阅、清帧组装
+ * watchdog）→ extraTransport.dispose()（关闭底层 WebSocket/port）。幂等性由 RemoteServiceAccess 守卫。
+ */
+export function connectViaProtocol(
+  protocol: IMessagePassingProtocol,
+  extraTransport?: IDisposable,
+): DisposableServiceAccessor {
   const client = new ChannelClient(protocol);
-  return new RemoteServiceAccess(client);
+  const transport = toDisposable(() => {
+    client.dispose();
+    // IMessagePassingProtocol 未强制 dispose；SocketProtocol 有，裸协议可缺省。
+    (protocol as Partial<IDisposable>).dispose?.();
+    extraTransport?.dispose();
+  });
+  return new RemoteServiceAccess(client, transport);
 }

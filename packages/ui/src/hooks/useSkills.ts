@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { ACodeSkillReferenceCatalogEntry } from "@acode/shared";
+
+import { type V4SkillReferenceCatalogEntry } from "@acode/shared/acode-protocol-v4";
 import { useWorkspaceServicesResolution } from "@/hooks/useWorkspaceServices.js";
 import { logger } from "@/logger.js";
 
 interface ConversationSkillCatalogState {
-  skills: ACodeSkillReferenceCatalogEntry[];
+  skills: V4SkillReferenceCatalogEntry[];
   authority: "session" | "workspace" | null;
   loading: boolean;
   error: string | null;

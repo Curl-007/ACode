@@ -1,4 +1,5 @@
 import type { AgentRuntimeInternal } from "../internal.js";
+import { getRuntimeSidecarPort } from "../runtime-sidecar.js";
 
 /**
  * 登记会越过当前同步调用栈的 runtime-owned work。
@@ -6,14 +7,17 @@ import type { AgentRuntimeInternal } from "../internal.js";
  * session 常驻池过去只观察 active turn 与 task registry；title、MCP startup、
  * ledger write 等 detached Promise 不在两者中，可能在仍读写 runtime 时被当作 idle 关闭。
  * 计数必须在 Promise 启动的同一同步片增加，并只在 finally 释放。
+ * R1-01 B4：residencyBlockingWorkCount 归 RuntimeSidecarOwner，begin/end 端口各保持
+ * 原子化（`+= 1` 与 `Math.max(0, n - 1)` 语义不变）。
  */
 export function trackResidencyBlockingWork<T>(
   this: AgentRuntimeInternal,
   work: Promise<T>,
 ): Promise<T> {
-  this.residencyBlockingWorkCount += 1;
+  const sidecarPort = getRuntimeSidecarPort(this);
+  sidecarPort.beginBlockingWork();
   return work.finally(() => {
-    this.residencyBlockingWorkCount = Math.max(0, this.residencyBlockingWorkCount - 1);
+    sidecarPort.endBlockingWork();
   });
 }
 

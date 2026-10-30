@@ -60,6 +60,8 @@ export function LoginApiKeyForm({ onCancel, onSaved, onSkipped }: LoginApiKeyFor
   const [saving, setSaving] = useState(false);
   const [skipping, setSkipping] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** 保存成功后落到「已保存」屏，用户点继续或跳过进入下一步。 */
+  const [saved, setSaved] = useState(false);
   const providerSettingsRead = useProviderSettingsView();
   const providerSettingsView =
     providerSettingsRead.state.status === "ready" ? providerSettingsRead.state.view : null;
@@ -105,7 +107,8 @@ export function LoginApiKeyForm({ onCancel, onSaved, onSkipped }: LoginApiKeyFor
         created.providerId,
       );
       markApiKeyLoginSuccess(defaultModelPreference);
-      await onSaved();
+      // 保存成功**不直接跳走**：先落到「已保存」屏，让用户确认后再点继续。
+      setSaved(true);
     } catch (saveError) {
       logger.error("[LoginEntry] 保存 API Key provider 失败", {
         templateId,
@@ -151,6 +154,44 @@ export function LoginApiKeyForm({ onCancel, onSaved, onSkipped }: LoginApiKeyFor
   };
 
   const busy = saving || skipping;
+
+  // ── 保存后的确认屏 ─────────────────────────────────────────────
+  // 与上面的表单态互斥：保存成功即切到这里，用户点继续或跳过进入下一步。
+  if (saved) {
+    return (
+      <div className="space-y-4">
+        <div className="space-y-2">
+          <h2 className="text-ui-base font-medium text-foreground">
+            {intl.formatMessage({ id: "login.apiKey.savedTitle" })}
+          </h2>
+          <p className="text-ui-xs leading-4 text-foreground-subtle">
+            {intl.formatMessage({ id: "login.apiKey.savedHint" })}
+          </p>
+        </div>
+
+        <div className="space-y-2">
+          <Button
+            type="button"
+            className="h-10 w-full text-ui-base"
+            size="lg"
+            data-testid="login-api-key-saved-continue-button"
+            onClick={() => void onSaved()}
+          >
+            {intl.formatMessage({ id: "login.apiKey.continue" })}
+          </Button>
+          <Button
+            type="button"
+            variant="link"
+            className="h-7 w-full text-ui-base text-foreground-subtle hover:text-foreground"
+            data-testid={TID_LOGIN_API_KEY_SKIP_BUTTON}
+            onClick={() => void onSkipped()}
+          >
+            {intl.formatMessage({ id: "login.apiKey.skipVerification" })}
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">

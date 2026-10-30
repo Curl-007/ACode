@@ -1,13 +1,11 @@
-import {
-  ACODE_OFFICIAL_PLUGIN_MARKETPLACE_ID,
-  type ACodePluginsResolveSuggestedReferenceResult,
-} from "@acode/shared";
+import { ACODE_OFFICIAL_PLUGIN_MARKETPLACE_ID } from "@acode/shared";
+import { type V4PluginsResolveSuggestedReferenceResult } from "@acode/shared/acode-protocol-v4";
 
 export interface DraftSuggestedPluginFlow {
   anchorItemId: string;
   operationId: string;
   plugin: { stableId: string; label: string };
-  result?: ACodePluginsResolveSuggestedReferenceResult;
+  result?: V4PluginsResolveSuggestedReferenceResult;
   stage: "checking" | "missing" | "disabled" | "unavailable";
 }
 
@@ -39,7 +37,7 @@ export async function trackDraftSuggestedPluginOperation<T>(
 }
 
 export function resolveDraftSuggestedPluginFlowStage(
-  result: ACodePluginsResolveSuggestedReferenceResult,
+  result: V4PluginsResolveSuggestedReferenceResult,
 ): DraftSuggestedPluginFlow["stage"] {
   const { status } = result;
   if (

@@ -4,7 +4,8 @@
  * 跨包唯一入口（package exports `"."` 与 `"./contract"`）。消费方只有 bootstrap 装配接缝
  * （workflow-wiring / workflow-app-facade / workflow-facade / workflow-methods /
  * script-workflow-methods / create-app / ambient-runtime / overnight-controller /
- * swarm-plan-runtime）、legacy `acode-protocol/saved-workflows.ts` 与 CLI 测试；一律经
+ * swarm-plan-runtime）、`acode-protocol-v4/saved-workflows-hub.ts`（M2-6 起承载已保存
+ * 工作流中枢的 v4 面）与 CLI 测试；一律经
  * 包名入口，不得深导入内部文件。
  *
  * 本包拥有：DWF run 应用服务（launch/submit/lifecycle/replay/roster/observation/

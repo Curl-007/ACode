@@ -1,9 +1,5 @@
 /* eslint-disable max-lines -- 存量基线豁免:该文件先于 CLI lint 门禁建立即超限(根 lint 的 ignorePatterns 排除 apps/acode-cli,turbo lint 因此从未变绿)。头注豁免以恢复门禁信号;拆分重构超出本批范围。 */
-import {
-  backgroundBashOutputResultSchema,
-  v4BackgroundBashOutputParamsSchema,
-  type BackgroundBashOutputResult,
-} from "@acode/shared/acode-protocol-v4";
+import { backgroundBashOutputResultSchema, v4BackgroundBashOutputParamsSchema, type BackgroundBashOutputResult, type CommandAck, type AttachmentRef, type CommandEnvelope, type CommandKey, type CommandResult, type ConversationRowTarget, type CommandsQueryResult, type ConversationInputIntent, type ConversationTopicFrame, type QueueItem, type RoutedTopicFrame, type RoutedTopicWireFrame, type SessionSummary, type SessionsIndexTopicFrame, type SubscribeAck, type V4AttachmentBeginResult, type V4AttachmentChunkResult, type V4AttachmentCommitResult, type V4AttachmentPreviewSourceResult, type V4AttachmentReadResult, type V4ConversationAttachmentReadResult, type V4ConversationAttachmentStatResult, type V4ConversationFileChangesResult, type V4ConversationFileRewindPreviewResult, type V4ConversationPlansResult, type V4ConversationWorkflowRunArtifactDataResult, type V4ConversationWorkflowRunArtifactReadResult, type V4ConversationWorkflowRunArtifactsResult, type V4ConversationWorkflowRunNodeResultResult, type V4ConversationWorkflowRunWorkspaceResult, type V4ConversationWorkflowRunEventsResult, type V4ConversationWorkflowRunsResult, type V4ConversationRowsRangeResult, type WorkspaceConfigState, type WorkspaceConfigTopicFrame, type ConversationTelemetryFact, type CuaPermissionObservation, type ConversationOpenTiming, DELIVERY_PROFILES, PROTOCOL_V4_LIMITS, ACODE_ATTACHMENT_FAULT_CODES, ACodeAttachmentFaultError, readACodeAttachmentFaultCode, encodeTopicWireFrames, commandsQueryParamsSchema, commandsQueryResultSchema, parseCommandEnvelope, measureTopicNotificationEnvelopeBytes, parseConversationTopic, parseSessionsIndexTopic, parseWorkspaceConfigTopic, v4AttachmentAbortParamsSchema, v4AttachmentBeginParamsSchema, v4AttachmentChunkParamsSchema, v4AttachmentCommitParamsSchema, v4AttachmentPreviewSourceParamsSchema, v4AttachmentPreviewSourceResultSchema, v4AttachmentReadParamsSchema, v4ConversationAttachmentReadParamsSchema, v4ConversationAttachmentReadResultSchema, v4ConversationAttachmentStatParamsSchema, v4ConversationAttachmentStatResultSchema, v4ConnectionFlowParamsSchema, v4ConversationFileChangesParamsSchema, v4ConversationFileRewindPreviewParamsSchema, v4ConversationPlansParamsSchema, WORKFLOW_ARTIFACT_LIMITS, v4ConversationWorkflowRunArtifactDataParamsSchema, v4ConversationWorkflowRunArtifactDataResultSchema, v4ConversationWorkflowRunArtifactReadParamsSchema, v4ConversationWorkflowRunArtifactReadResultSchema, v4ConversationVisualizationReadParamsSchema, v4ConversationVisualizationReadResultSchema, type V4ConversationVisualizationReadResult, v4NetworkCaptureSetEnabledParamsSchema, v4NetworkCaptureSetEnabledResultSchema, type V4NetworkCaptureSetEnabledResult, type V4NetworkCaptureRecordsNotification, v4ConversationWorkflowRunArtifactsParamsSchema, v4ConversationWorkflowRunArtifactsResultSchema, v4ConversationWorkflowRunNodeResultParamsSchema, v4ConversationWorkflowRunNodeResultResultSchema, v4ConversationWorkflowRunWorkspaceParamsSchema, v4ConversationWorkflowRunWorkspaceResultSchema, WORKFLOW_WORKSPACE_LIMITS, v4ConversationWorkflowRunEventsParamsSchema, v4ConversationWorkflowRunEventsResultSchema, v4ConversationWorkflowRunsParamsSchema, v4ConversationWorkflowRunsResultSchema, v4ConversationRowsRangeParamsSchema, v4ConversationResyncParamsSchema, v4ConversationSubscribeParamsSchema, v4ConversationUnsubscribeParamsSchema, SUPERSEDED_BY_REDELIVERY_REASON_CODE, type PendingInteractionHints } from "@acode/shared/acode-protocol-v4";
 // V4 conversation 网关（host 通道层 CLI 侧）。
 // 职责：per-session ConversationTopicPublisher 注册表 + flushWindowMs 定时调度
 // + v4/command → CommandInbox → 宿主 executor 的收口。
@@ -30,105 +26,7 @@ import type {
 import { SessionEventType, isFileSystemPortError } from "@acode/contracts";
 import type { ACodeWorkspaceRef } from "@acode/shared";
 import { extractMarkdownArtifactImageRefs } from "@acode/shared";
-import type {
-  CommandAck,
-  AttachmentRef,
-  CommandEnvelope,
-  CommandKey,
-  CommandResult,
-  ConversationRowTarget,
-  CommandsQueryResult,
-  ConversationInputIntent,
-  ConversationTopicFrame,
-  QueueItem,
-  RoutedTopicFrame,
-  RoutedTopicWireFrame,
-  SessionSummary,
-  SessionsIndexTopicFrame,
-  SubscribeAck,
-  V4AttachmentBeginResult,
-  V4AttachmentChunkResult,
-  V4AttachmentCommitResult,
-  V4AttachmentPreviewSourceResult,
-  V4AttachmentReadResult,
-  V4ConversationAttachmentReadResult,
-  V4ConversationAttachmentStatResult,
-  V4ConversationFileChangesResult,
-  V4ConversationFileRewindPreviewResult,
-  V4ConversationPlansResult,
-  V4ConversationWorkflowRunArtifactDataResult,
-  V4ConversationWorkflowRunArtifactReadResult,
-  V4ConversationWorkflowRunArtifactsResult,
-  V4ConversationWorkflowRunNodeResultResult,
-  V4ConversationWorkflowRunWorkspaceResult,
-  V4ConversationWorkflowRunEventsResult,
-  V4ConversationWorkflowRunsResult,
-  V4ConversationRowsRangeResult,
-  WorkspaceConfigState,
-  WorkspaceConfigTopicFrame,
-  ConversationTelemetryFact,
-  CuaPermissionObservation,
-  ConversationOpenTiming,
-} from "@acode/shared/acode-protocol-v4";
-import {
-  DELIVERY_PROFILES,
-  PROTOCOL_V4_LIMITS,
-  ACODE_ATTACHMENT_FAULT_CODES,
-  ACodeAttachmentFaultError,
-  readACodeAttachmentFaultCode,
-  encodeTopicWireFrames,
-  commandsQueryParamsSchema,
-  commandsQueryResultSchema,
-  parseCommandEnvelope,
-  measureTopicNotificationEnvelopeBytes,
-  parseConversationTopic,
-  parseSessionsIndexTopic,
-  parseWorkspaceConfigTopic,
-  v4AttachmentAbortParamsSchema,
-  v4AttachmentBeginParamsSchema,
-  v4AttachmentChunkParamsSchema,
-  v4AttachmentCommitParamsSchema,
-  v4AttachmentPreviewSourceParamsSchema,
-  v4AttachmentPreviewSourceResultSchema,
-  v4AttachmentReadParamsSchema,
-  v4ConversationAttachmentReadParamsSchema,
-  v4ConversationAttachmentReadResultSchema,
-  v4ConversationAttachmentStatParamsSchema,
-  v4ConversationAttachmentStatResultSchema,
-  v4ConnectionFlowParamsSchema,
-  v4ConversationFileChangesParamsSchema,
-  v4ConversationFileRewindPreviewParamsSchema,
-  v4ConversationPlansParamsSchema,
-  WORKFLOW_ARTIFACT_LIMITS,
-  v4ConversationWorkflowRunArtifactDataParamsSchema,
-  v4ConversationWorkflowRunArtifactDataResultSchema,
-  v4ConversationWorkflowRunArtifactReadParamsSchema,
-  v4ConversationWorkflowRunArtifactReadResultSchema,
-  v4ConversationVisualizationReadParamsSchema,
-  v4ConversationVisualizationReadResultSchema,
-  type V4ConversationVisualizationReadResult,
-  v4NetworkCaptureSetEnabledParamsSchema,
-  v4NetworkCaptureSetEnabledResultSchema,
-  type V4NetworkCaptureSetEnabledResult,
-  type V4NetworkCaptureRecordsNotification,
-  v4ConversationWorkflowRunArtifactsParamsSchema,
-  v4ConversationWorkflowRunArtifactsResultSchema,
-  v4ConversationWorkflowRunNodeResultParamsSchema,
-  v4ConversationWorkflowRunNodeResultResultSchema,
-  v4ConversationWorkflowRunWorkspaceParamsSchema,
-  v4ConversationWorkflowRunWorkspaceResultSchema,
-  WORKFLOW_WORKSPACE_LIMITS,
-  v4ConversationWorkflowRunEventsParamsSchema,
-  v4ConversationWorkflowRunEventsResultSchema,
-  v4ConversationWorkflowRunsParamsSchema,
-  v4ConversationWorkflowRunsResultSchema,
-  v4ConversationRowsRangeParamsSchema,
-  v4ConversationResyncParamsSchema,
-  v4ConversationSubscribeParamsSchema,
-  v4ConversationUnsubscribeParamsSchema,
-  SUPERSEDED_BY_REDELIVERY_REASON_CODE,
-  type PendingInteractionHints,
-} from "@acode/shared/acode-protocol-v4";
+
 import { AttachmentUploadRegistry } from "./attachment-upload-registry.js";
 import {
   ColdSessionResumeCoordinator,
@@ -150,6 +48,8 @@ import type {
   SessionUsageSeed,
 } from "./product-projection.js";
 import type { ConversationRowTargetAction } from "./product-projection.js";
+// U11：工具图片 ref 的读取授权（纯函数叶子，拆出不给本文件加码）。
+import { resolveAuthorizedToolMedia } from "./tool-media-authorization.js";
 import { SessionsIndexFanoutThrottle } from "./sessions-index-fanout-throttle.js";
 import { SessionsIndexPublisher } from "./sessions-index-publisher.js";
 import { SessionsIndexPublisherRegistry } from "./sessions-index-publisher-registry.js";
@@ -220,10 +120,11 @@ export interface V4GatewayHost {
   /** 会话是否在宿主注册表中活跃（inbox 的 sessionNotFound 裁决依据）。 */
   sessionExists(sessionId: string): boolean;
   /**
-   * V4 冷恢复钩子。gateway 用同一个 READY promise 包住 runtime activation 与 projection
-   * hydration；宿主只负责恢复 record。
+   * V4 冷恢复能力。gateway 用同一个 READY promise 包住 runtime activation 与 projection
+   * hydration；宿主（v4-binder）只负责恢复 record。
+   * M3 收编：曾为可选过渡钩子；legacy 目录删除后执行面与 binder 同归 v4 目录，转为必填。
    */
-  resumePersistedSession?(
+  resumePersistedSession(
     sessionId: string,
     resumeThoughtLevel?: string,
     workspace?: ACodeWorkspaceRef,
@@ -1945,7 +1846,7 @@ export class ConversationV4Gateway {
    *
    * 这两个 query 都经 app 能力读 journal，而宿主按 sessionId 找 record——历史
    * 会话的 record 只由**订阅**路径激活。renderer 里发现查询的 effect 声明在 lease/订阅
-   * effect 之前，而 CLI 严格串行派发请求（`acode-protocol/transport.ts`，只有 session/stop
+   * effect 之前，而 CLI 严格串行派发请求（`acode-protocol-v4/transport.ts`，只有 session/stop
    * 越队），于是「重启后打开历史会话」时它必然先于订阅被处理、必然拿到 sessionNotFound：
    * 工具卡的 join 回退整块消失，卡片退回编译态，被打断的 run 连入口都没有。
    *
@@ -2277,6 +2178,18 @@ export class ConversationV4Gateway {
 
     // 旧 renderer 没有 row target，无法按消息定位持久 artifact；一旦
     // previewRef 存在就只能授权该 durable ref，不能重新放行可变的原始路径。
+    //
+    // U11：工具图片走 ref 形态时，字节不在 row 里，读取只能靠这条 ref-only 路径授权。判据是
+    // 「当前 session 的权威 toolCall row 的 node_repl_images display 是否携带该 ref」——由
+    // resolveAuthorizedToolMedia（sibling 叶子，不给本文件加码）逐字照 attachmentRead 纪律证明，
+    // 命中返回**行上的** mime/bytes（不采信 renderer 自报），越权/未命中一律 null。
+    const toolMedia = resolveAuthorizedToolMedia({
+      rows: publisher.getSnapshot().rows.window,
+      sessionId,
+      ref,
+    });
+    if (toolMedia) return { attachment: toolMedia };
+
     for (const row of publisher.getSnapshot().rows.window) {
       if (row.kind === "userInput") {
         for (const attachment of row.attachments ?? []) {

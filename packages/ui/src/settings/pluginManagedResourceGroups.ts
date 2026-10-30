@@ -1,15 +1,5 @@
-import type {
-  PluginCommand,
-  McpServerStatus,
-  SkillSummary,
-  UserCommand,
-  ACodeCommand,
-  ACodeMcpServer,
-  ACodeMcpServerStatusSnapshot,
-  ACodePluginInfo,
-  ACodePluginComponentKind,
-  ACodePluginsDescribeResult,
-} from "@acode/shared";
+import type { PluginCommand, McpServerStatus, SkillSummary, UserCommand, ACodeCommand, ACodeMcpServer } from "@acode/shared";
+import { type V4McpServerStatusSnapshot, type V4PluginInfo, type V4PluginComponentKind, type V4PluginsDescribeResult } from "@acode/shared/acode-protocol-v4";
 import { isPluginCommand, isUserCommand, ACODE_COMMAND_AGENT_SOURCE } from "@acode/shared";
 import type { PluginComponentDisplayGroup } from "@/settings/PluginComponentGroups.js";
 
@@ -21,7 +11,7 @@ interface ResourceGroups<TLocal, TPlugin> {
 }
 
 /** 详情分组的展示顺序，与 describeResultToDisplayGroups / buildInstalledPluginDisplayGroups 一致。 */
-const COMPONENT_KIND_ORDER: ACodePluginComponentKind[] = [
+const COMPONENT_KIND_ORDER: V4PluginComponentKind[] = [
   "agent",
   "command",
   "skill",
@@ -34,9 +24,9 @@ const COMPONENT_KIND_ORDER: ACodePluginComponentKind[] = [
  * 省略空分组。数量取 items.length（describe 已是权威枚举）。
  */
 export function describeResultToDisplayGroups(
-  result: ACodePluginsDescribeResult,
+  result: V4PluginsDescribeResult,
 ): PluginComponentDisplayGroup[] {
-  const byKind = new Map<ACodePluginComponentKind, PluginComponentDisplayGroup>();
+  const byKind = new Map<V4PluginComponentKind, PluginComponentDisplayGroup>();
   for (const group of result.components) {
     if (group.items.length === 0) continue;
     byKind.set(group.kind, {
@@ -63,9 +53,9 @@ export function describeResultToDisplayGroups(
  * 这里直接用它，彻底去掉脆弱的 join。
  */
 export function buildInstalledPluginDisplayGroups(
-  plugin: ACodePluginInfo,
+  plugin: V4PluginInfo,
 ): PluginComponentDisplayGroup[] {
-  const byKind = new Map<ACodePluginComponentKind, PluginComponentDisplayGroup>();
+  const byKind = new Map<V4PluginComponentKind, PluginComponentDisplayGroup>();
   for (const group of plugin.components ?? []) {
     if (group.items.length === 0) continue;
     byKind.set(group.kind, {
@@ -84,9 +74,9 @@ export function buildInstalledPluginDisplayGroups(
 
 export interface PluginMcpServerItem {
   active: boolean;
-  authorization?: ACodeMcpServerStatusSnapshot["authorization"];
+  authorization?: V4McpServerStatusSnapshot["authorization"];
   error?: string;
-  failureKind?: ACodeMcpServerStatusSnapshot["failureKind"];
+  failureKind?: V4McpServerStatusSnapshot["failureKind"];
   id: string;
   hostProvided?: boolean;
   name: string;
@@ -221,9 +211,9 @@ export function filterLocalMcpServers(servers: ACodeMcpServer[], query: string):
 }
 
 export function buildPluginMcpServerItems(
-  plugins: ACodePluginInfo[],
+  plugins: V4PluginInfo[],
   query: string,
-  statusSnapshots: Record<string, ACodeMcpServerStatusSnapshot> = {},
+  statusSnapshots: Record<string, V4McpServerStatusSnapshot> = {},
 ): PluginMcpServerItem[] {
   return plugins.flatMap((plugin) => {
     const hostNames = new Set(plugin.hostMcpServerNames ?? []);
@@ -276,14 +266,14 @@ export function buildPluginMcpServerItems(
   });
 }
 
-function toPluginMcpServerDisplayName(plugin: ACodePluginInfo, serverName: string): string {
+function toPluginMcpServerDisplayName(plugin: V4PluginInfo, serverName: string): string {
   const namespacePrefix = `plugin:${plugin.name}:`;
   return serverName.startsWith(namespacePrefix)
     ? serverName.slice(namespacePrefix.length)
     : serverName;
 }
 
-function resolvePluginMcpRuntimeServerName(plugin: ACodePluginInfo, displayName: string): string {
+function resolvePluginMcpRuntimeServerName(plugin: V4PluginInfo, displayName: string): string {
   const activeName = plugin.mcpServerNames.find(
     (serverName) =>
       serverName === displayName ||
@@ -293,7 +283,7 @@ function resolvePluginMcpRuntimeServerName(plugin: ACodePluginInfo, displayName:
 }
 
 function mapPluginRuntimeStatus(
-  snapshot: ACodeMcpServerStatusSnapshot | undefined,
+  snapshot: V4McpServerStatusSnapshot | undefined,
 ): Pick<
   PluginMcpServerItem,
   "authorization" | "error" | "failureKind" | "serverRequestId" | "status" | "toolCount"

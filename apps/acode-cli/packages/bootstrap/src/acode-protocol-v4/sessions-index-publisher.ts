@@ -3,13 +3,9 @@
 // 比 ConversationTopicPublisher 简单：index delta 不做 profile 过滤（列表摘要对所有客户端一致），
 // conflation 已在 projection 内完成（同 sessionId 覆盖）；重放缓冲有界，
 // 溢出/断档退化为 snapshot（conflated 语义下与续传等价）。
-import type {
-  ConversationSnapshot,
-  SessionsIndexDelta,
-  SessionsIndexTopicFrame,
-  TopicFrameDeliveryKind,
-} from "@acode/shared/acode-protocol-v4";
 import { sessionsIndexTopic } from "@acode/shared/acode-protocol-v4";
+import type { ConversationSnapshot, SessionsIndexDelta, SessionsIndexTopicFrame, TopicFrameDeliveryKind } from "@acode/shared/acode-protocol-v4";
+
 import {
   SessionsIndexProjection,
   type SessionSummaryDeriveExtra,

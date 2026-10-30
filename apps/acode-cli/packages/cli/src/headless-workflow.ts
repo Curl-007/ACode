@@ -64,7 +64,7 @@ export const createHeadlessPermissionBroker = (): NonNullable<
 /**
  * stream-json 里 dwf 进度行的 `type`。
  *
- * 刻意**不**进 `acodeSessionEventTypeSchema`（`shared/src/acode-protocol/index.ts`）：
+ * 刻意**不**进 `acodeSessionEventTypeSchema`（M4a 后居 `shared/src/acode-session-events.ts`）：
  * 那是个闭集 `z.enum` 且喂给 `acodeSessionEventSchema` 的 discriminated union，加值等于让
  * v3 app-server 在类型面上宣告一个它永不发出的事件。stream-json 是 CLI 私有输出格式，
  * 不受协议 strict schema 约束。

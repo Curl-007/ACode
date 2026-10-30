@@ -21,6 +21,7 @@ import type {
   PrepareCuaHelperPermissionDragResult,
 } from "./cuaAccessibilitySettings.js";
 import type { BrowserViewportSize } from "./browser-use/command-metadata.js";
+import type { LocalDiagnosticFacts, SaveDiagnosticReportResult } from "./localDiagnosticReport.js";
 import type {
   PostUpdateReleaseNotesPayload,
   UpdateCheckResultPayload,
@@ -962,6 +963,24 @@ export interface IPlatformService {
    * （失败/取消，详情走 main 日志）。桌面专属；Web fallback 缺席即隐藏入口。
    */
   exportSupportBundle?(): Promise<string | null>;
+
+  /**
+   * 采集本地诊断事实（U12，packages/shared/specs/local-diagnostic-report.md）：各端返回
+   * 自己拥有的白名单 build/connection 事实 DTO + 每组可用性；无法提供的组标 unavailable
+   * 并省略。UI 合并 renderer 内存计数/provider 摘要/events 组装成完整报告。**不发起网络
+   * 请求、不触发 provider live probe、不为采集断线重连**（spec 产品规则 4）。
+   */
+  collectLocalDiagnostics(): Promise<LocalDiagnosticFacts>;
+
+  /**
+   * 保存本地诊断报告 JSON（U12，拟议接口，spec §接口契约）：Desktop 走 save dialog + 写文件，
+   * Web 走 Blob + object URL 下载并在返回前 revokeObjectURL（释放率 100%）。可选；缺席即 UI
+   * 降级为「复制 JSON 到剪贴板」并说明当前平台不支持直接下载。UI 不得直接访问 native bridge。
+   */
+  saveDiagnosticReport?(
+    json: string,
+    suggestedName: string,
+  ): Promise<SaveDiagnosticReportResult>;
 
   /** 截取当前窗口，用于错误反馈携带现场画面；Web fallback 可返回 null */
   captureWindowScreenshot?(): Promise<WindowScreenshotResult | null>;

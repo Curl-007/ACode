@@ -98,7 +98,7 @@ test("projection chain wiring invariants (dispatch / cold replay / v3 strip / co
     "delta 不是 swarmPlan 键级整体替换",
   );
 
-  const bridge = await readCli("packages/bootstrap/src/acode-protocol/v4-bridge.ts");
+  const bridge = await readCli("packages/bootstrap/src/acode-protocol-v4/v4-binder.ts");
   assert.ok(/async function replaySwarmPlanEvent\(/.test(bridge), "冷回放函数缺失");
   assert.ok(/\.\.\.replayedSwarm/.test(bridge), "冷回放事件未前置进 memoryEvents");
   assert.ok(
@@ -113,7 +113,7 @@ test("projection chain wiring invariants (dispatch / cold replay / v3 strip / co
   );
 
   // R2 v4-only：v3 面剥离（场景 7 负向断言）
-  const sessionMapper = await readCli("packages/bootstrap/src/acode-protocol/session-mapper.ts");
+  const sessionMapper = await readCli("packages/bootstrap/src/acode-protocol-v4/session-mapper.ts");
   const stripBlock = sessionMapper.slice(
     sessionMapper.indexOf("event.type === SessionEventType.SwarmPlanProgress"),
   );
@@ -155,7 +155,9 @@ test("wire surface: snapshot optional key, patch key, event naming (R1/R2)", asy
     /swarmPlan: swarmPlanStateSchema\.nullable\(\)\.optional\(\),/.test(delta),
     "statePatchSchema 未挂 swarmPlan 键",
   );
-  const events = await readCli("packages/contracts/src/events/session.events.ts");
+  // 锚点随 2026-10-28 拆分迁移：session.events.ts 已降级为纯桶（导出面逐名不变），
+  // SessionEventType 词表（含本事件名）的权威叶是 session-event-type.ts。
+  const events = await readCli("packages/contracts/src/events/session-event-type.ts");
   assert.ok(/SwarmPlanProgress: "swarm_plan_progress",/.test(events), "事件命名缺前缀");
   // 旧快照 wire 兼容（场景 8）：不含 swarmPlan 键的快照照常解析
   const legacy = JSON.parse(JSON.stringify({ swarmPlan: undefined }));

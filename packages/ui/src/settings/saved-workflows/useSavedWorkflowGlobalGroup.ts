@@ -1,7 +1,8 @@
 // 全局工作流组的状态与动作。抽成 hook 让组件文件守住
 // max-lines 400；载体是 `useServices().acodeAgentService`，RPC 一律带 `{ scope: "global" }`。
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ACodeSavedWorkflowEntry, ACodeSavedWorkflowRun } from "@acode/shared";
+
+import { type V4SavedWorkflowEntry, type V4SavedWorkflowRun } from "@acode/shared/acode-protocol-v4";
 import { toast } from "@/components/ui/toast.js";
 import { useACodeIntl } from "@/i18n/IntlProvider.js";
 import { useConfirmDialog } from "@/hooks/useConfirmDialog.js";
@@ -72,8 +73,8 @@ export function useSavedWorkflowGlobalGroup({
     selectSavedWorkflowState(store, GLOBAL_SAVED_WORKFLOW_TARGET),
   );
   const load = useSavedWorkflowStore((store) => store.load);
-  const [launchEntry, setLaunchEntry] = useState<ACodeSavedWorkflowEntry | null>(null);
-  const [moveEntry, setMoveEntry] = useState<ACodeSavedWorkflowEntry | null>(null);
+  const [launchEntry, setLaunchEntry] = useState<V4SavedWorkflowEntry | null>(null);
+  const [moveEntry, setMoveEntry] = useState<V4SavedWorkflowEntry | null>(null);
   const [busyName, setBusyName] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
 
@@ -128,7 +129,7 @@ export function useSavedWorkflowGlobalGroup({
 
   // 全局档一律弹窗——即使无实参，也需要「运行于」选择器。
   const handleRun = useCallback(
-    (entry: ACodeSavedWorkflowEntry) => {
+    (entry: V4SavedWorkflowEntry) => {
       launcher.clearError();
       setLaunchEntry(entry);
     },
@@ -136,7 +137,7 @@ export function useSavedWorkflowGlobalGroup({
   );
   const launch = useCallback(
     async (
-      entry: ACodeSavedWorkflowEntry,
+      entry: V4SavedWorkflowEntry,
       args: Record<string, unknown>,
       target?: AutomationWorkspaceOption,
     ) => {
@@ -154,7 +155,7 @@ export function useSavedWorkflowGlobalGroup({
     [launcher],
   );
   const handleRevise = useCallback(
-    (entry: ACodeSavedWorkflowEntry) => {
+    (entry: V4SavedWorkflowEntry) => {
       if (!actionTarget) return;
       onCreateViaChat?.(
         buildSavedWorkflowRevisePrompt({
@@ -173,7 +174,7 @@ export function useSavedWorkflowGlobalGroup({
     onCreateViaChat?.(buildSavedWorkflowCreatePrompt(locale, "global"), actionTarget);
   }, [actionTarget, locale, onCreateViaChat]);
   const handleCopyPath = useCallback(
-    (entry: ACodeSavedWorkflowEntry) => {
+    (entry: V4SavedWorkflowEntry) => {
       void navigator.clipboard
         ?.writeText(entry.path)
         .then(() => toast(intl.formatMessage({ id: "workflows.hub.copied" })))
@@ -186,7 +187,7 @@ export function useSavedWorkflowGlobalGroup({
     [intl],
   );
   const handleDelete = useCallback(
-    async (entry: ACodeSavedWorkflowEntry) => {
+    async (entry: V4SavedWorkflowEntry) => {
       const confirmed = await requestConfirmation({
         title: intl.formatMessage({ id: "workflows.hub.delete.title" }, { name: entry.name }),
         description: intl.formatMessage(
@@ -229,18 +230,18 @@ export function useSavedWorkflowGlobalGroup({
     [agentService, intl, mode, onBack, refresh, requestConfirmation],
   );
   const handleCardDelete = useCallback(
-    (entry: ACodeSavedWorkflowEntry) => void handleDelete(entry),
+    (entry: V4SavedWorkflowEntry) => void handleDelete(entry),
     [handleDelete],
   );
-  const handleCardMove = useCallback((entry: ACodeSavedWorkflowEntry) => setMoveEntry(entry), []);
+  const handleCardMove = useCallback((entry: V4SavedWorkflowEntry) => setMoveEntry(entry), []);
   const handleOpen = useCallback(
-    (entry: ACodeSavedWorkflowEntry) => onOpenDetail(entry.name),
+    (entry: V4SavedWorkflowEntry) => onOpenDetail(entry.name),
     [onOpenDetail],
   );
   // 全局档的目标项目按 `run.cwd` 反查已打开项目；没打开就两个入口都关掉
   // （实例必须开在发起它的项目）。门与实参构造与项目档共用（产物不需要 toolCallId）。
   const resolveRunTarget = useCallback(
-    (run: ACodeSavedWorkflowRun) => findProjectByCwd(localProjects, run.cwd) ?? null,
+    (run: V4SavedWorkflowRun) => findProjectByCwd(localProjects, run.cwd) ?? null,
     [localProjects],
   );
   const { handleOpenArtifact, handleOpenRun } = useSavedWorkflowRunOpeners({

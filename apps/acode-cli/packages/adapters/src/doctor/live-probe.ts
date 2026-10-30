@@ -17,6 +17,7 @@ import {
   type ModelToolContract,
   type ModelUsage,
 } from "@acode/contracts";
+import type { ProviderDiagnosticsReasonCode } from "@acode/shared";
 import { getErrorCode, getStatusCode, unwrapRetryError } from "../model/failure-inspection.js";
 import {
   PROVIDER_DOCTOR_PROBE_MAX_OUTPUT_TOKENS,
@@ -50,6 +51,13 @@ export interface ProviderDoctorProbeOutcome {
   /** 是否真的发出了请求：只有 true 才计入可计费调用（spec R6）。 */
   readonly attempted: boolean;
   readonly usage?: ModelUsage;
+  /**
+   * U08 结构化原因码（provider-diagnostics.md R7）。仅 `tool_call_parse` 因
+   * `supportsToolCall=false` 而 skip 时需要它：`tool_call_parse` + `skipped` 有两种成因
+   * （本档不跑 live / 模型不支持工具调用），GUI 必须分开呈现（U08-A5），而 (id,status)
+   * 二元组不足以区分。
+   */
+  readonly reasonCode?: ProviderDiagnosticsReasonCode;
 }
 
 export interface ProviderDoctorLiveProbeInput {
@@ -206,6 +214,7 @@ export async function probeToolCallParse(
       status: "skipped",
       attempted: false,
       detail: "该模型的 properties.supportsToolCall=false，跳过工具调用解析",
+      reasonCode: "tool-call-unsupported",
     };
   }
   const options = resolveProbeOptions(input.model);

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { ACodeTaskMeta } from "@acode/shared";
 import { useACodeSessionService } from "@/hooks/useACodeSessionService.js";
-import { acodeSessionSnapshotToTaskMeta } from "@/lib/acodeSessionProjection.js";
+import { mapSessionHeaderMetaToTaskMeta } from "@/v4/mapSessionHeaderMetaToTaskMeta.js";
 
 function resolveImmediateActiveTaskSnapshotMeta(
   previousSnapshotMeta: ACodeTaskMeta | null,
@@ -61,19 +61,21 @@ export function useActiveTaskSnapshotMeta(
     }
 
     void acodeSessionService
-      // active header 只需要 session meta/标题兜底，走 ACode Protocol 的轻量读取，
-      // 避免继续经 legacy snapshot 把大任务消息整包拉回 UI。
-      .readSession({
+      // active header 只需要 session meta/标题兜底。走 v4 归档冷读（specs/v4-session-header-meta.md）：
+      // 只回 header 元数据，不带消息整包，且**不激活会话运行时**（归档任务的 workspace 进程可能已回收）。
+      // 这是 legacy M1 的两个真投影消费方之一，就此从 acodeSessionProjection 收口。
+      .readSessionHeaderMeta({
         workspacePath,
         workspaceIdentity,
         sessionId: taskId,
-        messageLimit: 1,
       })
-      .then((snapshot) => {
+      .then((result) => {
         if (cancelled) {
           return;
         }
-        setSnapshotMeta(acodeSessionSnapshotToTaskMeta(snapshot));
+        // found=false 是正常竞态（归档 ID 已清理 / 列表数据源缺席），归一成 null——
+        // 与迁移前 .catch(()=>setSnapshotMeta(null)) 同一语义，不让 header 保留上一个任务的残留。
+        setSnapshotMeta(result.found && result.meta ? mapSessionHeaderMetaToTaskMeta(result.meta) : null);
       })
       .catch(() => {
         if (cancelled) {

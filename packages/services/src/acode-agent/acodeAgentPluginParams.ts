@@ -1,9 +1,5 @@
-import type {
-  ACodeAgentMcpServer,
-  ACodeAutomationScheduleRule,
-  ACodeMcpListMode,
-  ModelSelection,
-} from "@acode/shared";
+import type { ACodeAgentMcpServer, ACodeAutomationScheduleRule, ModelSelection } from "@acode/shared";
+import { type V4McpListMode } from "@acode/shared/acode-protocol-v4";
 
 export interface ACodeAgentWorkspaceTarget {
   workspacePath: string;
@@ -18,7 +14,7 @@ export interface ACodeAgentPluginViewParams extends ACodeAgentWorkspaceTarget {
 
 export interface ACodeAgentListMcpServerStatusesParams extends ACodeAgentWorkspaceTarget {
   mcpServers?: ACodeAgentMcpServer[];
-  mode?: ACodeMcpListMode;
+  mode?: V4McpListMode;
 }
 
 export interface ACodeAgentAddPluginMarketplaceParams extends ACodeAgentWorkspaceTarget {

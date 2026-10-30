@@ -1,30 +1,19 @@
-/* eslint-disable max-lines -- 存量基线豁免:该文件先于 CLI lint 门禁建立即超限(根 lint 的 ignorePatterns 排除 apps/acode-cli,turbo lint 因此从未变绿)。头注豁免以恢复门禁信号;拆分重构超出本批范围。 */
 // ============================================================
 // Event Reducer - State projection from events
 // ============================================================
+// 拆分说明（批次 B 例外债务偿还）：原文件 587 行，超 architecture-policy 的
+// max-file-lines（400），头部曾挂行数抑制头注。按事件域拆出三个纯函数叶：
+//   - event-reducer-turn.ts：轮次生命周期 + steer 队列（Turn* / TurnSteer*）；
+//   - event-reducer-tool.ts：工具调用状态机（ToolCall* / ToolBatchComplete）；
+//   - event-reducer-task-permission.ts：后台任务 + 权限（BackgroundTask* / Permission*）。
+// 处理器为纯函数 (projection, event) -> projection；本文件保留 session / compact /
+// checkpoint / rewind / model / target 域处理器与分发骨架。导出面不变。
+
 
 import type {
   SessionEvent,
   SessionCreatedPayload,
   SessionCompactedPayload,
-  TurnCompletePayload,
-  TurnErrorPayload,
-  TurnSteerDiscardedPayload,
-  TurnSteerDrainedPayload,
-  TurnSteerDeliveryChangedPayload,
-  TurnSteerQueuedPayload,
-  TurnSteerReorderedPayload,
-  ToolCallScheduledPayload,
-  ToolCallStartedPayload,
-  ToolCallResultPayload,
-  ToolCallErrorPayload,
-  ToolBatchCompletePayload,
-  BackgroundTaskStartedPayload,
-  BackgroundTaskUpdatedPayload,
-  BackgroundTaskCompletedPayload,
-  PermissionRequestedPayload,
-  PermissionResolvedPayload,
-  PermissionDeniedPayload,
   ModelCompletePayload,
   SessionModeChangedPayload,
   TargetChangedPayload,
@@ -35,6 +24,11 @@ import type {
   StreamingToolLedgerPayload,
 } from "./stream-recovery.events.js";
 import { SessionEventType as EventTypes } from "./session.events.js";
+import type {
+  BackgroundTaskStartedPayload,
+  BackgroundTaskUpdatedPayload,
+  BackgroundTaskCompletedPayload,
+} from "./session.events.js";
 import { getModelUsageContextTokens } from "../model/index.js";
 import { parseCheckpointCreatedPayload, parseRewindTriggeredPayload } from "../rewind/index.js";
 import {
@@ -42,21 +36,38 @@ import {
   failedGoalCompletionVerification,
   parseGoalCompletionVerificationText,
 } from "../tools/target.js";
-import type {
-  ActiveToolCall,
-  PendingPermission,
-  SessionProjection,
-  SessionStatus,
-} from "../interfaces/session.port.js";
+import type { SessionProjection, SessionStatus } from "../interfaces/session.port.js";
 import {
-  applyBackgroundTaskCompleted,
-  applyBackgroundTaskStarted,
-  applyBackgroundTaskUpdated,
   applyCompactBoundary,
   applyStreamRecoveryAnchorCreated,
   applyStreamingToolLedgerUpdate,
   initialSessionProjection,
 } from "./event-reducer-helpers.js";
+import {
+  applyTurnComplete,
+  applyTurnError,
+  applyTurnStarted,
+  applyTurnSteerDeliveryChanged,
+  applyTurnSteerDiscarded,
+  applyTurnSteerDrained,
+  applyTurnSteerQueued,
+  applyTurnSteerReordered,
+} from "./event-reducer-turn.js";
+import {
+  applyToolBatchComplete,
+  applyToolCallError,
+  applyToolCallResult,
+  applyToolCallScheduled,
+  applyToolCallStarted,
+} from "./event-reducer-tool.js";
+import {
+  applyBackgroundTaskCompleted,
+  applyBackgroundTaskStarted,
+  applyBackgroundTaskUpdated,
+  applyPermissionDenied,
+  applyPermissionRequested,
+  applyPermissionResolved,
+} from "./event-reducer-task-permission.js";
 
 function shouldModelCompleteUpdateContextUsed(payload: ModelCompletePayload): boolean {
   if (payload.querySource !== undefined) {
@@ -69,8 +80,7 @@ function shouldModelCompleteUpdateContextUsed(payload: ModelCompletePayload): bo
 }
 
 // -----------------------------------------------
-// Event Reducer
-// -----------------------------------------------
+
 
 export class EventReducer {
   reduce(events: SessionEvent[]): SessionProjection {
@@ -95,6 +105,7 @@ export class EventReducer {
     string,
     (projection: SessionProjection, event: SessionEvent) => SessionProjection
   > = {
+
     [EventTypes.SessionCreated]: (p, e) => {
       const payload = e.payload as SessionCreatedPayload;
       return {
@@ -109,18 +120,7 @@ export class EventReducer {
       };
     },
 
-    [EventTypes.TurnStarted]: (p, e) => {
-      return {
-        ...p,
-        currentTurnId: e.turnId,
-        // 上一轮 provider 失败会写入 projection.lastError；新一轮消息被接受后，
-        // 旧错误不再是当前任务事实。必须在源头清理，避免 readSession/getTaskSnapshot 反复恢复旧横幅。
-        lastError: undefined,
-        turnCount: p.turnCount + 1,
-        status: "running" as SessionStatus,
-        updatedAt: e.timestamp,
-      };
-    },
+    [EventTypes.TurnStarted]: applyTurnStarted,
 
     [EventTypes.SessionCompacted]: (p, e) => {
       const payload = e.payload as SessionCompactedPayload;
@@ -188,15 +188,7 @@ export class EventReducer {
       };
     },
 
-    [EventTypes.TurnComplete]: (p, e) => {
-      const payload = e.payload as TurnCompletePayload;
-      return {
-        ...p,
-        status: "idle" as SessionStatus,
-        totalTokenCount: p.totalTokenCount + payload.tokenCount,
-        updatedAt: e.timestamp,
-      };
-    },
+    [EventTypes.TurnComplete]: applyTurnComplete,
 
     [EventTypes.ModelComplete]: (p, e) => {
       const payload = e.payload as ModelCompletePayload;
@@ -319,186 +311,27 @@ export class EventReducer {
       };
     },
 
-    [EventTypes.TurnError]: (p, e) => {
-      const payload = e.payload as TurnErrorPayload;
-      return {
-        ...p,
-        status: "error" as SessionStatus,
-        // projection 是重启/恢复链路的数据来源，必须保留真实 provider/subagent 根因。
-        lastError: {
-          type: payload.error.type,
-          ...(payload.error.code ? { code: payload.error.code } : {}),
-          message: payload.error.message,
-          ...(payload.error.detail ? { detail: payload.error.detail } : {}),
-          // TurnError 的 provider/network 归因是 live 与 cold projection 的共同事实；
-          // 旧 reducer 只保留文案和 code，导致后续 task meta/telemetry 无法区分 provider 拒绝。
-          ...(payload.error.attribution ? { attribution: payload.error.attribution } : {}),
-        },
-        updatedAt: e.timestamp,
-      };
-    },
+    [EventTypes.TurnError]: applyTurnError,
 
-    [EventTypes.TurnSteerQueued]: (p, e) => {
-      const payload = e.payload as TurnSteerQueuedPayload;
-      const existingIndex = p.pendingSteerInputs.findIndex(
-        (item) => item.pendingInputId === payload.pendingInputId,
-      );
-      const existing = existingIndex >= 0 ? p.pendingSteerInputs[existingIndex] : undefined;
-      const next = {
-        pendingInputId: payload.pendingInputId,
-        input: payload.input,
-        inputPreview: payload.inputPreview,
-        inputSize: payload.inputSize,
-        commandKind: payload.commandKind ?? existing?.commandKind,
-        source: payload.source ?? existing?.source,
-        inputPresentation: payload.inputPresentation ?? existing?.inputPresentation,
-        intent: payload.intent ?? existing?.intent,
-        toolDisallowlist: payload.toolDisallowlist ?? existing?.toolDisallowlist,
-        // editQueueItem 会以同 id 重发 queued 事件；编辑不是重新 admission，
-        // 必须保留原排队时间和数组位置，否则 runtime 冷重建会把它移到队尾。
-        queuedAt: existing?.queuedAt ?? e.timestamp,
-        targetTurnId: payload.targetTurnId,
-        traceId: e.traceId,
-      };
-      return {
-        ...p,
-        pendingSteerInputs:
-          existingIndex >= 0
-            ? p.pendingSteerInputs.map((item, index) => (index === existingIndex ? next : item))
-            : [...p.pendingSteerInputs, next],
-        updatedAt: e.timestamp,
-      };
-    },
+    [EventTypes.TurnSteerQueued]: applyTurnSteerQueued,
 
-    [EventTypes.TurnSteerDeliveryChanged]: (p, e) => {
-      const payload = e.payload as TurnSteerDeliveryChangedPayload;
-      return {
-        ...p,
-        pendingSteerInputs: p.pendingSteerInputs.map((item) =>
-          item.pendingInputId === payload.pendingInputId
-            ? {
-                ...item,
-                intent:
-                  payload.intent ??
-                  (item.intent
-                    ? {
-                        ...item.intent,
-                        admittedDelivery: payload.admittedDelivery,
-                        fallbackReasonCode: payload.fallbackReasonCode,
-                      }
-                    : undefined),
-              }
-            : item,
-        ),
-        updatedAt: e.timestamp,
-      };
-    },
+    [EventTypes.TurnSteerDeliveryChanged]: applyTurnSteerDeliveryChanged,
 
-    [EventTypes.TurnSteerReordered]: (p, e) => {
-      const payload = e.payload as TurnSteerReorderedPayload;
-      const byId = new Map(p.pendingSteerInputs.map((item) => [item.pendingInputId, item]));
-      const orderedIds = new Set(payload.orderedPendingInputIds);
-      const ordered = payload.orderedPendingInputIds.flatMap((id) => {
-        const item = byId.get(id);
-        return item ? [item] : [];
-      });
-      const rest = p.pendingSteerInputs.filter((item) => !orderedIds.has(item.pendingInputId));
-      return {
-        ...p,
-        pendingSteerInputs: [...ordered, ...rest].map((item, queuePosition) => ({
-          ...item,
-          ...(item.intent ? { intent: { ...item.intent, queuePosition } } : {}),
-        })),
-        updatedAt: e.timestamp,
-      };
-    },
+    [EventTypes.TurnSteerReordered]: applyTurnSteerReordered,
 
-    [EventTypes.TurnSteerDrained]: (p, e) => {
-      const payload = e.payload as TurnSteerDrainedPayload;
-      return {
-        ...p,
-        pendingSteerInputs: p.pendingSteerInputs.filter(
-          (item) => !payload.pendingInputIds.includes(item.pendingInputId),
-        ),
-        updatedAt: e.timestamp,
-      };
-    },
+    [EventTypes.TurnSteerDrained]: applyTurnSteerDrained,
 
-    [EventTypes.TurnSteerDiscarded]: (p, e) => {
-      const payload = e.payload as TurnSteerDiscardedPayload;
-      return {
-        ...p,
-        pendingSteerInputs: p.pendingSteerInputs.filter(
-          (item) => !payload.pendingInputIds.includes(item.pendingInputId),
-        ),
-        updatedAt: e.timestamp,
-      };
-    },
+    [EventTypes.TurnSteerDiscarded]: applyTurnSteerDiscarded,
 
-    [EventTypes.ToolCallScheduled]: (p, e) => {
-      const payload = e.payload as ToolCallScheduledPayload;
-      const newToolCall: ActiveToolCall = {
-        toolCallId: payload.toolCallId,
-        toolName: payload.toolName,
-        status: "pending",
-      };
-      return {
-        ...p,
-        activeToolCalls: [...p.activeToolCalls, newToolCall],
-        updatedAt: e.timestamp,
-      };
-    },
+    [EventTypes.ToolCallScheduled]: applyToolCallScheduled,
 
-    [EventTypes.ToolCallStarted]: (p, e) => {
-      const payload = e.payload as ToolCallStartedPayload;
-      return {
-        ...p,
-        activeToolCalls: p.activeToolCalls.map((tc) =>
-          tc.toolCallId === payload.toolCallId
-            ? { ...tc, status: "running", startedAt: payload.startedAt }
-            : tc,
-        ),
-        updatedAt: e.timestamp,
-      };
-    },
+    [EventTypes.ToolCallStarted]: applyToolCallStarted,
 
-    [EventTypes.ToolCallResult]: (p, e) => {
-      const payload = e.payload as ToolCallResultPayload;
-      return {
-        ...p,
-        activeToolCalls: p.activeToolCalls.map((tc) =>
-          tc.toolCallId === payload.toolCallId
-            ? { ...tc, status: payload.result.success ? "completed" : "failed" }
-            : tc,
-        ),
-        updatedAt: e.timestamp,
-      };
-    },
+    [EventTypes.ToolCallResult]: applyToolCallResult,
 
-    [EventTypes.ToolCallError]: (p, e) => {
-      const payload = e.payload as ToolCallErrorPayload;
-      return {
-        ...p,
-        activeToolCalls: p.activeToolCalls.map((tc) =>
-          tc.toolCallId === payload.toolCallId ? { ...tc, status: "failed" } : tc,
-        ),
-        updatedAt: e.timestamp,
-      };
-    },
+    [EventTypes.ToolCallError]: applyToolCallError,
 
-    [EventTypes.ToolBatchComplete]: (p, e) => {
-      const payload = e.payload as ToolBatchCompletePayload;
-      const activeToolCalls = p.activeToolCalls.filter(
-        (tc) => !payload.toolCallIds.includes(tc.toolCallId as any),
-      );
-      return {
-        ...p,
-        activeToolCalls,
-        // a tool batch can finish before the turn makes its follow-up model request.
-        // Only turn_complete moves the session projection back to idle.
-        updatedAt: e.timestamp,
-      };
-    },
+    [EventTypes.ToolBatchComplete]: applyToolBatchComplete,
 
     [EventTypes.BackgroundTaskStarted]: (p, e) => {
       const payload = e.payload as BackgroundTaskStartedPayload;
@@ -515,62 +348,12 @@ export class EventReducer {
       return applyBackgroundTaskCompleted(p, payload, e.timestamp);
     },
 
-    [EventTypes.PermissionRequested]: (p, e) => {
-      const payload = e.payload as PermissionRequestedPayload;
-      const newPending: PendingPermission = {
-        input: payload.input,
-        reason: payload.reason,
-        requestId: payload.requestId,
-        toolCallId: payload.toolCallId,
-        toolName: payload.toolName,
-        ...(payload.suggestedPermissionUpdates
-          ? { suggestedPermissionUpdates: payload.suggestedPermissionUpdates }
-          : {}),
-        ...(payload.origin ? { origin: payload.origin } : {}),
-        ...(payload.display ? { display: payload.display } : {}),
-        ...(payload.optionsPolicy ? { optionsPolicy: payload.optionsPolicy } : {}),
-        riskLevel: payload.riskLevel,
-        requestedAt: e.timestamp,
-      };
-      return {
-        ...p,
-        pendingPermissions: [...p.pendingPermissions, newPending],
-        updatedAt: e.timestamp,
-      };
-    },
+    [EventTypes.PermissionRequested]: applyPermissionRequested,
 
-    [EventTypes.PermissionResolved]: (p, e) => {
-      const payload = e.payload as PermissionResolvedPayload;
-      let toolStatus: ActiveToolCall["status"] = "completed";
-      if (payload.decision === "deny") {
-        toolStatus = "denied";
-      }
+    [EventTypes.PermissionResolved]: applyPermissionResolved,
 
-      return {
-        ...p,
-        pendingPermissions: p.pendingPermissions.filter(
-          (pp) => pp.toolCallId !== payload.toolCallId,
-        ),
-        activeToolCalls: p.activeToolCalls.map((tc) =>
-          tc.toolCallId === payload.toolCallId ? { ...tc, status: toolStatus } : tc,
-        ),
-        updatedAt: e.timestamp,
-      };
-    },
+    [EventTypes.PermissionDenied]: applyPermissionDenied,
 
-    [EventTypes.PermissionDenied]: (p, e) => {
-      const payload = e.payload as PermissionDeniedPayload;
-      return {
-        ...p,
-        pendingPermissions: p.pendingPermissions.filter(
-          (pp) => pp.toolCallId !== payload.toolCallId,
-        ),
-        activeToolCalls: p.activeToolCalls.map((tc) =>
-          tc.toolCallId === payload.toolCallId ? { ...tc, status: "denied" } : tc,
-        ),
-        updatedAt: e.timestamp,
-      };
-    },
   };
 }
 

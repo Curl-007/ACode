@@ -14,7 +14,6 @@
  * 2. ChatComposerPasteEvent 收口为本文件导出的结构类型；
  * 3. mention 面板用 enableMentionPanel 控制；slash command 始终读取 CLI workspace catalog。
  */
-import { $getPromptMarkdown } from "@/mentions/promptSerialization.js";
 import { PromptClipboardPlugin } from "@/mentions/PromptClipboardPlugin.js";
 import {
   resolveComposerKeyAction,
@@ -31,10 +30,7 @@ import {
   $createParagraphNode,
   $createTextNode,
   $getSelection,
-  $getNodeByKey,
-  $setSelection,
   $getRoot,
-  $isParagraphNode,
   $isRangeSelection,
   $isTextNode,
   KEY_ARROW_DOWN_COMMAND,
@@ -43,17 +39,36 @@ import {
   COMMAND_PRIORITY_HIGH,
   KEY_ENTER_COMMAND,
   type EditorState,
-  type LexicalEditor,
 } from "lexical";
 import { SlashCommandPlugin } from "./SlashCommandPlugin.js";
 import type { AppSlashCommand } from "./slashCommandHelpers.js";
 import { MentionPlugin } from "./mentions/MentionPlugin.js";
 import { useChatViewActiveTaskProvider } from "@/v4/activeTaskProvider.js";
+import { $isPromptMentionNode, PromptMentionNode } from "./mentions/nodes/PromptMentionNode.js";
 import {
-  $createPromptMentionNode,
-  $isPromptMentionNode,
-  PromptMentionNode,
-} from "./mentions/nodes/PromptMentionNode.js";
+  shouldNormalizeLeadingChineseSlashAliasInput,
+  shouldResetLexicalEditorAfterSubmit,
+  shouldSubmitLexicalEnter,
+  shouldSubmitLexicalModifiedEnter,
+  STANDARD_SLASH_TRIGGER,
+  type LexicalSubmitResult,
+} from "./lexical-chat-input/lexicalChatInputDecisions.js";
+import {
+  appendEditorFileMention,
+  appendEditorPlainText,
+  getEditorMarkdown,
+  insertEditorMention,
+  isCollapsedSelectionAtEditorStart,
+  prependEditorMentionIfMissing,
+  replaceEditorStateJson,
+  replaceEditorText,
+  replaceEditorTextWithPluginMentions,
+  replaceEditorWithMention,
+  replaceEditorWithSkillMention,
+  replaceEditorWithSlashCommandMention,
+  resetEditor,
+  selectAfterPromptMentionById,
+} from "./lexical-chat-input/lexicalEditorActions.js";
 import { logger } from "./logger.js";
 import { navigatePromptHistory } from "./lib/promptHistory.js";
 import type { MentionItemData } from "@/mentions/mentionTypes.js";
@@ -90,357 +105,7 @@ export interface LexicalChatInputHandle {
   setSlashCommandMention: (commandName: string, markdown?: string, trailingText?: string) => void;
 }
 
-interface LexicalEnterSubmitOptions {
-  allowSubmitWhenEmpty?: boolean;
-  ctrlKey?: boolean;
-  enterSubmits: boolean;
-  isComposing?: boolean;
-  metaKey?: boolean;
-  shiftKey?: boolean;
-  text: string;
-}
-
-interface LexicalModifiedEnterSubmitOptions {
-  allowSubmitWhenEmpty?: boolean;
-  ctrlKey?: boolean;
-  isComposing?: boolean;
-  metaKey?: boolean;
-  modifiedEnterSubmits: boolean;
-  shiftKey?: boolean;
-  text: string;
-}
-
-type LexicalSubmitResult = boolean | void;
-
-interface LeadingChineseSlashAliasInputOptions {
-  data: string | null;
-  inputType: string;
-  isAtEditorStart: boolean;
-  isComposing?: boolean;
-}
-
-const CHINESE_SLASH_ALIAS = "、";
-const STANDARD_SLASH_TRIGGER = "/";
-
 import { HISTORY_NAVIGATION_UPDATE_TAG, PROGRAMMATIC_UPDATE_TAG } from "./lib/editorUpdateTags.js";
-
-function shouldSubmitLexicalEnter({
-  allowSubmitWhenEmpty = false,
-  ctrlKey = false,
-  enterSubmits,
-  isComposing = false,
-  metaKey = false,
-  shiftKey = false,
-  text,
-}: LexicalEnterSubmitOptions): boolean {
-  if (!enterSubmits) {
-    return false;
-  }
-  if (shiftKey || ctrlKey || metaKey || isComposing) {
-    return false;
-  }
-  return Boolean(text.trim() || allowSubmitWhenEmpty);
-}
-
-function shouldSubmitLexicalModifiedEnter({
-  allowSubmitWhenEmpty = false,
-  ctrlKey = false,
-  isComposing = false,
-  metaKey = false,
-  modifiedEnterSubmits,
-  shiftKey = false,
-  text,
-}: LexicalModifiedEnterSubmitOptions): boolean {
-  return (
-    modifiedEnterSubmits &&
-    (ctrlKey || metaKey) &&
-    !shiftKey &&
-    !isComposing &&
-    Boolean(text.trim() || allowSubmitWhenEmpty)
-  );
-}
-
-function shouldResetLexicalEditorAfterSubmit(result: LexicalSubmitResult): boolean {
-  return result !== false;
-}
-
-function shouldNormalizeLeadingChineseSlashAliasInput({
-  data,
-  inputType,
-  isAtEditorStart,
-  isComposing = false,
-}: LeadingChineseSlashAliasInputOptions): boolean {
-  return (
-    data === CHINESE_SLASH_ALIAS && inputType === "insertText" && isAtEditorStart && !isComposing
-  );
-}
-
-/** 提取编辑器内容；mention 节点会在这里输出 markdown */
-function getEditorMarkdown(editorState: EditorState): string {
-  let text = "";
-  editorState.read(() => {
-    text = $getPromptMarkdown();
-  });
-  return text;
-}
-
-function replaceEditorText(editor: LexicalEditor, text: string) {
-  editor.update(
-    () => {
-      const root = $getRoot();
-      root.clear();
-
-      // Lexical getTextContent() 用 \n\n 分隔段落，对称处理防止换行翻倍
-      for (const line of text.split("\n\n")) {
-        const paragraph = $createParagraphNode();
-        if (line) {
-          paragraph.append($createTextNode(line));
-        }
-        root.append(paragraph);
-      }
-
-      root.getLastChild()?.selectEnd();
-    },
-    { tag: PROGRAMMATIC_UPDATE_TAG },
-  );
-}
-
-const INLINE_PLUGIN_MENTION_PATTERN =
-  /\[@((?:\\.|[^\]])+)\]\(plugin:\/\/([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+)\)/g;
-
-function replaceEditorTextWithPluginMentions(editor: LexicalEditor, text: string) {
-  editor.update(
-    () => {
-      const root = $getRoot();
-      root.clear();
-      for (const line of text.split("\n\n")) {
-        const paragraph = $createParagraphNode();
-        let cursor = 0;
-        for (const match of line.matchAll(INLINE_PLUGIN_MENTION_PATTERN)) {
-          const start = match.index ?? 0;
-          if (start > cursor) paragraph.append($createTextNode(line.slice(cursor, start)));
-          const markdown = match[0];
-          const label = match[1]?.replaceAll("\\]", "]").replaceAll("\\[", "[") ?? "";
-          const pluginId = match[2] ?? "";
-          paragraph.append(
-            $createPromptMentionNode({
-              id: `plugin:${pluginId}`,
-              category: "plugins",
-              label,
-              value: pluginId,
-              markdown,
-              data: { pluginId },
-            }),
-          );
-          cursor = start + markdown.length;
-        }
-        if (cursor < line.length || paragraph.getChildrenSize() === 0) {
-          paragraph.append($createTextNode(line.slice(cursor)));
-        }
-        root.append(paragraph);
-      }
-      root.getLastChild()?.selectEnd();
-    },
-    { tag: PROGRAMMATIC_UPDATE_TAG },
-  );
-}
-
-function replaceEditorWithMention(
-  editor: LexicalEditor,
-  mention: ComposerMentionPrefill,
-  trailingText = " ",
-) {
-  editor.update(
-    () => {
-      const root = $getRoot();
-      root.clear();
-      const paragraph = $createParagraphNode();
-      // 预填后保留空格供用户直接继续输入；选区正确性由 TextNode 文本/DOM 契约保证。
-      const trailing = $createTextNode(trailingText || " ");
-      paragraph.append($createPromptMentionNode(mention), trailing);
-      root.append(paragraph);
-      trailing.selectEnd();
-    },
-    { tag: PROGRAMMATIC_UPDATE_TAG },
-  );
-}
-
-/**
- * 在草稿开头插入结构化 mention，同时保留已有 Lexical 节点和段落。
- *
- * 不能通过 getMarkdown → setMention 重建：setMention 是替换型预填，会把旧 mention
- * 序列化后作为普通 TextNode 放回编辑器，导致已有 Plugin / 文件 / Skill chip 降级。
- */
-function prependEditorMentionIfMissing(
-  editor: LexicalEditor,
-  mention: ComposerMentionPrefill,
-): boolean {
-  let inserted = false;
-  editor.update(
-    () => {
-      const root = $getRoot();
-      const alreadyPresent = root
-        .getAllTextNodes()
-        .some(
-          (node) =>
-            $isPromptMentionNode(node) &&
-            node.getMention().category === mention.category &&
-            node.getMention().value === mention.value,
-        );
-      if (alreadyPresent) return;
-
-      const mentionNode = $createPromptMentionNode(mention);
-      const separator = $createTextNode(" ");
-      const firstBlock = root.getFirstChild();
-      if ($isParagraphNode(firstBlock)) {
-        const firstInline = firstBlock.getFirstChild();
-        if (firstInline) {
-          firstInline.insertBefore(mentionNode);
-          mentionNode.insertAfter(separator);
-        } else {
-          firstBlock.append(mentionNode, separator);
-        }
-      } else {
-        const paragraph = $createParagraphNode().append(mentionNode, separator);
-        if (firstBlock) firstBlock.insertBefore(paragraph);
-        else root.append(paragraph);
-      }
-      separator.selectEnd();
-      inserted = true;
-    },
-    { discrete: true, tag: PROGRAMMATIC_UPDATE_TAG },
-  );
-  return inserted;
-}
-
-function replaceEditorStateJson(editor: LexicalEditor, editorStateJson: string) {
-  const editorState = editor.parseEditorState(editorStateJson);
-  editor.setEditorState(editorState, { tag: PROGRAMMATIC_UPDATE_TAG });
-}
-
-function resetEditor(editor: LexicalEditor) {
-  replaceEditorText(editor, "");
-}
-
-function replaceEditorWithSkillMention(
-  editor: LexicalEditor,
-  skillName: string,
-  markdown = `$${skillName}`,
-  trailingText = " ",
-) {
-  editor.update(
-    () => {
-      const root = $getRoot();
-      root.clear();
-      const paragraph = $createParagraphNode();
-      paragraph.append(
-        $createPromptMentionNode({
-          id: `prefill-skill:${skillName}`,
-          category: "skills",
-          // 预填入口之前虽然会插入 skill node，但节点里保存的 markdown 仍固定成 `$slug`，
-          // 导致像 New Skill 这种入口即使理论上有完整转译内容，进入输入框后也会被悄悄降级。
-          // 这里显式透传原始 markdown，并直接显示 frontmatter name，避免 UI 再加工 skill 标题。
-          label: skillName,
-          value: skillName,
-          markdown,
-        }),
-        $createTextNode(trailingText),
-      );
-      root.append(paragraph);
-      root.getLastChild()?.selectEnd();
-    },
-    { tag: PROGRAMMATIC_UPDATE_TAG },
-  );
-}
-
-function replaceEditorWithSlashCommandMention(
-  editor: LexicalEditor,
-  commandName: string,
-  markdown = `/${commandName}`,
-  trailingText = " ",
-) {
-  editor.update(
-    () => {
-      const root = $getRoot();
-      root.clear();
-      const paragraph = $createParagraphNode();
-      paragraph.append(
-        $createPromptMentionNode({
-          id: `prefill-slash:${commandName}`,
-          category: "commands",
-          label: commandName,
-          value: commandName,
-          markdown,
-        }),
-        $createTextNode(trailingText),
-      );
-      root.append(paragraph);
-      root.getLastChild()?.selectEnd();
-    },
-    { tag: PROGRAMMATIC_UPDATE_TAG },
-  );
-}
-
-function appendEditorFileMention(
-  editor: LexicalEditor,
-  label: string,
-  value: string,
-  markdown: string,
-  data?: MentionItemData,
-  trailingText = " ",
-) {
-  editor.update(
-    () => {
-      const root = $getRoot();
-      const lastChild = root.getLastChild();
-      const paragraph = $isParagraphNode(lastChild) ? lastChild : $createParagraphNode();
-      if (!$isParagraphNode(lastChild)) {
-        root.append(paragraph);
-      }
-
-      const currentText = paragraph.getTextContent();
-      if (currentText.length > 0 && !/\s$/.test(currentText)) {
-        paragraph.append($createTextNode(" "));
-      }
-
-      paragraph.append(
-        $createPromptMentionNode({
-          id: `dropped-file:${value}`,
-          category: "files",
-          label,
-          value,
-          markdown,
-          data,
-        }),
-        $createTextNode(trailingText),
-      );
-      paragraph.selectEnd();
-    },
-    { tag: PROGRAMMATIC_UPDATE_TAG },
-  );
-}
-
-function appendEditorPlainText(editor: LexicalEditor, text: string) {
-  editor.update(
-    () => {
-      const root = $getRoot();
-      const lastChild = root.getLastChild();
-      const paragraph = $isParagraphNode(lastChild) ? lastChild : $createParagraphNode();
-      if (!$isParagraphNode(lastChild)) {
-        root.append(paragraph);
-      }
-
-      const currentText = paragraph.getTextContent();
-      if (currentText.length > 0 && !/\s$/.test(currentText)) {
-        paragraph.append($createTextNode(" "));
-      }
-
-      paragraph.append($createTextNode(text));
-      paragraph.selectEnd();
-    },
-    { tag: PROGRAMMATIC_UPDATE_TAG },
-  );
-}
 
 function getPromptMentionIdAfterDomSelection(rootElement: HTMLElement): string | null {
   const selection = window.getSelection();
@@ -474,29 +139,6 @@ function getPromptMentionIdFromBoundaryNode(node: Node | null): string | null {
     return null;
   }
   return node.dataset.mentionId ?? null;
-}
-
-function selectAfterPromptMentionById(mentionId: string): boolean {
-  const mentionNode = $getRoot()
-    .getAllTextNodes()
-    .find(
-      (node): node is PromptMentionNode =>
-        $isPromptMentionNode(node) && node.getMention().id === mentionId,
-    );
-  if (!mentionNode) {
-    return false;
-  }
-
-  const nextSibling = mentionNode.getNextSibling();
-  if ($isTextNode(nextSibling)) {
-    const text = nextSibling.getTextContent();
-    const offset = /^\s/.test(text) ? Math.min(1, text.length) : 0;
-    nextSibling.select(offset, offset);
-    return true;
-  }
-
-  mentionNode.selectNext(0, 0);
-  return true;
 }
 
 /**
@@ -1095,32 +737,6 @@ function PromptHistoryPlugin({
   return null;
 }
 
-function isCollapsedSelectionAtEditorStart(): boolean {
-  const selection = $getSelection();
-  if (!$isRangeSelection(selection) || !selection.isCollapsed()) {
-    return false;
-  }
-
-  const [startPoint] = selection.getStartEndPoints() ?? [];
-  if (!startPoint || startPoint.offset !== 0) {
-    return false;
-  }
-
-  const root = $getRoot();
-  const startNode = startPoint.getNode();
-  if (startPoint.type === "text") {
-    const firstTextNode = root.getAllTextNodes()[0] ?? null;
-    return firstTextNode?.is(startNode) ?? root.getTextContentSize() === 0;
-  }
-
-  if (startNode.is(root)) {
-    return true;
-  }
-
-  const firstDescendant = root.getFirstDescendant();
-  return firstDescendant?.is(startNode) ?? root.getTextContentSize() === 0;
-}
-
 function LeadingChineseSlashAliasPlugin({ disabled }: { disabled?: boolean }) {
   const [editor] = useLexicalComposerContext();
 
@@ -1211,34 +827,6 @@ function PasteCapturePlugin({
   }, [disabled, editor, onPaste]);
 
   return null;
-}
-
-/** 暴露 focus / clear / getText 给外部 */
-function insertEditorMention(
-  editor: LexicalEditor,
-  mention: ComposerMentionPrefill,
-  selectionState?: EditorState,
-) {
-  const selection = selectionState?.read(() => $getSelection()?.clone() ?? null);
-  editor.update(
-    () => {
-      // 浮层获取焦点后 Lexical 选区会丢失，恢复打开菜单前的光标，避免覆盖整份草稿。
-      // 草稿可能在菜单打开期间被替换；旧节点不存在时不能恢复选区，否则 Lexical 会抛错。
-      if ($isRangeSelection(selection)) {
-        if ($getNodeByKey(selection.anchor.key) && $getNodeByKey(selection.focus.key)) {
-          $setSelection(selection);
-        } else {
-          $getRoot().selectEnd();
-        }
-      }
-      let target = $getSelection();
-      if (!$isRangeSelection(target)) target = $getRoot().selectEnd();
-      const trailing = $createTextNode(" ");
-      target.insertNodes([$createPromptMentionNode(mention), trailing]);
-      trailing.selectEnd();
-    },
-    { tag: PROGRAMMATIC_UPDATE_TAG },
-  );
 }
 
 function EditorApiPlugin({

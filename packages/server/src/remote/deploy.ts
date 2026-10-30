@@ -1,66 +1,50 @@
-/* eslint-disable max-lines -- 远端部署入口集中编排 server/node/agent/tool 资源，拆分需单独整理边界。 */
-import { join } from "node:path";
+// 拆分说明（满足 400 行架构上限）：部署入口按职责分叶，本文件保留公开面与编排主干：
+// - deployReleaseDir.ts：releaseDir 解析链（mock-cdn → 完整性检查 → CDN/cache 回退）
+// - deployServerDecision.ts：是否需要部署的裁决 + 裁决后的执行编排 + installer 工厂。
 import {
   ACODE_VERSION,
   formatLogPrefix,
   normalizeRemoteResourcePackageSelection,
   type RemoteAssetInstallMode,
-  type RemoteResourcePackageId,
   type RemoteResourcePackageSelection,
 } from "@acode/shared";
 import type { IRemoteBackend, RemoteEnvironment } from "./backend.js";
-import { deployACodeAgentRuntime } from "./acodeAgentDeploy.js";
+import { createRemoteComponentVersionResolver } from "@acode/server/remote/remoteAssetDeployDecision.js";
+import { formatOptionalValue, formatOptionalValues } from "@acode/server/remote/deployShared.js";
 import {
-  deployNodePtyPrebuilds,
-  deployNodeRuntime,
-  createRemoteComponentVersionResolver,
-  logDeployRequired,
-} from "@acode/server/remote/remoteAssetDeployDecision.js";
-import {
-  REMOTE_BASE,
-  fileExists,
-  formatOptionalValue,
-  formatOptionalValues,
-  type DeployLoggers,
-  type RemoteAssetDeployOptions,
-} from "@acode/server/remote/deployShared.js";
-import { quotePosixPathArg } from "@acode/server/remote/posixShell.js";
-import { checkServerBundleRequiredMarkers } from "@acode/server/remote/serverBundleDeployCheck.js";
-import { deployRuntimeTools } from "@acode/server/remote/runtimeToolDeploy.js";
-import { REMOTE_AGENT_OFFICIAL_PLUGIN_REQUIRED_RELATIVE_PATHS } from "@acode/server/remote/acodeAgentOfficialPluginAssets.js";
-import {
-  ensureRemoteReleaseDirFromCdn,
   selectRemoteAssetManifestComponents,
   type RemoteAssetManifestRef,
 } from "@acode/server/remote/remoteAssetCache.js";
 import {
   fetchRemoteDownloadManifest,
-  LocalUploadAssetInstaller,
-  RemoteDownloadAssetInstaller,
-  type RemoteAssetInstaller,
   type RemoteManifestRef,
 } from "@acode/server/remote/remoteAssetInstaller.js";
-import {
-  checkRemoteAssetComponentIdentity,
-  createFreshRemoteAssetManifestRefResolver,
-  hasRemoteAssetComponentRefreshPending,
-  markRemoteAssetComponentRefreshPending,
-  writeRemoteAssetComponentMeta,
-} from "@acode/server/remote/remoteAssetLiveIdentity.js";
-import { detectRemoteAssetTools } from "@acode/server/remote/remoteAssetPreflight.js";
+import { createFreshRemoteAssetManifestRefResolver } from "@acode/server/remote/remoteAssetLiveIdentity.js";
 import { assertSupportedRemoteEnvironment } from "@acode/server/remote/remotePlatformSupport.js";
 import { acquireRemoteDeployLock } from "@acode/server/remote/remoteDeployLock.js";
 import type { RemoteAssetNetworkPort } from "@acode/server/remote/remoteAssetNetwork.js";
-import { preflightRemoteDeployDiskSpace } from "@acode/server/remote/remoteDeployDiskSpace.js";
 import {
   createRemoteAssetManifestGuard,
   type RemoteAssetManifestSignatureVerifier,
 } from "@acode/server/remote/remoteAssetManifestSignature.js";
+import {
+  buildReleaseDirCacheKey,
+  findMissingMockReleasePaths,
+  hasRemoteAssetCdnFallback,
+  resolveMockCdnReleaseDir,
+  resolveReleaseDir,
+  SERVER_BUNDLE_COMPONENT_ID,
+} from "@acode/server/remote/deployReleaseDir.js";
+import {
+  checkServerDeployDecision,
+  createRemoteAssetInstaller,
+  executeServerDeployDecision,
+  type ServerDeployExecutionContext,
+} from "@acode/server/remote/deployServerDecision.js";
 
 const log = (...args: unknown[]) => console.log(formatLogPrefix("deploy", process.pid), ...args);
 const logWarn = (...args: unknown[]) =>
   console.warn(formatLogPrefix("deploy", process.pid), ...args);
-const SERVER_BUNDLE_COMPONENT_ID = "server-bundle";
 
 export type DeployLockMode = "remote" | "caller-serialized";
 
@@ -111,8 +95,6 @@ export async function deployServer(
   const platformArch = `${env.platform}-${env.arch}`;
   assertSupportedRemoteEnvironment(env);
   const selectedResourcePackageIds = normalizeRemoteResourcePackageSelection();
-  const shouldDeployResourcePackage = (packageId: RemoteResourcePackageId): boolean =>
-    selectedResourcePackageIds.includes(packageId);
   const componentResolverOptions = {
     mockCdnDir: options?.mockCdnDir,
     remoteCdnBaseUrl: options?.remoteCdnBaseUrl,
@@ -289,171 +271,21 @@ export async function deployServer(
     }
   };
 
-  const deployWithDecision = async (
-    serverDeployDecision: ServerDeployDecision,
-    expectedServerBundleSha256: string | null,
-  ): Promise<boolean> => {
-    if (serverDeployDecision.shouldDeploy) {
-      // 修复原因：远端磁盘不足的失败形态是中途 ENOSPC 并留下半成品部署目录。
-      // 在任何远端写入（含强刷 pending marker）之前做 df 等价探测：余量必须
-      // ≥ 7× 资产估算，不足即拒绝并解释（specs/remote-deploy-hardening.md R1）。
-      await preflightRemoteDeployDiskSpace(backend, {
-        requiredRelativePaths: resolveRequiredMockReleasePaths(
-          platformArch,
-          selectedResourcePackageIds,
-        ),
-        resolveReleaseDir: () => getReleaseDir([...selectedResourcePackageIds]),
-        manifestComponents: await resolveManifestComponentsForEstimate(),
-        loggers: { log, logWarn },
-      });
-    }
-    const hasPendingAppVersionRefresh = await hasRemoteAssetComponentRefreshPending(backend, {
-      componentId: "glm",
-      platformArch,
-    });
-    const shouldForceRefreshContentAddressedAssets =
-      Boolean(options?.force) ||
-      hasPendingAppVersionRefresh ||
-      (serverDeployDecision.shouldDeploy && serverDeployDecision.appVersionChanged === true);
-
-    if (shouldForceRefreshContentAddressedAssets) {
-      // server 会先于 GLM 更新；若后续步骤失败，下次连接时 server 版本
-      // 已经匹配。必须持久化升级强刷状态，让重试继续绕过同 SHA cache，直到 GLM 成功覆盖 marker。
-      await markRemoteAssetComponentRefreshPending(backend, {
-        componentId: "glm",
-        platformArch,
-        appVersion: ACODE_VERSION,
-      });
-    }
-
-    // Check if deploy is needed
-    if (!serverDeployDecision.shouldDeploy) {
-      log("skipped — remote version matches");
-      // 主 server 版本相同只证明 node/acode-server.cjs 可启动，不代表随包工具仍存在。
-      // glm 内容跟随 app/server 版本刷新；但 wrapper/bundle 被清理或开发态 bundle 变化时仍要按实体检查修复。
-      if (shouldDeployResourcePackage("node-pty")) {
-        await deployNodePtyPrebuilds(
-          backend,
-          env,
-          {
-            ...assetDeployOptions,
-            platformArch,
-            onlyIfMissing: true,
-            installer,
-          },
-          { log, logWarn },
-        );
-      }
-      await deployACodeAgentRuntime(
-        backend,
-        env,
-        {
-          ...assetDeployOptions,
-          platformArch,
-          installer,
-          force: shouldForceRefreshContentAddressedAssets,
-          selectedResourcePackageIds,
-        },
-        { log, logWarn },
-      );
-      await deployRuntimeTools(
-        backend,
-        env,
-        {
-          ...assetDeployOptions,
-          platformArch,
-          installer,
-          selectedResourcePackageIds,
-        },
-        { log, logWarn },
-      );
-      return false;
-    }
-
-    await deployNodeRuntime(
-      backend,
-      {
-        ...assetDeployOptions,
-        platformArch,
-        force: Boolean(options?.force),
-        installer,
-        expectedVersion: await getExpectedComponentVersion("node-runtime"),
-      },
-      { log, logWarn },
-    );
-
-    logDeployRequired({
-      loggers: { logWarn },
-      installer,
-      componentId: SERVER_BUNDLE_COMPONENT_ID,
-      reason: serverDeployDecision.reason,
-    });
-    await installer.installFile({
-      componentId: SERVER_BUNDLE_COMPONENT_ID,
-      sourceRelativePath: "server/acode-server.cjs",
-      remotePath: `${REMOTE_BASE}/acode-server.cjs`,
-      // App 版本变化是新的发布边界，不能只凭历史 cache 的 `.ready`
-      // 判断 server-bundle 可复用；与 GLM 一致，必须重新下载并校验当前 manifest 制品。
-      forceRefresh: shouldForceRefreshContentAddressedAssets,
-    });
-    if (expectedServerBundleSha256) {
-      // App/version 相同不代表 server-bundle 制品相同。安装成功后才写
-      // manifest SHA marker，避免失败重试把旧 server 误判成当前制品。
-      await writeRemoteAssetComponentMeta(backend, {
-        id: SERVER_BUNDLE_COMPONENT_ID,
-        sha256: expectedServerBundleSha256,
-        platformArch,
-      });
-    }
-    log("server install done");
-
-    if (shouldDeployResourcePackage("node-pty")) {
-      await deployNodePtyPrebuilds(
-        backend,
-        env,
-        {
-          ...assetDeployOptions,
-          platformArch,
-          force: Boolean(options?.force),
-          onlyIfMissing: false,
-          installer,
-          expectedVersion: await getExpectedComponentVersion("node-pty"),
-        },
-        { log, logWarn },
-      );
-    }
-
-    log("all uploads complete");
-
-    // 部署 ACode Agent runtime 到远程，历史资源包选择已在入口统一忽略。
-    await deployACodeAgentRuntime(
-      backend,
-      env,
-      {
-        ...assetDeployOptions,
-        platformArch,
-        installer,
-        // 旧版 App 会覆盖 agents/glm，却不会同步新版引入的 GLM SHA marker。
-        // App 版本变化后该 marker 可能与实际 bundle 不一致，必须绕过 marker 与远端 cache，
-        // 按当前 App 的 manifest 重新下载并部署；同 App 版本内仍按 SHA 精确判断。
-        force: shouldForceRefreshContentAddressedAssets,
-        selectedResourcePackageIds,
-      },
-      { log, logWarn },
-    );
-    await deployRuntimeTools(
-      backend,
-      env,
-      {
-        ...assetDeployOptions,
-        platformArch,
-        installer,
-        selectedResourcePackageIds,
-      },
-      { log, logWarn },
-    );
-
-    return true;
+  // 原 deployWithDecision 闭包体（裁决后的逐组件执行）移至 deployServerDecision.ts；
+  // 闭包捕获经显式上下文参数传入，行为逐点等价。
+  const deployContext: ServerDeployExecutionContext = {
+    backend,
+    env,
+    force: Boolean(options?.force),
+    platformArch,
+    selectedResourcePackageIds,
+    installer,
+    assetDeployOptions,
+    resolveReleaseDirForPreflight: () => getReleaseDir([...selectedResourcePackageIds]),
+    getExpectedComponentVersion,
+    resolveManifestComponentsForEstimate,
+    log,
+    logWarn,
   };
 
   const deployUsingCurrentRemoteState = async (): Promise<boolean> => {
@@ -466,8 +298,8 @@ export async function deployServer(
       : await checkServerDeployDecision(backend, {
           platformArch,
           expectedSha256: expectedServerBundleSha256,
-        });
-    return deployWithDecision(decision, expectedServerBundleSha256);
+        }, log);
+    return executeServerDeployDecision(deployContext, decision, expectedServerBundleSha256);
   };
 
   if (options?.deployLockMode === "caller-serialized") {
@@ -482,7 +314,7 @@ export async function deployServer(
     : await checkServerDeployDecision(backend, {
         platformArch,
         expectedSha256: null,
-      });
+      }, log);
   if (preLockDecision.shouldDeploy) {
     log(`waiting for install-root lock: ${preLockDecision.reason}`);
   }
@@ -523,293 +355,4 @@ export async function deployServer(
     throw releaseOutcome.error;
   }
   return deployOutcome.value;
-}
-
-type ServerDeployDecision =
-  | { shouldDeploy: false }
-  | {
-      shouldDeploy: true;
-      reason: string;
-      appVersionChanged?: boolean;
-    };
-
-async function checkServerDeployDecision(
-  backend: IRemoteBackend,
-  options: {
-    platformArch: string;
-    expectedSha256: string | null;
-  },
-): Promise<ServerDeployDecision> {
-  try {
-    log("checking if deploy needed...");
-    const nodePath = `${REMOTE_BASE}/node`;
-    const exists = await backend.exists(nodePath);
-    log("remote node exists:", exists);
-    if (!exists) {
-      return {
-        shouldDeploy: true,
-        reason: `remote file missing path=${nodePath}`,
-      };
-    }
-
-    const serverPath = `${REMOTE_BASE}/acode-server.cjs`;
-    const serverExists = await backend.exists(serverPath);
-    log("remote server exists:", serverExists);
-    if (!serverExists) {
-      return {
-        shouldDeploy: true,
-        reason: `remote file missing path=${serverPath}`,
-      };
-    }
-
-    // Check version
-    log("checking remote version...");
-    const stream = await backend.exec(
-      `${quotePosixPathArg(nodePath)} ${quotePosixPathArg(serverPath)} --version`,
-    );
-    const version = (await collectStdout(stream)).trim();
-    log("remote version:", JSON.stringify(version), "local:", ACODE_VERSION);
-    if (version !== ACODE_VERSION) {
-      return {
-        shouldDeploy: true,
-        reason: `remote server version mismatch remote=${version} expected=${ACODE_VERSION}`,
-        appVersionChanged: true,
-      };
-    }
-    const requiredFeatureDecision = await checkServerBundleRequiredMarkers(
-      backend,
-      nodePath,
-      serverPath,
-    );
-    if (requiredFeatureDecision.shouldDeploy) {
-      return requiredFeatureDecision;
-    }
-    if (options.expectedSha256) {
-      const identityDecision = await checkRemoteAssetComponentIdentity(backend, {
-        componentId: SERVER_BUNDLE_COMPONENT_ID,
-        platformArch: options.platformArch,
-        expectedIdentity: { sha256: options.expectedSha256 },
-      });
-      if (identityDecision.shouldDeploy) {
-        return identityDecision;
-      }
-    }
-    return { shouldDeploy: false };
-  } catch (err) {
-    log("checkServerDeployDecision error (will deploy):", err);
-    return {
-      shouldDeploy: true,
-      reason: `remote deploy check failed: ${String(err)}`,
-    };
-  }
-}
-
-function createRemoteAssetInstaller(
-  backend: IRemoteBackend,
-  options: RemoteAssetDeployOptions & {
-    version: string;
-    platformArch: string;
-    assetInstallMode?: RemoteAssetInstallMode;
-  },
-  loggers: DeployLoggers,
-  getPinnedRemoteManifest: (() => Promise<RemoteManifestRef>) | null = null,
-): RemoteAssetInstaller {
-  if (options.assetInstallMode !== "remote-download") {
-    return new LocalUploadAssetInstaller(backend, options, loggers);
-  }
-
-  let remoteInstallerPromise: Promise<RemoteAssetInstaller> | null = null;
-  let remoteManifestPromise: ReturnType<typeof fetchRemoteDownloadManifest> | null = null;
-  const getRemoteManifest = (): ReturnType<typeof fetchRemoteDownloadManifest> => {
-    if (getPinnedRemoteManifest) {
-      return getPinnedRemoteManifest();
-    }
-    if (!remoteManifestPromise) {
-      remoteManifestPromise = fetchRemoteDownloadManifest(options, loggers);
-    }
-    return remoteManifestPromise;
-  };
-  const getRemoteInstaller = async (): Promise<RemoteAssetInstaller> => {
-    if (!remoteInstallerPromise) {
-      remoteInstallerPromise = detectRemoteAssetTools(backend, loggers).then(
-        (tools) =>
-          new RemoteDownloadAssetInstaller(backend, options, tools, loggers, getRemoteManifest()),
-      );
-    }
-    return remoteInstallerPromise;
-  };
-
-  return {
-    mode: "remote-download",
-    async resolveComponentVersion(componentId) {
-      const manifestRef = await getRemoteManifest();
-      return (
-        selectRemoteAssetManifestComponents(manifestRef.manifest, [componentId])[0]?.version ?? null
-      );
-    },
-    async resolveComponentSha256(componentId) {
-      const manifestRef = await getRemoteManifest();
-      return (
-        selectRemoteAssetManifestComponents(manifestRef.manifest, [componentId])[0]?.sha256 ?? null
-      );
-    },
-    async installFile(params) {
-      const remoteInstaller = await getRemoteInstaller();
-      await remoteInstaller.installFile(params);
-    },
-    async installDirectory(params) {
-      const remoteInstaller = await getRemoteInstaller();
-      await remoteInstaller.installDirectory(params);
-    },
-  };
-}
-
-function buildReleaseDirCacheKey(componentIds: string[] | undefined, forceRefresh = false): string {
-  const componentKey =
-    componentIds && componentIds.length > 0 ? componentIds.slice().sort().join(",") : "<all>";
-  return `${componentKey}:${forceRefresh ? "force" : "reuse"}`;
-}
-
-function resolveMockCdnReleaseDir(mockCdnDir?: string): string | null {
-  if (!mockCdnDir) {
-    return null;
-  }
-
-  return join(mockCdnDir, "releases", ACODE_VERSION);
-}
-
-async function resolveReleaseDir(
-  options: DeployOptions | undefined,
-  env: RemoteEnvironment,
-  loggers: {
-    log: (...args: unknown[]) => void;
-    logWarn: (...args: unknown[]) => void;
-  },
-  componentIds?: string[],
-  manifestRef?: RemoteAssetManifestRef | null,
-  forceRefresh = false,
-): Promise<string | null> {
-  const mockReleaseDir = resolveMockCdnReleaseDir(options?.mockCdnDir);
-  const platformArch = `${env.platform}-${env.arch}`;
-  if (mockReleaseDir) {
-    const missingMockPaths = await findMissingMockReleasePaths(
-      mockReleaseDir,
-      platformArch,
-      componentIds,
-    );
-    if (missingMockPaths.length === 0) {
-      return mockReleaseDir;
-    }
-
-    // WSL/SSH 开发态可能只有版本目录，但缺当前远端平台的具体组件
-    // （例如 Windows 侧 mock-cdn 只有 linux-arm64，却连接 linux-x64 WSL）。
-    // 直接返回 mock 目录会在上传阶段报 local remote asset not found；
-    // 有 CDN/cache 时应按组件回退到完整缓存，没有回退源时保留原错误指向缺失文件。
-    loggers.logWarn(
-      `[remote-assets] mock-cdn incomplete for ${platformArch}; missing=${missingMockPaths.join(", ")}`,
-    );
-    if (!hasRemoteAssetCdnFallback(options)) {
-      return mockReleaseDir;
-    }
-
-    loggers.logWarn(
-      `[remote-assets] fallback to CDN/cache for ${platformArch}; components=${componentIds?.join(",") ?? "<all>"}`,
-    );
-  }
-
-  // 生产态不再打包 remote 资源，必须先从 CDN 下载到本地 cache。
-  // 这里统一把“拿 releaseDir”的逻辑收口，避免后续各资源分支继续散落占位判断。
-  return ensureRemoteReleaseDirFromCdn(
-    {
-      remoteCdnBaseUrl: options?.remoteCdnBaseUrl,
-      remoteCdnBaseUrls: options?.remoteCdnBaseUrls,
-      remoteCacheDir: options?.remoteCacheDir,
-      version: ACODE_VERSION,
-      platformArch,
-      componentIds,
-      manifestRef,
-      forceRefresh,
-      manifestRequestTimeoutMs: options?.manifestRequestTimeoutMs,
-      remoteAssetNetwork: options?.remoteAssetNetwork,
-    },
-    loggers,
-  );
-}
-
-function hasRemoteAssetCdnFallback(options: DeployOptions | undefined): boolean {
-  const hasRemoteCacheDir = Boolean(options?.remoteCacheDir?.trim());
-  const hasBaseUrl = Boolean(options?.remoteCdnBaseUrl?.trim());
-  const hasBaseUrls = Boolean(
-    options?.remoteCdnBaseUrls?.some((baseUrl) => baseUrl.trim().length > 0),
-  );
-  return hasRemoteCacheDir && (hasBaseUrl || hasBaseUrls);
-}
-
-async function findMissingMockReleasePaths(
-  releaseDir: string,
-  platformArch: string,
-  componentIds: string[] | undefined,
-): Promise<string[]> {
-  const missingPaths: string[] = [];
-  for (const relativePath of resolveRequiredMockReleasePaths(platformArch, componentIds)) {
-    if (!(await fileExists(releaseDir, ...relativePath.split("/")))) {
-      missingPaths.push(relativePath);
-    }
-  }
-  return missingPaths;
-}
-
-function resolveRequiredMockReleasePaths(
-  platformArch: string,
-  componentIds: string[] | undefined,
-): string[] {
-  const ids =
-    componentIds && componentIds.length > 0
-      ? componentIds
-      : [SERVER_BUNDLE_COMPONENT_ID, "node-runtime"];
-  const requiredPaths = new Set<string>();
-
-  for (const componentId of ids) {
-    switch (componentId) {
-      case SERVER_BUNDLE_COMPONENT_ID:
-        requiredPaths.add("server/acode-server.cjs");
-        break;
-      case "node-runtime":
-        requiredPaths.add(`node/${platformArch}/node`);
-        break;
-      case "node-pty":
-        requiredPaths.add(`node-pty/${platformArch}/pty.node`);
-        if (platformArch.startsWith("darwin-")) {
-          requiredPaths.add(`node-pty/${platformArch}/spawn-helper`);
-        }
-        break;
-      case "glm":
-        requiredPaths.add(`glm/${platformArch}/acode.cjs`);
-        for (const relativePath of REMOTE_AGENT_OFFICIAL_PLUGIN_REQUIRED_RELATIVE_PATHS) {
-          requiredPaths.add(`glm/${platformArch}/packages/${relativePath}`);
-        }
-        break;
-      case "bfs":
-        requiredPaths.add(`tools/${platformArch}/bfs/bfs`);
-        break;
-      case "ripgrep":
-        requiredPaths.add(`tools/${platformArch}/ripgrep/rg`);
-        break;
-      case "ugrep":
-        requiredPaths.add(`tools/${platformArch}/ugrep/ugrep`);
-        break;
-    }
-  }
-
-  return [...requiredPaths];
-}
-
-function collectStdout(stream: import("./backend.js").StdioStream): Promise<string> {
-  return new Promise((resolve) => {
-    let data = "";
-    stream.stdout.on("data", (chunk: Buffer) => {
-      data += chunk.toString();
-    });
-    stream.onClose(() => resolve(data));
-  });
 }

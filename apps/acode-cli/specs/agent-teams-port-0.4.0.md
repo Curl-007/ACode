@@ -182,6 +182,16 @@
 - `agent_teams_merge_member_worktree(member, method, cleanup?)`：先快照成员树未提交改动到成员分支；主工作区脏/不在基线分支/冲突 → 结构化错误且不改主工作区；`merge`（`--no-ff`）或 `squash`；无独有提交返回 `already_merged` 幂等；`cleanup:true` 只删「干净且已合并」的树与分支（`branch -d`，绝不用 `-D`）。
 - 团队结束/成员移除时自动尝试清理；未合并提交、未提交改动、非 `acode/wt/` 归属、成员仍有进行中任务的一律保留并在 `keptReason` 说明。
 
+**行尾中立（`core.autocrlf` 兼容，2026-10-29 增量）**
+
+Windows 用户全局 `core.autocrlf=true` 是常态：检出把索引里的 LF 转成 CRLF，而 agent/编辑器按 LF 原样重写内容时，`git status --porcelain` 会因 stat 缓存与工作区字节不一致报 ` M`，即使文件内容与 HEAD 逐字节（按 git 的转换规则）相同。本插件此前以 status 输出作为脏判据，会因此把「仅换行差异、语义未变」的树当成真实改动。
+
+- **脏判据 = 内容比较**：`git diff --quiet HEAD`（tracked，含已暂存）+ `git ls-files --others --exclude-standard`（未跟踪，与 `--untracked-files=all` 同语义，忽略 ignored）；exit 0 视为干净，1 或其他非 0 一律按脏处理（查不出来宁可保留）。不使用 `git status` 的 stat 缓存结果。
+- **快照**：`git add -A` 后先以 `git diff --cached --quiet` 判定是否有 staged 差异；无差异表示没有内容可快照，返回 false（不提交、不抛 `worktree_merge_failed`）。有差异才 `git commit`。
+- **清理**：内容判定为干净后，删除前先对成员树执行 `git add -u` 刷新 tracked 文件的 stat 缓存（不引入新内容、不收集未跟踪文件），再 `git worktree remove`（仍不带 `--force`）。未跟踪文件与真实改动依旧由 git 自己拒绝删除，第二道保险保留。
+- **主工作区脏判据**同用内容比较，且沿用既有语义「只看 tracked、不看未跟踪」（原 `--untracked-files=no`）。
+- 以上均不改用户 git 配置，也不依赖 `-c core.autocrlf=false`（该覆盖会把正常的 CRLF 检出误判成改动，不可用）。
+
 ### 3.5 400 行 ratchet 与拆分要求
 
 目标 `.architecture-policy.yaml:304`：`maxFileLines: 400`，对未纳管模块（`acode-cli`、`ui` 均为 `managed:false`）是「只减不增」ratchet；测试文件不参与。目标插件目录没有任何 baseline 条目，因此**任何新的 >400 行插件源码文件都是硬失败**。源 0.4.0 有三个超限/贴线文件，不能逐字复制：
@@ -524,6 +534,7 @@ pnpm verify:pre-push
 | S3 | `maxActiveTeams=1` 拒绝第二个团队；越界配置夹到 1..8 | `team_limit_exceeded` | `multi-team.test.ts:354-392` |
 | S4 | 旧平铺布局启动迁移到 `teams/<id>/`；旧 history URL 仍可读 | 数据不丢、地址可用 | `multi-team.test.ts:394-440`、`store.test.ts:190` |
 | S5 | worktree：非 git/无提交/detached 拒绝；创建 `.acode/worktrees/...` 与 `acode/wt/...`；exclude 幂等；脏主工作区/错分支/冲突拒绝；merge/squash/already_merged；cleanup 保守 | 源 `worktree.test.ts`，断言改 ACode 前缀 | `tests/worktree.test.ts` |
+| S5b | worktree 行尾中立：`core.autocrlf=true` 的仓库里，CRLF 检出被 agent 按 LF 原样重写（内容无实质变化）不得被判脏、不得阻断 merge/cleanup；真实改动仍必须被识别 | 内容判据（`diff --quiet HEAD` + `ls-files --others`）与快照/清理路径 | `tests/worktree.test.ts`（`autocrlf` 场景套件） |
 | S6 | `wait_for_work`：有活 `ready:true`（current/claimable/unread 理由）；8 分钟无活 `ready:false`；归档 `team_archived`；移出 `caller_not_member`；等待期 `waitingUntil` 不出 wake；不占互斥锁 | 源 `member-wait.ts` 行为 | `tests/tools.test.ts` 或新增 wait 测试 |
 | S7 | trust-wrapper：框架行列 0、内容缩进、伪造框架行中和、空文本不包装；成员/队长 status 与 claim 的邮箱正文被包装；磁盘 mailbox 仍旧原文；`trust_note` 在场 | 目标 `tests/trust-wrapper.test.ts` 全绿 | 保留并扩展导入 |
 | S8 | 通知桥：真实 `dist/mcp/server.js` → adapter 捕获 `{pluginId,key,state}`；非插件连接/无 pluginId 不投递；pluginId 不可由 server 自报 | 目标 `apps/acode-cli/tests/plugin-state-bridge.test.mjs` | 在途文件 |
@@ -540,7 +551,7 @@ pnpm verify:pre-push
 | --- | --- | --- |
 | `apps/zcode-cli/packages/agent-teams-plugin/tests/{dag,machine,scheduler,store,tools,prompt-contract}.test.ts` | 同名目标路径 | 移植并更新 17 工具/多团队断言 |
 | `tests/multi-team.test.ts` | `apps/acode-cli/packages/agent-teams-plugin/tests/multi-team.test.ts` | 移植 |
-| `tests/worktree.test.ts` | 同名 | 移植，断言 `.acode/worktrees`/`acode/wt/` |
+| `tests/worktree.test.ts` | 同名 | 移植，断言 `.acode/worktrees`/`acode/wt/`；fixture 用 `realpath` 规范化临时目录（Windows `tmpdir()` 可能返回 8.3 短路径 `C:\Users\ADMINI~1\...`，而 git 输出长路径，直接用短路径会让产品的路径身份比对错位——产品入口 `inspectRepo` 本身就取 git 的长路径，fixture 必须模拟同一入口语义） |
 | `tests/trust-wrapper.test.ts` | 目标已有 | 保留，更新任务工具导入后仍全绿 |
 | `apps/zcode-cli/packages/bootstrap/src/app/plugin-state-bridge.test.ts` | `apps/acode-cli/tests/plugin-state-bridge.test.mjs` | 在途；按目标 test 脚本 `.mjs` 形式 |
 | `apps/zcode-cli/packages/bootstrap/src/app/plugin-state-pool.test.ts` | `apps/acode-cli/tests/plugin-state-pool.test.mjs` | 在途 |
@@ -654,3 +665,4 @@ pnpm verify:pre-push
 | 日期 | 变更 |
 | --- | --- |
 | 2026-10-20 | 初稿：基于目标 HEAD `38b93920` 与源 `master@2bf8d04d` 核实；记录 R3 工作树在途实现 |
+| 2026-10-29 | §3.4 增补「行尾中立」：脏判据改内容比较（`diff --quiet HEAD` + `ls-files --others`），快照先看 `diff --cached --quiet`，清理前 `add -u` 刷新 stat；§7.2 新增 S5b 验收场景。依据：本机 `core.autocrlf=true` 下真实产品路径复现——CRLF 检出被 LF 原样重写后 `status` 报 ` M` 但 `diff --quiet HEAD` 为 0，导致主工作区被误判脏、成员树被误判 dirty 而拒绝清理/快照提交失败。同时记录本机 fixture 的 8.3 短路径问题（见 §7.3 备注） |

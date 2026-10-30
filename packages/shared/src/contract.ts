@@ -22,7 +22,7 @@ export type {
 } from "./remoteTarget.js";
 
 // ── 账号访问类别（acode-protocol 面；唯一事实源 account-access-types.ts，
-//    叶子文件——usage-stats.ts 与 acode-protocol/index.ts 共用且无环）──────
+//    叶子文件——usage-stats.ts 与（M4a 前）legacy barrel 共用且无环）──────
 export {
   acodeAccountAccessSchema,
   acodeProviderAccountAccessSchema,

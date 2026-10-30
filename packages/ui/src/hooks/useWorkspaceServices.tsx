@@ -145,7 +145,9 @@ export function useOptionalBaseWorkspaceServices(): IServiceAccessor | null {
   return registeredBaseServices ?? contextServices;
 }
 
-interface WorkspaceServicesResolution {
+// 批次 4 外迁（2026-10-28）：settings/plugins/usePluginListController 的导出签名经推断引用
+// 本类型，依 TS4058/ts-no-return-type 规则由属主模块具名导出。
+export interface WorkspaceServicesResolution {
   services: IServiceAccessor;
   remoteSessionId: string | null;
   isRemoteTarget: boolean;

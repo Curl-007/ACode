@@ -57,7 +57,7 @@ import type {
   WorkspaceForkResult,
 } from "../types.js";
 import { cloneModelSelection } from "../model-selection.js";
-import type { ModelSelection } from "@acode/contracts";
+import type { ModelSelection, SessionTaskType } from "@acode/contracts";
 
 function stableForkError(message: string, context: Record<string, unknown> = {}): Error {
   return createCoreError(CoreErrorType.InvalidStateTransition, message, {
@@ -150,20 +150,34 @@ function buildForkedSessionInput(
   parentSession: SessionInfo,
   forkedSessionId: SessionId,
   kind: "fork" | "selection_side_chat" = "fork",
+  // overnight 隐藏 coordinator（specs/overnight-execution.md R1a）：**持久化身份**覆盖。
+  // 只改落盘行（侧栏可见性的判据），不改运行期 config.taskType。
+  hiddenCoordinatorTitle?: string,
 ): CreateSessionInput {
   const now = Date.now();
+  // R1a 修复的既有缺陷：coordinator 的 fork 会话行以 taskType "fork" 落盘，而侧栏可见性
+  // 由持久化 taskType 决定（isTaskListSessionType 判 interactive/fork/workflow_parent 可见，
+  // 冷启动 seed 从 store 读同一判据），故 CLI 重启后隐藏 coordinator 被投进侧栏显示为
+  // 「Fork of X」——「隐藏」语义跨重启不成立。改用专属 taskType，它不在
+  // TASK_LIST_SESSION_TYPES 内，靠既有集合的「不在即不可见」生效，不新增第二条可见性路径。
+  // 运行期 config.taskType 仍由调用方设为 "fork"：isMainMemoryTaskType 等运行期门正向
+  // 枚举 "fork"，改运行期值会连带关掉项目记忆等非目标行为。
+  const persistedTaskType: SessionTaskType =
+    hiddenCoordinatorTitle === undefined ? kind : "overnight_coordinator";
   return {
     id: forkedSessionId,
     projectID: parentSession.projectID,
     workspaceID: parentSession.workspaceID,
     parentID: runtime.sessionId,
     traceID: runtime.rootTraceContext.traceId,
-    taskType: kind,
-    slug: `${slugify(parentSession.slug)}-${kind}-${now.toString(36)}`.slice(0, 120),
+    taskType: persistedTaskType,
+    slug: `${slugify(parentSession.slug)}-${persistedTaskType}-${now.toString(36)}`.slice(0, 120),
     directory: parentSession.directory,
     path: parentSession.path,
+    // coordinator 有自己的标题（含 duration 与 runId），不是「Fork of <父标题>」。
     title:
-      kind === "selection_side_chat" ? "Selection side chat" : `Fork of ${parentSession.title}`,
+      hiddenCoordinatorTitle ??
+      (kind === "selection_side_chat" ? "Selection side chat" : `Fork of ${parentSession.title}`),
     titleSource: "generated",
     version: parentSession.version,
     permission: parentSession.permission,
@@ -864,6 +878,8 @@ export async function createForkedSession(
     parentSession: SessionInfo;
     forkedSessionId?: SessionId;
     stableForkMetadata?: StableConversationForkChildMetadata;
+    // overnight 隐藏 coordinator（specs/overnight-execution.md R1a）：只改落盘行身份。
+    hiddenCoordinatorTitle?: string;
   },
 ): Promise<SessionId> {
   if (!runtime.sessionStore) {
@@ -876,7 +892,13 @@ export async function createForkedSession(
   }
 
   const forkedSessionId = options.forkedSessionId ?? createSessionId();
-  const input = buildForkedSessionInput(runtime, options.parentSession, forkedSessionId);
+  const input = buildForkedSessionInput(
+    runtime,
+    options.parentSession,
+    forkedSessionId,
+    "fork",
+    options.hiddenCoordinatorTitle,
+  );
   // legacy workspace fork 兼容分支。V4 stable/compact-edit 入口直接构建完整 bundle，
   // 不得经过这里的 child-only metadata 原语，否则会重新引入逐条补写窗口。
   if (options.stableForkMetadata) {

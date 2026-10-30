@@ -5,13 +5,8 @@
  * _commonHeaders() 与 requestInit 之后、真正发出请求之前注入。因此现有的 HTTP 代理、
  * 自定义 CA、No Proxy 策略全部保留——本 wrapper 只包裹它，不绕过。
  */
-import {
-  findOfficialMcpReservedHeaders,
-  isOfficialMcpReservedHeaderName,
-  summarizeOfficialMcpIdentityHeaders,
-  type McpServerFailureKind,
-  type OfficialMcpAuthFailureKind,
-} from "@acode/shared";
+import { findOfficialMcpReservedHeaders, isOfficialMcpReservedHeaderName, summarizeOfficialMcpIdentityHeaders, type OfficialMcpAuthFailureKind } from "@acode/shared";
+import { type V4McpServerFailureKind } from "@acode/shared/acode-protocol-v4";
 import type {
   Logger,
   McpOfficialProvenance,
@@ -71,7 +66,7 @@ interface CreateOfficialMcpAuthFetchInput {
 
 /** 一次官方 MCP 响应中可用于关联的非敏感事实。不含 body、不含任何 header 值。 */
 export interface OfficialMcpServerResponseInfo {
-  failureKind?: McpServerFailureKind;
+  failureKind?: V4McpServerFailureKind;
   httpStatus: number;
   rpcMethod?: string;
   rpcToolName?: string;
@@ -340,7 +335,7 @@ const MAX_DIAGNOSTIC_RESPONSE_BYTES = 64 * 1024;
 
 async function classifyOfficialMcpResponse(
   response: Response,
-): Promise<McpServerFailureKind | undefined> {
+): Promise<V4McpServerFailureKind | undefined> {
   if (response.status === 429) return "rate_limited";
   if (response.status >= 500) return "server_internal_error";
 

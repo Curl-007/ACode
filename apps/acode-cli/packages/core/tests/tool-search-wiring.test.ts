@@ -29,6 +29,7 @@ import { hydrateMessageHistoryFromSession } from "../src/agent/session-history-h
 import { buildProviderRequestMessages } from "../src/runtime/helpers/provider-request-messages.js";
 import { completedToolPartMetadata } from "../src/runtime/methods/tool-part-metadata.js";
 import { refreshBranchAwareBuiltInTools } from "../src/runtime/methods/embedded-search-branch.js";
+import { initializeRuntimeToolCache } from "../src/runtime/runtime-tool-cache.js";
 import { createToolRegistry } from "../src/tool/registry.js";
 
 // -----------------------------------------------
@@ -396,21 +397,29 @@ test("wrapper：completedToolPartMetadata 持久化引用型 modelContent，字�
 // -----------------------------------------------
 
 test("embedded 分支刷新：includeToolSearch 透传，控制工具仍在；off 不注册", () => {
+  // 修复依据：R1-01 B4 把 cachedTools 收编进 RuntimeToolCacheOwner（WeakMap owner），
+  // refreshBranchAwareBuiltInTools 末尾改走 getRuntimeToolCachePort(runtime).invalidateCachedTools()。
+  // 假 runtime 必须先 initializeRuntimeToolCache 建立 owner，否则抛
+  // “Runtime tool cache has not been initialized”。旧测试按 B4 前的扁平契约传含
+  // cachedTools 字段的 partial 对象，属测试漂移（本地 CLI 根套件只跑 tests/**/*.test.mjs，
+  // 未覆盖本包 .test.ts，故仅 CI Windows/Linux 的 core 步骤暴露）。
   const localRegistry = createToolRegistry();
-  refreshBranchAwareBuiltInTools({
+  const localRuntime = {
     registry: localRegistry,
     config: { toolSearchMode: "local" },
-    cachedTools: null,
-  } as never);
+  } as never;
+  initializeRuntimeToolCache(localRuntime);
+  refreshBranchAwareBuiltInTools(localRuntime);
   assert.ok(localRegistry.get(TOOL_SEARCH_NAME), "ToolSearch 应随分支刷新保留");
   assert.ok(localRegistry.get(DEFERRED_TOOL_CALL_NAME), "DeferredToolCall 应随分支刷新保留");
 
   const offRegistry = createToolRegistry();
-  refreshBranchAwareBuiltInTools({
+  const offRuntime = {
     registry: offRegistry,
     config: {},
-    cachedTools: null,
-  } as never);
+  } as never;
+  initializeRuntimeToolCache(offRuntime);
+  refreshBranchAwareBuiltInTools(offRuntime);
   assert.equal(offRegistry.get(TOOL_SEARCH_NAME), undefined);
   assert.equal(offRegistry.get(DEFERRED_TOOL_CALL_NAME), undefined);
 });

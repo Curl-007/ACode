@@ -8,7 +8,7 @@ import type {
   SubmissionMode,
 } from "@acode/shared/acode-protocol-v4";
 import type { ModelSelection } from "@acode/shared";
-import { createModelExecutionContext } from "../../../acode-protocol/model-execution.js";
+import { createModelExecutionContext } from "../../model-execution.js";
 import type { SteerTurnOptions } from "../../../app/types.js";
 import { parseProviderQualifiedModelSelection } from "../../../app/provider-registry-selection.js";
 import type { TurnAttachment } from "@acode/core";

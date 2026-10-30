@@ -271,7 +271,7 @@ test("R3#5: 闲时轮隐藏名单只有一个所有者，两个 bootstrap 消费
   // modelExecution 之外重启子 Agent 的入口。
   for (const path of [
     `${BOOTSTRAP}/acode-protocol-v4/commands/prompt-turn.ts`,
-    `${BOOTSTRAP}/acode-protocol/server-operations.ts`,
+    `${BOOTSTRAP}/acode-protocol-v4/server-operations.ts`,
   ]) {
     const source = readSource(path);
     assert.match(

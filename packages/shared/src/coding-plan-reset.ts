@@ -39,4 +39,4 @@ export interface CodingPlanResetUseRequest extends CodingPlanResetScopeRequest {
 export interface CodingPlanResetUseResult {
   used: true;
 }
-import type { ACodeAccountAccess, ACodeProviderAccountAccess } from "./acode-protocol/index.js";
+import type { ACodeAccountAccess, ACodeProviderAccountAccess } from "./account-access-types.js";

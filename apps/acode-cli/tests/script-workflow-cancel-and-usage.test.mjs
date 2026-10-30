@@ -17,8 +17,10 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-const RUNTIME = "../packages/cli-workflow/src/script-workflow-runtime.ts";
 const CONTRACTS = "../packages/contracts/src/workflow/script.ts";
+// W1-R3 max-lines 拆分后：取消判据与结算词表在 run-body，per-agent 超时的合并信号在 run-agent。
+const RUN_BODY = "../packages/cli-workflow/src/script-workflow-run-body.ts";
+const RUN_AGENT = "../packages/cli-workflow/src/script-workflow-run-agent.ts";
 
 function readSource(relativePath) {
   return readFileSync(new URL(relativePath, import.meta.url), "utf8");
@@ -38,7 +40,7 @@ test("cancelled 确实在存储的状态词表里（不是为这次修复新造�
 });
 
 test("取消判据只认 run 级 signal，per-agent 超时不算用户取消", () => {
-  const code = codeLines(readSource(RUNTIME));
+  const code = codeLines(readSource(RUN_BODY));
   assert.match(
     code,
     /const cancelled = options\?\.abortSignal\?\.aborted === true;/,
@@ -46,12 +48,15 @@ test("取消判据只认 run 级 signal，per-agent 超时不算用户取消", (
   );
   // runAgent 里 per-agent 超时用的是 mergedSignal 合出来的**另一个** signal；它中止时
   // run 级 signal 仍未 aborted，那条路是货真价实的失败（activity_failed 冒上来）。
-  // 判据若改读别的信号，一次 agent 超时就会被报成「你停的」。
-  assert.match(code, /mergedSignal\(options\?\.abortSignal, input\.opts\?\.timeoutMs\)/);
+  // 判据若改读别的信号，一次 agent 超时就会被报成「你停的」。该合并信号随拆分住在 run-agent。
+  assert.match(
+    codeLines(readSource(RUN_AGENT)),
+    /mergedSignal\(options\?\.abortSignal, input\.opts\?\.timeoutMs\)/,
+  );
 });
 
 test("取消与失败各自写各自的状态词与事件名", () => {
-  const code = codeLines(readSource(RUNTIME));
+  const code = codeLines(readSource(RUN_BODY));
   assert.match(code, /status: cancelled \? "cancelled" : "failed",/);
   assert.match(
     code,
@@ -61,7 +66,7 @@ test("取消与失败各自写各自的状态词与事件名", () => {
 });
 
 test("取消不记 failure：abort reason 恒为「被取消」，记下来只会把主动停止报成带错误的失败", () => {
-  const code = codeLines(readSource(RUNTIME));
+  const code = codeLines(readSource(RUN_BODY));
   assert.match(code, /\.\.\.\(cancelled \? \{\} : \{ failure: serializeError\(error\) \}\),/);
   // 无条件写 failure 的旧写法一个都不许剩。
   assert.equal(
@@ -72,8 +77,9 @@ test("取消不记 failure：abort reason 恒为「被取消」，记下来只�
 });
 
 test("两张按 run 建键的 Map 都在结算点清项（runtime 实例活整个会话）", () => {
-  const code = codeLines(readSource(RUNTIME));
-  assert.match(code, /this\.agentCallCounts\.delete\(run\.id\);/);
-  assert.match(code, /this\.statsWrites\.delete\(run\.id\);/);
-  assert.match(code, /this\.deps\.progressAdapter\?\.forgetRun\(run\.id\);/);
+  // 清理点随拆分住在 run-body 的 finally 段；经宿主对象（host）碰主类的两个 Map。
+  const code = codeLines(readSource(RUN_BODY));
+  assert.match(code, /host\.agentCallCounts\.delete\(run\.id\);/);
+  assert.match(code, /host\.statsWrites\.delete\(run\.id\);/);
+  assert.match(code, /host\.deps\.progressAdapter\?\.forgetRun\(run\.id\);/);
 });

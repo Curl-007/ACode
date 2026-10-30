@@ -9,6 +9,7 @@ import {
   type PersistedTokenUsageBaseline,
 } from "../../agent/message-history-usage.js";
 import { recordModelUsageFact } from "./usage-observability.js";
+import { getRuntimeCacheDiagnosticsPort } from "../runtime-cache-diagnostics.js";
 
 interface RecordMainTurnModelUsageInput {
   assistantMessageId: MessageId;
@@ -135,29 +136,21 @@ export function recordMainTurnCacheHitUsage(
     return undefined;
   }
 
-  runtime.mainTurnCacheHitAggregate = {
-    requestCount: runtime.mainTurnCacheHitAggregate.requestCount + 1,
-    totalInputTokens: runtime.mainTurnCacheHitAggregate.totalInputTokens + inputTokens,
-    totalCacheReadTokens: runtime.mainTurnCacheHitAggregate.totalCacheReadTokens + cacheReadTokens,
-    totalCacheWriteTokens:
-      runtime.mainTurnCacheHitAggregate.totalCacheWriteTokens + cacheWriteTokens,
-  };
-
+  // R1-01 B1：cache 归因事务（D1/D2/D3/M4 累计 + 消费 pending）收敛到
+  // RuntimeCacheDiagnosticsOwner 的 recordMainTurnUsage 端口，原子完成。
+  const cachePort = getRuntimeCacheDiagnosticsPort(runtime);
   // miss-cause 归因唯一判定点（specs/prompt-cache-diagnostics.md R2，Path A）。
   const isMiss = cacheReadTokens === 0 && inputTokens > 0;
-  if (isMiss) {
-    const cause = resolveCacheMissCause(runtime, modelId);
-    runtime.cacheMissCauseCounts = {
-      ...runtime.cacheMissCauseCounts,
-      [cause]: (runtime.cacheMissCauseCounts[cause] ?? 0) + 1,
-    };
-  }
-  // 命中与 miss 都消费 pending 并更新模型记录：陈旧 pending 不得归因给后续无关 miss。
-  runtime.pendingCacheMissCause = undefined;
-  if (modelId !== undefined) runtime.lastRequestModelId = modelId;
+  const cause = isMiss ? resolveCacheMissCause(runtime, modelId) : undefined;
+  const { aggregate, missCauses } = cachePort.recordMainTurnUsage({
+    inputTokens,
+    cacheReadTokens,
+    cacheWriteTokens,
+    isMiss,
+    cause,
+    modelId,
+  });
 
-  const aggregate = runtime.mainTurnCacheHitAggregate;
-  const hasMissCauses = Object.keys(runtime.cacheMissCauseCounts).length > 0;
   return {
     inputTokens,
     cacheReadTokens,
@@ -171,7 +164,7 @@ export function recordMainTurnCacheHitUsage(
     totalInputTokens: aggregate.totalInputTokens,
     totalCacheReadTokens: aggregate.totalCacheReadTokens,
     totalCacheWriteTokens: aggregate.totalCacheWriteTokens,
-    ...(hasMissCauses ? { missCauses: { ...runtime.cacheMissCauseCounts } } : {}),
+    ...(missCauses ? { missCauses } : {}),
   };
 }
 
@@ -186,17 +179,25 @@ function resolveCacheMissCause(
   runtime: AgentRuntimeInternal,
   modelId: string | undefined,
 ): PromptCacheMissCause {
-  if (runtime.pendingCacheMissCause) return runtime.pendingCacheMissCause;
+  // R1-01 B1：归因事务的 3 个输入（pendingCacheMissCause / lastRequestModelId /
+  // lastAssistantCompletedAtMs）已收敛到 RuntimeCacheDiagnosticsOwner，这里经 peek 端口读取
+  // ——本函数只「读」归因输入，不写；真正的「消费即清 + 计数累计 + 模型记录更新」在
+  // recordMainTurnUsage 端口内原子完成（同一事务）。
+  const cachePort = getRuntimeCacheDiagnosticsPort(runtime);
+  const pendingCause = cachePort.peekPendingCacheMissCause();
+  if (pendingCause) return pendingCause;
+  const lastRequestModelId = cachePort.peekLastRequestModelId();
   if (
     modelId !== undefined &&
-    runtime.lastRequestModelId !== undefined &&
-    runtime.lastRequestModelId !== modelId
+    lastRequestModelId !== undefined &&
+    lastRequestModelId !== modelId
   ) {
     return "model_changed";
   }
+  const lastAssistantCompletedAtMs = cachePort.peekLastAssistantCompletedAtMs();
   if (
-    runtime.lastAssistantCompletedAtMs !== undefined &&
-    Date.now() - runtime.lastAssistantCompletedAtMs > CACHE_TTL_SUSPECT_MS
+    lastAssistantCompletedAtMs !== undefined &&
+    Date.now() - lastAssistantCompletedAtMs > CACHE_TTL_SUSPECT_MS
   ) {
     return "idle_ttl_suspected";
   }

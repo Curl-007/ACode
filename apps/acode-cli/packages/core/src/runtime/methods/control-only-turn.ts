@@ -16,6 +16,8 @@ import { buildUserContentFromTurn } from "../helpers/index.js";
 import { realUserRuntimeMetadata } from "../../agent/message-history.js";
 import type { AgentRuntimeInternal } from "../internal.js";
 import { getRuntimeTurnTimingPort } from "../runtime-turn-timing.js";
+import { getRuntimeCacheDiagnosticsPort } from "../runtime-cache-diagnostics.js";
+import { getRuntimeMessageProjectionPort } from "../runtime-message-projection.js";
 import type { ControlOnlyTurnRuntimeCommand } from "../command-queue.js";
 import { buildProjectionAnchor } from "./projection-anchor.js";
 import { maybeStartGoalSummaryTitleGeneration } from "./goal-summary-title.js";
@@ -113,7 +115,8 @@ export async function emitControlOnlyUserTurn(
   getRuntimeTurnTimingPort(this).advanceTurn();
   this.messageHistory.setCacheMiss();
   // 无模型输出的边界 turn 后首个请求前缀必变（prompt-cache-diagnostics.md R1）。
-  this.pendingCacheMissCause = "control_only_turn";
+  // R1-01 B1：pendingCacheMissCause 归 RuntimeCacheDiagnosticsOwner，写入经端口。
+  getRuntimeCacheDiagnosticsPort(this).setPendingCacheMissCause("control_only_turn");
 }
 
 /**
@@ -134,7 +137,8 @@ export async function persistWorkflowLaunchUserMessage(
     traceContext: TraceContext;
   },
 ): Promise<void> {
-  this.latestConversationMessageId = options.messageID;
+  // R1-01 B3：latestConversationMessageId 归 RuntimeMessageProjectionOwner，写入经端口。
+  getRuntimeMessageProjectionPort(this).recordConversationMessage(options.messageID);
   if (!this.sessionStore) return;
 
   const created = Date.now();

@@ -1,22 +1,7 @@
 import { ServiceChannels } from "@acode/shared";
-import type {
-  TraceId,
-  ACodeAgentMcpServer,
-  ACodeDeliveryKind,
-  ACodeMessageWithParts,
-  ModelSelection,
-  ACodePermissionRequestParams,
-  ACodeUserInputRequestParams,
-  ACodeUserInputResponse,
-  ACodeSessionInfo,
-  ACodeSessionImportHistory,
-  ACodeSessionEvent,
-  ACodeSessionMode,
-  ACodeSessionPersistence,
-  ACodeSessionStateSnapshot,
-  ACodeStateUpdatedNotification,
-  ACodeWorkspacePresentation,
-} from "@acode/shared";
+import type { TraceId, ACodeAgentMcpServer, ACodeDeliveryKind, ACodeMessageWithParts, ModelSelection, ACodeSessionInfo, ACodeSessionImportHistory, ACodeSessionEvent, ACodeSessionMode, ACodeSessionStateSnapshot, ACodeStateUpdatedNotification } from "@acode/shared";
+import { type V4InteractionRequestPermissionParams, type V4InteractionRequestUserInputParams, type V4UserInputResponse, type V4SessionPersistence, type V4WorkspacePresentation, type V4SessionHeaderMetaResult } from "@acode/shared/acode-protocol-v4";
+
 import { createServiceDescriptor } from "#src/descriptors.js";
 
 export interface ACodeSessionWorkspaceTarget {
@@ -38,13 +23,13 @@ export interface ACodeSessionCreateParams extends ACodeSessionWorkspaceTarget {
   parentSessionId?: string;
   mode?: ACodeSessionMode;
   model?: ModelSelection;
-  persistence?: ACodeSessionPersistence;
+  persistence?: V4SessionPersistence;
   thoughtLevel?: string;
   mcpServers?: ACodeAgentMcpServer[];
   importedHistory?: ACodeSessionImportHistory;
 }
 
-export interface ACodeSessionResumeParams extends ACodeTaskTarget {
+export interface V4SessionResumeParams extends ACodeTaskTarget {
   model?: ModelSelection;
   thoughtLevel?: string;
   mcpServers?: ACodeAgentMcpServer[];
@@ -106,12 +91,12 @@ export interface ACodeSessionSubscribeParams extends ACodeTaskTarget {
 export type ACodeSessionServiceEvent =
   | { type: "session.event"; event: ACodeSessionEvent }
   | { type: "state.updated"; notification: ACodeStateUpdatedNotification }
-  | { type: "permission.request"; request: ACodePermissionRequestParams }
-  | { type: "userInput.request"; request: ACodeUserInputRequestParams }
+  | { type: "permission.request"; request: V4InteractionRequestPermissionParams }
+  | { type: "userInput.request"; request: V4InteractionRequestUserInputParams }
   | {
       type: "userInput.response";
       requestId: string;
-      response: ACodeUserInputResponse;
+      response: V4UserInputResponse;
     }
   | { type: "snapshot"; snapshot: ACodeSessionStateSnapshot };
 
@@ -139,11 +124,18 @@ export interface IACodeSessionService {
   ): Promise<ACodeSessionWorkspaceRuntimeIdentity>;
   readWorkspacePresentation(
     params: ACodeSessionReadWorkspacePresentationParams,
-  ): Promise<ACodeWorkspacePresentation>;
+  ): Promise<V4WorkspacePresentation>;
   createSession(params: ACodeSessionCreateParams): Promise<ACodeSessionStateSnapshot>;
-  resumeSession(params: ACodeSessionResumeParams): Promise<ACodeSessionStateSnapshot>;
+  resumeSession(params: V4SessionResumeParams): Promise<ACodeSessionStateSnapshot>;
   listSessions(params: ACodeSessionListParams): Promise<ACodeSessionInfo[]>;
   readSession(params: ACodeSessionReadParams): Promise<ACodeSessionStateSnapshot>;
+  /**
+   * 归档会话 header 冷读（apps/acode-cli/specs/v4-session-header-meta.md）：只回 header 元数据，
+   * 不带 messages/快照整包，不激活 session 运行时。useActiveTaskSnapshotMeta 的兜底读走这里，
+   * 替代 legacy readSession（M1 的两个真消费方之一）。返回 wire result（found + meta?），
+   * UI 侧再映射成 ACodeTaskMeta。
+   */
+  readSessionHeaderMeta(params: ACodeTaskTarget): Promise<V4SessionHeaderMetaResult>;
   readSessionMessages(params: ACodeSessionMessagesParams): Promise<ACodeMessageWithParts[]>;
   readSessionEvents(params: ACodeSessionEventsParams): Promise<ACodeSessionEvent[]>;
   promoteDeferredDraftSession(params: ACodeTaskTarget): Promise<void>;
@@ -166,6 +158,7 @@ export const IACodeSessionService = createServiceDescriptor<IACodeSessionService
       "resumeSession",
       "listSessions",
       "readSession",
+      "readSessionHeaderMeta",
       "readSessionMessages",
       "readSessionEvents",
       "promoteDeferredDraftSession",
@@ -185,6 +178,8 @@ export const IACodeSessionService = createServiceDescriptor<IACodeSessionService
       resumeSession: (args) => requireSessionParams(args, ["workspacePath", "sessionId"]),
       listSessions: (args) => requireSessionParams(args, ["workspacePath"]),
       readSession: (args) => requireSessionParams(args, ["workspacePath", "sessionId"]),
+      // ACodeTaskTarget = workspacePath + sessionId，与 readSession 同款校验器（ARCH-01 门禁）。
+      readSessionHeaderMeta: (args) => requireSessionParams(args, ["workspacePath", "sessionId"]),
       readSessionMessages: (args) => requireSessionParams(args, ["workspacePath", "sessionId"]),
       readSessionEvents: (args) => requireSessionParams(args, ["workspacePath", "sessionId"]),
       promoteDeferredDraftSession: (args) =>

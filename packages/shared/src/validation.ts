@@ -15,11 +15,8 @@ import {
   NETWORK_CAPTURE_MAX_RECORDS_PER_NOTIFICATION,
   networkCaptureRecordSchema,
 } from "./acode-protocol-v4/network-capture.js";
-import {
-  acodeMcpResourceSamplesSchema,
-  acodeToolExecResourceSchema,
-  acodeProcessResourceSampleSchema,
-} from "./acode-protocol/index.js";
+import { overnightCompletionOutcomeSchema } from "./acode-protocol-v4/overnight-completion.js";
+import { acodeMcpResourceSamplesSchema, acodeToolExecResourceSchema, acodeProcessResourceSampleSchema } from "./acode-agent-notifications.js";
 import { acodeTaskModeSchema } from "./acode-task-mode-schema.js";
 import { errorAttributionSchema } from "./acode-protocol-v4/snapshot.js";
 import {
@@ -505,6 +502,25 @@ export const hostNetworkCaptureRecordsResponseSchema = z
   .strict();
 export type HostNetworkCaptureRecordsResponse = z.infer<
   typeof hostNetworkCaptureRecordsResponseSchema
+>;
+
+// host→main 的 Overnight（K3）完成信号（specs/overnight-completion-notify.md §7）。
+// 载荷即 v4 overnight-completion 通知的镜像（agent→host schema 在
+// acode-protocol-v4/overnight-completion.ts，直接复用其 outcome 枚举与字段，不重复定义），
+// 只额外加 host→main 的 `type` 判别字面量以进 hostResponseMessageSchema 判别联合。
+export const hostOvernightCompletionNotifyResponseSchema = z
+  .object({
+    type: z.literal("overnight-completion-notify"),
+    // 与 v4 通知 schema 同款 trim().min(1)：跨两道边界（agent→host、host→main）对标识符
+    // 用同一严格度，纯空白 id 一律 fail-closed（不静默透传到 main 弹通知）。
+    runId: z.string().trim().min(1).max(128),
+    parentTaskId: z.string().trim().min(1).max(256),
+    outcome: overnightCompletionOutcomeSchema,
+    morningReportReady: z.boolean(),
+  })
+  .strict();
+export type HostOvernightCompletionNotifyResponse = z.infer<
+  typeof hostOvernightCompletionNotifyResponseSchema
 >;
 
 export const hostIncomingMessageSchema = z.discriminatedUnion("type", [
@@ -1048,6 +1064,7 @@ export const hostResponseMessageSchema = z.discriminatedUnion("type", [
   hostOffPeakRunResultResponseSchema,
   hostCronSchedulerWakeRequestResponseSchema,
   hostOffPeakSchedulerWakeRequestResponseSchema,
+  hostOvernightCompletionNotifyResponseSchema,
 ]);
 
 export const acodeTaskPersistStatusSchema = z.enum(["running", "completed", "error"]);

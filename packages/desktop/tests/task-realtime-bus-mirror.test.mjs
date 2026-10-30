@@ -81,6 +81,22 @@ function snapshotPublish(eventId, taskId) {
     },
   };
 }
+// 无 taskId 的 workspace 级事件 → getSeenEventBucketKey 落到 "seen::" + workspaceKey 桶。
+// 用于验证 workspace 级去重桶的回收（单释放路径修复，见 taskRealtimeBus.ts releaseLease）。
+function workspacePublish(eventId) {
+  return {
+    type: "task-realtime-publish",
+    event: {
+      type: "workspace_task_list_invalidated",
+      eventId,
+      workspacePath: WS,
+      workspaceKey: WS,
+      traceId: "trace-" + eventId,
+      createdAt: 1,
+      reason: "task_created",
+    },
+  };
+}
 
 function makeBus(opts = {}) {
   return new TaskRealtimeBus({ logger: silentLogger, ...opts });
@@ -237,4 +253,54 @@ test("finding #4：host 退出回收其名下所有去重桶", () => {
 
   owner.emitExit();
   assert.equal(bus.collectMemoryDiagnostics().seenEventBuckets, 0, "host 退出后去重桶全部回收，防泄漏");
+});
+
+// 1.0.4 review finding（P3）：单释放路径 workspace 级去重桶回收顺序缺陷。
+// 旧实现 releaseLease 先 discardSeenEventBucketForTask 后 leases.delete，导致 helper 内
+// stillUsed 扫描把正在释放的 lease 也算进去 → 恒 true → workspace 桶永不回收。修复为先删 lease。
+test("1.0.4 P3：释放 workspace 最后一个 lease 回收 workspace 级去重桶", () => {
+  const bus = makeBus();
+  const owner = registerOwner(bus);
+  owner.emitMessage(leaseAcquire("taskA", "runA", "lr1"));
+  // 无 taskId 事件 → 建立 workspace 级去重桶 "seen::WS"。
+  owner.emitMessage(workspacePublish("wsEvt1"));
+  assert.equal(bus.collectMemoryDiagnostics().seenEventBuckets, 1, "workspace 事件建立 workspace 级桶");
+
+  // 释放该 workspace 的唯一 lease：workspace 桶应被回收（旧顺序缺陷下会残留 → 断言 0 失败）。
+  owner.emitMessage(leaseRelease("taskA", "runA"));
+  assert.equal(bus.collectMemoryDiagnostics().leases, 0, "lease 已释放");
+  assert.equal(
+    bus.collectMemoryDiagnostics().seenEventBuckets,
+    0,
+    "释放 workspace 最后一个 lease 后 workspace 级去重桶被回收",
+  );
+  owner.emitExit();
+});
+
+test("1.0.4 P3：同 workspace 两个 lease，释放其一保留 workspace 桶，释放其二才回收", () => {
+  const bus = makeBus();
+  const owner = registerOwner(bus);
+  owner.emitMessage(leaseAcquire("taskA", "runA", "lr1"));
+  owner.emitMessage(leaseAcquire("taskB", "runB", "lr2"));
+  owner.emitMessage(workspacePublish("wsEvt1"));
+  assert.equal(bus.collectMemoryDiagnostics().seenEventBuckets, 1, "workspace 事件建立 workspace 级桶");
+
+  // 释放其中一个 lease：taskB 仍持有同 workspace 的 lease → workspace 桶必须保留（防过度回收）。
+  owner.emitMessage(leaseRelease("taskA", "runA"));
+  assert.equal(bus.collectMemoryDiagnostics().leases, 1, "taskB lease 仍在");
+  assert.equal(
+    bus.collectMemoryDiagnostics().seenEventBuckets,
+    1,
+    "同 workspace 仍有 lease → workspace 桶保留，不误删",
+  );
+
+  // 释放最后一个 lease → workspace 桶回收。
+  owner.emitMessage(leaseRelease("taskB", "runB"));
+  assert.equal(bus.collectMemoryDiagnostics().leases, 0);
+  assert.equal(
+    bus.collectMemoryDiagnostics().seenEventBuckets,
+    0,
+    "释放最后一个 lease 后 workspace 桶被回收",
+  );
+  owner.emitExit();
 });

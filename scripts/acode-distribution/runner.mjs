@@ -149,12 +149,23 @@ function networkUrls(port, token) {
 }
 
 function openBrowser(url) {
+  // 修复依据（R2-01 命令注入的第三份出货副本；同 adapters/src/auth/browser.ts 与
+  // bootstrap/src/app/platform-open-port.ts 的 H1/R2-01 模式，2026-10-26 补齐）：
+  // 原写法 `spawn("cmd", ["/c","start","",url])` 中，cmd.exe 按 `"` 切换引号态——url 只要
+  // 内嵌裸双引号即可逃逸引号态，其后 `&calc&` 作为新命令在 CLI 用户上下文执行。spawn 的参数
+  // 数组只保证 argv 边界；当 executable 本身是 shell（cmd.exe）时，数组形态不构成防线
+  // （元字符由 shell 二次解释）。本文件随发行包出货为 bin/acode.mjs（build-acode.mjs 复制），
+  // 是「修一处漏其余副本」流程失败的复发点。此处 url 由本地 CLI 参数构造（host/port/token），
+  // 无远程字符串到达，故非远程可利用（P3），但违反 auth-browser-opener.md 立的不变量。
+  // 改用 explorer.exe 直传：非 shell，argv 经 CreateProcess 传递，无元字符解释层，内嵌
+  // `"`/`&`/`^`/`%` 不被解释。`explorer.exe <url>` 用系统默认浏览器打开 URL。
   const command =
-    process.platform === "darwin" ? "open" : process.platform === "win32" ? "cmd" : "xdg-open";
-  const args = process.platform === "win32" ? ["/c", "start", "", url] : [url];
+    process.platform === "darwin" ? "open" : process.platform === "win32" ? "explorer.exe" : "xdg-open";
+  const args = [url];
   const child = spawn(command, args, {
     detached: true,
     stdio: "ignore",
+    windowsHide: true,
   });
   child.unref();
 }

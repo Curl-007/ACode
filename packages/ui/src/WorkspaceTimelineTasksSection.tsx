@@ -409,13 +409,24 @@ export function WorkspaceTimelineTasksSection({
         })
         .catch(() => {
           // R2-06: 回滚阶段——pinned 时远端 pinned remove + timeline upsert（恢复列表顺序）。
+          // Bugfix(2026-10-26 review P3): 此前这里传的是 previousState/nextState 都为
+          // { pinned: false } 的「同一态 → 同一态」参数，不是乐观阶段
+          // （{ pinned: false } → { pinned }）的逆变换。taskQueryCacheStore.applyTaskMutation
+          // 的计数是 nextTotal = total + Number(nextIncluded) - Number(previousIncluded)，
+          // 两个成员态相同时 timeline / pinned 两个 descriptor 的 delta 都恒为 0，
+          // 于是乐观阶段已经发生的 timeline total −1、pinned total +1 不会被撤销：
+          // 一次失败的 pin 之后两个 total 会一直漂移到下次服务端 setQueryResult 覆盖为止，
+          // 影响 hasMore /「显示更多」的判定（可见行本身能靠 wasVisible 分支正确恢复）。
+          // 修复依据见 packages/ui/specs/task-meta-cache-ownership.md「回滚必须是乐观写入的
+          // 精确逆变换」：回滚的 previousState 取乐观阶段的 nextState（{ pinned }），
+          // nextState 取乐观阶段的 previousState（{ pinned: false }）。
           writeTaskMetaToCaches({
             workspacePath: item.workspacePath,
             workspaceIdentity: item.workspaceIdentity,
             taskId: item.taskId,
             previousTask: item,
             nextTask: item,
-            previousState: { pinned: false, archived: false },
+            previousState: { pinned, archived: false },
             nextState: { pinned: false, archived: false },
             remoteTimeline: pinned ? "upsert" : "none",
             remoteTimelineSortBy: taskSortByRef.current,
@@ -759,13 +770,21 @@ export function WorkspaceTimelineTasksSection({
                 })
                 .catch(() => {
                   // R2-06: 回滚阶段——pinned 时远端 pinned remove + timeline upsert（恢复列表顺序）。
+                  // Bugfix(2026-10-26 review P3): 与 toggleTimelineItemPin 的回滚同因同修——
+                  // 此前传的是 { pinned: false } → { pinned: false } 的非逆变参数，
+                  // applyTaskMutation 的 nextTotal = total + Number(nextIncluded)
+                  // - Number(previousIncluded) 两个 descriptor 都恒为 0 delta，
+                  // 乐观阶段造成的 timeline total −1 / pinned total +1 不会回退，
+                  // hasMore 与「显示更多」计数会一直漂移。改为乐观阶段的精确逆变换：
+                  // previousState = 乐观 nextState（{ pinned }），nextState = 乐观 previousState
+                  // （{ pinned: false }）。详见 specs/task-meta-cache-ownership.md。
                   writeTaskMetaToCaches({
                     workspacePath: contextMenuItem.workspacePath,
                     workspaceIdentity: contextMenuItem.workspaceIdentity,
                     taskId: contextMenuItem.taskId,
                     previousTask: contextMenuItem,
                     nextTask: contextMenuItem,
-                    previousState: { pinned: false, archived: false },
+                    previousState: { pinned, archived: false },
                     nextState: { pinned: false, archived: false },
                     remoteTimeline: pinned ? "upsert" : "none",
                     remoteTimelineSortBy: taskSortBy,

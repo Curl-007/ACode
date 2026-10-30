@@ -35,7 +35,8 @@
 | [upgrades/product-and-support-2026-10.md](upgrades/product-and-support-2026-10.md) 🔒    | 产品与支持升级项（多为提案）                                                              |
 | [upgrades/runtime-and-protocol-2026-10.md](upgrades/runtime-and-protocol-2026-10.md)     | runtime 与协议升级项（多为提案）                                                          |
 | [upgrades/quality-and-release-2026-10.md](upgrades/quality-and-release-2026-10.md) 🔒    | 质量与发布升级项（U01 已落地，其余提案）                                                  |
-| [k-series-upgrade-plan.md](k-series-upgrade-plan.md)                                     | K 系列升级计划（spec 已落，代码未实施；被 10 个 spec 当 §K1–K9 立项依据引用，故留活跃区） |
+| [k-series-upgrade-plan.md](k-series-upgrade-plan.md)                                     | K 系列升级计划（K1-K9 已全部实施；非目标项维持登记，被 spec 当 §K1–K9 立项依据引用，故留活跃区） |
+| [desktop-evolution-analysis-2026-10-26.md](desktop-evolution-analysis-2026-10-26.md)      | 桌面端功能进化分析：U07/U08/U11/U12 已实施、overnight×通知端到端已通；U14 工具链待裁决、U05 legacy 退役待启动；含量级估计复盘 |
 
 ## 设计依据
 
@@ -50,10 +51,12 @@
 
 | 文档                                                                                             | 内容                                                                                                                                                                          |
 | ------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [project-review-2026-10-22.md](project-review-2026-10-22.md)                                     | **当前最新** 全项目 review 枢纽（1.0.3 基线）                                                                                                                                 |
-| [reviews/2026-10-22/](reviews/2026-10-22/)                                                       | 本轮 11 个专项 review + fix-status（多个 spec / test 引用，活跃）                                                                                                             |
-| [project-review-2026-10-08.md](project-review-2026-10-08.md)                                     | 上一轮全项目 review（基线 `dev/0.0.7`）                                                                                                                                       |
-| [reviews/2026-10-08/](reviews/2026-10-08/)                                                       | 上一轮专项 + 修复记录（仍被当前 review、活跃文档与源码注释引用，故留原位）                                                                                                    |
+| [project-review-2026-10-26.md](project-review-2026-10-26.md)                                     | **当前最新** 全项目 review 枢纽（1.0.4 基线）：上轮 16 项整改全部核验站住 + 4×P2 新发现（2 个在修复引入的重连模块内）                                                          |
+| [reviews/2026-10-26/](reviews/2026-10-26/)                                                       | 本轮 11 个专项 review（整改核验 + 新发现，主审对全部 P2 逐行亲验）                                                                                                            |
+| [project-review-2026-10-22.md](project-review-2026-10-22.md)                                     | 上一轮全项目 review 枢纽（1.0.3 基线；其整改批次即 1.0.4 发布）                                                                                                               |
+| [reviews/2026-10-22/](reviews/2026-10-22/)                                                       | 上一轮 11 个专项 review + fix-status（多个 spec / test 引用，活跃）                                                                                                           |
+| [project-review-2026-10-08.md](project-review-2026-10-08.md)                                     | 更早一轮全项目 review（基线 `dev/0.0.7`）                                                                                                                                     |
+| [reviews/2026-10-08/](reviews/2026-10-08/)                                                       | 该轮专项 + 修复记录（仍被后续 review、活跃文档与源码注释引用，故留原位）                                                                                                      |
 | [codex-orchestration-plan-audit-2026-10-10.md](codex-orchestration-plan-audit-2026-10-10.md)     | Codex 编排计划审计（审计对象已归档，见下）                                                                                                                                    |
 | [omp-cli-replacement-assessment-2026-10-23.md](omp-cli-replacement-assessment-2026-10-23.md)     | 用 omp（oh-my-pi）替换 ACode Agent CLI 的可行性评估（4 路子代理分析 + 亲验；结论：不建议完整替换，可行形态是 shim 桥接共存）**待决策**                                        |
 | [jcode-cli-replacement-assessment-2026-10-23.md](jcode-cli-replacement-assessment-2026-10-23.md) | 用 jcode（纯 Rust）替换 ACode Agent CLI 的可行性评估（3 路子代理分析 + 亲验；结论：净优于 omp 但 Windows 无稳定驱动通道，推进前需安全硬化层）；§8 含两候选横向对比 **待决策** |

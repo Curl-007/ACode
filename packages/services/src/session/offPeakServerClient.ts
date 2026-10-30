@@ -250,7 +250,7 @@ export function createOffPeakServerClient(deps: OffPeakServerClientDeps): OffPea
       // 单用户非终态任务数达到 100 前，服务端取号上限早就先挡住了。
       const limited = ticketIds.slice(0, 100);
       if (limited.length < ticketIds.length) {
-        deps.logger.warn(`off-peak batch status truncated ${ticketIds.length} -> 100`);
+        deps.logger.warn(undefined, `off-peak batch status truncated ${ticketIds.length} -> 100`);
       }
       const raw = await request("POST", "/ticket/status", {
         ticket_ids: limited,

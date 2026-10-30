@@ -31,12 +31,15 @@
   checker 以 `deep-import` 拒绝。
 - 全仓消费均使用包根 specifier `@acode/provider`（含 provider-node、desktop
   tsup noExternal 内联与 CLI 测试；纳管前扫描确认零 deep import）。
-- 行数/抑制例外（限期债，expires 2026-12-31）：
-  - `onboard-provider-over-limit`（max-file-lines）：config-service.ts 757、
-    facades.ts 688、config/model-config.ts 581、config/provider-config.ts 580；
-  - `onboard-provider-disables`（disable-count）：上述 4 文件 + resolver.ts
-    （各 1 条首行 max-lines 抑制）。
-    到期前必须拆分/清理并移除例外；`.architecture-baseline.json` 不动。
+- 行数/抑制例外（原限期债 expires 2026-12-31，**2026-10-28 已拆分偿还**）：
+  - `onboard-provider-over-limit`（max-file-lines）：config-service.ts、facades.ts、
+    config/model-config.ts、config/provider-config.ts 已按职责拆为 <400 行叶子
+    （类型/helper/方法族/视图契约/投影/Facade 各归其叶，原文件降级为 barrel
+    或类本体+委托），4 条首行 max-lines 抑制头注随拆分删除；
+  - `onboard-provider-disables`（disable-count）：全包仅剩 resolver.ts 1 条首行
+    抑制（resolver.ts 392 行，合规未动）。
+    `architecture-policy.yaml` 的例外收窄由集成者统一收口；
+    `.architecture-baseline.json` 不动。
 
 ## Dependency direction
 

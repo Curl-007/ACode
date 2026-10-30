@@ -1070,16 +1070,20 @@ test("验收8: protocol schema 依赖方向稳定；命令分发只一处注册"
     join(REPO_ROOT, "packages/shared/src/acode-protocol-v4/command.ts"),
     "utf8",
   );
-  const legacyProtocol = readFileSync(
-    join(REPO_ROOT, "packages/shared/src/acode-protocol/index.ts"),
-    "utf8",
-  );
-  // v4 使用中立 schema，legacy 只保留兼容导出；避免新协议重新依赖 legacy barrel。
+  // M4a：legacy barrel（acode-protocol/index.ts）已整删，原先「legacy 不反向依赖 v4」的
+  // 断言面消失。依赖方向守护改为：v4 只许走中立叶（acode-protocol-shared.js），且
+  // 已删除的两个 legacy 路径不得复活。
   assert.match(v4Command, /acode-protocol-shared\.js/);
   assert.doesNotMatch(v4Command, /acode-protocol\/index(?:\.js|\.ts)?/);
-  assert.doesNotMatch(
-    legacyProtocol,
-    /acode-protocol-v4[\\/](?:command|capabilities|transport|core)(?:\.js|\.ts)?/,
+  assert.equal(
+    existsSync(join(REPO_ROOT, "packages/shared/src/acode-protocol")),
+    false,
+    "M4a：legacy barrel 目录必须已删除（复活即红）",
+  );
+  assert.equal(
+    existsSync(join(REPO_ROOT, "packages/shared/src/acode-protocol-legacy-types.ts")),
+    false,
+    "M4a：legacy-types 必须已删除（复活即红）",
   );
 
   const runSource = readFileSync(join(CLI_SRC, "run.ts"), "utf8");

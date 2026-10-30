@@ -25,6 +25,8 @@ import {
 import type { ActiveTurnInfo, RuntimeConfigUpdatePatch } from "../types.js";
 import type { AgentRuntimeInternal } from "../internal.js";
 import { getRuntimeModelSelectionPort } from "../runtime-model-selection.js";
+import { getRuntimeContextInitPort } from "../runtime-context-init.js";
+import { getRuntimeToolCachePort } from "../runtime-tool-cache.js";
 import { applyRuntimeExecutionState } from "../execution-state.js";
 import { resolveOutputStyleSelection } from "../../context/output-styles.js";
 
@@ -152,17 +154,24 @@ export function getActiveTurnInfo(this: AgentRuntimeInternal): ActiveTurnInfo | 
 }
 
 export function getTools(this: AgentRuntimeInternal, model?: Model): ModelToolContract[] {
+  // R1-01 B4：cachedTools 归 RuntimeToolCacheOwner，写面经端口；readonly getter 没有
+  // 赋值窄化，非空事实由双分支赋值承载（else 分支的属性窄化给出非 null；
+  // === null 判定与度量调用形态不变——tools-schema-token-metrics 套件以源码字符串钉住本分支）。
+  let tools: ModelToolContract[];
   if (this.cachedTools === null) {
-    this.cachedTools = filterRuntimeVisibleTools.call(this, this.registry.toContracts());
+    tools = filterRuntimeVisibleTools.call(this, this.registry.toContracts());
+    getRuntimeToolCachePort(this).commitCachedTools(tools);
     // P5 度量点一（specs/tools-schema-token-metrics.md R1）：缓存重建时点 = 工具面变化时点，
     // 记一条 debug 级本地度量（工具数量 / MCP 占比 / schema 估算 token）。只写本地日志，
     // 不外发、不进遥测通道；度量纯读契约数组，不影响这里的返回值与后续过滤。
     logToolsSchemaTokenMetric(this, this.cachedTools);
+  } else {
+    tools = this.cachedTools;
   }
   // intent 字段注入（specs/tool-intent-field.md R2）：provider 可见契约的唯一出口，
   // 注册表/执行器/度量面看到的都是未注入的原始 entry。缺省关闭（R1 灰度）。
   const intentFieldEnabled = isToolIntentFieldEnabled();
-  return this.cachedTools
+  return tools
     .filter((tool) => tool.name !== "WebSearch" || shouldExposeWebSearch.call(this, model))
     .map((tool) => {
       const projected = projectToolModelContract(tool, this.registry.get(tool.name), {
@@ -175,7 +184,8 @@ export function getTools(this: AgentRuntimeInternal, model?: Model): ModelToolCo
 }
 
 export function invalidateToolCache(this: AgentRuntimeInternal): void {
-  this.cachedTools = null;
+  // R1-01 B4：cachedTools 归 RuntimeToolCacheOwner，写面经端口。
+  getRuntimeToolCachePort(this).invalidateCachedTools();
 }
 
 export function getToolRegistry(this: AgentRuntimeInternal): ToolRegistry {
@@ -258,14 +268,18 @@ export function createChildClientPorts(
 
 export function getContextBuilder(this: AgentRuntimeInternal): ContextBuilder {
   if (!this.contextBuilder) {
-    this.contextBuilder = this.createContextBuilderFromSnapshot(
+    // R1-01 B4：contextBuilder 归 RuntimeContextInitOwner，写面经端口；readonly getter
+    // 没有赋值窄化，提交与返回都由局部变量 builder 承载（与迁移前同值同序）。
+    const builder = this.createContextBuilderFromSnapshot(
       this.createConfigOnlyContextSnapshot(this.workingDirectory),
       undefined,
       { persistEnvInfo: false },
     );
+    getRuntimeContextInitPort(this).commitContextBuilder(builder);
+    // 这个 getter 只能提供同步预览 builder，不能初始化 messageHistory。
+    // 否则首轮 executeTurn 会跳过异步 context source 解析，导致真实 workspace context 丢失。
+    return builder;
   }
-  // 这个 getter 只能提供同步预览 builder，不能初始化 messageHistory。
-  // 否则首轮 executeTurn 会跳过异步 context source 解析，导致真实 workspace context 丢失。
   return this.contextBuilder;
 }
 

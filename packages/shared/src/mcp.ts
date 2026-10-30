@@ -4,7 +4,8 @@
  */
 
 import type { SettingsDirectoryLocation } from "./settings-source.js";
-import type { ACodeMcpReconnectSuspension, McpServerFailureKind } from "./acode-protocol/index.js";
+import type { ACodeMcpReconnectSuspension } from "./acode-protocol-shared.js";
+import type { V4McpServerFailureKind } from "./acode-protocol-v4/mcp.js";
 
 // CUA official plugin 身份常量（port 自 feat；UI 设置面板 + bootstrap 复用以避免字面量漂移）。
 export const ACODE_CUA_OFFICIAL_PLUGIN_ID = "computer-use@acode-plugins-official";
@@ -119,7 +120,7 @@ export interface ACodeMcpServer {
   status?: McpServerStatus;
   lastConnected?: Date;
   error?: string;
-  failureKind?: McpServerFailureKind;
+  failureKind?: V4McpServerFailureKind;
   serverRequestId?: string;
   /** 重连熔断挂起附加事实（specs/mcp-lifecycle-ttl-approval.md R2.3）；恢复后由 store 清除。 */
   reconnectSuspension?: ACodeMcpReconnectSuspension;

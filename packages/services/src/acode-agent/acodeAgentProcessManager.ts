@@ -25,7 +25,7 @@ import {
   ACODE_AGENT_MAX_OLD_SPACE_MB_ENV_KEY,
   ACODE_RUNTIME_ENV_KEY,
   DEFAULT_AGENT_MAX_OLD_SPACE_MB,
-  acodeProtocolNotifications,
+  LEGACY_NOTIFICATIONS,
   acodeRuntimeIdleExitParamsSchema,
   appendMaxOldSpaceToNodeOptions,
   isPackagedACodeDesktopRuntime,
@@ -40,6 +40,9 @@ import {
   findACodeAgentRuntimeBinary,
   findACodeAgentRuntimeNodeBundle,
 } from "../runtime-tools/providerRuntimeResolver.js";
+// M2-8：cancelGenerateText 迁 v4 词（specs/m2-8-workspace-provider-process.md）；
+// onRequestTimeout 的 best-effort 白名单改认 v4 方法名。
+import { V4_METHODS } from "@acode/shared/acode-protocol-v4";
 import { isEffectiveDevelopmentNodeEnv } from "#src/runtime-tools/nodeEnv.js";
 import { createServiceLogger } from "#src/logger/serviceLogger.js";
 import { ACodeProtocolClient } from "./acodeProtocolClient.js";
@@ -1664,7 +1667,7 @@ export class ACodeAgentProcessManager {
     // protocol close/exit 不再被当作崩溃。宣告帧先于 EOF 到达(stdout 帧序保证),
     // 竞态丢帧由退出码兜底(见 exit handler)。
     client.onNotification((message) => {
-      if (message.method !== acodeProtocolNotifications.runtimeIdleExit) return;
+      if (message.method !== LEGACY_NOTIFICATIONS.runtimeIdleExit) return;
       if (this.disposed || managed.exited) return;
       if (this.processesByWorkspaceKey.get(managed.workspaceKey) !== managed) return;
       const parsed = acodeRuntimeIdleExitParamsSchema.safeParse(message.params);
@@ -1881,7 +1884,7 @@ export class ACodeAgentProcessManager {
       if (this.processesByWorkspaceKey.get(managed.workspaceKey) !== managed) {
         return;
       }
-      if (event.method === "workspace/cancelGenerateText") {
+      if (event.method === V4_METHODS.workspaceCancelGenerateText) {
         warnLog(
           "ACode agent cancel notification timed out; keeping client (best-effort control plane)",
           {

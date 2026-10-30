@@ -1,9 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import {
-  acodeInteractionOriginAncestorSchema,
-  acodeInteractionRequestOriginSchema,
-} from "../src/acode-protocol-legacy-types.js";
+import { acodeInteractionOriginAncestorSchema, acodeInteractionRequestOriginSchema } from "../src/acode-interaction-types.js";
 
 /**
  * origin 谱系协议 schema 的 additive 扩展验收

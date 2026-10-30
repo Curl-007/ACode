@@ -18,7 +18,9 @@ import {
   type SavePersonalModelDraftInput,
 } from "@acode/provider";
 import { createServiceDescriptor } from "../descriptors.js";
-import type { ModelConnectivityResult } from "@acode/shared";
+import type {
+  ModelConnectivityResult,
+} from "@acode/shared";
 import { createServiceLogger } from "../logger/serviceLogger.js";
 import {
   discoverProviderModelsFromEndpoint,

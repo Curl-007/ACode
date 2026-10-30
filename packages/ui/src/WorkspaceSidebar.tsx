@@ -12,22 +12,13 @@ import {
   type SetStateAction,
 } from "react";
 import {
-  Archive,
   Blocks,
   CalendarClock,
-  Clock3,
   Cloud,
-  Folder,
   FolderOpen,
-  Hash,
-  ListFilter,
-  Maximize2,
-  MessageCircleCheck,
   MessageCirclePlus,
-  Minimize2,
   Plus,
   Search,
-  X,
 } from "lucide-react";
 import {
   DndContext,
@@ -58,15 +49,10 @@ import {
 } from "@acode/shared";
 import { ControlHintTooltip } from "@/ControlHintTooltip.js";
 import { Button } from "@/components/ui/button.js";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs.js";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu.js";
 import { useACodeIntl } from "@/i18n/IntlProvider.js";
@@ -75,7 +61,7 @@ import { NewTaskButtonGroup } from "@/NewTaskButtonGroup.js";
 import { selectWorkspaceACodeState, useACodeSessionStore } from "@/store/acodeSessionStore.js";
 import { useACodeStore } from "@/store/StoreProvider.js";
 import { useTabStore } from "@/store/TabStoreProvider.js";
-import { isWorkspaceReadOnly, isWorkspaceTab, type WorkspaceTabState } from "@/store/tabStore.js";
+import { isWorkspaceReadOnly, isWorkspaceTab } from "@/store/tabStore.js";
 import { useWorkspaceTaskLists } from "@/hooks/useWorkspaceTaskLists.js";
 import {
   persistSidebarTaskPreferences,
@@ -127,6 +113,12 @@ import {
   resolveSidebarTaskGroupTogglePresentation,
   type SidebarTaskGroupTogglePresentation,
 } from "@/WorkspaceSidebar/taskGroupTogglePresentation.js";
+import { WorkspaceSidebarTaskToolbar } from "@/WorkspaceSidebar/WorkspaceSidebarTaskToolbar.js";
+import {
+  WorkspaceDragOverlay,
+  WorkspaceNewTaskTooltip,
+} from "@/WorkspaceSidebar/sidebarChrome.js";
+import { resolveSidebarTaskViewMode } from "@/WorkspaceSidebar/sidebarTaskViewMode.js";
 import { WorkspacePurposeSection } from "@/WorkspaceSidebar/WorkspacePurposeSection.js";
 import { cn } from "@/components/lib/utils.js";
 import { useCodingPlanUpgradeDialog } from "@/settings/CodingPlanUpgradeDialogProvider.js";
@@ -137,28 +129,12 @@ import {
 } from "@/lib/workspaceSidebarDrag.js";
 import { createPortal } from "react-dom";
 
-function WorkspaceNewTaskTooltip({
-  children,
-  disabledReason,
-}: {
-  children: ReactNode;
-  disabledReason?: string;
-}) {
-  // 正常状态下按钮已带“新建任务”文案和快捷键，再挂 tooltip 只是重复；仅禁用时才解释原因。
-  if (!disabledReason) return children;
-  return (
-    <ControlHintTooltip title={disabledReason}>
-      <div>{children}</div>
-    </ControlHintTooltip>
-  );
-}
 export { applyWorkspaceTriggerSelection } from "@/WorkspaceSidebar/workspaceSidebarSelection.js";
 export { WorkspaceSidebarCollapsedRail } from "@/WorkspaceSidebar/WorkspaceSidebarCollapsedRail.js";
 
 type TaskOrganizeBy = SidebarTaskOrganizeBy;
 type TaskSortBy = SidebarTaskSortBy;
 type PrimaryTaskMode = "workspace" | "grouped";
-type SidebarTaskViewMode = "grouped" | "workspace" | "timeline" | "archived";
 
 interface SidebarFileTreeTarget {
   workspacePath: string;
@@ -179,45 +155,9 @@ const EMPTY_RECONNECTING_REMOTE_WORKSPACE_LOGS_BY_WORKSPACE_KEY: Record<
   RemoteConnectionLogEntry[]
 > = {};
 
-function WorkspaceDragOverlay({ tab, width }: { tab: WorkspaceTabState; width: number | null }) {
-  const isRemote = Boolean(tab.remoteSessionId || tab.remoteTarget || tab.workspaceIdentity);
-  return (
-    <div
-      data-testid="workspace-drag-overlay"
-      className="pointer-events-none flex cursor-grabbing items-center rounded-lg border border-border bg-background text-ui-base text-foreground shadow-lg h-8 px-2.5 gap-2 [&_svg]:pointer-events-none [&_svg]:size-3.5 [&_svg]:shrink-0"
-      style={width ? { width } : undefined}
-    >
-      {/* 项目列表图标位于 Button 内，运行态会被按钮 SVG 规则收敛为 14px；
-          overlay 脱离 Button 后不再继承该规则，因此显式使用相同尺寸，避免 preview 图标放大。 */}
-      {isRemote ? (
-        <Cloud className="size-3.5 shrink-0 text-foreground-subtle" />
-      ) : (
-        <Folder className="size-3.5 shrink-0 text-foreground-subtle" />
-      )}
-      <span className="min-w-0 flex-1 truncate px-1">{tab.label}</span>
-    </div>
-  );
-}
-
 export interface SidebarFileTreeOpenRequest {
   id: number;
   target: SidebarFileTreeTarget;
-}
-
-function resolveSidebarTaskViewMode(params: {
-  showArchivedTasks: boolean;
-  taskOrganizeBy: TaskOrganizeBy;
-}): SidebarTaskViewMode {
-  if (params.showArchivedTasks) {
-    return "archived";
-  }
-  if (params.taskOrganizeBy === "chronological") {
-    return "timeline";
-  }
-  if (params.taskOrganizeBy === "grouped") {
-    return "grouped";
-  }
-  return "workspace";
 }
 
 export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
@@ -1018,216 +958,32 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
   // 这里把 render prop 稳定在真正影响工具栏展示的状态上，避免消息流更新污染侧栏任务区。
   const workspaceTaskToolbar = useCallback(
     () => (
-      <div className="pl-2.5 pr-3">
-        <div className="flex min-w-0 items-center justify-between gap-2">
-          <div className="flex min-w-0 shrink-0 items-center gap-1">
-            <Tabs
-              value={activePrimaryTaskMode}
-              onValueChange={handlePrimaryTaskModeChange}
-              className="w-fit shrink-0"
-              aria-label={intl.formatMessage({
-                id: "workspaceSidebar.organize",
-              })}
-            >
-              {/* TabsList 默认横向态是 h-8；这里同步覆盖 variant，避免实际 Radix 横向态把外壳撑高。 */}
-              <TabsList
-                ref={primaryTaskTabsListRef}
-                className="relative h-7 w-fit overflow-hidden rounded-full bg-surface p-0.5 group-data-horizontal/tabs:h-7"
-              >
-                <span
-                  aria-hidden="true"
-                  className="pointer-events-none absolute inset-y-0.5 left-0 rounded-full bg-background transition-[opacity,transform,width] duration-200 ease-out"
-                  style={primaryTaskIndicatorStyle}
-                />
-                <TabsTrigger
-                  ref={(node) => {
-                    primaryTaskTabTriggerRefs.current.grouped = node;
-                  }}
-                  value="grouped"
-                  className="relative z-10 h-6 flex-none gap-1 rounded-full border-transparent bg-transparent py-0 pl-1.5 pr-2 text-ui-sm font-medium text-foreground-subtle transition-colors data-active:border-transparent data-active:bg-transparent data-active:text-foreground data-active:shadow-none dark:data-active:border-transparent dark:data-active:bg-transparent"
-                >
-                  <Hash aria-hidden="true" className="size-3 shrink-0" />
-                  <span>
-                    {intl.formatMessage({
-                      id: "workspaceSidebar.organizeGrouped",
-                    })}
-                  </span>
-                </TabsTrigger>
-                <TabsTrigger
-                  ref={(node) => {
-                    primaryTaskTabTriggerRefs.current.workspace = node;
-                  }}
-                  value="workspace"
-                  className="relative z-10 h-6 flex-none gap-1 rounded-full border-transparent bg-transparent py-0 pl-1.5 pr-2 text-ui-sm font-medium text-foreground-subtle transition-colors data-active:border-transparent data-active:bg-transparent data-active:text-foreground data-active:shadow-none dark:data-active:border-transparent dark:data-active:bg-transparent"
-                >
-                  <Folder aria-hidden="true" className="size-3 shrink-0" />
-                  <span>
-                    {intl.formatMessage({
-                      id: "workspaceSidebar.organizeByProject",
-                    })}
-                  </span>
-                </TabsTrigger>
-              </TabsList>
-            </Tabs>
-            {toggleAllTaskGroupsPresentation ? (
-              <ControlHintTooltip
-                title={intl.formatMessage({
-                  id: toggleAllTaskGroupsPresentation.messageId,
-                })}
-              >
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  className="shrink-0 text-foreground-subtle hover:text-foreground"
-                  aria-label={intl.formatMessage({
-                    id: toggleAllTaskGroupsPresentation.messageId,
-                  })}
-                  disabled={!toggleAllTaskGroupsPresentation.canToggle}
-                  onClick={handleToggleAllTaskGroups}
-                >
-                  {toggleAllTaskGroupsPresentation.areAllExpanded ? (
-                    <Minimize2 className="size-3.5" />
-                  ) : (
-                    <Maximize2 className="size-3.5" />
-                  )}
-                </Button>
-              </ControlHintTooltip>
-            ) : null}
-          </div>
-          <div className="flex shrink-0 items-center gap-1">
-            {taskViewMode === "grouped" ? (
-              <ControlHintTooltip
-                title={workspaceReadOnlyReason ?? intl.formatMessage({ id: "taskGroup.newGroup" })}
-              >
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  className="shrink-0 text-foreground-subtle hover:text-foreground"
-                  aria-label={intl.formatMessage({
-                    id: "taskGroup.newGroup",
-                  })}
-                  disabled={workspaceReadOnly || !createGroupedTaskGroupAction}
-                  onClick={() => {
-                    if (!workspaceReadOnly) {
-                      createGroupedTaskGroupAction?.();
-                    }
-                  }}
-                >
-                  <Hash className="size-3.5" />
-                </Button>
-              </ControlHintTooltip>
-            ) : null}
-            {showTaskViewFilter ? (
-              <DropdownMenu>
-                <ControlHintTooltip
-                  title={intl.formatMessage({
-                    id: "workspaceSidebar.taskViewOptions",
-                  })}
-                >
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon-sm"
-                      className="shrink-0 text-foreground-subtle hover:text-foreground"
-                      aria-label={intl.formatMessage({
-                        id: "workspaceSidebar.taskViewOptions",
-                      })}
-                    >
-                      <ListFilter className="size-3.5" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                </ControlHintTooltip>
-                <DropdownMenuContent align="end" className="w-48 min-w-48">
-                  {showWorkspaceViewOptions ? (
-                    <>
-                      <DropdownMenuLabel>
-                        {intl.formatMessage({
-                          id: "workspaceSidebar.organize",
-                        })}
-                      </DropdownMenuLabel>
-                      <DropdownMenuRadioGroup
-                        value={workspaceTaskViewValue}
-                        onValueChange={handleWorkspaceTaskViewChange}
-                      >
-                        <DropdownMenuRadioItem value="project">
-                          <Folder className="size-4" />
-                          {intl.formatMessage({
-                            id: "workspaceSidebar.viewByWorkspace",
-                          })}
-                        </DropdownMenuRadioItem>
-                        <DropdownMenuRadioItem value="chronological">
-                          <Clock3 className="size-4" />
-                          {intl.formatMessage({
-                            id: "workspaceSidebar.organizeChronologicalList",
-                          })}
-                        </DropdownMenuRadioItem>
-                      </DropdownMenuRadioGroup>
-                    </>
-                  ) : null}
-                  {showWorkspaceViewOptions && showTaskSortOptions ? (
-                    <DropdownMenuSeparator />
-                  ) : null}
-                  {showTaskSortOptions ? (
-                    <>
-                      <DropdownMenuLabel>
-                        {intl.formatMessage({
-                          id: "workspaceSidebar.sortBy",
-                        })}
-                      </DropdownMenuLabel>
-                      <DropdownMenuRadioGroup
-                        value={taskSortBy}
-                        onValueChange={(value) => {
-                          if (value === "created" || value === "updated") {
-                            setTaskSortBy(value);
-                          }
-                        }}
-                      >
-                        <DropdownMenuRadioItem value="updated">
-                          <MessageCircleCheck className="size-4" />
-                          {intl.formatMessage({
-                            id: "workspaceSidebar.sortByUpdated",
-                          })}
-                        </DropdownMenuRadioItem>
-                        <DropdownMenuRadioItem value="created">
-                          <MessageCirclePlus className="size-4" />
-                          {intl.formatMessage({
-                            id: "workspaceSidebar.sortByCreated",
-                          })}
-                        </DropdownMenuRadioItem>
-                      </DropdownMenuRadioGroup>
-                    </>
-                  ) : null}
-                </DropdownMenuContent>
-              </DropdownMenu>
-            ) : null}
-            {showArchivedTasks ? (
-              <div
-                ref={setArchivedActionsContainer}
-                data-testid="archived-tasks-toolbar-actions"
-                className="flex shrink-0 items-center"
-              />
-            ) : null}
-            <ControlHintTooltip title={archivedTasksActionLabel}>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                className="shrink-0 text-foreground-subtle hover:text-foreground data-[state=on]:bg-hover data-[state=on]:text-foreground"
-                data-state={showArchivedTasks ? "on" : "off"}
-                aria-label={archivedTasksActionLabel}
-                onClick={() => {
-                  setShowArchivedTasks((current) => !current);
-                }}
-              >
-                {showArchivedTasks ? <X className="size-3.5" /> : <Archive className="size-3.5" />}
-              </Button>
-            </ControlHintTooltip>
-          </div>
-        </div>
-      </div>
+      // 批次 5：JSX 本体迁至 WorkspaceSidebar/WorkspaceSidebarTaskToolbar.tsx（逐字）；
+      // 本闭包保持原 deps 稳定语义（intl 不再被引用，archivedTasksActionLabel 已覆盖 locale 切换）。
+      <WorkspaceSidebarTaskToolbar
+        activePrimaryTaskMode={activePrimaryTaskMode}
+        archivedTasksActionLabel={archivedTasksActionLabel}
+        createGroupedTaskGroupAction={createGroupedTaskGroupAction}
+        onArchivedActionsContainerChange={setArchivedActionsContainer}
+        onPrimaryTaskModeChange={handlePrimaryTaskModeChange}
+        onTaskSortByChange={setTaskSortBy}
+        onToggleAllTaskGroups={handleToggleAllTaskGroups}
+        onToggleArchivedTasks={() => setShowArchivedTasks((current) => !current)}
+        onWorkspaceTaskViewChange={handleWorkspaceTaskViewChange}
+        primaryTaskIndicatorStyle={primaryTaskIndicatorStyle}
+        primaryTaskTabsListRef={primaryTaskTabsListRef}
+        primaryTaskTabTriggerRefs={primaryTaskTabTriggerRefs}
+        showArchivedTasks={showArchivedTasks}
+        showTaskSortOptions={showTaskSortOptions}
+        showTaskViewFilter={showTaskViewFilter}
+        showWorkspaceViewOptions={showWorkspaceViewOptions}
+        taskSortBy={taskSortBy}
+        taskViewMode={taskViewMode}
+        toggleAllTaskGroupsPresentation={toggleAllTaskGroupsPresentation}
+        workspaceReadOnly={workspaceReadOnly}
+        workspaceReadOnlyReason={workspaceReadOnlyReason}
+        workspaceTaskViewValue={workspaceTaskViewValue}
+      />
     ),
     [
       activePrimaryTaskMode,
@@ -1236,7 +992,6 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
       handlePrimaryTaskModeChange,
       handleToggleAllTaskGroups,
       handleWorkspaceTaskViewChange,
-      intl,
       primaryTaskIndicatorStyle,
       showArchivedTasks,
       showTaskSortOptions,
@@ -1245,6 +1000,8 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
       taskSortBy,
       taskViewMode,
       toggleAllTaskGroupsPresentation,
+      workspaceReadOnly,
+      workspaceReadOnlyReason,
       workspaceTaskViewValue,
     ],
   );

@@ -1,5 +1,6 @@
 import { useCallback } from "react";
-import type { ACodeSavedWorkflowRun } from "@acode/shared";
+
+import { type V4SavedWorkflowRun } from "@acode/shared/acode-protocol-v4";
 import type {
   SavedWorkflowsOpenArtifactParams,
   SavedWorkflowsOpenRunParams,
@@ -31,17 +32,17 @@ interface SavedWorkflowRunOpenTarget {
  */
 export function useSavedWorkflowRunOpeners(options: {
   /** 该行归属的项目；返回 null 即两个入口都关闭（全局档里 cwd 对应的项目没打开）。 */
-  resolveTarget: (run: ACodeSavedWorkflowRun) => SavedWorkflowRunOpenTarget | null;
+  resolveTarget: (run: V4SavedWorkflowRun) => SavedWorkflowRunOpenTarget | null;
   onOpenWorkflowRun?: (params: SavedWorkflowsOpenRunParams) => void;
   onOpenWorkflowArtifact?: (params: SavedWorkflowsOpenArtifactParams) => void;
 }): {
-  handleOpenRun: (run: ACodeSavedWorkflowRun, workflowName: string) => void;
-  handleOpenArtifact: (run: ACodeSavedWorkflowRun, artifactId: string) => void;
+  handleOpenRun: (run: V4SavedWorkflowRun, workflowName: string) => void;
+  handleOpenArtifact: (run: V4SavedWorkflowRun, artifactId: string) => void;
 } {
   const { onOpenWorkflowArtifact, onOpenWorkflowRun, resolveTarget } = options;
 
   const handleOpenRun = useCallback(
-    (run: ACodeSavedWorkflowRun, workflowName: string) => {
+    (run: V4SavedWorkflowRun, workflowName: string) => {
       if (!run.parentSessionId || !run.toolCallId) return;
       const target = resolveTarget(run);
       if (!target) return;
@@ -58,11 +59,11 @@ export function useSavedWorkflowRunOpeners(options: {
   );
 
   const handleOpenArtifact = useCallback(
-    (run: ACodeSavedWorkflowRun, artifactId: string) => {
+    (run: V4SavedWorkflowRun, artifactId: string) => {
       if (!run.parentSessionId) return;
       const target = resolveTarget(run);
       if (!target) return;
-      // 行上的 chip 载荷（`ACodeSavedWorkflowRun.artifacts`）带最新版的 `contentType`：
+      // 行上的 chip 载荷（`V4SavedWorkflowRun.artifacts`）带最新版的 `contentType`：
       // 终点据它把 html 产物直接开成浏览器 tab。老行整个 `artifacts` 缺席，少一个键是退化不是错误。
       const artifact = run.artifacts?.find((candidate) => candidate.id === artifactId);
       onOpenWorkflowArtifact?.({

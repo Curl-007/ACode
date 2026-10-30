@@ -2,11 +2,8 @@ import { execFile as nodeExecFile } from "node:child_process";
 import { readdir, readFile } from "node:fs/promises";
 import { basename } from "node:path";
 import os from "node:os";
-import {
-  formatACodeAgentProcessName,
-  type HostResourceUsageProcess,
-  type ACodeProcessChildProcess,
-} from "@acode/shared";
+import { formatACodeAgentProcessName, type HostResourceUsageProcess } from "@acode/shared";
+import { type V4ProcessChildProcess } from "@acode/shared/acode-protocol-v4";
 
 /**
  * 资源管理器 Host 侧采样。
@@ -334,7 +331,7 @@ export interface HostResourceUsageAgent {
   provider: string;
   workspacePath: string;
   /** CLI `process/childProcesses` 的回报；请求失败时为空数组，其后代全部归入 cli */
-  children: readonly ACodeProcessChildProcess[];
+  children: readonly V4ProcessChildProcess[];
 }
 
 interface AttributeHostProcessTreeOptions {
@@ -347,7 +344,7 @@ interface AttributeHostProcessTreeOptions {
 
 type Owner =
   | { kind: "agent"; agent: HostResourceUsageAgent }
-  | { kind: "mcp"; child: ACodeProcessChildProcess }
+  | { kind: "mcp"; child: V4ProcessChildProcess }
   | { kind: "builtin"; pluginName: string };
 
 function commandDisplayName(command: string): string {

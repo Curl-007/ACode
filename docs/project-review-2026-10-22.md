@@ -4,7 +4,7 @@
 
 **修复状态（同日）**：本轮 review 的问题索引已由 14 个并发修复代理按层面落地，逐项处置、门禁实跑结果与提交 SHA 见 [reviews/2026-10-22/fix-status.md](reviews/2026-10-22/fix-status.md)。4 条 P1（CI win32 矩阵、smoke 进 release、SessionPane 拆分、原型注入 owner 收敛）与 8 条 P2 已修或做有界切片；里程碑债务（legacy M2/M3/M4、115 组件全拆、bootstrap W2）按边界只做切片 + spec 登记，未假装完成。修复后统一验证：typecheck/lint/architecture(--changed)/knip:gate 全 exit 0；third-party ledger 9 个哈希不符是本轮合法改动连带，按惯例留发布流程回补。
 
-上一轮全面 review 见 [../project-review-2026-10-08.md](../project-review-2026-10-08.md)（基线 `dev/0.0.7`，21 项问题 8×P1/13×P2，附 [../reviews/2026-10-08/](../reviews/2026-10-08/) 专项与修复记录）。本轮重点：**核对历史修复在 1.0.3 是否回归、发现新问题、评估当前健康度**。
+上一轮全面 review 见 [project-review-2026-10-08.md](project-review-2026-10-08.md)（基线 `dev/0.0.7`，21 项问题 8×P1/13×P2，附 [reviews/2026-10-08/](reviews/2026-10-08/) 专项与修复记录）。本轮重点：**核对历史修复在 1.0.3 是否回归、发现新问题、评估当前健康度**。
 
 ## 项目规模
 

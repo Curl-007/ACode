@@ -31,7 +31,6 @@ import {
   type OvernightCoordinatorLease,
   type OvernightCoordinatorPort,
   type OvernightPreflightCollectors,
-  type OvernightPreflightGitSnapshot,
   type OvernightRunHandle,
 } from "@acode/core";
 import {
@@ -39,14 +38,31 @@ import {
   type ScriptWorkflowAgentRuntimeDeps,
 } from "@acode/cli-workflow/contract";
 import { applyGitPostureGateway } from "@acode/shared";
+import type { V4OvernightCompletionNotification } from "@acode/shared/acode-protocol-v4";
 import { getCliGitInvocationEnvOverlay } from "@acode/shared/node";
 import type { ACodeOvernightHostCommand } from "../builtin-prompt-command.js";
+// 纯投影与 git 快照解析已抽到 overnight-completion-signal.ts（400 行纪律）。
+// toOvernightCompletionSignal 在此 re-export，保持既有 import 路径（overnight-completion-emission
+// 测试从本文件取用）与「controller 是完成信号的对外面」这一语义不变。
+import {
+  parseGitStatusPorcelain,
+  toOvernightCompletionSignal,
+} from "./overnight-completion-signal.js";
+
+export { toOvernightCompletionSignal };
 
 export interface CreateOvernightControllerDeps extends ScriptWorkflowAgentRuntimeDeps {
   executionPort: ExecutionPort;
   fileSystemPort: FileSystemPort;
   runtimeTaskRegistry: RuntimeTaskRegistry;
   traceContext: TraceContext;
+  /**
+   * Overnight 完成信号的跨进程出口（specs/overnight-completion-notify.md §7）：run 落终态时
+   * 由本 controller 调用一次，宿主（协议 entrypoint）把它发成 v4 通知经 stdio 上报 host→main。
+   * 缺席（纯 CLI/TUI 形态、测试未注入）时静默 no-op——完成事实仍进日志与 runtime-task 投影，
+   * 只是不弹桌面系统通知。这是「既有 UI 通知面」在桌面形态下的进程内触发口，不新建外部渠道。
+   */
+  emitOvernightCompletion?: (signal: V4OvernightCompletionNotification) => void;
 }
 
 export interface OvernightStartResult {
@@ -70,17 +86,6 @@ export interface OvernightController {
 }
 
 const GIT_SNAPSHOT_TIMEOUT_MS = 10_000;
-
-function parseGitStatusPorcelain(stdout: string): OvernightPreflightGitSnapshot {
-  const lines = stdout.split("\n").filter((line) => line.trim().length > 0);
-  const branchLine = lines.find((line) => line.startsWith("## "));
-  if (!branchLine) return { error: "git status --branch 未返回分支行（可能不在 git 仓库内）" };
-  const branchSegment = branchLine.slice(3).split("...")[0]!.trim();
-  return {
-    branch: branchSegment.length > 0 ? branchSegment : undefined,
-    dirty: lines.length > 1,
-  };
-}
 
 export function createOvernightController(deps: CreateOvernightControllerDeps): OvernightController {
   const logger = deps.logger;
@@ -158,9 +163,14 @@ export function createOvernightController(deps: CreateOvernightControllerDeps): 
       // fork 全部父 messages 于当下：targetMessageId = 父 active 分支最后一条消息
       // （coordinator.ts 的投影已给出）。message 目标形态只撤销其后 checkpoint——
       // 目标即最新消息时等价纯对话 fork，不动工作区文件。
+      // R1a（specs/overnight-execution.md）：request.hidden 的消费点在这里——传 title 令落盘
+      // 会话行拿专属 taskType "overnight_coordinator" 与 coordinator 自己的标题，冷重启后不被
+      // seed 投进侧栏。此前 hidden 无消费者，行以 "fork" 落盘 → 重启后显示「Fork of X」。
+      // 不做运行期分支：coordinator 是唯一隐藏形态（spec「未做与取舍」2），hidden 恒为字面量 true。
       const forked = await runtime.forkWorkspaceFromCheckpoint({
         targetMessageId: request.targetMessageId as MessageId,
         traceContext: deps.traceContext,
+        hiddenCoordinatorTitle: request.title,
       });
       const childRuntime = createScriptWorkflowAgentRuntime({
         childSessionId: forked.forkedSessionId,
@@ -176,8 +186,17 @@ export function createOvernightController(deps: CreateOvernightControllerDeps): 
           mode: deps.runtimeConfig.mode,
           // dwf child 禁 subagents；运营契约要求 helper 只在正期望时可用——保留。
           subagents: { enabled: true },
-          // 与落盘 child session 的 taskType 对齐（buildForkedSessionInput 的 "fork"）。
-          taskType: "fork",
+          // **必须与上面 fork 落盘的 taskType 同值**（单一事实、两次写入不得冲突）：
+          // ensureSessionPersisted 在 child 首个 turn 会以 config.taskType upsert 会话行
+          // （turn.ts:332 → events.ts:593 → createSession 的 `task_type = excluded.task_type`），
+          // 而 child 的 sessionPersisted 初值为 false（agent-runtime.ts:340，fork 路径不预置），
+          // 故该 upsert 必然发生。若此处仍写 "fork"，首个 turn 就会把 R1a 的隐藏身份静默改回去。
+          // 运行期语义不变：其余 config.taskType 消费方全部只判 subagent_child/workflow_child
+          // （runtime-tools、swarm-plan-turn、tool-allowlist、model-request-session-type、
+          // auto-resume CHILD_SESSION_TASK_TYPES、querySourceForTask），"fork" 与
+          // "overnight_coordinator" 走同一分支；唯一差别是 isTaskListSessionType 判不可见
+          // （即本修复目标）。project-memory 的 isMainMemoryTaskType 已同批加该值以保持记忆启用。
+          taskType: "overnight_coordinator",
         },
       });
       // provider 配置继承：legacy fork 链不复制选型 entry，显式绑定父会话当前选择。
@@ -317,6 +336,23 @@ export function createOvernightController(deps: CreateOvernightControllerDeps): 
         return { ok: false, response: `overnight run 启动失败：${message}` };
       }
       activeRun = handle;
+      // 完成信号的单一发射点（specs/overnight-completion-notify.md §7）：completion promise 每 run
+      // 恰 resolve 一次（supervisor 的 runPromise 记忆化），故在此发射天然满足「一 run 一信号」，
+      // 无需在 onEvent 的 completed/failed 分支重复发（事件对象也不带 manifest，无法给出真实晨报标志）。
+      // 出口缺席（纯 CLI/TUI、测试未注入）时 optional-chain 静默 no-op——完成事实仍进日志与投影。
+      void handle.completion
+        .then((result) => {
+          deps.emitOvernightCompletion?.(toOvernightCompletionSignal(result));
+        })
+        .catch((error: unknown) => {
+          // supervisor.start() 内建 runLoop().catch 兜底（supervisor.ts:302-311），正常不 reject；
+          // 此处仅防 unhandledRejection，不外发信号（reject 无权威 manifest 可投影）。
+          logger?.warn("Overnight completion signal skipped: run promise rejected", {
+            error: error instanceof Error ? error.message : String(error),
+            event: "overnight.run.completion_rejected",
+            module: "bootstrap.overnight",
+          });
+        });
       // 终态后清空 active 槽，允许下一次 /overnight。
       void handle.completion.finally(() => {
         if (activeRun === handle) activeRun = undefined;

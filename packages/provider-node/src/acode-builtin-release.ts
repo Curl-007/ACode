@@ -2,17 +2,16 @@ import { z } from "zod";
 import {
   parseACodeBuiltinModelConfigRules,
   parseACodeBuiltinProviderConfigRules,
+  ProviderConfigMap,
   type ModelConfigRules,
-  type ProviderConfigMap,
   type ProviderTemplateMap,
 } from "@acode/provider";
 
 export const ACODE_BUILTIN_RELEASE_SCHEMA_VERSION = 1 as const;
-const RETIRED_ZAPI_PROVIDER_ID = "builtin:zapi";
-// 2026-10-30 用户裁决：智谱账号 provider（zai/bigmodel 两家族八条 plan）退出本产品构建。
-// 与 ZAPI 同机制：旧 Remote Release / LKG 不得把已退条目重新发布进 Built-in 集合，
-// 命中即拒整份 Release、Source 回落兼容候选（bundled 已删这些条目）。
-const RETIRED_ZHIPU_ACCOUNT_PROVIDER_IDS = new Set([
+// 退役 Provider 清单（解码期剥离，见 decodeACodeBuiltinRelease 注释）：
+// builtin:zapi（ZAPI 已退出产品）+ 2026-10-30 用户裁决退役的智谱账号 provider 八条。
+const RETIRED_PROVIDER_IDS = new Set([
+  "builtin:zapi",
   "account:zai-individual-coding-plan",
   "account:zai-team-coding-plan",
   "account:zai-start-plan",
@@ -55,19 +54,24 @@ export function decodeACodeBuiltinRelease(input: unknown): ACodeBuiltinRelease {
   );
   // ZAPI 已退出产品，旧 Remote Release 或 LKG 不能在 Renderer 静态入口删除后
   // 又通过目标 Host Registry 将它重新发布。拒绝整份不兼容 Release，让 Source 回落到兼容候选。
-  if (providers.has(RETIRED_ZAPI_PROVIDER_ID)) {
-    throw new Error(`ACode Built-in Release 包含已退出的 Provider: ${RETIRED_ZAPI_PROVIDER_ID}`);
-  }
-  for (const retiredId of RETIRED_ZHIPU_ACCOUNT_PROVIDER_IDS) {
-    if (providers.has(retiredId)) {
-      throw new Error(`ACode Built-in Release 包含已退出的智谱账号 Provider: ${retiredId}`);
-    }
-  }
+  // 退役条目剥离（2026-10-30 语义修订，取代整份拒绝）：Remote/LKG/Active 缓存可能仍携带
+  // 已退役 Provider（远端 release 不受本分支控制；agent spawn env 的 bundled 候选即 Active
+  // 路径，整份拒绝会让 bundled/active 同源同败 → host 崩溃循环）。剥离保证退役条目永不进入
+  // 发布快照（ZAPI 原顾虑仍成立），其余条目按正常 LKG 语义继续服务。
+  const retiredPresent = [...providers.entries()]
+    .map(([providerId]) => providerId)
+    .filter((providerId) => RETIRED_PROVIDER_IDS.has(providerId));
+  const strippedProviders =
+    retiredPresent.length > 0
+      ? new ProviderConfigMap(
+          [...providers.entries()].filter(([providerId]) => !RETIRED_PROVIDER_IDS.has(providerId)),
+        )
+      : providers;
   return Object.freeze({
     schemaVersion: ACODE_BUILTIN_RELEASE_SCHEMA_VERSION,
     revision: parsed.revision,
     config: Object.freeze({
-      providers,
+      providers: strippedProviders,
       providerTemplates,
       modelConfigRules: parseACodeBuiltinModelConfigRules(parsed.config.modelConfigRules),
     }),

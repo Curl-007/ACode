@@ -47,6 +47,26 @@ export function isACodeCuaInternalFeatureEnabled(env: EnvRecord = process.env): 
   return true;
 }
 
+/**
+ * 是否存在**显式**的 CUA 本地开发激活旗标（specs/cua-broker-credential-relay.md R1(b)）。
+ *
+ * 与 isACodeCuaInternalFeatureEnabled（缺省 ON，语义 = 「CUA 基础设施随正式版打包」）
+ * 不同，本谓词缺省 false，只认用户/开发环境显式设置的 dev 旋钮：
+ * - ACODE_CUA_DEV_MODE 真值（一键 dev 链）；
+ * - ACODE_CUA_PRODUCT_HELPER 显式真值（历史四变量咒语的单开旋钮；空串/0/false/off 不算）。
+ *
+ * 用途：CLI 侧 broker 凭据中继门的 dev 分支。这两个键在正式 desktop bundle 编译期关闭
+ * 并在 main→host 边界删除（见 ACODE_CUA_DEV_MODE_ENV_KEY 注释），因此打包生产的 agent
+ * 进程恒判 false——生产链的凭据中继仍只由设置页开关落盘的插件启用记录驱动，
+ * 「电脑控制默认关闭」的产品决策不受影响。
+ */
+export function isACodeCuaDevActivationRequested(env: EnvRecord = process.env): boolean {
+  if (isCuaDevModeRequested(env)) return true;
+  const explicit = env[ACODE_CUA_PRODUCT_HELPER_ENV_KEY]?.trim().toLowerCase();
+  if (explicit === undefined || explicit === "") return false;
+  return explicit !== "0" && explicit !== "false" && explicit !== "off";
+}
+
 const SANITIZED_RUNTIME_ENV_KEYS = [
   "NODE_ENV",
   "ELECTRON_RUN_AS_NODE",

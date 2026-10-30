@@ -512,13 +512,14 @@ exceptions:
   - id: onboard-b3-session-disables
     rule: disable-count
     expires: "2026-12-31"
+    # 2026-10-30 部分偿还：claudeNativeSessionImportParser.ts（369 行）与
+    # offPeakRuntimeModel.ts（357 行）的 max-lines 头注系陈旧残留（物理行本就低于
+    # 400 上限），已删除并移出本清单。
     paths:
       [
         packages/services/src/session/acodeTaskService.ts,
         packages/services/src/session/automationRepo.ts,
-        packages/services/src/session/claude-native/claudeNativeSessionImportParser.ts,
         packages/services/src/session/offPeakMockGateway.ts,
-        packages/services/src/session/offPeakRuntimeModel.ts,
         packages/services/src/session/offPeakTaskRepo.ts,
         packages/services/src/session/offPeakTaskService.ts,
         packages/services/src/session/taskIndexRepo.ts,

@@ -14,11 +14,8 @@ import type {
   ACodeAgentRpcRequestOptions,
 } from "./acodeAgentRpcClient.js";
 
-// 客户端可发的方法名：旧 acodeProtocolMethods + v4/* + U08 provider 诊断。诊断方法名落中立叶子
-// `PROVIDER_DIAGNOSTICS_METHODS`，不进 legacy barrel 冻结面（只删不增）；wire 上 method 本就是
-// 自由字符串、CLI dispatch 是普通 string switch，故扩联合即可打通，不必改任何被守护的方法表。
-// 联合类型从中立接口叶子 acodeAgentRpcClient.ts 取（单一事实源），本类 implements 该接口，
-// 签名漂移由 typecheck 捕获。
+// 客户端可发的方法名：旧 acodeProtocolMethods + v4/*。联合类型从中立接口叶子
+// acodeAgentRpcClient.ts 取（单一事实源），本类 implements 该接口，签名漂移由 typecheck 捕获。
 type ACodeProtocolClientMethod = ACodeAgentRpcMethod;
 
 interface ACodeProtocolClientOptions {

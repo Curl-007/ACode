@@ -13,7 +13,7 @@ import type {
 } from "@acode/provider";
 import { completeNewModelSelection } from "@acode/provider";
 import type { OffPeakClientConfig } from "#src/coding-plan-subscription/codingPlanSubscription.js";
-import { ACODE_SESSION_RUNTIME_PREFERENCES_REQUEST_TIMEOUT_MS, resolveWorkspaceKey, type TraceId, ACODE_AGENT_PROVIDER, ACODE_AGENT_PROVIDER_NOT_READY_CODE, ACODE_AGENT_PROVIDER_NOT_READY_REASON, ACODE_MODEL_REASONING_SEPARATOR, isRemoteWorkspaceIdentity, ACODE_PROTOCOL_NAME, ACODE_PROTOCOL_VERSION, acodePluginOperationProgressNotificationSchema, acodePluginsCancelOperationResultSchema, OFF_PEAK_PROVIDER_IDS, PROVIDER_DIAGNOSTICS_METHODS, providerDiagnosticsResultSchema, providerDiagnosticsCancelResultSchema, summarizeOfficialMcpIdentityHeaders, acodeProtocolEmptyResultSchema, LEGACY_SURVIVOR_METHODS, LEGACY_NOTIFICATIONS, acodeMcpTelemetryEventSchema, acodeMcpResourceSamplesSchema, acodeToolExecResourceSchema, acodeProcessResourceSampleSchema, acodeSessionEventsResultSchema, acodeSessionSubagentsResultSchema, acodeSessionEventSchema, acodeSessionSendResultSchema, acodeSessionRuntimePreferencesResultSchema, acodeSessionStateSnapshotSchema, acodeSessionSubscribeResultSchema, acodeStateUpdatedNotificationSchema, type ACodeSessionStateSnapshot, type ACodeSessionGoal, type ACodeAutomation, type ACodeAutomationRun, type DynamicWorkflowClientConfig, type ScriptWorkflowMode, isScriptWorkflowModeEnabled, type ToolSearchAppMode, type AgentLaneResourceSample, type ProcessResourceCliLane, type ACodeMcpTelemetryEvent, type ACodeMcpResourceSample, type ACodeToolExecResource, type ACodePluginOperationProgressNotification, type ACodeTaskMode } from "@acode/shared";
+import { ACODE_SESSION_RUNTIME_PREFERENCES_REQUEST_TIMEOUT_MS, resolveWorkspaceKey, type TraceId, ACODE_AGENT_PROVIDER, ACODE_AGENT_PROVIDER_NOT_READY_CODE, ACODE_AGENT_PROVIDER_NOT_READY_REASON, ACODE_MODEL_REASONING_SEPARATOR, isRemoteWorkspaceIdentity, ACODE_PROTOCOL_NAME, ACODE_PROTOCOL_VERSION, acodePluginOperationProgressNotificationSchema, acodePluginsCancelOperationResultSchema, OFF_PEAK_PROVIDER_IDS, summarizeOfficialMcpIdentityHeaders, acodeProtocolEmptyResultSchema, LEGACY_SURVIVOR_METHODS, LEGACY_NOTIFICATIONS, acodeMcpTelemetryEventSchema, acodeMcpResourceSamplesSchema, acodeToolExecResourceSchema, acodeProcessResourceSampleSchema, acodeSessionEventsResultSchema, acodeSessionSubagentsResultSchema, acodeSessionEventSchema, acodeSessionSendResultSchema, acodeSessionRuntimePreferencesResultSchema, acodeSessionStateSnapshotSchema, acodeSessionSubscribeResultSchema, acodeStateUpdatedNotificationSchema, type ACodeSessionStateSnapshot, type ACodeSessionGoal, type ACodeAutomation, type ACodeAutomationRun, type DynamicWorkflowClientConfig, type ScriptWorkflowMode, isScriptWorkflowModeEnabled, type ToolSearchAppMode, type AgentLaneResourceSample, type ProcessResourceCliLane, type ACodeMcpTelemetryEvent, type ACodeMcpResourceSample, type ACodeToolExecResource, type ACodePluginOperationProgressNotification, type ACodeTaskMode } from "@acode/shared";
 import { createServiceLogger } from "#src/logger/serviceLogger.js";
 import { createOfficialMcpIssuanceAudit } from "#src/official-mcp/officialMcpIssuanceAudit.js";
 import type {
@@ -42,8 +42,6 @@ import type {
   ACodeAgentCancelWorkspaceGenerateTextParams,
   ACodeAgentGenerateWorkspaceTextParams,
   ACodeAgentTestModelConnectivityParams,
-  ACodeAgentRunProviderDiagnosticsParams,
-  ACodeAgentCancelProviderDiagnosticsParams,
   ACodeAgentGoalParams,
   ACodeAgentGrantWorkspaceHookTrustParams,
   ACodeAgentInitializeResult,
@@ -3340,34 +3338,6 @@ export function createACodeAgentService(
     return client;
   }
 
-  /**
-   * U08 provider 诊断的载体（specs/provider-diagnostics.md「无 workspace 的首次配置」）。
-   *
-   * 诊断读的是**进程级** provider 事实（配置文件路径、凭据库、Registry 快照），不绑定任何
-   * workspace，因此复用任一已活跃的本地 runtime 即可——与 `getAppUsageStats` 对进程级事实
-   * 的同款路由（那里注释：「usage 表位于全局 session 库；复用任意已连接的 workspace client」）。
-   *
-   * 与 `resolveGlobalSavedWorkflowCarrier` 的**关键差异**：那里在没有活跃 runtime 时会回落到
-   * 插件管理面并**拉起一个新进程**；这里刻意不回落。提案 §3.1 的非目标是「不为首次配置或
-   * 手机另起 Agent/Host」，而首次配置（WelcomeScreen）恰恰是最可能一个 workspace 都没打开的
-   * 时刻。因此没有现成 runtime 时抛带稳定 code 的错误，编排器归一成 `no-agent-runtime` 终态：
-   * 零网络/DNS/模型调用，UI 保持「已保存、尚未验证」并给「稍后验证」出口。
-   */
-  function getProviderDiagnosticsClient(): ACodeProtocolClient {
-    for (const active of activeClientsByWorkspaceKey.values()) {
-      // 远程 runtime（SSH/WSL identity 或带 remoteSessionId）的 home 不是本机，provider
-      // 配置与凭据库都在远端，诊断结论对本地首配无意义——只选本地载体。
-      if (!isLocalActiveWorkspaceClient(active.workspace)) continue;
-      if (!isReusableActiveClientEntry(active.workspace, active)) continue;
-      return active.client;
-    }
-    const error = new Error("no agent runtime available for provider diagnostics") as Error & {
-      code: string;
-    };
-    error.code = ACODE_AGENT_RUNTIME_UNAVAILABLE_CODE;
-    throw error;
-  }
-
   function disposeLocalState(): void {
     accountProviderConfigUnsubscribe?.();
     accountProviderConfigUnsubscribe = undefined;
@@ -4897,37 +4867,6 @@ export function createACodeAgentService(
         },
         v4ProviderTestModelConnectivityResultSchema,
         { signal: params.signal },
-      );
-    },
-
-    async runProviderDiagnostics(params: ACodeAgentRunProviderDiagnosticsParams) {
-      // 载体解析放在最前面：没有可复用的本地 runtime 时立即抛稳定 code，
-      // 一次网络/DNS/模型调用都不会发出（U08-A1 的零调用断言依赖这个顺序）。
-      const client = getProviderDiagnosticsClient();
-      // 这里刻意**不**像 testModelConnectivity 那样临时 ensureAccountProviderConfigSynced：
-      // 载体是复用的活跃 runtime，账号 Overlay 变化时已由 handleAccountProviderConfigChanged
-      // 广播同步给它；诊断只读已落盘的 Registry 事实，不需要为它再补一次同步（避免多一条写入路径）。
-      // client.request 的 resultSchema 已在跨进程边界做 .strict() 校验（不信任远端产物）。
-      return client.request(
-        PROVIDER_DIAGNOSTICS_METHODS.run,
-        params,
-        providerDiagnosticsResultSchema,
-      );
-    },
-
-    async cancelProviderDiagnostics(params: ACodeAgentCancelProviderDiagnosticsParams) {
-      // 取消是 best-effort 控制面（R4）：连载体都没有就说明没有在飞的执行，
-      // 归一成 cancelled:false，不把「没进程」当成取消失败抛给用户。
-      let client: ACodeProtocolClient;
-      try {
-        client = getProviderDiagnosticsClient();
-      } catch {
-        return { requestId: params.requestId, cancelled: false };
-      }
-      return client.request(
-        PROVIDER_DIAGNOSTICS_METHODS.cancel,
-        params,
-        providerDiagnosticsCancelResultSchema,
       );
     },
 

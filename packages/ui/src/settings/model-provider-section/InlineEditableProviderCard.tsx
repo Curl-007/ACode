@@ -32,7 +32,6 @@ import { resolveModelProviderDisplayName } from "./constants.js";
 import { useProviderDetailFeedback } from "./ProviderDetailFeedback.js";
 import { useIdleTrigger } from "./useIdleTrigger.js";
 import { useOptimisticReorder } from "./useOptimisticReorder.js";
-import { ProviderDiagnosticsCard } from "@/settings/ProviderDiagnosticsCard.js";
 
 type ProviderNameEditKeyAction = "commit" | "cancel";
 type ProviderDraftCleanupAction = "commit" | "skip-delete";
@@ -959,13 +958,6 @@ export function InlineEditableProviderCard({
           settingsRevision={settingsRevision ?? 0}
         />
 
-        {/* U08 分档诊断：自包含组件，自己读 providerId/revision，不经 props 层层穿透。
-            与上面的 testModelConnectivity 并存——连通性测试是「单模型 live 探针」，
-            诊断是「12 检查点分档 + 修复动作」，两者语义不同，刻意不互相替代。 */}
-        <ProviderDiagnosticsCard
-          providerId={provider.providerId}
-          revision={settingsRevision ?? 0}
-        />
       </div>
     </div>
   );

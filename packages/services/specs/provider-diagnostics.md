@@ -1,5 +1,16 @@
 # Provider 诊断服务（U08：首次配置与模型故障诊断）
 
+> **已退役（2026-10-30）**：用户裁决前端不需要「模型诊断」，服务面随之移除。
+> 删除面：`packages/services/src/model-provider/providerDiagnosticsExecutor.ts`、
+> `packages/services/src/acode-agent/providerDiagnosticsRpc.ts`、
+> `providerFacadeServices` 的 `runProviderDiagnostics`/`cancelProviderDiagnostics`
+> 成员与校验器、`acodeAgent` 的 RPC 注册/参数校验/descriptor 表项、
+> `acodeAgentService` 的客户端实现、`node.ts` 的 executor 装配、
+> bootstrap `acode-protocol-v4/provider-diagnostics(-ports).ts` 与 server 接线。
+> 本 spec 仅作历史记录保留。保留面：CLI `acode doctor --provider` 命令与
+> `apps/acode-cli/packages/adapters/src/doctor/*`、`packages/shared/src/providerDiagnostics*.ts`
+> 线协议词表、`apps/acode-cli/specs/provider-doctor.md`。
+
 用户在保存 provider 后能区分**「已保存、尚未验证」**与**「已验证」**，能看到明确的故障阶段与可执行的修复动作，并能在**不重复创建 provider** 的前提下重试或稍后验证。
 
 立项依据 [docs/upgrades/product-and-support-2026-10.md §3](../../../docs/upgrades/product-and-support-2026-10.md)（U08）。档位、检查点、`tier-passed`/`ready` 判定、offline 零网络双重强制的**唯一真源**是 [apps/acode-cli/specs/provider-doctor.md](../../../apps/acode-cli/specs/provider-doctor.md)（R1-R7 与 12 检查点表）——本 spec 只定义**服务面契约**，不复制也不重定义 Doctor 语义，凡涉及档位/checkpoint 一律以指针指向该文件。

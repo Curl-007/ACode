@@ -12,14 +12,13 @@
 import type {
   ACodeProtocolRequestId,
   ACodeProtocolTrace,
-  ProviderDiagnosticsMethod,
   LegacySurvivorMethod,
 } from "@acode/shared";
 import type { V4Method } from "@acode/shared/acode-protocol-v4";
 import type { z } from "zod";
 
 /** 客户端可发的方法名联合（与 acodeProtocolClient.ts 的同名 type 逐字一致，单一事实靠 implements 钉住）。 */
-export type ACodeAgentRpcMethod = LegacySurvivorMethod | V4Method | ProviderDiagnosticsMethod;
+export type ACodeAgentRpcMethod = LegacySurvivorMethod | V4Method;
 
 /** 请求选项（结构等价于 acodeProtocolClient.ts 的 ACodeProtocolClientRequestOptions）。 */
 export interface ACodeAgentRpcRequestOptions {

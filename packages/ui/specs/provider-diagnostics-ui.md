@@ -1,5 +1,14 @@
 # Provider 诊断 UI（U08 首次配置与模型故障诊断）
 
+> **已退役（2026-10-30）**：用户裁决前端不需要「模型诊断」，因为诊断结果对用户价值不足。
+> 前端功能面（`ProviderDiagnosticsPanel`、`ProviderDiagnosticsCard`、
+> `useProviderDiagnostics`、`lib/providerDiagnostics(.Labels)`、登录首配的「已保存尚未验证」
+> 三档 tier 卡片与运行诊断、设置页诊断卡片、i18n `settings.modelProvider.diagnostics.*`
+> 76 键）已整体删除；本 spec 仅作历史记录保留。保留面：CLI `acode doctor --provider`
+> 命令（`apps/acode-cli/packages/adapters/src/doctor/*`、
+> `packages/cli/src/provider-doctor-command.ts`）、`packages/shared/src/providerDiagnostics*.ts`
+> 线协议词表与 barrel 导出、`apps/acode-cli/specs/provider-doctor.md`。
+
 用户保存 provider 后能区分**「已保存、尚未验证」**与**「已验证」**，看到明确的故障阶段与可执行的修复动作，并能在**不重复创建 provider** 的前提下重试或稍后验证。
 
 上游规格：[packages/services/specs/provider-diagnostics.md](../../services/specs/provider-diagnostics.md)（服务契约 R1-R10）；档位/checkpoint 语义唯一真源 [apps/acode-cli/specs/provider-doctor.md](../../../apps/acode-cli/specs/provider-doctor.md)。本 spec 只定义 **UI 侧不变量与决策逻辑归属**，不重复定义契约字段。

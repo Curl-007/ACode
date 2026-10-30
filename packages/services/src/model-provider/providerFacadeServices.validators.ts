@@ -166,12 +166,6 @@ export const providerSettingsArgumentValidators: Partial<
     }
   },
   discoverProviderModels: (args) => requireObjectArg(args, ["workspacePath", "providerId"]),
-  // U08 诊断（specs/provider-diagnostics.md）：顶层只做确定检查，业务形态由 shared 的
-  // .strict() zod schema 在跨进程边界把关（providerDiagnosticsResultSchema）。
-  // 刻意**不**要求 workspacePath——Doctor 的 ports 全读进程级事实，首次配置无 workspace
-  // 也能诊断（提案 §3.2）。
-  runProviderDiagnostics: (args) => requireObjectArg(args, ["requestId", "providerId", "tier"]),
-  cancelProviderDiagnostics: (args) => requireObjectArg(args, ["requestId"]),
 };
 
 export const modelSelectionArgumentValidators: Partial<

@@ -8,11 +8,6 @@ import type { Event, IDisposable } from "@acode/rpc";
 import { ServiceChannels } from "@acode/shared";
 import type { AppUsageRange, AppUsageSnapshot, ACodeTaskTokenUsageResult } from "@acode/shared";
 import type { ACodeAutomation, ACodeAutomationRun } from "@acode/shared";
-import type {
-  ProviderDiagnosticsCancelResult,
-  ProviderDiagnosticsRequest,
-  ProviderDiagnosticsResult,
-} from "@acode/shared";
 import type { ACodeStorageStartupState, ACodeDeliveryKind, ACodeAgentMcpServer, ACodeBackgroundTurnAttribution, TraceId, ACodeSessionCompactResult, ACodeSessionGoalAction, ACodeSessionGoalResult, ACodeMessageWithParts, ModelSelection, ACodeSessionImportHistory, AgentLaneResourceSample, ACodeMcpTelemetryEvent, ACodeMcpResourceSample, ACodeToolExecResource, ACodePluginsCancelOperationResult, ACodePluginOperationProgressNotification, ACodeSessionEvent, ACodeSessionInfo, ACodeSessionMode, ACodeSessionSendResult, ACodeSessionRequestRuntimePreferencesParams, ACodeSessionRuntimePreferencesResult, ACodeSessionStateSnapshot, ACodeSessionSubagentsResult, ACodeStateUpdatedNotification, ACodeTaskClientMode, ACodeBrowserAmbientContext, ACodeAutomationBotDeliveryTarget } from "@acode/shared";
 import { type V4InteractionRequestPermissionParams, type V4ProcessChildProcess, type V4McpListResult, type V4PluginsListResult, type V4PluginsOverviewResult, type V4PluginsMarketplaceMutationResult, type V4PluginsInstallResult, type V4PluginsReferenceCatalogResult, type V4SkillsReferenceCatalogResult, type V4WorkflowsDeleteResult, type V4WorkflowsGetResult, type V4WorkflowsListResult, type V4WorkflowsMoveResult, type V4WorkflowsRunsResult, type V4WorkflowsUpdateMetaResult, type V4PluginsUninstallResult, type V4PluginsRestoreBuiltinResult, type V4PluginsConfigureResult, type V4PluginsDescribeResult, type V4PluginsValidateResult, type V4PluginsSetEnabledResult, type V4ProviderTestModelConnectivityParams, type V4ProviderTestModelConnectivityResult, type V4InteractionRequestUserInputParams, type V4UserInputResponse, type V4SessionPersistence, type V4WorkspacePresentation, type V4WorkspaceGenerateTextResult, type V4WorkspaceGenerateTextParams, type V4WorkspaceHookTrustGrantResult, type ClientHello, type CommandAck, type CommandEnvelope, type CommandKey, type CommandsQueryResult, type ConversationTopicWireCandidate, type ConversationTelemetryFact, type CuaPermissionObservation, type ConversationRowTarget, type HelloMessage, type SessionsIndexTopicWireCandidate, type V4AttachmentBeginResult, type V4AttachmentChunkResult, type V4AttachmentCommitResult, type V4AttachmentPreviewSourceResult, type V4AttachmentReadResult, type V4ConversationAttachmentReadResult, type V4ConversationAttachmentStatResult, type V4ConnectionFlowState, type V4ConversationFileChangesResult, type V4ConversationFileRewindPreviewResult, type V4ConversationPlansResult, type V4ConversationWorkflowRunEventsResult, type V4ConversationWorkflowRunArtifactDataResult, type V4ConversationWorkflowRunArtifactReadResult, type V4ConversationVisualizationReadResult, type V4ConversationWorkflowRunArtifactsResult, type V4ConversationWorkflowRunNodeResultResult, type V4ConversationWorkflowRunWorkspaceResult, type V4ConversationWorkflowRunsResult, type V4ConversationRowsRangeResult, type V4ConversationResyncResult, type V4ConversationSubscribeResult, type V4NetworkCaptureRecordsNotification, type V4OvernightCompletionNotification, type V4SessionsIndexSubscribeResult, type V4SessionHeaderMetaResult, type V4WorkspaceConfigSubscribeResult, type WorkspaceConfigTopicWireCandidate } from "@acode/shared/acode-protocol-v4";
 
@@ -272,20 +267,6 @@ export interface ACodeAgentCancelWorkspaceGenerateTextParams extends ACodeAgentW
 export interface ACodeAgentTestModelConnectivityParams extends ACodeAgentWorkspaceTarget {
   selection: V4ProviderTestModelConnectivityParams["selection"];
   signal?: AbortSignal;
-}
-
-/**
- * U08 Provider 诊断参数（specs/provider-diagnostics.md）。
- *
- * 刻意**不** extends `ACodeAgentWorkspaceTarget`：诊断读的是进程级 provider 事实
- * （配置文件路径、凭据库、Registry 快照），不绑定任何 workspace。这正是它与
- * `testModelConnectivity` 的关键差异——首次配置（WelcomeScreen）尚无 workspace 时
- * 仍可诊断，不必硬复用要求 workspace 的设置页 probe（提案 §3.2）。
- */
-export interface ACodeAgentRunProviderDiagnosticsParams extends ProviderDiagnosticsRequest {}
-
-export interface ACodeAgentCancelProviderDiagnosticsParams {
-  requestId: string;
 }
 
 export interface ACodeAgentSessionRuntimePreferencesRequest extends ACodeSessionRequestRuntimePreferencesParams {
@@ -677,19 +658,6 @@ export interface IACodeAgentService {
     params: ACodeAgentTestModelConnectivityParams,
   ): Promise<V4ProviderTestModelConnectivityResult>;
   /**
-   * U08 Provider 分档诊断（specs/provider-diagnostics.md）。执行体在 CLI 侧 adapters/doctor，
-   * host 只做载体路由与 schema 校验。不要求 workspace（进程级 provider 事实）。
-   */
-  runProviderDiagnostics(
-    params: ACodeAgentRunProviderDiagnosticsParams,
-  ): Promise<ProviderDiagnosticsResult>;
-  /**
-   * 取消某一次诊断（R4）：只取消该 requestId 所属执行。best-effort，不在飞回 cancelled:false。
-   */
-  cancelProviderDiagnostics(
-    params: ACodeAgentCancelProviderDiagnosticsParams,
-  ): Promise<ProviderDiagnosticsCancelResult>;
-  /**
    * @deprecated：send 主路径已收敛 v4 sendText 命令。仅剩两个消费点——
    * adapter 带附件输入回退（待附件命令面落地后移除）与 acodeSessionService
    * pass-through；新代码禁止回用。
@@ -941,8 +909,6 @@ export const IACodeAgentService = createServiceDescriptor<IACodeAgentService>(
       "generateWorkspaceText",
       "cancelWorkspaceGenerateText",
       "testModelConnectivity",
-      "runProviderDiagnostics",
-      "cancelProviderDiagnostics",
       "sendPrompt",
       "compactSession",
       "goalSession",
@@ -1079,10 +1045,6 @@ export const IACodeAgentService = createServiceDescriptor<IACodeAgentService>(
       generateWorkspaceText: requireSingleParamsObject,
       cancelWorkspaceGenerateText: requireSingleParamsObject,
       testModelConnectivity: requireSingleParamsObject,
-      // U08 诊断：顶层只校验「单个参数对象」，业务形态由 shared 的 .strict() zod schema
-      // 在跨进程边界把关（providerDiagnosticsRequestSchema / ResultSchema）。
-      runProviderDiagnostics: requireSingleParamsObject,
-      cancelProviderDiagnostics: requireSingleParamsObject,
       sendPrompt: requireSingleParamsObject,
       compactSession: requireSingleParamsObject,
       goalSession: requireSingleParamsObject,

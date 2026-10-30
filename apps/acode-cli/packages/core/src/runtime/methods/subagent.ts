@@ -36,6 +36,10 @@ import type {
 } from "../deps.js";
 import { AgentRuntime } from "../agent-runtime.js";
 import type { AgentRuntimeInternal } from "../internal.js";
+import {
+  registerLiveChildRuntime,
+  unregisterLiveChildRuntime,
+} from "../subagent-child-registry.js";
 import { cloneModelSelection } from "../model-selection.js";
 import { resolveSubagentSelection } from "../helpers/subagent-selection.js";
 import type { AgentRuntimeDeps } from "../types.js";
@@ -552,80 +556,90 @@ export function createDefaultSubagentPort(
         },
       );
 
-      const resumesExistingChild = request.resumeFromStore === true;
-      if (resumesExistingChild) {
-        // 子模式跟随父当前档（specs/subagent-parent-inheritance.md R2）：不传 override 时
-        // resume.ts 会用 child 创建时刻落库的旧模式覆盖上面刚解析的 childMode——
-        // 「build 时派生、授完全访问后 SendMessage」会以 build 复活重新弹审批。
-        // plan 豁免：override 只带 mode，resolveExecutionState 会把 planEnabled 归 false，
-        // 传了会静默拆 plan 地板；plan 由创建时刻落库的 execution-state entry 恢复。
-        const resumeModeOverride = resolveSubagentResumeModeOverride(childMode);
-        await childRuntime.resumeFromStore({
-          traceContext: request.traceContext,
-          ...(resumeModeOverride === undefined ? {} : { modeOverride: resumeModeOverride }),
-        });
-      } else {
-        // 父会话过去先发布 SubagentSpawned，child 的首轮 executeTurn 才落库。
-        // 并发派生时目录查询会在两者之间读到少一个 child。这里把持久化提升为发布前闸门。
-        await childRuntime.ensureSessionPersistedForExternalActivity(request.prompt, {
-          traceContext: request.traceContext,
-        });
-      }
-      await notifySessionReady();
-      if (!resumesExistingChild) {
-        // 新 child 的最终模型可能来自继承、lite 或 profile 显式覆盖。它既是首轮
-        // 实时投影事实，也是冷恢复必须保留的 transcript 边界；resume 不重复写入。
-        childRuntime.recordPendingModelChange({
-          toModel: childSelection,
-          toModelLabel: `${childSelection.providerId}/${childSelection.modelId}`,
-        });
-        await childRuntime.emitModelSelected({
-          modelSelection: childSelection,
-          effectiveReasoningLevel: childModel.options.reasoningLevel,
-          previousModelSelection: null,
-          traceContext: request.traceContext,
-        });
-      }
-      request.registerMessageSink?.(createSubagentMessageSink(childRuntime, request));
+      // 活 child 登记（specs/subagent-parent-inheritance.md「完全访问事后传播」R7）：
+      // 父 runtime 是注册表唯一所有者——此处登记、下方外层 finally 注销；WeakMap 不延寿。
+      // 登记点刻意紧贴构造完成：resume / 持久化闸 / turn 失败都经外层 finally 注销，
+      // 构造后的所有退出路径都不给广播留下陈旧目标。
+      registerLiveChildRuntime(this, childRuntime as unknown as AgentRuntimeInternal);
       try {
-        return await childRuntime.executeTurn(request.prompt, undefined, {
-          abortSignal: options?.signal,
-          // 子 Runtime 的首轮输入来自父 Agent，而不是真实用户直接输入；保留源事实，避免
-          // Subagent Turn 在 Trace 和成功率报表里被误归类为 user。
-          inputSource: "subagent",
-          inputPresentation: "coordinator_input",
-          // turn 起点 drain（specs/subagent-pending-message-drain.md R1/R2）：注册 flush
-          // 与 turn 启动的竞态输掉后，回队消息在 turn 激活的确定性边界补投。钩子不抛
-          // （此处包裹；drain 失败保持 re-queue 语义，resume 路径仍会再冲）。
-          onTurnStarted: () => {
-            try {
-              request.drainQueuedMessages?.();
-            } catch {
-              // drain 是观察性兜底：失败不伤 turn，消息留在队列。
-            }
-          },
-          traceContext: request.traceContext,
-        });
-      } finally {
-        const cancelled = options?.signal?.aborted === true;
-        childRuntime.sealBackgroundTaskNotifications({
-          reason: cancelled ? "subagent_cancelled" : "subagent_terminal",
-          traceContext: request.traceContext,
-        });
-        if (cancelled) {
-          await childRuntime.cancelRunningRuntimeBackgroundTasks({
-            reason: "subagent_cancelled",
+        const resumesExistingChild = request.resumeFromStore === true;
+        if (resumesExistingChild) {
+          // 子模式跟随父当前档（specs/subagent-parent-inheritance.md R2）：不传 override 时
+          // resume.ts 会用 child 创建时刻落库的旧模式覆盖上面刚解析的 childMode——
+          // 「build 时派生、授完全访问后 SendMessage」会以 build 复活重新弹审批。
+          // plan 豁免：override 只带 mode，resolveExecutionState 会把 planEnabled 归 false，
+          // 传了会静默拆 plan 地板；plan 由创建时刻落库的 execution-state entry 恢复。
+          const resumeModeOverride = resolveSubagentResumeModeOverride(childMode);
+          await childRuntime.resumeFromStore({
+            traceContext: request.traceContext,
+            ...(resumeModeOverride === undefined ? {} : { modeOverride: resumeModeOverride }),
+          });
+        } else {
+          // 父会话过去先发布 SubagentSpawned，child 的首轮 executeTurn 才落库。
+          // 并发派生时目录查询会在两者之间读到少一个 child。这里把持久化提升为发布前闸门。
+          await childRuntime.ensureSessionPersistedForExternalActivity(request.prompt, {
             traceContext: request.traceContext,
           });
         }
-        // 编排方案 Phase 4 第二批（specs/subagent-nesting-budget.md R5-2 / 审计 §6.2）：
-        // 级联收口——child turn 已结算（无论完成还是取消），其在飞的子代理不再有任何
-        // 通知消费者（child runtime 即将废弃、其队列无人再读），继续执行 = 孤儿烧 token。
-        // 树随派发 run 同生共死；depth-1 无子代理时为 no-op，行为与现状一致。
-        await childRuntime.stopInFlightSubagentTasks({
-          reason: cancelled ? "subagent_cancelled" : "subagent_terminal",
-          traceContext: request.traceContext,
-        });
+        await notifySessionReady();
+        if (!resumesExistingChild) {
+          // 新 child 的最终模型可能来自继承、lite 或 profile 显式覆盖。它既是首轮
+          // 实时投影事实，也是冷恢复必须保留的 transcript 边界；resume 不重复写入。
+          childRuntime.recordPendingModelChange({
+            toModel: childSelection,
+            toModelLabel: `${childSelection.providerId}/${childSelection.modelId}`,
+          });
+          await childRuntime.emitModelSelected({
+            modelSelection: childSelection,
+            effectiveReasoningLevel: childModel.options.reasoningLevel,
+            previousModelSelection: null,
+            traceContext: request.traceContext,
+          });
+        }
+        request.registerMessageSink?.(createSubagentMessageSink(childRuntime, request));
+        try {
+          return await childRuntime.executeTurn(request.prompt, undefined, {
+            abortSignal: options?.signal,
+            // 子 Runtime 的首轮输入来自父 Agent，而不是真实用户直接输入；保留源事实，避免
+            // Subagent Turn 在 Trace 和成功率报表里被误归类为 user。
+            inputSource: "subagent",
+            inputPresentation: "coordinator_input",
+            // turn 起点 drain（specs/subagent-pending-message-drain.md R1/R2）：注册 flush
+            // 与 turn 启动的竞态输掉后，回队消息在 turn 激活的确定性边界补投。钩子不抛
+            // （此处包裹；drain 失败保持 re-queue 语义，resume 路径仍会再冲）。
+            onTurnStarted: () => {
+              try {
+                request.drainQueuedMessages?.();
+              } catch {
+                // drain 是观察性兜底：失败不伤 turn，消息留在队列。
+              }
+            },
+            traceContext: request.traceContext,
+          });
+        } finally {
+          const cancelled = options?.signal?.aborted === true;
+          childRuntime.sealBackgroundTaskNotifications({
+            reason: cancelled ? "subagent_cancelled" : "subagent_terminal",
+            traceContext: request.traceContext,
+          });
+          if (cancelled) {
+            await childRuntime.cancelRunningRuntimeBackgroundTasks({
+              reason: "subagent_cancelled",
+              traceContext: request.traceContext,
+            });
+          }
+          // 编排方案 Phase 4 第二批（specs/subagent-nesting-budget.md R5-2 / 审计 §6.2）：
+          // 级联收口——child turn 已结算（无论完成还是取消），其在飞的子代理不再有任何
+          // 通知消费者（child runtime 即将废弃、其队列无人再读），继续执行 = 孤儿烧 token。
+          // 树随派发 run 同生共死；depth-1 无子代理时为 no-op，行为与现状一致。
+          await childRuntime.stopInFlightSubagentTasks({
+            reason: cancelled ? "subagent_cancelled" : "subagent_terminal",
+            traceContext: request.traceContext,
+          });
+        }
+      } finally {
+        // R7 注销：与上方 registerLiveChildRuntime 配对，覆盖构造后所有退出路径。
+        unregisterLiveChildRuntime(this, childRuntime as unknown as AgentRuntimeInternal);
       }
     },
   });

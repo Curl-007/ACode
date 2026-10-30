@@ -8,6 +8,7 @@ import {
 } from "@acode/contracts";
 import type { AgentRuntimeInternal } from "./internal.js";
 import { getRuntimeLifecyclePort } from "./runtime-lifecycle.js";
+import { liveChildRuntimes } from "./subagent-child-registry.js";
 import {
   unpublishedPermissionGrants,
   recoverPendingPermissionGrant,
@@ -72,6 +73,16 @@ export async function applyRuntimeExecutionState(
   await persistExecutionState(runtime, next);
   runtime.config.mode = next.mode;
   runtime.config.planEnabled = next.planEnabled;
+  // 完全访问事后传播（specs/subagent-parent-inheritance.md R7）：进入 bypass 档时同步广播到
+  // 同谱系活 child runtime；孙级由 child 的 apply 递归触达，无需手写递归。只对「非 bypass →
+  // bypass」的跃迁触发，bypass 内部换档（yolo ↔ bypassPermissions）不重播。
+  if (isBypassPermissionMode(next.mode) && !isBypassPermissionMode(previous.mode)) {
+    await propagateBypassModeToLiveChildren(runtime, {
+      source: cause.source,
+      ...(cause.toolCallId ? { toolCallId: cause.toolCallId } : {}),
+      traceContext: cause.traceContext,
+    });
+  }
   const trace = cause.traceContext ?? runtime.rootTraceContext;
   await runtime.appendEvent(
     runtime.createEvent(
@@ -90,4 +101,42 @@ export async function applyRuntimeExecutionState(
   if (previous.planEnabled && !next.planEnabled)
     getRuntimeLifecyclePort(runtime).armPlanModeExitReminder();
   return next;
+}
+
+/**
+ * 完全访问事后传播（specs/subagent-parent-inheritance.md R7）：把父 runtime 当前模式
+ * 广播到注册表里的活 child runtime。广播复用 applyRuntimeExecutionState——child 会话
+ * 持久化、SessionModeChanged 事件审计、托管策略地板校验全部沿用既有语义，不新写第二条
+ * 模式写入路径；孙级由 child 自己的 apply 递归触达。
+ *
+ * 语义边界：
+ * - child 的 planEnabled 不随广播改变（语义 1）：resolveExecutionState 对只传
+ *   { mode } 的合法非 plan 输入会把 planEnabled 归 false，这里显式回传 child 当前值。
+ * - 单个 child 失败（托管地板 modePolicyForbidden / 授权 busy）warn-skip，不反抛、
+ *   不回滚根授权（语义 2：部分传播优于整体失败，地板仍是底线）。
+ * - child 已在 bypass 档时 apply 同档早退，无事件刷屏（语义 3）。
+ */
+export async function propagateBypassModeToLiveChildren(
+  runtime: AgentRuntimeInternal,
+  cause: { source: "command" | "tool"; toolCallId?: string; traceContext?: TraceContext },
+): Promise<void> {
+  for (const child of liveChildRuntimes(runtime)) {
+    try {
+      await applyRuntimeExecutionState(
+        child,
+        { mode: runtime.config.mode, planEnabled: child.config.planEnabled },
+        {
+          source: cause.source,
+          ...(cause.toolCallId ? { toolCallId: cause.toolCallId } : {}),
+          traceContext: cause.traceContext,
+        },
+      );
+    } catch (error) {
+      runtime.logger?.warn?.("Bypass mode propagation skipped a live child runtime", {
+        event: "runtime.permission.propagation_skip",
+        childSessionId: child.sessionId,
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
 }

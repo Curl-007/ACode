@@ -107,8 +107,10 @@ async function requestPermission(
     },
     {
       ...createInteractionRegistrationOptions(request, "other"),
-      ...(!request.origin &&
-      !request.optionsPolicy &&
+      // R7（subagent-parent-inheritance 2026-10-30）：移除 origin 抑制——子来源弹窗也注册
+      // fullAccess 通道；sessionId 已被 broker 包装链外层后写为根会话，授权落在根 runtime
+      // 并经广播收敛 origin child。optionsPolicy（托管选项策略）抑制保留。
+      ...(!request.optionsPolicy &&
       options?.claimResponse &&
       context.deps?.sessionStore?.commitPermissionFullAccess
         ? {

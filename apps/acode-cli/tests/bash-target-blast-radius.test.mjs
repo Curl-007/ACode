@@ -552,6 +552,7 @@ function makeService(extra = {}) {
     disallowedTools: new Set(extra.disallowedTools ?? []),
     autoApproveHighRisk: extra.autoApproveHighRisk ?? false,
     allowMediumRiskInAutoMode: false,
+    ...(extra.logger ? { logger: extra.logger } : {}),
   });
 }
 
@@ -577,6 +578,21 @@ test("service: catastrophic overrides ask too (build mode never routes it to app
   const decision = makeService().checkPermission(permissionCtx("rm -rf ~", "build"));
   assert.equal(decision.decision, "deny");
   assert.equal(decision.ruleId, "breaker.bashTargetCatastrophic");
+});
+
+test("service: R8 边界——deny 级命中不被 yolo 豁免集合误吞（仍 deny 且零静默审计）", () => {
+  // R8（2026-10-30 用户裁决「完全访问 不弹」）的豁免集合只列 ask 级类，且判定带
+  // behavior !== "deny" 守门：behavior=deny 的 catastrophic 命中在 yolo 下照旧硬堵
+  // （拒绝不是弹窗），且不产生 permission.breaker.silenced_under_yolo 审计。
+  const warnings = [];
+  const service = makeService({
+    logger: { warn: (member, details) => warnings.push({ member, details }) },
+  });
+  const decision = service.checkPermission(permissionCtx("rm -rf ~"));
+  assert.equal(decision.decision, "deny");
+  assert.equal(decision.ruleId, "breaker.bashTargetCatastrophic");
+  assert.match(decision.reason, /never permitted/);
+  assert.equal(warnings.length, 0, "deny 级命中不走 R8 静默通道");
 });
 
 test("service: autoApproveHighRisk cannot auto-approve confirm-level commands (critical upgrade)", () => {

@@ -172,6 +172,13 @@ inbound 方向（agent→host）的 dispatch 不在 server.ts，而在 services 
 
 **冒烟测试含义**（按 `docs/legacy-protocol-convergence-plan.md:192` M2 风险条）：这 13 个的每一个迁移批次都必须跑 desktop-continuous + web-remote-replayable **双链路真实冒烟**，headless 环境不可跑（前者需要 desktop main 进程持续通道，后者需要远端 relay 回放语义）。
 
+> **口径修正（2026-10-30，第七会话实测）**：「headless 不可跑」在**协议语义层被推翻**——
+> 链路一 = 本机 Electron dev 实例 + CDP 驱动；链路二 = `@acode/server`（自托管 relay 真身，
+> 非外部云）+ packages/web（手机浏览器同一代码路径）+ 无头浏览器。13 方法中 10 个在链路一
+> 实测、链路二完成 create/send/subscribe/queue 持久化/断流重连/snapshot 重建/stop 实测；
+> 真机残余面仅移动浏览器生命周期约 5%（发布观察项）。详见
+> `docs/reviews/2026-10-30/dual-link-smoke.md`。
+
 其余 55 个不直接触及 stream/snapshot/queue（它们是 CRUD / 配置 / catalog / marketplace / interaction broker），冒烟要求可降级为单链路功能测试 + 单元测试。
 
 ---
@@ -313,7 +320,7 @@ inbound 方向（agent→host）的 dispatch 不在 server.ts，而在 services 
 
 4. **inbound broker 重设计（M2-4 + M2-7 部分）是隐藏大坑**。9 个方法是 agent→host 方向，迁移需要 CLI 先发 v4 形态 + host 才能改 handler，**两侧协议变更**必须分 PR 落地（CLI 双形态共存 → host 切换 → CLI 删 legacy）。permissions 一对更复杂：架构性替换为 broker 模型，不是改名。证据：`acodeAgentService.ts:2301` handler 注册 vs `command.ts:201` resolveInteraction。
 
-5. **双链路真实冒烟环境**（M2-3/M2-4 强阻塞）。13 个 stream/snapshot/queue 高危方法必须跑 desktop-continuous + web-remote-replayable 真实冒烟。当前 headless 环境**不可跑**。需要：桌面 main 进程持续通道运行环境 + 远端 relay replayable 链路环境。M2-3 之前必须备齐。证据：`docs/legacy-protocol-convergence-plan.md:192` 风险条。
+5. **双链路真实冒烟环境**（M2-3/M2-4 强阻塞）。13 个 stream/snapshot/queue 高危方法必须跑 desktop-continuous + web-remote-replayable 真实冒烟。当前 headless 环境**不可跑**。需要：桌面 main 进程持续通道运行环境 + 远端 relay replayable 链路环境。M2-3 之前必须备齐。证据：`docs/legacy-protocol-convergence-plan.md:192` 风险条。**（2026-10-30 口径修正：协议语义层已本机全真实测闭合，见 `docs/reviews/2026-10-30/dual-link-smoke.md`；残余真机面降为发布观察项。）**
 
 6. **`sessionSubscribe` 阻塞已解除**。M1（UI 投影收口）2026-10-28 已落地（`docs/legacy-protocol-convergence-plan.md:46-57`），M2-3 的最大前置已清。
 

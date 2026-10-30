@@ -496,31 +496,11 @@ exceptions:
   # bot-callbacks / token-request-view，全部 <400 行），首行 max-lines 头注删除；
   # server 模块 2026-12-31 例外面清零。安全测试管线（server-auth.test.mjs 的 stub 加载
   # 与源码断言面）同步改造，见 packages/server/specs/module-boundary.md「Registered debt」。
-  - id: onboard-b3-session-over-limit
-    rule: max-file-lines
-    expires: "2026-12-31"
-    paths:
-      [
-        packages/services/src/session/acodeTaskService.ts,
-        packages/services/src/session/automationRepo.ts,
-        packages/services/src/session/automationService.ts,
-        packages/services/src/session/offPeakMockGateway.ts,
-        packages/services/src/session/offPeakTaskRepo.ts,
-        packages/services/src/session/offPeakTaskService.ts,
-        packages/services/src/session/taskIndexRepo.ts,
-      ]
-  - id: onboard-b3-session-disables
-    rule: disable-count
-    expires: "2026-12-31"
-    # 2026-10-30 部分偿还：claudeNativeSessionImportParser.ts（369 行）与
-    # offPeakRuntimeModel.ts（357 行）的 max-lines 头注系陈旧残留（物理行本就低于
-    # 400 上限），已删除并移出本清单。
-    paths:
-      [
-        packages/services/src/session/acodeTaskService.ts,
-        packages/services/src/session/automationRepo.ts,
-        packages/services/src/session/offPeakMockGateway.ts,
-        packages/services/src/session/offPeakTaskRepo.ts,
-        packages/services/src/session/offPeakTaskService.ts,
-        packages/services/src/session/taskIndexRepo.ts,
-      ]
+  # 2026-10-30 偿还：onboard-b3-session-over-limit / onboard-b3-session-disables 已删——
+  # 7 个存量超限文件（taskIndexRepo.ts 2567 行最大头）拆为本体（30–386 行 facade，
+  # 导出面逐名不变、消费方零改动）+ task-index/(13)、automation/(9)、off-peak/(14)、
+  # acode-task/(7) 四子目录 43 叶，全部 <400 物理行；8 处 disable 头注同批删除
+  # （claudeNativeSessionImportParser.ts / offPeakRuntimeModel.ts 两条系陈旧残留先行偿）。
+  # session 模块 2026-12-31 例外面清零；task-index-writers（2/2）与
+  # renderer-browser-safety（3/3）守护全绿。详见 packages/services/specs/
+  # session-module-boundary.md「Registered debt」。

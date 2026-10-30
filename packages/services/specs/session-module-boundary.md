@@ -106,10 +106,24 @@ services 包的公开 API。
 
 ## Registered debt（例外，expires 2026-12-31）
 
-- `onboard-b3-session-over-limit`：7 个存量超 400 行文件（taskIndexRepo.ts
-  2567 行为最大头）；例外只冻结存量，新增超限文件仍阻断。
-- `onboard-b3-session-disables`：8 个含 lint disable 的存量文件。
-- 到期前应拆分文件、移除 disable，而不是续期例外。
+- **已全部偿还（2026-10-30）**：`onboard-b3-session-over-limit`（7 个超 400 行文件，
+  taskIndexRepo.ts 2567 行最大头）与 `onboard-b3-session-disables`（8 个含 disable
+  头注文件）两条删除，session 模块 2026-12-31 例外面清零。
+  - 拆分形态：7 个本体降为 30–386 行 facade（导出面逐名不变，internalEdgeAllowlist
+    15 条登记边与全部消费方零改动），新增 task-index/(13)、automation/(9)、
+    off-peak/(14)、acode-task/(7) 四子目录 43 叶，全部 <400 物理行、0 lint disable。
+  - 所有权与守护：`TaskIndexRepo` 类定义留 taskIndexRepo.ts 本体，叶子零该类名文本
+    引用（task-index-writers 守护文本引用面未扩张，2/2 绿）；`acodeTaskService.ts`
+    及其新增值边叶子（argumentValidators）闭包零 node: 导入，barrel 浏览器安全值边
+    不变（renderer-browser-safety 3/3 绿）；offPeak mock 共享票据状态唯一所有者在
+    off-peak/offPeakMockTicketStore.ts（工厂闭包，处理器经其方法读写）；automation
+    repo 的 Node-only `createRequire("node:sqlite")` 边收敛在
+    automation/automationRepoBase.ts（继承链 Base→Crud→Claiming→Dispatch→Runs，
+    共享同一库连接，不复制状态）。
+  - 两处陈旧 max-lines 头注（claudeNativeSessionImportParser.ts 369 行、
+    offPeakRuntimeModel.ts 357 行——物理行本就低于上限）先行单独删除。
+- 本节「Dependency direction」的描述性数字为拆分前口径；拆分后实测：模块 99 文件、
+  含 node: 导入 44 文件、lint disable 0 处、最大文件 386 行（automationService.ts）。
 
 ## Acceptance scenarios
 

@@ -520,8 +520,10 @@ void CaptureDisplayWorker::Execute() {
   g_cancelRequested.store(false);
 
   // 截图诚实 preflight（§10.7/§10.9）：锁屏/Session 0/非默认输入桌面/DPI 未达标一律
-  // 固定失败关闭——DPI 虚拟化会让 bounds 与栅格失配，绝不带病捕获。
-  if (!DetectInteractiveDesktop() || DetectSessionZero() || !g_dpiAware.load()) {
+  // 固定失败关闭——DPI 虚拟化会让 bounds 与栅格失配，绝不带病捕获。DPI 判据 = 本 worker
+  // 线程的 PMv2 override 复核（§10.7 R 裁决：electron fork 下进程级 Set 恒被拒，门禁
+  // 归线程级）。
+  if (!DetectInteractiveDesktop() || DetectSessionZero() || !EnsureThreadDpiPerMonitorV2()) {
     FailAx(kNonInteractiveDesktop, false);
     return;
   }
@@ -691,7 +693,8 @@ class CaptureWindowWorker final : public PromiseWorker {
 
 void CaptureWindowWorker::Execute() {
   g_cancelRequested.store(false);
-  if (!DetectInteractiveDesktop() || DetectSessionZero() || !g_dpiAware.load()) {
+  // DPI 判据 = 线程级 PMv2 复核（§10.7 R 裁决，与 CaptureDisplayWorker 同律）。
+  if (!DetectInteractiveDesktop() || DetectSessionZero() || !EnsureThreadDpiPerMonitorV2()) {
     FailAx(kNonInteractiveDesktop, false);
     return;
   }

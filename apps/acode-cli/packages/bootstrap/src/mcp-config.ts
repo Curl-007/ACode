@@ -29,6 +29,18 @@ function resolveACodeCuaBrokerToken(): string | undefined {
   return undefined;
 }
 
+/**
+ * 宿主是否已向本 agent 进程下发可解析的 broker 凭据（specs/cua-broker-credential-relay.md）。
+ *
+ * 与 injectACodeCuaBrokerMcpServers 的 socket 解析共用同一函数（捕获快照优先、env 兜底），
+ * 保证中继门「开门 ⇒ 注入器有料可写」，不会出现门开而注入 no-op 的空转；反之无凭据时
+ * 门恒闭（fail-closed，绝不伪造凭据）。半组凭据在 CLI 入口 sanitize 时已被
+ * captureACodeCuaBrokerCredentials 清空且不落 env，这里自然判 false。
+ */
+export function hasDeliveredACodeCuaBrokerCredentials(): boolean {
+  return Boolean(resolveACodeCuaBrokerSocket());
+}
+
 const NODE_REPL_SERVER_NAME = "node_repl";
 const REFRESH_MARKER_ENV = "ACODE_CUA_PERMISSION_BROKER_REFRESH_MARKER";
 

@@ -6,7 +6,10 @@ import {
   type AgentRuntimeConfig,
   type LoadCurrentSubagentProfiles,
 } from "@acode/core";
-import { type BuiltInSubagentModelSelectionOverrides } from "@acode/shared";
+import {
+  isACodeCuaDevActivationRequested,
+  type BuiltInSubagentModelSelectionOverrides,
+} from "@acode/shared";
 import {
   type CollaborationMode,
   type HookConfigSource,
@@ -15,7 +18,11 @@ import {
   type HooksRuntimeConfig,
   type McpServerConfig,
 } from "@acode/contracts";
-import { omitMcpServers, resolveTrustedOfficialCuaServerNames } from "../mcp-config.js";
+import {
+  hasDeliveredACodeCuaBrokerCredentials,
+  omitMcpServers,
+  resolveTrustedOfficialCuaServerNames,
+} from "../mcp-config.js";
 import {
   collectProjectDeclaredStdioServers,
   resolveUntrustedProjectMcpServers,
@@ -131,7 +138,23 @@ export function resolveAppRuntimeConfig(input: {
     pluginMcpServers ?? {},
   );
   const cuaBridgeServerNames = new Set(trustedOfficialCuaServerNames);
-  if (pluginRuntimeFeatures?.computerUse === true && configuredMcpServers.node_repl) {
+  // 修复双权威分裂（specs/cua-broker-credential-relay.md R1/R2，fix/cua-spawn-broker-credentials）：
+  // 宿主对「本 agent 是否可用 CUA」的裁决是 isCuaEnabledForContext（services/node.ts:1726），
+  // 裁决通过时 broker 凭据已随 spawn env 下发并被本进程私有快照捕获；而 computerUse feature
+  // 依赖用户在设置页开关落盘的 enabledPlugins 记录（manifest tier default_false、缺省无记录）。
+  // dev/internal 链（ACODE_CUA_DEV_MODE=1）宿主恒 ON、插件记录恒缺 → 中继门永闭 → node_repl
+  // 子进程缺 ACODE_CUA_PERMISSION_BROKER_SOCKET → agent.computerUse fail-closed（2026-10-30
+  // dev 链实证：Helper ready、零 broker_unavailable、当日 22 次 bootstrap enabledPluginCount=11）。
+  // 这里把中继资格与宿主权威对齐：显式 dev 激活旗标（正式 bundle 在 main→host 边界删除该
+  // 旗标，打包生产恒判 false）∧ 凭据确已下发（与注入器同一解析源，门开必有料可写）。
+  // 用户显式启用路径（computerUse feature）逐字保留，生产「默认关闭、需设置页开启」零变化。
+  const cuaDevCredentialRelay =
+    isACodeCuaDevActivationRequested(options.env ?? process.env) &&
+    hasDeliveredACodeCuaBrokerCredentials();
+  if (
+    (pluginRuntimeFeatures?.computerUse === true || cuaDevCredentialRelay) &&
+    configuredMcpServers.node_repl
+  ) {
     // node_repl 需要 broker 注入，但不是 CUA MCP server。注入资格与官方 CUA 图片
     // authority 必须分开；把它塞进 trustedOfficialCuaServerNames 会让整个
     // 通用 node_repl 结果被误送进 exact-raster gate，Browser 截图和 console 日志都会失败。

@@ -287,8 +287,16 @@ test("historical built-in platform model endpoints cannot escape the model trans
     else if (value && typeof value === "object") Object.values(value).forEach(visit);
   }
   visit(config);
-  assert.ok(urls.length > 0);
-  for (const url of urls) await assert.rejects(fetch(url), /ACode/);
+  // 2026-10-30 智谱账号集成退役后 builtin catalog 不再含官方平台 URL（原 8 条
+  // zhipu-account 条目携带 zcode/cdn-zcode 串）。confinement 守卫改用显式历史
+  // 端点字面量做夹具，保证「官方平台 URL 不得经模型 transport fetch」断言非空转；
+  // catalog 若未来重新出现官方平台 URL，仍一并纳入断言。
+  const historicalOfficialUrls = [
+    "https://zcode.z.ai/api/v1/zcode-plan",
+    "https://cdn-zcode.z.ai/provider/icon.png",
+  ];
+  const urlsToAssert = urls.length > 0 ? urls : historicalOfficialUrls;
+  for (const url of urlsToAssert) await assert.rejects(fetch(url), /ACode/);
 });
 
 test("Node API blocks official endpoints before resolving settings or calling fetch", async () => {

@@ -1,14 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Copy } from "lucide-react";
-import {
-  TID_WORKFLOW_DETAIL,
-  TID_WORKFLOW_DETAIL_SCRIPT,
-  TID_WORKFLOW_DETAIL_TAB,
-  type ACodeSavedWorkflowEntry,
-  type ACodeSavedWorkflowMeta,
-  type ACodeSavedWorkflowRun,
-  type ACodeWorkflowsGetResult,
-} from "@acode/shared";
+import { TID_WORKFLOW_DETAIL, TID_WORKFLOW_DETAIL_SCRIPT, TID_WORKFLOW_DETAIL_TAB } from "@acode/shared";
+import { type V4SavedWorkflowEntry, type V4SavedWorkflowMeta, type V4SavedWorkflowRun, type V4WorkflowsGetResult } from "@acode/shared/acode-protocol-v4";
 import type { IACodeAgentService, ACodeAgentSavedWorkflowTarget } from "@acode/services";
 import { CodeBlock } from "@/components/ai-elements/code-block.js";
 import { Button } from "@/components/ui/button.js";
@@ -41,12 +34,12 @@ type DetailTab = "definition" | "history";
 
 type DetailLoad =
   | { status: "loading" }
-  | { status: "ready"; detail: Extract<ACodeWorkflowsGetResult, { ok: true }> }
+  | { status: "ready"; detail: Extract<V4WorkflowsGetResult, { ok: true }> }
   | { status: "failed"; reason: string };
 
 type MetaDraft = SavedWorkflowMetaDraft;
 
-function draftFromMeta(meta: ACodeSavedWorkflowMeta): MetaDraft {
+function draftFromMeta(meta: V4SavedWorkflowMeta): MetaDraft {
   return {
     description: meta.description,
     whenToUse: meta.whenToUse ?? "",
@@ -63,8 +56,8 @@ interface SavedWorkflowDetailViewProps {
   name: string;
   /** 面包屑「自动化 › <项目名> › <工作流名>」里的项目一级。 */
   projectLabel: string;
-  entry: ACodeSavedWorkflowEntry | undefined;
-  runs: readonly ACodeSavedWorkflowRun[];
+  entry: V4SavedWorkflowEntry | undefined;
+  runs: readonly V4SavedWorkflowRun[];
   now: number;
   busy: boolean;
   canOpenRun: boolean;
@@ -75,12 +68,12 @@ interface SavedWorkflowDetailViewProps {
   /** 作用域动作：项目档「提升为全局」（AI 概括）/ 全局档「移到项目…」；仅在传入时出现。 */
   onMove?: () => void;
   onDelete: () => void;
-  onOpenRun: (run: ACodeSavedWorkflowRun) => void;
+  onOpenRun: (run: V4SavedWorkflowRun) => void;
   /** 产物 chip → `workflow-artifact` tab；缺席即 chips 只读。 */
-  onOpenArtifact?: (run: ACodeSavedWorkflowRun, artifactId: string) => void;
+  onOpenArtifact?: (run: V4SavedWorkflowRun, artifactId: string) => void;
   onMetaSaved: () => void;
   /** 传入即在运行历史每行渲染项目列（全局工作流跨项目历史）。 */
-  resolveRunProject?: (run: ACodeSavedWorkflowRun) => SavedWorkflowRunProject | null;
+  resolveRunProject?: (run: V4SavedWorkflowRun) => SavedWorkflowRunProject | null;
   /** 实参窗由列表层持有（同一份状态），详情页只负责挂到树上。 */
   launchDialog: ReactNode;
 }
@@ -214,7 +207,7 @@ export function SavedWorkflowDetailView({
     if (!collected.ok) setRowErrors(collected.errors);
     if (descriptionMissing || !collected.ok) return;
     const whenToUse = draft.whenToUse.trim();
-    const meta: ACodeSavedWorkflowMeta = {
+    const meta: V4SavedWorkflowMeta = {
       description,
       ...(whenToUse.length === 0 ? {} : { whenToUse }),
       ...(collected.args === undefined ? {} : { args: collected.args }),

@@ -103,7 +103,7 @@
 ## 跨进程 / 跨环境注入完整性（回归修复，2026-09-28）
 
 P1-5 首版实现漏了「**谁读 vault 化的 provider_config.json，谁就得有 vault**」这条不变量的完整执行，
-造成三条回归（见 `docs/security-hardening-handoff.md` §5）。本节把不变量及其执行点固化为规则：
+造成三条回归（见 `docs/archive/security-hardening-handoff.md` §5）。本节把不变量及其执行点固化为规则：
 
 ### R1：协议 worker 无条件注入 vault
 

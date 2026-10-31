@@ -26,9 +26,11 @@ ARCH-04 batch 2）：公开契约、状态所有权、依赖方向与验收场�
   根导出；`src/contract.ts`（治理登记面，逐名转发 model.ts）与 `src/model.ts`
   同时登记为 publicEntrypoints。`main.ts`/`styles.css` 是 vite 应用内部实现，
   不出包、不入契约，跨模块 deep import 会被 architecture checker 拒绝。
-- `model.ts` 是 920 行的入口文件——不触发 max-contract-lines：该规则只匹配
-  basename 以 `contract.` 开头的文件（scripts/architecture/index.mjs:178，纳管前
-  已核对源码）。contract.ts 本身只有转发语句。
+- `model.ts` 曾是 920 行的入口文件，2026-10-28 按职责拆为 barrel（37 行逐名
+  转发，导出面不变）+ `model/` 五叶（types/profiles/decisions/evaluate/trace）；
+  barrel 仍不触发 max-contract-lines：该规则只匹配 basename 以 `contract.`
+  开头的文件（scripts/architecture/index.mjs:178，纳管前已核对源码）。
+  contract.ts 本身只有转发语句。
 - 全仓当前无源码以包名 import 本模块（bootstrap 只有注释级对齐声明）。
 
 ## Dependency direction
@@ -42,9 +44,12 @@ ARCH-04 batch 2）：公开契约、状态所有权、依赖方向与验收场�
 ## Acceptance scenarios
 
 1. `node scripts/architecture/architecture-check.mjs check`：formal-proof 在
-   managed 语义下，除已登记例外 `onboard-formal-proof-over-limit`（max-file-lines，
-   `main.ts` 905 行 / `model.ts` 920 行，expires 2026-12-31）外零违规；到期前
-   必须拆分收回 400 行上限并移除例外，`.architecture-baseline.json` 不动。
+   managed 语义下零违规——原例外 `onboard-formal-proof-over-limit`
+   （max-file-lines，`main.ts` 905 行 / `model.ts` 920 行，expires 2026-12-31）
+   已于 2026-10-28 拆分偿还：main.ts → 388 行 + appShell/graphModel/columnBands/
+   renderBudget/reviewCases 五叶（全部 <400）；model.ts → 37 行 barrel +
+   model/ 五叶（全部 <400）。architecture-policy.yaml 例外条目由集成者收口删除，
+   `.architecture-baseline.json` 不动。
 2. `node scripts/architecture/architecture-check.mjs context formal-proof` 展示
    owner `formal-proof-model`、module.ts 与 contract.ts。
 3. 包导出面（./model）与纳管前逐名一致；本包 `test` 脚本

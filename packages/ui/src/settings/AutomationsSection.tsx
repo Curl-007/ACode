@@ -1,38 +1,20 @@
 import { useCodingPlanEntryGate } from "@/settings/CodingPlanEntryButton.js";
 /* eslint-disable max-lines -- 定时任务主视图集中维护列表、创建/编辑整页路由与启停/删除操作，集中更利于交互一致。 */
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useState,
-  type ComponentType,
-  type SVGProps,
-} from "react";
-import { CircleCheck, RotateCcw, TriangleAlert } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { TriangleAlert } from "lucide-react";
 import {
   AUTOMATION_CREATE_LIMIT,
   BUILTIN_MODEL_PROVIDER_IDS,
-  TID_AUTOMATION_ACTION_DELETE,
-  TID_AUTOMATION_ACTION_TOGGLE,
   TID_AUTOMATION_CARD,
-  TID_AUTOMATION_CARD_MENU,
   TID_AUTOMATIONS_LIST,
   TID_AUTOMATIONS_STATUS_FILTER,
   TID_OFFPEAK_CREATE_BUTTON,
   TID_OFFPEAK_TAB,
-  isAutomationCreateLimitError,
   resolveWorkspaceKey,
   type ACodeAutomation,
   type ACodeOffPeakTask,
 } from "@acode/shared";
 import { Button } from "@/components/ui/button.js";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu.js";
 import { Spinner } from "@/components/ui/spinner.js";
 import { toast as showToast, type ToastOptions } from "@/components/ui/toast.js";
 import { cn } from "@/components/lib/utils.js";
@@ -52,10 +34,7 @@ import { useProviderSettingsView } from "@/hooks/useProviderSettingsView.js";
 import { useOffPeakEligibility } from "@/hooks/useOffPeakEligibility.js";
 import { useSettings } from "@/hooks/useSettingService.js";
 import { logger } from "@/logger.js";
-import {
-  useAutomationManagementStore,
-  type AutomationRunNowResult,
-} from "@/store/automationManagementStore.js";
+import { useAutomationManagementStore } from "@/store/automationManagementStore.js";
 import {
   isCurrentOffPeakCodingPlanSupported,
   resolveOffPeakCreateErrorMessageId,
@@ -69,23 +48,15 @@ import {
   formatAutomationCardNextRun,
   hasAutomationFailureState,
   resolveAutomationStatusKind,
-  type AutomationStatusKind,
 } from "@/settings/automationFormat.js";
 import { describeAutomationCardSchedule } from "@/settings/automationCardSchedule.js";
 import { AutomationEditView, type AutomationEditSubmit } from "@/settings/AutomationEditView.js";
 import { AutomationScheduleBadge } from "@/settings/AutomationScheduleBadge.js";
 import {
   AutomationClockIcon,
-  AutomationContinueIcon,
   AutomationCreateDropdown,
-  AutomationEditActionIcon,
   AutomationKeepAwakeNotice,
-  AutomationMoreHorizontalIcon,
-  AutomationPauseActionIcon,
-  AutomationPausedIcon,
   AutomationRefreshIcon,
-  AutomationRunNowIcon,
-  AutomationTrashIcon,
 } from "@/settings/AutomationDesignPrimitives.js";
 import { useCodingPlanUpgradeDialog } from "@/settings/CodingPlanUpgradeDialogProvider.js";
 import { SETTINGS_FRAME_CONTENT_CLASSNAME } from "@/settings/SettingsPageParts.js";
@@ -158,7 +129,29 @@ interface AutomationsSectionProps {
   }) => void;
 }
 
-export const AUTOMATIONS_TOAST_ANCHOR_ID = "automations-main-toast-anchor";
+import {
+  AUTOMATIONS_TOAST_ANCHOR_ID,
+  STATUS_META,
+  automationPromptSummary,
+  canRestartAutomation,
+  canToggleAutomation,
+  getAutomationActionErrorToastId,
+  getAutomationCreateErrorToastId,
+  getAutomationRunNowToastId,
+  isOffPeakDetailNavigationId,
+  resolveAutomationDetailNavigation,
+  resolveAutomationTabAfterOffPeakChange,
+  resolveAutomationTabNavigation,
+  resolveAutomationTemplateVisibility,
+  resolveOffPeakDetailNavigation,
+  resolveVisibleAutomationTabs,
+  type AutomationsTab,
+} from "@/settings/automations/navigationModel.js";
+import { AutomationActionsMenu } from "@/settings/automations/AutomationActionsMenu.js";
+import { AutomationStatusFilterEmpty } from "@/settings/automations/AutomationStatusFilterEmpty.js";
+
+// batch-1 helper 外迁后保持既有外部 import 路径不变（WorkspaceShellLayout 消费）。
+export { AUTOMATIONS_TOAST_ANCHOR_ID };
 
 function toast(message: string, options?: ToastOptions): number {
   return showToast(message, {
@@ -219,283 +212,6 @@ type AutomationsView =
   | { mode: "edit"; automation: ACodeAutomation }
   | { mode: "offpeak-create"; draft?: OffPeakCreateDraft }
   | { mode: "offpeak-edit"; task: ACodeOffPeakTask };
-
-/** 主视图标签页：Scheduled 常驻，Idle-time 受灰度控制；不设 All 混排视图。 */
-type AutomationsTab = "scheduled" | "idle";
-
-const SCHEDULED_ONLY_AUTOMATION_TABS: readonly AutomationsTab[] = ["scheduled"];
-const SCHEDULED_AND_IDLE_AUTOMATION_TABS: readonly AutomationsTab[] = ["scheduled", "idle"];
-
-function resolveVisibleAutomationTabs({
-  hasAnyTasks,
-  offPeakVisible,
-}: {
-  hasAnyTasks: boolean;
-  offPeakVisible: boolean;
-}): readonly AutomationsTab[] {
-  if (!hasAnyTasks) return [];
-  return offPeakVisible ? SCHEDULED_AND_IDLE_AUTOMATION_TABS : SCHEDULED_ONLY_AUTOMATION_TABS;
-}
-
-function resolveAutomationTabAfterOffPeakChange(
-  tab: AutomationsTab,
-  offPeakVisible: boolean,
-): AutomationsTab {
-  return tab === "idle" && !offPeakVisible ? "scheduled" : tab;
-}
-
-function resolveAutomationTabNavigation({
-  requestedTab,
-  tabsReady,
-  visibleTabs,
-}: {
-  requestedTab: AutomationsTab;
-  tabsReady: boolean;
-  visibleTabs: readonly AutomationsTab[];
-}): { status: "pending" } | { status: "settled"; tab: AutomationsTab } {
-  if (!tabsReady) return { status: "pending" };
-  return {
-    status: "settled",
-    tab: visibleTabs.includes(requestedTab) ? requestedTab : "scheduled",
-  };
-}
-
-function resolveAutomationTemplateVisibility({
-  hasAnyTasks,
-  offPeakCreationEnabled,
-  tab,
-}: {
-  hasAnyTasks: boolean;
-  offPeakCreationEnabled: boolean;
-  tab: AutomationsTab;
-}): {
-  showOffPeakTemplates: boolean;
-  showScheduledTemplates: boolean;
-} {
-  // 移除 All tab 后空首页仍默认落在 Scheduled，导致闲时模板被 tab 条件误隐藏。
-  // 无任务时恢复两类模板并列展示；有任务后继续由 Scheduled / Idle tab 分流。
-  const showAllTemplates = !hasAnyTasks;
-  return {
-    showOffPeakTemplates: offPeakCreationEnabled && (showAllTemplates || tab === "idle"),
-    showScheduledTemplates: showAllTemplates || tab === "scheduled",
-  };
-}
-
-const STATUS_META: Record<
-  AutomationStatusKind,
-  { icon: ComponentType<SVGProps<SVGSVGElement>>; className: string }
-> = {
-  active: { icon: AutomationClockIcon, className: "text-success" },
-  // 设计稿的暂停态是 stop-circle 描边图标，不能回退为圆圈内实心方块。
-  paused: { icon: AutomationPausedIcon, className: "text-foreground-subtle" },
-  completed: { icon: CircleCheck, className: "text-foreground-subtle" },
-  failed: { icon: TriangleAlert, className: "text-destructive" },
-};
-
-function automationPromptSummary(prompt: string): string {
-  const normalized = prompt.replace(/\s+/g, " ").trim();
-  return normalized.length > 0 ? normalized : " ";
-}
-
-function canRestartAutomation(automation: Pick<ACodeAutomation, "lifecycleStatus">): boolean {
-  return automation.lifecycleStatus === "failed";
-}
-
-function canToggleAutomation(automation: Pick<ACodeAutomation, "lifecycleStatus">): boolean {
-  return automation.lifecycleStatus !== "completed" && automation.lifecycleStatus !== "failed";
-}
-
-function getAutomationRunNowToastId(
-  result: AutomationRunNowResult,
-): "automations.runNowQueued" | "automations.runNowAlreadyRunning" | "automations.runNowFailed" {
-  if (result === "queued") return "automations.runNowQueued";
-  if (result === "duplicate") return "automations.runNowAlreadyRunning";
-  return "automations.runNowFailed";
-}
-
-type AutomationActionError = "create" | "update" | "toggle" | "restart" | "delete";
-
-/** 原始 Agent/RPC 错误留在 logger；界面只展示当前动作对应的可理解提示。 */
-function getAutomationActionErrorToastId(action: AutomationActionError): string {
-  return `automations.error.${action}`;
-}
-
-function getAutomationCreateErrorToastId(error: unknown): string {
-  return isAutomationCreateLimitError(error)
-    ? "automations.error.createLimit"
-    : getAutomationActionErrorToastId("create");
-}
-
-function resolveAutomationDetailTarget(
-  automations: readonly ACodeAutomation[],
-  automationId?: string | null,
-): ACodeAutomation | null {
-  const targetId = automationId?.trim();
-  if (!targetId) return null;
-  return automations.find((automation) => automation.automationId === targetId) ?? null;
-}
-
-function resolveAutomationDetailNavigation(
-  automations: readonly ACodeAutomation[],
-  automationId: string | null | undefined,
-  listReady: boolean,
-): { status: "pending" } | { status: "missing" } | { status: "found"; target: ACodeAutomation } {
-  if (!automationId?.trim() || !listReady) return { status: "pending" };
-  const target = resolveAutomationDetailTarget(automations, automationId);
-  return target ? { status: "found", target } : { status: "missing" };
-}
-
-/** openAutomationId 里 `offpeak-` 前缀 id 的判别（生成点唯一：offPeakTaskService 的 offpeak-${uuid}）。 */
-function isOffPeakDetailNavigationId(automationId: string | null | undefined): boolean {
-  return Boolean(automationId?.trim().startsWith("offpeak-"));
-}
-
-/** 闲时轮尾卡跳转的并行解析路径；与 cron 的 resolveAutomationDetailNavigation 对称。 */
-function resolveOffPeakDetailNavigation(
-  tasks: readonly ACodeOffPeakTask[],
-  offPeakTaskId: string | null | undefined,
-  listReady: boolean,
-  listError: string | null = null,
-):
-  | { status: "pending" }
-  | { status: "unavailable" }
-  | { status: "missing" }
-  | { status: "found"; target: ACodeOffPeakTask } {
-  const targetId = offPeakTaskId?.trim();
-  if (!targetId || !listReady) return { status: "pending" };
-  // review：store.refresh 吞错保留旧列表；列表不可信时不能做 found/missing 终审。
-  if (listError) return { status: "unavailable" };
-  const target = tasks.find((task) => task.offPeakTaskId === targetId) ?? null;
-  return target ? { status: "found", target } : { status: "missing" };
-}
-
-interface AutomationActionsMenuProps {
-  automation: ACodeAutomation;
-  busy: boolean;
-  canRestart: boolean;
-  canToggle: boolean;
-  onRunNow: (automation: ACodeAutomation) => void;
-  onEdit: (automation: ACodeAutomation) => void;
-  onToggle: (automation: ACodeAutomation, enabled: boolean) => void;
-  onRestart: (automation: ACodeAutomation) => void;
-  onDelete: (automation: ACodeAutomation) => void;
-}
-
-function AutomationActionsMenu({
-  automation,
-  busy,
-  canRestart,
-  canToggle,
-  onRunNow,
-  onEdit,
-  onToggle,
-  onRestart,
-  onDelete,
-}: AutomationActionsMenuProps) {
-  const { intl } = useACodeIntl();
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <button
-          type="button"
-          className="flex size-6 items-center justify-center rounded-md opacity-100 transition-colors hover:bg-hover md:opacity-0 md:group-hover:opacity-100 data-[state=open]:bg-hover data-[state=open]:opacity-100"
-          data-testid={TID_AUTOMATION_CARD_MENU}
-          aria-label={intl.formatMessage({ id: "automations.moreActions" })}
-          disabled={busy}
-          // 卡片可点进编辑;菜单点击不冒泡到卡片。
-          onClick={(event) => event.stopPropagation()}
-        >
-          <AutomationMoreHorizontalIcon
-            className="size-4 text-foreground-subtle"
-            aria-hidden="true"
-          />
-        </button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent
-        align="end"
-        sideOffset={4}
-        className="w-[190px]"
-        onClick={(event) => event.stopPropagation()}
-      >
-        {/* 立即运行：当前 RPC 期间用 busy 防重，返回后恢复入口；活动 run 由 host single-flight 判重。 */}
-        <DropdownMenuItem
-          className="gap-1"
-          disabled={busy}
-          onSelect={() => void onRunNow(automation)}
-        >
-          <span className="flex size-5 items-center justify-center">
-            <AutomationRunNowIcon className="size-4" aria-hidden="true" />
-          </span>
-          {intl.formatMessage({ id: "automations.runNow" })}
-        </DropdownMenuItem>
-        {canRestart ? (
-          <DropdownMenuItem
-            className="gap-1"
-            disabled={busy}
-            onSelect={() => void onRestart(automation)}
-          >
-            <span className="flex size-5 items-center justify-center">
-              <RotateCcw className="size-4" strokeWidth={1.33} aria-hidden="true" />
-            </span>
-            {intl.formatMessage({ id: "automations.restart" })}
-          </DropdownMenuItem>
-        ) : null}
-        {/* 终态任务不展示 pause/resume：failed 可 Restart，completed 彻底收口只保留查看/删除。 */}
-        {canToggle ? (
-          <DropdownMenuItem
-            data-testid={TID_AUTOMATION_ACTION_TOGGLE}
-            className="gap-1"
-            disabled={busy}
-            onSelect={() => void onToggle(automation, !automation.enabled)}
-          >
-            {automation.enabled ? (
-              <span className="flex size-5 items-center justify-center">
-                <AutomationPauseActionIcon className="size-4" aria-hidden="true" />
-              </span>
-            ) : (
-              <span className="flex size-5 items-center justify-center">
-                <AutomationContinueIcon className="size-4" aria-hidden="true" />
-              </span>
-            )}
-            {intl.formatMessage({
-              id: automation.enabled ? "automations.pause" : "automations.resume",
-            })}
-          </DropdownMenuItem>
-        ) : null}
-        <DropdownMenuItem
-          className="gap-1"
-          disabled={busy}
-          onSelect={() => void onEdit(automation)}
-        >
-          <span className="flex size-5 items-center justify-center">
-            <AutomationEditActionIcon className="size-4" aria-hidden="true" />
-          </span>
-          {intl.formatMessage({ id: "automations.form.editTitle" })}
-        </DropdownMenuItem>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem
-          data-testid={TID_AUTOMATION_ACTION_DELETE}
-          className="gap-1 !text-destructive data-[highlighted]:!bg-menu-hover data-[highlighted]:!text-destructive focus:!text-destructive [&_svg]:!text-destructive"
-          disabled={busy}
-          onSelect={() => void onDelete(automation)}
-        >
-          <AutomationTrashIcon />
-          {intl.formatMessage({ id: "automations.delete" })}
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
-}
-
-/** 状态筛选命中 0 条时的占位；复用闲时空态卡的描边样式，文案与「还没有任务」区分开。 */
-function AutomationStatusFilterEmpty() {
-  const { intl } = useACodeIntl();
-  return (
-    <div className="rounded-[10px] border border-card-border px-3 py-3 text-ui-base text-foreground-subtle">
-      {intl.formatMessage({ id: "automations.statusFilter.empty" })}
-    </div>
-  );
-}
 
 export function AutomationsSection({
   workspacePath,

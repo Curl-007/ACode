@@ -20,8 +20,8 @@
 //
 // 裁到旧界（256）由 `clampWorkflowRunsForLegacy` 负责，理由见它的文件头。
 
-import type { ConversationDelta, WorkflowRunsState } from "@acode/shared/acode-protocol-v4";
 import { clampWorkflowRunsForLegacy, utf8JsonByteLength } from "@acode/shared/acode-protocol-v4";
+import type { ConversationDelta, WorkflowRunsState } from "@acode/shared/acode-protocol-v4";
 
 function isWorkflowRunDelta(delta: ConversationDelta): boolean {
   return delta.op === "workflowRun.updated" || delta.op === "workflowRun.removed";

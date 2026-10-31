@@ -12,6 +12,7 @@ import type {
   TraceContext,
 } from "../deps.js";
 import type { AgentRuntimeInternal } from "../internal.js";
+import { getRuntimeMcpLifecyclePort } from "../runtime-mcp-lifecycle.js";
 
 const MCP_SESSION_OAUTH_AUTHORIZATION_TIMEOUT_MS = 15_000;
 
@@ -46,11 +47,15 @@ export function startMcpStartup(
   this: AgentRuntimeInternal,
   traceContext: TraceContext,
 ): Promise<McpConnectionSnapshot> | undefined {
-  if (this.mcpInitialized) return this.mcpStartupPromise;
-  this.mcpInitialized = true;
+  // R1-01 B4：mcpInitialized/mcpStartupPromise/mcpToolsRegistered 归
+  // RuntimeMcpLifecycleOwner——claimStartup 原子化原「读 false + 写 true」，
+  // 并发/重复调用只第一个拿到 claimed:true。
+  const mcpLifecycle = getRuntimeMcpLifecyclePort(this);
+  const claim = mcpLifecycle.claimStartup();
+  if (!claim.claimed) return claim.startupPromise;
 
   if (!this.mcpPort || this.config.mcp?.enabled === false) {
-    this.mcpToolsRegistered = true;
+    mcpLifecycle.commitToolsRegistered();
     return undefined;
   }
 
@@ -68,8 +73,9 @@ export function startMcpStartup(
         });
         return { statuses: {}, tools: [] };
       });
-    this.mcpStartupPromise = this.trackResidencyBlockingWork(startup);
-    return this.mcpStartupPromise;
+    const tracked = this.trackResidencyBlockingWork(startup);
+    mcpLifecycle.commitStartupPromise(tracked);
+    return tracked;
   }
 
   const startedAt = Date.now();
@@ -113,7 +119,8 @@ export function startMcpStartup(
       });
       return { statuses: {}, tools: [] };
     });
-  this.mcpStartupPromise = this.trackResidencyBlockingWork(startup);
+  const tracked = this.trackResidencyBlockingWork(startup);
+  mcpLifecycle.commitStartupPromise(tracked);
   this.logger?.debug("MCP startup scheduled", {
     ...traceContextToLogContext(traceContext),
     event: "mcp.startup.scheduled",
@@ -121,7 +128,7 @@ export function startMcpStartup(
     serverCount: Object.keys(servers).length,
     status: "started",
   });
-  return this.mcpStartupPromise;
+  return tracked;
 }
 
 export async function initializeMcp(
@@ -138,11 +145,14 @@ export async function initializeMcp(
   }
 
   const initialization = initializeMcpOnce.call(this, traceContext);
-  this.mcpInitializationPromise = initialization;
+  // R1-01 B4：mcpInitializationPromise 归 RuntimeMcpLifecycleOwner——从入口检查到
+  // claim 之间无 await（initializeMcpOnce.call 同步段完成 startup claim），与迁移前同一片。
+  const mcpLifecycle = getRuntimeMcpLifecyclePort(this);
+  mcpLifecycle.claimInitialization(initialization);
   try {
     await initialization;
   } finally {
-    this.mcpInitializationPromise = undefined;
+    mcpLifecycle.releaseInitialization();
   }
 }
 
@@ -154,8 +164,11 @@ async function initializeMcpOnce(
 
   const startup = this.startMcpStartup(traceContext);
   const mcpPort = this.mcpPort;
+  // R1-01 B4：mcpToolsRegistered 归 RuntimeMcpLifecycleOwner，单调提交（含失败路径
+  // fail-closed），写面经端口。
+  const mcpLifecycle = getRuntimeMcpLifecyclePort(this);
   if (!startup || !mcpPort) {
-    this.mcpToolsRegistered = true;
+    mcpLifecycle.commitToolsRegistered();
     return;
   }
   const serverCount = Object.keys(this.config.mcp?.servers ?? {}).length;
@@ -193,7 +206,7 @@ async function initializeMcpOnce(
       status: "completed",
     });
   } catch (error) {
-    this.mcpToolsRegistered = true;
+    mcpLifecycle.commitToolsRegistered();
     this.logger?.warn("MCP initialization failed", {
       ...traceContextToLogContext(traceContext),
       error: error instanceof Error ? error.message : String(error),
@@ -202,7 +215,7 @@ async function initializeMcpOnce(
       status: "failed",
     });
   }
-  this.mcpToolsRegistered = true;
+  mcpLifecycle.commitToolsRegistered();
 }
 
 const MCP_TOOLS_REBIND_DEBOUNCE_MS = 100;

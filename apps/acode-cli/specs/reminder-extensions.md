@@ -1,6 +1,6 @@
 # reminder 承载类型扩展：TodoWrite pending 门槛 + 召回记忆提醒（P7）
 
-提示词主线 P7 项（`docs/cli-dispatch-and-system-prompt-upgrade-plan.md` §4「P7（P2）reminder 承载类型扩展」、
+提示词主线 P7 项（`docs/archive/cli-dispatch-and-system-prompt-upgrade-plan.md` §4「P7（P2）reminder 承载类型扩展」、
 §3 能力对照表 B7 行）。本 spec 规定 turn 级 system-reminder 的两项承载扩展：
 
 1. **TodoWrite 久未使用提醒**加「存在未完成项」门槛（既有 `todo_reminder` 注入点的触发条件收紧）；

@@ -23,6 +23,9 @@ export function WebDisconnectOverlay({
   const copy = getWebReconnectCopy();
   const exhausted = state.phase === "exhausted";
   const waiting = state.phase === "waiting";
+  // connecting 阶段禁用手动重试：一次 connect 已在途，再触发 retryNow 会换代控制器并泄漏孤儿 socket
+  //（specs/web-reconnect.md R3.4/R5.4/R7）。入口 retryNow 也做了同守卫，双保险。
+  const connecting = state.phase === "connecting";
   const countdown =
     waiting && state.retryInMs > 0
       ? formatRetryCountdown(copy, Math.max(1, Math.ceil(state.retryInMs / 1000)))
@@ -42,7 +45,7 @@ export function WebDisconnectOverlay({
         </div>
         <p className="mt-2 text-ui-sm/relaxed text-foreground-subtle">{description}</p>
         {countdown ? <p className="mt-1 text-ui-sm text-foreground-subtlest">{countdown}</p> : null}
-        <Button type="button" size="lg" className="mt-4 w-full" onClick={onRetry}>
+        <Button type="button" size="lg" className="mt-4 w-full" onClick={onRetry} disabled={connecting}>
           {copy.retryAction}
         </Button>
       </section>

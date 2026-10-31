@@ -6,9 +6,9 @@ export * from "./usage-quota.js";
 // 外部 API Key Provider 余额类型独立于官方套餐额度，见 provider-balance.ts 头部说明。
 export * from "./provider-balance.js";
 import type { UsageMcpQuotaSnapshot, UsageQuotaSnapshot } from "./usage-quota.js";
-// 类型改从无环叶子 account-access-types.ts 导入：本文件被 acode-protocol/index.ts
-// 以值导入（APP_USAGE_RANGES / appUsageSnapshotSchema），若再反向 import barrel
-// 会形成文件级循环依赖（forbidCycles 命中）；叶子文件与 barrel re-export 同名同型。
+// 类型改从无环叶子 account-access-types.ts 导入：本文件曾（M4a 前）被 legacy barrel
+// acode-protocol/index.ts 以值导入（APP_USAGE_RANGES / appUsageSnapshotSchema），若再反向
+// import barrel 会形成文件级循环依赖（forbidCycles 命中）；叶子文件与公开面同名同型。
 import type { ACodeAccountAccess, ACodeProviderAccountAccess } from "./account-access-types.js";
 
 export const ESTIMATED_TOKEN_CHAR_DIVISOR = 3;

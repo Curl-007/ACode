@@ -65,6 +65,12 @@ export interface WebReconnectControllerOptions<T, H = DefaultTimerHandle>
   connect: () => Promise<T>;
   /** 重连成功回调：调用方据此用新 services 重新渲染 app 并隐藏 overlay。 */
   onReconnected: (result: T) => void;
+  /**
+   * 连接已 resolve 但控制器在此期间被 `cancel()`（手动重试换代 / 真卸载丢弃）时回调：
+   * 调用方据此释放这条**孤儿连接**（dispose WebSocket + ChannelClient），而非静默丢弃。
+   * 修复依据：此前 `if (cancelled) return` 直接丢掉已建立的活连接，无任何处置路径 → 泄漏 socket。
+   */
+  onDiscard?: (result: T) => void;
   /** 状态变更回调：驱动断线态 overlay。 */
   onStateChange?: (state: WebReconnectState) => void;
   /**
@@ -78,8 +84,21 @@ export interface WebReconnectControllerOptions<T, H = DefaultTimerHandle>
 export interface WebReconnectController {
   /** 收到 close 事件后调用：启动退避重连循环（幂等，已在进行中的循环不重复启动）。 */
   start(): void;
-  /** 取消并清理挂起 timer（卸载/页面销毁时调用，防定时器泄漏）。 */
+  /**
+   * 终态取消：清理挂起 timer + 置终态标志（此后 start/pause/resume 均 no-op），并清延迟意图。
+   * **仅真卸载调用**（pagehide 且 persisted=false），防定时器泄漏。
+   */
   cancel(): void;
+  /**
+   * 非终态暂停（bfcache 进入用）：清挂起 timer（避免冻结期以陈旧退避立即触发）、记「循环在途」意图，
+   * 但**不置终态**，可被 resume() 唤醒。幂等；cancel 后 no-op。
+   */
+  pause(): void;
+  /**
+   * 唤醒 pause() 冻结的循环（bfcache 恢复用）：按当前 attempt 重新武装退避，或（若冻结期收到 start()）
+   * 推进到下一次退避。幂等；未暂停或已 cancel 时 no-op。
+   */
+  resume(): void;
   /** 当前尝试次数（0 = 尚未开始或已成功复位）。 */
   readonly attempt: number;
 }
@@ -96,7 +115,23 @@ export function createWebReconnectController<T, H = DefaultTimerHandle>(
   let attempt = 0;
   let timer: H | null = null;
   let cancelled = false;
+  /**
+   * 「重连意图」的唯一真源：true 表示当前想要一条连接（退避等待 / 正在 connect / 冻结待恢复）。
+   * start() 置真、成功或 cancel() 置假。bfcache 暂停不清它——恢复后据此判断是否重新武装退避。
+   */
   let looping = false;
+  /**
+   * bfcache 暂停态（非终态）：`paused` 冻结退避循环、等待 resume()。冻结期不排/不触发 timer
+   *（避免以陈旧退避时长立即重连），但保留 `looping` 意图；resume() 据 looping 决定是否重新武装。
+   */
+  let paused = false;
+  /**
+   * 是否有 connect() 正在 await 中（connecting 阶段）。resume() 据此避免重复武装：
+   * 若在途 connect 之上再排一个 timer，timer 到期会发起**第二个** connect，两个都 resolve 就会
+   * 双发 onReconnected（重挂 Root 两次）+ 泄漏一条孤儿 socket。in-flight 时由 runAttempt 自身
+   * 的成功/失败分支驱动下一步，resume() 不补排。
+   */
+  let inFlight = false;
 
   const emit = (state: WebReconnectState): void => {
     options.onStateChange?.(state);
@@ -110,9 +145,11 @@ export function createWebReconnectController<T, H = DefaultTimerHandle>(
   }
 
   function scheduleNext(): void {
-    if (cancelled) {
+    if (cancelled || paused) {
       return;
     }
+    // 防御性清理：arm 前统一 clearTimer()，杜绝任何交叠路径下覆盖并泄漏前一个 timer。
+    clearTimer();
     if (attempt >= maxAttempts) {
       looping = false;
       emit({ phase: "exhausted", attempts: attempt });
@@ -127,7 +164,8 @@ export function createWebReconnectController<T, H = DefaultTimerHandle>(
     emit({ phase: "waiting", attempt, retryInMs });
     timer = setTimeoutFn(() => {
       timer = null;
-      if (cancelled) {
+      // `!looping` 守卫：在途 connect 已成功（looping 复位）后，任何 stale timer 都不得再发起多余连接。
+      if (cancelled || paused || !looping) {
         return;
       }
       void runAttempt();
@@ -136,21 +174,30 @@ export function createWebReconnectController<T, H = DefaultTimerHandle>(
 
   async function runAttempt(): Promise<void> {
     emit({ phase: "connecting", attempt });
+    inFlight = true;
     try {
       const result = await options.connect();
+      inFlight = false;
       if (cancelled) {
+        // 控制器已终态取消（换代/真卸载）后 connect 才 resolve：这是孤儿连接，交回调用方释放，
+        // 不静默丢弃（否则泄漏已打开的 WebSocket + ChannelClient）。
+        options.onDiscard?.(result);
         return;
       }
-      // 成功：复位计数、退出循环、通知调用方重新渲染。
+      // 成功：复位计数、退出循环、清可能残留的 timer、通知调用方重新渲染。成功的连接始终胜出，
+      // 不受 pause 影响（bfcache 冻结期 JS 挂起，connect resolve 只在恢复后继续）。
       attempt = 0;
       looping = false;
+      clearTimer();
       emit({ phase: "reconnected" });
       options.onReconnected(result);
     } catch {
+      inFlight = false;
       if (cancelled) {
         return;
       }
-      // 失败：继续下一次退避（attempt 已在 scheduleNext 递增）。
+      // 失败：继续下一次退避（attempt 已在 scheduleNext 递增）。paused 时 scheduleNext 自身 no-op，
+      // looping 意图保留，resume() 再武装。
       scheduleNext();
     }
   }
@@ -161,15 +208,79 @@ export function createWebReconnectController<T, H = DefaultTimerHandle>(
         return;
       }
       looping = true;
+      if (paused) {
+        // 冻结期收到 close（socket 后台被回收）：记下重连意图，resume() 时再武装退避。
+        return;
+      }
       scheduleNext();
     },
     cancel(): void {
       cancelled = true;
       looping = false;
+      paused = false;
       clearTimer();
+    },
+    pause(): void {
+      if (cancelled || paused) {
+        return;
+      }
+      paused = true;
+      // 清挂起 timer：避免冻结期/解冻瞬间以陈旧退避时长立即触发；resume() 会按当前 attempt 重新武装。
+      // looping 意图保留——恢复后据此判断是否需要继续重连。
+      clearTimer();
+    },
+    resume(): void {
+      if (cancelled || !paused) {
+        return;
+      }
+      paused = false;
+      // 只有「想重连且没有 connect 在途」才补排 timer。若冻结时有 connect 在途（inFlight），
+      // 该 connect 的 resolve/reject 会在解冻后驱动下一步（成功→onReconnected，失败→scheduleNext），
+      // 此刻补排会多开一条 socket + 双发 onReconnected（见 inFlight 注释）。
+      if (looping && !inFlight) {
+        // 按当前 attempt 重新武装（scheduleNext 内 attempt+=1 推进到下一次），恢复退避节奏。
+        scheduleNext();
+      }
     },
     get attempt(): number {
       return attempt;
+    },
+  };
+}
+
+/**
+ * 连接代际守卫（specs/web-reconnect.md R5.4 / 验收 11）。
+ *
+ * 修复依据：每次 `establish()` 注册 `onClose: () => controller?.start()`，闭包引用同一个可变 controller。
+ * `retryNow()` 换代后，旧（孤儿）socket 的迟到 close 会驱动**当前**健康控制器 → 在正常会话上误弹断线
+ * overlay + 多开 socket + 重挂 Root。代际 token 让每个连接的 onClose 只在自己那代仍是当前代时才驱动。
+ *
+ * 唯一所有者是本闭包内的 `current` 计数器；`next()` 换代（前移 current），`capture()` 在建立连接时
+ * 记录当时代并返回一个「是否仍是当前代」的判定闭包。
+ */
+export interface WebConnectionGenerationGuard {
+  /** 换代：作废当前代（前移计数器）。retryNow 建新控制器前调用。 */
+  next(): void;
+  /** 建立一次连接时调用：捕获当时代，返回判定「该代是否仍是当前代」的谓词。 */
+  capture(): () => boolean;
+  /** 当前代 id（测试用）。 */
+  readonly current: number;
+}
+
+export function createWebConnectionGenerationGuard(
+  initialGeneration = 1,
+): WebConnectionGenerationGuard {
+  let current = initialGeneration;
+  return {
+    next(): void {
+      current += 1;
+    },
+    capture(): () => boolean {
+      const myGeneration = current;
+      return () => myGeneration === current;
+    },
+    get current(): number {
+      return current;
     },
   };
 }

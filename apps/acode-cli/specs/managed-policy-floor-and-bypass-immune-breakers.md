@@ -6,8 +6,10 @@
    不能放宽的策略，任何用户/项目/CLI 配置都无法放松它。
 2. **旁路免疫熔断器（bypass-immune circuit breakers）**：一组内置的危险动作检查，
    **即使 yolo/bypass 也强制弹窗**——把「yolo = 无条件放行」改成「yolo = 放行除熔断器外的一切」。
-   （R6 校准，2026-10-14：pathEscapeWrite 类退出 yolo 兜底面——「yolo = 放行除
-   **其余**熔断类外的一切」；sensitiveRead/删除类/灾难目标 deny 的 yolo 兜底不变。）
+   （R6 校准，2026-10-14：pathEscapeWrite 类退出 yolo 兜底面。R8 再校准，2026-10-30
+   用户裁决「完全访问 不弹」：sensitiveRead/bashRootDelete 两类 ask 级也退出 yolo 兜底面
+   ——「yolo = 放行除 **deny 级熔断与托管策略地板**外的一切」，ask 级豁免留 warn 审计；
+   catastrophic deny 级与策略地板不变。）
 
 P1-6 的项目 restrictive floor 是本骨架的特例（见 `project-permission-restrictive-floor.md`
 末段）；本骨架落地后，项目层、用户层、策略层共用同一套「只能收紧」的表达。
@@ -63,9 +65,9 @@ P1-6 的项目 restrictive floor 是本骨架的特例（见 `project-permission
 
 | 类 | ruleId | 触发条件 |
 |---|---|---|
-| 空变量根删除 | `breaker.bashRootDelete` | Bash 命令经 `analyzeBashCommand` AST 解析后，存在删除类命令（`rm`/`rmdir`/`del`/`Remove-Item`）携带递归/强制旗标，且其路径参数满足任一：① 含未解析展开（ParameterExpansion/SimpleExpansion/CommandExpansion，即 `rm -rf "$DIR"` 形态——变量为空时等价于删根）；② 解析后等于文件系统根或用户 home；③ 参数为空字符串 |
+| 空变量根删除 | `breaker.bashRootDelete` | Bash 命令经 `analyzeBashCommand` AST 解析后，存在删除类命令（`rm`/`rmdir`/`del`/`Remove-Item`）携带递归/强制旗标，且其路径参数满足任一：① 含未解析展开（ParameterExpansion/SimpleExpansion/CommandExpansion，即 `rm -rf "$DIR"` 形态——变量为空时等价于删根）；② 解析后等于文件系统根或用户 home；③ 参数为空字符串。**yolo 直通见 R8**（同 sensitiveRead） |
 | 路径逃逸写 | `breaker.pathEscapeWrite` | Write/Edit/ApplyPatch 的目标路径（经 `resolveWorkspacePath` 以 workingDirectory 解析）落在 workspaceRoot 之外（workspaceRoot 已知时）。**ask 而非 deny**：与 `path-policy.ts:36-38` 的既有产品决定一致（子代理可能需要查看用户指定的兄弟仓库），但 yolo 下不再静默放行。**豁免面见 R5**（系统临时目录 + 产品 scratch 区，2026-10-14 用户裁决）；**yolo 直通见 R6**（2026-10-14 用户二次裁决：yolo 下本类不再降级 allow，非 yolo 的 allow 来源照旧） |
-| 敏感位置读 | `breaker.sensitiveRead` | Read/Glob/Grep/Bash 的目标命中**封闭清单**的凭据位置模式（ssh 私钥、系统/用户凭据库、浏览器 profile、云 CLI 凭据目录）。清单是代码内常量，不接受配置扩展（扩展走策略地板的 deny/ask） |
+| 敏感位置读 | `breaker.sensitiveRead` | Read/Glob/Grep/Bash 的目标命中**封闭清单**的凭据位置模式（ssh 私钥、系统/用户凭据库、浏览器 profile、云 CLI 凭据目录）。清单是代码内常量，不接受配置扩展（扩展走策略地板的 deny/ask）。**yolo 直通见 R8**（2026-10-30 用户裁决「完全访问 不弹」：yolo 下本类静默放行 + warn 审计，非 yolo 照旧） |
 
 - Bash 解析失败/超长（`hasParseErrors`）时，删除类命令按「含未解析展开」同等对待
   （fail-closed 到 ask）；非删除类命令不受影响。
@@ -85,7 +87,9 @@ checkPermission(context, capability, projectRules, rulePolicy)
   ├─ 4. requiresUserInteraction（既有）
   ├─ 5. alwaysAsk（既有，含 session/workflow-owner 免确认）
   ├─ 6. bypass-immune breakers 命中      → ask    （在 yolo 直通之前；只降级 allow。
-  │        R6：pathEscapeWrite 命中在 yolo 直通条件成立时不降级——判定分层见 R6.2）
+  │        R6/R8：YOLO_SILENCED_ASK_BREAKERS 集合内（pathEscapeWrite/sensitiveRead/
+  │        bashRootDelete）的 ask 级命中在 yolo 直通条件成立时不降级——静默放行 +
+  │        warn 审计，判定分层见 R6.2/R8.4；deny 级（catastrophic）永不豁免）
   ├─ 7. yolo fast-path（policyFloor.disableBypassPermissionsMode=true 时跳过，
   │        落入 build 判定）
   └─ 8. auto / project rules / plan / allowedTools / edit / build（既有顺序不变）
@@ -189,7 +193,8 @@ checkPermission(context, capability, projectRules, rulePolicy)
 - **R6.3 其余熔断类不受影响**：sensitiveRead（读/命令文本凭据位置）、bashRootDelete、
   bashTargetCatastrophic（deny 级）、反射门在 yolo 下行为不变——「yolo = 放行除
   熔断器外的一切」收窄为「yolo = 放行除**其余**熔断类外的一切（pathEscapeWrite
-  除外）」。R2 开篇的总语义按此校准。
+  除外）」。R2 开篇的总语义按此校准。（**R8 再校准**：sensitiveRead/bashRootDelete
+  两类 ask 级的 yolo 兜底亦废止，见 R8；deny 级与反射门维持本条结论。）
 - **R6.4 与 R5 的关系**：R5 豁免面（tmpdir/scratch）保留且继续服务非 yolo 的 allow
   来源（build 下项目 allow 规则写 tmpdir 不再被熔断降级）；yolo 下两者叠加后
   pathEscapeWrite 实际不可达（R6 直通先生效）。
@@ -201,6 +206,48 @@ checkPermission(context, capability, projectRules, rulePolicy)
 
 **验收场景（19-22）**：见下节；场景 9 的 yolo ask 断言由本裁决废止（改写为非 yolo
 allow 来源形态）。
+
+### R8 yolo 下 ask 级熔断静默放行 + warn 审计（2026-10-30 用户裁决「完全访问 不弹」）
+
+**裁决背景**：R7（subagent-parent-inheritance.md）落地后复盘「完全访问」的剩余弹窗面：
+yolo 档下 sensitiveRead（凭据位置读）与 bashRootDelete（空变量根删除）两类 ask 级熔断
+仍逐次弹窗，而 R5.4 已把熔断弹窗的「总是允许」结构性置空——剩余弹窗是纯一次性摩擦，
+无记忆效应。用户裁决：**完全访问 = 不弹**。
+
+**规则**：
+
+- **R8.1 豁免集合**：模块级常量 `YOLO_SILENCED_ASK_BREAKERS =
+  { breaker.pathEscapeWrite, breaker.sensitiveRead, breaker.bashRootDelete }`——R6 的
+  单条豁免收口进本集合（语义不变，只扩面）。条件三合一：yolo 直通条件成立
+  （`isYoloTrustBypassActive`，与 R6.1/C11/R3 第 7 步同一谓词）∧ 命中 ruleId 在集合内
+  ∧ 命中非 deny 级 → **先记 warn 审计再置未命中**（静默放行）。
+- **R8.2 warn 审计留痕**：逐条审计，event `permission.breaker.silenced_under_yolo`，
+  字段 ruleId / toolName / 目标摘要。**路径可记、内容绝不记**：Write/Edit 面记目标
+  路径；Bash/PowerShell 面记命令文本前 120 字符截断；ApplyPatch 目标内嵌于 patch
+  文本（文本即内容），宁缺不记。通道为 `PermissionConfig.logger`（装配层注入
+  permissionAuditLogger，NodeFileLogger 落盘，与反射门 auditedAllow 同一通道）；缺省
+  不留痕——审计缺席绝不阻断放行（与决策日志「失败静默」同哲学）。已知边界（登记
+  接受）：`defaultPermissionConfig` 自建实例（Explore 子代理、memory agent）未注入
+  logger，其豁免不留痕——与 R6 的 yolo 直通同边界。
+- **R8.3 deny 级永不豁免**：`breaker.bashTargetCatastrophic`（behavior `"deny"`）在 yolo
+  下照旧硬堵——**deny 是拒绝不是弹窗**，不在「不弹」裁决范围。托管策略地板
+  （rule.policy.deny/ask）与 requiresUserInteraction 不动。
+- **R8.4 判定位分层**：与 R6 同架构——熔断器模块（bypass-immune-breakers.ts）保持
+  模式无关**一字不动**，模式裁决在 service 收口层叠加；executor 与 input-recheck 两个
+  调用方自动同语义。PowerShell 面经同一 evaluator 自动同语义（cross-ref
+  `powershell-tool.md` R8② 的三道命令文本门——豁免发生在 service 收口层，与 shell
+  种类无关）。
+- **R8.5 与反射门的交互**：被豁免的命中视同「熔断器仍在覆盖」——反射门的「不重复
+  反射」边界（`bash-confirm-reflexive-gate.md` R1/R2：confirm 级形态已被类 1 覆盖的
+  不进门）对豁免面同样成立。否则 `rm -rf "$DIR"` 族在 yolo 下会从「熔断 ask」退化成
+  「门首轮 reflect deny」，「不弹」裁决落空。门对**未命中熔断器**的 confirm 级命令
+  （`cat list | xargs rm -rf`、`npm run $X` 族）在 yolo 下的既有收口不变。
+- **威胁模型登记（用户知情裁决）**：yolo 下 prompt-injection 驱动的凭据外传
+  （读 `~/.ssh`、`~/.aws/credentials` 等）不再有任何人工作战拦截点，仅剩事后审计
+  （warn 落盘 + 决策日志）——这是「完全访问 不弹」接受的残余风险。catastrophic
+  目标档（deny 级）与托管策略地板作为最后防线保留。
+
+**验收场景（24-28）**：见下节；场景 8/10/23 的 yolo ask 断言由本裁决废止。
 
 ## 接口
 
@@ -214,7 +261,9 @@ allow 来源形态）。
   与既有「拿不到工作目录照常判定」同一容错哲学）；`PermissionContext.scratchRoot?: string`
   （R5.2 豁免根，缺省时该豁免不生效）；私有谓词 `isYoloTrustBypassActive(context)`
   （R6.1：三处 yolo 直通条件的单一来源——R3 第 7 步 fast-path、C11 checkAlwaysAsk、
-  R6 熔断降级豁免共用，防三份内联拷贝漂移）。
+  R6 熔断降级豁免共用，防三份内联拷贝漂移）；模块级常量 `YOLO_SILENCED_ASK_BREAKERS`
+  与 `PermissionConfig.logger`（R8：yolo 静默豁免集合与 warn 审计通道，
+  `bootstrap/src/app/create-app.ts` 注入 permissionAuditLogger 落盘）。
 - `core/src/permission/bypass-immune-breakers.ts`：
   `evaluateBypassImmuneBreakers(context, capability): { ruleId: string; reason: string } | undefined`；
   `BypassImmuneBreakerContext.scratchRoot?: string`（R5.2，经
@@ -249,12 +298,15 @@ allow 来源形态）。
 7. 打包态忽略 `ACODE_MANAGED_POLICY_FILE` env（isPackaged=true 时只读 OS 托管路径）。
 
 **熔断器**
-8. yolo 下 `rm -rf "$UNSET_VAR"` / `rm -rf /` / `rm -rf ~` → ask（breaker.bashRootDelete）；
-   `rm -rf ./build` → 不触发（既有 yolo 直通）。
+8. ~~yolo 下 `rm -rf "$UNSET_VAR"` / `rm -rf /` / `rm -rf ~` → ask~~（两次修订：J1-1 起
+   `rm -rf /`、`rm -rf ~` 为 catastrophic **deny**；**R8 废止** `rm -rf "$UNSET_VAR"` 的
+   yolo ask 形态，改为 allow + warn 审计，见 24-28）；`rm -rf ./build` → 不触发
+   （既有 yolo 直通）。
 9. ~~yolo 下 Write 到 workspaceRoot 之外 → ask~~（**R6 废止 yolo 形态**，见 19-22）；
    熔断器模块纯函数面不变：workspaceRoot 外的 Write/Edit/ApplyPatch 目标仍判命中
    （模式无关），workspace 内不触发。
-10. yolo 下 Read `~/.ssh/id_rsa` → ask（breaker.sensitiveRead）；workspace 内文件 → 不触发。
+10. ~~yolo 下 Read `~/.ssh/id_rsa` → ask~~（**R8 废止 yolo 形态**，见 25）；非 yolo
+    照旧 ask；workspace 内文件 → 不触发。
 11. 熔断器不覆写已有 deny / ask 的 ruleId；alwaysAsk 工具照常走 alwaysAsk。
 12. Bash 解析失败时删除类命令 fail-closed 到 ask；非删除类不受影响。
 
@@ -282,8 +334,23 @@ allow 来源形态）。
     build 判定（副作用 ask）；yolo + plan 生效 → 写入本就被 plan deny（熔断不放宽 deny）。
 22. 三处 yolo 直通谓词（R3 第 7 步 fast-path / C11 checkAlwaysAsk / R6 熔断降级豁免）
     单一来源 `isYoloTrustBypassActive`：任一处条件被单独改松都会使三处同红（回归钉）。
-23. 其余熔断类在 yolo 不直通：Read `~/.ssh/id_rsa` → ask（`breaker.sensitiveRead`）、
-    `rm -rf "$X"/` → ask、灾难目标 → deny（既有场景 8/10/11 不回归）。
+23. ~~其余熔断类在 yolo 不直通~~（**R8 废止**：sensitiveRead/bashRootDelete 的 yolo
+    ask 形态改为静默放行 + warn 审计，见 24-28；灾难目标 deny 不变）。
+
+**R8 yolo 静默豁免（2026-10-30 用户裁决「完全访问 不弹」）**
+24. yolo 下 `rm -rf "$X"/` → allow（`mode.yolo`）+ warn 审计一条：event
+    `permission.breaker.silenced_under_yolo`、ruleId `breaker.bashRootDelete`、
+    toolName、命令摘要（前 120 字符截断）；**反射门不接管**（首轮无 reflect deny，
+    R8.5 不重复反射）。
+25. yolo 下 Read `~/.ssh/id_rsa` → allow + warn 审计（ruleId `breaker.sensitiveRead`、
+    target 为目标路径）；build 下同一路径 → ask（`breaker.sensitiveRead`）保留。
+26. yolo 下 catastrophic 目标（`rm -rf ~`）→ deny（`breaker.bashTargetCatastrophic`）
+    且**零静默审计**——豁免集合不误吞 deny 级（behavior=deny 结构性守门）。
+27. R6 回归：yolo 下越界写 → allow + warn 审计（pathEscapeWrite 并入集合后审计同格）；
+    非 yolo allow 来源照旧降级（场景 20 不回归）；审计内容纪律——写工具的
+    content 绝不进审计字段。
+28. PowerShell 面自动同语义：yolo 下 PS 命令文本命中 sensitiveRead/bashRootDelete
+    静默放行 + 审计（豁免在 service 收口层，与 shell 种类无关）。
 
 ## 不在本骨架范围
 

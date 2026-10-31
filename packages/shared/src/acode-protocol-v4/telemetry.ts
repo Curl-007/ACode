@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { acodeSyntheticUserMessageSourceSchema } from "../acode-protocol-legacy-types.js";
+import { acodeSyntheticUserMessageSourceSchema } from "../acode-session-types.js";
 import { timestampSchema } from "./core.js";
 
 const factBaseFields = {

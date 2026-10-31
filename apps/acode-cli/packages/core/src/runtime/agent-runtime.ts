@@ -1,14 +1,13 @@
 /* eslint-disable max-lines -- 存量基线豁免:该文件先于 CLI lint 门禁建立即超限(根 lint 的 ignorePatterns 排除 apps/acode-cli,turbo lint 因此从未变绿)。头注豁免以恢复门禁信号;拆分重构超出本批范围。 */
 import { DEFAULT_ACODE_MODEL_CONTEXT_BUDGET_STRATEGY, resolveExecutionState } from "@acode/shared";
 import type { BackgroundBashOutputResult } from "@acode/shared";
-import type { PromptCacheMissCause } from "@acode/contracts";
+import type { PromptCacheMissCause, ToolSearchExecutionContext } from "@acode/contracts";
 import {
   createDenyPermissionBroker,
   createRootTraceContext,
   createToolRegistry,
   defaultPermissionConfig,
   EventReducer,
-  MessageHistoryImpl,
   PermissionService,
   ToolScheduler,
   traceContextToLogContext,
@@ -135,6 +134,8 @@ import { InMemoryRuntimeTaskRegistry, type RuntimeTaskRegistry } from "../runtim
 import type { SwarmPlanPort } from "../swarm/port.js";
 import type { ChildClientPortsContext, ClientFacingPorts } from "./helpers/child-client-ports.js";
 import type { ProjectMemoryExtractionScheduler } from "./helpers/project-memory-extraction.js";
+import type { MemorySemanticRecallChannel } from "./helpers/memory-semantic-recall.js";
+import type { PromptFileRouting } from "../context/prompt-files.js";
 import { projectPersistentAgentMemoryTools } from "../subagent/persistent-memory.js";
 import { RuntimeTelemetryFacade } from "../telemetry/runtime-telemetry.js";
 import type { WorkspaceHookRuntimeAdmissionPort } from "../hooks/workspace-hook-runtime-admission.js";
@@ -152,6 +153,16 @@ import { initializeRuntimeModelSelection } from "./runtime-model-selection.js";
 import { initializeRuntimeSessionPersistence } from "./runtime-session-persistence.js";
 import { initializeRuntimePermissionGrant } from "./runtime-permission-grant.js";
 import { initializeRuntimeModelChangeTimeline } from "./runtime-model-change-timeline.js";
+import { initializeRuntimeCacheDiagnostics } from "./runtime-cache-diagnostics.js";
+import { initializeRuntimeForegroundExecution } from "./runtime-foreground-execution.js";
+import { initializeRuntimeMessageProjection } from "./runtime-message-projection.js";
+import {
+  getRuntimeContextInitPort,
+  initializeRuntimeContextInit,
+} from "./runtime-context-init.js";
+import { initializeRuntimeMcpLifecycle } from "./runtime-mcp-lifecycle.js";
+import { initializeRuntimeToolCache } from "./runtime-tool-cache.js";
+import { initializeRuntimeSidecar } from "./runtime-sidecar.js";
 
 /**
  * 工作区身份根的构造期归一化（specs/subagent-parent-inheritance.md R1）：
@@ -194,25 +205,42 @@ export class AgentRuntime {
   private browserControlPort?: AgentRuntimeDeps["browserControlPort"];
   /** 模型请求准入端口；随每次模型请求进调用上下文。 */
   private modelRequestAdmission?: AgentRuntimeDeps["modelRequestAdmission"];
-  private messageHistory: MessageHistory;
-  private readFileState: ReadFileStateMap;
-  private cachedTools: ModelToolContract[] | null = null;
-  private contextBuilder: ContextBuilder | null = null;
-  private contextInitialized = false;
-  private contextSourceSnapshot?: ContextSourceSnapshot;
-  private latestContextBuildResult?: ContextBuildResult;
-  private memoryRoot?: string;
-  private memoryIndexContent?: string;
-  private memoryExtractionScheduler?: ProjectMemoryExtractionScheduler;
+  // R1-01 B4：ContextMemory 19 字段已全部收敛——
+  // messageHistory / contextBuilder / contextInitialized / contextSourceSnapshot /
+  // latestContextBuildResult / memoryRoot / memoryIndexContent / promptFileRouting /
+  // skillLoadOutcome 归 RuntimeContextInitOwner（runtime-context-init.ts）；
+  // mcpInitialized / mcpStartupPromise / mcpInitializationPromise / mcpToolsRegistered 归
+  // RuntimeMcpLifecycleOwner（runtime-mcp-lifecycle.ts）；cachedTools / toolSearchContext 归
+  // RuntimeToolCacheOwner（runtime-tool-cache.ts）；memoryExtractionScheduler /
+  // memorySemanticRecallChannel / residencyBlockingWorkCount 归 RuntimeSidecarOwner
+  // （runtime-sidecar.ts）。declare readonly getter 由各 initializeRuntime* 在构造期安装；
+  // 迁移前的扁平默认值（cachedTools=null、contextInitialized=false、
+  // residencyBlockingWorkCount=0 等）全部下沉到 owner 默认值。
+  declare private readonly messageHistory: MessageHistory;
+  // readFileState 零 method 重赋值（唯一赋值在构造期），与 runtimeCommandQueue 同款：
+  // 构造期不可写数据属性 + 类型级 readonly，不进 owner。
+  declare private readonly readFileState: ReadFileStateMap;
+  declare private readonly cachedTools: ModelToolContract[] | null;
+  declare private readonly toolSearchContext?: ToolSearchExecutionContext;
+  declare private readonly contextBuilder: ContextBuilder | null;
+  declare private readonly contextInitialized: boolean;
+  declare private readonly contextSourceSnapshot?: ContextSourceSnapshot;
+  declare private readonly latestContextBuildResult?: ContextBuildResult;
+  declare private readonly memoryRoot?: string;
+  declare private readonly memoryIndexContent?: string;
+  declare private readonly promptFileRouting?: PromptFileRouting;
+  declare private readonly memoryExtractionScheduler?: ProjectMemoryExtractionScheduler;
+  declare private readonly memorySemanticRecallChannel?: MemorySemanticRecallChannel;
+  declare private readonly skillLoadOutcome?: SkillLoadOutcome;
+  declare private readonly mcpStartupPromise?: Promise<McpConnectionSnapshot>;
+  /** MCP tool registration owner：并发 initializeMcp 共享这一 promise。 */
+  declare private readonly mcpInitializationPromise?: Promise<void>;
+  declare private readonly residencyBlockingWorkCount: number;
+  declare private readonly mcpInitialized: boolean;
+  declare private readonly mcpToolsRegistered: boolean;
   private contextSourcePort?: ContextSourcePort;
   private skillPort?: SkillPort;
   private mcpPort?: McpPort;
-  private mcpStartupPromise?: Promise<McpConnectionSnapshot>;
-  /** MCP tool registration owner：并发 initializeMcp 共享这一 promise。 */
-  private mcpInitializationPromise?: Promise<void>;
-  private residencyBlockingWorkCount = 0;
-  private mcpInitialized = false;
-  private mcpToolsRegistered = false;
   private subagentPort?: SubagentPort;
   private dynamicWorkflowRunPort?: DynamicWorkflowRunPort;
   private workflowPort?: WorkflowPort;
@@ -225,35 +253,40 @@ export class AgentRuntime {
   private fileSystemPort?: FileSystemPort;
   private imageProcessorPort?: ImageProcessorPort;
   private pdfDocumentPort?: PdfDocumentPort;
-  private skillLoadOutcome?: SkillLoadOutcome;
   private workingDirectory: string;
   private workspaceRoot: string;
   private sessionStore?: SessionStorePort;
   declare private readonly sessionPersisted: boolean;
   declare private readonly runtimeRestartReminderEmitted: boolean;
-  private latestConversationMessageId?: MessageId;
-  private latestAssistantMessageId?: MessageId;
-  private latestAssistantTurnId?: TurnId;
-  private mainTurnCacheHitAggregate: MainTurnCacheHitAggregate = {
-    requestCount: 0,
-    totalInputTokens: 0,
-    totalCacheReadTokens: 0,
-    totalCacheWriteTokens: 0,
-  };
-  // prompt-cache miss 归因（specs/prompt-cache-diagnostics.md R2/R3）：进程内状态，
-  // resume/rewind 重建后计数从空开始（tokens 可重建命中率、不可重建归因）。
-  private pendingCacheMissCause?: PromptCacheMissCause;
-  private cacheMissCauseCounts: Partial<Record<PromptCacheMissCause, number>> = {};
-  private lastRequestModelId?: string;
-  private currentTurnFileChanges: RuntimeTurnFileChangeMap = new Map();
-  private lastAssistantCompletedAtMs?: number;
-  private lastEmittedLocalDate?: string;
-  private autoCompactConsecutiveFailures = 0;
-  private runtimeCommandQueue: RuntimeCommandQueue;
+  // R1-01 B3：MessageProjection 4 字段已收敛到 RuntimeMessageProjectionOwner
+  // （runtime-message-projection.ts），declare readonly getter 由
+  // initializeRuntimeMessageProjection 在构造期安装。
+  declare private readonly latestConversationMessageId?: MessageId;
+  declare private readonly latestAssistantMessageId?: MessageId;
+  declare private readonly latestAssistantTurnId?: TurnId;
+  // R1-01 B1：cache 诊断 6 字段已收敛到 RuntimeCacheDiagnosticsOwner
+  // （runtime-cache-diagnostics.ts），declare readonly getter 由 initializeRuntimeCacheDiagnostics
+  // 在构造期安装。迁移前的扁平赋值（mainTurnCacheHitAggregate 字面量、cacheMissCauseCounts={}、
+  // autoCompactConsecutiveFailures=0 等）全部下沉到 owner 默认值。
+  declare private readonly mainTurnCacheHitAggregate: MainTurnCacheHitAggregate;
+  declare private readonly pendingCacheMissCause?: PromptCacheMissCause;
+  declare private readonly cacheMissCauseCounts: Partial<Record<PromptCacheMissCause, number>>;
+  declare private readonly lastRequestModelId?: string;
+  declare private readonly lastAssistantCompletedAtMs?: number;
+  declare private readonly autoCompactConsecutiveFailures: number;
+  // R1-01 B2：TurnState 剩余 4 字段已收敛——activeForegroundExecution /
+  // foregroundPromotionLease / currentTurnFileChanges 归 RuntimeForegroundExecutionOwner
+  // （runtime-foreground-execution.ts），declare readonly getter 由
+  // initializeRuntimeForegroundExecution 在构造期安装。runtimeCommandQueue 零 method
+  // 写点（唯一赋值在构造期），declare readonly + 构造期不可写数据属性，不进 owner。
+  declare private readonly currentTurnFileChanges: RuntimeTurnFileChangeMap;
+  // R1-01 B3：日期游标同属 RuntimeMessageProjectionOwner（见上）。
+  declare private readonly lastEmittedLocalDate?: string;
+  declare private readonly runtimeCommandQueue: RuntimeCommandQueue;
   declare private readonly runtimeCommandDrainActive: boolean;
-  private activeForegroundExecution?: ActiveForegroundExecutionState;
+  declare private readonly activeForegroundExecution?: ActiveForegroundExecutionState;
   /** sendQueuedNow 的 Core 调度权；只活在当前进程，匹配 runtime command 出队即消费。 */
-  private foregroundPromotionLease?: ForegroundPromotionLeaseState;
+  declare private readonly foregroundPromotionLease?: ForegroundPromotionLeaseState;
   declare private readonly activeTurn?: ActiveTurnSteeringState;
   declare private readonly activeTurnStartReservation:
     | Readonly<ActiveTurnStartReservation>
@@ -321,9 +354,25 @@ export class AgentRuntime {
     this.browserControlPort = deps.browserControlPort;
     this.modelRequestAdmission = deps.modelRequestAdmission;
     // 旧会话的选择缺失不能阻断历史恢复；不在这里制造默认模型。
-    this.messageHistory = new MessageHistoryImpl();
-    this.readFileState = new Map();
-    this.runtimeCommandQueue = createRuntimeCommandQueue();
+    // R1-01 B4：messageHistory 归 RuntimeContextInitOwner（构造期默认值 = owner 初始值
+    // new MessageHistoryImpl()，resume 整体替换经 resetForResume 端口）；readFileState
+    // 零 method 重赋值——构造期装不可写数据属性（与下方 runtimeCommandQueue 同款），
+    // 容器内容变更（set/delete  hydrate 等）是设计内行为。
+    Object.defineProperty(this, "readFileState", {
+      configurable: false,
+      enumerable: true,
+      writable: false,
+      value: new Map(),
+    });
+    // R1-01 B2：runtimeCommandQueue 零 method 写点——构造期装不可写数据属性，引用
+    // 不可替换（运行时赋值/重定义抛 TypeError，tsc 下报 readonly 违例）；容器内容
+    // 变更（enqueue/dequeueNextBatch/removeById/...）经 queue 方法是设计内行为。
+    Object.defineProperty(this, "runtimeCommandQueue", {
+      configurable: false,
+      enumerable: true,
+      writable: false,
+      value: createRuntimeCommandQueue(),
+    });
     this.workingDirectory = config.workingDirectory ?? ".";
     this.contextSourcePort = deps.contextSourcePort;
     this.skillPort = deps.skillPort;
@@ -340,6 +389,20 @@ export class AgentRuntime {
     initializeRuntimeSessionPersistence(runtime);
     initializeRuntimePermissionGrant(runtime);
     initializeRuntimeModelChangeTimeline(runtime);
+    // R1-01 B1：cache 诊断 6 字段 owner，与上述 owner 同款——必须先于任何 method 读面。
+    initializeRuntimeCacheDiagnostics(runtime);
+    // R1-01 B2：foreground execution / promotion lease / turn file changes owner，同款。
+    initializeRuntimeForegroundExecution(runtime);
+    // R1-01 B3：消息投影 4 游标字段 owner，同款——必须先于任何 method 读面。
+    initializeRuntimeMessageProjection(runtime);
+    // R1-01 B4：ContextMemory 18 字段归 4 个子 owner（context-init / mcp-lifecycle /
+    // tool-cache / sidecar），同款——必须先于任何 method 读面（含下方
+    // createDefaultSubagentPort / initializeRuntimeTooling / startMcpStartup 与
+    // 构造期 contextBuilder 分支）。
+    initializeRuntimeContextInit(runtime);
+    initializeRuntimeMcpLifecycle(runtime);
+    initializeRuntimeToolCache(runtime);
+    initializeRuntimeSidecar(runtime);
     this.artifactStore = deps.artifactStore;
     this.executionPort = deps.executionPort;
     this.fileSystemPort = deps.fileSystemPort;
@@ -364,10 +427,15 @@ export class AgentRuntime {
     this.workspaceHookAdmission = deps.workspaceHookAdmission;
     this.executor = tooling.executor;
 
-    this.contextBuilder = deps.contextBuilder ?? null;
-    if (this.contextBuilder) {
-      runtime.initializeMessageHistoryFromContext(this.contextBuilder, this.rootTraceContext);
-      this.contextInitialized = true;
+    // R1-01 B4：contextBuilder/contextInitialized 归 RuntimeContextInitOwner，写面经端口
+    // （原 `this.contextBuilder = deps.contextBuilder ?? null; if (...) { ...;
+    // this.contextInitialized = true; }` 逐点等价：builder 提交 → 历史初始化 → 单调提交）。
+    const injectedContextBuilder = deps.contextBuilder ?? null;
+    if (injectedContextBuilder) {
+      const contextInitPort = getRuntimeContextInitPort(runtime);
+      contextInitPort.commitContextBuilder(injectedContextBuilder);
+      runtime.initializeMessageHistoryFromContext(injectedContextBuilder, this.rootTraceContext);
+      contextInitPort.markContextInitialized();
     }
     runtime.startMcpStartup(this.rootTraceContext);
   }
@@ -727,6 +795,8 @@ export interface AgentRuntime {
     targetCheckpointId?: string;
     targetMessageId?: MessageId;
     traceContext?: TraceContext;
+    // overnight 隐藏 coordinator 的落盘身份覆盖（specs/overnight-execution.md R1a）。
+    hiddenCoordinatorTitle?: string;
   }): Promise<WorkspaceForkResult>;
   forkStableConversationAtMessage(
     options: StableConversationForkOptions,

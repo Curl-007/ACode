@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 /**
- * D6 验证（docs/cli-dispatch-and-system-prompt-upgrade-plan.md §D6）：
+ * D6 验证（docs/archive/cli-dispatch-and-system-prompt-upgrade-plan.md §D6）：
  * cron 到期是否打断进行中 turn。
  *
  * 被验证的真实链路（全部走产品代码，不用 mock 决策逻辑）：
@@ -35,6 +35,12 @@ const { initializeRuntimeTurnCoordination } =
   await import("../packages/core/src/runtime/turn-coordination.ts");
 const { initializeRuntimeTurnTiming } = await import(
   "../packages/core/src/runtime/runtime-turn-timing.ts"
+);
+const { initializeRuntimeForegroundExecution } = await import(
+  "../packages/core/src/runtime/runtime-foreground-execution.ts"
+);
+const { initializeRuntimeMessageProjection } = await import(
+  "../packages/core/src/runtime/runtime-message-projection.ts"
 );
 const { SessionEventType } = await import("../packages/contracts/src/index.ts");
 
@@ -80,14 +86,16 @@ function createRuntimeHarness() {
     logger: undefined,
     turnNumber: 1,
     // ── admitPrompt / hasActiveOrQueuedTurnWork 读取的 busy 事实 ──
+    // （foregroundPromotionLease / activeForegroundExecution 归 R1-01 B2
+    // RuntimeForegroundExecutionOwner，由下方 initializeRuntimeForegroundExecution 装 getter）
     activeTurn: undefined,
     activeTurnStartReservation: undefined,
-    foregroundPromotionLease: undefined,
-    activeForegroundExecution: undefined,
     runtimeCommandDrainActive: false,
     // ── steering 状态 ──
     pendingInputSequence: 0,
     pendingInputReservations: new Map(),
+    // （latestAssistantTurnId 归 R1-01 B3 RuntimeMessageProjectionOwner，由下方
+    // initializeRuntimeMessageProjection 装 getter；桩绑定方法只读它——steering.ts:231）
     latestAssistantTurnId: undefined,
     permissionFullAccessPending: false,
     queueExternalDrainActive: false,
@@ -149,6 +157,12 @@ function createRuntimeHarness() {
   // RuntimeTurnTimingOwner（CLI-05 P1）：fake runtime 与真实构造期一样装只读 getter，
   // beginActiveTurn/createPendingInputId/setQueueAutoDrain 经端口读写。
   initializeRuntimeTurnTiming(runtime);
+  // foreground execution / promotion lease（R1-01 B2）同 owner 化：桩与真实构造期一样
+  // 装只读 getter，acquire/releaseForegroundPromotionLease 经端口读写。
+  initializeRuntimeForegroundExecution(runtime);
+  // 消息投影游标（R1-01 B3）同 owner 化：桩绑定方法只读 latestAssistantTurnId，
+  // 与真实构造期一样装只读 getter（覆盖上方扁平属性，初始值同为 undefined）。
+  initializeRuntimeMessageProjection(runtime);
   return { runtime, events, pendingCommands, heldQueue };
 }
 

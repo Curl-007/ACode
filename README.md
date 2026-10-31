@@ -8,18 +8,28 @@
   <a href="README.zh-CN.md">简体中文</a> | English
 </p>
 
-ACode is an AI coding workspace with desktop, browser, and terminal interfaces. This repository contains the full source code — clients, backend services, shared UI, and the Agent CLI and runtime — maintained independently by the repository owner.
+ACode is an AI coding workspace that runs the same agent across three interfaces — a desktop app, a browser, and the terminal. One codebase drives all three: clients, backend services, shared UI, and the Agent CLI and runtime, maintained independently by the repository owner. It is built for long-running, complex coding tasks, and engineered so your code and credentials stay on your machine.
 
-## Highlights
+## What is ACode
 
-- **No monitoring or telemetry**: roughly 26k lines of monitoring/telemetry implementation removed (ARMS RUM, OTLP reporting, crash collection, resource and network sampling, UI instrumentation), with regression checks keeping those exits from coming back.
+- **One agent, three interfaces.** The same Agent runtime powers the Electron desktop app, the browser Web workspace, and the terminal TUI / `acode` CLI. Pick whichever fits the task; nothing is locked to one surface.
+- **Built for long-horizon work.** A long-running agent loop with three-domain checkpoints (resume / fork / rewind), sub-agent orchestration, and automatic context compaction — so a big task can be paused, branched, rolled back, or resumed without losing progress.
+- **Security is designed in, not bolted on.** Layered command governance — bash blast-radius classification, bypass-immune circuit breakers, confirm-reflex gates, a managed policy floor, and a sub-agent permission ceiling that even the most permissive mode cannot override.
+- **Your code and keys stay local.** No monitoring or telemetry, vendor services off by default, credentials encrypted with the OS keychain, and fail-closed authentication on any non-loopback bind. See [Privacy and security](#privacy-and-security).
+- **Open and extensible.** A plugin store, multi-vendor manifest compatibility (it reads `.claude-plugin` / `.codex-plugin` / `.cursor-plugin` alongside its own), MCP servers, and lifecycle hooks. See [apps/acode-cli/README.md](apps/acode-cli/README.md).
+
+## Privacy and security
+
+ACode is derived from an open-source baseline that shipped with client monitoring and telemetry. This repository removes all of it and keeps it out.
+
+- **No monitoring or telemetry**: the client monitoring SDK, usage/network telemetry, resource and performance sampling, crash collection, CLI telemetry, and UI instrumentation were removed wholesale, with regression checks keeping those exits from coming back.
 - **Vendor services off by default**: account sign-in, feedback, coding plans, official MCP, and the plugin marketplace are all off by default, each with its own switch in Settings.
 - **No unconsented data egress**: snapshot packaging, encryption, and direct-upload paths were reviewed across the repository; this version has no unconsented data egress implementation.
 - **Transparent source builds**: desktop clients and the CLI distribution are built with GitHub Actions from this repository's source, with artifacts published to Releases.
 
-### What was removed
+**Kept on purpose**: local logs (for troubleshooting), user-initiated feedback, and normal business requests (model calls, update checks). The device identifier is used only for business identity and local locks.
 
-Compared with the open-source baseline, this repository contains **no monitoring or telemetry implementation**:
+The table below records what was removed, for transparency. **Verification**: the change passes `pnpm typecheck`, `pnpm lint` (0 errors), and per-module regression tests. Full lists and verification limits are in the removal reports: [desktop](packages/desktop/specs/telemetry-removal-report.md), [CLI](apps/acode-cli/specs/telemetry-removal-report.md), [UI](packages/ui/specs/telemetry-removal-report.md).
 
 | Area                        | Removed                                                                                                                                                 |
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -30,10 +40,6 @@ Compared with the open-source baseline, this repository contains **no monitoring
 | CLI telemetry               | The entire `@acode/telemetry` package (OTLP export, model API recording, agent metrics and traces)                                                      |
 | UI instrumentation          | All session-open, subscription-error, automation, prompt-template, and user-action instrumentation, plus the platform reporting methods and IPC bridges |
 | Protocol and configuration  | Telemetry event protocols and reporting paths; added filtering so legacy telemetry environment variables cannot re-enter the agent                      |
-
-**Kept on purpose**: local logs (for troubleshooting), user-initiated feedback, and normal business requests (model calls, update checks). The device identifier is used only for business identity and local locks.
-
-**Verification**: the change passes `pnpm typecheck`, `pnpm lint` (0 errors), and per-module regression tests. Full lists and verification limits are in the removal reports: [desktop](packages/desktop/specs/telemetry-removal-report.md), [CLI](apps/acode-cli/specs/telemetry-removal-report.md), [UI](packages/ui/specs/telemetry-removal-report.md).
 
 ### Local credential protection
 
@@ -57,11 +63,11 @@ Full rules, priority chain, race/migration semantics and honest boundaries: [`pa
 
 The [Releases](https://github.com/Curl-007/ACode/releases) page ships desktop clients (macOS / Windows / Linux) and the CLI distribution.
 
-**About signing**: the builds are **not code-signed**, so the operating system blocks the first launch. That is expected — allow it once per platform as below. You can verify the download against the `sha256.txt` on the release page before allowing it.
+**About signing**: the builds are **not code-signed**, so the operating system blocks the first launch. That is expected — allow it once per platform as below. You can verify a download against the checksum file on the release page before allowing it: desktop installers are covered by `ACode-<version>-checksums.txt`, and the CLI tarball by `sha256.txt`.
 
-### macOS (.dmg)
+### macOS (.dmg / .zip)
 
-1. Download `ACode-*-mac-arm64.dmg` (Apple Silicon) or `ACode-*-mac-x64.dmg` (Intel), open it and drag ACode into Applications.
+1. Download `ACode-*-mac-arm64.dmg` (Apple Silicon) or `ACode-*-mac-x64.dmg` (Intel), open it and drag ACode into Applications. A `.zip` of the same app is also published if you prefer to unzip rather than mount a disk image.
 2. The app is unsigned, so Gatekeeper will say the developer cannot be verified (or that the app is damaged). **After dragging the app into Applications**, run the command below (enter your login password when asked; nothing is shown while typing):
 
    ```bash
@@ -71,12 +77,12 @@ The [Releases](https://github.com/Curl-007/ACode/releases) page ships desktop cl
 
    The absolute `/usr/bin/xattr` path avoids shadowing by other tools with the same name (for example the Python xattr package), which fail with "option -r not recognized". Alternatively, right-click (Control-click) the app in Finder → Open → click Open again in the dialog. Afterwards it launches normally with a double-click.
 
-### Windows (.exe)
+### Windows (.exe / .zip)
 
-1. Download `ACode-*-win-x64.exe` and double-click it.
-2. The installer is unsigned, so SmartScreen shows the "Windows protected your PC" warning. Click **More info** → **Run anyway** and finish the installer.
+1. **Installer**: download `ACode-*-win-x64.exe` and double-click it. The installer is unsigned, so SmartScreen shows the "Windows protected your PC" warning — click **More info** → **Run anyway** and finish the install. This is the expected prompt, not a sign of corruption.
+2. **Portable (zip)**: download `ACode-*-win-x64.zip`, extract it anywhere, and run `ACode.exe` inside. The zip needs no installer and writes no registry or Start-menu entries. It is not fully self-contained, though: by default it shares user data with the installed version under `%APPDATA%\ACode`. Set `ACODE_DESKTOP_USER_DATA_DIR` to keep that data inside a folder you carry with the zip.
 
-   This is the expected prompt, not a sign of corruption; you can also verify the installer against the `sha256.txt` from the release page first.
+You can verify either download against `ACode-<version>-checksums.txt` from the release page first.
 
 ### Linux (.AppImage)
 
@@ -106,7 +112,8 @@ acode --help        # or run directly: node bin/acode.mjs --help
 ## Build and Release
 
 - **GitHub builds**: this repository builds from source with GitHub Actions, and CLI distributions are published to [Releases](https://github.com/Curl-007/ACode/releases). Every artifact comes from the source in this repository.
-- **Release flow**: run the [Release](.github/workflows/release.yml) workflow manually in Actions. Enter `0.0.1` with pre-release checked to get `0.0.1-audit.<date>` (repeat builds on the same day get `.2`, `.3`, …; the full form `0.0.1-audit.20260922[.2]` is also accepted). With pre-release unchecked it publishes the stable `v0.0.1` (clean tag, GitHub Latest, so `/releases/latest` works). Release notes always lead with "what changed vs the baseline", then the install steps — the English block first, an exact Chinese mirror below — and the downloads list last. Every artifact is uploaded into a **draft** release first; the release is published only after the CLI and all desktop platform artifacts are uploaded, and a failed build leaves it as a draft, so download pages never resolve to a still-building version.
+- **Release gates**: before any artifact is published, the [Release](.github/workflows/release.yml) workflow runs `verify` (typecheck / lint / architecture check / knip / full test suite), then a `desktop-smoke` gate that launches Electron on Windows and exercises the startup chain — a failure there blocks the release.
+- **Release flow**: run the [Release](.github/workflows/release.yml) workflow manually in Actions. Enter `0.0.1` with pre-release checked to get `0.0.1-audit.<date>` (repeat builds on the same day get `.2`, `.3`, …; the full form `0.0.1-audit.20260922[.2]` is also accepted). With pre-release unchecked it publishes the stable `v0.0.1` (clean tag, GitHub Latest, so `/releases/latest` works). A `keep_draft` input leaves an otherwise-successful build as a draft (for audit test builds). Release notes always lead with "what changed vs the baseline", then the install steps — the English block first, an exact Chinese mirror below — and the downloads list last. Every artifact is uploaded into a **draft** release first; the release is published only after the CLI and all desktop platform artifacts are uploaded and verified, and a failed build leaves it as a draft, so download pages never resolve to a still-building version.
 
 The branch model, commit conventions, and the full merge-and-release procedure are defined in [docs/git-collaboration.md](docs/git-collaboration.md): `main` is the release branch, feature work lands on `dev` via squash merges, and releases go through `release/*` branches.
 
@@ -170,7 +177,7 @@ ACODE_DATA_BASE_DIR="$HOME/.acode-dev-home" pnpm dev:desktop:test
 
 ### Remote features (SSH/WSL)
 
-Run `pnpm bootstrap:with-remote` first to prepare remote assets (mock-cdn), then `pnpm dev:desktop`; when connecting to a remote project, choose "download locally and upload" for assets. In development, assets come from the local `packages/desktop/mock-cdn` and local build outputs, uploaded to the remote host over SFTP without touching a CDN.
+Run `pnpm bootstrap:with-remote` first to prepare remote assets (mock-cdn), then `pnpm dev:desktop`; when connecting to a remote project, choose "download locally and upload" for assets. In development, assets come from the local `packages/desktop/mock-cdn` (a generated, git-ignored directory produced by `prepare:remote-assets`, not a committed one) and local build outputs, uploaded to the remote host over SFTP without touching a CDN.
 
 ### Web Development
 
@@ -233,22 +240,24 @@ Plugin, MCP-server, and hooks configuration for the `acode` CLI is documented in
 
 ## Quality gates
 
-Run from the repository root; `pnpm verify:pre-push` is the minimum gate before pushing. There is no repository-wide test command — test entry points follow each package's `package.json` and the actual test files next to the source.
+Run from the repository root; `pnpm verify:pre-push` is the minimum gate before pushing. The full test suite runs from the root with `pnpm test` (it executes each package's `test` script serially, via `node --import tsx --test` — TypeScript / MJS test files run directly with no pre-build); this is the same command CI runs. There is no separate unified E2E command — end-to-end scenarios live with each package's own tests.
 
-| Command                                 | Purpose                                       |
-| --------------------------------------- | --------------------------------------------- |
-| `pnpm typecheck`                        | TypeScript project-references type check      |
-| `pnpm lint` / `pnpm lint:fix`           | Lint and auto-fix (oxlint)                    |
-| `pnpm fmt:check` / `pnpm fmt`           | Format check and format (oxfmt)               |
-| `pnpm verify:pre-push`                  | Lint + architecture check (pre-push gate)     |
-| `pnpm architecture:check -- --changed`  | Architecture boundary check for changed files |
-| `pnpm architecture:context <module-id>` | Bounded reading context for a module          |
-| `pnpm knip`                             | Unused dependencies and exports report        |
-| `pnpm dep:refs --list-exports <file>`   | List a file's exports and their references    |
+| Command                                 | Purpose                                            |
+| --------------------------------------- | -------------------------------------------------- |
+| `pnpm typecheck`                        | TypeScript project-references type check           |
+| `pnpm lint` / `pnpm lint:fix`           | Lint and auto-fix (oxlint)                         |
+| `pnpm fmt:check` / `pnpm fmt`           | Format check and format (oxfmt)                    |
+| `pnpm test`                             | Full test suite across all packages (what CI runs) |
+| `pnpm --filter <package> test`          | Run a single package's tests                       |
+| `pnpm verify:pre-push`                  | Lint + architecture check (pre-push gate)          |
+| `pnpm architecture:check -- --changed`  | Architecture boundary check for changed files      |
+| `pnpm architecture:context <module-id>` | Bounded reading context for a module               |
+| `pnpm knip`                             | Unused dependencies and exports report             |
+| `pnpm dep:refs --list-exports <file>`   | List a file's exports and their references         |
 
 ## Configuration
 
-The root [.env.example](.env.example) provides sample service URLs and build configuration. Copy it to `.env` as needed and place local overrides in `.env.local`. Select the Desktop development environment with `dev:desktop:test` or `dev:desktop:prod`.
+The root [.env.example](.env.example) provides sample service URLs and build configuration. Copy it to `.env` as needed and place local overrides in `.env.local`. Select the Desktop development environment with `dev:desktop:test` or `dev:desktop:prod`. The most commonly referenced variables:
 
 | Setting                              | Purpose                                                                                 |
 | ------------------------------------ | --------------------------------------------------------------------------------------- |
@@ -256,8 +265,10 @@ The root [.env.example](.env.example) provides sample service URLs and build con
 | `ACODE_SERVER_WORKSPACE`             | Workspace path for the Web backend                                                      |
 | `ACODE_BUILTIN_PROVIDER_CONFIG_FILE` | Path to a local provider configuration file; uses the built-in configuration when unset |
 | `ACODE_DIST_BASE_URL`                | Download base URL used by the CLI distribution installer                                |
+| `ACODE_REMOTE_ASSET_CDN_BASE_URL`    | Base URL for remote runtime assets (remote-workspace distribution)                      |
+| `ACODE_DEPS_BASE_URL`                | Base URL for downloaded runtime dependencies                                            |
 
-Runtime variables can be set explicitly in the environment of the startup command. See [config/README.md](config/README.md) for the default configuration shipped with the client.
+`.env.example` lists further service and CDN URLs. Runtime variables can be set explicitly in the environment of the startup command. See [config/README.md](config/README.md) for the default configuration shipped with the client.
 
 ## Packaging
 
@@ -330,47 +341,60 @@ Open `http://127.0.0.1:3030` to validate the complete flow, with one backend ser
 
 ## Repository Structure
 
-| Directory                          | Responsibility                                                                                                                                                                   |
-| ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `packages/desktop`                 | Electron Main, Host, Renderer, and desktop packaging                                                                                                                             |
-| `packages/web`                     | Web client                                                                                                                                                                       |
-| `packages/server`                  | HTTP / WebSocket services and remote connections                                                                                                                                 |
-| `packages/acode-server-cli`        | Remote-server-side CLI and supervisor                                                                                                                                            |
-| `packages/ui`                      | Shared React components, hooks, and Zustand state                                                                                                                                |
-| `packages/services`                | Business services and persistence                                                                                                                                                |
-| `packages/shared`                  | Shared protocols and types (including the Desktop–Agent protocol)                                                                                                                |
-| `packages/rpc`                     | RPC framework                                                                                                                                                                    |
-| `packages/client`                  | Agent client SDK                                                                                                                                                                 |
-| `packages/provider`                | Provider account and configuration services                                                                                                                                      |
-| `packages/provider-node`           | Node-side materialization of builtin provider configuration                                                                                                                      |
-| `packages/model-option-map`        | Parsing, compilation, and evaluation of model option maps                                                                                                                        |
-| `packages/acode-cua`               | CUA (Computer Use) placeholder package; every surface is fail-closed in this build                                                                                               |
-| `packages/formal-proof`            | Formal-proof models and UI                                                                                                                                                       |
-| `apps/acode-cli`                   | Agent CLI, TUI, runtime, and tools — a nested workspace whose packages (`core`, `adapters`, `contracts`, `cli`, `tui`, `dynamic-workflow`, …) live in `apps/acode-cli/packages/` |
-| `scripts`, `config`, `third-party` | Build and maintenance scripts, built-in configuration, and third-party notice materials                                                                                          |
-| `docs`                             | Engineering plans, handoffs, and verification records (see Documentation below)                                                                                                  |
+| Directory                          | Responsibility                                                                                                                                                                       |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `packages/desktop`                 | Electron Main, Host, Renderer, and desktop packaging                                                                                                                                 |
+| `packages/web`                     | Web client                                                                                                                                                                           |
+| `packages/server`                  | HTTP / WebSocket services and remote connections                                                                                                                                     |
+| `packages/acode-server-cli`        | Remote-server-side CLI and supervisor                                                                                                                                                |
+| `packages/ui`                      | Shared React components, hooks, and Zustand state                                                                                                                                    |
+| `packages/services`                | Business services and persistence                                                                                                                                                    |
+| `packages/shared`                  | Shared protocols and types (including the Desktop–Agent protocol)                                                                                                                    |
+| `packages/rpc`                     | RPC framework                                                                                                                                                                        |
+| `packages/client`                  | Agent client SDK                                                                                                                                                                     |
+| `packages/harness-sdk`             | ACode Harness API v1 TypeScript SDK (connect / launch dual-mode)                                                                                                                     |
+| `packages/provider`                | Provider account and configuration services                                                                                                                                          |
+| `packages/provider-node`           | Node-side materialization of builtin provider configuration                                                                                                                          |
+| `packages/model-option-map`        | Parsing, compilation, and evaluation of model option maps                                                                                                                            |
+| `packages/acode-cua`               | Computer Use package. Server / Helper surfaces are inert fail-closed; the client wire surface is fully implemented but gated off by default (no broker socket path, plugin disabled) |
+| `packages/formal-proof`            | Formal-proof models and UI (an internal product-behavior verifier, not a user-facing feature)                                                                                        |
+| `apps/acode-cli`                   | Agent CLI, TUI, runtime, and tools — a nested workspace whose packages (`core`, `adapters`, `contracts`, `cli`, `tui`, `dynamic-workflow`, …) live in `apps/acode-cli/packages/`     |
+| `scripts`, `config`, `third-party` | Build and maintenance scripts, built-in configuration, and third-party notice materials                                                                                              |
+| `docs`                             | Cross-module plans, reviews, governance, and design records (indexed in [docs/README.md](docs/README.md))                                                                            |
 
 ## Documentation
 
-Top-level guides:
+Start at [docs/README.md](docs/README.md) for the full index. Top-level guides:
 
 - [AGENTS.md](AGENTS.md) — working conventions for contributors and AI sessions: spec-first workflow, verification requirements, module boundaries, and logging rules.
 - [CONTEXT.md](CONTEXT.md) — domain vocabulary for the plugin-store surfaces; read before changing related UI.
 - [DESIGN.md](DESIGN.md) — UI design specification; read before UI changes.
 - [docs/git-collaboration.md](docs/git-collaboration.md) — branch model, commit conventions, and the merge-and-release flow.
 
-Engineering documents in [docs/](docs/) record the plans, implementation status, handoffs, and verification records of the major hardening and upgrade tracks:
+Active governance and specs — the rules day-to-day work refers back to:
 
-| Document                                                                                              | Content                                                                                                                                       |
-| ----------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| [security-hardening-plan.md](docs/security-hardening-plan.md)                                         | Prioritized (P0–P3) security hardening roadmap based on line-by-line source review                                                            |
-| [security-hardening-handoff.md](docs/security-hardening-handoff.md)                                   | Implementation status, verification commands, and handoff notes for the security hardening batches                                            |
-| [security-scan-triage-2026-09-29.md](docs/security-scan-triage-2026-09-29.md)                         | Triage of all 118 findings from the sealed deep security scan: false positive / by-design / mitigated / residual                              |
-| [j5-performance-baseline.md](docs/j5-performance-baseline.md)                                         | Agent CLI performance and resource baseline across four runtime forms, plus the implemented levers (production V8 bytecode, token estimation) |
-| [jcode-inspired-upgrade-plan.md](docs/jcode-inspired-upgrade-plan.md)                                 | Defensive-mechanism upgrade roadmap: bash target blast-radius gating, confirm reflex gates, typed workflow artifacts, provider doctor         |
-| [jcode-upgrade-handoff.md](docs/jcode-upgrade-handoff.md)                                             | Per-item implementation status, review findings, and follow-ups for that upgrade                                                              |
-| [cli-dispatch-and-system-prompt-upgrade-plan.md](docs/cli-dispatch-and-system-prompt-upgrade-plan.md) | Agent dispatch and system-prompt upgrade roadmap with per-item implementation status                                                          |
-| [renderer-memory-soak-2026-10-01.md](docs/renderer-memory-soak-2026-10-01.md)                         | Renderer memory-leak root cause, fixes, and live-machine verification                                                                         |
+| Document                                                                             | Content                                                                                                                                |
+| ------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------- |
+| [docs/specs/engineering-invariants.md](docs/specs/engineering-invariants.md)         | Cross-cutting engineering invariants (failure degradation, lifecycle, concurrency, persistence, performance, UI, dispatch, API design) |
+| [docs/legacy-protocol-convergence-plan.md](docs/legacy-protocol-convergence-plan.md) | Milestones for retiring the legacy protocol surface (delete-only)                                                                      |
+| [docs/tech-debt-backlog.md](docs/tech-debt-backlog.md)                               | Technical-debt backlog (referenced by CI)                                                                                              |
+| [docs/specs/cli-validation-gates.md](docs/specs/cli-validation-gates.md)             | CLI validation gates (referenced by ci.yml / release.yml / typecheck gate)                                                             |
+| [docs/specs/ci-platform-matrix.md](docs/specs/ci-platform-matrix.md)                 | CI platform matrix spec                                                                                                                |
+
+Historical track records — completed plans, handoffs, and dated verification records of the major hardening and upgrade tracks (kept for implementation status and evidence; see [docs/README.md](docs/README.md) for the full list):
+
+| Document                                                                                                      | Content                                                                                                                                       |
+| ------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| [security-hardening-plan.md](docs/security-hardening-plan.md)                                                 | Prioritized (P0–P3) security hardening roadmap based on line-by-line source review                                                            |
+| [security-hardening-handoff.md](docs/archive/security-hardening-handoff.md)                                   | Implementation status, verification commands, and handoff notes for the security hardening batches                                            |
+| [security-scan-triage-2026-09-29.md](docs/archive/security-scan-triage-2026-09-29.md)                         | Triage of all 118 findings from the sealed deep security scan: false positive / by-design / mitigated / residual                              |
+| [j5-performance-baseline.md](docs/j5-performance-baseline.md)                                                 | Agent CLI performance and resource baseline across four runtime forms, plus the implemented levers (production V8 bytecode, token estimation) |
+| [jcode-inspired-upgrade-plan.md](docs/archive/jcode-inspired-upgrade-plan.md)                                 | Defensive-mechanism upgrade roadmap: bash target blast-radius gating, confirm reflex gates, typed workflow artifacts, provider doctor         |
+| [jcode-upgrade-handoff.md](docs/archive/jcode-upgrade-handoff.md)                                             | Per-item implementation status, review findings, and follow-ups for that upgrade                                                              |
+| [cli-dispatch-and-system-prompt-upgrade-plan.md](docs/archive/cli-dispatch-and-system-prompt-upgrade-plan.md) | Agent dispatch and system-prompt upgrade roadmap with per-item implementation status                                                          |
+| [renderer-memory-soak-2026-10-01.md](docs/archive/renderer-memory-soak-2026-10-01.md)                         | Renderer memory-leak root cause, fixes, and live-machine verification                                                                         |
+
+The latest full-project review is [docs/project-review-2026-10-22.md](docs/project-review-2026-10-22.md), with its per-area findings under [docs/reviews/2026-10-22/](docs/reviews/2026-10-22/).
 
 Behavior changes follow a spec-first convention: product rules, state owners, interfaces, and acceptance scenarios are written down before the code, in per-module specs under `packages/*/specs/` and `apps/acode-cli/specs/` — for example the [telemetry removal reports](packages/desktop/specs/telemetry-removal-report.md) and the [credential storage spec](packages/services/specs/credential-storage.md).
 

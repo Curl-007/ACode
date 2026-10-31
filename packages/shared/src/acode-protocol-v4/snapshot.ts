@@ -3,12 +3,8 @@
 // A 区更新语义 = 字段级整体替换（state.updated），绝不深合并——深合并是错乱之母。
 import { z } from "zod";
 import { conversationInputDispatchSchema, conversationInputIntentSchema } from "./input-intent.js";
-import {
-  acodeContextUsageBreakdownSchema,
-  acodeInteractionRequestOriginSchema,
-  acodePermissionResponseSchema,
-  acodeSessionContextCacheUsageSchema,
-} from "../acode-protocol-legacy-types.js";
+import { acodeInteractionRequestOriginSchema, acodePermissionResponseSchema } from "../acode-interaction-types.js";
+import { acodeContextUsageBreakdownSchema, acodeSessionContextCacheUsageSchema } from "../acode-session-runtime-types.js";
 import { timestampSchema } from "./core.js";
 import { conversationRowSchema, composerTurnMetricsSchema } from "./rows.js";
 import { toolCallDisplaySchema } from "./toolDisplay.js";

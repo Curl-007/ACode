@@ -7,7 +7,7 @@
 import type { ListSessionsInput, SessionStorePort, UsageStorePort } from "@acode/contracts";
 import { executeUsageQuery, renderUsageQueryUnavailable } from "@acode/core";
 import type { CommandEnvelope } from "@acode/shared/acode-protocol-v4";
-import { resolveTzOffsetMs } from "../../../acode-protocol/usage-stats-builder.js";
+import { resolveTzOffsetMs } from "../../usage-stats-builder.js";
 import type { V4CommandCoreHost } from "../types.js";
 
 /** shared commandPayloadSchemas.usage 同形。 */

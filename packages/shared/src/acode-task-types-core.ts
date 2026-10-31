@@ -7,12 +7,8 @@
 
 import type { ACodeBackgroundTaskControlItem } from "./background-task-controls.js";
 import type { ToolCallDisplay } from "./acode-protocol-v4/toolDisplay.js";
-import type {
-  ACodeContextUsageBreakdownItem,
-  ACodeInteractionRequestOrigin,
-  ACodePermissionResponse,
-  ACodeSessionActiveTurnKind,
-} from "./acode-protocol-legacy-types.js";
+import type { ACodeInteractionRequestOrigin, ACodePermissionResponse } from "./acode-interaction-types.js";
+import type { ACodeContextUsageBreakdownItem, ACodeSessionActiveTurnKind } from "./acode-session-runtime-types.js";
 import type { ErrorAttribution } from "./acode-protocol-v4/snapshot.js";
 
 /**

@@ -1,30 +1,17 @@
 /* eslint-disable max-lines -- 定时任务编辑整页集中维护 Settings/History 两个 tab、cron builder、项目/模型选择器与运行历史，集中更利于交互一致。 */
 import { useStartPlanRecommendation } from "@/hooks/useStartPlanRecommendation.js";
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type FormEvent } from "react";
 import { completeNewModelSelection } from "@acode/provider";
 import {
   ArrowLeft,
   ArrowRight,
-  CalendarDays,
-  Check,
-  ChevronDown,
-  ChevronLeft,
-  ChevronRight,
-  ChevronUp,
   FolderOpen,
   MessageCircle,
-  X,
 } from "lucide-react";
 import {
   resolveWorkspaceKey,
   testId,
-  TID_AUTOMATION_CUSTOM_CONFIRM,
-  TID_AUTOMATION_CUSTOM_INTERVAL_DECREMENT,
-  TID_AUTOMATION_CUSTOM_INTERVAL_INCREMENT,
-  TID_AUTOMATION_CUSTOM_INTERVAL_SELECT,
   TID_AUTOMATION_CUSTOM_REPEAT_EDIT,
-  TID_AUTOMATION_CUSTOM_UNIT_OPTION,
-  TID_AUTOMATION_CUSTOM_UNIT_SELECT,
   TID_AUTOMATION_FORM_PROMPT,
   TID_AUTOMATION_FORM_SUBMIT,
   TID_AUTOMATION_FORM_TITLE,
@@ -34,12 +21,8 @@ import {
   TID_AUTOMATION_SCHEDULE_ADD,
   TID_AUTOMATION_SCHEDULE_DELETE,
   TID_AUTOMATION_SCHEDULE_PREVIEW,
-  TID_AUTOMATION_YEAR_DAY_OPTION,
-  TID_AUTOMATION_YEAR_MONTH_OPTION,
-  TID_AUTOMATION_YEAR_MONTHDAY,
   ACODE_AGENT_PROVIDER,
   type ACodeAutomation,
-  type ACodeAutomationRun,
   type ACodeAutomationScheduleRule,
 } from "@acode/shared";
 import {
@@ -88,16 +71,6 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip.js";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover.js";
-import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog.js";
-import { ScrollArea } from "@/components/ui/scroll-area.js";
 import { cn } from "@/components/lib/utils.js";
 import { SETTINGS_FRAME_CONTENT_CLASSNAME } from "@/settings/SettingsPageParts.js";
 import { resolveLocalizedAutomationCreateTitle } from "@/settings/automationEditLocalizedTitle.js";
@@ -130,7 +103,7 @@ import { useAutomationProjectOptions } from "@/hooks/useAutomationProjectOptions
 import { useModelSelectionView } from "@/hooks/useModelSelectionView.js";
 import { resolveModelThoughtOption } from "@/lib/modelThoughtOption.js";
 import { decodeCustomModelValue, encodeCustomModelValue } from "@/lib/acodeCustomModelValue.js";
-import { parseModelPickerValue } from "@/lib/acodeSessionProjection.js";
+import { parseModelPickerValue } from "@/lib/modelPickerValue.js";
 import { logger } from "@/logger.js";
 import {
   findAutomationWorkspaceOptionByKey,
@@ -139,6 +112,25 @@ import {
   type AutomationWorkspaceOption,
 } from "@/settings/automationWorkspaceOptions.js";
 import {
+  AUTOMATION_STATUS_DOT_CLASS,
+  buildRunsPageItems,
+  FREQUENCIES,
+  isCronFrequency,
+  normalizeAutomationScheduleRule,
+  pad2,
+  resolveRunStatus,
+  RUN_STATUS_DOT_CLASS,
+  RUN_STATUS_TEXT_CLASS,
+  RUNS_PAGE_SIZE,
+  workspaceLabelFromPath,
+} from "@/settings/automation/scheduleModel.js";
+import { initialBuilder } from "@/settings/automation/cronBuilder.js";
+import { cronBuilderReducer } from "@/settings/automation/cronBuilderReducer.js";
+import { CustomRepeatDialog } from "@/settings/automation/pickers/CustomRepeatDialog.js";
+import { MonthDayPicker } from "@/settings/automation/pickers/MonthDayPicker.js";
+import { TimeOfDayPicker } from "@/settings/automation/pickers/TimeOfDayPicker.js";
+import { WeekdayPicker } from "@/settings/automation/pickers/WeekdayPicker.js";
+import {
   buildCronExpr,
   canVisualizeCronInAutomationEditor,
   describeCronBuilder,
@@ -146,13 +138,7 @@ import {
   formatDuration,
   formatGmtOffset,
   isSessionCreatedAutomation as resolveIsSessionCreatedAutomation,
-  parseCronToBuilder,
   resolveAutomationStatusKind,
-  WEEKDAY_ORDER,
-  type AutomationStatusKind,
-  type CronBuilderState,
-  type CronFrequency,
-  type CustomRepeatUnit,
 } from "@/settings/automationFormat.js";
 import type {
   AutomationRunsEntry,
@@ -161,900 +147,7 @@ import type {
 } from "@/store/automationManagementStore.js";
 
 const MODEL_ITEM_NEVER_LOCKED = () => false;
-const FREQUENCIES: CronFrequency[] = ["hourly", "daily", "weekdays", "weekly", "monthly", "custom"];
-const isCronFrequency = (value: string): value is CronFrequency =>
-  FREQUENCIES.includes(value as CronFrequency);
-/** 运行历史每页条数。 */
-const RUNS_PAGE_SIZE = 8;
-/** 自定义重复频率输入允许输入的视觉范围。 */
-const CUSTOM_REPEAT_INTERVAL_INPUT_MIN = 0;
-/** cron 的步长必须为正整数，0 不能形成有效调度。 */
-const CUSTOM_REPEAT_INTERVAL_SCHEDULABLE_MIN = 1;
-const CUSTOM_REPEAT_INTERVAL_MAX = 200;
 
-/**
- * 生成分页控件的页码序列：首尾各保留 3 页、当前页左右各 1 页，其余用省略号折叠。
- * 例：current=1,total=10 → [1,2,3,"ellipsis",8,9,10]。
- */
-function buildRunsPageItems(current: number, total: number): Array<number | "ellipsis"> {
-  if (total <= 7) {
-    return Array.from({ length: total }, (_, index) => index + 1);
-  }
-  const pages = new Set<number>([
-    1,
-    2,
-    3,
-    total - 2,
-    total - 1,
-    total,
-    current - 1,
-    current,
-    current + 1,
-  ]);
-  const sorted = [...pages].filter((page) => page >= 1 && page <= total).sort((a, b) => a - b);
-  const items: Array<number | "ellipsis"> = [];
-  let previous = 0;
-  for (const page of sorted) {
-    if (previous && page - previous > 1) {
-      items.push("ellipsis");
-    }
-    items.push(page);
-    previous = page;
-  }
-  return items;
-}
-
-function workspaceLabelFromPath(path: string): string {
-  return path.replace(/\\/g, "/").split("/").filter(Boolean).pop() ?? path;
-}
-
-function pad2(value: number): string {
-  return String(value).padStart(2, "0");
-}
-
-const CUSTOM_REPEAT_SELECT_CONTENT_CLASS =
-  "w-[var(--radix-select-trigger-width)] px-0 py-1.5 [&_[data-position=popper]]:px-1 [&_[data-slot=select-scroll-up-button]]:hidden [&_[data-slot=select-scroll-down-button]]:hidden";
-const CUSTOM_REPEAT_SELECT_ITEM_CLASS =
-  "min-h-8 rounded-[8px] px-2 py-1.5 pr-8 text-ui-base leading-5 text-foreground-subtle data-[highlighted]:bg-menu-hover data-[highlighted]:text-foreground data-[state=checked]:bg-menu-hover data-[state=checked]:text-foreground";
-
-function CustomRepeatSelectIndicator() {
-  return (
-    <span className="flex size-5 shrink-0 items-center justify-center" aria-hidden="true">
-      <ChevronDown className="size-4" strokeWidth={2} />
-    </span>
-  );
-}
-
-function CustomRepeatCalendarIcon({ className }: { className?: string }) {
-  return <CalendarDays className={className} strokeWidth={2} />;
-}
-
-/**
- * 时间选择的单列滚动列表（小时或分钟），选中项打开时自动滚动到可见位置。
- * 时间选项属于常用交互控件，不应沿用仅用于徽标和紧凑标签的最小字号 token。
- * 已选时间属于菜单选中态，不是主操作按钮；使用菜单 hover 语义避免 Light 主题下出现突兀黑块。
- */
-function TimeUnitColumn({
-  count,
-  selected,
-  onSelect,
-}: {
-  count: number;
-  selected: number;
-  onSelect: (value: number) => void;
-}) {
-  const selectedRef = useRef<HTMLButtonElement | null>(null);
-  useEffect(() => {
-    selectedRef.current?.scrollIntoView({ block: "center" });
-  }, []);
-  return (
-    <ScrollArea className="h-52 w-14 shrink-0">
-      <div className="flex flex-col gap-0.5 p-1">
-        {Array.from({ length: count }, (_, value) => value).map((value) => (
-          <button
-            key={value}
-            ref={value === selected ? selectedRef : undefined}
-            type="button"
-            onClick={() => onSelect(value)}
-            className={cn(
-              "rounded-md px-2 py-1 text-center text-ui-base tabular-nums transition-colors",
-              value === selected
-                ? "bg-menu-hover text-foreground"
-                : "text-foreground-subtle hover:bg-menu-hover hover:text-foreground",
-            )}
-          >
-            {pad2(value)}
-          </button>
-        ))}
-      </div>
-    </ScrollArea>
-  );
-}
-
-/**
- * HH:MM 时间选择器：一个 pill 触发器 + 弹层内小时/分钟两列滚动选择。
- * 时间选择触发器属于常用交互控件，应使用正文基准字号 text-ui-base。
- */
-function TimeOfDayPicker({
-  hour,
-  minute,
-  onChange,
-  ariaLabel,
-}: {
-  hour: number;
-  minute: number;
-  onChange: (hour: number, minute: number) => void;
-  ariaLabel?: string;
-}) {
-  const [open, setOpen] = useState(false);
-  return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <button
-          type="button"
-          aria-label={ariaLabel}
-          className="inline-flex h-auto items-center gap-1 rounded-full bg-hover py-px pl-2 pr-1.5 text-ui-base leading-5 tabular-nums text-foreground transition-colors hover:bg-selected focus-visible:bg-input-focused focus-visible:outline-none"
-        >
-          {pad2(hour)}:{pad2(minute)}
-          <span className="shrink-0 text-foreground-subtle">
-            <AutomationChevronDownIcon />
-          </span>
-        </button>
-      </PopoverTrigger>
-      <PopoverContent
-        align="start"
-        side="bottom"
-        sideOffset={4}
-        className="w-29 flex-row gap-0 p-0"
-      >
-        <TimeUnitColumn count={24} selected={hour} onSelect={(value) => onChange(value, minute)} />
-        <div className="w-px shrink-0 bg-border" />
-        <TimeUnitColumn count={60} selected={minute} onSelect={(value) => onChange(hour, value)} />
-      </PopoverContent>
-    </Popover>
-  );
-}
-
-/** 月/日单列滚动列表（1-based 值），样式对齐 TimeUnitColumn。 */
-function ScrollNumberColumn({
-  values,
-  selected,
-  onSelect,
-  buttonTestIdPrefix,
-}: {
-  values: number[];
-  selected: number;
-  onSelect: (value: number) => void;
-  /** 提供时每个数字按钮带 `${prefix}-${value}` 的 data-testid（e2e 用）。 */
-  buttonTestIdPrefix?: string;
-}) {
-  const selectedRef = useRef<HTMLButtonElement | null>(null);
-  useEffect(() => {
-    selectedRef.current?.scrollIntoView({ block: "center" });
-  }, []);
-  return (
-    <ScrollArea className="h-52 w-14 shrink-0">
-      <div className="flex flex-col gap-0.5 p-1">
-        {values.map((value) => (
-          <button
-            key={value}
-            ref={value === selected ? selectedRef : undefined}
-            type="button"
-            data-testid={buttonTestIdPrefix ? testId(buttonTestIdPrefix, String(value)) : undefined}
-            onClick={() => onSelect(value)}
-            className={cn(
-              "rounded-md px-2 py-1 text-center text-ui-sm tabular-nums transition-colors",
-              value === selected
-                ? "bg-primary text-primary-foreground"
-                : "text-foreground-subtle hover:bg-surface-hover",
-            )}
-          >
-            {pad2(value)}
-          </button>
-        ))}
-      </div>
-    </ScrollArea>
-  );
-}
-
-/** 某月天数（用闰年 2024 作参照，使 2 月可选到 29）；month 为 1-12。 */
-function daysInMonth(month: number): number {
-  return new Date(2024, month, 0).getDate();
-}
-
-/**
- * 月/日选择器（custom → yearly 用）：一个 pill 触发器 + 弹层内月/日两列滚动选择，
- * 样式与 TimeOfDayPicker 对齐。切月后当前日超过该月最大天数时自动收敛。
- */
-function MonthDayPicker({
-  month,
-  day,
-  intl,
-  onChange,
-}: {
-  month: number;
-  day: number;
-  intl: ReturnType<typeof useACodeIntl>["intl"];
-  onChange: (month: number, day: number) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const months = Array.from({ length: 12 }, (_, index) => index + 1);
-  const days = Array.from({ length: daysInMonth(month) }, (_, index) => index + 1);
-  return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <button
-          type="button"
-          data-testid={TID_AUTOMATION_YEAR_MONTHDAY}
-          aria-label={intl.formatMessage({
-            id: "automations.form.schedule.yearDateLabel",
-          })}
-          className="inline-flex h-auto items-center gap-1 rounded-full bg-hover py-px pl-2 pr-1.5 text-ui-base leading-5 tabular-nums text-foreground transition-colors hover:bg-selected focus-visible:bg-input-focused focus-visible:outline-none"
-        >
-          {intl.formatMessage(
-            { id: "automations.form.schedule.monthDayValue" },
-            { month: String(month), day: String(day) },
-          )}
-          <span className="shrink-0 text-foreground-subtle">
-            <AutomationChevronDownIcon />
-          </span>
-        </button>
-      </PopoverTrigger>
-      {/* 与 TimeOfDayPicker 一致：flex-row 覆盖 PopoverContent 默认的 flex-col，月/日两列并排。 */}
-      <PopoverContent
-        align="start"
-        side="bottom"
-        sideOffset={4}
-        className="w-29 flex-row gap-0 p-0"
-      >
-        <ScrollNumberColumn
-          values={months}
-          selected={month}
-          buttonTestIdPrefix={TID_AUTOMATION_YEAR_MONTH_OPTION}
-          onSelect={(value) => onChange(value, Math.min(day, daysInMonth(value)))}
-        />
-        <div className="w-px shrink-0 bg-border" />
-        <ScrollNumberColumn
-          values={days}
-          selected={day}
-          buttonTestIdPrefix={TID_AUTOMATION_YEAR_DAY_OPTION}
-          onSelect={(value) => onChange(month, value)}
-        />
-      </PopoverContent>
-    </Popover>
-  );
-}
-
-/** 每周日期选择：保持语句式 trigger，并禁止清空最后一个日期。 */
-function WeekdayPicker({
-  weekdays,
-  intl,
-  onChange,
-}: {
-  weekdays: number[];
-  intl: ReturnType<typeof useACodeIntl>["intl"];
-  onChange: (weekdays: number[]) => void;
-}) {
-  const label = WEEKDAY_ORDER.filter((day) => weekdays.includes(day))
-    .map((day) => intl.formatMessage({ id: `automations.weekday.${day}` }))
-    .join(intl.formatMessage({ id: "automations.weekday.separator" }));
-
-  return (
-    <Popover>
-      <PopoverTrigger asChild>
-        <button
-          type="button"
-          aria-label={intl.formatMessage({
-            id: "automations.form.schedule.weekdaysLabel",
-          })}
-          // 星期多选 trigger 与同层频率、时间 tag 使用相同高亮，避免亮度不一致。
-          className="inline-flex h-auto max-w-full items-center gap-0.5 rounded-full bg-hover py-px pl-2 pr-0.5 text-ui-base leading-5 text-foreground transition-colors hover:bg-selected data-[state=open]:bg-selected focus-visible:bg-input-focused focus-visible:outline-none"
-        >
-          <span className="truncate">{label}</span>
-          <AutomationChevronDownIcon />
-        </button>
-      </PopoverTrigger>
-      <PopoverContent align="start" sideOffset={4} className="w-40 p-1">
-        {WEEKDAY_ORDER.map((day) => {
-          const active = weekdays.includes(day);
-          return (
-            <button
-              key={day}
-              type="button"
-              onClick={() => {
-                if (active && weekdays.length === 1) return;
-                onChange(
-                  active ? weekdays.filter((candidate) => candidate !== day) : [...weekdays, day],
-                );
-              }}
-              className="flex h-7 w-full items-center gap-2 rounded-md px-2 text-left text-ui-base text-foreground transition-colors hover:bg-menu-hover"
-            >
-              {/* 勾选位放在行首会让星期菜单偏离标准的尾部状态布局。 */}
-              <span className="min-w-0 flex-1 truncate">
-                {intl.formatMessage({ id: `automations.weekday.${day}` })}
-              </span>
-              <span className="flex size-4 shrink-0 items-center justify-center">
-                {active ? <Check className="size-3.5" aria-hidden="true" /> : null}
-              </span>
-            </button>
-          );
-        })}
-      </PopoverContent>
-    </Popover>
-  );
-}
-
-function toDateInputValue(timestamp: number | undefined): string {
-  const date = timestamp ? new Date(timestamp) : new Date(Date.now() + 24 * 60 * 60 * 1_000);
-  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
-}
-
-function localDateEndTimestamp(value: string): number | undefined {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
-  if (!match) return undefined;
-  const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 23, 59, 59, 999);
-  return Number.isNaN(date.getTime()) ? undefined : date.getTime();
-}
-
-function parseDateInputValue(value: string): Date | null {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
-  if (!match) return null;
-  const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
-  return Number.isNaN(date.getTime()) ? null : date;
-}
-
-function EndDatePicker({
-  disabled,
-  intl,
-  min,
-  onChange,
-  value,
-}: {
-  disabled: boolean;
-  intl: ReturnType<typeof useACodeIntl>["intl"];
-  min: string;
-  onChange: (value: string) => void;
-  value: string;
-}) {
-  const [open, setOpen] = useState(false);
-  const selectedDate = parseDateInputValue(value);
-  const minDate = parseDateInputValue(min);
-  const [visibleMonth, setVisibleMonth] = useState(() => selectedDate ?? minDate ?? new Date());
-
-  useEffect(() => {
-    if (open && selectedDate) setVisibleMonth(selectedDate);
-  }, [open, selectedDate?.getTime()]);
-
-  const year = visibleMonth.getFullYear();
-  const month = visibleMonth.getMonth();
-  const firstWeekday = new Date(year, month, 1).getDay();
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
-  const todayValue = toDateInputValue(Date.now());
-  const monthLabel = intl.formatMessage(
-    { id: "automations.customRepeat.monthLabel" },
-    { year: String(year), month: String(month + 1) },
-  );
-
-  return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <button
-          type="button"
-          disabled={disabled}
-          className="inline-flex h-9 w-[135px] items-center justify-center gap-1.5 rounded-lg border border-input-border bg-input pl-3 pr-3.5 text-ui-base font-normal leading-5 tracking-[-0.18px] text-foreground transition-colors hover:border-input-border-hover hover:bg-input/80 data-[state=open]:border-input-border-hover data-[state=open]:bg-input/80 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-input-border disabled:hover:bg-input"
-        >
-          <CustomRepeatCalendarIcon className="size-5 shrink-0 text-foreground-subtle" />
-          <span className="tabular-nums">
-            {selectedDate
-              ? `${selectedDate.getFullYear()}/${pad2(selectedDate.getMonth() + 1)}/${pad2(selectedDate.getDate())}`
-              : value}
-          </span>
-        </button>
-      </PopoverTrigger>
-      <PopoverContent align="start" sideOffset={6} className="w-72 p-3">
-        <div className="mb-3 flex h-8 items-center justify-between">
-          <span className="text-ui-sm font-medium text-foreground">{monthLabel}</span>
-          <div className="flex items-center gap-1">
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              onClick={() => setVisibleMonth(new Date(year, month - 1, 1))}
-              aria-label={intl.formatMessage({
-                id: "automations.customRepeat.previousMonth",
-              })}
-            >
-              <ChevronLeft className="size-4" />
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              onClick={() => setVisibleMonth(new Date(year, month + 1, 1))}
-              aria-label={intl.formatMessage({
-                id: "automations.customRepeat.nextMonth",
-              })}
-            >
-              <ChevronRight className="size-4" />
-            </Button>
-          </div>
-        </div>
-        <div className="grid grid-cols-7 gap-1">
-          {[0, 1, 2, 3, 4, 5, 6].map((day) => (
-            <span
-              key={day}
-              className="flex size-8 items-center justify-center text-ui-sm text-foreground-subtlest"
-            >
-              {intl.formatMessage({ id: `automations.weekday.${day}` })}
-            </span>
-          ))}
-          {Array.from({ length: firstWeekday }, (_, index) => (
-            <span key={`blank-${index}`} className="size-8" />
-          ))}
-          {Array.from({ length: daysInMonth }, (_, index) => index + 1).map((day) => {
-            const dateValue = `${year}-${pad2(month + 1)}-${pad2(day)}`;
-            const selected = dateValue === value;
-            const isToday = dateValue === todayValue;
-            const unavailable = dateValue < min;
-            return (
-              <button
-                key={day}
-                type="button"
-                disabled={unavailable}
-                onClick={() => {
-                  onChange(dateValue);
-                  setOpen(false);
-                }}
-                className={cn(
-                  "flex size-8 items-center justify-center rounded-[8px] text-ui-base tabular-nums transition-colors",
-                  selected
-                    ? "bg-primary text-primary-foreground"
-                    : "text-foreground hover:bg-menu-hover",
-                  isToday && !selected && "ring-1 ring-inset ring-border-hover",
-                  unavailable && "cursor-not-allowed text-foreground-subtlest opacity-35",
-                )}
-              >
-                {day}
-              </button>
-            );
-          })}
-          {Array.from({ length: 42 - firstWeekday - daysInMonth }, (_, index) => (
-            <span key={`trailing-blank-${index}`} className="size-8" />
-          ))}
-        </div>
-      </PopoverContent>
-    </Popover>
-  );
-}
-
-function CustomRepeatDialog({
-  builder,
-  endAt,
-  intl,
-  onConfirm,
-  onOpenChange,
-  open,
-}: {
-  builder: CronBuilderState;
-  endAt: number | undefined;
-  intl: ReturnType<typeof useACodeIntl>["intl"];
-  onConfirm: (value: {
-    interval: number;
-    unit: CustomRepeatUnit;
-    weekdays: number[];
-    monthDays: number[];
-    monthlyMode: CronBuilderState["customMonthlyMode"];
-    endAt?: number;
-  }) => void;
-  onOpenChange: (open: boolean) => void;
-  open: boolean;
-}) {
-  const [intervalInput, setIntervalInput] = useState(String(builder.customInterval));
-  const [unit, setUnit] = useState<CustomRepeatUnit>(builder.customUnit);
-  const [weekdays, setWeekdays] = useState(builder.customWeekdays);
-  const [monthDays, setMonthDays] = useState(builder.customMonthDays);
-  const [monthlyMode, setMonthlyMode] = useState(builder.customMonthlyMode);
-  const [ends, setEnds] = useState(endAt !== undefined);
-  const [endDate, setEndDate] = useState(toDateInputValue(endAt));
-
-  useEffect(() => {
-    if (!open) return;
-    setIntervalInput(String(builder.customInterval));
-    setUnit(builder.customUnit);
-    setWeekdays(builder.customWeekdays);
-    setMonthDays(builder.customMonthDays);
-    setMonthlyMode(builder.customMonthlyMode);
-    setEnds(endAt !== undefined);
-    setEndDate(toDateInputValue(endAt));
-  }, [builder, endAt, open]);
-
-  const interval = Number(intervalInput);
-  const isIntervalValid =
-    /^\d+$/.test(intervalInput) &&
-    Number.isInteger(interval) &&
-    interval >= CUSTOM_REPEAT_INTERVAL_SCHEDULABLE_MIN &&
-    interval <= CUSTOM_REPEAT_INTERVAL_MAX;
-  const canIncrementInterval = intervalInput === "" || interval < CUSTOM_REPEAT_INTERVAL_MAX;
-  const canDecrementInterval = intervalInput !== "" && interval > CUSTOM_REPEAT_INTERVAL_INPUT_MIN;
-  const stepInterval = (delta: 1 | -1) => {
-    const currentInterval = /^\d+$/.test(intervalInput)
-      ? interval
-      : CUSTOM_REPEAT_INTERVAL_INPUT_MIN;
-    const nextInterval = Math.min(
-      CUSTOM_REPEAT_INTERVAL_MAX,
-      Math.max(CUSTOM_REPEAT_INTERVAL_INPUT_MIN, currentInterval + delta),
-    );
-    setIntervalInput(String(nextInterval));
-  };
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent
-        className="max-h-[calc(100vh-2rem)] w-[400px] gap-0 overflow-y-auto border-border bg-card p-0 shadow-[0_20px_25px_-5px_rgba(0,0,0,0.1),0_8px_10px_-6px_rgba(0,0,0,0.1)]"
-        aria-describedby={undefined}
-        showCloseButton={false}
-      >
-        <DialogHeader className="px-5 pb-5 pt-5">
-          <DialogTitle className="text-ui-xl font-medium leading-[26px] tracking-[-0.12px]">
-            {intl.formatMessage({ id: "automations.customRepeat.title" })}
-          </DialogTitle>
-          <DialogClose asChild>
-            <button
-              type="button"
-              aria-label={intl.formatMessage({ id: "common.close" })}
-              className="absolute right-5 top-5 flex size-6 items-center justify-center rounded-[6px] opacity-80 transition-colors hover:bg-surface-hover hover:opacity-100"
-            >
-              <X className="size-4" strokeWidth={2} aria-hidden="true" />
-            </button>
-          </DialogClose>
-        </DialogHeader>
-
-        <div className="space-y-5 px-5">
-          <div className="flex flex-col gap-1.5">
-            <label
-              htmlFor="automation-custom-interval"
-              className="text-ui-base leading-5 tracking-[-0.18px] text-foreground"
-            >
-              {intl.formatMessage({ id: "automations.customRepeat.frequency" })}
-            </label>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="relative">
-                <Input
-                  id="automation-custom-interval"
-                  type="number"
-                  min={CUSTOM_REPEAT_INTERVAL_INPUT_MIN}
-                  max={CUSTOM_REPEAT_INTERVAL_MAX}
-                  step={1}
-                  inputMode="numeric"
-                  value={intervalInput}
-                  aria-invalid={!isIntervalValid}
-                  className="h-9 rounded-lg px-3 pr-10 text-mobile-input-safe leading-6 tracking-[-0.18px] [appearance:textfield] md:text-ui-base md:leading-5 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-                  data-testid={TID_AUTOMATION_CUSTOM_INTERVAL_SELECT}
-                  onChange={(event) => {
-                    const value = event.target.value;
-                    // number 输入允许空值和科学计数法；保留空值便于编辑，
-                    // 但只接收非负整数文本，避免将无效值写进 cron / scheduleRule。
-                    if (value === "" || /^\d+$/.test(value)) setIntervalInput(value);
-                  }}
-                />
-                {/* 原生 number spinner 在系统浏览器与 WebView 的尺寸、主题反馈不一致；
-                    使用受控步进按钮，统一桌面与手机 Web 的点击样式。 */}
-                <div className="absolute inset-y-px right-px flex w-8 flex-col overflow-hidden rounded-r-[7px] border-l border-input-border bg-input">
-                  <button
-                    type="button"
-                    aria-label="+1"
-                    title="+1"
-                    data-testid={TID_AUTOMATION_CUSTOM_INTERVAL_INCREMENT}
-                    disabled={!canIncrementInterval}
-                    onClick={() => stepInterval(1)}
-                    className="flex flex-1 items-center justify-center border-b border-input-border text-foreground-subtle transition-colors hover:bg-input-focused hover:text-foreground focus-visible:z-10 focus-visible:bg-input-focused focus-visible:outline-none disabled:pointer-events-none disabled:opacity-40"
-                  >
-                    <ChevronUp className="size-3" strokeWidth={2} aria-hidden="true" />
-                  </button>
-                  <button
-                    type="button"
-                    aria-label="-1"
-                    title="-1"
-                    data-testid={TID_AUTOMATION_CUSTOM_INTERVAL_DECREMENT}
-                    disabled={!canDecrementInterval}
-                    onClick={() => stepInterval(-1)}
-                    className="flex flex-1 items-center justify-center text-foreground-subtle transition-colors hover:bg-input-focused hover:text-foreground focus-visible:z-10 focus-visible:bg-input-focused focus-visible:outline-none disabled:pointer-events-none disabled:opacity-40"
-                  >
-                    <ChevronDown className="size-3" strokeWidth={2} aria-hidden="true" />
-                  </button>
-                </div>
-              </div>
-              <Select
-                value={unit}
-                onValueChange={(value) => {
-                  const nextUnit = value as CustomRepeatUnit;
-                  setUnit(nextUnit);
-                  if (nextUnit === "yearly") setMonthDays([new Date().getDate()]);
-                }}
-              >
-                <SelectTrigger
-                  className="h-9 w-full rounded-[8px] px-3 text-ui-base leading-5 tracking-[-0.18px] hover:bg-input/80 data-[state=open]:border-input-border-hover data-[state=open]:bg-input/80"
-                  data-testid={TID_AUTOMATION_CUSTOM_UNIT_SELECT}
-                  indicator={<CustomRepeatSelectIndicator />}
-                >
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent
-                  position="popper"
-                  align="start"
-                  side="bottom"
-                  sideOffset={4}
-                  collisionPadding={8}
-                  className={CUSTOM_REPEAT_SELECT_CONTENT_CLASS}
-                >
-                  <SelectItem
-                    value="minute"
-                    className={CUSTOM_REPEAT_SELECT_ITEM_CLASS}
-                    data-testid={testId(TID_AUTOMATION_CUSTOM_UNIT_OPTION, "minute")}
-                  >
-                    {intl.formatMessage({
-                      id: "automations.customRepeat.unit.minute",
-                    })}
-                  </SelectItem>
-                  <SelectItem
-                    value="hourly"
-                    className={CUSTOM_REPEAT_SELECT_ITEM_CLASS}
-                    data-testid={testId(TID_AUTOMATION_CUSTOM_UNIT_OPTION, "hourly")}
-                  >
-                    {intl.formatMessage({
-                      id: "automations.customRepeat.unit.hour",
-                    })}
-                  </SelectItem>
-                  <SelectItem
-                    value="daily"
-                    data-testid={testId(TID_AUTOMATION_CUSTOM_UNIT_OPTION, "daily")}
-                  >
-                    {intl.formatMessage({
-                      id: "automations.customRepeat.unit.day",
-                    })}
-                  </SelectItem>
-                  <SelectItem
-                    value="weekly"
-                    data-testid={testId(TID_AUTOMATION_CUSTOM_UNIT_OPTION, "weekly")}
-                  >
-                    {intl.formatMessage({
-                      id: "automations.customRepeat.unit.week",
-                    })}
-                  </SelectItem>
-                  <SelectItem
-                    value="monthly"
-                    data-testid={testId(TID_AUTOMATION_CUSTOM_UNIT_OPTION, "monthly")}
-                  >
-                    {intl.formatMessage({
-                      id: "automations.customRepeat.unit.month",
-                    })}
-                  </SelectItem>
-                  <SelectItem
-                    value="yearly"
-                    data-testid={testId(TID_AUTOMATION_CUSTOM_UNIT_OPTION, "yearly")}
-                  >
-                    {intl.formatMessage({
-                      id: "automations.customRepeat.unit.year",
-                    })}
-                  </SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-
-          {unit === "weekly" ? (
-            <div className="grid grid-cols-7 gap-2">
-              {WEEKDAY_ORDER.map((day) => {
-                const active = weekdays.includes(day);
-                return (
-                  <button
-                    key={day}
-                    type="button"
-                    onClick={() => {
-                      if (active && weekdays.length === 1) return;
-                      setWeekdays(
-                        active
-                          ? weekdays.filter((candidate) => candidate !== day)
-                          : [...weekdays, day],
-                      );
-                    }}
-                    className={cn(
-                      "flex h-9 items-center justify-center rounded-md border text-ui-base",
-                      active
-                        ? "border-primary bg-primary text-primary-foreground"
-                        : "border-border hover:bg-surface-hover",
-                    )}
-                  >
-                    {intl.formatMessage({ id: `automations.weekday.${day}` })}
-                  </button>
-                );
-              })}
-            </div>
-          ) : null}
-
-          {unit === "monthly" ? (
-            <div className="space-y-3">
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-ui-base text-foreground">
-                  {intl.formatMessage({ id: "automations.customRepeat.rule" })}
-                </span>
-                <Select
-                  value={monthlyMode}
-                  onValueChange={(value) =>
-                    setMonthlyMode(value as CronBuilderState["customMonthlyMode"])
-                  }
-                >
-                  <SelectTrigger
-                    className="h-9 w-32 rounded-[8px] px-3 text-ui-base hover:bg-input/80 data-[state=open]:border-input-border-hover data-[state=open]:bg-input/80"
-                    indicator={<CustomRepeatSelectIndicator />}
-                  >
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent
-                    position="popper"
-                    align="start"
-                    side="bottom"
-                    sideOffset={4}
-                    collisionPadding={8}
-                    className={CUSTOM_REPEAT_SELECT_CONTENT_CLASS}
-                  >
-                    <SelectItem value="date" className={CUSTOM_REPEAT_SELECT_ITEM_CLASS}>
-                      {intl.formatMessage({
-                        id: "automations.customRepeat.byDate",
-                      })}
-                    </SelectItem>
-                    <SelectItem value="weekday" className={CUSTOM_REPEAT_SELECT_ITEM_CLASS}>
-                      {intl.formatMessage({
-                        id: "automations.customRepeat.byWeekday",
-                      })}
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              {monthlyMode === "date" ? (
-                <div className="grid grid-cols-10 gap-2.5">
-                  {Array.from({ length: 31 }, (_, index) => index + 1).map((day) => {
-                    const active = monthDays.includes(day);
-                    return (
-                      <button
-                        key={day}
-                        type="button"
-                        onClick={() => {
-                          if (active && monthDays.length === 1) return;
-                          setMonthDays(
-                            active
-                              ? monthDays.filter((candidate) => candidate !== day)
-                              : [...monthDays, day],
-                          );
-                        }}
-                        className={cn(
-                          "flex h-7 w-full items-center justify-center rounded-[8px] border text-ui-sm",
-                          active
-                            ? "border-primary bg-primary text-primary-foreground"
-                            : "border-border hover:bg-surface-hover",
-                        )}
-                      >
-                        {day}
-                      </button>
-                    );
-                  })}
-                </div>
-              ) : (
-                <div className="grid grid-cols-7 gap-2">
-                  {WEEKDAY_ORDER.map((day) => {
-                    const active = weekdays.includes(day);
-                    return (
-                      <button
-                        key={day}
-                        type="button"
-                        onClick={() => setWeekdays([day])}
-                        className={cn(
-                          "flex h-9 items-center justify-center rounded-md border text-ui-base",
-                          active
-                            ? "border-primary bg-primary text-primary-foreground"
-                            : "border-border hover:bg-surface-hover",
-                        )}
-                      >
-                        {intl.formatMessage({
-                          id: `automations.weekday.${day}`,
-                        })}
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          ) : null}
-
-          <div className="flex flex-col gap-1.5">
-            <span className="text-ui-base leading-5 tracking-[-0.18px] text-foreground">
-              {intl.formatMessage({ id: "automations.customRepeat.ends" })}
-            </span>
-            <div className="flex flex-wrap items-center gap-4">
-              <button
-                type="button"
-                onClick={() => setEnds(false)}
-                className="flex h-9 items-center gap-2 rounded-[8px] px-2 text-ui-base leading-5 tracking-[-0.18px] transition-colors hover:bg-surface-hover"
-              >
-                <span className="flex size-5 items-center justify-center">
-                  <span
-                    className={cn(
-                      "flex size-4 items-center justify-center rounded-full border-[1.33px]",
-                      !ends ? "border-[#4099FF] bg-[#4099FF]" : "border-border",
-                    )}
-                  >
-                    {!ends ? <span className="size-1.5 rounded-full bg-white" /> : null}
-                  </span>
-                </span>
-                {intl.formatMessage({
-                  id: "automations.customRepeat.neverEnds",
-                })}
-              </button>
-              <button
-                type="button"
-                onClick={() => setEnds(true)}
-                className="flex h-9 items-center gap-2 rounded-[8px] px-2 text-ui-base leading-5 tracking-[-0.18px] transition-colors hover:bg-surface-hover"
-              >
-                <span className="flex size-5 items-center justify-center">
-                  <span
-                    className={cn(
-                      "flex size-4 items-center justify-center rounded-full border-[1.33px]",
-                      ends ? "border-[#4099FF] bg-[#4099FF]" : "border-border",
-                    )}
-                  >
-                    {ends ? <span className="size-1.5 rounded-full bg-white" /> : null}
-                  </span>
-                </span>
-                {intl.formatMessage({
-                  id: "automations.customRepeat.endsOption",
-                })}
-              </button>
-            </div>
-            {/* 原生 date input 会在暗色主题中弹出不可控的系统白色月历。*/}
-            <EndDatePicker
-              value={endDate}
-              min={toDateInputValue(Date.now())}
-              disabled={!ends}
-              intl={intl}
-              onChange={setEndDate}
-            />
-          </div>
-        </div>
-
-        <DialogFooter className="gap-3 px-5 pb-5 pt-5">
-          <DialogClose asChild>
-            <Button
-              type="button"
-              variant="outline"
-              className="h-9 rounded-[8px] px-4 text-ui-base font-medium leading-5 tracking-[-0.18px] hover:border-border-hover hover:bg-input/50"
-            >
-              {intl.formatMessage({ id: "common.cancel" })}
-            </Button>
-          </DialogClose>
-          <Button
-            type="button"
-            className="h-9 rounded-[8px] px-4 text-ui-base font-medium leading-5 tracking-[-0.18px] hover:bg-primary/80"
-            data-testid={TID_AUTOMATION_CUSTOM_CONFIRM}
-            disabled={!isIntervalValid || (ends && !localDateEndTimestamp(endDate))}
-            onClick={() => {
-              onConfirm({
-                interval,
-                unit,
-                weekdays,
-                monthDays,
-                monthlyMode,
-                ...(ends ? { endAt: localDateEndTimestamp(endDate) } : {}),
-              });
-              onOpenChange(false);
-            }}
-          >
-            {intl.formatMessage({ id: "common.confirm" })}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
 
 export interface AutomationEditSubmit {
   input: CreateAutomationInput | UpdateAutomationInput;
@@ -1093,105 +186,6 @@ async function saveAndRunAutomation(
   if (!(await save())) return false;
   await run();
   return true;
-}
-
-function defaultBuilder(): CronBuilderState {
-  return {
-    frequency: "daily",
-    hour: 9,
-    minute: 0,
-    weekdays: [1],
-    dayOfMonth: 1,
-    rawExpr: "0 9 * * *",
-    customInterval: 1,
-    customUnit: "daily",
-    customWeekdays: [1],
-    customMonthDays: [1],
-    customMonth: new Date().getMonth() + 1,
-    customMonthlyMode: "date",
-  };
-}
-
-function initialBuilder(
-  editing: ACodeAutomation | null,
-  initialDraft?: { title: string; cronExpr: string; prompt: string } | null,
-): CronBuilderState {
-  if (!editing) {
-    return initialDraft ? parseCronToBuilder(initialDraft.cronExpr) : defaultBuilder();
-  }
-
-  const parsedBuilder = parseCronToBuilder(editing.cronExpr);
-  if (!editing.scheduleRule) return parsedBuilder;
-
-  return {
-    ...parsedBuilder,
-    frequency: "custom",
-    hour: editing.scheduleRule.hour,
-    minute: editing.scheduleRule.minute,
-    customInterval: editing.scheduleRule.interval,
-    customUnit: editing.scheduleRule.unit,
-    customWeekdays: editing.scheduleRule.weekdays ?? [1],
-    customMonthDays: editing.scheduleRule.monthDays ?? [1],
-    customMonth:
-      editing.scheduleRule.months?.[0] ?? new Date(editing.scheduleRule.anchorAt).getMonth() + 1,
-    customMonthlyMode: editing.scheduleRule.monthlyMode ?? "date",
-  };
-}
-
-// ---- 运行历史状态映射(与 AutomationRunsDialog 保持一致) ----
-type RunStatusKind = "running" | "succeeded" | "failed" | "stopped" | "skipped";
-function resolveRunStatus(run: ACodeAutomationRun): RunStatusKind {
-  if (run.dispatchStatus === "skipped") return "skipped";
-  if (run.dispatchStatus === "failed_to_dispatch") return "failed";
-  switch (run.outcome) {
-    case "succeeded":
-      return "succeeded";
-    case "failed":
-      return "failed";
-    case "stopped":
-      return "stopped";
-    default:
-      return "running";
-  }
-}
-// 运行状态用「圆点 + 彩色文字」呈现（Scheduled 历史表密度规格）。
-const RUN_STATUS_DOT_CLASS: Record<RunStatusKind, string> = {
-  running: "bg-primary",
-  succeeded: "bg-success",
-  failed: "bg-destructive",
-  stopped: "bg-foreground-subtlest",
-  skipped: "bg-warning",
-};
-const RUN_STATUS_TEXT_CLASS: Record<RunStatusKind, string> = {
-  running: "text-primary",
-  succeeded: "text-success",
-  failed: "text-destructive",
-  stopped: "text-foreground-subtle",
-  skipped: "text-warning",
-};
-
-const AUTOMATION_STATUS_DOT_CLASS: Record<AutomationStatusKind, string> = {
-  active: "bg-success",
-  paused: "bg-warning",
-  failed: "bg-destructive",
-  completed: "bg-foreground-subtlest",
-};
-
-function normalizeAutomationScheduleRule(
-  rule: ACodeAutomationScheduleRule | null | undefined,
-): Record<string, unknown> | null {
-  if (!rule) return null;
-  return {
-    unit: rule.unit,
-    interval: rule.interval,
-    hour: rule.hour,
-    minute: rule.minute,
-    anchorAt: rule.anchorAt,
-    weekdays: rule.weekdays ?? [],
-    monthDays: rule.monthDays ?? [],
-    months: rule.months ?? [],
-    monthlyMode: rule.monthlyMode ?? "date",
-  };
 }
 
 export function AutomationEditView({
@@ -1236,8 +230,11 @@ export function AutomationEditView({
   const thoughtTriggerRef = useRef<HTMLSpanElement | null>(null);
   // 不能首帧先渲染默认的“每天 09:00”、再由 effect 回填持久化调度。
   // 子级调度控件会先注册 value 回调，从而把默认值误记成 dirty baseline；编辑态必须首帧即使用真实值。
-  const [builder, setBuilder] = useState<CronBuilderState>(() =>
-    initialBuilder(editing, initialDraft),
+  // 批次 3：27 个 useState 中 builder 相关簇收敛为单一 useReducer（actions 见 cronBuilderReducer.ts）。
+  const [builder, dispatchBuilder] = useReducer(
+    cronBuilderReducer,
+    { editing, initialDraft },
+    ({ editing: editingArg, initialDraft: draftArg }) => initialBuilder(editingArg, draftArg),
   );
   // 新建任务默认不带日程，通过「Add schedule」显式添加；移除后未补齐标红提示。
   const [scheduleRemoved, setScheduleRemoved] = useState(!editing && !initialDraft);
@@ -1310,7 +307,7 @@ export function AutomationEditView({
       modeRef.current = editingMode;
       setMode(editingMode);
       setThoughtLevel(editingThoughtLevel);
-      setBuilder(initialBuilder(editing, initialDraft));
+      dispatchBuilder({ type: "reset", next: initialBuilder(editing, initialDraft) });
       setEndAt(editing.endAt);
       setWorkspaceKey(
         resolveWorkspaceKey({
@@ -1332,7 +329,7 @@ export function AutomationEditView({
       thoughtLevelRef.current = "";
       setMode(AUTOMATION_DEFAULT_MODE);
       setThoughtLevel("");
-      setBuilder(initialBuilder(editing, initialDraft));
+      dispatchBuilder({ type: "reset", next: initialBuilder(editing, initialDraft) });
       setEndAt(undefined);
       setWorkspaceKey(
         reconcileAutomationWorkspaceSelectionKey(workspaceOptionsRef.current, null, {
@@ -2200,11 +1197,7 @@ export function AutomationEditView({
                               setCustomRepeatOpen(true);
                               return;
                             }
-                            setBuilder((previous) => ({
-                              ...previous,
-                              frequency,
-                              ...(frequency === "weekdays" ? { weekdays: [1, 2, 3, 4, 5] } : {}),
-                            }));
+                            dispatchBuilder({ type: "setFrequency", frequency });
                             setScheduleRemoved(false);
                             clearRequiredFieldValidation("schedule");
                           }}
@@ -2239,11 +1232,7 @@ export function AutomationEditView({
                             setCustomRepeatOpen(true);
                             return;
                           }
-                          setBuilder((prev) => ({
-                            ...prev,
-                            frequency: value,
-                            ...(value === "weekdays" ? { weekdays: [1, 2, 3, 4, 5] } : {}),
-                          }));
+                          dispatchBuilder({ type: "setFrequency", frequency: value });
                         }}
                       >
                         {/* 频率触发器曾写死深色值，导致浅色主题下对比失真；
@@ -2280,10 +1269,7 @@ export function AutomationEditView({
                           value={String(builder.dayOfMonth)}
                           onValueChange={(value) => {
                             markFieldTouched("schedule");
-                            setBuilder((prev) => ({
-                              ...prev,
-                              dayOfMonth: Number(value),
-                            }));
+                            dispatchBuilder({ type: "setDayOfMonth", dayOfMonth: Number(value) });
                           }}
                         >
                           <SelectTrigger
@@ -2312,7 +1298,7 @@ export function AutomationEditView({
                           intl={intl}
                           onChange={(weekdays) => {
                             markFieldTouched("schedule");
-                            setBuilder((prev) => ({ ...prev, weekdays }));
+                            dispatchBuilder({ type: "setWeekdays", weekdays });
                           }}
                         />
                       ) : null}
@@ -2371,7 +1357,7 @@ export function AutomationEditView({
                             })}
                             onChange={(hour, minute) => {
                               markFieldTouched("schedule");
-                              setBuilder((prev) => ({ ...prev, hour, minute }));
+                              dispatchBuilder({ type: "setTimeOfDay", hour, minute });
                             }}
                           />
                           <span className="whitespace-nowrap text-foreground-subtle">
@@ -2391,10 +1377,7 @@ export function AutomationEditView({
                             value={String(builder.minute)}
                             onValueChange={(value) => {
                               markFieldTouched("schedule");
-                              setBuilder((prev) => ({
-                                ...prev,
-                                minute: Number(value),
-                              }));
+                              dispatchBuilder({ type: "setMinute", minute: Number(value) });
                             }}
                           >
                             <SelectTrigger
@@ -2430,10 +1413,7 @@ export function AutomationEditView({
                             value={String(builder.minute)}
                             onValueChange={(value) => {
                               markFieldTouched("schedule");
-                              setBuilder((prev) => ({
-                                ...prev,
-                                minute: Number(value),
-                              }));
+                              dispatchBuilder({ type: "setMinute", minute: Number(value) });
                             }}
                           >
                             <SelectTrigger
@@ -2465,11 +1445,7 @@ export function AutomationEditView({
                           intl={intl}
                           onChange={(month, day) => {
                             markFieldTouched("schedule");
-                            setBuilder((prev) => ({
-                              ...prev,
-                              customMonth: month,
-                              customMonthDays: [day],
-                            }));
+                            dispatchBuilder({ type: "setYearlyMonthDay", month, day });
                           }}
                         />
                       ) : null}
@@ -2488,7 +1464,7 @@ export function AutomationEditView({
                             minute={builder.minute}
                             onChange={(hour, minute) => {
                               markFieldTouched("schedule");
-                              setBuilder((prev) => ({ ...prev, hour, minute }));
+                              dispatchBuilder({ type: "setTimeOfDay", hour, minute });
                             }}
                           />
                           <span className="text-foreground-subtle">{formatGmtOffset()}</span>
@@ -2533,15 +1509,14 @@ export function AutomationEditView({
                     markFieldTouched("schedule");
                     setScheduleRemoved(false);
                     clearRequiredFieldValidation("schedule");
-                    setBuilder((prev) => ({
-                      ...prev,
-                      frequency: "custom",
-                      customInterval: interval,
-                      customUnit: unit,
-                      customWeekdays: weekdays,
-                      customMonthDays: monthDays,
-                      customMonthlyMode: monthlyMode,
-                    }));
+                    dispatchBuilder({
+                      type: "applyCustomRepeat",
+                      interval,
+                      unit,
+                      weekdays,
+                      monthDays,
+                      monthlyMode,
+                    });
                     setEndAt(nextEndAt);
                   }}
                 />

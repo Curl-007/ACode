@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 /**
- * A9 待验证项（docs/cli-dispatch-and-system-prompt-upgrade-plan.md §8.2 #5）：
+ * A9 待验证项（docs/archive/cli-dispatch-and-system-prompt-upgrade-plan.md §8.2 #5）：
  * **中断输出围栏回灌等价物**——ACode 的 compact / turn 路径上，有没有把「中途被打断的输出」
  * 回灌进上下文、并指示模型续写而不重复的机制。
  *

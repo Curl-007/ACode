@@ -339,6 +339,8 @@ function resolveBuiltInToolEntryForBranch(
   if (entry.metadata.name === "js") {
     return createJsToolEntry({
       browserUseEnabled: options.includeBrowserUse === true,
+      // U11 图片外置引用生产门（specs/tool-media-attachment-ref.md R10.1）：默认关闭。
+      nodeReplMediaRefs: options.nodeReplMediaRefs === true,
     });
   }
   return entry;

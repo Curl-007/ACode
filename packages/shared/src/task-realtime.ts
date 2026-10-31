@@ -17,7 +17,7 @@ import type {
   TaskStreamMirrorStreamEventOp,
   TaskStreamMirrorOp,
 } from "./acode-task-types-core.js";
-import type { ACodePermissionResponse } from "./acode-protocol-legacy-types.js";
+import type { ACodePermissionResponse } from "./acode-interaction-types.js";
 import type { WorkspaceHookReviewDecision } from "./acode-protocol-v4/workspace-hook-review.js";
 
 export interface TaskRealtimeEnvelope {
@@ -75,6 +75,9 @@ export interface TaskStreamMirrorBatchEvent extends TaskRealtimeEnvelope {
 
 export type TaskRealtimeDeliveryPurpose = "observer" | "relay_owner";
 
+// 1.0.4 review P3：relay_bridge 是预留枚举值，当前全仓（含 acode-server-cli）无生产者与分支消费者，
+// Main 侧只实现 desktop_window。它保留在 legacy wire 面上属有意预留，删除是 wire-compat 变更；接线前
+// 必须先在 desktop specs/task-realtime-bus-mirror.md 登记权威实现位置。
 export type TaskRealtimeHostDeliveryKind = "desktop_window" | "relay_bridge";
 
 export interface TaskRunLeaseTarget extends TaskStreamMirrorTarget {}

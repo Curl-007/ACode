@@ -259,7 +259,7 @@ function isSameIdentitySnapshot(
 }
 
 function identityOnlyOutcome(identity: OfficialMcpIdentitySnapshot): OfficialMcpCredentialOutcome {
-  log.debug("official mcp identity-only credentials resolved", {
+  log.debug(undefined, "official mcp identity-only credentials resolved", {
     providerFamily: identity.activeProvider,
     reason: "official_auth_plan_required",
   });
@@ -322,7 +322,7 @@ export async function resolveOfficialMcpCredentials(
       // 归类为 unavailable 而不是 plan_required：这是登录态不完整（需要重新登录），
       // 不是"没有套餐"。两个 provider adapter 在登录时都会硬性要求写入该 token，
       // 因此正常路径不会命中，主要出现在历史迁移过来的旧登录态上。
-      log.warn("official mcp maas jwt missing", {
+      log.warn(undefined, "official mcp maas jwt missing", {
         providerFamily: selected.plan.providerFamily,
         reason: "official_auth_unavailable",
       });
@@ -371,7 +371,7 @@ export async function resolveOfficialMcpCredentials(
     });
     if (logKey !== lastCredentialResolvedLogKey) {
       lastCredentialResolvedLogKey = logKey;
-      log.info("official mcp credentials resolved", {
+      log.info(undefined, "official mcp credentials resolved", {
         maasJwtExpiresInSeconds,
         providerFamily: selected.plan.providerFamily,
         planTargetType: selected.plan.planScope?.targetType ?? null,

@@ -12,6 +12,7 @@ import {
   buildProviderCatalogUrl,
   inspectProviderEndpoint,
 } from "./endpoint-policy.js";
+import type { ProviderDiagnosticsReasonCode } from "@acode/shared";
 import type {
   ProviderDoctorHttpPort,
   ProviderDoctorProviderFacts,
@@ -27,6 +28,15 @@ export interface ProviderDoctorCatalogProbeResult {
   readonly modelIds: readonly string[];
   readonly detail: string;
   readonly httpStatus?: number;
+  /**
+   * U08 结构化原因码（provider-diagnostics.md R6/R7）。
+   *
+   * `status: "failed"` 一个值盖住了三种用户视角完全不同的故障：密钥被端点拒（401/403）、
+   * 网络层不可达（超时/连接失败）、以及 2xx 但目录为空。GUI 要给三种不同的修复动作，
+   * 而根 AGENTS.md 禁止用 `detail` 文本做流程判断——所以在**分支发生处**按结构化事实
+   * （HTTP 状态码 / 异常种类）就地落码，不让下游猜。
+   */
+  readonly reasonCode?: ProviderDiagnosticsReasonCode;
 }
 
 export interface ProviderDoctorCatalogProbeInput {
@@ -52,13 +62,14 @@ export async function probeProviderModelCatalog(
       status: "unsupported",
       modelIds: [],
       detail: `api type ${provider.apiType ?? "未知"} 没有可探测的公开目录端点`,
+      reasonCode: "catalog-unsupported",
     };
   }
 
   // 先校验后连接：本地字面判定不通过就绝不发请求（DNS 层校验是检查点 #7 的职责）。
   const verdict = inspectProviderEndpoint(provider.baseUrl);
   if (!verdict.ok) {
-    return { status: "failed", modelIds: [], detail: verdict.reason };
+    return { status: "failed", modelIds: [], detail: verdict.reason, reasonCode: "endpoint-not-public" };
   }
 
   const apiKey = input.apiKey?.trim();
@@ -67,6 +78,7 @@ export async function probeProviderModelCatalog(
       status: "failed",
       modelIds: [],
       detail: "没有可用于目录请求的凭据（先修 credential_available）",
+      reasonCode: "credential-missing",
     };
   }
 
@@ -90,6 +102,7 @@ export async function probeProviderModelCatalog(
       status: "failed",
       modelIds: [],
       detail: `目录端点请求失败: ${describeError(error)}`,
+      reasonCode: "catalog-unreachable",
     };
   }
 
@@ -99,14 +112,19 @@ export async function probeProviderModelCatalog(
       modelIds: [],
       detail: `端点不支持目录列举（HTTP ${response.status}）`,
       httpStatus: response.status,
+      reasonCode: "catalog-unsupported",
     };
   }
   if (response.status < 200 || response.status >= 300) {
+    // 401/403 = 凭据送到了端点但被拒（「密钥错了」），区别于「密钥不在」与「网络不可达」。
+    // 其余非 2xx（5xx / 429 等）归 catalog-unreachable：这一层的语义是「拿不到目录」。
+    const rejected = response.status === 401 || response.status === 403;
     return {
       status: "failed",
       modelIds: [],
       detail: `目录端点返回 HTTP ${response.status}`,
       httpStatus: response.status,
+      reasonCode: rejected ? "credential-rejected" : "catalog-unreachable",
     };
   }
 
@@ -123,6 +141,7 @@ export async function probeProviderModelCatalog(
       modelIds: [],
       detail: `目录端点返回 2xx 但没有解析出任何可用模型 id${filteredNote}`,
       httpStatus: response.status,
+      reasonCode: "catalog-empty",
     };
   }
   return {

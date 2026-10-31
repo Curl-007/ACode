@@ -218,6 +218,41 @@ acode doctor --provider[=<providerId>] [--model=<modelId>] [--tier=offline|catal
   （`acode doctor --provider=<id> --tier=live`，会花费余额）。
 - 建议文案由检查点目录集中持有（单一所有者），不在渲染层散落 if/else。
 
+### R8 结构化原因码（U08 additive 扩展）
+
+GUI 侧诊断（`packages/services/specs/provider-diagnostics.md`）必须区分「密钥被端点拒绝」、
+「凭据引用悬空」与「目录端点返回 2xx 但为空」——这三者在 `catalog_live_endpoint` + `failed`
+上可能同形，`(id, status)` 二元组不足以区分。根 AGENTS.md 禁止用错误文本做流程判断，因此在
+**分支发生处**按结构化事实（HTTP 状态码 / 异常种类）就地落码：
+
+- `ProviderDoctorCheckResult.reasonCode?: ProviderDiagnosticsReasonCode`。词汇的唯一所有者是
+  `@acode/shared` 的 `providerDiagnosticsReasonCodeSchema`（adapters 已依赖 shared），不在本仓
+  另立一份枚举，避免两侧漂移。
+- `ProviderDoctorCatalogProbeResult.reasonCode?`：`401|403` → `credential-rejected`；其余非 2xx
+  与网络层异常 → `catalog-unreachable`；2xx 但解析不出模型 id → `catalog-empty`；
+  `404|405|501` 与「api type 无公开目录端点」→ `catalog-unsupported`；本地 host 校验不过 →
+  `endpoint-not-public`；无可用凭据 → `credential-missing`。
+- `ProviderDoctorProbeOutcome.reasonCode?`：仅 `tool_call_parse` 因
+  `properties.supportsToolCall=false` 而 skip 时落 `tool-call-unsupported`。该检查点的 `skipped`
+  有两种成因（本档不跑 live / 模型不支持工具调用），GUI 必须分开呈现（U08-A5）。
+
+**additive 纪律（勿破坏）**：
+
+- 只加在**内存报告**上，**不加进 `ProviderDoctorLedgerEvent`**：账本 `schemaVersion: 1` 与既有
+  覆盖视图逐字不变，不动已落盘证据的 schema。
+- 不新增/重命名/重排任何 checkpoint id；不改 12 点顺序；不改 `tier-passed`/`ready` 判定；
+  不改任何既有检查点的 status 取值。
+- `reasonCode` 是结构化枚举、不含任何值，因此**不过 redactor**（redactor 只处理自由文本
+  `detail`）；R5 的隐私边界不受影响。
+- `detail` 仍是给人看的脱敏文案，**不参与**任何分支判定：GUI 的 errorCode 派生只读
+  `(id, status, reasonCode)` 三元组。
+
+**GUI 侧的 DTO 投影**：`adapters/src/doctor/project-diagnostics-result.ts` 把 Doctor 报告投影成
+`@acode/shared` 的白名单 DTO——**只搬结构化闭集**，`label` 与 `detail` 不跨进程（用户文本由 UI 按
+`id`+`reasonCode` 走 i18n）。`verdict` 逐字沿用本 spec 的 R2 判定，投影层不重算、不放宽；
+`offline` 档 `blockedNetworkCalls > 0` 时投影层强制把 verdict 降级为 `failed` 并给
+`offline-network-blocked`（R2 的零网络承诺被违背时不得背书）。
+
 ## 状态所有者
 
 ```

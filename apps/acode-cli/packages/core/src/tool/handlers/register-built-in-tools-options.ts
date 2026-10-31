@@ -80,6 +80,19 @@ export interface RegisterBuiltInToolsOptions {
   /** node_repl（js）默认关闭，由官方 browser-use 插件启用。 */
   includeNodeRepl?: boolean;
   /**
+   * U11 工具图片外置引用（specs/tool-media-attachment-ref.md R10.1）的生产门：**默认关闭**。
+   *
+   * 只有显式 true 才把 node-repl 工具图片写进 artifact store，并让 `node_repl_images` display
+   * 发 ref 形态（字节按需读取）；缺席/false 时行为与 U11 之前逐字一致（全 inline base64）。
+   * 极性沿用同族 `include*` 门（`includeBrowserUse` / `includeOffPeak`：只有显式 true 才开）。
+   *
+   * 门开时运行期还要过两道判据（`shouldEmitToolMediaRefs`）：`clientMode === "desktop-continuous"`
+   * 与 artifact store 在场。为什么默认关闭而不做 capability 协商：安全的协商方向是 host→client
+   * （`hello.capabilities`），而本项需要的是 client→host，而 `clientHello.capabilities` 是
+   * `.strict()` 的——加键会让老 Host 整条握手失败（spec §6.4）。
+   */
+  nodeReplMediaRefs?: boolean;
+  /**
    * 工具按需检索（specs/tool-search.md R3/R4）：runtime 启动选项 toolSearchMode
    * 非 off 才为 true（推导在 runtime-tools.ts）。控制工具被作用域禁用时 exposure
    * 会降级 off；这里管的是注册面——off 时两个控制工具不进 registry。

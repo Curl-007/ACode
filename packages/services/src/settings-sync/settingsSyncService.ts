@@ -2287,7 +2287,7 @@ export function createSettingsSyncService(
       const result = await copyClaudeAgentsFileToAcodeAgentsFile({
         overwrite: request.overwrite,
       });
-      log.info("[settings-sync] Claude AGENTS.md migration completed", {
+      log.info(undefined, "[settings-sync] Claude AGENTS.md migration completed", {
         workspacePath: request.workspacePath,
         workspaceIdentity: request.workspaceIdentity,
         sourcePath: result.sourcePath,

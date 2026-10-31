@@ -48,7 +48,7 @@ const { createSqliteSessionStore } = await import(
   "../packages/adapters/src/storage/session-store/sqlite-session-store.ts"
 );
 const { mapTodoItem } = await import(
-  "../packages/bootstrap/src/acode-protocol/session-mapper.ts"
+  "../packages/bootstrap/src/acode-protocol-v4/session-mapper.ts"
 );
 
 // —— 构造器与假 store（与 todo-dependency-fields.test.mjs 同款约定） ——

@@ -2,18 +2,21 @@ import { ACodeStorageStartupGate } from "#src/acode-agent/acodeStorageStartupGat
 import { Emitter } from "@acode/rpc";
 import type { IDisposable } from "@acode/rpc";
 import type {
-  ACodeProtocolMethod,
   ACodeProtocolNotification,
   ACodeProtocolRequest,
   ACodeProtocolRequestId,
-  ACodeProtocolTrace,
 } from "@acode/shared";
-import type { V4Method } from "@acode/shared/acode-protocol-v4";
 import type { z } from "zod";
 import type { ACodeProtocolTransport } from "./acodeProtocolTransport.js";
+import type {
+  ACodeAgentRpcClient,
+  ACodeAgentRpcMethod,
+  ACodeAgentRpcRequestOptions,
+} from "./acodeAgentRpcClient.js";
 
-/** 客户端可发的方法名：旧 acodeProtocolMethods + v4/*（并存，收敛为 v4）。 */
-type ACodeProtocolClientMethod = ACodeProtocolMethod | V4Method;
+// 客户端可发的方法名：旧 acodeProtocolMethods + v4/*。联合类型从中立接口叶子
+// acodeAgentRpcClient.ts 取（单一事实源），本类 implements 该接口，签名漂移由 typecheck 捕获。
+type ACodeProtocolClientMethod = ACodeAgentRpcMethod;
 
 interface ACodeProtocolClientOptions {
   requireStorageStartup?: boolean;
@@ -37,13 +40,8 @@ interface PendingRequest<T> {
   cleanupAbort?: () => void;
 }
 
-interface ACodeProtocolClientRequestOptions {
-  /** 观测不得参与 runtime 健康判定或业务空闲续期；默认保持业务请求语义。 */
-  lifecycle?: "operation" | "observation";
-  signal?: AbortSignal;
-  trace?: ACodeProtocolTrace;
-  timeoutMs?: number;
-}
+// 请求选项类型同样以中立叶子为单一事实源（避免两份定义漂移）。
+type ACodeProtocolClientRequestOptions = ACodeAgentRpcRequestOptions;
 
 const DEFAULT_ACODE_PROTOCOL_REQUEST_TIMEOUT_MS = 3 * 60_000;
 
@@ -69,7 +67,7 @@ export class ACodeProtocolRequestTimeoutError extends Error {
   }
 }
 
-export class ACodeProtocolClient implements IDisposable {
+export class ACodeProtocolClient implements IDisposable, ACodeAgentRpcClient {
   readonly storageStartup: ACodeStorageStartupGate;
   private readonly pending = new Map<string, PendingRequest<unknown>>();
   private readonly notificationEmitter = new Emitter<ACodeProtocolNotification>();

@@ -1,4 +1,5 @@
-import { resolveWorkspaceKey, type ACodeComputerUseOperationEvent } from "@acode/shared";
+import { resolveWorkspaceKey } from "@acode/shared";
+import { type V4CuaOperationEvent } from "@acode/shared/acode-protocol-v4";
 import type { PipSessionEvent } from "@acode/acode-cua/pip-session";
 
 export interface CuaOperationWorkspaceTarget {
@@ -19,7 +20,7 @@ export interface CuaOperationStateReporter {
 }
 
 interface CuaOperationTurnTracker {
-  accept(workspace: CuaOperationWorkspaceTarget, event: ACodeComputerUseOperationEvent): void;
+  accept(workspace: CuaOperationWorkspaceTarget, event: V4CuaOperationEvent): void;
   /** 当前是否存在仍在执行 Computer Use 工具的 turn。 */
   hasActiveTurn(): boolean;
   clearWorkspaceKey(workspaceKey: string): void;
@@ -167,7 +168,7 @@ export function createCuaOperationTurnTracker(options: {
 
   function accept(
     workspace: CuaOperationWorkspaceTarget,
-    event: ACodeComputerUseOperationEvent,
+    event: V4CuaOperationEvent,
   ): void {
     const workspaceKey = resolveWorkspaceKey(workspace);
     const sessionKey = sessionKeyFor(workspaceKey, event.sessionId);

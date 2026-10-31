@@ -53,6 +53,9 @@ const { scheduleProjectMemoryExtraction } = await import(
 const { resolveEnabledProjectMemoryRoot } = await import(
   "../packages/core/src/runtime/helpers/project-memory.ts"
 );
+const { initializeRuntimeSidecar } = await import(
+  "../packages/core/src/runtime/runtime-sidecar.ts"
+);
 
 // ── 夹具 ──────────────────────────────────────────────────────────────
 
@@ -1148,6 +1151,9 @@ function createExtractionHarness() {
     workingDirectory: EXTRACTION_WORKSPACE,
     workspaceRoot: EXTRACTION_WORKSPACE,
   };
+  // R1-01 B4：memoryExtractionScheduler 归 RuntimeSidecarOwner——桩与真实构造期一样装
+  // 只读 getter（初始值 undefined），scheduleProjectMemoryExtraction 的惰性构造经端口。
+  initializeRuntimeSidecar(runtime);
   return { modelCalls, runtime, telemetryEvents, warnings };
 }
 

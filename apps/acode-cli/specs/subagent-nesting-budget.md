@@ -1,6 +1,6 @@
 # 子代理受约束深度嵌套：谱系、天花板锚根与树级预算（编排方案 Phase 4 / ③）
 
-来源：[`docs/codex-orchestration-integration-plan.md`](../../../docs/codex-orchestration-integration-plan.md)
+来源：[`docs/archive/codex-orchestration-integration-plan.md`](../../../docs/archive/codex-orchestration-integration-plan.md)
 §4 Phase 4（安全修复 A + 放开嵌套 B + 全局预算 C）与 §5 R1/R3 行；2026-10-10 对照审计
 （B1 R1 提权链、B4 §6.1 工厂链泄漏、B5 §6.2 后台孤儿、§6.3 双重镜像均独立复核
 confirmed）。参照机制：Codex `agent_max_depth` / `max_concurrent_threads_per_session`。

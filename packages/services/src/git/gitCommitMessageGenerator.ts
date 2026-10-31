@@ -1,10 +1,5 @@
-import type {
-  GitCommitMessageConversationContext,
-  GitDiffResult,
-  GitFileChange,
-  Locale,
-  ACodeWorkspaceGenerateTextParams,
-} from "@acode/shared";
+import type { GitCommitMessageConversationContext, GitDiffResult, GitFileChange, Locale } from "@acode/shared";
+import { type V4WorkspaceGenerateTextParams } from "@acode/shared/acode-protocol-v4";
 import type { ServiceLogger } from "#src/logger/serviceLogger.js";
 
 const MAX_PROMPT_FILES = 20;
@@ -24,17 +19,17 @@ interface GitCommitMessageCurrentModelProvider {
   readCurrentModel(params: {
     workspacePath: string;
     workspaceIdentity?: string;
-  }): Promise<ACodeWorkspaceGenerateTextParams["selection"] | null>;
+  }): Promise<V4WorkspaceGenerateTextParams["selection"] | null>;
 }
 
 interface GitCommitMessageTextGenerator {
   generateText(params: {
     workspacePath: string;
     workspaceIdentity?: string;
-    selection: ACodeWorkspaceGenerateTextParams["selection"];
+    selection: V4WorkspaceGenerateTextParams["selection"];
     prompt: string;
     querySource: string;
-  }): Promise<{ text: string; selection: ACodeWorkspaceGenerateTextParams["selection"] }>;
+  }): Promise<{ text: string; selection: V4WorkspaceGenerateTextParams["selection"] }>;
 }
 
 interface GitCommitMessageGeneratorOptions {
@@ -120,7 +115,7 @@ export class GitCommitMessageGenerator {
   private async resolveCurrentModel(params: {
     workspacePath: string;
     workspaceIdentity?: string;
-  }): Promise<ACodeWorkspaceGenerateTextParams["selection"]> {
+  }): Promise<V4WorkspaceGenerateTextParams["selection"]> {
     const currentModel = await this.options.currentModelProvider.readCurrentModel({
       workspacePath: params.workspacePath,
       workspaceIdentity: params.workspaceIdentity,
@@ -147,7 +142,7 @@ export class GitCommitMessageGenerator {
   private async complete(params: {
     workspacePath: string;
     workspaceIdentity?: string;
-    selection: ACodeWorkspaceGenerateTextParams["selection"];
+    selection: V4WorkspaceGenerateTextParams["selection"];
     prompt: string;
   }): Promise<string> {
     try {

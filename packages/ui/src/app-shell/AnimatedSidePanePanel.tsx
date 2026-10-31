@@ -1,6 +1,6 @@
-/* eslint-disable max-lines -- Side pane 当前集中承载 tabs、browser/git/code-viewer 内容；完整拆分需按 pane 功能边界继续推进。 */
+/* eslint-disable max-lines -- Side pane 集中承载 20 类 pane 分发；批次 6 已把视口度量 hooks 外迁到 useSidePaneViewportMetrics.ts，批次 7 把 tab 条 state/effect 簇收口到 useSidePaneTabStrip.ts。 */
 import { ServiceProvider } from "@/hooks/useServices.js";
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from "react";
+import { useEffect, useMemo, type CSSProperties, type RefObject } from "react";
 import type { PanelImperativeHandle } from "react-resizable-panels";
 import type { IServiceAccessor } from "@acode/services";
 import {
@@ -10,8 +10,6 @@ import {
   PointerSensor,
   useSensor,
   useSensors,
-  type DragEndEvent,
-  type DragStartEvent,
 } from "@dnd-kit/core";
 import { horizontalListSortingStrategy, SortableContext } from "@dnd-kit/sortable";
 import type { BrowserViewScreenshotSurfacePreparePayload, GitChangeSourceId } from "@acode/shared";
@@ -58,10 +56,6 @@ import {
   SortableSidePaneTabTrigger,
 } from "@/app-shell/SidePaneTabTrigger.js";
 import {
-  resolveSidePaneTabsOverflow,
-  SIDE_PANE_DEFAULT_EXPANDED_RATIO,
-} from "@/app-shell/sidePaneLayout.js";
-import {
   resolveAnimatedSidePanePanelLayout,
   resolveOpenTabLauncherItemIds,
   shouldOfferSelectionSideConversation,
@@ -103,12 +97,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
-const SIDE_PANE_CONTENT_WIDTH_LOCK_DURATION_MS = 200;
 const PREVIEW_PANE_RESIZE_SETTLE_DELAY_MS = 220;
-type TabsScrollMaskEdges = {
-  left: boolean;
-  right: boolean;
-};
 type OpenTabLauncherItem = {
   id: OpenTabLauncherItemId;
   label: string;
@@ -116,10 +105,11 @@ type OpenTabLauncherItem = {
   onOpen: () => void;
 };
 const EMPTY_SIDE_PANE_TABS: WorkspaceSidePaneState["tabs"] = [];
-const EMPTY_TABS_SCROLL_MASK_EDGES: TabsScrollMaskEdges = {
-  left: false,
-  right: false,
-};
+import {
+  useViewportInlineIntersectionSize,
+  useWindowResizeSettling,
+} from "@/app-shell/useSidePaneViewportMetrics.js";
+import { useSidePaneTabStrip } from "@/app-shell/useSidePaneTabStrip.js";
 
 function SuspendedBrowserSidePaneContent({
   tab,
@@ -155,129 +145,6 @@ function SuspendedBrowserSidePaneContent({
       className="relative z-10 h-full min-h-0 bg-background data-[state=inactive]:hidden"
     />
   );
-}
-
-function readViewportInlineIntersectionSize(element: HTMLElement | null) {
-  if (!element || typeof window === "undefined") {
-    return null;
-  }
-
-  const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
-  if (viewportWidth <= 0) {
-    return null;
-  }
-
-  const rect = element.getBoundingClientRect();
-  const visibleLeft = Math.max(0, rect.left);
-  const visibleRight = Math.min(viewportWidth, rect.right);
-  return Math.max(0, Math.round(visibleRight - visibleLeft));
-}
-
-function useViewportInlineIntersectionSize<TElement extends HTMLElement>(
-  elementRef: RefObject<TElement | null>,
-  enabled: boolean,
-) {
-  const [visibleInlineSizePx, setVisibleInlineSizePx] = useState<number | null>(null);
-
-  useEffect(() => {
-    if (!enabled || typeof window === "undefined") {
-      setVisibleInlineSizePx(null);
-      return;
-    }
-
-    const element = elementRef.current;
-    if (!element) {
-      setVisibleInlineSizePx(null);
-      return;
-    }
-
-    let frameId: number | null = null;
-    const update = () => {
-      frameId = null;
-      const next = readViewportInlineIntersectionSize(element);
-      setVisibleInlineSizePx((current) => (current === next ? current : next));
-    };
-    const scheduleUpdate = () => {
-      if (frameId !== null) {
-        return;
-      }
-
-      if (typeof window.requestAnimationFrame !== "function") {
-        update();
-        return;
-      }
-
-      frameId = window.requestAnimationFrame(update);
-    };
-
-    update();
-    window.addEventListener("resize", scheduleUpdate, { passive: true });
-    window.addEventListener("scroll", scheduleUpdate, {
-      capture: true,
-      passive: true,
-    });
-
-    const resizeObserver =
-      typeof ResizeObserver === "undefined" ? null : new ResizeObserver(scheduleUpdate);
-    resizeObserver?.observe(element);
-
-    return () => {
-      window.removeEventListener("resize", scheduleUpdate);
-      window.removeEventListener("scroll", scheduleUpdate, { capture: true });
-      resizeObserver?.disconnect();
-      if (frameId !== null) {
-        window.cancelAnimationFrame(frameId);
-      }
-    };
-  }, [elementRef, enabled]);
-
-  return visibleInlineSizePx;
-}
-
-function useWindowResizeSettling(enabled: boolean) {
-  const [isResizeSettling, setIsResizeSettling] = useState(false);
-  const resizeSettleTimerRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    if (!enabled || typeof window === "undefined") {
-      setIsResizeSettling(false);
-      return;
-    }
-
-    const finishSettling = () => {
-      resizeSettleTimerRef.current = null;
-      setIsResizeSettling(false);
-    };
-
-    const markSettling = () => {
-      // 窗口 resize 期间，大文件 PreviewPane 的千行 Shadow DOM 会在每帧参与
-      // React commit + Layout。这里只把 resize 视为短暂的不稳定阶段，等尺寸停止抖动后再恢复重内容。
-      setIsResizeSettling((current) => (current ? current : true));
-      if (resizeSettleTimerRef.current !== null) {
-        window.clearTimeout(resizeSettleTimerRef.current);
-      }
-      resizeSettleTimerRef.current = window.setTimeout(
-        finishSettling,
-        PREVIEW_PANE_RESIZE_SETTLE_DELAY_MS,
-      );
-    };
-
-    window.addEventListener("resize", markSettling, { passive: true });
-    window.visualViewport?.addEventListener("resize", markSettling, {
-      passive: true,
-    });
-
-    return () => {
-      window.removeEventListener("resize", markSettling);
-      window.visualViewport?.removeEventListener("resize", markSettling);
-      if (resizeSettleTimerRef.current !== null) {
-        window.clearTimeout(resizeSettleTimerRef.current);
-        resizeSettleTimerRef.current = null;
-      }
-    };
-  }, [enabled]);
-
-  return isResizeSettling;
 }
 
 export function AnimatedSidePanePanel({
@@ -437,25 +304,38 @@ export function AnimatedSidePanePanel({
   const visibleActiveTabId = visibleTabs.some((tab) => tab.id === activeTabId)
     ? activeTabId
     : (visibleTabs.at(-1)?.id ?? "");
-  const [isAddMenuOpen, setIsAddMenuOpen] = useState(false);
-  const tabsScrollViewportRef = useRef<HTMLDivElement | null>(null);
-  const tabsScrollContentRef = useRef<HTMLDivElement | null>(null);
-  const [lockedContentWidthPx, setLockedContentWidthPx] = useState<number | null>(null);
   const shouldMountContent = shouldMountSidePaneContent(isVisible, tabs);
-  const [hasRenderedSidePane, setHasRenderedSidePane] = useState(shouldMountContent);
-  const [isTabsOverflowing, setIsTabsOverflowing] = useState(false);
-  const [tabsScrollMaskEdges, setTabsScrollMaskEdges] = useState<TabsScrollMaskEdges>({
-    left: false,
-    right: false,
+  // tab 条的全部 state/effect（溢出判定 / mask / active 滚入视区 / 收起锁宽 / 拖拽态）
+  // 批次 7 收口到 useSidePaneTabStrip；主文件只保留 pane 分发与布局分支。
+  const {
+    draggingTabId,
+    handleTabDragCancel,
+    handleTabDragEnd,
+    handleTabDragStart,
+    hasRenderedSidePane,
+    isAddMenuOpen,
+    isTabsOverflowing,
+    lockedContentStyle,
+    setIsAddMenuOpen,
+    tabsScrollContentRef,
+    tabsScrollMaskEdges,
+    tabsScrollViewportRef,
+  } = useSidePaneTabStrip({
+    isVisible,
+    shouldMountContent,
+    visibleTabs,
+    visibleActiveTabId,
+    panelElementRef,
+    onReorderTab,
   });
-  const [draggingTabId, setDraggingTabId] = useState<string | null>(null);
   const sidePaneVisibleInlineSizePx = useViewportInlineIntersectionSize(
     panelElementRef,
     hasRenderedSidePane,
   );
-  const isWindowResizeSettling = useWindowResizeSettling(hasRenderedSidePane);
-  const widthUnlockTimerRef = useRef<number | null>(null);
-  const previousIsVisibleRef = useRef(isVisible);
+  const isWindowResizeSettling = useWindowResizeSettling(
+    hasRenderedSidePane,
+    PREVIEW_PANE_RESIZE_SETTLE_DELAY_MS,
+  );
   const panelLayout = resolveAnimatedSidePanePanelLayout();
   const hasReviewTab = visibleTabs.some((tab) => tab.type === "git");
   const canOpenSelectionSideConversation = shouldOfferSelectionSideConversation({
@@ -468,225 +348,6 @@ export function AnimatedSidePanePanel({
       },
     }),
   );
-
-  const handleTabDragStart = (event: DragStartEvent) => {
-    setDraggingTabId(String(event.active.id));
-  };
-
-  const handleTabDragEnd = (event: DragEndEvent) => {
-    setDraggingTabId(null);
-    const { active, over } = event;
-    if (!over || active.id === over.id) {
-      return;
-    }
-
-    onReorderTab(String(active.id), String(over.id));
-  };
-
-  const handleTabDragCancel = () => {
-    setDraggingTabId(null);
-  };
-
-  const readInitialExpandedContentWidthPx = () => {
-    const panelElement = panelElementRef.current;
-    const panelGroupElement = panelElement?.parentElement;
-    const panelGroupWidthPx = Math.round(panelGroupElement?.getBoundingClientRect().width ?? 0);
-
-    if (!Number.isFinite(panelGroupWidthPx) || panelGroupWidthPx <= 0) {
-      return null;
-    }
-
-    return Math.round(panelGroupWidthPx * SIDE_PANE_DEFAULT_EXPANDED_RATIO);
-  };
-
-  useEffect(() => {
-    if (shouldMountContent) {
-      // side pane 收起动画原本依赖外层 panel 的 opacity/flex-grow 过渡，
-      // 但这里之前把内容写成 `isVisible && sidePaneState ? ... : null`，
-      // 一收起就会先把 Tabs/Git/Browser 整块卸载，动画还没走完内容就没了。
-      // 改成首次打开后保持挂载，后续收起只隐藏不卸载，这样动画和内部状态都能一起保留。
-      setHasRenderedSidePane(true);
-    }
-  }, [shouldMountContent]);
-
-  useEffect(() => {
-    const previousIsVisible = previousIsVisibleRef.current;
-    previousIsVisibleRef.current = isVisible;
-
-    if (widthUnlockTimerRef.current !== null) {
-      window.clearTimeout(widthUnlockTimerRef.current);
-      widthUnlockTimerRef.current = null;
-    }
-
-    if (previousIsVisible && !isVisible) {
-      const currentPanelWidthPx = Math.round(
-        panelElementRef.current?.getBoundingClientRect().width ?? 0,
-      );
-      // side pane 收起时内容层会跟着外层 panel 一起参与过渡，
-      // 这里在收起前锁住当前像素宽度，避免内部 Tabs/Git/Browser 先重新排版后再淡出。
-      setLockedContentWidthPx(currentPanelWidthPx > 0 ? currentPanelWidthPx : null);
-      return;
-    }
-
-    if (!previousIsVisible && isVisible) {
-      // 首次展开没有“上一次收起前宽度”可复用，内容会先以 0 宽度参与布局再被撑开。
-      // 这里用 PanelGroup 的真实像素宽度换算默认展开宽度，先给内容层一个接近最终态的锁宽；
-      // 等 200ms 过渡结束后再移除固定宽度，恢复成普通自适应布局。
-      setLockedContentWidthPx(
-        (currentWidthPx) => currentWidthPx ?? readInitialExpandedContentWidthPx(),
-      );
-      widthUnlockTimerRef.current = window.setTimeout(() => {
-        setLockedContentWidthPx(null);
-        widthUnlockTimerRef.current = null;
-      }, SIDE_PANE_CONTENT_WIDTH_LOCK_DURATION_MS);
-    }
-  }, [isVisible, panelElementRef]);
-
-  useEffect(() => {
-    return () => {
-      if (widthUnlockTimerRef.current !== null) {
-        window.clearTimeout(widthUnlockTimerRef.current);
-      }
-    };
-  }, []);
-
-  const lockedContentStyle: CSSProperties | undefined =
-    lockedContentWidthPx !== null
-      ? {
-          width: `${lockedContentWidthPx}px`,
-        }
-      : undefined;
-
-  useEffect(() => {
-    const viewport = tabsScrollViewportRef.current;
-    const content = tabsScrollContentRef.current;
-
-    if (!viewport || !content) {
-      setIsTabsOverflowing(false);
-      // sidePaneState 为空或内容尚未挂载时 refs 会持续为空。
-      // 这里不能每次写入新的 mask 对象，否则 effect 会在空 tabs 阶段反复触发更新。
-      setTabsScrollMaskEdges((current) =>
-        current.left || current.right ? EMPTY_TABS_SCROLL_MASK_EDGES : current,
-      );
-      return;
-    }
-
-    const updateOverflowState = () => {
-      const maxScrollLeft = Math.max(0, viewport.scrollWidth - viewport.clientWidth);
-      const addButton = viewport.parentElement?.querySelector<HTMLElement>(
-        "[data-side-pane-add-tab-trigger]",
-      );
-      const addButtonWidth = addButton?.getBoundingClientRect().width ?? 0;
-      // 旧判定直接读取 content.scrollWidth，但 overflow 状态本身会把新增按钮
-      // 移进/移出 content 并改变 viewport 宽度，临界区会形成 ResizeObserver 反馈环。
-      // 这里统一还原“新增按钮位于 tabs 末尾”的假想布局，只用稳定的最小宽度预算判定。
-      const isOverflowing = resolveSidePaneTabsOverflow({
-        addButtonInside: Boolean(addButton && content.contains(addButton)),
-        addButtonWidth,
-        tabCount: visibleTabs.length,
-        viewportWidth: viewport.clientWidth,
-      });
-      // 新增按钮在 tabs 尚可等宽收缩时跟随末尾，只有达到 60px 下限仍溢出后才固定到右侧。
-      setIsTabsOverflowing(isOverflowing);
-      // tabs 溢出时不能两侧一直显示渐变 mask：滚动到起点/终点也像还能继续滚。
-      // 这里把 mask 和实际 scrollLeft 绑定，只提示仍可继续滚动的一侧。
-      setTabsScrollMaskEdges((current) => {
-        const next = {
-          left: isOverflowing && viewport.scrollLeft > 1,
-          right: isOverflowing && viewport.scrollLeft < maxScrollLeft - 1,
-        };
-
-        if (current.left === next.left && current.right === next.right) {
-          return current;
-        }
-
-        return next;
-      });
-    };
-
-    // RAF-based debounce to coalesce resize events
-    let rafId: number | null = null;
-    let latestCallback = updateOverflowState;
-    const debouncedUpdate = () => {
-      if (rafId !== null) return;
-      rafId = requestAnimationFrame(() => {
-        rafId = null;
-        latestCallback();
-      });
-    };
-
-    updateOverflowState();
-    viewport.addEventListener("scroll", updateOverflowState, {
-      passive: true,
-    });
-
-    if (typeof ResizeObserver === "undefined") {
-      window.addEventListener("resize", debouncedUpdate);
-      return () => {
-        viewport.removeEventListener("scroll", updateOverflowState);
-        window.removeEventListener("resize", debouncedUpdate);
-        if (rafId !== null) cancelAnimationFrame(rafId);
-      };
-    }
-
-    const resizeObserver = new ResizeObserver(() => {
-      latestCallback = updateOverflowState;
-      debouncedUpdate();
-    });
-    resizeObserver.observe(viewport);
-    resizeObserver.observe(content);
-    window.addEventListener("resize", debouncedUpdate);
-
-    return () => {
-      resizeObserver.disconnect();
-      viewport.removeEventListener("scroll", updateOverflowState);
-      window.removeEventListener("resize", debouncedUpdate);
-      if (rafId !== null) cancelAnimationFrame(rafId);
-    };
-  }, [visibleTabs]);
-
-  useEffect(() => {
-    const viewport = tabsScrollViewportRef.current;
-    const content = tabsScrollContentRef.current;
-
-    if (!visibleActiveTabId || !viewport || !content) {
-      return;
-    }
-
-    let frameId: number | null = requestAnimationFrame(() => {
-      frameId = null;
-      const activeTab = Array.from(
-        content.querySelectorAll<HTMLElement>("[data-side-pane-tab-id]"),
-      ).find((element) => element.dataset.sidePaneTabId === visibleActiveTabId);
-
-      if (!activeTab) {
-        return;
-      }
-
-      const viewportRect = viewport.getBoundingClientRect();
-      const activeTabRect = activeTab.getBoundingClientRect();
-      const leftOverflow = activeTabRect.left - viewportRect.left;
-      const rightOverflow = activeTabRect.right - viewportRect.right;
-
-      if (leftOverflow < 0) {
-        // 从外部激活 tab（例如打开文件或切回旧 Browser）时，
-        // active tab 可能已经被横向滚动区域遮住。这里按真实 DOM 宽度滚回可视区，
-        // 避免使用固定宽度估算导致长标题 / favicon tab 对不齐。
-        viewport.scrollBy({ left: leftOverflow, behavior: "smooth" });
-        return;
-      }
-
-      if (rightOverflow > 0) {
-        viewport.scrollBy({ left: rightOverflow, behavior: "smooth" });
-      }
-    });
-
-    return () => {
-      if (frameId !== null) {
-        cancelAnimationFrame(frameId);
-      }
-    };
-  }, [visibleActiveTabId, visibleTabs]);
 
   const addTabMenu = (
     <DropdownMenu open={isAddMenuOpen} onOpenChange={setIsAddMenuOpen}>

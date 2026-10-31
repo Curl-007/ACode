@@ -1,6 +1,6 @@
 # expert workflow 类型化 artifact + critic 点名校验（J2-3）
 
-调度可信批次 P1 项（docs/jcode-inspired-upgrade-plan.md §J2-3）。给 expert workflow 补两件事：
+调度可信批次 P1 项（docs/archive/jcode-inspired-upgrade-plan.md §J2-3）。给 expert workflow 补两件事：
 
 1. **类型化 artifact**：节点完成提交除路径式 markdown 产物外，可携带结构化 typed 段
    （findings / evidence(file:line) / validation / openQuestions / confidence / whatINotChecked）；

@@ -1,11 +1,5 @@
-import type {
-  PluginStoreModeOrder,
-  ACodeAvailablePluginSummary,
-  ACodeInstalledPluginSummary,
-  ACodePluginInfo,
-  ACodePluginMarketplaceSummary,
-  ACodePluginStoreListing,
-} from "@acode/shared";
+import type { PluginStoreModeOrder } from "@acode/shared";
+import { type V4AvailablePluginSummary, type V4InstalledPluginSummary, type V4PluginInfo, type V4PluginMarketplaceSummary, type V4PluginStoreListing } from "@acode/shared/acode-protocol-v4";
 import {
   sortPluginStoreEntries,
   compareDocumentPluginPriority,
@@ -33,11 +27,11 @@ export { isPublicStoreMarketplaceId };
  * 会把第三方条目的品牌和图标误挂到另一个 marketplace，安全降级为 slug 更可靠。
  */
 export function resolveUniquePluginListingByName(
-  plugins: readonly Pick<ACodeAvailablePluginSummary, "name" | "listing">[],
+  plugins: readonly Pick<V4AvailablePluginSummary, "name" | "listing">[],
   name: string,
-): ACodePluginStoreListing | undefined {
+): V4PluginStoreListing | undefined {
   const normalizedName = name.trim().toLocaleLowerCase();
-  let match: ACodePluginStoreListing | undefined;
+  let match: V4PluginStoreListing | undefined;
   let count = 0;
   for (const plugin of plugins) {
     if (plugin.name.trim().toLocaleLowerCase() !== normalizedName) continue;
@@ -60,14 +54,14 @@ export interface StorePluginItem {
   restorable: boolean;
   /** 已安装但原 marketplace 已移除；仍可运行和管理，但不能更新。 */
   orphaned: boolean;
-  listing?: ACodePluginStoreListing;
-  summary?: ACodeAvailablePluginSummary;
+  listing?: V4PluginStoreListing;
+  summary?: V4AvailablePluginSummary;
   /** 运行时信息（仅已发现的已安装插件有）：启用态、组件、manifest 回退字段。 */
-  info?: ACodePluginInfo;
-  installedMeta?: ACodeInstalledPluginSummary;
+  info?: V4PluginInfo;
+  installedMeta?: V4InstalledPluginSummary;
 }
 
-export type PluginUpdateStatus = NonNullable<ACodeInstalledPluginSummary["updateStatus"]>;
+export type PluginUpdateStatus = NonNullable<V4InstalledPluginSummary["updateStatus"]>;
 
 export function isPluginUpdatePending(
   updateStatus: PluginUpdateStatus | undefined,
@@ -114,7 +108,7 @@ export function resolveItemDescription(item: StorePluginItem, locale: string): s
 
 /** 管理列表与商店复用完整 ID 关联的展示信息，避免英文 manifest 绕过本地化。 */
 export function resolveManagedPluginDisplay(
-  plugin: ACodePluginInfo,
+  plugin: V4PluginInfo,
   item: StorePluginItem | undefined,
   locale: string,
 ): { name: string; description: string | undefined } {
@@ -161,9 +155,9 @@ const OFFICIAL_MARKETPLACE_ORDER: readonly string[] = [ACODE_OFFICIAL_PLUGIN_MAR
  * 同一时间使用本地化名称稳定兜底，避免市场源顺序随持久化数组历史漂移。
  */
 export function sortMarketplaceSources(
-  marketplaces: readonly ACodePluginMarketplaceSummary[],
+  marketplaces: readonly V4PluginMarketplaceSummary[],
   locale: string,
-): ACodePluginMarketplaceSummary[] {
+): V4PluginMarketplaceSummary[] {
   const officialRank = new Map(OFFICIAL_MARKETPLACE_ORDER.map((id, index) => [id, index]));
   return marketplaces.toSorted((left, right) => {
     const leftRank = officialRank.get(left.id);
@@ -189,7 +183,7 @@ export function sortMarketplaceSources(
  */
 export function sortPersonalMarketplaceGroups(
   groups: PersonalMarketplaceGroup[],
-  marketplaces: readonly ACodePluginMarketplaceSummary[],
+  marketplaces: readonly V4PluginMarketplaceSummary[],
   locale: string,
 ): PersonalMarketplaceGroup[] {
   const lastUpdatedById = new Map(
@@ -211,12 +205,12 @@ export function sortPersonalMarketplaceGroups(
  * 条目宇宙 = availablePlugins ∪ restorableBuiltins ∪ 实际发现的插件包（覆盖 inline/孤儿插件）。
  */
 export function buildStoreItems(input: {
-  marketplaces: ACodePluginMarketplaceSummary[];
+  marketplaces: V4PluginMarketplaceSummary[];
   marketplaceAvailabilityKnown: boolean;
-  availablePlugins: ACodeAvailablePluginSummary[];
-  installedPlugins: ACodeInstalledPluginSummary[];
-  plugins: ACodePluginInfo[];
-  restorableBuiltins: ACodeAvailablePluginSummary[];
+  availablePlugins: V4AvailablePluginSummary[];
+  installedPlugins: V4InstalledPluginSummary[];
+  plugins: V4PluginInfo[];
+  restorableBuiltins: V4AvailablePluginSummary[];
 }): StorePluginItem[] {
   const infoById = new Map(input.plugins.map((plugin) => [plugin.id, plugin]));
   const metaById = new Map(input.installedPlugins.map((item) => [item.id, item]));
@@ -298,7 +292,7 @@ export function buildStoreItems(input: {
 /** 公开分段：Featured（CDN featured 名单按序）+ 分类聚合（无分类归 other，排最后）。 */
 export function selectFeaturedItems(
   publicItems: StorePluginItem[],
-  marketplaces: ACodePluginMarketplaceSummary[],
+  marketplaces: V4PluginMarketplaceSummary[],
 ): StorePluginItem[] {
   const byName = new Map<string, StorePluginItem>();
   for (const item of publicItems) {

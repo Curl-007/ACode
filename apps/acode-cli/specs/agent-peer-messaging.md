@@ -1,6 +1,6 @@
 # Agent 间点对点通信 P0：进程内同父兄弟（编排方案 Phase 3 / ④-P0）
 
-来源：[`docs/codex-orchestration-integration-plan.md`](../../../docs/codex-orchestration-integration-plan.md)
+来源：[`docs/archive/codex-orchestration-integration-plan.md`](../../../docs/archive/codex-orchestration-integration-plan.md)
 §4 Phase 3 与 §5 peer-1..peer-5 行。2026-10-10 对照审计核实：呈现层文案已超前于能力
 （`incoming-message.ts` 的 PEER_PERMISSION_GUIDANCE / PEER_REPLY_GUIDANCE /
 subagent_reply(_steer) presentation 原样在场）、半成品持久 mailbox 仍无写入方、

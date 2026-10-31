@@ -14,6 +14,7 @@ import type {
   ACodeProvider,
   ACodeSlashCommand,
 } from "@acode/shared";
+import { submissionModeSchema } from "@acode/shared/acode-protocol-v4";
 import type { SessionConfigState } from "@acode/shared/acode-protocol-v4";
 import type { IModelSelectionService } from "@acode/services";
 import { completeNewModelSelection } from "@acode/provider";
@@ -21,12 +22,12 @@ import {
   useModelSelectionServiceView,
   type ModelSelectionRead,
 } from "@/hooks/useModelSelectionView.js";
-import { submissionModeSchema } from "@acode/shared/acode-protocol-v4";
+
 import { prepareWorkspaceWithACodeSessionService } from "@/hooks/useWorkspacePrepare.js";
 import { useACodeSessionService } from "@/hooks/useACodeSessionService.js";
 import { useSettings } from "@/hooks/useSettingService.js";
 import { useServices } from "@/hooks/useServices.js";
-import { parseModelPickerValue } from "@/lib/acodeSessionProjection.js";
+import { parseModelPickerValue } from "@/lib/modelPickerValue.js";
 import {
   initializeNewTaskDraft,
   refreshUneditedNewTaskDefaults,

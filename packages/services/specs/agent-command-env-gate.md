@@ -64,7 +64,7 @@
 
 ### R4 门禁覆盖 ACODE_CUA_DEV_ROOT（2026-09-30 深度扫描分诊补充）
 
-来源：[`docs/security-scan-triage-2026-09-29.md`](../../../docs/security-scan-triage-2026-09-29.md)
+来源：[`docs/archive/security-scan-triage-2026-09-29.md`](../../../docs/archive/security-scan-triage-2026-09-29.md)
 §3 残留观察项 #2。`windowsCuaDevRuntime.ts` 的 `resolveWindowsCuaRuntime` 以
 `ACODE_CUA_DEV_ROOT` env 为最高优先级选择 dev 运行时根目录，且 helper host 会 fork
 该目录下的 JS（`windowsCuaDevHelperHost.ts`）——与 R1 的 `ACODE_AGENT_SERVER_COMMAND`

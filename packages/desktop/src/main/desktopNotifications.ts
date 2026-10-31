@@ -80,46 +80,59 @@ function focusTaskNotificationWindow(senderWindow: BrowserWindow) {
   senderWindow.focus();
 }
 
-export function dispatchTaskNotification(options: {
-  event: IpcMainEvent | IpcMainInvokeEvent;
-  payload: unknown;
+/**
+ * 呈现结果：区分「已弹出」与各种「未弹出原因」，让上层按原因决定幂等语义。
+ * overnight 完成通知据此把「平台不支持」与「焦点抑制/去重/缺文案」区别对待
+ * （前者不消费 runId 幂等槽，允许平台恢复后重试；后者视为已处置，不再重发）。
+ */
+export type TaskNotificationPresentOutcome =
+  | "presented"
+  | "unsupported"
+  | "window_focused"
+  | "missing_copy"
+  | "duplicate";
+
+/**
+ * 任务通知的共享呈现核：能力闸 → 焦点闸 → 文案守卫 → 去重 → 弹出 + retain + 点击路由 + 声音。
+ * IPC 路径（dispatchTaskNotification）与 Main 侧 seam（overnightCompletionNotify）共用此核，
+ * 避免复制焦点/去重/防 GC/点击路由这些原语而产生第二条写入路径（AGENTS.md「避免重复状态」）。
+ * 文案纪律不变：Main 无 renderer i18n 上下文，缺失本地化文案直接拒绝展示，不兜底硬编码。
+ */
+export function presentTaskNotification(options: {
+  senderWindow: BrowserWindow | null;
+  payload: TaskNotificationPayload;
   logger: { info: (...args: unknown[]) => void; warn: (...args: unknown[]) => void };
-}): boolean {
-  const result = taskNotificationPayloadSchema.safeParse(options.payload);
-  if (!result.success) {
-    options.logger.warn("[show-task-notification] invalid payload:", formatZodError(result.error));
-    return false;
-  }
+}): TaskNotificationPresentOutcome {
+  const { senderWindow, logger } = options;
 
   if (!Notification.isSupported()) {
-    options.logger.warn("[show-task-notification] notification is not supported on this platform");
-    return false;
+    logger.warn("[show-task-notification] notification is not supported on this platform");
+    return "unsupported";
   }
 
   if (isAnyAppWindowFocused()) {
-    return false;
+    return "window_focused";
   }
 
-  const { taskId, status, requestId, title, body } = result.data;
+  const { taskId, status, requestId, title, body } = options.payload;
   const notificationTitle = title.trim();
   const notificationBody = body.trim();
   if (!notificationTitle || !notificationBody) {
     // main process 没有 renderer 当前语言上下文，不能在这里兜底生成中文通知文案。
-    // 通知文案必须由 renderer 侧按 i18n 生成后传入；缺失时直接拒绝展示，避免英文界面弹出中文硬编码。
-    options.logger.warn("[show-task-notification] missing localized notification copy", {
+    // 通知文案必须由调用方按 locale 生成后传入；缺失时直接拒绝展示，避免英文界面弹出中文硬编码。
+    logger.warn("[show-task-notification] missing localized notification copy", {
       taskId,
       status,
       hasTitle: Boolean(notificationTitle),
       hasBody: Boolean(notificationBody),
     });
-    return false;
+    return "missing_copy";
   }
 
   if (shouldSuppressDuplicateTaskNotification(taskId, status, requestId)) {
-    return false;
+    return "duplicate";
   }
 
-  const senderWindow = BrowserWindow.fromWebContents(options.event.sender);
   const notification = new Notification({
     title: notificationTitle,
     body: notificationBody,
@@ -135,7 +148,7 @@ export function dispatchTaskNotification(options: {
     releaseTaskNotification(notification);
 
     if (!senderWindow || senderWindow.isDestroyed()) {
-      options.logger.warn("[show-task-notification] click ignored: sender window is gone", {
+      logger.warn("[show-task-notification] click ignored: sender window is gone", {
         taskId,
       });
       return;
@@ -143,7 +156,7 @@ export function dispatchTaskNotification(options: {
 
     focusTaskNotificationWindow(senderWindow);
     senderWindow.webContents.send(PlatformChannels.TaskNotificationClick, taskId);
-    options.logger.info("[show-task-notification] notification click handled", {
+    logger.info("[show-task-notification] notification click handled", {
       taskId,
       windowId: senderWindow.id,
     });
@@ -153,6 +166,24 @@ export function dispatchTaskNotification(options: {
   });
 
   notification.show();
-  options.event.sender.send(PlatformChannels.TaskNotificationSound);
-  return true;
+  senderWindow?.webContents.send(PlatformChannels.TaskNotificationSound);
+  return "presented";
+}
+
+export function dispatchTaskNotification(options: {
+  event: IpcMainEvent | IpcMainInvokeEvent;
+  payload: unknown;
+  logger: { info: (...args: unknown[]) => void; warn: (...args: unknown[]) => void };
+}): boolean {
+  const result = taskNotificationPayloadSchema.safeParse(options.payload);
+  if (!result.success) {
+    options.logger.warn("[show-task-notification] invalid payload:", formatZodError(result.error));
+    return false;
+  }
+
+  const senderWindow = BrowserWindow.fromWebContents(options.event.sender);
+  return (
+    presentTaskNotification({ senderWindow, payload: result.data, logger: options.logger }) ===
+    "presented"
+  );
 }

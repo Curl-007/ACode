@@ -4,7 +4,7 @@ import {
   type ACodeStreamEvent,
   type ACodeTaskMeta,
 } from "@acode/shared";
-import { buildPerTurnChangeSummaries } from "../session/taskChangeSummary.js";
+import { buildPerTurnChangeSummaries } from "../session/contract.js";
 
 const MS_IN_SECOND = 1_000;
 const MS_IN_MINUTE = 60 * MS_IN_SECOND;

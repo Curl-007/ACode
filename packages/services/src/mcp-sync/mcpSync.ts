@@ -1,17 +1,5 @@
-import type {
-  LoadCliMcpFromUserDirectoryRequest,
-  LoadCliMcpFromUserDirectoryResult,
-  McpSyncCandidateListResult,
-  McpSyncExportResult,
-  McpSyncExportedServer,
-  McpSyncImportResult,
-  McpSyncRemoteStatusResult,
-  RemoteSyncWriteAccessResult,
-  SaveCliMcpToUserDirectoryRequest,
-  ACodeAgentMcpServer,
-  ACodeMcpListMode,
-  ACodeMcpListResult,
-} from "@acode/shared";
+import type { LoadCliMcpFromUserDirectoryRequest, LoadCliMcpFromUserDirectoryResult, McpSyncCandidateListResult, McpSyncExportResult, McpSyncExportedServer, McpSyncImportResult, McpSyncRemoteStatusResult, RemoteSyncWriteAccessResult, SaveCliMcpToUserDirectoryRequest, ACodeAgentMcpServer } from "@acode/shared";
+import { type V4McpListMode, type V4McpListResult } from "@acode/shared/acode-protocol-v4";
 import { ServiceChannels } from "@acode/shared";
 import { createServiceDescriptor } from "../descriptors.js";
 
@@ -28,8 +16,8 @@ export interface IMcpSyncService {
     workspacePath: string;
     workspaceIdentity?: string;
     mcpServers?: ACodeAgentMcpServer[];
-    mode?: ACodeMcpListMode;
-  }): Promise<ACodeMcpListResult>;
+    mode?: V4McpListMode;
+  }): Promise<V4McpListResult>;
   saveMcpToUserDirectory(payload: SaveCliMcpToUserDirectoryRequest): Promise<void>;
   listLocalUserMcpCandidates(): Promise<McpSyncCandidateListResult>;
   listRemoteUserMcpStatuses(params: { names: string[] }): Promise<McpSyncRemoteStatusResult>;

@@ -5,7 +5,7 @@
 // 已存储模型 API Key 的用户可见性（安全加固 handoff §5.5「小眼睛按需 reveal」）的
 // 源码契约钉桩：眼睛在 storedInVault 下不再 disabled、reveal 走 credentialService.load、
 // 隐藏/provider 切换/卸载即清明文、展示值与草稿值分离、明文绝不进日志。
-// 依据：docs/security-hardening-handoff.md §5.4/§5.5；ui 测试无 jsdom 先例
+// 依据：docs/archive/security-hardening-handoff.md §5.4/§5.5；ui 测试无 jsdom 先例
 // （appearancePreferences.test.ts 头注），组件不真渲染，按源码文本层断言。
 
 import assert from "node:assert/strict";

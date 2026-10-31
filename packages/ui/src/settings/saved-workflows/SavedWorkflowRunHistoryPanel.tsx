@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Ban, ChevronRight, CircleCheck, Loader2, TriangleAlert } from "lucide-react";
-import { TID_WORKFLOW_RUN_ROW, testId, type ACodeSavedWorkflowRun } from "@acode/shared";
+import { TID_WORKFLOW_RUN_ROW, testId } from "@acode/shared";
+import { type V4SavedWorkflowRun } from "@acode/shared/acode-protocol-v4";
 import { Button } from "@/components/ui/button.js";
 import { cn } from "@/components/lib/utils.js";
 import { useACodeIntl } from "@/i18n/IntlProvider.js";
@@ -31,17 +32,17 @@ export function SavedWorkflowRunHistory({
   onOpenArtifact,
   resolveRunProject,
 }: {
-  runs: readonly ACodeSavedWorkflowRun[];
+  runs: readonly V4SavedWorkflowRun[];
   now: number;
   canOpenRun: boolean;
-  onOpenRun: (run: ACodeSavedWorkflowRun) => void;
+  onOpenRun: (run: V4SavedWorkflowRun) => void;
   /**
    * 产物 chip → `workflow-artifact` tab。
    * 缺席即 chips 只读。门比「查看实例」松一格：产物不需要 `toolCallId`。
    */
-  onOpenArtifact?: (run: ACodeSavedWorkflowRun, artifactId: string) => void;
+  onOpenArtifact?: (run: V4SavedWorkflowRun, artifactId: string) => void;
   /** 传入即在每行渲染项目列（全局工作流跨项目历史）；「查看实例」还要该行 canOpen。 */
-  resolveRunProject?: (run: ACodeSavedWorkflowRun) => SavedWorkflowRunProject | null;
+  resolveRunProject?: (run: V4SavedWorkflowRun) => SavedWorkflowRunProject | null;
 }) {
   const { intl } = useACodeIntl();
   if (runs.length === 0) {

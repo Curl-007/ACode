@@ -9,108 +9,8 @@ import {
   emitNetworkTelemetryObservation,
   type NetworkObservation,
 } from "@acode/rpc";
-import {
-  coalesceConsecutiveACodeAssistants,
-  createSessionTraceId,
-  decodeCustomModelValue,
-  deriveACodeTaskStatusFromSessionSnapshot,
-  extractPlanStepsFromToolInput,
-  extractPlanStepsFromToolOutput,
-  generateTraceId,
-  getACodeGoalActiveIterationCount,
-  getACodeGoalIterationByAssistantMessageId,
-  getACodeUserVisibleMessages,
-  isMainAgentToolProjectionSource,
-  normalizeACodeApiRetryStatus,
-  attachACodeBackgroundTaskNotificationToRaw,
-  collectACodeBackgroundTaskNotificationsByToolUseId,
-  mergeACodeBackgroundTaskControlItems,
-  parseACodeBackgroundTaskControlItems,
-  parseACodeBackgroundTaskNotificationText,
-  parseModelPickerValue as parseSharedModelSelection,
-  resolveWorkspaceKey,
-  resolveACodeVisibleSessionTitle,
-  textFromACodeMessageParts,
-  ACODE_AGENT_PROVIDER,
-  acodeBackgroundTaskNotificationToolUpdateStatus,
-  appendACodeStreamingToolInputDelta,
-  buildACodeStreamingToolInputPreview,
-  createACodeToolProjectionMemory,
-  finalizeACodeToolProjectionInput,
-  forgetACodeToolProjectionMetadata,
-  isACodeModelRetryRecoveryProgressPayload,
-  markACodeStreamingToolInputPreviewMaterialized,
-  resolveACodeToolProjectionMetadata,
-  acodeApiRetryFromModelNetworkStatusPayload,
-  acodeApiRetryFromStreamRecoveryPayload,
-  acodeTaskNetworkDebugStatusFromPayload,
-  shouldMaterializeACodeStreamingToolInputPreview,
-  type ACodeApiRetrySlotValue,
-  type ACodeAssistantMessageFeedback,
-  type ACodeBackgroundTaskNotificationInfo,
-  type ACodeBackgroundTaskControlItem,
-  type ACodeBackgroundTurnAttribution,
-  type ACodeAutomationBotDeliveryTarget,
-  type ACodeCancelTaskCommandResult,
-  type ACodeConfigOption,
-  type ACodeEnqueueTaskCommandResult,
-  type ACodeError,
-  type ACodeGoalVerificationTimelineMeta,
-  type ACodeImportSessionsResult,
-  type ACodeImportableSessionCandidate,
-  type ACodeUsage,
-  type ACodePersistedMessage,
-  type ACodePersistedMessagePart,
-  type ACodePersistedToolCall,
-  type ACodePromptAttachment,
-  type ACodeProvider,
-  type ACodeSessionFile,
-  type ACodeTaskGoal,
-  type ACodeTaskGoalStats,
-  type ACodeTaskMode,
-  type ACodePlanStep,
-  type ACodeSlashCommand,
-  type ACodeStreamEvent,
-  type ACodeTaskCreateResult,
-  type ACodeTaskMeta,
-  type ACodeTaskClientMode,
-  type ACodeTaskRuntimeCommand,
-  type ACodeTaskSnapshot,
-  type ACodeTaskSnapshotBody,
-  type ACodeTaskSnapshotRefContent,
-  type ACodeTaskSnapshotToolCallsSlice,
-  type ACodeTaskTokenUsageResult,
-  type ACodeTodoGroup,
-  type ACodeTurnSteerCommandKind,
-  type ACodeTurnSteerSource,
-  type ACodeWorkspaceEvent,
-  type ACodeWorkspaceTaskListChanged,
-  type InputId,
-  type TraceId,
-  acodeContextUsageBreakdownSchema,
-  acodeSessionSettingsStateSchema,
-  type ACodeDeliveryKind,
-  type ACodeMessagePart,
-  type ACodeMessageWithParts,
-  type ModelSelection,
-  type ACodePermissionOption,
-  type ACodePermissionRequestParams,
-  type ACodePermissionRequest,
-  type ACodeRiskLevel,
-  type ACodeSessionEvent,
-  type ACodeSessionMode,
-  type ACodeSessionSettingsState,
-  type ACodeSessionStateSnapshot,
-  type ACodeStateUpdatedNotification,
-  type ACodeContextCompactionTimelineMeta,
-  type ACodeTimelineMeta,
-  type ACodeTimelineStatus,
-  type ACodeTimelineTrigger,
-  type ACodeToolProjectionMemory,
-  type ACodeUserInputRequestParams,
-  type ACodeUserInputResponse,
-  type ACodeAgentMcpServer,
-} from "@acode/shared";
+import { coalesceConsecutiveACodeAssistants, createSessionTraceId, decodeCustomModelValue, deriveACodeTaskStatusFromSessionSnapshot, extractPlanStepsFromToolInput, extractPlanStepsFromToolOutput, generateTraceId, getACodeGoalActiveIterationCount, getACodeGoalIterationByAssistantMessageId, getACodeUserVisibleMessages, isMainAgentToolProjectionSource, normalizeACodeApiRetryStatus, attachACodeBackgroundTaskNotificationToRaw, collectACodeBackgroundTaskNotificationsByToolUseId, mergeACodeBackgroundTaskControlItems, parseACodeBackgroundTaskControlItems, parseACodeBackgroundTaskNotificationText, parseModelPickerValue as parseSharedModelSelection, resolveWorkspaceKey, resolveACodeVisibleSessionTitle, textFromACodeMessageParts, ACODE_AGENT_PROVIDER, acodeBackgroundTaskNotificationToolUpdateStatus, appendACodeStreamingToolInputDelta, buildACodeStreamingToolInputPreview, createACodeToolProjectionMemory, finalizeACodeToolProjectionInput, forgetACodeToolProjectionMetadata, isACodeModelRetryRecoveryProgressPayload, markACodeStreamingToolInputPreviewMaterialized, resolveACodeToolProjectionMetadata, acodeApiRetryFromModelNetworkStatusPayload, acodeApiRetryFromStreamRecoveryPayload, acodeTaskNetworkDebugStatusFromPayload, shouldMaterializeACodeStreamingToolInputPreview, type ACodeApiRetrySlotValue, type ACodeAssistantMessageFeedback, type ACodeBackgroundTaskNotificationInfo, type ACodeBackgroundTaskControlItem, type ACodeBackgroundTurnAttribution, type ACodeAutomationBotDeliveryTarget, type ACodeCancelTaskCommandResult, type ACodeConfigOption, type ACodeEnqueueTaskCommandResult, type ACodeError, type ACodeGoalVerificationTimelineMeta, type ACodeImportSessionsResult, type ACodeImportableSessionCandidate, type ACodeUsage, type ACodePersistedMessage, type ACodePersistedMessagePart, type ACodePersistedToolCall, type ACodePromptAttachment, type ACodeProvider, type ACodeSessionFile, type ACodeTaskGoal, type ACodeTaskGoalStats, type ACodeTaskMode, type ACodePlanStep, type ACodeSlashCommand, type ACodeStreamEvent, type ACodeTaskCreateResult, type ACodeTaskMeta, type ACodeTaskClientMode, type ACodeTaskRuntimeCommand, type ACodeTaskSnapshot, type ACodeTaskSnapshotBody, type ACodeTaskSnapshotRefContent, type ACodeTaskSnapshotToolCallsSlice, type ACodeTaskTokenUsageResult, type ACodeTodoGroup, type ACodeTurnSteerCommandKind, type ACodeTurnSteerSource, type ACodeWorkspaceEvent, type ACodeWorkspaceTaskListChanged, type InputId, type TraceId, acodeContextUsageBreakdownSchema, acodeSessionSettingsStateSchema, type ACodeDeliveryKind, type ACodeMessagePart, type ACodeMessageWithParts, type ModelSelection, type ACodePermissionOption, type ACodePermissionRequest, type ACodeRiskLevel, type ACodeSessionEvent, type ACodeSessionMode, type ACodeSessionSettingsState, type ACodeSessionStateSnapshot, type ACodeStateUpdatedNotification, type ACodeContextCompactionTimelineMeta, type ACodeTimelineMeta, type ACodeTimelineStatus, type ACodeTimelineTrigger, type ACodeToolProjectionMemory, type ACodeAgentMcpServer } from "@acode/shared";
+import { type V4InteractionRequestPermissionParams, type V4InteractionRequestUserInputParams, type V4UserInputResponse, errorAttributionSchema, type CommandPayloadMap } from "@acode/shared/acode-protocol-v4";
 import type {
   ACodeTaskListQuery,
   ACodeTaskListResult,
@@ -119,7 +19,7 @@ import type {
   ACodeArchivedTaskDeletionResult,
   ACodeTaskReadyOutcome,
   ACodeTaskTerminalOutcome,
-} from "../session/acodeTaskService.js";
+} from "../session/contract.js";
 import { createServiceLogger } from "#src/logger/serviceLogger.js";
 import {
   AUTOMATION_MUTATION_TOOL_NAMES,
@@ -129,7 +29,10 @@ import type { ISettingService } from "#src/setting/setting.js";
 import type {
   SessionMessageDeliveryResult,
   SessionMessageSendRequested,
-} from "#src/session/sessionMailbox.js";
+} from "#src/session/contract.js";
+// TaskIndexRepo 构造边 + claude-native/external-import 会话导入机器件：均为写入/装配面，
+// 刻意不走消费契约（见 task-index-writers 守护 specs/task-index-write-ownership.md）。
+// 本文件是守护白名单登记的写入方；这些边由 internalEdgeAllowlist 显式登记。
 import { TaskIndexRepo } from "#src/session/taskIndexRepo.js";
 import type {
   IACodeAgentService,
@@ -142,7 +45,7 @@ import type {
   ACodeTaskIndexTerminalEvent,
 } from "./acodeTaskIndexSyncer.js";
 import { readModelTrajectory } from "./modelTrajectory.js";
-import { errorAttributionSchema, type CommandPayloadMap } from "@acode/shared/acode-protocol-v4";
+
 import {
   assertV4CommandAckOk,
   createHostCommandEnvelope,
@@ -1194,23 +1097,13 @@ export function createACodeTaskServiceAdapter(
 
   /**
    * session/setMode → v4 switchCollaborationMode。
-   * auto 例外保真：v4 命令值域刻意排除 auto（「auto 非用户可切，不进 UI 命令面」，
-   * command.ts 裁决），而旧协议 ACodeSessionMode 含 auto 且旧 op 接受它——为 UI 行为
-   * 零变化，auto 继续走旧 op，其余值一律 v4 原生。过渡归宿 = auto 语义在 v4 侧裁决后收口。
+   * auto 已收口（M2-1 裁决 2026-10-28，默认裁决产品可推翻）：v4 命令值域补回 auto，
+   * 不再例外走旧 op——六值（含 auto）一律 v4 原生。
    */
   async function switchCollaborationModeViaProtocol(
     target: TaskTarget,
     mode: ACodeSessionMode,
   ): Promise<void> {
-    if (mode === "auto") {
-      await options.acodeAgentService.setMode({
-        workspacePath: target.workspacePath,
-        workspaceIdentity: target.workspaceIdentity,
-        sessionId: target.taskId,
-        mode,
-      });
-      return;
-    }
     await sendConfigCasCommandV4(
       target,
       "switchCollaborationMode",
@@ -2879,6 +2772,7 @@ export function createACodeTaskServiceAdapter(
       // 这里按 sessionId 还原该 task 的模型调用轨迹，供 UI 侧边栏可视化。
       const trajectory = await readModelTrajectory(params.taskId, params.limit);
       logger.info(
+        undefined,
         `[ACodeTaskService] getModelTrajectory taskId=${params.taskId} records=${trajectory.records.length} files=${trajectory.sourceFiles.length} truncated=${trajectory.truncated}`,
       );
       return trajectory;
@@ -4945,7 +4839,7 @@ function agentTextFromContentField(value: unknown): string | undefined {
 
 function permissionRequestToStreamEvent(
   taskId: string,
-  request: ACodePermissionRequestParams,
+  request: V4InteractionRequestPermissionParams,
 ): ACodePermissionRequest {
   return {
     type: "permission_request",
@@ -4985,7 +4879,7 @@ function pendingPermissionToStreamEvent(
 
 function userInputRequestToElicitationStreamEvent(
   taskId: string,
-  request: ACodeUserInputRequestParams,
+  request: V4InteractionRequestUserInputParams,
 ): ACodeStreamEvent {
   const questions =
     request.questions?.map((question) => ({
@@ -5028,7 +4922,7 @@ function userInputRequestToElicitationStreamEvent(
 function userInputResponseToElicitationStreamEvent(
   taskId: string,
   requestId: string,
-  response: ACodeUserInputResponse,
+  response: V4UserInputResponse,
 ): Extract<ACodeStreamEvent, { type: "elicitation_response" }> {
   return {
     type: "elicitation_response",

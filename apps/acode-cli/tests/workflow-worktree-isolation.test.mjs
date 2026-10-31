@@ -422,11 +422,13 @@ test("(场景6) prune：git 登记外的老龄残骸被清；登记内与新鲜�
   await manager.releaseWorktree(live);
 });
 
-// ── 场景 7：runtime 接线源码不变量 ─────────────────────────────────
+// ── 场景 7：runtime 接线源码不变量（W1-R3 拆分后居 script-workflow-run-agent.ts）──
 
 test("(场景7) runtime 接线：桩已移除，ensure/release/注入/信封登记全部在场", () => {
+  // agent 执行体随 W1-R3 max-lines 拆分迁到 script-workflow-run-agent.ts；
+  // worktree 生命周期（ensure/release/注入/信封登记）逐字住在那里。
   const source = readFileSync(
-    new URL("../packages/cli-workflow/src/script-workflow-runtime.ts", import.meta.url),
+    new URL("../packages/cli-workflow/src/script-workflow-run-agent.ts", import.meta.url),
     "utf-8",
   );
   assert.ok(!source.includes("not implemented yet"), "not-implemented 桩必须移除");

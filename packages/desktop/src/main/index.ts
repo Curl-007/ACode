@@ -161,6 +161,7 @@ import { maybeWarnArchitectureMismatch } from "./desktopArchitectureGuard.js";
 import { maybeBlockStartupForForceUpdate } from "./forceUpdateGuard.js";
 import { createWindowsDesktopTray, updateWindowsDesktopTrayMenu } from "./desktopTray.js";
 import { createWindowsCuaOperationIndicator } from "./windowsCuaOperationIndicator.js";
+import { createOvernightCompletionNotifier } from "./overnightCompletionNotify.js";
 import {
   configureDockMenu,
   createWindow,
@@ -722,6 +723,21 @@ const hostRunningTaskCountMap =
   keepAwakeClaimSources.createHostRunningTaskCountMap<ElectronUtilityProcess>();
 const windowsCuaOperationIndicator = createWindowsCuaOperationIndicator({
   platform: process.platform,
+  getLocale: () => currentApplicationLocale,
+  logger,
+});
+
+// Overnight（K3）完成通知的 Main 侧出口（specs/overnight-completion-notify.md）。
+// 单例：runId 幂等集必须跨窗口/跨 host 全局共享——一个 run 至多一条通知，即使 host 重投或
+// 多窗口在场也不重复打扰（幂等裁决的唯一所有者就在这个 notifier 内，Main 别处不持有第二份）。
+// resolveTargetWindow 的目标窗口由 host→main 派发点按「发送方 host 所属窗口」直接给出
+// （desktopHostProcess 的 child.on("message") 闭包内即在作用域），Main 无需再按 child 反查、
+// 也不落任何 child→window 映射状态。下方 pending 变量是同步传参桥：notify() 全程同步执行
+// （presentTaskNotification 内无 await），set→notify→clear 落在同一调用帧，事件循环单线程下
+// 不可能被另一条 host 消息插入，故非竞态；它只在该帧内短暂持有窗口引用，不累积任何任务状态。
+let pendingOvernightNotifyTargetWindow: BrowserWindow | null = null;
+const overnightCompletionNotifier = createOvernightCompletionNotifier({
+  resolveTargetWindow: () => pendingOvernightNotifyTargetWindow,
   getLocale: () => currentApplicationLocale,
   logger,
 });
@@ -1790,6 +1806,16 @@ function createWindowInstance(startupBootstrap: StartupWindowBootstrap = {}) {
             windowsCuaOperationIndicator.handleState(source, event),
           onCuaOperationStateSourceExited: (source) =>
             windowsCuaOperationIndicator.clearSource(source),
+          // Overnight（K3）完成信号（specs/overnight-completion-notify.md §7）：派发点已把发送方
+          // host 所属窗口作为 targetWindow 交来，这里只经同步桥传给单例 notifier 裁决弹出/点击。
+          onOvernightCompletionNotify: (targetWindow, signal) => {
+            pendingOvernightNotifyTargetWindow = targetWindow;
+            try {
+              overnightCompletionNotifier.notify(signal);
+            } finally {
+              pendingOvernightNotifyTargetWindow = null;
+            }
+          },
           onCronRunResult: forwardCronRunResult,
           onOffPeakRunResult: forwardOffPeakRunResult,
           onCronSchedulerWakeRequested: wakeCronScheduler,

@@ -1319,8 +1319,9 @@ producer 内完成、不得要求模型计算，2026-08-18-frame-pixel-zoom-regr
 
 **多显示器/DPI 边界（如实登记）**：
 
-- bounds/坐标恒为虚拟桌面物理像素；Helper 进程在 addon Init 设 Per-Monitor-V2 DPI
-  awareness（`SetProcessDpiAwarenessContext`；地板 17763 > 1703 保证 API 存在）——失败 →
+- bounds/坐标恒为虚拟桌面物理像素；Helper 进程在 addon Init 尝试进程级 Per-Monitor-V2
+  （`SetProcessDpiAwarenessContext`；地板 17763 > 1703 保证 API 存在），**门禁事实源 =
+  坐标触点 worker 的线程级 PMv2 复核**（R 裁决，见本节末）——复核失败 →
   `environmentProbe.dpiAware=false` → 输入/捕获 preflight 拒绝（§10.9），**绝不带病派发**
   （DPI 虚拟化会让 WGC bounds、UIA 矩形与 SendInput 归一化坐标三者失配）。
 - 显示拓扑变化（增删显示器/改分辨率）→ frame 注册表**拓扑世代** +1，旧世代 frame 一律
@@ -1330,7 +1331,49 @@ producer 内完成、不得要求模型计算，2026-08-18-frame-pixel-zoom-regr
 - 副屏负坐标：全链一致虚拟桌面空间（capture bounds、frame 登记、坐标投影、SendInput
   `MOUSEEVENTF_VIRTUALDESK` 归一化），上游机制同向（:268）。
 
-**落盘**：无（§1.3 不变量；image_ref 延后，oQ9）。
+**R 裁决（2026-10-31 缺陷修复登记；契约不变量逐字保留：DPI 虚拟化不带病捕获）**：
+
+- **缺陷实证（对照实验，本机复测登记）**：`environmentProbe().dpiAware` 在 plain node
+  下 `true`、在 electron fork（`ELECTRON_RUN_AS_NODE=1 node_modules/electron/dist/electron.exe`，
+  Electron 41.10.7 = desktop pin，产品/dev 链 Helper 的唯一形态）下 `false`；
+  `interactiveDesktop`/`sessionZero` 两探针双运行时均正常。机制：electron.exe manifest
+  预设了**非 PMv2** 的 DPI 意识 → 进程级 `SetProcessDpiAwarenessContext` 被拒（意识已
+  初始化，ERROR_ACCESS_DENIED），旧回退以 `GetThreadDpiAwarenessContext()==PMv2` 查询
+  兜底——manifest 预设值非 PMv2 → 恒判 false → §10.9 preflight 与捕获面恒
+  fail-closed，产品链 CUA 全工具不可用（wire 文案 `permission_denied`/non-interactive
+  desktop 误导为锁屏语义，实为 DPI 门）。
+- **裁决**：门禁事实源从「进程级 Set 结果」改为「触点线程级复核」——新增共用原生辅助
+  `EnsureThreadDpiPerMonitorV2()`（environment.cc）= `SetThreadDpiAwarenessContext(PMv2)`
+  + `GetThreadDpiAwarenessContext`/`AreDpiAwarenessContextsEqual(PMv2)` 复核，失败返回
+  false。线程级 override 是 manifest 预设意识场景的文档化通道（进程级 Set 被拒后的
+  合法替代）；「坐标触点运行时必须是真 PMv2」的契约语义不变。所有坐标/栅格触点
+  worker 的 Execute 前奏调用该辅助，失败 → 既有 fail-closed（native
+  `non_interactive_desktop` → wire `permission_denied`/nonInteractiveDesktop，各 worker
+  现状码不变）；UIA COM 在专属 MTA 线程执行（§11.1），坐标任务体（树采集/窗口枚举/
+  clickable point）在任务体前奏同律复核。
+- **触点清单（修复批次 grep 核定，不遗漏不扩大）**：capture.cc CaptureDisplayWorker /
+  CaptureWindowWorker；uia_tree.cc CaptureUiTreeWorker / ListApplicationsWorker /
+  ListWindowsWorker（§10.9 统一 preflight 门同律替换）；uia_patterns.cc
+  ElementClickablePointWorker；pointer.cc MoveToWorker / ScrollAtWorker / DragWorker；
+  foreground.cc CursorPositionWorker；MTA 任务体三处（captureUiTree / listWindows /
+  elementClickablePoint 的任务体前奏）。**非触点不动**：mouseDown/mouseUp、sendText/
+  pressKeys、clipboardWriteText、UIA 变更类 pattern（set_value/select_text/
+  perform_action/invoke/scroll）——不经屏幕坐标的消费或产出。
+- **地板核对**：`SetThreadDpiAwarenessContext`/`GetThreadDpiAwarenessContext` 为
+  `SetProcessDpiAwarenessContext` 同族 API，需 Win10 1607（14393）；既有地板
+  17763 > 14393 覆盖，§12.3 单一地板裁决不变，无需补注上调。
+- **`environmentProbe.dpiAware` 语义精确化**：= 探针 worker 的线程级复核结果（每次
+  probe 实测，不缓存——与锁屏/解锁的动态性同律）。进程级 `SetProcessDpiAwarenessContext`
+  尝试保留（plain node 形态的最优默认：成功后全部线程缺省 PMv2，线程复核恒快路径
+  通过）；旧 `g_dpiAware` 全局删除（门禁改线程复核后无消费者——避免重复状态与双
+  写入路径），「查询确认已达标」的比较语义由线程复核辅助承载。
+- **修复后复测值（本机实测回填，2026-10-31）**：plain node 与 electron fork 的
+  `environmentProbe()` 全字段一致（`{interactiveDesktop:true, sessionZero:false,
+  dpiAware:true}`）；electron fork 下触点面实测全通（captureDisplay 实捕 1920×1080 →
+  阶梯 PNG、listWindows、captureUiTree 元素 bounds、elementClickablePoint 坐标、
+  cursorPosition、moveTo 死 pid 负控制恒 `foreground_lost`）；
+  `node --import tsx cua-producer/scripts/smoke-real.mjs --capture --uia --host`
+  三层级全 pass；`pnpm --filter acode-cli test`（native 双守卫真实执行）全绿。
 
 ### 10.8 watchdog 自适应收紧（oQ6 裁决落地）
 
@@ -2423,6 +2466,10 @@ Windows 本机拆分提交。
    以 `GetThreadDpiAwarenessContext + AreDpiAwarenessContextsEqual(PMv2)` 查询兜底判定
    达标（裸 node 是 unaware → Set 成功分支）。§10.7「addon Init 设 PMv2」的语义精确化为
    「设置成功 **或** 查询确认已达标」，两分支 dpiAware=true；其余形态 false → preflight 拒绝。
+   **（2026-10-31 R 裁决修订**：本条「manifest 已声明 PMv2」的前提经对照实验实证**不
+   成立**——electron.exe manifest 预设的是**非 PMv2** 意识，查询兜底在该宿主形态下恒判
+   false，产品链恒 fail-closed；门禁事实源改为触点线程级复核，`g_dpiAware` 全局删除，
+   见 §10.7 末 R 裁决节。本条原文保留作历史登记。**）**
 6. **stop 与取消旗的竞态收口（§10.6 实现细化）**：native 取消旗在每个派发类 worker 的
    Execute 入口清零（「stop 非会话闩锁」的结构化落点）；因此 JS 侧 stop 编排必须**先
    阻断 admission 出队、再 cancelOperations**——否则 ② settle 后 admission 立即出队下一项，

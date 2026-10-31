@@ -102,13 +102,46 @@
 3. `resolveSubagentResumeModeOverride`：非 plan childMode 原样透出（resume 后跟随父当前
    yolo）；`"plan"` 返回 undefined（plan 地板不拆，由持久化 execution-state entry 恢复）。
 
+## 完全访问事后传播（2026-10-30 增补，用户裁决修复）
+
+**R7 裁决**：根会话授予完全访问（`grantPermissionFullAccess` 弹窗路径，或
+`applyRuntimeExecutionState` 切 bypass 档）时，**同步广播到同谱系活 child runtime**
+（含孙级，递归）。根因登记：授权原只写根 runtime `config.mode`
+（permission-full-access.ts / execution-state.ts），child 模式在 spawn 时冻结
+（subagent.ts `config.mode = childMode`），导致「先派子代理后授权」场景子代理逐次
+弹审批、且子弹窗不提供完全访问选项（用户实测三连弹复现）。
+
+- **通道**：父 runtime 是活 child runtime 注册表唯一所有者（spawn 登记 / child turn
+  finally 注销，WeakMap 持有不延寿）；广播复用 `applyRuntimeExecutionState`——child
+  会话持久化、`SessionModeChanged` 事件审计、托管策略地板校验全部沿用既有语义，
+  不新写第二条模式写入路径。
+- **语义边界**：
+  1. child `planEnabled` 不随广播改变（与根授权保留 planEnabled 同语义；plan vessel
+     不被静默解除）。
+  2. 托管策略地板拒绝（modePolicyForbidden）或 child 授权 busy：warn-skip 该 child，
+     不回滚根授权（部分传播优于整体失败，地板仍是底线）。
+  3. child 已在 bypass 档：`applyRuntimeExecutionState` 同档早退，无事件刷屏。
+  4. 熔断器 bypass-immune 面按 R8 分层（managed-policy-floor-and-bypass-immune-breakers.md，
+     2026-10-30 用户裁决「完全访问 不弹」）：ask 级三类（pathEscapeWrite /
+     sensitiveRead / bashRootDelete）在 yolo 下静默放行 + warn 审计留痕；deny 级
+     （catastrophic 目标档）照旧硬堵——拒绝不是弹窗，安全底线不随本修复拆除。
+- **子弹窗放开**：`interaction-broker.ts` 与 `product-projection.ts` 的 origin 抑制
+  移除；子来源弹窗的「完全访问」选项选中后走根授权 + 广播（origin child 一并收敛）。
+  `optionsPolicy` 抑制保留（托管选项策略仍是地板）。
+
+**验收场景**：
+1. 先派后授：build 档派子代理 → 根切完全访问 → 子代理后续域外 Write/Read 静默
+   （无 PermissionRequested；决策日志 child mode=yolo）。
+2. 子来源弹窗含 fullAccess 选项；选中后全谱系收敛（含发起请求的 child）。
+3. 对照：build 档（未授权）域外写仍 ask；授权前 child 的弹窗逐次出现（旧语义保留到授权时刻）。
+4. plan child 不被广播解除 plan（planEnabled 保持 true，mode 升 yolo）。
+5. 托管 disable-bypass 策略下广播对该 child skip + warn，根授权成功。
+
 ## 不在本项范围
 
 - **模型（非权限）继承的边界**：本 spec 只管 workspaceRoot 锚定与 resume 模式跟随。
   子代理模型选择优先级（override > profile > 父继承）归 `resolveSubagentSelection`；
   AgentTeams 成员的 `inheritCaptainModel` 两分支与 fail-closed 标记见
   `agent-teams-derived-config.md` R3/R4（2026-10-15 合入批次）。
-- 运行中 child 不接收父事后的模式变更（无传播通道，属新特性）。
-- 子弹窗刻意隐藏「完全访问」授予（`product-projection.ts` 设计内），不放开。
 - 熔断器对工作区外目标的 ask 本体（安全加固 P2 不变量）。
 - workflow / swarm / memory agent 的构造点（锚定应用级 cwd / deny broker，设计内）。

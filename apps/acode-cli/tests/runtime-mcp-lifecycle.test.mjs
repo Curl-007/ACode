@@ -2,13 +2,13 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 const { initializeMcp } = await import("../packages/core/src/runtime/methods/mcp.ts");
+const { initializeRuntimeMcpLifecycle } = await import(
+  "../packages/core/src/runtime/runtime-mcp-lifecycle.ts"
+);
 
 function makeRuntime(startup) {
   let registered = 0;
   const runtime = {
-    mcpInitialized: true,
-    mcpToolsRegistered: false,
-    mcpInitializationPromise: undefined,
     mcpPort: { callTool: async () => ({ content: [] }) },
     config: { mcp: { servers: {} } },
     registry: {
@@ -22,6 +22,10 @@ function makeRuntime(startup) {
     },
     logger: undefined,
   };
+  // R1-01 B4：mcpInitialized/mcpStartupPromise/mcpInitializationPromise/mcpToolsRegistered
+  // 归 RuntimeMcpLifecycleOwner——桩与真实构造期一样装只读 getter（初始值 false/undefined，
+  // 与迁移前的扁平字面量一致），initializeMcp 的 claim/release/单调提交经端口。
+  initializeRuntimeMcpLifecycle(runtime);
   return { runtime, getRegistered: () => registered };
 }
 

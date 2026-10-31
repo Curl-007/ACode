@@ -12,8 +12,10 @@ import {
   describeGitFailure,
   isWorktreeDirty,
   listRegisteredWorktrees,
+  mainWorkspaceDiffStatus,
   parseMergeCommandConflicts,
   parseMergeTreeConflicts,
+  refreshTrackedStat,
   runGit,
   snapshotPendingChanges,
 } from "./git.js";
@@ -98,15 +100,25 @@ export async function mergeMemberWorktree(params: {
     `Snapshot AgentTeams member worktree ${handle.branch.slice(MEMBER_WORKTREE_BRANCH_PREFIX.length)}`,
   );
 
-  const status = await runGit(repoRoot, ["status", "--porcelain", "--untracked-files=no"]);
-  if (status.exitCode !== 0) {
-    throw new TeamError("worktree_merge_failed", describeGitFailure("git status", status));
-  }
-  if (status.stdout.trim().length > 0) {
+  // 主工作区脏判据用内容比较而非 `git status`：Windows 全局 core.autocrlf=true 时，
+  // CRLF 检出被按 LF 原样重写后 status 会报 ` M`，但 `git diff --quiet HEAD` 为 0
+  // （内容按 git 的转换规则与 HEAD 相同）。用 status 会把语义无变化的树误判为脏，
+  // 让用户看到无法自洽的 worktree_dirty_workspace（提示「commit 或 revert」，
+  // 而 git 自己又报 nothing to commit）。语义沿用既有的「只看 tracked」。
+  const status = await mainWorkspaceDiffStatus(repoRoot);
+  if (status.exitCode === 0) {
+    // 干净：顺带刷新 stat 缓存，避免后续 git merge 把 autocrlf 幻影当成本地改动而拒绝。
+    const refreshed = await refreshTrackedStat(repoRoot);
+    if (refreshed.exitCode !== 0) {
+      throw new TeamError("worktree_merge_failed", describeGitFailure("git add -u", refreshed));
+    }
+  } else if (status.exitCode === 1) {
     throw new TeamError(
       "worktree_dirty_workspace",
       "Main workspace has uncommitted changes; commit or revert them before merging.",
     );
+  } else {
+    throw new TeamError("worktree_merge_failed", describeGitFailure("git diff", status));
   }
   const current = await runGit(repoRoot, ["rev-parse", "--abbrev-ref", "HEAD"]);
   if (current.exitCode !== 0 || current.stdout.trim() !== baseBranch) {
@@ -255,6 +267,20 @@ export async function cleanupMemberWorktree(params: {
 
   let removed = !pathExists && !entry;
   if (entry || pathExists) {
+    // 内容判定为干净后，先刷新 tracked 文件的 stat 缓存：autocrlf 幻影会让
+    // `git worktree remove`（不带 --force）误以为还有未提交改动而拒绝删除。
+    // `git add -u` 不收集未跟踪文件、不改变内容，未跟踪文件仍由 git 自己拒绝删除。
+    // 目录已不存在（只剩失效登记）时没有可刷新的工作区，跳过。
+    if (entry && pathExists) {
+      const refreshed = await refreshTrackedStat(handle.path);
+      if (refreshed.exitCode !== 0) {
+        return {
+          removed: false,
+          branchRemoved: false,
+          error: describeGitFailure("git add -u", refreshed),
+        };
+      }
+    }
     // 不带 --force：git 自己也会拒绝删除含未提交改动的树，作为第二道保险。
     const removal = await runGit(repoRoot, ["worktree", "remove", handle.path]);
     if (removal.exitCode !== 0) {

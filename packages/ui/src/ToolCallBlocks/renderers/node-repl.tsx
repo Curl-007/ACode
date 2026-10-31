@@ -270,7 +270,7 @@ export function NodeReplToolCallBlock(context: ToolCallBlockRenderContext) {
         ) : null}
 
         {model.images.length > 0 ? (
-          <NodeReplImageGrid images={model.images} resultImageLabel={resultImageLabel} />
+          <NodeReplImageGrid images={model.images} label={resultImageLabel} toolCall={toolCall} />
         ) : null}
 
         {model.persistedResult && fullResultLabel ? (
@@ -371,7 +371,7 @@ export function NodeReplToolCallBlock(context: ToolCallBlockRenderContext) {
   );
 
   if (model.displaySource === "browser_turn_end") {
-    return <NodeReplImageGrid images={model.images} resultImageLabel={resultImageLabel} />;
+    return <NodeReplImageGrid images={model.images} label={resultImageLabel} toolCall={toolCall} />;
   }
 
   return (

@@ -29,7 +29,7 @@ async function discardPreparedUpdateBestEffort(
   } catch (error: unknown) {
     // 准备产物清理属于非关键收尾；直接 await discard 会让清理失败覆盖
     // running-task guard 或 control socket 的原始错误，导致用户看到错误的排障方向。
-    log.warn("failed to discard prepared update after command failure", error);
+    log.warn(undefined, "failed to discard prepared update after command failure", error);
   }
 }
 

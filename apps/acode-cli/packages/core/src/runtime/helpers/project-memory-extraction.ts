@@ -12,6 +12,7 @@ import {
 import { runMemoryAgentLoop } from "../../memory/memory-agent-loop.js";
 import { createMemoryRecallInjector, resolveMemoryIdentityKey } from "../../memory/recall/index.js";
 import type { AgentRuntimeInternal } from "../internal.js";
+import { getRuntimeSidecarPort } from "../runtime-sidecar.js";
 import {
   buildProjectMemoryAgentProviderMessages,
   captureProjectMemoryAgentContext,
@@ -78,10 +79,14 @@ export function scheduleProjectMemoryExtraction(
     },
   );
 
-  runtime.memoryExtractionScheduler ??= createMemoryExtractionScheduler((extraction) =>
-    executeProjectMemoryExtraction(runtime, extraction),
+  // R1-01 B4：memoryExtractionScheduler 归 RuntimeSidecarOwner——`??=` 惰性构造收敛为
+  // getOrCreate 原子端口（factory 只在缺席时求值，RHS 短路语义逐点等价）。
+  const scheduler = getRuntimeSidecarPort(runtime).getOrCreateExtractionScheduler(() =>
+    createMemoryExtractionScheduler((extraction) =>
+      executeProjectMemoryExtraction(runtime, extraction),
+    ),
   );
-  runtime.memoryExtractionScheduler.schedule(snapshot);
+  scheduler.schedule(snapshot);
 }
 
 export async function drainMemoryExtractions(

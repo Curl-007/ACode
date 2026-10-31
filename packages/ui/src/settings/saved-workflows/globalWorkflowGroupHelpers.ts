@@ -1,6 +1,7 @@
 // 全局工作流组的纯逻辑。与组件分文件以守住 max-lines 400，
 // 也便于单测这些无 React 的判定。
-import { resolveWorkspaceKey, type ACodeSavedWorkflowRun } from "@acode/shared";
+import { resolveWorkspaceKey } from "@acode/shared";
+import { type V4SavedWorkflowRun } from "@acode/shared/acode-protocol-v4";
 import type { ACodeAgentSavedWorkflowTarget } from "@acode/services";
 import type { AutomationWorkspaceOption } from "@/settings/automationWorkspaceOptions.js";
 import type { SavedWorkflowProjectTarget } from "@/settings/saved-workflows/savedWorkflowContract.js";
@@ -49,7 +50,7 @@ export function findProjectByCwd(
  */
 export function buildGlobalRunProjectResolver(
   localProjects: readonly AutomationWorkspaceOption[],
-): (run: ACodeSavedWorkflowRun) => SavedWorkflowRunProject | null {
+): (run: V4SavedWorkflowRun) => SavedWorkflowRunProject | null {
   return (run) => {
     if (!run.cwd) return null;
     const project = findProjectByCwd(localProjects, run.cwd);

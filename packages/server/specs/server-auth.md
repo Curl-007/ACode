@@ -218,7 +218,10 @@ P0-2（鉴权 fail-closed + token 走 Header 不走 query）。
   fallback `ACODE_SERVER_AUTH_TOKEN`，host 缺省 loopback）。运行期不变更；`createServerInfo` /
   Core `info` 据实际挂载中间件的 token 派生 `authRequired`，不读其它变量。
 - **待认领远程连接唯一所有者**：`packages/server` 进程内 `remoteConnections` Map
-  （`Map<id, { connection, spawnedAt }>`）；写入仅 `/api/connect-remote`（Origin 裁决 + 惰性驱逐 +
+  （`Map<id, { connection, spawnedAt }>`，2026-10-30 拆分后位于 `src/http/pending-connections.ts`，
+  写入路径收敛为叶内 `registerPendingConnection` / `claimPendingConnection` /
+  `pruneExpiredPendingConnections` 三函数，http.ts 本体不再直接持有 Map）；写入仅
+  `/api/connect-remote`（Origin 裁决 + 惰性驱逐 +
   上限之后），删除在 `/ws/remote/:id` 认领时**或**惰性过期 prune 时（两个既有请求触点，
   无常驻定时器）；不落盘。
 - **terminal-client 凭据 allowlist 唯一所有者**：`@acode/shared/node` 的

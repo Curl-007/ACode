@@ -7,7 +7,7 @@ test('CLI removes exporter package and bootstrap integration', async () => {
   await assert.rejects(access(new URL('apps/acode-cli/packages/telemetry/package.json', root)));
   const manifest = JSON.parse(await read('apps/acode-cli/packages/bootstrap/package.json'));
   assert.equal(manifest.dependencies['@acode/telemetry'], undefined);
-  for (const file of ['app/create-app.ts', 'index.ts', 'acode-protocol-entrypoint.ts', 'acode-protocol/runtime-cleanup.ts']) {
+  for (const file of ['app/create-app.ts', 'index.ts', 'acode-protocol-entrypoint.ts', 'acode-protocol-v4/runtime-cleanup.ts']) {
     assert.doesNotMatch(await read(`apps/acode-cli/packages/bootstrap/src/${file}`), /@acode\/telemetry|prepareACodeTelemetryEnv|shutdownACodeTelemetry|createModelTelemetry/);
   }
 });

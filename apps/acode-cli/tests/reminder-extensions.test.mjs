@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 
 /**
- * P7（docs/cli-dispatch-and-system-prompt-upgrade-plan.md §4 P7）验收测试：
+ * P7（docs/archive/cli-dispatch-and-system-prompt-upgrade-plan.md §4 P7）验收测试：
  * reminder 承载类型扩展——TodoWrite 久未使用提醒加「存在未完成项」门槛，
  * 新增召回记忆提醒 `memory_recall`（per-request 档，不落 session）。
  *

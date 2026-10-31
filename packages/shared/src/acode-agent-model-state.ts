@@ -2,9 +2,14 @@
 // 剩余 5 个导出：旧 configOptions 投影函数（formatModelPickerValue/normalizeAvailableACodeMode/
 // getACodeAgentModeSelectOptions/getACodeAgentAvailableModes/
 // acodeSessionSettingsToACodeConfigOptions）。
-// 消费者：services acodeConfigOptions、UI acodeSessionProjection 等旧栈。
+// 消费者：services acodeConfigOptions（经 acodeSessionSettingsToACodeConfigOptions）、
+// UI workspaceModeConfigOptions（经 normalizeAvailableACodeMode / getACodeAgentModeSelectOptions）。
+// 注：UI 侧曾有一份重复实现（packages/ui/src/lib/acodeSessionProjection.ts 的本地
+// ACODE_AGENT_MODE_OPTIONS + acodeSessionSettingsToConfigOptions），2026-10-28 随 legacy M1
+// 收口删除——那份只有 4 档 mode（缺 dontAsk），与本文件的权威 5 档已漂移。本文件是单一事实源。
 import { formatModelPickerValue } from "./model-selection.js";
-import type { ACodeSessionMode, ACodeSessionSettingsState } from "./acode-protocol/index.js";
+import type { ACodeSessionSettingsState } from "./acode-session-projection.js";
+import type { ACodeSessionMode } from "./acode-session-types.js";
 import type { ACodeConfigOption, ACodeTaskModeInfo, ACodeProvider } from "./acode-task-types-core.js";
 const MODEL_CONFIG_ID = "model";
 const MODEL_CONFIG_CATEGORY = "model";
@@ -57,7 +62,7 @@ export function getACodeAgentModeSelectOptions(): NonNullable<ACodeConfigOption[
 }
 
 /**
- * native(glm) 引擎的可用模式（build/edit/plan/yolo）。
+ * native(glm) 引擎的可用模式（build/edit/plan/yolo/dontAsk）。
  *
  * 外部引擎槽位已下线，引擎联合只剩 native；保留 engineId 入参以维持调用方形状，
  * 非法/旧值经 resolveAgentEngine 归一后仍走 native 分支。

@@ -1,5 +1,5 @@
-import type { ACodeMessageWithParts } from "./acode-protocol-legacy-types.js";
-import { textFromACodeMessageParts } from "./acode-protocol-legacy-types.js";
+import type { ACodeMessageWithParts } from "./acode-message-types.js";
+import { textFromACodeMessageParts } from "./acode-message-types.js";
 import type { ACodeStreamEvent } from "./acode-task-types-core.js";
 
 export interface ACodeBackgroundTaskNotificationInfo {

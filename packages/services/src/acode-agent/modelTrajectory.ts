@@ -7,7 +7,7 @@ import type {
   ACodeModelTrajectoryMessage,
   ACodeModelTrajectoryRecord,
   ACodeModelTrajectoryUsage,
-} from "#src/session/acodeTaskService.js";
+} from "#src/session/contract.js";
 import { createServiceLogger } from "#src/logger/serviceLogger.js";
 import {
   readTrajectoryFileTail,

@@ -57,6 +57,12 @@ import {
   TimelineRowHeightCache,
 } from "@/v4/timelineRowHeightCache.js";
 import {
+  canReleasePendingScrollMemoryRestore,
+  resolvePendingScrollMemoryRestoreWait,
+  type ConversationScrollMemoryScopeSnapshot,
+  type PendingScrollMemoryRestore,
+} from "@/v4/conversationScrollMemoryRestore.js";
+import {
   readChatSessionScrollMemoryState,
   resolveChatSessionScrollRestoreTop,
   saveChatSessionScrollMemoryState,
@@ -101,7 +107,6 @@ const COMPOSER_MESSAGE_MASK_TRANSPARENT_HEIGHT_PX = 96;
 const USER_SCROLL_INTENT_TTL_MS = 1200;
 const LAYOUT_SCROLL_GUARD_MS = 250;
 const CONTENT_WIDTH_RESIZE_SETTLE_MS = 120;
-const SCROLL_MEMORY_RESTORE_TOLERANCE_PX = 1;
 
 function scheduleMicrotask(callback: () => void): void {
   // 部分 WebView/最小 DOM 运行时没有 window.queueMicrotask；调度能力应从
@@ -148,50 +153,6 @@ function ConversationBackToBottomButton({
       <ArrowDownIcon className="size-4" />
     </Button>
   );
-}
-
-interface ConversationScrollMemoryScopeSnapshot {
-  key: string;
-  state: ChatSessionScrollMemoryState;
-}
-
-type PendingScrollMemoryRestoreWait = "rows" | "content";
-
-interface PendingScrollMemoryRestore extends ConversationScrollMemoryScopeSnapshot {
-  rowWindowKey: string;
-  waitFor: PendingScrollMemoryRestoreWait;
-}
-
-function resolvePendingScrollMemoryRestoreWait(
-  state: ChatSessionScrollMemoryState | null,
-  element: Pick<HTMLElement, "clientHeight" | "scrollHeight"> | null,
-  hasRows: boolean,
-): PendingScrollMemoryRestoreWait | null {
-  if (!state || state.wasPinnedToBottom !== false) return null;
-  if (!hasRows || !element) return "rows";
-
-  const restoredTop = resolveChatSessionScrollRestoreTop(state, element);
-  return restoredTop + SCROLL_MEMORY_RESTORE_TOLERANCE_PX < state.scrollTop ? "content" : null;
-}
-
-function canReleasePendingScrollMemoryRestore(
-  pendingRestore: PendingScrollMemoryRestore,
-  element: Pick<HTMLElement, "clientHeight" | "scrollHeight"> | null,
-  rowCount: number,
-  hasOlderRows: boolean,
-  rowWindowKey: string,
-): boolean {
-  if (!element) return false;
-  if (pendingRestore.waitFor === "rows" && rowCount === 0) return false;
-  const restoredTop = resolveChatSessionScrollRestoreTop(pendingRestore.state, element);
-  const targetIsRepresentable =
-    restoredTop + SCROLL_MEMORY_RESTORE_TOLERANCE_PX >= pendingRestore.state.scrollTop;
-  if (targetIsRepresentable || element.scrollHeight >= pendingRestore.state.scrollHeight) {
-    return true;
-  }
-  // 新 lease 的首帧 rows 可能仍是截断尾窗；只要还能拉取更早历史，就继续保留原始
-  // 恢复意图，避免把临时 clamp 后的 scrollTop 当成最终阅读锚点。
-  return rowCount > 0 && !hasOlderRows && pendingRestore.rowWindowKey !== rowWindowKey;
 }
 
 interface ConversationScrollMemoryScopeCaptureProps {

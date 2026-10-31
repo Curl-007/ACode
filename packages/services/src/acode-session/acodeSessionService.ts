@@ -15,7 +15,7 @@ import type {
   ACodeSessionMessagesParams,
   ACodeSessionReadParams,
   ACodeSessionReadWorkspacePresentationParams,
-  ACodeSessionResumeParams,
+  V4SessionResumeParams,
   ACodeSessionSetModeParams,
   ACodeSessionSetModelParams,
   ACodeSessionSetThoughtLevelParams,
@@ -161,7 +161,7 @@ export function createACodeSessionService({
 
   async function repairEmptyImportedClaudeSession(
     snapshot: ACodeSessionStateSnapshot,
-    params: ACodeSessionResumeParams | ACodeSessionReadParams,
+    params: V4SessionResumeParams | ACodeSessionReadParams,
   ): Promise<ACodeSessionStateSnapshot> {
     return withApiRetryRuntime(
       await repairEmptyImportedClaudeSessionSnapshot({
@@ -173,7 +173,7 @@ export function createACodeSessionService({
   }
 
   async function withResolvedMcpServers<
-    T extends ACodeSessionCreateParams | ACodeSessionResumeParams,
+    T extends ACodeSessionCreateParams | V4SessionResumeParams,
   >(params: T): Promise<T> {
     const mcpServers = appendWorkspaceToFilesystemMcpServers(
       params.mcpServers,
@@ -272,7 +272,7 @@ export function createACodeSessionService({
       return snapshotWithRuntime;
     },
 
-    async resumeSession(params: ACodeSessionResumeParams) {
+    async resumeSession(params: V4SessionResumeParams) {
       const startedAt = Date.now();
       const { broadcastSnapshot: shouldBroadcastSnapshot = true, ...resumeParams } = params;
       const agentParams = await withResolvedMcpServers(resumeParams);
@@ -407,6 +407,16 @@ export function createACodeSessionService({
 
     readSessionEvents(params: ACodeSessionEventsParams) {
       return agentService.readSessionEvents(params);
+    },
+
+    // 归档 header 冷读（apps/acode-cli/specs/v4-session-header-meta.md）。刻意**不**包
+    // repairEmptyImportedClaudeSession / withApiRetryRuntime / info 日志：
+    // ① repair 是给导入的 Claude 空会话补正文用的，header meta 不带 messages，无从修也无需修；
+    // ② header 兜底读在每次打开归档任务时都会发生，加 info 日志会把正常路径刷成噪声
+    //    （AGENTS.md 日志分级：info 用于一次性初始化/生命周期事件，非高频读取）；
+    // ③ 失败由 UI 侧 .catch 归一成 snapshotMeta=null（既有语义），不需要服务层重试包装。
+    readSessionHeaderMeta(params: ACodeTaskTarget) {
+      return agentService.readSessionHeaderMeta(params);
     },
 
     promoteDeferredDraftSession(params: ACodeTaskTarget) {

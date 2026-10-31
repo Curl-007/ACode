@@ -35,6 +35,8 @@ test("WebDisconnectOverlay: waiting 态渲染标题、说明、倒计时与手�
   // destructive 状态点 + 可读文案（不只靠颜色传义）——中英任一语言都应出现标题与重试按钮。
   assert.match(html, /bg-destructive/);
   assert.match(html, /<button[^>]*type="button"/);
+  // waiting 态重试按钮可用（不在 connecting 阶段）：不得渲染 disabled。
+  assert.ok(!/<button[^>]*disabled/.test(html), "waiting retry button must be enabled");
   // 倒计时把 5000ms 向上取整成 5 秒并替换占位符（{seconds} 不得残留）。
   assert.ok(!html.includes("{seconds}"), "countdown placeholder must be substituted");
   assert.match(html, /5/);
@@ -49,10 +51,12 @@ test("WebDisconnectOverlay: exhausted 态渲染达上限说明与手动重试", 
   );
   // exhausted 不显示倒计时（无 waiting.retryInMs），但仍提供手动重试按钮。
   assert.match(html, /<button[^>]*type="button"/);
+  // exhausted 态重试按钮可用（手动重试正是此态的出口）。
+  assert.ok(!/<button[^>]*disabled/.test(html), "exhausted retry button must be enabled");
   assert.ok(!html.includes("{seconds}"));
 });
 
-test("WebDisconnectOverlay: connecting 态无倒计时（retryInMs 仅 waiting 有）", () => {
+test("WebDisconnectOverlay: connecting 态禁用重试按钮（防 retryNow 换代泄漏孤儿 socket）", () => {
   const html = renderToStaticMarkup(
     createElement(WebDisconnectOverlay, {
       state: { phase: "connecting", attempt: 1 },
@@ -60,5 +64,7 @@ test("WebDisconnectOverlay: connecting 态无倒计时（retryInMs 仅 waiting �
     }),
   );
   assert.match(html, /<button[^>]*type="button"/);
+  // connecting 阶段一次 connect 已在途，重试按钮必须 disabled（specs R3.4/R5.4）。
+  assert.match(html, /<button[^>]*disabled/, "connecting retry button must be disabled");
   assert.ok(!html.includes("{seconds}"), "connecting 态不应渲染倒计时模板");
 });

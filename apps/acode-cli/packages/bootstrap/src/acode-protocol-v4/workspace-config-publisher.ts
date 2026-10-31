@@ -2,13 +2,9 @@
 // slash 命令目录）的 conflated 最新态 + seq 区间记账 + snapshot/delta 帧构造。
 // 与 SessionsIndexPublisher 同构且更简单：载荷是单个整体替换态（config.updated），
 // conflation = 深比较去抖；重放缓冲有界，断档退化为 snapshot（conflated 语义下等价）。
-import type {
-  WorkspaceConfigDelta,
-  WorkspaceConfigState,
-  WorkspaceConfigTopicFrame,
-  TopicFrameDeliveryKind,
-} from "@acode/shared/acode-protocol-v4";
 import { workspaceConfigTopic } from "@acode/shared/acode-protocol-v4";
+import type { WorkspaceConfigDelta, WorkspaceConfigState, WorkspaceConfigTopicFrame, TopicFrameDeliveryKind } from "@acode/shared/acode-protocol-v4";
+
 import type { TopicFrameReservation } from "./topic-frame-reservation.js";
 
 interface ConfigSubscription {

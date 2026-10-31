@@ -1,6 +1,6 @@
 # 子代理挂起消息的 turn 起点 drain（编排方案 Phase 3 前置修复 / peer-5）
 
-来源：[`docs/codex-orchestration-integration-plan.md`](../../../docs/codex-orchestration-integration-plan.md)
+来源：[`docs/archive/codex-orchestration-integration-plan.md`](../../../docs/archive/codex-orchestration-integration-plan.md)
 §4 Phase 3「前置 bug 修复」与 §5 peer-5 行。2026-10-10 对照审计（C1，独立复核
 confirmed）核实悬挂路径仍在本检出原样存在。Phase 3（agent-peer-messaging，另行立项）
 以本修复为阻塞前置：peer 的「空闲目标 enqueue 起新 turn」路由依赖同一个 drain 钩子。

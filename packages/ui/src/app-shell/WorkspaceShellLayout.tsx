@@ -1,10 +1,6 @@
 /* eslint-disable max-lines -- workspace shell 当前集中编排 sidebar、chat、terminal 和 browser pane 的布局联动，先保持单文件收口，避免为满足行数限制打散关键布局状态。*/
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type {
-  CSSProperties,
-  KeyboardEvent as ReactKeyboardEvent,
-  PointerEvent as ReactPointerEvent,
-} from "react";
+import type { CSSProperties } from "react";
 import type { PanelImperativeHandle } from "react-resizable-panels";
 
 import { TID_APP_HEADER } from "@acode/shared";
@@ -57,6 +53,8 @@ import {
 import { AnimatedTerminalPanel } from "@/app-shell/AnimatedTerminalPanel.js";
 import { SIDE_PANE_DEFAULT_EXPANDED_SIZE } from "@/app-shell/sidePaneLayout.js";
 import { useAnimatedResizablePanel } from "@/app-shell/useAnimatedResizablePanel.js";
+import { useWorkspaceSidebarResize } from "@/app-shell/useWorkspaceSidebarResize.js";
+import { WORKSPACE_SIDEBAR_MIN_WIDTH_PX } from "@/app-shell/workspaceSidebarWidth.js";
 import { ensureTaskNavigationWorkspace } from "@/app-shell/taskNavigationWorkspace.js";
 
 import {
@@ -73,7 +71,6 @@ import { useACodeIntl } from "@/i18n/IntlProvider.js";
 import { useBaseWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
 import { getPathLeaf, toFileUrl } from "@/lib/path.js";
 import { shouldOpenAssistantHtmlInBrowser } from "@/lib/assistantPreviewCards.js";
-import { setWorkspaceSidebarResizeActive } from "@/lib/workspaceSidebarResizeState.js";
 import { buildTaskWorkspaceKey } from "@/lib/taskQueryCache.js";
 import {
   addWorkspacePathOpenRequestListener,
@@ -96,15 +93,6 @@ import { useTabStoreApi } from "@/store/TabStoreProvider.js";
 import { useACodeSessionStore } from "@/store/acodeSessionStore.js";
 import type { ComposerMentionPrefill } from "@/store/acodeSessionStoreTypes.js";
 
-const WORKSPACE_SIDEBAR_DEFAULT_WIDTH_PX = 264;
-const WORKSPACE_SIDEBAR_MIN_WIDTH_PX = 264;
-const WORKSPACE_SIDEBAR_MAX_WIDTH_RATIO = 0.5;
-const WORKSPACE_SIDEBAR_WIDTH_STORAGE_KEY = "acode:workspace-shell:sidebar-width-px";
-const LEGACY_WORKSPACE_SHELL_LAYOUT_STORAGE_KEY =
-  "react-resizable-panels:workspace-shell-layout:sidebar:content";
-const WORKSPACE_SIDEBAR_RESIZE_KEYBOARD_STEP_PX = 16;
-const WORKSPACE_SIDEBAR_PANEL_WIDTH_CSS_VAR = "--workspace-sidebar-panel-width";
-const WORKSPACE_SIDEBAR_WIDTH_CSS_VAR = "--workspace-sidebar-width";
 const CONVERSATION_AUTO_COLLAPSE_SIDE_PANE_WIDTH_PX = 480;
 // WorkspaceShellLayout 是 memo 组件，默认 []/{} 会在缺省调用时每次创建新引用；
 // 入口缺省这些集合时复用常量，避免浅比较误判 props 变化。
@@ -120,72 +108,6 @@ const CONVERSATION_AUTO_COLLAPSE_RESIZE_IDLE_MS = 300;
 // 会跟随 chat streaming render 重算布局上下文；固定数组语义上不会随消息变化。
 const WORKSPACE_BODY_PANEL_IDS = ["conversation-column", "browser"];
 const WORKSPACE_CONVERSATION_PANEL_IDS = ["conversation", "terminal"];
-
-type WorkspaceSidebarResizeSession = {
-  containerWidthPx: number;
-  pointerId: number;
-  startWidthPx: number;
-  startX: number;
-};
-
-function clampWorkspaceSidebarWidth(widthPx: number, containerWidthPx?: number) {
-  const maxWidthPx =
-    containerWidthPx && containerWidthPx > 0
-      ? Math.max(
-          WORKSPACE_SIDEBAR_MIN_WIDTH_PX,
-          containerWidthPx * WORKSPACE_SIDEBAR_MAX_WIDTH_RATIO,
-        )
-      : Number.POSITIVE_INFINITY;
-
-  return Math.round(Math.max(WORKSPACE_SIDEBAR_MIN_WIDTH_PX, Math.min(widthPx, maxWidthPx)));
-}
-
-function readStoredWorkspaceSidebarWidthPx(): number | null {
-  if (typeof window === "undefined") {
-    return null;
-  }
-
-  try {
-    const raw = window.localStorage.getItem(WORKSPACE_SIDEBAR_WIDTH_STORAGE_KEY);
-    if (!raw) {
-      return null;
-    }
-    const parsed = Number(raw);
-    return Number.isFinite(parsed) && parsed > 0 ? clampWorkspaceSidebarWidth(parsed) : null;
-  } catch {
-    return null;
-  }
-}
-
-function readLegacyWorkspaceSidebarWidthRatio(): number | null {
-  if (typeof window === "undefined") {
-    return null;
-  }
-
-  try {
-    const raw = window.localStorage.getItem(LEGACY_WORKSPACE_SHELL_LAYOUT_STORAGE_KEY);
-    if (!raw) {
-      return null;
-    }
-    const parsed = JSON.parse(raw) as { sidebar?: unknown };
-    const ratio = Number(parsed.sidebar);
-    return Number.isFinite(ratio) && ratio > 0 ? ratio / 100 : null;
-  } catch {
-    return null;
-  }
-}
-
-function persistWorkspaceSidebarWidthPx(widthPx: number) {
-  if (typeof window === "undefined") {
-    return;
-  }
-
-  try {
-    window.localStorage.setItem(WORKSPACE_SIDEBAR_WIDTH_STORAGE_KEY, String(Math.round(widthPx)));
-  } catch {
-    // ignore
-  }
-}
 
 export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent({
   services,
@@ -385,11 +307,6 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
     workspaceKey,
   });
   const conversationAutoCollapseResizeTimerRef = useRef<number | null>(null);
-  const workspaceSidebarResizeSessionRef = useRef<WorkspaceSidebarResizeSession | null>(null);
-  const [workspaceSidebarPanelWidthPx, setWorkspaceSidebarPanelWidthPx] = useState(
-    () => readStoredWorkspaceSidebarWidthPx() ?? WORKSPACE_SIDEBAR_DEFAULT_WIDTH_PX,
-  );
-  const workspaceSidebarPanelWidthPxRef = useRef(workspaceSidebarPanelWidthPx);
   const openWorkspaceKeys = useMemo(
     () => workspaceTabs.map((tab) => tab.workspaceIdentity?.trim() || tab.workspacePath),
     [workspaceTabs],
@@ -534,192 +451,20 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
     };
   }, [workspaceMainView]);
 
-  useEffect(() => {
-    workspaceSidebarPanelWidthPxRef.current = workspaceSidebarPanelWidthPx;
-  }, [workspaceSidebarPanelWidthPx]);
-
-  const applyWorkspaceSidebarWidthDuringDrag = useCallback(
-    (nextWidthPx: number) => {
-      workspaceSidebarPanelWidthPxRef.current = nextWidthPx;
-      const shellElement = workspaceShellRef.current;
-      if (!shellElement) {
-        return;
-      }
-
-      // 大会话 trace 显示拖拽侧栏时每个 pointermove 都 setState，
-      // 会让 WorkspaceShellLayout、WorkspaceSidebar 和 ChatView 大树反复 render。
-      // 拖拽中的宽度只是瞬时布局值，直接写 CSS 变量；释放时再提交 React state。
-      shellElement.style.setProperty(
-        WORKSPACE_SIDEBAR_PANEL_WIDTH_CSS_VAR,
-        `${isSidebarPanelVisible ? nextWidthPx : collapsedSidebarWidthPx}px`,
-      );
-      shellElement.style.setProperty(WORKSPACE_SIDEBAR_WIDTH_CSS_VAR, `${nextWidthPx}px`);
-    },
-    [collapsedSidebarWidthPx, isSidebarPanelVisible],
-  );
-
-  useEffect(() => {
-    if (readStoredWorkspaceSidebarWidthPx() !== null) {
-      return;
-    }
-
-    const legacyRatio = readLegacyWorkspaceSidebarWidthRatio();
-    const shellElement = workspaceShellRef.current;
-    if (legacyRatio === null || !shellElement) {
-      return;
-    }
-
-    const containerWidthPx = shellElement.getBoundingClientRect().width;
-    if (!Number.isFinite(containerWidthPx) || containerWidthPx <= 0) {
-      return;
-    }
-
-    // 外层 workspace shell 不再使用 react-resizable-panels，
-    // 但旧版本已持久化过 sidebar/content 百分比。迁移成像素宽度后，
-    // 普通窗口 resize 不会再触发 RRP layout store，同时仍保留用户拖出的侧栏宽度。
-    const migratedWidthPx = clampWorkspaceSidebarWidth(
-      containerWidthPx * legacyRatio,
-      containerWidthPx,
-    );
-    workspaceSidebarPanelWidthPxRef.current = migratedWidthPx;
-    setWorkspaceSidebarPanelWidthPx(migratedWidthPx);
-    persistWorkspaceSidebarWidthPx(migratedWidthPx);
-  }, []);
-
-  const applyWorkspaceSidebarWidth = useCallback(
-    (nextWidthPx: number, options: { persist: boolean }) => {
-      const containerWidthPx = workspaceShellRef.current?.getBoundingClientRect().width;
-      const resolvedWidthPx = clampWorkspaceSidebarWidth(nextWidthPx, containerWidthPx);
-      workspaceSidebarPanelWidthPxRef.current = resolvedWidthPx;
-      setWorkspaceSidebarPanelWidthPx((currentWidthPx) =>
-        currentWidthPx === resolvedWidthPx ? currentWidthPx : resolvedWidthPx,
-      );
-      if (options.persist) {
-        persistWorkspaceSidebarWidthPx(resolvedWidthPx);
-      }
-      return resolvedWidthPx;
-    },
-    [],
-  );
-
-  const handleWorkspaceSidebarResizeStart = useCallback(
-    (event: ReactPointerEvent<HTMLDivElement>) => {
-      if (!isSidebarPanelVisible || (event.pointerType === "mouse" && event.button !== 0)) {
-        return;
-      }
-
-      const shellElement = workspaceShellRef.current;
-      if (!shellElement) {
-        return;
-      }
-
-      const containerWidthPx = shellElement.getBoundingClientRect().width;
-      workspaceSidebarResizeSessionRef.current = {
-        containerWidthPx,
-        pointerId: event.pointerId,
-        startWidthPx: workspaceSidebarPanelWidthPxRef.current,
-        startX: event.clientX,
-      };
-      setWorkspaceSidebarResizeActive({
-        active: true,
-        panelElement: workspaceSidebarPanelElementRef.current,
-        shellElement,
-      });
-      event.currentTarget.setPointerCapture(event.pointerId);
-      event.preventDefault();
-    },
-    [isSidebarPanelVisible],
-  );
-
-  const handleWorkspaceSidebarResizeMove = useCallback(
-    (event: ReactPointerEvent<HTMLDivElement>) => {
-      const resizeSession = workspaceSidebarResizeSessionRef.current;
-      if (!resizeSession || resizeSession.pointerId !== event.pointerId) {
-        return;
-      }
-
-      event.preventDefault();
-      const nextWidthPx = clampWorkspaceSidebarWidth(
-        resizeSession.startWidthPx + event.clientX - resizeSession.startX,
-        resizeSession.containerWidthPx,
-      );
-      applyWorkspaceSidebarWidthDuringDrag(nextWidthPx);
-      event.currentTarget.setAttribute("aria-valuenow", String(Math.round(nextWidthPx)));
-    },
-    [applyWorkspaceSidebarWidthDuringDrag],
-  );
-
-  const finishWorkspaceSidebarResize = useCallback(
-    (event: ReactPointerEvent<HTMLDivElement>, cancelled = false) => {
-      const resizeSession = workspaceSidebarResizeSessionRef.current;
-      if (!resizeSession || resizeSession.pointerId !== event.pointerId) {
-        return;
-      }
-
-      workspaceSidebarResizeSessionRef.current = null;
-      setWorkspaceSidebarResizeActive({
-        active: false,
-        panelElement: workspaceSidebarPanelElementRef.current,
-        shellElement: workspaceShellRef.current,
-      });
-      setWorkspaceSidebarPanelWidthPx((currentWidthPx) => {
-        const finalWidthPx = workspaceSidebarPanelWidthPxRef.current;
-        return currentWidthPx === finalWidthPx ? currentWidthPx : finalWidthPx;
-      });
-      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-        event.currentTarget.releasePointerCapture(event.pointerId);
-      }
-      if (!cancelled) {
-        persistWorkspaceSidebarWidthPx(workspaceSidebarPanelWidthPxRef.current);
-      }
-    },
-    [],
-  );
-
-  const handleWorkspaceSidebarResizeKeyDown = useCallback(
-    (event: ReactKeyboardEvent<HTMLDivElement>) => {
-      if (!isSidebarPanelVisible) {
-        return;
-      }
-
-      const containerWidthPx = workspaceShellRef.current?.getBoundingClientRect().width;
-      const maxWidthPx =
-        containerWidthPx && containerWidthPx > 0
-          ? containerWidthPx * WORKSPACE_SIDEBAR_MAX_WIDTH_RATIO
-          : workspaceSidebarPanelWidthPxRef.current;
-      let nextWidthPx: number | null = null;
-
-      if (event.key === "ArrowLeft") {
-        nextWidthPx =
-          workspaceSidebarPanelWidthPxRef.current - WORKSPACE_SIDEBAR_RESIZE_KEYBOARD_STEP_PX;
-      } else if (event.key === "ArrowRight") {
-        nextWidthPx =
-          workspaceSidebarPanelWidthPxRef.current + WORKSPACE_SIDEBAR_RESIZE_KEYBOARD_STEP_PX;
-      } else if (event.key === "Home") {
-        nextWidthPx = WORKSPACE_SIDEBAR_MIN_WIDTH_PX;
-      } else if (event.key === "End") {
-        nextWidthPx = maxWidthPx;
-      }
-
-      if (nextWidthPx === null) {
-        return;
-      }
-
-      event.preventDefault();
-      applyWorkspaceSidebarWidth(nextWidthPx, { persist: true });
-    },
-    [applyWorkspaceSidebarWidth, isSidebarPanelVisible],
-  );
-
-  useEffect(() => {
-    return () => {
-      setWorkspaceSidebarResizeActive({
-        active: false,
-        panelElement: workspaceSidebarPanelElementRef.current,
-        shellElement: workspaceShellRef.current,
-      });
-    };
-  }, []);
+  // 批次 5：resize 状态机（state/refs/拖拽 CSS 直写/legacy 迁移/键盘步进/卸载清理）
+  // 逐字收口进 useWorkspaceSidebarResize；hook 内部顺序与 deps 逐字保留。
+  const {
+    workspaceSidebarPanelWidthPx,
+    handleWorkspaceSidebarResizeStart,
+    handleWorkspaceSidebarResizeMove,
+    finishWorkspaceSidebarResize,
+    handleWorkspaceSidebarResizeKeyDown,
+  } = useWorkspaceSidebarResize({
+    workspaceShellRef,
+    workspaceSidebarPanelElementRef,
+    isSidebarPanelVisible,
+    collapsedSidebarWidthPx,
+  });
 
   const activeSearchResultHighlightRequest = useMemo(() => {
     if (!searchResultHighlightRequest || searchResultHighlightRequest.taskId !== activeTaskId) {

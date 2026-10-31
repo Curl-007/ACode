@@ -75,6 +75,7 @@ import {
 } from "./turn-model-step-usage.js";
 import { computeModelStepTiming } from "./usage-observability.js";
 import { estimateCurrentModelInputTokens } from "./compact.js";
+import { getRuntimeCacheDiagnosticsPort } from "../runtime-cache-diagnostics.js";
 import {
   resolveModelStepMaxOutputTokens,
   resolveNormalRequestMaxOutputTokens,
@@ -658,7 +659,8 @@ async function runModelBackedTurnStepImpl(
   );
   await this.appendEvent(modelCompleteEvent, modelTraceContext);
   state.events.push(modelCompleteEvent);
-  this.lastAssistantCompletedAtMs = Date.now();
+  // R1-01 B1：lastAssistantCompletedAtMs 归 RuntimeCacheDiagnosticsOwner，写入经端口。
+  getRuntimeCacheDiagnosticsPort(this).recordAssistantCompleted(Date.now());
   await recordMainTurnModelUsage(this, state, {
     assistantMessageId,
     model,

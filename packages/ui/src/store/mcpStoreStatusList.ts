@@ -1,17 +1,18 @@
-import type { McpServerStatus, ACodeMcpServer, ACodeMcpServerStatusSnapshot } from "@acode/shared";
+import type { McpServerStatus, ACodeMcpServer } from "@acode/shared";
+import { type V4McpServerStatusSnapshot } from "@acode/shared/acode-protocol-v4";
 
 type MappedMcpServerStatus = {
-  authorization?: ACodeMcpServerStatusSnapshot["authorization"];
+  authorization?: V4McpServerStatusSnapshot["authorization"];
   error?: string;
-  failureKind?: ACodeMcpServerStatusSnapshot["failureKind"];
+  failureKind?: V4McpServerStatusSnapshot["failureKind"];
   serverRequestId?: string;
   // 熔断挂起只在 failed/disconnected 两态出现（R1：显式复位先于连接，connected 恒不携带）；
   // 快照缺失时映射结果同样缺失，merge 输出据此清除 store 内旧值——恢复后不得残留挂起横幅。
-  reconnectSuspension?: ACodeMcpServerStatusSnapshot["reconnectSuspension"];
+  reconnectSuspension?: V4McpServerStatusSnapshot["reconnectSuspension"];
   status: McpServerStatus;
 };
 
-function mapRuntimeStatusToUi(snapshot: ACodeMcpServerStatusSnapshot): MappedMcpServerStatus {
+function mapRuntimeStatusToUi(snapshot: V4McpServerStatusSnapshot): MappedMcpServerStatus {
   switch (snapshot.status) {
     case "connected":
     case "connecting":
@@ -50,7 +51,7 @@ function mapRuntimeStatusToUi(snapshot: ACodeMcpServerStatusSnapshot): MappedMcp
 
 export function mergeMcpServerStatusSnapshots(
   servers: ACodeMcpServer[],
-  statuses: Record<string, ACodeMcpServerStatusSnapshot>,
+  statuses: Record<string, V4McpServerStatusSnapshot>,
   options: { markMissingConnectingAsError?: boolean } = {},
 ): ACodeMcpServer[] {
   const markMissingConnectingAsError = options.markMissingConnectingAsError ?? true;

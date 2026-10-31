@@ -1,4 +1,4 @@
-import type { ACodeProtocolClient } from "./acodeProtocolClient.js";
+import type { ACodeAgentRpcClient } from "./acodeAgentRpcClient.js";
 import {
   V4_CAPABILITY_KEYS,
   V4_METHODS,
@@ -10,7 +10,7 @@ const checks = new WeakMap<object, Promise<void>>();
 
 /** Host 更新不代表远端 CLI 已更新；旧 CLI 会剥掉 Plan 字段，必须在发送前确认执行端。 */
 export function ensureIndependentPlanSupport(
-  client: Pick<ACodeProtocolClient, "request">,
+  client: Pick<ACodeAgentRpcClient, "request">,
 ): Promise<void> {
   const cached = checks.get(client);
   if (cached) return cached;

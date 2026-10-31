@@ -1,52 +1,39 @@
-/* eslint-disable max-lines -- workflow port keeps launch, task, and source resolution on one boundary. */
-import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+// ============================================================
+// Script Workflow 工具端口：工厂（WorkflowPort 唯一实现）
+// ============================================================
+// 行数拆分（原 556 行超过 400 行门禁，并带有 1 条 max-lines 的 lint disable 头注，已随拆分删除）：
+// 按「读面 / 起面」拆成两个叶子——
+//   - tool-port-snapshot.ts：getTask / waitForTask 的全部逻辑（durable 结果读取、逻辑状态映射、
+//     失败消息、等待）与 `ScriptWorkflowToolPortDeps`；
+//   - tool-port-launch.ts：start() 之前的来源解析（四种来源的优先级裁决、脚本持久化、路径校验、
+//     内建允许名单、启动回话与输出投影）。
+// 本文件降为工厂本身：`createScriptWorkflowToolPort` 装配 cancel / getTask / waitForTask / start
+// 四个方法并持有三张运行态表（completionSnapshots / launchSnapshots / runAbortControllers）——
+// resume 并发守卫与 cancel 通道必须与这三张表同住，拆不得。
+// 依赖方向：叶子 ← 本文件，叶子不反向 import 本文件。对外导出不变：只有工厂。
+//
+// resume 前的并发守卫判据必须复用 completionSnapshots（run promise 未结算即在飞），
+// 不另立第二份运行态（测试钉住了源码形状）。
+
 import {
   WORKFLOW_RUN_ID_PATTERN,
   createCoreError,
   CoreErrorType,
-  isFileSystemPortError,
-  type FileSystemPort,
-  type Logger,
-  type SessionId,
-  type SessionStorePort,
-  type ScriptWorkflowRunRecord,
-  type TraceContext,
   type WorkflowOutput,
   type WorkflowPort,
-  type WorkflowStartRequest,
   type WorkflowTaskSnapshot,
-  type WorkflowTaskStatus,
 } from "@acode/contracts";
 import {
-  assertScriptWorkflowResumeOwner,
-  type ScriptWorkflowOwnerContext,
-} from "@acode/workflow-run-command/contract";
-import { readWorkflowScriptDocument } from "./script-workflow-meta.js";
-import { formatScriptWorkflowRun } from "./script-workflow-format.js";
-import type { ScriptWorkflowRuntime } from "./script-workflow-runtime.js";
-import { isScriptWorkflowStore } from "./script-workflow-utils.js";
+  resolveWorkflowToolSource,
+  runWorkflowLaunchResponse,
+  workflowOutputFromRunResult,
+} from "./tool-port-launch.js";
 import {
-  logicalScriptWorkflowStatus,
-  type ScriptWorkflowLogicalStatus,
-} from "./script-workflow-run-status.js";
-
-const WORKFLOW_SCRIPT_SUFFIX = ".workflow.js";
-const WORKFLOW_NAME_PATTERN = /^[A-Za-z0-9_.-]+$/;
-const BUILTIN_WORKFLOW_ALLOWLIST = new Map<string, string>();
-
-interface ScriptWorkflowToolPortDeps {
-  fileSystemPort: FileSystemPort;
-  getRuntime: () => ScriptWorkflowRuntime;
-  logger?: Logger;
-  remoteSessionId?: string;
-  sessionId: SessionId;
-  sessionStore: SessionStorePort;
-  storageRoot: string;
-  traceContext: TraceContext;
-  workspaceIdentity?: string;
-  workingDirectory: string;
-}
+  getWorkflowTaskSnapshot,
+  waitForWorkflowTaskCompletion,
+  workflowTaskStatus,
+  type ScriptWorkflowToolPortDeps,
+} from "./tool-port-snapshot.js";
 
 export function createScriptWorkflowToolPort(deps: ScriptWorkflowToolPortDeps): WorkflowPort {
   const completionSnapshots = new Map<string, Promise<WorkflowTaskSnapshot | undefined>>();
@@ -197,360 +184,6 @@ export function createScriptWorkflowToolPort(deps: ScriptWorkflowToolPortDeps): 
   };
 }
 
-/**
- * 启动成功回给模型的那句话。
- *
- * 它必须只点名**真实存在**的通道：原文写的是 "Use /workflows <runId> to watch progress"，
- * 而 ACode 没有 `/workflows` 命令（dwf 那边是 `/dwf list`，且它列的是 dwf 的 run，
- * 前缀 dwfrun_ 而不是 wf_）。让模型去用一个不存在的命令，它会要么编一个、要么反复重试，
- * 两种都比直说「等通知」更贵。
- *
- * 三条通道都是接好的：完成通知走 backgroundSource:"workflow"，TaskOutput 走端口的
- * getTask/waitForTask，TaskStop 走新加的 cancel()。
- */
-function runWorkflowLaunchResponse(runId: string, scriptPath: string | undefined): string {
-  const lines = [
-    `Workflow started in the background as ${runId}. It is still running — you will be notified with the final result when it completes, so do not poll it.`,
-    `To block until it finishes use TaskOutput with taskId ${runId}; to stop it use TaskStop with the same id.`,
-  ];
-  if (scriptPath !== undefined) {
-    lines.push(
-      `The script was saved to ${scriptPath}. To iterate, edit that file and call RunWorkflow again with the same \`scriptPath\` instead of resending the whole script.`,
-    );
-  }
-  return lines.join(" ");
-}
-
-function waitForWorkflowTaskCompletion(
-  completion: Promise<WorkflowTaskSnapshot | undefined>,
-  signal: AbortSignal | undefined,
-): Promise<WorkflowTaskSnapshot | undefined> {
-  if (!signal) return completion;
-  if (signal.aborted) return Promise.reject(workflowAbortReason(signal));
-
-  return new Promise((resolve, reject) => {
-    const cleanup = (): void => {
-      signal.removeEventListener("abort", onAbort);
-    };
-    const onAbort = (): void => {
-      cleanup();
-      reject(workflowAbortReason(signal));
-    };
-    signal.addEventListener("abort", onAbort, { once: true });
-    completion.then(
-      (snapshot) => {
-        cleanup();
-        resolve(snapshot);
-      },
-      (error: unknown) => {
-        cleanup();
-        reject(error);
-      },
-    );
-  });
-}
-
-function workflowAbortReason(signal: AbortSignal): unknown {
-  return signal.reason ?? new Error("Workflow task wait aborted");
-}
-
-function workflowOutputFromRunResult(
-  result: Awaited<ReturnType<ScriptWorkflowRuntime["run"]>>,
-  source: ResolvedWorkflowSource,
-  traceId: string,
-): WorkflowOutput {
-  return {
-    backgroundTaskId: result.runId,
-    name: source.name,
-    response: result.response,
-    runId: result.runId,
-    scriptPath: source.scriptPath,
-    status: result.status === "completed" ? "completed" : "failed",
-    traceId,
-  };
-}
-
-async function getWorkflowTaskSnapshot(
-  deps: ScriptWorkflowToolPortDeps,
-  taskId: string,
-): Promise<WorkflowTaskSnapshot | undefined> {
-  if (!isScriptWorkflowStore(deps.sessionStore)) return undefined;
-  const run = await deps.sessionStore.getScriptWorkflowRun(taskId);
-  if (!run) return undefined;
-  // 读**逻辑**状态：物理词 `cancelled` 同时承载「用户停的」与「宿主没了」，后者该报 `lost`
-  // （我们再也不知道它怎么样了），前者才是 `cancelled`。判据是 failure 上的结构化 code，
-  // 解码只有 script-workflow-run-status.ts 一处。
-  const logicalStatus = logicalScriptWorkflowStatus(run);
-  const status = workflowTaskStatus(logicalStatus);
-  const output = await durableWorkflowOutput(deps, run, logicalStatus);
-  return {
-    completedAt: run.completedAt ? new Date(run.completedAt) : undefined,
-    description: run.name,
-    error: failureMessage(run.failure),
-    name: run.name,
-    output:
-      // `lost` 也在列：孤儿收敛之后行的状态是 `interrupted` → 映射成 `lost`，
-      // 而「我们把它丢了」本身就是一个确定的结局，TaskOutput 该给一句准话而不是空手而归
-      // （否则模型会以为还在跑、继续等一个永不到来的结果）。
-      status === "completed" || status === "failed" || status === "cancelled" || status === "lost"
-        ? {
-            backgroundTaskId: run.id,
-            name: run.name,
-            response: output ?? `Workflow ${status}: ${run.id}`,
-            runId: run.id,
-            scriptPath: run.scriptPath,
-            status: status === "completed" ? "completed" : "failed",
-            traceId: deps.traceContext.traceId,
-          }
-        : undefined,
-    runId: run.id,
-    startedAt: new Date(run.startedAt ?? run.createdAt),
-    status,
-    taskId: run.id,
-  };
-}
-
-/**
- * `workflow_completed.result` 已经是 durable 事件事实；读取端必须和实时 completion 使用同一
- * formatter，否则完成后/冷恢复的 TaskOutput 会退化成状态摘要。缺少旧事件时保留摘要回退，
- * 但不伪造一个空结果。
- */
-async function durableWorkflowOutput(
-  deps: ScriptWorkflowToolPortDeps,
-  run: ScriptWorkflowRunRecord,
-  status: ScriptWorkflowLogicalStatus,
-): Promise<string | undefined> {
-  if (status !== "completed" || !isScriptWorkflowStore(deps.sessionStore)) return undefined;
-  try {
-    const [activities, events] = await Promise.all([
-      deps.sessionStore.listScriptWorkflowActivities({ runId: run.id }),
-      deps.sessionStore.listScriptWorkflowEvents({ runId: run.id }),
-    ]);
-    const event = [...events].reverse().find((entry) => entry.type === "workflow_completed");
-    const payload = event?.payload;
-    const result =
-      payload && typeof payload === "object" && "result" in payload
-        ? (payload as { result?: unknown }).result
-        : undefined;
-    return formatScriptWorkflowRun({ activities, result, run });
-  } catch (error) {
-    deps.logger?.warn?.("Script workflow durable result read failed", {
-      error: error instanceof Error ? error.message : String(error),
-      event: "workflow.tool.result_read_failed",
-      module: "bootstrap.workflow",
-      runId: run.id,
-    });
-    return undefined;
-  }
-}
-
-interface ResolvedWorkflowSource {
-  name?: string;
-  scriptPath?: string;
-}
-
-async function resolveWorkflowToolSource(
-  deps: ScriptWorkflowToolPortDeps,
-  request: WorkflowStartRequest,
-  signal?: AbortSignal,
-  owner?: ScriptWorkflowOwnerContext,
-): Promise<ResolvedWorkflowSource> {
-  // `resumeFromRunId` is an owner-bound read.  Resolve it before looking at any
-  // competing source field so a direct port caller cannot smuggle a foreign run
-  // through the scriptPath/script/name precedence rule.  The schema rejects this
-  // combination for normal tool calls; keep the runtime check here as the
-  // fail-closed boundary for callers that bypass schema validation.
-  if (request.resumeFromRunId) {
-    const resumed = await findResumeSource(
-      deps,
-      request.resumeFromRunId,
-      owner ?? {
-        parentSessionId: deps.sessionId,
-        remoteSessionId: deps.remoteSessionId,
-        workspaceIdentity: deps.workspaceIdentity,
-        workspacePath: deps.workingDirectory,
-      },
-    );
-    if (request.scriptPath || request.script || request.name) {
-      throw new Error(
-        "RunWorkflow cannot combine resumeFromRunId with scriptPath, script, or name; resume the existing run by id alone.",
-      );
-    }
-    return resumed;
-  }
-
-  if (request.scriptPath) {
-    const sourcePath = resolve(request.workingDirectory, request.scriptPath);
-    await validateScriptPath(deps.fileSystemPort, sourcePath, request.trace, signal);
-    const copiedPath = await persistScriptCopy(deps, request, sourcePath, signal);
-    await validateScriptPath(deps.fileSystemPort, copiedPath, request.trace, signal);
-    return { scriptPath: copiedPath };
-  }
-
-  if (request.script) {
-    const scriptPath = await persistInlineScript(deps, request, signal);
-    await validateScriptPath(deps.fileSystemPort, scriptPath, request.trace, signal);
-    return { scriptPath };
-  }
-
-  if (request.name) {
-    const sourcePath = await resolveNamedWorkflowPath(deps, request.name, request.trace, signal);
-    const copiedPath = await persistScriptCopy(deps, request, sourcePath, signal);
-    await validateScriptPath(deps.fileSystemPort, copiedPath, request.trace, signal);
-    return { name: request.name, scriptPath: copiedPath };
-  }
-
-  throw new Error("Workflow requires scriptPath, script, name, or resumeFromRunId.");
-}
-
-async function persistInlineScript(
-  deps: ScriptWorkflowToolPortDeps,
-  request: WorkflowStartRequest,
-  signal?: AbortSignal,
-): Promise<string> {
-  const scriptPath = sessionWorkflowScriptPath(deps.storageRoot, deps.sessionId, request);
-  await deps.fileSystemPort.writeTextFile(
-    {
-      atomic: true,
-      content: request.script ?? "",
-      createParents: true,
-      path: scriptPath,
-      trace: request.trace,
-    },
-    { signal },
-  );
-  return scriptPath;
-}
-
-async function persistScriptCopy(
-  deps: ScriptWorkflowToolPortDeps,
-  request: WorkflowStartRequest,
-  sourcePath: string,
-  signal?: AbortSignal,
-): Promise<string> {
-  const script = await deps.fileSystemPort.readTextFile(
-    { path: sourcePath, trace: request.trace },
-    { signal },
-  );
-  const scriptPath = sessionWorkflowScriptPath(deps.storageRoot, deps.sessionId, request);
-  await deps.fileSystemPort.writeTextFile(
-    {
-      atomic: true,
-      content: script.content,
-      createParents: true,
-      path: scriptPath,
-      trace: request.trace,
-    },
-    { signal },
-  );
-  return scriptPath;
-}
-
-async function resolveNamedWorkflowPath(
-  deps: ScriptWorkflowToolPortDeps,
-  name: string,
-  trace: TraceContext,
-  signal?: AbortSignal,
-): Promise<string> {
-  const fileName = workflowFileName(name);
-  const candidates = [
-    join(deps.workingDirectory, ".acode", "workflows", fileName),
-    join(homedir(), ".acode", "workflows", fileName),
-  ];
-  const builtIn = BUILTIN_WORKFLOW_ALLOWLIST.get(name);
-  if (builtIn) candidates.push(builtIn);
-
-  for (const candidate of candidates) {
-    if (await isReadableFile(deps.fileSystemPort, candidate, trace, signal)) return candidate;
-  }
-  throw new Error(`Workflow not found: ${name}`);
-}
-
-async function findResumeSource(
-  deps: ScriptWorkflowToolPortDeps,
-  runId: string,
-  owner: ScriptWorkflowOwnerContext,
-): Promise<ResolvedWorkflowSource> {
-  if (!isScriptWorkflowStore(deps.sessionStore)) {
-    throw new Error("Script workflow store is not available for this session store.");
-  }
-  const run = await deps.sessionStore.getScriptWorkflowRun(runId);
-  if (!run) throw new Error(`Workflow run not found: ${runId}`);
-  await assertScriptWorkflowResumeOwner(deps, run, owner);
-  if (!run.scriptPath) throw new Error(`Workflow run has no script path: ${runId}`);
-  return { name: run.name, scriptPath: run.scriptPath };
-}
-
-async function validateScriptPath(
-  fileSystemPort: FileSystemPort,
-  scriptPath: string,
-  traceContext: TraceContext,
-  signal?: AbortSignal,
-): Promise<void> {
-  await readWorkflowScriptDocument({ fileSystemPort, scriptPath, traceContext });
-  if (signal?.aborted) {
-    throw createCoreError(CoreErrorType.ToolCancelled, "Workflow launch cancelled");
-  }
-}
-
-async function isReadableFile(
-  fileSystemPort: FileSystemPort,
-  path: string,
-  trace: TraceContext,
-  signal?: AbortSignal,
-): Promise<boolean> {
-  try {
-    const stat = await fileSystemPort.stat({ path, trace }, { signal });
-    return stat.kind === "file";
-  } catch (error) {
-    if (isFileSystemPortError(error) && error.code === "not_found") return false;
-    throw error;
-  }
-}
-
-function workflowFileName(name: string): string {
-  if (!WORKFLOW_NAME_PATTERN.test(name)) {
-    throw new Error(`Workflow name must contain only letters, numbers, dot, dash, or underscore.`);
-  }
-  return name.endsWith(WORKFLOW_SCRIPT_SUFFIX) ? name : `${name}${WORKFLOW_SCRIPT_SUFFIX}`;
-}
-
-function workflowTaskStatus(status: ScriptWorkflowLogicalStatus): WorkflowTaskStatus {
-  if (status === "completed") return "completed";
-  if (status === "failed") return "failed";
-  if (status === "cancelled") return "cancelled";
-  // 宿主进程死了留下的遗物：不是脚本失败、也不是用户取消，而是「我们再也不知道它怎么样了」。
-  // `lost` 正是这个词在后台任务词汇表里的既有含义，不是兜底凑数。
-  if (status === "interrupted") return "lost";
-  if (status === "pending" || status === "running" || status === "paused") return "running";
-  return "lost";
-}
-
-function failureMessage(failure: unknown): string | undefined {
-  if (!failure) return undefined;
-  if (typeof failure === "string") return failure;
-  if (typeof failure === "object" && "message" in failure) {
-    const message = (failure as { message?: unknown }).message;
-    return typeof message === "string" ? message : undefined;
-  }
-  return String(failure);
-}
-
-function sessionWorkflowScriptPath(
-  storageRoot: string,
-  sessionId: SessionId,
-  request: WorkflowStartRequest,
-): string {
-  const baseName = request.name
-    ? workflowFileName(request.name)
-    : `${safeId(request.parentToolCallId)}${WORKFLOW_SCRIPT_SUFFIX}`;
-  return join(storageRoot, "cli", "sessions", sessionId, "workflows", baseName);
-}
-
 function toError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error));
-}
-
-function safeId(value: string): string {
-  return value.replace(/[^A-Za-z0-9_.-]/g, "_");
 }

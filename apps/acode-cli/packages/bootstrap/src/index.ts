@@ -68,7 +68,7 @@ export type {
 export { runACodeProtocolAgent } from "./acode-protocol-entrypoint.js";
 // Exposed for the CLI's --output-format stream-json: it needs the same event
 // shape the protocol server emits, rather than inventing a second one.
-export { mapSessionEvent } from "./acode-protocol/session-mapper.js";
+export { mapSessionEvent } from "./acode-protocol-v4/session-mapper.js";
 export type { SessionTranscriptMessage, SessionTranscriptPart } from "./session-transcript.js";
 export { listACodeSessions, resolveLatestSession } from "./sessions.js";
 export { inspectACodeSkill, listACodeSkills } from "./skills.js";

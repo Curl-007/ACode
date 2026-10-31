@@ -8,6 +8,7 @@ import {
   resolveRuntimeScriptWorkflowToolsIncluded,
 } from "../helpers/tool-allowlist.js";
 import { isToolNameDisallowed } from "../../tool/tool-visibility.js";
+import { getRuntimeToolCachePort } from "../runtime-tool-cache.js";
 
 export function resolveRuntimeEmbeddedSearchEnabled(runtime: AgentRuntimeInternal): boolean {
   const builtInToolAllowlist = resolveBuiltInToolAllowlist(runtime.config);
@@ -50,7 +51,8 @@ export function refreshBranchAwareBuiltInTools(runtime: AgentRuntimeInternal): v
     disallowedTools: runtime.config.toolDisallowlist,
     silentDuplicateWarnings: true,
   });
-  runtime.cachedTools = null;
+  // R1-01 B4：cachedTools 归 RuntimeToolCacheOwner，写面经端口。
+  getRuntimeToolCachePort(runtime).invalidateCachedTools();
 }
 
 export function filterEmbeddedSearchRuntimeVisibleTools(

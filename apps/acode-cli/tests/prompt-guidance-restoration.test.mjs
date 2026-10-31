@@ -6,7 +6,7 @@ import { test } from "node:test";
  * + workflow-actor 契约的 escalate 通道说明段。
  *
  * 覆盖：
- * - 方案 docs/cli-dispatch-and-system-prompt-upgrade-plan.md §4 P1 的验收
+ * - 方案 docs/archive/cli-dispatch-and-system-prompt-upgrade-plan.md §4 P1 的验收
  *   （「AskUserQuestion/Agent 在工具面时对应指导段出现、不在时消失」的条件组装测试）；
  * - specs/dispatch-discipline-prompt.md R1 分层判据在恢复段上的落地
  *   （去重的机器化断言在 dispatch-discipline-prompt.test.mjs 场景 6）；

@@ -1,6 +1,6 @@
 import type { ACodeConfigOption } from "@acode/shared";
 import type { SessionConfigState } from "@acode/shared/acode-protocol-v4";
-import { parseModelPickerValue } from "@/lib/acodeSessionProjection.js";
+import { parseModelPickerValue } from "@/lib/modelPickerValue.js";
 
 function resolveModelDisplayValue(
   options: readonly ACodeConfigOption[],

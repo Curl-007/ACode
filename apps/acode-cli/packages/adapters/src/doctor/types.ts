@@ -23,8 +23,12 @@ import type {
   RegistryModelConfig,
   RegistryProviderConfig,
 } from "@acode/provider";
-import type { ACodeProviderAccountAccess } from "@acode/shared";
+import type { ACodeProviderAccountAccess, ProviderDiagnosticsReasonCode } from "@acode/shared";
 import type { DnsLookup } from "../http/public-egress-policy.js";
+
+// runProviderDoctor 的 dnsLookup 入口类型属于 doctor 的公开契约面（消费者需要它来注入 fake
+// DNS 做封闭测试）。adapters/http barrel 未 re-export 该类型，故在此转出，随 doctor barrel 公开。
+export type { DnsLookup };
 
 /** 诊断档位；缺省 offline（未显式要求就不触网、不花费）。 */
 export const PROVIDER_DOCTOR_TIERS = ["offline", "catalog", "live"] as const;
@@ -206,6 +210,21 @@ export interface ProviderDoctorCheckResult {
   readonly status: ProviderDoctorCheckStatus;
   readonly detail: string;
   readonly durationMs?: number;
+  /**
+   * U08 结构化原因码（provider-diagnostics.md R7）。
+   *
+   * GUI 必须区分「密钥被端点拒绝」与「目录为空」，而两者都是
+   * `catalog_live_endpoint` + `failed`——只能靠目录探测的结构化 `httpStatus` 分辨。
+   * 根 AGENTS.md 禁止用错误文本做流程判断，因此这里给出**结构化**码，`detail` 仍只是
+   * 给人看的脱敏文案、不参与任何分支。
+   *
+   * additive 纪律：只加在内存报告上，**不加进 `ProviderDoctorLedgerEvent`**——账本
+   * schema（`schemaVersion: 1`）与既有覆盖视图逐字不变，不动已落盘证据的 schema。
+   * 词汇唯一所有者是 `@acode/shared` 的 `providerDiagnosticsReasonCodeSchema`
+   * （adapters 已依赖 shared，见本文件顶部的 `ACodeProviderAccountAccess`），
+   * 避免两侧各存一份枚举后漂移。
+   */
+  readonly reasonCode?: ProviderDiagnosticsReasonCode;
 }
 
 export interface ProviderDoctorReport {

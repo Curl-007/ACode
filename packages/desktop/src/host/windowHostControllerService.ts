@@ -1,12 +1,9 @@
 /* eslint-disable max-lines -- Controller source 聚合、路由、订阅与生命周期属于同一个 Host 边界。 */
 import { Emitter } from "@acode/rpc";
 import type { ACodeTaskMeta } from "@acode/shared";
-import type {
-  ControllerSubscribeParams,
-  WindowHostControllerTaskRow,
-  WindowHostTaskAddress,
-} from "@acode/shared/acode-protocol-v4";
 import { matchesTaskListMembershipKind } from "@acode/shared/acode-protocol-v4";
+import type { ControllerSubscribeParams, WindowHostControllerTaskRow, WindowHostTaskAddress } from "@acode/shared/acode-protocol-v4";
+
 import type {
   IWindowControllerService,
   IACodeAgentService,

@@ -1,3 +1,7 @@
+/* eslint-disable max-lines -- 本文件在 Overnight 完成信号接线前已达 max-lines 上限（400，零余量）；
+   overnight-completion 出口（onOvernightCompletion → connection.send）必须落在 createACodeApp 调用处
+   与既有 onToolExecResource 同族，任何一行新增都会越界。头注豁免以恢复门禁信号；拆分重构超出本批范围
+   （与 server.ts / v4-bridge.ts / app/types.ts 等同款基线豁免一致）。 */
 import { createConfig } from "@acode/adapters/config";
 import { createNodeModelSelectionFacade } from "@acode/provider-node";
 import { createNodeLoggerFactory } from "@acode/adapters/logging";
@@ -8,14 +12,15 @@ import {
   type McpTelemetryTracker,
 } from "@acode/adapters/mcp";
 import {
-  acodeProtocolNotifications,
   ACODE_APP_IS_PACKAGED_ENV,
   createACodeAgentIdleExitEvaluator,
   resolveACodeAgentIdleExitConfig,
   type ACodeMcpResourceSample,
   type ACodeMcpTelemetryEvent,
+  LEGACY_NOTIFICATIONS,
 } from "@acode/shared";
 import type { SqliteSessionStore } from "@acode/adapters/storage";
+import { V4_OVERNIGHT_COMPLETION_METHOD } from "@acode/shared/acode-protocol-v4";
 import { traceContextToLogContext, createRootTraceContext } from "@acode/contracts";
 import type { McpPort, ModelSelection } from "@acode/contracts";
 import type { PresentationSurface } from "@acode/core";
@@ -28,16 +33,16 @@ import {
 import {
   openProtocolStartupStorage,
   prepareProtocolStartupStorage,
-} from "./acode-protocol/storage-startup.js";
+} from "./acode-protocol-v4/storage-startup.js";
 import { closeSessionStore, getSessionDbPath } from "./app/session-store.js";
 import { startProcessProviderRegistryRuntime } from "./app/process-provider-registry-runtime.js";
 import { scheduleStartupLogRetentionCleanup } from "./log-retention.js";
 import { StartupTimer, startupNow } from "./startup-logging.js";
-import { installACodeProtocolAiSdkWarningLogger } from "./acode-protocol/ai-sdk-warning-logger.js";
+import { installACodeProtocolAiSdkWarningLogger } from "./acode-protocol-v4/ai-sdk-warning-logger.js";
 import {
   createOfficialMcpAuthHeadersPort,
   type OfficialMcpAuthRequestContext,
-} from "./acode-protocol/official-mcp-auth-port.js";
+} from "./acode-protocol-v4/official-mcp-auth-port.js";
 import {
   createOfficialMcpTrustedOriginRegistry,
   OFFICIAL_MCP_DEV_TRUSTED_ORIGINS_ENV,
@@ -46,11 +51,11 @@ import {
   ACODE_WORKSPACE_IDENTITY_ENV,
   resolveRuntimeACodeEndpointOrigin,
 } from "@acode/shared";
-import { ACodeProtocolAgentServer } from "./acode-protocol/server.js";
-import { ACodeProtocolNdjsonConnection } from "./acode-protocol/transport.js";
-import { cleanupProtocolRuntime } from "./acode-protocol/runtime-cleanup.js";
-import { startProtocolResourceSampler } from "./acode-protocol/resource-sampler.js";
-import { acquireProtocolStartupResource } from "./acode-protocol/startup-resource.js";
+import { ACodeProtocolAgentServer } from "./acode-protocol-v4/server.js";
+import { ACodeProtocolNdjsonConnection } from "./acode-protocol-v4/transport.js";
+import { cleanupProtocolRuntime } from "./acode-protocol-v4/runtime-cleanup.js";
+import { startProtocolResourceSampler } from "./acode-protocol-v4/resource-sampler.js";
+import { acquireProtocolStartupResource } from "./acode-protocol-v4/startup-resource.js";
 import type { ACodeProcessResourceSampler } from "./process-resource-sampler.js";
 
 function applyProtocolPresentationSurface(
@@ -299,7 +304,12 @@ export async function runACodeProtocolAgent(
             : {}),
           sourceTitle: "electron",
           onToolExecResource: (params) =>
-            connection.send({ method: acodeProtocolNotifications.toolExecResource, params }),
+            connection.send({ method: LEGACY_NOTIFICATIONS.toolExecResource, params }),
+          // Overnight（K3）完成信号（specs/overnight-completion-notify.md §7）：agent 子进程内
+          // supervisor 落终态时经此出口发成 v4 通知，host 侧 acodeAgentService 解析后镜像给 main。
+          // method 用本仓 v4 叶子的常量（不进 legacy barrel 冻结面）。
+          onOvernightCompletion: (signal) =>
+            connection.send({ method: V4_OVERNIGHT_COMPLETION_METHOD, params: signal }),
         }),
       cwd: options.cwd,
       env: options.env,
@@ -340,14 +350,14 @@ export async function runACodeProtocolAgent(
     server.setNotificationSink((notification) => connection.send(notification));
     mcpResourceSink = (samples) =>
       connection.send({
-        method: acodeProtocolNotifications.mcpResourceSamples,
+        method: LEGACY_NOTIFICATIONS.mcpResourceSamples,
         params: samples,
       });
     mcpTelemetrySink = (event) => {
       // 五分钟资源通知取代旧内存通知；tracker 内部孤儿事实仍保留原判据。
       if (event.kind === "memory") return;
       connection.send({
-        method: acodeProtocolNotifications.mcpTelemetry,
+        method: LEGACY_NOTIFICATIONS.mcpTelemetry,
         params: event,
       });
     };
@@ -377,7 +387,7 @@ export async function runACodeProtocolAgent(
               return facts;
             },
             announce: (params) =>
-              connection.send({ method: acodeProtocolNotifications.runtimeIdleExit, params }),
+              connection.send({ method: LEGACY_NOTIFICATIONS.runtimeIdleExit, params }),
             requestShutdown: (exitCode) => options.lifecycle?.requestShutdown(undefined, exitCode),
             onEvent: (event) => {
               if (event.kind === "announced") {

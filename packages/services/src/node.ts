@@ -244,6 +244,8 @@ export {
 } from "./runtime-tools/runtimeCommandEnv.js";
 
 // 定时任务管理与 scheduler 共用同一套 node-only 存储和 cron 语义。
+// 全部经 session 契约面转出（specs/session-module-boundary.md）：node.ts 是装配根/barrel，
+// 不再直引 session 实现文件——deep-import 门禁因此对 session 强校验，internalEdgeAllowlist 见底。
 export {
   AutomationRepo,
   DISPATCH_RETRY_BASE_MS,
@@ -251,17 +253,19 @@ export {
   DISPATCH_MAX_ATTEMPTS,
   CLAIM_STALE_MS,
   computeRetryAt,
-} from "./session/automationRepo.js";
-export { AutomationService, InvalidCronExprError } from "./session/automationService.js";
-// 闲时任务与 automation 同库不同表；类型/常量全独立。
-export { OffPeakTaskRepo, OFF_PEAK_CLAIM_STALE_MS } from "./session/offPeakTaskRepo.js";
-// host 域终态回填 files_changed 复用现有 task diff 汇总。
-export { buildTaskChangeSummary } from "./session/taskChangeSummary.js";
-export { OffPeakTaskService } from "./session/offPeakTaskService.js";
-export { IOffPeakTaskService } from "./session/offPeakTask.js";
-export { createOffPeakServerClient, OffPeakServerError } from "./session/offPeakServerClient.js";
-export { isOffPeakMockEnabled, startOffPeakMockGateway } from "./session/offPeakMockGateway.js";
-export {
+  AutomationService,
+  InvalidCronExprError,
+  // 闲时任务与 automation 同库不同表；类型/常量全独立。
+  OffPeakTaskRepo,
+  OFF_PEAK_CLAIM_STALE_MS,
+  // host 域终态回填 files_changed 复用现有 task diff 汇总。
+  buildTaskChangeSummary,
+  OffPeakTaskService,
+  IOffPeakTaskService,
+  createOffPeakServerClient,
+  OffPeakServerError,
+  isOffPeakMockEnabled,
+  startOffPeakMockGateway,
   buildOffPeakRequestAuth,
   createOffPeakOriginResolver,
   resolveOffPeakCredentials,
@@ -271,7 +275,12 @@ export {
   OffPeakCredentialsUnavailableError,
   OffPeakModelUnavailableError,
   OffPeakPermanentDispatchError,
-} from "./session/offPeakRuntimeModel.js";
+  computeAutomationNextRunAt,
+  computeNextRunAt,
+  computeScheduleRuleNextRunAt,
+  isOneShotAutomation,
+  isValidCronExpr,
+} from "./session/contract.js";
 export { createServiceLogger } from "./logger/serviceLogger.js";
 // 运行期收名（specs/log-privacy-redaction.md services R3）：SSH/远程连接建立点
 // 把对端主机名登记进服务层脱敏注册表；桌面 main 侧收名走 logPrivacyIdentity 的
@@ -282,13 +291,6 @@ export {
   createOfficialMcpAuthHeadersResolver,
   resolveOfficialMcpCredentials,
 } from "./official-mcp/officialMcpCredentials.js";
-export {
-  computeAutomationNextRunAt,
-  computeNextRunAt,
-  computeScheduleRuleNextRunAt,
-  isOneShotAutomation,
-  isValidCronExpr,
-} from "./session/automationCron.js";
 
 import { ServiceCollection } from "./collection.js";
 import { IFileService } from "./file/file.js";
@@ -301,7 +303,7 @@ import { ISettingService } from "./setting/setting.js";
 import { IOnboardingRecordService } from "./onboarding/onboardingRecord.js";
 import { ICredentialService } from "./credential/credential.js";
 import { IBroadcastService } from "./broadcast/broadcast.js";
-import { IACodeTaskService } from "./session/acodeTaskService.js";
+import { IACodeTaskService } from "./session/contract.js";
 import { IACodeAgentService } from "./acode-agent/acodeAgent.js";
 import type { CuaOperationStateReporter } from "./acode-agent/cuaOperationTurnTracker.js";
 import { IACodeSessionService } from "./acode-session/acodeSession.js";
@@ -351,7 +353,7 @@ import { createACodeTaskIndexSyncer } from "./acode-agent/acodeTaskIndexSyncer.j
 import { TaskIndexRepo } from "./session/taskIndexRepo.js";
 import { createBotsService } from "./bots/botsService.js";
 import { createBotRemoteWorkspaceService } from "./bots/botRemoteWorkspaceBridge.js";
-import type { SessionMessageSendRequested } from "#src/session/sessionMailbox.js";
+import type { SessionMessageSendRequested } from "#src/session/contract.js";
 import { createFileWatcherService } from "./fileWatcher/fileWatcherService.js";
 import { createOAuthService } from "./oauth/oauthService.js";
 import { isCurrentOAuthCredentialRequest } from "#src/oauth/oauthUnauthorizedRequest.js";
@@ -436,17 +438,17 @@ import {
 import { ensureAppCaCert } from "./runtime-tools/appCaCert.js";
 import { buildHelperOpenArgs, isCuaLocalDevelopmentRuntime } from "@acode/acode-cua/broker/server";
 import { createServiceLogger, type ServiceLogger } from "#src/logger/serviceLogger.js";
-import { IOffPeakTaskService } from "./session/offPeakTask.js";
-import { OffPeakTaskService } from "./session/offPeakTaskService.js";
-import { OffPeakTaskRepo } from "./session/offPeakTaskRepo.js";
-import { createOffPeakServerClient } from "./session/offPeakServerClient.js";
 import {
+  IOffPeakTaskService,
+  OffPeakTaskService,
+  OffPeakTaskRepo,
+  createOffPeakServerClient,
   buildOffPeakRequestAuth,
   createOffPeakOriginResolver,
   resolveOffPeakCredentials,
   resolveOffPeakCodingPlanSupport,
   resolveOffPeakMockUpstream,
-} from "./session/offPeakRuntimeModel.js";
+} from "./session/contract.js";
 import {
   createOfficialMcpAuthHeadersResolver,
   resolveOfficialMcpCredentials,
@@ -521,6 +523,7 @@ import {
   isACodeCuaMcpCommand,
   isACodeCuaMcpPackageArg,
   isACodeCuaInternalFeatureEnabled,
+  isACodeCuaDevActivationRequested,
   ACODE_CUA_PLUGIN_AUTHORITY_ENV_KEY,
   type ACodeAutomation,
   type ACodeAutomationRun,
@@ -1722,11 +1725,14 @@ export function createLocalServices(options: {
   // service 创建完成后再赋值。Helper recovery 始终不能回收 Agent。
   let hasActiveTurnRef: (() => boolean) | undefined;
   const isCuaEnabledForContext = (context?: CuaProductMcpServerResolverContext): boolean =>
-    // 保留 main 原有 gate 行为（避免回归）：dev/internal 特性开启时（ACODE_CUA_DEV_MODE=1 或
-    // ACODE_CUA_PRODUCT_HELPER=1）即视为启用，不依赖 config.json 显式 enable——main 的 bootstrap
-    // 用 isACodeCuaInternalFeatureEnabled 门控 bundled plugin，与 feat 的 workspace enablement 不同。
-    // 生产路径（dev mode off）回落到官方插件 workspace enablement 判定（与 feat 一致）。
-    isACodeCuaInternalFeatureEnabled(process.env) ||
+    // 启用单一权威（specs/cua-enablement-authority.md R1/R2/R3）：
+    // - R1 生产形态唯一事实源 = 设置页开关落盘的插件启用记录（isOfficialCuaPluginEnabledForWorkspace
+    //   真读盘，user 配置 + workspace 并入，优先级与 CLI createConfig 实物一致）；
+    // - R2 dev 覆盖旗标（ACODE_CUA_DEV_MODE / ACODE_CUA_PRODUCT_HELPER 显式真值）独立于开关，
+    //   只在未打包构建可达（打包态经 startupSanitation 删除，见 R2 硬化）；
+    // - R3 isACodeCuaInternalFeatureEnabled（缺省 ON）已退出启用判定，其「CUA 基础设施随正式版
+    //   打包」语义留在 shouldEnableDefaultCuaProductHelper 等既有消费点（:704，一字不动）。
+    isACodeCuaDevActivationRequested(process.env) ||
     isOfficialCuaPluginEnabledForWorkspace({
       env: process.env,
       workingDirectory: context?.workspacePath,
@@ -2465,7 +2471,7 @@ export function createLocalServices(options: {
         }
       })
       .catch((error) => {
-        acodeJwtLogoutLogger.warn("ACode JWT logout failed", { error });
+        acodeJwtLogoutLogger.warn(undefined, "ACode JWT logout failed", { error });
       });
   };
   // Desktop Host 曾从 Settings View 再扫描一次 Account Provider，既绕开
@@ -2730,13 +2736,13 @@ export function createLocalServices(options: {
   void providerRuntime.start().then(
     () => {
       const snapshot = providerRuntime.registryService.getSnapshot()!;
-      log.info("Provider Registry 已就绪", {
+      log.info(undefined, "Provider Registry 已就绪", {
         configRevision: snapshot.sourceRevisions.config,
         providerCount: snapshot.registry.providers.length,
       });
     },
     (error: unknown) => {
-      log.error("Provider 配置事实初始化失败", error);
+      log.error(undefined, "Provider 配置事实初始化失败", error);
     },
   );
 

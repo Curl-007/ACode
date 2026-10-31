@@ -13,30 +13,9 @@
 //   flush buffer，旧 subscriptionId 不再产帧，客户端按 subId 丢弃旧代际帧。
 import { Buffer } from "node:buffer";
 import { SessionEventType, type SessionEvent } from "@acode/contracts";
-import type {
-  CommandEnvelope,
-  ConversationDelta,
-  ConversationRowTarget,
-  ConversationSnapshot,
-  ConversationTopicFrame,
-  DeliveryProfile,
-  DeliveryProfileName,
-  QueueItem,
-  SubscribeAck,
-  TopicFrameDeliveryKind,
-  ToolCallRow,
-  V4ConversationPlansResult,
-  V4ConversationRowsRangeResult,
-} from "@acode/shared/acode-protocol-v4";
-import {
-  DELIVERY_PROFILES,
-  PROTOCOL_V4_LIMITS,
-  clampWorkflowRunsForLegacy,
-  coalesceConversationDeltas,
-  filterConversationDeltasForProfile,
-  filterConversationRowsForProfile,
-  utf8JsonByteLength,
-} from "@acode/shared/acode-protocol-v4";
+import { DELIVERY_PROFILES, PROTOCOL_V4_LIMITS, clampWorkflowRunsForLegacy, coalesceConversationDeltas, filterConversationDeltasForProfile, filterConversationRowsForProfile, utf8JsonByteLength } from "@acode/shared/acode-protocol-v4";
+import type { CommandEnvelope, ConversationDelta, ConversationRowTarget, ConversationSnapshot, ConversationTopicFrame, DeliveryProfile, DeliveryProfileName, QueueItem, SubscribeAck, TopicFrameDeliveryKind, ToolCallRow, V4ConversationPlansResult, V4ConversationRowsRangeResult } from "@acode/shared/acode-protocol-v4";
+
 import {
   encodeConversationDeltasForLegacy,
   workflowRunDeltaGrowthUpperBound,

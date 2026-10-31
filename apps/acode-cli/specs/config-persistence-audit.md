@@ -3,7 +3,7 @@
 - 状态：审计完成；`settingService` 缺口已修复（前瞻性）；存量固化键的追溯清理待产品决策（见「残留风险」）。
 - 日期：2026-09-30
 - 审计范围：`packages/services` 的配置读写（用户设置、provider 配置、bots/MCP/plugin/skills 同步落盘）、`packages/desktop` 的配置存储。
-- 审计对象模式（jcode 事故，转引自 `docs/jcode-inspired-upgrade-plan.md` J1-4 小节，原始出处 jcode `docs/DISCOVERY_CONVERSION_ANALYSIS.md:30-41`）：
+- 审计对象模式（jcode 事故，转引自 `docs/archive/jcode-inspired-upgrade-plan.md` J1-4 小节，原始出处 jcode `docs/DISCOVERY_CONVERSION_ANALYSIS.md:30-41`）：
   `Config::save()`「读入全量 → 内存改一处 → 写回全量」把旧默认值（`sponsors.enabled=false`）冻结进 168 个用户配置文件；之后翻转默认值也救不回来——**已落盘的旧默认值和用户显式选择无法区分**。
 - 重点判定：写回时「用户从未显式设置过的键」是被保留（不写入/合并写）还是被当时代码里的默认值固化。
 

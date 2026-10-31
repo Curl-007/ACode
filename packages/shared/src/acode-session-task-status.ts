@@ -1,7 +1,9 @@
 // ── 旧协议兼容面（过渡期）──────────────────────────────
 // 剩余 1 个导出：deriveACodeTaskStatusFromSessionSnapshot。
-// 消费者：acodeTaskServiceAdapter/acodeTaskIndexSyncer/acodeSessionProjection（旧投影栈）。
-import type { ACodeSessionStateSnapshot } from "./acode-protocol/index.js";
+// 消费者：acodeTaskServiceAdapter/acodeTaskIndexSyncer（旧投影栈）。
+// 注：UI 侧曾有一个消费方 packages/ui/src/lib/acodeSessionProjection.ts，2026-10-28 随
+// legacy M1 收口删除（改走 v4 session/headerMeta 冷读）。
+import type { ACodeSessionStateSnapshot } from "./acode-session-projection.js";
 import { getACodeUserVisibleMessages } from "./acode-session-visible-content.js";
 import type { ACodeTaskMeta } from "./acode-task-types-core.js";
 type ACodeTaskStatus = ACodeTaskMeta["status"];

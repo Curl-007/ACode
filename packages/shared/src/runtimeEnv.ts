@@ -25,8 +25,11 @@ export const ACODE_CUA_NODE_REPL_HOST_ENV_KEY = "ACODE_CUA_NODE_REPL_HOST";
 // flag (below) plus the local-helper relaxations wired in packages/services (unsigned/
 // unauthenticated local helper, dev install variant, "Dev.app" naming). It exists so a developer
 // can launch the full local CUA loop with a single env var instead of the historical four-var
-// incantation. 这些开关只在未打包本地构建生效；正式 desktop/Helper bundle 会在编译期关闭并在
-// main→host 边界删除，不能用于 signed release 的 runtime override。
+// incantation. 这两个键只在未打包构建生效：打包 desktop 的启动卫生件
+// （packages/desktop/src/main/startupSanitation.ts 的 PACKAGED_BOOT_ENV_DROP_KEYS，
+// spec: packages/services/specs/cua-enablement-authority.md R2）在 main 装配任何 CUA
+// 消费点之前把两键从 process.env 删除（打包 + 无有效调试令牌时生效），
+// 不能用于 signed release 的 runtime override。
 export const ACODE_CUA_DEV_MODE_ENV_KEY = "ACODE_CUA_DEV_MODE";
 
 export type ACodeRuntimeEnv = "development" | "production" | "test";
@@ -45,6 +48,26 @@ export function isACodeCuaInternalFeatureEnabled(env: EnvRecord = process.env): 
   const explicit = env[ACODE_CUA_PRODUCT_HELPER_ENV_KEY]?.trim().toLowerCase();
   if (explicit === "0" || explicit === "false" || explicit === "off") return false;
   return true;
+}
+
+/**
+ * 是否存在**显式**的 CUA 本地开发激活旗标（specs/cua-broker-credential-relay.md R1(b)）。
+ *
+ * 与 isACodeCuaInternalFeatureEnabled（缺省 ON，语义 = 「CUA 基础设施随正式版打包」）
+ * 不同，本谓词缺省 false，只认用户/开发环境显式设置的 dev 旋钮：
+ * - ACODE_CUA_DEV_MODE 真值（一键 dev 链）；
+ * - ACODE_CUA_PRODUCT_HELPER 显式真值（历史四变量咒语的单开旋钮；空串/0/false/off 不算）。
+ *
+ * 用途：CLI 侧 broker 凭据中继门的 dev 分支。这两个键在打包 desktop 启动时经
+ * startupSanitation 的 PACKAGED_BOOT_ENV_DROP_KEYS 删除（见 ACODE_CUA_DEV_MODE_ENV_KEY
+ * 注释），因此打包生产的 agent 进程恒判 false——生产链的凭据中继仍只由设置页开关落盘的
+ * 插件启用记录驱动，「电脑控制默认关闭」的产品决策不受影响。
+ */
+export function isACodeCuaDevActivationRequested(env: EnvRecord = process.env): boolean {
+  if (isCuaDevModeRequested(env)) return true;
+  const explicit = env[ACODE_CUA_PRODUCT_HELPER_ENV_KEY]?.trim().toLowerCase();
+  if (explicit === undefined || explicit === "") return false;
+  return explicit !== "0" && explicit !== "false" && explicit !== "off";
 }
 
 const SANITIZED_RUNTIME_ENV_KEYS = [

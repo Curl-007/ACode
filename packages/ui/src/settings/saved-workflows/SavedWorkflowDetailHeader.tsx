@@ -1,11 +1,5 @@
-import {
-  TID_WORKFLOW_DETAIL_MENU,
-  TID_WORKFLOW_DETAIL_RUN,
-  TID_WORKFLOW_ACTION_DELETE,
-  TID_WORKFLOW_ACTION_MOVE,
-  testId,
-  type ACodeSavedWorkflowEntry,
-} from "@acode/shared";
+import { TID_WORKFLOW_DETAIL_MENU, TID_WORKFLOW_DETAIL_RUN, TID_WORKFLOW_ACTION_DELETE, TID_WORKFLOW_ACTION_MOVE, testId } from "@acode/shared";
+import { type V4SavedWorkflowEntry } from "@acode/shared/acode-protocol-v4";
 import { Button } from "@/components/ui/button.js";
 import {
   DropdownMenu,
@@ -24,7 +18,7 @@ import {
 interface SavedWorkflowDetailHeaderProps {
   name: string;
   description: string;
-  entry: ACodeSavedWorkflowEntry | undefined;
+  entry: V4SavedWorkflowEntry | undefined;
   busy: boolean;
   onRun: () => void;
   onRevise: () => void;

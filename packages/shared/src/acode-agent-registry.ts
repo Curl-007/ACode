@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { ACodeProvider } from "./acode-task-types-core.js";
-import { acodeEnginePermissionModeSchema } from "./acode-protocol-legacy-types.js";
+import { acodeEnginePermissionModeSchema } from "./acode-session-types.js";
 import { filterBotSelectablePermissionModes } from "./bot-remote-guard.js";
 
 /**

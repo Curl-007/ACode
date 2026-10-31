@@ -11,6 +11,7 @@
  * 文件 import 它（消费方经 tsconfig types 引用）。见 specs/module-boundary.md。
  */
 export { RemoteServiceAccess } from "./remoteServiceAccess.js";
+export type { DisposableServiceAccessor } from "./remoteServiceAccess.js";
 export { connectViaProtocol, connectViaWebSocket } from "./websocket.js";
 export type { WebSocketConnectionCloseEvent } from "./websocket.js";
 export { connectViaMessagePort, createMessagePortServiceConnection } from "./messageport.js";

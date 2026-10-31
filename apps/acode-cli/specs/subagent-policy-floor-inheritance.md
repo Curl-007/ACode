@@ -109,7 +109,7 @@ create-app（唯一注册点）
 
 ## 增补（2026-10-10）：R4 派发工具面永不经任何 allowlist 分支授予
 
-来源：[`docs/codex-orchestration-integration-plan.md`](../../../docs/codex-orchestration-integration-plan.md)
+来源：[`docs/archive/codex-orchestration-integration-plan.md`](../../../docs/archive/codex-orchestration-integration-plan.md)
 §5 R2（allowlist 洞）的修复，经 2026-10-10 对照审计（B2，独立复核 confirmed）核实后
 按方案「即使不放开嵌套也值得先做」单独先行。放开嵌套时的按 depth 重评**已随编排方案
 Phase 4 落地**（`allowDispatch`，与 child enabled 闸门同源派生，见
@@ -144,5 +144,7 @@ Phase 4 落地**（`allowDispatch`，与 child enabled 闸门同源派生，见
 
 - Explore 子代理的 yolo 缺省改模式（设计保留，见 R3；只读工具面 + 三层兜底）。
 - memory agent 的 deny broker 语义（ask→deny 是其隔离设计，不动）。
-- 多 app 同进程场景（不存在：一个进程一个 createACodeApp，与 setOfficialServiceSwitches
-  同一前提）。
+- 多 app 同进程场景（本 spec 的规则不因其改变；但注意该场景**真实存在**——桌面
+  app-server 每会话一个 create-app、多 app 并存，见 specs/gen-ui-visualize.md
+  「注册表绑定（2026-10-12 实机修复：多 app 进程）」Bug 6 真机复现。进程级
+  setOfficialServiceSwitches 的覆盖语义属既有事实，不在本项范围内处理）。

@@ -1,13 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type {
-  ACodePluginReferenceCatalogEntry,
-  ACodePluginsReferenceCatalogResult,
-} from "@acode/shared";
+
+import { type V4PluginReferenceCatalogEntry, type V4PluginsReferenceCatalogResult } from "@acode/shared/acode-protocol-v4";
 import { useWorkspaceServicesResolution } from "@/hooks/useWorkspaceServices.js";
 import { logger } from "@/logger.js";
 
 interface PluginReferenceCatalogState {
-  entries: ACodePluginReferenceCatalogEntry[];
+  entries: V4PluginReferenceCatalogEntry[];
   authority: "session" | "workspace" | null;
   loading: boolean;
   error: string | null;
@@ -41,14 +39,14 @@ interface PluginReferenceCatalogOptions {
 
 let sessionCatalogRequests = new WeakMap<
   object,
-  Map<string, Promise<ACodePluginsReferenceCatalogResult>>
+  Map<string, Promise<V4PluginsReferenceCatalogResult>>
 >();
 
 function releaseSessionCatalogRequest(
   services: object,
-  serviceCache: Map<string, Promise<ACodePluginsReferenceCatalogResult>>,
+  serviceCache: Map<string, Promise<V4PluginsReferenceCatalogResult>>,
   requestKey: string,
-  request: Promise<ACodePluginsReferenceCatalogResult>,
+  request: Promise<V4PluginsReferenceCatalogResult>,
 ): void {
   // 成功 Promise 曾永久驻留，并在 Agent runtime 换代后继续冒充新
   // runtime 的 Session authority。缓存只能做挂载期的 in-flight 单飞；旧请求
@@ -62,9 +60,9 @@ function releaseSessionCatalogRequest(
 
 function releaseSessionCatalogRequestWhenSettled(
   services: object,
-  serviceCache: Map<string, Promise<ACodePluginsReferenceCatalogResult>>,
+  serviceCache: Map<string, Promise<V4PluginsReferenceCatalogResult>>,
   requestKey: string,
-  request: Promise<ACodePluginsReferenceCatalogResult>,
+  request: Promise<V4PluginsReferenceCatalogResult>,
 ): void {
   const release = () => releaseSessionCatalogRequest(services, serviceCache, requestKey, request);
   void request.then(release, release);
@@ -137,8 +135,8 @@ export function usePluginReferenceCatalog(
       ...(remoteSessionId ? { remoteSessionId } : {}),
       ...(sessionId ? { sessionId } : {}),
     };
-    let request: Promise<ACodePluginsReferenceCatalogResult>;
-    let requestServiceCache: Map<string, Promise<ACodePluginsReferenceCatalogResult>> | undefined;
+    let request: Promise<V4PluginsReferenceCatalogResult>;
+    let requestServiceCache: Map<string, Promise<V4PluginsReferenceCatalogResult>> | undefined;
     if (options?.dedupeSessionRequest && sessionId) {
       let serviceCache = sessionCatalogRequests.get(services);
       if (!serviceCache) {

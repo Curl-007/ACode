@@ -12,8 +12,9 @@
  * 不变量：Main 侧不得新增 task/session 快照落盘；本协调器只持有内存转发态。
  *
  * deliveryKind：Main 侧只登记 desktop_window，且仅作日志/诊断，无分支消费。
- * relay_bridge 的权威在 acode-server-cli（手机 web-remote-replayable 恢复链路刻意不经 Main），
- * 见 specs/task-realtime-bus-mirror.md「两条交付链路」。
+ * relay_bridge 是预留枚举值，当前全仓（含 acode-server-cli）无生产者与分支消费者；Main 侧只实现
+ * desktop_window（手机 web-remote-replayable 恢复链路刻意不经 Main）。若未来要给 relay_bridge 接线，
+ * 必须先在 specs/task-realtime-bus-mirror.md 登记权威实现位置，见该 spec「两条交付链路」。
  */
 import type { UtilityProcess as ElectronUtilityProcess } from "electron";
 import {
@@ -194,11 +195,12 @@ export class TaskRealtimeBus {
     const workspaceKeys = new Set(params.workspaceKeys);
     // 主审 review finding #1（P2）：Main 侧 deliveryKind 只登记为诊断/日志字段，全 desktop 无
     // `deliveryKind === "relay_bridge"` 的分支消费点（rg 复核命中 0）。desktop 全仓 registerHost
-    // 恒为 desktop_window；手机 web-remote-replayable 恢复链路的真源在 acode-server-cli
-    // （server-core/http.ts，与 desktop-continuous 在 server-cli/host 侧分流），刻意不经 Main
-    // 实时总线。故 relay_bridge 在 Main 侧是有意预留的枚举值而非未接线的缺陷；权威见
-    // specs/task-realtime-bus-mirror.md「两条交付链路」。shared 的类型定义
-    // （TaskRealtimeHostDeliveryKind）不在本包所有权内，不改。
+    // 恒为 desktop_window。手机 web-remote-replayable 恢复链路刻意不经 Main 实时总线，其传输真源在
+    // acode-server-cli（server-core/http.ts，与 desktop-continuous 在 server-cli/host 侧分流）——但
+    // 该链路**不使用 relay_bridge 这个枚举值**：relay_bridge 是死值/预留枚举，全仓（含 acode-server-cli）
+    // 无生产者与分支消费者，不得声称其权威已在某处实现。1.0.4 review P3 订正：此前注释误称 relay_bridge
+    // 的权威在 acode-server-cli，源码不支持。详见 specs/task-realtime-bus-mirror.md「两条交付链路」。
+    // shared 的类型定义（TaskRealtimeHostDeliveryKind）不在本包所有权内，不改。
     const deliveryKind = params.deliveryKind ?? "desktop_window";
     this.hosts.set(params.hostId, {
       hostId: params.hostId,
@@ -418,8 +420,14 @@ export class TaskRealtimeBus {
     // finding #2：lease 释放代表 run 结束，其 replay 镜像非权威且不再需要；无条件回收 streamBatch
     // 与去重桶，防止非 terminal 释放时镜像残留占用 Main 内存（详见 specs/task-realtime-bus-mirror.md）。
     this.discardStreamBatch(batchKey);
-    this.discardSeenEventBucketForTask(target.workspaceKey, target.taskId);
+    // 1.0.4 review finding（P3）：语句顺序缺陷修复。此前先调 discardSeenEventBucketForTask、后
+    // this.leases.delete，导致该 helper 内「workspace 桶仅在该 workspace 再无 lease 时回收」的
+    // stillUsed 扫描把正在释放的 lease 也算进去 → stillUsed 恒 true → 单释放路径永不回收 workspace
+    // 级去重桶（terminal :481 与 host 退出 :443 路径都是先删 lease，故正确）。修法：先删 lease 再回收
+    // 桶，使扫描只反映「其它 lease 是否仍用该 workspaceKey」，与 spec task-realtime-bus-mirror.md:113
+    // 的明文意图一致。discardSeenEventBucketForTask 的入参取自 target（非 map），先删 lease 不影响它。
     this.leases.delete(key);
+    this.discardSeenEventBucketForTask(target.workspaceKey, target.taskId);
     this.logger.info("[task-realtime] task run lease released", {
       hostId,
       workspaceKey: target.workspaceKey,

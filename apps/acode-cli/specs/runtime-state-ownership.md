@@ -3,7 +3,11 @@
 状态：类型级分簇已实施；CLI-05 本批进一步封装 reservation、command drain 与 branch generation 的实际写权限（2026-10-09）。其余状态仍为分簇登记，不宣称整体 runtime 已隔离。
 同日增补（2026-10-09 批次）：`RuntimeSessionLifecycleState` 最后四个扁平可变字段（`shuttingDown` / `permissionFullAccessPending` / `lastPermissionGrantId` / `pendingModelChangeTimeline`）收敛到 owner 只读 getter + 有限写端口，该簇不再保留任何扁平可写字段。
 2026-10-22 增补（CLI-05 P1 第一切片，review R1-01）：`RuntimeTurnState` 的 7 个高频时序字段（`turnNumber` / `activeTurn` / `pendingInputSequence` / `pendingInputReservations` / `pendingInputDrains` / `queueAutoDrain` / `queueExternalDrainActive`）收敛到新的 `RuntimeTurnTimingOwner`（`runtime-turn-timing.ts`）——只读 getter + 有限写端口，形态与 turn-coordination/permission-grant 完全一致。这是「原型注入 `this` 面绕过 owner 只读约束」这条 P1 的有界第一切片，剩余字段与后续批次见 §RuntimeTurnState 剩余字段与后续批次。
-代码：`packages/core/src/runtime/internal.ts`（分簇子接口 + 组合）；`packages/core/src/runtime/agent-runtime.ts`（构造与原型安装）；`packages/core/src/runtime/turn-coordination.ts`（关键状态 owner）；`packages/core/src/runtime/runtime-turn-timing.ts`（turn 时序字段 owner，2026-10-22 新增）。
+2026-10-28 增补（R1-01 批次 B1）：`RuntimeCacheDiagnosticsState` 4 字段（`mainTurnCacheHitAggregate` / `pendingCacheMissCause` / `cacheMissCauseCounts` / `autoCompactConsecutiveFailures`）+ 迁入的 `lastRequestModelId`（原 MessageProjection，cache 归因输入）+ `lastAssistantCompletedAtMs`（原 TurnState 剩余，cache 归因输入）共 6 字段收敛到新的 `RuntimeCacheDiagnosticsOwner`（`runtime-cache-diagnostics.ts`）——只读 getter + 有限写端口，含原子归因事务 `recordMainTurnUsage`（聚合累计 + 消费 pending + 计数累计 + 模型记录更新）与重建端口 `resetMainTurnCacheHitAggregate` / `resetCacheMissCauseCounts` / `restoreLastAssistantCompletedAtMs`。负向 tsc 诊断数 18 → 24（+6 字段），运行时拒写与端口冻结由新增用例「cache diagnostics fields are owned by a finite write port」钉住。详见 §R1-01 批次 B1：CacheDiagnostics + 派生游标。
+2026-10-28 增补（R1-01 批次 B2）：`RuntimeTurnState` 剩余 4 字段收敛——`activeForegroundExecution` / `foregroundPromotionLease` / `currentTurnFileChanges` 归新的 `RuntimeForegroundExecutionOwner`（`runtime-foreground-execution.ts`，只读 getter + 有限写端口）；`runtimeCommandQueue` 零 method 写点（唯一赋值在构造期），readonly 化为构造期不可写数据属性 + 类型级 readonly，不进 owner。负向 tsc 诊断数 24 → 28（+4 字段），运行时拒写与端口冻结由新增用例「foreground execution fields are owned by a finite write port」钉住。详见 §R1-01 批次 B2：TurnState 剩余。
+2026-10-28 增补（R1-01 批次 B3）：`RuntimeMessageProjectionState` 剩余 4 字段（`latestConversationMessageId` / `latestAssistantMessageId` / `latestAssistantTurnId` / `lastEmittedLocalDate`）收敛到新的 `RuntimeMessageProjectionOwner`（`runtime-message-projection.ts`）——只读 getter + 有限写端口，含 assistant 持久化回滚的 identity 条件恢复端口 `restoreFromPersistenceAnchor` 与日期游标的原子「读旧值 + 写新值」端口 `emitLocalDateReminder`。负向 tsc 诊断数 28 → 32（+4 字段），运行时拒写与端口冻结由新增用例「message projection fields are owned by a finite write port」钉住。详见 §R1-01 批次 B3：MessageProjection。
+2026-10-28 增补（R1-01 批次 B4，收官批）：`RuntimeContextMemoryState` 整簇 19 字段收敛——18 字段进 4 个新子 owner（`runtime-context-init.ts` 的 RuntimeContextInitOwner：context 初始化事务 8 字段 + `messageHistory` 容器引用；`runtime-mcp-lifecycle.ts` 的 RuntimeMcpLifecycleOwner：MCP startup claim / initialize 并发守卫 / 工具注册单调提交 4 字段；`runtime-tool-cache.ts` 的 RuntimeToolCacheOwner：cachedTools + toolSearchContext；`runtime-sidecar.ts` 的 RuntimeSidecarOwner：memory 提取/召回 sidecar 惰性构造 + residency 阻塞计数器 3 字段）；`readFileState` 零 method 重赋值，构造期不可写数据属性 + 类型级 readonly（同 B2 `runtimeCommandQueue` 先例）。负向 tsc 诊断数 32 → 51（+19 字段），运行时拒写与端口冻结由新增用例「context memory fields are owned by finite write ports」钉住。详见 §R1-01 批次 B4：ContextMemory。**R1-01 四批全部完成，`AgentRuntimeInternal` 扁平可写字段清零**；长期方案（原型注入换显式组合）另行立项，不在 R1-01 内。
+代码：`packages/core/src/runtime/internal.ts`（分簇子接口 + 组合）；`packages/core/src/runtime/agent-runtime.ts`（构造与原型安装）；`packages/core/src/runtime/turn-coordination.ts`（关键状态 owner）；`packages/core/src/runtime/runtime-turn-timing.ts`（turn 时序字段 owner，2026-10-22 新增）；`packages/core/src/runtime/runtime-cache-diagnostics.ts`（cache 诊断字段 owner，2026-10-28 新增）；`packages/core/src/runtime/runtime-foreground-execution.ts`（前台执行与 promotion lease 字段 owner，2026-10-28 新增）；`packages/core/src/runtime/runtime-message-projection.ts`（消息投影游标字段 owner，2026-10-28 新增）；`packages/core/src/runtime/runtime-context-init.ts` / `runtime-mcp-lifecycle.ts` / `runtime-tool-cache.ts` / `runtime-sidecar.ts`（ContextMemory 4 子 owner，2026-10-28 B4 新增）。
 
 ## 背景
 
@@ -249,21 +253,259 @@ turn 编排（唯一写入方）
   用 fake-runtime 桩直接调真实 `beginActiveTurn`/`setQueueAutoDrain` 的既有测试
   （compact-invariants、cron-idle-trigger）在桩上补 `initializeRuntimeTurnTiming`（与真实构造期一致）。
 
+## R1-01 批次 B1：CacheDiagnostics + 派生游标（2026-10-28）
+
+**字段**（6 个）：D1 `mainTurnCacheHitAggregate`、D2 `pendingCacheMissCause`、D3 `cacheMissCauseCounts`、D4 `autoCompactConsecutiveFailures`、迁入 M4 `lastRequestModelId`（从 MessageProjection 拆出）、迁入 T5 `lastAssistantCompletedAtMs`（从 TurnState 剩余拆出）。
+
+**Owner**：`runtime-cache-diagnostics.ts`（`RuntimeCacheDiagnosticsOwner`），形态与 `runtime-turn-timing.ts` 完全一致——WeakMap 持有真值、构造期 `Object.defineProperty` 装只读 getter（无 setter、`configurable:false`）、写面只经 `getRuntimeCacheDiagnosticsPort(this)` 的有限端口。
+
+**端口形态**：
+
+| 端口 | 语义 | 唯一调用方 |
+| --- | --- | --- |
+| `recordAssistantCompleted(atMs)` | turn 完成时推进 `lastAssistantCompletedAtMs` | `turn-model-step.ts:661`（原 `this.lastAssistantCompletedAtMs = Date.now()`） |
+| `recordMainTurnUsage(input)` | 原子事务：聚合累计 + miss 计数累计 + pending 消费即清 + `lastRequestModelId` 更新 | `turn-model-step-usage.ts:138-174`（原 5 个字段的扁平读写） |
+| `setPendingCacheMissCause(cause)` | 显式事件点写入 pending（compaction / control_only_turn / context_refresh / conversation_rewind） | `compact-active.ts:771`、`microcompact.ts:81`、`control-only-turn.ts:116`、`context-refresh.ts:47`、`rewind-message.ts:742` |
+| `clearPendingCacheMissCause()` | resume 重建后清空 pending | `resume.ts:240` |
+| `consumePendingCacheMissCause()` | 原子「读 + 清」（供 resolveCacheMissCause 归因消费） | `turn-model-step-usage.ts`（内部） |
+| `peekPendingCacheMissCause()` / `peekLastRequestModelId()` / `peekLastAssistantCompletedAtMs()` | 只读快照（resolveCacheMissCause 归因输入，不消费） | `turn-model-step-usage.ts`（内部） |
+| `resetMainTurnCacheHitAggregate(aggregate)` | resume/rewind 从持久消息反推重建聚合 | `resume.ts:233`、`rewind-message.ts:744` |
+| `resetCacheMissCauseCounts()` | resume/rewind 重建后清空 miss 计数（不可从持久 tokens 重建，spec R3 诚实边界） | `resume.ts:239`、`rewind-message.ts:743` |
+| `resetAutoCompactFailures()` | compact 成功后重置失败计数为 0 | `compact.ts:305,460`、`rewind-message.ts:753` |
+| `recordAutoCompactFailure()` | compact 失败后计数 ++ 并返回新值（用于日志） | `compact.ts:320,473` |
+| `restoreLastAssistantCompletedAtMs(atMs)` | resume/rewind 从 latest assistant 消息时间反推 | `resume.ts:197`、`rewind-message.ts:735` |
+
+**关键设计**：`recordMainTurnUsage` 是 6 字段中事务密度最高的端口——`resolveCacheMissCause`（`turn-model-step-usage.ts:185-204`）把 `pendingCacheMissCause` / `lastRequestModelId` / `lastAssistantCompletedAtMs` 作为**同一归因事务的输入**读取；`recordMainTurnUsage` 同时写 D1/D2/D3/M4。分 owner 会切开原子性，故 6 字段必须同一 owner 持有。
+
+**验收**：
+- 负向 tsc 诊断数 18 → 24（+6 字段的 readonly 违例）；
+- 运行时拒写与端口冻结由「cache diagnostics fields are owned by a finite write port」用例钉住；
+- 既有 cache 归因测试套件（`prompt-cache-diagnostics.test.mjs` 9/9）全绿，fake-runtime 桩同步迁移到「先 `initializeRuntimeCacheDiagnostics` + 端口回放 overrides」形态；
+- R1/R3 事件点与重建复位守护的源码字符串断言同步换成端口调用形式（不变量本身不变）。
+
+## R1-01 批次 B2：TurnState 剩余（foreground execution + promotion lease + 队列引用）
+
+**字段**（4 个）：T1 `activeForegroundExecution`、T2 `foregroundPromotionLease`、T4 `currentTurnFileChanges` 收敛到新的 `RuntimeForegroundExecutionOwner`（`runtime-foreground-execution.ts`），形态与既有 owner 完全一致——WeakMap 持有真值、构造期 `Object.defineProperty` 装只读 getter（无 setter、`configurable:false`）、写面只经 `getRuntimeForegroundExecutionPort(this)` 的有限端口。T3 `runtimeCommandQueue` 零 method 写点（唯一赋值在 `agent-runtime.ts` 构造期，grep 全仓确认），不进 owner——构造期改为不可写数据属性（`writable:false, configurable:false`）+ `AgentRuntimeInternal` 类型级 readonly，读面（19 处 `this.runtimeCommandQueue.X(...)`）不变。
+
+**端口形态**：
+
+| 端口 | 语义 | 唯一调用方 |
+| --- | --- | --- |
+| `beginForegroundExecution(state)` | 建立当前前台执行状态（原 `this.activeForegroundExecution = state`）。state 由调用方构造（AbortController 接线是方法职责），owner 只持有引用 | `runtime-command-queue.ts` `beginForegroundExecution` |
+| `finishForegroundExecution(state)` | identity 命中才清除（`===` 不匹配是 no-op）；`disposeParentAbort` 副作用留在调用方 | `runtime-command-queue.ts` `finishForegroundExecution` |
+| `commitPromotionLease(lease)` | 提交 promotion lease；acquire 的 conflict/busy 裁决留在方法内（读面含 turn-timing/turn-coordination 等其他 owner 字段，不内移避免跨 owner 耦合）。owner 入库时浅冻结 lease（现有路径从不原地修改 lease，与 model-change-timeline 同先例） | `runtime-command-queue.ts` `acquireForegroundPromotionLease` |
+| `releasePromotionLease(leaseId)` | 原子「比对 leaseId + 清除」：不匹配返回 `false` 且 lease 保持；drain 恢复副作用（`void drainRuntimeCommandQueue()`）留在方法内，只在端口返回 true 后执行 | `runtime-command-queue.ts` `releaseForegroundPromotionLease` |
+| `consumePromotionLease()` | 出队 promoted command 成功后同步消费 lease | `runtime-command-queue.ts` `dequeueNextRunnableBatch` |
+| `resetTurnFileChanges()` | 整体替换为新空 Map（原 `this.currentTurnFileChanges = new Map()`） | `turn.ts:141`（turn 开始）、`rewind-message.ts`（rewind 重建） |
+
+**关键不变量**：
+
+- **lease 消费与 promoted command 出队同一同步片**（原注释钉住的 sendQueuedNow 竞态：notification B 不得在 Stop A 与 promoted 入队之间抢先出队）——`consumePromotionLease()` 只在 `removeById` 成功后调用；snapshot 未命中或 remove 失败时 lease 保持，不消费。
+- **`activeForegroundExecution` 的 state 引用不冻结**：`stopActiveForegroundExecution` 的 `active.preserveQueueAutoDrainOnCancel = ...` 容器内写保留（与 `activeTurn.pendingInputs` 原地 splice 同先例）；owner 只封「整体替换/清除」写面。
+- **`currentTurnFileChanges` 的 Map 内容写保留**（`tools.ts` 的 `recordTurnFileChange(map, ...)` 原地 set）；owner 只封整体替换。
+- **`runtimeCommandQueue` 引用不可替换**；容器内容变更（`enqueue`/`dequeueNextBatch`/`removeById`/…）经 queue 方法是设计内行为，不在本批范围。
+
+**事件顺序**：
+
+```text
+sendQueuedNow / queue promotion
+  → acquireForegroundPromotionLease：读 getter 判 conflict（已有 lease）与 busy（idle-only 模式）
+  → commitPromotionLease（owner 唯一写点，入库浅冻结）
+
+drain 循环 dequeueNextRunnableBatch（同步片）
+  → 读 lease getter → snapshot() 找 promoted command
+  → removeById 成功 → consumePromotionLease()   ← 出队与 lease 消费同一同步步
+  → 未命中 / remove 失败 → 返回空批，lease 保持
+
+release 路径（sendQueuedNow 失败回滚 / 完成清理）
+  → releasePromotionLease(leaseId)：不匹配 → false，零副作用
+                                  → 命中清除 → true → void drainRuntimeCommandQueue() 恢复 drain
+
+run 路径
+  → beginForegroundExecution：构造 state（parent abort 接线）→ 端口持有
+  → finally finishForegroundExecution：disposeParentAbort → identity 命中清除
+```
+
+**验收**：
+
+- 负向 tsc 诊断数 24 → 28（+4：T1/T2/T4 的 readonly 违例 + `runtimeCommandQueue` 类型级 readonly 违例），2540 计数 23 → 27；
+- 运行时拒写扩 4 字段进「non-writable, non-replaceable state getters」清单（T3 是不可写数据属性，赋值/重定义同样抛 TypeError）；
+- 「R1-01 B2: foreground execution fields are owned by a finite write port」用例钉住：begin/finish identity 语义、lease commit/release/consume 三转换、resetTurnFileChanges 替换 Map identity、state 与 Map 引用不冻结（容器内写可行）、端口冻结、幂等初始化；
+- 既有套件全绿：cron-idle-trigger（真实 `acquireForegroundPromotionLease`/`releaseForegroundPromotionLease` 绑桩——桩补 `initializeRuntimeForegroundExecution`）、runtime-branch-continuation-races（`runtime.activeForegroundExecution.controller.abort()` 读面不变）、compact-invariants、steering/queue 相关回归。
+
+## R1-01 批次 B3：MessageProjection（4 字段）
+
+**字段**（4 个）：M1 `latestConversationMessageId`、M2 `latestAssistantMessageId`、M3 `latestAssistantTurnId`、M5 `lastEmittedLocalDate` 收敛到新的 `RuntimeMessageProjectionOwner`（`runtime-message-projection.ts`），形态与既有 owner 完全一致——WeakMap 持有真值、构造期 `Object.defineProperty` 装只读 getter（无 setter、`configurable:false`）、写面只经 `getRuntimeMessageProjectionPort(this)` 的有限端口。M4 `lastRequestModelId` 已在 B1 迁出至 CacheDiagnostics（cache 归因输入），不在本批。
+
+**端口形态**：
+
+| 端口 | 语义 | 唯一调用方 |
+| --- | --- | --- |
+| `recordConversationMessage(messageId)` | 推进 `latestConversationMessageId`（原 `this.latestConversationMessageId = id` 单游标写） | `message-persistence.ts`（persistUserPrompt / persistSyntheticUserNoticeForSession）、`compact-active.ts`（compact summary 成为最新 anchor）、`control-only-turn.ts`（persistWorkflowLaunchUserMessage） |
+| `recordAssistantMessage(messageId, turnId?)` | 推进 `latestConversationMessageId` + `latestAssistantMessageId`；有 turnId 时同步推进 `latestAssistantTurnId`（truthy 判定与迁移前一致） | `message-persistence.ts` persistAssistantMessage |
+| `restoreFromPersistenceAnchor(rolledBackMessageId, anchor)` | assistant 持久化失败回滚：**仅当**游标仍指向被回滚消息时恢复 anchor——conversation 游标命中恢复 conversation；assistant 游标命中同步恢复 assistant + turn 游标。identity 前置条件与恢复同一事务 | `turn-stop.ts` persistCompletedAssistantStep |
+| `rebuildFromMessages(input)` | resume/rewind 从持久消息整体替换三个 ID 游标（含清 `undefined`），不动日期游标 | `resume.ts`、`rewind-message.ts` |
+| `resetLocalDateCursor()` | cold resume 重置 `lastEmittedLocalDate` 为 `undefined` | `resume.ts` |
+| `emitLocalDateReminder(currentDate)` | 日期游标原子「读旧值 + 写新值」，返回更新前的值；是否注入 date_change 提醒的比较（`!previousDate \|\| previousDate === currentDate`）与附件注入留在调用方（`buildDateChangeReminderBody` 需要 previousDate，且 `messageHistory.addAttachment` 是另一字段的容器内写） | `turn.ts` injectDateChangeReminderIntoMessageHistory |
+
+**与 scoping 建议（r1-01-scoping.md §4 B3）的最小偏差**（均以复核后的实际写点语义为准，逐点等价是硬约束）：
+
+1. scoping 拆 `recordUserMessage` / `recordControlOnlyMessage` 两个端口；实际 4 处写点全是同一条 `latestConversationMessageId = id` 赋值（user prompt、synthetic notice、compact summary、workflow-launch user message——control-only-turn.ts 的实际写点是 `persistWorkflowLaunchUserMessage`，不是控制轮）。合并为单个 `recordConversationMessage`，不为同一语义造两个名字。
+2. `restoreFromPersistenceAnchor` 增加 `rolledBackMessageId` 参数：真实写点带 identity 前置条件（`runtime.latestX === options.assistantMessageId` 才恢复），把条件内移端口保持原子性与逐点等价。
+3. 新增 `resetLocalDateCursor()`：scoping 漏掉 `resume.ts` cold 路径的 `lastEmittedLocalDate = undefined` 重置写点。
+4. `emitLocalDateReminder` 返回更新前的值而非布尔：调用方需要 previousDate 构造提醒正文，且「是否注入」的比较行保持与迁移前逐字一致。
+
+**关键不变量**：
+
+- **回滚恢复的 identity 前置条件不可丢**：assistant 持久化失败时，仅当投影游标仍指向被回滚的 assistant 消息才恢复 anchor；若游标已被后续消息推进，恢复是 no-op（条件与恢复同一同步片，无读-改-写缝）。
+- **rewind 不重置日期游标**：`rebuildFromMessages` 只替换三个 ID 游标；`lastEmittedLocalDate` 仅由 cold resume（`resetLocalDateCursor`）与 turn 边界（`emitLocalDateReminder`）写，与迁移前一致。
+- **日期游标「读旧 + 写新」原子化**：`emitLocalDateReminder` 一次端口调用完成读取旧值与写入新值；首日（previousDate 缺失）或同日不注入提醒的比较语义不变。
+
+**事件顺序**：
+
+```text
+user prompt / synthetic notice / compact summary / workflow launch
+  → recordConversationMessage(messageId)          （owner 唯一写点）
+
+assistant 持久化（persistAssistantMessage）
+  → recordAssistantMessage(messageId, traceContext.turnId?)
+
+assistant 持久化失败回滚（turn-stop persistCompletedAssistantStep）
+  → captureAssistantPersistenceAnchor（纯读面，不变）
+  → commit 失败 → restoreFromPersistenceAnchor(rolledBackMessageId, anchor)
+      conversation 游标命中 → 恢复 conversation 游标
+      assistant 游标命中   → 恢复 assistant + turn 游标
+      均未命中             → no-op
+
+resume（cold）
+  → resetLocalDateCursor()
+  → 水合完成 → rebuildFromMessages({ 三游标 })
+rewind
+  → rebuildFromMessages({ 三游标 })                （日期游标不动）
+
+turn 边界（injectDateChangeReminderIntoMessageHistory）
+  → emitLocalDateReminder(currentDate)：原子读旧 + 写新，返回 previousDate
+  → previousDate 缺失或同日 → return（不注入）
+  → 否则 messageHistory.addAttachment("date_change", ...)（容器内写，不经端口）
+
+读面（不变）  methods/* 经 this.<field> 只读；任何 this.<field> = … 运行时抛 TypeError、tsc 报 readonly
+```
+
+**验收**：
+
+- 负向 tsc 诊断数 28 → 32（+4 字段的 readonly 违例），2540 计数 27 → 31；
+- 运行时拒写扩 4 字段进「non-writable, non-replaceable state getters」清单；
+- 「R1-01 B3: message projection fields are owned by a finite write port」用例钉住：初始值、`recordConversationMessage` / `recordAssistantMessage`（有无 turnId）、`restoreFromPersistenceAnchor` 的 identity 前置条件（命中/未命中/部分命中）、`rebuildFromMessages` 整体替换（含清 `undefined`）、`emitLocalDateReminder` 原子「读旧 + 写新」与 `resetLocalDateCursor`、端口冻结、幂等初始化；
+- 既有套件全绿：cron-idle-trigger（桩绑定方法只读 `latestAssistantTurnId`——与 B2 同款补 `initializeRuntimeMessageProjection`）、compact-invariants、runtime-branch-continuation-races。
+
+## R1-01 批次 B4：ContextMemory（19 字段，5 子 owner）
+
+**字段**（19 个）：`RuntimeContextMemoryState` 整簇收敛。18 字段进 4 个新子 owner（形态与既有 owner 完全一致——WeakMap 持有真值、构造期 `Object.defineProperty` 装只读 getter（无 setter、`configurable:false`）、写面只经各自 `getRuntime*Port(this)` 的有限端口）；C2 `readFileState` 零 method 重赋值（唯一赋值在构造期，grep 全仓确认），与 `runtimeCommandQueue` 同款——构造期不可写数据属性（`writable:false, configurable:false`）+ 类型级 readonly，不进 owner。
+
+**子 owner 端口形态**：
+
+| 子 owner（文件） | 字段 | 端口 | 唯一调用方 |
+| --- | --- | --- | --- |
+| **RuntimeContextInitOwner**（`runtime-context-init.ts`） | C1 `messageHistory`、C5 `contextBuilder`、C6 `contextInitialized`、C7 `contextSourceSnapshot`、C8 `latestContextBuildResult`、C9 `memoryRoot`、C10 `memoryIndexContent`、C11 `promptFileRouting`、C18 `skillLoadOutcome` | `commitContextSourceSnapshot(snapshot)` / `commitSkillLoadOutcome(outcome)` / `commitMemoryRoot(root)` / `commitMemoryIndexContent(content)` / `commitPromptFileRouting(routing)` / `commitContextBuilder(builder)` / `commitContextBuildResult(result)` / `markContextInitialized()` / `resetForResume()` | `context.ts` ensureContextInitialized + initializeMessageHistoryFromContext、`config.ts` getContextBuilder、`context-refresh.ts` rebuildContextPrefix（2 处 builder + 1 处 result）、`session-shell-environment.ts` refreshPreConversationShellContext（snapshot patch）、`resume.ts` cold 三联重置、构造期 builder 分支 |
+| **RuntimeMcpLifecycleOwner**（`runtime-mcp-lifecycle.ts`） | C16 `mcpInitialized`、C14 `mcpStartupPromise`、C15 `mcpInitializationPromise`、C17 `mcpToolsRegistered` | `claimStartup()`（原子「读 + 写」）/ `commitStartupPromise(promise)` / `claimInitialization(promise)` / `releaseInitialization()` / `commitToolsRegistered()`（单调） | 全部在 `mcp.ts`：startMcpStartup / initializeMcp / initializeMcpOnce |
+| **RuntimeToolCacheOwner**（`runtime-tool-cache.ts`） | C3 `cachedTools`、C4 `toolSearchContext` | `commitCachedTools(tools)` / `invalidateCachedTools()` + `commitToolSearchContext(ctx)` / `clearToolSearchContext()` | `config.ts` getTools / invalidateToolCache、`embedded-search-branch.ts` refreshBranchAwareBuiltInTools（invalidate）、`tool-search-request.ts` projectToolSearchRequest（set/clear） |
+| **RuntimeSidecarOwner**（`runtime-sidecar.ts`） | C12 `memoryExtractionScheduler`、C13 `memorySemanticRecallChannel`、C19 `residencyBlockingWorkCount` | `getOrCreateExtractionScheduler(factory)` / `getOrCreateSemanticRecallChannel(factory)` / `beginBlockingWork()` / `endBlockingWork()` | `helpers/project-memory-extraction.ts`（`??=` 惰性构造）、`helpers/memory-semantic-recall.ts` ensureChannel（惰性构造）、`residency.ts` trackResidencyBlockingWork（计数器） |
+| **readFileState readonly 化**（不进 owner） | C2 `readFileState` | — | 构造期唯一赋值；容器内写（set/delete/hydrate）是设计内行为，不在本批范围 |
+
+**C1/C2 处置决定**：
+
+- C1 `messageHistory` 进 RuntimeContextInitOwner：「整体替换」写面 = 构造期默认值（owner 初始值 `new MessageHistoryImpl()`）+ `resume.ts` cold 路径重赋值。resume 的三联写（`messageHistory = new MessageHistoryImpl()` / `contextBuilder = null` / `contextInitialized = false`）是同一连续同步块，合并为单个 `resetForResume()` 端口保持块原子性；新容器由 owner 内部构造（与构造期默认值同源）。旧容器引用经查**无 by-value 长持有方**（runtime-tools 的 getToolSearchContext/hasLoadedSkill 是调用期读 `runtime.messageHistory` 的闭包；resume/rewind 的 `history: this.messageHistory` 是调用期传参），替换安全。容器内写（19 个 method 文件的 34 处 `this.messageHistory.addUser/...`）不在本批范围。
+- C2 `readFileState`：构造期唯一赋值、零 method 重赋值——不可写数据属性 + 类型级 readonly，与 B2 `runtimeCommandQueue` 同款。
+
+**与 scoping 建议（r1-01-scoping.md §4 B4）的偏差**（均以复核后的实际写点语义为准，逐点等价是硬约束）：
+
+1. ContextInit 不用单一 `commitInitial(snapshot)`：ensureContextInitialized 的 8 个字段写点与 `await` 交错（每字段算完即写，初始化面允许并发观察者看到部分提交，`contextInitialized` 最后单调提交才是收敛门）——一字段一端口、写点位置逐行对应，不把交错写面折叠成末尾整包提交（那会改变并发观察窗）。
+2. `patchShellSelection(sel)` 不落独立端口：session-shell-environment 的实际写点是「读旧 snapshot + spread 构造新对象 + 一次赋值」，复用 `commitContextSourceSnapshot`，spread 留在调用方。
+3. ToolCache 两字段同 owner 不同端口组：语义不同（派生缓存 vs 请求级读缝），但写入方各 1-2 文件、同属「工具面供给 executor/模型请求的派生态」；拆两个 owner 文件会为各 2 端口复制整套样板。`getOrCompute` 不落端口：getTools 的 `=== null` 判定与度量日志被 tools-schema-token-metrics 套件以源码字符串钉住，端口只封赋值（`commitCachedTools`/`invalidateCachedTools`）。
+4. Sidecar 的 `trackWork(promise)` 不落端口：`.finally` 包装泛型在调用方（`Promise<T>` 透传），端口只封 `beginBlockingWork()`/`endBlockingWork()` 两个原子计数点（含 0 下界钳制）。
+5. scoping 漏记的写点已补齐：`embedded-search-branch.ts` 的 `cachedTools = null`（invalidate 第 2 调用方）、构造期 `contextBuilder/contextInitialized` 分支（deps.contextBuilder 注入时）。
+
+**关键不变量**：
+
+- **MCP initialize 只允许一次真实注册**：`mcpInitializationPromise` 的「读 `undefined` + 写 promise」在同一同步片（initializeMcp 从入口检查到 `claimInitialization` 之间无 await，`initializeMcpOnce.call` 同步段含 startMcpStartup 的 startup claim）；并发第二个 initializeMcp 只能 await 既有 promise。claim/release 语义迁移中不弱化。
+- **startup claim 原子化**：`claimStartup()` 把原「读 `mcpInitialized` + 写 `true`」并为一次端口调用；并发/重复 startMcpStartup 只第一个拿到 `claimed:true`，其余拿到既有 `startupPromise`。
+- **`mcpToolsRegistered` 单调提交**：成功尾部、无 startup 可跟的提前返回、失败路径 fail-closed 三处写点共用 `commitToolsRegistered()`；失败也提交（startup 拒绝后不在同一 runtime 重试连接）。
+- **ensureContextInitialized 并发语义不变**：迁移前无跨 await 互斥（两个并发调用可都进入初始化面），逐点等价硬约束下不新增互斥；收敛门仍是最后单调提交的 `contextInitialized`。
+- **sidecar 惰性构造幂等**：getOrCreate 只在缺席时求值 factory，重复调用返回同一实例。
+- **residency 计数原子性**：`beginBlockingWork` 在 Promise 启动的同一同步片 +1，`endBlockingWork` 只在 finally 释放并钳制 0 下界。
+
+**事件顺序**：
+
+```text
+构造期  AgentRuntime ctor → initializeRuntimeContextInit / initializeRuntimeMcpLifecycle /
+        initializeRuntimeToolCache / initializeRuntimeSidecar（在 createDefaultSubagentPort /
+        initializeRuntimeTooling / startMcpStartup 与构造期 builder 分支之前）
+        → readFileState 装不可写数据属性（同 runtimeCommandQueue 先例）
+        → deps.contextBuilder 注入时：commitContextBuilder → initializeMessageHistoryFromContext
+          （内部 commitContextBuildResult + messageHistory.init 容器内写）→ markContextInitialized
+
+首轮 turn  ensureContextInitialized（读 contextInitialized 收敛门）
+        → commitContextSourceSnapshot → startMcpStartup（claimStartup）
+        → commitSkillLoadOutcome → commitMemoryRoot → commitMemoryIndexContent
+        → commitPromptFileRouting → commitContextBuilder
+        → initializeMessageHistoryFromContext（commitContextBuildResult）
+        → markContextInitialized（单调提交）
+
+MCP 并发  startMcpStartup：claimStartup 只一个 claimed:true → commitStartupPromise
+        initializeMcp：mcpToolsRegistered 读 → mcpInitializationPromise 读（在则 await 既有）
+        → initializeMcpOnce 同步段 → claimInitialization → await → finally releaseInitialization
+        → commitToolsRegistered（成功/失败/无 startup 三路径同一单调端口）
+
+shell 选择 patch  refreshPreConversationShellContext（门：builder+initialized+snapshot 俱在、
+        无会话消息、未持久化）→ commitContextSourceSnapshot({...旧, envInfo}) → rebuildContextPrefix
+
+cold resume  resetForResume()（messageHistory 整体替换 + builder 清 null + initialized 回退
+        false，同一同步事务）→ readFileState 容器内 hydrate → ensureContextInitialized 重建
+
+工具缓存  getTools：`cachedTools === null` 判定与度量日志在调用方 → commitCachedTools；
+        invalidateToolCache / refreshBranchAwareBuiltInTools → invalidateCachedTools
+请求级搜索 context  projectToolSearchRequest：off → clearToolSearchContext；否则
+        commitToolSearchContext(exposure.context)
+
+sidecar  scheduleProjectMemoryExtraction → getOrCreateExtractionScheduler（factory 缺席才求值）
+        ensureChannel → getOrCreateSemanticRecallChannel（同）
+        trackResidencyBlockingWork → beginBlockingWork …finally endBlockingWork
+
+读面（不变）  methods/* 经 this.<field> 只读；任何 this.<field> = … 运行时抛 TypeError、tsc 报 readonly
+```
+
+**验收**：
+
+- 负向 tsc 诊断数 32 → 51（+19 字段的 readonly 违例），2540 计数 31 → 50；
+- 运行时拒写扩 19 字段进「non-writable, non-replaceable state getters」清单（readFileState 是不可写数据属性，赋值/重定义同样抛 TypeError）；
+- 「R1-01 B4: context memory fields are owned by finite write ports」用例钉住：四个 owner 的初始值、ContextInit 逐点提交 + `resetForResume` 三联重置（messageHistory identity 变化）+ `markContextInitialized` 单调、MCP `claimStartup` 只一个 claimed、`claimInitialization`/`releaseInitialization` 配对、`commitToolsRegistered` 单调、ToolCache 双端口组、Sidecar getOrCreate 幂等（factory 只求值一次）与计数器钳制、端口冻结、幂等初始化；
+- 并发用例：runtime-mcp-lifecycle 套件「并发 initializeMcp 共享一次 registration attempt」（桩补 `initializeRuntimeMcpLifecycle`）钉住「两次 initializeMcp 只一次真实注册」；真实 runtime 上 `ensureContextInitialized` 两次调用只一次真实初始化（收敛门读面不变）；
+- 既有套件全绿：cron-idle-trigger / compact-invariants / runtime-branch-continuation-races / context / mcp / residency / memory-injection-fail-closed（桩补 `initializeRuntimeSidecar`）/ memory-semantic-recall（同）/ tools-schema-token-metrics（源码钉住分支形态不变）。
+
 ## RuntimeTurnState 剩余字段与后续批次
 
-本切片**未**迁移 `RuntimeTurnState` 的其余扁平可写字段，它们仍经 `this` 面共享读写，登记为后续批次：
+`RuntimeTurnState` 扁平可写字段已全部收敛（2026-10-28 B2 完成）；下表保留作历史对照：
 
-| 剩余字段 | 语义 | 建议后续批次顺序 |
+| 剩余字段 | 语义 | 批次结果 |
 | --- | --- | --- |
-| `activeForegroundExecution` | 前台执行状态（stop barrier、preserveQueueAutoDrainOnCancel） | 批次 2（与 foregroundPromotionLease 同族） |
-| `foregroundPromotionLease` | sendQueuedNow 的 Core 调度权 | 批次 2 |
-| `runtimeCommandQueue` | 命令队列实例（容器本身不变，内容经 queue 端口） | 批次 3（评估：可能只需 readonly 化引用） |
-| `currentTurnFileChanges` | turn 内文件改动图 | 批次 3 |
-| `lastAssistantCompletedAtMs` | 最近 assistant 完成时间戳 | 批次 3（单值游标，最简单） |
+| ~~`activeForegroundExecution`~~ | 前台执行状态（stop barrier、preserveQueueAutoDrainOnCancel） | **已迁出**（R1-01 B2，归 RuntimeForegroundExecutionOwner） |
+| ~~`foregroundPromotionLease`~~ | sendQueuedNow 的 Core 调度权 | **已迁出**（R1-01 B2，归 RuntimeForegroundExecutionOwner） |
+| ~~`runtimeCommandQueue`~~ | 命令队列实例（容器本身不变，内容经 queue 端口） | **已收敛**（R1-01 B2：零 method 写点，不可写数据属性 + 类型级 readonly，不进 owner） |
+| ~~`currentTurnFileChanges`~~ | turn 内文件改动图 | **已迁出**（R1-01 B2，归 RuntimeForegroundExecutionOwner） |
+| ~~`lastAssistantCompletedAtMs`~~ | 最近 assistant 完成时间戳 | **已迁出**（R1-01 B1，归 RuntimeCacheDiagnosticsOwner） |
 
 其余 4 簇（`RuntimeContextMemoryState` / `RuntimeMessageProjectionState` / `RuntimeCacheDiagnosticsState`
-以及 `RuntimeTurnState` 上述剩余）约 46 个扁平字段，按「时序不变量密度」优先级分批：TurnState 剩余 →
+以及 `RuntimeTurnState` 上述剩余）28 个扁平字段（ContextMemory 19 + MessageProjection 5 +
+CacheDiagnostics 4；含 TurnState 剩余 5 个则共 33），按「时序不变量密度」优先级分批：TurnState 剩余 →
 ContextMemory（并发初始化最密）→ MessageProjection/CacheDiagnostics（派生游标，最低优先）。
+**2026-10-28 更新**：R1-01 B1 已完成 CacheDiagnostics 4 字段 + 迁入 `lastRequestModelId`（MessageProjection）
++ `lastAssistantCompletedAtMs`（TurnState 剩余）共 6 字段；R1-01 B2 已完成 TurnState 剩余 4 字段
+（`activeForegroundExecution` / `foregroundPromotionLease` / `currentTurnFileChanges` 归
+RuntimeForegroundExecutionOwner，`runtimeCommandQueue` readonly 化）；R1-01 B3 已完成
+MessageProjection 剩余 4 字段（`latestConversationMessageId` / `latestAssistantMessageId` /
+`latestAssistantTurnId` / `lastEmittedLocalDate` 归 RuntimeMessageProjectionOwner）；R1-01 B4 已完成
+ContextMemory 19 字段（5 子 owner，见 §R1-01 批次 B4）。**R1-01 四批全部完成，
+`AgentRuntimeInternal` 扁平可写字段清零；长期方案（显式组合）另行立项**（见下段，保留不变）。
 
 **长期方案（review R1-01 建议，本切片未做，需单独立项）**：把「原型注入 + `this: AgentRuntimeInternal`」
 换为**显式组合**——构造期把方法绑到实例或委托对象，使 `this` 面不再等于全字段并集。这是根治 P1 的
@@ -278,7 +520,7 @@ declaration-merging 结构，属不可一次验证的大重构，必须独立立
 | ----------------------------- | ---------------------------------------------------------------------------------- | -------------------------------------------------------- |
 | RuntimeIdentityConfig         | 构造函数                                                                           | 不可变                                                   |
 | RuntimeInjectedDeps           | 构造函数（deps 注入，无 late binding）                                             | 不可变（Set/Map 容器内容除外，容器所有者见各 port 契约） |
-| RuntimeContextMemoryState     | methods/context-\*、memory 提取/召回 helpers、MCP 启动路径                         | 会话内可变                                               |
+| RuntimeContextMemoryState     | 4 个子 owner（context-init / mcp-lifecycle / tool-cache / sidecar）的有限写端口；readFileState 构造期固定（R1-01 B4 完成，无扁平可写字段） | 会话内可变——只经端口                                    |
 | RuntimeTurnState              | turn 编排路径（methods/turn.ts、methods/prompt-admission.ts、command-queue drain） | turn 内高频可变——**时序不变量最密集**                    |
 | RuntimeMessageProjectionState | 事件发布/reducer 路径                                                              | 派生游标                                                 |
 | RuntimeCacheDiagnosticsState  | 模型请求路径                                                                       | 进程内累计，resume/rewind 后重置                         |

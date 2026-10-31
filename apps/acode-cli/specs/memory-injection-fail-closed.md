@@ -1,6 +1,6 @@
 # 记忆注入 fail-closed 重验证 + TTL 去重（J3-2）
 
-方案条目：`docs/jcode-inspired-upgrade-plan.md` §J3-2。机制参照 jcode (MIT,
+方案条目：`docs/archive/jcode-inspired-upgrade-plan.md` §J3-2。机制参照 jcode (MIT,
 github.com/1jehuang/jcode) `crates/jcode-base/src/memory/pending.rs`（快照-重验证协议、
 三层注入去重、TTL 设计教训、竞态测试集），**自撰 TypeScript 实现**，未拷贝任何文件。
 

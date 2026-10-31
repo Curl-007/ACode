@@ -87,6 +87,8 @@ export async function forkWorkspaceAtMessage(
     forkedSessionId?: SessionId;
     targetMessageId: MessageId;
     traceContext: TraceContext;
+    // overnight 隐藏 coordinator（specs/overnight-execution.md R1a）：透传到落盘身份。
+    hiddenCoordinatorTitle?: string;
   },
 ): Promise<WorkspaceForkResult> {
   if (!this.sessionStore) {
@@ -199,6 +201,9 @@ export async function forkWorkspaceAtMessage(
   const forkedSessionId = await createForkedSession(this, {
     forkedSessionId: options.forkedSessionId,
     parentSession,
+    ...(options.hiddenCoordinatorTitle !== undefined
+      ? { hiddenCoordinatorTitle: options.hiddenCoordinatorTitle }
+      : {}),
   });
   const forkHistoryMessages = buildForkHistoryMessages(
     parentMessages,

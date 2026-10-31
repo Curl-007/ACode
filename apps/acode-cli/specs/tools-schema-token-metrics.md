@@ -1,6 +1,6 @@
 # tools schema token 占比的 debug 级本地度量（P5）
 
-提示词主线 P2 评估项（方案文档 `docs/cli-dispatch-and-system-prompt-upgrade-plan.md` 第 4 章 P5）。
+提示词主线 P2 评估项（方案文档 `docs/archive/cli-dispatch-and-system-prompt-upgrade-plan.md` 第 4 章 P5）。
 延迟工具 ToolSearch 的立项判据是 **tools schema token 占比 > 15%**；判据成立与否今天无数据。
 本 spec 定义 Phase 0 的度量点铺设：只加 debug 级本地度量，**不承诺实施 ToolSearch**。
 
@@ -148,7 +148,7 @@ export function buildToolsSchemaTokenMetric(tools: ModelToolContract[]): ToolsSc
   p5Decision 字段）。debug 级度量生产默认不落盘（R3 第 1 条），原始日志行未留存仓内，
   本节不能附上原始输出；复测按 R3 操作手册执行，估算口径为 R4 的
   `acode.estimateTokens.v1`（confidence=low，占比是比值、系统偏差大部分相消）。
-- 方案文档同步点：`docs/cli-dispatch-and-system-prompt-upgrade-plan.md` 的
+- 方案文档同步点：`docs/archive/cli-dispatch-and-system-prompt-upgrade-plan.md` 的
   优先级总览 P5 行、§4 P5 决策记录、§6 Phase 3 范围行。
 
 ## 复测记录（2026-10-03，提示词优化批次 W9 测量）

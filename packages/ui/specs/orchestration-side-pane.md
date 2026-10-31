@@ -1,6 +1,6 @@
 # 统一编排 Side Pane（三键合流，编排方案 Phase 2 / P2b）
 
-来源：[`docs/codex-orchestration-integration-plan.md`](../../../docs/codex-orchestration-integration-plan.md)
+来源：[`docs/archive/codex-orchestration-integration-plan.md`](../../../docs/archive/codex-orchestration-integration-plan.md)
 §4 Phase 2 与 [`apps/acode-cli/specs/swarm-observability-projection.md`](../../../apps/acode-cli/specs/swarm-observability-projection.md)
 的分批注记（P2a 投影链已实施，`5eed9f3`）。本批 = GUI 消费面：把 v4 snapshot 的
 `subagents` / `workflowRuns` / `swarmPlan` 三键合成右侧 Side Pane 的一个统一编排

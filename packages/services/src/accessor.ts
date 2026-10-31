@@ -1,4 +1,4 @@
-import { IOffPeakTaskService } from "./session/offPeakTask.js";
+import { IOffPeakTaskService, type IACodeTaskService } from "./session/contract.js";
 import type { IFileService } from "./file/file.js";
 import type { IMediaPreviewService } from "./media-preview/mediaPreview.js";
 import type { IGitService } from "./git/git.js";
@@ -8,7 +8,6 @@ import type { ITerminalService } from "./terminal/terminal.js";
 import type { ISettingService } from "./setting/setting.js";
 import type { ICredentialService } from "./credential/credential.js";
 import type { IBroadcastService } from "./broadcast/broadcast.js";
-import type { IACodeTaskService } from "./session/acodeTaskService.js";
 import type { IACodeAgentService } from "./acode-agent/acodeAgent.js";
 import type { IACodeSessionService } from "./acode-session/acodeSession.js";
 import type { ICuaPermissionService } from "./cua-permission-broker/cuaPermissionService.js";

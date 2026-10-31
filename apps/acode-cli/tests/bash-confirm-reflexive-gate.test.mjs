@@ -206,9 +206,12 @@ test("(R7) catastrophic deny and class-1 breaker hits bypass the gate entirely",
   assert.equal(catastrophic.decision, "deny");
   assert.equal(catastrophic.ruleId, "breaker.bashTargetCatastrophic");
 
+  // R8（2026-10-30 用户裁决「完全访问 不弹」，spec managed-policy-floor-and-bypass-immune-breakers.md
+  // R8.5）：类 1 命中在 yolo 下静默放行，被豁免的命中视同「熔断器仍在覆盖」——
+  // 门依旧不介入（无 reflect deny），形态从「breaker ask」变为「直通 allow」。
   const classOne = service.checkPermission(bashCtx('rm -rf "$OUT"/', "yolo"));
-  assert.equal(classOne.decision, "ask");
-  assert.equal(classOne.ruleId, "breaker.bashRootDelete");
+  assert.equal(classOne.decision, "allow");
+  assert.equal(classOne.ruleId, "mode.yolo");
 });
 
 test("(R8) safe/low commands and non-Bash tools never enter the gate", () => {

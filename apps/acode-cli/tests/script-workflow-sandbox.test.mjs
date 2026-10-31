@@ -13,6 +13,18 @@ import test from "node:test";
 const { runScriptWorkflowChild } =
   await import("../packages/cli-workflow/src/script-workflow-process.ts");
 
+/**
+ * 确定性事件循环屏障（house 惯用法，见 pause-gate.test.mjs:58「有界微任务 flush，绝不轮询真实时钟」）：
+ * 有界地推进已就绪的微任务/宏任务轮次，让任何「本可结算」的 promise 反应（如 run 的 .then 里
+ * 置位 settled、推 order）在检查前跑到；真正 park 在异步边界上的 promise 再多 flush 也不会结算。
+ * 用它替代固定 setTimeout 墙钟窗口——不赌毫秒数，只推进就绪工作，因此在并行负载下不飘。
+ */
+async function flushLoop(turns = 32) {
+  for (let i = 0; i < turns; i += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+}
+
 /** 造一份最小合法的脚本文档；body 是**已剥掉 meta 头**的正文（与生产一致）。 */
 function makeDocument(body, dir) {
   return {
@@ -85,6 +97,9 @@ test("P1 SWF-01: child close 后仍排空已接纳的 agent 请求，再返回�
   const request = new Promise((resolve) => {
     release = resolve;
   });
+  // 事件顺序账本：把「父侧 handler 排空」与「run 结算」两个时刻记成可正断言的序列，
+  // 取代原来靠墙钟窗口猜「谁先谁后」。R19.1 的实质就是 handler 必须先于 run 结算。
+  const order = [];
   try {
     const run = runScriptWorkflowChild({
       document: makeDocument('void agent("in-flight"); return "done";', dir),
@@ -93,25 +108,47 @@ test("P1 SWF-01: child close 后仍排空已接纳的 agent 请求，再返回�
         requestSeen();
         await request;
         requestDone = true;
+        order.push("handler-drained");
         return { value: "agent-result" };
       },
       runId: "wf_drain-request",
       workingDirectory: dir,
     });
+    // 正向信号：请求已抵达父进程、handler 已进入并 park 在 release 门上（seen 是确定性的，
+    // 由 handler 自己 resolve，不赌时间）。此刻脚本正文早已 return，child 即将/已经 close。
     await seen;
-    // 脚本正文已 return，若只等待 child close，run 会在这里提前 resolve；真实 owner 仍未排空。
-    await new Promise((resolve) => setTimeout(resolve, 25));
-    assert.equal(requestDone, false);
     let settled = false;
     void run.finally(() => {
       settled = true;
+      order.push("run-settled");
     });
-    await new Promise((resolve) => setTimeout(resolve, 25));
+    // 确定性观测屏障（取代原来两处 setTimeout(25) 墙钟窗口）：有界 flush 推进已就绪的事件循环
+    // 轮次。作用是「观测」而非「等待」——若 run 已经结算，其 .finally 回调必在下一个微任务里跑，
+    // 而 setImmediate（宏任务）边界会先排空整个微任务队列，故 flushLoop 保证任何「已结算」事实
+    // 都被 settled=true 记到，assert 才不会因为回调还没排上而假绿。
+    //
+    // 为什么两条负断言是确定性的、与墙钟无关：requestDone 与 settled 都只能在 release() 之后翻真，
+    // 而 release() 在其后才调用——原来的 setTimeout(25) 从未保护任何东西，只是把同步事实包进一个
+    // 墙钟窗口（并行负载下 25ms 的长短与结论无关，读起来却像在赌时间，即 C1 flake 根因）。
+    // 更深一层：run 的每条结算路径都在 impl 的 `await Promise.allSettled(pendingHandlers)`
+    // （script-workflow-process.ts:147）之后——handler 未排空则 run 结构上无法结算。
+    //
+    // 诚实边界：child 进程的启动 wall-clock（数十 ms）远超本屏障的有界 flush，且
+    // runScriptWorkflowChild 未暴露 child-close 事件，故「close 先于 drain 被挡住」这一具体时刻
+    // 无法从测试侧确定性观测。本用例的强证明落在 release 之后的 order 账本：它确定性地钉住
+    // R19.1「handler 排空必先于 run 结算」，与 child close 的确切时序无关。
+    await flushLoop();
+    assert.equal(requestDone, false);
     assert.equal(settled, false, "child close 不能越过仍在飞的父侧 request");
     release();
     const result = await run;
     assert.equal(result.value, "done");
     assert.equal(requestDone, true, "终态前必须排空 agent handler");
+    assert.deepEqual(
+      order,
+      ["handler-drained", "run-settled"],
+      "R19.1：父侧 request handler 必须先于 run 结算排空",
+    );
   } finally {
     await rm(dir, { force: true, recursive: true });
   }

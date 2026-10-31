@@ -1,3 +1,5 @@
+// 拆分说明：tar 二进制格式编解码已移到 localTarGzFormat.ts、条目路径与 symlink 安全规范化
+// 已移到 localTarGzPaths.ts（满足 400 行架构上限）；本文件保留 extract/create 的归档流程编排。
 import { gzip, gunzip } from "node:zlib";
 import {
   chmod,
@@ -10,13 +12,30 @@ import {
   unlink,
   writeFile,
 } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative, resolve, sep, posix } from "node:path";
+import { dirname, join, posix, resolve } from "node:path";
 import { promisify } from "node:util";
+import {
+  TAR_BLOCK_SIZE,
+  TAR_END_BLOCK_BYTES,
+  createTarHeader,
+  isZeroBlock,
+  parseTarOctal,
+  readTarEntryPath,
+  readTarString,
+  readTarTypeFlag,
+  roundUpToTarBlock,
+} from "./localTarGzFormat.js";
+import {
+  ensureTrailingSlash,
+  normalizeCreateEntryPath,
+  normalizeCreateSymlinkTarget,
+  normalizeExtractEntryPath,
+  normalizeExtractSymlinkTarget,
+  resolvePathWithinBase,
+} from "./localTarGzPaths.js";
 
 const gzipAsync = promisify(gzip);
 const gunzipAsync = promisify(gunzip);
-const TAR_BLOCK_SIZE = 512;
-const TAR_END_BLOCK_BYTES = TAR_BLOCK_SIZE * 2;
 
 export interface LocalTarGzEntry {
   sourcePath: string;
@@ -184,227 +203,6 @@ async function appendTarEntry(
     content,
     Buffer.alloc(roundUpToTarBlock(content.length) - content.length),
   );
-}
-
-function createTarHeader(options: {
-  entryPath: string;
-  linkName?: string;
-  mode: number;
-  mtimeSeconds: number;
-  size: number;
-  typeFlag: "0" | "2" | "5";
-}): Buffer {
-  const header = Buffer.alloc(TAR_BLOCK_SIZE);
-  const { name, prefix } = splitTarEntryPath(options.entryPath);
-
-  writeTarString(header, name, 0, 100);
-  writeTarOctal(header, options.mode & 0o777, 100, 8);
-  writeTarOctal(header, 0, 108, 8);
-  writeTarOctal(header, 0, 116, 8);
-  writeTarOctal(header, options.size, 124, 12);
-  writeTarOctal(header, options.mtimeSeconds, 136, 12);
-  header.fill(0x20, 148, 156);
-  writeTarString(header, options.typeFlag, 156, 1);
-  if (options.linkName) {
-    if (Buffer.byteLength(options.linkName) > 100) {
-      throw new Error(`[remote-assets] tar symlink target is too long: ${options.linkName}`);
-    }
-    writeTarString(header, options.linkName, 157, 100);
-  }
-  writeTarString(header, "ustar", 257, 6);
-  writeTarString(header, "00", 263, 2);
-  writeTarString(header, "acode", 265, 32);
-  writeTarString(header, "acode", 297, 32);
-  writeTarString(header, prefix, 345, 155);
-
-  let checksum = 0;
-  for (const byte of header) {
-    checksum += byte;
-  }
-  writeTarChecksum(header, checksum);
-  return header;
-}
-
-function splitTarEntryPath(entryPath: string): { name: string; prefix: string } {
-  const encodedLength = Buffer.byteLength(entryPath);
-  if (encodedLength <= 100) {
-    return { name: entryPath, prefix: "" };
-  }
-
-  const segments = entryPath.split("/");
-  for (let index = segments.length - 1; index > 0; index -= 1) {
-    const prefix = segments.slice(0, index).join("/");
-    const name = segments.slice(index).join("/");
-    if (Buffer.byteLength(prefix) <= 155 && Buffer.byteLength(name) <= 100) {
-      return { name, prefix };
-    }
-  }
-
-  throw new Error(`[remote-assets] tar entry path is too long: ${entryPath}`);
-}
-
-function readTarEntryPath(header: Buffer): string {
-  const name = readTarString(header, 0, 100);
-  const prefix = readTarString(header, 345, 155);
-  return prefix ? `${prefix}/${name}` : name;
-}
-
-function readTarTypeFlag(header: Buffer): string {
-  const value = header[156] ?? 0;
-  return value === 0 ? "0" : String.fromCharCode(value);
-}
-
-function readTarString(buffer: Buffer, offset: number, length: number): string {
-  const slice = buffer.subarray(offset, offset + length);
-  const end = slice.indexOf(0);
-  return slice.subarray(0, end === -1 ? slice.length : end).toString("utf8");
-}
-
-function writeTarString(buffer: Buffer, value: string, offset: number, length: number): void {
-  buffer.write(value, offset, length, "utf8");
-}
-
-function parseTarOctal(buffer: Buffer, offset: number, length: number): number {
-  const raw = readTarString(buffer, offset, length).trim();
-  return raw ? Number.parseInt(raw, 8) : 0;
-}
-
-function writeTarOctal(buffer: Buffer, value: number, offset: number, length: number): void {
-  const encoded = Math.trunc(value)
-    .toString(8)
-    .padStart(length - 1, "0");
-  writeTarString(buffer, encoded.slice(-(length - 1)), offset, length - 1);
-}
-
-function writeTarChecksum(buffer: Buffer, checksum: number): void {
-  const encoded = checksum.toString(8).padStart(6, "0").slice(-6);
-  writeTarString(buffer, encoded, 148, 6);
-  buffer[154] = 0;
-  buffer[155] = 0x20;
-}
-
-function isZeroBlock(block: Buffer): boolean {
-  return block.every((byte) => byte === 0);
-}
-
-function roundUpToTarBlock(size: number): number {
-  return Math.ceil(size / TAR_BLOCK_SIZE) * TAR_BLOCK_SIZE;
-}
-
-function normalizeCreateEntryPath(entryPath: string): string {
-  const normalized = entryPath.replace(/^\.\/+/u, "").replace(/\/+$/u, "");
-  if (!normalized || normalized === ".") {
-    throw new Error("[remote-assets] tar entry path must not be empty");
-  }
-  return normalized;
-}
-
-function normalizeExtractEntryPath(entryPath: string): string | null {
-  const trimmed = entryPath.trim().replace(/^\.\/+/u, "");
-  if (!trimmed || trimmed === ".") {
-    return null;
-  }
-  if (trimmed.includes("\\") || isAbsolute(trimmed) || posix.isAbsolute(trimmed)) {
-    throw new Error(`[remote-assets] unsafe tar entry path: ${entryPath}`);
-  }
-
-  const normalized = posix.normalize(trimmed).replace(/\/+$/u, "");
-  if (
-    !normalized ||
-    normalized === "." ||
-    normalized === ".." ||
-    normalized.startsWith("../") ||
-    normalized.includes("/../")
-  ) {
-    throw new Error(`[remote-assets] unsafe tar entry path: ${entryPath}`);
-  }
-  return normalized;
-}
-
-function normalizeCreateSymlinkTarget({
-  archivePath,
-  rawLinkTarget,
-}: {
-  archivePath: string;
-  rawLinkTarget: string;
-}): string {
-  const normalizedLinkTarget = normalizeSymlinkLinkName(rawLinkTarget);
-  const parentArchivePath = posix.dirname(archivePath);
-  const resolvedArchiveTarget = posix.normalize(
-    posix.join(parentArchivePath === "." ? "" : parentArchivePath, normalizedLinkTarget),
-  );
-  if (
-    !resolvedArchiveTarget ||
-    resolvedArchiveTarget === "." ||
-    resolvedArchiveTarget === ".." ||
-    resolvedArchiveTarget.startsWith("../")
-  ) {
-    throw new Error(`[remote-assets] unsafe tar symlink target: ${rawLinkTarget}`);
-  }
-  return normalizedLinkTarget;
-}
-
-function normalizeExtractSymlinkTarget({
-  rawLinkTarget,
-  targetPath,
-  targetRoot,
-}: {
-  rawLinkTarget: string;
-  targetPath: string;
-  targetRoot: string;
-}): string {
-  const normalizedLinkTarget = normalizeSymlinkLinkName(rawLinkTarget);
-  const resolvedTarget = resolve(dirname(targetPath), ...normalizedLinkTarget.split("/"));
-  const relativePath = relative(targetRoot, resolvedTarget);
-  if (
-    relativePath === "" ||
-    relativePath.startsWith(`..${sep}`) ||
-    relativePath === ".." ||
-    isAbsolute(relativePath)
-  ) {
-    throw new Error(`[remote-assets] unsafe tar symlink target: ${rawLinkTarget}`);
-  }
-  return normalizedLinkTarget;
-}
-
-function normalizeSymlinkLinkName(rawLinkTarget: string): string {
-  const normalized = posix.normalize(rawLinkTarget);
-  // tar symlink 如果允许绝对路径、Windows drive 或反斜杠，解包后可能把本地缓存指向目标目录外。
-  // 这里只保留 POSIX 相对 link target，并在创建/解包两侧继续校验它解析后的落点。
-  if (
-    !rawLinkTarget ||
-    !normalized ||
-    normalized === "." ||
-    normalized.includes("\\") ||
-    isAbsolute(normalized) ||
-    posix.isAbsolute(normalized) ||
-    /^[a-zA-Z]:/u.test(normalized)
-  ) {
-    throw new Error(`[remote-assets] unsafe tar symlink target: ${rawLinkTarget}`);
-  }
-  return normalized;
-}
-
-function ensureTrailingSlash(entryPath: string): string {
-  return entryPath.endsWith("/") ? entryPath : `${entryPath}/`;
-}
-
-function resolvePathWithinBase(baseDir: string, entryPath: string): string {
-  const targetPath = resolve(baseDir, ...entryPath.split("/"));
-  assertPathInsideBase(baseDir, targetPath, entryPath);
-  return targetPath;
-}
-
-function assertPathInsideBase(baseDir: string, targetPath: string, sourceLabel: string): void {
-  const relativePath = relative(baseDir, targetPath);
-  if (
-    relativePath === "" ||
-    relativePath.startsWith(`..${sep}`) ||
-    relativePath === ".." ||
-    isAbsolute(relativePath)
-  ) {
-    throw new Error(`[remote-assets] unsafe tar entry path: ${sourceLabel}`);
-  }
 }
 
 async function unlinkIfExists(filePath: string): Promise<void> {

@@ -1,4 +1,5 @@
-import type { ACodePluginInfo, ACodePluginUserConfigOption } from "@acode/shared";
+
+import { type V4PluginInfo, type V4PluginUserConfigOption } from "@acode/shared/acode-protocol-v4";
 
 export type PluginOptionDraftValue = string | number | boolean | null;
 
@@ -15,7 +16,7 @@ interface PluginConfigPatch {
  * Workspace override。只有明确产生 draft 的字段才属于本次写入。
  */
 export function buildPluginConfigPatch(
-  plugin: Pick<ACodePluginInfo, "userConfig">,
+  plugin: Pick<V4PluginInfo, "userConfig">,
   drafts: Record<string, PluginOptionDraftValue | undefined>,
 ): PluginConfigPatch {
   const options: Record<string, string | number | boolean> = {};
@@ -23,7 +24,7 @@ export function buildPluginConfigPatch(
 
   for (const [key, option] of Object.entries(plugin.userConfig ?? {}) as [
     string,
-    ACodePluginUserConfigOption,
+    V4PluginUserConfigOption,
   ][]) {
     const draft = drafts[key];
     if (draft === undefined) continue;

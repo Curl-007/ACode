@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 const { listSessionSubagents } = await import(
-  "../packages/bootstrap/src/acode-protocol/server-operations.ts"
+  "../packages/bootstrap/src/acode-protocol-v4/server-operations.ts"
 );
 
 function createContext({ liveRecord }) {

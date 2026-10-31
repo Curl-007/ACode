@@ -138,6 +138,9 @@ export async function forkWorkspaceFromCheckpoint(
     targetCheckpointId?: string;
     targetMessageId?: MessageId;
     traceContext?: TraceContext;
+    // overnight 隐藏 coordinator（specs/overnight-execution.md R1a）：只改落盘行身份
+    // （taskType "overnight_coordinator" + coordinator 自己的标题），不改运行期 config。
+    hiddenCoordinatorTitle?: string;
   } = {},
 ): Promise<WorkspaceForkResult> {
   const traceContext = options.traceContext ?? getCurrentTraceContext() ?? this.rootTraceContext;
@@ -153,6 +156,9 @@ export async function forkWorkspaceFromCheckpoint(
       forkedSessionId: options.forkedSessionId,
       targetMessageId: options.targetMessageId,
       traceContext,
+      ...(options.hiddenCoordinatorTitle !== undefined
+        ? { hiddenCoordinatorTitle: options.hiddenCoordinatorTitle }
+        : {}),
     });
   }
 
@@ -233,6 +239,11 @@ export async function forkWorkspaceFromCheckpoint(
   const forkedSessionId = await createForkedSession(this, {
     forkedSessionId: options.forkedSessionId,
     parentSession,
+    // 与 message 目标分支同语义：显式 checkpoint 目标也承载落盘身份覆盖，避免调用方
+    // 传了 hiddenCoordinatorTitle 却被静默丢弃（静默丢弃 = 隐藏语义在另一条 fork 路径失效）。
+    ...(options.hiddenCoordinatorTitle !== undefined
+      ? { hiddenCoordinatorTitle: options.hiddenCoordinatorTitle }
+      : {}),
   });
 
   const forkHistoryEndIndex = resolveForkHistoryEndIndex(forkSourceMessages, targetIndex, false);

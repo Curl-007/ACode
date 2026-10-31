@@ -81,14 +81,17 @@ test("会话门：acodeAgentService 不 memoize、resolver 缺席回 undefined�
 
 test("legacy 面零新增：session create/resume 参数构造不携带 toolSearchMode（legacy 只删不增）", () => {
   const source = readSource("../src/acode-agent/acodeAgentService.ts");
-  // 按 legacy 参数构造函数的区域切分（同 scriptWorkflowModeFieldChain 的钉法），
-  // v4 信封注入点不在这两个函数里，不参与本断言。
-  const createStart = source.indexOf("function buildSessionCreateParams");
-  const resumeStart = source.indexOf("function buildSessionResumeParams");
-  assert.ok(createStart > 0 && resumeStart > createStart, "legacy 参数构造函数仍在");
-  const legacyRegion = source.slice(createStart, resumeStart + 2500);
-  assert.ok(
-    !legacyRegion.includes("toolSearchMode"),
-    "legacy session create/resume 参数构造不得出现 toolSearchMode（legacy 会话缺席 = off）",
+  // M2-3：legacy session/create|resume wire 面整体删除（v4 化完成），buildSessionCreateParams/
+  // buildSessionResumeParams 随之移除——「不携带 toolSearchMode」由删除承载，比区域扫描更强；
+  // legacy 会话缺席=off 的语义随 wire 面一并退役。
+  assert.equal(
+    source.indexOf("function buildSessionCreateParams"),
+    -1,
+    "legacy create 参数构造已随 M2-3 删除",
+  );
+  assert.equal(
+    source.indexOf("function buildSessionResumeParams"),
+    -1,
+    "legacy resume 参数构造已随 M2-3 删除",
   );
 });

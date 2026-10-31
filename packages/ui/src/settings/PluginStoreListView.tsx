@@ -2,7 +2,8 @@ import { useIsOfficeMode } from "@/hooks/useInterfaceMode.js";
 /* eslint-disable max-lines -- 商店列表页把标题/搜索/已安装条/公开-个人分段/Featured/分类折叠聚合成一个连贯浏览面，拆散反而难以维持 1:1 布局。 */
 import { useMemo, useState } from "react";
 import { Download, Loader2, Settings2 } from "lucide-react";
-import type { PluginStoreOrder, ACodePluginMarketplaceSummary } from "@acode/shared";
+import type { PluginStoreOrder } from "@acode/shared";
+import { type V4PluginMarketplaceSummary } from "@acode/shared/acode-protocol-v4";
 import { ACODE_OFFICIAL_PLUGIN_MARKETPLACE_ID } from "@acode/shared";
 import { Button } from "@/components/ui/button.js";
 import { cn } from "@/components/lib/utils.js";
@@ -48,7 +49,7 @@ export function PluginStoreListView({
 }: {
   items: StorePluginItem[];
   order?: PluginStoreOrder | null;
-  marketplaces: ACodePluginMarketplaceSummary[];
+  marketplaces: V4PluginMarketplaceSummary[];
   actions: PluginStoreActions;
   loading: boolean;
   query: string;

@@ -1,6 +1,6 @@
 # Codex 编排方案对照实现审计报告（2026-10-10）
 
-> **审计对象**：[codex-orchestration-integration-plan.md](codex-orchestration-integration-plan.md)（生成于 2026-10-09，核实基线 `dev/0.0.9 @ 2855cce`）。
+> **审计对象**：[codex-orchestration-integration-plan.md](archive/codex-orchestration-integration-plan.md)（生成于 2026-10-09，核实基线 `dev/0.0.9 @ 2855cce`）。
 > **审计检出**：`dev/0.0.7`（HEAD `372f40f`，已合并 dev/0.0.9）。
 > **方法**：5 路独立核对员按方案五个区域分工，对 65 条承重论断逐条读当前源码、按「文件名 + 符号名」重定位并引用 file:line 证据；再由 1 名未参与核对的独立复核员对全部偏离方案的结论（2 条 invalid）、全部安全论断（R1/R2/五道门/§6.1/§6.2）及 2 条 holds 抽查逐一反驳——**9/9 confirmed，0 refuted，0 unclear**。
 > **性质**：只读审计，不改代码、不改 spec。本报告与对方案文档的定点修订（见 §4）是全部产出。
@@ -166,7 +166,7 @@
 
 ## 4. 方案文档修订清单（已随本审计执行）
 
-以下定点修订已直接写入 [codex-orchestration-integration-plan.md](codex-orchestration-integration-plan.md)，其余行号漂移不逐条改动（方案附录的「以文件名 + 符号名为主」纪律继续适用，逐条漂移登记以本报告 §2 为准）：
+以下定点修订已直接写入 [codex-orchestration-integration-plan.md](archive/codex-orchestration-integration-plan.md)，其余行号漂移不逐条改动（方案附录的「以文件名 + 符号名为主」纪律继续适用，逐条漂移登记以本报告 §2 为准）：
 
 1. 头部新增「复核记录（2026-10-10）」段：登记复核范围、结论与本报告链接。
 2. Phase 1 关键改动：新迁移 `0028-subagent-edge.ts` → **`0030-subagent-edge.ts`**；注册说明「最新是 0027」→「最新已到 0029（c453fca 追加 0028/0029 workflow-run-owner 族）」。

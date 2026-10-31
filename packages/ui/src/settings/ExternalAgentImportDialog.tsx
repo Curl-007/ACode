@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- 外部 Agent 导入弹窗复用 skills/commands 的交互状态机，业务扫描与导入在服务层按类别分开 */
+/* eslint-disable max-lines -- 外部 Agent 导入弹窗保留导入流程编排与全部渲染组件；选择 key/分组/结果提取等纯 helper 已批次 4 迁至 external-agent-import/importModel，类别状态 hook 迁至 useExternalAgentImportCategoryState */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   AlertCircleIcon,
@@ -12,20 +12,9 @@ import {
 } from "lucide-react";
 import type {
   SettingsSyncAgentSummary,
-  SettingsSyncCategory,
-  SettingsSyncCommandImportResult,
   SettingsSyncDiscoveryResult,
   SettingsSyncImportResult,
-  SettingsSyncSelection,
   SettingsSyncImportMode,
-  SettingsSyncMcpServerImportResult,
-  SettingsSyncSourceMcpServerSummary,
-  SettingsSyncPluginImportResult,
-  SettingsSyncSkillImportResult,
-  SettingsSyncSourceCommandSummary,
-  SettingsSyncSourcePluginSummary,
-  SettingsSyncSourceSkillSummary,
-  SettingsSyncSourceRootSummary,
   SettingsSyncSourceScope,
 } from "@acode/shared";
 import { ControlHintTooltip } from "@/ControlHintTooltip.js";
@@ -50,22 +39,34 @@ import {
 import type { ISettingsSyncService } from "@acode/services";
 import { useACodeIntl } from "@/i18n/IntlProvider.js";
 import { logger } from "@/logger.js";
+import {
+  IMPORT_MODE_ORDER,
+  SOURCE_ROOT_SCOPE_ORDER,
+  buildExternalAgentImportSelections,
+  formatAgentName,
+  formatSourceRootScope,
+  getImportResults,
+  getResourceCategory,
+  getResourceSelectionKey,
+  getSourceRootItems,
+  getSourceSelectionKey,
+  groupAgentsBySourceRootScope,
+  normalizeError,
+  type ImportItemResult,
+  type ImportItemSummary,
+  type ImportResourceCategory,
+} from "./external-agent-import/importModel.js";
+import {
+  useExternalAgentImportCategoryState,
+  type ExternalAgentImportCategoryState,
+} from "./external-agent-import/useExternalAgentImportCategoryState.js";
+
+// 批次 4 helper 外迁后保持对外签名不变：消费方仍从本文件 import 这些名字。
+export type { ImportResourceCategory } from "./external-agent-import/importModel.js";
+export { useExternalAgentImportCategoryState } from "./external-agent-import/useExternalAgentImportCategoryState.js";
+export type { ExternalAgentImportCategoryState } from "./external-agent-import/useExternalAgentImportCategoryState.js";
 
 type ImportStep = "selection" | "importing" | "complete";
-export type ImportResourceCategory = Extract<
-  SettingsSyncCategory,
-  "skills" | "commands" | "plugins" | "mcpServers"
->;
-type ImportItemSummary =
-  | SettingsSyncSourceSkillSummary
-  | SettingsSyncSourceCommandSummary
-  | SettingsSyncSourcePluginSummary
-  | SettingsSyncSourceMcpServerSummary;
-type ImportItemResult =
-  | SettingsSyncSkillImportResult
-  | SettingsSyncCommandImportResult
-  | SettingsSyncPluginImportResult
-  | SettingsSyncMcpServerImportResult;
 
 interface ExternalAgentImportDialogProps {
   open: boolean;
@@ -83,245 +84,6 @@ interface CategorizedExternalAgentImportDialogProps extends ExternalAgentImportD
   category: ImportResourceCategory;
 }
 
-interface ResourceSelectionKeyPayload {
-  agent: string;
-  category: ImportResourceCategory;
-  sourceScope?: SettingsSyncSourceScope;
-  resourcePath: string;
-}
-
-function getSourceSelectionKey(
-  agent: string,
-  category: string,
-  sourceScope?: SettingsSyncSourceScope,
-): string {
-  return sourceScope ? `${agent}:${category}:${sourceScope}` : `${agent}:${category}`;
-}
-
-function getResourceSelectionKey(payload: ResourceSelectionKeyPayload): string {
-  return JSON.stringify(payload);
-}
-
-function readResourceSelectionKey(key: string): ResourceSelectionKeyPayload | null {
-  try {
-    const payload = JSON.parse(key) as Partial<ResourceSelectionKeyPayload>;
-    if (
-      typeof payload.agent !== "string" ||
-      typeof payload.category !== "string" ||
-      typeof payload.resourcePath !== "string"
-    ) {
-      return null;
-    }
-    return {
-      agent: payload.agent,
-      category: payload.category as ImportResourceCategory,
-      ...(payload.sourceScope ? { sourceScope: payload.sourceScope } : {}),
-      resourcePath: payload.resourcePath,
-    };
-  } catch {
-    return null;
-  }
-}
-
-function buildExternalAgentImportSelections(
-  selectedKeys: string[],
-  targetScope: SettingsSyncSourceScope,
-  importMode: SettingsSyncImportMode,
-): SettingsSyncSelection[] {
-  const grouped = new Map<string, SettingsSyncSelection>();
-  for (const key of selectedKeys) {
-    const payload = readResourceSelectionKey(key);
-    if (!payload) {
-      continue;
-    }
-    const groupKey = JSON.stringify([payload.agent, payload.category, payload.sourceScope ?? null]);
-    const selection = grouped.get(groupKey) ?? {
-      agent: payload.agent as SettingsSyncSelection["agent"],
-      category: payload.category as SettingsSyncSelection["category"],
-      ...(payload.sourceScope ? { sourceScope: payload.sourceScope } : {}),
-      targetScope,
-      importMode,
-      ...(payload.category === "skills"
-        ? { skillPaths: [] }
-        : payload.category === "commands"
-          ? { commandPaths: [] }
-          : payload.category === "plugins"
-            ? { pluginPaths: [] }
-            : { mcpServerPaths: [] }),
-    };
-    if (payload.category === "skills") {
-      selection.skillPaths = [...(selection.skillPaths ?? []), payload.resourcePath];
-    } else if (payload.category === "commands") {
-      selection.commandPaths = [...(selection.commandPaths ?? []), payload.resourcePath];
-    } else if (payload.category === "plugins") {
-      selection.pluginPaths = [...(selection.pluginPaths ?? []), payload.resourcePath];
-    } else {
-      selection.mcpServerPaths = [...(selection.mcpServerPaths ?? []), payload.resourcePath];
-    }
-    grouped.set(groupKey, selection);
-  }
-  return [...grouped.values()];
-}
-
-function normalizeError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function getImportResults(
-  result: SettingsSyncImportResult | null,
-  category: ImportResourceCategory,
-): ImportItemResult[] {
-  return (
-    result?.taskResults.flatMap((taskResult) =>
-      category === "skills"
-        ? (taskResult.skillResults ?? [])
-        : category === "commands"
-          ? (taskResult.commandResults ?? [])
-          : category === "plugins"
-            ? (taskResult.pluginResults ?? [])
-            : (taskResult.mcpServerResults ?? []),
-    ) ?? []
-  );
-}
-
-function formatAgentName(agent: string, intl: ReturnType<typeof useACodeIntl>["intl"]): string {
-  switch (agent) {
-    case "claudeCode":
-      return intl.formatMessage({ id: "settingsSync.agent.claudeCode" });
-    case "codexCli":
-      return intl.formatMessage({ id: "settingsSync.agent.codexCli" });
-    case "openCode":
-      return intl.formatMessage({ id: "settingsSync.agent.openCode" });
-    case "openClaw":
-      return intl.formatMessage({ id: "settingsSync.agent.openClaw" });
-    case "augment":
-      return intl.formatMessage({ id: "settingsSync.agent.augment" });
-    case "continue":
-      return intl.formatMessage({ id: "settingsSync.agent.continue" });
-    case "goose":
-      return intl.formatMessage({ id: "settingsSync.agent.goose" });
-    case "qwenCode":
-      return intl.formatMessage({ id: "settingsSync.agent.qwenCode" });
-    case "qode":
-      return intl.formatMessage({ id: "settingsSync.agent.qode" });
-    case "qodeCn":
-      return intl.formatMessage({ id: "settingsSync.agent.qodeCn" });
-    case "windsurf":
-      return intl.formatMessage({ id: "settingsSync.agent.windsurf" });
-    case "trae":
-      return intl.formatMessage({ id: "settingsSync.agent.trae" });
-    case "traeCn":
-      return intl.formatMessage({ id: "settingsSync.agent.traeCn" });
-    case "kiroCli":
-      return intl.formatMessage({ id: "settingsSync.agent.kiroCli" });
-    case "roo":
-      return intl.formatMessage({ id: "settingsSync.agent.roo" });
-    case "codeBuddy":
-      return intl.formatMessage({ id: "settingsSync.agent.codeBuddy" });
-    case "agents":
-      return intl.formatMessage({ id: "settingsSync.agent.agents" });
-    case "acode":
-      return intl.formatMessage({ id: "settingsSync.agent.acode" });
-    default:
-      return agent;
-  }
-}
-
-function getResourceCategory(
-  agent: SettingsSyncAgentSummary,
-  resourceCategory: ImportResourceCategory,
-) {
-  return agent.categories.find((category) => category.category === resourceCategory);
-}
-
-const SOURCE_ROOT_SCOPE_ORDER: SettingsSyncSourceScope[] = ["global", "project"];
-const IMPORT_MODE_ORDER: SettingsSyncImportMode[] = ["symlink", "copy"];
-
-function formatSourceRootScope(
-  scope: SettingsSyncSourceScope,
-  intl: ReturnType<typeof useACodeIntl>["intl"],
-  resourceCategory: ImportResourceCategory,
-): string {
-  return intl.formatMessage({ id: `settings.${resourceCategory}.import.scope.${scope}` });
-}
-
-function getSourceRootItems(
-  sourceRoot: SettingsSyncSourceRootSummary,
-  resourceCategory: ImportResourceCategory,
-): ImportItemSummary[] {
-  return resourceCategory === "skills"
-    ? (sourceRoot.skills ?? [])
-    : resourceCategory === "commands"
-      ? (sourceRoot.commands ?? [])
-      : resourceCategory === "plugins"
-        ? (sourceRoot.plugins ?? [])
-        : (sourceRoot.mcpServers ?? []);
-}
-
-function normalizePathForScope(path: string): string {
-  return path.replaceAll("\\", "/").replace(/\/+$/u, "");
-}
-
-function inferSourceRootScope(
-  path: string,
-  workspacePath: string | null | undefined,
-): SettingsSyncSourceScope {
-  if (!workspacePath) {
-    return "global";
-  }
-  const normalizedPath = normalizePathForScope(path);
-  const normalizedWorkspacePath = normalizePathForScope(workspacePath);
-  return normalizedPath === normalizedWorkspacePath ||
-    normalizedPath.startsWith(`${normalizedWorkspacePath}/`)
-    ? "project"
-    : "global";
-}
-
-function getSourceRoots(
-  agent: SettingsSyncAgentSummary,
-  workspacePath: string | null | undefined,
-  resourceCategory: ImportResourceCategory,
-): SettingsSyncSourceRootSummary[] {
-  const category = getResourceCategory(agent, resourceCategory);
-  if (!category) {
-    return [];
-  }
-  if (category.sourceRoots && category.sourceRoots.length > 0) {
-    return category.sourceRoots;
-  }
-  return (category.sourcePaths ?? []).map((path) => ({
-    scope: inferSourceRootScope(path, workspacePath),
-    path,
-    discoveredCount: category.discoveredCount,
-    importableCount: category.importableCount,
-    skippedCount: category.skippedCount,
-  }));
-}
-
-function groupAgentsBySourceRootScope(
-  agents: SettingsSyncAgentSummary[],
-  workspacePath: string | null | undefined,
-  resourceCategory: ImportResourceCategory,
-): Array<{
-  scope: SettingsSyncSourceScope;
-  rows: Array<{
-    agent: SettingsSyncAgentSummary;
-    sourceRoot: SettingsSyncSourceRootSummary;
-  }>;
-}> {
-  return SOURCE_ROOT_SCOPE_ORDER.map((scope) => ({
-    scope,
-    rows: agents.flatMap((agent) =>
-      getSourceRoots(agent, workspacePath, resourceCategory)
-        .filter((sourceRoot) => sourceRoot.scope === scope)
-        .filter((sourceRoot) =>
-          getSourceRootItems(sourceRoot, resourceCategory).some((item) => item.importable),
-        )
-        .map((sourceRoot) => ({ agent, sourceRoot })),
-    ),
-  }));
-}
-
 export function SkillsImportDialog(props: ExternalAgentImportDialogProps) {
   return <ExternalAgentImportDialog {...props} category="skills" />;
 }
@@ -332,160 +94,6 @@ export function CommandsImportDialog(props: ExternalAgentImportDialogProps) {
 
 export function McpServersImportDialog(props: ExternalAgentImportDialogProps) {
   return <ExternalAgentImportDialog {...props} category="mcpServers" />;
-}
-
-export interface ExternalAgentImportCategoryState {
-  activeScope: SettingsSyncSourceScope;
-  discovery: SettingsSyncDiscoveryResult | null;
-  error: string | null;
-  expandedSourceKeys: string[];
-  importMode: SettingsSyncImportMode;
-  importTargetScope: SettingsSyncSourceScope;
-  loading: boolean;
-  selectedCount: number;
-  selectedKeys: string[];
-  selections: SettingsSyncSelection[];
-  totalImportableCount: number;
-  loadDiscovery: () => Promise<void>;
-  setActiveSourceScope: (scope: SettingsSyncSourceScope) => void;
-  setImportMode: (mode: SettingsSyncImportMode) => void;
-  setImportTargetScope: (scope: SettingsSyncSourceScope) => void;
-  setResourceSelection: (keys: string[], checked: boolean) => void;
-  toggleExpanded: (key: string) => void;
-  toggleSelection: (key: string) => void;
-}
-
-export function useExternalAgentImportCategoryState({
-  category,
-  enabled,
-  settingsSyncService,
-  workspaceIdentity,
-  workspacePath,
-}: {
-  category: ImportResourceCategory;
-  enabled: boolean;
-  settingsSyncService: ISettingsSyncService;
-  workspacePath: string | null | undefined;
-  workspaceIdentity?: string;
-}): ExternalAgentImportCategoryState {
-  const [loading, setLoading] = useState(false);
-  const [discovery, setDiscovery] = useState<SettingsSyncDiscoveryResult | null>(null);
-  const [selectedKeys, setSelectedKeys] = useState<string[]>([]);
-  const [expandedSourceKeys, setExpandedSourceKeys] = useState<string[]>([]);
-  const [activeScope, setActiveScope] = useState<SettingsSyncSourceScope>("global");
-  const [importTargetScope, setImportTargetScope] = useState<SettingsSyncSourceScope>("global");
-  const [importMode, setImportMode] = useState<SettingsSyncImportMode>("symlink");
-  const [error, setError] = useState<string | null>(null);
-
-  const totalImportableCount = useMemo(
-    () =>
-      discovery?.agents.reduce(
-        (sum, agent) =>
-          sum +
-          agent.categories.reduce(
-            (categorySum, category) => categorySum + category.importableCount,
-            0,
-          ),
-        0,
-      ) ?? 0,
-    [discovery],
-  );
-
-  const loadDiscovery = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const nextDiscovery = await settingsSyncService.detect({
-        workspacePath: workspacePath ?? undefined,
-        workspaceIdentity,
-        categories: [category],
-        intent: "manualImport",
-      });
-      setDiscovery(nextDiscovery);
-      setSelectedKeys([]);
-      setExpandedSourceKeys([]);
-      setActiveScope("global");
-      setImportTargetScope("global");
-    } catch (loadError) {
-      const message = normalizeError(loadError);
-      logger.error("[ExternalAgentImportDialog] scan failed", { category, error: message });
-      setError(message);
-      setDiscovery({ agents: [] });
-      setSelectedKeys([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [category, settingsSyncService, workspaceIdentity, workspacePath]);
-
-  useEffect(() => {
-    if (!enabled || discovery || loading) {
-      return;
-    }
-    void loadDiscovery();
-  }, [discovery, enabled, loadDiscovery, loading]);
-
-  const toggleSelection = useCallback((key: string) => {
-    setSelectedKeys((current) => {
-      const next = new Set(current);
-      if (next.has(key)) {
-        next.delete(key);
-      } else {
-        next.add(key);
-      }
-      return [...next];
-    });
-  }, []);
-
-  const setResourceSelection = useCallback((keys: string[], checked: boolean) => {
-    setSelectedKeys((current) => {
-      const next = new Set(current);
-      for (const key of keys) {
-        if (checked) {
-          next.add(key);
-        } else {
-          next.delete(key);
-        }
-      }
-      return [...next];
-    });
-  }, []);
-
-  const toggleExpanded = useCallback((key: string) => {
-    setExpandedSourceKeys((current) =>
-      current.includes(key) ? current.filter((item) => item !== key) : [...current, key],
-    );
-  }, []);
-
-  const setActiveSourceScope = useCallback((nextScope: SettingsSyncSourceScope) => {
-    setActiveScope(nextScope);
-    setImportTargetScope(nextScope);
-  }, []);
-
-  const selections = useMemo(
-    () => buildExternalAgentImportSelections(selectedKeys, importTargetScope, importMode),
-    [importMode, importTargetScope, selectedKeys],
-  );
-
-  return {
-    activeScope,
-    discovery,
-    error,
-    expandedSourceKeys,
-    importMode,
-    importTargetScope,
-    loading,
-    selectedCount: selectedKeys.length,
-    selectedKeys,
-    selections,
-    totalImportableCount,
-    loadDiscovery,
-    setActiveSourceScope,
-    setImportMode,
-    setImportTargetScope,
-    setResourceSelection,
-    toggleExpanded,
-    toggleSelection,
-  };
 }
 
 function ExternalAgentImportDialog({

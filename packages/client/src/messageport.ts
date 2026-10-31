@@ -1,4 +1,4 @@
-import { MessagePortProtocol, ChannelClient } from "@acode/rpc";
+import { MessagePortProtocol, ChannelClient, toDisposable } from "@acode/rpc";
 import type { IServiceAccessor } from "@acode/services";
 import { RemoteServiceAccess } from "./remoteServiceAccess.js";
 import { isRendererProductionBuild } from "./rendererLoggingEnv.js";
@@ -33,17 +33,29 @@ export function createMessagePortServiceConnection(
   });
   logMessagePortDebug("[messageport] client created, waiting for Initialize...");
 
-  const services = new RemoteServiceAccess(client);
+  // 单一幂等释放边界：connection.dispose 与 services.dispose 共用，避免两条释放路径
+  //（RemoteServiceAccess.dispose 内部再守一次 disposed）。client.dispose 会 reject 挂起 RPC，
+  // protocol.disconnect 摘 message 订阅并关闭 port。
   let disposed = false;
+  const transport = toDisposable(() => {
+    if (disposed) {
+      return;
+    }
+    disposed = true;
+    client.dispose();
+    protocol.disconnect();
+  });
+
+  const services = new RemoteServiceAccess(client, transport);
   return {
     services,
     dispose: (reason?: Error) => {
-      if (disposed) {
-        return;
+      // reason 仅用于把挂起 RPC 以指定错误 fail-closed；共享 transport 无参，故先在此收口一次。
+      if (!disposed) {
+        disposed = true;
+        client.dispose(reason);
+        protocol.disconnect();
       }
-      disposed = true;
-      client.dispose(reason);
-      protocol.disconnect();
     },
   };
 }

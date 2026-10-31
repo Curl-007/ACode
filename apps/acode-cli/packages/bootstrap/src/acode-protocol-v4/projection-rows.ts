@@ -9,14 +9,8 @@ import type {
   TurnResultType,
   TurnStartedPayload,
 } from "@acode/contracts";
-import type {
-  GoalState,
-  TimelineMarkerPayload,
-  ToolOutput,
-  TurnHeaderRow,
-  UserInputRow,
-} from "@acode/shared/acode-protocol-v4";
 import { PROTOCOL_V4_LIMITS } from "@acode/shared/acode-protocol-v4";
+import type { GoalState, TimelineMarkerPayload, ToolOutput, TurnHeaderRow, UserInputRow } from "@acode/shared/acode-protocol-v4";
 
 interface RowBaseInput {
   rowId: number;

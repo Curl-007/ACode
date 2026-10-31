@@ -33,17 +33,11 @@ import { usePdfViewerLabels, usePptxViewerLabels } from "@/hooks/usePreviewViewe
 import {
   FILE_VIEWER_MAX_TEXT_BYTES,
   createDiffSourceFilePreviewSource,
-  inferImageMediaType,
-  inferMediaPreview,
-  isPdfPreviewPath,
-  isPptxPreviewPath,
   type CodeViewerSource,
-  type MediaCodeViewerSource,
 } from "@/lib/codeViewer.js";
 import type { PdfViewerSource } from "@/components/ui/pdf-viewer.js";
 import { normalizeCodeViewerSource } from "@/lib/codeViewerSource.js";
-import { FileDisplayIcon, resolveFileDisplayDescriptor } from "@/lib/fileDisplay.js";
-import { getPathLeaf, isAbsoluteFilePath } from "@/lib/path.js";
+import { FileDisplayIcon } from "@/lib/fileDisplay.js";
 import { decodeBase64ToArrayBuffer, getOfficeFilePreviewKind } from "@/lib/officeFilePreview.js";
 import { usePlatform } from "@/hooks/usePlatform.js";
 import { useFileContextActions } from "@/hooks/useFileContextActions.js";
@@ -66,6 +60,35 @@ import {
 import { readLastSelectedEditorId } from "@/lib/editorPreference.js";
 import { PreviewPaneContent } from "@/previewPaneContent.js";
 import {
+  type BreadcrumbMaskState,
+  BREADCRUMB_MASK_CLASS_BY_STATE,
+  buildCodeViewerBreadcrumb,
+} from "@/previewPane/previewPaneBreadcrumb.js";
+import {
+  isPreviewPaneFileTooLargeError,
+  isPreviewPaneMissingFileError,
+  resolvePptxPreviewReadErrorMessage,
+  shouldToastPptxReferenceFileMissing,
+} from "@/previewPane/previewPaneErrors.js";
+import { PreviewPaneDeferredHeavyContent } from "@/previewPane/PreviewPaneDeferredHeavyContent.js";
+import {
+  PDF_FULL_READ_MAX_BYTES,
+  PDF_RANGE_CHUNK_BYTES,
+  getPreviewPaneDisplayOptions,
+  isMarkdownFilePath,
+  isMarkdownSource,
+  isPptxPreviewFileTooLarge,
+  isSvgFilePath,
+  isSvgSource,
+  resolveMediaPlaybackErrorMessageId,
+  resolvePreviewPaneImageSource,
+  resolvePreviewPaneMediaSource,
+  resolvePreviewPanePdfSource,
+  resolvePreviewPanePptxSource,
+  resolvePreviewPaneTextFileResult,
+  shouldShowPreviewPaneHeaderDivider,
+} from "@/previewPane/previewPaneSources.js";
+import {
   dispatchCodeCommentAddToChat,
   dispatchCodeCommentRemoveFromChat,
   isCodeCommentMarkedRemoved,
@@ -80,118 +103,7 @@ import {
   readPptxPreviewData,
 } from "@/lib/pptxPreviewData.js";
 
-interface CodeViewerBreadcrumbData {
-  rootLabel: string | null;
-  parentSegments: string[];
-  fileLabel: string;
-  fileIconSrc: string | null;
-}
-
-type BreadcrumbMaskState = "none" | "left" | "right" | "both";
-
-const BREADCRUMB_MASK_CLASS_BY_STATE: Record<BreadcrumbMaskState, string> = {
-  none: "",
-  left: "[mask-image:linear-gradient(to_right,transparent_0,black_16px,black_100%)] [-webkit-mask-image:linear-gradient(to_right,transparent_0,black_16px,black_100%)]",
-  right:
-    "[mask-image:linear-gradient(to_right,black_0,black_calc(100%-16px),transparent_100%)] [-webkit-mask-image:linear-gradient(to_right,black_0,black_calc(100%-16px),transparent_100%)]",
-  both: "[mask-image:linear-gradient(to_right,transparent_0,black_16px,black_calc(100%-16px),transparent_100%)] [-webkit-mask-image:linear-gradient(to_right,transparent_0,black_16px,black_calc(100%-16px),transparent_100%)]",
-};
-const PREVIEW_PANE_DEFERRED_PLACEHOLDER_LINE_WIDTHS = [
-  44, 72, 58, 86, 64, 78, 52, 90, 68, 48, 82, 60,
-] as const;
 const EMPTY_CODE_COMMENT_PREVIEWS: readonly CodeCommentPreview[] = [];
-
-function normalizeBreadcrumbPathSegments(path: string): string[] {
-  return path.replace(/\\/g, "/").split("/").filter(Boolean);
-}
-
-function isMarkdownSource(source: CodeViewerSource): boolean {
-  return source.type === "text" && source.language === "markdown";
-}
-
-function isSvgSource(source: CodeViewerSource): boolean {
-  return source.type === "text" && source.path?.toLowerCase().endsWith(".svg") === true;
-}
-
-function isMarkdownFilePath(path?: string): boolean {
-  if (!path) {
-    return false;
-  }
-
-  const normalizedPath = path.toLowerCase();
-  return normalizedPath.endsWith(".md") || normalizedPath.endsWith(".markdown");
-}
-
-function isPreviewPaneMissingFileError(error: unknown): boolean {
-  if (typeof error === "object" && error !== null && "code" in error) {
-    const code = (error as { code?: unknown }).code;
-    if (code === "ENOENT") {
-      return true;
-    }
-  }
-
-  const message = error instanceof Error ? error.message : String(error);
-  return /\bENOENT\b/i.test(message) || /no such file or directory/i.test(message);
-}
-
-function shouldToastPptxReferenceFileMissing(
-  source: CodeViewerSource | null,
-  error: unknown,
-): boolean {
-  return (
-    source?.type === "pptx" &&
-    source.referenceNavigation !== undefined &&
-    isPreviewPaneMissingFileError(error)
-  );
-}
-
-function isPreviewPaneFileTooLargeError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return /file is too large to preview/i.test(message);
-}
-
-function getPreviewPaneSafeErrorMessage(error: unknown, sourcePath: string): string {
-  const message = error instanceof Error ? error.message : String(error);
-  if (!isAbsoluteFilePath(sourcePath)) {
-    return message;
-  }
-
-  const sourceLeaf = getPathLeaf(sourcePath);
-  const pathVariants = new Set([
-    sourcePath,
-    sourcePath.replace(/\\/g, "/"),
-    sourcePath.replace(/\//g, "\\"),
-  ]);
-
-  let safeMessage = message;
-  for (const pathVariant of pathVariants) {
-    if (pathVariant !== sourceLeaf) {
-      safeMessage = safeMessage.split(pathVariant).join(sourceLeaf);
-    }
-  }
-  return safeMessage;
-}
-
-function resolvePptxPreviewReadErrorMessage(
-  error: unknown,
-  options: {
-    sourcePath: string;
-    fileMissingMessage: string;
-    legacyFileTooLargeMessage: string;
-    incompleteFileMessage: string;
-  },
-): string {
-  if (isPreviewPaneMissingFileError(error)) {
-    return options.fileMissingMessage;
-  }
-  if (isPreviewPaneFileTooLargeError(error)) {
-    return options.legacyFileTooLargeMessage;
-  }
-  if (isPptxPreviewIncompleteFileError(error)) {
-    return options.incompleteFileMessage;
-  }
-  return getPreviewPaneSafeErrorMessage(error, options.sourcePath);
-}
 
 function readPreviewPaneScrollMetrics(
   container: Pick<HTMLElement, "scrollHeight" | "scrollTop"> | null,
@@ -203,277 +115,6 @@ function readPreviewPaneScrollMetrics(
   return {
     scrollHeight: container.scrollHeight,
     scrollTop: container.scrollTop,
-  };
-}
-
-function resolvePreviewPaneTextFileResult(result: FileTextSlice): {
-  filePreview: FileTextSlice | null;
-  fileTooLarge: boolean;
-} {
-  if (result.isBinary) {
-    return {
-      filePreview: result,
-      fileTooLarge: false,
-    };
-  }
-
-  return result.truncated
-    ? {
-        filePreview: null,
-        fileTooLarge: true,
-      }
-    : {
-        filePreview: result,
-        fileTooLarge: false,
-      };
-}
-
-function isSvgFilePath(path?: string): boolean {
-  return path?.toLowerCase().endsWith(".svg") ?? false;
-}
-
-function getFileImageMediaType(path?: string): string | null {
-  const mediaType = inferImageMediaType(path);
-  return mediaType && mediaType !== "image/svg+xml" ? mediaType : null;
-}
-
-// 与 service 层 readFileRange 的默认分段大小对齐，一次 range 请求对应一次 RPC 调用。
-const PDF_RANGE_CHUNK_BYTES = 256 * 1024;
-// 小 PDF 直接循环拉全量（少量往返、渲染路径最简单）；超过阈值交给 pdf.js range 按需分段加载。
-const PDF_FULL_READ_MAX_BYTES = 2 * 1024 * 1024;
-const PPTX_MAX_FILE_BYTES = 64 * 1024 * 1024;
-
-function isPptxPreviewFileTooLarge(size: number): boolean {
-  return size > PPTX_MAX_FILE_BYTES;
-}
-
-function PreviewPaneDeferredHeavyContent({ style }: { style?: CSSProperties }) {
-  return (
-    <div
-      aria-hidden="true"
-      className="h-full w-full overflow-hidden bg-background"
-      data-preview-pane-heavy-content-deferred="true"
-      style={style}
-    >
-      {/* resize/sliver 阶段不能展示大文件 CodeViewer，但只放空白会明显闪烁。
-          这里用少量静态 code-line 纹理保留预览区的视觉重量，不让千行 Shadow DOM 参与可见布局。 */}
-      <div
-        className="sticky top-0 flex h-full min-h-0 flex-col gap-1.5 overflow-hidden p-3"
-        data-preview-pane-heavy-content-placeholder="true"
-      >
-        {PREVIEW_PANE_DEFERRED_PLACEHOLDER_LINE_WIDTHS.map((width, index) => (
-          <div key={`${width}-${index}`} className="flex h-4 shrink-0 items-center gap-2">
-            <span className="h-3 w-8 shrink-0 rounded-sm bg-surface" />
-            <span className="h-3 rounded-sm bg-surface-hover" style={{ width: `${width}%` }} />
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function resolvePreviewPaneImageSource(
-  source: CodeViewerSource | null,
-): Extract<CodeViewerSource, { type: "image" }> | null {
-  if (!source) {
-    return null;
-  }
-
-  if (source.type === "image") {
-    return source;
-  }
-
-  if (source.type !== "file") {
-    return null;
-  }
-
-  const mediaType = getFileImageMediaType(source.path);
-  if (!mediaType) {
-    return null;
-  }
-
-  return {
-    type: "image",
-    title: source.title,
-    path: source.path,
-    mediaType,
-  };
-}
-
-function resolvePreviewPaneMediaSource(
-  source: CodeViewerSource | null,
-): MediaCodeViewerSource | null {
-  if (!source) return null;
-  if (source.type === "media") return source;
-  if (source.type !== "file") return null;
-  const media = inferMediaPreview(source.path);
-  if (!media) return null;
-  return { ...source, type: "media", ...media };
-}
-
-function resolveMediaPlaybackErrorMessageId(
-  code: number | undefined,
-): "codeViewer.mediaUnsupported" | "codeViewer.mediaLoadFailed" {
-  return code === 3 || code === 4 ? "codeViewer.mediaUnsupported" : "codeViewer.mediaLoadFailed";
-}
-
-function resolvePreviewPanePdfSource(
-  source: CodeViewerSource | null,
-): Extract<CodeViewerSource, { type: "pdf" }> | null {
-  if (!source) {
-    return null;
-  }
-
-  if (source.type === "pdf") {
-    return source;
-  }
-
-  if (source.type !== "file" || !isPdfPreviewPath(source.path)) {
-    return null;
-  }
-
-  return {
-    type: "pdf",
-    title: source.title,
-    path: source.path,
-  };
-}
-
-function resolvePreviewPanePptxSource(
-  source: CodeViewerSource | null,
-): Extract<CodeViewerSource, { type: "pptx" }> | null {
-  if (!source) {
-    return null;
-  }
-
-  if (source.type === "pptx") {
-    return source;
-  }
-
-  if (source.type !== "file" || !isPptxPreviewPath(source.path)) {
-    return null;
-  }
-
-  return {
-    ...source,
-    type: "pptx",
-  };
-}
-
-function shouldShowPreviewPaneHeaderDivider(source: CodeViewerSource | null): boolean {
-  return Boolean(
-    resolvePreviewPanePdfSource(source) ||
-    resolvePreviewPanePptxSource(source) ||
-    resolvePreviewPaneMediaSource(source) ||
-    (source?.type === "file" && getOfficeFilePreviewKind(source.path)),
-  );
-}
-
-function isPlainCodeSource(source: CodeViewerSource | null): boolean {
-  if (!source) {
-    return false;
-  }
-
-  if (source.type === "text") {
-    return !isMarkdownSource(source) && !isSvgSource(source);
-  }
-
-  if (source.type === "file") {
-    return (
-      !isMarkdownFilePath(source.path) &&
-      !isSvgFilePath(source.path) &&
-      !getFileImageMediaType(source.path) &&
-      // PDF、Office 和 PPTX 走专用只读预览，没有源码视图，也不该出现自动换行开关。
-      !isPdfPreviewPath(source.path) &&
-      !getOfficeFilePreviewKind(source.path) &&
-      !isPptxPreviewPath(source.path)
-    );
-  }
-
-  if (source.type === "media") return false;
-
-  if (source.type === "code-review") {
-    return true;
-  }
-
-  return false;
-}
-
-function getPreviewPaneDisplayOptions(
-  source: CodeViewerSource | null,
-  viewModes: {
-    markdownViewMode?: "preview" | "code";
-    svgViewMode?: "preview" | "code";
-  } = {},
-) {
-  const canToggleMarkdownView =
-    source !== null &&
-    (isMarkdownSource(source) || (source.type === "file" && isMarkdownFilePath(source.path)));
-  const canToggleSvgView =
-    source !== null &&
-    (isSvgSource(source) || (source.type === "file" && isSvgFilePath(source.path)));
-  const canToggleCodeWrap =
-    isPlainCodeSource(source) ||
-    (canToggleMarkdownView && viewModes.markdownViewMode === "code") ||
-    (canToggleSvgView && viewModes.svgViewMode === "code");
-
-  return {
-    canToggleCodeWrap,
-    canToggleMarkdownView,
-    canToggleSvgView,
-    hasMoreMenu: canToggleMarkdownView || canToggleSvgView || canToggleCodeWrap,
-  };
-}
-
-function buildCodeViewerBreadcrumb(
-  source: CodeViewerSource,
-  workspacePath?: string,
-): CodeViewerBreadcrumbData | null {
-  const sourcePath = source.path;
-  if (!sourcePath) {
-    if (!source.title.trim()) {
-      return null;
-    }
-
-    return {
-      rootLabel: null,
-      parentSegments: [],
-      fileLabel: source.title,
-      fileIconSrc: null,
-    };
-  }
-
-  const normalizedSourcePath = sourcePath.replace(/\\/g, "/");
-  const normalizedWorkspacePath = workspacePath?.replace(/\\/g, "/").replace(/\/+$/, "") ?? null;
-  const sourceLeaf = getPathLeaf(sourcePath);
-  const descriptor = resolveFileDisplayDescriptor(sourcePath);
-  if (
-    normalizedWorkspacePath &&
-    (normalizedSourcePath === normalizedWorkspacePath ||
-      normalizedSourcePath.startsWith(`${normalizedWorkspacePath}/`))
-  ) {
-    const relativePath =
-      normalizedSourcePath === normalizedWorkspacePath
-        ? ""
-        : normalizedSourcePath.slice(normalizedWorkspacePath.length + 1);
-    const relativeSegments = normalizeBreadcrumbPathSegments(relativePath);
-
-    return {
-      rootLabel: getPathLeaf(normalizedWorkspacePath),
-      parentSegments: relativeSegments.slice(0, -1),
-      fileLabel: relativeSegments.at(-1) ?? sourceLeaf,
-      fileIconSrc: descriptor.fileIconSrc,
-    };
-  }
-
-  const sourceSegments = normalizeBreadcrumbPathSegments(normalizedSourcePath);
-  return {
-    rootLabel: sourcePath.startsWith("/") ? "/" : (sourceSegments[0] ?? null),
-    parentSegments: sourcePath.startsWith("/")
-      ? sourceSegments.slice(0, -1)
-      : sourceSegments.slice(1, -1),
-    fileLabel: sourceSegments.at(-1) ?? sourceLeaf,
-    fileIconSrc: descriptor.fileIconSrc,
   };
 }
 

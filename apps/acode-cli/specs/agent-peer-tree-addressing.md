@@ -1,6 +1,6 @@
 # Agent 间整树寻址 P2：同树跨层 peer 投递（编排方案 Phase 5 / ④-P2）
 
-来源：[`docs/codex-orchestration-integration-plan.md`](../../../docs/codex-orchestration-integration-plan.md)
+来源：[`docs/archive/codex-orchestration-integration-plan.md`](../../../docs/archive/codex-orchestration-integration-plan.md)
 §4 Phase 5 P2（整树寻址表 + 多层镜像逐级向各自父收口 + 跨层环路/深度守卫）与 §7④
 裁决。前置批次全部就绪：P0 进程内同父兄弟
 （[`agent-peer-messaging.md`](agent-peer-messaging.md)）、P1 跨进程 store-and-forward

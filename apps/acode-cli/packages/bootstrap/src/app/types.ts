@@ -28,6 +28,7 @@ import type {
 import type {
   ListScriptWorkflowDefinitionsResult,
   ListScriptWorkflowRunsResult,
+  V4OvernightCompletionNotification,
   WorkspaceHookReviewDecision,
   WorkspaceHookTrustRevokeTarget,
 } from "@acode/shared/acode-protocol-v4";
@@ -168,6 +169,12 @@ export interface ACodeAppOptions {
   executionPort?: ExecutionPort;
   /** 资源遥测旁路；由协议宿主注入，主任务和 workflow 的执行适配器共用。 */
   onToolExecResource?: (sample: ACodeToolExecResource) => void;
+  /**
+   * Overnight（K3）完成信号旁路（specs/overnight-completion-notify.md §7）：run 落终态时
+   * overnight-controller 调用一次，由协议宿主（entrypoint）发成 v4 通知经 stdio 上报 host→main。
+   * 与 onToolExecResource 同族的宿主注入出口；缺席（纯 CLI/TUI）时静默 no-op，不影响完成事实落日志。
+   */
+  onOvernightCompletion?: (signal: V4OvernightCompletionNotification) => void;
   /** browser-use 控制端口；注入后 node_repl 的 agent.browsers.* 可用。缺省则不可用。 */
   browserControlPort?: BrowserControlPort;
   /** 可由协议宿主注入的进程级 node_repl Browser broker；缺省时 app 自建并拥有。 */

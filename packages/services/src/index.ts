@@ -77,6 +77,13 @@ export type {
 } from "./broadcast/broadcast.js";
 
 // ACode task wrapper service — task 列表/置顶/归档等 app 侧包装状态入口。
+// 消费方符号经 session 契约面出面（specs/session-module-boundary.md「Public boundary」）。
+// 修复依据（同 spec「浏览器安全不变量」，2026-10-30 白屏事故）：本 barrel 是 desktop/web
+// renderer 的值导入面，值边经 contract.ts hub 转发时，rolldown 会把 hub 上 Node-only 仓库件
+// （automationRepo/offPeakTaskRepo 顶层 createRequire("node:sqlite")、paths.ts 顶层 homedir()）
+// 的副作用 re-export 保守保留进 renderer 产物，Windows 生产构建启动即白屏，vite dev 全图求值
+// 同样炸（node:crypto externalized）。故值导出直指浏览器安全叶子；类型导出仍经 contract.ts
+// （export type 被擦除，不产生 bundle 边）。
 export { IACodeTaskService } from "./session/acodeTaskService.js";
 export type {
   ACodeArchivedTaskDeletionResult,
@@ -104,8 +111,8 @@ export type {
   ACodeGroupedTaskViewTopLevelNodeRef,
   ACodeTaskGroup,
   ACodeTaskGroupColor,
-} from "./session/acodeTaskService.js";
-export type { ACodeTaskListItem } from "./session/acodeTaskListTypes.js";
+  ACodeTaskListItem,
+} from "./session/contract.js";
 
 export { IWindowControllerService } from "./window-controller/windowController.js";
 export type {
@@ -168,7 +175,7 @@ export type {
   ACodeSessionListParams,
   ACodeSessionMessagesParams,
   ACodeSessionReadParams,
-  ACodeSessionResumeParams,
+  V4SessionResumeParams,
   ACodeSessionServiceEvent,
   ACodeSessionSetModeParams,
   ACodeSessionSetModelParams,
@@ -199,7 +206,7 @@ export {
 } from "./memory/memory.js";
 export type { ProjectMemoryFileSummary, ProjectMemoryWorkspaceSummary } from "./memory/memory.js";
 
-export type { SessionRealtimePort } from "./session/sessionRealtimePort.js";
+export type { SessionRealtimePort } from "./session/contract.js";
 
 // FileWatcher service — IFileWatcherService is both a type (interface) and value (descriptor)
 export { IFileWatcherService } from "./fileWatcher/fileWatcher.js";
@@ -226,10 +233,10 @@ export {
   type ClientSceneResponseBody,
   type ClientScenesResponse,
 } from "./client-scenes/clientScenes.js";
+// 浏览器安全不变量（见上方 IACodeTaskService 注释）：值导出直连叶子，不经 contract hub。
 export { isValidCronExpr } from "./session/automationCronValidation.js";
 // 闲时任务管理服务（与 automation 服务面独立）；接口/描述符 browser-safe。
-export { IOffPeakTaskService } from "./session/offPeakTask.js";
-export type { OffPeakUpdateTaskParams } from "./session/offPeakTask.js";
+export { IOffPeakTaskService, type OffPeakUpdateTaskParams } from "./session/offPeakTask.js";
 
 // Skills service — ISkillsService is both a type (interface) and value (descriptor)
 export { ISkillsService } from "./skills/skills.js";

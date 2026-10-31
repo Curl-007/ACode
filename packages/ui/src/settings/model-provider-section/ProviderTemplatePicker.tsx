@@ -34,17 +34,12 @@ export function ProviderTemplatePicker({
   const { intl, locale } = useACodeIntl();
   const { dismissFeedback, showFeedback } = useProviderDetailFeedback();
   const customLabel = intl.formatMessage({ id: "settings.modelProvider.newProviderName" });
-  const zhipuIds = ["bigmodel-api", "zai-api", "bigmodel-standard-api", "zai-standard-api"];
+  // 2026-10-30 用户裁决智谱账号集成退役（builtin catalog 条目删除 + release 拒绝清单），
+  // 模板选择器的智谱组随之移除；仅保留 other 组。
   const groups = [
     {
-      id: "zhipu",
-      templates: zhipuIds.flatMap((id) =>
-        templates.filter((template) => template.templateId === id),
-      ),
-    },
-    {
       id: "other",
-      templates: templates.filter((template) => !zhipuIds.includes(template.templateId)),
+      templates: [...templates],
     },
   ] as const;
   const createWithFeedback = async (create: () => Promise<void>) => {

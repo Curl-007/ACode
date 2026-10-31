@@ -1,6 +1,6 @@
 # 压缩不变量审计（J1-3）
 
-方案条目 **J1-3**（`docs/jcode-inspired-upgrade-plan.md:111-133`），性质：**审计 + 修正**。
+方案条目 **J1-3**（`docs/archive/jcode-inspired-upgrade-plan.md:111-133`），性质：**审计 + 修正**。
 
 本 spec 是审计清单式登记处：五条来自 jcode 事故记录的压缩不变量 → 逐条判定
 （**成立 / 缺口 / 不适用**）→ 亲自复核的证据（`file:line` + 实跑命令与输出）→ 修正项 → 测试。

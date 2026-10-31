@@ -4,7 +4,7 @@ import { repairImportedClaudeSessionSnapshot } from "#src/session/claude-native/
 import type { IACodeAgentService } from "#src/acode-agent/acodeAgent.js";
 import type {
   ACodeSessionReadParams,
-  ACodeSessionResumeParams,
+  V4SessionResumeParams,
 } from "#src/acode-session/acodeSession.js";
 
 const logger = createServiceLogger("acode-session-service");
@@ -12,7 +12,7 @@ const logger = createServiceLogger("acode-session-service");
 export async function repairEmptyImportedClaudeSessionSnapshot(params: {
   agentService: IACodeAgentService;
   snapshot: ACodeSessionStateSnapshot;
-  target: ACodeSessionResumeParams | ACodeSessionReadParams;
+  target: V4SessionResumeParams | ACodeSessionReadParams;
 }): Promise<ACodeSessionStateSnapshot> {
   const repaired = await repairImportedClaudeSessionSnapshot({
     snapshot: params.snapshot,

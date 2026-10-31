@@ -1,6 +1,6 @@
 # 子代理交互请求 origin 的谱系补全（R5/R6，编排方案 Phase 4 拆分单元）
 
-来源：[`docs/codex-orchestration-integration-plan.md`](../../../docs/codex-orchestration-integration-plan.md)
+来源：[`docs/archive/codex-orchestration-integration-plan.md`](../../../docs/archive/codex-orchestration-integration-plan.md)
 §4 Phase 4 B「origin 归属（可拆后续 PR）」与 §5 R5 行（归属退化：origin 只留最内层、
 parentSessionId 指向客户端不可见会话）。嵌套放开（maxDepth>1，
 [`subagent-nesting-budget.md`](subagent-nesting-budget.md)）后该退化成为现实缺陷：

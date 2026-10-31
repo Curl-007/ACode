@@ -1,5 +1,6 @@
 import type { IPluginManagementService } from "@acode/services";
-import type { ACodePluginScope } from "@acode/shared";
+
+import { type V4PluginScope } from "@acode/shared/acode-protocol-v4";
 import { logger } from "@/logger.js";
 import { loadInto } from "@/store/pluginManagementStoreLoading.js";
 import type { PluginManagementState } from "@/store/pluginManagementStore.js";
@@ -14,7 +15,7 @@ const activeToggleRequests = new Map<string, number>();
 function buildToggleRequestKey(input: {
   workspacePath: string;
   workspaceIdentity: string | null;
-  configScope: ACodePluginScope | null;
+  configScope: V4PluginScope | null;
   pluginId: string;
 }): string {
   const workspaceKey = input.workspaceIdentity?.trim() || input.workspacePath;
@@ -27,7 +28,7 @@ export async function setPluginEnabledOptimistically(
   pluginId: string,
   enabled: boolean,
   pluginService: IPluginManagementService,
-  scope: ACodePluginScope = "user",
+  scope: V4PluginScope = "user",
 ): Promise<boolean> {
   const { workspacePath, workspaceIdentity, configScope } = get();
   if (!workspacePath) return false;
@@ -87,6 +88,10 @@ export async function setPluginEnabledOptimistically(
       configScope,
       pluginService,
     });
+    // R4 可观测性（specs/cua-enablement-authority.md）：成功路径也留痕（debug 级，
+    // 生产不落盘）——开关写路径的失败有 error、早退有 warn，成功若无任何记录，
+    // 「显示 ON + 磁盘无记录 + 零日志」仍无法与「写成功但读侧分裂」区分。
+    logger.debug("[plugins] setEnabled succeeded", { pluginId, enabled });
     return isCurrentRequest();
   } catch (error) {
     // 启停失败时必须返回 false 并恢复 optimistic projection，避免

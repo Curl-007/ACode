@@ -17,3 +17,4 @@ export * from "./diagnose-provider.js";
 export * from "./run-provider-doctor.js";
 export * from "./format-report.js";
 export * from "./defaults.js";
+export * from "./project-diagnostics-result.js";

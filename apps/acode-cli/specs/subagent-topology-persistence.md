@@ -1,6 +1,6 @@
 # 子代理拓扑持久化 + 崩溃恢复（编排方案 Phase 1 / ①）
 
-来源：[`docs/codex-orchestration-integration-plan.md`](../../../docs/codex-orchestration-integration-plan.md) §4 Phase 1，
+来源：[`docs/archive/codex-orchestration-integration-plan.md`](../../../docs/archive/codex-orchestration-integration-plan.md) §4 Phase 1，
 经 2026-10-10 对照审计（[`docs/codex-orchestration-plan-audit-2026-10-10.md`](../../../docs/codex-orchestration-plan-audit-2026-10-10.md)）
 复核后按当前检出实施。审计带来的两处方案修订已吸收：迁移编号 **0030**（0028/0029 已被
 `c453fca` 的 workflow-run-owner 族占用）；`session-store.port.ts` 契约面已因

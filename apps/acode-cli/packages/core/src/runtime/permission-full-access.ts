@@ -6,7 +6,11 @@ import {
   type SessionModeChangedPayload,
 } from "@acode/contracts";
 import type { AgentRuntimeInternal } from "./internal.js";
-import { buildExecutionStateEntry, readRuntimeExecutionState } from "./execution-state.js";
+import {
+  buildExecutionStateEntry,
+  propagateBypassModeToLiveChildren,
+  readRuntimeExecutionState,
+} from "./execution-state.js";
 import {
   unpublishedPermissionGrants,
   recoverPendingPermissionGrant,
@@ -99,6 +103,13 @@ export async function grantPermissionFullAccess(
       grantPort.setLastPermissionGrantId(interactionId);
       this.config.mode = payload.mode;
       this.config.planEnabled = payload.planEnabled;
+      // 完全访问事后传播（specs/subagent-parent-inheritance.md R7）：弹窗授权路径不经
+      // applyRuntimeExecutionState（上面直写 config），广播在此显式触发；applied 去重
+      // + child 侧 apply 的同档早退保证重授不刷事件。
+      await propagateBypassModeToLiveChildren(this, {
+        source: "command",
+        traceContext: this.rootTraceContext,
+      });
       for (const item of this.activeTurn?.pendingInputs ?? []) {
         if (ids.has(item.id) && item.intent) item.intent = { ...item.intent, mode: "yolo" };
       }

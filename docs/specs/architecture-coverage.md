@@ -49,6 +49,46 @@ sequenceDiagram
    golden、branch generation 与 waiting 行为测试通过。
 4. checker 检查既有 baseline 未改写，已有债务与新增违规分开报告；不产生新 ratchet 豁免。
 
+## v4 → legacy 协议面反向依赖边界（26R2-03，2026-10-26 落地）
+
+checker 的 `v4-imports-legacy-protocol` 规则禁止 protocol v4（`packages/shared/src/
+acode-protocol-v4/`）反向依赖 legacy 协议面。实现见 `scripts/architecture/protocol-boundary.mjs`
+（从 `index.mjs` 抽出，因需要 specifier 与源码做符号级 AST 分析）。边界覆盖**两类**目标，
+策略不同：
+
+1. **barrel 目录 `packages/shared/src/acode-protocol/`**：全禁。该目录（`index.ts`，3,700+ 行）
+   按 `docs/legacy-protocol-convergence-plan.md` 于 M4 整体删除，任何 v4→barrel 边都会在 M4
+   断裂。共享 schema 必须迁到中立叶子 `acode-protocol-shared.ts`（M2-B 模式）。
+2. **幸存文件 `packages/shared/src/acode-protocol-legacy-types.ts`**：符号级**白名单**。该文件
+   的头注自述为「旧协议 barrel 删除后该协议面的唯一幸存面」——它不在 M4 被删，而是被甄别保留。
+   故不做全禁，而是冻结当前 4 个 v4 文件（`snapshot` / `transport` / `telemetry` /
+   `script-workflow-management`）导入的 **6 个幸存 schema** 于白名单：
+   `acodePermissionResponseSchema`、`acodeContextUsageBreakdownSchema`、
+   `acodeInteractionRequestOriginSchema`、`acodeSessionContextCacheUsageSchema`、
+   `acodeWorkspaceRefSchema`、`acodeSyntheticUserMessageSourceSchema`。
+
+**根因（缺陷本质）**：旧谓词 `isSharedV4ToLegacyProtocolImport` 只用尾斜杠目录前缀
+`acode-protocol/`，而 `acode-protocol-legacy-types.ts` 是**同级文件**（兄弟路径，不在该目录
+下），谓词对它恒返回 false。上轮 review 认证「v4→legacy 双层守护/无回归」只核验了
+`command.ts`→barrel，**漏掉** legacy-types 这条活路径——守护边界窄于成文冻结规则。这 6 条既有
+边因文件幸存而不会断裂（低风险），但守护缺口使**未来**新增 v4→legacy-types 依赖（引入一个 M4
+会甄别删除的符号）静默通过门禁。
+
+**规则语义**：
+- 白名单内的幸存符号导入 → 放行（既有 6 条边保持绿）。
+- 白名单外的**任何新符号**导入 → 报 `v4-imports-legacy-protocol`，message 列出未登记符号名。
+- `import * as ns`（namespace import）与 `export * from`（整体重导）无法按符号收窄，
+  fail-closed 报违规（哨兵 `*` 必然不在白名单）。
+- 纯 side-effect import（`import "<spec>"`，无符号绑定）不引用具名符号，文件本身幸存 M4，放行。
+- 白名单是**冻结面**：新增 v4→legacy-types 依赖须走中立叶子（`acode-protocol-shared.ts`），
+  或经 review 显式扩充白名单（并同步本 spec），不得随手加符号。
+
+**fixture**（`apps/acode-cli/tests/architecture-coverage.test.mjs`）：
+`protocolBoundaryFixture` 的 `acode-protocol-legacy-types.ts` 导出一个白名单幸存符号
+（`acodeWorkspaceRefSchema`）与一个「M4 将删除」的非白名单符号（`acodeSchemaToBeDeletedAtM4`），
+四条用例钉住边界——白名单符号放行、非白名单新符号拦截（真负例，构造证明）、namespace import
+fail-closed、混合 import 仍报违规且 message 只列非法符号。
+
 ## Resolver 能力（ARCH-04 三缺口，2026-10-22 落地）
 
 checker 的导入解析与边界判定新增四项能力，全部 fail-closed（默认不放宽边界），

@@ -84,12 +84,8 @@ import {
   OfficialMcpAuthError,
   type OfficialMcpServerResponseInfo,
 } from "./official-auth.js";
-import {
-  OFFICIAL_MCP_AUTH_META_KEY,
-  ACODE_OFFICIAL_MCP_AUTH_TYPE,
-  type McpServerFailureKind,
-  type OfficialMcpAuthFailureKind,
-} from "@acode/shared";
+import { OFFICIAL_MCP_AUTH_META_KEY, ACODE_OFFICIAL_MCP_AUTH_TYPE, type OfficialMcpAuthFailureKind } from "@acode/shared";
+import { type V4McpServerFailureKind } from "@acode/shared/acode-protocol-v4";
 import {
   buildMcpStdioEnv,
   createMcpTransportFetch,
@@ -1669,7 +1665,7 @@ class NodeMcpAdapter implements McpPort {
     let getRecentStderr: (() => string | undefined) | undefined;
     let listToolsDurationMs: number | undefined;
     let transport: McpTransport | undefined;
-    let failureKind: McpServerFailureKind =
+    let failureKind: V4McpServerFailureKind =
       config.type === "stdio" ? "process_start_failed" : "network_unreachable";
 
     try {
@@ -2112,7 +2108,7 @@ class NodeMcpAdapter implements McpPort {
     config: McpServerConfig;
     connectDurationMs?: number;
     error: unknown;
-    failureKind?: McpServerFailureKind;
+    failureKind?: V4McpServerFailureKind;
     generation: number;
     getRecentStderr?: () => string | undefined;
     listToolsDurationMs?: number;

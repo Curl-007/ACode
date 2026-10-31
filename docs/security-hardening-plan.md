@@ -2,7 +2,7 @@
 
 本文件是 ACode 的分优先级安全加固路线图，基于对业界通行安全设计的对照与公开资料，以及对 ACode 当前源码的逐项核实。适用于所有协作者与 AI 辅助会话；与 [AGENTS.md](../AGENTS.md) 冲突时以 AGENTS.md 为准。
 
-> **文档状态**：方案（plan）。**P0 与 P1（P1-5/6/7）已实施并验证，进度与验证记录见 [`security-hardening-handoff.md`](security-hardening-handoff.md)；P2 已实施（2026-09-30 核实代码+spec 俱在）、P3 未开始。**每项落地前先按 AGENTS.md 的 spec-first 约定更新对应 `specs/*.md`，再改代码。
+> **文档状态**：方案（plan）。**P0 与 P1（P1-5/6/7）已实施并验证，进度与验证记录见 [`security-hardening-handoff.md`](archive/security-hardening-handoff.md)；P2 已实施（2026-09-30 核实代码+spec 俱在）、P3 未开始。**每项落地前先按 AGENTS.md 的 spec-first 约定更新对应 `specs/*.md`，再改代码。
 >
 > **生成日期**：2026-09-27。**行号时效性**：以下 `file:line` 以 2026-09-27 的检出为准，实施前需复核（行号会随版本漂移）。
 >

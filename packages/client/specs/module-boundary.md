@@ -19,6 +19,12 @@ MessagePort（Desktop renderer 主链路）与 WebSocket（Web 远程链路）�
 - `MessagePortServiceConnection.dispose` 是幂等的一次性释放边界：scoped remote
   session 换代时必须同时释放 ChannelClient 与底层 port，否则旧 attachment 上的
   挂起 RPC 无法 settle，并继续占用上层去重状态（messageport.ts 注释即此约束）。
+- WebSocket 链路对称暴露幂等释放边界：`RemoteServiceAccess.dispose()`（可选注入
+  transport）与 `connectViaWebSocket`/`connectViaProtocol` 返回的门面 `dispose()`，
+  按 desktop `serverRemoteConnection` 的 `client.dispose() → protocol.dispose() →
+  socket.dispose()` 顺序收口，释放 ChannelClient + SocketProtocol + 底层 WebSocket。
+  消费方（web 重连换代丢弃孤儿连接时）经此 `dispose()` 释放已打开的活 socket，
+  而非静默丢弃（否则泄漏 WebSocket + ChannelClient）。`dispose()` 幂等，重复调用只生效一次。
 - renderer 生产构建下连接调试日志静默（rendererLoggingEnv），避免窗口启动与
   重连路径的同步 console 成本。
 
@@ -50,7 +56,13 @@ MessagePort（Desktop renderer 主链路）与 WebSocket（Web 远程链路）�
    不新增例外，`.architecture-baseline.json` 不动。
 2. `node scripts/architecture/architecture-check.mjs context client` 展示 owner
    `remote-client-bridge`、module.ts 与 contract.ts。
-3. 包根导出面（index.ts）与纳管前逐名一致；client 无独立 test 脚本，回归由
-   desktop/web 消费链路承担。
+3. 包根导出面（index.ts）与治理契约（contract.ts）逐名一致；client 有独立 test 脚本
+   （`node --import tsx --test`，与 web/services 同范式，无需预构建、无 jsdom），
+   覆盖 WebSocket/MessagePort 连接门面的幂等 `dispose()`（关闭底层传输 + ChannelClient）、
+   `connectViaWebSocket` 就绪前失败的 reject 路径，以及 `RemoteServiceAccess` 代理展开——
+   传输/远程访问面是纯逻辑，用注入的假 transport/socket 直接驱动，无需 live server。
 4. `tsc -b packages/client`（根 `pnpm typecheck` 名单内）通过；
    `contract.example.ts` 随包工程一起编译（无 IO，仅编译与文档验证）。
+5. `pnpm --filter @acode/client test`（`tests/**/*.test.ts`）通过；测试文件与被测源文件
+   （src/remoteServiceAccess.ts、src/websocket.ts、src/messageport.ts）均在 client 模块根内，
+   不产生新的跨模块 deep-import 边。

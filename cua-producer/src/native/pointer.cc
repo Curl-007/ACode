@@ -103,6 +103,13 @@ class MoveToWorker final : public PromiseWorker {
     // 「当前正在 Execute 的操作」。admission 串行 + stop 先阻断出队再置旗（JS 侧），
     // 排除竞态窗口（input-session.ts 注释）。
     g_cancelRequested.store(false);
+    // 坐标触点（§10.7 R 裁决）：GetSystemMetrics/SendInput 归一化在本 worker 线程执行，
+    // 线程必须是真 PMv2——electron fork 下进程级 Set 恒被拒，门禁归线程级复核；
+    // 失败即既有 fail-closed（零注入，确定未派发）。
+    if (!EnsureThreadDpiPerMonitorV2()) {
+      FailAx(kNonInteractiveDesktop, false);
+      return;
+    }
     if (!IsExpectedForeground(expectedPid_)) {
       FailAx(kForegroundLost, false);  // 零注入，确定未派发（§10.3）
       return;
@@ -132,6 +139,11 @@ class ScrollAtWorker final : public PromiseWorker {
  protected:
   void Execute() override {
     g_cancelRequested.store(false);
+    // 坐标触点（§10.7 R 裁决）：线程级 PMv2 复核先于任何注入（同 MoveToWorker）。
+    if (!EnsureThreadDpiPerMonitorV2()) {
+      FailAx(kNonInteractiveDesktop, false);
+      return;
+    }
     if (!IsExpectedForeground(expectedPid_)) {
       FailAx(kForegroundLost, false);
       return;
@@ -185,6 +197,11 @@ class DragWorker final : public PromiseWorker {
  protected:
   void Execute() override {
     g_cancelRequested.store(false);
+    // 坐标触点（§10.7 R 裁决）：线程级 PMv2 复核先于任何注入（同 MoveToWorker）。
+    if (!EnsureThreadDpiPerMonitorV2()) {
+      FailAx(kNonInteractiveDesktop, false);
+      return;
+    }
     if (!IsExpectedForeground(expectedPid_)) {
       FailAx(kForegroundLost, false);
       return;

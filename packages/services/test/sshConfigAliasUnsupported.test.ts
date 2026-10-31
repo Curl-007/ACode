@@ -175,25 +175,22 @@ test("alias listing marks proxy-dependent aliases instead of silently dropping t
     const cmd = byAlias.get("cmd-target");
     assert.equal(cmd?.unsupported?.reason, "proxy_command_unsupported");
 
-    const viaSshG = jumpbox?.unsupported?.detectedBy === "ssh-g";
-    if (viaSshG) {
-      // -G 权威路径：Match exec 已被真实 ssh 求值（探针文件不存在 → 不适用），
-      // clean/match-exec/match-not 目标均无拒绝。
-      assert.equal(byAlias.get("match-exec-target")?.unsupported, undefined);
-      assert.equal(byAlias.get("clean-target")?.unsupported, undefined);
-      assert.equal(byAlias.get("match-not-target")?.unsupported, undefined);
-    } else {
-      // 静态回退路径：Match exec 不可判定 → 保守拒绝所有别名（match_unsupported），
-      // 指令类拒绝仍优先。
-      assert.equal(
-        byAlias.get("match-exec-target")?.unsupported?.reason,
-        "match_unsupported",
-      );
-      assert.equal(byAlias.get("clean-target")?.unsupported?.reason, "match_unsupported");
-      assert.equal(
-        byAlias.get("match-not-target")?.unsupported?.reason,
-        "match_unsupported",
-      );
+    // 修复原因：旧断言用 jumpbox 的 detectedBy 做全局 if/else 二分支，隐含
+    // 「同一次运行内所有别名同走一条路径」的假设。但实现是逐别名独立 spawn
+    // ssh -G、独立 1.5s 超时回退（spec 规则 2 逐别名独立判定）——慢 CI 上
+    // 部分别名超时回退、其余走 -G 权威路径的混合结果属设计内韧性行为，
+    // 全局二分支必然抖动（Windows CI 实测：clean-target 走 -G 无拒绝，
+    // match-exec-target 超时回退 match_unsupported）。改为逐别名断言两条
+    // 路径各自的合法结果：
+    // - 代理类别名（上方 jumpbox/cmd）：两条路径拒绝结论一致，仅 detectedBy 不同；
+    // - 干净别名：-G 已求值 → 无拒绝；保守回退 → match_unsupported（且只能来自回退）。
+    for (const alias of ["match-exec-target", "clean-target", "match-not-target"] as const) {
+      const unsupported = byAlias.get(alias)?.unsupported;
+      if (unsupported === undefined) {
+        continue;
+      }
+      assert.equal(unsupported.reason, "match_unsupported", `${alias} 回退路径只能保守拒绝`);
+      assert.equal(unsupported.detectedBy, "static-fallback");
     }
 
     // 平铺键解析行为不回退

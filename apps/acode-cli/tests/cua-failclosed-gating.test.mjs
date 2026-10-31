@@ -10,20 +10,48 @@
  *   ② dev env 存在但插件/内部特性未启用时，上游门控判定不创建 Helper（即不注入 live broker
  *      socket env）——用「假 env + 导入上游判定函数」验证，不修改 packages/services/src/node.ts。
  *
- * ② 的判定链（对应 node.ts:1721-1731 的 isCuaEnabledForContext 闭包，该闭包不导出，故本测试
+ * ② 的判定链（对应 node.ts isCuaEnabledForContext 闭包，该闭包不导出，故本测试
  * 复用其两个可导入的组成谓词 + 一个 admission 谓词逐段验证，注释标明镜像来源）：
- *   cuaPluginEnabled = isACodeCuaInternalFeatureEnabled(process.env)          // @acode/shared runtimeEnv
- *                    || isOfficialCuaPluginEnabledForWorkspace({...})         // 本包 broker-server stub（恒 false）
+ *   cuaPluginEnabled = isACodeCuaDevActivationRequested(process.env)          // @acode/shared runtimeEnv（R2 dev 旗标）
+ *                    || isOfficialCuaPluginEnabledForWorkspace({...})         // 本包 broker-server（R1 真读盘）
+ *   （spec: packages/services/specs/cua-enablement-authority.md——R3 后
+ *   isACodeCuaInternalFeatureEnabled 已退出该 OR 组合，其 infra 语义留在
+ *   shouldEnableDefaultCuaProductHelper。）
  *   → 传入 shouldCreateDefaultCuaProductHelper({ hasBuiltInCuaPlugin: cuaPluginEnabled, ... })
- *     决定是否 acquire 一个托管 Helper（node.ts:1752 getOrCreateDefaultCuaProductHelper）。
+ *     决定是否 acquire 一个托管 Helper（node.ts getOrCreateDefaultCuaProductHelper）。
  *     admission 为 false ⇒ 无 Helper ⇒ win32 无 live broker socket 可注入 ⇒ 客户端面 fail-closed。
  */
 import assert from "node:assert/strict";
+// 临时文件 IO 走异步 API（AGENTS.md：使用异步文件和网络 IO）。
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 
 import { createComputerUseRuntime } from "../../../packages/acode-cua/index.js";
 import { mintBrokerSocketPath } from "../../../packages/acode-cua/broker.js";
 import { isOfficialCuaPluginEnabledForWorkspace } from "../../../packages/acode-cua/broker-server.js";
+
+const CANONICAL_CUA_PLUGIN_ID = "computer-use@acode-plugins-official";
+
+/** temp HOME 夹具：被测磁盘谓词显式读注入 env 的 HOME，不碰 process.env。 */
+async function createCuaEnablementFixture() {
+  const home = await mkdtemp(join(tmpdir(), "acode-cua-gating-home-"));
+  await mkdir(join(home, ".acode", "cli"), { recursive: true });
+  const userConfigPath = join(home, ".acode", "cli", "config.json");
+  return {
+    env: { HOME: home },
+    async writeUserEnabled(enabled) {
+      await writeFile(
+        userConfigPath,
+        JSON.stringify({ plugins: { enabledPlugins: { [CANONICAL_CUA_PLUGIN_ID]: enabled } } }),
+      );
+    },
+    async cleanup() {
+      await rm(home, { recursive: true, force: true });
+    },
+  };
+}
 
 /** 取单文本块结果的解析 JSON（模拟 SDK unwrapEnvelope 的读取方式）。 */
 function parsedText(result) {
@@ -82,30 +110,58 @@ test("② 内部特性谓词：ACODE_CUA_PRODUCT_HELPER=0/false/off 显式关闭
   assert.equal(isACodeCuaInternalFeatureEnabled({ ACODE_CUA_PRODUCT_HELPER: "false" }), false);
 });
 
-test("② 官方插件 enablement 谓词：本包 stub 恒 false（插件未打包/未启用）", () => {
-  // broker-server.js:132 的占位——生产链阶段 5 打包未落地，官方插件 workspace enablement 恒 false。
-  assert.equal(isOfficialCuaPluginEnabledForWorkspace({ env: {}, workingDirectory: undefined }), false);
-  assert.equal(isOfficialCuaPluginEnabledForWorkspace({ env: { ACODE_CUA_DEV_MODE: "1" } }), false);
+test("② 官方插件 enablement 谓词：R1 真读盘——无记录 fail-closed，dev env 不是磁盘谓词输入", async () => {
+  // broker-server.js 的 R1 补实（cua-enablement-authority.md）：占位恒 false 已退役，
+  // 判定 = 设置页开关落盘记录。无记录（temp HOME 空配置）必须 fail-closed；dev 旗标
+  // 不属于磁盘谓词的输入（R2 的 dev 覆盖在组合式的另一条 OR 支，由下条镜像测试锁定）。
+  const fx = await createCuaEnablementFixture();
+  try {
+    assert.equal(isOfficialCuaPluginEnabledForWorkspace({ env: fx.env, workingDirectory: undefined }), false);
+    assert.equal(
+      isOfficialCuaPluginEnabledForWorkspace({ env: { ...fx.env, ACODE_CUA_DEV_MODE: "1" } }),
+      false,
+      "ACODE_CUA_DEV_MODE 不得让磁盘谓词误判启用",
+    );
+    // 正向对照：落盘记录 true → 谓词 true（证明上面的 false 不是「谓词已死」的空洞断言）。
+    await fx.writeUserEnabled(true);
+    assert.equal(isOfficialCuaPluginEnabledForWorkspace({ env: fx.env }), true);
+  } finally {
+    await fx.cleanup();
+  }
 });
 
-test("② cuaPluginEnabled 镜像：关闭门控需 PRODUCT_HELPER=0 且无 DEV_MODE（DEV_MODE 优先级更高）", async () => {
-  const { isACodeCuaInternalFeatureEnabled } = await import(
+test("② cuaPluginEnabled 镜像：R1 记录为唯一权威 + R2 dev 旗标独立覆盖 + R3 internal 退出", async () => {
+  const { isACodeCuaDevActivationRequested } = await import(
     "../../../packages/shared/src/runtimeEnv.ts"
   );
-  // 镜像 node.ts:1726 的 isCuaEnabledForContext 表达式（该闭包不导出，故按同一 OR 组合复算）。
-  const cuaPluginEnabled = (env) =>
-    isACodeCuaInternalFeatureEnabled(env) || isOfficialCuaPluginEnabledForWorkspace({ env });
-  // 关键优先级：runtimeEnv.ts:44 先判 isCuaDevModeRequested → DEV_MODE=1 **短路返回 true**，
-  // 早于 PRODUCT_HELPER=0 的关闭分支。故想真正关闭门控必须「PRODUCT_HELPER=0 且不设 DEV_MODE」。
-  assert.equal(cuaPluginEnabled({ ACODE_CUA_PRODUCT_HELPER: "0" }), false, "仅显式关闭 ⇒ 门控 false");
-  assert.equal(
-    cuaPluginEnabled({ ACODE_CUA_PRODUCT_HELPER: "0", ACODE_CUA_DEV_MODE: "1" }),
-    true,
-    "DEV_MODE=1 覆盖 PRODUCT_HELPER=0（dev 旋钮优先级更高，不可用它关闭）",
-  );
-  // 对照：缺省（内部特性 ON）⇒ 门控 true——说明生产 fail-closed 不靠此门控默认关闭，
-  // 而靠 admission（下条）+ Helper host 是无法启动的 stub（见 README/CONTRACT）。
-  assert.equal(cuaPluginEnabled({}), true);
+  // 镜像 node.ts 的 isCuaEnabledForContext 表达式（该闭包不导出，故按同一 OR 组合复算；
+  // 组合式由 packages/services/tests/cuaEnablementAuthority.test.mjs 的源码结构钉锁定）。
+  const fx = await createCuaEnablementFixture();
+  try {
+    const cuaPluginEnabled = (env) =>
+      isACodeCuaDevActivationRequested(env) || isOfficialCuaPluginEnabledForWorkspace({ env });
+    // R3：缺省（isACodeCuaInternalFeatureEnabled ON）+ 无记录 ⇒ 门控 false——internal 已退出
+    // 启用判定，生产 fail-closed 靠「设置页开关缺省无记录」+ admission（下条）+ Helper 打包缺席。
+    assert.equal(cuaPluginEnabled({ ...fx.env }), false, "R3：缺省无记录 ⇒ 门控 false");
+    // R1：开关落盘 true ⇒ 门控 true，即便显式 PRODUCT_HELPER=0（internal flag 压不住记录）。
+    await fx.writeUserEnabled(true);
+    assert.equal(cuaPluginEnabled({ ...fx.env }), true, "R1：落盘记录是启用唯一权威");
+    assert.equal(
+      cuaPluginEnabled({ ...fx.env, ACODE_CUA_PRODUCT_HELPER: "0" }),
+      true,
+      "R3：PRODUCT_HELPER=0 不再参与启用判定",
+    );
+    // R2：dev 旗标独立于开关记录——显式 OFF + DEV_MODE=1 仍启用（dev 链回归不变）。
+    await fx.writeUserEnabled(false);
+    assert.equal(cuaPluginEnabled({ ...fx.env }), false, "显式 OFF + 无 dev 旗标 ⇒ 门控 false");
+    assert.equal(
+      cuaPluginEnabled({ ...fx.env, ACODE_CUA_DEV_MODE: "1" }),
+      true,
+      "R2：DEV_MODE=1 覆盖显式 OFF（dev 旋钮独立于开关）",
+    );
+  } finally {
+    await fx.cleanup();
+  }
 });
 
 test("② admission 谓词：门控为 false 时即便 desktop-local 也不创建 Helper（无 live broker 可注入）", async () => {

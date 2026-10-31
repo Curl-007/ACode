@@ -33,6 +33,7 @@ import {
   type CuaPermissionReturnRecoveryClaim,
 } from "@/lib/cuaPermissionAction.js";
 import { usePluginManagementStore } from "@/store/pluginManagementStore.js";
+import { logger } from "@/logger.js";
 import { SettingsBadge, SettingsGroupCard, SettingsRow } from "@/settings/SettingsPageParts.js";
 import { StatusDot, type StatusDotTone } from "@/settings/StatusDot.js";
 import { supportsLocalMacCuaPermissionOnboarding } from "@/lib/cuaPlatform.js";
@@ -139,13 +140,17 @@ export function ComputerUseSection({
 
   const initRef = useRef(false);
   useEffect(() => {
-    if (
-      initRef.current ||
-      !supportsComputerUseSettings ||
-      !workspacePath ||
-      !pluginManagementService
-    )
+    if (initRef.current) return;
+    if (!supportsComputerUseSettings || !workspacePath || !pluginManagementService) {
+      // R4 可观测性（specs/cua-enablement-authority.md）：初始化被守卫静默跳过时必须留痕——
+      // 「显示态 + 磁盘记录」一旦分裂，零日志形态不得复现。initRef 命中是正常幂等跳过，不留痕。
+      logger.warn("[computer-use] settings init skipped: prerequisites missing", {
+        supportsComputerUseSettings,
+        hasWorkspacePath: Boolean(workspacePath),
+        hasPluginManagementService: Boolean(pluginManagementService),
+      });
       return;
+    }
     initRef.current = true;
     // 复用 Plugins 分区同一条初始化路径，确保 store 已加载 acode-cua 的 enabled 态。
     void initializePlugins({
@@ -332,7 +337,14 @@ export function ComputerUseSection({
 
   const onTogglePlugin = useCallback(
     async (next: boolean) => {
-      if (!pluginManagementService) return;
+      if (!pluginManagementService) {
+        // R4 可观测性（specs/cua-enablement-authority.md）：service 缺失导致开关点击静默
+        // 无效时必须有日志——这是「点了开关但磁盘无记录」类分裂的唯一现场证据。
+        logger.warn("[computer-use] toggle ignored: pluginManagementService unavailable", {
+          next,
+        });
+        return;
+      }
       const operationGeneration = ++pluginToggleGenerationRef.current;
       const operationContextKey = pluginToggleContextKey;
       // 切换 acode-cua 插件 = 同步其 MCP server + skill 一起启用/禁用。

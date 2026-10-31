@@ -93,7 +93,10 @@ stderr 拒绝文案与决策对象（键名级，不落值）。
      `ACODE_E2E_ARTIFACT_DIR`、`ACODE_E2E_RUNTIME_LOG_DIR`；
   3. 身份/数据目录覆写键：`ACODE_DESKTOP_USER_DATA_DIR`、`ACODE_DESKTOP_HOME_DIR`、
      `ACODE_DESKTOP_SESSION_DATA_DIR`、`ACODE_DESKTOP_APPLICATION_NAME`、
-     `ACODE_DESKTOP_USE_ELECTRON_DEFAULT_USER_DATA`、`ACODE_DATA_BASE_DIR`。
+     `ACODE_DESKTOP_USE_ELECTRON_DEFAULT_USER_DATA`、`ACODE_DATA_BASE_DIR`；
+  4. CUA dev 覆盖旗标：`ACODE_CUA_DEV_MODE`、`ACODE_CUA_PRODUCT_HELPER`
+     （`packages/services/specs/cua-enablement-authority.md` R2——dev 链覆盖旋钮不得
+     在 signed release 生效，否则绕过设置页开关这一启用单一权威）。
 
 诊断：记录被忽略的**键名**列表（`getBootEnvironmentDecision().ignoredEnvKeys`），
 **绝不记录值**；同时经 `console.warn`（try/catch）输出一行键名摘要。决策对象常驻

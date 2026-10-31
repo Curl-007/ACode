@@ -29,9 +29,10 @@ unavailable 语义失败，绝不静默降级为“看起来可用”。
 > host 侧纯 JS，Helper 缺席时端到端仍走 unavailable / `CUA_NOT_READY`（warming-up）语义，
 > `execute` 对未接线 Helper 返回可重试的 not-ready 信封而非假成功。故「本包不再是占位」的说法
 > **仍不成立**：栏② 的一切（Helper 服务端 `dispatchRequest` 系、原生 seam、mac-only、PiP、installer）
-> 保持 fail-closed，且 `isOfficialCuaPluginEnabledForWorkspace` /
-> `createCuaProductMcpServerResolver` / `CuaProductHelperWorkspaceRegistry` / `isScreenCaptureProbeSuccess`
-> 亦仍占位（最小可用集延后，见下栏）。
+> 保持 fail-closed，且 `createCuaProductMcpServerResolver` / `CuaProductHelperWorkspaceRegistry` /
+> `isScreenCaptureProbeSuccess` 亦仍占位（最小可用集延后，见下栏）。
+> （2026-10-31：`isOfficialCuaPluginEnabledForWorkspace` 已随
+> `packages/services/specs/cua-enablement-authority.md` R1 补实为真读盘，退出占位列，见下栏。）
 >
 > **（2026-10-14 更新，A1 批次）**：角色 A 的 **A1 骨架 Helper 已在 `cua-producer/` 树内落地**
 > （两阶段 ready、named pipe wire 服务端**自建**、诚实 probe addon；契约与验收见
@@ -50,9 +51,10 @@ unavailable 语义失败，绝不静默降级为“看起来可用”。
 > （`ACODE_CUA_DEV_ROOT` → `WindowsCuaHelperHost`）已具备端到端物质基础**——真机烟测
 > `--capture/--uia/--host` 实证（producer spec §15）；C05/C07 真机人工验收待执行。**产品链
 > 仍不可用**：阶段 5 打包（`resources/tools/cua-helper` staging + 签名 + 完整性校验）未落地，
-> 本包占位面零改动——`isOfficialCuaPluginEnabledForWorkspace` /
-> `createCuaProductMcpServerResolver` / `CuaProductHelperWorkspaceRegistry` /
-> `isScreenCaptureProbeSuccess` 仍 fail-closed（最小可用集延后裁决不变）。
+> 本包占位面零改动——`createCuaProductMcpServerResolver` / `CuaProductHelperWorkspaceRegistry` /
+> `isScreenCaptureProbeSuccess` 仍 fail-closed（最小可用集延后裁决不变；
+> `isOfficialCuaPluginEnabledForWorkspace` 已于 2026-10-31 随 cua-enablement-authority R1
+> 补实退出本列）。
 
 ## 状态所有权
 
@@ -148,15 +150,22 @@ unavailable 语义失败，绝不静默降级为“看起来可用”。
   `requestHelperAccessibilityPermissionViaLaunchServices` /
   `requestHelperScreenRecordingPermissionViaLaunchServices`（9 项，
   `product-and-support-2026-10.md:666`）。
-- **角色 B 拥有、但阶段 2 首版未列入上表①的三项 host 编排占位**（§7.8 表① 判其归角色 B，
+- **角色 B 拥有、但阶段 2 首版未列入上表①的 host 编排占位**（§7.8 表① 判其归角色 B，
   但仍保持占位、**不等角色 A**；是否随阶段 2 首版补实取决于「最小可用集」分类，属待裁决项）：
-  `isOfficialCuaPluginEnabledForWorkspace`（`broker-server.js:132`，恒 false——dev/internal
-  路径被 `isACodeCuaInternalFeatureEnabled` 默认 true 短路，`node.ts:1697`）、
-  `createCuaProductMcpServerResolver`（`broker-server.js:136`，passthrough——上游**开源侧同为
+  `createCuaProductMcpServerResolver`（`broker-server.js:248`，passthrough——上游**开源侧同为
   stub**（`zcode-cua/broker-server.js:137-139` 的 `resolveMcpServers` 直接 `return servers`），
   其真实形态在闭源 producer，无法据开源材料确认是否 passthrough，故本项延后证据较软，属待裁决）、
-  `CuaProductHelperWorkspaceRegistry`（`broker-server.js:95`，`setEnabled` no-op——全仓
+  `CuaProductHelperWorkspaceRegistry`（`broker-server.js:99`，`setEnabled` no-op——全仓
   **write-only、无读者**，`node.ts:1685` 构造 + `:2191`/`:2203`/`:2214` 三处 set，无 get）。
+  （**2026-10-31 退出本列一项**：`isOfficialCuaPluginEnabledForWorkspace`
+  （`broker-server.js:160`）已随 `packages/services/specs/cua-enablement-authority.md` R1
+  补实为真读盘——user 配置 + workspace 候选并入、合并优先级镜像 CLI `createConfig`/
+  `mergeConfigs` 实物（Project > User）、畸形输入全折叠 fail-closed；`node.ts` 的启用支
+  同步改为 `isACodeCuaDevActivationRequested || isOfficialCuaPluginEnabledForWorkspace`，
+  原「dev/internal 路径被 `isACodeCuaInternalFeatureEnabled` 默认 true 短路」的占位注记作废
+  （R3：internal 退出启用判定）。测试：`packages/services/tests/cuaEnablementAuthority.test.mjs`
+  + `apps/acode-cli/tests/cua-failclosed-gating.test.mjs`。本补实新增 `node:fs` import
+  （`node:os`/`node:path` 包内已在用），同为 node 内建，`requires: []` 与不变量 2 不变。）
 - **端口/探针门控（2026-10-13 主循环核实：`isScreenCaptureProbeSuccess` 属 macOS-only 可达，已从栏①移出）**：
   `shouldRunCuaScreenCaptureProbe`（`broker-ports.js:5`）恒 false，且其下游
   `isScreenCaptureProbeSuccess`（`broker-server.js:245`）的唯一消费者

@@ -46,7 +46,9 @@ const HIDDEN_SETTINGS_SECTIONS = new Set<SettingsSectionId>([
   // 工作区搜索（.acodeignore）设置入口先隐藏：规则文件仍生效并可手动编辑，
   // 编辑页代码保留，放开时从这里移除即可。
   "workspaceFileSearch",
-  "computerUse",
+  // 电脑控制设置分区自初始提交起隐藏；2026-10-31 用户裁决「做成前端可开关功能」放开
+  // （specs/cua-enablement-authority.md R6）：分区可见性回归平台可用性推导
+  // （computerUseAvailability），启用语义归设置页开关落盘记录（R1）。
 ]);
 
 interface SettingsSectionIntentEventDetail {

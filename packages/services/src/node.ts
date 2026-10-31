@@ -523,6 +523,7 @@ import {
   isACodeCuaMcpCommand,
   isACodeCuaMcpPackageArg,
   isACodeCuaInternalFeatureEnabled,
+  isACodeCuaDevActivationRequested,
   ACODE_CUA_PLUGIN_AUTHORITY_ENV_KEY,
   type ACodeAutomation,
   type ACodeAutomationRun,
@@ -1724,11 +1725,14 @@ export function createLocalServices(options: {
   // service 创建完成后再赋值。Helper recovery 始终不能回收 Agent。
   let hasActiveTurnRef: (() => boolean) | undefined;
   const isCuaEnabledForContext = (context?: CuaProductMcpServerResolverContext): boolean =>
-    // 保留 main 原有 gate 行为（避免回归）：dev/internal 特性开启时（ACODE_CUA_DEV_MODE=1 或
-    // ACODE_CUA_PRODUCT_HELPER=1）即视为启用，不依赖 config.json 显式 enable——main 的 bootstrap
-    // 用 isACodeCuaInternalFeatureEnabled 门控 bundled plugin，与 feat 的 workspace enablement 不同。
-    // 生产路径（dev mode off）回落到官方插件 workspace enablement 判定（与 feat 一致）。
-    isACodeCuaInternalFeatureEnabled(process.env) ||
+    // 启用单一权威（specs/cua-enablement-authority.md R1/R2/R3）：
+    // - R1 生产形态唯一事实源 = 设置页开关落盘的插件启用记录（isOfficialCuaPluginEnabledForWorkspace
+    //   真读盘，user 配置 + workspace 并入，优先级与 CLI createConfig 实物一致）；
+    // - R2 dev 覆盖旗标（ACODE_CUA_DEV_MODE / ACODE_CUA_PRODUCT_HELPER 显式真值）独立于开关，
+    //   只在未打包构建可达（打包态经 startupSanitation 删除，见 R2 硬化）；
+    // - R3 isACodeCuaInternalFeatureEnabled（缺省 ON）已退出启用判定，其「CUA 基础设施随正式版
+    //   打包」语义留在 shouldEnableDefaultCuaProductHelper 等既有消费点（:704，一字不动）。
+    isACodeCuaDevActivationRequested(process.env) ||
     isOfficialCuaPluginEnabledForWorkspace({
       env: process.env,
       workingDirectory: context?.workspacePath,

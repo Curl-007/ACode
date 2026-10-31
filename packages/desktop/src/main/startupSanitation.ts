@@ -23,7 +23,10 @@ import {
 /**
  * 打包态 + 无有效签名令牌时从 process.env 删除的键（闭集，spec §2）：
  * TLS 会话密钥外泄面、运行时「自称测试」键（E2E/test hook 门控升级）、
- * 身份/数据目录覆写键。键名可入诊断日志，值绝不入。
+ * 身份/数据目录覆写键，以及 CUA dev 覆盖旗标（specs/cua-enablement-authority.md R2：
+ * ACODE_CUA_DEV_MODE / ACODE_CUA_PRODUCT_HELPER 是 dev 链覆盖旋钮，绝不能在 signed
+ * release 上把「电脑操控」从设置页开关手里夺走；本模块是 main 第一行 import，删除
+ * 先于任何 CUA 消费点装配）。键名可入诊断日志，值绝不入。
  */
 export const PACKAGED_BOOT_ENV_DROP_KEYS: readonly string[] = [
   "SSLKEYLOGFILE",
@@ -39,6 +42,8 @@ export const PACKAGED_BOOT_ENV_DROP_KEYS: readonly string[] = [
   "ACODE_DESKTOP_APPLICATION_NAME",
   "ACODE_DESKTOP_USE_ELECTRON_DEFAULT_USER_DATA",
   "ACODE_DATA_BASE_DIR",
+  "ACODE_CUA_DEV_MODE",
+  "ACODE_CUA_PRODUCT_HELPER",
 ];
 
 export interface BootEnvironmentDecision {

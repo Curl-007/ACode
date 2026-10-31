@@ -72,3 +72,18 @@ ACODE_CUA_SMOKE_POINTER_LIVE=1 node --import tsx cua-producer/scripts/smoke-real
 无签名会被 Smart App Control 拒载）、manifest 生成（sha256 小写、electronVersion
 精确匹配、先签后算 hash）。前置：签名证书。见
 `docs/upgrades/product-and-support-2026-10.md:545-546`。
+
+### 阶段 5 前置清单（2026-10-31 登记，按推荐处置）
+
+1. ~~宿主生产门占位补实~~：**已随 PR #15 R1 完成**（`isOfficialCuaPluginEnabledForWorkspace`
+   补实为真读盘，`isCuaEnabledForContext` 启用支改读落盘记录；infra 旗标只留
+   `shouldEnableDefaultCuaProductHelper` 等打包语义消费点）。
+2. ~~packaged dev 旗标硬化~~：**已随 PR #15 R2 完成**（两键进
+   `PACKAGED_BOOT_ENV_DROP_KEYS`）。
+3. **设置页乐观投影静默路径**（`pluginManagementStoreEnabled.ts:79-108`）：P2 另立，
+   阶段 5 前排期修复（开关成为单一权威后，乐观态不合并服务端确认值的静默路径
+   会放大「显示态≠落盘态」误判）。
+4. **签名证书**：阶段 5 的硬前置；证书到位前生产包 CUA 保持 fail-closed（设计内）。
+5. **凭据卫生**：2026-10-31 发现一笔无法归因的本地提交+推送（`440e32b9`，内容已核对
+   无夹带）——建议轮换 GitHub 推送凭据并排查计划任务/自启动项，作为阶段 5 前的
+   安全卫生项。

@@ -14,6 +14,11 @@
    展开进平铺键（含 Match 设置的 proxy 类指令，会以上述键形式现形），因此
    `-G` 成功路径不做静态 Match 判断，也不叠加 fallback 检测结果。
 2. **静态回退路径**（无 ssh 可执行文件、`-G` 失败或超时）：
+   - **逐别名独立判定**：每个别名的 `ssh -G` 查询独立 spawn、独立 1.5s 超时，
+     同一列表内允许逐别名混合路径（慢机器上部分别名超时回退、其余走 `-G`
+     权威路径属设计内韧性行为，非错误）；两条路径对代理类别名的拒绝结论
+     一致（`proxy_*_unsupported`），差异只体现在 `detectedBy` 与
+     `match_unsupported` 的保守标记上；
    - 匹配别名的 Host 块中出现 `proxyjump` / `proxycommand` / `localcommand`
      指令 → 对应拒绝；
    - `Match` 行自成条件块（不再把条件 token 误当 Host pattern、也不再把其后
@@ -72,6 +77,9 @@
    ProxyCommand → `proxy_command_unsupported`（指令类优先）；`Match exec "…"`
    → `match_unsupported`；`Match host !<alias>` → 不适用、无拒绝；
    `Match host other` → 不适用；`Match all` + 良性指令 → 指令并入且无拒绝。
+   集成断言按别名分别判定（规则 2 的逐别名独立判定）：代理类别名在两条
+   路径下都必须以指令类 reason 拒绝；干净别名接受「无拒绝（`-G` 已求值）」
+   或「`match_unsupported`（保守回退）」两种合法结果。
 4. Match 块的条件 token 不再被当作 Host pattern 参与别名匹配（`Match host x`
    不使 x 成为别名，其后指令不并入前一 Host 块）。
 5. 拒绝 message 含指令标签与「直连目标主机」/「跳板拓扑」指引语义。

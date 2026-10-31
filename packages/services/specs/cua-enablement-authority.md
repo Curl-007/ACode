@@ -9,8 +9,13 @@
 
 生产形态下「电脑操控是否启用」的**唯一**事实源 = 插件启用记录
 `plugins.enabledPlugins["computer-use@acode-plugins-official"]`
-（user 配置 `~/.acode/cli/config.json` 优先、workspace `.acode/config.json` 并入，
-键形态与优先级与 `manifest-tier.ts:79-81 resolveEnabled` 逐字一致）。
+（user 配置 `~/.acode/cli/config.json` 与 workspace 候选 `acode.json` /
+`.acode/config.json`（根→cwd 发现序）并入；键形态与
+`manifest-tier.ts:79-81 resolveEnabled` 一致（`enabledPlugins[id] ?? defaultEnabled`），
+合并优先级与 CLI `createConfig`/`mergeConfigs` 实物一致：ConfigScopePriority
+Project(20) > User(10)，同一 id 冲突时 **workspace 覆盖 user**）。
+（2026-10-31 实物核定修正：原文「user 配置优先」与 mergeConfigs 的
+enabledPlugins 按 id 后写者胜语义不符，以实物为准。）
 
 - **host 侧**：`isOfficialCuaPluginEnabledForWorkspace`（`packages/acode-cua/broker-server.js`
   占位恒 false）补实为真读盘（上述两路径同键同优先级）；`isCuaEnabledForContext`
@@ -53,8 +58,18 @@ Helper 不创建、凭据不下发、中继门闭、composer 入口隐藏（既�
 2. 无 dev 旗标：开关 OFF → 新会话 fail-closed（bridge assertAvailable 抛 unavailable）。
 3. 仅 dev 旗标（开关 OFF/无记录）：dev 链可用（本分支既有 E2E 回归）。
 4. packaged 态导出 dev 旗标：sanitize 删除之，覆盖不生效（单测钉 drop 闭集）。
-5. workspace 与 user 配置并存时合并优先级与 `resolveEnabled` 一致（user 优先）。
+5. workspace 与 user 配置并存时合并优先级与 `createConfig`/`mergeConfigs` 实物一致
+   （Project(20) > User(10)：同一 id 冲突时 workspace 覆盖 user；仅单层有记录时该层生效；
+   workspace 多文件按根→cwd 发现序、每级 `acode.json` 先于 `.acode/config.json`，后写者胜）。
 6. 开关写失败：UI 回滚乐观态 + error 日志（既有语义回归钉住）。
+
+## R6 设置页分区放开（2026-10-31 用户裁决）
+
+`HIDDEN_SETTINGS_SECTIONS` 移除 `"computerUse"`（自初始提交起隐藏，无单独决策记录）：
+设置页 Computer Use 分区恢复可见，**分区可见性**归平台可用性推导
+（`computerUseAvailability.ts`：本地 Windows/macOS 完整卡、remote/web/linux 提示卡），
+**启用语义**归 R1 开关落盘记录。分区内含主开关（插件启用）与 composer 入口子开关
+（`computerUseComposerEntryHidden`，既有键语义不变）。
 
 ## 不在本项范围
 

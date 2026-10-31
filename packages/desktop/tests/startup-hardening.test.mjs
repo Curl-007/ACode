@@ -373,6 +373,36 @@ test("§2 sanitizePackagedBootEnvironment: drops closed-set keys only when packa
   assert.ok(PACKAGED_BOOT_ENV_DROP_KEYS.includes("ACODE_ENV"));
 });
 
+test("§2 sanitize: CUA dev 覆盖旗标在 drop 闭集内且仅 packaged 生效（cua-enablement-authority R2 / 验收 4）", async () => {
+  const mod = await loadMain("startupSanitation", {
+    electron: { app: { isPackaged: false } },
+    "./bootSwitchDenylist.js": await loadMain("bootSwitchDenylist"),
+    "./debugTokenGate.js": { getBootDebugTokenDecision: () => ({ tokenPresent: false, tokenValid: false }) },
+  });
+  const { sanitizePackagedBootEnvironment, PACKAGED_BOOT_ENV_DROP_KEYS } = mod;
+
+  // R2 钉①：两键必须入闭集——否则打包态导出 dev 旗标会绕过设置页开关（启用单一权威）。
+  assert.ok(PACKAGED_BOOT_ENV_DROP_KEYS.includes("ACODE_CUA_DEV_MODE"));
+  assert.ok(PACKAGED_BOOT_ENV_DROP_KEYS.includes("ACODE_CUA_PRODUCT_HELPER"));
+
+  // R2 钉②（验收 4）：packaged + 无令牌 → 两键被删，覆盖不生效。
+  const prodEnv = { ACODE_CUA_DEV_MODE: "1", ACODE_CUA_PRODUCT_HELPER: "1" };
+  const dropped = sanitizePackagedBootEnvironment({ env: prodEnv, isPackaged: true, tokenValid: false });
+  assert.equal(prodEnv.ACODE_CUA_DEV_MODE, undefined);
+  assert.equal(prodEnv.ACODE_CUA_PRODUCT_HELPER, undefined);
+  assert.ok(dropped.includes("ACODE_CUA_DEV_MODE"));
+  assert.ok(dropped.includes("ACODE_CUA_PRODUCT_HELPER"));
+
+  // R2 钉③：dev 构建不受影响（dev 一键链回归不变）。
+  const devEnv = { ACODE_CUA_DEV_MODE: "1", ACODE_CUA_PRODUCT_HELPER: "1" };
+  assert.deepEqual(
+    sanitizePackagedBootEnvironment({ env: devEnv, isPackaged: false, tokenValid: false }),
+    [],
+  );
+  assert.equal(devEnv.ACODE_CUA_DEV_MODE, "1");
+  assert.equal(devEnv.ACODE_CUA_PRODUCT_HELPER, "1");
+});
+
 test("§2 sanitize: dropped diagnostics record key names only, never values", async () => {
   const mod = await loadMain("startupSanitation", {
     electron: { app: { isPackaged: false } },

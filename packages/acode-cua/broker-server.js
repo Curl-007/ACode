@@ -1,3 +1,7 @@
+import { readFileSync, statSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+
 import { CuaHelperError } from "./broker.js";
 
 export const HELPER_ADDON_ENV = "ACODE_CUA_HELPER_ADDON";
@@ -129,8 +133,116 @@ function createUnavailableCuaHelperHost() {
   };
 }
 
-export function isOfficialCuaPluginEnabledForWorkspace(_options) {
-  return false;
+// ─── R1 启用单一权威：设置页开关落盘记录的真读盘 ───────────────────────────────
+// （spec: packages/services/specs/cua-enablement-authority.md R1；本包占位曾恒 false，
+// 使「设置页开关 ON」与「host 侧启用判定」分裂。）
+//
+// 「电脑操控是否启用」的唯一事实源 = 插件启用记录
+// plugins.enabledPlugins["computer-use@acode-plugins-official"]。本函数把它真读盘，
+// 路径解析与合并优先级逐字镜像 CLI 的 config 源（apps/acode-cli/packages/adapters/src/config/）：
+// - user 层：file-config.adapter.ts:57-79（DEFAULT_BASE_DIR "~/.acode/cli" + "config.json"）。
+//   HOME 优先解析与 node.ts:1074 hasGlobalCliACodeCuaServer 同款（os.homedir() 在 POSIX 本就以
+//   $HOME 为先、win32 以 USERPROFILE 为先；显式读注入 env 的 HOME 让该优先级对调用方/夹具可见，
+//   且与设置页写路径 resolveUserHomeDir 的 HOME||homedir() 顺序对齐）。
+// - workspace 层：候选发现镜像 shared/workspace-hook-config.ts 同步版的
+//   getProjectConfigDirectories + buildWorkspaceHookCandidatePaths（自 cwd 上溯至含 .git 的
+//   目录（含）后反转为 根→cwd；全程无 .git 时仅 [cwd]；每级目录 acode.json 先于
+//   .acode/config.json）。无 explicitProjectConfigPath 入参，自动发现不会产生重复路径，
+//   故不镜像 deduplicateWorkspaceHookConfigRefs。
+// - 合并优先级镜像 createConfig 层序（config-factory.ts:140-221）+ mergeConfigs 的
+//   enabledPlugins 按 id 展开（config-merger.ts:145-152）：ConfigScopePriority
+//   Project(20) > User(10)，故同一 id 冲突时 **workspace 覆盖 user**（spec 验收 5 已按此
+//   实物修正措辞）。env/CLI 覆盖层不携带 plugins.enabledPlugins（env-config.adapter.ts 无
+//   plugins 键；CLI 覆盖是一次性调用入参，host 无从读取），本镜像因此完备。
+// fail-closed：同步读，任何 IO/JSON/形状异常折叠为该层「未声明」，全部未声明即 false；
+// admission 频率低，不缓存。
+
+export function isOfficialCuaPluginEnabledForWorkspace(options) {
+  try {
+    const env = isRecord(options?.env) ? options.env : process.env;
+    const homeOverride = typeof env.HOME === "string" ? env.HOME.trim() : "";
+    const home = homeOverride || homedir();
+    let enabled = readCuaEnablementDeclaration(join(home, ".acode", "cli", "config.json"));
+    const workingDirectory =
+      typeof options?.workingDirectory === "string" ? options.workingDirectory.trim() : "";
+    if (workingDirectory) {
+      for (const candidatePath of discoverWorkspaceEnablementConfigPaths(workingDirectory)) {
+        const declared = readCuaEnablementDeclaration(candidatePath);
+        // 项目层各文件同优先级（Project=20），stable sort 保持发现序、后写者胜；
+        // 且项目层整体压过 user 层——逐文件按发现序覆盖即镜像该语义。
+        if (declared !== undefined) enabled = declared;
+      }
+    }
+    return enabled === true;
+  } catch {
+    return false;
+  }
+}
+
+// legacy id：schema.ts:179 LEGACY_CUA_PLUGIN_ID 的等值字面量（不变量 2 禁跨包 import；
+// 防漂移由 services 侧启用权威测试锁定）。装载态迁移语义（schema.ts:454-458 与
+// file-config.adapter.ts:118-161 两处同构）：canonical 缺席时 legacy 值补位，canonical 在席恒胜。
+const CUA_ENABLEMENT_LEGACY_PLUGIN_ID = "acode-cua@acode-plugins-official";
+
+function isRecord(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+// 逐文件读取该 id 的启用声明：undefined = 未声明/声明无效（fail-closed 视同未声明）；
+// true/false = 显式声明（canonical 优先于 legacy）。
+function readCuaEnablementDeclaration(configPath) {
+  let parsed;
+  try {
+    parsed = JSON.parse(readFileSync(configPath, "utf-8"));
+  } catch {
+    // 文件缺席/不可读/非法 JSON → 该层不贡献（镜像 loadFileConfig 的 catch 折叠为未加载）。
+    return undefined;
+  }
+  if (!isRecord(parsed) || !isRecord(parsed.plugins)) return undefined;
+  const enabledPlugins = parsed.plugins.enabledPlugins;
+  if (!isRecord(enabledPlugins)) return undefined;
+  // 镜像 schema.ts:171 的 z.record(z.string(), z.boolean())：任一值非 boolean 即整文件
+  // schema 失败、loadFileConfig 折叠为未加载——该文件不得贡献任何声明（类型不符一律不判启用）。
+  for (const value of Object.values(enabledPlugins)) {
+    if (typeof value !== "boolean") return undefined;
+  }
+  const canonical = enabledPlugins[CUA_OFFICIAL_PLUGIN_ID];
+  return canonical !== undefined ? canonical : enabledPlugins[CUA_ENABLEMENT_LEGACY_PLUGIN_ID];
+}
+
+// workspace 候选路径，返回顺序即合并顺序（根→cwd，每级 acode.json 先于 .acode/config.json）。
+function discoverWorkspaceEnablementConfigPaths(workingDirectory) {
+  const start = resolve(workingDirectory);
+  const directories = [];
+  let current = start;
+  while (true) {
+    directories.push(current);
+    if (hasGitWorktreeMarker(current)) {
+      directories.reverse();
+      return directories.flatMap(workspaceEnablementCandidates);
+    }
+    const parent = dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  // 上溯到文件系统根仍无 .git：镜像实物只保留 cwd 一级（workspace-hook-config.ts:345
+  // return [start]，防止无仓库目录意外继承祖先配置）。
+  return workspaceEnablementCandidates(start);
+}
+
+function workspaceEnablementCandidates(directory) {
+  return [join(directory, "acode.json"), join(directory, ".acode", "config.json")];
+}
+
+function hasGitWorktreeMarker(directory) {
+  // 镜像 workspace-hook-config.ts:348-357 hasWorktreeMarker 同步版：.git 是目录（普通仓库）
+  // 或文件（worktree/submodule 指针）都算；任何异常一律 false。
+  try {
+    const stats = statSync(join(directory, ".git"));
+    return stats.isDirectory() || stats.isFile();
+  } catch {
+    return false;
+  }
 }
 
 export function createCuaProductMcpServerResolver(_host, _options) {

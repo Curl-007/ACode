@@ -8,7 +8,9 @@
  *
  * isPotentialACodeCuaAgentMcpServer 已随角色 B 增量 4 补实（测试见同目录
  * cua-agent-mcp-predicate.test.mjs 与 packages/services/test/cuaAgentMcpPredicateParity.test.ts），
- * 不再属本文件注释的 fail-closed 面。isOfficialCuaPluginEnabledForWorkspace /
+ * 不再属本文件注释的 fail-closed 面。isOfficialCuaPluginEnabledForWorkspace 已随
+ * cua-enablement-authority.md R1 补实为真读盘（测试见同目录 cua-failclosed-gating.test.mjs
+ * 与 packages/services/tests/cuaEnablementAuthority.test.mjs）；
  * createCuaProductMcpServerResolver / CuaProductHelperWorkspaceRegistry 仍 fail-closed
  * （最小可用集延后，见 module-boundary.md），本文件不测其补实。
  *

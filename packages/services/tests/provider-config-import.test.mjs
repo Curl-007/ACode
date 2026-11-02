@@ -677,3 +677,23 @@ test("RPC 参数校验：importProviderCandidates 接受字符串数组 candidat
   validateScan([{ sources: ["claude-code"] }]);
   assert.throws(() => validateScan([{ sources: "claude-code" }]), /invalid sources/);
 });
+
+// bundle 存活回归（GUI 真实点击抓到的缺陷 2）：tsup 打 server bundle 时把字面量动态
+// import("node:sqlite") 改写成 import("sqlite")；sqlite 是 node:-only 内建（无裸名别名），
+// server 运行时 ERR_MODULE_NOT_FOUND → cc-switch 来源在真实环境恒报 source-read-failed
+// （源码形态与纯 esbuild 均不复现，单测全绿也拦不住）。locate.ts 以非字面量 specifier
+// 绕过静态改写；本测试钉住该形态，防止「顺手改回字面量」的回归。
+test("locate.ts 的 node:sqlite 动态 import 必须保持非字面量 specifier（tsup 改写回归）", () => {
+  const source = readFileSync(
+    new URL("../src/model-provider/provider-import/locate.ts", import.meta.url),
+    "utf8",
+  );
+  // 值位置的字面量动态 import 会被 tsup 剥 node: 前缀 → 禁止。
+  assert.ok(
+    !source.includes('await import("node:sqlite")'),
+    "字面量 await import(\"node:sqlite\") 会被 tsup 改写为 import(\"sqlite\")，server 运行时必失败",
+  );
+  // 修复形态：specifier 常量 + 类型位置的字面量 import（类型会被擦除，不参与改写）。
+  assert.ok(source.includes('const sqliteSpecifier = "node:sqlite"'));
+  assert.ok(source.includes("await import(sqliteSpecifier)"));
+});

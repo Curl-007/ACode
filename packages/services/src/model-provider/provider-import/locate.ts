@@ -98,7 +98,13 @@ export async function readCcSwitchRows(
   try {
     await copyFile(dbPath, copyPath);
     if (await statIfExists(walPath)) await copyFile(walPath, `${copyPath}-wal`);
-    const { DatabaseSync } = await import("node:sqlite");
+    // sqlite 是 node:-only 内建模块（无 fs/path 那样的裸名别名）。tsup 打 server bundle 时
+    // 会把字面量动态 import("node:sqlite") 改写成 import("sqlite")（dist 实测），运行时
+    // ERR_MODULE_NOT_FOUND → 整个 cc-switch 来源误报 source-read-failed（GUI 真实点击抓到；
+    // 源码形态与纯 esbuild 均不复现）。非字面量 specifier 不被静态改写，运行时保持 node:；
+    // 类型仍从字面量 type-import 取（类型位置会被擦除，不参与改写）。
+    const sqliteSpecifier = "node:sqlite";
+    const { DatabaseSync } = (await import(sqliteSpecifier)) as typeof import("node:sqlite");
     const db = new DatabaseSync(copyPath, { readOnly: true });
     try {
       if (!hasTable(db, table)) return { rows: [], tooLarge: false };

@@ -174,6 +174,14 @@ export function formatAgentName(agent: string, intl: IntlInstance): string {
       return intl.formatMessage({ id: "settingsSync.agent.roo" });
     case "codeBuddy":
       return intl.formatMessage({ id: "settingsSync.agent.codeBuddy" });
+    case "cursor":
+      return intl.formatMessage({ id: "settingsSync.agent.cursor" });
+    case "gemini":
+      return intl.formatMessage({ id: "settingsSync.agent.gemini" });
+    case "vscode":
+      return intl.formatMessage({ id: "settingsSync.agent.vscode" });
+    case "ccSwitch":
+      return intl.formatMessage({ id: "settingsSync.agent.ccSwitch" });
     case "agents":
       return intl.formatMessage({ id: "settingsSync.agent.agents" });
     case "acode":

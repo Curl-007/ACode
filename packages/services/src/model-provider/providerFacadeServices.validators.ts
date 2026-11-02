@@ -166,6 +166,23 @@ export const providerSettingsArgumentValidators: Partial<
     }
   },
   discoverProviderModels: (args) => requireObjectArg(args, ["workspacePath", "providerId"]),
+  // 导入面（docs/specs/provider-config-import.md R5）：descriptor 边界只做顶层形态检查
+  //（数组/对象类型），语义校验（非空、枚举合法、UUID、上限）由服务内二次校验返回
+  // invalid-args，避免顶层抛错把可映射的结构化失败态变成 rpc-invalid-arguments。
+  scanProviderImports: (args) => {
+    if (args.length > 1) throw new Error("expected at most one argument");
+    optionalObjectArg(args, 0);
+    const value = args[0];
+    if (value === undefined || value === null) return;
+    const sources = (value as Record<string, unknown>).sources;
+    if (sources !== undefined && sources !== null) {
+      requireStringArrayAt(sources, "invalid sources");
+    }
+  },
+  importProviderCandidates: (args) => {
+    requireObjectArg(args, ["candidateIds"]);
+    requireStringArrayAt((args[0] as Record<string, unknown>).candidateIds, "invalid candidateIds");
+  },
 };
 
 export const modelSelectionArgumentValidators: Partial<

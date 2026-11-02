@@ -20,6 +20,8 @@ import type { TeamPanelLanding } from "@/lib/workspaceSidePane.js";
 import { TeamInlineTaskList } from "@/components/TeamInlineTaskList.js";
 import { TeamApprovalActions } from "@/components/TeamApprovalActions.js";
 import { TeamLingeringMembers } from "@/components/TeamLingeringMembers.js";
+import { TeamReviewEntry } from "@/components/TeamReviewEntry.js";
+import { TeamAcceptanceMetricsRow } from "@/components/TeamAcceptanceMetricsRow.js";
 
 export function TeamWorkflowCard({
   team,
@@ -273,7 +275,9 @@ export function TeamWorkflowCard({
             )}
           </span>
         ) : null}
+        <TeamReviewEntry team={team} {...(onOpen ? { onOpen } : {})} />
       </div>
+      <TeamAcceptanceMetricsRow team={team} />
     </section>
   );
 }

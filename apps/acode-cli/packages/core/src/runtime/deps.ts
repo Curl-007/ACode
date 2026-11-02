@@ -138,6 +138,7 @@ export type {
   ModelNetworkStatusEvent,
   ModelAnomalyGuardConfig,
   AutoResumeConfig,
+  AgentTeamsHostWakeConfig,
   Model,
   ModelEvent,
   ModelInvocationContext,

@@ -11,7 +11,11 @@ import { memberTools } from "./tools/members.js";
 import { taskTools } from "./tools/tasks.js";
 import { messageTools } from "./tools/messages.js";
 import { waitForWorkTool } from "./tools/member-wait.js";
+import { waitForMembersTool } from "./tools/member-wait-captain.js";
 import { worktreeTools } from "./tools/worktree.js";
+import { reviewDiffTools } from "./tools/review-diff.js";
+import { runChecksTools } from "./tools/run-checks.js";
+import { acceptTaskTools } from "./tools/accept-task.js";
 import { normalizeMaxActiveTeams, normalizeMaxReassignRounds, TeamError } from "./state/types.js";
 import type { Tool } from "@modelcontextprotocol/server";
 
@@ -29,7 +33,11 @@ const ALL_TOOLS = [
   ...taskTools,
   ...messageTools,
   ...worktreeTools,
+  ...reviewDiffTools,
+  ...runChecksTools,
+  ...acceptTaskTools,
   waitForWorkTool,
+  waitForMembersTool,
 ];
 
 const envStateDir = process.env.AGENT_TEAMS_STATE_DIR?.trim() || "";
@@ -70,7 +78,7 @@ if (panel) {
 }
 
 const server = new Server(
-  { name: "acode-agent-teams", version: "0.4.0" },
+  { name: "acode-agent-teams", version: "0.6.0" },
   // logging capability 是插件状态通道的前提：server.notification() 发
   // notifications/message 前会断言该能力（缺省即抛 MethodNotSupportedByProtocolVersion）。
   { capabilities: { tools: {}, logging: {} } },
@@ -234,6 +242,7 @@ async function emitPanelStateNotification(archivedTeamId?: string): Promise<void
           ...buildTeamPanelState({
             team: primary,
             tasks: archived?.tasks ?? store.readTasks(primary.teamId),
+            captainUnreadMessages: archived ? [] : store.listUnreadMessages(primary.teamId, "captain"),
             ...(panel
               ? { panelUrl: archived ? `${panel.url}history/${primary.teamId}` : panel.url }
               : {}),
@@ -294,6 +303,7 @@ function buildTeamPanelSnapshot(team: import("./state/types.js").TeamState) {
     team,
     tasks: store.readTasks(team.teamId),
     mailboxes: store.listAllMailboxes(team.teamId),
+    captainUnreadMessages: store.listUnreadMessages(team.teamId, "captain"),
   });
 }
 

@@ -1,7 +1,19 @@
 /** 团队状态的数据模型。全部由 server 进程互斥段内读-改-写，磁盘是唯一真相。 */
 
 export type TeamStatus = "draft" | "active" | "paused" | "archived";
-export type TaskStatus = "todo" | "in_progress" | "done" | "failed" | "blocked" | "cancelled";
+/**
+ * 任务状态。`in_review` = 成员已汇报、**待队长验收**（非终态：不放行下游依赖，
+ * 也不让成员被视为忙碌）。验收通过的唯一入口是合并耦合（隔离团队）或队长显式验收
+ * （OQ-1，非隔离团队）。
+ */
+export type TaskStatus =
+  | "todo"
+  | "in_progress"
+  | "in_review"
+  | "done"
+  | "failed"
+  | "blocked"
+  | "cancelled";
 export type TaskKind = "build" | "review" | "test" | "design" | "chore";
 export type MemberStatus = "registered" | "bound" | "removed";
 
@@ -42,6 +54,17 @@ export interface TeamMember {
   readonly name: string;
   readonly role: string;
   readonly charter: string;
+  /**
+   * 角色能力包引用（批次 5，additive）：成员 spawn 时使用的宿主 AgentProfile 名
+   * （即原生 `Agent` 工具的 `subagent_type` 取值，插件命名空间形如 `agent-teams:member`）。
+   *
+   * **不透明标识**：插件只存不解释、不校验 profile 是否存在（零 core 依赖，看不到宿主
+   * profile 注册表）；解析责任在宿主派发边界（`core/src/subagent/runner.ts` 的
+   * `resolveAgentProfileByType`，未命中抛 UNKNOWN_AGENT_TYPE 并列出可用类型）。缺席 =
+   * 未指定，spawn 回退插件默认成员 profile `agent-teams:member`（`agents/member.md`）。
+   * 定义与边界见 `apps/acode-cli/specs/agent-teams-role-packs.md` R1/R2/R4。
+   */
+  readonly roleRef?: string;
   /** Agent 工具 spawn 返回的 agentId（bind 之后存在）。 */
   agentId?: string;
   /** bind 时锁定的成员身份线索（子会话续跑会换 session id，仅作审计）。 */
@@ -76,6 +99,37 @@ export interface TaskRevision {
   readonly fields: string[];
 }
 
+/**
+ * run_checks 最近一次检查结果（R1.2，additive）。
+ *
+ * 形状对齐 `packages/shared/specs/team-acceptance-review-contract.md` 的 `reviews[].check`
+ * （command / exitCode / passed / summary / truncated / ranAt），另带 attemptId 以便批次 1
+ * 把结果锚回「审的是哪次交付」。批次 4 的坊主没有独立存储面，这里是其生产者基础。
+ */
+export interface TaskCheckResult {
+  readonly attemptId: string;
+  readonly command: string;
+  readonly exitCode: number;
+  readonly passed: boolean;
+  readonly truncated?: boolean;
+  readonly summary?: string;
+  readonly ranAt: string;
+}
+
+/**
+ * review_member_diff 最近一次钉住的提交对（additive）。
+ *
+ * 面板 `reviews[]` 的 `baseCommit`/`headCommit` 坐标靠它落盘——panel-state 是纯投影
+ * （无 git IO），无法在快照生成时现算成员分支 HEAD，只能复用 review 时已解析的绝对 SHA。
+ * 缺席 = 尚未 review 过（坐标回退到 `member.worktree.baseCommit`，headCommit 缺席）。
+ */
+export interface TaskReviewCoordinates {
+  readonly baseCommit: string;
+  readonly headCommit: string;
+  readonly branchHeadCommit?: string;
+  readonly reviewedAt: string;
+}
+
 export interface TeamTask {
   readonly taskId: string;
   title: string;
@@ -94,6 +148,10 @@ export interface TeamTask {
   summary?: string;
   outputs?: string[];
   verify?: string;
+  /** run_checks 最近一次检查结果（additive；缺席 = 未执行过检查）。 */
+  lastCheck?: TaskCheckResult;
+  /** review_member_diff 最近一次钉住的提交对（additive；面板 reviews[] 的坐标来源）。 */
+  lastReview?: TaskReviewCoordinates;
   blockedReason?: string;
   failReason?: string;
   readonly createdAt: string;
@@ -124,6 +182,39 @@ export interface TeamState {
   /** 单调递增序号：所有写操作递增；面板与冷恢复用它检测进度差量。 */
   seq: number;
   members: TeamMember[];
+  /**
+   * run_checks 调用计数（R1.5，additive）。本地磁盘事实，**不上报**（no-telemetry）；
+   * 为后续「run_checks 迁宿主 core handler」的取舍留数据。历史团队无该字段即视为 0。
+   */
+  checkRuns?: TeamCheckRuns;
+  /**
+   * 唤醒世代号（host-team-wake.md R3，additive）。**仅成员来源的唤醒级写入**递增：
+   * 成员邮箱投递（from 非 captain）与成员 update_task 落终态/汇报（done|failed|blocked）；
+   * 队长自身的读/写（读信、鉴权刷新 lastCaptainSeenAt）不递增。历史团队无该字段即视为 0。
+   * 宿主据它防旧世代覆盖（EI-59），面板 `wakePending.generation` 直接投影本值。
+   */
+  wakeSeq?: number;
+  /**
+   * 队长正阻塞在 agent_teams_wait_for_members 里等成员的截止时刻（ISO，additive）。
+   * 镜像成员侧 `waitingUntil`；供宿主判断「队长正在有意的阻塞等待」。缺席 = 未在等待。
+   */
+  captainWaitingUntil?: string;
+}
+
+/**
+ * 邮箱消息的语义类别（host-team-wake.md R2，additive，缺省 `note`）。
+ * 成员阻塞提问用 `question`、上报需用户决策/权限的风险用 `escalation`、常规完成汇报用
+ * `report`。形状与宿主 core `TeamWakeMessageKind` 严格对齐（宿主据此收窄，见
+ * `apps/acode-cli/specs/host-team-wake.md` R1 与 `core/src/runtime/team-wake/types.ts`）。
+ */
+export type TeamMessageKind = "report" | "question" | "escalation" | "note";
+
+/** run_checks 调用计数（R1.5，additive）。 */
+export interface TeamCheckRuns {
+  total: number;
+  byMember: Record<string, number>;
+  lastAt?: string;
+  lastExitCode?: number;
 }
 
 export interface TeamMessage {
@@ -133,6 +224,8 @@ export interface TeamMessage {
   summary?: string;
   readonly message: string;
   readonly deliveredAt: string;
+  /** 语义类别（R2，additive）；缺席按 `note` 解释。 */
+  readonly kind?: TeamMessageKind;
   readAt?: string;
 }
 
@@ -144,6 +237,18 @@ export interface MailboxAddress {
 export const CAPTAIN_ADDRESS = "captain";
 
 export const MEMBER_NAME_PATTERN = /^[a-z][a-z0-9-]{1,30}$/;
+
+/**
+ * 角色引用（`roleRef`）的形状约束（批次 5）。
+ *
+ * 取值是宿主 AgentProfile 名 / `subagent_type`，宿主解析用的是 NFKC + 小写 + 去
+ * 空白/破折号/下划线的**宽松归一**，所以这里放行常见分隔符（`.` `_` `:` `-`）与大小写；
+ * 但**拒绝空白/换行/控制字符**——它既要作为 JSON 字段透传，也是宿主类型名，非法字符
+ * 应在插件层「明确拒绝」（EI-11：明确未执行可安全重试），而不是拖到宿主 spawn 才炸。
+ * 1–64 字符上界（EI-6 一切资源有界）。存在性校验不在插件层（零 core 依赖，做不到，
+ * 见 specs/agent-teams-role-packs.md R1/R4）。
+ */
+export const ROLE_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/;
 
 export const TASK_ID_PATTERN = /^t-\d+$/;
 

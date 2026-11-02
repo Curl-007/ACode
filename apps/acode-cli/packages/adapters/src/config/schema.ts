@@ -242,6 +242,22 @@ const autoResumeSchema = z.object({
   continueMessage: z.string().min(1).optional(),
 });
 
+// 宿主团队唤醒（apps/acode-cli/specs/host-team-wake.md R7，autoResume 同构）：参数与逃生阀
+// 走 config；运行态计数/世代/ack 只住 core team-wake owner。waitDefaultMs/waitMaxMs 由插件
+// 侧 wait_for_members 工具消费（批次 3 第二部分），此面仅声明。
+const agentTeamsHostWakeSchema = z.object({
+  enabled: z.boolean().optional(),
+  maxWakePrompts: positiveIntegerSchema.optional(),
+  maxDeliveryAttempts: positiveIntegerSchema.optional(),
+  intentTtlMs: positiveNumberSchema.optional(),
+  waitDefaultMs: positiveNumberSchema.optional(),
+  waitMaxMs: positiveNumberSchema.optional(),
+});
+
+const agentTeamsSchema = z.object({
+  hostWake: agentTeamsHostWakeSchema.optional(),
+});
+
 // Hooks schema：
 // 理想态是 re-export shared/workspace-hook-config，但两个 pnpm workspace 解析出物理
 // 不同的 zod 实例（adapters 4.4.3 / shared 4.3.6）：shared schema 嵌入本包组合 schema
@@ -320,6 +336,7 @@ export const ACodeConfigFileSchema = z
     toolConcurrency: toolConcurrencySchema.optional(),
     modelAnomalyGuard: modelAnomalyGuardSchema.optional(),
     autoResume: autoResumeSchema.optional(),
+    agentTeams: agentTeamsSchema.optional(),
     hooks: hooksSchema.optional(),
   })
   .passthrough();
@@ -441,6 +458,7 @@ function parsedConfigFileToRuntimePatch(parsed: ACodeConfigFile): RuntimeConfigP
   if (parsed.toolConcurrency) config.toolConcurrency = parsed.toolConcurrency;
   if (parsed.modelAnomalyGuard) config.modelAnomalyGuard = parsed.modelAnomalyGuard;
   if (parsed.autoResume) config.autoResume = parsed.autoResume;
+  if (parsed.agentTeams) config.agentTeams = parsed.agentTeams;
   if (parsed.hooks) config.hooks = parsed.hooks;
 
   return config;

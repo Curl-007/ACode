@@ -116,10 +116,10 @@ test("bots: saveConfig/deleteBot 非法参数在方法体前拒绝，合法调�
 });
 
 // ---------------------------------------------------------------------------
-// git —— commit / push / stagePaths
+// git —— commit / push / stagePaths / getRefRangeDiff
 // ---------------------------------------------------------------------------
 
-test("git: commit/push/stagePaths 非法参数在方法体前拒绝，合法调用放行", async () => {
+test("git: commit/push/stagePaths/getRefRangeDiff 非法参数在方法体前拒绝，合法调用放行", async () => {
   const calls: string[] = [];
   const stub = {
     commit: async () => {
@@ -132,6 +132,10 @@ test("git: commit/push/stagePaths 非法参数在方法体前拒绝，合法调�
     },
     stagePaths: async () => {
       calls.push("stagePaths");
+    },
+    getRefRangeDiff: async () => {
+      calls.push("getRefRangeDiff");
+      return {};
     },
   };
   await withWire(IGitService, stub, async (channel) => {
@@ -153,11 +157,30 @@ test("git: commit/push/stagePaths 非法参数在方法体前拒绝，合法调�
         return true;
       },
     );
+    // getRefRangeDiff 缺 baseRef（契约 B：显式 rev 必填，缺一即拒且方法体不执行）
+    await assert.rejects(
+      channel.call("getRefRangeDiff", [{ workspacePath: "/repo", headRef: "LEAKME-head" }]),
+      (error) => {
+        assertRpcArgumentError(error, "getRefRangeDiff", ["LEAKME-head"]);
+        return true;
+      },
+    );
+    // getRefRangeDiff 缺 headRef
+    await assert.rejects(
+      channel.call("getRefRangeDiff", [{ workspacePath: "/repo", baseRef: "LEAKME-base" }]),
+      (error) => {
+        assertRpcArgumentError(error, "getRefRangeDiff", ["LEAKME-base"]);
+        return true;
+      },
+    );
     assert.deepEqual(calls, [], "方法体不得执行");
     await channel.call("commit", [{ workspacePath: "/repo", message: "fix: thing" }]);
     await channel.call("push", [{ workspacePath: "/repo" }]);
     await channel.call("stagePaths", [{ workspacePath: "/repo", paths: ["a.ts", "b.ts"] }]);
-    assert.deepEqual(calls, ["commit", "push", "stagePaths"]);
+    await channel.call("getRefRangeDiff", [
+      { workspacePath: "/repo", baseRef: "a".repeat(40), headRef: "b".repeat(40) },
+    ]);
+    assert.deepEqual(calls, ["commit", "push", "stagePaths", "getRefRangeDiff"]);
   });
 });
 

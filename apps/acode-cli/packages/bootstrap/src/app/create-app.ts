@@ -127,6 +127,19 @@ import {
 } from "../builtin-prompt-command.js";
 import { collectDisabledPaths } from "../skill-command-overrides.js";
 import { loadPluginAgentProfiles, loadACodeAgentProfiles } from "../subagents.js";
+// 协调者只读预设宿主侧派生（specs/coordinator-readonly-preset.md R2/R4/R5/Q3）：
+// 插件状态通知 + 会话恢复重放 → 会话级队长基准（写进 core 的 coordinator-scope store）。
+import {
+  applyCoordinatorBasisFromNotification,
+  rebuildCoordinatorBasisFromEvents,
+  resolveCaptainReadOnlyEnabled,
+} from "../coordinator-readonly-derivation.js";
+// 宿主团队唤醒宿主侧派生（apps/acode-cli/specs/host-team-wake.md R4/R9）：插件状态通知 /
+// 重放 → 规范化 wakePending intent → 队长会话 runtime（通道 = 既有 acode-plugin-state）。
+import {
+  applyTeamWakeFromNotification,
+  redispatchTeamWakeFromEvents,
+} from "../team-wake-derivation.js";
 import { loadCurrentACodeAgentProfiles } from "../subagent-live-state.js";
 import { createRuntimeAiSdkModelExecutionConfig } from "../model-config.js";
 import { createCliPlatformOpenPort } from "./platform-open-port.js";
@@ -417,6 +430,10 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
       ],
     }).profiles;
     const pluginRuntimeFeatures = resolvePluginRuntimeFeatures(pluginOutcome);
+    // 协调者只读预设逃生阀（specs/coordinator-readonly-preset.md R5）：插件 userConfig
+    // captainReadOnly 决定是否施加预设（默认 true）。启动一次解析——配置不随会话变更。
+    // 判定不可得绝不自动回退到逃生阀（R5.1）：本标志只关「是否施加」，不关「谁算队长」。
+    const coordinatorReadOnlyEnabled = resolveCaptainReadOnlyEnabled(pluginOutcome.plugins);
     const builtInMcpServers = resolveBuiltInNodeReplMcpServers({
       pluginOutcome,
       workingDirectory,
@@ -679,6 +696,29 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
       startupTimer,
       storageRoot,
     });
+    // 协调者只读预设：插件状态通知到达即派生本会话队长基准（R2.2/R2.3/R2.4）。
+    // 只派生、不改动既有 PluginStateUpdated 事件桥接（两处入口共用本回调）。
+    const applyCoordinatorReadOnlyDerivation = (
+      notification: McpPluginStateNotification,
+    ): void => {
+      applyCoordinatorBasisFromNotification({
+        notification,
+        sessionId,
+        enabled: coordinatorReadOnlyEnabled,
+      });
+    };
+    // 宿主团队唤醒逃生阀（specs/host-team-wake.md R7，EI-149）：只由用户显式 config 关闭。
+    const teamWakeEnabled = runtimeConfig.agentTeams?.hostWake?.enabled !== false;
+    // 队长路由：本 App 只持有自身会话 runtime，仅当通知的 captainSessionId 命中本会话时注入
+    // （非队长会话天然跳过，不另起 Agent/Host/会话）。
+    const applyTeamWakeDerivation = (notification: McpPluginStateNotification): void => {
+      applyTeamWakeFromNotification({
+        notification,
+        sessionId,
+        enabled: teamWakeEnabled,
+        lookupRuntime: (captainSessionId) => (captainSessionId === sessionId ? runtime : undefined),
+      });
+    };
     const mcpPort =
       options.mcpPort ??
       (runtimeConfig.mcp?.enabled === false
@@ -720,9 +760,14 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
             // 落成 PluginStateUpdated 会话事件，投影归约进 pluginStates 状态键。
             // runtime 晚于 adapter 构造（下方才 new AgentRuntime），闭包引用它的变量。
             onPluginStateNotification: options.onPluginStateNotification
-              ? (notification: McpPluginStateNotification) =>
-                  options.onPluginStateNotification?.(notification)
+              ? (notification: McpPluginStateNotification) => {
+                  options.onPluginStateNotification?.(notification);
+                  applyCoordinatorReadOnlyDerivation(notification);
+                  applyTeamWakeDerivation(notification);
+                }
               : (notification: McpPluginStateNotification) => {
+                  applyCoordinatorReadOnlyDerivation(notification);
+                  applyTeamWakeDerivation(notification);
                   void runtime
                     ?.appendEvent(
                       createSessionEvent(
@@ -748,6 +793,8 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
     // 桌面宿主以进程池 lease 注入 MCP port；该路径不创建上面的 adapter，须在
     // 会话 lease 上订阅同一通知通道。设置页 lease 无会话，池本身拒绝订阅。
     const unsubscribePluginState = mcpPort?.subscribePluginStateNotifications?.((notification) => {
+      applyCoordinatorReadOnlyDerivation(notification);
+      applyTeamWakeDerivation(notification);
       if (options.onPluginStateNotification) {
         options.onPluginStateNotification(notification);
         return;
@@ -879,6 +926,30 @@ export async function createACodeApp(options: ACodeAppOptions): Promise<ACodeApp
           traceContext: resumeTraceContext,
         });
         await runtime.activatePausedTargetAfterResume(resumeTraceContext);
+        // 协调者只读预设（R2.5/Q3）：会话恢复按重放的 PluginStateUpdated 重建队长基准——
+        // 队长在恢复后首次工具调用前即被判定为只读。不新增持久面；重放流为空（冷进程
+        // 重启且内存事件已亡）时基准维持，粘性局限已登记 Q3。
+        try {
+          const restoredEvents = await runtime.getSessionEventStore().getEvents(sessionId);
+          rebuildCoordinatorBasisFromEvents({
+            events: restoredEvents,
+            sessionId,
+            enabled: coordinatorReadOnlyEnabled,
+          });
+          // 宿主团队唤醒（specs/host-team-wake.md R9）：按重放的 PluginStateUpdated 重新派生
+          // 待唤醒；世代号 + 宿主内存 ack 约束下至多再注入一次，邮箱已读的快照无注入。
+          redispatchTeamWakeFromEvents({
+            events: restoredEvents,
+            sessionId,
+            enabled: teamWakeEnabled,
+            lookupRuntime: (captainSessionId) =>
+              captainSessionId === sessionId ? runtime : undefined,
+          });
+        } catch (error: unknown) {
+          logger?.warn("coordinator.readonly.rebuild_failed", {
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
         resumePrepared = true;
         return { ...result, modelSelection };
       } finally {

@@ -4,6 +4,7 @@
 
 import type { ContextSection, EnvInfo } from "../types.js";
 import type { Model } from "@acode/contracts";
+import { COORDINATOR_ENV_INFO_INSTRUCTION } from "../../permission/coordinator-readonly.js";
 import { estimateTokens } from "../utils.js";
 
 const ENVIRONMENT_HEADING = "# Environment";
@@ -65,8 +66,9 @@ export function buildEnvInfoSection(
   envInfo: EnvInfo,
   model?: Model,
   scratchDir?: string,
+  coordinatorReadOnly?: boolean,
 ): ContextSection {
-  const content = buildEnvInfoContent(envInfo, model, scratchDir);
+  const content = buildEnvInfoContent(envInfo, model, scratchDir, coordinatorReadOnly);
 
   return {
     name: "Environment Info",
@@ -99,7 +101,12 @@ export function buildGitSystemContextSection(envInfo: EnvInfo): ContextSection |
   };
 }
 
-function buildEnvInfoContent(info: EnvInfo, model?: Model, scratchDir?: string): string {
+function buildEnvInfoContent(
+  info: EnvInfo,
+  model?: Model,
+  scratchDir?: string,
+  coordinatorReadOnly?: boolean,
+): string {
   const hasGitRepository = isEnvInfoGitRepository(info);
   const lines: string[] = [
     ENVIRONMENT_HEADING,
@@ -140,6 +147,12 @@ function buildEnvInfoContent(info: EnvInfo, model?: Model, scratchDir?: string):
       `${SCRATCH_DIRECTORY_LABEL}: ${scratchDirectory}`,
       SCRATCH_DIRECTORY_INSTRUCTION,
     );
+  }
+
+  // R6.1（specs/coordinator-readonly-preset.md）：协调者只读事实条件出现——仅预设生效
+  // 时渲染一行中性说明（EI-17：陈述保留了什么与该怎么做）；缺席零渲染，段内容逐字节不变。
+  if (coordinatorReadOnly === true) {
+    lines.push("", COORDINATOR_ENV_INFO_INSTRUCTION);
   }
 
   return lines.join("\n");

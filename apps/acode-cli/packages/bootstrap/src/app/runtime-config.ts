@@ -30,6 +30,7 @@ import {
   type UntrustedProjectMcpServer,
 } from "./project-mcp-trust.js";
 import { resolveDefaultEmbeddedSearchBackend } from "./embedded-search-backend.js";
+import { resolveHostWakeRuntimeConfig } from "./team-wake-config.js";
 import { getProjectMemoryRoot } from "./paths.js";
 import type { ACodeAppOptions } from "./types.js";
 import {
@@ -232,6 +233,9 @@ export function resolveAppRuntimeConfig(input: {
       ...configResult.config.autoResume,
       ...options.runtimeConfig?.autoResume,
     },
+    // agentTeams.hostWake（specs/host-team-wake.md R7）：三级默认链逐字段落默认（EI-152），
+    // 段缺失/非法值不崩；实现与理由见 team-wake-config.ts。
+    agentTeams: resolveHostWakeRuntimeConfig(configResult.config, options.runtimeConfig),
     mcp: {
       enabled: options.runtimeConfig?.mcp?.enabled ?? configResult.config.features.mcp,
       servers: autoConnectMcpServers,

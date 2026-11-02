@@ -212,6 +212,20 @@ class ConfigStore {
         scope,
       );
     }
+    if (config.agentTeams) {
+      // agentTeams.hostWake 逐字段浅合并后整体写回本 scope（autoResume 同构）。
+      const previous = this.get(ConfigKey.AgentTeams) ?? DefaultConfig.agentTeams;
+      this.set(
+        ConfigKey.AgentTeams,
+        {
+          hostWake: {
+            ...previous.hostWake,
+            ...config.agentTeams.hostWake,
+          },
+        },
+        scope,
+      );
+    }
     if (config.hooks) {
       const previous = this.get(ConfigKey.Hooks) ?? DefaultConfig.hooks;
       this.set(
@@ -352,6 +366,7 @@ export class ConfigPortImpl implements ConfigPort {
       modelAnomalyGuard:
         this.store.get(ConfigKey.ModelAnomalyGuard) ?? DefaultConfig.modelAnomalyGuard,
       autoResume: this.store.get(ConfigKey.AutoResume) ?? DefaultConfig.autoResume,
+      agentTeams: this.store.get(ConfigKey.AgentTeams) ?? DefaultConfig.agentTeams,
       hooks: this.store.get(ConfigKey.Hooks) ?? DefaultConfig.hooks,
       ui: {
         locale: this.store.get(ConfigKey.UiLocale) ?? DefaultConfig.ui.locale,
@@ -463,6 +478,8 @@ function getDefaultValue(key: ConfigKey): unknown {
       return defaults.modelAnomalyGuard;
     case ConfigKey.AutoResume:
       return defaults.autoResume;
+    case ConfigKey.AgentTeams:
+      return defaults.agentTeams;
     case ConfigKey.Hooks:
       return defaults.hooks;
     case ConfigKey.UiLocale:

@@ -1,9 +1,10 @@
 import { z } from "zod";
 import type { ToolDefinition, ToolResult } from "./registry.js";
 import { isTaskReady } from "../state/dag.js";
-import { assertTransition } from "../state/machine.js";
+import { assertKnownTaskStatus, assertTransition } from "../state/machine.js";
 import { computeNextActions } from "../scheduler.js";
 import { nowIso, TASK_ID_PATTERN, TEAM_ID_PATTERN, TeamError } from "../state/helpers.js";
+import type { TaskStatus } from "../state/types.js";
 import { randomUUID } from "node:crypto";
 import { TEAM_TRUST_NOTE, wrapTeamMessageBodies } from "../trust-wrapper.js";
 
@@ -39,7 +40,7 @@ export const memberTaskTools: readonly ToolDefinition[] = [
   {
     name: "agent_teams_claim_task",
     description:
-      "Claim a ready task after dependencies are validated. Each member may hold at most one in_progress task (per team). Returns the attempt_id required for updates. Members may claim own or unassigned tasks; the captain claims via reassign (takeover).",
+      "Claim a ready task after dependencies are validated. Each member may hold at most one in_progress task (per team); a task sitting in_review does not block claiming another. Returns the attempt_id required for updates. Members may claim own or unassigned tasks. The captain does not claim tasks (captain takeover was revoked): captain-side change is dispatched by reassigning the task to a member, or by amend/send_message.",
     schema: claimSchema,
     memberAllowed: true,
     async handler(input, context): Promise<ToolResult> {
@@ -60,6 +61,7 @@ export const memberTaskTools: readonly ToolDefinition[] = [
       if (!task) {
         throw new TeamError("task_not_found", `Task ${parsed.taskId} not found.`);
       }
+      assertKnownTaskStatus(task.status, `task ${parsed.taskId}`);
       const byId = new Map(tasks.map((item) => [item.taskId, item]));
       if (!isTaskReady(task, byId)) {
         throw new TeamError(
@@ -131,17 +133,20 @@ export const memberTaskTools: readonly ToolDefinition[] = [
   {
     name: "agent_teams_update_task",
     description:
-      "Advance a task with its current attempt_id (stale attempts are rejected). done requires verify when acceptance is non-empty. failed/blocked do not unlock downstream work; quality-kind failures block dependent tasks until a repair task replaces the failed gate.",
+      "Advance a task with its current attempt_id (stale attempts are rejected). status done means REPORT the work: it moves the task to in_review (awaiting the captain's acceptance), not to done — only acceptance (the captain merging the worktree, or the captain's explicit accept for non-isolated teams) closes it. done requires verify when acceptance is non-empty; declare runnable commands as \"$ <command>\" lines so the captain can run exactly them with agent_teams_run_checks. failed/blocked do not unlock downstream work; quality-kind failures block dependent tasks until a repair task replaces the failed gate.",
     schema: updateSchema,
     memberAllowed: true,
     async handler(input, context): Promise<ToolResult> {
       const parsed = updateSchema.parse(input);
       const team = context.resolveTeamContext(parsed.teamId);
-      const memberName = context.requireMember(team, { allowCaptain: true });
+      // Q2 裁决（specs/coordinator-readonly-preset.md）：撤销队长自助接管路径——任务更新
+      // 只认成员身份，队长不再是「兼成员」。队长侧任务操作走 requireCaptain 的 create/amend。
+      const memberName = context.requireMember(team);
       const task = context.store.readTask(team.teamId, parsed.taskId);
       if (!task) {
         throw new TeamError("task_not_found", `Task ${parsed.taskId} not found.`);
       }
+      assertKnownTaskStatus(task.status, `task ${parsed.taskId}`);
       if (task.activeAttemptId !== parsed.attemptId) {
         throw new TeamError(
           "stale_attempt",
@@ -186,8 +191,10 @@ export const memberTaskTools: readonly ToolDefinition[] = [
             ? "update_failed"
             : "update_blocked";
       assertTransition(task.status, action);
+      // R2.1/R2.7：done 是「汇报」，落到 in_review（非终态）等队长验收；failed/blocked 原样。
+      const nextStatus: TaskStatus = parsed.status === "done" ? "in_review" : parsed.status;
       context.store.writeTask(team.teamId, parsed.taskId, (target) => {
-        target.status = parsed.status;
+        target.status = nextStatus;
         target.summary = parsed.summary;
         if (parsed.outputs) target.outputs = parsed.outputs;
         if (parsed.verify) target.verify = parsed.verify;
@@ -202,16 +209,22 @@ export const memberTaskTools: readonly ToolDefinition[] = [
       const refreshedTeam = context.store.findTeam(team.teamId) ?? team;
       const refreshedTasks = context.store.readTasks(team.teamId);
       const isMember = memberName !== "captain";
+      // R3（host-team-wake.md）：成员汇报/失败/阻塞是唤醒级写，递增世代号让宿主感知。
+      // 队长自身的任务写不存在（接管路径已撤销）；幂等重复汇报在上方提前返回，不重复递增。
+      if (isMember) context.store.bumpWakeSeq(team.teamId);
       return {
         ok: true,
         teamId: team.teamId,
         taskId: parsed.taskId,
-        status: parsed.status,
+        status: nextStatus,
+        ...(nextStatus === "in_review" ? { awaiting_acceptance: true } : {}),
         next_actions: isMember
           ? {
               wake: [],
               notes: [
-                "Task updated. Report to the captain now (RespondToCoordinator), then call agent_teams_wait_for_work to wait for the next assignment — do not end your turn.",
+                nextStatus === "in_review"
+                  ? "Reported. The task is now in_review — waiting for the captain to accept it; it is NOT done yet. Report to the captain now (RespondToCoordinator), then call agent_teams_wait_for_work to wait for the next assignment — do not end your turn."
+                  : "Task updated. Report to the captain now (RespondToCoordinator), then call agent_teams_wait_for_work to wait for the next assignment — do not end your turn.",
               ],
               report_to_captain: true,
             }

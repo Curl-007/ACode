@@ -21,9 +21,13 @@ const TeamSidePaneContents = memo(function TeamSidePaneContents({
   const [lease, setLease] = useState<SessionLease | null>(null);
   const projection = useConversationProjection(lease);
   // 团队面板与会话尾部团队卡同一归属口径：只列出以 tab.parentSessionId 为队长的团队。
+  // 同时把队长会话运行态（control.phase）交给投影，供 wakeHint 派生（host-team-wake R10）。
   const teams = useMemo(
-    () => buildConversationStatusPanelTeams(projection.snapshot?.pluginStates, tab.parentSessionId),
-    [projection.snapshot?.pluginStates, tab.parentSessionId],
+    () =>
+      buildConversationStatusPanelTeams(projection.snapshot?.pluginStates, tab.parentSessionId, {
+        sessionControl: projection.snapshot?.control ?? null,
+      }),
+    [projection.snapshot?.pluginStates, projection.snapshot?.control, tab.parentSessionId],
   );
   // 已结束的团队不在 teams[] 里（归档后随即从快照消失），落点命中 recentEnded 时
   // 仍要能只读查看（SPEC-012 R15）。

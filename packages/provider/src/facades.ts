@@ -18,6 +18,11 @@ export type {
   ResolveModelConfigInput,
   SavePersonalModelDraftInput,
 } from "./provider-settings-views.js";
+export type {
+  PersonalProviderImportItem,
+  PersonalProviderImportOutcome,
+  ProviderImportInput,
+} from "./config-service.js";
 export { ProviderSettingsFacade } from "./provider-settings-facade.js";
 export type {
   ModelSelectionModelView,

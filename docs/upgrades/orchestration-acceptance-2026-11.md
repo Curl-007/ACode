@@ -2,7 +2,9 @@
 
 先落 Track A 批次 M0（验收度量基线）与批次 0（队长验收工具面），再按 in_review 态耦合推进宿主强制与验收可视化；Track B（Provider/MCP 配置导入）与 Track C（diff 渲染选型）与 Track A 正交，可并行立项。
 
-本文是立项与实施提案，参照外部开源项目 Fynvra（Apache-2.0，Electron 桌面 AI coding workbench，约 9.4 万行 TS、188 个测试文件）的验收闭环设计。文中"新增/拟议"的接口、状态与工具均未实现，不代表行为已经存在。方法纪律遵循 EI-131（[engineering-invariants.md](../specs/engineering-invariants.md):242）：借契约与证据形状，不抄实现；先核对自身现状确认是真实差距；显式列出不做清单（§8）。
+本文是立项与实施提案，参照外部开源项目 Fynvra（Apache-2.0，Electron 桌面 AI coding workbench，约 9.4 万行 TS、188 个测试文件）的验收闭环设计。方法纪律遵循 EI-131（[engineering-invariants.md](../specs/engineering-invariants.md):242）：借契约与证据形状，不抄实现；先核对自身现状确认是真实差距；显式列出不做清单（§8）。
+
+**实施状态（2026-11-02）**：Track A 批次 M0/0/1/2/3/4/5 与 Track B 阶段一/二已全部在 `feature/cli-agent-teams-acceptance-loop` 分支实现并按批提交（裁决见附录 C；各批 spec 为契约真源）。Track C（编辑器/merge view）按 §7 仍为选型立项事项，未实施。正文保留提案原文（含"拟新增"措辞）；已实现范围与形状以各 spec、附录 C 与提交记录为准，正文与 spec 冲突处已在附录 C 登记修正。
 
 **基线与核查声明**：调查与核查基线 `dev/1.0.4` @ `49c0631e`（2026-11-02）。本文全部 file:line 已对该检出逐条抽查核实（17 项承重论断，15 项完全属实，2 项行号/路径漂移已在附录 A 修正）；实施时行号仍需复核。Fynvra 侧结论来自对其源码的独立只读调查；jev-judgment 校准工具在核查会话不可用，结论以源码证据为准，无工具校准概率。本文引用的 EI 编号（27 个）与 spec 文件名（11 个）已逐一确认存在于当前检出。
 
@@ -250,3 +252,23 @@ Track B Provider/MCP 导入（约 1–2 周，与 A 并行）    Track C 编辑�
 | worker brief 五段模板（Target/Change/Constraints/Ownership/Acceptance）+ report_done 契约 | `packages/core/src/briefs/renderBrief.ts` | 横切核对项：与 dispatch-discipline-prompt.md 对照融合 |
 | 保守清理规则：只清理已验收/已放弃，清理前检查干净且无未合并新提交 | `src/main/services/orchestration/worktreeCleanup.ts` | ACode 已有等价物（keptReason），不搬 |
 | Provider 导入三层结构 + 指纹去重 + 明文缓存 TTL + 候选 id 回换 | `src/main/services/providers/import/{locate,readers,scan}.ts`、`src/main/services/mcp/import/mcpImporter.ts` | Track B 实现模板 |
+
+## 附录 C · 实施裁决记录（2026-11-02，批次实现前冻结）
+
+Spec 波次（6 份，见各批次 spec 落点）交付后，开放问题由编排侧逐项裁决如下。本附录是契约冻结的可追溯来源；与正文冲突时，以本附录与各 spec 为准（正文 §开头已声明"本文不能替代模块 spec"）。
+
+**裁决点 1（run_checks）= 选项 A 修正版**，细则以 `apps/acode-cli/specs/agent-teams-acceptance-loop.md` R1.2 为准：verify 字段中 `$ ` 前缀行为机器声明；空白折叠后 argv 逐项精确匹配（大小写敏感、v1 无通配、非法/通配字符 fail-closed 拒绝）；Windows `.cmd`/`.bat` 走唯一 `cmd.exe /d /s /c` hop（argv 独立传递，不字符串拼接）；实跑超时 480s（低于宿主 MCP 传输 600s 上限）、输出 ≤256KiB 整段丢弃 + 失步标记；调用计数落团队状态 JSON。
+
+**裁决点 2（已停队长）= 选项 ②**，细则以 `apps/acode-cli/specs/host-team-wake.md` 为准：唤醒仅针对"运行中且空闲"的队长（runtime 命令队列新模式 `team-wake`，不经 v4 CommandInbox）；已停止 → 不注入、消息留箱 + 投影 `wakeHint` 供 UI 显式提示"需人工介入"；宿主感知走既有 `acode-plugin-state` 通知通道 + 插件 additive `wakePending` 窄投影（不建文件 watcher、不读插件磁盘布局、不建第二真源）；去重三层（mailbox UUID 文件名 + 未读→读原子 rename、`TeamState.wakeSeq` 世代号、宿主内存 consume-on-inject）；防循环 `MAX_WAKE_PROMPTS=2` / `MAX_WAKE_DELIVERY_ATTEMPTS=3` / `MAX_WAKE_EVENTS=8` / intent TTL 10min；计数存宿主 per-runtime 内存，不写插件状态。
+
+**验收闭环 spec（两册）OQ 裁决**：OQ-1 队长显式验收入口增设——隔离团队由合并工具耦合即验收，非隔离（worktree_disabled）团队由队长显式 accept 路径验收，保持"done 必经验收"单一语义（工具形态以第 2 册为准）；OQ-2 review/run_checks 增可选 `attemptId`（additive，缺省从磁盘现算当前锚定）；OQ-3 保持 attemptSeq 既有"认领计数器"单一语义（正文 §5 批次 1 的"打回递增 attemptSeq"作废——实测 reassign 从不递增 attemptSeq，以 spec 为准）；OQ-4 verify 取 `$ ` 前缀声明语法（其余行为散文）；OQ-5 超时常量 480s 实跑 / 600s 冻结上限；OQ-6 `in_review` 期间冻结 acceptance 修订（`acceptance_frozen`）；OQ-7 accept 记一条"谁验收"revision 审计；OQ-8 `verify_required` 复用同一错误码承载两类 message，不扩错误码面；OQ-9 允许成员持有 in_review 任务时认领新任务（靠 headRef 钉住审查对象）。
+
+**协调者只读 spec（Q1–Q6）裁决**：Q1 默认不禁 Bash（队长保留只读审查命令面；Bash 写向残余面已在 spec 如实登记 EI-9，"严格档"待批次 0 工具上线后凭调用数据评估）；Q2 同批撤销"队长自助接管任务改代码"的已文档化路径（commands/team.md 第 12 条、tools/registry.ts `requireMember({allowCaptain:true})`、提示词与 prompt-contract 测试同步）；Q3 队长判定仅经 PluginStateUpdated 重放重建，不新增持久化面（恢复期"判定不可得"窗口的粘性语义按 spec R3，局限性已登记）；Q4 新增独立 `rule.coordinator.readonly` 判定与 `coordinator_readonly` 拒绝归因 token（不并入 rule.disallowedTools，保留归因与逃生阀可区分性）；Q5 认可"读插件已声明的 captainSessionId 投影"、否决磁盘布局读法；Q6 文件名保留 `coordinator-readonly-preset.md`。
+
+**宿主唤醒 spec（OQ1–4）裁决**：OQ1 新增 `RuntimeInputPresentation` token `team_wake`（与 task_notification 语义隔离，contracts additive +1）；OQ2 配置面 `agentTeams.hostWake.*`、`enabled` 默认 true；OQ3 `wakeHint` 在 UI teamPanelModel 计算（零协议新增，后续可迁 bootstrap 下发）；OQ4 成员汇报不双写 mailbox（`wakePending.settledTasks` 覆盖任务终态，避免与 RespondToCoordinator 双通知）。
+
+**验收可视化 spec（OQ1–6）裁决**：OQ1 `reviews[]` 生产者归属插件批次 0/1 范围（批次 0 持久化 run_checks 结果，批次 1 在 panel-state 投影 reviews[] 坐标、可用性与分组），批次 4 为纯消费方——消除"只有消费方无生产方"缺口；OQ2 `counts.inReview` 为唯一计数源，metrics 投影复用 `countTasksByStatus` 单一实现、不重复字段（EI-2）；OQ3 手机端 IGitService 可得性未实证——按 spec 降级矩阵实现（不可用 + `reason` 明示，EI-9），真机验证列入交付时的人工核对项；OQ4 提醒验收/请求打回动作只填 composer、不自动发送（守单一写入路径，沿 useTeamApprovalDraft 先例）；OQ5 常量归属：`MAX_PANEL_REVIEWS` 在插件侧、`TEAM_REVIEW_DIFF_MAX_LINES` 在 UI 侧，数值以 shared 契约 spec 对齐；OQ6 `TeamPanelLanding` 的 focusTab/focusReviewTaskId 为 additive 扩展，无持久化迁移面。
+
+**Provider 配置导入 spec（Q1–Q7）裁决**：Q1 MCP 导入扩展 settings-sync 既有外部 Agent 导入面（来源表追加 cursor/gemini/vscode/opencode/cc-switch + JSONC 解析），不建第二套 reader；Q2 本批内把 MCP 落盘收敛到 mcp-sync 唯一漏斗（消除既有双 writer，符合"避免多条写入路径"）；Q3 新增单事务 `importPersonalProviders`（EI-12/EI-40 原子性成立，新增公开入口的必要性已在 spec 论证）；Q4 CC Switch 的 gemini 行跳过 + 结构化 warning（不新增 google 协议值——实测协议枚举仅 anthropic-messages / openai-chat-completions / openai-responses）；Q5 远程 workspace 按 spec 推荐强度提示"导入读取的是服务所在主机的本机配置"；Q6 候选列表展示 baseUrl（非凭据，辅助去重理解）；Q7 悬空的 `SettingsSyncCategory:"providers"` 值本批不动，登记 tech-debt-backlog.md。
+
+**事实修正（正文以下各点作废或精确化，实施以 spec 为准）**：① `tools/tasks.ts` 是 10 行 barrel，实现面在 tasks-captain.ts / tasks-progress.ts（正文 §5 批次 0 的"tasks.ts 贴上限"理由改写，结论不变）；② attemptSeq 是认领计数器，reassign 从不递增（见 OQ-3）；③ core 文件写工具只有 Write/Edit/ApplyPatch，无 NotebookEdit/MultiEdit（正文批次 2 括注作废）；④ 批次 4 实测**不需要任何新 v4 命令/事件**（通用插件状态通道 + 新增 `IGitService.getRefRangeDiff` 已覆盖，正文 §5 批次 4 第一条精确化）；⑤ core 已存在 RespondToCoordinator → subagent-message → runtime 命令队列的自动唤醒链，批次 3 的真实缺口只有"插件 mailbox 事件无宿主唤醒"与"已停队长无提示"两点（正文 G5 范围收窄）；⑥ ACode 已有外部 Agent MCP 导入面（settings-sync 12 来源 + McpServersImportDialog 三步向导），Track B 的 MCP 部分是扩展与 writer 收敛，不是新建（正文 §6 MCP 面精确化）；⑦ `reassign_limit_exceeded` 已存在于 TEAM_ERROR_CODES（types.ts:184），无需新增；⑧ `remove_member` 与 `memberHasActiveTask` 需补 in_review 处理，否则静默丢任务/误删待验收 worktree（已入第 2 册 R2.7 清单）。

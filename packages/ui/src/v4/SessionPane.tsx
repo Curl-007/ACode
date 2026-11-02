@@ -3032,6 +3032,9 @@ export function SessionPane({
         workflowRuns: snapshot?.workflowRuns?.runs ?? [],
         pluginStates: snapshot?.pluginStates,
         sessionId: sessionId ?? null,
+        // 队长会话运行态 → wakeHint 派生（host-team-wake R10）；此处 SessionPane 的会话
+        // 就是团队卡所属的队长会话。
+        sessionControl: snapshot?.control ?? null,
       }),
     [
       isOfficeMode,
@@ -3039,6 +3042,7 @@ export function SessionPane({
       gitSummary,
       gitWorktreeChangeSummary,
       snapshot?.backgroundWorks,
+      snapshot?.control,
       snapshot?.goal,
       snapshot?.pluginStates,
       snapshot?.plan,

@@ -7,6 +7,8 @@ import type {
   GitIdentity,
   GitLocalBranchListResult,
   GitPushResult,
+  GitRefRangeDiffRequest,
+  GitRefRangeDiffResult,
   GitRepositorySummary,
   GitWorkspaceRepositoryInfo,
 } from "@acode/shared";
@@ -88,6 +90,7 @@ export interface GitCliRepo {
   ): Promise<GitBranchMutationResult>;
   getDiff(params: GitDiffQuery): Promise<GitDiffResult>;
   getBranchComparison(workspacePath: string): Promise<GitBranchComparisonSnapshot>;
+  getRefRangeDiff(params: GitRefRangeDiffRequest): Promise<GitRefRangeDiffResult>;
   stage(workspacePath: string, paths: string[]): Promise<void>;
   unstage(workspacePath: string, paths: string[]): Promise<void>;
   discard(workspacePath: string, paths: string[], staged: boolean): Promise<void>;

@@ -130,6 +130,7 @@ import type { AgentRuntimeInternal } from "./internal.js";
 // 跨回合 auto-resume（specs/turn-auto-resume.md）：shutdown 收口 + /auto-resume 命令面。
 import { disposeAutoResumeCoordinator } from "./auto-resume/runtime-api.js";
 import type { AutoResumeRuntimeCommand, AutoResumeStatusSnapshot } from "./auto-resume/types.js";
+import type { TeamWakeIntent } from "./team-wake/types.js";
 import { InMemoryRuntimeTaskRegistry, type RuntimeTaskRegistry } from "../runtime-task/contract.js";
 import type { SwarmPlanPort } from "../swarm/port.js";
 import type { ChildClientPortsContext, ClientFacingPorts } from "./helpers/child-client-ports.js";
@@ -859,6 +860,12 @@ export interface AgentRuntime {
    * config 持久化在 bootstrap app 层另行叠加（照 /locale 写 config 先例）。
    */
   applyAutoResumeCommand?(input: AutoResumeRuntimeCommand): void;
+  /**
+   * 宿主团队唤醒命令面（apps/acode-cli/specs/host-team-wake.md R4）：bootstrap 把从插件
+   * `wakePending` 规范化的 intent 交给队长 runtime；optional 成员先例（缺席 = 宿主未装配，
+   * 不得猜测）。
+   */
+  applyTeamWakeIntent?(intent: TeamWakeIntent): void;
 }
 
 installAgentRuntimeMethods(AgentRuntime);

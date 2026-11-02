@@ -10,6 +10,7 @@ import type { HooksRuntimeConfig } from "../hooks/index.js";
 import type { PluginConfig, PluginOptionValues } from "../plugins/index.js";
 import type { ManagedPolicyFloorData } from "./managed-policy.js";
 import type {
+  AgentTeamsConfig,
   AutoResumeConfig,
   ModelAnomalyGuardConfig,
   SkillCommandOverride,
@@ -89,6 +90,10 @@ export const ConfigKey = {
   // 运行态计数/定时器只住进程内 coordinator。
   AutoResume: "autoResume",
 
+  // 宿主团队唤醒（specs/host-team-wake.md R7）：参数与逃生阀走 config，运行态计数/世代/
+  // ack 只住进程内 team-wake owner。
+  AgentTeams: "agentTeams",
+
   // Hooks
   Hooks: "hooks",
 
@@ -164,13 +169,15 @@ export type ConfigValue<K extends ConfigKey> = K extends "modelStream.idleTimeou
                                             ? ModelAnomalyGuardConfig
                                             : K extends "autoResume"
                                               ? AutoResumeConfig
-                                              : K extends "hooks"
-                                                ? HooksRuntimeConfig
-                                                : K extends "ui.locale"
-                                                  ? UiLocale
-                                                  : K extends "ui.theme"
-                                                    ? UiThemePreference
-                                                    : unknown;
+                                              : K extends "agentTeams"
+                                                ? AgentTeamsConfig
+                                                : K extends "hooks"
+                                                  ? HooksRuntimeConfig
+                                                  : K extends "ui.locale"
+                                                    ? UiLocale
+                                                    : K extends "ui.theme"
+                                                      ? UiThemePreference
+                                                      : unknown;
 
 // ============================================================
 // Config Scope

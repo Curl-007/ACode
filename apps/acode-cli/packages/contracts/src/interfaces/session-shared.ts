@@ -75,6 +75,9 @@ export const SYNTHETIC_USER_MESSAGE_SOURCES = [
   "selection_side_chat",
   "subagent",
   "subagent_message",
+  // 宿主团队唤醒（specs/host-team-wake.md R6）：插件 mailbox 事件经宿主注入队长会话的
+  // model-only synthetic notice；与 subagent_message 同档（runtime 注入 carrier，非用户动作）。
+  "team_wake",
   "todo_reminder",
   // 工具按需检索公告（specs/tool-search.md R9）：公告是持久化轨迹的一部分，
   // 作为 model-only synthetic notice 落库，冷恢复按 runtimeMessage metadata 重建。

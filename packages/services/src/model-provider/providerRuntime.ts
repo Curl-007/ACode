@@ -2,6 +2,7 @@ import {
   NodeModelSelectionConfigRepository,
   createNodeModelSelectionFacade,
 } from "@acode/provider-node";
+import { homedir } from "node:os";
 import {
   ProviderRegistryService,
   ProviderSettingsFacade,
@@ -25,6 +26,7 @@ import {
   type ModelSelectionConfiguredDefaultSource,
   type ProviderSettingsConnectivityTester,
 } from "./providerFacadeServices.js";
+import { createProviderImportService } from "./provider-import/providerImporterService.js";
 
 export interface ProviderRuntimeOptions extends ProviderConfigRuntimeOptions {
   readonly accountSource?: RefreshableProviderSource<AccountProviderConfigSnapshot>;
@@ -114,10 +116,32 @@ export class ProviderRuntime {
     );
     const ensureReady = () => this.start();
     const settingsFacade = new ProviderSettingsFacade(this.registryService, mutations);
+    // provider 配置导入（docs/specs/provider-config-import.md）：读取是本机外部工具文件（只读），
+    // 写入经同一 Facade 的单事务漏斗；明文 apiKey 只在宿主内存，绝不进 RPC 视图/日志。
+    const providerImport = createProviderImportService({
+      home: process.env.HOME?.trim() || homedir(),
+      env: process.env,
+      // 已有 Provider 比对事实：经宿主本地只读面读水合后的 baseUrl/apiKey（该读取不登记 RPC、不进日志）。
+      existing: () =>
+        settingsFacade.getView().providers.flatMap((provider) => {
+          const discovery = settingsFacade.readProviderDiscoveryInput(provider.providerId);
+          if (!discovery) return [];
+          return [
+            {
+              providerName: provider.providerName?.trim() || provider.providerId,
+              baseUrl: discovery.baseUrl,
+              ...(discovery.apiKey ? { apiKey: discovery.apiKey } : {}),
+            },
+          ];
+        }),
+      importPersonalProviders: async (inputs) =>
+        (await settingsFacade.importPersonalProviders(inputs)).result,
+    });
     this.providerSettings = createProviderSettingsService(
       settingsFacade,
       ensureReady,
       dependencies.testConnectivity,
+      providerImport,
     );
     this.#modelSelectionRuntime = createModelSelectionService(
       createNodeModelSelectionFacade(this.registryService),
@@ -173,6 +197,7 @@ function createSettingsMutationTarget(
       configService.deletePersonalModel(providerId, modelId, membership),
     setPersonalModelEnabled: (providerId, modelId, enabled, membership) =>
       configService.setPersonalModelEnabled(providerId, modelId, enabled, membership),
+    importPersonalProviders: (inputs) => configService.importPersonalProviders(inputs),
     savePersonalModelDraft: (
       providerId,
       originalModelId,

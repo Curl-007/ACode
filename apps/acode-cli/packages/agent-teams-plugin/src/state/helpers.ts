@@ -27,6 +27,7 @@ export {
   type TeamErrorCode,
   type TeamMember,
   type TeamMessage,
+  type TeamMessageKind,
   type TeamState,
   type TeamStatus,
   type TeamTask,

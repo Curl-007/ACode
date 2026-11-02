@@ -16,6 +16,8 @@ import type { ConversationStatusPanelTeam } from "@/v4/teamPanelModel.js";
  */
 
 const GROUP_ORDER = [
+  // 待验收排最前（批次 4）：它是唯一「有你的事」的等待态（confirmation 家族取色）。
+  ["review", "teamPanel.group.review", "bg-[var(--color-interaction-confirmation-foreground)]"],
   ["inProgress", "teamPanel.group.inProgress", "bg-[var(--color-warning)]"],
   ["ready", "teamPanel.group.ready", "bg-[var(--color-success)]"],
   ["waiting", "teamPanel.group.waiting", "bg-[var(--color-foreground-subtlest)]"],

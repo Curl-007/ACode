@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { layoutTeamTaskGraph, TeamTaskGraph } from "../src/components/TeamTaskGraph.js";
-import { groupTasks } from "../src/app-shell/teamPaneParts.js";
+import { groupTasks, TEAM_TASK_STATUS_DOT } from "../src/app-shell/teamPaneParts.js";
 import type { ConversationStatusPanelTeam } from "../src/v4/teamPanelModel.js";
 
 const team: ConversationStatusPanelTeam = {
@@ -26,6 +26,9 @@ const team: ConversationStatusPanelTeam = {
   mailboxes: [],
   unreadMessages: [],
   maxMembers: 8,
+  // 验收面 additive 投影（批次 4）：本用例聚焦依赖图，验收面为空即可。
+  reviews: [],
+  reviewsTruncated: false,
 };
 
 describe("team task graph", () => {
@@ -49,6 +52,28 @@ describe("team task graph", () => {
       ["t-5"],
     );
     assert.equal(groupTasks(cancelled).waiting.length, 1);
+  });
+
+  it("groups in_review tasks into their own action-first bucket, not waiting", () => {
+    const withReview = {
+      ...team,
+      tasks: [
+        ...team.tasks,
+        { taskId: "t-6", title: "await", status: "in_review", kind: "review", dependencies: [] },
+      ],
+    };
+    const groups = groupTasks(withReview);
+    assert.deepEqual(
+      groups.review.map((task) => task.taskId),
+      ["t-6"],
+    );
+    assert.equal(
+      groups.waiting.some((task) => task.taskId === "t-6"),
+      false,
+    );
+    // 待验收取色走 confirmation 家族，不得用 success 冒充等待态（DESIGN.md）。
+    assert.match(TEAM_TASK_STATUS_DOT.in_review ?? "", /interaction-confirmation/u);
+    assert.doesNotMatch(TEAM_TASK_STATUS_DOT.in_review ?? "", /color-success/u);
   });
 
   it("uses theme tokens and preserves full-width geometry for horizontal scrolling", () => {

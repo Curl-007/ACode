@@ -49,6 +49,11 @@ import {
  * 锁保持全根一把：工具调用是模型节奏（秒级），分团队锁换来的是「多把锁的写序」
  * 复杂度，收益不成比例。
  */
+/** R3：把团队唤醒世代号 +1（历史团队无该字段时从 0 起）；唯一实现点，供写盘入口复用。 */
+function bumpWakeSeq(team: TeamState): void {
+  team.wakeSeq = (team.wakeSeq ?? 0) + 1;
+}
+
 export class TeamStore {
   private readonly rootDir: string;
   private queue: Promise<unknown> = Promise.resolve();
@@ -249,8 +254,20 @@ export class TeamStore {
       deliveredAt: nowIso(),
     };
     this.writeJsonAtomic(join(unreadDir, `${full.id}.json`), full);
-    this.writeTeam(teamId, () => undefined);
+    // R3：成员来源的邮箱投递是唤醒级写；队长自身发信不递增（不制造世代噪音）。
+    this.writeTeam(teamId, (team) => {
+      if (message.from !== CAPTAIN_ADDRESS) bumpWakeSeq(team);
+    });
     return full;
+  }
+
+  /**
+   * 递增团队唤醒世代号（host-team-wake.md R3）。只由**成员来源**的唤醒级写调用
+   * （成员 update_task 落 done|failed|blocked 汇报）；队长读信/宿主消费不调用。
+   * 与 deliverMessage 同为写盘入口，调用方须已在 withLock 内（本方法自身不再加锁）。
+   */
+  bumpWakeSeq(teamId: string): void {
+    this.writeTeam(teamId, bumpWakeSeq);
   }
 
   listUnreadMessages(teamId: string, address: string): TeamMessage[] {

@@ -227,6 +227,12 @@ export function createGitService(options?: {
       return await repo.getDiff(params);
     },
 
+    async getRefRangeDiff(params) {
+      // 只读面：解析与读取全部在 repo 层完成，service 层不追加任何回落逻辑，
+      // 保证远程/手机与本地走同一实现（team-acceptance-review-contract.md 契约 B）。
+      return await repo.getRefRangeDiff(params);
+    },
+
     async getBranchComparison(params): Promise<GitBranchComparison> {
       const comparison = await repo.getBranchComparison(params.workspacePath);
       return {

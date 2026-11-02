@@ -430,6 +430,10 @@ function userInputOrigin(
       // child 回复是 mailbox runtime carrier，不是真实用户输入；
       // live/cold 即使都隐藏它，也必须保留相同 canonical origin。
       return "mailbox";
+    case "team_wake":
+      // 宿主团队唤醒（specs/host-team-wake.md R6）：插件 mailbox 事件经宿主注入的 model-only
+      // carrier，不是真实用户输入；归 mailbox（与 subagent_message 同档），不是后台任务。
+      return "mailbox";
     case "fork":
     case "plugin_reference":
     case "rewind":

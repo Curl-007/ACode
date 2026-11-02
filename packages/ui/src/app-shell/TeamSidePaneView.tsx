@@ -9,10 +9,11 @@ import type { TeamSidePaneTab } from "@/lib/workspaceSidePane.js";
 import { teamStatusDotClass } from "./teamPaneParts.js";
 import { TeamSidePaneMembers, TeamSidePaneMailbox } from "./TeamSidePanePeople.js";
 import { TeamSidePaneTasks } from "./TeamSidePaneTasks.js";
+import { TeamSidePaneReview } from "./TeamSidePaneReview.js";
 import { TeamWorkflowPhaseList } from "./TeamWorkflowPhaseList.js";
 import { teamStatusMessageId } from "@/v4/teamWorkflowPresentation.js";
 
-type PanelTab = "overview" | "tasks" | "members" | "mailbox";
+type PanelTab = "overview" | "tasks" | "members" | "mailbox" | "review";
 export const TeamSidePaneView = memo(function TeamSidePaneView({
   tab,
   teams,
@@ -38,7 +39,7 @@ export const TeamSidePaneView = memo(function TeamSidePaneView({
   // 新打开的落点覆盖本地查看选择；普通快照更新不重置页签或展开状态。
   const selectionCurrent = selection.openedAt === tab.openedAt;
   const selectedTeamId = selectionCurrent ? selection.teamId : tab.teamId;
-  const panelTab = selectionCurrent ? selection.panelTab : "overview";
+  const panelTab = selectionCurrent ? selection.panelTab : (tab.focusTab ?? "overview");
   // 落点是否命中「已结束」：命中 recentEnded 时按只读终态渲染（邮箱页签隐藏——
   // 已结束快照不带 mailboxes）。
   const endedIds = new Set(endedTeams.map((candidate) => candidate.teamId));
@@ -89,6 +90,16 @@ export const TeamSidePaneView = memo(function TeamSidePaneView({
     );
   const unreadTotal = team.mailboxes.reduce((sum, mailbox) => sum + mailbox.unread, 0);
   const statusId = teamStatusMessageId(team.status);
+  // 页签显隐：邮箱仅在有邮箱时出现（既有手法）；「待验收」仅在 reviews[] 非空时出现（批次 4）。
+  const panelTabs: readonly PanelTab[] = [
+    "overview",
+    "tasks",
+    "members",
+    ...(team.status === "archived" || !team.mailboxes.length
+      ? []
+      : (["mailbox"] as PanelTab[])),
+    ...(team.reviews.length > 0 ? (["review"] as PanelTab[]) : []),
+  ];
   const copyPanelUrl = async () => {
     if (!team.panelUrl) return;
     try {
@@ -177,10 +188,7 @@ export const TeamSidePaneView = memo(function TeamSidePaneView({
         </div>
       </header>
       <div className="flex shrink-0 flex-wrap items-center gap-1 border-b border-border px-2 py-1">
-        {(team.status === "archived" || !team.mailboxes.length
-          ? (["overview", "tasks", "members"] as const)
-          : (["overview", "tasks", "members", "mailbox"] as const)
-        ).map((id) => (
+        {panelTabs.map((id) => (
           <button
             key={id}
             type="button"
@@ -238,6 +246,11 @@ export const TeamSidePaneView = memo(function TeamSidePaneView({
         {panelTab === "mailbox" ? (
           <div className="p-3">
             <TeamSidePaneMailbox team={team} />
+          </div>
+        ) : null}
+        {panelTab === "review" ? (
+          <div className="p-3">
+            <TeamSidePaneReview key={`${team.teamId}:${tab.openedAt}`} tab={tab} team={team} />
           </div>
         ) : null}
       </div>

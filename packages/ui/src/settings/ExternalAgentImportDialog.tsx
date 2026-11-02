@@ -22,6 +22,8 @@ import { cn } from "@/components/lib/utils.js";
 import { Badge } from "@/components/ui/badge.js";
 import { Button } from "@/components/ui/button.js";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog.js";
+import { McpVariableReferenceWarnings } from "@/settings/McpVariableReferenceWarnings.js";
+import { ResourceSelectionRow } from "@/settings/external-agent-import/ResourceSelectionRow.js";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -684,6 +686,9 @@ function ImportResultRow({
           </Badge>
         ) : null}
       </div>
+      {category === "mcpServers" && "warnings" in result && result.warnings?.length ? (
+        <McpVariableReferenceWarnings warnings={result.warnings} />
+      ) : null}
     </div>
   );
 }
@@ -994,57 +999,5 @@ function ImportSelectionList({
         })}
       </div>
     </div>
-  );
-}
-
-function ResourceSelectionRow({
-  agent,
-  category,
-  sourceScope,
-  selected,
-  item,
-  onToggleSelection,
-}: {
-  agent: SettingsSyncAgentSummary;
-  category: ImportResourceCategory;
-  sourceScope: SettingsSyncSourceScope;
-  selected: Set<string>;
-  item: ImportItemSummary;
-  onToggleSelection: (key: string) => void;
-}) {
-  const itemKey = getResourceSelectionKey({
-    agent: agent.agent,
-    category,
-    sourceScope,
-    resourcePath: item.path,
-  });
-  const checked = selected.has(itemKey);
-
-  return (
-    <button
-      type="button"
-      onClick={() => onToggleSelection(itemKey)}
-      className="flex w-full min-w-0 items-center gap-3 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-surface-hover/50"
-    >
-      <span className="flex min-w-0 items-center gap-2">
-        <span
-          className={cn(
-            "flex size-4 shrink-0 items-center justify-center rounded-sm border border-border",
-            checked && "border-primary bg-primary text-primary-foreground",
-          )}
-        >
-          {checked ? <CheckIcon className="size-3.5" /> : null}
-        </span>
-        <span className="min-w-0 truncate text-ui-base text-foreground">{item.name}</span>
-        {"version" in item && item.version ? (
-          <Badge
-            variant="outline"
-            className="h-5 border-border bg-surface px-1.5 font-mono text-ui-xs font-normal text-foreground-subtle"
-          >
-            {item.version.startsWith("v") ? item.version : `v${item.version}`}
-          </Badge>
-        ) : null}
-      </span>
-    </button>
   );
 }

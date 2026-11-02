@@ -1,5 +1,7 @@
 import { createServer } from "node:http";
 import type { TeamStore } from "./state/store.js";
+import { buildTeamAcceptanceMetrics } from "./metrics.js";
+import { countTasksByStatus } from "./state/task-counts.js";
 
 /**
  * 团队面板（PRD §15）：localhost 只读 HTTP。绑定 127.0.0.1 随机端口；
@@ -142,22 +144,22 @@ function handlePanelRequest(
   if (url.pathname === "/api/teams") {
     respondJson(response, {
       teams: store.listTeams().map((team) => {
-        const tasks = store.readTasks(team.teamId);
-        const counts = { done: 0, inProgress: 0, todo: 0, failed: 0, blocked: 0 };
-        for (const task of tasks) {
-          if (task.status === "done") counts.done += 1;
-          else if (task.status === "in_progress") counts.inProgress += 1;
-          else if (task.status === "todo") counts.todo += 1;
-          else if (task.status === "failed") counts.failed += 1;
-          else if (task.status === "blocked") counts.blocked += 1;
-        }
+        // R2.7：单一计数实现（EI-2），含 inReview。
+        const counts = countTasksByStatus(store.readTasks(team.teamId));
         return {
           teamId: team.teamId,
           goal: team.goal,
           status: team.status,
           seq: team.seq,
           updatedAt: team.updatedAt,
-          counts,
+          counts: {
+            done: counts.done,
+            inProgress: counts.inProgress,
+            todo: counts.todo,
+            inReview: counts.inReview,
+            failed: counts.failed,
+            blocked: counts.blocked,
+          },
           members: team.members.filter((member) => member.status !== "removed").length,
         };
       }),
@@ -208,6 +210,7 @@ function readPanelState(store: TeamStore): {
   mailboxes: unknown;
   archives?: unknown;
   teams?: unknown;
+  metrics?: unknown;
 } {
   // primary：updatedAt 最新的活跃团队（兼容旧页面的单团队形状）。
   const teams = store.listTeams();
@@ -219,11 +222,14 @@ function readPanelState(store: TeamStore): {
   if (!primary) {
     return { team: undefined, tasks: [], mailboxes: [], archives: store.listArchivedTeams() };
   }
+  const tasks = store.readTasks(primary.teamId);
   return {
     team: primary,
-    tasks: store.readTasks(primary.teamId),
+    tasks,
     mailboxes: store.listAllMailboxes(primary.teamId),
     archives: store.listArchivedTeams(),
+    // R0：度量首屏（纯读派生，随快照现算；面板与 MCP 状态通道同源）。
+    metrics: buildTeamAcceptanceMetrics(primary, tasks),
     teams: teams.map((team) => ({
       teamId: team.teamId,
       goal: team.goal,
@@ -236,12 +242,14 @@ function readPanelState(store: TeamStore): {
 function readTeamPanelState(
   store: TeamStore,
   teamId: string,
-): { team: unknown; tasks: unknown; mailboxes: unknown } {
+): { team: unknown; tasks: unknown; mailboxes: unknown; metrics?: unknown } {
   const team = store.findTeam(teamId);
+  const tasks = store.readTasks(teamId);
   return {
     team,
-    tasks: store.readTasks(teamId),
+    tasks,
     mailboxes: store.listAllMailboxes(teamId),
+    ...(team ? { metrics: buildTeamAcceptanceMetrics(team, tasks) } : {}),
   };
 }
 
@@ -334,6 +342,7 @@ function render(data) {
   root.innerHTML = teamNav +
     section("团队", '<div class="card"><b>' + esc(team.goal) + '</b><br><span class="muted">' + esc(team.teamId) + " · " + esc(team.status) + " · seq " + esc(team.seq) + "</span></div>") +
     section("进度", '<div class="card">' + Object.entries(counts).map(([k, v]) => '<span class="pill ' + (statusColors[k] ?? "") + '">' + esc(k) + " " + v + "</span>").join(" ") + (data.tasks?.length ? "" : " <span class='muted'>暂无任务</span>") + "</div>") +
+    section("验收度量", metricCard(data.metrics)) +
     section("成员", '<table><tr><th>成员</th><th>角色</th><th>状态</th><th>当前任务</th></tr>' +
       (team.members ?? []).map((m) => {
         const cur = (data.tasks ?? []).find((t) => t.status === "in_progress" && (t.attempts?.find((a) => a.id === t.activeAttemptId)?.owner) === m.name);
@@ -344,6 +353,13 @@ function render(data) {
     section("邮箱", '<table><tr><th>地址</th><th>未读</th><th>已读</th></tr>' +
       (data.mailboxes ?? []).map((m) => "<tr><td>" + esc(m.address) + "</td><td>" + esc(m.unread) + "</td><td>" + esc(m.read) + "</td></tr>").join("") + "</table>") +
     ((data.archives ?? []).length ? section("历史归档", '<ul>' + data.archives.map((a) => "<li><a href='/history/" + esc(a) + "'>" + esc(a) + "</a></li>").join("") + "</ul>") : "");
+}
+function metricCard(m) {
+  if (!m) return '<p class="muted">旧插件 / 暂无度量数据。</p>';
+  const rate = m.acceptance.firstPassRate === null ? "—" : Math.round(m.acceptance.firstPassRate * 100) + "%";
+  const avg = m.acceptance.avgAttemptsPerTask === null ? "—" : m.acceptance.avgAttemptsPerTask.toFixed(2);
+  const lat = m.latency.avgAcceptLatencyMs === null ? "—" : Math.round(m.latency.avgAcceptLatencyMs / 1000) + "s";
+  return '<div class="card"><span class="pill">一次通过 ' + rate + '</span> <span class="pill">平均尝试 ' + avg + '</span> <span class="pill">打回 ' + esc(m.acceptance.rejections) + '</span> <span class="pill">验收耗时 ' + lat + '（样本 ' + esc(m.latency.sampleSize) + '）</span><br><span class="muted">共 ' + esc(m.tasks.total) + ' 任务 · 已验收 ' + esc(m.tasks.accepted) + ' · 未完成 ' + esc(m.tasks.open) + '</span></div>';
 }
 function section(title, body) { return "<h2>" + title + "</h2>" + body; }
 tick();

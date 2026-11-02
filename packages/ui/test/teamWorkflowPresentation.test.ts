@@ -3,6 +3,7 @@ import test from "node:test";
 import { buildConversationStatusPanelTeams } from "../src/v4/teamPanelModel.js";
 import {
   buildTeamWorkflowPresentation,
+  groupInlineTasks,
   teamTaskStatus,
 } from "../src/v4/teamWorkflowPresentation.js";
 
@@ -122,4 +123,21 @@ test("large team phases retain every participant for shared roster folding", () 
     result.model.stations[0]!.pills.map((pill) => pill.avatarIndex),
     members.map((_, index) => index),
   );
+});
+
+test("in_review tasks are in-flight with their own inline group", () => {
+  const team = project(
+    [task("t-1", [], "in_review", "dev"), task("t-2", [], "in_progress", "dev")],
+    [{ name: "dev", role: "Developer", status: "bound" }],
+  );
+  // 待验收仍是「在途」（等队长裁决），不是未开始。
+  assert.equal(teamTaskStatus("in_review"), "running");
+  const groups = groupInlineTasks(team);
+  assert.deepEqual(
+    groups.map((group) => group.key),
+    ["running", "inReview"],
+  );
+  assert.deepEqual(groups.find((group) => group.key === "inReview")?.tasks.map((t) => t.taskId), [
+    "t-1",
+  ]);
 });

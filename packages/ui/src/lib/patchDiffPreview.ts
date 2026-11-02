@@ -22,7 +22,8 @@ const PATCH_DIFF_FORCE_PLAIN_TEXT_FILE_TYPES = new Set(["zsh"]);
 // 这里按文件后缀提前降级成轻量 <pre>，避免点击文件 chip 后整屏不可交互。
 const PATCH_DIFF_FORCE_PLAIN_TEXT_PATH_SUFFIXES = [".gradle", ".gradle.kts"];
 
-function buildTruncatedMarkerLine(omittedLineCount: number): string {
+/** 导出给需自建行级截断的展示面（团队验收 diff，见 v4/teamReviewModel.ts）。 */
+export function buildTruncatedMarkerLine(omittedLineCount: number): string {
   return `${FALLBACK_TRUNCATED_MARKER_PREFIX}${omittedLineCount}`;
 }
 

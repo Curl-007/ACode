@@ -197,6 +197,7 @@ import {
   isProjectMemoryEnabled,
 } from "../helpers/project-memory-extraction.js";
 import { installAutoResumeRuntimeMethods } from "../auto-resume/runtime-api.js";
+import { installTeamWakeRuntimeMethods } from "../team-wake/runtime-api.js";
 
 type AgentRuntimeConstructor = { prototype: object };
 
@@ -395,4 +396,5 @@ export function installAgentRuntimeMethods(ctor: AgentRuntimeConstructor): void 
   proto.drainMemoryExtractions = drainMemoryExtractions;
   proto.isProjectMemoryEnabled = isProjectMemoryEnabled;
   installAutoResumeRuntimeMethods(proto);
+  installTeamWakeRuntimeMethods(proto);
 }

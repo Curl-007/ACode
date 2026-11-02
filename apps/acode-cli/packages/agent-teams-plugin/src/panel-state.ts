@@ -1,11 +1,18 @@
 import { subagentSessionIdForAgent } from "./identity.js";
-import type { TeamState, TeamTask } from "./state/types.js";
+import type { TeamMessage, TeamState, TeamTask } from "./state/types.js";
 import { STALE_TEAM_AFTER_MS } from "./state/types.js";
 import {
   computeReadyTaskIds,
   criticalPathDepth,
   tasksBlockedByFailedQuality,
 } from "./state/dag.js";
+import { buildTeamAcceptanceMetrics } from "./metrics.js";
+import type { TeamAcceptanceMetrics } from "./metrics.js";
+import { countTasksByStatus } from "./state/task-counts.js";
+import { buildTeamPanelReviews } from "./panel-reviews.js";
+import type { TeamPanelReview } from "./panel-reviews.js";
+import { buildTeamPanelWakePending } from "./wake-pending.js";
+import type { TeamPanelWakePending } from "./wake-pending.js";
 
 /**
  * 面板状态快照（TeamPanelState）：宿主状态面板（pluginStates 状态键）与浏览器面板
@@ -34,6 +41,8 @@ export interface TeamPanelMessage {
   from: string;
   to: string;
   summary?: string;
+  /** 语义类别（R2，additive）；缺席即 note。 */
+  kind?: "report" | "question" | "escalation" | "note";
   /** 已按 MAX_PANEL_MESSAGE_CHARS 截断；完整正文在磁盘 mailbox 里。 */
   message: string;
   deliveredAt: string;
@@ -55,6 +64,8 @@ export interface TeamPanelState {
     done: number;
     inProgress: number;
     todo: number;
+    /** 待验收（批次 1 additive；缺席即 0，旧宿主不因此判形状不符）。 */
+    inReview: number;
     failed: number;
     blocked: number;
   };
@@ -65,6 +76,12 @@ export interface TeamPanelState {
     currentTaskId?: string;
     /** 已绑定成员的子会话 id（按 identity.ts 既有构造规则派生）；UI 据此打开成员会话。 */
     childSessionId?: string;
+    /**
+     * 角色能力包引用（批次 5，additive）：成员 spawn 用的宿主 AgentProfile 名；缺席即
+     * 未指定（用插件默认成员 profile）。宿主 UI 投影按白名单收窄、未知字段忽略，故本条
+     * 对旧宿主/旧 UI 无破坏（specs/agent-teams-role-packs.md R5）。
+     */
+    roleRef?: string;
   }>;
   /** 名册上限（team.json 的 maxMembers），面板据此显示「成员 5/8」。 */
   maxMembers: number;
@@ -105,6 +122,25 @@ export interface TeamPanelState {
    * 不再收到这些团队，UI 的「已结束」桶只能从这里取。
    */
   recentEnded?: Array<TeamPanelState & { endedAt: string }>;
+  /**
+   * 验收度量（R0，additive，v 仍为 1）：每次由磁盘快照现算，不缓存、不落盘、不进 seq；
+   * 旧宿主缺席即退回（不画度量块，不构成形状不符）。口径与状态工具共用 metrics.ts（EI-2）。
+   */
+  metrics?: TeamAcceptanceMetrics;
+  /**
+   * 验收面只读坐标（批次 1，additive，v 仍为 1，契约 A）：待验收/已验收任务的成员、
+   * 钉住的 base/head 提交、可用性与已执行检查。缺席（旧插件）= 不渲染验收面，不判形状不符。
+   * 上限 MAX_PANEL_REVIEWS，超限整段丢弃并置 reviewsTruncated（EI-97）。
+   */
+  reviews?: TeamPanelReview[];
+  reviewsTruncated?: boolean;
+  /**
+   * 待唤醒窄投影（host-team-wake.md R1，additive，v 仍为 1）：插件自算、有界的结构事实，
+   * 供宿主 core 的 team-wake 唤醒器按形状收窄（不解释成员原文）。缺席（旧插件）/触发集空 =
+   * 宿主零行为。生产方在 buildTeamPanelWakePending；只承载结构事实 + 有界摘要，正文永不内联
+   * （原文仍在磁盘 mailbox，经读边界包装后才进模型上下文）。
+   */
+  wakePending?: TeamPanelWakePending;
 }
 
 /** recentEnded 保留条数上限。 */
@@ -121,18 +157,22 @@ export function buildTeamPanelState(params: {
   panelUrl?: string;
   mailboxes?: readonly TeamPanelMailbox[];
   unreadMessages?: readonly TeamPanelMessage[];
+  /** 队长邮箱未读（原始 TeamMessage，带 kind）：wakePending.messages 的来源；不带正文。 */
+  captainUnreadMessages?: readonly TeamMessage[];
 }): TeamPanelState {
   const { team, tasks } = params;
   const updatedAtMs = Date.parse(team.updatedAt);
   const stale = Number.isFinite(updatedAtMs) && Date.now() - updatedAtMs > STALE_TEAM_AFTER_MS;
-  const counts = { done: 0, inProgress: 0, todo: 0, failed: 0, blocked: 0 };
-  for (const task of tasks) {
-    if (task.status === "done") counts.done += 1;
-    else if (task.status === "in_progress") counts.inProgress += 1;
-    else if (task.status === "todo") counts.todo += 1;
-    else if (task.status === "failed") counts.failed += 1;
-    else if (task.status === "blocked") counts.blocked += 1;
-  }
+  // R2.7：单一计数实现（EI-2）；counts.inReview 是唯一计数源。
+  const taskCounts = countTasksByStatus(tasks);
+  const counts = {
+    done: taskCounts.done,
+    inProgress: taskCounts.inProgress,
+    todo: taskCounts.todo,
+    inReview: taskCounts.inReview,
+    failed: taskCounts.failed,
+    blocked: taskCounts.blocked,
+  };
   // 成员现状：进行中任务的 attempt owner 即当前任务；无则空闲。
   const currentTaskByMember = new Map<string, string>();
   for (const task of tasks) {
@@ -156,9 +196,15 @@ export function buildTeamPanelState(params: {
       from: message.from,
       to: message.to,
       ...(message.summary ? { summary: message.summary } : {}),
+      ...(message.kind ? { kind: message.kind } : {}),
       message: truncateMessage(message.message),
       deliveredAt: message.deliveredAt,
     }));
+  const wakePending = buildTeamPanelWakePending({
+    team,
+    tasks,
+    ...(params.captainUnreadMessages ? { captainUnreadMessages: params.captainUnreadMessages } : {}),
+  });
   return {
     v: 1,
     teamId: team.teamId,
@@ -180,6 +226,7 @@ export function buildTeamPanelState(params: {
           ? { currentTaskId: currentTaskByMember.get(member.name) }
           : {}),
         ...(member.agentId ? { childSessionId: subagentSessionIdForAgent(member.agentId) } : {}),
+        ...(member.roleRef ? { roleRef: member.roleRef } : {}),
       })),
     tasks: tasks.map((task) => ({
       taskId: task.taskId,
@@ -199,5 +246,14 @@ export function buildTeamPanelState(params: {
       read: mailbox.read,
     })),
     unreadMessages,
+    metrics: buildTeamAcceptanceMetrics(team, tasks),
+    ...(() => {
+      const reviews = buildTeamPanelReviews(team, tasks);
+      return {
+        reviews: reviews.reviews,
+        ...(reviews.reviewsTruncated ? { reviewsTruncated: true } : {}),
+      };
+    })(),
+    ...(wakePending ? { wakePending } : {}),
   };
 }

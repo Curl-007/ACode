@@ -20,10 +20,12 @@ import type {
   CreatePersonalProviderInput,
   PersonalProviderConfigRepository,
   PersonalProviderCreation,
+  PersonalProviderImportOutcome,
   ProviderConfigLayerSnapshot,
   ProviderConfigLayerUpdate,
   ProviderConfigServiceDependencies,
   ProviderConfigServiceOpsContext,
+  ProviderImportInput,
   ProviderModelMembership,
 } from "./config-service-types.js";
 import {
@@ -32,6 +34,7 @@ import {
   reorderPersonalProviders,
   savePersonalProviderOverlay,
 } from "./config-service-provider-ops.js";
+import { importPersonalProviders } from "./config-service-import-ops.js";
 import {
   addPersonalModel,
   addPersonalModels,
@@ -46,9 +49,12 @@ export type {
   CreatePersonalProviderInput,
   PersonalProviderConfigRepository,
   PersonalProviderCreation,
+  PersonalProviderImportItem,
+  PersonalProviderImportOutcome,
   ProviderConfigLayerSnapshot,
   ProviderConfigLayerUpdate,
   ProviderConfigServiceDependencies,
+  ProviderImportInput,
   ProviderModelMembership,
 } from "./config-service-types.js";
 
@@ -130,6 +136,16 @@ export class ProviderConfigService implements ProviderSource<ProviderConfigSnaps
     providerIds: readonly ProviderId[],
   ): Promise<ProviderConfigLayerSnapshot> {
     return reorderPersonalProviders(this.#ops, providerIds);
+  }
+
+  /**
+   * provider 配置导入（docs/specs/provider-config-import.md R6）：整批候选在单个
+   * `updatePersonal` 事务内建 Provider + 模型，单 revision；任一条失败整批放弃。
+   */
+  async importPersonalProviders(
+    inputs: readonly ProviderImportInput[],
+  ): Promise<PersonalProviderImportOutcome> {
+    return importPersonalProviders(this.#ops, inputs);
   }
 
   async reorderPersonalModels(

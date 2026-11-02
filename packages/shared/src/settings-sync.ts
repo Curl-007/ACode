@@ -16,6 +16,10 @@ export type SettingsSyncAgent =
   | "kiroCli"
   | "roo"
   | "codeBuddy"
+  | "cursor"
+  | "gemini"
+  | "vscode"
+  | "ccSwitch"
   | "agents";
 
 export type SettingsSyncCategory = "providers" | "skills" | "commands" | "plugins" | "mcpServers";
@@ -137,12 +141,28 @@ export interface SettingsSyncPluginImportResult {
 
 export type SettingsSyncMcpServerImportStatus = "imported" | "skipped" | "failed";
 
+/**
+ * 变量引用告警位置（docs/specs/provider-config-import.md R7.6）：env 键、header 键、
+ * args 项、url 分别标位置。**只含键名/序号，绝不含值**——外部 MCP 配置的 env/header
+ * 值可能带凭据（R7.7）。
+ */
+export type SettingsSyncMcpVariableReferenceLocation = "env" | "headers" | "args" | "url";
+
+export interface SettingsSyncMcpVariableReferenceWarning {
+  kind: "variable-reference";
+  location: SettingsSyncMcpVariableReferenceLocation;
+  /** env/headers → 键名；args → 序号（字符串化）；url → 空数组。 */
+  keys: string[];
+}
+
 export interface SettingsSyncMcpServerImportResult {
   name: string;
   path: string;
   sourceScope: SettingsSyncSourceScope;
   status: SettingsSyncMcpServerImportStatus;
   skipReason?: SettingsSyncMcpServerSkipReason;
+  /** 变量引用未展开告警（R7.6）：只含位置与键名。 */
+  warnings?: SettingsSyncMcpVariableReferenceWarning[];
 }
 
 export interface SettingsSyncAgentSummary {

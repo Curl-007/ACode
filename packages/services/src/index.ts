@@ -14,6 +14,22 @@ export type {
   ProviderModelDiscoveryErrorKind,
   ProviderModelDiscoveryResult,
 } from "./model-provider/providerModelDiscovery.js";
+// provider 配置导入（docs/specs/provider-config-import.md）纯类型导出：视图/结果/warning/error
+// 与 RPC 端口接口。实现（node:fs / node:sqlite）只在 host 侧装配，不经本 barrel 进入 renderer。
+export type {
+  ProviderImportCandidateModelView,
+  ProviderImportCandidateView,
+  ProviderImportError,
+  ProviderImportErrorCode,
+  ProviderImportImportedItem,
+  ProviderImportResult,
+  ProviderImportScanResult,
+  ProviderImportServicePort,
+  ProviderImportSkippedItem,
+  ProviderImportSource,
+  ProviderImportWarning,
+  ProviderImportWarningCode,
+} from "./model-provider/provider-import/providerImportTypes.js";
 export {
   createAccountRequestAuthService,
   type IAccountRequestAuthService,

@@ -16,6 +16,8 @@ import { PermissionDenialReason } from "@acode/contracts";
 import { appendPermissionDecisionLogEntry } from "./decision-log.js";
 import { DONT_ASK_RULE_ID } from "./dont-ask-mode.js";
 import { isBashReflexGateRuleId } from "./bash-confirm-reflex-gate.js";
+// ruleId 单一出处（spec R8.3）：协调者只读判定的 ruleId 不在此处再手写一份字面量。
+import { COORDINATOR_READONLY_RULE_ID } from "./coordinator-readonly.js";
 
 // -----------------------------------------------
 // R1 闭集词表
@@ -66,6 +68,9 @@ export const FORGED_TOOL_NAME_RULE_ID = "dispatch.forgedToolName";
 const RULE_ID_TO_AUTO_DENY_REASON: Readonly<Record<string, AutoDenyReason>> = Object.freeze({
   "rule.policy.deny": PermissionDenialReason.PolicyDenied,
   "rule.disallowedTools": PermissionDenialReason.DisallowedTool,
+  // 协调者只读预设（specs/coordinator-readonly-preset.md R1.2/R4）：独立归因 token，
+  // 不并入 disallowed_tool——保留中性文案、identity_missing 与逃生阀的可区分性。
+  [COORDINATOR_READONLY_RULE_ID]: PermissionDenialReason.CoordinatorReadOnly,
   "rule.skillActivation.deny": CoreAutoDenyExtraReason.SkillActivationDenied,
   "rule.project.deny": PermissionDenialReason.ProjectRuleDenied,
   "mode.plan.nonReadOnly": PermissionDenialReason.PlanModeRequiresReadOnly,

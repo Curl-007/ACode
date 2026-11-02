@@ -1,7 +1,7 @@
 // 2026-12-31 例外债务偿还：自 facades.ts 按职责拆出 —— ProviderSettingsFacade
 // （Settings 视图读取、模型配置解析预览与串行化写入边界）。类逐字迁移，行为零改动；
 // 视图契约见 provider-settings-views.ts，快照投影见 provider-settings-projection.ts。
-import type { ProviderModelMembership } from "./config-service.js";
+import type { ProviderModelMembership, ProviderImportInput } from "./config-service.js";
 import type {
   ModelConfigObject,
   ModelId,
@@ -26,6 +26,7 @@ import type {
   ResolveModelConfigInput,
   SavePersonalModelDraftInput,
 } from "./provider-settings-views.js";
+import type { PersonalProviderImportOutcome } from "./config-service.js";
 import {
   createProviderSettingsView,
   requireEffectiveProvider,
@@ -145,6 +146,20 @@ export class ProviderSettingsFacade {
           : {}),
       }),
     ).then(({ result, view }) => ({ providerId: result.providerId, view }));
+  }
+
+  /**
+   * provider 配置导入（docs/specs/provider-config-import.md R6）：整批候选单事务写入，
+   * 返回逐条结果（含实际 providerId/modelIds）与刷新后的设置视图。
+   * 入参 `apiKey` 是明文，只流向 repository 写入漏斗，不进任何返回值。
+   */
+  importPersonalProviders(input: readonly ProviderImportInput[]): Promise<{
+    readonly result: PersonalProviderImportOutcome;
+    readonly view: ProviderSettingsView;
+  }> {
+    return this.#mutateWithResult("import-providers", (target) =>
+      target.importPersonalProviders(input),
+    );
   }
 
   savePersonalProviderOverlay(

@@ -3,10 +3,11 @@
  * AgentTeams 插件 server 的端到端冒烟：用 @modelcontextprotocol/client 的
  * Client + StdioClientTransport 驱动（与宿主 adapter 同一条协商链路，含
  * server/discover 版本协商）。无 _meta 的 tools/call 用 caller 降级身份。
- * 验证：tools/list（17 个）→ create → add/bind → create_task（依赖）→
- * approve → status（next_actions）→ claim → update（verify 门）→ send_message →
- * status → 面板 API → delete → 工具关闭；0.2 增补：多团队并行、teamId 寻址、
- * team_ambiguous、status 总览、adopt_team、teams[] 通知、/api/teams。
+ * 验证：tools/list（21 个）→ create → add/bind → create_task（依赖）→
+ * approve → status（next_actions）→ claim → update（verify 门，汇报落 in_review）→
+ * send_message → accept_task（非隔离团队验收 → done）→ status → 面板 API →
+ * delete → 工具关闭；0.2 增补：多团队并行、teamId 寻址、team_ambiguous、
+ * status 总览、adopt_team、teams[] 通知、/api/teams。
  */
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -73,10 +74,15 @@ const check = (label, condition) => {
 try {
   const listed = await client.listTools();
   const names = listed.tools.map((tool) => tool.name).sort();
-  check("17 tools listed", names.length === 17);
+  check("21 tools listed", names.length === 21);
   check("create present", names.includes("agent_teams_create"));
   check("adopt_team present", names.includes("agent_teams_adopt_team"));
   check("merge_member_worktree present", names.includes("agent_teams_merge_member_worktree"));
+  // 批次 0/1/3 新增的工具面：验收 diff/checks、显式验收、队长等待成员。
+  check("review_member_diff present", names.includes("agent_teams_review_member_diff"));
+  check("run_checks present", names.includes("agent_teams_run_checks"));
+  check("accept_task present", names.includes("agent_teams_accept_task"));
+  check("wait_for_members present", names.includes("agent_teams_wait_for_members"));
   check(
     "schemas carry type object",
     listed.tools.every((tool) => tool.inputSchema?.type === "object"),
@@ -211,7 +217,9 @@ try {
       { name: "dev-1", role: "member" },
     ),
   );
-  check("task done", updated.status === "done");
+  // 批次 1（spec 第 2 册 R2.1/R2.2）：update_task(done) 是「汇报」，落 in_review 而非 done。
+  check("task reported to in_review", updated.status === "in_review");
+  check("in_review awaits acceptance", updated.awaiting_acceptance === true);
 
   const sent = text(
     await toolCall(
@@ -222,6 +230,17 @@ try {
   );
   check("message from derived", sent.from === "dev-1");
 
+  // 批次 1（spec 第 2 册 R2.1/OQ-1）：本冒烟团队未开工作树隔离，无合并入口，验收走
+  // 队长显式 accept_task（isolated 团队该工具会被拒，改由合并耦合验收）。仅 accept 到 done
+  // 后才放行下游依赖（dag.dependencySatisfied 只认 done）。
+  const accepted = text(
+    await toolCall("agent_teams_accept_task", { taskId: "t-1" }, { role: "captain" }),
+  );
+  check(
+    "accept_task closes in_review task",
+    accepted.status === "done" && accepted.accepted === true,
+  );
+
   const status = text(await toolCall("agent_teams_status", {}, { role: "captain" }));
   check("captain status perspective", status.perspective === "captain");
   // status 返回本次读取的消息内容（读即置已读），下次 status 才为空。
@@ -230,7 +249,7 @@ try {
     Array.isArray(status.unread.captain) &&
       status.unread.captain.some((message) => message.from === "dev-1"),
   );
-  check("t-2 ready after t-1 done", status.ready_tasks.includes("t-2"));
+  check("t-2 ready after t-1 accepted", status.ready_tasks.includes("t-2"));
   const readState = await waitForPluginState(
     (notification) =>
       notification.data?.teamId === created.teamId &&

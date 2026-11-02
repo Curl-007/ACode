@@ -46,6 +46,9 @@ export function mergeConfigs(...configs: PrioritizedConfig[]): RuntimeConfigPatc
     // result.autoResume 整体替换成当前层对象，事后再展开 result.autoResume 读到的是
     // 本层自己——跨层逐字段继承形同虚设（后一层的部分覆盖会丢掉前一层的其余字段）。
     const previousAutoResume = result.autoResume;
+    // agentTeams.hostWake 同理必须在 Object.assign 之前快照：assign 会把 result.agentTeams
+    // 整体替换成当前层对象，事后展开读到的是本层自己，跨层逐字段继承形同虚设。
+    const previousAgentTeams = result.agentTeams;
     // B1 收口（specs/project-mcp-trust-gate.md R11）：mcp 与 hooks/plugins 同理必须在
     // Object.assign 之前快照——assign 会把 result.mcp 整体替换成当前层的对象，下面
     // servers 展开里读到的 result.mcp?.servers 其实是**本层自己**的 servers，跨文件/
@@ -201,6 +204,15 @@ export function mergeConfigs(...configs: PrioritizedConfig[]): RuntimeConfigPatc
       result.autoResume = {
         ...previousAutoResume,
         ...config.autoResume,
+      };
+    }
+    if (config.agentTeams) {
+      // hostWake 逐字段继承低层（System 层 = DefaultRuntimeConfig.agentTeams.hostWake 全量）。
+      result.agentTeams = {
+        hostWake: {
+          ...previousAgentTeams?.hostWake,
+          ...config.agentTeams.hostWake,
+        },
       };
     }
     if (config.hooks) {

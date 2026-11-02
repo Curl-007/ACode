@@ -25,10 +25,13 @@ export interface WorktreeCleanupSummary {
   errors: WorktreeCleanupEntry[];
 }
 
-/** 成员是否仍持有进行中任务（队长视角：attempt owner 或 assignee 命中）。 */
+/**
+ * 成员是否仍持有未完成任务（队长视角：attempt owner 或 assignee 命中）。
+ * R2.4：`in_review` 视为**未完成**——待验收的工作树不得被清理（EI-52：删除/清理前材料优先）。
+ */
 function memberHasActiveTask(store: TeamStore, team: TeamState, memberName: string): boolean {
   return store.readTasks(team.teamId).some((task) => {
-    if (task.status !== "in_progress") return false;
+    if (task.status !== "in_progress" && task.status !== "in_review") return false;
     const owner = task.attempts.find((attempt) => attempt.id === task.activeAttemptId)?.owner;
     return owner === memberName || task.assignee === memberName;
   });

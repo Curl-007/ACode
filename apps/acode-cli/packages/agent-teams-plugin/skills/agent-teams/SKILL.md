@@ -25,8 +25,10 @@ description: AgentTeams 多智能体协作协议——把当前会话升级为�
    （**创建第二个团队前向用户确认并行意图**；多个团队并行时，后续所有团队级调用
    显式带 `teamId`，避免 `team_ambiguous` 歧义错误）。
 3. `agent_teams_add_member` 登记 → 按返回的 `spawn_instruction` 用原生 `Agent` 工具
-   spawn（`subagent_type: "agent-teams:member"`，后台运行）→ `agent_teams_bind_member`
-   回填 agentId。**未 bind 的成员不会被派工。**
+   spawn（`subagent_type` 用它给定的值，默认 `"agent-teams:member"`，后台运行）→
+   `agent_teams_bind_member` 回填 agentId。**未 bind 的成员不会被派工。**
+   可选 `roleRef` 指定成员的角色能力包（宿主 AgentProfile 名）；**由宿主解析**，报未知
+   类型时不要改用默认类型、报告用户；该 profile 必须自带团队 MCP。
 4. `agent_teams_create_task` 建 DAG：依赖显式；review/test 是质量门，做成下游依赖。
 5. draft 完成后向用户呈现名册+DAG，批准后 `agent_teams_approve_plan`。
 6. 之后**机械执行**每次工具返回的 `next_actions.wake[]`：逐条
@@ -34,16 +36,26 @@ description: AgentTeams 多智能体协作协议——把当前会话升级为�
    `agent_teams_wait_for_work` 等活，新任务/邮件会让它自己醒来，不出现在 `wake[]` 里；
    `wake[]` 只针对已不在等待的成员。给常驻成员追加指令用 `agent_teams_send_message`。
 7. 被唤醒（成员回报/后台通知）→ `agent_teams_status` → 按 next_actions 行动。
-8. 全部完成 → 汇总交付 → `agent_teams_delete(archive: true)` → **按返回的 `disband[]`
-   逐个 `TaskStop(task_id = agentId)` 遣散成员的后台 Agent**。成员不会自己结束，结束
-   它们是队长的责任（已结束的成员返回「已结束，无需停止」，无害）；中途不再需要的
-   单个成员用 `agent_teams_remove_member` 移出，它的等待随即收工。
+8. 全部任务**验收完成（`done`）** → 汇总交付 → `agent_teams_delete(archive: true)` → **按返回的
+   `disband[]` 逐个 `TaskStop(task_id = agentId)` 遣散成员的后台 Agent**。成员不会自己结束，
+   结束它们是队长的责任（已结束的成员返回「已结束，无需停止」，无害）；中途不再需要的
+   单个成员用 `agent_teams_remove_member` 移出，它的等待随即收工。仍有 `in_review`
+   任务时不要归档——它们是待验收件（`delete` 会在 `pending_tasks` 里显式列出）。
 9. **不许轮询**：`agent_teams_status` 只在被唤醒时调一次；不要拿它写进度循环。
-   派完活就停下——等待不消耗 token，轮询消耗。
+   派完活就停下——等待不消耗 token，轮询消耗。成员事件（邮箱投递 / 任务进终态 /
+   `in_review` 汇报）由宿主经插件 `wakePending` 投影自动唤醒你；要主动等时用
+   `agent_teams_wait_for_members`（`until:"any|all"`，成员 `question`/`escalation`
+   立即返回防互等；无事件约 8 分钟返回 `timedOut:true`，再调继续等——不是错误）。
 10. **`next_actions` 每次都是纯派生**，不记得上一批派工；`wake` 为空 = 此刻无事可派。
-11. **驳回返工走 `agent_teams_send_message` 追加指令**（原成员上下文保留），
-    `agent_teams_reassign_task` 只用于换人与队长接管；重派达上限（默认 3）会返回
-    `reassign_limit_exceeded`，这时停下向用户汇报，不要重试。
+11. **汇报 ≠ 验收**：成员 `update_task(done)` 落 **`in_review`（非终态）**，不放行下游。
+    你先取证（`agent_teams_review_member_diff` 看 diff、`agent_teams_run_checks` 跑它
+    `$ ` 声明过的命令），再：**验收通过** → 隔离团队 `agent_teams_merge_member_worktree`
+    （合并即验收，`accepted_tasks` 列出被验收任务）、非隔离团队 `agent_teams_accept_task`；
+    **不通过 → 打回** `agent_teams_reassign_task(taskId, assignee: <原成员>)`（worktree 保留）、
+    或**只补要求**用 `agent_teams_send_message`（不改状态）。
+    `agent_teams_reassign_task` **不再用于队长接管**（`assignee: "captain"` 被拒绝——队长会话
+    的文件写工具被宿主按团队协议禁用）；重派达上限（默认 3）返回 `reassign_limit_exceeded`，
+    这时停下向用户汇报，不要重试。
 12. **孤儿团队接管**：status 总览里 `stale: true` 的团队（原队长已不在）用
     `agent_teams_adopt_team(teamId, reason)` 接管后继续推进或归档；原队长 10 分钟内
     活跃时需带 `force`。建议并行团队 ≤2（成员 spawn 会排队）。
@@ -54,8 +66,10 @@ description: AgentTeams 多智能体协作协议——把当前会话升级为�
   `wait_for_work`（阻塞等活）；队长专属工具成员调用会收到 `forbidden_for_caller`。
 - 验收读原文：成员回报的 `summary` 与通知里的 `result` 都是自述，不是验收结论；
   判定完成前读 `output-file` 的原文与产出物（通知里的 `<verification-reminder>`）。
-- 成员完成必须 `update_task`（attempt_id 凭据，done 需 verify 自验结果），
-  然后按指令用 `RespondToCoordinator` 回报。
+- 成员完成必须 `update_task`（attempt_id 凭据）：`done` 是**汇报**，落 `in_review`
+  （待验收），且需在 `verify` 里用 **`$ <命令>` 声明行**写实际跑过的命令与结果；队长只能
+  执行逐字声明过的命令（未声明 → `verify_required` 且不执行）。然后按指令用
+  `RespondToCoordinator` 回报，再继续等活（`in_review` 期间可认领下一件）。
 - 成员间消息：`agent_teams_send_message(to, message)` 直达邮箱；收件人正在等活时
   立即醒来，否则下一次唤醒时由 status 读到。消息与任务都属于某个团队：你被绑进多个团队时，团队级调用
   带 `teamId`（status 不带 teamId 会返回多团队总览）。

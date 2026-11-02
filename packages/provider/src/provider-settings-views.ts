@@ -3,7 +3,11 @@
 // 接口逐字迁移，行为零改动；Registry 快照投影见 provider-settings-projection.ts，
 // Facade 实现见 provider-settings-facade.ts / model-selection-facade.ts。
 import type { ConfigValidationIssue } from "./config-overlay.js";
-import type { ProviderModelMembership } from "./config-service.js";
+import type {
+  PersonalProviderImportOutcome,
+  ProviderImportInput,
+  ProviderModelMembership,
+} from "./config-service.js";
 import type {
   ModelConfig,
   ModelConfigObject,
@@ -104,6 +108,10 @@ export interface ProviderSettingsMutationTarget {
     enabled: boolean,
     membership?: ProviderModelMembership,
   ): Promise<unknown>;
+  /** provider 配置导入：整批候选单事务写入（docs/specs/provider-config-import.md R6）。 */
+  importPersonalProviders(
+    inputs: readonly ProviderImportInput[],
+  ): Promise<PersonalProviderImportOutcome>;
   refresh(reason: string): Promise<ProviderRegistryServiceSnapshot>;
   /** 主动重读上游事实后再刷新 Registry。 */
   refreshSources?(reason: string): Promise<ProviderRegistryServiceSnapshot>;

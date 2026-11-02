@@ -15,6 +15,7 @@ const GROUP_LIMIT = 5;
 
 const GROUP_LABEL_IDS: Record<TeamInlineTaskGroupKey, string> = {
   running: "teamPanel.timeline.groupRunning",
+  inReview: "teamPanel.timeline.groupInReview",
   failed: "teamPanel.timeline.groupFailed",
   ready: "teamPanel.timeline.groupReady",
   todo: "teamPanel.timeline.groupTodo",
@@ -24,6 +25,8 @@ const GROUP_LABEL_IDS: Record<TeamInlineTaskGroupKey, string> = {
 /** 分组状态点的取色：复用时间线的状态语义（running/failed/done/pending）。 */
 const GROUP_DOT: Record<TeamInlineTaskGroupKey, string> = {
   running: "bg-[var(--color-warning)]",
+  // 待验收 = 等待裁决，走 confirmation-interaction 家族（不得用 success 冒充等待态）。
+  inReview: "bg-[var(--color-interaction-confirmation-foreground)]",
   failed: "bg-destructive",
   ready: "bg-foreground-subtle",
   todo: "bg-foreground-subtlest",
@@ -44,7 +47,10 @@ export function TeamInlineTaskList({
   onOpenAll?: () => void;
 }) {
   const { intl } = useACodeIntl();
-  // 只有「已完成」默认折叠：它是唯一会随长任务列表无限增长的一组。
+  // 「已完成」恒可折叠（唯一会随长任务列表无限增长的一组）；「待验收」超单组上限时
+  // 也可折叠（EI-111 的长列表纪律），但不改变其排在最前的组序。
+  const isFoldable = (group: TeamInlineTaskGroup) =>
+    group.key === "done" || (group.key === "inReview" && group.tasks.length > GROUP_LIMIT);
   const [expandedGroups, setExpandedGroups] = useState<ReadonlySet<TeamInlineTaskGroupKey>>(
     () => new Set(),
   );
@@ -63,25 +69,26 @@ export function TeamInlineTaskList({
         )}
       </div>
       {groups.map((group) => {
-        const open = group.key === "done" ? expandedGroups.has("done") : true;
+        const foldable = isFoldable(group);
+        const open = foldable ? expandedGroups.has(group.key) : true;
         const visible = open ? group.tasks.slice(0, GROUP_LIMIT) : [];
         const hidden = group.tasks.length - visible.length;
         return (
           <div className="flex min-w-0 flex-col" data-task-group={group.key} key={group.key}>
             <button
-              aria-expanded={group.key === "done" ? open : undefined}
+              aria-expanded={foldable ? open : undefined}
               className={cn(
                 "flex cursor-pointer items-center gap-1.5 text-left text-foreground-subtle outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/40",
-                group.key === "done" && "rounded-sm",
+                foldable && "rounded-sm",
               )}
               data-testid={`team-inline-group-${group.key}`}
               type="button"
               onClick={() => {
-                if (group.key !== "done") return;
+                if (!foldable) return;
                 setExpandedGroups((current) => {
                   const next = new Set(current);
-                  if (next.has("done")) next.delete("done");
-                  else next.add("done");
+                  if (next.has(group.key)) next.delete(group.key);
+                  else next.add(group.key);
                   return next;
                 });
               }}
@@ -96,7 +103,7 @@ export function TeamInlineTaskList({
                   { count: group.tasks.length },
                 )}
               </span>
-              {group.key === "done" ? (
+              {foldable ? (
                 open ? (
                   <ChevronDownIcon aria-hidden className="size-3" />
                 ) : (

@@ -2687,6 +2687,15 @@ const enUS: Record<string, string> = {
   "settings.mcpServers.import.deselectSource": "Deselect all MCP servers from this source",
   "settings.mcpServers.import.itemCount": "{count} MCP servers",
   "settings.mcpServers.import.skipReason.sameNameExists": "Server exists",
+  // Unresolved variable reference warning (docs/specs/provider-config-import.md R7.6): location + keys only
+  "settings.mcpServers.import.variableReference.title":
+    "Unresolved variable reference in {location} ({keys})",
+  "settings.mcpServers.import.variableReference.titleNoKeys":
+    "Unresolved variable reference in {location}",
+  "settings.mcpServers.import.variableReference.location.env": "environment",
+  "settings.mcpServers.import.variableReference.location.headers": "headers",
+  "settings.mcpServers.import.variableReference.location.args": "arguments",
+  "settings.mcpServers.import.variableReference.location.url": "URL",
   "settings.mcpServers.import.start": "Import selected MCP servers",
   "settings.mcpServers.import.targetLabel": "Import target",
   "settings.mcpServers.import.target.global": "Import to Global",
@@ -2752,6 +2761,74 @@ const enUS: Record<string, string> = {
   "settings.modelProvider.catalogProviderSearch": "Search providers",
   "settings.modelProvider.catalogProviderEmpty": "No providers found",
   "settings.modelProvider.addProviderAction": "Add provider",
+  // Import providers from external tools (docs/specs/provider-config-import.md R8)
+  "settings.modelProvider.import.title": "Import providers from external tools",
+  "settings.modelProvider.import.hostNote":
+    "Scans the local configuration of external tools on the current host (the remote host for a remote workspace).",
+  "settings.modelProvider.import.source.label": "Sources",
+  "settings.modelProvider.import.source.claudeCode": "Claude Code",
+  "settings.modelProvider.import.source.codex": "Codex",
+  "settings.modelProvider.import.source.ccSwitch": "CC Switch",
+  "settings.modelProvider.import.source.selectAll": "Select all",
+  "settings.modelProvider.import.source.clearAll": "Clear all",
+  "settings.modelProvider.import.scan": "Scan",
+  "settings.modelProvider.import.rescan": "Scan again",
+  "settings.modelProvider.import.scanning": "Scanning external tool configuration...",
+  "settings.modelProvider.import.importing": "Importing...",
+  "settings.modelProvider.import.cancel": "Cancel",
+  "settings.modelProvider.import.confirm": "Import selected ({count})",
+  "settings.modelProvider.import.finish": "Done",
+  "settings.modelProvider.import.empty":
+    "No importable providers were found. Make sure the tools are installed and configured on this host, then scan again.",
+  "settings.modelProvider.import.preview.summary": "Found {count} candidate providers",
+  "settings.modelProvider.import.preview.selectionCount": "Selected {selected}/{total}",
+  "settings.modelProvider.import.preview.selectAll": "Select all",
+  "settings.modelProvider.import.preview.clearAll": "Clear all",
+  "settings.modelProvider.import.preview.current": "In use",
+  "settings.modelProvider.import.preview.duplicateExisting": "Already exists",
+  "settings.modelProvider.import.preview.duplicateCandidate": "Duplicate of another source",
+  "settings.modelProvider.import.preview.duplicateExistingReason":
+    "Same as existing provider \"{name}\"; not selected by default",
+  "settings.modelProvider.import.preview.duplicateCandidateReason":
+    "Same as \"{name}\"; not selected by default",
+  "settings.modelProvider.import.preview.modelCount": "{count} models",
+  "settings.modelProvider.import.preview.keyPresent": "Key {hint}",
+  "settings.modelProvider.import.preview.keyMissing": "No key detected",
+  "settings.modelProvider.import.result.imported": "Imported",
+  "settings.modelProvider.import.result.skipped": "Skipped",
+  "settings.modelProvider.import.result.empty": "Nothing was imported in this run.",
+  "settings.modelProvider.import.skipReason.model-exists": "Model already exists",
+  "settings.modelProvider.import.warnings.title": "Scan warnings ({count})",
+  "settings.modelProvider.import.warning.source-read-failed": "Failed to read configuration: {file}",
+  "settings.modelProvider.import.warning.invalid-json":
+    "{source} configuration is not valid JSON; skipped",
+  "settings.modelProvider.import.warning.invalid-toml":
+    "{source} configuration is not valid TOML (line {line}); skipped",
+  "settings.modelProvider.import.warning.no-table": "{source} configuration has no model_providers table",
+  "settings.modelProvider.import.warning.auth-ignored":
+    "{source} auth.json could not be parsed; no key was read",
+  "settings.modelProvider.import.warning.env-missing-key":
+    "Environment variable {key} referenced by {source} is not set; the provider has no key",
+  "settings.modelProvider.import.warning.config-invalid-json": "This entry is not valid JSON; skipped",
+  "settings.modelProvider.import.warning.unsupported-api-format":
+    "ACode does not support this API format; skipped {count} entries",
+  "settings.modelProvider.import.warning.unsupported-app-type": "Skipped {count} unsupported entries",
+  "settings.modelProvider.import.warning.file-too-large": "Configuration file too large; skipped: {file}",
+  "settings.modelProvider.import.warning.db-too-large": "Database copy too large; skipped: {file}",
+  "settings.modelProvider.import.warning.candidate-invalid":
+    "{source} contained an invalid candidate ({reason}); skipped",
+  "settings.modelProvider.import.warning.candidates-truncated":
+    "Too many candidates; {count} entries were truncated",
+  "settings.modelProvider.import.error.invalid-args":
+    "Invalid arguments; nothing was read or written.",
+  "settings.modelProvider.import.error.scan-stale": "The scan results have expired. Scan again to import.",
+  "settings.modelProvider.import.error.candidate-missing":
+    "Some candidates are no longer valid and were removed from the selection; nothing was written.",
+  "settings.modelProvider.import.error.candidateMissingNote":
+    "The expired candidate was removed from this selection.",
+  "settings.modelProvider.import.error.scan-failed": "Scan failed. Please try again.",
+  "settings.modelProvider.import.error.write-failed":
+    "Import failed: nothing was written. The preview is kept so you can retry.",
   "settings.modelProvider.templatePickerTitle": "Add provider",
   "settings.modelProvider.templateGroup.zhipu": "Zhipu",
   "settings.modelProvider.templateGroup.other": "Other",
@@ -4079,6 +4156,10 @@ const enUS: Record<string, string> = {
   "settingsSync.agent.kiroCli": "Kiro CLI",
   "settingsSync.agent.roo": "Roo Code",
   "settingsSync.agent.codeBuddy": "CodeBuddy",
+  "settingsSync.agent.cursor": "Cursor",
+  "settingsSync.agent.gemini": "Gemini CLI",
+  "settingsSync.agent.vscode": "VS Code",
+  "settingsSync.agent.ccSwitch": "CC Switch",
   "settingsSync.agent.agents": "Shared .agents",
   "settingsSync.category.providers": "Providers",
   "settingsSync.category.providers.description": "Models and credentials",
@@ -6830,6 +6911,7 @@ const enUS: Record<string, string> = {
   "teamPanel.timeline.doneCount": "{count} done",
   "teamPanel.timeline.tasksTitle": "Tasks {done}/{total}",
   "teamPanel.timeline.groupRunning": "In progress",
+  "teamPanel.timeline.groupInReview": "Awaiting acceptance {count}",
   "teamPanel.timeline.groupFailed": "Failed · blocked {count}",
   "teamPanel.timeline.groupReady": "Ready · claimable {count}",
   "teamPanel.timeline.groupTodo": "Not started {count}",
@@ -6846,6 +6928,16 @@ const enUS: Record<string, string> = {
   "chat.statusPanel.agentTeams.statusArchived": "Archived",
   "chat.statusPanel.agentTeams.tasksLabel": "Tasks ({count})",
   "chat.statusPanel.agentTeams.inProgressCount": "{count} running",
+  "chat.statusPanel.agentTeams.inReviewCount": "{count} awaiting acceptance",
+  // Batch 4 metrics row (read-only derived projection): missing data always reads
+  // "insufficient sample", never faked as 0.
+  "chat.statusPanel.agentTeams.metricsInsufficient": "Insufficient sample",
+  "chat.statusPanel.agentTeams.metricsFirstPassRate": "First-pass rate {rate}",
+  "chat.statusPanel.agentTeams.metricsAvgAttempts": "Avg attempts {count}",
+  "chat.statusPanel.agentTeams.metricsRejections": "Rejections {count}",
+  "chat.statusPanel.agentTeams.metricsAvgLatency": "Avg review latency {seconds}s",
+  // Explicit human-intervention hint when the captain has stopped (host-team-wake R10).
+  "chat.statusPanel.agentTeams.wakeHint": "Captain stopped; human intervention needed",
   // Metric row: the ready set and critical path are computed by the plugin in the
   // snapshot (see state/dag.ts); the host only displays them.
   "chat.statusPanel.agentTeams.readyCount": "{count} ready",
@@ -6896,6 +6988,63 @@ const enUS: Record<string, string> = {
   "teamPanel.group.waiting": "Waiting on dependencies",
   "teamPanel.group.done": "Done",
   "teamPanel.group.blocked": "Failed / blocked / cancelled",
+  // Batch 4 acceptance surface: new "Awaiting review" task-board group (first, confirmation
+  // family—never faked with the success color).
+  "teamPanel.group.review": "Awaiting review",
+  // Review tab (only rendered when reviews[] is non-empty): list / on-demand diff / remind
+  // actions / unavailable exits.
+  "teamPanel.tab.review": "Awaiting review",
+  "teamPanel.review.openEntry": "{count} awaiting review",
+  "teamPanel.review.viewDiff": "View diff",
+  "teamPanel.review.hideDiff": "Hide diff",
+  "teamPanel.review.filesTitle": "{count} files · +{added} −{removed}",
+  "teamPanel.review.loadingFiles": "Reading file list…",
+  "teamPanel.review.loadingDiff": "Reading diff…",
+  "teamPanel.review.noChanges": "No changes in this commit range.",
+  "teamPanel.review.filesTruncated":
+    "The file list is too large and was dropped entirely (out-of-sync marker); retry or ask the captain to narrow the range.",
+  "teamPanel.review.retry": "Retry",
+  "teamPanel.review.group.in_review": "{count} awaiting review",
+  "teamPanel.review.group.merged": "{count} accepted",
+  "teamPanel.review.group.rejected": "{count} rejected",
+  "teamPanel.review.status.in_review": "Awaiting review",
+  "teamPanel.review.status.merged": "Accepted",
+  "teamPanel.review.status.rejected": "Rejected",
+  "teamPanel.review.remind": "Remind captain to review",
+  "teamPanel.review.reject": "Request rejection",
+  "teamPanel.review.remindText":
+    "Please review the team's pending tasks {taskIds}: check the diff and check results, then decide to merge or reject.",
+  "teamPanel.review.rejectText":
+    "Please reject the team's pending tasks {taskIds}: I judge they do not meet the acceptance criteria.",
+  "teamPanel.review.composerWarn":
+    "No writable composer right now (no active workspace); the reminder was not inserted.",
+  "teamPanel.review.check.section": "Check result",
+  "teamPanel.review.check.passed": "Checks passed",
+  "teamPanel.review.check.failed": "Checks failed",
+  "teamPanel.review.check.exitCode": "Exit code {code}",
+  "teamPanel.review.check.truncated": "Output truncated",
+  "teamPanel.review.check.expand": "Show full output",
+  "teamPanel.review.check.collapse": "Hide output",
+  "teamPanel.review.wakeHint":
+    "Captain stopped; human intervention needed ({unread} unread · {tasks} member tasks pending)",
+  "teamPanel.review.diffUnavailable.pinnedMissing":
+    "The snapshot carries no pinned commits, so the diff cannot be reviewed. Ask the captain to use agent_teams_review_member_diff.",
+  "teamPanel.review.diffUnavailable.disconnected":
+    "Workspace is not connected; the diff is unavailable. Reconnect the workspace and retry.",
+  "teamPanel.review.diffUnavailable.worktree_disabled":
+    "This team has no worktree isolation, so the diff is unavailable.",
+  "teamPanel.review.diffUnavailable.worktree_cleaned":
+    "The worktree was cleaned up; the commit pair is not readable right now.",
+  "teamPanel.review.diffUnavailable.commits_unreachable":
+    "The commits are no longer reachable (they may have been garbage-collected).",
+  "teamPanel.review.diffUnavailable.refUnresolved":
+    "The worktree was cleaned up and the commits are unreachable.",
+  "teamPanel.review.diffUnavailable.not_a_repository": "This workspace is not a Git repository.",
+  "teamPanel.review.diffUnavailable.git_unavailable": "Git is unavailable or the read command failed.",
+  "teamPanel.review.diffUnavailable.timeout": "The read timed out.",
+  "teamPanel.review.diffUnavailable.tooLarge":
+    "The content is too large and was omitted; ask the captain to narrow the range or use the review tool.",
+  "teamPanel.review.diffUnavailable.unknown": "The read failed for an unknown reason.",
   "teamPanel.group.empty": "None",
   "teamPanel.readyUnavailable":
     "This older team snapshot has no readiness data; check task states and dependencies.",

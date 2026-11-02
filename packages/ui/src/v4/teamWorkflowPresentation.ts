@@ -39,6 +39,8 @@ export interface TeamWorkflowMember {
 
 export function teamTaskStatus(status: string): StepRunStatus {
   if (status === "in_progress") return "running";
+  // 待验收仍是「在途」（等队长裁决），不是 pending/未开始。
+  if (status === "in_review") return "running";
   if (status === "done") return "done";
   if (status === "failed" || status === "blocked" || status === "cancelled") return "failed";
   return "pending";
@@ -202,8 +204,8 @@ export function localizeTeamTimeline(
   };
 }
 
-/** 内联任务清单的分组键（SPEC-012 R5）。 */
-export type TeamInlineTaskGroupKey = "running" | "failed" | "ready" | "todo" | "done";
+/** 内联任务清单的分组键（SPEC-012 R5；批次 1 增 inReview = 待验收）。 */
+export type TeamInlineTaskGroupKey = "running" | "inReview" | "failed" | "ready" | "todo" | "done";
 
 export interface TeamInlineTaskGroup {
   key: TeamInlineTaskGroupKey;
@@ -211,15 +213,17 @@ export interface TeamInlineTaskGroup {
 }
 
 /**
- * 卡片内联任务清单分组：进行中 → 失败·阻断 → 就绪 → 待开始 → 已完成。
+ * 卡片内联任务清单分组：进行中 → 待验收 → 失败·阻断 → 就绪 → 待开始 → 已完成。
  * 空组不返回；组序即渲染序。blockedByFailedQuality 命中的 todo 归入失败·阻断
- * （与时间线的 statusOf 同一口径）。
+ * （与时间线的 statusOf 同一口径）。待验收单列，是因为它需要队长的动作（验收/打回），
+ * 混进「进行中」会让待验收件在长列表里被淹没。
  */
 export function groupInlineTasks(team: ConversationStatusPanelTeam): TeamInlineTaskGroup[] {
   const ready = new Set(team.readyTaskIds);
   const blockedQuality = new Set(team.blockedByFailedQuality.map((entry) => entry.taskId));
   const groups: Record<TeamInlineTaskGroupKey, ConversationStatusPanelTeamTask[]> = {
     running: [],
+    inReview: [],
     failed: [],
     ready: [],
     todo: [],
@@ -229,11 +233,12 @@ export function groupInlineTasks(team: ConversationStatusPanelTeam): TeamInlineT
     if (task.status === "done" || task.status === "cancelled") groups.done.push(task);
     else if (task.status === "failed" || task.status === "blocked") groups.failed.push(task);
     else if (task.status === "in_progress") groups.running.push(task);
+    else if (task.status === "in_review") groups.inReview.push(task);
     else if (blockedQuality.has(task.taskId)) groups.failed.push(task);
     else if (ready.has(task.taskId)) groups.ready.push(task);
     else groups.todo.push(task);
   }
-  return (["running", "failed", "ready", "todo", "done"] as const)
+  return (["running", "inReview", "failed", "ready", "todo", "done"] as const)
     .map((key) => ({ key, tasks: groups[key] }))
     .filter((group) => group.tasks.length > 0);
 }

@@ -553,6 +553,10 @@ export interface TeamPanelLanding {
   teamId?: string | undefined;
   focusPhaseId?: string | undefined;
   focusTaskId?: string | undefined;
+  /** 打开时选中的页签（批次 4 additive）；缺席 = overview（与既有 selectionCurrent 回退同义）。 */
+  focusTab?: "overview" | "tasks" | "members" | "mailbox" | "review" | undefined;
+  /** 待验收页签的定位条目（批次 4 additive）；缺席 = 定位第一条待验收。 */
+  focusReviewTaskId?: string | undefined;
 }
 
 export interface OpenTeamSideTabRequest extends TeamPanelLanding {
@@ -833,6 +837,8 @@ function createTeamSidePaneTab(
     teamId: options.teamId,
     focusPhaseId: options.focusPhaseId,
     focusTaskId: options.focusTaskId,
+    focusTab: options.focusTab,
+    focusReviewTaskId: options.focusReviewTaskId,
     openedAt: Date.now(),
     workspaceKey: options.workspaceKey,
     workspacePath: options.workspacePath,

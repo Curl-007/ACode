@@ -57,6 +57,14 @@ import {
   matchesSkillActivationAllow,
   matchesSkillActivationDeny,
 } from "./skill-activation-rules.js";
+// 协调者只读预设 2.5 判定（specs/coordinator-readonly-preset.md R1.2/R6）：与会话级
+// deny 同档、位次在 disallowedTools 之后、技能激活期 deny 之前，所有模式分支之前。
+import {
+  COORDINATOR_IDENTITY_MISSING_TOKEN,
+  COORDINATOR_READONLY_RULE_ID,
+  resolveCoordinatorDeny,
+  type CoordinatorScope,
+} from "./coordinator-readonly.js";
 import type { SkillActivationScope } from "@acode/contracts";
 
 // -----------------------------------------------
@@ -147,6 +155,15 @@ export interface PermissionContext {
    * 匹配语义裁决见 permission/skill-activation-rules.ts 头注。缺席 = 零行为变化。
    */
   skillActivationRules?: SkillActivationScope;
+  /**
+   * 协调者只读作用域（specs/coordinator-readonly-preset.md R1.4）：本会话被判定为
+   * AgentTeams 队长时的会话级只读预设快照（executor 的 permission-flow / 复核链路
+   * 每次裁决前从共享 store 取）。deny 并入会话级 deny 位次（disallowedTools 之后、
+   * 技能激活期 deny 之前，所有模式分支之前）——策略地板 deny/ask 与其后的熔断器
+   * 照常压过它，任何 allow 分支都不可放宽它。判定来源与解除时机见
+   * agent/coordinator-scope.ts。缺席 = 未施加 / 逃生阀放开 / 非队长，零行为变化。
+   */
+  coordinatorReadOnly?: CoordinatorScope;
 }
 
 export interface PermissionToolCapability {
@@ -206,6 +223,13 @@ export class PermissionService {
    * 生命周期哲学）；重启 / 冷恢复 / `/new` 自然清零，不存在跨会话的预填绕过。
    */
   private readonly bashReflexGate = new BashConfirmReflexGate();
+
+  /**
+   * R4.3 identity_missing 审计去重键（specs/coordinator-readonly-preset.md R6.3）：
+   * 同一会话在「判定不可得」窗口内只 warn 一次，避免逐条工具拒绝刷屏。随实例生灭
+   * （一个实例 = 一个会话，与 sessionRules 同生命周期哲学）。
+   */
+  private readonly coordinatorIdentityMissingAudited = new Set<string>();
 
   constructor(private config: PermissionConfig = defaultPermissionConfig) {}
 
@@ -322,6 +346,24 @@ export class PermissionService {
     });
   }
 
+  /**
+   * R4.3 warn 审计（specs/coordinator-readonly-preset.md R6.3）：R4.1 粘性期的
+   * 「判定不可得」逐会话一次留痕（复用 permissionAuditLogger 通道）。审计缺席绝不
+   * 阻断拒绝——拒绝本身即本判定的效果。字段只记会话与归因 token，不记工具输入。
+   */
+  private auditCoordinatorIdentityMissing(context: PermissionContext): void {
+    const key = String(context.sessionId ?? "unknown");
+    if (this.coordinatorIdentityMissingAudited.has(key)) return;
+    this.coordinatorIdentityMissingAudited.add(key);
+    this.config.logger?.warn?.("Coordinator readonly identity could not be re-confirmed (R4.1)", {
+      event: "permission.coordinator_readonly.identity_missing",
+      ruleId: COORDINATOR_READONLY_RULE_ID,
+      reason: COORDINATOR_IDENTITY_MISSING_TOKEN,
+      toolName: context.toolName,
+      ...(context.sessionId ? { sessionId: context.sessionId } : {}),
+    });
+  }
+
   checkPermission(
     context: PermissionContext,
     toolCapability?: PermissionToolCapability,
@@ -414,6 +456,23 @@ export class PermissionService {
         "rule.disallowedTools",
         `Tool ${context.toolName} is explicitly disallowed`,
       );
+    }
+
+    // 协调者只读预设（specs/coordinator-readonly-preset.md R1.2，位次 2.5）：与
+    // disallowedTools 同档的会话级 deny——在**所有模式分支之前**收口（yolo 直通、
+    // plan transition、auto 分类器、项目规则之前），压不过策略地板 deny/ask（其前）。
+    // 用独立 ruleId（非并入 rule.disallowedTools）：中性文案、identity_missing 归因
+    // 与逃生阀可验证都需可区分的归因面。独立判定体量控制在数行，不新建大类。
+    const coordinatorDeny = resolveCoordinatorDeny({
+      toolName: context.toolName,
+      scope: context.coordinatorReadOnly,
+    });
+    if (coordinatorDeny) {
+      // R4.3：R4.1 的「判定不可得」经 warn 审计留痕（去重），拒绝文案已带 identity_missing。
+      if (context.coordinatorReadOnly?.identityMissing) {
+        this.auditCoordinatorIdentityMissing(context);
+      }
+      return this.deny(context, capability, coordinatorDeny.ruleId, coordinatorDeny.reason);
     }
 
     // 技能激活期 deny（skill-frontmatter-governance R4 消费接线）：与 disallowedTools

@@ -18,6 +18,8 @@ import type {
   GitPathMutationRequest,
   GitPushRequest,
   GitPushResult,
+  GitRefRangeDiffRequest,
+  GitRefRangeDiffResult,
   GitRefreshRequest,
   GitRefreshResult,
   GitRepositoryRequest,
@@ -40,6 +42,7 @@ export interface IGitService {
   getIgnoredPaths(params: GitIgnoredPathsRequest): Promise<string[]>;
   getDiff(params: GitDiffQuery): Promise<GitDiffResult>;
   getBranchComparison(params: GitRepositoryRequest): Promise<GitBranchComparison>;
+  getRefRangeDiff(params: GitRefRangeDiffRequest): Promise<GitRefRangeDiffResult>;
   stagePaths(params: GitPathMutationRequest): Promise<void>;
   unstagePaths(params: GitPathMutationRequest): Promise<void>;
   discardPaths(params: GitDiscardPathsRequest): Promise<void>;
@@ -64,6 +67,7 @@ export const IGitService = createServiceDescriptor<IGitService>(ServiceChannels.
     "getIgnoredPaths",
     "getDiff",
     "getBranchComparison",
+    "getRefRangeDiff",
     "stagePaths",
     "unstagePaths",
     "discardPaths",
@@ -87,6 +91,8 @@ export const IGitService = createServiceDescriptor<IGitService>(ServiceChannels.
     },
     getDiff: (args) => requireGitParams(args, ["workspacePath", "path"]),
     getBranchComparison: (args) => requireGitParams(args, ["workspacePath"]),
+    getRefRangeDiff: (args) =>
+      requireGitParams(args, ["workspacePath", "baseRef", "headRef"]),
     stagePaths: (args) => {
       const value = requireGitParams(args, ["workspacePath"]);
       requireStringArrayField(value, "paths");

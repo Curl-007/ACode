@@ -81,6 +81,7 @@ import {
   notifyAutoResumeTurnFailure,
   notifyAutoResumeTurnSettled,
 } from "../auto-resume/runtime-api.js";
+import { notifyTeamWakeTurnSettled } from "../team-wake/runtime-api.js";
 
 const TARGET_RUN_HEARTBEAT_MS = 15_000;
 
@@ -450,6 +451,8 @@ export async function executeTurnCommand(
           events.push(completeEvent);
           // 成功结局（hook 拦截的 success 收口同样计入）：auto-resume 链清零。
           notifyAutoResumeTurnSettled(this, "success");
+          // 宿主团队唤醒：成功 turn 亦是唤醒计数/重试档的重置条件（specs/host-team-wake.md R7）。
+          notifyTeamWakeTurnSettled(this);
           await recordTurnUsageFact(this, {
             completedAt: Date.now(),
             events,
@@ -702,6 +705,8 @@ export async function executeTurnCommand(
         events.push(completeEvent);
         // 成功 turn = auto-resume 链重置条件（specs/turn-auto-resume.md）。
         notifyAutoResumeTurnSettled(this, "success");
+        // 宿主团队唤醒：成功 turn 同样重置唤醒计数/重试档（specs/host-team-wake.md R7）。
+        notifyTeamWakeTurnSettled(this);
         await recordTurnUsageFact(this, {
           completedAt: Date.now(),
           events,

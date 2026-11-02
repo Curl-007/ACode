@@ -14,6 +14,7 @@ export type RuntimeCommandMode =
   | "target-continuation-loop"
   | "task-notification"
   | "subagent-message"
+  | "team-wake"
   | "control-only-turn";
 export type RuntimeCommandId = string & {
   readonly __runtimeCommandId: unique symbol;
@@ -108,12 +109,37 @@ export interface ControlOnlyTurnRuntimeCommand extends RuntimeCommandBase {
   readonly workflowLaunch: WorkflowLaunchMeta;
 }
 
+/**
+ * 宿主团队唤醒命令（apps/acode-cli/specs/host-team-wake.md R5）：与 `subagent-message`
+ * 同档——**不进** `runtime-command-active-loop.ts` 的吸收集，因而天然「回合结束后投递」；
+ * 空闲队长 drain 到它即自动开轮（= 唤醒），忙碌则留队、当前 turn 收尾后投递一次。
+ *
+ * 唤醒不是用户输入，没有 commandId/admission/CAS 语义，故**不经** v4 `CommandInbox`。
+ * 与本 spec 契约形状的唯一增量：`settledTaskIds`（成员名下已终态任务 id）——messageIds
+ * 之外的另一类唤醒事实也需要在 consume 时计入 ack，spec 的字段清单未列，此为准入扩展。
+ */
+export interface TeamWakeRuntimeCommand extends RuntimeCommandBase {
+  readonly branchGeneration: number;
+  readonly mode: "team-wake";
+  readonly source: "team_wake";
+  readonly teamId: string;
+  /** = 插件 TeamState.wakeSeq（单调，R3）；世代过滤见 owner。 */
+  readonly wakeGeneration: number;
+  readonly messageIds: readonly string[];
+  readonly settledTaskIds: readonly string[];
+  readonly triggers: readonly ("message" | "settled_task" | "question" | "escalation")[];
+  readonly captainSessionId: string;
+  /** 宿主自撰的结构化事实块（不含成员原文）。 */
+  readonly text: string;
+}
+
 export type RuntimeCommand =
   | PromptRuntimeCommand
   | TargetContinuationRuntimeCommand
   | TargetContinuationLoopRuntimeCommand
   | TaskNotificationRuntimeCommand
   | SubagentMessageRuntimeCommand
+  | TeamWakeRuntimeCommand
   | ControlOnlyTurnRuntimeCommand;
 
 export interface RuntimeCommandQueue {

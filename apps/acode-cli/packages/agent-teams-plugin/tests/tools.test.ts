@@ -10,7 +10,11 @@ import { memberTools } from "../src/tools/members.js";
 import { taskTools } from "../src/tools/tasks.js";
 import { messageTools } from "../src/tools/messages.js";
 import { worktreeTools } from "../src/tools/worktree.js";
+import { reviewDiffTools } from "../src/tools/review-diff.js";
+import { runChecksTools } from "../src/tools/run-checks.js";
+import { acceptTaskTools } from "../src/tools/accept-task.js";
 import { waitForWorkTool } from "../src/tools/member-wait.js";
+import { waitForMembersTool } from "../src/tools/member-wait-captain.js";
 import { subagentSessionIdForAgent } from "../src/identity.js";
 import {
   DEFAULT_MAX_REASSIGN_ROUNDS,
@@ -27,7 +31,11 @@ const ALL_TOOLS = [
   ...taskTools,
   ...messageTools,
   ...worktreeTools,
+  ...reviewDiffTools,
+  ...runChecksTools,
+  ...acceptTaskTools,
   waitForWorkTool,
+  waitForMembersTool,
 ];
 const tool = (name: string) => {
   const found = ALL_TOOLS.find((item) => item.name === name);
@@ -204,7 +212,30 @@ describe("tool identity matrix and happy path", () => {
       },
       member("dev-1"),
     )) as { status: string };
-    assert.equal(updated.status, "done");
+    // R2.1：done 是「汇报」，落到 in_review 等验收（不再是终态）。
+    assert.equal(updated.status, "in_review");
+    assert.equal(store.readTask(createdTeam.teamId, "t-1")?.status, "in_review");
+
+    // 待验收不放行下游依赖：t-2 仍不可认领。
+    const beforeAccept = (await tool("agent_teams_status").handler({}, captain())) as {
+      ready_tasks: string[];
+    };
+    assert.deepEqual(beforeAccept.ready_tasks, []);
+
+    // OQ-1：非隔离团队由队长显式验收（隔离团队走合并耦合，见 worktree.test）。
+    const accepted = (await tool("agent_teams_accept_task").handler(
+      { taskId: "t-1" },
+      captain(),
+    )) as { status: string; accepted: boolean };
+    assert.equal(accepted.status, "done");
+    assert.equal(accepted.accepted, true);
+    const acceptedTask = store.readTask(createdTeam.teamId, "t-1")!;
+    assert.equal(acceptedTask.status, "done");
+    // OQ-7：验收记一条「谁验收」revision。
+    assert.ok(
+      acceptedTask.revisions.some((revision) => revision.fields.includes("acceptedBy")),
+      "acceptance must record who accepted it",
+    );
 
     const sent = (await tool("agent_teams_send_message").handler(
       { to: "captain", message: "task done", summary: "t-1 done" },
@@ -588,10 +619,11 @@ describe("max reassign rounds normalization", () => {
 
 void randomUUID;
 
-describe("tool registry (0.4.0 surface)", () => {
-  it("exposes exactly the 17 agent_teams_* tools, no duplicates and no extra", () => {
+describe("tool registry (0.6.0 surface)", () => {
+  it("exposes exactly the 21 agent_teams_* tools, no duplicates and no extra", () => {
     const names = ALL_TOOLS.map((item) => item.name).sort();
     assert.deepEqual(names, [
+      "agent_teams_accept_task",
       "agent_teams_add_member",
       "agent_teams_adopt_team",
       "agent_teams_amend_task",
@@ -605,9 +637,12 @@ describe("tool registry (0.4.0 surface)", () => {
       "agent_teams_reassign_task",
       "agent_teams_remove_member",
       "agent_teams_resume",
+      "agent_teams_review_member_diff",
+      "agent_teams_run_checks",
       "agent_teams_send_message",
       "agent_teams_status",
       "agent_teams_update_task",
+      "agent_teams_wait_for_members",
       "agent_teams_wait_for_work",
     ]);
     assert.equal(new Set(names).size, names.length, "tool names must be unique");
@@ -624,5 +659,252 @@ describe("tool registry (0.4.0 surface)", () => {
       "agent_teams_update_task",
       "agent_teams_wait_for_work",
     ]);
+  });
+});
+/**
+ * 批次 1 验收语义（R2.1-R2.7，无 git 部分）：汇报落 in_review、打回、OQ-1 显式验收、
+ * OQ-6 验收标准冻结、归档显式列出、移除成员回收、未知状态 fail loudly。
+ */
+describe("acceptance loop semantics (batch 1, no git)", () => {
+  let root: string;
+  let store: TeamStore;
+  let teamId: string;
+  let taskId: string;
+  let attemptId: string;
+
+  const captain = () => makeContext({ store, role: "captain" });
+  const member = (name: string) => makeContext({ store, role: "member", memberName: name });
+  const bindMember = (name: string) =>
+    // 显式带 teamId：避免用例残留团队导致隐式寻址歧义。
+    tool("agent_teams_bind_member").handler({ teamId, name, agentId: agentIdFor(name) }, captain());
+
+  /** 非隔离团队 + 已绑定成员 + 已认领任务（in_progress）。 */
+  async function setupClaimed(): Promise<void> {
+    teamId = (
+      (await tool("agent_teams_create").handler(
+        { goal: "acceptance", approval: "automatic" },
+        captain(),
+      )) as { teamId: string }
+    ).teamId;
+    await tool("agent_teams_add_member").handler(
+      { teamId, name: "dev-1", role: "dev", charter: "c" },
+      captain(),
+    );
+    await bindMember("dev-1");
+    taskId = (
+      (await tool("agent_teams_create_task").handler(
+        { teamId, title: "build", objective: "o", acceptance: ["a"] },
+        captain(),
+      )) as { taskId: string }
+    ).taskId;
+    attemptId = (
+      (await tool("agent_teams_claim_task").handler(
+        { teamId, taskId },
+        member("dev-1"),
+      )) as { attempt_id: string }
+    ).attempt_id;
+  }
+
+  const report = (verify = "$ node -v") =>
+    tool("agent_teams_update_task").handler(
+      { teamId, taskId, attemptId, status: "done", summary: "done", verify },
+      member("dev-1"),
+    ) as Promise<{ status: string; awaiting_acceptance?: boolean }>;
+
+  before(() => {
+    root = mkdtempSync(join(tmpdir(), "agent-teams-acc-"));
+    store = new TeamStore(root);
+  });
+
+  after(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("scenario 1: update_task(done) reports into in_review, not done", async () => {
+    await setupClaimed();
+    const updated = await report();
+    assert.equal(updated.status, "in_review");
+    assert.equal(updated.awaiting_acceptance, true);
+    assert.equal(store.readTask(teamId, taskId)?.status, "in_review");
+    // 汇报不影响 attempt 记录：旧 attempt 收尾为 done，activeAttemptId 仍在（待验收）。
+    const task = store.readTask(teamId, taskId)!;
+    assert.equal(task.activeAttemptId, attemptId);
+    assert.equal(task.attempts.find((a) => a.id === attemptId)?.outcome, "done");
+    // 同 attempt 重复汇报是幂等成功（R2.6），不产生第二次状态迁移。
+    const repeat = (await report()) as { status: string; idempotent?: boolean };
+    assert.equal(repeat.status, "in_review");
+    assert.equal(repeat.idempotent, true);
+    await tool("agent_teams_delete").handler({ teamId, archive: false }, captain());
+  });
+
+  it("scenario 5: reassign from in_review appends a revision and does not bump attemptSeq", async () => {
+    await setupClaimed();
+    await report();
+    const before = store.readTask(teamId, taskId)!;
+    const revisionsBefore = before.revisions.length;
+    await tool("agent_teams_reassign_task").handler(
+      { teamId, taskId, assignee: "dev-1", reason: "rework" },
+      captain(),
+    );
+    const after = store.readTask(teamId, taskId)!;
+    assert.equal(after.status, "todo");
+    assert.equal(after.activeAttemptId, undefined);
+    assert.equal(after.revisions.length, revisionsBefore + 1);
+    assert.deepEqual(after.revisions[after.revisions.length - 1]?.fields, ["status", "assignee"]);
+    assert.equal(after.revisions[after.revisions.length - 1]?.by, "captain");
+    // OQ-3：attemptSeq 是认领计数器，打回**不当场**递增。
+    assert.equal(after.attemptSeq, before.attemptSeq);
+    // 重新认领后 attempts +1（重派轮次随认领推进），且拿到新 attempt id。
+    const reclaim = (await tool("agent_teams_claim_task").handler(
+      { teamId, taskId },
+      member("dev-1"),
+    )) as { attempt_id: string };
+    const reclaimed = store.readTask(teamId, taskId)!;
+    assert.equal(reclaimed.attempts.length, before.attempts.length + 1);
+    assert.notEqual(reclaim.attempt_id, attemptId);
+    assert.equal(reclaimed.attemptSeq, before.attemptSeq + 1);
+    await tool("agent_teams_delete").handler({ teamId, archive: false }, captain());
+  });
+
+  it("scenario 6: reassign_limit_exceeded is enforced across reject/reclaim rounds", async () => {
+    await setupClaimed();
+    await report();
+    // 默认上限 3：连续「打回 → 重新认领」直到越界。
+    for (let round = 0; round < 3; round += 1) {
+      await tool("agent_teams_reassign_task").handler(
+        { teamId, taskId, assignee: "dev-1", reason: `round ${round}` },
+        captain(),
+      );
+      await tool("agent_teams_claim_task").handler({ teamId, taskId }, member("dev-1"));
+    }
+    await assert.rejects(
+      tool("agent_teams_reassign_task").handler(
+        { teamId, taskId, assignee: "dev-1", reason: "one too many" },
+        captain(),
+      ),
+      (error: unknown) => {
+        const typed = error as { code?: string; data?: { reassignCount?: number } };
+        assert.equal(typed.code, "reassign_limit_exceeded");
+        assert.equal(typed.data?.reassignCount, 3);
+        return true;
+      },
+    );
+    // send_message 通道不受限（回归）。
+    await tool("agent_teams_send_message").handler(
+      { teamId, message: "more instructions", to: "dev-1" },
+      captain(),
+    );
+    await tool("agent_teams_delete").handler({ teamId, archive: false }, captain());
+  });
+
+  it("OQ-6: acceptance is frozen while in_review (objective/notes still editable)", async () => {
+    await setupClaimed();
+    await report();
+    await assert.rejects(
+      tool("agent_teams_amend_task").handler(
+        { teamId, taskId, acceptance: ["changed"] },
+        captain(),
+      ),
+      (error: unknown) => (error as { code?: string }).code === "acceptance_frozen",
+    );
+    const amended = (await tool("agent_teams_amend_task").handler(
+      { teamId, taskId, objective: "clarified" },
+      captain(),
+    )) as { revised_fields: string[] };
+    assert.deepEqual(amended.revised_fields, ["objective"]);
+    await tool("agent_teams_delete").handler({ teamId, archive: false }, captain());
+  });
+
+  it("OQ-1: explicit accept closes an in_review task and records who accepted", async () => {
+    await setupClaimed();
+    await report();
+    const accepted = (await tool("agent_teams_accept_task").handler(
+      { teamId, taskId },
+      captain(),
+    )) as { status: string; accepted: boolean };
+    assert.equal(accepted.status, "done");
+    assert.equal(accepted.accepted, true);
+    const task = store.readTask(teamId, taskId)!;
+    assert.equal(task.status, "done");
+    assert.ok(task.revisions.some((revision) => revision.fields.includes("acceptedBy")));
+    // 验收后任务封闭：accept 再来一次被拒。
+    await assert.rejects(
+      tool("agent_teams_accept_task").handler({ teamId, taskId }, captain()),
+      (error: unknown) => (error as { code?: string }).code === "invalid_input",
+    );
+    await tool("agent_teams_delete").handler({ teamId, archive: false }, captain());
+  });
+
+  it("OQ-1: accept refuses a task that is not in_review and refuses isolated teams", async () => {
+    await setupClaimed();
+    // 尚未汇报（in_progress）→ 拒绝。
+    await assert.rejects(
+      tool("agent_teams_accept_task").handler({ teamId, taskId }, captain()),
+      (error: unknown) => (error as { code?: string }).code === "invalid_input",
+    );
+    await report();
+    // 隔离团队由合并耦合验收：accept_task 拒绝（避免第二条验收语义）。
+    store.writeTeam(teamId, (team) => {
+      team.worktreeIsolation = {
+        enabled: true,
+        repoRoot: process.cwd(),
+        baseBranch: "main",
+        createdAt: nowIso(),
+      };
+    });
+    await assert.rejects(
+      tool("agent_teams_accept_task").handler({ teamId, taskId }, captain()),
+      (error: unknown) => (error as { code?: string }).code === "invalid_input",
+    );
+    await tool("agent_teams_delete").handler({ teamId, archive: false }, captain());
+  });
+
+  it("scenario 7: delete lists in_review as unfinished and remove_member reclaims it", async () => {
+    // (a) 归档显式列出 in_review 任务
+    await setupClaimed();
+    await report();
+    const deleted = (await tool("agent_teams_delete").handler(
+      { teamId, archive: false },
+      captain(),
+    )) as { pending_tasks: Array<{ taskId: string; status: string }> };
+    assert.equal(deleted.pending_tasks.length, 1);
+    assert.equal(deleted.pending_tasks[0]?.taskId, taskId);
+    assert.equal(deleted.pending_tasks[0]?.status, "in_review");
+
+    // (b) remove_member 对 in_review 任务 → 回收为 todo（不静默丢弃，EI-1）
+    await setupClaimed();
+    await report();
+    const removed = (await tool("agent_teams_remove_member").handler(
+      { teamId, name: "dev-1", reason: "left" },
+      captain(),
+    )) as { reclaimed_tasks: string[] };
+    assert.deepEqual(removed.reclaimed_tasks, [taskId]);
+    const reclaimed = store.readTask(teamId, taskId)!;
+    assert.equal(reclaimed.status, "todo");
+    assert.equal(reclaimed.activeAttemptId, undefined);
+    await tool("agent_teams_delete").handler({ teamId, archive: false }, captain());
+  });
+
+  it("scenario 8 reverse: an unknown task status fails loudly at the status read boundary", async () => {
+    await setupClaimed();
+    // 直写磁盘，模拟外来 / 未来版本写入的未知状态。
+    store.writeTask(teamId, taskId, (task) => {
+      (task as { status: string }).status = "shipped";
+    });
+    await assert.rejects(
+      tool("agent_teams_status").handler({ teamId }, captain()),
+      (error: unknown) => {
+        const typed = error as { code?: string; name?: string };
+        assert.equal(typed.code, "invalid_input");
+        assert.notEqual(typed.name, "TypeError");
+        return true;
+      },
+    );
+    // claim 也拒（assertTransition 保护，不把未知当 todo）。
+    await assert.rejects(
+      tool("agent_teams_claim_task").handler({ teamId, taskId }, member("dev-1")),
+      (error: unknown) => (error as { code?: string }).code === "invalid_input",
+    );
+    await tool("agent_teams_delete").handler({ teamId, archive: false }, captain());
   });
 });

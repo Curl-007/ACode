@@ -367,6 +367,7 @@ export function buildConversationStatusPanelModel(
   const teamSections = buildConversationStatusPanelTeamSections(
     input.pluginStates,
     input.sessionId,
+    { sessionControl: input.sessionControl ?? null },
   );
 
   return {

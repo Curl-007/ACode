@@ -7,6 +7,9 @@ import type { TeamState } from "../state/types.js";
 import { STALE_TEAM_AFTER_MS } from "../state/types.js";
 import { TEAM_ID_PATTERN } from "../state/helpers.js";
 import { TEAM_TRUST_NOTE, wrapTeamMessageBodies } from "../trust-wrapper.js";
+import { buildTeamAcceptanceMetrics } from "../metrics.js";
+import { countTasksByStatus } from "../state/task-counts.js";
+import { assertKnownTaskStatuses } from "../state/machine.js";
 
 /**
  * status 工具：单团队全量（队长/成员双视角）或多团队总览（不带 teamId 且调用方
@@ -18,7 +21,7 @@ const statusSchema = z.object({ teamId: z.string().regex(TEAM_ID_PATTERN).option
 export const statusTool: ToolDefinition = {
   name: "agent_teams_status",
   description:
-    "Read team state. Captain view: full roster, task DAG summary, unread counts, ready tasks and next_actions dispatch instructions. Member view: own current task, claimable tasks, own unread messages. Without teamId: one team → that team's full view; multiple teams → multi-team overview listing each team's counts and your role (pass teamId to focus one). Call this whenever you wake up or need to check state.",
+    "Read team state. Captain view: full roster, task DAG summary, unread counts, ready tasks, acceptance metrics and next_actions dispatch instructions. Tasks reported by members sit in_review until you accept them (merge the worktree, or agent_teams_accept_task for non-isolated teams) — in_review is not a terminal state and does not unblock dependents. Member view: own current task, claimable tasks, own unread messages. Without teamId: one team → that team's full view; multiple teams → multi-team overview listing each team's counts and your role (pass teamId to focus one). Call this whenever you wake up or need to check state.",
   schema: statusSchema,
   memberAllowed: true,
   async handler(input, context): Promise<ToolResult> {
@@ -37,6 +40,8 @@ export const statusTool: ToolDefinition = {
     const team = context.resolveTeamContext(parsed.teamId);
     const memberName = context.resolveMemberName(team);
     const tasks = context.store.readTasks(team.teamId);
+    // R2.5：读到未知任务状态即 fail loudly，不静默当 todo（双视角同一读边界）。
+    assertKnownTaskStatuses(tasks);
     const readyIds = computeReadyTaskIds(tasks);
     const tasksById = new Map(tasks.map((task) => [task.taskId, task]));
 
@@ -152,6 +157,8 @@ export const statusTool: ToolDefinition = {
         perspective: "captain",
       }),
       ...(refreshed.worktreeIsolation ? { worktree_isolation: refreshed.worktreeIsolation } : {}),
+      // R0：验收度量（additive，队长视角）。只读派生，不落第二份台账（EI-48）。
+      metrics: buildTeamAcceptanceMetrics(refreshed, tasks),
       panel_url: context.panelUrl,
       ...context.identityWarning(),
     };
@@ -166,14 +173,17 @@ export function buildMultiTeamOverview(
   const perspective = context.identity.runtimeScope === "subagent" ? "member" : "captain";
   const overview = teams.map((team) => {
     const tasks = context.store.readTasks(team.teamId);
-    const counts = { done: 0, inProgress: 0, todo: 0, failed: 0, blocked: 0 };
-    for (const task of tasks) {
-      if (task.status === "done") counts.done += 1;
-      else if (task.status === "in_progress") counts.inProgress += 1;
-      else if (task.status === "todo") counts.todo += 1;
-      else if (task.status === "failed") counts.failed += 1;
-      else if (task.status === "blocked") counts.blocked += 1;
-    }
+    assertKnownTaskStatuses(tasks);
+    // R2.7：单一计数实现（EI-2），含 inReview。
+    const bucket = countTasksByStatus(tasks);
+    const counts = {
+      done: bucket.done,
+      inProgress: bucket.inProgress,
+      todo: bucket.todo,
+      inReview: bucket.inReview,
+      failed: bucket.failed,
+      blocked: bucket.blocked,
+    };
     const myRole =
       perspective === "captain"
         ? "captain"

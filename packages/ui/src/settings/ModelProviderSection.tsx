@@ -38,6 +38,9 @@ import {
 } from "./model-provider-section/constants.js";
 import { ModelProviderSectionDetail } from "./model-provider-section/Detail.js";
 import { ModelProviderSectionLayout } from "./model-provider-section/SectionLayout.js";
+import { ProviderImportDialog } from "./model-provider-section/ProviderImportDialog.js";
+import { resolveEntitledAccountProviderIds } from "./model-provider-section/entitledAccountProviderIds.js";
+import { openProviderApiKeyUrl } from "./model-provider-section/providerApiKeyUrl.js";
 import { ProviderTemplatePicker } from "./model-provider-section/ProviderTemplatePicker.js";
 import type { CodingPlanLoginOptions } from "./model-provider-section/codingPlanPricingCards.js";
 import { useModelProviderNavigation } from "./model-provider-section/useModelProviderNavigation.js";
@@ -278,17 +281,10 @@ export function ModelProviderSection({
       id: "settings.modelProvider.testModel.localWorkspaceUnavailable",
     }),
   });
-  const entitledAccountProviderIds = useMemo<ReadonlySet<string>>(() => {
-    return new Set(
-      (providerSettingsView?.providers ?? [])
-        .filter(
-          (provider) =>
-            provider.effectiveConfig.access?.type === "zhipu-account" &&
-            provider.effectiveConfig.access.entitled === true,
-        )
-        .map((provider) => provider.providerId),
-    );
-  }, [providerSettingsView]);
+  const entitledAccountProviderIds = useMemo(
+    () => resolveEntitledAccountProviderIds(providerSettingsView?.providers),
+    [providerSettingsView],
+  );
   const providerConnectionRefreshSignal = providerSettingsView?.revision;
   const [initialModelProviderTarget] = useState(() => consumePendingSettingsModelProviderTarget());
   const [invalidProviderTarget, setInvalidProviderTarget] = useState(() =>
@@ -311,6 +307,7 @@ export function ModelProviderSection({
   const [, setCodingPlanProductsRefreshToken] = useState(0);
   const [pendingCreatedProviderId, setPendingCreatedProviderId] = useState<string | null>(null);
   const [templatePickerOpen, setTemplatePickerOpen] = useState(false);
+  const [providerImportOpen, setProviderImportOpen] = useState(false);
   const [creatingProvider, setCreatingProvider] = useState(false);
 
   useEffect(() => {
@@ -771,13 +768,7 @@ export function ModelProviderSection({
   );
 
   const handleOpenApiKeyUrl = useCallback(
-    (url: string) => {
-      const normalizedUrl = url.trim();
-      if (!normalizedUrl) {
-        return;
-      }
-      platform.openExternal(normalizedUrl);
-    },
+    (url: string) => openProviderApiKeyUrl(url, platform),
     [platform],
   );
 
@@ -1065,6 +1056,8 @@ export function ModelProviderSection({
       }}
       addProviderLabel={intl.formatMessage({ id: "settings.modelProvider.addProviderAction" })}
       onAddProvider={() => setTemplatePickerOpen(true)}
+      importLabel={intl.formatMessage({ id: "settings.resourceActions.import" })}
+      onImport={() => setProviderImportOpen(true)}
       navigationGroups={navigationGroups}
       selectedNodeKey={selectedNodeKey}
       onSelectNavItem={handleSelectNavItem}
@@ -1155,6 +1148,11 @@ export function ModelProviderSection({
           }}
         />
       )}
+      <ProviderImportDialog
+        open={providerImportOpen}
+        onOpenChange={setProviderImportOpen}
+        onImported={() => refresh()}
+      />
     </ModelProviderSectionLayout>
   );
 }

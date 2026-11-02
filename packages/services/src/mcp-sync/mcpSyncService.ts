@@ -275,6 +275,34 @@ async function saveMcpToUserDirectory(payload: SaveCliMcpToUserDirectoryRequest)
   await writeACodeServersToFile(scope, nextServers, payload.projectPath);
 }
 
+/**
+ * MCP 写入漏斗的可复用导出面（docs/specs/provider-config-import.md R7.3 / 裁决 Q2）：
+ * settings-sync 的外部 Agent 导入改为经本函数落盘，消除既有第二条 writer
+ * （settings-sync 的 addMcpServerToAcodeConfig——直接 writeFile、无原子写、无 enable 迁移）。
+ *
+ * 语义与 `saveMcpToUserDirectory` 的 upsert 一致：先读既有 server（含 enable→enabled 迁移），
+ * 再以入参逐名覆盖写入，最后按 ACODE_MCP_DESCRIPTOR 解析路径做原子写。
+ * 去重（同名跳过）仍由调用方的 `existingNameKeysByTargetScope` 预先完成，本函数不改该语义。
+ */
+export async function upsertAcodeMcpServers(input: {
+  readonly scope: Exclude<McpScope, "common">;
+  readonly workspacePath?: string;
+  readonly servers: Readonly<Record<string, Record<string, unknown>>>;
+}): Promise<void> {
+  const existingServers = await readDirectoryServersFromFile(
+    ACODE_MCP_DESCRIPTOR,
+    input.scope,
+    input.workspacePath,
+  );
+  const nextServers: Record<string, Record<string, unknown>> = Object.fromEntries(
+    existingServers.map((server) => [server.name, server.config as Record<string, unknown>]),
+  );
+  for (const [name, config] of Object.entries(input.servers)) {
+    nextServers[name] = config;
+  }
+  await writeACodeServersToFile(input.scope, nextServers, input.workspacePath);
+}
+
 function sortMcpRecords(records: UserMcpRecord[]): UserMcpRecord[] {
   return records.sort((left, right) => left.name.localeCompare(right.name));
 }

@@ -210,7 +210,7 @@ export const teamTools: readonly ToolDefinition[] = [
   {
     name: "agent_teams_delete",
     description:
-      "Captain only. End the team. Default archives tasks, dependency graph and mailboxes under .agent-teams/archives/; pass archive:false to discard them. After this, team tools are closed; the panel stays readable for history.",
+      "Captain only. End the team. Default archives tasks, dependency graph and mailboxes under .agent-teams/archives/; pass archive:false to discard them. Unfinished tasks (todo / in_progress / in_review / blocked) are listed in pending_tasks so nothing awaiting acceptance is silently dropped — in_review counts as unfinished. After this, team tools are closed; the panel stays readable for history.",
     schema: deleteSchema,
     memberAllowed: false,
     async handler(input, context): Promise<ToolResult> {
@@ -219,6 +219,22 @@ export const teamTools: readonly ToolDefinition[] = [
       context.requireCaptain(team);
       // 遣散清单必须在 archiveTeam 前取：归档会移走/删除 team.json（修复原因见 SPEC-012 §3.6）。
       const disband = collectDisbandRoster(team);
+      // R2.4：归档前显式列出未完成任务（in_review 视为未完成），默认只删记录不删数据、
+      // 也不静默丢弃待验收件（EI-1/EI-36）。
+      const pendingTasks = context.store
+        .readTasks(team.teamId)
+        .filter(
+          (task) =>
+            task.status === "in_review" ||
+            task.status === "in_progress" ||
+            task.status === "todo" ||
+            task.status === "blocked",
+        )
+        .map((task) => ({
+          taskId: task.taskId,
+          status: task.status,
+          ...(task.summary ? { summary: task.summary } : {}),
+        }));
       // SPEC-015：清理工作树也必须先于归档——归档会搬走 team.json，之后再无句柄可查。
       // 清理结果写回 team.json 后再归档，保留事后审计所需的分支/路径与结果。
       const worktrees = await cleanupTeamWorktrees(context.store, team);
@@ -229,6 +245,7 @@ export const teamTools: readonly ToolDefinition[] = [
         teamId: outcome?.teamId ?? team.teamId,
         archive_dir: parsed.archive ? outcome?.archiveDir : undefined,
         disband,
+        pending_tasks: pendingTasks,
         ...(worktrees ? { worktrees } : {}),
         protocol:
           "Team ended. For EVERY entry in disband[], call TaskStop with task_id = agentId (already-finished agents are fine). Then summarize the combined result to the user.",

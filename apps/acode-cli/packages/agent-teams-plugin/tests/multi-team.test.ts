@@ -194,7 +194,8 @@ describe("multi-team core acceptance (PRD 0.2)", () => {
       },
       member("dev-1"),
     )) as { status: string };
-    assert.equal(updated.status, "done");
+    // 批次 1：update_task(done) 落到 in_review（非终态）。
+    assert.equal(updated.status, "in_review");
     const deleted = (await tool("agent_teams_delete").handler({ archive: true }, captain())) as {
       archived: boolean;
       teamId: string;

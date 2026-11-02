@@ -5,6 +5,7 @@ import { createRuntimeCommandId } from "../command-queue.js";
 import type { AgentRuntimeInternal } from "../internal.js";
 import { enqueueCancellableRuntimeCommand } from "./runtime-command-submit.js";
 import { notifyAutoResumeUserInputAdmitted } from "../auto-resume/runtime-api.js";
+import { notifyTeamWakeTurnSettled } from "../team-wake/runtime-api.js";
 import type {
   ActiveTurnStartReservation,
   ExecuteTurnOptions,
@@ -29,6 +30,8 @@ export async function admitPrompt(
     // 取消 pending 自动继续定时器并清零链计数。synthetic 注入（goal-continuation /
     // auto_resume 等自带 inputSource）不触发重置。
     notifyAutoResumeUserInputAdmitted(this);
+    // 宿主团队唤醒：用户输入接管同样重置唤醒计数/重试档（specs/host-team-wake.md R7）。
+    notifyTeamWakeTurnSettled(this);
   }
   const promotionLeaseOnly =
     options?.requireIdle === true &&

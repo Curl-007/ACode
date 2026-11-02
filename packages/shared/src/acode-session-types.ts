@@ -111,6 +111,9 @@ export const acodeSyntheticUserMessageSourceSchema = z.enum([
   // child 回复会作为 model-only synthetic user message 持久化；
   // app/agent 共用的承重消息 schema 必须与 CLI contracts 使用同一来源词表。
   "subagent_message",
+  // 宿主团队唤醒（apps/acode-cli/specs/host-team-wake.md R6）：与 contracts
+  // SYNTHETIC_USER_MESSAGE_SOURCES 保持同一词表，否则 v3 mapper 收窄该 source 会 tsc 失败。
+  "team_wake",
   "todo_reminder",
   // 工具按需检索公告（apps/acode-cli/specs/tool-search.md R9/R10）：model-only
   // synthetic notice；词表与 contracts SYNTHETIC_USER_MESSAGE_SOURCES 同步。

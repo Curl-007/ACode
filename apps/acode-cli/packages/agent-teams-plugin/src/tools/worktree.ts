@@ -1,12 +1,43 @@
 import { z } from "zod";
 import type { ToolDefinition, ToolResult } from "./registry.js";
 import { TEAM_ID_PATTERN, TeamError, nowIso } from "../state/helpers.js";
+import { assertTransition } from "../state/machine.js";
 import { mergeMemberWorktree } from "../worktree/manager.js";
 
 /**
  * 成员工作树合并（SPEC-015）。队长专属，唯一合并入口：
  * 冲突不自动解决，主工作区脏/不在基线分支时拒绝；默认保留成员树。
+ *
+ * R2.2（批次 1）：合并成功即**验收耦合**——该成员名下待验收（in_review）的任务
+ * 在同一锁段内 accept → done（该成员分支的全部提交一次性验收）。无待验收任务时
+ * 显式告知（EI-1 不静默）。
  */
+
+/**
+ * 把成员名下 in_review 任务一次性验收为 done（R2.2）。同一写段内调用（server 的
+ * withLock 覆盖整个 handler），只认「最后 attempt owner === 成员」或「assignee === 成员」。
+ * 返回被验收的 taskId 列表（幂等：无待验收任务时返回空并附显式 note）。
+ */
+function acceptMemberInReviewTasks(
+  context: import("./registry.js").ToolContext,
+  teamId: string,
+  memberName: string,
+): string[] {
+  const accepted: string[] = [];
+  for (const task of context.store.readTasks(teamId)) {
+    if (task.status !== "in_review") continue;
+    const lastOwner = task.attempts[task.attempts.length - 1]?.owner;
+    if (task.assignee !== memberName && lastOwner !== memberName) continue;
+    assertTransition("in_review", "accept");
+    context.store.writeTask(teamId, task.taskId, (target) => {
+      target.status = "done";
+      // OQ-7：记「谁验收」，与 amend/打回共用 revisions 台账。
+      target.revisions.push({ at: nowIso(), by: "captain", fields: ["status", "acceptedBy"] });
+    });
+    accepted.push(task.taskId);
+  }
+  return accepted;
+}
 
 const mergeSchema = z
   .object({
@@ -22,7 +53,7 @@ export const worktreeTools: readonly ToolDefinition[] = [
   {
     name: "agent_teams_merge_member_worktree",
     description:
-      "Captain only. Merge a member's isolated worktree branch back into the team's base branch (SPEC-015). Uncommitted member changes are snapshotted onto the member branch first. Refuses dirty main workspaces, wrong checked-out branch, and conflicts; conflicts are reported, never auto-resolved. Idempotent when the branch has no unique commits. Pass cleanup:true to remove the tree/branch after a clean merge (unmerged or dirty trees are always kept).",
+      "Captain only. Merge a member's isolated worktree branch back into the team's base branch (SPEC-015); merging IS the acceptance — the member's in_review tasks are marked done and listed in accepted_tasks (empty means nothing was awaiting acceptance). Uncommitted member changes are snapshotted onto the member branch first. Refuses dirty main workspaces, wrong checked-out branch, and conflicts; conflicts are reported, never auto-resolved, and the member's tasks stay in_review. Idempotent when the branch has no unique commits. Pass cleanup:true to remove the tree/branch after a clean merge (unmerged or dirty trees are always kept).",
     schema: mergeSchema,
     memberAllowed: false,
     async handler(input, context): Promise<ToolResult> {
@@ -76,6 +107,8 @@ export const worktreeTools: readonly ToolDefinition[] = [
           };
         }
       });
+      // R2.2：合并即验收（幂等：alreadyMerged 同样执行），与该 writeTeam 同处一个锁段。
+      const acceptedTasks = acceptMemberInReviewTasks(context, team.teamId, member.name);
       return {
         ok: true,
         teamId: team.teamId,
@@ -87,11 +120,18 @@ export const worktreeTools: readonly ToolDefinition[] = [
         no_changes: merged.noChanges,
         already_merged: merged.alreadyMerged,
         ...(merged.cleanup ? { cleanup: merged.cleanup } : {}),
-        notes: merged.alreadyMerged
-          ? ["The member branch had no unique commits; nothing to merge."]
-          : [
-              "Merged. Review the main workspace; resolve any conflicts in the member worktree and deliver again.",
-            ],
+        // R2.2：合并即验收——列出被一次性验收为 done 的任务（无则空 + 显式 note）。
+        accepted_tasks: acceptedTasks,
+        notes: [
+          ...(merged.alreadyMerged
+            ? ["The member branch had no unique commits; nothing to merge."]
+            : [
+                "Merged. Review the main workspace; resolve any conflicts in the member worktree and deliver again.",
+              ]),
+          ...(acceptedTasks.length === 0
+            ? ["Merged, but the member had no task awaiting acceptance."]
+            : []),
+        ],
         ...context.identityWarning(),
       };
     },

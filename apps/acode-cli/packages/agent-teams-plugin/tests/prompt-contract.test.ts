@@ -29,20 +29,29 @@ describe("prompt contract: captain protocol", () => {
     assert.ok(team.includes("纯派生"), "team.md must say next_actions is purely derived");
   });
 
-  it("commands/team.md routes rejection through send_message, not reassign", () => {
-    assert.ok(team.includes("驳回返工走追加指令"), "team.md must name the rejection channel");
+  it("commands/team.md splits补要求 from 打回 and revokes captain takeover", () => {
+    assert.ok(team.includes("只补要求、不返工"), "team.md must separate topping-up from rework");
     assert.ok(
       team.includes("agent_teams_send_message(to: <成员名>"),
       "team.md must show the send_message call shape",
     );
     assert.ok(
-      team.includes("只用于两件事"),
-      "team.md must scope reassign to owner change and takeover",
+      team.includes("不再用于队长接管"),
+      "team.md must revoke reassign-for-takeover (captain takeover revoked, Q2)",
     );
   });
 
+  it("commands/team.md teaches 汇报 != 验收, in_review and merge-as-acceptance", () => {
+    assert.ok(team.includes("只是**汇报**"), "team.md must say done is a report, not acceptance");
+    assert.ok(team.includes("in_review"), "team.md must name the in_review status");
+    assert.ok(team.includes("合并即验收"), "team.md must state merging is acceptance");
+    assert.ok(team.includes("agent_teams_accept_task"), "team.md must name the explicit accept tool");
+    assert.ok(team.includes("$ "), "team.md must carry the `$ ` declaration syntax");
+    assert.ok(team.includes("verify_required"), "team.md must name the undeclared-command refusal");
+  });
+
   it("commands/team.md caps reassign rounds and stops on the cap", () => {
-    assert.ok(team.includes("最大驳回轮次"), "team.md must carry the max-rounds discipline");
+    assert.ok(team.includes("最大重派轮次"), "team.md must carry the max-rounds discipline");
     assert.ok(team.includes("reassign_limit_exceeded"), "team.md must name the error code");
     assert.ok(team.includes("需要人工介入"), "team.md must say to report to the user at the cap");
   });
@@ -57,9 +66,32 @@ describe("prompt contract: captain protocol", () => {
     assert.ok(skill.includes("不记得上一批"), "SKILL.md must state next_actions is not sticky");
     assert.ok(
       skill.includes("agent_teams_send_message"),
-      "SKILL.md must name the rejection channel",
+      "SKILL.md must name the topping-up channel",
     );
     assert.ok(skill.includes("reassign_limit_exceeded"), "SKILL.md must name the cap error");
+    assert.ok(skill.includes("汇报 ≠ 验收"), "SKILL.md must mirror report != acceptance");
+    assert.ok(skill.includes("合并即验收"), "SKILL.md must mirror merge-as-acceptance");
+    assert.ok(skill.includes("$ <命令>"), "SKILL.md must mirror the `$ ` declaration syntax");
+  });
+
+  it("commands/team.md and SKILL.md teach the captain-side blocking wait (batch 3)", () => {
+    assert.ok(
+      team.includes("agent_teams_wait_for_members"),
+      "team.md must route the captain into the wait tool instead of polling",
+    );
+    assert.ok(team.includes("timedOut"), "team.md must say a timedOut wait is not an error");
+    assert.ok(
+      team.includes("立即返回"),
+      "team.md must state that a member question/escalation returns immediately",
+    );
+    assert.ok(
+      skill.includes("agent_teams_wait_for_members"),
+      "SKILL.md must mirror the captain wait tool",
+    );
+    assert.ok(
+      skill.includes("wakePending"),
+      "SKILL.md must name the host wake projection source",
+    );
   });
 });
 
@@ -73,6 +105,16 @@ describe("prompt contract: member brief", () => {
   it("separates measured results from unverified claims", () => {
     assert.ok(member.includes("实测"), "member.md must mention measured results");
     assert.ok(member.includes("未验证"), "member.md must mention unverified claims");
+  });
+
+  it("teaches members that done reports into in_review with `$ ` declarations", () => {
+    assert.ok(member.includes("in_review"), "member.md must name the in_review status");
+    assert.ok(member.includes("不是终态"), "member.md must say in_review is not terminal");
+    assert.ok(member.includes("$ "), "member.md must carry the `$ ` declaration syntax");
+    assert.ok(
+      member.includes("agent_teams_run_checks"),
+      "member.md must name the command the captain runs",
+    );
   });
 
   it("allows a member to reject a task it should not do", () => {
@@ -147,10 +189,47 @@ describe("prompt contract: docs and spec", () => {
     assert.ok(protocol.includes("不记得上一批"), "protocol.md must state next_actions is derived");
   });
 
+  it("docs/protocol.md documents the in_review state machine and the acceptance discipline", () => {
+    const protocol = read("docs/protocol.md");
+    assert.ok(protocol.includes("in_review"), "protocol.md must document the in_review status");
+    assert.ok(
+      protocol.includes("in_review --accept--> done"),
+      "protocol.md must show the accept transition",
+    );
+    assert.ok(protocol.includes("验收纪律"), "protocol.md must carry the acceptance discipline");
+    assert.ok(
+      protocol.includes("未经验收的 done"),
+      "protocol.md must state there is no unaccepted done",
+    );
+    assert.ok(protocol.includes("合并即验收"), "protocol.md must state merging is acceptance");
+  });
+
+  it("docs/usage.md documents the acceptance loop and in_review troubleshooting", () => {
+    const usage = read("docs/usage.md");
+    assert.ok(usage.includes("待验收"), "usage.md must mention awaiting acceptance");
+    assert.ok(usage.includes("in_review"), "usage.md must name the status for operators");
+    assert.ok(usage.includes("verify_required"), "usage.md must cover the verify_required row");
+    assert.ok(usage.includes("acceptance_frozen"), "usage.md must cover the frozen-acceptance row");
+  });
+
   it("docs/usage.md documents the two new troubleshooting rows", () => {
     const usage = read("docs/usage.md");
     assert.ok(usage.includes("队长在轮询"), "usage.md must cover the polling symptom");
     assert.ok(usage.includes("驳回后成员从零开始"), "usage.md must cover the lost-context symptom");
     assert.ok(usage.includes("maxReassignRounds"), "usage.md must list the new config key");
+  });
+
+  it("docs/protocol.md documents the captain wait tool and the wake projection (batch 3)", () => {
+    const protocol = read("docs/protocol.md");
+    assert.ok(
+      protocol.includes("agent_teams_wait_for_members"),
+      "protocol.md must document the captain wait tool",
+    );
+    assert.ok(protocol.includes("wakePending"), "protocol.md must document the wake projection");
+    assert.ok(protocol.includes("timedOut"), "protocol.md must say a timed-out wait is not an error");
+    assert.ok(
+      protocol.includes("kind"),
+      "protocol.md must document the send_message kind tag",
+    );
   });
 });

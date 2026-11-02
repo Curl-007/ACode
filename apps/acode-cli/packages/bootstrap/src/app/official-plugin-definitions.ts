@@ -326,7 +326,7 @@ export const OFFICIAL_PLUGIN_DEFINITIONS: readonly OfficialPluginDefinition[] = 
       "dist/mcp/server.js",
       "skills/agent-teams/SKILL.md",
     ],
-    version: "0.4.0",
+    version: "0.6.0",
   },
   // 智谱 BigModel 技能集 8 个分类内容包（specs/bigmodel-skills-marketplace-plugins.md）：
   // 表驱动生成，默认关闭，用户在市场按需启用。

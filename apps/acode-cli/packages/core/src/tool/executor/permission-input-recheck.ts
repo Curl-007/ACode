@@ -7,6 +7,7 @@ import {
 } from "@acode/contracts";
 
 import type { PermissionDecisionResult, PermissionContext } from "../../permission/service.js";
+import { snapshotSessionCoordinatorScope } from "../../agent/coordinator-scope.js";
 import { resolveAutoGrayZoneDecision } from "../../permission/auto-risk-classifier.js";
 import type { ExecutableToolCall, ToolEntry } from "../types.js";
 import { applyMemoryFilePermission, targetsMemoryFile } from "./memory-file-permission.js";
@@ -60,6 +61,11 @@ export async function recheckPermissionHookModifiedInput(input: {
     // 对抗复审 N3：复核与首次判定必须是同一调用方身份，否则 hook 改写后命中的反射门
     // 挑战键会换一个身份，门把已通过反射的命令重新拒一遍（反之也防跨身份借用挑战）。
     sessionId: input.deps.sessionId,
+    // 协调者只读预设（specs/coordinator-readonly-preset.md R7.6）：与首次判定
+    // （permission-flow.ts）同源的会话级快照——hook 改写 input 后复核仍须 deny，
+    // 否则改个 input 就能绕过队长只读。skillActivationRules 的复核缺口是既存事实，
+    // 按 spec 显式登记不顺带修（超范围）。
+    coordinatorReadOnly: snapshotSessionCoordinatorScope(input.deps.sessionId),
     // R6 边界⑥收口：script 体 map（deny 级熔断与反射门从这里拿注入）。
     ...(runtimePermissionContext.packageScripts
       ? { packageScripts: runtimePermissionContext.packageScripts }

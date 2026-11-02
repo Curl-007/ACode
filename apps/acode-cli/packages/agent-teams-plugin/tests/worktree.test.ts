@@ -12,6 +12,7 @@ import {
   mergeMemberWorktree,
 } from "../src/worktree/manager.js";
 import { snapshotPendingChanges } from "../src/worktree/git.js";
+import { cleanupMemberWorktreeRecord } from "../src/worktree/lifecycle.js";
 import {
   WORKTREES_RELATIVE_DIR,
   isManagedWorktreeBranch,
@@ -686,5 +687,115 @@ describe("AgentTeams integration (SPEC-015)", () => {
       (error: unknown) => (error as { code?: string }).code === "worktree_disabled",
     );
     await tool("agent_teams_delete").handler({ teamId: created.teamId, archive: false }, captain());
+  });
+
+  /** 建隔离团队 + 成员 + 已汇报（in_review）任务；返回句柄与 taskId。 */
+  async function setupInReview(goal: string): Promise<{
+    teamId: string;
+    taskId: string;
+    handle: { path: string; branch: string; baseCommit: string };
+  }> {
+    const created = (await tool("agent_teams_create").handler(
+      { goal, worktreeIsolation: true, approval: "automatic" },
+      captain(),
+    )) as { teamId: string };
+    const teamId = created.teamId;
+    await tool("agent_teams_add_member").handler(
+      { teamId, name: "dev-1", role: "dev", charter: "c" },
+      captain(),
+    );
+    await tool("agent_teams_bind_member").handler(
+      { teamId, name: "dev-1", agentId: agentIdFor("dev-1") },
+      captain(),
+    );
+    const handle = store.findTeam(teamId)!.members.find((m) => m.name === "dev-1")!.worktree!;
+    const task = (await tool("agent_teams_create_task").handler(
+      { teamId, title: "build", objective: "o", acceptance: ["a"] },
+      captain(),
+    )) as { taskId: string };
+    const claim = (await tool("agent_teams_claim_task").handler(
+      { teamId, taskId: task.taskId },
+      member("dev-1"),
+    )) as { attempt_id: string };
+    await tool("agent_teams_update_task").handler(
+      {
+        teamId,
+        taskId: task.taskId,
+        attemptId: claim.attempt_id,
+        status: "done",
+        summary: "delivered",
+        verify: "$ node -v",
+      },
+      member("dev-1"),
+    );
+    assert.equal(store.readTask(teamId, task.taskId)?.status, "in_review");
+    return { teamId, taskId: task.taskId, handle };
+  }
+
+  it("merge accepts the member's in_review task (accepted_tasks), conservatively, idempotently", async () => {
+    const fx = await setupInReview("acceptance coupling");
+    await writeFile(join(fx.handle.path, "delivered.txt"), "d\n");
+    const merged = (await tool("agent_teams_merge_member_worktree").handler(
+      { teamId: fx.teamId, member: "dev-1" },
+      captain(),
+    )) as { accepted_tasks: string[]; already_merged: boolean };
+    assert.deepEqual(merged.accepted_tasks, [fx.taskId]);
+    assert.equal(merged.already_merged, false);
+    assert.equal(store.readTask(fx.teamId, fx.taskId)?.status, "done");
+    const handle = store.findTeam(fx.teamId)!.members.find((m) => m.name === "dev-1")!.worktree!;
+    assert.equal(handle.status, "merged");
+    // OQ-7：验收落一条「谁验收」revision。
+    const acceptedTask = store.readTask(fx.teamId, fx.taskId)!;
+    assert.ok(acceptedTask.revisions.some((revision) => revision.fields.includes("acceptedBy")));
+    // 提交对可查：baseCommit..lastMergedCommit 能 git log 出来。
+    const log = await git(repo, ["log", "--oneline", `${handle.baseCommit}..${handle.lastMergedCommit}`]);
+    assert.ok(log.trim().length > 0, "merged commits must be reachable in the main repo");
+
+    // 幂等：alreadyMerged 重跑同样执行验收耦合；无待验收任务 → accepted_tasks [] + 显式 note。
+    const again = (await tool("agent_teams_merge_member_worktree").handler(
+      { teamId: fx.teamId, member: "dev-1" },
+      captain(),
+    )) as { accepted_tasks: string[]; already_merged: boolean; notes: string[] };
+    assert.equal(again.already_merged, true);
+    assert.deepEqual(again.accepted_tasks, []);
+    assert.ok(again.notes.some((note) => note.includes("no task awaiting acceptance")));
+    await tool("agent_teams_delete").handler({ teamId: fx.teamId, archive: true }, captain());
+  });
+
+  it("merge conflict keeps the task in_review and never writes mergedAt", async () => {
+    const fx = await setupInReview("conflict keeps in_review");
+    await writeFile(join(fx.handle.path, "shared.txt"), "member\n");
+    await git(fx.handle.path, ["add", "."]);
+    await git(fx.handle.path, ["commit", "-q", "-m", "member shared"]);
+    await writeFile(join(repo, "shared.txt"), "captain\n");
+    await git(repo, ["add", "."]);
+    await git(repo, ["commit", "-q", "-m", "captain shared"]);
+    const before = await readFile(join(repo, "shared.txt"), "utf8");
+
+    await assert.rejects(
+      tool("agent_teams_merge_member_worktree").handler(
+        { teamId: fx.teamId, member: "dev-1" },
+        captain(),
+      ),
+      (error: unknown) => (error as { code?: string }).code === "worktree_conflict",
+    );
+    // 任务留在 in_review（未验收），主工作区未被改，worktree 未写 mergedAt。
+    assert.equal(store.readTask(fx.teamId, fx.taskId)?.status, "in_review");
+    assert.equal(await readFile(join(repo, "shared.txt"), "utf8"), before);
+    assert.equal(existsSync(join(repo, ".git", "MERGE_HEAD")), false);
+    const handle = store.findTeam(fx.teamId)!.members.find((m) => m.name === "dev-1")!.worktree!;
+    assert.equal(handle.mergedAt, undefined);
+    assert.equal(handle.status, "active");
+    await tool("agent_teams_delete").handler({ teamId: fx.teamId, archive: false }, captain());
+  });
+
+  it("keeps the worktree of a member holding an in_review task (keptReason member_active)", async () => {
+    const fx = await setupInReview("keep in_review tree");
+    const team = store.findTeam(fx.teamId)!;
+    const kept = await cleanupMemberWorktreeRecord(store, team, "dev-1");
+    assert.equal(kept?.removed, false);
+    assert.equal(kept?.keptReason, "member_active");
+    assert.equal(existsSync(fx.handle.path), true, "an awaiting-acceptance tree must not be cleaned");
+    await tool("agent_teams_delete").handler({ teamId: fx.teamId, archive: false }, captain());
   });
 });

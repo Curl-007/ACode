@@ -47,6 +47,9 @@ function mapUserInputOrigin(
     case "subagent":
     case "subagent_message":
       return "mailbox";
+    case "team_wake":
+      // 宿主团队唤醒（specs/host-team-wake.md R6）：宿主注入的 model-only carrier，归 mailbox。
+      return "mailbox";
     case "fork":
     case "plugin_reference":
     case "rewind":

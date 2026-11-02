@@ -54,7 +54,7 @@ export interface ToolContext {
   /** 工具 handler 首行调用：把（可能缺省的）teamId 解析成确定的 TeamState。 */
   resolveTeamContext(teamId: unknown): TeamState;
   requireCaptain(team: TeamState): void;
-  requireMember(team: TeamState, options?: { allowCaptain?: boolean }): string;
+  requireMember(team: TeamState): string;
   resolveMemberName(team: TeamState): string | undefined;
 }
 
@@ -176,15 +176,9 @@ export function createToolContext(params: {
         // 团队被并发归档等竞态：鉴权已按读到的快照通过，静默放弃刷新。
       }
     },
-    requireMember(team: TeamState, options?: { allowCaptain?: boolean }): string {
-      // 队长兼成员（takeover 后更新任务）：main scope + 严格 sessionId 匹配。
-      if (
-        options?.allowCaptain &&
-        identity.runtimeScope === "main" &&
-        (identity.degraded || team.captainSessionId === identity.sessionId)
-      ) {
-        return "captain";
-      }
+    requireMember(team: TeamState): string {
+      // 队长不再是成员（specs/coordinator-readonly-preset.md Q2 裁决：撤销队长自助接管
+      // 任务改代码的路径）——队长专属能力走 requireCaptain，任务更新只认成员身份。
       if (identity.degraded && params.memberNameHint) {
         const member = team.members.find(
           (item) => item.name === params.memberNameHint && item.status !== "removed",

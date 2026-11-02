@@ -19,6 +19,9 @@ import type {
 const STATUS_COLOR: Record<string, string> = {
   todo: "var(--color-foreground-subtlest)",
   in_progress: "var(--color-warning)",
+  // 待验收：等待裁决，走 confirmation-interaction 家族（与任务板分组/行取色同源，
+  // 不得用 --color-success 冒充等待态）。
+  in_review: "var(--color-interaction-confirmation-foreground)",
   done: "var(--color-success)",
   failed: "var(--color-destructive)",
   blocked: "var(--color-destructive)",
@@ -97,13 +100,13 @@ export function layoutTeamTaskGraph(team: ConversationStatusPanelTeam): TeamTask
     for (const dependencyId of task.dependencies) {
       const dependency = byId.get(dependencyId);
       if (!dependency) continue;
-      // 边色讲的是「这条依赖放行了吗」：上游失败且属质量门 → 红；上游在跑 → 橙；
+      // 边色讲的是「这条依赖放行了吗」：上游失败且属质量门 → 红；上游在跑或待验收 → 橙；
       // 上游已完成 → 绿；其余（还没开始）→ 灰。下游自己被质量门卡住也标红。
       const tone: EdgeTone = blockedTasks.has(task.taskId)
         ? "blocked"
         : dependency.status === "done"
           ? "satisfied"
-          : dependency.status === "in_progress"
+          : dependency.status === "in_progress" || dependency.status === "in_review"
             ? "running"
             : "pending";
       edges.push({ from: dependencyId, to: task.taskId, tone });

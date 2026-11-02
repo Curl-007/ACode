@@ -89,6 +89,10 @@ function syntheticUserNoticeKind(source: SyntheticUserMessageSource): MessageSem
       // child -> parent 的 model-only runtime carrier，
       // 若这里未同步穷举，持久消息会产生 kind=undefined，冷恢复后无法保持语义等价。
       return "subagent_notification";
+    case "team_wake":
+      // 宿主团队唤醒（specs/host-team-wake.md R6）：runtime 注入的 model-only 系统提醒
+      // 语义，与 auto_resume / plugin_reference 同档（非用户 transcript）。
+      return "system_reminder";
     case "todo_reminder":
       return "todo_reminder";
     // 工具按需检索公告（specs/tool-search.md R9）：runtime 注入的 model-only

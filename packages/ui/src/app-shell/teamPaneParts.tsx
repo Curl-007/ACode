@@ -46,6 +46,8 @@ export function teamStatusDotClass(team: {
 export const TEAM_TASK_STATUS_DOT: Record<string, string> = {
   todo: "border-[1.5px] border-[var(--color-foreground-subtlest)] bg-transparent",
   in_progress: "bg-[var(--color-warning)]",
+  // 待验收 = 等待裁决（批次 4）：走 confirmation-interaction 家族，不得用 success 冒充等待态。
+  in_review: "bg-[var(--color-interaction-confirmation-foreground)]",
   done: "bg-[var(--color-success)]",
   failed: "bg-[var(--color-destructive)]",
   blocked: "bg-[var(--color-destructive)]",
@@ -102,6 +104,8 @@ export function describeTopology(
 
 /** 任务分组：按「能不能开工」分，而不是按 status 字段分——后者分不出「就绪」与「等依赖」。 */
 export interface TaskGroups {
+  /** 待验收（批次 4）：有待处理动作，排在组序最前（与「彩色 = 有你的事」同语义）。 */
+  review: ConversationStatusPanelTeamTask[];
   inProgress: ConversationStatusPanelTeamTask[];
   ready: ConversationStatusPanelTeamTask[];
   waiting: ConversationStatusPanelTeamTask[];
@@ -112,9 +116,18 @@ export interface TaskGroups {
 export function groupTasks(team: ConversationStatusPanelTeam): TaskGroups {
   const ready = new Set(team.readyTaskIds);
   const blocked = new Set(team.blockedByFailedQuality.map((entry) => entry.taskId));
-  const groups: TaskGroups = { inProgress: [], ready: [], waiting: [], blocked: [], done: [] };
+  const groups: TaskGroups = {
+    review: [],
+    inProgress: [],
+    ready: [],
+    waiting: [],
+    blocked: [],
+    done: [],
+  };
   for (const task of team.tasks) {
-    if (task.status === "in_progress") groups.inProgress.push(task);
+    // in_review 单列：它需要队长裁决（验收/打回），混进「等待依赖」会让待验收件被淹没。
+    if (task.status === "in_review") groups.review.push(task);
+    else if (task.status === "in_progress") groups.inProgress.push(task);
     else if (task.status === "done") groups.done.push(task);
     else if (task.status === "failed" || task.status === "blocked" || task.status === "cancelled")
       groups.blocked.push(task);

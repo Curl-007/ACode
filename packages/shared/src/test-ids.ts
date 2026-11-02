@@ -450,6 +450,10 @@ export const TID_SIDEBAR_CODING_PLAN_USAGE_BUTTON = "sidebar-coding-plan-usage-b
 // Model Provider Settings
 /** 模型供应商顶部添加按钮 */
 export const TID_MODEL_PROVIDER_ADD_PROVIDER_BUTTON = "model-provider-add-provider-button";
+/** 模型供应商「从外部工具导入」入口（docs/specs/provider-config-import.md R8） */
+export const TID_MODEL_PROVIDER_IMPORT_BUTTON = "model-provider-import-button";
+/** 模型供应商导入向导对话框 */
+export const TID_MODEL_PROVIDER_IMPORT_DIALOG = "model-provider-import-dialog";
 /** 模型供应商 Template 选择页 */
 export const TID_MODEL_PROVIDER_TEMPLATE_PICKER = "model-provider-template-picker";
 /** 模型供应商 Template 选择项（动态后缀为 templateId，custom 表示纯自定义） */

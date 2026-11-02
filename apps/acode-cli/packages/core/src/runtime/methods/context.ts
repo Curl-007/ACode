@@ -27,6 +27,7 @@ import { resolveEnabledProjectMemoryRoot } from "../helpers/project-memory.js";
 import { buildContextHistoryEntries } from "./context-history-entries.js";
 import { resolveRuntimeEmbeddedSearchEnabled } from "./embedded-search-branch.js";
 import { getContextSourceShellDisplayName } from "./session-shell-environment.js";
+import { snapshotSessionCoordinatorScope } from "../../agent/coordinator-scope.js";
 
 export { buildContextHistoryEntries };
 
@@ -151,6 +152,9 @@ export function createContextBuilderFromSnapshot(
     memoryRoot,
     // R5.3：env-info 段的 scratch 引导事实源（构造期注入，见 internal.ts RuntimeInjectedDeps）。
     scratchDir: this.scratchRoot,
+    // R6.1（specs/coordinator-readonly-preset.md）：协调者只读事实——构造期取会话级
+    // 快照（basis 为真即生效），env-info 段据此渲染一行；缺席不渲染。
+    coordinatorReadOnly: snapshotSessionCoordinatorScope(this.sessionId) !== undefined,
     skills: this.skillLoadOutcome,
     // paths 触发激活集的会话键（skill-frontmatter-governance R5 消费接线）。
     sessionId: String(this.sessionId),

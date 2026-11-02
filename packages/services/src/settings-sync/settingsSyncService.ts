@@ -13,6 +13,7 @@ import type {
   SettingsSyncPluginSkipReason,
   SettingsSyncMcpServerImportResult,
   SettingsSyncMcpServerSkipReason,
+  SettingsSyncMcpVariableReferenceWarning,
   SettingsSyncSelection,
   SettingsSyncImportMode,
   SettingsSyncSkillImportResult,
@@ -35,11 +36,19 @@ import {
 import { homedir } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
-import { parse as parseToml } from "smol-toml";
 import { CommandFileParser } from "../commands/commandFileParser.js";
 import type { ISettingService } from "../setting/setting.js";
 import { createServiceLogger } from "../logger/serviceLogger.js";
 import { walkSkillMarkdownPaths } from "../skills/skillDiscoveryWalk.js";
+import {
+  collectExternalMcpSourceRoots,
+  detectMcpVariableReferences,
+  normalizeMcpServerMap,
+  readMcpServersFromSourceFile,
+  SUPPORTED_MCP_AGENT_SOURCES,
+  type McpSourceRoot,
+} from "./mcpExternalSources.js";
+import { upsertAcodeMcpServers } from "../mcp-sync/mcpSyncService.js";
 import type { ISettingsSyncService } from "./settingsSync.js";
 
 const log = createServiceLogger("settings-sync");
@@ -118,9 +127,6 @@ interface PluginSourceRoot {
   scope: PluginImportScope;
 }
 
-type McpImportScope = "user" | "workspace";
-type McpConfigFormat = "mcpServersJson" | "mcpJson" | "codexToml";
-
 interface McpImportCandidate {
   agent: SettingsSyncAgent;
   name: string;
@@ -129,20 +135,8 @@ interface McpImportCandidate {
   sourceRootScope: SettingsSyncSourceScope;
   sourceRootPath: string;
   sourcePath: string;
-}
-
-interface McpSourceRoot {
-  agent: SettingsSyncAgent;
-  rootPath: string;
-  scope: McpImportScope;
-  format: McpConfigFormat;
-}
-
-interface ExternalAgentMcpPathSource {
-  agent: SettingsSyncAgent;
-  projectFiles: string[][];
-  globalFiles: string[][];
-  format: McpConfigFormat;
+  /** R7.6 变量引用告警（只含位置与键名，不含值）。 */
+  warnings?: SettingsSyncMcpVariableReferenceWarning[];
 }
 
 const SUPPORTED_SKILL_AGENT_SOURCES: ExternalAgentPathSource[] = [
@@ -336,80 +330,8 @@ const SUPPORTED_PLUGIN_AGENT_SOURCES: ExternalAgentPathSource[] = [
   },
 ];
 
-const SUPPORTED_MCP_AGENT_SOURCES: ExternalAgentMcpPathSource[] = [
-  {
-    agent: "claudeCode",
-    projectFiles: [[".claude", "settings.json"], [".mcp.json"]],
-    globalFiles: [[".claude", "settings.json"]],
-    format: "mcpServersJson",
-  },
-  {
-    agent: "codexCli",
-    projectFiles: [[".codex", "config.toml"]],
-    globalFiles: [[".codex", "config.toml"]],
-    format: "codexToml",
-  },
-  {
-    agent: "openCode",
-    projectFiles: [[".opencode", "opencode.json"]],
-    globalFiles: [[".config", "opencode", "opencode.json"]],
-    format: "mcpJson",
-  },
-  {
-    agent: "openClaw",
-    projectFiles: [["settings.json"]],
-    globalFiles: [[".openclaw", "settings.json"]],
-    format: "mcpServersJson",
-  },
-  {
-    agent: "qwenCode",
-    projectFiles: [[".qwen", "settings.json"]],
-    globalFiles: [[".qwen", "settings.json"]],
-    format: "mcpServersJson",
-  },
-  {
-    agent: "qode",
-    projectFiles: [[".qoder", "settings.json"]],
-    globalFiles: [[".qoder", "settings.json"]],
-    format: "mcpServersJson",
-  },
-  {
-    agent: "qodeCn",
-    projectFiles: [[".qoder", "settings.json"]],
-    globalFiles: [[".qoder-cn", "settings.json"]],
-    format: "mcpServersJson",
-  },
-  {
-    agent: "trae",
-    projectFiles: [[".trae", "settings.json"]],
-    globalFiles: [[".trae", "settings.json"]],
-    format: "mcpServersJson",
-  },
-  {
-    agent: "kiroCli",
-    projectFiles: [[".kiro", "settings.json"]],
-    globalFiles: [[".kiro", "settings.json"]],
-    format: "mcpServersJson",
-  },
-  {
-    agent: "roo",
-    projectFiles: [[".roo", "settings.json"]],
-    globalFiles: [[".roo", "settings.json"]],
-    format: "mcpServersJson",
-  },
-  {
-    agent: "codeBuddy",
-    projectFiles: [[".codebuddy", "settings.json"]],
-    globalFiles: [[".codebuddy", "settings.json"]],
-    format: "mcpServersJson",
-  },
-  {
-    agent: "agents",
-    projectFiles: [[".agents", "mcp.json"]],
-    globalFiles: [[".agents", "mcp.json"]],
-    format: "mcpServersJson",
-  },
-];
+// 外部 Agent MCP 来源表已迁至 ./mcpExternalSources.ts（R7.1/R7.2 扩展 cursor/gemini/vscode/
+// opencode.jsonc/cc-switch 后集中一处），本文件只消费 collectExternalMcpSourceRoots/reader。
 
 const ACODE_PLUGIN_MANIFEST_PATH = [".acode-plugin", "plugin.json"] as const;
 const CLAUDE_PLUGIN_MANIFEST_PATH = [".claude-plugin", "plugin.json"] as const;
@@ -694,29 +616,8 @@ function getExternalPluginRoots(workspacePath?: string): PluginSourceRoot[] {
 }
 
 function getExternalMcpRoots(workspacePath?: string): McpSourceRoot[] {
-  const home = resolveUserHomeDir();
-  const userRoots: McpSourceRoot[] = SUPPORTED_MCP_AGENT_SOURCES.flatMap((source) =>
-    source.globalFiles.map((globalFile) => ({
-      agent: source.agent,
-      rootPath: join(home, ...globalFile),
-      scope: "user" as const,
-      format: source.format,
-    })),
-  );
-  if (!workspacePath) {
-    return userRoots;
-  }
-  return [
-    ...userRoots,
-    ...SUPPORTED_MCP_AGENT_SOURCES.flatMap((source) =>
-      source.projectFiles.map((projectFile) => ({
-        agent: source.agent,
-        rootPath: join(workspacePath, ...projectFile),
-        scope: "workspace" as const,
-        format: source.format,
-      })),
-    ),
-  ];
+  // 来源表与路径展开归 ./mcpExternalSources.ts（含 VS Code 的平台候选与 JSONC/cc-switch 格式）。
+  return collectExternalMcpSourceRoots(resolveUserHomeDir(), workspacePath);
 }
 
 async function exists(path: string): Promise<boolean> {
@@ -1004,20 +905,6 @@ function normalizeMcpServerNameKey(name: string): string {
   return name.trim().toLowerCase();
 }
 
-function normalizeMcpServerMap(value: unknown): Record<string, McpServerConfig> {
-  if (!isRecord(value)) {
-    return {};
-  }
-  const servers: Record<string, McpServerConfig> = {};
-  for (const [name, config] of Object.entries(value)) {
-    if (!name.trim() || !isRecord(config)) {
-      continue;
-    }
-    servers[name] = config as McpServerConfig;
-  }
-  return servers;
-}
-
 function stripExternalMcpTimeoutFields(config: McpServerConfig): McpServerConfig {
   const {
     timeout: _timeout,
@@ -1034,66 +921,6 @@ function readAcodeMcpServers(parsed: Record<string, unknown>): Record<string, Mc
   return normalizeMcpServerMap(parsed.mcp.servers);
 }
 
-function readWrappedMcpServers(parsed: Record<string, unknown>): Record<string, McpServerConfig> {
-  return normalizeMcpServerMap(parsed.mcpServers);
-}
-
-function readOpenCodeMcpServers(parsed: Record<string, unknown>): Record<string, McpServerConfig> {
-  const servers = normalizeMcpServerMap(parsed.mcp);
-  return Object.fromEntries(
-    Object.entries(servers).map(([name, config]) => [name, normalizeOpenCodeMcpConfig(config)]),
-  );
-}
-
-function normalizeOpenCodeMcpConfig(config: McpServerConfig): McpServerConfig {
-  const rawCommand = (config as Record<string, unknown>).command;
-  if (Array.isArray(rawCommand)) {
-    const [firstCommand, ...args] = rawCommand.filter(
-      (item): item is string => typeof item === "string",
-    );
-    if (firstCommand) {
-      const { command: _command, type, ...rest } = config;
-      return {
-        ...rest,
-        command: firstCommand,
-        args,
-        ...(type === "local" ? { type: "stdio" } : type === "remote" ? { type: "http" } : {}),
-      };
-    }
-  }
-  if (config.type === "local" && typeof rawCommand === "string" && rawCommand.trim()) {
-    return {
-      ...config,
-      type: "stdio",
-      command: rawCommand.trim(),
-    };
-  }
-  return config;
-}
-
-function readTomlMcpServers(parsed: Record<string, unknown>): Record<string, McpServerConfig> {
-  return normalizeMcpServerMap(parsed.mcp_servers ?? parsed.mcpServers);
-}
-
-async function readMcpServersFromSourceFile(
-  filePath: string,
-  format: McpConfigFormat,
-): Promise<Record<string, McpServerConfig>> {
-  try {
-    const raw = await readFile(filePath, "utf-8");
-    if (format === "codexToml") {
-      return readTomlMcpServers(parseToml(raw) as Record<string, unknown>);
-    }
-    const parsed = JSON.parse(raw) as unknown;
-    if (!isRecord(parsed)) {
-      return {};
-    }
-    return format === "mcpJson" ? readOpenCodeMcpServers(parsed) : readWrappedMcpServers(parsed);
-  } catch {
-    return {};
-  }
-}
-
 async function collectExistingMcpServerNameKeys(
   targetScope: SettingsSyncSourceScope,
   workspacePath: string | undefined,
@@ -1108,26 +935,6 @@ async function collectExistingMcpServerNameKeys(
     }
   }
   return nameKeys;
-}
-
-async function addMcpServerToAcodeConfig(
-  filePath: string,
-  name: string,
-  config: McpServerConfig,
-): Promise<void> {
-  const parsed = await readJsonFileOrEmpty(filePath);
-  const currentMcp = isRecord(parsed.mcp) ? parsed.mcp : {};
-  const servers = readAcodeMcpServers(parsed);
-  await writeJsonFile(filePath, {
-    ...parsed,
-    mcp: {
-      ...currentMcp,
-      servers: {
-        ...servers,
-        [name]: config,
-      },
-    },
-  });
 }
 
 function readStringArray(value: unknown): string[] {
@@ -1619,7 +1426,11 @@ async function collectMcpImportCandidates(workspacePath?: string): Promise<McpIm
     if (!(await pathExists(root.rootPath))) {
       continue;
     }
-    const serverMap = await readMcpServersFromSourceFile(root.rootPath, root.format);
+    const serverMap = await readMcpServersFromSourceFile(
+      root.rootPath,
+      root.format,
+      root.wrapperKey,
+    );
     for (const [name, config] of Object.entries(serverMap)) {
       const sourcePath = `${root.rootPath}#${name}`;
       const seenKey = `${root.agent}:${sourcePath}`;
@@ -1627,14 +1438,18 @@ async function collectMcpImportCandidates(workspacePath?: string): Promise<McpIm
         continue;
       }
       seenSourceNames.add(seenKey);
+      const strippedConfig = stripExternalMcpTimeoutFields(config);
+      // R7.6：变量引用原样保留，只带位置与键名的告警随候选带上。
+      const warnings = detectMcpVariableReferences(strippedConfig);
       candidates.push({
         agent: root.agent,
         name,
         nameKey: normalizeMcpServerNameKey(name),
-        config: stripExternalMcpTimeoutFields(config),
+        config: strippedConfig,
         sourceRootScope: root.scope === "workspace" ? "project" : "global",
         sourceRootPath: root.rootPath,
         sourcePath,
+        ...(warnings.length > 0 ? { warnings } : {}),
       });
     }
   }
@@ -1766,7 +1581,12 @@ async function buildPluginsDiscovery(workspacePath?: string): Promise<SettingsSy
 async function buildMcpDiscovery(workspacePath?: string): Promise<SettingsSyncDiscoveryResult> {
   const candidates = await collectMcpImportCandidates(workspacePath);
   const agents: SettingsSyncDiscoveryResult["agents"] = [];
+  // 同一 agent 可能有多个来源条目（如 openCode 的 .json 与 .jsonc），发现结果按 agent 去重聚合。
+  const agentOrder: SettingsSyncAgent[] = [];
   for (const { agent } of SUPPORTED_MCP_AGENT_SOURCES) {
+    if (!agentOrder.includes(agent)) agentOrder.push(agent);
+  }
+  for (const agent of agentOrder) {
     const agentCandidates = candidates.filter((candidate) => candidate.agent === agent);
     const discoveredCount = agentCandidates.length;
     const sourcePaths = [
@@ -2146,17 +1966,37 @@ async function importMcpServersForAgent(
       continue;
     }
     try {
-      await addMcpServerToAcodeConfig(selectedConfigPath, candidate.name, candidate.config);
+      // Q2 收敛：MCP 落盘唯一漏斗 = mcp-sync（ACODE_MCP_DESCRIPTOR 路径解析 + 原子写 +
+      // enable→enabled 一次性迁移），本文件不再持有第二条 writer。
+      const servers = { [candidate.name]: candidate.config as Record<string, unknown> };
+      if (selectedTargetScope === "global") {
+        await upsertAcodeMcpServers({ scope: "user", servers });
+      } else if (workspacePath) {
+        await upsertAcodeMcpServers({ scope: "workspace", workspacePath, servers });
+      } else {
+        // 上方 selectedConfigPath 空值已拦截该组合；保留显式失败而非静默。
+        throw new Error("缺少工作区路径，无法写入工作区 MCP 配置");
+      }
       importedCount += 1;
       const existingNameKeys = existingNameKeysByTargetScope.get(selectedTargetScope);
       if (existingNameKeys) {
         existingNameKeys.add(candidate.nameKey);
+      }
+      if (candidate.warnings?.length) {
+        // R7.6/R7.7：变量引用未展开只记位置与键名，绝不记 env/header 的值。
+        for (const warning of candidate.warnings) {
+          log.warn(undefined, "[settings-sync] MCP 变量引用未展开", {
+            location: warning.location,
+            keys: warning.keys,
+          });
+        }
       }
       mcpServerResults.push({
         name: candidate.name,
         path: candidate.sourcePath,
         sourceScope: candidate.sourceRootScope,
         status: "imported",
+        ...(candidate.warnings?.length ? { warnings: candidate.warnings } : {}),
       });
     } catch {
       failedCount += 1;

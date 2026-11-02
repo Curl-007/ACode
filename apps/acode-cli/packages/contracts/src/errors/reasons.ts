@@ -106,6 +106,11 @@ export const PermissionDenialReason = {
   ApprovalArgumentsMismatch: "approval_arguments_mismatch",
   /** dontAsk 模式拒绝（批 2 R1）：无人可问，未白名单即拒不弹卡。 */
   DontAskModeDenied: "dontask_mode_denied",
+  /**
+   * 协调者只读预设拒绝（specs/coordinator-readonly-preset.md R4/R6）：
+   * AgentTeams 队长会话的文件写工具被团队协议禁用，独立归因 token。
+   */
+  CoordinatorReadOnly: "coordinator_readonly",
 } as const;
 
 export type PermissionDenialReason =

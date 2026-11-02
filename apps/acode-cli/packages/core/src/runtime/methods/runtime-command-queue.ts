@@ -10,6 +10,11 @@ import {
   shouldSuppressTaskNotificationRuntimeCommand,
 } from "./background-notifications.js";
 import { persistSubagentMessageCommand } from "./subagent-messages.js";
+import { persistTeamWakeCommand } from "../team-wake/injector.js";
+import {
+  completeTeamWakeDelivery,
+  dropTeamWakePending,
+} from "../team-wake/runtime-api.js";
 import { runControlOnlyTurnCommand } from "./control-only-turn.js";
 import { createTurnCancelledError } from "../helpers/index.js";
 import { executeTargetContinuationCommand } from "./target.js";
@@ -198,7 +203,11 @@ async function runRuntimeCommand(
     await runTaskNotificationBatch.call(this, [command]);
     return;
   }
-  if (isStaleBranchRuntimeCommand(this, command)) return;
+  if (isStaleBranchRuntimeCommand(this, command)) {
+    // 陈旧分支的唤醒命令被丢弃：清 pending 使下一次通知可重排（未计 ack）。
+    if (command.mode === "team-wake") dropTeamWakePending(this, command.teamId);
+    return;
+  }
   const foregroundExecution = beginForegroundExecution.call(this, command);
   try {
     if (command.mode === "prompt") {
@@ -298,6 +307,27 @@ async function runRuntimeCommand(
     }
     if (command.mode === "control-only-turn") {
       await runControlOnlyTurnCommand.call(this, command);
+      return;
+    }
+    if (command.mode === "team-wake") {
+      // 宿主团队唤醒（specs/host-team-wake.md R5）：与 subagent-message 同档——不进
+      // active-loop 吸收集，故只在回合结束后 drain 到此。持久化 model-only synthetic
+      // notice（inputPresentation:"team_wake"）后开轮即唤醒；分支陈旧则丢弃并清 pending。
+      const messageId = await persistTeamWakeCommand.call(this, command);
+      if (!messageId) {
+        dropTeamWakePending(this, command.teamId);
+        return;
+      }
+      completeTeamWakeDelivery(this, command);
+      await this.executeTurnCommand(command.text, undefined, {
+        abortSignal: foregroundExecution.controller.signal,
+        inputSource: "team_wake",
+        inputVisibility: "model-only",
+        recordedInputMessageId: messageId,
+        skipInputRecord: true,
+        skipUserPromptSubmitHooks: true,
+        traceContext: command.traceContext,
+      });
       return;
     }
   } catch (error) {

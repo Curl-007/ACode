@@ -101,6 +101,8 @@ describe("buildTeamModel（pluginStates → 团队卡）", () => {
       done: 0,
       inProgress: 0,
       todo: 0,
+      // 批次 1 additive：旧快照缺席 counts.inReview → 0。
+      inReview: 0,
       failed: 0,
       blocked: 0,
     });

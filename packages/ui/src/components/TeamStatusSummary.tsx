@@ -6,6 +6,7 @@ import { useACodeIntl } from "@/i18n/IntlProvider.js";
 import type { ConversationStatusPanelTeam } from "@/v4/teamPanelModel.js";
 import { teamStatusMessageId } from "@/v4/teamWorkflowPresentation.js";
 import type { OpenTeamSideTabRequest } from "@/lib/workspaceSidePane.js";
+import { TeamAcceptanceMetricsRow } from "@/components/TeamAcceptanceMetricsRow.js";
 
 export function TeamStatusSummary({
   team,
@@ -59,11 +60,30 @@ export function TeamStatusSummary({
             )}
           </span>
         ) : null}
+        {team.counts.inReview > 0 ? (
+          <span>
+            {intl.formatMessage(
+              { id: "chat.statusPanel.agentTeams.inReviewCount" },
+              { count: team.counts.inReview },
+            )}
+          </span>
+        ) : null}
         {team.stale ? (
           <span title={intl.formatMessage({ id: "chat.statusPanel.agentTeams.staleHint" })}>
             {intl.formatMessage({ id: "chat.statusPanel.agentTeams.stale" })}
           </span>
         ) : null}
+      </div>
+      {team.wakeHint ? (
+        <p
+          className="mt-1 text-ui-xs text-[var(--color-interaction-confirmation-foreground)]"
+          data-testid="team-status-wake-hint"
+        >
+          {intl.formatMessage({ id: "chat.statusPanel.agentTeams.wakeHint" })}
+        </p>
+      ) : null}
+      <div className="mt-1 min-w-0">
+        <TeamAcceptanceMetricsRow team={team} />
       </div>
     </div>
   );

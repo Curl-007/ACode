@@ -1,5 +1,8 @@
 import type { ReactNode } from "react";
-import { TID_MODEL_PROVIDER_ADD_PROVIDER_BUTTON } from "@acode/shared";
+import {
+  TID_MODEL_PROVIDER_ADD_PROVIDER_BUTTON,
+  TID_MODEL_PROVIDER_IMPORT_BUTTON,
+} from "@acode/shared";
 import type { ModelProviderNavGroup } from "@/settings/model-provider-section/constants.js";
 import { ModelProviderSectionNavigation } from "@/settings/model-provider-section/Navigation.js";
 import { ProviderDetailFeedbackBoundary } from "@/settings/model-provider-section/ProviderDetailFeedback.js";
@@ -14,6 +17,10 @@ interface ModelProviderSectionLayoutProps {
   onRefresh: () => void;
   addProviderLabel: string;
   onAddProvider: () => void;
+  /** 「从外部工具导入」入口（docs/specs/provider-config-import.md R8）。 */
+  importLabel: string;
+  onImport: () => void;
+  importDisabled?: boolean;
   navigationGroups: ModelProviderNavGroup[];
   selectedNodeKey: string | null;
   onSelectNavItem: (item: ModelProviderNavGroup["items"][number]) => void;
@@ -38,6 +45,9 @@ export function ModelProviderSectionLayout({
   onRefresh,
   addProviderLabel,
   onAddProvider,
+  importLabel,
+  onImport,
+  importDisabled,
   navigationGroups,
   selectedNodeKey,
   onSelectNavItem,
@@ -57,10 +67,15 @@ export function ModelProviderSectionLayout({
         <SettingsResourceHeaderActions
           onRefresh={onRefresh}
           onNew={onAddProvider}
+          onImport={onImport}
+          importDisabled={importDisabled}
           refreshing={refreshButtonLoading}
           refreshLabel={refreshButtonLoading ? loadingLabel : refreshLabel}
           newLabel={addProviderLabel}
           newTestId={TID_MODEL_PROVIDER_ADD_PROVIDER_BUTTON}
+          importLabel={importLabel}
+          importActionId="settings.modelProvider.import.open"
+          importTestId={TID_MODEL_PROVIDER_IMPORT_BUTTON}
         />
       </div>
 

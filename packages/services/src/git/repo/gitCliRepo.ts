@@ -13,6 +13,8 @@ import type {
   GitIdentity,
   GitLocalBranch,
   GitLocalBranchListResult,
+  GitRefRangeDiffRequest,
+  GitRefRangeDiffResult,
   GitWorkspaceRepositoryInfo,
   GitPushResult,
 } from "@acode/shared";
@@ -59,6 +61,7 @@ import {
   type GitResolvedRepository,
   type GitStatusSnapshot,
 } from "./gitCliTypes.js";
+import { readRefRangeDiff } from "./refRangeDiff.js";
 
 export type {
   GitBranchComparisonChange,
@@ -1388,6 +1391,11 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
         allowedExitCodes: [0, 1],
         emptySummary: "No previewable diff is available for this file.",
       });
+    },
+
+    async getRefRangeDiff(params: GitRefRangeDiffRequest): Promise<GitRefRangeDiffResult> {
+      const resolution = await this.resolveRepository(params.workspacePath);
+      return await readRefRangeDiff({ commandProvider, resolution, params });
     },
 
     async getBranchComparison(workspacePath: string): Promise<GitBranchComparisonSnapshot> {

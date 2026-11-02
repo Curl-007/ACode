@@ -28,8 +28,10 @@ interface SettingsResourceHeaderActionsProps {
   newDisabled?: boolean;
   refreshTestId?: string;
   newTestId?: string;
+  importTestId?: string;
   refreshLabel?: string;
   newLabel?: string;
+  importLabel?: string;
   importActionId?: string;
   exportActionId?: string;
   newActionId?: string;
@@ -47,17 +49,21 @@ export function SettingsResourceHeaderActions({
   newDisabled = false,
   refreshTestId,
   newTestId,
+  importTestId,
   refreshLabel,
   newLabel: customNewLabel,
+  importLabel: customImportLabel,
   importActionId,
   exportActionId,
   newActionId,
 }: SettingsResourceHeaderActionsProps) {
   const { intl } = useACodeIntl();
   const resolvedRefreshLabel = refreshLabel ?? intl.formatMessage({ id: "common.refresh" });
-  const importLabel = intl.formatMessage({
-    id: "settings.resourceActions.import",
-  });
+  const importLabel =
+    customImportLabel ??
+    intl.formatMessage({
+      id: "settings.resourceActions.import",
+    });
   const exportLabel = intl.formatMessage({
     id: "settings.resourceActions.export",
   });
@@ -80,6 +86,7 @@ export function SettingsResourceHeaderActions({
             {onImport ? (
               <DropdownMenuItem
                 data-settings-import-action={importActionId}
+                data-testid={importTestId}
                 disabled={importDisabled}
                 onSelect={onImport}
               >

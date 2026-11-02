@@ -1,6 +1,6 @@
 {
   "name": "agent-teams",
-  "version": "0.4.0",
+  "version": "0.6.0",
   "tier": "always",
   "description": "AgentTeams 多智能体协作：当前会话成为队长，组建可续跑的成员团队，把目标拆成依赖任务 DAG，经成员邮箱直连协作，由指令式调度推进，并提供只读团队面板。同一工作区可并行多个团队（上限可配），支持孤儿团队接管与成员工作树隔离。",
   "description_i18n": {
@@ -58,6 +58,13 @@
       "description": "Off (default): use the configured AgentTeams member model, then the general-purpose subagent model; refuse to spawn if neither is configured. On: members without a dedicated model inherit the captain model.",
       "type": "boolean",
       "default": false,
+      "required": false
+    },
+    "captainReadOnly": {
+      "title": "Coordinator (captain) read-only preset",
+      "description": "On (default): a session that is a team captain has the file-writing tools (Write/Edit/ApplyPatch) disabled by the team protocol and dispatches changes to a member. Off: the captain keeps regular write permissions. Read-only and team tools are unaffected either way.",
+      "type": "boolean",
+      "default": true,
       "required": false
     }
   }

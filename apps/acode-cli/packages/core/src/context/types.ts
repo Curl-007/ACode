@@ -114,6 +114,12 @@ export interface ContextBuilderConfig {
   memoryRoot?: string;
   /** 产品 scratch 暂存区根（R5.3）：在场时 env-info / 子代理环境段渲染目录行与指引；缺席零渲染。 */
   scratchDir?: string;
+  /**
+   * 协调者只读预设生效事实（specs/coordinator-readonly-preset.md R6.1）：本会话被判定为
+   * AgentTeams 队长时为 true，env-info 段渲染一行中性说明；缺席（未生效 / 非队长 /
+   * 逃生阀放开）零渲染，段内容逐字节不变。
+   */
+  coordinatorReadOnly?: boolean;
   memoryIndexContent?: string;
   skills?: SkillLoadOutcome;
   /**

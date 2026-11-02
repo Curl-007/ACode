@@ -30,6 +30,13 @@ import {
   modelSelectionArgumentValidators,
   providerSettingsArgumentValidators,
 } from "./providerFacadeServices.validators.js";
+import type {
+  ProviderImportResult,
+  ProviderImportScanResult,
+  ProviderImportServicePort,
+  ProviderImportSource,
+} from "./provider-import/providerImportTypes.js";
+import { createProviderImportMethods } from "./providerImportFacadeMethods.js";
 
 export type {
   ProviderSettingsProviderView,
@@ -92,6 +99,18 @@ export interface IProviderSettingsService {
   discoverProviderModels(
     input: ProviderSettingsDiscoveryRequest,
   ): Promise<ProviderModelDiscoveryResult>;
+  /**
+   * provider 配置导入扫描（docs/specs/provider-config-import.md R5）：读本机外部工具
+   * （Claude Code / Codex / CC Switch）的 provider 配置，返回脱敏候选视图 + 结构化告警。
+   * 明文 key 绝不出宿主；候选明文缓存只在服务实例内存（TTL 10 min）。
+   */
+  scanProviderImports(input?: {
+    readonly sources?: readonly ProviderImportSource[];
+  }): Promise<ProviderImportScanResult>;
+  /** 按候选 id 回换缓存并单事务写入（provider 域 importPersonalProviders）。 */
+  importProviderCandidates(input: {
+    readonly candidateIds: readonly string[];
+  }): Promise<ProviderImportResult>;
 }
 
 export interface ProviderSettingsDiscoveryRequest {
@@ -121,6 +140,8 @@ export const IProviderSettingsService = createServiceDescriptor<IProviderSetting
       "testModelConnectivity",
       "addPersonalModels",
       "discoverProviderModels",
+      "scanProviderImports",
+      "importProviderCandidates",
     ],
     // 校验表拆到同目录伴生文件，避免本文件超过 400 行门禁；键仍受 interface keyof 约束。
     argumentValidators: providerSettingsArgumentValidators,
@@ -167,6 +188,7 @@ export function createProviderSettingsService(
   facade: ProviderSettingsFacade,
   ensureReady: () => Promise<void> = async () => {},
   testConnectivity?: ProviderSettingsConnectivityTester,
+  providerImport?: ProviderImportServicePort,
 ): IProviderSettingsService {
   return {
     onDidChange: toEvent((listener) => facade.onDidChange(listener)),
@@ -276,6 +298,7 @@ export function createProviderSettingsService(
       if (!discoveryInput) return { ok: false, error: { kind: "no-base-url" as const } };
       return discoverProviderModelsFromEndpoint(discoveryInput);
     },
+    ...createProviderImportMethods(providerImport),
   };
 }
 

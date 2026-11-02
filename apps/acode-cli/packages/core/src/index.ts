@@ -245,6 +245,23 @@ export type {
   TtlApprovalWriter,
 } from "./permission/index.js";
 
+// 协调者只读预设（specs/coordinator-readonly-preset.md R2/Q3）：宿主（bootstrap
+// create-app 的插件状态派生写路径 + 会话恢复重放重建）经**公开入口**消费本会话级
+// store 与纯派生函数；权限面 core 内部直连叶子，不经过本导出。
+export {
+  AGENT_TEAMS_PLUGIN_ID,
+  AGENT_TEAMS_PLUGIN_STATE_TOPIC,
+  clearAllSessionCoordinatorScopes,
+  clearSessionCoordinatorScope,
+  deriveCoordinatorBasisFromPluginState,
+  deriveCoordinatorBasisFromPluginStates,
+  findAgentTeamsPluginStateKey,
+  isAgentTeamsPluginId,
+  setSessionCoordinatorBasis,
+  snapshotSessionCoordinatorScope,
+} from "./agent/coordinator-scope.js";
+export type { CoordinatorScope } from "./permission/coordinator-readonly.js";
+
 // Runtime
 export { AgentRuntime } from "./runtime.js";
 export { createExternalTurnFaultError } from "./runtime/helpers/turn-errors.js";
@@ -269,6 +286,27 @@ export type {
   AutoResumeLocale,
 } from "./runtime/auto-resume/command.js";
 export type { AutoResumeStatusSnapshot } from "./runtime/auto-resume/types.js";
+// 宿主团队唤醒（apps/acode-cli/specs/host-team-wake.md R4）：插件面板快照 → 规范化 intent
+// 的纯解析函数与生效配置解析经公开入口给 bootstrap 装配复用（core 不订阅 MCP、不读插件
+// 状态目录；依赖方向 bootstrap→core）。意图/常量类型同时导出供 bootstrap 与测试消费。
+export {
+  MAX_WAKE_DELIVERY_ATTEMPTS,
+  MAX_WAKE_EVENTS,
+  MAX_WAKE_PROMPTS,
+  WAKE_INTENT_TTL_MS,
+  resolveTeamWakeConfig,
+} from "./runtime/team-wake/types.js";
+export { parseTeamWakeIntents } from "./runtime/team-wake/owner.js";
+export { buildTeamWakeCommandText } from "./runtime/team-wake/injector.js";
+export type {
+  ResolvedTeamWakeConfig,
+  TeamWakeIntent,
+  TeamWakeMessageFact,
+  TeamWakeMessageKind,
+  TeamWakeSettledTaskFact,
+  TeamWakeSettledTaskStatus,
+  TeamWakeTrigger,
+} from "./runtime/team-wake/types.js";
 // 会话级 worktree 写围栏（specs/session-worktree-lifecycle.md R7）：bootstrap 装配经
 // sessionWorktreeEnv provider 向子进程注入边界 env；warn 档遥测缺省 no-op，装配层
 // 接 service logger（不 console 刷屏）。

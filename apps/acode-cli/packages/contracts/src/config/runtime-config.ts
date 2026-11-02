@@ -80,6 +80,12 @@ export interface RuntimeConfig {
   modelAnomalyGuard: ModelAnomalyGuardConfig;
   /** 跨回合 auto-resume（specs/turn-auto-resume.md）；默认值见 DefaultRuntimeConfig.autoResume。 */
   autoResume: AutoResumeConfig;
+  /**
+   * 编排方案批次 3（apps/acode-cli/specs/host-team-wake.md R7）：宿主团队唤醒参数与长期
+   * 开关。运行态计数/世代/ack 只住 core runtime/team-wake owner 的进程内 per-runtime
+   * 内存，不跨进程持久化——这里只承载长期参数与逃生阀。
+   */
+  agentTeams: AgentTeamsConfig;
   hooks: HooksRuntimeConfig;
   ui: {
     locale: UiLocale;
@@ -103,6 +109,7 @@ export interface RuntimeConfigPatch {
   toolConcurrency?: Partial<RuntimeConfig["toolConcurrency"]>;
   modelAnomalyGuard?: Partial<RuntimeConfig["modelAnomalyGuard"]>;
   autoResume?: Partial<RuntimeConfig["autoResume"]>;
+  agentTeams?: AgentTeamsConfigPatch;
   hooks?: HooksRuntimeConfigPatch;
   ui?: Partial<RuntimeConfig["ui"]>;
 }
@@ -188,6 +195,19 @@ export const DefaultRuntimeConfig: RuntimeConfig = {
     cooldownMaxSec: 60,
     loopGuardRepeats: 3,
   },
+  // 默认值分档（specs/host-team-wake.md R7）：enabled=true——唤醒是既有语义补全、非新算力
+  // 面；惊讶成本由 maxWakePrompts/intentTtlMs/用户显式 off 封顶。上限镜像 Fynvra
+  // coordinatorWake（MAX_REVIEW_PROMPTS=2 / MAX_DELIVERY_ATTEMPTS=3）。
+  agentTeams: {
+    hostWake: {
+      enabled: true,
+      maxWakePrompts: 2,
+      maxDeliveryAttempts: 3,
+      intentTtlMs: 10 * 60 * 1000,
+      waitDefaultMs: 300_000,
+      waitMaxMs: 480_000,
+    },
+  },
   hooks: {
     enabled: false,
     events: {},
@@ -234,4 +254,33 @@ export interface AutoResumeConfig {
   loopGuardRepeats: number;
   /** 自定义继续指令（仅作用 transient 档）；支持 {count}/{max}/{remaining} 占位符。 */
   continueMessage?: string;
+}
+
+/**
+ * 宿主团队唤醒配置（specs/host-team-wake.md R7）。字段为全量落定形态：缺省值三级
+ * （用户显式配置 > 偏好设置 > 硬编码回落），`enabled` 默认 true（唤醒是既有语义补全，
+ * 惊讶成本由上限封顶；逃生阀只能是用户显式配置，不自动回退 —— EI-149）。
+ */
+export interface AgentTeamsHostWakeConfig {
+  /** 逃生阀：false 时宿主完全不解析/注入唤醒（wakePending 仍经 pluginStates 投影给 UI）。 */
+  enabled: boolean;
+  /** 同一 (teamId, messageId) 旨意最多唤醒次数；越限不再注入并置 wakeHint（EI-1）。 */
+  maxWakePrompts: number;
+  /** 同一 intent 因 drain 失败/世代失效重排上限。 */
+  maxDeliveryAttempts: number;
+  /** intent 存活上限（ms）：队长持续忙碌超时即丢弃，避免醒来处理化石事件（EI-11）。 */
+  intentTtlMs: number;
+  /** 队长 `agent_teams_wait_for_members` 默认等待（ms）；插件侧工具消费（批次 3 第二部分）。 */
+  waitDefaultMs: number;
+  /** 队长 `agent_teams_wait_for_members` 等待上限（ms，clamp 上界）。 */
+  waitMaxMs: number;
+}
+
+export interface AgentTeamsConfig {
+  hostWake: AgentTeamsHostWakeConfig;
+}
+
+/** 配置补丁形态：hostWake 逐字段部分覆盖（照 autoResume 的 assign 前快照纪律）。 */
+export interface AgentTeamsConfigPatch {
+  hostWake?: Partial<AgentTeamsHostWakeConfig>;
 }

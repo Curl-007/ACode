@@ -108,6 +108,7 @@ import type {
   UserInstructionsOptions,
   AutoCompactPolicyConfig,
   AutoResumeConfig,
+  AgentTeamsHostWakeConfig,
   ModelAnomalyGuardConfig,
   OutputStylePromptConfig,
 } from "./deps.js";
@@ -209,6 +210,11 @@ export interface AgentRuntimeConfig {
    * overlay 只住 core runtime/auto-resume coordinator 的进程内内存。
    */
   autoResume?: Partial<AutoResumeConfig>;
+  /**
+   * 宿主团队唤醒参数与逃生阀（specs/host-team-wake.md R7）：bootstrap 从 config 链物化；
+   * 运行态计数/世代/ack 只住 core runtime/team-wake owner 的进程内 per-runtime 内存。
+   */
+  agentTeams?: { hostWake?: Partial<AgentTeamsHostWakeConfig> };
   mcp?: {
     enabled?: boolean;
     servers?: Record<string, McpServerConfig>;

@@ -14,6 +14,7 @@
  * 要用它过滤主区，而 presentation 反过来依赖本模型的类型——判据留在本文件，
  * 依赖方向才是单向的（本文件不 import 任何 UI 模块）。
  */
+import { projectTeamReviewProjection, type TeamReviewProjection, type TeamWakeInput } from "./teamReviewModel.js";
 
 /** AgentTeams 团队卡的任务行。字段即插件 TeamPanelState.tasks 的投影。 */
 export interface ConversationStatusPanelTeamTask {
@@ -56,12 +57,20 @@ export interface ConversationStatusPanelTeamMessage {
  * 新宿主仍能用。质量门语义（哪些 kind 算质量门）由插件在 blockedByFailedQuality 里算好，
  * 宿主不复制这份知识。
  */
-export interface ConversationStatusPanelTeam {
+export interface ConversationStatusPanelTeam extends TeamReviewProjection {
   teamId: string;
   goal: string;
   status: string;
   panelUrl?: string;
-  counts: { done: number; inProgress: number; todo: number; failed: number; blocked: number };
+  counts: {
+    done: number;
+    inProgress: number;
+    todo: number;
+    /** 待验收（插件批次 1 additive；缺席 = 0，不参与形状判定）。 */
+    inReview: number;
+    failed: number;
+    blocked: number;
+  };
   totalCount: number;
   members: ConversationStatusPanelTeamMember[];
   tasks: ConversationStatusPanelTeamTask[];
@@ -108,10 +117,11 @@ const AGENT_TEAMS_STATE_KEY_SUFFIX = ":agent-teams";
  */
 export function buildConversationStatusPanelTeam(
   pluginStates: Record<string, unknown> | null | undefined,
+  wakeInput?: TeamWakeInput | undefined,
 ): ConversationStatusPanelTeam | null {
   const snapshot = pickAgentTeamsStateEntry(pluginStates);
   if (!snapshot) return null;
-  return projectTeamCard(snapshot);
+  return projectTeamCard(snapshot, wakeInput);
 }
 
 /**
@@ -123,10 +133,11 @@ export function buildConversationStatusPanelTeam(
 export function buildConversationStatusPanelTeams(
   pluginStates: Record<string, unknown> | null | undefined,
   ownerSessionId?: string | null,
+  wakeInput?: TeamWakeInput | undefined,
 ): ConversationStatusPanelTeam[] {
   const snapshot = pickAgentTeamsStateEntry(pluginStates);
   if (!snapshot) return [];
-  const primary = projectTeamCard(snapshot);
+  const primary = projectTeamCard(snapshot, wakeInput);
   const rawTeams = snapshot.teams;
   const all = (() => {
     if (!Array.isArray(rawTeams) || rawTeams.length === 0) {
@@ -134,7 +145,7 @@ export function buildConversationStatusPanelTeams(
     }
     const teams = rawTeams.flatMap((raw): ConversationStatusPanelTeam[] => {
       if (typeof raw !== "object" || raw === null) return [];
-      const card = projectTeamCard(raw as Record<string, unknown>);
+      const card = projectTeamCard(raw as Record<string, unknown>, wakeInput);
       return card ? [card] : [];
     });
     return teams.length > 0 ? teams : primary ? [primary] : [];
@@ -167,7 +178,7 @@ export function buildConversationStatusPanelEndedTeams(
 /**
  * 团队「已结束」判据（SPEC-012 §5.4）：已归档；或未归档但至少 1 个任务且全部为
  * done / cancelled。有 failed / blocked 的团队不算结束——它们需要队长或用户处理，
- * 不能收进「已结束」桶里藏起来。
+ * 不能收进「已结束」桶里藏起来。`in_review` 同样**不算结束**（待验收仍需处理）。
  */
 export function isTeamEnded(team: {
   status: string;
@@ -189,6 +200,8 @@ export interface ConversationStatusPanelTeamSections {
 export interface ConversationStatusPanelTeamSectionsInput {
   pluginStates?: Record<string, unknown> | null;
   sessionId?: string | null;
+  /** 队长会话运行态（wakeHint 派生输入，host-team-wake R10）；缺席 = 不派生候选提示。 */
+  sessionControl?: TeamWakeInput["sessionControl"];
 }
 
 /**
@@ -198,9 +211,10 @@ export interface ConversationStatusPanelTeamSectionsInput {
 export function buildConversationStatusPanelTeamSections(
   pluginStates: Record<string, unknown> | null | undefined,
   sessionId?: string | null,
+  wakeInput?: TeamWakeInput | undefined,
 ): ConversationStatusPanelTeamSections {
   const endedFromSnapshot = buildConversationStatusPanelEndedTeams(pluginStates, sessionId);
-  const all = buildConversationStatusPanelTeams(pluginStates, sessionId);
+  const all = buildConversationStatusPanelTeams(pluginStates, sessionId, wakeInput);
   const teams = all.filter((candidate) => !isTeamEnded(candidate));
   const endedInline = all.filter((candidate) => isTeamEnded(candidate));
   const endedIds = new Set(endedInline.map((candidate) => candidate.teamId));
@@ -229,7 +243,10 @@ function pickAgentTeamsStateEntry(
 }
 
 /** 单个团队快照 → 团队卡（形状不符返回 null，不渲染半张卡）。 */
-function projectTeamCard(snapshot: Record<string, unknown>): ConversationStatusPanelTeam | null {
+function projectTeamCard(
+  snapshot: Record<string, unknown>,
+  wakeInput?: TeamWakeInput | undefined,
+): ConversationStatusPanelTeam | null {
   if (snapshot.v !== 1) return null;
   if (typeof snapshot.teamId !== "string" || !snapshot.teamId) return null;
   if (typeof snapshot.goal !== "string") return null;
@@ -243,6 +260,8 @@ function projectTeamCard(snapshot: Record<string, unknown>): ConversationStatusP
     done: numeric(counts.done) ?? 0,
     inProgress: numeric(counts.inProgress) ?? 0,
     todo: numeric(counts.todo) ?? 0,
+    // 插件批次 1 additive：缺席（旧插件）即 0。
+    inReview: numeric(counts.inReview) ?? 0,
     failed: numeric(counts.failed) ?? 0,
     blocked: numeric(counts.blocked) ?? 0,
   };
@@ -340,6 +359,7 @@ function projectTeamCard(snapshot: Record<string, unknown>): ConversationStatusP
       })
     : [];
   return {
+    ...projectTeamReviewProjection(snapshot, wakeInput),
     teamId: snapshot.teamId,
     goal: snapshot.goal,
     status: snapshot.status,
@@ -359,6 +379,7 @@ function projectTeamCard(snapshot: Record<string, unknown>): ConversationStatusP
       projectedCounts.done +
       projectedCounts.inProgress +
       projectedCounts.todo +
+      projectedCounts.inReview +
       projectedCounts.failed +
       projectedCounts.blocked,
     members,

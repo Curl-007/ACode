@@ -1,8 +1,7 @@
-import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { ToolDefinition, ToolResult } from "./registry.js";
 import { assertNoCycle } from "../state/dag.js";
-import { assertTransition } from "../state/machine.js";
+import { assertKnownTaskStatus, assertTransition } from "../state/machine.js";
 import { computeNextActions } from "../scheduler.js";
 import {
   QUALITY_TASK_KINDS,
@@ -128,7 +127,7 @@ export const captainTaskTools: readonly ToolDefinition[] = [
   {
     name: "agent_teams_amend_task",
     description:
-      "Captain only. Amend objective/acceptance/notes on a non-terminal task. Review-kind tasks freeze acceptance after the reviewed task passes. Every amendment is recorded in a revisions ledger.",
+      "Captain only. Amend objective/acceptance/notes on a non-terminal task. Acceptance is frozen while a task is in_review (the member's delivery is being judged against the wording it was given — reject it or accept it instead of moving the goalposts), and review-kind tasks freeze acceptance after the attempt started. Every amendment is recorded in a revisions ledger.",
     schema: amendSchema,
     memberAllowed: false,
     async handler(input, context): Promise<ToolResult> {
@@ -139,10 +138,19 @@ export const captainTaskTools: readonly ToolDefinition[] = [
       if (!task) {
         throw new TeamError("task_not_found", `Task ${parsed.taskId} not found.`);
       }
+      assertKnownTaskStatus(task.status, `task ${parsed.taskId}`);
       if (task.status === "done" || task.status === "cancelled") {
         throw new TeamError(
           "invalid_input",
           `Task ${parsed.taskId} is ${task.status}; amendment is closed.`,
+        );
+      }
+      if (task.status === "in_review" && parsed.acceptance !== undefined) {
+        // OQ-6：待验收期间冻结验收标准——改掉它会抽掉已交付工作的依据，改用 reassign 更诚实。
+        throw new TeamError(
+          "acceptance_frozen",
+          `Task ${parsed.taskId} is in_review; acceptance is frozen while the delivery is being judged. Accept it or reassign it instead of amending the acceptance criteria.`,
+          { taskId: parsed.taskId, status: task.status },
         );
       }
       if (
@@ -183,24 +191,34 @@ export const captainTaskTools: readonly ToolDefinition[] = [
   {
     name: "agent_teams_reassign_task",
     description:
-      'Captain only. Atomically retry or reassign a task: the old attempt is revoked, the task returns to todo with the new assignee (use "captain" for captain takeover). If the new owner is idle and ready, the dispatch instruction wakes them. Use this only to change the owner or to take over — to send a rejected task back with more instructions, use agent_teams_send_message instead (the original member keeps its context). Refused with reassign_limit_exceeded once the task has been reassigned maxReassignRounds times (default 3); stop and report to the user at that point.',
+      "Captain only. Atomically reject or reassign a task: the old attempt is revoked, the task returns to todo with the new assignee (from in_progress, in_review, failed or blocked). A task in_review means the member already delivered — reassigning is how you REJECT that delivery (the member's worktree is kept so it can keep working in the same tree); to add requirements without rejecting, use agent_teams_send_message. Reassigning to the captain is refused: the coordinator session does not take over tasks to change code (dispatch to a member instead). Refused with reassign_limit_exceeded once the task has been reassigned maxReassignRounds times (default 3); stop and report to the user at that point.",
     schema: reassignSchema,
     memberAllowed: false,
     async handler(input, context): Promise<ToolResult> {
       const parsed = reassignSchema.parse(input);
       const team = context.resolveTeamContext(parsed.teamId);
       context.requireCaptain(team);
+      // Q2 裁决（specs/coordinator-readonly-preset.md）：撤销「队长自助接管任务改代码」的
+      // 文档化路径——队长会话的文件写工具被宿主按团队协议禁用，接管后也无从改代码。
+      // 中性文案列明该怎么做（派成员 / 追加指令），不描述为错误（EI-17）。
+      if (parsed.assignee === "captain") {
+        throw new TeamError(
+          "invalid_input",
+          'Reassigning to "captain" is not supported: the coordinator session does not take over a task to change code. Reassign to a member, or use agent_teams_send_message to add instructions to the original member.',
+        );
+      }
       const task = context.store.readTask(team.teamId, parsed.taskId);
       if (!task) {
         throw new TeamError("task_not_found", `Task ${parsed.taskId} not found.`);
       }
+      assertKnownTaskStatus(task.status, `task ${parsed.taskId}`);
       if (task.status === "done" || task.status === "cancelled") {
         throw new TeamError(
           "invalid_input",
           `Task ${parsed.taskId} is ${task.status}; reassignment is closed.`,
         );
       }
-      if (parsed.assignee !== "captain") {
+      {
         const member = team.members.find((item) => item.name === parsed.assignee);
         if (!member || member.status === "removed") {
           throw new TeamError(
@@ -240,27 +258,14 @@ export const captainTaskTools: readonly ToolDefinition[] = [
           }
         });
         target.activeAttemptId = undefined;
+        // R2.3：打回审计——与 amend 共用同一 revisions 台账，不新增结构；
+        // 在所有 reassign 来源上统一生效（EI-2）。attemptSeq 不在此递增（OQ-3：认领计数器，
+        // 下一次 claim 才 +1 并生成新 attempt）。
+        target.revisions.push({ at: nowIso(), by: "captain", fields: ["status", "assignee"] });
       });
-      // 修复原因（D-3）：reassign 给 captain 后任务停在 todo 且 activeAttemptId 为空，队长 update_task 总报
-      // stale_attempt（todo→update_done 也不存在），claim 又报 caller_not_member，接管流程走不通。
-      // 修复依据：captain 接管时在同一次调用里为队长创建活动 attempt 并置 in_progress，返回 attempt_id 供 update_task 使用。
-      let captainAttemptId: string | undefined;
-      if (parsed.assignee === "captain") {
-        assertTransition("todo", "claim");
-        captainAttemptId = randomUUID();
-        const attemptId = captainAttemptId;
-        context.store.writeTask(team.teamId, parsed.taskId, (target) => {
-          target.status = "in_progress";
-          target.attemptSeq += 1;
-          target.attempts.push({
-            id: attemptId,
-            seq: target.attemptSeq,
-            owner: "captain",
-            startedAt: nowIso(),
-          });
-          target.activeAttemptId = attemptId;
-        });
-      }
+      // Q2 裁决（specs/coordinator-readonly-preset.md）：撤销队长自助接管——不再为
+      // 「assignee: captain」创建进行中 attempt（该入参已在入口拒绝）。任务回 todo，
+      // 由被指派的成员认领。
       const refreshedTeam = context.store.findTeam(team.teamId) ?? team;
       const refreshedTasks = context.store.readTasks(team.teamId);
       return {
@@ -268,7 +273,6 @@ export const captainTaskTools: readonly ToolDefinition[] = [
         teamId: team.teamId,
         taskId: parsed.taskId,
         assignee: parsed.assignee,
-        ...(captainAttemptId ? { attempt_id: captainAttemptId, status: "in_progress" } : {}),
         reason: parsed.reason,
         next_actions: computeNextActions({
           team: refreshedTeam,

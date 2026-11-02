@@ -134,6 +134,29 @@ derived-config 的 R3–R7 作为 live-refresh 真源，不复述其规则；把
 - `packages/ui/src/v4/teamPanelModel.ts` 的成员投影是字段白名单（未知字段忽略），**本批
   不改 UI**：字段先落地于插件快照与 status；UI 若需展示（如角色徽标）归 UI 批次。
 
+### R5.1 UI 角色徽标（2026-11-02 UI 批次增补，兑现 R5「归 UI 批次」约定）
+
+- **渲染点（单一）**：团队侧栏成员页签的成员行（`packages/ui/src/app-shell/TeamSidePanePeople.tsx`
+  的 `TeamSidePaneMembers`，徽标在成员名之后、role 文本之前）。工作流卡成员 pill 与
+  `TeamLingeringMembers` **不渲染** `roleRef`——避免第二/第三展示面；队长侧消费点仍是
+  `agent_teams_status`（R5）。
+- **显示语义**：徽标文本 = `roleRef` **逐字显示**（不透明 AgentProfile 引用，R1），UI 不做
+  映射/翻译/改写；允许布局层 `max-w` + `truncate` 截断，`title` 给全文（i18n 键
+  `teamPanel.member.roleRefBadge`，zh「角色包：{roleRef}」/ en「Role pack: {roleRef}」，
+  EI-107 双词典同批）。**中性元数据样式**：不用状态色、不用 confirmation 家族
+  （`roleRef` 不是状态），沿用仓库既有 neutral tag 惯用法（`bg-markdown-inline-code/50` +
+  `font-mono` + `text-ui-xs`）。
+- **缺席即不渲染**：成员无 `roleRef`（add_member 缺省，或旧版插件快照）→ 徽标整体缺席，
+  不参与形状判定（与 R5 additive 同口径）；不得以 role 文本或占位符冒充。
+- **UI 侧收窄单点**：成员投影实现外迁叶子 `packages/ui/src/v4/teamPanelMembers.ts`
+  （`projectTeamMembers`，遵循 team-acceptance-visualization spec R10「新增投影必须外迁
+  叶子、`teamPanelModel.ts` 不得越 400」）；`roleRef` 非字符串或空串一律按缺席处理
+  （字段白名单，坏条只丢该字段不丢成员条目）。
+- **测试**：`test/teamPanelModel.test.ts` 增收窄断言（在场逐字 / 缺席无键 / 坏值与空串
+  按缺席）；新增 `test/teamSidePaneMembers.test.ts` SSR 断言（有 `roleRef` →
+  `data-testid="team-member-role-ref"` 徽标恰一处 + 逐字文本；无 → 不渲染）；
+  `test/teamLocaleKeys.test.ts` 关键键清单收录新键。
+
 ### R6 live-refresh 语义（沿 derived-config，指针引用）
 
 - 引用的 profile 内容（模型/思考档/Skills/MCP/工具/审批）由宿主在**每次新派生**时按

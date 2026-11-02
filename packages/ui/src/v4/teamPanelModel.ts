@@ -14,7 +14,12 @@
  * 要用它过滤主区，而 presentation 反过来依赖本模型的类型——判据留在本文件，
  * 依赖方向才是单向的（本文件不 import 任何 UI 模块）。
  */
+import { projectTeamMembers, type ConversationStatusPanelTeamMember } from "./teamPanelMembers.js";
 import { projectTeamReviewProjection, type TeamReviewProjection, type TeamWakeInput } from "./teamReviewModel.js";
+
+// 成员行形状与收窄实现外迁在 teamPanelMembers.ts（R10 叶子纪律）；类型在此 re-export
+// 保持既有导入面（TeamLingeringMembers 等）不变。
+export type { ConversationStatusPanelTeamMember };
 
 /** AgentTeams 团队卡的任务行。字段即插件 TeamPanelState.tasks 的投影。 */
 export interface ConversationStatusPanelTeamTask {
@@ -24,15 +29,6 @@ export interface ConversationStatusPanelTeamTask {
   kind: string;
   dependencies: string[];
   assignee?: string;
-}
-
-export interface ConversationStatusPanelTeamMember {
-  name: string;
-  role: string;
-  status: string;
-  currentTaskId?: string;
-  /** 已绑定成员的子会话 id（插件 0.3 additive）；缺席 = 不可打开成员会话。 */
-  childSessionId?: string;
 }
 
 export interface ConversationStatusPanelTeamMailbox {
@@ -284,26 +280,7 @@ function projectTeamCard(
         ];
       })
     : [];
-  const members = Array.isArray(snapshot.members)
-    ? snapshot.members.flatMap((raw): ConversationStatusPanelTeamMember[] => {
-        if (typeof raw !== "object" || raw === null) return [];
-        const member = raw as Record<string, unknown>;
-        if (typeof member.name !== "string" || !member.name) return [];
-        return [
-          {
-            name: member.name,
-            role: typeof member.role === "string" ? member.role : "",
-            status: typeof member.status === "string" ? member.status : "registered",
-            ...(typeof member.currentTaskId === "string"
-              ? { currentTaskId: member.currentTaskId }
-              : {}),
-            ...(typeof member.childSessionId === "string" && member.childSessionId
-              ? { childSessionId: member.childSessionId }
-              : {}),
-          },
-        ];
-      })
-    : [];
+  const members = projectTeamMembers(snapshot.members);
   const readyTaskIds = Array.isArray(snapshot.readyTaskIds)
     ? snapshot.readyTaskIds.filter((id): id is string => typeof id === "string" && id.length > 0)
     : [];

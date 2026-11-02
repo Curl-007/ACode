@@ -71,6 +71,7 @@ test("team card and team pane critical keys exist in both locales", () => {
     "teamPanel.member.pending",
     "teamPanel.member.idle",
     "teamPanel.member.registered",
+    "teamPanel.member.roleRefBadge",
     "teamPanel.mailbox.unreadSection",
     "teamPanel.mailbox.rosterSection",
     "teamPanel.mailbox.empty",

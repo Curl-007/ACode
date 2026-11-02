@@ -7063,6 +7063,7 @@ const enUS: Record<string, string> = {
   "teamPanel.member.pending": "Has pending tasks",
   "teamPanel.member.idle": "Idle",
   "teamPanel.member.registered": "Registered · not started",
+  "teamPanel.member.roleRefBadge": "Role pack: {roleRef}",
   "teamPanel.mailbox.unreadSection": "Unread",
   "teamPanel.mailbox.rosterSection": "Mailbox status",
   "teamPanel.mailbox.empty": "No unread messages.",

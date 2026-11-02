@@ -6754,6 +6754,7 @@ const zhCN: Record<string, string> = {
   "teamPanel.member.pending": "有待办任务",
   "teamPanel.member.idle": "空闲",
   "teamPanel.member.registered": "已登记 · 未启动",
+  "teamPanel.member.roleRefBadge": "角色包：{roleRef}",
   "teamPanel.mailbox.unreadSection": "未读",
   "teamPanel.mailbox.rosterSection": "邮箱状态",
   "teamPanel.mailbox.empty": "暂无未读消息。",

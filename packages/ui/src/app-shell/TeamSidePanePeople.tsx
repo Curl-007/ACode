@@ -75,6 +75,20 @@ export const TeamSidePaneMembers = memo(function TeamSidePaneMembers({
               style={{ backgroundColor: color }}
             />
             <span className="shrink-0 text-ui-base font-medium text-foreground">{member.name}</span>
+            {member.roleRef ? (
+              // 角色包徽标（role-packs spec R5.1）：roleRef 逐字显示、中性元数据样式；
+              // 缺席整个徽标不渲染，不以 role 文本冒充。
+              <span
+                className="max-w-28 shrink-0 truncate rounded-md bg-markdown-inline-code/50 px-1.5 font-mono text-ui-xs text-foreground-subtle"
+                data-testid="team-member-role-ref"
+                title={intl.formatMessage(
+                  { id: "teamPanel.member.roleRefBadge" },
+                  { roleRef: member.roleRef },
+                )}
+              >
+                {member.roleRef}
+              </span>
+            ) : null}
             <span className="min-w-0 flex-1 truncate text-ui-sm text-foreground-subtle">
               {member.role}
             </span>

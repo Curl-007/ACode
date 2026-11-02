@@ -66,6 +66,27 @@ test("in_review counts additively (old snapshots default to 0) and the team stay
   assert.equal(legacy.counts.inReview, 0);
 });
 
+test("member roleRef projects verbatim when present; absent/bad/empty leave no key (role-packs R5.1)", () => {
+  const team = buildConversationStatusPanelTeam({
+    [stateKey]: snapshot({
+      members: [
+        { name: "dev", role: "Developer", status: "bound", roleRef: "agent-teams:member" },
+        { name: "rev", role: "Reviewer", status: "registered" },
+        { name: "bad", role: "Auditor", status: "bound", roleRef: 42 },
+        { name: "empty", role: "Auditor", status: "bound", roleRef: "" },
+      ],
+    }),
+  })!;
+  // 逐字透传：不做映射/归一化（不透明 AgentProfile 引用）。
+  assert.equal(team.members[0]!.roleRef, "agent-teams:member");
+  // 缺席（缺省/旧插件）与坏值/空串一律无键——不参与形状判定，也不渲染空徽标。
+  assert.equal("roleRef" in team.members[1]!, false);
+  assert.equal("roleRef" in team.members[2]!, false);
+  assert.equal("roleRef" in team.members[3]!, false);
+  // 坏 roleRef 只丢字段不丢成员条目（白名单口径）。
+  assert.equal(team.members.length, 4);
+});
+
 test("multi-team snapshots keep order and filter by captain session", () => {
   const teams = buildConversationStatusPanelTeams({
     [stateKey]: snapshot({

@@ -180,7 +180,11 @@ export const providerSettingsArgumentValidators: Partial<
     }
   },
   importProviderCandidates: (args) => {
-    requireObjectArg(args, ["candidateIds"]);
+    // candidateIds 是字符串数组，不能进 requireObjectArg 的 requiredStringFields——
+    // 那是「必需非空字符串」语义，合法数组会被第一行误判 invalid（GUI 真实点击
+    // 穿透抓到的回归：UI→RPC 链路此前无测试覆盖）。这里只做「单一参数对象」的
+    // 边界检查；数组形态归下一行，非空/UUID/上限语义按 R5 归服务内二次校验。
+    requireObjectArg(args, []);
     requireStringArrayAt((args[0] as Record<string, unknown>).candidateIds, "invalid candidateIds");
   },
 };

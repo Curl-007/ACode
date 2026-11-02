@@ -652,3 +652,28 @@ test("N11 测试夹具凭据均为合成占位，不含真实前缀形态", () =
   assert.ok(!existsSync(join(tmpdir(), "acode-provider-import-should-not-exist")));
   assert.ok(statSync(new URL(import.meta.url)).isFile());
 });
+
+// RPC 边界校验回归（GUI 真实点击穿透抓到的缺陷）：importProviderCandidates 的校验器
+// 曾把 candidateIds 塞进 requireObjectArg 的 requiredStringFields（「必需非空字符串」
+// 语义），合法字符串数组在第一行就被拒为 rpc-invalid-arguments，第二行数组校验永不
+// 执行——UI 导入必失败。此前测试只调 service 层，从未穿透 RPC 校验器，故未拦住。
+test("RPC 参数校验：importProviderCandidates 接受字符串数组 candidateIds", async () => {
+  const { providerSettingsArgumentValidators } = await import(
+    "../src/model-provider/providerFacadeServices.validators.ts"
+  );
+  const validateImport = providerSettingsArgumentValidators.importProviderCandidates;
+  // 合法调用（UI 实发同款形状）必须通过——修复前这里抛 "invalid candidateIds"。
+  validateImport([{ candidateIds: ["c-1", "c-2"] }]);
+  // 空数组过边界：非空/UUID/上限语义按 R5 归服务内二次校验（结构化错误可映射）。
+  validateImport([{ candidateIds: [] }]);
+  // 负向：字符串、缺字段、非字符串元素、多参仍被边界拒绝。
+  assert.throws(() => validateImport([{ candidateIds: "c-1" }]), /invalid candidateIds/);
+  assert.throws(() => validateImport([{}]), /invalid candidateIds/);
+  assert.throws(() => validateImport([{ candidateIds: ["c-1", 2] }]), /invalid candidateIds/);
+  assert.throws(() => validateImport([]), /single parameter object/);
+  // 扫描面校验器同批钉住（该链路本来就通，防止顺手回归）。
+  const validateScan = providerSettingsArgumentValidators.scanProviderImports;
+  validateScan([]);
+  validateScan([{ sources: ["claude-code"] }]);
+  assert.throws(() => validateScan([{ sources: "claude-code" }]), /invalid sources/);
+});

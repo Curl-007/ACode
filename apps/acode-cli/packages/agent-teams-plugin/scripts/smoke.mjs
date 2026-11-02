@@ -3,73 +3,34 @@
  * AgentTeams 插件 server 的端到端冒烟：用 @modelcontextprotocol/client 的
  * Client + StdioClientTransport 驱动（与宿主 adapter 同一条协商链路，含
  * server/discover 版本协商）。无 _meta 的 tools/call 用 caller 降级身份。
+ * 驱动/通知/断言样板在 scripts/smoke-lib.mjs（与 smoke-acceptance.mjs 共用）。
+ *
  * 验证：tools/list（21 个）→ create → add/bind → create_task（依赖）→
  * approve → status（next_actions）→ claim → update（verify 门，汇报落 in_review）→
  * send_message → accept_task（非隔离团队验收 → done）→ status → 面板 API →
  * delete → 工具关闭；0.2 增补：多团队并行、teamId 寻址、team_ambiguous、
  * status 总览、adopt_team、teams[] 通知、/api/teams。
  */
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { Client } from "@modelcontextprotocol/client";
-import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import {
+  capturePluginState,
+  createChecker,
+  createWorkspace,
+  errorOf,
+  parseResult,
+  startAgentTeamsClient,
+} from "./smoke-lib.mjs";
 
-const workspace = mkdtempSync(join(tmpdir(), "agent-teams-smoke-"));
-const transport = new StdioClientTransport({
-  command: process.execPath,
-  args: [join(import.meta.dirname, "..", "dist", "mcp", "server.js")],
-  env: { ...process.env, ACODE_PROJECT_DIR: workspace },
-});
-const client = new Client(
-  { name: "smoke", version: "0" },
-  // server 侧 legacy: "reject"（与 node-repl-host 相同）；冒烟用 pin 2026-07-28
-  // 对齐宿主 adapter 对现代 server 的协商结果（auto 模式对 reject server 的
-  // 等效路径）。
-  { versionNegotiation: { mode: { pin: "2026-07-28" } } },
-);
-
-// 截获插件状态通知（acode-plugin-state:agent-teams logging 通知 → 宿主桥的前半段）。
-const pluginStateNotifications = [];
-client.setNotificationHandler("notifications/message", (notification) => {
-  const params = notification.params ?? {};
-  if (typeof params.logger === "string" && params.logger.startsWith("acode-plugin-state:")) {
-    pluginStateNotifications.push({ logger: params.logger, data: params.data });
-  }
-});
-const waitForPluginState = (predicate, timeoutMs = 10000) =>
-  new Promise((resolve, reject) => {
-    const startedAt = Date.now();
-    const poll = () => {
-      const found = pluginStateNotifications.find(predicate);
-      if (found) {
-        resolve(found);
-        return;
-      }
-      if (Date.now() - startedAt > timeoutMs) {
-        reject(new Error("plugin state notification not observed in time"));
-        return;
-      }
-      setTimeout(poll, 100);
-    };
-    poll();
-  });
+const workspace = createWorkspace("agent-teams-smoke-");
+const { client, transport } = startAgentTeamsClient({ workspace, name: "smoke" });
+const { waitForPluginState } = capturePluginState(client);
 await client.connect(transport);
 
 const toolCall = (name, args, caller) =>
   client.callTool({ name, arguments: { ...args, ...(caller ? { caller } : {}) } });
-
-const text = (result) => {
-  const parsed = JSON.parse(result.content[0].text);
-  if (parsed.ok === false) throw new Error(`tool ${parsed.error.code}: ${parsed.error.message}`);
-  return parsed;
-};
-
-let failures = 0;
-const check = (label, condition) => {
-  console.log(`${condition ? "PASS" : "FAIL"}  ${label}`);
-  if (!condition) failures += 1;
-};
+const text = parseResult;
+const { check, crash, finish } = createChecker();
 
 try {
   const listed = await client.listTools();
@@ -144,10 +105,7 @@ try {
     { title: "x", objective: "y", acceptance: ["z"] },
     { name: "dev-1", role: "member" },
   );
-  check(
-    "member cannot create task",
-    JSON.parse(denied.content[0].text).error.code === "forbidden_for_caller",
-  );
+  check("member cannot create task", errorOf(denied).code === "forbidden_for_caller");
 
   const approved = text(
     await toolCall("agent_teams_approve_plan", { confirmation: "smoke go" }, { role: "captain" }),
@@ -199,10 +157,7 @@ try {
     { taskId: "t-1", attemptId: claimed.attempt_id, status: "done", summary: "ok" },
     { name: "dev-1", role: "member" },
   );
-  check(
-    "done requires verify",
-    JSON.parse(noVerify.content[0].text).error.code === "verify_required",
-  );
+  check("done requires verify", errorOf(noVerify).code === "verify_required");
 
   const updated = text(
     await toolCall(
@@ -289,10 +244,7 @@ try {
     history.team?.status === "archived" && history.tasks?.length === 2,
   );
   const closed = await toolCall("agent_teams_status", {}, { role: "captain" });
-  check(
-    "tools closed after archive",
-    JSON.parse(closed.content[0].text).error.code === "no_active_team",
-  );
+  check("tools closed after archive", errorOf(closed).code === "no_active_team");
 
   // ---- 0.2 多团队 ----
   const teamA = text(
@@ -309,7 +261,7 @@ try {
     { name: "dev-1", role: "dev", charter: "c" },
     { role: "captain" },
   );
-  const ambiguousError = JSON.parse(ambiguous.content[0].text).error;
+  const ambiguousError = errorOf(ambiguous);
   check(
     "team_ambiguous with candidates",
     ambiguousError.code === "team_ambiguous" && ambiguousError.data.candidates.length === 2,
@@ -395,17 +347,12 @@ try {
     text(await toolCall("agent_teams_delete", { teamId, archive: false }, { role: "captain" }));
   }
   const finalStatus = await toolCall("agent_teams_status", {}, { role: "captain" });
-  check(
-    "all teams archived",
-    JSON.parse(finalStatus.content[0].text).error.code === "no_active_team",
-  );
+  check("all teams archived", errorOf(finalStatus).code === "no_active_team");
 } catch (error) {
-  failures += 1;
-  console.log(`FAIL  smoke crashed: ${error.message}`);
+  crash(error);
 } finally {
   await client.close().catch(() => undefined);
   rmSync(workspace, { recursive: true, force: true });
 }
 
-console.log(failures === 0 ? "\nSMOKE OK" : `\nSMOKE FAILED (${failures})`);
-process.exit(failures === 0 ? 0 : 1);
+finish();

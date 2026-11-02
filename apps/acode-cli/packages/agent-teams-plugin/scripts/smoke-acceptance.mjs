@@ -2,8 +2,8 @@
 /**
  * AgentTeams 验收闭环的端到端冒烟（批次 0 + 批次 1，**真实隔离 worktree**）。
  *
- * 与 smoke.mjs 同一驱动模式：真实 stdio 拉起构建后的 dist/mcp/server.js，用
- * @modelcontextprotocol/client 走宿主同一条协商链路；无 _meta 时用 caller 降级身份
+ * 与 smoke.mjs 同一驱动模式（client 拉起/通知/断言样板在 scripts/smoke-lib.mjs）：
+ * 真实 stdio 拉起构建后的 dist/mcp/server.js，无 _meta 时用 caller 降级身份
  * （captain / dev-1）。**全程无模型**：脚本自己扮演队长与成员——成员的「干活」= 在你的
  * 真实 worktree 里真实写文件 + 真实 git 提交。
  *
@@ -15,91 +15,34 @@
  *
  * 全部真 git、真文件 IO、真命令执行；工作区是临时目录（自清理），git 用户配置**局部**设置。
  */
-import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
-import { Client } from "@modelcontextprotocol/client";
-import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { existsSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import {
+  capturePluginState,
+  createChecker,
+  createWorkspace,
+  errorOf,
+  git,
+  isRegisteredWorktree,
+  parseResult,
+  runGit,
+  startAgentTeamsClient,
+} from "./smoke-lib.mjs";
 
-const workspace = realpathSync(mkdtempSync(join(tmpdir(), "agent-teams-acceptance-")));
+const workspace = realpathSync(createWorkspace("agent-teams-acceptance-"));
 const repo = workspace; // 工作区即 git 仓库根：worktree 隔离要求 ACODE_PROJECT_DIR 是仓库。
 console.log(`workspace: ${workspace}`);
 
-// ---- 真实 git（局部用户配置，不污染全局） ----
-const runGit = (cwd, args, { allowFailure = false } = {}) => {
-  try {
-    const stdout = execFileSync("git", args, {
-      cwd,
-      encoding: "utf8",
-      windowsHide: true,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    return { ok: true, stdout };
-  } catch (error) {
-    if (!allowFailure) {
-      throw new Error(`git ${args.join(" ")} failed in ${cwd}: ${error.stderr ?? error.message}`);
-    }
-    return { ok: false, stdout: typeof error.stdout === "string" ? error.stdout : "" };
-  }
-};
-const git = (cwd, args) => runGit(cwd, args).stdout.trim();
-/** 归一化路径比较（git porcelain 与产品句柄可能分别是正/反斜杠、盘符大小写）。 */
-const normPath = (value) => resolve(value).replace(/\\/gu, "/").toLowerCase();
-/** 该路径是否是 git 登记的 worktree（与 manager.listRegisteredWorktrees 同源判据）。 */
-const isRegisteredWorktree = (repoRoot, path) =>
-  git(repoRoot, ["worktree", "list", "--porcelain"])
-    .split(/\r?\n/u)
-    .filter((line) => line.startsWith("worktree "))
-    .some((line) => normPath(line.slice("worktree ".length)) === normPath(path));
-
-const transport = new StdioClientTransport({
-  command: process.execPath,
-  args: [join(import.meta.dirname, "..", "dist", "mcp", "server.js")],
-  env: { ...process.env, ACODE_PROJECT_DIR: repo },
+const { client, transport } = startAgentTeamsClient({ workspace: repo, name: "acceptance-smoke" });
+const { waitForPluginState } = capturePluginState(client);
+const { check, note, crash, finish } = createChecker({
+  okLabel: "ACCEPTANCE SMOKE",
+  crashLabel: "acceptance smoke",
 });
-const client = new Client(
-  { name: "acceptance-smoke", version: "0" },
-  { versionNegotiation: { mode: { pin: "2026-07-28" } } },
-);
-
-const pluginStateNotifications = [];
-client.setNotificationHandler("notifications/message", (notification) => {
-  const params = notification.params ?? {};
-  if (typeof params.logger === "string" && params.logger.startsWith("acode-plugin-state:")) {
-    pluginStateNotifications.push({ logger: params.logger, data: params.data });
-  }
-});
-const waitForPluginState = (predicate, timeoutMs = 10000) =>
-  new Promise((resolve, reject) => {
-    const startedAt = Date.now();
-    const poll = () => {
-      const found = pluginStateNotifications.find(predicate);
-      if (found) return resolve(found);
-      if (Date.now() - startedAt > timeoutMs) {
-        return reject(new Error("plugin state notification not observed in time"));
-      }
-      setTimeout(poll, 100);
-    };
-    poll();
-  });
-
-let failures = 0;
-const check = (label, condition) => {
-  console.log(`${condition ? "PASS" : "FAIL"}  ${label}`);
-  if (!condition) failures += 1;
-};
-/** 打印真实 git 事实（SHA 等），便于人工核对与留痕。 */
-const note = (label, value) => console.log(`INFO  ${label}: ${value}`);
 
 const toolCall = (name, args, caller = captain) =>
   client.callTool({ name, arguments: { ...args, caller } });
-const text = (result) => {
-  const parsed = JSON.parse(result.content[0].text);
-  if (parsed.ok === false) throw new Error(`tool ${parsed.error.code}: ${parsed.error.message}`);
-  return parsed;
-};
-const errorOf = (result) => JSON.parse(result.content[0].text).error;
+const text = parseResult;
 
 const captain = { role: "captain" };
 const member = { name: "dev-1", role: "member" };
@@ -277,12 +220,10 @@ try {
   check("delete lists in_review tasks in pending_tasks", Array.isArray(deleted.pending_tasks) && deleted.pending_tasks.some((p) => p.taskId === "t-2") && deleted.pending_tasks.some((p) => p.taskId === "t-3"));
   check("pending_tasks marks them in_review", deleted.pending_tasks.filter((p) => p.taskId === "t-2" || p.taskId === "t-3").every((p) => p.status === "in_review"));
 } catch (error) {
-  failures += 1;
-  console.log(`FAIL  acceptance smoke crashed: ${error.message}`);
+  crash(error);
 } finally {
   await client.close().catch(() => undefined);
   rmSync(workspace, { recursive: true, force: true });
 }
 
-console.log(failures === 0 ? "\nACCEPTANCE SMOKE OK" : `\nACCEPTANCE SMOKE FAILED (${failures})`);
-process.exit(failures === 0 ? 0 : 1);
+finish();

@@ -15,6 +15,7 @@ import {
 } from "../runtime/manifest.js";
 import { stageRelease } from "./stage.js";
 import { resolveNodeDistBase } from "./nodeDistMirror.js";
+import { inspectReleaseSourceUrl } from "../runtime/releaseSourcePolicy.js";
 
 const log = (...args: unknown[]): void => console.log("[stage]", ...args);
 
@@ -51,6 +52,18 @@ async function runCommand(command: string, args: readonly string[], cwd: string)
 }
 
 async function downloadFile(url: string, destinationPath: string): Promise<void> {
+  // 打包期的 Node dist 镜像同样只允许 http/https：`file:` / `data:` 对镜像没有任何合法用途，
+  // 却能把构建机上的本地文件读进发布物。
+  //
+  // 但这里**刻意只取协议白名单、不做公网主机校验**（`allowPrivateSource: true`）：
+  // `ACODE_NODE_DIST_MIRROR` 是 CI 的既有旋钮（`.gitlab/ci/00-workflow.yml`），指向内网镜像是
+  // 合法用法；且本函数跑在构建机上——能改构建机 env 的人本来就能直接改发布物，主机校验在这里
+  // 不构成有意义的边界。与运行时的 release 下载源（`runtime/releaseSourcePolicy.ts`，默认拒绝
+  // 非公网）信任位置不同，理由与边界见 specs/release-source-egress.md「打包期例外」。
+  const verdict = inspectReleaseSourceUrl(url, { allowPrivateSource: true });
+  if (!verdict.ok) {
+    throw new Error(`Refusing to download from ${url}: ${verdict.reason}`);
+  }
   const response = await fetch(url, { redirect: "follow" });
   if (!response.ok || !response.body) {
     throw new Error(`Download failed: HTTP ${response.status} (${url})`);

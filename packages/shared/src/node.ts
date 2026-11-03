@@ -156,3 +156,12 @@ export {
   type ArchiveFileEntryPlan,
   type ArchiveSkipEntryPlan,
 } from "./node/archiveExtractionSession.js";
+// 公网出口 IP 阻断表：doctor endpoint-policy、adapters public-egress-policy、core WebFetch guard
+// 与 @acode/server-cli 的 release 下载出口校验共用这一份（放置理由见该文件头注释）。
+export {
+  getIpAddressVersion,
+  getPublicEgressIpBlockReason,
+  normalizeIpAddressLiteral,
+  type IpAddressVersion,
+  type PublicEgressIpBlockReason,
+} from "./node/publicEgressIp.js";

@@ -764,6 +764,61 @@ R3 第三条「独立 acode-server-cli 分发不设打包标记：其管理员�
   等的重复文件）**未确认**；若包含，finding 计数可能含副本重复。
 - 全程静态阅读，未启动进程、未抓 stdio 流量、未构造 `..`/绝对路径/符号链接的 artifact id 做实验。
 
+### 6.4 §6.3.3 两个缺口的实施记录（2026-11-04，owner 裁决「修」）
+
+两个缺口都已实施，规则与验收在各自的 spec 里，此处只记**分诊建议与实际实施的差异**，避免台账与
+代码各说一套。
+
+**缺口一 → `packages/acode-server-cli/specs/release-source-egress.md`**
+
+- 建议里的「套用 `doctor/endpoint-policy.ts` 同一出口策略」照做了，但**判定表必须先上提**：
+  `getPublicEgressIpBlockReason` 原在嵌套 workspace 的 `@acode/contracts`，而根 `packages/*` 当前
+  不依赖任何嵌套包（全仓实测零命中）。直接依赖会新开一条依赖方向并把整个 CLI 契约面拖进远端
+  server 发布物。故上提到 `packages/shared/src/node/publicEgressIp.ts`（`@acode/shared/node`），
+  contracts 改具名 re-export，公开导出名逐字不变、三个既有消费方零改动。
+- 建议里没写、实施时发现的**关键一点**：只校验首个 URL 是没用的。原代码是 `redirect:"follow"`，
+  服务端一个 302 就能把请求送到 `169.254.169.254`。改为 `manual` + 逐跳校验（实测 Node 全局 fetch
+  在 manual 档返回 `type:"basic"`、`Location` 可读，浏览器的 opaqueredirect 过滤在 undici 上不存在）。
+- 建议里没写、实施时补的**信任位置修正**：`agent-command-env-gate.md` R3(c) 已裁决 server-cli 的
+  管理员对本机有完全控制权、env 配置属合法用法，且全仓只有 `updatePreparation.ts:67` 一处读该 env、
+  没有任何代码设置它。故无条件阻断私网会静默打断内网镜像部署，改为默认拒绝 +
+  `ACODE_SERVER_RELEASE_ALLOW_PRIVATE_SOURCE=1` 显式放行（协议白名单不受开关影响）。
+- **§6.3.3 漏记了第三处裸 fetch**：`packaging/stageCli.ts:54` 从 `ACODE_NODE_DIST_MIRROR` 下载 Node
+  二进制并打进发布物。按信任位置区分处置——只加协议白名单，不加主机校验（构建机上能改 env 的人
+  本来就能改发布物，而该 env 是 CI 既有旋钮）。
+- 建议里的「把 sha256 信任来源与被校验物解耦」**未实施**：那等于验签，已在
+  `remote-deploy-hardening.md` 登记项 2（钉扎公钥分发属发布管线）。已在 spec 残余 1 写明
+  「对控制了目录主机的攻击者，出口校验不是防线，签名才是」。
+- DNS 重绑定窗口**未闭合**：闭合需给本包新增 `undici` 直接依赖（实测 Node 不暴露 `Agent`、
+  `node:undici` 不可导入），而 `module-boundary.md` 允许清单不含它。裁决为不为此新增依赖，
+  登记在 spec 残余 2 并附了闭合路径。
+
+**缺口二 → `packages/services/specs/credentialed-egress-origin.md`**
+
+- 建议里的「纳入与 `ACODE_UPDATE_FEED_URL` 同档的 isPackaged 门禁（或纳入 drop 闭集）」选了后者：
+  `PACKAGED_BOOT_ENV_DROP_KEYS` 新增 15 键。放行走该闭集而不是新造一个 isPackaged 判断，是因为
+  闭集已有 `ACODE_ENV`，与 `isTrustedCodingPlanWebviewOrigin` 只在 e2e 旗标下信任 loopback 的既有
+  判断天然咬合。**放行开关本身也在闭集里**，否则它就是绕过闭集的后门。
+- 建议里的「统一校验只有 `normalizeACodeEndpointOrigin`」**没有去改那个函数**：它同时用于 origin
+  比较与设置写入，让它开始抛错会波及非出站路径。改为在 `NodeApiClient.request` 这个唯一咽喉加守卫。
+- **§6.3.3 对站点数的枚举不完整**：实测同型站点另有 ≥6 处，且被点名的 4 处**不含字面量
+  `Authorization:`**（走 header 工厂），故 `grep Authorization` 连它们自己都会漏。这直接决定了
+  修法必须是咽喉点而不是枚举调用点，已写进 spec R1。
+- 主次修正：主威胁是 token 外泄、攻击者 origin 通常是公网的，**私网阻断挡不住它**；需要的是
+  origin 白名单，属产品决策，登记在 spec 残余 1。
+- `acodeEndpointOrigin` UI 暴露面已补核（§6.3.3 自认未核的那一项）：无设置页 UI，仅
+  `ACODE_ENV==="test"` 渲染 Help 菜单、setter 在 production 早退，但**读取侧无门禁**，手改
+  settings.json 仍生效 → 登记在 spec 残余 2，本次未改。
+- **用户可见变更（发布说明需提及）**：打包桌面下用 shell env 配置自定义 ACode/zai/bigmodel 端点的
+  用户，升级后会静默回落到默认端点；替代通道是 settings.json 的 `acodeEndpointOrigin`。
+
+**共同的验证纪律**：两处都补了「接线钉子」并**实测其鉴别力**——摘掉接线后，缺口一的其余 12 个
+用例、缺口二的其余 7 个用例全部照绿，只有钉子/接线用例变红。即叶子测试证明不了「接上了」，
+承重的是那一道。全量 `verify-local` 8 道门 EXIT=0（23 个受影响包）。实施过程中还撞到一个既有
+治理门禁：`packages/desktop/tests/no-official-platform.test.mjs` 用显式 stub 映射加载
+`nodeApiClient.ts`，未登记的 import 会被拒（`unexpected import`），已按该文件既有惯例补桩并注明
+桩成 no-op 不削弱其断言（`request()` 第一句就抛，走不到目标校验）。
+
 ## 7. 复扫指引
 
 后续扫描对照本台账时：

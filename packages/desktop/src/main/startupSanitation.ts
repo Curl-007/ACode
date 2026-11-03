@@ -23,10 +23,14 @@ import {
 /**
  * 打包态 + 无有效签名令牌时从 process.env 删除的键（闭集，spec §2）：
  * TLS 会话密钥外泄面、运行时「自称测试」键（E2E/test hook 门控升级）、
- * 身份/数据目录覆写键，以及 CUA dev 覆盖旗标（specs/cua-enablement-authority.md R2：
+ * 身份/数据目录覆写键、CUA dev 覆盖旗标（specs/cua-enablement-authority.md R2：
  * ACODE_CUA_DEV_MODE / ACODE_CUA_PRODUCT_HELPER 是 dev 链覆盖旋钮，绝不能在 signed
  * release 上把「电脑操控」从设置页开关手里夺走；本模块是 main 第一行 import，删除
- * 先于任何 CUA 消费点装配）。键名可入诊断日志，值绝不入。
+ * 先于任何 CUA 消费点装配），以及**决定携凭据出站目标 origin 的键族**
+ * （services/specs/credentialed-egress-origin.md：这些键决定 OAuth/login access token 被送往
+ * 哪个 origin，打包态下用户 shell env 不是可信配置通道，与 autoUpdater.ts 对
+ * ACODE_UPDATE_FEED_URL 的 isPackaged 门禁是同一套 P1-7 姿态；`REMOTE_RUNTIME_ENV_KEYS` 还会把
+ * 其中四个转发给远端 server，故删除同时切断转发链）。键名可入诊断日志，值绝不入。
  */
 export const PACKAGED_BOOT_ENV_DROP_KEYS: readonly string[] = [
   "SSLKEYLOGFILE",
@@ -44,6 +48,24 @@ export const PACKAGED_BOOT_ENV_DROP_KEYS: readonly string[] = [
   "ACODE_DATA_BASE_DIR",
   "ACODE_CUA_DEV_MODE",
   "ACODE_CUA_PRODUCT_HELPER",
+  // ↓ 携凭据出站目标 origin 键族（2026-11-04，缺口二）。这些键决定 access token 被送往哪个
+  // origin；打包态下 shell env 不可信，故与 ACODE_ENV 同档删除。最后一项是 services 侧的
+  // 非公网放行开关——**必须一并删除**，否则它就成了绕过本闭集的后门。
+  "ACODE_BASE_URL",
+  "ACODE_ENDPOINT_ORIGIN",
+  "ACODE_ENDPOINT_ALLOW_PRIVATE_ORIGIN",
+  "ZAI_BUSINESS_BASE_URL",
+  "ZAI_BUSINESS_LOGIN_URL",
+  "ZAI_OAUTH_ORIGIN",
+  "ZAI_OAUTH_AUTHORIZE_URL",
+  "ZAI_OAUTH_TOKEN_URL",
+  "ZAI_OAUTH_USERINFO_URL",
+  "BIGMODEL_API_BASE_URL",
+  "BIGMODEL_OAUTH_AUTHORIZE_URL",
+  "BIGMODEL_OAUTH_TOKEN_URL",
+  "BIGMODEL_OAUTH_USERINFO_URL",
+  "ACODE_BIGMODEL_USAGE_QUOTA_URL",
+  "BIGMODEL_USAGE_QUOTA_URL",
 ];
 
 export interface BootEnvironmentDecision {

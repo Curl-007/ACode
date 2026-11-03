@@ -310,6 +310,12 @@ test("Node API blocks official endpoints before resolving settings or calling fe
     "#src/logger/serviceLogger.js": { createServiceLogger: () => ({}) },
     "../sourceHeaders.js": {},
     "./requestIdHeaders.js": {},
+    // 本用例的断言对象是「官方平台 URL 在解析设置与建连之前就被短路」，那由上面注入的**真实**
+    // officialPlatformPolicy 承担。携凭据出站的目标校验是另一层守卫，其行为由
+    // packages/services/test/request-egress-origin.test.ts 直测，这里按本文件既有惯例桩掉
+    // （logger / sourceHeaders / requestIdHeaders 同样是桩）。桩成 no-op 不削弱本用例：
+    // request() 的第一句 assertNoOfficialPlatformUrl 就会抛，走不到目标校验那一行。
+    "./requestEgressPolicy.js": { assertPublicRequestTarget: () => {} },
   });
   const unexpected = () => assert.fail("must not resolve or request");
   const client = new NodeApiClient({

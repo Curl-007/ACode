@@ -7,6 +7,7 @@ import { pipeline } from "node:stream/promises";
 import type { ReadableStream as NodeWebReadableStream } from "node:stream/web";
 import { type ZodType } from "zod";
 import { releaseCatalogSchema, type ReleaseCatalog } from "../contracts.js";
+import { fetchPublicReleaseSource } from "./releaseSourcePolicy.js";
 
 export async function fetchReleaseJson<T>(
   url: string,
@@ -17,7 +18,14 @@ export async function fetchReleaseJson<T>(
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(url, { redirect: "follow", signal: controller.signal });
+    // 出口守卫落在这一层而不是 env 读取处：catalogUrl 来自 env，而 archiveUrl / manifestUrl 来自
+    // **目录内容**，只有 fetch 层是三条 URL 的公共咽喉。redirect 由守卫逐跳校验（manual），
+    // 故这里不再传 redirect: "follow"——那会让首跳的校验形同虚设。
+    const response = await fetchPublicReleaseSource(
+      url,
+      { signal: controller.signal },
+      { signal: controller.signal },
+    );
     if (!response.ok) throw new Error(`${resourceName} download failed: HTTP ${response.status}`);
     return schema.parse(await response.json());
   } finally {
@@ -120,7 +128,13 @@ export class ReleaseDownloader {
     resetIdleTimer();
     try {
       await mkdir(dirname(options.destination), { recursive: true });
-      const response = await fetch(options.url, { redirect: "follow", signal: controller.signal });
+      // 同一套出口守卫；signal 同时传给 fetch 与 DNS 预检，否则一次挂死的解析会绕过
+      // 上面刚设好的 idle / overall 超时边界。
+      const response = await fetchPublicReleaseSource(
+        options.url,
+        { signal: controller.signal },
+        { signal: controller.signal },
+      );
       if (!response.ok) throw new ReleaseDownloadHttpError(response.status);
       if (!response.body) throw new Error("Release download failed: response body is empty");
       const body = Readable.fromWeb(response.body as unknown as NodeWebReadableStream<Uint8Array>);

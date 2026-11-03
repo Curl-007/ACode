@@ -10,6 +10,7 @@ import {
 import { createServiceLogger } from "#src/logger/serviceLogger.js";
 import { buildACodeSourceHeaders } from "../sourceHeaders.js";
 import { withRequestIdHeader } from "./requestIdHeaders.js";
+import { assertPublicRequestTarget, type RequestTargetEgressOptions } from "./requestEgressPolicy.js";
 
 const log = createServiceLogger("node-api-client");
 
@@ -18,6 +19,12 @@ interface NodeApiClientOptions {
   onAcodeJwtInvalid?: (input: string | URL, headers: Headers) => void;
   isAcodeJwtRequest?: (input: string | URL, headers: Headers) => boolean | Promise<boolean>;
   resolveACodeEndpointOrigin?: () => Promise<string> | string;
+  /**
+   * 携凭据出站的目标校验选项（见 `requestEgressPolicy.ts`）。缺省按 env 推导：test 姿态或
+   * `ACODE_ENDPOINT_ALLOW_PRIVATE_ORIGIN=1` 时放行非公网目标，否则强制。装配处可用
+   * `{ allowNonPublic: false }` 强制收紧。
+   */
+  requestTargetEgress?: RequestTargetEgressOptions;
 }
 
 function resolveMethod(init?: ApiRequestInit): string {
@@ -79,12 +86,14 @@ export class NodeApiClient implements ApiClient {
   private readonly resolveACodeEndpointOrigin?: () => Promise<string> | string;
   private readonly onAcodeJwtInvalid?: (input: string | URL, headers: Headers) => void;
   private readonly isAcodeJwtRequest?: NodeApiClientOptions["isAcodeJwtRequest"];
+  private readonly requestTargetEgress?: RequestTargetEgressOptions;
 
   constructor(options: NodeApiClientOptions = {}) {
     this.fetchImpl = options.fetchImpl;
     this.onAcodeJwtInvalid = options.onAcodeJwtInvalid;
     this.isAcodeJwtRequest = options.isAcodeJwtRequest;
     this.resolveACodeEndpointOrigin = options.resolveACodeEndpointOrigin;
+    this.requestTargetEgress = options.requestTargetEgress;
   }
 
   async request(input: string | URL, init?: ApiRequestInit): Promise<Response> {
@@ -97,6 +106,11 @@ export class NodeApiClient implements ApiClient {
     const activeEndpointOrigin = endpointOrigin ?? DEFAULT_ACODE_ENDPOINT_ORIGIN;
     const requestInput = rewriteACodeEndpointUrl(input, activeEndpointOrigin);
     assertNoOfficialPlatformUrl(requestInput);
+    // 携凭据出站的目标校验：必须在 rewrite **之后**（rewrite 会把默认 origin 换成 env/设置决定的
+    // origin，那才是真正要发出去的地址），且在凭证读取与建连之前。放在这里而不是逐个调用点，
+    // 是因为 NodeApiClient.request 是 services 侧 ACode 后端出站的唯一咽喉（理由见
+    // requestEgressPolicy.ts 头注释与 specs/credentialed-egress-origin.md）。
+    assertPublicRequestTarget(requestInput, this.requestTargetEgress);
     const url = resolveUrl(requestInput);
     const method = resolveMethod(init);
     const timeoutMs = init?.timeoutMs;

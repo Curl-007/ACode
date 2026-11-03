@@ -92,6 +92,29 @@
 - 定性：打包态此前 dev-root 也几乎不可能被命中（打包用户无该 env），本条是
   **一致性加固**而非缺陷修复；无权限增量的论证见分诊文档 §3 #2。
 
+### R5 本 spec 的门禁**不覆盖**「决定出站目标 origin」的 env（2026-11-04 增设）
+
+R1-R4 的门禁实体全部是「替换**实际执行的代码面**」的键：`ACODE_AGENT_SERVER_COMMAND` /
+`..._ARGS_JSON` / `..._CWD`、`GLM_BINARY_PATH`、外部引擎的 `binaryEnvVar`、`ACODE_CUA_DEV_ROOT`。
+本 spec 全文不含 URL / endpoint / origin / ssrf / fetch 语义，故它**既未纳入也未豁免**另一类 env：
+决定「携凭据出站请求发往哪个 origin」的键族（`ACODE_BASE_URL`、`ACODE_ENDPOINT_ORIGIN`、
+`ZAI_BUSINESS_BASE_URL`、`ZAI_OAUTH_ORIGIN`、`BIGMODEL_API_BASE_URL`、`*_USAGE_QUOTA_URL` 等）。
+
+经核实（2026-11-03，全仓 16 个 spec 目录 grep）：在本节增设之前，**没有任何 spec 对这一类 env 的
+出站姿态做过裁决**——是未覆盖，不是已裁决。把它误读成「R3 已豁免」会掩盖一个真实缺口。
+
+该类 env 的姿态由 [`credentialed-egress-origin.md`](./credentialed-egress-origin.md) 单独承载
+（咽喉点选择、协议白名单、主机/地址校验、三条放行来源、打包态 drop 闭集扩充与用户可见变更、
+以及六条残余）。此处只留指针，不复制规则，避免出现第二套真相。
+
+与本 spec 的两处咬合关系值得就地记住：
+
+- R3(c) 对 `acode-server-cli` 的信任位置裁决（管理员对本机有完全控制权，env 配置属合法用法）
+  **同样适用于**该 spec 的 R4 放行开关与 R3(c) 例外——即 server-cli 侧默认拒绝非公网下载源，
+  但管理员可显式放行；两侧都不是「无条件阻断」。
+- 该 spec 的 R5 把 `ACODE_ENV` 与本 spec R1-R4 依赖的「打包态删除自称测试键」是**同一个闭集**
+  （`PACKAGED_BOOT_ENV_DROP_KEYS`）；两侧共用它，故改这个闭集会同时影响两套门禁。
+
 ## 状态所有者与调用链
 
 ```

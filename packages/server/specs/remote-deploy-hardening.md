@@ -125,3 +125,13 @@
 9. WSL distro 与 user 同强度校验：`wslConnectOptionsSchema` 与 AppSettings 的 WSL 分支
    都使用 `wslDistroSchema`；含控制字符或 `:` `/` `\` 的 distro 被拒；真实名称
    （`Ubuntu-22.04`、`docker-desktop`、`Debian`）通过；空串仍代表"未指定"而非报错。
+10. R4/测试自身的平台中立性（2026-11-03 追加，承 CI run 41677578056）：验收 6 的用例注入
+    `platform: "win32"`，故拼 `PATH` 必须用 `path.win32.delimiter` 而非宿主的分隔符常量——
+    后者在 Windows 开发机上恰好等于 `;`、与被注入平台一致，于是**缺陷在开发机上结构性不可见**，
+    只在 Linux CI 上暴露（宿主拼出 `.:bin:C:\real-bin`，按 `;` 切只得一个非绝对条目，解析器
+    正确地全部落空并走到 win32 兜底）。门禁形态是静态自扫而非运行时断言：扫本包 `tests/*.mjs`
+    中**注入了 platform** 的文件，命中宿主相关的分隔符常量即红（放过 `path.win32.*` /
+    `path.posix.*` 限定形；先滤注释行，且门禁自身的标题与消息刻意不写出被扫的成员名以免自指命中）。
+    实测鉴别力：把旧写法塞回去，运行时用例在 Windows 上**仍然通过**，只有这道静态门禁变红。
+    **范围限制**：只扫 `packages/server/tests/`，不跨包（跨包扫描是分层异味）；同类写法若出现在
+    别的包，本门禁看不到——这是已知的覆盖边界，不是已裁决的安全。

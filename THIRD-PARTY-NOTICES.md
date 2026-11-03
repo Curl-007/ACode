@@ -72,7 +72,7 @@ Original copyright, license and NOTICE text is retained below. Identical text is
 
 - @floating-ui/utils@0.2.11 — MIT
 
-- @hono/node-server@1.19.14 — MIT
+- @hono/node-server@1.19.18 — MIT
 
 - @hono/node-ws@1.3.0 — MIT
 
@@ -214,11 +214,9 @@ Original copyright, license and NOTICE text is retained below. Identical text is
 
 - @modelcontextprotocol/client@2.3.1 — Apache-2.0
 
-- @modelcontextprotocol/core@2.0.0 — MIT
-
 - @modelcontextprotocol/core@2.3.1 — Apache-2.0
 
-- @modelcontextprotocol/server@2.0.0 — MIT
+- @modelcontextprotocol/server@2.4.0 — Apache-2.0
 
 - @napi-rs/canvas-darwin-arm64@0.1.100 — MIT
 
@@ -840,7 +838,7 @@ Original copyright, license and NOTICE text is retained below. Identical text is
 
 - docx-preview@0.4.0 — Apache-2.0
 
-- dompurify@3.4.16 — (MPL-2.0 OR Apache-2.0)
+- dompurify@3.4.17 — (MPL-2.0 OR Apache-2.0)
 
 - dotenv@17.4.2 — BSD-2-Clause
 
@@ -902,7 +900,7 @@ Original copyright, license and NOTICE text is retained below. Identical text is
 
 - find-up@4.1.0 — MIT
 
-- follow-redirects@1.16.0 — MIT
+- follow-redirects@1.16.2 — MIT
 
 - form-data@4.0.6 — MIT
 
@@ -1008,7 +1006,7 @@ Original copyright, license and NOTICE text is retained below. Identical text is
 
 - iobuffer@6.0.1 — MIT
 
-- ip-address@10.7.2 — MIT
+- ip-address@10.7.5 — MIT
 
 - ipaddr.js@1.9.1 — MIT
 
@@ -1244,7 +1242,7 @@ Original copyright, license and NOTICE text is retained below. Identical text is
 
 - node-addon-api@7.1.1 — MIT
 
-- node-forge@1.4.0 — (BSD-3-Clause OR GPL-2.0)
+- node-forge@1.4.2 — (BSD-3-Clause OR GPL-2.0)
 
 - node-gyp-build@4.8.4 — MIT
 
@@ -1334,7 +1332,7 @@ Original copyright, license and NOTICE text is retained below. Identical text is
 
 - qrcode@1.5.4 — MIT
 
-- qs@6.15.1 — BSD-3-Clause
+- qs@6.17.1 — BSD-3-Clause
 
 - quickjs-wasi@2.2.0 — MIT
 
@@ -1452,7 +1450,7 @@ Original copyright, license and NOTICE text is retained below. Identical text is
 
 - side-channel-weakmap@1.0.2 — MIT
 
-- side-channel@1.1.0 — MIT
+- side-channel@1.1.1 — MIT
 
 - simple-xml-to-json@1.2.7 — MIT
 
@@ -1548,7 +1546,7 @@ Original copyright, license and NOTICE text is retained below. Identical text is
 
 - undici-types@7.19.2 — MIT
 
-- undici@6.29.0 — MIT
+- undici@6.29.1 — MIT
 
 - unified@11.0.5 — MIT
 
@@ -1586,7 +1584,7 @@ Original copyright, license and NOTICE text is retained below. Identical text is
 
 - util-deprecate@1.0.2 — MIT
 
-- uuid@11.1.0 — MIT
+- uuid@11.1.1 — MIT
 
 - uuid@9.0.1 — MIT
 
@@ -1660,7 +1658,7 @@ Original copyright, license and NOTICE text is retained below. Identical text is
 
 - zod@3.25.76 — MIT
 
-- zod@4.6.5 — MIT
+- zod@4.6.7 — MIT
 
 - zrender@6.1.0 — BSD-3-Clause
 
@@ -2238,7 +2236,7 @@ SOFTWARE.
 
 - @chevrotain/types@11.1.2: LICENSE.txt
 
-- dompurify@3.4.16: LICENSE
+- dompurify@3.4.17: LICENSE
 
 - long@5.3.2: LICENSE
 
@@ -2724,7 +2722,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### Notice 6895190430d809c4c57a7582ecc2f99acbc2ea39a5dfad20262a41d5b3e91733
 
-- @hono/node-server@1.19.14: LICENSE
+- @hono/node-server@1.19.18: LICENSE
 
 
 
@@ -2755,7 +2753,7 @@ SOFTWARE.
 
 ### Notice daf005969aac8cb4283b3777361f0244f4cce898b9a983a60b7f0d9e96f559bf
 
-- @hono/node-server@1.19.14: README.md (license section)
+- @hono/node-server@1.19.18: README.md (license section)
 
 - @hono/node-ws@1.3.0: README.md (license section)
 
@@ -2799,7 +2797,7 @@ SOFTWARE.
 
 - ts-dedent@2.2.0: README.md (license section)
 
-- undici@6.29.0: README.md (license section)
+- undici@6.29.1: README.md (license section)
 
 - universalify@2.0.1: README.md (license section)
 
@@ -3443,11 +3441,9 @@ SOFTWARE.
 
 - @modelcontextprotocol/client@2.3.1: LICENSE
 
-- @modelcontextprotocol/core@2.0.0: LICENSE
-
 - @modelcontextprotocol/core@2.3.1: LICENSE
 
-- @modelcontextprotocol/server@2.0.0: LICENSE
+- @modelcontextprotocol/server@2.4.0: LICENSE
 
 
 
@@ -9968,7 +9964,7 @@ THE SOFTWARE.
 
 ### Notice fab3dd6bdab226f1c08630b1dd917e11fcb4ec5e1e020e2c16f83a0a13863e85
 
-- dompurify@3.4.16: LICENSE-MPL
+- dompurify@3.4.17: LICENSE-MPL
 
 
 
@@ -10351,7 +10347,7 @@ Exhibit B - "Incompatible With Secondary Licenses" Notice
 
 ### Notice 5803fa925ae1703b9c752921c95a321570e6cabf06fcf2de895ddaf1687cebef
 
-- dompurify@3.4.16: src/license_header
+- dompurify@3.4.17: src/license_header
 
 
 
@@ -11547,7 +11543,7 @@ and organizations as noted below:
 
 ### Notice bfa8a54bb952ccda79f0f1889721d108f5b605babbb2b8a3705ffb52f4132eb7
 
-- follow-redirects@1.16.0: LICENSE
+- follow-redirects@1.16.2: LICENSE
 
 
 
@@ -11575,7 +11571,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### Notice abd3792ba3b4f3da7f4ed431de50254c3e748bba1596bc7f36937b97767e02d2
 
-- follow-redirects@1.16.0: README.md (license section)
+- follow-redirects@1.16.2: README.md (license section)
 
 
 
@@ -14023,7 +14019,7 @@ SOFTWARE.
 
 ### Notice f8d791359a50cbcac82c29cb7b0b1b889b28be76fdd35b8ee33f0f7c8704702a
 
-- ip-address@10.7.2: LICENSE
+- ip-address@10.7.5: LICENSE
 
 
 
@@ -21434,7 +21430,7 @@ THE SOFTWARE IS PROVIDED 'AS IS', WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 ### Notice f63ff0e4e239244aa79280da2dd4811a0469e5e201caf5cbc0d97c3a1dff8e82
 
-- node-forge@1.4.0: LICENSE
+- node-forge@1.4.2: LICENSE
 
 
 
@@ -24089,7 +24085,7 @@ DENSO WAVE INCORPORATED
 
 ### Notice e7dc37bf662d7f786efcb46c545615e70c1daf458a38385521c63cf6607cdfe1
 
-- qs@6.15.1: LICENSE.md
+- qs@6.17.1: LICENSE.md
 
 
 
@@ -26158,7 +26154,7 @@ MIT
 
 - side-channel-weakmap@1.0.2: LICENSE
 
-- side-channel@1.1.0: LICENSE
+- side-channel@1.1.1: LICENSE
 
 
 
@@ -27546,7 +27542,7 @@ ISC
 
 - undici-types@7.19.2: LICENSE
 
-- undici@6.29.0: LICENSE
+- undici@6.29.1: LICENSE
 
 
 
@@ -27577,7 +27573,7 @@ SOFTWARE.
 
 ### Notice a21d6c8d3fc631198b97e57584697f7f9c37805c71c6cf9a12e4442b40394b88
 
-- undici@6.29.0: lib/web/fetch/LICENSE
+- undici@6.29.1: lib/web/fetch/LICENSE
 
 
 
@@ -28522,7 +28518,7 @@ OTHER DEALINGS IN THE SOFTWARE.
 
 ### Notice beaa6b04fb82e41dd2ad679e19e27953afb5999b1abbb455b6564e78ebfeb332
 
-- uuid@11.1.0: LICENSE.md
+- uuid@11.1.1: LICENSE.md
 
 - uuid@9.0.1: LICENSE.md
 
@@ -29904,7 +29900,7 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 - zod@3.25.76: LICENSE
 
-- zod@4.6.5: LICENSE
+- zod@4.6.7: LICENSE
 
 
 

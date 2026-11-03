@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "inputHashEncoding": "UTF-8 with CRLF normalized to LF; notice and source snapshot hashes remain byte-exact",
   "scope": "Production dependency union across current workspace projects, copied source/assets and native tools; not a per-installer SBOM or a certification of all licensing obligations.",
-  "noticesSha256": "99af6726bc1c8aa0014bd108f253cb541f83b215a8552b77f767164f1ff13d14",
+  "noticesSha256": "a9b49392deca66018e20534051c776133c0930533f76fc42662267f9a54b17ee",
   "inputs": {
     ".agents/skills/agent-browser/references/authentication.md": "b7531e028594768e2447547e67559ca1a88fdefba8d5507c07d04bc802c05d09",
     ".agents/skills/agent-browser/references/commands.md": "6eb0e44a3c939c90116092b1a11ae03a2884fb5716d42f2468677870304d11a8",
@@ -3340,7 +3340,7 @@
     },
     {
       "name": "@hono/node-server",
-      "version": "1.19.14",
+      "version": "1.19.18",
       "license": "MIT",
       "repository": "https://github.com/honojs/node-server.git",
       "notices": [
@@ -4226,18 +4226,6 @@
     },
     {
       "name": "@modelcontextprotocol/core",
-      "version": "2.0.0",
-      "license": "MIT",
-      "repository": "git+https://github.com/modelcontextprotocol/typescript-sdk.git",
-      "notices": [
-        {
-          "member": "LICENSE",
-          "sha256": "0382b0057770ca05e9c350a50aa3b1c1fea84da0bc81d723bf00b9aa841be58a"
-        }
-      ]
-    },
-    {
-      "name": "@modelcontextprotocol/core",
       "version": "2.3.1",
       "license": "Apache-2.0",
       "repository": "git+https://github.com/modelcontextprotocol/typescript-sdk.git",
@@ -4250,8 +4238,8 @@
     },
     {
       "name": "@modelcontextprotocol/server",
-      "version": "2.0.0",
-      "license": "MIT",
+      "version": "2.4.0",
+      "license": "Apache-2.0",
       "repository": "git+https://github.com/modelcontextprotocol/typescript-sdk.git",
       "notices": [
         {
@@ -8301,7 +8289,7 @@
     },
     {
       "name": "dompurify",
-      "version": "3.4.16",
+      "version": "3.4.17",
       "license": "(MPL-2.0 OR Apache-2.0)",
       "repository": "git://github.com/cure53/DOMPurify.git",
       "notices": [
@@ -8753,7 +8741,7 @@
     },
     {
       "name": "follow-redirects",
-      "version": "1.16.0",
+      "version": "1.16.2",
       "license": "MIT",
       "repository": "git+ssh://git@github.com/follow-redirects/follow-redirects.git",
       "notices": [
@@ -9505,7 +9493,7 @@
     },
     {
       "name": "ip-address",
-      "version": "10.7.2",
+      "version": "10.7.5",
       "license": "MIT",
       "repository": "https://github.com/beaugunderson/ip-address.git",
       "notices": [
@@ -11281,7 +11269,7 @@
     },
     {
       "name": "node-forge",
-      "version": "1.4.0",
+      "version": "1.4.2",
       "license": "(BSD-3-Clause OR GPL-2.0)",
       "repository": "https://github.com/digitalbazaar/forge",
       "notices": [
@@ -11953,7 +11941,7 @@
     },
     {
       "name": "qs",
-      "version": "6.15.1",
+      "version": "6.17.1",
       "license": "BSD-3-Clause",
       "repository": "https://github.com/ljharb/qs.git",
       "notices": [
@@ -12793,7 +12781,7 @@
     },
     {
       "name": "side-channel",
-      "version": "1.1.0",
+      "version": "1.1.1",
       "license": "MIT",
       "repository": "git+https://github.com/ljharb/side-channel.git",
       "notices": [
@@ -13441,7 +13429,7 @@
     },
     {
       "name": "undici",
-      "version": "6.29.0",
+      "version": "6.29.1",
       "license": "MIT",
       "repository": "git+https://github.com/nodejs/undici.git",
       "notices": [
@@ -13725,7 +13713,7 @@
     },
     {
       "name": "uuid",
-      "version": "11.1.0",
+      "version": "11.1.1",
       "license": "MIT",
       "repository": "https://github.com/uuidjs/uuid.git",
       "notices": [
@@ -14305,7 +14293,7 @@
     },
     {
       "name": "zod",
-      "version": "4.6.5",
+      "version": "4.6.7",
       "license": "MIT",
       "repository": "git+https://github.com/colinhacks/zod.git",
       "notices": [

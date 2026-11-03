@@ -593,16 +593,54 @@ socket（`connect.ts`/`stdio-socket.ts` 无任何 HTTP fetch）。`packages/serv
 devDependency 故不出现在 `--prod` 列表，但**确实打包进安装包**——`--prod` 的 40→7 不含它，
 升级 Electron 属独立的平台级变更。
 
-**必须知道的后续动作（本批无法在本地完成）**：依赖树已实质变化（本轮 install 净移除 200+ 个包、
+**后续动作（本批无法在本地完成；已于同日闭环，见下「派生字段回填记录」）**：
+依赖树已实质变化（本轮 install 净移除 200+ 个包、
 MCP 包族跨小版本），台账的 `packages` / `noticesSha256` / `notInstalled` 等**派生字段已过期**。
 这些字段依赖平台相关的 optional deps，按 R7.24 **不得在 Windows 上重生成**。
 本批只把 `inputs` 的 15 条源文件哈希（14 个 `package.json` + `pnpm-lock.yaml`）按台账自己的口径
 （`hashBytes`，CRLF→LF）重算并做了纯文本替换，故 `ci.yml` 的 `--inputs-only` 开发期信号为绿
 （2904/2904，diff 恰好 15 行、无格式漂移）；但 `licenses-notices.yml` 的 **`full` 模式会红**，
-这是设计内的两段式回路：该 workflow 的 `pull_request` 触发路径已包含 `pnpm-lock.yaml` /
-`**/package.json` / `third-party/**`，推送后它会在 CI Linux 上全量重生成并上传 artifact，
-需下载该 artifact 提交后才收敛。按 `docs/git-collaboration.md`，release 分支上
-「licenses-notices 等专项闸门全部 success」是发布前置，**故本批在 artifact 回填前不可发布**。
+这是设计内的两段式回路：需在 CI Linux 上全量重生成、下载 artifact 提交后才收敛。
+按 `docs/git-collaboration.md`，release 分支上「licenses-notices 等专项闸门全部 success」是发布前置，
+**故本批在 artifact 回填前不可发布**（该阻塞已解除）。
+
+**派生字段回填记录（2026-11-03 晚，run 41655539550）**
+
+实际触发路径与上文原先的预期**不同，需如实修正**：上文曾写「该 workflow 的 `pull_request` 触发路径已
+包含 `pnpm-lock.yaml` / `**/package.json` / `third-party/**`，推送后它会在 CI Linux 上全量重生成」。
+事实上该 workflow 的 `push` 触发**刻意排除 `dev/**`**（workflow 注释：dev 线推送频繁，避免这个
+72-102s 的 musl 全量 job 频繁红灯），而 `dev/1.1.1` 上当时**没有开放 PR**，故 `pull_request` 路径也不会
+触发。推送后 `licenses-notices` 一次都没跑；现存最新 artifact 是 10-31 `main` 那次（升级前的依赖树，
+回填进去等于把台账退回旧图）。**结论：dev 线上改依赖后，台账收敛必须人工
+`gh workflow run licenses-notices.yml --ref <dev 分支>`，没有自动兜底**——这与「dev 线的源文件哈希漂移
+已由 ci.yml 的 inputs-only 覆盖」是两件事，后者覆盖不到派生字段。本次即按人工派发办理。
+
+执行与验证：
+
+1. `git push origin dev/1.1.1`：pre-push hook 跑完整 `verify:pre-push`（tests 328.7s，EXIT=0）。
+2. `workflow_dispatch --ref dev/1.1.1` → run `41655539550`：`Regenerate` ✓、
+   `Run license identifier gate` ✓（无越界许可、无 stale notice override）、
+   `Report diff against committed ledger` **✗（即预期的漂移，闸门按设计工作）**、
+   `Upload regenerated ledgers`（`if: always()`）✓ 交出正确产物。
+3. artifact 下载到仓库外空目录，回填前逐项核对而非直接覆盖：
+   - **`inputs` 2904 条零差异** —— 独立交叉验证了本批手算的 15 条哈希与 CI Linux 逐字节吻合，
+     说明 `--inputs-only` 在 inputs 维度是可信替身（派生字段维度仍不可替代）。
+   - 治理相关字段 `copied`(9) / `patches`(2) / `exceptions`(9) / `embedded`(2) / `runtimes` /
+     `notInstalled`(3) / `reviewRequired`(13) **全部逐字节一致**；漂移只落在 `packages` 与 `noticesSha256`。
+   - `packages` 832→831：按 `name@version` 精确比是 12 消失 / 11 新增，其中 11 对是同一包的版本改写
+     （JSON 里只是 `"version"` 单行变化），唯一整条删除的是 `@modelcontextprotocol/core@2.0.0` ——
+     `server` 2.0.0→2.4.0 后其对 `core` 的依赖收敛到 2.3.1，重复版本被 dedup，故净 -1。
+   - **`@modelcontextprotocol/server` 许可证 MIT → Apache-2.0**（随 2.0.0→2.4.0；本批 override
+     `@modelcontextprotocol/server@2: ^2.3.0` 的直接结果，pnpm 解析到 2.4.0）。这是本批**唯一的许可证
+     变更**，identifier gate 通过说明新许可证在允许集内；notices 正文**零许可文本变化**，只是把该包从
+     MIT 块改挂到文件中已存在的 Apache-2.0 块。
+   - `THIRD-PARTY-NOTICES.md` diff 28 增 / 32 删，全部是头部包索引表的版本号与「共享同一许可文本的包」
+     归属行。行尾口径两侧一致（LF 结构 + 1344 处来自上游 LICENSE 正文的 CRLF；`.gitattributes:25`
+     标 `-text`，要求字节保真，故必须整体替换而非重新格式化）。
+4. 回填后自证：`sha256(THIRD-PARTY-NOTICES.md)` = `a9b49392…` = inventory 的新 `noticesSha256`
+   （两文件为配对产物，互证一致）；`git add` 后 **index blob 与 artifact 逐字节相同**
+   （inventory `3cdb7182…`、notices `a9b49392…`），故下次 CI 的 `--diff-only` 必为空 diff；
+   本地 `reproducibility --inputs-only` 仍绿（2904/2904）。
 
 ### 6.3 other-security 120 条复核（2026-11-03，AI 辅助会话增补，非原台账作者裁决）
 

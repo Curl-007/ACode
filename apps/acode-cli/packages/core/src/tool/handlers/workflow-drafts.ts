@@ -38,8 +38,31 @@ const WORKFLOW_DRAFT_SLUG_DROP_PATTERN = /[^\p{L}\p{N}_.-]/gu;
 /** 空白连成一个 `-`：`PR review #12` → `PR-review-12`，比挤成一团的 `PRreview12` 认得出。 */
 const WORKFLOW_DRAFT_WHITESPACE_PATTERN = /\s+/gu;
 
-/** 文件名长度上限，与 `SAVED_WORKFLOW_MAX_NAME_CHARS` 同一个数，理由也同一条（各平台的 PATH_MAX）。 */
+/**
+ * 文件名的**码点**上限，与 `SAVED_WORKFLOW_MAX_NAME_CHARS` 同一个数。按码点截断而不是按 UTF-16
+ * 单元，免得把一个 astral 字切成半个代理对（那在 Windows 上是非法文件名）。
+ *
+ * 订正：此处原写「理由也同一条（各平台的 PATH_MAX）」——错。Linux 的 `PATH_MAX` 是 4096，64 个字符
+ * 离它远得很；真正先被撞上的是单个目录项的 `NAME_MAX`，且它按**字节**数。故码点上限之外还有下面
+ * 那道字节预算，两道都要过（specs/workflow-draft-filename.md R3.1 / R3.4）。
+ */
 const WORKFLOW_DRAFT_MAX_SLUG_CHARS = 64;
+
+/**
+ * 单个目录项的字节上限：Linux ext4 的 `NAME_MAX` = 255 **字节**，Windows NTFS 数的是 255 个 UTF-16
+ * 单元，取 255 字节是三个平台的公共下界。
+ *
+ * 为什么码点上限挡不住它：白名单刻意放行 Unicode 字母（理由见 `WORKFLOW_DRAFT_SLUG_DROP_PATTERN`），
+ * 而 astral 字符 UTF-8 占 4 字节——64 个就是 256 字节，加 `.dwf.ts`(7) 与最长同名后缀 `-1000`(5)
+ * 共 268 字节。同一个名字在 Windows 上只有 135 个 UTF-16 单元，照写不误；在 Linux 上必然
+ * `ENAMETOOLONG`，且被 `writeWorkflowDraft` 的尽力而为 catch **静默吞成 `undefined`**，用户只看到
+ * 「这次没有草稿」，没有诊断也没有日志（2026-11-03 CI run 41654947675 实测；
+ * specs/workflow-draft-filename.md R3.2 / R6）。
+ */
+const WORKFLOW_DRAFT_MAX_FILE_NAME_BYTES = 255;
+
+/** 最长同名后缀 `-1000` 的字节数；与 `WORKFLOW_DRAFT_MAX_ATTEMPTS` 绑定，改上界必须同步这里。 */
+const WORKFLOW_DRAFT_MAX_ATTEMPT_SUFFIX_BYTES = 5;
 
 /**
  * 名字里一个可用字符都不剩时的兜底（中文名是最常见的那一种）。
@@ -121,22 +144,48 @@ export function resolveWorkflowDraftName(
 }
 
 /**
- * 名字 → 文件名主干。空白连成 `-`，字母表（Unicode 字母 / 数字 / `_ . -`）之外的一概丢掉，
- * 截到上限（按码点，不按 UTF-16 单元，免得把一个字切成半个代理对）；什么都不剩、或只剩点
- * （`.` / `..` 是目录项，不是文件名）时用兜底词。
+ * 名字 → 文件名主干。空白连成 `-`，字母表（Unicode 字母 / 数字 / `_ . -`）之外的一概丢掉，再过两道
+ * 长度预算：**码点数** ≤ 64（按码点截断，不按 UTF-16 单元，免得把一个字切成半个代理对），以及
+ * **UTF-8 字节数**落在 `WORKFLOW_DRAFT_MAX_FILE_NAME_BYTES` 之内（含扩展名与最长同名后缀的预留）。
+ * 什么都不剩、或只剩点（`.` / `..` 是目录项，不是文件名）时用兜底词。
+ * 两道预算的必要性见 specs/workflow-draft-filename.md R3。
  */
 function workflowDraftSlug(name: string): string {
-  const reduced = Array.from(
+  const codePoints = Array.from(
     name
       .trim()
       .replace(WORKFLOW_DRAFT_WHITESPACE_PATTERN, "-")
       .replace(WORKFLOW_DRAFT_SLUG_DROP_PATTERN, ""),
-  )
-    .slice(0, WORKFLOW_DRAFT_MAX_SLUG_CHARS)
+  ).slice(0, WORKFLOW_DRAFT_MAX_SLUG_CHARS);
+  const reduced = fitUtf8ByteBudget(codePoints)
     .join("")
     .replace(/^[.-]+|[.-]+$/gu, "");
   if (reduced === "" || /^\.+$/u.test(reduced)) return WORKFLOW_DRAFT_FALLBACK_SLUG;
   return reduced;
+}
+
+/**
+ * 逐码点累加、超出预算即停——**绝不在字节中间截断**，那会留下半个代理对（在 Windows 上是非法
+ * 文件名，在 Linux 上是无效 UTF-8）。预算已扣掉扩展名与最长同名后缀，故 `-2`…`-1000` 的顺延不会
+ * 把已经贴着上限的名字推出 255（specs/workflow-draft-filename.md R3.3）。
+ *
+ * 对现实名字（ASCII、中英混排、纯中文）这道预算从不触发：64 个 BMP CJK 字符是 192 字节，
+ * 远在 243 的预算内。它只收 R3.1 放过去的病态输入（全 astral 名）。
+ */
+function fitUtf8ByteBudget(codePoints: string[]): string[] {
+  const budget =
+    WORKFLOW_DRAFT_MAX_FILE_NAME_BYTES -
+    Buffer.byteLength(SAVED_WORKFLOW_FILE_EXTENSION, "utf8") -
+    WORKFLOW_DRAFT_MAX_ATTEMPT_SUFFIX_BYTES;
+  const fitted: string[] = [];
+  let used = 0;
+  for (const codePoint of codePoints) {
+    const size = Buffer.byteLength(codePoint, "utf8");
+    if (used + size > budget) break;
+    fitted.push(codePoint);
+    used += size;
+  }
+  return fitted;
 }
 
 /** 草稿目录内的 `.gitignore`，只在缺席时写一次（用户改过就不再动它）。 */

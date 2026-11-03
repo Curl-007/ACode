@@ -138,6 +138,12 @@ export interface AgentRuntimeConfig {
   streamingToolExecution?: "off" | "readOnly";
   /** Session 创建时固定；缺省使用共享的模型上下文预算默认策略。 */
   modelContextBudgetStrategy?: "legacy" | "preflight-v1";
+  /**
+   * 应用配置默认模型（模型设置持久化的 configuredDefaultModelSelection，经 registry
+   * 解析；freshness = app runtime 快照）。子代理空选择（「继承默认」）继承链第二环
+   * （specs/agent-teams-derived-config.md R4.1）；缺席 = 该环跳过。
+   */
+  appDefaultModelSelection?: ModelSelection;
   permissionTimeoutMs?: number;
   compact?: AutoCompactPolicyConfig;
   targetCompletionVerification?: { enabled?: boolean };

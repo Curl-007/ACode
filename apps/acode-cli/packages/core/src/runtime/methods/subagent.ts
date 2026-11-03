@@ -191,21 +191,54 @@ export function createDefaultSubagentPort(
         request.profile.injectAgentsMd !== false
           ? this.contextSourceSnapshot?.userInstructions
           : undefined;
-      const { selection: profileChildSelection, hasConcreteModel } = resolveSubagentSelection({
+      const {
+        selection: profileChildSelection,
+        hasConcreteModel,
+        inheritance,
+      } = resolveSubagentSelection({
         profileSelection: request.profile.modelSelection,
         parentSelection: this.getSessionModelSelection(),
         overrideSelection: options?.modelOverride?.selection,
-        // AgentTeams 成员 fail-closed（specs/agent-teams-derived-config.md R4）：
-        // 标记由 bootstrap 的插件覆盖烘焙写入 profile，无模型配置时拒绝派生。
+        // R4.1 链环 2：应用配置默认模型（缺席 = 跳过该环）。
+        appDefaultSelection: this.config.appDefaultModelSelection,
+        // AgentTeams 成员 fail-closed（specs/agent-teams-derived-config.md R4/R4.1）：
+        // 标记由 bootstrap 的插件覆盖烘焙写入 profile；全链皆空才拒绝派生。
         requireExplicitModelSelection: request.profile.requireExplicitModelSelection,
         resolveSelection: deps.resolveEffectiveModelSelection,
       });
       const modelOverride = options?.modelOverride;
-      const inheritedModel = !modelOverride && !hasConcreteModel ? options?.model : undefined;
+      // 活跃模型环（options.model）排在应用默认环之后：链已按应用默认派生时
+      // 不被调用方活跃模型顶替（R4.1 链序）。
+      const inheritedModel =
+        !modelOverride && !hasConcreteModel && inheritance?.source !== "app-default"
+          ? options?.model
+          : undefined;
       // Core Server override 优先于持久化 profile 与父模型继承，但仍只是标准 Selection。
       const childSelection = inheritedModel
         ? modelSelectionFromActiveModel(inheritedModel)
         : profileChildSelection;
+      // R4.1 可见性义务：requireExplicit 成员经父会话环（含等价活跃模型环）时，
+      // 每 spawn 发一次用户可见继承 notice；静默 opt-in 仍是 inheritCaptainModel。
+      const inheritedCaptainModel =
+        !modelOverride &&
+        !hasConcreteModel &&
+        (inheritedModel !== undefined || inheritance?.source === "parent-session");
+      if (request.profile.requireExplicitModelSelection && inheritedCaptainModel) {
+        await this.persistSyntheticUserNoticeForSession({
+          messageID: createMessageId(),
+          metadata: {
+            modelInheritance: {
+              providerId: childSelection.providerId,
+              modelId: childSelection.modelId,
+            },
+          },
+          sessionId: this.sessionId,
+          source: "model_inheritance",
+          text: `Member session inherits the captain model ${childSelection.providerId}/${childSelection.modelId} because no model is configured for its profile. Pin it via Subagents (profile or general-purpose model), the app default model, or inheritCaptainModel. / 成员未配置模型，本次继承队长模型 ${childSelection.providerId}/${childSelection.modelId}；固定途径：Subagents 下为 profile 或 general-purpose 配模型、配置应用默认模型，或开启 inheritCaptainModel。`,
+          traceContext: request.traceContext,
+          visibility: "user-visible",
+        });
+      }
       const embeddedSearchEnabled = resolveSubagentEmbeddedSearchEnabled();
       const baseChildEnvInfo = this.contextSourceSnapshot?.envInfo ??
         this.config.envInfo ?? {

@@ -67,6 +67,10 @@ export const SYNTHETIC_USER_MESSAGE_SOURCES = [
   "fork",
   "goal_state_change",
   "goal-continuation",
+  // 子代理空选择（「继承默认」）回退到父会话模型时的用户可见继承 notice
+  //（apps/acode-cli/specs/agent-teams-derived-config.md R4.1）：继承必须可见，
+  // 静默 opt-in 仍是 inheritCaptainModel；与 shared z.enum 词表同步。
+  "model_inheritance",
   // peer 消息镜像（specs/agent-peer-messaging.md R5）：成功受理的兄弟间消息落共同父
   // 会话的 model-only 合成 notice，冷目录/审计因此看得到 peer 流量。
   "peer_message",

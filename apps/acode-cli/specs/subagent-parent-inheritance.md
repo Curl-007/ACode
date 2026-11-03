@@ -143,5 +143,9 @@
   子代理模型选择优先级（override > profile > 父继承）归 `resolveSubagentSelection`；
   AgentTeams 成员的 `inheritCaptainModel` 两分支与 fail-closed 标记见
   `agent-teams-derived-config.md` R3/R4（2026-10-15 合入批次）。
+  **2026-11-03 修订**：空选择（「继承默认」）链扩为
+  profile 显式 → 应用配置默认模型 → 父会话模型 → fail-closed；成员（`requireExplicitModelSelection`）
+  走父会话环时附用户可见 `model_inheritance` notice（R4「无感知不回退」口径），
+  详见 `agent-teams-derived-config.md` R4.1。本 spec 的「父继承」链尾语义不变。
 - 熔断器对工作区外目标的 ask 本体（安全加固 P2 不变量）。
 - workflow / swarm / memory agent 的构造点（锚定应用级 cwd / deny broker，设计内）。

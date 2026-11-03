@@ -114,6 +114,35 @@ knip：`scripts/build.mjs`、`scripts/smoke.mjs` 若不在 import 图则按既�
   传 `requireExplicitModelSelection: request.profile.requireExplicitModelSelection`
   （分支上此调用点未接线，guard 是死代码；本批接线）。
 
+### R4.1 空选择（「继承默认」）的默认模型继承链（2026-11-03 修订，补默认链缺口）
+
+- **背景（真实环境回归）**：子智能体页「继承默认」= 空 `modelSelection`
+  （`subagent-batch-edit.md` R3）。修订前成员链只有两环：profile 显式（含插件/内置
+  override）→ general-purpose 内置 override；两环皆空即 R4 fail-closed——**应用级配置
+  默认模型与队长会话模型都不参与**，「未配全局默认模型」的环境首 spawn 必失败
+  （GUI 真实演练复现：`Spawn 失败：profile 未配置模型`）。非成员 profile 的空选择走
+  `resolveSubagentSelection` 的父继承环（`subagent-parent-inheritance.md`），不受本缺口影响。
+- **修订后链**（空选择，按序）：
+  1. profile 显式选择（插件/内置 override 或定义文件 model；含 R4 为成员烘焙的
+     general-purpose override）；
+  2. **应用配置默认模型**（`configuredDefaultModelSelection`：模型设置持久化的应用级
+     默认模型，经 registry 解析；freshness = app runtime 快照，与 session-facade 同源）；
+  3. **父（派发方）会话模型**——`requireExplicitModelSelection` 成员走本环时附
+     **每 spawn 一次的用户可见 synthetic notice**（`SyntheticUserMessageSource` 新成员
+     `model_inheritance`；文案写明继承的 provider/model 与三个固定途径：给 profile 配模型 /
+     给 general-purpose 配模型 / 开启 `inheritCaptainModel`）。R4「不能悄悄回退父模型」
+     修订为「不能**无感知**回退父模型」：继承必须可见；静默 opt-in 入口仍是
+     `inheritCaptainModel: true`（该分支按 R4 剥标记、不发 notice）。非成员的父继承环
+     保持既有静默语义（`subagent-parent-inheritance.md` 链尾）。
+  4. fail-closed：`ConfigurationError`（recoverable），消息列举已试链环与配置引导
+     （原三途径 + 应用默认模型）。
+- `resolveSubagentSelection` 返回值增 `inheritance?: { source: "app-default" | "parent-session" }`；
+  调用方仅在 `source === "parent-session"` 且 `profile.requireExplicitModelSelection` 时发 notice。
+- **边界**：只改空选择的**派生链**；不改 override 优先级、不改权限继承
+  （`subagent-parent-inheritance.md`）、不改 `newTaskDefaults` 所有权（它仍是客户端
+  新建任务草稿默认，不进运行时继承链；与运行时「配置默认」双源不统一登记为命名债，
+  本修订不合并）。
+
 ### R5 派生边界 live 重读（loadCurrentACodeAgentProfiles，fail-closed）
 
 - 已打开的会话在**每次新建子 Agent 前**异步重读一次最新已提交配置：用户/项目

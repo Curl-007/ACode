@@ -133,6 +133,12 @@ export function runtimeMetadataForSyntheticUserMessageSource(
   if (source === "subagent") {
     return systemReminderRuntimeMetadata("queued_system_notification");
   }
+  if (source === "model_inheritance") {
+    // 用户可见继承 notice（specs/agent-teams-derived-config.md R4.1）：与
+    // background_task 同档的 legacy synthetic carrier——落用户 transcript 的可见合成行，
+    // 缺省分支（rewind_notice）会错误归类冷恢复语义。
+    return legacySyntheticRuntimeMetadata();
+  }
   if (source === "team_wake") {
     // 宿主团队唤醒（specs/host-team-wake.md R6）：与 subagent_message 同档的 runtime
     // carrier——inputPresentation="team_wake" 驱动请求边界重排版；这里只登记 legacy

@@ -101,6 +101,10 @@ export const acodeSyntheticUserMessageSourceSchema = z.enum([
   "fork",
   "goal_state_change",
   "goal-continuation",
+  // 子代理空选择（「继承默认」）回退到父会话模型时的用户可见继承 notice
+  //（apps/acode-cli/specs/agent-teams-derived-config.md R4.1）；词表与 contracts
+  // SYNTHETIC_USER_MESSAGE_SOURCES 同步。
+  "model_inheritance",
   // peer 消息镜像（specs/agent-peer-messaging.md R5）：兄弟间消息落共同父会话的
   // model-only 合成 notice；词表与 contracts SYNTHETIC_USER_MESSAGE_SOURCES 同步。
   "peer_message",

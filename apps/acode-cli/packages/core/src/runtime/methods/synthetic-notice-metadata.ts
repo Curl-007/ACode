@@ -73,6 +73,11 @@ function syntheticUserNoticeKind(source: SyntheticUserMessageSource): MessageSem
       return "system_reminder";
     case "goal-continuation":
       return "system_reminder";
+    case "model_inheritance":
+      // 空选择回退父会话模型的用户可见继承 notice（specs/agent-teams-derived-config.md
+      // R4.1）：子代理域通知，与 subagent/subagent_message 同 kind；可见性由
+      // visibility 参数驱动（本 source 以 user-visible 发射）。
+      return "subagent_notification";
     case "peer_message":
       // peer 镜像（specs/agent-peer-messaging.md R5）：与 subagent_message 同为子代理域的
       // model-only runtime carrier——兄弟间消息落共同父会话的持久痕迹，冷恢复后语义等价。

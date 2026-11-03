@@ -281,6 +281,10 @@ export function resolveAppRuntimeConfig(input: {
       use: options.runtimeConfig?.memory?.use ?? configResult.config.memory.use,
       workspaceIdentity: workspaceIdentity?.trim() || undefined,
     },
+    // R4.1 链环 2：应用配置默认模型（specs/agent-teams-derived-config.md）；缺席 = 跳过该环。
+    ...(options.configuredDefaultModelSelection
+      ? { appDefaultModelSelection: options.configuredDefaultModelSelection }
+      : {}),
   };
   return {
     configuredMcpServers,

@@ -203,20 +203,29 @@ test("(R7) loader 缺席：行为与现状一致（启动快照，逐字节兼�
   }
 });
 
-test("(R4) requireExplicitModelSelection：无选择即拒绝，有 profile/override 选择放行", () => {
+test("(R4/R4.1) requireExplicitModelSelection：全链皆空才拒绝；父会话环放行并标记继承", () => {
   const selection = { providerId: "provider", modelId: "model" };
   const parent = { providerId: "provider", modelId: "captain-model" };
 
-  // 无 profileSelection、无 overrideSelection → fail-closed，消息带配置引导。
+  // R4.1（2026-11-03 修订）：链上有父会话模型时不再立即 fail-closed——父会话环
+  // 放行并返回 inheritance 标记（用户可见 notice 的发射点在 methods/subagent.ts）。
+  const viaParent = resolveSubagentSelection({
+    requireExplicitModelSelection: true,
+    parentSelection: parent,
+  });
+  assert.deepEqual(viaParent.selection, parent);
+  assert.deepEqual(viaParent.inheritance, { source: "parent-session" });
+
+  // 全链皆空 → fail-closed，消息带全部配置引导（含应用默认模型环）。
   assert.throws(
     () =>
       resolveSubagentSelection({
         requireExplicitModelSelection: true,
-        parentSelection: parent,
       }),
     (error) => {
       assert.match(error.message, /Cannot start AgentTeams member/u);
       assert.match(error.message, /inheritCaptainModel/u);
+      assert.match(error.message, /app default model/u);
       return true;
     },
   );

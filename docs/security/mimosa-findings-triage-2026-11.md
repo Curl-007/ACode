@@ -604,6 +604,128 @@ MCP 包族跨小版本），台账的 `packages` / `noticesSha256` / `notInstall
 需下载该 artifact 提交后才收敛。按 `docs/git-collaboration.md`，release 分支上
 「licenses-notices 等专项闸门全部 success」是发布前置，**故本批在 artifact 回填前不可发布**。
 
+### 6.3 other-security 120 条复核（2026-11-03，AI 辅助会话增补，非原台账作者裁决）
+
+方法：不逐条看，先按 **(sink × 污点源)** 建矩阵找簇。120 条的分布——
+按 sink：未标注 49、`ssrf` 32、`mongo-sort-injection` 16、`command-injection` 9、`sql-injection` 7、
+`path-traversal` 7；按源：**环境变量 83（69%）**、HTTP 请求输入 29、命令行参数 6、未标注 2。
+
+#### 6.3.1 两类可整批结构性否证
+
+1. **`mongo-sort-injection` 全部 16 条：结构上不可能。** `grep -c -i mongo pnpm-lock.yaml` = **0**，
+   所有 `package.json` 中 `mongoose`/`mongodb`/`mongo` 零命中——产品里没有 MongoDB。
+   代表条目 `adapters/src/model/runner-debug.ts:796` 的所谓 sink `fingerprintValue`（:845-879）是
+   **纯字符串派生函数，无任何 I/O**，链路中唯一的 `.sort()` 是 `Object.keys(record).sort()`
+   （内存对象键排序）；该文件 SQL/DB 标识符零命中，I/O 面只有 `node:fs` 同步 API 写
+   `~/.acode/cli/{debug,rollout}/model-io-*.jsonl`。判为 sink 分类误报（疑以 `.sort()` 为触发词）。
+2. **`sql-injection` 全部 7 条：污点链不可能存在（跨包同名符号联接）。** 链声称
+   `getSession → buildInjectedGlobals(sink:sql-injection)`。事实：
+   - `buildInjectedGlobals`（`apps/acode-cli/packages/core/src/tool/handlers/node-repl.ts:79-161`）
+     构造的是 **node REPL 沙箱内的浏览器控制全局对象**，该文件 SQL/DB/`process.env` 零命中；
+   - 被报的 5 个位置（`packages/desktop/src/host/index.ts:1455/1889/2046/2061/2090`）调用的是
+     **另一个同名** `getSession`——`windowRemoteConnectionRegistry.getSession(remoteSessionId)`，
+     实现是 `sessionsById.get(...)` 内存 Map 查找 + 快照投影（`windowRemoteConnectionRegistry.ts:710-713`）；
+   - **`packages/desktop` 不依赖 `@acode/core`**（`package.json:35-43` 列全 9 个 `@acode/*` 依赖，
+     无 core），`host/index.ts` 中 `@acode/core`/`node-repl` 零命中。故该链无导入边可依。
+   - 持久化统一为 Node 内置 `node:sqlite` 的 `DatabaseSync`（`taskIndexRepo.ts:67` 等），无 npm 驱动。
+   **但相邻问题未闭环，如实登记**：仓库内确有约 10 处字符串插值 SQL，已核 2 处
+   （`taskListQueries.ts:170-194`、`dwf-journal.ts:455-464`）插值内容均为代码常量或 `?` 占位符
+   个数、值走绑定参数；其余 6-8 处插值的 `table`/`where`/`activePredicate`/`limit` 变量
+   **定义处未逐个回溯到源头**。`sql +=` / `query +=` 形态全仓零命中。见 6.3.4。
+
+#### 6.3.2 逐簇裁决
+
+| 簇 | 条数 | 裁决 | 关键证据 |
+| --- | --- | --- | --- |
+| v4 协议 handler「到达 ssrf」（`acode-protocol-v4/server.ts:541-575`，`plans`/`fileChanges`/`workflowRuns`/`workflowRunArtifactRead`/`visualizationRead` 等） | 12+ | **误报（源与 sink 双错）** | ① **该面不是 HTTP**：入站是 `process.stdin` 上的 NDJSON 行（`acode-protocol-entrypoint.ts:113-114、340-349`），transport kind 联合为 `"stdio"\|"websocket"\|"memory"`（`acodeProtocolTransport.ts:4`）**无 http 成员**，src 下唯一实现是 `ACodeStdioTransport`（`kind = "stdio"`）。扫描器的「HTTP 请求输入」源分类不成立。② 被报的三个文件（`server.ts`/`v4-gateway.ts`/`v4-binder.ts`）中 `fetch`/`node:http(s)`/`undici`/`axios`/`new URL`/`http(s)://` **全部零命中**。③ 扫描器指认的 sink 文件 `agentConversationTransport*.ts` **不在被指的包里**，只存在于 `packages/ui/src/v4/`，且被指行本体是 `agentService.conversationXxxV4({...})` 的 TS 方法调用。④ 不可信字段实际去向：Map 键、SQLite 绑定参数、进程内函数实参、`sanitizePathSegment()` 后的目录段——不进 URL。⑤ artifact 链有文档化授权链（`artifact-read.ts:13-27`）：调用方 id **只用于查 journal 行，从不直接成为路径**，读取用的 `uri` 取自 journal 行的 `result.uri`，store 侧再以 `readdir` + `entries.find(e => e.includes(artifactId))` 定位真实文件名（`storage/index.ts:175-179`）。抽样展开 3 条完整链（含 artifact 类），另 4 条只验到 `record.app.*` 转发层。 |
+| `doctor/defaults.ts:71` ssrf | 1 | **误报** | doctor 的 CLI 参数面（`provider-doctor-command.ts:390-403`，`strict: true`）**不含任何 URL 选项**；URL 由 provider registry 的 `config.api.baseUrl` 经 `buildProviderCatalogUrl` 追加固定 `/models` 生成，且 `withPath` 清空 search 与 hash。**先校验后连接**：`inspectProviderEndpoint`（协议白名单 http/https + 拒 localhost/`*.localhost`/`*.local`/私网/链路本地/保留 IP，复用 contracts 的 `getPublicEgressIpBlockReason`，不另建第二套真相）+ `assertProviderEndpointPublicEgress`（DNS 预检）。offline 档换成 `request(): Promise<never>` 的拒绝型端口并计数。该文件是 doctor 目录内唯一允许引用底层 HTTP adapter 的装配点（有测试钉住的豁免）。 |
+| path-traversal × 7（`windowsCuaDevRuntime.ts:95/118/191/218/219/249/494`） | 7 | **5 条误报 + 2 条可接受设计（R4 已在案）** | R4 门禁**确实已实现**：`:94-98` 使用 `isPackagedACodeDesktopRuntime(requestEnv)`，且有验收测试（`agent-command-env-gate.test.mjs:152` 打包态设 dev-root → 走 packaged 链；`:171` 非打包态 → dev-root 生效）。**7 条中只有 `:95`、`:118` 的路径输入真来自 env**（`ACODE_CUA_DEV_ROOT`）；`:191/:218/:219/:249/:494` 全在 `resolvePackagedRuntime` 内，其根来自 `options.resourcesPath ?? process.resourcesPath`、manifest 字段来自磁盘文件，**没有任何 env 值进入这些路径构造**——扫描器把函数级 env 读取过度近似传播到了 packaged 分支。dev 链边界校验完整：绝对路径要求、lstat 非 symlink + realpath `samePhysicalPath`、`requireExpectedPackage` 的 containment + 内容契约、`isCanonicalRelativeArtifactPath` 拒 `..`/绝对/反斜杠/冒号/NUL、`requireContainedRegularArtifact`；packaged 链另有 sha256。残余（R4 已裁决）：非打包态下 env 选定的 dev 根决定**哪个 JS 被 fork 执行**（`windowsCuaDevHelperHost.ts:309-326`），与 R1 同一威胁模型，R4 明言「非打包态零变化」。 |
+| command-injection × 9 | 9 | **5 条误报 + 4 条可接受设计** | 误报 5 条的被标 sink **根本不是进程执行**：`zip-source.ts:183` 的 `isIpv4LoopbackHost` 是 `RegExp.exec`（该文件无 `node:child_process` 导入）、`create-app.ts:1367` 的 `parsePromptCustomCommandInvocation` 是 `RegExp.exec`、`autoUpdater.ts:1228` 的 `parseUpdaterCacheDirName` 是 `RegExp.exec`（解析 app-update.yml）、`agent-teams-plugin/server.ts:75` 的 `handlePanelRequest` 是**进程内只读 HTTP handler**（§6.1 的误报裁决经独立复核**成立**：`panel.ts` 全文 `node:child_process` 零命中，两处 `exec` 均为正则；面板 `server.listen(0,"127.0.0.1")` 只读 store 回 JSON/HTML）、`powershell-launch.ts:35` 声称的 sink `execSshCommandSimple` 在 **packages/server** 而被报文件在 `apps/acode-cli/packages/core`（无导入关系，跨包同名联接），实际消费是 `mode:"argv"` 直 spawn 无 shell 拼接。可接受设计 4 条：`mcp/index.ts:1746` 经 MCP SDK 的 `spawn(command, args, {shell:false})` argv 数组，且有 `sanitizeACodeRuntimeEnv`（剥离 NODE_OPTIONS/ELECTRON_RUN_AS_NODE/代理族/CA 族劫持键）+ `applyExecHijackEnvGuard` + `mcp-env-gate.ts` 拒绝命中劫持闭集的 server，且 **MCP server 不能由 env 层定义**（`env-config.adapter.ts` 不产出 `mcp.servers`）；`host/index.ts:1074` 的命令是**静态字面量** `printf %s "$HOME"`；`:1080` 的 find/rm/mkdir/chmod 路径参数全经 `quotePosixShellArg`/`quotePosixPathArg`；`:2381` 只转发 `REMOTE_RUNTIME_ENV_KEYS` **白名单**键且逐值引号包裹（注释明言不带 credential/token），执行位置是用户自己配置的远端主机（同 §6.2.1 对 `ssh-backend.ts:341` 的裁决）。 |
+| ssrf（env 源）中被名称联接到无关实体的部分 | 6+ | **误报** | `host/index.ts:1685` 的 `hostResourceUsageResponder.handleRequest` —— `hostResourceUsage.ts` 全文无 fetch/http/net，被联接的 `openai-provider-proxy.ts` 属 `apps/acode-cli/tools/prompt-trajectory/`（独立录制工具的 127.0.0.1 mock 代理），desktop 不导入它；`:1693`/`node.ts:2428` 的 sink 是 `client.request(...)` **stdio RPC**；`:2170` 与 `windowsCuaDevHelperHost.ts:318` 被联接到 `packages/harness-sdk/src/session.ts` 的**同名** `detach()`/`fork()`。 |
+
+#### 6.3.3 复核中发现的两个真实缺口（**扫描器没有正确指认，属本次复核的产出**）
+
+以下两条不在任何 finding 的正确位置上——扫描器把 `http/index.ts:186` 与若干 env 源 ssrf 混在一起报，
+而真正的问题在它们的**上游信任模型**里。两条都是事实核实过的，不是推测。
+
+**缺口一：`ACODE_SERVER_RELEASE_MANIFEST_URL` 是无人看守的代码投递路径。**
+`packages/acode-server-cli/src/runtime/updatePreparation.ts:67→78→96→117/264`：该 env 决定
+更新目录 URL，随后 `fetchReleaseJson` / `downloadOnce` 都是**裸 `fetch(url, { redirect: "follow" })`**
+（`runtime/releaseDownload.ts:20、:123`），**fetch 层无协议白名单、无主机校验、无内网/环回/
+metadata 地址阻断**。目录 JSON 经 zod 校验，但 `archiveUrl`/`manifestUrl` 的约束只是
+`z.string().url()`（`contracts.ts:194-195、:205`，仅 URL 语法，**不限 https**）；而归档的完整性
+sha256 来自**同一份目录**（`:196`）——即**期望值与被校验物同源，是自指信任**。
+该 env 在仓库内只有一处代码引用，`packages/acode-server-cli/specs/` 的五个 spec **均未提及它**。
+对照事实：**桌面更新源 env 是有门禁的**——`ACODE_UPDATE_FEED_URL` + argv 开关在
+`autoUpdater.ts:880-907` 被 `isPackaged` 门禁挡住（打包态直接返回 undefined，注释明引 P1-7 与
+NOTICE 承诺）。同一仓库对「env 决定下载哪份代码」这件事，桌面侧有门禁、server-cli 侧没有。
+
+**缺口二：携带凭据的出站请求，其目标 origin 由 env/设置决定，且打包态无门禁。**
+四个点把 **OAuth / login access token 放进 Authorization 头**，发往由 env 决定的 origin：
+`accountProviderTeamPlanRequestKey.ts:58-64`、`codingPlanProviderAvailability.ts:256-262`
+（均为 `resolveZaiBusinessBaseUrl(process.env) ?? resolveBigModelApiOrigin(process.env)` →
+`${host}/api/biz/customer/getCustomerInfo`）、`legacyTeamOrganizationResolver.ts:27-40`、
+`zaiStartPlanBilling.ts:11-12/:97/:108`。另两处（`acode-builtin-download.ts:54`、
+`clientConfigService.ts:73-75`）用 `endpointOrigin`（设置 override > env > 编译期默认）构造 URL。
+统一校验只有 `normalizeACodeEndpointOrigin`（`acodeEndpoint.ts:88-98`）：URL 可解析 + 协议
+http/https，**无白名单、无内网/环回/metadata 阻断**。
+关键事实：这些 env 键**既不在** `PACKAGED_BOOT_ENV_DROP_KEYS`（`startupSanitation.ts:31-47`，
+只删 `ACODE_ENV` 等激活旗标）**也不在** `SANITIZED_RUNTIME_ENV_KEYS`（`runtimeEnv.ts:73-104`）
+——即打包桌面下，用户 shell env（`agent-command-env-gate.md` 威胁模型段 :20-23 所述的
+`launchctl setenv` / profile / Windows 用户变量注入面）设置的 endpoint 键**会存活进 host 进程**；
+且 `REMOTE_RUNTIME_ENV_KEYS` 白名单（`connect.ts:55-67`）会把 endpoint 族**显式转发给远端 server**。
+
+**为什么 `agent-command-env-gate.md` R3 覆盖不到这两条**（经全文核实，非推断）：该 spec 的
+标题、威胁模型段与 R1/R2/R4 的门禁实体**全部是「替换实际执行的代码面」**（程序/二进制选择点）；
+R3 第三条「独立 acode-server-cli 分发不设打包标记：其管理员对本机有完全控制权，env 配置属
+合法用法」出现在该语境内。而上述两条的 env 决定的是**出站请求的目标 origin**与**下载哪份发布物**，
+不是「哪个二进制被执行」。经 grep 核实：该 spec **全文不含** `URL`/`endpoint`/`ssrf`/`fetch`/
+`release-manifest` 任何一处，`ACODE_SERVER_RELEASE_MANIFEST_URL` 与 endpoint 族 env 键在 spec 中
+零提及。故 R3 既未把这类纳入门禁，也未点名豁免它们——**是未覆盖，不是已裁决**。
+
+处置建议（**未实施，需 owner 裁决**，因两条都改变安全姿态与/或发布链路）：
+- 缺口一：给 release-manifest 的 fetch 加与 `doctor/endpoint-policy.ts` 同一套出口策略
+  （协议白名单 + 拒 localhost/私网/链路本地/保留地址 + DNS 预检），复用 contracts 的
+  `getPublicEgressIpBlockReason` 以免出现第二套真相；并把 sha256 的**信任来源与被校验物解耦**
+  （期望值不应来自同一份可被同一 env 改写的目录）。该 env 需补 spec 记载。
+- 缺口二：把 endpoint 族 env 键纳入与 `ACODE_UPDATE_FEED_URL` 同档的 `isPackaged` 门禁，
+  或纳入 `PACKAGED_BOOT_ENV_DROP_KEYS`；并在 `agent-command-env-gate.md` 增设一节明确
+  「出站目标 origin 类 env」的门禁姿态（当前 spec 对此沉默）。
+  注意 `acodeEndpointOrigin` 设置项的 UI 暴露面（谁能在设置里改）本次未核，裁决前需补。
+
+#### 6.3.4 本次未覆盖 / 未闭环（如实登记）
+
+- `ssrf` 簇中 **6 个调用方的 URL 来源未追**：`plugins/marketplace.ts:551`、
+  `plugins/zip-source.ts:174`、`bootstrap/src/auth-login.ts:387`、`workflow-facade.ts:311`、
+  `script-workflow-child-runtime.ts:212`、以及 `create-app.ts:839` 的通用 `httpClientPort`。
+  其中 marketplace 与 zip-source 属插件市场面，其 URL 是否可由**远端目录内容**决定需单独取证。
+- `egressPolicy` 是**调用方自选**字段（`http/index.ts:73-75`）：只有显式传 `"public"` 才启用
+  DNS 预检。本次只确认了 doctor 硬编码 `"public"`（`defaults.ts:77`），**其余调用方传的档位未逐一核对**
+  ——这是「出口校验 opt-in」的架构性质，值得单独立项核对。
+- `assertPublicEgressDestination` / `assertPublicEgressProxyBoundary` / `createPublicEgressLookup`
+  的实现体（`adapters/src/http/public-egress-policy.ts`）未读，只确认了调用点与注释语义；
+  是否存在 DNS 预检与建连之间的 TOCTOU/重绑定残留未评估。
+- 6.3.1 第 2 条留下的 6-8 处 SQL 插值变量源头未回溯（`locate.ts:111 table`、
+  `migrations.ts:154/164 table|activePredicate`、`messages.ts:216 table`、`debug.ts:32 table|where`、
+  `sessions.ts:224 where|limit`、`script-workflow-runs.ts:291 where|limitSql`），以及
+  `taskListQueries.ts:173 appendACodeAgentIndexedProviderFilter` 的函数体未读。
+- `storage/index.ts` 的两处形状事实未做可达性验证：`sanitizePathSegment`（:308-310）的允许字符集
+  含 `.`，故字面量 `".."` 经它后**仍为 `".."`**（`/` 与 `\` 会被替换成 `_`）；且该文件
+  `realpath`/`lstat`/`readlink`/`isSymbolicLink`/`withFileTypes` **零命中**（无符号链接检查）。
+  `sessionDir` 段来自 journal 行 uri 的 `hostname`（发布时由 store 用
+  `encodeURIComponent(request.sessionId)` 生成），而 `request.sessionId` 的最初来源未追
+  （来自工具执行上下文，非本批 RPC 入参）。**未构造实验证明可达**，仅登记为待查的加固点。
+- v4 簇抽样而非穷举：`fileChanges`、`fileRewindPreview`、`workflowRunNodeResult`、
+  `workflowRunWorkspace` 的最内层实现体未读；`record.app.*` 之后的传递闭包未穷举
+  （`workflow-facade.ts:311` 与 `script-workflow-child-runtime.ts:212` 确实构造了
+  `createNodeWebFetchHttpClientAdapter`，但未追出上述只读 query 方法到这两个构造点的可达路径，
+  也未证明不可达）。
+- Web 部署形态下浏览器 WS 帧到 `acodeAgentService.conversationXxxV4` 的完整跨进程链只验到
+  `setupChannelServer` 调用点，未逐层追。
+- 扫描根是否包含 `.claude/worktrees/`（仓库内有 4 份副本，含 `agentConversationTransport*.ts`
+  等的重复文件）**未确认**；若包含，finding 计数可能含副本重复。
+- 全程静态阅读，未启动进程、未抓 stdio 流量、未构造 `..`/绝对路径/符号链接的 artifact id 做实验。
+
 ## 7. 复扫指引
 
 后续扫描对照本台账时：

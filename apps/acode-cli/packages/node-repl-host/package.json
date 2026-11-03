@@ -24,7 +24,7 @@
     "@acode/core": "workspace:*",
     "@acode/shared": "workspace:*",
     "@acode/acode-cua": "workspace:*",
-    "zod": "^4.4.3"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",

@@ -542,6 +542,68 @@ socket（`connect.ts`/`stdio-socket.ts` 无任何 HTTP fetch）。`packages/serv
 决策；且 D 的前提（无仓外消费方）本仓无法自证。需 owner 选定后再实施，实施时按 AGENTS.md
 先改 `packages/server/specs/server-auth.md` 的「loopback 无 token 是受支持的默认姿态」这条裁决。
 
+#### 6.2.6 依赖升级批次的执行结果（2026-11-03，承 §6.2.3）
+
+**结果：生产依赖 advisory 40 → 7；critical 1 → 0、high 19 → 2、moderate 16 → 3、low 8 → 4。**
+
+采取的手段（按优先级）：
+
+1. **抬既有 override 的地板**（范围本就允许修复版，属锁文件陈旧）：`dompurify@3` ^3.4.16→^3.4.17、
+   `undici@6` ^6.28.0→^6.29.1、`undici@7` ^7.28.0→^7.30.1、`ip-address@10` ^10.5.1→^10.7.4、
+   `fast-uri@3` ^3.1.6→^3.1.9。
+2. **新增同大版本内的 override**（minor/patch，semver 兼容）：`node-forge@1` ^1.4.1（→1.4.2）、
+   `follow-redirects@1` ^1.16.2、`@modelcontextprotocol/{server@2,client@2,core@2}` ^2.3.0
+   （server 2.0.0→2.4.0；client/core 已是 2.3.1，此举同时消除了 MCP 包族的版本错配）、
+   `@modelcontextprotocol/sdk@1` ^1.32.0（→1.32.2）、`qs@6` ^6.16.1（→6.17.1）、
+   `uuid@11` ^11.1.1、`@hono/node-server@1` ^1.19.15（→1.19.18）、`body-parser@2` ^2.4.0、
+   `handlebars@4` ^4.7.10（dev）、`postcss-selector-parser@{6,7}`。
+3. **改我们自己的声明**（zod）：12 个入库 `package.json` 精确钉版 `"zod": "4.6.5"` → `"4.6.7"`，
+   另 `apps/acode-cli/packages/node-repl-host` 的 `"^4.4.3"` → `"^4.6.7"`（它是 `dependencies`
+   而非 peer，抬地板安全）。zod 由此从 3.25.76 / 4.6.5 / 4.6.7 三版并存收敛为 3.25.76 / 4.6.7 两版。
+
+**两次踩坑与其教训（记录以免重犯）**：
+
+- **`moment` 的 override 会破坏第三方包的 peer 声明，已撤销。** 加 `"moment@2": "^2.31.0"` 后，
+  锁文件里 `vis-timeline@8.5.1` 的 `peerDependencies.moment` 被改写成 `^2.31.0`，而实际解析仍是
+  `2.30.1`——声明与实解自相矛盾。改成无选择器的 `"moment": "^2.31.0"` 同样无效。根因：moment 在
+  全树里**只是 vis-timeline 的 peer**（`pnpm view vis-timeline@8.5.1 peerDependencies` 确认真实范围
+  是 `^2.24.0`），没有任何包把它当真实依赖，override 改不到 peer 的实际解析版本。撤销后
+  vis-timeline 的声明还原为 `^2.24.0`。**教训：override 会改写 peerDependencies 声明，
+  对「仅作为 peer 存在」的包无效且会制造矛盾，此类项不能用 override 修。**
+- **`zod@4` 的 override 造成 unmet peer，已改用直接抬声明。** 加 `"zod@4": "^4.6.6"` 后 install
+  出现 `✕ unmet peer zod@^4.6.6: found 3.25.76`（在 `shadcn` 里，两条）：override 把 shadcn 的
+  peer 声明收窄成 `^4.6.6`，而它实际拿到的是 zod 3.25.76（本在其原始范围内）。撤掉 override、
+  改为直接抬我们自己的 13 处声明后，警告消失（只剩既有的 `unmet peer typescript@^5: found 6.0.2`，
+  与本次无关）。**教训：能改自己声明就不要用 override；override 是 blunt instrument，
+  会连带改写第三方的 peer 契约并产生假警告，而假警告会让人开始忽略真警告。**
+
+**剩余 7 条（全部需要跨大版本或不同机制，本批未做，逐项理由）**：
+
+| 包 | 严重度 | 现状 | 为何未做 |
+| --- | --- | --- | --- |
+| `basic-ftp` | high | 5.3.1，修复需 ≥6.2.1 | **跨大版本**。它不是任何包的直接依赖，只经 override `basic-ftp@5: ^5.3.1` 钉住；改 6.x 等于强制上游依赖跨 major，需先确认其 API 兼容性与上游是否已适配 |
+| `zod` | high | 4.6.7 已修；剩余是 **zod@3.25.76** 那个实例（通告范围 `<4.6.6` 字面涵盖 3.x） | **跨大版本** 3→4，涉及 6 处依赖方（含 `zod-to-json-schema@3.25.2` 的 peer 绑定），是独立迁移项目 |
+| `uuid` | moderate | 11.1.1 已修；剩余是 **uuid@9.0.1** 那个实例 | 跨大版本 9→11 |
+| `moment` | moderate | 2.30.1 | 仅作为 vis-timeline 的 peer 存在，override 无效（见上）。可行路径是等 vis-timeline 自身抬 peer，或改用非 override 机制 |
+| `@hono/node-server` | moderate | 1.19.18（`<1.19.15` 那条**已修**）；剩余那条需 ≥2.1.3 | 跨大版本 1→2 |
+| `katex` | low | 0.16.45 / 0.16.47 | 0.x 的次版本即破坏性，需 ≥0.18.2 |
+| `@ai-sdk/provider-utils` | low | 未处理 | patch 级可修（≥4.0.33），本批为控制 diff 规模未纳入 |
+
+另：`electron` 41.10.7 有 7 条通告（含 1 条 high「eMudhra 中间证书被攻破的缓解」）。它按惯例记为
+devDependency 故不出现在 `--prod` 列表，但**确实打包进安装包**——`--prod` 的 40→7 不含它，
+升级 Electron 属独立的平台级变更。
+
+**必须知道的后续动作（本批无法在本地完成）**：依赖树已实质变化（本轮 install 净移除 200+ 个包、
+MCP 包族跨小版本），台账的 `packages` / `noticesSha256` / `notInstalled` 等**派生字段已过期**。
+这些字段依赖平台相关的 optional deps，按 R7.24 **不得在 Windows 上重生成**。
+本批只把 `inputs` 的 15 条源文件哈希（14 个 `package.json` + `pnpm-lock.yaml`）按台账自己的口径
+（`hashBytes`，CRLF→LF）重算并做了纯文本替换，故 `ci.yml` 的 `--inputs-only` 开发期信号为绿
+（2904/2904，diff 恰好 15 行、无格式漂移）；但 `licenses-notices.yml` 的 **`full` 模式会红**，
+这是设计内的两段式回路：该 workflow 的 `pull_request` 触发路径已包含 `pnpm-lock.yaml` /
+`**/package.json` / `third-party/**`，推送后它会在 CI Linux 上全量重生成并上传 artifact，
+需下载该 artifact 提交后才收敛。按 `docs/git-collaboration.md`，release 分支上
+「licenses-notices 等专项闸门全部 success」是发布前置，**故本批在 artifact 回填前不可发布**。
+
 ## 7. 复扫指引
 
 后续扫描对照本台账时：

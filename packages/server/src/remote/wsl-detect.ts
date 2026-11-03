@@ -1,9 +1,13 @@
 import { execFile } from "node:child_process";
 import type { WSLDistro } from "@acode/shared";
+import { resolveWslCommand, WSL_EXEC_MAX_BUFFER } from "@acode/server/remote/wslBackendSupport.js";
 export type { WSLDistro } from "@acode/shared";
 
-const WSL_COMMAND = "wsl.exe";
-const WSL_EXEC_MAX_BUFFER = 8 * 1024 * 1024;
+// WSL_COMMAND 与 WSL_EXEC_MAX_BUFFER 此前在本文件另有一份副本，与 wslBackendSupport.ts 并存
+// ——同一个「用哪个 wsl.exe」的事实有两处写入路径，加固时只会改到其中一处。现统一从
+// wslBackendSupport.ts 取，并改用 resolveWslCommand() 拿到绝对路径（裸名会让 CreateProcess
+// 把 cwd 排在 System32 之前，见该处注释与 specs/remote-deploy-hardening.md R4）。
+// decodeWslOutput 的同名重复属既有问题、与本次加固无关，登记在 tech-debt-backlog 未顺手重构。
 
 export const WSL_DISCOVERY_CACHE_TTL_MS = 5_000;
 
@@ -72,9 +76,11 @@ export function parseWSLDistroList(rawOutput: string): WSLDistro[] {
 }
 
 async function execWslForBuffer(args: string[]): Promise<Buffer> {
+  // 绝对路径后再 execFile，理由同 wslBackendProcess.ts 的两处 spawn。
+  const wslCommand = await resolveWslCommand();
   return new Promise((resolve, reject) => {
     execFile(
-      WSL_COMMAND,
+      wslCommand,
       args,
       {
         encoding: "buffer",

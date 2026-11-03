@@ -32,8 +32,11 @@ import {
   taskStreamMirrorPublishOpSchema,
   taskStreamMirrorTargetSchema,
 } from "./task-realtime-core.js";
+import { wslDistroSchema } from "./wslDistroValidation.js";
 import { wslUserSchema } from "./wslUserValidation.js";
 
+export { isValidWslDistro, wslDistroSchema } from "./wslDistroValidation.js";
+export { WSL_IDENTITY_MAX_LENGTH, isValidWslIdentity } from "./wslIdentityChars.js";
 export { WSL_USER_MAX_LENGTH, isValidWslUser, wslUserSchema } from "./wslUserValidation.js";
 export { acodeTaskModeSchema } from "./acode-task-mode-schema.js";
 export {
@@ -78,7 +81,9 @@ export const sshConnectOptionsSchema = z.object({
 
 export const wslConnectOptionsSchema = z.object({
   kind: z.literal("wsl"),
-  distro: z.string().optional(),
+  // distro 与 user 同强度校验：两者的值都会作为独立 argv 元素交给 wsl.exe（`-d`/`-u`），
+  // 且 wsl-backend 在 distro 枚举失败时会把用户原始字符串直接用于 `-d`。
+  distro: wslDistroSchema.optional(),
   user: wslUserSchema.optional(),
 });
 

@@ -383,14 +383,14 @@
 | 1 | `runtimeLoginShellEnvCapture.ts:95,236`：`accessSync` 按 cwd 解析相对名、`spawn` 裸名按子进程 PATH 解析，**校验的文件与执行的文件可能不是同一个** | **本次已修**（见 6.2.2） |
 | 2 | `run-workflow.ts:138` 注释与 spec R17.1 矛盾，且矛盾点正在 R4 安全论证的支点上 | **本次已修**（见 6.2.2） |
 | 3 | `workflowDraftSlug` 无专门测试，白名单行为只有代码注释作证 | **本次已门禁化**（见 6.2.2） |
-| 4 | `tool-port-launch.ts:71`：`scriptPath` 的绝对路径**原样接受、无工作区 containment**，模型可指定进程可读的任意文件作为脚本源；控制只有 meta 头校验 + 确认门。spec 未逐字讨论该任意文件读取面 → **spec 缺口**，非代码缺陷 | 待跟进 |
-| 5 | `docker-detect.ts:76-107`：PATH 逐目录 join 解析 docker 可执行，**无 cwd/相对条目排除、不强制绝对路径**，兜底为裸名 `"docker"`；`wslBackendSupport.ts:19` 的 `wsl.exe` 同为裸名常量。与 §6.1 对 `run_checks` 要求的「归一为绝对路径、排除工作目录二进制种植」标准不一致 | 待跟进 |
-| 6 | `wsl-backend.ts:268`：`options.distro` 仅 `z.string().optional()` **无字符校验**，而 `options.user` 有专用 `wslUserSchema`（≤64、拒控制字符与 `:`/`/`/`\`）——两个 schema 严格度不对称；且 `safeListDistros` 失败时吞错返回 `[]`，用户原始字符串可不经枚举比对直达 `-d`。有 `--` 终止符与 argv 隔离，不构成 shell 注入 | 待跟进 |
+| 4 | `tool-port-launch.ts:71`：`scriptPath` 的绝对路径**原样接受、无工作区 containment**，模型可指定进程可读的任意文件作为脚本源；控制只有 meta 头校验 + 确认门。spec 未逐字讨论该任意文件读取面 → **spec 缺口**，非代码缺陷 | **本次已补 spec**（见 6.2.2 第 4 项）：复核后确认暴露面比原判**窄**——校验先于拷贝，非工作流文件被读入后即拒绝、不落盘不回模型，实际是「内容盲的解析 oracle」而非任意内容外泄；但它不经 Read 工具权限层，且 yolo 下 `alwaysAsk` 放行（R17.1）使技能门成为唯一控制。未加 containment（`name` 入参本就读工作区外的 `~/.acode/workflows/`，只收 `scriptPath` 会不一致），两条收口候选已写入 spec 待产品裁决 |
+| 5 | `docker-detect.ts:76-107`：PATH 逐目录 join 解析 docker 可执行，**无 cwd/相对条目排除、不强制绝对路径**，兜底为裸名 `"docker"`；`wslBackendSupport.ts:19` 的 `wsl.exe` 同为裸名常量。与 §6.1 对 `run_checks` 要求的「归一为绝对路径、排除工作目录二进制种植」标准不一致 | **本次已修**（见 6.2.2 第 5 项）：复核确认严重度**高于原判**——Windows `CreateProcess` 解析裸名时把「当前目录」排在 System32 **之前**，故 `wsl.exe` 裸名是真实的 cwd 种植面，不只是「没绝对化」 |
+| 6 | `wsl-backend.ts:268`：`options.distro` 仅 `z.string().optional()` **无字符校验**，而 `options.user` 有专用 `wslUserSchema`（≤64、拒控制字符与 `:`/`/`/`\`）——两个 schema 严格度不对称；且 `safeListDistros` 失败时吞错返回 `[]`，用户原始字符串可不经枚举比对直达 `-d`。有 `--` 终止符与 argv 隔离，不构成 shell 注入 | **本次已修**（见 6.2.2 第 6 项）：抽出共享叶子 `wslIdentityChars.ts`，distro 与 user 同强度同来源，两处 schema 站点（连接入口 + AppSettings）同步；测试以**对称性**为核心断言，任一方被单独放宽即红 |
 | 7 | server-core 无 token 姿态下的多用户主机暴露（代码 `http.ts:159-163` 自陈）：未配置 `ACODE_SERVER_AUTH_TOKEN` 时，同机任意**非浏览器**进程（不带 Origin）可铸票并升级为 `desktop-continuous`，获得含全量凭据的完整 RPC；Origin 门只防浏览器上下文。spec 明文接受（边界 = loopback 绑定 + fail-closed + 启动告警），但**仓库既不生成也不强制该 token**，实际安全性取决于 operator | 待跟进（设计取舍，需产品裁决） |
 
 另记两条不属于 finding 但本次发现的**依赖面事实**，见 6.2.3。
 
-#### 6.2.2 本次落地的三处修复
+#### 6.2.2 本次落地的六处修复
 
 1. **`SHELL` 必须是绝对路径才进候选**（`runtimeLoginShellEnvCapture.ts` `resolveShellPathForLoginEnv`）。
    相对值一律跳过，落到 `/bin/zsh → /bin/bash → /bin/sh`。**不推翻** `agent-command-env-gate.md`
@@ -410,6 +410,41 @@
    R17.1（批次 C11）之后 yolo 放行该门，故 yolo 下残余逸出面之前只剩技能门与「必须刻意构造
    原型链攻击」这一成本，**没有逐脚本的用户批准**。追记只负责写明白，**不重新裁决**——
    是否在 yolo 下为工作流族恢复确认门属 R17.1 范围，需用户裁决。
+
+4. **`scriptPath` 暴露面写进 spec**（`apps/acode-cli/specs/script-workflow-revival.md`
+   「已知边界」第 8 条）。复核把原判收窄了：`validateScriptPath` 的实现就是
+   `readWorkflowScriptDocument` + 取消检查，**不含 containment**，但校验发生在
+   `persistScriptCopy` **之前**，且文件必须带合法 `export const meta = {…}` 头才继续，
+   错误信息只带路径不回显内容——所以实际能力是「读任意可读文件（有 `SCRIPT_READ_MAX_BYTES`
+   上界）并得知它是否解析为工作流脚本」，即**内容盲的解析 oracle**，不是任意内容外泄。
+   真正值得注意的是它**不经 Read 工具的权限层**，而 yolo 下 `alwaysAsk` 放行（R17.1）使技能门
+   成为唯一控制。**未加 containment**：`name` 入参的候选目录本就含工作区外的
+   `~/.acode/workflows/`（`tool-port-launch.ts:144-149`），只收 `scriptPath` 会与既有设计意图
+   不一致；两条收口候选（经文件读取权限层 / 对两个入参同时引入允许根白名单）已写入 spec 待裁决。
+5. **宿主侧可执行解析归一为绝对路径**（`packages/server/specs/remote-deploy-hardening.md` 新增 R4）。
+   复核确认严重度**高于原判**：Windows `CreateProcess` 解析裸名的顺序是「调用方 exe 目录 →
+   **当前目录** → System32 → …」，当前目录排在 System32 之前，故 `WSL_COMMAND = "wsl.exe"`
+   不只是「没绝对化」，而是真实的 cwd 种植面。改动：新增 `resolveWslCommand()` 作为唯一解析入口
+   （返回 `<SystemRoot>\System32\wsl.exe`，经 `access(X_OK)` 确认；解析不出才回退裸名，保持既有
+   行为不变砖；结果 memoized），三个 spawn/execFile 站点全部改为先 await 它；`docker-detect.ts`
+   遍历 PATH 时跳过非绝对条目（含 `.` 与空串）。**并消除了 `WSL_COMMAND` /
+   `WSL_EXEC_MAX_BUFFER` 在 `wsl-detect.ts` 的第二份声明**——「用哪个 wsl.exe」此前有两处写入
+   路径，加固只会改到其中一处。R4.4 如实登记残余：都找不到时仍返回裸名 `"docker"`（改为抛错会
+   改变全部调用方的错误语义，且该分支只在 docker 本就不可用时到达）。
+   回归测试 `packages/server/tests/remote-executable-resolution.test.mjs` 7 例：docker 侧用
+   `resolveDockerCommand` 既有的 platform/env/isExecutable 注入做确定性断言（`isExecutable` 恒真
+   时若解析器仍考虑相对条目就会命中 `.`，故用例具备鉴别力）；wsl 侧断言可观察契约（绝对路径或
+   文档化回退 + memoized）并以静态扫描守住「无裸名 spawn 站点」「`WSL_COMMAND` 只有一处声明」。
+6. **WSL distro 与 user 同强度校验**（新增 `packages/shared/src/wslIdentityChars.ts` 共享叶子 +
+   `wslDistroValidation.ts`）。约束抽成独立叶子而非各写一份：两个字段的合法字符集相同且**必须
+   同步演进**，放宽一个忘了另一个就会重现本次的不对称。两处 schema 站点（`validation.ts` 的
+   `wslConnectOptionsSchema` 与 `validationAppSettings.ts` 的 WSL 分支）同步改用
+   `wslDistroSchema`——远程历史重连会直接使用 settings 里的值，只改连接入口等于留了绕过 UI 的
+   第二条路。`WSL_USER_MAX_LENGTH` 保留原导出名（它是 `@acode/shared` 公开 barrel 的一部分，
+   删名属破坏性变更），值与 distro 共享同一常量。回归测试
+   `packages/shared/test/wsl-identity-validation.test.ts` 5 例，**核心断言是对称性**：逐个输入
+   比较 `isValidWslDistro` 与 `isValidWslUser` 的判定，任一方被单独放宽即红；另钉住真实 distro 名
+   （`Ubuntu-22.04`、`docker-desktop`、`Alpine.WSL` 等）不被误伤、空串仍代表「未指定」而非报错。
 
 #### 6.2.3 依赖通告：扫描器严重低估（本次新发现，与 findings 无关）
 
@@ -464,6 +499,48 @@
 - Supervisor 的 control socket / IPC 通道（`packages/acode-server-cli/src/ipc/`）是 HTTP 之外的
   另一控制面，未纳入。
 
+
+#### 6.2.5 待跟进第 7 条的决策简报（server-core 无 token 姿态；**需产品裁决，本次未改行为**）
+
+**暴露面的精确形态**（取证已闭环，非推测）：`acode-server-cli` 的 server-core 恒绑定
+`127.0.0.1` + 随机端口（`core.ts:45` 不传 host/port，`http.ts:158/313`），且「非 loopback 绑定
+且无 token 一律拒绝启动」是 fail-closed 启动不变量（`serverAuth.ts:59-66`）。**未配置
+`ACODE_SERVER_AUTH_TOKEN` 时**：全局 token 中间件不挂载，同机任意进程可
+`POST /api/rpc-host-capability` 铸票，再经 `/ws/host` 兑换升级为
+`clientMode: "desktop-continuous"` / `role: "trusted-host-relay"`，而该模式**保留全量 Credential
+通道**（`http.ts:124-132` 只对其他连接收窄凭据）。Origin 门只拦浏览器上下文（跨源 simple POST），
+**拦不住不带 Origin 的原生进程**。
+
+**为什么现在是这个姿态**：`packages/server/specs/server-auth.md` 明文裁决「loopback 无 token 是
+受支持的默认姿态」，边界 = loopback 绑定 + fail-closed 不变量 + 启动告警。代码自己也自陈威胁
+（`http.ts:159-163` M1 注释：「多用户主机上任意本地用户可获完整 file/terminal/credential RPC」）。
+所以这**不是遗漏，是已知取舍**；问题在于取舍的前提（loopback ≈ 单一信任域）在**多用户远端主机**
+上不成立，而 server-core 的主要部署形态恰恰是远端 Linux 服务器（`verify-remote-ssh.mjs:207`：
+「Core 只监听远端回环地址；ssh -L 隧道是到达它的唯一路径」）。
+
+**一条降低处置成本的关键事实**：取证发现**仓库内没有生产的铸票消费方**——非测试的唯一
+铸造+兑换调用点是验证脚本 `verify-remote-ssh.mjs:254-278`；desktop 的
+`serverRemoteConnection.ts` 只连 `/ws`（Bearer 头）、不铸票，desktop 的 SSH 远程工作区走 stdio
+socket（`connect.ts`/`stdio-socket.ts` 无任何 HTTP fetch）。`packages/server/src/http.ts:98` 的注释
+自称「唯一消费链 serverRemoteConnection.ts」与该文件实际代码不吻合。**故收紧 mint 端点的仓内
+破坏面可能为零**；但无法从本仓证实或证伪是否存在仓外/未来消费方，这正是需要裁决的地方。
+
+**四个选项与代价**：
+
+| 选项 | 做法 | 收益 | 代价 / 风险 |
+| --- | --- | --- | --- |
+| A 现状 | 由 operator 自行设置 `ACODE_SERVER_AUTH_TOKEN`；仓库不生成、不强制 | 0 | 多用户主机上任何本机用户可取得含凭据的完整 RPC；实际是否安全完全取决于部署者是否知道要设这个变量 |
+| B 首启自动生成 token（**推荐**） | Supervisor 首次启动生成随机 token，写入 `status.json` 并限 `0600`；desktop 经 SSH 隧道读取后带 Bearer 连接 | **真正关掉多用户洞**：其他用户读不到 token 文件即无法鉴权；loopback 边界从「同机所有人」收窄到「同用户」 | 中。需改 Supervisor 启动、status.json 权限与写入时序、desktop 连接流程；且要为既有无 token 部署设计迁移（否则升级即断连） |
+| C 多用户主机强制 token | 检测到多用户主机时拒绝无 token 启动 | 精准命中风险场景，单机用户零影响 | 「多用户主机」的可靠检测本身不易（存在即视为多用户会误伤单用户 Linux 桌面）；拒启动是硬失败，可能砖掉现有部署 |
+| D 无 token 时拒绝铸票（**廉价的部分收口**） | `mint` 端点在「未配置 token」时直接 403，其余 `/api` 面不变 | 关掉提权门票这一条最严重的路径（拿不到 `desktop-continuous` 即拿不到全量凭据通道），改动只有一处判断 | 低——**但前提是「仓内无生产铸票消费方」这条事实成立**（见上）。若存在仓外消费方则会断掉它；且它不解决 `/ws` 与其余 `/api` 在无 token 时对同机所有用户开放的问题 |
+
+**建议**：以 B 为目标（它是唯一真正消除多用户暴露的方案），D 作为 B 落地前的过渡（改动一处、
+风险可控、且能立刻移除最严重的提权路径）。C 的检测可靠性不足，不建议单独采用。A 等于把安全性
+寄托在部署者读过文档。
+
+**本节不做的事**：不改任何行为。B/C/D 都改变 server-core 的鉴权姿态与升级兼容性，属产品与发布
+决策；且 D 的前提（无仓外消费方）本仓无法自证。需 owner 选定后再实施，实施时按 AGENTS.md
+先改 `packages/server/specs/server-auth.md` 的「loopback 无 token 是受支持的默认姿态」这条裁决。
 
 ## 7. 复扫指引
 

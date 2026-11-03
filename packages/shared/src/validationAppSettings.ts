@@ -6,6 +6,7 @@ import { SCRIPT_WORKFLOW_MODES } from "./script-workflow-feature.js";
 import { TOOL_SEARCH_APP_MODES } from "./tool-search-feature.js";
 import { REMOTE_ASSET_INSTALL_MODES } from "./remoteAssetInstallMode.js";
 import { isKnownRemoteResourcePackageId } from "./remoteResourcePackages.js";
+import { wslDistroSchema } from "./wslDistroValidation.js";
 import { wslUserSchema } from "./wslUserValidation.js";
 import { normalizeACodeEndpointOrigin } from "./acodeEndpoint.js";
 import {
@@ -117,7 +118,9 @@ const remoteWorkspaceTargetSchema = z.discriminatedUnion("kind", [
   }),
   z.object({
     kind: z.literal("wsl"),
-    distro: z.string().optional(),
+    // 与连接入口共用校验（同 user 字段的既有理由）：远程历史重连会直接使用 settings 中的
+    // WSL distro，绕过 UI 后仍不得把控制字符或路径分隔符带进 identity/日志与 `-d` 传参。
+    distro: wslDistroSchema.optional(),
     // 远程历史重连会直接使用 settings 中的 WSL user，必须和连接入口共用校验，避免绕过 UI 后污染 identity/日志。
     user: wslUserSchema.optional(),
   }),

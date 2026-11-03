@@ -51,6 +51,33 @@
 4. remoteAssetCache/remoteAssetInstaller 内部自取的 manifest 不经过 deploy.ts
    guard，属验签实装批次的收口范围（登记项 2）。
 
+### R4 宿主侧可执行文件解析必须归一为绝对路径（2026-11-03 安全复核新增）
+
+来源：Mimosa `scan-2026-11-03T05-54-54.981Z-a02e99b81cc6` 复核的待跟进第 5 条
+（`docs/security/mimosa-findings-triage-2026-11.md` §6.2.1）。
+
+1. **威胁模型**：Windows `CreateProcess` 解析裸名可执行的搜索顺序是「调用方 exe 所在目录 →
+   **当前目录** → System32 → 16 位系统目录 → Windows 目录 → PATH」——当前目录排在 System32
+   **之前**。POSIX 侧若 PATH 含相对条目（含 `.`），`join` 出的候选同样按 cwd 解析。两者都构成
+   **工作目录二进制种植**面。这与 `agent-teams-plugin` 的 `run_checks` 已明确排除的是同一类风险
+   （其命令解析归一为绝对路径、不含 cwd，见上述台账 §6.1 ④）；同一仓库不应对同类风险采用两种标准。
+2. **`wsl.exe`**：`wslBackendSupport.ts` 的 `resolveWslCommand()` 是唯一解析入口，返回
+   `<SystemRoot>\System32\wsl.exe`（经 `access(X_OK)` 确认存在）；解析不出来才回退裸名
+   `WSL_COMMAND`，保持既有行为不因加固而变砖。结果 memoized（SystemRoot 在进程生命周期内不变）。
+   **所有 spawn/execFile 站点必须先 `await resolveWslCommand()`**，不得直接使用 `WSL_COMMAND`
+   常量；该常量的文档注释已标注「只应作为回退」。`wsl-detect.ts` 此前另有一份
+   `WSL_COMMAND` / `WSL_EXEC_MAX_BUFFER` 副本，已删除并改为从 `wslBackendSupport.ts` 导入——
+   「用哪个 wsl.exe」只能有一处写入路径，否则加固只会改到其中一处。
+3. **`docker`**：`docker-detect.ts` 的 `resolveDockerCommand()` 遍历 PATH 时**跳过非绝对条目**
+   （含 `.` 与空串）。跳过不丢功能：真只在相对条目里的 docker 仍由函数末尾的裸名回退交给
+   spawn 自行解析，行为与改动前一致。
+4. **残余（登记，不在本条修）**：`resolveDockerCommand` 在 PATH 与固定安装位置都找不到时仍返回
+   裸名 `"docker"`；此时 spawn 的解析顺序回到第 1 条描述的形态。保留理由：改为抛错会改变全部
+   调用方的错误语义，而该分支只在「docker 本就不可用」时到达，种植者还需同时具备 cwd 写权限。
+   若日后要收口，应连同调用方的错误处理一起改，不在本条范围内。
+5. **不适用**：SSH backend 宿主侧不 spawn 任何本地可执行文件（经 ssh2 协议通道），故本条不涉及；
+   其远端命令字符串的引号纪律由 `posixShell.ts` 承担，属既有约定。
+
 ## 状态所有者与事件顺序
 
 - guard 的检查结果按 manifest 对象 memoize（WeakMap），deploy 事务内多条路径
@@ -87,3 +114,14 @@
 4. 注入 verifier 返回 `invalid` → 部署在首个远端写入前拒绝；`not-configured` →
    放行且同一 manifest 只 verify 一次（memoize）。
 5. 预检失败路径不产生任何远端写入（fake backend 断言 exec 只出现 df 探测）。
+6. R4/docker：`PATH` 含相对条目（`.`、`bin`、空串）且其中"存在"可执行 docker 时，
+   `resolveDockerCommand` 不返回该相对候选；`PATH` 只含绝对条目时行为与改动前一致
+   （按序返回第一个可执行候选）；两者都找不到时仍返回裸名 `docker`（R4.4 残余）。
+7. R4/wsl：`resolveWslCommand()` 在 win32 且 `<SystemRoot>\System32\wsl.exe` 存在时返回该
+   绝对路径；SystemRoot 缺失或该文件不可访问时回退裸名 `wsl.exe`；非 win32 直接回退裸名。
+   结果 memoized（同一进程内多次调用只做一次文件系统访问）。
+8. R4/单一写入路径：`wsl-detect.ts` 不再自行声明 `WSL_COMMAND` / `WSL_EXEC_MAX_BUFFER`；
+   仓库内不存在以裸名 `"wsl.exe"` 直接 spawn/execFile 的站点。
+9. WSL distro 与 user 同强度校验：`wslConnectOptionsSchema` 与 AppSettings 的 WSL 分支
+   都使用 `wslDistroSchema`；含控制字符或 `:` `/` `\` 的 distro 被拒；真实名称
+   （`Ubuntu-22.04`、`docker-desktop`、`Debian`）通过；空串仍代表"未指定"而非报错。

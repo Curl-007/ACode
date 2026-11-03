@@ -5,7 +5,7 @@ import { spawn, execFile } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
 import type { StdioStream } from "@acode/server/remote/backend.js";
 import { createCloseEventController } from "@acode/server/remote/closeEvent.js";
-import { buildWslArgs, WSL_COMMAND, WSL_EXEC_MAX_BUFFER, decodeWslOutput, normalizeWslOutput } from "@acode/server/remote/wslBackendSupport.js";
+import { buildWslArgs, resolveWslCommand, WSL_EXEC_MAX_BUFFER, decodeWslOutput, normalizeWslOutput } from "@acode/server/remote/wslBackendSupport.js";
 
 export interface WslOwnedChildState {
   closed: Promise<void>;
@@ -14,16 +14,20 @@ export interface WslOwnedChildState {
 
 export type WslOwnedChildren = Map<ChildProcess, WslOwnedChildState>;
 
-export function spawnWslExec(params: {
+export async function spawnWslExec(params: {
   command: string;
   distroName: string | null;
   userName: string | null;
   ownedChildren: WslOwnedChildren;
 }): Promise<StdioStream> {
   const { command, distroName, userName, ownedChildren } = params;
+  // 先解析成绝对路径再 spawn：裸名会被 CreateProcess 按「应用目录 → cwd → System32」搜索，
+  // cwd 优先于 System32，故必须消除工作目录种植面（resolveWslCommand 的注释与
+  // specs/remote-deploy-hardening.md R4）。
+  const wslCommand = await resolveWslCommand();
   return new Promise((resolve, reject) => {
     const child = spawn(
-      WSL_COMMAND,
+      wslCommand,
       buildWslArgs(["bash", "-lc", command], distroName, userName),
       {
         stdio: "pipe",
@@ -69,13 +73,15 @@ export function spawnWslExec(params: {
   });
 }
 
-export function execWslCommandToBuffer(
+export async function execWslCommandToBuffer(
   args: string[],
   ownedChildren: WslOwnedChildren,
 ): Promise<Buffer> {
+  // 同 spawnWslExec：裸名解析会把 cwd 排在 System32 之前，必须先取绝对路径。
+  const wslCommand = await resolveWslCommand();
   return new Promise((resolve, reject) => {
     const child = execFile(
-      WSL_COMMAND,
+      wslCommand,
       args,
       {
         encoding: "buffer",

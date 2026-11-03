@@ -828,6 +828,29 @@ export async function runScriptWorkflowChild(input: {...}): Promise<ScriptWorkfl
 7. **`budget.remaining()` 的 `Infinity` 过不了线**。run 的返回值经 JSON 序列化过 stdio，
    而 `Infinity` 不是 JSON 字面量，`return { left: budget.remaining() }` 到达调用方是
    `{ left: null }`。realm **内**的比较运算照常工作，受影响的只是交回的值。技能 §8 已写明。
+8. **`scriptPath` 不做工作区 containment，真实暴露面是「解析 oracle」而非任意文件读取**
+   （2026-11-03 安全复核追记，来源 Mimosa `scan-2026-11-03` 待跟进第 4 条）。事实链：
+   - `tool-port-launch.ts:71` 是 `resolve(request.workingDirectory, request.scriptPath)`，
+     **绝对路径原样保留**，无工作区边界；随后两次 `validateScriptPath`（源路径与拷贝后各一次）。
+   - `validateScriptPath` 的实现就是 `readWorkflowScriptDocument` + 取消检查，**不含任何
+     containment**。读取受 `SCRIPT_READ_MAX_BYTES` 上界约束，超限即抛。
+   - 关键顺序：校验发生在 `persistScriptCopy` **之前**。文件必须带合法的
+     `export const meta = {…}` 头（meriyah AST + `WorkflowScriptMetaSchema`）才继续；不合法
+     即抛错，**既不落盘拷贝、也不回给模型**。错误信息只带路径，不回显内容。
+   - 因此实际能力是：让进程读取任意可读文件（有字节上界）并得知「它是否解析为工作流脚本」——
+     一个**内容盲的解析 oracle**，不是任意文件内容外泄。
+   - 真正值得注意的一点：这条读取路径**不经 Read 工具的权限层**。RunWorkflow 自己的门是
+     技能门 + `alwaysAsk`，而按 R17.1，yolo 模式下 `alwaysAsk` 放行——故 yolo 下这条路径的
+     唯一控制是技能门（本会话未加载 `script-workflows` 技能即拒绝带 `script`/`scriptPath`
+     的调用）。这与 R4 追记所记的是同一个后果的两面。
+   - **不单独加 containment 的理由**：`name` 入参的候选目录本就包含工作区之外的
+     `~/.acode/workflows/`（`tool-port-launch.ts:144-149`），即「工作流文件住在项目外」是既有
+     设计意图；只对 `scriptPath` 加边界会与之不一致，且会破坏用户把共享工作流放在家目录的用法。
+     相邻的 `path` 入参读取面同样不硬拦工作区外路径，且 `workflow-path-source.ts:41-45` 的
+     注释已自陈这一点。
+   - 若要收口，两条候选（均需产品裁决，本节不裁决）：① 让 `scriptPath` 的读取经文件读取权限层，
+     与 Read 工具同一道门；② 对 `scriptPath` 与 `name` 一起引入「允许的工作流根集合」白名单
+     （工作区 + `~/.acode/workflows/` + 内置），两个入参同时收口才一致。
 8. **工具输出的 `status` 枚举仍是三值**（`backgrounded | completed | failed`）。它与 dwf 的
    `CreateWorkflow` / `AmendWorkflow` / `ResumeWorkflowRun` 以及 `BashOutput` 共用同一个
    `WorkflowOutputStatusSchema`，为一次取消往这个共享枚举里加 `cancelled` 不成比例。

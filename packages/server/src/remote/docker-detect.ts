@@ -32,6 +32,22 @@ function getPathDelimiter(platform: NodeJS.Platform): string {
   return platform === "win32" ? ";" : ":";
 }
 
+/**
+ * PATH 条目是否为绝对路径。
+ *
+ * 只接受绝对条目：`joinExecutablePath` 用相对条目拼出的候选会按**当前工作目录**解析，等于把
+ * 「cwd 里恰好有个 docker」当成可信来源——这正是 agent-teams-plugin 的 run_checks 已明确排除的
+ * 工作目录二进制种植面（其命令解析归一为绝对路径、不含 cwd，见
+ * docs/security/mimosa-findings-triage-2026-11.md §6.1 ④）。同一仓库不应对同类风险采用两种标准。
+ *
+ * 跳过相对条目不丢功能：真只在这类条目里的 docker，仍由 `resolveDockerCommand` 末尾的裸名
+ * 回退交给 spawn 自行解析，行为与改动前一致（那条回退的残余风险在
+ * specs/remote-deploy-hardening.md R4 登记）。
+ */
+function isAbsoluteDirectory(platform: NodeJS.Platform, directory: string): boolean {
+  return platform === "win32" ? win32.isAbsolute(directory) : posix.isAbsolute(directory);
+}
+
 function joinExecutablePath(
   platform: NodeJS.Platform,
   directory: string,
@@ -83,6 +99,10 @@ export function resolveDockerCommand(options: DockerCommandResolutionOptions = {
   for (const directory of pathValue.split(pathDelimiter)) {
     const trimmedDirectory = directory.trim();
     if (!trimmedDirectory) {
+      continue;
+    }
+    // 相对条目（含 "." 与 ""）一律跳过，理由见 isAbsoluteDirectory。
+    if (!isAbsoluteDirectory(platform, trimmedDirectory)) {
       continue;
     }
 

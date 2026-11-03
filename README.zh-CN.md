@@ -240,7 +240,7 @@ node apps/acode-cli/packages/cli/dist/acode.cjs --help
 
 ## 质量门禁
 
-从仓库根目录运行；推送前的最低门禁是 `pnpm verify:pre-push`。全量测试从根目录用 `pnpm test` 运行（它串行执行每个包的 `test` 脚本，经 `node --import tsx --test`——TypeScript / MJS 测试文件直接运行，无需预构建）；这与 CI 运行的命令一致。没有单独的统一 E2E 命令——端到端场景随各包自己的测试。
+从仓库根目录运行；推送前的门禁是 `pnpm verify:pre-push`，由 `.husky/pre-push` 自动执行，覆盖与 CI `verify` 对齐的 8 道门（lint / 架构 / knip / 台账 / typecheck / CLI 构建 / CLI lint / 测试），其中测试只跑受影响包（相对 upstream，含依赖方；根级配置变更或有未纳入 git 的新文件时自动退回全量）。`pnpm verify:ci` 是 CI 等价档，测试跑全量。全量测试从根目录用 `pnpm test` 运行（它串行执行每个包的 `test` 脚本，经 `node --import tsx --test`——TypeScript / MJS 测试文件直接运行，无需预构建）；这与 CI 运行的命令一致。串行是承重约束，不得放宽（依据见 `docs/specs/local-verify-gates.md`）。没有单独的统一 E2E 命令——端到端场景随各包自己的测试。
 
 | 命令                                    | 用途                                   |
 | --------------------------------------- | -------------------------------------- |
@@ -249,7 +249,8 @@ node apps/acode-cli/packages/cli/dist/acode.cjs --help
 | `pnpm fmt:check` / `pnpm fmt`           | 格式检查与格式化（oxfmt）              |
 | `pnpm test`                             | 全部包的全量测试（CI 运行的命令）      |
 | `pnpm --filter <包名> test`             | 运行单个包的测试                       |
-| `pnpm verify:pre-push`                  | Lint + 架构检查（推送前门禁）          |
+| `pnpm verify:pre-push`                  | 推送前门禁：CI 对齐 8 道门 + 受影响包测试 |
+| `pnpm verify:ci`                        | CI 等价门禁：同上，测试跑全量          |
 | `pnpm architecture:check -- --changed`  | 对改动文件做架构边界检查               |
 | `pnpm architecture:context <module-id>` | 某模块的受控阅读上下文                 |
 | `pnpm knip`                             | 未使用依赖与导出报告                   |

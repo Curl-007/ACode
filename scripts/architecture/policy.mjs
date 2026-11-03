@@ -2,6 +2,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import ts from "typescript";
 import { parse as parseYaml } from "yaml";
+import { withoutGitIgnored } from "./git-ignored.mjs";
 
 const SOURCE_EXTENSIONS = [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"];
 
@@ -257,12 +258,13 @@ export function moduleForFile(file, policy) {
   return candidates[0] ?? null;
 }
 
-export async function discoverFiles(policy) {
+export async function discoverFiles(policy, cwd = process.cwd()) {
   const files = [];
   for (const module of policy.modules) {
     for (const root of module.roots) await walk(root, files);
   }
-  return [...new Set(files)].sort();
+  // 剔除 gitignored 构建产物，使本地与 CI 的治理输入等价；理由见 ./git-ignored.mjs。
+  return withoutGitIgnored(cwd, [...new Set(files)].sort());
 }
 
 function resolveKnownFile(base, knownFiles) {

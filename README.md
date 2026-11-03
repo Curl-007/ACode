@@ -240,7 +240,7 @@ Plugin, MCP-server, and hooks configuration for the `acode` CLI is documented in
 
 ## Quality gates
 
-Run from the repository root; `pnpm verify:pre-push` is the minimum gate before pushing. The full test suite runs from the root with `pnpm test` (it executes each package's `test` script serially, via `node --import tsx --test` — TypeScript / MJS test files run directly with no pre-build); this is the same command CI runs. There is no separate unified E2E command — end-to-end scenarios live with each package's own tests.
+Run from the repository root; the pre-push gate is `pnpm verify:pre-push`, executed automatically by `.husky/pre-push`. It covers the same 8 gates as CI `verify` (lint / architecture / knip / third-party ledger / typecheck / CLI build / CLI lint / tests), with tests scoped to affected packages (relative to upstream, including dependents; it falls back to the full suite when root-level config changed or untracked files are present). `pnpm verify:ci` is the CI-equivalent mode and runs the full test suite. The full suite runs from the root with `pnpm test` (it executes each package's `test` script serially, via `node --import tsx --test` — TypeScript / MJS test files run directly with no pre-build); this is the same command CI runs. Serial execution is a load-bearing constraint and must not be relaxed (evidence in `docs/specs/local-verify-gates.md`). There is no separate unified E2E command — end-to-end scenarios live with each package's own tests.
 
 | Command                                 | Purpose                                            |
 | --------------------------------------- | -------------------------------------------------- |
@@ -249,7 +249,8 @@ Run from the repository root; `pnpm verify:pre-push` is the minimum gate before 
 | `pnpm fmt:check` / `pnpm fmt`           | Format check and format (oxfmt)                    |
 | `pnpm test`                             | Full test suite across all packages (what CI runs) |
 | `pnpm --filter <package> test`          | Run a single package's tests                       |
-| `pnpm verify:pre-push`                  | Lint + architecture check (pre-push gate)          |
+| `pnpm verify:pre-push`                  | Pre-push gate: 8 CI-aligned gates + affected-package tests |
+| `pnpm verify:ci`                        | CI-equivalent gate: same, with the full test suite         |
 | `pnpm architecture:check -- --changed`  | Architecture boundary check for changed files      |
 | `pnpm architecture:context <module-id>` | Bounded reading context for a module               |
 | `pnpm knip`                             | Unused dependencies and exports report             |

@@ -2,6 +2,11 @@
 *.mjs text eol=lf
 *.sh  text eol=lf
 
+# git hook 无扩展名，上面的规则覆盖不到，但同样必须 LF：husky 的 .husky/_/h 以
+# `sh -e "$s"` 调用用户 hook，CRLF 会把 \r 带进命令名（`pnpm\r` → command not found），
+# 于是 core.autocrlf=true 的 Windows 检出上 hook 静默失效——正是它要拦的门禁全部不跑。
+.husky/* text eol=lf
+
 # TypeScript 源码统一 LF：core.autocrlf 的机器间差异曾让「字节级比较源码」的
 # 测试在 Windows 工作区误红（F8 教训，见 apps/acode-cli/specs/acp-host-adapter.md）。
 # 索引内文件本就全为 LF，此规则只约束检出形态，使跨平台字节一致。

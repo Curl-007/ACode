@@ -125,8 +125,14 @@ jobs:
   # 这里独立成 job（不把 verify 改 matrix）：Windows 首跑若暴露既有 win32 失败，失败面与
   # 主门禁隔离，不连带弄红 ubuntu leg。必需 job：失败即 CI 整体红，不为过 CI 放宽测试。
   #
-  # 缓存纪律：warm-cache.yml 只生产 Linux 条目，Windows 无生产者，故本 job 不加任何
-  # actions/cache、不用 setup-node 的 cache:pnpm（会 save，违反 omp「只 restore 不 save」教训）。
+  # 缓存纪律：消费方一律只 restore 不 save（omp「每 PR 各存一份 store 吃掉 9.4GB/10GB 配额」
+  # 的教训），也绝不用 setup-node 的 cache:pnpm（它会 save）。Windows 条目此前无生产者，
+  # 故本 job 曾每次冷装依赖（实测 1m34s，Linux leg 命中缓存只要 31s）；
+  # warm-cache.yml 的 warm-windows job 现已按 ci-platform-matrix.md R1.5 预留补上生产者，
+  # 这里改为 restore。store 路径两侧都用 `pnpm store path` 解析（Windows 默认落在
+  # %LOCALAPPDATA%\pnpm\store，与 Linux 的 ~/.local/share/pnpm/store 不同构，不能硬编码）。
+  # 注意收益边界：本 job 与 verify 并行且提前约 5 分钟结束，不在关键路径上，
+  # 该缓存省的是计费分钟数（Windows runner 倍率 2×），不缩短单轮反馈时长。
   # Node 钉 24.14.0（对齐 mise.toml）消除 runner 次版本漂移；run 统一 shell:bash（windows-latest
   # 自带 Git Bash），避免 pwsh/bash 在 --filter、glob、退出码上的语义差异。
   windows-verify:
@@ -140,6 +146,22 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24.14.0
+
+      # 与 warm-cache.yml 的 warm-windows 逐字符同键、同路径解析方式。
+      # 不设 continue-on-error：与 verify job 的 restore 步骤保持同一姿态
+      # （ci-platform-matrix.md 验收 5 要求本 leg 的门禁步骤不得吞失败）。
+      - name: Resolve pnpm store path
+        id: store
+        shell: bash
+        run: echo "path=$(pnpm store path)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore pnpm store cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ steps.store.outputs.path }}
+          key: pnpm-store-Windows-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-store-Windows-
 
       - name: Install dependencies
         shell: bash

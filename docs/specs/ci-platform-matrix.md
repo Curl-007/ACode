@@ -37,10 +37,17 @@
    `version: 10.33.2`（与全仓既有 job 同款；等价于 corepack 钉版，不另引入 corepack 以免与
    既有 job 分歧）。`run` 统一 `shell: bash`（windows-latest 自带 Git Bash），消除 pwsh/bash
    在 `--filter`、glob、退出码上的语义差异。
-5. **缓存纪律**：`warm-cache.yml` 只生产 Linux 条目（`pnpm-store-Linux-*`），Windows 无对应
-   生产者。Windows leg **不加**任何 `actions/cache`、**不用** `setup-node` 的 `cache: pnpm`
-   （后者会 save，违反 omp「只 restore 不 save」教训并吃配额）。代价是每次冷装依赖；若后续
-   Windows leg 稳定，再由 `warm-cache.yml` 增开 Windows 生产者，键前缀改 `pnpm-store-Windows-`。
+5. **缓存纪律**：消费方一律**只 restore 不 save**，写入方只有 `warm-cache.yml`
+   （omp 事故教训：每 PR 各存一份 ~500MB store，合计吃掉 9.4GB/10GB 配额）；
+   任何 leg 都**不用** `setup-node` 的 `cache: pnpm`（它会 save）。
+   Windows 生产者已于 2026-11-03 按本条预留补上：`warm-cache.yml` 的 `warm-windows` job
+   产出 `pnpm-store-Windows-<lockfile 哈希>`，`windows-verify` 改为 `actions/cache/restore`
+   消费（此前每次冷装依赖，实测 1m34s vs Linux leg 命中缓存 31s）。
+   store 路径两侧都用 `pnpm store path` 解析——Windows 默认落在 `%LOCALAPPDATA%\pnpm\store`，
+   与 Linux 的 `~/.local/share/pnpm/store` 不同构，不能硬编码。
+   **收益边界**：`windows-verify` 与 `verify` 并行且提前约 5 分钟结束，不在关键路径上，
+   故该缓存省的是计费分钟数（Windows runner 倍率 2×），不缩短单轮反馈时长。
+   规则与落地细节见 [local-verify-gates.md](local-verify-gates.md) R5。
 6. **失败处置**：Windows leg 是**必需** job（不设 `continue-on-error`）。若首跑暴露既有 win32
    真实失败，**不为过 CI 而跳过/放宽测试**——按 AGENTS.md 如实登记待修项并修复源码。退一步的
    分批方案（仅在失败面过大无法一次落地时）：先只跑 `typecheck + lint + shared 一包`，其余分批，
@@ -99,7 +106,8 @@
    → `publish` 不执行 → release 保持 draft。
 4. 两个 workflow 所有含 `typecheck` 的 `run` 仍逐字 `pnpm typecheck`（cli-validation-gates 规则 5）。
 5. Windows leg 与 smoke leg 均无 `continue-on-error`、无 `setup-node` 的 `cache: pnpm`、无
-   `actions/cache` save（缓存纪律）。
+   `actions/cache` save（缓存纪律）。`windows-verify` 允许且应当出现 `actions/cache/restore`
+   （R1.5 的消费侧），restore 步骤同样不设 `continue-on-error`，与 `verify` job 姿态一致。
 6. release.yml `verify_assets` 的 zip 结构检查按名断言 `ACode.exe`（非「某 exe 存在」）；
    `WIN_SIGNING=true` 的签名校验步同时校验顶层 nsis 安装包与 `zip-extracted\ACode.exe` 内层
    便携 exe 的 Authenticode。YAML 可解析、步骤顺序为「结构检查 → 签名校验」（签名步依赖结构步

@@ -26,7 +26,7 @@
 - 使用 Conventional Commits:`type(scope): 摘要`。`type` 取 `feat`、`fix`、`docs`、`style`、`refactor`、`perf`、`test`、`build`、`ci`、`chore`、`revert`;纯资源改动可用 `assets`。`scope` 与分支的 `<scope>` 一致,可省略。
 - 摘要说明"改了什么",正文说明"为什么":bug 修复写明根因与修复依据,资源重生成写明生成方式与验证结果。中文或英文均可,同一系列提交保持一种语言。
 - 一个提交只做一件事;不混入无关改动(图标修复与文档清理应分成两个提交)。
-- 提交前至少运行 `pnpm lint`;推送前运行 `pnpm verify:pre-push`(lint + 架构检查)。有行为改动时按 AGENTS.md 补测试并实际执行验证,报告真实结果。
+- 提交前至少运行 `pnpm lint`;推送前运行 `pnpm verify:pre-push`——它由 `.husky/pre-push` 自动执行,覆盖与 CI `verify` 对齐的 8 道门(lint / 架构 / knip / 台账 / typecheck / CLI 构建 / CLI lint),测试只跑受影响包;需要 CI 等价确证时手动跑 `pnpm verify:ci`(测试全量)。规则见 `docs/specs/local-verify-gates.md`。有行为改动时按 AGENTS.md 补测试并实际执行验证,报告真实结果。
 - 不在提交、日志或示例中写入凭据、真实用户数据和内部服务地址。误提交敏感信息时,仅 revert 不够,必须轮换凭据并清理历史。
 - AI 辅助产生的提交按当前工具约定附 `Co-Authored-By` 署名行。
 

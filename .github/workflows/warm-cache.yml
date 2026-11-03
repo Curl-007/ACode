@@ -90,3 +90,73 @@ jobs:
             | while read -r id; do
                 gh cache delete "$id" --repo "$GITHUB_REPOSITORY" || true
               done || true
+
+  # Windows pnpm store 生产者（ci-platform-matrix.md R1.5 预留的后续动作，
+  # local-verify-gates.md R5.16 落地）：Windows leg 已稳定（2026-10-31 起连续 run 全绿），
+  # 故增开本生产者，让 ci.yml 的 windows-verify 从「每次冷装 1m34s」变成 restore 命中。
+  #
+  # 收益边界要写清楚：windows-verify 与 verify 并行且提前约 5 分钟结束，**不在关键路径上**，
+  # 所以本条目省的是计费分钟数（Windows runner 倍率 2×），不缩短单轮反馈时长。
+  #
+  # 纪律与 Linux 生产者逐条对齐：消费方只 restore 不 save，写入方只有本 workflow；
+  # probe→save→prune 三步全部 continue-on-error，缓存写入失败绝不阻断。
+  # store 路径不硬编码——Windows 上 pnpm 默认落在 %LOCALAPPDATA%\pnpm\store，
+  # 与 Linux 的 ~/.local/share/pnpm/store 不同构，故两侧都用 `pnpm store path` 解析，
+  # 生产者与消费者解析方式一致才能保证键与路径都对得上。
+  warm-windows:
+    name: Seed pnpm store cache (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.2
+      # Node 钉 24.14.0 对齐 mise.toml 与 windows-verify，消除 runner 次版本漂移。
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.14.0
+
+      - name: Resolve cache key and store path
+        id: key
+        shell: bash
+        run: |
+          echo "key=pnpm-store-Windows-${{ hashFiles('pnpm-lock.yaml') }}" >> "$GITHUB_OUTPUT"
+          echo "prefix=pnpm-store-Windows-" >> "$GITHUB_OUTPUT"
+          echo "store=$(pnpm store path)" >> "$GITHUB_OUTPUT"
+
+      - name: Probe existing cache entry
+        id: probe
+        continue-on-error: true
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ steps.key.outputs.store }}
+          key: ${{ steps.key.outputs.key }}
+          lookup-only: true
+
+      - name: Fill pnpm store
+        if: steps.probe.outputs.cache-hit != 'true'
+        shell: bash
+        run: pnpm fetch
+
+      - name: Save pnpm store cache
+        if: steps.probe.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ steps.key.outputs.store }}
+          key: ${{ steps.key.outputs.key }}
+
+      - name: Prune superseded cache entries
+        if: steps.probe.outputs.cache-hit != 'true'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREFIX: ${{ steps.key.outputs.prefix }}
+        shell: bash
+        run: |
+          gh cache list --repo "$GITHUB_REPOSITORY" --ref "refs/heads/${GITHUB_REF_NAME}" \
+              --key "$PREFIX" --sort created_at --order desc --limit 100 --json id \
+              --jq '.[2:][].id' \
+            | while read -r id; do
+                gh cache delete "$id" --repo "$GITHUB_REPOSITORY" || true
+              done || true

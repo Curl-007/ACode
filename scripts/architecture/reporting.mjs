@@ -8,7 +8,7 @@ export async function generateContext({ cwd = process.cwd(), moduleId }) {
   const policy = await loadPolicy(cwd);
   const module = policy.modules.find((item) => item.id === moduleId);
   if (!module) throw new Error(`未知模块: ${moduleId}`);
-  const files = await discoverFiles(policy);
+  const files = await discoverFiles(policy, cwd);
   const moduleFiles = files.filter((file) => moduleForFile(file, policy)?.id === moduleId);
   const manifest = moduleFiles.find((file) => path.basename(file) === "module.ts");
   const contracts = moduleFiles.filter((file) => path.basename(file).startsWith("contract."));

@@ -62,7 +62,7 @@ function violation({ rule, file, detail, message, module, global = false }) {
 
 export async function checkArchitecture({ cwd = process.cwd(), changedFiles = null } = {}) {
   const policy = await loadPolicy(cwd);
-  const files = await discoverFiles(policy);
+  const files = await discoverFiles(policy, cwd);
   const workspacePackages = await discoverWorkspacePackages(policy);
   const tsconfigAliases = await discoverTsconfigAliases(policy);
   const aliasRules = [...policy.global.aliasRules, ...tsconfigAliases];

@@ -20,7 +20,8 @@
 | 格式检查         | `pnpm fmt:check`                          |
 | 桌面开发         | `pnpm dev:desktop`                        |
 | Web 开发         | `pnpm dev:web`                            |
-| 提交前检查       | `pnpm verify:pre-push`（Lint 与架构检查） |
+| 推送前门禁       | `pnpm verify:pre-push`（CI 对齐，测试按变更范围） |
+| CI 等价本地门禁  | `pnpm verify:ci`（8 道门全量，等于 `ci.yml` verify） |
 | 架构检查         | `pnpm architecture:check --changed`       |
 | 模块阅读包       | `pnpm architecture:context <module-id>`   |
 | 未使用依赖与导出 | `pnpm knip`                               |

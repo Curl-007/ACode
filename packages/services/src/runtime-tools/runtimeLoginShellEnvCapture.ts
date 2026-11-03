@@ -1,6 +1,7 @@
 import { execFileSync, spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
 import { accessSync, constants } from "node:fs";
+import { isAbsolute } from "node:path";
 import { prependPathEntries } from "./runtimeToolResolver.js";
 
 const LOGIN_ENV_CAPTURE_PREFIX = "__ACODE_LOGIN_ENV_START__";
@@ -37,7 +38,23 @@ function isExecutableFile(path: string): boolean {
 }
 
 function resolveShellPathForLoginEnv(baseEnv: NodeJS.ProcessEnv): string | null {
-  const candidates = [baseEnv.SHELL, "/bin/zsh", "/bin/bash", "/bin/sh"];
+  // SHELL 必须是绝对路径才进候选：`isExecutableFile` 的 accessSync 按 **cwd** 解析相对名，
+  // 而 spawn 收到的裸名按**子进程 env.PATH** 解析（buildShellBootstrapPath 只把绝对系统目录
+  // 前置、原样保留其中可能存在的相对条目），两者解析基准不同 —— 校验的文件与实际执行的文件
+  // 可能不是同一个。固定兜底项本就是绝对路径，故本约束只对 SHELL 生效：相对 SHELL 一律跳过，
+  // 落到 /bin/zsh → /bin/bash → /bin/sh。
+  //
+  // 这不推翻 specs/agent-command-env-gate.md R3 的裁决（SHELL 在打包态保留，因为 login env
+  // 采集的功能本体就是跑用户自己的 shell，门禁它会破坏 fish/自定义 shell 用户）：正常登录
+  // shell 的 SHELL 来自 passwd 条目，恒为绝对路径，这类用户不受影响。R3 接受的是「SHELL 指向
+  // 同用户植入的可执行文件」，此处消除的是另一件事——「检查的不是将要执行的那个文件」。
+  const shell = baseEnv.SHELL;
+  const candidates = [
+    shell !== undefined && shell !== "" && isAbsolute(shell) ? shell : undefined,
+    "/bin/zsh",
+    "/bin/bash",
+    "/bin/sh",
+  ];
   for (const candidate of candidates) {
     if (candidate && isExecutableFile(candidate)) {
       return candidate;

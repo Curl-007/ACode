@@ -135,10 +135,14 @@ export const runWorkflowToolEntry: ToolEntry = {
     patternSources: ["toolName"],
     alwaysAllowPatternSources: ["toolName"],
     denyPriority: "beforeAsk",
-    // 一整块代码执行 + 多次模型调用，任何权限模式（含 yolo / plan）都要先问。
-    // 与 CreateWorkflow 同一条裁决，理由也同一条：run 一次要花钱且有真实副作用，
-    // 而 scriptPath 指向的文件在批准之后随时可能被改动，所以「上次批准过」推不出
-    // 「这次要跑的还是那段代码」——持久确认永不减免。
+    // 一整块代码执行 + 多次模型调用：plan 与默认模式都要先问；完全访问（yolo）按
+    // specs/script-workflow-revival.md R17.1（批次 C11）裁决**放行**，落点是
+    // permission/service.ts `checkAlwaysAsk` 的 yolo 分支（planEnabled、或策略地板
+    // disableBypassPermissionsMode 时不放行；项目 deny 在本分支之前收口，压过一切放行）。
+    // 与 CreateWorkflow 同一条裁决。
+    // 「持久确认永不减免」是另一件事、理由也独立：run 一次要花钱且有真实副作用，而
+    // scriptPath 指向的文件在批准之后随时可能被改动，所以「上次批准过」推不出「这次要跑的
+    // 还是那段代码」——故 allowAlways 只给到会话作用域，不落 TTL 持久授权。
     alwaysAsk: true,
     // 放开的只是**会话作用域**：用户看过并批准本会话第一个脚本之后，可以选
     // 「Always allow in this session」让本会话后续免确认。授权只活在 PermissionService

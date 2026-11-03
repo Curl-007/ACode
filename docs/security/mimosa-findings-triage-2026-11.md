@@ -325,6 +325,145 @@
 
 裁决后口径：本分支改动文件上的 6 条 = 误报 3（test-ids.ts×2 + server.ts:75）、可接受设计（在案）2（server.ts:134/148）、存量 backlog 1（create-app.ts:1367）。**本分支引入且未裁决的 finding 为 0。**
 
+### 6.2 2026-11-03 复扫与 22 条具体项源码复核（AI 辅助会话增补，非原台账作者裁决）
+
+> 本节由 2026-11-03 一次 AI 辅助复核会话追加，**与 §1-§6.1 的作者裁决分开署名**。
+> 数据源：`scan-2026-11-03T05-54-54.981Z-a02e99b81cc6`（deep，attempt 1，一次跑完未 resume）。
+> seal `sha256:e0ff255c20143b91d6ac048fd5ea29d11462fcdabe190182aee48cd19f582c51`；
+> 三份语义文档摘要经本地重算与 `seal.json` 逐字一致。
+> **coverage 仍为 `completeness: partial` / `runStatus: inconclusive`**（`threatModel` 与
+> `findingDiscovery` 两个 phase 为 partial，`validation`/`pathAnalysis`/`reporting` completed；
+> source 侧完整：selected 5909 / parsed 5909 / truncated false / readFailures 0）。
+> 按 §7.3 与密封契约，partial 排除任何全项目安全声明；本节所有「误报」的含义是
+> **在逐处读过源码并核实证据的范围内**成立，不是扫描器的判定。
+
+**identity 集合比对（按 §7.1 口径）**：与基线扫描 `scan-2026-11-02T07-13-15.785Z-fbeb171a9f17`
+按 `identity.publicClass|anchor|instance` 三元组比对，结果 **persistent 287 / new 0 / absent 0**。
+即 287 这个数字相同不是巧合而是同一集合，§1-§6.1 的分档可 1:1 沿用，无需重新分诊。
+非 vendored 计数 143 与 §2 增补口径（误报 9 + 可接受设计 2 + 待跟进 132）精确吻合。
+`absent` 为 0，故不涉及 §7 所述「partial 下消失只能记 unknown」的情形。
+
+**落在本次改动文件上的 finding：0 条**（改动为本地验证门禁一批，22 文件）。
+
+**severity/class 分布（全量 287）**：high 199 / medium 76 / low 12；`other-security` 126、
+`xxe` 72、`path-traversal` 55、`insecure-randomness` 12、`command-injection` 10、
+`hardcoded-credential` 8、`code-injection` 2、`weak-crypto` 1、`business-logic-risk` 1。
+其中 **120 条落在 gitignored 目录**（已实测确认 `packages/desktop/bundled-agents` 与
+`packages/desktop/mock-cdn` 均被忽略）——不在版本控制内，源码层无法修，CI 侧扫描亦不可见。
+
+#### 6.2.1 本次复核的 22 条具体项（`other-security` 120 条未纳入，见 6.2.4）
+
+**误报 8 条**（另 8 条 `hardcoded-credential` 已由 §4 裁决，位置逐一吻合，本次只复核其依据
+具体性——键名常量 / 错误原因枚举 / mock 占位串 / UI 测试选择器常量，且遵守「不复制字面量」
+红线，成立）：
+
+| 路径:行 | 类别 | 依据（当前检出可复核） |
+| --- | --- | --- |
+| `packages/desktop/native/windows-browser-import-helper/Program.cs:140` | command-injection | `Process.Start` 的 `Arguments` 全部由进程内值构成：`GetSelfPath()`（自身映像绝对路径）、GUID-N 管道名（32 位十六进制）、`CreateToken()` 的 64 位十六进制 CSPRNG、int PID。外部输入（stdin 导入请求含 chromePath）经 `ValidateImportRequest`/`ParseImportRequest`（3 段 tab 分割、base64、密钥长度 32..65536、扩展名必须 `.exe`）后**只经命名管道转发**，从不进命令行；chromePath 仅用于与 DPAPI app-bound blob 内嵌路径做归一化等值比较（`NormalizeProgramFilesPath`，OrdinalIgnoreCase 全等）。GUID-N/hex/int 字符集内不含 shell 元字符。 |
+| `packages/server/src/remote/backend.ts:44` | command-injection | 该行是 `exec(command: string): Promise<StdioStream>;`——`IRemoteBackend` 的**接口类型声明**。全文 49 行只有 `import type` 与接口定义，无 `node:child_process` 导入、无执行点。与 §6.1 `server.ts:75` 误报同型（声明处无 sink）。实际执行体是 docker/ssh/wsl 三个实现，各自单列。 |
+| `packages/server/src/remote/sshBackendUpload.ts:198` | command-injection | 命令为 `mkdir -p <quoted> && cat > <quoted>`，两个路径均经 `quotePosixShellArg`（单引号包裹 + `'"'"'` 转义）；**上传的文件内容走 stdin 字节流**（`readStream.pipe(stdin)`），不进命令字符串。`resolvedRemotePath` 来自部署层常量（`REMOTE_BASE="~/.acode/server"` + 常量文件名）或 `Date.now()+randomUUID()` 临时后缀。本地无进程 spawn，经 ssh2 channel 由远端 `/bin/sh -c` 解释。 |
+| `packages/server/src/remote/wslBackendUpload.ts:30` | command-injection | 与上条同一模板、同一 `quotePosixShellArg`；且优先路径是 UNC 文件复制（`copyFileToAnyPath`，不经 shell），`cat` 流仅用于带进度/取消或 UNC 失败回退。 |
+| `apps/acode-cli/packages/cli-workflow/src/script-workflow-child-source.ts:274` | code-injection | `vm.runInContext(SANDBOX_BOOTSTRAP, context, …)` 中 `SANDBOX_BOOTSTRAP` 是同文件 48-107 行的**编译期静态常量**（自述「纯 JS、不含反引号与 `${}`」），生成时经 `JSON.stringify` 内嵌（:316）。**274 行不含任何动态插值**；与动态数据的交互走 vm sandbox 对象属性（`__host`/`__argsJson`，:265-268），不走字符串拼接。判为对 `vm.runInContext` 调用形态的模式匹配。 |
+| `apps/acode-cli/packages/core/src/tool/handlers/workflow-drafts.ts:91` | path-traversal | 扫描器称「未见根目录边界或文件名白名单校验」——边界存在，只是形态不是 `resolve`+前缀比较，而是 `path.join` **之前**的字符白名单：`WORKFLOW_DRAFT_SLUG_DROP_PATTERN = /[^\p{L}\p{N}_.-]/gu`（:36）丢掉 Unicode 字母/数字与 `_ . -` 之外的一切，路径分隔符与 Windows 保留字符（`/ \ : * ? " < > |`）、空白、控制字符因此都进不来；随后按码点截 64、剥首尾 `[.-]+`、全点或空则回退 `workflow`（:128-140）。**已门禁化**：新增 `packages/core/tests/workflow-draft-path-containment.test.ts`，以 15 组敌意名字（含 `../../`、`..\..\`、绝对路径、盘符、NUL、`....//`、换行夹带）断言落点必在草稿目录内，并全量扫描沙箱确认无越界文件；敌意输入只用有限层 `..` 且 cwd 埋在临时目录深层，故白名单若回归，逃逸落点仍在沙箱内、不会先写到真实系统路径。 |
+| `packages/server/src/remote/sshKnownHosts.ts:29` | weak-crypto | `createHmac("sha1", salt)` **只用于解析 OpenSSH hashed known_hosts 的 `\|1\|salt\|hash` 既有格式**（`ssh-keygen -H` / `HashKnownHosts` 写出），本项目是该格式的**读取兼容方**而非定义方：代码硬校验版本字段 `parts[1]==="1"`、salt 与 hash 均 20 字节，比较用 `timingSafeEqual`。该 HMAC 的输出只回答「这行的主机字段是否为目标主机」，**不做密钥摘要、不做签名、不用于展示**；参与信任决策的**主机密钥指纹走 SHA256**（同文件 :19），裁决 fail-closed（仅 `trusted` 放行，缺席/抛错一律 `unavailable` 拒绝，`sshAuth.ts:219,224-238`，`hostHash:"sha256"`）。格式所有权见 `packages/server/specs/ssh-host-key-trust.md:46`；测试 `packages/server/tests/ssh-known-hosts.test.mjs:34,42` 构造真实 `\|1\|` 行断言接受。补充（属外部密码学常识，非仓库证据）：HMAC-SHA1 与裸 SHA1 在碰撞意义上不等价，HMAC 构造未受 SHA1 碰撞攻击影响。**「修掉」它是功能回归**：拒绝 `\|1\|` 行会使全部 hashed known_hosts 条目不匹配 → `unknown` → 认证前拒绝连接。 |
+| `packages/acode-server-cli/src/server-core/http.ts:285` | business-logic-risk | 扫描器**框架前提错误**：该 server 是 **Hono** + `@hono/node-server`（`http.ts:3-5`），仓库内不存在任何 Nest guard/decorator，「未观察到 Nest guard」检查的对象不存在。且其描述对应 commit `a782a913`（批次 M1）**修复前的历史状态**。当前实现：配置 token 时全局 `app.use("*")` 中间件注册在所有路由之前，经共享 `resolveServerTokenAuth` + `isTokenProtectedPathname`（`/ws*` ∪ `/api/**`）覆盖本端点；handler 第一条语句即 Origin/Host 裁决，**先于 `issue()`**（spec 明文要求并附 DoS 推理：先校验则恶意网页连槽位都占不到）；body 全程不解析。启动侧 fail-closed 不变量：「非 loopback 绑定且无 token 一律拒绝启动」；默认 `host = 127.0.0.1`、`port = 0`（随机）。**运行时证据**：取证时实跑 `packages/server/tests/server-auth.test.mjs` → 46 pass / 0 fail，含「token 下无凭据铸票 → 401」「恶意 Origin 洪泛 300 次后无 Origin 原生铸造仍 200」「票据单次兑换」，直接回应扫描器「静态路径不能证明运行时 guard 执行顺序」的 proofGap。另注：本 server 无 RBAC 概念，授权模型 = 单 lite token（单 token=单主体）+ loopback + Origin 裁决 + 一次性票据，故「未观察到角色或权限检查」在字面上对无 token 姿态成立，但该姿态是 `packages/server/specs/server-auth.md` 明文裁决的设计而非遗漏。 |
+
+**可接受设计（在案）3 条**：
+
+| 路径:行 | 依据 |
+| --- | --- |
+| `packages/server/src/remote/ssh-backend.ts:341` | 本地**无进程 spawn**：经 ssh2 `client.exec(buildPosixShellExecCommand(command))`，由**远端主机 `/bin/sh`** 解释（统一进 `/bin/sh` 是为规避 fish 等默认 shell 的 POSIX 语法差异）。在用户自己配置的 SSH 主机上、以该 SSH 账号身份执行部署脚本即产品功能本身；连接参数全部来自用户自己的 `RemoteTarget`；host key fail-closed（默认只读本机 known_hosts，`hostKeyDecision !== "trusted"` 时即使 ready 也拒绝并 end）。 |
+| `packages/services/src/acode-agent/acodeAgentProcessManager.ts:1545` | argv 数组 `spawn`、无 shell 选项。程序路径决定链有明确加固：打包态忽略 `ACODE_AGENT_SERVER_COMMAND`（`isPackagedACodeDesktopRuntime()` 读 `ACODE_APP_IS_PACKAGED==="1"`，该键由 desktop main 在 `...inheritedEnv` **之后** spread 写入，`desktopRuntimeEnv.ts:542` vs `:559`，故继承环境无法覆盖）；候选链全部 `resolvePath` 绝对化 + `existsSync` 门；字节码 loader 只认「已解析 bundle 的同目录兄弟」；`providerRuntimeResolver.ts:111-114` 注释明确排除了会下沉到用户可写目录、可被同用户进程劫持的独立候选链。规格 `packages/services/specs/agent-command-env-gate.md` R1/R2。 |
+| `apps/acode-cli/packages/cli-workflow/src/script-workflow-child-source.ts:278` | `payload.scriptBody` **被有意作为代码求值**（:276 注释：包成 async 函数以支持顶层 await 与末尾 return）。作者是把 `RunWorkflow` 的 inline `script` / `scriptPath` 交给它的模型或用户自己保存的工作流文件，非网络静默输入。控制面：技能门（本会话未加载 `script-workflows` 技能即拒绝带 `script`/`scriptPath` 的调用）+ `alwaysAsk` 确认门 + vm realm `codeGeneration:{strings:false,wasm:false}` + 未提供 `importModuleDynamically` + realm 内无 `process`/`Buffer`/`require`。生成层 `JSON.stringify(payload)` 内嵌，脚本体是字符串字面量的一部分、不会被再解析一次。spec R4 有明文裁决，验收项 5a 要求残余逸出面（`agent.constructor.constructor("return process")()` 原型链上溯）**如实记录而非假装关闭**。 |
+
+**待跟进 7 条**（其中 3 条本次已处置，见 6.2.2）：
+
+| # | 位置 / 事项 | 状态 |
+| --- | --- | --- |
+| 1 | `runtimeLoginShellEnvCapture.ts:95,236`：`accessSync` 按 cwd 解析相对名、`spawn` 裸名按子进程 PATH 解析，**校验的文件与执行的文件可能不是同一个** | **本次已修**（见 6.2.2） |
+| 2 | `run-workflow.ts:138` 注释与 spec R17.1 矛盾，且矛盾点正在 R4 安全论证的支点上 | **本次已修**（见 6.2.2） |
+| 3 | `workflowDraftSlug` 无专门测试，白名单行为只有代码注释作证 | **本次已门禁化**（见 6.2.2） |
+| 4 | `tool-port-launch.ts:71`：`scriptPath` 的绝对路径**原样接受、无工作区 containment**，模型可指定进程可读的任意文件作为脚本源；控制只有 meta 头校验 + 确认门。spec 未逐字讨论该任意文件读取面 → **spec 缺口**，非代码缺陷 | 待跟进 |
+| 5 | `docker-detect.ts:76-107`：PATH 逐目录 join 解析 docker 可执行，**无 cwd/相对条目排除、不强制绝对路径**，兜底为裸名 `"docker"`；`wslBackendSupport.ts:19` 的 `wsl.exe` 同为裸名常量。与 §6.1 对 `run_checks` 要求的「归一为绝对路径、排除工作目录二进制种植」标准不一致 | 待跟进 |
+| 6 | `wsl-backend.ts:268`：`options.distro` 仅 `z.string().optional()` **无字符校验**，而 `options.user` 有专用 `wslUserSchema`（≤64、拒控制字符与 `:`/`/`/`\`）——两个 schema 严格度不对称；且 `safeListDistros` 失败时吞错返回 `[]`，用户原始字符串可不经枚举比对直达 `-d`。有 `--` 终止符与 argv 隔离，不构成 shell 注入 | 待跟进 |
+| 7 | server-core 无 token 姿态下的多用户主机暴露（代码 `http.ts:159-163` 自陈）：未配置 `ACODE_SERVER_AUTH_TOKEN` 时，同机任意**非浏览器**进程（不带 Origin）可铸票并升级为 `desktop-continuous`，获得含全量凭据的完整 RPC；Origin 门只防浏览器上下文。spec 明文接受（边界 = loopback 绑定 + fail-closed + 启动告警），但**仓库既不生成也不强制该 token**，实际安全性取决于 operator | 待跟进（设计取舍，需产品裁决） |
+
+另记两条不属于 finding 但本次发现的**依赖面事实**，见 6.2.3。
+
+#### 6.2.2 本次落地的三处修复
+
+1. **`SHELL` 必须是绝对路径才进候选**（`runtimeLoginShellEnvCapture.ts` `resolveShellPathForLoginEnv`）。
+   相对值一律跳过，落到 `/bin/zsh → /bin/bash → /bin/sh`。**不推翻** `agent-command-env-gate.md`
+   R3 的既有裁决（R3 接受的是「SHELL 指向同用户 planted 的可执行文件」，属同用户植入面、
+   攻击者已有用户级代码执行；此处消除的是另一件事——「检查的不是将要执行的那个文件」）。
+   正常登录 shell 的 `SHELL` 来自 passwd 条目、恒为绝对路径，fish/自定义 shell 用户不受影响。
+   R3 已加追记写明这一区分。回归测试 `packages/services/test/login-shell-env-capture.test.ts`
+   4 例，**已验证鉴别力**：临时撤掉绝对路径门禁则该用例红、装回则绿；另含「绝对路径的自定义
+   shell 仍被采用」正向用例，防止收口过度。
+2. **纠正 `run-workflow.ts:138` 注释**：原文「任何权限模式（含 yolo / plan）都要先问」在 yolo
+   上是错的。实测 `permission/service.ts` `checkAlwaysAsk`：项目 deny → **yolo 直通 allow
+   （`mode.yolo.alwaysAsk`）** → 项目 ask → 会话 allow → TTL → owner-Amend → ask；yolo 分支
+   条件与 `checkPermissionByMode` 逐字同档（`planEnabled` 不放行、策略地板
+   `disableBypassPermissionsMode` 不放行）。同时把「持久确认永不减免」拆成独立理由
+   （它讲的是 `allowAlways` 只给会话作用域，与「谁要问」无关）。
+3. **在 spec R4 里写明其支点被 R17.1 局部抽掉**：R4 称 `alwaysAsk` 是「真正的控制」，但
+   R17.1（批次 C11）之后 yolo 放行该门，故 yolo 下残余逸出面之前只剩技能门与「必须刻意构造
+   原型链攻击」这一成本，**没有逐脚本的用户批准**。追记只负责写明白，**不重新裁决**——
+   是否在 yolo 下为工作流族恢复确认门属 R17.1 范围，需用户裁决。
+
+#### 6.2.3 依赖通告：扫描器严重低估（本次新发现，与 findings 无关）
+
+本次扫描 `dependencySummary` 报 `packagesScanned: 1413`、`matchedPackages: 1`、
+`matchedAdvisories: 1`、`unknown: 0`，但 **`packages` 数组为空，且 287 条 finding 中无任何一条
+携带 `advisory` 字段**，`report.md` 只有「静态 advisory 需要人工确认真实数据流和可利用性」
+一类通用注记——**密封产物无法确定那 1 个匹配包与那 1 条通告是什么**。
+
+改用实时库独立核对（`pnpm audit --json` / `--prod --json`，并与 `pnpm-lock.yaml` 的实际解析
+版本逐一比对，确认不是版本范围误匹配）：
+
+- 全量（含 dev）**82 条**：critical 4 / high 34 / moderate 39 / low 18。
+- 仅生产依赖 **40 条**：critical 1 / high 19 / moderate 16 / low 8。
+
+已确证解析版本落在漏洞区间内的高优先项：
+
+| 包 | 解析版本 | 修复版本 | 既有 override | 备注 |
+| --- | --- | --- | --- | --- |
+| `dompurify` | 3.4.16 | ≥3.4.17 | `dompurify@3: ^3.4.16` | **唯一生产 critical**（SAFE_FOR_TEMPLATES 绕过）；范围本就允许修复版 → 属**锁文件陈旧** |
+| `node-forge` | 1.4.0 | ≥1.4.1 | 无 | 6 high + 3 moderate + 3 low（含 X.509 basicConstraints 绕过、PKCS#12 MAC 伪造） |
+| `undici` | 6.29.0 / 7.30.0 | ≥6.29.1 / ≥7.30.1 | `^6.28.0` / `^7.28.0` | 3 high（TLS 校验绕过、跨源重定向缓存投毒）；差一个补丁位 |
+| `follow-redirects` | 1.16.0 | ≥1.16.2 | 无 | 3 high（凭据头跨域泄漏） |
+| `basic-ftp` | 5.3.1 | ≥6.2.1 | `basic-ftp@5: ^5.3.1` | **override 钉死在 5.x，永远到不了 6.2.1——该 override 主动挡住修复**，需跨大版本决策 |
+| `@modelcontextprotocol/server` | 2.0.0 | ≥2.3.0 | 无 | 3 high；`client`/`core` 已是 2.3.1，**只有 server 落后** |
+| `@modelcontextprotocol/sdk` | 1.29.0 | ≥1.32.0 | 无 | high：OAuth 凭据可能发给 MCP server 指定的授权服务器 |
+| `zod` | 4.6.5 | ≥4.6.6 | 无 | high（超大受约束集合可耗尽内存） |
+| `@hono/node-server` | 1.19.14 | ≥1.19.15 / ≥2.1.3 | 无 | 2 moderate，其一为 **Windows `serve-static` 编码反斜杠路径穿越**，与本项目平台相关 |
+| `qs` / `moment` / `uuid` / `ip-address` / `katex` | 6.15.1 / 2.30.1 / 11.1.0 / 10.7.2 / 0.16.47 | 见通告 | `ip-address@10: ^10.5.1` | moderate~low |
+
+三点口径必须一并记住，否则会误判紧急度：
+
+1. 另 3 条 critical（`handlebars` ×2、`proxy-addr`）**只出现在含 dev 的全量列表**，不在 `--prod`
+   → 开发依赖，不随产品分发。
+2. **`--prod` 对 Electron 应用会漏算发货面**：`electron` 自身有 7 条通告（含 1 条 high
+   「eMudhra 中间证书被攻破的缓解」），按惯例记为 devDependency，但它确实打包进安装包。
+   故「生产依赖 40 条」是**下界**，不是发货面全貌。
+3. **修复受本仓纪律约束**：改 `pnpm-lock.yaml` 会触发 third-party 台账 `full` 模式，按
+   `docs/specs/local-verify-gates.md` R7.24，依赖树有变时必须在 CI Linux 上全量重生成后下载
+   artifact 提交，**不得在 Windows 上跑 `licenses.mjs notices`**（`packages`/`noticesSha256`
+   等派生字段依赖平台相关 optional deps，本机会算错）。故这是一次独立变更，未在本次处理。
+
+#### 6.2.4 本次未覆盖的范围（如实登记）
+
+- `other-security` **120 条（57 high + 63 medium）未复核**——该类别笼统，需先按 §3.1 规则聚合
+  再定抽样策略。`xxe` 72、`path-traversal` 其余 54、`insecure-randomness` 12 同样未逐条复核
+  （其中大部分按 §5 属 vendored）。
+- 未验证 `permission/service.ts` 之外 yolo 放行的端到端运行行为（本次只读了 `checkAlwaysAsk`
+  实现并据其纠正注释，未跑 yolo 模式的真实工具调用）。
+- 未验证 `getRunDetail` 服务端 `scriptPath` 的完整性（§6.2.1 待跟进第 4 条的上游）。
+- 未验证 `resolveSpawnEnv` 在 `acodeAgentService.ts` 的装配内容。
+- 依赖通告只核了「解析版本落在漏洞区间」，**未验证任一漏洞在本项目的调用形态下可利用**。
+- Supervisor 的 control socket / IPC 通道（`packages/acode-server-cli/src/ipc/`）是 HTTP 之外的
+  另一控制面，未纳入。
+
 
 ## 7. 复扫指引
 

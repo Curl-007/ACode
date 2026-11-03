@@ -183,6 +183,15 @@
   （`dynamic-workflow-runtime/src/script-error.ts` 同款表述），真正的控制是 `RunWorkflow` 的
   `alwaysAsk` 确认门——脚本是模型写的、用户逐个批准过的。本项的实际收益是把「随手就能拿到
   Node」降级成「必须刻意构造原型链攻击」，并让两套系统姿态一致；不声称更多。
+  - **本裁决的支点被 R17.1 局部抽掉，须一并阅读（2026-11-03 复核追记）**：上面把
+    `alwaysAsk` 确认门称为「真正的控制」，但 R17.1（批次 C11）之后完全访问（`yolo`）模式
+    **放行**该门（落点 `permission/service.ts` `checkAlwaysAsk` 的 yolo 分支，实测
+    `mode.yolo.alwaysAsk` 直接 allow；`planEnabled` 与策略地板 `disableBypassPermissionsMode`
+    时不放行，项目 deny 仍压过一切）。因此在 yolo 下，本项残余逸出面（原型链上溯取外层
+    `Function`）之前只剩**技能门**（本会话未加载 `script-workflows` 技能即拒绝带
+    `script`/`scriptPath` 的调用）与「必须刻意构造原型链攻击」这一成本，**没有逐脚本的
+    用户批准**。这是 R17.1 那次裁决的既有后果，本条只负责把它写明白，不重新裁决。
+    是否要在 yolo 下为工作流族恢复确认门，属 R17.1 的范围，需用户重新裁决。
 - **八个全局由外层 realm 构造后注入**，不在 realm 内定义。理由：`agent`/`parallel`/`pipeline` 依赖
   `AsyncLocalStorage`（`callPath` 铸造）与 `callParent`（stdio 请求），这些都是 Node 能力，
   必须留在外层；realm 内只拿到闭包句柄。这与 dwf 的 `__host` 注入是同一形状。

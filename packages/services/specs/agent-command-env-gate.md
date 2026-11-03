@@ -55,6 +55,17 @@
   门禁它会破坏 fish/自定义 shell 用户。已有缓解：`isExecutableFile`（accessSync X_OK）
   校验存在且可执行。残余风险 = 「SHELL 指向同用户 planted 的可执行文件」，属同用户
   文件植入面（攻击者已有用户级代码执行），不在 env 注入门禁的威胁模型内。
+  - **追记（2026-11-03，Mimosa scan-2026-11-03 复核）**：本条接受的是「SHELL 被植入」，
+    不覆盖另一件不同的事——**校验的文件与执行的文件不是同一个**。`isExecutableFile` 的
+    `accessSync` 按 **cwd** 解析相对名，而 `spawn` 收到的裸名按**子进程 env.PATH** 解析
+    （`buildShellBootstrapPath` 只把绝对系统目录前置，原样保留其中可能存在的相对条目，
+    `runtimeToolResolver.ts` 无过滤）。相对 `SHELL`（如 `SHELL=zsh`）在 cwd 恰好存在同名
+    可执行文件时会通过校验，随后 spawn 却按 PATH 解析到另一个文件。已收口为
+    **`SHELL` 必须是绝对路径才进候选**，相对值一律跳过、落到 `/bin/zsh → /bin/bash → /bin/sh`。
+    这**不改变本条裁决**：正常登录 shell 的 `SHELL` 来自 passwd 条目、恒为绝对路径，
+    fish/自定义 shell 用户不受影响；固定兜底项本就是绝对路径。回归测试
+    `packages/services/test/login-shell-env-capture.test.ts`（已验证鉴别力：撤掉绝对路径
+    门禁则该用例红，装回则绿）。
 - 外部引擎（codex/opencode/gemini）打包态忽略 `binaryEnvVar` 后，自定义安装路径的
   发现通道只剩 `~/.acode/server/agents/<engine>`；当前外部引擎会话协议未接入
   （registry implemented:false，仅安装探测/诊断使用），UX 影响为零。接入会话时若需
